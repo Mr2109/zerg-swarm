@@ -1,0 +1,2056 @@
+// package gateway 负责 Zerg v2 网关：三种 AI 标准（OpenAI Chat / Claude Messages / OpenAI Responses）的统一入口。
+// 阶段 2：纯透传——认证 + 路由 + 转发，不做任何格式转换。
+//
+// 架构：
+//
+//	POST :8682/v1/*
+//	  → AuthMiddleware（三兼容认证）
+//	  → 提取 body.model
+//	  → pickRoute（已加载→空闲→负载低）
+//	  → 转发到子端 :8100/infer（body + "_path" 字段）
+//	  → 响应透传（非流式完整 / 流式逐 chunk）
+package gateway
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
+	"sync"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"zerg/core/internal/compressor"
+	"zerg/core/internal/config"
+	"zerg/core/internal/control"
+	"zerg/core/internal/gateway/adapter"
+	"zerg/core/internal/gateway/orchestrator"
+	"zerg/core/internal/localback"
+	"zerg/core/internal/plugin"
+	"zerg/core/internal/store"
+)
+
+// Gateway 网关主结构，持有配置和 HTTP 客户端。
+// 阶段 3：内置 LocalBackend 管理本机子端。
+// 阶段 B：内置动作级路由表（actionRouter）。
+type Gateway struct {
+	authToken string              // 从 fleet.yaml auth.token 读取
+	config    *config.FleetConfig
+	client    *http.Client       // 转发用 HTTP 客户端
+	localBack *localback.LocalBackend // 本机子端（阶段 3）
+	store     *store.Store       // fleet 快照（路由决策用：已加载模型/活跃请求/健康）
+	comp      *compressor.Compressor // LLMLingua-2 压缩器（V22，Go 一体化）
+	compMu    sync.RWMutex
+	gate      *control.Gate      // M3 集中控制层（v2.4——工具调用拦截；nil=不启用）
+
+	// 会话粘性（T4，借鉴 vLLM consistent_hash / llama.cpp conv_model_tracker）
+	// sessionID → 绑定的机器。同一会话固定同一台机器，复用 KV cache。
+	sessionMu sync.RWMutex
+	sessions  map[string]sessionBinding
+
+	// cache-aware 路由（T5，借鉴 vLLM cache_aware）
+	// 每机器记录最近请求的 prompt 前缀签名（字符级，避免分词开销），
+	// 路由时前缀匹配度高的机器加分（复用 KV cache / prefix cache）。
+	prefixMu sync.RWMutex
+	prefixes map[string]map[string]int // host → prompt签名 → 出现次数
+
+	// 熔断/降权（T7，借鉴 vLLM/open-llm-router）
+	// 每机器连续转发失败计数，超阈值后短期降权（不再选为最优），
+	// 心跳恢复健康后自动回池。
+	failMu      sync.Mutex
+	failCounts  map[string]int     // host → 连续失败次数
+	failSince   map[string]time.Time // host → 首次熔断时间（自动恢复用）
+
+	// v2.5.5 重启窗口期治本: 主控启动时间——宽限期内（startupGrace 秒）忽略 unhealthy 快照
+	// 根因: 主控重启瞬间 X3 心跳失败（主控 API 未就绪窗口期）→ 快照 unhealthy → 路由拒绝
+	// 治本: 启动后宽限期——机器还没机会心跳——不应因启动窗口失败被拒
+	startupTime time.Time
+
+	// 阶段 B：动作级路由表
+	actionRouter *ActionModelRouter // 动作→模型映射（代码常量，后续迁移到 fleet.yaml）
+
+	// B13: 负载均衡轮询（压力均分——本机/X3 交替接活）
+	roundRobinMu sync.Mutex
+	roundRobin   map[string]int // model → 轮询计数器（0=本机先, 1=X3先, 交替）
+	tripMu       sync.Mutex
+	tripCounts   map[string]int // v2.5.4.9 C failover——机器失败计数（熔断用）
+
+	// 阶段 C：脑手编排器（复合模型 zerg-baiyan（白眼——多视角参考+聚合提炼））
+	orchestrator *orchestrator.Orchestrator
+
+	// B4 v2：排除本机模式（用户工作时——路由跳过 local，任务全走远程）
+	excludeLocalMu sync.RWMutex
+	excludeLocal   bool
+
+	// v2.5.4.10 模型适配器注册表（方案 B——适配器完整路由）
+	// 模型名 → 适配器插件（Execute 返回路由字段——machine/format/params）
+	// 无适配器的模型 → 回退旧路由（fleet.yaml + 打分）——兼容
+	adapterRegistry map[string]plugin.Plugin
+
+	// v2.5.4.10 模型级超时覆盖（适配器声明 timeout_sec——转发时用）
+	timeoutOverride map[string]int
+}
+
+// setRequestTimeout — 模型级超时覆盖（适配器声明——Qwen3.8 120s/Nemotron 60s）
+func (g *Gateway) setRequestTimeout(model string, sec int) {
+	if g.timeoutOverride == nil {
+		g.timeoutOverride = map[string]int{}
+	}
+	g.timeoutOverride[model] = sec
+	log.Printf("⏱️ 适配器 %s: 超时覆盖 %ds", model, sec)
+}
+
+// getRequestTimeout — 查询模型超时覆盖（无则 0——用默认）
+func (g *Gateway) getRequestTimeout(model string) int {
+	if g.timeoutOverride == nil {
+		return 0
+	}
+	return g.timeoutOverride[model]
+}
+
+// SetExcludeLocal 切换排除本机模式（true=路由跳过 local 候选）。
+// 持久化到 state 文件——主控重启后保持开关状态（UI 同步不丢）。
+func (g *Gateway) SetExcludeLocal(exclude bool) {
+	g.excludeLocalMu.Lock()
+	g.excludeLocal = exclude
+	g.excludeLocalMu.Unlock()
+	log.Printf("🚫 排除本机模式: %v", exclude)
+	_ = g.persistExcludeLocal(exclude)
+}
+
+// LoadExcludeLocal 启动时从 state 文件读回开关状态（主控重启后保持）。
+func (g *Gateway) LoadExcludeLocal() {
+	data, err := os.ReadFile(stateFilePath())
+	if err != nil {
+		return // 无状态文件——默认关
+	}
+	var st struct {
+		ExcludeLocal bool `json:"exclude_local"`
+	}
+	if json.Unmarshal(data, &st) == nil && st.ExcludeLocal {
+		g.excludeLocalMu.Lock()
+		g.excludeLocal = true
+		g.excludeLocalMu.Unlock()
+		log.Printf("🚫 排除本机模式（主控重启恢复）: true")
+	}
+}
+
+func (g *Gateway) persistExcludeLocal(exclude bool) error {
+	st := struct {
+		ExcludeLocal bool `json:"exclude_local"`
+		UpdatedAt    string `json:"updated_at"`
+	}{ExcludeLocal: exclude, UpdatedAt: time.Now().Format(time.RFC3339)}
+	data, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(stateFilePath(), data, 0644)
+}
+
+// stateFilePath 主控状态文件路径（/tmp——重启后保留，机器重启才清）。
+func stateFilePath() string {
+	return "/tmp/zerg-state.json"
+}
+
+// ExcludeLocal 查询排除本机模式状态。
+func (g *Gateway) ExcludeLocal() bool {
+	g.excludeLocalMu.RLock()
+	defer g.excludeLocalMu.RUnlock()
+	return g.excludeLocal
+}
+
+// CompositeModelName 复合模型名（客户端指定走脑手编排）
+const CompositeModelName = "zerg-baiyan"
+
+// circuitCooldown 熔断自动恢复时间（熔断后过冷却期自动重新尝试）。
+// v2.5.5 #9: 60s→30s（瞬时失败快速恢复——X3 healthy 但超时误熔断后能快速半开试错）
+const circuitCooldown = 30 * time.Second
+
+// circuitFailThreshold 熔断阈值（连续失败次数——达到才熔断）。
+// v2.5.5 #9: 3→5→8（X3 偶发转发失败（连接层——infer 实际 200）——阈值提高——心跳清零兜底）
+const circuitFailThreshold = 8
+
+// healthyTripLimit healthy 机器的熔断上限（失败数 >= 此值即使 healthy 也熔断）。
+// v2.5.5 #9 补充3: X3 偶发转发失败——healthy 保护（失败<10 不熔断——只降权）
+const healthyTripLimit = 10
+
+// startupGrace 主控启动宽限期（秒）——宽限期内忽略 unhealthy 快照（防重启窗口期误拒）
+// v2.5.5 #9 补充2 治本: 主控重启瞬间 X3 心跳失败（API 未就绪窗口）→ 快照 unhealthy → 路由拒绝
+const startupGrace = 30 * time.Second
+
+// sessionBinding 会话绑定记录。
+type sessionBinding struct {
+	host     string    // 绑定的机器（如 "x3"）
+	model    string    // 绑定时请求的模型
+	lastUsed time.Time // 最近使用时间（过期清理）
+	tokens   int       // 会话累计 token（V22 上下文预算）
+}
+
+// sessionTTL 会话绑定过期时间（超过后允许重新路由）。
+const sessionTTL = 30 * time.Minute
+
+// maxSessionTokens 会话 token 预算上限（超过触发 compaction 提示，V22-1）。
+// 128K 覆盖典型 agent 会话；超预算由客户端或编排层 compaction。
+const maxSessionTokens = 131072
+
+// NewGateway 创建网关实例，附带本机后端。
+// localBack 可为 nil（此时 host=local 的模型仍返回 503）。
+// adapters v2.5.4.10：模型适配器注册表（模型名→插件）——可为 nil（回退旧路由）。
+func NewGateway(authToken string, cfg *config.FleetConfig, localBack *localback.LocalBackend, st *store.Store, adapters map[string]plugin.Plugin) *Gateway {
+	// v2.5.4.10 适配器注册表（nil→空 map——回退旧路由）
+	if adapters == nil {
+		adapters = map[string]plugin.Plugin{}
+	}
+	// 阶段 B：创建动作级路由表（默认配置）
+	actionRouter := newActionModelRouter()
+	// 阶段 C：脑手编排器（走网关统一路由——executor 带认证）
+	orch := orchestrator.NewOrchestrator(orchestrator.DefaultOrchestratorConfig(),
+		newGatewayExecutor(authToken))
+
+	// M3 集中控制层（v2.4）：加载规则——nil 不启用；观察模式（记录不拦截——Mr2109确认策略后改拦截）
+	var ctrlGate *control.Gate
+	if gate, err := control.NewGateFromFile("<repo>/core/internal/control/rules.yaml"); err == nil {
+		ctrlGate = gate
+		log.Printf("🔒 M3 集中控制层已加载（观察模式——记录不拦截）")
+	} else {
+		log.Printf("⚠️ M3 控制层加载失败（不启用）: %v", err)
+	}
+
+	g := &Gateway{
+		authToken: authToken,
+		config:    cfg,
+		actionRouter: actionRouter,
+		roundRobin: make(map[string]int), // B13: 轮询计数器初始化
+		orchestrator: orch,
+		gate:       ctrlGate, // M3 集中控制层（观察模式）
+		adapterRegistry: adapters, // v2.5.4.10 模型适配器注册表
+		client: &http.Client{
+			// v2.5.6 故障自愈（Mr2109 2026-08-28）: 5min→45min——长生成（思考模型 13万token）
+			// 之前 5min 总超时 + override 120s 覆盖整个请求——长生成必被杀——熔断风暴根因
+			// 现在: 有 override 的模型走 overrideClient（首 token 超时=override——总超时 45min）
+			//       无 override 的模型走这里（首 token 90s——总超时 45min）
+			Timeout: 45 * time.Minute,
+			// 内部转发永远直连：禁用代理（Go 默认 Transport 会读 macOS 系统代理，
+			// 导致局域网 10.0.x 请求被发给代理 → no route to host）
+			Transport: &http.Transport{
+				Proxy: nil,
+				// 治本（2026-08-12）：禁 keep-alive——X3 agent Keep-Alive: timeout=5
+				// 连接 5s 空闲被 agent 关——网关复用断连接 → IncompleteRead（EOF 根因）
+				DisableKeepAlives: true,
+				// v2.5.4.9 C failover：首 token 超时（等响应头 90s——卡死检测）
+				// 知识库经验: Codex 请求体大(64-79KB含tools)→example-35b-v2推理38-60s(正常——35B思考模型+工具调用)
+				// 60s 误杀大请求（60.02s 触发——实际快好了）——调 90s 给余量
+				// 真卡死: 完全无响应头 90s——判定挂起——failover 换机器
+				ResponseHeaderTimeout: 90 * time.Second,
+			},
+		},
+		localBack: localBack,
+		store:     st,
+		sessions:   make(map[string]sessionBinding),
+		prefixes:   make(map[string]map[string]int),
+		failCounts: make(map[string]int),
+		failSince:  make(map[string]time.Time),
+		startupTime: time.Now(), // v2.5.5 重启窗口期治本: 启动宽限期起点
+	}
+	// v2.5.6 适配器覆盖配置恢复（启动重放——2026-08-27 Mr2109）
+	g.loadAdapterOverrides()
+	return g
+}
+
+// SetCompressor 设置 LLMLingua-2 压缩器（V22，主控启动时调用，加载 ONNX 模型）。
+func (g *Gateway) SetCompressor(c *compressor.Compressor) {
+	g.compMu.Lock()
+	g.comp = c
+	g.compMu.Unlock()
+	if c != nil {
+		// 加载 ONNX 模型（异步，不阻塞启动）
+		go func() {
+			if err := c.Load(); err != nil {
+				log.Printf("⚠️ 压缩器加载失败（gemma 兜底继续用）: %v", err)
+			}
+		}()
+	}
+}
+
+// compressWithLLMLingua2 用 LLMLingua-2 压缩文本（引擎无关，Go 进程内 ONNX 推理）。
+// 未加载或失败时返回 error，调用方 fallback 到 gemma 摘要。
+func (g *Gateway) compressWithLLMLingua2(text string) (string, error) {
+	g.compMu.RLock()
+	c := g.comp
+	g.compMu.RUnlock()
+	if c == nil {
+		return "", fmt.Errorf("压缩器未设置")
+	}
+	compressed, _, _, err := c.Compress(text)
+	if err != nil {
+		return "", fmt.Errorf("LLMLingua-2 压缩失败: %w", err)
+	}
+	if compressed == "" || len(compressed) >= len(text)*90/100 {
+		// 压缩无效或压缩率过低（<10%），视为失败（gemma 兜底）
+		return "", fmt.Errorf("LLMLingua-2 压缩率过低")
+	}
+	return compressed, nil
+}
+
+// RegisterRoutes 注册路由到 chi 路由器。
+func (g *Gateway) RegisterRoutes(r *chi.Mux) {
+	// 认证中间件应用到 /v1/*
+	r.Group(func(r chi.Router) {
+		r.Use(g.authMiddleware)
+
+		// POST /v1/chat/completions（OpenAI Chat）
+		r.Post("/v1/chat/completions", g.handleRequest)
+
+		// POST /v1/messages（Claude Messages）
+		r.Post("/v1/messages", g.handleRequest)
+
+		// POST /v1/responses（OpenAI Responses）
+		r.Post("/v1/responses", g.handleRequest)
+
+		// GET /v1/models（模型列表，Codex/客户端需要）
+		r.Get("/v1/models", g.handleModels)
+
+		// POST /v1/context/compact（V22-2 上下文压缩：调虫族模型压缩长会话为摘要）
+		r.Post("/v1/context/compact", g.handleCompact)
+
+		// GET /v1/context/{session_id}（V22 客户端主动查询会话 token 状态）
+		r.Get("/v1/context/{session_id}", g.handleContextQuery)
+	})
+}
+
+// handleContextQuery 处理 GET /v1/context/{session_id}，返回会话 token 状态（客户端主动查询）。
+func (g *Gateway) handleContextQuery(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "session_id")
+	if sessionID == "" {
+		http.Error(w, `{"error":"session_id 不能为空"}`, http.StatusBadRequest)
+		return
+	}
+	// 用会话绑定模型的动态阈值（ctx_window/4槽/50%）
+	boundModel := ""
+	g.sessionMu.RLock()
+	if b, ok := g.sessions[sessionID]; ok {
+		boundModel = b.model
+	}
+	g.sessionMu.RUnlock()
+
+	threshold := g.compactThreshold(boundModel)
+	out, _ := json.Marshal(map[string]interface{}{
+		"session_id":  sessionID,
+		"tokens":      g.sessionTokens(sessionID),
+		"max_tokens":  threshold,
+		"over_budget": g.sessionTokens(sessionID) > threshold,
+		"status":      "ok",
+	})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(out)
+}
+
+// handleModels 处理 GET /v1/models，返回路由表全部模型。
+func (g *Gateway) handleModels(w http.ResponseWriter, r *http.Request) {
+	var data []map[string]interface{}
+	for name, candidates := range g.config.Models {
+		for _, c := range candidates {
+			data = append(data, map[string]interface{}{
+				"id":       name,
+				"object":   "model",
+				"created":  time.Now().Unix(),
+				"owned_by": c.Host,
+				"backend":  c.Backend,
+			})
+		}
+	}
+	resp, _ := json.Marshal(map[string]interface{}{"data": data})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(resp)
+}
+
+// handleCompact 处理 POST /v1/context/compact（V22-2 上下文压缩）。
+// 接收 {session_id, messages}，调虫族压缩模型（gemma 轻量）生成摘要，
+// 返回 {summary}——引擎无关（走网关内部调用，不依赖 llama 特性）。
+func (g *Gateway) handleCompact(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	defer r.Body.Close()
+
+	var req struct {
+		SessionID string        `json:"session_id"`
+		Messages  []interface{} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, `{"error":"解析请求失败"}`, http.StatusBadRequest)
+		return
+	}
+	if len(req.Messages) == 0 {
+		http.Error(w, `{"error":"messages 不能为空"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 压缩模型：选 gemma（轻量快）或 example-35b-v2（更懂上下文）。有 gemma 用 gemma，否则 example-35b-v2。
+	compactModel := "gemma-4-12B"
+	if _, ok := g.config.Models[compactModel]; !ok {
+		compactModel = "example-35b"
+	}
+
+	// 构造压缩 prompt：结构化摘要（固定类别：目标/进展/决策/关键事实/待办/文件引用）
+	msgsJSON, _ := json.Marshal(req.Messages)
+	compactPrompt := BuildStructuredSummaryPrompt(string(msgsJSON))
+
+	// 调虫族网关内部（复用路由/转发）
+	compactBody := map[string]interface{}{
+		"model":    compactModel,
+		"messages": []interface{}{map[string]interface{}{"role": "user", "content": compactPrompt}},
+		"max_tokens": 2000,
+	}
+	compactBodyJSON, _ := json.Marshal(compactBody)
+
+	// 内部转发（不走外部 HTTP，直接路由到机器）
+	model := compactModel
+	// 压缩模型优先走 local（本机）——X3 agent 响应截断 bug（issue-3889字节）导致压缩不可靠
+	// local 不可用（本机没加载 gemma）时 fallback 到 X3
+	route, err := g.pickRouteLocal(model)
+	if err != nil {
+		route, err = g.pickRoute(model, "", "")
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"路由失败: %v"}`, err), http.StatusServiceUnavailable)
+			return
+		}
+	}
+	log.Printf("📎 压缩路由: %s（%s）", route.Host, route.URL)
+
+	var resp *http.Response
+	var respBody []byte
+	// 压缩模型可能忙（gemma 单槽）+ X3 agent 响应偶发截断（issue-3889字节）——重试 5 次
+	// 注意：截断是"成功返回但 body 不完整"（err=nil），必须解析失败也重试
+	for attempt := 0; attempt < 5; attempt++ {
+		if route.Host == "local" {
+			if g.localBack == nil {
+				http.Error(w, `{"error":"本机后端不可用"}`, http.StatusServiceUnavailable)
+				return
+			}
+			// 加载压缩模型（如果未加载或模型不同）
+			if err := g.loadModel(compactModel, route); err != nil {
+				log.Printf("⚠️ 压缩本地模型加载失败: %v", err)
+				http.Error(w, fmt.Sprintf(`{"error":"压缩模型加载失败: %v"}`, err), http.StatusServiceUnavailable)
+				return
+			}
+			resp, err = g.localBack.Infer("/v1/chat/completions", compactBodyJSON)
+		} else {
+			resp, err = g.forwardToBackend(r.Context(), route, "/v1/chat/completions", compactBodyJSON, r.Header)
+		}
+		if err != nil {
+			log.Printf("⚠️ 压缩第 %d 次失败: %v（重试）", attempt+1, err)
+			if attempt < 2 {
+				time.Sleep(2 * time.Second)
+			}
+			continue
+		}
+		// 读 body 并校验 JSON 完整性（截断 → 重试）
+		respBody, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		var chk map[string]interface{}
+		if json.Unmarshal(respBody, &chk) == nil {
+			break // 完整响应
+		}
+		log.Printf("⚠️ 压缩第 %d 次响应不完整（%d 字节，截断），重试", attempt+1, len(respBody))
+		if attempt < 2 {
+			time.Sleep(2 * time.Second)
+		}
+	}
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"压缩失败: %v"}`, err), http.StatusBadGateway)
+		return
+	}
+
+	var obj map[string]interface{}
+	if err := json.Unmarshal(respBody, &obj); err != nil {
+		log.Printf("⚠️ handleCompact 解析失败: %v, body前200: %s", err, string(respBody)[:min(len(respBody), 200)])
+		http.Error(w, `{"error":"压缩响应解析失败"}`, http.StatusBadGateway)
+		return
+	}
+	choices, _ := obj["choices"].([]interface{})
+	if len(choices) == 0 {
+		http.Error(w, `{"error":"压缩无结果"}`, http.StatusBadGateway)
+		return
+	}
+	msg, _ := choices[0].(map[string]interface{})["message"].(map[string]interface{})
+	summary, _ := msg["content"].(string)
+	if summary == "" {
+		summary, _ = msg["reasoning_content"].(string)
+	}
+
+	// 返回摘要；会话 token 计数重置（压缩后上下文变小）
+	if req.SessionID != "" {
+		g.resetSessionTokens(req.SessionID)
+	}
+	out, _ := json.Marshal(map[string]interface{}{
+		"summary":    summary,
+		"model":      compactModel,
+		"session_id": req.SessionID,
+		"status":     "ok",
+	})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(out)
+}
+//
+// 支持三种认证头：
+//   - X-Auth-Token: <token>（Zerg 内部标准）
+//   - Authorization: Bearer <token>（OpenAI 标准）
+//   - x-api-key: <token>（Claude 标准）
+//
+// v1 血泪教训：urllib 会自动规范化 X-Api-Key → X-Api-Key（小写首字母+大写其余），
+// 导致匹配失败。Go 的 http.Header.Get 天然大小写不敏感，直接用即可。
+func (g *Gateway) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 提取认证 token（三种认证方式）
+
+		// 方式 1：X-Auth-Token header（Zerg 内部标准）
+		// Go 的 http.Header.Get 自动忽略大小写，无需手动处理
+		token := r.Header.Get("X-Auth-Token")
+
+		// 方式 2：Authorization: Bearer <token>（OpenAI 标准）
+		if token == "" {
+			authHeader := r.Header.Get("Authorization")
+			if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+				token = strings.TrimSpace(authHeader[len("bearer "):])
+			}
+		}
+
+		// 方式 3：x-api-key header（Claude 标准）
+		// v1 被 urllib 的 X-Api-Key 规范化坑过，Go 天然不敏感
+		if token == "" {
+			token = r.Header.Get("x-api-key")
+		}
+
+		// 验证 token 是否匹配
+		if token == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":"unauthorized: missing authentication"}`))
+			return
+		}
+
+		if token != g.authToken {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":"unauthorized: invalid token"}`))
+			return
+		}
+
+		// 认证通过，继续处理请求
+		next.ServeHTTP(w, r)
+	})
+}
+
+// handleRequest 统一请求处理：提取 model → 路由 → 转发 → 透传响应。
+//
+// 处理流程：
+//   1. 读取请求体（大 body 支持：按 Content-Length 循环读）
+//   2. 提取 body.model 字段
+//   3. pickRoute 选择目标机器
+//   4. host=local → 通过 LocalBackend 转发（阶段 3 实现）
+//   5. 转发到子端 :8100/infer（body + " _path" 字段）
+//   6. 响应透传（非流式完整 / 流式逐 chunk）
+func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
+	// 1. 读取请求体（大 body 支持：按 Content-Length 循环读，不截断）
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("读取请求体失败: %v", err)
+		http.Error(w, "读取请求体失败", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	// 1.5 客户端适配器识别（路径/UA/body 格式 → codex/chat/claude/generic）
+	adp := adapter.Dispatch(r, body)
+	log.Printf("🔌 客户端适配器: %s (%s)", adp.Name(), r.URL.Path)
+
+	// 2. 提取 model 字段（三种标准都在 body.model）
+	// 阶段 B：如果未显式指定 model，走动作路由解析
+	model, usedAction, err := g.extractModelWithAction(body, r.URL.Path)
+	if err != nil {
+		log.Printf("提取 model 失败: %v", err)
+		adp.TransformError(w, http.StatusBadRequest, "invalid_request_error", fmt.Sprintf("提取 model 失败: %v", err))
+		return
+	}
+	if usedAction {
+		log.Printf("🎯 请求 model（动作路由）: %s", model)
+	} else {
+		log.Printf("🎯 请求 model: %s", model)
+	}
+
+	// 2.5 入站转换（客户端格式 → 后端格式；Claude 全量转 chat，Codex 基本透传）
+	forwardBody, backendPath, err := adp.TransformRequest(r, body)
+	if err != nil {
+		log.Printf("入站转换失败: %v", err)
+		adp.TransformError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+
+	// 2.6 模型别名解析：客户端可能用别名请求（Hermes 发 zerg-example-35b-v2 等）。
+	// 不仅路由要用标准名，转发给后端的 body 里的 model 字段也要替换（否则 agent 找不到模型）。
+	if canonical, ok := g.config.Aliases[model]; ok {
+		log.Printf("🎭 模型别名: %s → %s", model, canonical)
+		model = canonical
+		forwardBody = adapter.JsonSetField(forwardBody, "model", canonical)
+	}
+
+	// 2.65 复合模型：model=zerg-baiyan → 脑手编排器（decompose→dispatch→synthesize）
+	// 不走常规路由——编排器内部按脑/手子任务调不同模型
+	if model == CompositeModelName && g.orchestrator != nil {
+		log.Printf("🧠 复合模型: %s → 脑手编排器", model)
+		// 提取用户消息（最后一条 user 内容）
+		prompt := extractLastUserPrompt(body)
+		if prompt == "" {
+			prompt = extractPrompt(body)
+		}
+		result, err := g.orchestrator.Execute(ctxFromReq(r), prompt, 4000)
+		if err != nil {
+			log.Printf("编排器执行失败: %v", err)
+			adp.TransformError(w, http.StatusInternalServerError, "orchestration_error", fmt.Sprintf("编排失败: %v", err))
+			return
+		}
+		// 返回 OpenAI 兼容响应（chat 格式——客户端用 /v1/chat/completions 请求）
+		// MoA（白眼）：CombinedResult = example-35b-v2 聚合最终回答；Summary 仅元信息
+		finalContent := result.CombinedResult
+		if strings.TrimSpace(finalContent) == "" {
+			finalContent = result.Summary
+		}
+		respJSON := fmt.Sprintf(`{"id":"chatcmpl_%s","object":"chat.completion","created":%d,"model":"zerg-baiyan","choices":[{"index":0,"message":{"role":"assistant","content":%s},"finish_reason":"stop"}],"usage":{"total_tokens":%d}}`,
+			"orchestrator", time.Now().Unix(), quoteJSON(finalContent), result.TotalTokens)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(respJSON))
+		log.Printf("🧠 编排完成: %d 子任务, %v", len(result.TaskResults), result.TotalTime)
+		return
+	}
+
+	// 3. 路由选择：pickRoute（会话粘性 → 已加载→空闲→负载低 → cache-aware）
+	sessionID := extractSessionID(body)
+	prompt := extractPrompt(body)
+
+	// v2.5.4.10 方案 B：适配器参数覆盖（有适配器——按适配器特征覆盖请求体）
+	// 无适配器 → 原样（fleet.yaml 默认——兼容旧模型）
+	if ada, ok := g.adapterRegistry[model]; ok {
+		out, aerr := ada.Execute(plugin.PluginInput{Data: map[string]any{"model": model}})
+		if aerr != nil {
+			// v2.5.6 错误码设计（2026-08-29）: 适配器执行失败不能静默——记日志（覆盖失败用默认参数——不阻塞请求）
+			log.Printf("⚠️ 适配器 %s 执行失败（用默认参数）: %v", model, aerr)
+		}
+		if aerr == nil && out.Result != nil {
+			if res, ok := out.Result.(map[string]any); ok {
+				// 温度/采样参数覆盖
+				if t, ok := res["temperature"].(float64); ok {
+					forwardBody = adapter.JsonSetField(forwardBody, "temperature", t)
+					log.Printf("🎛️ 适配器 %s: 温度覆盖 %.2f", model, t)
+				}
+				// v2.5.6 修复（Mr2109 2026-08-28）: max_tokens 同时覆盖两种格式——
+				// 之前只写 max_tokens（chat 格式）——调度器用 max_output_tokens（responses 格式）
+				// 字段不匹配 → 适配器 32768 从未覆盖调度器请求 → 适配器形同虚设
+				// 适配器 = 参数唯一来源（程序调用参数由适配器决定——每步都生效）
+				if mt, ok := res["max_tokens"].(int); ok && mt > 0 {
+					forwardBody = adapter.JsonSetField(forwardBody, "max_tokens", mt)
+					forwardBody = adapter.JsonSetField(forwardBody, "max_output_tokens", mt)
+					log.Printf("🎛️ 适配器 %s: max_tokens 覆盖 %d（chat+responses 双格式）", model, mt)
+				}
+				// reasoning_effort 覆盖（思考深度——适配器声明——Mr2109 low）
+				if re, ok := res["reasoning_effort"].(string); ok && re != "" {
+					forwardBody = adapter.JsonSetField(forwardBody, "reasoning_effort", re)
+				}
+				// 超时覆盖（按模型——Qwen3.8 120s / Nemotron 60s——适配器声明）
+				if ts, ok := res["timeout_sec"].(int); ok && ts > 0 {
+					g.setRequestTimeout(model, ts)
+				}
+			}
+		}
+	}
+
+	// 2.7 快路径逐字精简（渐进式压缩：50%前每次请求前轻量删噪）
+	// 引擎无关：纯规则（工具输出 observation masking + 填充回复删除），毫秒级
+	if trimmed := trimRequestMessages(&forwardBody); trimmed {
+		log.Printf("✂️ 快路径精简: 工具输出/填充回复已删噪（%s）", sessionID)
+	}
+
+	route, err := g.pickRoute(model, sessionID, prompt)
+	if err != nil {
+		log.Printf("路由选择失败: %v", err)
+		// v2.5.6 故障自愈（Mr2109 2026-08-28）: 错误码语义化——调度器按 code 分类处理
+		// 熔断/无候选/被排除 = 环境故障（503 circuit_open——可等——waiting_retry）
+		// 模型不在路由表 = 配置问题（404 model_not_found——不可重试）
+		msg := fmt.Sprintf("路由选择失败: %v", err)
+		code, status := classifyRouteError(err)
+		adp.TransformError(w, status, code, msg)
+		return
+	}
+
+	// 4. host=local 的模型：通过 LocalBackend 转发到本机 llama-server
+	if route.Host == "local" {
+		if g.localBack == nil {
+			handleLocalModel(w)
+			return
+		}
+		// 加载模型（如果未加载或模型不同）
+		if err := g.loadModel(model, route); err != nil {
+			log.Printf("加载本地模型失败: %v", err)
+			// v2.5.6 故障自愈: 加载失败=资源/环境故障（可等——OOM/冷加载——waiting_retry）
+			adp.TransformError(w, http.StatusServiceUnavailable, "circuit_open", fmt.Sprintf("加载本地模型失败: %v", err))
+			return
+		}
+		// 通过 LocalBackend 转发
+		g.forwardToLocal(w, r, route, forwardBody, body, adp)
+		return
+	}
+
+	log.Printf("📍 路由到: %s:%d", route.Host, route.Port)
+
+	// 会话粘性：记录绑定（仅非 local 机器）
+	if sessionID != "" && route.Host != "local" {
+		g.bindSession(sessionID, route.Host, model)
+	}
+	// cache-aware：记录该机器处理过的 prompt 前缀签名
+	if prompt != "" && route.Host != "local" {
+		g.recordPrefix(route.Host, prompt)
+	}
+
+	// 5. 转发到子端（适配器已做入站转换；含 tools 强制非流式由 chat 适配器在出站处理）
+	hasTools := adapter.ContainsTools(forwardBody)
+	log.Printf("🔍 请求检查: tools=%v stream=%v bodyLen=%d", hasTools, adapter.IsStreamRequest(forwardBody), len(forwardBody))
+
+	// M3 集中控制层（v2.4）：工具调用拦截检查——观察模式（记录不拦截——等Mr2109确认策略后启用）
+	// gate 检查请求里的工具调用——block 记录告警；require_approval 记录待审（暂不拦截——默认放行保持现有行为）
+	if hasTools && g.gate != nil {
+		for _, toolName := range adapter.ExtractToolNames(forwardBody) {
+			decision := g.gate.Check(toolName, "", "agent")
+			if decision.Action != control.ActionAllow {
+				log.Printf("🔒 M3控制层[观察]: 工具 %s → %s（%s）——暂不拦截（观察模式）",
+					toolName, decision.Action, decision.Message)
+			}
+		}
+	}
+
+	// 转发 + 失败重试（T7）：失败记录熔断计数，重路由到次优机器
+	// v2.5.5 T1 连接层治本: maxRetries 2→3——连接层失败重试不立即熔断（重试成功就不算失败）
+	const maxRetries = 3
+	var resp *http.Response
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			// 重试：重新路由（熔断机器已被跳过）
+			log.Printf("🔄 第 %d 次重试路由 (%s)", attempt, model)
+			route, err = g.pickRoute(model, sessionID, prompt)
+			if err != nil {
+				break
+			}
+			log.Printf("📍 重试路由到: %s:%d", route.Host, route.Port)
+		}
+
+		resp, err = g.forwardToBackend(r.Context(), route, backendPath, forwardBody, r.Header)
+		if err == nil && resp != nil && resp.StatusCode < 500 {
+			break // 转发成功（非 5xx）
+		}
+		// v2.5.5 T5b: 5xx（后端/模型错误）也触发重试换机器（另一台可能正常）
+		if err == nil && resp != nil && resp.StatusCode >= 500 {
+			log.Printf("⚠️ 后端 %s 返回 %d——换机器重试（T5b 5xx failover）", route.Host, resp.StatusCode)
+			// 5xx 也是模型错误——记失败（防持续 5xx 机器被熔断）
+			if route.Host != "local" {
+				g.markFailure(route.Host)
+			}
+			// v2.5.6 错误码设计（2026-08-29）: 读取子端错误体——透传真实错误消息（调试关键）
+			// 子端错误如 {"error":"queue full"}(429) / {"error":"inference timeout"}(504)——
+			// 不读 body 则客户端只见"后端 x3 返回 500"——根因丢失
+			bodyMsg := ""
+			if b, rerr := io.ReadAll(resp.Body); rerr == nil && len(b) > 0 {
+				bodyMsg = strings.TrimSpace(string(b))
+				if len(bodyMsg) > 200 {
+					bodyMsg = bodyMsg[:200]
+				}
+			}
+			resp.Body.Close()
+			if bodyMsg != "" {
+				err = fmt.Errorf("后端 %s 返回 %d: %s", route.Host, resp.StatusCode, bodyMsg)
+			} else {
+				err = fmt.Errorf("后端 %s 返回 %d", route.Host, resp.StatusCode)
+			}
+		}
+
+		log.Printf("转发请求失败: %v", err)
+		// v2.5.5 T1 连接层治本: 连接层失败（网络/超时）——重试不立即熔断（给足机会）
+		// 模型错误（HTTP 响应——4xx/5xx）才立即 markFailure（真失败）
+		if route.Host != "local" && isModelError(err) {
+			g.markFailure(route.Host)
+		}
+		// 连接层失败——不 markFailure（重试成功就没事——偶发网络不熔断）
+	}
+	if err != nil {
+		// v2.5.6 故障自愈（Mr2109 2026-08-28）: 错误码语义化——按错误类型区分
+		//   circuit_open    (503) 熔断/无候选——可等（waiting_retry）
+		//   upstream_fail   (502) 转发失败——可重试（换机/换模型）
+		//   bad_request     (400) 参数错——不可重试
+		code := "upstream_fail"
+		status := http.StatusBadGateway
+		if strings.Contains(err.Error(), "熔断") || strings.Contains(err.Error(), "无可用候选") {
+			code = "circuit_open"
+			status = http.StatusServiceUnavailable
+		} else if strings.Contains(err.Error(), "bad request") || strings.Contains(err.Error(), "参数") {
+			code = "bad_request"
+			status = http.StatusBadRequest
+		} else if strings.Contains(err.Error(), "queue full") || strings.Contains(err.Error(), "429") {
+			// v2.5.6 错误码设计（2026-08-29）: 子端 queue full(429)=单槽被占——可等（busy）
+			code = "busy"
+			status = http.StatusTooManyRequests
+		} else if strings.Contains(err.Error(), "model not found") || strings.Contains(err.Error(), "missing model") || strings.Contains(err.Error(), "404") {
+			// v2.5.6 错误码设计: 子端模型不存在/缺失——不可重试（model_not_found）
+			code = "model_not_found"
+			status = http.StatusNotFound
+		}
+		adp.TransformError(w, status, code, fmt.Sprintf("转发请求失败: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	// 转发成功：恢复机器权重
+	if route.Host != "local" {
+		g.markSuccess(route.Host)
+	}
+
+	// 6. 出站转换（后端响应 → 客户端格式，由适配器完成）
+	// V22 token 预算：内部累计 + 按模型窗口 50% 自动 compaction（不通知客户端）
+	if sessionID != "" {
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+		if tok := extractUsageTokensFromBytes(respBody); tok > 0 {
+			g.addSessionTokens(sessionID, tok)
+			// 按模型窗口动态阈值（ctx_window × 50%——单槽执行），超了自动压缩
+			if threshold := g.compactThreshold(model); threshold > 0 && g.sessionTokens(sessionID) > threshold {
+				slog.Info("会话超压缩阈值，自动 compaction", "session", sessionID, "tokens", g.sessionTokens(sessionID), "threshold", threshold)
+				log.Printf("♻️ 会话 %s 超压缩阈值 (%d/%d)，自动 compaction", sessionID, g.sessionTokens(sessionID), threshold)
+				g.autoCompact(sessionID, model, body)
+			}
+		}
+	}
+	adp.TransformResponse(w, resp, r, body)
+}
+
+// extractModel 从请求体提取 model 字段。
+// 三种标准（OpenAI Chat / Claude Messages / OpenAI Responses）都在 body.model。
+func extractModel(body []byte) (string, error) {
+	var req map[string]interface{}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return "", fmt.Errorf("解析请求体 JSON 失败: %w", err)
+	}
+
+	model, ok := req["model"].(string)
+	if !ok || model == "" {
+		return "", fmt.Errorf("请求体中缺少 model 字段")
+	}
+
+	return model, nil
+}
+
+// extractModelWithAction 尝试提取 model，如果缺失则走动作路由解析。
+// 返回模型名和是否使用了动作路由（usedAction 为 true 表示走了动作路由）。
+// 设计：只有当客户端未显式指定 model 时，才使用动作路由；已指定的尊重客户端选择。
+func (g *Gateway) extractModelWithAction(body []byte, path string) (model string, usedAction bool, err error) {
+	// 先尝试标准提取
+	model, err = extractModel(body)
+	if err == nil {
+		// 标准提取成功，直接使用（尊重客户端选择）
+		return model, false, nil
+	}
+
+	// 标准提取失败（缺少 model 字段），尝试动作路由
+	log.Printf("🔍 请求未指定 model，尝试动作路由: %v", err)
+	
+	action := detectAction(body, path)
+	log.Printf("🎯 识别动作类型: %s", action.String())
+	
+	// 通过动作路由解析目标模型
+	resolved := g.actionRouter.resolveModel(action)
+	if resolved == "" {
+		return "", false, fmt.Errorf("动作路由未找到目标模型: %s", action.String())
+	}
+	
+	log.Printf("✅ 动作路由解析成功: %s → %s", action.String(), resolved)
+	return resolved, true, nil
+}
+
+// pickRoute 路由选择：已加载→空闲→负载低。
+//
+// 路由策略：
+//   1. 在 fleet.yaml 的 models 表中查找模型
+//   2. 如果有多个候选 host，按优先级选择：
+//      - 已加载该模型的 host 优先
+//      - 同级别按负载（mem_gb）选择负载最低的
+//   3. host=local 的模型：阶段 3 实现，先返回 503
+//
+// 阶段 1 已有 FleetConfig.Models 结构，这里复用。
+// markFailure 记录机器转发失败（熔断计数）。
+func (g *Gateway) markFailure(host string) {
+	g.failMu.Lock()
+	defer g.failMu.Unlock()
+	g.failCounts[host]++
+	slog.Warn("机器转发失败", "host", host, "fail_count", g.failCounts[host], "threshold", 3)
+	log.Printf("🚨 机器 %s 转发失败 (%d/3)，超过阈值将降权", host, g.failCounts[host])
+}
+
+// markSuccess 清零机器失败计数（转发成功后调用，恢复权重）。
+func (g *Gateway) markSuccess(host string) {
+	g.failMu.Lock()
+	defer g.failMu.Unlock()
+	if g.failCounts[host] != 0 {
+		log.Printf("✅ 机器 %s 恢复健康，清零失败计数", host)
+		g.failCounts[host] = 0
+	}
+	delete(g.failSince, host)
+}
+
+// ClearFailures 清零机器失败计数（v2.5.5 #9 补充5: 心跳健康时调用——防残留熔断）。
+func (g *Gateway) ClearFailures(host string) {
+	g.failMu.Lock()
+	defer g.failMu.Unlock()
+	if g.failCounts[host] != 0 {
+		log.Printf("✅ 机器 %s 心跳健康——清零失败计数", host)
+		g.failCounts[host] = 0
+	}
+	delete(g.failSince, host)
+}
+
+// isModelError 判断转发错误是否是"模型错误"（HTTP 响应错误——4xx/5xx）。
+// v2.5.5 T1 连接层治本: 连接层失败（网络/超时/EOF）≠ 模型失败——不熔断（偶发网络重试就好）
+func isModelError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// HTTP 响应错误（模型返回 4xx/5xx）——真失败
+	var httpErr interface{ StatusCode() int }
+	if errors.As(err, &httpErr) {
+		code := httpErr.StatusCode()
+		return code >= 400 && code < 600
+	}
+	// 连接层错误（net.Error/超时/EOF——网络问题）——不是模型失败
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return false
+	}
+	// 其他（URL 错误等）——保守按模型错误处理（熔断——防持续失败）
+	return true
+}
+
+// isTripped 判断机器是否处于熔断状态（连续失败 >= 阈值 且未过冷却期）。
+// 超过冷却期自动恢复（半开状态：放行一次试错，成功则清零，失败则重新熔断）。
+// v2.5.5 #9 补充3: healthy 机器不轻易熔断（快照 healthy + 失败数未超高 → 只降权不摘除）
+// 但失败数 >= healthyTripLimit（10）仍熔断（持续失败必须摘除）
+func (g *Gateway) isTripped(host string) bool {
+	g.failMu.Lock()
+	defer g.failMu.Unlock()
+	// healthy 机器且失败数未超高 → 不熔断（瞬时失败保护）
+	// v2.5.5 重启窗口期治本: 宽限期内也不熔断（机器还没机会心跳——启动窗口失败不算）
+	if g.failCounts[host] < healthyTripLimit && time.Since(g.startupTime) < startupGrace {
+		return false
+	}
+	if g.failCounts[host] < healthyTripLimit {
+		if snap := g.snapshotFor(host); snap != nil && snap.Healthy {
+			return false
+		}
+	}
+	if g.failCounts[host] < circuitFailThreshold {
+		return false
+	}
+	// 已过冷却期 → 自动恢复（尝试放行）
+	if since, ok := g.failSince[host]; ok && time.Since(since) > circuitCooldown {
+		log.Printf("♻️ 机器 %s 熔断冷却期已过，自动恢复尝试", host)
+		g.failCounts[host] = 0
+		delete(g.failSince, host)
+		return false
+	}
+	// 首次熔断时记录时间
+	if _, ok := g.failSince[host]; !ok {
+		g.failSince[host] = time.Now()
+	}
+	return true
+}
+
+// pickRoute 返回最优路由（失败重试时排除指定机器）。
+func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*RouteResult, error) {
+	// 别名解析：客户端可能用别名请求（Hermes 发 zerg-example-35b-v2 等），映射到标准模型名
+	if _, ok := g.config.Models[model]; !ok {
+		if canonical, ok2 := g.config.Aliases[model]; ok2 {
+			log.Printf("🎭 模型别名: %s → %s", model, canonical)
+			model = canonical
+		}
+	}
+
+	// v2.5.6 DS4 让位机制（2026-08-23 Mr2109——Hermes 调 DS4 熔断——81G 超大）
+	// 1. 目标模型 = DS4 → X3 清场（卸载其他只留 DS4）
+	// 2. 其他模型请求 → 按 DS4 状态三分支（未加载→正常 / 闲置→卸 DS4 / 繁忙→local）
+	if model == ds4ModelName {
+		if !g.ensureDS4Room() {
+			log.Printf("⚠️ DS4 清场失败——继续尝试路由（可能熔断兜底）")
+		}
+	} else {
+		forceLocal, reason := g.ds4RouteDecision()
+		if forceLocal {
+			log.Printf("🎯 %s——其他模型 %s 走本机", reason, model)
+			// 强制 local（排除 X3）
+			if r, err := g.pickRouteLocal(model); err == nil {
+				return r, nil
+			}
+			// local 不可用——回退正常路由（pickRouteExcluding x3）
+			log.Printf("⚠️ 本机不可用——回退路由（排除 X3——不打扰 DS4）")
+			if r, err := g.pickRouteExcluding(model, "x3"); err == nil {
+				return r, nil
+			}
+		}
+	}
+
+	// 在 models 表中查找
+	models, ok := g.config.Models[model]
+	if !ok {
+		return nil, fmt.Errorf("模型 %s 未在路由表中找到", model)
+	}
+
+	// 辅助函数：根据 host 名从 Fleet 获取节点（IP + 端口）
+	getNode := func(host string) (string, int) {
+		if node, ok := g.config.Fleet[host]; ok {
+			return node.Host, node.Port
+		}
+		return host, 8100 // 无配置时回退机器名 + 默认端口
+	}
+
+	// 会话粘性（T4）：会话已绑定到某机器且该机器仍可用（健康 + 仍是该模型的候选）→ 直接复用
+	if sessionID != "" {
+		if bound := g.boundSession(sessionID, model); bound != "" {
+			// 确认绑定机器仍是该模型的候选
+			for _, c := range models {
+				if c.Host == bound {
+					// 机器健康才复用，否则放行重新路由
+					if snap := g.snapshotFor(bound); snap != nil && snap.Healthy {
+						log.Printf("🎯 会话粘性: session=%s 绑定 %s，直接路由", sessionID, bound)
+						ip, port := getNode(bound)
+						return &RouteResult{
+							Host:  bound,
+							Port:  port,
+							URL:   fmt.Sprintf("http://%s:%d/infer", ip, port),
+							File:  c.File,
+							MemGB: int(c.MemGb),
+						}, nil
+					}
+					log.Printf("🎯 会话粘性: session=%s 绑定 %s 但不可用，重新路由", sessionID, bound)
+				}
+			}
+		}
+	}
+
+	// 如果有多个候选 host，选择最优的（B13: 负载均衡轮询——本机/X3 压力均分）
+	if len(models) > 1 {
+		// B13 策略：所有候选（含 local）参与打分 + 轮询权重（压力均分）
+		//   1. 轮询：roundRobin[model] 计数器 → 上次选的机器下次减权（轮流）
+		//   2. 健康/已加载+10/空闲+1/负载低+1 打分
+		//   3. 熔断跳过保留
+		// 会话粘性优先（前面已处理：有绑定走绑定机器）
+		var best *config.ModelCandidate
+		var bestScore int = -1
+		var bestMemGB int
+
+		// 轮询计数器：偶数 → local 先，奇数 → 远程先（交替）
+		g.roundRobinMu.Lock()
+		rr := g.roundRobin[model]
+		g.roundRobinMu.Unlock()
+
+		for i, candidate := range models {
+			// 熔断（T7）：连续失败 >= 阈值 的机器跳过（降权/摘除）
+			if g.isTripped(candidate.Host) {
+				log.Printf("⛔ 机器 %s 已熔断，跳过路由候选", candidate.Host)
+				continue
+			}
+			// B4 v2：排除本机模式——local 候选直接跳过（用户工作时任务全走远程）
+			if candidate.Host == "local" && g.ExcludeLocal() {
+				continue
+			}
+			score := 0
+			// B13 轮询倾向：同分时轻微倾向另一台（压力均分——不强制，只打破平局）
+			// 真实打分（健康/已加载/空闲/负载）优先，轮询只在小分时起作用
+			if candidate.Host == "local" {
+				if rr%2 == 0 {
+					score += 2 // 偶数轮：local 微倾向
+				}
+			} else {
+				if rr%2 == 1 {
+					score += 2 // 奇数轮：远程微倾向
+				}
+			}
+			if snap := g.snapshotFor(candidate.Host); snap != nil {
+				// v2.5.5 重启窗口期治本: 宽限期内 unhealthy 快照不算降权（机器还没机会心跳）
+				// 主控重启瞬间 X3 心跳失败（API 未就绪窗口）→ 快照 unhealthy → 之前路由拒绝
+				isHealthy := snap.Healthy
+				if !isHealthy && time.Since(g.startupTime) < startupGrace {
+					isHealthy = true // 宽限期内视为健康（等心跳恢复）
+				}
+				if isHealthy {
+					score++
+				}
+				// 已加载目标模型 → 高分（+8——从+10降——让轮询/负载能打破"永远选X3"）
+				// v2.5.6 修复（Mr2109 2026-08-28）: 精确相等改为文件名匹配——
+				// local 快照 Model="Qwen3.8-27B-Q4_K_M-vcruz305"（文件名形式）≠ 请求逻辑名 "Qwen3.8-27B"
+				// → local 永远拿不到 +8 → x3 恒赢 → 任务永远走 x3 → x3 故障反复挂起死循环
+				if modelFileLoaded(snap, candidate.File) {
+					score += 8
+				}
+				// v2.5.4.9 分配改进A：active 降权（最少连接思想——按机器并行度）
+				//   并行度: X3/本机都单槽执行（GPU 全负荷——active>=1 即忙——降权转走）
+				//   单槽机器（本机）active>=1 忙——扣分转走
+				parallel := g.parallelSlots(candidate.Host)
+				if snap.ActiveRequests == 0 {
+					score++ // 空闲 +1
+				} else if snap.ActiveRequests >= parallel {
+					score -= 8 // 满负载——明显降权（倾向另一台）
+				} else if parallel <= 1 {
+					score -= 5 // 单槽机器忙——降权转走
+				}
+				// 负载低（Load < 0.5）→ +1
+				if snap.Load < 0.5 {
+					score++
+				}
+			} else if candidate.Host == "local" && g.localBack != nil {
+				// B13: local 无快照（本机不心跳）——用 LocalBackend 状态打分
+				if g.localBack.IsReady() {
+					score++ // 健康
+				}
+				if g.localBack.ModelFile() == candidate.File {
+					score += 10 // 已加载目标模型
+				}
+			}
+			// cache-aware（T5）：该机器处理过相似 prompt → 加分
+			if prompt != "" {
+				if ps := g.prefixScore(candidate.Host, prompt); ps > 0 {
+					score += ps
+				}
+			}
+			// 同分取列表靠前者（fleet.yaml 顺序即配置优先级）
+			if score > bestScore {
+				bestScore = score
+				best = &candidate
+				bestMemGB = int(candidate.MemGb)
+			}
+			_ = i
+		}
+
+		// v2.5.5 #9 修复：所有候选都被熔断/排除时——返回明确错误（不兜底空 URL）
+		// 原逻辑: best==nil 时 fallback models[0]（可能 URL:"" 空——转发 Post "" 失败）
+		if best == nil {
+			// 真正"所有候选都是 local 且未排除"才本机兜底
+			allLocal := true
+			for _, c := range models {
+				if c.Host != "local" {
+					allLocal = false
+					break
+				}
+			}
+			if allLocal && !g.ExcludeLocal() {
+				c := models[0]
+				return &RouteResult{
+					Host:  c.Host,
+					Port:  0, // 本机端口由 LocalBackend 动态分配
+					URL:   "",
+					File:  c.File,
+					MemGB: int(c.MemGb),
+				}, nil
+			}
+			// 无可用候选（全熔断/全排除）——明确错误（不转发空 URL）
+			hosts := make([]string, 0, len(models))
+			for _, c := range models {
+				hosts = append(hosts, c.Host)
+			}
+			return nil, fmt.Errorf("模型 %s 无可用候选（全部熔断或排除: %s）", model, strings.Join(hosts, ","))
+		}
+
+		// 有可用候选 → 返回 + 轮询计数器 +1
+		g.roundRobinMu.Lock()
+		g.roundRobin[model]++
+		g.roundRobinMu.Unlock()
+		ip, port := getNode(best.Host)
+		return &RouteResult{
+			Host:  best.Host,
+			Port:  port,
+			URL:   fmt.Sprintf("http://%s:%d/infer", ip, port),
+			File:  best.File,
+			MemGB: bestMemGB,
+		}, nil
+		}
+
+		// 单个候选，直接返回（v2.5.5 #9：也要检查熔断/排除——单候选也可能全不可用）
+	c := models[0]
+	if g.isTripped(c.Host) {
+		return nil, fmt.Errorf("模型 %s 唯一候选 %s 已熔断——无可用候选", model, c.Host)
+	}
+	if c.Host == "local" && g.ExcludeLocal() {
+		return nil, fmt.Errorf("模型 %s 唯一候选 local 已被排除——无可用候选", model)
+	}
+	if c.Host == "local" {
+		return &RouteResult{
+			Host:  c.Host,
+			Port:  0,
+			URL:   "",
+			File:  c.File,
+			MemGB: int(c.MemGb),
+		}, nil
+	}
+	ip, port := getNode(c.Host)
+	return &RouteResult{
+		Host:  c.Host,
+		Port:  port,
+		URL:   fmt.Sprintf("http://%s:%d/infer", ip, port),
+		File:  c.File,
+		MemGB: int(c.MemGb),
+	}, nil
+}
+
+// snapshotFor 安全获取机器快照（无 store 或机器未知时返回 nil）。
+func (g *Gateway) snapshotFor(machine string) *store.FleetSnapshot {
+	if g.store == nil {
+		return nil
+	}
+	return g.store.GetSnapshot(machine)
+}
+
+// modelFileLoaded 判断机器快照是否已加载候选模型文件（v2.5.6 修复——Mr2109 2026-08-28）
+// 匹配规则（宽松匹配——兼容文件名形式与逻辑名）:
+//   - 快照 Model 与候选 File 的 basename 匹配（去路径去 .gguf 后缀）
+//     local 快照 Model="Qwen3.8-27B-Q4_K_M-vcruz305"（文件名形式）
+//   - 快照 Model 是逻辑名（如 "Qwen3.8-27B"）——与候选 File basename 去量化后缀后匹配
+//     （"Qwen3.8-27B-Q4_K_M-vcruz305" 去 "-Q4_K_M-vcruz305" → "Qwen3.8-27B"）
+//   - 快照 Models 列表任一匹配（同规则）
+// 注意: 不能用 filepath.Ext 剥扩展——模型名含点号（Qwen3.8 的 .8 会被误当扩展名）
+func modelFileLoaded(snap *store.FleetSnapshot, file string) bool {
+	if snap == nil || file == "" {
+		return false
+	}
+	// 目标文件 basename（去路径 + 去 .gguf）——如 ".../Qwen3.8-27B-Q4_K_M-vcruz305.gguf" → "Qwen3.8-27B-Q4_K_M-vcruz305"
+	target := filepath.Base(file)
+	target = strings.TrimSuffix(target, ".gguf")
+	// 目标去量化后缀（"Qwen3.8-27B-Q4_K_M-vcruz305" → "Qwen3.8-27B"）——逻辑名匹配用
+	targetStem := stripQuantSuffix(target)
+	// 当前模型（快照 Model——可能文件名形式或逻辑名）
+	if snap.Model != nil {
+		cur := *snap.Model
+		cur = strings.TrimSuffix(cur, ".gguf")
+		// 可能带路径（子端上报完整路径）
+		cur = filepath.Base(cur)
+		if cur == target {
+			return true
+		}
+		if targetStem != "" && (cur == targetStem || *snap.Model == targetStem) {
+			return true
+		}
+	}
+	// Models 列表（已加载模型集合）
+	for _, m := range snap.Models {
+		cur := m
+		cur = strings.TrimSuffix(cur, ".gguf")
+		cur = filepath.Base(cur)
+		if cur == target {
+			return true
+		}
+		if targetStem != "" && (cur == targetStem || m == targetStem) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripQuantSuffix 去掉量化/版本后缀（Q4_K_M/vcruz305 等）——逻辑名匹配用
+// "Qwen3.8-27B-Q4_K_M-vcruz305" → "Qwen3.8-27B"；无后缀原样返回
+func stripQuantSuffix(name string) string {
+	// 常见量化/版本标记（出现在模型逻辑名之后）
+	markers := []string{"-Q", "-q", "_Q", "_q", "-fp", "-Fp", "-bf16", "-v"}
+	best := name
+	for _, m := range markers {
+		if idx := strings.Index(name, m); idx > 0 {
+			cand := name[:idx]
+			if len(cand) > 3 && len(cand) < len(best) {
+				best = cand
+			}
+		}
+	}
+	return best
+}
+
+// classifyRouteError 路由错误分类（v2.5.6 故障自愈——Mr2109 2026-08-28）
+// 返回 (错误码, HTTP 状态码)——调度器按 code 分类处理（可等/可重试/不可重试）
+//   circuit_open    (503) 熔断/无候选/被排除——环境故障——可等（waiting_retry）
+//   model_not_found (404) 模型不在路由表——配置问题——不可重试
+func classifyRouteError(err error) (string, int) {
+	if err == nil {
+		return "api_error", http.StatusBadGateway
+	}
+	msg := err.Error()
+	// 熔断/无候选/被排除 → 环境故障（可等——机器恢复后自动重派）
+	if strings.Contains(msg, "熔断") || strings.Contains(msg, "无可用候选") ||
+		strings.Contains(msg, "已被排除") {
+		return "circuit_open", http.StatusServiceUnavailable
+	}
+	// 模型不在路由表 → 配置问题（不可重试——纠正模型名/配置）
+	if strings.Contains(msg, "未在路由表中找到") || strings.Contains(msg, "未知模型") {
+		return "model_not_found", http.StatusNotFound
+	}
+	// 默认——转发失败（可重试）
+	return "upstream_fail", http.StatusBadGateway
+}
+
+// Snapshot 导出机器快照（v2.5.5 T3: 内部任务引擎空闲检测用）。
+func (g *Gateway) Snapshot(machine string) *store.FleetSnapshot {
+	return g.snapshotFor(machine)
+}
+
+// pickFallbackRoute — v2.5.4.9 C failover：换机器（跳过失败机器——选其他候选）
+// 转发失败（超时/卡死）→ 熔断失败机器 + 重选候选（强制排除失败机器）
+func (g *Gateway) pickFallbackRoute(failed *RouteResult, model string) (*RouteResult, error) {
+	if model == "" {
+		return nil, fmt.Errorf("模型为空——无法 failover")
+	}
+	// 熔断失败机器（连续失败计数——isTripped 后续跳过）
+	g.tripMachine(failed.Host)
+	// 重选候选（pickRoute——但强制排除失败机器）
+	route, err := g.pickRouteExcluding(model, failed.Host)
+	if err != nil {
+		return nil, fmt.Errorf("failover 无可用候选: %w", err)
+	}
+	return route, nil
+}
+
+// pickRouteExcluding — 选路但排除指定机器（failover 用——不选回失败机器）
+func (g *Gateway) pickRouteExcluding(model, exclude string) (*RouteResult, error) {
+	// v2.5.5 #9 修复: 直接调用 pickRoute 的内部逻辑但跳过 exclude 机器（不走熔断 hack——防 healthy 保护冲突）
+	// 先试正常 pickRoute——若选回 exclude——用"临时排除"重选（设置 failCounts 到超高——强制跳过）
+	route, err := g.pickRoute(model, "", "")
+	if err != nil {
+		return nil, err
+	}
+	if route.Host != exclude {
+		return route, nil
+	}
+	// 选回失败机器——临时熔断它再重选（设到 healthyTripLimit+1——保证即使 healthy 保护也熔断）
+	g.failMu.Lock()
+	if g.failCounts == nil {
+		g.failCounts = map[string]int{}
+	}
+	if g.failSince == nil {
+		g.failSince = map[string]time.Time{}
+	}
+	g.failCounts[exclude] = healthyTripLimit + 1 // 超高——强制跳过（v2.5.5 #9: 用 healthyTripLimit+1）
+	g.failSince[exclude] = time.Now()
+	g.failMu.Unlock()
+	route2, err2 := g.pickRoute(model, "", "")
+	if err2 != nil {
+		return nil, err2
+	}
+	if route2.Host == exclude {
+		return nil, fmt.Errorf("无其他候选——只有 %s", exclude)
+	}
+	return route2, nil
+}
+
+// tripMachine — 熔断一台机器（加 failCounts——isTripped 连续失败>=3 熔断）
+func (g *Gateway) tripMachine(host string) {
+	g.tripMu.Lock()
+	if g.tripCounts == nil {
+		g.tripCounts = map[string]int{}
+	}
+	g.tripCounts[host]++
+	cnt := g.tripCounts[host]
+	g.tripMu.Unlock()
+	// 同步到 failCounts（isTripped 用——连续失败 >=3 熔断）
+	g.failMu.Lock()
+	if g.failCounts == nil {
+		g.failCounts = map[string]int{}
+	}
+	g.failCounts[host]++
+	if g.failCounts[host] >= 3 {
+		g.failSince[host] = time.Now()
+	}
+	fcnt := g.failCounts[host]
+	g.failMu.Unlock()
+	log.Printf("⛔ 机器 %s 失败计数 trip=%d fail=%d", host, cnt, fcnt)
+}
+
+// modelName — 从请求体提取模型名（failover 用）
+func modelName(reqMap map[string]interface{}) string {
+	if m, ok := reqMap["model"].(string); ok {
+		return m
+	}
+	return ""
+}
+
+// applyReasoningFallback — v2.5.4.9 reasoning 兜底（思考模型 content 空时拼 reasoning）
+// 场景: Nemotron/Qwen3.8 思考模式——生成全在 reasoning_content——content 空
+// 处理: 读 body——chat.completions 响应里 message.content 空但有 reasoning_content
+//       → content 用 reasoning_content 填充（调用方不误判"无输出"）
+func (g *Gateway) applyReasoningFallback(resp *http.Response) *http.Response {
+	if resp == nil || resp.Body == nil {
+		return resp
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp
+	}
+	defer resp.Body.Close()
+
+	// 解析响应——chat.completions 格式
+	var obj map[string]interface{}
+	if err := json.Unmarshal(body, &obj); err != nil {
+		// 非 JSON——原样返回
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp
+	}
+	choices, ok := obj["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp
+	}
+	changed := false
+	for _, c := range choices {
+		choice, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		msg, ok := choice["message"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		content, _ := msg["content"].(string)
+		reasoning, _ := msg["reasoning_content"].(string)
+		if strings.TrimSpace(content) == "" && strings.TrimSpace(reasoning) != "" {
+			// content 空 + reasoning 有——用 reasoning 兜底
+			msg["content"] = reasoning
+			changed = true
+		}
+	}
+	if !changed {
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp
+	}
+	// 重新序列化
+	newBody, err := json.Marshal(obj)
+	if err != nil {
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp
+	}
+	log.Printf("🔄 reasoning 兜底: content 空→用 reasoning_content（思考模型）")
+	resp.Body = io.NopCloser(bytes.NewReader(newBody))
+	return resp
+}
+
+// parallelSlots — 机器执行并行度（分配改进A——active 降权按执行能力）
+//   Mr2109认知纠正（2026-08-15）：X3 -np 4 ≠ 能并行 4 任务
+//     = 显存大能同时加载 4 个模型（切换快——选择多）
+//     但执行 1 个模型 = GPU 全负荷（单任务推理）
+//   → 执行层面并行度都是 1——active>=1 即忙（GPU 满）——应降权转走
+//   所有机器统一 1（保守——不低估忙）
+func (g *Gateway) parallelSlots(machine string) int {
+	return 1 // 执行层面单任务（GPU 全负荷——active>=1 即忙）
+}
+
+// extractSessionID 从请求体提取会话 ID（OpenAI 标准: body.session_id；Responses 标准: body.llm_request_id / body.session）。
+// 没有则返回 ""（不启用会话粘性）。
+func extractSessionID(body []byte) string {
+	var obj map[string]interface{}
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return ""
+	}
+	if v, ok := obj["session_id"].(string); ok && v != "" {
+		return v
+	}
+	if v, ok := obj["session"].(string); ok && v != "" {
+		return v
+	}
+	if v, ok := obj["llm_request_id"].(string); ok && v != "" {
+		return v
+	}
+	return ""
+}
+
+// boundSession 查询会话绑定的机器（未过期且模型匹配时返回，否则 ""）。
+func (g *Gateway) boundSession(sessionID, model string) string {
+	g.sessionMu.RLock()
+	defer g.sessionMu.RUnlock()
+	b, ok := g.sessions[sessionID]
+	if !ok {
+		return ""
+	}
+	if time.Since(b.lastUsed) > sessionTTL {
+		delete(g.sessions, sessionID)
+		return ""
+	}
+	if b.model != model {
+		return "" // 换了模型，重新路由
+	}
+	b.lastUsed = time.Now()
+	g.sessions[sessionID] = b
+	return b.host
+}
+
+// pickRouteLocal 强制选择 local（本机）候选——用于压缩模型避开 X3 截断 bug。
+// 若无 local 候选或本机后端不可用，返回错误（调用方 fallback 到 pickRoute）。
+func (g *Gateway) pickRouteLocal(model string) (*RouteResult, error) {
+	candidates, ok := g.config.Models[model]
+	if !ok || len(candidates) == 0 {
+		return nil, fmt.Errorf("模型 %s 未配置", model)
+	}
+	for _, c := range candidates {
+		if c.Host == "local" {
+			return &RouteResult{Host: "local", URL: "", File: c.File, MemGB: int(c.MemGb)}, nil
+		}
+	}
+	return nil, fmt.Errorf("模型 %s 无 local 候选", model)
+}
+
+// bindSession 记录会话 → 机器绑定。
+func (g *Gateway) bindSession(sessionID, host, model string) {
+	g.sessionMu.Lock()
+	defer g.sessionMu.Unlock()
+	g.sessions[sessionID] = sessionBinding{
+		host:     host,
+		model:    model,
+		lastUsed: time.Now(),
+	}
+	// 简单清理：超过 64 个绑定且数量过多时删过期
+	if len(g.sessions) > 64 {
+		for k, v := range g.sessions {
+			if time.Since(v.lastUsed) > sessionTTL {
+				delete(g.sessions, k)
+			}
+		}
+	}
+}
+
+// extractUsageTokensFromBytes 从响应体提取本次请求消耗的 token（usage.total_tokens）。
+func extractUsageTokensFromBytes(body []byte) int {
+	if len(body) == 0 {
+		return 0
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return 0
+	}
+	if usage, ok := obj["usage"].(map[string]interface{}); ok {
+		if total, ok := usage["total_tokens"].(float64); ok {
+			return int(total)
+		}
+	}
+	return 0
+}
+
+// addSessionTokens 累加会话 token 用量（V22 上下文预算）。
+func (g *Gateway) addSessionTokens(sessionID string, n int) {
+	g.sessionMu.Lock()
+	defer g.sessionMu.Unlock()
+	b, ok := g.sessions[sessionID]
+	if !ok {
+		return
+	}
+	b.tokens += n
+	g.sessions[sessionID] = b
+}
+
+// sessionTokens 返回会话累计 token。
+func (g *Gateway) sessionTokens(sessionID string) int {
+	g.sessionMu.RLock()
+	defer g.sessionMu.RUnlock()
+	if b, ok := g.sessions[sessionID]; ok {
+		return b.tokens
+	}
+	return 0
+}
+
+// resetSessionTokens 重置会话 token 计数（compaction 后上下文变小）。
+func (g *Gateway) resetSessionTokens(sessionID string) {
+	g.sessionMu.Lock()
+	defer g.sessionMu.Unlock()
+	if b, ok := g.sessions[sessionID]; ok {
+		b.tokens = 0
+		g.sessions[sessionID] = b
+	}
+}
+
+// compactThreshold 返回会话压缩阈值（模型窗口 × 50%——单槽执行）。
+// 模型窗口从 fleet.yaml ctx_window 读；未配置时用全局 maxSessionTokens。
+func (g *Gateway) compactThreshold(model string) int {
+	if candidates, ok := g.config.Models[model]; ok && len(candidates) > 0 {
+		ctx := candidates[0].CtxWindow
+		if ctx > 0 {
+			perSlot := ctx // 单槽执行（v2.5.5: X3/本机都单槽——取消 4 槽假设）
+			return perSlot / 2 // 50% 触发压缩
+		}
+	}
+	return maxSessionTokens / 2
+}
+
+// autoCompact 自动压缩会话历史（超阈值时调用）。
+// 优先 LLMLingua-2（Go 进程内 ONNX，删除式保真，0.1s）；失败/未加载 → gemma 摘要兜底。
+// 引擎无关：不依赖 llama 特性。
+func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
+	// 从请求 body 提取 messages（当前请求的上下文）
+	var req struct {
+		Messages []interface{} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || len(req.Messages) == 0 {
+		return
+	}
+
+	// 优先：LLMLingua-2 压缩（Go 进程内，删除式，保真）
+	msgsJSON, _ := json.Marshal(req.Messages)
+	if compressed, err := g.compressWithLLMLingua2(string(msgsJSON)); err == nil {
+		log.Printf("🧠 会话 %s LLMLingua-2 压缩完成（%d→%d 字符），token 重置", sessionID, len(msgsJSON), len(compressed))
+		g.resetSessionTokens(sessionID)
+		return
+	}
+
+	// 兜底：gemma 摘要（重写式，结构化 prompt 保针）
+	compactModel := "gemma-4-12B"
+	if _, ok := g.config.Models[compactModel]; !ok {
+		compactModel = model
+	}
+
+	compactPrompt := BuildStructuredSummaryPrompt(string(msgsJSON))
+
+	compactBody := map[string]interface{}{
+		"model":     compactModel,
+		"messages":  []interface{}{map[string]interface{}{"role": "user", "content": compactPrompt}},
+		"max_tokens": 2000,
+	}
+	compactBodyJSON, _ := json.Marshal(compactBody)
+
+	route, err := g.pickRoute(compactModel, "", "")
+	if err != nil {
+		log.Printf("⚠️ autoCompact 路由失败: %v", err)
+		return
+	}
+
+	var resp *http.Response
+	if route.Host == "local" {
+		if g.localBack == nil {
+			return
+		}
+		resp, err = g.localBack.Infer("/v1/chat/completions", compactBodyJSON)
+	} else {
+		resp, err = g.forwardToBackend(context.Background(), route, "/v1/chat/completions", compactBodyJSON, nil)
+	}
+	if err != nil {
+		log.Printf("⚠️ autoCompact 压缩失败: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	// 压缩成功 → token 重置（摘要替代历史，上下文变小）
+	respBody, _ := io.ReadAll(resp.Body)
+	var obj map[string]interface{}
+	if err := json.Unmarshal(respBody, &obj); err == nil {
+		if choices, ok := obj["choices"].([]interface{}); ok && len(choices) > 0 {
+			if msg, ok := choices[0].(map[string]interface{})["message"].(map[string]interface{}); ok {
+				summary, _ := msg["content"].(string)
+				if summary == "" {
+					summary, _ = msg["reasoning_content"].(string)
+				}
+				if summary != "" {
+					summary = ParseStructuredSummary(summary)
+					log.Printf("♻️ 会话 %s 压缩完成（摘要 %d 字符），token 重置", sessionID, len(summary))
+					g.resetSessionTokens(sessionID)
+					return
+				}
+			}
+		}
+	}
+	log.Printf("⚠️ autoCompact 压缩无结果")
+}
+
+// extractPrompt 从请求体提取 prompt 文本（拼接 messages 内容，用于前缀匹配）。
+func extractPrompt(body []byte) string {
+	var obj struct {
+		Messages []struct {
+			Content string `json:"content"`
+		} `json:"messages"`
+		Input []struct {
+			Content string `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, m := range obj.Messages {
+		sb.WriteString(m.Content)
+		sb.WriteString("\n")
+	}
+	for _, m := range obj.Input {
+		sb.WriteString(m.Content)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// prefixScore 返回该机器对给定 prompt 的缓存匹配加分（0-8）。
+// 多级前缀匹配（V22-3，近似 radix trie）：前缀越长匹配 → 分越高。
+// 引擎无关：不依赖任何引擎的 KV 实现，纯字符前缀记录。
+func (g *Gateway) prefixScore(host, prompt string) int {
+	if prompt == "" {
+		return 0
+	}
+	// 多级签名：400/200/100/50 字符前缀（覆盖长/中/短 prompt 匹配）
+	levels := []struct {
+		len   int
+		score int
+	}{
+		{400, 8}, {200, 6}, {100, 4}, {50, 2},
+	}
+	sigs := make([]string, 0, len(levels))
+	for _, lv := range levels {
+		s := prompt
+		if len(s) > lv.len {
+			s = s[:lv.len]
+		}
+		sigs = append(sigs, s)
+	}
+
+	g.prefixMu.RLock()
+	defer g.prefixMu.RUnlock()
+
+	hostMap, ok := g.prefixes[host]
+	if !ok || len(hostMap) == 0 {
+		return 0
+	}
+	// 从最长前缀开始匹配，命中即返回对应分
+	for i, sig := range sigs {
+		if _, ok := hostMap[sig]; ok {
+			return levels[i].score
+		}
+	}
+	return 0
+}
+
+// recordPrefix 记录该机器处理过的 prompt 前缀签名（V22-3 多级前缀缓存）。
+func (g *Gateway) recordPrefix(host, prompt string) {
+	if prompt == "" || host == "" || host == "local" {
+		return
+	}
+	// 多级签名（400/200/100/50）
+	lengths := []int{400, 200, 100, 50}
+	sigs := make([]string, 0, len(lengths))
+	for _, ln := range lengths {
+		s := prompt
+		if len(s) > ln {
+			s = s[:ln]
+		}
+		sigs = append(sigs, s)
+	}
+
+	g.prefixMu.Lock()
+	defer g.prefixMu.Unlock()
+	if g.prefixes[host] == nil {
+		g.prefixes[host] = make(map[string]int)
+	}
+	for _, sig := range sigs {
+		g.prefixes[host][sig]++
+	}
+	// 简单限制每机器记录条数，防内存膨胀
+	if len(g.prefixes[host]) > 500 {
+		// 清空重建（最简策略：丢弃旧签名）
+		g.prefixes[host] = make(map[string]int)
+	}
+}
+
+// loadModel 加载本地模型到 LocalBackend（按需加载）。
+// 如果本地后端已就绪且加载了相同模型，则跳过加载。
+func (g *Gateway) loadModel(model string, route *RouteResult) error {
+	if route.File == "" {
+		return fmt.Errorf("本地模型缺少 file 路径")
+	}
+
+	// 检查是否已加载相同模型
+	if g.localBack != nil && g.localBack.IsReady() && g.localBack.ModelFile() == route.File {
+		log.Printf("[gateway] 本地模型已就绪: %s (%s)", model, route.File)
+		return nil
+	}
+
+	// 加载模型到 LocalBackend
+	log.Printf("[gateway] 加载本地模型: %s → %s (%d GB)", model, route.File, route.MemGB)
+	if err := g.localBack.LoadModel(route.File, route.MemGB); err != nil {
+		return fmt.Errorf("LocalBackend.LoadModel: %w", err)
+	}
+	log.Printf("[gateway] 本地模型加载完成: %s (state=%s)", model, g.localBack.State())
+	return nil
+}
+
+// forwardToLocal 通过 LocalBackend 转发请求到本机 llama-server。
+// 健康检查由 LocalBackend.Infer() 内部处理（崩溃自愈 + 熔断）。
+func (g *Gateway) forwardToLocal(w http.ResponseWriter, r *http.Request, route *RouteResult, body []byte, origBody []byte, adp adapter.Adapter) {
+	// 调用 LocalBackend.Infer() 转发到本机 llama-server
+	// path 透传给 llama-server（如 /v1/chat/completions）
+	resp, err := g.localBack.Infer(r.URL.Path, body)
+	if err != nil {
+		log.Printf("转发到本机后端失败: %v", err)
+		// 后端未就绪或熔断，返回 503
+		adp.TransformError(w, http.StatusServiceUnavailable, "api_error", fmt.Sprintf("local backend unavailable: %s", err.Error()))
+		return
+	}
+	defer resp.Body.Close()
+
+	// 出站转换（按客户端适配器）——用原始 body 判断流式（forwardBody 已被强制 stream:false）
+	adp.TransformResponse(w, resp, r, origBody)
+}
+
+// handleLocalModel host=local 且无 LocalBackend 时的回退处理。
+func handleLocalModel(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	w.Write([]byte(`{"error":"local backend not configured"}`))
+	log.Println("⚠️  host=local 模型请求，未配置 LocalBackend")
+}
+
+// RouteResult 路由选择结果。
+type RouteResult struct {
+	Host  string // 目标机器名（x3, mini1 等）
+	Port  int    // 目标端口（默认 8100）
+	URL   string // 完整转发 URL（http://{host}:{port}/infer）
+	File  string // 模型文件路径（仅 host=local 时有效）
+	MemGB int    // 内存预算 GB（仅 host=local 时有效）
+}
+
+// Start 启动网关服务器。
+func (g *Gateway) Start(port int) error {
+	r := chi.NewRouter()
+	g.RegisterRoutes(r)
+
+	// 用 0.0.0.0 显式监听 IPv4（Go 的 ":port" 默认 IPv6-only，子端 IPv4 连不上）
+	addr := fmt.Sprintf("0.0.0.0:%d", port)
+	log.Printf("🚀 网关启动，监听 %s", addr)
+	return http.ListenAndServe(addr, r)
+}
+
+// extractLastUserPrompt 提取请求体的最后一条 user 消息内容（复合模型用）。
+func extractLastUserPrompt(body []byte) string {
+	var req struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+		Input []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"input"`
+	}
+	if json.Unmarshal(body, &req) != nil {
+		return ""
+	}
+	msgs := req.Messages
+	if len(msgs) == 0 {
+		msgs = make([]struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}, 0)
+		for _, m := range req.Input {
+			msgs = append(msgs, struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			}{m.Role, m.Content})
+		}
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return msgs[i].Content
+		}
+	}
+	return ""
+}
+
+// ctxFromReq 从请求提取上下文（编排器用——独立于请求生命周期）。
+func ctxFromReq(r *http.Request) context.Context {
+	return context.Background()
+}
+
+// quoteJSON 转义字符串为 JSON 字符串字面量。
+func quoteJSON(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// AdapterOptions 模型适配器配置项（Mr2109 2026-08-27——UI 显示适配器所有选项）
+// 优先适配器实现的 Options() 接口——没有则反射读取导出字段
+func (g *Gateway) AdapterOptions(model string) map[string]interface{} {
+	adp, ok := g.adapterRegistry[model]
+	if !ok || adp == nil {
+		return nil
+	}
+	// 1. 显式 Options() 接口（config 小写字段的适配器——qwen38/gemma/nemotron/qwable）
+	if o, ok := adp.(interface{ Options() map[string]interface{} }); ok {
+		return o.Options()
+	}
+	// 2. 反射兜底（example-35b-v2/ds4——导出字段）
+	opts := map[string]interface{}{}
+	v := reflect.ValueOf(adp)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	reflectPluginOptions(v, "", opts)
+	if len(opts) == 0 {
+		return nil
+	}
+	return opts
+}
+
+// reflectPluginOptions 反射遍历导出字段（嵌套 struct 递归——config 子字段展开）
+func reflectPluginOptions(v reflect.Value, prefix string, out map[string]interface{}) {
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		fv := v.Field(i)
+		key := f.Name
+		if prefix != "" {
+			key = prefix + "." + f.Name
+		}
+		switch fv.Kind() {
+		case reflect.String:
+			if fv.String() != "" {
+				out[key] = fv.String()
+			}
+		case reflect.Float64:
+			if fv.Float() != 0 || f.Name == "Temperature" || f.Name == "TopP" || f.Name == "TopK" || f.Name == "MinP" {
+				out[key] = fv.Float()
+			}
+		case reflect.Bool:
+			out[key] = fv.Bool()
+		case reflect.Int, reflect.Int32, reflect.Int64:
+			if fv.Int() != 0 {
+				out[key] = fv.Int()
+			}
+		case reflect.Slice:
+			if fv.Len() > 0 {
+				items := make([]string, 0, fv.Len())
+				for j := 0; j < fv.Len(); j++ {
+					items = append(items, fmt.Sprint(fv.Index(j).Interface()))
+				}
+				out[key] = strings.Join(items, ", ")
+			}
+		case reflect.Struct:
+			reflectPluginOptions(fv, key, out)
+		}
+	}
+}
+
+// 适配器选项编辑（2026-08-27 Mr2109——每个模型各自独立参数集——实时生效）
+
+// adapterOverridesFile 适配器配置覆盖持久化（重启恢复）
+var adapterOverridesFile = "/tmp/zerg-tasks/adapter_overrides.json"
+
+// adapterOverrides 模型名 → 配置覆盖（map[model]map[key]value）
+var adapterOverrides = map[string]map[string]interface{}{}
+
+// loadAdapterOverrides 启动恢复（NewGateway 调用——Init 后重放）
+func (g *Gateway) loadAdapterOverrides() {
+	data, err := os.ReadFile(adapterOverridesFile)
+	if err != nil {
+		return
+	}
+	var raw map[string]map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return
+	}
+	adapterOverrides = raw
+	// 重放（每个适配器 UpdateOptions——覆盖默认值）
+	for model, cfg := range raw {
+		if adp, ok := g.adapterRegistry[model]; ok {
+			if o, ok := adp.(plugin.OptionedAdapter); ok {
+				if err := o.UpdateOptions(cfg); err != nil {
+					log.Printf("⚠️ 适配器 %s 覆盖配置重放失败: %v", model, err)
+				} else {
+					log.Printf("🧩 适配器 %s 覆盖配置已恢复（%d 项）", model, len(cfg))
+				}
+			}
+		}
+	}
+}
+
+// saveAdapterOverrides 持久化
+func saveAdapterOverrides() {
+	data, _ := json.MarshalIndent(adapterOverrides, "", "  ")
+	_ = os.MkdirAll(filepathDir(adapterOverridesFile), 0o755)
+	_ = os.WriteFile(adapterOverridesFile, data, 0o644)
+}
+
+func filepathDir(p string) string {
+	if i := strings.LastIndex(p, "/"); i > 0 {
+		return p[:i]
+	}
+	return "."
+}
+
+// AdapterSchema 模型适配器参数 schema（含当前值——编辑控件渲染用）
+// 无适配器 → nil（走旧路由）
+func (g *Gateway) AdapterSchema(model string) []plugin.OptionDef {
+	adp, ok := g.adapterRegistry[model]
+	if !ok || adp == nil {
+		return nil
+	}
+	o, ok := adp.(plugin.OptionedAdapter)
+	if !ok {
+		return nil
+	}
+	return o.OptionSchema()
+}
+
+// UpdateAdapterOptions 更新适配器配置（实时生效——校验 key → UpdateOptions → 持久化）
+func (g *Gateway) UpdateAdapterOptions(model string, cfg map[string]interface{}) error {
+	adp, ok := g.adapterRegistry[model]
+	if !ok || adp == nil {
+		return fmt.Errorf("模型 %s 无适配器（走旧路由——不可编辑）", model)
+	}
+	o, ok := adp.(plugin.OptionedAdapter)
+	if !ok {
+		return fmt.Errorf("模型 %s 适配器不支持编辑", model)
+	}
+	// 校验 key（只允许 schema 内的参数——各模型各自参数集）
+	schema := o.OptionSchema()
+	valid := map[string]bool{}
+	for _, d := range schema {
+		valid[d.Key] = true
+	}
+	for k := range cfg {
+		if !valid[k] {
+			return fmt.Errorf("参数 %s 不在该模型适配器参数集内（各模型各自不同——可编辑: %v）", k, keysOf(schema))
+		}
+	}
+	if err := o.UpdateOptions(cfg); err != nil {
+		return fmt.Errorf("适配器更新失败: %w", err)
+	}
+	// 持久化（合并覆盖）
+	if adapterOverrides[model] == nil {
+		adapterOverrides[model] = map[string]interface{}{}
+	}
+	for k, v := range cfg {
+		adapterOverrides[model][k] = v
+	}
+	saveAdapterOverrides()
+	return nil
+}
+
+// keysOf schema 参数名列表（错误信息用）
+func keysOf(schema []plugin.OptionDef) []string {
+	out := make([]string, 0, len(schema))
+	for _, d := range schema {
+		out = append(out, d.Key)
+	}
+	return out
+}

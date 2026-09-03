@@ -1,0 +1,1364 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+	"zerg/core/internal/agent"
+	"zerg/core/internal/chat"
+	"zerg/core/internal/config"
+	"zerg/core/internal/gateway"
+	"zerg/core/internal/localback"
+	"zerg/core/internal/store"
+
+	"github.com/go-chi/chi/v5"
+)
+
+// Handlers 封装所有 HTTP 处理器需要的依赖。
+type Handlers struct {
+	Config           *config.FleetConfig
+	ConfigPath       string // B11: 配置文件路径（热加载用）
+	Store            *store.Store
+	LocalBack        *localback.LocalBackend
+	HeartbeatLogger  *slog.Logger // v2.3 B1: 心跳专用日志，分离到 /tmp/zerg-heartbeat.log
+	Gateway          *gateway.Gateway // v2.5.5 #9 补充5: 心跳健康清零熔断用
+	Scheduler        *MasterScheduler // v2.5.5 T3: 主控总调度器（两级调度）
+	// v2.5.7 对话→任务集成: 来源对话内容查询（派任务带上下文——main.go 对话模块就绪后注入）
+	ChatStore *chat.ChatStore
+}
+
+// writeJSON 辅助函数：写入 JSON 响应。
+func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+
+// writeError 辅助函数：写入错误 JSON 响应。
+// v2.5.6 错误码设计（2026-08-29）: 响应格式对齐网关——{"error":{"type":"<code>","message":"<msg>"}}
+// 现有调用 writeError(w, status, msg) 不传 code → code 为空——兼容（客户端按 HTTP 状态兜底）
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// writeErrorCode 带分类码的错误响应（错误码体系——对齐网关 {"error":{"type":code}}）
+// 用法: writeErrorCode(w, http.StatusNotFound, "model_not_found", "模型不存在: xxx")
+func writeErrorCode(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]interface{}{
+		"error": map[string]string{
+			"type":    code,
+			"message": message,
+		},
+	})
+}
+
+// SubmitTaskHandler 提交任务到总调度器（v2.5.5 T3——外部任务接入/内部任务触发）
+func (h *Handlers) SubmitTaskHandler(w http.ResponseWriter, r *http.Request) {
+	if h.Scheduler == nil {
+		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		return
+	}
+	var req struct {
+		ID          string `json:"id"`
+		Description string `json:"description"`
+		Type        string `json:"type"`     // internal/external
+		Priority    int    `json:"priority"` // 优先级（默认 internal）
+		Model       string `json:"model"`
+		Workdir     string `json:"workdir"`
+		Flow        string `json:"flow"` // v2.5.6: "zerg"=程序定量驱动新流程（空=旧 CA 流程）
+		// v2.5.7 对话→任务集成: 来源对话/消息（UI"派任务"带——任务详情可回溯来源）
+		ParentSessionID string `json:"parent_session_id"`
+		ParentMessageID string `json:"parent_message_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "请求体解析失败: "+err.Error())
+		return
+	}
+	if req.Description == "" {
+		writeError(w, http.StatusBadRequest, "description 不能为空")
+		return
+	}
+	description := req.Description
+	// v2.5.7 对话→任务: 带来源会话时——附上对话最后用户请求（CA 任务描述有上下文——不然只知道"处理对话 xxx"不知道干啥）
+	if req.ParentSessionID != "" && h.ChatStore != nil {
+		if msgs, err := h.ChatStore.ListMessages(req.ParentSessionID); err == nil {
+			for i := len(msgs) - 1; i >= 0; i-- {
+				if msgs[i].Role == "user" && msgs[i].Content != "" {
+					description = description + "\n\n[来源对话 " + req.ParentSessionID + "——用户最后请求]\n" + msgs[i].Content
+					break
+				}
+			}
+		}
+	}
+	taskType := req.Type
+	if taskType == "" {
+		taskType = "internal"
+	}
+	priority := TaskPriority(req.Priority)
+	if priority == 0 {
+		if taskType == "external" {
+			priority = PriorityExternal
+		} else {
+			priority = PriorityInternal
+		}
+	}
+	id := req.ID
+	if id == "" {
+		id = fmt.Sprintf("task-%d", time.Now().UnixNano())
+	}
+	task := &Task{
+		ID:               id,
+		Description:      description,
+		Priority:         priority,
+		Type:             taskType,
+		Status:           "queued",
+		Model:            req.Model,
+		Workdir:          req.Workdir,
+		Flow:             req.Flow, // v2.5.6: "zerg"=程序定量驱动新流程
+		ParentSessionID:  req.ParentSessionID,
+		ParentMessageID:  req.ParentMessageID,
+		CreatedAt:        time.Now(),
+	}
+	h.Scheduler.Submit(task)
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{
+		"id":       task.ID,
+		"status":   task.Status,
+		"priority": task.Priority,
+		"type":     task.Type,
+	})
+}
+
+// ListTasksHandler 列出任务（总调度器视角——所有任务状态——含历史）
+// v2.5.5 虫族UI: 返回 running + queue + history（UI 3 组显示）
+func (h *Handlers) ListTasksHandler(w http.ResponseWriter, r *http.Request) {
+	if h.Scheduler == nil {
+		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		return
+	}
+	h.Scheduler.mu.Lock()
+	tasks := make([]*Task, 0, len(h.Scheduler.queue)+len(h.Scheduler.running)+len(h.Scheduler.history))
+	// v2.5.5 去重（2026-08-21 发现——失败自动重跑任务同 ID 在 history+queue 重复——列表重复显示）
+	seen := map[string]bool{}
+	addTask := func(t *Task) {
+		if t == nil || seen[t.ID] {
+			return
+		}
+		seen[t.ID] = true
+		tasks = append(tasks, t)
+	}
+	for _, t := range h.Scheduler.queue {
+		addTask(t)
+	}
+	for _, t := range h.Scheduler.running {
+		addTask(t)
+	}
+	for _, t := range h.Scheduler.history {
+		addTask(t)
+	}
+	h.Scheduler.mu.Unlock()
+	// v2.5.6 任务详情补设备（Mr2109 2026-08-27——UI 显示跑的设备——按模型所在机器推算）
+	machineOf := h.modelMachineMap()
+	for _, t := range tasks {
+		if m, ok := machineOf[t.Model]; ok {
+			t.Machine = m
+		} else if t.Machine == "" {
+			t.Machine = "本机"
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"tasks": tasks,
+		"count": len(tasks),
+	})
+}
+
+// TaskDetailHandler 任务详情（v2.5.5 虫族UI: 点击任务看全部数据——含跟踪）
+// GET /api/tasks/{id}——基本信息 + 执行时间线（events.jsonl 解析）+ 产物
+func (h *Handlers) TaskDetailHandler(w http.ResponseWriter, r *http.Request) {
+	if h.Scheduler == nil {
+		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		return
+	}
+	taskID := chi.URLParam(r, "id")
+	h.Scheduler.mu.Lock()
+	var task *Task
+	if t, ok := h.Scheduler.running[taskID]; ok {
+		task = t
+	} else if t, ok := h.Scheduler.history[taskID]; ok {
+		task = t
+	} else {
+		// v2.5.5 修复（2026-08-22 skill 测试发现）: queued 任务在 queue heap——详情也要查
+		for _, t := range h.Scheduler.queue {
+			if t.ID == taskID {
+				task = t
+				break
+			}
+		}
+	}
+	h.Scheduler.mu.Unlock()
+	if task == nil {
+		writeError(w, http.StatusNotFound, "任务不存在: "+taskID)
+		return
+	}
+	// 组装详情（基本信息 + 跟踪）
+	detail := map[string]interface{}{
+		"id":           task.ID,
+		"description":  task.Description,
+		"type":         task.Type,
+		"priority":     task.Priority,
+		"status":       task.Status,
+		"model":        task.Model,
+		"workdir":      task.Workdir,
+		"created_at":   task.CreatedAt,
+		"completed_at": task.CompletedAt,
+		"issue_path":   task.IssuePath,
+	}
+	// v2.5.6 详情补设备（Mr2109 2026-08-27——UI 显示跑的设备——按模型所在机器推算）
+	{
+		machine := task.Machine
+		if machine == "" {
+			if m, ok := h.modelMachineMap()[task.Model]; ok {
+				machine = m
+			} else {
+				machine = "本机"
+			}
+		}
+		detail["machine"] = machine
+	}
+	// 跟踪数据（events.jsonl 解析——轮次/工具/token）
+	trace := parseTaskTrace(task.ID)
+	detail["trace"] = trace
+	// v2.5.5 虫族UI 任务详情增强（Mr2109 2026-08-20）: 执行报告 + 复查报告
+	// 执行报告: workdir/internal-task-report.md（执行模型写的）
+	// 复查报告: workdir/review-report.md 或复查任务工作区的报告
+	// v2.5.5 修复（2026-08-22 skill 测试发现）: 不依赖 task.Workdir（可能空）——按任务 ID 读任务目录
+	{
+		// 执行报告（任务目录——CA 写任务目录/work——2026-08-21 修复）
+		taskDir := filepath.Join("/tmp/zerg-tasks", sanitizeID(task.ID))
+		execReport := FindTaskReport(filepath.Join(taskDir, "work"))
+		if execReport != "" {
+			if content, err := os.ReadFile(execReport); err == nil {
+				detail["exec_report"] = string(content)
+			}
+		}
+		// 任务目录根的报告（复制保留——copyReportToTaskDir）
+		if _, ok := detail["exec_report"].(string); !ok || detail["exec_report"] == "" {
+			rootReport := filepath.Join(taskDir, "internal-task-report.md")
+			if content, err := os.ReadFile(rootReport); err == nil {
+				detail["exec_report"] = string(content)
+			}
+		}
+		// git 回退（旧任务——worktree merge 后报告进 git）
+		if _, ok := detail["exec_report"].(string); !ok || detail["exec_report"] == "" {
+			if content := gitShowReport(task.ID, "internal-task-report.md"); content != "" {
+				detail["exec_report"] = content
+			}
+		}
+		// 复查报告（review-report.md——复查模型写的——约定文件名——写执行任务目录）
+		reviewReport := filepath.Join(taskDir, "review-report.md")
+		if content, err := os.ReadFile(reviewReport); err == nil {
+			detail["review_report"] = string(content)
+		}
+		// 复查报告 git 回退（任务目录没有——git 历史找）
+		if _, ok := detail["review_report"].(string); !ok || detail["review_report"] == "" {
+			if content := gitShowReport(task.ID, "review-report.md"); content != "" {
+				detail["review_report"] = content
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+// gitShowReport 从 git 历史找回任务报告（worktree merge 回 main——报告在 git 保留）
+// v2.5.5 修复（2026-08-21 Mr2109发现——UI 报告缺失——英文报告写 git）
+// 查 task-<ID> 分支/或 main 历史里的报告文件——内容验证（防共享旧报告误显示）
+func gitShowReport(taskID, reportName string) string {
+	repoDir := "<repo>"
+	branch := "task-" + sanitizeID(taskID)
+	// 尝试分支（task-<ID>——merge 前）
+	cmd := exec.Command("git", "-C", repoDir, "show", branch+":"+reportName)
+	if out, err := cmd.CombinedOutput(); err == nil && len(out) > 0 {
+		return string(out)
+	}
+	// 回退: main 历史找（git log 找报告路径）——但验证内容（防同名共享报告误显示）
+	cmd2 := exec.Command("git", "-C", repoDir, "log", "--all", "--format=%H", "--", reportName)
+	if out, err := cmd2.CombinedOutput(); err == nil {
+		commits := strings.Fields(string(out))
+		for _, c := range commits {
+			cmd3 := exec.Command("git", "-C", repoDir, "show", c+":"+reportName)
+			if out3, err3 := cmd3.CombinedOutput(); err3 == nil && len(out3) > 0 {
+				content := string(out3)
+				// 内容验证: 报告必须含任务 ID 短码（唯一——防共享旧报告误显示）
+				short := taskID
+				if len(taskID) > 10 {
+					short = taskID[len(taskID)-10:] // 任务 ID 后 10 位（唯一）
+				}
+				if strings.Contains(content, short) {
+					return content
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// parseTaskTrace 解析任务跟踪（v2.5.5 虫族UI: /tmp/zerg-ca-logs/<任务ID>/events.jsonl → 轮次）
+func parseTaskTrace(taskID string) map[string]interface{} {
+	// 找任务日志目录（taskID 是纳秒时间戳——日志目录是日期格式——模糊匹配）
+	logDir := findTaskLogDir(taskID)
+	if logDir == "" {
+		return map[string]interface{}{"rounds": []interface{}{}, "note": "无跟踪数据（日志未找到）"}
+	}
+	eventsPath := filepath.Join(logDir, "events.jsonl")
+	data, err := os.ReadFile(eventsPath)
+	if err != nil {
+		return map[string]interface{}{"rounds": []interface{}{}, "note": "日志读取失败: " + err.Error()}
+	}
+	// 解析 events.jsonl（每行 JSON——轮次/模型/工具）
+	rounds := []map[string]interface{}{}
+	var curRound map[string]interface{}
+	var curRoundStart string // 轮次开始时间（算耗时——用 loop_start 首轮/上轮 end 后续——2026-08-21 修复）
+	var totalTokens int64
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var ev map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			continue
+		}
+		action, _ := ev["Action"].(string)
+		evType, _ := ev["Type"].(string)
+		if action == "loop_start" {
+			// 整个循环开始——第一轮的开始时间
+			curRoundStart, _ = ev["Timestamp"].(string)
+		}
+		if action == "loop_iteration_end" {
+			// 轮次结束——收集（带耗时）
+			if curRound != nil {
+				rounds = append(rounds, curRound)
+			}
+			curRound = map[string]interface{}{
+				"round": len(rounds),
+				"tools": []map[string]interface{}{},
+			}
+			// 每轮耗时（轮开始→轮结束——Timestamp RFC3339）
+			if endTime, ok := ev["Timestamp"].(string); ok && curRoundStart != "" {
+				curRound["duration"] = roundDuration(curRoundStart, endTime)
+			}
+			// 下一轮开始 = 本轮结束（轮间连续——2026-08-21 修复: 之前 model_call_ok 同毫秒不准）
+			if endTime, ok := ev["Timestamp"].(string); ok {
+				curRoundStart = endTime
+			}
+		}
+		if curRound == nil {
+			curRound = map[string]interface{}{"round": 0, "tools": []map[string]interface{}{}}
+		}
+		if evType == "model_call" && action == "model_call_ok" {
+			prompt, _ := ev["Prompt"].(string)
+			curRound["model"] = map[string]interface{}{
+				"tokens": len(prompt) / 4, // 近似（真实 token 在 Args）
+				"time":   ev["Timestamp"],
+			}
+			// v2.5.5 修复（2026-08-21 Mr2109发现）: events.jsonl 无 loop_iteration_start——用 model_call_ok 时间做轮开始
+			// 每轮第一次模型调用 = 轮开始（后续 model_call 不覆盖——只记录首次）
+			if curRoundStart == "" {
+				if t, ok := ev["Timestamp"].(string); ok {
+					curRoundStart = t
+				}
+			}
+		}
+		if evType == "tool_call" {
+			toolName, _ := ev["ToolName"].(string)
+			args, _ := ev["Args"].(map[string]interface{})
+			tools, _ := curRound["tools"].([]map[string]interface{})
+			curRound["tools"] = append(tools, map[string]interface{}{
+				"name": toolName,
+				"args": args,
+			})
+		}
+	}
+	if curRound != nil {
+		rounds = append(rounds, curRound)
+	}
+	return map[string]interface{}{
+		"rounds":       rounds,
+		"total_tokens": totalTokens,
+		"log_dir":      logDir,
+	}
+}
+
+// roundDuration 计算轮次耗时（RFC3339 时间差——人性化）
+func roundDuration(start, end string) string {
+	parse := func(s string) (time.Time, bool) {
+		// 尝试 RFC3339（含毫秒/纳秒）
+		for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+			if t, err := time.Parse(layout, s); err == nil {
+				return t, true
+			}
+		}
+		return time.Time{}, false
+	}
+	st, ok1 := parse(start)
+	et, ok2 := parse(end)
+	if !ok1 || !ok2 {
+		return ""
+	}
+	d := et.Sub(st)
+	if d < 0 {
+		return ""
+	}
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%.1fm", d.Minutes())
+}
+
+// findTaskLogDir 找任务日志目录（优先 audit.jsonl 精确匹配——回退模糊）
+// v2.5.5 修复（2026-08-21 Mr2109发现——每轮时间不对）: 之前 strings.Contains(taskID, e.Name()) 永不匹配
+// → 总是返回最新目录（错误日志——duration 算不出）——改读 audit.jsonl 精确关联
+func findTaskLogDir(taskID string) string {
+	base := "/tmp/zerg-ca-logs"
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return ""
+	}
+	// 1. 精确匹配: 日志目录 audit.jsonl 含 task_id（CA 启动时写审计——ZERG_TASK_DIR 路径）
+	// 2026-08-21 修复: 任务可能重跑多次（多日志目录）——返回最新匹配（不是第一个）
+	// 且排除复查任务日志（audit task_id 是 review- 前缀——误匹配执行任务）
+	best := ""
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		auditPath := filepath.Join(base, e.Name(), "audit.jsonl")
+		if content, err := os.ReadFile(auditPath); err == nil {
+			auditStr := string(content)
+			// 2026-08-21 修复: 执行任务查询排除复查日志（audit 里 task_id 是 review-task-...）
+			if !strings.Contains(taskID, "review") && strings.Contains(auditStr, "review-task-") {
+				continue
+			}
+			if strings.Contains(auditStr, taskID) ||
+				strings.Contains(auditStr, strings.TrimPrefix(taskID, "task-")) {
+				best = filepath.Join(base, e.Name()) // 覆盖——最后匹配=最新
+			}
+		}
+	}
+	if best != "" {
+		return best
+	}
+	// 2. 任务 ID 纳秒 → 时间戳 → 匹配目录名（2026-08-21 修复——旧格式无 audit 时）
+	// 任务 ID 如 task-1787243319269431000——纳秒 → 目录名 2026-08-21T01-10-39
+	if idx := strings.LastIndex(taskID, "-"); idx >= 0 {
+		if ns, err := strconv.ParseInt(taskID[idx+1:], 10, 64); err == nil {
+			t := time.Unix(0, ns).Local() // 本地时区（目录名是本地时间——2026-08-21 修复）
+			// 目录名格式 2026-08-21T01-10-39（±2 分钟容差）
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				if dirTime, err := time.Parse("2006-01-02T15-04-05", e.Name()); err == nil {
+					diff := dirTime.Sub(t)
+					if diff > -2*time.Minute && diff < 2*time.Minute {
+						return filepath.Join(base, e.Name())
+					}
+				}
+			}
+		}
+	}
+	// 3. 无匹配——返回最新目录（当前任务——兜底）
+	if len(entries) > 0 {
+		return filepath.Join(base, entries[len(entries)-1].Name())
+	}
+	return ""
+}
+
+// GitStatusHandler 仓库 git 总览（v2.5.5 虫族UI: 分支/worktree/未merge任务分支）
+// GET /api/git/status
+func (h *Handlers) GitStatusHandler(w http.ResponseWriter, r *http.Request) {
+	repoDir := r.URL.Query().Get("repo")
+	if repoDir == "" {
+		repoDir = "<repo>"
+	}
+	// git branch --list（全分支）
+	branchOut, _ := exec.Command("git", "-C", repoDir, "branch", "--list").Output()
+	branches := []string{}
+	for _, l := range strings.Split(string(branchOut), "\n") {
+		l = strings.TrimSpace(strings.TrimPrefix(l, "*"))
+		if l != "" {
+			branches = append(branches, l)
+		}
+	}
+	// git worktree list（worktree 状态）
+	wtOut, _ := exec.Command("git", "-C", repoDir, "worktree", "list").Output()
+	worktrees := []map[string]string{}
+	for _, l := range strings.Split(string(wtOut), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		parts := strings.Fields(l)
+		if len(parts) >= 2 {
+			worktrees = append(worktrees, map[string]string{
+				"path":   parts[0],
+				"branch": strings.Trim(strings.TrimPrefix(parts[1], "["), "]"),
+			})
+		}
+	}
+	// 未 merge 任务分支（task-* 不在 main）
+	unmerged := []string{}
+	for _, b := range branches {
+		if strings.HasPrefix(b, "task-") {
+			mergedOut, _ := exec.Command("git", "-C", repoDir, "branch", "--merged", "main", "--list", b).Output()
+			if strings.TrimSpace(string(mergedOut)) == "" {
+				unmerged = append(unmerged, b)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"repo":      repoDir,
+		"branches":  branches,
+		"worktrees": worktrees,
+		"unmerged":  unmerged,
+	})
+}
+
+// TaskGitHandler 任务 git 详情（v2.5.5 虫族UI: 分支/commit 历史/diff 统计）
+// GET /api/tasks/{id}/git
+func (h *Handlers) TaskGitHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	// 任务 worktree 路径（zerg-wt/task-<id>）
+	wtDir := filepath.Join("<repo>", "zerg-wt", "task-"+sanitizeID(taskID))
+	if _, err := os.Stat(wtDir); err != nil {
+		writeError(w, http.StatusNotFound, "任务 worktree 不存在: "+taskID)
+		return
+	}
+	// git log（最近 20 commit）
+	logOut, _ := exec.Command("git", "-C", wtDir, "log", "--oneline", "-20").Output()
+	commits := []string{}
+	for _, l := range strings.Split(string(logOut), "\n") {
+		if strings.TrimSpace(l) != "" {
+			commits = append(commits, strings.TrimSpace(l))
+		}
+	}
+	// git diff --stat（未提交改动）
+	statOut, _ := exec.Command("git", "-C", wtDir, "diff", "--stat").Output()
+	// git status --short
+	statusOut, _ := exec.Command("git", "-C", wtDir, "status", "--short").Output()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"task_id":     taskID,
+		"worktree":    wtDir,
+		"commits":     commits,
+		"diff_stat":   strings.TrimSpace(string(statOut)),
+		"status":      strings.TrimSpace(string(statusOut)),
+	})
+}
+
+// TaskDiffHandler 任务 diff 内容（v2.5.5 虫族UI: 查看变更）
+// GET /api/tasks/{id}/diff
+func (h *Handlers) TaskDiffHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	wtDir := filepath.Join("<repo>", "zerg-wt", "task-"+sanitizeID(taskID))
+	if _, err := os.Stat(wtDir); err != nil {
+		writeError(w, http.StatusNotFound, "任务 worktree 不存在: "+taskID)
+		return
+	}
+	diffOut, err := exec.Command("git", "-C", wtDir, "diff").Output()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "git diff 失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"task_id": taskID,
+		"diff":    string(diffOut),
+	})
+}
+
+// ResourcesHandler 资源库（v2.5.5 虫族UI: 模型/工具/skill/MCP 清单）
+// GET /api/resources/{type}（models|tools|skills|mcp）
+func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
+	resType := chi.URLParam(r, "type")
+	switch resType {
+	case "models":
+		// 模型清单（从 fleet/models API 聚合）
+		models := h.aggregateModels()
+		// v2.5.5 资源信任度（2026-08-21 Mr2109）: 模型状态（🆕新/正式）
+		for _, m := range models {
+			if name, ok := m["name"].(string); ok {
+				m["trust"] = resourceTrust.GetResourceStatus("models", name)
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"type": "models", "items": models})
+	case "tools":
+		// 工具库——CA 层（agent.DefaultTools）+ 对话层（chat deferred 138）合并
+		items := []map[string]interface{}{}
+		seen := map[string]bool{}
+		// P4-49 统一计数（agent.ToolUses——对话+CA 同一计数器）
+		trustOf := func(name string) string {
+			u := agent.ToolUses(name)
+			if u >= 100 {
+				return "正式"
+			}
+			if u > 0 {
+				return "新"
+			}
+			return "新"
+		}
+		for _, td := range agent.AllTools() {
+			seen[td.Function.Name] = true
+			items = append(items, map[string]interface{}{
+				"name":    td.Function.Name,
+				"scope":   "CA",
+				"version": agent.ToolVersion(td.Function.Name), // P4-49 工具版本（进化可追溯）
+				"trust":   trustOf(td.Function.Name),
+				"uses":    agent.ToolUses(td.Function.Name),
+				"faults":  0,
+				"since":   resourceTrust.GetResourceSince("tools", td.Function.Name),
+				"desc":    firstLine(td.Function.Description), // 简介（一句话——Mr2109 2026-08-21）
+			})
+		}
+		// P4-48 对话 deferred 工具（chat 层 138——ChatExtraToolDefs）
+		for name, def := range chat.ChatExtraToolDefs() {
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			desc := ""
+			if fn, ok := def["function"].(map[string]interface{}); ok {
+				if d, ok2 := fn["description"].(string); ok2 {
+					desc = firstLine(d)
+				}
+			}
+			items = append(items, map[string]interface{}{
+				"name":    name,
+				"scope":   "对话",
+				"version": agent.ToolVersion(name), // P4-49 工具版本（进化可追溯）
+				"trust":   trustOf(name),
+				"uses":    agent.ToolUses(name),
+				"faults":  0,
+				"since":   resourceTrust.GetResourceSince("tools", name),
+				"desc":    desc,
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"type": "tools", "items": items})
+	case "skills":
+		// skill 库——扫描 skills/ 目录 + Hermes skills（SKILL.md）
+		items := []map[string]interface{}{}
+		home, _ := os.UserHomeDir()
+		skillDirs := []string{"skills", "agent/skills", "../skills", filepath.Join(home, ".hermes", "skills"), "docs/00-总览"}
+		seen := map[string]bool{}
+		for _, dir := range skillDirs {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				name := e.Name()
+				if seen[name] {
+					continue
+				}
+				if e.IsDir() {
+					// skill 目录（含 SKILL.md）
+					if _, err := os.Stat(filepath.Join(dir, name, "SKILL.md")); err == nil {
+						items = append(items, map[string]interface{}{
+							"name":  name,
+							"trust": resourceTrust.GetResourceStatus("skills", name),
+							"uses":  resourceTrust.GetResourceUses("skills", name),
+							"faults": resourceTrust.GetResourceFaults("skills", name),
+							"since": resourceTrust.GetResourceSince("skills", name),
+						})
+						seen[name] = true
+					}
+				} else if strings.HasSuffix(name, ".md") && strings.Contains(name, "SKILL") {
+					items = append(items, map[string]interface{}{
+						"name":  name,
+						"trust": resourceTrust.GetResourceStatus("skills", name),
+						"uses":  resourceTrust.GetResourceUses("skills", name),
+					})
+					seen[name] = true
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"type": "skills", "items": items})
+	case "mcp":
+		// MCP 库——扫描 MCP 配置（~/.hermes/mcp-servers + 项目 mcp/）
+		items := []map[string]interface{}{}
+		home, _ := os.UserHomeDir()
+		mcpDirs := []string{filepath.Join(home, ".hermes", "mcp-servers"), "mcp", "/tmp/zerg-mcp"}
+		seen := map[string]bool{}
+		for _, dir := range mcpDirs {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				name := e.Name()
+				if seen[name] {
+					continue
+				}
+				items = append(items, map[string]interface{}{
+					"name":  name,
+					"trust": resourceTrust.GetResourceStatus("mcp", name),
+					"uses":  resourceTrust.GetResourceUses("mcp", name),
+					"faults": resourceTrust.GetResourceFaults("mcp", name),
+					"since": resourceTrust.GetResourceSince("mcp", name),
+				})
+				seen[name] = true
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"type": "mcp", "items": items})
+	default:
+		writeError(w, http.StatusBadRequest, "未知资源类型: "+resType)
+	}
+}
+
+// aggregateModels 聚合模型清单（从 store 模型注册表——模型名/状态）
+func (h *Handlers) aggregateModels() []map[string]interface{} {
+	models := []map[string]interface{}{}
+	if h.Store == nil {
+		return models
+	}
+	// store 模型注册表（GetAllModels——各机器模型名）
+	all := h.Store.GetAllModels()
+	// v2.5.5 模型按设备分类（Mr2109 2026-08-20）: 从 fleet 配置读模型所在设备
+	machineOf := h.modelMachineMap()
+	for _, name := range all {
+		machine := "unknown"
+		if m, ok := machineOf[name]; ok {
+			machine = m
+		}
+		models = append(models, map[string]interface{}{
+			"name":        name,
+			"status":      "available",
+			"machine":     machine,
+			"description": h.modelDescription(name),
+		})
+	}
+	return models
+}
+
+// modelDescription 模型简介（从 fleet 配置读描述——没有则基本信息）
+func (h *Handlers) modelDescription(name string) string {
+	if h.Config == nil {
+		return ""
+	}
+	if candidates, ok := h.Config.Models[name]; ok && len(candidates) > 0 {
+		c := candidates[0]
+		// 从候选描述/参数拼简介
+		desc := c.Description
+		if desc == "" {
+			desc = fmt.Sprintf("%s 模型（%s 设备——%.0f GB——上下文 %d）", name, c.Host, c.MemGb, c.CtxWindow)
+		}
+		return desc
+	}
+	return name + " 模型（设备未配置）"
+}
+
+// modelMachineMap 模型 → 设备映射（从 fleet 配置读——模型候选机器）
+func (h *Handlers) modelMachineMap() map[string]string {
+	m := map[string]string{}
+	if h.Config == nil {
+		return m
+	}
+	for name, candidates := range h.Config.Models {
+		if len(candidates) > 0 {
+			m[name] = candidates[0].Host // 第一个候选的设备
+		}
+	}
+	return m
+}
+
+// TaskRetryHandler 重跑任务（failed→queued——右键功能——2026-08-21 Mr2109）
+// POST /api/tasks/{id}/retry
+func (h *Handlers) TaskRetryHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if h.Scheduler == nil {
+		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		return
+	}
+	if err := h.Scheduler.RetryTask(taskID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "task_id": taskID, "status": "queued"})
+}
+
+// TaskMoveHandler 重排任务（置顶/置底/上移/下移——右键功能——2026-08-21 Mr2109）
+// POST /api/tasks/{id}/move?action=top|bottom|up|down
+func (h *Handlers) TaskMoveHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	action := r.URL.Query().Get("action")
+	if action == "" {
+		writeError(w, http.StatusBadRequest, "缺少 action 参数（top/bottom/up/down）")
+		return
+	}
+	if h.Scheduler == nil {
+		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		return
+	}
+	if err := h.Scheduler.MoveTask(taskID, action); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "task_id": taskID, "action": action})
+}
+
+// TaskPauseHandler 暂停/继续任务（右键功能——2026-08-21 Mr2109）
+// POST /api/tasks/{id}/pause?pause=true|false
+func (h *Handlers) TaskPauseHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	pause := r.URL.Query().Get("pause") != "false" // 默认 true（暂停）
+	if h.Scheduler == nil {
+		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		return
+	}
+	if err := h.Scheduler.PauseTask(taskID, pause); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	status := "paused"
+	if !pause {
+		status = "queued"
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "task_id": taskID, "status": status})
+}
+
+// TaskDeleteHandler 删除排队任务（右键功能——2026-08-21 Mr2109）
+// DELETE /api/tasks/{id}
+func (h *Handlers) TaskDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if h.Scheduler == nil {
+		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		return
+	}
+	if err := h.Scheduler.DeleteTask(taskID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "task_id": taskID, "deleted": true})
+}
+
+// firstLine 取首行（简介——一句话——2026-08-21 Mr2109）
+func firstLine(s string) string {
+	if i := strings.IndexAny(s, "\n."); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > 60 {
+		s = s[:60] + "…"
+	}
+	return s
+}
+
+// LogsHandler2 日志 API（v2.5.5 虫族UI: 主控/任务/机器日志）
+// GET /api/logs（主控日志 tail）+ GET /api/logs/task/{id} + GET /api/logs/agent/{machine}
+func (h *Handlers) LogsHandler2(w http.ResponseWriter, r *http.Request) {
+	kind := chi.URLParam(r, "kind")
+	limit := 200
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	switch kind {
+	case "main":
+		// 主控日志（/tmp/zerg-core.log tail）
+		lines, _ := tailFile("/tmp/zerg-core.log", limit)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"lines": lines})
+	case "task":
+		// 任务日志（/tmp/zerg-ca-logs/<最新>/events.jsonl）
+		taskID := chi.URLParam(r, "id")
+		lines, _ := tailFile(filepath.Join("/tmp/zerg-ca-logs", taskID, "events.jsonl"), limit)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"lines": lines})
+	default:
+		writeJSON(w, http.StatusOK, map[string]interface{}{"lines": []string{}, "note": "未知日志源: " + kind})
+	}
+}
+
+// DocsHandler 文档 API（v2.5.5 虫族UI: docs/ 目录列表 + 内容）
+// GET /api/docs（目录）+ GET /api/docs/{path}（内容）
+func (h *Handlers) DocsHandler(w http.ResponseWriter, r *http.Request) {
+	// v2.5.6 多段路径: {path} 单段 → catch-all 用 "*"（00-总览/xxx.md）
+	docPath := chi.URLParam(r, "path")
+	if docPath == "" {
+		docPath = chi.URLParam(r, "*")
+	}
+	// v2.5.6 URL 解码（reqwest 自动编码中文——后端必须解回原始路径）
+	if unescaped, err := url.PathUnescape(docPath); err == nil {
+		docPath = unescaped
+	}
+	docsDir := "<repo>/docs"
+	if docPath == "" {
+		// 目录列表——递归收集所有 md（书结构——docs/0X-类型/xxx.md 完整路径）
+		files := []string{}
+		dirs := []string{} // v2.5.6 目录树（Mr2109 2026-08-29: UI 第一栏=目录树——第二栏=目录下文件——第三栏=正文）
+		filepath.Walk(docsDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			rel, _ := filepath.Rel(docsDir, path)
+			if info.IsDir() {
+				// 收集目录（排除根、排除 issues/thunderbolt 噪音）
+				if rel != "." && !strings.Contains(rel, "/issues") && !strings.Contains(rel, "/thunderbolt") && rel != "issues" && rel != "thunderbolt" {
+					dirs = append(dirs, rel)
+				}
+				return nil
+			}
+			if strings.HasSuffix(path, ".md") && !strings.Contains(path, "/issues/") && !strings.Contains(path, "/thunderbolt/") {
+				files = append(files, rel)
+			}
+			return nil
+		})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"files": files, "dirs": dirs})
+		return
+	}
+	// 内容（防路径穿越）
+	if strings.Contains(docPath, "..") {
+		writeError(w, http.StatusBadRequest, "非法路径")
+		return
+	}
+	content, err := os.ReadFile(filepath.Join(docsDir, docPath))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "文档不存在: "+docPath)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"path": docPath, "content": string(content)})
+}
+
+// tailFile 读文件尾部 N 行（日志 tail）——已定义于 control.go（复用）
+
+// filterDocs 按关键词过滤文件（文档分组——书目录）
+func filterDocs(files []string, keywords ...string) []string {
+	out := []string{}
+	for _, f := range files {
+		for _, kw := range keywords {
+			if strings.Contains(f, kw) {
+				out = append(out, f)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// HeartbeatHandler 处理 POST /api/fleet/heartbeat
+// 接收子端心跳，更新集群状态。
+func (h *Handlers) HeartbeatHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "仅支持 POST 方法")
+		return
+	}
+
+	var req store.HeartbeatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "请求体 JSON 解析失败: "+err.Error())
+		return
+	}
+
+	// 验证必填字段
+	if req.Machine == "" {
+		writeError(w, http.StatusBadRequest, "machine 字段不能为空")
+		return
+	}
+
+	// 处理心跳
+	resp := h.Store.ReceiveHeartbeat(req)
+
+	// v2.5.5 #9 补充5: 心跳 healthy → 自动清零该机器熔断计数（防残留熔断——健康恢复即解除）
+	// 根因: 熔断计数只在"转发成功"清零——若健康恢复但无转发——熔断残留 → 路由一直拒绝
+	if req.Healthy && h.Gateway != nil {
+		h.Gateway.ClearFailures(req.Machine)
+	}
+
+	// 记录心跳日志（v2.3 B1: 分离到 /tmp/zerg-heartbeat.log，避免撑满主日志）
+	// 打印心跳摘要（解引用指针，避免显示 0x 地址）
+	modelName := "<nil>"
+	if req.Model != nil {
+		modelName = *req.Model
+	}
+	h.HeartbeatLogger.Info("心跳",
+		"machine", req.Machine,
+		"model", modelName,
+		"state", req.BackendState,
+		"healthy", req.Healthy,
+	)
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// StatusHandler 处理 GET /api/fleet/status
+// 返回集群当前状态概览。
+func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "仅支持 GET 方法")
+		return
+	}
+
+	snapshots := h.Store.GetAllSnapshots()
+	models := h.Store.GetAllModels()
+
+	// 合并本机子端（localback 不通过心跳上报，直接读快照）
+	if h.LocalBack != nil {
+		localSnap := h.LocalBack.Snapshot()
+		// B4 v2：从 store 里保留已写入的 cpu_pct/gpu_pct（SetLocalSnapshot 30s 周期写入）
+		prevLocal := snapshots["local"]
+		var cpuPct, gpuPct float64
+		if prevLocal != nil {
+			cpuPct = prevLocal.CpuPct
+			gpuPct = prevLocal.GpuPct
+		}
+		snapshots["local"] = &store.FleetSnapshot{
+			Machine:        "local",
+			Model:          nil,
+			Backend:        nil,
+			Port:           nil,
+			MemAvailableGb: localSnap.MemAvailableGb,
+			MemTotalGb:     localSnap.MemTotalGb,
+			Load:           localSnap.Load,
+			Models:         localSnap.Models,
+			GpuUsedGb:      localSnap.GpuUsedGb,
+			GpuTempC:       localSnap.GpuTempC,
+			BackendRssGb:   localSnap.BackendRssGb,
+			Healthy:        localSnap.Healthy,
+			BackendState:   localSnap.BackendState,
+			CpuPct:         cpuPct,
+			GpuPct:         gpuPct,
+			LastSeen:       time.Now(),
+		}
+		// 本机已加载模型时填充 model 字段
+		if len(localSnap.Models) > 0 {
+			m := localSnap.Models[0]
+			snapshots["local"].Model = &m
+		}
+	}
+
+	// 构建状态响应
+	// 统计健康/不健康节点
+	healthyCount := 0
+	unhealthyCount := 0
+	totalMemAvailable := 0.0
+	totalMemTotal := 0.0
+	totalGPUUsed := 0.0
+	totalActive := 0
+
+	for _, snap := range snapshots {
+		if snap.Healthy {
+			healthyCount++
+		} else {
+			unhealthyCount++
+		}
+		totalMemAvailable += snap.MemAvailableGb
+		totalMemTotal += snap.MemTotalGb
+		totalGPUUsed += snap.GpuUsedGb
+		totalActive += snap.ActiveRequests
+	}
+
+	response := map[string]interface{}{
+		"total_machines":      len(snapshots),
+		"healthy_count":       healthyCount,
+		"unhealthy_count":     unhealthyCount,
+		"total_models":        len(models),
+		"available_models":    models,
+		"total_mem_available_gb": totalMemAvailable,
+		"total_mem_total_gb":    totalMemTotal,
+		"total_gpu_used_gb":     totalGPUUsed,
+		"total_active_requests": totalActive,
+		"machines":              snapshots,
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+// ModelsHandler 处理 GET /api/fleet/models
+// 返回路由表中已知的全部模型（来自 fleet.yaml，含多候选 host）。
+func (h *Handlers) ModelsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "仅支持 GET 方法")
+		return
+	}
+
+	// 从配置路由表返回全部模型（多候选展开为多条）
+	var list []map[string]interface{}
+	for name, candidates := range h.Config.Models {
+		for _, c := range candidates {
+			list = append(list, map[string]interface{}{
+				"id":       name,
+				"host":     c.Host,
+				"backend":  c.Backend,
+				"file":     c.File,
+				"mem_gb":   c.MemGb,
+				"modality": "text",
+			})
+		}
+	}
+
+	response := map[string]interface{}{
+		"models": list,
+		"count":  len(list),
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+// ModelDetailHandler 模型详情（Mr2109 2026-08-27——UI 右栏: 简介 + 适配器所有选项 + 启动状态）
+// GET /api/models/{name}——fleet 配置全字段（=适配器选项）+ 本机加载状态
+func (h *Handlers) ModelDetailHandler(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if h.Config == nil {
+		writeError(w, http.StatusServiceUnavailable, "配置未加载")
+		return
+	}
+	cands, ok := h.Config.Models[name]
+	if !ok || len(cands) == 0 {
+		writeError(w, http.StatusNotFound, "模型不存在: "+name)
+		return
+	}
+	c := cands[0]
+	// 本机加载状态（LocalBack 当前加载的是否此模型）
+	status := "未加载"
+	loaded := false
+	if h.LocalBack != nil && h.LocalBack.IsReady() && h.LocalBack.ModelFile() == c.File {
+		status = "已加载"
+		loaded = true
+	}
+	// 架构兜底（architecture 优先——arch 兼容旧 key）
+	arch := c.Architecture
+	if arch == "" {
+		arch = c.Arch
+	}
+	thinking := false
+	if c.Thinking != nil {
+		thinking = *c.Thinking
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"name":          name,
+		"family":        c.Family,
+		"host":          c.Host,
+		"backend":       c.Backend,
+		"file":          c.File,
+		"mem_gb":        c.MemGb,
+		"ssd":           c.SSD,
+		"ctx_window":    c.CtxWindow,
+		"arch":          arch,
+		"architecture":  c.Architecture, // v2.5.6 2026-08-27 模型详情补全
+		"thinking":      thinking,
+		"mmproj":        c.Mmproj,
+		"moe":           c.Moe,
+		"template":      c.Template,
+		"cmd":           c.Cmd,
+		"env":           c.Env,
+		"modality":      c.Modality,
+		"tool_support":  c.ToolSupport,
+		"description":   c.Description,
+		"added":         c.Added,
+		"verified":      c.Verified,
+		"status":        status,
+		"loaded":        loaded,
+		"can_start":     c.Host == "local",
+		"adapter_opts":  h.AdapterOptions(name), // v2.5.6: 适配器调用选项（Temperature/APIFormat/ReasoningEffort 等——反射读适配器实例）
+		"note":          "适配器选项=fleet.yaml 配置字段——本机模型可手动启动/停止（远程设备走 agent 加载）",
+	})
+}
+
+// ModelStartHandler 手动启动模型（Mr2109 2026-08-27——UI 开关）
+// POST /api/models/{name}/start——仅本机模型（LocalBack 直接加载）
+func (h *Handlers) ModelStartHandler(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if h.Config == nil || h.LocalBack == nil {
+		writeError(w, http.StatusServiceUnavailable, "本机后端未就绪")
+		return
+	}
+	cands, ok := h.Config.Models[name]
+	if !ok || len(cands) == 0 {
+		writeError(w, http.StatusNotFound, "模型不存在: "+name)
+		return
+	}
+	c := cands[0]
+	if c.Host != "local" {
+		writeError(w, http.StatusBadRequest, "仅本机模型可手动启动（"+name+" 在 "+c.Host+"——远程加载走 agent）")
+		return
+	}
+	if err := h.LocalBack.LoadModel(c.File, int(c.MemGb)); err != nil {
+		writeError(w, http.StatusInternalServerError, "模型加载失败: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "name": name, "status": "已启动（加载中）"})
+}
+
+// ModelStopHandler 手动停止模型（Mr2109 2026-08-27——UI 开关）
+// POST /api/models/{name}/stop——本机已加载该模型才停止
+func (h *Handlers) ModelStopHandler(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if h.Config == nil || h.LocalBack == nil {
+		writeError(w, http.StatusServiceUnavailable, "本机后端未就绪")
+		return
+	}
+	cands, ok := h.Config.Models[name]
+	if !ok || len(cands) == 0 {
+		writeError(w, http.StatusNotFound, "模型不存在: "+name)
+		return
+	}
+	c := cands[0]
+	if h.LocalBack.IsReady() && h.LocalBack.ModelFile() == c.File {
+		h.LocalBack.Stop()
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "name": name, "status": "已停止"})
+}
+
+// AdapterOptions 模型适配器配置项（Mr2109 2026-08-27——UI 显示适配器所有选项）
+// 反射读取适配器实例的导出字段（Temperature/APIFormat/ReasoningEffort 等调用配置）
+func (h *Handlers) AdapterOptions(model string) map[string]interface{} {
+	if h.Gateway == nil {
+		return nil
+	}
+	return h.Gateway.AdapterOptions(model)
+}
+
+// AdapterSchemaHandler 适配器参数 schema（Mr2109 2026-08-27——UI 编辑控件渲染——各模型各自参数集）
+// GET /api/models/{name}/adapter-opts
+func (h *Handlers) AdapterSchemaHandler(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if h.Gateway == nil {
+		writeError(w, http.StatusServiceUnavailable, "网关未就绪")
+		return
+	}
+	schema := h.Gateway.AdapterSchema(name)
+	if schema == nil {
+		writeError(w, http.StatusNotFound, "模型 "+name+" 无适配器（走旧路由——不可编辑）")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"model":  name,
+		"schema": schema,
+		"note":   "每个模型的适配器参数集各自不同——编辑后实时生效（不重启）——持久化重启恢复",
+	})
+}
+
+// UpdateAdapterOptionsHandler 更新适配器配置（Mr2109 2026-08-27——实时生效）
+// PUT /api/models/{name}/adapter-opts  body: {"temperature": 0.8, "reasoning_effort": "high"}
+func (h *Handlers) UpdateAdapterOptionsHandler(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if h.Gateway == nil {
+		writeError(w, http.StatusServiceUnavailable, "网关未就绪")
+		return
+	}
+	var cfg map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		writeError(w, http.StatusBadRequest, "参数解析失败: "+err.Error())
+		return
+	}
+	if len(cfg) == 0 {
+		writeError(w, http.StatusBadRequest, "无参数提交")
+		return
+	}
+	if err := h.Gateway.UpdateAdapterOptions(name, cfg); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"model":   name,
+		"updated": cfg,
+		"message": "适配器配置已更新——实时生效（后续请求即用新参数）",
+	})
+}
+
+// LogsHandler 处理 POST /api/fleet/logs——接收子端日志上报（v1 agent 兼容）。
+func (h *Handlers) LogsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "仅支持 POST 方法")
+		return
+	}
+	body, _ := io.ReadAll(r.Body)
+	defer r.Body.Close()
+	// v1 agent 上报格式: {machine, level, component, message, timestamp, request_id}
+	var logEntry map[string]interface{}
+	if err := json.Unmarshal(body, &logEntry); err != nil {
+		// 非 JSON 也接收（简单日志行）
+		logEntry = map[string]interface{}{"raw": string(body)}
+	}
+	// 打印到主控日志（聚合展示可后续扩展存储）
+	machine, _ := logEntry["machine"].(string)
+	level, _ := logEntry["level"].(string)
+	msg, _ := logEntry["message"].(string)
+	println("子端日志: machine=", machine, " level=", level, " msg=", msg)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+// TasksHandler 处理 GET /api/fleet/tasks —— 返回任务列表（初始为空）。
+func (h *Handlers) TasksHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "仅支持 GET 方法")
+		return
+	}
+
+	tasks := h.Store.GetTasks()
+
+	response := map[string]interface{}{
+		"tasks": tasks,
+		"count": len(tasks),
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+// ReloadConfigHandler 热加载配置（B11：加模型不用重启主控）。
+// POST /api/config/reload — 重读 fleet.yaml，更新路由表；已加载模型不受影响。
+func (h *Handlers) ReloadConfigHandler(w http.ResponseWriter, r *http.Request) {
+	if h.ConfigPath == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "config path 未配置"})
+		return
+	}
+	newCfg, err := config.LoadFleetConfig(h.ConfigPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "配置加载失败: " + err.Error()})
+		return
+	}
+	oldModelCount := len(h.Config.Models)
+	h.Config = newCfg
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":      "ok",
+		"models":      len(newCfg.Models),
+		"added":       len(newCfg.Models) - oldModelCount,
+		"fleet_nodes": len(newCfg.Fleet),
+	})
+}
+
+// TaskTerminateHandler 终止执行中任务（右键功能——2026-08-22 Mr2109）
+// POST /api/tasks/{id}/terminate
+func (h *Handlers) TaskTerminateHandler(w http.ResponseWriter, r *http.Request) {
+	if h.Scheduler == nil {
+		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		return
+	}
+	taskID := chi.URLParam(r, "id")
+	if err := h.Scheduler.TerminateTask(taskID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "message": "任务已终止"})
+}
+
+// TaskRequeueHandler 执行中任务重回队列（右键功能——2026-08-22 Mr2109）
+// POST /api/tasks/{id}/requeue
+func (h *Handlers) TaskRequeueHandler(w http.ResponseWriter, r *http.Request) {
+	if h.Scheduler == nil {
+		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		return
+	}
+	taskID := chi.URLParam(r, "id")
+	if err := h.Scheduler.RequeueTask(taskID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "message": "任务已重回队列"})
+}

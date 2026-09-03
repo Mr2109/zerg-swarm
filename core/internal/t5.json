@@ -1,0 +1,1 @@
+{"model":"example-35b-v2","messages":[{"role":"user","content":"My favorite color is green."},{"role":"assistant","content":"Nice! Green is my favorite too."},{"role":"user","content":"What is my favorite color?"}],"max_tokens":120}
