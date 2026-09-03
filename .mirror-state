@@ -1,0 +1,17 @@
+{
+  "generator": "publish/mirror-public.sh",
+  "last_mirrored_private_sha": "1e36fbc822273388aadd15acc3b59d4c06586f92",
+  "mirror_parent_sha": "",
+  "mirrored_commits": 1,
+  "note": "本仓为私有权威仓的过滤镜像：每笔提交与私有提交一一对应（trailer GitOrigin-RevId）。本文件记录镜像到哪一笔私有提交，不含任何私有内容；内容确定性、无时间戳。",
+  "replace_rules_fingerprint": "c1d769e69547d852057ee90f0dd8e45962da008834106a18b213a556572f0846",
+  "replace_rules_fingerprint_assets": {
+    "publish/excludes.txt": "09ed8a1bcd5893fa0ac85733d195ed24058c042beb4c94aaec9c7e13742ef298",
+    "publish/private-paths.txt": "6406c67b3e15c0fc19353909398492d3dd8094b808b821cea92e6e4aeb49a7c4",
+    "publish/replace-rules.tsv": "bc4b56171e65620e61da95ceeb69022adbca58026d82e23824edeabc632ae07a",
+    "publish/whitelist.txt": "18f6c8ec6fd8666aee577ed8262c3b9a4efba5bbc881116ef3cc365433db9f4a",
+    "scripts/公开标记.tsv": "89cc02377baad816fe09bed7bc9cb09779b489a7629e884cbb739778c81dc73e"
+  },
+  "replace_rules_fingerprint_scope": "publish/replace-rules.tsv · publish/whitelist.txt · publish/private-paths.txt · publish/excludes.txt · scripts/公开标记.tsv",
+  "schema": 1
+}
