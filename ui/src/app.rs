@@ -1090,21 +1090,18 @@ impl ZergApp {
                         });
                     });
                 } else {
-                    // ── 示例虫茧全屏（嵌中央区——返回条——切走引擎后台继续 M2）──
-                    egui::Panel::top("rt_back_bar").show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            if ui.button(format!("← {}", t!("cocoon_platform"))).clicked() {
-                                self.rt_active = false;
-                            }
-                            ui.separator();
-                            ui.weak(t!("roundtable_hint"));
-                        });
-                    });
+                    // ── 示例虫茧全屏（嵌中央区——面包屑一层——切走引擎后台继续 M2）──
+                    // 三层收一层（2026-09-04）：宿主不再画返回条——示例虫茧面包屑自带"← 虫茧平台"
                     if self.roundtable.is_none() {
                         self.roundtable = Some(Box::new(zerg_roundtable::ui::RoundtableApp::new()));
                     }
                     let rt = self.roundtable.as_mut().unwrap();
+                    rt.embedded = true;
                     rt.render(ui);
+                    // 面包屑"← 虫茧平台"点击请求 → 退出回平台栅格（引擎后台继续 M2）
+                    if rt.exit_platform {
+                        self.rt_active = false;
+                    }
                 }
             }
             "docs" => {
