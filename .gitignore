@@ -1,0 +1,19 @@
+# 模型文件不进 git（7.5GB，用 git-lfs 或本地存储）
+compress_models/
+core/.zerg/
+core/internal/agent/test_deadcode/
+.hermes/
+.zerg/
+bin/zerg-core
+agent/bin/
+app/dist/
+data/
+core/internal/agent/设计-*.md
+core/zerg-scheduler
+cmd/zerg-scheduler/zerg-scheduler
+core/zerg-api
+core/zerg-api
+core/zerg-api
+core/zerg-review
+zerg-wt/
+bin/zerg-core.old

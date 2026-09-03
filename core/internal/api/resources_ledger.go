@@ -1,0 +1,386 @@
+package api
+
+import (
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/localback"
+	"github.com/Mr2109/zerg-swarm/core/internal/modelreg"
+	"github.com/Mr2109/zerg-swarm/core/internal/resources"
+	"github.com/Mr2109/zerg-swarm/core/internal/store"
+)
+
+// resources_ledger.go —— 资源管理器观测面：每机账本 + 逐模型"跑得动吗"估算
+// （《设计-资源管理器》批 4；规格 §三.4 观测面 / §四 形状 / §八 Q8）。
+//
+// 路由（注册在 cmd/zerg-core/main.go，与既有 /api/* 同一套 AuthMiddleware 鉴权）：
+//
+//	GET /api/resources/ledger → {"machines":[...],"count":N,"models_dir":"...","registered_models":M}
+//
+// 每台机器一台账本（内存/显存/驻留明细/未托管项）+ 逐登记模型在该机上的估算。
+//
+// 【机器列表来源（本任务修补）】store 心跳快照 + **本机实时快照**，与 /api/fleet/status
+// 共用同一个来源函数（liveLocalFleetSnapshot）——本机不经心跳，store 里的 local 行由
+// cmd/zerg-core 的 30s 周期任务写入（首次写入在启动 30 秒后）；若只读 store，刚启动/刚部署
+// 后的前 30 秒账本里会缺 local 一行，而 status 有（实测缺口 = 来源不对称）。
+//
+// 【严格只读——本接口硬约束，改动时不要破坏】
+//   - 只做 os.ReadDir / os.Open（读登记库 JSON、读 .gguf 元数据）；**绝不**调用
+//     MkdirAll / WriteFile / Rename / Remove（与 /api/models/registry 同一纪律）。
+//   - 拿不到的字段**整键不出现**（omitempty/指针），绝不造值、绝不 500：
+//     · 该机器没有心跳快照 → 该机器整条不出现；
+//     · 没有驻留明细 → resident 整键不出现；没有未托管项 → unmanaged 整键不出现；
+//     · 显存拿不到 → vram_known=false 且 vram_total/used/free **整键不出现**（不出现假值）；
+//       统一内存平台（Apple Silicon：显存即内存）另标 vram_unified=true——与"真未知"区分：
+//       前者按内存口径判，后者按 §3.2 诚实原则 fail-closed（不许把未知当无限）；
+//     · 内存拿不到 → mem_known=false 且 mem_total/available **整键不出现**；
+//     · 登记库读不动 / 坏记录 → 估算项跳过（registered_models 整键不出现），不改整体状态码。
+//
+// 【诚实原则（§3.2）】估算输入全部来自现有数据：登记库 files[].size（权重真值）+ context_window
+// （上下文上限）+ 批 3 的 probe_meta GGUF 真值（n_layers / n_kv_heads / head_dim）。
+//   - KV dtype 与引擎开销是**引擎运行参数**，GGUF 不记录 → 由 Handler 字段
+//     （KvCacheBytesPerElem / EngineOverheadGb）提供；未提供则回退常量并标 estimated=true
+//     （宁可标"估的"，不许冒充实测——§八 Q4）。
+//   - 关键输入缺失（权重字节/上下文/层数）→ 估算 fail-closed 判 no_fit，basis 写明原因。
+//   - 登记库里没有的模型不在此出现（"缺就缺"）。
+
+// ResourceMachineView 是一台机器的账本对外视图（§3.4 观测面）。
+//
+// 取值纪律：resident / unmanaged / vram_* / mem_* 用 omitempty 或指针——
+// 拿不到就整键不出现；mem_known / vram_known 恒出现，因为"知不知道"本身就是信息。
+type ResourceMachineView struct {
+	Machine      string   `json:"machine"`
+	MemKnown     bool     `json:"mem_known"`
+	MemTotalGb   *float64 `json:"mem_total_gb,omitempty"`
+	MemAvailGb   *float64 `json:"mem_available_gb,omitempty"`
+	VramKnown    bool     `json:"vram_known"`
+	VramUnified  bool     `json:"vram_unified,omitempty"` // 显存即内存（统一内存平台，§3.1）——vram_known=false 但仍可判定
+	VramTotalGb  *float64 `json:"vram_total_gb,omitempty"`
+	VramUsedGb   *float64 `json:"vram_used_gb,omitempty"`
+	VramFreeGb   *float64 `json:"vram_free_gb,omitempty"`
+	GpuPct       *float64 `json:"gpu_pct,omitempty"`
+	BackendState string   `json:"backend_state,omitempty"`
+
+	// 驻留明细（state / last_used_ago_s / req_count / managed / pinned / pin_ttl_s /
+	// weights_bytes / ctx_window）。pin_ttl_s 即 pin 的**剩余 TTL 秒**（= §八 Q5 的 pin 剩余时间）。
+	Resident []resources.ResidentEntry `json:"resident,omitempty"`
+	// 未托管但占着资源的进程/端口（覆盖实测 E2；§八 Q6：只标注，不接管、不杀）。
+	Unmanaged []resources.UnmanagedProcess `json:"unmanaged,omitempty"`
+	// 逐登记模型在本机上的"跑得动吗"估算（§3.2；含 verdict / estimated / basis）。
+	Fit []resources.FitEstimate `json:"fit,omitempty"`
+}
+
+// fitInput 是一个登记模型的估算输入（与机器无关；读取成本只付一次，各机器复用）。
+type fitInput struct {
+	Name         string
+	Digest       string
+	WeightsBytes int64
+	Ctx          int
+	ArchFamily   string
+	Meta         *modelreg.GGUFMeta // 读到本地 GGUF 元数据则非 nil；拿不到为 nil
+}
+
+// localModelFile 是从 fleet 配置解析出的"某权重文件名在本地对应的路径 + 架构族"。
+type localModelFile struct {
+	Path string
+	Arch string
+}
+
+// ResourceLedgerHandler — GET /api/resources/ledger（需鉴权、严格只读）
+func (h *Handlers) ResourceLedgerHandler(w http.ResponseWriter, r *http.Request) {
+	inputs, regErr := h.registeredFitInputs()
+	machines := h.buildResourceMachines(inputs)
+	resp := map[string]interface{}{
+		"machines":   machines,
+		"count":      len(machines),
+		"models_dir": h.modelsRoot(),
+	}
+	// 登记库读不动 → registered_models 整键不出现（缺就缺），但账本本体照常返回（不 500）
+	if regErr == "" {
+		resp["registered_models"] = len(inputs)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// buildResourceMachines 把每台机器快照翻成对外账本视图（机器名排序，响应可复现）。
+//
+// 机器列表与 /api/fleet/status **同一套来源**：store 里的心跳快照 + 本机（local）实时快照。
+// 为什么必须实时合并 local（本任务根因）：store 里的 local 行由 cmd/zerg-core 的 30s 周期任务
+// 写入，其**首次**写入发生在进程启动 30 秒之后——只读 store 时，刚启动/刚部署后的前 30 秒
+// 账本里没有 local，而 /api/fleet/status 是实时合并的 ⇒ 同一时刻两个接口的机器列表不一致。
+func (h *Handlers) buildResourceMachines(inputs []fitInput) []ResourceMachineView {
+	out := []ResourceMachineView{}
+	if h.Store == nil {
+		return out
+	}
+	snaps := h.Store.GetAllSnapshots()
+	// 本机一行以实时快照为准（GetAllSnapshots 返回的是副本，改动不外泄回 store）。
+	// 拿不到实时来源则保持 store 里已有的 local 行（旧行为），不伪造。
+	if localRow := h.liveLocalFleetSnapshot(snaps["local"]); localRow != nil {
+		snaps["local"] = localRow
+	}
+	names := make([]string, 0, len(snaps))
+	for n := range snaps {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		snap := snaps[n]
+		if snap == nil {
+			continue
+		}
+		out = append(out, h.machineView(snap, inputs))
+	}
+	return out
+}
+
+// LocalSnapshotProvider 提供本机（local）的实时资源快照——生产实现是 *localback.LocalBackend。
+// 接口存在的唯一理由是可测：LocalBackend 的状态字段在包外不可构造，api 侧造不出"本机有驻留"
+// 的真实快照，只能用替身验证 local 一行的合并口径（Tests only，生产由 main.go 注入 LocalBack）。
+type LocalSnapshotProvider interface {
+	Snapshot() *localback.LocalSnapshot
+}
+
+// localSnapshotSource 返回本机快照来源：测试注入的 provider 优先，否则 LocalBack；都没有则 nil。
+func (h *Handlers) localSnapshotSource() LocalSnapshotProvider {
+	if h.LocalSnapProvider != nil {
+		return h.LocalSnapProvider
+	}
+	if h.LocalBack == nil {
+		return nil
+	}
+	return h.LocalBack
+}
+
+// liveLocalFleetSnapshot 把本机子端快照翻成与远程子端**同一个** store.FleetSnapshot，
+// 供 /api/fleet/status 与 /api/resources/ledger 共用（口径唯一，两个观测面不再各取一套来源）。
+//
+//   - prev = store 里已有的 local 行（可能为 nil）：只借回 LocalBack 不采样的 cpu_pct/gpu_pct，
+//     其余字段一律以实时快照为准——实时不会比 30 秒前那次落盘更差，且本地已卸载的驻留
+//     会立刻从账本消失（不以旧值充数）。
+//   - 拿不到的一律留零值/false（vram_known=false、resident 为空）→ 对外视图整键不出现，不造值（§3.2）。
+//   - 来源不可得（provider/LocalBack 为 nil，或快照为 nil）→ 返回 nil；调用方保持既有行为
+//     （账本侧沿用 store 里那份、status 侧不出现 local），绝不凭空造一行。
+func (h *Handlers) liveLocalFleetSnapshot(prev *store.FleetSnapshot) *store.FleetSnapshot {
+	src := h.localSnapshotSource()
+	if src == nil {
+		return nil
+	}
+	ls := src.Snapshot()
+	if ls == nil {
+		return nil
+	}
+	name := strings.TrimSpace(ls.Machine)
+	if name == "" {
+		name = "local"
+	}
+	var cpuPct, gpuPct float64
+	if prev != nil {
+		cpuPct, gpuPct = prev.CpuPct, prev.GpuPct
+	}
+	snap := &store.FleetSnapshot{
+		Machine:        name,
+		Models:         ls.Models,
+		MemAvailableGb: ls.MemAvailableGb,
+		MemTotalGb:     ls.MemTotalGb,
+		Load:           ls.Load,
+		GpuUsedGb:      ls.GpuUsedGb,
+		GpuTempC:       ls.GpuTempC,
+		BackendRssGb:   ls.BackendRssGb,
+		Healthy:        ls.Healthy,
+		BackendState:   ls.BackendState,
+		CpuPct:         cpuPct,
+		GpuPct:         gpuPct,
+		Resident:       ls.Resident,
+		VramKnown:      ls.VramKnown,
+		VramUnified:    ls.VramUnified,
+		VramTotalGb:    ls.VramTotalGb,
+		VramUsedGb:     ls.VramUsedGb,
+		VramFreeGb:     ls.VramFreeGb,
+		LastSeen:       time.Now(),
+	}
+	// 本机已加载模型时填充 model 字段（口径同 /api/fleet/status）
+	if len(ls.Models) > 0 {
+		m := ls.Models[0]
+		snap.Model = &m
+	}
+	return snap
+}
+
+// machineView 单台机器 → 对外视图。
+func (h *Handlers) machineView(snap *store.FleetSnapshot, inputs []fitInput) ResourceMachineView {
+	mv := ResourceMachineView{Machine: snap.Machine}
+
+	// 内存：总量 > 0 视为已知；未知则两个值键都不出现（不出现假值）
+	if snap.MemTotalGb > 0 {
+		mv.MemKnown = true
+		total, avail := snap.MemTotalGb, snap.MemAvailableGb
+		mv.MemTotalGb = &total
+		mv.MemAvailGb = &avail
+	}
+	// 显存：只看子端自报的 vram_known（拿不到 = false，值键整键不出现），绝不用 RSS 冒充
+	if snap.VramKnown {
+		mv.VramKnown = true
+		t, u, f := snap.VramTotalGb, snap.VramUsedGb, snap.VramFreeGb
+		mv.VramTotalGb, mv.VramUsedGb, mv.VramFreeGb = &t, &u, &f
+	}
+	// 统一内存平台（显存即内存，§3.1）：如实标注——vram_known=false 但"装得下吗"仍可判定（按内存口径）
+	mv.VramUnified = snap.VramUnified
+	if snap.GpuPct > 0 {
+		gp := snap.GpuPct
+		mv.GpuPct = &gp
+	}
+	mv.BackendState = strings.TrimSpace(snap.BackendState)
+	if len(snap.Resident) > 0 {
+		mv.Resident = snap.Resident
+	}
+	if len(snap.Unmanaged) > 0 {
+		mv.Unmanaged = snap.Unmanaged
+	}
+	mv.Fit = h.fitEstimatesFor(snap, inputs)
+	return mv
+}
+
+// fitEstimatesFor 对一台机器算逐登记模型的"跑得动吗"（输入来自登记库 + GGUF 真值）。
+func (h *Handlers) fitEstimatesFor(snap *store.FleetSnapshot, inputs []fitInput) []resources.FitEstimate {
+	if len(inputs) == 0 {
+		return nil // 无登记模型 → fit 整键不出现
+	}
+	ledger := resources.MachineLedger{
+		Machine:    snap.Machine,
+		MemTotalGb: snap.MemTotalGb,
+		MemAvailGb: snap.MemAvailableGb,
+		Resident:   snap.Resident,
+	}
+	// 显存只在子端真拿到了（vram_known=true）时才进比较式；统一内存（显存即内存）按内存口径；
+	// 两者都不是（真未知）→ EstimateFit fail-closed 判装不下（绝不把"未知"当"无限"，§3.2 诚实原则）。
+	if snap.VramKnown {
+		ledger.VramTotalGb = snap.VramTotalGb
+		ledger.VramUsedGb = snap.VramUsedGb
+		ledger.VramFreeGb = snap.VramFreeGb
+	}
+	ledger.UnifiedMemory = snap.VramUnified
+	// 引擎开销：Handler 提供则用真值，否则留 0 → EstimateFit 回退常量并标 estimated
+	if h.EngineOverheadGb > 0 {
+		ledger.EngineOverheadGb = h.EngineOverheadGb
+	}
+	out := make([]resources.FitEstimate, 0, len(inputs))
+	for _, in := range inputs {
+		out = append(out, modelreg.EstimateFitFromMeta(
+			in.Meta, in.Name, in.Ctx, in.WeightsBytes, h.KvCacheBytesPerElem, in.ArchFamily, ledger))
+	}
+	return out
+}
+
+// registeredFitInputs 扫登记库，把每条记录翻成估算输入。
+//
+// 返回值 (inputs, errMsg)：errMsg 非空 = 登记库整体读不动（此时 inputs 为空、registered_models 不出现）。
+// 单条坏记录 / 单条读不动 → 只跳过这一条（反例优先：一条坏记录不能让整个账本挂掉）。
+func (h *Handlers) registeredFitInputs() ([]fitInput, string) {
+	st := modelreg.NewStore(h.modelsRoot())
+	rows, err := st.List()
+	if err != nil {
+		return nil, err.Error()
+	}
+	idx := h.localModelIndex()
+	out := make([]fitInput, 0, len(rows))
+	for _, row := range rows {
+		if row.Err != "" {
+			continue // 坏记录：跳过，不 500
+		}
+		rec, lerr := modelreg.Load(row.Path)
+		if lerr != nil {
+			continue
+		}
+		in := fitInput{
+			Name:   firstNonEmpty(rec.Name, rec.ID, row.ID),
+			Digest: rec.Digest,
+			Ctx:    rec.ContextWindow,
+		}
+		var weights int64
+		for _, f := range rec.Files {
+			weights += f.Size
+		}
+		in.WeightsBytes = weights
+		// 定位本机可读的权重文件（拿不到就 Meta=nil，估算按回退/fail-closed 处理）
+		if p, arch := h.resolveWeightFile(rec, idx); p != "" {
+			in.ArchFamily = arch
+			// probe.meta.gguf.v1（批 3）真值：层数 / n_kv_heads / head_dim
+			if meta, _, merr := modelreg.ProbeMetaGGUFFile(p); merr == nil {
+				in.Meta = meta
+				if meta.Architecture != "" {
+					in.ArchFamily = meta.Architecture
+				}
+			}
+		}
+		out = append(out, in)
+	}
+	return out, ""
+}
+
+// localModelIndex 从 fleet 配置建"权重文件名(basename) → 本地路径 + 架构族"索引，
+// 用于把登记库记录里的建材定位到本机可读的 .gguf。文件不存在也保留路径，
+// 由 resolveWeightFile 再做存在性判断（本机没有的（如 X3 权重）自然缺席）。
+func (h *Handlers) localModelIndex() map[string]localModelFile {
+	idx := map[string]localModelFile{}
+	if h.Config == nil {
+		return idx
+	}
+	for _, cands := range h.Config.Models {
+		for _, c := range cands {
+			if strings.TrimSpace(c.File) == "" {
+				continue
+			}
+			base := filepath.Base(c.File)
+			if _, dup := idx[base]; dup {
+				continue
+			}
+			arch := c.Architecture
+			if arch == "" {
+				arch = c.Arch
+			}
+			idx[base] = localModelFile{Path: c.File, Arch: arch}
+		}
+	}
+	return idx
+}
+
+// resolveWeightFile 为一条登记记录找本机可读的 .gguf 路径（拿不到返回 ""，不编造）。
+func (h *Handlers) resolveWeightFile(rec *modelreg.Record, idx map[string]localModelFile) (string, string) {
+	for _, f := range rec.Files {
+		name := strings.TrimSpace(f.Name)
+		if name == "" {
+			continue
+		}
+		if filepath.IsAbs(name) {
+			if fileExists(name) {
+				return name, ""
+			}
+			continue
+		}
+		if e, ok := idx[filepath.Base(name)]; ok && fileExists(e.Path) {
+			return e.Path, e.Arch
+		}
+	}
+	return "", ""
+}
+
+// fileExists 报告路径是否为已存在的普通文件（只读探测，不创建任何东西）。
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
+// firstNonEmpty 返回第一个非空（已去空白）字符串。
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if s := strings.TrimSpace(v); s != "" {
+			return s
+		}
+	}
+	return ""
+}

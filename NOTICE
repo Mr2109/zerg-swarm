@@ -1,0 +1,16 @@
+Zerg Swarm (虫族)
+Copyright 2026 The Zerg Swarm Authors
+
+This product includes software developed at the Zerg Swarm project
+(https://github.com/Mr2109/zerg-swarm).
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party components and their licenses are listed in
+THIRD_PARTY_LICENSES.md. Components are NOT bundled in this repository;
+the list records what a deployment may install separately.
+
+Note on trademarks: the Apache-2.0 license does not grant permission to use
+the trade names, trademarks, service marks, or product names of the project
+(including "Zerg Swarm" / "虫族"), except as required for reasonable and
+customary use in describing the origin of the work.
