@@ -1,0 +1,36 @@
+package main
+
+import (
+	"fmt"
+	"strings"
+
+	"zerg/core/internal/compressor"
+)
+
+func main() {
+	base := "<repo>/compress_models/llmlingua2-onnx"
+	c := compressor.New(compressor.Config{
+		ModelPath: base + "/model.onnx",
+		TokPath:   base + "/tokenizer.json",
+	})
+	err := c.Load()
+	if err != nil {
+		fmt.Printf("加载失败: %v\n", err)
+		return
+	}
+	defer c.Destroy()
+
+	text := "今天讨论项目进展，顺便说一下，保险箱的密码是 7329，放在书房书桌第二个抽屉里。新来的项目经理叫王强，他之前是腾讯的架构师。项目预算最终定为 500 万，分三期付款。"
+	compressed, origLen, compLen, err := c.Compress(text)
+	if err != nil {
+		fmt.Printf("压缩失败: %v\n", err)
+		return
+	}
+
+	fmt.Printf("原始 %d 字: %s\n", origLen, text)
+	fmt.Printf("压缩 %d 字 (%.0f%%): %s\n", compLen, float64(compLen)/float64(origLen)*100, compressed)
+	for _, n := range []string{"7329", "王强", "500"} {
+		ok := strings.Contains(compressed, n)
+		fmt.Printf("针 %s: %v\n", n, ok)
+	}
+}

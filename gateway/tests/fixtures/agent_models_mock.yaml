@@ -1,0 +1,36 @@
+# 测试用 mock 模型注册表 —— 全部指向本地假 llama-server（mock_backend.py）
+# cmd 支持 {port}（动态端口）与 {dir}（注册表所在目录）占位符
+mock-small:
+  file: /tmp/fake-small.gguf
+  backend: llama-server
+  mem_gb: 0.01
+  modality: text
+  cmd: ["python3", "{dir}/mock_backend.py", "--port", "{port}"]
+
+mock-slow:
+  file: /tmp/fake-slow.gguf
+  backend: llama-server
+  mem_gb: 0.01
+  modality: text
+  cmd: ["python3", "{dir}/mock_backend.py", "--port", "{port}", "--infer-delay", "8"]
+
+mock-slow-health:
+  file: /tmp/fake-slow-health.gguf
+  backend: llama-server
+  mem_gb: 0.01
+  modality: text
+  cmd: ["python3", "{dir}/mock_backend.py", "--port", "{port}", "--health-delay", "1"]
+
+mock-huge:
+  file: /tmp/fake-huge.gguf
+  backend: llama-server
+  mem_gb: 999999
+  modality: text
+  cmd: ["python3", "{dir}/mock_backend.py", "--port", "{port}"]
+
+mock-crash:
+  file: /tmp/fake-crash.gguf
+  backend: llama-server
+  mem_gb: 0.01
+  modality: text
+  cmd: ["python3", "{dir}/does_not_exist_xxx.py", "--port", "{port}"]

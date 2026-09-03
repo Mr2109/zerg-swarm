@@ -1,0 +1,14 @@
+# Swift build artifacts
+.build/
+.build/
+
+# Xcode
+*.xcodeproj/
+xcuserdata/
+
+# macOS
+.DS_Store
+*.dSYM/
+
+# Product binary (only at app root level)
+/ZergApp
