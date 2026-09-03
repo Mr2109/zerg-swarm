@@ -1,0 +1,33 @@
+// package config 负责解析 fleet.yaml 配置文件。
+// 支持 v1 的多候选数组格式：模型名可以映射到候选列表数组，也可以映射到单个 dict。
+package config
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// ModelCandidate 一个模型在某个主机上的候选部署信息。
+type ModelCandidate struct {
+	Name      string  `yaml:"name,omitempty"`              // 模型名称（V001 必填）
+	Family    string  `yaml:"family,omitempty"`            // 模型家族（V002/V014 必填/校验）
+	Host      string  `yaml:"host"`
+	Backend   string  `yaml:"backend"`
+	File      string  `yaml:"file"`
+	MemGb     float64 `yaml:"mem_gb"`
+	SSD       bool    `yaml:"ssd"`
+	CtxWindow int     `yaml:"ctx_window"` // 模型上下文上限（V22，GGUF 元数据实测）
+	Arch      string  `yaml:"arch,omitempty"` // 架构标识（V015 校验）
+
+	// ═══ M0 配置模块完整字段（2026-08-12 扩展——无模块无法调用铁律）═══
+	Cmd         []string `yaml:"cmd,omitempty"`          // 启动参数（--jinja 等新架构必须参数）
+	Env         []string `yaml:"env,omitempty"`          // 依赖环境变量（LD_LIBRARY_PATH 等）
+	Modality    string   `yaml:"modality,omitempty"`     // text/vision
+	ToolSupport *bool    `yaml:"tool_support,omitempty"` // 工具调用支持（nil=未知，true/false 显式）
+	Description string   `yaml:"description,omitempty"`  // 模型描述
+	Added       string   `yaml:"added,omitempty"`        // 接入日期
+	Verified    bool     `yaml:"verified,omitempty"`     // 验证状态
+}

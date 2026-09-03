@@ -1,0 +1,43 @@
+# rules.yaml — 虫族 v2.4 M3 集中控制层规则（2026-08-13）
+# 控制层独立于 agent——模型看不到/改不了这个文件（git 版本化 + 权限保护）
+# 三态: allow(放行) / block(拦截) / require_approval(需Mr2109批准)
+version: 1
+rules:
+  # 默认策略: allow=放行(现有行为不变) / block=保守拒绝
+  default: allow
+  tools:
+    # ===== M3 铁律: 模型不能改核心配置 =====
+    - name: "patch_fleet_yaml"
+      action: block
+      message: "模型禁改 fleet.yaml（M3 铁律——配置模块只归Mr2109/主控）"
+    - name: "edit_scoring"
+      action: block
+      message: "模型禁改评分逻辑（M3 铁律——评分防作弊）"
+    - name: "edit_rules_yaml"
+      action: block
+      message: "模型禁改控制层规则（规则在模型够不到的地方）"
+
+    # ===== 危险命令: 拦截 =====
+    - name: "terminal"
+      action: require_approval
+      args_deny:
+        - "rm -rf /"
+        - "git push --force"
+        - "kill -9 $(pgrep"
+        - "sudo "
+    - name: "write_file"
+      action: allow
+      args_deny:
+        - "fleet.yaml"
+        - "rules.yaml"
+        - "scoring"
+
+    # ===== 日常工具: 放行 =====
+    - name: "git_commit"
+      action: allow
+    - name: "search_files"
+      action: allow
+    - name: "read_file"
+      action: allow
+    - name: "curl"
+      action: allow
