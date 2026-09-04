@@ -5,135 +5,29 @@
 
 package chat
 
+// 2026-09-05: LoopGuard 抽公共包 internal/loopguard（CA/对话共用同一防循环内核）——
+// 本文件保留类型别名转发（兼容现有调用点）+ CompactToolResults（chat 特有）
+
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
+
+	"zerg/core/internal/loopguard"
 )
 
-// LoopExit — 循环退出原因
-type LoopExit int
+// LoopGuard/LoopConfig — 公共包别名（渐进迁移——现有调用点不改）
+type LoopGuard = loopguard.Guard
 
-const (
-	ExitNatural      LoopExit = iota // 模型无工具调用——最终回复
-	ExitBudgetRounds                 // 30 轮保护
-	ExitBudgetWallClock              // 600s 墙钟
-	ExitNoProgress                   // 引导 3 次仍无进展——升级收尾
-	ExitCancelled                    // 用户断开
-)
-
-func (e LoopExit) String() string {
-	switch e {
-	case ExitNatural:
-		return "自然终止（模型无工具调用）"
-	case ExitBudgetRounds:
-		return "轮数上限（30）"
-	case ExitBudgetWallClock:
-		return "墙钟上限（600s）"
-	case ExitNoProgress:
-		return "多次引导仍无进展——升级收尾"
-	case ExitCancelled:
-		return "用户断开"
-	}
-	return "未知"
-}
-
-// LoopConfig — 循环保护参数（Claude "dozens of turns"——30 轮 + 600s 墙钟 + 引导 3 次）
-type LoopConfig struct {
-	MaxRounds        int     // 30
-	MaxWallSeconds   float64 // 600
-	MaxGuideAttempts int     // 引导次数 3（先警告后升级——Hermes 481）
-	WindowSize       int     // 指纹滑动窗口 8
-}
+// LoopConfig — 守卫配置别名
+type LoopConfig = loopguard.Config
 
 // DefaultLoopConfig — 默认配置
 func DefaultLoopConfig() LoopConfig {
-	return LoopConfig{MaxRounds: 30, MaxWallSeconds: 600, MaxGuideAttempts: 3, WindowSize: 8}
+	return LoopConfig{}
 }
 
-// LoopGuard — 循环守卫（SHA-256 指纹滑动窗口——检测相同调用重复 + A/B 交替卡死）
-// 反应: 分级引导（换策略→列工具→升级收尾）——不是失败就停（Mr2109要求）
-type LoopGuard struct {
-	fingerprints []string // 滑动窗口（工具名+参数哈希）
-	guideCount   int      // 已引导次数
-	cfg          LoopConfig
-}
-
-// NewLoopGuard — 创建守卫
+// NewLoopGuard — 创建守卫（转发公共包）
 func NewLoopGuard(cfg LoopConfig) *LoopGuard {
-	if cfg.WindowSize <= 0 {
-		cfg.WindowSize = 8
-	}
-	if cfg.MaxGuideAttempts <= 0 {
-		cfg.MaxGuideAttempts = 3
-	}
-	return &LoopGuard{cfg: cfg}
-}
-
-// Record — 记录一次工具调用（工具名 + 参数 JSON 序列化 → SHA-256）
-// P4-38: 指纹含结果哈希？——不——结果在执行后才知道——指纹只含工具名+参数
-//（结果变化不算循环——同工具同参数不同结果 = 正常推进——轮询/验证场景）
-func (g *LoopGuard) Record(name string, args map[string]any) string {
-	raw := name
-	if b, err := json.Marshal(args); err == nil {
-		raw += "|" + string(b)
-	}
-	h := sha256.Sum256([]byte(raw))
-	fp := hex.EncodeToString(h[:8]) // 8 字节足够
-	g.fingerprints = append(g.fingerprints, fp)
-	if len(g.fingerprints) > g.cfg.WindowSize {
-		g.fingerprints = g.fingerprints[len(g.fingerprints)-g.cfg.WindowSize:]
-	}
-	return fp
-}
-
-// Detect — 检测循环模式（返回: 是否检测到——原因）
-// 模式1: 相同指纹 ≥3 次（窗口内）
-// 模式2: A/B 交替（ABAB 出现 ≥2 对）
-func (g *LoopGuard) Detect() (bool, string) {
-	n := len(g.fingerprints)
-	if n < 3 {
-		return false, ""
-	}
-	// 模式1: 最近 3 次相同
-	last := g.fingerprints[n-1]
-	if n >= 3 && g.fingerprints[n-2] == last && g.fingerprints[n-3] == last {
-		return true, "相同调用重复 3 次"
-	}
-	// 模式2: A/B 交替（检查最后 4 项 ABAB 或 6 项 ABABAB）
-	if n >= 4 {
-		a, b := g.fingerprints[n-4], g.fingerprints[n-3]
-		if a != b && g.fingerprints[n-2] == a && g.fingerprints[n-1] == b {
-			return true, "两个调用交替卡死（A/B 循环）"
-		}
-	}
-	return false, ""
-}
-
-// BuildGuide — 分级引导消息（第 1 次: 换策略——第 2 次: 列工具——第 3 次: 升级收尾）
-// 返回: (引导消息, 是否升级收尾)
-func (g *LoopGuard) BuildGuide(reason string, availableTools []string) (string, bool) {
-	g.guideCount++
-	switch {
-	case g.guideCount == 1:
-		return fmt.Sprintf("（注意：检测到 %s——你已经重复同样的操作。请换一种方法或换一个工具来推进任务——不要重复刚才的调用）", reason), false
-	case g.guideCount == 2:
-		// 第 2 次仍重复——直接升级（同指纹重复浪费轮次——小模型空参数循环无意义）
-		return "（已经尽力尝试了多种方式，请把到目前为止获得的信息整理成最终回答。如果信息不足或没找到答案，就直接说明没找到——绝不编造。）", true
-	default:
-		return "（已经尽力尝试了多种方式，请把到目前为止获得的信息整理成最终回答。如果信息不足或没找到答案，就直接说明没找到——绝不编造。）", true
-	}
-}
-
-// GuideCount — 已引导次数
-func (g *LoopGuard) GuideCount() int {
-	return g.guideCount
-}
-
-// ShouldUpgrade — 是否达到升级阈值（引导 ≥ MaxGuideAttempts）
-func (g *LoopGuard) ShouldUpgrade() bool {
-	return g.guideCount >= g.cfg.MaxGuideAttempts
+	return loopguard.New(cfg)
 }
 
 // CompactToolResults — P4-38 T5: 上下文轻量化（loop 中旧工具结果压缩）

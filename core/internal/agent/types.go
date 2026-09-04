@@ -53,6 +53,17 @@ type ToolCallResult struct {
 
 // 模型响应解析
 
+// ModelResponse — 模型响应（原 agent.go 定义——2026-09-05 随协议统一移入 types.go）
+type ModelResponse struct {
+	Content   string
+	Reasoning string
+	ToolCalls []ToolCall
+	Finish    string
+	Usage     struct {
+		TotalTokens int64
+	}
+}
+
 // parseModelResponse — 解析模型响应（Chat API 格式——choices[].message）
 func parseModelResponse(raw []byte) (*ModelResponse, error) {
 	// Responses API 格式：output items（message/reasoning/function_call）
@@ -104,6 +115,64 @@ func parseModelResponse(raw []byte) (*ModelResponse, error) {
 				RawArgs: item.Arguments,
 			})
 		}
+	}
+	resp.Usage.TotalTokens = parsed.Usage.TotalTokens
+	// 思考模型 fallback（content 空读 reasoning）
+	if resp.Content == "" && resp.Reasoning != "" {
+		resp.Content = resp.Reasoning
+	}
+	return resp, nil
+}
+
+
+// parseChatModelResponse — 解析 chat completions 响应（choices[].message——2026-09-05 协议统一）
+// 容错: usage 缺失=0（llama-server 截断 bug 兼容——与 chat 包 parseChatResultTolerant 同思想）
+func parseChatModelResponse(raw []byte) (*ModelResponse, error) {
+	var parsed struct {
+		Choices []struct {
+			Message struct {
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
+				ToolCalls []struct {
+					ID       string `json:"id"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+		Usage struct {
+			TotalTokens int64 `json:"total_tokens"`
+		} `json:"usage"`
+		// 顶层 reasoning_content（streamReadChat 聚合产物——部分实现思考不在 message 内）
+		ReasoningContent string `json:"reasoning_content"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+	resp := &ModelResponse{}
+	if len(parsed.Choices) > 0 {
+		m := parsed.Choices[0].Message
+		resp.Content = m.Content
+		resp.Reasoning = m.ReasoningContent
+		for _, tc := range m.ToolCalls {
+			args := map[string]any{}
+			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+				log.Printf("解析 tool_call arguments 失败: %v (raw: %s)", err, tc.Function.Arguments)
+			}
+			resp.ToolCalls = append(resp.ToolCalls, ToolCall{
+				ID:      tc.ID,
+				Name:    tc.Function.Name,
+				Args:    args,
+				RawArgs: tc.Function.Arguments,
+			})
+		}
+		resp.Finish = parsed.Choices[0].FinishReason
+	}
+	if resp.Reasoning == "" && parsed.ReasoningContent != "" {
+		resp.Reasoning = parsed.ReasoningContent
 	}
 	resp.Usage.TotalTokens = parsed.Usage.TotalTokens
 	// 思考模型 fallback（content 空读 reasoning）

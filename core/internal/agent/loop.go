@@ -17,6 +17,7 @@ import (
 
 	"zerg/core/internal/agentstate"
 	"zerg/core/internal/compressor"
+	"zerg/core/internal/loopguard"
 )
 
 // 循环结果
@@ -53,6 +54,7 @@ func newLoop(agent *Agent, tools []ToolDef, logger *Logger, state *agentstate.Ha
 			sm = c
 		}
 	}
+	lg := loopguard.New(loopguard.Config{})
 	return &loopState{
 		agent:            agent,
 		tools:            tools,
@@ -62,6 +64,7 @@ func newLoop(agent *Agent, tools []ToolDef, logger *Logger, state *agentstate.Ha
 		budget:           budget,
 		noProgressThresh: noProgressThresh,
 		sysmetrics:       sm,
+		guard:            lg,
 	}
 }
 
@@ -142,6 +145,23 @@ func Loop(ctx context.Context, agent *Agent, tools []ToolDef, logger *Logger, st
 		// 6. 执行工具（逐个）
 		var toolResults []ToolCallResult
 		for _, tc := range resp.ToolCalls {
+			// 2026-09-05 LoopGuard 接入（对齐对话系统——重复/交替→引导换招→升级收尾）
+			if ls.guard != nil {
+				ls.guard.Record(tc.Name, tc.Args)
+				if ok, reason := ls.guard.Detect(); ok {
+					guide, upgrade := ls.guard.BuildGuide(reason, toolNames(ls.tools))
+					if upgrade {
+						ls.logger.LogEvent(string(EventLoopEnd), "warn", "loopguard_escalate",
+							"", "循环守卫升级收尾: "+reason, nil, "", "", "")
+						ls.agent.AppendMessage(Message{Role: "user", Content: guide})
+						// 升级=终止（引导消息已进历史——外层 CLI 会话恢复可续——这里按 blocked 走 Reflexion）
+						return LoopResult{Reason: ReasonBlocked, Turns: ls.turn, Tokens: ls.totalTokens}
+					}
+					ls.logger.LogEvent(string(EventToolCall), "warn", "loopguard_guide",
+						tc.Name, "循环守卫引导: "+reason, nil, "", "", "")
+					ls.agent.AppendMessage(Message{Role: "user", Content: guide})
+				}
+			}
 			result, execErr := ls.executeTool(ctx, tc)
 			if execErr != nil {
 				ls.logger.LogEvent(string(EventToolError), "error", "tool_exec_failed",
@@ -547,6 +567,7 @@ type loopState struct {
 	diagnosed      bool // 已给过诊断（每任务一次——防刷屏）
 	lastReadPath   string // 上次 read 的 path（重复读检测）
 	verifiedOutput bool   // 产出已验证（Completeness Verifier——写文件后系统验证）
+	guard          *loopguard.Guard // 2026-09-05: 指纹防循环（公共包——与对话系统同一内核）
 
 	// v2.5.1 上下文压缩（C 方案——LLMLingua-2 onnx——50% 触发）
 	compressor *compressor.Compressor // onnx 语义压缩器（加载一次复用）
