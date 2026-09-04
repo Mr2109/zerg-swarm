@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -213,7 +214,8 @@ func (a *Agent) RestoreFromLog() int {
 	return len(msgs)
 }
 
-// callModel - 调网关（Responses API——/v1/responses——Codex 同款协议）
+// callModel - 调网关（2026-09-05 协议统一: /v1/chat/completions——对齐 2026-08-30 铁律——
+// 原走 /v1/responses 与对话系统协议分叉——chat 格式字符串 content 历史完全兼容（实测））
 func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef) (*ModelResponse, error) {
 	a.turnCount++ // v2.5.5 冷启动计数（首轮=1）
 	// v2.5.4.7：如果设置了适配器插件——走适配器（主控零模型假设）
@@ -229,41 +231,31 @@ func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef
 	}
 	for _, m := range a.history {
 		if m.Role == "tool" {
-			// Responses API 工具结果回喂：function_call_output item
-			// 注意：须在 function_call 之后（配对顺序——先 call 后 output）
+			// chat 格式工具结果: role=tool + tool_call_id（2026-09-05 协议统一）
 			msgs = append(msgs, map[string]any{
-				"type":    "function_call_output",
-				"call_id": m.ToolCallID,
-				"output":  m.Content,
+				"role":         "tool",
+				"tool_call_id": m.ToolCallID,
+				"content":      m.Content,
 			})
 			continue
 		}
 		if len(m.ToolCalls) > 0 {
-			// Responses API：assistant 的工具调用拆成顶层 function_call item（须在 output 之前）
-			// 注意：assistant 文本消息须转 type:message item（llama 转换器不认裸 role:assistant——上游确认）
-			if m.Content != "" {
-				msgs = append(msgs, map[string]any{
-					"type":    "message",
-					"role":    "assistant",
-					"content": []map[string]any{{"type": "output_text", "text": m.Content}},
-				})
-			}
+			// chat 格式 assistant 工具调用: message.tool_calls[]（历史 assistant 完全兼容）
+			tcs := make([]map[string]any, 0, len(m.ToolCalls))
 			for _, tc := range m.ToolCalls {
-				msgs = append(msgs, map[string]any{
-					"type":      "function_call",
-					"call_id":   tc.ID,
-					"name":      tc.Name,
-					"arguments": tc.RawArgs,
+				tcs = append(tcs, map[string]any{
+					"id":   tc.ID,
+					"type": "function",
+					"function": map[string]any{
+						"name":      tc.Name,
+						"arguments": tc.RawArgs,
+					},
 				})
 			}
-			continue
-		}
-		// 其他 assistant 消息（纯文本——无工具调用）也转 type:message item
-		if m.Role == "assistant" && m.Content != "" {
 			msgs = append(msgs, map[string]any{
-				"type":    "message",
-				"role":    "assistant",
-				"content": []map[string]any{{"type": "output_text", "text": m.Content}},
+				"role":       "assistant",
+				"content":    m.Content,
+				"tool_calls": tcs,
 			})
 			continue
 		}
@@ -272,22 +264,25 @@ func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef
 
 	body := map[string]any{
 		"model":       a.cfg.Model,
-		"input":       msgs,
-		"stream":      true, // v2.5.5 P1: 流式（2026-08-21 Mr2109——首 token 秒级反馈——Codex 借鉴）
+		"messages":    msgs,
+		"stream":      true, // v2.5.5 P1: 流式（首 token 秒级反馈——聚合后返回完整响应）
 		"temperature": a.cfg.Temperature,
+		"reasoning":   map[string]any{"effort": "low"}, // 思考不能关（Mr2109铁律——与对话系统一致）
 	}
 	if len(tools) > 0 {
-		// v2.5.4.8 方向A：Responses API 工具格式——顶层 name/description/parameters
-		respTools := make([]map[string]any, 0, len(tools))
+		// chat 格式工具: tools[].function
+		chatTools := make([]map[string]any, 0, len(tools))
 		for _, t := range tools {
-			respTools = append(respTools, map[string]any{
-				"type":        "function",
-				"name":        t.Function.Name,
-				"description": t.Function.Description,
-				"parameters":  t.Function.Parameters,
+			chatTools = append(chatTools, map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name":        t.Function.Name,
+					"description": t.Function.Description,
+					"parameters":  t.Function.Parameters,
+				},
 			})
 		}
-		body["tools"] = respTools
+		body["tools"] = chatTools
 	}
 
 	data, err := json.Marshal(body)
@@ -301,7 +296,7 @@ func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef
 			len(msgs), len(tools), len(data), toolNames(tools))
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", a.cfg.GatewayURL+"/v1/responses", strings.NewReader(string(data)))
+	req, err := http.NewRequestWithContext(ctx, "POST", a.cfg.GatewayURL+"/v1/chat/completions", strings.NewReader(string(data)))
 	if err != nil {
 		return nil, err
 	}
@@ -323,7 +318,7 @@ func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef
 		// v2.5.4.8 日志完善：错误详情完整打印（含响应体——找错必需）
 		fmt.Fprintf(os.Stderr, "[callModel] ❌ HTTP %d (%s) url=%s\n  响应体: %s\n  请求体摘要: %d bytes\n",
 			resp.StatusCode, time.Since(start).Round(time.Millisecond),
-			a.cfg.GatewayURL+"/v1/responses",
+			a.cfg.GatewayURL+"/v1/chat/completions",
 			errStr, len(data))
 		// v2.5.4.9 结构化日志：model_call 失败事件
 		if a.logger != nil {
@@ -336,13 +331,13 @@ func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef
 
 	// v2.5.5 P1: 流式响应解析（2026-08-21 Mr2109——SSE 逐 chunk——聚合完整响应）
 	// 流式: 每行 "data: {...}"——聚合 response.delta 文本——结束聚合完整 JSON
-	raw, err := streamReadResponses(resp.Body)
+	raw, err := streamReadChat(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("流式读取失败: %w", err)
 	}
 	// v2.5.4.9 结构化日志：model_call 成功事件（含耗时/token 数——跟踪程序用）
 	// 先解析响应（一次——日志用 tokens + 返回值用同一结果）
-	parsed, perr := parseModelResponse(raw)
+	parsed, perr := parseChatModelResponse(raw)
 	if a.logger != nil {
 		usage := 0
 		if perr == nil {
@@ -360,83 +355,121 @@ func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef
 	return parsed, nil
 }
 
-// streamReadResponses 流式读取 Responses API（SSE——逐 chunk——聚合完整响应 JSON）
-// v2.5.5 P1（2026-08-21 Mr2109——Codex 借鉴——首 token 秒级反馈）
-// 流式 chunk: {"type":"response.output_text.delta","delta":"好"} / ...output_text.done 等
-// 聚合: 收集 delta 文本 + 拼接完整响应（结束输出 response.completed 完整 JSON）
-func streamReadResponses(body io.Reader) ([]byte, error) {
+// streamReadChat 流式读取 chat completions SSE（逐 chunk 聚合完整 message JSON）
+// chunk: choices[].delta {content/reasoning_content/tool_calls} + usage
+// 聚合产物: {"choices":[{"message":{...}}],"usage":{...},"reasoning_content":...}——parseChatModelResponse 同构
+func streamReadChat(body io.Reader) ([]byte, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-	var fullText strings.Builder
-	var lastJSON []byte
-	textDone := false
+	var content strings.Builder
+	var reasoning strings.Builder
+	tcMap := map[int]*map[string]any{} // index → {id,type,function:{name,arguments}}
+	usage := map[string]any{}
+	finish := ""
+	has := false
 
 	for scanner.Scan() {
-		line := scanner.Text()
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if !strings.HasPrefix(line, "data:") {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || !strings.HasPrefix(line, "data:") {
 			continue
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
 			break
 		}
-		var ev map[string]any
-		if err := json.Unmarshal([]byte(data), &ev); err != nil {
-			continue
+		var ev struct {
+			Choices []struct {
+				Delta struct {
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
+					ToolCalls []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+					FinishReason *string `json:"finish_reason"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Usage *map[string]any `json:"usage"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
 		}
-		evType, _ := ev["type"].(string)
-		switch evType {
-		case "response.output_text.delta":
-			if d, ok := ev["delta"].(string); ok {
-				fullText.WriteString(d)
+		if err := json.Unmarshal([]byte(data), &ev); err != nil {
+			continue // 容错跳过坏 chunk
+		}
+		if ev.Error != nil && ev.Error.Message != "" {
+			return nil, fmt.Errorf("流式错误: %s", ev.Error.Message)
+		}
+		has = true
+		for _, ch := range ev.Choices {
+			content.WriteString(ch.Delta.Content)
+			reasoning.WriteString(ch.Delta.ReasoningContent)
+			for _, dtc := range ch.Delta.ToolCalls {
+				m, ok := tcMap[dtc.Index]
+				if !ok {
+					nm := map[string]any{
+						"id":   dtc.ID,
+						"type": "function",
+						"function": map[string]any{
+							"name":      dtc.Function.Name,
+							"arguments": dtc.Function.Arguments,
+						},
+					}
+					tcMap[dtc.Index] = &nm
+					m = &nm
+				} else {
+					if dtc.ID != "" {
+						(*m)["id"] = dtc.ID
+					}
+					fn, _ := (*m)["function"].(map[string]any)
+					if fn == nil {
+						fn = map[string]any{}
+						(*m)["function"] = fn
+					}
+					if dtc.Function.Name != "" {
+						fn["name"] = dtc.Function.Name
+					}
+					prev, _ := fn["arguments"].(string)
+					fn["arguments"] = prev + dtc.Function.Arguments
+				}
 			}
-		case "response.output_text.done":
-			textDone = true
-		case "response.completed":
-			// 完整响应（含 output/tools/usage）——保留作为最终 JSON
-			if resp, ok := ev["response"].(map[string]any); ok {
-				lastJSON, _ = json.Marshal(resp)
+			if ch.Delta.FinishReason != nil && *ch.Delta.FinishReason != "" {
+				finish = *ch.Delta.FinishReason
 			}
-		case "error":
-			b, _ := json.Marshal(ev)
-			return nil, fmt.Errorf("流式错误: %s", string(b))
+		}
+		if ev.Usage != nil {
+			usage = *ev.Usage
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-
-	// 有完整 JSON（response.completed）→ 用它（工具调用/usage 完整）
-	if len(lastJSON) > 0 {
-		return lastJSON, nil
+	if !has {
+		return []byte(`{"choices":[{"message":{"content":"","finish_reason":"stop"}}],"usage":{"total_tokens":0}}`), nil
 	}
-	// 无 completed（截断/兼容）→ 构造最小响应（text + output）
-	if textDone || fullText.Len() > 0 {
-		msg := map[string]any{
-			"id":      "stream",
-			"object":  "response",
-			"status":  "completed",
-			"output": []map[string]any{
-				{"type": "message", "role": "assistant", "content": []map[string]any{{"type": "output_text", "text": fullText.String()}}},
-			},
-			"usage": map[string]any{"total_tokens": 0},
+	msg := map[string]any{"role": "assistant", "content": content.String()}
+	if len(tcMap) > 0 {
+		idxs := make([]int, 0, len(tcMap))
+		for i := range tcMap {
+			idxs = append(idxs, i)
 		}
-		return json.Marshal(msg)
+		sort.Ints(idxs)
+		tcs := make([]map[string]any, 0, len(idxs))
+		for _, i := range idxs {
+			tcs = append(tcs, *tcMap[i])
+		}
+		msg["tool_calls"] = tcs
 	}
-	return []byte(`{"id":"stream","object":"response","status":"completed","output":[],"usage":{"total_tokens":0}}`), nil
-}
-
-// parseModelResponse 解析模型响应
-type ModelResponse struct {
-	Content   string
-	Reasoning string
-	ToolCalls []ToolCall
-	Finish    string
-	Usage     struct {
-		TotalTokens int64
+	out := map[string]any{
+		"choices": []map[string]any{{"message": msg, "finish_reason": finish}},
+		"usage":   usage,
 	}
+	if reasoning.Len() > 0 {
+		out["reasoning_content"] = reasoning.String()
+	}
+	return json.Marshal(out)
 }
