@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 
@@ -272,6 +273,54 @@ func (h *ChatHandlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 	writeChatJSON(w, http.StatusOK, map[string]any{"messages": msgs})
 }
 
+// isValidAnswerBody — 剥离后正文有效性检查（2026-09-05: 防「中文前英文推理剥离」误吞正文——
+// 正文须 ≥8 字且含非标点实词字符——纯标点/省略号视为无效）
+func isValidAnswerBody(s string) bool {
+	if len([]rune(s)) < 8 {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripReasoningFromContent — P4-50 Hermes 模式推理分离（工具轮 <tool_call> 前剥离 + 收尾轮中文前英文剥离）
+// 2026-09-05 从 SendMessageTool/SendMessage 两处内联抽出（消重复）+ isValidAnswerBody 加固
+// 返回: (正文, 思考)
+func stripReasoningFromContent(result *chat.InferResult) (string, string) {
+	msgContent := normalizeChatContent(result.Content)
+	msgReasoning := result.Reasoning
+	if msgReasoning != "" {
+		return msgContent, msgReasoning
+	}
+	if strings.Contains(msgContent, "<tool_call>") {
+		if idx := strings.Index(msgContent, "<tool_call>"); idx > 0 {
+			return "", strings.TrimSpace(msgContent[:idx])
+		}
+		return msgContent, ""
+	}
+	// 收尾轮启发式: 第一个中文字符前的英文推理剥离（仅当后面有中文回答——全英文不剥防误伤）
+	// 加固: 剥离后正文必须有效（isValidAnswerBody）——否则整段保留不当 reasoning（防误吞正文）
+	idx := -1
+	for i, r := range msgContent {
+		if r >= 0x4e00 && r <= 0x9fff {
+			idx = i
+			break
+		}
+	}
+	if idx > 0 {
+		pre := strings.TrimSpace(msgContent[:idx])
+		rest := strings.TrimSpace(msgContent[idx:])
+		if len([]rune(pre)) > 20 && isValidAnswerBody(rest) {
+			return rest, pre
+		}
+	}
+	return msgContent, ""
+}
+
 // SendMessageTool — 发消息（C4b 工具循环——非流式 Infer 带 tools——tool_calls 流转）
 // 决策: llama-server 流式不推 tool_calls（GitHub #5769）——工具对话走非流式循环——
 // SSE 转发最终结果（delta 一次性 + tool 事件）——纯对话仍走 SendMessage（C3 流式）
@@ -330,34 +379,8 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 		toolCallsStr = string(tracesJSON)
 	}
 	// P4-50 Hermes 模式: ornith 推理写进 content（reasoning_content 空——无 tools 字段时训练格式如此）
-	// ①工具轮: <tool_call> 前的推理文本剥离进 reasoning ②收尾轮: 第一个中文前的英文推理剥离（UI 思考折叠——正文干净）
-	msgContent := normalizeChatContent(result.Content)
-	msgReasoning := result.Reasoning
-	if msgReasoning == "" {
-		if strings.Contains(msgContent, "<tool_call>") {
-			if idx := strings.Index(msgContent, "<tool_call>"); idx > 0 {
-				msgReasoning = strings.TrimSpace(msgContent[:idx])
-				msgContent = ""
-			}
-		} else {
-			// 收尾轮启发式: 第一个中文字符前的英文推理剥离（仅当后面有中文回答——全英文不剥防误伤）
-			idx := -1
-			for i, r := range msgContent {
-				if r >= 0x4e00 && r <= 0x9fff {
-					idx = i
-					break
-				}
-			}
-			if idx > 0 {
-				pre := strings.TrimSpace(msgContent[:idx])
-				rest := strings.TrimSpace(msgContent[idx:])
-				if len([]rune(pre)) > 20 { // 推理足够长才剥离（防误剥短句）
-					msgReasoning = pre
-					msgContent = rest
-				}
-			}
-		}
-	}
+	// 2026-09-05 抽公共 stripReasoningFromContent（两路径同构消重复）+ isValidAnswerBody 防误吞正文
+	msgContent, msgReasoning := stripReasoningFromContent(result)
 	assistantMsg := &chat.Message{
 		SessionID: id, Role: "assistant", Content: msgContent,
 		Reasoning: msgReasoning, Model: se.Model,
@@ -599,7 +622,8 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 
 	// 工具循环（最多 10 轮——每轮流式——tool_calls 执行后追加结果再流式）
 	// P4-40 对话工具工作目录=项目根（模型查项目用 glob/grep/read 相对路径——之前 /tmp/zerg-chat/tools 导致路径全被 validatePath 拒——"工具已用尽"假象）
-	ec := agent.NewExecContext("<repo>")
+	// 2026-09-05 统一常量 ChatToolsWorkDir（与非流式路径共用——消除双循环目录分叉）
+	ec := agent.NewExecContext(chat.ChatToolsWorkDir)
 	ec.AgentName = "chat"
 	var traces []chat.ToolTrace
 	var result *chat.InferResult
@@ -626,12 +650,17 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		}
 		// 流式调网关（带工具）
 		var streamErr error
-		// P4-50 每轮推理限时 120s（模型单轮生成不收敛——无限生成——墙钟在轮间查不到——轮内也限）
-		roundCtx, roundCancel := context.WithTimeout(r.Context(), 120*time.Second)
-		result, streamErr = h.infer.InferStream(roundCtx, se.Model, sysPrompt, cur, func(deltaType, text string) {
+		// 2026-09-05 修复: 重试重复输出——deltaOnce 标记首轮是否已流出 token——
+		// 已流出后再重试会从头重放（用户看到断片+重说）——只在收到 delta 前允许重试
+		var deltaOnce bool
+		deltaSink := func(deltaType, text string) {
+			deltaOnce = true
 			payload, _ := json.Marshal(map[string]any{"type": deltaType, "text": text})
 			writeSSE("delta", string(payload))
-		}, tools)
+		}
+		// P4-50 每轮推理限时 120s（模型单轮生成不收敛——无限生成——墙钟在轮间查不到——轮内也限）
+		roundCtx, roundCancel := context.WithTimeout(r.Context(), 120*time.Second)
+		result, streamErr = h.infer.InferStream(roundCtx, se.Model, sysPrompt, cur, deltaSink, tools)
 		roundCancel()
 		if streamErr != nil && (strings.Contains(streamErr.Error(), "context deadline") || strings.Contains(streamErr.Error(), "超时")) {
 			// 单轮超时——模型生成不收敛——直接收尾（提示用已有信息回答——不再等）
@@ -641,8 +670,9 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 			result = &chat.InferResult{} // 空结果——940 收尾轮会处理
 			break
 		}
-		if streamErr != nil {
+		if streamErr != nil && !deltaOnce {
 			// P4-48 故障自愈: X3 单槽排队超时（502/500——基础设施瞬时故障）——重试 2 次（间隔 2s）——3 次失败才回滚
+			// 2026-09-05: 只在未流出任何 delta 时重试（deltaOnce=true 时重试必重复输出——直接报错回滚）
 			retried := false
 			for attempt := 1; attempt <= 2; attempt++ {
 				if !strings.Contains(streamErr.Error(), "502") && !strings.Contains(streamErr.Error(), "500") {
@@ -650,10 +680,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 				}
 				time.Sleep(2 * time.Second)
 				writeSSE("retry", fmt.Sprintf("{\"attempt\":%d,\"reason\":\"X3 瞬时故障\"}", attempt))
-				result, streamErr = h.infer.InferStream(r.Context(), se.Model, sysPrompt, cur, func(deltaType, text string) {
-					payload, _ := json.Marshal(map[string]any{"type": deltaType, "text": text})
-					writeSSE("delta", string(payload))
-				}, tools)
+				result, streamErr = h.infer.InferStream(r.Context(), se.Model, sysPrompt, cur, deltaSink, tools)
 				if streamErr == nil {
 					retried = true
 					break
@@ -669,6 +696,11 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 			if retried {
 				writeSSE("retry_done", "{}")
 			}
+		} else if streamErr != nil && deltaOnce {
+			// 已流出部分 token 后才失败——无法安全重试（会重复）——发中断提示+按现有内容收尾
+			writeSSE("loop_hint", `{"kind":"stream_broken_midway"}`)
+			result = &chat.InferResult{}
+			break
 		}
 		if len(result.ToolCalls) == 0 {
 			// P4-47/48 坏工具调用检测: content 含 <tool_call> 但解析失败——不当正文——提示模型修正格式重试
@@ -1000,34 +1032,8 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		toolCallsStr = string(tracesJSON)
 	}
 	// P4-50 Hermes 模式: ornith 推理写进 content（reasoning_content 空——无 tools 字段时训练格式如此）
-	// ①工具轮: <tool_call> 前的推理文本剥离进 reasoning ②收尾轮: 第一个中文前的英文推理剥离（UI 思考折叠——正文干净）
-	msgContent := normalizeChatContent(result.Content)
-	msgReasoning := result.Reasoning
-	if msgReasoning == "" {
-		if strings.Contains(msgContent, "<tool_call>") {
-			if idx := strings.Index(msgContent, "<tool_call>"); idx > 0 {
-				msgReasoning = strings.TrimSpace(msgContent[:idx])
-				msgContent = ""
-			}
-		} else {
-			// 收尾轮启发式: 第一个中文字符前的英文推理剥离（仅当后面有中文回答——全英文不剥防误伤）
-			idx := -1
-			for i, r := range msgContent {
-				if r >= 0x4e00 && r <= 0x9fff {
-					idx = i
-					break
-				}
-			}
-			if idx > 0 {
-				pre := strings.TrimSpace(msgContent[:idx])
-				rest := strings.TrimSpace(msgContent[idx:])
-				if len([]rune(pre)) > 20 { // 推理足够长才剥离（防误剥短句）
-					msgReasoning = pre
-					msgContent = rest
-				}
-			}
-		}
-	}
+	// 2026-09-05 抽公共 stripReasoningFromContent（两路径同构消重复）+ isValidAnswerBody 防误吞正文
+	msgContent, msgReasoning := stripReasoningFromContent(result)
 	assistantMsg := &chat.Message{
 		SessionID: id, Role: "assistant", Content: msgContent,
 		Reasoning: msgReasoning, Model: se.Model,

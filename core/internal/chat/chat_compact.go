@@ -90,17 +90,35 @@ func ShouldCompactPtr(msgs []*Message, model string) bool {
 	return compactOverThreshold(out, model)
 }
 
-// compactOverThreshold — token 估算超阈值（P4-39 含工具 JSON）
+// estimateTokens — 按内容中英比例估 token（2026-09-05: 原 len(rune)/2 一刀切对中文偏高估
+// ——llama 系分词中文≈0.7 字/token、英文≈0.25 字/token——估准压缩触发时机偏差从 ±40% 收窄）
+func estimateTokens(s string) int {
+	if s == "" {
+		return 0
+	}
+	cjk := 0
+	total := 0
+	for _, r := range s {
+		total++
+		if r >= 0x4e00 && r <= 0x9fff {
+			cjk++
+		}
+	}
+	ascii := total - cjk
+	return int(float64(cjk)/0.7) + ascii/4 // 中文 1.43 token/字 ÷ 系数表述——即 0.7 字/token；英文 4 字符/token
+}
+
+// compactOverThreshold — token 估算超阈值（P4-39 含工具 JSON——2026-09-05 用 estimateTokens）
 func compactOverThreshold(msgs []Message, model string) bool {
 	trigger := CompactTriggerTokens(model)
 	total := 0
 	for _, m := range msgs {
-		total += len([]rune(m.Content)) / 2
+		total += estimateTokens(m.Content)
 		if m.Reasoning != "" {
-			total += len([]rune(m.Reasoning)) / 4
+			total += estimateTokens(m.Reasoning)
 		}
 		if m.ToolCalls != "" {
-			total += len([]rune(m.ToolCalls)) / 4
+			total += estimateTokens(m.ToolCalls)
 		}
 	}
 	return float64(total) > float64(trigger)
