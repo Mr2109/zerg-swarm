@@ -19,6 +19,10 @@ import (
 // MaxToolRounds — 工具循环最大轮数（P4-37 3→10——多步任务需多轮工具——Hermes agent loop 无硬上限）
 const MaxToolRounds = 10
 
+// ChatToolsWorkDir — 对话工具工作目录（唯一常量——2026-09-05 统一: 非流式 /tmp/zerg-chat/tools
+// 与流式项目根曾分叉致路径行为不一致——两条循环路径共用此值）
+const ChatToolsWorkDir = "<repo>"
+
 // ToolTrace — 工具调用记录（落库展示）
 type ToolTrace struct {
 	Round    int    `json:"round"`
@@ -54,9 +58,15 @@ func RunToolLoop(ctx context.Context, infer *ChatInfer, model, sysPrompt string,
 	if err := os.MkdirAll(toolsWorkDir, 0o755); err != nil { // 工具工作区（bash/read 等需要真实目录）
 		return nil, nil, fmt.Errorf("chat: 工具工作区创建失败 %s: %w", toolsWorkDir, err)
 	}
-	ec := agent.NewExecContext(toolsWorkDir)
+	ec := agent.NewExecContext(ChatToolsWorkDir)
 	ec.AgentName = "chat"
 	tools := BuildToolsParam()
+
+	// 2026-09-05 对齐流式路径: LoopGuard 指纹防循环 + 空参数/坏格式计数（此前非流式路径裸奔——
+	// 双循环漂移——流式有五重防护这里全无——现在同一行为基线）
+	guard := NewLoopGuard(DefaultLoopConfig())
+	emptyArgsStreak := 0
+	badFormatStreak := 0
 
 	for round := 1; round <= MaxToolRounds; round++ {
 		// 调网关（带工具）
@@ -65,6 +75,22 @@ func RunToolLoop(ctx context.Context, infer *ChatInfer, model, sysPrompt string,
 			return nil, traces, err
 		}
 		if len(res.ToolCalls) == 0 {
+			// 坏格式检测（对齐流式 P4-48: content 含 <tool_call> 但没解析出调用——提示修正而非当正文）
+			if strings.Contains(res.Content, "<tool_call>") {
+				badFormatStreak++
+				if badFormatStreak >= 3 {
+					// 连续 3 次——收尾（用已有信息整理回答）
+					res2, err := infer.Infer(ctx, model, sysPrompt, append(cur,
+						map[string]any{"role": "user", "content": "（你的工具调用格式一直无效。请停止调用工具——把已知信息整理成最终回答——信息不足就说明没找到——绝不编造。）"}))
+					if err != nil {
+						return res, traces, nil
+					}
+					return res2, traces, nil
+				}
+				cur = append(cur,
+					map[string]any{"role": "user", "content": "（工具调用格式无效——<tool_call> 内必须是一个 JSON 对象 {\"name\": \"工具名\", \"arguments\": {...}}——请重新输出格式正确的工具调用）"})
+				continue
+			}
 			// 无工具调用——最终回复
 			return res, traces, nil
 		}
@@ -73,6 +99,35 @@ func RunToolLoop(ctx context.Context, infer *ChatInfer, model, sysPrompt string,
 			// P4-50 参数统一解包（模型 Hermes 风格嵌套——bash arguments 双层——见 NormalizeToolArgs）
 			NormalizeToolArgs(&tc)
 			argsJSON, _ := json.Marshal(tc.Args)
+			// 空参数计数（对齐流式 P4-44）
+			ajs := string(argsJSON)
+			if ajs == "" || ajs == "{}" || ajs == "null" {
+				emptyArgsStreak++
+			} else {
+				emptyArgsStreak = 0
+			}
+			// P4-38 指纹记录 + 检测（对齐流式——重复/交替→引导换招→收尾）
+			guard.Record(tc.Name, tc.Args)
+			if ok, reason := guard.Detect(); ok {
+				guide, upgrade := guard.BuildGuide(reason, toolNameListOf(tools))
+				if upgrade {
+					res2, err := infer.Infer(ctx, model, sysPrompt, append(cur,
+						map[string]any{"role": "user", "content": guide}))
+					if err != nil {
+						return res, traces, nil
+					}
+					return res2, traces, nil
+				}
+				cur = append(cur, map[string]any{"role": "user", "content": guide})
+			}
+			if emptyArgsStreak >= 3 {
+				res2, err := infer.Infer(ctx, model, sysPrompt, append(cur,
+					map[string]any{"role": "user", "content": "（连续多次空参数调用。请把到目前为止获得的信息整理成最终回答——信息不足就说明没找到——绝不编造。）"}))
+				if err != nil {
+					return res, traces, nil
+				}
+				return res2, traces, nil
+			}
 			var content, dur string
 			var execErr error
 			// P4-50 隐藏工具拦截（3 次 exec 失败后——本对话不再执行——除非 tool_search 类查询器）
@@ -133,6 +188,19 @@ func RunToolLoop(ctx context.Context, infer *ChatInfer, model, sysPrompt string,
 		return nil, traces, err
 	}
 	return res, traces, nil
+}
+
+// toolNameListOf — tools 参数 → 工具名列表（LoopGuard 引导用——chat 包内版——api 包 toolNameList 同构）
+func toolNameListOf(tools []map[string]any) []string {
+	var names []string
+	for _, t := range tools {
+		if fn, ok := t["function"].(map[string]any); ok {
+			if nm, ok := fn["name"].(string); ok {
+				names = append(names, nm)
+			}
+		}
+	}
+	return names
 }
 
 // truncateArgs — 截断工具结果（对话展示——防巨型输出）

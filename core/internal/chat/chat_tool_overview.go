@@ -38,31 +38,19 @@ func latestVersionDir() string {
 	if len(dirs) == 0 {
 		return ""
 	}
-	best := ""
-	bestVer := []int{-1}
+	// 候选排序（版本号降序）
+	sort.Slice(dirs, func(i, j int) bool {
+		vi, vj := parseVersion(filepath.Base(dirs[i])), parseVersion(filepath.Base(dirs[j]))
+		return compareVersion(vi, vj) > 0
+	})
+	// 守卫: 版本目录文档数 <3 = 空壳（新版本刚建档未填充——2026-09-05 实测 v2.6 两文件导致
+	// 使用指南/INDEX 断链）——回退到第一个文档齐全的版本
 	for _, d := range dirs {
-		base := filepath.Base(d)
-		ver := parseVersion(base)
-		if len(ver) > 0 && compareVersion(ver, bestVer) > 0 {
-			best, bestVer = d, ver
+		if len(globMd(d)) >= 3 {
+			return d
 		}
 	}
-	if best == "" {
-		// fallback: 修改时间最新
-		var newest time.Time
-		for _, d := range dirs {
-			if fi, err := os.Stat(d); err == nil && fi.ModTime().After(newest) {
-				newest, best = fi.ModTime(), d
-			}
-		}
-	}
-	if best == "" {
-		// fallback: 字典序最大
-		sorted := append([]string{}, dirs...)
-		sort.Strings(sorted)
-		best = sorted[len(sorted)-1]
-	}
-	return best
+	return dirs[0]
 }
 
 // parseVersion — "v2.5.7" → [2,5,7]（容忍 v2.5.7-xxx / 2.5.7）
