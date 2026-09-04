@@ -417,7 +417,16 @@ func (s *MasterScheduler) runTask(task *Task) {
 		if verifyDir == "" {
 			verifyDir = workdir // 外部任务（无 worktree）用工作目录
 		}
-		if vres := VerifyTaskOutput(verifyDir, reportPath, task.Description); !vres.Pass {
+		// 2026-09-05 TaskContract: 有契约的任务按契约逐条核验（机器判据——治本）——无契约走旧启发式
+		var vres *VerifyResult
+		if contract := ParseContract(task.Description); contract != nil {
+			vres = contract.Verify(worktreeDir, workdir)
+			log.Printf("📋 总调度: 任务 %s 按契约验证（%d 文件/%d 命令/%d diff）",
+				task.ID, len(contract.MustWriteFiles), len(contract.MustPassCmds), len(contract.MustDiffPaths))
+		} else {
+			vres = VerifyTaskOutput(verifyDir, reportPath, task.Description)
+		}
+		if !vres.Pass {
 			task.Status = "failed"
 			task.FailReason = "确定性验证不过: " + strings.Join(vres.Failures, "; ")
 			log.Printf("❌ 总调度: 任务 %s 确定性验证不过（假完成拦截）: %s", task.ID, strings.Join(vres.Failures, "; "))
