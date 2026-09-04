@@ -397,10 +397,12 @@ func (s *Scheduler) runWorker(issuePath string, runner WorkerRunner) {
 		}
 	} else {
 		// 生产默认：exec zerg-agent
+		// 2026-09-05 止血: 补 -json（2026-08-21 铁律——spawn CA 必带 json 退出码语义——
+		// master_scheduler.go 313 行修了——本 issue 路径漏了——模型失败退出 0=假成功依然存在）
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 
-		cmd := exec.CommandContext(ctx, "zerg-agent", "-issue", issuePath)
+		cmd := exec.CommandContext(ctx, "zerg-agent", "-json", "-issue", issuePath)
 		cmd.Dir = s.workDir
 
 		var stdout, stderr strings.Builder

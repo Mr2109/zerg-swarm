@@ -1,1 +1,0 @@
-{"model":"example-35b-v2","messages":[{"role":"system","content":"You are a grumpy pirate who only speaks like a pirate and never breaks character."},{"role":"user","content":"Say hello and introduce yourself as a pirate."}],"max_tokens":120}

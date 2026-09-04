@@ -9,6 +9,7 @@ import (
 	"log"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -71,16 +72,40 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 		log.Printf("⚠️ 复查 %s 找不到执行任务 %s——复查结果丢弃", reviewTask.ID, reviewTask.RefTaskID)
 		return
 	}
-	// 读复查结论（复查报告——找复查任务工作区里的 internal-task-report.md）
-	conclusion := "pass" // 默认通过（复查任务 done = 复查模型认为通过）
+	// 读复查结论（复查报告——2026-09-05 治本: 缺失=打回 不默认通过——
+	// 原逻辑: 复查模型没产出报告→pass——复查模型失败=执行任务自动成功（假完成绿通道——实测 internal-health-check 案例走通）
+	// 现逻辑: 报告缺失/过短/无结论 → rework（打回重做）——复查是闸门不是橡皮章
+	conclusion := "rework" // 默认打回（复查没给出明确通过证据=不通过）
 	reportPath := FindTaskReport(reviewTask.Workdir)
+	// 补认 review-report.md（复查任务约定文件名——原只读 internal-task-report.md——读写路径错位）
+	if reportPath == "" {
+		for _, cand := range []string{
+			filepath.Join(filepath.Dir(reviewTask.Workdir), "review-report.md"),
+			filepath.Join(reviewTask.Workdir, "review-report.md"),
+		} {
+			if _, err := os.Stat(cand); err == nil {
+				reportPath = cand
+				break
+			}
+		}
+	}
 	if reportPath != "" {
 		if content, err := os.ReadFile(reportPath); err == nil {
 			low := strings.ToLower(string(content))
-			if strings.Contains(low, "打回") || strings.Contains(low, "不通过") || strings.Contains(low, "rework") || strings.Contains(low, "fail") {
+			// 报告过短（<100 字）= 复查模型敷衍——打回（防 26 字空报告蒙混——实测案例）
+			if len(content) < 100 {
+				log.Printf("🔁 总调度: 复查 %s 报告过短（%d 字节——疑似敷衍）——打回", reviewTask.ID, len(content))
+			} else if strings.Contains(low, "打回") || strings.Contains(low, "不通过") || strings.Contains(low, "rework") {
+				// 打回关键词（去掉裸 "fail"——报告里提 "测试未 fail" 等反述误判）
 				conclusion = "rework"
+			} else if strings.Contains(low, "通过") || strings.Contains(low, "pass") {
+				// 明确含通过语义词才 pass
+				conclusion = "pass"
 			}
 		}
+	}
+	if conclusion == "rework" && reportPath == "" {
+		log.Printf("🔁 总调度: 复查 %s 无报告——打回（复查失败≠执行成功——2026-09-05 治假完成绿通道）", reviewTask.ID)
 	}
 	if conclusion == "rework" {
 		// v2.5.5 阶段3（设计-20260820）: Replan 循环——打回 → 派重做任务（同模型 A——带复查意见）

@@ -108,9 +108,9 @@ func TestHandleReviewDone_Pass(t *testing.T) {
 		Model:     "gemma-4-26B",
 		Workdir:   "/tmp/zerg-test-flow",
 	}
-	// 复查报告（通过——无打回关键词）
+	// 复查报告（通过——无打回关键词——≥100 字节过新守卫——2026-09-05）
 	_ = os.MkdirAll("/tmp/zerg-test-flow", 0o755)
-	_ = os.WriteFile(filepath.Join("/tmp/zerg-test-flow", "internal-task-report.md"), []byte("复查通过——真实性OK"), 0o644)
+	_ = os.WriteFile(filepath.Join("/tmp/zerg-test-flow", "internal-task-report.md"), []byte("## 复查结论\n\n结论: 通过。\n\n理由: 报告内容与实际改动核对一致，真实性检查通过，完成度满足任务要求，未发现虚构或遗漏，质量符合预期。\n"), 0o644)
 	s.handleReviewDoneLocked(reviewTask)
 	if execTask.Status != "done" {
 		t.Fatalf("复查通过后执行任务应 done: %s", execTask.Status)
