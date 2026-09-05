@@ -21,12 +21,14 @@ import (
 
 // ExecContext — 工具执行上下文
 type ExecContext struct {
-	WorkDir    string        // 工作区根目录
-	Timeout    time.Duration // 命令超时（默认 30s）
-	OutputMax  int           // 输出最大字符数（默认 2000）
-	AgentName  string        // agent 名称（用于 gate 日志）
+	WorkDir   string        // 工作区根目录
+	Timeout   time.Duration // 命令超时（默认 30s）
+	OutputMax int           // 输出最大字符数（默认 2000）
+	AgentName string        // agent 名称（用于 gate 日志）
 	// v2.5.5 P2: 父 agent 引用（spawn_agent 子 agent 委托——2026-08-21 Mr2109）
 	Parent *Agent
+	// S10: 白名单目录（任务目录——结晶模式报告写入——validatePath 例外）
+	ExtraAllowDirs []string
 }
 
 // NewExecContext — 创建执行上下文
@@ -34,13 +36,13 @@ func NewExecContext(workDir string) *ExecContext {
 	return &ExecContext{
 		WorkDir:   workDir,
 		Timeout:   120 * time.Second, // v2.5：30s→120s（评测/长命令——Codex bash 对齐）
-		OutputMax: 16000,            // v2.5：2000→16000（读长文件——Codex 对齐——模型需完整代码）
+		OutputMax: 16000,             // v2.5：2000→16000（读长文件——Codex 对齐——模型需完整代码）
 	}
 }
 
 // 安全校验
 
-// validatePath — 校验路径必须在 WorkDir 内
+// validatePath — 校验路径必须在 WorkDir 内（S10: 白名单目录 ExtraAllowDirs 例外——任务目录报告写入）
 func (ec *ExecContext) validatePath(relPath string) (string, error) {
 	// 清理路径（去除 .. 等）
 	cleaned := filepath.Clean(relPath)
@@ -61,6 +63,16 @@ func (ec *ExecContext) validatePath(relPath string) (string, error) {
 
 	// 路径必须在 WorkDir 内（防止逃逸）
 	if !strings.HasPrefix(absPath, absWorkDir+string(os.PathSeparator)) && absPath != absWorkDir {
+		// S10 白名单: 任务目录（ZERG_TASK_DIR——报告写入场景——结晶模式报告路径冲突治本）
+		for _, dir := range ec.ExtraAllowDirs {
+			absDir, err := filepath.Abs(dir)
+			if err != nil {
+				continue
+			}
+			if strings.HasPrefix(absPath, absDir+string(os.PathSeparator)) || absPath == absDir {
+				return absPath, nil
+			}
+		}
 		return "", fmt.Errorf("路径 %q 不在工作区 %q 内，拒绝访问", relPath, ec.WorkDir)
 	}
 

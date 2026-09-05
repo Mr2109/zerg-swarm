@@ -279,6 +279,10 @@ func RunSubtaskLoop(ctx context.Context, a *Agent, tools []ToolDef, logger *Logg
 	if cfg.TaskDir == "" {
 		cfg.TaskDir = spec.TaskDir
 	}
+	// S10: 任务目录加入沙盒白名单（报告写入——治"路径不在工作区"拒绝）
+	if a.execContext != nil && cfg.TaskDir != "" {
+		a.execContext.ExtraAllowDirs = append(a.execContext.ExtraAllowDirs, cfg.TaskDir)
+	}
 	sched := subtask.NewScheduler(cfg, subtask.ModelCall(call), subtask.PhaseRunner(runner), nil)
 
 	// S6 打回续作: 任务目录里有断点数据 → 恢复（跳过已 done 阶段+复查意见注入首个执行阶段）
