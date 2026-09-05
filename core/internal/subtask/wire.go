@@ -14,6 +14,7 @@ import (
 type TaskSpec struct {
 	ID            string
 	Description   string
+	TaskDir       string // S8: 断点数据+UI stages 落任务目录
 	PlannerModel  string // 拆解模型（空=DS4 默认）
 	ExecutorModel string // 执行模型
 	WorktreeDir   string
@@ -45,6 +46,7 @@ func BuildConfig(spec TaskSpec) Config {
 	return Config{
 		WorktreeDir:   spec.WorktreeDir,
 		Workdir:       spec.Workdir,
+		TaskDir:       spec.TaskDir,
 		PlannerModel:  planner,
 		ExecutorModel: executor,
 	}
