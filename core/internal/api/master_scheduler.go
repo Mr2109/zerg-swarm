@@ -53,6 +53,7 @@ type Task struct {
 	Flow        string       `json:"flow,omitempty"` // v2.5.6: 执行流程（"zerg"=程序定量驱动新流程——空=旧 CA 流程）
 	Machine     string       `json:"machine,omitempty"` // v2.5.6: 执行设备（模型所在机器——handlers 按 modelMachineMap 推算——UI 详情显示）
 	SkillKey    string       `json:"skill_key,omitempty"` // v2.5.6: skill 归属 key（内部任务=def.ID——独属 skill；空=外部任务按类型共享）
+	ExtraEnv    []string     `json:"extra_env,omitempty"` // S6: 任务级 env 透传（rework 续作——ZERG_TASK_DIR/ZERG_REVIEW_NOTE）
 	cmd         *exec.Cmd    // 运行中的 CA 进程（打断发信号用——非导出）
 }
 
@@ -346,6 +347,8 @@ func (s *MasterScheduler) runTask(task *Task) {
 		args = append(args, "-subtask")
 		baseEnv = append(baseEnv, "ZERG_HERMES_TOOLS=1") // Hermes 协议转正（C3 实测参数全对）
 	}
+	// S6: 任务级 env 透传（rework 续作断点数据）
+	baseEnv = append(baseEnv, task.ExtraEnv...)
 	cmd.Env = append(baseEnv, "ZERG_LOG_DIR=/tmp/zerg-ca-logs")
 	// v2.5.5 任务目录唯一化（2026-08-20 设计）: 注入任务目录——CA 写报告到任务目录（不共享）
 	cmd.Env = append(cmd.Env, "ZERG_TASK_DIR="+taskDir)
