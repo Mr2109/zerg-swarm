@@ -10,8 +10,8 @@ import (
 
 // ExtraTool — 扩展工具（对话层注册——CA/对话通用）
 type ExtraTool struct {
-	Name string                                     // 工具名
-	Desc string                                     // 描述（工具列表/搜索用）
+	Name string                                                    // 工具名
+	Desc string                                                    // 描述（工具列表/搜索用）
 	Fn   func(args map[string]any, workDir string) (string, error) // 执行器
 }
 

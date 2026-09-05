@@ -188,10 +188,10 @@ func (h *ControlHandlers) CoreStatusHandler(w http.ResponseWriter, r *http.Reque
 	}
 	pid := os.Getpid()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"ok":           true,
-		"pid":          pid,
-		"started_at":   time.Now().Format(time.RFC3339),
-		"version":      "zerg-core v2",
+		"ok":            true,
+		"pid":           pid,
+		"started_at":    time.Now().Format(time.RFC3339),
+		"version":       "zerg-core v2",
 		"local_backend": h.LocalBack.State(),
 	})
 }

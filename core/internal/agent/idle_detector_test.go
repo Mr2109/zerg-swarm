@@ -11,7 +11,7 @@ import (
 func TestIdleDetector_Trigger(t *testing.T) {
 	dir := t.TempDir()
 	d := NewIdleDetector(dir)
-	d.SetExternalQueue(func() int { return 0 })     // 外部任务空
+	d.SetExternalQueue(func() int { return 0 })    // 外部任务空
 	d.SetResourceIdle(func() bool { return true }) // 资源空闲
 	d.enabled = true
 
@@ -29,7 +29,7 @@ func TestIdleDetector_Trigger(t *testing.T) {
 func TestIdleDetector_ExternalBusy(t *testing.T) {
 	dir := t.TempDir()
 	d := NewIdleDetector(dir)
-	d.SetExternalQueue(func() int { return 2 })    // 外部任务在跑
+	d.SetExternalQueue(func() int { return 2 }) // 外部任务在跑
 	d.SetResourceIdle(func() bool { return true })
 	d.enabled = true
 

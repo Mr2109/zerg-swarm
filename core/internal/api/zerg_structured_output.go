@@ -24,8 +24,8 @@ type PlanItem struct {
 
 // SelectOutput 选定轮输出（固定格式）
 type SelectOutput struct {
-	Selected     string   `json:"selected"`     // 选哪个（plans 里的 id）
-	Reason       string   `json:"reason"`       // 理由
+	Selected     string   `json:"selected"`      // 选哪个（plans 里的 id）
+	Reason       string   `json:"reason"`        // 理由
 	RefinedSteps []string `json:"refined_steps"` // 细化步骤（小任务列表）
 }
 

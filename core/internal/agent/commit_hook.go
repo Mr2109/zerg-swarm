@@ -35,7 +35,7 @@ func (r *realGitRunner) run(repoDir string, args ...string) (string, error) {
 
 // commitHookState — 跟踪每个 issue 的 lastCommittedState（防重复 commit）
 type commitHookState struct {
-	mu              sync.Mutex
+	mu                 sync.Mutex
 	lastCommittedState map[string]string // issuePath → lastCommittedState
 }
 

@@ -19,7 +19,7 @@ var DefaultTools = []ToolDef{
 	toolScreenshot(), // v2.5.5: 虫族看图工具（截图+OCR——开发调试）
 	toolApplyPatch(), // v2.5.5 P0: apply_patch 精确补丁（Codex 借鉴——防改错——Mr2109 2026-08-21）
 	toolSpawnAgent(), // v2.5.5 P2: spawn_agent 子 agent 委托（agent 间通信——2026-08-21 接入——孤儿工具修复）
-	toolTodo(), // v2.5.5 P2: todo 任务清单（Claude Code 借鉴——复杂任务拆解防遗漏——2026-08-21）
+	toolTodo(),       // v2.5.5 P2: todo 任务清单（Claude Code 借鉴——复杂任务拆解防遗漏——2026-08-21）
 }
 
 // pluginTools — 插件动态工具（v2.5.5 P2 可逆副作用——2026-08-21 Mr2109）
@@ -421,8 +421,8 @@ func toolSpawnAgent() ToolDef {
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"prompt": map[string]any{"type": "string", "description": "子任务完整提示词（自包含——子 agent 独立执行）"},
-					"type":   map[string]any{"type": "string", "description": "子 agent 类型: explore/plan/general（默认 general）"},
+					"prompt":  map[string]any{"type": "string", "description": "子任务完整提示词（自包含——子 agent 独立执行）"},
+					"type":    map[string]any{"type": "string", "description": "子 agent 类型: explore/plan/general（默认 general）"},
 					"machine": map[string]any{"type": "string", "description": "指定机器（双机协作）: x3/local/mini1/mini2（不传=默认调度）"},
 				},
 				"required": []string{"prompt"},
@@ -450,10 +450,10 @@ func toolTodo() ToolDef {
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"action": map[string]any{"type": "string", "description": "操作: create/update/list（默认 list）"},
-					"items":  map[string]any{"type": "array", "description": "create 时待办数组（[{content, status}]）"},
+					"action":  map[string]any{"type": "string", "description": "操作: create/update/list（默认 list）"},
+					"items":   map[string]any{"type": "array", "description": "create 时待办数组（[{content, status}]）"},
 					"item_id": map[string]any{"type": "integer", "description": "update 时要更新的项序号"},
-					"status": map[string]any{"type": "string", "description": "update 时新状态: pending/in_progress/completed/cancelled"},
+					"status":  map[string]any{"type": "string", "description": "update 时新状态: pending/in_progress/completed/cancelled"},
 				},
 				"required": []string{"action"},
 			},

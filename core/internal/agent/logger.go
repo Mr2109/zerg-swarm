@@ -49,48 +49,48 @@ const (
 
 // EventEntry - events.jsonl 每行一条
 type EventEntry struct {
-	Seq       int64     
-	TaskID    string    
-	Type      string    
-	Level     string    
-	Action    string    
-	ToolName  string    
-	Prompt    string    
-	Args      any       
-	Result    string    
-	Error     string    
-	Step      int       
-	Duration  string    
-	Timestamp time.Time 
+	Seq       int64
+	TaskID    string
+	Type      string
+	Level     string
+	Action    string
+	ToolName  string
+	Prompt    string
+	Args      any
+	Result    string
+	Error     string
+	Step      int
+	Duration  string
+	Timestamp time.Time
 }
 
 // AuditEntry - audit.jsonl 每行一条（M3 安全对齐）
 type AuditEntry struct {
-	TaskID    string    
-	ToolName  string    
-	Args      any       
-	Prompt    string    
-	Decision  string    
-	Result    string    
-	Error     string    
-	Agent     string    
-	Duration  string    
-	Timestamp time.Time 
+	TaskID    string
+	ToolName  string
+	Args      any
+	Prompt    string
+	Decision  string
+	Result    string
+	Error     string
+	Agent     string
+	Duration  string
+	Timestamp time.Time
 }
 
 // TranscriptEntry - transcript.jsonl 每行一条（M4 蒸馏数据源）
 type TranscriptEntry struct {
-	TaskID     string    
-	Step       int       
-	Role       string    
-	Content    string    
-	ToolName   string    
-	ToolCallID string    
-	Args       any       
-	Result     string    
-	Error      string    
-	Duration   string    
-	Timestamp  time.Time 
+	TaskID     string
+	Step       int
+	Role       string
+	Content    string
+	ToolName   string
+	ToolCallID string
+	Args       any
+	Result     string
+	Error      string
+	Duration   string
+	Timestamp  time.Time
 }
 
 // Logger - 虫族日志系统
