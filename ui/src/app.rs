@@ -826,6 +826,30 @@ impl ZergApp {
                 }
                 ui.add_space(8.0);
                 ui.separator();
+                // S8: 结晶阶段进度卡（subtask_mode=true 时 stages[] 渲染——阶段/目标/状态）
+                if detail.get("subtask_mode").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    if let Some(stages) = detail.get("stages").and_then(|v| v.as_array()) {
+                        ui.label("🧩 结晶阶段");
+                        for s in stages {
+                            let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                            let goal = s.get("goal").and_then(|v| v.as_str()).unwrap_or("");
+                            let status = s.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
+                            let (icon, color) = match status {
+                                "done" => ("✅", egui::Color32::from_rgb(76, 175, 80)),
+                                "partial" => ("🟡", egui::Color32::from_rgb(255, 193, 7)),
+                                "blocked" => ("⛔", egui::Color32::from_rgb(244, 67, 54)),
+                                "running" => ("🔄", egui::Color32::from_rgb(33, 150, 243)),
+                                _ => ("⏳", egui::Color32::GRAY),
+                            };
+                            ui.horizontal(|ui| {
+                                ui.colored_label(color, format!("{} {}", icon, id));
+                                ui.weak(goal);
+                            });
+                        }
+                        ui.add_space(8.0);
+                        ui.separator();
+                    }
+                }
                 // 执行报告（直接展开——外层统一滚——不嵌套 ScrollArea）
                 if let Some(rep) = detail.get("exec_report").and_then(|r| r.as_str()) {
                     ui.label("📄 执行报告");
