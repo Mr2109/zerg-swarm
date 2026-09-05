@@ -18,12 +18,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"zerg/core/internal/agent"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+	"zerg/core/internal/agent"
 )
 
 // ChatToolResult — 执行结果
@@ -36,9 +36,12 @@ type ChatToolResult struct {
 // workDir: 项目根（相对路径解析基准）
 func ExecuteChatTool(name string, args map[string]any, workDir string) ChatToolResult {
 	// P4-49 统一工具计数（对话调用计入——成功执行才计——与 CA 同一计数器）
+	// 2026-09-06: 计数+事件流双写(事件=未来账本源)
+	start := time.Now()
 	res := executeChatToolInner(name, args, workDir)
 	if res.Error == "" && name != "" && name[0] != '_' {
 		agent.RecordToolUse(name)
+		agent.AppendToolEvent(name, time.Since(start).Milliseconds())
 	}
 	return res
 }
@@ -1025,13 +1028,13 @@ func mediaInfo(args map[string]any, workDir string) (string, error) {
 	}
 	var info struct {
 		Streams []struct {
-			CodecType string `json:"codec_type"`
-			CodecName string `json:"codec_name"`
-			Width     int    `json:"width"`
-			Height    int    `json:"height"`
-			Duration  string `json:"duration"`
+			CodecType  string `json:"codec_type"`
+			CodecName  string `json:"codec_name"`
+			Width      int    `json:"width"`
+			Height     int    `json:"height"`
+			Duration   string `json:"duration"`
 			SampleRate string `json:"sample_rate"`
-			Channels  int    `json:"channels"`
+			Channels   int    `json:"channels"`
 		} `json:"streams"`
 		Format struct {
 			Duration string `json:"duration"`
@@ -1426,9 +1429,6 @@ func min(a, b int) int {
 	return b
 }
 
-
-
-
 // ChatExtraToolDefs — deferred 工具 schema 库（P4-42——tool_search 命中后注入）
 // 精简 schema（每工具主要参数）——全部真实可执行（ExecuteChatTool 实现）
 func ChatExtraToolDefs() map[string]map[string]any {
@@ -1465,21 +1465,21 @@ func ChatExtraToolDefs() map[string]map[string]any {
 		"find_name":   fn("find_name", "按文件名模式查找（如 *.go）。", map[string]any{"pattern": strProp("文件名模式"), "path": strProp("搜索根默认.")}, []string{"pattern"}),
 		"file_type":   fn("file_type", "判断文件类型（魔数检测）。", map[string]any{"path": strProp("文件路径")}, []string{"path"}),
 		// 系统
-		"sys_info":      fn("sys_info", "查看系统信息（主机/OS/架构）。", map[string]any{}, []string{}),
-		"cpu_status":    fn("cpu_status", "查看 CPU 负载。", map[string]any{}, []string{}),
-		"mem_status":    fn("mem_status", "查看内存使用。", map[string]any{}, []string{}),
-		"disk_usage":    fn("disk_usage", "查看磁盘空间。", map[string]any{}, []string{}),
-		"process_list":  fn("process_list", "查看进程列表（可过滤）。", map[string]any{"filter": strProp("过滤关键词")}, []string{}),
-		"port_check":    fn("port_check", "查端口占用（lsof）。", map[string]any{"port": strProp("端口号")}, []string{"port"}),
+		"sys_info":       fn("sys_info", "查看系统信息（主机/OS/架构）。", map[string]any{}, []string{}),
+		"cpu_status":     fn("cpu_status", "查看 CPU 负载。", map[string]any{}, []string{}),
+		"mem_status":     fn("mem_status", "查看内存使用。", map[string]any{}, []string{}),
+		"disk_usage":     fn("disk_usage", "查看磁盘空间。", map[string]any{}, []string{}),
+		"process_list":   fn("process_list", "查看进程列表（可过滤）。", map[string]any{"filter": strProp("过滤关键词")}, []string{}),
+		"port_check":     fn("port_check", "查端口占用（lsof）。", map[string]any{"port": strProp("端口号")}, []string{"port"}),
 		"service_status": fn("service_status", "查看 zerg 服务状态（core/ui 进程）。", map[string]any{}, []string{}),
-		"log_tail":      fn("log_tail", "查看服务日志尾部（core/ui）。", map[string]any{"target": strProp("core/ui/路径"), "lines": numProp("行数默认30")}, []string{}),
-		"gpu_status":    fn("gpu_status", "查看 GPU 利用率（macOS ioreg/X3 rocm-smi）。", map[string]any{}, []string{}),
-		"ping_check":    fn("ping_check", "测试网络连通（ping）。", map[string]any{"host": strProp("主机默认127.0.0.1")}, []string{}),
+		"log_tail":       fn("log_tail", "查看服务日志尾部（core/ui）。", map[string]any{"target": strProp("core/ui/路径"), "lines": numProp("行数默认30")}, []string{}),
+		"gpu_status":     fn("gpu_status", "查看 GPU 利用率（macOS ioreg/X3 rocm-smi）。", map[string]any{}, []string{}),
+		"ping_check":     fn("ping_check", "测试网络连通（ping）。", map[string]any{"host": strProp("主机默认127.0.0.1")}, []string{}),
 		"network_status": fn("network_status", "查看网络接口状态。", map[string]any{}, []string{}),
-		"kill_process":  fn("kill_process", "杀进程（pid 或 name——慎用）。", map[string]any{"pid": numProp("进程 PID"), "name": strProp("进程名")}, []string{}),
-		"start_service": fn("start_service", "启动服务（zerg-core/ui 需手动——提示）。", map[string]any{"service": strProp("服务名")}, []string{"service"}),
-		"stop_service":  fn("stop_service", "停止服务。", map[string]any{"service": strProp("服务名")}, []string{"service"}),
-		"uptime_info":   fn("uptime_info", "查看系统运行时间与负载。", map[string]any{}, []string{}),
+		"kill_process":   fn("kill_process", "杀进程（pid 或 name——慎用）。", map[string]any{"pid": numProp("进程 PID"), "name": strProp("进程名")}, []string{}),
+		"start_service":  fn("start_service", "启动服务（zerg-core/ui 需手动——提示）。", map[string]any{"service": strProp("服务名")}, []string{"service"}),
+		"stop_service":   fn("stop_service", "停止服务。", map[string]any{"service": strProp("服务名")}, []string{"service"}),
+		"uptime_info":    fn("uptime_info", "查看系统运行时间与负载。", map[string]any{}, []string{}),
 		// 效率
 		"calc":              fn("calc", "计算表达式（1+2*3）。", map[string]any{"expr": strProp("数学表达式")}, []string{"expr"}),
 		"json_format":       fn("json_format", "JSON 格式化/美化。", map[string]any{"json": strProp("JSON 文本")}, []string{"json"}),
@@ -1498,11 +1498,11 @@ func ChatExtraToolDefs() map[string]map[string]any {
 		"export_json": fn("export_json", "导出 JSON 美化版。", map[string]any{"path": strProp("JSON 文件")}, []string{"path"}),
 		"import_json": fn("import_json", "写入 JSON 内容到文件。", map[string]any{"path": strProp("目标路径"), "content": strProp("JSON 内容")}, []string{"path", "content"}),
 		// 影音
-		"media_info":       fn("media_info", "查看媒体文件信息（ffprobe——时长/编码/分辨率/采样率）。", map[string]any{"path": strProp("媒体文件")}, []string{"path"}),
-		"ffmpeg_transcode": fn("ffmpeg_transcode", "ffmpeg 转码。", map[string]any{"input": strProp("输入文件"), "output": strProp("输出文件")}, []string{"input", "output"}),
-		"audio_extract":    fn("audio_extract", "提取音频为 WAV（PCM）。", map[string]any{"input": strProp("视频/媒体"), "output": strProp("输出wav默认同名")}, []string{"input"}),
-		"video_extract":    fn("video_extract", "提取视频去音轨。", map[string]any{"input": strProp("视频"), "output": strProp("输出默认_novideo")}, []string{"input"}),
-		"timecode_convert": fn("timecode_convert", "时间码↔帧数/秒换算（HH:MM:SS:FF）。", map[string]any{"timecode": strProp("时间码"), "fps": strProp("帧率默认25")}, []string{"timecode"}),
+		"media_info":        fn("media_info", "查看媒体文件信息（ffprobe——时长/编码/分辨率/采样率）。", map[string]any{"path": strProp("媒体文件")}, []string{"path"}),
+		"ffmpeg_transcode":  fn("ffmpeg_transcode", "ffmpeg 转码。", map[string]any{"input": strProp("输入文件"), "output": strProp("输出文件")}, []string{"input", "output"}),
+		"audio_extract":     fn("audio_extract", "提取音频为 WAV（PCM）。", map[string]any{"input": strProp("视频/媒体"), "output": strProp("输出wav默认同名")}, []string{"input"}),
+		"video_extract":     fn("video_extract", "提取视频去音轨。", map[string]any{"input": strProp("视频"), "output": strProp("输出默认_novideo")}, []string{"input"}),
+		"timecode_convert":  fn("timecode_convert", "时间码↔帧数/秒换算（HH:MM:SS:FF）。", map[string]any{"timecode": strProp("时间码"), "fps": strProp("帧率默认25")}, []string{"timecode"}),
 		"sample_rate_check": fn("sample_rate_check", "查音频采样率/声道。", map[string]any{"path": strProp("音频文件")}, []string{"path"}),
 		"subtitle_generate": fn("subtitle_generate", "字幕生成（依赖 Qwen3-ASR 8788——未启动返回提示）。", map[string]any{"path": strProp("音频/视频")}, []string{"path"}),
 		"multicam_check":    fn("multicam_check", "多机位同步验证（依赖 fcpx skill 脚本链）。", map[string]any{"path": strProp("项目/素材")}, []string{"path"}),
@@ -1519,22 +1519,22 @@ func ChatExtraToolDefs() map[string]map[string]any {
 		"kb_stats":      fn("kb_stats", "知识库条数统计。", map[string]any{}, []string{}),
 		"capture_fix":   fn("capture_fix", "排障经验沉淀（提示走 MCP）。", map[string]any{"problem": strProp("问题"), "fix": strProp("修复")}, []string{"problem", "fix"}),
 		// 多模态
-		"image_desc":    fn("image_desc", "图片描述（依赖视觉服务——对话内图片可直接看）。", map[string]any{"path": strProp("图片路径")}, []string{"path"}),
-		"ocr_text":      fn("ocr_text", "OCR 文字识别（ocr_server 8790）。", map[string]any{"path": strProp("图片路径")}, []string{"path"}),
-		"tts_speak":     fn("tts_speak", "语音朗读（macOS say——Tingting）。", map[string]any{"text": strProp("要朗读的文本")}, []string{"text"}),
+		"image_desc":     fn("image_desc", "图片描述（依赖视觉服务——对话内图片可直接看）。", map[string]any{"path": strProp("图片路径")}, []string{"path"}),
+		"ocr_text":       fn("ocr_text", "OCR 文字识别（ocr_server 8790）。", map[string]any{"path": strProp("图片路径")}, []string{"path"}),
+		"tts_speak":      fn("tts_speak", "语音朗读（macOS say——Tingting）。", map[string]any{"text": strProp("要朗读的文本")}, []string{"text"}),
 		"asr_transcribe": fn("asr_transcribe", "语音转文字（依赖 Qwen3-ASR 8788）。", map[string]any{"path": strProp("音频")}, []string{"path"}),
-		"image_resize":  fn("image_resize", "图片缩放（sips）。", map[string]any{"path": strProp("图片"), "width": numProp("目标宽度默认800")}, []string{"path"}),
+		"image_resize":   fn("image_resize", "图片缩放（sips）。", map[string]any{"path": strProp("图片"), "width": numProp("目标宽度默认800")}, []string{"path"}),
 		// agent 独有（复用 agent schema——走 agent 执行）
 		"screenshot":  fn("screenshot", "截屏（agent 工具）。", map[string]any{}, []string{}),
 		"apply_patch": fn("apply_patch", "批量补丁编辑（agent 工具）。", map[string]any{}, []string{}),
 		"spawn_agent": fn("spawn_agent", "派子代理执行任务（agent 工具）。", map[string]any{}, []string{}),
 		"todo":        fn("todo", "任务清单管理（agent 工具）。", map[string]any{}, []string{}),
 		// 音乐
-		"music_search":          fn("music_search", "搜索音乐（v2.6 接入）。", map[string]any{"keyword": strProp("歌名/歌手")}, []string{"keyword"}),
-		"qq_music_download":     fn("qq_music_download", "QQ 音乐下载（v2.6 接入——vkey 直连）。", map[string]any{}, []string{}),
+		"music_search":           fn("music_search", "搜索音乐（v2.6 接入）。", map[string]any{"keyword": strProp("歌名/歌手")}, []string{"keyword"}),
+		"qq_music_download":      fn("qq_music_download", "QQ 音乐下载（v2.6 接入——vkey 直连）。", map[string]any{}, []string{}),
 		"netease_music_download": fn("netease_music_download", "网易云下载（v2.6 接入——3s 防 406）。", map[string]any{}, []string{}),
-		"kuwo_music_download":   fn("kuwo_music_download", "酷我下载（v2.6 接入）。", map[string]any{}, []string{}),
-		"music_cover":           fn("music_cover", "专辑封面获取（v2.6）。", map[string]any{}, []string{}),
+		"kuwo_music_download":    fn("kuwo_music_download", "酷我下载（v2.6 接入）。", map[string]any{}, []string{}),
+		"music_cover":            fn("music_cover", "专辑封面获取（v2.6）。", map[string]any{}, []string{}),
 
 		// ── 影音剪辑第二批（P4-43——footage.db + fcpx 脚本链）──
 		"footage_video_clips":  fn("footage_video_clips", "查视频素材（footage.db video_clips——机位/日期/文件）。", map[string]any{"cond": strProp("SQL 条件（可选）"), "limit": numProp("返回条数默认10")}, []string{}),
@@ -1554,18 +1554,18 @@ func ChatExtraToolDefs() map[string]map[string]any {
 		"audio_sync_check":     fn("audio_sync_check", "音频/视频对齐检查（两边 start_time 对比）。", map[string]any{"video": strProp("视频路径"), "audio": strProp("音频路径")}, []string{"video", "audio"}),
 
 		// ── 音乐下载第二批（P4-43——真实 API）──
-		"music_search_qq":       fn("music_search_qq", "QQ 音乐搜歌（songmid/歌手/专辑）。", map[string]any{"keyword": strProp("歌名/歌手")}, []string{"keyword"}),
-		"music_search_netease":  fn("music_search_netease", "网易云搜歌（id 用于下载）。", map[string]any{"keyword": strProp("歌名/歌手")}, []string{"keyword"}),
-		"music_search_kuwo":     fn("music_search_kuwo", "酷我搜歌（musicdl KuwoMusicClient）。", map[string]any{"keyword": strProp("歌名")}, []string{"keyword"}),
-		"music_download_qq":     fn("music_download_qq", "QQ 音乐下载（musicdl——能下 VIP/无损）。", map[string]any{"keyword": strProp("歌名/歌手——先搜索确认")}, []string{"keyword"}),
+		"music_search_qq":        fn("music_search_qq", "QQ 音乐搜歌（songmid/歌手/专辑）。", map[string]any{"keyword": strProp("歌名/歌手")}, []string{"keyword"}),
+		"music_search_netease":   fn("music_search_netease", "网易云搜歌（id 用于下载）。", map[string]any{"keyword": strProp("歌名/歌手")}, []string{"keyword"}),
+		"music_search_kuwo":      fn("music_search_kuwo", "酷我搜歌（musicdl KuwoMusicClient）。", map[string]any{"keyword": strProp("歌名")}, []string{"keyword"}),
+		"music_download_qq":      fn("music_download_qq", "QQ 音乐下载（musicdl——能下 VIP/无损）。", map[string]any{"keyword": strProp("歌名/歌手——先搜索确认")}, []string{"keyword"}),
 		"music_download_netease": fn("music_download_netease", "网易云下载（320k——VIP 无 URL 换 QQ 源——间隔 3s 防 406）。", map[string]any{"id": numProp("网易云歌曲 id（先搜索拿）"), "save_dir": strProp("保存目录默认新下音乐")}, []string{"id"}),
-		"music_download_kuwo":   fn("music_download_kuwo", "酷我下载（musicdl——快/flac）。", map[string]any{"keyword": strProp("歌名")}, []string{"keyword"}),
-		"music_parse_share":     fn("music_parse_share", "解析微信分享链接（songDetail/xxx → 歌曲信息）。", map[string]any{"link": strProp("分享链接")}, []string{"link"}),
-		"music_album_search":    fn("music_album_search", "专辑搜歌（QQ——专辑名+歌手）。", map[string]any{"keyword": strProp("专辑名+歌手")}, []string{"keyword"}),
-		"music_batch_download":  fn("music_batch_download", "批量下载（逗号分隔歌单）。", map[string]any{"keywords": strProp("歌名,歌名,…"), "source": strProp("源：KuwoMusicClient/QQMusicClient 默认酷我")}, []string{"keywords"}),
-		"music_cover_get":       fn("music_cover_get", "专辑封面 URL（QQ 图源）。", map[string]any{"keyword": strProp("歌名")}, []string{"keyword"}),
-		"music_save_info":       fn("music_save_info", "音乐下载目录信息（新下音乐）。", map[string]any{}, []string{}),
-		"music_merge_check":     fn("music_merge_check", "下载归拢检查（musicdl_outputs 子目录→顶层+重命名）。", map[string]any{}, []string{}),
+		"music_download_kuwo":    fn("music_download_kuwo", "酷我下载（musicdl——快/flac）。", map[string]any{"keyword": strProp("歌名")}, []string{"keyword"}),
+		"music_parse_share":      fn("music_parse_share", "解析微信分享链接（songDetail/xxx → 歌曲信息）。", map[string]any{"link": strProp("分享链接")}, []string{"link"}),
+		"music_album_search":     fn("music_album_search", "专辑搜歌（QQ——专辑名+歌手）。", map[string]any{"keyword": strProp("专辑名+歌手")}, []string{"keyword"}),
+		"music_batch_download":   fn("music_batch_download", "批量下载（逗号分隔歌单）。", map[string]any{"keywords": strProp("歌名,歌名,…"), "source": strProp("源：KuwoMusicClient/QQMusicClient 默认酷我")}, []string{"keywords"}),
+		"music_cover_get":        fn("music_cover_get", "专辑封面 URL（QQ 图源）。", map[string]any{"keyword": strProp("歌名")}, []string{"keyword"}),
+		"music_save_info":        fn("music_save_info", "音乐下载目录信息（新下音乐）。", map[string]any{}, []string{}),
+		"music_merge_check":      fn("music_merge_check", "下载归拢检查（musicdl_outputs 子目录→顶层+重命名）。", map[string]any{}, []string{}),
 		// ── 虫族管理（P4-48 第三批）──
 		"task_list":     fn("task_list", "查看任务队列（虫族任务——状态/模型/描述）。【什么时候用】问任务相关", map[string]any{"limit": numProp("显示数量默认10")}, []string{}),
 		"task_detail":   fn("task_detail", "查看任务详情（完整信息）。【什么时候用】看某个任务细节", map[string]any{"id": strProp("任务 ID——task_list 查")}, []string{"id"}),
@@ -1601,6 +1601,6 @@ func ChatExtraToolDefs() map[string]map[string]any {
 		// P4-50 虫族系统总览（自进化指针——2026-09-02——Mr2109: 自进化关键）
 		"zerg_overview": fn("zerg_overview", "虫族系统总览——最新架构/怎么使用/最近变化/运行状态/文档入口/模块地图（自进化指针——执行时聚合活源）。系统任务/改代码/排障先调用。参数: section=模块名(如 调度器/网关/使用/架构)下钻深度——无参返回全景", map[string]any{"section": strProp("模块名下钻（调度器/网关/agent/使用/架构 等）")}, []string{}),
 		"port_services": fn("port_services", "本机监听端口→服务映射（lsof 解读成中文清单——已知服务标注——查端口是什么/服务在哪/推理服务——【直接调本工具——不要用 bash lsof/ss（输出截断不全——反复试浪费轮次）】）。", map[string]any{}, []string{}),
-		"tool_errors": fn("tool_errors", "工具错误统计（聚合桶——某工具错误/全局 Top——param错=描述/schema待优化——exec错=服务待修——辅助工具升级决策）。参数: tool 可选（不传=全局 Top 20）。", map[string]any{"tool": strProp("工具名（可选——不传=全局）")}, []string{}),
+		"tool_errors":   fn("tool_errors", "工具错误统计（聚合桶——某工具错误/全局 Top——param错=描述/schema待优化——exec错=服务待修——辅助工具升级决策）。参数: tool 可选（不传=全局 Top 20）。", map[string]any{"tool": strProp("工具名（可选——不传=全局）")}, []string{}),
 	}
 }
