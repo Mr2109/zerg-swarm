@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,8 +140,14 @@ func (s *Scheduler) EnsurePlan(ctx context.Context, taskDesc string) (*Plan, []s
 		return nil, nil, fmt.Errorf("续作模式但 plan 未注入（LoadPlan 失败?）——拆解轮不重跑")
 	}
 	var lastStats string
+	// S11b 计划缓存检索——命中则注入拆解 prompt（模板参考——适配优于全量重拆）
+	var tplHint string
+	if tpl, sim := FindPlanTemplate(taskDesc); tpl != nil {
+		tplHint = fmt.Sprintf("【相似历史任务计划（相似度%.0f%%——仅参考骨架，须按本任务实际调整）】\n%s", sim*100, tpl.ToJSON())
+		log.Printf("[subtask] 计划缓存命中: 相似度 %.0f%%——注入拆解参考", sim*100)
+	}
 	for attempt := 1; attempt <= s.cfg.MaxDecompose+1; attempt++ {
-		out, inTok, outTok, err := s.call(ctx, "你是任务架构师——只输出 JSON。", DecomposePrompt(taskDesc, "", lastStats), 0)
+		out, inTok, outTok, err := s.call(ctx, "你是任务架构师——只输出 JSON。", DecomposePrompt(taskDesc, tplHint, lastStats), 0)
 		if err != nil {
 			return nil, nil, fmt.Errorf("拆解模型调用失败: %w", err)
 		}
@@ -245,6 +252,10 @@ func (s *Scheduler) Run(ctx context.Context, taskDesc string) (*TaskOutcome, err
 	}
 	// 任务级收尾
 	if outcome.Status == "done" {
+		// S11b 计划缓存: 成功任务的计划入库（G9 门槛——仅 done）
+		if err := SavePlanTemplate(taskDesc, plan); err != nil {
+			log.Printf("[subtask] 计划模板入库失败(非致命): %v", err)
+		}
 		blocked := 0
 		for _, st := range s.stages {
 			if st == "blocked" {
