@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -21,6 +22,7 @@ import (
 
 	"zerg/core/internal/agent"
 	"zerg/core/internal/chat"
+	"zerg/core/internal/loopcore"
 )
 
 // P4-11 系统提示词（借鉴 Hermes 精华——行为规格而非特质列表——
@@ -589,8 +591,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	sysPrompt := chatSystemPrompt + fmt.Sprintf("\n\n# 你的身份\n- 你当前运行在模型 %s（虫族本地模型集群）——Mr2109的对话助手——不要调查或质疑自己的身份。", se.Model) + chat.BuildHermesToolPrompt(progRT)
 	gate := &chat.ChatGate{}
-		// P4-46 Hermes 模式: 不带 tools 字段（模板 XML 分支不渲染——模型输出 <tool_call>JSON</tool_call>——parseXMLToolCalls 解析）
-	tools := []map[string]any(nil)
+	// P4-46 Hermes 模式: 不带 tools 字段（内核 Deps.Tools=nil——模板 XML 分支不渲染——模型输出 <tool_call>JSON</tool_call>）
 
 	// SSE 响应头
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -620,395 +621,136 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 工具循环（最多 10 轮——每轮流式——tool_calls 执行后追加结果再流式）
-	// P4-40 对话工具工作目录=项目根（模型查项目用 glob/grep/read 相对路径——之前 /tmp/zerg-chat/tools 导致路径全被 validatePath 拒——"工具已用尽"假象）
-	// 2026-09-05 统一常量 ChatToolsWorkDir（与非流式路径共用——消除双循环目录分叉）
 	ec := agent.NewExecContext(chat.ChatToolsWorkDir)
 	ec.AgentName = "chat"
 	var traces []chat.ToolTrace
 	var result *chat.InferResult
 	cur := msgs
-	// P4-38 LoopGuard（SHA-256 指纹滑动窗口——检测重复/交替——引导换招——非失败停止）
+	emptyArgsStreak := 0
+	badFormatStreak := 0
+	searchStreak := map[string]int{}
+	searchNoUseStreak := 0
 	guard := chat.NewLoopGuard(chat.DefaultLoopConfig())
 	loopStart := time.Now()
-	// P4-44 空参数计数（模型输出 {} 高频——连续 3 次立即收尾——不空转）
-	emptyArgsStreak := 0
-	// P4-48 坏格式计数（content 含 <tool_call> 但解析失败——连续 3 次收尾）
-	badFormatStreak := 0
-	// P4-50 重复搜索计数（模型反复 tool_search 同关键词不执行——第 2 次强制提示）
-	searchStreak := map[string]int{}
-	// P4-50 搜索无进展计数（模型换词反复 tool_search 不执行——2 轮轻推/3 轮强推新工具——不收尾——Mr2109）
-	searchNoUseStreak := 0
-	for round := 1; round <= chat.MaxToolRounds; round++ {
-		// P4-38 保护检查（墙钟 600s——防失控）
-		if time.Since(loopStart).Seconds() > 600 {
-			break
+
+	// 工具循环——2026-09-05 换装 loopcore 内核（对话循环两份合一第一步——
+	// 五重防护/心跳/引导收尾全部沉淀进内核——此处只做装配）
+	inferAdapter := func(ctx context.Context, model, sysPrompt string, m []map[string]any,
+		onDelta func(deltaType, text string), toolsParam []map[string]any) (*agent.ModelResponse, error) {
+		ir, ierr := h.infer.InferStream(ctx, model, sysPrompt, m, onDelta, toolsParam)
+		if ierr != nil {
+			return nil, ierr
 		}
-		// P4-38 T5 上下文轻量化（loop 中旧工具结果压缩——小模型上下文金贵——防膨胀到放弃工具）
-		if len(cur) > 30 {
-			cur = chat.CompactToolResults(cur, 3)
-		}
-		// 流式调网关（带工具）
-		var streamErr error
-		// 2026-09-05 修复: 重试重复输出——deltaOnce 标记首轮是否已流出 token——
-		// 已流出后再重试会从头重放（用户看到断片+重说）——只在收到 delta 前允许重试
-		var deltaOnce bool
-		deltaSink := func(deltaType, text string) {
-			deltaOnce = true
-			payload, _ := json.Marshal(map[string]any{"type": deltaType, "text": text})
-			writeSSE("delta", string(payload))
-		}
-		// P4-50 每轮推理限时 120s（模型单轮生成不收敛——无限生成——墙钟在轮间查不到——轮内也限）
-		roundCtx, roundCancel := context.WithTimeout(r.Context(), 120*time.Second)
-		result, streamErr = h.infer.InferStream(roundCtx, se.Model, sysPrompt, cur, deltaSink, tools)
-		roundCancel()
-		if streamErr != nil && (strings.Contains(streamErr.Error(), "context deadline") || strings.Contains(streamErr.Error(), "超时")) {
-			// 单轮超时——模型生成不收敛——直接收尾（提示用已有信息回答——不再等）
-			writeSSE("loop_hint", `{"kind":"round_timeout"}`)
-			cur = append(cur, map[string]any{"role": "user", "content": "（时间到——请立即把已获得的信息整理成最终回答——不要继续调用工具或推理——直接给出结论——信息不足就说明没找到——绝不编造。）"})
-			streamErr = nil
-			result = &chat.InferResult{} // 空结果——940 收尾轮会处理
-			break
-		}
-		if streamErr != nil && !deltaOnce {
-			// P4-48 故障自愈: X3 单槽排队超时（502/500——基础设施瞬时故障）——重试 2 次（间隔 2s）——3 次失败才回滚
-			// 2026-09-05: 只在未流出任何 delta 时重试（deltaOnce=true 时重试必重复输出——直接报错回滚）
-			retried := false
-			for attempt := 1; attempt <= 2; attempt++ {
-				if !strings.Contains(streamErr.Error(), "502") && !strings.Contains(streamErr.Error(), "500") {
-					break
-				}
-				time.Sleep(2 * time.Second)
-				writeSSE("retry", fmt.Sprintf("{\"attempt\":%d,\"reason\":\"X3 瞬时故障\"}", attempt))
-				result, streamErr = h.infer.InferStream(r.Context(), se.Model, sysPrompt, cur, deltaSink, tools)
-				if streamErr == nil {
-					retried = true
-					break
-				}
-			}
-			if streamErr != nil {
-				// 推理失败（重试后仍失败）——回滚 user 消息 + SSE 发 error
-				_ = h.store.DeleteMessage(id, userMsgID)
-				payload, _ := json.Marshal(map[string]any{"error": streamErr.Error()})
-				writeSSE("error", string(payload))
-				return
-			}
-			if retried {
-				writeSSE("retry_done", "{}")
-			}
-		} else if streamErr != nil && deltaOnce {
-			// 已流出部分 token 后才失败——无法安全重试（会重复）——发中断提示+按现有内容收尾
-			writeSSE("loop_hint", `{"kind":"stream_broken_midway"}`)
-			result = &chat.InferResult{}
-			break
-		}
-		if len(result.ToolCalls) == 0 {
-			// P4-47/48 坏工具调用检测: content 含 <tool_call> 但解析失败——不当正文——提示模型修正格式重试
-			// P4-48 连续 3 次坏格式 → 收尾（模型学不会——不再空转）
-			if strings.Contains(result.Content, "<tool_call>") {
-				badFormatStreak++
-				var badCall string
-				if badFormatStreak >= 3 {
-					badCall = "你的工具调用格式一直无效（已 " + fmt.Sprint(badFormatStreak) + " 次）。请停止调用工具——用中文把已知信息整理成最终回答。工具调用示例（严格照抄——一个 <tool_call> 只放一个 JSON 对象）:\n<tool_call>\n{\"name\": \"task_list\", \"arguments\": {}}\n</tool_call>"
-					cur = append(cur, map[string]any{"role": "user", "content": badCall})
-					writeSSE("tool", `{"name":"__bad_format__","args":"{}","result":"`+badCall+`"}`)
-					break
-				}
-				badCall = "工具调用格式无效（<tool_call> 内必须是一个 JSON 对象 {\"name\": \"工具名\", \"arguments\": {...}}——无参数工具 arguments 写 {}——多个工具就输出多个 <tool_call> 块——严格照抄示例:\n<tool_call>\n{\"name\": \"task_list\", \"arguments\": {}}\n</tool_call>）——请重新输出格式正确的工具调用"
-				cur = append(cur, map[string]any{"role": "user", "content": badCall})
-				writeSSE("tool", `{"name":"__bad_format__","args":"{}","result":"`+badCall+`"}`)
-				continue
-			}
-			badFormatStreak = 0
-			break // 无工具调用——最终回复
-		}
-		// 执行工具（P4-36 异步 + 心跳——工具执行期间 SSE 不断流——UI 实时反馈"执行中 N 秒"）
-		for _, tc := range result.ToolCalls {
-			// P4-50 参数统一解包（模型 Hermes 风格嵌套——bash arguments 双层——见 NormalizeToolArgs）
-			chat.NormalizeToolArgs(&tc)
-			argsJSON, _ := json.Marshal(tc.Args)
-			// P4-35 工具执行前发 tool_start 事件（UI 显示"🔧 bash 执行中…"——解决等待无反馈）
-			startPayload, _ := json.Marshal(map[string]any{"name": tc.Name, "args": string(argsJSON)})
-			writeSSE("tool_start", string(startPayload))
-			startT := time.Now()
-			// 异步执行（goroutine——handler 不被阻塞——心跳 ticker 持续推事件）
+		return &agent.ModelResponse{
+			Content: ir.Content, Reasoning: ir.Reasoning,
+			ToolCalls: ir.ToolCalls, Finish: "stop",
+		}, nil
+	}
+	var tracesMu sync.Mutex
+	kres := loopcore.Run(r.Context(), loopcore.Config{
+		MaxRounds:    chat.MaxToolRounds,
+		WallClock:    600 * time.Second,
+		RoundTimeout: 120 * time.Second,
+		KeepRecent:   3,
+	}, se.Model, sysPrompt, msgs, loopcore.Deps{
+		Infer: inferAdapter,
+		Exec: func(ctx context.Context, name string, targs map[string]any) (string, string, error) {
+			// P4-36 异步+心跳（工具执行期间 SSE 不断流——UI 实时"执行中 N 秒"）
 			type execRes struct {
 				content string
 				dur     string
 				err     error
 			}
+			startT := time.Now()
 			resCh := make(chan execRes, 1)
-			go func(tc agent.ToolCall) {
-				var content, dur string
+			go func() {
+				var content string
+				var dur string
 				var execErr error
-				// P4-50 隐藏工具拦截（3 次 exec 失败——本对话不再执行——tool_search 查询器除外）
-				if progRT != nil && progRT.IsHidden(tc.Name) && tc.Name != "tool_search" {
-					resCh <- execRes{content: fmt.Sprintf("【系统】工具 %s 本对话已隐藏（连续 3 次执行失败）。请换其他工具或 tool_search 搜索替代。", tc.Name)}
-					return
-				}
-				if tc.Name == "kb_search" {
-					query, _ := tc.Args["query"].(string)
+				if name == "kb_search" {
+					query, _ := targs["query"].(string)
 					limit := 10
-					if l, ok := tc.Args["limit"].(float64); ok {
+					if l, ok := targs["limit"].(float64); ok {
 						limit = int(l)
 					}
 					content, execErr = chat.KbSearchExecute(query, limit)
-				} else if tc.Name == "tool_search" {
-					// P4-46 Hermes 模式: tool_search 发现工具——文本描述注入 cur（无 tools 字段——模型后续轮按描述调用）
-					query, _ := tc.Args["query"].(string)
-					// P4-50 重复搜索检测（模型反复搜同关键词不执行——第 2 次强制提示立即调用）
-					if query != "" {
-						searchStreak[query]++
-					}
-					have := map[string]bool{}
-					for _, t := range tools {
-						if fn, ok := t["function"].(map[string]any); ok {
-							if nm, ok := fn["name"].(string); ok {
-								have[nm] = true
-							}
-						}
-					}
-					found := chat.ChatToolSearch(query, have, 8)
-					// P4-50 隐藏工具过滤（本对话 3 次 exec 失败的工具不推荐——除非全部隐藏则保留第一个——"无其他可选不隐藏"）
-					if progRT != nil {
-						var visible []string
-						for _, nm := range found {
-							if !progRT.IsHidden(nm) {
-								visible = append(visible, nm)
-							}
-						}
-						if len(visible) > 0 {
-							found = visible
-						}
-					}
-					if len(found) == 0 {
-						content = "（未发现匹配工具——当前可用: " + toolNames(tools) + "——可换个词再搜）"
-					} else {
-						extraDefs := chat.ChatExtraToolDefs()
-						var descs []string
-						for _, nm := range found {
-							desc := nm
-							if def, ok := extraDefs[nm]; ok {
-								if fn, ok2 := def["function"].(map[string]any); ok2 {
-									if d, ok3 := fn["description"].(string); ok3 {
-										desc = nm + ": " + d
-									}
-								}
-							}
-							descs = append(descs, desc)
-						}
-						if searchStreak[query] >= 3 && len(found) > 0 {
-							// P4-50 第 3 次重复搜索——系统代执行第一个匹配工具（模型搜了不调——系统弥补——虫族哲学: 小模型生成削弱由系统补）
-							sysName := found[0]
-							if chat.IsExtraTool(sysName) {
-								ctr := chat.ExecuteChatTool(sysName, map[string]any{}, "<repo>")
-								content = ctr.Content
-								if ctr.Error != "" {
-									execErr = fmt.Errorf("%s", ctr.Error)
-								}
-							} else {
-								tres := ec.ExecuteTool(r.Context(), sysName, map[string]any{}, gate)
-								content = tres.Content
-								if tres.Error != "" {
-									execErr = fmt.Errorf("%s", tres.Error)
-								}
-								dur = tres.Duration
-							}
-							content = fmt.Sprintf("【你已连续 3 次搜索 \"%s\" 未执行——系统替你执行了 %s 工具】\n%s", query, sysName, content)
-							searchStreak[query] = 0 // 重置（防止下轮再触发）
-						} else if searchStreak[query] >= 2 {
-							// 重复搜索——强制提示（模型搜了不调——LoopGuard 引导不够）
-							content = fmt.Sprintf("【你已经搜索过 \"%s\"——工具已在上方列出——不要重复搜索——立即调用其中一个（如 %s）——用 <tool_call> 格式直接调用】发现 %d 个工具:\n%s",
-								query, found[0], len(found), strings.Join(descs, "\n"))
-						} else {
-							content = fmt.Sprintf("✅ 发现 %d 个工具——【已加入你的可用工具列表——与 <tools> 内工具同等地位——直接用工具名调用——参数写进 arguments——JSON 格式】:\n%s",
-								len(found), strings.Join(descs, "\n"))
-						}
-					}
-					execErr = nil
-				} else if chat.IsExtraTool(tc.Name) {
-					// P4-42 deferred 新工具（chat 层实现）
-					ctr := chat.ExecuteChatTool(tc.Name, tc.Args, "<repo>")
-					content = ctr.Content
-					if ctr.Error != "" {
-						execErr = fmt.Errorf("%s", ctr.Error)
-					}
 				} else {
-					tres := ec.ExecuteTool(r.Context(), tc.Name, tc.Args, gate)
-					content = tres.Content
-					if tres.Error != "" {
-						execErr = fmt.Errorf("%s", tres.Error)
+					tc := agent.ToolCall{ID: "kernel", Name: name, Args: targs}
+					result := ec.ExecuteTool(ctx, name, tc.Args, gate)
+					content = result.Content
+					dur = result.Duration
+					if result.Error != "" {
+						execErr = fmt.Errorf("%s", result.Error)
 					}
-					dur = tres.Duration
 				}
-				resCh <- execRes{content: content, dur: dur, err: execErr}
-			}(tc)
-			// 心跳：每 2s 推 tool_ping（UI 显示执行中计时——Hermes 工具行等效）
-			ticker := time.NewTicker(2 * time.Second)
+				resCh <- execRes{content, dur, execErr}
+			}()
+			ticker := time.NewTicker(3 * time.Second)
+			defer ticker.Stop()
 			var res execRes
-		waitLoop:
+			waitLoop:
 			for {
 				select {
 				case r := <-resCh:
 					res = r
 					break waitLoop
 				case <-ticker.C:
-					pingPayload, _ := json.Marshal(map[string]any{"name": tc.Name, "elapsed": int(time.Since(startT).Seconds())})
+					pingPayload, _ := json.Marshal(map[string]any{"name": name, "elapsed": int(time.Since(startT).Seconds())})
 					writeSSE("tool_ping", string(pingPayload))
-				case <-r.Context().Done():
-					// 客户端断开——取消工具执行
+				case <-ctx.Done():
 					res = execRes{err: fmt.Errorf("已取消")}
 					break waitLoop
 				}
 			}
 			ticker.Stop()
-			var content, dur string
-			var execErr error
-			content, dur, execErr = res.content, res.dur, res.err
-			if execErr != nil {
-				content = fmt.Sprintf("工具执行失败: %s（%s）", execErr.Error(), truncateStr(content, 500))
-				// P4-43 空参数强化（小模型高频输出 {}——给示例照抄——治本）
-				if tc.Name == "bash" && strings.Contains(content, "命令参数为空") {
-					content = "bash 命令参数为空——必须提供 command 字段。正确示例: {\"command\":\"ls -la\"} 或 {\"command\":\"python3 test.py\"}——请照抄这个格式重新调用"
-				}
-				if tc.Name == "tool_search" && strings.Contains(content, "参数为空") {
-					content = "tool_search 参数为空——必须提供 query 字段。正确示例: {\"query\":\"剪辑\"} 或 {\"query\":\"系统\"}——请照抄格式"
-				}
+			tracesMu.Lock()
+			traces = append(traces, chat.ToolTrace{Round: 0, CallID: "kernel", Name: name, Args: "", Result: res.content, Error: func() string { if res.err != nil { return res.err.Error() }; return "" }(), Duration: res.dur})
+			tracesMu.Unlock()
+			return res.content, res.dur, res.err
+		},
+		Events: func(event, payload string) {
+			if event == "delta" {
+				writeSSE("delta", payload)
+				return
 			}
-			// P4-50 渐进式常驻钩子（SSE 路径——成败判定只看执行层）
-			if progRT != nil && tc.Name != "tool_search" {
-				if execErr != nil {
-					typ := chat.ErrTypeOf(execErr.Error())
-					hint := progRT.RecordOutcome(tc.Name, typ, execErr.Error())
-					chat.RecordToolError(tc.Name, execErr.Error(), tc.Args)
-					if hint != "" {
-						content = hint + "\n" + content
-					}
-				} else if !strings.HasPrefix(content, "【bash") && !strings.HasPrefix(content, "【系统】") {
-					progRT.RecordOutcome(tc.Name, "", "")
-				}
-			}
-			// P4-47 contentJSON（Hermes <tool_response>——content 转 JSON 字符串——避免引号破坏）
-			contentJSON, _ := json.Marshal(content)
-			traces = append(traces, chat.ToolTrace{
-				Round: round, CallID: tc.ID, Name: tc.Name,
-				Args: string(argsJSON), Result: content,
-				Error:  func() string { if execErr != nil { return execErr.Error() }; return "" }(),
-				Duration: dur,
-			})
-			// tool 事件 SSE
-			payload, _ := json.Marshal(map[string]any{"name": tc.Name, "args": string(argsJSON), "result": truncateStr(content, 300)})
-			writeSSE("tool", string(payload))
-			// P4-47 contentJSON（Hermes <tool_response> 用——JSON 字符串化——避免引号破坏 XML）
-			// P4-47 Hermes 标准回传: assistant 保留模型 <tool_call> 原文 + tool 消息用 <tool_response>（模型训练见过的格式）
-			assistantContent := tc.RawCall
-			if assistantContent == "" {
-				assistantContent = fmt.Sprintf("<tool_call>\n{\"name\": \"%s\", \"arguments\": %s}\n</tool_call>", tc.Name, argsJSON)
-			}
-			toolResp := fmt.Sprintf("<tool_response>\n{\"name\": \"%s\", \"content\": %s}\n</tool_response>", tc.Name, contentJSON)
-			cur = append(cur,
-				map[string]any{"role": "assistant", "content": assistantContent},
-				map[string]any{"role": "tool", "tool_call_id": tc.ID, "content": toolResp},
-			)
-			// P4-44 空参数计数（{} 或空——模型无效调用——连续 3 次升级）
-			argsJSON2 := string(argsJSON)
-			if len(argsJSON2) <= 2 || argsJSON2 == "{}" || argsJSON2 == "null" {
-				emptyArgsStreak++
-			} else {
-				emptyArgsStreak = 0
-			}
-			// P4-38 指纹记录（工具名+参数哈希——检测重复/交替）
-			guard.Record(tc.Name, tc.Args)
-			// P4-38 T3: 工具结果标记 [成功]/[失败]（小模型可读状态——futureagi: 无法读反馈=循环根因）
-			// P4-50 加长度标注: [成功·N字]——模型明确知道"这就是完整返回"——防"被省略"误判反复核验
-			status := "[失败]"
-			if execErr != nil {
-				status = "[失败]"
-			} else {
-				runeLen := len([]rune(content))
-				if runeLen > 0 {
-					status = fmt.Sprintf("[成功·%d字]", runeLen)
-				} else {
-					status = "[成功·空]"
-				}
-			}
-			toolResp2 := fmt.Sprintf("<tool_response>\n{\"name\": \"%s\", \"content\": %s}\n</tool_response>", tc.Name, contentJSON)
-			cur = append(cur,
-				map[string]any{"role": "assistant", "content": assistantContent},
-				map[string]any{"role": "tool", "tool_call_id": tc.ID, "content": status + " " + toolResp2},
-			)
-		}
-		// P4-50 搜索无进展检测（本轮全 tool_search 无执行 → 推新工具/换思路——不是收尾——Mr2109）
-		searchedOnly := len(result.ToolCalls) > 0
-		for _, tcr := range result.ToolCalls {
-			if tcr.Name != "tool_search" {
-				searchedOnly = false
-				break
-			}
-		}
-		if searchedOnly {
-			searchNoUseStreak++
-		} else {
-			searchNoUseStreak = 0
-		}
-		if searchNoUseStreak >= 3 {
-			// 第 3 轮仍只搜不用——强推：停止搜索——从已发现工具执行或换思路
-			cur = append(cur, map[string]any{"role": "user", "content": "（你已连续 3 轮只搜索工具未执行任何工具。停止搜索——从已发现的工具里选一个直接执行（<tool_call> 格式）——若都不合适就换思路（help 看用法/直接 bash/read 查）——不要继续搜索。）"})
-			writeSSE("loop_hint", `{"kind":"no_search_progress"}`)
-			searchNoUseStreak = 0 // 引导已给——下轮再犯重新计
-		} else if searchNoUseStreak == 2 {
-			// 第 2 轮轻推
-			cur = append(cur, map[string]any{"role": "user", "content": "（提示：你已连续 2 轮只搜索未执行工具——从搜索结果里选一个执行——或换思路——不要继续搜索同类问题。）"})
-			writeSSE("loop_hint", `{"kind":"no_search_progress"}`)
-		}
-		// P4-44 空参数连续 3 次 → 立即收尾（模型无效输出——空转无意义）
-		if emptyArgsStreak >= 3 {
-			cur = append(cur, map[string]any{
-				"role":    "user",
-				"content": "（你的工具调用连续输出空参数（{}）——工具一直无法执行。请停止调用工具，把已知信息整理成最终回答；如果确实需要执行命令，请先说明要执行什么。绝不编造。）",
-			})
-			break
-		}
-		// P4-38 循环守卫（Detect + 分级引导——换策略→列工具→升级——不是失败就停）
-		if ok, reason := guard.Detect(); ok {
-			guide, upgrade := guard.BuildGuide(reason, toolNameList(tools))
-			cur = append(cur, map[string]any{"role": "user", "content": guide})
-			if upgrade {
-				// 引导 3 次仍重复——升级收尾（保留已执行工作——不丢弃）
-				break
-			}
-			writeSSE("loop_hint", `{"kind":"guide"}`)
-		}
+			writeSSE(event, payload)
+		},
+	})
+
+	// 内核结果 → 原有落库/收尾形态（result/traces 适配）
+	if kres.Err != "" {
+		// 推理失败（重试后仍失败）——回滚 user 消息 + SSE 发 error
+		_ = h.store.DeleteMessage(id, userMsgID)
+		payload, _ := json.Marshal(map[string]any{"error": kres.Err})
+		writeSSE("error", string(payload))
+		return
 	}
-	// P4-37 轮数用尽强制收尾（模型还在调工具——追加提示——最后带工具调一轮——必须给最终答案）
-	if len(result.ToolCalls) > 0 {
-		cur = append(cur, map[string]any{
-			"role":    "user",
-			"content": "（已经尽力尝试了多种方式，请把到目前为止获得的信息整理成最终回答。如果信息不足或没找到答案，就直接说明没找到——绝不编造。）",
-		})
-		var finalErr error
-		// P4-50 收尾轮限时（墙钟 bug——模型收尾不收敛无限生成——60s 截断——有流式内容已发出——超时按已收内容返回）
-		finCtx, finCancel := context.WithTimeout(r.Context(), 60*time.Second)
-		result, finalErr = h.infer.InferStream(finCtx, se.Model, sysPrompt, cur, func(deltaType, text string) {
-			payload, _ := json.Marshal(map[string]any{"type": deltaType, "text": text})
-			writeSSE("delta", string(payload))
-		}, []map[string]any{{"__temp__": 0.3}})
-		finCancel()
-		if finalErr != nil {
-			// 收尾轮失败/超时——用已收集内容尽力收尾（不再发 error——有历史工具结果可整理）
-			if strings.Contains(finalErr.Error(), "context deadline") || strings.Contains(finalErr.Error(), "超时") {
-				writeSSE("loop_hint", `{"kind":"final_timeout"}`)
-				finalErr = nil // 超时不算致命——有部分/历史内容
-			}
-		}
-		if finalErr != nil {
-			// 收尾轮失败（非超时）——用最后一轮结果（可能空——但尽力）
-			_ = h.store.DeleteMessage(id, userMsgID)
-			payload, _ := json.Marshal(map[string]any{"error": finalErr.Error()})
-			writeSSE("error", string(payload))
-			return
-		}
+	for i := range kres.Traces {
+		kres.Traces[i].Round = i + 1
 	}
+	if len(kres.Traces) > 0 {
+		tb, _ := json.Marshal(kres.Traces)
+		tracesJSON := string(tb)
+		_ = tracesJSON
+	}
+	result = &chat.InferResult{
+		Content: kres.Content, Reasoning: kres.Reasoning,
+		InputTokens: int(kres.Usage.TotalTokens), // 内核只回总量——落库按 input 计（output 在 done 事件单算）
+	}
+	traces = traces[:0]
+	for _, tr := range kres.Traces {
+		traces = append(traces, chat.ToolTrace(tr))
+	}
+	cur = msgs
+	_ = cur
+	_ = emptyArgsStreak
+	_ = badFormatStreak
+	_ = searchStreak
+	_ = searchNoUseStreak
+	_ = guard
+	_ = loopStart
+	_ = ec
+
 	// P4-48 最终回答质量检测: content 是推理文本（英文推理开头/无中文——ornith 通病）→ 重试一次"请用中文直接回答"
 	if !isChineseAnswer(result.Content) && len(traces) > 0 {
 		cur = append(cur, map[string]any{"role": "user", "content": "（你的上一条输出是思考过程——不是回答。请用中文直接回答用户的问题——基于已获取的工具结果——简洁总结。）"})
