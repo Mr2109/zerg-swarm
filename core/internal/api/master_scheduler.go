@@ -8,9 +8,9 @@ package api
 
 import (
 	"container/heap"
-	"log"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,32 +30,32 @@ const (
 
 // Task 总调度任务
 type Task struct {
-	ID          string       `json:"id"`       // 任务 ID（唯一）
-	Description string       `json:"description"` // 任务描述
-	Priority    TaskPriority `json:"priority"` // 优先级（外部高/内部低）
-	Type        string       `json:"type"`     // internal/external
-	Status      string       `json:"status"`   // queued/running/paused/done/failed
+	ID          string       `json:"id"`                    // 任务 ID（唯一）
+	Description string       `json:"description"`           // 任务描述
+	Priority    TaskPriority `json:"priority"`              // 优先级（外部高/内部低）
+	Type        string       `json:"type"`                  // internal/external
+	Status      string       `json:"status"`                // queued/running/paused/done/failed
 	FailReason  string       `json:"fail_reason,omitempty"` // 失败原因（确定性验证/执行失败——UI 显示）
 	RefTaskID   string       `json:"ref_task_id,omitempty"` // 关联任务（复查任务 → 执行任务）
 	// v2.5.7 对话→任务集成: 来源对话/消息关联（UI"派任务"——记录任务从哪个对话发起）
-	ParentSessionID  string `json:"parent_session_id,omitempty"`
-	ParentMessageID  string `json:"parent_message_id,omitempty"`
-	RefWorktree string       `json:"ref_worktree,omitempty"` // 关联 worktree（复查用）
-	ReplanCount int          `json:"replan_count,omitempty"` // 重做次数（阶段3 Replan 循环——上限 3）
-	ReviewCount int          `json:"review_count,omitempty"` // 复查次数（阶段3——上限 5）
-	RetryCount  int          `json:"retry_count,omitempty"` // 自动重跑次数（失败自动重跑——上限 3——Mr2109 2026-08-20）
-	Model       string       `json:"model"`    // 派发用模型
-	Workdir     string       `json:"workdir"`  // 工作区
-	CreatedAt   time.Time    `json:"created_at"`
-	CompletedAt time.Time    `json:"completed_at"` // v2.5.5 虫族UI: 完成时间（耗时计算）
-	Checkpoint  string       `json:"checkpoint"` // 检查点（打断恢复用——.zerg/logs/<ID>/checkpoint.json）
-	IssuePath   string       `json:"issue_path"` // v2.5.5 P1-3: 任务单路径（idle_detector 建的 docs/issues/*.md——完成时更新状态）
-	Flow        string       `json:"flow,omitempty"` // v2.5.6: 执行流程（"zerg"=程序定量驱动新流程——空=旧 CA 流程）
-	Machine     string       `json:"machine,omitempty"` // v2.5.6: 执行设备（模型所在机器——handlers 按 modelMachineMap 推算——UI 详情显示）
-	SkillKey    string       `json:"skill_key,omitempty"` // v2.5.6: skill 归属 key（内部任务=def.ID——独属 skill；空=外部任务按类型共享）
-	ExtraEnv    []string     `json:"extra_env,omitempty"` // S6: 任务级 env 透传（rework 续作——ZERG_TASK_DIR/ZERG_REVIEW_NOTE）
-	ReviewFailedCount int    `json:"review_failed_count,omitempty"` // S7: 复查自身失败重派次数（上限 2）
-	cmd         *exec.Cmd    // 运行中的 CA 进程（打断发信号用——非导出）
+	ParentSessionID   string    `json:"parent_session_id,omitempty"`
+	ParentMessageID   string    `json:"parent_message_id,omitempty"`
+	RefWorktree       string    `json:"ref_worktree,omitempty"` // 关联 worktree（复查用）
+	ReplanCount       int       `json:"replan_count,omitempty"` // 重做次数（阶段3 Replan 循环——上限 3）
+	ReviewCount       int       `json:"review_count,omitempty"` // 复查次数（阶段3——上限 5）
+	RetryCount        int       `json:"retry_count,omitempty"`  // 自动重跑次数（失败自动重跑——上限 3——Mr2109 2026-08-20）
+	Model             string    `json:"model"`                  // 派发用模型
+	Workdir           string    `json:"workdir"`                // 工作区
+	CreatedAt         time.Time `json:"created_at"`
+	CompletedAt       time.Time `json:"completed_at"`                  // v2.5.5 虫族UI: 完成时间（耗时计算）
+	Checkpoint        string    `json:"checkpoint"`                    // 检查点（打断恢复用——.zerg/logs/<ID>/checkpoint.json）
+	IssuePath         string    `json:"issue_path"`                    // v2.5.5 P1-3: 任务单路径（idle_detector 建的 docs/issues/*.md——完成时更新状态）
+	Flow              string    `json:"flow,omitempty"`                // v2.5.6: 执行流程（"zerg"=程序定量驱动新流程——空=旧 CA 流程）
+	Machine           string    `json:"machine,omitempty"`             // v2.5.6: 执行设备（模型所在机器——handlers 按 modelMachineMap 推算——UI 详情显示）
+	SkillKey          string    `json:"skill_key,omitempty"`           // v2.5.6: skill 归属 key（内部任务=def.ID——独属 skill；空=外部任务按类型共享）
+	ExtraEnv          []string  `json:"extra_env,omitempty"`           // S6: 任务级 env 透传（rework 续作——ZERG_TASK_DIR/ZERG_REVIEW_NOTE）
+	ReviewFailedCount int       `json:"review_failed_count,omitempty"` // S7: 复查自身失败重派次数（上限 2）
+	cmd               *exec.Cmd // 运行中的 CA 进程（打断发信号用——非导出）
 }
 
 // TaskQueue 优先级队列（container/heap）
@@ -75,18 +75,18 @@ func (q *TaskQueue) Pop() interface{} {
 
 // MasterScheduler 主控总调度器
 type MasterScheduler struct {
-	mu       sync.Mutex
-	queue    TaskQueue // 优先级队列（外部高——内部低）
-	running  map[string]*Task // 运行中任务
-	history  map[string]*Task // v2.5.5 虫族UI: 已完成/失败任务历史（UI 列表显示——不丢）
-	waiting  map[string]*Task // v2.5.6 故障自愈: 环境故障挂起任务（waiting_retry——机器恢复自动重派）
-	maxConcurrent int    // 最大并发（单槽——1 个任务在跑）
-	agentCmd string   // CA 启动命令（zerg-agent 路径）
-	agentEnv []string // CA 环境变量（网关地址/token）
-	taskDirForCall string // v2.5.6: 当前 zerg 流程任务目录（write_file 工具写文件用）
-	pingMu    sync.Mutex        // v2.5.6 故障自愈: 模型探活缓存锁
-	pingCache map[string]pingResult // v2.5.6 模型探活结果缓存（10s——排队任务不重复 ping）
-	store     StoreReader       // v2.5.6 ping 三级漏斗: 快照读取（第1级——快照优先——0ms）
+	mu             sync.Mutex
+	queue          TaskQueue             // 优先级队列（外部高——内部低）
+	running        map[string]*Task      // 运行中任务
+	history        map[string]*Task      // v2.5.5 虫族UI: 已完成/失败任务历史（UI 列表显示——不丢）
+	waiting        map[string]*Task      // v2.5.6 故障自愈: 环境故障挂起任务（waiting_retry——机器恢复自动重派）
+	maxConcurrent  int                   // 最大并发（单槽——1 个任务在跑）
+	agentCmd       string                // CA 启动命令（zerg-agent 路径）
+	agentEnv       []string              // CA 环境变量（网关地址/token）
+	taskDirForCall string                // v2.5.6: 当前 zerg 流程任务目录（write_file 工具写文件用）
+	pingMu         sync.Mutex            // v2.5.6 故障自愈: 模型探活缓存锁
+	pingCache      map[string]pingResult // v2.5.6 模型探活结果缓存（10s——排队任务不重复 ping）
+	store          StoreReader           // v2.5.6 ping 三级漏斗: 快照读取（第1级——快照优先——0ms）
 }
 
 // StoreReader 快照读取接口（注入——解耦——测试可 mock）
@@ -150,7 +150,7 @@ func (s *MasterScheduler) recoverWaitingLocked() {
 		return
 	}
 	now := time.Now()
-	var expired []*Task   // 超上限——降级 failed
+	var expired []*Task    // 超上限——降级 failed
 	var candidates []*Task // 待 ping 探测
 	for _, task := range s.waiting {
 		if now.Sub(task.CompletedAt) > maxWaitRetry {
@@ -297,12 +297,12 @@ func (s *MasterScheduler) runTask(task *Task) {
 	os.MkdirAll(filepath.Join(taskDir, "logs"), 0o755)
 	// 审计文件（任务元数据）
 	audit := map[string]interface{}{
-		"task_id":   task.ID,
-		"type":      task.Type,
-		"model":     task.Model,
-		"priority":  task.Priority,
-		"created":   task.CreatedAt,
-		"desc":      task.Description,
+		"task_id":  task.ID,
+		"type":     task.Type,
+		"model":    task.Model,
+		"priority": task.Priority,
+		"created":  task.CreatedAt,
+		"desc":     task.Description,
 	}
 	if ab, err := json.Marshal(audit); err == nil {
 		os.WriteFile(filepath.Join(taskDir, "audit.jsonl"), append(ab, '\n'), 0o644)
@@ -332,6 +332,10 @@ func (s *MasterScheduler) runTask(task *Task) {
 	taskDesc := task.Description + reportHint
 	args = append(args, "-task", taskDesc)
 
+	// 子任务结晶模式: ZERG_SUBTASK=1 → CA 带 -subtask flag（设计-子任务结晶模式-20260905 S5——修: 必须在 exec.Command 前 append）
+	if os.Getenv("ZERG_SUBTASK") == "1" {
+		args = append(args, "-subtask")
+	}
 	cmd := exec.Command(s.agentCmd, args...)
 	// v2.5.5 P1-2 修复: 日志写固定位置（/tmp/zerg-ca-logs/）——防 worktree merge 后日志丢失
 	// 默认写 workdir/.zerg/logs（worktree 内）——merge 删 worktree——跟踪数据断
@@ -339,14 +343,15 @@ func (s *MasterScheduler) runTask(task *Task) {
 	if len(baseEnv) == 0 {
 		baseEnv = os.Environ()
 	}
+	// Hermes 协议转正（C3 实测参数全对——随结晶模式一起开）
+	if os.Getenv("ZERG_SUBTASK") == "1" {
+		baseEnv = append(baseEnv, "ZERG_HERMES_TOOLS=1")
+	} else {
+		log.Printf("⚠️ 总调度: ZERG_SUBTASK=%q（非 1——任务 %s 不走结晶模式）", os.Getenv("ZERG_SUBTASK"), task.ID)
+	}
 	// 2026-09-05 对照验证: ZERG_LOOPCORE 显式转发给 CA（core 进程 env 或 s.agentEnv 任一配置即生效）
 	if os.Getenv("ZERG_LOOPCORE") != "" {
 		baseEnv = append(baseEnv, "ZERG_LOOPCORE="+os.Getenv("ZERG_LOOPCORE"))
-	}
-	// 子任务结晶模式: ZERG_SUBTASK=1 → CA 带 -subtask flag（设计-子任务结晶模式-20260905 S5）
-	if os.Getenv("ZERG_SUBTASK") == "1" {
-		args = append(args, "-subtask")
-		baseEnv = append(baseEnv, "ZERG_HERMES_TOOLS=1") // Hermes 协议转正（C3 实测参数全对）
 	}
 	// S6: 任务级 env 透传（rework 续作断点数据）
 	baseEnv = append(baseEnv, task.ExtraEnv...)
