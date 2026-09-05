@@ -143,3 +143,50 @@ func TestPlanCacheGate(t *testing.T) {
 	}
 	fmt.Println("G9 门槛建议: SavePlanTemplate 仅当 outcome.Status==done")
 }
+
+// TestSchedulerResumeSkipsDone — S6: 断点恢复续作（已 done 阶段跳过）
+func TestSchedulerResumeSkipsDone(t *testing.T) {
+	dir := t.TempDir()
+	call := func(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, int64, int64, error) {
+		if strings.Contains(userPrompt, "阶段总结员") {
+			return `{"key_data":["续作补充"],"influence":""}`, 10, 10, nil
+		}
+		return "正文", 50, 50, nil
+	}
+	ranSteps := []string{}
+	runner := func(ctx context.Context, step Step, seed []map[string]any) (string, int64, int, error) {
+		ranSteps = append(ranSteps, step.ID)
+		_ = os.WriteFile(filepath.Join(dir, step.Produces[0]), []byte("x"), 0o644)
+		return "ok", 100, 2, nil
+	}
+	s := NewScheduler(Config{Workdir: dir}, call, runner, nil)
+	// 注入持久化 plan（模拟 LoadPlan）
+	plan := &Plan{Steps: []Step{
+		{ID: "A", Goal: "写 a.txt", Produces: []string{"a.txt"}, Contract: &Contract{MustWriteFiles: []string{"a.txt"}}},
+		{ID: "B", Goal: "写 b.txt 依赖 a", Produces: []string{"b.txt"}, Depends: []string{"A"}, Contract: &Contract{MustWriteFiles: []string{"b.txt"}}},
+	}}
+	s.SetPlan(plan)
+	// 注入断点结晶（A 已 done）
+	s.Resume(map[string]*Crystal{"A": {StepID: "A", ExitKind: ExitDone}})
+	out, err := s.Run(context.Background(), "写 a.txt 然后写 b.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != "done" {
+		t.Fatalf("应 done: %+v", out)
+	}
+	if !s.Resumed {
+		t.Fatal("应标记续作")
+	}
+	for _, id := range ranSteps {
+		if id == "A" {
+			t.Fatal("已 done 的 A 不应重跑")
+		}
+	}
+	if len(ranSteps) != 1 || ranSteps[0] != "B" {
+		t.Fatalf("应只跑 B: %v", ranSteps)
+	}
+	if len(s.ResumedSkipped) != 1 || s.ResumedSkipped[0] != "A" {
+		t.Fatalf("审计: %v", s.ResumedSkipped)
+	}
+}
