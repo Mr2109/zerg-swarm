@@ -71,6 +71,10 @@ func newLoop(agent *Agent, tools []ToolDef, logger *Logger, state *agentstate.Ha
 // Loop 运行 Agent 主循环——每轮: 模型调用→工具执行→无进展检测，直到终止条件或 maxTurns 用尽
 // v2.5.1 挂单诊断: defer 捕获 ToolTrace 补全（所有出口都带完整工具轨迹）
 func Loop(ctx context.Context, agent *Agent, tools []ToolDef, logger *Logger, state *agentstate.HarnessState, maxTurns int, budget int64, noProgressThresh int) (result LoopResult) {
+	// 2026-09-05 内核开关: ZERG_LOOPCORE=1 走 loopcore 内核（CATerminator 仲裁）——默认关（对照验证——稳定后转正）
+	if os.Getenv("ZERG_LOOPCORE") == "1" {
+		return agent.RunWithKernel(ctx, tools, logger, state, maxTurns, budget, noProgressThresh)
+	}
 	var ls *loopState // v2.5.1 defer 捕获（ToolTrace 补全）
 	defer func() {
 		// v2.5.1 挂单诊断：所有出口补 ToolTrace

@@ -54,6 +54,16 @@ func TestMasterScheduler_ConcurrentLimit(t *testing.T) {
 // TestMasterScheduler_Pause — 外部任务提交——内部任务挂起重新入队（外部优先执行）
 func TestMasterScheduler_Pause(t *testing.T) {
 	s := NewMasterScheduler("/bin/echo", 2)
+	// 2026-09-05 修: 清全局持久化残留（其他测试/真实运行写 /tmp/zerg-tasks.json——
+	// NewMasterScheduler 恢复旧任务入队致 QueueLen 断言污染）——再清一次本测试入队的
+	defer func() {
+		s.mu.Lock()
+		s.queue = s.queue[:0]
+		s.mu.Unlock()
+	}()
+	s.mu.Lock()
+	s.queue = s.queue[:0] // 清恢复入队的旧任务——只测 pause 逻辑
+	s.mu.Unlock()
 	// 直接构造 running 状态（不真跑——验证 pauseInternalsLocked 逻辑）
 	internal := &Task{ID: "internal-1", Description: "进化", Priority: PriorityInternal, Status: "running"}
 	s.running[internal.ID] = internal
