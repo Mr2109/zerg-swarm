@@ -116,12 +116,17 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 			execTask.FailReason = fmt.Sprintf("复查打回 %d 次超限（重做 %d 次）: %s", execTask.ReviewCount, execTask.ReplanCount, shortReason(reportPath))
 			log.Printf("🔁 总调度: 复查 %s 打回任务 %s 超限（复查%d次/重做%d次）——标 failed", reviewTask.ID, execTask.ID, execTask.ReviewCount, execTask.ReplanCount)
 		} else {
-			// 派重做任务（同模型 A——带复查意见——重做）
+			// 派重做任务（同模型 A——带复查意见——S6: 续作语义非全量重做）
 			execTask.ReplanCount++
 			reworkID := "rework-" + sanitizeID(execTask.ID) + "-" + fmt.Sprintf("%d", execTask.ReplanCount)
+			// S6 断点数据 env（结晶任务打回——CA 侧 LoadPlan/LoadCrystals 恢复）
+			extraEnv := []string{
+				"ZERG_TASK_DIR=" + taskDirOf(execTask),
+				"ZERG_REVIEW_NOTE=" + shortReason(reportPath),
+			}
 			reworkTask := &Task{
 				ID:          reworkID,
-				Description: fmt.Sprintf("重做任务（第 %d 次——复查打回后重做——被复查任务: %s）。\n复查意见（必须按此修改）: %s\n原任务: %s\n要求: 按复查意见修正——重做——写报告到 internal-task-report.md——贴输出。", execTask.ReplanCount, execTask.ID, shortReason(reportPath), execTask.Description),
+				Description: fmt.Sprintf("续作任务（第 %d 次——复查打回后续作——被复查任务: %s）。\n复查意见（必须按此修正——只修问题不重做已完成部分）: %s\n原任务: %s\n要求: 按复查意见修正——已完成的产物不要重做——写报告到 internal-task-report.md——贴输出。", execTask.ReplanCount, execTask.ID, shortReason(reportPath), execTask.Description),
 				Priority:    PriorityExternal - 1,
 				Type:        "rework",
 				Model:       execTask.Model, // 同执行模型 A
@@ -131,6 +136,7 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 				RefWorktree: execTask.RefWorktree,
 				ReplanCount: execTask.ReplanCount,
 				ReviewCount: execTask.ReviewCount,
+				ExtraEnv:    extraEnv, // S6: 断点恢复+意见注入
 				CreatedAt:   time.Now(), // 修复: rework 也设创建时间（UI 执行时长）
 			}
 			heap.Push(&s.queue, reworkTask)
@@ -233,4 +239,9 @@ func buildReviewPrompt(execTask *Task, reportPath string) string {
 6. 贴输出（评分表 + 结论）
 
 注意: 你是独立复查者——不受执行模型影响——只看证据（报告+代码+产物）——真复查真评分。`, execTask.Description, execTask.Model, reportPath)
+}
+
+// taskDirOf — 任务目录（S6 断点数据位置——/tmp/zerg-tasks/<ID>/）
+func taskDirOf(t *Task) string {
+	return filepath.Join("/tmp/zerg-tasks", t.ID)
 }
