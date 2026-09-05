@@ -17,16 +17,16 @@ import (
 
 // Issue Status — v2.5.2 完整状态枚举
 const (
-	StatusOpen       = "open"        // 新创建，待分配
-	StatusQueued     = "queued"      // 已排队
-	StatusRunning    = "running"     // 正在处理
-	StatusFixing     = "fixing"      // 正在修复
-	StatusVerified   = "verified"    // 已验证通过
+	StatusOpen       = "open"           // 新创建，待分配
+	StatusQueued     = "queued"         // 已排队
+	StatusRunning    = "running"        // 正在处理
+	StatusFixing     = "fixing"         // 正在修复
+	StatusVerified   = "verified"       // 已验证通过
 	StatusWaitReview = "waiting_review" // C4: 验收通过——等脑确认复查（v2.5.3）
-	StatusDone       = "done"        // 已关闭（终态）
-	StatusRetry      = "retry"       // 需要重试
-	StatusEscalated  = "escalated"   // 已升级（终态）
-	StatusDead       = "dead"        // 已放弃（终态）
+	StatusDone       = "done"           // 已关闭（终态）
+	StatusRetry      = "retry"          // 需要重试
+	StatusEscalated  = "escalated"      // 已升级（终态）
+	StatusDead       = "dead"           // 已放弃（终态）
 )
 
 // IsValidStatus — 检查状态是否合法
@@ -143,17 +143,17 @@ func isTerminalStatus(s string) bool {
 
 // IssueRecord — 失败问题单（SWE-bench 8 字段——本地 docs/issues/）
 type IssueRecord struct {
-	InstanceID       string    `json:"instance_id"`       // 唯一标识（时间戳+任务hash）
-	Task             string    `json:"task"`              // 任务描述（截断 200）
-	ExitStatus       string    `json:"exit_status"`       // failed/timeout/blocked/token_budget/model_error
-	ErrorType        string    `json:"error_type"`        // 失败分类枚举
-	RetryCount       int       `json:"retry_count"`       // 重试次数
-	AssignedAgent    string    `json:"assigned_agent"`    // 派单 agent（默认 zerg-agent）
-	CreatedAt        string    `json:"created_at"`        // 创建时间
-	LastAttemptAt    string    `json:"last_attempt_at"`   // 最后尝试
-	ToolTrace        []string  `json:"tool_trace,omitempty"` // 工具调用轨迹（诊断用）
-	Status           string    `json:"status"`            // open/fixing/resolved/escalated
-	Resolution       string    `json:"resolution,omitempty"` // 修复结论（agent 填）
+	InstanceID    string   `json:"instance_id"`          // 唯一标识（时间戳+任务hash）
+	Task          string   `json:"task"`                 // 任务描述（截断 200）
+	ExitStatus    string   `json:"exit_status"`          // failed/timeout/blocked/token_budget/model_error
+	ErrorType     string   `json:"error_type"`           // 失败分类枚举
+	RetryCount    int      `json:"retry_count"`          // 重试次数
+	AssignedAgent string   `json:"assigned_agent"`       // 派单 agent（默认 zerg-agent）
+	CreatedAt     string   `json:"created_at"`           // 创建时间
+	LastAttemptAt string   `json:"last_attempt_at"`      // 最后尝试
+	ToolTrace     []string `json:"tool_trace,omitempty"` // 工具调用轨迹（诊断用）
+	Status        string   `json:"status"`               // open/fixing/resolved/escalated
+	Resolution    string   `json:"resolution,omitempty"` // 修复结论（agent 填）
 }
 
 // ClassifyFailure — 失败分类（LoopResult → error_type——SWE-bench 枚举）

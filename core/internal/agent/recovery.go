@@ -48,10 +48,10 @@ func DefaultPolicy() RetryPolicy {
 //
 // 执行流程：
 //
-//	1. 调用 fn()
-//	2. 失败且可重试 → 退避 sleep → 重试
-//	3. <=MaxRetries 次后成功 → 返回 nil
-//	4. 不可重试 / 次数耗尽 → 返回最后一次错误
+//  1. 调用 fn()
+//  2. 失败且可重试 → 退避 sleep → 重试
+//  3. <=MaxRetries 次后成功 → 返回 nil
+//  4. 不可重试 / 次数耗尽 → 返回最后一次错误
 func Retry(fn func() error, policy RetryPolicy) error {
 	if policy.MaxRetries <= 0 {
 		policy.MaxRetries = DefaultMaxRetries

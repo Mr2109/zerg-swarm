@@ -63,14 +63,15 @@ func (c *ControlledLoop) Verify() (bool, string, error) {
 
 // RunStep 受控循环（一个小任务）
 // 伪代码:
-//   for round in 1..MaxRounds:
-//     调模型（当前小任务 + 上步总结 + 失败反馈）→ 模型调工具完成
-//     验证（程序检查）→ 过 = 成功退出
-//     不过 → 反馈重做（带失败信息）
-//  超限 → NeedRebuild（git 回溯重做）
+//
+//	 for round in 1..MaxRounds:
+//	   调模型（当前小任务 + 上步总结 + 失败反馈）→ 模型调工具完成
+//	   验证（程序检查）→ 过 = 成功退出
+//	   不过 → 反馈重做（带失败信息）
+//	超限 → NeedRebuild（git 回溯重做）
 //
 // 说明: 实际模型调用由调用方（执行器）做——本结构体提供边界控制与验证
-//（模型调用走网关——见 zerg_executor.go——后续实施）
+// （模型调用走网关——见 zerg_executor.go——后续实施）
 func (c *ControlledLoop) RunStep(step string, callModel func(step, feedback string) (string, error)) (*LoopResult, error) {
 	result := &LoopResult{}
 	feedback := c.FailFeedback // 初始失败反馈（可能是重做带入的）

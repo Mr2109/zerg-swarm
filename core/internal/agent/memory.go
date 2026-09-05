@@ -124,7 +124,7 @@ func (m *MemoryStore) Search(query string, limit int) []string {
 				count := strings.Count(text, t)
 				if count > 0 {
 					// 词频 + 长度归一（BM25 简化）
-					s += float64(count) / float64(len(text))/100 + 1
+					s += float64(count)/float64(len(text))/100 + 1
 				}
 			}
 			if s > 0 {

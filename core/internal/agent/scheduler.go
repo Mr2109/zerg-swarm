@@ -15,26 +15,25 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 )
 
 // 常量
 
 const (
-	defaultMaxWorkers  = 2       // 默认并发上限
-	defaultCooldown    = 30 * time.Second // 冷却时间（失败后重派最小间隔）
-	maxRetries         = 3       // 最大重试次数（超过标记 dead）
-	pollInterval       = 5 * time.Second // 轮询间隔
-	workersConfigPath  = "config/workers.yaml" // 并发配置文件
+	defaultMaxWorkers = 2                     // 默认并发上限
+	defaultCooldown   = 30 * time.Second      // 冷却时间（失败后重派最小间隔）
+	maxRetries        = 3                     // 最大重试次数（超过标记 dead）
+	pollInterval      = 5 * time.Second       // 轮询间隔
+	workersConfigPath = "config/workers.yaml" // 并发配置文件
 )
 
 // Priority — 任务优先级（调度器排序用）
 type Priority int
 
 const (
-	PriorityLow     Priority = iota // low
-	PriorityNormal                    // normal
-	PriorityHigh                      // high
+	PriorityLow    Priority = iota // low
+	PriorityNormal                 // normal
+	PriorityHigh                   // high
 )
 
 // String — 优先级字符串
@@ -81,14 +80,14 @@ func (p Priority) Value() int {
 
 // ParsedIssue — 调度器视角的 issue（从 markdown 文件解析）
 type ParsedIssue struct {
-	Path       string    // 文件绝对路径
-	InstanceID string    // 从文件名提取
-	Status     string    // 当前状态
-	Priority   Priority  // 优先级
-	RetryCount int       // 当前重试次数
+	Path        string    // 文件绝对路径
+	InstanceID  string    // 从文件名提取
+	Status      string    // 当前状态
+	Priority    Priority  // 优先级
+	RetryCount  int       // 当前重试次数
 	LastAttempt time.Time // 最后尝试时间
-	CreatedAt  time.Time // 创建时间
-	Content    string    // 原始 markdown 内容
+	CreatedAt   time.Time // 创建时间
+	Content     string    // 原始 markdown 内容
 }
 
 // 并发配置
@@ -138,12 +137,12 @@ type Scheduler struct {
 	maxWorkers   int
 	polling      bool
 	cancelPoll   context.CancelFunc
-	activeCount  int           // 当前活跃 worker 数
+	activeCount  int                  // 当前活跃 worker 数
 	lastDispatch map[string]time.Time // 上次派单时间（issue path → 时间）
-	wg           sync.WaitGroup // 等待所有 worker 退出
-	doneCh       chan struct{}  // 停止信号
-	runner       WorkerRunner  // v2.5.2 可注入 runner（测试 mock——生产默认 exec）
-	logger       *Logger      // v2.5.4.9 结构化日志（可选——nil 不记录）
+	wg           sync.WaitGroup       // 等待所有 worker 退出
+	doneCh       chan struct{}        // 停止信号
+	runner       WorkerRunner         // v2.5.2 可注入 runner（测试 mock——生产默认 exec）
+	logger       *Logger              // v2.5.4.9 结构化日志（可选——nil 不记录）
 	// v2.5.3 容器模式（CA 脱离沙箱——docker run 完整环境）
 	ContainerMode     bool   // true=容器内执行 worker（默认 false=exec 兼容）
 	ContainerAgentBin string // Linux zerg-agent 路径（容器内挂载）

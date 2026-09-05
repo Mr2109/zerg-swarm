@@ -6,9 +6,9 @@ package api
 
 import (
 	"encoding/json"
-	"log"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,13 +24,13 @@ type ModelCaller func(systemPrompt, userPrompt string, maxTokens int) (string, e
 // ZergFlowExecutor 流程执行器（一个任务的全流程驱动）
 type ZergFlowExecutor struct {
 	Task       *Task
-	TaskDir    string   // 任务目录（/tmp/zerg-tasks/<ID>/）
-	Git        *ZergGit // 任务 git
+	TaskDir    string        // 任务目录（/tmp/zerg-tasks/<ID>/）
+	Git        *ZergGit      // 任务 git
 	TaskFile   *ZergTaskFile // task.jsonl
 	Skill      *ZergSkill
-	TaskType   string   // 模型判断的任务类型（skill 类型库 key——外部任务用）
+	TaskType   string      // 模型判断的任务类型（skill 类型库 key——外部任务用）
 	CallModel  ModelCaller // 模型调用（注入——网关）
-	SkillsRoot string     // Skill 库根
+	SkillsRoot string      // Skill 库根
 }
 
 // NewZergFlowExecutor 新建执行器（任务建立——git + jsonl + skill 模板）
@@ -420,7 +420,9 @@ func (e *ZergFlowExecutor) closePhase() error {
 // evolveSkillIfNeeded skill 进化自省（Mr2109 2026-08-27）
 // 读当前 skill → 结合本次任务总结 → 让模型判断是否需要优化 → 需要则产出优化版
 // v2.5.6 候选机制（2026-08-28 Mr2109）: 进化产出先存候选（SKILL.candidate.md）——
-//   不直接覆盖正式版——下次任务用候选试跑——成功转正/失败作废——防"模型自评进化"越进化越差
+//
+//	不直接覆盖正式版——下次任务用候选试跑——成功转正/失败作废——防"模型自评进化"越进化越差
+//
 // 任何失败只告警不阻塞（任务已完成——skill 进化是加分项）
 func (e *ZergFlowExecutor) evolveSkillIfNeeded() error {
 	// 当前 skill（任务内/独属/类型库/模板）
@@ -540,9 +542,11 @@ func isRebuildErr(err error) bool {
 // pingModel 模型探活（v2.5.6 三级漏斗——Mr2109 2026-08-28 效率优化）
 // 用途: ① 任务派发前探活（坏模型不派发）② 恢复调度器判定（环境恢复才重派）
 // 三级漏斗（按耗时从短到长——效率最高时间最短）:
-//   第1级: 快照优先（0ms）——机器 healthy + 已加载目标模型 → 直接通过（不发请求）
-//   第2级: 响应头探测（~1-3s）——发请求只等响应头不等 body——链路通+模型接单=通过
-//   第3级: 完整推理（16s+）——只有响应头到了但怀疑干不了活才等完整响应——几乎不用
+//
+//	第1级: 快照优先（0ms）——机器 healthy + 已加载目标模型 → 直接通过（不发请求）
+//	第2级: 响应头探测（~1-3s）——发请求只等响应头不等 body——链路通+模型接单=通过
+//	第3级: 完整推理（16s+）——只有响应头到了但怀疑干不了活才等完整响应——几乎不用
+//
 // 返回: ok=模型可推理 / err=失败原因（分类）
 func (s *MasterScheduler) pingModel(model string) (bool, error) {
 	if model == "" {
@@ -589,7 +593,7 @@ func (s *MasterScheduler) pingModel(model string) (bool, error) {
 		}
 	}
 	body := map[string]interface{}{
-		"model":            model,
+		"model": model,
 		"input": []map[string]string{
 			{"role": "user", "content": "ping"},
 		},
@@ -834,12 +838,12 @@ func (s *MasterScheduler) callGatewayModel(model, systemPrompt, userPrompt strin
 		userPrompt = strings.TrimPrefix(userPrompt, "TOOL:") + "\n（请调用工具提交方案/执行——不要只输出文字）"
 	}
 	body := map[string]interface{}{
-		"model":            model,
+		"model": model,
 		"input": []map[string]string{
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userPrompt},
 		},
-		"stream":           false,
+		"stream": false,
 	}
 	// v2.5.6 参数来源（Mr2109 2026-08-28）: max_tokens 由适配器决定——
 	// maxTokens>0 才带（兼容旧调用/无适配器模型）——否则不带（网关适配器覆盖成声明值）
@@ -849,8 +853,8 @@ func (s *MasterScheduler) callGatewayModel(model, systemPrompt, userPrompt strin
 	if useTools {
 		body["tools"] = []map[string]interface{}{
 			{
-				"type": "function",
-				"name": "submit_plan",
+				"type":        "function",
+				"name":        "submit_plan",
 				"description": "提交执行方案（1-3 个）",
 				"parameters": map[string]interface{}{
 					"type": "object",
@@ -871,8 +875,8 @@ func (s *MasterScheduler) callGatewayModel(model, systemPrompt, userPrompt strin
 				},
 			},
 			{
-				"type": "function",
-				"name": "submit_select",
+				"type":        "function",
+				"name":        "submit_select",
 				"description": "选定一个执行方案",
 				"parameters": map[string]interface{}{
 					"type": "object",
@@ -885,8 +889,8 @@ func (s *MasterScheduler) callGatewayModel(model, systemPrompt, userPrompt strin
 				},
 			},
 			{
-				"type": "function",
-				"name": "write_file",
+				"type":        "function",
+				"name":        "write_file",
 				"description": "在工作区写文件（执行轮——模型实际产出）",
 				"parameters": map[string]interface{}{
 					"type": "object",
@@ -990,10 +994,11 @@ func taskDirForTask(task *Task) string {
 
 // finishTask 任务收尾（失败/完成——更新状态——调度器统一出口）
 // v2.5.6 故障自愈（Mr2109 2026-08-28）: 环境故障 ≠ 任务失败——
-//   circuit_open/busy（熔断/排队/资源）→ waiting_retry（挂起——机器恢复自动重派——不消耗重试次数）
-//   upstream_fail（转发失败）→ 同 waiting_retry（可重试——恢复后重派）
-//   bad_request/model_not_found（参数/配置）→ failed（不可重试——带根因）
-//   REBUILD/其他任务逻辑错误 → failed（任务自身失败——重试 3 次后查因）
+//
+//	circuit_open/busy（熔断/排队/资源）→ waiting_retry（挂起——机器恢复自动重派——不消耗重试次数）
+//	upstream_fail（转发失败）→ 同 waiting_retry（可重试——恢复后重派）
+//	bad_request/model_not_found（参数/配置）→ failed（不可重试——带根因）
+//	REBUILD/其他任务逻辑错误 → failed（任务自身失败——重试 3 次后查因）
 func (s *MasterScheduler) finishTask(task *Task, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

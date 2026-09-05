@@ -69,8 +69,8 @@ func parseModelResponse(raw []byte) (*ModelResponse, error) {
 	// Responses API 格式：output items（message/reasoning/function_call）
 	var parsed struct {
 		Output []struct {
-			Type      string `json:"type"`
-			Content   []struct {
+			Type    string `json:"type"`
+			Content []struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
 			} `json:"content"`
@@ -124,7 +124,6 @@ func parseModelResponse(raw []byte) (*ModelResponse, error) {
 	return resp, nil
 }
 
-
 // parseChatModelResponse — 解析 chat completions 响应（choices[].message——2026-09-05 协议统一）
 // 容错: usage 缺失=0（llama-server 截断 bug 兼容——与 chat 包 parseChatResultTolerant 同思想）
 func parseChatModelResponse(raw []byte) (*ModelResponse, error) {
@@ -133,7 +132,7 @@ func parseChatModelResponse(raw []byte) (*ModelResponse, error) {
 			Message struct {
 				Content          string `json:"content"`
 				ReasoningContent string `json:"reasoning_content"`
-				ToolCalls []struct {
+				ToolCalls        []struct {
 					ID       string `json:"id"`
 					Function struct {
 						Name      string `json:"name"`

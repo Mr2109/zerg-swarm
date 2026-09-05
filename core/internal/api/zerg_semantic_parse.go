@@ -29,12 +29,13 @@ type Action struct {
 
 // ParseAction 从模型自然语言提取动作（规则解析——程序精准）
 // 示例: "创建 hello.txt 内容 zerg-test" → {Type:write, Path:hello.txt, Content:zerg-test}
-//       "运行 go test" → {Type:run, Command:go test}
-//       "看看当前目录" → {Type:list}
-//       "看看 hello.txt" → {Type:read, Path:hello.txt}
-//       "搜索 zerg" → {Type:search, Keyword:zerg}
-//       "把 hello.txt 里的 old 改成 new" → {Type:patch, Path:hello.txt, OldText:old, NewText:new}
-//       "在 hello.txt 末尾追加 xxx" → {Type:append, Path:hello.txt, Content:xxx}
+//
+//	"运行 go test" → {Type:run, Command:go test}
+//	"看看当前目录" → {Type:list}
+//	"看看 hello.txt" → {Type:read, Path:hello.txt}
+//	"搜索 zerg" → {Type:search, Keyword:zerg}
+//	"把 hello.txt 里的 old 改成 new" → {Type:patch, Path:hello.txt, OldText:old, NewText:new}
+//	"在 hello.txt 末尾追加 xxx" → {Type:append, Path:hello.txt, Content:xxx}
 func ParseAction(nl string, workdir string) *Action {
 	raw := strings.TrimSpace(nl)
 	act := &Action{Raw: raw}

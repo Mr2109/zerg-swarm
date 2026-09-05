@@ -98,8 +98,22 @@ func TestV2LongQuery(t *testing.T) {
 // 8. 并发（两个同时搜——缓存/goroutine 安全）
 func TestV2Concurrent(t *testing.T) {
 	done := make(chan string, 2)
-	go func() { r, e := WebSearchV2(SearchParams{Query: "Go 语言", Limit: 2}); if e != nil { done <- "err1" } else { done <- fmt.Sprintf("ok1(%d)", len(r)) } }()
-	go func() { r, e := WebSearchV2(SearchParams{Query: "Rust 语言", Limit: 2}); if e != nil { done <- "err2" } else { done <- fmt.Sprintf("ok2(%d)", len(r)) } }()
+	go func() {
+		r, e := WebSearchV2(SearchParams{Query: "Go 语言", Limit: 2})
+		if e != nil {
+			done <- "err1"
+		} else {
+			done <- fmt.Sprintf("ok1(%d)", len(r))
+		}
+	}()
+	go func() {
+		r, e := WebSearchV2(SearchParams{Query: "Rust 语言", Limit: 2})
+		if e != nil {
+			done <- "err2"
+		} else {
+			done <- fmt.Sprintf("ok2(%d)", len(r))
+		}
+	}()
 	a, b := <-done, <-done
 	t.Logf("⑧并发: %s / %s", a, b)
 }

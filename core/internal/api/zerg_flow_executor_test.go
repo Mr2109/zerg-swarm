@@ -62,7 +62,7 @@ func TestZergFlowExecutorRun(t *testing.T) {
 	_ = os.RemoveAll("/tmp/zerg-test-flow/hello.txt")
 
 	task := &Task{
-		ID:          "task-flow-test-1",
+		ID: "task-flow-test-1",
 		// 用唯一目录避免并发测试冲突
 		Description: "创建 hello.txt 文件",
 		Type:        "internal",
