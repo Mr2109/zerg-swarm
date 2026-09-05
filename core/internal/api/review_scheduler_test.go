@@ -174,3 +174,39 @@ func TestHandleReviewDone_Rework(t *testing.T) {
 		t.Fatal("打回后应派重做任务")
 	}
 }
+
+// TestReviewRetryOnReviewerFailure — S7: 复查自身失败（无报告）→ 重派复查非打回
+func TestReviewRetryOnReviewerFailure(t *testing.T) {
+	s := NewMasterScheduler("", 1)
+	s.mu.Lock()
+	s.queue = s.queue[:0]
+	s.waiting = map[string]*Task{}
+	s.mu.Unlock()
+	reviewDir := t.TempDir() // 空目录=无报告=复查自身失败
+	execTask := &Task{ID: "exec-s7", Status: "reviewing", Model: "Qwen3.8-27B", Workdir: t.TempDir(), Description: "测试任务"}
+	s.history[execTask.ID] = execTask
+	review := &Task{ID: "review-s7", RefTaskID: execTask.ID, Status: "done", Model: "example-35b-v2",
+		Workdir: reviewDir, ReplanCount: 0}
+	s.history[review.ID] = review
+
+	s.handleReviewDoneLocked(review)
+
+	if execTask.Status == "failed" {
+		t.Fatalf("复查自身失败不应打回执行任务: %s", execTask.FailReason)
+	}
+	if execTask.ReplanCount != 0 {
+		t.Fatalf("不应消耗 Replan: %d", execTask.ReplanCount)
+	}
+	if execTask.ReviewFailedCount != 1 {
+		t.Fatalf("应记复查失败 1 次: %d", execTask.ReviewFailedCount)
+	}
+	found := false
+	for _, task := range s.queue {
+		if strings.HasPrefix(task.ID, "review-retry-exec-s7") && task.Type == "review" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("应重派 review-retry 任务")
+	}
+}
