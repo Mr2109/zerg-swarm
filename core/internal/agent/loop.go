@@ -17,6 +17,7 @@ import (
 
 	"zerg/core/internal/agentstate"
 	"zerg/core/internal/compressor"
+	"zerg/core/internal/hermes"
 	"zerg/core/internal/loopguard"
 )
 
@@ -231,6 +232,15 @@ func Loop(ctx context.Context, agent *Agent, tools []ToolDef, logger *Logger, st
 				Content:    toolResults[i].Content,
 				ToolCallID: tc.ID,
 			}
+			// 2026-09-05 Hermes 化: 工具结果 <tool_response> 包装 + 状态标注（ZERG_HERMES_TOOLS=1——
+			// callModelHermes 把 role=tool 转 user 回传——模型看训练见过的格式）
+			if os.Getenv("ZERG_HERMES_TOOLS") == "1" {
+				if toolResults[i].Error != "" {
+					toolMsg.Content = hermes.WrapToolResponseErr(tc.Name, toolResults[i].Content)
+				} else {
+					toolMsg.Content = hermes.WrapToolResponse(tc.Name, toolResults[i].Content)
+				}
+			}
 			if tc.Name == "read" && toolResults[i].Error == "" {
 				// v2.5 读后行动引导（对齐 Codex——模型读后需明确下一步）
 				toolMsg.Content += "\n\n[读后引导] 已读取文件内容。请基于内容采取行动：若任务要求修改/创建文件——立即用 edit/write；若需要进一步信息——用 grep/glob 定位；若已理解——直接生成所需内容。"
@@ -380,7 +390,13 @@ func (ls *loopState) toolSearch(query string) (ToolCallResult, error) {
 		}
 	}
 	if len(matched) == 0 {
-		return ToolCallResult{Content: "（未发现匹配工具——当前已有: " + strings.Join(func() []string { var n []string; for _, t := range ls.tools { n = append(n, t.Function.Name) }; return n }(), ", ") + "）"}, nil
+		return ToolCallResult{Content: "（未发现匹配工具——当前已有: " + strings.Join(func() []string {
+			var n []string
+			for _, t := range ls.tools {
+				n = append(n, t.Function.Name)
+			}
+			return n
+		}(), ", ") + "）"}, nil
 	}
 	// v2.5.1: 返回限制（≤8——对齐调研"单次调用 ≤10 工具"——不一次全给）
 	const maxSearchReturn = 8
@@ -547,30 +563,30 @@ func (ls *loopState) logFinal(result LoopResult) {
 
 // loopState - 循环内部状态
 type loopState struct {
-	agent     *Agent
-	tools     []ToolDef
-	logger    *Logger
-	state     *agentstate.HarnessState
-	execCtx   *ExecContext
+	agent   *Agent
+	tools   []ToolDef
+	logger  *Logger
+	state   *agentstate.HarnessState
+	execCtx *ExecContext
 
-	turn            int
-	totalTokens     int64
-	retryCount      int
-	noProgressCount int
-	lastSummary     string
-	toolTrace       []string // v2.5.1 工具调用轨迹（挂单诊断）
-	confirmDone     int // v2.5：无工具调用确认完成引导（0=未引导 1=已引导）
-	maxTurns        int
-	budget          int64
+	turn             int
+	totalTokens      int64
+	retryCount       int
+	noProgressCount  int
+	lastSummary      string
+	toolTrace        []string // v2.5.1 工具调用轨迹（挂单诊断）
+	confirmDone      int      // v2.5：无工具调用确认完成引导（0=未引导 1=已引导）
+	maxTurns         int
+	budget           int64
 	noProgressThresh int
 
 	// v2.5 系统回馈统计（Reflexion 模式——Codex 阈值）
-	exploreCount   int // 探索工具调用（ls/glob/grep）
-	verifyCount    int // 验证工具调用（重复读同一文件）
-	noActionCount  int // 无工具调用轮数
-	diagnosed      bool // 已给过诊断（每任务一次——防刷屏）
-	lastReadPath   string // 上次 read 的 path（重复读检测）
-	verifiedOutput bool   // 产出已验证（Completeness Verifier——写文件后系统验证）
+	exploreCount   int              // 探索工具调用（ls/glob/grep）
+	verifyCount    int              // 验证工具调用（重复读同一文件）
+	noActionCount  int              // 无工具调用轮数
+	diagnosed      bool             // 已给过诊断（每任务一次——防刷屏）
+	lastReadPath   string           // 上次 read 的 path（重复读检测）
+	verifiedOutput bool             // 产出已验证（Completeness Verifier——写文件后系统验证）
 	guard          *loopguard.Guard // 2026-09-05: 指纹防循环（公共包——与对话系统同一内核）
 
 	// v2.5.1 上下文压缩（C 方案——LLMLingua-2 onnx——50% 触发）
@@ -582,8 +598,9 @@ type loopState struct {
 }
 
 // hasRealChanges — v2.5.4.9 防假完成：工作区是否有"真实代码改动"（非 .md 报告）
-//   检查工作区目录 git diff——存在非 .md 后缀的改动文件 → true
-//   （CA 假完成模式只写 result.md——不算真实改动——不能强制完成）
+//
+//	检查工作区目录 git diff——存在非 .md 后缀的改动文件 → true
+//	（CA 假完成模式只写 result.md——不算真实改动——不能强制完成）
 func (ls *loopState) hasRealChanges() bool {
 	if ls.agent == nil || ls.agent.execContext == nil {
 		return false
@@ -619,7 +636,8 @@ func (ls *loopState) hasRealChanges() bool {
 }
 
 // hasReportFile — v2.5.5 P1-1 防假完成：工作区是否有报告文件（internal-task-report.md 或任务指定）
-//   内部任务（报告型）——完成判定前检查——没报告文件=假完成（不判定完成）
+//
+//	内部任务（报告型）——完成判定前检查——没报告文件=假完成（不判定完成）
 func (ls *loopState) hasReportFile() bool {
 	if ls.agent == nil || ls.agent.execContext == nil {
 		return false
@@ -735,7 +753,6 @@ func (ls *loopState) handleNoToolCalls(resp *ModelResponse) (bool, LoopResult) {
 func systemPrompt() string {
 	return "你是虫族 Agent（Zerg Agent），通过工具执行任务的智能体。\n\n【核心规则】\n0. 【工具思维（最重要）】开始任务前先想：1)这个任务需要什么能力？（查代码/查经验/查网络/读写文件）2)哪个工具最合适？（如果工具列表里没有——用 tool_search 搜索发现）3)规划执行步骤——然后再动手。先找对工具再执行，能大幅加速成功率！\n0.3. 【工具帮助】不确定工具的参数/用法时——给该工具加 help:true（如 {\"help\":true}）——返回详细文档（参数示例/变更记录）——看完再调用。不要反复搜索同一关键词——工具已列出就直接调用。\n0.5. 【并行工具（效率关键）】探索阶段（查代码/看文件/搜索）时——一次响应中调用多个只读工具（如同时 ls + grep + read——一个回合完成探索）——不要一个个来！独立只读操作可并行。只有写操作（write/edit）或依赖上一步结果时才单个调用。\n1. 每个任务必须调用工具完成，不调用工具=任务失败\n2. 工具结果回喂后必须分析结果再决定下一步\n3. 读完文件要分析内容（如数据要比较、找规律）——不能只读不改\n4. 文件操作用专用工具（read读/edit改/write写/grep搜/glob找）——禁止用 bash 裸命令做这些（bash 只跑程序/测试/构建）\n5. 工具返回多行结果时必须完整利用（不能只取第一行）\n6. 任务完成前自查：目标是否真正达成？缺少的步骤补上\n7. 失败换方法重试（最多3次），不要重复同一动作\n8. 任务真正完成时必须明确输出【任务完成】作为结束标记——不要反复验证同一结果\n9. 【路径语义（重要）】所有工具路径相对「当前工作区」（workdir）——不是项目根。工作区已是目标目录时用相对名（如 memory.go）或 .（当前目录）——不要拼完整项目路径（如 core/internal/agent/xxx.go 会重复拼接导致找不到文件）。不确定时先 ls . 看当前目录。\n10. 【超大输出（重要）】工具结果超 20K 字符会自动持久化到 .zerg/tool_output/ 文件——回喂的是截断预览+文件路径。需要完整内容时用 read 读该文件（按需——不要重复请求同样的大搜索）。\n11. 【codegraph（重要）】查代码结构/调用关系/死代码时优先用 mcp_codegraph_* 工具（mcp_codegraph_codegraph_callers 查谁调用某函数——零调用者=死代码候选；mcp_codegraph_codegraph_explore 一次查多个符号）——比盲目 read/grep 高效百倍。查代码第一优先 codegraph！\n12. 【工具分层（重要）】MCP 工具按只展示必要+更多选项：kb 核心 4 个（mcp_kb_kb_search 查经验/read 读全文/add 写入/capture_fix 排障沉淀）**常驻可用**——v2.5.5 T4: anysearch 核心 2 个（mcp_anysearch_search 网络调研/batch_search 批量搜）**也常驻可用**——网络搜索首选 anysearch（300ms——比 web_search 30s 快 100 倍——疑难杂症/深度技术问题优先）——其他扩展工具（codegraph 查代码/更多 kb 功能）**不预加载**——需要时用 tool_search 搜索发现。执行任务前**先 kb_search 查经验**（避免踩坑）。\n\n【可用工具】\nbash(执行命令), read(读文件), write(写文件 path+content), edit(编辑文件 path+search+replace), glob(文件匹配), grep(搜索 pattern), ls(列表), web_search(网络搜索), web_fetch(网页抓取), skill_load(加载技能), tool_search(搜索发现工具——需要时用)\n\n【执行流程】\n分析任务→选工具→调用→分析结果→完成或继续"
 }
-
 
 // containsDoneWords - 检测模型回复是否含完成语义词（v2.5——example-35b-v2 不输出【任务完成】标记）
 func containsDoneWords(s string) bool {

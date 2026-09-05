@@ -17,22 +17,23 @@ import (
 	"time"
 
 	"zerg/core/internal/agentstate"
+	"zerg/core/internal/hermes"
 )
 
 // TerminateReason - 循环终止状态（与 Claude Code 对齐）
 type TerminateReason string
 
 const (
-	ReasonComplete     TerminateReason = "complete"     // 正常完成（checker 通过）
-	ReasonUserAbort    TerminateReason = "user_abort"   // 用户中止
-	ReasonTokenBudget  TerminateReason = "token_budget" // token 预算耗尽
-	ReasonMaxTurns     TerminateReason = "max_turns"    // 超过最大轮数
-	ReasonStopHook     TerminateReason = "stop_hook"    // 外部 stop hook
-	ReasonMaxRetries   TerminateReason = "max_retries"  // 最大重试次数
-	ReasonModelError   TerminateReason = "model_error"  // 模型调用失败
-	ReasonToolError    TerminateReason = "tool_error"   // 工具不可恢复错误
-	ReasonEscalate     TerminateReason = "escalate"     // 升级给人
-	ReasonBlocked      TerminateReason = "blocked"      // 被门控拦截
+	ReasonComplete    TerminateReason = "complete"     // 正常完成（checker 通过）
+	ReasonUserAbort   TerminateReason = "user_abort"   // 用户中止
+	ReasonTokenBudget TerminateReason = "token_budget" // token 预算耗尽
+	ReasonMaxTurns    TerminateReason = "max_turns"    // 超过最大轮数
+	ReasonStopHook    TerminateReason = "stop_hook"    // 外部 stop hook
+	ReasonMaxRetries  TerminateReason = "max_retries"  // 最大重试次数
+	ReasonModelError  TerminateReason = "model_error"  // 模型调用失败
+	ReasonToolError   TerminateReason = "tool_error"   // 工具不可恢复错误
+	ReasonEscalate    TerminateReason = "escalate"     // 升级给人
+	ReasonBlocked     TerminateReason = "blocked"      // 被门控拦截
 )
 
 // ToolCall - 模型输出的工具调用
@@ -54,16 +55,16 @@ type Message struct {
 
 // Config - Agent 配置
 type Config struct {
-	Model      string        `json:"model"`       // 模型
-	GatewayURL string        `json:"gateway_url"` // 网关地址
-	AuthToken  string        `json:"auth_token"` // X-Auth-Token
-	MaxTurns   int           `json:"max_turns"` // 最大轮数
-	Budget     int64         `json:"budget"`    // token 预算
-	Timeout    time.Duration `json:"timeout"`    // 网关超时
-	ContextWindow int        `json:"context_window"` // v2.5.4.9 滚动窗口压缩——保留最近 N 轮完整（默认 5——Mr2109）
-	WorkDir    string        `json:"work_dir"`    // 工作区
-	StateDir   string        `json:"state_dir"` // 状态目录
-	Temperature float64      `json:"temperature"` // 采样温度（v2.5：默认 0.3——低温稳定工具调用）
+	Model         string        `json:"model"`          // 模型
+	GatewayURL    string        `json:"gateway_url"`    // 网关地址
+	AuthToken     string        `json:"auth_token"`     // X-Auth-Token
+	MaxTurns      int           `json:"max_turns"`      // 最大轮数
+	Budget        int64         `json:"budget"`         // token 预算
+	Timeout       time.Duration `json:"timeout"`        // 网关超时
+	ContextWindow int           `json:"context_window"` // v2.5.4.9 滚动窗口压缩——保留最近 N 轮完整（默认 5——Mr2109）
+	WorkDir       string        `json:"work_dir"`       // 工作区
+	StateDir      string        `json:"state_dir"`      // 状态目录
+	Temperature   float64       `json:"temperature"`    // 采样温度（v2.5：默认 0.3——低温稳定工具调用）
 }
 
 // Terminator - 外部终止回调（gate 或用户中止循环）
@@ -71,21 +72,21 @@ type Terminator func(reason TerminateReason)
 
 // Agent - 虫族 Agent（替代 Codex 的手）
 type Agent struct {
-	cfg           Config
-	history       []Message
-	sessionLog    *SessionLog // v2.5.5 P1: 会话日志（日志=上下文真相——2026-08-21 Mr2109）
-	state         *agentstate.HarnessState
-	gate          ToolGater
-	checker       Checker
-	client        *http.Client
-	terminator    Terminator
-	resultHandler func([]ToolCallResult)
-	execContext   *ExecContext // 工具执行上下文（工作区/超时/输出上限）
-	mcpMgr        *MCPManager  // v2.5.1 MCP 管理器（codegraph 等——动态工具）
-	skillMgr      *SkillManager // v2.5.1 skill 管理器（SKILL.md 技能）
-	adapter       ModelAdapter // v2.5.4.7 模型适配器插件（可选——nil=老逻辑）
-	logger        *Logger      // v2.5.4.9 结构化日志（可选——nil 时用 stderr）
-	turnCount     int          // v2.5.5 冷启动检测：callModel 调用计数（首轮=冷启动）
+	cfg            Config
+	history        []Message
+	sessionLog     *SessionLog // v2.5.5 P1: 会话日志（日志=上下文真相——2026-08-21 Mr2109）
+	state          *agentstate.HarnessState
+	gate           ToolGater
+	checker        Checker
+	client         *http.Client
+	terminator     Terminator
+	resultHandler  func([]ToolCallResult)
+	execContext    *ExecContext   // 工具执行上下文（工作区/超时/输出上限）
+	mcpMgr         *MCPManager    // v2.5.1 MCP 管理器（codegraph 等——动态工具）
+	skillMgr       *SkillManager  // v2.5.1 skill 管理器（SKILL.md 技能）
+	adapter        ModelAdapter   // v2.5.4.7 模型适配器插件（可选——nil=老逻辑）
+	logger         *Logger        // v2.5.4.9 结构化日志（可选——nil 时用 stderr）
+	turnCount      int            // v2.5.5 冷启动检测：callModel 调用计数（首轮=冷启动）
 	rollingSummary rollingSummary // v2.5.4.9 滚动窗口压缩——累积摘要（压缩轮次保留）
 }
 
@@ -222,6 +223,11 @@ func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef
 	if a.adapter != nil {
 		return a.adapter.Call(ctx, sysPrompt, a.history, tools)
 	}
+	// 2026-09-05 CA Hermes 化: ZERG_HERMES_TOOLS=1 走 Hermes 协议（不带 tools 字段——
+	// 提示注入 <tools> schema——模型输出 <tool_call>XML——治 X3 长 prompt 下畸形 arguments）
+	if os.Getenv("ZERG_HERMES_TOOLS") == "1" {
+		return a.callModelHermes(ctx, sysPrompt, tools)
+	}
 	// 老逻辑（未设适配器——兼容）
 	msgs := make([]map[string]any, 0, len(a.history)+2)
 	msgs = append(msgs, map[string]any{"role": "system", "content": sysPrompt})
@@ -269,7 +275,9 @@ func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef
 		"temperature": a.cfg.Temperature,
 		"reasoning":   map[string]any{"effort": "low"}, // 思考不能关（Mr2109铁律——与对话系统一致）
 	}
-	if len(tools) > 0 {
+	// Hermes 模式不带 tools 字段（P4-46——模板 XML 分支不渲染——模型输出 <tool_call>）
+	// 工具定义已在 callModelHermes 注入 sysPrompt
+	if len(tools) > 0 && os.Getenv("ZERG_HERMES_TOOLS") != "1" {
 		// chat 格式工具: tools[].function
 		chatTools := make([]map[string]any, 0, len(tools))
 		for _, t := range tools {
@@ -335,6 +343,10 @@ func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef
 	if err != nil {
 		return nil, fmt.Errorf("流式读取失败: %w", err)
 	}
+	// Hermes 模式: 从正文解析 <tool_call>（chat 解析器只认 message.tool_calls）
+	if os.Getenv("ZERG_HERMES_TOOLS") == "1" {
+		return parseHermesChatResult(raw)
+	}
 	// v2.5.4.9 结构化日志：model_call 成功事件（含耗时/token 数——跟踪程序用）
 	// 先解析响应（一次——日志用 tokens + 返回值用同一结果）
 	parsed, perr := parseChatModelResponse(raw)
@@ -382,7 +394,7 @@ func streamReadChat(body io.Reader) ([]byte, error) {
 				Delta struct {
 					Content          string `json:"content"`
 					ReasoningContent string `json:"reasoning_content"`
-					ToolCalls []struct {
+					ToolCalls        []struct {
 						Index    int    `json:"index"`
 						ID       string `json:"id"`
 						Function struct {
@@ -472,4 +484,96 @@ func streamReadChat(body io.Reader) ([]byte, error) {
 		out["reasoning_content"] = reasoning.String()
 	}
 	return json.Marshal(out)
+}
+
+// callModelHermes — CA Hermes 模式（2026-09-05——治 X3 长 prompt 下 tools 字段畸形 arguments）
+// 与对话系统 P4-46 同模式: 不带 tools 字段 → sysPrompt 注入 <tools> schema → 模型输出 <tool_call>XML
+// 工具结果回传: assistant content=<tool_call> 原文 + user content=<tool_response>（模型训练见过的格式）
+func (a *Agent) callModelHermes(ctx context.Context, sysPrompt string, tools []ToolDef) (*ModelResponse, error) {
+	// 消息组装（chat 格式——工具结果用 <tool_response> 文本回传——非 role=tool）
+	msgs := make([]map[string]any, 0, len(a.history)+2)
+	// 工具 schema 注入 sysPrompt（P4-46——hermes 包构建）
+	hermesTools := make([]hermes.ToolSchema, 0, len(tools))
+	for _, t := range tools {
+		hermesTools = append(hermesTools, hermes.ToolSchema{
+			Name:        t.Function.Name,
+			Description: t.Function.Description,
+			Parameters:  t.Function.Parameters,
+		})
+	}
+	sysPrompt += hermes.BuildToolPrompt(hermesTools, "")
+	msgs = append(msgs, map[string]any{"role": "system", "content": sysPrompt})
+	if sum := a.buildSummaryBlock(); sum != nil {
+		msgs = append(msgs, map[string]any{"role": "system", "content": sum.Content})
+	}
+	for _, m := range a.history {
+		if m.Role == "tool" {
+			// Hermes 模式: 工具结果作为 user 消息回传（<tool_response> 已含在 content 里——回传时直接用）
+			msgs = append(msgs, map[string]any{"role": "user", "content": m.Content})
+			continue
+		}
+		// assistant 的 <tool_call> 原文保留在 content（模型看过自己的调用历史）
+		msgs = append(msgs, map[string]any{"role": m.Role, "content": m.Content})
+	}
+
+	body := map[string]any{
+		"model":       a.cfg.Model,
+		"messages":    msgs,
+		"stream":      false, // Hermes 模式非流式（聚合简单——CA 不需要逐字）
+		"temperature": a.cfg.Temperature,
+		"reasoning":   map[string]any{"effort": "low"},
+		// 注意: 不带 tools 字段（P4-46 核心）
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("序列化请求体失败: %w", err)
+	}
+	if os.Getenv("ZERG_DEBUG") == "1" {
+		fmt.Fprintf(os.Stderr, "[callModelHermes] body=%d bytes history=%d\n", len(data), len(a.history))
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", a.cfg.GatewayURL+"/v1/chat/completions", strings.NewReader(string(data)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if a.cfg.AuthToken != "" {
+		req.Header.Set("X-Auth-Token", a.cfg.AuthToken)
+	}
+	start := time.Now()
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("调用网关失败(%s): %w", time.Since(start).Round(time.Millisecond), err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("网关返回 %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return parseHermesChatResult(raw)
+}
+
+// parseHermesChatResult — 解析 Hermes 模式响应（content 含 <tool_call> → XML 解析）
+func parseHermesChatResult(raw []byte) (*ModelResponse, error) {
+	parsed, err := parseChatModelResponse(raw)
+	if err != nil {
+		return nil, err
+	}
+	// 从正文解析 <tool_call>
+	xmlCalls := hermes.ParseXMLToolCalls(parsed.Content)
+	if len(xmlCalls) > 0 {
+		for _, xc := range xmlCalls {
+			parsed.ToolCalls = append(parsed.ToolCalls, ToolCall{
+				ID:      fmt.Sprintf("hermes_%d", time.Now().UnixNano()%100000),
+				Name:    xc.Name,
+				Args:    xc.Args,
+				RawArgs: xc.RawArgs,
+			})
+		}
+		parsed.Content = hermes.StripXMLToolCalls(parsed.Content)
+	}
+	return parsed, nil
 }
