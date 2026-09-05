@@ -19,19 +19,20 @@ import (
 	"zerg/core/internal/gateway"
 	"zerg/core/internal/localback"
 	"zerg/core/internal/store"
+	"zerg/core/internal/subtask"
 
 	"github.com/go-chi/chi/v5"
 )
 
 // Handlers 封装所有 HTTP 处理器需要的依赖。
 type Handlers struct {
-	Config           *config.FleetConfig
-	ConfigPath       string // B11: 配置文件路径（热加载用）
-	Store            *store.Store
-	LocalBack        *localback.LocalBackend
-	HeartbeatLogger  *slog.Logger // v2.3 B1: 心跳专用日志，分离到 /tmp/zerg-heartbeat.log
-	Gateway          *gateway.Gateway // v2.5.5 #9 补充5: 心跳健康清零熔断用
-	Scheduler        *MasterScheduler // v2.5.5 T3: 主控总调度器（两级调度）
+	Config          *config.FleetConfig
+	ConfigPath      string // B11: 配置文件路径（热加载用）
+	Store           *store.Store
+	LocalBack       *localback.LocalBackend
+	HeartbeatLogger *slog.Logger     // v2.3 B1: 心跳专用日志，分离到 /tmp/zerg-heartbeat.log
+	Gateway         *gateway.Gateway // v2.5.5 #9 补充5: 心跳健康清零熔断用
+	Scheduler       *MasterScheduler // v2.5.5 T3: 主控总调度器（两级调度）
 	// v2.5.7 对话→任务集成: 来源对话内容查询（派任务带上下文——main.go 对话模块就绪后注入）
 	ChatStore *chat.ChatStore
 }
@@ -116,17 +117,17 @@ func (h *Handlers) SubmitTaskHandler(w http.ResponseWriter, r *http.Request) {
 		id = fmt.Sprintf("task-%d", time.Now().UnixNano())
 	}
 	task := &Task{
-		ID:               id,
-		Description:      description,
-		Priority:         priority,
-		Type:             taskType,
-		Status:           "queued",
-		Model:            req.Model,
-		Workdir:          req.Workdir,
-		Flow:             req.Flow, // v2.5.6: "zerg"=程序定量驱动新流程
-		ParentSessionID:  req.ParentSessionID,
-		ParentMessageID:  req.ParentMessageID,
-		CreatedAt:        time.Now(),
+		ID:              id,
+		Description:     description,
+		Priority:        priority,
+		Type:            taskType,
+		Status:          "queued",
+		Model:           req.Model,
+		Workdir:         req.Workdir,
+		Flow:            req.Flow, // v2.5.6: "zerg"=程序定量驱动新流程
+		ParentSessionID: req.ParentSessionID,
+		ParentMessageID: req.ParentMessageID,
+		CreatedAt:       time.Now(),
 	}
 	h.Scheduler.Submit(task)
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
@@ -236,6 +237,36 @@ func (h *Handlers) TaskDetailHandler(w http.ResponseWriter, r *http.Request) {
 	// 跟踪数据（events.jsonl 解析——轮次/工具/token）
 	trace := parseTaskTrace(task.ID)
 	detail["trace"] = trace
+	// S8: 结晶模式阶段进度卡（plan.json+crystallization.jsonl——任务目录读）
+	{
+		taskDir := filepath.Join("/tmp/zerg-tasks", sanitizeID(task.ID))
+		if plan, err := subtask.LoadPlan(taskDir); err == nil && plan != nil {
+			crystals, _ := subtask.LoadCrystals(taskDir)
+			type StageView struct {
+				ID      string   `json:"id"`
+				Goal    string   `json:"goal"`
+				Status  string   `json:"status"` // done/partial/blocked/running/pending
+				Results []string `json:"results,omitempty"`
+			}
+			var stages []StageView
+			for _, stepID := range plan.SortedStepIDs() {
+				step := plan.StepByID(stepID)
+				if step == nil {
+					continue
+				}
+				sv := StageView{ID: step.ID, Goal: step.Goal, Status: "pending"}
+				if c, ok := crystals[step.ID]; ok {
+					sv.Status = string(c.ExitKind)
+					sv.Results = c.Results
+				}
+				stages = append(stages, sv)
+			}
+			if stages != nil {
+				detail["stages"] = stages
+				detail["subtask_mode"] = true
+			}
+		}
+	}
 	// v2.5.5 虫族UI 任务详情增强（Mr2109 2026-08-20）: 执行报告 + 复查报告
 	// 执行报告: workdir/internal-task-report.md（执行模型写的）
 	// 复查报告: workdir/review-report.md 或复查任务工作区的报告
@@ -557,11 +588,11 @@ func (h *Handlers) TaskGitHandler(w http.ResponseWriter, r *http.Request) {
 	// git status --short
 	statusOut, _ := exec.Command("git", "-C", wtDir, "status", "--short").Output()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"task_id":     taskID,
-		"worktree":    wtDir,
-		"commits":     commits,
-		"diff_stat":   strings.TrimSpace(string(statOut)),
-		"status":      strings.TrimSpace(string(statusOut)),
+		"task_id":   taskID,
+		"worktree":  wtDir,
+		"commits":   commits,
+		"diff_stat": strings.TrimSpace(string(statOut)),
+		"status":    strings.TrimSpace(string(statusOut)),
 	})
 }
 
@@ -672,11 +703,11 @@ func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
 					// skill 目录（含 SKILL.md）
 					if _, err := os.Stat(filepath.Join(dir, name, "SKILL.md")); err == nil {
 						items = append(items, map[string]interface{}{
-							"name":  name,
-							"trust": resourceTrust.GetResourceStatus("skills", name),
-							"uses":  resourceTrust.GetResourceUses("skills", name),
+							"name":   name,
+							"trust":  resourceTrust.GetResourceStatus("skills", name),
+							"uses":   resourceTrust.GetResourceUses("skills", name),
 							"faults": resourceTrust.GetResourceFaults("skills", name),
-							"since": resourceTrust.GetResourceSince("skills", name),
+							"since":  resourceTrust.GetResourceSince("skills", name),
 						})
 						seen[name] = true
 					}
@@ -708,11 +739,11 @@ func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				items = append(items, map[string]interface{}{
-					"name":  name,
-					"trust": resourceTrust.GetResourceStatus("mcp", name),
-					"uses":  resourceTrust.GetResourceUses("mcp", name),
+					"name":   name,
+					"trust":  resourceTrust.GetResourceStatus("mcp", name),
+					"uses":   resourceTrust.GetResourceUses("mcp", name),
 					"faults": resourceTrust.GetResourceFaults("mcp", name),
-					"since": resourceTrust.GetResourceSince("mcp", name),
+					"since":  resourceTrust.GetResourceSince("mcp", name),
 				})
 				seen[name] = true
 			}
@@ -1062,16 +1093,16 @@ func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"total_machines":      len(snapshots),
-		"healthy_count":       healthyCount,
-		"unhealthy_count":     unhealthyCount,
-		"total_models":        len(models),
-		"available_models":    models,
+		"total_machines":         len(snapshots),
+		"healthy_count":          healthyCount,
+		"unhealthy_count":        unhealthyCount,
+		"total_models":           len(models),
+		"available_models":       models,
 		"total_mem_available_gb": totalMemAvailable,
-		"total_mem_total_gb":    totalMemTotal,
-		"total_gpu_used_gb":     totalGPUUsed,
-		"total_active_requests": totalActive,
-		"machines":              snapshots,
+		"total_mem_total_gb":     totalMemTotal,
+		"total_gpu_used_gb":      totalGPUUsed,
+		"total_active_requests":  totalActive,
+		"machines":               snapshots,
 	}
 
 	writeJSON(w, http.StatusOK, response)
@@ -1139,32 +1170,32 @@ func (h *Handlers) ModelDetailHandler(w http.ResponseWriter, r *http.Request) {
 		thinking = *c.Thinking
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"name":          name,
-		"family":        c.Family,
-		"host":          c.Host,
-		"backend":       c.Backend,
-		"file":          c.File,
-		"mem_gb":        c.MemGb,
-		"ssd":           c.SSD,
-		"ctx_window":    c.CtxWindow,
-		"arch":          arch,
-		"architecture":  c.Architecture, // v2.5.6 2026-08-27 模型详情补全
-		"thinking":      thinking,
-		"mmproj":        c.Mmproj,
-		"moe":           c.Moe,
-		"template":      c.Template,
-		"cmd":           c.Cmd,
-		"env":           c.Env,
-		"modality":      c.Modality,
-		"tool_support":  c.ToolSupport,
-		"description":   c.Description,
-		"added":         c.Added,
-		"verified":      c.Verified,
-		"status":        status,
-		"loaded":        loaded,
-		"can_start":     c.Host == "local",
-		"adapter_opts":  h.AdapterOptions(name), // v2.5.6: 适配器调用选项（Temperature/APIFormat/ReasoningEffort 等——反射读适配器实例）
-		"note":          "适配器选项=fleet.yaml 配置字段——本机模型可手动启动/停止（远程设备走 agent 加载）",
+		"name":         name,
+		"family":       c.Family,
+		"host":         c.Host,
+		"backend":      c.Backend,
+		"file":         c.File,
+		"mem_gb":       c.MemGb,
+		"ssd":          c.SSD,
+		"ctx_window":   c.CtxWindow,
+		"arch":         arch,
+		"architecture": c.Architecture, // v2.5.6 2026-08-27 模型详情补全
+		"thinking":     thinking,
+		"mmproj":       c.Mmproj,
+		"moe":          c.Moe,
+		"template":     c.Template,
+		"cmd":          c.Cmd,
+		"env":          c.Env,
+		"modality":     c.Modality,
+		"tool_support": c.ToolSupport,
+		"description":  c.Description,
+		"added":        c.Added,
+		"verified":     c.Verified,
+		"status":       status,
+		"loaded":       loaded,
+		"can_start":    c.Host == "local",
+		"adapter_opts": h.AdapterOptions(name), // v2.5.6: 适配器调用选项（Temperature/APIFormat/ReasoningEffort 等——反射读适配器实例）
+		"note":         "适配器选项=fleet.yaml 配置字段——本机模型可手动启动/停止（远程设备走 agent 加载）",
 	})
 }
 
