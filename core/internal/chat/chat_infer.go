@@ -63,7 +63,7 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 	body := map[string]any{
 		"model":     model,
 		"messages":  msgsAll,
-		"stream":    false, // C3 流式走 InferStream——这里保持非流式（C2 兼容）
+		"stream":    false,                           // C3 流式走 InferStream——这里保持非流式（C2 兼容）
 		"reasoning": map[string]any{"effort": "low"}, // 思考不能关——low 控深度（Mr2109）
 	}
 	if len(tools) > 0 && len(tools[0]) > 0 {
@@ -196,10 +196,10 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 		var ev struct {
 			Choices []struct {
 				Delta struct {
-					Role            string         `json:"role"`
-					Content         string         `json:"content"`
-					ReasoningContent string        `json:"reasoning_content"`
-					ToolCalls       []chatToolCall `json:"tool_calls"`
+					Role             string         `json:"role"`
+					Content          string         `json:"content"`
+					ReasoningContent string         `json:"reasoning_content"`
+					ToolCalls        []chatToolCall `json:"tool_calls"`
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
@@ -410,10 +410,10 @@ func parseChatResult(raw []byte) (*InferResult, error) {
 	var obj struct {
 		Choices []struct {
 			Message struct {
-				Role            string          `json:"role"`
-				Content         string          `json:"content"`
+				Role             string         `json:"role"`
+				Content          string         `json:"content"`
 				ReasoningContent string         `json:"reasoning_content"`
-				ToolCalls       []chatToolCall  `json:"tool_calls"`
+				ToolCalls        []chatToolCall `json:"tool_calls"`
 			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
@@ -485,7 +485,6 @@ func parseToolArgs(raw string) map[string]any {
 	}
 	return args // 解析失败——空参数（工具侧会报参数缺失）
 }
-
 
 // ═══════════════ P4-45 XML 工具调用解析（适配器原则——ornith 训练格式）═══════════════
 

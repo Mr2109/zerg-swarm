@@ -7,7 +7,10 @@ import (
 
 // 版本解析（多级 fallback）
 func TestOverviewVersion(t *testing.T) {
-	cases := []struct{ in string; want int }{
+	cases := []struct {
+		in   string
+		want int
+	}{
 		{"v2.5.7", 3},
 		{"v2.6", 2},
 		{"v2.5.7-test", 3}, // 容忍后缀
