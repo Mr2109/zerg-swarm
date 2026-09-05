@@ -20,24 +20,24 @@ type SysMetric struct {
 	Timestamp time.Time `json:"ts"`
 	Step      int       `json:"step"`
 	// 本机
-	LocalCPU  float64 `json:"local_cpu,omitempty"`  // 本机 CPU %（总）
-	LocalMem  float64 `json:"local_mem,omitempty"`  // 本机内存 %
+	LocalCPU  float64 `json:"local_cpu,omitempty"`       // 本机 CPU %（总）
+	LocalMem  float64 `json:"local_mem,omitempty"`       // 本机内存 %
 	DiskRead  float64 `json:"disk_read_mbps,omitempty"`  // 磁盘读 MB/s
 	DiskWrite float64 `json:"disk_write_mbps,omitempty"` // 磁盘写 MB/s
 	// X3（agent 状态——如有）
-	X3GPU     float64 `json:"x3_gpu,omitempty"`  // X3 GPU %
-	X3CPU     float64 `json:"x3_cpu,omitempty"`  // X3 CPU %
-	X3Active  int     `json:"x3_active,omitempty"` // X3 活跃请求
+	X3GPU      float64 `json:"x3_gpu,omitempty"`          // X3 GPU %
+	X3CPU      float64 `json:"x3_cpu,omitempty"`          // X3 CPU %
+	X3Active   int     `json:"x3_active,omitempty"`       // X3 活跃请求
 	X3MemAvail float64 `json:"x3_mem_avail_gb,omitempty"` // X3 可用内存 GB
 }
 
 // SysMetricsCollector 机器指标采集器（写 sysmetrics.jsonl）
 type SysMetricsCollector struct {
-	file   *os.File
-	x3URL  string // X3 agent 状态地址（如 http://<worker-ip>:8100/status）——空=不采 X3
-	token  string // X3 认证 token
-	last   map[string]float64 // 上次磁盘读数（算速率）
-	lastT  time.Time
+	file  *os.File
+	x3URL string             // X3 agent 状态地址（如 http://<worker-ip>:8100/status）——空=不采 X3
+	token string             // X3 认证 token
+	last  map[string]float64 // 上次磁盘读数（算速率）
+	lastT time.Time
 }
 
 // NewSysMetricsCollector 创建采集器

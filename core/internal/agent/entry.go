@@ -98,9 +98,9 @@ func taskPriorityStatus(priority string) string {
 // SubmitTask — 统一任务提交入口（四类源：git/cron/api/a2a）
 //
 // 流程：
-//   1. 校验 TaskSpec
-//   2. 计算 task hash，检查去重（同 hash 且未关闭 → 返回已有路径）
-//   3. 生成 issue 文件写入 docs/issues/
+//  1. 校验 TaskSpec
+//  2. 计算 task hash，检查去重（同 hash 且未关闭 → 返回已有路径）
+//  3. 生成 issue 文件写入 docs/issues/
 //
 // 返回：issue 文件路径
 func SubmitTask(spec TaskSpec) (string, error) {

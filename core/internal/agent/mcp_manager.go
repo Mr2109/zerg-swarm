@@ -100,8 +100,9 @@ func (mm *MCPManager) ConnectHTTP(name string, baseURL string, headers map[strin
 }
 
 // ToolDefs — 返回 MCP 工具定义（v2.5.1 分层——"只展示必要+更多选项"）
-//   extended=false: 只返回核心工具（当前 kb 的 4 个核心——codegraph/anysearch 无核心→空）
-//   extended=true:  返回全部（tool_search 用——模型搜索发现扩展）
+//
+//	extended=false: 只返回核心工具（当前 kb 的 4 个核心——codegraph/anysearch 无核心→空）
+//	extended=true:  返回全部（tool_search 用——模型搜索发现扩展）
 func (mm *MCPManager) ToolDefs(extended bool) []ToolDef {
 	var defs []ToolDef
 	for serverName, mc := range mm.clients {
