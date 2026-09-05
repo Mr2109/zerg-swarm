@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"zerg/core/internal/agent"
 )
 
 // Run — 运行工具循环（唯一实现——Deps.Infer 内部决定流式与否，内核只透传 delta 回调）
@@ -97,10 +96,22 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 		}
 		res.Content = result.Content
 		res.Reasoning = result.Reasoning
-		res.Usage.TotalTokens += result.Usage.TotalTokens
+		res.Usage.TotalTokens += result.TotalTokens
 
 		// 无工具调用
 		if len(result.ToolCalls) == 0 {
+			// Terminator 仲裁（CA 契约判定/对话 nil=自然终止）
+			if d.Terminator != nil {
+				done, feedback := d.Terminator.OnNoToolCall(result)
+				if feedback != "" {
+					msgs = append(msgs, map[string]any{"role": "user", "content": feedback})
+				}
+				if done {
+					res.ExitKind = "natural"
+					return res
+				}
+				continue // 引导消息已追加——继续循环
+			}
 			if strings.Contains(result.Content, "<tool_call>") {
 				// 坏格式（连续 3 次→收尾）
 				badFormatStreak++
@@ -148,9 +159,12 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 			}
 			res.Traces = append(res.Traces, Trace{Round: round, CallID: tc.ID, Name: tc.Name, Args: argsJSON, Result: content, Error: errStr(execErr), Duration: dur})
 			emit("tool", mustJSON(map[string]any{"name": tc.Name, "args": argsJSON, "result": truncateStr(content, 300)}))
+			if d.OnToolResult != nil {
+				d.OnToolResult(tc, content, execErr)
+			}
 
 			// 回传（Hermes 包装 + [成功·N字] 标注）
-			assistantContent := tc.RawCall
+			assistantContent := tc.RawArgs
 			if assistantContent == "" {
 				assistantContent = fmt.Sprintf("<tool_call>\n{\"name\": \"%s\", \"arguments\": %s}\n</tool_call>", tc.Name, argsJSON)
 			}
@@ -183,7 +197,7 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 					if ferr == nil {
 						res.Content = final.Content
 						res.Reasoning = final.Reasoning
-						res.Usage.TotalTokens += final.Usage.TotalTokens
+						res.Usage.TotalTokens += final.TotalTokens
 					}
 					res.ExitKind = "loopguard_escalate"
 					return res
@@ -196,7 +210,7 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				final, ferr := d.Infer(ctx, model, sysPrompt, msgs, nil, nil)
 				if ferr == nil {
 					res.Content = final.Content
-					res.Usage.TotalTokens += final.Usage.TotalTokens
+					res.Usage.TotalTokens += final.TotalTokens
 				}
 				res.ExitKind = "empty_args"
 				return res
@@ -280,7 +294,7 @@ func errTypeOf(msg string) string {
 
 // normalizeToolArgs — 工具参数统一解包（chat 包 NormalizeToolArgs 同逻辑——模型 Hermes 风格
 // {name,arguments} 整个塞进 function.arguments——解一层覆盖+剔混入元键）
-func normalizeToolArgs(tc *agent.ToolCall) {
+func normalizeToolArgs(tc *ToolCall) {
 	if tc == nil {
 		return
 	}

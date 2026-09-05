@@ -636,15 +636,19 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	// 工具循环——2026-09-05 换装 loopcore 内核（对话循环两份合一第一步——
 	// 五重防护/心跳/引导收尾全部沉淀进内核——此处只做装配）
 	inferAdapter := func(ctx context.Context, model, sysPrompt string, m []map[string]any,
-		onDelta func(deltaType, text string), toolsParam []map[string]any) (*agent.ModelResponse, error) {
+		onDelta func(deltaType, text string), toolsParam []map[string]any) (*loopcore.Response, error) {
 		ir, ierr := h.infer.InferStream(ctx, model, sysPrompt, m, onDelta, toolsParam)
 		if ierr != nil {
 			return nil, ierr
 		}
-		return &agent.ModelResponse{
-			Content: ir.Content, Reasoning: ir.Reasoning,
-			ToolCalls: ir.ToolCalls, Finish: "stop",
-		}, nil
+		kr := &loopcore.Response{
+			Content: ir.Content, Reasoning: ir.Reasoning, Finish: "stop",
+			TotalTokens: int64(ir.InputTokens + ir.OutputTokens + ir.ReasoningTokens),
+		}
+		for _, tc := range ir.ToolCalls {
+			kr.ToolCalls = append(kr.ToolCalls, loopcore.ToolCall{ID: tc.ID, Name: tc.Name, Args: tc.Args, RawArgs: tc.RawArgs})
+		}
+		return kr, nil
 	}
 	var tracesMu sync.Mutex
 	kres := loopcore.Run(r.Context(), loopcore.Config{
