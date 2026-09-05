@@ -20,13 +20,10 @@ func TestInferLive(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
-	res, traces, err := RunToolLoop(ctx, c, "example-35b-v2", "你是虫族 AI。", msgs, nil, nil)
+	// 2026-09-05: RunToolLoop 已删（内核第三步A）——真网关验证走 /send SSE 端点或 loopcore 装配
+	ir, err := c.Infer(ctx, "example-35b-v2", "你是虫族 AI。", msgs)
 	if err != nil {
-		t.Fatalf("RunToolLoop 失败: %v", err)
+		t.Fatalf("Infer 失败: %v", err)
 	}
-	t.Logf("最终回复: %s", truncateArgs(res.Content, 200))
-	t.Logf("工具轨迹: %d 条", len(traces))
-	for _, tr := range traces {
-		t.Logf("  [%s] %s args=%s → %s", tr.Name, tr.CallID, truncateArgs(tr.Args, 80), truncateArgs(tr.Result, 120))
-	}
+	t.Logf("最终回复: %s", truncateArgs(ir.Content, 200))
 }
