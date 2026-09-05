@@ -33,11 +33,25 @@ type ExecContext struct {
 
 // NewExecContext — 创建执行上下文
 func NewExecContext(workDir string) *ExecContext {
-	return &ExecContext{
+	ec := &ExecContext{
 		WorkDir:   workDir,
 		Timeout:   120 * time.Second, // v2.5：30s→120s（评测/长命令——Codex bash 对齐）
 		OutputMax: 16000,             // v2.5：2000→16000（读长文件——Codex 对齐——模型需完整代码）
 	}
+	// S11d: 任务目录白名单统一注入（ZERG_TASK_DIR——所有 CA 通用）
+	// 场景: ①结晶任务报告写入 ②复查任务读被复查任务的报告——都需要跨 workdir 访问任务目录
+	if td := os.Getenv("ZERG_TASK_DIR"); td != "" {
+		ec.ExtraAllowDirs = append(ec.ExtraAllowDirs, td)
+	}
+	// S11d: 附加白名单（冒号分隔——复查任务需要访问被复查任务目录）
+	if extra := os.Getenv("ZERG_EXTRA_ALLOW_DIR"); extra != "" {
+		for _, d := range strings.Split(extra, ":") {
+			if d != "" {
+				ec.ExtraAllowDirs = append(ec.ExtraAllowDirs, d)
+			}
+		}
+	}
+	return ec
 }
 
 // 安全校验
