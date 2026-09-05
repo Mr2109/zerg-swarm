@@ -18,17 +18,18 @@ import (
 
 // 压缩参数（Hermes config.yaml 实测——2026-08-29——threshold 0.5/protect_last_n 20/protect_first_n 3）
 // 对话场景: example-35b-v2 ctx 262144 太大——0.5=131K token 对话永远达不到——用活跃窗口目标值 8000 token
-//（≈20 条长消息——超过即压缩中间段——响应速度优先）
+// （≈20 条长消息——超过即压缩中间段——响应速度优先）
 // P4-39 升级: 比例阈值 + per-model——触发 = max(min(ctx×ThresholdRatio, ActiveWindow), MinWindow)
-//   example-35b-v2 262K  → min(131K, 8000) = 8000（活跃窗口优先——现状不变）
-//   8K 小模型    → min(4K, 8000)   = 4000（窗口小提前压——本地小模型关键）
+//
+//	example-35b-v2 262K  → min(131K, 8000) = 8000（活跃窗口优先——现状不变）
+//	8K 小模型    → min(4K, 8000)   = 4000（窗口小提前压——本地小模型关键）
 const (
-	CompactThresholdRatio = 0.5        // 阈值比例（模型上下文窗口 × 0.5）
-	CompactProtectLastN   = 20         // 保护最近 N 条
-	CompactProtectFirstN  = 3          // 保护最早 N 条
-	CompactMinMessages    = 30         // 最少消息数才压缩（防频繁压缩小会话）
-	CompactActiveWindow   = 8000       // 对话活跃窗口目标 token（超此压缩——对话实用阈值）
-	CompactMinWindow      = 2000       // 触发下限（窗口再小也不低于此）
+	CompactThresholdRatio = 0.5  // 阈值比例（模型上下文窗口 × 0.5）
+	CompactProtectLastN   = 20   // 保护最近 N 条
+	CompactProtectFirstN  = 3    // 保护最早 N 条
+	CompactMinMessages    = 30   // 最少消息数才压缩（防频繁压缩小会话）
+	CompactActiveWindow   = 8000 // 对话活跃窗口目标 token（超此压缩——对话实用阈值）
+	CompactMinWindow      = 2000 // 触发下限（窗口再小也不低于此）
 )
 
 // compactModelCtxs — 模型→上下文窗口注册表（main 启动时从 fleet.yaml 构建）

@@ -21,8 +21,8 @@ type Message struct {
 	ToolName   string  `json:"tool_name,omitempty"`  // 工具消息的工具名
 	Model      string  `json:"model,omitempty"`
 	TokenCount int     `json:"token_count"`
-	Active     bool    `json:"active"`     // 上下文窗口内（Hermes 式）
-	Compacted  bool    `json:"compacted"`  // 压缩摘要标记
+	Active     bool    `json:"active"`               // 上下文窗口内（Hermes 式）
+	Compacted  bool    `json:"compacted"`            // 压缩摘要标记
 	ImagePath  string  `json:"image_path,omitempty"` // D3 多模态：图片文件路径
 	Timestamp  float64 `json:"timestamp"`
 }

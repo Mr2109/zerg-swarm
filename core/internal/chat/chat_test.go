@@ -45,7 +45,7 @@ func TestCompactTriggerTokens(t *testing.T) {
 	}{
 		{"example-35b-v2", 8000}, // min(131K, 8000) = 8000 活跃窗口优先
 		{"Qwen3.8-27B", 8000},    // min(16K, 8000) = 8000
-		{"gemma-12B", 4096},     // min(4096, 8000) = 4096——小窗口提前压
+		{"gemma-12B", 4096},      // min(4096, 8000) = 4096——小窗口提前压
 		{"unknown-model", 8000},  // 未注册默认 262K → 8000
 	}
 	for _, c := range cases {
@@ -219,7 +219,6 @@ func TestParseToolArgs(t *testing.T) {
 		t.Errorf("空参数应返回空 map: %v", got3)
 	}
 }
-
 
 // TestParseXMLToolCalls — P4-45 example-35b-v2 XML 工具调用解析（训练格式——适配器原则）
 func TestParseXMLToolCalls(t *testing.T) {

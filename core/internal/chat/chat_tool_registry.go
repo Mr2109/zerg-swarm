@@ -189,7 +189,6 @@ var chatToolRegistry = []ChatToolMeta{
 
 	// ── 多模态（P4-48 第四批——1）──
 	{Name: "image_ocr", Category: "多模态", Keywords: []string{"ocr", "图片文字", "识别"}},
-
 }
 
 // chatToolMetaByName — 工具名 → 元数据
