@@ -302,7 +302,65 @@ func ParsePlanJSON(modelOutput string) (*Plan, error) {
 	}
 	var p Plan
 	if err := json.Unmarshal([]byte(s), &p); err != nil {
+		// S11: 截断检测与自救——unexpected end of input = JSON 没写完(通常 max_tokens 掐断或模型偷懒)
+		// 自救: 在最后完整的 } 对象处闭合 steps 数组+根对象——已完成的步骤仍可用(部分计划>无计划)
+		if strings.Contains(err.Error(), "unexpected end of JSON input") || strings.Contains(err.Error(), "unexpected end of input") {
+			if p2, ok := salvageTruncatedPlan(s); ok {
+				return p2, nil
+			}
+			return nil, fmt.Errorf("拆解输出非合法 JSON(疑似截断——原文末尾: ...%s): %w", tailRunes(s, 60), err)
+		}
 		return nil, fmt.Errorf("拆解输出非合法 JSON: %w", err)
 	}
 	return &p, nil
+}
+
+// salvageTruncatedPlan — S11: 截断 JSON 自救(回退到最后一个完整步骤对象+闭合数组)
+func salvageTruncatedPlan(s string) (*Plan, bool) {
+	// 找 "steps":[ 之后的所有完整 {..} 对象——逐个尝试解析
+	// 策略: 从后往前找 "}，" 或 "}" 边界, 截到最后一个完整对象, 闭合 "]}"
+
+	// 去掉尾部不完整的尾巴: 找最后一个 "}," 或 "}"（在 steps 数组内的对象边界）
+	lastComplete := strings.LastIndex(s, "}")
+	for lastComplete > 0 {
+		candidate := s[:lastComplete+1]
+		// 闭合数组+根对象——若 candidate 以 "[" 中途开始需处理, 简化: 直接补 "]}";
+
+		// 去掉 candidate 尾部悬挂的逗号
+		trimmed := strings.TrimRight(candidate, " ,\n\t")
+		if strings.HasSuffix(trimmed, "}") {
+			fixed := trimmed + "]}"
+
+			var p Plan
+			if err := json.Unmarshal([]byte(fixed), &p); err == nil && len(p.Steps) > 0 {
+				// 校验每个步骤基本完整(id+goal 非空)
+				valid := true
+				for _, st := range p.Steps {
+					if st.ID == "" || st.Goal == "" {
+						valid = false
+						break
+					}
+				}
+				if valid {
+					return &p, true
+				}
+			}
+		}
+		// 回退找上一个 "}"
+		prev := strings.LastIndex(s[:lastComplete], "}")
+		if prev <= 0 {
+			break
+		}
+		lastComplete = prev
+	}
+	return nil, false
+}
+
+// tailRunes — 取尾部 N 个 rune（错误信息展示用）
+func tailRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[len(r)-n:])
 }
