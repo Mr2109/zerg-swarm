@@ -20,7 +20,8 @@ func DecomposePrompt(taskDesc string, replanFeedback string, lastStats string) s
 	b.WriteString("4. 子任务数 2-8 个（太少=没拆——太多=膨胀）\n")
 	b.WriteString("5. 每个子任务描述含：做什么/产出什么文件/完成判据\n")
 	b.WriteString("6. 关键步骤（失败=整个任务无意义）标 critical:true\n")
-	b.WriteString("7. 步骤目标必须来自任务原文——不要发明任务没要求的东西\n\n")
+	b.WriteString("7. 步骤目标必须来自任务原文——不要发明任务没要求的东西\n")
+	b.WriteString("8. 若任务要求写报告：报告步骤的 goal 必须注明「报告内容≥100字——记录: 做了什么/结果/关键数据/验证证据」——禁止一句话空报告\n\n")
 	b.WriteString("【任务原文】\n" + taskDesc + "\n\n")
 	if replanFeedback != "" {
 		b.WriteString("【重拆背景】以下为已完成阶段的结晶与当前卡点——只拆剩余部分，已完成阶段不要重复拆：\n" + replanFeedback + "\n\n")
