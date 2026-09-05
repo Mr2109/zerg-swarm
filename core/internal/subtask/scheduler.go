@@ -258,6 +258,11 @@ func (s *Scheduler) Run(ctx context.Context, taskDesc string) (*TaskOutcome, err
 	}
 	outcome.DurationS = int(time.Since(start).Seconds())
 	outcome.CrystalsJSON = string(crystalsJSON)
+	// S10: 分相计量回填（G6——否则日志 tokens=0 无法对照实验）
+	outcome.DecomposeTokens = s.DecomposeTokens
+	outcome.ExecuteTokens = s.ExecuteTokens
+	outcome.CrystallizeTokens = s.CrystallizeTokens
+	outcome.Rounds = s.Rounds
 	return outcome, nil
 }
 
