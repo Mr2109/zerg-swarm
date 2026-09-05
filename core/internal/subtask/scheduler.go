@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +28,6 @@ type PhaseRunner func(ctx context.Context, step Step, seedMsgs []map[string]any)
 type Config struct {
 	WorktreeDir    string // worktree（契约核验用）
 	Workdir        string // 工作区
-	TaskDir        string // 任务目录（S8——断点数据+UI stages 数据源）
 	PlannerModel   string // 拆解模型（DS4 默认）
 	ExecutorModel  string // 执行模型
 	MaxReplan      int    // Replan 上限（默认 2）
@@ -61,26 +59,6 @@ type Scheduler struct {
 	ExecuteTokens     int64
 	CrystallizeTokens int64
 	Rounds            int
-	// S6 续作
-	ResumedSkipped []string // 断点恢复跳过的阶段（审计）
-	Resumed        bool     // 本次 Run 是否为续作
-}
-
-// SetPlan — S6: 注入已持久化的 plan（续作不重拆）
-func (s *Scheduler) SetPlan(p *Plan) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.plan = p
-}
-
-// Resume — S6 续作模式: 注入断点数据（已恢复的结晶+plan）——Run 跳过已 done 阶段
-func (s *Scheduler) Resume(crystals map[string]*Crystal) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for id, c := range crystals {
-		s.crystals[id] = c
-	}
-	s.Resumed = true
 }
 
 // NewScheduler — 创建（plan 可 nil=由拆解轮生成）
@@ -135,19 +113,9 @@ func (s *Scheduler) EnsurePlan(ctx context.Context, taskDesc string) (*Plan, []s
 	if s.plan != nil {
 		return s.plan, nil, nil
 	}
-	// S6 续作: 拆解是语义工作不重复——续作时调用方 LoadPlan 注入（无 plan 则报错）
-	if s.Resumed {
-		return nil, nil, fmt.Errorf("续作模式但 plan 未注入（LoadPlan 失败?）——拆解轮不重跑")
-	}
 	var lastStats string
-	// S11b 计划缓存检索——命中则注入拆解 prompt（模板参考——适配优于全量重拆）
-	var tplHint string
-	if tpl, sim := FindPlanTemplate(taskDesc); tpl != nil {
-		tplHint = fmt.Sprintf("【相似历史任务计划（相似度%.0f%%——仅参考骨架，须按本任务实际调整）】\n%s", sim*100, tpl.ToJSON())
-		log.Printf("[subtask] 计划缓存命中: 相似度 %.0f%%——注入拆解参考", sim*100)
-	}
 	for attempt := 1; attempt <= s.cfg.MaxDecompose+1; attempt++ {
-		out, inTok, outTok, err := s.call(ctx, "你是任务架构师——只输出 JSON。", DecomposePrompt(taskDesc, tplHint, lastStats), 0)
+		out, inTok, outTok, err := s.call(ctx, "你是任务架构师——只输出 JSON。", DecomposePrompt(taskDesc, "", lastStats), 0)
 		if err != nil {
 			return nil, nil, fmt.Errorf("拆解模型调用失败: %w", err)
 		}
@@ -179,12 +147,9 @@ func (s *Scheduler) Run(ctx context.Context, taskDesc string) (*TaskOutcome, err
 	if err != nil {
 		return &TaskOutcome{Status: "failed", Reason: err.Error()}, err
 	}
-	// plan.json 落盘（3.6 断点恢复数据源——S8 修: 双落盘 Workdir+TaskDir）
+	// plan.json 落盘（3.6 断点恢复数据源）
 	_ = os.MkdirAll(s.cfg.Workdir, 0o755)
 	_ = os.WriteFile(filepath.Join(s.cfg.Workdir, "plan.json"), []byte(plan.ToJSON()), 0o644)
-	if s.cfg.TaskDir != "" {
-		_ = SavePlan(s.cfg.TaskDir, plan)
-	}
 
 	start := time.Now()
 	outcome := &TaskOutcome{Status: "done"}
@@ -192,12 +157,6 @@ func (s *Scheduler) Run(ctx context.Context, taskDesc string) (*TaskOutcome, err
 
 	for _, stepID := range plan.SortedStepIDs() {
 		step := s.stepByID(stepID)
-		// ⓪ S6 续作: 断点恢复——已 done 的阶段直接跳过（复查打回重做不重复劳动）
-		if c, ok := s.crystals[stepID]; ok && c.ExitKind == ExitDone {
-			s.setStatus(stepID, "done")
-			s.ResumedSkipped = append(s.ResumedSkipped, stepID)
-			continue
-		}
 		// ① 依赖检查（前置 done——G4 partial 不满足依赖→blocked）
 		if !s.depsSatisfied(step) {
 			s.setStatus(stepID, "blocked")
@@ -233,9 +192,6 @@ func (s *Scheduler) Run(ctx context.Context, taskDesc string) (*TaskOutcome, err
 		crystal := s.crystallize(ctx, step, exitKind, vres, body, tokens, rounds)
 		s.mu.Lock()
 		s.crystals[stepID] = crystal
-		if s.cfg.TaskDir != "" {
-			_ = SaveCrystal(s.cfg.TaskDir, crystal) // S8: 结晶落任务目录（断点+UI 数据源）
-		}
 		s.setStatusLocked(stepID, string(crystal.ExitKind))
 		crystalsJSON = appendCrystals(crystalsJSON, crystal)
 		s.mu.Unlock()
@@ -252,10 +208,6 @@ func (s *Scheduler) Run(ctx context.Context, taskDesc string) (*TaskOutcome, err
 	}
 	// 任务级收尾
 	if outcome.Status == "done" {
-		// S11b 计划缓存: 成功任务的计划入库（G9 门槛——仅 done）
-		if err := SavePlanTemplate(taskDesc, plan); err != nil {
-			log.Printf("[subtask] 计划模板入库失败(非致命): %v", err)
-		}
 		blocked := 0
 		for _, st := range s.stages {
 			if st == "blocked" {
@@ -269,11 +221,6 @@ func (s *Scheduler) Run(ctx context.Context, taskDesc string) (*TaskOutcome, err
 	}
 	outcome.DurationS = int(time.Since(start).Seconds())
 	outcome.CrystalsJSON = string(crystalsJSON)
-	// S10: 分相计量回填（G6——否则日志 tokens=0 无法对照实验）
-	outcome.DecomposeTokens = s.DecomposeTokens
-	outcome.ExecuteTokens = s.ExecuteTokens
-	outcome.CrystallizeTokens = s.CrystallizeTokens
-	outcome.Rounds = s.Rounds
 	return outcome, nil
 }
 
@@ -320,9 +267,6 @@ func (s *Scheduler) crystallizeBlocked(step Step) {
 	s.mu.Lock()
 	s.crystals[step.ID] = cr
 	s.mu.Unlock()
-	if s.cfg.TaskDir != "" {
-		_ = SaveCrystal(s.cfg.TaskDir, cr)
-	}
 }
 
 // seedMessages — 种子上下文（R2: 结晶链=追加消息+末尾 recitation——非改写系统提示）
@@ -340,10 +284,6 @@ func (s *Scheduler) seedMessages(taskDesc string, step Step) []map[string]any {
 	// 本步描述+契约（recitation——紧邻结尾）
 	var cb strings.Builder
 	cb.WriteString(fmt.Sprintf("【当前阶段 %s】%s\n", step.ID, step.Goal))
-	// S10 前置: 报告类步骤注入结构要求（D6 教训——模型写 10 字节空报告被任务级验证打回）
-	if strings.Contains(step.Goal, "报告") || strings.Contains(step.Goal, "report") {
-		cb.WriteString("【报告硬性要求】报告必须≥100字，结构: ①做了什么（每步动作）②结果（产物清单+关键内容）③验证证据（测试/检查输出摘录）。一句话空报告=阶段失败。\n")
-	}
 	if step.Contract != nil {
 		if len(step.Contract.MustWriteFiles) > 0 {
 			cb.WriteString(fmt.Sprintf("【本阶段验收——必须落盘】%v\n", step.Contract.MustWriteFiles))
