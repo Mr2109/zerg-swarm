@@ -6,14 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"zerg/core/internal/agent"
-)
+	)
 
 // mockInfer — 逐轮脚本化响应
-func mockInfer(responses []agent.ModelResponse) (Infer, *int) {
+func mockInfer(responses []Response) (Infer, *int) {
 	i := 0
 	return func(ctx context.Context, model, sysPrompt string, msgs []map[string]any,
-		onDelta func(deltaType, text string), tools []map[string]any) (*agent.ModelResponse, error) {
+		onDelta func(deltaType, text string), tools []map[string]any) (*Response, error) {
 		r := responses[min(i, len(responses)-1)]
 		i++
 		cp := r
@@ -29,7 +28,7 @@ func min(a, b int) int {
 }
 
 func TestRunNaturalFinish(t *testing.T) {
-	infer, _ := mockInfer([]agent.ModelResponse{{Content: "答案"}})
+	infer, _ := mockInfer([]Response{{Content: "答案"}})
 	d := Deps{Infer: infer}
 	res := Run(context.Background(), Config{MaxRounds: 3}, "m", "sys", nil, d)
 	if res.ExitKind != "natural" || res.Content != "答案" {
@@ -38,8 +37,8 @@ func TestRunNaturalFinish(t *testing.T) {
 }
 
 func TestRunToolThenFinish(t *testing.T) {
-	infer, _ := mockInfer([]agent.ModelResponse{
-		{ToolCalls: []agent.ToolCall{{ID: "c1", Name: "bash", Args: map[string]any{"command": "ls"}, RawArgs: `{"command":"ls"}`}}},
+	infer, _ := mockInfer([]Response{
+		{ToolCalls: []ToolCall{{ID: "c1", Name: "bash", Args: map[string]any{"command": "ls"}, RawArgs: `{"command":"ls"}`}}},
 		{Content: "完成"},
 	})
 	execCount := 0
@@ -61,8 +60,8 @@ func TestRunToolThenFinish(t *testing.T) {
 }
 
 func TestRunLoopguardEscalate(t *testing.T) {
-	same := agent.ModelResponse{ToolCalls: []agent.ToolCall{{ID: "c", Name: "bash", Args: map[string]any{"command": "same"}, RawArgs: "{}"}}}
-	infer, _ := mockInfer([]agent.ModelResponse{same, same, same, same, same})
+	same := Response{ToolCalls: []ToolCall{{ID: "c", Name: "bash", Args: map[string]any{"command": "same"}, RawArgs: "{}"}}}
+	infer, _ := mockInfer([]Response{same, same, same, same, same})
 	d := Deps{
 		Infer: infer,
 		Exec: func(ctx context.Context, name string, args map[string]any) (string, string, error) {
@@ -76,8 +75,8 @@ func TestRunLoopguardEscalate(t *testing.T) {
 }
 
 func TestRunEmptyArgsEscalate(t *testing.T) {
-	empty := agent.ModelResponse{ToolCalls: []agent.ToolCall{{ID: "c", Name: "tool_a", Args: map[string]any{}}}}
-	infer, _ := mockInfer([]agent.ModelResponse{empty, empty, empty, empty})
+	empty := Response{ToolCalls: []ToolCall{{ID: "c", Name: "tool_a", Args: map[string]any{}}}}
+	infer, _ := mockInfer([]Response{empty, empty, empty, empty})
 	d := Deps{
 		Infer: infer,
 		Exec: func(ctx context.Context, name string, args map[string]any) (string, string, error) {
@@ -91,8 +90,8 @@ func TestRunEmptyArgsEscalate(t *testing.T) {
 }
 
 func TestRunWallClock(t *testing.T) {
-	slow := agent.ModelResponse{ToolCalls: []agent.ToolCall{{ID: "c", Name: "tool_a", Args: map[string]any{"x": 1}}}}
-	infer, _ := mockInfer([]agent.ModelResponse{slow, slow, {Content: "done"}})
+	slow := Response{ToolCalls: []ToolCall{{ID: "c", Name: "tool_a", Args: map[string]any{"x": 1}}}}
+	infer, _ := mockInfer([]Response{slow, slow, {Content: "done"}})
 	d := Deps{
 		Infer: infer,
 		Exec: func(ctx context.Context, name string, args map[string]any) (string, string, error) {
