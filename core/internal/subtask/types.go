@@ -228,6 +228,16 @@ func truncateRunes(s string, n int) string {
 }
 
 // SortedStepIDs — 拓扑排序后的步骤 id（DAG 依赖序——R4 预留并行）
+// StepByID — 按 ID 查步骤（S8 stages 渲染用）
+func (p *Plan) StepByID(id string) *Step {
+	for i := range p.Steps {
+		if p.Steps[i].ID == id {
+			return &p.Steps[i]
+		}
+	}
+	return nil
+}
+
 func (p *Plan) SortedStepIDs() []string {
 	byID := map[string]Step{}
 	inDeg := map[string]int{}
