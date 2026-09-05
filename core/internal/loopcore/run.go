@@ -10,24 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
+	"zerg/core/internal/agent"
 )
 
 // Run — 运行工具循环（唯一实现——Deps.Infer 内部决定流式与否，内核只透传 delta 回调）
-// appendReasoning — 多轮思考累积（2026-09-10 修复"思考内容不全"）
-// 根因: 每轮 res.Reasoning = result.Reasoning 覆盖 → 多轮工具调用只留最后一轮思考。
-// UI 实时缓冲是逐轮累加的，落库/刷新后却只剩末轮 → 用户看到"思考不全"。
-func appendReasoning(acc, round string) string {
-	round = strings.TrimSpace(round)
-	if round == "" {
-		return acc
-	}
-	if strings.TrimSpace(acc) == "" {
-		return round
-	}
-	return acc + "\n\n" + round
-}
-
 func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[string]any, d Deps) *Result {
 	res := &Result{}
 	maxRounds := cfg.MaxRounds
@@ -109,34 +95,12 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				return res
 			}
 		}
-		// 2026-09-10 修复"思考内容不全": 多轮时每轮覆盖 → 落库只剩末轮(UI 实时看到的过程全丢)。
-		// 中间轮(带工具调用)的正文=模型的思考/过程文本 → 归入思考；末轮才是最终回答。
-		if len(result.ToolCalls) > 0 {
-			mid := result.Content
-			if i := strings.Index(mid, "<tool_call>"); i > 0 {
-				mid = mid[:i]
-			}
-			res.Reasoning = appendReasoning(res.Reasoning, appendReasoning(result.Reasoning, mid))
-		} else {
-			res.Content = result.Content
-			res.Reasoning = appendReasoning(res.Reasoning, result.Reasoning)
-		}
-		res.Usage.TotalTokens += result.TotalTokens
+		res.Content = result.Content
+		res.Reasoning = result.Reasoning
+		res.Usage.TotalTokens += result.Usage.TotalTokens
 
 		// 无工具调用
 		if len(result.ToolCalls) == 0 {
-			// Terminator 仲裁（CA 契约判定/对话 nil=自然终止）
-			if d.Terminator != nil {
-				done, feedback := d.Terminator.OnNoToolCall(result)
-				if feedback != "" {
-					msgs = append(msgs, map[string]any{"role": "user", "content": feedback})
-				}
-				if done {
-					res.ExitKind = "natural"
-					return res
-				}
-				continue // 引导消息已追加——继续循环
-			}
 			if strings.Contains(result.Content, "<tool_call>") {
 				// 坏格式（连续 3 次→收尾）
 				badFormatStreak++
@@ -180,33 +144,18 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				}
 			}
 			if execErr != nil {
-				e := execErr.Error()
-				if ffp.In(execErr.Error()) {
-					// FFP 2026-09-08: 格式错误≠执行失败——教学文本直通,不加"执行失败"包装(否则与首行断言矛盾)
-					content = e
-				} else {
-					content = fmt.Sprintf("工具执行失败: %s（%s）", e, truncateStr(content, 500))
-				}
+				content = fmt.Sprintf("工具执行失败: %s（%s）", execErr.Error(), truncateStr(content, 500))
 			}
 			res.Traces = append(res.Traces, Trace{Round: round, CallID: tc.ID, Name: tc.Name, Args: argsJSON, Result: content, Error: errStr(execErr), Duration: dur})
 			emit("tool", mustJSON(map[string]any{"name": tc.Name, "args": argsJSON, "result": truncateStr(content, 300)}))
-			if d.OnToolResult != nil {
-				d.OnToolResult(tc, content, execErr)
-			}
 
 			// 回传（Hermes 包装 + [成功·N字] 标注）
-			assistantContent := tc.RawArgs
+			assistantContent := tc.RawCall
 			if assistantContent == "" {
 				assistantContent = fmt.Sprintf("<tool_call>\n{\"name\": \"%s\", \"arguments\": %s}\n</tool_call>", tc.Name, argsJSON)
 			}
 			status := "[失败]"
-			if execErr != nil {
-				if ffp.In(execErr.Error()) {
-					status = "[格式反馈]" // FFP: 教学轮——非执行失败
-				} else {
-					status = "[失败]"
-				}
-			} else {
+			if execErr == nil {
 				status = fmt.Sprintf("[成功·%d字]", len([]rune(content)))
 			}
 			contentJSON := mustJSON(content)
@@ -233,8 +182,8 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 					final, ferr := d.Infer(ctx, model, sysPrompt, msgs, nil, nil)
 					if ferr == nil {
 						res.Content = final.Content
-						res.Reasoning = appendReasoning(res.Reasoning, final.Reasoning)
-						res.Usage.TotalTokens += final.TotalTokens
+						res.Reasoning = final.Reasoning
+						res.Usage.TotalTokens += final.Usage.TotalTokens
 					}
 					res.ExitKind = "loopguard_escalate"
 					return res
@@ -247,7 +196,7 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				final, ferr := d.Infer(ctx, model, sysPrompt, msgs, nil, nil)
 				if ferr == nil {
 					res.Content = final.Content
-					res.Usage.TotalTokens += final.TotalTokens
+					res.Usage.TotalTokens += final.Usage.TotalTokens
 				}
 				res.ExitKind = "empty_args"
 				return res
@@ -331,7 +280,7 @@ func errTypeOf(msg string) string {
 
 // normalizeToolArgs — 工具参数统一解包（chat 包 NormalizeToolArgs 同逻辑——模型 Hermes 风格
 // {name,arguments} 整个塞进 function.arguments——解一层覆盖+剔混入元键）
-func normalizeToolArgs(tc *ToolCall) {
+func normalizeToolArgs(tc *agent.ToolCall) {
 	if tc == nil {
 		return
 	}

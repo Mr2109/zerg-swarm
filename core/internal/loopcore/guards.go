@@ -5,7 +5,7 @@ package loopcore
 import (
 	"fmt"
 
-	"github.com/Mr2109/zerg-swarm/core/internal/loopguard"
+	"zerg/core/internal/loopguard"
 )
 
 // CompactToolResults — 旧工具结果压缩（keepRecent: 最近 N 个保留完整——其余一行摘要）
