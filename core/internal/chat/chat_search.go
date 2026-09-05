@@ -9,12 +9,12 @@ import (
 
 // SearchResult — 搜索结果
 type SearchResult struct {
-	SessionID string  `json:"session_id"`
-	MessageID int64   `json:"message_id"`
-	Role      string  `json:"role"`
-	Content   string  `json:"content"`
-	SessionTitle string `json:"session_title"`
-	Timestamp float64 `json:"timestamp"`
+	SessionID    string  `json:"session_id"`
+	MessageID    int64   `json:"message_id"`
+	Role         string  `json:"role"`
+	Content      string  `json:"content"`
+	SessionTitle string  `json:"session_title"`
+	Timestamp    float64 `json:"timestamp"`
 }
 
 // SearchMessages — FTS5 全文搜索（跨会话）
