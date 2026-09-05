@@ -50,7 +50,8 @@ func main() {
 		gateway    string
 		x3Status   string // v2.5.4.9 机器级采样——X3 状态地址
 		x3Token    string // v2.5.4.9 机器级采样——X3 token
-		jsonOut   bool
+		jsonOut     bool
+		subtaskMode bool
 		retryN    int
 		stateFile string
 	)
@@ -63,6 +64,7 @@ func main() {
 	flag.StringVar(&mcpFlag, "mcp", "", "MCP 服务器（name:cmd|arg 逗号分隔——如 codegraph:codegraph|serve|--mcp；HTTP 型 name:http|url|token）")
 	flag.BoolVar(&autoIssue, "auto-issue", false, "失败自动挂单（错误自愈 P0——重试耗尽写 docs/issues/）")
 	flag.BoolVar(&jsonOut, "json", false, "JSON 输出（AI 解析用）")
+	flag.BoolVar(&subtaskMode, "subtask", false, "子任务结晶模式（2026-09-05——拆解轮+阶段执行+结晶链）")
 	flag.IntVar(&retryN, "retry", 1, "失败自动重试次数（默认 1）")
 	flag.StringVar(&stateFile, "state", "", "状态文件路径（断连恢复用——存在则续跑）")
 	flag.StringVar(&issueFile, "issue", "", "接单模式：issue 文件路径（读问题单→查因→填修复结论→标记 resolved）")
@@ -240,7 +242,12 @@ func main() {
 	// 执行任务（失败自动重试——v2.5 治本：example-35b-v2 波动靠重试缓解）
 	var result agent.LoopResult
 	for attempt := 0; attempt <= retryN; attempt++ {
-		result = agent.Loop(ctx, a, tools, logger, state, maxTurns, 0, 3)
+		if subtaskMode {
+			// 2026-09-05 子任务结晶模式（设计-子任务结晶模式-20260905——S5 接线）
+			result = agent.RunSubtaskLoop(ctx, a, tools, logger, state, maxTurns)
+		} else {
+			result = agent.Loop(ctx, a, tools, logger, state, maxTurns, 0, 3)
+		}
 		// 保存状态（断连恢复——v2.5 #9）
 		if stateFile != "" && state != nil {
 			_ = state.Save(stateFile)
