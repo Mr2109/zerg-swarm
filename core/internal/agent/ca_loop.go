@@ -251,11 +251,17 @@ func RunSubtaskLoop(ctx context.Context, a *Agent, tools []ToolDef, logger *Logg
 	}
 
 	// 阶段执行适配（PhaseRunner——内部组装种子消息走 callModel+工具循环）
+	reviewInjected := false
 	runner := func(ctx context.Context, step subtask.Step, seed []map[string]any) (string, int64, int, error) {
 		// 种子消息灌入 Agent 历史
 		a.history = a.history[:0]
 		for _, m := range seed {
 			a.history = append(a.history, Message{Role: m["role"].(string), Content: m["content"].(string)})
+		}
+		// S6: 复查意见注入（只注首个执行阶段——续作的问题定位输入）
+		if note := os.Getenv("ZERG_REVIEW_NOTE"); note != "" && !reviewInjected {
+			reviewInjected = true
+			a.history = append(a.history, Message{Role: "user", Content: "【复查打回意见——本次执行必须按此修正】" + note})
 		}
 		// 单阶段内循环（复用 Loop 内核——但轮数限本阶段）
 		res := Loop(ctx, a, tools, logger, state, 15, 0, 3)
@@ -272,6 +278,19 @@ func RunSubtaskLoop(ctx context.Context, a *Agent, tools []ToolDef, logger *Logg
 	}
 	cfg := subtask.BuildConfig(spec)
 	sched := subtask.NewScheduler(cfg, subtask.ModelCall(call), subtask.PhaseRunner(runner), nil)
+
+	// S6 打回续作: 任务目录里有断点数据 → 恢复（跳过已 done 阶段+复查意见注入首个执行阶段）
+	if taskDir := os.Getenv("ZERG_TASK_DIR"); taskDir != "" {
+		if plan, perr := subtask.LoadPlan(taskDir); perr == nil {
+			if crystals, cerr := subtask.LoadCrystals(taskDir); cerr == nil {
+				sched.SetPlan(plan)
+				sched.Resume(crystals)
+				logger.LogEvent(string(EventLoopEnd), "info", "subtask_resume", "",
+					subtask.ResumeSummary(plan, crystals), nil, "", "", "")
+			}
+		}
+	}
+
 	outcome, err := sched.Run(ctx, spec.Description)
 	if err != nil {
 		logger.LogEvent(string(EventLoopEnd), "error", "subtask_failed", "", err.Error(), nil, err.Error(), "", "")

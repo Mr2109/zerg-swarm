@@ -59,6 +59,26 @@ type Scheduler struct {
 	ExecuteTokens     int64
 	CrystallizeTokens int64
 	Rounds            int
+	// S6 续作
+	ResumedSkipped []string // 断点恢复跳过的阶段（审计）
+	Resumed        bool     // 本次 Run 是否为续作
+}
+
+// SetPlan — S6: 注入已持久化的 plan（续作不重拆）
+func (s *Scheduler) SetPlan(p *Plan) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.plan = p
+}
+
+// Resume — S6 续作模式: 注入断点数据（已恢复的结晶+plan）——Run 跳过已 done 阶段
+func (s *Scheduler) Resume(crystals map[string]*Crystal) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, c := range crystals {
+		s.crystals[id] = c
+	}
+	s.Resumed = true
 }
 
 // NewScheduler — 创建（plan 可 nil=由拆解轮生成）
@@ -113,6 +133,10 @@ func (s *Scheduler) EnsurePlan(ctx context.Context, taskDesc string) (*Plan, []s
 	if s.plan != nil {
 		return s.plan, nil, nil
 	}
+	// S6 续作: 拆解是语义工作不重复——续作时调用方 LoadPlan 注入（无 plan 则报错）
+	if s.Resumed {
+		return nil, nil, fmt.Errorf("续作模式但 plan 未注入（LoadPlan 失败?）——拆解轮不重跑")
+	}
 	var lastStats string
 	for attempt := 1; attempt <= s.cfg.MaxDecompose+1; attempt++ {
 		out, inTok, outTok, err := s.call(ctx, "你是任务架构师——只输出 JSON。", DecomposePrompt(taskDesc, "", lastStats), 0)
@@ -157,6 +181,12 @@ func (s *Scheduler) Run(ctx context.Context, taskDesc string) (*TaskOutcome, err
 
 	for _, stepID := range plan.SortedStepIDs() {
 		step := s.stepByID(stepID)
+		// ⓪ S6 续作: 断点恢复——已 done 的阶段直接跳过（复查打回重做不重复劳动）
+		if c, ok := s.crystals[stepID]; ok && c.ExitKind == ExitDone {
+			s.setStatus(stepID, "done")
+			s.ResumedSkipped = append(s.ResumedSkipped, stepID)
+			continue
+		}
 		// ① 依赖检查（前置 done——G4 partial 不满足依赖→blocked）
 		if !s.depsSatisfied(step) {
 			s.setStatus(stepID, "blocked")
