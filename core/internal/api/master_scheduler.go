@@ -54,6 +54,7 @@ type Task struct {
 	Machine     string       `json:"machine,omitempty"` // v2.5.6: 执行设备（模型所在机器——handlers 按 modelMachineMap 推算——UI 详情显示）
 	SkillKey    string       `json:"skill_key,omitempty"` // v2.5.6: skill 归属 key（内部任务=def.ID——独属 skill；空=外部任务按类型共享）
 	ExtraEnv    []string     `json:"extra_env,omitempty"` // S6: 任务级 env 透传（rework 续作——ZERG_TASK_DIR/ZERG_REVIEW_NOTE）
+	ReviewFailedCount int    `json:"review_failed_count,omitempty"` // S7: 复查自身失败重派次数（上限 2）
 	cmd         *exec.Cmd    // 运行中的 CA 进程（打断发信号用——非导出）
 }
 

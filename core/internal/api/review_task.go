@@ -104,8 +104,38 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 			}
 		}
 	}
+	// S7 复查误伤治理: 复查自身失败（无报告=复查模型没产出结论——复查环节故障）
+	// ≠ 执行任务不通过。锅不能让执行任务背——重派复查（换模型池）——上限 2 次，超限才打回
 	if conclusion == "rework" && reportPath == "" {
-		log.Printf("🔁 总调度: 复查 %s 无报告——打回（复查失败≠执行成功——2026-09-05 治假完成绿通道）", reviewTask.ID)
+		log.Printf("🔁 总调度: 复查 %s 无报告——复查自身失败（非执行不通过）——处理见下", reviewTask.ID)
+	}
+	if conclusion == "rework" && reportPath == "" {
+		// 复查失败重派（换模型池——非打回执行任务）
+		execTask.ReviewFailedCount++
+		if execTask.ReviewFailedCount <= 2 {
+			reviewRetryID := fmt.Sprintf("review-retry-%s-%d", sanitizeID(execTask.ID), execTask.ReviewFailedCount)
+			// 从复查池选一个与上次不同的模型
+			nextModel := pickAlternateReviewModel(reviewTask.Model, execTask.Model)
+			retryTask := &Task{
+				ID:          reviewRetryID,
+				Description: fmt.Sprintf("重派复查任务（第 %d 次——上次复查模型未产出报告——非执行任务问题）。\n被复查任务: %s\n执行报告: %s\n要求: 独立审查执行产物与报告——写结论到 review-report.md（结论必须含「通过」或「打回」——附理由）。", execTask.ReviewFailedCount, execTask.ID, FindTaskReport(execTask.Workdir)),
+				Priority:    PriorityExternal - 1,
+				Type:        "review",
+				Model:       nextModel,
+				Workdir:     reviewTask.Workdir,
+				Status:      "queued",
+				RefTaskID:   execTask.ID,
+				RefWorktree: execTask.RefWorktree,
+				ReplanCount: execTask.ReplanCount,
+				ReviewCount: execTask.ReviewCount,
+				CreatedAt:   time.Now(),
+			}
+			heap.Push(&s.queue, retryTask)
+			log.Printf("🔁 总调度: 复查 %s 自身失败——重派复查 %s（模型 %s——第 %d/2 次）", reviewTask.ID, reviewRetryID, nextModel, execTask.ReviewFailedCount)
+			return
+		}
+		// 复查重派超限——按原逻辑打回（但注记是复查系统失败）
+		log.Printf("⚠️ 总调度: 复查重派 %d 次仍失败——回退打回执行任务 %s（复查系统故障注记）", execTask.ReviewFailedCount, execTask.ID)
 	}
 	if conclusion == "rework" {
 		// v2.5.5 阶段3（设计-20260820）: Replan 循环——打回 → 派重做任务（同模型 A——带复查意见）
@@ -244,4 +274,15 @@ func buildReviewPrompt(execTask *Task, reportPath string) string {
 // taskDirOf — 任务目录（S6 断点数据位置——/tmp/zerg-tasks/<ID>/）
 func taskDirOf(t *Task) string {
 	return filepath.Join("/tmp/zerg-tasks", t.ID)
+}
+
+// pickAlternateReviewModel — S7: 复查重派选模型（与上次不同优先——池小则接受同款）
+func pickAlternateReviewModel(lastReviewModel, execModel string) string {
+	next := pickReviewModel(execModel)
+	if next != lastReviewModel {
+		return next
+	}
+	// 池小无备选——同款重试（换 seed 意义靠重跑本身）
+	log.Printf("⚠️ 复查池无备选模型——同款 %s 重派（重跑换随机性）", next)
+	return next
 }
