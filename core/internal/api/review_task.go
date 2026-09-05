@@ -235,6 +235,8 @@ func (s *MasterScheduler) submitReviewTaskLocked(execTask *Task, reportPath, wor
 		// 直接 heap.Push 不走 Submit——手动设创建时间（UI 执行时长用）
 		CreatedAt: time.Now(),
 		// 关联执行任务（复查完成后决策用）
+		// S11d: 白名单——复查要读被复查任务目录的报告+写复查报告到该目录
+		ExtraEnv: []string{"ZERG_EXTRA_ALLOW_DIR=" + taskDirOf(execTask)},
 	}
 	// 记录关联（复查任务 → 执行任务）
 	reviewTask.RefTaskID = execTask.ID
