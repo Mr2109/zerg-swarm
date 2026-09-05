@@ -30,7 +30,7 @@ const (
 	statusRetry    = "retry"
 	statusQueued   = "queued"
 
-	maxRetryBeforeDead = 3 // 重试上限，超过标记 dead
+	maxRetryBeforeDead = 3                // 重试上限，超过标记 dead
 	cooldownDuration   = 30 * time.Second // 失败冷却时间
 )
 
@@ -38,8 +38,8 @@ const (
 // 封装 zerg-agent 执行 + 状态更新 + 失败处理
 type Worker struct {
 	mu       sync.Mutex
-	runner   WorkerRunner // 可注入 runner（测试 mock——生产默认 exec）
-	workDir  string      // 工作目录（用于相对路径解析）
+	runner   WorkerRunner         // 可注入 runner（测试 mock——生产默认 exec）
+	workDir  string               // 工作目录（用于相对路径解析）
 	dispatch map[string]time.Time // 派单时间记录（冷却用）
 }
 
@@ -167,7 +167,7 @@ func (w *Worker) executeAgent(issuePath string) (int, error) {
 			return exitErr.ExitCode(), nil // 退出码不是 0 = 失败（正常路径）
 		}
 		log.Printf("🐛 zerg-agent 执行异常（非退出码错误）: %v", err)
-	return -1, fmt.Errorf("执行 zerg-agent 失败: %w", err)
+		return -1, fmt.Errorf("执行 zerg-agent 失败: %w", err)
 	}
 
 	return 0, nil

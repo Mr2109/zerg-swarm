@@ -60,13 +60,13 @@ exit 0
 // mockRunner — 模拟 docker 命令执行
 // 返回: 被调用的 cmd, args, 以及预设的退出码
 type mockRunner struct {
-	called     bool
-	args       []string
-	exitCode   int
-	err        error
-	agentBin   string // 期望的宿主机路径
-	issuePath  string // 期望的 issue 路径
-	workDir    string // 期望的工作区
+	called    bool
+	args      []string
+	exitCode  int
+	err       error
+	agentBin  string // 期望的宿主机路径
+	issuePath string // 期望的 issue 路径
+	workDir   string // 期望的工作区
 }
 
 func newMockRunner() *mockRunner {

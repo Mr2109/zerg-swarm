@@ -15,11 +15,12 @@ import (
 
 // InternalTask 内部任务定义
 type InternalTask struct {
-	ID          string // 任务类型 ID（如 "tool-check"）
-	Description string // 人类可读描述
-	Template    string // 任务描述模板（派 CA 用——含工作区/要求）
+	ID          string        // 任务类型 ID（如 "tool-check"）
+	Description string        // 人类可读描述
+	Template    string        // 任务描述模板（派 CA 用——含工作区/要求）
 	Cooldown    time.Duration // 冷却时间（同类型防重复）
 }
+
 // ListInternalTasks 导出内部任务清单（2026-08-22 Mr2109——UI 分类显示）
 func ListInternalTasks() []InternalTask {
 	return internalTaskDefs
@@ -131,12 +132,12 @@ var internalTaskDefs = []InternalTask{
 // IdleDetector 空闲检测器——定时检查外部任务队列 + 资源空闲
 type IdleDetector struct {
 	mu            sync.Mutex
-	issueDir      string // 任务单目录（docs/issues/）
-	lastTriggered map[string]time.Time // 任务类型 → 上次触发时间（冷却）
-	externalQueue func() int // 外部任务队列长度（注入——测试用）
-	resourceIdle  func() bool // 资源是否空闲（注入——X3 GPU idle）
+	issueDir      string                                   // 任务单目录（docs/issues/）
+	lastTriggered map[string]time.Time                     // 任务类型 → 上次触发时间（冷却）
+	externalQueue func() int                               // 外部任务队列长度（注入——测试用）
+	resourceIdle  func() bool                              // 资源是否空闲（注入——X3 GPU idle）
 	onTrigger     func(def InternalTask, issuePath string) // 触发回调（v2.5.5 测试6——触发后调总调度器 Submit——闭环；P1-3 带任务单路径）
-	autoCheck     func(defID string) bool // 运行模式检查（注入——api.IsInternalAuto——手动任务不自动触发——2026-08-28 Mr2109）
+	autoCheck     func(defID string) bool                  // 运行模式检查（注入——api.IsInternalAuto——手动任务不自动触发——2026-08-28 Mr2109）
 	enabled       bool
 }
 

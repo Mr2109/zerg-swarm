@@ -6,8 +6,8 @@ package api
 
 import (
 	"container/heap"
-	"log"
 	"encoding/json"
+	"log"
 	"os"
 	"time"
 )

@@ -30,18 +30,18 @@ type SubagentConfig struct {
 
 // TaskInput — 子 agent 执行的任务描述
 type TaskInput struct {
-	Description string         // 任务简述（用于日志/摘要）
-	Prompt      string         // 完整提示词（发给子 agent）
-	Type        SubagentType   // 子 agent 类型
-	Model       string         // 覆盖默认模型
+	Description string       // 任务简述（用于日志/摘要）
+	Prompt      string       // 完整提示词（发给子 agent）
+	Type        SubagentType // 子 agent 类型
+	Model       string       // 覆盖默认模型
 }
 
 // SubagentResult — 子 agent 执行结果
 type SubagentResult struct {
-	TaskDesc   string        // 任务描述
-	Summary    string        // 精简摘要（1-2K 字符，父上下文干净）
+	TaskDesc   string          // 任务描述
+	Summary    string          // 精简摘要（1-2K 字符，父上下文干净）
 	Terminates TerminateReason // 终止原因
-	ToolUse    string        // 工具调用摘要（如 "read×3, grep×1"）
+	ToolUse    string          // 工具调用摘要（如 "read×3, grep×1"）
 }
 
 // SpawnSubagent — 派生子 agent 执行小任务，返回精简摘要

@@ -33,7 +33,7 @@ func (h *Handlers) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 			{"name": "git_status", "desc": "任务 git 状态（分支/diff）", "endpoint": "GET /api/git/status"},
 		},
 		"workflow": "提交任务 → CA 执行（worktree git）→ 确定性验证（机器检查）→ 复查模型（跨家族）→ 通过 merge/打回重做",
-		"notes": "单槽铁律: 单设备串行——排队慢正常（等更多 X3 并行）",
+		"notes":    "单槽铁律: 单设备串行——排队慢正常（等更多 X3 并行）",
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -60,8 +60,8 @@ func (h *Handlers) OpenAPIHandler(w http.ResponseWriter, r *http.Request) {
 			"/api/tasks/{id}": map[string]interface{}{
 				"get": map[string]interface{}{"summary": "任务详情", "description": "状态/执行报告/复查报告/轮次"},
 			},
-			"/api/fleet/models": map[string]interface{}{"get": map[string]interface{}{"summary": "模型清单"}},
-			"/api/fleet/status": map[string]interface{}{"get": map[string]interface{}{"summary": "集群状态"}},
+			"/api/fleet/models":     map[string]interface{}{"get": map[string]interface{}{"summary": "模型清单"}},
+			"/api/fleet/status":     map[string]interface{}{"get": map[string]interface{}{"summary": "集群状态"}},
 			"/api/resources/{type}": map[string]interface{}{"get": map[string]interface{}{"summary": "资源库（models/tools/skills/mcp）"}},
 		},
 		"security": []map[string]interface{}{

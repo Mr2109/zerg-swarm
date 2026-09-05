@@ -92,7 +92,7 @@ func (h *ChatHandlers) RegisterChatRoutes(r chiRouter) {
 	r.Get("/api/chat/sessions/{id}/messages", h.ListMessages)
 	r.Post("/api/chat/sessions/{id}/send", h.SendMessage)
 	r.Post("/api/chat/sessions/{id}/send-tool", h.SendMessageTool) // C4b 工具循环对话
-	r.Patch("/api/chat/messages/{mid}", h.EditMessage)            // P0 消息编辑（点击编辑——Hermes user-edit 借鉴）
+	r.Patch("/api/chat/messages/{mid}", h.EditMessage)             // P0 消息编辑（点击编辑——Hermes user-edit 借鉴）
 	// 搜索
 	r.Get("/api/chat/search", h.Search)
 }
@@ -553,8 +553,8 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	id := chiURLParam(r, "id")
 	var req struct {
 		Content string   `json:"content"`
-		Image   string   `json:"image"`   // D3 多模态: data URL base64（单图——兼容）
-		Images  []string `json:"images"`  // P2 多图: data URL base64 数组（优先）
+		Image   string   `json:"image"`  // D3 多模态: data URL base64（单图——兼容）
+		Images  []string `json:"images"` // P2 多图: data URL base64 数组（优先）
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
 		writeChatError(w, http.StatusBadRequest, errOrMsg(err, "消息内容为空"))
@@ -708,7 +708,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 			ticker := time.NewTicker(3 * time.Second)
 			defer ticker.Stop()
 			var res execRes
-			waitLoop:
+		waitLoop:
 			for {
 				select {
 				case r := <-resCh:
@@ -724,7 +724,12 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 			}
 			ticker.Stop()
 			tracesMu.Lock()
-			traces = append(traces, chat.ToolTrace{Round: 0, CallID: "kernel", Name: name, Args: "", Result: res.content, Error: func() string { if res.err != nil { return res.err.Error() }; return "" }(), Duration: res.dur})
+			traces = append(traces, chat.ToolTrace{Round: 0, CallID: "kernel", Name: name, Args: "", Result: res.content, Error: func() string {
+				if res.err != nil {
+					return res.err.Error()
+				}
+				return ""
+			}(), Duration: res.dur})
 			tracesMu.Unlock()
 			return res.content, res.dur, res.err
 		},
@@ -817,10 +822,10 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	// 6. SSE done（含消息 id + 标题）
 	payload, _ := json.Marshal(map[string]any{
-		"message_id": astID,
-		"title":      se.Title,
-		"input_tokens": result.InputTokens,
-		"output_tokens": result.OutputTokens,
+		"message_id":       astID,
+		"title":            se.Title,
+		"input_tokens":     result.InputTokens,
+		"output_tokens":    result.OutputTokens,
 		"reasoning_tokens": result.ReasoningTokens,
 	})
 	writeSSE("done", string(payload))
