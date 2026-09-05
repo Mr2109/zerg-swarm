@@ -327,6 +327,8 @@ func stripReasoningFromContent(result *chat.InferResult) (string, string) {
 // 决策: llama-server 流式不推 tool_calls（GitHub #5769）——工具对话走非流式循环——
 // SSE 转发最终结果（delta 一次性 + tool 事件）——纯对话仍走 SendMessage（C3 流式）
 func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
+	// 2026-09-05 内核第三步A: 原走 chat.RunToolLoop（独立非流式循环——防循环裸奔已弃）
+	// 改装 loopcore.Run（非流式形态——Events=nil）——与流式 /send 同一内核
 	id := chiURLParam(r, "id")
 	var req struct {
 		Content string `json:"content"`
@@ -340,7 +342,6 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 		writeChatError(w, http.StatusNotFound, err)
 		return
 	}
-	// 1. 存用户消息
 	userMsg := &chat.Message{
 		SessionID: id, Role: "user", Content: normalizeChatContent(req.Content),
 		Active: true, Timestamp: chatNow(),
@@ -349,7 +350,6 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 		writeChatError(w, http.StatusInternalServerError, err)
 		return
 	}
-	// 2. 历史
 	history, _ := h.store.GetActiveMessages(id)
 	_, _ = h.store.CompressHistory(r.Context(), h.infer, id, se.Model, history)
 	history, _ = h.store.GetActiveMessages(id)
@@ -357,69 +357,85 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	for _, m := range history {
 		msgs = append(msgs, map[string]any{"role": m.Role, "content": m.Content})
 	}
-	// 3. 工具循环（非流式——全工具——C7 危险命令黑名单 gate）
-	// P4-41 身份治本: 系统提示注入真实模型名——模型不用"调查自己"（编造身份根因）
-	// P4-46 Hermes 工具指令（治本: 不带 tools 字段——模板 XML 分支不渲染——模型输出 JSON 工具调用）
-	// P4-50 渐进式常驻（ZERG_PROGRESSIVE=1 启用）
 	var progRT *chat.ToolRuntime
 	if progressiveEnabled {
 		progRT = h.store.GetToolRuntime(id)
 	}
 	sysPrompt := chatSystemPrompt + fmt.Sprintf("\n\n# 你的身份\n- 你当前运行在模型 %s（虫族本地模型集群）——Mr2109的对话助手——不要调查或质疑自己的身份。", se.Model) + chat.BuildHermesToolPrompt(progRT)
-	gate := &chat.ChatGate{} // C7 危险命令黑名单（rm 根目录/mkfs/shutdown 拦截+引导）
-	result, traces, err := chat.RunToolLoop(r.Context(), h.infer, se.Model, sysPrompt, msgs, gate, progRT)
-	if err != nil {
+	gate := &chat.ChatGate{}
+
+	inferAdapter := func(ctx context.Context, model, sysP string, m []map[string]any,
+		onDelta func(deltaType, text string), toolsParam []map[string]any) (*loopcore.Response, error) {
+		ir, ierr := h.infer.Infer(ctx, model, sysP, m) // 非流式——Hermes 模式不带 tools 字段
+		if ierr != nil {
+			return nil, ierr
+		}
+		kr := &loopcore.Response{Content: ir.Content, Reasoning: ir.Reasoning, Finish: "stop",
+			TotalTokens: int64(ir.InputTokens + ir.OutputTokens + ir.ReasoningTokens)}
+		for _, tc := range ir.ToolCalls {
+			kr.ToolCalls = append(kr.ToolCalls, loopcore.ToolCall{ID: tc.ID, Name: tc.Name, Args: tc.Args, RawArgs: tc.RawArgs})
+		}
+		return kr, nil
+	}
+	ec := agent.NewExecContext(chat.ChatToolsWorkDir)
+	ec.AgentName = "chat"
+	execFn := func(ctx context.Context, name string, targs map[string]any) (string, string, error) {
+		if name == "kb_search" {
+			query, _ := targs["query"].(string)
+			limit := 10
+			if l, ok := targs["limit"].(float64); ok {
+				limit = int(l)
+			}
+			c, e := chat.KbSearchExecute(query, limit)
+			return c, "", e
+		}
+		tc := agent.ToolCall{ID: "kernel", Name: name, Args: targs}
+		result := ec.ExecuteTool(ctx, name, tc.Args, gate)
+		if result.Error != "" {
+			return result.Content, result.Duration, fmt.Errorf("%s", result.Error)
+		}
+		return result.Content, result.Duration, nil
+	}
+	kres := loopcore.Run(r.Context(), loopcore.Config{
+		MaxRounds: chat.MaxToolRounds, WallClock: 600 * time.Second,
+		RoundTimeout: 120 * time.Second, KeepRecent: 3,
+	}, se.Model, sysPrompt, msgs, loopcore.Deps{Infer: inferAdapter, Exec: execFn})
+	if kres.Err != "" {
 		_ = h.store.DeleteMessage(id, userMsg.ID)
-		writeChatError(w, http.StatusBadGateway, err)
+		writeChatError(w, http.StatusBadGateway, fmt.Errorf("%s", kres.Err))
 		return
 	}
-	// 4. 存 assistant 消息（含工具轨迹）
-	// P4-31 无工具时存空串（json.Marshal(nil) = "null" 字符串——UI 误判显示"工具调用…"）
+	var traces []chat.ToolTrace
+	for _, tr := range kres.Traces {
+		traces = append(traces, chat.ToolTrace(tr))
+	}
 	var toolCallsStr string
 	if len(traces) > 0 {
 		tracesJSON, _ := json.Marshal(traces)
 		toolCallsStr = string(tracesJSON)
 	}
-	// P4-50 Hermes 模式: example-35b-v2 推理写进 content（reasoning_content 空——无 tools 字段时训练格式如此）
-	// 2026-09-05 抽公共 stripReasoningFromContent（两路径同构消重复）+ isValidAnswerBody 防误吞正文
-	msgContent, msgReasoning := stripReasoningFromContent(result)
+	msgContent := normalizeChatContent(kres.Content)
+	msgReasoning := kres.Reasoning
 	assistantMsg := &chat.Message{
 		SessionID: id, Role: "assistant", Content: msgContent,
 		Reasoning: msgReasoning, Model: se.Model,
-		TokenCount: result.OutputTokens, Active: true, Timestamp: chatNow(),
+		TokenCount: int(kres.Usage.TotalTokens), Active: true, Timestamp: chatNow(),
 		ToolCalls: toolCallsStr,
 	}
 	if _, err := h.store.AddMessage(assistantMsg); err != nil {
 		writeChatError(w, http.StatusInternalServerError, err)
 		return
 	}
-	_ = h.store.TouchSession(id, result.InputTokens, result.OutputTokens, result.ReasoningTokens)
+	_ = h.store.TouchSession(id, int(kres.Usage.TotalTokens), 0, 0)
 	if se.Title == "" {
 		title := autoTitle(req.Content)
 		_ = h.store.UpdateSessionTitle(id, title)
 		se.Title = title
 	}
-	// 5. SSE 转发（工具事件 + 最终结果）
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	flusher, _ := w.(http.Flusher)
-	writeSSE := func(evType, data string) {
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evType, data)
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
-	for _, tr := range traces {
-		payload, _ := json.Marshal(map[string]any{"name": tr.Name, "args": tr.Args, "result": truncateStr(tr.Result, 300), "error": tr.Error})
-		writeSSE("tool", string(payload))
-	}
-	if result.Content != "" {
-		payload, _ := json.Marshal(map[string]any{"type": "output", "text": result.Content})
-		writeSSE("delta", string(payload))
-	}
-	payload, _ := json.Marshal(map[string]any{"done": true, "title": se.Title})
-	writeSSE("done", string(payload))
+	writeChatJSON(w, http.StatusOK, map[string]any{
+		"content": msgContent, "reasoning": msgReasoning,
+		"tool_calls": traces, "title": se.Title,
+	})
 }
 
 // toolNames — 当前 tools 列表工具名（tool_search 无结果时展示）
