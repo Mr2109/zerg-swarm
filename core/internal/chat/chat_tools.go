@@ -158,13 +158,13 @@ func hasToolCalls(raw []byte) bool {
 	return strings.Contains(string(raw), `"tool_calls"`)
 }
 
-
 // BuildHermesToolPrompt — P4-46/47 Hermes 工具指令（治本: 不带 tools 字段——模板 XML 分支不渲染）
 // Hermes Function Calling 官方标准（NousResearch）: 工具定义 <tools> + OpenAI JSON schema——模型输出 <tool_call> JSON
 // Qwen 官方: Hermes-style tool use 最大化函数调用性能（模型训练过该变体）
 // 工具调用轮温度 0.0（P4-47——采样方差破坏 tool_call 内 JSON）
 // P4-50 渐进式常驻: rt != nil → 渐进模式（初始 resident 空——<tools> 只 tool_search + 已常驻工具——成功即常驻）
-//                 rt == nil → 老行为（L0 全列表）
+//
+//	rt == nil → 老行为（L0 全列表）
 func BuildHermesToolPrompt(rt *ToolRuntime) string {
 	tools := HermesToolDefs()
 	if rt != nil {
@@ -278,4 +278,3 @@ func HermesToolDefs() []struct {
 		{"doc_search", "项目文档检索——关键词→docs 命中文件+片段（当前版优先——query 必填——scope 可选限定如 v2.5.8/常青——查文档先调本工具不 open 全文）", map[string]any{"query": map[string]any{"type": "string", "description": "关键词（空格分词——AND）"}, "scope": map[string]any{"type": "string", "description": "限定范围——如 v2.5.8/常青（默认全部）"}}, []string{"query"}},
 	}
 }
-
