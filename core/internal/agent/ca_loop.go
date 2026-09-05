@@ -150,14 +150,13 @@ func (a *Agent) RunWithKernel(ctx context.Context, tools []ToolDef, logger *Logg
 		"", fmt.Sprintf("内核循环完成: reason=%s turns~%d tokens=%d", kres.ExitKind, len(kres.Traces), kres.Usage.TotalTokens),
 		nil, "", "", "")
 	return LoopResult{
-		Reason:     reason,
-		Turns:      ls.turn,
-		Tokens:     kres.Usage.TotalTokens,
-		Content:    kres.Content,
-		ToolTrace:  ls.toolTrace,
+		Reason:    reason,
+		Turns:     ls.turn,
+		Tokens:    kres.Usage.TotalTokens,
+		Content:   kres.Content,
+		ToolTrace: ls.toolTrace,
 	}
 }
-
 
 // loopcoreRun — loopcore.Run 的 agent 侧适配（Infer=a.callModel / Exec=ls.executeTool）
 func loopcoreRun(ctx context.Context, a *Agent, ls *loopState, sysPrompt string,
@@ -231,7 +230,6 @@ const agentChatWorkDir = "<repo>"
 
 var _ = time.Now
 
-
 // RunSubtaskLoop — 子任务结晶模式入口（2026-09-05 S5——ZERG_SUBTASK 路径）
 // 拆解轮(强模型)→阶段执行(loopcore×本 Agent)→结晶→下一阶段——设计 3.3 落地
 func RunSubtaskLoop(ctx context.Context, a *Agent, tools []ToolDef, logger *Logger,
@@ -275,8 +273,12 @@ func RunSubtaskLoop(ctx context.Context, a *Agent, tools []ToolDef, logger *Logg
 		ExecutorModel: a.cfg.Model,
 		WorktreeDir:   worktreeOf(a),
 		Workdir:       workdirOf(a),
+		TaskDir:       os.Getenv("ZERG_TASK_DIR"), // S8: 断点数据+UI stages 落任务目录
 	}
 	cfg := subtask.BuildConfig(spec)
+	if cfg.TaskDir == "" {
+		cfg.TaskDir = spec.TaskDir
+	}
 	sched := subtask.NewScheduler(cfg, subtask.ModelCall(call), subtask.PhaseRunner(runner), nil)
 
 	// S6 打回续作: 任务目录里有断点数据 → 恢复（跳过已 done 阶段+复查意见注入首个执行阶段）
