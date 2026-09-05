@@ -3,10 +3,13 @@
 // 类型判断（模型）→ 查/建（程序）→ 执行 → 总结 → 进化
 // 2026-08-25 Mr2109——设计 docs/01-设计/设计-程序定量驱动Agent-20260824.md 10/15 章
 // v2.5.6 机制调整（2026-08-27 Mr2109）: skill 归属=任务独属——
-//   内部任务（SkillKey=def.ID）无 skill 时按类型给起步——沉淀后优化版成为该任务独属 skill（skills/<key>/）
-//   再次运行默认调独属 skill（有独属用独属——没有再回退类型库——最后模板）
+//
+//	内部任务（SkillKey=def.ID）无 skill 时按类型给起步——沉淀后优化版成为该任务独属 skill（skills/<key>/）
+//	再次运行默认调独属 skill（有独属用独属——没有再回退类型库——最后模板）
+//
 // v2.5.6 候选机制（2026-08-28 Mr2109）: 进化产出先存候选（SKILL.candidate.md）——不直接覆盖正式版——
-//   下次任务用候选试跑——成功转正（候选覆盖正式）/失败作废（删候选保正式）——防"模型自评进化"越进化越差
+//
+//	下次任务用候选试跑——成功转正（候选覆盖正式）/失败作废（删候选保正式）——防"模型自评进化"越进化越差
 package api
 
 import (
@@ -102,7 +105,9 @@ func (s *ZergSkill) LookupCandidate(key, taskType string) string {
 
 // Get 获取当前任务的 Skill 内容
 // 优先级: 任务 git 内 SKILL.md（本次任务已建/进化）→ 候选（SKILL.candidate.md——进化待验证——试跑）
-//        → 独属 skill（skills/<key>/——该任务沉淀的进化版）→ 类型库 Skill（同类共享进化版）→ 模板
+//
+//	→ 独属 skill（skills/<key>/——该任务沉淀的进化版）→ 类型库 Skill（同类共享进化版）→ 模板
+//
 // v2.5.6 候选机制（2026-08-28）: 命中候选——置 UsingCandidate=true——任务结束成功=转正/失败=作废
 func (s *ZergSkill) Get(taskType string) (string, error) {
 	// 1. 任务内已有（本次执行建过）
@@ -140,7 +145,9 @@ func (s *ZergSkill) Get(taskType string) (string, error) {
 
 // SaveCandidate 存候选 skill（进化产出——待下次任务试跑验证）
 // content: 模型产出的优化版完整 skill 内容——写 skills/<key>/SKILL.candidate.md（内部任务）
-//          外部任务（key 空）→ skills/<类型>/SKILL.candidate.md（同类共享候选）
+//
+//	外部任务（key 空）→ skills/<类型>/SKILL.candidate.md（同类共享候选）
+//
 // 不覆盖正式版 SKILL.md——试跑成功才转正
 func (s *ZergSkill) SaveCandidate(key, taskType, content string) error {
 	libKey := key

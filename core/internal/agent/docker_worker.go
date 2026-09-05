@@ -19,21 +19,21 @@ import (
 // 常量
 
 const (
-	defaultImage      = "zerg-dev"      // 默认镜像名
-	defaultTimeout    = 10 * time.Minute // 容器执行超时
-	defaultNetwork    = "host"           // 容器网络模式
+	defaultImage      = "zerg-dev"                    // 默认镜像名
+	defaultTimeout    = 10 * time.Minute              // 容器执行超时
+	defaultNetwork    = "host"                        // 容器网络模式
 	agentBinaryInHost = "/tmp/zerg-agent-linux-arm64" // 宿主机 zerg-agent 路径
-	agentBinaryInCont = "/zerg-agent"                   // 容器内 zerg-agent 路径
+	agentBinaryInCont = "/zerg-agent"                 // 容器内 zerg-agent 路径
 )
 
 // DockerWorker — 容器化 worker
 // 封装 docker run 命令构造 + 执行 + 退出码解析
 // cmdRunner 可注入（测试 mock——生产默认 docker exec.CommandContext）
 type DockerWorker struct {
-	image    string   // Docker 镜像名
-	agentBin string   // 宿主机 zerg-agent 路径
-	timeout  time.Duration
-	network  string
+	image     string // Docker 镜像名
+	agentBin  string // 宿主机 zerg-agent 路径
+	timeout   time.Duration
+	network   string
 	cmdRunner func(ctx context.Context, name string, args ...string) (int, error) // 可注入 runner
 }
 
@@ -48,10 +48,10 @@ func NewDockerWorker(image, agentBin string) *DockerWorker {
 		agentBin = agentBinaryInHost
 	}
 	return &DockerWorker{
-		image:   image,
+		image:    image,
 		agentBin: agentBin,
-		timeout: defaultTimeout,
-		network: defaultNetwork,
+		timeout:  defaultTimeout,
+		network:  defaultNetwork,
 	}
 }
 

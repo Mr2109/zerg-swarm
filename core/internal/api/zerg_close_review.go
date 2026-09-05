@@ -15,8 +15,8 @@ import (
 
 // ZergClose 封闭轮（任务收尾）
 type ZergClose struct {
-	TaskDir string   // 任务目录
-	Git     *ZergGit // 任务 git
+	TaskDir  string        // 任务目录
+	Git      *ZergGit      // 任务 git
 	TaskFile *ZergTaskFile // task.jsonl
 }
 

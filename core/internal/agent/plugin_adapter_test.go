@@ -11,15 +11,15 @@ import (
 // mockPluginBase 提供 plugin.Plugin 接口的默认空实现（mock 复用——不全写）
 type mockPluginBase struct{}
 
-func (m *mockPluginBase) Init(cfg map[string]any) error             { return nil }
-func (m *mockPluginBase) Start() error                              { return nil }
-func (m *mockPluginBase) Stop() error                               { return nil }
-func (m *mockPluginBase) Close() error                              { return nil }
-func (m *mockPluginBase) Name() string                              { return "mock" }
-func (m *mockPluginBase) Version() string                           { return "test" }
-func (m *mockPluginBase) Type() plugin.PluginType                  { return plugin.PluginTypeModelAdapter }
-func (m *mockPluginBase) Capabilities() []string                    { return []string{"model"} }
-func (m *mockPluginBase) Shutdown() error                           { return nil }
+func (m *mockPluginBase) Init(cfg map[string]any) error { return nil }
+func (m *mockPluginBase) Start() error                  { return nil }
+func (m *mockPluginBase) Stop() error                   { return nil }
+func (m *mockPluginBase) Close() error                  { return nil }
+func (m *mockPluginBase) Name() string                  { return "mock" }
+func (m *mockPluginBase) Version() string               { return "test" }
+func (m *mockPluginBase) Type() plugin.PluginType       { return plugin.PluginTypeModelAdapter }
+func (m *mockPluginBase) Capabilities() []string        { return []string{"model"} }
+func (m *mockPluginBase) Shutdown() error               { return nil }
 
 // mockTruncPlugin — 返回截断 tool_calls 的假插件（测试截断容错）
 type mockTruncPlugin struct{ mockPluginBase }

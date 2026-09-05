@@ -38,14 +38,14 @@ func TestZergTaskFileAppendAndSummary(t *testing.T) {
 	// 方案轮
 	_ = z.Append(ZergTaskLine{
 		Round: 1, Phase: "plan",
-		Output: map[string]interface{}{"plans": []string{"A", "B", "C"}},
+		Output:  map[string]interface{}{"plans": []string{"A", "B", "C"}},
 		Summary: "出了3个方案",
 		Time:    "t1",
 	})
 	// 选定轮
 	_ = z.Append(ZergTaskLine{
 		Round: 2, Phase: "select",
-		Output: map[string]interface{}{"selected": "A", "steps": []string{"s1", "s2"}},
+		Output:  map[string]interface{}{"selected": "A", "steps": []string{"s1", "s2"}},
 		Summary: "选定方案A",
 		Time:    "t2",
 	})

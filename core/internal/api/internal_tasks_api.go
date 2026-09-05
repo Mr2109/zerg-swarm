@@ -44,15 +44,15 @@ func (h *Handlers) InternalTasksHandler(w http.ResponseWriter, r *http.Request) 
 			"description":   d.Description,
 			"template":      d.Template,
 			"cooldown":      d.Cooldown.String(),
-			"default_hours": d.Cooldown.Hours(), // v2.5.6: 默认执行周期（Mr2109——UI 周期下拉默认显示）
-			"skill":         skill,              // 该类最近任务的 skill（无=空——模型自举中）
+			"default_hours": d.Cooldown.Hours(),   // v2.5.6: 默认执行周期（Mr2109——UI 周期下拉默认显示）
+			"skill":         skill,                // 该类最近任务的 skill（无=空——模型自举中）
 			"auto_run":      IsInternalAuto(d.ID), // v2.5.6: 运行模式（true=自动——编排触发——false=手动——只手动触发——Mr2109 2026-08-28）
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"count":   len(items),
-		"items":   items,
-		"note":    "内部任务=进化任务（为自己）——编排自动运行——也可手动执行（POST /api/internal-tasks/{id}/run）",
+		"count": len(items),
+		"items": items,
+		"note":  "内部任务=进化任务（为自己）——编排自动运行——也可手动执行（POST /api/internal-tasks/{id}/run）",
 	})
 }
 
