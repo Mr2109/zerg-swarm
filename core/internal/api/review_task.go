@@ -250,14 +250,31 @@ func (s *MasterScheduler) submitReviewTaskLocked(execTask *Task, reportPath, wor
 // buildReviewPrompt 构造复查任务描述（复查模型读执行结果——rubric 评分）
 // execTask: 执行任务（含描述/报告路径/worktree）
 func buildReviewPrompt(execTask *Task, reportPath string) string {
+	// S11d: 执行报告内容直接贴入(≤3000字)——复查模型不用在陌生目录里找文件(实测16轮迷路教训)
+	reportExcerpt := ""
+	if b, err := os.ReadFile(reportPath); err == nil {
+		reportExcerpt = string(b)
+		if len(reportExcerpt) > 3000 {
+			reportExcerpt = reportExcerpt[:3000] + "\n...(已截断——完整文件在报告路径)"
+		}
+	}
+	prodList := listTaskArtifacts(execTask)
 	return fmt.Sprintf(`复查任务（执行/复查双模型——你是复查者——决定成败）。
 
 被复查任务: %s
 执行模型: %s
 报告路径: %s
 
+执行报告内容（已为你读取——无需再读文件）:
+<exec_report>
+%s
+</exec_report>
+
+执行产物清单（程序扫描——文件名+字节）:
+%s
+
 要求:
-1. 读执行任务的报告（报告路径）——验证内容真实性
+1. 核对上方执行报告内容与产物清单是否一致——验证内容真实性
 2. 检查执行结果（git diff/产物——如果有 worktree 分支——看改动）
 3. 按以下 rubric 评分（每维度: 通过/不通过）:
    - 真实性: 报告描述是否匹配实际改动（防谎报/幻觉）
@@ -270,7 +287,7 @@ func buildReviewPrompt(execTask *Task, reportPath string) string {
 5. 写复查报告到 internal-task-report.md（复查报告——追加或覆盖——含 rubric 评分表 + 结论）
 6. 贴输出（评分表 + 结论）
 
-注意: 你是独立复查者——不受执行模型影响——只看证据（报告+代码+产物）——真复查真评分。`, execTask.Description, execTask.Model, reportPath)
+注意: 你是独立复查者——不受执行模型影响——只看证据（报告+代码+产物）——真复查真评分。`, execTask.Description, execTask.Model, reportPath, reportExcerpt, prodList)
 }
 
 // taskDirOf — 任务目录（S6 断点数据位置——/tmp/zerg-tasks/<ID>/）
@@ -287,4 +304,31 @@ func pickAlternateReviewModel(lastReviewModel, execModel string) string {
 	// 池小无备选——同款重试（换 seed 意义靠重跑本身）
 	log.Printf("⚠️ 复查池无备选模型——同款 %s 重派（重跑换随机性）", next)
 	return next
+}
+
+// listTaskArtifacts — S11d: 扫描被复查任务的产物清单（任务目录/work 两级——文件名+字节）
+func listTaskArtifacts(execTask *Task) string {
+	taskDir := taskDirOf(execTask)
+	var b strings.Builder
+	dirs := []string{filepath.Join(taskDir, "work"), taskDir}
+	seen := map[string]bool{}
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || seen[e.Name()] {
+				continue
+			}
+			if info, err := e.Info(); err == nil {
+				seen[e.Name()] = true
+				fmt.Fprintf(&b, "- %s（%d 字节）\n", e.Name(), info.Size())
+			}
+		}
+	}
+	if b.Len() == 0 {
+		return "（无产物）"
+	}
+	return b.String()
 }
