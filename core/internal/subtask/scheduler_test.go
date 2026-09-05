@@ -213,3 +213,33 @@ func TestParsePlanJSONTruncatedSalvage(t *testing.T) {
 		t.Fatal("非截断坏输出仍应报错")
 	}
 }
+
+// TestPlanCache — S11b: 计划缓存存取+检索
+func TestPlanCache(t *testing.T) {
+	// 清环境
+	os.RemoveAll("/tmp/zerg-plan-templates")
+	desc := "在工作区创建 calc.go 实现 Add 函数。然后创建 calc_test.go 测试 Add。最后写报告 internal-task-report.md。"
+	plan := &Plan{Steps: []Step{
+		{ID: "A", Goal: "写 calc.go", Produces: []string{"calc.go"}},
+		{ID: "B", Goal: "写 calc_test.go", Produces: []string{"calc_test.go"}, Depends: []string{"A"}},
+	}}
+	if err := SavePlanTemplate(desc, plan); err != nil {
+		t.Fatal(err)
+	}
+	// 相同任务检索——应命中
+	got, sim := FindPlanTemplate(desc)
+	if got == nil || sim < 0.99 {
+		t.Fatalf("同任务应高相似命中: sim=%.2f", sim)
+	}
+	// 相似任务检索——应命中(大部分关键词重叠)
+	similar := "在工作区创建 calc.go 实现 Sub 函数。然后写报告 internal-task-report.md 记录结果。"
+	got2, sim2 := FindPlanTemplate(similar)
+	if got2 == nil || sim2 < 0.35 {
+		t.Fatalf("相似任务应命中: sim=%.2f", sim2)
+	}
+	// 无关任务——不应命中
+	unrelated := "配置 nginx 服务器反向代理并启用 https 证书"
+	if got3, _ := FindPlanTemplate(unrelated); got3 != nil {
+		t.Fatal("无关任务不应命中")
+	}
+}

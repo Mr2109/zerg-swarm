@@ -93,8 +93,7 @@ func extractKeywords(desc string) []string {
 	})
 	for _, w := range words {
 		w = strings.ToLower(strings.TrimSpace(w))
-		// S11b 修: 过滤含点号/路径片段的 token(如 "calc2.go"/"tmp/zerg-tasks")——避免文件名以"."开头变隐藏文件
-		if len(w) < 2 || stop[w] || strings.ContainsAny(w, "./\\") {
+		if len(w) < 2 || stop[w] {
 			continue
 		}
 		// 中文段 2-gram

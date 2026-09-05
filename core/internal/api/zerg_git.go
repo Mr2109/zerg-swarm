@@ -58,7 +58,7 @@ func (z *ZergGit) CommitRound(round int, phase, summary string) error {
 	if out, err := z.git("commit", "-q", "-m", msg); err != nil {
 		// v2.5.6 放宽: 空提交（无新产出——验证/检查类步骤）——用 --allow-empty（模型已响应——步骤完成）
 		// 防假完成靠"模型响应了"（受控循环验证）——不是强制文件变化
-		if strings.Contains(string(out), "nothing to commit") || strings.Contains(string(out), "no changes") {
+		if strings.Contains(string(out), "nothing to commit") || strings.Contains(string(out), "no changes") || strings.Contains(string(out), "无文件要提交") {
 			if _, err2 := z.git("commit", "-q", "--allow-empty", "-m", msg); err2 != nil {
 				return fmt.Errorf("提交失败: %w", err2)
 			}
@@ -128,6 +128,8 @@ func (z *ZergGit) Status() (string, error) {
 // git 执行（包装——输出）
 func (z *ZergGit) git(args ...string) ([]byte, error) {
 	cmd := exec.Command("git", append([]string{"-C", z.RepoDir}, args...)...)
+	// S11: 强制英文输出——输出文案判断(如 "nothing to commit")不能依赖系统 locale(中文 git 会误判)
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
 	return cmd.CombinedOutput()
 }
 
