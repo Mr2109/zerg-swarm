@@ -337,6 +337,10 @@ func (s *MasterScheduler) runTask(task *Task) {
 	if len(baseEnv) == 0 {
 		baseEnv = os.Environ()
 	}
+	// 2026-09-05 对照验证: ZERG_LOOPCORE 显式转发给 CA（core 进程 env 或 s.agentEnv 任一配置即生效）
+	if os.Getenv("ZERG_LOOPCORE") != "" {
+		baseEnv = append(baseEnv, "ZERG_LOOPCORE="+os.Getenv("ZERG_LOOPCORE"))
+	}
 	cmd.Env = append(baseEnv, "ZERG_LOG_DIR=/tmp/zerg-ca-logs")
 	// v2.5.5 任务目录唯一化（2026-08-20 设计）: 注入任务目录——CA 写报告到任务目录（不共享）
 	cmd.Env = append(cmd.Env, "ZERG_TASK_DIR="+taskDir)
