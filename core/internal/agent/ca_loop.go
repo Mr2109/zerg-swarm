@@ -13,6 +13,7 @@ import (
 
 	"zerg/core/internal/agentstate"
 	"zerg/core/internal/loopcore"
+	"zerg/core/internal/subtask"
 )
 
 // CATerminator — CA 终止仲裁（内核 Terminator 实现）
@@ -229,3 +230,85 @@ func loopcoreRun(ctx context.Context, a *Agent, ls *loopState, sysPrompt string,
 const agentChatWorkDir = "<repo>"
 
 var _ = time.Now
+
+
+// RunSubtaskLoop — 子任务结晶模式入口（2026-09-05 S5——ZERG_SUBTASK 路径）
+// 拆解轮(强模型)→阶段执行(loopcore×本 Agent)→结晶→下一阶段——设计 3.3 落地
+func RunSubtaskLoop(ctx context.Context, a *Agent, tools []ToolDef, logger *Logger,
+	state *agentstate.HarnessState, maxTurns int) LoopResult {
+
+	// 模型调用适配（Hermes 协议——ZERG_HERMES_TOOLS 转正后走 callModelHermes）
+	call := func(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, int64, int64, error) {
+		a2 := *a // 浅拷贝——单次调用独立历史（拆解/结晶无工具——干净上下文）
+		a2.history = []Message{
+			{Role: "user", Content: userPrompt},
+		}
+		resp, err := a2.callModel(ctx, systemPrompt, nil) // nil tools——非工具调用轮
+		if err != nil {
+			return "", 0, 0, err
+		}
+		return resp.Content, resp.Usage.TotalTokens, resp.Usage.TotalTokens, nil
+	}
+
+	// 阶段执行适配（PhaseRunner——内部组装种子消息走 callModel+工具循环）
+	runner := func(ctx context.Context, step subtask.Step, seed []map[string]any) (string, int64, int, error) {
+		// 种子消息灌入 Agent 历史
+		a.history = a.history[:0]
+		for _, m := range seed {
+			a.history = append(a.history, Message{Role: m["role"].(string), Content: m["content"].(string)})
+		}
+		// 单阶段内循环（复用 Loop 内核——但轮数限本阶段）
+		res := Loop(ctx, a, tools, logger, state, 15, 0, 3)
+		tokens := res.Tokens
+		return res.Content, tokens, res.Turns, nil
+	}
+
+	spec := subtask.TaskSpec{
+		Description:   lastUserTask(a),
+		PlannerModel:  os.Getenv("ZERG_PLANNER_MODEL"),
+		ExecutorModel: a.cfg.Model,
+		WorktreeDir:   worktreeOf(a),
+		Workdir:       workdirOf(a),
+	}
+	cfg := subtask.BuildConfig(spec)
+	sched := subtask.NewScheduler(cfg, subtask.ModelCall(call), subtask.PhaseRunner(runner), nil)
+	outcome, err := sched.Run(ctx, spec.Description)
+	if err != nil {
+		logger.LogEvent(string(EventLoopEnd), "error", "subtask_failed", "", err.Error(), nil, err.Error(), "", "")
+		return LoopResult{Reason: ReasonModelError, Turns: 0, Tokens: 0}
+	}
+	if outcome.Status == "done" {
+		logger.LogEvent(string(EventLoopEnd), "info", "subtask_done", "",
+			fmt.Sprintf("结晶模式完成: tokens=%d rounds=%d deco=%d exec=%d crys=%d",
+				outcome.Tokens, outcome.Rounds, outcome.DecomposeTokens, outcome.ExecuteTokens, outcome.CrystallizeTokens),
+			nil, "", "", "")
+		return LoopResult{Reason: ReasonComplete, Tokens: outcome.Tokens, Content: outcome.CrystalsJSON}
+	}
+	logger.LogEvent(string(EventLoopEnd), "warn", "subtask_failed", "", outcome.Reason, nil, "", "", "")
+	return LoopResult{Reason: ReasonBlocked, Tokens: outcome.Tokens}
+}
+
+// lastUserTask — 取最后一条 user 消息（任务描述）
+func lastUserTask(a *Agent) string {
+	for i := len(a.history) - 1; i >= 0; i-- {
+		if a.history[i].Role == "user" {
+			return a.history[i].Content
+		}
+	}
+	return ""
+}
+
+// worktreeOf / workdirOf — 从 execContext 取
+func worktreeOf(a *Agent) string {
+	if a.execContext != nil {
+		return a.execContext.WorkDir
+	}
+	return ""
+}
+
+func workdirOf(a *Agent) string {
+	if a.execContext != nil {
+		return a.execContext.WorkDir
+	}
+	return ""
+}

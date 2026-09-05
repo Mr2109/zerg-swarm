@@ -341,6 +341,11 @@ func (s *MasterScheduler) runTask(task *Task) {
 	if os.Getenv("ZERG_LOOPCORE") != "" {
 		baseEnv = append(baseEnv, "ZERG_LOOPCORE="+os.Getenv("ZERG_LOOPCORE"))
 	}
+	// 子任务结晶模式: ZERG_SUBTASK=1 → CA 带 -subtask flag（设计-子任务结晶模式-20260905 S5）
+	if os.Getenv("ZERG_SUBTASK") == "1" {
+		args = append(args, "-subtask")
+		baseEnv = append(baseEnv, "ZERG_HERMES_TOOLS=1") // Hermes 协议转正（C3 实测参数全对）
+	}
 	cmd.Env = append(baseEnv, "ZERG_LOG_DIR=/tmp/zerg-ca-logs")
 	// v2.5.5 任务目录唯一化（2026-08-20 设计）: 注入任务目录——CA 写报告到任务目录（不共享）
 	cmd.Env = append(cmd.Env, "ZERG_TASK_DIR="+taskDir)
