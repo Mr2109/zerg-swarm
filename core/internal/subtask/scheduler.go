@@ -324,6 +324,10 @@ func (s *Scheduler) seedMessages(taskDesc string, step Step) []map[string]any {
 	// 本步描述+契约（recitation——紧邻结尾）
 	var cb strings.Builder
 	cb.WriteString(fmt.Sprintf("【当前阶段 %s】%s\n", step.ID, step.Goal))
+	// S10 前置: 报告类步骤注入结构要求（D6 教训——模型写 10 字节空报告被任务级验证打回）
+	if strings.Contains(step.Goal, "报告") || strings.Contains(step.Goal, "report") {
+		cb.WriteString("【报告硬性要求】报告必须≥100字，结构: ①做了什么（每步动作）②结果（产物清单+关键内容）③验证证据（测试/检查输出摘录）。一句话空报告=阶段失败。\n")
+	}
 	if step.Contract != nil {
 		if len(step.Contract.MustWriteFiles) > 0 {
 			cb.WriteString(fmt.Sprintf("【本阶段验收——必须落盘】%v\n", step.Contract.MustWriteFiles))
