@@ -114,12 +114,12 @@ func TestProgressiveHiddenList(t *testing.T) {
 // 8. ErrTypeOf 分类（参数类→param——执行类→exec）
 func TestErrTypeOf(t *testing.T) {
 	cases := map[string]string{
-		"参数 port 不能为空":          "param",
-		"命令参数为空":               "param",
-		"格式错误: 期望 JSON":        "param",
+		"参数 port 不能为空":             "param",
+		"命令参数为空":                   "param",
+		"格式错误: 期望 JSON":            "param",
 		"未知工具: xxx（先 tool_search）": "param",
-		"服务 502: upstream fail": "exec",
-		"连接超时":                 "exec",
+		"服务 502: upstream fail":    "exec",
+		"连接超时":                     "exec",
 	}
 	for msg, want := range cases {
 		if got := ErrTypeOf(msg); got != want {

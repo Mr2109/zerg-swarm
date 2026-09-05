@@ -5,14 +5,13 @@
 package chat
 
 import (
-
+	"database/sql"
 	"fmt"
+	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
-	_ "modernc.org/sqlite"
-"database/sql"
 )
 
 // ChatStore — 对话 SQLite 存储（会话 + 消息）

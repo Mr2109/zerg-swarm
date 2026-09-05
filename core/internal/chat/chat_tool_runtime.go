@@ -16,13 +16,15 @@ import (
 	"sync"
 	"time"
 
-	"zerg/core/internal/agent"
 	"log"
+	"zerg/core/internal/agent"
 )
 
 // NormalizeToolArgs — 工具参数统一解包（P4-50 bash arguments 双层嵌套修复）
 // 现象: 模型把 Hermes 风格 {name, arguments} 整个塞进 chat 格式 function.arguments——
-//       parseToolArgs 解一层后 Args = {"arguments":"{\"command\"...}","name":"bash"}——工具拿不到真参
+//
+//	parseToolArgs 解一层后 Args = {"arguments":"{\"command\"...}","name":"bash"}——工具拿不到真参
+//
 // 处理: ①Args 含 "arguments" 键（字符串 JSON 或对象）→ 解包它覆盖 ②剔除混入的元键（name/type/function）
 // 注: 所有工具执行路径统一调用（RunToolLoop + chat_handlers SSE + agent loop）
 func NormalizeToolArgs(tc *agent.ToolCall) {
@@ -46,7 +48,6 @@ func NormalizeToolArgs(tc *agent.ToolCall) {
 		delete(tc.Args, k)
 	}
 }
-
 
 // 渐进常驻配置
 const (

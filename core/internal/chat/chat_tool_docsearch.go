@@ -14,7 +14,7 @@ import (
 	"unicode/utf8"
 )
 
-const docSearchMaxFiles = 6  // 最多返回命中文件数
+const docSearchMaxFiles = 6    // 最多返回命中文件数
 const docSearchMaxTotal = 3500 // 总输出字符上限
 
 // docSearch — doc_search 执行器
@@ -80,7 +80,7 @@ func docSearch(args map[string]any, workDir string) (string, error) {
 					ln = string([]rune(ln)[:150]) + "…"
 				}
 				if ln != "" {
-					snippets = append(snippets, "L" + itoa(i+1) + ": " + ln)
+					snippets = append(snippets, "L"+itoa(i+1)+": "+ln)
 					matches++
 				}
 			}
