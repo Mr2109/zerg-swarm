@@ -850,9 +850,12 @@ func toolHelp(name string) ToolCallResult {
 // 执行前过 gate 检查，返回 ToolCallResult
 func (ec *ExecContext) ExecuteTool(ctx context.Context, toolName string, args map[string]any, gate ToolGater) ToolCallResult {
 	// P4-49 统一工具计数（CA 调用计入——成功执行才计）
+	// 2026-09-06: 计数+事件流双写(事件=未来账本源——含耗时)
+	start := time.Now()
 	res := ec.executeToolInner(ctx, toolName, args, gate)
 	if res.Error == "" && toolName != "" && toolName[0] != '_' {
 		RecordToolUse(toolName)
+		appendToolEvent(ToolEvent{Ts: time.Now().Unix(), Node: nodeName, Tool: toolName, DurMs: time.Since(start).Milliseconds()})
 	}
 	return res
 }

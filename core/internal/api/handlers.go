@@ -646,17 +646,23 @@ func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			return "新"
 		}
+		// 2026-09-06 事件流: 当日事件按工具聚合(账本雏形——时间维度)
+		evAgg := map[string]int{}
+		for _, ev := range agent.ToolEventsToday() {
+			evAgg[ev.Tool]++
+		}
 		for _, td := range agent.AllTools() {
 			seen[td.Function.Name] = true
 			items = append(items, map[string]interface{}{
-				"name":    td.Function.Name,
-				"scope":   "CA",
-				"version": agent.ToolVersion(td.Function.Name), // P4-49 工具版本（进化可追溯）
-				"trust":   trustOf(td.Function.Name),
-				"uses":    agent.ToolUses(td.Function.Name),
-				"faults":  0,
-				"since":   resourceTrust.GetResourceSince("tools", td.Function.Name),
-				"desc":    firstLine(td.Function.Description), // 简介（一句话——Mr2109 2026-08-21）
+				"name":       td.Function.Name,
+				"scope":      "CA",
+				"version":    agent.ToolVersion(td.Function.Name), // P4-49 工具版本（进化可追溯）
+				"trust":      trustOf(td.Function.Name),
+				"uses":       agent.ToolUses(td.Function.Name),
+				"today_uses": evAgg[td.Function.Name], // 当日调用数(事件流源)
+				"faults":     0,
+				"since":      resourceTrust.GetResourceSince("tools", td.Function.Name),
+				"desc":       firstLine(td.Function.Description), // 简介（一句话——Mr2109 2026-08-21）
 			})
 		}
 		// P4-48 对话 deferred 工具（chat 层 138——ChatExtraToolDefs）
@@ -672,14 +678,15 @@ func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			items = append(items, map[string]interface{}{
-				"name":    name,
-				"scope":   "对话",
-				"version": agent.ToolVersion(name), // P4-49 工具版本（进化可追溯）
-				"trust":   trustOf(name),
-				"uses":    agent.ToolUses(name),
-				"faults":  0,
-				"since":   resourceTrust.GetResourceSince("tools", name),
-				"desc":    desc,
+				"name":       name,
+				"scope":      "对话",
+				"version":    agent.ToolVersion(name), // P4-49 工具版本（进化可追溯）
+				"trust":      trustOf(name),
+				"uses":       agent.ToolUses(name),
+				"today_uses": evAgg[name], // 2026-09-06 当日调用数（事件流源）
+				"faults":     0,
+				"since":      resourceTrust.GetResourceSince("tools", name),
+				"desc":       desc,
 			})
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"type": "tools", "items": items})
