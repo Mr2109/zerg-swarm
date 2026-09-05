@@ -28,6 +28,7 @@ type PhaseRunner func(ctx context.Context, step Step, seedMsgs []map[string]any)
 type Config struct {
 	WorktreeDir    string // worktree（契约核验用）
 	Workdir        string // 工作区
+	TaskDir        string // 任务目录（S8——断点数据+UI stages 数据源）
 	PlannerModel   string // 拆解模型（DS4 默认）
 	ExecutorModel  string // 执行模型
 	MaxReplan      int    // Replan 上限（默认 2）
@@ -171,9 +172,12 @@ func (s *Scheduler) Run(ctx context.Context, taskDesc string) (*TaskOutcome, err
 	if err != nil {
 		return &TaskOutcome{Status: "failed", Reason: err.Error()}, err
 	}
-	// plan.json 落盘（3.6 断点恢复数据源）
+	// plan.json 落盘（3.6 断点恢复数据源——S8 修: 双落盘 Workdir+TaskDir）
 	_ = os.MkdirAll(s.cfg.Workdir, 0o755)
 	_ = os.WriteFile(filepath.Join(s.cfg.Workdir, "plan.json"), []byte(plan.ToJSON()), 0o644)
+	if s.cfg.TaskDir != "" {
+		_ = SavePlan(s.cfg.TaskDir, plan)
+	}
 
 	start := time.Now()
 	outcome := &TaskOutcome{Status: "done"}
@@ -222,6 +226,9 @@ func (s *Scheduler) Run(ctx context.Context, taskDesc string) (*TaskOutcome, err
 		crystal := s.crystallize(ctx, step, exitKind, vres, body, tokens, rounds)
 		s.mu.Lock()
 		s.crystals[stepID] = crystal
+		if s.cfg.TaskDir != "" {
+			_ = SaveCrystal(s.cfg.TaskDir, crystal) // S8: 结晶落任务目录（断点+UI 数据源）
+		}
 		s.setStatusLocked(stepID, string(crystal.ExitKind))
 		crystalsJSON = appendCrystals(crystalsJSON, crystal)
 		s.mu.Unlock()
@@ -297,6 +304,9 @@ func (s *Scheduler) crystallizeBlocked(step Step) {
 	s.mu.Lock()
 	s.crystals[step.ID] = cr
 	s.mu.Unlock()
+	if s.cfg.TaskDir != "" {
+		_ = SaveCrystal(s.cfg.TaskDir, cr)
+	}
 }
 
 // seedMessages — 种子上下文（R2: 结晶链=追加消息+末尾 recitation——非改写系统提示）
