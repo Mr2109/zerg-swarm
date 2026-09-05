@@ -190,3 +190,26 @@ func TestSchedulerResumeSkipsDone(t *testing.T) {
 		t.Fatalf("审计: %v", s.ResumedSkipped)
 	}
 }
+
+// TestParsePlanJSONTruncatedSalvage — S11: 截断 JSON 自救(部分计划>无计划)
+func TestParsePlanJSONTruncatedSalvage(t *testing.T) {
+	// 模拟 max_tokens 掐断: 前两步完整, 第三步半截
+	truncated := `{"steps":[
+		{"id":"A","goal":"写 a.txt 基础文件","produces":["a.txt"],"contract":{"must_write_files":["a.txt"]}},
+		{"id":"B","goal":"写 b.txt 依赖 a","produces":["b.txt"],"depends":["A"],"contract":{"must_write_files":["b.txt"]}},
+		{"id":"C","goal":"写 c.txt 依赖 b","produces":["c.txt"],"depends":["B"],"contract":{"must_write`
+	p, err := ParsePlanJSON(truncated)
+	if err != nil {
+		t.Fatalf("截断应自救: %v", err)
+	}
+	if len(p.Steps) != 2 {
+		t.Fatalf("应恢复前 2 个完整步骤: %d", len(p.Steps))
+	}
+	if p.Steps[0].ID != "A" || p.Steps[1].ID != "B" {
+		t.Fatalf("步骤错: %+v", p.Steps)
+	}
+	// 坏 JSON(非截断)仍报错
+	if _, err := ParsePlanJSON("完全不是JSON"); err == nil {
+		t.Fatal("非截断坏输出仍应报错")
+	}
+}
