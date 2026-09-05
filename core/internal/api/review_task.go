@@ -6,8 +6,8 @@ package api
 
 import (
 	"container/heap"
-	"log"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,11 +17,11 @@ import (
 // 复查模型池（跨家族——真独立——防同源偏见）
 // 执行用 ornith → 复查用 Qwen/gemma（不同训练源/架构）
 var reviewModelPool = []string{
-	"gemma-4-26B",    // Google 家族（2026-08-20 Mr2109: 12B 换 26B）
-	"GLM-4.7-Flash",  // 智谱家族
-	"Qwen3.8-27B",    // Qwen 家族
-	"example-35b-v2", // Ornith 家族
-	"example-30b",   // Meta 家族（Mr2109新增）
+	"example-26b-review",     // Google 家族——复查专用别名（只走 local 本机——单槽隔离——Mr210909-05拍板）
+	"GLM-4.7-Flash",          // 智谱家族
+	"Qwen3.8-27B",            // Qwen 家族
+	"example-35b-v2",         // Ornith 家族
+	"example-30b",       // Meta 家族（Mr2109新增）
 	"Nemotron-3.5-Lightning", // NVIDIA 家族（Mr2109新增）
 }
 
@@ -166,7 +166,7 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 				RefWorktree: execTask.RefWorktree,
 				ReplanCount: execTask.ReplanCount,
 				ReviewCount: execTask.ReviewCount,
-				ExtraEnv:    extraEnv, // S6: 断点恢复+意见注入
+				ExtraEnv:    extraEnv,   // S6: 断点恢复+意见注入
 				CreatedAt:   time.Now(), // 修复: rework 也设创建时间（UI 执行时长）
 			}
 			heap.Push(&s.queue, reworkTask)
@@ -233,7 +233,7 @@ func (s *MasterScheduler) submitReviewTaskLocked(execTask *Task, reportPath, wor
 		Status:      "queued",
 		// v2.5.5 修复（2026-08-21 Mr2109发现）: 复查任务执行时间不对——CreatedAt 零值
 		// 直接 heap.Push 不走 Submit——手动设创建时间（UI 执行时长用）
-		CreatedAt:   time.Now(),
+		CreatedAt: time.Now(),
 		// 关联执行任务（复查完成后决策用）
 	}
 	// 记录关联（复查任务 → 执行任务）
