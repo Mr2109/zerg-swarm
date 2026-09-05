@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 // Config — 守卫配置
@@ -38,7 +40,9 @@ func New(cfg Config) *Guard {
 // 指纹不含结果——同工具同参数不同结果=正常推进（轮询/验证场景）
 func (g *Guard) Record(name string, args map[string]any) string {
 	raw := name
-	if b, err := json.Marshal(args); err == nil {
+	// 2026-09-05 修: map 键序不稳定——json.Marshal(map) 每次键序可能不同→同参数不同指纹→
+	// 重复检测永远不触发（93 次重写同文件才升级的根因）——canonical 序列化（键排序）
+	if b, err := marshalCanonical(args); err == nil {
 		raw += "|" + string(b)
 	}
 	h := sha256.Sum256([]byte(raw))
@@ -84,4 +88,46 @@ func (g *Guard) BuildGuide(reason string, availableTools []string) (string, bool
 // GuideCount — 已引导次数
 func (g *Guard) GuideCount() int {
 	return g.guideCount
+}
+
+
+// marshalCanonical — 键排序的确定性 JSON 序列化（指纹稳定——同参数必同指纹）
+func marshalCanonical(v any) ([]byte, error) {
+	switch t := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var b strings.Builder
+		b.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			kb, _ := json.Marshal(k)
+			b.Write(kb)
+			b.WriteByte(':')
+			vb, err := marshalCanonical(t[k])
+			if err != nil {
+				return nil, err
+			}
+			b.Write(vb)
+		}
+		b.WriteByte('}')
+		return []byte(b.String()), nil
+	case []any:
+		parts := make([]string, 0, len(t))
+		for _, item := range t {
+			vb, err := marshalCanonical(item)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, string(vb))
+		}
+		return []byte("[" + strings.Join(parts, ",") + "]"), nil
+	default:
+		return json.Marshal(v)
+	}
 }
