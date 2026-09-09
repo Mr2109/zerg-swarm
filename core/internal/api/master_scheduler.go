@@ -343,11 +343,11 @@ func (s *MasterScheduler) runTask(task *Task) {
 	if len(baseEnv) == 0 {
 		baseEnv = os.Environ()
 	}
-	// Hermes 协议转正（C3 实测参数全对——随结晶模式一起开）
-	if os.Getenv("ZERG_SUBTASK") == "1" {
-		baseEnv = append(baseEnv, "ZERG_HERMES_TOOLS=1")
-	} else {
-		log.Printf("⚠️ 总调度: ZERG_SUBTASK=%q（非 1——任务 %s 不走结晶模式）", os.Getenv("ZERG_SUBTASK"), task.ID)
+	// Hermes 协议转正（2026-09-08——C3 实测: 原生 tools 字段畸形 arguments→空参数归零——
+	// 外部 CA 任务一律 Hermes 化(XML 模板工具——不带 tools 字段)——Mr2109确认——与内核转正同线）
+	baseEnv = append(baseEnv, "ZERG_HERMES_TOOLS=1")
+	if os.Getenv("ZERG_SUBTASK") != "1" {
+		log.Printf("ℹ️ 总调度: ZERG_SUBTASK=%q（非 1——任务 %s 不走结晶模式——Hermes 化已默认开）", os.Getenv("ZERG_SUBTASK"), task.ID)
 	}
 	// 2026-09-05 对照验证: ZERG_LOOPCORE 显式转发给 CA（core 进程 env 或 s.agentEnv 任一配置即生效）
 	if os.Getenv("ZERG_LOOPCORE") != "" {

@@ -74,19 +74,25 @@ func toolBash() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "bash",
-			Description: "执行 bash 命令，在沙盒 shell 中运行，返回 stdout 和 stderr。\n\n" +
-				"【工具偏好矩阵】除非必要避免用 bash 运行以下命令——请用专用工具：" +
-				"文件搜索用 glob、内容搜索用 grep、读文件用 read、编辑用 edit、写文件用 write" +
-				"（专用工具有结构化输入和权限检查，bash 裸命令不可控）。\n\n" +
-				"【用法】bash 只用于执行程序/脚本/测试/构建/编译。命令带 30 秒超时，" +
-				"输出截断 2000 字符，必须在 WorkDir 内执行。\n\n" +
-				"【示例】\"ls -la\" 列目录、\"python3 test.py\" 跑测试、\"go build ./...\" 编译",
+			Description: "执行 bash 命令（沙盒 shell——只用于执行程序/脚本/测试/构建/编译——文件操作用专用工具）。\n\n" +
+				"【何时用】跑测试/构建/脚本/命令。文件搜索 glob、内容 grep、读 read、编辑 edit、写 write（专用工具有结构化输入+权限检查——bash 裸命令不可控）。\n\n" +
+				"【成败判定】返回首行若为「⚠️ exit N — 命令失败」=失败（附 [guide] 引导）；正常看 [exit_code] 0。超长输出头尾保留+溢出落盘（标注路径——read 可续读）。\n\n" +
+				"【参数】command 必填；cwd 可选（执行目录——默认工作区——跨目录任务请显式给）；timeout_s 可选（默认 30——长任务给 300）。\n\n" +
+				"【示例】\"go test ./...\" 跑测试、\"python3 test.py\" 跑脚本、{\"command\":\"go build\",\"timeout_s\":300} 长编译、{\"command\":\"ls\",\"cwd\":\"sub/dir\"} 指定目录",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"command": map[string]any{
 						"type":        "string",
 						"description": "要执行的 bash 命令（执行程序/脚本/测试/构建——文件操作用专用工具）",
+					},
+					"cwd": map[string]any{
+						"type":        "string",
+						"description": "可选：执行工作目录（相对工作区路径——默认工作区根；cd 不跨调用持久——跨目录请用此参数）",
+					},
+					"timeout_s": map[string]any{
+						"type":        "integer",
+						"description": "可选：超时秒数（默认 30——长编译/测试/下载请显式给大值如 300）",
 					},
 				},
 				"required": []string{"command"},
@@ -259,14 +265,36 @@ func toolLs() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "ls",
-			Description: "列出目录内容（目录列表用本工具）。\n\n" +
-				"【示例】\"ls\" path=. — 列出当前目录",
+			Description: "列出目录内容(目录结构概览——v1.0.2)。默认: 目录在前、隐藏点项、最多 60 行+省略引导。\n\n" +
+				"【示例】\"ls\" — 当前目录概览\n\"ls\" path=. dir_only=true — 只看子目录\n\"ls\" pattern=*.go limit=0 — 本层所有 .go 文件(limit 0=不截断)\n\"ls\" sort_by=time — 按修改时间新→旧(附 MM-DD HH:mm 时间列)\n\n" +
+				"【分工】ls=本层结构概览(可 pattern 收窄);glob=跨层精确找文件;grep=内容搜索。超限输出请缩小 pattern,勿重发大列表。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"path": map[string]any{
 						"type":        "string",
-						"description": "目录路径（默认 .）",
+						"description": "目录路径(默认 .)",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"description": "最大列出行(默认 60;0=不截断)",
+					},
+					"dir_only": map[string]any{
+						"type":        "boolean",
+						"description": "只列目录(默认 false)",
+					},
+					"hidden": map[string]any{
+						"type":        "boolean",
+						"description": "显示点文件/目录(默认 false——.zerg 等隐藏)",
+					},
+					"pattern": map[string]any{
+						"type":        "string",
+						"description": "名称通配过滤(如 *.go——fnmatch)",
+					},
+					"sort_by": map[string]any{
+						"type":        "string",
+						"enum":        []any{"name", "time", "size"},
+						"description": "排序(默认 name;目录恒在前;time 附时间列)",
 					},
 				},
 				"required": []string{},
