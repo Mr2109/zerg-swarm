@@ -5,9 +5,13 @@ package agent
 // 设计：每个工具执行前过 gate 检查，执行后返回 ToolCallResult
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"zerg/core/internal/ffp"
 )
@@ -155,8 +160,10 @@ func checkDangerousCommand(command string) error {
 // v1.0.0 问题: 裸文本返回无 exit_code/截断一刀切/无 cwd/timeout_s 参数
 // → v1.0.1: 三段式返回+系统断言+防呆拦截+溢出落盘+错误分类引导
 
-// executeRead — 读取文件内容
-// 路径校验 + 文件大小限制（100KB）
+// executeRead — 读取文件内容(v1.0.2:类型感知分层路由——多文件类型可读)
+// 设计: docs/01-设计/设计-read工具v1.0.2-多类型读取升级-20260908.md
+// 路由: 文本(iconv 编码修正+行号)/PDF(pdftotext)/docx·doc·rtf·html(textutil)/epub·odt(pandoc)/
+//       xlsx(内置 zip+XML 单 sheet TSV)/图像·音频·视频(委托专用工具)/二进制(仅提示)
 func (ec *ExecContext) executeRead(ctx context.Context, path string, args map[string]any, gate ToolGater) (string, error) {
 	// Gate 检查
 	if gate != nil {
@@ -174,24 +181,12 @@ func (ec *ExecContext) executeRead(ctx context.Context, path string, args map[st
 	if err != nil {
 		return "", err
 	}
-
-	// 文件大小限制（v2.5.1: 100KB→500KB——分页后大文件可分段读）
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return "", fmt.Errorf("文件不存在或无法访问: %w", err)
 	}
-	if info.Size() > 500*1024 {
-		return "", fmt.Errorf("文件过大 (%d bytes)，请用 read offset/limit 分段读取", info.Size())
-	}
 
-	data, err := os.ReadFile(absPath)
-	if err != nil {
-		return "", fmt.Errorf("读取文件失败: %w", err)
-	}
-
-	// v2.5.1: 分页（offset/limit——模型控制看哪页——Claude Code 同款）
-	lines := strings.Split(string(data), "\n")
-	total := len(lines)
+	// 参数(分页沿用;v1.0.2 新: num 行号默认开 / format raw 强制原文)
 	offset := 1
 	if o, ok := args["offset"].(float64); ok && o > 0 {
 		offset = int(o)
@@ -200,23 +195,405 @@ func (ec *ExecContext) executeRead(ctx context.Context, path string, args map[st
 	if l, ok := args["limit"].(float64); ok && l > 0 {
 		limit = int(l)
 	}
-	if offset > total {
-		offset = 1
+	num := true
+	if n, ok := args["num"].(bool); ok {
+		num = n
 	}
-	end := offset + limit - 1
-	if end > total {
-		end = total
+	forceRaw := false
+	if fm, ok := args["format"].(string); ok && fm == "raw" {
+		forceRaw = true
 	}
 
-	// v2.5：返回带文件标记（对齐 Claude Code——模型清楚文件上下文——读后可继续操作）
 	rel, _ := filepath.Rel(ec.WorkDir, absPath)
-	page := strings.Join(lines[offset-1:end], "\n")
-	// 分页提示（模型知道还有更多——主动翻页——控制权）
-	pageInfo := ""
-	if total > limit || offset > 1 {
-		pageInfo = fmt.Sprintf("\n[分页] 文件共 %d 行——显示 %d-%d 行。需要看后续用 read offset=%d limit=%d；不需要到此为止。", total, offset, end, end+1, limit)
+	wrap := func(ftype string, text, note string, total int) string {
+		lines := strings.Split(text, "\n")
+		if offset > total {
+			offset = 1
+		}
+		end := offset + limit - 1
+		if end > total {
+			end = total
+		}
+		var sb strings.Builder
+		for i := offset - 1; i < end; i++ {
+			ln := lines[i]
+			if num {
+				ln = fmt.Sprintf("%4d │ %s", i+1, ln)
+			}
+			if len([]rune(ln)) > 2000 { // 超长行截断(业界规格)
+				ln = string([]rune(ln)[:2000]) + " [截断]"
+			}
+			sb.WriteString(ln)
+			sb.WriteString("\n")
+		}
+		head := fmt.Sprintf("<file path=%q type=%q lines=%d>\n", rel, ftype, total)
+		body := sb.String()
+		tail := "</file>"
+		if note != "" {
+			note = "\n" + note
+		}
+		pageInfo := ""
+		if total > limit || offset > 1 {
+			pageInfo = fmt.Sprintf("\n[分页] 共 %d 行——显示 %d-%d 行。续读用 read offset=%d limit=%d。", total, offset, end, end+1, limit)
+		}
+		return head + body + tail + note + pageInfo
 	}
-	return fmt.Sprintf("<file path=%q>\n%s\n</file>%s", rel, page, pageInfo), nil
+
+	// 头部探测(前 512B)
+	head := make([]byte, 512)
+	fh, err := os.Open(absPath)
+	if err != nil {
+		return "", fmt.Errorf("打开文件失败: %w", err)
+	}
+	n, _ := io.ReadFull(fh, head)
+	head = head[:n]
+	fh.Close()
+
+	kind := detectReadKind(head, absPath, info.Size())
+	if !forceRaw {
+		switch kind {
+		case "binary":
+			return "", fmt.Errorf("文件是二进制(%.0f KB)——不输出原文(防乱码/幻觉)。需要解析可委托专用工具或人工。", float64(info.Size())/1024)
+		case "img":
+			return "", fmt.Errorf("文件是图像——read 不读像素。用 image_desc(描述)或 image_ocr(取文字)工具。")
+		case "audio":
+			return "", fmt.Errorf("文件是音频——read 不支持。用 audio 系工具(如 asr_transcribe 转文字)。")
+		case "video":
+			return "", fmt.Errorf("文件是视频——read 不支持。用 media_info/ffprobe 系工具看元数据。")
+		case "pdf", "docx", "doc", "rtf", "html", "epub", "odt", "xlsx":
+			if info.Size() > 100*1024*1024 {
+				return "", fmt.Errorf("文档过大 (%.0f MB)——超过 100MB 抽取上限", float64(info.Size())/1024/1024)
+			}
+			text, note, err := extractDocument(ctx, kind, absPath)
+			if err != nil {
+				return "", err
+			}
+			if kind == "pdf" && strings.TrimSpace(text) == "" {
+				return "", fmt.Errorf("PDF 无文本层(扫描件/纯图)——用 image_ocr 逐页取字,或先转图片。")
+			}
+			total := len(strings.Split(text, "\n"))
+			return wrap(kind, text, note, total), nil
+		}
+	}
+
+	// 纯文本路径(500KB 上限沿用)
+	if info.Size() > 500*1024 {
+		return "", fmt.Errorf("文件过大 (%d bytes)，请用 read offset/limit 分段读取", info.Size())
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return "", fmt.Errorf("读取文件失败: %w", err)
+	}
+	// 编码修正(v1.0.2: UTF-16/GB18030 → UTF-8;iconv 零依赖)
+	if kind == "utf16le" || kind == "utf16be" {
+		if d, err := iconvBytes(data, kind); err == nil {
+			data = d
+		} else {
+			return "", fmt.Errorf("UTF-16 转码失败: %v", err)
+		}
+	} else if !utf8.Valid(data) {
+		if d, err := iconvBytes(data, "gb18030"); err == nil {
+			data = d
+		} else {
+			return "", fmt.Errorf("文件非 UTF-8 且 GB18030/UTF-16 转码失败——可能为二进制或特殊编码(可 format=raw 强读)")
+		}
+	}
+	text := string(data)
+	total := len(strings.Split(text, "\n"))
+	note := ""
+	if forceRaw && kind != "text" && kind != "" {
+		note = fmt.Sprintf("(format=raw 强制按原文读取——文件类型 %s)", kind)
+	}
+	return wrap("text", text, note, total), nil
+}
+
+// readFileKindName — executeRead 里 kind 的展示名(文档抽取注记)
+func docExtractNote(kind string) string {
+	return fmt.Sprintf("(已从 %s 抽取文本——原格式/图表/排版可能丢失)", strings.ToUpper(kind))
+}
+
+// detectReadKind — 魔数优先+后缀兜底的类型探测
+func detectReadKind(head []byte, absPath string, size int64) string {
+	// 编码 BOM
+	if len(head) >= 2 && head[0] == 0xFF && head[1] == 0xFE {
+		return "utf16le"
+	}
+	if len(head) >= 2 && head[0] == 0xFE && head[1] == 0xFF {
+		return "utf16be"
+	}
+	// PDF
+	if len(head) >= 5 && string(head[:5]) == "%PDF-" {
+		return "pdf"
+	}
+	// zip 容器(docx/xlsx/pptx——查 Content_Types)
+	if len(head) >= 4 && head[0] == 'P' && head[1] == 'K' && (head[2] == 3 || head[2] == 5) && head[3] == 4 {
+		switch kindFromZip(absPath) {
+		case "xlsx":
+			return "xlsx"
+		case "docx":
+			return "docx"
+		case "pptx":
+			return "pptx"
+		}
+		return "binary"
+	}
+	// 图像/媒体魔数(RIFF→WAVE=audio、AVI=video;ftyp=视频/图片容器按品牌粗分)
+	if len(head) >= 4 && string(head[:4]) == "RIFF" {
+		if len(head) >= 12 {
+			if string(head[8:12]) == "WAVE" {
+				return "audio"
+			}
+			if string(head[8:12]) == "AVI " {
+				return "video"
+			}
+		}
+		return "binary"
+	}
+	if len(head) >= 8 && bytes.Equal(head[:8], []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}) ||
+		len(head) >= 3 && head[0] == 0xFF && head[1] == 0xD8 && head[2] == 0xFF ||
+		len(head) >= 4 && string(head[:4]) == "GIF8" {
+		return "img"
+	}
+	// 音频
+	if len(head) >= 3 && string(head[:3]) == "ID3" ||
+		len(head) >= 4 && string(head[:4]) == "fLaC" ||
+		len(head) >= 4 && string(head[:4]) == "OggS" {
+		return "audio"
+	}
+	// 视频/ISO 容器(ftyp)
+	if len(head) >= 12 && bytes.Contains(head[:12], []byte("ftyp")) {
+		return "video"
+	}
+	// 后缀兜底(文档类)
+	ext := strings.ToLower(filepath.Ext(absPath))
+	switch ext {
+	case ".doc", ".docx":
+		return "docx"
+	case ".rtf":
+		return "rtf"
+	case ".html", ".htm":
+		return "html"
+	case ".epub":
+		return "epub"
+	case ".odt":
+		return "odt"
+	case ".xlsx":
+		return "xlsx"
+	case ".pptx":
+		return "pptx"
+	}
+	// 文本判定:可打印占比 + 无 null(业界 null-byte 探测)
+	if bytes.IndexByte(head, 0) >= 0 {
+		return "binary"
+	}
+	printable := 0
+	for _, b := range head {
+		if b == '\n' || b == '\r' || b == '	' || (b >= 0x20 && b < 0x7F) || b >= 0x80 {
+			printable++
+		}
+	}
+	if len(head) > 0 && float64(printable)/float64(len(head)) < 0.9 {
+		return "binary"
+	}
+	return "text"
+}
+
+// kindFromZip — 查 zip 内 [Content_Types].xml 判断 office 类型
+func kindFromZip(path string) string {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return ""
+	}
+	defer zr.Close()
+	for _, f := range zr.File {
+		if f.Name == "[Content_Types].xml" {
+			rc, err := f.Open()
+			if err != nil {
+				return ""
+			}
+			b, _ := io.ReadAll(io.LimitReader(rc, 64*1024))
+			rc.Close()
+			s := string(b)
+			switch {
+			case strings.Contains(s, "wordprocessingml"):
+				return "docx"
+			case strings.Contains(s, "spreadsheetml"):
+				return "xlsx"
+			case strings.Contains(s, "presentationml"):
+				return "pptx"
+			}
+		}
+	}
+	return ""
+}
+
+// extractDocument — 按类型调系统 CLI 抽取文本(零新依赖)
+func extractDocument(ctx context.Context, kind, absPath string) (string, string, error) {
+	run := func(sec int, name string, args ...string) (string, error) {
+		cctx, cancel := context.WithTimeout(ctx, time.Duration(sec)*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(cctx, name, args...)
+		var out, errb bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errb
+		if err := cmd.Run(); err != nil {
+			return "", fmt.Errorf("%s 抽取失败: %v(%s)", name, err, strings.TrimSpace(errb.String())[:min(200, len(strings.TrimSpace(errb.String())))])
+		}
+		return out.String(), nil
+	}
+	var text string
+	var err error
+	switch kind {
+	case "pdf":
+		text, err = run(60, "pdftotext", "-layout", "-enc", "UTF-8", absPath, "-")
+	case "docx", "doc", "rtf", "html":
+		text, err = run(30, "textutil", "-convert", "txt", "-stdout", absPath)
+	case "epub", "odt":
+		text, err = run(30, "pandoc", absPath, "-t", "plain")
+	case "xlsx":
+		text, err = xlsxToTSV(absPath)
+	default:
+		err = fmt.Errorf("不支持的抽取类型: %s", kind)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return text, docExtractNote(kind), nil
+}
+
+// xlsxToTSV — 内置轻抽取: sharedStrings + 首 sheet → TSV(单 sheet;更多用 db/csv 系)
+func xlsxToTSV(path string) (string, error) {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return "", fmt.Errorf("xlsx 打开失败: %w", err)
+	}
+	defer zr.Close()
+	// sharedStrings
+	var shared []string
+	for _, f := range zr.File {
+		if f.Name == "xl/sharedStrings.xml" {
+			rc, _ := f.Open()
+			shared = parseSharedStrings(rc)
+			rc.Close()
+			break
+		}
+	}
+	// 首 sheet(按名字典序取第一个 sheet1/…,简化取 xl/worksheets/sheet1.xml,缺则任意第一个)
+	var sheetFile *zip.File
+	for _, f := range zr.File {
+		if strings.HasPrefix(f.Name, "xl/worksheets/") && strings.HasSuffix(f.Name, ".xml") {
+			sheetFile = f
+			if strings.HasSuffix(f.Name, "sheet1.xml") {
+				break
+			}
+		}
+	}
+	if sheetFile == nil {
+		return "", fmt.Errorf("xlsx 无 worksheet")
+	}
+	rc, err := sheetFile.Open()
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+	return parseSheetTSV(rc, shared)
+}
+
+type siItem struct {
+	Text string `xml:",chardata"`
+	Runs []struct {
+		T string `xml:"t"`
+	} `xml:"r"`
+}
+
+func parseSharedStrings(r io.Reader) []string {
+	var out []string
+	dec := xml.NewDecoder(r)
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		if se, ok := tok.(xml.StartElement); ok && se.Name.Local == "si" {
+			var si struct {
+				T  string `xml:"t"`
+				Ts []struct {
+					Text string `xml:",chardata"`
+				} `xml:"r>t"`
+			}
+			_ = dec.DecodeElement(&si, &se)
+			s := si.T
+			for _, x := range si.Ts {
+				s += x.Text
+			}
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func parseSheetTSV(r io.Reader, shared []string) (string, error) {
+	dec := xml.NewDecoder(r)
+	var sb strings.Builder
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		if se, ok := tok.(xml.StartElement); ok && se.Name.Local == "row" {
+			var row struct {
+				Cells []struct {
+					Type string `xml:"t,attr"`
+					V    string `xml:"v"`
+					Is   struct {
+						T string `xml:"t"`
+					} `xml:"is"`
+				} `xml:"c"`
+			}
+			_ = dec.DecodeElement(&row, &se)
+			cells := make([]string, 0, len(row.Cells))
+			for _, c := range row.Cells {
+				v := c.V
+				if c.Type == "s" {
+					idx := 0
+					fmt.Sscanf(v, "%d", &idx)
+					if idx >= 0 && idx < len(shared) {
+						v = shared[idx]
+					}
+				} else if c.Type == "inlineStr" || c.Type == "str" {
+					if c.Is.T != "" {
+						v = c.Is.T
+					}
+				}
+				cells = append(cells, strings.ReplaceAll(strings.ReplaceAll(v, "\n", " "), "	", " "))
+			}
+			sb.WriteString(strings.Join(cells, "	"))
+			sb.WriteString("\n")
+		}
+	}
+	if sb.Len() == 0 {
+		return "", fmt.Errorf("xlsx 首 sheet 无数据(可能为空或保护)")
+	}
+	return sb.String(), nil
+}
+
+// iconvBytes — 经系统 iconv 转码到 UTF-8(零依赖)
+func iconvBytes(data []byte, from string) ([]byte, error) {
+	cmd := exec.Command("iconv", "-f", from, "-t", "UTF-8")
+	cmd.Stdin = bytes.NewReader(data)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // executeWrite — 原子写入文件

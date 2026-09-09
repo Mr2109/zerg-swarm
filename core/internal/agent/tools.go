@@ -107,12 +107,9 @@ func toolRead() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "read",
-			Description: "读取文件内容（带行号）。\n\n" +
-				"【用法】\n" +
-				"- 读文件用本工具（NOT cat/head/tail）\n" +
-				"- 大文件自动分页（offset/limit）\n" +
-				"- 路径相对于 WorkDir\n\n" +
-				"【示例】\"read\" path=src/main.go — 读取文件",
+			Description: "读取文件内容(v1.0.2——多文件类型:文本/PDF/Office/epub 等自动抽取;图像音频视频委托专用工具)。\n\n" +
+				"【用法】\n- 文本: 原文带行号(num=false 可关)——代码/JSON/YAML/MD/LOG 等\n- PDF/Office: 自动抽取文本(pdftotext/textutil/pandoc)——附类型注记\n- 表格: .xlsx 自动抽首 sheet 为 TSV;.csv 原样\n- 编码: GBK/UTF-16 自动转 UTF-8\n- 二进制/图像/音频/视频: 不吐内容,给委托指引\n- 大文件分页: offset/limit;超长行自动 [截断]\n\n" +
+				"【示例】\"read\" path=main.go — 带行号读;\"read\" path=报告.pdf offset=1 limit=100 — 读 PDF;\"read\" path=data.xlsx — 抽 TSV;\"read\" path=旧文件.txt format=raw num=false — 原文无行号",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -127,6 +124,15 @@ func toolRead() ToolDef {
 					"limit": map[string]any{
 						"type":        "integer",
 						"description": "返回行数上限（默认 500——分页用——文件超限时模型主动翻页）",
+					},
+					"num": map[string]any{
+						"type":        "boolean",
+						"description": "行号(默认 true;false=原文无行号)",
+					},
+					"format": map[string]any{
+						"type":        "string",
+						"enum":        []any{"auto", "raw"},
+						"description": "auto=类型探测自动读(默认);raw=强制按原文文本读(不抽取/不委托)",
 					},
 				},
 				"required": []string{"path"},
