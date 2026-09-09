@@ -53,6 +53,11 @@ func (g *ChatGate) Check(toolName, args string, agentName string) (agent.Decisio
 			return agent.Decision{Action: "block", Message: "危险命令拦截: " + b.pattern + "。" + b.suggest}, nil
 		}
 	}
+	// 事故修复(2026-09-07): rm 参数级家目录防护——endOnly 同款漏洞(~/$HOME/家目录绝对路径漏过)
+	// 与 agent/bash_v101.go bashRmTargetGuard 同规则(展开后逐目标判定 / 家目录本身/祖先/内部)
+	if err := agent.BashCheckRmHome(cmd); err != nil {
+		return agent.Decision{Action: "block", Message: "危险命令拦截: " + err.Error()}, nil
+	}
 	return agent.Decision{Action: "allow"}, nil
 }
 

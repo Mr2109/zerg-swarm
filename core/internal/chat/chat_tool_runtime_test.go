@@ -117,6 +117,8 @@ func TestErrTypeOf(t *testing.T) {
 		"参数 port 不能为空":             "param",
 		"命令参数为空":                   "param",
 		"格式错误: 期望 JSON":            "param",
+		"⚠️ 工具调用格式错误(系统断言——非执行失败——请勿原样重发)": "param",
+		"bash: ⚠️ 工具调用格式错误(系统断言——非执行失败——请勿原样重发)": "param",
 		"未知工具: xxx（先 tool_search）": "param",
 		"服务 502: upstream fail":    "exec",
 		"连接超时":                     "exec",
