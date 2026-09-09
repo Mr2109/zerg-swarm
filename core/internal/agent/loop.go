@@ -401,8 +401,21 @@ func (ls *loopState) toolSearch(query string) (ToolCallResult, error) {
 			}
 		}
 	}
+	// 零匹配(或搜到常驻工具)——先查可用列表:
+	// 2026-09-09(write v1.0.1 验收实证): 模型反复 tool_search 找常驻工具(write 等)→ 空手回复无行动指引 → 死循环
+	if name := matchAvailableTool(query, ls.tools); name != "" {
+		for _, t := range ls.tools {
+			if t.Function.Name == name {
+				help := strings.ReplaceAll(t.Function.Description, "\n", " ")
+				if len(help) > 200 {
+					help = help[:200] + "…"
+				}
+				return ToolCallResult{Content: fmt.Sprintf("✅ %s 已在可用工具列表——直接调用即可(无需 tool_search)。\n%s", name, help)}, nil
+			}
+		}
+	}
 	if len(matched) == 0 {
-		return ToolCallResult{Content: "（未发现匹配工具——当前已有: " + strings.Join(func() []string {
+		return ToolCallResult{Content: "（未发现匹配工具——tool_search 只用于发现扩展工具(kb/anysearch/codegraph 等 MCP);常驻工具(如 write/read/edit/bash/ls)直接调用无需搜索——当前已有: " + strings.Join(func() []string {
 			var n []string
 			for _, t := range ls.tools {
 				n = append(n, t.Function.Name)
@@ -422,6 +435,29 @@ func (ls *loopState) toolSearch(query string) (ToolCallResult, error) {
 		names = append(names, t.Function.Name)
 	}
 	return ToolCallResult{Content: fmt.Sprintf("✅ 发现 %d 个工具（已加入可用列表——更多可再搜）:\n%s\n【用法】直接用工具名调用（如 mcp_codegraph_codegraph_callers）", len(matched), strings.Join(names, "\n"))}, nil
+}
+
+// matchAvailableTool — 查询是否命中已可用工具名(词元精确/包含)
+// 2026-09-09: 模型常对常驻工具发 tool_search——命中即引导直接调用(免空转)
+func matchAvailableTool(query string, tools []ToolDef) string {
+	q := strings.ToLower(query)
+	for _, t := range tools {
+		name := t.Function.Name
+		if name == "" || len(name) < 2 {
+			continue
+		}
+		// 词元精确匹配(英文查询如 "write file create" → write)
+		for _, tok := range strings.FieldsFunc(q, func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9') }) {
+			if tok == name {
+				return name
+			}
+		}
+		// 无空格中文/单查询串包含工具名(write 场景为主)
+		if !strings.Contains(q, " ") && strings.Contains(q, name) {
+			return name
+		}
+	}
+	return ""
 }
 
 // executeTool - 执行单个工具调用
