@@ -17,3 +17,6 @@ core/zerg-api
 core/zerg-review
 zerg-wt/
 bin/zerg-core.old
+
+# 构建产物不入库(2026-09-08 政策)
+bin/
