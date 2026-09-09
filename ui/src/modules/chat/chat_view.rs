@@ -1318,24 +1318,30 @@ impl ChatView {
                     self.slash_open = false;
                 }
             }
-            // P1 建议药丸（输入区上方——快捷提问——Hermes SuggestionPills 借鉴）
-            if !streaming && self.input.is_empty() && self.editing_id.is_none() {
-                ui.horizontal_wrapped(|ui| {
-                    let pills = ["📝 总结这段对话", "🔍 搜索知识库：虫族经济", "📌 帮我规划 v2.6 开源步骤", "🤔 分析一个技术问题"];
-                    let mut fill: Option<String> = None;
-                    for p in pills {
-                        if ui.small_button(p).clicked() {
-                            fill = Some(p.to_string());
-                        }
-                    }
-                    if let Some(f) = fill {
-                        self.input = f;
-                    }
-                });
-            }
-            // 第二行：按钮行（P2-3 按钮下移——胶囊 + 📎 + 发送/停止）
+            // P1 建议药丸已移除（2026-09-09 Mr2109——输入框下四按钮排不要）
+            // 第二行：操作按钮行（📎 + 发送/停止——2026-09-09 模型胶囊移出到最末行）
             ui.horizontal(|ui| {
-                // 模型胶囊（当前模型——点击切换——Hermes model-pill 借鉴）
+                // D3 图片选择按钮
+                if ui
+                    .button(icon_text("paperclip"))
+                    .on_hover_text("发送图片")
+                    .clicked()
+                {
+                    self.pick_image();
+                }
+                if streaming {
+                    if ui.button(format!("{} 停止", icon_text("stop"))).clicked() {
+                        stop_clicked = true;
+                    }
+                } else if ui.button(format!("{} 发送", icon_text("send"))).clicked() {
+                    send_clicked = true;
+                }
+                if enter && !streaming {
+                    send_clicked = true;
+                }
+            });
+            // 最后一行：模型胶囊（当前模型——点击切换——2026-09-09 Mr2109移至此行）
+            ui.horizontal(|ui| {
                 let models = self.models.clone();
                 let cur = self.current_model.clone();
                 let mut new_model: Option<String> = None;
@@ -1358,24 +1364,6 @@ impl ChatView {
                     .on_hover_text(format!("当前模型: {}", cur));
                 if let Some(nm) = new_model {
                     self.switch_model(nm);
-                }
-                // D3 图片选择按钮
-                if ui
-                    .button(icon_text("paperclip"))
-                    .on_hover_text("发送图片")
-                    .clicked()
-                {
-                    self.pick_image();
-                }
-                if streaming {
-                    if ui.button(format!("{} 停止", icon_text("stop"))).clicked() {
-                        stop_clicked = true;
-                    }
-                } else if ui.button(format!("{} 发送", icon_text("send"))).clicked() {
-                    send_clicked = true;
-                }
-                if enter && !streaming {
-                    send_clicked = true;
                 }
             });
         }
