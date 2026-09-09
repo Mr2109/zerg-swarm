@@ -5,7 +5,6 @@ package agent
 // 设计：每个工具执行前过 gate 检查，执行后返回 ToolCallResult
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,8 +12,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
+
+	"zerg/core/internal/ffp"
 )
 
 // 执行上下文
@@ -51,6 +53,8 @@ func NewExecContext(workDir string) *ExecContext {
 			}
 		}
 	}
+	// bash v1.0.1: 溢出落盘目录白名单（超长输出 spill——模型 read 可续读）
+	ec.ExtraAllowDirs = append(ec.ExtraAllowDirs, BashOverflowDir)
 	return ec
 }
 
@@ -87,7 +91,13 @@ func (ec *ExecContext) validatePath(relPath string) (string, error) {
 				return absPath, nil
 			}
 		}
-		return "", fmt.Errorf("路径 %q 不在工作区 %q 内，拒绝访问", relPath, ec.WorkDir)
+		// FFP 式可行动拒绝(2026-09-08——报告路径沙盒冲突治本): 拒绝=教学——
+	// 报出合法落点(ZERG_TASK_DIR 已在白名单——报告应写任务目录而非越界自创路径)
+	allowed := ""
+	if td := os.Getenv("ZERG_TASK_DIR"); td != "" {
+		allowed = fmt.Sprintf("。报告/产物请写到任务目录(已在白名单): %s/internal-task-report.md", td)
+	}
+	return "", fmt.Errorf("路径 %q 不在工作区 %q 内，拒绝访问%s", relPath, ec.WorkDir, allowed)
 	}
 
 	return absPath, nil
@@ -141,80 +151,9 @@ func checkDangerousCommand(command string) error {
 	return nil
 }
 
-// executeBash — 执行 bash 命令
-// 带超时（30s）、输出截断（2000）、路径校验（WorkDir 内）
-func (ec *ExecContext) executeBash(ctx context.Context, command string, gate ToolGater) (string, error) {
-	// v2.5.4.9 危险命令黑名单（防误删/系统级破坏——CA 自举安全加固）
-	if err := checkDangerousCommand(command); err != nil {
-		return "", err
-	}
-	// Gate 检查
-	if gate != nil {
-		decision, err := gate.Check("bash", command, ec.AgentName)
-		if err != nil {
-			return "", fmt.Errorf("gate 检查失败: %w", err)
-		}
-		switch decision.Action {
-		case "block":
-			return "", fmt.Errorf("命令被 gate 拦截: %s — %s", command, decision.Message)
-		case "require_approval":
-			return "", fmt.Errorf("命令需要审批: %s — %s", command, decision.Message)
-		}
-	}
-
-	// 工作区路径校验（禁止绝对路径逃逸）
-	if filepath.IsAbs(command) {
-		// 解析路径是否在 WorkDir 内
-		dir := filepath.Dir(command)
-		absDir, err := filepath.Abs(dir)
-		if err != nil {
-			return "", fmt.Errorf("路径解析失败: %w", err)
-		}
-		absWorkDir, _ := filepath.Abs(ec.WorkDir)
-		if !strings.HasPrefix(absDir, absWorkDir+string(os.PathSeparator)) {
-			return "", fmt.Errorf("命令路径 %q 不在工作区内", command)
-		}
-	}
-
-	// 设置超时 context
-	ctx, cancel := context.WithTimeout(ctx, ec.Timeout)
-	defer cancel()
-
-	// 执行命令（v2.5.1: RTK 包装——ls/git 等紧凑输出——源头减量）
-	// 已知紧凑命令前缀 rtk（不支持的透传——安全）
-	rtkCommand := command
-	fields := strings.Fields(command)
-	if len(fields) > 0 {
-		switch fields[0] {
-		case "ls", "git", "find", "ps", "df", "du", "pip", "npm", "go", "cargo", "docker":
-			rtkCommand = "rtk " + command
-		}
-	}
-	cmd := exec.CommandContext(ctx, "bash", "-c", rtkCommand)
-	cmd.Dir = ec.WorkDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		// 超时或错误时返回 stderr
-		output := stderr.String()
-		if output == "" {
-			output = err.Error()
-		}
-		return truncate(output, ec.OutputMax), nil
-	}
-
-	// 合并 stdout + stderr
-	output := stdout.String()
-	if stderr.Len() > 0 {
-		output += "\n" + stderr.String()
-	}
-
-	return truncate(output, ec.OutputMax), nil
-}
+// executeBash v1.0.0 已升级为 executeBashV101（bash_v101.go——2026-09-06 AI 专用执行契约）
+// v1.0.0 问题: 裸文本返回无 exit_code/截断一刀切/无 cwd/timeout_s 参数
+// → v1.0.1: 三段式返回+系统断言+防呆拦截+溢出落盘+错误分类引导
 
 // executeRead — 读取文件内容
 // 路径校验 + 文件大小限制（100KB）
@@ -707,9 +646,17 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 	return strings.Join(results, "\n"), nil
 }
 
-// executeLs — 列出目录内容
-// 类似 ls -la
-func (ec *ExecContext) executeLs(ctx context.Context, path string, gate ToolGater) (string, error) {
+// lsOptions — ls v1.0.2 参数(设计-ls工具v1.0.2-目录概览升级-20260908)
+type lsOptions struct {
+	Limit   int    // 最大列出行(0=不截断)
+	DirOnly bool   // 只列目录
+	Hidden  bool   // 显示点文件/目录(默认隐藏——治 .zerg 噪音)
+	Pattern string // 名称 fnmatch 过滤(与 glob 分工: 概览内收窄)
+	SortBy  string // name/time/size(目录恒在前)
+}
+
+// executeLs — 列出目录内容(ls v1.0.2——权限格式修复/摘要行/截断引导/排序/参数)
+func (ec *ExecContext) executeLs(ctx context.Context, path string, o lsOptions, gate ToolGater) (string, error) {
 	// Gate 检查
 	if gate != nil {
 		decision, err := gate.Check("ls", path, ec.AgentName)
@@ -733,98 +680,161 @@ func (ec *ExecContext) executeLs(ctx context.Context, path string, gate ToolGate
 		return "", fmt.Errorf("读取目录失败: %w", err)
 	}
 
-	// 格式化输出
-	var results []string
+	// 过滤+收集(点项默认隐藏;dir_only;pattern)
+	type row struct {
+		name  string
+		dirs  bool
+		size  int64
+		mod   time.Time
+		perms string
+		extra string // 符号链接 -> 目标
+	}
+	var rows []row
 	for _, entry := range entries {
+		name := entry.Name()
+		if !o.Hidden && strings.HasPrefix(name, ".") {
+			continue
+		}
+		if o.Pattern != "" {
+			if ok, _ := filepath.Match(o.Pattern, name); !ok {
+				continue
+			}
+		}
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
 		mode := info.Mode()
-		size := info.Size()
-		name := entry.Name()
+		isDir := mode.IsDir()
+		if o.DirOnly && !isDir {
+			continue
+		}
+		r := row{name: name, dirs: isDir, size: info.Size(), mod: info.ModTime()}
+		full := filepath.Join(absPath, name)
+		if mode&os.ModeSymlink != 0 {
+			// 符号链接: 类型 l + 目标权限(os.Stat 跟随——GNU ls 一致——拍板 4)
+			if tgt, err := os.Readlink(full); err == nil {
+				r.extra = " -> " + tgt
+			}
+			permMode := mode
+			if st, err := os.Stat(full); err == nil {
+				permMode = st.Mode()
+			} else {
+				permMode = 0 // 断链——全 '-' 权限
+			}
+			r.perms = "l" + lsPermsBody(permMode)
+		} else {
+			r.perms = formatPermissions(mode)
+		}
+		rows = append(rows, r)
+	}
 
-		// 目录标记
-		if info.IsDir() {
+	// 排序: 目录恒在前(拍板内固定);组内按 sort_by
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].dirs != rows[j].dirs {
+			return rows[i].dirs // 目录在前
+		}
+		switch o.SortBy {
+		case "time":
+			if !rows[i].mod.Equal(rows[j].mod) {
+				return rows[i].mod.After(rows[j].mod)
+			}
+		case "size":
+			if rows[i].size != rows[j].size {
+				return rows[i].size > rows[j].size
+			}
+		}
+		return rows[i].name < rows[j].name
+	})
+
+	// 摘要行
+	dirCount, fileCount := 0, 0
+	for _, r := range rows {
+		if r.dirs {
+			dirCount++
+		} else {
+			fileCount++
+		}
+	}
+	total := len(rows)
+	showTime := o.SortBy == "time" // 拍板 3: sort_by=time 显示时间列(本地 AI 判新旧——Mr2109)
+	lines := []string{fmt.Sprintf("== %s (共 %d 项:%d 目录 / %d 文件)==", absPath, total, dirCount, fileCount)}
+	if total == 0 {
+		switch {
+		case o.DirOnly:
+			lines = append(lines, "(无目录)")
+		case o.Pattern != "":
+			lines = append(lines, "(无匹配项)")
+		default:
+			lines = append(lines, "(空目录)")
+		}
+		return strings.Join(lines, "\n"), nil
+	}
+
+	limit := o.Limit
+	if limit <= 0 {
+		limit = total
+	}
+	for i, r := range rows {
+		if i >= limit {
+			lines = append(lines, fmt.Sprintf("… [已省略 %d 项——共 %d 项——用 pattern 或 glob 缩小范围]", total-limit, total))
+			break
+		}
+		name := r.name
+		if r.dirs {
 			name += "/"
 		}
-
-		// 简化权限（类似 ls -la）
-		perms := formatPermissions(mode)
-
-		results = append(results, fmt.Sprintf("%s %8d %s", perms, size, name))
+		name += r.extra
+		sizeCol := fmt.Sprintf("%8d", r.size)
+		if r.dirs {
+			sizeCol = "       -"
+		}
+		line := fmt.Sprintf("%s %s %s", r.perms, sizeCol, name)
+		if showTime {
+			line += "  " + r.mod.Format("01-02 15:04")
+		}
+		lines = append(lines, line)
 	}
-
-	if len(results) == 0 {
-		return "(空目录)", nil
-	}
-
-	return strings.Join(results, "\n"), nil
+	return strings.Join(lines, "\n"), nil
 }
 
-// formatPermissions — 格式化文件权限（类似 ls -la 的 -rwxr-xr-x）
+// formatPermissions — 格式化文件权限(标准 10 字符——按用户类分组 rwx/rwx/rwx)
+// v1.0.2 修复: 旧版按位型分组(rrr/www/xxx→"drrrw--xxx" 畸形——2026-09-08 日志实锤)
 func formatPermissions(mode os.FileMode) string {
-	var perms string
 	if mode.IsDir() {
-		perms = "d"
-	} else if mode&os.ModeSymlink != 0 {
-		perms = "l"
-	} else {
-		perms = "-"
+		return "d" + lsPermsBody(mode)
 	}
+	if mode&os.ModeSymlink != 0 {
+		return "l" + lsPermsBody(mode)
+	}
+	return "-" + lsPermsBody(mode)
+}
 
-	// 读
-	if mode&0o400 != 0 {
-		perms += "r"
-	} else {
-		perms += "-"
-	}
-	if mode&0o040 != 0 {
-		perms += "r"
-	} else {
-		perms += "-"
-	}
-	if mode&0o004 != 0 {
-		perms += "r"
-	} else {
-		perms += "-"
-	}
+// lsPermsBody — 9 位权限体(owner rwx + group rwx + other rwx)
+func lsPermsBody(mode os.FileMode) string {
+	p := make([]byte, 9)
+	// owner
+	p[0], p[1], p[2] = bitRwx(mode, 0o400, 0o200, 0o100)
+	// group
+	p[3], p[4], p[5] = bitRwx(mode, 0o040, 0o020, 0o010)
+	// other
+	p[6], p[7], p[8] = bitRwx(mode, 0o004, 0o002, 0o001)
+	return string(p)
+}
 
-	// 写
-	if mode&0o200 != 0 {
-		perms += "w"
-	} else {
-		perms += "-"
+// bitRwx — 单类 rwx 三元组(某类读/写/执行位)
+func bitRwx(mode os.FileMode, r, w, x os.FileMode) (byte, byte, byte) {
+	rb, wb, xb := byte('-'), byte('-'), byte('-')
+	if mode&r != 0 {
+		rb = 'r'
 	}
-	if mode&0o020 != 0 {
-		perms += "w"
-	} else {
-		perms += "-"
+	if mode&w != 0 {
+		wb = 'w'
 	}
-	if mode&0o002 != 0 {
-		perms += "w"
-	} else {
-		perms += "-"
+	if mode&x != 0 {
+		xb = 'x'
 	}
-
-	// 执行
-	if mode&0o100 != 0 {
-		perms += "x"
-	} else {
-		perms += "-"
-	}
-	if mode&0o010 != 0 {
-		perms += "x"
-	} else {
-		perms += "-"
-	}
-	if mode&0o001 != 0 {
-		perms += "x"
-	} else {
-		perms += "-"
-	}
-
-	return perms
+	return rb, wb, xb
 }
 
 // 工具路由
@@ -868,10 +878,29 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 	switch toolName {
 	case "bash":
 		command, ok := args["command"].(string)
-		if !ok || command == "" {
-			return ToolCallResult{Error: "命令参数为空"}
+		if !ok || strings.TrimSpace(command) == "" {
+			// FFP 2026-09-08: 格式错误≠执行失败——回结构化教学文本(分类+原文回显+最小示例)
+			// 实测样本: 空 command 旧反馈"命令参数为空"零信息→模型原样重发死循环
+			kind := "参数缺失: bash.command"
+			sent := "<空/缺失>"
+			if !ok {
+				kind = "类型错误: bash.command(string)"
+				sent = ffp.EchoSafe(args["command"])
+			}
+			return ToolCallResult{Error: ffp.Build(kind, sent,
+				"字段 command:string 非空(trim 后)——为必填字段",
+				`{"command": "ls -la"}`,
+				"命令字段不能为空——先想好要执行什么,再发完整 JSON 工具调用;命令本身勿用引号包裹 JSON")}
 		}
-		output, err := ec.executeBash(ctx, command, gate)
+		// v1.0.1: cwd/timeout_s 可选参数（无状态 shell 补偿+超时覆盖）
+		cwd, _ := args["cwd"].(string)
+		timeoutS := 0
+		if tv, ok := args["timeout_s"]; ok {
+			if n, ok2 := jsonNumber(tv); ok2 {
+				timeoutS = n
+			}
+		}
+		output, err := ec.executeBashV101(ctx, command, cwd, timeoutS, gate)
 		if err != nil {
 			return ToolCallResult{Error: err.Error()}
 		}
@@ -989,7 +1018,24 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 
 	case "ls":
 		path, _ := args["path"].(string)
-		result, err := ec.executeLs(ctx, path, gate)
+		// ls v1.0.2: 参数(limit/dir_only/hidden/pattern/sort_by——默认最省 token)
+		o := lsOptions{Limit: 60, SortBy: "name"}
+		if v, ok := args["limit"].(float64); ok && v >= 0 {
+			o.Limit = int(v)
+		}
+		if v, ok := args["dir_only"].(bool); ok && v {
+			o.DirOnly = true
+		}
+		if v, ok := args["hidden"].(bool); ok && v {
+			o.Hidden = true
+		}
+		if v, ok := args["pattern"].(string); ok {
+			o.Pattern = v
+		}
+		if v, ok := args["sort_by"].(string); ok && v != "" {
+			o.SortBy = v
+		}
+		result, err := ec.executeLs(ctx, path, o, gate)
 		if err != nil {
 			return ToolCallResult{Error: err.Error()}
 		}
