@@ -77,6 +77,10 @@ func (h *Handlers) InternalTaskRunHandler(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "内部任务不存在: "+taskID)
 		return
 	}
+	if os.Getenv("ZERG_INTERNAL_TASKS") != "1" {
+		writeError(w, http.StatusForbidden, "内部任务引擎已停用（2026-09-06 误删事故）——设 ZERG_INTERNAL_TASKS=1 并重启主控后可运行")
+		return
+	}
 	// 提交任务（内部——优先级 5——模型=内部任务默认（新流程须模型名——网关路由））
 	// v2.5.6 Mr2109: 内部任务走新机制（Flow=zerg——程序定量驱动）
 	task := &Task{
