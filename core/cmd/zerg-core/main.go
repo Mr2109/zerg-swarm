@@ -2,7 +2,8 @@
 // 阶段 1：骨架 —— fleet 路由表 + 心跳接收 + status/models API。
 //
 // 用法:
-//   cd <repo>/core && go run ./cmd/zerg-core
+//
+//	cd <repo>/core && go run ./cmd/zerg-core
 //
 // 监听端口 8680（不与旧主控 8580 冲突）。
 package main
@@ -25,8 +26,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"zerg/core"
-	"zerg/core/internal/api"
 	"zerg/core/internal/agent"
+	"zerg/core/internal/api"
 	"zerg/core/internal/chat"
 	"zerg/core/internal/compressor"
 	"zerg/core/internal/config"
@@ -180,21 +181,21 @@ func main() {
 	// 加载插件管理器 + 注册 6 个模型适配器（example-35b-v2/ds4/nemotron/qwen38/qwable/gemma）
 	// 无适配器的模型 → 回退旧路由（fleet.yaml + 打分）——兼容
 	adapterRegistry := map[string]plugin.Plugin{
-		"example-35b":      adapters.NewOrnithAdapter(),
-		"example-35b-v2":      adapters.NewOrnithAdapter(), // 2026-08-20 接入——新版——不替换1.0
-		"deepseek-v4-flash":   adapters.NewDs4Adapter(),
-		"Nemotron-3.5-Lightning": adapters.NewNemotronAdapter(),
-		"Qwen3.8-27B":         adapters.NewQwen38Adapter(),
-		"Qwen3.8-Flash-Next":        adapters.NewQwen38FlashAdapter(), // 2026-08-29 接入——125B MoE qwen4架构
-		"Qwen3.8-Flash-Next-IQ4_XS": adapters.NewQwen38FlashAdapter(), // 2026-08-30 X3 三档量化——IQ4_XS 93.7GB（内存更宽）
+		"example-35b":             adapters.NewOrnithAdapter(),
+		"example-35b-v2":             adapters.NewOrnithAdapter(), // 2026-08-20 接入——新版——不替换1.0
+		"deepseek-v4-flash":          adapters.NewDs4Adapter(),
+		"Nemotron-3.5-Lightning":     adapters.NewNemotronAdapter(),
+		"Qwen3.8-27B":                adapters.NewQwen38Adapter(),
+		"Qwen3.8-Flash-Next":         adapters.NewQwen38FlashAdapter(), // 2026-08-29 接入——125B MoE qwen4架构
+		"Qwen3.8-Flash-Next-IQ4_XS":  adapters.NewQwen38FlashAdapter(), // 2026-08-30 X3 三档量化——IQ4_XS 93.7GB（内存更宽）
 		"Qwen3.8-Flash-Next-Q3_K_XL": adapters.NewQwen38FlashAdapter(), // 2026-08-30 X3 三档量化——Q3_K_XL 89.9GB（内存最宽）
-		"example-8b-quant":    adapters.NewQwableAdapter(),
-		"Qwable-v1.Q5_K_M":    adapters.NewQwableAdapter(),
-		"gemma-4-26B":         adapters.NewGemmaAdapter(),
-		"gemma-4-12B":         adapters.NewGemmaAdapter(),
-		"GLM-4.7-Flash":        adapters.NewGlm47Adapter(),       // 2026-08-28 补全——智谱30B-A3B MoE
-		"Qwen3.6-35B-A3B":      adapters.NewQwen36Adapter(),      // 2026-08-28 补全——阿里35B/3B MoE
-		"example-30b":     adapters.NewMuseGlimmerAdapter(), // 2026-08-28 补全——Meta 30B 多模态
+		"example-8b-quant":           adapters.NewQwableAdapter(),
+		"Qwable-v1.Q5_K_M":           adapters.NewQwableAdapter(),
+		"gemma-4-26B":                adapters.NewGemmaAdapter(),
+		"gemma-4-12B":                adapters.NewGemmaAdapter(),
+		"GLM-4.7-Flash":              adapters.NewGlm47Adapter(),       // 2026-08-28 补全——智谱30B-A3B MoE
+		"Qwen3.6-35B-A3B":            adapters.NewQwen36Adapter(),      // 2026-08-28 补全——阿里35B/3B MoE
+		"example-30b":           adapters.NewMuseGlimmerAdapter(), // 2026-08-28 补全——Meta 30B 多模态
 	}
 	// 初始化适配器配置（Init——默认值——后续 config.yaml 覆盖）
 	for name, adp := range adapterRegistry {
@@ -307,7 +308,7 @@ func main() {
 	// v2.5.5 T3 内部任务引擎（空闲检测——挂主控）
 	// 外部任务队列空 + 资源空闲 → 触发内部任务（进化）
 	idleDetector := agent.NewIdleDetector("<repo>/docs/issues")
-	api.InitInternalModes() // v2.5.6: 内部任务运行模式开关持久化恢复（自动/手动——Mr2109 2026-08-28）
+	api.InitInternalModes()                       // v2.5.6: 内部任务运行模式开关持久化恢复（自动/手动——Mr2109 2026-08-28）
 	idleDetector.SetAutoCheck(api.IsInternalAuto) // v2.5.6: 运行模式开关——手动任务不自动触发（空闲检测跳过）
 	idleDetector.SetExternalQueue(func() int { return masterSched.RunningCount() })
 	idleDetector.SetResourceIdle(func() bool {
@@ -344,71 +345,85 @@ func main() {
 			Workdir:     "<repo>/core",
 			Status:      "queued",
 			IssuePath:   issuePath, // P1-3: 任务单路径——完成时更新状态
-			Flow:        "zerg",   // v2.5.6 Mr2109 2026-08-27: 内部任务走新机制（程序定量驱动——内部任务=最佳测试任务）
-			SkillKey:    def.ID,   // v2.5.6 Mr2109: skill 归属=任务独属（def.ID——沉淀后成为该任务自己的 skill）
+			Flow:        "zerg",    // v2.5.6 Mr2109 2026-08-27: 内部任务走新机制（程序定量驱动——内部任务=最佳测试任务）
+			SkillKey:    def.ID,    // v2.5.6 Mr2109: skill 归属=任务独属（def.ID——沉淀后成为该任务自己的 skill）
 		})
 	})
+	// ===== 2026-09-06 内部任务引擎停用 =====
+	// 事故: 内部任务(tool-check/mem-disk-alert 等清理类)经旧 bash 工具(黑名单无 $HOME/变量展开防护——P6 洞)误删用户主目录与 ~/.hermes
+	// 恢复: bash_v101 沙盒+危险命令双检(bashExpandDangerScan)合入并重编 bin/zerg-core 验证后, 启动 zerg-core 前设 ZERG_INTERNAL_TASKS=1
+	internalEngineOn := os.Getenv("ZERG_INTERNAL_TASKS") == "1"
 	idleStop := make(chan struct{})
-	go idleDetector.Run(idleStop)
-	fmt.Printf("🕐 内部任务引擎启动（v2.5.5 T3——空闲检测挂主控）\n")
+	if internalEngineOn {
+		go idleDetector.Run(idleStop)
+		fmt.Printf("🕐 内部任务引擎启动(v2.5.5 T3——空闲检测挂主控)\n")
+	} else {
+		fmt.Printf("🛑 内部任务引擎停用: ZERG_INTERNAL_TASKS 未设=1(2026-09-06 误删事故——自动触发已全部关闭)\n")
+	}
 	// v2.5.6 周期调度（Mr2109 2026-08-27——任务循环周期——每 60s 检查到点触发）
 	// 触发复用 onTrigger 的提交逻辑（模型轮换 + Flow=zerg + SkillKey=def.ID）
-	go func() {
-		for {
-			time.Sleep(60 * time.Second)
-			due := api.RunIntervalTick()
-			for _, defID := range due {
-				// v2.5.6 运行模式开关（Mr2109 2026-08-28）: 手动运行任务——周期调度跳过（只手动触发）
-				if !api.IsInternalAuto(defID) {
-					fmt.Printf("⏰ 周期触发跳过: %s（手动运行——只手动触发）\n", defID)
-					continue
-				}
-				for _, d := range agent.ListInternalTasks() {
-					if d.ID != defID {
+	if internalEngineOn {
+		go func() {
+			for {
+				time.Sleep(60 * time.Second)
+				due := api.RunIntervalTick()
+				for _, defID := range due {
+					// v2.5.6 运行模式开关（Mr2109 2026-08-28）: 手动运行任务——周期调度跳过（只手动触发）
+					if !api.IsInternalAuto(defID) {
+						fmt.Printf("⏰ 周期触发跳过: %s（手动运行——只手动触发）\n", defID)
 						continue
 					}
-					if internalTriggerCount > 0 {
-						internalModelIdx = (internalModelIdx + 1) % len(internalModelPool)
+					for _, d := range agent.ListInternalTasks() {
+						if d.ID != defID {
+							continue
+						}
+						if internalTriggerCount > 0 {
+							internalModelIdx = (internalModelIdx + 1) % len(internalModelPool)
+						}
+						internalTriggerCount++
+						model := internalModelPool[internalModelIdx]
+						fmt.Printf("⏰ 周期触发: 内部任务 %s 用模型 %s（周期调度）\n", defID, model)
+						masterSched.Submit(&api.Task{
+							ID:          "internal-" + d.ID + "-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+							Description: d.Template,
+							Priority:    api.PriorityInternal,
+							Type:        "internal",
+							Model:       model,
+							Workdir:     "<repo>/core",
+							Status:      "queued",
+							Flow:        "zerg",
+							SkillKey:    d.ID,
+						})
+						break
 					}
-					internalTriggerCount++
-					model := internalModelPool[internalModelIdx]
-					fmt.Printf("⏰ 周期触发: 内部任务 %s 用模型 %s（周期调度）\n", defID, model)
-					masterSched.Submit(&api.Task{
-						ID:          "internal-" + d.ID + "-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-						Description: d.Template,
-						Priority:    api.PriorityInternal,
-						Type:        "internal",
-						Model:       model,
-						Workdir:     "<repo>/core",
-						Status:      "queued",
-						Flow:        "zerg",
-						SkillKey:    d.ID,
-					})
-					break
 				}
 			}
-		}
-	}()
-	fmt.Printf("⏰ 内部任务周期调度启动（每 60s 检查）\n")
+		}()
+		fmt.Printf("⏰ 内部任务周期调度启动（每 60s 检查）\n")
+	}
 
 	// v2.5.6 内部任务启停控制（UI 按钮——停止=发信号停检测——启动=重启检测）
 	internalStopCh := idleStop
-	api.SetInternalTasksControl(
-		func() { // onStop: 停 idle 检测（发停止信号）
-			select {
-			case <-internalStopCh:
-				// 已停止
-			default:
-				close(internalStopCh)
-			}
-			fmt.Printf("🛑 内部任务已停止（UI 按钮）\n")
-		},
-		func() { // onStart: 重启 idle 检测（新通道 + Run）
-			internalStopCh = make(chan struct{})
-			go idleDetector.Run(internalStopCh)
-			fmt.Printf("▶️ 内部任务已启动（UI 按钮）\n")
-		},
-	)
+	if !internalEngineOn {
+		api.SetInternalTasksControl(func() {}, func() {}) // 停用态: 启停按钮置空——防 UI /start 绕过门控
+	} else {
+		api.SetInternalTasksControl(
+			func() { // onStop: 停 idle 检测（发停止信号）
+				select {
+				case <-internalStopCh:
+					// 已停止
+				default:
+					close(internalStopCh)
+				}
+				fmt.Printf("🛑 内部任务已停止（UI 按钮）\n")
+			},
+			func() { // onStart: 重启 idle 检测（新通道 + Run）
+				internalStopCh = make(chan struct{})
+				go idleDetector.Run(internalStopCh)
+				fmt.Printf("▶️ 内部任务已启动（UI 按钮）\n")
+			},
+		)
+	}
 
 	// 主控重启恢复开关状态（排除本机——UI 同步不丢）
 	gw.LoadExcludeLocal()
@@ -417,13 +432,15 @@ func main() {
 	// 路径：compress_models/llmlingua2-onnx/（模型已转换 ONNX）
 	compressorPath := filepath.Join("<volume-path>", "Zerg", "compress_models", "llmlingua2-onnx")
 	gw.SetCompressor(compressor.New(compressor.Config{
-			ModelPath: filepath.Join(compressorPath, "model.onnx"),
-			TokPath:   filepath.Join(compressorPath, "tokenizer.json"),
-		}))
+		ModelPath: filepath.Join(compressorPath, "model.onnx"),
+		TokPath:   filepath.Join(compressorPath, "tokenizer.json"),
+	}))
 
 	// B4 v2：排除本机模式切换（用户工作时——路由跳过 local）
 	r.Post("/api/fleet/exclude-local", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Exclude bool `json:"exclude"` }
+		var req struct {
+			Exclude bool `json:"exclude"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "参数错误", http.StatusBadRequest)
 			return
@@ -456,7 +473,7 @@ func main() {
 				snap.MemAvailableGb,
 				snap.MemTotalGb,
 				snap.Load,
-				0, // local active requests（暂用 0）
+				0,                       // local active requests（暂用 0）
 				loadToCpuPct(snap.Load), // B4 v2：CPU 使用率（load/核数近似）
 				collectGpuPct(),         // B4 v2：GPU 使用率（显存占用近似）
 			)
