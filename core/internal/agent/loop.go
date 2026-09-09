@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"zerg/core/internal/agentstate"
+	"zerg/core/internal/ffp"
 	"zerg/core/internal/compressor"
 	"zerg/core/internal/hermes"
 	"zerg/core/internal/loopguard"
@@ -72,8 +73,11 @@ func newLoop(agent *Agent, tools []ToolDef, logger *Logger, state *agentstate.Ha
 // Loop 运行 Agent 主循环——每轮: 模型调用→工具执行→无进展检测，直到终止条件或 maxTurns 用尽
 // v2.5.1 挂单诊断: defer 捕获 ToolTrace 补全（所有出口都带完整工具轨迹）
 func Loop(ctx context.Context, agent *Agent, tools []ToolDef, logger *Logger, state *agentstate.HarnessState, maxTurns int, budget int64, noProgressThresh int) (result LoopResult) {
-	// 2026-09-05 内核开关: ZERG_LOOPCORE=1 走 loopcore 内核（CATerminator 仲裁）——默认关（对照验证——稳定后转正）
-	if os.Getenv("ZERG_LOOPCORE") == "1" {
+	// 2026-09-08 内核转正: 默认走 loopcore 内核(CATerminator 仲裁)——legacy Loop 工具结果角色
+	// 不合 llama-server 严格 OpenAI 协议(assistant.tool_calls 后必须 role=tool)——外部任务第 2 轮起
+	// 400 "Cannot continue an assistant message that contains tool calls" 死循环(2026-09-08 五连败实锤)。
+	// chat 已在内核长期稳定。ZERG_LEGACY_LOOP=1 逃生门(对照/回滚——一版后删——设计-20260908)
+	if os.Getenv("ZERG_LEGACY_LOOP") != "1" {
 		return agent.RunWithKernel(ctx, tools, logger, state, maxTurns, budget, noProgressThresh)
 	}
 	var ls *loopState // v2.5.1 defer 捕获（ToolTrace 补全）
@@ -169,6 +173,14 @@ func Loop(ctx context.Context, agent *Agent, tools []ToolDef, logger *Logger, st
 			}
 			result, execErr := ls.executeTool(ctx, tc)
 			if execErr != nil {
+				if ffp.In(execErr.Error()) {
+					// FFP 2026-09-08: 格式错误≠执行失败——教学文本原样回喂(不加"执行失败"包装)
+					ls.logger.LogEvent(string(EventToolError), "warn", "tool_format_feedback",
+						tc.Name, fmt.Sprintf("第 %d 轮: %s 格式反馈(FFP)", ls.turn, tc.Name),
+						nil, execErr.Error(), "", "")
+					agent.AppendMessage(Message{Role: "user", Content: execErr.Error()})
+					continue
+				}
 				ls.logger.LogEvent(string(EventToolError), "error", "tool_exec_failed",
 					tc.Name, fmt.Sprintf("第 %d 轮: %s 执行失败: %v", ls.turn, tc.Name, execErr),
 					nil, execErr.Error(), "", "")
