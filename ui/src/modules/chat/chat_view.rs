@@ -187,6 +187,7 @@ pub struct ChatView {
     edit_pending: Option<api::SharedResult<Value>>,
     // P1 输入历史（Hermes 借鉴——↑↓ 浏览历史输入）
     input_history: Vec<String>,
+    composer_focus: bool, // 2026-09-09 Hermes 式输入容器聚焦描边(上帧 focus——ring 提亮)
     history_idx: Option<usize>,
     // P1 草稿持久化（Hermes 借鉴——会话级草稿——切换不丢）
     drafts: std::collections::HashMap<String, String>,
@@ -265,6 +266,7 @@ impl ChatView {
             editing_content: String::new(),
             edit_pending: None,
             input_history: Vec::new(),
+            composer_focus: false,
             history_idx: None,
             drafts: std::collections::HashMap::new(),
             slash_open: false,
@@ -1127,10 +1129,8 @@ impl ChatView {
                 }
             }
         }
-        // 底部输入区（C5 模型胶囊 + D3 图片 + 输入 + 发送）
+        // 底部输入区（C5 模型胶囊 + D3 图片 + 输入 + 发送）——2026-09-09 Hermes 化(发送/停止声明内移输入区块)
         ui.separator();
-        let mut send_clicked = false;
-        let mut stop_clicked = false;
         // D3/P2 已选图片 chips（多图——Hermes 多附件借鉴）
         if !self.pending_images.is_empty() {
             ui.horizontal_wrapped(|ui| {
@@ -1214,67 +1214,136 @@ impl ChatView {
             }
         }
         {
-            // 第一行：输入框（全宽——P2-3 按钮下移）
-            // P4-13 Enter=发送 / Shift+Enter=换行（return_key 改 Shift+Enter——
-            // multiline 默认 Enter 是换行——改为 Enter 留给发送检测）
-            // P4-16 输入框透明化（Hermes 调研——--dt-input-bg:0% + 淡边框 7%——
-            // 输入区浮在消息区上不抢视觉——聚焦时边框亮起）
-            let input_frame = egui::Frame::new()
-                .fill(egui::Color32::TRANSPARENT)
-                .stroke(egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color.gamma_multiply(0.7)))
-                .corner_radius(8.0)
-                .inner_margin(egui::Margin::symmetric(10, 6));
-            let input_resp = input_frame.show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::multiline(&mut self.input)
-                        .desired_rows(2)
-                        .frame(egui::Frame::NONE)
-                        .hint_text("输入消息... (Enter 发送 / Shift+Enter 换行 / / 命令)")
-                        .desired_width(ui.available_width())
-                        .return_key(egui::KeyboardShortcut::new(
-                            egui::Modifiers::SHIFT,
-                            egui::Key::Enter,
-                        )),
-                )
+            // Hermes 式输入区（2026-09-09 设计稿:限宽居中 + 圆角16 玻璃容器 + 输入行内右控件）
+            // 对标 Hermes composer-root: rounded-2xl + 行内 [模型pill | 发送/停止] + Enter 发送
+            let avail_w = ui.available_width();
+            let cw = avail_w.min(860.0);
+            let side = ((avail_w - cw) * 0.5).max(0.0);
+            // 聚焦描边(上帧 focus——仿 Hermes composer-ring 动态强度)
+            let ring = if self.composer_focus {
+                ui.visuals().widgets.active.bg_stroke.color
+            } else {
+                ui.visuals().widgets.noninteractive.bg_stroke.color.gamma_multiply(0.7)
+            };
+            // 模型胶囊数据(行内右控件用——克隆避免嵌套闭包借用 self)
+            let models = self.models.clone();
+            let cur = self.current_model.clone();
+            let mut new_model: Option<String> = None;
+            let mut resp_out: Option<egui::Response> = None;
+            let mut stop_clicked = false;
+            let mut send_clicked = false;
+            // 居中限宽:外层 horizontal + 左侧 space;玻璃圆角容器
+            ui.horizontal(|ui| {
+                ui.add_space(side);
+                let input_frame = egui::Frame::new()
+                    .fill(ui.visuals().extreme_bg_color.gamma_multiply(0.35))
+                    .stroke(egui::Stroke::new(1.0, ring))
+                    .corner_radius(16.0)
+                    .inner_margin(egui::Margin { left: 12, right: 8, top: 8, bottom: 8 });
+                input_frame.show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        // 输入:自动增高 1..8 行（Hermes contentEditable 同感）
+                        let rows = (self.input.lines().count()).clamp(1, 8);
+                        let in_w = (cw - 250.0 - 16.0).max(160.0);
+                        resp_out = Some(ui.add(
+                            egui::TextEdit::multiline(&mut self.input)
+                                .desired_rows(rows)
+                                .frame(egui::Frame::NONE)
+                                .hint_text("输入消息… (Enter 发送 / Shift+Enter 换行 / / 命令)")
+                                .desired_width(in_w)
+                                .return_key(egui::KeyboardShortcut::new(
+                                    egui::Modifiers::SHIFT,
+                                    egui::Key::Enter,
+                                )),
+                        ));
+                        let can_send = !self.input.trim().is_empty();
+                        // 行内右控件（Hermes ml-auto 同感:发送/停止最右,模型胶囊其左）
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if streaming {
+                                if ui
+                                    .button(format!("{} 停止", icon_text("stop")))
+                                    .on_hover_text("停止生成")
+                                    .clicked()
+                                {
+                                    stop_clicked = true;
+                                }
+                            } else {
+                                let sbtn = ui.add_enabled(
+                                    can_send,
+                                    egui::Button::new(format!("{} 发送", icon_text("send"))),
+                                );
+                                if sbtn.on_hover_text("Enter 发送").clicked() {
+                                    send_clicked = true;
+                                }
+                            }
+                            egui::ComboBox::from_id_salt("chat_model_pill")
+                                .selected_text(format!("{} {}", icon_text("brain"), short_model(&cur)))
+                                .width(140.0)
+                                .show_ui(ui, |ui| {
+                                    for m in &models {
+                                        if ui.selectable_label(*m == cur, m).clicked() {
+                                            new_model = Some(m.clone());
+                                        }
+                                    }
+                                    if !models.contains(&cur) {
+                                        if ui.selectable_label(true, &cur).clicked() {
+                                            new_model = Some(cur.clone());
+                                        }
+                                    }
+                                })
+                                .response
+                                .on_hover_text(format!("当前模型: {}", cur));
+                        });
+                    });
+                });
             });
-            let resp = input_resp.inner;
-            let enter = resp.has_focus()
+            self.composer_focus = resp_out.as_ref().is_some_and(|r| r.has_focus());
+            // Enter=发送 / Shift+Enter=换行（行内 resp 已捕获——以下方法体直序避免嵌套借用）
+            let enter = resp_out
+                .as_ref()
+                .is_some_and(|r| r.has_focus())
                 && ui.input(|i| i.key_pressed(egui::Key::Enter))
                 && !ui.input(|i| i.modifiers.shift);
-            // P1 输入历史（↑↓ 浏览——Hermes 借鉴）
-            if resp.has_focus() {
-                // P2 粘贴图片（Cmd+V 读剪贴板 PNG——JXA——Hermes paste-to-focus 借鉴）
-                if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V)) {
-                    if let Some(b64) = paste_clipboard_png() {
-                        if self.pending_images.len() < 8 {
-                            self.pending_images
-                                .push((format!("data:image/png;base64,{}", b64), "剪贴板图片".to_string()));
+            // 模型切换（闭包外执行——避免嵌套 &mut self）
+            if let Some(nm) = new_model {
+                self.switch_model(nm);
+            }
+            if let Some(resp) = &resp_out {
+                if resp.has_focus() {
+                    // P2 粘贴图片（Cmd+V 读剪贴板 PNG——JXA——Hermes paste-to-focus 借鉴）
+                    if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V)) {
+                        if let Some(b64) = paste_clipboard_png() {
+                            if self.pending_images.len() < 8 {
+                                self.pending_images
+                                    .push((format!("data:image/png;base64,{}", b64), "剪贴板图片".to_string()));
+                            }
                         }
                     }
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) && !self.input_history.is_empty() {
-                    let n = self.input_history.len();
-                    let idx = match self.history_idx {
-                        Some(i) if i > 0 => i - 1,
-                        _ => n - 1,
-                    };
-                    self.history_idx = Some(idx);
-                    self.input = self.input_history[idx].clone();
-                }
-                if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-                    if let Some(i) = self.history_idx {
-                        if i + 1 < self.input_history.len() {
-                            let ni = i + 1;
-                            self.history_idx = Some(ni);
-                            self.input = self.input_history[ni].clone();
-                        } else {
-                            self.history_idx = None;
-                            self.input.clear();
+                    // P1 输入历史（↑↓ 浏览）
+                    if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) && !self.input_history.is_empty() {
+                        let n = self.input_history.len();
+                        let idx = match self.history_idx {
+                            Some(i) if i > 0 => i - 1,
+                            _ => n - 1,
+                        };
+                        self.history_idx = Some(idx);
+                        self.input = self.input_history[idx].clone();
+                    }
+                    if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                        if let Some(i) = self.history_idx {
+                            if i + 1 < self.input_history.len() {
+                                let ni = i + 1;
+                                self.history_idx = Some(ni);
+                                self.input = self.input_history[ni].clone();
+                            } else {
+                                self.history_idx = None;
+                                self.input.clear();
+                            }
                         }
                     }
                 }
             }
-            // P1 斜杠命令（输入 / 开头弹菜单——/new /clear /delegate）
+            // P1 斜杠命令（/new /clear /delegate）
             self.slash_open = self.input.starts_with('/') && !self.streaming;
             if self.slash_open {
                 let cmd = self.input.trim().to_string();
@@ -1296,8 +1365,8 @@ impl ChatView {
                             }
                         }
                     });
-                if let Some(p) = picked {
-                    match p.as_str() {
+                if let Some(pl) = picked {
+                    match pl.as_str() {
                         "/new" => {
                             self.new_session();
                             self.input.clear();
@@ -1308,8 +1377,11 @@ impl ChatView {
                             if !rest.is_empty() {
                                 let model = self.current_model.clone();
                                 let psid = self.active_session.clone();
-                                self.delegate_pending = Some(api::chat_delegate_task_async(rest, model, psid));
-                                self.send_error = Some(format!("{} 已派单到任务队列", icon_text("rocket-launch")).to_string());
+                                self.delegate_pending =
+                                    Some(api::chat_delegate_task_async(rest, model, psid));
+                                self.send_error = Some(
+                                    format!("{} 已派单到任务队列", icon_text("rocket-launch")).to_string(),
+                                );
                             }
                             self.input.clear();
                         }
@@ -1318,60 +1390,17 @@ impl ChatView {
                     self.slash_open = false;
                 }
             }
-            // P1 建议药丸已移除（2026-09-09 Mr2109——输入框下四按钮排不要）
-            // 第二行：操作按钮行（📎 + 发送/停止——2026-09-09 模型胶囊移出到最末行）
-            ui.horizontal(|ui| {
-                // D3 图片选择按钮
-                if ui
-                    .button(icon_text("paperclip"))
-                    .on_hover_text("发送图片")
-                    .clicked()
-                {
-                    self.pick_image();
-                }
-                if streaming {
-                    if ui.button(format!("{} 停止", icon_text("stop"))).clicked() {
-                        stop_clicked = true;
-                    }
-                } else if ui.button(format!("{} 发送", icon_text("send"))).clicked() {
-                    send_clicked = true;
-                }
-                if enter && !streaming {
-                    send_clicked = true;
-                }
-            });
-            // 最后一行：模型胶囊（当前模型——点击切换——2026-09-09 Mr2109移至此行）
-            ui.horizontal(|ui| {
-                let models = self.models.clone();
-                let cur = self.current_model.clone();
-                let mut new_model: Option<String> = None;
-                egui::ComboBox::from_id_salt("chat_model_pill")
-                    .selected_text(format!("{} {}", icon_text("brain"), short_model(&cur)))
-                    .width(150.0)
-                    .show_ui(ui, |ui| {
-                        for m in &models {
-                            if ui.selectable_label(*m == cur, m).clicked() {
-                                new_model = Some(m.clone());
-                            }
-                        }
-                        if !models.contains(&cur) {
-                            if ui.selectable_label(true, &cur).clicked() {
-                                new_model = Some(cur.clone());
-                            }
-                        }
-                    })
-                    .response
-                    .on_hover_text(format!("当前模型: {}", cur));
-                if let Some(nm) = new_model {
-                    self.switch_model(nm);
-                }
-            });
-        }
-        if stop_clicked {
-            self.stop();
-        }
-        if send_clicked {
-            self.send();
+            // 回车发送（行内发送钮同效）
+            if enter && !streaming {
+                send_clicked = true;
+            }
+            // 行内停止/发送处理
+            if stop_clicked {
+                self.stop();
+            }
+            if send_clicked {
+                self.send();
+            }
         }
         // P2 底部状态栏（Hermes footer 借鉴——版本/会话数/消息数/模型）
         ui.separator();
