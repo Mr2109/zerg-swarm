@@ -74,9 +74,10 @@ func toolBash() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "bash",
-			Description: "执行 bash 命令（沙盒 shell——只用于执行程序/脚本/测试/构建/编译——文件操作用专用工具）。\n\n" +
+			Description: "执行 bash 命令(v1.0.3——AI 专用契约+删除范围门控)。沙盒 shell——只用于执行程序/脚本/测试/构建/编译——文件操作用专用工具。\n\n" +
+				"【删除安全】rm 目标必须落在 { 工作区, /tmp, 白名单 } 内——家目录/根目录/系统路径一律拦截(危险命令拦截:不在允许删除域/家目录保护)。拦截=预期——勿用变量/base64/换拼写绕过(同样拦截)。\n\n" +
 				"【何时用】跑测试/构建/脚本/命令。文件搜索 glob、内容 grep、读 read、编辑 edit、写 write（专用工具有结构化输入+权限检查——bash 裸命令不可控）。\n\n" +
-				"【成败判定】返回首行若为「⚠️ exit N — 命令失败」=失败（附 [guide] 引导）；正常看 [exit_code] 0。超长输出头尾保留+溢出落盘（标注路径——read 可续读）。\n\n" +
+				"【成败判定】返回首行若为「⚠️ exit N — 命令失败」=失败（附 [guide] 引导）；正常看 [exit_code] 0。空命令/坏参数回 ⚠️ 格式教学(勿原样重发)。超长输出头尾保留+溢出落盘（标注路径——read 可续读）。\n\n" +
 				"【参数】command 必填；cwd 可选（执行目录——默认工作区——跨目录任务请显式给）；timeout_s 可选（默认 30——长任务给 300）。\n\n" +
 				"【示例】\"go test ./...\" 跑测试、\"python3 test.py\" 跑脚本、{\"command\":\"go build\",\"timeout_s\":300} 长编译、{\"command\":\"ls\",\"cwd\":\"sub/dir\"} 指定目录",
 			Parameters: map[string]any{
