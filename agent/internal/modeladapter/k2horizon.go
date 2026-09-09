@@ -3,7 +3,7 @@ package modeladapter
 import (
 	"fmt"
 
-	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
+	"zerg/agent/internal/registry"
 )
 
 // K2Horizon IFM K2-Horizon 家族适配器（k2-horizon 架构）。
@@ -28,7 +28,7 @@ func (a *K2Horizon) BuildArgs(entry *registry.ModelEntry, port int) []string {
 		"-fa", "on",
 		"--cache-prompt",
 		"--cache-idle-slots",
-		"-np", "1", // v2.5.5 单槽铁律（设计决策——执行层面单槽——GPU全负荷）
+		"-np", "1", // v2.5.5 单槽铁律（Mr2109——执行层面单槽——GPU全负荷）
 		"-cb",
 		"--jinja",              // GGUF 内嵌 chat template（K2 模板由 fork 写入）
 		"--reasoning-preserve", // 思考保留（reasoning_content 抽取）
