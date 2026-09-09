@@ -148,12 +148,11 @@ func toolWrite() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "write",
-			Description: "写文件（原子写——临时文件+rename）。\n\n" +
-				"【用法】\n" +
-				"- 写文件用本工具（NOT echo 重定向/cat <<EOF）\n" +
-				"- 覆盖整个文件（追加请先 read 再写）\n" +
-				"- 路径相对于 WorkDir\n\n" +
-				"【示例】\"write\" path=src/main.go content=\"package main\\n\\nfunc main() {}\"",
+			Description: "写文件(v1.0.1——类型感知:防毁+自检+编码)。原子写(临时+回读校验+rename)。\n\n" +
+				"【用法】\n- 写文件用本工具(NOT echo 重定向/cat <<EOF)\n- 覆盖整个文件(追加请先 read 再写)\n- 路径相对于 WorkDir\n\n" +
+				"【v1.0.1 行为】目标为文档/二进制类(.pdf/.docx/.xlsx/.pptx/.epub/.odt 等/图片/音频/视频)→ 拒绝文本写入(防毁——引导专用工具/先删)。写 .json/.xml 自动语法自检,坏则回滚报错。\n\n" +
+				"【参数】path+content 必填;bom=true 加 UTF-8 BOM(Windows/Excel);line_end=lf|crlf 统一行尾;format=raw 裸写(跳防呆/自检——慎用)\n\n" +
+				"【示例】\"write\" path=src/main.go content=\"...\" — 写代码;{\"path\":\"a.json\",\"content\":\"{}\"} — 写 JSON(自动校验);{\"path\":\"win.csv\",\"content\":\"a,b\\n1,2\",\"bom\":true,\"line_end\":\"crlf\"} — Windows 友好",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -164,6 +163,20 @@ func toolWrite() ToolDef {
 					"content": map[string]any{
 						"type":        "string",
 						"description": "要写入的文件内容",
+					},
+					"bom": map[string]any{
+						"type":        "boolean",
+						"description": "true=前加 UTF-8 BOM(Windows/Excel 中文友好)",
+					},
+					"line_end": map[string]any{
+						"type":        "string",
+						"enum":        []any{"lf", "crlf"},
+						"description": "行尾统一(默认 lf)",
+					},
+					"format": map[string]any{
+						"type":        "string",
+						"enum":        []any{"auto", "raw"},
+						"description": "auto=防呆+自检(默认);raw=裸写逃生门(跳防呆/自检——慎用)",
 					},
 				},
 				"required": []string{"path", "content"},
@@ -179,6 +192,7 @@ func toolEdit() ToolDef {
 		Function: FunctionDef{
 			Name: "edit",
 			Description: "在文件中精准替换字符串（search → replace）。\n\n" +
+				"【注意 v1.0.1 起】文档/二进制类目标(.pdf/.docx/.xlsx 等)拒绝 search/replace(与 write 同源防毁——2026-09-09)。\n" +
 				"【用法】\n" +
 				"- 编辑前必须先 read 过该文件（read-before-edit 规则）\n" +
 				"- search 必须唯一匹配（不唯一会失败——用更多上下文或 replace_all）\n" +

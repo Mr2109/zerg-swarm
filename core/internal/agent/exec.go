@@ -370,6 +370,8 @@ func detectReadKind(head []byte, absPath string, size int64) string {
 	// 后缀兜底(文档类)
 	ext := strings.ToLower(filepath.Ext(absPath))
 	switch ext {
+	case ".pdf":
+		return "pdf"
 	case ".doc", ".docx":
 		return "docx"
 	case ".rtf":
@@ -599,9 +601,99 @@ func min(a, b int) int {
 	return b
 }
 
-// executeWrite — 原子写入文件
-// 路径校验 + 先写临时文件再 rename
-func (ec *ExecContext) executeWrite(ctx context.Context, path string, content string, gate ToolGater) (string, error) {
+// writeOpts — write v1.0.1 参数(设计-write工具v1.0.1-类型感知写入升级-20260909)
+type writeOpts struct {
+	BOM     bool   // 前加 UTF-8 BOM(Windows/Excel 中文)
+	LineEnd string // lf/crlf(默认 lf)
+	Format  string // auto(默认,防呆+自检)/ raw(裸写逃生门)
+}
+
+// nonTextWriteKinds — 禁文本直写类型(与 read 探测集合对齐——Mr2109拍板)
+var nonTextWriteKinds = map[string]bool{
+	"pdf": true, "docx": true, "doc": true, "xlsx": true, "pptx": true,
+	"epub": true, "odt": true, "binary": true, "img": true, "audio": true, "video": true,
+}
+
+// writeTargetKind — 写目标类型(存在→魔数优先;不存在→后缀兜底)
+func writeTargetKind(absPath string) string {
+	if st, err := os.Stat(absPath); err == nil && st.Mode().IsRegular() {
+		if f, err := os.Open(absPath); err == nil {
+			h := make([]byte, 512)
+			n, _ := io.ReadFull(f, h)
+			f.Close()
+			return detectReadKind(h[:n], absPath, st.Size())
+		}
+	}
+	return detectReadKind(nil, absPath, 0)
+}
+
+// writeTargetBlock — 类型防呆(write/edit 共用):非文本目标 → 可行动拒绝;空串=放行
+func writeTargetBlock(absPath string) string {
+	kind := writeTargetKind(absPath)
+	if !nonTextWriteKinds[kind] {
+		return ""
+	}
+	return fmt.Sprintf("目标为 %s 文件——纯文本写入/替换会损坏其结构(2026-09-09 防呆)。可选:① 用该类型专用工具/脚本生成或修改 ② 先删除目标,再用 write 建文本(.txt/.md/.json 等) ③ write 确需裸写加 format=raw(自担损坏)", strings.ToUpper(kind))
+}
+
+// validateWritten — 结构化写后自检(json/xml 硬校验;yaml 有解析器则校验)
+// 返回 (注记, 错误串)——错误串非空=校验失败(调用方须回滚删除)
+func validateWritten(absPath string) (string, string) {
+	ext := strings.ToLower(filepath.Ext(absPath))
+	switch ext {
+	case ".json":
+		data, err := os.ReadFile(absPath)
+		if err != nil {
+			return "", "读取校验失败: " + err.Error()
+		}
+		if !json.Valid(data) {
+			return "", "JSON 语法错误(写后自检失败)"
+		}
+		return "", ""
+	case ".xml":
+		data, err := os.ReadFile(absPath)
+		if err != nil {
+			return "", "读取校验失败: " + err.Error()
+		}
+		dec := xml.NewDecoder(bytes.NewReader(data))
+		for {
+			if _, err := dec.Token(); err != nil {
+				if err == io.EOF {
+					return "", ""
+				}
+				return "", "XML 语法错误: " + err.Error()
+			}
+		}
+	case ".yaml", ".yml":
+		note, err := validateYAML(absPath)
+		return note, err
+	}
+	return "", ""
+}
+
+// validateYAML — python3 yaml 校验(无解析器→跳过注记;不引 Go 依赖——拍板 2)
+func validateYAML(absPath string) (string, string) {
+	cmd := exec.Command("python3", "-c", "import sys,yaml;yaml.safe_load(sys.stdin.read())")
+	in, err := os.Open(absPath)
+	if err != nil {
+		return "", ""
+	}
+	defer in.Close()
+	cmd.Stdin = in
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		if strings.Contains(errb.String(), "No module named") {
+			return "(yaml 校验跳过:系统无 yaml 解析器——建议 write 后 read 复核)", ""
+		}
+		return "", "YAML 语法错误: " + strings.TrimSpace(errb.String())[:min(200, len(strings.TrimSpace(errb.String())))]
+	}
+	return "", ""
+}
+
+// executeWrite — 原子写文件(v1.0.1:类型防呆+回读校验+结构化自检+编码/行尾)
+// 设计: docs/01-设计/设计-write工具v1.0.1-类型感知写入升级-20260909.md
+func (ec *ExecContext) executeWrite(ctx context.Context, path string, content string, o writeOpts, gate ToolGater) (string, error) {
 	// Gate 检查
 	if gate != nil {
 		decision, err := gate.Check("write", path, ec.AgentName)
@@ -619,28 +711,76 @@ func (ec *ExecContext) executeWrite(ctx context.Context, path string, content st
 		return "", err
 	}
 
+	// 目录目标拒绝
+	if st, err := os.Stat(absPath); err == nil && st.IsDir() {
+		return "", fmt.Errorf("目标是目录——write 需指向文件路径")
+	}
+
+	// 内容规整: 行尾统一 + BOM(v1.0.1)
+	le := o.LineEnd
+	if le == "" {
+		le = "lf"
+	}
+	s := strings.ReplaceAll(content, "\r\n", "\n")
+	if le == "crlf" {
+		s = strings.ReplaceAll(s, "\n", "\r\n")
+	} else {
+		s = strings.ReplaceAll(s, "\r", "\n")
+	}
+	if o.BOM {
+		s = "\xEF\xBB\xBF" + s
+	}
+	// 大小上限(10MB——L0 预检)
+	if len(s) > 10*1024*1024 {
+		return "", fmt.Errorf("内容过大 (%d KB > 10MB 上限)——拒绝写入(防 OOM/误写巨型内容)", len(s)/1024)
+	}
+
+	// 类型防呆(2.1——format=raw 逃生门跳过)
+	if o.Format != "raw" {
+		if blk := writeTargetBlock(absPath); blk != "" {
+			return "", fmt.Errorf("%s", blk)
+		}
+	}
+
 	// 创建父目录
 	dir := filepath.Dir(absPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("创建父目录失败: %w", err)
 	}
 
-	// 原子写入：先写临时文件再 rename
+	// 事务原子写(Resilient Write L1 四阶段): 临时写→回读校验→原子 rename
 	tmpFile := absPath + ".tmp"
-	if err := os.WriteFile(tmpFile, []byte(content), 0o644); err != nil {
-		return "", fmt.Errorf("写临时文件失败: %w", err)
-	}
-
-	// rename 原子替换
-	if err := os.Rename(tmpFile, absPath); err != nil {
-		// rename 失败，清理临时文件（v2.5.1: 清理失败记日志——scan4 发现）
-		if rmErr := os.Remove(tmpFile); rmErr != nil {
+	cleanup := func() {
+		if rmErr := os.Remove(tmpFile); rmErr != nil && !os.IsNotExist(rmErr) {
 			fmt.Fprintf(os.Stderr, "⚠️ 临时文件清理失败 %s: %v\n", tmpFile, rmErr)
 		}
+	}
+	if err := os.WriteFile(tmpFile, []byte(s), 0o644); err != nil {
+		return "", fmt.Errorf("写临时文件失败: %w", err)
+	}
+	back, err := os.ReadFile(tmpFile)
+	if err != nil {
+		cleanup()
+		return "", fmt.Errorf("回读校验失败: %w", err)
+	}
+	if !bytes.Equal(back, []byte(s)) {
+		cleanup()
+		return "", fmt.Errorf("写后回读校验不符(%d vs %d 字节)——已撤销(磁盘/截断问题)", len(back), len(s))
+	}
+	if err := os.Rename(tmpFile, absPath); err != nil {
+		cleanup()
 		return "", fmt.Errorf("重命名文件失败: %w", err)
 	}
 
-	return fmt.Sprintf("已写入 %d 字节到 %s", len(content), path), nil
+	// 结构化写后自检(2.2——坏则回滚删除,不留坏文件)
+	if note, verr := validateWritten(absPath); verr != "" {
+		os.Remove(absPath)
+		return "", fmt.Errorf("写后自检失败——已回滚删除目标:%s", verr)
+	} else if note != "" {
+		return fmt.Sprintf("已写入 %d 字节到 %s\n%s", len(s), path, note), nil
+	}
+
+	return fmt.Sprintf("已写入 %d 字节到 %s", len(s), path), nil
 }
 
 // executeEdit — 替换文件内容
@@ -663,6 +803,11 @@ func (ec *ExecContext) executeEdit(ctx context.Context, path string, search stri
 		return "", err
 	}
 
+	// v1.0.1 类型防呆(与 write 共用——search/replace 落文档类同样毁文件——拍板 1)
+	if blk := writeTargetBlock(absPath); blk != "" {
+		return "", fmt.Errorf("%s", blk)
+	}
+
 	// 读取原文件
 	data, err := os.ReadFile(absPath)
 	if err != nil {
@@ -679,8 +824,8 @@ func (ec *ExecContext) executeEdit(ctx context.Context, path string, search stri
 
 	newContent := content[:idx] + replace + content[idx+len(search):]
 
-	// 原子写入
-	return ec.executeWrite(ctx, path, newContent, nil)
+	// 原子写入(edit 沿用 write v1.0.1 原子写/回读/自检——但类型防呆已在上方拦非文本目标)
+	return ec.executeWrite(ctx, path, newContent, writeOpts{}, nil)
 }
 
 // executeApplyPatch — 精确补丁应用（Codex apply_patch 借鉴——2026-08-21 Mr2109 P0）
@@ -1315,7 +1460,18 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 		if path == "" || content == "" {
 			return ToolCallResult{Error: "路径或内容参数为空"}
 		}
-		result, err := ec.executeWrite(ctx, path, content, gate)
+		// write v1.0.1: bom/line_end/format
+		wo := writeOpts{}
+		if v, ok := args["bom"].(bool); ok && v {
+			wo.BOM = true
+		}
+		if v, ok := args["line_end"].(string); ok && v != "" {
+			wo.LineEnd = v
+		}
+		if v, ok := args["format"].(string); ok && v != "" {
+			wo.Format = v
+		}
+		result, err := ec.executeWrite(ctx, path, content, wo, gate)
 		if err != nil {
 			return ToolCallResult{Error: err.Error()}
 		}
