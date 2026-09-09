@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"zerg/core/internal/ffp"
 )
 
 // Run — 运行工具循环（唯一实现——Deps.Infer 内部决定流式与否，内核只透传 delta 回调）
@@ -155,7 +156,13 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				}
 			}
 			if execErr != nil {
-				content = fmt.Sprintf("工具执行失败: %s（%s）", execErr.Error(), truncateStr(content, 500))
+				e := execErr.Error()
+				if ffp.In(execErr.Error()) {
+					// FFP 2026-09-08: 格式错误≠执行失败——教学文本直通,不加"执行失败"包装(否则与首行断言矛盾)
+					content = e
+				} else {
+					content = fmt.Sprintf("工具执行失败: %s（%s）", e, truncateStr(content, 500))
+				}
 			}
 			res.Traces = append(res.Traces, Trace{Round: round, CallID: tc.ID, Name: tc.Name, Args: argsJSON, Result: content, Error: errStr(execErr), Duration: dur})
 			emit("tool", mustJSON(map[string]any{"name": tc.Name, "args": argsJSON, "result": truncateStr(content, 300)}))
@@ -169,7 +176,13 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				assistantContent = fmt.Sprintf("<tool_call>\n{\"name\": \"%s\", \"arguments\": %s}\n</tool_call>", tc.Name, argsJSON)
 			}
 			status := "[失败]"
-			if execErr == nil {
+			if execErr != nil {
+				if ffp.In(execErr.Error()) {
+					status = "[格式反馈]" // FFP: 教学轮——非执行失败
+				} else {
+					status = "[失败]"
+				}
+			} else {
 				status = fmt.Sprintf("[成功·%d字]", len([]rune(content)))
 			}
 			contentJSON := mustJSON(content)
