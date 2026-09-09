@@ -93,6 +93,34 @@ func (g *Gateway) unloadX3Models() bool {
 	return false
 }
 
+// ensureX3RoomForFile — 2026-09-09(诊断 R2/R4): X3 模型驻留无回收→内存打满→实例挂死
+// 通用让位(DS4 机制推广): 路由目标=X3 且目标模型未加载 + X3 可用内存 < 所需 → 先 unload(agent 清场按需再载)
+// 幂等: 已加载/内存够 → no-op(agent 自行按需加载);DS4 场景其专用分支已先清场——此处二次进入自动 no-op
+func (g *Gateway) ensureX3RoomForFile(file string, memGB int) {
+	if file == "" || memGB <= 0 {
+		return
+	}
+	snap := g.snapshotFor("x3")
+	if snap == nil {
+		return
+	}
+	// 有在飞请求时绝不强卸(会杀活跃推理)——路由打分自会转 local/等待
+	if snap.ActiveRequests > 0 {
+		return
+	}
+	if snap.Model != nil && modelFileLoaded(snap, file) {
+		return // 目标已加载——无需让位
+	}
+	// 2026-09-09(诊断 R2 深化): GPU 也是单资源——X3 单卡,多实例常驻→gpu_pct=100→
+	// 新加载模型推理被饿(实例 0% CPU 假健康)。内存够但 GPU 忙(≥90%)→同样清场单驻留
+	if snap.MemAvailableGb >= float64(memGB) && snap.GpuPct < 90 {
+		return // 内存+GPU 都够——X3 agent 按需加载
+	}
+	if g.unloadX3Models() {
+		log.Printf("🧹 X3 让位(通用): 路由 %s 需 %dG 可用 %.0fG GPU %.0f%%——已清场(X3 agent 按需单驻留)", file, memGB, snap.MemAvailableGb, snap.GpuPct)
+	}
+}
+
 // ds4RouteDecision 其他模型请求时——按 DS4 状态路由决策
 // 返回: 是否强制走 local（true=其他模型走本机——不打扰 DS4）
 func (g *Gateway) ds4RouteDecision() (forceLocal bool, reason string) {
