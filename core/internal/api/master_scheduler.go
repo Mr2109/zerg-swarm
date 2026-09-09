@@ -9,6 +9,7 @@ package api
 import (
 	"container/heap"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -195,6 +196,19 @@ func (s *MasterScheduler) recoverWaitingLocked() {
 
 // maxWaitRetry 环境故障最大等待时间（30 分钟——超限降级 failed）
 const maxWaitRetry = 30 * time.Minute
+
+// isBackendExit — 2026-09-09(诊断 R3): agent exit 3 = ReasonModelError(模型/后端类失败)
+// 与代码注释约定一致: -json 模式退出码语义(模型失败 exit 3 → 主控 err → 自动重跑)
+func isBackendExit(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode() == 3
+	}
+	return false
+}
 
 // Submit 提交任务（外部/内部都走这——优先级排队）
 func (s *MasterScheduler) Submit(task *Task) {
@@ -399,9 +413,20 @@ func (s *MasterScheduler) runTask(task *Task) {
 	if err != nil {
 		task.Status = "failed"
 		log.Printf("🔄 总调度: 任务 %s 失败: %v\n%s", task.ID, err, tail(string(out), 500))
+		task.RetryCount++
+		// 2026-09-09(诊断 R3): 模型/后端类失败(exit 3=ReasonModelError——熔断/超时/实例挂死)
+		// 进 waiting_retry(环境恢复自动重派 30s 扫描)——不秒级热重试烧次数——治"卡 queued/秒 failed"连锁
+		if isBackendExit(err) && task.RetryCount <= 3 {
+			task.Status = "waiting_retry"
+			task.FailReason = fmt.Sprintf("模型/后端不可用(第 %d 次——%v)——等待环境恢复自动重试", task.RetryCount, err)
+			s.waiting[task.ID] = task
+			saveTasksLocked(s.queue, s.running, s.history, s.waiting)
+			log.Printf("⏳ 总调度: 任务 %s 后端不可用——进等待队列(恢复自动重派——第 %d/3 次)", task.ID, task.RetryCount)
+			s.dispatchLocked()
+			return
+		}
 		// v2.5.5 失败自动重跑（Mr2109 2026-08-20）: 失败任务自动重排队（同 ID——不新建记录）
 		// 瞬时故障（熔断/网络——大概率恢复）——重跑 3 次仍失败才放执行完成标 failed
-		task.RetryCount++
 		if task.RetryCount <= 3 {
 			task.Status = "queued"
 			// v2.5.5 修复（2026-08-24 Mr2109）: 同一个任务不换模型——重跑保持原模型
@@ -666,6 +691,8 @@ func (s *MasterScheduler) PauseTask(taskID string, pause bool) error {
 			if !pause && t.Status == "paused" {
 				t.Status = "queued"
 				log.Printf("▶️ 总调度: 任务 %s 继续", taskID)
+				// 2026-09-09: 恢复即派发(同 RetryTask 修复——防恢复后空等)
+				s.dispatchLocked()
 				return nil
 			}
 			return fmt.Errorf("任务 %s 状态 %s 不可%s", taskID, t.Status, map[bool]string{true: "暂停", false: "继续"}[pause])
@@ -685,6 +712,9 @@ func (s *MasterScheduler) RetryTask(taskID string) error {
 			t.FailReason = ""
 			heap.Push(&s.queue, t)
 			log.Printf("🔁 总调度: 任务 %s 手动重跑（右键——同 ID）", taskID)
+			// 2026-09-09 修复（write v1.0.1 验收实证——卡 queued 10 分钟根因）:
+			// 只推堆不派发 → 无后续事件则永不执行——补派发
+			s.dispatchLocked()
 			return nil
 		}
 	}

@@ -1179,6 +1179,10 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 		g.roundRobinMu.Lock()
 		g.roundRobin[model]++
 		g.roundRobinMu.Unlock()
+		// 2026-09-09 通用让位: EDGE-NODE 内存不足时先清场(防多实例堆积挂死)
+		if best.Host == "edge-node" {
+			g.ensureX3RoomForFile(best.File, bestMemGB)
+		}
 		ip, port := getNode(best.Host)
 		return &RouteResult{
 			Host:  best.Host,
