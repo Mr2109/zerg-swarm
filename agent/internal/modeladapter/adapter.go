@@ -33,7 +33,7 @@ type ModelAdapter interface {
 
 // Registry 适配器注册表。
 var (
-	mu      sync.RWMutex
+	mu       sync.RWMutex
 	adapters []ModelAdapter
 )
 
@@ -74,6 +74,7 @@ func init() {
 	Register(&Ornith{})
 	Register(&Qwen36{})
 	Register(&Qwen38Flash{}) // 2026-08-29 Qwen3.8-Flash-Next（qwen4 架构——前缀优先于 qwen3）
+	Register(&K2Horizon{})   // 2026-09-08 IFM example-moe-36b（example-moe-36b 架构——需 llama.cpp IFM fork）
 	Register(&DS4{})
 	Register(&Gemma{})
 }
