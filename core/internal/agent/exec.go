@@ -285,17 +285,20 @@ func (ec *ExecContext) executeRead(ctx context.Context, path string, args map[st
 		return "", fmt.Errorf("读取文件失败: %w", err)
 	}
 	// 编码修正(v1.0.2: UTF-16/GB18030 → UTF-8;iconv 零依赖)
-	if kind == "utf16le" || kind == "utf16be" {
-		if d, err := iconvBytes(data, kind); err == nil {
-			data = d
-		} else {
-			return "", fmt.Errorf("UTF-16 转码失败: %v", err)
-		}
-	} else if !utf8.Valid(data) {
-		if d, err := iconvBytes(data, "gb18030"); err == nil {
-			data = d
-		} else {
-			return "", fmt.Errorf("文件非 UTF-8 且 GB18030/UTF-16 转码失败——可能为二进制或特殊编码(可 format=raw 强读)")
+	// format=raw: 原样字节输出——不做编码修正(真正的 raw 语义)
+	if !forceRaw {
+		if kind == "utf16le" || kind == "utf16be" {
+			if d, err := iconvBytes(data, kind); err == nil {
+				data = d
+			} else {
+				return "", fmt.Errorf("UTF-16 转码失败: %v", err)
+			}
+		} else if !utf8.Valid(data) {
+			if d, err := iconvBytes(data, "gb18030"); err == nil {
+				data = d
+			} else {
+				return "", fmt.Errorf("文件非 UTF-8 且 GB18030/UTF-16 转码失败——可能为二进制或特殊编码(可 format=raw 强读)")
+			}
 		}
 	}
 	text := string(data)
