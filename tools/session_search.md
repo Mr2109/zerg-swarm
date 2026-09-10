@@ -22,6 +22,8 @@
 - `session_id` + `around_id?`：读窗口（read 模式）
 - 都不传：browse 模式
 - `limit`：可选，缺省 search=20 / read=20 / browse=10
+- `include_archived`：可选（默认 false）。true 时把**已归档会话**也纳入检索/浏览——归档只是不占活跃视线，不等于"搜不到"
+
 
 ## 变更履历
 
@@ -32,3 +34,12 @@
 - 执行器 `core/internal/chat/chat_tool_session_search.go`（复用 `SearchMessages` + 新增按 id 取窗口查询 + 最近会话列表）
 - 注册：对话族 deferred（`tool_search` 发现）+ CA 族（同一注册通道）
 - 与记忆体系的分工：`memory` = **写**（跨会话事实），`session_search` = **读**（历史对话原文，按需取回）
+
+### v1.1.0（2026-09-10）
+
+**新增 `include_archived`（Mr2109拍板：归档会话也要能搜到）**
+
+- store 层：`SearchMessagesArchived(query, limit, includeArchived)` + `searchLikeArchived`（FTS 与 LIKE 降级两条路径）+ `ListSessionsArchived(limit, includeArchived)`
+- 兼容：`SearchMessages` / `searchLike` / `ListSessions` 保留原签名（默认排除归档）——UI 搜索端点等既有调用方行为不变
+- 工具层：`ssBoolArg` 容错（bool / "true" / "1" / "yes" / "是"）；search 与 browse 两种模式都支持；结果与无命中提示都标注范围（"含已归档"/"已排除归档"），无命中时提示逃生门
+- 验收：单测 `chat_include_archived_test.go`（默认不中 / 显式中 / 字符串布尔 / browse 两态 / store 层默认不变）；活体 A/B：UI 搜索端点默认 8 条命中**全部来自活跃会话**（归档探针会话不出现）；模型经 `tool_search → session_search(include_archived=true)` 取回归档会话原文（含"含已归档"标注 + 恢复指针），服务端 `tool_uses.json`/事件文件双证 `session_search` 真实执行
