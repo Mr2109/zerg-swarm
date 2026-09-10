@@ -18,7 +18,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/Mr2109/zerg-swarm/core/internal/memory"
+	"zerg/core/internal/memory"
 )
 
 var (
@@ -127,8 +127,7 @@ func strArg(m map[string]any, k string) string {
 
 // MemoryToolExecute — memory 工具执行器（返回结构化 JSON——对齐 Hermes 的应答形状）
 // 参数：action(add|replace|remove) / target(memory|user) / content? / old_text? /
-//
-//	operations[]（批量原子）/ scope(global|agent) / agent_id? / source(user|model|tool|web)
+//       operations[]（批量原子）/ scope(global|agent) / agent_id? / source(user|model|tool|web)
 func MemoryToolExecute(args map[string]any) (string, error) {
 	target := memory.Target("memory")
 	if t, ok := args["target"].(string); ok && t != "" {
@@ -144,10 +143,7 @@ func MemoryToolExecute(args map[string]any) (string, error) {
 		b, _ := json.Marshal(memory.Result{Success: false, Error: err.Error()})
 		return string(b), nil
 	}
-	// 2026-09-10 边界③修正：失败计数按会话隔离（_session_id 由 chat_handlers 在调用前注入；
-	// 缺省空串=默认键，单会话行为与旧版等价）
-	sessionKey, _ := args["_session_id"].(string)
-	res := memStore.ApplyFor(sessionKey, scope, target, ops)
+	res := memStore.Apply(scope, target, ops)
 	b, merr := json.Marshal(res)
 	if merr != nil {
 		return "", merr

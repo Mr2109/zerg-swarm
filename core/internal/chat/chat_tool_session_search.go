@@ -46,46 +46,36 @@ func SessionSearchExecute(args map[string]any, store *ChatStore) (string, error)
 	sessionID := strings.TrimSpace(ssStringArg(args, "session_id"))
 	aroundID := ssInt64Arg(args, "around_id")
 	limit := int(ssInt64Arg(args, "limit")) // 可选——覆盖默认条数（search=20 / read=20 / browse=10）
-	// 丙批 C2 补（2026-09-10 Mr2109拍板）：归档会话默认不搜，但可显式纳入（归档≠搜不到）
-	includeArchived := ssBoolArg(args, "include_archived")
 
 	switch {
 	case query != "":
-		return ssSearch(store, query, limit, includeArchived)
+		return ssSearch(store, query, limit)
 	case sessionID != "":
 		return ssRead(store, sessionID, aroundID, limit)
 	default:
-		return ssBrowse(store, limit, includeArchived)
+		return ssBrowse(store, limit)
 	}
 }
 
 // ============ 模式① search（有 query） ============
 
 // ssSearch — FTS5 检索跨会话命中，逐条附恢复指针
-func ssSearch(store *ChatStore, query string, limit int, includeArchived bool) (string, error) {
+func ssSearch(store *ChatStore, query string, limit int) (string, error) {
 	maxHits := ssSearchMaxHits
 	if limit > 0 {
 		maxHits = limit
 	}
-	hits, err := store.SearchMessagesArchived(query, maxHits, includeArchived)
+	hits, err := store.SearchMessages(query, maxHits)
 	if err != nil {
 		return "", fmt.Errorf("session_search 检索失败: %w", err)
 	}
 	var b strings.Builder
 	b.WriteString(ssHistoryBanner + "\n")
 	if len(hits) == 0 {
-		scope := ""
-		if includeArchived {
-			scope = "（含已归档）"
-		}
-		b.WriteString(fmt.Sprintf("🔍 session_search（query=%q）%s: 无命中。可换关键词，或 session_search() 浏览最近会话；已归档会话需 include_archived=true。", query, scope))
+		b.WriteString(fmt.Sprintf("🔍 session_search（query=%q）: 无命中。可换关键词，或 session_search() 浏览最近会话。", query))
 		return b.String(), nil
 	}
-	archNote := ""
-	if includeArchived {
-		archNote = "（含已归档）"
-	}
-	b.WriteString(fmt.Sprintf("🔍 session_search（query=%q）%s命中 %d 条：\n\n", query, archNote, len(hits)))
+	b.WriteString(fmt.Sprintf("🔍 session_search（query=%q）命中 %d 条：\n\n", query, len(hits)))
 	for i, h := range hits {
 		title := h.SessionTitle
 		if strings.TrimSpace(title) == "" {
@@ -181,12 +171,12 @@ func ssMsgMark(m *Message) string {
 // ============ 模式③ browse（都不传） ============
 
 // ssBrowse — 最近 ~10 个会话（排除 archived——ListSessions 已按活动时间倒序 + 排除归档）
-func ssBrowse(store *ChatStore, limit int, includeArchived bool) (string, error) {
+func ssBrowse(store *ChatStore, limit int) (string, error) {
 	n := ssBrowseLimit
 	if limit > 0 {
 		n = limit
 	}
-	ses, err := store.ListSessionsArchived(n, includeArchived)
+	ses, err := store.ListSessions(n)
 	if err != nil {
 		return "", fmt.Errorf("session_search 浏览失败: %w", err)
 	}
@@ -196,11 +186,7 @@ func ssBrowse(store *ChatStore, limit int, includeArchived bool) (string, error)
 		b.WriteString("🗂 session_search: 暂无会话。")
 		return b.String(), nil
 	}
-	scope := "已排除归档"
-	if includeArchived {
-		scope = "含已归档"
-	}
-	b.WriteString(fmt.Sprintf("🗂 session_search: 最近 %d 个会话（按最后活动倒序，%s）：\n\n", len(ses), scope))
+	b.WriteString(fmt.Sprintf("🗂 session_search: 最近 %d 个会话（按最后活动倒序，已排除归档）：\n\n", len(ses)))
 	for i, se := range ses {
 		title := se.Title
 		if strings.TrimSpace(title) == "" {
@@ -209,7 +195,7 @@ func ssBrowse(store *ChatStore, limit int, includeArchived bool) (string, error)
 		b.WriteString(fmt.Sprintf("%d. %s · %s · 最后活动 %s · %d 条消息\n",
 			i+1, se.ID, title, ssFmtTime(se.LastActivityAt), se.MessageCount))
 	}
-	b.WriteString("\n> 读某会话: session_search(session_id=<id>)；搜关键词: session_search(query=<词>)；归档也要: 加 include_archived=true")
+	b.WriteString("\n> 读某会话: session_search(session_id=<id>)；搜关键词: session_search(query=<词>)")
 	return b.String(), nil
 }
 
@@ -330,27 +316,6 @@ func ssInt64Arg(args map[string]any, key string) int64 {
 		return n
 	}
 	return 0
-}
-
-// ssBoolArg — 取布尔参数（容忍 bool / "true"/"1"/"yes" / 数字）
-func ssBoolArg(args map[string]any, key string) bool {
-	if args == nil {
-		return false
-	}
-	switch v := args[key].(type) {
-	case bool:
-		return v
-	case string:
-		s := strings.ToLower(strings.TrimSpace(v))
-		return s == "true" || s == "1" || s == "yes" || s == "y" || s == "是"
-	case float64:
-		return v != 0
-	case int:
-		return v != 0
-	case int64:
-		return v != 0
-	}
-	return false
 }
 
 // ssFmtTime — 秒级时间戳 → 本地时间字符串
