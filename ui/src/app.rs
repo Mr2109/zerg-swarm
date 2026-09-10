@@ -127,6 +127,9 @@ pub struct ZergApp {
     // APP-A06: 周期配置独立计时器（原来共用 last_it_fetch——被 30s 清单刷新归零后 60s 条件永不成立）
     last_it_interval_fetch: std::time::Instant,
     // A07 治本（2026-09-10）：引擎状态=后端单一真相源（10s 轮询）——本地不再持有“真相”，只做乐观提示
+    // M06 对比样张（2026-09-10）：预览渲染器切换开关（决定后即可移除）
+    preview_renderer_cm: bool,
+    preview_cm_cache: egui_commonmark::CommonMarkCache,
     engine_state: api::SharedResult<serde_json::Value>,
     last_engine_fetch: std::time::Instant,
     it_ctrl_busy: Option<bool>, // 请求在飞（按钮显示“切换中…”）
@@ -221,6 +224,9 @@ impl ZergApp {
             internal_tasks: std::sync::Arc::new(std::sync::Mutex::new(None)),
             last_it_fetch: std::time::Instant::now(),
             last_it_interval_fetch: std::time::Instant::now(),
+            // M06 对比样张（2026-09-10）：预览渲染器可切换——默认 ferrite(现状)，可切 commonmark(带缓存)
+            preview_renderer_cm: std::env::var("ZERG_PREVIEW_RENDERER").map(|v| v == "commonmark").unwrap_or(false),
+            preview_cm_cache: Default::default(),
             engine_state: Arc::new(Mutex::new(None)),
             last_engine_fetch: std::time::Instant::now(),
             it_ctrl_busy: None,
@@ -1662,6 +1668,19 @@ impl ZergApp {
                                                 .layout(egui::Layout::top_down(egui::Align::Min)),
                                         );
                                         p_ui.separator();
+                                        // M06 对比样张（2026-09-10）：同一文档一键切换渲染器——ferrite(每帧 comrak 解析) / commonmark(带缓存)
+                                        // Mr2109看过样张后决定保留哪种；决定后本段与 preview_renderer_cm/preview_cm_cache 字段一并移除
+                                        let mut flip = false;
+                                        p_ui.horizontal(|ui| {
+                                            let cur = if self.preview_renderer_cm { "commonmark（带缓存）" } else { "ferrite（现状/每帧解析）" };
+                                            if ui.small_button(format!("渲染器: {} ⇄ 切换", cur)).clicked() {
+                                                flip = true;
+                                            }
+                                            ui.weak("（M06 对比样张）");
+                                        });
+                                        if flip {
+                                            self.preview_renderer_cm = !self.preview_renderer_cm;
+                                        }
                                         let preview_text = self.ferrite_text_cached(); // M06: 带缓存
                                         // F4 滚动同步：编辑 scroll_line 变化 → 预览跟随（比例换算）
                                         let line_count = self.ferrite_editor.line_count().max(1);
@@ -1674,13 +1693,21 @@ impl ZergApp {
                                         } else {
                                             self.preview_last_offset
                                         };
+                                        // 借用规则：缓存先取出为局部变量，闭包内不再触碰 self（egui 嵌套闭包不可再借 &mut self）
+                                        let use_cm = self.preview_renderer_cm;
+                                        let mut cm_cache = std::mem::take(&mut self.preview_cm_cache);
                                         let out = egui::ScrollArea::vertical()
                                             .id_salt("ferrite_preview")
                                             .auto_shrink(false)
                                             .vertical_scroll_offset(sync_target)
                                             .show(&mut p_ui, |ui| {
-                                                crate::modules::ferrite::markdown::render_markdown(ui, &preview_text);
+                                                if use_cm {
+                                                    egui_commonmark::CommonMarkViewer::new().show(ui, &mut cm_cache, &preview_text);
+                                                } else {
+                                                    crate::modules::ferrite::markdown::render_markdown(ui, &preview_text);
+                                                }
                                             });
+                                        self.preview_cm_cache = cm_cache;
                                         self.preview_content_h = out.content_size.y;
                                         self.preview_last_offset = out.state.offset.y;
                                     },
