@@ -18,7 +18,7 @@ const docSearchMaxFiles = 6    // 最多返回命中文件数
 const docSearchMaxTotal = 3500 // 总输出字符上限
 
 // docSearch — doc_search 执行器
-// args: query(必填——关键词——空格分词 AND 匹配), scope(可选——限定子串如 v2.5.8/常青——默认全 docs)
+// args: query(必填——关键词——空格分词 AND 匹配), scope(可选——限定子串如 v2.5.9/常青——默认全 docs)
 func docSearch(args map[string]any, workDir string) (string, error) {
 	q, _ := args["query"].(string)
 	q = strings.TrimSpace(q)
@@ -108,7 +108,7 @@ func docSearch(args map[string]any, workDir string) (string, error) {
 		filepath.Walk(r, walkFn)
 	}
 	if len(order) == 0 {
-		return "doc_search: 无命中（query=\"" + q + "\"）——换关键词或 scope 限定（如 scope=v2.5.8）", nil
+		return "doc_search: 无命中（query=\"" + q + "\"）——换关键词或 scope 限定（如 scope=v2.5.9）", nil
 	}
 	// 排序：当前版(0) → 常青/其他(1) → 历史版(2)，同键按路径
 	sort.Slice(order, func(i, j int) bool {

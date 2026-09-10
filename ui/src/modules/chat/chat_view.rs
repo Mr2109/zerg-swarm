@@ -2111,7 +2111,7 @@ impl ChatView {
         // P2 底部状态栏（Hermes footer 借鉴——版本/会话数/消息数/模型）
         ui.separator();
         ui.horizontal(|ui| {
-            ui.weak(egui::RichText::new("虫族 Zerg v2.5.8").size(10.0));
+            ui.weak(egui::RichText::new(format!("虫族 Zerg v{}", env!("CARGO_PKG_VERSION"))).size(10.0));
             ui.weak(egui::RichText::new(format!("· {} 会话", self.sessions.len())).size(10.0));
             ui.weak(egui::RichText::new(format!("· {} 消息", self.messages.len())).size(10.0));
             if self.streaming {
