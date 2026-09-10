@@ -63,6 +63,11 @@ func NewSessionID() string {
 
 // ListSessions — 会话列表（按活动时间倒序）
 func (s *ChatStore) ListSessions(limit int) ([]*Session, error) {
+	return s.ListSessionsArchived(limit, false)
+}
+
+// ListSessionsArchived — 会话列表；includeArchived=true 时含已归档（session_search browse 模式用）
+func (s *ChatStore) ListSessionsArchived(limit int, includeArchived bool) ([]*Session, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -70,8 +75,8 @@ func (s *ChatStore) ListSessions(limit int) ([]*Session, error) {
 		`SELECT id, title, model, created_at, last_activity_at, message_count,
 		        input_tokens, output_tokens, reasoning_tokens, pinned, archived,
 		        COALESCE(parent_task_id, ''), COALESCE(source, 'desktop'), COALESCE(parent_session_id, '')
-		 FROM sessions WHERE archived = 0 ORDER BY last_activity_at DESC LIMIT ?`,
-		limit,
+		 FROM sessions WHERE (archived = 0 OR ?) ORDER BY last_activity_at DESC LIMIT ?`,
+		includeArchived, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("chat: 会话列表失败: %w", err)
