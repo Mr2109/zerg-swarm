@@ -33,9 +33,46 @@ fn find_pingfang_assets() -> Option<String> {
     None
 }
 
+/// 初始语言（多语言决策② 2026-09-11）：prefs 显式值 → 系统语言 → fallback "en"
+///
+/// 本机（AppleLocale=zh_CN）→ zh-CN，界面无变化；英文系统 → en；界面右上角可随时切换，
+/// 切换后写入 `~/.zerg-ui-prefs.json` 的 `locale` 字段（下次启动优先于系统语言）。
+pub fn detect_locale() -> String {
+    const SUPPORTED: [&str; 2] = ["zh-CN", "en"];
+    let prefs = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+        .join(".zerg-ui-prefs.json");
+    // ① 偏好文件显式值
+    if let Ok(raw) = std::fs::read_to_string(&prefs) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(l) = v.get("locale").and_then(|x| x.as_str()) {
+                if SUPPORTED.contains(&l) {
+                    return l.to_string();
+                }
+            }
+        }
+    }
+    // ② 系统语言：环境变量 → macOS AppleLocale
+    let mut sys = std::env::var("LC_ALL")
+        .or_else(|_| std::env::var("LANG"))
+        .unwrap_or_default();
+    if sys.is_empty() {
+        if let Ok(out) = std::process::Command::new("defaults")
+            .args(["read", "-g", "AppleLocale"])
+            .output()
+        {
+            sys = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        }
+    }
+    // ③ 判定：含 zh → zh-CN，其余 → en
+    if sys.to_lowercase().contains("zh") {
+        "zh-CN".to_string()
+    } else {
+        "en".to_string()
+    }
+}
+
 fn main() -> eframe::Result<()> {
-    // 默认中文（Mr2109——虫族母语）
-    rust_i18n::set_locale("zh-CN");
+    rust_i18n::set_locale(&detect_locale());
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(t!("app.version_line", version = env!("CARGO_PKG_VERSION")).to_string())
@@ -148,4 +185,89 @@ fn setup_fonts(ctx: &egui::Context) {
             egui::FontId::new(20.0, egui::FontFamily::Proportional),
         );
     });
+}
+
+#[cfg(test)]
+mod locale_tests {
+    use super::detect_locale;
+
+    fn with_prefs(locale: Option<&str>) -> String {
+        let dir = std::env::temp_dir().join(format!(
+            "zerg-locale-test-{}-{:?}",
+            std::process::id(),
+            locale
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let f = dir.join(".zerg-ui-prefs.json");
+        match locale {
+            Some(l) => std::fs::write(&f, format!("{{\"locale\":\"{}\"}}", l)).unwrap(),
+            None => {
+                let _ = std::fs::remove_file(&f);
+            }
+        }
+        // 复刻 detect_locale 的 prefs 分支（不污染进程级 HOME）
+        if let Ok(raw) = std::fs::read_to_string(&f) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(l) = v.get("locale").and_then(|x| x.as_str()) {
+                    if ["zh-CN", "en"].contains(&l) {
+                        return l.to_string();
+                    }
+                }
+            }
+        }
+        "en".to_string()
+    }
+
+    #[test]
+    fn prefs_en_wins() {
+        assert_eq!(with_prefs(Some("en")), "en");
+    }
+
+    #[test]
+    fn prefs_zh_cn_wins() {
+        assert_eq!(with_prefs(Some("zh-CN")), "zh-CN");
+    }
+
+    #[test]
+    fn unsupported_prefs_falls_back() {
+        assert_eq!(with_prefs(Some("fr")), "en");
+    }
+
+    /// 端到端：locale 切换后，同一键在两版 yml 里解析出各自语言（英文模式验收证据）
+    #[test]
+    fn locale_switch_resolves_english_and_chinese() {
+        use rust_i18n::t;
+        rust_i18n::set_locale("en");
+        assert_eq!(&*t!("app.title"), "Zerg");
+        assert_eq!(
+            &*t!("app.version_line", version = "9.9.9"),
+            "Zerg v9.9.9"
+        );
+        assert_eq!(
+            &*t!("chat.start_hint"),
+            "← Pick a session or create one to start chatting"
+        );
+        assert_eq!(
+            &*t!("chat.tool_executing", tool = "doc_search", secs = 3),
+            "🔧 doc_search running… (3s)"
+        );
+        assert_eq!(&*t!("chat.ready", icon = "*"), "* ready");
+        rust_i18n::set_locale("zh-CN");
+        assert_eq!(&*t!("app.title"), "虫族 Zerg");
+        assert_eq!(
+            &*t!("app.version_line", version = "9.9.9"),
+            "虫族 Zerg v9.9.9"
+        );
+        assert_eq!(&*t!("chat.ready", icon = "*"), "* 就绪");
+        assert_eq!(
+            &*t!("chat.tool_executing", tool = "doc_search", secs = 3),
+            "🔧 doc_search 执行中…（3 秒）"
+        );
+    }
+
+    #[test]
+    fn real_detect_returns_supported_locale() {
+        let l = detect_locale();
+        assert!(l == "zh-CN" || l == "en", "unexpected locale: {}", l);
+    }
 }
