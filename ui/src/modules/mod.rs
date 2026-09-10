@@ -33,7 +33,8 @@ pub fn build_registry() -> ModuleRegistry {
         icon: icon_text("chat-circle-text"),
         description: "AI 对话（借鉴 Hermes——思考可见——全工具）",
         is_core: true,
-        version: "0.1.0",
+        // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
+        version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "tasks",
@@ -41,7 +42,8 @@ pub fn build_registry() -> ModuleRegistry {
         icon: icon_text("list-checks"),
         description: "AI 任务体系——外部任务创建/调度/执行/复查/成果",
         is_core: true,
-        version: "0.1.0",
+        // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
+        version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "internal-tasks",
@@ -49,7 +51,8 @@ pub fn build_registry() -> ModuleRegistry {
         icon: icon_text("wrench"),
         description: "AI 任务体系——16 类内部任务自动编排/手动执行",
         is_core: true,
-        version: "0.1.0",
+        // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
+        version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "cluster",
@@ -57,7 +60,8 @@ pub fn build_registry() -> ModuleRegistry {
         icon: icon_text("chart-bar"),
         description: "基础设施——机器状态/负载/GPU/健康",
         is_core: true,
-        version: "0.1.0",
+        // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
+        version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "models",
@@ -65,7 +69,8 @@ pub fn build_registry() -> ModuleRegistry {
         icon: icon_text("computer-tower"),
         description: "基础设施——模型管理/加载/适配器选项",
         is_core: true,
-        version: "0.1.0",
+        // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
+        version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "resources",
@@ -73,7 +78,8 @@ pub fn build_registry() -> ModuleRegistry {
         icon: icon_text("package"),
         description: "基础设施——模型/工具/skill/mcp 资源信任度",
         is_core: true,
-        version: "0.1.0",
+        // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
+        version: env!("CARGO_PKG_VERSION"),
     });
 
     // 🧩 可装卸箱（甲板箱——默认在船）
@@ -84,7 +90,8 @@ pub fn build_registry() -> ModuleRegistry {
         icon: icon_text("boxes"),
         description: "虫族集装箱平台——示例虫茧（群 AI 讨论——小说生成只是它的一个项目）",
         is_core: false,
-        version: "0.1.0",
+        // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
+        version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "docs",
@@ -92,7 +99,8 @@ pub fn build_registry() -> ModuleRegistry {
         icon: icon_text("books"),
         description: "文档三栏 + md 编辑器（M3 换 Ferrite 集装箱）",
         is_core: false,
-        version: "0.1.0",
+        // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
+        version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "git",
@@ -100,7 +108,8 @@ pub fn build_registry() -> ModuleRegistry {
         icon: icon_text("git-branch"),
         description: "Git 状态/分支/提交",
         is_core: false,
-        version: "0.1.0",
+        // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
+        version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "logs",
@@ -108,7 +117,8 @@ pub fn build_registry() -> ModuleRegistry {
         icon: icon_text("scroll"),
         description: "主控运行日志",
         is_core: false,
-        version: "0.1.0",
+        // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
+        version: env!("CARGO_PKG_VERSION"),
     });
 
     // M4 生态箱接入——配置文件声明外部模块（/tmp/zerg-ui/external-modules.json）

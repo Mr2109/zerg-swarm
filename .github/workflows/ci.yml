@@ -38,6 +38,14 @@ jobs:
         working-directory: ui
         run: cargo test -p zerg-ui
 
+  version:
+    name: 版本号一致性（UI ↔ Go 单一来源）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检查
+        run: python3 scripts/check_version.py
+
   docs:
     name: 文档双语门禁（配对/标题/链接）
     runs-on: ubuntu-latest

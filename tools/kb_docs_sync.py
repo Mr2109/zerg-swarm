@@ -19,7 +19,7 @@ CANDIDATES = os.path.join(KB_DIR, "kb_sync_candidates.json")
 REPO = "<repo>"
 DOCS = os.path.join(REPO, "docs", "项目文档")
 
-# 入库"关键文档"清单（G3——随版本演化——当前版 v2.5.8 定）
+# 入库"关键文档"清单（G3——随版本演化——当前版由 current_version_dir() 动态取）
 def current_version_dir():
     vs = [d for d in os.listdir(DOCS) if os.path.isdir(os.path.join(DOCS, d)) and re.match(r"^v\d+\.\d+\.\d+$", d)]
     if not vs:
