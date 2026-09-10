@@ -331,9 +331,12 @@ impl MdEditor {
             self.scroll_line = scroll_max;
         }
 
+        // M16/M17(2026-09-10 审计): 指针悬停判定——编辑器不再消费"全局"滚轮
+        let pointer_over = ui.rect_contains_pointer(ui.max_rect());
+
         // F3 滚轮滚动（egui scroll_delta——更新 scroll_line）
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
-        if scroll_delta.abs() > 0.0 {
+        if pointer_over && scroll_delta.abs() > 0.0 {
             let lines = (scroll_delta / row_height).round() as i64;
             self.scroll_line = (self.scroll_line as i64 + lines).clamp(0, scroll_max as i64) as usize;
         }
@@ -393,8 +396,23 @@ impl MdEditor {
                 }
             });
 
-        // 键盘输入
-        let output = ui.ctx().input(|i| {
+        // M16(2026-09-10 审计): 编辑器可聚焦区域——仅聚焦时消费键盘。
+        // 原来直接读全局 events（不判焦点）→ 任何控件里的输入都会同时写进编辑器 buffer。
+        let edit_resp = ui.interact(
+            ui.max_rect(),
+            ui.id().with("ferrite_editor_focus"),
+            egui::Sense::click(),
+        );
+        if edit_resp.clicked() {
+            edit_resp.request_focus();
+        }
+        let editor_focused = edit_resp.has_focus();
+
+        // 键盘输入（仅聚焦时）
+        let output = if !editor_focused {
+            Vec::new()
+        } else {
+            ui.ctx().input(|i| {
             let mut out: Vec<KeyAction> = Vec::new();
             for e in &i.events {
                 match e {
@@ -426,7 +444,8 @@ impl MdEditor {
                 }
             }
             out
-        });
+            })
+        };
 
         for action in output {
             match action {
