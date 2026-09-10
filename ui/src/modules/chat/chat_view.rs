@@ -1216,8 +1216,18 @@ impl ChatView {
         let stream_reasoning = self.stream_reasoning.clone();
         let streaming = self.streaming;
         let avail_h = ui.available_height();
-        let input_h = 60.0;
-        let scroll_h = (avail_h - input_h - 16.0).max(120.0);
+        // 2026-09-10 修复"无法滚到最底"(之二)：composer 高度按实际内容动态估算——
+        // 固定 60 在 多行草稿/队列 chips/恢复横幅 时偏小 → 消息区预留过高 → 末行落到窗口外(看着像滚不到底)
+        let input_rows = self.input.lines().count().clamp(1, 8) as f32;
+        let mut composer_h = 46.0 + input_rows * 19.0;
+        composer_h += 22.0 * self.queue.len() as f32; // C1 队列 chips
+        if self.resume_hint.is_some() {
+            composer_h += 26.0; // D3 恢复横幅
+        }
+        if self.send_error.is_some() {
+            composer_h += 20.0; // 提示行（已引导/错误）
+        }
+        let scroll_h = (avail_h - composer_h - 16.0).max(120.0);
         // 时间线分组预计算（P1——间隔 >30 分钟插时间标签——每条消息前是否有标签）
         let mut timeline: Vec<bool> = Vec::with_capacity(msgs.len());
         let mut last_ts: Option<f64> = None;
@@ -1246,8 +1256,13 @@ impl ChatView {
                 let editing_content = &mut self.editing_content;
                 let thinking_open = &mut self.thinking_open;
                 let speaking_id = &mut self.speaking_id;
-                // 虚拟列表：每行一条消息——只渲染视口±200px（egui_virtual_list 懒算高度缓存）
-                self.vlist.ui_custom_layout(ui, msgs.len(), |ui, i| {
+                // 2026-09-10 修复"无法滚到最底"：虚拟列表高度缓存与真实内容不一致
+                // （硬换行后消息变高、流式增长 → 估算高度偏小 → ScrollArea 内容高 < 实际 → 底部不可达）
+                // 策略：常规渲染（≤300 条，永远正确）；超长对话才走虚拟列表
+                let mut render_one = |ui: &mut egui::Ui,
+                                      i: usize,
+                                      action: &mut Option<MsgAction>|
+                 -> usize {
                     if let Some(show) = timeline.get(i) {
                         if *show {
                             ui.add_space(8.0);
@@ -1268,10 +1283,17 @@ impl ChatView {
                         &mut self.reactions,
                         &mut self.reacting_id,
                     ) {
-                        action = Some(a);
+                        *action = Some(a);
                     }
-                    1 // 一行一条消息
-                });
+                    1
+                };
+                if msgs.len() > 300 {
+                    self.vlist.ui_custom_layout(ui, msgs.len(), |ui, i| render_one(ui, i, &mut action));
+                } else {
+                    for i in 0..msgs.len() {
+                        render_one(ui, i, &mut action);
+                    }
+                }
                 // 生成中的 assistant 消息（流式实时显示——C3）
                 if streaming {
                     // P4-39 T5: 上下文压缩进行中（compacting 事件——Hermes TurnActivityIndicator 风格）
