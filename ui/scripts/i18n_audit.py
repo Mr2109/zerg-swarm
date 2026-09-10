@@ -104,12 +104,20 @@ def keys_audit(root):
     used = collections.defaultdict(list)   # key -> [(file, line, ctx)]
     # 前置边界：避免误匹配 format!() / writeln!() 尾部的 "t!("
     tlit = re.compile(r'(?<![A-Za-z_])t!\(\s*"((?:[^"\\]|\\.)*)"')
+    # 动态键调用（t!(m.name_key) 这类）——无法静态得知用了哪个键，
+    # 但仍要计数并在报告里声明：此时"定义未引用"清单可能包含被动态引用的键。
+    tdyn = re.compile(r'(?<![A-Za-z_])t!\(\s*[^")\s]')
+    dyn = []
     for f in rust_files(root):
         rel = os.path.relpath(f, root)
         for i, line in enumerate(open(f, encoding="utf-8", errors="replace"), 1):
+            if line.strip().startswith("//"):      # 注释里的示例不算调用
+                continue
             for k in tlit.findall(line):
                 used[k].append((rel, i, line.strip()[:90]))
-    return defs, used
+            if tdyn.search(line):
+                dyn.append((rel, i, line.strip()[:90]))
+    return defs, used, dyn
 
 
 def main():
@@ -138,7 +146,7 @@ def main():
         print("   写出:", os.path.relpath(p, root))
 
     if mode in ("keys", "all"):
-        defs, used = keys_audit(root)
+        defs, used, dyn = keys_audit(root)
         zh, en = defs["zh-CN"], defs["en"]
         p = os.path.join(outdir, "P0-3-键审计.md")
         lines = ["# P0-3 i18n 键健康度审计", "",
@@ -160,13 +168,20 @@ def main():
                 lines.append("| `%s` | %d | %d | %s |" % (
                     k, len(sites), len(files),
                     "<br>".join("%s:%d" % (s[0], s[1]) for s in sites[:6])))
+        lines += ["", "## 动态键调用（静态分析不可见）", "",
+                  "`t!(<表达式>)` 形式的调用 %d 处——这些键无法被静态扫描确认，"
+                  "因此上方「定义了但未被引用」清单**可能包含被动态引用的键**：" % len(dyn), "",
+                  "| 位置 | 代码 |", "|---|---|"]
+        for rel, i, ctx in dyn:
+            lines.append("| `%s:%d` | `%s` |" % (rel, i, ctx.replace("|", "\\|"))) 
         lines += ["", "> 判读：同一键出现在**语义不同**的位置即为一键多义（GPUI 官方明令禁止）。"
                       "同一文件内相邻行的重复调用通常正常（列表逐行渲染）。", ""]
         open(p, "w", encoding="utf-8").write("\n".join(lines))
         print("\n=== P0-3 键审计 ===")
         print("   zh=%d en=%d 仅zh=%s 仅en=%s" % (len(zh), len(en), sorted(zh - en) or "无", sorted(en - zh) or "无"))
         print("   引用未定义:", sorted(set(used) - zh) or "无")
-        print("   定义未引用(%d):" % len(zh - set(used)), sorted(zh - set(used)))
+        print("   定义未引用(%d,注:动态键调用 %d 处不可见):" % (len(zh - set(used)), len(dyn)), sorted(zh - set(used)))
+        print("   动态键调用点:", ["%s:%d" % (d[0], d[1]) for d in dyn])
         print("   多次引用的键: %d 个（详见报告）" % multi)
         print("   写出:", os.path.relpath(p, root))
 
