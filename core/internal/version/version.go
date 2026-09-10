@@ -13,31 +13,3 @@ const Version = "2.5.9"
 
 // Tag 展示用带前缀形式（横幅、能力清单、openapi），如 "v2.5.9"。
 const Tag = "v" + Version
-
-// Commit / BuildTime —— 构建时由 -ldflags -X 注入的代码身份（自动升级模块的验证依据）。
-// 必须是 var（-X 只能写字符串变量，不能写 const）；未注入时为 "unknown"。
-// 注入命令见 scripts/build-all.sh：
-//
-//	-ldflags "-X github.com/Mr2109/zerg-swarm/core/internal/version.Commit=<sha40/短> \
-//	          -X github.com/Mr2109/zerg-swarm/core/internal/version.BuildTime=<UTC ISO8601>"
-var (
-	Commit    = "unknown"
-	BuildTime = "unknown"
-)
-
-// Line —— 机器可读的单行身份（升级器/安装器比对用，纯 ASCII 空格分隔）：
-//
-//	zerg-core 2.5.9 e322802c 2026-09-11T05:28:05Z
-func Line(component string) string {
-	return component + " " + Version + " " + Commit + " " + BuildTime
-}
-
-// Describe —— 人类可读的完整身份，如 "v2.5.9+2ddeba9e（2026-09-11T05:33:09Z）"。
-// 用于启动横幅、upgrade --plan 的盘点输出、版本矩阵。
-func Describe() string {
-	out := Tag + "+" + Commit
-	if BuildTime != "unknown" && BuildTime != "" {
-		out += "（" + BuildTime + "）"
-	}
-	return out
-}
