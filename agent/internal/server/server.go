@@ -44,10 +44,10 @@ type Agent struct {
 	sampler    *monitor.Sampler
 	controller string
 
-	mu       sync.Mutex
+	mu         sync.Mutex
 	activeReqs int
-	inferCh  chan inferReq
-	startedAt time.Time
+	inferCh    chan inferReq
+	startedAt  time.Time
 }
 
 // inferReq 推理请求项，包含 done channel 用于结果回传。
@@ -328,6 +328,7 @@ func (s *Server) handleInferRequest(req inferReq) {
 //  2. 响应 < 500 字符
 //  3. 响应含前瞻意图（"我将/我用/首先/第一步/let me/i'll 等）
 //  4. 响应没有工具调用（无 tool_calls / finish_reason != tool_calls）
+//
 // 满足则往请求体追加 reminder 用户消息，返回 true。
 func (s *Server) maybeRemind(model string, body, respBody []byte) ([]byte, bool) {
 	adp := modeladapter.Dispatch(model)
@@ -537,8 +538,8 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 // writeInferError 写推理错误响应。
 func writeInferError(w http.ResponseWriter, status int, errMsg string, loadErr error) {
 	resp := map[string]interface{}{
-		"error":   errMsg,
-		"status":  status,
+		"error":  errMsg,
+		"status": status,
 	}
 	if loadErr != nil {
 		resp["message"] = loadErr.Error()

@@ -143,12 +143,12 @@ func (a *QwableAdapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, 
 	}
 	return plugin.PluginOutput{
 		Result: map[string]any{
-			"model":       qwableName,
-			"variant":     a.config.Variant,
-			"role":        role,
-			"temperature": temp,
-			"max_tokens":  maxTok,
-			"ctx_window":  a.config.CtxWindow,
+			"model":        qwableName,
+			"variant":      a.config.Variant,
+			"role":         role,
+			"temperature":  temp,
+			"max_tokens":   maxTok,
+			"ctx_window":   a.config.CtxWindow,
 			"tool_calling": role == "coding", // 编码支持工具——MoA 参考无工具
 		},
 	}, nil

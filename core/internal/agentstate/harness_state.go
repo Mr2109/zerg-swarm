@@ -16,44 +16,44 @@ import (
 type TodoStatus string
 
 const (
-	TodoOpen       TodoStatus = "open"       // 未开始
+	TodoOpen       TodoStatus = "open"        // 未开始
 	TodoInProgress TodoStatus = "in_progress" // 进行中
-	TodoCompleted  TodoStatus = "completed"  // 完成
-	TodoBlocked    TodoStatus = "blocked"    // 阻塞（等审批/依赖）
+	TodoCompleted  TodoStatus = "completed"   // 完成
+	TodoBlocked    TodoStatus = "blocked"     // 阻塞（等审批/依赖）
 )
 
 // Todo 任务项（LoopX todo 状态机——JSON 字段版）
 type Todo struct {
-	ID         string     `json:"id"`                   // 唯一标识（todo_xxx）
-	Text       string     `json:"text"`                 // 任务描述
-	Priority   string     `json:"priority"`             // P0/P1/P2
-	Status     TodoStatus `json:"status"`               // open/in_progress/completed/blocked
+	ID         string     `json:"id"`                    // 唯一标识（todo_xxx）
+	Text       string     `json:"text"`                  // 任务描述
+	Priority   string     `json:"priority"`              // P0/P1/P2
+	Status     TodoStatus `json:"status"`                // open/in_progress/completed/blocked
 	ActionKind string     `json:"action_kind,omitempty"` // shell/file/research
-	UpdatedAt  string     `json:"updated_at"`           // 时间戳
+	UpdatedAt  string     `json:"updated_at"`            // 时间戳
 }
 
 // Evidence 每轮结束契约（LoopX 4 行——防"干了没记录"）
 type Evidence struct {
-	Round      int    `json:"round"`                 // 轮次
-	Changed    string `json:"changed"`               // 改了什么
-	Validation string `json:"validation"`            // 怎么验证
-	Risk       string `json:"risk,omitempty"`        // 剩余风险
-	Next       string `json:"next"`                  // 下一步
+	Round      int    `json:"round"`          // 轮次
+	Changed    string `json:"changed"`        // 改了什么
+	Validation string `json:"validation"`     // 怎么验证
+	Risk       string `json:"risk,omitempty"` // 剩余风险
+	Next       string `json:"next"`           // 下一步
 	Timestamp  string `json:"timestamp"`
 }
 
 // Quota 配额记账（防烧算力）
 type Quota struct {
-	WindowHours int     `json:"window_hours"`          // 窗口小时（默认 24）
-	SpentSlots  int     `json:"spent_slots"`           // 已消耗槽
-	MaxSlots    int     `json:"max_slots"`             // 上限（默认 720）
+	WindowHours int `json:"window_hours"` // 窗口小时（默认 24）
+	SpentSlots  int `json:"spent_slots"`  // 已消耗槽
+	MaxSlots    int `json:"max_slots"`    // 上限（默认 720）
 }
 
 // HarnessState 任务状态文件（local——session 目录）
 type HarnessState struct {
-	Status    string     `json:"status"`               // active/completed/failed
-	Objective string     `json:"objective"`            // 任务目标
-	Agent     string     `json:"agent,omitempty"`      // 执行 agent（codex/agent）
+	Status    string     `json:"status"`          // active/completed/failed
+	Objective string     `json:"objective"`       // 任务目标
+	Agent     string     `json:"agent,omitempty"` // 执行 agent（codex/agent）
 	UpdatedAt string     `json:"updated_at"`
 	Todos     []Todo     `json:"todos"`
 	Evidence  []Evidence `json:"evidence"`

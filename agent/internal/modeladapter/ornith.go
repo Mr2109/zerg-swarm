@@ -54,6 +54,7 @@ func (a *Ornith) BuildArgs(entry *registry.ModelEntry, port int) []string {
 //  2. 环境变量 ZERG_ORNITH_TEMPLATE
 //  3. ~/.zerg/ornith_chat_template.jinja
 //  4. 仓库内相对路径 agent/ornith_chat_template.jinja（及其上一级）
+//
 // 链路上任一处显式配置但文件不存在 → 记 WARN 并继续回退，不会把坏路径传给后端。
 func (a *Ornith) templatePath(entry *registry.ModelEntry) string {
 	if entry != nil && entry.ChatTemplate != "" {

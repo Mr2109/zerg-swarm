@@ -1,14 +1,15 @@
 // Package logx — 虫族 v2 统一日志系统
 //
 // 设计原则：
-//   1. 分层级别：DEBUG < INFO < WARN < ERROR（可配置，默认 INFO）
-//   2. 结构化输出：时间 级别 [组件] 消息 key=value...
-//   3. 双写：stdout（实时）+ 文件（持久化，可配路径）
-//   4. 请求追踪：可带 request_id / machine / model 等字段
+//  1. 分层级别：DEBUG < INFO < WARN < ERROR（可配置，默认 INFO）
+//  2. 结构化输出：时间 级别 [组件] 消息 key=value...
+//  3. 双写：stdout（实时）+ 文件（持久化，可配路径）
+//  4. 请求追踪：可带 request_id / machine / model 等字段
 //
 // 用法：
-//   logx.Infof("heartbeat", "心跳上报成功", "machine", "mini1")
-//   logx.Errorf("server", "请求失败", "error", err, "path", "/infer")
+//
+//	logx.Infof("heartbeat", "心跳上报成功", "machine", "mini1")
+//	logx.Errorf("server", "请求失败", "error", err, "path", "/infer")
 package logx
 
 import (
@@ -40,10 +41,10 @@ var levelNames = map[Level]string{
 
 // Logger 日志器（双写 stdout + 文件）
 type Logger struct {
-	mu      sync.Mutex
-	out     io.Writer   // stdout（或任意 writer）
-	file    *os.File    // 文件（可选）
-	level   Level       // 最低输出级别
+	mu    sync.Mutex
+	out   io.Writer // stdout（或任意 writer）
+	file  *os.File  // 文件（可选）
+	level Level     // 最低输出级别
 }
 
 var (

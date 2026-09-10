@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"log"
 	"log/slog"
 	"net"
@@ -26,8 +27,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/Mr2109/zerg-swarm/core"
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 	"github.com/Mr2109/zerg-swarm/core/internal/api"
@@ -39,6 +38,8 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin/adapters"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 // fleet.yaml 路径由配置指定（defaultFleetYAML 已删——2026-08-13 死代码清理）
@@ -91,7 +92,7 @@ func main() {
 
 	// 阶段 3：初始化本机子端（LocalBackend）
 	// 日志路径用绝对路径（进程可能从任意目录启动，相对路径会找不到目录）
-	logPath := "/tmp/zerg-localback.log"
+	logPath := filepath.Join(statepath.RuntimeLogDir(), "zerg-localback.log")
 	localBack := localback.NewLocalBackend(logPath)
 	// v2.5.4.9 分配改进：探测本机已运行模型（9000 ornith 等）——接管为 ready——本机候选参与路由
 	// 候选 = fleet.yaml 中 host=local 的模型文件（匹配才接管——避免接错残留进程）
@@ -142,7 +143,7 @@ func main() {
 	} else {
 		chatLifecycle := chat.NewLifecycle(chatStore)
 		chatLifecycle.Start() // 90 天硬删定时（启动扫 + 每天 3 点）
-		chatInfer := chat.NewChatInfer("http://127.0.0.1:8082", cfg.Auth.Token)
+		chatInfer := chat.NewChatInfer(statepath.GatewayBaseURL(), cfg.Auth.Token)
 		chatHandlers := api.NewChatHandlers(chatStore, chatInfer)
 		chatHandlers.RegisterChatRoutes(r)
 		handlers.ChatStore = chatStore // v2.5.7 对话→任务: 总调度器 handler 可查来源对话内容（派任务带上下文）
@@ -176,7 +177,7 @@ func main() {
 	r.Post("/api/config/reload", handlers.ReloadConfigHandler)
 
 	// 正式端口 8580（API）+ 8082（网关）——已从测试端口 8680/8682 切换
-	port := 8580
+	port := statepath.CorePort()
 	// 用 0.0.0.0 显式监听 IPv4（Go 的 ":8580" 默认 IPv6-only，子端 IPv4 连不上）
 	addr := fmt.Sprintf("0.0.0.0:%d", port)
 	fmt.Printf("🚀 启动服务器，监听 %s\n", addr)
@@ -250,7 +251,7 @@ func main() {
 
 	// v2.5.5 P1-5 治本: 启动清理残留任务 worktree（上次崩溃/重启悬空——状态丢——worktree 堆积）
 	// 扫描 git worktree list——所有 task-* 分支——尝试 merge（有报告）或强制清理（无报告——任务已死）
-	cleaned := api.CleanupStaleWorktrees("<repo>")
+	cleaned := api.CleanupStaleWorktrees(statepath.WorkspaceRoot())
 	if cleaned > 0 {
 		fmt.Printf("🧹 启动清理残留 worktree: %d 个（P1-5 治本——任务悬空恢复）\n", cleaned)
 	}
@@ -527,7 +528,7 @@ func main() {
 
 	// B4 监看面板（状态灯 + 模型矩阵 + 告警——单页仪表盘 8581）
 	go func() {
-		mon := core.NewMonitor("http://127.0.0.1:8580", cfg.Auth.Token)
+		mon := core.NewMonitor(statepath.CoreBaseURL(), cfg.Auth.Token)
 		if err := mon.Start("8581"); err != nil {
 			fmt.Printf("⚠️ 监看面板启动失败: %v\n", err)
 		}

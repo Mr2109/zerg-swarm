@@ -59,9 +59,9 @@ func (c *CmdString) UnmarshalYAML(value *yaml.Node) error {
 
 // Registry 模型注册表，线程安全。
 type Registry struct {
-	mu      sync.RWMutex
-	models  map[string]*ModelEntry
-	path    string
+	mu     sync.RWMutex
+	models map[string]*ModelEntry
+	path   string
 }
 
 // New 创建并加载注册表。

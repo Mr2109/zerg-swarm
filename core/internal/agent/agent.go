@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"io"
 	"net/http"
 	"os"
@@ -136,7 +137,7 @@ func NewAgent(cfg Config) *Agent {
 		cfg.Temperature = 0.8 // v2.5：实测 0.3 更差（ornith 保守不调工具）——恢复 0.8（波动靠提示/重试缓解）
 	}
 	if cfg.GatewayURL == "" {
-		cfg.GatewayURL = "http://127.0.0.1:8082"
+		cfg.GatewayURL = statepath.GatewayBaseURL()
 	}
 	if cfg.AuthToken == "" {
 		cfg.AuthToken = "example-35b"

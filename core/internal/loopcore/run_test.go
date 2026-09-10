@@ -5,8 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	)
+)
 
 // mockInfer — 逐轮脚本化响应
 func mockInfer(responses []Response) (Infer, *int) {
@@ -108,7 +107,7 @@ func TestRunWallClock(t *testing.T) {
 func TestCompactToolResults(t *testing.T) {
 	var msgs []map[string]any
 	for i := 0; i < 10; i++ {
-		msgs = append(msgs, map[string]any{"role": "tool", "tool_call_id": string(rune('a'+i)), "content": strings.Repeat("x", 200)})
+		msgs = append(msgs, map[string]any{"role": "tool", "tool_call_id": string(rune('a' + i)), "content": strings.Repeat("x", 200)})
 	}
 	out := CompactToolResults(msgs, 3)
 	full := 0

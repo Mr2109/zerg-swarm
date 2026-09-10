@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"log"
 	"os"
 	"os/exec"
@@ -303,7 +304,7 @@ func (s *MasterScheduler) runTask(task *Task) {
 	// v2.5.5 任务目录唯一化（2026-08-20 设计——Mr2109）: 任务目录 /tmp/zerg-tasks/<任务ID>/
 	// 任务所有产出（代码/临时脚本/报告/日志）集中此目录——隔离+归档
 	// 注: 不用 /var（Mac 普通用户无权限）——用 /tmp/zerg-tasks（可写——与 zerg-* 约定一致）
-	taskDir := filepath.Join("/tmp/zerg-tasks", sanitizeID(task.ID))
+	taskDir := filepath.Join(statepath.TaskRoot(), sanitizeID(task.ID))
 	if err := os.MkdirAll(taskDir, 0o755); err != nil {
 		log.Printf("⚠️ 总调度: 任务 %s 目录创建失败: %v", task.ID, err)
 	}
@@ -786,7 +787,7 @@ func copyReportToTaskDir(taskID, wtDir string) {
 	if wtDir == "" {
 		return
 	}
-	taskDir := filepath.Join("/tmp/zerg-tasks", sanitizeID(taskID))
+	taskDir := filepath.Join(statepath.TaskRoot(), sanitizeID(taskID))
 	os.MkdirAll(taskDir, 0o755)
 	// 复制常见报告文件（worktree 里 → 任务目录）
 	for _, name := range []string{"internal-task-report.md", "review-report.md", "report.md", "result.md"} {

@@ -6,6 +6,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"log"
 	"os"
 	"os/exec"
@@ -13,12 +14,12 @@ import (
 	"time"
 )
 
-const (
-	tasksDir     = "/tmp/zerg-tasks"               // 任务目录（活跃——Mac 可写路径）
-	archiveDir   = "/tmp/zerg-archive"             // 归档目录（压缩包）
-	archiveIndex = "/tmp/zerg-archive/index.jsonl" // 归档索引
-	archiveAfter = 30 * 24 * time.Hour             // 30 天归档（Mr2109）
-	deleteAfter  = 90 * 24 * time.Hour             // 归档保留 90 天删除（Mr2109——GitHub 默认标准）
+var (
+	tasksDir     = statepath.TaskRoot()                                                    // 任务目录（活跃——可写路径）
+	archiveDir   = filepath.Join(statepath.RuntimeLogDir(), "zerg-archive")                // 归档目录（压缩包）
+	archiveIndex = filepath.Join(statepath.RuntimeLogDir(), "zerg-archive", "index.jsonl") // 归档索引
+	archiveAfter = 30 * 24 * time.Hour                                                     // 30 天归档（Mr2109）
+	deleteAfter  = 90 * 24 * time.Hour                                                     // 归档保留 90 天删除（Mr2109——GitHub 默认标准）
 )
 
 // RunTaskArchive 归档器——扫描任务目录:

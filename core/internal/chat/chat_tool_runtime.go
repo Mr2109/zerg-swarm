@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"log"
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
+	"log"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
@@ -61,10 +61,10 @@ const (
 
 // ToolRuntime — 对话/任务级渐进式常驻工具状态（不跨会话背债——活跃期内存）
 type ToolRuntime struct {
-	mu       sync.Mutex
-	resident []string       // 常驻工具名（≤MaxResident——尾=最新）
-	failSeq  map[string]int // 工具连续 exec 失败数
-	hidden   map[string]bool
+	mu           sync.Mutex
+	resident     []string       // 常驻工具名（≤MaxResident——尾=最新）
+	failSeq      map[string]int // 工具连续 exec 失败数
+	hidden       map[string]bool
 	searchCounts map[string]int // 同一 query 搜索次数（批次A: SearchStreak 钩子）
 }
 
@@ -228,6 +228,7 @@ func (rt *ToolRuntime) SearchStreak(query string) (int, string) {
 //  1. role=tool 必须紧跟前一条 assistant（且该 assistant 带 tool_calls）——孤立 tool 结果丢弃
 //  2. 相邻同角色消息合并（除 assistant 带 tool_calls 的边界）
 //  3. 非 system 首条为空时不处理（保留原始语义）
+//
 // 返回: 修复后消息 + 修复记录（供事件/告警）
 func SanitizeMessages(msgs []map[string]any) ([]map[string]any, []string) {
 	var out []map[string]any
@@ -288,7 +289,7 @@ type toolErrorStore struct {
 }
 
 var (
-	errStore     = &toolErrorStore{Tools: map[string]map[string]map[string]*errBucket{}}
+	errStore = &toolErrorStore{Tools: map[string]map[string]map[string]*errBucket{}}
 	// 甲批 T2（2026-09-10）：/tmp → ~/.zerg/state/tool_errors.json（首次启动自动搬旧文件）
 	errStoreFile = statepath.MigrateIfNeeded("/tmp/zerg-tool-errors.json", "tool_errors.json")
 	errStoreInit sync.Once

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"testing"
 	"time"
 )
@@ -88,7 +89,7 @@ func TestCheckers(t *testing.T) {
 	}
 
 	// LLMJudge 结构存在
-	j := &LLMJudge{GatewayURL: "http://127.0.0.1:8082", Model: "gemma-4-12B"}
+	j := &LLMJudge{GatewayURL: statepath.GatewayBaseURL(), Model: "gemma-4-12B"}
 	if j.GatewayURL == "" || j.Model == "" {
 		t.Fatalf("LLMJudge 配置不完整")
 	}

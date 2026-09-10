@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"log"
 	"os"
 	"os/signal"
@@ -81,7 +82,7 @@ func main() {
 	flag.IntVar(&retryN, "retry", 1, "失败自动重试次数（默认 1）")
 	flag.StringVar(&stateFile, "state", "", "状态文件路径（断连恢复用——存在则续跑）")
 	flag.StringVar(&issueFile, "issue", "", "接单模式：issue 文件路径（读问题单→查因→填修复结论→标记 resolved）")
-	flag.StringVar(&gateway, "gateway", "http://127.0.0.1:8082", "网关地址（容器内用 host.docker.internal:8082——v2.5.3）")
+	flag.StringVar(&gateway, "gateway", statepath.GatewayBaseURL(), "网关地址（容器内用 host.docker.internal:8082——v2.5.3）")
 	flag.StringVar(&x3Status, "x3-status", "", "X3 agent 状态地址（机器级采样用——如 http://<worker-ip>:8100/status）")
 	flag.StringVar(&x3Token, "x3-token", "", "X3 认证 token（机器级采样用）")
 	flag.Parse()

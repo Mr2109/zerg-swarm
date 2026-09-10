@@ -26,7 +26,7 @@ type gatewayExecutor struct {
 // 2026-08-12 改：所有模型走网关统一路由（8082）——不直连端点（虫族统一路由/负载均衡/认证/排除本机生效）
 func newGatewayExecutor(authToken string) *gatewayExecutor {
 	return &gatewayExecutor{
-		client: &http.Client{Timeout: 10 * time.Minute},
+		client:    &http.Client{Timeout: 10 * time.Minute},
 		authToken: authToken,
 		endpoints: map[string]string{
 			// 全部走网关——网关按模型名路由（ornith→X3 / gemma→候选 / Qwable→候选）
@@ -79,7 +79,7 @@ func (e *gatewayExecutor) ExecuteWithResponse(ctx context.Context, model string,
 	var out struct {
 		Choices []struct {
 			Message struct {
-				Content         string `json:"content"`
+				Content          string `json:"content"`
 				ReasoningContent string `json:"reasoning_content"`
 			} `json:"message"`
 		} `json:"choices"`

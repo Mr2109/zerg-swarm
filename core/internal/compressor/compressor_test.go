@@ -1,12 +1,15 @@
 package compressor
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 func TestCompress(t *testing.T) {
-	base := "<repo>/compress_models/llmlingua2-onnx"
+	base := filepath.Join(statepath.CompressModelsDir(), "llmlingua2-onnx")
 	c := New(Config{
 		ModelPath: base + "/model.onnx",
 		TokPath:   base + "/tokenizer.json",

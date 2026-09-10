@@ -90,7 +90,6 @@ func (g *Guard) GuideCount() int {
 	return g.guideCount
 }
 
-
 // marshalCanonical — 键排序的确定性 JSON 序列化（指纹稳定——同参数必同指纹）
 func marshalCanonical(v any) ([]byte, error) {
 	switch t := v.(type) {

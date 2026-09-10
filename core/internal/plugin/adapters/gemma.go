@@ -18,14 +18,14 @@ const (
 
 // GemmaConfig — 适配器配置
 type GemmaConfig struct {
-	Temperature  float64 // MoA 参考（默认 0.7）
-	JudgeTemp    float64 // Judge 场景（默认 0.2——评判稳定）
-	Size         string  // 家族档位: 12B / 26B
-	MaxTokens    int     // MoA 参考（2000）
-	JudgeTokens  int     // Judge（4096）
-	CtxWindow    int
-	AuthToken    string
-	BaseURL      string
+	Temperature float64 // MoA 参考（默认 0.7）
+	JudgeTemp   float64 // Judge 场景（默认 0.2——评判稳定）
+	Size        string  // 家族档位: 12B / 26B
+	MaxTokens   int     // MoA 参考（2000）
+	JudgeTokens int     // Judge（4096）
+	CtxWindow   int
+	AuthToken   string
+	BaseURL     string
 }
 
 // GemmaAdapter — 实现 plugin.Plugin 接口
@@ -39,11 +39,11 @@ var _ plugin.Plugin = (*GemmaAdapter)(nil)
 func NewGemmaAdapter() *GemmaAdapter {
 	return &GemmaAdapter{
 		config: GemmaConfig{
-			Temperature: 0.7,  // MoA 多样性
-			JudgeTemp:   0.2,  // Judge 稳定
+			Temperature: 0.7,   // MoA 多样性
+			JudgeTemp:   0.2,   // Judge 稳定
 			Size:        "26B", // 默认 MoA 参考
-			MaxTokens:   2000, // MoA RefMaxTokens 一致
-			JudgeTokens: 4096, // Judge 输出短但完整
+			MaxTokens:   2000,  // MoA RefMaxTokens 一致
+			JudgeTokens: 4096,  // Judge 输出短但完整
 			CtxWindow:   gemmaCtxWindow,
 		},
 	}
@@ -140,14 +140,14 @@ func (a *GemmaAdapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, e
 	}
 	return plugin.PluginOutput{
 		Result: map[string]any{
-			"model":       gemmaName,
-			"size":        a.config.Size,
-			"role":        role,
-			"temperature": temp,
-			"max_tokens":  maxTok,
-			"ctx_window":  a.config.CtxWindow,
-			"tool_calling": false, // 无工具纯文本分析
-			"judge_capable": true, // Judge 能力
+			"model":         gemmaName,
+			"size":          a.config.Size,
+			"role":          role,
+			"temperature":   temp,
+			"max_tokens":    maxTok,
+			"ctx_window":    a.config.CtxWindow,
+			"tool_calling":  false, // 无工具纯文本分析
+			"judge_capable": true,  // Judge 能力
 		},
 	}, nil
 }

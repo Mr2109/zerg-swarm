@@ -7,6 +7,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"os"
 	"path/filepath"
 	"time"
@@ -226,7 +227,7 @@ func loopcoreRun(ctx context.Context, a *Agent, ls *loopState, sysPrompt string,
 }
 
 // agentChatWorkDir — CA 工具工作目录（与 chat.ChatToolsWorkDir 同值——chat 包 import agent 故不能反向引用）
-const agentChatWorkDir = "<repo>"
+var agentChatWorkDir = statepath.WorkspaceRoot()
 
 var _ = time.Now
 
