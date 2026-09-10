@@ -689,6 +689,26 @@ func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
 				"desc":       desc,
 			})
 		}
+		// 2026-09-11 一致性审计：补对话 L0 常驻工具
+		// 原先只并「CA 工具 + 对话 deferred」→ doc_search / kb_search 这类
+		// 「只在提示词 L0 定义表里」的工具在资源库（UI 资源库/版本/履历）里永远查不到。
+		for _, d := range chat.HermesToolDefs() {
+			if seen[d.Name] {
+				continue
+			}
+			seen[d.Name] = true
+			items = append(items, map[string]interface{}{
+				"name":       d.Name,
+				"scope":      "对话L0",
+				"version":    agent.ToolVersion(d.Name),
+				"trust":      trustOf(d.Name),
+				"uses":       agent.ToolUses(d.Name),
+				"today_uses": evAgg[d.Name],
+				"faults":     0,
+				"since":      resourceTrust.GetResourceSince("tools", d.Name),
+				"desc":       firstLine(d.Desc),
+			})
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"type": "tools", "items": items})
 	case "skills":
 		// skill 库——扫描 skills/ 目录 + Hermes skills（SKILL.md）
