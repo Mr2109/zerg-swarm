@@ -330,7 +330,7 @@ impl ZergApp {
                     *lock_recover(&self.poll_err) = None;
                 }
                 Err(e) => {
-                    *lock_recover(&self.poll_err) = Some(format!("内部任务启停: {}", e));
+                    *lock_recover(&self.poll_err) = Some(t!("err.internal_tasks", err = e).to_string());
                 }
             }
         }
@@ -368,7 +368,7 @@ impl ZergApp {
                         *lock_recover(&store) = Some(v);
                         *lock_recover(&perr) = None;
                     }
-                    Err(e) => *lock_recover(&perr) = Some(format!("git 状态: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(t!("err.git", err = e).to_string()),
                 }
             });
         }
@@ -384,7 +384,7 @@ impl ZergApp {
                         *lock_recover(&store) = Some(v);
                         *lock_recover(&perr) = None;
                     }
-                    Err(e) => *lock_recover(&perr) = Some(format!("主控日志: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(t!("err.main_logs", err = e).to_string()),
                 }
             });
         }
@@ -400,7 +400,7 @@ impl ZergApp {
                         *lock_recover(&store) = Some(v);
                         *lock_recover(&perr) = None;
                     }
-                    Err(e) => *lock_recover(&perr) = Some(format!("文档目录: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(t!("err.docs", err = e).to_string()),
                 }
             });
         }
@@ -417,7 +417,7 @@ impl ZergApp {
                         *lock_recover(&store) = Some(v);
                         *lock_recover(&perr) = None;
                     }
-                    Err(e) => *lock_recover(&perr) = Some(format!("资源库: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(t!("err.resources", err = e).to_string()),
                 }
             });
         }
@@ -433,7 +433,7 @@ impl ZergApp {
                         *lock_recover(&store) = Some(v);
                         *lock_recover(&perr) = None;
                     }
-                    Err(e) => *lock_recover(&perr) = Some(format!("集群状态: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(t!("err.cluster", err = e).to_string()),
                 }
             });
         }
@@ -448,7 +448,7 @@ impl ZergApp {
             lock_recover(&self.doc_content).clone().unwrap_or_default()
         };
         if text.trim().is_empty() {
-            self.ai_output = Some(("error".to_string(), "文档内容为空——无法执行 AI 操作".to_string()));
+            self.ai_output = Some(("error".to_string(), t!("ai.empty_doc").to_string()));
             return;
         }
         let model = "example-35b-v2".to_string(); // 中文好/工具正常（Mr2109）
@@ -466,7 +466,7 @@ impl ZergApp {
             _ => return,
         };
         self.ai_busy = true;
-        self.ai_status = format!("AI {} 中...", action);
+        self.ai_status = t!("ai.running", action = action).to_string();
         let result: api::SharedResult<String> = Arc::new(Mutex::new(None));
         let r2 = result.clone();
         api::runtime().spawn(async move {
@@ -489,7 +489,7 @@ impl ZergApp {
                     }
                     Err(e) => {
                         // 失败弹窗提示（不能静默）
-                        self.ai_output = Some(("error".to_string(), format!("AI 调用失败: {}", e)));
+                        self.ai_output = Some(("error".to_string(), t!("ai.call_failed", err = e).to_string()));
                         self.ai_status = String::new();
                     }
                 }
@@ -521,12 +521,12 @@ impl ZergApp {
     fn ai_result_view(&mut self, ctx: &egui::Context) {
         if let Some((action, text)) = self.ai_output.clone() {
             let title = match action.as_str() {
-                "summarize" => format!("{} AI 总结", icon_text("sparkles")),
-                "continue" => format!("{} AI 续写", icon_text("pencil-simple")),
-                "translate" => format!("{} AI 翻译", icon_text("translate")),
-                "polish" => format!("{} AI 润色", icon_text("sparkles")),
-                "error" => format!("{} AI 错误", icon_text("warning")),
-                _ => format!("{} AI 结果", icon_text("sparkles")),
+                "summarize" => t!("ai.summarize", icon = icon_text("sparkles")).to_string(),
+                "continue" => t!("ai.continue", icon = icon_text("pencil-simple")).to_string(),
+                "translate" => t!("ai.translate", icon = icon_text("translate")).to_string(),
+                "polish" => t!("ai.polish", icon = icon_text("sparkles")).to_string(),
+                "error" => t!("ai.error_title", icon = icon_text("warning")).to_string(),
+                _ => t!("ai.result", icon = icon_text("sparkles")).to_string(),
             };
             // 窗口占界面 70% 高度（Mr2109 2026-08-29——太高挡内容）
             let screen_rect = ctx.viewport_rect();
@@ -544,12 +544,12 @@ impl ZergApp {
                     ui.separator();
                     ui.horizontal(|ui| {
                         if action == "error" {
-                            if ui.button(format!("{} 关闭", icon_text("x-circle"))).clicked() {
+                            if ui.button(t!("action.close_icon", icon = icon_text("x-circle"))).clicked() {
                                 self.ai_output = None;
                             }
                             return;
                         }
-                        if ui.button("📥 插入到文档末尾").clicked() {
+                        if ui.button(t!("ai.insert_at_end")).clicked() {
                             // APP-A10: 编辑器未载入（预览模式点的）→ 先载入当前文档再追加，
                             // 否则结果既看不见、进编辑模式时又会被文件内容 load 覆盖掉
                             self.ensure_editor_loaded();
@@ -558,7 +558,7 @@ impl ZergApp {
                             self.sync_preview_after_ai();
                             self.ai_output = None;
                         }
-                        if ui.button(format!("{} 替换全文", icon_text("note-pencil"))).clicked() {
+                        if ui.button(t!("ai.replace_all", icon = icon_text("note-pencil"))).clicked() {
                             // APP-A10: 同上——预览模式渲染的是 doc_content，结果同步过去才看得见
                             self.ensure_editor_loaded();
                             self.ferrite_editor.load(&text);
@@ -566,7 +566,7 @@ impl ZergApp {
                             self.sync_preview_after_ai();
                             self.ai_output = None;
                         }
-                        if ui.button(format!("{} 关闭", icon_text("x-circle"))).clicked() {
+                        if ui.button(t!("action.close_icon", icon = icon_text("x-circle"))).clicked() {
                             self.ai_output = None;
                         }
                     });
@@ -1287,9 +1287,10 @@ impl ZergApp {
                 if let Some(lines) = lock_recover(&self.logs).clone() {
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                         for l in lines {
-                            let color = if l.contains("error") || l.contains("错误") {
+                            let ll = l.to_ascii_lowercase();   // 日志级别判定：大小写不敏感 + 中英双认（去掉对单一语言的依赖）
+                            let color = if ll.contains("error") || l.contains("错误") {
                                 egui::Color32::from_rgb(220, 80, 80)
-                            } else if l.contains("warn") || l.contains("警告") {
+                            } else if ll.contains("warn") || l.contains("警告") {
                                 egui::Color32::from_rgb(240, 200, 80)
                             } else {
                                 egui::Color32::from_rgb(200, 200, 200)
@@ -2922,7 +2923,7 @@ impl ZergApp {
         map.insert(key.to_string(), val);
         // APP-A12: 写失败不再静默（原 let _ = 吞掉——布局悄悄不保存）
         if let Err(e) = std::fs::write(&path, serde_json::to_string(&map).unwrap_or_default()) {
-            eprintln!("[zerg-ui] 布局持久化失败 {}: {}", path.display(), e);
+            eprintln!("[zerg-ui] failed to persist layout {}: {}", path.display(), e);   // 日志英文（设计稿 §7-3）
         }
     }
 }
@@ -3024,7 +3025,7 @@ impl eframe::App for ZergApp {
             if let Some(msg) = notice {
                 ui.horizontal(|ui| {
                     ui.colored_label(egui::Color32::from_rgb(230, 90, 90), format!("⚠ {}", msg));
-                    if ui.small_button("✕ 清除").clicked() {
+                    if ui.small_button(t!("action.clear")).clicked() {
                         *lock_recover(&self.poll_err) = None;
                     }
                 });
@@ -3082,7 +3083,7 @@ fn task_duration(created: Option<&str>, completed: Option<&str>) -> String {
     let d = parse(completed);
     match (c, d) {
         // 零值时间（0001-01-01——CreatedAt 未设置——旧复查任务）→ 未知（2026-08-21 修复——不显示巨大错误时长）
-        (Some(c), _) if c < 0 => "未知".to_string(),
+        (Some(c), _) if c < 0 => t!("common.unknown").to_string(),
         (Some(c), Some(d)) if d >= c => {
             let secs = d - c;
             if secs < 60 {
@@ -3093,7 +3094,7 @@ fn task_duration(created: Option<&str>, completed: Option<&str>) -> String {
                 format!("{}h{}m", secs / 3600, (secs % 3600) / 60)
             }
         }
-        (Some(_), None) => "进行中".to_string(),
+        (Some(_), None) => t!("task.in_progress").to_string(),
         _ => "—".to_string(),
     }
 }
@@ -3176,12 +3177,12 @@ impl ZergApp {
                             if running > 0 {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(250, 200, 90),
-                                    egui::RichText::new(format!("⚙ {} 运行中", running)).size(11.0),
+                                    egui::RichText::new(t!("hud.running", n = running)).size(11.0),
                                 );
                             } else {
-                                ui.weak(egui::RichText::new("空闲").size(11.0));
+                                ui.weak(egui::RichText::new(t!("hud.idle")).size(11.0));
                             }
-                            if ui.small_button("✕").on_hover_text("隐藏 HUD——右上角仪表图标重新显示").clicked() {
+                            if ui.small_button("✕").on_hover_text(t!("hud.hide_tip")).clicked() {
                                 self.hud_hidden = true;
                             }
                         });
