@@ -198,6 +198,33 @@ func (s *ChatStore) UpdateMessageContent(sessionID string, id int64, content str
 	return tx.Commit()
 }
 
+// SoftDeleteAfter — 批次C3(2026-09-10): 软删某消息之后的所有消息（active=0——可搜可恢复）
+// 用于"编辑即截断重跑"/重生成——不硬删（FTS 仍可搜旧分支——对齐 Hermes 软归档哲学）
+func (s *ChatStore) SoftDeleteAfter(sessionID string, afterID int64) (int, error) {
+	res, err := s.db.Exec(
+		"UPDATE messages SET active = 0 WHERE session_id = ? AND id > ? AND active = 1",
+		sessionID, afterID)
+	if err != nil {
+		return 0, fmt.Errorf("chat: 软删截断失败: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// LastUserMessage — 批次C3: 会话最后一条 user 消息（重生成用）
+func (s *ChatStore) LastUserMessage(sessionID string) (*Message, error) {
+	msgs, err := s.ListMessages(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return msgs[i], nil
+		}
+	}
+	return nil, nil
+}
+
 // MarkCompacted — 把指定消息标记为已压缩（active=false——不进上下文窗口）
 func (s *ChatStore) MarkCompacted(sessionID string, ids []int64) error {
 	if len(ids) == 0 {

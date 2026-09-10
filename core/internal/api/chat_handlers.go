@@ -69,6 +69,57 @@ var progressiveEnabled = os.Getenv("ZERG_PROGRESSIVE") == "1"
 // 客户端断连时部分结果落库——会话 id → CancelFunc）
 var chatTurnCancels sync.Map
 
+// 批次C2(2026-09-10): 插话 steer 存储（会话 id → 待挂载文本——挂下一次工具结果）
+var chatSteers sync.Map // sessionID -> *steerBox
+
+type steerBox struct {
+	mu   sync.Mutex
+	text []string
+}
+
+func steerBoxFor(id string) *steerBox {
+	v, _ := chatSteers.LoadOrStore(id, &steerBox{})
+	return v.(*steerBox)
+}
+
+// drainSteer — 取出并清空待挂 steer（execFn 钩子调用）
+func drainSteer(id string) []string {
+	v, ok := chatSteers.Load(id)
+	if !ok {
+		return nil
+	}
+	b := v.(*steerBox)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := b.text
+	b.text = nil
+	return out
+}
+
+// Steer — POST /api/chat/sessions/{id}/steer（批次C2——纯文本插话，挂下一次工具边界）
+func (h *ChatHandlers) Steer(w http.ResponseWriter, r *http.Request) {
+	id := chiURLParam(r, "id")
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
+		writeChatError(w, http.StatusBadRequest, fmt.Errorf("chat: 插话内容为空"))
+		return
+	}
+	_, running := chatTurnCancels.Load(id)
+	if !running {
+		// 无运行中轮次——不入库（避免误挂到未来轮次）；由客户端转排队
+		writeChatJSON(w, http.StatusOK, map[string]any{"ok": true, "session_id": id, "steer_queued": 0, "turn_running": false})
+		return
+	}
+	b := steerBoxFor(id)
+	b.mu.Lock()
+	b.text = append(b.text, strings.TrimSpace(req.Content))
+	n := len(b.text)
+	b.mu.Unlock()
+	writeChatJSON(w, http.StatusOK, map[string]any{"ok": true, "session_id": id, "steer_queued": n, "turn_running": true})
+}
+
 // AbortMessage — POST /api/chat/sessions/{id}/abort（批次B 服务端中断）
 // 语义: 取消该会话运行中的轮次；已流出的部分内容由 SendMessage 侧落库（附"（已中断）"）
 func (h *ChatHandlers) AbortMessage(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +162,8 @@ func (h *ChatHandlers) RegisterChatRoutes(r chiRouter) {
 	r.Post("/api/chat/sessions/{id}/send", h.SendMessage)
 	r.Post("/api/chat/sessions/{id}/send-tool", h.SendMessageTool) // C4b 工具循环对话
 	r.Post("/api/chat/sessions/{id}/abort", h.AbortMessage)        // 批次B(2026-09-10): 服务端中断（部分结果落库）
+	r.Post("/api/chat/sessions/{id}/regenerate", h.Regenerate)     // 批次C3(2026-09-10): 重生成（软删其后消息——重跑末条 user）
+	r.Post("/api/chat/sessions/{id}/steer", h.Steer)               // 批次C2(2026-09-10): 生成中插话（挂下一次工具结果）
 	r.Patch("/api/chat/messages/{mid}", h.EditMessage)             // P0 消息编辑（点击编辑——Hermes user-edit 借鉴）
 	// 搜索
 	r.Get("/api/chat/search", h.Search)
@@ -201,7 +254,8 @@ func (h *ChatHandlers) EditMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Content string `json:"content"`
+		Content  string `json:"content"`
+		Truncate bool   `json:"truncate"` // 批次C3: 编辑即截断（软删其后消息——可重跑）
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
 		writeChatError(w, http.StatusBadRequest, fmt.Errorf("chat: 编辑内容为空"))
@@ -218,7 +272,27 @@ func (h *ChatHandlers) EditMessage(w http.ResponseWriter, r *http.Request) {
 		writeChatError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeChatJSON(w, http.StatusOK, map[string]any{"edited": true, "id": mid, "session_id": sid, "content": strings.TrimSpace(req.Content)})
+	truncated := 0
+	if req.Truncate {
+		truncated, _ = h.store.SoftDeleteAfter(sid, mid)
+	}
+	writeChatJSON(w, http.StatusOK, map[string]any{"edited": true, "id": mid, "session_id": sid, "content": strings.TrimSpace(req.Content), "truncated": truncated})
+}
+
+// Regenerate — POST /api/chat/sessions/{id}/regenerate（批次C3）
+// 语义: 取最后一条 user 消息 → 软删其后全部消息 → 返回 (user_message_id, content) 供客户端重跑
+func (h *ChatHandlers) Regenerate(w http.ResponseWriter, r *http.Request) {
+	id := chiURLParam(r, "id")
+	last, err := h.store.LastUserMessage(id)
+	if err != nil || last == nil {
+		writeChatError(w, http.StatusNotFound, fmt.Errorf("chat: 没有可重生成的用户消息"))
+		return
+	}
+	n, _ := h.store.SoftDeleteAfter(id, last.ID)
+	writeChatJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "session_id": id,
+		"user_message_id": last.ID, "content": last.Content, "truncated": n,
+	})
 }
 
 // UpdateTitle — 改标题
@@ -420,10 +494,15 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 		}
 		tc := agent.ToolCall{ID: "kernel", Name: name, Args: targs}
 		result := ec.ExecuteTool(ctx, name, tc.Args, gate)
-		if result.Error != "" {
-			return result.Content, result.Duration, fmt.Errorf("%s", result.Error)
+		// C2: 插话 steer 挂到工具结果（下一次工具边界生效）
+		extra := ""
+		if st := drainSteer(id); len(st) > 0 {
+			extra = "\n\n【用户插话·引导】" + strings.Join(st, "\n")
 		}
-		return result.Content, result.Duration, nil
+		if result.Error != "" {
+			return result.Content + extra, result.Duration, fmt.Errorf("%s", result.Error)
+		}
+		return result.Content + extra, result.Duration, nil
 	}
 	kres := loopcore.Run(r.Context(), loopcore.Config{
 		MaxRounds: chat.MaxToolRounds, WallClock: 600 * time.Second,
@@ -581,9 +660,10 @@ func chatMessageToReq(m *chat.Message, keepImage bool) map[string]any {
 func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	id := chiURLParam(r, "id")
 	var req struct {
-		Content string   `json:"content"`
-		Image   string   `json:"image"`  // D3 多模态: data URL base64（单图——兼容）
-		Images  []string `json:"images"` // P2 多图: data URL base64 数组（优先）
+		Content      string   `json:"content"`
+		Image        string   `json:"image"`          // D3 多模态: data URL base64（单图——兼容）
+		Images       []string `json:"images"`         // P2 多图: data URL base64 数组（优先）
+		ReuseUserID  int64    `json:"reuse_user_id"`  // 批次C3: 重跑既有 user 消息（不新增——重生成用）
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
 		writeChatError(w, http.StatusBadRequest, errOrMsg(err, "消息内容为空"))
@@ -595,6 +675,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 1. 存用户消息（D3/P2 图片: base64 → 文件 → image_path——多图逗号分隔）
+	//    批次C3: reuse_user_id>0 → 不新增（重生成路径——软删其后消息——复用既有 user 消息）
 	imagePath := ""
 	imgs := req.Images
 	if len(imgs) == 0 && req.Image != "" {
@@ -609,14 +690,20 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		}
 		imagePath = strings.Join(paths, ",")
 	}
-	userMsg := &chat.Message{
-		SessionID: id, Role: "user", Content: normalizeChatContent(req.Content),
-		Active: true, Timestamp: chatNow(), ImagePath: imagePath,
-	}
-	userMsgID, err := h.store.AddMessage(userMsg)
-	if err != nil {
-		writeChatError(w, http.StatusInternalServerError, err)
-		return
+	var userMsgID int64
+	if req.ReuseUserID > 0 {
+		userMsgID = req.ReuseUserID
+		_, _ = h.store.SoftDeleteAfter(id, req.ReuseUserID)
+	} else {
+		userMsg := &chat.Message{
+			SessionID: id, Role: "user", Content: normalizeChatContent(req.Content),
+			Active: true, Timestamp: chatNow(), ImagePath: imagePath,
+		}
+		userMsgID, err = h.store.AddMessage(userMsg)
+		if err != nil {
+			writeChatError(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	// 2. 历史（active 窗口内——压缩后旧消息不重发）
 	history, _ := h.store.GetActiveMessages(id)
@@ -741,6 +828,10 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 					tc := agent.ToolCall{ID: "kernel", Name: name, Args: targs}
 					result := ec.ExecuteTool(ctx, name, tc.Args, gate)
 					content = result.Content
+					// C2: 插话 steer 挂到工具结果
+					if st := drainSteer(id); len(st) > 0 {
+						content += "\n\n【用户插话·引导】" + strings.Join(st, "\n")
+					}
 					dur = result.Duration
 					if result.Error != "" {
 						execErr = fmt.Errorf("%s", result.Error)
@@ -890,13 +981,18 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		se.Title = title
 	}
 	// 6. SSE done（含消息 id + 标题）
-	payload, _ := json.Marshal(map[string]any{
+	donePayload := map[string]any{
 		"message_id":       astID,
 		"title":            se.Title,
 		"input_tokens":     result.InputTokens,
 		"output_tokens":    result.OutputTokens,
 		"reasoning_tokens": result.ReasoningTokens,
-	})
+	}
+	// C2(2026-09-10): 未命中工具边界的 steer 交还客户端（排队续发——字不丢）
+	if st := drainSteer(id); len(st) > 0 {
+		donePayload["steer_undrained"] = st
+	}
+	payload, _ := json.Marshal(donePayload)
 	writeSSE("done", string(payload))
 }
 
