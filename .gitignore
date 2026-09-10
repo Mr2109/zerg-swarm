@@ -25,3 +25,7 @@ bin/
 *.orig
 *.rej
 
+# 子项目根下的编译产物（与 agent/bin 同类）
+/core/zerg-agent
+/agent/zerg-agent
+
