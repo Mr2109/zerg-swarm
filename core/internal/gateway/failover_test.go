@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"zerg/core/internal/config"
-	"zerg/core/internal/store"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/store"
 )
 
 // TestPickFallbackRoute_SwitchMachine — failover 换机器（X3 失败→换 mini1）

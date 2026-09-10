@@ -3,7 +3,7 @@ package adapters
 import (
 	"testing"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // TestQwen38_Interface — 接口断言

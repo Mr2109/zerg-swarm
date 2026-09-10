@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"zerg/core/internal/agentstate"
-	"zerg/core/internal/ffp"
-	"zerg/core/internal/compressor"
-	"zerg/core/internal/hermes"
-	"zerg/core/internal/loopguard"
+	"github.com/Mr2109/zerg-swarm/core/internal/agentstate"
+	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
+	"github.com/Mr2109/zerg-swarm/core/internal/compressor"
+	"github.com/Mr2109/zerg-swarm/core/internal/hermes"
+	"github.com/Mr2109/zerg-swarm/core/internal/loopguard"
 )
 
 // 循环结果

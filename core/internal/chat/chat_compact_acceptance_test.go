@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"zerg/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 // 造足够大的历史以越过阈值（触发条件：≥30 条消息 AND 估算 token > 8000）

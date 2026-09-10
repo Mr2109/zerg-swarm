@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"zerg/core/internal/config"
-	"zerg/core/internal/store"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/store"
 )
 
 // TestPickRoute_AllTripped — v2.5.5 #9：所有候选熔断时——返回明确错误（不兜底空 URL）

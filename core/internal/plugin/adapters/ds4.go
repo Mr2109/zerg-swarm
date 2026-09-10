@@ -4,7 +4,7 @@ package adapters
 import (
 	"fmt"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // Ds4Adapter 实现 plugin.Plugin 接口

@@ -6,7 +6,7 @@ package inference
 import (
 	"testing"
 
-	"zerg/core/internal/store"
+	"github.com/Mr2109/zerg-swarm/core/internal/store"
 )
 
 // TestRegistry_Local 本机特殊处理——Get("local") 返回 local

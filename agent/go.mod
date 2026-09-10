@@ -1,4 +1,4 @@
-module zerg/agent
+module github.com/Mr2109/zerg-swarm/agent
 
 go 1.23
 

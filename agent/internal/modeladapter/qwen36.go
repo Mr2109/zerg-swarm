@@ -3,7 +3,7 @@ package modeladapter
 import (
 	"fmt"
 
-	"zerg/agent/internal/registry"
+	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
 
 // Qwen36 Qwen3.6-35B-A3B 适配器。
@@ -24,7 +24,7 @@ func (a *Qwen36) BuildArgs(entry *registry.ModelEntry, port int) []string {
 		"--cache-prompt",
 		// v2.5.5 T6: 空闲槽保留 KV 缓存——同会话连续请求前缀复用（CA 轮次间 TTFT 大降）
 		"--cache-idle-slots",
-		// v2.5.5 单槽铁律（Mr2109——X3/本机都单槽执行——GPU 全负荷——active>=1 即忙）
+		// v2.5.5 单槽铁律（设计决策——X3/本机都单槽执行——GPU 全负荷——active>=1 即忙）
 		"-np", "1",
 		"-cb",
 		"--host", "127.0.0.1",

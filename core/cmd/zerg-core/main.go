@@ -28,17 +28,17 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"zerg/core"
-	"zerg/core/internal/agent"
-	"zerg/core/internal/api"
-	"zerg/core/internal/chat"
-	"zerg/core/internal/compressor"
-	"zerg/core/internal/config"
-	"zerg/core/internal/gateway"
-	"zerg/core/internal/localback"
-	"zerg/core/internal/plugin"
-	"zerg/core/internal/plugin/adapters"
-	"zerg/core/internal/store"
+	"github.com/Mr2109/zerg-swarm/core"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/api"
+	"github.com/Mr2109/zerg-swarm/core/internal/chat"
+	"github.com/Mr2109/zerg-swarm/core/internal/compressor"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/gateway"
+	"github.com/Mr2109/zerg-swarm/core/internal/localback"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin/adapters"
+	"github.com/Mr2109/zerg-swarm/core/internal/store"
 )
 
 // fleet.yaml 路径由配置指定（defaultFleetYAML 已删——2026-08-13 死代码清理）

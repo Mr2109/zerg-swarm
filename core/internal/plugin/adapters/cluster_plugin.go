@@ -5,7 +5,7 @@ package adapters
 import (
 	"fmt"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // MachineInfo 集群机器信息。

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // OrnithAdapter 实现 plugin.Plugin 接口
