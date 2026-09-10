@@ -56,9 +56,9 @@ func main() {
 
 	// P4-49 统一工具库: 对话 deferred 工具注册到 agent 层（CA/对话通用——Mr2109 2026-09-02）
 	chat.RegisterChatExtraTools()
-	slog.Info("统一工具库", "对话工具已注册", "count", len(chat.ChatExtraToolDefs()))
+	slog.Info("统一工具库已注册", "count", len(chat.ChatExtraToolDefs()))
 
-	// P4-49 工具调用统一计数（对话+CA 同一计数器——/tmp/zerg-tool-uses.json）
+	// P4-49 工具调用统一计数（对话+CA 同一计数器——甲批 T2: ~/.zerg/state/tool_uses.json）
 	agent.InitToolUses()
 	// P4-49 工具版本表（tools/versions.json——进化可追溯）
 	agent.InitToolVersions()

@@ -43,7 +43,12 @@ func (s *ChatStore) GetToolRuntime(sessionID string) *ToolRuntime {
 // v1: 初始（C1）
 // v2: D3 多模态——messages 加 image_path 列（图片消息存储）
 // v3: P4-32 对话 ID 系统升级——sessions 加 source/parent_session_id + messages 加 parent_message_id（分支 DAG 预留）+ 索引
-const schemaVersion = 3
+// v4: 中文检索修复（Mr2109拍板方案 A 2026-09-10）——messages_fts 重建为 trigram 分词器
+//
+//	（unicode61 把连续 CJK 当一个 token——实测 MATCH '工具' 零命中；trigram 支持 ≥3 字 MATCH，<3 字由查询侧走 LIKE）
+//
+// v5: 甲批 T3（2026-09-10 Mr2109拍板）——两阶段清理：sessions 加 purge_after 列（软删→宽限→级联硬删）
+const schemaVersion = 5
 
 // schemaSQL — 建表语句（借鉴 Hermes 精简）
 const schemaSQL = `
@@ -65,7 +70,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     archived INTEGER DEFAULT 0,
     parent_task_id TEXT,
     source TEXT NOT NULL DEFAULT 'desktop',
-    parent_session_id TEXT
+    parent_session_id TEXT,
+    purge_after REAL
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(last_activity_at DESC);
 -- 注: idx_sessions_source/parent 在 init() 迁移后创建（旧表无新列时 CREATE INDEX 会失败——P4-32 实测坑）
@@ -88,16 +94,19 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, timestamp);
 
-CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(content, tokenize='unicode61');
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(content, tokenize='trigram');
 `
 
-// OpenChatStore — 打开/初始化对话数据库（/tmp/zerg-chat/chat.db——90 天销毁同区）
+// OpenChatStore — 打开/初始化对话数据库
+// 2026-09-10 甲批 T1（Mr2109拍板）：默认落 ~/.zerg-chat/chat.db（持久，与项目路径无关；ZERG_CHAT_DB_PATH 可覆盖）。
+// 旧路径 /tmp/zerg-chat/chat.db 会被一次性迁移（VACUUM INTO 一致性快照 + integrity_check + 行数比对）；
+// 迁移失败则继续用旧路径（不阻断启动，旧库不删）。
 func OpenChatStore() (*ChatStore, error) {
-	dir := "/tmp/zerg-chat"
+	path := ResolveChatDBPath()
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("chat: 创建目录失败: %w", err)
 	}
-	path := filepath.Join(dir, "chat.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("chat: 打开数据库失败: %w", err)
@@ -155,6 +164,20 @@ func (s *ChatStore) init() error {
 				return fmt.Errorf("chat: 迁移 v3 parent 索引失败: %w", err)
 			}
 		}
+		if v < 4 {
+			// v3→v4: 中文检索修复——旧库 messages_fts 是 unicode61 → 重建为 trigram（含全量重建 + 行数校验）
+			if err := s.migrateFTSv4(); err != nil {
+				return fmt.Errorf("chat: 迁移 v4（中文检索）失败: %w", err)
+			}
+		}
+		if v < 5 {
+			// v4→v5: 两阶段清理——sessions 加 purge_after（软删宽限到期时间；NULL=不在清理队列）
+			if !s.hasColumn("sessions", "purge_after") {
+				if _, err := s.db.Exec("ALTER TABLE sessions ADD COLUMN purge_after REAL"); err != nil {
+					return fmt.Errorf("chat: 迁移 v5 purge_after 失败: %w", err)
+				}
+			}
+		}
 		_, err = s.db.Exec("UPDATE schema_version SET version = ?", schemaVersion)
 		if err != nil {
 			return fmt.Errorf("chat: 更新 schema 版本失败: %w", err)
@@ -168,6 +191,28 @@ func (s *ChatStore) init() error {
 		return fmt.Errorf("chat: 建 parent 索引失败: %w", err)
 	}
 	return nil
+}
+
+// hasColumn — 列是否存在（迁移防重复加列）
+func (s *ChatStore) hasColumn(table, col string) bool {
+	rows, err := s.db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false
+		}
+		if name == col {
+			return true
+		}
+	}
+	return false
 }
 
 // Close — 关闭数据库

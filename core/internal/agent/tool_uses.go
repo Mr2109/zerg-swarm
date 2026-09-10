@@ -14,10 +14,13 @@ import (
 	"os"
 	"sync"
 	"syscall"
+
+	"zerg/core/internal/statepath"
 )
 
 // toolUsesFile — 工具计数持久化文件
-var toolUsesFile = "/tmp/zerg-tool-uses.json"
+// 甲批 T2（2026-09-10）：/tmp → ~/.zerg/state/tool_uses.json（首次启动自动搬旧文件）
+var toolUsesFile = statepath.MigrateIfNeeded("/tmp/zerg-tool-uses.json", "tool_uses.json")
 
 // toolUseCount — 读缓存（查询用——启动加载一次；写永远走文件锁，不更新此缓存）
 // 查询低频（UI 拉取）——直接读盘也行；保留缓存减少 IO
