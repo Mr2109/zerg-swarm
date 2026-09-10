@@ -7,6 +7,7 @@ use serde_json::Value;
 use std::sync::{Arc, Mutex};
 
 use crate::api;
+use rust_i18n::t;   // i18n（B2 抽取：对话界面文案走键）
 use egui_commonmark::CommonMarkViewer; // P4-23 消息 Markdown 渲染（借文档查看模式 egui_commonmark——Mr2109: 文档实现方式借用到对话）
 
 // P4-25 md 预处理（补 egui_commonmark 不支持的格式）：
@@ -508,10 +509,10 @@ impl ChatView {
             self.model_update_pending = Some((prev, api::chat_update_model_async(sid, model)));
         } else {
             // M12: 无活动会话 → 请求无目标（模型仅在内存）——明确提示，避免"以为已切换"
-            self.send_error = Some(format!(
-                "已选择模型 {}（新建会话时生效）",
-                short_model(&model)
-            ));
+            self.send_error = Some(t!(
+                "chat.model_selected",
+                model = short_model(&model)
+            ).to_string());
         }
     }
 
@@ -524,12 +525,12 @@ impl ChatView {
         // C2(2026-09-10): 生成中 + 纯文本 → steer（挂下一次工具边界，不打断）；带图不支持
         if self.streaming {
             if !self.pending_images.is_empty() {
-                self.send_error = Some("生成中暂不能发送图片——请等待本轮结束".to_string());
+                self.send_error = Some(t!("chat.err_busy_image").to_string());
                 return;
             }
             if let Some(sid) = self.active_session.clone() {
                 self.steer_pending = Some((content.clone(), api::chat_steer_async(sid, content.clone())));
-                self.send_error = Some("已引导（将在下一次工具调用时生效）".to_string());
+                self.send_error = Some(t!("chat.steered").to_string());
             } else {
                 self.queue.push(content.clone());
             }
@@ -543,7 +544,7 @@ impl ChatView {
             return;
         }
         let Some(sid) = self.active_session.clone() else {
-            self.send_error = Some("请先新建或选择会话".to_string());
+            self.send_error = Some(t!("chat.need_session").to_string());
             return;
         };
         // 立即显示用户消息（乐观更新）
@@ -588,7 +589,7 @@ impl ChatView {
     /// 选择图片（D3/P2——rfd 文件对话框 → base64 data URL——多图追加）
     pub fn pick_image(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("图片", &["png", "jpg", "jpeg", "gif", "webp"])
+            .add_filter(t!("chat.filter_images").as_ref(), &["png", "jpg", "jpeg", "gif", "webp"])
             .pick_file()
         else {
             return;
@@ -605,8 +606,8 @@ impl ChatView {
             let name = path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or("图片")
-                .to_string();
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| t!("chat.image_default").to_string());
             let data_url = format!("data:image/{};base64,{}", ext, base64_std(&bytes));
             let _ = tx.send((data_url, name));
         });
@@ -620,7 +621,7 @@ impl ChatView {
             if let Some(b64) = paste_clipboard_png() {
                 let _ = tx.send((
                     format!("data:image/png;base64,{}", b64),
-                    "剪贴板图片".to_string(),
+                    t!("chat.clipboard_image").to_string(),
                 ));
             }
         });
@@ -645,9 +646,9 @@ impl ChatView {
         // M14(2026-09-10 审计): 停止后显式处理排队——延后 0.4s 续发（先让 abort 请求落地，避免与新轮竞态）
         if !self.queue.is_empty() {
             self.drain_at = Some(now_f64() + 0.4);
-            self.send_error = Some(format!("已停止生成（{} 条排队待续发）", self.queue.len()));
+            self.send_error = Some(t!("chat.stopped_queued", n = self.queue.len()).to_string());
         } else {
-            self.send_error = Some("已停止生成".to_string());
+            self.send_error = Some(t!("chat.stopped").to_string());
         }
         // 停止后重新拉会话（拿已生成的部分——后端已落库）
         if let Some(sid) = self.active_session.clone() {
@@ -669,10 +670,10 @@ impl ChatView {
         if !draft.trim().is_empty() {
             self.input = draft; // M23: 还原草稿（否则本轮结束静默吞掉用户半截输入）
         }
-        self.send_error = Some(format!(
-            "已续发排队消息（剩余 {} 条）",
-            self.queue.len()
-        ));
+        self.send_error = Some(t!(
+            "chat.drained",
+            n = self.queue.len()
+        ).to_string());
         true
     }
 
@@ -781,7 +782,7 @@ impl ChatView {
                     if self.pending_images.len() < 8 {
                         self.pending_images.push((data_url, name));
                     } else {
-                        self.send_error = Some("最多 8 张图片".to_string());
+                        self.send_error = Some(t!("chat.max_images").to_string());
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => self.image_rx = Some(rx),
@@ -832,7 +833,7 @@ impl ChatView {
                             }
                         }
                     }
-                    Err(e) => self.send_error = Some(format!("会话列表加载失败: {}", e))
+                    Err(e) => self.send_error = Some(t!("chat.err_sessions", err = e).to_string())
                 }
             } else {
                 self.sessions_pending = Some(p);
@@ -847,12 +848,12 @@ impl ChatView {
                         let running = v.get("turn_running").and_then(|x| x.as_bool()).unwrap_or(false);
                         if !running {
                             self.queue.push(text);
-                            self.send_error = Some(format!("未在生成中——已排队（{} 条）", self.queue.len()));
+                            self.send_error = Some(t!("chat.queued_not_generating", n = self.queue.len()).to_string());
                         }
                     }
                     Err(e) => {
                         self.queue.push(text);
-                        self.send_error = Some(format!("插话请求失败转为排队: {}", e));
+                        self.send_error = Some(t!("chat.err_steer_to_queue", err = e).to_string());
                     }
                 }
             } else {
@@ -875,7 +876,7 @@ impl ChatView {
                             self.send_reuse(uid, content);
                         }
                     }
-                    Err(e) => self.send_error = Some(format!("重生成失败: {}", e)),
+                    Err(e) => self.send_error = Some(t!("chat.err_regen", err = e).to_string()),
                 }
             } else {
                 self.regen_pending = Some(p);
@@ -887,7 +888,7 @@ impl ChatView {
         if let Some(p) = self.abort_pending.take() {
             let g = lock_recover(&p);
             if let Some(Err(e)) = g.as_ref() {
-                self.send_error = Some(format!("中断请求失败: {}", e));
+                self.send_error = Some(t!("chat.err_abort", err = e).to_string());
             }
         }
         if let Some(p) = pending {
@@ -909,7 +910,7 @@ impl ChatView {
                     }
                     Err(e) => {
                         // M08/M13(2026-09-10 审计): 原来 Err(_) => {} —— 失败后消息区永久空白且无提示
-                        self.send_error = Some(format!("会话内容加载失败: {}", e));
+                        self.send_error = Some(t!("chat.err_load_messages", err = e).to_string());
                         self.session_load_failed = true;
                     }
                 }
@@ -924,7 +925,7 @@ impl ChatView {
             if let Some(res) = done {
                 match res {
                     Ok(list) => self.models = list,
-                    Err(e) => self.send_error = Some(format!("模型列表加载失败: {}", e))
+                    Err(e) => self.send_error = Some(t!("chat.err_models", err = e).to_string())
                 }
             } else {
                 self.models_pending = Some(p);
@@ -938,7 +939,7 @@ impl ChatView {
                 if let Err(e) = res {
                     // M12(2026-09-10 审计): 失败回滚为旧模型（原来只提示，胶囊与后端不一致）
                     self.current_model = prev;
-                    self.send_error = Some(format!("模型切换失败（已回滚）: {}", e));
+                    self.send_error = Some(t!("chat.err_model_switch", err = e).to_string());
                 }
             } else {
                 self.model_update_pending = Some((prev, p));
@@ -949,8 +950,8 @@ impl ChatView {
         if let Some(pr) = cr {
             let done = lock_recover(&pr).clone();
             match done {
-                Some(Ok(_)) => self.send_error = Some("压缩冷却/硬熔断已重置".to_string()),
-                Some(Err(e)) => self.send_error = Some(format!("重置压缩熔断失败: {}", e)),
+                Some(Ok(_)) => self.send_error = Some(t!("chat.compact_reset_ok").to_string()),
+                Some(Err(e)) => self.send_error = Some(t!("chat.err_compact_reset", err = e).to_string()),
                 None => self.compact_reset_pending = Some(pr),
             }
         }
@@ -962,7 +963,7 @@ impl ChatView {
                 Some(Ok(v)) => {
                     self.pointer_text = v.get("text").and_then(|t| t.as_str()).map(|t| t.to_string());
                 }
-                Some(Err(e)) => self.send_error = Some(format!("取回被压缩原文失败: {}", e)),
+                Some(Err(e)) => self.send_error = Some(t!("chat.err_fetch_archived", err = e).to_string()),
                 None => self.pointer_pending = Some(p),
             }
         }
@@ -977,7 +978,7 @@ impl ChatView {
                             self.search_results = arr.clone();
                         }
                     }
-                    Err(e) => self.send_error = Some(format!("会话搜索失败: {}", e))
+                    Err(e) => self.send_error = Some(t!("chat.err_search", err = e).to_string())
                 }
             } else {
                 self.search_pending = Some(p);
@@ -991,9 +992,9 @@ impl ChatView {
                 match res {
                     Ok(v) => {
                         let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
-                        self.send_error = Some(format!("{} 已派单（任务 {}）", icon_text("rocket-launch"), id));
+                        self.send_error = Some(t!("chat.delegated", icon = icon_text("rocket-launch"), id = id).to_string());
                     }
-                    Err(e) => self.send_error = Some(format!("派单失败: {}", e)),
+                    Err(e) => self.send_error = Some(t!("chat.err_delegate", err = e).to_string()),
                 }
             } else {
                 self.delegate_pending = Some(p);
@@ -1011,7 +1012,7 @@ impl ChatView {
                             self.regen_pending = Some(api::chat_regenerate_async(sid));
                         }
                     }
-                    Err(e) => self.send_error = Some(format!("编辑失败: {}", e)),
+                    Err(e) => self.send_error = Some(t!("chat.err_edit", err = e).to_string()),
                 }
             } else {
                 self.edit_pending = Some(p);
@@ -1036,7 +1037,7 @@ impl ChatView {
         }
         // A09 备选（2026-09-10）：流式任务 panic 上报（任务已在后台 join——取走即清空，不重复报）
         if let Some(p) = api::take_stream_panic() {
-            self.send_error = Some(format!("流式任务异常结束: {}", p));
+            self.send_error = Some(t!("chat.err_stream_end", err = p).to_string());
         }
         // C3 流式发送轮询（生成中——每帧读 stream state）
         if self.streaming {
@@ -1078,7 +1079,7 @@ impl ChatView {
                         for t in undrained.clone() {
                             self.queue.push(t);
                         }
-                        self.send_error = Some(format!("插话未命中工具边界——已转入排队（{} 条）", self.queue.len()));
+                        self.send_error = Some(t!("chat.steer_queued", n = self.queue.len()).to_string());
                     }
                     // C1(2026-09-10): 队列自动续发（M14 抽成 drain_queue——stop() 复用）
                     // M04: 只有本会话的轮次结束才续发——否则排队消息会投到别的会话
@@ -1098,7 +1099,7 @@ impl ChatView {
                         self.renaming_id = None;
                         self.refresh_sessions();
                     }
-                    Err(e) => self.send_error = Some(format!("重命名失败: {}", e))
+                    Err(e) => self.send_error = Some(t!("chat.err_rename", err = e).to_string())
                 }
             } else {
                 self.rename_pending = Some(p);
@@ -1116,7 +1117,7 @@ impl ChatView {
                             self.refresh_sessions();
                         }
                     }
-                    Err(e) => self.send_error = Some(format!("新建会话失败: {}", e))
+                    Err(e) => self.send_error = Some(t!("chat.err_new_session", err = e).to_string())
                 }
             } else {
                 self.create_pending = Some(p);
@@ -1130,7 +1131,7 @@ impl ChatView {
             let done = lock_recover(&p).clone();
             match done {
                 Some(Ok(_)) => self.refresh_sessions(),
-                Some(Err(e)) => self.send_error = Some(format!("置顶失败: {}", e)),
+                Some(Err(e)) => self.send_error = Some(t!("chat.err_pin", err = e).to_string()),
                 None => still.push(p),
             }
         }
@@ -1143,7 +1144,7 @@ impl ChatView {
             let done = lock_recover(&p).clone();
             match done {
                 Some(Ok(_)) => self.refresh_sessions(),
-                Some(Err(e)) => self.send_error = Some(format!("归档失败: {}", e)),
+                Some(Err(e)) => self.send_error = Some(t!("chat.err_archive", err = e).to_string()),
                 None => still.push(p),
             }
         }
@@ -1155,8 +1156,8 @@ impl ChatView {
             if let Some(res) = done {
                 match res {
                     Ok(true) => self.refresh_sessions(),
-                    Ok(false) => self.send_error = Some("删除会话失败（后端未确认）".to_string()),
-                    Err(e) => self.send_error = Some(format!("删除会话失败: {}", e)),
+                    Ok(false) => self.send_error = Some(t!("chat.err_delete_unconfirmed").to_string()),
+                    Err(e) => self.send_error = Some(t!("chat.err_delete", err = e).to_string()),
                 }
             } else {
                 self.delete_pending = Some(p);
@@ -2428,15 +2429,15 @@ fn format_age(ts: f64, now_secs: i64) -> String {
     }
     let age = (now_secs - ts as i64).max(0);
     if age < 60 {
-        "刚刚".to_string()
+        t!("age.just_now").to_string()
     } else if age < 3600 {
-        format!("{}分", age / 60)
+        t!("age.minutes", n = age / 60).to_string()
     } else if age < 86400 {
-        format!("{}时", age / 3600)
+        t!("age.hours", n = age / 3600).to_string()
     } else if age < 86400 * 30 {
-        format!("{}天", age / 86400)
+        t!("age.days", n = age / 86400).to_string()
     } else {
-        format!("{}月", age / (86400 * 30))
+        t!("age.months", n = age / (86400 * 30)).to_string()
     }
 }
 
@@ -2567,17 +2568,17 @@ fn tool_calls_to_md(tc: &str) -> String {
                     while end > 0 && !result.is_char_boundary(end) {
                         end -= 1;
                     }
-                    format!("{}…（结果过长已截断——共 {} 字符）", &result[..end], result.len())
+                    t!("chat.truncated_result", head = &result[..end], total = result.len()).to_string()
                 } else {
                     result.to_string()
                 };
                 // 4 反引号围栏（结果含 3 反引号不会提前闭合——无需转义）
-                md.push_str(&format!("✅ 结果:\n````\n{}\n````\n\n", body));
+                md.push_str(&t!("chat.tool_result", body = body));
             }
         }
         if let Some(err) = call.get("error").and_then(|x| x.as_str()) {
             if !err.is_empty() {
-                md.push_str(&format!("❌ **错误:**\n````\n{}\n````\n\n", err));
+                md.push_str(&t!("chat.tool_error", err = err));
             }
         }
         if i + 1 < v.len() {
