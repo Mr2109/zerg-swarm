@@ -125,6 +125,10 @@ func main() {
 
 	// v2.5.7 对话模块（C1 存储 + C2 推理——借鉴 Hermes——Mr2109——顶部导航第一板块）
 	chatStore, chatErr := chat.OpenChatStore()
+	// 乙批（2026-09-10）：把对话库注入记忆工具接线（session_search 用）
+	if chatErr == nil && chatStore != nil {
+		chat.SetWireStore(chatStore)
+	}
 	if chatErr != nil {
 		fmt.Printf("⚠️  对话模块初始化失败: %v（继续启动——无对话功能）\n", chatErr)
 	} else {

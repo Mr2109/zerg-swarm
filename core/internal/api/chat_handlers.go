@@ -469,7 +469,10 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	if progRT != nil {
 		progHooks = loopcore.Hooks{IsHidden: progRT.IsHidden, RecordOutcome: progRT.RecordOutcome, SearchStreak: progRT.SearchStreak}
 	}
-	sysPrompt := chatSystemPrompt + fmt.Sprintf("\n\n# 你的身份\n- 你当前运行在模型 %s（虫族本地模型集群）——Mr2109的对话助手——不要调查或质疑自己的身份。", se.Model) + chat.BuildHermesToolPrompt(progRT)
+	// 乙批（2026-09-10）：每轮开始清零记忆失败计数（连续 3 次失败后第 4 次返回终止态——不阻塞本轮回复）
+	chat.BeginMemoryTurn(id)
+	// 乙批（2026-09-10）：记忆块参与系统提示 volatile 层——取自会话冻结快照（会话内字节稳定，写盘不改已发出请求）
+	sysPrompt := chatSystemPrompt + fmt.Sprintf("\n\n# 你的身份\n- 你当前运行在模型 %s（虫族本地模型集群）——Mr2109的对话助手——不要调查或质疑自己的身份。", se.Model) + chat.BuildHermesToolPrompt(progRT) + chat.MemoryBlock(id)
 	gate := &chat.ChatGate{}
 
 	inferAdapter := func(ctx context.Context, model, sysP string, m []map[string]any,
@@ -749,7 +752,10 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	if progRT != nil {
 		progHooks = loopcore.Hooks{IsHidden: progRT.IsHidden, RecordOutcome: progRT.RecordOutcome, SearchStreak: progRT.SearchStreak}
 	}
-	sysPrompt := chatSystemPrompt + fmt.Sprintf("\n\n# 你的身份\n- 你当前运行在模型 %s（虫族本地模型集群）——Mr2109的对话助手——不要调查或质疑自己的身份。", se.Model) + chat.BuildHermesToolPrompt(progRT)
+	// 乙批（2026-09-10）：每轮开始清零记忆失败计数（连续 3 次失败后第 4 次返回终止态——不阻塞本轮回复）
+	chat.BeginMemoryTurn(id)
+	// 乙批（2026-09-10）：记忆块参与系统提示 volatile 层——取自会话冻结快照（会话内字节稳定，写盘不改已发出请求）
+	sysPrompt := chatSystemPrompt + fmt.Sprintf("\n\n# 你的身份\n- 你当前运行在模型 %s（虫族本地模型集群）——Mr2109的对话助手——不要调查或质疑自己的身份。", se.Model) + chat.BuildHermesToolPrompt(progRT) + chat.MemoryBlock(id)
 	gate := &chat.ChatGate{}
 	// P4-46 Hermes 模式: 不带 tools 字段（内核 Deps.Tools=nil——模板 XML 分支不渲染——模型输出 <tool_call>JSON</tool_call>）
 
