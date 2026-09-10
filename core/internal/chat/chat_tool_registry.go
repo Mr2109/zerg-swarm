@@ -207,6 +207,35 @@ var chatToolMetaByName = func() map[string]ChatToolMeta {
 	return m
 }()
 
+// CategoryEN — 类别英文别名（多语言 D1·缺陷 3——2026-09-11）。
+// 背景：注册中心关键词与类别原本只有中文，英文用户搜 "system"/"video" 一律落空。
+// 命中策略见 ChatToolSearch：类别英文别名 + 工具名分词（footage_search → footage/search），
+// 两者与中文关键词同权（耦合铁律：描述与索引同版本发布）。
+var CategoryEN = map[string][]string{
+	"文件与代码":  {"file", "code", "files", "text"},
+	"知识库":    {"knowledge", "kb", "doc", "document", "docs"},
+	"网络与调研":  {"web", "network", "research", "internet", "search"},
+	"系统管理":   {"system", "admin", "management"},
+	"系统":     {"system", "admin"},
+	"虫族系统管理": {"system", "zerg", "admin"},
+	"影音与剪辑":  {"media", "video", "audio", "clip", "edit", "cut"},
+	"影音剪辑":   {"media", "video", "audio", "clip", "edit", "cut"},
+	"音乐下载":   {"music", "audio", "song", "download"},
+	"效率工具":   {"utility", "productivity", "tool", "convert", "calc"},
+	"多模态":    {"multimodal", "vision", "image", "ocr", "asr", "speech"},
+	"数据与存储":  {"data", "storage", "database", "db"},
+	"数据存储":   {"data", "storage", "database", "db"},
+	"任务与调度":  {"task", "job", "scheduler", "dispatch", "queue"},
+	"记忆":     {"memory", "remember", "recall"},
+	"GUI与预览": {"gui", "ui", "preview"},
+	"模型与部署":  {"model", "deploy", "llm"},
+}
+
+// CategoryENOf — 取类别英文别名（未登记类别返回 nil）
+func CategoryENOf(category string) []string {
+	return CategoryEN[category]
+}
+
 // L0ToolNames — 常驻工具名集合（主提示只出这些——小模型决策负担 12 选 1）
 var L0ToolNames = func() map[string]bool {
 	m := make(map[string]bool)
@@ -255,16 +284,54 @@ func ChatToolSearch(query string, have map[string]bool, maxReturn int) []string 
 			seen[meta.Name] = true
 			continue
 		}
-		// 工具名匹配
-		if strings.Contains(strings.ToLower(meta.Name), q) {
+		// 多语言 D1（缺陷 3——2026-09-11）：英文同样可搜。
+		// ① 类别英文别名（CategoryEN）② 工具名分词（footage_search → footage / search）。
+		// 长度守卫：查询词与目标两侧都必须 ≥3 才做子串匹配（<3 只全等）——否则 "id" 会命中 "video"。
+		enHit := false
+		for _, en := range CategoryENOf(meta.Category) {
+			for _, w := range queryWords {
+				if en == w || (len(w) >= 3 && len(en) >= 3 && (strings.Contains(en, w) || strings.Contains(w, en))) {
+					enHit = true
+					break
+				}
+			}
+			if enHit {
+				break
+			}
+		}
+		if !enHit {
+			for _, tok := range strings.Split(strings.ToLower(meta.Name), "_") {
+				if tok == "" {
+					continue
+				}
+				for _, w := range queryWords {
+					if tok == w || (len(w) >= 3 && len(tok) >= 3 && (strings.Contains(tok, w) || strings.Contains(w, tok))) {
+						enHit = true
+						break
+					}
+				}
+				if enHit {
+					break
+				}
+			}
+		}
+		if enHit {
+			byCategory = append(byCategory, meta.Name)
+			seen[meta.Name] = true
+			continue
+		}
+		// 工具名匹配（短词只做全等——防 "id" 子串命中 validate/video 这类误召回；2026-09-11 由双语回归测试发现）
+		nameLower := strings.ToLower(meta.Name)
+		if nameLower == q || (len(q) >= 3 && strings.Contains(nameLower, q)) {
 			byKeyword = append(byKeyword, meta.Name)
 			seen[meta.Name] = true
 			continue
 		}
-		// 关键词匹配（任一查询词命中任一关键词）
+		// 关键词匹配（任一查询词命中任一关键词；短词只做全等——防 "id" 命中 video/validate）
 		for _, kw := range meta.Keywords {
+			kwLower := strings.ToLower(kw)
 			for _, w := range queryWords {
-				if strings.Contains(kw, w) || strings.Contains(w, kw) {
+				if kwLower == w || (len(w) >= 3 && (strings.Contains(kwLower, w) || strings.Contains(w, kwLower))) {
 					byKeyword = append(byKeyword, meta.Name)
 					seen[meta.Name] = true
 					break

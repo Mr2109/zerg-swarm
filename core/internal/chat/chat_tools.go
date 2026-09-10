@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
 )
 
 // 工具循环上限（防失控——对话是交流——不是任务）
@@ -127,11 +128,11 @@ func BuildToolSearchParam() map[string]any {
 		"type": "function",
 		"function": map[string]any{
 			"name":        "tool_search",
-			"description": "搜索发现更多工具（deferred 按需加载）。【什么时候用】当前工具列表没有合适工具时——如查系统状态搜\"系统\"、查影音搜\"剪辑\"、查音乐搜\"音乐\"、查效率搜\"计算\"。发现后直接用工具名调用。",
+			"description": "搜索发现更多工具（按需加载）。当前工具列表没有合适工具时用——如 查系统状态搜\"系统\"/system、查影音搜\"剪辑\"/video、查音乐搜\"音乐\"/music、查效率搜\"计算\"/calc。发现后直接用工具名调用。",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"query": map[string]any{"type": "string", "description": "搜索词（中文——如 系统/剪辑/音乐/知识库/效率）"},
+					"query": map[string]any{"type": "string", "description": "搜索词（中文或英文——如 系统/system、剪辑/video、音乐/music、知识库/knowledge）"},
 				},
 				"required": []string{"query"},
 			},
@@ -181,7 +182,7 @@ func BuildHermesToolPrompt(rt *ToolRuntime) string {
 			Desc     string
 			Props    map[string]any
 			Required []string
-		}{"tool_search", "搜索发现工具（参数: query——中文描述需求——如 搜\"系统\"查状态/搜\"文件\"查文件操作/搜\"端口\"查服务——发现后调用——成功使用的工具会自动加入下方常驻列表）", map[string]any{"query": map[string]any{"type": "string", "description": "中文描述你需要的工具能力"}}, []string{"query"}})
+		}{"tool_search", "搜索发现工具（query 描述需求，中英均可——如 搜\"系统\"/system 查状态、搜\"文件\"/file 查文件操作、搜\"端口\"/port 查服务；发现后调用，成功使用的工具自动加入下方常驻列表）", map[string]any{"query": map[string]any{"type": "string", "description": "描述你需要的工具能力（中文或英文）"}}, []string{"query"}})
 		for _, name := range rt.Resident() {
 			if d := residentToolDesc(name); d != "" {
 				res = append(res, struct {
@@ -219,15 +220,16 @@ func BuildHermesToolPrompt(rt *ToolRuntime) string {
 	b.WriteString("<tools>\n" + string(schemaJSON) + "\n</tools>\n\n")
 	b.WriteString("每次函数调用输出一个 JSON 对象（函数名+参数）——包在 <tool_call></tool_call> XML 标签内:\n")
 	b.WriteString("{" + callSchema + "}\n")
-	b.WriteString("格式（name 与 arguments 必填——arguments 内参数按工具 schema 必填——不能为空）:\n")
+	b.WriteString("格式（name/arguments 必填，arguments 内参数按 schema 必填、不可为空）:\n")
 	b.WriteString("<tool_call>\n{\"name\": \"工具名\", \"arguments\": {\"参数名\": \"参数值\"}}\n</tool_call>\n\n")
 	b.WriteString("工具结果会以 <tool_response> 标签回传。\n")
+	b.WriteString(ffp.Conventions + "\n")
 	if rt != nil {
-		b.WriteString("【渐进式工具】上方常驻列表外没有你要的工具能力时——先 tool_search 搜索（中文描述需求——如查系统状态搜\"系统\"——查影音搜\"剪辑\"——查端口/服务搜\"端口\"——查文件操作搜\"文件\"——查知识库搜\"知识库\"——查网络搜\"网络\"）。成功使用某工具后——它会自动加入上方常驻列表（本对话后续无需再搜）。同一工具不要反复搜索——工具已列出就直接调用。\n")
+		b.WriteString("【渐进式工具】上方常驻列表外没有你要的工具能力时，先 tool_search 搜索（中英均可，如 \"系统\"/system、\"剪辑\"/video、\"端口\"/port、\"文件\"/file、\"知识库\"/knowledge）。工具成功使用后自动加入常驻列表（本对话无需再搜）；已列出的工具直接调用，勿反复搜索。\n")
 	}
-	b.WriteString("【重要——专用工具优先】系统状态/任务队列/集群/模型/素材库/音乐下载/文件统计/字幕/OCR 等——都有专用工具——先 tool_search 搜索（如搜 \"系统\"/\"任务\"/\"素材\"/\"音乐\"/\"统计\"）——【tool_search 发现的工具已加入你的可用工具列表——与上方 <tools> 内工具同等地位——不要怀疑——直接用工具名调用】。不要用 bash 硬做专用工具能做的事（如文件统计用 file_count——素材查询用 footage_search）。\n")
+	b.WriteString("【专用工具优先】系统状态/任务队列/集群/模型/素材库/音乐下载/文件统计/字幕/OCR 等都有专用工具，先 tool_search 搜索（如 \"系统\"/\"任务\"/\"素材\"/\"音乐\"/\"统计\"）——搜到的工具与上方 <tools> 同等可用，直接用工具名调用。不要用 bash 硬做专用工具的事（如文件统计用 file_count、素材查询用 footage_search）。\n")
 	b.WriteString("调用工具时不要解释——直接输出 <tool_call>。\n")
-	b.WriteString("【工具帮助】不确定工具的参数/用法时——给该工具加 help:true（如 {\"help\":true}）——返回该工具详细文档（参数示例/变更记录）——看完再调用。不要反复搜索同一关键词——工具已列出就直接调用。\n")
+	b.WriteString("【工具帮助】不确定参数/用法时给该工具加 help:true（如 {\"help\":true}），返回详细文档（参数示例/变更记录）后再调用。\n")
 	return b.String()
 }
 
