@@ -847,6 +847,30 @@ pub fn chat_update_model_async(session_id: String, model: String) -> SharedResul
     out
 }
 
+/// 服务端中断（批次B 2026-09-10——POST /api/chat/sessions/{id}/abort）
+/// 语义: 取消运行中的轮次——已流出部分由后端落库（"（已中断）"）
+pub fn chat_abort_async(session_id: String) -> SharedResult<Value> {
+    let out: SharedResult<Value> = Arc::new(Mutex::new(None));
+    let out2 = out.clone();
+    runtime().spawn(async move {
+        let client = reqwest::Client::new();
+        let url = format!("{}/api/chat/sessions/{}/abort", API_BASE, session_id);
+        let resp = client
+            .post(&url)
+            .header("X-Auth-Token", API_TOKEN)
+            .send()
+            .await;
+        match resp {
+            Ok(r) => match r.json::<Value>().await {
+                Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
+                Err(e) => *out2.lock().unwrap() = Some(Err(format!("解析失败: {}", e))),
+            },
+            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+        }
+    });
+    out
+}
+
 /// 会话搜索（C6——GET /api/chat/search?q=）
 pub fn chat_search_async(q: String) -> SharedResult<Value> {
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
