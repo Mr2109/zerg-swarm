@@ -220,6 +220,7 @@ pub struct ChatView {
     model_update_pending: Option<api::SharedResult<Value>>,
     // C5 思考折叠（消息 id → 展开）
     thinking_open: std::collections::HashSet<i64>,
+    tools_open: std::collections::HashSet<i64>, // 2026-09-10: 工具调用独立折叠（与思考分开）
     // C6 会话搜索
     search_query: String,
     search_results: Vec<Value>,
@@ -311,6 +312,7 @@ impl ChatView {
             models_pending: None,
             model_update_pending: None,
             thinking_open: std::collections::HashSet::new(),
+            tools_open: std::collections::HashSet::new(),
             search_query: String::new(),
             search_results: Vec::new(),
             search_pending: None,
@@ -1255,6 +1257,7 @@ impl ChatView {
                 let editing_id = &mut self.editing_id;
                 let editing_content = &mut self.editing_content;
                 let thinking_open = &mut self.thinking_open;
+                let tools_open = &mut self.tools_open;
                 let speaking_id = &mut self.speaking_id;
                 // 2026-09-10 修复"无法滚到最底"：虚拟列表高度缓存与真实内容不一致
                 // （硬换行后消息变高、流式增长 → 估算高度偏小 → ScrollArea 内容高 < 实际 → 底部不可达）
@@ -1279,6 +1282,7 @@ impl ChatView {
                         editing_id,
                         editing_content,
                         thinking_open,
+                        tools_open,
                         speaking_id,
                         &mut self.reactions,
                         &mut self.reacting_id,
@@ -1766,6 +1770,7 @@ impl ChatView {
         editing_id: &mut Option<i64>,
         editing_content: &mut String,
         thinking_open: &mut std::collections::HashSet<i64>,
+        tools_open: &mut std::collections::HashSet<i64>,
         speaking_id: &mut Option<i64>,
         reactions: &mut std::collections::HashMap<i64, String>,
         reacting_id: &mut Option<i64>,
@@ -1853,14 +1858,14 @@ impl ChatView {
                             });
                     }
                 }
-                // 工具调用轨迹（C4b——与思考共用折叠状态）
+                // 工具调用轨迹（C4b——2026-09-10: 独立折叠状态 tools_open，点思考只开思考、点工具只开工具）
                 if let Some(tc) = m.get("tool_calls").and_then(|t| t.as_str()) {
                     if !tc.is_empty() && tc != "null" { // P4-31 无工具调用不显示（后端 NULL 序列化成字符串 "null"）
-                        let topen = thinking_open.contains(&msg_id);
+                        let topen = tools_open.contains(&msg_id);
                         let tlabel = if topen {
                             format!("{} 工具调用（点击收起）", icon_text("wrench")).to_string()
                         } else {
-                            format!("{} 工具调用…", icon_text("wrench")).to_string()
+                            format!("{} 工具调用（点击展开）", icon_text("wrench")).to_string()
                         };
                         let tresp = egui::Frame::new()
                             .fill(ui.visuals().extreme_bg_color)
@@ -1873,9 +1878,9 @@ impl ChatView {
                             .interact(egui::Sense::click());
                         if tresp.clicked() {
                             if topen {
-                                thinking_open.remove(&msg_id);
+                                tools_open.remove(&msg_id);
                             } else {
-                                thinking_open.insert(msg_id);
+                                tools_open.insert(msg_id);
                             }
                         }
                         if topen {
