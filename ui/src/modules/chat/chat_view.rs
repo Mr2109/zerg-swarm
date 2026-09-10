@@ -144,6 +144,7 @@ pub struct ChatView {
     sessions_pending: Option<api::SharedResult<Vec<Value>>>,
     session_pending: Option<api::SharedResult<Value>>,
     abort_pending: Option<api::SharedResult<Value>>, // 批次B: 服务端中断请求（结果忽略——轮询消费）
+    regen_pending: Option<api::SharedResult<Value>>, // C3: 重生成请求（返回 uid+content → 重跑）
     create_pending: Option<api::SharedResult<Value>>,
     // C3 流式发送（生成中状态）
     stream: Option<api::SharedChatStream>,
@@ -192,6 +193,9 @@ pub struct ChatView {
     history_idx: Option<usize>,
     // P1 草稿持久化（Hermes 借鉴——会话级草稿——切换不丢）
     drafts: std::collections::HashMap<String, String>,
+    drafts_saved_at: f64,          // C4(2026-09-10): 草稿落盘节流
+    queue: Vec<String>,            // C1(2026-09-10): 生成中排队消息（流结束自动发）
+    steer_pending: Option<(String, api::SharedResult<Value>)>, // C2: 插话回执（文本+请求）
     // P1 斜杠命令菜单
     slash_open: bool,
     // P2 多图（Vec<(dataURL, name)>——Hermes 多附件借鉴）
@@ -233,6 +237,7 @@ impl ChatView {
             sessions_pending: None,
             session_pending: None,
             abort_pending: None,
+            regen_pending: None,
             create_pending: None,
             stream: None,
             streaming: false,
@@ -270,7 +275,10 @@ impl ChatView {
             input_history: Vec::new(),
             composer_focus: false,
             history_idx: None,
-            drafts: std::collections::HashMap::new(),
+            drafts: Self::load_drafts(),
+            drafts_saved_at: 0.0,
+            queue: Vec::new(),
+            steer_pending: None,
             slash_open: false,
             pending_images: Vec::new(),
             reactions: std::collections::HashMap::new(),
@@ -329,7 +337,28 @@ impl ChatView {
     /// 发送消息（C3 流式——乐观显示 user + 流式接收 assistant）
     pub fn send(&mut self) {
         let content = self.input.trim().to_string();
-        if content.is_empty() || self.streaming {
+        if content.is_empty() {
+            return;
+        }
+        // C2(2026-09-10): 生成中 + 纯文本 → steer（挂下一次工具边界，不打断）；带图不支持
+        if self.streaming {
+            if !self.pending_images.is_empty() {
+                self.send_error = Some("生成中暂不能发送图片——请等待本轮结束".to_string());
+                return;
+            }
+            if let Some(sid) = self.active_session.clone() {
+                self.steer_pending = Some((content.clone(), api::chat_steer_async(sid, content.clone())));
+                self.send_error = Some("已引导（将在下一次工具调用时生效）".to_string());
+            } else {
+                self.queue.push(content.clone());
+            }
+            if self.input_history.last() != Some(&content) {
+                self.input_history.push(content);
+                if self.input_history.len() > 50 {
+                    self.input_history.remove(0);
+                }
+            }
+            self.input.clear();
             return;
         }
         let Some(sid) = self.active_session.clone() else {
@@ -369,7 +398,7 @@ impl ChatView {
             None
         };
         self.pending_images.clear();
-        self.stream = Some(api::chat_send_stream_async(sid, content, img_single, imgs));
+        self.stream = Some(api::chat_send_stream_async(sid, content, img_single, imgs, None));
         self.stream_started = now_f64(); // P4-35 等待计时起点
         self.stream_started = now_f64();
     }
@@ -417,8 +446,60 @@ impl ChatView {
         }
     }
 
+    /// C3(2026-09-10): 重跑既有 user 消息（重生成——服务端已软删其后消息）
+    fn send_reuse(&mut self, uid: i64, content: String) {
+        let Some(sid) = self.active_session.clone() else {
+            return;
+        };
+        if self.streaming {
+            return;
+        }
+        // 本地乐观: 移除尾部 assistant（后端已软删）
+        if let Some(last) = self.messages.last() {
+            if last.get("role").and_then(|r| r.as_str()) == Some("assistant") {
+                self.messages.pop();
+            }
+        }
+        self.streaming = true;
+        self.stream_content.clear();
+        self.stream_reasoning.clear();
+        self.send_error = None;
+        self.stream = Some(api::chat_send_stream_async(
+            sid, content, None, Vec::new(), Some(uid),
+        ));
+        self.stream_started = now_f64();
+    }
+
+    /// C4(2026-09-10): 草稿落盘/读取（~/.zerg-ui-drafts.json——切会话/重启不丢）
+    fn drafts_path() -> std::path::PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        std::path::PathBuf::from(home).join(".zerg-ui-drafts.json")
+    }
+    fn save_drafts(&self) {
+        if let Ok(s) = serde_json::to_string(&self.drafts) {
+            let _ = std::fs::write(Self::drafts_path(), s);
+        }
+    }
+    fn load_drafts() -> std::collections::HashMap<String, String> {
+        std::fs::read_to_string(Self::drafts_path())
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
     /// 每帧轮询异步结果
     pub fn poll(&mut self) {
+        // C4(2026-09-10): 草稿持久化（3s 节流落盘 ~/.zerg-ui-drafts.json）
+        if let Some(sid) = self.active_session.clone() {
+            if self.drafts.get(&sid) != Some(&self.input) {
+                self.drafts.insert(sid, self.input.clone());
+            }
+            let now = now_f64();
+            if now - self.drafts_saved_at > 3.0 {
+                self.drafts_saved_at = now;
+                self.save_drafts();
+            }
+        }
         // 会话列表
         let pending = self.sessions_pending.take();
         if let Some(p) = pending {
@@ -442,6 +523,49 @@ impl ChatView {
                 }
             } else {
                 self.sessions_pending = Some(p);
+            }
+        }
+        // C2: 插话回执（turn_running=false → 转本地队列，字不丢）
+        if let Some((text, p)) = self.steer_pending.take() {
+            let done = p.lock().unwrap().clone();
+            if let Some(res) = done {
+                match res {
+                    Ok(v) => {
+                        let running = v.get("turn_running").and_then(|x| x.as_bool()).unwrap_or(false);
+                        if !running {
+                            self.queue.push(text);
+                            self.send_error = Some(format!("未在生成中——已排队（{} 条）", self.queue.len()));
+                        }
+                    }
+                    Err(e) => {
+                        self.queue.push(text);
+                        self.send_error = Some(format!("插话请求失败转为排队: {}", e));
+                    }
+                }
+            } else {
+                self.steer_pending = Some((text, p));
+            }
+        }
+        // C3: 重生成结果消费（uid+content → 复用 user 消息重跑）
+        if let Some(p) = self.regen_pending.take() {
+            let done = p.lock().unwrap().clone();
+            if let Some(res) = done {
+                match res {
+                    Ok(v) => {
+                        let uid = v.get("user_message_id").and_then(|x| x.as_i64()).unwrap_or(0);
+                        let content = v
+                            .get("content")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if uid > 0 && !content.is_empty() {
+                            self.send_reuse(uid, content);
+                        }
+                    }
+                    Err(e) => self.send_error = Some(format!("重生成失败: {}", e)),
+                }
+            } else {
+                self.regen_pending = Some(p);
             }
         }
         // 会话详情
@@ -541,8 +665,9 @@ impl ChatView {
             if let Some(res) = done {
                 match res {
                     Ok(_) => {
+                        // C3: 编辑成功 → 重生成重跑（复用末条 user 消息）
                         if let Some(sid) = self.active_session.clone() {
-                            self.session_pending = Some(api::fetch_chat_session_async(sid));
+                            self.regen_pending = Some(api::chat_regenerate_async(sid));
                         }
                     }
                     Err(e) => self.send_error = Some(format!("编辑失败: {}", e)),
@@ -565,12 +690,26 @@ impl ChatView {
                     self.send_error = Some(e);
                 }
                 if st.done {
+                    let undrained = st.steer_undrained.clone();
                     drop(st);
                     self.stream = None;
                     self.streaming = false;
                     // 流结束——重拉会话（拿完整消息 + 标题）
                     if let Some(sid) = self.active_session.clone() {
                         self.session_pending = Some(api::fetch_chat_session_async(sid));
+                    }
+                    // C2: 未命中工具边界的插话 → 交还并入队（字不丢）
+                    if !undrained.is_empty() {
+                        for t in undrained.clone() {
+                            self.queue.push(t);
+                        }
+                        self.send_error = Some(format!("插话未命中工具边界——已转入排队（{} 条）", self.queue.len()));
+                    }
+                    // C1(2026-09-10): 队列自动续发（先发后删——Hermes drain 语义）
+                    if !self.queue.is_empty() {
+                        let next = self.queue.remove(0);
+                        self.input = next;
+                        self.send();
                     }
                 }
             }
@@ -1131,9 +1270,11 @@ impl ChatView {
                 MsgAction::Copy(text) => {
                     ui.ctx().copy_text(text);
                 }
-                MsgAction::Retry(text) => {
-                    self.input = text;
-                    self.send();
+                MsgAction::Retry(_text) => {
+                    // C3: 重试 = 真重生成（软删末条回复重跑——不再追加重复 user 消息）
+                    if let Some(sid) = self.active_session.clone() {
+                        self.regen_pending = Some(api::chat_regenerate_async(sid));
+                    }
                 }
                 MsgAction::Delegate(text) => {
                     let model = self.current_model.clone();
@@ -1157,6 +1298,25 @@ impl ChatView {
                 }
                 if let Some(i) = remove {
                     self.pending_images.remove(i);
+                }
+            });
+        }
+        // C1(2026-09-10): 排队消息 chips（生成中入队——点击移除）
+        if !self.queue.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.weak(egui::RichText::new(format!("⏳ 排队 {} 条:", self.queue.len())).size(11.0));
+                let mut remove: Option<usize> = None;
+                for (i, q) in self.queue.iter().enumerate() {
+                    if ui
+                        .small_button(format!("{}. {}", i + 1, truncate(q, 14)))
+                        .on_hover_text(q)
+                        .clicked()
+                    {
+                        remove = Some(i);
+                    }
+                }
+                if let Some(i) = remove {
+                    self.queue.remove(i);
                 }
             });
         }
@@ -1221,7 +1381,8 @@ impl ChatView {
             if save_edit {
                 let c = self.editing_content.trim().to_string();
                 if !c.is_empty() {
-                    self.edit_pending = Some(api::chat_edit_message_async(mid, c));
+                    // C3: 编辑即截断（软删其后消息）——成功后由 poll 触发重生成重跑
+                    self.edit_pending = Some(api::chat_edit_message_async(mid, c, true));
                     self.editing_id = None;
                     self.editing_content.clear();
                 }
