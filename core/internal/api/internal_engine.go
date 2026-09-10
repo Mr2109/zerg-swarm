@@ -4,28 +4,25 @@
 // 环境门控 ZERG_INTERNAL_TASKS（UI 不可见）；且 stopped 不持久化 → 重启必漂移。
 //
 // 本文件建立**唯一真相源**：
-//
-//	GET /api/internal-tasks/state → {enabled, running, stopped, since, last_tick, next_tick, reason, updated_at}
-//	变更接口（start/stop/mode/interval）响应体统一回带 state（契约：变更即回状态，UI 无需二次往返）
-//	持久化 ~/.zerg/state/internal_engine.json（重启恢复用户意图；路径遵循 statepath 规则）
+//   GET /api/internal-tasks/state → {enabled, running, stopped, since, last_tick, next_tick, reason, updated_at}
+//   变更接口（start/stop/mode/interval）响应体统一回带 state（契约：变更即回状态，UI 无需二次往返）
+//   持久化 ~/.zerg/state/internal_engine.json（重启恢复用户意图；路径遵循 statepath 规则）
 //
 // 语义澄清：
-//
-//	enabled   = 环境门控是否放行（ZERG_INTERNAL_TASKS=1）——环境事实，不可由 UI 改变
-//	stopped   = 用户意图（按钮）——持久化，重启保留
-//	running   = 引擎此刻真的在跑 = enabled && !stopped
-//	last_tick = 心跳。running=true 但心跳停滞 → UI 显示"异常"，不再谎报"运行中"
+//   enabled   = 环境门控是否放行（ZERG_INTERNAL_TASKS=1）——环境事实，不可由 UI 改变
+//   stopped   = 用户意图（按钮）——持久化，重启保留
+//   running   = 引擎此刻真的在跑 = enabled && !stopped
+//   last_tick = 心跳。running=true 但心跳停滞 → UI 显示"异常"，不再谎报"运行中"
 package api
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
-	"github.com/Mr2109/zerg-swarm/core/internal/compat"
-	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
+	"zerg/core/internal/statepath"
 )
 
 // EngineStateView 引擎状态快照（JSON 契约——UI 与外部 agent 共用）
@@ -56,7 +53,6 @@ var (
 	engineFile string
 )
 
-// engineStatePath —— 路径解析器（与 compat 清单的 internal_engine 条目同源；排障/测试用）。
 func engineStatePath() string {
 	if engineFile == "" {
 		engineFile = statepath.File("internal_engine.json")
@@ -65,23 +61,12 @@ func engineStatePath() string {
 }
 
 // InitInternalEngine 启动恢复（main.go 调用——早于 SetEngineEnabled）
-// 恢复用户意图（stopped/since）；文件不存在=默认未停止（兼容现状）。
-//
-// B7 / G10：读取走 compat 兼容层——旧版（无 schema）文件**原地**迁移一次（备份 + 回读校验），
-// 比本机认知更新的 schema 则**只读降级**（不猜、不回写）并提示升级本机二进制。
+// 恢复用户意图（stopped/since）；文件不存在=默认未停止（兼容现状）
 func InitInternalEngine() {
 	engineMu.Lock()
 	defer engineMu.Unlock()
-	data, out, err := compat.Read("internal_engine", compat.DefaultConfig())
-	switch {
-	case err != nil:
-		log.Printf("⚠️ [internal_engine] 状态文件不可用（沿用默认：未停止；不阻断启动）：%v", err)
-	case out == compat.OutcomeFuture:
-		log.Printf("⚠️ [internal_engine] 状态文件 schema 高于本机二进制认知——本次只读降级（已识别字段照常恢复），请升级本机二进制")
-	case out == compat.OutcomeMigrated:
-		log.Printf("✅ [internal_engine] 旧版状态文件已迁移到 schema %d", 1)
-	}
-	if len(data) > 0 {
+	data, err := os.ReadFile(engineStatePath())
+	if err == nil {
 		var raw engineState
 		if json.Unmarshal(data, &raw) == nil {
 			engine.Stopped = raw.Stopped
@@ -94,12 +79,16 @@ func InitInternalEngine() {
 	engine.UpdatedAt = time.Now()
 }
 
-// saveEngineLocked 持久化（调用方持锁——经 compat 层写回，写时带 schema 版本号）。
-// 失败仅告警不阻断（状态持久化不该成为主控的失败点）。
+// saveEngineLocked 持久化（调用方持锁——目录不存在则创建；失败仅告警不阻断）
 func saveEngineLocked() {
-	if _, err := compat.Write("internal_engine", engine, compat.DefaultConfig()); err != nil {
-		log.Printf("⚠️ [internal_engine] 状态落盘失败（不阻断）：%v", err)
+	data, err := json.MarshalIndent(engine, "", "  ")
+	if err != nil {
+		return
 	}
+	if err := os.MkdirAll(statepath.Dir(), 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(engineStatePath(), data, 0o644)
 }
 
 // SetEngineEnabled 设置环境门控（main.go 启动时按 ZERG_INTERNAL_TASKS 调用）
