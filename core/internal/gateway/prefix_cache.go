@@ -581,6 +581,7 @@ type persistedPrefixCache struct {
 	Alerts          []PrefixCacheAlert        `json:"alerts"`
 	UnknownForms    int                       `json:"unknown_forms"`
 	UnknownLastKeys []string                  `json:"unknown_last_keys,omitempty"`
+	UnknownShapes   []string                  `json:"unknown_shapes,omitempty"` // 形态签名集（2026-09-11 补齐：计数持久化而形态集不持久化=半个闭环）
 }
 
 // load 从磁盘恢复窗口/基线/告警/未知形态统计。
@@ -635,6 +636,15 @@ func (t *prefixCacheTracker) load() {
 	}
 	t.unknownForms = pf.UnknownForms
 	t.unknownLastKeys = append([]string(nil), pf.UnknownLastKeys...)
+	if len(pf.UnknownShapes) > 0 {
+		t.unknownShapes = make(map[string]bool, len(pf.UnknownShapes))
+		for _, sig := range pf.UnknownShapes {
+			if len(t.unknownShapes) >= maxUnknownShapes {
+				break
+			}
+			t.unknownShapes[sig] = true
+		}
+	}
 	log.Printf("✅ [prefix_cache] 已从 %s 恢复 %d 个模型 / %d 条告警 / %d 次未知形态",
 		t.persistPath, len(models), len(t.alerts), t.unknownForms)
 }
@@ -651,6 +661,7 @@ func (t *prefixCacheTracker) saveLocked() {
 		Alerts:          t.alerts,
 		UnknownForms:    t.unknownForms,
 		UnknownLastKeys: t.unknownLastKeys,
+		UnknownShapes:   t.unknownShapeList(),
 	}
 	for name, st := range t.models {
 		h, m := windowTotals(st.samples)

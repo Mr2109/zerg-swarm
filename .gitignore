@@ -20,3 +20,8 @@ bin/zerg-core.old
 
 # 构建产物不入库(2026-09-08 政策)
 bin/
+
+# patch 残片不入库（2026-09-11 一致性审计：tools.go.orig/.rej 曾长期被跟踪）
+*.orig
+*.rej
+
