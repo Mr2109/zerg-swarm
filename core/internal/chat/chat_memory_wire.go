@@ -127,7 +127,8 @@ func strArg(m map[string]any, k string) string {
 
 // MemoryToolExecute — memory 工具执行器（返回结构化 JSON——对齐 Hermes 的应答形状）
 // 参数：action(add|replace|remove) / target(memory|user) / content? / old_text? /
-//       operations[]（批量原子）/ scope(global|agent) / agent_id? / source(user|model|tool|web)
+//
+//	operations[]（批量原子）/ scope(global|agent) / agent_id? / source(user|model|tool|web)
 func MemoryToolExecute(args map[string]any) (string, error) {
 	target := memory.Target("memory")
 	if t, ok := args["target"].(string); ok && t != "" {

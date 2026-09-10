@@ -95,7 +95,7 @@ type Store struct {
 	root string
 
 	mu       sync.Mutex
-	failures map[string]int // 会话键 → 本轮失败次数（2026-09-10：原为 store 级单计数）               // 每轮可修复失败计数(BeginTurn 清零;成功写入也清零)
+	failures map[string]int    // 会话键 → 本轮失败次数（2026-09-10：原为 store 级单计数）               // 每轮可修复失败计数(BeginTurn 清零;成功写入也清零)
 	frozen   map[string]string // sessionID+"\x00"+scope → 冻结块
 }
 
@@ -170,6 +170,7 @@ func (s *Store) Entries(scope string, t Target) ([]string, error) {
 // 失败分类:
 //   - 可修复失败(计入每轮上限):超预算 / 零匹配 / 匹配歧义 / 批量结构性错误 / 批量清空
 //   - 安全与基建拒绝(不计入):威胁命中 / 磁盘 drift / 文件不可读 / 参数非法
+//
 // Apply — 兼容入口（无会话键：计数归入默认键 ""）。新代码请用 ApplyFor。
 func (s *Store) Apply(scope string, t Target, ops []Op) Result {
 	return s.ApplyFor("", scope, t, ops)

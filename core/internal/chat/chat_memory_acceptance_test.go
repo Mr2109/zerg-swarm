@@ -260,4 +260,3 @@ func TestBatchB_SessionScopedFailureCounter(t *testing.T) {
 	}
 	t.Log("✓ 边界③: 失败计数按会话隔离——A 熔断不影响 B")
 }
-
