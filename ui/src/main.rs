@@ -7,7 +7,9 @@ mod app;
 mod modules; // v2.5.6 集装箱模块系统（Mr2109 2026-08-29——注册表+顶部导航）
 
 // 多国语言（rust-i18n——默认中文——locales/ 目录）
-rust_i18n::i18n!("locales", fallback = "zh-CN");
+// fallback 方向 = en（设计稿 §7-7 拍板 2026-09-11）：不支持的系统语言回落英文，
+// 中文键本就全覆盖，中文用户不会撞到 fallback；启动仍显式 set_locale（L2 改为跟随系统）。
+rust_i18n::i18n!("locales", fallback = "en");
 
 /// 搜索 macOS 26+ 动态字体包里的 PingFang（AssetsV2——路径随系统更新变）
 fn find_pingfang_assets() -> Option<String> {
