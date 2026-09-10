@@ -130,7 +130,7 @@ impl ModuleRegistry {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return, // 无文件=正常
             Err(e) => {
-                eprintln!("[modules] 读取外部模块配置失败 {}: {}", path.display(), e); // M33
+                eprintln!("[modules] failed to read the external module config {}: {}", path.display(), e); // M33
                 return;
             }
         };
@@ -141,7 +141,7 @@ impl ModuleRegistry {
         let cfg = match serde_json::from_str::<Config>(&s) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("[modules] 解析外部模块配置失败 {}: {}", path.display(), e); // M33
+                eprintln!("[modules] failed to parse the external module config {}: {}", path.display(), e); // M33
                 return;
             }
         };
@@ -174,7 +174,7 @@ impl ModuleRegistry {
         let dir = crate::api::ui_dir();
         // M33(2026-09-10 审计): 目录/写盘失败不再静默——用户禁用/启用选择重启即失效却无感知
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            eprintln!("[modules] 创建配置目录失败 {}: {}", dir.display(), e);
+            eprintln!("[modules] failed to create the config directory {}: {}", dir.display(), e);
             return;
         }
         let path = format!("{}/modules.json", dir.display());
@@ -187,10 +187,10 @@ impl ModuleRegistry {
         match serde_json::to_string(&enabled) {
             Ok(s) => {
                 if let Err(e) = std::fs::write(&path, s) {
-                    eprintln!("[modules] 保存模块状态失败 {}: {}", path, e); // M33
+                    eprintln!("[modules] failed to save the module state {}: {}", path, e); // M33
                 }
             }
-            Err(e) => eprintln!("[modules] 序列化模块状态失败: {}", e), // M33
+            Err(e) => eprintln!("[modules] failed to serialize the module state: {}", e), // M33
         }
     }
 
@@ -202,14 +202,14 @@ impl ModuleRegistry {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
             Err(e) => {
-                eprintln!("[modules] 读取模块状态失败 {}: {}", path.display(), e); // M33
+                eprintln!("[modules] failed to read the module state {}: {}", path.display(), e); // M33
                 return;
             }
         };
         let disabled: std::collections::BTreeMap<String, bool> = match serde_json::from_str(&s) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("[modules] 解析模块状态失败 {}: {}", path.display(), e); // M33
+                eprintln!("[modules] failed to parse the module state {}: {}", path.display(), e); // M33
                 return;
             }
         };
