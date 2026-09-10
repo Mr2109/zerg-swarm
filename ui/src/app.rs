@@ -62,6 +62,14 @@ pub struct ZergApp {
     // M3 Ferrite 重写编辑器（Mr2109 2026-08-29——替换 TextEdit——rope 缓冲）
     ferrite_editor: crate::modules::ferrite::MdEditor,
     ferrite_loaded: bool, // 是否已载入当前文件到编辑器（切文件重置）
+    // M06(2026-09-10 审计): 编辑器全量文本缓存——(epoch, text)。每帧 text() 是 Rope→String 全量克隆，
+    // 大文档直接拖垮帧率；按 cache_epoch 失效，仅在内容变更后重建。
+    ferrite_text_cache: Option<(u64, String)>,
+    // 2026-09-10 审计 APP-A02: 文档操作(save/delete/rename/mkdir/copy)结果回报——
+    // 先确认成功再改本地状态;失败红字提示且不动状态(reject-before-persist)
+    doc_op_result: api::SharedResult<()>,
+    doc_op_ctx: Option<(String, String)>, // (kind, path)——成功后据此改本地状态
+    doc_op_err: Option<String>,           // 失败提示(下次成功时清除)
     // F4 滚动同步（编辑→预览单向——防反馈环）
     preview_sync_line: usize,     // 上次同步的编辑滚动行
     preview_content_h: f32,       // 预览内容高度（上次渲染）
@@ -155,6 +163,10 @@ impl ZergApp {
             doc_edit_dirty: false,
             ferrite_editor: crate::modules::ferrite::MdEditor::new(),
             ferrite_loaded: false,
+            ferrite_text_cache: None,
+            doc_op_result: Arc::new(Mutex::new(None)),
+            doc_op_ctx: None,
+            doc_op_err: None,
             preview_sync_line: 0,
             preview_content_h: 0.0,
             preview_last_offset: 0.0,
@@ -237,6 +249,36 @@ impl ZergApp {
         // 收集在线结果
         if let Some(ok) = self.online_result.lock().unwrap().take() {
             self.online = ok;
+        }
+        // 文档操作结果(APP-A02 2026-09-10 审计)——成功才改本地状态;失败只提示、不改状态
+        if let Some(r) = self.doc_op_result.lock().unwrap().take() {
+            let ctx = self.doc_op_ctx.take();
+            match r {
+                Ok(()) => {
+                    if let Some((kind, path)) = ctx {
+                        match kind.as_str() {
+                            "del_dir" => {
+                                if self.doc_dir == path {
+                                    self.doc_dir = "00-总览".to_string();
+                                }
+                            }
+                            "del_file" => {
+                                if self.doc_file == path {
+                                    self.doc_file = String::new();
+                                    *self.doc_content.lock().unwrap() = None;
+                                }
+                            }
+                            "save" => {
+                                self.doc_edit_dirty = false;
+                                self.doc_edit_mode = false; // 保存成功才回预览
+                            }
+                            _ => {}
+                        }
+                    }
+                    self.doc_op_err = None;
+                }
+                Err(e) => self.doc_op_err = Some(e),
+            }
         }
         // 在线后拉任务（3s）
         if self.online && now - self.last_tasks > 3.0 {
@@ -481,11 +523,25 @@ impl ZergApp {
                         s == "queued" || s == "paused"
                     })
                     .collect();
+                // APP-A03（2026-09-10 审计）: 后端会产出 waiting_retry（环境故障挂起，机器恢复自动重派）
+                // 原实现三个分组都不含它 → 任务在界面凭空消失、右键不可达。补专门分组。
+                let waiting: Vec<_> = list
+                    .iter()
+                    .filter(|t| t.status.as_deref() == Some("waiting_retry"))
+                    .collect();
                 let done: Vec<_> = list
                     .iter()
                     .filter(|t| {
                         let s = t.status.as_deref().unwrap_or("");
                         s == "done" || s == "failed"
+                    })
+                    .collect();
+                // APP-A03: 其它未知状态兜底显示——任何状态都不许凭空消失
+                let others: Vec<_> = list
+                    .iter()
+                    .filter(|t| {
+                        let s = t.status.as_deref().unwrap_or("");
+                        !matches!(s, "running" | "queued" | "paused" | "done" | "failed" | "waiting_retry")
                     })
                     .collect();
                 // Mr2109: 执行完成组按完成时间降序（最新在最上面——固定不随刷新变）
@@ -530,6 +586,27 @@ impl ZergApp {
                             ui.weak(t!("none"));
                         }
                     });
+                let waiting_count = waiting.len();
+                egui::CollapsingHeader::new(format!("🔁 等待重试（{}）", waiting_count))
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        for t in &waiting {
+                            self.task_row(ui, t);
+                        }
+                        if waiting_count == 0 {
+                            ui.weak(t!("none"));
+                        }
+                    });
+                let others_count = others.len();
+                if others_count > 0 {
+                    egui::CollapsingHeader::new(format!("❔ 其它状态（{}）", others_count))
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            for t in &others {
+                                self.task_row(ui, t);
+                            }
+                        });
+                }
                 let done_count = done_main.len();
                 // Mr2109 2026-08-22: 执行完成任务按日期分组（上级=完成日期——一眼看哪天完成）
                 let mut by_date: std::collections::BTreeMap<String, Vec<&TaskInfo>> = Default::default();
@@ -582,6 +659,7 @@ impl ZergApp {
         let color = match status {
             "running" => egui::Color32::from_rgb(80, 180, 255),
             "queued" => egui::Color32::from_rgb(240, 200, 80),
+            "waiting_retry" => egui::Color32::from_rgb(255, 170, 60), // APP-A03: 等待重试(环境故障挂起)
             "done" => egui::Color32::from_rgb(80, 200, 120),
             "failed" => egui::Color32::from_rgb(220, 80, 80),
             _ => egui::Color32::GRAY,
@@ -955,6 +1033,20 @@ impl ZergApp {
     }
 
     /// 渲染主区（v2.5.6——集装箱注册表分发——Mr2109 2026-08-29）
+
+    /// M06(2026-09-10 审计): 取编辑器全量文本（带 epoch 缓存——避免每帧 Rope→String 克隆）
+    fn ferrite_text_cached(&mut self) -> String {
+        let epoch = self.ferrite_editor.epoch();
+        if let Some((e, t)) = &self.ferrite_text_cache {
+            if *e == epoch {
+                return t.clone();
+            }
+        }
+        let t = self.ferrite_editor.text();
+        self.ferrite_text_cache = Some((epoch, t.clone()));
+        t
+    }
+
     fn main_view(&mut self, ui: &mut egui::Ui) {
         match self.registry.active.as_str() {
             "chat" => {
@@ -1169,12 +1261,9 @@ impl ZergApp {
                                     }
                                     if ui.button(format!("{} 删除", icon_text("trash"))).clicked() {
                                         let path = dir.clone();
-                                        api::runtime().spawn(async move {
-                                            let _ = api::doc_op_blocking("delete", serde_json::json!({"path": path})).await;
-                                        });
-                                        if self.doc_dir == *dir {
-                                            self.doc_dir = "00-总览".to_string();
-                                        }
+                                        // APP-A02: 先确认成功再改本地状态(原实现丢结果 + 立即切目录)
+                                        self.doc_op_ctx = Some(("del_dir".to_string(), path.clone()));
+                                        self.doc_op_result = api::doc_op_async("delete", serde_json::json!({"path": path}));
                                         ui.close();
                                     }
                                     if ui.button(format!("{} 新建子目录", icon_text("folder-plus"))).clicked() {
@@ -1242,21 +1331,17 @@ impl ZergApp {
                                             // 目标 = 当前目录 + 源文件名（冲突加副本后缀）
                                             let fname_src = src.split('/').last().unwrap_or(&src).to_string();
                                             let target = format!("{}/{}", self.doc_dir, fname_src);
-                                            api::runtime().spawn(async move {
-                                                let _ = api::doc_op_blocking("copy", serde_json::json!({"from": src, "to": target})).await;
-                                            });
+                                            // APP-A02: 粘贴(复制)也走结果回报——失败可见
+                                            self.doc_op_ctx = Some(("copy".to_string(), String::new()));
+                                            self.doc_op_result = api::doc_op_async("copy", serde_json::json!({"from": src, "to": target}));
                                             ui.close();
                                         }
                                     }
                                     if ui.button(format!("{} 删除", icon_text("trash"))).clicked() {
                                         let path = f.to_string();
-                                        api::runtime().spawn(async move {
-                                            let _ = api::doc_op_blocking("delete", serde_json::json!({"path": path})).await;
-                                        });
-                                        if self.doc_file == f.as_str() {
-                                            self.doc_file = String::new();
-                                            *self.doc_content.lock().unwrap() = None;
-                                        }
+                                        // APP-A02: 成功才清空选中/内容
+                                        self.doc_op_ctx = Some(("del_file".to_string(), path.clone()));
+                                        self.doc_op_result = api::doc_op_async("delete", serde_json::json!({"path": path}));
                                         ui.close();
                                     }
                                 });
@@ -1306,22 +1391,28 @@ impl ZergApp {
                                         }
                                     }
                                 }
+                                // APP-A02: 文档操作失败红字提示（不改本地状态）
+                                let doc_err = self.doc_op_err.clone();
+                                if let Some(e) = doc_err {
+                                    ui.colored_label(
+                                        egui::Color32::from_rgb(230, 90, 90),
+                                        format!("⚠ {}", e.chars().take(80).collect::<String>()),
+                                    );
+                                }
                                 if self.doc_edit_dirty {
                                     if ui.button(format!("{} 保存", icon_text("floppy-disk"))).clicked() {
                                         // 保存——调 /api/docs/save（M3: 取 Ferrite 编辑器文本）
                                         let path = self.doc_file.clone();
-                                        let content = self.ferrite_editor.text();
-                                        let store = self.doc_content.clone();
-                                        api::runtime().spawn(async move {
-                                            let payload = serde_json::json!({"path": path, "content": content});
-                                            let _ = api::doc_op_blocking("save", payload).await;
-                                            // 保存后刷新内容显示
-                                            if let Some(c) = store.lock().unwrap().clone() {
-                                                // no-op——内容已在编辑缓冲
-                                            }
-                                        });
-                                        self.doc_edit_dirty = false;
-                                        self.doc_edit_mode = false; // 保存后回预览
+                                        // APP-A01 修复(2026-09-10): 编辑器从未载入(预览模式 AI 插入等)时，
+                                        // 绝不能用空/不完整缓冲覆盖整份文档——回落到当前文档内容
+                                        let content = if self.ferrite_loaded {
+                                            self.ferrite_editor.text()
+                                        } else {
+                                            self.doc_content.lock().unwrap().clone().unwrap_or_default()
+                                        };
+                                        // APP-A02: 保存成功才清 dirty/回预览；失败红字提示
+                                        self.doc_op_ctx = Some(("save".to_string(), path.clone()));
+                                        self.doc_op_result = api::doc_op_async("save", serde_json::json!({"path": path, "content": content}));
                                     }
                                 }
                                 // F5 AI 动力（Mr2109统一接口——网关 8082——虫族版编辑器本质特征）
@@ -1352,10 +1443,11 @@ impl ZergApp {
                                     if let Some(content) = self.doc_content.lock().unwrap().clone() {
                                         self.ferrite_editor.load(&content);
                                     }
+                                    self.ferrite_text_cache = None; // M06: 载入新内容 → 失效
                                     self.ferrite_loaded = true;
                                 }
                                 // F4 大纲条（标题横向——点击跳转）
-                                let edit_text = self.ferrite_editor.text();
+                                let edit_text = self.ferrite_text_cached(); // M06: 带缓存
                                 let toc_entries = crate::modules::ferrite::toc::parse_toc(&edit_text);
                                 if !toc_entries.is_empty() {
                                     c3_ui.horizontal(|ui| {
@@ -1424,7 +1516,7 @@ impl ZergApp {
                                                 .layout(egui::Layout::top_down(egui::Align::Min)),
                                         );
                                         p_ui.separator();
-                                        let preview_text = self.ferrite_editor.text();
+                                        let preview_text = self.ferrite_text_cached(); // M06: 带缓存
                                         // F4 滚动同步：编辑 scroll_line 变化 → 预览跟随（比例换算）
                                         let line_count = self.ferrite_editor.line_count().max(1);
                                         let editor_line = self.ferrite_editor.scroll_line();
@@ -1500,9 +1592,8 @@ impl ZergApp {
                                     // old=当前完整路径, new=父目录+v（目录）或 v（文件）
                                     let parent = current_path.rfind('/').map(|i| current_path[..i].to_string()).unwrap_or_default();
                                     let new_path = if parent.is_empty() { v.clone() } else { format!("{}/{}", parent, v) };
-                                    api::runtime().spawn(async move {
-                                        let _ = api::doc_op_blocking("rename", serde_json::json!({"old": current_path, "new": new_path})).await;
-                                    });
+                                    self.doc_op_ctx = Some(("rename".to_string(), String::new()));
+                                    self.doc_op_result = api::doc_op_async("rename", serde_json::json!({"old": current_path, "new": new_path}));
                                 } else if t.contains("新建目录") {
                                     let new_path = if current_path.ends_with('/') {
                                         format!("{}{}", current_path, v)
@@ -1511,9 +1602,8 @@ impl ZergApp {
                                     } else {
                                         format!("{}/{}", current_path, v)
                                     };
-                                    api::runtime().spawn(async move {
-                                        let _ = api::doc_op_blocking("mkdir", serde_json::json!({"dir": new_path})).await;
-                                    });
+                                    self.doc_op_ctx = Some(("mkdir".to_string(), String::new()));
+                                    self.doc_op_result = api::doc_op_async("mkdir", serde_json::json!({"dir": new_path}));
                                 }
                             }
                             close = true;

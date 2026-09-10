@@ -13,7 +13,12 @@ pub const AI_BASE: &str = "http://127.0.0.1:8082"; // F5 AI 动力（网关—�
 /// 结果是"主控离线"（系统 UI/URLSession 会自动绕过回环，故只有本进程中招）；此前靠 start-zerg-ui.sh 剥代理治标。
 /// 本 UI 的全部请求都指向回环（8580 主控 / 8082 网关），故一律 no_proxy —— 不再依赖启动脚本。
 pub fn http_client() -> reqwest::Client {
-    match reqwest::Client::builder().no_proxy().build() {
+    // A03（2026-09-10 审计）：连接超时 3s——服务器不可达时不再挂死 worker；**不设总超时**（流式生成可能数分钟）
+    match reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
         Ok(c) => c,
         // 兜底（构建失败极罕见：TLS 后端初始化异常）——宁可退回默认 client，也绝不递归调用自身
         // （2026-09-10 审计 A01 修正：原写法 unwrap_or_else(|_| http_client()) 会无限递归 → 栈溢出）
@@ -21,10 +26,46 @@ pub fn http_client() -> reqwest::Client {
     }
 }
 
+/// JSON 短请求 client（A03 2026-09-10）：连接 3s + 总 20s——轮询/列表/操作类，防单请求挂死拖垮 2 线程 runtime
+pub fn http_client_json() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .unwrap_or_else(|_| http_client())
+}
+
+/// AI 网关 client（A03 2026-09-10）：连接 3s + 总 120s——模型生成慢，20s 会误杀
+pub fn http_client_ai() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .unwrap_or_else(|_| http_client())
+}
+
+/// json_body（A04 2026-09-10 审计）：**先判 HTTP 状态再解析**——5xx/4xx 不再被当成"成功但空数据"
+async fn json_body(r: reqwest::Response) -> Result<Value, String> {
+    let status = r.status();
+    let text = r.text().await.unwrap_or_default();
+    if !status.is_success() {
+        if let Ok(v) = serde_json::from_str::<Value>(&text) {
+            if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
+                return Err(format!("HTTP {}: {}", status, e));
+            }
+        }
+        let brief: String = text.chars().take(200).collect();
+        return Err(format!("HTTP {}{}", status, if brief.is_empty() { String::new() } else { format!(": {}", brief) }));
+    }
+    serde_json::from_str::<Value>(&text).map_err(|e| format!("解析失败: {}", e))
+}
+
 /// F5 AI 调用（网关 8082 /v1/responses——OpenAI responses 格式）
 /// 解析 output 里的 output_text 文本（跳过 reasoning）
 pub async fn ai_prompt_blocking(model: &str, prompt: &str) -> Result<String, String> {
-    let client = http_client();
+    let client = http_client_ai();
     let url = format!("{}/v1/responses", AI_BASE);
     // 适配器铁律（Mr2109 2026-08-27+28）：程序不硬编码 max_tokens——传 0/不带由适配器决定
     // 思考不能关——深度由 reasoning effort(low) 统一控制
@@ -115,7 +156,7 @@ pub fn runtime() -> &'static tokio::runtime::Runtime {
 
 /// 同步请求主控 API（GET——带 token——在 runtime 内跑）——公开（app 用）
 pub async fn sync_get_public(path: &str) -> Result<Value, String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}{}", API_BASE, path);
     let resp = client
         .get(&url)
@@ -212,7 +253,7 @@ pub async fn fetch_doc_content_blocking(path: String) -> Result<String, String> 
 
 /// 文档操作（blocking）——v2.5.6 右键菜单/编辑器（Mr2109 2026-08-29）
 pub async fn doc_op_blocking(action: &str, payload: serde_json::Value) -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/docs/{}", API_BASE, action);
     let resp = client
         .post(&url)
@@ -237,9 +278,22 @@ pub async fn doc_op_blocking(action: &str, payload: serde_json::Value) -> Result
     Ok(())
 }
 
+/// 文档操作（异步——结果交回 UI 轮询；APP-A02 2026-09-10 审计修复）
+/// 与 doc_op_blocking 同语义，但不阻塞 UI 线程、不丢结果：UI 拿到 Ok 才改本地状态，Err 红字提示
+pub fn doc_op_async(action: &str, payload: serde_json::Value) -> SharedResult<()> {
+    let out: SharedResult<()> = Arc::new(Mutex::new(None));
+    let out2 = out.clone();
+    let action = action.to_string();
+    runtime().spawn(async move {
+        let r = doc_op_blocking(&action, payload).await;
+        *out2.lock().unwrap() = Some(r);
+    });
+    out
+}
+
 // task_retry_blocking 重跑任务（右键——failed→queued）
 pub async fn task_retry_blocking(id: &str) -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/tasks/{}/retry", API_BASE, id);
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
@@ -247,7 +301,7 @@ pub async fn task_retry_blocking(id: &str) -> Result<(), String> {
 
 // task_move_blocking 重排任务（右键——top/bottom/up/down）
 pub async fn task_move_blocking(id: &str, action: &str) -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/tasks/{}/move?action={}", API_BASE, id, action);
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
@@ -255,7 +309,7 @@ pub async fn task_move_blocking(id: &str, action: &str) -> Result<(), String> {
 
 // task_delete_blocking 删除任务（右键——queued 移除）
 pub async fn task_delete_blocking(id: &str) -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/tasks/{}", API_BASE, id);
     let resp = client.delete(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
@@ -263,7 +317,7 @@ pub async fn task_delete_blocking(id: &str) -> Result<(), String> {
 
 // task_pause_blocking 暂停/继续任务（右键——queued→paused / paused→queued）
 pub async fn task_pause_blocking(id: &str, pause: bool) -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/tasks/{}/pause?pause={}", API_BASE, id, pause);
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
@@ -271,7 +325,7 @@ pub async fn task_pause_blocking(id: &str, pause: bool) -> Result<(), String> {
 
 // fetch_internal_tasks_blocking 拉内部任务清单（Mr2109 2026-08-22）
 pub async fn fetch_internal_tasks_blocking() -> Result<Vec<serde_json::Value>, String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/internal-tasks", API_BASE);
     let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
@@ -280,7 +334,7 @@ pub async fn fetch_internal_tasks_blocking() -> Result<Vec<serde_json::Value>, S
 
 // run_internal_task_blocking 手动执行内部任务（Mr2109 2026-08-22）
 pub async fn run_internal_task_blocking(id: &str) -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/internal-tasks/{}/run", API_BASE, id);
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
@@ -292,7 +346,7 @@ pub async fn run_internal_task_blocking(id: &str) -> Result<(), String> {
 
 // stop_internal_tasks_blocking 停止内部任务（Mr2109 2026-08-27——UI 按钮）
 pub async fn stop_internal_tasks_blocking() -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/internal-tasks/stop", API_BASE);
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
@@ -304,7 +358,7 @@ pub async fn stop_internal_tasks_blocking() -> Result<(), String> {
 
 // start_internal_tasks_blocking 启动内部任务（Mr2109 2026-08-27——UI 按钮）
 pub async fn start_internal_tasks_blocking() -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/internal-tasks/start", API_BASE);
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
@@ -316,7 +370,7 @@ pub async fn start_internal_tasks_blocking() -> Result<(), String> {
 
 // set_internal_interval_blocking 设置内部任务周期（Mr2109 2026-08-27——循环周期 1h-24h/指定）
 pub async fn set_internal_interval_blocking(id: &str, hours: f64) -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/internal-tasks/{}/interval", API_BASE, id);
     let resp = client
         .post(&url)
@@ -335,7 +389,7 @@ pub async fn set_internal_interval_blocking(id: &str, hours: f64) -> Result<(), 
 // set_internal_mode_blocking 设置内部任务运行模式（Mr2109 2026-08-28——自动/手动开关）
 // auto_run=true=自动运行（编排触发）——false=手动运行（只手动触发）
 pub async fn set_internal_mode_blocking(id: &str, auto_run: bool) -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/internal-tasks/{}/mode", API_BASE, id);
     let resp = client
         .post(&url)
@@ -353,7 +407,7 @@ pub async fn set_internal_mode_blocking(id: &str, auto_run: bool) -> Result<(), 
 
 // fetch_internal_intervals_blocking 查询周期配置（Mr2109 2026-08-27）
 pub async fn fetch_internal_intervals_blocking() -> Result<serde_json::Value, String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/internal-tasks/intervals", API_BASE);
     let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     resp.json().await.map_err(|e| e.to_string())
@@ -361,7 +415,7 @@ pub async fn fetch_internal_intervals_blocking() -> Result<serde_json::Value, St
 
 // task_terminate_blocking 终止执行中任务（右键——running→failed）
 pub async fn task_terminate_blocking(id: &str) -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/tasks/{}/terminate", API_BASE, id);
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
@@ -369,7 +423,7 @@ pub async fn task_terminate_blocking(id: &str) -> Result<(), String> {
 
 // task_requeue_blocking 执行中任务重回队列（右键——running→queued）
 pub async fn task_requeue_blocking(id: &str) -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/tasks/{}/requeue", API_BASE, id);
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
@@ -377,7 +431,7 @@ pub async fn task_requeue_blocking(id: &str) -> Result<(), String> {
 
 // fetch_archive_blocking 拉归档列表（Mr2109 2026-08-22）
 pub async fn fetch_archive_blocking() -> Result<Vec<serde_json::Value>, String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/archive", API_BASE);
     let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
@@ -397,7 +451,7 @@ pub async fn fetch_cluster_blocking() -> Result<Value, String> {
 
 // fetch_model_detail_blocking 模型详情（Mr2109 2026-08-27——适配器选项+加载状态）
 pub async fn fetch_model_detail_blocking(name: &str) -> Result<Value, String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/models/{}", API_BASE, name);
     let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
@@ -409,7 +463,7 @@ pub async fn fetch_model_detail_blocking(name: &str) -> Result<Value, String> {
 
 // model_start_blocking 启动模型（Mr2109 2026-08-27——UI 开关）
 pub async fn model_start_blocking(name: &str) -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/models/{}/start", API_BASE, name);
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
@@ -421,7 +475,7 @@ pub async fn model_start_blocking(name: &str) -> Result<(), String> {
 
 // model_stop_blocking 停止模型（Mr2109 2026-08-27——UI 开关）
 pub async fn model_stop_blocking(name: &str) -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/models/{}/stop", API_BASE, name);
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
@@ -433,7 +487,7 @@ pub async fn model_stop_blocking(name: &str) -> Result<(), String> {
 
 // fetch_adapter_schema_blocking 适配器参数 schema（Mr2109 2026-08-27——编辑控件渲染）
 pub async fn fetch_adapter_schema_blocking(name: &str) -> Result<serde_json::Value, String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/models/{}/adapter-opts", API_BASE, name);
     let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
@@ -445,7 +499,7 @@ pub async fn fetch_adapter_schema_blocking(name: &str) -> Result<serde_json::Val
 
 // update_adapter_opts_blocking 更新适配器配置（实时生效）
 pub async fn update_adapter_opts_blocking(name: &str, cfg: serde_json::Value) -> Result<(), String> {
-    let client = http_client();
+    let client = http_client_json();
     let url = format!("{}/api/models/{}/adapter-opts", API_BASE, name);
     let resp = client
         .put(&url)
@@ -609,7 +663,7 @@ pub fn create_chat_session_async(model: String) -> SharedResult<Value> {
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let client = http_client();
+        let client = http_client_json();
         let url = format!("{}/api/chat/sessions", API_BASE);
         let body = serde_json::json!({"model": model});
         let resp = client
@@ -619,9 +673,9 @@ pub fn create_chat_session_async(model: String) -> SharedResult<Value> {
             .send()
             .await;
         match resp {
-            Ok(r) => match r.json::<Value>().await {
+            Ok(r) => match json_body(r).await {
                 Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(format!("解析失败: {}", e))),
+                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
             },
             Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
         }
@@ -673,6 +727,16 @@ pub fn chat_send_stream_async(session_id: String, content: String, image: Option
             .await;
         match resp {
             Ok(r) => {
+                // A02（2026-09-10 审计）：先判 HTTP 状态——否则 4xx/5xx 被当成"空白回复"静默结束，用户看不到任何错误
+                if !r.status().is_success() {
+                    let code = r.status();
+                    let body = r.text().await.unwrap_or_default();
+                    let brief: String = body.chars().take(300).collect();
+                    let mut st = s2.lock().unwrap();
+                    st.error = Some(format!("HTTP {}: {}", code, brief));
+                    st.done = true;
+                    return;
+                }
                 let mut stream = r.bytes_stream();
                 let mut buf: Vec<u8> = Vec::new();
                 while let Some(chunk) = stream.next().await {
@@ -773,7 +837,7 @@ pub fn delete_chat_session_async(session_id: String) -> SharedResult<bool> {
     let out: SharedResult<bool> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let client = http_client();
+        let client = http_client_json();
         let url = format!("{}/api/chat/sessions/{}", API_BASE, session_id);
         let resp = client
             .delete(&url)
@@ -858,7 +922,7 @@ pub fn chat_update_model_async(session_id: String, model: String) -> SharedResul
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let client = http_client();
+        let client = http_client_json();
         let url = format!("{}/api/chat/sessions/{}/model", API_BASE, session_id);
         let resp = client
             .post(&url)
@@ -867,9 +931,9 @@ pub fn chat_update_model_async(session_id: String, model: String) -> SharedResul
             .send()
             .await;
         match resp {
-            Ok(r) => match r.json::<Value>().await {
+            Ok(r) => match json_body(r).await {
                 Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(format!("解析失败: {}", e))),
+                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
             },
             Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
         }
@@ -883,7 +947,7 @@ pub fn chat_abort_async(session_id: String) -> SharedResult<Value> {
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let client = http_client();
+        let client = http_client_json();
         let url = format!("{}/api/chat/sessions/{}/abort", API_BASE, session_id);
         let resp = client
             .post(&url)
@@ -891,9 +955,9 @@ pub fn chat_abort_async(session_id: String) -> SharedResult<Value> {
             .send()
             .await;
         match resp {
-            Ok(r) => match r.json::<Value>().await {
+            Ok(r) => match json_body(r).await {
                 Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(format!("解析失败: {}", e))),
+                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
             },
             Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
         }
@@ -907,7 +971,7 @@ pub fn chat_steer_async(session_id: String, content: String) -> SharedResult<Val
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let client = http_client();
+        let client = http_client_json();
         let url = format!("{}/api/chat/sessions/{}/steer", API_BASE, session_id);
         let resp = client
             .post(&url)
@@ -916,9 +980,9 @@ pub fn chat_steer_async(session_id: String, content: String) -> SharedResult<Val
             .send()
             .await;
         match resp {
-            Ok(r) => match r.json::<Value>().await {
+            Ok(r) => match json_body(r).await {
                 Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(format!("解析失败: {}", e))),
+                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
             },
             Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
         }
@@ -932,7 +996,7 @@ pub fn chat_regenerate_async(session_id: String) -> SharedResult<Value> {
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let client = http_client();
+        let client = http_client_json();
         let url = format!("{}/api/chat/sessions/{}/regenerate", API_BASE, session_id);
         let resp = client
             .post(&url)
@@ -940,9 +1004,9 @@ pub fn chat_regenerate_async(session_id: String) -> SharedResult<Value> {
             .send()
             .await;
         match resp {
-            Ok(r) => match r.json::<Value>().await {
+            Ok(r) => match json_body(r).await {
                 Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(format!("解析失败: {}", e))),
+                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
             },
             Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
         }
@@ -970,7 +1034,7 @@ pub fn chat_delegate_task_async(description: String, model: String, parent_sessi
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let client = http_client();
+        let client = http_client_json();
         let url = format!("{}/api/tasks", API_BASE);
         let mut body = serde_json::json!({"description": description, "model": model, "type": "external", "priority": 3});
         if let Some(psid) = parent_session_id {
@@ -983,9 +1047,9 @@ pub fn chat_delegate_task_async(description: String, model: String, parent_sessi
             .send()
             .await;
         match resp {
-            Ok(r) => match r.json::<Value>().await {
+            Ok(r) => match json_body(r).await {
                 Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(format!("解析失败: {}", e))),
+                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
             },
             Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
         }
@@ -998,7 +1062,7 @@ pub fn chat_set_archived_async(session_id: String, archived: bool) -> SharedResu
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let client = http_client();
+        let client = http_client_json();
         let url = format!("{}/api/chat/sessions/{}/archive", API_BASE, session_id);
         let resp = client
             .post(&url)
@@ -1007,9 +1071,9 @@ pub fn chat_set_archived_async(session_id: String, archived: bool) -> SharedResu
             .send()
             .await;
         match resp {
-            Ok(r) => match r.json::<Value>().await {
+            Ok(r) => match json_body(r).await {
                 Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(format!("解析失败: {}", e))),
+                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
             },
             Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
         }
@@ -1021,7 +1085,7 @@ pub fn chat_set_pinned_async(session_id: String, pinned: bool) -> SharedResult<V
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let client = http_client();
+        let client = http_client_json();
         let url = format!("{}/api/chat/sessions/{}/pinned", API_BASE, session_id);
         let resp = client
             .post(&url)
@@ -1030,9 +1094,9 @@ pub fn chat_set_pinned_async(session_id: String, pinned: bool) -> SharedResult<V
             .send()
             .await;
         match resp {
-            Ok(r) => match r.json::<Value>().await {
+            Ok(r) => match json_body(r).await {
                 Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(format!("解析失败: {}", e))),
+                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
             },
             Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
         }
@@ -1045,7 +1109,7 @@ pub fn chat_rename_session_async(session_id: String, title: String) -> SharedRes
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let client = http_client();
+        let client = http_client_json();
         let url = format!("{}/api/chat/sessions/{}/title", API_BASE, session_id);
         let resp = client
             .post(&url)
@@ -1054,9 +1118,9 @@ pub fn chat_rename_session_async(session_id: String, title: String) -> SharedRes
             .send()
             .await;
         match resp {
-            Ok(r) => match r.json::<Value>().await {
+            Ok(r) => match json_body(r).await {
                 Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(format!("解析失败: {}", e))),
+                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
             },
             Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
         }
@@ -1069,7 +1133,7 @@ pub fn chat_edit_message_async(mid: i64, content: String, truncate: bool) -> Sha
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let client = http_client();
+        let client = http_client_json();
         let url = format!("{}/api/chat/messages/{}", API_BASE, mid);
         let resp = client
             .patch(&url)
@@ -1078,9 +1142,9 @@ pub fn chat_edit_message_async(mid: i64, content: String, truncate: bool) -> Sha
             .send()
             .await;
         match resp {
-            Ok(r) => match r.json::<Value>().await {
+            Ok(r) => match json_body(r).await {
                 Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(format!("解析失败: {}", e))),
+                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
             },
             Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
         }
