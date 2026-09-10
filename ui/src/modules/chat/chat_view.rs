@@ -201,7 +201,7 @@ fn compute_math_svg(math: &str, inline: bool) -> Vec<u8> {
 /// - 失败也落缓存（空 Vec = 不可渲染哨兵）→ 不再每帧 fork node + 阻塞等待
 /// - 锁只保护 map 读写，子进程执行在锁外
 /// - 图片 URI 用**内容哈希**（原用公式长度 → 等长公式互相串图）
-fn render_math(ui: &mut egui::Ui, math: &str, inline: bool) {
+pub fn render_math(ui: &mut egui::Ui, math: &str, inline: bool) {
     let cached: Option<Vec<u8>> = {
         let mut guard = lock_recover(&MATH_CACHE);
         guard

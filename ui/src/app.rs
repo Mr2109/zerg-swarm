@@ -127,7 +127,7 @@ pub struct ZergApp {
     // APP-A06: 周期配置独立计时器（原来共用 last_it_fetch——被 30s 清单刷新归零后 60s 条件永不成立）
     last_it_interval_fetch: std::time::Instant,
     // A07 治本（2026-09-10）：引擎状态=后端单一真相源（10s 轮询）——本地不再持有“真相”，只做乐观提示
-    // M06 对比样张（2026-09-10）：预览渲染器切换开关（决定后即可移除）
+    // M06 双渲染器（2026-09-10 Mr2109：两种都保留，含切换）——ferrite=自研样式 / commonmark=带缓存，选择持久化
     preview_renderer_cm: bool,
     preview_cm_cache: egui_commonmark::CommonMarkCache,
     engine_state: api::SharedResult<serde_json::Value>,
@@ -224,8 +224,8 @@ impl ZergApp {
             internal_tasks: std::sync::Arc::new(std::sync::Mutex::new(None)),
             last_it_fetch: std::time::Instant::now(),
             last_it_interval_fetch: std::time::Instant::now(),
-            // M06 对比样张（2026-09-10）：预览渲染器可切换——默认 ferrite(现状)，可切 commonmark(带缓存)
-            preview_renderer_cm: std::env::var("ZERG_PREVIEW_RENDERER").map(|v| v == "commonmark").unwrap_or(false),
+            // M06 双渲染器（2026-09-10 Mr2109：两种都保留）：选择持久化，重启后保持
+            preview_renderer_cm: Self::load_preview_pref().or_else(|| std::env::var("ZERG_PREVIEW_RENDERER").ok().map(|v| v == "commonmark")).unwrap_or(false),
             preview_cm_cache: Default::default(),
             engine_state: Arc::new(Mutex::new(None)),
             last_engine_fetch: std::time::Instant::now(),
@@ -1668,18 +1668,19 @@ impl ZergApp {
                                                 .layout(egui::Layout::top_down(egui::Align::Min)),
                                         );
                                         p_ui.separator();
-                                        // M06 对比样张（2026-09-10）：同一文档一键切换渲染器——ferrite(每帧 comrak 解析) / commonmark(带缓存)
-                                        // Mr2109看过样张后决定保留哪种；决定后本段与 preview_renderer_cm/preview_cm_cache 字段一并移除
+                                        // M06 双渲染器（2026-09-10 Mr2109：两种都保留，含切换）
+                                        // ferrite=自研样式（每帧 comrak 解析）；commonmark=带缓存（大文档省一半，且支持图片/公式/任务列表）
                                         let mut flip = false;
                                         p_ui.horizontal(|ui| {
-                                            let cur = if self.preview_renderer_cm { "commonmark（带缓存）" } else { "ferrite（现状/每帧解析）" };
-                                            if ui.small_button(format!("渲染器: {} ⇄ 切换", cur)).clicked() {
+                                            let cur = if self.preview_renderer_cm { "commonmark（缓存版）" } else { "ferrite（标准）" };
+                                            if ui.small_button(format!("预览渲染: {} ⇄", cur)).clicked() {
                                                 flip = true;
                                             }
-                                            ui.weak("（M06 对比样张）");
+                                            ui.weak("（切换后记住选择）");
                                         });
                                         if flip {
                                             self.preview_renderer_cm = !self.preview_renderer_cm;
+                                            Self::save_preview_pref(self.preview_renderer_cm);
                                         }
                                         let preview_text = self.ferrite_text_cached(); // M06: 带缓存
                                         // F4 滚动同步：编辑 scroll_line 变化 → 预览跟随（比例换算）
@@ -1702,7 +1703,10 @@ impl ZergApp {
                                             .vertical_scroll_offset(sync_target)
                                             .show(&mut p_ui, |ui| {
                                                 if use_cm {
-                                                    egui_commonmark::CommonMarkViewer::new().show(ui, &mut cm_cache, &preview_text);
+                                                    // 能力对齐：带公式渲染（与对话/消息同款 KaTeX→SVG），否则切过去公式退化为纯文本
+                                                    egui_commonmark::CommonMarkViewer::new()
+                                                        .render_math_fn(Some(&crate::modules::chat::chat_view::render_math))
+                                                        .show(ui, &mut cm_cache, &preview_text);
                                                 } else {
                                                     crate::modules::ferrite::markdown::render_markdown(ui, &preview_text);
                                                 }
@@ -2457,6 +2461,30 @@ impl ZergApp {
 
     /// APP-A07（2026-09-10 审计）: 内部任务启停包成 SharedResult——api.rs 的 start/stop 是
     /// async fn（无异步句柄版），这里在 app.rs 内本地包装，不改 api.rs 签名。
+    /// M06 双渲染器：预览渲染器偏好持久化（~/.zerg-ui-prefs.json——重启后保持Mr2109的选择）
+    fn preview_pref_path() -> std::path::PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        std::path::PathBuf::from(home).join(".zerg-ui-prefs.json")
+    }
+    fn load_preview_pref() -> Option<bool> {
+        let s = std::fs::read_to_string(Self::preview_pref_path()).ok()?;
+        Self::parse_preview_pref(&s)
+    }
+        /// 纯解析（可单测）：ferrite→false / commonmark→true / 其它或坏 JSON→None（用默认）
+        fn parse_preview_pref(s: &str) -> Option<bool> {
+            let v: serde_json::Value = serde_json::from_str(s).ok()?;
+            match v.get("preview_renderer").and_then(|x| x.as_str())? {
+                "commonmark" => Some(true),
+                "ferrite" => Some(false),
+                _ => None,
+            }
+        }
+
+    fn save_preview_pref(cm: bool) {
+        let v = serde_json::json!({ "preview_renderer": if cm { "commonmark" } else { "ferrite" } });
+        let _ = std::fs::write(Self::preview_pref_path(), v.to_string());
+    }
+
     fn it_ctrl_async(start: bool) -> api::SharedResult<()> {
         let out: api::SharedResult<()> = Arc::new(Mutex::new(None));
         let out2 = out.clone();
@@ -3071,3 +3099,17 @@ impl ZergApp {
 
 }
 
+#[cfg(test)]
+mod m06_preview_pref_tests {
+    use super::ZergApp;
+
+    /// M06 双渲染器：偏好解析（Mr2109的"记住选择"）
+    #[test]
+    fn parse_preview_pref_cases() {
+        assert_eq!(ZergApp::parse_preview_pref(r#"{"preview_renderer":"commonmark"}"#), Some(true));
+        assert_eq!(ZergApp::parse_preview_pref(r#"{"preview_renderer":"ferrite"}"#), Some(false));
+        assert_eq!(ZergApp::parse_preview_pref(r#"{"preview_renderer":"weird"}"#), None);
+        assert_eq!(ZergApp::parse_preview_pref("not json"), None);
+        assert_eq!(ZergApp::parse_preview_pref("{}"), None);
+    }
+}
