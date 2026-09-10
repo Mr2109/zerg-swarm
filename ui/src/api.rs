@@ -1351,6 +1351,15 @@ mod proxy_root_fix_tests {
             }
             EnvGuard(saved)
         }
+
+        /// 清空指定变量（drop 时恢复）——用于剔除会旁路代理的白名单（NO_PROXY/no_proxy）
+        fn clear(vars: &[&'static str]) -> Self {
+            let saved = vars.iter().map(|k| (*k, std::env::var(k).ok())).collect();
+            for k in vars {
+                std::env::remove_var(k);
+            }
+            EnvGuard(saved)
+        }
     }
     impl Drop for EnvGuard {
         fn drop(&mut self) {
@@ -1373,7 +1382,14 @@ mod proxy_root_fix_tests {
             ("HTTPS_PROXY", "http://127.0.0.1:9"),
             ("http_proxy", "http://127.0.0.1:9"),
             ("https_proxy", "http://127.0.0.1:9"),
+            // D 批补（2026-09-11 文档/代码一致性审计）：补齐 ALL_PROXY 两个拼写——
+            // 只守 4 个变量时，ambient 环境里的 ALL_PROXY 会让「裸 client」也走真实代理，
+            // 对照组的「必须连不通」就会偶发翻成 Some(true)（审计中真实踩到过一次）。
+            ("ALL_PROXY", "http://127.0.0.1:9"),
+            ("all_proxy", "http://127.0.0.1:9"),
         ]);
+        // 同时剔除旁路白名单：NO_PROXY 会让裸 client 绕过死代理直连回环 → 对照失效
+        let _env_np = EnvGuard::clear(&["NO_PROXY", "no_proxy"]);
 
         let rt = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
@@ -1404,13 +1420,34 @@ mod proxy_root_fix_tests {
             Some(false) => panic!("no_proxy client 未能打通回环（根治失败）"),
             Some(true) => {}
         }
-        // 对照：裸 client 在死代理下**必须连不通**（None）——这正是被根治的旧 bug
-        // （A13 的 probe 语义：None=连不通 / Some(bool)=拿到 HTTP 状态；旧断言按 Some(false) 写，已过时）
-        let bare = probe(reqwest::Client::new());
-        eprintln!("no_proxy client 成功=true; 裸 client 结果={:?}（None=被死代理吞掉）", bare);
+        // 对照（2026-09-11 审计加固——原断言依赖"环境变量生效 + 无 NO_PROXY/ALL_PROXY 干扰"，
+        // 在子代理机器环境里偶发翻过（裸 client 竟 Some(true)），且受 reqwest 环境代理缓存影响，
+        // 无法稳定复现）。改为**显式死代理**做对照：与进程环境、与环境代理缓存彻底无关。
+        let dead_proxy = reqwest::Proxy::all("http://127.0.0.1:9").expect("构造死代理");
+        // 对照①：显式死代理 + no_proxy → 仍能打通（这正是被根治的性质——我们的 client 不吃代理）
+        let ours_explicit = probe(
+            reqwest::Client::builder()
+                .proxy(dead_proxy.clone())
+                .no_proxy()
+                .build()
+                .expect("client 构造失败"),
+        );
+        match ours_explicit {
+            None => panic!("no_proxy client 在显式死代理下未能打通回环（根治失败）"),
+            Some(false) => panic!("no_proxy client 打通了但状态码非 2xx"),
+            Some(true) => {}
+        }
+        // 对照②：同一个显式死代理、不加 no_proxy → 必须连不通（证明死代理确实在起作用=对照有效）
+        let bare = probe(
+            reqwest::Client::builder()
+                .proxy(dead_proxy)
+                .build()
+                .expect("client 构造失败"),
+        );
+        eprintln!("no_proxy client 成功=true; 显式死代理裸 client 结果={:?}（None=被死代理吞掉）", bare);
         assert_eq!(
             bare, None,
-            "对照失效：裸 client 竟然连上了 127.0.0.1（环境变量未生效，或 reqwest 已不再走代理）"
+            "对照失效：显式死代理下裸 client 竟然连上了 127.0.0.1（对照本身不成立，需检查 reqwest 行为）"
         );
     }
 }
