@@ -1204,7 +1204,7 @@ impl ZergApp {
                         let healthy = r.get("healthy_count").and_then(|h| h.as_u64()).unwrap_or(0);
                         let total = r.get("total_machines").and_then(|h| h.as_u64()).unwrap_or(0);
                         let active = r.get("total_active_requests").and_then(|h| h.as_u64()).unwrap_or(0);
-                        ui.label(format!("✅ 健康 {}/{} ｜ 🌀 活跃请求 {}", healthy, total, active));
+                        ui.label(t!("cluster.health_summary", healthy = healthy, total = total, active = active));
                         ui.separator();
                         // 机器列表（dict——local/mini1/x3）
                         if let Some(machines) = r.get("machines").and_then(|m| m.as_object()) {
@@ -1218,9 +1218,9 @@ impl ZergApp {
                                 let color = if healthy_m { egui::Color32::from_rgb(80, 200, 120) } else { egui::Color32::from_rgb(220, 80, 80) };
                                 ui.label(egui::RichText::new(format!("📊 {}", name)).color(color));
                                 ui.indent(name, |ui| {
-                                    ui.label(format!("  模型: {}", model));
-                                    ui.label(format!("  内存: {:.0}/{:.0} GB", mem_avail, mem_total));
-                                    ui.label(format!("  负载: {:.2} ｜ GPU: {:.1} GB", load, gpu));
+                                    ui.label(t!("cluster.machine_model", model = model));
+                                    ui.label(t!("cluster.machine_mem", avail = format!("{:.0}", mem_avail), total = format!("{:.0}", mem_total)));
+                                    ui.label(t!("cluster.machine_load", load = format!("{:.2}", load), gpu = format!("{:.1}", gpu)));
                                 });
                                 ui.separator();
                             }
@@ -1317,10 +1317,10 @@ impl ZergApp {
                     ui.add_space(10.0);
                     // 应用清单（平台雏形——未来读集装箱注册/目录扫描——现静态声明可扩展）
                     // 结构：每卡=独立 git 集装箱应用（id/名字/描述/打开）
-                    let cards: [(String, &str, &str); 1] = [(
+                    let cards: [(String, String, String); 1] = [(
                         "roundtable".into(),
-                        "示例虫茧",
-                        "自动小说创作工坊——13 角色圆桌讨论→锁定设定→章节→评审（首个茧——引擎层 35 测试）",
+                        t!("cocoon.roundtable.name").to_string(),
+                        t!("cocoon.roundtable.desc").to_string(),
                     )];
                     // 卡片网格（wrap 布局——每卡固定宽 260）
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -1342,7 +1342,7 @@ impl ZergApp {
                                 );
                                 card_ui.label(egui::RichText::new(format!("📖 {name}")).size(16.0).strong());
                                 card_ui.add_space(6.0);
-                                card_ui.label(egui::RichText::new(*desc).size(12.0).color(egui::Color32::from_rgb(170, 175, 185)));
+                                card_ui.label(egui::RichText::new(desc.as_str()).size(12.0).color(egui::Color32::from_rgb(170, 175, 185)));
                                 card_ui.with_layout(egui::Layout::right_to_left(egui::Align::BOTTOM), |ui| {
                                     if ui.button(egui::RichText::new(t!("action.open")).size(12.0)).clicked() {
                                         // 2026-09-11 B 批（决策 5）：集装箱需编译时装载（feature）
@@ -1353,7 +1353,7 @@ impl ZergApp {
                                 });
                                 if !cfg!(feature = "zerg-roundtable") {
                                     card_ui.label(
-                                        egui::RichText::new("未装载（本构建未启用该集装箱）")
+                                        egui::RichText::new(t!("cocoon.not_loaded"))
                                             .size(11.0)
                                             .weak(),
                                     );
@@ -2055,7 +2055,7 @@ impl ZergApp {
                     ui.add_space(12.0);
                     ui.heading(format!("{} {}", m.icon, m.name));
                     ui.weak(&m.description);
-                    ui.label(format!("版本: {}", m.version));
+                    ui.label(t!("common.version_label", version = m.version));
                     ui.separator();
                     ui.add_space(8.0);
                     egui::Frame::new()
@@ -2063,13 +2063,13 @@ impl ZergApp {
                         .corner_radius(8.0)
                         .inner_margin(egui::Margin::same(16))
                         .show(ui, |ui| {
-                            ui.strong("🌍 生态集装箱（外部应用）");
+                            ui.strong(t!("ext.title"));
                             ui.add_space(4.0);
-                            ui.label("这是通过配置文件声明的第三方集装箱——当前为元数据占位（M4 阶段）。");
-                            ui.label("v2.6 起支持：独立进程容器 + 标准适配层（实现 trait ZergModule）——真生态箱。");
+                            ui.label(t!("ext.hint"));
+                            ui.label(t!("ext.roadmap"));
                             ui.add_space(8.0);
                             if !m.url.is_empty() {
-                                if ui.button("🔗 打开外部地址").clicked() {
+                                if ui.button(t!("ext.open")).clicked() {
                                     // APP-A18（2026-09-10 审计）: ① URL 来自外部模块配置文件
                                     // （M4 生态箱——第三方开发者挂船），先校验 scheme（仅 http/https），
                                     // 拼错或 file://、javascript: 之类一律拒绝并红字提示；
@@ -2086,21 +2086,18 @@ impl ZergApp {
                                             }
                                             Err(e) => {
                                                 *lock_recover(&self.poll_err) =
-                                                    Some(format!("打开外部地址失败: {}", e));
+                                                    Some(t!("ext.open_failed", err = e).to_string());
                                             }
                                         }
                                     } else {
-                                        *lock_recover(&self.poll_err) = Some(format!(
-                                            "外部地址非法（仅允许 http/https）: {}",
-                                            url
-                                        ));
+                                        *lock_recover(&self.poll_err) = Some(t!("ext.bad_url", url = url).to_string());
                                     }
                                 }
                             }
                         });
                 } else {
                     // 未知/未启用模块——空舱（M2 模块管理后此处显示占位）
-                    ui.weak("集装箱未启用或不存在");
+                    ui.weak(t!("ext.missing"));
                 }
             }
         }
