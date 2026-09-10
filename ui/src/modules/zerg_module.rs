@@ -15,12 +15,13 @@ use eframe::egui;
 pub struct ModuleManifest {
     /// 唯一 id（如 "tasks" / "docs"）
     pub id: &'static str,
-    /// 显示名称（如 "任务队列"）
-    pub name: &'static str,
+    /// 显示名称的 i18n 键（如 "mod.tasks.name"）——渲染处用 t!(name_key)；
+    /// 若键不存在，rust-i18n 会原样返回键名（外部箱因此可直接放普通文本）
+    pub name_key: &'static str,
     /// 图标（emoji——PingFang 支持）
     pub icon: String,
-    /// 简介（模块管理面板显示）
-    pub description: &'static str,
+    /// 简介的 i18n 键（如 "mod.tasks.desc"）——渲染处用 t!(desc_key)
+    pub desc_key: &'static str,
     /// 是否核心箱（船体箱——不可禁用——任务体系+基础设施）
     pub is_core: bool,
     /// 版本（箱内容版本——Ferrite 升级=版本变——船体无感）

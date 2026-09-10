@@ -12,6 +12,7 @@ pub mod chat; // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第�
 pub mod icons; // P3 图标统一封装（iconflow——14 包 34 TTF——MIT）
 
 use eframe::egui;
+use rust_i18n::t;   // i18n（B1 抽取：导航/模块名走键）
 use crate::modules::icons::icon_text; // P3 图标（iconflow）
 pub use zerg_module::{ModuleManifest, ModuleRegistry};
 
@@ -29,54 +30,54 @@ pub fn build_registry() -> ModuleRegistry {
     // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块——排任务队列前）
     reg.register(ModuleManifest {
         id: "chat",
-        name: "对话",
+        name_key: "mod.chat.name",
         icon: icon_text("chat-circle-text"),
-        description: "AI 对话（借鉴 Hermes——思考可见——全工具）",
+        desc_key: "mod.chat.desc",
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "tasks",
-        name: "任务队列",
+        name_key: "mod.tasks.name",
         icon: icon_text("list-checks"),
-        description: "AI 任务体系——外部任务创建/调度/执行/复查/成果",
+        desc_key: "mod.tasks.desc",
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "internal-tasks",
-        name: "内部任务",
+        name_key: "mod.internal_tasks.name",
         icon: icon_text("wrench"),
-        description: "AI 任务体系——16 类内部任务自动编排/手动执行",
+        desc_key: "mod.internal_tasks.desc",
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "cluster",
-        name: "集群",
+        name_key: "mod.cluster.name",
         icon: icon_text("chart-bar"),
-        description: "基础设施——机器状态/负载/GPU/健康",
+        desc_key: "mod.cluster.desc",
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "models",
-        name: "模型库",
+        name_key: "mod.models.name",
         icon: icon_text("computer-tower"),
-        description: "基础设施——模型管理/加载/适配器选项",
+        desc_key: "mod.models.desc",
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "resources",
-        name: "资源库",
+        name_key: "mod.resources.name",
         icon: icon_text("package"),
-        description: "基础设施——模型/工具/skill/mcp 资源信任度",
+        desc_key: "mod.resources.desc",
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
@@ -86,36 +87,36 @@ pub fn build_registry() -> ModuleRegistry {
     // 🦋 虫茧（T8——zerg-cocoon 第一个茧——示例虫茧 egui 集装箱——破茧换新）
     reg.register(ModuleManifest {
         id: "roundtable",
-        name: "虫茧",
+        name_key: "mod.roundtable.name",
         icon: icon_text("boxes"),
-        description: "虫族集装箱平台——示例虫茧（群 AI 讨论——小说生成只是它的一个项目）",
+        desc_key: "mod.roundtable.desc",
         is_core: false,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "docs",
-        name: "文档",
+        name_key: "mod.docs.name",
         icon: icon_text("books"),
-        description: "文档三栏 + md 编辑器（M3 换 Ferrite 集装箱）",
+        desc_key: "mod.docs.desc",
         is_core: false,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "git",
-        name: "Git",
+        name_key: "mod.git.name",
         icon: icon_text("git-branch"),
-        description: "Git 状态/分支/提交",
+        desc_key: "mod.git.desc",
         is_core: false,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
         id: "logs",
-        name: "日志",
+        name_key: "mod.logs.name",
         icon: icon_text("scroll"),
-        description: "主控运行日志",
+        desc_key: "mod.logs.desc",
         is_core: false,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
@@ -157,7 +158,7 @@ pub fn top_nav_bar(
         // 原来每帧 clone 全部清单（含 String 图标）与 active；点击只在循环后落一次 active。
         let mut switched: Option<String> = None;
         for m in registry.visible() {
-            let label = format!("{} {}", m.icon, m.name);
+            let label = format!("{} {}", m.icon, t!(m.name_key));
             if ui.selectable_label(registry.active == m.id, label).clicked() {
                 switched = Some(m.id.to_string());
             }
