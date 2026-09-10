@@ -251,6 +251,21 @@ mod locale_tests {
             &*t!("chat.tool_executing", tool = "doc_search", secs = 3),
             "🔧 doc_search running… (3s)"
         );
+        // L4：错误码 → 本地化文案（同一测试内串行断言两语言——避免与全局 locale 竞争）
+        assert_eq!(
+            crate::api::localized_api_error("MISSING_MACHINE").as_deref(),
+            Some("machine must not be empty")
+        );
+        assert_eq!(
+            crate::api::localized_api_error("AUTH_TOKEN_INVALID").as_deref(),
+            Some("Invalid auth token")
+        );
+        assert_eq!(
+            crate::api::localized_api_error("scheduler_not_started").as_deref(),
+            Some("Scheduler is not running"),
+            "大小写不敏感（服务端恒大写，键恒小写）"
+        );
+        assert_eq!(crate::api::localized_api_error("SOME_FUTURE_CODE"), None, "未收录的码须返回 None（回退服务端 message）");
         assert_eq!(&*t!("chat.ready", icon = "*"), "* ready");
         rust_i18n::set_locale("zh-CN");
         assert_eq!(&*t!("app.title"), "虫族 Zerg");
@@ -262,6 +277,15 @@ mod locale_tests {
         assert_eq!(
             &*t!("chat.tool_executing", tool = "doc_search", secs = 3),
             "🔧 doc_search 执行中…（3 秒）"
+        );
+        // L4（zh-CN 侧）
+        assert_eq!(
+            crate::api::localized_api_error("MISSING_MACHINE").as_deref(),
+            Some("machine 字段不能为空")
+        );
+        assert_eq!(
+            crate::api::localized_api_error("INVALID_PATH").as_deref(),
+            Some("非法路径")
         );
     }
 

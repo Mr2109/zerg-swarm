@@ -40,7 +40,7 @@ func NewControlHandlers(token string, cfg *config.FleetConfig, lb *localback.Loc
 // body: {"machine": "x3"|"local"|"mini1", "model": "deepseek-v4-flash"}
 func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "仅支持 POST 方法")
+		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 POST 方法")
 		return
 	}
 
@@ -49,18 +49,18 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 		Model   string `json:"model"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "请求体 JSON 解析失败: "+err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_BODY", "请求体 JSON 解析失败: "+err.Error())
 		return
 	}
 	if req.Machine == "" || req.Model == "" {
-		writeError(w, http.StatusBadRequest, "machine 和 model 字段不能为空")
+		writeErrorCode(w, http.StatusBadRequest, "MISSING_MACHINE_OR_MODEL", "machine 和 model 字段不能为空")
 		return
 	}
 
 	// 从路由表找该模型在该机器的候选
 	candidates, ok := h.Models[req.Model]
 	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("未知模型: %s", req.Model))
+		writeErrorCode(w, http.StatusNotFound, "MODEL_NOT_FOUND", fmt.Sprintf("未知模型: %s", req.Model))
 		return
 	}
 	var candidate *config.ModelCandidate
@@ -71,14 +71,14 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if candidate == nil {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("模型 %s 在机器 %s 无部署", req.Model, req.Machine))
+		writeErrorCode(w, http.StatusNotFound, "MODEL_NOT_DEPLOYED", fmt.Sprintf("模型 %s 在机器 %s 无部署", req.Model, req.Machine))
 		return
 	}
 
 	// 本机：走 localback
 	if req.Machine == "local" {
 		if err := h.LocalBack.LoadModel(candidate.File, int(candidate.MemGb)); err != nil {
-			writeError(w, http.StatusInternalServerError, "本机加载失败: "+err.Error())
+			writeErrorCode(w, http.StatusInternalServerError, "MODEL_LOAD_FAILED", "本机加载失败: "+err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "machine": "local", "model": req.Model})
@@ -88,13 +88,13 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 	// 远程子端：转发 /load
 	node, ok := h.Fleet[req.Machine]
 	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("未知机器: %s", req.Machine))
+		writeErrorCode(w, http.StatusNotFound, "MACHINE_NOT_FOUND", fmt.Sprintf("未知机器: %s", req.Machine))
 		return
 	}
 	body, _ := json.Marshal(map[string]string{"model": req.Model})
 	status, respBody, err := h.forward(node, "/load", body)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("转发到 %s 失败: %v", req.Machine, err))
+		writeErrorCode(w, http.StatusBadGateway, "FORWARD_FAILED", fmt.Sprintf("转发到 %s 失败: %v", req.Machine, err))
 		return
 	}
 	writeJSON(w, status, json.RawMessage(respBody))
@@ -104,7 +104,7 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 // body: {"machine": "x3"|"local"|"mini1"}
 func (h *ControlHandlers) UnloadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "仅支持 POST 方法")
+		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 POST 方法")
 		return
 	}
 
@@ -112,11 +112,11 @@ func (h *ControlHandlers) UnloadHandler(w http.ResponseWriter, r *http.Request) 
 		Machine string `json:"machine"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "请求体 JSON 解析失败: "+err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_BODY", "请求体 JSON 解析失败: "+err.Error())
 		return
 	}
 	if req.Machine == "" {
-		writeError(w, http.StatusBadRequest, "machine 字段不能为空")
+		writeErrorCode(w, http.StatusBadRequest, "MISSING_MACHINE", "machine 字段不能为空")
 		return
 	}
 
@@ -129,12 +129,12 @@ func (h *ControlHandlers) UnloadHandler(w http.ResponseWriter, r *http.Request) 
 
 	node, ok := h.Fleet[req.Machine]
 	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Sprintf("未知机器: %s", req.Machine))
+		writeErrorCode(w, http.StatusNotFound, "MACHINE_NOT_FOUND", fmt.Sprintf("未知机器: %s", req.Machine))
 		return
 	}
 	status, respBody, err := h.forward(node, "/unload", nil)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("转发到 %s 失败: %v", req.Machine, err))
+		writeErrorCode(w, http.StatusBadGateway, "FORWARD_FAILED", fmt.Sprintf("转发到 %s 失败: %v", req.Machine, err))
 		return
 	}
 	writeJSON(w, status, json.RawMessage(respBody))
@@ -144,7 +144,7 @@ func (h *ControlHandlers) UnloadHandler(w http.ResponseWriter, r *http.Request) 
 // 延迟 300ms 退出，保证响应先送达。
 func (h *ControlHandlers) StopHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "仅支持 POST 方法")
+		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 POST 方法")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "message": "主控即将退出"})
@@ -185,7 +185,7 @@ func (h *ControlHandlers) forward(node config.FleetNode, path string, body []byt
 // 返回主控进程 PID、启动时间、内存占用（供 UI 主控模块显示）。
 func (h *ControlHandlers) CoreStatusHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "仅支持 GET 方法")
+		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET 方法")
 		return
 	}
 	pid := os.Getpid()
@@ -202,7 +202,7 @@ func (h *ControlHandlers) CoreStatusHandler(w http.ResponseWriter, r *http.Reque
 // 从本地日志文件 /tmp/zerg-core.log 读取尾部 N 行（不存在则返回空）。
 func (h *ControlHandlers) CoreLogsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "仅支持 GET 方法")
+		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET 方法")
 		return
 	}
 	logPath := filepath.Join(statepath.RuntimeLogDir(), "zerg-core.log")
