@@ -81,6 +81,10 @@ func (c CompactErrClass) kind() string {
 	switch {
 	case c.HTTPStatus == 429 || (c.HTTPStatus == 0 && c.RetryAfter > 0):
 		return compactClass429
+	case c.transient4xx():
+		// 408/425/499 是「暂时性」4xx（超时/过早/客户端断开），不是请求本身错——按 5xx 递进重试，
+		// 否则一次超时就把压缩永久熔断（Mr2109补：分流要按「该不该再试」而不是按状态码段）。
+		return compactClass5xx
 	case c.HTTPStatus >= 400 && c.HTTPStatus < 500:
 		return compactClass4xx
 	case c.HTTPStatus >= 500 && c.HTTPStatus < 600:
@@ -90,9 +94,19 @@ func (c CompactErrClass) kind() string {
 	}
 }
 
-// nonRetryable — 不可重试错误（4xx 且非 429）→ 直接硬熔断，不等 3 次
+// nonRetryable — 不可重试错误（4xx 且非 429/非暂时性）→ 直接硬熔断，不等 3 次
 func (c CompactErrClass) nonRetryable() bool {
-	return c.HTTPStatus >= 400 && c.HTTPStatus < 500 && c.HTTPStatus != 429
+	return c.HTTPStatus >= 400 && c.HTTPStatus < 500 && c.HTTPStatus != 429 && !c.transient4xx()
+}
+
+// transient4xx — 暂时性 4xx（可重试）：408 请求超时 / 425 过早 / 499 客户端断开。
+// 与「请求本身错」（400/401/403/404/422）相反：重试有意义，故走递进退避而非直接熔断。
+func (c CompactErrClass) transient4xx() bool {
+	switch c.HTTPStatus {
+	case 408, 425, 499:
+		return true
+	}
+	return false
 }
 
 // hasRetryFloor — 需要套用「冷却不小于 Retry-After」下界（429 或显式带 Retry-After）
