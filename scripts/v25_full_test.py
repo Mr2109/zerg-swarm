@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 PASS, FAIL = "✅", "❌"
-CORE = "<repo>/core"
+CORE = f"{REPO}/core"
 results = []
 
 
@@ -83,6 +83,8 @@ test_code = '''
 package main
 
 import (
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 仓库根（2026-09-11 B 批：去私有路径）
     "fmt"
     "os"
     "zerg/core/internal/agent"

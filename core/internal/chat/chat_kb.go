@@ -8,14 +8,24 @@ package chat
 import (
 	"database/sql"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"os"
+	"path/filepath"
 	"strings"
 
 	_ "modernc.org/sqlite"
 )
 
 // KBPath — 知识库数据库路径（与 mcp_kb_server.py 一致）
-const KBPath = "<volume-path>"
+// KBPath — 知识库 SQLite 路径（2026-09-11 B 批：不再硬编码私有卷路径）
+// 覆盖顺序：ZERG_KB_PATH → <工作区>/data/knowledge.db
+// （Mr2109本机沿用原位置：已在仓库 .env 中设 ZERG_KB_PATH 指向 <volume-path>）
+var KBPath = func() string {
+	if v := os.Getenv("ZERG_KB_PATH"); v != "" {
+		return v
+	}
+	return filepath.Join(statepath.WorkspaceRoot(), "data", "knowledge.db")
+}()
 
 // kbItem — 知识条目（搜索返回）
 type kbItem struct {

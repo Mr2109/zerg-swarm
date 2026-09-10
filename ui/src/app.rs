@@ -112,6 +112,9 @@ pub struct ZergApp {
     // v2.5.6 模块管理面板开关（➕ 吊装系统——M2）
     show_module_manager: bool,
     // T8 虫茧集装箱（示例虫茧——懒加载——点虫茧首次建——切走引擎后台继续 M2）
+    // 2026-09-11 B 批（决策 5）：示例虫茧为独立仓（zerg-cocoon）的**可选**集装箱——
+    // 公开快照不启用该 feature（不编译、不链接）；未启用时平台栅格显示"未装载"。
+    #[cfg(feature = "zerg-roundtable")]
     roundtable: Option<Box<zerg_roundtable::ui::RoundtableApp>>,
     // T8 虫茧平台态（false=平台启动器应用栅格；true=示例虫茧全屏）
     rt_active: bool,
@@ -219,6 +222,7 @@ impl ZergApp {
                 r
             },
             show_module_manager: false,
+            #[cfg(feature = "zerg-roundtable")]
             roundtable: None,
             rt_active: false,
             selected_task: None,
@@ -1301,6 +1305,11 @@ impl ZergApp {
             // 🐛 虫茧=平台（Mr2109 2026-09-03：平台界面呈现无数应用——示例虫茧只是其一）
             // rt_active=false → 平台启动器（应用栅格）；true → 示例虫茧全屏（引擎后台继续 M2）
             "roundtable" => {
+                #[cfg(not(feature = "zerg-roundtable"))]
+                {
+                    // 未装载该集装箱：永远停在平台栅格（不进入不存在的视图）
+                    self.rt_active = false;
+                }
                 if !self.rt_active {
                     // ── 平台界面：应用栅格（无数茧——每个=独立集装箱应用——示例虫茧=第一个）──
                     ui.heading(format!("{} {}", icon_text("boxes"), t!("cocoon_platform")));
@@ -1336,10 +1345,23 @@ impl ZergApp {
                                 card_ui.label(egui::RichText::new(*desc).size(12.0).color(egui::Color32::from_rgb(170, 175, 185)));
                                 card_ui.with_layout(egui::Layout::right_to_left(egui::Align::BOTTOM), |ui| {
                                     if ui.button(egui::RichText::new(t!("cocoon_open")).size(12.0)).clicked() {
-                                        self.rt_active = true;
+                                        // 2026-09-11 B 批（决策 5）：集装箱需编译时装载（feature）
+                                        if cfg!(feature = "zerg-roundtable") {
+                                            self.rt_active = true;
+                                        }
                                     }
                                 });
-                                if card_ui.rect_contains_pointer(rect) && ui.ctx().input(|i| i.pointer.any_click()) {
+                                if !cfg!(feature = "zerg-roundtable") {
+                                    card_ui.label(
+                                        egui::RichText::new("未装载（本构建未启用该集装箱）")
+                                            .size(11.0)
+                                            .weak(),
+                                    );
+                                }
+                                if card_ui.rect_contains_pointer(rect)
+                                    && ui.ctx().input(|i| i.pointer.any_click())
+                                    && cfg!(feature = "zerg-roundtable")
+                                {
                                     self.rt_active = true;
                                 }
                                 ui.allocate_exact_size(egui::vec2(0.0, 0.0), egui::Sense::hover());
@@ -1347,9 +1369,12 @@ impl ZergApp {
                             }
                         });
                     });
-                } else {
-                    // ── 示例虫茧全屏（嵌中央区——面包屑一层——切走引擎后台继续 M2）──
-                    // 三层收一层（2026-09-04）：宿主不再画返回条——示例虫茧面包屑自带"← 虫茧平台"
+                }
+                // ── 示例虫茧全屏（嵌中央区——面包屑一层——切走引擎后台继续 M2）──
+                // 三层收一层（2026-09-04）：宿主不再画返回条——示例虫茧面包屑自带"← 虫茧平台"
+                // 2026-09-11 B 批（决策 5）：整块随 feature 编译——未启用时不存在该视图
+                #[cfg(feature = "zerg-roundtable")]
+                if self.rt_active {
                     if self.roundtable.is_none() {
                         self.roundtable = Some(Box::new(zerg_roundtable::ui::RoundtableApp::new()));
                     }
@@ -2884,7 +2909,7 @@ impl ZergApp {
 
     // ─── 布局持久化（Mr2109 2026-08-27——左右分割比例——拖动后下次启动默认）───
     fn layout_path() -> std::path::PathBuf {
-        let mut p = std::path::PathBuf::from("/tmp/zerg-tasks");
+        let mut p = api::task_root();
         p.push("ui_layout.json");
         p
     }
@@ -2906,7 +2931,7 @@ impl ZergApp {
 
 // 布局比例持久化（Mr2109 2026-08-27——左右分割——拖动后下次启动默认）
 fn load_layout_ratio(key: &str, default: f32) -> f32 {
-    let mut p = std::path::PathBuf::from("/tmp/zerg-tasks");
+    let mut p = api::task_root();
     p.push("ui_layout.json");
     if let Ok(s) = std::fs::read_to_string(p) {
         if let Ok(m) = serde_json::from_str::<std::collections::HashMap<String, f32>>(&s) {

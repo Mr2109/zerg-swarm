@@ -7,8 +7,8 @@
 set -e
 MODEL="${1:-example-35b}"
 VERSION="${2:-$(date +%Y%m%d-%H%M)}"
-BASE="<repo>"
-EVALS="<volume-path>"
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+EVALS="${ZERG_EVALS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../zerg-evals" && pwd)}"
 RUN_DIR="$EVALS/results/agent/runs/$MODEL-$VERSION"
 
 echo "🐛 虫族 Agent 测试——模型: $MODEL | 版本: $VERSION"

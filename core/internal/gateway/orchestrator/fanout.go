@@ -14,13 +14,13 @@ import (
 
 // MoAConfig MoA 参考/聚合配置。
 type MoAConfig struct {
-	ReferenceModels []string      `json:"reference_models"`  // 参考模型列表（并行 fan-out）
-	AggregatorModel string        `json:"aggregator_model"`  // 聚合器（=主模型）
-	RefMaxTokens    int           `json:"ref_max_tokens"`    // 参考输出截断（[:2000]）
-	RefTimeout      time.Duration `json:"ref_timeout"`       // 参考超时
-	RefTemperature  float64       `json:"ref_temperature"`   // 参考温度（0.7 多样性）
-	MinSuccessful   int           `json:"min_successful"`    // MIN_SUCCESSFUL_REFERENCES=1
-	MaxRetries      int           `json:"max_retries"`       // 参考重试（2 次退避）
+	ReferenceModels []string      `json:"reference_models"` // 参考模型列表（并行 fan-out）
+	AggregatorModel string        `json:"aggregator_model"` // 聚合器（=主模型）
+	RefMaxTokens    int           `json:"ref_max_tokens"`   // 参考输出截断（[:2000]）
+	RefTimeout      time.Duration `json:"ref_timeout"`      // 参考超时
+	RefTemperature  float64       `json:"ref_temperature"`  // 参考温度（0.7 多样性）
+	MinSuccessful   int           `json:"min_successful"`   // MIN_SUCCESSFUL_REFERENCES=1
+	MaxRetries      int           `json:"max_retries"`      // 参考重试（2 次退避）
 }
 
 // DefaultMoAConfig 默认 MoA 配置（用户 2026-08-12 指定模型选型）。

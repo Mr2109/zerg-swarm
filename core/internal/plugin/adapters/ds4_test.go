@@ -74,11 +74,11 @@ func TestDs4Adapter_DefaultConfig(t *testing.T) {
 func TestDs4Adapter_Init(t *testing.T) {
 	d := NewDs4Adapter()
 	cfg := map[string]interface{}{
-		"temperature": 0.7,
-		"auth_token":  "custom-token",
+		"temperature":  0.7,
+		"auth_token":   "custom-token",
 		"finish_words": []string{"完成", "done"},
-		"gateway_url": "http://localhost:9090",
-		"api_format": "responses",
+		"gateway_url":  "http://localhost:9090",
+		"api_format":   "responses",
 	}
 	if err := d.Init(cfg); err != nil {
 		t.Fatalf("Init failed: %v", err)

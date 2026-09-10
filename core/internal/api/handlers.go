@@ -3,6 +3,14 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/chat"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/gateway"
+	"github.com/Mr2109/zerg-swarm/core/internal/localback"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/store"
+	"github.com/Mr2109/zerg-swarm/core/internal/subtask"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,13 +21,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"github.com/Mr2109/zerg-swarm/core/internal/agent"
-	"github.com/Mr2109/zerg-swarm/core/internal/chat"
-	"github.com/Mr2109/zerg-swarm/core/internal/config"
-	"github.com/Mr2109/zerg-swarm/core/internal/gateway"
-	"github.com/Mr2109/zerg-swarm/core/internal/localback"
-	"github.com/Mr2109/zerg-swarm/core/internal/store"
-	"github.com/Mr2109/zerg-swarm/core/internal/subtask"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -239,7 +240,7 @@ func (h *Handlers) TaskDetailHandler(w http.ResponseWriter, r *http.Request) {
 	detail["trace"] = trace
 	// S8: 结晶模式阶段进度卡（plan.json+crystallization.jsonl——任务目录读）
 	{
-		taskDir := filepath.Join("/tmp/zerg-tasks", sanitizeID(task.ID))
+		taskDir := filepath.Join(statepath.TaskRoot(), sanitizeID(task.ID))
 		if plan, err := subtask.LoadPlan(taskDir); err == nil && plan != nil {
 			crystals, _ := subtask.LoadCrystals(taskDir)
 			type StageView struct {
@@ -273,7 +274,7 @@ func (h *Handlers) TaskDetailHandler(w http.ResponseWriter, r *http.Request) {
 	// v2.5.5 修复（2026-08-22 skill 测试发现）: 不依赖 task.Workdir（可能空）——按任务 ID 读任务目录
 	{
 		// 执行报告（任务目录——CA 写任务目录/work——2026-08-21 修复）
-		taskDir := filepath.Join("/tmp/zerg-tasks", sanitizeID(task.ID))
+		taskDir := filepath.Join(statepath.TaskRoot(), sanitizeID(task.ID))
 		execReport := FindTaskReport(filepath.Join(taskDir, "work"))
 		if execReport != "" {
 			if content, err := os.ReadFile(execReport); err == nil {
@@ -312,7 +313,7 @@ func (h *Handlers) TaskDetailHandler(w http.ResponseWriter, r *http.Request) {
 // v2.5.5 修复（2026-08-21 Mr2109发现——UI 报告缺失——英文报告写 git）
 // 查 task-<ID> 分支/或 main 历史里的报告文件——内容验证（防共享旧报告误显示）
 func gitShowReport(taskID, reportName string) string {
-	repoDir := "<repo>"
+	repoDir := statepath.WorkspaceRoot()
 	branch := "task-" + sanitizeID(taskID)
 	// 尝试分支（task-<ID>——merge 前）
 	cmd := exec.Command("git", "-C", repoDir, "show", branch+":"+reportName)
@@ -460,7 +461,7 @@ func roundDuration(start, end string) string {
 // v2.5.5 修复（2026-08-21 Mr2109发现——每轮时间不对）: 之前 strings.Contains(taskID, e.Name()) 永不匹配
 // → 总是返回最新目录（错误日志——duration 算不出）——改读 audit.jsonl 精确关联
 func findTaskLogDir(taskID string) string {
-	base := "/tmp/zerg-ca-logs"
+	base := statepath.CAEventLogRoot()
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		return ""
@@ -520,7 +521,7 @@ func findTaskLogDir(taskID string) string {
 func (h *Handlers) GitStatusHandler(w http.ResponseWriter, r *http.Request) {
 	repoDir := r.URL.Query().Get("repo")
 	if repoDir == "" {
-		repoDir = "<repo>"
+		repoDir = statepath.WorkspaceRoot()
 	}
 	// git branch --list（全分支）
 	branchOut, _ := exec.Command("git", "-C", repoDir, "branch", "--list").Output()
@@ -570,7 +571,7 @@ func (h *Handlers) GitStatusHandler(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) TaskGitHandler(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
 	// 任务 worktree 路径（zerg-wt/task-<id>）
-	wtDir := filepath.Join("<repo>", "zerg-wt", "task-"+sanitizeID(taskID))
+	wtDir := filepath.Join(statepath.WorkspaceRoot(), "zerg-wt", "task-"+sanitizeID(taskID))
 	if _, err := os.Stat(wtDir); err != nil {
 		writeError(w, http.StatusNotFound, "任务 worktree 不存在: "+taskID)
 		return
@@ -600,7 +601,7 @@ func (h *Handlers) TaskGitHandler(w http.ResponseWriter, r *http.Request) {
 // GET /api/tasks/{id}/diff
 func (h *Handlers) TaskDiffHandler(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
-	wtDir := filepath.Join("<repo>", "zerg-wt", "task-"+sanitizeID(taskID))
+	wtDir := filepath.Join(statepath.WorkspaceRoot(), "zerg-wt", "task-"+sanitizeID(taskID))
 	if _, err := os.Stat(wtDir); err != nil {
 		writeError(w, http.StatusNotFound, "任务 worktree 不存在: "+taskID)
 		return
@@ -753,7 +754,7 @@ func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
 		// MCP 库——扫描 MCP 配置（~/.hermes/mcp-servers + 项目 mcp/）
 		items := []map[string]interface{}{}
 		home, _ := os.UserHomeDir()
-		mcpDirs := []string{filepath.Join(home, ".hermes", "mcp-servers"), "mcp", "/tmp/zerg-mcp"}
+		mcpDirs := []string{filepath.Join(home, ".hermes", "mcp-servers"), "mcp", filepath.Join(statepath.TaskRoot(), "mcp")}
 		seen := map[string]bool{}
 		for _, dir := range mcpDirs {
 			entries, err := os.ReadDir(dir)
@@ -929,12 +930,12 @@ func (h *Handlers) LogsHandler2(w http.ResponseWriter, r *http.Request) {
 	switch kind {
 	case "main":
 		// 主控日志（/tmp/zerg-core.log tail）
-		lines, _ := tailFile("/tmp/zerg-core.log", limit)
+		lines, _ := tailFile(filepath.Join(statepath.RuntimeLogDir(), "zerg-core.log"), limit)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"lines": lines})
 	case "task":
 		// 任务日志（/tmp/zerg-ca-logs/<最新>/events.jsonl）
 		taskID := chi.URLParam(r, "id")
-		lines, _ := tailFile(filepath.Join("/tmp/zerg-ca-logs", taskID, "events.jsonl"), limit)
+		lines, _ := tailFile(filepath.Join(statepath.CAEventLogRoot(), taskID, "events.jsonl"), limit)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"lines": lines})
 	default:
 		writeJSON(w, http.StatusOK, map[string]interface{}{"lines": []string{}, "note": "未知日志源: " + kind})

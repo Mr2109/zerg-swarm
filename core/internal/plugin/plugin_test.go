@@ -15,14 +15,14 @@ type mockPlugin struct {
 	closed  bool
 }
 
-func (m *mockPlugin) Name() string                     { return m.name }
-func (m *mockPlugin) Type() PluginType                 { return m.ptype }
-func (m *mockPlugin) Version() string                  { return "1.0.0" }
-func (m *mockPlugin) Capabilities() []string           { return []string{"test"} }
+func (m *mockPlugin) Name() string                          { return m.name }
+func (m *mockPlugin) Type() PluginType                      { return m.ptype }
+func (m *mockPlugin) Version() string                       { return "1.0.0" }
+func (m *mockPlugin) Capabilities() []string                { return []string{"test"} }
 func (m *mockPlugin) Init(cfg map[string]interface{}) error { return nil }
-func (m *mockPlugin) Start() error                     { m.started = true; return nil }
-func (m *mockPlugin) Stop() error                      { m.stopped = true; return nil }
-func (m *mockPlugin) Close() error                     { m.closed = true; return nil }
+func (m *mockPlugin) Start() error                          { m.started = true; return nil }
+func (m *mockPlugin) Stop() error                           { m.stopped = true; return nil }
+func (m *mockPlugin) Close() error                          { m.closed = true; return nil }
 func (m *mockPlugin) Execute(input PluginInput) (PluginOutput, error) {
 	return PluginOutput{Result: "ok:" + input.TaskID}, nil
 }

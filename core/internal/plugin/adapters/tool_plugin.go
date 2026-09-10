@@ -116,8 +116,8 @@ func (p *ToolPlugin) Execute(input plugin.PluginInput) (plugin.PluginOutput, err
 	}
 	err := cmd.Run()
 	result := map[string]interface{}{
-		"stdout": stdout.String(),
-		"stderr": stderr.String(),
+		"stdout":  stdout.String(),
+		"stderr":  stderr.String(),
 		"command": cmdRaw,
 	}
 	if err != nil {

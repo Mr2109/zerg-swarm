@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"io"
 	"os"
 	"os/exec"
@@ -97,12 +98,12 @@ func (ec *ExecContext) validatePath(relPath string) (string, error) {
 			}
 		}
 		// FFP 式可行动拒绝(2026-09-08——报告路径沙盒冲突治本): 拒绝=教学——
-	// 报出合法落点(ZERG_TASK_DIR 已在白名单——报告应写任务目录而非越界自创路径)
-	allowed := ""
-	if td := os.Getenv("ZERG_TASK_DIR"); td != "" {
-		allowed = fmt.Sprintf("。报告/产物请写到任务目录(已在白名单): %s/internal-task-report.md", td)
-	}
-	return "", fmt.Errorf("路径 %q 不在工作区 %q 内，拒绝访问%s", relPath, ec.WorkDir, allowed)
+		// 报出合法落点(ZERG_TASK_DIR 已在白名单——报告应写任务目录而非越界自创路径)
+		allowed := ""
+		if td := os.Getenv("ZERG_TASK_DIR"); td != "" {
+			allowed = fmt.Sprintf("。报告/产物请写到任务目录(已在白名单): %s/internal-task-report.md", td)
+		}
+		return "", fmt.Errorf("路径 %q 不在工作区 %q 内，拒绝访问%s", relPath, ec.WorkDir, allowed)
 	}
 
 	return absPath, nil
@@ -163,7 +164,8 @@ func checkDangerousCommand(command string) error {
 // executeRead — 读取文件内容(v1.0.2:类型感知分层路由——多文件类型可读)
 // 设计: docs/01-设计/设计-read工具v1.0.2-多类型读取升级-20260908.md
 // 路由: 文本(iconv 编码修正+行号)/PDF(pdftotext)/docx·doc·rtf·html(textutil)/epub·odt(pandoc)/
-//       xlsx(内置 zip+XML 单 sheet TSV)/图像·音频·视频(委托专用工具)/二进制(仅提示)
+//
+//	xlsx(内置 zip+XML 单 sheet TSV)/图像·音频·视频(委托专用工具)/二进制(仅提示)
 func (ec *ExecContext) executeRead(ctx context.Context, path string, args map[string]any, gate ToolGater) (string, error) {
 	// Gate 检查
 	if gate != nil {
@@ -1368,7 +1370,7 @@ func bitRwx(mode os.FileMode, r, w, x os.FileMode) (byte, byte, byte) {
 // fallback: 工具定义描述（无履历文件不报错——给 schema 描述）
 func toolHelp(name string) ToolCallResult {
 	// 1. 读履历文件 tools/<name>.md（含说明/示例/变更记录——进化日记）
-	mdPath := filepath.Join("<repo>/tools", name+".md")
+	mdPath := filepath.Join(statepath.WorkspaceRoot(), "tools", name+".md")
 	if b, err := os.ReadFile(mdPath); err == nil && len(b) > 0 {
 		return ToolCallResult{Content: fmt.Sprintf("【工具 %s 帮助】\n%s", name, string(b))}
 	}

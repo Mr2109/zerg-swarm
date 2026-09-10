@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"io"
 	"log"
 	"log/slog"
@@ -29,7 +30,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/Mr2109/zerg-swarm/core/internal/compressor"
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"github.com/Mr2109/zerg-swarm/core/internal/control"
@@ -38,6 +38,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/localback"
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
+	"github.com/go-chi/chi/v5"
 )
 
 // Gateway 网关主结构，持有配置和 HTTP 客户端。
@@ -223,7 +224,7 @@ func NewGateway(authToken string, cfg *config.FleetConfig, localBack *localback.
 
 	// M3 集中控制层（v2.4）：加载规则——nil 不启用；观察模式（记录不拦截——Mr2109确认策略后改拦截）
 	var ctrlGate *control.Gate
-	if gate, err := control.NewGateFromFile("<repo>/core/internal/control/rules.yaml"); err == nil {
+	if gate, err := control.NewGateFromFile(filepath.Join(statepath.WorkspaceRoot(), "core", "internal", "control", "rules.yaml")); err == nil {
 		ctrlGate = gate
 		log.Printf("🔒 M3 集中控制层已加载（观察模式——记录不拦截）")
 	} else {
@@ -2031,7 +2032,7 @@ func reflectPluginOptions(v reflect.Value, prefix string, out map[string]interfa
 // 适配器选项编辑（2026-08-27 Mr2109——每个模型各自独立参数集——实时生效）
 
 // adapterOverridesFile 适配器配置覆盖持久化（重启恢复）
-var adapterOverridesFile = "/tmp/zerg-tasks/adapter_overrides.json"
+var adapterOverridesFile = filepath.Join(statepath.TaskRoot(), "adapter_overrides.json")
 
 // adapterOverrides 模型名 → 配置覆盖（map[model]map[key]value）
 var adapterOverrides = map[string]map[string]interface{}{}

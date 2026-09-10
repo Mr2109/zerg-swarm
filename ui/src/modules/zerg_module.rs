@@ -124,12 +124,12 @@ impl ModuleRegistry {
     /// 找不到文件 = 无外部箱（正常）；读取/解析失败（M33 2026-09-10 审计：不再静默）
     /// 打一次日志便于定位（用户写的 JSON 写错时不再无声无息）。
     pub fn load_external(&mut self) {
-        let path = "/tmp/zerg-ui/external-modules.json";
-        let s = match std::fs::read_to_string(path) {
+        let path = crate::api::ui_dir().join("external-modules.json");
+        let s = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return, // 无文件=正常
             Err(e) => {
-                eprintln!("[modules] 读取外部模块配置失败 {}: {}", path, e); // M33
+                eprintln!("[modules] 读取外部模块配置失败 {}: {}", path.display(), e); // M33
                 return;
             }
         };
@@ -140,7 +140,7 @@ impl ModuleRegistry {
         let cfg = match serde_json::from_str::<Config>(&s) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("[modules] 解析外部模块配置失败 {}: {}", path, e); // M33
+                eprintln!("[modules] 解析外部模块配置失败 {}: {}", path.display(), e); // M33
                 return;
             }
         };
@@ -170,13 +170,13 @@ impl ModuleRegistry {
     /// 持久化——哪些箱在船上（/tmp/zerg-ui/modules.json）
     /// 只存 enabled 状态——模块清单是代码内建的（集装箱注册）
     pub fn save(&self) {
-        let dir = "/tmp/zerg-ui";
+        let dir = crate::api::ui_dir();
         // M33(2026-09-10 审计): 目录/写盘失败不再静默——用户禁用/启用选择重启即失效却无感知
-        if let Err(e) = std::fs::create_dir_all(dir) {
-            eprintln!("[modules] 创建配置目录失败 {}: {}", dir, e);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("[modules] 创建配置目录失败 {}: {}", dir.display(), e);
             return;
         }
-        let path = format!("{}/modules.json", dir);
+        let path = format!("{}/modules.json", dir.display());
         let enabled: std::collections::BTreeMap<String, bool> = self
             .enabled
             .iter()
@@ -196,19 +196,19 @@ impl ModuleRegistry {
     /// 加载持久化状态（启动时调用——恢复"哪些箱卸下了"）
     /// 找不到文件 = 默认全在船（首次启动）；解析失败打日志（M33 2026-09-10 审计）
     pub fn load(&mut self) {
-        let path = "/tmp/zerg-ui/modules.json";
-        let s = match std::fs::read_to_string(path) {
+        let path = crate::api::ui_dir().join("modules.json");
+        let s = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
             Err(e) => {
-                eprintln!("[modules] 读取模块状态失败 {}: {}", path, e); // M33
+                eprintln!("[modules] 读取模块状态失败 {}: {}", path.display(), e); // M33
                 return;
             }
         };
         let disabled: std::collections::BTreeMap<String, bool> = match serde_json::from_str(&s) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("[modules] 解析模块状态失败 {}: {}", path, e); // M33
+                eprintln!("[modules] 解析模块状态失败 {}: {}", path.display(), e); // M33
                 return;
             }
         };

@@ -14,8 +14,8 @@ import (
 
 // 工具输出保留策略：只保留首尾 N 行（中间省略）
 const (
-	toolOutputHeadLines = 5  // 工具输出保留开头行数
-	toolOutputTailLines = 3  // 工具输出保留结尾行数
+	toolOutputHeadLines = 5   // 工具输出保留开头行数
+	toolOutputTailLines = 3   // 工具输出保留结尾行数
 	toolOutputMaxLen    = 800 // 单个工具输出最大保留字符
 )
 
@@ -188,7 +188,6 @@ func ensureMap(messages []interface{}) []map[string]interface{} {
 	}
 	return out
 }
-
 
 // trimRequestMessages 快路径精简请求 body 的 messages（工具输出 masking + 填充删除）。
 // 返回是否发生精简。body 是 *[]byte，精简后回写。

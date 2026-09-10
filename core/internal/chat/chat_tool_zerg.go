@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"io"
 	"net/http"
 	"os"
@@ -21,16 +22,13 @@ import (
 
 // zergAPI — 调本机 core API（任务/集群/模型——X-Auth-Token）
 func zergAPI(method, path string, body []byte) (string, error) {
-	req, err := http.NewRequest(method, "http://127.0.0.1:8580"+path, strings.NewReader(string(body)))
+	req, err := http.NewRequest(method, statepath.CoreBaseURL()+path, strings.NewReader(string(body)))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if token, err := os.ReadFile("/tmp/zerg-chat/token.txt"); err == nil {
-		req.Header.Set("X-Auth-Token", strings.TrimSpace(string(token)))
-	} else {
-		req.Header.Set("X-Auth-Token", config.ResolveAuthToken())
-	}
+	// 2026-09-11 A/B 批：统一走令牌解析（环境变量 → ~/.zerg/token），不再读历史 /tmp 文件
+	req.Header.Set("X-Auth-Token", config.ResolveAuthToken())
 	client := &http.Client{Timeout: 8 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -263,7 +261,7 @@ func zergHealth(args map[string]any) (string, error) {
 // zergVersion — 虫族版本（构建信息）
 func zergVersion(args map[string]any) (string, error) {
 	// 从 git 仓库读取最近版本
-	gitDir := "<repo>"
+	gitDir := statepath.WorkspaceRoot()
 	ver := "unknown"
 	if b, err := os.ReadFile(filepath.Join(gitDir, ".git", "HEAD")); err == nil {
 		ver = strings.TrimSpace(string(b))

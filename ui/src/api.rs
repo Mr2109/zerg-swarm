@@ -4,9 +4,20 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::{Arc, Mutex, OnceLock};
 
-pub const API_BASE: &str = "http://127.0.0.1:8580";
+/// 主控 API 基址（2026-09-11 B 批：环境无关化——ZERG_api_base() 可覆盖，默认本机 8580）
+pub fn api_base() -> &'static str {
+    static BASE: OnceLock<String> = OnceLock::new();
+    BASE.get_or_init(|| {
+        std::env::var("ZERG_api_base()")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "http://127.0.0.1:8580".to_string())
+    })
+    .as_str()
+}
 /// 共享令牌（2026-09-11 A 批：不再硬编码——库内零明文）
-/// 解析顺序：环境变量 ZERG_AUTH_TOKEN → ZERG_api_token() → ~/.zerg-ui-prefs.json 的 auth_token → ~/.zerg/token
+/// 解析顺序：环境变量 ZERG_AUTH_TOKEN → ZERG_API_TOKEN → ~/.zerg-ui-prefs.json 的 auth_token → ~/.zerg/token
 pub fn api_token() -> &'static str {
     static TOKEN: OnceLock<String> = OnceLock::new();
     TOKEN
@@ -45,7 +56,18 @@ pub fn api_token() -> &'static str {
         })
         .as_str()
 }
-pub const AI_BASE: &str = "http://127.0.0.1:8082"; // F5 AI 动力（网关——Mr2109统一接口）
+/// 网关（AI 动力）基址（ZERG_ai_base() 可覆盖，默认本机 8082）
+pub fn ai_base() -> &'static str {
+    static BASE: OnceLock<String> = OnceLock::new();
+    BASE.get_or_init(|| {
+        std::env::var("ZERG_ai_base()")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "http://127.0.0.1:8082".to_string())
+    })
+    .as_str()
+}
 
 /// http_client — 统一构造 reqwest client（2026-09-10 根治回环代理问题）
 /// 背景：reqwest 默认尊重系统代理（macOS Clash Party :7895），对 **127.0.0.1 回环请求**也会走代理，
@@ -143,7 +165,7 @@ async fn json_body(r: reqwest::Response) -> Result<Value, String> {
 /// 解析 output 里的 output_text 文本（跳过 reasoning）
 pub async fn ai_prompt_blocking(model: &str, prompt: &str) -> Result<String, String> {
     let client = http_client_ai();
-    let url = format!("{}/v1/responses", AI_BASE);
+    let url = format!("{}/v1/responses", ai_base());
     // 适配器铁律（Mr2109 2026-08-27+28）：程序不硬编码 max_tokens——传 0/不带由适配器决定
     // 思考不能关——深度由 reasoning effort(low) 统一控制
     let body = serde_json::json!({
@@ -270,7 +292,7 @@ pub fn runtime() -> &'static tokio::runtime::Runtime {
 /// 同步请求主控 API（GET——带 token——在 runtime 内跑）——公开（app 用）
 pub async fn sync_get_public(path: &str) -> Result<Value, String> {
     let client = http_client_json();
-    let url = format!("{}{}", API_BASE, path);
+    let url = format!("{}{}", api_base(), path);
     let resp = client
         .get(&url)
         .header("X-Auth-Token", api_token())
@@ -358,7 +380,7 @@ pub async fn fetch_doc_content_blocking(path: String) -> Result<String, String> 
 /// 文档操作（blocking）——v2.5.6 右键菜单/编辑器（Mr2109 2026-08-29）
 pub async fn doc_op_blocking(action: &str, payload: serde_json::Value) -> Result<(), String> {
     let client = http_client_json();
-    let url = format!("{}/api/docs/{}", API_BASE, action);
+    let url = format!("{}/api/docs/{}", api_base(), action);
     let resp = client
         .post(&url)
         .header("X-Auth-Token", api_token())
@@ -393,7 +415,7 @@ pub fn doc_op_async(action: &str, payload: serde_json::Value) -> SharedResult<()
 // task_retry_blocking 重跑任务（右键——failed→queued）
 pub async fn task_retry_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
-    let url = format!("{}/api/tasks/{}/retry", API_BASE, id);
+    let url = format!("{}/api/tasks/{}/retry", api_base(), id);
     let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
 }
@@ -401,7 +423,7 @@ pub async fn task_retry_blocking(id: &str) -> Result<(), String> {
 // task_move_blocking 重排任务（右键——top/bottom/up/down）
 pub async fn task_move_blocking(id: &str, action: &str) -> Result<(), String> {
     let client = http_client_json();
-    let url = format!("{}/api/tasks/{}/move?action={}", API_BASE, id, action);
+    let url = format!("{}/api/tasks/{}/move?action={}", api_base(), id, action);
     let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
 }
@@ -409,7 +431,7 @@ pub async fn task_move_blocking(id: &str, action: &str) -> Result<(), String> {
 // task_delete_blocking 删除任务（右键——queued 移除）
 pub async fn task_delete_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
-    let url = format!("{}/api/tasks/{}", API_BASE, id);
+    let url = format!("{}/api/tasks/{}", api_base(), id);
     let resp = client.delete(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
 }
@@ -417,7 +439,7 @@ pub async fn task_delete_blocking(id: &str) -> Result<(), String> {
 // task_pause_blocking 暂停/继续任务（右键——queued→paused / paused→queued）
 pub async fn task_pause_blocking(id: &str, pause: bool) -> Result<(), String> {
     let client = http_client_json();
-    let url = format!("{}/api/tasks/{}/pause?pause={}", API_BASE, id, pause);
+    let url = format!("{}/api/tasks/{}/pause?pause={}", api_base(), id, pause);
     let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
 }
@@ -425,7 +447,7 @@ pub async fn task_pause_blocking(id: &str, pause: bool) -> Result<(), String> {
 // fetch_internal_tasks_blocking 拉内部任务清单（Mr2109 2026-08-22）
 pub async fn fetch_internal_tasks_blocking() -> Result<Vec<serde_json::Value>, String> {
     let client = http_client_json();
-    let url = format!("{}/api/internal-tasks", API_BASE);
+    let url = format!("{}/api/internal-tasks", api_base());
     let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     // A05（2026-09-10 审计）：先判 HTTP 状态（json_body），字段缺失返回 Err——不再把 500 错误体当成"空列表"
     let v = json_body(resp).await?;
@@ -438,7 +460,7 @@ pub async fn fetch_internal_tasks_blocking() -> Result<Vec<serde_json::Value>, S
 // run_internal_task_blocking 手动执行内部任务（Mr2109 2026-08-22）
 pub async fn run_internal_task_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
-    let url = format!("{}/api/internal-tasks/{}/run", API_BASE, id);
+    let url = format!("{}/api/internal-tasks/{}/run", api_base(), id);
     let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
@@ -452,7 +474,7 @@ pub async fn run_internal_task_blocking(id: &str) -> Result<(), String> {
 /// 2026-09-10 治本（APP-A07）：返回响应体（内含 state）——契约"变更即回状态"，UI 无需二次往返
 pub async fn stop_internal_tasks_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
-    let url = format!("{}/api/internal-tasks/stop", API_BASE);
+    let url = format!("{}/api/internal-tasks/stop", api_base());
     let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     json_body(resp).await
 }
@@ -462,7 +484,7 @@ pub async fn stop_internal_tasks_blocking() -> Result<serde_json::Value, String>
 /// 2026-09-10 治本（APP-A07）：门控未放行时后端返回 403 + 原因——这里如实报错（不再假成功）
 pub async fn start_internal_tasks_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
-    let url = format!("{}/api/internal-tasks/start", API_BASE);
+    let url = format!("{}/api/internal-tasks/start", api_base());
     let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     json_body(resp).await
 }
@@ -470,7 +492,7 @@ pub async fn start_internal_tasks_blocking() -> Result<serde_json::Value, String
 /// 内部任务引擎状态（2026-09-10 治本——UI 每 10s 轮询；服务端为唯一真相源）
 pub async fn fetch_internal_state_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
-    let url = format!("{}/api/internal-tasks/state", API_BASE);
+    let url = format!("{}/api/internal-tasks/state", api_base());
     let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     json_body(resp).await
 }
@@ -478,7 +500,7 @@ pub async fn fetch_internal_state_blocking() -> Result<serde_json::Value, String
 // set_internal_interval_blocking 设置内部任务周期（Mr2109 2026-08-27——循环周期 1h-24h/指定）
 pub async fn set_internal_interval_blocking(id: &str, hours: f64) -> Result<(), String> {
     let client = http_client_json();
-    let url = format!("{}/api/internal-tasks/{}/interval", API_BASE, id);
+    let url = format!("{}/api/internal-tasks/{}/interval", api_base(), id);
     let resp = client
         .post(&url)
         .header("X-Auth-Token", api_token())
@@ -497,7 +519,7 @@ pub async fn set_internal_interval_blocking(id: &str, hours: f64) -> Result<(), 
 // auto_run=true=自动运行（编排触发）——false=手动运行（只手动触发）
 pub async fn set_internal_mode_blocking(id: &str, auto_run: bool) -> Result<(), String> {
     let client = http_client_json();
-    let url = format!("{}/api/internal-tasks/{}/mode", API_BASE, id);
+    let url = format!("{}/api/internal-tasks/{}/mode", api_base(), id);
     let resp = client
         .post(&url)
         .header("X-Auth-Token", api_token())
@@ -515,7 +537,7 @@ pub async fn set_internal_mode_blocking(id: &str, auto_run: bool) -> Result<(), 
 // fetch_internal_intervals_blocking 查询周期配置（Mr2109 2026-08-27）
 pub async fn fetch_internal_intervals_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
-    let url = format!("{}/api/internal-tasks/intervals", API_BASE);
+    let url = format!("{}/api/internal-tasks/intervals", api_base());
     let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     // A05（2026-09-10 审计）：先判 HTTP 状态——5xx 错误体不再被当成"成功但空数据"
     json_body(resp).await
@@ -524,7 +546,7 @@ pub async fn fetch_internal_intervals_blocking() -> Result<serde_json::Value, St
 // task_terminate_blocking 终止执行中任务（右键——running→failed）
 pub async fn task_terminate_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
-    let url = format!("{}/api/tasks/{}/terminate", API_BASE, id);
+    let url = format!("{}/api/tasks/{}/terminate", api_base(), id);
     let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
 }
@@ -532,7 +554,7 @@ pub async fn task_terminate_blocking(id: &str) -> Result<(), String> {
 // task_requeue_blocking 执行中任务重回队列（右键——running→queued）
 pub async fn task_requeue_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
-    let url = format!("{}/api/tasks/{}/requeue", API_BASE, id);
+    let url = format!("{}/api/tasks/{}/requeue", api_base(), id);
     let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
 }
@@ -540,7 +562,7 @@ pub async fn task_requeue_blocking(id: &str) -> Result<(), String> {
 // fetch_archive_blocking 拉归档列表（Mr2109 2026-08-22）
 pub async fn fetch_archive_blocking() -> Result<Vec<serde_json::Value>, String> {
     let client = http_client_json();
-    let url = format!("{}/api/archive", API_BASE);
+    let url = format!("{}/api/archive", api_base());
     let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     // A05（2026-09-10 审计）：先判 HTTP 状态；entries 字段缺失返回 Err——不再把错误显示成"无数据"
     let v = json_body(resp).await?;
@@ -566,7 +588,7 @@ pub async fn fetch_cluster_blocking() -> Result<Value, String> {
 pub async fn fetch_model_detail_blocking(name: &str) -> Result<Value, String> {
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名（fleet 键可能含空格/斜杠）编码后入路径
-    let url = format!("{}/api/models/{}", API_BASE, urlencode_path(name));
+    let url = format!("{}/api/models/{}", api_base(), urlencode_path(name));
     let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         resp.json().await.map_err(|e| e.to_string())
@@ -579,7 +601,7 @@ pub async fn fetch_model_detail_blocking(name: &str) -> Result<Value, String> {
 pub async fn model_start_blocking(name: &str) -> Result<(), String> {
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名编码后入路径
-    let url = format!("{}/api/models/{}/start", API_BASE, urlencode_path(name));
+    let url = format!("{}/api/models/{}/start", api_base(), urlencode_path(name));
     let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
@@ -592,7 +614,7 @@ pub async fn model_start_blocking(name: &str) -> Result<(), String> {
 pub async fn model_stop_blocking(name: &str) -> Result<(), String> {
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名编码后入路径
-    let url = format!("{}/api/models/{}/stop", API_BASE, urlencode_path(name));
+    let url = format!("{}/api/models/{}/stop", api_base(), urlencode_path(name));
     let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
@@ -605,7 +627,7 @@ pub async fn model_stop_blocking(name: &str) -> Result<(), String> {
 pub async fn fetch_adapter_schema_blocking(name: &str) -> Result<serde_json::Value, String> {
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名编码后入路径
-    let url = format!("{}/api/models/{}/adapter-opts", API_BASE, urlencode_path(name));
+    let url = format!("{}/api/models/{}/adapter-opts", api_base(), urlencode_path(name));
     let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         resp.json().await.map_err(|e| e.to_string())
@@ -618,7 +640,7 @@ pub async fn fetch_adapter_schema_blocking(name: &str) -> Result<serde_json::Val
 pub async fn update_adapter_opts_blocking(name: &str, cfg: serde_json::Value) -> Result<(), String> {
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名编码后入路径
-    let url = format!("{}/api/models/{}/adapter-opts", API_BASE, urlencode_path(name));
+    let url = format!("{}/api/models/{}/adapter-opts", api_base(), urlencode_path(name));
     let resp = client
         .put(&url)
         .header("X-Auth-Token", api_token())
@@ -773,7 +795,7 @@ pub fn create_chat_session_async(model: String) -> SharedResult<Value> {
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
-        let url = format!("{}/api/chat/sessions", API_BASE);
+        let url = format!("{}/api/chat/sessions", api_base());
         let body = serde_json::json!({"model": model});
         let resp = client
             .post(&url)
@@ -856,7 +878,7 @@ pub fn chat_send_stream_async(session_id: String, content: String, image: Option
         // A09：任务退出（含 panic）兜底——保证状态机收敛
         let _guard = StreamDoneGuard(s2.clone());
         let client = http_client();
-        let url = format!("{}/api/chat/sessions/{}/send", API_BASE, session_id);
+        let url = format!("{}/api/chat/sessions/{}/send", api_base(), session_id);
         let mut body = serde_json::json!({"content": content});
         // C3(2026-09-10): 重生成——复用既有 user 消息（服务端软删其后消息）
         if let Some(uid) = reuse_user_id {
@@ -1036,7 +1058,7 @@ pub fn delete_chat_session_async(session_id: String) -> SharedResult<bool> {
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
-        let url = format!("{}/api/chat/sessions/{}", API_BASE, session_id);
+        let url = format!("{}/api/chat/sessions/{}", api_base(), session_id);
         let resp = client
             .delete(&url)
             .header("X-Auth-Token", api_token())
@@ -1126,7 +1148,7 @@ pub fn chat_update_model_async(session_id: String, model: String) -> SharedResul
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
-        let url = format!("{}/api/chat/sessions/{}/model", API_BASE, session_id);
+        let url = format!("{}/api/chat/sessions/{}/model", api_base(), session_id);
         let resp = client
             .post(&url)
             .header("X-Auth-Token", api_token())
@@ -1151,7 +1173,7 @@ pub fn chat_abort_async(session_id: String) -> SharedResult<Value> {
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
-        let url = format!("{}/api/chat/sessions/{}/abort", API_BASE, session_id);
+        let url = format!("{}/api/chat/sessions/{}/abort", api_base(), session_id);
         let resp = client
             .post(&url)
             .header("X-Auth-Token", api_token())
@@ -1175,7 +1197,7 @@ pub fn chat_steer_async(session_id: String, content: String) -> SharedResult<Val
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
-        let url = format!("{}/api/chat/sessions/{}/steer", API_BASE, session_id);
+        let url = format!("{}/api/chat/sessions/{}/steer", api_base(), session_id);
         let resp = client
             .post(&url)
             .header("X-Auth-Token", api_token())
@@ -1200,7 +1222,7 @@ pub fn chat_regenerate_async(session_id: String) -> SharedResult<Value> {
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
-        let url = format!("{}/api/chat/sessions/{}/regenerate", API_BASE, session_id);
+        let url = format!("{}/api/chat/sessions/{}/regenerate", api_base(), session_id);
         let resp = client
             .post(&url)
             .header("X-Auth-Token", api_token())
@@ -1239,7 +1261,7 @@ pub fn chat_delegate_task_async(description: String, model: String, parent_sessi
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
-        let url = format!("{}/api/tasks", API_BASE);
+        let url = format!("{}/api/tasks", api_base());
         let mut body = serde_json::json!({"description": description, "model": model, "type": "external", "priority": 3});
         if let Some(psid) = parent_session_id {
             body["parent_session_id"] = serde_json::Value::String(psid);
@@ -1267,7 +1289,7 @@ pub fn chat_set_archived_async(session_id: String, archived: bool) -> SharedResu
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
-        let url = format!("{}/api/chat/sessions/{}/archive", API_BASE, session_id);
+        let url = format!("{}/api/chat/sessions/{}/archive", api_base(), session_id);
         let resp = client
             .post(&url)
             .header("X-Auth-Token", api_token())
@@ -1290,7 +1312,7 @@ pub fn chat_set_pinned_async(session_id: String, pinned: bool) -> SharedResult<V
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
-        let url = format!("{}/api/chat/sessions/{}/pinned", API_BASE, session_id);
+        let url = format!("{}/api/chat/sessions/{}/pinned", api_base(), session_id);
         let resp = client
             .post(&url)
             .header("X-Auth-Token", api_token())
@@ -1314,7 +1336,7 @@ pub fn chat_rename_session_async(session_id: String, title: String) -> SharedRes
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
-        let url = format!("{}/api/chat/sessions/{}/title", API_BASE, session_id);
+        let url = format!("{}/api/chat/sessions/{}/title", api_base(), session_id);
         let resp = client
             .post(&url)
             .header("X-Auth-Token", api_token())
@@ -1338,7 +1360,7 @@ pub fn chat_edit_message_async(mid: i64, content: String, truncate: bool) -> Sha
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
-        let url = format!("{}/api/chat/messages/{}", API_BASE, mid);
+        let url = format!("{}/api/chat/messages/{}", api_base(), mid);
         let resp = client
             .patch(&url)
             .header("X-Auth-Token", api_token())
@@ -1439,7 +1461,7 @@ mod proxy_root_fix_tests {
         let probe = |client: reqwest::Client| {
             rt.block_on(async move {
                 match client
-                    .get(format!("{}/api/fleet/status", API_BASE))
+                    .get(format!("{}/api/fleet/status", api_base()))
                     .header("X-Auth-Token", api_token())
                     .send()
                     .await
@@ -1502,7 +1524,7 @@ pub fn fetch_chat_window_async(session_id: String, around_id: i64) -> SharedResu
         let client = http_client_json();
         let url = format!(
             "{}/api/chat/sessions/{}/window?around_id={}&limit=20",
-            API_BASE, session_id, around_id
+            api_base(), session_id, around_id
         );
         let r = match client.get(&url).header("X-Auth-Token", api_token()).send().await {
             Ok(resp) => json_body(resp).await,
@@ -1519,7 +1541,7 @@ pub fn chat_compact_reset_async(session_id: String) -> SharedResult<serde_json::
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
-        let url = format!("{}/api/chat/sessions/{}/compact-reset", API_BASE, session_id);
+        let url = format!("{}/api/chat/sessions/{}/compact-reset", api_base(), session_id);
         let r = match client.post(&url).header("X-Auth-Token", api_token()).send().await {
             Ok(resp) => json_body(resp).await,
             Err(e) => Err(format!("请求失败: {}", e)),
@@ -1532,7 +1554,7 @@ pub fn chat_compact_reset_async(session_id: String) -> SharedResult<serde_json::
 /// 网关前缀命中率（丙批 N4——网关 8082；需 X-Auth-Token）
 pub async fn fetch_prefix_cache_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
-    let url = format!("{}/api/metrics/prefix_cache", AI_BASE);
+    let url = format!("{}/api/metrics/prefix_cache", ai_base());
     let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     json_body(resp).await
 }
@@ -1580,4 +1602,24 @@ mod a08_abort_tests {
         }
         assert!(take_stream_panic().is_none(), "正常结束不应上报 panic");
     }
+}
+
+/// UI 运行目录（ZERG_UI_DIR 可覆盖，默认 <tmp>/zerg-ui）——模块清单/外部模块声明落此
+pub fn ui_dir() -> std::path::PathBuf {
+    let base = std::env::var("ZERG_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
+    std::env::var("ZERG_UI_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(base).join("zerg-ui"))
+}
+
+/// CA 任务根目录（与主控一致：ZERG_TASK_ROOT → <ZERG_TMP_DIR|/tmp>/zerg-tasks）
+pub fn task_root() -> std::path::PathBuf {
+    if let Ok(v) = std::env::var("ZERG_TASK_ROOT") {
+        if !v.trim().is_empty() {
+            return std::path::PathBuf::from(v);
+        }
+    }
+    let base = std::env::var("ZERG_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
+    std::path::PathBuf::from(base).join("zerg-tasks")
 }

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"io"
 	"net/http"
 	"os"
@@ -42,10 +43,10 @@ func WebSearch(query string, limit int) (string, error) {
 	_, file, _, _ := runtime.Caller(0)
 	scriptDir := filepath.Dir(file)
 	script := filepath.Join(scriptDir, "searx_search.py")
-	venvPy := "<repo>/vendor/searxng/.venv/bin/python3"
+	venvPy := searxngPython()
 
 	cmd := exec.Command(venvPy, script, query, fmt.Sprintf("%d", limit))
-	cmd.Env = append(os.Environ(), "SEARXNG_SETTINGS_PATH=<repo>/vendor/searxng/searx/settings.yml")
+	cmd.Env = append(os.Environ(), "SEARXNG_SETTINGS_PATH="+searxngSettings())
 	// 清除 PYTHONPATH（防 Hermes venv 污染——脚本内也处理）
 	cmd.Env = removeEnv(cmd.Env, "PYTHONPATH")
 
@@ -243,13 +244,13 @@ func webSearchBridge(query string, limit int, lang string, timeRange string) (*s
 	_, file, _, _ := runtime.Caller(0)
 	scriptDir := filepath.Dir(file)
 	script := filepath.Join(scriptDir, "searx_search.py")
-	venvPy := "<repo>/vendor/searxng/.venv/bin/python3"
+	venvPy := searxngPython()
 	args := []string{script, query, fmt.Sprintf("%d", limit), lang}
 	if timeRange != "" {
 		args = append(args, timeRange)
 	}
 	cmd := exec.Command(venvPy, args...)
-	cmd.Env = append(os.Environ(), "SEARXNG_SETTINGS_PATH=<repo>/vendor/searxng/searx/settings.yml")
+	cmd.Env = append(os.Environ(), "SEARXNG_SETTINGS_PATH="+searxngSettings())
 	cmd.Env = removeEnv(cmd.Env, "PYTHONPATH")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -426,4 +427,34 @@ func LoadSearchCache() {
 			delete(searchCacheMap, k)
 		}
 	}
+}
+
+// ─── 2026-09-11 B 批（可移植性）：searxng 由用户自建，路径不再硬编码 ───
+// 优先级：ZERG_SEARXNG_PY / ZERG_SEARXNG_SETTINGS → <工作区>/vendor/searxng/... → PATH 中的 python3
+// （vendor/searxng 是 AGPL 第三方组件，不随仓库分发；安装见 scripts/install-searxng.sh）
+
+func searxngPython() string {
+	if v := strings.TrimSpace(os.Getenv("ZERG_SEARXNG_PY")); v != "" {
+		return v
+	}
+	if ws := statepath.WorkspaceRoot(); ws != "" {
+		p := filepath.Join(ws, "vendor", "searxng", ".venv", "bin", "python3")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	if p, err := exec.LookPath("python3"); err == nil {
+		return p
+	}
+	return "python3"
+}
+
+func searxngSettings() string {
+	if v := strings.TrimSpace(os.Getenv("ZERG_SEARXNG_SETTINGS")); v != "" {
+		return v
+	}
+	if ws := statepath.WorkspaceRoot(); ws != "" {
+		return filepath.Join(ws, "vendor", "searxng", "searx", "settings.yml")
+	}
+	return ""
 }

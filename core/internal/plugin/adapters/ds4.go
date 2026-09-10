@@ -3,6 +3,7 @@ package adapters
 
 import (
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
@@ -20,11 +21,11 @@ type Ds4Adapter struct {
 	name    string
 	version string
 	// 可配置参数（Init 后生效）
-	Temperature     float64
-	AuthToken       string
-	FinishWords     []string
-	GatewayURL      string
-	APIFormat       string // "openai" 或 "responses"
+	Temperature float64
+	AuthToken   string
+	FinishWords []string
+	GatewayURL  string
+	APIFormat   string // "openai" 或 "responses"
 	// 状态
 	initialized bool
 	started     bool
@@ -33,13 +34,13 @@ type Ds4Adapter struct {
 // NewDs4Adapter 创建 Ds4Adapter（默认配置）
 func NewDs4Adapter() *Ds4Adapter {
 	return &Ds4Adapter{
-		name:            "ds4",
-		version:         "0.1.0",
-		Temperature:     0.6,
-		AuthToken:       "ds4-gateway-token",
-		FinishWords:     []string{"任务完成", "已完成", "成功完成", "完成", "done", "completed"},
-		GatewayURL:      "http://127.0.0.1:8082",
-		APIFormat:       "openai",
+		name:        "ds4",
+		version:     "0.1.0",
+		Temperature: 0.6,
+		AuthToken:   "ds4-gateway-token",
+		FinishWords: []string{"任务完成", "已完成", "成功完成", "完成", "done", "completed"},
+		GatewayURL:  statepath.GatewayBaseURL(),
+		APIFormat:   "openai",
 	}
 }
 
@@ -152,11 +153,11 @@ func (d *Ds4Adapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, err
 	}
 
 	response := map[string]interface{}{
-		"model":        "deepseek-v4-flash",
-		"temperature":  d.Temperature,
-		"auth_token":   d.AuthToken,
-		"api_format":   d.APIFormat,
-		"gateway_url":  d.GatewayURL,
+		"model":       "deepseek-v4-flash",
+		"temperature": d.Temperature,
+		"auth_token":  d.AuthToken,
+		"api_format":  d.APIFormat,
+		"gateway_url": d.GatewayURL,
 		// v2.5.5 T5c 元数据风格（与 qwen38/nemotron 一致——B-3 路由参数覆盖用）
 		"machine":     "",
 		"format":      "chat",

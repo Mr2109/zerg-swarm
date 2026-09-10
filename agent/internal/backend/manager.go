@@ -25,18 +25,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 	"github.com/Mr2109/zerg-swarm/agent/internal/modeladapter"
+	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
 
 // 状态机常量
 const (
-	StateIdle      = "idle"
-	StateLoading   = "loading"
-	StateReady     = "ready"
-	StateCrashed   = "crashed"
-	StateSleeping  = "sleeping"
+	StateIdle     = "idle"
+	StateLoading  = "loading"
+	StateReady    = "ready"
+	StateCrashed  = "crashed"
+	StateSleeping = "sleeping"
 
 	// maxResident 模型驻留上限（LRU 淘汰阈值，借鉴 llama.cpp router mode）
 	maxResident = 3
@@ -48,10 +48,10 @@ type subproc struct {
 	port     int
 	model    string
 	entry    *registry.ModelEntry
-	state    string      // ready / loading / crashed / sleeping
-	failCnt  int         // 连续健康检查失败次数
-	lastUsed time.Time   // 最近使用时间（LRU）
-	reqCount int         // 活跃请求数
+	state    string    // ready / loading / crashed / sleeping
+	failCnt  int       // 连续健康检查失败次数
+	lastUsed time.Time // 最近使用时间（LRU）
+	reqCount int       // 活跃请求数
 }
 
 // loadWaiter 请求合并：同模型并发请求共享一个加载槽
@@ -64,7 +64,7 @@ type loadWaiter struct {
 // Manager 后端管理器，线程安全。多模型驻留 + LRU 淘汰。
 type Manager struct {
 	mu       sync.Mutex
-	procs    map[string]*subproc   // model → subproc（多模型驻留）
+	procs    map[string]*subproc    // model → subproc（多模型驻留）
 	loading  map[string]*loadWaiter // model → 正在加载的等待组（请求合并）
 	registry *registry.Registry
 	machine  string

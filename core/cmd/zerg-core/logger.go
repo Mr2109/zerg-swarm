@@ -7,6 +7,7 @@ package main
 //   - 环境变量：ZERG_LOG_LEVEL（debug/info/warn/error）、ZERG_LOG_STDOUT=1（同时输出终端）
 
 import (
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"io"
 	"log"
 	"log/slog"
@@ -63,7 +64,7 @@ func setupLogger(logDir string) *slog.Logger {
 // 写入 /tmp/zerg-heartbeat.log，50MB 轮转，与主日志分离。
 func setupHeartbeatLogger() *slog.Logger {
 	rotate := &lumberjack.Logger{
-		Filename:   "/tmp/zerg-heartbeat.log",
+		Filename:   filepath.Join(statepath.RuntimeLogDir(), "zerg-heartbeat.log"),
 		MaxSize:    50,   // 单文件最大 50MB
 		MaxBackups: 5,    // 保留 5 个旧文件
 		MaxAge:     7,    // 超过 7 天删除

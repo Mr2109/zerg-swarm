@@ -10,10 +10,10 @@ import (
 
 // Response — 模型响应（内核自有类型——调用方适配）
 type Response struct {
-	Content   string
-	Reasoning string
-	ToolCalls []ToolCall
-	Finish    string
+	Content     string
+	Reasoning   string
+	ToolCalls   []ToolCall
+	Finish      string
 	TotalTokens int64
 }
 
@@ -59,22 +59,22 @@ type Config struct {
 
 // Deps — 依赖注入
 type Deps struct {
-	Infer     Infer
-	Exec      ToolExec         // nil = 不执行工具（纯对话）
-	Gate      ToolGater        // 安全门（可 nil）
-	Tools     []map[string]any // 工具定义（chat 格式——nil=纯对话）
-	Events       EventSink   // 事件回调（可 nil）
-	HermesRaw    bool        // 工具结果回传用 Hermes <tool_response> 包装（对话模式）
-	Hooks        Hooks       // 渐进式常驻/错误桶钩子（可零值——chat 包适配注入）
-	Terminator   Terminator  // 终止仲裁（可 nil——nil=模型无工具调用即自然终止）
-	OnToolResult OnToolResult // 工具结果钩子（可 nil——CA 侧产出验证）
+	Infer        Infer
+	Exec         ToolExec         // nil = 不执行工具（纯对话）
+	Gate         ToolGater        // 安全门（可 nil）
+	Tools        []map[string]any // 工具定义（chat 格式——nil=纯对话）
+	Events       EventSink        // 事件回调（可 nil）
+	HermesRaw    bool             // 工具结果回传用 Hermes <tool_response> 包装（对话模式）
+	Hooks        Hooks            // 渐进式常驻/错误桶钩子（可零值——chat 包适配注入）
+	Terminator   Terminator       // 终止仲裁（可 nil——nil=模型无工具调用即自然终止）
+	OnToolResult OnToolResult     // 工具结果钩子（可 nil——CA 侧产出验证）
 }
 
 // Hooks — 渐进式常驻钩子（chat.ToolRuntime 的行为接口——内核不依赖 chat 包）
 type Hooks struct {
-	IsHidden      func(name string) bool                                  // 工具是否被隐藏（3 次 exec 失败）
-	RecordOutcome func(name, errType, errMsg string) (hint string)        // 成败记录（返回提示或空）
-	SearchStreak  func(query string) (count int, forceHint string)        // 重复搜索计数（返回次数+强制提示或空）
+	IsHidden      func(name string) bool                           // 工具是否被隐藏（3 次 exec 失败）
+	RecordOutcome func(name, errType, errMsg string) (hint string) // 成败记录（返回提示或空）
+	SearchStreak  func(query string) (count int, forceHint string) // 重复搜索计数（返回次数+强制提示或空）
 }
 
 // Result — 循环结果
@@ -90,7 +90,6 @@ type Result struct {
 	ExitKind string // natural/bad_format/wall_clock/round_timeout/stream_broken/loopguard_escalate/empty_args/max_rounds
 	Err      string // 模型调用失败（重试后仍败）——非空=异常终止
 }
-
 
 // Terminator — 终止仲裁接口（内核在模型无工具调用时征询——CA 传契约判定/对话传 nil=自然终止）
 // OnNoToolCall 返回 (终止?, 终止后追加给模型的引导消息——空=不追加)
@@ -111,4 +110,3 @@ type Trace struct {
 	Error    string `json:"error,omitempty"`
 	Duration string `json:"duration,omitempty"`
 }
-

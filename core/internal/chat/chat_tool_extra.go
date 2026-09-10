@@ -12,6 +12,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"io"
 	"net/http"
 	"net/url"
@@ -23,7 +25,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 )
 
 // ChatToolResult — 执行结果
@@ -49,7 +50,7 @@ func ExecuteChatTool(name string, args map[string]any, workDir string) ChatToolR
 func executeChatToolInner(name string, args map[string]any, workDir string) ChatToolResult {
 	// P4-50 工具帮助体系: help:true → 读 tools/<名>.md（deferred 工具同样支持——按需看用法）
 	if h, ok := args["help"].(bool); ok && h {
-		mdPath := "<repo>/tools/" + name + ".md"
+		mdPath := filepath.Join(statepath.WorkspaceRoot(), "tools") + "/" + name + ".md"
 		if b, err := os.ReadFile(mdPath); err == nil && len(b) > 0 {
 			return ChatToolResult{Content: fmt.Sprintf("【工具 %s 帮助】\n%s", name, string(b))}
 		}
@@ -588,7 +589,7 @@ func memStatus() (string, error) {
 
 func diskUsage() (string, error) {
 	if runtime.GOOS == "darwin" {
-		out, _ := exec.Command("sh", "-c", "df -h / <volume-path>").Output()
+		out, _ := exec.Command("sh", "-c", fmt.Sprintf("df -h / %s 2>/dev/null | head -6", os.Getenv("ZERG_DF_PATHS"))).Output()
 		return string(out), nil
 	}
 	out, _ := exec.Command("sh", "-c", "df -h | head -8").Output()
@@ -644,11 +645,11 @@ func logTail(args map[string]any) (string, error) {
 	var path string
 	switch target {
 	case "core":
-		path = "/tmp/zerg-core.log"
+		path = filepath.Join(statepath.RuntimeLogDir(), "zerg-core.log")
 	case "ui":
 		path = "/tmp/zerg-ui.log"
 	case "", "default":
-		path = "/tmp/zerg-core.log"
+		path = filepath.Join(statepath.RuntimeLogDir(), "zerg-core.log")
 	default:
 		path = target
 	}
@@ -1270,7 +1271,7 @@ func kbRead(args map[string]any) (string, error) {
 }
 
 func kbReadByID(id int64) (string, error) {
-	out, err := exec.Command("sh", "-c", fmt.Sprintf("sqlite3 <volume-path>"SELECT id, domain, content FROM knowledge WHERE id=%d;\" 2>&1", id)).Output()
+	out, err := exec.Command("sh", "-c", fmt.Sprintf("sqlite3 \"%s\" \"SELECT id, domain, content FROM knowledge WHERE id=%d;\" 2>&1", KBPath, id)).Output()
 	if err != nil {
 		return "", fmt.Errorf("读知识库失败: %v", err)
 	}
@@ -1281,7 +1282,7 @@ func kbReadByID(id int64) (string, error) {
 }
 
 func kbCategories() (string, error) {
-	out, err := exec.Command("sh", "-c", "sqlite3 <volume-path>"SELECT domain, COUNT(*) FROM knowledge GROUP BY domain ORDER BY COUNT(*) DESC LIMIT 30;\" 2>&1").Output()
+	out, err := exec.Command("sh", "-c", fmt.Sprintf("sqlite3 \"%s\" \"SELECT domain, COUNT(*)", KBPath)+" FROM knowledge GROUP BY domain ORDER BY COUNT(*) DESC LIMIT 30;\" 2>&1").Output()
 	if err != nil {
 		return "", fmt.Errorf("读知识库分类失败: %v", err)
 	}
@@ -1302,7 +1303,7 @@ func kbAdd(args map[string]any) (string, error) {
 }
 
 func kbStats() (string, error) {
-	out, err := exec.Command("sh", "-c", "sqlite3 <volume-path>"SELECT COUNT(*) FROM knowledge;\" 2>&1").Output()
+	out, err := exec.Command("sh", "-c", fmt.Sprintf("sqlite3 \"%s\" \"SELECT COUNT(*) FROM knowledge;\" 2>&1", KBPath)).Output()
 	if err != nil {
 		return "", fmt.Errorf("读知识库统计失败: %v", err)
 	}

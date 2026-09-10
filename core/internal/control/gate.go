@@ -16,23 +16,23 @@ import (
 type Action string
 
 const (
-	ActionAllow            Action = "allow"              // 放行
-	ActionBlock            Action = "block"              // 拦截
-	ActionRequireApproval  Action = "require_approval"   // 需审批
+	ActionAllow           Action = "allow"            // 放行
+	ActionBlock           Action = "block"            // 拦截
+	ActionRequireApproval Action = "require_approval" // 需审批
 )
 
 // ToolRule 工具拦截规则
 type ToolRule struct {
-	Name            string   `yaml:"name"`                       // 工具名（精确匹配）
-	Action          Action   `yaml:"action"`                     // 三态
-	Scope           []string `yaml:"scope,omitempty"`            // 适用 agent（空=全部）
-	ArgsDeny        []string `yaml:"args_deny,omitempty"`        // 参数子串命中即拦截（如 rm -rf）
+	Name     string   `yaml:"name"`                // 工具名（精确匹配）
+	Action   Action   `yaml:"action"`              // 三态
+	Scope    []string `yaml:"scope,omitempty"`     // 适用 agent（空=全部）
+	ArgsDeny []string `yaml:"args_deny,omitempty"` // 参数子串命中即拦截（如 rm -rf）
 }
 
 // RulesConfig 规则文件结构
 type RulesConfig struct {
-	Version int        `yaml:"version"`
-	Rules   RulesBody  `yaml:"rules"`
+	Version int       `yaml:"version"`
+	Rules   RulesBody `yaml:"rules"`
 }
 
 // RulesBody 规则主体

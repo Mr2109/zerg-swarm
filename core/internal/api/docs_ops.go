@@ -5,13 +5,14 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-const docsRoot = "<repo>/docs"
+var docsRoot = filepath.Join(statepath.WorkspaceRoot(), "docs") // 2026-09-11 B 批：去硬编码
 
 // safeDocPath 校验相对路径（防穿越）——返回绝对路径或空
 func safeDocPath(rel string) string {

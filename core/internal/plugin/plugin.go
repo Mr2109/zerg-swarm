@@ -7,14 +7,14 @@ type PluginType string
 
 // 预定义的插件类型常量（来自设计定稿）。
 const (
-	PluginTypeSkill          PluginType = "skill"
-	PluginTypeMCP            PluginType = "mcp"
-	PluginTypeCA             PluginType = "ca"
-	PluginTypeLlama          PluginType = "llama"
-	PluginTypeModelAdapter   PluginType = "model-adapter"
-	PluginTypeTool           PluginType = "tool"
-	PluginTypeCluster        PluginType = "cluster"
-	PluginTypeStore          PluginType = "store"
+	PluginTypeSkill        PluginType = "skill"
+	PluginTypeMCP          PluginType = "mcp"
+	PluginTypeCA           PluginType = "ca"
+	PluginTypeLlama        PluginType = "llama"
+	PluginTypeModelAdapter PluginType = "model-adapter"
+	PluginTypeTool         PluginType = "tool"
+	PluginTypeCluster      PluginType = "cluster"
+	PluginTypeStore        PluginType = "store"
 )
 
 // Plugin 插件接口——所有插件必须实现。

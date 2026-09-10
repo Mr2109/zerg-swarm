@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,8 +17,8 @@ import (
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/agentstate"
-	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
 	"github.com/Mr2109/zerg-swarm/core/internal/compressor"
+	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
 	"github.com/Mr2109/zerg-swarm/core/internal/hermes"
 	"github.com/Mr2109/zerg-swarm/core/internal/loopguard"
 )
@@ -495,7 +496,7 @@ func (ls *loopState) executeTool(ctx context.Context, tc ToolCall) (ToolCallResu
 			serverName, toolName := parts[1], parts[2]
 			// P4-50 MCP 工具 help（help:true → 读 tools/<tool名>.md——与核心工具同款）
 			if h, ok := tc.Args["help"].(bool); ok && h {
-				mdPath := "<repo>/tools/" + toolName + ".md"
+				mdPath := filepath.Join(statepath.WorkspaceRoot(), "tools") + "/" + toolName + ".md"
 				if b, err := os.ReadFile(mdPath); err == nil && len(b) > 0 {
 					return done(ToolCallResult{Content: fmt.Sprintf("【工具 %s 帮助】\n%s", tc.Name, string(b))}, nil)
 				}
@@ -884,7 +885,7 @@ func (ls *loopState) compactHistory(ctx context.Context) error {
 
 	// 第二层: LLMLingua-2 语义压缩（如果可用——失败则用基础摘要——降级）
 	if ls.compressor == nil {
-		modelPath := "<repo>/compress_models/llmlingua2-onnx"
+		modelPath := filepath.Join(statepath.CompressModelsDir(), "llmlingua2-onnx")
 		c := compressor.New(compressor.Config{
 			ModelPath: modelPath + "/model.onnx",
 			TokPath:   modelPath + "/tokenizer.json",
