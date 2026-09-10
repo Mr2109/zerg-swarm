@@ -14,6 +14,20 @@ import (
 )
 
 // Run — 运行工具循环（唯一实现——Deps.Infer 内部决定流式与否，内核只透传 delta 回调）
+// appendReasoning — 多轮思考累积（2026-09-10 修复"思考内容不全"）
+// 根因: 每轮 res.Reasoning = result.Reasoning 覆盖 → 多轮工具调用只留最后一轮思考。
+// UI 实时缓冲是逐轮累加的，落库/刷新后却只剩末轮 → 用户看到"思考不全"。
+func appendReasoning(acc, round string) string {
+	round = strings.TrimSpace(round)
+	if round == "" {
+		return acc
+	}
+	if strings.TrimSpace(acc) == "" {
+		return round
+	}
+	return acc + "\n\n" + round
+}
+
 func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[string]any, d Deps) *Result {
 	res := &Result{}
 	maxRounds := cfg.MaxRounds
@@ -95,8 +109,18 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				return res
 			}
 		}
-		res.Content = result.Content
-		res.Reasoning = result.Reasoning
+		// 2026-09-10 修复"思考内容不全": 多轮时每轮覆盖 → 落库只剩末轮(UI 实时看到的过程全丢)。
+		// 中间轮(带工具调用)的正文=模型的思考/过程文本 → 归入思考；末轮才是最终回答。
+		if len(result.ToolCalls) > 0 {
+			mid := result.Content
+			if i := strings.Index(mid, "<tool_call>"); i > 0 {
+				mid = mid[:i]
+			}
+			res.Reasoning = appendReasoning(res.Reasoning, appendReasoning(result.Reasoning, mid))
+		} else {
+			res.Content = result.Content
+			res.Reasoning = appendReasoning(res.Reasoning, result.Reasoning)
+		}
 		res.Usage.TotalTokens += result.TotalTokens
 
 		// 无工具调用
@@ -209,7 +233,7 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 					final, ferr := d.Infer(ctx, model, sysPrompt, msgs, nil, nil)
 					if ferr == nil {
 						res.Content = final.Content
-						res.Reasoning = final.Reasoning
+						res.Reasoning = appendReasoning(res.Reasoning, final.Reasoning)
 						res.Usage.TotalTokens += final.TotalTokens
 					}
 					res.ExitKind = "loopguard_escalate"
