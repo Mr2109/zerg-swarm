@@ -7,15 +7,17 @@ import os
 import subprocess
 import sys
 
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 仓库根（2026-09-11 B 批：去私有路径）
+
 PASS, FAIL = "✅", "❌"
 WORK = "/tmp/zerg-agent-eval"
-EVALS = "<volume-path>"
+EVALS = os.environ.get("ZERG_EVALS_DIR", "")
 os.makedirs(WORK, exist_ok=True)
 
 
 def run_agent(task, workdir, max_turns=15):
     r = subprocess.run(
-        f'cd "<repo>/core" && go run ./cmd/zerg-agent -task "{task}" -model example-35b -workdir {workdir} -max-turns {max_turns} 2>&1',
+        f'cd f"{REPO}/core" && go run ./cmd/zerg-agent -task "{task}" -model example-35b -workdir {workdir} -max-turns {max_turns} 2>&1',
         shell=True, capture_output=True, text=True, timeout=300, errors="replace")
     return r.stdout + r.stderr
 

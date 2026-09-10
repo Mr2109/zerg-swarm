@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"io"
 	"log"
 	"net/http"
@@ -36,7 +37,7 @@ type ZergFlowExecutor struct {
 
 // NewZergFlowExecutor 新建执行器（任务建立——git + jsonl + skill 模板）
 func NewZergFlowExecutor(task *Task, callModel ModelCaller, skillsRoot string) (*ZergFlowExecutor, error) {
-	taskDir := filepath.Join("/tmp/zerg-tasks", sanitizeID(task.ID))
+	taskDir := filepath.Join(statepath.TaskRoot(), sanitizeID(task.ID))
 	e := &ZergFlowExecutor{
 		Task:       task,
 		TaskDir:    taskDir,
@@ -583,7 +584,7 @@ func (s *MasterScheduler) pingModel(model string) (bool, error) {
 		}
 	}
 
-	gatewayURL := "http://127.0.0.1:8082"
+	gatewayURL := statepath.GatewayBaseURL()
 	token := config.ResolveAuthToken()
 	for _, env := range s.agentEnv {
 		if strings.HasPrefix(env, "ZERG_GATEWAY_URL=") {
@@ -794,7 +795,7 @@ func (s *MasterScheduler) runZergFlow(task *Task) {
 	callModel := func(systemPrompt, userPrompt string, maxTokens int) (string, error) {
 		return s.callGatewayModel(task.Model, systemPrompt, userPrompt, maxTokens)
 	}
-	s.taskDirForCall = filepath.Join("/tmp/zerg-tasks", sanitizeID(task.ID)) // v2.5.6: write_file 写任务目录
+	s.taskDirForCall = filepath.Join(statepath.TaskRoot(), sanitizeID(task.ID)) // v2.5.6: write_file 写任务目录
 	executor, err := NewZergFlowExecutor(task, callModel, "/tmp/zerg-tasks/skills")
 	if err != nil {
 		s.finishTask(task, fmt.Errorf("流程执行器创建失败: %w", err))
@@ -822,7 +823,7 @@ func (s *MasterScheduler) runZergFlow(task *Task) {
 // 调度器不硬编码（maxTokens 参数传 0 = 不带 max_output_tokens——网关层适配器覆盖成适配器声明值）
 // 适配器 = 参数唯一来源——程序（含执行任务每步）调用参数由适配器决定
 func (s *MasterScheduler) callGatewayModel(model, systemPrompt, userPrompt string, maxTokens int) (string, error) {
-	gatewayURL := "http://127.0.0.1:8082"
+	gatewayURL := statepath.GatewayBaseURL()
 	token := config.ResolveAuthToken() // 默认网关 token（虫族标准）
 	for _, env := range s.agentEnv {
 		if strings.HasPrefix(env, "ZERG_GATEWAY_URL=") {
@@ -990,7 +991,7 @@ func (s *MasterScheduler) callGatewayModel(model, systemPrompt, userPrompt strin
 
 // taskDirForTask zerg 流程任务目录（/tmp/zerg-tasks/<sanitizeID>——统一规则）
 func taskDirForTask(task *Task) string {
-	return filepath.Join("/tmp/zerg-tasks", sanitizeID(task.ID))
+	return filepath.Join(statepath.TaskRoot(), sanitizeID(task.ID))
 }
 
 // finishTask 任务收尾（失败/完成——更新状态——调度器统一出口）

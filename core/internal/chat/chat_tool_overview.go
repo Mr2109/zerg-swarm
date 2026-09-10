@@ -7,6 +7,7 @@ package chat
 
 import (
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,8 +18,9 @@ import (
 )
 
 // ZergDocsBase — 版本档案根目录
-const ZergDocsBase = "<repo>/docs/项目文档"
-const ZergRepoRoot = "<repo>"
+var ZergDocsBase = filepath.Join(statepath.WorkspaceRoot(), "docs", "项目文档")
+
+var ZergRepoRoot = statepath.WorkspaceRoot()
 
 // zergOverview — zerg_overview 执行器（全景 / section 下钻）
 func zergOverview(args map[string]any, workDir string) (string, error) {

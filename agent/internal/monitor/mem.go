@@ -8,11 +8,11 @@ package monitor
 
 import (
 	"bufio"
-	"os"
-	"runtime"
-	"os/exec"
-	"strconv"
 	"fmt"
+	"os"
+	"os/exec"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"

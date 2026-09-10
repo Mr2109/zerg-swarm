@@ -30,14 +30,14 @@ def parse_run(run_dir):
 
 def main():
     if len(sys.argv) < 3:
-        base = "<volume-path>"
+        base = os.path.join(os.environ.get("ZERG_EVALS_DIR", ""), "results/agent/runs")
         runs = sorted(os.listdir(base)) if os.path.exists(base) else []
         print("用法: compare.py <run1> <run2>")
         print(f"可用运行: {runs}")
         return
 
     r1, r2 = sys.argv[1], sys.argv[2]
-    base = "<volume-path>"
+    base = os.path.join(os.environ.get("ZERG_EVALS_DIR", ""), "results/agent/runs")
     d1 = os.path.join(base, r1)
     d2 = os.path.join(base, r2)
 

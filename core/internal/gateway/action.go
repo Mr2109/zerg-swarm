@@ -10,11 +10,11 @@ import (
 type ActionType int
 
 const (
-	ActionDefault     ActionType = iota // 默认动作（无明确信号，走默认路由）
-	ActionCoding                        // 编码动作（refactor/fix/test/commit/code）
-	ActionWriting                       // 写作动作（write/draft/章/文/报告）
-	ActionResearch                      // 研究动作（search/research/分析/调研/文献）
-	ActionToolCall                      // 工具调用动作（body 含 tools 字段 = agent 任务）
+	ActionDefault  ActionType = iota // 默认动作（无明确信号，走默认路由）
+	ActionCoding                     // 编码动作（refactor/fix/test/commit/code）
+	ActionWriting                    // 写作动作（write/draft/章/文/报告）
+	ActionResearch                   // 研究动作（search/research/分析/调研/文献）
+	ActionToolCall                   // 工具调用动作（body 含 tools 字段 = agent 任务）
 )
 
 // String 动作类型中文名（日志用）。
@@ -58,12 +58,12 @@ var researchKeywords = []string{
 // detectAction 从请求体中识别动作类型。
 //
 // 信号优先级（从高到低）：
-//   1. path=/v1/responses → 工具调用（agent 任务）
-//   2. body.tools 字段存在 → 工具调用
-//   3. 消息内容匹配编码关键词 → 编码
-//   4. 消息内容匹配写作关键词 → 写作
-//   5. 消息内容匹配研究关键词 → 研究
-//   6. 其余 → 默认
+//  1. path=/v1/responses → 工具调用（agent 任务）
+//  2. body.tools 字段存在 → 工具调用
+//  3. 消息内容匹配编码关键词 → 编码
+//  4. 消息内容匹配写作关键词 → 写作
+//  5. 消息内容匹配研究关键词 → 研究
+//  6. 其余 → 默认
 //
 // 设计说明：
 //   - 不依赖客户端明确标注动作类型

@@ -9,14 +9,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 // ScreenshotAndOCR 截图 + 识别（虫族看图工具）
@@ -26,7 +29,7 @@ func ScreenshotAndOCR(path string, vision bool) (string, error) {
 	// 1. 确定图片路径（没给就截图）
 	imagePath := path
 	if imagePath == "" {
-		imagePath = "/tmp/zerg-shot.png"
+		imagePath = filepath.Join(statepath.RuntimeLogDir(), "zerg-shot.png")
 		if err := takeScreenshot(imagePath); err != nil {
 			return "", fmt.Errorf("截图失败: %w", err)
 		}

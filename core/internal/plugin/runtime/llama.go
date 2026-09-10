@@ -47,28 +47,28 @@ type ChatMessage struct {
 
 // ChatCompletionRequest llama OpenAI 兼容 API 的请求体
 type ChatCompletionRequest struct {
-	Model     string        `json:"model"`
-	Messages  []ChatMessage `json:"messages"`
-	Temperature float64     `json:"temperature,omitempty"`
-	MaxTokens   int         `json:"max_tokens,omitempty"`
-	Stream    bool          `json:"stream,omitempty"`
+	Model       string        `json:"model"`
+	Messages    []ChatMessage `json:"messages"`
+	Temperature float64       `json:"temperature,omitempty"`
+	MaxTokens   int           `json:"max_tokens,omitempty"`
+	Stream      bool          `json:"stream,omitempty"`
 }
 
 // ChatCompletionResponse llama OpenAI 兼容 API 的响应体
 type ChatCompletionResponse struct {
-	ID      string            `json:"id"`
-	Object  string            `json:"object"`
-	Created int64             `json:"created"`
-	Model   string            `json:"model"`
-	Choices []Choice          `json:"choices"`
-	Usage   Usage             `json:"usage"`
+	ID      string   `json:"id"`
+	Object  string   `json:"object"`
+	Created int64    `json:"created"`
+	Model   string   `json:"model"`
+	Choices []Choice `json:"choices"`
+	Usage   Usage    `json:"usage"`
 }
 
 // Choice 响应中的一个选择
 type Choice struct {
-	Index        int           `json:"index"`
-	Message      ChatMessage   `json:"message"`
-	FinishReason string        `json:"finish_reason"`
+	Index        int         `json:"index"`
+	Message      ChatMessage `json:"message"`
+	FinishReason string      `json:"finish_reason"`
 }
 
 // Usage token 用量统计
@@ -118,20 +118,20 @@ type LlamaRuntime struct {
 	version string
 
 	// 可配置参数（Init 后生效）
-	Host              string
-	Port              string
-	ModelFile         string
-	NGPULayers        int
-	StartupTimeout    time.Duration
-	RequestTimeout    time.Duration
-	MaxRetries        int
-	AutoStart         bool // 是否自动启动 llama-server
-	ExecutablePath    string // llama-server 可执行文件路径
+	Host           string
+	Port           string
+	ModelFile      string
+	NGPULayers     int
+	StartupTimeout time.Duration
+	RequestTimeout time.Duration
+	MaxRetries     int
+	AutoStart      bool   // 是否自动启动 llama-server
+	ExecutablePath string // llama-server 可执行文件路径
 
 	// 内部状态
-	baseURL    string
-	httpClient *http.Client
-	process    *LlamaServerProcess
+	baseURL     string
+	httpClient  *http.Client
+	process     *LlamaServerProcess
 	initialized bool
 	started     bool
 
@@ -142,16 +142,16 @@ type LlamaRuntime struct {
 // NewLlamaRuntime 创建 LlamaRuntime（默认配置）
 func NewLlamaRuntime() *LlamaRuntime {
 	return &LlamaRuntime{
-		name:             "llama",
-		version:          "0.1.0",
-		Host:             defaultHost,
-		Port:             defaultPort,
-		NGPULayers:       999,
-		StartupTimeout:   defaultStartupTimeout,
-		RequestTimeout:   defaultRequestTimeout,
-		MaxRetries:       defaultMaxRetries,
-		AutoStart:        false, // 默认不自动启动——可手动连接已有服务
-		baseURL:          fmt.Sprintf("http://%s:%s", defaultHost, defaultPort),
+		name:           "llama",
+		version:        "0.1.0",
+		Host:           defaultHost,
+		Port:           defaultPort,
+		NGPULayers:     999,
+		StartupTimeout: defaultStartupTimeout,
+		RequestTimeout: defaultRequestTimeout,
+		MaxRetries:     defaultMaxRetries,
+		AutoStart:      false, // 默认不自动启动——可手动连接已有服务
+		baseURL:        fmt.Sprintf("http://%s:%s", defaultHost, defaultPort),
 		httpClient: &http.Client{
 			Timeout: defaultRequestTimeout,
 		},
@@ -478,8 +478,8 @@ func (l *LlamaRuntime) Execute(input plugin.PluginInput) (plugin.PluginOutput, e
 	}
 
 	result := map[string]interface{}{
-		"response":     reply,
-		"model":        apiResp.Model,
+		"response": reply,
+		"model":    apiResp.Model,
 		"finish_reason": func() string {
 			if len(apiResp.Choices) > 0 {
 				return apiResp.Choices[0].FinishReason

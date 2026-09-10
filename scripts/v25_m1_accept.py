@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 PASS, FAIL = "✅", "❌"
-CORE = "<repo>/core"
+CORE = f"{REPO}/core"
 results = []
 
 
@@ -37,6 +37,8 @@ check("go vet 干净", rc == 0, out.strip()[-80:])
 
 # 3. 7 工具定义存在
 import os
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 仓库根（2026-09-11 B 批：去私有路径）
 agent_dir = os.path.join(CORE, "internal/agent")
 files = os.listdir(agent_dir)
 check("agent 目录文件", len(files) >= 3, f"{len(files)} 个文件: {files}")

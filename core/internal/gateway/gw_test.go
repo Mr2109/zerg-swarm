@@ -75,8 +75,8 @@ func TestPickRoute_ActiveDowngrade_WithIdle(t *testing.T) {
 		},
 	}
 	st := store.NewStore()
-	injectSnap(st, "edge-node", "example-35b-v2", 4, true, 0.8)    // EDGE-NODE 满负载（已加载+8 健康+1 满-8 = 1）
-	injectSnap(st, "mini-node-1", "", 0, true, 0.1)        // mini-node-1 空闲（健康+1 空闲+1 = 2）
+	injectSnap(st, "edge-node", "example-35b-v2", 4, true, 0.8) // EDGE-NODE 满负载（已加载+8 健康+1 满-8 = 1）
+	injectSnap(st, "mini-node-1", "", 0, true, 0.1)    // mini-node-1 空闲（健康+1 空闲+1 = 2）
 	g := &Gateway{config: cfg, roundRobin: map[string]int{"example-35b-v2": 0}, excludeLocal: false, store: st}
 	route, err := g.pickRoute("example-35b-v2", "", "")
 	if err != nil {
@@ -91,8 +91,9 @@ func TestPickRoute_ActiveDowngrade_WithIdle(t *testing.T) {
 }
 
 // TestPickRoute_X3Busy_Transfers — Mr2109认知纠正（2026-08-15）：
-//   EDGE-NODE -np 4 ≠ 并行 4 任务（= 显存大能加载多模型——执行单任务 GPU 满）
-//   → 执行层面单槽——EDGE-NODE active=1 即忙——mini-node-1 空闲时转走
+//
+//	EDGE-NODE -np 4 ≠ 并行 4 任务（= 显存大能加载多模型——执行单任务 GPU 满）
+//	→ 执行层面单槽——EDGE-NODE active=1 即忙——mini-node-1 空闲时转走
 func TestPickRoute_X3Busy_Transfers(t *testing.T) {
 	cfg := &config.FleetConfig{
 		Models: map[string][]config.ModelCandidate{
@@ -108,7 +109,7 @@ func TestPickRoute_X3Busy_Transfers(t *testing.T) {
 	}
 	st := store.NewStore()
 	injectSnap(st, "edge-node", "example-35b-v2", 1, true, 0.8)    // EDGE-NODE 忙（active=1 执行中——GPU 满）
-	injectSnap(st, "mini-node-1", "example-35b-v2", 0, true, 0.1)  // mini-node-1 空闲（已加载）
+	injectSnap(st, "mini-node-1", "example-35b-v2", 0, true, 0.1) // mini-node-1 空闲（已加载）
 	g := &Gateway{config: cfg, roundRobin: map[string]int{"example-35b-v2": 0}, excludeLocal: false, store: st}
 	route, err := g.pickRoute("example-35b-v2", "", "")
 	if err != nil {

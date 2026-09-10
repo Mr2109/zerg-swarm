@@ -10,6 +10,8 @@ import time
 import urllib.error
 import urllib.request
 
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 仓库根（2026-09-11 B 批：去私有路径）
+
 PASS = "✅"
 def _zerg_token():
     """共享令牌（2026-09-11 A 批：库内零明文）——环境变量优先，其次 ~/.zerg/token"""
@@ -56,8 +58,8 @@ def api_get(url, headers=None):
         return 0, str(e)
 
 
-CORE = "<repo>/core"
-EVALS = "<volume-path>"
+CORE = f"{REPO}/core"
+EVALS = os.environ.get("ZERG_EVALS_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "zerg-evals"))
 
 
 def main():

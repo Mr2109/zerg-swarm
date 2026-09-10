@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,10 +39,10 @@ func mockModel(systemPrompt, userPrompt string, maxTokens int) (string, error) {
 		content = []byte("## 任务报告\n\n本任务创建了 hello.txt 文件并完成验证。\n\n### 做了什么\n- 创建了测试文件\n- 完成流程验证\n\n### 验证结果\n- 文件已写入\n- 全流程通过\n\n### 结论\n任务正常完成，产出真实有效。")
 	}
 	// 扫描 /tmp/zerg-tasks/task-flow-test-* 目录——写到每个（保证执行器验证能找到）
-	if entries, err := os.ReadDir("/tmp/zerg-tasks"); err == nil {
+	if entries, err := os.ReadDir(statepath.TaskRoot()); err == nil {
 		for _, en := range entries {
 			if strings.HasPrefix(en.Name(), "task-flow-test-") && en.IsDir() {
-				_ = os.WriteFile(filepath.Join("/tmp/zerg-tasks", en.Name(), "hello.txt"), content, 0o644)
+				_ = os.WriteFile(filepath.Join(statepath.TaskRoot(), en.Name(), "hello.txt"), content, 0o644)
 			}
 		}
 	}
@@ -50,10 +51,10 @@ func mockModel(systemPrompt, userPrompt string, maxTokens int) (string, error) {
 
 func TestZergFlowExecutorRun(t *testing.T) {
 	// 清理旧的 task-flow-test-* 目录（避免 git 残留累积——commit 数错乱）
-	if entries, err := os.ReadDir("/tmp/zerg-tasks"); err == nil {
+	if entries, err := os.ReadDir(statepath.TaskRoot()); err == nil {
 		for _, en := range entries {
 			if strings.HasPrefix(en.Name(), "task-flow-test-") {
-				_ = os.RemoveAll(filepath.Join("/tmp/zerg-tasks", en.Name()))
+				_ = os.RemoveAll(filepath.Join(statepath.TaskRoot(), en.Name()))
 			}
 		}
 	}

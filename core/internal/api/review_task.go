@@ -7,6 +7,7 @@ package api
 import (
 	"container/heap"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"log"
 	"os"
 	"path/filepath"
@@ -292,7 +293,7 @@ func buildReviewPrompt(execTask *Task, reportPath string) string {
 
 // taskDirOf — 任务目录（S6 断点数据位置——/tmp/zerg-tasks/<ID>/）
 func taskDirOf(t *Task) string {
-	return filepath.Join("/tmp/zerg-tasks", t.ID)
+	return filepath.Join(statepath.TaskRoot(), t.ID)
 }
 
 // pickAlternateReviewModel — S7: 复查重派选模型（与上次不同优先——池小则接受同款）

@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -203,7 +205,7 @@ func (h *ControlHandlers) CoreLogsHandler(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusMethodNotAllowed, "仅支持 GET 方法")
 		return
 	}
-	const logPath = "/tmp/zerg-core.log"
+	logPath := filepath.Join(statepath.RuntimeLogDir(), "zerg-core.log")
 	lines, err := tailFile(logPath, 200)
 	if err != nil {
 		// 日志文件不存在不算错误，返回空

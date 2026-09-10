@@ -436,13 +436,20 @@ func (ec *ExecContext) executeBashV101(ctx context.Context, command string, cwd 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// 6. 执行（RTK 包装保留——ls/git 等紧凑输出）
+	// 6. 执行（RTK 包装可选——ls/git 等紧凑输出）
+	// 2026-09-11 B 批（可移植性）：rtk 是可选依赖，缺装时**绝不能**让所有命令失败
+	// （原实现无条件加 "rtk " 前缀 → 别人机器上 ls/git/go… 全部 command not found）。
+	// 开关：ZERG_RTK=0 强制关闭；默认仅当 PATH 中真有 rtk 时才包装。
 	rtkCommand := command
-	fields := strings.Fields(command)
-	if len(fields) > 0 {
-		switch fields[0] {
-		case "ls", "git", "find", "ps", "df", "du", "pip", "npm", "go", "cargo", "docker":
-			rtkCommand = "rtk " + command
+	if os.Getenv("ZERG_RTK") != "0" {
+		if _, err := exec.LookPath("rtk"); err == nil {
+			fields := strings.Fields(command)
+			if len(fields) > 0 {
+				switch fields[0] {
+				case "ls", "git", "find", "ps", "df", "du", "pip", "npm", "go", "cargo", "docker":
+					rtkCommand = "rtk " + command
+				}
+			}
 		}
 	}
 	cmd := exec.CommandContext(ctx, "bash", "-c", rtkCommand)

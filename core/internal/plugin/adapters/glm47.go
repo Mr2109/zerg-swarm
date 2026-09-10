@@ -21,17 +21,17 @@ const (
 
 // Glm47Config — 适配器配置
 type Glm47Config struct {
-	Temperature   float64
-	TopP          float64
-	TopK          int
-	MinP          float64
-	MaxTokens     int
-	CtxWindow     int
-	TimeoutSec    int
+	Temperature     float64
+	TopP            float64
+	TopK            int
+	MinP            float64
+	MaxTokens       int
+	CtxWindow       int
+	TimeoutSec      int
 	ReasoningEffort string // low/medium/high——思考深度控制
-	Thinking      bool   // 思考开关（官方 Enable Thinking——默认 true——思考不能关）
-	AuthToken     string
-	BaseURL       string
+	Thinking        bool   // 思考开关（官方 Enable Thinking——默认 true——思考不能关）
+	AuthToken       string
+	BaseURL         string
 }
 
 // Glm47Adapter — 实现 plugin.Plugin 接口
@@ -52,8 +52,8 @@ func NewGlm47Adapter() *Glm47Adapter {
 			MaxTokens:       glm47MaxTokens,
 			CtxWindow:       glm47CtxWindow,
 			TimeoutSec:      glm47Timeout,
-			ReasoningEffort: "low",   // 同 Qwen3.8——少思考更快
-			Thinking:        true,    // 思考不能关（Mr2109原则）
+			ReasoningEffort: "low", // 同 Qwen3.8——少思考更快
+			Thinking:        true,  // 思考不能关（Mr2109原则）
 		},
 	}
 }
@@ -160,18 +160,18 @@ func (a *Glm47Adapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, e
 	}
 	return plugin.PluginOutput{
 		Result: map[string]any{
-			"model":             glm47Name,
-			"max_tokens":        a.config.MaxTokens,
-			"ctx_window":        a.config.CtxWindow,
-			"temperature":       a.config.Temperature,
-			"top_p":             a.config.TopP,
-			"top_k":             a.config.TopK,
-			"min_p":             a.config.MinP,
-			"timeout_sec":       a.config.TimeoutSec,
-			"reasoning_effort":  a.config.ReasoningEffort,
-			"thinking":          a.config.Thinking,
+			"model":              glm47Name,
+			"max_tokens":         a.config.MaxTokens,
+			"ctx_window":         a.config.CtxWindow,
+			"temperature":        a.config.Temperature,
+			"top_p":              a.config.TopP,
+			"top_k":              a.config.TopK,
+			"min_p":              a.config.MinP,
+			"timeout_sec":        a.config.TimeoutSec,
+			"reasoning_effort":   a.config.ReasoningEffort,
+			"thinking":           a.config.Thinking,
 			"reasoning_fallback": true, // content空时用reasoning_content兜底
-			"tool_support":      true,
+			"tool_support":       true,
 		},
 	}, nil
 }

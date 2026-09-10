@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"os"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ func TestInferLive(t *testing.T) {
 	if tok == "" {
 		t.Skip("未配置共享令牌（ZERG_AUTH_TOKEN 或 ~/.zerg/token）——跳过活体测试")
 	}
-	c := NewChatInfer("http://127.0.0.1:8082", tok)
+	c := NewChatInfer(statepath.GatewayBaseURL(), tok)
 	msgs := []map[string]any{
 		{"role": "user", "content": "帮我查一下当前项目目录下的文件列表（用工具）"},
 	}
