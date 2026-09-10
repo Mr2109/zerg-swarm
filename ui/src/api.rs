@@ -409,27 +409,31 @@ pub async fn run_internal_task_blocking(id: &str) -> Result<(), String> {
 }
 
 // stop_internal_tasks_blocking 停止内部任务（Mr2109 2026-08-27——UI 按钮）
-pub async fn stop_internal_tasks_blocking() -> Result<(), String> {
+/// 停止内部任务（Mr2109 2026-08-27——UI 按钮）
+/// 2026-09-10 治本（APP-A07）：返回响应体（内含 state）——契约"变更即回状态"，UI 无需二次往返
+pub async fn stop_internal_tasks_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks/stop", API_BASE);
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
-    if resp.status().is_success() {
-        Ok(())
-    } else {
-        Err(format!("HTTP {}", resp.status()))
-    }
+    json_body(resp).await
 }
 
 // start_internal_tasks_blocking 启动内部任务（Mr2109 2026-08-27——UI 按钮）
-pub async fn start_internal_tasks_blocking() -> Result<(), String> {
+/// 启动内部任务（Mr2109 2026-08-27——UI 按钮）
+/// 2026-09-10 治本（APP-A07）：门控未放行时后端返回 403 + 原因——这里如实报错（不再假成功）
+pub async fn start_internal_tasks_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks/start", API_BASE);
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
-    if resp.status().is_success() {
-        Ok(())
-    } else {
-        Err(format!("HTTP {}", resp.status()))
-    }
+    json_body(resp).await
+}
+
+/// 内部任务引擎状态（2026-09-10 治本——UI 每 10s 轮询；服务端为唯一真相源）
+pub async fn fetch_internal_state_blocking() -> Result<serde_json::Value, String> {
+    let client = http_client_json();
+    let url = format!("{}/api/internal-tasks/state", API_BASE);
+    let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    json_body(resp).await
 }
 
 // set_internal_interval_blocking 设置内部任务周期（Mr2109 2026-08-27——循环周期 1h-24h/指定）

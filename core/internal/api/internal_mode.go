@@ -102,6 +102,7 @@ func (h *Handlers) InternalModeHandler(w http.ResponseWriter, r *http.Request) {
 		"id":       taskID,
 		"auto_run": req.AutoRun,
 		"message":  "内部任务 " + taskID + " 已切换为" + mode,
+		"state":    InternalEngineStateMap(), // 2026-09-10：变更即回状态（契约统一）
 	})
 }
 
