@@ -63,6 +63,7 @@ type ToolRuntime struct {
 	resident []string       // 常驻工具名（≤MaxResident——尾=最新）
 	failSeq  map[string]int // 工具连续 exec 失败数
 	hidden   map[string]bool
+	searchCounts map[string]int // 同一 query 搜索次数（批次A: SearchStreak 钩子）
 }
 
 // NewToolRuntime — 初始无常驻（设计 3.1 规则 1）
@@ -159,6 +160,65 @@ func (rt *ToolRuntime) HiddenList() []string {
 		out = append(out, n)
 	}
 	return out
+}
+
+// ToolSearchExecute — 对话 tool_search 执行器（2026-09-10 批次A 断链修复——此前定义零调用者）
+// 语义: 过滤已常驻(L0+R resident)与隐藏(无可选时豁免) → 命中的加入常驻(后续轮次 <tools> 可见) → 返回清单
+func ToolSearchExecute(query string, rt *ToolRuntime, maxReturn int) string {
+	if rt == nil {
+		rt = NewToolRuntime()
+	}
+	have := map[string]bool{}
+	for n := range L0ToolNames {
+		have[n] = true
+	}
+	for _, n := range rt.Resident() {
+		have[n] = true
+	}
+	names := ChatToolSearch(query, have, maxReturn)
+	var kept []string
+	var hiddenHit []string
+	for _, n := range names {
+		if rt.IsHidden(n) {
+			hiddenHit = append(hiddenHit, n)
+			continue
+		}
+		kept = append(kept, n)
+	}
+	// 无可选时豁免隐藏（防搜不到更差）
+	if len(kept) == 0 && len(hiddenHit) > 0 {
+		kept = hiddenHit
+	}
+	if len(kept) == 0 {
+		return "（未发现匹配工具——换中文关键词再搜：系统/文件/影音/网络/知识库/任务/素材 等；已常驻工具直接调用无需搜索）"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "✅ 发现 %d 个工具（已加入你的常驻列表——立即可以直接调用）:\n", len(kept))
+	for _, n := range kept {
+		rt.AddResident(n)
+		d := residentToolDesc(n)
+		if d == "" {
+			d = "（无描述——可直接调用看结果）"
+		}
+		fmt.Fprintf(&b, "- %s: %s\n", n, d)
+	}
+	return b.String()
+}
+
+// SearchStreak — 重复搜索计数（loopcore.Hooks.SearchStreak 实现——批次A 接线）
+// 同一 query ≥3 次 → 返回强制提示（kernel 自身在 ≥2 次已有轻提示——此处加重）
+func (rt *ToolRuntime) SearchStreak(query string) (int, string) {
+	rt.mu.Lock()
+	if rt.searchCounts == nil {
+		rt.searchCounts = map[string]int{}
+	}
+	rt.searchCounts[query]++
+	n := rt.searchCounts[query]
+	rt.mu.Unlock()
+	if n >= 3 {
+		return n, fmt.Sprintf("【系统】同一关键词已搜索 %d 次——不要再搜——直接用上面结果里最接近的工具调用,或换完全不同的中文关键词。", n)
+	}
+	return n, ""
 }
 
 // ===== 全局错误桶（工具资产进化数据——跨对话持久——4.x 设计） =====
