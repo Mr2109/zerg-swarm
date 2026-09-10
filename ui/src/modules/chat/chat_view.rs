@@ -355,6 +355,10 @@ pub struct ChatView {
     reacting_id: Option<i64>,
     // P2 语音朗读中
     speaking_id: Option<i64>,
+    // 丙批补（2026-09-10）：召回指针回跳——请求句柄 + 取回的窗口文本
+    compact_reset_pending: Option<api::SharedResult<Value>>, // 丙批补: 重置压缩熔断请求
+    pointer_pending: Option<api::SharedResult<Value>>,
+    pointer_text: Option<String>,
     // P2-3 侧栏宽度（可拖拽——egui 拖拽分栏）
     sidebar_w: f32,
 }
@@ -371,6 +375,8 @@ enum MsgAction {
     Copy(String),
     Retry(String),
     Delegate(String),
+    // 丙批补（2026-09-10）：召回指针——跳回被压缩的原文
+    JumpPointer { session_id: String, around_id: i64 },
 }
 
 impl ChatView {
@@ -443,6 +449,9 @@ impl ChatView {
             reactions: std::collections::HashMap::new(),
             reacting_id: None,
             speaking_id: None,
+            compact_reset_pending: None,
+            pointer_pending: None,
+            pointer_text: None,
             sidebar_w: 200.0,
         };
         v.refresh_sessions();
@@ -665,6 +674,34 @@ impl ChatView {
             self.queue.len()
         ));
         true
+    }
+
+    /// 丙批补（2026-09-10）：从消息文本解析召回指针
+    /// 形态：`(可搜回:session_search(session_id=SEC, around_id=NUM))`（兼容空格/引号）
+    fn recall_pointer(content: &str) -> Option<(String, i64)> {
+        let key = "session_search(session_id=";
+        let i = content.find(key)?;
+        let rest = &content[i + key.len()..];
+        let end = rest.find(')')?;
+        let inner = &rest[..end]; // "SEC, around_id=NUM"
+        let mut parts = inner.split(',');
+        let sid = parts
+            .next()?
+            .trim()
+            .trim_matches(|c| c == '"' || c == '\'')
+            .to_string();
+        let tail = parts.next()?;
+        let akey = "around_id=";
+        let ai = tail.find(akey)?;
+        let num: String = tail[ai + akey.len()..]
+            .trim()
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        if sid.is_empty() || num.is_empty() {
+            return None;
+        }
+        Some((sid, num.parse().ok()?))
     }
 
     /// D3(2026-09-10): in-flight turn journal（崩溃/断线恢复——~/.zerg-ui-inflight.json）
@@ -907,6 +944,28 @@ impl ChatView {
                 self.model_update_pending = Some((prev, p));
             }
         }
+        // 丙批补（2026-09-10）：压缩熔断重置回执
+        let cr = self.compact_reset_pending.take();
+        if let Some(pr) = cr {
+            let done = lock_recover(&pr).clone();
+            match done {
+                Some(Ok(_)) => self.send_error = Some("压缩冷却/硬熔断已重置".to_string()),
+                Some(Err(e)) => self.send_error = Some(format!("重置压缩熔断失败: {}", e)),
+                None => self.compact_reset_pending = Some(pr),
+            }
+        }
+        // 丙批补（2026-09-10）：召回指针窗口回执
+        let pp = self.pointer_pending.take();
+        if let Some(p) = pp {
+            let done = lock_recover(&p).clone();
+            match done {
+                Some(Ok(v)) => {
+                    self.pointer_text = v.get("text").and_then(|t| t.as_str()).map(|t| t.to_string());
+                }
+                Some(Err(e)) => self.send_error = Some(format!("取回被压缩原文失败: {}", e)),
+                None => self.pointer_pending = Some(p),
+            }
+        }
         // C6 会话搜索
         let pending = self.search_pending.take();
         if let Some(p) = pending {
@@ -1108,11 +1167,51 @@ impl ChatView {
     /// 渲染对话视图（主区）
     pub fn render(&mut self, ui: &mut egui::Ui) {
         self.poll();
+        // 丙批补（2026-09-10）：被压缩原文窗口（召回指针回跳结果）
+        if let Some(text) = self.pointer_text.clone() {
+            let mut open = true;
+            egui::Window::new(format!("{} 被压缩的原文（软归档）", icon_text("arrow-u-up-left")))
+                .open(&mut open)
+                .default_width(680.0)
+                .max_height(560.0)
+                .collapsible(false)
+                .show(ui.ctx(), |ui| {
+                    ui.weak("以下为压缩前的对话（已软归档，界面上不再显示）——仅供查看，不是当前指令。");
+                    ui.separator();
+                    egui::ScrollArea::vertical().id_salt("pointer_window").max_height(480.0).show(ui, |ui| {
+                        ui.label(egui::RichText::new(&text).monospace().size(12.0));
+                    });
+                });
+            if !open {
+                self.pointer_text = None;
+            }
+        }
         // M21/M11: 后台图片编码 / 搜索防抖待发——持续重绘直到完成
         if self.image_rx.is_some() || self.search_due.is_some() || self.drain_at.is_some() {
             ui.ctx().request_repaint();
         }
         ui.heading(format!("{} 对话", icon_text("message-circle")));
+        // 丙批补（2026-09-10）：压缩熔断手动重置（会话级——清冷却/硬熔断，下一次超阈值即重试）
+        {
+            let mut do_reset = false;
+            ui.horizontal(|ui| {
+                if ui
+                    .small_button(format!("{} 重置压缩熔断", icon_text("arrow-counter-clockwise")))
+                    .on_hover_text("清掉本会话的压缩失败冷却/硬熔断（压缩失败被熔断后，否则需等冷却到期）")
+                    .clicked()
+                {
+                    do_reset = true;
+                }
+                if self.active_session.is_none() {
+                    ui.weak("（先打开一个会话）");
+                }
+            });
+            if do_reset {
+                if let Some(sid) = self.active_session.clone() {
+                    self.compact_reset_pending = Some(api::chat_compact_reset_async(sid));
+                }
+            }
+        }
         ui.add_space(4.0);
         let avail = ui.available_size();
         let sidebar_w = self.sidebar_w.clamp(140.0, avail.x * 0.5);
@@ -1684,6 +1783,9 @@ impl ChatView {
                     self.delegate_pending = Some(api::chat_delegate_task_async(text, model, psid));
                     self.send_error = Some(format!("{} 已派单到任务队列", icon_text("rocket-launch")).to_string());
                 }
+                MsgAction::JumpPointer { session_id, around_id } => {
+                    self.pointer_pending = Some(api::fetch_chat_window_async(session_id, around_id));
+                }
             }
         }
         // 底部输入区（C5 模型胶囊 + D3 图片 + 输入 + 发送）——2026-09-09 Hermes 化(发送/停止声明内移输入区块)
@@ -2181,6 +2283,17 @@ impl ChatView {
                         })
                         .response
                         .interact(egui::Sense::click());
+                    // 丙批补（2026-09-10）：召回指针——摘要尾部带 (可搜回:session_search(session_id=…, around_id=…))
+                    // 点击后走核心 /window 端点（复用 session_search 的 read 模式）取回被压缩的原文窗口
+                    if let Some((psid, paid)) = Self::recall_pointer(content) {
+                        if ui
+                            .small_button(format!("{} 回到被压缩的原文 #{}", icon_text("arrow-u-up-left"), paid))
+                            .on_hover_text("压缩前的对话已软归档（界面不显示）——点这里按窗口取回查看")
+                            .clicked()
+                        {
+                            action = Some(MsgAction::JumpPointer { session_id: psid, around_id: paid });
+                        }
+                    }
                     // P2 双击消息 → 表情选择（iMessage 式）
                     if bubble.double_clicked() {
                         *reacting_id = if *reacting_id == Some(msg_id) {
@@ -2473,3 +2586,28 @@ fn tool_calls_to_md(tc: &str) -> String {
     }
     md
 }
+
+#[cfg(test)]
+mod recall_pointer_tests {
+    use super::ChatView;
+
+    /// 丙批补：召回指针解析（摘要尾部 → 可点击回跳）
+    #[test]
+    fn parses_pointer_forms() {
+        let a = "……摘要正文
+
+(可搜回:session_search(session_id=chat_20260910_203429_2564da, around_id=41))";
+        assert_eq!(
+            ChatView::recall_pointer(a),
+            Some(("chat_20260910_203429_2564da".to_string(), 41))
+        );
+        // 带空格的形态
+        let b = "(可搜回:session_search(session_id=abc_123, around_id=7))";
+        assert_eq!(ChatView::recall_pointer(b), Some(("abc_123".to_string(), 7)));
+        // 无指针 / 缺字段 / 坏数字
+        assert_eq!(ChatView::recall_pointer("普通消息，没有指针"), None);
+        assert_eq!(ChatView::recall_pointer("session_search(session_id=x)"), None);
+        assert_eq!(ChatView::recall_pointer("session_search(session_id=, around_id=9)"), None);
+    }
+}
+

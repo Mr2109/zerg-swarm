@@ -127,6 +127,9 @@ pub struct ZergApp {
     // APP-A06: 周期配置独立计时器（原来共用 last_it_fetch——被 30s 清单刷新归零后 60s 条件永不成立）
     last_it_interval_fetch: std::time::Instant,
     // A07 治本（2026-09-10）：引擎状态=后端单一真相源（10s 轮询）——本地不再持有“真相”，只做乐观提示
+    // 丙批 N4（2026-09-10）：前缀缓存命中率（网关 8082——30s 轮询）
+    prefix_cache: api::SharedResult<serde_json::Value>,
+    last_pc_fetch: std::time::Instant,
     // M06 双渲染器（2026-09-10 Mr2109：两种都保留，含切换）——ferrite=自研样式 / commonmark=带缓存，选择持久化
     preview_renderer_cm: bool,
     preview_cm_cache: egui_commonmark::CommonMarkCache,
@@ -227,6 +230,8 @@ impl ZergApp {
             // M06 双渲染器（2026-09-10 Mr2109：两种都保留）：选择持久化，重启后保持
             preview_renderer_cm: Self::load_preview_pref().or_else(|| std::env::var("ZERG_PREVIEW_RENDERER").ok().map(|v| v == "commonmark")).unwrap_or(false),
             preview_cm_cache: Default::default(),
+            prefix_cache: Arc::new(Mutex::new(None)),
+            last_pc_fetch: std::time::Instant::now(),
             engine_state: Arc::new(Mutex::new(None)),
             last_engine_fetch: std::time::Instant::now(),
             it_ctrl_busy: None,
@@ -289,6 +294,16 @@ impl ZergApp {
                 }
                 Err(e) => self.doc_op_err = Some(e),
             }
+        }
+        // 丙批 N4（2026-09-10）：前缀缓存命中率轮询（网关 8082——30s）
+        if lock_recover(&self.prefix_cache).is_none() || self.last_pc_fetch.elapsed().as_secs() >= 30 {
+            let store = self.prefix_cache.clone();
+            let now = std::time::Instant::now();
+            api::runtime().spawn(async move {
+                let r = api::fetch_prefix_cache_blocking().await;
+                *lock_recover(&store) = Some(r);
+            });
+            self.last_pc_fetch = now;
         }
         // A07 治本（2026-09-10）：引擎状态轮询（10s）——服务端为唯一真相源
         if lock_recover(&self.engine_state).is_none() || self.last_engine_fetch.elapsed().as_secs() >= 10 {
@@ -2504,6 +2519,65 @@ impl ZergApp {
         ui.heading("🔧 内部任务（进化——为自己）");
         ui.add_space(4.0);
         ui.weak("16 类内部任务——编排自动运行——也可手动执行（空闲检测触发）。单槽铁律: 排队串行。");
+
+        // 丙批 N4（2026-09-10）：前缀缓存命中率面板（网关 8082——数据来自 /api/metrics/prefix_cache）
+        {
+            let pc = lock_recover(&self.prefix_cache).clone();
+            let mut refresh = false;
+            egui::CollapsingHeader::new(format!("{} 前缀缓存命中率（网关）", icon_text("chart-line")))
+                .default_open(false)
+                .show(ui, |ui| {
+                    match &pc {
+                        Some(Ok(v)) => {
+                            let f = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(0.0);
+                            let u = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+                            let ver = v.get("prompt_version").and_then(|x| x.as_str()).unwrap_or("");
+                            let samples = v
+                                .get("window")
+                                .and_then(|w| w.get("samples"))
+                                .and_then(|x| x.as_u64())
+                                .unwrap_or(0);
+                            ui.horizontal(|ui| {
+                                ui.label(format!("命中率 {:.1}%", f("ratio") * 100.0));
+                                ui.weak(format!("（样本 {} · 命中 {} / 未命中 {}）", samples, u("hits"), u("misses")));
+                            });
+                            if v.get("has_baseline").and_then(|x| x.as_bool()).unwrap_or(false) {
+                                ui.weak(format!("上一版本基线 {:.1}%（版本变更时对比告警）", f("baseline_ratio") * 100.0));
+                            }
+                            ui.weak(format!(
+                                "提示/工具版本: {}",
+                                if ver.is_empty() { "（尚无样本）" } else { ver }
+                            ));
+                            if let Some(alerts) = v.get("alerts").and_then(|x| x.as_array()) {
+                                if !alerts.is_empty() {
+                                    ui.colored_label(
+                                        egui::Color32::from_rgb(220, 100, 90),
+                                        format!("{} {} 条命中率下降告警", icon_text("warning"), alerts.len()),
+                                    );
+                                    for al in alerts.iter().take(2) {
+                                        if let Some(msg) = al.get("message").and_then(|x| x.as_str()) {
+                                            ui.weak(msg);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Some(Err(e)) => {
+                            ui.colored_label(egui::Color32::from_rgb(220, 100, 90), format!("读取失败: {}", e));
+                        }
+                        None => {
+                            ui.weak("读取中…");
+                        }
+                    }
+                    if ui.small_button("刷新").clicked() {
+                        refresh = true;
+                    }
+                });
+            if refresh {
+                self.last_pc_fetch = std::time::Instant::now() - std::time::Duration::from_secs(60);
+            }
+        }
+        ui.add_space(6.0);
         ui.add_space(8.0);
         // v2.5.6 内部任务启停按钮（Mr2109 2026-08-27）
         // A07 治本（2026-09-10）：状态显示取自后端单一真相源——本地不再持有“真相”，只做乐观提示
