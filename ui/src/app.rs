@@ -577,7 +577,7 @@ impl ZergApp {
     /// 渲染主视图（v2.5.6——内容区由集装箱注册表分发）
     /// 渲染任务视图（主区——队列 + 详情各占一半——水平布局）
     fn tasks_view(&mut self, ui: &mut egui::Ui) {
-        ui.heading(t!("task_queue"));
+        ui.heading(t!("task.queue"));
         ui.add_space(4.0);
         let list: Vec<TaskInfo> = lock_recover(&self.tasks).clone().unwrap_or_default();
         // 默认选中最新任务（第一条——加载后自动）
@@ -653,7 +653,7 @@ impl ZergApp {
                 ui.weak("暂无任务");
             } else {
                 ui.spinner();
-                ui.weak(t!("loading"));
+                ui.weak(t!("common.loading"));
             }
             return;
         }
@@ -715,7 +715,7 @@ impl ZergApp {
                     .collect();
 
                 let running_count = running.len();
-                egui::CollapsingHeader::new(format!("🔄 {}（{}）", t!("running"), running_count))
+                egui::CollapsingHeader::new(format!("🔄 {}（{}）", t!("task.state_running"), running_count))
                     .id_salt("task_group_running") // APP-A08: 稳定 id
                     .default_open(true)
                     .show(ui, |ui| {
@@ -723,11 +723,11 @@ impl ZergApp {
                             self.task_row(ui, t);
                         }
                         if running_count == 0 {
-                            ui.weak(t!("none"));
+                            ui.weak(t!("common.none"));
                         }
                     });
                 let queued_count = queued.len();
-                egui::CollapsingHeader::new(format!("⏳ {}（{}）", t!("queued"), queued_count))
+                egui::CollapsingHeader::new(format!("⏳ {}（{}）", t!("task.state_queued"), queued_count))
                     .id_salt("task_group_queued") // APP-A08: 稳定 id
                     .default_open(true)
                     .show(ui, |ui| {
@@ -735,7 +735,7 @@ impl ZergApp {
                             self.task_row(ui, t);
                         }
                         if queued_count == 0 {
-                            ui.weak(t!("none"));
+                            ui.weak(t!("common.none"));
                         }
                     });
                 let waiting_count = waiting.len();
@@ -747,7 +747,7 @@ impl ZergApp {
                             self.task_row(ui, t);
                         }
                         if waiting_count == 0 {
-                            ui.weak(t!("none"));
+                            ui.weak(t!("common.none"));
                         }
                     });
                 let others_count = others.len();
@@ -769,12 +769,12 @@ impl ZergApp {
                     let date = t.completed_at.as_deref().map(|s| s.chars().take(10).collect::<String>()).unwrap_or_else(|| "未知日期".to_string());
                     by_date.entry(date).or_default().push(t);
                 }
-                egui::CollapsingHeader::new(format!("✅ {}（{}）", t!("done"), done_count))
+                egui::CollapsingHeader::new(format!("✅ {}（{}）", t!("task.state_done"), done_count))
                     .id_salt("task_group_done") // APP-A08: 稳定 id
                     .default_open(false)
                     .show(ui, |ui| {
                         if done_count == 0 {
-                            ui.weak(t!("none"));
+                            ui.weak(t!("common.none"));
                         }
                         // 日期分组（倒序——最新日期在上——BTreeMap 反序）
                         let dates: Vec<String> = by_date.keys().rev().cloned().collect();
@@ -984,20 +984,20 @@ impl ZergApp {
 
     /// 任务详情（右栏——含时间线）
     fn task_detail(&mut self, ui: &mut egui::Ui) {
-        ui.heading(t!("task_detail"));
+        ui.heading(t!("task.detail"));
         ui.add_space(4.0);
         if let Some(t) = &self.selected_task {
             ui.label(format!("ID: {}", t.id.as_deref().unwrap_or("?")));
-            ui.label(format!("{}: {}", t!("task_desc"), t.description.as_deref().unwrap_or("?")));
-            ui.label(format!("{}: {}", t!("task_type"), t.task_type.as_deref().unwrap_or("?")));
-            ui.label(format!("{}: {}", t!("task_priority"), t.priority.unwrap_or(0)));
-            ui.label(format!("{}: {}", t!("task_status"), t.status.as_deref().unwrap_or("?")));
-            ui.label(format!("{}: {}", t!("task_model"), t.model.as_deref().unwrap_or("?")));
-            ui.label(format!("{}: {}", t!("task_machine"), t.machine.as_deref().unwrap_or("?")));
+            ui.label(format!("{}: {}", t!("task.desc"), t.description.as_deref().unwrap_or("?")));
+            ui.label(format!("{}: {}", t!("task.type"), t.task_type.as_deref().unwrap_or("?")));
+            ui.label(format!("{}: {}", t!("task.priority"), t.priority.unwrap_or(0)));
+            ui.label(format!("{}: {}", t!("task.status"), t.status.as_deref().unwrap_or("?")));
+            ui.label(format!("{}: {}", t!("task.model"), t.model.as_deref().unwrap_or("?")));
+            ui.label(format!("{}: {}", t!("task.machine"), t.machine.as_deref().unwrap_or("?")));
             ui.add_space(8.0);
             ui.separator();
             if let Some(detail) = lock_recover(&self.task_detail).clone() {
-                ui.label(t!("timeline"));
+                ui.label(t!("task.timeline"));
                 if let Some(trace) = detail.get("trace") {
                     if let Some(rounds) = trace.get("rounds").and_then(|r| r.as_array()) {
                         // 内层不再用固定高度 ScrollArea（嵌套滚动冲突——外层统一滚——Mr2109 2026-08-20）
@@ -1014,10 +1014,10 @@ impl ZergApp {
                                 .and_then(|d| d.as_str())
                                 .unwrap_or("");
                             let header = if dur.is_empty() {
-                                format!("[{}{}] {} {}", t!("round"), rn, t!("tools"), tools)
+                                format!("[{}{}] {} {}", t!("task.round"), rn, t!("task.tools"), tools)
                             } else {
                                 // Mr2109 2026-08-21: 耗时排在工具调用后面
-                                format!("[{}{}] {} {} | ⏱ {}", t!("round"), rn, t!("tools"), tools, dur)
+                                format!("[{}{}] {} {} | ⏱ {}", t!("task.round"), rn, t!("task.tools"), tools, dur)
                             };
                             egui::CollapsingHeader::new(header)
                                 // APP-A08: 轮次号做稳定 id（耗时字段每轮刷新都可能变——原来一展开就被重置）
@@ -1037,10 +1037,10 @@ impl ZergApp {
                             });
                         }
                     } else {
-                        ui.weak(t!("no_rounds"));
+                        ui.weak(t!("task.no_rounds"));
                     }
                 } else {
-                    ui.weak(t!("no_trace"));
+                    ui.weak(t!("task.no_trace"));
                 }
                 ui.add_space(8.0);
                 ui.separator();
@@ -1081,10 +1081,10 @@ impl ZergApp {
                 }
             } else {
                 ui.spinner();
-                ui.weak(t!("loading"));
+                ui.weak(t!("common.loading"));
             }
         } else {
-            ui.weak(t!("click_task"));
+            ui.weak(t!("task.click_hint"));
         }
     }
 
@@ -1196,7 +1196,7 @@ impl ZergApp {
             "tasks" => self.tasks_view(ui),
             "internal-tasks" => self.internal_tasks_view(ui),
             "cluster" => {
-                ui.heading(t!("cluster_status"));
+                ui.heading(t!("cluster.status"));
                 ui.add_space(4.0);
                 if let Some(r) = lock_recover(&self.cluster).clone() {
                     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -1228,15 +1228,15 @@ impl ZergApp {
                     });
                 } else {
                     ui.spinner();
-                    ui.weak(t!("loading"));
+                    ui.weak(t!("common.loading"));
                 }
             }
             "git" => {
-                ui.heading(t!("git_overview"));
+                ui.heading(t!("git.overview"));
                 ui.add_space(4.0);
                 if let Some(g) = lock_recover(&self.git_status).clone() {
                     // 分支（通俗化——task-xxx → 任务类型名）
-                    egui::CollapsingHeader::new(format!("🌿 {}（{}）", t!("branches"), g.branches.as_ref().map(|b| b.len()).unwrap_or(0)))
+                    egui::CollapsingHeader::new(format!("🌿 {}（{}）", t!("git.branches"), g.branches.as_ref().map(|b| b.len()).unwrap_or(0)))
                         .id_salt("git_branches") // APP-A08: 稳定 id
                         .show(ui, |ui| {
                         if let Some(branches) = &g.branches {
@@ -1246,7 +1246,7 @@ impl ZergApp {
                         }
                     });
                     // worktree（通俗化——只显示分支名——不显示完整路径）
-                    egui::CollapsingHeader::new(format!("📂 {}（{}）", t!("worktrees"), g.worktrees.as_ref().map(|w| w.len()).unwrap_or(0)))
+                    egui::CollapsingHeader::new(format!("📂 {}（{}）", t!("git.worktrees"), g.worktrees.as_ref().map(|w| w.len()).unwrap_or(0)))
                         .id_salt("git_worktrees") // APP-A08: 稳定 id
                         .show(ui, |ui| {
                         if let Some(wts) = &g.worktrees {
@@ -1261,7 +1261,7 @@ impl ZergApp {
                         format!(
                             "{} {}（{}）",
                             icon_text("warning"),
-                            t!("unmerged"),
+                            t!("git.unmerged"),
                             g.unmerged.as_ref().map(|u| u.len()).unwrap_or(0)
                         ),
                     )
@@ -1273,16 +1273,16 @@ impl ZergApp {
                             }
                         }
                         if g.unmerged.as_ref().map(|u| u.is_empty()).unwrap_or(true) {
-                            ui.weak(format!("  {}", t!("none")));
+                            ui.weak(format!("  {}", t!("common.none")));
                         }
                     });
                 } else {
                     ui.spinner();
-                    ui.weak(t!("loading"));
+                    ui.weak(t!("common.loading"));
                 }
             }
             "logs" => {
-                ui.heading(t!("logs"));
+                ui.heading(t!("page.logs"));
                 ui.add_space(4.0);
                 if let Some(lines) = lock_recover(&self.logs).clone() {
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -1299,7 +1299,7 @@ impl ZergApp {
                     });
                 } else {
                     ui.spinner();
-                    ui.weak(t!("loading"));
+                    ui.weak(t!("common.loading"));
                 }
             }
             // 🐛 虫茧=平台（Mr2109 2026-09-03：平台界面呈现无数应用——示例虫茧只是其一）
@@ -1312,8 +1312,8 @@ impl ZergApp {
                 }
                 if !self.rt_active {
                     // ── 平台界面：应用栅格（无数茧——每个=独立集装箱应用——示例虫茧=第一个）──
-                    ui.heading(format!("{} {}", icon_text("boxes"), t!("cocoon_platform")));
-                    ui.weak(t!("cocoon_platform_hint"));
+                    ui.heading(format!("{} {}", icon_text("boxes"), t!("cocoon.platform")));
+                    ui.weak(t!("cocoon.platform_hint"));
                     ui.add_space(10.0);
                     // 应用清单（平台雏形——未来读集装箱注册/目录扫描——现静态声明可扩展）
                     // 结构：每卡=独立 git 集装箱应用（id/名字/描述/打开）
@@ -1344,7 +1344,7 @@ impl ZergApp {
                                 card_ui.add_space(6.0);
                                 card_ui.label(egui::RichText::new(*desc).size(12.0).color(egui::Color32::from_rgb(170, 175, 185)));
                                 card_ui.with_layout(egui::Layout::right_to_left(egui::Align::BOTTOM), |ui| {
-                                    if ui.button(egui::RichText::new(t!("cocoon_open")).size(12.0)).clicked() {
+                                    if ui.button(egui::RichText::new(t!("action.open")).size(12.0)).clicked() {
                                         // 2026-09-11 B 批（决策 5）：集装箱需编译时装载（feature）
                                         if cfg!(feature = "zerg-roundtable") {
                                             self.rt_active = true;
@@ -1388,7 +1388,7 @@ impl ZergApp {
                 }
             }
             "docs" => {
-                ui.heading(t!("docs"));
+                ui.heading(t!("page.docs"));
                 ui.add_space(4.0);
                 let docs_snap = lock_recover(&self.docs).clone(); // 先释放借用——内部闭包要 &mut self（F5 AI 按钮）
                 if let Some((files, dirs)) = docs_snap {
@@ -1551,7 +1551,7 @@ impl ZergApp {
                                 }
                             }
                             if dir_files.is_empty() {
-                                ui.weak(t!("none"));
+                                ui.weak(t!("common.none"));
                             }
                         });
                         // 拖拽条2
@@ -1788,7 +1788,7 @@ impl ZergApp {
                                 }
                             } else {
                                 c3_ui.spinner();
-                                c3_ui.weak(t!("loading"));
+                                c3_ui.weak(t!("common.loading"));
                             }
                         }
                         });
@@ -1863,7 +1863,7 @@ impl ZergApp {
                     }
                 } else {
                     ui.spinner();
-                    ui.weak(t!("loading"));
+                    ui.weak(t!("common.loading"));
                 }
             }
             "models" => {
@@ -1892,7 +1892,7 @@ impl ZergApp {
                         *lock_recover(&store) = r;
                     });
                 }
-                ui.heading(t!("resources"));
+                ui.heading(t!("page.resources"));
                 ui.add_space(4.0);
                 // 3 库切换（模型库已独立板块——Mr2109 2026-08-27）
                 ui.horizontal(|ui| {
@@ -2017,11 +2017,11 @@ impl ZergApp {
                                 }
                             });
                         } else {
-                            cols[0].weak(t!("none"));
+                            cols[0].weak(t!("common.none"));
                         }
                     } else {
                         cols[0].spinner();
-                        cols[0].weak(t!("loading"));
+                        cols[0].weak(t!("common.loading"));
                     }
                     // 右列——模型简介
                     if self.res_type == "models" {
@@ -2188,11 +2188,11 @@ impl ZergApp {
                         }
                     });
                 } else {
-                    l_ui.weak(t!("none"));
+                    l_ui.weak(t!("common.none"));
                 }
             } else {
                 l_ui.spinner();
-                l_ui.weak(t!("loading"));
+                l_ui.weak(t!("common.loading"));
             }
             } // 左列块结束
                 // 拖拽条（8px 分隔线——鼠标移到显示 ⇔ 光标——可拖）
@@ -2970,14 +2970,14 @@ impl eframe::App for ZergApp {
                 ui.horizontal(|ui| {
                     ui.colored_label(
                         egui::Color32::from_rgb(220, 80, 80),
-                        t!("offline_waiting"),
+                        t!("status.offline_waiting"),
                     );
                 });
             });
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.centered_and_justified(|ui| {
                     ui.label(
-                        egui::RichText::new(t!("offline_full"))
+                        egui::RichText::new(t!("status.offline_full"))
                             .size(24.0)
                             .color(egui::Color32::from_rgb(150, 150, 150)),
                     );
