@@ -91,20 +91,27 @@ pub async fn ai_prompt_blocking(model: &str, prompt: &str) -> Result<String, Str
         return Err(format!("AI 错误({}): {}", status, json));
     }
     // 解析 output_text（跳过 reasoning）
+    // A14（2026-09-10 审计）：**累积全部** output_text——responses 格式 output 常含多个 item（工具调用 + 多段文本），
+    // 原实现遇到第一段就 return，F5「总结/续写/翻译/润色」输出被静默截断
+    let mut out = String::new();
     if let Some(output) = json.get("output").and_then(|o| o.as_array()) {
         for item in output {
             if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
                 for part in content {
                     if part.get("type").and_then(|t| t.as_str()) == Some("output_text") {
                         if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                            return Ok(text.to_string());
+                            out.push_str(text);
                         }
                     }
                 }
             }
         }
     }
-    Err(format!("AI 响应无文本: {}", json))
+    if out.is_empty() {
+        Err(format!("AI 响应无文本: {}", json))
+    } else {
+        Ok(out)
+    }
 }
 
 /// 共享异步结果（tokio spawn + Mutex——每帧轮询）
@@ -244,7 +251,8 @@ pub async fn fetch_docs_blocking() -> Result<(Vec<String>, Vec<String>), String>
 
 /// 文档内容（blocking）
 pub async fn fetch_doc_content_blocking(path: String) -> Result<String, String> {
-    let p = format!("/api/docs/{}", path);
+    // A12（2026-09-10 审计）：逐段编码路径——文档名含空格/#/?/中文时不再被截断或 400（'/' 保留）
+    let p = format!("/api/docs/{}", urlencode_path(&path));
     let v = sync_get_public(&p).await?;
     Ok(v.get("content")
         .and_then(|c| c.as_str().map(|s| s.to_string()))
@@ -286,7 +294,7 @@ pub fn doc_op_async(action: &str, payload: serde_json::Value) -> SharedResult<()
     let action = action.to_string();
     runtime().spawn(async move {
         let r = doc_op_blocking(&action, payload).await;
-        *out2.lock().unwrap() = Some(r);
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
     });
     out
 }
@@ -328,8 +336,12 @@ pub async fn fetch_internal_tasks_blocking() -> Result<Vec<serde_json::Value>, S
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks", API_BASE);
     let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
-    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(v.get("items").cloned().and_then(|a| a.as_array().cloned()).unwrap_or_default())
+    // A05（2026-09-10 审计）：先判 HTTP 状态（json_body），字段缺失返回 Err——不再把 500 错误体当成"空列表"
+    let v = json_body(resp).await?;
+    v.get("items")
+        .cloned()
+        .and_then(|a| a.as_array().cloned())
+        .ok_or_else(|| "响应缺少 items 字段".to_string())
 }
 
 // run_internal_task_blocking 手动执行内部任务（Mr2109 2026-08-22）
@@ -410,7 +422,8 @@ pub async fn fetch_internal_intervals_blocking() -> Result<serde_json::Value, St
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks/intervals", API_BASE);
     let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
-    resp.json().await.map_err(|e| e.to_string())
+    // A05（2026-09-10 审计）：先判 HTTP 状态——5xx 错误体不再被当成"成功但空数据"
+    json_body(resp).await
 }
 
 // task_terminate_blocking 终止执行中任务（右键——running→failed）
@@ -434,8 +447,12 @@ pub async fn fetch_archive_blocking() -> Result<Vec<serde_json::Value>, String> 
     let client = http_client_json();
     let url = format!("{}/api/archive", API_BASE);
     let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
-    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(v.get("entries").cloned().and_then(|a| a.as_array().cloned()).unwrap_or_default())
+    // A05（2026-09-10 审计）：先判 HTTP 状态；entries 字段缺失返回 Err——不再把错误显示成"无数据"
+    let v = json_body(resp).await?;
+    v.get("entries")
+        .cloned()
+        .and_then(|a| a.as_array().cloned())
+        .ok_or_else(|| "响应缺少 entries 字段".to_string())
 }
 
 /// 资源库（blocking）
@@ -533,7 +550,7 @@ pub fn fetch_tasks_async() -> SharedResult<Vec<TaskInfo>> {
             }
             Err(e) => Err(e),
         };
-        *out2.lock().unwrap() = Some(result);
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
     });
     out
 }
@@ -551,7 +568,7 @@ pub fn fetch_git_status_async() -> SharedResult<GitStatusResp> {
             },
             Err(e) => Err(e),
         };
-        *out2.lock().unwrap() = Some(result);
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
     });
     out
 }
@@ -563,7 +580,7 @@ pub fn fetch_task_detail_async(id: String) -> SharedResult<Value> {
     runtime().spawn(async move {
         let path = format!("/api/tasks/{}", id);
         let result = sync_get_public(&path).await;
-        *out2.lock().unwrap() = Some(result);
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
     });
     out
 }
@@ -586,7 +603,7 @@ pub fn fetch_main_logs_async() -> SharedResult<Vec<String>> {
                 .unwrap_or_default()),
             Err(e) => Err(e),
         };
-        *out2.lock().unwrap() = Some(result);
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
     });
     out
 }
@@ -609,7 +626,7 @@ pub fn fetch_docs_async() -> SharedResult<Vec<String>> {
                 .unwrap_or_default()),
             Err(e) => Err(e),
         };
-        *out2.lock().unwrap() = Some(result);
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
     });
     out
 }
@@ -621,7 +638,7 @@ pub fn fetch_resources_async(res_type: String) -> SharedResult<Value> {
     runtime().spawn(async move {
         let path = format!("/api/resources/{}", res_type);
         let result = sync_get_public(&path).await;
-        *out2.lock().unwrap() = Some(result);
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
     });
     out
 }
@@ -632,7 +649,7 @@ pub fn ping_async() -> SharedResult<bool> {
     let out2 = out.clone();
     runtime().spawn(async move {
         let ok = sync_get_public("/api/tasks").await.is_ok();
-        *out2.lock().unwrap() = Some(Ok(ok));
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(ok));
     });
     out
 }
@@ -648,12 +665,12 @@ pub fn fetch_chat_sessions_async() -> SharedResult<Vec<Value>> {
         let v = match res {
             Ok(v) => v.get("sessions").cloned().unwrap_or(Value::Array(vec![])),
             Err(e) => {
-                *out2.lock().unwrap() = Some(Err(e));
+                *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e));
                 return;
             }
         };
         let arr = v.as_array().cloned().unwrap_or_default();
-        *out2.lock().unwrap() = Some(Ok(arr));
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(arr));
     });
     out
 }
@@ -674,10 +691,10 @@ pub fn create_chat_session_async(model: String) -> SharedResult<Value> {
             .await;
         match resp {
             Ok(r) => match json_body(r).await {
-                Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
+                Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
+                Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
         }
     });
     out
@@ -700,6 +717,21 @@ pub struct ChatStreamState {
 }
 pub type SharedChatStream = Arc<Mutex<ChatStreamState>>;
 
+/// A09（2026-09-10 审计）：流式任务守卫——任务 panic / 异常提前结束时兜底收敛状态机
+/// （JoinHandle 仍由调用方丢弃，但至少保证 done=true + error，UI 不会永久停在"生成中"）
+struct StreamDoneGuard(SharedChatStream);
+impl Drop for StreamDoneGuard {
+    fn drop(&mut self) {
+        let mut st = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !st.done {
+            st.done = true;
+            if st.error.is_none() {
+                st.error = Some("内部错误：流式任务异常结束".to_string());
+            }
+        }
+    }
+}
+
 /// 发消息（C3 流式——POST /send——SSE 读取——边收边更新状态）
 /// image: 可选单图 data URL（D3）——images: 多图数组（P2——优先）
 pub fn chat_send_stream_async(session_id: String, content: String, image: Option<String>, images: Vec<String>, reuse_user_id: Option<i64>) -> SharedChatStream {
@@ -707,6 +739,8 @@ pub fn chat_send_stream_async(session_id: String, content: String, image: Option
     let state: SharedChatStream = Arc::new(Mutex::new(ChatStreamState::default()));
     let s2 = state.clone();
     runtime().spawn(async move {
+        // A09：任务退出（含 panic）兜底——保证状态机收敛
+        let _guard = StreamDoneGuard(s2.clone());
         let client = http_client();
         let url = format!("{}/api/chat/sessions/{}/send", API_BASE, session_id);
         let mut body = serde_json::json!({"content": content});
@@ -732,89 +766,121 @@ pub fn chat_send_stream_async(session_id: String, content: String, image: Option
                     let code = r.status();
                     let body = r.text().await.unwrap_or_default();
                     let brief: String = body.chars().take(300).collect();
-                    let mut st = s2.lock().unwrap();
+                    let mut st = s2.lock().unwrap_or_else(|e| e.into_inner());
                     st.error = Some(format!("HTTP {}: {}", code, brief));
                     st.done = true;
                     return;
                 }
                 let mut stream = r.bytes_stream();
                 let mut buf: Vec<u8> = Vec::new();
-                while let Some(chunk) = stream.next().await {
+                // A08（2026-09-10 审计）：取消信号与 stream.next() 并列等待——模型思考/工具执行期间长时间无
+                // 字节输出时，点 ⏹ 也能立即生效（原实现只在收到下一个 chunk 后才检查 cancelled）
+                loop {
                     // 停止检查（用户点 ⏹——断开连接→后端 ctx cancel）
-                    if s2.lock().unwrap().cancelled {
+                    if s2.lock().unwrap_or_else(|e| e.into_inner()).cancelled {
                         break;
                     }
-                    let chunk = match chunk {
-                        Ok(c) => c,
-                        Err(_) => break,
+                    let stop = tokio::select! {
+                        maybe = stream.next() => match maybe {
+                            Some(Ok(chunk)) => {
+                                buf.extend_from_slice(&chunk);
+                                // 按 \n\n 分割 SSE 事件
+                                loop {
+                                    let text = String::from_utf8_lossy(&buf);
+                                    let Some(pos) = text.find("\n\n") else { break };
+                                    let event = text[..pos].to_string();
+                                    // A06（2026-09-10 审计）：显式解析事件名——不再只靠 contains("event: done") 判断
+                                    let ev_name = event
+                                        .lines()
+                                        .find_map(|l| l.trim_start().strip_prefix("event:").map(|s| s.trim().to_string()));
+                                    let mut st = s2.lock().unwrap_or_else(|e| e.into_inner());
+                                    // A06（2026-09-10 审计）：收集本事件块内**全部** data: 行（SSE 规范多行 data 以 \n 拼接，
+                                    // 前缀 "data:" 后的空格可选）——原实现只取首条 data 行、且强制要求冒号后有空格
+                                    let mut payload = String::new();
+                                    let mut has_data = false;
+                                    for l in event.lines() {
+                                        if let Some(rest) = l.trim_start().strip_prefix("data:") {
+                                            if has_data {
+                                                payload.push('\n');
+                                            }
+                                            payload.push_str(rest.strip_prefix(' ').unwrap_or(rest));
+                                            has_data = true;
+                                        }
+                                    }
+                                    let parsed: Option<Value> = if has_data {
+                                        serde_json::from_str::<Value>(&payload).ok()
+                                    } else {
+                                        None
+                                    };
+                                    if let Some(v) = &parsed {
+                                        if let Some(t) = v.get("type").and_then(|x| x.as_str()) {
+                                            let txt = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
+                                            match t {
+                                                "reasoning" => st.reasoning.push_str(txt),
+                                                "output" => st.content.push_str(txt),
+                                                "tool_start" => {
+                                                    // P4-35 工具执行中状态（name 字段——执行前事件）
+                                                    st.tool_name = v.get("name").and_then(|x| x.as_str()).map(|s| s.to_string());
+                                                }
+                                                "compacting" => {
+                                                    // P4-39 T5: 上下文压缩进行中（Hermes "compacting" 状态）
+                                                    st.compacting = true;
+                                                }
+                                                "compact_done" => {
+                                                    st.compacting = false;
+                                                }
+                                                "tool" => {
+                                                    // P4-35 工具执行完成——清除执行中状态（结果事件）
+                                                    st.tool_name = None;
+                                                }
+                                                "tool_ping" => {
+                                                    // P4-36 工具执行心跳——计时（UI 显示"执行中 N 秒"）
+                                                    st.tool_elapsed = v.get("elapsed").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                        if let Some(e) = v.get("error").and_then(|x| x.as_str()) {
+                                            st.error = Some(e.to_string());
+                                        }
+                                    }
+                                    if ev_name.as_deref() == Some("done") {
+                                        st.done = true;
+                                        // C2: 回收未消费插话（交队列续发）
+                                        if let Some(v) = &parsed {
+                                            if let Some(arr) = v.get("steer_undrained").and_then(|x| x.as_array()) {
+                                                st.steer_undrained = arr
+                                                    .iter()
+                                                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                                                    .collect();
+                                            }
+                                        }
+                                    }
+                                    drop(st);
+                                    buf.drain(..pos + 2);
+                                }
+                                false
+                            }
+                            // A07（2026-09-10 审计）：断流不再静默 break——写 error，用户可与正常结束区分
+                            Some(Err(e)) => {
+                                s2.lock().unwrap_or_else(|e| e.into_inner()).error = Some(format!("流中断: {}", e));
+                                true
+                            }
+                            None => true,
+                        },
+                        // 150ms 心跳：无字节输出时也回来重查取消标志
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(150)) => false,
                     };
-                    buf.extend_from_slice(&chunk);
-                    // 按 \n\n 分割 SSE 事件
-                    loop {
-                        let text = String::from_utf8_lossy(&buf);
-                        let Some(pos) = text.find("\n\n") else { break };
-                        let event = text[..pos].to_string();
-                        let mut st = s2.lock().unwrap();
-                        if let Some(dline) = event.lines().find(|l| l.starts_with("data: ")) {
-                            let payload = dline.trim_start_matches("data: ");
-                            if let Ok(v) = serde_json::from_str::<Value>(payload) {
-                                if let Some(t) = v.get("type").and_then(|x| x.as_str()) {
-                                    let txt = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
-                                    match t {
-                                        "reasoning" => st.reasoning.push_str(txt),
-                                        "output" => st.content.push_str(txt),
-                                        "tool_start" => {
-                                            // P4-35 工具执行中状态（name 字段——执行前事件）
-                                            st.tool_name = v.get("name").and_then(|x| x.as_str()).map(|s| s.to_string());
-                                        }
-                                        "compacting" => {
-                                            // P4-39 T5: 上下文压缩进行中（Hermes "compacting" 状态）
-                                            st.compacting = true;
-                                        }
-                                        "compact_done" => {
-                                            st.compacting = false;
-                                        }
-                                        "tool" => {
-                                            // P4-35 工具执行完成——清除执行中状态（结果事件）
-                                            st.tool_name = None;
-                                        }
-                                        "tool_ping" => {
-                                            // P4-36 工具执行心跳——计时（UI 显示"执行中 N 秒"）
-                                            st.tool_elapsed = v.get("elapsed").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                if let Some(e) = v.get("error").and_then(|x| x.as_str()) {
-                                    st.error = Some(e.to_string());
-                                }
-                            }
-                        }
-                        if event.contains("event: done") {
-                            st.done = true;
-                            // C2: 回收未消费插话（交队列续发）
-                            if let Some(l) = event.lines().find(|l| l.trim_start().starts_with("data:")) {
-                                let j = l.trim_start().trim_start_matches("data:").trim();
-                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(j) {
-                                    if let Some(arr) = v.get("steer_undrained").and_then(|x| x.as_array()) {
-                                        st.steer_undrained = arr
-                                            .iter()
-                                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
-                                            .collect();
-                                    }
-                                }
-                            }
-                        }
-                        drop(st);
-                        buf.drain(..pos + 2);
+                    if stop {
+                        break;
                     }
                 }
                 // 流结束（正常或取消）
-                s2.lock().unwrap().done = true;
+                s2.lock().unwrap_or_else(|e| e.into_inner()).done = true;
             }
             Err(e) => {
-                s2.lock().unwrap().error = Some(format!("请求失败: {}", e));
-                s2.lock().unwrap().done = true;
+                s2.lock().unwrap_or_else(|e| e.into_inner()).error = Some(format!("请求失败: {}", e));
+                s2.lock().unwrap_or_else(|e| e.into_inner()).done = true;
             }
         }
     });
@@ -827,7 +893,7 @@ pub fn fetch_chat_session_async(session_id: String) -> SharedResult<Value> {
     let out2 = out.clone();
     runtime().spawn(async move {
         let res = sync_get_public(&format!("/api/chat/sessions/{}", session_id)).await;
-        *out2.lock().unwrap() = Some(res);
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(res);
     });
     out
 }
@@ -845,8 +911,8 @@ pub fn delete_chat_session_async(session_id: String) -> SharedResult<bool> {
             .send()
             .await;
         match resp {
-            Ok(r) => *out2.lock().unwrap() = Some(Ok(r.status().is_success())),
-            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+            Ok(r) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(r.status().is_success())),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
         }
     });
     out
@@ -859,7 +925,7 @@ pub fn search_chat_async(query: String) -> SharedResult<Value> {
     runtime().spawn(async move {
         let path = format!("/api/chat/search?q={}", urlencode(&query));
         let res = sync_get_public(&path).await;
-        *out2.lock().unwrap() = Some(res);
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(res);
     });
     out
 }
@@ -877,6 +943,11 @@ fn urlencode(s: &str) -> String {
             }
         })
         .collect()
+}
+
+/// 路径编码（A12 2026-09-10 审计）：按 `/` 分段各自 urlencode——保留路径分隔符，其余字符转义
+fn urlencode_path(path: &str) -> String {
+    path.split('/').map(urlencode).collect::<Vec<_>>().join("/")
 }
 
 /// 可用模型列表（C5 模型胶囊——GET /api/fleet/models 提取 name）
@@ -909,9 +980,9 @@ pub fn fetch_available_models_async() -> SharedResult<Vec<String>> {
                 }
                 names.sort();
                 names.dedup();
-                *out2.lock().unwrap() = Some(Ok(names));
+                *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(names));
             }
-            Err(e) => *out2.lock().unwrap() = Some(Err(e)),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
         }
     });
     out
@@ -932,10 +1003,10 @@ pub fn chat_update_model_async(session_id: String, model: String) -> SharedResul
             .await;
         match resp {
             Ok(r) => match json_body(r).await {
-                Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
+                Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
+                Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
         }
     });
     out
@@ -956,10 +1027,10 @@ pub fn chat_abort_async(session_id: String) -> SharedResult<Value> {
             .await;
         match resp {
             Ok(r) => match json_body(r).await {
-                Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
+                Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
+                Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
         }
     });
     out
@@ -981,10 +1052,10 @@ pub fn chat_steer_async(session_id: String, content: String) -> SharedResult<Val
             .await;
         match resp {
             Ok(r) => match json_body(r).await {
-                Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
+                Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
+                Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
         }
     });
     out
@@ -1005,10 +1076,10 @@ pub fn chat_regenerate_async(session_id: String) -> SharedResult<Value> {
             .await;
         match resp {
             Ok(r) => match json_body(r).await {
-                Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
+                Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
+                Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
         }
     });
     out
@@ -1019,10 +1090,11 @@ pub fn chat_search_async(q: String) -> SharedResult<Value> {
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let res = sync_get_public(&format!("/api/chat/search?q={}", q)).await;
+        // A11（2026-09-10 审计）：查询串需 URL 编码——`&`/`#`/`+`/中文会破坏 URL（与 search_chat_async 保持一致）
+        let res = sync_get_public(&format!("/api/chat/search?q={}", urlencode(&q))).await;
         match res {
-            Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-            Err(e) => *out2.lock().unwrap() = Some(Err(e)),
+            Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
         }
     });
     out
@@ -1048,10 +1120,10 @@ pub fn chat_delegate_task_async(description: String, model: String, parent_sessi
             .await;
         match resp {
             Ok(r) => match json_body(r).await {
-                Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
+                Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
+                Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
         }
     });
     out
@@ -1072,10 +1144,10 @@ pub fn chat_set_archived_async(session_id: String, archived: bool) -> SharedResu
             .await;
         match resp {
             Ok(r) => match json_body(r).await {
-                Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
+                Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
+                Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
         }
     });
     out
@@ -1095,10 +1167,10 @@ pub fn chat_set_pinned_async(session_id: String, pinned: bool) -> SharedResult<V
             .await;
         match resp {
             Ok(r) => match json_body(r).await {
-                Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
+                Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
+                Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
         }
     });
     out
@@ -1119,10 +1191,10 @@ pub fn chat_rename_session_async(session_id: String, title: String) -> SharedRes
             .await;
         match resp {
             Ok(r) => match json_body(r).await {
-                Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
+                Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
+                Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
         }
     });
     out
@@ -1143,10 +1215,10 @@ pub fn chat_edit_message_async(mid: i64, content: String, truncate: bool) -> Sha
             .await;
         match resp {
             Ok(r) => match json_body(r).await {
-                Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
-                Err(e) => *out2.lock().unwrap() = Some(Err(e)),
+                Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
+                Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
         }
     });
     out
@@ -1156,20 +1228,46 @@ pub fn chat_edit_message_async(mid: i64, content: String, truncate: bool) -> Sha
 mod proxy_root_fix_tests {
     use super::*;
 
+    /// 环境变量守卫（A13 2026-09-10 审计）：测试结束恢复原值——不再把 4 个代理变量永久留在进程环境里污染其它测试
+    struct EnvGuard(Vec<(&'static str, Option<String>)>);
+    impl EnvGuard {
+        fn set(vars: &[(&'static str, &str)]) -> Self {
+            let saved = vars.iter().map(|(k, _)| (*k, std::env::var(k).ok())).collect();
+            for (k, v) in vars {
+                std::env::set_var(k, v);
+            }
+            EnvGuard(saved)
+        }
+    }
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (k, v) in &self.0 {
+                match v {
+                    Some(val) => std::env::set_var(k, val),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
     /// 根治验证：设置一个"死代理"环境变量后——
     /// 统一 client（no_proxy）必须仍能打通回环主控；裸 Client::new() 则应失败（复现旧 bug）。
     /// 主控未运行时跳过（避免 CI/离线环境误报）。
     #[test]
     fn no_proxy_client_reaches_loopback() {
-        std::env::set_var("HTTP_PROXY", "http://127.0.0.1:9");
-        std::env::set_var("HTTPS_PROXY", "http://127.0.0.1:9");
-        std::env::set_var("http_proxy", "http://127.0.0.1:9");
-        std::env::set_var("https_proxy", "http://127.0.0.1:9");
+        let _env = EnvGuard::set(&[
+            ("HTTP_PROXY", "http://127.0.0.1:9"),
+            ("HTTPS_PROXY", "http://127.0.0.1:9"),
+            ("http_proxy", "http://127.0.0.1:9"),
+            ("https_proxy", "http://127.0.0.1:9"),
+        ]);
 
         let rt = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
             Err(_) => return,
         };
+        // A13（2026-09-10 审计）：Err(_) → None（"连不通"），与"状态码非 2xx"（Some(false)）区分——
+        // 主控离线时探测结果为 None → 走下面的跳过分支，不再误报"根治失败"
         let probe = |client: reqwest::Client| {
             rt.block_on(async move {
                 match client
@@ -1179,7 +1277,7 @@ mod proxy_root_fix_tests {
                     .await
                 {
                     Ok(r) => Some(r.status().is_success()),
-                    Err(_) => Some(false),
+                    Err(_) => None,
                 }
             })
         };
@@ -1193,9 +1291,13 @@ mod proxy_root_fix_tests {
             Some(false) => panic!("no_proxy client 未能打通回环（根治失败）"),
             Some(true) => {}
         }
-        // 对照：裸 client 在死代理下应失败（若也成功，说明代理环境未生效，测试无意义）
+        // 对照：裸 client 在死代理下**必须连不通**（None）——这正是被根治的旧 bug
+        // （A13 的 probe 语义：None=连不通 / Some(bool)=拿到 HTTP 状态；旧断言按 Some(false) 写，已过时）
         let bare = probe(reqwest::Client::new());
-        eprintln!("no_proxy client 成功=true; 裸 client 成功={:?}", bare);
-        assert_eq!(bare, Some(false), "对照失效：裸 client 竟然也通了（环境变量未生效）");
+        eprintln!("no_proxy client 成功=true; 裸 client 结果={:?}（None=被死代理吞掉）", bare);
+        assert_eq!(
+            bare, None,
+            "对照失效：裸 client 竟然连上了 127.0.0.1（环境变量未生效，或 reqwest 已不再走代理）"
+        );
     }
 }
