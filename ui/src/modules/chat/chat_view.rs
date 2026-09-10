@@ -27,14 +27,14 @@ fn md_preprocess_cached(s: &str) -> String {
         h.finish()
     };
     {
-        let mut g = MD_PRE_CACHE.lock().unwrap();
+        let mut g = lock_recover(&MD_PRE_CACHE);
         if let Some(v) = g.get_or_insert_with(std::collections::HashMap::new).get(&key) {
             return v.clone();
         }
     }
     let out = md_preprocess(s);
     {
-        let mut g = MD_PRE_CACHE.lock().unwrap();
+        let mut g = lock_recover(&MD_PRE_CACHE);
         let m = g.get_or_insert_with(std::collections::HashMap::new);
         if m.len() > 256 {
             m.clear();
@@ -203,7 +203,7 @@ fn compute_math_svg(math: &str, inline: bool) -> Vec<u8> {
 /// - 图片 URI 用**内容哈希**（原用公式长度 → 等长公式互相串图）
 fn render_math(ui: &mut egui::Ui, math: &str, inline: bool) {
     let cached: Option<Vec<u8>> = {
-        let mut guard = MATH_CACHE.lock().unwrap();
+        let mut guard = lock_recover(&MATH_CACHE);
         guard
             .get_or_insert_with(std::collections::HashMap::new)
             .get(math)
@@ -217,7 +217,7 @@ fn render_math(ui: &mut egui::Ui, math: &str, inline: bool) {
         Some(b) => b,
         None => {
             let computed = compute_math_svg(math, inline); // 锁外执行子进程
-            let mut guard = MATH_CACHE.lock().unwrap();
+            let mut guard = lock_recover(&MATH_CACHE);
             let map = guard.get_or_insert_with(std::collections::HashMap::new);
             if map.len() > 512 {
                 map.clear(); // 防无上限增长
@@ -250,6 +250,21 @@ fn render_math(ui: &mut egui::Ui, math: &str, inline: bool) {
     }
 }
 
+/// M22(2026-09-10 审计): 中毒互斥锁恢复读取。
+/// 后台任务 panic 会中毒共享 Mutex；若 UI 线程每帧 `.lock().unwrap()`，一次后台 panic 就让整个界面崩溃。
+/// 统一改用本函数（`into_inner()` 取回数据）——UI 线程永不因锁中毒 panic。
+fn lock_recover<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// M19(2026-09-10 审计): 流式渲染专用缓存键（大负值——与"缺 id"消息的 -1 槽区分，避免互相覆盖）
+const STREAM_CONTENT_KEY: i64 = -1_000_001;
+const STREAM_REASONING_KEY: i64 = -1_000_002;
+const STREAM_THINKING_KEY: i64 = -1_000_003;
+
+/// M24(2026-09-10 审计): 朗读进程 pid（精确停止——替代 `pkill -f say` 误杀系统其它 say 进程）
+static SPEAK_PID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
 /// 对话视图状态
 pub struct ChatView {
     // 会话列表
@@ -259,6 +274,7 @@ pub struct ChatView {
     pub active_session: Option<String>,
     pub messages: Vec<Value>,
     messages_loading: bool,
+    session_load_failed: bool, // M13: 会话详情加载失败（消息区给重试入口）
     // 输入
     pub input: String,
     pub sending: bool,
@@ -269,6 +285,7 @@ pub struct ChatView {
     abort_pending: Option<api::SharedResult<Value>>, // 批次B: 服务端中断请求（结果忽略——轮询消费）
     regen_pending: Option<api::SharedResult<Value>>, // C3: 重生成请求（返回 uid+content → 重跑）
     create_pending: Option<api::SharedResult<Value>>,
+    delete_pending: Option<api::SharedResult<bool>>, // M10: 删会话请求（Ok(false) 也算失败）
     // C3 流式发送（生成中状态）
     stream: Option<api::SharedChatStream>,
     // M04(2026-09-10 审计): 本轮流所属会话 id——poll 只在仍是当前会话时回写，防跨会话串台
@@ -285,7 +302,7 @@ pub struct ChatView {
     pub current_model: String,
     models: Vec<String>,
     models_pending: Option<api::SharedResult<Vec<String>>>,
-    model_update_pending: Option<api::SharedResult<Value>>,
+    model_update_pending: Option<(String, api::SharedResult<Value>)>, // M12: (旧模型, 请求)——失败回滚用
     // C5 思考折叠（消息 id → 展开）
     thinking_open: std::collections::HashSet<i64>,
     tools_open: std::collections::HashSet<i64>, // 2026-09-10: 工具调用独立折叠（与思考分开）
@@ -293,11 +310,13 @@ pub struct ChatView {
     search_query: String,
     search_results: Vec<Value>,
     search_pending: Option<api::SharedResult<Value>>,
+    search_due: Option<(String, f64)>, // M11: 搜索防抖（关键词 + 最后输入时刻）
     // C7 派单
     delegate_pending: Option<api::SharedResult<Value>>,
     // D3 多模态：待发送图片（data URL + 文件名）
     pending_image: Option<String>,
     pending_image_name: String,
+    image_rx: Option<std::sync::mpsc::Receiver<(String, String)>>, // M21: 后台图片编码结果（data URL, 名称）
     // D4 固定
     pin_pending: Option<api::SharedResult<Value>>,
     archive_pending: Option<api::SharedResult<Value>>,
@@ -321,6 +340,7 @@ pub struct ChatView {
     drafts: std::collections::HashMap<String, String>,
     drafts_saved_at: f64,          // C4(2026-09-10): 草稿落盘节流
     queue: Vec<String>,            // C1(2026-09-10): 生成中排队消息（流结束自动发）
+    drain_at: Option<f64>,         // M14: 停止后队列续发的到点时刻（延时避开 abort 竞态）
     steer_pending: Option<(String, api::SharedResult<Value>)>, // C2: 插话回执（文本+请求）
     inflight_saved_at: f64,                                     // D3: in-flight journal 节流
     resume_hint: Option<(String, String, String)>,              // D3: (sid, user, partial) 上次未完成轮次
@@ -359,6 +379,7 @@ impl ChatView {
             active_session: None,
             messages: Vec::new(),
             messages_loading: false,
+            session_load_failed: false,
             input: String::new(),
             sending: false,
             send_error: None,
@@ -367,6 +388,7 @@ impl ChatView {
             abort_pending: None,
             regen_pending: None,
             create_pending: None,
+            delete_pending: None,
             stream: None,
             stream_sid: None,
             streaming: false,
@@ -385,9 +407,11 @@ impl ChatView {
             search_query: String::new(),
             search_results: Vec::new(),
             search_pending: None,
+            search_due: None,
             delegate_pending: None,
             pending_image: None,
             pending_image_name: String::new(),
+            image_rx: None,
             pin_pending: None,
             archive_pending: None,
             msg_md_cache: std::collections::HashMap::new(),
@@ -408,6 +432,7 @@ impl ChatView {
             drafts: Self::load_drafts(),
             drafts_saved_at: 0.0,
             queue: Vec::new(),
+            drain_at: None,
             steer_pending: None,
             inflight_saved_at: 0.0,
             resume_hint: Self::load_inflight(),
@@ -447,6 +472,11 @@ impl ChatView {
         self.messages.clear();
         self.stream_content.clear();
         self.stream_reasoning.clear();
+        // M19(2026-09-10 审计): 切会话清渲染缓存（原按 msg_id 单调累积 + 跨会话键冲突）
+        self.msg_md_cache.clear();
+        self.thinking_open.clear();
+        self.tools_open.clear();
+        self.session_load_failed = false; // M13: 重置详情加载失败态
         // P1 恢复新会话草稿
         self.input = self.drafts.get(&id).cloned().unwrap_or_default();
         self.messages_loading = true;
@@ -460,9 +490,17 @@ impl ChatView {
         if self.current_model == model {
             return;
         }
+        // M12(2026-09-10 审计): 记录旧模型——请求失败时回滚（原来只提示不回滚，胶囊与后端不一致）
+        let prev = self.current_model.clone();
         self.current_model = model.clone();
         if let Some(sid) = self.active_session.clone() {
-            self.model_update_pending = Some(api::chat_update_model_async(sid, model));
+            self.model_update_pending = Some((prev, api::chat_update_model_async(sid, model)));
+        } else {
+            // M12: 无活动会话 → 请求无目标（模型仅在内存）——明确提示，避免"以为已切换"
+            self.send_error = Some(format!(
+                "已选择模型 {}（新建会话时生效）",
+                short_model(&model)
+            ));
         }
     }
 
@@ -530,6 +568,8 @@ impl ChatView {
             None
         };
         self.pending_images.clear();
+        // M04(2026-09-10 审计): 记录本轮流所属会话——poll 归属校验（否则切会话后旧流串台）
+        self.stream_sid = Some(sid.clone());
         self.stream = Some(api::chat_send_stream_async(sid, content, img_single, imgs, None));
         self.stream_started = now_f64(); // P4-35 等待计时起点
         self.stream_started = now_f64();
@@ -537,28 +577,44 @@ impl ChatView {
 
     /// 选择图片（D3/P2——rfd 文件对话框 → base64 data URL——多图追加）
     pub fn pick_image(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
+        let Some(path) = rfd::FileDialog::new()
             .add_filter("图片", &["png", "jpg", "jpeg", "gif", "webp"])
             .pick_file()
-        {
-            if let Ok(bytes) = std::fs::read(&path) {
-                let ext = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("png")
-                    .to_string();
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("图片")
-                    .to_string();
-                let b64 = base64_std(&bytes);
-                let data_url = format!("data:image/{};base64,{}", ext, b64);
-                if self.pending_images.len() < 8 {
-                    self.pending_images.push((data_url, name));
-                }
+        else {
+            return;
+        };
+        // M21(2026-09-10 审计): 读文件 + base64 移出 UI 线程（原同步执行——选大图时界面冻结）
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let Ok(bytes) = std::fs::read(&path) else { return };
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("png")
+                .to_string();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("图片")
+                .to_string();
+            let data_url = format!("data:image/{};base64,{}", ext, base64_std(&bytes));
+            let _ = tx.send((data_url, name));
+        });
+        self.image_rx = Some(rx);
+    }
+
+    /// M21(2026-09-10 审计): 后台读剪贴板 PNG（osascript 首次启动可达数百 ms——不能阻塞 UI 线程）
+    fn paste_clipboard_async(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Some(b64) = paste_clipboard_png() {
+                let _ = tx.send((
+                    format!("data:image/png;base64,{}", b64),
+                    "剪贴板图片".to_string(),
+                ));
             }
-        }
+        });
+        self.image_rx = Some(rx);
     }
 
     /// 停止生成（C3——断开连接——后端 ctx cancel）
@@ -568,14 +624,43 @@ impl ChatView {
             self.abort_pending = Some(api::chat_abort_async(sid.clone()));
         }
         if let Some(s) = self.stream.clone() {
-            s.lock().unwrap().cancelled = true;
+            lock_recover(&s).cancelled = true; // M22: 中毒锁恢复（原 unwrap 中毒即 panic）
         }
         self.stream = None;
         self.streaming = false;
+        self.stream_sid = None;
+        // M14(2026-09-10 审计): 停止后显式处理排队——延后 0.4s 续发（先让 abort 请求落地，避免与新轮竞态）
+        if !self.queue.is_empty() {
+            self.drain_at = Some(now_f64() + 0.4);
+            self.send_error = Some(format!("已停止生成（{} 条排队待续发）", self.queue.len()));
+        } else {
+            self.send_error = Some("已停止生成".to_string());
+        }
         // 停止后重新拉会话（拿已生成的部分——后端已落库）
         if let Some(sid) = self.active_session.clone() {
             self.session_pending = Some(api::fetch_chat_session_async(sid));
         }
+    }
+
+    /// M14/M23(2026-09-10 审计): 队列续发（两处共用：流正常结束 + 用户点停止后的延时）。
+    /// M23: 不覆盖用户草稿——发完把草稿还原回输入框。
+    /// 返回是否已发出下一条。
+    fn drain_queue(&mut self) -> bool {
+        if self.streaming || self.queue.is_empty() || self.active_session.is_none() {
+            return false;
+        }
+        let next = self.queue.remove(0);
+        let draft = std::mem::take(&mut self.input); // M23: 暂存当前草稿
+        self.input = next;
+        self.send(); // send 内会取走 input 并清空
+        if !draft.trim().is_empty() {
+            self.input = draft; // M23: 还原草稿（否则本轮结束静默吞掉用户半截输入）
+        }
+        self.send_error = Some(format!(
+            "已续发排队消息（剩余 {} 条）",
+            self.queue.len()
+        ));
+        true
     }
 
     /// D3(2026-09-10): in-flight turn journal（崩溃/断线恢复——~/.zerg-ui-inflight.json）
@@ -622,6 +707,7 @@ impl ChatView {
         self.stream_content.clear();
         self.stream_reasoning.clear();
         self.send_error = None;
+        self.stream_sid = Some(sid.clone()); // M04: 重生成也记录归属会话
         self.stream = Some(api::chat_send_stream_async(
             sid, content, None, Vec::new(), Some(uid),
         ));
@@ -647,6 +733,34 @@ impl ChatView {
 
     /// 每帧轮询异步结果
     pub fn poll(&mut self) {
+        // M21(2026-09-10 审计): 后台图片编码结果回填（读文件/base64/剪贴板已移出 UI 线程）
+        if let Some(rx) = self.image_rx.take() {
+            match rx.try_recv() {
+                Ok((data_url, name)) => {
+                    if self.pending_images.len() < 8 {
+                        self.pending_images.push((data_url, name));
+                    } else {
+                        self.send_error = Some("最多 8 张图片".to_string());
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => self.image_rx = Some(rx),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+            }
+        }
+        // M11(2026-09-10 审计): 搜索防抖——最后一次输入 250ms 后才发一次请求（原来每键一发）
+        if let Some((q, at)) = self.search_due.clone() {
+            if now_f64() - at >= 0.25 {
+                self.search_due = None;
+                self.search_pending = Some(api::chat_search_async(q));
+            }
+        }
+        // M14(2026-09-10 审计): 停止后队列续发（到点执行——避开与 aborted 轮次的竞态）
+        if let Some(at) = self.drain_at {
+            if now_f64() >= at {
+                self.drain_at = None;
+                self.drain_queue();
+            }
+        }
         // C4(2026-09-10): 草稿持久化（3s 节流落盘 ~/.zerg-ui-drafts.json）
         if let Some(sid) = self.active_session.clone() {
             if self.drafts.get(&sid) != Some(&self.input) {
@@ -661,7 +775,7 @@ impl ChatView {
         // 会话列表
         let pending = self.sessions_pending.take();
         if let Some(p) = pending {
-            let done = p.lock().unwrap().clone();
+            let done = lock_recover(&p).clone();
             if let Some(res) = done {
                 self.sessions_loading = false;
                 match res {
@@ -677,7 +791,7 @@ impl ChatView {
                             }
                         }
                     }
-                    Err(_) => {}
+                    Err(e) => self.send_error = Some(format!("会话列表加载失败: {}", e))
                 }
             } else {
                 self.sessions_pending = Some(p);
@@ -685,7 +799,7 @@ impl ChatView {
         }
         // C2: 插话回执（turn_running=false → 转本地队列，字不丢）
         if let Some((text, p)) = self.steer_pending.take() {
-            let done = p.lock().unwrap().clone();
+            let done = lock_recover(&p).clone();
             if let Some(res) = done {
                 match res {
                     Ok(v) => {
@@ -706,7 +820,7 @@ impl ChatView {
         }
         // C3: 重生成结果消费（uid+content → 复用 user 消息重跑）
         if let Some(p) = self.regen_pending.take() {
-            let done = p.lock().unwrap().clone();
+            let done = lock_recover(&p).clone();
             if let Some(res) = done {
                 match res {
                     Ok(v) => {
@@ -730,18 +844,18 @@ impl ChatView {
         let pending = self.session_pending.take();
         // 批次B: 中断请求结果消费（失败也无碍——服务端取消由断连兜底）
         if let Some(p) = self.abort_pending.take() {
-            if let Ok(g) = p.lock() {
-                if let Some(Err(e)) = g.as_ref() {
-                    self.send_error = Some(format!("中断请求失败: {}", e));
-                }
+            let g = lock_recover(&p);
+            if let Some(Err(e)) = g.as_ref() {
+                self.send_error = Some(format!("中断请求失败: {}", e));
             }
         }
         if let Some(p) = pending {
-            let done = p.lock().unwrap().clone();
+            let done = lock_recover(&p).clone();
             if let Some(res) = done {
                 self.messages_loading = false;
                 match res {
                     Ok(v) => {
+                        self.session_load_failed = false; // M13: 成功清除失败态
                         if let Some(msgs) = v.get("messages").and_then(|m| m.as_array()) {
                             self.messages = msgs.clone();
                         }
@@ -752,7 +866,11 @@ impl ChatView {
                             }
                         }
                     }
-                    Err(_) => {}
+                    Err(e) => {
+                        // M08/M13(2026-09-10 审计): 原来 Err(_) => {} —— 失败后消息区永久空白且无提示
+                        self.send_error = Some(format!("会话内容加载失败: {}", e));
+                        self.session_load_failed = true;
+                    }
                 }
             } else {
                 self.session_pending = Some(p);
@@ -761,11 +879,11 @@ impl ChatView {
         // C5 模型列表
         let pending = self.models_pending.take();
         if let Some(p) = pending {
-            let done = p.lock().unwrap().clone();
+            let done = lock_recover(&p).clone();
             if let Some(res) = done {
                 match res {
                     Ok(list) => self.models = list,
-                    Err(_) => {}
+                    Err(e) => self.send_error = Some(format!("模型列表加载失败: {}", e))
                 }
             } else {
                 self.models_pending = Some(p);
@@ -773,20 +891,22 @@ impl ChatView {
         }
         // C5 模型切换结果
         let pending = self.model_update_pending.take();
-        if let Some(p) = pending {
-            let done = p.lock().unwrap().clone();
+        if let Some((prev, p)) = pending {
+            let done = lock_recover(&p).clone();
             if let Some(res) = done {
                 if let Err(e) = res {
-                    self.send_error = Some(format!("模型切换失败: {}", e));
+                    // M12(2026-09-10 审计): 失败回滚为旧模型（原来只提示，胶囊与后端不一致）
+                    self.current_model = prev;
+                    self.send_error = Some(format!("模型切换失败（已回滚）: {}", e));
                 }
             } else {
-                self.model_update_pending = Some(p);
+                self.model_update_pending = Some((prev, p));
             }
         }
         // C6 会话搜索
         let pending = self.search_pending.take();
         if let Some(p) = pending {
-            let done = p.lock().unwrap().clone();
+            let done = lock_recover(&p).clone();
             if let Some(res) = done {
                 match res {
                     Ok(v) => {
@@ -794,7 +914,7 @@ impl ChatView {
                             self.search_results = arr.clone();
                         }
                     }
-                    Err(_) => {}
+                    Err(e) => self.send_error = Some(format!("会话搜索失败: {}", e))
                 }
             } else {
                 self.search_pending = Some(p);
@@ -803,7 +923,7 @@ impl ChatView {
         // C7 派单结果
         let pending = self.delegate_pending.take();
         if let Some(p) = pending {
-            let done = p.lock().unwrap().clone();
+            let done = lock_recover(&p).clone();
             if let Some(res) = done {
                 match res {
                     Ok(v) => {
@@ -819,7 +939,7 @@ impl ChatView {
         // P0 编辑结果（成功后刷新会话消息）
         let ep = self.edit_pending.take();
         if let Some(p) = ep {
-            let done = p.lock().unwrap().clone();
+            let done = lock_recover(&p).clone();
             if let Some(res) = done {
                 match res {
                     Ok(_) => {
@@ -857,7 +977,7 @@ impl ChatView {
             if let Some(s) = s {
                 // M04(2026-09-10 审计): 会话归属校验——切走后旧流只收尾，不再回写当前会话视图
                 let owned = self.stream_sid.as_deref() == self.active_session.as_deref();
-                let st = s.lock().unwrap();
+                let st = lock_recover(&s);
                 if owned {
                     self.stream_content = st.content.clone();
                     self.stream_reasoning = st.reasoning.clone();
@@ -874,6 +994,10 @@ impl ChatView {
                     self.stream = None;
                     self.streaming = false;
                     self.stream_sid = None;
+                    // M19(2026-09-10 审计): 流结束清理流式专用缓存/折叠态（原 -1 槽跨轮残留）
+                    self.thinking_open.remove(&STREAM_THINKING_KEY);
+                    self.msg_md_cache.remove(&STREAM_CONTENT_KEY);
+                    self.msg_md_cache.remove(&STREAM_REASONING_KEY);
                     // 流结束——重拉会话（拿完整消息 + 标题）；仅当该流属于当前会话
                     if owned {
                         if let Some(sid) = self.active_session.clone() {
@@ -889,12 +1013,10 @@ impl ChatView {
                         }
                         self.send_error = Some(format!("插话未命中工具边界——已转入排队（{} 条）", self.queue.len()));
                     }
-                    // C1(2026-09-10): 队列自动续发（先发后删——Hermes drain 语义）
+                    // C1(2026-09-10): 队列自动续发（M14 抽成 drain_queue——stop() 复用）
                     // M04: 只有本会话的轮次结束才续发——否则排队消息会投到别的会话
-                    if owned && !self.queue.is_empty() {
-                        let next = self.queue.remove(0);
-                        self.input = next;
-                        self.send();
+                    if owned {
+                        self.drain_queue();
                     }
                 }
             }
@@ -902,14 +1024,14 @@ impl ChatView {
         // P4-10 重命名结果
         let pending = self.rename_pending.take();
         if let Some(p) = pending {
-            let done = p.lock().unwrap().clone();
+            let done = lock_recover(&p).clone();
             if let Some(res) = done {
                 match res {
                     Ok(_) => {
                         self.renaming_id = None;
                         self.refresh_sessions();
                     }
-                    Err(_) => {}
+                    Err(e) => self.send_error = Some(format!("重命名失败: {}", e))
                 }
             } else {
                 self.rename_pending = Some(p);
@@ -918,7 +1040,7 @@ impl ChatView {
         // 新建会话
         let pending = self.create_pending.take();
         if let Some(p) = pending {
-            let done = p.lock().unwrap().clone();
+            let done = lock_recover(&p).clone();
             if let Some(res) = done {
                 match res {
                     Ok(v) => {
@@ -927,10 +1049,50 @@ impl ChatView {
                             self.refresh_sessions();
                         }
                     }
-                    Err(_) => {}
+                    Err(e) => self.send_error = Some(format!("新建会话失败: {}", e))
                 }
             } else {
                 self.create_pending = Some(p);
+            }
+        }
+        // M09(2026-09-10 审计): 置顶结果消费（成功后再刷新——原来发起即刷新有竞态）
+        let pending = self.pin_pending.take();
+        if let Some(p) = pending {
+            let done = lock_recover(&p).clone();
+            if let Some(res) = done {
+                match res {
+                    Ok(_) => self.refresh_sessions(),
+                    Err(e) => self.send_error = Some(format!("置顶失败: {}", e)),
+                }
+            } else {
+                self.pin_pending = Some(p);
+            }
+        }
+        // M09(2026-09-10 审计): 归档结果消费（成功后再刷新——原来发起即刷新有竞态）
+        let pending = self.archive_pending.take();
+        if let Some(p) = pending {
+            let done = lock_recover(&p).clone();
+            if let Some(res) = done {
+                match res {
+                    Ok(_) => self.refresh_sessions(),
+                    Err(e) => self.send_error = Some(format!("归档失败: {}", e)),
+                }
+            } else {
+                self.archive_pending = Some(p);
+            }
+        }
+        // M10(2026-09-10 审计): 删会话结果消费（Ok(false) 也算失败；成功后再刷新）
+        let pending = self.delete_pending.take();
+        if let Some(p) = pending {
+            let done = lock_recover(&p).clone();
+            if let Some(res) = done {
+                match res {
+                    Ok(true) => self.refresh_sessions(),
+                    Ok(false) => self.send_error = Some("删除会话失败（后端未确认）".to_string()),
+                    Err(e) => self.send_error = Some(format!("删除会话失败: {}", e)),
+                }
+            } else {
+                self.delete_pending = Some(p);
             }
         }
     }
@@ -938,6 +1100,10 @@ impl ChatView {
     /// 渲染对话视图（主区）
     pub fn render(&mut self, ui: &mut egui::Ui) {
         self.poll();
+        // M21/M11: 后台图片编码 / 搜索防抖待发——持续重绘直到完成
+        if self.image_rx.is_some() || self.search_due.is_some() || self.drain_at.is_some() {
+            ui.ctx().request_repaint();
+        }
         ui.heading(format!("{} 对话", icon_text("message-circle")));
         ui.add_space(4.0);
         let avail = ui.available_size();
@@ -1003,12 +1169,15 @@ impl ChatView {
             if !self.search_query.trim().is_empty() && ui.button("✕").clicked() {
                 self.search_query.clear();
                 self.search_results.clear();
+                self.search_due = None; // M11: 取消在途防抖
             }
         });
         if do_search {
             let q = self.search_query.trim().to_string();
             if !q.is_empty() {
-                self.search_pending = Some(api::chat_search_async(q));
+                // M11(2026-09-10 审计): 记录输入时刻，poll 到点才发（250ms 防抖——原每键一发 FTS5）
+                self.search_due = Some((q, now_f64()));
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(260));
             }
         }
         // 搜索结果（显示在会话列表上方）
@@ -1039,7 +1208,9 @@ impl ChatView {
             ui.weak("加载中...");
         }
         // 会话列表（分组：📌 已置顶 / 💬 会话——Hermes sidebar 借鉴——P0）
-        let sessions = self.sessions.clone();
+        // M20(2026-09-10 审计): 取走列表（渲染后归还）——避免每帧整数组深拷贝
+        let sessions = std::mem::take(&mut self.sessions);
+        let now_secs = now_f64() as i64; // M20: 每帧只取一次（原来每条会话各调一次 SystemTime::now）
         let mut selected: Option<String> = None;
         let mut deleted: Option<String> = None;
         let mut delegate_sid: Option<(String, String)> = None; // v2.5.7 对话→任务: 会话级派任务（id+标题）
@@ -1065,7 +1236,7 @@ impl ChatView {
                     .and_then(|t| t.as_f64())
                     .or_else(|| s.get("last_active").and_then(|t| t.as_f64()))
                     .unwrap_or(0.0);
-                let age = format_age(ts);
+                let age = format_age(ts, now_secs);
                 let abs = format_abs_time(ts);
                 let running = streaming_now && is_active;
                 // P4-7 会话行（Mr2109 2026-08-31）：单行左对齐——不显示模型行——hover 显示标题+模型+建立时间
@@ -1222,8 +1393,8 @@ impl ChatView {
                 render_group(ui, &format!("{} 会话", icon_text("message-circle")), normal_items.clone());
             });
         if let Some((pid, pin)) = pinned {
+            // M09(2026-09-10 审计): 不再发起即刷新（竞态）——poll 成功后刷新
             self.pin_pending = Some(api::chat_set_pinned_async(pid, pin));
-            self.refresh_sessions();
         }
         // P4-10 重命名（进入行内编辑）
         if let Some((rid, rtext)) = renaming {
@@ -1242,16 +1413,16 @@ impl ChatView {
             self.open_session(id);
         }
         if let Some(id) = archived {
+            // M09(2026-09-10 审计): 不再发起即刷新（竞态）——poll 成功后刷新
             self.archive_pending = Some(api::chat_set_archived_async(id, true));
-            self.refresh_sessions();
         }
         if let Some(id) = deleted {
             if self.active_session.as_deref() == Some(&id) {
                 self.active_session = None;
                 self.messages.clear();
             }
-            let _ = api::delete_chat_session_async(id);
-            self.refresh_sessions();
+            // M10(2026-09-10 审计): 保存句柄由 poll 消费（Ok(false) 也算失败；成功后再刷新）
+            self.delete_pending = Some(api::delete_chat_session_async(id));
         }
         // v2.5.7 对话→任务: 会话级派任务（POST /api/tasks——带 parent_session_id——后端附最后用户请求）
         if let Some((sid, label)) = delegate_sid {
@@ -1259,6 +1430,8 @@ impl ChatView {
             let desc = format!("处理对话「{}」的请求（从对话发起——详见来源会话）", label);
             self.delegate_pending = Some(api::chat_delegate_task_async(desc, model, Some(sid)));
         }
+        // M20: 归还会话列表（本帧借用结束）
+        self.sessions = sessions;
     }
 
     /// 渲染右侧消息区
@@ -1276,15 +1449,33 @@ impl ChatView {
             ui.weak("加载中...");
             return;
         }
+        // M13(2026-09-10 审计): 会话详情加载失败 → 明示 + 重试入口（原来失败后永久空白无提示）
+        if self.session_load_failed && self.messages.is_empty() {
+            ui.add_space(20.0);
+            ui.weak("会话内容加载失败");
+            if ui
+                .button(format!("{} 重新加载", icon_text("arrows-clockwise")))
+                .clicked()
+            {
+                if let Some(sid) = self.active_session.clone() {
+                    self.session_load_failed = false;
+                    self.messages_loading = true;
+                    self.session_pending = Some(api::fetch_chat_session_async(sid));
+                }
+            }
+            return;
+        }
         // 错误提示
         if let Some(err) = self.send_error.clone() {
             ui.colored_label(egui::Color32::from_rgb(220, 80, 80), format!("⚠️ {}", err));
             ui.add_space(4.0);
         }
+        // M19(2026-09-10 审计): 缓存上限（长会话/多轮——原无上限单调增长）
+        if self.msg_md_cache.len() > 512 {
+            self.msg_md_cache.clear();
+        }
         // 消息流（ScrollArea + P4-29 虚拟列表——长对话只渲染视口±over_scan——恒定渲染成本）
         let msgs = self.messages.clone();
-        let stream_content = self.stream_content.clone();
-        let stream_reasoning = self.stream_reasoning.clone();
         let streaming = self.streaming;
         let avail_h = ui.available_height();
         // 2026-09-10 修复"无法滚到最底"(之二)：composer 高度按实际内容动态估算——
@@ -1406,9 +1597,9 @@ impl ChatView {
                             .show(ui, |ui| {
                                 // P4-30 思考实时流式显示（Mr2109: 思考不是实时流式——根因: truncate 前 60 字
                                 // 显示固定——实际后端逐 token 流式——改为尾部实时滚动 + 可展开全文）
-                                if !stream_reasoning.is_empty() {
-                                    let rn = stream_reasoning.chars().count();
-                                    let sopen = self.thinking_open.contains(&-1);
+                                if !self.stream_reasoning.is_empty() {
+                                    let rn = self.stream_reasoning.chars().count();
+                                    let sopen = self.thinking_open.contains(&STREAM_THINKING_KEY);
                                     if sopen {
                                         // 展开：全文实时流式（ScrollArea 自动滚底——Hermes/Claude 风格）
                                         egui::ScrollArea::vertical()
@@ -1418,12 +1609,12 @@ impl ChatView {
                                             .stick_to_bottom(true)
                                             .show(ui, |ui| {
                                                 // P4-31 思考内容 md 渲染（CommonMarkViewer——与消息同款）
-                                                let cache = msg_md_cache.entry(-2).or_default();
-                                                CommonMarkViewer::new().render_math_fn(Some(&render_math)).show(ui, cache, &md_preprocess_cached(&stream_reasoning));
+                                                let cache = msg_md_cache.entry(STREAM_REASONING_KEY).or_default();
+                                                CommonMarkViewer::new().render_math_fn(Some(&render_math)).show(ui, cache, &md_preprocess_cached(&self.stream_reasoning));
                                             });
                                     } else {
                                         // 折叠：实时尾部 60 字（滚动更新——看得见思考在动）+ 字数
-                                        let tail: String = stream_reasoning
+                                        let tail: String = self.stream_reasoning
                                             .chars()
                                             .rev()
                                             .take(60)
@@ -1439,12 +1630,12 @@ impl ChatView {
                                             ))
                                             .clicked()
                                         {
-                                            self.thinking_open.insert(-1);
+                                            self.thinking_open.insert(STREAM_THINKING_KEY);
                                         }
                                         ui.weak(egui::RichText::new(format!("{}", tail)).size(11.0).weak());
                                     }
                                 }
-                                if stream_content.is_empty() && self.stream_tool.is_none() {
+                                if self.stream_content.is_empty() && self.stream_tool.is_none() {
                                     // P4-35 思考等待计时器（Hermes TurnActivityIndicator 简化——卡没卡一眼知道）
                                     let wait = (now_f64() - self.stream_started).max(0.0);
                                     ui.spinner();
@@ -1452,13 +1643,13 @@ impl ChatView {
                                         egui::RichText::new(format!("思考中…（{:.0} 秒）", wait))
                                             .size(12.0),
                                     );
-                                } else if stream_content.is_empty() {
+                                } else if self.stream_content.is_empty() {
                                     ui.spinner();
                                     ui.weak("工具执行中...");
                                 } else {
                                     // D1 流式内容也 Markdown 渲染（P4-29 用拆借的 cache——闭包内无 self 冲突）
-                                    let cache = msg_md_cache.entry(-1).or_default();
-                                    CommonMarkViewer::new().render_math_fn(Some(&render_math)).show(ui, cache, &md_preprocess_cached(&stream_content));
+                                    let cache = msg_md_cache.entry(STREAM_CONTENT_KEY).or_default();
+                                    CommonMarkViewer::new().render_math_fn(Some(&render_math)).show(ui, cache, &md_preprocess_cached(&self.stream_content));
                                 }
                             });
                     });
@@ -1719,12 +1910,8 @@ impl ChatView {
                 if resp.has_focus() {
                     // P2 粘贴图片（Cmd+V 读剪贴板 PNG——JXA——Hermes paste-to-focus 借鉴）
                     if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V)) {
-                        if let Some(b64) = paste_clipboard_png() {
-                            if self.pending_images.len() < 8 {
-                                self.pending_images
-                                    .push((format!("data:image/png;base64,{}", b64), "剪贴板图片".to_string()));
-                            }
-                        }
+                        // M21(2026-09-10 审计): osascript 读剪贴板移出 UI 线程（原同步阻塞——⌘V 卡顿）
+                        self.paste_clipboard_async();
                     }
                     // P1 输入历史（↑↓ 浏览）
                     if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) && !self.input_history.is_empty() {
@@ -2026,16 +2213,35 @@ impl ChatView {
                         {
                             if speaking {
                                 *speaking_id = None;
-                                let _ = std::process::Command::new("pkill").arg("-f").arg("say").spawn();
+                                // M24(2026-09-10 审计): 精确 kill 本进程 pid（原 `pkill -f say` 误杀系统其它 say）
+                                let pid = SPEAK_PID.swap(0, std::sync::atomic::Ordering::SeqCst);
+                                if pid > 0 {
+                                    let _ = std::process::Command::new("kill")
+                                        .arg(pid.to_string())
+                                        .spawn();
+                                }
                             } else {
                                 let text = content.to_string();
                                 *speaking_id = Some(msg_id);
                                 std::thread::spawn(move || {
-                                    let _ = std::process::Command::new("say")
+                                    // M24: 保存子进程 pid 供精确停止（不再 pkill -f）
+                                    if let Ok(mut c) = std::process::Command::new("say")
                                         .arg("-r")
                                         .arg("170")
                                         .arg(&text)
-                                        .output();
+                                        .spawn()
+                                    {
+                                        let pid = c.id() as i32;
+                                        SPEAK_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
+                                        let _ = c.wait();
+                                        // 自然结束——清 pid（若仍指向本进程）
+                                        let _ = SPEAK_PID.compare_exchange(
+                                            pid,
+                                            0,
+                                            std::sync::atomic::Ordering::SeqCst,
+                                            std::sync::atomic::Ordering::SeqCst,
+                                        );
+                                    }
                                 });
                             }
                         }
@@ -2076,26 +2282,28 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 /// 时间格式化（D4——timestamp 秒 → HH:MM）
+/// M18(2026-09-10 审计): 原直接取 UTC 小时（`secs/3600%24`）→ 改本地时区
 fn format_time(ts: f64) -> String {
     if ts <= 0.0 {
         return String::new();
     }
-    let secs = ts as i64;
-    let h = (secs / 3600) % 24;
-    let m = (secs % 3600) / 60;
-    format!("{:02}:{:02}", h, m)
+    match chrono::DateTime::<chrono::Utc>::from_timestamp(ts as i64, 0) {
+        Some(dt) => {
+            use chrono::Timelike;
+            let local = dt.with_timezone(&chrono::Local);
+            format!("{:02}:{:02}", local.hour(), local.minute())
+        }
+        None => String::new(),
+    }
 }
 
 /// 相对时间（P0——Hermes 借鉴——刚刚/N时/N天——秒级时间戳）
-fn format_age(ts: f64) -> String {
+/// M20(2026-09-10 审计): now 由调用方每帧传一次（原来每条会话各调一次 SystemTime::now）
+fn format_age(ts: f64, now_secs: i64) -> String {
     if ts <= 0.0 {
         return String::new();
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let age = (now - ts as i64).max(0);
+    let age = (now_secs - ts as i64).max(0);
     if age < 60 {
         "刚刚".to_string()
     } else if age < 3600 {
@@ -2110,15 +2318,26 @@ fn format_age(ts: f64) -> String {
 }
 
 /// 绝对时间（P0——hover 显示——MM-DD HH:MM）
+/// M18(2026-09-10 审计): 原用 `(d%12)+1`/`(d%28)+1` 造"月日"（与真实日历无关的假日期）；
+/// 改为 chrono 真实本地日历（epoch 第 31 天 = 1970-02-01 之类不再出错）。
 fn format_abs_time(ts: f64) -> String {
     if ts <= 0.0 {
         return String::new();
     }
-    let secs = ts as i64;
-    let d = secs / 86400;
-    let h = (secs / 3600) % 24;
-    let m = (secs % 3600) / 60;
-    format!("{:02}-{:02} {:02}:{:02}", (d % 12) + 1, (d % 28) + 1, h, m)
+    match chrono::DateTime::<chrono::Utc>::from_timestamp(ts as i64, 0) {
+        Some(dt) => {
+            use chrono::{Datelike, Timelike};
+            let local = dt.with_timezone(&chrono::Local);
+            format!(
+                "{:02}-{:02} {:02}:{:02}",
+                local.month(),
+                local.day(),
+                local.hour(),
+                local.minute()
+            )
+        }
+        None => String::new(),
+    }
 }
 
 /// 会话是否固定（pinned 字段兼容 bool/int）
