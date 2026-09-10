@@ -626,6 +626,9 @@ impl ChatView {
         }
         if let Some(s) = self.stream.clone() {
             lock_recover(&s).cancelled = true; // M22: 中毒锁恢复（原 unwrap 中毒即 panic）
+            // A08 备选（2026-09-10）：不再只等下一个 chunk——abort 任务立即丢弃响应流，
+            // 连接断开 → 服务端取消生成（与上面 /abort 请求构成双保险）
+            api::chat_stream_abort(&s);
         }
         self.stream = None;
         self.streaming = false;
@@ -971,6 +974,10 @@ impl ChatView {
                 let partial = self.stream_content.clone();
                 Self::save_inflight(&sid, &user, &partial);
             }
+        }
+        // A09 备选（2026-09-10）：流式任务 panic 上报（任务已在后台 join——取走即清空，不重复报）
+        if let Some(p) = api::take_stream_panic() {
+            self.send_error = Some(format!("流式任务异常结束: {}", p));
         }
         // C3 流式发送轮询（生成中——每帧读 stream state）
         if self.streaming {
