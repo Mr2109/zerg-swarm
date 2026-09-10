@@ -1,110 +1,116 @@
-# 虫族 · Zerg Swarm
+# Zerg Swarm
 
-**自研本地 LLM 集群** —— 把几台普通机器（含 Apple Silicon Mac 与 NVIDIA 机器）组成一个"虫群"：
-按需加载模型、按显存与负载选机、统一 OpenAI 兼容入口、自带任务自动执行与对话工作台。
+**A self-hosted local LLM cluster** — turn a few ordinary machines (Apple Silicon Macs, NVIDIA boxes) into one "swarm": load models on demand, pick the machine by VRAM and load, expose a single OpenAI-compatible endpoint, and get autonomous task execution plus a chat workbench out of the box.
 
-> 设计理念：**没有弱模型，只有不完善的系统**。
-> 模型任务失败、格式跑偏、工具调用异常——我们一律先归因**系统**（提示设计、解析层、防呆兜底、反馈协议），
-> 而不是甩锅给模型。这条原则决定了本项目的很多设计（见 [docs/design/格式反馈协议-FFP.md](docs/design/格式反馈协议-FFP.md)）。
+> **English** | [中文](README.zh-CN.md)
+>
+> *Source of truth: the Chinese original ([README.zh-CN.md](README.zh-CN.md)). If the two disagree, the Chinese text prevails.*
+
+> Design principle: **there are no weak models, only incomplete systems.**
+> When a model fails a task, drifts off format, or breaks a tool call, we blame the **system** first
+> (prompt design, parsing layer, guardrails, feedback protocol) — never the model.
+> This principle shapes much of the project (see the [Format Feedback Protocol](docs/design/格式反馈协议-FFP.md), in Chinese).
 
 ---
 
-## 它解决什么问题
+## What it solves
 
-- **本地模型很多、显存不够**：同一台机器装不下所有模型 → 虫族按需求把模型**按需加载**到有显存的机器，用完可卸载
-- **多机多引擎难统一**：llama.cpp / ds4-server / vLLM / 任何 OpenAI 兼容引擎 → 虫族统一成**一个入口**
-- **本地模型"不听话"**：工具调用格式错、空参数、循环重发 → 系统层做格式反馈与防呆，而不是换更大的模型
-- **想要自己的 AI 工作台**：对话、任务、工具、记忆、日志、集群状态 → 一套桌面 UI + HTTP API
+- **Many local models, not enough VRAM**: one machine cannot hold them all → Zerg **loads models on demand** onto whichever machine has room, and unloads them when idle.
+- **Too many engines to unify**: llama.cpp / ds4-server / vLLM / any OpenAI-compatible engine → Zerg exposes them behind **one endpoint**.
+- **Local models "not obeying"**: malformed tool calls, empty arguments, retry loops → handled at the system layer with format feedback and guardrails, instead of swapping in a bigger model.
+- **You want your own AI workbench**: chat, tasks, tools, memory, logs, cluster status → one desktop UI plus an HTTP API.
 
-## 架构（四件套）
+## Architecture (four parts)
 
 ```
-                    ┌──────────────────────────────┐
-                    │  zerg-ui（Rust/egui 桌面）    │
-                    │  对话 · 任务 · 集群 · 工具 · 日志 │
-                    └───────────────┬──────────────┘
+                    ┌───────────────────────────────┐
+                    │  zerg-ui (Rust/egui desktop)  │
+                    │  chat · tasks · cluster · tools · logs │
+                    └───────────────┬───────────────┘
                                     │ HTTP + X-Auth-Token
-                    ┌───────────────▼──────────────┐
-                    │  主控 zerg-core（Go，:8580）   │
-                    │  调度 / 对话 / 工具 / 记忆 / 网关 │
-                    └───────┬───────────────┬──────┘
-        OpenAI 兼容入口      │               │  任务派发 + 心跳
-        （:8082 网关）       │               │
+                    ┌───────────────▼───────────────┐
+                    │  controller zerg-core (Go, :8580) │
+                    │  scheduling / chat / tools / memory / gateway │
+                    └───────┬───────────────┬───────┘
+      OpenAI-compatible     │               │  task dispatch + heartbeat
+      entry (:8082 gateway) │               │
                     ┌───────▼──────┐  ┌─────▼─────────────────────┐
-                    │ 客户端/外部工具 │  │ 子端 zerg-agent（Go，:8100）│
-                    └──────────────┘  │ 按需加载模型 · 健康自愈 · 熔断 │
-                                      └─────┬─────────────────────┘
-                                            │ 拉起/卸载
+                    │ clients /    │  │ agent zerg-agent (Go, :8100) │
+                    │ external tools │  │ load on demand · self-heal · circuit breaker │
+                    └──────────────┘  └─────┬─────────────────────┘
+                                            │ spawn / unload
                                   ┌─────────▼─────────┐
                                   │ llama-server /    │
-                                  │ ds4-server / 其他  │
+                                  │ ds4-server / etc. │
                                   └───────────────────┘
 ```
 
-| 组件 | 目录 | 语言 | 作用 |
+| Component | Directory | Language | Role |
 |---|---|---|---|
-| 主控 | `core/` | Go | 调度（按显存/负载选机）、对话与工具循环、记忆、网关（OpenAI 兼容 `:8082`） |
-| 子端 | `agent/` | Go | 部署在每台工作机：按需加载/卸载模型、健康自愈、5 秒心跳上报 |
-| 桌面 UI | `ui/` | Rust + egui | 对话、任务、集群状态、工具目录、文档、日志 |
-| 菜单栏 | `app/` | Swift | macOS 只读状态面板（**可选**，不参与核心逻辑） |
+| Controller | `core/` | Go | Scheduling (pick machine by VRAM/load), chat and tool loop, memory, gateway (OpenAI-compatible `:8082`) |
+| Agent | `agent/` | Go | Runs on every worker machine: load/unload models on demand, self-heal, 5-second heartbeat |
+| Desktop UI | `ui/` | Rust + egui | Chat, tasks, cluster status, tool catalog, docs, logs |
+| Menu bar app | `app/` | Swift | macOS read-only status panel (**optional**, not part of the core logic) |
 
-## 特性
+## Features
 
-- **集群调度**：模型登记表声明"同一模型在多台机器上的候选"，运行时按显存/负载打分选机
-- **按需加载**：不在用时自动卸载；同一机器**单槽**约束（一次只跑一个模型，冲突时整机清场）
-- **多引擎**：任何 OpenAI 兼容后端皆可接入，不被单一引擎绑定
-- **任务自动执行**：提交一个自然语言任务 → Agent 循环（工具调用 + 反馈 + 重试 + 熔断）→ 产出报告
-- **工具系统**：文件读写/编辑、shell（带删除范围闸门）、搜索、截图 OCR、媒体处理、知识库、子任务拆解……共 135 个注册工具
-- **记忆**：两级作用域（全局 + 每 Agent）+ 预算控制 + 压缩与召回回跳（见 [docs/design/记忆体系.md](docs/design/记忆体系.md)）
-- **桌面工作台**：对话流式输出、Markdown 渲染、任务面板、集群/模型状态、日志、文档浏览
+- **Cluster scheduling**: the model registry declares the candidate machines for the same model; the runtime scores them by VRAM and load.
+- **Load on demand**: models unload when unused; each machine is **single-slot** (one model at a time, with a machine-wide sweep on conflict).
+- **Multiple engines**: any OpenAI-compatible backend can be plugged in; nothing is bound to a single engine.
+- **Autonomous tasks**: hand it a natural-language task → agent loop (tool calls + feedback + retries + circuit breaker) → a report.
+- **Tool system**: file read/write/edit, shell (with a deletion-scope gate), search, screenshot OCR, media processing, knowledge base, subtask decomposition … 135 registered tools.
+- **Memory**: two scopes (global + per agent) with budgets, compression, and recall pointers (see [记忆体系](docs/design/记忆体系.md), in Chinese).
+- **Desktop workbench**: streaming chat, Markdown rendering, task panel, cluster/model status, logs, document browsing.
 
-## 快速开始
+## Quick start
 
 ```bash
 git clone <this-repo> && cd zerg-swarm
 
-# 1. 令牌（所有组件共用；绝不写进仓库）
+# 1. Token (shared by all components; never commit it)
 cp .env.example .env
 printf '%s\n' "$(openssl rand -hex 32)" > .env.tmp && sed -i '' "s/^ZERG_AUTH_TOKEN=.*/ZERG_AUTH_TOKEN=$(cat .env.tmp)/" .env && rm .env.tmp
 set -a; . ./.env; set +a
 
-# 2. 模型登记表
-cp gateway/fleet.example.yaml gateway/fleet.yaml   # 按自己的机器/权重路径改
+# 2. Model registry
+cp gateway/fleet.example.yaml gateway/fleet.yaml   # edit for your machines/weights
 
-# 3. 主控
+# 3. Controller
 cd core && go build -o ../bin/zerg-core ./cmd/zerg-core && cd ..
 ./bin/zerg-core
 ```
 
-细节（加子端、接模型、装桌面 UI）见 [docs/QUICKSTART.md](docs/QUICKSTART.md)。
-配置项清单见 [docs/CONFIGURATION.md](docs/CONFIGURATION.md)。
+Details (adding an agent, wiring models, installing the desktop UI) are in [docs/QUICKSTART.en.md](docs/QUICKSTART.en.md).
+The full configuration reference is [docs/CONFIGURATION.en.md](docs/CONFIGURATION.en.md).
 
-## 环境要求
+## Requirements
 
-| 组件 | 要求 |
+| Component | Requirement |
 |---|---|
-| 主控 / 子端 | Go 1.22+（构建）。运行时无额外依赖（SQLite 走纯 Go 驱动） |
-| 桌面 UI | Rust stable（构建）；运行支持 macOS 14+ / Linux |
-| 模型后端 | [llama.cpp](https://github.com/ggml-org/llama.cpp) 的 `llama-server`（推荐）或其他 OpenAI 兼容引擎 |
-| 联网搜索（可选） | 自建 [searxng](https://github.com/searxng/searxng)（AGPL，**不随本仓库分发**）——见 `scripts/install-searxng.sh` |
-| 命令输出压缩（可选） | [rtk](https://github.com/rtk-ai/rtk)（Apache-2.0）——**缺装自动降级**，也可 `ZERG_RTK=0` 关闭 |
+| Controller / agent | Go 1.22+ (to build). No runtime dependencies (SQLite via a pure-Go driver) |
+| Desktop UI | Rust stable (to build); runs on macOS 14+ / Linux |
+| Model backend | [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-server` (recommended) or any OpenAI-compatible engine |
+| Web search (optional) | Your own [searxng](https://github.com/searxng/searxng) (AGPL, **not distributed with this repo**) — see `scripts/install-searxng.sh` |
+| Command-output compression (optional) | [rtk](https://github.com/rtk-ai/rtk) (Apache-2.0) — **degrades gracefully if missing**, or disable with `ZERG_RTK=0` |
 
-## 文档
+## Documentation
 
-| 文档 | 内容 |
+| Document | Contents |
 |---|---|
-| [docs/QUICKSTART.md](docs/QUICKSTART.md) | 从零跑通：单机 → 加子端 → 接模型 → 桌面 UI |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 组件职责、数据流、单槽机制、任务执行链路 |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | 端口、环境变量、状态目录、登记表字段 |
-| [docs/MODELS.md](docs/MODELS.md) | 模型接入与适配器机制、上下文件、chat template |
-| [docs/TOOLS.md](docs/TOOLS.md) | 工具目录（按用途分类） |
-| [docs/FAQ.md](docs/FAQ.md) | 常见问题与排障 |
-| [docs/design/](docs/design/) | 设计文档：格式反馈协议（FFP）、记忆体系、工具升级规范 |
+| [docs/QUICKSTART.en.md](docs/QUICKSTART.en.md) | From zero to running: single machine → add an agent → wire models → desktop UI |
+| [docs/ARCHITECTURE.en.md](docs/ARCHITECTURE.en.md) | Component responsibilities, data flow, single-slot mechanism, task execution chain |
+| [docs/CONFIGURATION.en.md](docs/CONFIGURATION.en.md) | Ports, environment variables, state directories, registry fields |
+| [docs/MODELS.en.md](docs/MODELS.en.md) | Model onboarding, adapter mechanism, context, chat templates |
+| [docs/TOOLS.en.md](docs/TOOLS.en.md) | Tool catalog (grouped by purpose) |
+| [docs/FAQ.en.md](docs/FAQ.en.md) | Common questions and troubleshooting |
+| [docs/design/](docs/design/) | Design notes: Format Feedback Protocol (FFP), memory system, tool-upgrade spec (Chinese) |
 
-## 许可与贡献
+Every document also exists in Chinese (`docs/*.zh-CN.md`), and the Chinese version is the authoritative one.
 
-- **Apache-2.0**（见 [LICENSE](LICENSE)）；第三方组件见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
-- 贡献请用 **DCO**：`git commit -s`，详见 [CONTRIBUTING.md](CONTRIBUTING.md)
-- 安全策略与"部署者须知"见 [SECURITY.md](SECURITY.md)
+## License and contributing
 
-> 版权行 `Copyright 2026 The Zerg Swarm Authors`。Apache-2.0 **不授予商标许可**——"虫族 / Zerg Swarm"名称不在授权范围内。
+- **Apache-2.0** (see [LICENSE](LICENSE)); third-party components are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+- Contributions use **DCO**: `git commit -s`, see [CONTRIBUTING.md](CONTRIBUTING.md).
+- Security policy and "notes for deployers" are in [SECURITY.md](SECURITY.md).
+
+> Copyright line: `Copyright 2026 The Zerg Swarm Authors`. Apache-2.0 grants **no trademark rights** — the names "虫族 / Zerg Swarm" are not covered by the license.

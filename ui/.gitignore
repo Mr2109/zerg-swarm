@@ -1,2 +1,2 @@
 target/
-Cargo.lock
+# Cargo.lock 入库（2026-09-11 决策：二进制项目需可复现构建——公开用户 clone 后依赖版本固定）
