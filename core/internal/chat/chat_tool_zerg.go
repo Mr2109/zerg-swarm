@@ -9,6 +9,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"io"
 	"net/http"
 	"os"
@@ -28,7 +29,7 @@ func zergAPI(method, path string, body []byte) (string, error) {
 	if token, err := os.ReadFile("/tmp/zerg-chat/token.txt"); err == nil {
 		req.Header.Set("X-Auth-Token", strings.TrimSpace(string(token)))
 	} else {
-		req.Header.Set("X-Auth-Token", "x3gw-shared-2026")
+		req.Header.Set("X-Auth-Token", config.ResolveAuthToken())
 	}
 	client := &http.Client{Timeout: 8 * time.Second}
 	resp, err := client.Do(req)
@@ -247,7 +248,7 @@ func zergHealth(args map[string]any) (string, error) {
 	for _, p := range probes {
 		client := &http.Client{Timeout: 3 * time.Second}
 		req, _ := http.NewRequest("GET", p.url, nil)
-		req.Header.Set("X-Auth-Token", "x3gw-shared-2026")
+		req.Header.Set("X-Auth-Token", config.ResolveAuthToken())
 		resp, err := client.Do(req)
 		if err != nil {
 			b.WriteString(fmt.Sprintf("- %s: ❌ %v\n", p.name, err))

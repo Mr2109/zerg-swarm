@@ -9,15 +9,17 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 	"github.com/Mr2109/zerg-swarm/core/internal/agentstate"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 )
 
 func filterTools(all []agent.ToolDef, names string) []agent.ToolDef {
@@ -34,26 +36,37 @@ func filterTools(all []agent.ToolDef, names string) []agent.ToolDef {
 	return out
 }
 
+// mustToken 启动期校验共享令牌（2026-09-11 A 批：库内零明文）。
+// 解析顺序：环境变量 ZERG_AUTH_TOKEN / ZERG_API_TOKEN → ~/.zerg/token 文件。
+// 拿不到即拒绝启动——空令牌会让所有主控调用 403，而日志看不出异常。
+func mustToken() string {
+	t := config.ResolveAuthToken()
+	if t == "" {
+		log.Fatalf("❌ 未配置共享令牌：请设置环境变量 ZERG_AUTH_TOKEN，或写入文件 %s（见仓库 .env.example）", config.TokenFilePath())
+	}
+	return t
+}
+
 func main() {
 	startTime := time.Now() // 开始时间（JSON 信封 metrics——v2.5）
 
 	// 参数解析
 	var (
-		task      string
-		model     string
-		workdir   string
-		maxTurns  int
-		toolsFlag string
-		mcpFlag   string
-		autoIssue bool
-		issueFile  string
-		gateway    string
-		x3Status   string // v2.5.4.9 机器级采样——X3 状态地址
-		x3Token    string // v2.5.4.9 机器级采样——X3 token
+		task        string
+		model       string
+		workdir     string
+		maxTurns    int
+		toolsFlag   string
+		mcpFlag     string
+		autoIssue   bool
+		issueFile   string
+		gateway     string
+		x3Status    string // v2.5.4.9 机器级采样——X3 状态地址
+		x3Token     string // v2.5.4.9 机器级采样——X3 token
 		jsonOut     bool
 		subtaskMode bool
-		retryN    int
-		stateFile string
+		retryN      int
+		stateFile   string
 	)
 
 	flag.StringVar(&task, "task", "", "任务描述（必填）")
@@ -100,18 +113,22 @@ func main() {
 		issueText = agent.MarkIssueStatus(issueText, "fixing")
 		_ = os.WriteFile(issueFile, []byte(issueText), 0o644)
 		task = "接单修复问题单 " + issueFile + "。内容:\n" + issueText + "\n\n任务: 1.查根因（用 codegraph 查代码/kb 查经验）2.能修则修复+测试验证 3.将修复结论（根因/修复/验证）写回该 issue 文件（替换'根因: '等留空处）4.标记状态为 resolved。不能修（环境/设计问题）则写结论并标记 escalated。"
-		if !jsonOut { fmt.Printf("📋 接单: %s（查因→修复→回填结论）\n", issueFile) }
+		if !jsonOut {
+			fmt.Printf("📋 接单: %s（查因→修复→回填结论）\n", issueFile)
+		}
 	}
 
 	// 创建 Agent
 	a := agent.NewAgent(agent.Config{
 		GatewayURL: gateway,
-		AuthToken:  "x3gw-shared-2026",
+		AuthToken:  mustToken(),
 		Model:      model,
 		MaxTurns:   maxTurns,
 		WorkDir:    workdir,
 	})
-	if !jsonOut { fmt.Printf("✅ Agent 已创建 (模型: %s)\n", model) }
+	if !jsonOut {
+		fmt.Printf("✅ Agent 已创建 (模型: %s)\n", model)
+	}
 
 	// 建日志
 	taskID := time.Now().Format("2006-01-02T15-04-05")
@@ -140,12 +157,16 @@ func main() {
 		defer sl.Close()
 		// 恢复历史（日志=权威——续跑/崩溃恢复）
 		if n := a.RestoreFromLog(); n > 0 {
-			if !jsonOut { fmt.Printf("♻️ 从会话日志恢复历史: %d 条消息\n", n) }
+			if !jsonOut {
+				fmt.Printf("♻️ 从会话日志恢复历史: %d 条消息\n", n)
+			}
 		}
 	}
 	// v2.5.4.9 结构化日志接通：注入 agent（callModel 事件写入）
 	a.SetLogger(logger)
-	if !jsonOut { fmt.Printf("✅ 日志目录: %s\n", logDir) }
+	if !jsonOut {
+		fmt.Printf("✅ 日志目录: %s\n", logDir)
+	}
 
 	// 准备状态
 	// 状态（断连恢复——v2.5 #9）
@@ -159,7 +180,9 @@ func main() {
 					done++
 				}
 			}
-			if !jsonOut { fmt.Printf("🔄 恢复状态: todo %d/%d 完成（断连续跑）\n", done, len(loaded.Todos)) }
+			if !jsonOut {
+				fmt.Printf("🔄 恢复状态: todo %d/%d 完成（断连续跑）\n", done, len(loaded.Todos))
+			}
 		}
 	}
 	if state == nil {
@@ -199,7 +222,9 @@ func main() {
 						fmt.Fprintf(os.Stderr, "⚠️ MCP HTTP 连接失败 %s: %v\n", name, err)
 						continue
 					}
-					if !jsonOut { fmt.Printf("✅ MCP %s 已连接（HTTP）: %d 个工具（deferred——tool_search 发现）\n", name, len(mcpMgr.ToolDefs(true))) }
+					if !jsonOut {
+						fmt.Printf("✅ MCP %s 已连接（HTTP）: %d 个工具（deferred——tool_search 发现）\n", name, len(mcpMgr.ToolDefs(true)))
+					}
 				}
 				continue
 			}
@@ -214,18 +239,26 @@ func main() {
 			// v2.5.1: 工具分层（对齐"只展示必要+更多选项"）——kb 核心常驻——其他 deferred
 			coreTools := mcpMgr.ToolDefs(false) // false=只核心（kb_search/read/add/capture_fix）
 			tools = append(tools, coreTools...) // 核心加进初始列表（查经验是高优先行为）
-			if !jsonOut { fmt.Printf("✅ MCP %s 已连接: %d 个核心工具（常驻） + 扩展 deferred（tool_search 发现）\n", name, len(coreTools)) }
+			if !jsonOut {
+				fmt.Printf("✅ MCP %s 已连接: %d 个核心工具（常驻） + 扩展 deferred（tool_search 发现）\n", name, len(coreTools))
+			}
 		}
 	}
 	// 工具子集（v2.5.1: MCP 合并后统一过滤——-tools 指定时全部工具生效——含 MCP）
 	if toolsFlag != "" {
 		tools = filterTools(tools, toolsFlag)
 	}
-	if !jsonOut { fmt.Printf("✅ 工具已加载: %d 个\n", len(tools)) }
+	if !jsonOut {
+		fmt.Printf("✅ 工具已加载: %d 个\n", len(tools))
+	}
 
 	// 启动循环
-	if !jsonOut { fmt.Printf("\n🚀 开始执行任务: %s\n", task) }
-	if !jsonOut { fmt.Println("─────────────────────────────────────") }
+	if !jsonOut {
+		fmt.Printf("\n🚀 开始执行任务: %s\n", task)
+	}
+	if !jsonOut {
+		fmt.Println("─────────────────────────────────────")
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -256,11 +289,13 @@ func main() {
 			break
 		}
 		if attempt < retryN {
-			if !jsonOut { fmt.Printf("⚠️ 第 %d 次未完成（%s）——自动重试...\n", attempt+1, result.Reason) }
+			if !jsonOut {
+				fmt.Printf("⚠️ 第 %d 次未完成（%s）——自动重试...\n", attempt+1, result.Reason)
+			}
 			// 清历史重来（新实例）
 			a = agent.NewAgent(agent.Config{
 				GatewayURL: gateway,
-				AuthToken:  "x3gw-shared-2026",
+				AuthToken:  mustToken(),
 				Model:      model,
 				MaxTurns:   maxTurns,
 				WorkDir:    workdir,
@@ -277,9 +312,13 @@ func main() {
 	if autoIssue && result.Reason != agent.ReasonComplete && result.Reason != agent.ReasonModelError {
 		issuePath, err := agent.CreateIssue(workdir, task, result.Reason, retryN, result.ToolTrace)
 		if err != nil {
-			if !jsonOut { fmt.Fprintf(os.Stderr, "⚠️ 挂单失败: %v\n", err) }
+			if !jsonOut {
+				fmt.Fprintf(os.Stderr, "⚠️ 挂单失败: %v\n", err)
+			}
 		} else {
-			if !jsonOut { fmt.Printf("📋 失败已挂单: %s（错误入工作流——待派单）\n", issuePath) }
+			if !jsonOut {
+				fmt.Printf("📋 失败已挂单: %s（错误入工作流——待派单）\n", issuePath)
+			}
 		}
 	}
 
@@ -292,7 +331,9 @@ func main() {
 		if data, err := os.ReadFile(issueFile); err == nil {
 			updated := agent.MarkIssueStatus(string(data), finalStatus)
 			_ = os.WriteFile(issueFile, []byte(updated), 0o644)
-			if !jsonOut { fmt.Printf("📋 issue 状态: %s（%s）\n", finalStatus, result.Reason) }
+			if !jsonOut {
+				fmt.Printf("📋 issue 状态: %s（%s）\n", finalStatus, result.Reason)
+			}
 		}
 	}
 
@@ -327,7 +368,7 @@ func main() {
 			"errors":   []string{},
 			"warnings": []string{},
 			"metrics": map[string]any{
-				"exit_code": exitCode,
+				"exit_code":   exitCode,
 				"duration_ms": time.Since(startTime).Milliseconds(),
 			},
 		}

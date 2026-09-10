@@ -11,6 +11,19 @@ import urllib.error
 import urllib.request
 
 PASS = "✅"
+def _zerg_token():
+    """共享令牌（2026-09-11 A 批：库内零明文）——环境变量优先，其次 ~/.zerg/token"""
+    import os as _os
+    t = (_os.environ.get("ZERG_AUTH_TOKEN") or _os.environ.get("ZERG_API_TOKEN") or "").strip()
+    if t:
+        return t
+    try:
+        with open(_os.path.expanduser("~/.zerg/token"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 FAIL = "❌"
 results = []
 
@@ -74,7 +87,7 @@ def main():
 
     # ===== 5. 网关回归（模型列表）=====
     print("\n--- 网关回归 ---")
-    code, body = api_get("http://127.0.0.1:8082/v1/models", {"X-Auth-Token": "x3gw-shared-2026"})
+    code, body = api_get("http://127.0.0.1:8082/v1/models", {"X-Auth-Token": _zerg_token()})
     try:
         n = len(json.loads(body).get("data", []))
         check("网关模型列表", code == 200 and n > 0, f"{n} 模型")
@@ -82,7 +95,7 @@ def main():
         check("网关模型列表", False, body[:60])
 
     # ===== 6. 主控状态 =====
-    code, body = api_get("http://127.0.0.1:8580/api/fleet/status", {"X-Auth-Token": "x3gw-shared-2026"})
+    code, body = api_get("http://127.0.0.1:8580/api/fleet/status", {"X-Auth-Token": _zerg_token()})
     try:
         machines = json.loads(body).get("machines", {})
         check("主控状态", code == 200 and len(machines) > 0, f"{len(machines)} 机器")
@@ -90,7 +103,7 @@ def main():
         check("主控状态", False, body[:60])
 
     # ===== 7. 排除本机持久化 =====
-    code, body = api_get("http://127.0.0.1:8580/api/fleet/exclude-local", {"X-Auth-Token": "x3gw-shared-2026"})
+    code, body = api_get("http://127.0.0.1:8580/api/fleet/exclude-local", {"X-Auth-Token": _zerg_token()})
     check("排除本机查询", code == 200 and "exclude_local" in body, body[:40])
 
     # ===== 8. CoEval 脚本存在 =====

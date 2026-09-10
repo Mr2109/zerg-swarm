@@ -7,6 +7,7 @@ package gateway
 
 import (
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"log"
 	"net/http"
 	"time"
@@ -60,7 +61,7 @@ func (g *Gateway) ensureDS4Room() bool {
 	}
 	// X3 有其他模型占用（或空闲）——需要清场（卸载其他——只留 DS4）
 	if snap.Model != nil || snap.MemAvailableGb < ds4MemGB {
-		log.Printf("🧹 DS4 让位: X3 当前模型=%v 内存余量=%.0fG——卸载腾位（只留 DS4）", 
+		log.Printf("🧹 DS4 让位: X3 当前模型=%v 内存余量=%.0fG——卸载腾位（只留 DS4）",
 			snap.Model, snap.MemAvailableGb)
 		return g.unloadX3Models()
 	}
@@ -70,7 +71,7 @@ func (g *Gateway) ensureDS4Room() bool {
 // unloadX3Models 调 X3 agent 卸载模型（清场——释放内存）
 // X3 agent 端点: /unload（agent 服务 8100——认证 X-Auth-Token）
 func (g *Gateway) unloadX3Models() bool {
-	// X3 agent 卸载接口（<worker-ip>:8100/unload——认证 x3gw-shared-2026）
+	// X3 agent 卸载接口（<worker-ip>:8100/unload——认证 X-Auth-Token，令牌来自环境变量/~/.zerg/token）
 	url := "http://<worker-ip>:8100/unload"
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequest("POST", url, nil)
@@ -78,7 +79,7 @@ func (g *Gateway) unloadX3Models() bool {
 		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Auth-Token", "x3gw-shared-2026")
+	req.Header.Set("X-Auth-Token", config.ResolveAuthToken())
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("⚠️ DS4 清场失败（X3 agent 不可达）: %v", err)
