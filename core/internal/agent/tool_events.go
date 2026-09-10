@@ -15,10 +15,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"zerg/core/internal/statepath"
 )
 
 // toolEventsDir — 事件流目录（按天文件——历史留档可回溯）
-var toolEventsDir = "/tmp/zerg-tool-events"
+// 甲批 T2（2026-09-10）：/tmp → ~/.zerg/state/tool_events/（首次启动自动搬历史目录）
+var toolEventsDir = func() string {
+	d := statepath.MigrateIfNeeded("/tmp/zerg-tool-events", "tool_events")
+	_ = os.MkdirAll(d, 0o755)
+	return d
+}()
 
 // toolEventsMu — 事件写锁（进程内——跨进程靠 O_APPEND 原子追加）
 var toolEventsMu sync.Mutex
