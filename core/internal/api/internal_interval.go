@@ -130,9 +130,9 @@ func (h *Handlers) InternalIntervalHandler(w http.ResponseWriter, r *http.Reques
 	}
 	SetInternalInterval(taskID, req.Hours)
 	if req.Hours <= 0 {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "id": taskID, "hours": 0, "message": "周期已取消"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "id": taskID, "hours": 0, "message": "周期已取消", "state": InternalEngineStateMap()})
 	} else {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "id": taskID, "hours": req.Hours, "message": "周期已设置: 每 " + formatHours(req.Hours) + " 触发"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "id": taskID, "hours": req.Hours, "message": "周期已设置: 每 " + formatHours(req.Hours) + " 触发", "state": InternalEngineStateMap()})
 	}
 }
 
@@ -142,6 +142,7 @@ func (h *Handlers) InternalIntervalsHandler(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"intervals": InternalIntervals(),
 		"note":      "内部任务循环周期（小时）——0/不存在=未设置",
+		"state":     InternalEngineStateMap(),
 	})
 }
 

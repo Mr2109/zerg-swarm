@@ -302,6 +302,8 @@ func main() {
 	r.Post("/api/internal-tasks/{id}/mode", handlers.InternalModeHandler)
 	r.Get("/api/internal-tasks/modes", handlers.InternalModesHandler)
 	// v2.5.6 内部任务启停（Mr2109 2026-08-27——UI 内部任务板块最上面停止/启动按钮）
+	// 2026-09-10 治本（APP-A07）：引擎状态查询——UI 轮询/运维 curl 的单一真相源
+	r.Get("/api/internal-tasks/state", handlers.InternalEngineHandler)
 	r.Post("/api/internal-tasks/stop", api.InternalTasksStopHandler)
 	r.Post("/api/internal-tasks/start", api.InternalTasksStartHandler)
 
@@ -353,6 +355,13 @@ func main() {
 	// 事故: 内部任务(tool-check/mem-disk-alert 等清理类)经旧 bash 工具(黑名单无 $HOME/变量展开防护——P6 洞)误删用户主目录与 ~/.hermes
 	// 恢复: bash_v101 沙盒+危险命令双检(bashExpandDangerScan)合入并重编 bin/zerg-core 验证后, 启动 zerg-core 前设 ZERG_INTERNAL_TASKS=1
 	internalEngineOn := os.Getenv("ZERG_INTERNAL_TASKS") == "1"
+	// 2026-09-10 治本（APP-A07）：先恢复用户意图（持久化），再如实登记环境门控
+	api.InitInternalEngine()
+	if internalEngineOn {
+		api.SetEngineEnabled(true, "引擎已启用（ZERG_INTERNAL_TASKS=1）")
+	} else {
+		api.SetEngineEnabled(false, "引擎未启用：2026-09-06 误删事故后默认关闭（启动前设 ZERG_INTERNAL_TASKS=1）")
+	}
 	idleStop := make(chan struct{})
 	if internalEngineOn {
 		go idleDetector.Run(idleStop)
@@ -366,7 +375,13 @@ func main() {
 		go func() {
 			for {
 				time.Sleep(60 * time.Second)
+				// 2026-09-10 治本（APP-A07）：停止对**周期调度**也生效——原先该循环不看停止标志，按钮形同虚设
+				if api.InternalTasksStopped() {
+					api.EngineSkippedTick()
+					continue
+				}
 				due := api.RunIntervalTick()
+				api.EngineTick(60 * time.Second) // 心跳：running=true 但心跳停滞 → UI 显示异常
 				for _, defID := range due {
 					// v2.5.6 运行模式开关（Mr2109 2026-08-28）: 手动运行任务——周期调度跳过（只手动触发）
 					if !api.IsInternalAuto(defID) {
