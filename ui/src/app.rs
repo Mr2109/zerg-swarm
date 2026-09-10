@@ -73,7 +73,7 @@ pub struct ZergApp {
     chat_view: crate::modules::chat::ChatView,
     // v2.5.6 文档右键操作（Mr2109 2026-08-29）
     doc_clipboard: Option<String>, // 复制缓冲（复制的文件路径）
-    doc_input: Option<(String, String)>, // 输入对话框 (标题, 当前值)——重命名/新建用
+    doc_input: Option<(String, String, String)>, // 输入对话框 (标题, 当前值, 动作令牌)——令牌用于逻辑判断(不依赖文案语言)
     // APP-A09: 输入缓冲提升到 self（原来每帧从初值重建局部变量 → 打不进字、提交的是打开时的旧值）
     doc_input_buf: String, // 编辑中的输入内容
     doc_input_new: bool,   // 刚打开——仅首帧 request_focus（防每帧抢焦点/断中文 IME）
@@ -957,7 +957,7 @@ impl ZergApp {
                     self.task_op(async move { api::task_move_blocking(&id, "down").await }, "下移任务");
                     ui.close();
                 }
-                if ui.button(format!("{} 删除", icon_text("trash"))).clicked() {
+                if ui.button(format!("{} {}", icon_text("trash"), t!("action.delete"))).clicked() {
                     let id = task_id_owned.clone();
                     // APP-A11: 结果不再 let _ = 丢弃——失败写提示条（原来操作失败界面无任何反馈）
                     self.task_op(async move { api::task_delete_blocking(&id).await }, "删除任务");
@@ -1408,7 +1408,7 @@ impl ZergApp {
                         let (c1, _) = ui.allocate_exact_size(egui::vec2(col1_w, avail_h), egui::Sense::hover());
                         let mut c1_ui = ui.new_child(egui::UiBuilder::new().max_rect(c1).layout(egui::Layout::top_down(egui::Align::Min)));
                         egui::ScrollArea::vertical().id_salt("docs_col1").auto_shrink(false).show(&mut c1_ui, |ui| {
-                            ui.heading("📚 目录树");
+                            ui.heading(t!("docs.tree"));
                             ui.add_space(4.0);
                             for dir in &dirs {
                                 let depth = dir.split('/').count() - 1; // 子目录缩进
@@ -1422,22 +1422,22 @@ impl ZergApp {
                                 let resp = ui.selectable_label(self.doc_dir == *dir, label);
                                 // v2.5.6 目录右键（Mr2109 2026-08-29: 重命名/删除/新建子目录）
                                 resp.context_menu(|ui| {
-                                    if ui.button("📝 重命名").clicked() {
-                                        self.doc_input = Some(("重命名目录".to_string(), dir.clone()));
+                                    if ui.button(t!("action.rename")).clicked() {
+                                        self.doc_input = Some((t!("docs.rename_dir").to_string(), dir.clone(), "rename_dir".to_string()));
                                         self.doc_input_buf = dir.clone(); // APP-A09
                                         self.doc_input_new = true;
                                         ui.close();
                                     }
-                                    if ui.button(format!("{} 删除", icon_text("trash"))).clicked() {
+                                    if ui.button(format!("{} {}", icon_text("trash"), t!("action.delete"))).clicked() {
                                         let path = dir.clone();
                                         // APP-A02: 先确认成功再改本地状态(原实现丢结果 + 立即切目录)
                                         self.doc_op_ctx = Some(("del_dir".to_string(), path.clone()));
                                         self.doc_op_result = api::doc_op_async("delete", serde_json::json!({"path": path}));
                                         ui.close();
                                     }
-                                    if ui.button(format!("{} 新建子目录", icon_text("folder-plus"))).clicked() {
+                                    if ui.button(format!("{} {}", icon_text("folder-plus"), t!("docs.new_subdir"))).clicked() {
                                         let base = dir.clone();
-                                        self.doc_input = Some(("新建子目录".to_string(), format!("{}/", base)));
+                                        self.doc_input = Some((t!("docs.new_subdir").to_string(), format!("{}/", base), "new_subdir".to_string()));
                                         self.doc_input_buf = format!("{}/", base); // APP-A09
                                         self.doc_input_new = true;
                                         ui.close();
@@ -1453,8 +1453,8 @@ impl ZergApp {
                             }
                             // v2.5.6 空白右键——新建目录（Mr2109 2026-08-29）
                             ui.add_space(4.0);
-                            if ui.button(format!("{} 新建目录", icon_text("folder-plus"))).clicked() {
-                                self.doc_input = Some(("新建目录".to_string(), String::new()));
+                            if ui.button(format!("{} {}", icon_text("folder-plus"), t!("docs.new_dir"))).clicked() {
+                                self.doc_input = Some((t!("docs.new_dir").to_string(), String::new(), "new_dir".to_string()));
                                 self.doc_input_buf = String::new(); // APP-A09
                                 self.doc_input_new = true;
                             }
@@ -1494,18 +1494,18 @@ impl ZergApp {
                                 let resp = ui.selectable_label(selected, format!("📄 {}", fname));
                                 // v2.5.6 文件右键（Mr2109 2026-08-29: 重命名/复制/粘贴/删除）
                                 resp.context_menu(|ui| {
-                                    if ui.button("📝 重命名").clicked() {
-                                        self.doc_input = Some(("重命名文件".to_string(), f.to_string()));
+                                    if ui.button(t!("action.rename")).clicked() {
+                                        self.doc_input = Some((t!("docs.rename_file").to_string(), f.to_string(), "rename_file".to_string()));
                                         self.doc_input_buf = f.to_string(); // APP-A09
                                         self.doc_input_new = true;
                                         ui.close();
                                     }
-                                    if ui.button(format!("{} 复制", icon_text("copy"))).clicked() {
+                                    if ui.button(format!("{} {}", icon_text("copy"), t!("action.copy"))).clicked() {
                                         self.doc_clipboard = Some(f.to_string());
                                         ui.close();
                                     }
                                     if let Some(src) = self.doc_clipboard.clone() {
-                                        if ui.button(format!("{} 粘贴到此处", icon_text("clipboard"))).clicked() {
+                                        if ui.button(format!("{} {}", icon_text("clipboard"), t!("docs.paste_here"))).clicked() {
                                             // 目标 = 当前目录 + 源文件名（冲突加副本后缀）
                                             let fname_src = src.split('/').last().unwrap_or(&src).to_string();
                                             let target = format!("{}/{}", self.doc_dir, fname_src);
@@ -1515,7 +1515,7 @@ impl ZergApp {
                                             ui.close();
                                         }
                                     }
-                                    if ui.button(format!("{} 删除", icon_text("trash"))).clicked() {
+                                    if ui.button(format!("{} {}", icon_text("trash"), t!("action.delete"))).clicked() {
                                         let path = f.to_string();
                                         // APP-A02: 成功才清空选中/内容
                                         self.doc_op_ctx = Some(("del_file".to_string(), path.clone()));
@@ -1544,7 +1544,7 @@ impl ZergApp {
                                             }
                                             Err(e) => {
                                                 *lock_recover(&store) = None;
-                                                *lock_recover(&err) = Some(format!("读取文档内容失败: {}", e));
+                                                *lock_recover(&err) = Some(t!("docs.read_failed", err = e).to_string());
                                             }
                                         }
                                     });
@@ -1572,12 +1572,12 @@ impl ZergApp {
                         let (c3, _) = ui.allocate_exact_size(egui::vec2(c3_w, avail_h), egui::Sense::hover());
                         let mut c3_ui = ui.new_child(egui::UiBuilder::new().max_rect(c3).layout(egui::Layout::top_down(egui::Align::Min)));
                         if self.doc_file.is_empty() {
-                            c3_ui.weak("← 左侧选择目录和文件查看/编辑内容");
+                            c3_ui.weak(t!("docs.pick_hint"));
                         } else {
                             c3_ui.horizontal(|ui| {
                                 ui.label(format!("📄 {}", self.doc_file.split('/').last().unwrap_or("")));
                                 // v2.5.6 md 编辑器工具栏（Mr2109 2026-08-29）
-                                if ui.button(if self.doc_edit_mode { "🔍 预览".to_string() } else { format!("{} 编辑", icon_text("note-pencil")) }).clicked() {
+                                if ui.button(if self.doc_edit_mode { t!("docs.preview").to_string() } else { format!("{} {}", icon_text("note-pencil"), t!("action.edit")) }).clicked() {
                                     // APP-A15: 原来这里还有一段「切到编辑时同步 doc_edit 缓冲」——
                                     // doc_edit 已证明是只写不读的死状态（且 rope 缓冲由下方
                                     // `if !ferrite_loaded { load(文件内容) }` 负责），整段删除。
@@ -1592,7 +1592,7 @@ impl ZergApp {
                                     );
                                 }
                                 if self.doc_edit_dirty {
-                                    if ui.button(format!("{} 保存", icon_text("floppy-disk"))).clicked() {
+                                    if ui.button(format!("{} {}", icon_text("floppy-disk"), t!("action.save"))).clicked() {
                                         // 保存——调 /api/docs/save（M3: 取 Ferrite 编辑器文本）
                                         let path = self.doc_file.clone();
                                         // APP-A01 修复(2026-09-10): 编辑器从未载入(预览模式 AI 插入等)时，
@@ -1609,16 +1609,16 @@ impl ZergApp {
                                 }
                                 // F5 AI 动力（Mr2109统一接口——网关 8082——虫族版编辑器本质特征）
                                 if !self.ai_busy {
-                                    if ui.button("✨ 总结").clicked() {
+                                    if ui.button(t!("docs.ai_summary")).clicked() {
                                         self.ai_run("summarize");
                                     }
-                                    if ui.button(format!("{} 续写", icon_text("pencil-simple"))).clicked() {
+                                    if ui.button(format!("{} {}", icon_text("pencil-simple"), t!("docs.ai_continue"))).clicked() {
                                         self.ai_run("continue");
                                     }
-                                    if ui.button(format!("{} 翻译", icon_text("translate"))).clicked() {
+                                    if ui.button(format!("{} {}", icon_text("translate"), t!("docs.ai_translate"))).clicked() {
                                         self.ai_run("translate");
                                     }
-                                    if ui.button("💄 润色").clicked() {
+                                    if ui.button(t!("docs.ai_polish")).clicked() {
                                         self.ai_run("polish");
                                     }
                                 } else {
@@ -1643,7 +1643,7 @@ impl ZergApp {
                                 let toc_entries = crate::modules::ferrite::toc::parse_toc(&edit_text);
                                 if !toc_entries.is_empty() {
                                     c3_ui.horizontal(|ui| {
-                                        ui.weak("📑 大纲:");
+                                        ui.weak(t!("docs.outline"));
                                         let mut jump: Option<usize> = None;
                                         egui::ScrollArea::horizontal()
                                             .id_salt("ferrite_toc")
@@ -1712,11 +1712,11 @@ impl ZergApp {
                                         // ferrite=自研样式（每帧 comrak 解析）；commonmark=带缓存（大文档省一半，且支持图片/公式/任务列表）
                                         let mut flip = false;
                                         p_ui.horizontal(|ui| {
-                                            let cur = if self.preview_renderer_cm { "commonmark（缓存版）" } else { "ferrite（标准）" };
-                                            if ui.small_button(format!("预览渲染: {} ⇄", cur)).clicked() {
+                                            let cur = if self.preview_renderer_cm { t!("docs.renderer_cm").to_string() } else { t!("docs.renderer_ferrite").to_string() };
+                                            if ui.small_button(t!("docs.renderer_switch", cur = cur)).clicked() {
                                                 flip = true;
                                             }
-                                            ui.weak("（切换后记住选择）");
+                                            ui.weak(t!("docs.renderer_remember"));
                                         });
                                         if flip {
                                             self.preview_renderer_cm = !self.preview_renderer_cm;
@@ -1768,7 +1768,7 @@ impl ZergApp {
                                     egui::Color32::from_rgb(230, 90, 90),
                                     format!("⚠ {}", e),
                                 );
-                                if c3_ui.button("🔁 重新读取").clicked() {
+                                if c3_ui.button(t!("action.reload")).clicked() {
                                     let path = self.doc_file.clone();
                                     let store = self.doc_content.clone();
                                     let err = self.doc_content_err.clone();
@@ -1781,7 +1781,7 @@ impl ZergApp {
                                             }
                                             Err(e2) => {
                                                 *lock_recover(&store) = None;
-                                                *lock_recover(&err) = Some(format!("读取文档内容失败: {}", e2));
+                                                *lock_recover(&err) = Some(t!("docs.read_failed", err = e2).to_string());
                                             }
                                         }
                                     });
@@ -1801,7 +1801,7 @@ impl ZergApp {
                     // v2.5.6 输入对话框（重命名/新建目录——Mr2109 2026-08-29）
                     // APP-A09: 输入内容存 self.doc_input_buf（原来每帧从打开时的初值重建局部变量——
                     // 用户输入只活在当帧：打不进字、点确定提交的还是旧值；request_focus 也改成仅首帧）
-                    if let Some((title, current)) = self.doc_input.clone() {
+                    if let Some((title, current, action)) = self.doc_input.clone() {
                         let mut new_val = std::mem::take(&mut self.doc_input_buf);
                         let mut needs_focus = self.doc_input_new;
                         let mut close = false;
@@ -1811,16 +1811,16 @@ impl ZergApp {
                             .resizable(false)
                             .show(ui.ctx(), |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label("名称:");
+                                    ui.label(t!("common.name_label"));
                                     let resp = ui.text_edit_singleline(&mut new_val);
                                     if needs_focus {
                                         resp.request_focus(); // 仅首帧——原来每帧抢焦点（中文 IME 打不进）
                                         needs_focus = false;
                                     }
-                                    if ui.button("确定").clicked() {
+                                    if ui.button(t!("action.ok")).clicked() {
                                         do_submit = true;
                                     }
-                                    if ui.button("取消").clicked() {
+                                    if ui.button(t!("action.cancel")).clicked() {
                                         close = true;
                                     }
                                 });
@@ -1832,17 +1832,18 @@ impl ZergApp {
                         self.doc_input_new = false;
                         if do_submit {
                             // 提交——根据标题判断操作类型
-                            let t = title.clone();
                             let v = self.doc_input_buf.trim().to_string();
                             let current_path = current.clone();
                             if !v.is_empty() {
-                                if t.contains("重命名") {
+                                // 动作判定用 ASCII 令牌（原实现按标题文案 contains —— 语言一改即失效；
+                                // 且 "新建子目录" 不含 "新建目录" → 子目录提交曾经什么都不发生，此处一并修复）
+                                if action == "rename_dir" || action == "rename_file" {
                                     // old=当前完整路径, new=父目录+v（目录）或 v（文件）
                                     let parent = current_path.rfind('/').map(|i| current_path[..i].to_string()).unwrap_or_default();
                                     let new_path = if parent.is_empty() { v.clone() } else { format!("{}/{}", parent, v) };
                                     self.doc_op_ctx = Some(("rename".to_string(), String::new()));
                                     self.doc_op_result = api::doc_op_async("rename", serde_json::json!({"old": current_path, "new": new_path}));
-                                } else if t.contains("新建目录") {
+                                } else if action == "new_dir" || action == "new_subdir" {
                                     let new_path = if current_path.ends_with('/') {
                                         format!("{}{}", current_path, v)
                                     } else if current_path.is_empty() {
@@ -1876,9 +1877,9 @@ impl ZergApp {
                         *lock_recover(&store) = r;
                     });
                 }
-                ui.heading(format!("{} 模型库", icon_text("computer-tower")));
+                ui.heading(format!("{} {}", icon_text("computer-tower"), t!("page.model_library")));
                 ui.add_space(4.0);
-                ui.weak("按设备分组——模型按字母排序——点击查看简介（资源信任度 🆕=新入库）");
+                ui.weak(t!("models.group_hint"));
                 ui.add_space(4.0);
                 self.models_view(ui);
             }
@@ -1896,7 +1897,7 @@ impl ZergApp {
                 ui.add_space(4.0);
                 // 3 库切换（模型库已独立板块——Mr2109 2026-08-27）
                 ui.horizontal(|ui| {
-                    let types = [("🔧 工具库", "tools"), ("📚 Skill 库", "skills"), ("🔌 MCP 库", "mcp")];
+                    let types = [(t!("resources.tools").to_string(), "tools"), (t!("resources.skills").to_string(), "skills"), (t!("resources.mcp").to_string(), "mcp")];
                     for (label, t) in types {
                         if ui.selectable_label(self.res_type == t, label).clicked() {
                             self.res_type = t.to_string();
@@ -1932,13 +1933,13 @@ impl ZergApp {
                                     }
                                     for (machine, names) in &groups {
                                         let icon = match machine.as_str() {
-                                            "x3" => "📊 X3",
-                                            "local" => "💻 本机",
-                                            "mini1" => "🍎 mini1",
-                                            "mini2" => "🍎 mini2",
-                                            _ => "❓ 未配置",
+                                            "x3" => "📊 X3".to_string(),
+                                            "local" => t!("resources.machine_local").to_string(),
+                                            "mini1" => "🍎 mini1".to_string(),
+                                            "mini2" => "🍎 mini2".to_string(),
+                                            _ => t!("resources.machine_unknown").to_string(),
                                         };
-                                        egui::CollapsingHeader::new(format!("{}（{} 个模型）", icon, names.len()))
+                                        egui::CollapsingHeader::new(t!("models.header_count", icon = icon, count = names.len()))
                                             .id_salt(format!("res_models_{}", machine)) // APP-A08: 稳定 id
                                             // APP-A21（2026-09-10 审计）: 默认展开——原来默认为折叠，
                                             // 进「资源库」只看到设备分组标题、看不到任何模型，容易以为没模型
@@ -1988,7 +1989,10 @@ impl ZergApp {
                                     });
                                     egui::Grid::new("res_table").striped(true).show(ui, |ui| {
                                         // 列头（点击排序——Mr2109 2026-08-21）
-                                        let headers = [("名称", 0), ("版本", 1), ("状态", 2), ("调用次数", 3), ("故障", 4), ("入库时间", 5), ("简介", 6)];
+                                        let headers = [(t!("resources.col_name").to_string(), 0), (t!("resources.col_version").to_string(), 1),
+                                            (t!("resources.col_state").to_string(), 2), (t!("resources.col_calls").to_string(), 3),
+                                            (t!("resources.col_faults").to_string(), 4), (t!("resources.col_added").to_string(), 5),
+                                            (t!("resources.col_desc").to_string(), 6)];
                                         for (label, col) in headers {
                                             let arrow = if self.res_sort_col == col { if self.res_sort_desc { " ▼" } else { " ▲" } } else { "" };
                                             if ui.button(format!("{}{}", label, arrow)).clicked() {
@@ -2005,8 +2009,8 @@ impl ZergApp {
                                             // P4-49 工具名后不加图标（Mr2109 UI 偏好——与模型名一致）
                                             ui.label(name.clone());
                                             ui.label(version.clone());
-                                            ui.label(if trust == "新" { "新" } else if trust == "正式" { "正式" } else { trust.as_str() });
-                                            ui.label(format!("{} 次", uses));
+                                            ui.label(if trust == "新" { t!("resources.trust_new").to_string() } else if trust == "正式" { t!("resources.trust_official").to_string() } else if trust == "未知" || trust.is_empty() { t!("common.unknown").to_string() } else { trust.clone() });
+                                            ui.label(t!("resources.uses_count", n = uses));
                                             let fault_color = if *faults > 0 { egui::Color32::from_rgb(255, 80, 80) } else { egui::Color32::GRAY };
                                             ui.colored_label(fault_color, format!("{}", faults));
                                             ui.label(since.clone());
@@ -2025,20 +2029,20 @@ impl ZergApp {
                     }
                     // 右列——模型简介
                     if self.res_type == "models" {
-                        cols[1].heading("📖 模型简介");
+                        cols[1].heading(t!("models.desc_title"));
                         if let Some(m) = &self.selected_model {
-                            cols[1].label(format!("模型: {}", m));
+                            cols[1].label(t!("models.model_label", model = m));
                             cols[1].add_space(4.0);
                             if !self.selected_model_desc.is_empty() {
                                 cols[1].label(&self.selected_model_desc);
                             } else {
-                                cols[1].weak("（暂无简介——设备未配置描述）");
+                                cols[1].weak(t!("models.no_desc"));
                             }
                         } else {
-                            cols[1].weak("点击左侧模型查看简介");
+                            cols[1].weak(t!("models.click_hint"));
                         }
                     } else {
-                        cols[1].weak("工具/Skill/MCP 库——点击切换查看");
+                        cols[1].weak(t!("resources.lib_hint"));
                     }
                 });
             }
@@ -2141,7 +2145,7 @@ impl ZergApp {
                                 "mini2" => "🍎 mini2",
                                 _ => "❓ 未配置",
                             };
-                            egui::CollapsingHeader::new(format!("{}（{} 个模型）", icon, names.len()))
+                            egui::CollapsingHeader::new(t!("models.header_count", icon = icon, count = names.len()))
                                 .id_salt(format!("models_view_{}", machine)) // APP-A08: 稳定 id
                                 // APP-A21（2026-09-10 审计）: 默认展开（同资源库——否则进「模型库」左栏是空的）
                                 .default_open(true)
@@ -2817,7 +2821,7 @@ impl ZergApp {
                                     if ui.text_edit_singleline(&mut h).changed() {
                                         self.it_custom_hours = h.clone();
                                     }
-                                    if ui.button("确定").clicked() {
+                                    if ui.button(t!("action.ok")).clicked() {
                                         if let Ok(hv) = h.trim().parse::<f64>() {
                                             if hv > 0.0 {
                                                 let id2 = id.clone();
