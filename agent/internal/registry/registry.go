@@ -23,6 +23,10 @@ type ModelEntry struct {
 	Modality string  `yaml:"modality"`
 	// D3 多模态：视觉投影文件（llama-server -mm 参数——如 mmproj-*.gguf）
 	MMProj string `yaml:"mmproj"`
+	// ChatTemplate 可选的 chat template 文件路径（覆盖 GGUF 内嵌模板，如 ornith 系）。
+	// 支持 ~ 前缀；相对路径按 agent 工作目录解析。留空则由适配器按环境变量/约定路径回退。
+	// 例：chat_template: ~/.zerg/ornith_chat_template.jinja
+	ChatTemplate string `yaml:"chat_template,omitempty"`
 	// Cmd 自定义启动命令，兼容两种格式：
 	//   字符串: "llama-server -m {file} --port {port}"
 	//   数组:   ["llama-server", "-m", "{file}", "--port", "{port}"]

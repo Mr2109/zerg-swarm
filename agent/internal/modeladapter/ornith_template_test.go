@@ -136,3 +136,4 @@ func TestRegistryParsesChatTemplate(t *testing.T) {
 		t.Errorf("mmproj 解析异常（inline Custom 字段未受影响？）: %q", e.MMProj)
 	}
 }
+
