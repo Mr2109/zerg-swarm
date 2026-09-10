@@ -6,6 +6,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/Mr2109/zerg-swarm/core/internal/version"
 	"net/http"
 )
 
@@ -14,7 +15,7 @@ import (
 func (h *Handlers) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"name":        "虫族 Zerg",
-		"version":     "v2.5.8",
+		"version":     version.Tag,
 		"description": "去中心化 AI 任务网络——主控调度 + CA 执行 + 复查验证",
 		"auth":        "X-Auth-Token 请求头（网关/主控配置的 token）",
 		"base_url":    "http://<主控地址>:8580",
@@ -45,7 +46,7 @@ func (h *Handlers) OpenAPIHandler(w http.ResponseWriter, r *http.Request) {
 		"openapi": "3.0.0",
 		"info": map[string]interface{}{
 			"title":       "虫族 Zerg API",
-			"version":     "2.5.8",
+			"version":     version.Version,
 			"description": "去中心化 AI 任务网络主控 API——提交/查询/管理任务",
 		},
 		"paths": map[string]interface{}{

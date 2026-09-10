@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/version"
 	"log"
 	"log/slog"
 	"net"
@@ -54,7 +55,7 @@ func main() {
 
 	// 解析 fleet.yaml 配置
 	fleetYAML := resolveFleetYAML()
-	fmt.Printf("🦠 虫族主控 v2.5.8（内部任务自主开发核心）\n")
+	fmt.Printf("🦠 虫族主控 %s（内部任务自主开发核心）\n", version.Tag)
 	fmt.Printf("📋 配置文件: %s\n", fleetYAML)
 	slog.Info("主控启动", "config", fleetYAML)
 

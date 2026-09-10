@@ -3136,14 +3136,12 @@ fn humanize_branch(branch: &str) -> String {
 impl ZergApp {
     /// HUD 悬浮层（挂起清单 ③——最小实现：core 状态点 + 当前模块 + running 任务数）
     fn hud_view(&mut self, ctx: &egui::Context) {
-        // APP-A23（2026-09-10 审计——版本号硬编码多处漂移）: 本文件（app.rs）不含程序版本号字面量，
-        // 故这一条在 app.rs 内无字面量可改。**已收口（92a18189，2026-09-10）**——唯一版本源 = 当前发布版：
-        //   · ui/Cargo.toml version = "2.5.8"
-        //   · ui/src/main.rs:38  with_title("虫族 Zerg v2.5.8")
-        //   · ui/src/modules/chat/chat_view.rs:2114  底栏 "虫族 Zerg v2.5.8"
-        //   · core/cmd/zerg-core/main.go:56  启动横幅 v2.5.8
-        //   · core/internal/api/capabilities.go:17  + /api/openapi.json version
-        // 五处一致；运行中二进制复核：/api/capabilities 与 openapi 均返回 2.5.8。改版本先改这五处。
+        // APP-A23 收口（2026-09-11 单一来源改造）: 版本号**不再多处硬编码**——
+        //   · UI 侧唯一来源 = ui/Cargo.toml `version`（窗口标题 + 底栏 + 10 个集装箱箱版本全用
+        //     env!("CARGO_PKG_VERSION") 编译期取值，改一处即全改）
+        //   · Go 侧唯一来源 = core/internal/version.Version（启动横幅 + /api/capabilities + openapi info.version）
+        //   · 两处一致性由门禁 scripts/check_version.py 断言（CI + 发布导出）
+        // 收版时改这两处 + 运行中二进制复核（/api/capabilities、/api/openapi.json、窗口标题）。
         // 数据：当前模块名 + running 任务数（复用现有 tasks——不新拉）
         let mod_name: String = self
             .registry

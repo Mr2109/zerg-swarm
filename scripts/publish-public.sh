@@ -278,6 +278,17 @@ if [ -f "$REPO_ROOT/scripts/check_docs.py" ]; then
   fi
 fi
 
+# 4c. 版本号一致性门禁（UI ↔ Go 单一来源）
+if [ -f "$REPO_ROOT/scripts/check_version.py" ]; then
+  if python3 "$REPO_ROOT/scripts/check_version.py" "$REPO_ROOT" >/dev/null; then
+    echo "  版本号门禁: 通过"
+  else
+    echo "  ❌ 版本号不一致——已中止导出" >&2
+    python3 "$REPO_ROOT/scripts/check_version.py" "$REPO_ROOT" >&2
+    exit 1
+  fi
+fi
+
 say "5/6 生成单个压平提交（SQUASH）"
 cd "$OUT"
 rm -rf .git
