@@ -220,6 +220,6 @@
 ## 重新生成
 
 ```bash
-python3 tools/gen_tools_md.py > docs/TOOLS.md
+python3 tools/gen_tools_md.py > docs/TOOLS.zh-CN.md   # 英文版 docs/TOOLS.en.md 需同 PR 同步
 ```
 
