@@ -156,3 +156,5 @@ fleet:                      # 机器清单
 | `preview_renderer` | Markdown 预览渲染器选择（可用 `ZERG_PREVIEW_RENDERER` 覆盖启动默认） |
 
 运行目录：`<tmp>/zerg-ui/`（模块清单等），可用 `ZERG_UI_DIR` 覆盖。
+
+| `ZERG_AI_MODEL` | — | UI 文档 AI 动作（总结/续写/翻译/润色）使用的模型 id；也可写进 `~/.zerg-ui-prefs.json` 的 `ai_model` |
