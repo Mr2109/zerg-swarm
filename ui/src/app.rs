@@ -126,8 +126,11 @@ pub struct ZergApp {
     last_it_fetch: std::time::Instant,
     // APP-A06: 周期配置独立计时器（原来共用 last_it_fetch——被 30s 清单刷新归零后 60s 条件永不成立）
     last_it_interval_fetch: std::time::Instant,
-    internal_stopped: bool, // v2.5.6 内部任务启停状态（toggle 按钮）
-    // APP-A07: 启停结果回报——成功才翻转 internal_stopped；失败红字提示且不改本地状态
+    // A07 治本（2026-09-10）：引擎状态=后端单一真相源（10s 轮询）——本地不再持有“真相”，只做乐观提示
+    engine_state: api::SharedResult<serde_json::Value>,
+    last_engine_fetch: std::time::Instant,
+    it_ctrl_busy: Option<bool>, // 请求在飞（按钮显示“切换中…”）
+    // APP-A07: 启停结果回报——成功才刷新状态；失败红字提示且不改显示
     it_ctrl_result: api::SharedResult<()>,
     it_ctrl_target: Option<bool>, // 待生效的目标值（后端成功返回后套用）
     it_ctrl_confirm: bool,        // 二次确认态（防误点启停内部任务引擎）
@@ -218,7 +221,9 @@ impl ZergApp {
             internal_tasks: std::sync::Arc::new(std::sync::Mutex::new(None)),
             last_it_fetch: std::time::Instant::now(),
             last_it_interval_fetch: std::time::Instant::now(),
-            internal_stopped: false,
+            engine_state: Arc::new(Mutex::new(None)),
+            last_engine_fetch: std::time::Instant::now(),
+            it_ctrl_busy: None,
             it_ctrl_result: Arc::new(Mutex::new(None)),
             it_ctrl_target: None,
             it_ctrl_confirm: false,
@@ -279,17 +284,27 @@ impl ZergApp {
                 Err(e) => self.doc_op_err = Some(e),
             }
         }
-        // APP-A07: 内部任务启停结果——成功才翻转按钮状态；失败只提示（原实现不成功也翻转）
+        // A07 治本（2026-09-10）：引擎状态轮询（10s）——服务端为唯一真相源
+        if lock_recover(&self.engine_state).is_none() || self.last_engine_fetch.elapsed().as_secs() >= 10 {
+            let store = self.engine_state.clone();
+            let now = std::time::Instant::now();
+            api::runtime().spawn(async move {
+                let r = api::fetch_internal_state_blocking().await;
+                *lock_recover(&store) = Some(r);
+            });
+            self.last_engine_fetch = now;
+        }
+        // APP-A07: 启停结果——成功则立刻回读真实状态（不再靠本地翻转）；失败只提示
         if let Some(r) = lock_recover(&self.it_ctrl_result).take() {
+            self.it_ctrl_busy = None;
+            self.it_ctrl_target = None;
             match r {
                 Ok(()) => {
-                    if let Some(target) = self.it_ctrl_target.take() {
-                        self.internal_stopped = target;
-                    }
+                    // 立即重拉状态（把“切换中…”换成后端事实）
+                    self.last_engine_fetch = std::time::Instant::now() - std::time::Duration::from_secs(60);
                     *lock_recover(&self.poll_err) = None;
                 }
                 Err(e) => {
-                    self.it_ctrl_target = None;
                     *lock_recover(&self.poll_err) = Some(format!("内部任务启停: {}", e));
                 }
             }
@@ -2420,9 +2435,9 @@ impl ZergApp {
         let out2 = out.clone();
         api::runtime().spawn(async move {
             let r = if start {
-                api::start_internal_tasks_blocking().await
+                api::start_internal_tasks_blocking().await.map(|_| ())
             } else {
-                api::stop_internal_tasks_blocking().await
+                api::stop_internal_tasks_blocking().await.map(|_| ())
             };
             *lock_recover(&out2) = Some(r);
         });
@@ -2435,32 +2450,78 @@ impl ZergApp {
         ui.add_space(4.0);
         ui.weak("16 类内部任务——编排自动运行——也可手动执行（空闲检测触发）。单槽铁律: 排队串行。");
         ui.add_space(8.0);
-        // v2.5.6 内部任务启停按钮（Mr2109 2026-08-27——一个 toggle——点停止变启动/点启动变停止）
-        // 显示状态: 根据后端 internal_stopped——UI 记录本地状态（点击后切换）
+        // v2.5.6 内部任务启停按钮（Mr2109 2026-08-27）
+        // A07 治本（2026-09-10）：状态显示取自后端单一真相源——本地不再持有“真相”，只做乐观提示
         ui.horizontal(|ui| {
-            let stopped = self.internal_stopped;
-            let label = if stopped { format!("{} 启动内部任务", icon_text("play")) } else { format!("{} 停止内部任务", icon_text("stop-circle")) };
-            // APP-A07: 二次确认 + 结果回报（原来一次误点即启停、不成功也翻转本地状态）
-            if self.it_ctrl_confirm {
+            let snap = lock_recover(&self.engine_state).clone();
+            let (known, enabled, stopped, running, reason, tick) = match &snap {
+                Some(Ok(v)) => {
+                    let s = v.get("state").unwrap_or(v);
+                    let g = |k: &str| s.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    (
+                        true,
+                        s.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false),
+                        s.get("stopped").and_then(|x| x.as_bool()).unwrap_or(false),
+                        s.get("running").and_then(|x| x.as_bool()).unwrap_or(false),
+                        g("reason"),
+                        g("last_tick"),
+                    )
+                }
+                _ => (false, false, false, false, String::new(), String::new()),
+            };
+            let err = match &snap {
+                Some(Err(e)) => Some(e.clone()),
+                _ => None,
+            };
+            if let Some(b) = self.it_ctrl_busy {
                 ui.colored_label(
                     egui::Color32::from_rgb(220, 180, 60),
-                    format!("{} 确认{}内部任务引擎？", icon_text("warning"), if stopped { "启动" } else { "停止" }),
+                    format!("⏳ 切换中…（目标: {}）", if b { "启动" } else { "停止" }),
+                );
+            } else if self.it_ctrl_confirm {
+                // APP-A07: 二次确认（防误点启停引擎）
+                ui.colored_label(
+                    egui::Color32::from_rgb(220, 180, 60),
+                    format!("{} 确认{}内部任务引擎？", icon_text("warning"), if running { "停止" } else { "启动" }),
                 );
                 if ui.button("✅ 确认").clicked() {
-                    self.it_ctrl_target = Some(!stopped);
-                    self.it_ctrl_result = Self::it_ctrl_async(!stopped);
+                    let target = !running;
+                    self.it_ctrl_target = Some(target);
+                    self.it_ctrl_busy = Some(target);
+                    self.it_ctrl_result = Self::it_ctrl_async(target);
                     self.it_ctrl_confirm = false;
                 }
                 if ui.button("✖ 取消").clicked() {
                     self.it_ctrl_confirm = false;
                 }
-            } else if ui.button(label).clicked() {
-                self.it_ctrl_confirm = true;
-            }
-            if stopped {
-                ui.weak("（当前: 已停止——点启动恢复自动触发）");
             } else {
-                ui.weak("（当前: 运行中——点停止暂停自动触发）");
+                let label = if running { format!("{} 停止内部任务", icon_text("stop-circle")) } else { format!("{} 启动内部任务", icon_text("play")) };
+                if ui.add_enabled(known, egui::Button::new(label)).clicked() {
+                    self.it_ctrl_confirm = true;
+                }
+            }
+            // 状态文案（诚实呈现：未启用 / 已停止 / 运行中 / 异常）
+            if let Some(e) = err {
+                ui.colored_label(egui::Color32::from_rgb(220, 100, 90), format!("（状态未知: {}）", e));
+            } else if !known {
+                ui.weak("（状态获取中…）");
+            } else if !enabled {
+                ui.colored_label(
+                    egui::Color32::GRAY,
+                    format!("（未启用——{}）", if reason.is_empty() { "ZERG_INTERNAL_TASKS=1 才开".to_string() } else { reason }),
+                );
+            } else if stopped {
+                ui.colored_label(egui::Color32::from_rgb(220, 180, 60), "（当前: 已停止——点启动恢复自动触发）");
+            } else if running {
+                ui.colored_label(egui::Color32::from_rgb(120, 200, 120), "（当前: 运行中——点停止暂停自动触发）");
+            } else {
+                ui.colored_label(
+                    egui::Color32::from_rgb(220, 100, 90),
+                    format!("（异常：{}）", if reason.is_empty() { "心跳停滞".to_string() } else { reason }),
+                );
+            }
+            if !tick.is_empty() && tick.len() >= 16 {
+                ui.weak(format!("心跳 {}", &tick[11..16]));
             }
         });
         ui.add_space(8.0);
@@ -2742,6 +2803,7 @@ impl eframe::App for ZergApp {
             || self.ai_pending.is_some()
             || lock_recover(&self.doc_op_result).is_some()
             || lock_recover(&self.it_ctrl_result).is_some()
+            || self.it_ctrl_busy.is_some()
             || self.rt_active;
         if busy {
             ui.ctx().request_repaint();
