@@ -346,7 +346,7 @@ impl ZergApp {
                         *lock_recover(&store) = Some(v);
                         *lock_recover(&perr) = None;
                     }
-                    Err(e) => *lock_recover(&perr) = Some(format!("任务列表: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(t!("task.list_err", err = e).to_string()),
                 }
             });
         }
@@ -592,7 +592,7 @@ impl ZergApp {
                 // APP-A04: 失败保留旧详情 + 提示（原实现失败写 None → 右栏永久 spinner）
                 match api::fetch_task_detail_blocking(id).await {
                     Ok(v) => *lock_recover(&store) = Some(v),
-                    Err(e) => *lock_recover(&perr) = Some(format!("任务详情: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(t!("task.detail_err", err = e).to_string()),
                 }
             });
         }
@@ -615,21 +615,21 @@ impl ZergApp {
             api::runtime().spawn(async move {
                 match api::fetch_archive_blocking().await {
                     Ok(items) => *lock_recover(&store) = Some(items),
-                    Err(e) => *lock_recover(&perr) = Some(format!("归档: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(t!("task.archive_err", err = e).to_string()),
                 }
             });
             self.last_archive_fetch = now;
         }
         let arc_snap = lock_recover(&self.archive).clone();
         let arc_count = arc_snap.as_ref().map(|v| v.len()).unwrap_or(0);
-        egui::CollapsingHeader::new(format!("🗄️ 归档（{}）", arc_count))
+        egui::CollapsingHeader::new(t!("task.archive_group", n = arc_count))
             .id_salt("task_group_archive") // APP-A08: 稳定 id（标题含计数——每帧变会让展开态被重置）
             .default_open(false)
             .show(ui, |ui| {
                 match &arc_snap {
                     Some(arcs) => {
                         if arcs.is_empty() {
-                            ui.weak("暂无归档（30 天归档 / 90 天删除——容量有界）");
+                            ui.weak(t!("task.no_archive"));
                         }
                         for a in arcs {
                             let tid = a.get("task_id").and_then(|v| v.as_str()).unwrap_or("?").to_string();
@@ -637,12 +637,12 @@ impl ZergApp {
                             let size = a.get("size").and_then(|v| v.as_i64()).unwrap_or(0);
                             // APP-A16: 尾 6 字符/前 16 字符都按「字符」切（原来按字节下标——
                             // 多字节 task_id/时间串会切在字符中间 panic，整个 UI 退出）
-                            ui.label(format!("📦 {} | 归档: {} | {}KB", short_id(&tid), when.chars().take(16).collect::<String>(), size / 1024));
+                            ui.label(t!("task.archive_row", id = short_id(&tid), when = when.chars().take(16).collect::<String>(), kb = size / 1024));
                         }
                     }
                     // APP-A19: None = 还没拉到或拉取失败——不再谎报「暂无归档」
                     None => {
-                        ui.weak("⏳ 归档加载中（若持续如此=拉取失败——见顶部提示条）");
+                        ui.weak(t!("task.archive_loading"));
                     }
                 }
             });
@@ -650,7 +650,7 @@ impl ZergApp {
         if list.is_empty() {
             // 已加载但无任务——显示"暂无任务"（不是"拉取中"）
             if self.tasks_loaded {
-                ui.weak("暂无任务");
+                ui.weak(t!("task.none"));
             } else {
                 ui.spinner();
                 ui.weak(t!("common.loading"));
@@ -739,7 +739,7 @@ impl ZergApp {
                         }
                     });
                 let waiting_count = waiting.len();
-                egui::CollapsingHeader::new(format!("🔁 等待重试（{}）", waiting_count))
+                egui::CollapsingHeader::new(t!("task.group_waiting", n = waiting_count))
                     .id_salt("task_group_waiting_retry") // APP-A08: 稳定 id
                     .default_open(true)
                     .show(ui, |ui| {
@@ -752,7 +752,7 @@ impl ZergApp {
                     });
                 let others_count = others.len();
                 if others_count > 0 {
-                    egui::CollapsingHeader::new(format!("❔ 其它状态（{}）", others_count))
+                    egui::CollapsingHeader::new(t!("task.group_others", n = others_count))
                         .id_salt("task_group_others") // APP-A08: 稳定 id
                         .default_open(true)
                         .show(ui, |ui| {
@@ -766,7 +766,7 @@ impl ZergApp {
                 let mut by_date: std::collections::BTreeMap<String, Vec<&TaskInfo>> = Default::default();
                 for t in &done_main {
                     // APP-A16: 取日期同样按字符切（原 `s[..10]` 是字节下标——含多字节的时间串会 panic）
-                    let date = t.completed_at.as_deref().map(|s| s.chars().take(10).collect::<String>()).unwrap_or_else(|| "未知日期".to_string());
+                    let date = t.completed_at.as_deref().map(|s| s.chars().take(10).collect::<String>()).unwrap_or_else(|| t!("common.unknown_date").to_string());
                     by_date.entry(date).or_default().push(t);
                 }
                 egui::CollapsingHeader::new(format!("✅ {}（{}）", t!("task.state_done"), done_count))
@@ -819,11 +819,11 @@ impl ZergApp {
         let what = what.to_string();
         api::runtime().spawn(async move {
             if let Err(e) = fut.await {
-                *lock_recover(&perr) = Some(format!("{}失败: {}", what, e));
+                *lock_recover(&perr) = Some(t!("task.op_failed", what = what, err = e).to_string());
             }
             match api::fetch_tasks_blocking().await {
                 Ok(v) => *lock_recover(&store) = Some(v),
-                Err(e) => *lock_recover(&perr) = Some(format!("任务列表: {}", e)),
+                Err(e) => *lock_recover(&perr) = Some(t!("task.list_err", err = e).to_string()),
             }
         });
     }
@@ -860,10 +860,10 @@ impl ZergApp {
         let dur = task_duration(t.created_at.as_deref(), t.completed_at.as_deref());
         // 是否成功（done=成功 failed=失败 running=… queued=待——用中文——字体兼容）
         let ok = match status {
-            "done" => "成功",
-            "failed" => "失败",
-            "running" => "…",
-            _ => "待",
+            "done" => t!("task.ok_success").to_string(),
+            "failed" => t!("task.ok_failed").to_string(),
+            "running" => "…".to_string(),
+            _ => t!("task.ok_pending").to_string(),
         };
         // 失败行红色显示（Mr2109——失败醒目）
         let final_color = if status == "failed" {
@@ -889,7 +889,7 @@ impl ZergApp {
                 // APP-A04: 失败保留旧详情 + 提示（原实现失败写 None → 右栏永久 spinner）
                 match api::fetch_task_detail_blocking(id).await {
                     Ok(v) => *lock_recover(&store) = Some(v),
-                    Err(e) => *lock_recover(&perr) = Some(format!("任务详情: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(t!("task.detail_err", err = e).to_string()),
                 }
             });
         }
@@ -898,84 +898,84 @@ impl ZergApp {
         let status_owned = status.to_string();
         resp.context_menu(|ui| {
             // 复制任务描述
-            if ui.button(format!("{} 复制描述", icon_text("copy"))).clicked() {
+            if ui.button(t!("task.copy_desc", icon = icon_text("copy"))).clicked() {
                 if let Some(desc) = t.description.clone() {
                     ui.ctx().copy_text(desc);
                 }
                 ui.close();
             }
             // 重跑（failed 任务）
-            if status == "failed" && ui.button("🔁 重跑任务").clicked() {
+            if status == "failed" && ui.button(t!("task.op_retry")).clicked() {
                 let id = task_id_owned.clone();
                 // APP-A11: 结果不再 let _ = 丢弃——失败写提示条（原来操作失败界面无任何反馈）
-                self.task_op(async move { api::task_retry_blocking(&id).await }, "重跑任务");
+                self.task_op(async move { api::task_retry_blocking(&id).await }, t!("task.op_retry").as_ref());
                 ui.close();
             }
             // 重回排队（done/failed 任务——重新入队——Mr2109 2026-08-21）
-            if (status == "done" || status == "failed") && ui.button("🔙 重回排队").clicked() {
+            if (status == "done" || status == "failed") && ui.button(t!("task.back_to_queue")).clicked() {
                 let id = task_id_owned.clone();
                 // APP-A11: 结果不再 let _ = 丢弃——失败写提示条（原来操作失败界面无任何反馈）
-                self.task_op(async move { api::task_retry_blocking(&id).await }, "重回排队");
+                self.task_op(async move { api::task_retry_blocking(&id).await }, t!("task.back_to_queue").as_ref());
                 ui.close();
             }
             // 暂停/继续（queued 任务——Mr2109 2026-08-21）
             if status_owned == "queued" {
-                if ui.button(format!("{} 暂停", icon_text("pause"))).clicked() {
+                if ui.button(t!("task.pause", icon = icon_text("pause"))).clicked() {
                     let id = task_id_owned.clone();
                     // APP-A11: 结果不再 let _ = 丢弃——失败写提示条（原来操作失败界面无任何反馈）
-                    self.task_op(async move { api::task_pause_blocking(&id, true).await }, "暂停任务");
+                    self.task_op(async move { api::task_pause_blocking(&id, true).await }, t!("task.op_pause").as_ref());
                     ui.close();
                 }
-                if ui.button(format!("{} 继续", icon_text("play"))).clicked() {
+                if ui.button(t!("task.resume", icon = icon_text("play"))).clicked() {
                     let id = task_id_owned.clone();
                     // APP-A11: 结果不再 let _ = 丢弃——失败写提示条（原来操作失败界面无任何反馈）
-                    self.task_op(async move { api::task_pause_blocking(&id, false).await }, "继续任务");
+                    self.task_op(async move { api::task_pause_blocking(&id, false).await }, t!("task.op_resume").as_ref());
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("⏫ 置顶").clicked() {
+                if ui.button(t!("task.pin_top")).clicked() {
                     let id = task_id_owned.clone();
                     // APP-A11: 结果不再 let _ = 丢弃——失败写提示条（原来操作失败界面无任何反馈）
-                    self.task_op(async move { api::task_move_blocking(&id, "top").await }, "置顶任务");
+                    self.task_op(async move { api::task_move_blocking(&id, "top").await }, t!("task.op_pin_top").as_ref());
                     ui.close();
                 }
-                if ui.button("⏬ 置底").clicked() {
+                if ui.button(t!("task.pin_bottom")).clicked() {
                     let id = task_id_owned.clone();
                     // APP-A11: 结果不再 let _ = 丢弃——失败写提示条（原来操作失败界面无任何反馈）
-                    self.task_op(async move { api::task_move_blocking(&id, "bottom").await }, "置底任务");
+                    self.task_op(async move { api::task_move_blocking(&id, "bottom").await }, t!("task.op_pin_bottom").as_ref());
                     ui.close();
                 }
-                if ui.button("⬆ 上移").clicked() {
+                if ui.button(t!("task.move_up")).clicked() {
                     let id = task_id_owned.clone();
                     // APP-A11: 结果不再 let _ = 丢弃——失败写提示条（原来操作失败界面无任何反馈）
-                    self.task_op(async move { api::task_move_blocking(&id, "up").await }, "上移任务");
+                    self.task_op(async move { api::task_move_blocking(&id, "up").await }, t!("task.op_move_up").as_ref());
                     ui.close();
                 }
-                if ui.button("⬇ 下移").clicked() {
+                if ui.button(t!("task.move_down")).clicked() {
                     let id = task_id_owned.clone();
                     // APP-A11: 结果不再 let _ = 丢弃——失败写提示条（原来操作失败界面无任何反馈）
-                    self.task_op(async move { api::task_move_blocking(&id, "down").await }, "下移任务");
+                    self.task_op(async move { api::task_move_blocking(&id, "down").await }, t!("task.op_move_down").as_ref());
                     ui.close();
                 }
                 if ui.button(format!("{} {}", icon_text("trash"), t!("action.delete"))).clicked() {
                     let id = task_id_owned.clone();
                     // APP-A11: 结果不再 let _ = 丢弃——失败写提示条（原来操作失败界面无任何反馈）
-                    self.task_op(async move { api::task_delete_blocking(&id).await }, "删除任务");
+                    self.task_op(async move { api::task_delete_blocking(&id).await }, t!("task.op_delete").as_ref());
                     ui.close();
                 }
             }
             // 执行中任务操作（running——终止/重回队列——Mr2109 2026-08-22）
             if status_owned == "running" {
-                if ui.button("🛑 终止").clicked() {
+                if ui.button(t!("task.terminate")).clicked() {
                     let id = task_id_owned.clone();
                     // APP-A11: 结果不再 let _ = 丢弃——失败写提示条（原来操作失败界面无任何反馈）
-                    self.task_op(async move { api::task_terminate_blocking(&id).await }, "终止任务");
+                    self.task_op(async move { api::task_terminate_blocking(&id).await }, t!("task.op_terminate").as_ref());
                     ui.close();
                 }
-                if ui.button("🔁 重回队列").clicked() {
+                if ui.button(t!("task.requeue")).clicked() {
                     let id = task_id_owned.clone();
                     // APP-A11: 结果不再 let _ = 丢弃——失败写提示条（原来操作失败界面无任何反馈）
-                    self.task_op(async move { api::task_requeue_blocking(&id).await }, "重回队列");
+                    self.task_op(async move { api::task_requeue_blocking(&id).await }, t!("task.op_requeue").as_ref());
                     ui.close();
                 }
             }
@@ -1047,7 +1047,7 @@ impl ZergApp {
                 // S8: 结晶阶段进度卡（subtask_mode=true 时 stages[] 渲染——阶段/目标/状态）
                 if detail.get("subtask_mode").and_then(|v| v.as_bool()).unwrap_or(false) {
                     if let Some(stages) = detail.get("stages").and_then(|v| v.as_array()) {
-                        ui.label("🧩 结晶阶段");
+                        ui.label(t!("task.stage_crystallize"));
                         for s in stages {
                             let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("?");
                             let goal = s.get("goal").and_then(|v| v.as_str()).unwrap_or("");
@@ -1070,13 +1070,13 @@ impl ZergApp {
                 }
                 // 执行报告（直接展开——外层统一滚——不嵌套 ScrollArea）
                 if let Some(rep) = detail.get("exec_report").and_then(|r| r.as_str()) {
-                    ui.label("📄 执行报告");
+                    ui.label(t!("task.report_exec"));
                     ui.monospace(rep);
                 }
                 // 复查报告（直接展开——外层统一滚——不嵌套 ScrollArea）
                 if let Some(rep) = detail.get("review_report").and_then(|r| r.as_str()) {
                     ui.add_space(8.0);
-                    ui.label("🔍 复查报告");
+                    ui.label(t!("task.report_review"));
                     ui.monospace(rep);
                 }
             } else {
@@ -1092,12 +1092,12 @@ impl ZergApp {
     /// 核心箱（船体——不可禁用）+ 可装卸箱（checkbox 开关——变更即持久化）
     fn module_manager_view(&mut self, ctx: &egui::Context) {
         let mut close = false;
-        egui::Window::new("🧩 模块管理（吊装系统）")
+        egui::Window::new(t!("modules.title"))
             .collapsible(false)
             .resizable(true)
             .default_size([420.0, 380.0])
             .show(ctx, |ui| {
-                ui.label("⚡ 核心（船体箱——不可禁用——任务体系+基础设施）");
+                ui.label(t!("modules.core_section"));
                 ui.separator();
                 let mut changed = false;
                 for m in self.registry.modules.iter().filter(|m| m.is_core) {
@@ -1108,7 +1108,7 @@ impl ZergApp {
                     });
                 }
                 ui.add_space(8.0);
-                ui.label("🧩 模块（集装箱——可吊装/卸下——变化即持久化）");
+                ui.label(t!("modules.loadable_section"));
                 ui.separator();
                 // 先收集切换请求（避免迭代中改 registry——借用冲突）
                 let mut to_toggle: Option<String> = None;
@@ -1135,7 +1135,7 @@ impl ZergApp {
                 // M4 生态箱（外部模块——配置文件声明——第三方开发者挂船）
                 if !self.registry.external.is_empty() {
                     ui.add_space(8.0);
-                    ui.label("🌍 生态箱（外部应用——配置文件声明——可吊装/卸下）");
+                    ui.label(t!("modules.ext_section"));
                     ui.separator();
                     let mut ext_toggle: Option<String> = None;
                     let ext_list = self.registry.external.clone();
@@ -1163,7 +1163,7 @@ impl ZergApp {
                     self.registry.save(); // 持久化（M2-c）
                 }
                 ui.add_space(12.0);
-                if ui.button("关闭").clicked() {
+                if ui.button(t!("action.close")).clicked() {
                     close = true;
                 }
             });
@@ -3103,7 +3103,7 @@ fn task_duration(created: Option<&str>, completed: Option<&str>) -> String {
 fn humanize_branch(branch: &str) -> String {
     let b = branch.trim();
     if b == "main" {
-        return "main（主分支）".to_string();
+        return t!("git.main_branch").to_string();
     }
     // task-xxx-1787... 格式——提取类型
     if let Some(idx) = b.find("task-") {
@@ -3113,17 +3113,17 @@ fn humanize_branch(branch: &str) -> String {
         if parts.len() >= 2 {
             // 内部任务（internal-类型）
             if parts[0] == "internal" && parts.len() >= 3 {
-                let task_type = match parts[1] {
-                    "health" => "系统健康巡检",
-                    "tool" => "工具库检查",
-                    "code" => "代码质量",
-                    "knowledge" => "经验沉淀",
-                    _ => parts[1],
+                let task_type: String = match parts[1] {
+                    "health" => t!("it.type_health").to_string(),
+                    "tool" => t!("it.type_tool").to_string(),
+                    "code" => t!("it.type_code").to_string(),
+                    "knowledge" => t!("it.type_knowledge").to_string(),
+                    _ => parts[1].to_string(),
                 };
-                return format!("内部任务·{}", task_type);
+                return t!("task.internal_label", ty = task_type).to_string();
             }
             // 外部任务（task-xxx）
-            return format!("外部任务·{}", parts[0]);
+            return t!("task.external_label", id = parts[0]).to_string();
         }
         return rest.to_string();
     }
