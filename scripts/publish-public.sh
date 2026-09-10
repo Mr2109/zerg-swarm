@@ -102,12 +102,15 @@ EXCLUDES=(
   "gateway/scripts/fleet_logs.py"
   "scripts/publish-public.sh"   # 发布工具自身不进快照（含私有规则表引用）
 )
+# 编译缓存 / 原生产物（即使被跟踪也不该出现在源码快照里）
 for e in "${EXCLUDES[@]}"; do rm -rf "${OUT:?}/$e"; done
 # 通用噪声（白名单递归可能带进来的）
 find "$OUT" -name '*.orig' -delete
 find "$OUT" -name '*.rej' -delete
 find "$OUT" -name '*.bak' -delete
 find "$OUT" -type f -name '*.[0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' -delete 2>/dev/null || true
+find "$OUT" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+find "$OUT" -type f \( -name '*.pyc' -o -name '*.pyo' -o -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.class' \) -delete 2>/dev/null || true
 echo "导出文件数: $(find "$OUT" -type f | wc -l | tr -d ' ')"
 
 say "2/6 套用发布专属文件（publish/ → 快照）"
@@ -225,9 +228,16 @@ for root, dirs, files in os.walk(out):
     for fn in files:
         fp = os.path.join(root, fn)
         rel = os.path.relpath(fp, out)
+        ALLOWED_BINARY = (".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".webp",
+                          ".ttf", ".otf", ".woff", ".woff2", ".pdf")
         try:
             txt = open(fp, encoding="utf-8").read()
-        except (UnicodeDecodeError, OSError):
+        except UnicodeDecodeError:
+            # 不可按文本解码 = 二进制/编译产物：源码快照里除白名单类型外一律视为可疑
+            if not rel.lower().endswith(ALLOWED_BINARY):
+                hits.append((rel, 0, "二进制/编译产物（源码快照不应包含）", ""))
+            continue
+        except OSError:
             continue
         for i, line in enumerate(txt.splitlines(), 1):
             for rx, why in PATTERNS:
