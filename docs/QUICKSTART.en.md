@@ -24,6 +24,10 @@ set -a; . ./.env; set +a
 ```
 
 You can also skip `.env` entirely: just write the token into `~/.zerg/token` (single line, `chmod 600`).
+
+> ⚠️ **Quote any `.env` value that contains spaces or non-ASCII text** (e.g. `ZERG_KB_PATH="/Volumes/My Disk/knowledge.db"`).
+> Otherwise `set -a; . ./.env` truncates the variable at the first space and tries to run the rest as a command
+> (`no such file or directory`).
 Resolution priority: `ZERG_AUTH_TOKEN` → `~/.zerg/token`.
 
 > When the token is missing, the controller and agents **refuse to start** and print guidance — this is deliberate (an empty token makes every API return 401 while the logs look perfectly normal).
