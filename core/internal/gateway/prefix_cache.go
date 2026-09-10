@@ -120,8 +120,9 @@ type prefixCacheTracker struct {
 	dirty        bool          // 是否有未落盘变更
 
 	// 丙批 C2：未知响应形态探测
-	unknownForms    int      // 解析失败（无 timings 且无已知 usage 字段）的响应计数
-	unknownLastKeys []string // 最近一条未知样本的键名列表（不含值——防泄漏）
+	unknownForms    int             // 解析失败（无 timings 且无已知 usage 字段）的响应计数
+	unknownLastKeys []string        // 最近一条未知样本的键名列表（不含值——防泄漏）
+	unknownShapes   map[string]bool // 形态签名集合（键名排序后用 | 连接；上限 maxUnknownShapes）
 }
 
 // newPrefixCache 构造追踪器。windowN<=0 用默认 50；dur<=0 用默认 10 分钟。
@@ -757,6 +758,32 @@ func unknownFormKeys(respBody []byte) ([]string, bool) {
 	return keys, true
 }
 
+// maxUnknownShapes — 形态签名集合上限（防无界增长）
+const maxUnknownShapes = 16
+
+// formSignature — 键名集 → 稳定签名（排序后拼接；空集给占位符）
+func formSignature(keys []string) string {
+	if len(keys) == 0 {
+		return "(无键名)"
+	}
+	cp := append([]string(nil), keys...)
+	sort.Strings(cp)
+	return strings.Join(cp, "|")
+}
+
+// unknownShapeList — 形态签名列表（调用方持锁；排序输出，便于稳定展示/测试）
+func (t *prefixCacheTracker) unknownShapeList() []string {
+	if len(t.unknownShapes) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(t.unknownShapes))
+	for sig := range t.unknownShapes {
+		out = append(out, sig)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // markUnknown 记录一次未知响应形态：计数 +1、更新最近样本键名列表（不含值），并按节流规则尝试落盘。
 // 返回累计未知形态次数。keys 为空也表示"有未知但无键名"。
 func (t *prefixCacheTracker) markUnknown(keys []string) int {
@@ -770,6 +797,13 @@ func (t *prefixCacheTracker) markUnknown(keys []string) int {
 		keys = keys[:maxUnknownLastKeys]
 	}
 	t.unknownLastKeys = append([]string(nil), keys...)
+	// 形态去重：同键名集合只记一次（探针价值在「发现了几种新形态」，不是「命中多少次」）
+	if t.unknownShapes == nil {
+		t.unknownShapes = make(map[string]bool)
+	}
+	if sig := formSignature(keys); len(t.unknownShapes) < maxUnknownShapes && !t.unknownShapes[sig] {
+		t.unknownShapes[sig] = true
+	}
 	t.markDirtyLocked()
 	return t.unknownForms
 }
@@ -813,6 +847,7 @@ type PrefixCacheSnapshot struct {
 	// 丙批 C2：未知响应形态探测
 	UnknownForms    int      `json:"unknown_forms"`               // 解析失败的响应计数（无 timings 且无已知 usage 字段）
 	UnknownLastKeys []string `json:"unknown_last_keys,omitempty"` // 最近一条未知样本的键名列表（不含值）
+	UnknownShapes   []string `json:"unknown_shapes,omitempty"`    // 去重后的形态签名（键名集；同一形态只列一次——「12 条同形态」≠「12 种形态」）
 	Status          string   `json:"status"`
 }
 
@@ -857,6 +892,7 @@ func (t *prefixCacheTracker) Snapshot(model string) PrefixCacheSnapshot {
 	if len(t.unknownLastKeys) > 0 {
 		snap.UnknownLastKeys = append([]string(nil), t.unknownLastKeys...)
 	}
+	snap.UnknownShapes = t.unknownShapeList() // 形态去重（同键名集只列一次）
 
 	// 过滤告警
 	for _, a := range t.alerts {
