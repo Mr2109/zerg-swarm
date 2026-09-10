@@ -143,6 +143,7 @@ pub struct ChatView {
     // 异步句柄
     sessions_pending: Option<api::SharedResult<Vec<Value>>>,
     session_pending: Option<api::SharedResult<Value>>,
+    abort_pending: Option<api::SharedResult<Value>>, // 批次B: 服务端中断请求（结果忽略——轮询消费）
     create_pending: Option<api::SharedResult<Value>>,
     // C3 流式发送（生成中状态）
     stream: Option<api::SharedChatStream>,
@@ -231,6 +232,7 @@ impl ChatView {
             send_error: None,
             sessions_pending: None,
             session_pending: None,
+            abort_pending: None,
             create_pending: None,
             stream: None,
             streaming: false,
@@ -400,12 +402,16 @@ impl ChatView {
 
     /// 停止生成（C3——断开连接——后端 ctx cancel）
     pub fn stop(&mut self) {
+        // 批次B(2026-09-10): 先请求服务端中断（部分结果落库——不再凭空消失），再丢弃本地流
+        if let Some(sid) = self.active_session.clone() {
+            self.abort_pending = Some(api::chat_abort_async(sid.clone()));
+        }
         if let Some(s) = self.stream.clone() {
             s.lock().unwrap().cancelled = true;
         }
         self.stream = None;
         self.streaming = false;
-        // 停止后重新拉会话（拿已生成的部分——后端可能已存）
+        // 停止后重新拉会话（拿已生成的部分——后端已落库）
         if let Some(sid) = self.active_session.clone() {
             self.session_pending = Some(api::fetch_chat_session_async(sid));
         }
@@ -440,6 +446,14 @@ impl ChatView {
         }
         // 会话详情
         let pending = self.session_pending.take();
+        // 批次B: 中断请求结果消费（失败也无碍——服务端取消由断连兜底）
+        if let Some(p) = self.abort_pending.take() {
+            if let Ok(g) = p.lock() {
+                if let Some(Err(e)) = g.as_ref() {
+                    self.send_error = Some(format!("中断请求失败: {}", e));
+                }
+            }
+        }
         if let Some(p) = pending {
             let done = p.lock().unwrap().clone();
             if let Some(res) = done {
@@ -1232,14 +1246,21 @@ impl ChatView {
             let mut resp_out: Option<egui::Response> = None;
             let mut stop_clicked = false;
             let mut send_clicked = false;
-            // 居中限宽:外层 horizontal + 左侧 space;玻璃圆角容器
+            // 居中限宽:精确 allocate cw 宽度(水平 side 偏移 + 行内定宽块——修正不居中)
+            let input_frame = egui::Frame::new()
+                .fill(ui.visuals().extreme_bg_color.gamma_multiply(0.35))
+                .stroke(egui::Stroke::new(1.0, ring))
+                .corner_radius(16.0)
+                .inner_margin(egui::Margin { left: 12, right: 8, top: 8, bottom: 8 });
+            // 预估容器高(行数驱动——cursor 推进准确,不留大空白)
+            let est_rows = (self.input.lines().count().max(1)).clamp(1, 8) as f32;
+            let est_h = 36.0 + est_rows * 19.0;
             ui.horizontal(|ui| {
                 ui.add_space(side);
-                let input_frame = egui::Frame::new()
-                    .fill(ui.visuals().extreme_bg_color.gamma_multiply(0.35))
-                    .stroke(egui::Stroke::new(1.0, ring))
-                    .corner_radius(16.0)
-                    .inner_margin(egui::Margin { left: 12, right: 8, top: 8, bottom: 8 });
+                ui.allocate_ui_with_layout(
+                    egui::vec2(cw, est_h),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
                 input_frame.show(ui, |ui| {
                     ui.horizontal(|ui| {
                         // 输入:自动增高 1..8 行（Hermes contentEditable 同感）
@@ -1295,6 +1316,7 @@ impl ChatView {
                                 .on_hover_text(format!("当前模型: {}", cur));
                         });
                     });
+                });
                 });
             });
             self.composer_focus = resp_out.as_ref().is_some_and(|r| r.has_focus());

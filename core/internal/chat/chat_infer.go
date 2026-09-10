@@ -47,6 +47,24 @@ type InferResult struct {
 	ToolCalls []agent.ToolCall `json:"tool_calls,omitempty"`
 }
 
+// sessionIDKey — 批次B(2026-09-10): 对话 session_id 经 ctx 透传给推理层
+// 目的: 请求体带 session_id → 网关 LLMLingua 自动压缩 + 会话粘性 KV 前缀缓存对对话生效
+type sessionIDKey struct{}
+
+// WithSessionID — 注入会话 ID（chat_handlers 调用）
+func WithSessionID(ctx context.Context, id string) context.Context {
+	if id == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, sessionIDKey{}, id)
+}
+
+// SessionIDFromCtx — 读取会话 ID（chat_infer 组装 body 用）
+func SessionIDFromCtx(ctx context.Context) string {
+	v, _ := ctx.Value(sessionIDKey{}).(string)
+	return v
+}
+
 // Infer — 单轮推理（历史 + 新用户消息 → 响应）
 // msgs: 已有消息（role/content 顺序——含工具链）
 // tools: 可选（chat 格式 tools 参数——C4b 工具循环用——缺省不带工具）
@@ -65,6 +83,10 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 		"messages":  msgsAll,
 		"stream":    false,                           // C3 流式走 InferStream——这里保持非流式（C2 兼容）
 		"reasoning": map[string]any{"effort": "low"}, // 思考不能关——low 控深度（Mr2109）
+	}
+	// 批次B(2026-09-10): 带 session_id → 网关 LLMLingua 压缩 + 粘性前缀缓存对对话生效
+	if sid := SessionIDFromCtx(ctx); sid != "" {
+		body["session_id"] = sid
 	}
 	if len(tools) > 0 && len(tools[0]) > 0 {
 		// P4-50 修复: __temp__ 是温度标记（收尾轮 0.3）——不是真 tools——必须剥离（X3 拒绝 Missing tool type）
@@ -141,6 +163,10 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 		"messages":  msgsAll,
 		"stream":    true,
 		"reasoning": map[string]any{"effort": "low"},
+	}
+	// 批次B(2026-09-10): 带 session_id（同 Infer——粘性缓存/LLMLingua 对对话生效）
+	if sid := SessionIDFromCtx(ctx); sid != "" {
+		body["session_id"] = sid
 	}
 	body["temperature"] = toolTemp
 	if len(tools) > 0 && len(tools[0]) > 0 {
