@@ -10,6 +10,7 @@ mod modules; // v2.5.6 集装箱模块系统（Mr2109 2026-08-29——注册表+
 // fallback 方向 = en（设计稿 §7-7 拍板 2026-09-11）：不支持的系统语言回落英文，
 // 中文键本就全覆盖，中文用户不会撞到 fallback；启动仍显式 set_locale（L2 改为跟随系统）。
 rust_i18n::i18n!("locales", fallback = "en");
+use rust_i18n::t;   // i18n（B3：窗口标题/应用名走键）
 
 /// 搜索 macOS 26+ 动态字体包里的 PingFang（AssetsV2——路径随系统更新变）
 fn find_pingfang_assets() -> Option<String> {
@@ -37,12 +38,12 @@ fn main() -> eframe::Result<()> {
     rust_i18n::set_locale("zh-CN");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(format!("虫族 Zerg v{}", env!("CARGO_PKG_VERSION")))
+            .with_title(t!("app.version_line", version = env!("CARGO_PKG_VERSION")).to_string())
             .with_inner_size([1280.0, 800.0]),
         ..Default::default()
     };
     eframe::run_native(
-        "虫族 Zerg",
+        t!("app.title").as_ref(),
         options,
         Box::new(|cc| {
             // 加载中文字体（egui 默认字体不含中文——乱码修复）
@@ -98,7 +99,7 @@ fn setup_fonts(ctx: &egui::Context) {
                 fam.insert(0, "cjk".to_owned());
             }
             loaded = true;
-            println!("[zerg-ui] 中文字体: {}", path);
+            println!("[zerg-ui] CJK font: {}", path);
             break;
         }
     }
