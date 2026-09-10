@@ -11,6 +11,39 @@ use egui_commonmark::CommonMarkViewer; // P4-23 消息 Markdown 渲染（借文�
 
 // P4-25 md 预处理（补 egui_commonmark 不支持的格式）：
 // ① ==高亮==（GFM highlight——pulldown-cmark 不支持）→ **加粗**（视觉近似）
+/// M05(2026-09-10 审计)：md_preprocess 结果按内容哈希缓存。
+/// 渲染路径每帧对相同文本重复调用（长会话 O(n) 每帧）——命中即返回，避免逐字符重建。
+static MD_PRE_CACHE: std::sync::Mutex<Option<std::collections::HashMap<u64, String>>> =
+    std::sync::Mutex::new(None);
+
+fn md_preprocess_cached(s: &str) -> String {
+    if s.len() > 200_000 {
+        return md_preprocess(s); // 巨串不缓存（防内存膨胀）
+    }
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        s.hash(&mut h);
+        h.finish()
+    };
+    {
+        let mut g = MD_PRE_CACHE.lock().unwrap();
+        if let Some(v) = g.get_or_insert_with(std::collections::HashMap::new).get(&key) {
+            return v.clone();
+        }
+    }
+    let out = md_preprocess(s);
+    {
+        let mut g = MD_PRE_CACHE.lock().unwrap();
+        let m = g.get_or_insert_with(std::collections::HashMap::new);
+        if m.len() > 256 {
+            m.clear();
+        }
+        m.insert(key, out.clone());
+    }
+    out
+}
+
 // P4-51(2026-09-10): 硬换行转换——CommonMark 单个 \n 是软换行(渲染成空格),
 // 导致"每个数字单独一行"的回复在 UI 挤成一段。恢复: 行尾补两空格 = 硬换行。
 // 跳过: 代码围栏内(``` ... ```——代码块本身保留换行)、空行、已是硬换行的行(行尾 2 空格/反斜杠)
@@ -117,60 +150,93 @@ mod harden_breaks_tests {
 static MATH_CACHE: std::sync::Mutex<Option<std::collections::HashMap<String, Vec<u8>>>> =
     std::sync::Mutex::new(None);
 
-fn render_math(ui: &mut egui::Ui, math: &str, inline: bool) {
-    let mut cache = MATH_CACHE.lock().unwrap();
-    let map = cache.get_or_insert_with(std::collections::HashMap::new);
-    let svg_bytes = if let Some(b) = map.get(math) {
-        b.clone()
-    } else {
-        // P4-26b mathjax-full 脚本（KaTeX CLI 的 --format svg 实际输出 HTML 无 <svg>——
-        // 换 mathjax-full tex2svg.js 输出标准 SVG——resvg 可加载）
-        let mut cmd = std::process::Command::new("node");
-        cmd.arg(std::env::var("HOME").unwrap_or_default() + "/.zerg-math/tex2svg.js");
-        if !inline {
-            cmd.arg("display");
+/// M02(2026-09-10 审计)：公式 → SVG 字节（失败返回**空 Vec** = 不可渲染哨兵）。
+/// 从 render_math 抽出：调用方在**锁外**执行本函数，避免把子进程阻塞包在全局锁里。
+fn compute_math_svg(math: &str, inline: bool) -> Vec<u8> {
+    if math.trim().is_empty() {
+        return Vec::new();
+    }
+    // P4-26b mathjax-full 脚本（KaTeX CLI 的 --format svg 实际输出 HTML 无 <svg>——换 tex2svg.js 输出标准 SVG）
+    let mut cmd = std::process::Command::new("node");
+    cmd.arg(std::env::var("HOME").unwrap_or_default() + "/.zerg-math/tex2svg.js");
+    if !inline {
+        cmd.arg("display");
+    }
+    cmd.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(), // 失败哨兵——缓存后不再每帧 fork
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let _ = stdin.write_all(math.as_bytes());
+    }
+    let out = child.wait_with_output();
+    let svg = match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => String::new(),
+    };
+    if svg.trim().is_empty() || !svg.contains("<svg") {
+        return Vec::new(); // 失败哨兵
+    }
+    // P4-27 暗色主题适配：mathjax SVG 默认黑色——在 <svg> 标签注入浅色
+    let svg = svg.trim();
+    let svg = if let Some(pos) = svg.find('>') {
+        let tag = &svg[..pos];
+        let rest = &svg[pos..];
+        if tag.contains("fill=") {
+            svg.to_string()
+        } else {
+            format!("{} fill={:?}{}", tag, "#c9c9c9", rest)
         }
-        cmd.stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null());
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(_) => {
+    } else {
+        svg.to_string()
+    };
+    svg.as_bytes().to_vec()
+}
+
+/// M02/M03(2026-09-10 审计)公式渲染：
+/// - 失败也落缓存（空 Vec = 不可渲染哨兵）→ 不再每帧 fork node + 阻塞等待
+/// - 锁只保护 map 读写，子进程执行在锁外
+/// - 图片 URI 用**内容哈希**（原用公式长度 → 等长公式互相串图）
+fn render_math(ui: &mut egui::Ui, math: &str, inline: bool) {
+    let cached: Option<Vec<u8>> = {
+        let mut guard = MATH_CACHE.lock().unwrap();
+        guard
+            .get_or_insert_with(std::collections::HashMap::new)
+            .get(math)
+            .cloned()
+    };
+    let svg_bytes = match cached {
+        Some(b) if b.is_empty() => {
+            ui.weak(format!("${}$", math)); // 已知不可渲染——直接降级为文本
+            return;
+        }
+        Some(b) => b,
+        None => {
+            let computed = compute_math_svg(math, inline); // 锁外执行子进程
+            let mut guard = MATH_CACHE.lock().unwrap();
+            let map = guard.get_or_insert_with(std::collections::HashMap::new);
+            if map.len() > 512 {
+                map.clear(); // 防无上限增长
+            }
+            map.insert(math.to_string(), computed.clone());
+            if computed.is_empty() {
                 ui.weak(format!("${}$", math));
                 return;
             }
-        };
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            let _ = stdin.write_all(math.as_bytes());
+            computed
         }
-        let out = child.wait_with_output();
-        let svg = match out {
-            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-            _ => String::new(),
-        };
-        if svg.trim().is_empty() || !svg.contains("<svg") {
-            ui.weak(format!("${}$", math));
-            return;
-        }
-        // P4-27 暗色主题适配：mathjax SVG 默认黑色（fill 继承）——在 <svg> 标签注入浅色
-        let svg = svg.trim();
-        let svg = if let Some(pos) = svg.find('>') {
-            let tag = &svg[..pos];
-            let rest = &svg[pos..];
-            if tag.contains("fill=") {
-                svg.to_string()
-            } else {
-                format!("{} fill={:?}{}", tag, "#c9c9c9", rest)
-            }
-        } else {
-            svg.to_string()
-        };
-        let bytes = svg.as_bytes().to_vec();
-        map.insert(math.to_string(), bytes.clone());
-        bytes
     };
-    let uri: String = format!("math-{}.svg", math.len());
+    // M03: URI = 公式内容哈希（等长公式不再串图）
+    let uri: String = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        math.hash(&mut h);
+        format!("math-{:016x}.svg", h.finish())
+    };
     let img = egui::Image::from_bytes(
         std::borrow::Cow::Owned(uri),
         egui::load::Bytes::Shared(std::sync::Arc::from(svg_bytes.as_slice())),
@@ -205,6 +271,8 @@ pub struct ChatView {
     create_pending: Option<api::SharedResult<Value>>,
     // C3 流式发送（生成中状态）
     stream: Option<api::SharedChatStream>,
+    // M04(2026-09-10 审计): 本轮流所属会话 id——poll 只在仍是当前会话时回写，防跨会话串台
+    stream_sid: Option<String>,
     streaming: bool,
     stream_content: String,
     stream_reasoning: String,
@@ -300,6 +368,7 @@ impl ChatView {
             regen_pending: None,
             create_pending: None,
             stream: None,
+            stream_sid: None,
             streaming: false,
             stream_content: String::new(),
             stream_reasoning: String::new(),
@@ -786,12 +855,16 @@ impl ChatView {
         if self.streaming {
             let s = self.stream.clone();
             if let Some(s) = s {
+                // M04(2026-09-10 审计): 会话归属校验——切走后旧流只收尾，不再回写当前会话视图
+                let owned = self.stream_sid.as_deref() == self.active_session.as_deref();
                 let st = s.lock().unwrap();
-                self.stream_content = st.content.clone();
-                self.stream_reasoning = st.reasoning.clone();
-                self.stream_tool = st.tool_name.clone(); // P4-35 工具执行中状态
-                self.stream_tool_elapsed = st.tool_elapsed; // P4-36 心跳计时
-                self.stream_compacting = st.compacting; // P4-39 压缩进行中
+                if owned {
+                    self.stream_content = st.content.clone();
+                    self.stream_reasoning = st.reasoning.clone();
+                    self.stream_tool = st.tool_name.clone(); // P4-35 工具执行中状态
+                    self.stream_tool_elapsed = st.tool_elapsed; // P4-36 心跳计时
+                    self.stream_compacting = st.compacting; // P4-39 压缩进行中
+                }
                 if let Some(e) = st.error.clone() {
                     self.send_error = Some(e);
                 }
@@ -800,9 +873,12 @@ impl ChatView {
                     drop(st);
                     self.stream = None;
                     self.streaming = false;
-                    // 流结束——重拉会话（拿完整消息 + 标题）
-                    if let Some(sid) = self.active_session.clone() {
-                        self.session_pending = Some(api::fetch_chat_session_async(sid));
+                    self.stream_sid = None;
+                    // 流结束——重拉会话（拿完整消息 + 标题）；仅当该流属于当前会话
+                    if owned {
+                        if let Some(sid) = self.active_session.clone() {
+                            self.session_pending = Some(api::fetch_chat_session_async(sid));
+                        }
                     }
                     // D3: 轮次完成 → 清除 journal
                     Self::clear_inflight();
@@ -814,7 +890,8 @@ impl ChatView {
                         self.send_error = Some(format!("插话未命中工具边界——已转入排队（{} 条）", self.queue.len()));
                     }
                     // C1(2026-09-10): 队列自动续发（先发后删——Hermes drain 语义）
-                    if !self.queue.is_empty() {
+                    // M04: 只有本会话的轮次结束才续发——否则排队消息会投到别的会话
+                    if owned && !self.queue.is_empty() {
                         let next = self.queue.remove(0);
                         self.input = next;
                         self.send();
@@ -1342,7 +1419,7 @@ impl ChatView {
                                             .show(ui, |ui| {
                                                 // P4-31 思考内容 md 渲染（CommonMarkViewer——与消息同款）
                                                 let cache = msg_md_cache.entry(-2).or_default();
-                                                CommonMarkViewer::new().render_math_fn(Some(&render_math)).show(ui, cache, &md_preprocess(&stream_reasoning));
+                                                CommonMarkViewer::new().render_math_fn(Some(&render_math)).show(ui, cache, &md_preprocess_cached(&stream_reasoning));
                                             });
                                     } else {
                                         // 折叠：实时尾部 60 字（滚动更新——看得见思考在动）+ 字数
@@ -1381,7 +1458,7 @@ impl ChatView {
                                 } else {
                                     // D1 流式内容也 Markdown 渲染（P4-29 用拆借的 cache——闭包内无 self 冲突）
                                     let cache = msg_md_cache.entry(-1).or_default();
-                                    CommonMarkViewer::new().render_math_fn(Some(&render_math)).show(ui, cache, &md_preprocess(&stream_content));
+                                    CommonMarkViewer::new().render_math_fn(Some(&render_math)).show(ui, cache, &md_preprocess_cached(&stream_content));
                                 }
                             });
                     });
@@ -1785,7 +1862,7 @@ impl ChatView {
                     .show(ui, |ui| {
                         // P4-23 Markdown 渲染（CommonMarkViewer——文档查看模式同款）
                         let cache = msg_md_cache.entry(msg_id).or_default();
-                        CommonMarkViewer::new().render_math_fn(Some(&render_math)).show(ui, cache, &md_preprocess(content));
+                        CommonMarkViewer::new().render_math_fn(Some(&render_math)).show(ui, cache, &md_preprocess_cached(content));
                     })
                     .response
                     .interact(egui::Sense::click());
@@ -1903,7 +1980,7 @@ impl ChatView {
                         .show(ui, |ui| {
                             // P4-23 Markdown 渲染（CommonMarkViewer——文档查看模式同款）
                             let cache = msg_md_cache.entry(msg_id).or_default();
-                            CommonMarkViewer::new().render_math_fn(Some(&render_math)).show(ui, cache, &md_preprocess(content));
+                            CommonMarkViewer::new().render_math_fn(Some(&render_math)).show(ui, cache, &md_preprocess_cached(content));
                         })
                         .response
                         .interact(egui::Sense::click());
