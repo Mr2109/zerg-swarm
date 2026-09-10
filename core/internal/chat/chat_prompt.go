@@ -17,6 +17,7 @@ package chat
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
 	"log"
 )
 
@@ -29,7 +30,8 @@ func PromptHash(p string) string {
 // BuildTieredSystemPrompt — 组装三档（纯函数——便于单测）
 func BuildTieredSystemPrompt(base, model, sessionID string, rt *ToolRuntime) string {
 	// stable：基础指令常量（调用方传入）+ 身份
-	stable := base + "\n\n# 你的身份\n- 你当前运行在虫族本地模型集群——Mr2109的对话助手——不要调查或质疑自己的身份。"
+	// 多语言 D2：执行接口约定进系统提示（常量 → 字节稳定，仅新会话生效）
+	stable := base + "\n\n# 你的身份\n- 你当前运行在虫族本地模型集群——Mr2109的对话助手——不要调查或质疑自己的身份。" + "\n\n" + ffp.Conventions
 	// context：会话元信息（模型切换 → 提示重建——缓存键含模型）
 	ctx := "\n\n# 会话环境\n- 模型: " + model
 	// volatile：记忆块 + 工具清单（会话内冻结）

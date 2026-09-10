@@ -56,6 +56,16 @@ func AllTools() []ToolDef {
 	return tools
 }
 
+// ToolDefOf — 按名取工具定义（多语言 D2：执行前接口约定校验读 schema 用）
+func ToolDefOf(name string) (ToolDef, bool) {
+	for _, d := range AllTools() {
+		if d.Function.Name == name {
+			return d, true
+		}
+	}
+	return ToolDef{}, false
+}
+
 // RegisterPluginTool 插件注册工具（可逆副作用——记录归属）
 func RegisterPluginTool(pluginName string, def ToolDef) {
 	pluginTools[pluginName] = append(pluginTools[pluginName], def)
@@ -74,12 +84,10 @@ func toolBash() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "bash",
-			Description: "执行 bash 命令(v1.0.3——AI 专用契约+删除范围门控)。沙盒 shell——只用于执行程序/脚本/测试/构建/编译——文件操作用专用工具。\n\n" +
-				"【删除安全】rm 目标必须落在 { 工作区, /tmp, 白名单 } 内——家目录/根目录/系统路径一律拦截(危险命令拦截:不在允许删除域/家目录保护)。拦截=预期——勿用变量/base64/换拼写绕过(同样拦截)。\n\n" +
-				"【何时用】跑测试/构建/脚本/命令。文件搜索 glob、内容 grep、读 read、编辑 edit、写 write（专用工具有结构化输入+权限检查——bash 裸命令不可控）。\n\n" +
-				"【成败判定】返回首行若为「⚠️ exit N — 命令失败」=失败（附 [guide] 引导）；正常看 [exit_code] 0。空命令/坏参数回 ⚠️ 格式教学(勿原样重发)。超长输出头尾保留+溢出落盘（标注路径——read 可续读）。\n\n" +
-				"【参数】command 必填；cwd 可选（执行目录——默认工作区——跨目录任务请显式给）；timeout_s 可选（默认 30——长任务给 300）。\n\n" +
-				"【示例】\"go test ./...\" 跑测试、\"python3 test.py\" 跑脚本、{\"command\":\"go build\",\"timeout_s\":300} 长编译、{\"command\":\"ls\",\"cwd\":\"sub/dir\"} 指定目录",
+			Description: "执行 shell 命令（测试/构建/脚本/命令）。文件操作走专用工具（read/write/edit/glob/grep——有结构化输入与权限检查）。\n\n" +
+				"【删除安全】rm 目标限 { 工作区, /tmp, 白名单 }；家目录/根目录/系统路径一律拦截。拦截=预期，勿用变量/base64/换拼写绕过（同样拦截）。\n\n" +
+				"【成败判定】首行「⚠️ exit N — 命令失败」=失败（附引导）；正常看 [exit_code] 0。空命令/坏参数回格式教学（勿原样重发）。超长输出头尾保留+溢出落盘路径（read 可续读）。\n\n" +
+				"【示例】\"go test ./...\" 跑测试；{\"command\":\"go build\",\"timeout_s\":300} 长编译；{\"command\":\"ls\",\"cwd\":\"sub/dir\"} 指定目录",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -108,9 +116,9 @@ func toolRead() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "read",
-			Description: "读取文件内容(v1.0.2——多文件类型:文本/PDF/Office/epub 等自动抽取;图像音频视频委托专用工具)。\n\n" +
-				"【用法】\n- 文本: 原文带行号(num=false 可关)——代码/JSON/YAML/MD/LOG 等\n- PDF/Office: 自动抽取文本(pdftotext/textutil/pandoc)——附类型注记\n- 表格: .xlsx 自动抽首 sheet 为 TSV;.csv 原样\n- 编码: GBK/UTF-16 自动转 UTF-8\n- 二进制/图像/音频/视频: 不吐内容,给委托指引\n- 大文件分页: offset/limit;超长行自动 [截断]\n\n" +
-				"【示例】\"read\" path=main.go — 带行号读;\"read\" path=报告.pdf offset=1 limit=100 — 读 PDF;\"read\" path=data.xlsx — 抽 TSV;\"read\" path=旧文件.txt format=raw num=false — 原文无行号",
+			Description: "读取文件内容（文本/PDF/Office/epub 自动抽取；图像/音频/视频给委托指引）。\n\n" +
+				"【用法】文本→带行号原文（num=false 关）；PDF/Office→自动抽取（附类型注记）；.xlsx→首 sheet 抽 TSV、.csv 原样；GBK/UTF-16→自动转 UTF-8；大文件→offset/limit 分页，超长行自动截断。\n\n" +
+				"【示例】\"read\" path=main.go；{\"path\":\"报告.pdf\",\"offset\":1,\"limit\":100}；{\"path\":\"旧.txt\",\"format\":\"raw\",\"num\":false}",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -148,11 +156,9 @@ func toolWrite() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "write",
-			Description: "写文件(v1.0.1——类型感知:防毁+自检+编码)。原子写(临时+回读校验+rename)。\n\n" +
-				"【用法】\n- 写文件用本工具(NOT echo 重定向/cat <<EOF)\n- 覆盖整个文件(追加请先 read 再写)\n- 路径相对于 WorkDir\n\n" +
-				"【v1.0.1 行为】目标为文档/二进制类(.pdf/.docx/.xlsx/.pptx/.epub/.odt 等/图片/音频/视频)→ 拒绝文本写入(防毁——引导专用工具/先删)。写 .json/.xml 自动语法自检,坏则回滚报错。\n\n" +
-				"【参数】path+content 必填;bom=true 加 UTF-8 BOM(Windows/Excel);line_end=lf|crlf 统一行尾;format=raw 裸写(跳防呆/自检——慎用)\n\n" +
-				"【示例】\"write\" path=src/main.go content=\"...\" — 写代码;{\"path\":\"a.json\",\"content\":\"{}\"} — 写 JSON(自动校验);{\"path\":\"win.csv\",\"content\":\"a,b\\n1,2\",\"bom\":true,\"line_end\":\"crlf\"} — Windows 友好",
+			Description: "写文件（原子写：临时+回读校验+rename；覆盖整个文件，追加先 read 再写）。路径相对 WorkDir。\n\n" +
+				"【行为】文档/二进制类（.pdf/.docx/.xlsx/.pptx/.epub/.odt/图片/音视频）拒绝文本写入（防毁）；.json/.xml 自动语法自检，坏则回滚报错。\n\n" +
+				"【示例】\"write\" path=src/main.go content=\"...\"；{\"path\":\"a.json\",\"content\":\"{}\"}（自动校验）；{\"path\":\"win.csv\",\"content\":\"a,b\\n1,2\",\"bom\":true,\"line_end\":\"crlf\"}",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -191,12 +197,8 @@ func toolEdit() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "edit",
-			Description: "在文件中精准替换字符串（search → replace）。\n\n" +
-				"【注意 v1.0.1 起】文档/二进制类目标(.pdf/.docx/.xlsx 等)拒绝 search/replace(与 write 同源防毁——2026-09-09)。\n" +
-				"【用法】\n" +
-				"- 编辑前必须先 read 过该文件（read-before-edit 规则）\n" +
-				"- search 必须唯一匹配（不唯一会失败——用更多上下文或 replace_all）\n" +
-				"- 保持原缩进\n\n" +
+			Description: "精准替换文件中的字符串（search → replace）。\n\n" +
+				"【注意】编辑前必须先 read 该文件（read-before-edit）；search 必须唯一匹配（否则失败——加长上下文或用 replace_all）；保持原缩进；文档/二进制类（.pdf/.docx/.xlsx 等）拒绝替换。\n\n" +
 				"【示例】\"edit\" path=main.go search=\"a / b\" replace=\"a // b\"",
 			Parameters: map[string]any{
 				"type": "object",
@@ -230,8 +232,8 @@ func toolGlob() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "glob",
-			Description: "按模式匹配查找文件（文件搜索用本工具——NOT find/ls）。\n\n" +
-				"【示例】\"glob\" pattern=\"**/*.go\" — 查找所有 Go 文件",
+			Description: "按模式查找文件（不要用 find/ls）。\n\n" +
+				"【示例】\"glob\" pattern=\"**/*.go\"",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -252,12 +254,8 @@ func toolGrep() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "grep",
-			Description: "按正则搜索文件内容（内容搜索用本工具——NOT grep/rg）。\n\n" +
-				"【用法】\n" +
-				"- path 可以是文件或目录（目录递归搜索）\n" +
-				"- pattern 是正则表达式\n" +
-				"- 匹配多时自动分页（最多显示 200 条——用 offset 看后续）\n\n" +
-				"【示例】\"grep\" path=src pattern=\"func \" — 搜索所有函数定义",
+			Description: "按正则搜索文件内容（不要用 bash grep/rg）。path 可为文件或目录（目录递归）；匹配多时自动分页（最多 200 条，用 offset 翻页）。\n\n" +
+				"【示例】\"grep\" path=src pattern=\"func \"",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -286,9 +284,8 @@ func toolLs() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "ls",
-			Description: "列出目录内容(目录结构概览——v1.0.2)。默认: 目录在前、隐藏点项、最多 60 行+省略引导。\n\n" +
-				"【示例】\"ls\" — 当前目录概览\n\"ls\" path=. dir_only=true — 只看子目录\n\"ls\" pattern=*.go limit=0 — 本层所有 .go 文件(limit 0=不截断)\n\"ls\" sort_by=time — 按修改时间新→旧(附 MM-DD HH:mm 时间列)\n\n" +
-				"【分工】ls=本层结构概览(可 pattern 收窄);glob=跨层精确找文件;grep=内容搜索。超限输出请缩小 pattern,勿重发大列表。",
+			Description: "列出目录内容（默认：目录在前、隐藏点项、最多 60 行）。ls=本层概览（可 pattern 收窄）；glob=跨层找文件；grep=内容搜索。\n\n" +
+				"【示例】\"ls\"；{\"path\":\".\",\"dir_only\":true}；{\"pattern\":\"*.go\",\"limit\":0}（不截断）；{\"sort_by\":\"time\"}（附时间列）。超限请缩小 pattern，勿重发大列表。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -330,14 +327,14 @@ func toolWebSearch() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name:        "web_search",
-			Description: `网络搜索（searxng 聚合——调研/查证）。参数: query 必填——可选 lang/time_range/domains/fetch_top——不确定先 help`,
+			Description: `网络搜索（searxng 聚合——调研/查证）。query 必填；可选 lang/time_range/domains/fetch_top/rewrite。不确定先 help:true`,
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"query":      map[string]any{"type": "string", "description": "搜索关键词（自然语言）"},
 					"limit":      map[string]any{"type": "integer", "description": "返回条数（默认 5——长 query 自动 8）"},
-					"lang":       map[string]any{"type": "string", "description": "语言偏好 zh/en/all（默认 all）"},
-					"time_range": map[string]any{"type": "string", "description": "时间过滤 day/week/month/year"},
+					"lang":       map[string]any{"type": "string", "enum": []any{"zh", "en", "all"}, "description": "语言偏好（默认 all）"},
+					"time_range": map[string]any{"type": "string", "enum": []any{"day", "week", "month", "year"}, "description": "时间过滤"},
 					"domains":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "限定域名（site: 过滤）"},
 					"fetch_top":  map[string]any{"type": "integer", "description": "自动抓取前 N 条正文（1-3）"},
 					"rewrite":    map[string]any{"type": "boolean", "description": "LLM 优化搜索词（慢）"},
@@ -354,7 +351,7 @@ func toolWebFetch() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name:        "web_fetch",
-			Description: `抓取网页正文（去标签——截断 10000）。参数: url 必填（http/https 完整地址）——不确定先 help`,
+			Description: `抓取网页正文（去标签，截断 10000）。url 必填（http/https）。不确定先 help:true`,
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -372,7 +369,7 @@ func toolSkillLoad() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name:        "skill_load",
-			Description: `加载技能正文 SKILL.md。参数: name 必填（系统提示列出的技能名——任务匹配时用）`,
+			Description: `加载技能正文 SKILL.md。name 必填（系统提示列出的技能名，任务匹配时用）`,
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -391,7 +388,7 @@ func toolToolSearch() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name:        "tool_search",
-			Description: `搜索发现可用工具（按需）。参数: query 必填（描述需要的能力——工具列表没有时用——发现后直接用）`,
+			Description: `搜索发现可用工具（按需）。query 必填（描述需要的能力，工具列表没有时用，发现后直接调用）`,
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -410,7 +407,7 @@ func toolScreenshot() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name:        "screenshot",
-			Description: `截图+OCR 识别看界面（开发调试——UI 验证/看报错）。参数: vision 可选(true 视觉模型理解)——不确定先 help`,
+			Description: `截图+OCR 识别看界面（开发调试——UI 验证/看报错）。vision 可选(true=视觉模型理解)。不确定先 help:true`,
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -429,21 +426,10 @@ func toolApplyPatch() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "apply_patch",
-			Description: "按精确补丁修改文件（标准 diff 格式——Codex 借鉴——防改错）。\n\n" +
-				"【用法】\n" +
-				"- 编辑前必须先 read 过该文件（read-before-edit 规则）\n" +
-				"- 补丁格式（git diff 风格）:\n" +
-				"    --- a/文件名\n" +
-				"    +++ b/文件名\n" +
-				"    @@ -起始行,行数 +起始行,行数 @@\n" +
-				"     上下文行（锚定——不修改）\n" +
-				"    -要删除的行\n" +
-				"    +要添加的行\n" +
-				"- 必须提供足够上下文（锚定唯一位置——防改错）\n" +
-				"- 位置不对/上下文不匹配 → 应用失败返回错误（不默默改错——重新读文件再写）\n" +
-				"- 与 edit 的区别: edit 是模糊替换（search→replace）；apply_patch 是精确补丁（行号+上下文严格匹配——改错位置会失败）\n\n" +
-				"【示例】\n" +
-				"apply_patch path=main.go patch=\"--- a/main.go\\n+++ b/main.go\\n@@ -10,3 +10,3 @@\\n func old() {\\n-    return oldValue\\n+    return newValue\\n }\"",
+			Description: "按精确补丁修改文件（标准 diff——行号+上下文严格匹配，位置错则失败，不默默改错）。编辑前必须先 read 该文件。\n\n" +
+				"【补丁格式】git diff 风格：--- a/文件名 / +++ b/文件名 / @@ -起始行,行数 +起始行,行数 @@ / 上下文行（锚定）/ -删除行 / +添加行；必须给足上下文锚定唯一位置。\n\n" +
+				"【与 edit 的区别】edit=模糊替换（search→replace）；apply_patch=精确补丁（改错位置会失败）。\n\n" +
+				"【示例】apply_patch path=main.go patch=\"--- a/main.go\\n+++ b/main.go\\n@@ -10,3 +10,3 @@\\n func old() {\\n-    return oldValue\\n+    return newValue\\n }\"",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -460,19 +446,15 @@ func toolSpawnAgent() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "spawn_agent",
-			Description: "派子 agent 执行独立子任务（agent 间通信——Codex 借鉴）。\n\n" +
-				"【用法】\n" +
-				"- 复杂任务可拆分子任务——派子 agent 执行（独立上下文——不污染父）\n" +
-				"- 子 agent 返回精简摘要（1-2K 字符——父上下文干净）\n" +
-				"- machine 指定机器（双机协作）: x3/local/mini1/mini2（不传=默认调度）\n" +
-				"- 适合: 独立调研/独立文件处理/独立验证——不适合需要父上下文的子任务\n\n" +
+			Description: "派子 agent 执行独立子任务（独立上下文，不污染父；返回 1-2K 精简摘要）。\n\n" +
+				"【适合】独立调研/独立文件处理/独立验证；不适合需要父上下文的子任务。machine 指定机器：x3/local/mini1/mini2（不传=默认调度）。\n\n" +
 				"【示例】\"spawn_agent\" prompt=\"调研 X 项目的依赖结构\" type=\"explore\" machine=\"x3\"",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"prompt":  map[string]any{"type": "string", "description": "子任务完整提示词（自包含——子 agent 独立执行）"},
-					"type":    map[string]any{"type": "string", "description": "子 agent 类型: explore/plan/general（默认 general）"},
-					"machine": map[string]any{"type": "string", "description": "指定机器（双机协作）: x3/local/mini1/mini2（不传=默认调度）"},
+					"type":    map[string]any{"type": "string", "enum": []any{"explore", "plan", "general"}, "description": "子 agent 类型（默认 general）"},
+					"machine": map[string]any{"type": "string", "x-zerg-format": "ascii", "description": "指定机器（双机协作）: x3/local/mini1/mini2（不传=默认调度）"},
 				},
 				"required": []string{"prompt"},
 			},
@@ -487,22 +469,16 @@ func toolTodo() ToolDef {
 		Type: "function",
 		Function: FunctionDef{
 			Name: "todo",
-			Description: "任务清单管理（Claude Code todo 借鉴——复杂任务拆解防遗漏）。\n\n" +
-				"【用法】\n" +
-				"- 复杂任务（多步骤/多文件）先拆解为 todo 清单——逐步勾选——防止遗漏\n" +
-				"- action 参数: create（创建清单）/ update（更新某项状态）/ list（查看当前清单）\n" +
-				"- create: items 传待办数组（[{content, status}]——status: pending/in_progress/completed/cancelled）\n" +
-				"- update: item_id 传要更新的项 + status 传新状态\n" +
-				"- 清单持久化到工作区 .zerg/todo.json——跨轮次保留\n\n" +
-				"【示例】\n" +
-				"\"todo\" action=\"create\" items=[{\"content\":\"调研依赖\",\"status\":\"completed\"},{\"content\":\"实现核心逻辑\",\"status\":\"in_progress\"},{\"content\":\"验证结果\",\"status\":\"pending\"}]",
+			Description: "任务清单管理（复杂任务拆解防遗漏；持久化到工作区 .zerg/todo.json，跨轮次保留）。\n\n" +
+				"【用法】复杂任务（多步骤/多文件）先建清单逐步勾选。action=create（items 传 [{content, status}]）/ update（item_id + status）/ list。status: pending/in_progress/completed/cancelled。\n\n" +
+				"【示例】\"todo\" action=\"create\" items=[{\"content\":\"调研依赖\",\"status\":\"completed\"},{\"content\":\"实现核心逻辑\",\"status\":\"in_progress\"},{\"content\":\"验证结果\",\"status\":\"pending\"}]",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"action":  map[string]any{"type": "string", "description": "操作: create/update/list（默认 list）"},
+					"action":  map[string]any{"type": "string", "enum": []any{"create", "update", "list"}, "description": "操作（默认 list）"},
 					"items":   map[string]any{"type": "array", "description": "create 时待办数组（[{content, status}]）"},
 					"item_id": map[string]any{"type": "integer", "description": "update 时要更新的项序号"},
-					"status":  map[string]any{"type": "string", "description": "update 时新状态: pending/in_progress/completed/cancelled"},
+					"status":  map[string]any{"type": "string", "enum": []any{"pending", "in_progress", "completed", "cancelled"}, "description": "update 时新状态"},
 				},
 				"required": []string{"action"},
 			},
