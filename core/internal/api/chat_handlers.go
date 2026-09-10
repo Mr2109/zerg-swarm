@@ -65,6 +65,24 @@ const chatSystemPrompt = `你是虫族 AI（Zerg）的对话助手——运行�
 // P4-50 渐进式常驻开关（ZERG_PROGRESSIVE=1 启用——默认关——对照验证——验证达标转正默认开）
 var progressiveEnabled = os.Getenv("ZERG_PROGRESSIVE") == "1"
 
+// 批次B(2026-09-10): 运行中轮次取消注册表（abort 端点 +
+// 客户端断连时部分结果落库——会话 id → CancelFunc）
+var chatTurnCancels sync.Map
+
+// AbortMessage — POST /api/chat/sessions/{id}/abort（批次B 服务端中断）
+// 语义: 取消该会话运行中的轮次；已流出的部分内容由 SendMessage 侧落库（附"（已中断）"）
+func (h *ChatHandlers) AbortMessage(w http.ResponseWriter, r *http.Request) {
+	id := chiURLParam(r, "id")
+	if v, ok := chatTurnCancels.Load(id); ok {
+		if cancel, ok2 := v.(context.CancelFunc); ok2 && cancel != nil {
+			cancel()
+			writeChatJSON(w, http.StatusOK, map[string]any{"ok": true, "session_id": id, "aborted": true})
+			return
+		}
+	}
+	writeChatJSON(w, http.StatusOK, map[string]any{"ok": true, "session_id": id, "aborted": false, "reason": "无运行中的轮次"})
+}
+
 // ChatHandlers — 对话 API 处理器
 type ChatHandlers struct {
 	store *chat.ChatStore
@@ -92,6 +110,7 @@ func (h *ChatHandlers) RegisterChatRoutes(r chiRouter) {
 	r.Get("/api/chat/sessions/{id}/messages", h.ListMessages)
 	r.Post("/api/chat/sessions/{id}/send", h.SendMessage)
 	r.Post("/api/chat/sessions/{id}/send-tool", h.SendMessageTool) // C4b 工具循环对话
+	r.Post("/api/chat/sessions/{id}/abort", h.AbortMessage)        // 批次B(2026-09-10): 服务端中断（部分结果落库）
 	r.Patch("/api/chat/messages/{mid}", h.EditMessage)             // P0 消息编辑（点击编辑——Hermes user-edit 借鉴）
 	// 搜索
 	r.Get("/api/chat/search", h.Search)
@@ -371,7 +390,7 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 
 	inferAdapter := func(ctx context.Context, model, sysP string, m []map[string]any,
 		onDelta func(deltaType, text string), toolsParam []map[string]any) (*loopcore.Response, error) {
-		ir, ierr := h.infer.Infer(ctx, model, sysP, m) // 非流式——Hermes 模式不带 tools 字段
+		ir, ierr := h.infer.Infer(chat.WithSessionID(ctx, id), model, sysP, m) // 非流式——Hermes 模式不带 tools 字段
 		if ierr != nil {
 			return nil, ierr
 		}
@@ -640,6 +659,10 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// C4a 上下文压缩（P4-39 T5: SSE 先行——压缩过程可见——Hermes TurnActivityIndicator "compacting"）
+	// 批次B(2026-09-10): 运行中轮次注册取消（abort 端点 + 断连部分落库）
+	runCtx, runCancel := context.WithCancel(r.Context())
+	chatTurnCancels.Store(id, runCancel)
+	defer func() { chatTurnCancels.Delete(id); runCancel() }()
 	// 压缩耗时 10-30s——用户在 UI 看到"正在压缩历史…"而非静默卡住
 	writeSSE("compacting", `{}`)
 	compacted, _ := h.store.CompressHistory(r.Context(), h.infer, id, se.Model, history)
@@ -668,7 +691,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	// 五重防护/心跳/引导收尾全部沉淀进内核——此处只做装配）
 	inferAdapter := func(ctx context.Context, model, sysPrompt string, m []map[string]any,
 		onDelta func(deltaType, text string), toolsParam []map[string]any) (*loopcore.Response, error) {
-		ir, ierr := h.infer.InferStream(ctx, model, sysPrompt, m, onDelta, toolsParam)
+		ir, ierr := h.infer.InferStream(chat.WithSessionID(ctx, id), model, sysPrompt, m, onDelta, toolsParam)
 		if ierr != nil {
 			return nil, ierr
 		}
@@ -682,7 +705,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return kr, nil
 	}
 	var tracesMu sync.Mutex
-	kres := loopcore.Run(r.Context(), loopcore.Config{
+	kres := loopcore.Run(runCtx, loopcore.Config{
 		MaxRounds:    chat.MaxToolRounds,
 		WallClock:    600 * time.Second,
 		RoundTimeout: 120 * time.Second,
@@ -763,6 +786,32 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// 内核结果 → 原有落库/收尾形态（result/traces 适配）
+	// 批次B(2026-09-10): 中断（abort 或客户端断连）→ 已流出内容落库（不再凭空消失）
+	if runCtx.Err() != nil {
+		partial := strings.TrimSpace(kres.Content)
+		if partial == "" {
+			payload, _ := json.Marshal(map[string]any{"interrupted": true, "empty": true})
+			writeSSE("done", string(payload))
+			return
+		}
+		pc, pr := stripReasoningFromContent(&chat.InferResult{Content: kres.Content, Reasoning: kres.Reasoning})
+		if pc == "" {
+			pc = partial
+		}
+		astID, aerr := h.store.AddMessage(&chat.Message{
+			SessionID: id, Role: "assistant",
+			Content: pc + "\n\n（已中断）", Reasoning: pr, Model: se.Model,
+			Active: true, Timestamp: chatNow(),
+		})
+		if aerr == nil {
+			payload, _ := json.Marshal(map[string]any{"message_id": astID, "interrupted": true})
+			writeSSE("done", string(payload))
+		} else {
+			payload, _ := json.Marshal(map[string]any{"error": aerr.Error(), "interrupted": true})
+			writeSSE("error", string(payload))
+		}
+		return
+	}
 	if kres.Err != "" {
 		// 推理失败（重试后仍失败）——回滚 user 消息 + SSE 发 error
 		_ = h.store.DeleteMessage(id, userMsgID)
@@ -801,7 +850,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		cur = append(cur, map[string]any{"role": "user", "content": "（你的上一条输出是思考过程——不是回答。请用中文直接回答用户的问题——基于已获取的工具结果——简洁总结。）"})
 		var retryRes *chat.InferResult
 		// P4-50 重试轮也限时（模型可能继续绕——不答中文——60s 截断）
-		retryCtx, retryCancel := context.WithTimeout(r.Context(), 60*time.Second)
+		retryCtx, retryCancel := context.WithTimeout(runCtx, 60*time.Second)
 		retryRes, _ = h.infer.InferStream(retryCtx, se.Model, sysPrompt, cur, func(deltaType, text string) {
 			payload, _ := json.Marshal(map[string]any{"type": deltaType, "text": text})
 			writeSSE("delta", string(payload))
