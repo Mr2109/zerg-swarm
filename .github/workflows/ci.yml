@@ -38,6 +38,14 @@ jobs:
         working-directory: ui
         run: cargo test -p zerg-ui
 
+  docs:
+    name: 文档双语门禁（配对/标题/链接）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检查
+        run: python3 scripts/check_docs.py
+
   secrets:
     name: 密钥扫描
     runs-on: ubuntu-latest

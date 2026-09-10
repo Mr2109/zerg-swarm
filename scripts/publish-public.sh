@@ -268,6 +268,16 @@ if [ "$DRY_RUN" = "1" ]; then
   exit 0
 fi
 
+# 4b. 文档双语门禁（配对完整 / 标题结构对齐 / 链接有效 / 源声明）
+if [ -f "$REPO_ROOT/scripts/check_docs.py" ]; then
+  if python3 "$REPO_ROOT/scripts/check_docs.py" "$OUT"; then
+    echo "  文档门禁: 通过"
+  else
+    echo "  ❌ 文档门禁未通过——已中止导出" >&2
+    exit 1
+  fi
+fi
+
 say "5/6 生成单个压平提交（SQUASH）"
 cd "$OUT"
 rm -rf .git
