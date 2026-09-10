@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -450,10 +451,16 @@ func main() {
 	// V22-压缩：LLMLingua-2 一体化压缩器（ONNX，纯 Go 进程内）
 	// 路径：compress_models/llmlingua2-onnx/（模型已转换 ONNX）
 	compressorPath := filepath.Join("<volume-path>", "Zerg", "compress_models", "llmlingua2-onnx")
-	gw.SetCompressor(compressor.New(compressor.Config{
+	linguaCompressor := compressor.New(compressor.Config{
 		ModelPath: filepath.Join(compressorPath, "model.onnx"),
 		TokPath:   filepath.Join(compressorPath, "tokenizer.json"),
-	}))
+	})
+	gw.SetCompressor(linguaCompressor)
+	// 丙批 §4.2（2026-09-10）：压缩单一入口的 LLMLingua-2 依赖——与网关同一个进程内 ONNX 实例
+	chat.SetLinguaCompressor(func(_ context.Context, text string) (string, error) {
+		out, _, _, err := linguaCompressor.Compress(text)
+		return out, err
+	})
 
 	// B4 v2：排除本机模式切换（用户工作时——路由跳过 local）
 	r.Post("/api/fleet/exclude-local", func(w http.ResponseWriter, r *http.Request) {

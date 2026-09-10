@@ -454,7 +454,12 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	history, _ := h.store.GetActiveMessages(id)
-	_, _ = h.store.CompressHistory(r.Context(), h.infer, id, se.Model, history)
+	// 丙批 §4.2（2026-09-10）：压缩走单一入口 MaybeCompact（冷却/硬熔断/召回指针在内部）
+	if did, cerr := h.store.MaybeCompact(r.Context(), id, se.Model, history, chat.LinguaFn(), chat.SummarizeWithInfer(h.infer, id, se.Model), false); did {
+		h.store.ClearSessionPrompt(id) // §4.1：压缩后系统提示需重建
+	} else if cerr != nil {
+		log.Printf("⚠️ 会话 %s 压缩失败（已记冷却）: %v", id, cerr)
+	}
 	history, _ = h.store.GetActiveMessages(id)
 	msgs := make([]map[string]any, 0, len(history))
 	for _, m := range history {
@@ -472,7 +477,8 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	// 乙批（2026-09-10）：每轮开始清零记忆失败计数（连续 3 次失败后第 4 次返回终止态——不阻塞本轮回复）
 	chat.BeginMemoryTurn(id)
 	// 乙批（2026-09-10）：记忆块参与系统提示 volatile 层——取自会话冻结快照（会话内字节稳定，写盘不改已发出请求）
-	sysPrompt := chatSystemPrompt + fmt.Sprintf("\n\n# 你的身份\n- 你当前运行在模型 %s（虫族本地模型集群）——Mr2109的对话助手——不要调查或质疑自己的身份。", se.Model) + chat.BuildHermesToolPrompt(progRT) + chat.MemoryBlock(id)
+	// 丙批 §4.1（2026-09-10）：三档组装 + 会话内冻结——首次构建落库，后续轮原样复用（模型切换自动重建）
+	sysPrompt := h.store.SessionSystemPrompt(id, chatSystemPrompt, se.Model, progRT)
 	gate := &chat.ChatGate{}
 
 	inferAdapter := func(ctx context.Context, model, sysP string, m []map[string]any,
@@ -512,6 +518,8 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 			c, e := chat.KbSearchExecute(query, limit)
 			return c, "", e
 		}
+		// 乙批验收③修正（2026-09-10）：把会话 id 透传给工具（memory 的"每轮失败计数"按会话隔离）
+		targs["_session_id"] = id
 		tc := agent.ToolCall{ID: "kernel", Name: name, Args: targs}
 		result := ec.ExecuteTool(ctx, name, tc.Args, gate)
 		// C2: 插话 steer 挂到工具结果（下一次工具边界生效）
@@ -755,7 +763,8 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	// 乙批（2026-09-10）：每轮开始清零记忆失败计数（连续 3 次失败后第 4 次返回终止态——不阻塞本轮回复）
 	chat.BeginMemoryTurn(id)
 	// 乙批（2026-09-10）：记忆块参与系统提示 volatile 层——取自会话冻结快照（会话内字节稳定，写盘不改已发出请求）
-	sysPrompt := chatSystemPrompt + fmt.Sprintf("\n\n# 你的身份\n- 你当前运行在模型 %s（虫族本地模型集群）——Mr2109的对话助手——不要调查或质疑自己的身份。", se.Model) + chat.BuildHermesToolPrompt(progRT) + chat.MemoryBlock(id)
+	// 丙批 §4.1（2026-09-10）：三档组装 + 会话内冻结——首次构建落库，后续轮原样复用（模型切换自动重建）
+	sysPrompt := h.store.SessionSystemPrompt(id, chatSystemPrompt, se.Model, progRT)
 	gate := &chat.ChatGate{}
 	// P4-46 Hermes 模式: 不带 tools 字段（内核 Deps.Tools=nil——模板 XML 分支不渲染——模型输出 <tool_call>JSON</tool_call>）
 
@@ -790,8 +799,12 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	// 压缩耗时 10-30s——用户在 UI 看到"正在压缩历史…"而非静默卡住
 	writeSSE("compacting", `{}`)
-	compacted, _ := h.store.CompressHistory(r.Context(), h.infer, id, se.Model, history)
+	compacted, cerr := h.store.MaybeCompact(r.Context(), id, se.Model, history, chat.LinguaFn(), chat.SummarizeWithInfer(h.infer, id, se.Model), false)
+	if cerr != nil {
+		log.Printf("⚠️ 会话 %s 压缩失败（已记冷却）: %v", id, cerr)
+	}
 	if compacted {
+		h.store.ClearSessionPrompt(id) // §4.1：压缩后系统提示需重建
 		writeSSE("compact_done", `{"done":true}`)
 		history, _ = h.store.GetActiveMessages(id)
 		msgs = msgs[:0]
@@ -863,6 +876,8 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 					}
 					content, execErr = chat.KbSearchExecute(query, limit)
 				} else {
+					// 乙批验收③修正（2026-09-10）：会话 id 透传（memory 失败计数按会话隔离）
+					targs["_session_id"] = id
 					tc := agent.ToolCall{ID: "kernel", Name: name, Args: targs}
 					result := ec.ExecuteTool(ctx, name, tc.Args, gate)
 					content = result.Content

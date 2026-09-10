@@ -95,7 +95,7 @@ type Store struct {
 	root string
 
 	mu       sync.Mutex
-	failures int               // 每轮可修复失败计数(BeginTurn 清零;成功写入也清零)
+	failures map[string]int // 会话键 → 本轮失败次数（2026-09-10：原为 store 级单计数）               // 每轮可修复失败计数(BeginTurn 清零;成功写入也清零)
 	frozen   map[string]string // sessionID+"\x00"+scope → 冻结块
 }
 
@@ -133,12 +133,13 @@ func Limits() (memoryLimit, userLimit int) { return MemoryCharLimit, UserCharLim
 
 // BeginTurn — 每轮开始清零失败计数(对齐 Hermes reset_consolidation_failures)。
 //
-// 说明:Apply 的签名不含 sessionID,所以"每轮失败计数"是 store 级而非会话级;
-// 单会话场景下两者等价,多会话共用一个 Store 时按"最后一次 BeginTurn"归零——这是接口约定下的必然。
+// 说明(2026-09-10 边界③修正):失败计数已按会话键隔离——ApplyFor(sessionKey, …) 写入,
+// BeginTurn(sessionKey) 清零;Apply(…)(无会话键)归入默认键 "",单会话行为与旧版等价。
 func (s *Store) BeginTurn(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.failures = 0
+	s.setFailures(sessionID, 0)
+	s.setFailures("", 0) // 兼容默认键（Apply 无会话键时使用）
 }
 
 // ── 读 ──────────────────────────────────────────────────────────────────────
@@ -169,7 +170,14 @@ func (s *Store) Entries(scope string, t Target) ([]string, error) {
 // 失败分类:
 //   - 可修复失败(计入每轮上限):超预算 / 零匹配 / 匹配歧义 / 批量结构性错误 / 批量清空
 //   - 安全与基建拒绝(不计入):威胁命中 / 磁盘 drift / 文件不可读 / 参数非法
+// Apply — 兼容入口（无会话键：计数归入默认键 ""）。新代码请用 ApplyFor。
 func (s *Store) Apply(scope string, t Target, ops []Op) Result {
+	return s.ApplyFor("", scope, t, ops)
+}
+
+// ApplyFor — 批量原子写（sessionKey 用于"每轮失败计数"的会话隔离——2026-09-10 边界③修正）。
+// sessionKey 为空时归入默认键（单会话场景与旧行为等价）。
+func (s *Store) ApplyFor(sessionKey, scope string, t Target, ops []Op) Result {
 	name, ok := targetFileName(t)
 	if !ok {
 		return Result{Success: false, Error: fmt.Sprintf("memory: 无效 target %q(请用 memory 或 user)", string(t))}
@@ -233,7 +241,7 @@ func (s *Store) Apply(scope string, t Target, ops []Op) Result {
 		switch act {
 		case "add":
 			if content == "" {
-				return s.fail(original, limit, fmt.Sprintf("%s (add):content 不能为空。", pos), "请带 content 重发。")
+				return s.failFor(sessionKey, original, limit, fmt.Sprintf("%s (add):content 不能为空。", pos), "请带 content 重发。")
 			}
 			if !containsString(working, content) { // 幂等:已存在则跳过,不算失败
 				working = append(working, content)
@@ -241,55 +249,55 @@ func (s *Store) Apply(scope string, t Target, ops []Op) Result {
 			}
 		case "replace":
 			if oldText == "" {
-				return s.fail(original, limit, fmt.Sprintf("%s (replace):缺少 old_text——无法定位要替换的条目。", pos),
+				return s.failFor(sessionKey, original, limit, fmt.Sprintf("%s (replace):缺少 old_text——无法定位要替换的条目。", pos),
 					"请带 old_text 重发(old_text = 现有条目里一段唯一的子串)。")
 			}
 			if content == "" {
-				return s.fail(original, limit, fmt.Sprintf("%s (replace):content 不能为空(删除请用 remove)。", pos),
+				return s.failFor(sessionKey, original, limit, fmt.Sprintf("%s (replace):content 不能为空(删除请用 remove)。", pos),
 					"请带 content 重发,或改用 remove。")
 			}
 			idx, ambiguous := findUniqueMatch(working, oldText)
 			if ambiguous {
-				return s.fail(original, limit, fmt.Sprintf("%s (replace):old_text %q 匹配到多条不同条目——请用更精确的文本。", pos, oldText),
+				return s.failFor(sessionKey, original, limit, fmt.Sprintf("%s (replace):old_text %q 匹配到多条不同条目——请用更精确的文本。", pos, oldText),
 					"请用更精确的 old_text 重发。")
 			}
 			if idx < 0 {
-				return s.fail(original, limit, fmt.Sprintf("%s (replace):没有条目匹配 old_text %q。", pos, oldText),
+				return s.failFor(sessionKey, original, limit, fmt.Sprintf("%s (replace):没有条目匹配 old_text %q。", pos, oldText),
 					"请核对 current_entries 后用条目里的准确文本重发。")
 			}
 			working[idx] = content
 			sourceOf[content] = src
 		case "remove":
 			if oldText == "" {
-				return s.fail(original, limit, fmt.Sprintf("%s (remove):缺少 old_text——无法定位要删除的条目。", pos),
+				return s.failFor(sessionKey, original, limit, fmt.Sprintf("%s (remove):缺少 old_text——无法定位要删除的条目。", pos),
 					"请带 old_text 重发(old_text = 现有条目里一段唯一的子串)。")
 			}
 			idx, ambiguous := findUniqueMatch(working, oldText)
 			if ambiguous {
-				return s.fail(original, limit, fmt.Sprintf("%s (remove):old_text %q 匹配到多条不同条目——请用更精确的文本。", pos, oldText),
+				return s.failFor(sessionKey, original, limit, fmt.Sprintf("%s (remove):old_text %q 匹配到多条不同条目——请用更精确的文本。", pos, oldText),
 					"请用更精确的 old_text 重发。")
 			}
 			if idx < 0 {
-				return s.fail(original, limit, fmt.Sprintf("%s (remove):没有条目匹配 old_text %q。", pos, oldText),
+				return s.failFor(sessionKey, original, limit, fmt.Sprintf("%s (remove):没有条目匹配 old_text %q。", pos, oldText),
 					"请核对 current_entries 后用条目里的准确文本重发。")
 			}
 			working = append(working[:idx], working[idx+1:]...)
 		default:
-			return s.fail(original, limit, fmt.Sprintf("%s:未知 action %q。", pos, op.Action),
+			return s.failFor(sessionKey, original, limit, fmt.Sprintf("%s:未知 action %q。", pos, op.Action),
 				"请只使用 add / replace / remove。")
 		}
 	}
 
 	// ⑤ 一次性把全部条目删空 → 拒写(防"整批清空"误操作;显式删除请用单次 remove)。
 	if batch && len(original) > 0 && len(working) == 0 {
-		return s.fail(original, limit,
+		return s.failFor(sessionKey, original, limit,
 			"memory: 拒写——这一批操作会把全部条目清空(批量是全有全无,未写入任何内容)。",
 			"改用单次 remove 明确删除;或把重叠条目合并成一条更短的,而不是删掉最后一条。")
 	}
 
 	// ⑥ 预算:只在**最终结果**上校验(允许"删旧腾地 + 加新"一次完成)。
 	if proj := joinedLen(working); proj > limit {
-		return s.fail(original, limit,
+		return s.failFor(sessionKey, original, limit,
 			fmt.Sprintf("memory: 超预算——应用后 %d/%d chars(当前 %d/%d)。", proj, limit, joinedLen(original), limit),
 			fmt.Sprintf("先 consolidate(合并/删除旧条目)再重试——当前 %d/%d,预计 %d chars。", joinedLen(original), limit, proj))
 	}
@@ -301,7 +309,7 @@ func (s *Store) Apply(scope string, t Target, ops []Op) Result {
 	s.writeProvenanceLocked(dir, sourceOf)
 
 	// ⑧ 成功:只回用量与条数,不回带条目列表。
-	s.failures = 0
+	s.setFailures(sessionKey, 0)
 	return Result{
 		Success:    true,
 		Done:       true,
@@ -312,6 +320,11 @@ func (s *Store) Apply(scope string, t Target, ops []Op) Result {
 
 // fail — 构造一条"可修复失败"(计入每轮上限),回带当前条目 + 用量 + 可行动指引。
 func (s *Store) fail(original []string, limit int, errMsg, hint string) Result {
+	return s.failFor("", original, limit, errMsg, hint)
+}
+
+// failFor — 会话键版可修复失败（2026-09-10 边界③：计数按会话隔离）
+func (s *Store) failFor(sessionKey string, original []string, limit int, errMsg, hint string) Result {
 	r := Result{
 		Success:        false,
 		Usage:          usageString(joinedLen(original), limit),
@@ -319,22 +332,41 @@ func (s *Store) fail(original []string, limit int, errMsg, hint string) Result {
 		CurrentEntries: append([]string(nil), original...),
 		Hint:           hint,
 	}
-	return s.countFailure(r)
+	return s.countFailureFor(sessionKey, r)
 }
 
 // countFailure — 失败计数与终止态:超过每轮上限后返回 {Success:false, Done:true},
 // 明确告诉模型"停止重试、先回答用户"(记忆副作用绝不能阻塞本轮回复)。
-func (s *Store) countFailure(r Result) Result {
-	s.failures++
-	if s.failures <= maxConsolidationFailuresPerTurn {
+func (s *Store) countFailure(r Result) Result { return s.countFailureFor("", r) }
+
+// countFailureFor — 会话键版失败计数与终止态
+func (s *Store) countFailureFor(sessionKey string, r Result) Result {
+	n := s.addFailure(sessionKey)
+	if n <= maxConsolidationFailuresPerTurn {
 		return r
 	}
 	return Result{
 		Success: false,
 		Done:    true,
 		Error: fmt.Sprintf("memory: 本轮记忆写入已失败 %d 次,停止重试——本轮不再改动记忆,请先回答用户;"+
-			"这条事实可以在后续轮次再记。", s.failures),
+			"这条事实可以在后续轮次再记。", n),
 	}
+}
+
+// setFailures / addFailure — 会话键 → 失败次数（懒初始化）
+func (s *Store) setFailures(sessionKey string, n int) {
+	if s.failures == nil {
+		s.failures = map[string]int{}
+	}
+	s.failures[sessionKey] = n
+}
+
+func (s *Store) addFailure(sessionKey string) int {
+	if s.failures == nil {
+		s.failures = map[string]int{}
+	}
+	s.failures[sessionKey]++
+	return s.failures[sessionKey]
 }
 
 // ── 渲染:Block / FrozenBlock ────────────────────────────────────────────────

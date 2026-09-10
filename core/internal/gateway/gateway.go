@@ -99,6 +99,10 @@ type Gateway struct {
 
 	// v2.5.4.10 模型级超时覆盖（适配器声明 timeout_sec——转发时用）
 	timeoutOverride map[string]int
+
+	// 丙批 N4（2026-09-10）：前缀命中率闭环——按 (model, prompt_version) 滑动窗口
+	// 统计 cache_read/cache_miss，并做版本级下降告警；GET /api/metrics/prefix_cache 查询。
+	prefixCache *prefixCacheTracker
 }
 
 // setRequestTimeout — 模型级超时覆盖（适配器声明——Qwen3.8 120s/Nemotron 60s）
@@ -261,6 +265,8 @@ func NewGateway(authToken string, cfg *config.FleetConfig, localBack *localback.
 		failCounts: make(map[string]int),
 		failSince:  make(map[string]time.Time),
 		startupTime: time.Now(), // v2.5.5 重启窗口期治本: 启动宽限期起点
+		// 丙批 N4：前缀命中率闭环（窗口 50 次 / 10 分钟——见 prefix_cache.go）
+		prefixCache: newPrefixCache(defaultPrefixWindowN, defaultPrefixWindowDur),
 	}
 	// v2.5.6 适配器覆盖配置恢复（启动重放——2026-08-27 Mr2109）
 	g.loadAdapterOverrides()
@@ -325,6 +331,10 @@ func (g *Gateway) RegisterRoutes(r *chi.Mux) {
 
 		// GET /v1/context/{session_id}（V22 客户端主动查询会话 token 状态）
 		r.Get("/v1/context/{session_id}", g.handleContextQuery)
+
+		// 丙批 N4：GET /api/metrics/prefix_cache（前缀命中率闭环查询——网关自有 mux）
+		// 与项目约定一致：/api/* 需认证（X-Auth-Token / Bearer / x-api-key）
+		r.Get("/api/metrics/prefix_cache", g.handlePrefixCacheMetrics)
 	})
 }
 
@@ -825,21 +835,43 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// 6. 出站转换（后端响应 → 客户端格式，由适配器完成）
 	// V22 token 预算：内部累计 + 按模型窗口 50% 自动 compaction（不通知客户端）
+	// （autoCompact 逻辑不变；respBody 提到外层以便复用——丙批前缀命中率也读它）
+	var respBody []byte
 	if sessionID != "" {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 		if tok := extractUsageTokensFromBytes(respBody); tok > 0 {
 			g.addSessionTokens(sessionID, tok)
-			// 按模型窗口动态阈值（ctx_window × 50%——单槽执行），超了自动压缩
-			if threshold := g.compactThreshold(model); threshold > 0 && g.sessionTokens(sessionID) > threshold {
+			// 丙批 §4.2：网关侧是**安全网**（85% 兜底，且 history ≥ 4 条才动）——不与对话侧主压缩抢跑
+			if threshold := g.compactThreshold(model); threshold > 0 && g.sessionTokens(sessionID) > threshold && requestMessageCount(body) >= 4 {
 				slog.Info("会话超压缩阈值，自动 compaction", "session", sessionID, "tokens", g.sessionTokens(sessionID), "threshold", threshold)
 				log.Printf("♻️ 会话 %s 超压缩阈值 (%d/%d)，自动 compaction", sessionID, g.sessionTokens(sessionID), threshold)
 				g.autoCompact(sessionID, model, body)
 			}
 		}
 	}
+	// 丙批 N4：前缀命中率闭环——解析上游缓存计量（非流式响应才缓冲；流式交给适配器直通，不破坏 SSE）
+	if g.prefixCache != nil && respBody == nil && !adapter.IsStreamResponse(resp) {
+		respBody, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+	}
+	if g.prefixCache != nil && len(respBody) > 0 {
+		g.recordPrefixCache(model, forwardBody, respBody)
+	}
+	// 丙批 N4 补齐（2026-09-10）：流式响应也采样——tee 只留尾部窗口，响应结束后取末块 timings/usage
+	var usageTee *sseUsageTee
+	if g.prefixCache != nil && adapter.IsStreamResponse(resp) {
+		usageTee = newSSEUsageTee(resp.Body)
+		resp.Body = usageTee
+	}
 	adp.TransformResponse(w, resp, r, body)
+	if g.prefixCache != nil && usageTee != nil {
+		if ub := usageTee.UsageJSON(); len(ub) > 0 {
+			g.recordPrefixCache(model, forwardBody, ub)
+		}
+	}
 }
 
 // extractModel 从请求体提取 model 字段。
@@ -1587,17 +1619,30 @@ func (g *Gateway) resetSessionTokens(sessionID string) {
 	}
 }
 
-// compactThreshold 返回会话压缩阈值（模型窗口 × 50%——单槽执行）。
-// 模型窗口从 fleet.yaml ctx_window 读；未配置时用全局 maxSessionTokens。
+// compactThreshold 返回网关侧**安全网**压缩阈值（模型窗口 × 85%——单槽执行）。
+// 丙批 §4.2（2026-09-10）：网关不再在 50% 独立触发（那会与对话侧主压缩抢跑）——
+// 主压缩在对话侧（chat.MaybeCompact，阈值 max(min(ctx×0.5,8000),2000)）；
+// 网关侧只在 **85%** 兜底（仅当 history ≥ 4 条时生效，见调用点）。
 func (g *Gateway) compactThreshold(model string) int {
 	if candidates, ok := g.config.Models[model]; ok && len(candidates) > 0 {
 		ctx := candidates[0].CtxWindow
 		if ctx > 0 {
-			perSlot := ctx // 单槽执行（v2.5.5: X3/本机都单槽——取消 4 槽假设）
-			return perSlot / 2 // 50% 触发压缩
+			perSlot := ctx          // 单槽执行（v2.5.5: X3/本机都单槽——取消 4 槽假设）
+			return perSlot * 85 / 100 // 85% 安全网兜底
 		}
 	}
-	return maxSessionTokens / 2
+	return maxSessionTokens * 85 / 100
+}
+
+// requestMessageCount — 请求体里的历史条数（网关安全网的 len(history)≥4 门槛用）
+func requestMessageCount(body []byte) int {
+	var req struct {
+		Messages []interface{} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return 0
+	}
+	return len(req.Messages)
 }
 
 // autoCompact 自动压缩会话历史（超阈值时调用）。
@@ -1809,8 +1854,32 @@ func (g *Gateway) forwardToLocal(w http.ResponseWriter, r *http.Request, route *
 	}
 	defer resp.Body.Close()
 
+	// 丙批 N4：前缀命中率闭环——本机 llama-server 也返回缓存计量（timings/usage）。
+	// 仅非流式响应读取缓冲（流式直通，不破坏 SSE）。
+	if g.prefixCache != nil && !adapter.IsStreamResponse(resp) {
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+		if model, merr := extractModel(body); merr == nil {
+			g.recordPrefixCache(model, body, respBody)
+		}
+	}
+
+	// 丙批 N4 补齐（2026-09-10）：本机 llama-server 走这条路径——流式同样采样（tee 尾窗 → 末块 timings）
+	var usageTeeLocal *sseUsageTee
+	if g.prefixCache != nil && adapter.IsStreamResponse(resp) {
+		usageTeeLocal = newSSEUsageTee(resp.Body)
+		resp.Body = usageTeeLocal
+	}
 	// 出站转换（按客户端适配器）——用原始 body 判断流式（forwardBody 已被强制 stream:false）
 	adp.TransformResponse(w, resp, r, origBody)
+	if g.prefixCache != nil && usageTeeLocal != nil {
+		if ub := usageTeeLocal.UsageJSON(); len(ub) > 0 {
+			if model, merr := extractModel(body); merr == nil {
+				g.recordPrefixCache(model, body, ub)
+			}
+		}
+	}
 }
 
 // handleLocalModel host=local 且无 LocalBackend 时的回退处理。
