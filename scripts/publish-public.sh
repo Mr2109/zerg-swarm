@@ -45,7 +45,7 @@ OUT="${OUT:-/tmp/zerg-public-${TS}}"
 
 # 单提交的作者身份（决策 6：集体版权行 + GitHub noreply 提交身份；可用环境变量覆盖）
 : "${SNAPSHOT_AUTHOR_NAME:=The Zerg Swarm Authors}"
-: "${SNAPSHOT_AUTHOR_EMAIL:=2109+Mr2109@users.noreply.github.com}"
+: "${SNAPSHOT_AUTHOR_EMAIL:=47194037+Mr2109@users.noreply.github.com}"   # 数字=GitHub 用户 ID（Mr2109=47194037）；写错会被归属到同号陌生账号
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
