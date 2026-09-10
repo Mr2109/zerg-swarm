@@ -702,21 +702,6 @@ pub fn fetch_resources_async(res_type: String) -> SharedResult<Value> {
     out
 }
 
-/// 探测主控是否在线
-/// A17（2026-09-10 审计）：探针原打 `/api/tasks`（全量任务列表——重，且任务接口单点故障会被误判为"主控离线"）
-/// → 改打 `/api/fleet/status`（轻量集群状态，与 fetch_cluster_blocking / 单测同源）。
-/// 台账：app.rs 侧曾丢弃本函数句柄并重复 spawn 同一请求（APP-A05 2026-09-10 已删掉那一路），
-/// 现本函数**全仓无调用方**；按"不删公共函数"原则保留为兼容入口，故加 #[allow(dead_code)]。
-#[allow(dead_code)]
-pub fn ping_async() -> SharedResult<bool> {
-    let out: SharedResult<bool> = Arc::new(Mutex::new(None));
-    let out2 = out.clone();
-    runtime().spawn(async move {
-        let ok = sync_get_public("/api/fleet/status").await.is_ok();
-        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(ok));
-    });
-    out
-}
 
 // ═══════════ v2.5.7 对话模块客户端（/api/chat/*——Mr2109借鉴 Hermes）═══════════
 
@@ -778,8 +763,29 @@ pub struct ChatStreamState {
     pub cancelled: bool,
     pub error: Option<String>,
     pub steer_undrained: Vec<String>, // C2: 未被工具边界消费的插话（客户端排队续发）
+    // A09/A08 备选（2026-09-10）：流式任务句柄——join 用于回读 panic 原因；abort 句柄可克隆，
+    // 供停止时立即断流（不与 join 的所有权冲突：观察者拿走 join，停止仍能 abort）
+    pub join: Option<tokio::task::JoinHandle<()>>,
+    pub abort: Option<tokio::task::AbortHandle>,
 }
 pub type SharedChatStream = Arc<Mutex<ChatStreamState>>;
+
+/// A09 备选（2026-09-10）：流式任务 panic 上报槽——仅 panic 记录（正常结束/用户停止不记）
+static STREAM_PANIC: Mutex<Option<String>> = Mutex::new(None);
+
+/// 取走最近一次流式任务 panic 信息（UI 每帧调用——取走即清空）
+pub fn take_stream_panic() -> Option<String> {
+    STREAM_PANIC.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// A08 备选（2026-09-10）：主动取消流式任务——abort 立即丢弃 HTTP 响应流 → 连接断开 →
+/// 服务端据此取消生成（与 /api/chat/.../abort 端点构成双保险）；Drop 守卫会把状态机收敛为 done。
+pub fn chat_stream_abort(state: &SharedChatStream) {
+    let h = state.lock().unwrap_or_else(|e| e.into_inner()).abort.take();
+    if let Some(h) = h {
+        h.abort();
+    }
+}
 
 /// A09（2026-09-10 审计）：流式任务守卫——任务 panic / 异常提前结束时兜底收敛状态机
 /// （JoinHandle 仍由调用方丢弃，但至少保证 done=true + error，UI 不会永久停在"生成中"）
@@ -789,7 +795,8 @@ impl Drop for StreamDoneGuard {
         let mut st = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if !st.done {
             st.done = true;
-            if st.error.is_none() {
+            // A08 备选：用户点停止（cancelled）后守卫兜底不再报“内部错误”——UI 已有“已停止生成”
+            if st.error.is_none() && !st.cancelled {
                 st.error = Some("内部错误：流式任务异常结束".to_string());
             }
         }
@@ -802,7 +809,7 @@ pub fn chat_send_stream_async(session_id: String, content: String, image: Option
     use futures_util::StreamExt;
     let state: SharedChatStream = Arc::new(Mutex::new(ChatStreamState::default()));
     let s2 = state.clone();
-    runtime().spawn(async move {
+    let join_handle = runtime().spawn(async move {
         // A09：任务退出（含 panic）兜底——保证状态机收敛
         let _guard = StreamDoneGuard(s2.clone());
         let client = http_client();
@@ -945,6 +952,24 @@ pub fn chat_send_stream_async(session_id: String, content: String, image: Option
             Err(e) => {
                 s2.lock().unwrap_or_else(|e| e.into_inner()).error = Some(format!("请求失败: {}", e));
                 s2.lock().unwrap_or_else(|e| e.into_inner()).done = true;
+            }
+        }
+    });
+    // A09 备选（2026-09-10）：句柄入状态（原实现裸丢弃）——停止时可 abort；panic 时原因可回读
+    {
+        let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
+        st.abort = Some(join_handle.abort_handle());
+        st.join = Some(join_handle);
+    }
+    // A09 备选：观察者任务——join 流式任务，仅 panic 记入上报槽（正常结束/被 abort 不记），UI 每帧取走
+    let obs = state.clone();
+    runtime().spawn(async move {
+        let h = obs.lock().unwrap_or_else(|e| e.into_inner()).join.take();
+        if let Some(h) = h {
+            if let Err(e) = h.await {
+                if e.is_panic() {
+                    *STREAM_PANIC.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!("{}", e));
+                }
             }
         }
     });
@@ -1383,5 +1408,50 @@ mod proxy_root_fix_tests {
             bare, None,
             "对照失效：裸 client 竟然连上了 127.0.0.1（环境变量未生效，或 reqwest 已不再走代理）"
         );
+    }
+}
+
+#[cfg(test)]
+mod a08_abort_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// A08 备选（2026-09-10）：chat_stream_abort 必须真正取消流式任务——
+    /// 否则点 ⏹ 只是标记 cancelled，任务仍要等下一个 chunk/await 才收手。
+    #[test]
+    fn abort_handle_cancels_stream_task() {
+        let state: SharedChatStream = Arc::new(Mutex::new(ChatStreamState::default()));
+        let flag = Arc::new(AtomicBool::new(false));
+        let f2 = flag.clone();
+        let h = runtime().spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            f2.store(true, Ordering::SeqCst);
+        });
+        {
+            let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
+            st.abort = Some(h.abort_handle());
+            st.join = Some(h);
+        }
+        chat_stream_abort(&state);
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        assert!(!flag.load(Ordering::SeqCst), "abort 后任务仍在跑——A08 立即断流机制失效");
+    }
+
+    /// A09 备选：句柄入状态后，正常结束应能被 join（不 panic → 不上报）
+    #[test]
+    fn join_handle_settles_without_panic_report() {
+        let _ = take_stream_panic(); // 清空历史
+        let state: SharedChatStream = Arc::new(Mutex::new(ChatStreamState::default()));
+        let h = runtime().spawn(async move {});
+        {
+            let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
+            st.join = Some(h);
+        }
+        // 观察者等价逻辑：join 完成后不应写入 panic 槽
+        let jest = state.lock().unwrap_or_else(|e| e.into_inner()).join.take();
+        if let Some(h) = jest {
+            assert!(runtime().block_on(h).is_ok(), "正常任务 join 不应报错");
+        }
+        assert!(take_stream_panic().is_none(), "正常结束不应上报 panic");
     }
 }
