@@ -15,6 +15,7 @@
 package chat
 
 import (
+	"math/rand"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -73,15 +74,29 @@ func compactCooldownFile() string { return statepath.File("compact_cooldown.json
 // compactJournalFile — 召回指针 journal 文件路径
 func compactJournalFile() string { return statepath.File("compact_journal.jsonl") }
 
+// compactJitterRand — 抖动随机源（[0,1)；测试可注入固定值以保证确定性）
+var compactJitterRand = rand.Float64
+
 // compactCooldownFor — 按连续失败次数取冷却时长（1→60s，2→300s，≥3→900s）
+// **full jitter**（§9.4 R6 / Mr2109 2026-09-10 要求）：实际冷却 = random(0, base)——
+// 打散"多个会话同时失败→同时重试→再次失败"的同步风暴；base 依次 60/300/900s（上限不变）。
+// 注：随机下界可为 0（下一次请求即可再试）；失败次数继续递增 → base 变大，退避总体仍在加深。
 func compactCooldownFor(streak int) time.Duration {
 	if streak <= 0 {
 		return 0
 	}
-	if streak > len(compactCooldownSteps) {
-		return compactCooldownSteps[len(compactCooldownSteps)-1]
+	base := compactCooldownSteps[len(compactCooldownSteps)-1]
+	if streak <= len(compactCooldownSteps) {
+		base = compactCooldownSteps[streak-1]
 	}
-	return compactCooldownSteps[streak-1]
+	f := compactJitterRand()
+	if f < 0 {
+		f = 0
+	}
+	if f > 1 {
+		f = 1
+	}
+	return time.Duration(float64(base) * f)
 }
 
 // compactInCooldown — 是否仍在冷却窗口内（now 为 unix 秒）
