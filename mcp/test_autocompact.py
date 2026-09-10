@@ -11,8 +11,21 @@ import json
 import time
 import urllib.request
 
+def _zerg_token():
+    """共享令牌（2026-09-11 A 批：库内零明文）——环境变量优先，其次 ~/.zerg/token"""
+    import os as _os
+    t = (_os.environ.get("ZERG_AUTH_TOKEN") or _os.environ.get("ZERG_API_TOKEN") or "").strip()
+    if t:
+        return t
+    try:
+        with open(_os.path.expanduser("~/.zerg/token"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 GATEWAY = "http://127.0.0.1:8082"
-TOKEN = "x3gw-shared-2026"
+TOKEN = _zerg_token()
 SESSION = "auto-compress-test-1"
 MODEL = "example-35b"
 

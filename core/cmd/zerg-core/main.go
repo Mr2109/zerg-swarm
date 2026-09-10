@@ -74,8 +74,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("❌ 加载配置文件失败: %v", err)
 	}
+	// 2026-09-11 A 批（库内零明文）：令牌缺失必须启动即失败——不得静默放行
+	// （空令牌会让所有 /api/* 请求 401，而日志看起来一切正常，属最难排查的一类）
+	if cfg.Auth.Token == "" {
+		log.Fatalf("❌ 未配置共享令牌：请设置环境变量 ZERG_AUTH_TOKEN，或写入文件 %s（仓库外，推荐），或仓库根 .env（见 .env.example）", config.TokenFilePath())
+	}
 
-	fmt.Printf("🔐 认证令牌: %s\n", cfg.Auth.Token)
+	fmt.Printf("🔐 认证令牌: %s\n", config.MaskToken(cfg.Auth.Token))
 	fmt.Printf("🖥️  集群节点: %d 个\n", len(cfg.Fleet))
 	fmt.Printf("🤖 已知模型: %d 个\n", len(cfg.Models))
 	slog.Info("配置加载", "models", len(cfg.Models), "fleet", len(cfg.Fleet))

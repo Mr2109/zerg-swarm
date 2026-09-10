@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"io"
 	"net/http"
 	"os"
@@ -146,7 +147,7 @@ func callVisionModel(imagePath string) (string, error) {
 	client := &http.Client{Timeout: 180 * time.Second}
 	req, _ := http.NewRequest("POST", "http://127.0.0.1:8082/v1/responses", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer x3gw-shared-2026")
+	req.Header.Set("Authorization", "Bearer "+config.ResolveAuthToken())
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("视觉模型调用失败: %w", err)

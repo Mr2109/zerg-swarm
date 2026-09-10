@@ -7,6 +7,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"io"
 	"log"
 	"net/http"
@@ -583,7 +584,7 @@ func (s *MasterScheduler) pingModel(model string) (bool, error) {
 	}
 
 	gatewayURL := "http://127.0.0.1:8082"
-	token := "x3gw-shared-2026"
+	token := config.ResolveAuthToken()
 	for _, env := range s.agentEnv {
 		if strings.HasPrefix(env, "ZERG_GATEWAY_URL=") {
 			gatewayURL = strings.TrimPrefix(env, "ZERG_GATEWAY_URL=")
@@ -822,7 +823,7 @@ func (s *MasterScheduler) runZergFlow(task *Task) {
 // 适配器 = 参数唯一来源——程序（含执行任务每步）调用参数由适配器决定
 func (s *MasterScheduler) callGatewayModel(model, systemPrompt, userPrompt string, maxTokens int) (string, error) {
 	gatewayURL := "http://127.0.0.1:8082"
-	token := "x3gw-shared-2026" // 默认网关 token（虫族标准）
+	token := config.ResolveAuthToken() // 默认网关 token（虫族标准）
 	for _, env := range s.agentEnv {
 		if strings.HasPrefix(env, "ZERG_GATEWAY_URL=") {
 			gatewayURL = strings.TrimPrefix(env, "ZERG_GATEWAY_URL=")

@@ -5,7 +5,46 @@ use serde_json::Value;
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub const API_BASE: &str = "http://127.0.0.1:8580";
-pub const API_TOKEN: &str = "x3gw-shared-2026";
+/// 共享令牌（2026-09-11 A 批：不再硬编码——库内零明文）
+/// 解析顺序：环境变量 ZERG_AUTH_TOKEN → ZERG_api_token() → ~/.zerg-ui-prefs.json 的 auth_token → ~/.zerg/token
+pub fn api_token() -> &'static str {
+    static TOKEN: OnceLock<String> = OnceLock::new();
+    TOKEN
+        .get_or_init(|| {
+            for k in ["ZERG_AUTH_TOKEN", "ZERG_api_token()"] {
+                if let Ok(v) = std::env::var(k) {
+                    let v = v.trim().to_string();
+                    if !v.is_empty() {
+                        return v;
+                    }
+                }
+            }
+            if let Some(home) = std::env::var_os("HOME") {
+                let home = std::path::PathBuf::from(home);
+                // UI 偏好文件（用户可在其中持久化令牌）
+                if let Ok(txt) = std::fs::read_to_string(home.join(".zerg-ui-prefs.json")) {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
+                        if let Some(t) = v.get("auth_token").and_then(|x| x.as_str()) {
+                            let t = t.trim();
+                            if !t.is_empty() {
+                                return t.to_string();
+                            }
+                        }
+                    }
+                }
+                // 共享令牌文件（与主控/子端同源）
+                if let Ok(txt) = std::fs::read_to_string(home.join(".zerg/token")) {
+                    let t = txt.trim();
+                    if !t.is_empty() {
+                        return t.to_string();
+                    }
+                }
+            }
+            eprintln!("⚠️  未配置共享令牌（ZERG_AUTH_TOKEN 或 ~/.zerg/token）——主控 API 将返回 401");
+            String::new()
+        })
+        .as_str()
+}
 pub const AI_BASE: &str = "http://127.0.0.1:8082"; // F5 AI 动力（网关——Mr2109统一接口）
 
 /// http_client — 统一构造 reqwest client（2026-09-10 根治回环代理问题）
@@ -115,7 +154,7 @@ pub async fn ai_prompt_blocking(model: &str, prompt: &str) -> Result<String, Str
     let resp = client
         .post(&url)
         .header("Content-Type", "application/json")
-        .header("X-Auth-Token", API_TOKEN)
+        .header("X-Auth-Token", api_token())
         .json(&body)
         .send()
         .await
@@ -234,7 +273,7 @@ pub async fn sync_get_public(path: &str) -> Result<Value, String> {
     let url = format!("{}{}", API_BASE, path);
     let resp = client
         .get(&url)
-        .header("X-Auth-Token", API_TOKEN)
+        .header("X-Auth-Token", api_token())
         .timeout(std::time::Duration::from_secs(5))
         .send()
         .await
@@ -322,7 +361,7 @@ pub async fn doc_op_blocking(action: &str, payload: serde_json::Value) -> Result
     let url = format!("{}/api/docs/{}", API_BASE, action);
     let resp = client
         .post(&url)
-        .header("X-Auth-Token", API_TOKEN)
+        .header("X-Auth-Token", api_token())
         .json(&payload)
         .timeout(std::time::Duration::from_secs(10))
         .send()
@@ -355,7 +394,7 @@ pub fn doc_op_async(action: &str, payload: serde_json::Value) -> SharedResult<()
 pub async fn task_retry_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/tasks/{}/retry", API_BASE, id);
-    let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
 }
 
@@ -363,7 +402,7 @@ pub async fn task_retry_blocking(id: &str) -> Result<(), String> {
 pub async fn task_move_blocking(id: &str, action: &str) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/tasks/{}/move?action={}", API_BASE, id, action);
-    let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
 }
 
@@ -371,7 +410,7 @@ pub async fn task_move_blocking(id: &str, action: &str) -> Result<(), String> {
 pub async fn task_delete_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/tasks/{}", API_BASE, id);
-    let resp = client.delete(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.delete(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
 }
 
@@ -379,7 +418,7 @@ pub async fn task_delete_blocking(id: &str) -> Result<(), String> {
 pub async fn task_pause_blocking(id: &str, pause: bool) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/tasks/{}/pause?pause={}", API_BASE, id, pause);
-    let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
 }
 
@@ -387,7 +426,7 @@ pub async fn task_pause_blocking(id: &str, pause: bool) -> Result<(), String> {
 pub async fn fetch_internal_tasks_blocking() -> Result<Vec<serde_json::Value>, String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks", API_BASE);
-    let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     // A05（2026-09-10 审计）：先判 HTTP 状态（json_body），字段缺失返回 Err——不再把 500 错误体当成"空列表"
     let v = json_body(resp).await?;
     v.get("items")
@@ -400,7 +439,7 @@ pub async fn fetch_internal_tasks_blocking() -> Result<Vec<serde_json::Value>, S
 pub async fn run_internal_task_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks/{}/run", API_BASE, id);
-    let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
     } else {
@@ -414,7 +453,7 @@ pub async fn run_internal_task_blocking(id: &str) -> Result<(), String> {
 pub async fn stop_internal_tasks_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks/stop", API_BASE);
-    let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     json_body(resp).await
 }
 
@@ -424,7 +463,7 @@ pub async fn stop_internal_tasks_blocking() -> Result<serde_json::Value, String>
 pub async fn start_internal_tasks_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks/start", API_BASE);
-    let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     json_body(resp).await
 }
 
@@ -432,7 +471,7 @@ pub async fn start_internal_tasks_blocking() -> Result<serde_json::Value, String
 pub async fn fetch_internal_state_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks/state", API_BASE);
-    let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     json_body(resp).await
 }
 
@@ -442,7 +481,7 @@ pub async fn set_internal_interval_blocking(id: &str, hours: f64) -> Result<(), 
     let url = format!("{}/api/internal-tasks/{}/interval", API_BASE, id);
     let resp = client
         .post(&url)
-        .header("X-Auth-Token", API_TOKEN)
+        .header("X-Auth-Token", api_token())
         .json(&serde_json::json!({"hours": hours}))
         .send()
         .await
@@ -461,7 +500,7 @@ pub async fn set_internal_mode_blocking(id: &str, auto_run: bool) -> Result<(), 
     let url = format!("{}/api/internal-tasks/{}/mode", API_BASE, id);
     let resp = client
         .post(&url)
-        .header("X-Auth-Token", API_TOKEN)
+        .header("X-Auth-Token", api_token())
         .json(&serde_json::json!({"auto_run": auto_run}))
         .send()
         .await
@@ -477,7 +516,7 @@ pub async fn set_internal_mode_blocking(id: &str, auto_run: bool) -> Result<(), 
 pub async fn fetch_internal_intervals_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks/intervals", API_BASE);
-    let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     // A05（2026-09-10 审计）：先判 HTTP 状态——5xx 错误体不再被当成"成功但空数据"
     json_body(resp).await
 }
@@ -486,7 +525,7 @@ pub async fn fetch_internal_intervals_blocking() -> Result<serde_json::Value, St
 pub async fn task_terminate_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/tasks/{}/terminate", API_BASE, id);
-    let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
 }
 
@@ -494,7 +533,7 @@ pub async fn task_terminate_blocking(id: &str) -> Result<(), String> {
 pub async fn task_requeue_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/tasks/{}/requeue", API_BASE, id);
-    let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
 }
 
@@ -502,7 +541,7 @@ pub async fn task_requeue_blocking(id: &str) -> Result<(), String> {
 pub async fn fetch_archive_blocking() -> Result<Vec<serde_json::Value>, String> {
     let client = http_client_json();
     let url = format!("{}/api/archive", API_BASE);
-    let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     // A05（2026-09-10 审计）：先判 HTTP 状态；entries 字段缺失返回 Err——不再把错误显示成"无数据"
     let v = json_body(resp).await?;
     v.get("entries")
@@ -528,7 +567,7 @@ pub async fn fetch_model_detail_blocking(name: &str) -> Result<Value, String> {
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名（fleet 键可能含空格/斜杠）编码后入路径
     let url = format!("{}/api/models/{}", API_BASE, urlencode_path(name));
-    let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         resp.json().await.map_err(|e| e.to_string())
     } else {
@@ -541,7 +580,7 @@ pub async fn model_start_blocking(name: &str) -> Result<(), String> {
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名编码后入路径
     let url = format!("{}/api/models/{}/start", API_BASE, urlencode_path(name));
-    let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
     } else {
@@ -554,7 +593,7 @@ pub async fn model_stop_blocking(name: &str) -> Result<(), String> {
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名编码后入路径
     let url = format!("{}/api/models/{}/stop", API_BASE, urlencode_path(name));
-    let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
     } else {
@@ -567,7 +606,7 @@ pub async fn fetch_adapter_schema_blocking(name: &str) -> Result<serde_json::Val
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名编码后入路径
     let url = format!("{}/api/models/{}/adapter-opts", API_BASE, urlencode_path(name));
-    let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         resp.json().await.map_err(|e| e.to_string())
     } else {
@@ -582,7 +621,7 @@ pub async fn update_adapter_opts_blocking(name: &str, cfg: serde_json::Value) ->
     let url = format!("{}/api/models/{}/adapter-opts", API_BASE, urlencode_path(name));
     let resp = client
         .put(&url)
-        .header("X-Auth-Token", API_TOKEN)
+        .header("X-Auth-Token", api_token())
         .json(&cfg)
         .send()
         .await
@@ -738,7 +777,7 @@ pub fn create_chat_session_async(model: String) -> SharedResult<Value> {
         let body = serde_json::json!({"model": model});
         let resp = client
             .post(&url)
-            .header("X-Auth-Token", API_TOKEN)
+            .header("X-Auth-Token", api_token())
             .json(&body)
             .send()
             .await;
@@ -830,7 +869,7 @@ pub fn chat_send_stream_async(session_id: String, content: String, image: Option
         }
         let resp = client
             .post(&url)
-            .header("X-Auth-Token", API_TOKEN)
+            .header("X-Auth-Token", api_token())
             .json(&body)
             .send()
             .await;
@@ -1000,7 +1039,7 @@ pub fn delete_chat_session_async(session_id: String) -> SharedResult<bool> {
         let url = format!("{}/api/chat/sessions/{}", API_BASE, session_id);
         let resp = client
             .delete(&url)
-            .header("X-Auth-Token", API_TOKEN)
+            .header("X-Auth-Token", api_token())
             .send()
             .await;
         match resp {
@@ -1090,7 +1129,7 @@ pub fn chat_update_model_async(session_id: String, model: String) -> SharedResul
         let url = format!("{}/api/chat/sessions/{}/model", API_BASE, session_id);
         let resp = client
             .post(&url)
-            .header("X-Auth-Token", API_TOKEN)
+            .header("X-Auth-Token", api_token())
             .json(&serde_json::json!({"model": model}))
             .send()
             .await;
@@ -1115,7 +1154,7 @@ pub fn chat_abort_async(session_id: String) -> SharedResult<Value> {
         let url = format!("{}/api/chat/sessions/{}/abort", API_BASE, session_id);
         let resp = client
             .post(&url)
-            .header("X-Auth-Token", API_TOKEN)
+            .header("X-Auth-Token", api_token())
             .send()
             .await;
         match resp {
@@ -1139,7 +1178,7 @@ pub fn chat_steer_async(session_id: String, content: String) -> SharedResult<Val
         let url = format!("{}/api/chat/sessions/{}/steer", API_BASE, session_id);
         let resp = client
             .post(&url)
-            .header("X-Auth-Token", API_TOKEN)
+            .header("X-Auth-Token", api_token())
             .json(&serde_json::json!({"content": content}))
             .send()
             .await;
@@ -1164,7 +1203,7 @@ pub fn chat_regenerate_async(session_id: String) -> SharedResult<Value> {
         let url = format!("{}/api/chat/sessions/{}/regenerate", API_BASE, session_id);
         let resp = client
             .post(&url)
-            .header("X-Auth-Token", API_TOKEN)
+            .header("X-Auth-Token", api_token())
             .send()
             .await;
         match resp {
@@ -1207,7 +1246,7 @@ pub fn chat_delegate_task_async(description: String, model: String, parent_sessi
         }
         let resp = client
             .post(&url)
-            .header("X-Auth-Token", API_TOKEN)
+            .header("X-Auth-Token", api_token())
             .json(&body)
             .send()
             .await;
@@ -1231,7 +1270,7 @@ pub fn chat_set_archived_async(session_id: String, archived: bool) -> SharedResu
         let url = format!("{}/api/chat/sessions/{}/archive", API_BASE, session_id);
         let resp = client
             .post(&url)
-            .header("X-Auth-Token", API_TOKEN)
+            .header("X-Auth-Token", api_token())
             .json(&serde_json::json!({"archived": archived}))
             .send()
             .await;
@@ -1254,7 +1293,7 @@ pub fn chat_set_pinned_async(session_id: String, pinned: bool) -> SharedResult<V
         let url = format!("{}/api/chat/sessions/{}/pinned", API_BASE, session_id);
         let resp = client
             .post(&url)
-            .header("X-Auth-Token", API_TOKEN)
+            .header("X-Auth-Token", api_token())
             .json(&serde_json::json!({"pinned": pinned}))
             .send()
             .await;
@@ -1278,7 +1317,7 @@ pub fn chat_rename_session_async(session_id: String, title: String) -> SharedRes
         let url = format!("{}/api/chat/sessions/{}/title", API_BASE, session_id);
         let resp = client
             .post(&url)
-            .header("X-Auth-Token", API_TOKEN)
+            .header("X-Auth-Token", api_token())
             .json(&serde_json::json!({"title": title}))
             .send()
             .await;
@@ -1302,7 +1341,7 @@ pub fn chat_edit_message_async(mid: i64, content: String, truncate: bool) -> Sha
         let url = format!("{}/api/chat/messages/{}", API_BASE, mid);
         let resp = client
             .patch(&url)
-            .header("X-Auth-Token", API_TOKEN)
+            .header("X-Auth-Token", api_token())
             .json(&serde_json::json!({"content": content, "truncate": truncate}))
             .send()
             .await;
@@ -1401,7 +1440,7 @@ mod proxy_root_fix_tests {
             rt.block_on(async move {
                 match client
                     .get(format!("{}/api/fleet/status", API_BASE))
-                    .header("X-Auth-Token", API_TOKEN)
+                    .header("X-Auth-Token", api_token())
                     .send()
                     .await
                 {
@@ -1465,7 +1504,7 @@ pub fn fetch_chat_window_async(session_id: String, around_id: i64) -> SharedResu
             "{}/api/chat/sessions/{}/window?around_id={}&limit=20",
             API_BASE, session_id, around_id
         );
-        let r = match client.get(&url).header("X-Auth-Token", API_TOKEN).send().await {
+        let r = match client.get(&url).header("X-Auth-Token", api_token()).send().await {
             Ok(resp) => json_body(resp).await,
             Err(e) => Err(format!("请求失败: {}", e)),
         };
@@ -1481,7 +1520,7 @@ pub fn chat_compact_reset_async(session_id: String) -> SharedResult<serde_json::
     runtime().spawn(async move {
         let client = http_client_json();
         let url = format!("{}/api/chat/sessions/{}/compact-reset", API_BASE, session_id);
-        let r = match client.post(&url).header("X-Auth-Token", API_TOKEN).send().await {
+        let r = match client.post(&url).header("X-Auth-Token", api_token()).send().await {
             Ok(resp) => json_body(resp).await,
             Err(e) => Err(format!("请求失败: {}", e)),
         };
@@ -1494,7 +1533,7 @@ pub fn chat_compact_reset_async(session_id: String) -> SharedResult<serde_json::
 pub async fn fetch_prefix_cache_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
     let url = format!("{}/api/metrics/prefix_cache", AI_BASE);
-    let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
     json_body(resp).await
 }
 
