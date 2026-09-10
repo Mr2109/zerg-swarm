@@ -25,8 +25,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sync"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -44,14 +44,14 @@ import (
 // 阶段 3：内置 LocalBackend 管理本机子端。
 // 阶段 B：内置动作级路由表（actionRouter）。
 type Gateway struct {
-	authToken string              // 从 fleet.yaml auth.token 读取
+	authToken string // 从 fleet.yaml auth.token 读取
 	config    *config.FleetConfig
-	client    *http.Client       // 转发用 HTTP 客户端
+	client    *http.Client            // 转发用 HTTP 客户端
 	localBack *localback.LocalBackend // 本机子端（阶段 3）
-	store     *store.Store       // fleet 快照（路由决策用：已加载模型/活跃请求/健康）
-	comp      *compressor.Compressor // LLMLingua-2 压缩器（V22，Go 一体化）
+	store     *store.Store            // fleet 快照（路由决策用：已加载模型/活跃请求/健康）
+	comp      *compressor.Compressor  // LLMLingua-2 压缩器（V22，Go 一体化）
 	compMu    sync.RWMutex
-	gate      *control.Gate      // M3 集中控制层（v2.4——工具调用拦截；nil=不启用）
+	gate      *control.Gate // M3 集中控制层（v2.4——工具调用拦截；nil=不启用）
 
 	// 会话粘性（T4，借鉴 vLLM consistent_hash / llama.cpp conv_model_tracker）
 	// sessionID → 绑定的机器。同一会话固定同一台机器，复用 KV cache。
@@ -67,9 +67,9 @@ type Gateway struct {
 	// 熔断/降权（T7，借鉴 vLLM/open-llm-router）
 	// 每机器连续转发失败计数，超阈值后短期降权（不再选为最优），
 	// 心跳恢复健康后自动回池。
-	failMu      sync.Mutex
-	failCounts  map[string]int     // host → 连续失败次数
-	failSince   map[string]time.Time // host → 首次熔断时间（自动恢复用）
+	failMu     sync.Mutex
+	failCounts map[string]int       // host → 连续失败次数
+	failSince  map[string]time.Time // host → 首次熔断时间（自动恢复用）
 
 	// v2.5.5 重启窗口期治本: 主控启动时间——宽限期内（startupGrace 秒）忽略 unhealthy 快照
 	// 根因: 主控重启瞬间 X3 心跳失败（主控 API 未就绪窗口期）→ 快照 unhealthy → 路由拒绝
@@ -151,7 +151,7 @@ func (g *Gateway) LoadExcludeLocal() {
 
 func (g *Gateway) persistExcludeLocal(exclude bool) error {
 	st := struct {
-		ExcludeLocal bool `json:"exclude_local"`
+		ExcludeLocal bool   `json:"exclude_local"`
 		UpdatedAt    string `json:"updated_at"`
 	}{ExcludeLocal: exclude, UpdatedAt: time.Now().Format(time.RFC3339)}
 	data, err := json.Marshal(st)
@@ -231,12 +231,12 @@ func NewGateway(authToken string, cfg *config.FleetConfig, localBack *localback.
 	}
 
 	g := &Gateway{
-		authToken: authToken,
-		config:    cfg,
-		actionRouter: actionRouter,
-		roundRobin: make(map[string]int), // B13: 轮询计数器初始化
-		orchestrator: orch,
-		gate:       ctrlGate, // M3 集中控制层（观察模式）
+		authToken:       authToken,
+		config:          cfg,
+		actionRouter:    actionRouter,
+		roundRobin:      make(map[string]int), // B13: 轮询计数器初始化
+		orchestrator:    orch,
+		gate:            ctrlGate, // M3 集中控制层（观察模式）
 		adapterRegistry: adapters, // v2.5.4.10 模型适配器注册表
 		client: &http.Client{
 			// v2.5.6 故障自愈（Mr2109 2026-08-28）: 5min→45min——长生成（思考模型 13万token）
@@ -258,15 +258,16 @@ func NewGateway(authToken string, cfg *config.FleetConfig, localBack *localback.
 				ResponseHeaderTimeout: 90 * time.Second,
 			},
 		},
-		localBack: localBack,
-		store:     st,
-		sessions:   make(map[string]sessionBinding),
-		prefixes:   make(map[string]map[string]int),
-		failCounts: make(map[string]int),
-		failSince:  make(map[string]time.Time),
+		localBack:   localBack,
+		store:       st,
+		sessions:    make(map[string]sessionBinding),
+		prefixes:    make(map[string]map[string]int),
+		failCounts:  make(map[string]int),
+		failSince:   make(map[string]time.Time),
 		startupTime: time.Now(), // v2.5.5 重启窗口期治本: 启动宽限期起点
-		// 丙批 N4：前缀命中率闭环（窗口 50 次 / 10 分钟——见 prefix_cache.go）
-		prefixCache: newPrefixCache(defaultPrefixWindowN, defaultPrefixWindowDur),
+		// 丙批 N4 / C2：前缀命中率闭环（窗口 50 次 / 10 分钟——见 prefix_cache.go）
+		// C2：带跨重启持久化（statepath ~/.zerg/state/prefix_cache.json + 节流写）
+		prefixCache: newPrefixCachePersistent(defaultPrefixWindowN, defaultPrefixWindowDur),
 	}
 	// v2.5.6 适配器覆盖配置恢复（启动重放——2026-08-27 Mr2109）
 	g.loadAdapterOverrides()
@@ -418,8 +419,8 @@ func (g *Gateway) handleCompact(w http.ResponseWriter, r *http.Request) {
 
 	// 调虫族网关内部（复用路由/转发）
 	compactBody := map[string]interface{}{
-		"model":    compactModel,
-		"messages": []interface{}{map[string]interface{}{"role": "user", "content": compactPrompt}},
+		"model":      compactModel,
+		"messages":   []interface{}{map[string]interface{}{"role": "user", "content": compactPrompt}},
 		"max_tokens": 2000,
 	}
 	compactBodyJSON, _ := json.Marshal(compactBody)
@@ -513,7 +514,7 @@ func (g *Gateway) handleCompact(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write(out)
 }
-//
+
 // 支持三种认证头：
 //   - X-Auth-Token: <token>（Zerg 内部标准）
 //   - Authorization: Bearer <token>（OpenAI 标准）
@@ -566,12 +567,12 @@ func (g *Gateway) authMiddleware(next http.Handler) http.Handler {
 // handleRequest 统一请求处理：提取 model → 路由 → 转发 → 透传响应。
 //
 // 处理流程：
-//   1. 读取请求体（大 body 支持：按 Content-Length 循环读）
-//   2. 提取 body.model 字段
-//   3. pickRoute 选择目标机器
-//   4. host=local → 通过 LocalBackend 转发（阶段 3 实现）
-//   5. 转发到子端 :8100/infer（body + " _path" 字段）
-//   6. 响应透传（非流式完整 / 流式逐 chunk）
+//  1. 读取请求体（大 body 支持：按 Content-Length 循环读）
+//  2. 提取 body.model 字段
+//  3. pickRoute 选择目标机器
+//  4. host=local → 通过 LocalBackend 转发（阶段 3 实现）
+//  5. 转发到子端 :8100/infer（body + " _path" 字段）
+//  6. 响应透传（非流式完整 / 流式逐 chunk）
 func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// 1. 读取请求体（大 body 支持：按 Content-Length 循环读，不截断）
 	body, err := io.ReadAll(r.Body)
@@ -903,16 +904,16 @@ func (g *Gateway) extractModelWithAction(body []byte, path string) (model string
 
 	// 标准提取失败（缺少 model 字段），尝试动作路由
 	log.Printf("🔍 请求未指定 model，尝试动作路由: %v", err)
-	
+
 	action := detectAction(body, path)
 	log.Printf("🎯 识别动作类型: %s", action.String())
-	
+
 	// 通过动作路由解析目标模型
 	resolved := g.actionRouter.resolveModel(action)
 	if resolved == "" {
 		return "", false, fmt.Errorf("动作路由未找到目标模型: %s", action.String())
 	}
-	
+
 	log.Printf("✅ 动作路由解析成功: %s → %s", action.String(), resolved)
 	return resolved, true, nil
 }
@@ -920,11 +921,11 @@ func (g *Gateway) extractModelWithAction(body []byte, path string) (model string
 // pickRoute 路由选择：已加载→空闲→负载低。
 //
 // 路由策略：
-//   1. 在 fleet.yaml 的 models 表中查找模型
-//   2. 如果有多个候选 host，按优先级选择：
-//      - 已加载该模型的 host 优先
-//      - 同级别按负载（mem_gb）选择负载最低的
-//   3. host=local 的模型：阶段 3 实现，先返回 503
+//  1. 在 fleet.yaml 的 models 表中查找模型
+//  2. 如果有多个候选 host，按优先级选择：
+//     - 已加载该模型的 host 优先
+//     - 同级别按负载（mem_gb）选择负载最低的
+//  3. host=local 的模型：阶段 3 实现，先返回 503
 //
 // 阶段 1 已有 FleetConfig.Models 结构，这里复用。
 // markFailure 记录机器转发失败（熔断计数）。
@@ -1223,9 +1224,9 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 			File:  best.File,
 			MemGB: bestMemGB,
 		}, nil
-		}
+	}
 
-		// 单个候选，直接返回（v2.5.5 #9：也要检查熔断/排除——单候选也可能全不可用）
+	// 单个候选，直接返回（v2.5.5 #9：也要检查熔断/排除——单候选也可能全不可用）
 	c := models[0]
 	if g.isTripped(c.Host) {
 		return nil, fmt.Errorf("模型 %s 唯一候选 %s 已熔断——无可用候选", model, c.Host)
@@ -1267,6 +1268,7 @@ func (g *Gateway) snapshotFor(machine string) *store.FleetSnapshot {
 //   - 快照 Model 是逻辑名（如 "Qwen3.8-27B"）——与候选 File basename 去量化后缀后匹配
 //     （"Qwen3.8-27B-Q4_K_M-vcruz305" 去 "-Q4_K_M-vcruz305" → "Qwen3.8-27B"）
 //   - 快照 Models 列表任一匹配（同规则）
+//
 // 注意: 不能用 filepath.Ext 剥扩展——模型名含点号（Qwen3.8 的 .8 会被误当扩展名）
 func modelFileLoaded(snap *store.FleetSnapshot, file string) bool {
 	if snap == nil || file == "" {
@@ -1324,8 +1326,9 @@ func stripQuantSuffix(name string) string {
 
 // classifyRouteError 路由错误分类（v2.5.6 故障自愈——Mr2109 2026-08-28）
 // 返回 (错误码, HTTP 状态码)——调度器按 code 分类处理（可等/可重试/不可重试）
-//   circuit_open    (503) 熔断/无候选/被排除——环境故障——可等（waiting_retry）
-//   model_not_found (404) 模型不在路由表——配置问题——不可重试
+//
+//	circuit_open    (503) 熔断/无候选/被排除——环境故障——可等（waiting_retry）
+//	model_not_found (404) 模型不在路由表——配置问题——不可重试
 func classifyRouteError(err error) (string, int) {
 	if err == nil {
 		return "api_error", http.StatusBadGateway
@@ -1431,7 +1434,8 @@ func modelName(reqMap map[string]interface{}) string {
 // applyReasoningFallback — v2.5.4.9 reasoning 兜底（思考模型 content 空时拼 reasoning）
 // 场景: Nemotron/Qwen3.8 思考模式——生成全在 reasoning_content——content 空
 // 处理: 读 body——chat.completions 响应里 message.content 空但有 reasoning_content
-//       → content 用 reasoning_content 填充（调用方不误判"无输出"）
+//
+//	→ content 用 reasoning_content 填充（调用方不误判"无输出"）
 func (g *Gateway) applyReasoningFallback(resp *http.Response) *http.Response {
 	if resp == nil || resp.Body == nil {
 		return resp
@@ -1488,11 +1492,12 @@ func (g *Gateway) applyReasoningFallback(resp *http.Response) *http.Response {
 }
 
 // parallelSlots — 机器执行并行度（分配改进A——active 降权按执行能力）
-//   Mr2109认知纠正（2026-08-15）：X3 -np 4 ≠ 能并行 4 任务
-//     = 显存大能同时加载 4 个模型（切换快——选择多）
-//     但执行 1 个模型 = GPU 全负荷（单任务推理）
-//   → 执行层面并行度都是 1——active>=1 即忙（GPU 满）——应降权转走
-//   所有机器统一 1（保守——不低估忙）
+//
+//	Mr2109认知纠正（2026-08-15）：X3 -np 4 ≠ 能并行 4 任务
+//	  = 显存大能同时加载 4 个模型（切换快——选择多）
+//	  但执行 1 个模型 = GPU 全负荷（单任务推理）
+//	→ 执行层面并行度都是 1——active>=1 即忙（GPU 满）——应降权转走
+//	所有机器统一 1（保守——不低估忙）
 func (g *Gateway) parallelSlots(machine string) int {
 	return 1 // 执行层面单任务（GPU 全负荷——active>=1 即忙）
 }
@@ -1627,7 +1632,7 @@ func (g *Gateway) compactThreshold(model string) int {
 	if candidates, ok := g.config.Models[model]; ok && len(candidates) > 0 {
 		ctx := candidates[0].CtxWindow
 		if ctx > 0 {
-			perSlot := ctx          // 单槽执行（v2.5.5: X3/本机都单槽——取消 4 槽假设）
+			perSlot := ctx            // 单槽执行（v2.5.5: X3/本机都单槽——取消 4 槽假设）
 			return perSlot * 85 / 100 // 85% 安全网兜底
 		}
 	}
@@ -1674,8 +1679,8 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 	compactPrompt := BuildStructuredSummaryPrompt(string(msgsJSON))
 
 	compactBody := map[string]interface{}{
-		"model":     compactModel,
-		"messages":  []interface{}{map[string]interface{}{"role": "user", "content": compactPrompt}},
+		"model":      compactModel,
+		"messages":   []interface{}{map[string]interface{}{"role": "user", "content": compactPrompt}},
 		"max_tokens": 2000,
 	}
 	compactBodyJSON, _ := json.Marshal(compactBody)

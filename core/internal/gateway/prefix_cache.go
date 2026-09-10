@@ -21,9 +21,14 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"zerg/core/internal/statepath"
 )
 
 // ---------------------------------------------------------------------------
@@ -45,6 +50,16 @@ const (
 	maxPrefixAlerts = 100
 	// maxPrefixModels 追踪的模型数上限（超过清理最久未更新的）。
 	maxPrefixModels = 64
+
+	// 丙批 C2：持久化节流参数（最多每 5 秒或每 10 个样本落盘一次，避免每请求一写）。
+	defaultFlushEvery   = 5 * time.Second
+	defaultFlushSamples = 10
+	// persistedPrefixCacheVersion 落盘格式版本（未来不兼容变更时递增）。
+	persistedPrefixCacheVersion = 1
+	// maxUnknownLastKeys 最近未知样本的键名列表上限（只留最近 1 条样本，键名本身限长防膨胀）。
+	maxUnknownLastKeys = 24
+	// prefixCacheStateFile 落盘文件名（位于 statepath.Dir()）。
+	prefixCacheStateFile = "prefix_cache.json"
 )
 
 // ---------------------------------------------------------------------------
@@ -95,6 +110,18 @@ type prefixCacheTracker struct {
 
 	models map[string]*modelPrefixState
 	alerts []PrefixCacheAlert // 最新告警在末尾
+
+	// 丙批 C2：跨重启持久化（persistPath 为空则禁用——单测构造默认禁用）
+	persistPath  string        // 落盘路径（statepath.File("prefix_cache.json")）
+	flushEvery   time.Duration // 节流：最短写盘间隔（默认 5s）
+	flushSamples int           // 节流：累计样本数阈值（默认 10）
+	lastSaveAt   time.Time     // 上次成功落盘时间
+	dirtySamples int           // 距上次落盘累计的变更数
+	dirty        bool          // 是否有未落盘变更
+
+	// 丙批 C2：未知响应形态探测
+	unknownForms    int      // 解析失败（无 timings 且无已知 usage 字段）的响应计数
+	unknownLastKeys []string // 最近一条未知样本的键名列表（不含值——防泄漏）
 }
 
 // newPrefixCache 构造追踪器。windowN<=0 用默认 50；dur<=0 用默认 10 分钟。
@@ -111,6 +138,40 @@ func newPrefixCache(windowN int, dur time.Duration) *prefixCacheTracker {
 		minAlertSamples: defaultPrefixMinAlertSamples,
 		now:             time.Now,
 		models:          map[string]*modelPrefixState{},
+	}
+}
+
+// newPrefixCachePersistent 构造带跨重启持久化的追踪器（生产路径——见 NewGateway）。
+// 立即尝试 load 已有文件；文件缺失/损坏 → 从空态开始并记日志（不阻断启动）。
+func newPrefixCachePersistent(windowN int, dur time.Duration) *prefixCacheTracker {
+	t := newPrefixCache(windowN, dur)
+	t.enablePersistence(statepath.File(prefixCacheStateFile))
+	return t
+}
+
+// enablePersistence 启用落盘并立即 load（path 为空则保持禁用——单测隔离友好）。
+func (t *prefixCacheTracker) enablePersistence(path string) {
+	if t == nil || path == "" {
+		return
+	}
+	t.mu.Lock()
+	t.persistPath = path
+	t.flushEvery = defaultFlushEvery
+	t.flushSamples = defaultFlushSamples
+	t.lastSaveAt = t.now() // 节流基准 = 启用时刻
+	t.mu.Unlock()
+	t.load()
+	// C2 补齐（2026-09-10）：后台定时刷盘——原先只在 Record 里按节流写，
+	// 若末批样本之后不再有新请求，这批样本会一直留在内存、进程被杀即丢（实测踩到）。
+	go t.autoFlushLoop()
+}
+
+// autoFlushLoop — 每 10s 把脏样本落盘（低流量场景的保底；不影响 Record 内的节流写）
+func (t *prefixCacheTracker) autoFlushLoop() {
+	tk := time.NewTicker(10 * time.Second)
+	defer tk.Stop()
+	for range tk.C {
+		t.Flush()
 	}
 }
 
@@ -319,6 +380,8 @@ func (t *prefixCacheTracker) Record(model string, body []byte, read, miss int) (
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// 丙批 C2：本次采样后按节流规则尝试落盘（在持锁状态下执行——LIFO defer 先于 Unlock）
+	defer t.markDirtyLocked()
 
 	st, ok := t.models[model]
 	if !ok {
@@ -470,6 +533,232 @@ func pctDrop(cur, baseline float64) float64 {
 }
 
 // ---------------------------------------------------------------------------
+// 丙批 C2：跨重启持久化（statepath + 节流写）
+// ---------------------------------------------------------------------------
+
+// persistedSample 单个窗口样本的落盘形态（时间用 Unix 毫秒——跨重启稳定）。
+type persistedSample struct {
+	TMs  int64 `json:"t_ms"`
+	Read int   `json:"read"` // 命中（复用前缀）的 token 数
+	Miss int   `json:"miss"` // 未命中（需重新处理）的 token 数
+}
+
+// persistedModel 单模型（当前 prompt_version 窗口 + 基线）的落盘形态。
+type persistedModel struct {
+	PromptVersion string            `json:"prompt_version"`
+	PrevVersion   string            `json:"prev_version,omitempty"`
+	BaselineRatio float64           `json:"baseline_ratio"`
+	HasBaseline   bool              `json:"has_baseline"`
+	Alerted       bool              `json:"alerted"`
+	UpdatedAtMs   int64             `json:"updated_at_ms"`
+	Hits          int               `json:"hits"`   // 窗口内命中合计（冗余——便于人读/校对）
+	Misses        int               `json:"misses"` // 窗口内未命中合计（冗余——便于人读/校对）
+	Samples       []persistedSample `json:"samples"`
+}
+
+// persistedPrefixCache 落盘文件根结构（prefix_cache.json）。
+type persistedPrefixCache struct {
+	Version         int                       `json:"version"`
+	SavedAt         string                    `json:"saved_at"`
+	Models          map[string]persistedModel `json:"models"`
+	Alerts          []PrefixCacheAlert        `json:"alerts"`
+	UnknownForms    int                       `json:"unknown_forms"`
+	UnknownLastKeys []string                  `json:"unknown_last_keys,omitempty"`
+}
+
+// load 从磁盘恢复窗口/基线/告警/未知形态统计。
+// 文件缺失 → 静默空态（首次启动）；读取失败或 JSON 损坏 → 记日志后忽略（不阻断启动、不 panic）。
+func (t *prefixCacheTracker) load() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.persistPath == "" {
+		return
+	}
+	b, err := os.ReadFile(t.persistPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("⚠️ [prefix_cache] 持久化文件读取失败（忽略，从空态开始）：%v", err)
+		}
+		return
+	}
+	var pf persistedPrefixCache
+	if err := json.Unmarshal(b, &pf); err != nil {
+		log.Printf("⚠️ [prefix_cache] 持久化文件损坏（忽略，从空态开始）：%v", err)
+		return
+	}
+
+	models := map[string]*modelPrefixState{}
+	for name, pm := range pf.Models {
+		st := &modelPrefixState{
+			version:       pm.PromptVersion,
+			baselineRatio: pm.BaselineRatio,
+			hasBaseline:   pm.HasBaseline,
+			prevVersion:   pm.PrevVersion,
+			alerted:       pm.Alerted,
+			updatedAt:     time.UnixMilli(pm.UpdatedAtMs),
+		}
+		for _, ps := range pm.Samples {
+			st.samples = append(st.samples, cacheSample{
+				t:         time.UnixMilli(ps.TMs),
+				cacheRead: ps.Read,
+				cacheMiss: ps.Miss,
+			})
+		}
+		// 兜底：样本为空但有合计值时合成一条聚合样本，保证 ratio 可复现。
+		if len(st.samples) == 0 && (pm.Hits > 0 || pm.Misses > 0) {
+			st.samples = append(st.samples, cacheSample{
+				t: st.updatedAt, cacheRead: pm.Hits, cacheMiss: pm.Misses,
+			})
+		}
+		models[name] = st
+	}
+	t.models = models
+	if pf.Alerts != nil {
+		t.alerts = pf.Alerts
+	}
+	t.unknownForms = pf.UnknownForms
+	t.unknownLastKeys = append([]string(nil), pf.UnknownLastKeys...)
+	log.Printf("✅ [prefix_cache] 已从 %s 恢复 %d 个模型 / %d 条告警 / %d 次未知形态",
+		t.persistPath, len(models), len(t.alerts), t.unknownForms)
+}
+
+// saveLocked 原子写盘（临时文件 + rename）——调用方须持 t.mu。
+func (t *prefixCacheTracker) saveLocked() {
+	if t.persistPath == "" {
+		return
+	}
+	pf := persistedPrefixCache{
+		Version:         persistedPrefixCacheVersion,
+		SavedAt:         t.now().Format(time.RFC3339),
+		Models:          make(map[string]persistedModel, len(t.models)),
+		Alerts:          t.alerts,
+		UnknownForms:    t.unknownForms,
+		UnknownLastKeys: t.unknownLastKeys,
+	}
+	for name, st := range t.models {
+		h, m := windowTotals(st.samples)
+		pm := persistedModel{
+			PromptVersion: st.version,
+			PrevVersion:   st.prevVersion,
+			BaselineRatio: st.baselineRatio,
+			HasBaseline:   st.hasBaseline,
+			Alerted:       st.alerted,
+			UpdatedAtMs:   st.updatedAt.UnixMilli(),
+			Hits:          h,
+			Misses:        m,
+		}
+		for _, s := range st.samples {
+			pm.Samples = append(pm.Samples, persistedSample{
+				TMs: s.t.UnixMilli(), Read: s.cacheRead, Miss: s.cacheMiss,
+			})
+		}
+		pf.Models[name] = pm
+	}
+	b, err := json.MarshalIndent(pf, "", "  ")
+	if err != nil {
+		log.Printf("⚠️ [prefix_cache] 持久化序列化失败（跳过本次落盘）：%v", err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(t.persistPath), 0o755); err != nil {
+		log.Printf("⚠️ [prefix_cache] 持久化目录创建失败（跳过本次落盘）：%v", err)
+		return
+	}
+	tmp := t.persistPath + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		log.Printf("⚠️ [prefix_cache] 持久化临时文件写入失败（跳过本次落盘）：%v", err)
+		return
+	}
+	if err := os.Rename(tmp, t.persistPath); err != nil {
+		log.Printf("⚠️ [prefix_cache] 持久化原子替换失败：%v", err)
+		return
+	}
+	t.lastSaveAt = t.now()
+	t.dirtySamples = 0
+	t.dirty = false
+}
+
+// markDirtyLocked 记一笔待落盘变更，并按节流规则决定是否立即写盘：
+// 累计变更 ≥ flushSamples 或距上次写盘 ≥ flushEvery 时写；否则留待下次或 Flush。
+func (t *prefixCacheTracker) markDirtyLocked() {
+	if t.persistPath == "" {
+		return
+	}
+	t.dirtySamples++
+	t.dirty = true
+	if t.dirtySamples >= t.flushSamples || t.now().Sub(t.lastSaveAt) >= t.flushEvery {
+		t.saveLocked()
+	}
+}
+
+// Flush 强制立即落盘（进程优雅退出前调用；无待落盘变更则 no-op——保证最后一批不丢）。
+func (t *prefixCacheTracker) Flush() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.persistPath == "" || !t.dirty {
+		return
+	}
+	t.saveLocked()
+}
+
+// ---------------------------------------------------------------------------
+// 丙批 C2：未知响应形态探测
+// ---------------------------------------------------------------------------
+
+// unknownFormKeys 提取响应体的键名列表（仅顶层 + usage/timings 的键名；不含任何值/原文——防泄漏）。
+// 返回 (键名列表, 是否可解析为 JSON 对象)。空/损坏/非对象一律 ok=false（不计入未知形态）。
+func unknownFormKeys(respBody []byte) ([]string, bool) {
+	if len(respBody) == 0 {
+		return nil, false
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal(respBody, &obj); err != nil {
+		return nil, false
+	}
+	keys := make([]string, 0, 16)
+	top := make([]string, 0, len(obj))
+	for k := range obj {
+		top = append(top, k)
+	}
+	sort.Strings(top) // 排序保证输出稳定（便于跨样本比对差异）
+	keys = append(keys, top...)
+	for _, sect := range []string{"usage", "timings"} {
+		m, ok := obj[sect].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		sub := make([]string, 0, len(m))
+		for k := range m {
+			sub = append(sub, k)
+		}
+		sort.Strings(sub)
+		for _, k := range sub {
+			keys = append(keys, sect+"."+k)
+		}
+	}
+	return keys, true
+}
+
+// markUnknown 记录一次未知响应形态：计数 +1、更新最近样本键名列表（不含值），并按节流规则尝试落盘。
+// 返回累计未知形态次数。keys 为空也表示"有未知但无键名"。
+func (t *prefixCacheTracker) markUnknown(keys []string) int {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.unknownForms++
+	if len(keys) > maxUnknownLastKeys {
+		keys = keys[:maxUnknownLastKeys]
+	}
+	t.unknownLastKeys = append([]string(nil), keys...)
+	t.markDirtyLocked()
+	return t.unknownForms
+}
+
+// ---------------------------------------------------------------------------
 // 查询端点数据
 // ---------------------------------------------------------------------------
 
@@ -505,7 +794,10 @@ type PrefixCacheSnapshot struct {
 	HasBaseline   bool                        `json:"has_baseline"`
 	Alerts        []PrefixCacheAlert          `json:"alerts"`
 	Models        map[string]ModelPrefixStats `json:"models,omitempty"`
-	Status        string                      `json:"status"`
+	// 丙批 C2：未知响应形态探测
+	UnknownForms    int      `json:"unknown_forms"`               // 解析失败的响应计数（无 timings 且无已知 usage 字段）
+	UnknownLastKeys []string `json:"unknown_last_keys,omitempty"` // 最近一条未知样本的键名列表（不含值）
+	Status          string   `json:"status"`
 }
 
 // Snapshot 生成查询快照。model 非空时只聚焦该模型；为空时聚合全部模型。
@@ -543,6 +835,11 @@ func (t *prefixCacheTracker) Snapshot(model string) PrefixCacheSnapshot {
 	snap := PrefixCacheSnapshot{
 		Alerts: []PrefixCacheAlert{},
 		Status: "ok",
+	}
+	// 丙批 C2：未知响应形态统计（拷贝切片——解锁后调用方仍可安全读取）
+	snap.UnknownForms = t.unknownForms
+	if len(t.unknownLastKeys) > 0 {
+		snap.UnknownLastKeys = append([]string(nil), t.unknownLastKeys...)
 	}
 
 	// 过滤告警
@@ -657,6 +954,13 @@ func (g *Gateway) recordPrefixCache(model string, forwardBody, respBody []byte) 
 	}
 	read, miss, form, raw, ok := parsePrefixCacheUsage(respBody)
 	if !ok {
+		// 丙批 C2：未知响应形态探测——记录键名（不含值）+ 计数 + WARN，便于以后发现新上游形态。
+		// 仅当响应体可解析为 JSON 对象时计数；空/损坏/非对象不计（避免把解析错误误判为形态）。
+		if keys, keyed := unknownFormKeys(respBody); keyed {
+			n := g.prefixCache.markUnknown(keys)
+			log.Printf("⚠️ [prefix_cache][WARN] 未知响应形态（累计第 %d 次）——样本键名: %v", n, keys)
+			slog.Warn("prefix_cache 未知响应形态", "count", n, "keys", keys)
+		}
 		return
 	}
 	version, changed, alert := g.prefixCache.Record(model, forwardBody, read, miss)
@@ -693,4 +997,13 @@ func (g *Gateway) handlePrefixCacheMetrics(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(out)
+}
+
+// FlushPrefixCache 强制将前缀命中率统计落盘（丙批 C2）。
+// 供进程优雅退出钩子调用——保证节流窗口内最后一批样本不丢。
+func (g *Gateway) FlushPrefixCache() {
+	if g == nil || g.prefixCache == nil {
+		return
+	}
+	g.prefixCache.Flush()
 }

@@ -7,8 +7,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"log"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -163,6 +163,8 @@ func (h *ChatHandlers) RegisterChatRoutes(r chiRouter) {
 	r.Post("/api/chat/sessions/{id}/archive", h.SetArchive) // P4-33 归档（archived=1 列表隐藏）
 	// 消息 + 对话
 	r.Get("/api/chat/sessions/{id}/messages", h.ListMessages)
+	r.Get("/api/chat/sessions/{id}/window", h.ChatWindowHandler)               // 丙批补: 召回指针回到原文（窗口）
+	r.Post("/api/chat/sessions/{id}/compact-reset", h.ChatCompactResetHandler) // 丙批补: 重置压缩冷却/硬熔断
 	r.Post("/api/chat/sessions/{id}/send", h.SendMessage)
 	r.Post("/api/chat/sessions/{id}/send-tool", h.SendMessageTool) // C4b 工具循环对话
 	r.Post("/api/chat/sessions/{id}/abort", h.AbortMessage)        // 批次B(2026-09-10): 服务端中断（部分结果落库）
@@ -688,10 +690,10 @@ func chatMessageToReq(m *chat.Message, keepImage bool) map[string]any {
 func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	id := chiURLParam(r, "id")
 	var req struct {
-		Content      string   `json:"content"`
-		Image        string   `json:"image"`          // D3 多模态: data URL base64（单图——兼容）
-		Images       []string `json:"images"`         // P2 多图: data URL base64 数组（优先）
-		ReuseUserID  int64    `json:"reuse_user_id"`  // 批次C3: 重跑既有 user 消息（不新增——重生成用）
+		Content     string   `json:"content"`
+		Image       string   `json:"image"`         // D3 多模态: data URL base64（单图——兼容）
+		Images      []string `json:"images"`        // P2 多图: data URL base64 数组（优先）
+		ReuseUserID int64    `json:"reuse_user_id"` // 批次C3: 重跑既有 user 消息（不新增——重生成用）
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
 		writeChatError(w, http.StatusBadRequest, errOrMsg(err, "消息内容为空"))
