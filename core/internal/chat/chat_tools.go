@@ -276,6 +276,6 @@ func HermesToolDefs() []struct {
 		// P4-50 虫族系统总览（L0 常驻——模型盲时也要看见——系统任务先调用）
 		{"zerg_overview", "虫族系统总览——最新架构/使用/状态/文档（系统任务/改代码/排障先调——无参全景——section=模块 下钻）", map[string]any{"section": map[string]any{"type": "string"}}, []string{}},
 		// P5-01 项目文档检索（v2.5.8——查文档先 doc_search——命中片段不全文读）
-		{"doc_search", "项目文档检索——关键词→docs 命中文件+片段（当前版优先——query 必填——scope 可选限定如 v2.5.8/常青——查文档先调本工具不 open 全文）", map[string]any{"query": map[string]any{"type": "string", "description": "关键词（空格分词——AND）"}, "scope": map[string]any{"type": "string", "description": "限定范围——如 v2.5.8/常青（默认全部）"}}, []string{"query"}},
+		{"doc_search", "项目文档检索——关键词→docs 命中文件+片段（当前版优先——query 必填——scope 可选限定如 v2.5.9/常青——查文档先调本工具不 open 全文）", map[string]any{"query": map[string]any{"type": "string", "description": "关键词（空格分词——AND）"}, "scope": map[string]any{"type": "string", "description": "限定范围——如 v2.5.9/常青（默认全部）"}}, []string{"query"}},
 	}
 }

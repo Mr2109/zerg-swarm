@@ -37,7 +37,7 @@ fn main() -> eframe::Result<()> {
     rust_i18n::set_locale("zh-CN");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("虫族 Zerg v2.5.8")
+            .with_title(format!("虫族 Zerg v{}", env!("CARGO_PKG_VERSION")))
             .with_inner_size([1280.0, 800.0]),
         ..Default::default()
     };
