@@ -1,0 +1,70 @@
+{
+  "_doc": "非测试、非注释的含中文 UI 字面量白名单（多语言决策④⑥ 2026-09-11）。新增条目须在评审里说明理由；门禁 G4 只允许此清单内的行。",
+  "allowed": [
+    {
+      "file": "ui/src/app.rs",
+      "contains": "\"summarize\" => format!(\"请用中文总结",
+      "why": "AI 文档动作提示词（决策④：提示不整体翻译）"
+    },
+    {
+      "file": "ui/src/app.rs",
+      "contains": "\"continue\" => format!(\"请用中文续写",
+      "why": "同上（AI 文档动作提示词）"
+    },
+    {
+      "file": "ui/src/app.rs",
+      "contains": "\"translate\" => format!(\"请将以下 Markdown 文档翻译成中文",
+      "why": "同上（AI 文档动作提示词）"
+    },
+    {
+      "file": "ui/src/app.rs",
+      "contains": "\"polish\" => format!(\"请润色以下 Markdown 文档",
+      "why": "同上（AI 文档动作提示词）"
+    },
+    {
+      "file": "ui/src/app.rs",
+      "contains": "l.contains(\"错误\")",
+      "why": "日志级别判定：中英双认（语言无关逻辑，非文案）"
+    },
+    {
+      "file": "ui/src/app.rs",
+      "contains": "l.contains(\"警告\")",
+      "why": "日志级别判定：中英双认（语言无关逻辑，非文案）"
+    },
+    {
+      "file": "ui/src/app.rs",
+      "contains": "unwrap_or(\"未知\")",
+      "why": "后端资源数据值（trust 字段），非展示文案"
+    },
+    {
+      "file": "ui/src/app.rs",
+      "contains": "trust == \"新\"",
+      "why": "后端资源数据值比较，展示走 resources.trust_* 键"
+    },
+    {
+      "file": "ui/src/modules/mod.rs",
+      "contains": "ui.button(\"中文\")",
+      "why": "语言自称（专名）——切到中文的按钮"
+    },
+    {
+      "file": "ui/src/modules/ferrite/buffer.rs",
+      "contains": "TextBuffer::insert 位置越界",
+      "why": "debug_assert 开发期断言（非用户可见）"
+    },
+    {
+      "file": "ui/src/modules/ferrite/buffer.rs",
+      "contains": "TextBuffer::remove 越界",
+      "why": "debug_assert 开发期断言（非用户可见）"
+    },
+    {
+      "file": "ui/src/modules/ferrite/buffer.rs",
+      "contains": "TextBuffer::line_to_char 行号越界",
+      "why": "debug_assert 开发期断言（非用户可见）"
+    },
+    {
+      "file": "ui/src/modules/ferrite/buffer.rs",
+      "contains": "TextBuffer::line_str 行号越界",
+      "why": "debug_assert 开发期断言（非用户可见）"
+    }
+  ]
+}

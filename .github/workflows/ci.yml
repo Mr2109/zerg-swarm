@@ -54,6 +54,14 @@ jobs:
       - name: 检查
         run: python3 scripts/check_docs.py
 
+  i18n:
+    name: i18n 门禁（键对称/引用完整/占位符/中文基线）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检查
+        run: python3 ui/scripts/check-i18n.py
+
   secrets:
     name: 密钥扫描
     runs-on: ubuntu-latest
