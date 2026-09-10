@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // SkillLoader 接口（解耦——适配器不依赖具体 SkillManager）

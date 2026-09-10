@@ -7,7 +7,7 @@ package chat
 import (
 	"strings"
 
-	"zerg/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 )
 
 // ChatGate — 对话工具安全门（实现 agent.ToolGater）

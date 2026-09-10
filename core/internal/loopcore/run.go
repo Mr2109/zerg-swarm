@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"zerg/core/internal/ffp"
+	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
 )
 
 // Run — 运行工具循环（唯一实现——Deps.Infer 内部决定流式与否，内核只透传 delta 回调）

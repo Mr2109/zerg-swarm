@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"zerg/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 )
 
 // InternalTasksHandler 内部任务清单（2026-08-22 Mr2109——UI 分类显示）

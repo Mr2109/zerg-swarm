@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // LlamaRuntime 实现 plugin.Plugin 接口

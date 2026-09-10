@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"time"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // ToolPlugin 实现 Plugin 接口——Execute 执行工具命令（bash exec 包装）。

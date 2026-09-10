@@ -30,14 +30,14 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"zerg/core/internal/compressor"
-	"zerg/core/internal/config"
-	"zerg/core/internal/control"
-	"zerg/core/internal/gateway/adapter"
-	"zerg/core/internal/gateway/orchestrator"
-	"zerg/core/internal/localback"
-	"zerg/core/internal/plugin"
-	"zerg/core/internal/store"
+	"github.com/Mr2109/zerg-swarm/core/internal/compressor"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/control"
+	"github.com/Mr2109/zerg-swarm/core/internal/gateway/adapter"
+	"github.com/Mr2109/zerg-swarm/core/internal/gateway/orchestrator"
+	"github.com/Mr2109/zerg-swarm/core/internal/localback"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/store"
 )
 
 // Gateway 网关主结构，持有配置和 HTTP 客户端。

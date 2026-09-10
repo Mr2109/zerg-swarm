@@ -6,7 +6,7 @@ package chat
 import (
 	"testing"
 
-	"zerg/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 )
 
 // 1. 成功即常驻（初始无常驻——成功调用后加入）

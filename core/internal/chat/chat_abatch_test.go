@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"zerg/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 // newTestStore — 独立临时库（避开 /tmp 迁移路径，防测试互相污染）

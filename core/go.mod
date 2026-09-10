@@ -1,4 +1,4 @@
-module zerg/core
+module github.com/Mr2109/zerg-swarm/core
 
 go 1.25.5
 

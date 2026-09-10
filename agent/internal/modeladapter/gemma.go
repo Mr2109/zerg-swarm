@@ -3,7 +3,7 @@ package modeladapter
 import (
 	"fmt"
 
-	"zerg/agent/internal/registry"
+	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
 
 // Gemma Gemma 4 系列适配器。
@@ -21,7 +21,7 @@ func (a *Gemma) BuildArgs(entry *registry.ModelEntry, port int) []string {
 		"-ctv", "q8_0",
 		"-fa", "on",
 		"--cache-prompt",
-		"-np", "1", // v2.5.5 单槽铁律（Mr2109——执行层面单槽——GPU全负荷）
+		"-np", "1", // v2.5.5 单槽铁律（设计决策——执行层面单槽——GPU全负荷）
 		"-cb",
 		"--host", "127.0.0.1",
 		"--port", fmt.Sprintf("%d", port),

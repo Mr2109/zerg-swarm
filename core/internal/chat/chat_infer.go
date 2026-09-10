@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"zerg/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 )
 
 // ChatInfer — 对话推理器（网关客户端）

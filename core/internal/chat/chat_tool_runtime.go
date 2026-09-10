@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"log"
-	"zerg/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 
-	"zerg/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 // NormalizeToolArgs — 工具参数统一解包（P4-50 bash arguments 双层嵌套修复）

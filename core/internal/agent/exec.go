@@ -21,7 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"zerg/core/internal/ffp"
+	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
 )
 
 // 执行上下文

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // pluginModelAdapter 桥：把 plugin.Plugin（模型适配器）适配成 agent.ModelAdapter。

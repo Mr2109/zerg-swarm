@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"zerg/agent/internal/registry"
+	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
 
 // ModelAdapter 模型适配器接口。

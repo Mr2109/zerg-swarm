@@ -21,9 +21,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"zerg/core/internal/agent"
-	"zerg/core/internal/chat"
-	"zerg/core/internal/loopcore"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/chat"
+	"github.com/Mr2109/zerg-swarm/core/internal/loopcore"
 )
 
 // P4-11 系统提示词（借鉴 Hermes 精华——行为规格而非特质列表——

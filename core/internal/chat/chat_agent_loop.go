@@ -11,7 +11,7 @@ package chat
 import (
 	"fmt"
 
-	"zerg/core/internal/loopguard"
+	"github.com/Mr2109/zerg-swarm/core/internal/loopguard"
 )
 
 // LoopGuard/LoopConfig — 公共包别名（渐进迁移——现有调用点不改）

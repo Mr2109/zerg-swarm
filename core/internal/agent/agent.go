@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"zerg/core/internal/agentstate"
-	"zerg/core/internal/hermes"
+	"github.com/Mr2109/zerg-swarm/core/internal/agentstate"
+	"github.com/Mr2109/zerg-swarm/core/internal/hermes"
 )
 
 // TerminateReason - 循环终止状态（与 Claude Code 对齐）

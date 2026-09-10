@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"zerg/core/internal/config"
-	"zerg/core/internal/localback"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/localback"
 )
 
 // ControlHandlers 控制端点处理器。
