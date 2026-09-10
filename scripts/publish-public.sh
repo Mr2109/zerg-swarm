@@ -118,6 +118,21 @@ cp -p "$REPO_ROOT/publish/CONTRIBUTING.md"         "$OUT/CONTRIBUTING.md"
 cp -p "$REPO_ROOT/publish/SECURITY.md"             "$OUT/SECURITY.md"
 [ -f "$REPO_ROOT/.env.example" ] && cp -p "$REPO_ROOT/.env.example" "$OUT/.env.example"
 cp -p "$REPO_ROOT/publish/config.example.yaml"     "$OUT/gateway/fleet.example.yaml"
+[ -f "$REPO_ROOT/publish/gitleaks.toml" ] && cp -p "$REPO_ROOT/publish/gitleaks.toml" "$OUT/.gitleaks.toml"
+# 公开文档（C 批成果，源在 publish/docs/）
+if [ -d "$REPO_ROOT/publish/docs" ]; then
+  mkdir -p "$OUT/docs/design"
+  for f in "$REPO_ROOT"/publish/docs/*.md; do
+    [ -e "$f" ] || continue
+    b="$(basename "$f")"
+    if [ "$b" = "README.md" ]; then cp -p "$f" "$OUT/README.md"; else cp -p "$f" "$OUT/docs/$b"; fi
+  done
+  for f in "$REPO_ROOT"/publish/docs/design/*.md; do
+    [ -e "$f" ] || continue
+    cp -p "$f" "$OUT/docs/design/$(basename "$f")"
+  done
+  echo "  公开文档: $(find "$OUT/docs" -name '*.md' | wc -l | tr -d ' ') 篇（含 README）"
+fi
 mkdir -p "$OUT/.github/workflows"
 cp -p "$REPO_ROOT/publish/ci/ci.yml"               "$OUT/.github/workflows/ci.yml"
 cp -p "$REPO_ROOT/publish/ci/release-agent.yml"    "$OUT/.github/workflows/release-agent.yml"
@@ -226,7 +241,11 @@ if hits:
 PY
 if command -v gitleaks >/dev/null 2>&1; then
   echo "  → 追加 gitleaks 通用密钥扫描"
-  ( cd "$OUT" && gitleaks detect --no-git --redact -v ) || { echo "❌ gitleaks 命中——中止发布" >&2; exit 1; }
+  if [ -f "$OUT/.gitleaks.toml" ]; then
+    ( cd "$OUT" && gitleaks detect --no-git --redact -v -c .gitleaks.toml ) || { echo "❌ gitleaks 命中——中止发布" >&2; exit 1; }
+  else
+    ( cd "$OUT" && gitleaks detect --no-git --redact -v ) || { echo "❌ gitleaks 命中——中止发布" >&2; exit 1; }
+  fi
 else
   echo "  （未安装 gitleaks——跳过通用密钥扫描；brew install gitleaks 可启用）"
 fi

@@ -1,0 +1,12 @@
+# gitleaks 配置（公开快照根 .gitleaks.toml）
+# 目的：保留官方默认规则集，仅对"测试夹具"这类**合成假密钥**做白名单，避免误报阻断 CI/发布。
+
+[extend]
+useDefault = true
+
+# 威胁扫描测试里用的合成密钥（用于验证 credential 分类，不是真凭据）
+[[allowlists]]
+description = "内存子系统的威胁扫描测试夹具（合成假密钥）"
+paths = [
+  'core/internal/memory/memory_test.go',
+]
