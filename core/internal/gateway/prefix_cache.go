@@ -232,6 +232,22 @@ func parsePrefixCacheUsage(respBody []byte) (cacheRead, cacheMiss int, form, raw
 		}
 	}
 
+	// ⑤ OpenAI Responses 式（2026-09-10 实测发现——未知形态探针抓到 12 条：
+	//    键名 output/status/usage.input_tokens/usage.input_tokens_details.cached_tokens）
+	if usage != nil {
+		if _, isResponses := obj["output"]; isResponses {
+			cached, hasCached := intField(usage, "input_tokens_details", "cached_tokens")
+			input, hasInput := intField(usage, "input_tokens")
+			if hasCached || hasInput {
+				miss := 0
+				if hasInput && input > cached {
+					miss = input - cached
+				}
+				return cached, miss, "openai-responses", rawSnippet(usage, timings), true
+			}
+		}
+	}
+
 	// ④ llama.cpp 式（timings.cache_n / timings.prompt_n）
 	if timings != nil {
 		cacheN, hasCacheN := intField(timings, "cache_n")
