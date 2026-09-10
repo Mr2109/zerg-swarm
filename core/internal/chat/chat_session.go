@@ -231,6 +231,60 @@ func (s *ChatStore) DeleteSession(id string) error {
 	return nil
 }
 
+// SoftDeleteExpired — 阶段1：过期会话软删（archived=1 + purge_after=now+grace）
+// 甲批 T3（2026-09-10）：软删→宽限→级联硬删；幂等（purge_after 非空者不重复处理，用户已归档者不动）
+func (s *ChatStore) SoftDeleteExpired(cutoff, purgeAfter float64) (int, error) {
+	res, err := s.db.Exec(
+		`UPDATE sessions SET archived = 1, purge_after = ?
+		 WHERE last_activity_at < ? AND archived = 0 AND purge_after IS NULL`,
+		purgeAfter, cutoff,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("chat: 软删过期会话失败: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// PurgeSoftDeleted — 阶段2：宽限期满 → 级联硬删（消息 + FTS + 图片）；幂等（可重复调用，失败下次重试）
+func (s *ChatStore) PurgeSoftDeleted(now float64) (int, error) {
+	rows, err := s.db.Query("SELECT id FROM sessions WHERE purge_after IS NOT NULL AND purge_after <= ?", now)
+	if err != nil {
+		return 0, fmt.Errorf("chat: 查待清会话失败: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("chat: 扫待清会话失败: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	done := 0
+	for _, id := range ids {
+		if err := s.DeleteSession(id); err != nil {
+			log.Printf("[chat] 级联硬删失败 %s（下次重试）: %v", id, err)
+			continue
+		}
+		done++
+	}
+	return done, nil
+}
+
+// CountCleanupPlan — 干跑：统计将软删/将硬删的会话数（不修改数据）
+func (s *ChatStore) CountCleanupPlan(cutoff, now float64) (soft, purge int, err error) {
+	if err = s.db.QueryRow(
+		`SELECT count(*) FROM sessions WHERE last_activity_at < ? AND archived = 0 AND purge_after IS NULL`,
+		cutoff).Scan(&soft); err != nil {
+		return
+	}
+	err = s.db.QueryRow(
+		`SELECT count(*) FROM sessions WHERE purge_after IS NOT NULL AND purge_after <= ?`, now).Scan(&purge)
+	return
+}
+
 // DeleteOldSessions — 90 天硬删（last_activity_at < cutoff 的会话）
 func (s *ChatStore) DeleteOldSessions(cutoff float64) (int, error) {
 	rows, err := s.db.Query("SELECT id FROM sessions WHERE last_activity_at < ?", cutoff)
