@@ -12,6 +12,7 @@ package agent
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"sync"
 	"syscall"
 
@@ -120,7 +121,7 @@ func InitToolUses() {
 // ─── 工具版本（P4-49——Mr2109 2026-09-02: 每个工具版本号——进化可追溯）───
 
 // toolVersionsFile — 工具版本表（项目根 tools/versions.json——工具资产集中）
-var toolVersionsFile = "<repo>/tools/versions.json"
+var toolVersionsFile = filepath.Join(statepath.WorkspaceRoot(), "tools", "versions.json")
 
 // toolVersions — 工具名 → 版本（加载缓存）
 var toolVersions = map[string]string{}

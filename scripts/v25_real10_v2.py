@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 PASS, FAIL = "✅", "❌"
-ZERG = "<repo>"
+ZERG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CORE = os.path.join(ZERG, "core")
 AGENT_SRC = os.path.join(CORE, "internal/agent")
 results = []

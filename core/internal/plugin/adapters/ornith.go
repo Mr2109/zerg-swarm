@@ -3,6 +3,7 @@ package adapters
 
 import (
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"strings"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
@@ -33,7 +34,7 @@ type OrnithAdapter struct {
 	// 完成语义词表（ornith 散落的完成词检测）
 	FinishWords []string
 	// Responses API 配置
-	GatewayURL     string
+	GatewayURL      string
 	UseResponsesAPI bool
 	// 状态
 	initialized bool
@@ -55,7 +56,7 @@ func NewOrnithAdapter() *OrnithAdapter {
 		Thinking:        true,
 		AuthToken:       "example-35b",
 		FinishWords:     DefaultFinishWords(),
-		GatewayURL:      "http://127.0.0.1:8082",
+		GatewayURL:      statepath.GatewayBaseURL(),
 		UseResponsesAPI: true,
 	}
 }
@@ -248,11 +249,11 @@ func (o *OrnithAdapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, 
 
 	// 构建响应（模拟——实际应调网关）
 	response := map[string]interface{}{
-		"prompt_length": len(prompt),
-		"gateway_url":  o.GatewayURL,
-		"temperature":  o.Temperature,
+		"prompt_length":  len(prompt),
+		"gateway_url":    o.GatewayURL,
+		"temperature":    o.Temperature,
 		"auth_token_set": o.AuthToken != "",
-		"responses_api": o.UseResponsesAPI,
+		"responses_api":  o.UseResponsesAPI,
 		// v2.5.5 T5c 元数据风格（与 qwen38/nemotron 一致——B-3 路由参数覆盖用）
 		"machine":     "",
 		"format":      o.Format,
@@ -299,6 +300,7 @@ func DefaultFinishWords() []string {
 // 参数:
 //   - text: 要检测的文本
 //   - words: 完成语义词表（nil 时用默认）
+//
 // 返回:
 //   - detected: 是否检测到完成词
 //   - matched: 匹配到的词列表

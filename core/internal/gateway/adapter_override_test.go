@@ -11,22 +11,22 @@ import (
 // mockAdapter — 测试用适配器（返回已知元数据）
 type mockAdapter struct{}
 
-func (m *mockAdapter) Name() string                       { return "mock" }
-func (m *mockAdapter) Type() plugin.PluginType            { return plugin.PluginTypeModelAdapter }
-func (m *mockAdapter) Version() string                    { return "1.0" }
-func (m *mockAdapter) Capabilities() []string             { return []string{"model"} }
-func (m *mockAdapter) Init(cfg map[string]any) error      { return nil }
-func (m *mockAdapter) Start() error                       { return nil }
-func (m *mockAdapter) Stop() error                        { return nil }
-func (m *mockAdapter) Close() error                       { return nil }
-func (m *mockAdapter) GetDescriptions() string            { return "mock" }
+func (m *mockAdapter) Name() string                  { return "mock" }
+func (m *mockAdapter) Type() plugin.PluginType       { return plugin.PluginTypeModelAdapter }
+func (m *mockAdapter) Version() string               { return "1.0" }
+func (m *mockAdapter) Capabilities() []string        { return []string{"model"} }
+func (m *mockAdapter) Init(cfg map[string]any) error { return nil }
+func (m *mockAdapter) Start() error                  { return nil }
+func (m *mockAdapter) Stop() error                   { return nil }
+func (m *mockAdapter) Close() error                  { return nil }
+func (m *mockAdapter) GetDescriptions() string       { return "mock" }
 func (m *mockAdapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, error) {
 	return plugin.PluginOutput{
 		Result: map[string]any{
-			"temperature":  0.7,
-			"max_tokens":   32768,
-			"timeout_sec":  120,
-			"model":        "mock-model",
+			"temperature": 0.7,
+			"max_tokens":  32768,
+			"timeout_sec": 120,
+			"model":       "mock-model",
 		},
 	}, nil
 }

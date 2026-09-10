@@ -8,8 +8,10 @@ import shutil
 import subprocess
 import sys
 
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 仓库根（2026-09-11 B 批：去私有路径）
+
 PASS, FAIL = "✅", "❌"
-CORE = "<repo>/core"
+CORE = f"{REPO}/core"
 results = []
 
 

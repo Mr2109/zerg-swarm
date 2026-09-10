@@ -62,7 +62,12 @@ fn setup_fonts(ctx: &egui::Context) {
     let mut candidates = vec![
         // P4-28 PingFangSC 独立 TTF（fonttools 从 TTC 提取 face 3——TTC 集合第一个 face 是
         // PingFangHK（繁体）——ab_glyph 只读第一个 face——HK 标点全角居中（Mr2109: 标点在中间）——SC 标点偏下偏左）
-        "~/Library/Fonts/PingFangSC.ttf".to_string(),
+        // 可选：用户自备字体（ZERG_FONT_PATH 指定），或 ~/Library/Fonts/PingFangSC.ttf
+        std::env::var("ZERG_FONT_PATH").unwrap_or_default(),
+        format!(
+            "{}/Library/Fonts/PingFangSC.ttf",
+            std::env::var("HOME").unwrap_or_default()
+        ),
         // macOS（PingFang 优先——原生清晰）
         "/System/Library/Fonts/PingFang.ttc".to_string(), // 旧路径（macOS ≤15）
         // macOS 26+：系统字体在 AssetsV2 动态资产包（路径随系统更新变——动态查找）

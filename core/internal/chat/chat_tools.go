@@ -8,6 +8,7 @@ package chat
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"strings"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
@@ -19,7 +20,7 @@ const MaxToolRounds = 10
 
 // ChatToolsWorkDir — 对话工具工作目录（唯一常量——2026-09-05 统一: 非流式 /tmp/zerg-chat/tools
 // 与流式项目根曾分叉致路径行为不一致——两条循环路径共用此值）
-const ChatToolsWorkDir = "<repo>"
+var ChatToolsWorkDir = statepath.WorkspaceRoot()
 
 // ToolTrace — 工具调用记录（落库展示）
 type ToolTrace struct {

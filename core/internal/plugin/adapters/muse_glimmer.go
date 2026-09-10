@@ -22,17 +22,17 @@ const (
 
 // MuseGlimmerConfig — 适配器配置
 type MuseGlimmerConfig struct {
-	Temperature      float64
-	TopP             float64
-	TopK             int
-	MinP             float64
-	MaxTokens        int
-	CtxWindow        int
-	TimeoutSec       int
-	ReasoningEffort  string // low/medium/high/xhigh——官方四档推理强度
-	Multimodal       bool   // 原生多模态（ViT-G/14 感知编码器）
-	AuthToken        string
-	BaseURL          string
+	Temperature     float64
+	TopP            float64
+	TopK            int
+	MinP            float64
+	MaxTokens       int
+	CtxWindow       int
+	TimeoutSec      int
+	ReasoningEffort string // low/medium/high/xhigh——官方四档推理强度
+	Multimodal      bool   // 原生多模态（ViT-G/14 感知编码器）
+	AuthToken       string
+	BaseURL         string
 }
 
 // MuseGlimmerAdapter — 实现 plugin.Plugin 接口
@@ -46,15 +46,15 @@ var _ plugin.Plugin = (*MuseGlimmerAdapter)(nil)
 func NewMuseGlimmerAdapter() *MuseGlimmerAdapter {
 	return &MuseGlimmerAdapter{
 		config: MuseGlimmerConfig{
-			Temperature:      museGlimmerDefaultTemp,
-			TopP:             0.95, // 官方评测
-			TopK:             64,   // 官方评测
-			MinP:             0,
-			MaxTokens:        museGlimmerMaxTokens,
-			CtxWindow:        museGlimmerCtxWindow,
-			TimeoutSec:       museGlimmerTimeout,
-			ReasoningEffort:  "medium", // 生产默认（官方建议复杂任务 high/xhigh）
-			Multimodal:       true,     // 原生多模态
+			Temperature:     museGlimmerDefaultTemp,
+			TopP:            0.95, // 官方评测
+			TopK:            64,   // 官方评测
+			MinP:            0,
+			MaxTokens:       museGlimmerMaxTokens,
+			CtxWindow:       museGlimmerCtxWindow,
+			TimeoutSec:      museGlimmerTimeout,
+			ReasoningEffort: "medium", // 生产默认（官方建议复杂任务 high/xhigh）
+			Multimodal:      true,     // 原生多模态
 		},
 	}
 }
@@ -161,19 +161,19 @@ func (a *MuseGlimmerAdapter) Execute(input plugin.PluginInput) (plugin.PluginOut
 	}
 	return plugin.PluginOutput{
 		Result: map[string]any{
-			"model":             museGlimmerName,
-			"max_tokens":        a.config.MaxTokens,
-			"ctx_window":        a.config.CtxWindow,
-			"temperature":       a.config.Temperature,
-			"top_p":             a.config.TopP,
-			"top_k":             a.config.TopK,
-			"min_p":             a.config.MinP,
-			"timeout_sec":       a.config.TimeoutSec,
-			"reasoning_effort":  a.config.ReasoningEffort,
-			"reasoning_fallback": true, // content空时用reasoning_content兜底
-			"multimodal":        a.config.Multimodal, // 原生多模态（ViT-G/14）
-			"tool_support":      true,                 // 结构化函数调用强
-			"judge_capable":     true,                 // LLM-as-a-judge
+			"model":              museGlimmerName,
+			"max_tokens":         a.config.MaxTokens,
+			"ctx_window":         a.config.CtxWindow,
+			"temperature":        a.config.Temperature,
+			"top_p":              a.config.TopP,
+			"top_k":              a.config.TopK,
+			"min_p":              a.config.MinP,
+			"timeout_sec":        a.config.TimeoutSec,
+			"reasoning_effort":   a.config.ReasoningEffort,
+			"reasoning_fallback": true,                // content空时用reasoning_content兜底
+			"multimodal":         a.config.Multimodal, // 原生多模态（ViT-G/14）
+			"tool_support":       true,                // 结构化函数调用强
+			"judge_capable":      true,                // LLM-as-a-judge
 		},
 	}, nil
 }

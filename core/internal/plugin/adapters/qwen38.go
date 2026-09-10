@@ -21,15 +21,15 @@ const (
 
 // Qwen38Config — 适配器配置
 type Qwen38Config struct {
-	Temperature   float64
-	TopP          float64 // 采样参数（官方 0.8）
-	TopK          int     // 官方 20
-	MinP          float64 // 官方 0
-	AuthToken     string
-	BaseURL       string
-	MaxTokens     int
-	CtxWindow     int
-	TimeoutSec    int  // 首 token 超时（思考模式长）
+	Temperature     float64
+	TopP            float64 // 采样参数（官方 0.8）
+	TopK            int     // 官方 20
+	MinP            float64 // 官方 0
+	AuthToken       string
+	BaseURL         string
+	MaxTokens       int
+	CtxWindow       int
+	TimeoutSec      int    // 首 token 超时（思考模式长）
 	ReasoningEffort string // low/medium/high——思考深度控制
 }
 
@@ -158,17 +158,17 @@ func (a *Qwen38Adapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, 
 	}
 	return plugin.PluginOutput{
 		Result: map[string]any{
-			"model":             qwen38Name,
-			"max_tokens":        a.config.MaxTokens,
-			"ctx_window":        a.config.CtxWindow,
-			"temperature":       a.config.Temperature,
-			"top_p":             a.config.TopP,
-			"top_k":             a.config.TopK,
-			"min_p":             a.config.MinP,
-			"timeout_sec":       a.config.TimeoutSec,
-			"reasoning_effort":  a.config.ReasoningEffort,
+			"model":              qwen38Name,
+			"max_tokens":         a.config.MaxTokens,
+			"ctx_window":         a.config.CtxWindow,
+			"temperature":        a.config.Temperature,
+			"top_p":              a.config.TopP,
+			"top_k":              a.config.TopK,
+			"min_p":              a.config.MinP,
+			"timeout_sec":        a.config.TimeoutSec,
+			"reasoning_effort":   a.config.ReasoningEffort,
 			"reasoning_fallback": true, // content空时用reasoning_content兜底
-			"multimodal":        true,  // 原生多模态（mmproj 已配）
+			"multimodal":         true, // 原生多模态（mmproj 已配）
 		},
 	}, nil
 }

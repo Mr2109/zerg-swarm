@@ -3,7 +3,7 @@
 # 用法: nohup bash scripts/watchdog.sh > /tmp/zerg-watchdog.log 2>&1 &
 # 检测逻辑：每 10s 查 zerg-core 进程；不在则记录退出时间+上次日志尾部，重启
 
-BIN="<repo>/bin/zerg-core"
+BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/zerg-core"
 LOG="/tmp/zerg-core.log"
 WD_LOG="/tmp/zerg-watchdog.log"
 CHECK_INTERVAL=10

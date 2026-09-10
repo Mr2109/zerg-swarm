@@ -45,7 +45,7 @@ func (a *Chat) TransformRequest(r *http.Request, body []byte) ([]byte, string, e
 // 背景：龙虾（OpenClaw）生成的 tools 里 pattern 不带 ^$ 前缀/后缀，
 // llama-server 报 "Pattern must start with '^' and end with '$'" 400 拒绝。
 // 处理：递归遍历 parameters，删除不以 ^ 开头或以 $ 结尾的 pattern 字段
-//（非标准 JSON Schema，删除后语义无损）。
+// （非标准 JSON Schema，删除后语义无损）。
 func sanitizeToolsSchema(body []byte) []byte {
 	var obj map[string]interface{}
 	if err := json.Unmarshal(body, &obj); err != nil {
@@ -106,7 +106,6 @@ func sanitizePattern(node map[string]interface{}) {
 		}
 	}
 }
-
 
 // TransformResponse 响应透传：
 //   - 含 tools（已被强制非流式转发）→ 按客户端 stream 参数分流：

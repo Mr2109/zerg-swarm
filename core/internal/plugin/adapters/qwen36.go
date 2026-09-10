@@ -21,16 +21,16 @@ const (
 
 // Qwen36Config — 适配器配置
 type Qwen36Config struct {
-	Temperature   float64
-	TopP          float64
-	TopK          int
-	MinP          float64
-	MaxTokens     int
-	CtxWindow     int
-	TimeoutSec    int
+	Temperature     float64
+	TopP            float64
+	TopK            int
+	MinP            float64
+	MaxTokens       int
+	CtxWindow       int
+	TimeoutSec      int
 	ReasoningEffort string // low/medium/high——思考深度控制
-	AuthToken     string
-	BaseURL       string
+	AuthToken       string
+	BaseURL         string
 }
 
 // Qwen36Adapter — 实现 plugin.Plugin 接口
@@ -153,18 +153,18 @@ func (a *Qwen36Adapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, 
 	}
 	return plugin.PluginOutput{
 		Result: map[string]any{
-			"model":             qwen36Name,
-			"max_tokens":        a.config.MaxTokens,
-			"ctx_window":        a.config.CtxWindow,
-			"temperature":       a.config.Temperature,
-			"top_p":             a.config.TopP,
-			"top_k":             a.config.TopK,
-			"min_p":             a.config.MinP,
-			"timeout_sec":       a.config.TimeoutSec,
-			"reasoning_effort":  a.config.ReasoningEffort,
+			"model":              qwen36Name,
+			"max_tokens":         a.config.MaxTokens,
+			"ctx_window":         a.config.CtxWindow,
+			"temperature":        a.config.Temperature,
+			"top_p":              a.config.TopP,
+			"top_k":              a.config.TopK,
+			"min_p":              a.config.MinP,
+			"timeout_sec":        a.config.TimeoutSec,
+			"reasoning_effort":   a.config.ReasoningEffort,
 			"reasoning_fallback": true, // content空时用reasoning_content兜底
-			"tool_support":      true,   // qwen3_coder 工具解析
-			"coding":            true,   // agentic 编码强
+			"tool_support":       true, // qwen3_coder 工具解析
+			"coding":             true, // agentic 编码强
 		},
 	}, nil
 }
