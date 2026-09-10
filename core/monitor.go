@@ -42,7 +42,7 @@ func (m *Monitor) fetchFleet() (map[string]interface{}, error) {
 func (m *Monitor) handler(w http.ResponseWriter, r *http.Request) {
 	fleet, err := m.fetchFleet()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>虫族监看台</title>
+	fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Zerg Monitor</title>
 <style>
 body{font-family:-apple-system,sans-serif;margin:20px;background:#0d1117;color:#c9d1d9}
 h1{color:#58a6ff;font-size:20px} h2{color:#58a6ff;font-size:15px;margin-top:20px}
@@ -52,7 +52,7 @@ h1{color:#58a6ff;font-size:20px} h2{color:#58a6ff;font-size:15px;margin-top:20px
 table{border-collapse:collapse;width:100%%} th,td{border:1px solid #30363d;padding:6px 10px;font-size:13px}
 th{background:#21262d} .num{color:#79c0ff} .warn{color:#f85149}
 </style></head><body>
-<h1>🐜 虫族监看台</h1>`)
+<h1>🐜 Zerg Monitor</h1>`)
 	if err != nil {
 		fmt.Fprintf(w, `<div class="card"><span class="dot red"></span>控制面连接失败: %v</div>`, err)
 		fmt.Fprintf(w, `</body></html>`)
@@ -96,6 +96,6 @@ th{background:#21262d} .num{color:#79c0ff} .warn{color:#f85149}
 func (m *Monitor) Start(port string) error {
 	http.HandleFunc("/", m.handler)
 	addr := "127.0.0.1:" + port
-	fmt.Printf("👁️ 监看台: http://%s\n", addr)
+	fmt.Printf("👁️  Monitor: http://%s\n", addr)
 	return http.ListenAndServe(addr, nil)
 }

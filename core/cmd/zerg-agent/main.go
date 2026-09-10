@@ -43,7 +43,7 @@ func filterTools(all []agent.ToolDef, names string) []agent.ToolDef {
 func mustToken() string {
 	t := config.ResolveAuthToken()
 	if t == "" {
-		log.Fatalf("❌ 未配置共享令牌：请设置环境变量 ZERG_AUTH_TOKEN，或写入文件 %s（见仓库 .env.example）", config.TokenFilePath())
+		log.Fatalf("❌ no shared token configured: set ZERG_AUTH_TOKEN or write it to %s (see .env.example)", config.TokenFilePath())
 	}
 	return t
 }
@@ -115,7 +115,7 @@ func main() {
 		_ = os.WriteFile(issueFile, []byte(issueText), 0o644)
 		task = "接单修复问题单 " + issueFile + "。内容:\n" + issueText + "\n\n任务: 1.查根因（用 codegraph 查代码/kb 查经验）2.能修则修复+测试验证 3.将修复结论（根因/修复/验证）写回该 issue 文件（替换'根因: '等留空处）4.标记状态为 resolved。不能修（环境/设计问题）则写结论并标记 escalated。"
 		if !jsonOut {
-			fmt.Printf("📋 接单: %s（查因→修复→回填结论）\n", issueFile)
+			fmt.Printf("📋 Task accepted: %s (diagnose → fix → report)\n", issueFile)
 		}
 	}
 
@@ -128,7 +128,7 @@ func main() {
 		WorkDir:    workdir,
 	})
 	if !jsonOut {
-		fmt.Printf("✅ Agent 已创建 (模型: %s)\n", model)
+		fmt.Printf("✅ Agent created (model: %s)\n", model)
 	}
 
 	// 建日志
@@ -159,14 +159,14 @@ func main() {
 		// 恢复历史（日志=权威——续跑/崩溃恢复）
 		if n := a.RestoreFromLog(); n > 0 {
 			if !jsonOut {
-				fmt.Printf("♻️ 从会话日志恢复历史: %d 条消息\n", n)
+				fmt.Printf("♻️ Restored history from the session log: %d messages\n", n)
 			}
 		}
 	}
 	// v2.5.4.9 结构化日志接通：注入 agent（callModel 事件写入）
 	a.SetLogger(logger)
 	if !jsonOut {
-		fmt.Printf("✅ 日志目录: %s\n", logDir)
+		fmt.Printf("✅ Log dir: %s\n", logDir)
 	}
 
 	// 准备状态
@@ -182,7 +182,7 @@ func main() {
 				}
 			}
 			if !jsonOut {
-				fmt.Printf("🔄 恢复状态: todo %d/%d 完成（断连续跑）\n", done, len(loaded.Todos))
+				fmt.Printf("🔄 Restored state: todo %d/%d done (resuming)\n", done, len(loaded.Todos))
 			}
 		}
 	}
@@ -224,7 +224,7 @@ func main() {
 						continue
 					}
 					if !jsonOut {
-						fmt.Printf("✅ MCP %s 已连接（HTTP）: %d 个工具（deferred——tool_search 发现）\n", name, len(mcpMgr.ToolDefs(true)))
+						fmt.Printf("✅ MCP %s connected (HTTP): %d tools (deferred — discovered via tool_search)\n", name, len(mcpMgr.ToolDefs(true)))
 					}
 				}
 				continue
@@ -241,7 +241,7 @@ func main() {
 			coreTools := mcpMgr.ToolDefs(false) // false=只核心（kb_search/read/add/capture_fix）
 			tools = append(tools, coreTools...) // 核心加进初始列表（查经验是高优先行为）
 			if !jsonOut {
-				fmt.Printf("✅ MCP %s 已连接: %d 个核心工具（常驻） + 扩展 deferred（tool_search 发现）\n", name, len(coreTools))
+				fmt.Printf("✅ MCP %s connected: %d core tools (resident) + deferred extensions (via tool_search)\n", name, len(coreTools))
 			}
 		}
 	}
@@ -250,12 +250,12 @@ func main() {
 		tools = filterTools(tools, toolsFlag)
 	}
 	if !jsonOut {
-		fmt.Printf("✅ 工具已加载: %d 个\n", len(tools))
+		fmt.Printf("✅ Tools loaded: %d\n", len(tools))
 	}
 
 	// 启动循环
 	if !jsonOut {
-		fmt.Printf("\n🚀 开始执行任务: %s\n", task)
+		fmt.Printf("\n🚀 Executing task: %s\n", task)
 	}
 	if !jsonOut {
 		fmt.Println("─────────────────────────────────────")
@@ -269,7 +269,7 @@ func main() {
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-ch
-		fmt.Println("\n⚠️  收到中断信号，正在终止...")
+		fmt.Println("\n⚠️  Interrupt signal received, terminating...")
 		cancel()
 	}()
 
@@ -291,7 +291,7 @@ func main() {
 		}
 		if attempt < retryN {
 			if !jsonOut {
-				fmt.Printf("⚠️ 第 %d 次未完成（%s）——自动重试...\n", attempt+1, result.Reason)
+				fmt.Printf("⚠️ Attempt %d incomplete (%s) — retrying...\n", attempt+1, result.Reason)
 			}
 			// 清历史重来（新实例）
 			a = agent.NewAgent(agent.Config{
@@ -318,7 +318,7 @@ func main() {
 			}
 		} else {
 			if !jsonOut {
-				fmt.Printf("📋 失败已挂单: %s（错误入工作流——待派单）\n", issuePath)
+				fmt.Printf("📋 Failure filed: %s (entered the workflow — pending dispatch)\n", issuePath)
 			}
 		}
 	}
@@ -333,7 +333,7 @@ func main() {
 			updated := agent.MarkIssueStatus(string(data), finalStatus)
 			_ = os.WriteFile(issueFile, []byte(updated), 0o644)
 			if !jsonOut {
-				fmt.Printf("📋 issue 状态: %s（%s）\n", finalStatus, result.Reason)
+				fmt.Printf("📋 Issue status: %s (%s)\n", finalStatus, result.Reason)
 			}
 		}
 	}
@@ -380,9 +380,9 @@ func main() {
 
 	// 输出结果
 	fmt.Println("─────────────────────────────────────")
-	fmt.Printf("\n🏁 执行结果:\n")
-	fmt.Printf("   状态:   %s\n", formatReason(result.Reason))
-	fmt.Printf("   轮数:   %d\n", result.Turns)
+	fmt.Printf("\n🏁 Result:\n")
+	fmt.Printf("   status: %s\n", formatReason(result.Reason))
+	fmt.Printf("   turns:  %d\n", result.Turns)
 	fmt.Printf("   Token:  %d\n", result.Tokens)
 	if result.Content != "" {
 		// 摘要：取前 200 字符
@@ -390,10 +390,10 @@ func main() {
 		if len(summary) > 200 {
 			summary = summary[:200] + "..."
 		}
-		fmt.Printf("   摘要:   %s\n", summary)
+		fmt.Printf("   summary: %s\n", summary)
 	}
-	fmt.Printf("\n📂 工作区: %s\n", workdir)
-	fmt.Printf("📋 日志:   %s\n", logDir)
+	fmt.Printf("\n📂 Workspace: %s\n", workdir)
+	fmt.Printf("📋 Log:   %s\n", logDir)
 }
 
 // formatReason - 将终止原因转为人类可读描述

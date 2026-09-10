@@ -89,7 +89,7 @@ func (h *Handlers) InternalModeHandler(w http.ResponseWriter, r *http.Request) {
 		AutoRun bool `json:"auto_run"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "参数解析失败: "+err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_PARAMS", "参数解析失败: "+err.Error())
 		return
 	}
 	SetInternalMode(taskID, req.AutoRun)

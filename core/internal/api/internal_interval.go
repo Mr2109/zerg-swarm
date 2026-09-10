@@ -121,11 +121,11 @@ func (h *Handlers) InternalIntervalHandler(w http.ResponseWriter, r *http.Reques
 		Hours float64 `json:"hours"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "参数解析失败: "+err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_PARAMS", "参数解析失败: "+err.Error())
 		return
 	}
 	if req.Hours < 0 || req.Hours > 24*30 {
-		writeError(w, http.StatusBadRequest, "周期范围: 0（取消）~ 720 小时")
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_INTERVAL", "周期范围: 0（取消）~ 720 小时")
 		return
 	}
 	SetInternalInterval(taskID, req.Hours)

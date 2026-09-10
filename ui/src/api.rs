@@ -138,6 +138,14 @@ fn parse_api_error(status: reqwest::StatusCode, body: &str) -> String {
             if let Some(s) = e.as_str() {
                 return format!("HTTP {}: {}", status, s);
             }
+            // 多语言 L4（2026-09-11）：优先按服务端错误码渲染本地化文案
+            // （服务端 message 恒为中文——双写期；UI 按 code 换成当前语言）
+            if let Some(c) = e.get("type").and_then(|c| c.as_str()) {
+                if let Some(msg) = localized_api_error(c) {
+                    return format!("HTTP {}: {}", status, msg);
+                }
+            }
+            // 未收录的 code → 回显服务端 message（客户端不改即可运行；新增 code 不必同步发 UI）
             if let Some(m) = e.get("message").and_then(|m| m.as_str()) {
                 return format!("HTTP {}: {}", status, m);
             }
@@ -148,6 +156,19 @@ fn parse_api_error(status: reqwest::StatusCode, body: &str) -> String {
         format!("HTTP {}", status)
     } else {
         format!("HTTP {}: {}", status, brief)
+    }
+}
+
+/// localized_api_error（多语言 L4）：错误码 → 当前语言的文案。
+/// 键名规则：`apierr.<code 小写>`（如 MISSING_MACHINE → apierr.missing_machine）。
+/// rust-i18n 对**未定义键原样返回键名**——据此判定命中：返回 None 时调用方回退服务端 message。
+pub(crate) fn localized_api_error(code: &str) -> Option<String> {
+    let key = format!("apierr.{}", code.to_ascii_lowercase());
+    let v = rust_i18n::t!(key.as_str()).to_string();
+    if v == key {
+        None
+    } else {
+        Some(v)
     }
 }
 

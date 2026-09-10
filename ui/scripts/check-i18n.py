@@ -161,8 +161,26 @@ def main():
             % (len(stale), ", ".join("%s|%s" % (a.get("file"), a.get("contains", "")[:24]) for a in stale[:5]))
         )
 
+    # G5 错误码 ↔ UI 键（多语言 L4——服务端 46 个 code 应有对应 apierr.* 键）
+    # 强度：warn（未收录的 code 会回退服务端 message——客户端不改即可运行，故不阻断）
+    api_dir = os.path.join(ROOT, "core", "internal", "api")
+    go_codes = set()
+    if os.path.isdir(api_dir):
+        for fn in sorted(os.listdir(api_dir)):
+            if fn.endswith(".go") and not fn.endswith("_test.go"):
+                src = open(os.path.join(api_dir, fn), encoding="utf-8").read()
+                go_codes.update(re.findall(r'writeErrorCode\(w,\s*[^,]+,\s*"([A-Z0-9_]+)"', src))
+    ui_codes = {k[len("apierr."):].upper() for k in zh if k.startswith("apierr.")}
+    missing_codes = sorted(go_codes - ui_codes)
+    extra_codes = sorted(ui_codes - go_codes)
+    if missing_codes:
+        warns.append("G5 服务端错误码缺 UI 本地化键（%d）：%s" % (len(missing_codes), ", ".join(missing_codes[:8])))
+    if extra_codes:
+        warns.append("G5 UI 有 apierr.* 键但服务端已无该码（%d）：%s" % (len(extra_codes), ", ".join(extra_codes[:8])))
+
     # 未引用键（提示级）
-    unused = sorted(k for k in zh if k not in used and "[" not in k)
+    # apierr.* 由 UI 动态拼键（format!("apierr.{code}")）→ 静态扫描看不见，不算未引用
+    unused = sorted(k for k in zh if k not in used and "[" not in k and not k.startswith("apierr."))
     if unused:
         warns.append("未引用键 %d 个（可能被动态引用 t!(变量)，据此删键前先确认）：%s"
                      % (len(unused), ", ".join(unused[:8])))
