@@ -1016,7 +1016,7 @@ pub fn chat_send_stream_async(session_id: String, content: String, image: Option
                 s2.lock().unwrap_or_else(|e| e.into_inner()).done = true;
             }
             Err(e) => {
-                s2.lock().unwrap_or_else(|e| e.into_inner()).error = Some(format!("请求失败: {}", e));
+                s2.lock().unwrap_or_else(|e| e.into_inner()).error = Some(t!("err.request", err = e).to_string());
                 s2.lock().unwrap_or_else(|e| e.into_inner()).done = true;
             }
         }
