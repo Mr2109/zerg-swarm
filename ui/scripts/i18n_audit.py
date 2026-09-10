@@ -6,7 +6,9 @@ i18n 审计工具（P0-2 文案口径分拣 + P0-3 键健康度审计）
 设计稿：docs/01-设计/设计-多语言开源版-20260911.md（§2.4 口径分拣 / §4.2 G1-G3 门禁 / P3 键审计）
 
 用法：
-    python3 ui/scripts/i18n_audit.py classify   # P0-2：分拣 CJK 字面量 → TSV 清单
+    python3 ui/scripts/i18n_audit.py classify   # 分拣 CJK 字面量 → L2 现状 TSV（P0 基线已冻结）
+
+权威门禁是 ui/scripts/check-i18n.py（G1-G4，含基线白名单）；本脚本是分析工具，口径更宽。
     python3 ui/scripts/i18n_audit.py keys       # P0-3：46 键健康度（未定义/未使用/一键多义）
     python3 ui/scripts/i18n_audit.py all        # 两者都跑
 
@@ -130,7 +132,8 @@ def main():
 
     if mode in ("classify", "all"):
         rows = classify(root)
-        p = os.path.join(outdir, "P0-2-文案分拣.tsv")
+        # 注意：P0-2-文案分拣.tsv 是 **P0 阶段历史基线，冻结不动**；现状写 L2 文件
+        p = os.path.join(outdir, "L2-现状-中文字面量-审计口径.tsv")
         with open(p, "w", encoding="utf-8") as fh:
             fh.write("文件\t行\t分类\t字面量\t该行代码\n")
             for r in rows:
