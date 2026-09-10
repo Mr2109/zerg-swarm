@@ -92,7 +92,9 @@ func zergOverviewFull() (string, error) {
 
 	// 架构（组件 + 路径一句话——精简——防重复）
 	b.WriteString("\n## 架构\n")
-	b.WriteString("主控core(core/) 模型集群(X3 g01@<worker-ip>/local/mini) UI(ui/ egui) CA(任务执行) 工具库(136 tools/) 知识库(00 项目/知识库/knowledge.db)\n")
+	// 2026-09-11 一致性审计：工具数原硬编码 "136 tools/"（每加工具必漂）→ 改为按注册表动态计算；
+	// 同时把 X3 两个地址口径写清（fleet 调用 host 与部署 ssh 主机不是一回事）
+	b.WriteString(fmt.Sprintf("主控core(core/) 模型集群(X3——fleet 调用 <worker-ip>:8100／部署 ssh g01@<worker-host>；local/mini) UI(ui/ egui) CA(任务执行) 工具库(%d 个注册——tool_search 查) 知识库(00 项目/知识库/knowledge.db)\n", len(chatToolRegistry)))
 
 	// 使用精简（分流——完整见使用指南）
 	b.WriteString("\n## 怎么使用\n")

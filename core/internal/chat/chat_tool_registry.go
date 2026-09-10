@@ -33,6 +33,10 @@ var chatToolRegistry = []ChatToolMeta{
 	{Name: "web_fetch", Category: "网络与调研", Keywords: []string{"网页", "抓取", "url"}, L0: true},
 	{Name: "tool_search", Category: "系统", Keywords: []string{"发现工具", "找工具", "工具列表"}, L0: true},
 	{Name: "skill_load", Category: "知识库", Keywords: []string{"技能", "skill", "加载"}, L0: true},
+	// 2026-09-11 一致性审计补齐：这两个此前只在提示词定义表（HermesToolDefs）里、不在注册表
+	// → tool_search 发现不了、UI 资源库也不列（两处真相源漂移）。见 chat_tool_registry_l0_test.go 锁死。
+	{Name: "zerg_overview", Category: "系统", Keywords: []string{"总览", "全景", "系统概览", "架构", "overview"}, L0: true},
+	{Name: "doc_search", Category: "知识库", Keywords: []string{"文档", "项目文档", "查文档", "设计文档", "doc"}, L0: true},
 
 	// ═══ L1 deferred——首批实装 ═══
 	// 记忆体系（乙批 2026-09-10）——非常驻：tool_search 发现后调用（省每轮 schema 成本）
