@@ -629,12 +629,13 @@ pub struct ChatStreamState {
     pub done: bool,
     pub cancelled: bool,
     pub error: Option<String>,
+    pub steer_undrained: Vec<String>, // C2: 未被工具边界消费的插话（客户端排队续发）
 }
 pub type SharedChatStream = Arc<Mutex<ChatStreamState>>;
 
 /// 发消息（C3 流式——POST /send——SSE 读取——边收边更新状态）
 /// image: 可选单图 data URL（D3）——images: 多图数组（P2——优先）
-pub fn chat_send_stream_async(session_id: String, content: String, image: Option<String>, images: Vec<String>) -> SharedChatStream {
+pub fn chat_send_stream_async(session_id: String, content: String, image: Option<String>, images: Vec<String>, reuse_user_id: Option<i64>) -> SharedChatStream {
     use futures_util::StreamExt;
     let state: SharedChatStream = Arc::new(Mutex::new(ChatStreamState::default()));
     let s2 = state.clone();
@@ -642,6 +643,10 @@ pub fn chat_send_stream_async(session_id: String, content: String, image: Option
         let client = reqwest::Client::new();
         let url = format!("{}/api/chat/sessions/{}/send", API_BASE, session_id);
         let mut body = serde_json::json!({"content": content});
+        // C3(2026-09-10): 重生成——复用既有 user 消息（服务端软删其后消息）
+        if let Some(uid) = reuse_user_id {
+            body["reuse_user_id"] = serde_json::Value::Number(uid.into());
+        }
         if !images.is_empty() {
             body["images"] = serde_json::Value::Array(images.into_iter().map(serde_json::Value::String).collect());
         } else if let Some(img) = image {
@@ -710,6 +715,18 @@ pub fn chat_send_stream_async(session_id: String, content: String, image: Option
                         }
                         if event.contains("event: done") {
                             st.done = true;
+                            // C2: 回收未消费插话（交队列续发）
+                            if let Some(l) = event.lines().find(|l| l.trim_start().starts_with("data:")) {
+                                let j = l.trim_start().trim_start_matches("data:").trim();
+                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(j) {
+                                    if let Some(arr) = v.get("steer_undrained").and_then(|x| x.as_array()) {
+                                        st.steer_undrained = arr
+                                            .iter()
+                                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                                            .collect();
+                                    }
+                                }
+                            }
                         }
                         drop(st);
                         buf.drain(..pos + 2);
@@ -871,6 +888,55 @@ pub fn chat_abort_async(session_id: String) -> SharedResult<Value> {
     out
 }
 
+/// 插话 steer（批次C2 2026-09-10——POST /api/chat/sessions/{id}/steer）
+/// 语义: 生成中纯文本 → 挂下一次工具边界（不打断）；返回 turn_running=false 时调用方应改为排队
+pub fn chat_steer_async(session_id: String, content: String) -> SharedResult<Value> {
+    let out: SharedResult<Value> = Arc::new(Mutex::new(None));
+    let out2 = out.clone();
+    runtime().spawn(async move {
+        let client = reqwest::Client::new();
+        let url = format!("{}/api/chat/sessions/{}/steer", API_BASE, session_id);
+        let resp = client
+            .post(&url)
+            .header("X-Auth-Token", API_TOKEN)
+            .json(&serde_json::json!({"content": content}))
+            .send()
+            .await;
+        match resp {
+            Ok(r) => match r.json::<Value>().await {
+                Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
+                Err(e) => *out2.lock().unwrap() = Some(Err(format!("解析失败: {}", e))),
+            },
+            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+        }
+    });
+    out
+}
+
+/// 重生成（批次C3 2026-09-10——POST /api/chat/sessions/{id}/regenerate）
+/// 语义: 软删末条 user 之后的消息 → 返回 (user_message_id, content) 供客户端重跑
+pub fn chat_regenerate_async(session_id: String) -> SharedResult<Value> {
+    let out: SharedResult<Value> = Arc::new(Mutex::new(None));
+    let out2 = out.clone();
+    runtime().spawn(async move {
+        let client = reqwest::Client::new();
+        let url = format!("{}/api/chat/sessions/{}/regenerate", API_BASE, session_id);
+        let resp = client
+            .post(&url)
+            .header("X-Auth-Token", API_TOKEN)
+            .send()
+            .await;
+        match resp {
+            Ok(r) => match r.json::<Value>().await {
+                Ok(v) => *out2.lock().unwrap() = Some(Ok(v)),
+                Err(e) => *out2.lock().unwrap() = Some(Err(format!("解析失败: {}", e))),
+            },
+            Err(e) => *out2.lock().unwrap() = Some(Err(format!("请求失败: {}", e))),
+        }
+    });
+    out
+}
+
 /// 会话搜索（C6——GET /api/chat/search?q=）
 pub fn chat_search_async(q: String) -> SharedResult<Value> {
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
@@ -986,7 +1052,7 @@ pub fn chat_rename_session_async(session_id: String, title: String) -> SharedRes
 }
 
 /// 编辑用户消息（P0——PATCH /api/chat/messages/{mid}——Hermes user-edit 借鉴）
-pub fn chat_edit_message_async(mid: i64, content: String) -> SharedResult<Value> {
+pub fn chat_edit_message_async(mid: i64, content: String, truncate: bool) -> SharedResult<Value> {
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
@@ -995,7 +1061,7 @@ pub fn chat_edit_message_async(mid: i64, content: String) -> SharedResult<Value>
         let resp = client
             .patch(&url)
             .header("X-Auth-Token", API_TOKEN)
-            .json(&serde_json::json!({"content": content}))
+            .json(&serde_json::json!({"content": content, "truncate": truncate}))
             .send()
             .await;
         match resp {
