@@ -2,6 +2,7 @@
 // 异步: tokio runtime（egui-async 在 eframe 0.36 下有帧号 bug——自己管理）
 use serde::Deserialize;
 use serde_json::Value;
+use rust_i18n::t;   // i18n（B3 抽取：错误文案走键）
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// 主控 API 基址（2026-09-11 B 批：环境无关化——ZERG_api_base() 可覆盖，默认本机 8580）
@@ -51,7 +52,7 @@ pub fn api_token() -> &'static str {
                     }
                 }
             }
-            eprintln!("⚠️  未配置共享令牌（ZERG_AUTH_TOKEN 或 ~/.zerg/token）——主控 API 将返回 401");
+            eprintln!("[api] no shared token configured (ZERG_AUTH_TOKEN or ~/.zerg/token) — the controller API will return 401");
             String::new()
         })
         .as_str()
@@ -158,7 +159,7 @@ async fn json_body(r: reqwest::Response) -> Result<Value, String> {
         // A19（2026-09-10 审计）：错误体解析统一走 parse_api_error
         return Err(parse_api_error(status, &text));
     }
-    serde_json::from_str::<Value>(&text).map_err(|e| format!("解析失败: {}", e))
+    serde_json::from_str::<Value>(&text).map_err(|e| t!("err.parse_failed", err = e).to_string())
 }
 
 /// F5 AI 调用（网关 8082 /v1/responses——OpenAI responses 格式）
@@ -180,24 +181,24 @@ pub async fn ai_prompt_blocking(model: &str, prompt: &str) -> Result<String, Str
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("AI 请求失败: {}", e))?;
+        .map_err(|e| t!("err.ai_request", err = e).to_string())?;
     let status = resp.status();
     // A16（2026-09-10 审计）：**先判状态、再解析 JSON**——错误体可能是网关 502 HTML / 空 body，
     // 原实现先 resp.json() 会把真实状态码吞掉、只报"AI 响应解析失败"。
     let text = resp
         .text()
         .await
-        .map_err(|e| format!("AI 响应读取失败: {}", e))?;
+        .map_err(|e| t!("err.ai_read", err = e).to_string())?;
     if !status.is_success() {
         let brief: String = text.chars().take(200).collect();
-        return Err(format!(
-            "AI 错误({}): {}",
-            status,
-            if brief.is_empty() { "<空响应>".to_string() } else { brief }
-        ));
+        return Err(t!(
+            "err.ai_status",
+            status = status,
+            brief = if brief.is_empty() { t!("common.empty_response").to_string() } else { brief }
+        ).to_string());
     }
     let json: Value =
-        serde_json::from_str(&text).map_err(|e| format!("AI 响应解析失败: {}", e))?;
+        serde_json::from_str(&text).map_err(|e| t!("err.ai_parse", err = e).to_string())?;
     // 解析 output_text（跳过 reasoning）
     // A14（2026-09-10 审计）：**累积全部** output_text——responses 格式 output 常含多个 item（工具调用 + 多段文本），
     // 原实现遇到第一段就 return，F5「总结/续写/翻译/润色」输出被静默截断
@@ -216,7 +217,7 @@ pub async fn ai_prompt_blocking(model: &str, prompt: &str) -> Result<String, Str
         }
     }
     if out.is_empty() {
-        Err(format!("AI 响应无文本: {}", json))
+        Err(t!("err.ai_no_text", json = json).to_string())
     } else {
         Ok(out)
     }
@@ -273,15 +274,15 @@ pub fn runtime() -> &'static tokio::runtime::Runtime {
         match build(4) {
             Ok(rt) => rt,
             Err(e) => {
-                eprintln!("[api] tokio runtime(4 线程) 创建失败: {}——降级为 1 线程重试", e);
+                eprintln!("[api] failed to create the tokio runtime (4 threads): {} — retrying with 1 thread", e);
                 match build(1) {
                     Ok(rt) => rt,
                     Err(e2) => {
-                        eprintln!("[api] tokio runtime(1 线程) 创建失败: {}", e2);
+                        eprintln!("[api] failed to create the tokio runtime (1 thread): {}", e2);
                         tokio::runtime::Builder::new_multi_thread()
                             .enable_all()
                             .build()
-                            .expect("tokio runtime 创建失败（已降级两次，环境异常）")
+                            .expect("failed to create the tokio runtime (downgraded twice — abnormal environment)")
                     }
                 }
             }
@@ -454,7 +455,7 @@ pub async fn fetch_internal_tasks_blocking() -> Result<Vec<serde_json::Value>, S
     v.get("items")
         .cloned()
         .and_then(|a| a.as_array().cloned())
-        .ok_or_else(|| "响应缺少 items 字段".to_string())
+        .ok_or_else(|| t!("err.missing_items").to_string())
 }
 
 // run_internal_task_blocking 手动执行内部任务（Mr2109 2026-08-22）
@@ -569,7 +570,7 @@ pub async fn fetch_archive_blocking() -> Result<Vec<serde_json::Value>, String> 
     v.get("entries")
         .cloned()
         .and_then(|a| a.as_array().cloned())
-        .ok_or_else(|| "响应缺少 entries 字段".to_string())
+        .ok_or_else(|| t!("err.missing_entries").to_string())
 }
 
 /// 资源库（blocking）
@@ -652,7 +653,7 @@ pub async fn update_adapter_opts_blocking(name: &str, cfg: serde_json::Value) ->
         Ok(())
     } else {
         let txt = resp.text().await.unwrap_or_default();
-        Err(if txt.is_empty() { format!("HTTP 错误") } else { txt })
+        Err(if txt.is_empty() { t!("err.http").to_string() } else { txt })
     }
 }
 
@@ -808,7 +809,7 @@ pub fn create_chat_session_async(model: String) -> SharedResult<Value> {
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
         }
     });
     out
@@ -862,7 +863,7 @@ impl Drop for StreamDoneGuard {
             st.done = true;
             // A08 备选：用户点停止（cancelled）后守卫兜底不再报“内部错误”——UI 已有“已停止生成”
             if st.error.is_none() && !st.cancelled {
-                st.error = Some("内部错误：流式任务异常结束".to_string());
+                st.error = Some(t!("err.stream_internal_end").to_string());
             }
         }
     }
@@ -999,7 +1000,7 @@ pub fn chat_send_stream_async(session_id: String, content: String, image: Option
                             }
                             // A07（2026-09-10 审计）：断流不再静默 break——写 error，用户可与正常结束区分
                             Some(Err(e)) => {
-                                s2.lock().unwrap_or_else(|e| e.into_inner()).error = Some(format!("流中断: {}", e));
+                                s2.lock().unwrap_or_else(|e| e.into_inner()).error = Some(t!("err.stream_broken", err = e).to_string());
                                 true
                             }
                             None => true,
@@ -1066,7 +1067,7 @@ pub fn delete_chat_session_async(session_id: String) -> SharedResult<bool> {
             .await;
         match resp {
             Ok(r) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(r.status().is_success())),
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
         }
     });
     out
@@ -1160,7 +1161,7 @@ pub fn chat_update_model_async(session_id: String, model: String) -> SharedResul
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
         }
     });
     out
@@ -1184,7 +1185,7 @@ pub fn chat_abort_async(session_id: String) -> SharedResult<Value> {
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
         }
     });
     out
@@ -1209,7 +1210,7 @@ pub fn chat_steer_async(session_id: String, content: String) -> SharedResult<Val
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
         }
     });
     out
@@ -1233,7 +1234,7 @@ pub fn chat_regenerate_async(session_id: String) -> SharedResult<Value> {
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
         }
     });
     out
@@ -1277,7 +1278,7 @@ pub fn chat_delegate_task_async(description: String, model: String, parent_sessi
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
         }
     });
     out
@@ -1301,7 +1302,7 @@ pub fn chat_set_archived_async(session_id: String, archived: bool) -> SharedResu
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
         }
     });
     out
@@ -1324,7 +1325,7 @@ pub fn chat_set_pinned_async(session_id: String, pinned: bool) -> SharedResult<V
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
         }
     });
     out
@@ -1348,7 +1349,7 @@ pub fn chat_rename_session_async(session_id: String, title: String) -> SharedRes
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
         }
     });
     out
@@ -1372,7 +1373,7 @@ pub fn chat_edit_message_async(mid: i64, content: String, truncate: bool) -> Sha
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(format!("请求失败: {}", e))),
+            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
         }
     });
     out
@@ -1528,7 +1529,7 @@ pub fn fetch_chat_window_async(session_id: String, around_id: i64) -> SharedResu
         );
         let r = match client.get(&url).header("X-Auth-Token", api_token()).send().await {
             Ok(resp) => json_body(resp).await,
-            Err(e) => Err(format!("请求失败: {}", e)),
+            Err(e) => Err(t!("err.request", err = e).to_string()),
         };
         *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
     });
@@ -1544,7 +1545,7 @@ pub fn chat_compact_reset_async(session_id: String) -> SharedResult<serde_json::
         let url = format!("{}/api/chat/sessions/{}/compact-reset", api_base(), session_id);
         let r = match client.post(&url).header("X-Auth-Token", api_token()).send().await {
             Ok(resp) => json_body(resp).await,
-            Err(e) => Err(format!("请求失败: {}", e)),
+            Err(e) => Err(t!("err.request", err = e).to_string()),
         };
         *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
     });

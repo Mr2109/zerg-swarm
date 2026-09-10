@@ -148,9 +148,9 @@ pub fn top_nav_bar(
     ui.horizontal(|ui| {
         // 主控在线状态灯（第一个——Mr2109 2026-08-29 删品牌——第一个=主控在线）
         if online {
-            ui.colored_label(egui::Color32::from_rgb(80, 200, 120), "● 主控在线");
+            ui.colored_label(egui::Color32::from_rgb(80, 200, 120), format!("● {}", t!("status.online")));
         } else {
-            ui.colored_label(egui::Color32::from_rgb(220, 80, 80), "● 主控离线");
+            ui.colored_label(egui::Color32::from_rgb(220, 80, 80), format!("● {}", t!("status.offline")));
         }
         ui.separator();
 
@@ -182,7 +182,7 @@ pub fn top_nav_bar(
         }
 
         // 吊装系统入口（➕——模块管理——Mr2109 2026-08-29 M2）
-        if ui.button("➕").on_hover_text("模块管理（吊装系统——启用/禁用集装箱）").clicked() {
+        if ui.button("➕").on_hover_text(t!("modules.open_tip")).clicked() {
             on_open_manager();
         }
         ui.separator();
@@ -190,13 +190,13 @@ pub fn top_nav_bar(
         // 右侧对齐：English + 登录用户（右到左布局）
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // 登录用户（v2.5.6——固定 Mr2109——未来登录系统）
-            ui.label("👤 Mr2109");
+            ui.label(format!("👤 {}", std::env::var("USER").unwrap_or_else(|_| "user".to_string())));   // 环境无关化：不再硬编码用户名
             ui.separator();
             // v2.5.7 HUD 开关（English 旁——Mr2109：图标开关——⌘H 是系统键冲突）
             let hud_label = format!("{}", icon_text("gauge"));
             let hud_btn = ui
                 .button(if hud_on { egui::RichText::new(&hud_label).strong() } else { egui::RichText::new(&hud_label).weak() })
-                .on_hover_text(if hud_on { "仪表 HUD：显示中（点击隐藏）" } else { "仪表 HUD：已隐藏（点击显示）" });
+                .on_hover_text(if hud_on { t!("hud.tip_on") } else { t!("hud.tip_off") });
             if hud_btn.clicked() {
                 on_toggle_hud();
             }
