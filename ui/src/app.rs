@@ -2139,11 +2139,11 @@ impl ZergApp {
                         }
                         for (machine, names) in &groups {
                             let icon = match machine.as_str() {
-                                "x3" => "📊 X3",
-                                "local" => "💻 本机",
-                                "mini1" => "🍎 mini1",
-                                "mini2" => "🍎 mini2",
-                                _ => "❓ 未配置",
+                                "x3" => "📊 X3".to_string(),
+                                "local" => t!("resources.machine_local").to_string(),
+                                "mini1" => "🍎 mini1".to_string(),
+                                "mini2" => "🍎 mini2".to_string(),
+                                _ => t!("resources.machine_unknown").to_string(),
                             };
                             egui::CollapsingHeader::new(t!("models.header_count", icon = icon, count = names.len()))
                                 .id_salt(format!("models_view_{}", machine)) // APP-A08: 稳定 id
@@ -2217,14 +2217,14 @@ impl ZergApp {
                     // 右列内容原体（整体滚动——2026-08-27 修复面板乱: 内容超长被 clip 裁掉不可滚）
                     egui::ScrollArea::vertical().id_salt("models_right_scroll").auto_shrink(false).show(&mut r_ui, |r_ui| {
             // 右列——模型简介 + 适配器选项 + 启动/停止（Mr2109 2026-08-27）
-            r_ui.heading("📖 模型详情");
+            r_ui.heading(t!("models.detail_title"));
             if let Some(m) = &self.selected_model {
-                r_ui.label(format!("模型: {}", m));
+                r_ui.label(t!("models.model_label", model = m));
                 r_ui.add_space(4.0);
                 if !self.selected_model_desc.is_empty() {
                     r_ui.label(&self.selected_model_desc);
                 } else {
-                    r_ui.weak("（暂无简介——设备未配置描述）");
+                    r_ui.weak(t!("models.no_desc"));
                 }
                 r_ui.add_space(8.0);
                 r_ui.separator();
@@ -2238,15 +2238,15 @@ impl ZergApp {
                         // 启动状态 + 开关
                         r_ui.horizontal(|ui| {
                             if loaded {
-                                ui.colored_label(egui::Color32::from_rgb(80, 200, 120), format!("● {}（本机）", status));
-                                if ui.button("🛑 停止").clicked() {
+                                ui.colored_label(egui::Color32::from_rgb(80, 200, 120), t!("models.local_badge", status = status));
+                                if ui.button(t!("models.stop")).clicked() {
                                     // APP-A11: 结果不再 let _ = 丢弃——失败红字提示
                                     let name2 = m.clone();
                                     let store = self.model_detail.clone();
                                     let perr = self.poll_err.clone();
                                     api::runtime().spawn(async move {
                                         if let Err(e) = api::model_stop_blocking(&name2).await {
-                                            *lock_recover(&perr) = Some(format!("停止模型 {} 失败: {}", name2, e));
+                                            *lock_recover(&perr) = Some(t!("models.stop_failed", name = name2, err = e).to_string());
                                         }
                                         if let Ok(v) = api::fetch_model_detail_blocking(&name2).await {
                                             *lock_recover(&store) = Some(v);
@@ -2256,14 +2256,14 @@ impl ZergApp {
                             } else {
                                 ui.colored_label(egui::Color32::from_rgb(200, 140, 80), format!("○ {}", status));
                                 if can_start {
-                                    if ui.button("▶ 启动").clicked() {
+                                    if ui.button(t!("models.start")).clicked() {
                                         // APP-A11: 失败红字提示
                                         let name2 = m.clone();
                                         let store = self.model_detail.clone();
                                         let perr = self.poll_err.clone();
                                         api::runtime().spawn(async move {
                                             if let Err(e) = api::model_start_blocking(&name2).await {
-                                                *lock_recover(&perr) = Some(format!("启动模型 {} 失败: {}", name2, e));
+                                                *lock_recover(&perr) = Some(t!("models.start_failed", name = name2, err = e).to_string());
                                             }
                                             if let Ok(v) = api::fetch_model_detail_blocking(&name2).await {
                                                 *lock_recover(&store) = Some(v);
@@ -2271,17 +2271,17 @@ impl ZergApp {
                                         });
                                     }
                                 } else {
-                                    ui.weak("（远程设备——加载走 agent）");
+                                    ui.weak(t!("models.remote_hint"));
                                 }
                             }
                         });
                         r_ui.add_space(6.0);
                         // 标签页切换（Mr2109 2026-08-27——模型详情/适配器选项分开）
                         r_ui.horizontal(|ui| {
-                            if ui.selectable_label(self.model_tab == "detail", "📄 模型详情").clicked() {
+                            if ui.selectable_label(self.model_tab == "detail", t!("models.tab_detail")).clicked() {
                                 self.model_tab = "detail".to_string();
                             }
-                            if ui.selectable_label(self.model_tab == "adapter", "🔧 适配器选项").clicked() {
+                            if ui.selectable_label(self.model_tab == "adapter", t!("models.tab_adapter")).clicked() {
                                 self.model_tab = "adapter".to_string();
                             }
                         });
@@ -2294,40 +2294,40 @@ impl ZergApp {
                                 ui.label(v);
                                 ui.end_row();
                             };
-                            opt(ui, "设备", d.get("host").and_then(|v| v.as_str()).unwrap_or("-").to_string());
-                            opt(ui, "后端", d.get("backend").and_then(|v| v.as_str()).unwrap_or("-").to_string());
-                            opt(ui, "模型文件", d.get("file").and_then(|v| v.as_str()).unwrap_or("-").to_string());
-                            opt(ui, "内存 (GB)", format!("{}", d.get("mem_gb").and_then(|v| v.as_f64()).unwrap_or(0.0)));
-                            opt(ui, "SSD 分流", if d.get("ssd").and_then(|v| v.as_bool()).unwrap_or(false) { "是" } else { "否" }.to_string());
-                            opt(ui, "上下文", format!("{}", d.get("ctx_window").and_then(|v| v.as_i64()).unwrap_or(0)));
-                            opt(ui, "架构", d.get("arch").and_then(|v| v.as_str()).unwrap_or("-").to_string());
-                            opt(ui, "思考模型", if d.get("thinking").and_then(|v| v.as_bool()).unwrap_or(false) { "✅ 默认开 <think>" } else { "-" }.to_string());
-                            opt(ui, "MoE 结构", d.get("moe").and_then(|v| v.as_str()).unwrap_or("-").to_string());
-                            opt(ui, "模板", d.get("template").and_then(|v| v.as_str()).unwrap_or("-").to_string());
-                            opt(ui, "模态", d.get("modality").and_then(|v| v.as_str()).unwrap_or("text").to_string());
+                            opt(ui, t!("models.opt_device").as_ref(), d.get("host").and_then(|v| v.as_str()).unwrap_or("-").to_string());
+                            opt(ui, t!("models.opt_backend").as_ref(), d.get("backend").and_then(|v| v.as_str()).unwrap_or("-").to_string());
+                            opt(ui, t!("models.opt_file").as_ref(), d.get("file").and_then(|v| v.as_str()).unwrap_or("-").to_string());
+                            opt(ui, t!("models.opt_mem").as_ref(), format!("{}", d.get("mem_gb").and_then(|v| v.as_f64()).unwrap_or(0.0)));
+                            opt(ui, t!("models.opt_ssd").as_ref(), if d.get("ssd").and_then(|v| v.as_bool()).unwrap_or(false) { t!("common.yes").to_string() } else { t!("common.no").to_string() });
+                            opt(ui, t!("models.opt_ctx").as_ref(), format!("{}", d.get("ctx_window").and_then(|v| v.as_i64()).unwrap_or(0)));
+                            opt(ui, t!("models.opt_arch").as_ref(), d.get("arch").and_then(|v| v.as_str()).unwrap_or("-").to_string());
+                            opt(ui, t!("models.opt_thinking").as_ref(), if d.get("thinking").and_then(|v| v.as_bool()).unwrap_or(false) { t!("models.thinking_default_on").to_string() } else { "-".to_string() });
+                            opt(ui, t!("models.opt_moe").as_ref(), d.get("moe").and_then(|v| v.as_str()).unwrap_or("-").to_string());
+                            opt(ui, t!("models.opt_template").as_ref(), d.get("template").and_then(|v| v.as_str()).unwrap_or("-").to_string());
+                            opt(ui, t!("models.opt_modality").as_ref(), d.get("modality").and_then(|v| v.as_str()).unwrap_or("text").to_string());
                             if let Some(mp) = d.get("mmproj").and_then(|v| v.as_str()) {
                                 if !mp.is_empty() {
-                                    opt(ui, "视觉投影", mp.to_string());
+                                    opt(ui, t!("models.opt_mmproj").as_ref(), mp.to_string());
                                 }
                             }
-                            opt(ui, "工具支持", match d.get("tool_support") {
-                                Some(v) if v.as_bool() == Some(true) => "是".to_string(),
-                                Some(v) if v.as_bool() == Some(false) => "否".to_string(),
-                                _ => "未知".to_string(),
+                            opt(ui, t!("models.opt_tools").as_ref(), match d.get("tool_support") {
+                                Some(v) if v.as_bool() == Some(true) => t!("common.yes").to_string(),
+                                Some(v) if v.as_bool() == Some(false) => t!("common.no").to_string(),
+                                _ => t!("common.unknown").to_string(),
                             });
-                            opt(ui, "接入日期", d.get("added").and_then(|v| v.as_str()).unwrap_or("-").to_string());
-                            opt(ui, "已验证", if d.get("verified").and_then(|v| v.as_bool()).unwrap_or(false) { "✅" } else { "-" }.to_string());
+                            opt(ui, t!("models.opt_added").as_ref(), d.get("added").and_then(|v| v.as_str()).unwrap_or("-").to_string());
+                            opt(ui, t!("models.opt_verified").as_ref(), if d.get("verified").and_then(|v| v.as_bool()).unwrap_or(false) { "✅" } else { "-" }.to_string());
                         });
                         // 启动参数（cmd/env）
                         if let Some(cmd) = d.get("cmd").and_then(|v| v.as_array()) {
                             if !cmd.is_empty() {
                                 r_ui.add_space(4.0);
-                                r_ui.label(format!("启动参数: {}", cmd.iter().filter_map(|c| c.as_str()).collect::<Vec<_>>().join(" ")));
+                                r_ui.label(t!("models.launch_args", args = cmd.iter().filter_map(|c| c.as_str()).collect::<Vec<_>>().join(" ")));
                             }
                         }
                         if let Some(env) = d.get("env").and_then(|v| v.as_array()) {
                             if !env.is_empty() {
-                                r_ui.label(format!("环境变量: {}", env.iter().filter_map(|c| c.as_str()).collect::<Vec<_>>().join(" ")));
+                                r_ui.label(t!("models.env_vars", env = env.iter().filter_map(|c| c.as_str()).collect::<Vec<_>>().join(" ")));
                             }
                         }
                         } else {
@@ -2337,7 +2337,7 @@ impl ZergApp {
                             Some(sv) => {
                                 if let Some(arr) = sv.get("schema").and_then(|v| v.as_array()) {
                                     if arr.is_empty() {
-                                        r_ui.weak("（无适配器——走旧路由）");
+                                        r_ui.weak(t!("adapter.none"));
                                     } else {
                                         // 编辑缓冲（懒初始化）
                                         {
@@ -2427,7 +2427,7 @@ impl ZergApp {
                                         r_ui.add_space(6.0);
                                         if !self.adapter_confirm {
                                             r_ui.horizontal(|ui| {
-                                                if ui.button("⚡ 应用（实时生效）").clicked() {
+                                                if ui.button(t!("adapter.apply")).clicked() {
                                                     self.adapter_confirm = true;
                                                     self.adapter_msg.clear();
                                                 }
@@ -2437,8 +2437,8 @@ impl ZergApp {
                                             });
                                         } else {
                                             r_ui.horizontal(|ui| {
-                                                ui.colored_label(egui::Color32::from_rgb(220, 180, 60), format!("{} 确认应用这些修改？", icon_text("warning")));
-                                                if ui.button("✅ 确认生效").clicked() {
+                                                ui.colored_label(egui::Color32::from_rgb(220, 180, 60), t!("adapter.confirm_apply", icon = icon_text("warning")));
+                                                if ui.button(t!("adapter.confirm_ok")).clicked() {
                                                     let cfg = lock_recover(&self.adapter_edit).get(m.as_str()).cloned().unwrap_or_default();
                                                     let cfg = serde_json::Value::Object(cfg.into_iter().collect());
                                                     let name2 = m.clone();
@@ -2464,33 +2464,33 @@ impl ZergApp {
                                                         let d = api::fetch_model_detail_blocking(&name2).await.ok();
                                                         *lock_recover(&dstore) = d;
                                                     });
-                                                    self.adapter_msg = "已生效".to_string();
+                                                    self.adapter_msg = t!("adapter.applied").to_string();
                                                     self.adapter_confirm = false;
                                                 }
-                                                if ui.button("✖ 取消").clicked() {
+                                                if ui.button(t!("action.cancel_x")).clicked() {
                                                     self.adapter_confirm = false;
                                                     self.adapter_msg.clear();
                                                 }
                                             });
                                         }
-                                        r_ui.weak("每个模型的适配器参数集各自不同——编辑后需确认才生效（持久化重启恢复）");
+                                        r_ui.weak(t!("adapter.hint"));
                                     }
                                 } else {
-                                    r_ui.weak("（无适配器——走旧路由）");
+                                    r_ui.weak(t!("adapter.none"));
                                 }
                             }
                             None => {
-                                r_ui.weak("（适配器选项加载中…）");
+                                r_ui.weak(t!("adapter.loading"));
                             }
                         }
                         }
                     }
                     None => {
-                        r_ui.weak("（适配器选项加载中…）");
+                        r_ui.weak(t!("adapter.loading"));
                     }
                 }
             } else {
-                r_ui.weak("点击左侧模型查看详情");
+                r_ui.weak(t!("models.click_detail"));
             }
                     }); // models_right_scroll 结束
             } // 右列块结束
@@ -2542,15 +2542,15 @@ impl ZergApp {
 
     /// 内部任务视图（Mr2109 2026-08-22——看到所有内部任务 + 手动执行按钮）
     fn internal_tasks_view(&mut self, ui: &mut egui::Ui) {
-        ui.heading("🔧 内部任务（进化——为自己）");
+        ui.heading(t!("it.title"));
         ui.add_space(4.0);
-        ui.weak("16 类内部任务——编排自动运行——也可手动执行（空闲检测触发）。单槽铁律: 排队串行。");
+        ui.weak(t!("it.desc"));
 
         // 丙批 N4（2026-09-10）：前缀缓存命中率面板（网关 8082——数据来自 /api/metrics/prefix_cache）
         {
             let pc = lock_recover(&self.prefix_cache).clone();
             let mut refresh = false;
-            egui::CollapsingHeader::new(format!("{} 前缀缓存命中率（网关）", icon_text("chart-line")))
+            egui::CollapsingHeader::new(t!("it.prefix_cache", icon = icon_text("chart-line")))
                 .default_open(false)
                 .show(ui, |ui| {
                     match &pc {
@@ -2564,21 +2564,18 @@ impl ZergApp {
                                 .and_then(|x| x.as_u64())
                                 .unwrap_or(0);
                             ui.horizontal(|ui| {
-                                ui.label(format!("命中率 {:.1}%", f("ratio") * 100.0));
-                                ui.weak(format!("（样本 {} · 命中 {} / 未命中 {}）", samples, u("hits"), u("misses")));
+                                ui.label(t!("it.hit_rate", pct = format!("{:.1}", f("ratio") * 100.0)));
+                                ui.weak(t!("it.samples", n = samples, hits = u("hits"), misses = u("misses")));
                             });
                             if v.get("has_baseline").and_then(|x| x.as_bool()).unwrap_or(false) {
-                                ui.weak(format!("上一版本基线 {:.1}%（版本变更时对比告警）", f("baseline_ratio") * 100.0));
+                                ui.weak(t!("it.baseline", pct = format!("{:.1}", f("baseline_ratio") * 100.0)));
                             }
-                            ui.weak(format!(
-                                "提示/工具版本: {}",
-                                if ver.is_empty() { "（尚无样本）" } else { ver }
-                            ));
+                            ui.weak(t!("it.prompt_version", ver = if ver.is_empty() { t!("it.no_sample").to_string() } else { ver.to_string() }));
                             if let Some(alerts) = v.get("alerts").and_then(|x| x.as_array()) {
                                 if !alerts.is_empty() {
                                     ui.colored_label(
                                         egui::Color32::from_rgb(220, 100, 90),
-                                        format!("{} {} 条命中率下降告警", icon_text("warning"), alerts.len()),
+                                        t!("it.alerts", icon = icon_text("warning"), n = alerts.len()),
                                     );
                                     for al in alerts.iter().take(2) {
                                         if let Some(msg) = al.get("message").and_then(|x| x.as_str()) {
@@ -2589,13 +2586,13 @@ impl ZergApp {
                             }
                         }
                         Some(Err(e)) => {
-                            ui.colored_label(egui::Color32::from_rgb(220, 100, 90), format!("读取失败: {}", e));
+                            ui.colored_label(egui::Color32::from_rgb(220, 100, 90), t!("it.read_failed", err = e));
                         }
                         None => {
-                            ui.weak("读取中…");
+                            ui.weak(t!("it.reading"));
                         }
                     }
-                    if ui.small_button("刷新").clicked() {
+                    if ui.small_button(t!("action.refresh")).clicked() {
                         refresh = true;
                     }
                 });
@@ -2631,52 +2628,52 @@ impl ZergApp {
             if let Some(b) = self.it_ctrl_busy {
                 ui.colored_label(
                     egui::Color32::from_rgb(220, 180, 60),
-                    format!("⏳ 切换中…（目标: {}）", if b { "启动" } else { "停止" }),
+                    t!("it.switching", target = if b { t!("it.start").to_string() } else { t!("it.stop").to_string() }),
                 );
             } else if self.it_ctrl_confirm {
                 // APP-A07: 二次确认（防误点启停引擎）
                 ui.colored_label(
                     egui::Color32::from_rgb(220, 180, 60),
-                    format!("{} 确认{}内部任务引擎？", icon_text("warning"), if running { "停止" } else { "启动" }),
+                    t!("it.confirm_engine", icon = icon_text("warning"), action = if running { t!("it.stop").to_string() } else { t!("it.start").to_string() }),
                 );
-                if ui.button("✅ 确认").clicked() {
+                if ui.button(t!("action.confirm")).clicked() {
                     let target = !running;
                     self.it_ctrl_target = Some(target);
                     self.it_ctrl_busy = Some(target);
                     self.it_ctrl_result = Self::it_ctrl_async(target);
                     self.it_ctrl_confirm = false;
                 }
-                if ui.button("✖ 取消").clicked() {
+                if ui.button(t!("action.cancel_x")).clicked() {
                     self.it_ctrl_confirm = false;
                 }
             } else {
-                let label = if running { format!("{} 停止内部任务", icon_text("stop-circle")) } else { format!("{} 启动内部任务", icon_text("play")) };
+                let label = if running { t!("it.stop_task", icon = icon_text("stop-circle")).to_string() } else { t!("it.start_task", icon = icon_text("play")).to_string() };
                 if ui.add_enabled(known, egui::Button::new(label)).clicked() {
                     self.it_ctrl_confirm = true;
                 }
             }
             // 状态文案（诚实呈现：未启用 / 已停止 / 运行中 / 异常）
             if let Some(e) = err {
-                ui.colored_label(egui::Color32::from_rgb(220, 100, 90), format!("（状态未知: {}）", e));
+                ui.colored_label(egui::Color32::from_rgb(220, 100, 90), t!("it.state_unknown", err = e));
             } else if !known {
-                ui.weak("（状态获取中…）");
+                ui.weak(t!("it.state_loading"));
             } else if !enabled {
                 ui.colored_label(
                     egui::Color32::GRAY,
-                    format!("（未启用——{}）", if reason.is_empty() { "ZERG_INTERNAL_TASKS=1 才开".to_string() } else { reason }),
+                    t!("it.not_enabled", reason = if reason.is_empty() { t!("it.gate_hint").to_string() } else { reason }),
                 );
             } else if stopped {
-                ui.colored_label(egui::Color32::from_rgb(220, 180, 60), "（当前: 已停止——点启动恢复自动触发）");
+                ui.colored_label(egui::Color32::from_rgb(220, 180, 60), t!("it.stopped_hint"));
             } else if running {
-                ui.colored_label(egui::Color32::from_rgb(120, 200, 120), "（当前: 运行中——点停止暂停自动触发）");
+                ui.colored_label(egui::Color32::from_rgb(120, 200, 120), t!("it.running_hint"));
             } else {
                 ui.colored_label(
                     egui::Color32::from_rgb(220, 100, 90),
-                    format!("（异常：{}）", if reason.is_empty() { "心跳停滞".to_string() } else { reason }),
+                    t!("it.abnormal", reason = if reason.is_empty() { t!("it.heartbeat_stall").to_string() } else { reason }),
                 );
             }
             if !tick.is_empty() && tick.len() >= 16 {
-                ui.weak(format!("心跳 {}", &tick[11..16]));
+                ui.weak(t!("it.heartbeat", tick = &tick[11..16]));
             }
         });
         ui.add_space(8.0);
@@ -2717,7 +2714,7 @@ impl ZergApp {
             .unwrap_or_default();
         let items = lock_recover(&self.internal_tasks).clone().unwrap_or_default();
         if items.is_empty() {
-            ui.weak("加载中…（或 API 不可用）");
+            ui.weak(t!("it.loading"));
             return;
         }
         // v2.5.6 左右布局（Mr2109 2026-08-27）: 左=任务列表（可点击）——右=详情+skill
@@ -2746,27 +2743,27 @@ impl ZergApp {
                         desc.clone()
                     };
                     ui.horizontal(|ui| {
-                        if ui.button("▶ 执行").clicked() {
+                        if ui.button(t!("action.run")).clicked() {
                             // APP-A11: 失败提示（原 let _ = 静默）
                             let id2 = id.clone();
                             let perr = self.poll_err.clone();
                             api::runtime().spawn(async move {
                                 if let Err(e) = api::run_internal_task_blocking(&id2).await {
-                                    *lock_recover(&perr) = Some(format!("执行内部任务 {} 失败: {}", id2, e));
+                                    *lock_recover(&perr) = Some(t!("it.run_failed", id = id2, err = e).to_string());
                                 }
                             });
                         }
                         // 运行模式开关（Mr2109 2026-08-28——自动/手动——点击切换）
                         let auto_run = it.get("auto_run").and_then(|v| v.as_bool()).unwrap_or(true);
-                        let mode_btn = if auto_run { "🔁 自动" } else { "✋ 手动" };
-                        if ui.selectable_label(false, mode_btn).on_hover_text("运行模式: 自动=编排自动触发 / 手动=只手动触发（点击切换）").clicked() {
+                        let mode_btn = if auto_run { t!("it.mode_auto").to_string() } else { t!("it.mode_manual").to_string() };
+                        if ui.selectable_label(false, mode_btn).on_hover_text(t!("it.mode_tip")).clicked() {
                             let id2 = id.clone();
                             let new_mode = !auto_run;
                             let perr = self.poll_err.clone();
                             api::runtime().spawn(async move {
                                 // APP-A11: 失败提示（原 let _ = 静默）
                                 if let Err(e) = api::set_internal_mode_blocking(&id2, new_mode).await {
-                                    *lock_recover(&perr) = Some(format!("切换运行模式 {} 失败: {}", id2, e));
+                                    *lock_recover(&perr) = Some(t!("it.mode_failed", id = id2, err = e).to_string());
                                 }
                             });
                             // 本地立即翻转（后端刷新 30s 后同步）
@@ -2787,12 +2784,12 @@ impl ZergApp {
                             if cur_h == cur_h.trunc() {
                                 format!("⏱{}h", cur_h as i64)
                             } else {
-                                format!("⏱{}h", cur_h)
+                                t!("it.interval_hours", h = cur_h).to_string()
                             }
                         } else if def_h > 0.0 {
-                            format!("⏱默认{}h", def_h as i64) // 默认执行周期
+                            t!("it.interval_default", h = def_h as i64).to_string() // 默认执行周期
                         } else {
-                            "⏱周期".to_string()
+                            t!("it.interval").to_string()
                         };
                         egui::ComboBox::from_id_salt(format!("it_iv_{}", id))
                             .selected_text(sel_text)
@@ -2800,9 +2797,9 @@ impl ZergApp {
                             .show_ui(ui, |ui| {
                                 for opt in [0.0_f64, 1.0, 2.0, 6.0, 12.0, 24.0] {
                                     let text = if opt == 0.0 {
-                                        "✖ 不设置".to_string()
+                                        t!("it.interval_none").to_string()
                                     } else {
-                                        format!("{} 小时", opt as i64)
+                                        t!("it.hours", h = opt as i64).to_string()
                                     };
                                     if ui.selectable_label(cur_h == opt, text).clicked() {
                                         let id2 = id.clone();
@@ -2810,7 +2807,7 @@ impl ZergApp {
                                         api::runtime().spawn(async move {
                                             // APP-A11: 失败提示（原 let _ = 静默）
                                             if let Err(e) = api::set_internal_interval_blocking(&id2, opt).await {
-                                                *lock_recover(&perr) = Some(format!("设置周期 {} 失败: {}", id2, e));
+                                                *lock_recover(&perr) = Some(t!("it.set_interval_failed", id = id2, err = e).to_string());
                                             }
                                         });
                                     }
@@ -2829,7 +2826,7 @@ impl ZergApp {
                                                 api::runtime().spawn(async move {
                                                     // APP-A11: 失败提示（原 let _ = 静默）
                                                     if let Err(e) = api::set_internal_interval_blocking(&id2, hv).await {
-                                                        *lock_recover(&perr) = Some(format!("设置指定周期 {} 失败: {}", id2, e));
+                                                        *lock_recover(&perr) = Some(t!("it.set_custom_failed", id = id2, err = e).to_string());
                                                     }
                                                 });
                                             }
@@ -2837,7 +2834,7 @@ impl ZergApp {
                                         self.it_custom_for = None;
                                         self.it_custom_hours.clear();
                                     }
-                                } else if ui.selectable_label(false, format!("{} 指定…", icon_text("pencil-simple"))).clicked() {
+                                } else if ui.selectable_label(false, t!("it.interval_custom", icon = icon_text("pencil-simple"))).clicked() {
                                     self.it_custom_for = Some(id.clone());
                                     self.it_custom_hours = format!("{}", cur_h as i64);
                                 }
@@ -2878,17 +2875,17 @@ impl ZergApp {
                     let skill = it.get("skill").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     r_ui.heading(format!("🔧 {}", sel.as_deref().unwrap_or("?")));
                     r_ui.add_space(4.0);
-                    r_ui.label(format!("说明: {}", desc));
-                    r_ui.label(format!("冷却: {}", cooldown));
+                    r_ui.label(t!("it.notes", desc = desc));
+                    r_ui.label(t!("it.cooldown", c = cooldown));
                     r_ui.add_space(4.0);
                     r_ui.separator();
-                    r_ui.strong("任务模板:");
+                    r_ui.strong(t!("it.template"));
                     r_ui.label(template);
                     r_ui.add_space(8.0);
                     r_ui.separator();
-                    r_ui.strong("Skill 内容（该类任务沉淀——执行中进化）:");
+                    r_ui.strong(t!("it.skill_content"));
                     if skill.is_empty() {
-                        r_ui.weak("（暂无 skill——该类任务首次执行时由模型自举建立）");
+                        r_ui.weak(t!("it.skill_none"));
                     } else {
                         egui::ScrollArea::vertical().id_salt("it_right_skill").max_height(320.0).show(&mut r_ui, |ui| {
                             ui.label(skill);
@@ -2896,7 +2893,7 @@ impl ZergApp {
                     }
                 }
                 None => {
-                    r_ui.weak("← 点击左侧任务查看详情和 skill");
+                    r_ui.weak(t!("it.click_detail"));
                 }
             }
         });
