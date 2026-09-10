@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  core:
+    name: 主控 + 子端（Go）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: |
+            core/go.sum
+            agent/go.sum
+      - name: core 构建 + 测试
+        working-directory: core
+        run: |
+          go build ./...
+          go test ./... -count=1
+      - name: agent 构建 + 测试
+        working-directory: agent
+        run: |
+          go build ./...
+          go test ./... -count=1
+
+  ui:
+    name: 桌面 UI（Rust）
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test
+        working-directory: ui
+        run: cargo test -p zerg-ui
+
+  secrets:
+    name: 密钥扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
