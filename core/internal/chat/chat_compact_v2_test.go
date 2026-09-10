@@ -7,11 +7,11 @@
 package chat
 
 import (
-	"math/rand"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
