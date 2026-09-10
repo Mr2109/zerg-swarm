@@ -97,7 +97,7 @@ def keys_audit(root):
         p = os.path.join(loc, name + ".yml")
         ks = set()
         for line in open(p, encoding="utf-8"):
-            m = re.match(r"^([A-Za-z_][\w]*):\s*", line)
+            m = re.match(r"^([A-Za-z_][\w.]*):\s*", line)   # 允许点号层级键
             if m:
                 ks.add(m.group(1))
         defs[name] = ks
