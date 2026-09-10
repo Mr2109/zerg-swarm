@@ -61,7 +61,7 @@ func (h *Handlers) InternalTasksHandler(w http.ResponseWriter, r *http.Request) 
 // POST /api/internal-tasks/{id}/run
 func (h *Handlers) InternalTaskRunHandler(w http.ResponseWriter, r *http.Request) {
 	if h.Scheduler == nil {
-		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
 		return
 	}
 	taskID := chi.URLParam(r, "id")
@@ -75,11 +75,11 @@ func (h *Handlers) InternalTaskRunHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if found == nil {
-		writeError(w, http.StatusNotFound, "内部任务不存在: "+taskID)
+		writeErrorCode(w, http.StatusNotFound, "INTERNAL_TASK_NOT_FOUND", "内部任务不存在: "+taskID)
 		return
 	}
 	if os.Getenv("ZERG_INTERNAL_TASKS") != "1" {
-		writeError(w, http.StatusForbidden, "内部任务引擎已停用（2026-09-06 误删事故）——设 ZERG_INTERNAL_TASKS=1 并重启主控后可运行")
+		writeErrorCode(w, http.StatusForbidden, "INTERNAL_TASKS_DISABLED", "内部任务引擎已停用（2026-09-06 误删事故）——设 ZERG_INTERNAL_TASKS=1 并重启主控后可运行")
 		return
 	}
 	// 提交任务（内部——优先级 5——模型=内部任务默认（新流程须模型名——网关路由））

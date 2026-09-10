@@ -33,16 +33,16 @@ func (h *Handlers) DocMkdirHandler(w http.ResponseWriter, r *http.Request) {
 		Dir string `json:"dir"`
 	}
 	if err := readJSONBody(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "请求体解析失败: "+err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_BODY", "请求体解析失败: "+err.Error())
 		return
 	}
 	abs := safeDocPath(req.Dir)
 	if abs == "" {
-		writeError(w, http.StatusBadRequest, "非法路径")
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_PATH", "非法路径")
 		return
 	}
 	if err := os.MkdirAll(abs, 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "新建目录失败: "+err.Error())
+		writeErrorCode(w, http.StatusInternalServerError, "MKDIR_FAILED", "新建目录失败: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "dir": req.Dir})
@@ -55,21 +55,21 @@ func (h *Handlers) DocRenameHandler(w http.ResponseWriter, r *http.Request) {
 		New string `json:"new"`
 	}
 	if err := readJSONBody(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "请求体解析失败: "+err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_BODY", "请求体解析失败: "+err.Error())
 		return
 	}
 	oldAbs := safeDocPath(req.Old)
 	newAbs := safeDocPath(req.New)
 	if oldAbs == "" || newAbs == "" {
-		writeError(w, http.StatusBadRequest, "非法路径")
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_PATH", "非法路径")
 		return
 	}
 	if _, err := os.Stat(oldAbs); err != nil {
-		writeError(w, http.StatusNotFound, "目标不存在: "+req.Old)
+		writeErrorCode(w, http.StatusNotFound, "TARGET_NOT_FOUND", "目标不存在: "+req.Old)
 		return
 	}
 	if err := os.Rename(oldAbs, newAbs); err != nil {
-		writeError(w, http.StatusInternalServerError, "重命名失败: "+err.Error())
+		writeErrorCode(w, http.StatusInternalServerError, "RENAME_FAILED", "重命名失败: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "old": req.Old, "new": req.New})
@@ -81,20 +81,20 @@ func (h *Handlers) DocDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		Path string `json:"path"`
 	}
 	if err := readJSONBody(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "请求体解析失败: "+err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_BODY", "请求体解析失败: "+err.Error())
 		return
 	}
 	abs := safeDocPath(req.Path)
 	if abs == "" {
-		writeError(w, http.StatusBadRequest, "非法路径")
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_PATH", "非法路径")
 		return
 	}
 	if _, err := os.Stat(abs); err != nil {
-		writeError(w, http.StatusNotFound, "目标不存在: "+req.Path)
+		writeErrorCode(w, http.StatusNotFound, "TARGET_NOT_FOUND", "目标不存在: "+req.Path)
 		return
 	}
 	if err := os.RemoveAll(abs); err != nil {
-		writeError(w, http.StatusInternalServerError, "删除失败: "+err.Error())
+		writeErrorCode(w, http.StatusInternalServerError, "DELETE_FAILED", "删除失败: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "path": req.Path})
@@ -107,26 +107,26 @@ func (h *Handlers) DocCopyHandler(w http.ResponseWriter, r *http.Request) {
 		To   string `json:"to"`
 	}
 	if err := readJSONBody(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "请求体解析失败: "+err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_BODY", "请求体解析失败: "+err.Error())
 		return
 	}
 	fromAbs := safeDocPath(req.From)
 	toAbs := safeDocPath(req.To)
 	if fromAbs == "" || toAbs == "" {
-		writeError(w, http.StatusBadRequest, "非法路径")
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_PATH", "非法路径")
 		return
 	}
 	content, err := os.ReadFile(fromAbs)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "源不存在: "+req.From)
+		writeErrorCode(w, http.StatusNotFound, "SOURCE_NOT_FOUND", "源不存在: "+req.From)
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(toAbs), 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "创建目标目录失败: "+err.Error())
+		writeErrorCode(w, http.StatusInternalServerError, "MKDIR_FAILED", "创建目标目录失败: "+err.Error())
 		return
 	}
 	if err := os.WriteFile(toAbs, content, 0o644); err != nil {
-		writeError(w, http.StatusInternalServerError, "复制失败: "+err.Error())
+		writeErrorCode(w, http.StatusInternalServerError, "COPY_FAILED", "复制失败: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "from": req.From, "to": req.To})
@@ -139,20 +139,20 @@ func (h *Handlers) DocSaveHandler(w http.ResponseWriter, r *http.Request) {
 		Content string `json:"content"`
 	}
 	if err := readJSONBody(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "请求体解析失败: "+err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_BODY", "请求体解析失败: "+err.Error())
 		return
 	}
 	abs := safeDocPath(req.Path)
 	if abs == "" {
-		writeError(w, http.StatusBadRequest, "非法路径")
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_PATH", "非法路径")
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "创建目录失败: "+err.Error())
+		writeErrorCode(w, http.StatusInternalServerError, "MKDIR_FAILED", "创建目录失败: "+err.Error())
 		return
 	}
 	if err := os.WriteFile(abs, []byte(req.Content), 0o644); err != nil {
-		writeError(w, http.StatusInternalServerError, "保存失败: "+err.Error())
+		writeErrorCode(w, http.StatusInternalServerError, "SAVE_FAILED", "保存失败: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "path": req.Path})

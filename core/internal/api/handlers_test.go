@@ -95,6 +95,29 @@ func TestHeartbeatHandler_ValidHeartbeat(t *testing.T) {
 	}
 }
 
+// apiErr（多语言 L4）：解析错误响应——兼容两种形态
+//
+//	{"error":"msg"}（旧/兼容）与 {"error":{"type":"CODE","message":"msg"}}（L4 带码）
+//
+// 与 UI 侧 parse_api_error 的双形态解析对齐。
+func apiErr(t *testing.T, w *httptest.ResponseRecorder) (code, message string) {
+	t.Helper()
+	var raw map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&raw); err != nil {
+		t.Fatalf("错误响应不是 JSON: %v", err)
+	}
+	switch e := raw["error"].(type) {
+	case string:
+		return "", e
+	case map[string]any:
+		c, _ := e["type"].(string)
+		m, _ := e["message"].(string)
+		return c, m
+	}
+	t.Fatalf("错误响应形态未知: %#v", raw["error"])
+	return "", ""
+}
+
 func TestHeartbeatHandler_MissingMachine(t *testing.T) {
 	h := newTestHandlers()
 
@@ -116,10 +139,12 @@ func TestHeartbeatHandler_MissingMachine(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
 	}
 
-	var resp map[string]string
-	json.NewDecoder(w.Body).Decode(&resp)
-	if !strings.Contains(resp["error"], "machine") {
-		t.Errorf("expected error message about 'machine', got '%s'", resp["error"])
+	code, msg := apiErr(t, w)
+	if code != "MISSING_MACHINE" {
+		t.Errorf("L4：错误码应为 MISSING_MACHINE，实得 %q", code)
+	}
+	if !strings.Contains(msg, "machine") {
+		t.Errorf("expected error message about 'machine', got '%s'", msg)
 	}
 }
 
@@ -183,10 +208,12 @@ func TestAuthMiddleware_MissingToken(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusUnauthorized, w.Code)
 	}
 
-	var resp map[string]string
-	json.NewDecoder(w.Body).Decode(&resp)
-	if !strings.Contains(resp["error"], "X-Auth-Token") {
-		t.Errorf("expected error about X-Auth-Token, got '%s'", resp["error"])
+	code, msg := apiErr(t, w)
+	if code != "AUTH_TOKEN_MISSING" {
+		t.Errorf("L4：错误码应为 AUTH_TOKEN_MISSING，实得 %q", code)
+	}
+	if !strings.Contains(msg, "X-Auth-Token") {
+		t.Errorf("expected error about X-Auth-Token, got '%s'", msg)
 	}
 }
 
@@ -206,10 +233,12 @@ func TestAuthMiddleware_WrongToken(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusForbidden, w.Code)
 	}
 
-	var resp map[string]string
-	json.NewDecoder(w.Body).Decode(&resp)
-	if !strings.Contains(resp["error"], "无效") {
-		t.Errorf("expected error about invalid token, got '%s'", resp["error"])
+	code, msg := apiErr(t, w)
+	if code != "AUTH_TOKEN_INVALID" {
+		t.Errorf("L4：错误码应为 AUTH_TOKEN_INVALID，实得 %q", code)
+	}
+	if !strings.Contains(msg, "无效") {
+		t.Errorf("expected error about invalid token, got '%s'", msg)
 	}
 }
 
