@@ -55,6 +55,12 @@ impl MdEditor {
         self.history = EditHistory::new();
         self.dirty = false;
         self.scroll_line = 0;
+        self.invalidate_cache(); // M06: 载入即版本自增——外部按 epoch 的缓存随之失效
+    }
+
+    /// 缓存版本号（M06 2026-09-10 审计：预览/大纲文本按此缓存，避免每帧 Rope→String 克隆）
+    pub fn epoch(&self) -> u64 {
+        self.cache_epoch
     }
 
     /// 取全量文本
@@ -142,11 +148,9 @@ impl MdEditor {
             return;
         }
         let start = self.cursor.saturating_sub(1);
-        let removed = self.buffer.to_string()[..self.buffer_byte(start)]
-            .chars()
-            .last()
-            .map(|c| c.to_string())
-            .unwrap_or_default();
+        // M01(2026-09-10 审计)修复：原来用 `..buffer_byte(start)` 取"被删字符"，
+        // 实际切到的是 start-1 位置（差一位）→ 撤销会把文本改坏；改为取 [start, cursor) 区间
+        let removed = self.buffer.slice_chars(start, self.cursor);
         self.buffer.remove(start, self.cursor);
         self.history.push(vec![EditOp::Delete {
             pos: start,
@@ -169,8 +173,7 @@ impl MdEditor {
             return;
         }
         let end = self.cursor + 1;
-        let removed = self.buffer.to_string()[self.buffer_byte(self.cursor)..self.buffer_byte(end)]
-            .to_string();
+        let removed = self.buffer.slice_chars(self.cursor, end); // M07: 不再整篇 to_string()
         self.buffer.remove(self.cursor, end);
         self.history.push(vec![EditOp::Delete {
             pos: self.cursor,
@@ -188,7 +191,7 @@ impl MdEditor {
     /// 有选择时返回删除选择的 ops
     fn replace_selection_ops(&mut self) -> Option<Vec<EditOp>> {
         let (start, end) = self.selection_range()?;
-        let removed = self.buffer.to_string()[self.buffer_byte(start)..self.buffer_byte(end)].to_string();
+        let removed = self.buffer.slice_chars(start, end); // M07: 只取选区片段
         self.buffer.remove(start, end);
         self.cursor = start;
         self.selection = None;
@@ -457,4 +460,38 @@ enum KeyAction {
     End,
     Undo,
     Redo,
+}
+
+#[cfg(test)]
+mod m01_tests {
+    use super::*;
+
+    /// M01 回归（2026-09-10 审计）：退格 → 撤销 必须还原原文（原来记录错字符，撤销把文本改坏）
+    #[test]
+    fn backspace_undo_restores_original() {
+        for original in ["abc", "你好a", "cat猫", ""] {
+            let mut ed = MdEditor::new();
+            ed.load(original);
+            ed.cursor = ed.buffer.len();
+            let before_len = ed.buffer.len();
+            if before_len == 0 {
+                continue;
+            }
+            ed.backspace();
+            assert_eq!(ed.buffer.len(), before_len - 1, "退格应删一个字符: {}", original);
+            ed.undo();
+            assert_eq!(ed.buffer.to_string(), original, "撤销后应还原原文: {}", original);
+        }
+    }
+
+    /// M07 回归：char_to_byte 与 ropey 字节长度一致（含多字节 CJK/emoji）
+    #[test]
+    fn char_to_byte_matches_bytes() {
+        let mut ed = MdEditor::new();
+        ed.load("你好a🙂bc");
+        for pos in 0..=ed.buffer.len() {
+            let expected = ed.buffer.to_string().chars().take(pos).map(|c| c.len_utf8()).sum::<usize>();
+            assert_eq!(ed.buffer.char_to_byte(pos), expected, "char {} 字节偏移不一致", pos);
+        }
+    }
 }
