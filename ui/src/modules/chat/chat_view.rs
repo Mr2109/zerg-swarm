@@ -11,6 +11,36 @@ use egui_commonmark::CommonMarkViewer; // P4-23 消息 Markdown 渲染（借文�
 
 // P4-25 md 预处理（补 egui_commonmark 不支持的格式）：
 // ① ==高亮==（GFM highlight——pulldown-cmark 不支持）→ **加粗**（视觉近似）
+// P4-51(2026-09-10): 硬换行转换——CommonMark 单个 \n 是软换行(渲染成空格),
+// 导致"每个数字单独一行"的回复在 UI 挤成一段。恢复: 行尾补两空格 = 硬换行。
+// 跳过: 代码围栏内(``` ... ```——代码块本身保留换行)、空行、已是硬换行的行(行尾 2 空格/反斜杠)
+fn harden_breaks(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + s.len() / 8);
+    let mut in_fence = false;
+    let lines: Vec<&str> = s.split('\n').collect();
+    let total = lines.len();
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            out.push_str(line);
+        } else if in_fence || line.trim().is_empty() {
+            out.push_str(line);
+        } else if line.ends_with("  ") || line.ends_with('\\') {
+            out.push_str(line); // 已是硬换行
+        } else {
+            out.push_str(line);
+            if idx + 1 < total {
+                out.push_str("  "); // 两空格 = 硬换行
+            }
+        }
+        if idx + 1 < total {
+            out.push('\n');
+        }
+    }
+    out
+}
+
 // ② <sup>/<sub> 上下标标签剥离（InlineHtml 不渲染——剥标签留内容）
 fn md_preprocess(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -52,7 +82,34 @@ fn md_preprocess(s: &str) -> String {
         out.push(chars[i]);
         i += 1;
     }
-    out
+    // P4-51: 单换行 → 硬换行（数字列表/逐行输出在 UI 不挤成一段）
+    harden_breaks(&out)
+}
+
+#[cfg(test)]
+mod harden_breaks_tests {
+    use super::harden_breaks;
+
+    #[test]
+    fn test_single_newlines_become_hard_breaks() {
+        let out = harden_breaks("1\n2\n3");
+        assert_eq!(out, "1  \n2  \n3", "单换行应补两空格成硬换行");
+    }
+
+    #[test]
+    fn test_code_fence_untouched() {
+        let src = "```\na\nb\n```\ntail";
+        let out = harden_breaks(src);
+        assert!(out.contains("```\na\nb\n```"), "代码块内不应改: {}", out);
+        assert!(out.ends_with("tail"), "围栏外尾行不应补空格: {}", out);
+    }
+
+    #[test]
+    fn test_empty_lines_and_existing_breaks_untouched() {
+        let out = harden_breaks("a\n\nb  \nc");
+        assert!(out.contains("\n\n"), "空行保留");
+        assert!(out.contains("b  \nc"), "已有硬换行不重复加: {}", out);
+    }
 }
 
 // P4-26 数学公式渲染（KaTeX CLI → SVG → egui Image——egui_commonmark render_math_fn）
