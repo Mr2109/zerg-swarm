@@ -66,7 +66,7 @@ fn warn_missing_icon(name: &str) {
     let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
     if let Ok(mut s) = seen.lock() {
         if s.insert(name.to_string()) {
-            eprintln!("[icons] 未收录图标名（回退为文本）: {}", name);
+            eprintln!("[icons] unknown icon name (falling back to text): {}", name);
         }
     }
 }
