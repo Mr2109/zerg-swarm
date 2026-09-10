@@ -72,24 +72,28 @@ impl TextBuffer {
         self.rope.char_to_line(pos.min(self.len()))
     }
 
-    /// 字符位置→字节位置（ropey 0.6 的 char_to_byte 是私有——自行计算）
+    /// 字符位置→字节位置（M07 2026-09-10 审计修复）
+    /// 原实现逐行 to_string() 累加字节 → O(行数)，大文档每次按键都全量扫；
+    /// ropey 的 `slice(0..pos).len_bytes()` 沿树求字节长度 → O(log n)。
     pub fn char_to_byte(&self, char_pos: usize) -> usize {
         let pos = char_pos.min(self.len());
-        let line = self.rope.char_to_line(pos);
-        let line_start_char = self.rope.line_to_char(line);
-        let line_text = self.rope.line(line).to_string();
-        let offset_chars = pos.saturating_sub(line_start_char);
-        let byte_in_line: usize = line_text
-            .chars()
-            .take(offset_chars.min(line_text.chars().count()))
-            .map(|c| c.len_utf8())
-            .sum();
-        // 行起始字节 = 前面所有行的字节和
-        let mut prefix_bytes = 0;
-        for l in 0..line {
-            prefix_bytes += self.rope.line(l).to_string().len();
+        self.rope.slice(0..pos).len_bytes()
+    }
+
+    /// 取字符区间文本（M07：替代 `to_string()[a..b]` 的全量克隆——只取所需片段）
+    pub fn slice_chars(&self, start: usize, end: usize) -> String {
+        let len = self.rope.len_chars();
+        let s = start.min(len);
+        let e = end.min(len).max(s);
+        self.rope.slice(s..e).to_string()
+    }
+
+    /// 取单个字符（越界返回 None）
+    pub fn char_at(&self, pos: usize) -> Option<char> {
+        if pos >= self.rope.len_chars() {
+            return None;
         }
-        prefix_bytes + byte_in_line
+        Some(self.rope.char(pos))
     }
 
     /// 取某行文本
