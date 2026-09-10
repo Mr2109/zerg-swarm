@@ -361,6 +361,11 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	if progressiveEnabled {
 		progRT = h.store.GetToolRuntime(id)
 	}
+	// 批次A(2026-09-10): 渐进钩子接线（同 send 路径）
+	var progHooks loopcore.Hooks
+	if progRT != nil {
+		progHooks = loopcore.Hooks{IsHidden: progRT.IsHidden, RecordOutcome: progRT.RecordOutcome, SearchStreak: progRT.SearchStreak}
+	}
 	sysPrompt := chatSystemPrompt + fmt.Sprintf("\n\n# 你的身份\n- 你当前运行在模型 %s（虫族本地模型集群）——Mr2109的对话助手——不要调查或质疑自己的身份。", se.Model) + chat.BuildHermesToolPrompt(progRT)
 	gate := &chat.ChatGate{}
 
@@ -380,6 +385,11 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	ec := agent.NewExecContext(chat.ChatToolsWorkDir)
 	ec.AgentName = "chat"
 	execFn := func(ctx context.Context, name string, targs map[string]any) (string, string, error) {
+		// 批次A(2026-09-10): tool_search 执行器接线（此前无执行器——模型调用必空转）
+		if name == "tool_search" {
+			q, _ := targs["query"].(string)
+			return chat.ToolSearchExecute(q, progRT, 8), "", nil
+		}
 		if name == "kb_search" {
 			query, _ := targs["query"].(string)
 			limit := 10
@@ -399,7 +409,7 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	kres := loopcore.Run(r.Context(), loopcore.Config{
 		MaxRounds: chat.MaxToolRounds, WallClock: 600 * time.Second,
 		RoundTimeout: 120 * time.Second, KeepRecent: 3,
-	}, se.Model, sysPrompt, msgs, loopcore.Deps{Infer: inferAdapter, Exec: execFn})
+	}, se.Model, sysPrompt, msgs, loopcore.Deps{Infer: inferAdapter, Exec: execFn, Hooks: progHooks})
 	if kres.Err != "" {
 		_ = h.store.DeleteMessage(id, userMsg.ID)
 		writeChatError(w, http.StatusBadGateway, fmt.Errorf("%s", kres.Err))
@@ -605,6 +615,11 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	if progressiveEnabled {
 		progRT = h.store.GetToolRuntime(id)
 	}
+	// 批次A(2026-09-10): 渐进钩子接线（同 send-tool 路径）
+	var progHooks loopcore.Hooks
+	if progRT != nil {
+		progHooks = loopcore.Hooks{IsHidden: progRT.IsHidden, RecordOutcome: progRT.RecordOutcome, SearchStreak: progRT.SearchStreak}
+	}
 	sysPrompt := chatSystemPrompt + fmt.Sprintf("\n\n# 你的身份\n- 你当前运行在模型 %s（虫族本地模型集群）——Mr2109的对话助手——不要调查或质疑自己的身份。", se.Model) + chat.BuildHermesToolPrompt(progRT)
 	gate := &chat.ChatGate{}
 	// P4-46 Hermes 模式: 不带 tools 字段（内核 Deps.Tools=nil——模板 XML 分支不渲染——模型输出 <tool_call>JSON</tool_call>）
@@ -674,6 +689,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		KeepRecent:   3,
 	}, se.Model, sysPrompt, msgs, loopcore.Deps{
 		Infer: inferAdapter,
+		Hooks: progHooks,
 		Exec: func(ctx context.Context, name string, targs map[string]any) (string, string, error) {
 			// P4-36 异步+心跳（工具执行期间 SSE 不断流——UI 实时"执行中 N 秒"）
 			type execRes struct {
@@ -687,7 +703,11 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 				var content string
 				var dur string
 				var execErr error
-				if name == "kb_search" {
+				// 批次A(2026-09-10): tool_search 执行器接线（流式主路径）
+				if name == "tool_search" {
+					q, _ := targs["query"].(string)
+					content = chat.ToolSearchExecute(q, progRT, 8)
+				} else if name == "kb_search" {
 					query, _ := targs["query"].(string)
 					limit := 10
 					if l, ok := targs["limit"].(float64); ok {
