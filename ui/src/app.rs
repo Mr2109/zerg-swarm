@@ -166,7 +166,7 @@ impl ZergApp {
             git_status: Arc::new(Mutex::new(None)),
             logs: Arc::new(Mutex::new(None)),
             docs: Arc::new(Mutex::new(None)),
-            doc_dir: "00-总览".to_string(), // v2.5.6 默认选中总览目录
+            doc_dir: String::new(), // 空 = 首次拉到目录树后自动选第一个（环境无关化——不再硬编码某台机器的中文目录名）
             doc_file: String::new(),
             doc_content: Arc::new(Mutex::new(None)),
             doc_content_err: Arc::new(Mutex::new(None)),
@@ -278,7 +278,7 @@ impl ZergApp {
                         match kind.as_str() {
                             "del_dir" => {
                                 if self.doc_dir == path {
-                                    self.doc_dir = "00-总览".to_string();
+                                    self.doc_dir = String::new(); // 选中目录被删 → 回到"未选"，下一帧自动选第一个
                                 }
                             }
                             "del_file" => {
@@ -451,7 +451,17 @@ impl ZergApp {
             self.ai_output = Some(("error".to_string(), t!("ai.empty_doc").to_string()));
             return;
         }
-        let model = "example-35b-v2".to_string(); // 中文好/工具正常（Mr2109）
+        // AI 模型解析（环境无关化 2026-09-11）：ZERG_AI_MODEL → ~/.zerg-ui-prefs.json 的 ai_model
+        // 原先硬编码私有模型名（外部用户没有该模型 → 四个 AI 动作必然失败）；缺配置时明确告知怎么配。
+        let model = std::env::var("ZERG_AI_MODEL")
+            .ok()
+            .filter(|m| !m.trim().is_empty())
+            .or_else(Self::load_ai_model_pref)
+            .unwrap_or_default();
+        if model.is_empty() {
+            self.ai_output = Some(("error".to_string(), t!("ai.no_model").to_string()));
+            return;
+        }
         // 安全截断（按 char 边界——中文 3 字节/字不能切中间）
         let mut clip_len = text.len().min(6000);
         while !text.is_char_boundary(clip_len) {
@@ -1393,6 +1403,12 @@ impl ZergApp {
                 ui.add_space(4.0);
                 let docs_snap = lock_recover(&self.docs).clone(); // 先释放借用——内部闭包要 &mut self（F5 AI 按钮）
                 if let Some((files, dirs)) = docs_snap {
+                    // 环境无关化（2026-09-11）：未选目录时自动选第一个可用目录（原先硬编码 "00-总览"，外部用户没有该目录）
+                    if self.doc_dir.is_empty() {
+                        if let Some(first) = dirs.first() {
+                            self.doc_dir = first.clone();
+                        }
+                    }
                     // v2.5.6 三栏（Mr2109 2026-08-29）: 第一栏=目录树（dirs）| 第二栏=选中目录文件 | 第三栏=正文
                     // 目录树——层级缩进（如 "项目文档" 顶层 / "项目文档/v2.5.6" 子级缩进）
                     let total_w = ui.available_width();
@@ -2508,6 +2524,13 @@ impl ZergApp {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         std::path::PathBuf::from(home).join(".zerg-ui-prefs.json")
     }
+    /// 读取 AI 模型偏好（与 preview_renderer 同一文件 ~/.zerg-ui-prefs.json 的 ai_model 字段）
+    fn load_ai_model_pref() -> Option<String> {
+        let s = std::fs::read_to_string(Self::preview_pref_path()).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&s).ok()?;
+        v.get("ai_model").and_then(|x| x.as_str()).map(|x| x.to_string()).filter(|m| !m.trim().is_empty())
+    }
+
     fn load_preview_pref() -> Option<bool> {
         let s = std::fs::read_to_string(Self::preview_pref_path()).ok()?;
         Self::parse_preview_pref(&s)
