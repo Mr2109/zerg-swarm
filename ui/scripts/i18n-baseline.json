@@ -3,6 +3,26 @@
   "allowed": [
     {
       "file": "ui/src/app.rs",
+      "contains": "\"summarize\" => format!(\"请用中文总结",
+      "why": "AI 文档动作提示词（决策④：提示不整体翻译）"
+    },
+    {
+      "file": "ui/src/app.rs",
+      "contains": "\"continue\" => format!(\"请用中文续写",
+      "why": "同上（AI 文档动作提示词）"
+    },
+    {
+      "file": "ui/src/app.rs",
+      "contains": "\"translate\" => format!(\"请将以下 Markdown 文档翻译成中文",
+      "why": "同上（AI 文档动作提示词）"
+    },
+    {
+      "file": "ui/src/app.rs",
+      "contains": "\"polish\" => format!(\"请润色以下 Markdown 文档",
+      "why": "同上（AI 文档动作提示词）"
+    },
+    {
+      "file": "ui/src/app.rs",
       "contains": "l.contains(\"错误\")",
       "why": "日志级别判定：中英双认（语言无关逻辑，非文案）"
     },

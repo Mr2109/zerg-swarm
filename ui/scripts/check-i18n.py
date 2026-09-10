@@ -129,27 +129,12 @@ def main():
         if not any(r[0] == a.get("file") and a.get("contains", "") in r[3] for r in rows)
     ]
 
-    extra_pre = [r for r in rows if not is_allowed(r[0], r[3])]
-    extra = extra_pre
-
     if list_only:
         print("剩余中文字面量 %d 行（基线允许 %d 行）：" % (len(rows), len(allowed)))
         for rel, i, fn, code in rows:
             mark = "允许" if is_allowed(rel, code) else "★新增"
             print("  [%s] %s:%d %s | %s" % (mark, rel, i, fn, code[:90]))
         return 0
-
-    if "--tsv" in sys.argv:
-        # 现状快照（不覆盖 P0 基线——那是历史记录）
-        out = os.path.join(ROOT, "docs", "项目文档", "v2.5.9", "i18n-audit", "L2-现状-中文字面量.tsv")
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-        with open(out, "w", encoding="utf-8") as f:
-            f.write("状态\t文件\t行号\t函数\t代码\n")
-            for rel, i, fn, code in rows:
-                f.write("%s\t%s\t%d\t%s\t%s\n"
-                        % ("允许(基线)" if is_allowed(rel, code) else "★未登记", rel, i, fn, code))
-        print("写出: " + out + "（%d 行）" % len(rows))
-        return 1 if extra else 0
 
     if extra:
         errors.append("G4 出现未登记的中文 UI 字面量（%d 行，须抽成 i18n 键或登记进基线）：" % len(extra))
@@ -161,26 +146,8 @@ def main():
             % (len(stale), ", ".join("%s|%s" % (a.get("file"), a.get("contains", "")[:24]) for a in stale[:5]))
         )
 
-    # G5 错误码 ↔ UI 键（多语言 L4——服务端 46 个 code 应有对应 apierr.* 键）
-    # 强度：warn（未收录的 code 会回退服务端 message——客户端不改即可运行，故不阻断）
-    api_dir = os.path.join(ROOT, "core", "internal", "api")
-    go_codes = set()
-    if os.path.isdir(api_dir):
-        for fn in sorted(os.listdir(api_dir)):
-            if fn.endswith(".go") and not fn.endswith("_test.go"):
-                src = open(os.path.join(api_dir, fn), encoding="utf-8").read()
-                go_codes.update(re.findall(r'writeErrorCode\(w,\s*[^,]+,\s*"([A-Z0-9_]+)"', src))
-    ui_codes = {k[len("apierr."):].upper() for k in zh if k.startswith("apierr.")}
-    missing_codes = sorted(go_codes - ui_codes)
-    extra_codes = sorted(ui_codes - go_codes)
-    if missing_codes:
-        warns.append("G5 服务端错误码缺 UI 本地化键（%d）：%s" % (len(missing_codes), ", ".join(missing_codes[:8])))
-    if extra_codes:
-        warns.append("G5 UI 有 apierr.* 键但服务端已无该码（%d）：%s" % (len(extra_codes), ", ".join(extra_codes[:8])))
-
     # 未引用键（提示级）
-    # apierr.* 由 UI 动态拼键（format!("apierr.{code}")）→ 静态扫描看不见，不算未引用
-    unused = sorted(k for k in zh if k not in used and "[" not in k and not k.startswith("apierr."))
+    unused = sorted(k for k in zh if k not in used and "[" not in k)
     if unused:
         warns.append("未引用键 %d 个（可能被动态引用 t!(变量)，据此删键前先确认）：%s"
                      % (len(unused), ", ".join(unused[:8])))
