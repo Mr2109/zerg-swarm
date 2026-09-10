@@ -1,5 +1,9 @@
 # 架构（ARCHITECTURE）
 
+[English](ARCHITECTURE.en.md) | **中文**
+
+> *中文原版（唯一真相源）。英文版为派生翻译；两版如有不一致，以**本文**为准。*
+
 四个进程 + 一层"登记表"驱动的调度。所有组件只通过 HTTP 通信，令牌统一，无中心化数据库。
 
 ---
@@ -111,7 +115,7 @@ POST /api/tasks
 | 运行日志 | `/tmp/zerg-*.log` | `ZERG_LOG_DIR` |
 | UI 偏好 | `~/.zerg-ui-prefs.json` | — |
 
-> HTTP 服务的端口、路径、外部数据位置（知识库、searxng、媒体目录）**全部**可通过环境变量覆盖，见 [CONFIGURATION.md](CONFIGURATION.md)。
+> HTTP 服务的端口、路径、外部数据位置（知识库、searxng、媒体目录）**全部**可通过环境变量覆盖，见 [CONFIGURATION.zh-CN.md](CONFIGURATION.zh-CN.md)。
 
 ---
 

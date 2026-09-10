@@ -128,7 +128,10 @@ if [ -d "$REPO_ROOT/publish/docs" ]; then
   for f in "$REPO_ROOT"/publish/docs/*.md; do
     [ -e "$f" ] || continue
     b="$(basename "$f")"
-    if [ "$b" = "README.md" ]; then cp -p "$f" "$OUT/README.md"; else cp -p "$f" "$OUT/docs/$b"; fi
+    case "$b" in
+      README.md|README.zh-CN.md) cp -p "$f" "$OUT/$b" ;;   # README 家族放仓库根（语言切换互链）
+      *)                         cp -p "$f" "$OUT/docs/$b" ;;
+    esac
   done
   for f in "$REPO_ROOT"/publish/docs/design/*.md; do
     [ -e "$f" ] || continue

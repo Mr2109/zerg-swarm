@@ -1,19 +1,24 @@
-# 工具目录（TOOLS）
+# Tool Catalog (TOOLS)
 
-> 本文件由工具注册表**自动生成**（`core/internal/chat/chat_tool_registry.go`）——
-> 改工具清单请改注册表，不要手改本文件。
-> 统计：**135** 个注册工具，其中 **14** 个为 L0 常驻（直接写进模型提示），其余按需发现。
+> **English** | [中文](TOOLS.zh-CN.md)
+>
+> *Source of truth: the Chinese original ([TOOLS.zh-CN.md](TOOLS.zh-CN.md)). If the two disagree, the Chinese text prevails.*
+> *Note: the tool **descriptions** below are the exact text sent to the model and are currently Chinese — descriptions are deliberately NOT translated in this release (see the tool-description decision in the project design doc). Tool names, parameters and categories are stable identifiers.*
 
-## 两层工具
+> This file is **auto-generated** from the tool registry (`core/internal/chat/chat_tool_registry.go`) —
+> To change the tool list, change the registry — do not hand-edit this file.
+> Stats: **135** registered tools, of which **14** are L0 always-on (written straight into the model prompt); the rest are discovered on demand.
 
-| 层 | 数量 | 说明 |
+## Two tiers of tools
+
+| Tier | Count | Description |
 |---|---|---|
-| **L0 常驻** | 14 | 高频基础能力，定义直接注入模型提示，随时可调 |
-| **延迟加载** | 121 | 通过 `tool_search`（按关键词/类别）发现后再调用，避免提示膨胀 |
+| **L0 always-on** | 14 | High-frequency primitives; their definitions are injected straight into the model prompt and are always callable |
+| **Deferred** | 121 | Discovered via `tool_search` (by keyword / category) and only then called, to keep the prompt from bloating |
 
-调用约定：模型先看提示里有没有；没有就用 `tool_search` 搜（支持中文关键词），拿到定义再调。
+Calling convention: the model first checks whether the prompt already carries the tool; if not, it searches with `tool_search` (Chinese keywords supported), gets the definition, then calls it.
 
-## 按类别
+## By category
 
 ### 影音与剪辑（25）
 
@@ -201,18 +206,18 @@
 
 - `model_status`
 
-## 工具自身文档（履历）
+## Per-tool documentation (résumé)
 
-每个工具的**版本、能力、参数、注意事项**写在 `tools/<name>.md`（履历），
-与注册表、工具简介三者应保持一致——这是本项目的硬约定（见 `docs/design/工具升级规范.md`）。
+Each tool's **version, capabilities, parameters and caveats** are written in `tools/<name>.md` (its résumé),
+and should stay consistent with the registry and the tool blurb — a hard convention in this project (see `docs/design/工具升级规范.md`).
 
-## 安全相关
+## Security
 
-- shell（`bash`）的删除类命令受**范围闸门**约束：仅允许任务工作区与 `ZERG_EXTRA_ALLOW_DIR` 白名单
-- 文件类工具（`read`/`write`/`edit`/`glob`）同样受路径域限制，越界返回**可执行的替代路径**而非空报错
-- 参数格式错误会触发**格式反馈协议**：返回「系统断言 + 正确示例」，避免模型重发同样的坏请求
+- Deletion-style commands in the shell (`bash`) are bound by the **scope gate**: only the task workspace and the `ZERG_EXTRA_ALLOW_DIR` allowlist are permitted
+- File tools (`read`/`write`/`edit`/`glob`) are path-domain-limited too; an out-of-bounds request returns an **actionable alternative path** rather than an empty error
+- Malformed arguments trigger the **Format Feedback Protocol**: it returns a "system assertion + a correct example" so the model does not resend the same bad request
 
-## 重新生成
+## Regenerate
 
 ```bash
 python3 tools/gen_tools_md.py > docs/TOOLS.md
