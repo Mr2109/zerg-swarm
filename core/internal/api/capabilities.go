@@ -14,7 +14,7 @@ import (
 func (h *Handlers) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"name":        "虫族 Zerg",
-		"version":     "v2.5.5",
+		"version":     "v2.5.8",
 		"description": "去中心化 AI 任务网络——主控调度 + CA 执行 + 复查验证",
 		"auth":        "X-Auth-Token 请求头（网关/主控配置的 token）",
 		"base_url":    "http://<主控地址>:8580",

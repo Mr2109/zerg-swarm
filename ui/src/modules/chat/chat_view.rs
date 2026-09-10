@@ -196,6 +196,8 @@ pub struct ChatView {
     drafts_saved_at: f64,          // C4(2026-09-10): 草稿落盘节流
     queue: Vec<String>,            // C1(2026-09-10): 生成中排队消息（流结束自动发）
     steer_pending: Option<(String, api::SharedResult<Value>)>, // C2: 插话回执（文本+请求）
+    inflight_saved_at: f64,                                     // D3: in-flight journal 节流
+    resume_hint: Option<(String, String, String)>,              // D3: (sid, user, partial) 上次未完成轮次
     // P1 斜杠命令菜单
     slash_open: bool,
     // P2 多图（Vec<(dataURL, name)>——Hermes 多附件借鉴）
@@ -279,6 +281,8 @@ impl ChatView {
             drafts_saved_at: 0.0,
             queue: Vec::new(),
             steer_pending: None,
+            inflight_saved_at: 0.0,
+            resume_hint: Self::load_inflight(),
             slash_open: false,
             pending_images: Vec::new(),
             reactions: std::collections::HashMap::new(),
@@ -444,6 +448,32 @@ impl ChatView {
         if let Some(sid) = self.active_session.clone() {
             self.session_pending = Some(api::fetch_chat_session_async(sid));
         }
+    }
+
+    /// D3(2026-09-10): in-flight turn journal（崩溃/断线恢复——~/.zerg-ui-inflight.json）
+    fn inflight_path() -> std::path::PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        std::path::PathBuf::from(home).join(".zerg-ui-inflight.json")
+    }
+    fn save_inflight(sid: &str, user: &str, partial: &str) {
+        let v = serde_json::json!({
+            "session_id": sid,
+            "user": user,
+            "assistant": truncate(partial, 4000),
+            "ts": now_f64(),
+        });
+        let _ = std::fs::write(Self::inflight_path(), v.to_string());
+    }
+    fn clear_inflight() {
+        let _ = std::fs::remove_file(Self::inflight_path());
+    }
+    fn load_inflight() -> Option<(String, String, String)> {
+        let s = std::fs::read_to_string(Self::inflight_path()).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&s).ok()?;
+        let sid = v.get("session_id")?.as_str()?.to_string();
+        let user = v.get("user")?.as_str()?.to_string();
+        let asst = v.get("assistant").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        Some((sid, user, asst))
     }
 
     /// C3(2026-09-10): 重跑既有 user 消息（重生成——服务端已软删其后消息）
@@ -676,6 +706,23 @@ impl ChatView {
                 self.edit_pending = Some(p);
             }
         }
+        // D3: 流式中节流写 journal（1s——崩溃可恢复）
+        if self.streaming {
+            if now_f64() - self.inflight_saved_at > 1.0 {
+                self.inflight_saved_at = now_f64();
+                let sid = self.active_session.clone().unwrap_or_default();
+                let user = self
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+                    .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                    .unwrap_or("")
+                    .to_string();
+                let partial = self.stream_content.clone();
+                Self::save_inflight(&sid, &user, &partial);
+            }
+        }
         // C3 流式发送轮询（生成中——每帧读 stream state）
         if self.streaming {
             let s = self.stream.clone();
@@ -698,6 +745,8 @@ impl ChatView {
                     if let Some(sid) = self.active_session.clone() {
                         self.session_pending = Some(api::fetch_chat_session_async(sid));
                     }
+                    // D3: 轮次完成 → 清除 journal
+                    Self::clear_inflight();
                     // C2: 未命中工具边界的插话 → 交还并入队（字不丢）
                     if !undrained.is_empty() {
                         for t in undrained.clone() {
@@ -1301,6 +1350,29 @@ impl ChatView {
                 }
             });
         }
+        // D3: 上次未完成轮次恢复提示
+        if let Some((sid, user, partial)) = self.resume_hint.clone() {
+            ui.horizontal_wrapped(|ui| {
+                ui.colored_label(
+                    egui::Color32::from_rgb(250, 180, 60),
+                    egui::RichText::new(format!("⚠ 上次未完成: {}", truncate(&user, 24))).size(11.0),
+                );
+                if !partial.is_empty() {
+                    ui.weak(egui::RichText::new(format!("(已生成 {} 字)", partial.chars().count())).size(10.0));
+                }
+                if ui.small_button("继续提问").on_hover_text(&user).clicked() {
+                    self.active_session = Some(sid.clone());
+                    self.session_pending = Some(api::fetch_chat_session_async(sid.clone()));
+                    self.input = user.clone();
+                    Self::clear_inflight();
+                    self.resume_hint = None;
+                }
+                if ui.small_button("丢弃").clicked() {
+                    Self::clear_inflight();
+                    self.resume_hint = None;
+                }
+            });
+        }
         // C1(2026-09-10): 排队消息 chips（生成中入队——点击移除）
         if !self.queue.is_empty() {
             ui.horizontal_wrapped(|ui| {
@@ -1588,7 +1660,7 @@ impl ChatView {
         // P2 底部状态栏（Hermes footer 借鉴——版本/会话数/消息数/模型）
         ui.separator();
         ui.horizontal(|ui| {
-            ui.weak(egui::RichText::new("虫族 Zerg v2.5.7").size(10.0));
+            ui.weak(egui::RichText::new("虫族 Zerg v2.5.8").size(10.0));
             ui.weak(egui::RichText::new(format!("· {} 会话", self.sessions.len())).size(10.0));
             ui.weak(egui::RichText::new(format!("· {} 消息", self.messages.len())).size(10.0));
             if self.streaming {
