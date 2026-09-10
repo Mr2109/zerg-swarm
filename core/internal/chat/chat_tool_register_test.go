@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	"zerg/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 )
 
 // TestRegisterChatExtraTools — 注册后 agent.AllTools 包含对话工具 + ExecuteTool 可路由执行

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // 编译期验证：OrnithAdapter 实现 Plugin 接口

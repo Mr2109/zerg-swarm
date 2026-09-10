@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // StorePlugin 实现 Plugin 接口——KV 存储。

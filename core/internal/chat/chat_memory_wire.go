@@ -18,7 +18,7 @@ import (
 	"os"
 	"sync"
 
-	"zerg/core/internal/memory"
+	"github.com/Mr2109/zerg-swarm/core/internal/memory"
 )
 
 var (

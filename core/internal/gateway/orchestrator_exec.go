@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	"zerg/core/internal/gateway/orchestrator"
+	"github.com/Mr2109/zerg-swarm/core/internal/gateway/orchestrator"
 )
 
 // gatewayExecutor 编排器执行器——按模型直连推理端点（不经网关，避免流式 EOF）。

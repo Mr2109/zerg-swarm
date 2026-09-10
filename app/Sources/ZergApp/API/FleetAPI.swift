@@ -3,8 +3,12 @@ import Combine
 import AppKit
 
 // MARK: - API 配置
-private let baseURL = "http://127.0.0.1:8580"
-private let authToken = "x3gw-shared-2026"
+// 2026-09-11 开源清理：端点与 token 不再写死
+//   端点：环境变量 ZERG_API_BASE（默认本机 8580）
+//   token：环境变量 ZERG_TOKEN → UserDefaults "zergToken" → 空
+private let baseURL = ProcessInfo.processInfo.environment["ZERG_API_BASE"] ?? "http://127.0.0.1:8580"
+private let authToken = ProcessInfo.processInfo.environment["ZERG_TOKEN"]
+    ?? UserDefaults.standard.string(forKey: "zergToken") ?? ""
 
 // MARK: - 数据模型
 struct FleetStatus: Codable {

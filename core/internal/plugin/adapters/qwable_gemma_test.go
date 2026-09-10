@@ -3,7 +3,7 @@ package adapters
 import (
 	"testing"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // TestQwable_Interface — 接口断言

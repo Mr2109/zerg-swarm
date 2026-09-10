@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"zerg/core/internal/agentstate"
+	"github.com/Mr2109/zerg-swarm/core/internal/agentstate"
 )
 
 // Strategy 编排策略。

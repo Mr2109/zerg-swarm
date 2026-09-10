@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"zerg/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 // EngineStateView 引擎状态快照（JSON 契约——UI 与外部 agent 共用）

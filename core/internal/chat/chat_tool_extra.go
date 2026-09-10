@@ -23,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"zerg/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 )
 
 // ChatToolResult — 执行结果

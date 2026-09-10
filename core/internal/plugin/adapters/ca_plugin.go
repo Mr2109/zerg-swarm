@@ -5,7 +5,7 @@ package adapters
 import (
 	"fmt"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // AgentRunner 抽象 agent 执行（可 mock 测试）。

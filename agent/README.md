@@ -40,25 +40,6 @@ GOOS=linux GOARCH=amd64 go build -o zerg-agent-linux-amd64 ./cmd/zerg-agent
 | `--machine` | 主机名 | 机器标识（主控路由按此寻址） |
 | `--registry` | — | 模型登记表（YAML：模型名 → 权重路径、上下文、显存需求等） |
 
-## 模型登记表（agent_models.yaml）
-
-最小条目：
-
-```yaml
-example-35b-v2:
-  backend: llama-server
-  file: /data/models/ornith/Ornith-1.5-35B-Q4_K_M.gguf
-  mem_gb: 21
-  modality: multimodal
-  mmproj: /data/models/ornith/mmproj-Ornith-1.5-35B-BF16.gguf   # 可选：视觉投影
-  chat_template: ~/.zerg/ornith_chat_template.jinja             # 可选：覆盖内嵌模板
-```
-
-**`chat_template`（可选）**：某些模型（如 ornith 系）的 GGUF 内嵌模板过旧，需外部模板覆盖。
-路径支持 `~` 前缀；相对路径按 agent 工作目录解析。
-解析优先级：**`chat_template` 字段 → 环境变量 `ZERG_ORNITH_TEMPLATE` → `~/.zerg/ornith_chat_template.jinja` → 仓库内相对路径**；
-链路上显式配置但文件不存在时记 WARN 并继续回退（不会把坏路径传给后端）。
-
 ## 环境变量
 
 | 变量 | 用途 |

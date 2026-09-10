@@ -8,7 +8,8 @@
 //   - 认证：X-Auth-Token
 //
 // 用法：
-//   ./zerg-agent --host 0.0.0.0 --machine x3 --controller http://<controller-host>:8580 --token x3gw-shared-2026 --registry agent_models.yaml
+//   ./zerg-agent --host 0.0.0.0 --machine <name> --controller http://<controller-host>:8580 --token <your-token> --registry agent_models.yaml
+//   （token 也可用环境变量 ZERG_TOKEN 提供）
 package main
 
 import (
@@ -19,19 +20,19 @@ import (
 	"os/signal"
 	"syscall"
 
-	"zerg/agent/internal/backend"
-	"zerg/agent/internal/heartbeat"
-	"zerg/agent/internal/logx"
-	"zerg/agent/internal/monitor"
-	"zerg/agent/internal/registry"
-	"zerg/agent/internal/server"
+	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
+	"github.com/Mr2109/zerg-swarm/agent/internal/heartbeat"
+	"github.com/Mr2109/zerg-swarm/agent/internal/logx"
+	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
+	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
+	"github.com/Mr2109/zerg-swarm/agent/internal/server"
 )
 
 var (
 	// 命令行参数
 	host         = flag.String("host", "127.0.0.1", "HTTP 监听地址（默认 127.0.0.1，部署时用 0.0.0.0）")
 	port         = flag.Int("port", 8100, "HTTP 监听端口（默认 8100）")
-	token        = flag.String("token", "x3gw-shared-2026", "共享认证令牌")
+	token        = flag.String("token", os.Getenv("ZERG_TOKEN"), "共享认证令牌（默认取环境变量 ZERG_TOKEN）")
 	controller   = flag.String("controller", "http://127.0.0.1:8580", "主控地址（心跳上报目标）")
 	machineParam = flag.String("machine", "", "机器标识（默认取主机名）")
 	registryPath = flag.String("registry", "agent_models.yaml", "模型注册表 YAML 路径")
