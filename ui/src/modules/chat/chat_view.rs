@@ -997,14 +997,6 @@ impl ChatView {
                     egui::vec2(ui.available_width(), row_h),
                     egui::Sense::click(),
                 );
-                // 调试：验证行左对齐（P4-8——只打印前3行）
-                static mut DEBUG_CNT: u32 = 0;
-                let mut dbg_cnt = 0;
-                unsafe { dbg_cnt = DEBUG_CNT; }
-                if dbg_cnt < 3 {
-                    println!("[zerg-ui] 行 rect: left={:.1} top={:.1} w={:.1}", row_rect.left(), row_rect.top(), row_rect.width());
-                    unsafe { DEBUG_CNT += 1; }
-                }
                 ui.add_space(3.0); // 队列间间距（Mr2109 2026-08-31——每个队列有点间距）
                 let left = row_rect.left() + 4.0;
                 // 选中/悬停背景
