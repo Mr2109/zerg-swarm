@@ -3,9 +3,9 @@
 //
 // 用法:
 //
-//	cd <repo>/core && go run ./cmd/zerg-core
+//	cd core && go run ./cmd/zerg-core
 //
-// 监听端口 8680（不与旧主控 8580 冲突）。
+// 监听端口 8580（API）；网关 8082。
 package main
 
 import (
