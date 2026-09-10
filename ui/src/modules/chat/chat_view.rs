@@ -1549,7 +1549,7 @@ impl ChatView {
         if self.active_session.is_none() {
             ui.add_space(40.0);
             ui.centered_and_justified(|ui| {
-                ui.weak("← 选择或新建会话开始对话");
+                ui.weak(t!("chat.start_hint"));
             });
             return;
         }
@@ -1562,9 +1562,9 @@ impl ChatView {
         // M13(2026-09-10 审计): 会话详情加载失败 → 明示 + 重试入口（原来失败后永久空白无提示）
         if self.session_load_failed && self.messages.is_empty() {
             ui.add_space(20.0);
-            ui.weak("会话内容加载失败");
+            ui.weak(t!("chat.load_messages_failed"));
             if ui
-                .button(format!("{} 重新加载", icon_text("arrows-clockwise")))
+                .button(t!("chat.reload_icon", icon = icon_text("arrows-clockwise")))
                 .clicked()
             {
                 if let Some(sid) = self.active_session.clone() {
@@ -1676,7 +1676,7 @@ impl ChatView {
                             ui.label(icon_text("compress"));
                             ui.spinner();
                             ui.weak(
-                                egui::RichText::new("正在压缩历史…（上下文窗口管理）")
+                                egui::RichText::new(t!("chat.compacting"))
                                     .size(12.0),
                             );
                         });
@@ -1689,9 +1689,9 @@ impl ChatView {
                             ui.spinner();
                             // P4-36 心跳计时（tool_ping 事件——"执行中…（N 秒）"——每 2s 更新）
                             ui.weak(
-                                egui::RichText::new(format!(
-                                    "🔧 {} 执行中…（{} 秒）",
-                                    tool, self.stream_tool_elapsed
+                                egui::RichText::new(t!(
+                                    "chat.tool_executing",
+                                    tool = tool, secs = self.stream_tool_elapsed
                                 ))
                                 .size(12.0),
                             );
@@ -1733,10 +1733,10 @@ impl ChatView {
                                             .rev()
                                             .collect();
                                         if ui
-                                            .button(format!(
-                                                "{} 思考中…（{} 字）点击展开",
-                                                icon_text("brain"),
-                                                rn
+                                            .button(t!(
+                                                "chat.thinking_chars",
+                                                icon = icon_text("brain"),
+                                                n = rn
                                             ))
                                             .clicked()
                                         {
@@ -1750,12 +1750,12 @@ impl ChatView {
                                     let wait = (now_f64() - self.stream_started).max(0.0);
                                     ui.spinner();
                                     ui.weak(
-                                        egui::RichText::new(format!("思考中…（{:.0} 秒）", wait))
+                                        egui::RichText::new(t!("chat.thinking_secs", secs = format!("{:.0}", wait)))
                                             .size(12.0),
                                     );
                                 } else if self.stream_content.is_empty() {
                                     ui.spinner();
-                                    ui.weak("工具执行中...");
+                                    ui.weak(t!("chat.tool_running"));
                                 } else {
                                     // D1 流式内容也 Markdown 渲染（P4-29 用拆借的 cache——闭包内无 self 冲突）
                                     let cache = msg_md_cache.entry(STREAM_CONTENT_KEY).or_default();
@@ -1782,7 +1782,7 @@ impl ChatView {
                     let model = self.current_model.clone();
                     let psid = self.active_session.clone();
                     self.delegate_pending = Some(api::chat_delegate_task_async(text, model, psid));
-                    self.send_error = Some(format!("{} 已派单到任务队列", icon_text("rocket-launch")).to_string());
+                    self.send_error = Some(t!("chat.delegated_queue", icon = icon_text("rocket-launch")).to_string());
                 }
                 MsgAction::JumpPointer { session_id, around_id } => {
                     self.pointer_pending = Some(api::fetch_chat_window_async(session_id, around_id));
@@ -1811,19 +1811,19 @@ impl ChatView {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(
                     egui::Color32::from_rgb(250, 180, 60),
-                    egui::RichText::new(format!("⚠ 上次未完成: {}", truncate(&user, 24))).size(11.0),
+                    egui::RichText::new(t!("chat.unfinished_warn", text = truncate(&user, 24))).size(11.0),
                 );
                 if !partial.is_empty() {
-                    ui.weak(egui::RichText::new(format!("(已生成 {} 字)", partial.chars().count())).size(10.0));
+                    ui.weak(egui::RichText::new(t!("chat.generated_chars", n = partial.chars().count())).size(10.0));
                 }
-                if ui.small_button("继续提问").on_hover_text(&user).clicked() {
+                if ui.small_button(t!("chat.continue_ask")).on_hover_text(&user).clicked() {
                     self.active_session = Some(sid.clone());
                     self.session_pending = Some(api::fetch_chat_session_async(sid.clone()));
                     self.input = user.clone();
                     Self::clear_inflight();
                     self.resume_hint = None;
                 }
-                if ui.small_button("丢弃").clicked() {
+                if ui.small_button(t!("chat.discard")).clicked() {
                     Self::clear_inflight();
                     self.resume_hint = None;
                 }
@@ -1832,7 +1832,7 @@ impl ChatView {
         // C1(2026-09-10): 排队消息 chips（生成中入队——点击移除）
         if !self.queue.is_empty() {
             ui.horizontal_wrapped(|ui| {
-                ui.weak(egui::RichText::new(format!("⏳ 排队 {} 条:", self.queue.len())).size(11.0));
+                ui.weak(egui::RichText::new(t!("chat.queue_count", n = self.queue.len())).size(11.0));
                 let mut remove: Option<usize> = None;
                 for (i, q) in self.queue.iter().enumerate() {
                     if ui
@@ -1855,31 +1855,31 @@ impl ChatView {
             // ② 富文本快捷工具栏（挂起清单②——markdown 片段插入编辑缓冲——光标跟踪 API 深——先尾部插最小版）
             let mut md_insert: Option<&str> = None;
             ui.horizontal(|ui| {
-                ui.weak(egui::RichText::new(format!("{} 编辑消息 #{}\t", icon_text("pencil-simple"), mid)).size(11.0));
-                ui.weak(egui::RichText::new("格式:").size(10.0));
-                if ui.small_button("B").on_hover_text("粗体 **文字**").clicked() {
+                ui.weak(egui::RichText::new(t!("chat.edit_message", icon = icon_text("pencil-simple"), id = mid)).size(11.0));
+                ui.weak(egui::RichText::new(t!("chat.format_label")).size(10.0));
+                if ui.small_button("B").on_hover_text(t!("chat.md_bold")).clicked() {
                     md_insert = Some("****");
                 }
-                if ui.small_button("I").on_hover_text("斜体 *文字*").clicked() {
+                if ui.small_button("I").on_hover_text(t!("chat.md_italic")).clicked() {
                     md_insert = Some("**");
                 }
-                if ui.small_button("<>").on_hover_text("行内代码 `文字`").clicked() {
+                if ui.small_button("<>").on_hover_text(t!("chat.md_code")).clicked() {
                     md_insert = Some("``");
                 }
-                if ui.small_button("{}").on_hover_text("代码块 ```语言").clicked() {
+                if ui.small_button("{}").on_hover_text(t!("chat.md_codeblock")).clicked() {
                     md_insert = Some("\n```\n\n```\n");
                 }
-                if ui.small_button("•").on_hover_text("列表项 - 文字").clicked() {
+                if ui.small_button("•").on_hover_text(t!("chat.md_list")).clicked() {
                     md_insert = Some("\n- ");
                 }
-                if ui.small_button("🔗").on_hover_text("链接 [文字](url)").clicked() {
+                if ui.small_button("🔗").on_hover_text(t!("chat.md_link")).clicked() {
                     md_insert = Some("[](url)");
                 }
-                if ui.small_button(">").on_hover_text("引用 > 文字").clicked() {
+                if ui.small_button(">").on_hover_text(t!("chat.md_quote")).clicked() {
                     md_insert = Some("\n> ");
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("✕").on_hover_text("取消").clicked() {
+                    if ui.small_button("✕").on_hover_text(t!("action.cancel")).clicked() {
                         cancel_edit = true;
                     }
                 });
@@ -1890,13 +1890,13 @@ impl ChatView {
             let eresp = ui.add(
                 egui::TextEdit::multiline(&mut self.editing_content)
                     .desired_rows(2)
-                    .hint_text("编辑内容... (Enter 保存)")
+                    .hint_text(t!("chat.edit_hint"))
                     .desired_width(ui.available_width() - 80.0),
             );
             let eenter = eresp.lost_focus()
                 && ui.input(|i| i.key_pressed(egui::Key::Enter))
                 && !ui.input(|i| i.modifiers.shift);
-            if ui.small_button(format!("{} 保存", icon_text("floppy-disk"))).clicked() {
+            if ui.small_button(t!("action.save_icon", icon = icon_text("floppy-disk"))).clicked() {
                 save_edit = true;
             }
             if eenter {
@@ -1959,7 +1959,7 @@ impl ChatView {
                             egui::TextEdit::multiline(&mut self.input)
                                 .desired_rows(rows)
                                 .frame(egui::Frame::NONE)
-                                .hint_text("输入消息… (Enter 发送 / Shift+Enter 换行 / / 命令)")
+                                .hint_text(t!("chat.input_hint"))
                                 .desired_width(in_w)
                                 .return_key(egui::KeyboardShortcut::new(
                                     egui::Modifiers::SHIFT,
@@ -1971,8 +1971,8 @@ impl ChatView {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if streaming {
                                 if ui
-                                    .button(format!("{} 停止", icon_text("stop")))
-                                    .on_hover_text("停止生成")
+                                    .button(t!("chat.stop_icon", icon = icon_text("stop")))
+                                    .on_hover_text(t!("chat.stop_tip"))
                                     .clicked()
                                 {
                                     stop_clicked = true;
@@ -1980,9 +1980,9 @@ impl ChatView {
                             } else {
                                 let sbtn = ui.add_enabled(
                                     can_send,
-                                    egui::Button::new(format!("{} 发送", icon_text("send"))),
+                                    egui::Button::new(t!("chat.send_icon", icon = icon_text("send"))),
                                 );
-                                if sbtn.on_hover_text("Enter 发送").clicked() {
+                                if sbtn.on_hover_text(t!("chat.send_tip")).clicked() {
                                     send_clicked = true;
                                 }
                             }
@@ -2002,7 +2002,7 @@ impl ChatView {
                                     }
                                 })
                                 .response
-                                .on_hover_text(format!("当前模型: {}", cur));
+                                .on_hover_text(t!("chat.current_model", model = cur));
                         });
                     });
                 });
@@ -2060,11 +2060,11 @@ impl ChatView {
                     .corner_radius(6.0)
                     .inner_margin(egui::Margin::same(6))
                     .show(ui, |ui| {
-                        ui.weak(egui::RichText::new("命令:").size(11.0));
+                        ui.weak(egui::RichText::new(t!("chat.commands_label")).size(11.0));
                         let cmds = [
-                            ("/new", "新建会话"),
-                            ("/clear", "清空输入"),
-                            ("/delegate", "派单给任务队列（后接内容）"),
+                            ("/new", t!("chat.cmd_new").to_string()),
+                            ("/clear", t!("chat.cmd_clear").to_string()),
+                            ("/delegate", t!("chat.cmd_delegate").to_string()),
                         ];
                         for (k, desc) in cmds {
                             if ui.button(format!("{}  {}", k, desc)).clicked() {
@@ -2087,7 +2087,7 @@ impl ChatView {
                                 self.delegate_pending =
                                     Some(api::chat_delegate_task_async(rest, model, psid));
                                 self.send_error = Some(
-                                    format!("{} 已派单到任务队列", icon_text("rocket-launch")).to_string(),
+                                    t!("chat.delegated_queue", icon = icon_text("rocket-launch")).to_string(),
                                 );
                             }
                             self.input.clear();
@@ -2112,16 +2112,16 @@ impl ChatView {
         // P2 底部状态栏（Hermes footer 借鉴——版本/会话数/消息数/模型）
         ui.separator();
         ui.horizontal(|ui| {
-            ui.weak(egui::RichText::new(format!("虫族 Zerg v{}", env!("CARGO_PKG_VERSION"))).size(10.0));
-            ui.weak(egui::RichText::new(format!("· {} 会话", self.sessions.len())).size(10.0));
-            ui.weak(egui::RichText::new(format!("· {} 消息", self.messages.len())).size(10.0));
+            ui.weak(egui::RichText::new(t!("app.version_line", version = env!("CARGO_PKG_VERSION"))).size(10.0));
+            ui.weak(egui::RichText::new(t!("chat.footer_sessions", n = self.sessions.len())).size(10.0));
+            ui.weak(egui::RichText::new(t!("chat.footer_messages", n = self.messages.len())).size(10.0));
             if self.streaming {
                 ui.colored_label(
                     egui::Color32::from_rgb(250, 180, 60),
-                    egui::RichText::new("● 生成中").size(9.0),
+                    egui::RichText::new(t!("chat.generating")).size(9.0),
                 );
             } else {
-                ui.weak(egui::RichText::new(format!("{} 就绪", icon_text("circle-check"))).size(9.0));
+                ui.weak(egui::RichText::new(t!("chat.ready", icon = icon_text("circle-check"))).size(9.0));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.weak(egui::RichText::new(format!("{} {}", icon_text("brain"), short_model(&self.current_model))).size(9.0));
@@ -2174,17 +2174,17 @@ impl ChatView {
                     ui.weak(egui::RichText::new(time_label).size(12.0).weak());
                     // P0 hover 操作栏（渐显——Hermes 借鉴——hover 才显示）
                     if edit_click.hovered() {
-                        if ui.small_button(icon_text("pencil-simple")).on_hover_text("编辑").clicked() {
+                        if ui.small_button(icon_text("pencil-simple")).on_hover_text(t!("action.edit")).clicked() {
                             *editing_id = Some(msg_id);
                             *editing_content = content.to_string();
                         }
-                        if ui.small_button(icon_text("copy")).on_hover_text("复制").clicked() {
+                        if ui.small_button(icon_text("copy")).on_hover_text(t!("chat.copy")).clicked() {
                             action = Some(MsgAction::Copy(content.to_string()));
                         }
-                        if ui.small_button(icon_text("arrows-clockwise")).on_hover_text("重试").clicked() {
+                        if ui.small_button(icon_text("arrows-clockwise")).on_hover_text(t!("chat.retry")).clicked() {
                             action = Some(MsgAction::Retry(content.to_string()));
                         }
-                        if ui.small_button(icon_text("rocket-launch")).on_hover_text("派单").clicked() {
+                        if ui.small_button(icon_text("rocket-launch")).on_hover_text(t!("chat.delegate")).clicked() {
                             action = Some(MsgAction::Delegate(content.to_string()));
                         }
                     }
@@ -2195,9 +2195,9 @@ impl ChatView {
                 if !reasoning.is_empty() {
                     let open = thinking_open.contains(&msg_id);
                     let label = if open {
-                        format!("{} 思考（点击收起）", icon_text("brain")).to_string()
+                        t!("chat.reasoning_collapse", icon = icon_text("brain")).to_string()
                     } else {
-                        format!("{} 思考: {}", icon_text("brain"), truncate(&reasoning, 80))
+                        t!("chat.reasoning_short", icon = icon_text("brain"), text = truncate(&reasoning, 80)).to_string()
                     };
                     let resp = egui::Frame::new()
                         .fill(ui.visuals().extreme_bg_color)
@@ -2232,9 +2232,9 @@ impl ChatView {
                     if !tc.is_empty() && tc != "null" { // P4-31 无工具调用不显示（后端 NULL 序列化成字符串 "null"）
                         let topen = tools_open.contains(&msg_id);
                         let tlabel = if topen {
-                            format!("{} 工具调用（点击收起）", icon_text("wrench")).to_string()
+                            t!("chat.tools_collapse", icon = icon_text("wrench")).to_string()
                         } else {
-                            format!("{} 工具调用（点击展开）", icon_text("wrench")).to_string()
+                            t!("chat.tools_expand", icon = icon_text("wrench")).to_string()
                         };
                         let tresp = egui::Frame::new()
                             .fill(ui.visuals().extreme_bg_color)
@@ -2288,8 +2288,8 @@ impl ChatView {
                     // 点击后走核心 /window 端点（复用 session_search 的 read 模式）取回被压缩的原文窗口
                     if let Some((psid, paid)) = Self::recall_pointer(content) {
                         if ui
-                            .small_button(format!("{} 回到被压缩的原文 #{}", icon_text("arrow-u-up-left"), paid))
-                            .on_hover_text("压缩前的对话已软归档（界面不显示）——点这里按窗口取回查看")
+                            .small_button(t!("chat.back_to_archived", icon = icon_text("arrow-u-up-left"), n = paid))
+                            .on_hover_text(t!("chat.back_to_archived_tip"))
                             .clicked()
                         {
                             action = Some(MsgAction::JumpPointer { session_id: psid, around_id: paid });
@@ -2319,20 +2319,20 @@ impl ChatView {
                     }
                     // C7/P2 hover 操作（复制/重试/派单/朗读）
                     ui.horizontal(|ui| {
-                        if ui.small_button(icon_text("copy")).on_hover_text("复制").clicked() {
+                        if ui.small_button(icon_text("copy")).on_hover_text(t!("chat.copy")).clicked() {
                             action = Some(MsgAction::Copy(content.to_string()));
                         }
-                        if ui.small_button(icon_text("arrows-clockwise")).on_hover_text("重试").clicked() {
+                        if ui.small_button(icon_text("arrows-clockwise")).on_hover_text(t!("chat.retry")).clicked() {
                             action = Some(MsgAction::Retry(content.to_string()));
                         }
-                        if ui.small_button(icon_text("rocket-launch")).on_hover_text("派单到任务").clicked() {
+                        if ui.small_button(icon_text("rocket-launch")).on_hover_text(t!("chat.delegate_to_task")).clicked() {
                             action = Some(MsgAction::Delegate(content.to_string()));
                         }
                         // P2 语音朗读（macOS say）
                         let speaking = *speaking_id == Some(msg_id);
                         if ui
                             .small_button(if speaking { icon_text("stop") } else { icon_text("speaker-high") })
-                            .on_hover_text("朗读回复")
+                            .on_hover_text(t!("chat.speak"))
                             .clicked()
                         {
                             if speaking {
