@@ -14,11 +14,11 @@ import (
 )
 
 // 环境路径（fcpx skill——AutoCUT 项目）
-const (
-	autoCutDir  = "<volume-path>"
+var (
+	autoCutDir  = os.Getenv("ZERG_AUTOCUT_DIR") // 可选：AutoCUT 目录（2026-09-11 B 批：去硬编码）
 	footageDB   = autoCutDir + "/data/footage.db"
-	fcpxExpFile = "~/.hermes/vault/learned/fcpx-互通经验.md"
-	musicSave   = "<volume-path>"
+	fcpxExpFile = os.Getenv("ZERG_FCPX_EXP_FILE") // 可选：FCPX 互通经验文件（空=不注入）
+	musicSave   = os.Getenv("ZERG_MUSIC_DIR")     // 可选：音乐下载目录
 )
 
 // ═══════════════ 影音剪辑第二批 ═══════════════
@@ -225,7 +225,7 @@ func fcpxExperience(args map[string]any) (string, error) {
 func resolveDrpCheck(args map[string]any) (string, error) {
 	drp, _ := args["path"].(string)
 	if drp == "" {
-		drp = "<volume-path>"
+		drp = os.Getenv("ZERG_DRP_FILE") // 可选：.drp 工程文件
 	}
 	info, err := os.Stat(drp)
 	if err != nil {

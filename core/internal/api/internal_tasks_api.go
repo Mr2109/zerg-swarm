@@ -6,14 +6,15 @@ package api
 
 import (
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
+	"github.com/go-chi/chi/v5"
 )
 
 // InternalTasksHandler 内部任务清单（2026-08-22 Mr2109——UI 分类显示）
@@ -25,7 +26,7 @@ func (h *Handlers) InternalTasksHandler(w http.ResponseWriter, r *http.Request) 
 	for _, d := range defs {
 		// 该类最近任务的 skill 内容（glob internal-<id>-*/SKILL.md——最新优先）
 		skill := ""
-		matches, _ := filepath.Glob(filepath.Join("/tmp/zerg-tasks", "internal-"+d.ID+"-*", "SKILL.md"))
+		matches, _ := filepath.Glob(filepath.Join(statepath.TaskRoot(), "internal-"+d.ID+"-*", "SKILL.md"))
 		if len(matches) > 0 {
 			sort.Slice(matches, func(i, j int) bool {
 				fi, erri := os.Stat(matches[i])

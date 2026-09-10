@@ -45,11 +45,11 @@ func TestPickRoute_SingleExcluded(t *testing.T) {
 		},
 	}
 	g := &Gateway{
-		config:     cfg,
-		roundRobin: map[string]int{},
-		failCounts: map[string]int{},
-		failSince:  map[string]time.Time{},
-		store:      &store.Store{},
+		config:       cfg,
+		roundRobin:   map[string]int{},
+		failCounts:   map[string]int{},
+		failSince:    map[string]time.Time{},
+		store:        &store.Store{},
 		excludeLocal: true,
 	}
 

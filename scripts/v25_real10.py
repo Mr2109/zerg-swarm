@@ -8,9 +8,9 @@ import subprocess
 import sys
 
 PASS, FAIL = "✅", "❌"
-ZERG = "<repo>"
+ZERG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CORE = os.path.join(ZERG, "core")
-EVALS = "<volume-path>"
+EVALS = os.environ.get("ZERG_EVALS_DIR", "")
 results = []
 
 
@@ -30,7 +30,7 @@ def run_agent(task, workdir, max_turns=12, tools=""):
 os.makedirs("/tmp/zerg-real10", exist_ok=True)
 
 # 1. 写测试用例（真实：给 memory.go 补测试）
-out = run_agent("阅读 <repo>/core/internal/agent/memory.go，用 write 创建 memory_extra_test.go 测试 WriteFact 和 Search 函数（测试内容简单即可：写入一个事实，搜索能搜到）", "/tmp/zerg-real10", 15)
+out = run_agent("阅读 {ZERG}/core/internal/agent/memory.go，用 write 创建 memory_extra_test.go 测试 WriteFact 和 Search 函数（测试内容简单即可：写入一个事实，搜索能搜到）", "/tmp/zerg-real10", 15)
 ok1 = os.path.exists(os.path.join("/tmp/zerg-real10", "memory_extra_test.go"))
 check("补测试(memory_extra_test.go)", ok1)
 

@@ -21,8 +21,8 @@ type MCPClient interface {
 
 // MCPToolDef 简化的工具定义（解耦——不依赖 agent.ToolDef）
 type MCPToolDef struct {
-	Type       string                 `json:"type"`
-	Function   map[string]interface{} `json:"function"`
+	Type     string                 `json:"type"`
+	Function map[string]interface{} `json:"function"`
 }
 
 // McpPlugin 实现 plugin.Plugin 接口

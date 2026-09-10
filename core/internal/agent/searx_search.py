@@ -21,11 +21,12 @@ import sys
 # 关键：清除 PYTHONPATH（防 Hermes venv 污染）
 os.environ.pop("PYTHONPATH", None)
 
-DEFAULT_SETTINGS = "<repo>/vendor/searxng/searx/settings.yml"
+_REPO = os.environ.get("ZERG_WORKSPACE") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+DEFAULT_SETTINGS = os.environ.get("ZERG_SEARXNG_SETTINGS") or os.path.join(_REPO, "vendor", "searxng", "searx", "settings.yml")
 NOPROXY_SETTINGS = "/tmp/searx_noproxy_settings.yml"
 PROXY_ADDR = ("127.0.0.1", 7892)
 
-sys.path.insert(0, "<repo>/vendor/searxng")
+sys.path.insert(0, os.environ.get("ZERG_SEARXNG_SRC") or os.path.join(_REPO, "vendor", "searxng"))
 
 from flask import Flask  # noqa: E402
 

@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"log"
 	"path/filepath"
 	"strings"
@@ -40,17 +41,17 @@ const (
 
 // Task 子任务。
 type Task struct {
-	ID           string   `json:"id"`
-	Type         string   `json:"type"`
-	SubType      string   `json:"sub_type"`
-	Description  string   `json:"description"`
-	Prompt       string   `json:"prompt"`
-	Result       string   `json:"result,omitempty"`
-	Error        string   `json:"error,omitempty"`
+	ID           string    `json:"id"`
+	Type         string    `json:"type"`
+	SubType      string    `json:"sub_type"`
+	Description  string    `json:"description"`
+	Prompt       string    `json:"prompt"`
+	Result       string    `json:"result,omitempty"`
+	Error        string    `json:"error,omitempty"`
 	StartTime    time.Time `json:"start_time,omitempty"`
 	EndTime      time.Time `json:"end_time,omitempty"`
-	Dependencies []string `json:"dependencies,omitempty"`
-	Model        string   `json:"model,omitempty"`
+	Dependencies []string  `json:"dependencies,omitempty"`
+	Model        string    `json:"model,omitempty"`
 }
 
 // DecomposeResult 分解结果。
@@ -63,11 +64,11 @@ type DecomposeResult struct {
 
 // SynthesizeResult 汇总结果。
 type SynthesizeResult struct {
-	CombinedResult string                  `json:"combined_result"`
-	Summary        string                  `json:"summary,omitempty"`
-	TaskResults    map[string]TaskResult   `json:"task_results"`
-	TotalTokens    int                     `json:"total_tokens"`
-	TotalTime      time.Duration           `json:"total_time"`
+	CombinedResult string                `json:"combined_result"`
+	Summary        string                `json:"summary,omitempty"`
+	TaskResults    map[string]TaskResult `json:"task_results"`
+	TotalTokens    int                   `json:"total_tokens"`
+	TotalTime      time.Duration         `json:"total_time"`
 }
 
 // TaskResult 子任务执行结果。
@@ -133,7 +134,7 @@ func NewOrchestrator(cfg *OrchestratorConfig, executor ModelExecutor) *Orchestra
 	if cfg == nil {
 		cfg = DefaultOrchestratorConfig()
 	}
-	return &Orchestrator{config: cfg, executor: executor, stateDir: "<repo>/.zerg/states"}
+	return &Orchestrator{config: cfg, executor: executor, stateDir: filepath.Join(statepath.WorkspaceRoot(), ".zerg", "states")}
 }
 
 // Executor 返回执行器（网关接线用——设置认证等）。

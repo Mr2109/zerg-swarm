@@ -35,8 +35,8 @@ func TestBashRmScopeGate_allowsInDomain(t *testing.T) {
 	allowed := []string{
 		"rm -rf /tmp/ok",                      // /tmp 决策域
 		"rm -f /tmp/zerg-bash-overflow/x.log", // 溢出目录(/tmp 内)
-		"rm -rf ./dist",                        // 工作区相对
-		"rm -f notes.md",                       // 裸文件名→以 execCwd(工作区内)为基
+		"rm -rf ./dist",                       // 工作区相对
+		"rm -f notes.md",                      // 裸文件名→以 execCwd(工作区内)为基
 		"rm -rf *",                            // 工作区内通配(git 兜底)
 		"rm -rf /data/task-xyz/tmp",           // 白名单任务目录
 		"ls /etc/hosts",                       // 非 rm 命令不受影响

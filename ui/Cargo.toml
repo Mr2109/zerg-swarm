@@ -24,8 +24,13 @@ chrono = "0.4"
 rust-i18n = "2"
 egui_virtual_list = "0.12"
 # 虫茧集装箱（T8——zerg-cocoon 示例虫茧——path 跨仓独立 git）
+# 2026-09-11 B 批（决策 5）：示例虫茧未完善，**首版不随公开快照发布**。
+# 因此依赖改为 optional：私有仓通过下方 default feature 保持启用（本机行为不变），
+# 公开快照删除本依赖与 default feature 后仍可编译（未启用时虫茧平台显示空栅格 + 未装载提示）。
 
 
+[features]
+zerg-roundtable = []  # 公开镜像：该虫茧（独立仓）不随发布——保留同名空 feature 以消除 cfg 警告
 [profile.release]
 opt-level = 3
 lto = true

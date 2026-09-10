@@ -173,6 +173,7 @@ var _ plugin.Plugin = (*SkillPlugin)(nil)
 // 如果调用方有 agent.SkillManager 实例，可直接用此函数创建插件
 //
 // 示例:
+//
 //	ListAllSkills 列出所有可用技能（便捷方法）
 func (s *SkillPlugin) ListAllSkills() []string {
 	if s.loader == nil {
