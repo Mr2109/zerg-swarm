@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"zerg/agent/internal/registry"
+	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
 
 // TestDispatchK2Horizon K2-Horizon 家族 Dispatch 命中测试（2026-09-08 接入）。

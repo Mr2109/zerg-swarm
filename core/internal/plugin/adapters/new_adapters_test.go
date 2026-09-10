@@ -6,7 +6,7 @@ package adapters
 import (
 	"testing"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // 编译期检查——三个新适配器都实现 plugin.Plugin 接口

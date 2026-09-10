@@ -5,7 +5,7 @@ package api
 // 避免 api 依赖 store 具体类型（解耦——测试可 mock）
 
 import (
-	"zerg/core/internal/store"
+	"github.com/Mr2109/zerg-swarm/core/internal/store"
 )
 
 // StoreSnapshotReader store 快照读取器（实现 StoreReader 接口）

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"zerg/core/internal/agent"
-	"zerg/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 )
 
 const (

@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"zerg/core/internal/gateway/adapter"
+	"github.com/Mr2109/zerg-swarm/core/internal/gateway/adapter"
 )
 
 // forwardToBackend 转发请求到子端 :8100/infer。

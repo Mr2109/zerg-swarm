@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"zerg/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 )
 
 // TestClassifyRouteError_CircuitOpen 熔断/无候选 → circuit_open(503)

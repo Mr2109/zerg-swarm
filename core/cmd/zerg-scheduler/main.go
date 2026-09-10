@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"zerg/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 )
 
 func main() {

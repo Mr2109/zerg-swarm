@@ -7,7 +7,7 @@ package chat
 import (
 	"fmt"
 
-	"zerg/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 )
 
 // RegisterChatExtraTools — 注册对话 deferred 工具到 agent 统一工具库（core 启动时调用一次）

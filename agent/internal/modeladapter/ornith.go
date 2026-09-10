@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"zerg/agent/internal/registry"
+	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
 
 // Ornith Ornith-1.0-35B 适配器（基于 Qwen 3.5）。
@@ -27,7 +27,7 @@ func (a *Ornith) BuildArgs(entry *registry.ModelEntry, port int) []string {
 		"-ctv", "q8_0",
 		"-fa", "on",
 		"--cache-prompt",
-		"-np", "1", // v2.5.5 单槽铁律（Mr2109——执行层面单槽——GPU全负荷）
+		"-np", "1", // v2.5.5 单槽铁律（设计决策——执行层面单槽——GPU全负荷）
 		"-cb",
 		"--host", "127.0.0.1",
 		"--port", fmt.Sprintf("%d", port),
@@ -46,12 +46,20 @@ func (a *Ornith) BuildArgs(entry *registry.ModelEntry, port int) []string {
 	return args
 }
 
-// templatePath 返回 ornith 外部 chat template 路径（若存在）。
+// templatePath 返回 ornith 外部 chat template 路径（可选；都不存在时不加该参数）。
+// 2026-09-11 开源清理：原写死两处机器绝对路径 → 改为「环境变量 ZERG_ORNITH_TEMPLATE + 家目录/仓库相对候选」。
 func (a *Ornith) templatePath() string {
-	candidates := []string{
-		"/home/g01/agent/ornith_chat_template.jinja", // X3
-		"~/agent/ornith_chat_template.jinja", // 本机
+	candidates := []string{}
+	if p := os.Getenv("ZERG_ORNITH_TEMPLATE"); p != "" {
+		candidates = append(candidates, p)
 	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, home+"/.zerg/ornith_chat_template.jinja")
+	}
+	candidates = append(candidates,
+		"agent/ornith_chat_template.jinja",
+		"../agent/ornith_chat_template.jinja",
+	)
 	for _, c := range candidates {
 		if _, err := os.Stat(c); err == nil {
 			return c

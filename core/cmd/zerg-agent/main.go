@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"zerg/core/internal/agent"
-	"zerg/core/internal/agentstate"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/agentstate"
 )
 
 func filterTools(all []agent.ToolDef, names string) []agent.ToolDef {

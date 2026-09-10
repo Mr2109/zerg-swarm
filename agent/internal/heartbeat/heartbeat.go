@@ -13,9 +13,9 @@ import (
 	"net/http"
 	"time"
 
-	"zerg/agent/internal/backend"
-	"zerg/agent/internal/logx"
-	"zerg/agent/internal/monitor"
+	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
+	"github.com/Mr2109/zerg-swarm/agent/internal/logx"
+	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 )
 
 // Runner 心跳上报器。

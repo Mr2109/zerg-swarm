@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"zerg/core/internal/agentstate"
-	"zerg/core/internal/loopcore"
-	"zerg/core/internal/subtask"
+	"github.com/Mr2109/zerg-swarm/core/internal/agentstate"
+	"github.com/Mr2109/zerg-swarm/core/internal/loopcore"
+	"github.com/Mr2109/zerg-swarm/core/internal/subtask"
 )
 
 // CATerminator — CA 终止仲裁（内核 Terminator 实现）

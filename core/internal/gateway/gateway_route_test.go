@@ -3,7 +3,7 @@ package gateway
 import (
 	"testing"
 
-	"zerg/core/internal/store"
+	"github.com/Mr2109/zerg-swarm/core/internal/store"
 )
 
 // ========== v2.5.6 路由打分修复测试（Mr2109 2026-08-28——反复挂起根因） ==========

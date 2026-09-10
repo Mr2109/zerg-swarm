@@ -3,7 +3,7 @@ package inference
 import (
 	"sync"
 
-	"zerg/core/internal/store"
+	"github.com/Mr2109/zerg-swarm/core/internal/store"
 )
 
 // RuntimeRegistry 运行时注册表——按机器名管理 Runtime。

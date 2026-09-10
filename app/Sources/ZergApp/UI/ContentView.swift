@@ -508,7 +508,10 @@ struct CoreSection: View {
         controlMsg = "正在启动主控..."
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        task.arguments = ["-c", "cd '<repo>/core' && nohup go run ./cmd/zerg-core > /tmp/zerg-core.log 2>&1 &"]
+        // 2026-09-11 开源清理：仓库路径可配（ZERG_REPO_PATH，默认 ~/zerg-swarm）
+        let repoPath = ProcessInfo.processInfo.environment["ZERG_REPO_PATH"]
+            ?? NSString(string: "~/zerg-swarm").expandingTildeInPath
+        task.arguments = ["-c", "cd '\(repoPath)/core' && nohup go run ./cmd/zerg-core > /tmp/zerg-core.log 2>&1 &"]
         do {
             try task.run()
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {

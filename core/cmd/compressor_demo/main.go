@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"zerg/core/internal/compressor"
+	"github.com/Mr2109/zerg-swarm/core/internal/compressor"
 )
 
 func main() {

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"zerg/core/internal/gateway/adapter"
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/gateway/adapter"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // mockAdapter — 测试用适配器（返回已知元数据）
