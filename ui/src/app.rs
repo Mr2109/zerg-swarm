@@ -1102,8 +1102,8 @@ impl ZergApp {
                 let mut changed = false;
                 for m in self.registry.modules.iter().filter(|m| m.is_core) {
                     ui.horizontal(|ui| {
-                        ui.label(format!("{} {}", m.icon, m.name));
-                        ui.weak(m.description);
+                        ui.label(format!("{} {}", m.icon, t!(m.name_key)));
+                        ui.weak(t!(m.desc_key));
                         ui.label("🔒");
                     });
                 }
@@ -1116,12 +1116,12 @@ impl ZergApp {
                     let on = self.registry.enabled.get(m.id).copied().unwrap_or(true);
                     let mut next = on;
                     ui.horizontal(|ui| {
-                        if ui.checkbox(&mut next, format!("{} {}", m.icon, m.name)).changed() {
+                        if ui.checkbox(&mut next, format!("{} {}", m.icon, t!(m.name_key))).changed() {
                             if next != on {
                                 to_toggle = Some(m.id.to_string());
                             }
                         }
-                        ui.weak(m.description);
+                        ui.weak(t!(m.desc_key));
                     });
                 }
                 if let Some(id) = to_toggle {
@@ -3148,7 +3148,7 @@ impl ZergApp {
             .modules
             .iter()
             .find(|m| m.id == self.registry.active)
-            .map(|m| m.name.to_string())
+            .map(|m| t!(m.name_key).to_string())
             .unwrap_or_else(|| self.registry.active.clone());
         let running = lock_recover(&self.tasks)
             .as_ref()
