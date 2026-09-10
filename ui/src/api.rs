@@ -1415,6 +1415,52 @@ mod proxy_root_fix_tests {
     }
 }
 
+// ═══════════ 丙批补（2026-09-10）：召回指针回跳 + 网关前缀命中率 ═══════════
+
+/// 取会话某段窗口（召回指针"回到原文"——GET /api/chat/sessions/{id}/window）
+/// 返回 {session_id, around_id, limit, text}；text 为可直接展示的窗口文本
+pub fn fetch_chat_window_async(session_id: String, around_id: i64) -> SharedResult<serde_json::Value> {
+    let out: SharedResult<serde_json::Value> = Arc::new(Mutex::new(None));
+    let out2 = out.clone();
+    runtime().spawn(async move {
+        let client = http_client_json();
+        let url = format!(
+            "{}/api/chat/sessions/{}/window?around_id={}&limit=20",
+            API_BASE, session_id, around_id
+        );
+        let r = match client.get(&url).header("X-Auth-Token", API_TOKEN).send().await {
+            Ok(resp) => json_body(resp).await,
+            Err(e) => Err(format!("请求失败: {}", e)),
+        };
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
+    });
+    out
+}
+
+/// 重置该会话的压缩冷却/硬熔断（丙批补——手动恢复入口）
+pub fn chat_compact_reset_async(session_id: String) -> SharedResult<serde_json::Value> {
+    let out: SharedResult<serde_json::Value> = Arc::new(Mutex::new(None));
+    let out2 = out.clone();
+    runtime().spawn(async move {
+        let client = http_client_json();
+        let url = format!("{}/api/chat/sessions/{}/compact-reset", API_BASE, session_id);
+        let r = match client.post(&url).header("X-Auth-Token", API_TOKEN).send().await {
+            Ok(resp) => json_body(resp).await,
+            Err(e) => Err(format!("请求失败: {}", e)),
+        };
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
+    });
+    out
+}
+
+/// 网关前缀命中率（丙批 N4——网关 8082；需 X-Auth-Token）
+pub async fn fetch_prefix_cache_blocking() -> Result<serde_json::Value, String> {
+    let client = http_client_json();
+    let url = format!("{}/api/metrics/prefix_cache", AI_BASE);
+    let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
+    json_body(resp).await
+}
+
 #[cfg(test)]
 mod a08_abort_tests {
     use super::*;

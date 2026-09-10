@@ -18,10 +18,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -447,6 +449,18 @@ func main() {
 
 	// 主控重启恢复开关状态（排除本机——UI 同步不丢）
 	gw.LoadExcludeLocal()
+
+	// 丙批 C2 补齐（2026-09-10）：退出前把前缀命中率统计落盘（否则末批样本随进程一起丢）
+	{
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+		go func() {
+			<-sigCh
+			gw.FlushPrefixCache()
+			fmt.Printf("💾 前缀命中率统计已落盘（退出）\n")
+			os.Exit(0)
+		}()
+	}
 
 	// V22-压缩：LLMLingua-2 一体化压缩器（ONNX，纯 Go 进程内）
 	// 路径：compress_models/llmlingua2-onnx/（模型已转换 ONNX）

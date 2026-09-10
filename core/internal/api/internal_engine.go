@@ -4,15 +4,17 @@
 // 环境门控 ZERG_INTERNAL_TASKS（UI 不可见）；且 stopped 不持久化 → 重启必漂移。
 //
 // 本文件建立**唯一真相源**：
-//   GET /api/internal-tasks/state → {enabled, running, stopped, since, last_tick, next_tick, reason, updated_at}
-//   变更接口（start/stop/mode/interval）响应体统一回带 state（契约：变更即回状态，UI 无需二次往返）
-//   持久化 ~/.zerg/state/internal_engine.json（重启恢复用户意图；路径遵循 statepath 规则）
+//
+//	GET /api/internal-tasks/state → {enabled, running, stopped, since, last_tick, next_tick, reason, updated_at}
+//	变更接口（start/stop/mode/interval）响应体统一回带 state（契约：变更即回状态，UI 无需二次往返）
+//	持久化 ~/.zerg/state/internal_engine.json（重启恢复用户意图；路径遵循 statepath 规则）
 //
 // 语义澄清：
-//   enabled   = 环境门控是否放行（ZERG_INTERNAL_TASKS=1）——环境事实，不可由 UI 改变
-//   stopped   = 用户意图（按钮）——持久化，重启保留
-//   running   = 引擎此刻真的在跑 = enabled && !stopped
-//   last_tick = 心跳。running=true 但心跳停滞 → UI 显示"异常"，不再谎报"运行中"
+//
+//	enabled   = 环境门控是否放行（ZERG_INTERNAL_TASKS=1）——环境事实，不可由 UI 改变
+//	stopped   = 用户意图（按钮）——持久化，重启保留
+//	running   = 引擎此刻真的在跑 = enabled && !stopped
+//	last_tick = 心跳。running=true 但心跳停滞 → UI 显示"异常"，不再谎报"运行中"
 package api
 
 import (
