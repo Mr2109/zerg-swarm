@@ -35,6 +35,9 @@ var chatToolRegistry = []ChatToolMeta{
 	{Name: "skill_load", Category: "知识库", Keywords: []string{"技能", "skill", "加载"}, L0: true},
 
 	// ═══ L1 deferred——首批实装 ═══
+	// 记忆体系（乙批 2026-09-10）——非常驻：tool_search 发现后调用（省每轮 schema 成本）
+	{Name: "memory", Category: "记忆", Keywords: []string{"记忆", "记住", "写记忆", "偏好", "事实", "沉淀", "remember"}, L0: false},
+	{Name: "session_search", Category: "记忆", Keywords: []string{"回忆", "历史对话", "检索对话", "以前说过", "翻旧账", "session", "search"}, L0: false},
 
 	// ── 文件与代码增强（10）──
 	{Name: "diff_files", Category: "文件与代码", Keywords: []string{"差异", "对比", "diff"}},
