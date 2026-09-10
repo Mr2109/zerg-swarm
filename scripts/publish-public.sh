@@ -278,6 +278,17 @@ if [ -f "$REPO_ROOT/scripts/check_docs.py" ]; then
   fi
 fi
 
+# 4d. i18n 门禁（键对称 / 引用完整 / 占位符一致 / 中文基线不越界）
+if [ -f "$REPO_ROOT/ui/scripts/check-i18n.py" ]; then
+  if python3 "$REPO_ROOT/ui/scripts/check-i18n.py" >/dev/null 2>&1; then
+    echo "  i18n 门禁: 通过"
+  else
+    echo "  ❌ i18n 门禁未通过——已中止导出" >&2
+    python3 "$REPO_ROOT/ui/scripts/check-i18n.py" >&2
+    exit 1
+  fi
+fi
+
 # 4c. 版本号一致性门禁（UI ↔ Go 单一来源）
 if [ -f "$REPO_ROOT/scripts/check_version.py" ]; then
   if python3 "$REPO_ROOT/scripts/check_version.py" "$REPO_ROOT" >/dev/null; then
