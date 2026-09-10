@@ -1,8 +1,12 @@
 # 快速开始（QUICKSTART）
 
+[English](QUICKSTART.en.md) | **中文**
+
+> *中文原版（唯一真相源）。英文版为派生翻译；两版如有不一致，以**本文**为准。*
+
 从零到一个能用的虫群，四步。全程只需要一条命令跑起来是**主控**；子端和 UI 可选但推荐。
 
-> 约定：下文 `<repo>` 指你 clone 下来的目录。所有端口/路径都可用环境变量覆盖，见 [CONFIGURATION.md](CONFIGURATION.md)。
+> 约定：下文 `<repo>` 指你 clone 下来的目录。所有端口/路径都可用环境变量覆盖，见 [CONFIGURATION.zh-CN.md](CONFIGURATION.zh-CN.md)。
 
 ---
 
@@ -49,7 +53,7 @@ fleet:
   local: { host: 127.0.0.1, port: 8100, os: macos }
 ```
 
-> **模型名可以随便起**——只要登记表里有、路径指对，虫族就能用。字段说明见 [MODELS.md](MODELS.md)。
+> **模型名可以随便起**——只要登记表里有、路径指对，虫族就能用。字段说明见 [MODELS.zh-CN.md](MODELS.zh-CN.md)。
 
 ## 第 2 步：启动主控
 
@@ -139,4 +143,4 @@ curl -s -X POST -H "X-Auth-Token: $ZERG_AUTH_TOKEN" -H 'Content-Type: applicatio
 | `ls/git/go…` 命令报 `rtk: command not found` | 旧版遗留问题，现已自动降级；也可 `ZERG_RTK=0` 显式关闭 |
 | `web_search` 不可用 | 需要自建 searxng，见 `scripts/install-searxng.sh`（AGPL 组件，不随仓库分发） |
 
-更多见 [FAQ.md](FAQ.md)。
+更多见 [FAQ.zh-CN.md](FAQ.zh-CN.md)。

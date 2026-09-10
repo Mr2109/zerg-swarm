@@ -1,5 +1,9 @@
 # 配置（CONFIGURATION）
 
+[English](CONFIGURATION.en.md) | **中文**
+
+> *中文原版（唯一真相源）。英文版为派生翻译；两版如有不一致，以**本文**为准。*
+
 虫族没有中心配置文件：**令牌 + 登记表 + 环境变量**就是全部配置。
 所有硬编码都收敛到"合理默认值 + 环境变量覆盖"，因此同一份代码在你的机器上也能跑。
 
@@ -70,7 +74,7 @@ UI 侧指向主控/网关：
 |---|---|
 | `ZERG_SEARXNG_PY` / `ZERG_SEARXNG_SETTINGS` / `ZERG_SEARXNG_SRC` | 自建 searxng 的解释器 / 设置文件 / 源码目录（默认找 `<工作区>/vendor/searxng/...`，再退到 `PATH` 里的 `python3`） |
 | `ZERG_RTK` | `0` = 关闭 rtk 命令包装。**未安装 rtk 时自动降级**，无需设置 |
-| `ZERG_ORNITH_TEMPLATE` | 某些模型需外部 chat template 覆盖内嵌旧模板时的文件路径（也支持登记表字段，见 [MODELS.md](MODELS.md)） |
+| `ZERG_ORNITH_TEMPLATE` | 某些模型需外部 chat template 覆盖内嵌旧模板时的文件路径（也支持登记表字段，见 [MODELS.md](MODELS.zh-CN.md)） |
 | `ZERG_AUTOCUT_DIR` / `ZERG_MUSIC_DIR` / `ZERG_DRP_FILE` | 影音工具链的可选目录/工程文件 |
 | `ZERG_DF_PATHS` | 磁盘巡检工具额外统计的挂载点（默认只看 `/`） |
 | `ZERG_FONT_PATH` | UI 中文字体文件 |

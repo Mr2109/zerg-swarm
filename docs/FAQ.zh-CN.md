@@ -1,5 +1,9 @@
 # 常见问题（FAQ）
 
+[English](FAQ.en.md) | **中文**
+
+> *中文原版（唯一真相源）。英文版为派生翻译；两版如有不一致，以**本文**为准。*
+
 ## 部署与启动
 
 **Q：主控启动就退出，提示"未配置共享令牌"？**
@@ -58,7 +62,7 @@ shell 的删除类命令受**范围闸门**约束：只允许作用于任务工�
 
 **Q：对话/记忆存在哪？**
 对话库 `~/.zerg-chat/chat.db`；记忆 `~/.zerg/memory/`；工具状态 `~/.zerg/state/`。
-都可以用环境变量搬到别处（见 [CONFIGURATION.md](CONFIGURATION.md)）。
+都可以用环境变量搬到别处（见 [CONFIGURATION.zh-CN.md](CONFIGURATION.zh-CN.md)）。
 
 **Q：怎么备份？**
 备份上面三个目录即可（SQLite 建议用 `VACUUM INTO` 而不是直接拷 .db 文件）。
