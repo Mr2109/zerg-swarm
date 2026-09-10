@@ -44,14 +44,22 @@ impl TextBuffer {
     }
 
     /// 插入文本（字符位置）
+    ///
+    /// M37(2026-09-10 审计)：`pos` 越界属于调用方逻辑错误——debug 下直接断言，
+    /// release 下仍夹取到末尾（行为不破坏，避免 panic）。调用方应保证 `pos <= len()`。
     pub fn insert(&mut self, pos: usize, text: &str) {
+        debug_assert!(pos <= self.rope.len_chars(), "TextBuffer::insert 位置越界: {} > {}", pos, self.rope.len_chars());
         let char_pos = self.rope.len_chars().min(pos);
         self.rope.insert(char_pos, text);
     }
 
     /// 删除区间（字符位置）
+    ///
+    /// M37：越界区间在 debug 下断言（`start`/`end` 均应 `<= len()` 且 `start <= end`）——
+    /// 越界静默夹取会掩盖调用方逻辑缺陷（如 M01 那类差一位）。
     pub fn remove(&mut self, start: usize, end: usize) {
         let len = self.rope.len_chars();
+        debug_assert!(start <= len && end <= len, "TextBuffer::remove 越界: [{}, {}) > {}", start, end, len);
         let s = start.min(len);
         let e = end.min(len).max(s);
         self.rope.remove(s..e);
@@ -62,8 +70,9 @@ impl TextBuffer {
         self.rope.to_string()
     }
 
-    /// 行数→字符位置
+    /// 行数→字符位置（M37：越界行 debug 断言，release 夹取到最后一行）
     pub fn line_to_char(&self, line: usize) -> usize {
+        debug_assert!(line < self.line_count(), "TextBuffer::line_to_char 行号越界: {} >= {}", line, self.line_count());
         self.rope.line_to_char(line.min(self.line_count().saturating_sub(1)))
     }
 
@@ -96,8 +105,9 @@ impl TextBuffer {
         Some(self.rope.char(pos))
     }
 
-    /// 取某行文本
+    /// 取某行文本（M37：越界行 debug 断言，release 夹取到最后一行）
     pub fn line_str(&self, line: usize) -> String {
+        debug_assert!(line < self.line_count(), "TextBuffer::line_str 行号越界: {} >= {}", line, self.line_count());
         let line = line.min(self.line_count().saturating_sub(1));
         self.rope.line(line).to_string()
     }

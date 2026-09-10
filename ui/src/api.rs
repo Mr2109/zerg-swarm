@@ -2,7 +2,7 @@
 // 异步: tokio runtime（egui-async 在 eframe 0.36 下有帧号 bug——自己管理）
 use serde::Deserialize;
 use serde_json::Value;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub const API_BASE: &str = "http://127.0.0.1:8580";
 pub const API_TOKEN: &str = "x3gw-shared-2026";
@@ -12,38 +12,81 @@ pub const AI_BASE: &str = "http://127.0.0.1:8082"; // F5 AI 动力（网关—�
 /// 背景：reqwest 默认尊重系统代理（macOS Clash Party :7895），对 **127.0.0.1 回环请求**也会走代理，
 /// 结果是"主控离线"（系统 UI/URLSession 会自动绕过回环，故只有本进程中招）；此前靠 start-zerg-ui.sh 剥代理治标。
 /// 本 UI 的全部请求都指向回环（8580 主控 / 8082 网关），故一律 no_proxy —— 不再依赖启动脚本。
+/// A15（2026-09-10 审计）：三档 client 各用 OnceLock 缓存单例——reqwest::Client 内含连接池、本应长期复用；
+/// 原实现每次请求都 build() 一个新的 → 每请求一条新 TCP、keep-alive 全废（与 3s/5s/10s 轮询叠加）。
+/// 返回 clone()（Client 内部是 Arc，浅拷贝共享连接池），调用方签名与用法不变。
+static CLIENT_DEFAULT: OnceLock<reqwest::Client> = OnceLock::new();
+static CLIENT_JSON: OnceLock<reqwest::Client> = OnceLock::new();
+static CLIENT_AI: OnceLock<reqwest::Client> = OnceLock::new();
+
 pub fn http_client() -> reqwest::Client {
     // A03（2026-09-10 审计）：连接超时 3s——服务器不可达时不再挂死 worker；**不设总超时**（流式生成可能数分钟）
-    match reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(std::time::Duration::from_secs(3))
-        .build()
-    {
-        Ok(c) => c,
-        // 兜底（构建失败极罕见：TLS 后端初始化异常）——宁可退回默认 client，也绝不递归调用自身
-        // （2026-09-10 审计 A01 修正：原写法 unwrap_or_else(|_| http_client()) 会无限递归 → 栈溢出）
-        Err(_) => reqwest::Client::new(),
-    }
+    CLIENT_DEFAULT
+        .get_or_init(|| match reqwest::Client::builder()
+            .no_proxy()
+            .connect_timeout(std::time::Duration::from_secs(3))
+            .build()
+        {
+            Ok(c) => c,
+            // 兜底（构建失败极罕见：TLS 后端初始化异常）——宁可退回默认 client，也绝不递归调用自身
+            // （2026-09-10 审计 A01 修正：原写法 unwrap_or_else(|_| http_client()) 会无限递归 → 栈溢出）
+            Err(_) => reqwest::Client::new(),
+        })
+        .clone()
 }
 
 /// JSON 短请求 client（A03 2026-09-10）：连接 3s + 总 20s——轮询/列表/操作类，防单请求挂死拖垮 2 线程 runtime
 pub fn http_client_json() -> reqwest::Client {
-    reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(std::time::Duration::from_secs(3))
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .unwrap_or_else(|_| http_client())
+    CLIENT_JSON
+        .get_or_init(|| match reqwest::Client::builder()
+            .no_proxy()
+            .connect_timeout(std::time::Duration::from_secs(3))
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+        {
+            // 兜底：默认档单例（http_client 用独立 OnceLock，不会递归）
+            Err(_) => http_client(),
+            Ok(c) => c,
+        })
+        .clone()
 }
 
 /// AI 网关 client（A03 2026-09-10）：连接 3s + 总 120s——模型生成慢，20s 会误杀
 pub fn http_client_ai() -> reqwest::Client {
-    reqwest::Client::builder()
-        .no_proxy()
-        .connect_timeout(std::time::Duration::from_secs(3))
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .unwrap_or_else(|_| http_client())
+    CLIENT_AI
+        .get_or_init(|| match reqwest::Client::builder()
+            .no_proxy()
+            .connect_timeout(std::time::Duration::from_secs(3))
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+        {
+            // 兜底：默认档单例（http_client 用独立 OnceLock，不会递归）
+            Err(_) => http_client(),
+            Ok(c) => c,
+        })
+        .clone()
+}
+
+/// parse_api_error（A19 2026-09-10 审计）：统一解析错误响应体——主控/网关两种格式
+/// `{"error":"msg"}` 或 `{"error":{"type":"code","message":"msg"}}`；非 JSON（网关 HTML / 空 body）回显前 200 字符。
+/// 供 sync_get_public / doc_op_blocking / json_body 共用——原 doc_op_blocking 缺 message 分支，错误提示退化成"HTTP 500"。
+fn parse_api_error(status: reqwest::StatusCode, body: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<Value>(body) {
+        if let Some(e) = v.get("error") {
+            if let Some(s) = e.as_str() {
+                return format!("HTTP {}: {}", status, s);
+            }
+            if let Some(m) = e.get("message").and_then(|m| m.as_str()) {
+                return format!("HTTP {}: {}", status, m);
+            }
+        }
+    }
+    let brief: String = body.chars().take(200).collect();
+    if brief.is_empty() {
+        format!("HTTP {}", status)
+    } else {
+        format!("HTTP {}: {}", status, brief)
+    }
 }
 
 /// json_body（A04 2026-09-10 审计）：**先判 HTTP 状态再解析**——5xx/4xx 不再被当成"成功但空数据"
@@ -51,13 +94,8 @@ async fn json_body(r: reqwest::Response) -> Result<Value, String> {
     let status = r.status();
     let text = r.text().await.unwrap_or_default();
     if !status.is_success() {
-        if let Ok(v) = serde_json::from_str::<Value>(&text) {
-            if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
-                return Err(format!("HTTP {}: {}", status, e));
-            }
-        }
-        let brief: String = text.chars().take(200).collect();
-        return Err(format!("HTTP {}{}", status, if brief.is_empty() { String::new() } else { format!(": {}", brief) }));
+        // A19（2026-09-10 审计）：错误体解析统一走 parse_api_error
+        return Err(parse_api_error(status, &text));
     }
     serde_json::from_str::<Value>(&text).map_err(|e| format!("解析失败: {}", e))
 }
@@ -83,13 +121,22 @@ pub async fn ai_prompt_blocking(model: &str, prompt: &str) -> Result<String, Str
         .await
         .map_err(|e| format!("AI 请求失败: {}", e))?;
     let status = resp.status();
-    let json: Value = resp
-        .json()
+    // A16（2026-09-10 审计）：**先判状态、再解析 JSON**——错误体可能是网关 502 HTML / 空 body，
+    // 原实现先 resp.json() 会把真实状态码吞掉、只报"AI 响应解析失败"。
+    let text = resp
+        .text()
         .await
-        .map_err(|e| format!("AI 响应解析失败: {}", e))?;
+        .map_err(|e| format!("AI 响应读取失败: {}", e))?;
     if !status.is_success() {
-        return Err(format!("AI 错误({}): {}", status, json));
+        let brief: String = text.chars().take(200).collect();
+        return Err(format!(
+            "AI 错误({}): {}",
+            status,
+            if brief.is_empty() { "<空响应>".to_string() } else { brief }
+        ));
     }
+    let json: Value =
+        serde_json::from_str(&text).map_err(|e| format!("AI 响应解析失败: {}", e))?;
     // 解析 output_text（跳过 reasoning）
     // A14（2026-09-10 审计）：**累积全部** output_text——responses 格式 output 常含多个 item（工具调用 + 多段文本），
     // 原实现遇到第一段就 return，F5「总结/续写/翻译/润色」输出被静默截断
@@ -149,15 +196,35 @@ pub struct GitStatusResp {
 }
 
 /// 启动 tokio runtime（一次性）
+/// A18（2026-09-10 审计）：worker_threads 2 → 4（3s/5s/10s 轮询 + 流式 + 文档/AI 请求并发时 2 线程易饥饿）；
+/// 且构建失败不再直接 panic 崩 UI——先降级重试并记录，最终才 expect（该路径理论不可达）。
+/// 注：签名仍为 &'static Runtime（改 Result 会牵动 app.rs 全部调用点，本次不动调用方签名）。
 pub fn runtime() -> &'static tokio::runtime::Runtime {
-    use std::sync::OnceLock;
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RT.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .expect("tokio runtime 创建失败")
+        let build = |threads: usize| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(threads)
+                .thread_name("zerg-ui-rt")
+                .enable_all()
+                .build()
+        };
+        match build(4) {
+            Ok(rt) => rt,
+            Err(e) => {
+                eprintln!("[api] tokio runtime(4 线程) 创建失败: {}——降级为 1 线程重试", e);
+                match build(1) {
+                    Ok(rt) => rt,
+                    Err(e2) => {
+                        eprintln!("[api] tokio runtime(1 线程) 创建失败: {}", e2);
+                        tokio::runtime::Builder::new_multi_thread()
+                            .enable_all()
+                            .build()
+                            .expect("tokio runtime 创建失败（已降级两次，环境异常）")
+                    }
+                }
+            }
+        }
     })
 }
 
@@ -175,20 +242,10 @@ pub async fn sync_get_public(path: &str) -> Result<Value, String> {
     if !resp.status().is_success() {
         // v2.5.6 错误码设计（2026-08-29）: 解析错误 body 的 error 消息——UI 显示具体原因（如"任务不存在: xxx"）
         // 之前只有 "HTTP 404"——看不到主控/网关返回的具体错误
+        // A19（2026-09-10 审计）：抽公共 parse_api_error——两种 error 形态 + 非 JSON 正文统一处理
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        if let Ok(v) = serde_json::from_str::<Value>(&body) {
-            // 网关/API 两种格式: {"error":"msg"} 或 {"error":{"type":"code","message":"msg"}}
-            if let Some(e) = v.get("error") {
-                if let Some(s) = e.as_str() {
-                    return Err(format!("HTTP {}: {}", status, s));
-                }
-                if let Some(m) = e.get("message").and_then(|m| m.as_str()) {
-                    return Err(format!("HTTP {}: {}", status, m));
-                }
-            }
-        }
-        return Err(format!("HTTP {}", status));
+        return Err(parse_api_error(status, &body));
     }
     resp.json::<Value>().await.map_err(|e| e.to_string())
 }
@@ -272,16 +329,11 @@ pub async fn doc_op_blocking(action: &str, payload: serde_json::Value) -> Result
         .await
         .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
+        // A19（2026-09-10 审计）：与 sync_get_public 统一走 parse_api_error——
+        // 原实现只认 {"error":"str"}，漏了 {"error":{"type":..,"message":".."}}，错误提示退化成"HTTP 500"
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        if let Ok(v) = serde_json::from_str::<Value>(&body) {
-            if let Some(e) = v.get("error") {
-                if let Some(s) = e.as_str() {
-                    return Err(format!("HTTP {}: {}", status, s));
-                }
-            }
-        }
-        return Err(format!("HTTP {}", status));
+        return Err(parse_api_error(status, &body));
     }
     Ok(())
 }
@@ -457,7 +509,8 @@ pub async fn fetch_archive_blocking() -> Result<Vec<serde_json::Value>, String> 
 
 /// 资源库（blocking）
 pub async fn fetch_resources_blocking(res_type: String) -> Result<Value, String> {
-    let path = format!("/api/resources/{}", res_type);
+    // A20（2026-09-10 审计）：路径段做 URL 编码（复用以 `/` 分段的 urlencode_path）——含 #/?/空格 不再打错 URL
+    let path = format!("/api/resources/{}", urlencode_path(&res_type));
     sync_get_public(&path).await
 }
 
@@ -469,7 +522,8 @@ pub async fn fetch_cluster_blocking() -> Result<Value, String> {
 // fetch_model_detail_blocking 模型详情（Mr2109 2026-08-27——适配器选项+加载状态）
 pub async fn fetch_model_detail_blocking(name: &str) -> Result<Value, String> {
     let client = http_client_json();
-    let url = format!("{}/api/models/{}", API_BASE, name);
+    // A20（2026-09-10 审计）：模型名（fleet 键可能含空格/斜杠）编码后入路径
+    let url = format!("{}/api/models/{}", API_BASE, urlencode_path(name));
     let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         resp.json().await.map_err(|e| e.to_string())
@@ -481,7 +535,8 @@ pub async fn fetch_model_detail_blocking(name: &str) -> Result<Value, String> {
 // model_start_blocking 启动模型（Mr2109 2026-08-27——UI 开关）
 pub async fn model_start_blocking(name: &str) -> Result<(), String> {
     let client = http_client_json();
-    let url = format!("{}/api/models/{}/start", API_BASE, name);
+    // A20（2026-09-10 审计）：模型名编码后入路径
+    let url = format!("{}/api/models/{}/start", API_BASE, urlencode_path(name));
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
@@ -493,7 +548,8 @@ pub async fn model_start_blocking(name: &str) -> Result<(), String> {
 // model_stop_blocking 停止模型（Mr2109 2026-08-27——UI 开关）
 pub async fn model_stop_blocking(name: &str) -> Result<(), String> {
     let client = http_client_json();
-    let url = format!("{}/api/models/{}/stop", API_BASE, name);
+    // A20（2026-09-10 审计）：模型名编码后入路径
+    let url = format!("{}/api/models/{}/stop", API_BASE, urlencode_path(name));
     let resp = client.post(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
@@ -505,7 +561,8 @@ pub async fn model_stop_blocking(name: &str) -> Result<(), String> {
 // fetch_adapter_schema_blocking 适配器参数 schema（Mr2109 2026-08-27——编辑控件渲染）
 pub async fn fetch_adapter_schema_blocking(name: &str) -> Result<serde_json::Value, String> {
     let client = http_client_json();
-    let url = format!("{}/api/models/{}/adapter-opts", API_BASE, name);
+    // A20（2026-09-10 审计）：模型名编码后入路径
+    let url = format!("{}/api/models/{}/adapter-opts", API_BASE, urlencode_path(name));
     let resp = client.get(&url).header("X-Auth-Token", API_TOKEN).send().await.map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         resp.json().await.map_err(|e| e.to_string())
@@ -517,7 +574,8 @@ pub async fn fetch_adapter_schema_blocking(name: &str) -> Result<serde_json::Val
 // update_adapter_opts_blocking 更新适配器配置（实时生效）
 pub async fn update_adapter_opts_blocking(name: &str, cfg: serde_json::Value) -> Result<(), String> {
     let client = http_client_json();
-    let url = format!("{}/api/models/{}/adapter-opts", API_BASE, name);
+    // A20（2026-09-10 审计）：模型名编码后入路径
+    let url = format!("{}/api/models/{}/adapter-opts", API_BASE, urlencode_path(name));
     let resp = client
         .put(&url)
         .header("X-Auth-Token", API_TOKEN)
@@ -636,7 +694,8 @@ pub fn fetch_resources_async(res_type: String) -> SharedResult<Value> {
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let path = format!("/api/resources/{}", res_type);
+        // A20（2026-09-10 审计）：路径段编码（与 fetch_resources_blocking 一致）
+        let path = format!("/api/resources/{}", urlencode_path(&res_type));
         let result = sync_get_public(&path).await;
         *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
     });
@@ -644,11 +703,16 @@ pub fn fetch_resources_async(res_type: String) -> SharedResult<Value> {
 }
 
 /// 探测主控是否在线
+/// A17（2026-09-10 审计）：探针原打 `/api/tasks`（全量任务列表——重，且任务接口单点故障会被误判为"主控离线"）
+/// → 改打 `/api/fleet/status`（轻量集群状态，与 fetch_cluster_blocking / 单测同源）。
+/// 台账：app.rs 侧曾丢弃本函数句柄并重复 spawn 同一请求（APP-A05 2026-09-10 已删掉那一路），
+/// 现本函数**全仓无调用方**；按"不删公共函数"原则保留为兼容入口，故加 #[allow(dead_code)]。
+#[allow(dead_code)]
 pub fn ping_async() -> SharedResult<bool> {
     let out: SharedResult<bool> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
-        let ok = sync_get_public("/api/tasks").await.is_ok();
+        let ok = sync_get_public("/api/fleet/status").await.is_ok();
         *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(ok));
     });
     out
@@ -1222,6 +1286,26 @@ pub fn chat_edit_message_async(mid: i64, content: String, truncate: bool) -> Sha
         }
     });
     out
+}
+
+#[cfg(test)]
+mod api_error_parse_tests {
+    use super::*;
+
+    /// A19（2026-09-10 审计）：错误体统一解析——两种 error 形态 + 非 JSON 正文：
+    /// `{"error":"msg"}` / `{"error":{"type":..,"message":"msg"}}` / 网关 HTML / 空 body
+    #[test]
+    fn parse_api_error_handles_all_shapes() {
+        let s = reqwest::StatusCode::BAD_REQUEST;
+        let a = parse_api_error(s, r#"{"error":"任务不存在: abc"}"#);
+        assert!(a.contains("任务不存在: abc"), "形态一（error 字符串）未解析: {a}");
+        let b = parse_api_error(s, r#"{"error":{"type":"not_found","message":"会话不存在: 42"}}"#);
+        assert!(b.contains("会话不存在: 42"), "形态二（error.message）未解析: {b}");
+        let c = parse_api_error(reqwest::StatusCode::BAD_GATEWAY, "<html>502 Bad Gateway</html>");
+        assert!(c.contains("502 Bad Gateway"), "非 JSON 正文未回显: {c}");
+        let d = parse_api_error(reqwest::StatusCode::BAD_GATEWAY, "");
+        assert_eq!(d, "HTTP 502 Bad Gateway", "空 body 格式异常: {d}");
+    }
 }
 
 #[cfg(test)]
