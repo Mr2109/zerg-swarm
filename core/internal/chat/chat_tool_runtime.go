@@ -221,6 +221,55 @@ func (rt *ToolRuntime) SearchStreak(query string) (int, string) {
 	return n, ""
 }
 
+// 批次D1(2026-09-10): 消息不变式守卫——注入前校验/修复（角色交替 + tool 配对）
+// 规则:
+//  1. role=tool 必须紧跟前一条 assistant（且该 assistant 带 tool_calls）——孤立 tool 结果丢弃
+//  2. 相邻同角色消息合并（除 assistant 带 tool_calls 的边界）
+//  3. 非 system 首条为空时不处理（保留原始语义）
+// 返回: 修复后消息 + 修复记录（供事件/告警）
+func SanitizeMessages(msgs []map[string]any) ([]map[string]any, []string) {
+	var out []map[string]any
+	var fixes []string
+	lastRole := ""
+	pendingToolCalls := false
+	for _, m := range msgs {
+		role, _ := m["role"].(string)
+		content, _ := m["content"].(string)
+		hasToolCalls := false
+		if tc, ok := m["tool_calls"]; ok && tc != nil {
+			hasToolCalls = true
+		}
+		switch role {
+		case "tool":
+			if !pendingToolCalls {
+				fixes = append(fixes, "丢弃孤立 tool 结果（无对应 assistant tool_calls）")
+				continue
+			}
+			pendingToolCalls = false
+		case "assistant":
+			pendingToolCalls = hasToolCalls
+		default:
+			pendingToolCalls = false
+		}
+		// 相邻同角色合并（assistant 带 tool_calls 或 tool 不合并）
+		if len(out) > 0 && role == lastRole && role != "tool" && !hasToolCalls {
+			if prev, ok := out[len(out)-1]["content"].(string); ok && content != "" {
+				merged := prev
+				if merged != "" {
+					merged += "\n"
+				}
+				merged += content
+				out[len(out)-1]["content"] = merged
+				fixes = append(fixes, "合并相邻同角色消息: "+role)
+				continue
+			}
+		}
+		out = append(out, m)
+		lastRole = role
+	}
+	return out, fixes
+}
+
 // ===== 全局错误桶（工具资产进化数据——跨对话持久——4.x 设计） =====
 
 type errBucket struct {
