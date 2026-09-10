@@ -4,8 +4,32 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"syscall"
 )
+
+// localLockDir — 锁/PID 文件目录（2026-09-10：挪出 /tmp——tmp_cleaner 3 天未访问即删；
+// 默认 ~/.zerg/state，ZERG_STATE_DIR 可覆盖）
+func localLockDir() string {
+	if d := os.Getenv("ZERG_STATE_DIR"); d != "" {
+		return d
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".zerg", "state")
+	}
+	return os.TempDir()
+}
+
+// localLockFile — 锁/PID 文件路径（kind=lock|pid）
+func localLockFile(modelKey, kind string) string {
+	dir := localLockDir()
+	_ = os.MkdirAll(dir, 0o755)
+	suffix := "lock"
+	if kind == "pid" {
+		suffix = "pid"
+	}
+	return filepath.Join(dir, fmt.Sprintf("llama-%s.%s", modelKey, suffix))
+}
 
 // B12 治本层：flock 文件锁 + PID 文件。
 // 原则（用户 2026-08-11 确认）：
@@ -25,7 +49,7 @@ type InstanceLock struct {
 // 已持有（其他进程在跑同模型服务）→ 返回已存在标记。
 // 未持有 → 拿锁成功，调用方负责启动服务。
 func AcquireLock(modelKey string) (*InstanceLock, bool, error) {
-	path := fmt.Sprintf("/tmp/zerg-llama-%s.lock", modelKey)
+	path := localLockFile(modelKey, "lock")
 
 	// 打开/创建锁文件（不删除——flock 锁跟文件描述符走，删文件会造成竞态）
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
@@ -56,13 +80,13 @@ func (l *InstanceLock) Release() {
 
 // WritePidFile 写 PID 文件（进程重复侦测辅助）。
 func WritePidFile(modelKey string, pid int) error {
-	path := fmt.Sprintf("/tmp/zerg-llama-%s.pid", modelKey)
+	path := localLockFile(modelKey, "pid")
 	return os.WriteFile(path, []byte(fmt.Sprintf("%d\n", pid)), 0644)
 }
 
 // RemovePidFile 删除 PID 文件（优雅退出时）。
 func RemovePidFile(modelKey string) {
-	path := fmt.Sprintf("/tmp/zerg-llama-%s.pid", modelKey)
+	path := localLockFile(modelKey, "pid")
 	os.Remove(path)
 }
 
