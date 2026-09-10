@@ -13,7 +13,7 @@ pub struct MdEditor {
     pub buffer: TextBuffer,
     /// 光标字符位置
     pub cursor: usize,
-    /// 选择起点（None = 无选择）
+    /// 选择起点（None = 无选择）——M35: shift+方向键会设置此项（锚点）
     pub selection: Option<usize>,
     /// 撤销历史
     history: EditHistory,
@@ -105,6 +105,7 @@ impl MdEditor {
         if text.is_empty() {
             return;
         }
+        let cursor_before = self.cursor; // M36: 记录编辑前光标（撤销恢复用）
         // 有选择——先删
         let ops = self.replace_selection_ops();
         let mut ops = ops.unwrap_or_default();
@@ -115,7 +116,7 @@ impl MdEditor {
         self.buffer.insert(self.cursor, text);
         self.cursor += text.chars().count();
         self.selection = None;
-        self.history.push(ops);
+        self.history.push(ops, cursor_before, self.cursor); // M36
         self.dirty = true;
         self.invalidate_cache();
     }
@@ -125,21 +126,27 @@ impl MdEditor {
         if text.is_empty() {
             return;
         }
+        let cursor_before = self.cursor; // M36
         let pos = self.buffer.len();
         self.buffer.insert(pos, text);
         self.cursor = self.buffer.len();
-        self.history.push(vec![EditOp::Insert {
-            pos,
-            text: text.to_string(),
-        }]);
+        self.history.push(
+            vec![EditOp::Insert {
+                pos,
+                text: text.to_string(),
+            }],
+            cursor_before,
+            self.cursor,
+        );
         self.dirty = true;
         self.invalidate_cache();
     }
 
     /// 删除（退格——光标前）
     pub fn backspace(&mut self) {
+        let cursor_before = self.cursor; // M36
         if let Some(ops) = self.replace_selection_ops() {
-            self.history.push(ops);
+            self.history.push(ops, cursor_before, self.cursor);
             self.dirty = true;
             self.invalidate_cache();
             return;
@@ -152,19 +159,24 @@ impl MdEditor {
         // 实际切到的是 start-1 位置（差一位）→ 撤销会把文本改坏；改为取 [start, cursor) 区间
         let removed = self.buffer.slice_chars(start, self.cursor);
         self.buffer.remove(start, self.cursor);
-        self.history.push(vec![EditOp::Delete {
-            pos: start,
-            text: removed,
-        }]);
         self.cursor = start;
+        self.history.push(
+            vec![EditOp::Delete {
+                pos: start,
+                text: removed,
+            }],
+            cursor_before,
+            self.cursor,
+        );
         self.dirty = true;
         self.invalidate_cache();
     }
 
     /// 删除（Del——光标后）
     pub fn delete_forward(&mut self) {
+        let cursor_before = self.cursor; // M36
         if let Some(ops) = self.replace_selection_ops() {
-            self.history.push(ops);
+            self.history.push(ops, cursor_before, self.cursor);
             self.dirty = true;
             self.invalidate_cache();
             return;
@@ -175,10 +187,14 @@ impl MdEditor {
         let end = self.cursor + 1;
         let removed = self.buffer.slice_chars(self.cursor, end); // M07: 不再整篇 to_string()
         self.buffer.remove(self.cursor, end);
-        self.history.push(vec![EditOp::Delete {
-            pos: self.cursor,
-            text: removed,
-        }]);
+        self.history.push(
+            vec![EditOp::Delete {
+                pos: self.cursor,
+                text: removed,
+            }],
+            cursor_before,
+            self.cursor,
+        );
         self.dirty = true;
         self.invalidate_cache();
     }
@@ -238,9 +254,10 @@ impl MdEditor {
     // ─────────────── 撤销/重做 ───────────────
 
     pub fn undo(&mut self) {
-        if let Some(ops) = self.history.undo() {
-            apply_undo_ops(&mut self.buffer, &ops);
-            self.cursor = self.cursor.min(self.buffer.len());
+        if let Some(group) = self.history.undo() {
+            apply_undo_ops(&mut self.buffer, &group.ops);
+            // M36(2026-09-10 审计): 恢复编辑前光标（原来只 min(len)——撤销后光标不在被改文本处）
+            self.cursor = group.cursor_before.min(self.buffer.len());
             self.selection = None;
             self.dirty = true;
             self.invalidate_cache();
@@ -248,9 +265,10 @@ impl MdEditor {
     }
 
     pub fn redo(&mut self) {
-        if let Some(ops) = self.history.redo() {
-            apply_redo_ops(&mut self.buffer, &ops);
-            self.cursor = self.cursor.min(self.buffer.len());
+        if let Some(group) = self.history.redo() {
+            apply_redo_ops(&mut self.buffer, &group.ops);
+            // M36: 恢复到编辑后光标
+            self.cursor = group.cursor_after.min(self.buffer.len());
             self.selection = None;
             self.dirty = true;
             self.invalidate_cache();
@@ -313,6 +331,89 @@ impl MdEditor {
         };
         self.cursor = line_end.max(self.buffer.line_to_char(line));
         self.selection = None;
+    }
+
+    // ─────── M35(2026-09-10 审计): Shift+方向键扩展选择 ───────
+    // 原来全文件只有把 selection 置 None 的赋值、没有任何 `selection = Some(..)`，
+    // shift+方向键也被显式排除 → 选择/替换功能全是死代码。以下 *_extend 变体
+    // 在移动光标前用当前光标作为锚点，形成 [锚点, 光标) 选区（普通 move_* 仍清空选区）。
+
+    /// 若尚无选择，以当前光标为选择锚点
+    fn ensure_sel_anchor(&mut self) {
+        if self.selection.is_none() {
+            self.selection = Some(self.cursor);
+        }
+    }
+
+    /// 锚点与光标重合时清除选区（避免"零宽选择"）
+    fn clear_collapsed_selection(&mut self) {
+        if self.selection == Some(self.cursor) {
+            self.selection = None;
+        }
+    }
+
+    pub fn move_left_extend(&mut self) {
+        self.ensure_sel_anchor();
+        if self.cursor > 0 {
+            self.cursor -= 1;
+        }
+        self.clear_collapsed_selection();
+    }
+
+    pub fn move_right_extend(&mut self) {
+        self.ensure_sel_anchor();
+        if self.cursor < self.buffer.len() {
+            self.cursor += 1;
+        }
+        self.clear_collapsed_selection();
+    }
+
+    pub fn move_up_extend(&mut self) {
+        self.ensure_sel_anchor();
+        let line = self.cursor_line();
+        if line > 0 {
+            let line_start = self.buffer.line_to_char(line - 1);
+            let col = self.cursor - self.buffer.line_to_char(line);
+            self.cursor = (line_start + col)
+                .min(self.buffer.line_to_char(line) - 1)
+                .max(line_start);
+        }
+        self.clear_collapsed_selection();
+    }
+
+    pub fn move_down_extend(&mut self) {
+        self.ensure_sel_anchor();
+        let line = self.cursor_line();
+        if line + 1 < self.buffer.line_count() {
+            let next_start = self.buffer.line_to_char(line + 1);
+            let col = self.cursor - self.buffer.line_to_char(line);
+            let next_end = if line + 2 < self.buffer.line_count() {
+                self.buffer.line_to_char(line + 2).saturating_sub(1)
+            } else {
+                self.buffer.len()
+            };
+            self.cursor = (next_start + col).min(next_end).max(next_start);
+        }
+        self.clear_collapsed_selection();
+    }
+
+    pub fn move_home_extend(&mut self) {
+        self.ensure_sel_anchor();
+        let line = self.cursor_line();
+        self.cursor = self.buffer.line_to_char(line);
+        self.clear_collapsed_selection();
+    }
+
+    pub fn move_end_extend(&mut self) {
+        self.ensure_sel_anchor();
+        let line = self.cursor_line();
+        let line_end = if line + 1 < self.buffer.line_count() {
+            self.buffer.line_to_char(line + 1).saturating_sub(1)
+        } else {
+            self.buffer.len()
+        };
+        self.cursor = line_end.max(self.buffer.line_to_char(line));
+        self.clear_collapsed_selection();
     }
 
     // ─────────────── 渲染 ───────────────
@@ -432,6 +533,13 @@ impl MdEditor {
                         egui::Key::ArrowDown if !modifiers.shift => out.push(KeyAction::Down),
                         egui::Key::Home if !modifiers.shift => out.push(KeyAction::Home),
                         egui::Key::End if !modifiers.shift => out.push(KeyAction::End),
+                        // M35: Shift+方向键/Home/End → 扩展选择（原来被排除=选择功能死代码）
+                        egui::Key::ArrowLeft if modifiers.shift => out.push(KeyAction::SelectLeft),
+                        egui::Key::ArrowRight if modifiers.shift => out.push(KeyAction::SelectRight),
+                        egui::Key::ArrowUp if modifiers.shift => out.push(KeyAction::SelectUp),
+                        egui::Key::ArrowDown if modifiers.shift => out.push(KeyAction::SelectDown),
+                        egui::Key::Home if modifiers.shift => out.push(KeyAction::SelectHome),
+                        egui::Key::End if modifiers.shift => out.push(KeyAction::SelectEnd),
                         egui::Key::Z if modifiers.command && !modifiers.shift => {
                             out.push(KeyAction::Undo)
                         }
@@ -461,6 +569,13 @@ impl MdEditor {
                 KeyAction::End => self.move_end(),
                 KeyAction::Undo => self.undo(),
                 KeyAction::Redo => self.redo(),
+                // M35: 扩展选择
+                KeyAction::SelectLeft => self.move_left_extend(),
+                KeyAction::SelectRight => self.move_right_extend(),
+                KeyAction::SelectUp => self.move_up_extend(),
+                KeyAction::SelectDown => self.move_down_extend(),
+                KeyAction::SelectHome => self.move_home_extend(),
+                KeyAction::SelectEnd => self.move_end_extend(),
             }
         }
     }
@@ -479,6 +594,13 @@ enum KeyAction {
     End,
     Undo,
     Redo,
+    // M35: Shift 扩展选择
+    SelectLeft,
+    SelectRight,
+    SelectUp,
+    SelectDown,
+    SelectHome,
+    SelectEnd,
 }
 
 #[cfg(test)]
@@ -512,5 +634,54 @@ mod m01_tests {
             let expected = ed.buffer.to_string().chars().take(pos).map(|c| c.len_utf8()).sum::<usize>();
             assert_eq!(ed.buffer.char_to_byte(pos), expected, "char {} 字节偏移不一致", pos);
         }
+    }
+
+    /// M36 回归：撤销/重做恢复光标到编辑位置（原来只 min(len)，光标错乱）
+    #[test]
+    fn undo_redo_restores_cursor() {
+        let mut ed = MdEditor::new();
+        ed.load("hello world");
+        ed.cursor = 5;
+        ed.insert_text("X");
+        assert_eq!(ed.buffer.to_string(), "helloX world");
+        assert_eq!(ed.cursor, 6);
+        ed.undo();
+        assert_eq!(ed.buffer.to_string(), "hello world");
+        assert_eq!(ed.cursor, 5, "撤销应恢复到编辑前光标");
+        ed.redo();
+        assert_eq!(ed.buffer.to_string(), "helloX world");
+        assert_eq!(ed.cursor, 6, "重做应恢复到编辑后光标");
+    }
+
+    /// M35 回归：Shift+方向键设置选择；输入时替换选区（原选择功能全是死代码）
+    #[test]
+    fn shift_arrow_sets_selection_and_replaces() {
+        let mut ed = MdEditor::new();
+        ed.load("abcdef");
+        ed.cursor = 6;
+        ed.move_left_extend();
+        ed.move_left_extend();
+        assert_eq!(ed.selection, Some(6), "shift 扩展应以原光标为锚点");
+        assert_eq!(ed.cursor, 4);
+        ed.insert_text("XY");
+        assert_eq!(ed.buffer.to_string(), "abcdXY", "插入应替换选区");
+        assert_eq!(ed.selection, None);
+    }
+
+    /// M36/M39 回归：历史溢出裁剪后仍可连续撤销且光标正确
+    #[test]
+    fn history_overflow_keeps_recent_edits() {
+        let mut ed = MdEditor::new();
+        ed.load("");
+        for i in 0..120u32 {
+            ed.cursor = ed.buffer.len();
+            ed.insert_text(&((b'a' + (i % 26) as u8) as char).to_string());
+        }
+        assert_eq!(ed.buffer.len(), 120);
+        for _ in 0..100 {
+            ed.undo();
+        }
+        // 只保留最近 100 次编辑——撤销 100 次后应剩 20 个字符
+        assert_eq!(ed.buffer.len(), 20, "溢出裁剪应只丢最旧的编辑");
     }
 }

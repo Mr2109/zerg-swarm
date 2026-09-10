@@ -318,8 +318,10 @@ pub struct ChatView {
     pending_image_name: String,
     image_rx: Option<std::sync::mpsc::Receiver<(String, String)>>, // M21: 后台图片编码结果（data URL, 名称）
     // D4 固定
-    pin_pending: Option<api::SharedResult<Value>>,
-    archive_pending: Option<api::SharedResult<Value>>,
+    // M28(2026-09-10 审计): 原来单槽 Option——连点置顶/归档会覆盖上一个句柄（结果无人消费）。
+    // 改为 Vec 队列，poll 逐帧消费已完成的、保留未完成的。
+    pin_pending: Vec<api::SharedResult<Value>>,
+    archive_pending: Vec<api::SharedResult<Value>>,
     // P4-23 消息 markdown 渲染缓存（msg_id → cache——文档查看模式同款 CommonMarkViewer）
     pub msg_md_cache: std::collections::HashMap<i64, egui_commonmark::CommonMarkCache>,
     // P4-29 消息区虚拟列表（长对话性能——egui_virtual_list——变高行+懒算高度缓存）
@@ -412,8 +414,8 @@ impl ChatView {
             pending_image: None,
             pending_image_name: String::new(),
             image_rx: None,
-            pin_pending: None,
-            archive_pending: None,
+            pin_pending: Vec::new(),
+            archive_pending: Vec::new(),
             msg_md_cache: std::collections::HashMap::new(),
             vlist: {
                 let mut v = egui_virtual_list::VirtualList::new();
@@ -572,7 +574,6 @@ impl ChatView {
         self.stream_sid = Some(sid.clone());
         self.stream = Some(api::chat_send_stream_async(sid, content, img_single, imgs, None));
         self.stream_started = now_f64(); // P4-35 等待计时起点
-        self.stream_started = now_f64();
     }
 
     /// 选择图片（D3/P2——rfd 文件对话框 → base64 data URL——多图追加）
@@ -1056,31 +1057,31 @@ impl ChatView {
             }
         }
         // M09(2026-09-10 审计): 置顶结果消费（成功后再刷新——原来发起即刷新有竞态）
-        let pending = self.pin_pending.take();
-        if let Some(p) = pending {
+        // M28(2026-09-10 审计): Vec 队列 drain——连点不再丢句柄
+        let pendings = std::mem::take(&mut self.pin_pending);
+        let mut still = Vec::new();
+        for p in pendings {
             let done = lock_recover(&p).clone();
-            if let Some(res) = done {
-                match res {
-                    Ok(_) => self.refresh_sessions(),
-                    Err(e) => self.send_error = Some(format!("置顶失败: {}", e)),
-                }
-            } else {
-                self.pin_pending = Some(p);
+            match done {
+                Some(Ok(_)) => self.refresh_sessions(),
+                Some(Err(e)) => self.send_error = Some(format!("置顶失败: {}", e)),
+                None => still.push(p),
             }
         }
+        self.pin_pending = still;
         // M09(2026-09-10 审计): 归档结果消费（成功后再刷新——原来发起即刷新有竞态）
-        let pending = self.archive_pending.take();
-        if let Some(p) = pending {
+        // M28: Vec 队列 drain
+        let pendings = std::mem::take(&mut self.archive_pending);
+        let mut still = Vec::new();
+        for p in pendings {
             let done = lock_recover(&p).clone();
-            if let Some(res) = done {
-                match res {
-                    Ok(_) => self.refresh_sessions(),
-                    Err(e) => self.send_error = Some(format!("归档失败: {}", e)),
-                }
-            } else {
-                self.archive_pending = Some(p);
+            match done {
+                Some(Ok(_)) => self.refresh_sessions(),
+                Some(Err(e)) => self.send_error = Some(format!("归档失败: {}", e)),
+                None => still.push(p),
             }
         }
+        self.archive_pending = still;
         // M10(2026-09-10 审计): 删会话结果消费（Ok(false) 也算失败；成功后再刷新）
         let pending = self.delete_pending.take();
         if let Some(p) = pending {
@@ -1394,7 +1395,8 @@ impl ChatView {
             });
         if let Some((pid, pin)) = pinned {
             // M09(2026-09-10 审计): 不再发起即刷新（竞态）——poll 成功后刷新
-            self.pin_pending = Some(api::chat_set_pinned_async(pid, pin));
+            // M28: 入队（不覆盖前一个句柄）
+            self.pin_pending.push(api::chat_set_pinned_async(pid, pin));
         }
         // P4-10 重命名（进入行内编辑）
         if let Some((rid, rtext)) = renaming {
@@ -1414,7 +1416,8 @@ impl ChatView {
         }
         if let Some(id) = archived {
             // M09(2026-09-10 审计): 不再发起即刷新（竞态）——poll 成功后刷新
-            self.archive_pending = Some(api::chat_set_archived_async(id, true));
+            // M28: 入队（不覆盖前一个句柄）
+            self.archive_pending.push(api::chat_set_archived_async(id, true));
         }
         if let Some(id) = deleted {
             if self.active_session.as_deref() == Some(&id) {
