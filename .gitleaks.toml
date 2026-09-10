@@ -10,9 +10,3 @@ description = "内存子系统的威胁扫描测试夹具（合成假密钥）"
 paths = [
   'core/internal/memory/memory_test.go',
 ]
-# 显式列出合成假值：路径白名单在部分 gitleaks 版本（如 8.24.3）不生效，
-# 直接对**被抽取出的 secret 本身**做正则豁免才版本无关（默认 regexTarget=secret，所以不带 `api_key = ` 前缀）。
-# 注意：正则必须能被 Go regexp 编译——不要写 `\"` 这类非法转义（实测会导致 gitleaks panic）。
-regexes = [
-  '8f3a9c2b7d1e4f6a8b2c4d6e8f0a1b3c',
-]

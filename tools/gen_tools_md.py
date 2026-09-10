@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
-"""gen_tools_md.py — 从工具注册表生成工具目录（公开文档的中文原版）
+"""gen_tools_md.py — 从工具注册表生成 TOOLS.md（公开文档）
 
 用法（仓库根执行）：
-    python3 tools/gen_tools_md.py > docs/TOOLS.zh-CN.md          # 公开仓
-    python3 tools/gen_tools_md.py > publish/docs/TOOLS.zh-CN.md   # 私有仓（快照源目录）
+    python3 tools/gen_tools_md.py > docs/TOOLS.md
 
 数据源：core/internal/chat/chat_tool_registry.go（单一真相源）
-说明：
-  - 本脚本只读注册表；改工具清单请改注册表，不要手改生成的文档。
-  - 生成结果含中文页头（语言切换 + 源声明），**是中文原版**；
-    英文版 docs/TOOLS.en.md 是它的派生翻译，改完必须同 PR 同步（工具名/分类不译，描述文字保持中文）。
+说明：本脚本只读注册表；改工具清单请改注册表，不要手改生成的文档。
 """
 import collections
 import os
@@ -45,11 +41,6 @@ def main() -> int:
 
     out = [
         "# 工具目录（TOOLS）",
-        "",
-        "[English](TOOLS.en.md) | **中文**",
-        "",
-        "> *中文原版（唯一真相源）。英文版为派生翻译；两版如有不一致，以**本文**为准。*",
-        "> *注：下方工具**描述**即实际发送给模型的文本（中文）——本版有意不翻译描述文字。*",
         "",
         "> 本文件由工具注册表**自动生成**（`core/internal/chat/chat_tool_registry.go`）——",
         "> 改工具清单请改注册表，不要手改本文件。",
@@ -88,7 +79,7 @@ def main() -> int:
         "## 重新生成",
         "",
         "```bash",
-        "python3 tools/gen_tools_md.py > docs/TOOLS.zh-CN.md   # 英文版 docs/TOOLS.en.md 需同 PR 同步",
+        "python3 tools/gen_tools_md.py > docs/TOOLS.md",
         "```",
         "",
     ]
