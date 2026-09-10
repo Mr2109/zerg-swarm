@@ -45,15 +45,22 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	json.NewEncoder(w).Encode(data)
 }
 
-// writeError 辅助函数：写入错误 JSON 响应。
+// writeError 辅助函数：写入错误 JSON 响应（**兼容路径**——多语言 L4 后 API 一律用 writeErrorCode）。
 // v2.5.6 错误码设计（2026-08-29）: 响应格式对齐网关——{"error":{"type":"<code>","message":"<msg>"}}
-// 现有调用 writeError(w, status, msg) 不传 code → code 为空——兼容（客户端按 HTTP 状态兜底）
+// 多语言 L4（2026-09-11）: api 包 88 处调用点已全部迁到 writeErrorCode（type=UPPER_SNAKE_CASE），
+// 本函数仅保留给外部插件/未来接口兜底（客户端两种形态都能解析——ui parse_api_error）。
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
-// writeErrorCode 带分类码的错误响应（错误码体系——对齐网关 {"error":{"type":code}}）
-// 用法: writeErrorCode(w, http.StatusNotFound, "model_not_found", "模型不存在: xxx")
+// writeErrorCode 带分类码的错误响应（错误码体系——对齐网关 {"error":{"type":code,"message":msg}}）
+// 用法: writeErrorCode(w, http.StatusNotFound, "MODEL_NOT_FOUND", "模型不存在: xxx")
+//
+// 多语言 L4（2026-09-11）约定：
+//   - code 用 UPPER_SNAKE_CASE（对齐 Google AIP-193 reason 与网关 type）
+//   - **双写期：只加 code，不改 message**（旧客户端读 message/HTTP 状态照常工作）
+//   - UI 侧按 code 渲染本地化文案（ui/src/api.rs parse_api_error + locales 的 apierr.* 键），
+//     未收录的 code 原样回显服务端 message——因此新增 code 不必同步发 UI
 func writeErrorCode(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]interface{}{
 		"error": map[string]string{
@@ -66,7 +73,7 @@ func writeErrorCode(w http.ResponseWriter, status int, code, message string) {
 // SubmitTaskHandler 提交任务到总调度器（v2.5.5 T3——外部任务接入/内部任务触发）
 func (h *Handlers) SubmitTaskHandler(w http.ResponseWriter, r *http.Request) {
 	if h.Scheduler == nil {
-		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
 		return
 	}
 	var req struct {
@@ -82,11 +89,11 @@ func (h *Handlers) SubmitTaskHandler(w http.ResponseWriter, r *http.Request) {
 		ParentMessageID string `json:"parent_message_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "请求体解析失败: "+err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_BODY", "请求体解析失败: "+err.Error())
 		return
 	}
 	if req.Description == "" {
-		writeError(w, http.StatusBadRequest, "description 不能为空")
+		writeErrorCode(w, http.StatusBadRequest, "MISSING_DESCRIPTION", "description 不能为空")
 		return
 	}
 	description := req.Description
@@ -143,7 +150,7 @@ func (h *Handlers) SubmitTaskHandler(w http.ResponseWriter, r *http.Request) {
 // v2.5.5 虫族UI: 返回 running + queue + history（UI 3 组显示）
 func (h *Handlers) ListTasksHandler(w http.ResponseWriter, r *http.Request) {
 	if h.Scheduler == nil {
-		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
 		return
 	}
 	h.Scheduler.mu.Lock()
@@ -186,7 +193,7 @@ func (h *Handlers) ListTasksHandler(w http.ResponseWriter, r *http.Request) {
 // GET /api/tasks/{id}——基本信息 + 执行时间线（events.jsonl 解析）+ 产物
 func (h *Handlers) TaskDetailHandler(w http.ResponseWriter, r *http.Request) {
 	if h.Scheduler == nil {
-		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
 		return
 	}
 	taskID := chi.URLParam(r, "id")
@@ -207,7 +214,7 @@ func (h *Handlers) TaskDetailHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	h.Scheduler.mu.Unlock()
 	if task == nil {
-		writeError(w, http.StatusNotFound, "任务不存在: "+taskID)
+		writeErrorCode(w, http.StatusNotFound, "TASK_NOT_FOUND", "任务不存在: "+taskID)
 		return
 	}
 	// 组装详情（基本信息 + 跟踪）
@@ -573,7 +580,7 @@ func (h *Handlers) TaskGitHandler(w http.ResponseWriter, r *http.Request) {
 	// 任务 worktree 路径（zerg-wt/task-<id>）
 	wtDir := filepath.Join(statepath.WorkspaceRoot(), "zerg-wt", "task-"+sanitizeID(taskID))
 	if _, err := os.Stat(wtDir); err != nil {
-		writeError(w, http.StatusNotFound, "任务 worktree 不存在: "+taskID)
+		writeErrorCode(w, http.StatusNotFound, "WORKTREE_NOT_FOUND", "任务 worktree 不存在: "+taskID)
 		return
 	}
 	// git log（最近 20 commit）
@@ -603,12 +610,12 @@ func (h *Handlers) TaskDiffHandler(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
 	wtDir := filepath.Join(statepath.WorkspaceRoot(), "zerg-wt", "task-"+sanitizeID(taskID))
 	if _, err := os.Stat(wtDir); err != nil {
-		writeError(w, http.StatusNotFound, "任务 worktree 不存在: "+taskID)
+		writeErrorCode(w, http.StatusNotFound, "WORKTREE_NOT_FOUND", "任务 worktree 不存在: "+taskID)
 		return
 	}
 	diffOut, err := exec.Command("git", "-C", wtDir, "diff").Output()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "git diff 失败: "+err.Error())
+		writeErrorCode(w, http.StatusInternalServerError, "GIT_DIFF_FAILED", "git diff 失败: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -778,7 +785,7 @@ func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"type": "mcp", "items": items})
 	default:
-		writeError(w, http.StatusBadRequest, "未知资源类型: "+resType)
+		writeErrorCode(w, http.StatusBadRequest, "UNKNOWN_RESOURCE_TYPE", "未知资源类型: "+resType)
 	}
 }
 
@@ -843,11 +850,11 @@ func (h *Handlers) modelMachineMap() map[string]string {
 func (h *Handlers) TaskRetryHandler(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
 	if h.Scheduler == nil {
-		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
 		return
 	}
 	if err := h.Scheduler.RetryTask(taskID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "TASK_RETRY_FAILED", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "task_id": taskID, "status": "queued"})
@@ -859,15 +866,15 @@ func (h *Handlers) TaskMoveHandler(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
 	action := r.URL.Query().Get("action")
 	if action == "" {
-		writeError(w, http.StatusBadRequest, "缺少 action 参数（top/bottom/up/down）")
+		writeErrorCode(w, http.StatusBadRequest, "MISSING_ACTION", "缺少 action 参数（top/bottom/up/down）")
 		return
 	}
 	if h.Scheduler == nil {
-		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
 		return
 	}
 	if err := h.Scheduler.MoveTask(taskID, action); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "TASK_MOVE_FAILED", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "task_id": taskID, "action": action})
@@ -879,11 +886,11 @@ func (h *Handlers) TaskPauseHandler(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
 	pause := r.URL.Query().Get("pause") != "false" // 默认 true（暂停）
 	if h.Scheduler == nil {
-		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
 		return
 	}
 	if err := h.Scheduler.PauseTask(taskID, pause); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "TASK_PAUSE_FAILED", err.Error())
 		return
 	}
 	status := "paused"
@@ -898,11 +905,11 @@ func (h *Handlers) TaskPauseHandler(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) TaskDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "id")
 	if h.Scheduler == nil {
-		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
 		return
 	}
 	if err := h.Scheduler.DeleteTask(taskID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "TASK_DELETE_FAILED", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "task_id": taskID, "deleted": true})
@@ -981,12 +988,12 @@ func (h *Handlers) DocsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// 内容（防路径穿越）
 	if strings.Contains(docPath, "..") {
-		writeError(w, http.StatusBadRequest, "非法路径")
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_PATH", "非法路径")
 		return
 	}
 	content, err := os.ReadFile(filepath.Join(docsDir, docPath))
 	if err != nil {
-		writeError(w, http.StatusNotFound, "文档不存在: "+docPath)
+		writeErrorCode(w, http.StatusNotFound, "DOC_NOT_FOUND", "文档不存在: "+docPath)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"path": docPath, "content": string(content)})
@@ -1012,19 +1019,19 @@ func filterDocs(files []string, keywords ...string) []string {
 // 接收子端心跳，更新集群状态。
 func (h *Handlers) HeartbeatHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "仅支持 POST 方法")
+		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 POST 方法")
 		return
 	}
 
 	var req store.HeartbeatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "请求体 JSON 解析失败: "+err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_BODY", "请求体 JSON 解析失败: "+err.Error())
 		return
 	}
 
 	// 验证必填字段
 	if req.Machine == "" {
-		writeError(w, http.StatusBadRequest, "machine 字段不能为空")
+		writeErrorCode(w, http.StatusBadRequest, "MISSING_MACHINE", "machine 字段不能为空")
 		return
 	}
 
@@ -1057,7 +1064,7 @@ func (h *Handlers) HeartbeatHandler(w http.ResponseWriter, r *http.Request) {
 // 返回集群当前状态概览。
 func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "仅支持 GET 方法")
+		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET 方法")
 		return
 	}
 
@@ -1140,7 +1147,7 @@ func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
 // 返回路由表中已知的全部模型（来自 fleet.yaml，含多候选 host）。
 func (h *Handlers) ModelsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "仅支持 GET 方法")
+		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET 方法")
 		return
 	}
 
@@ -1172,12 +1179,12 @@ func (h *Handlers) ModelsHandler(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) ModelDetailHandler(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if h.Config == nil {
-		writeError(w, http.StatusServiceUnavailable, "配置未加载")
+		writeErrorCode(w, http.StatusServiceUnavailable, "CONFIG_NOT_LOADED", "配置未加载")
 		return
 	}
 	cands, ok := h.Config.Models[name]
 	if !ok || len(cands) == 0 {
-		writeError(w, http.StatusNotFound, "模型不存在: "+name)
+		writeErrorCode(w, http.StatusNotFound, "MODEL_NOT_FOUND", "模型不存在: "+name)
 		return
 	}
 	c := cands[0]
@@ -1232,21 +1239,21 @@ func (h *Handlers) ModelDetailHandler(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) ModelStartHandler(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if h.Config == nil || h.LocalBack == nil {
-		writeError(w, http.StatusServiceUnavailable, "本机后端未就绪")
+		writeErrorCode(w, http.StatusServiceUnavailable, "LOCAL_BACKEND_NOT_READY", "本机后端未就绪")
 		return
 	}
 	cands, ok := h.Config.Models[name]
 	if !ok || len(cands) == 0 {
-		writeError(w, http.StatusNotFound, "模型不存在: "+name)
+		writeErrorCode(w, http.StatusNotFound, "MODEL_NOT_FOUND", "模型不存在: "+name)
 		return
 	}
 	c := cands[0]
 	if c.Host != "local" {
-		writeError(w, http.StatusBadRequest, "仅本机模型可手动启动（"+name+" 在 "+c.Host+"——远程加载走 agent）")
+		writeErrorCode(w, http.StatusBadRequest, "NOT_LOCAL_MODEL", "仅本机模型可手动启动（"+name+" 在 "+c.Host+"——远程加载走 agent）")
 		return
 	}
 	if err := h.LocalBack.LoadModel(c.File, int(c.MemGb)); err != nil {
-		writeError(w, http.StatusInternalServerError, "模型加载失败: "+err.Error())
+		writeErrorCode(w, http.StatusInternalServerError, "MODEL_LOAD_FAILED", "模型加载失败: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "name": name, "status": "已启动（加载中）"})
@@ -1257,12 +1264,12 @@ func (h *Handlers) ModelStartHandler(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) ModelStopHandler(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if h.Config == nil || h.LocalBack == nil {
-		writeError(w, http.StatusServiceUnavailable, "本机后端未就绪")
+		writeErrorCode(w, http.StatusServiceUnavailable, "LOCAL_BACKEND_NOT_READY", "本机后端未就绪")
 		return
 	}
 	cands, ok := h.Config.Models[name]
 	if !ok || len(cands) == 0 {
-		writeError(w, http.StatusNotFound, "模型不存在: "+name)
+		writeErrorCode(w, http.StatusNotFound, "MODEL_NOT_FOUND", "模型不存在: "+name)
 		return
 	}
 	c := cands[0]
@@ -1286,12 +1293,12 @@ func (h *Handlers) AdapterOptions(model string) map[string]interface{} {
 func (h *Handlers) AdapterSchemaHandler(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if h.Gateway == nil {
-		writeError(w, http.StatusServiceUnavailable, "网关未就绪")
+		writeErrorCode(w, http.StatusServiceUnavailable, "GATEWAY_NOT_READY", "网关未就绪")
 		return
 	}
 	schema := h.Gateway.AdapterSchema(name)
 	if schema == nil {
-		writeError(w, http.StatusNotFound, "模型 "+name+" 无适配器（走旧路由——不可编辑）")
+		writeErrorCode(w, http.StatusNotFound, "MODEL_NO_ADAPTER", "模型 "+name+" 无适配器（走旧路由——不可编辑）")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1306,20 +1313,20 @@ func (h *Handlers) AdapterSchemaHandler(w http.ResponseWriter, r *http.Request) 
 func (h *Handlers) UpdateAdapterOptionsHandler(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if h.Gateway == nil {
-		writeError(w, http.StatusServiceUnavailable, "网关未就绪")
+		writeErrorCode(w, http.StatusServiceUnavailable, "GATEWAY_NOT_READY", "网关未就绪")
 		return
 	}
 	var cfg map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-		writeError(w, http.StatusBadRequest, "参数解析失败: "+err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "INVALID_PARAMS", "参数解析失败: "+err.Error())
 		return
 	}
 	if len(cfg) == 0 {
-		writeError(w, http.StatusBadRequest, "无参数提交")
+		writeErrorCode(w, http.StatusBadRequest, "NO_PARAMS", "无参数提交")
 		return
 	}
 	if err := h.Gateway.UpdateAdapterOptions(name, cfg); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "ADAPTER_OPTIONS_FAILED", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1333,7 +1340,7 @@ func (h *Handlers) UpdateAdapterOptionsHandler(w http.ResponseWriter, r *http.Re
 // LogsHandler 处理 POST /api/fleet/logs——接收子端日志上报（v1 agent 兼容）。
 func (h *Handlers) LogsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "仅支持 POST 方法")
+		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 POST 方法")
 		return
 	}
 	body, _ := io.ReadAll(r.Body)
@@ -1356,7 +1363,7 @@ func (h *Handlers) LogsHandler(w http.ResponseWriter, r *http.Request) {
 // TasksHandler 处理 GET /api/fleet/tasks —— 返回任务列表（初始为空）。
 func (h *Handlers) TasksHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "仅支持 GET 方法")
+		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 GET 方法")
 		return
 	}
 
@@ -1374,12 +1381,12 @@ func (h *Handlers) TasksHandler(w http.ResponseWriter, r *http.Request) {
 // POST /api/config/reload — 重读 fleet.yaml，更新路由表；已加载模型不受影响。
 func (h *Handlers) ReloadConfigHandler(w http.ResponseWriter, r *http.Request) {
 	if h.ConfigPath == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "config path 未配置"})
+		writeErrorCode(w, http.StatusBadRequest, "CONFIG_PATH_MISSING", "config path 未配置")
 		return
 	}
 	newCfg, err := config.LoadFleetConfig(h.ConfigPath)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "配置加载失败: " + err.Error()})
+		writeErrorCode(w, http.StatusInternalServerError, "CONFIG_LOAD_FAILED", "配置加载失败: "+err.Error())
 		return
 	}
 	oldModelCount := len(h.Config.Models)
@@ -1396,12 +1403,12 @@ func (h *Handlers) ReloadConfigHandler(w http.ResponseWriter, r *http.Request) {
 // POST /api/tasks/{id}/terminate
 func (h *Handlers) TaskTerminateHandler(w http.ResponseWriter, r *http.Request) {
 	if h.Scheduler == nil {
-		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
 		return
 	}
 	taskID := chi.URLParam(r, "id")
 	if err := h.Scheduler.TerminateTask(taskID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "TASK_TERMINATE_FAILED", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "message": "任务已终止"})
@@ -1411,12 +1418,12 @@ func (h *Handlers) TaskTerminateHandler(w http.ResponseWriter, r *http.Request) 
 // POST /api/tasks/{id}/requeue
 func (h *Handlers) TaskRequeueHandler(w http.ResponseWriter, r *http.Request) {
 	if h.Scheduler == nil {
-		writeError(w, http.StatusServiceUnavailable, "总调度器未启动")
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
 		return
 	}
 	taskID := chi.URLParam(r, "id")
 	if err := h.Scheduler.RequeueTask(taskID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorCode(w, http.StatusBadRequest, "TASK_REQUEUE_FAILED", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "message": "任务已重回队列"})

@@ -55,13 +55,13 @@ func main() {
 
 	// 解析 fleet.yaml 配置
 	fleetYAML := resolveFleetYAML()
-	fmt.Printf("🦠 虫族主控 %s（内部任务自主开发核心）\n", version.Tag)
-	fmt.Printf("📋 配置文件: %s\n", fleetYAML)
-	slog.Info("主控启动", "config", fleetYAML)
+	fmt.Printf("🦠 Zerg Core %s (internal task engine)\n", version.Tag)
+	fmt.Printf("📋 Config file: %s\n", fleetYAML)
+	slog.Info("core started", "config", fleetYAML)
 
 	// P4-49 统一工具库: 对话 deferred 工具注册到 agent 层（CA/对话通用——Mr2109 2026-09-02）
 	chat.RegisterChatExtraTools()
-	slog.Info("统一工具库已注册", "count", len(chat.ChatExtraToolDefs()))
+	slog.Info("unified tool library registered", "count", len(chat.ChatExtraToolDefs()))
 
 	// P4-49 工具调用统一计数（对话+CA 同一计数器——甲批 T2: ~/.zerg/state/tool_uses.json）
 	agent.InitToolUses()
@@ -74,18 +74,18 @@ func main() {
 
 	cfg, err := config.LoadFleetConfig(fleetYAML)
 	if err != nil {
-		log.Fatalf("❌ 加载配置文件失败: %v", err)
+		log.Fatalf("❌ failed to load the config file: %v", err)
 	}
 	// 2026-09-11 A 批（库内零明文）：令牌缺失必须启动即失败——不得静默放行
 	// （空令牌会让所有 /api/* 请求 401，而日志看起来一切正常，属最难排查的一类）
 	if cfg.Auth.Token == "" {
-		log.Fatalf("❌ 未配置共享令牌：请设置环境变量 ZERG_AUTH_TOKEN，或写入文件 %s（仓库外，推荐），或仓库根 .env（见 .env.example）", config.TokenFilePath())
+		log.Fatalf("❌ no shared token configured: set ZERG_AUTH_TOKEN, or write it to %s (outside the repo — recommended), or the repo-root .env (see .env.example)", config.TokenFilePath())
 	}
 
-	fmt.Printf("🔐 认证令牌: %s\n", config.MaskToken(cfg.Auth.Token))
-	fmt.Printf("🖥️  集群节点: %d 个\n", len(cfg.Fleet))
-	fmt.Printf("🤖 已知模型: %d 个\n", len(cfg.Models))
-	slog.Info("配置加载", "models", len(cfg.Models), "fleet", len(cfg.Fleet))
+	fmt.Printf("🔐 Auth token: %s\n", config.MaskToken(cfg.Auth.Token))
+	fmt.Printf("🖥️  Fleet nodes: %d\n", len(cfg.Fleet))
+	fmt.Printf("🤖 Known models: %d\n", len(cfg.Models))
+	slog.Info("config loaded", "models", len(cfg.Models), "fleet", len(cfg.Fleet))
 
 	// M0 配置校验（v2.4）：启动时跑 Validate——Fatal 模型报错 + Warn 提示
 	// 铁律：无模块模型拒绝调用——启动时暴露配置问题（接入时发现而非运行才失败）
@@ -106,9 +106,9 @@ func main() {
 		}
 	}
 	if localBack.AdoptExisting(localCandidates) {
-		fmt.Printf("📦 本机子端: 接管已有模型 (%s)\n", localBack.ModelFile())
+		fmt.Printf("📦 Local agent: adopting existing models (%s)\n", localBack.ModelFile())
 	} else {
-		fmt.Printf("📦 本机子端: 已初始化 (日志: %s)\n", logPath)
+		fmt.Printf("📦 Local agent: initialized (log: %s)\n", logPath)
 	}
 
 	// 初始化存储和处理器
@@ -140,7 +140,7 @@ func main() {
 		chat.SetWireStore(chatStore)
 	}
 	if chatErr != nil {
-		fmt.Printf("⚠️  对话模块初始化失败: %v（继续启动——无对话功能）\n", chatErr)
+		fmt.Printf("⚠️  chat module init failed: %v (continuing without chat)\n", chatErr)
 	} else {
 		chatLifecycle := chat.NewLifecycle(chatStore)
 		chatLifecycle.Start() // 90 天硬删定时（启动扫 + 每天 3 点）
@@ -148,7 +148,7 @@ func main() {
 		chatHandlers := api.NewChatHandlers(chatStore, chatInfer)
 		chatHandlers.RegisterChatRoutes(r)
 		handlers.ChatStore = chatStore // v2.5.7 对话→任务: 总调度器 handler 可查来源对话内容（派任务带上下文）
-		fmt.Printf("💬 对话模块: 已就绪（SQLite + 网关推理——90 天硬删）\n")
+		fmt.Printf("💬 Chat module: ready (SQLite + gateway inference — 90-day hard delete)\n")
 	}
 
 	// 路由注册
@@ -181,7 +181,7 @@ func main() {
 	port := statepath.CorePort()
 	// 用 0.0.0.0 显式监听 IPv4（Go 的 ":8580" 默认 IPv6-only，子端 IPv4 连不上）
 	addr := fmt.Sprintf("0.0.0.0:%d", port)
-	fmt.Printf("🚀 启动服务器，监听 %s\n", addr)
+	fmt.Printf("🚀 Server listening on %s\n", addr)
 
 	// 控制端点（加载/卸载/退出主控）
 	ctrl := api.NewControlHandlers(cfg.Auth.Token, cfg, localBack)
@@ -214,17 +214,17 @@ func main() {
 	// 初始化适配器配置（Init——默认值——后续 config.yaml 覆盖）
 	for name, adp := range adapterRegistry {
 		if err := adp.Init(nil); err != nil {
-			log.Printf("⚠️ 适配器 %s 初始化失败: %v", name, err)
+			log.Printf("⚠️ adapter %s init failed: %v", name, err)
 		}
 	}
-	log.Printf("🧩 模型适配器注册表: %d 个适配器（方案 B——适配器完整路由）", len(adapterRegistry))
+	log.Printf("🧩 Model adapter registry: %d adapters (full adapter routing)", len(adapterRegistry))
 
 	// 同时启动网关（:8082），三标准透传 + 本机子端
 	gw := gateway.NewGateway(cfg.Auth.Token, cfg, localBack, store, adapterRegistry)
 	// v2.5.6 2026-08-28 治本: 网关先启动并等待就绪——再恢复任务/派发（之前 goroutine 晚启动——任务调 8082 connection refused 全失败→熔断连锁）
 	go func() {
 		if err := gw.Start(8082); err != nil {
-			log.Fatalf("❌ 网关启动失败: %v", err)
+			log.Fatalf("❌ gateway start failed: %v", err)
 		}
 	}()
 	for i := 0; i < 30; i++ {
@@ -234,7 +234,7 @@ func main() {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	fmt.Printf("🚦 网关就绪检查完成（8082）\n")
+	fmt.Printf("🚦 Gateway readiness check done (8082)\n")
 
 	// v2.5.5 #9 补充5: 网关引用注入 handlers（心跳健康清零熔断用）
 	handlers.Gateway = gw
@@ -248,13 +248,13 @@ func main() {
 	}
 	masterSched := api.NewMasterScheduler(agentBin, 1, &api.StoreSnapshotReader{Store: store}) // 单槽——串行——v2.5.6 注入 store（ping 快照优先）
 	handlers.Scheduler = masterSched
-	fmt.Printf("🔄 主控总调度器启动（v2.5.5 T3——两级调度）\n")
+	fmt.Printf("🔄 Master scheduler started (two-level scheduling)\n")
 
 	// v2.5.5 P1-5 治本: 启动清理残留任务 worktree（上次崩溃/重启悬空——状态丢——worktree 堆积）
 	// 扫描 git worktree list——所有 task-* 分支——尝试 merge（有报告）或强制清理（无报告——任务已死）
 	cleaned := api.CleanupStaleWorktrees(statepath.WorkspaceRoot())
 	if cleaned > 0 {
-		fmt.Printf("🧹 启动清理残留 worktree: %d 个（P1-5 治本——任务悬空恢复）\n", cleaned)
+		fmt.Printf("🧹 Cleaned %d stale worktrees at startup\n", cleaned)
 	}
 
 	// v2.5.5 T3 任务 API（总调度器入口——外部任务接入/内部任务触发）
@@ -347,11 +347,11 @@ func main() {
 		// 每任务换模型（Mr2109 2026-08-21——多轮循环——各模型执行同一种任务——对比时间/质量）
 		if internalTriggerCount > 0 {
 			internalModelIdx = (internalModelIdx + 1) % len(internalModelPool)
-			fmt.Printf("🔄 内部任务换模型: %s（第 %d 次触发）\n", internalModelPool[internalModelIdx], internalTriggerCount)
+			fmt.Printf("🔄 Internal task model rotated: %s (trigger #%d)\n", internalModelPool[internalModelIdx], internalTriggerCount)
 		}
 		internalTriggerCount++
 		model := internalModelPool[internalModelIdx]
-		fmt.Printf("🕐 内部任务 %s 用模型 %s（第 %d 次触发）\n", def.ID, model, internalTriggerCount)
+		fmt.Printf("🕐 Internal task %s using model %s (trigger #%d)\n", def.ID, model, internalTriggerCount)
 		masterSched.Submit(&api.Task{
 			ID:          "internal-" + def.ID + "-" + fmt.Sprintf("%d", time.Now().UnixNano()),
 			Description: def.Template,
@@ -379,9 +379,9 @@ func main() {
 	idleStop := make(chan struct{})
 	if internalEngineOn {
 		go idleDetector.Run(idleStop)
-		fmt.Printf("🕐 内部任务引擎启动(v2.5.5 T3——空闲检测挂主控)\n")
+		fmt.Printf("🕐 Internal task engine started (idle detection on the core)\n")
 	} else {
-		fmt.Printf("🛑 内部任务引擎停用: ZERG_INTERNAL_TASKS 未设=1(2026-09-06 误删事故——自动触发已全部关闭)\n")
+		fmt.Printf("🛑 Internal task engine disabled: ZERG_INTERNAL_TASKS not set to 1 (all automatic triggers off)\n")
 	}
 	// v2.5.6 周期调度（Mr2109 2026-08-27——任务循环周期——每 60s 检查到点触发）
 	// 触发复用 onTrigger 的提交逻辑（模型轮换 + Flow=zerg + SkillKey=def.ID）
@@ -399,7 +399,7 @@ func main() {
 				for _, defID := range due {
 					// v2.5.6 运行模式开关（Mr2109 2026-08-28）: 手动运行任务——周期调度跳过（只手动触发）
 					if !api.IsInternalAuto(defID) {
-						fmt.Printf("⏰ 周期触发跳过: %s（手动运行——只手动触发）\n", defID)
+						fmt.Printf("⏰ Interval trigger skipped: %s (manual-only)\n", defID)
 						continue
 					}
 					for _, d := range agent.ListInternalTasks() {
@@ -411,7 +411,7 @@ func main() {
 						}
 						internalTriggerCount++
 						model := internalModelPool[internalModelIdx]
-						fmt.Printf("⏰ 周期触发: 内部任务 %s 用模型 %s（周期调度）\n", defID, model)
+						fmt.Printf("⏰ Interval trigger: internal task %s using model %s\n", defID, model)
 						masterSched.Submit(&api.Task{
 							ID:          "internal-" + d.ID + "-" + fmt.Sprintf("%d", time.Now().UnixNano()),
 							Description: d.Template,
@@ -428,7 +428,7 @@ func main() {
 				}
 			}
 		}()
-		fmt.Printf("⏰ 内部任务周期调度启动（每 60s 检查）\n")
+		fmt.Printf("⏰ Internal task interval scheduler started (checks every 60s)\n")
 	}
 
 	// v2.5.6 内部任务启停控制（UI 按钮——停止=发信号停检测——启动=重启检测）
@@ -444,12 +444,12 @@ func main() {
 				default:
 					close(internalStopCh)
 				}
-				fmt.Printf("🛑 内部任务已停止（UI 按钮）\n")
+				fmt.Printf("🛑 Internal task stopped (UI button)\n")
 			},
 			func() { // onStart: 重启 idle 检测（新通道 + Run）
 				internalStopCh = make(chan struct{})
 				go idleDetector.Run(internalStopCh)
-				fmt.Printf("▶️ 内部任务已启动（UI 按钮）\n")
+				fmt.Printf("▶️ Internal task started (UI button)\n")
 			},
 		)
 	}
@@ -464,7 +464,7 @@ func main() {
 		go func() {
 			<-sigCh
 			gw.FlushPrefixCache()
-			fmt.Printf("💾 前缀命中率统计已落盘（退出）\n")
+			fmt.Printf("💾 Prefix-cache hit stats flushed (exit)\n")
 			os.Exit(0)
 		}()
 	}
@@ -531,7 +531,7 @@ func main() {
 	go func() {
 		mon := core.NewMonitor(statepath.CoreBaseURL(), cfg.Auth.Token)
 		if err := mon.Start("8581"); err != nil {
-			fmt.Printf("⚠️ 监看面板启动失败: %v\n", err)
+			fmt.Printf("⚠️ monitor panel failed to start: %v\n", err)
 		}
 	}()
 
@@ -550,19 +550,19 @@ func validateModels(cfg *config.FleetConfig) {
 		res := config.Validate(name, candidates[0])
 		if res.HasFatal() {
 			fatalCount++
-			slog.Warn("模型配置校验失败", "model", name, "errors", len(res.Errors))
+			slog.Warn("model config validation failed", "model", name, "errors", len(res.Errors))
 		} else if len(res.Warnings) > 0 {
 			warnCount++
 		}
 	}
 	if fatalCount > 0 {
-		fmt.Printf("⚠️  M0 校验: %d 个模型配置有 Fatal 错误（网关将拒绝调用）\n", fatalCount)
+		fmt.Printf("⚠️  M0 validation: %d model configs have fatal errors (the gateway will refuse them)\n", fatalCount)
 	}
 	if warnCount > 0 {
-		fmt.Printf("📝 M0 校验: %d 个模型有警告（存量兼容——默认值/推断）\n", warnCount)
+		fmt.Printf("📝 M0 validation: %d models have warnings (legacy compat — defaults/inference)\n", warnCount)
 	}
 	if fatalCount == 0 && warnCount == 0 {
-		fmt.Printf("✅ M0 校验: 全部模型配置通过\n")
+		fmt.Printf("✅ M0 validation: all model configs passed\n")
 	}
 }
 
