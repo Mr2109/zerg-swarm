@@ -42,16 +42,16 @@ const (
 //
 // 线程安全：所有方法通过 mu 互斥锁保护共享状态。
 type LocalBackend struct {
-	mu       sync.Mutex
-	process  *exec.Cmd      // 当前 llama-server 进程
-	port     int            // 当前端口（动态分配）
-	file     string         // 当前加载的模型文件路径
-	lock     *InstanceLock  // B12: 单实例 flock 锁（持锁=服务在运行）
-	memGB    int            // 内存预算（GB）
-	state    string         // 当前状态（状态机）
-	failCnt  int            // 连续健康检查失败次数
-	circuit  int            // 熔断阈值（默认 3）
-	logPath  string         // 日志文件路径
+	mu      sync.Mutex
+	process *exec.Cmd     // 当前 llama-server 进程
+	port    int           // 当前端口（动态分配）
+	file    string        // 当前加载的模型文件路径
+	lock    *InstanceLock // B12: 单实例 flock 锁（持锁=服务在运行）
+	memGB   int           // 内存预算（GB）
+	state   string        // 当前状态（状态机）
+	failCnt int           // 连续健康检查失败次数
+	circuit int           // 熔断阈值（默认 3）
+	logPath string        // 日志文件路径
 }
 
 // NewLocalBackend 创建并初始化本机后端实例
@@ -64,9 +64,10 @@ func NewLocalBackend(logPath string) *LocalBackend {
 }
 
 // AdoptExisting — v2.5.4.9 探测本机已运行的 llama-server（孤儿/外部启动——如 9000 端口 example-35b-v2）
-//   按候选模型文件匹配（fleet.yaml local 候选）——识别已加载模型 → 设置 ready
-//   candidates: 本机候选模型文件列表（匹配其中一个才接管——避免接错残留进程）
-//   返回值: 是否成功接管（本机有配置内的模型在跑）
+//
+//	按候选模型文件匹配（fleet.yaml local 候选）——识别已加载模型 → 设置 ready
+//	candidates: 本机候选模型文件列表（匹配其中一个才接管——避免接错残留进程）
+//	返回值: 是否成功接管（本机有配置内的模型在跑）
 func (lb *LocalBackend) AdoptExisting(candidates []string) bool {
 	modelFile, port := findMatchingRunningModel(candidates)
 	if modelFile == "" || port == 0 {
@@ -136,45 +137,52 @@ func findMatchingRunningModel(candidates []string) (string, int) {
 // 线程安全：单模型约束，先停旧进程再启新进程。
 //
 // 流程：
-//   1. 检查是否已有模型在运行 → 停止（SIGTERM → 等 5s → SIGKILL）
-//   2. 检查模型文件是否存在
-//   3. 记录内存预算
-//   4. 设置状态 loading
-//   5. 动态分配端口，exec llama-server
-//   6. 等待健康检查通过（最多 60 秒）
-//   7. 设置状态 ready
+//  1. 检查是否已有模型在运行 → 停止（SIGTERM → 等 5s → SIGKILL）
+//  2. 检查模型文件是否存在
+//  3. 记录内存预算
+//  4. 设置状态 loading
+//  5. 动态分配端口，exec llama-server
+//  6. 等待健康检查通过（最多 60 秒）
+//  7. 设置状态 ready
 //
 // 失败时返回 error 并保持状态 broken。
 func (lb *LocalBackend) LoadModel(modelFile string, memGB int) error {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 
-	// 单模型约束：如果已有模型在运行，先停掉
+	// ── 整机单槽（2026-09-10 修复，Mr2109拍板）────────────────────────────────
+	// 背景：本机实例常是"接管"来的（AdoptExisting → lb.process == nil），
+	// 旧逻辑"有进程才停"会漏 → 实测同时驻留 example-35b-v2-1.5 + gemma-4-26B（PhysMem 56G used / 21G compressor）。
+	// 规则：① 目标模型已在跑 → 接管复用（不新起）② 其它模型实例 → 一律停掉（整机只驻留一个）。
+	if procs := listRunningLlamaModels(); len(procs) > 0 {
+		for _, pr := range procs {
+			if pr.ModelFile == modelFile && pr.Port > 0 {
+				lb.file = modelFile
+				lb.port = pr.Port
+				lb.process = nil // 外部实例（接管态）
+				lb.memGB = memGB
+				_ = lb.ensureMachineLock()
+				lb.failCnt = 0
+				lb.setState(stateReady)
+				log.Printf("[localback] 单槽: 复用已在运行的同模型实例 pid=%d port=%d model=%s",
+					pr.PID, pr.Port, filepath.Base(modelFile))
+				return nil
+			}
+		}
+		if killed := sweepOtherModels(modelFile); len(killed) > 0 {
+			log.Printf("[localback] 单槽清场: 已停止 %d 个其它本机实例 %v（整机单模型驻留）", len(killed), killed)
+		}
+	}
+	// 进程内残留（本进程自己起的旧实例）也停掉
 	if lb.process != nil && lb.process.ProcessState == nil {
 		log.Printf("[localback] 已有模型在运行 (%s)，先停止...", lb.file)
 		lb.stopProcess()
 	}
-
-	// B12 治本：flock 单实例锁——一台机器一套 llama 服务。
-	// 已有实例持锁 → 复用（不新起进程）；无锁 → 拿锁后启动。
-	modelKey := modelName(modelFile)
-	if lb.lock != nil {
-		lb.lock.Release()
-		lb.lock = nil
-	}
-	lock, exists, err := AcquireLock(modelKey)
-	if err != nil {
+	// 整机单例锁（持锁 = 本机唯一后端；锁文件在状态目录，不用 /tmp）
+	if err := lb.ensureMachineLock(); err != nil {
 		lb.setState(stateBroken)
 		return err
 	}
-	if exists {
-		// 已有实例在跑（锁被持有）——复用：健康检查通过即返回 ready
-		log.Printf("[localback] B12: 复用已有 %s 实例（锁持有中）", modelKey)
-		lb.lock = lock // nil（未获取到锁）
-		lb.setState(stateReady)
-		return nil
-	}
-	lb.lock = lock
 
 	// 检查模型文件是否存在
 	if _, err := os.Stat(modelFile); err != nil {
@@ -227,11 +235,11 @@ func (lb *LocalBackend) LoadModel(modelFile string, memGB int) error {
 	}
 
 	args := []string{
-		"-m", modelFile,           // 模型文件
-		"-c", "262144",           // 上下文窗口 256K（example-35b-v2 支持最大，maxToken 同值）
-		"--host", "127.0.0.1",     // 绑定本机
+		"-m", modelFile, // 模型文件
+		"-c", "262144", // 上下文窗口 256K（example-35b-v2 支持最大，maxToken 同值）
+		"--host", "127.0.0.1", // 绑定本机
 		"--port", fmt.Sprintf("%d", port), // 动态端口
-		"--log-disable",           // 禁用 llama-server 内部日志（我们用文件）
+		"--log-disable", // 禁用 llama-server 内部日志（我们用文件）
 	}
 
 	// 启动 llama-server 进程
@@ -368,17 +376,17 @@ func (lb *LocalBackend) MemGB() int {
 
 // LocalSnapshot 本机子端的资源快照（供主控 status 合并展示）。
 type LocalSnapshot struct {
-	Machine         string  `json:"machine"`
-	Model           *string `json:"model,omitempty"`
-	BackendState    string  `json:"backend_state"`
-	MemAvailableGb  float64 `json:"mem_available_gb"`
-	MemTotalGb      float64 `json:"mem_total_gb"`
-	Load            float64 `json:"load"`
-	GpuUsedGb       float64 `json:"gpu_used_gb"`
-	GpuTempC        float64 `json:"gpu_temp_c"`
-	BackendRssGb    float64 `json:"backend_rss_gb"`
-	Healthy         bool    `json:"healthy"`
-	Models          []string `json:"models"`
+	Machine        string   `json:"machine"`
+	Model          *string  `json:"model,omitempty"`
+	BackendState   string   `json:"backend_state"`
+	MemAvailableGb float64  `json:"mem_available_gb"`
+	MemTotalGb     float64  `json:"mem_total_gb"`
+	Load           float64  `json:"load"`
+	GpuUsedGb      float64  `json:"gpu_used_gb"`
+	GpuTempC       float64  `json:"gpu_temp_c"`
+	BackendRssGb   float64  `json:"backend_rss_gb"`
+	Healthy        bool     `json:"healthy"`
+	Models         []string `json:"models"`
 }
 
 // Snapshot 返回本机子端状态快照（machine=local）。
@@ -643,7 +651,8 @@ func isPortFree(port int) bool {
 }
 
 // findAnyRunningModel — v2.5.4.9 扫 9000-9999 任一 llama-server 进程（不管哪个模型）
-//   返回: PID 列表 + 模型文件（命令行里的 -m 参数）
+//
+//	返回: PID 列表 + 模型文件（命令行里的 -m 参数）
 func findAnyRunningModel() ([]int, string) {
 	cmd := exec.Command("lsof", "-iTCP:9000-9999", "-sTCP:LISTEN", "-P", "-n")
 	out, err := cmd.Output()
@@ -715,4 +724,144 @@ func findExistingProcess(modelFile string) []int {
 		}
 	}
 	return pids
+}
+
+// ─── 整机单槽（2026-09-10 Mr2109拍板）─────────────────────────────────────────
+
+// llamaProc — 本机一个 llama-server 实例（pid/端口/模型文件）
+type llamaProc struct {
+	PID       int
+	Port      int
+	ModelFile string
+}
+
+// listRunningLlamaModels — 扫 9000-9999 上**所有** llama-server 实例（跨模型，不只匹配单个）
+func listRunningLlamaModels() []llamaProc {
+	out, err := exec.Command("lsof", "-iTCP:9000-9999", "-sTCP:LISTEN", "-P", "-n").Output()
+	if err != nil {
+		return nil
+	}
+	seen := map[int]bool{}
+	var procs []llamaProc
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[1])
+		if err != nil || seen[pid] {
+			continue
+		}
+		psOut, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+		if err != nil {
+			continue
+		}
+		cmdLine := string(psOut)
+		if !strings.Contains(cmdLine, "llama-server") {
+			continue
+		}
+		seen[pid] = true
+		procs = append(procs, llamaProc{
+			PID:       pid,
+			Port:      portFromCmdLine(cmdLine),
+			ModelFile: modelFileFromCmdLine(cmdLine),
+		})
+	}
+	return procs
+}
+
+// modelFileFromCmdLine — 从 llama-server 命令行提取 -m 的模型文件（无则 ""）
+func modelFileFromCmdLine(cmdLine string) string {
+	parts := strings.Fields(cmdLine)
+	for i, p := range parts {
+		if p == "-m" && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
+}
+
+// portFromCmdLine — 从 llama-server 命令行提取 --port（无则 0）
+func portFromCmdLine(cmdLine string) int {
+	parts := strings.Fields(cmdLine)
+	for i, p := range parts {
+		if p == "--port" && i+1 < len(parts) {
+			if n, err := strconv.Atoi(parts[i+1]); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// sweepOtherModels — 整机单槽清场：停掉除 target 之外的所有本机 llama-server 实例。
+// SIGTERM → 最多等 8s（llama 释放显存需时间）→ 仍活则 SIGKILL。返回被处理的 pid 列表。
+func sweepOtherModels(target string) []int {
+	var killed []int
+	for _, p := range listRunningLlamaModels() {
+		if p.PID <= 1 || p.ModelFile == target {
+			continue
+		}
+		log.Printf("[localback] 单槽清场: 停止其它实例 pid=%d model=%s", p.PID, filepath.Base(p.ModelFile))
+		if proc, err := os.FindProcess(p.PID); err == nil {
+			_ = proc.Signal(syscall.SIGTERM)
+		}
+		killed = append(killed, p.PID)
+	}
+	if len(killed) == 0 {
+		return nil
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		if !anyAlive(killed) {
+			return killed
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	for _, pid := range killed {
+		if pidAlive(pid) {
+			log.Printf("[localback] 单槽清场: pid=%d 未退出——SIGKILL", pid)
+			if proc, err := os.FindProcess(pid); err == nil {
+				_ = proc.Kill()
+			}
+		}
+	}
+	return killed
+}
+
+// pidAlive — 进程是否存活（signal 0）
+func pidAlive(pid int) bool {
+	if pid <= 1 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+func anyAlive(pids []int) bool {
+	for _, pid := range pids {
+		if pidAlive(pid) {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureMachineLock — 整机单例锁（整机只允许一个本机后端；持锁期间其它 zerg-core 不重复启动）
+func (lb *LocalBackend) ensureMachineLock() error {
+	if lb.lock != nil {
+		return nil // 已持有
+	}
+	lock, exists, err := AcquireLock("local")
+	if err != nil {
+		return err
+	}
+	if exists {
+		log.Printf("[localback] 单槽: 整机锁已被其它进程持有（沿用现有实例，本进程不重复启动）")
+	}
+	lb.lock = lock
+	return nil
 }
