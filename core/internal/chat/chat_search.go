@@ -25,6 +25,12 @@ func (s *ChatStore) SearchMessages(query string, limit int) ([]*SearchResult, er
 	if limit <= 0 {
 		limit = 50
 	}
+	// T4（2026-09-10）：trigram 分词器下 **<3 字的 CJK 查询 MATCH 必零命中**（实测），
+	// 故查询侧分流：含 CJK 且去空白后 <3 字 → 直接 LIKE（trigram 索引会加速 LIKE，实测 1ms 级）。
+	flat := strings.Join(strings.Fields(query), "")
+	if hasCJK(flat) && len([]rune(flat)) < 3 {
+		return s.searchLike(strings.TrimSpace(query), limit)
+	}
 	// FTS5 MATCH——查询词转引用
 	q := fmt.Sprintf(`"%s"`, strings.ReplaceAll(strings.TrimSpace(query), `"`, `""`))
 	rows, err := s.db.Query(
@@ -50,7 +56,20 @@ func (s *ChatStore) SearchMessages(query string, limit int) ([]*SearchResult, er
 		}
 		out = append(out, &r)
 	}
+	if len(out) == 0 && hasCJK(query) {
+		return s.searchLike(strings.TrimSpace(query), limit)
+	}
 	return out, nil
+}
+
+// hasCJK — 是否含 CJK 汉字（T4 查询侧分流用）
+func hasCJK(s string) bool {
+	for _, r := range s {
+		if r >= 0x4e00 && r <= 0x9fff {
+			return true
+		}
+	}
+	return false
 }
 
 // searchLike — FTS 失败降级（LIKE 模糊）

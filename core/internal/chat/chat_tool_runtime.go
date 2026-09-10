@@ -18,6 +18,8 @@ import (
 
 	"log"
 	"zerg/core/internal/agent"
+
+	"zerg/core/internal/statepath"
 )
 
 // NormalizeToolArgs — 工具参数统一解包（P4-50 bash arguments 双层嵌套修复）
@@ -287,7 +289,8 @@ type toolErrorStore struct {
 
 var (
 	errStore     = &toolErrorStore{Tools: map[string]map[string]map[string]*errBucket{}}
-	errStoreFile = "/tmp/zerg-tool-errors.json"
+	// 甲批 T2（2026-09-10）：/tmp → ~/.zerg/state/tool_errors.json（首次启动自动搬旧文件）
+	errStoreFile = statepath.MigrateIfNeeded("/tmp/zerg-tool-errors.json", "tool_errors.json")
 	errStoreInit sync.Once
 )
 
