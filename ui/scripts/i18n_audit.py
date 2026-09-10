@@ -59,12 +59,13 @@ def classify(root):
         rel = os.path.relpath(f, root)
         for i, line in enumerate(open(f, encoding="utf-8", errors="replace"), 1):
             stripped = line.strip()
-            if not CJK.search(line):
+            if not CJK.search(re.sub(r'//.*$', '', line)):
                 continue
             if stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("/*"):
                 rows.append((rel, i, "注释", "(comment)", stripped[:100]))
                 continue
-            for lit in literals_in_line(line):
+            code = re.sub(r'//.*$', '', line)      # 去行尾注释——注释里的"中文字面量"不算文案
+            for lit in literals_in_line(code):
                 if not CJK.search(lit):
                     continue
                 if T_MACRO.search(line) and lit == "":  # 保守：t! 的键不算法文案
