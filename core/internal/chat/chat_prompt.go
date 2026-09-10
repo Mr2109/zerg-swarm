@@ -17,7 +17,6 @@ package chat
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
 	"log"
 )
 
@@ -30,8 +29,7 @@ func PromptHash(p string) string {
 // BuildTieredSystemPrompt — 组装三档（纯函数——便于单测）
 func BuildTieredSystemPrompt(base, model, sessionID string, rt *ToolRuntime) string {
 	// stable：基础指令常量（调用方传入）+ 身份
-	// 多语言 D2：执行接口约定进系统提示（常量 → 字节稳定，仅新会话生效）
-	stable := base + "\n\n# 你的身份\n- 你当前运行在虫族本地模型集群——Mr2109的对话助手——不要调查或质疑自己的身份。" + "\n\n" + ffp.Conventions
+	stable := base + "\n\n# 你的身份\n- 你当前运行在虫族本地模型集群——Mr2109的对话助手——不要调查或质疑自己的身份。"
 	// context：会话元信息（模型切换 → 提示重建——缓存键含模型）
 	ctx := "\n\n# 会话环境\n- 模型: " + model
 	// volatile：记忆块 + 工具清单（会话内冻结）
@@ -54,7 +52,7 @@ func (s *ChatStore) SessionSystemPrompt(sessionID, base, model string, rt *ToolR
 	p := BuildTieredSystemPrompt(base, model, sessionID, rt)
 	if sessionID != "" {
 		if err := s.saveFrozenPrompt(sessionID, p, model); err != nil {
-			log.Printf("⚠️ failed to persist frozen system prompt (session %s): %v", sessionID, err)
+			log.Printf("⚠️ 系统提示冻结落库失败（会话 %s）: %v", sessionID, err)
 		}
 	}
 	return p
@@ -66,7 +64,7 @@ func (s *ChatStore) ClearSessionPrompt(sessionID string) {
 		return
 	}
 	if err := s.clearFrozenPrompt(sessionID); err != nil {
-		log.Printf("⚠️ failed to clear frozen system prompt (session %s): %v", sessionID, err)
+		log.Printf("⚠️ 清理系统提示冻结失败（会话 %s）: %v", sessionID, err)
 	}
 }
 

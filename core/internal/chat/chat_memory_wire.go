@@ -143,7 +143,10 @@ func MemoryToolExecute(args map[string]any) (string, error) {
 		b, _ := json.Marshal(memory.Result{Success: false, Error: err.Error()})
 		return string(b), nil
 	}
-	res := memStore.Apply(scope, target, ops)
+	// 2026-09-10 边界③修正：失败计数按会话隔离（_session_id 由 chat_handlers 在调用前注入；
+	// 缺省空串=默认键，单会话行为与旧版等价）
+	sessionKey, _ := args["_session_id"].(string)
+	res := memStore.ApplyFor(sessionKey, scope, target, ops)
 	b, merr := json.Marshal(res)
 	if merr != nil {
 		return "", merr

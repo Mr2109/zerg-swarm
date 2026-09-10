@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -260,8 +259,6 @@ func TestCompactLinguaFallbackToLLM(t *testing.T) {
 
 // TestCompactCooldownEscalation — 连续失败冷却 60→300→900 递增，冷却内不重试
 func TestCompactCooldownEscalation(t *testing.T) {
-	compactJitterRand = func() float64 { return 1 } // 钉住抖动（=base）——本用例断言精确冷却时长
-	t.Cleanup(func() { compactJitterRand = rand.Float64 })
 	st, _ := newCompactStore(t)
 	se, err := st.CreateSession("gemma-12B", "desktop", "", "冷却递增会话")
 	if err != nil {
@@ -332,8 +329,6 @@ func TestCompactCooldownEscalation(t *testing.T) {
 
 // TestCompactHardTrip — 连续 3 次失败硬熔断后不再尝试；手动重置可恢复
 func TestCompactHardTrip(t *testing.T) {
-	compactJitterRand = func() float64 { return 1 } // 钉住抖动（=base）——本用例断言精确冷却时长
-	t.Cleanup(func() { compactJitterRand = rand.Float64 })
 	st, _ := newCompactStore(t)
 	se, err := st.CreateSession("gemma-12B", "desktop", "", "硬熔断会话")
 	if err != nil {
@@ -536,27 +531,4 @@ func TestCompactContextLimitErrorDetect(t *testing.T) {
 		t.Fatalf("普通错误/空错误不应识别为上下文超限")
 	}
 	t.Logf("✓ 上下文超限识别: 3 命中 / 2 未命中")
-}
-
-// TestCompactCooldownFullJitter — 冷却含 full jitter：random(0, base)，且 base 随失败次数递增
-func TestCompactCooldownFullJitter(t *testing.T) {
-	defer func() { compactJitterRand = rand.Float64 }()
-	// 抖动因子 0.5 → 冷却 = base/2
-	compactJitterRand = func() float64 { return 0.5 }
-	if got := compactCooldownFor(1); got != 30*time.Second {
-		t.Fatalf("streak=1 抖动 0.5 → 期望 30s(60×0.5)，实际 %v", got)
-	}
-	if got := compactCooldownFor(2); got != 150*time.Second {
-		t.Fatalf("streak=2 抖动 0.5 → 期望 150s(300×0.5)，实际 %v", got)
-	}
-	// 抖动因子 0 → 冷却为 0（full jitter 允许立即重试）；因子 1 → 等于 base
-	compactJitterRand = func() float64 { return 0 }
-	if got := compactCooldownFor(3); got != 0 {
-		t.Fatalf("抖动 0 → 期望 0s，实际 %v", got)
-	}
-	compactJitterRand = func() float64 { return 1 }
-	if got := compactCooldownFor(3); got != 900*time.Second {
-		t.Fatalf("抖动 1 → 期望 900s（上限不变），实际 %v", got)
-	}
-	t.Log("✓ full jitter：随机(0,base) 生效；base 分级 60/300/900s 不变")
 }

@@ -7,7 +7,7 @@ package gateway
 import (
 	"testing"
 
-	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"zerg/core/internal/config"
 )
 
 // 阈值必须是 85%（安全网）——而不是旧实现的 50%（会与对话侧主压缩抢跑）

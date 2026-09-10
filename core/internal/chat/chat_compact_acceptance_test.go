@@ -9,14 +9,14 @@ package chat
 
 import (
 	"context"
+	"strconv"
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
+	"zerg/core/internal/statepath"
 )
 
 // 造足够大的历史以越过阈值（触发条件：≥30 条消息 AND 估算 token > 8000）

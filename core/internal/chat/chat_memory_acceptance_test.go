@@ -222,3 +222,42 @@ func TestBatchB_ToolsRegisteredAsDeferred(t *testing.T) {
 	}
 	t.Log("✓ 注册面: memory / session_search 均为 deferred 且有 schema 与类别")
 }
+
+// ── 边界③修正：失败计数按会话隔离（两会话互不牵连）──────────────────────
+
+func TestBatchB_SessionScopedFailureCounter(t *testing.T) {
+	acIsolateMemory(t)
+	failArgs := map[string]any{"action": "remove", "target": "memory", "old_text": "不存在的事实"}
+
+	// 会话 A 连续失败 3 次（进入"即将熔断"状态），但 A 自己的计数不影响 B
+	for i := 1; i <= 3; i++ {
+		argsA := map[string]any{}
+		for k, v := range failArgs {
+			argsA[k] = v
+		}
+		argsA["_session_id"] = "session-A"
+		if r := acApply(t, argsA); r.Success || r.Done {
+			t.Fatalf("会话 A 第 %d 次应普通失败，实际 %+v", i, r)
+		}
+	}
+	// 会话 B 的第一次失败 → 必须是普通失败（若计数仍为 store 级，这里会直接拿终止态）
+	argsB := map[string]any{"_session_id": "session-B"}
+	for k, v := range failArgs {
+		argsB[k] = v
+	}
+	rB := acApply(t, argsB)
+	if rB.Done {
+		t.Fatalf("会话 B 不应受会话 A 的失败计数影响（说明计数仍是 store 级）: %+v", rB)
+	}
+	// 会话 A 的第 4 次 → 终止态
+	argsA4 := map[string]any{"_session_id": "session-A"}
+	for k, v := range failArgs {
+		argsA4[k] = v
+	}
+	rA4 := acApply(t, argsA4)
+	if !rA4.Done {
+		t.Fatalf("会话 A 第 4 次应终止态，实际 %+v", rA4)
+	}
+	t.Log("✓ 边界③: 失败计数按会话隔离——A 熔断不影响 B")
+}
+
