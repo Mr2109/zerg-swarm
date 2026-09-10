@@ -21,7 +21,7 @@ futures-util = "0.3" # C3 流式（SSE——StreamExt）
 rfd = "0.15" # D3 多模态：native 文件对话框（选图）
 iconflow = { version = "1.0", features = ["all-packs"] } # P3 图标：14 开源包 34 TTF 嵌入式（MIT——v2.6 开源干净）
 chrono = "0.4"
-rust-i18n = "2"
+rust-i18n = "4"
 egui_virtual_list = "0.12"
 # 虫茧集装箱（T8——zerg-cocoon 示例虫茧——path 跨仓独立 git）
 # 2026-09-11 B 批（决策 5）：示例虫茧未完善，**首版不随公开快照发布**。
