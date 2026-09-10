@@ -1402,6 +1402,14 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 	if h, ok := args["help"].(bool); ok && h {
 		return toolHelp(toolName)
 	}
+	// 多语言 D2（2026-09-11）：执行接口约定断言——schema 里声明的约定（enum / x-zerg-format）先校验，
+	// 违约定（典型：中文值塞进英文枚举 = MLCL 主因）→ 回 FFP 教学文本，不执行。
+	// 只认 schema 声明的约定，未声明参数一律放行（中文路径/中文查询词合法——防误伤）。
+	if def, ok := ToolDefOf(toolName); ok {
+		if vs := ffp.CheckContract(toolName, def.Function.Parameters, args); len(vs) > 0 {
+			return ToolCallResult{Error: ffp.BuildParamContract(vs[0])}
+		}
+	}
 	switch toolName {
 	case "bash":
 		command, ok := args["command"].(string)
