@@ -129,12 +129,27 @@ def main():
         if not any(r[0] == a.get("file") and a.get("contains", "") in r[3] for r in rows)
     ]
 
+    extra_pre = [r for r in rows if not is_allowed(r[0], r[3])]
+    extra = extra_pre
+
     if list_only:
         print("剩余中文字面量 %d 行（基线允许 %d 行）：" % (len(rows), len(allowed)))
         for rel, i, fn, code in rows:
             mark = "允许" if is_allowed(rel, code) else "★新增"
             print("  [%s] %s:%d %s | %s" % (mark, rel, i, fn, code[:90]))
         return 0
+
+    if "--tsv" in sys.argv:
+        # 现状快照（不覆盖 P0 基线——那是历史记录）
+        out = os.path.join(ROOT, "docs", "项目文档", "v2.5.9", "i18n-audit", "L2-现状-中文字面量.tsv")
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w", encoding="utf-8") as f:
+            f.write("状态\t文件\t行号\t函数\t代码\n")
+            for rel, i, fn, code in rows:
+                f.write("%s\t%s\t%d\t%s\t%s\n"
+                        % ("允许(基线)" if is_allowed(rel, code) else "★未登记", rel, i, fn, code))
+        print("写出: " + out + "（%d 行）" % len(rows))
+        return 1 if extra else 0
 
     if extra:
         errors.append("G4 出现未登记的中文 UI 字面量（%d 行，须抽成 i18n 键或登记进基线）：" % len(extra))
