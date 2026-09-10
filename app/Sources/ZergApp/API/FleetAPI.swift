@@ -7,8 +7,22 @@ import AppKit
 //   端点：环境变量 ZERG_API_BASE（默认本机 8580）
 //   token：环境变量 ZERG_TOKEN → UserDefaults "zergToken" → 空
 private let baseURL = ProcessInfo.processInfo.environment["ZERG_API_BASE"] ?? "http://127.0.0.1:8580"
-private let authToken = ProcessInfo.processInfo.environment["ZERG_TOKEN"]
-    ?? UserDefaults.standard.string(forKey: "zergToken") ?? ""
+private let authToken: String = {
+    // 优先级与其它组件一致：环境变量 → UserDefaults → ~/.zerg/token（2026-09-11 补）
+    if let t = ProcessInfo.processInfo.environment["ZERG_AUTH_TOKEN"] ?? ProcessInfo.processInfo.environment["ZERG_TOKEN"],
+       !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return t.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    if let t = UserDefaults.standard.string(forKey: "zergToken"), !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return t.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    let path = (NSHomeDirectory() as NSString).appendingPathComponent(".zerg/token")
+    if let t = try? String(contentsOfFile: path, encoding: .utf8) {
+        let v = t.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !v.isEmpty { return v }
+    }
+    return ""
+}()
 
 // MARK: - 数据模型
 struct FleetStatus: Codable {
