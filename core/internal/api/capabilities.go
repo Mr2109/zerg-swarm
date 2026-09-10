@@ -45,7 +45,7 @@ func (h *Handlers) OpenAPIHandler(w http.ResponseWriter, r *http.Request) {
 		"openapi": "3.0.0",
 		"info": map[string]interface{}{
 			"title":       "虫族 Zerg API",
-			"version":     "2.5.5",
+			"version":     "2.5.8",
 			"description": "去中心化 AI 任务网络主控 API——提交/查询/管理任务",
 		},
 		"paths": map[string]interface{}{
