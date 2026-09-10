@@ -156,5 +156,3 @@ if any of them is configured explicitly but the file does not exist → log a WA
 | `preview_renderer` | Markdown preview renderer choice (the startup default can be overridden with `ZERG_PREVIEW_RENDERER`) |
 
 Runtime directory: `<tmp>/zerg-ui/` (module manifest and such); can be overridden with `ZERG_UI_DIR`.
-
-| `ZERG_AI_MODEL` | — | Model id used by the UI document AI actions (summarize / continue / translate / polish); can also be set as `ai_model` in `~/.zerg-ui-prefs.json` |

@@ -24,9 +24,6 @@ set -a; . ./.env; set +a
 ```
 
 也可以完全不用 `.env`：把令牌写进 `~/.zerg/token`（单行、`chmod 600`）即可。
-
-> ⚠️ **路径含空格或中文时必须在 `.env` 里加双引号**（例如 `ZERG_KB_PATH="/Volumes/My Disk/knowledge.db"`）——
-> 否则 `set -a; . ./.env` 会在空格处截断变量，后面的部分还会被当成命令执行（报 `no such file or directory`）。
 解析优先级：`ZERG_AUTH_TOKEN` → `~/.zerg/token`。
 
 > 令牌缺失时主控与子端会**拒绝启动**并给出指引——这是故意的（空令牌会让所有 API 401，而日志看起来一切正常）。

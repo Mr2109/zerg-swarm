@@ -220,6 +220,6 @@ and should stay consistent with the registry and the tool blurb — a hard conve
 ## Regenerate
 
 ```bash
-python3 tools/gen_tools_md.py > docs/TOOLS.zh-CN.md   # keep docs/TOOLS.en.md in sync in the same PR
+python3 tools/gen_tools_md.py > docs/TOOLS.md
 ```
 
