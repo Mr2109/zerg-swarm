@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"os"
 	"testing"
 	"time"
@@ -14,7 +15,11 @@ func TestInferLive(t *testing.T) {
 	if os.Getenv("ZERG_LIVE") == "" {
 		t.Skip("真网关集成测试——ZERG_LIVE=1 才跑（依赖 X3 在线）")
 	}
-	c := NewChatInfer("http://127.0.0.1:8082", "x3gw-shared-2026")
+	tok := config.ResolveAuthToken()
+	if tok == "" {
+		t.Skip("未配置共享令牌（ZERG_AUTH_TOKEN 或 ~/.zerg/token）——跳过活体测试")
+	}
+	c := NewChatInfer("http://127.0.0.1:8082", tok)
 	msgs := []map[string]any{
 		{"role": "user", "content": "帮我查一下当前项目目录下的文件列表（用工具）"},
 	}

@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -12,14 +13,14 @@ import (
 
 // ModelCandidate 一个模型在某个主机上的候选部署信息。
 type ModelCandidate struct {
-	Name      string  `yaml:"name,omitempty"`              // 模型名称（V001 必填）
-	Family    string  `yaml:"family,omitempty"`            // 模型家族（V002/V014 必填/校验）
+	Name      string  `yaml:"name,omitempty"`   // 模型名称（V001 必填）
+	Family    string  `yaml:"family,omitempty"` // 模型家族（V002/V014 必填/校验）
 	Host      string  `yaml:"host"`
 	Backend   string  `yaml:"backend"`
 	File      string  `yaml:"file"`
 	MemGb     float64 `yaml:"mem_gb"`
 	SSD       bool    `yaml:"ssd"`
-	CtxWindow int     `yaml:"ctx_window"` // 模型上下文上限（V22，GGUF 元数据实测）
+	CtxWindow int     `yaml:"ctx_window"`     // 模型上下文上限（V22，GGUF 元数据实测）
 	Arch      string  `yaml:"arch,omitempty"` // 架构标识（V015 校验）
 	// ═══ 模型详情补充字段（2026-08-27 Mr2109——fleet.yaml 写了但之前被丢弃）═══
 	Architecture string `yaml:"architecture,omitempty"` // 架构家族（example-35b-v2/qwen35moe/gemma4——fleet 常用 key）
@@ -64,7 +65,60 @@ func LoadFleetConfig(path string) (*FleetConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("读取配置文件失败: %w", err)
 	}
-	return ParseFleetConfig(data)
+	cfg, err := ParseFleetConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	// 2026-09-11 A 批（库内零明文）：共享令牌不再依赖 fleet.yaml 里的明文——
+	// 解析顺序：环境变量 ZERG_AUTH_TOKEN / ZERG_API_TOKEN → ~/.zerg/token 文件。
+	// 两处都没有时保留 yaml 中的值（向后兼容），为空则由调用方（cmd/zerg-core）启动即报错。
+	if t := ResolveAuthToken(); t != "" {
+		cfg.Auth.Token = t
+	}
+	return cfg, nil
+}
+
+// TokenFilePath 共享令牌文件路径（默认 ~/.zerg/token，单行）。
+//
+// 2026-09-11 A 批（库内零明文）约定：令牌绝不写进源码或仓库内配置。
+// 推荐三种提供方式（优先级从高到低）：
+//  1. 环境变量 ZERG_AUTH_TOKEN（兼容旧名 ZERG_API_TOKEN）
+//  2. 家目录文件 ~/.zerg/token（单行；仓库外，天然不入库）
+//  3. .env 文件 + `set -a; . ./.env; set +a`（见仓库根 .env.example）
+func TokenFilePath() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".zerg", "token")
+	}
+	return ""
+}
+
+// ResolveAuthToken 解析共享令牌：环境变量优先，其次 ~/.zerg/token 文件（首尾空白已去）。
+// 找不到返回空字符串——调用方必须显式处理（启动即报错并给指引），不得静默放行。
+func ResolveAuthToken() string {
+	for _, k := range []string{"ZERG_AUTH_TOKEN", "ZERG_API_TOKEN"} {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+	if p := TokenFilePath(); p != "" {
+		if b, err := os.ReadFile(p); err == nil {
+			if v := strings.TrimSpace(string(b)); v != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// MaskToken 打日志用的令牌掩码（保留前 4 位与长度，绝不打印完整令牌）。
+func MaskToken(t string) string {
+	if t == "" {
+		return "(未设置)"
+	}
+	if len(t) <= 4 {
+		return "****"
+	}
+	return t[:4] + strings.Repeat("*", 6) + fmt.Sprintf("(len=%d)", len(t))
 }
 
 // ParseFleetConfig 从 YAML 字节数据解析配置。

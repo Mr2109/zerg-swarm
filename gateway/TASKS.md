@@ -75,8 +75,8 @@
 - `install.sh`：本机模型管理器 App 重新构建
 
 ## 环境
-- X3: g01@<worker-host> 密码 21092109（sshpass -p '21092109'）
-- Mini: Mr2109@<worker-host> / .137 密码 21092109（注意 Mini SSH 认证当前被拒，部署时先解决登录——可让用户手动或改用密钥）
+- X3: g01@<worker-host> —— **推荐 ssh key 免密**（已配好，`ssh -o BatchMode=yes` 可直接连）；如需密码，从环境变量 `X3_PASS` 提供，勿写进仓库
+- Mini: Mr2109@<worker-host> / .137 —— 同上，走 ssh key；Mini SSH 认证当前被拒，部署前先解决登录（手动或配密钥）
 - 本机: ~，模型管理器 App 在 <volume-path>
 - 模型文件：本机 ~/models/*.gguf；X3 /data/models/**/*.gguf
 
