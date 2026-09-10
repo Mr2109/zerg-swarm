@@ -13,10 +13,12 @@ pub const AI_BASE: &str = "http://127.0.0.1:8082"; // F5 AI 动力（网关—�
 /// 结果是"主控离线"（系统 UI/URLSession 会自动绕过回环，故只有本进程中招）；此前靠 start-zerg-ui.sh 剥代理治标。
 /// 本 UI 的全部请求都指向回环（8580 主控 / 8082 网关），故一律 no_proxy —— 不再依赖启动脚本。
 pub fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .unwrap_or_else(|_| http_client())
+    match reqwest::Client::builder().no_proxy().build() {
+        Ok(c) => c,
+        // 兜底（构建失败极罕见：TLS 后端初始化异常）——宁可退回默认 client，也绝不递归调用自身
+        // （2026-09-10 审计 A01 修正：原写法 unwrap_or_else(|_| http_client()) 会无限递归 → 栈溢出）
+        Err(_) => reqwest::Client::new(),
+    }
 }
 
 /// F5 AI 调用（网关 8082 /v1/responses——OpenAI responses 格式）
