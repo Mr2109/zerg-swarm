@@ -143,37 +143,30 @@ pub fn top_nav_bar(
         }
         ui.separator();
 
-        // 板块切换（集装箱排布）——先克隆 active 避免借用冲突
-        let active_now = registry.active.clone();
-        let visible: Vec<ModuleManifest> = registry
-            .visible()
-            .into_iter()
-            .map(|m| m.clone())
-            .collect();
+        // 板块切换（集装箱排布）——M31(2026-09-10 审计): 只读借用注册表，
+        // 原来每帧 clone 全部清单（含 String 图标）与 active；点击只在循环后落一次 active。
         let mut switched: Option<String> = None;
-        for m in &visible {
+        for m in registry.visible() {
             let label = format!("{} {}", m.icon, m.name);
-            if ui.selectable_label(active_now == m.id, label).clicked() {
+            if ui.selectable_label(registry.active == m.id, label).clicked() {
                 switched = Some(m.id.to_string());
             }
         }
         // M4 生态箱（外部模块——配置文件声明——第三方开发者挂船）
-        let ext_visible: Vec<zerg_module::ExternalModule> = registry
-            .external_visible()
-            .into_iter()
-            .map(|m| m.clone())
-            .collect();
+        let ext_visible = registry.external_visible();
         if !ext_visible.is_empty() {
             ui.separator();
         }
         for m in &ext_visible {
             let label = format!("{} {}", m.icon, m.name);
-            if ui.selectable_label(active_now == m.id, label).clicked() {
+            if ui.selectable_label(registry.active == m.id, label).clicked() {
                 switched = Some(m.id.clone());
             }
         }
         if let Some(id) = switched {
-            // 点击切换后 on_load（懒加载——VS Code 经验）——M2 完整实现
+            // M32(2026-09-10 审计): 注册表目前仅"元数据"——此处只切 active。
+            // trait ZergModule 的 on_load/on_unload 生命周期**尚未接线**（见 zerg_module.rs），
+            // 待模块真正持有状态后再在此处调用（旧注释"懒加载 M2 完整实现"是误导，已更正）。
             registry.active = id;
         }
 

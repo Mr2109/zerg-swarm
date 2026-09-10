@@ -3,34 +3,14 @@
 use eframe::egui;
 use rust_i18n::t;
 
-use crate::api::{self, SharedResult, TaskInfo};
+use crate::api::{self, TaskInfo};
 use crate::modules::icons::icon_text; // P3 图标（iconflow）
 
-/// 通用异步结果（每帧检查——take 消费）
-struct AsyncData<T> {
-    result: SharedResult<T>,
-    last_trigger: f64,
-}
-
-impl<T> AsyncData<T> {
-    fn new() -> Self {
-        Self {
-            result: Arc::new(Mutex::new(None)),
-            last_trigger: 0.0,
-        }
-    }
-    /// 检查结果（消费——返回克隆数据）
-    fn take(&self) -> Option<T>
-    where
-        T: Clone,
-    {
-        self.result.lock().unwrap().take().and_then(|r| r.ok())
-    }
-    /// 是否已完成（不管结果）
-    fn is_done(&self) -> bool {
-        self.result.lock().unwrap().is_some()
-    }
-}
+// APP-A15（2026-09-10 审计）: 删除死代码 `struct AsyncData<T>` 及其 take()/is_done()。
+// 依据：全文件 grep 只有这里的声明与 impl，从未被实例化（模块内改用
+// `Arc<Mutex<Option<..>>>` + 直接 take）。删除原因：它没有任何调用点，
+// 且 take() 里的 `and_then(|r| r.ok())` 又是一处吞错模板，留着只会误导维护者。
+// 若将来需要「每帧检查 + 消费」的通用封装，请连同错误通道一起设计（不要吞 Err）。
 
 use std::sync::{Arc, Mutex};
 
@@ -56,8 +36,13 @@ pub struct ZergApp {
     doc_dir: String, // 第一栏选中的目录（如 "项目文档/v2.5.6"）
     doc_file: String,
     doc_content: Arc<Mutex<Option<String>>>,
+    // APP-A20（2026-09-10 审计）: 正文拉取失败文案——原来失败写 None，第三栏只剩
+    // 永久 spinner（无法区分「在读」与「读失败」）。失败时置此字段，渲染成红字。
+    doc_content_err: Arc<Mutex<Option<String>>>,
     // v2.5.6 md 编辑器（Mr2109 2026-08-29: 第三栏=md 编辑器——编辑/预览/保存）
-    doc_edit: String,       // 编辑缓冲（TextEdit 内容）
+    // APP-A15（2026-09-10 审计）: 删除死状态 `doc_edit`——全文件只有声明/初始化/一处赋值
+    // （「切到编辑模式时同步缓冲」），没有任何读取点，等于空操作；真实编辑缓冲是
+    // Ferrite 编辑器 rope（ferrite_editor）。删除原因：留着会让维护者以为还有一层同步逻辑。
     doc_edit_mode: bool,    // true=编辑模式 / false=预览模式
     doc_edit_dirty: bool,   // 有未保存修改
     doc_md_cache: egui_commonmark::CommonMarkCache, // markdown 渲染缓存
@@ -76,7 +61,9 @@ pub struct ZergApp {
     preview_sync_line: usize,     // 上次同步的编辑滚动行
     preview_content_h: f32,       // 预览内容高度（上次渲染）
     preview_last_offset: f32,     // 预览当前滚动位置（用户手动滚动保持）
-    preview_syncing: bool,        // 本次帧是否正在同步（防覆盖）
+    // APP-A15（2026-09-10 审计）: 删除死状态 `preview_syncing`——全文件只被赋值、
+    // 没有任何读取点（原注释承诺的「防覆盖」从未参与判断，滚动同步实际只靠
+    // preview_sync_line 比较）。删除原因：留着会让维护者以为还有一层保护。
     // F5 AI 动力（Mr2109统一接口——网关 8082）
     ai_busy: bool,                // AI 调用中
     ai_status: String,            // AI 状态提示（busy 时显示）
@@ -170,7 +157,7 @@ impl ZergApp {
             doc_dir: "00-总览".to_string(), // v2.5.6 默认选中总览目录
             doc_file: String::new(),
             doc_content: Arc::new(Mutex::new(None)),
-            doc_edit: String::new(),
+            doc_content_err: Arc::new(Mutex::new(None)),
             doc_edit_mode: false, // 默认预览模式
             doc_edit_dirty: false,
             ferrite_editor: crate::modules::ferrite::MdEditor::new(),
@@ -182,7 +169,6 @@ impl ZergApp {
             preview_sync_line: 0,
             preview_content_h: 0.0,
             preview_last_offset: 0.0,
-            preview_syncing: false,
             ai_busy: false,
             ai_status: String::new(),
             ai_pending: None,
@@ -256,15 +242,15 @@ impl ZergApp {
             let store = self.online_result.clone();
             api::runtime().spawn(async move {
                 let ok = api::sync_get_public("/api/capabilities").await.is_ok();
-                *store.lock().unwrap() = Some(ok);
+                *lock_recover(&store) = Some(ok);
             });
         }
         // 收集在线结果
-        if let Some(ok) = self.online_result.lock().unwrap().take() {
+        if let Some(ok) = lock_recover(&self.online_result).take() {
             self.online = ok;
         }
         // 文档操作结果(APP-A02 2026-09-10 审计)——成功才改本地状态;失败只提示、不改状态
-        if let Some(r) = self.doc_op_result.lock().unwrap().take() {
+        if let Some(r) = lock_recover(&self.doc_op_result).take() {
             let ctx = self.doc_op_ctx.take();
             match r {
                 Ok(()) => {
@@ -278,7 +264,7 @@ impl ZergApp {
                             "del_file" => {
                                 if self.doc_file == path {
                                     self.doc_file = String::new();
-                                    *self.doc_content.lock().unwrap() = None;
+                                    *lock_recover(&self.doc_content) = None;
                                 }
                             }
                             "save" => {
@@ -294,17 +280,17 @@ impl ZergApp {
             }
         }
         // APP-A07: 内部任务启停结果——成功才翻转按钮状态；失败只提示（原实现不成功也翻转）
-        if let Some(r) = self.it_ctrl_result.lock().unwrap().take() {
+        if let Some(r) = lock_recover(&self.it_ctrl_result).take() {
             match r {
                 Ok(()) => {
                     if let Some(target) = self.it_ctrl_target.take() {
                         self.internal_stopped = target;
                     }
-                    *self.poll_err.lock().unwrap() = None;
+                    *lock_recover(&self.poll_err) = None;
                 }
                 Err(e) => {
                     self.it_ctrl_target = None;
-                    *self.poll_err.lock().unwrap() = Some(format!("内部任务启停: {}", e));
+                    *lock_recover(&self.poll_err) = Some(format!("内部任务启停: {}", e));
                 }
             }
         }
@@ -317,16 +303,16 @@ impl ZergApp {
                 // APP-A04: 失败保留旧值（原实现 .ok() 写 None，一次抖动就把队列变成"暂无任务"）
                 match api::fetch_tasks_blocking().await {
                     Ok(v) => {
-                        *store.lock().unwrap() = Some(v);
-                        *perr.lock().unwrap() = None;
+                        *lock_recover(&store) = Some(v);
+                        *lock_recover(&perr) = None;
                     }
-                    Err(e) => *perr.lock().unwrap() = Some(format!("任务列表: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(format!("任务列表: {}", e)),
                 }
             });
         }
         // 任务已加载标记（主线程——store 有值=已拉到）
         if !self.tasks_loaded {
-            if self.tasks.lock().unwrap().is_some() {
+            if lock_recover(&self.tasks).is_some() {
                 self.tasks_loaded = true;
             }
         }
@@ -339,10 +325,10 @@ impl ZergApp {
                 // APP-A04: 失败保留旧值
                 match api::fetch_git_status_blocking().await {
                     Ok(v) => {
-                        *store.lock().unwrap() = Some(v);
-                        *perr.lock().unwrap() = None;
+                        *lock_recover(&store) = Some(v);
+                        *lock_recover(&perr) = None;
                     }
-                    Err(e) => *perr.lock().unwrap() = Some(format!("git 状态: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(format!("git 状态: {}", e)),
                 }
             });
         }
@@ -355,10 +341,10 @@ impl ZergApp {
                 // APP-A04: 失败保留旧值
                 match api::fetch_logs_blocking().await {
                     Ok(v) => {
-                        *store.lock().unwrap() = Some(v);
-                        *perr.lock().unwrap() = None;
+                        *lock_recover(&store) = Some(v);
+                        *lock_recover(&perr) = None;
                     }
-                    Err(e) => *perr.lock().unwrap() = Some(format!("主控日志: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(format!("主控日志: {}", e)),
                 }
             });
         }
@@ -371,10 +357,10 @@ impl ZergApp {
                 // APP-A04: 失败保留旧值
                 match api::fetch_docs_blocking().await {
                     Ok(v) => {
-                        *store.lock().unwrap() = Some(v);
-                        *perr.lock().unwrap() = None;
+                        *lock_recover(&store) = Some(v);
+                        *lock_recover(&perr) = None;
                     }
-                    Err(e) => *perr.lock().unwrap() = Some(format!("文档目录: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(format!("文档目录: {}", e)),
                 }
             });
         }
@@ -388,10 +374,10 @@ impl ZergApp {
                 // APP-A04: 失败保留旧值（原实现把资源库刷成空/加载中）
                 match api::fetch_resources_blocking(rt).await {
                     Ok(v) => {
-                        *store.lock().unwrap() = Some(v);
-                        *perr.lock().unwrap() = None;
+                        *lock_recover(&store) = Some(v);
+                        *lock_recover(&perr) = None;
                     }
-                    Err(e) => *perr.lock().unwrap() = Some(format!("资源库: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(format!("资源库: {}", e)),
                 }
             });
         }
@@ -404,10 +390,10 @@ impl ZergApp {
                 // APP-A04: 失败保留旧值
                 match api::fetch_cluster_blocking().await {
                     Ok(v) => {
-                        *store.lock().unwrap() = Some(v);
-                        *perr.lock().unwrap() = None;
+                        *lock_recover(&store) = Some(v);
+                        *lock_recover(&perr) = None;
                     }
-                    Err(e) => *perr.lock().unwrap() = Some(format!("集群状态: {}", e)),
+                    Err(e) => *lock_recover(&perr) = Some(format!("集群状态: {}", e)),
                 }
             });
         }
@@ -419,7 +405,7 @@ impl ZergApp {
         let text = if self.ferrite_loaded {
             self.ferrite_editor.text()
         } else {
-            self.doc_content.lock().unwrap().clone().unwrap_or_default()
+            lock_recover(&self.doc_content).clone().unwrap_or_default()
         };
         if text.trim().is_empty() {
             self.ai_output = Some(("error".to_string(), "文档内容为空——无法执行 AI 操作".to_string()));
@@ -445,7 +431,7 @@ impl ZergApp {
         let r2 = result.clone();
         api::runtime().spawn(async move {
             let res = api::ai_prompt_blocking(&model, &prompt).await;
-            *r2.lock().unwrap() = Some(res);
+            *lock_recover(&r2) = Some(res);
         });
         self.ai_pending = Some((action.to_string(), result));
     }
@@ -453,7 +439,7 @@ impl ZergApp {
     /// F5 AI 结果轮询（每帧检查 pending 是否完成）
     fn ai_poll(&mut self) {
         if let Some((action, result)) = self.ai_pending.clone() {
-            if let Some(res) = result.lock().unwrap().clone() {
+            if let Some(res) = lock_recover(&result).clone() {
                 self.ai_pending = None;
                 self.ai_busy = false;
                 match res {
@@ -475,7 +461,7 @@ impl ZergApp {
     /// 原来 rope 里只有 AI 那段，进编辑模式时的 `if !ferrite_loaded { load(文件内容) }` 会把它覆盖掉。
     fn ensure_editor_loaded(&mut self) {
         if !self.ferrite_loaded {
-            let cur = self.doc_content.lock().unwrap().clone().unwrap_or_default();
+            let cur = lock_recover(&self.doc_content).clone().unwrap_or_default();
             self.ferrite_editor.load(&cur);
             self.ferrite_text_cache = None;
             self.ferrite_loaded = true;
@@ -486,7 +472,7 @@ impl ZergApp {
     fn sync_preview_after_ai(&mut self) {
         if !self.doc_edit_mode {
             let txt = self.ferrite_editor.text();
-            *self.doc_content.lock().unwrap() = Some(txt);
+            *lock_recover(&self.doc_content) = Some(txt);
             self.ferrite_text_cache = None;
         }
     }
@@ -553,7 +539,7 @@ impl ZergApp {
     fn tasks_view(&mut self, ui: &mut egui::Ui) {
         ui.heading(t!("task_queue"));
         ui.add_space(4.0);
-        let list: Vec<TaskInfo> = self.tasks.lock().unwrap().clone().unwrap_or_default();
+        let list: Vec<TaskInfo> = lock_recover(&self.tasks).clone().unwrap_or_default();
         // 默认选中最新任务（第一条——加载后自动）
         if self.selected_task.is_none() && !list.is_empty() {
             let first = list[0].clone();
@@ -565,8 +551,8 @@ impl ZergApp {
             api::runtime().spawn(async move {
                 // APP-A04: 失败保留旧详情 + 提示（原实现失败写 None → 右栏永久 spinner）
                 match api::fetch_task_detail_blocking(id).await {
-                    Ok(v) => *store.lock().unwrap() = Some(v),
-                    Err(e) => *perr.lock().unwrap() = Some(format!("任务详情: {}", e)),
+                    Ok(v) => *lock_recover(&store) = Some(v),
+                    Err(e) => *lock_recover(&perr) = Some(format!("任务详情: {}", e)),
                 }
             });
         }
@@ -577,6 +563,50 @@ impl ZergApp {
                 self.selected_task = Some(fresh.clone());
             }
         }
+        // 归档折叠区（Mr2109 2026-08-22——30 天归档/90 天删除可查）
+        // APP-A19（2026-09-10 审计）: ① 整块从下方 `if list.is_empty() { … return; }` 之后
+        // 挪到之前——队列清空（任务全删/全归档）时「归档」恰恰是最有用的面板，原来直接消失；
+        // ② 拉取失败不再伪装成「暂无归档」（原来 .unwrap_or_default() 把 Err 变成空数组）——
+        // 失败保留旧值 + 顶部提示条 + 面板内区分「加载中/拉取失败」。
+        if lock_recover(&self.archive).is_none() || self.last_archive_fetch.elapsed().as_secs() > 60 {
+            let store = self.archive.clone();
+            let perr = self.poll_err.clone();
+            let now = std::time::Instant::now();
+            api::runtime().spawn(async move {
+                match api::fetch_archive_blocking().await {
+                    Ok(items) => *lock_recover(&store) = Some(items),
+                    Err(e) => *lock_recover(&perr) = Some(format!("归档: {}", e)),
+                }
+            });
+            self.last_archive_fetch = now;
+        }
+        let arc_snap = lock_recover(&self.archive).clone();
+        let arc_count = arc_snap.as_ref().map(|v| v.len()).unwrap_or(0);
+        egui::CollapsingHeader::new(format!("🗄️ 归档（{}）", arc_count))
+            .id_salt("task_group_archive") // APP-A08: 稳定 id（标题含计数——每帧变会让展开态被重置）
+            .default_open(false)
+            .show(ui, |ui| {
+                match &arc_snap {
+                    Some(arcs) => {
+                        if arcs.is_empty() {
+                            ui.weak("暂无归档（30 天归档 / 90 天删除——容量有界）");
+                        }
+                        for a in arcs {
+                            let tid = a.get("task_id").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+                            let when = a.get("archived").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+                            let size = a.get("size").and_then(|v| v.as_i64()).unwrap_or(0);
+                            // APP-A16: 尾 6 字符/前 16 字符都按「字符」切（原来按字节下标——
+                            // 多字节 task_id/时间串会切在字符中间 panic，整个 UI 退出）
+                            ui.label(format!("📦 {} | 归档: {} | {}KB", short_id(&tid), when.chars().take(16).collect::<String>(), size / 1024));
+                        }
+                    }
+                    // APP-A19: None = 还没拉到或拉取失败——不再谎报「暂无归档」
+                    None => {
+                        ui.weak("⏳ 归档加载中（若持续如此=拉取失败——见顶部提示条）");
+                    }
+                }
+            });
+        ui.add_space(4.0);
         if list.is_empty() {
             // 已加载但无任务——显示"暂无任务"（不是"拉取中"）
             if self.tasks_loaded {
@@ -587,35 +617,6 @@ impl ZergApp {
             }
             return;
         }
-        // 归档折叠区（Mr2109 2026-08-22——30 天归档/90 天删除可查）
-        if self.archive.lock().unwrap().is_none() || self.last_archive_fetch.elapsed().as_secs() > 60 {
-            let store = self.archive.clone();
-            let now = std::time::Instant::now();
-            api::runtime().spawn(async move {
-                let items = api::fetch_archive_blocking().await.unwrap_or_default();
-                let mut st = store.lock().unwrap();
-                *st = Some(items);
-            });
-            self.last_archive_fetch = now;
-        }
-        let arc_count = self.archive.lock().unwrap().clone().unwrap_or_default().len();
-        egui::CollapsingHeader::new(format!("🗄️ 归档（{}）", arc_count))
-            .id_salt("task_group_archive") // APP-A08: 稳定 id（标题含计数——每帧变会让展开态被重置）
-            .default_open(false)
-            .show(ui, |ui| {
-                let arcs = self.archive.lock().unwrap().clone().unwrap_or_default();
-                if arcs.is_empty() {
-                    ui.weak("暂无归档（30 天归档 / 90 天删除——容量有界）");
-                }
-                for a in arcs {
-                    let tid = a.get("task_id").and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                    let when = a.get("archived").and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                    let size = a.get("size").and_then(|v| v.as_i64()).unwrap_or(0);
-                    let short = if tid.len() > 6 { &tid[tid.len() - 6..] } else { &tid };
-                    ui.label(format!("📦 {} | 归档: {} | {}KB", short, &when[..when.len().min(16)], size / 1024));
-                }
-            });
-        ui.add_space(4.0);
         // 两列布局（队列 | 详情——ui.columns 均分——宽度正确）
         ui.columns(2, |cols| {
             // 左列——任务队列（ScrollArea 限制高度——超出可滚——独立 ID 防串扰）
@@ -724,7 +725,8 @@ impl ZergApp {
                 // Mr2109 2026-08-22: 执行完成任务按日期分组（上级=完成日期——一眼看哪天完成）
                 let mut by_date: std::collections::BTreeMap<String, Vec<&TaskInfo>> = Default::default();
                 for t in &done_main {
-                    let date = t.completed_at.as_deref().map(|s| if s.len() >= 10 { s[..10].to_string() } else { s.to_string() }).unwrap_or_else(|| "未知日期".to_string());
+                    // APP-A16: 取日期同样按字符切（原 `s[..10]` 是字节下标——含多字节的时间串会 panic）
+                    let date = t.completed_at.as_deref().map(|s| s.chars().take(10).collect::<String>()).unwrap_or_else(|| "未知日期".to_string());
                     by_date.entry(date).or_default().push(t);
                 }
                 egui::CollapsingHeader::new(format!("✅ {}（{}）", t!("done"), done_count))
@@ -777,11 +779,11 @@ impl ZergApp {
         let what = what.to_string();
         api::runtime().spawn(async move {
             if let Err(e) = fut.await {
-                *perr.lock().unwrap() = Some(format!("{}失败: {}", what, e));
+                *lock_recover(&perr) = Some(format!("{}失败: {}", what, e));
             }
             match api::fetch_tasks_blocking().await {
-                Ok(v) => *store.lock().unwrap() = Some(v),
-                Err(e) => *perr.lock().unwrap() = Some(format!("任务列表: {}", e)),
+                Ok(v) => *lock_recover(&store) = Some(v),
+                Err(e) => *lock_recover(&perr) = Some(format!("任务列表: {}", e)),
             }
         });
     }
@@ -846,8 +848,8 @@ impl ZergApp {
             api::runtime().spawn(async move {
                 // APP-A04: 失败保留旧详情 + 提示（原实现失败写 None → 右栏永久 spinner）
                 match api::fetch_task_detail_blocking(id).await {
-                    Ok(v) => *store.lock().unwrap() = Some(v),
-                    Err(e) => *perr.lock().unwrap() = Some(format!("任务详情: {}", e)),
+                    Ok(v) => *lock_recover(&store) = Some(v),
+                    Err(e) => *lock_recover(&perr) = Some(format!("任务详情: {}", e)),
                 }
             });
         }
@@ -954,7 +956,7 @@ impl ZergApp {
             ui.label(format!("{}: {}", t!("task_machine"), t.machine.as_deref().unwrap_or("?")));
             ui.add_space(8.0);
             ui.separator();
-            if let Some(detail) = self.task_detail.lock().unwrap().clone() {
+            if let Some(detail) = lock_recover(&self.task_detail).clone() {
                 ui.label(t!("timeline"));
                 if let Some(trace) = detail.get("trace") {
                     if let Some(rounds) = trace.get("rounds").and_then(|r| r.as_array()) {
@@ -1156,7 +1158,7 @@ impl ZergApp {
             "cluster" => {
                 ui.heading(t!("cluster_status"));
                 ui.add_space(4.0);
-                if let Some(r) = self.cluster.lock().unwrap().clone() {
+                if let Some(r) = lock_recover(&self.cluster).clone() {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         // 总览
                         let healthy = r.get("healthy_count").and_then(|h| h.as_u64()).unwrap_or(0);
@@ -1192,7 +1194,7 @@ impl ZergApp {
             "git" => {
                 ui.heading(t!("git_overview"));
                 ui.add_space(4.0);
-                if let Some(g) = self.git_status.lock().unwrap().clone() {
+                if let Some(g) = lock_recover(&self.git_status).clone() {
                     // 分支（通俗化——task-xxx → 任务类型名）
                     egui::CollapsingHeader::new(format!("🌿 {}（{}）", t!("branches"), g.branches.as_ref().map(|b| b.len()).unwrap_or(0)))
                         .id_salt("git_branches") // APP-A08: 稳定 id
@@ -1242,7 +1244,7 @@ impl ZergApp {
             "logs" => {
                 ui.heading(t!("logs"));
                 ui.add_space(4.0);
-                if let Some(lines) = self.logs.lock().unwrap().clone() {
+                if let Some(lines) = lock_recover(&self.logs).clone() {
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                         for l in lines {
                             let color = if l.contains("error") || l.contains("错误") {
@@ -1327,7 +1329,7 @@ impl ZergApp {
             "docs" => {
                 ui.heading(t!("docs"));
                 ui.add_space(4.0);
-                let docs_snap = self.docs.lock().unwrap().clone(); // 先释放借用——内部闭包要 &mut self（F5 AI 按钮）
+                let docs_snap = lock_recover(&self.docs).clone(); // 先释放借用——内部闭包要 &mut self（F5 AI 按钮）
                 if let Some((files, dirs)) = docs_snap {
                     // v2.5.6 三栏（Mr2109 2026-08-29）: 第一栏=目录树（dirs）| 第二栏=选中目录文件 | 第三栏=正文
                     // 目录树——层级缩进（如 "项目文档" 顶层 / "项目文档/v2.5.6" 子级缩进）
@@ -1385,7 +1387,7 @@ impl ZergApp {
                                     self.doc_file = String::new();
                                     self.doc_edit_dirty = false;
                                     self.ferrite_loaded = false; // M3 切目录重置编辑器
-                                    *self.doc_content.lock().unwrap() = None;
+                                    *lock_recover(&self.doc_content) = None;
                                 }
                             }
                             // v2.5.6 空白右键——新建目录（Mr2109 2026-08-29）
@@ -1464,12 +1466,26 @@ impl ZergApp {
                                     self.doc_file = f.to_string();
                                     self.doc_edit_dirty = false;
                                     self.ferrite_loaded = false; // M3 切文件重置编辑器
-                                    // 拉文档内容（异步）
+                                    // APP-A20（2026-09-10 审计）: 切文件立即清空旧正文+旧错误——
+                                    // 新内容到达前不再短暂显示上一个文件的正文；
+                                    // 拉取失败也不写 None 了事（原来第三栏永远转圈、无法判断读失败），
+                                    // 失败文案落到 doc_content_err 由第三栏红字渲染。
                                     let path = f.to_string();
                                     let store = self.doc_content.clone();
+                                    let err = self.doc_content_err.clone();
+                                    *lock_recover(&self.doc_content) = None;
+                                    *lock_recover(&self.doc_content_err) = None;
                                     api::runtime().spawn(async move {
-                                        let r = api::fetch_doc_content_blocking(path).await.ok();
-                                        *store.lock().unwrap() = r;
+                                        match api::fetch_doc_content_blocking(path).await {
+                                            Ok(txt) => {
+                                                *lock_recover(&store) = Some(txt);
+                                                *lock_recover(&err) = None;
+                                            }
+                                            Err(e) => {
+                                                *lock_recover(&store) = None;
+                                                *lock_recover(&err) = Some(format!("读取文档内容失败: {}", e));
+                                            }
+                                        }
                                     });
                                 }
                             }
@@ -1501,13 +1517,10 @@ impl ZergApp {
                                 ui.label(format!("📄 {}", self.doc_file.split('/').last().unwrap_or("")));
                                 // v2.5.6 md 编辑器工具栏（Mr2109 2026-08-29）
                                 if ui.button(if self.doc_edit_mode { "🔍 预览".to_string() } else { format!("{} 编辑", icon_text("note-pencil")) }).clicked() {
+                                    // APP-A15: 原来这里还有一段「切到编辑时同步 doc_edit 缓冲」——
+                                    // doc_edit 已证明是只写不读的死状态（且 rope 缓冲由下方
+                                    // `if !ferrite_loaded { load(文件内容) }` 负责），整段删除。
                                     self.doc_edit_mode = !self.doc_edit_mode;
-                                    // 切到编辑时同步缓冲
-                                    if self.doc_edit_mode {
-                                        if let Some(content) = self.doc_content.lock().unwrap().clone() {
-                                            self.doc_edit = content;
-                                        }
-                                    }
                                 }
                                 // APP-A02: 文档操作失败红字提示（不改本地状态）
                                 let doc_err = self.doc_op_err.clone();
@@ -1526,7 +1539,7 @@ impl ZergApp {
                                         let content = if self.ferrite_loaded {
                                             self.ferrite_editor.text()
                                         } else {
-                                            self.doc_content.lock().unwrap().clone().unwrap_or_default()
+                                            lock_recover(&self.doc_content).clone().unwrap_or_default()
                                         };
                                         // APP-A02: 保存成功才清 dirty/回预览；失败红字提示
                                         self.doc_op_ctx = Some(("save".to_string(), path.clone()));
@@ -1558,7 +1571,7 @@ impl ZergApp {
                                 let avail_h3 = c3_ui.available_height().max(200.0);
                                 // 首次进入编辑——载入内容到 rope 缓冲
                                 if !self.ferrite_loaded {
-                                    if let Some(content) = self.doc_content.lock().unwrap().clone() {
+                                    if let Some(content) = lock_recover(&self.doc_content).clone() {
                                         self.ferrite_editor.load(&content);
                                     }
                                     self.ferrite_text_cache = None; // M06: 载入新内容 → 失效
@@ -1639,13 +1652,11 @@ impl ZergApp {
                                         let line_count = self.ferrite_editor.line_count().max(1);
                                         let editor_line = self.ferrite_editor.scroll_line();
                                         let sync_target = if editor_line != self.preview_sync_line {
-                                            self.preview_syncing = true;
                                             self.preview_sync_line = editor_line;
                                             let ratio = editor_line as f32 / line_count as f32;
                                             let viewport = avail_h3;
                                             (ratio * (self.preview_content_h - viewport)).max(0.0)
                                         } else {
-                                            self.preview_syncing = false;
                                             self.preview_last_offset
                                         };
                                         let out = egui::ScrollArea::vertical()
@@ -1659,11 +1670,36 @@ impl ZergApp {
                                         self.preview_last_offset = out.state.offset.y;
                                     },
                                 );
-                            } else if let Some(content) = self.doc_content.lock().unwrap().clone() {
+                            } else if let Some(content) = lock_recover(&self.doc_content).clone() {
                                 egui::ScrollArea::vertical().id_salt("docs_col3").auto_shrink(false).show(&mut c3_ui, |ui| {
                                     // v2.5.6 md 渲染（egui_commonmark CommonMarkViewer——支持标题/列表/代码块/表格）
                                     egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.doc_md_cache, &content);
                                 });
+                            } else if let Some(e) = lock_recover(&self.doc_content_err).clone() {
+                                // APP-A20: 拉取失败——红字报错（原来只写 None，这里永远转圈）
+                                c3_ui.add_space(8.0);
+                                c3_ui.colored_label(
+                                    egui::Color32::from_rgb(230, 90, 90),
+                                    format!("⚠ {}", e),
+                                );
+                                if c3_ui.button("🔁 重新读取").clicked() {
+                                    let path = self.doc_file.clone();
+                                    let store = self.doc_content.clone();
+                                    let err = self.doc_content_err.clone();
+                                    *lock_recover(&self.doc_content_err) = None;
+                                    api::runtime().spawn(async move {
+                                        match api::fetch_doc_content_blocking(path).await {
+                                            Ok(txt) => {
+                                                *lock_recover(&store) = Some(txt);
+                                                *lock_recover(&err) = None;
+                                            }
+                                            Err(e2) => {
+                                                *lock_recover(&store) = None;
+                                                *lock_recover(&err) = Some(format!("读取文档内容失败: {}", e2));
+                                            }
+                                        }
+                                    });
+                                }
                             } else {
                                 c3_ui.spinner();
                                 c3_ui.weak(t!("loading"));
@@ -1751,7 +1787,7 @@ impl ZergApp {
                     let store = self.resources.clone();
                     api::runtime().spawn(async move {
                         let r = api::fetch_resources_blocking("models".to_string()).await.ok();
-                        *store.lock().unwrap() = r;
+                        *lock_recover(&store) = r;
                     });
                 }
                 ui.heading(format!("{} 模型库", icon_text("computer-tower")));
@@ -1767,7 +1803,7 @@ impl ZergApp {
                     let store = self.resources.clone();
                     api::runtime().spawn(async move {
                         let r = api::fetch_resources_blocking("tools".to_string()).await.ok();
-                        *store.lock().unwrap() = r;
+                        *lock_recover(&store) = r;
                     });
                 }
                 ui.heading(t!("resources"));
@@ -1783,7 +1819,7 @@ impl ZergApp {
                             let rt = t.to_string();
                             api::runtime().spawn(async move {
                                 let r = api::fetch_resources_blocking(rt).await.ok();
-                                *store.lock().unwrap() = r;
+                                *lock_recover(&store) = r;
                             });
                         }
                     }
@@ -1792,7 +1828,7 @@ impl ZergApp {
                 // 左列表 + 右简介（模型点击显示——Mr2109 2026-08-20）
                 ui.columns(2, |cols| {
                     // 左列——列表
-                    if let Some(r) = self.resources.lock().unwrap().clone() {
+                    if let Some(r) = lock_recover(&self.resources).clone() {
                         if let Some(items) = r.get("items").and_then(|i| i.as_array()) {
                             egui::ScrollArea::vertical().id_salt("res_list").show(&mut cols[0], |ui| {
                                 // 模型库——按设备分组 + 字母排序（Mr2109 2026-08-20）
@@ -1818,6 +1854,9 @@ impl ZergApp {
                                         };
                                         egui::CollapsingHeader::new(format!("{}（{} 个模型）", icon, names.len()))
                                             .id_salt(format!("res_models_{}", machine)) // APP-A08: 稳定 id
+                                            // APP-A21（2026-09-10 审计）: 默认展开——原来默认为折叠，
+                                            // 进「资源库」只看到设备分组标题、看不到任何模型，容易以为没模型
+                                            .default_open(true)
                                             .show(ui, |ui| {
                                             // 设备内按字母排序（固定——刷新不变——Mr2109）
                                             let mut sorted = names.clone();
@@ -1945,9 +1984,31 @@ impl ZergApp {
                             ui.add_space(8.0);
                             if !m.url.is_empty() {
                                 if ui.button("🔗 打开外部地址").clicked() {
-                                    let _ = std::process::Command::new("open")
-                                        .arg(&m.url)
-                                        .spawn();
+                                    // APP-A18（2026-09-10 审计）: ① URL 来自外部模块配置文件
+                                    // （M4 生态箱——第三方开发者挂船），先校验 scheme（仅 http/https），
+                                    // 拼错或 file://、javascript: 之类一律拒绝并红字提示；
+                                    // ② spawn 出的 Child 必须回收——原来 Result/Child 一起丢弃，
+                                    // `open` 退出后留下僵尸进程直到 UI 退出。这里在后台线程 wait()
+                                    // （不阻塞 UI 线程）。
+                                    let url = m.url.clone();
+                                    if url.starts_with("http://") || url.starts_with("https://") {
+                                        match std::process::Command::new("open").arg(&url).spawn() {
+                                            Ok(mut child) => {
+                                                std::thread::spawn(move || {
+                                                    let _ = child.wait(); // 回收子进程（防僵尸）
+                                                });
+                                            }
+                                            Err(e) => {
+                                                *lock_recover(&self.poll_err) =
+                                                    Some(format!("打开外部地址失败: {}", e));
+                                            }
+                                        }
+                                    } else {
+                                        *lock_recover(&self.poll_err) = Some(format!(
+                                            "外部地址非法（仅允许 http/https）: {}",
+                                            url
+                                        ));
+                                    }
                                 }
                             }
                         });
@@ -1975,7 +2036,7 @@ impl ZergApp {
             {
                 // 左列内容
             // 左列——按设备分组 + 字母排序
-            if let Some(r) = self.resources.lock().unwrap().clone() {
+            if let Some(r) = lock_recover(&self.resources).clone() {
                 if let Some(items) = r.get("items").and_then(|i| i.as_array()) {
                     egui::ScrollArea::vertical().id_salt("models_list").auto_shrink(false).show(&mut l_ui, |ui| {
                         let mut groups: std::collections::BTreeMap<String, Vec<String>> =
@@ -1999,6 +2060,8 @@ impl ZergApp {
                             };
                             egui::CollapsingHeader::new(format!("{}（{} 个模型）", icon, names.len()))
                                 .id_salt(format!("models_view_{}", machine)) // APP-A08: 稳定 id
+                                // APP-A21（2026-09-10 审计）: 默认展开（同资源库——否则进「模型库」左栏是空的）
+                                .default_open(true)
                                 .show(ui, |ui| {
                                 let mut sorted = names.clone();
                                 sorted.sort();
@@ -2016,7 +2079,7 @@ impl ZergApp {
                                         let edstore = self.adapter_edit.clone();
                                         api::runtime().spawn(async move {
                                             let r = api::fetch_model_detail_blocking(&name2).await.ok();
-                                            *store.lock().unwrap() = r;
+                                            *lock_recover(&store) = r;
                                             // 拉适配器 schema（编辑控件渲染——各模型各自参数集）
                                             let s = api::fetch_adapter_schema_blocking(&name2).await.ok();
                                             if let Some(ref sv) = s {
@@ -2027,10 +2090,10 @@ impl ZergApp {
                                                             init.insert(k.to_string(), v.clone());
                                                         }
                                                     }
-                                                    edstore.lock().unwrap().insert(name2.clone(), init);
+                                                    lock_recover(&edstore).insert(name2.clone(), init);
                                                 }
                                             }
-                                            *sstore.lock().unwrap() = s;
+                                            *lock_recover(&sstore) = s;
                                         });
                                         self.adapter_msg.clear();
                                     }
@@ -2079,7 +2142,7 @@ impl ZergApp {
                 r_ui.add_space(8.0);
                 r_ui.separator();
                 // 适配器选项 + 启动状态（从 /api/models/{name} 拉）
-                let detail = self.model_detail.lock().unwrap().clone();
+                let detail = lock_recover(&self.model_detail).clone();
                 match detail {
                     Some(d) => {
                         let loaded = d.get("loaded").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -2096,10 +2159,10 @@ impl ZergApp {
                                     let perr = self.poll_err.clone();
                                     api::runtime().spawn(async move {
                                         if let Err(e) = api::model_stop_blocking(&name2).await {
-                                            *perr.lock().unwrap() = Some(format!("停止模型 {} 失败: {}", name2, e));
+                                            *lock_recover(&perr) = Some(format!("停止模型 {} 失败: {}", name2, e));
                                         }
                                         if let Ok(v) = api::fetch_model_detail_blocking(&name2).await {
-                                            *store.lock().unwrap() = Some(v);
+                                            *lock_recover(&store) = Some(v);
                                         }
                                     });
                                 }
@@ -2113,10 +2176,10 @@ impl ZergApp {
                                         let perr = self.poll_err.clone();
                                         api::runtime().spawn(async move {
                                             if let Err(e) = api::model_start_blocking(&name2).await {
-                                                *perr.lock().unwrap() = Some(format!("启动模型 {} 失败: {}", name2, e));
+                                                *lock_recover(&perr) = Some(format!("启动模型 {} 失败: {}", name2, e));
                                             }
                                             if let Ok(v) = api::fetch_model_detail_blocking(&name2).await {
-                                                *store.lock().unwrap() = Some(v);
+                                                *lock_recover(&store) = Some(v);
                                             }
                                         });
                                     }
@@ -2182,7 +2245,7 @@ impl ZergApp {
                         }
                         } else {
                         // 适配器选项（真正的适配器配置——推理参数——可编辑——实时生效——Mr2109 2026-08-27）
-                        let schema = self.adapter_schema.lock().unwrap().clone();
+                        let schema = lock_recover(&self.adapter_schema).clone();
                         match schema {
                             Some(sv) => {
                                 if let Some(arr) = sv.get("schema").and_then(|v| v.as_array()) {
@@ -2191,7 +2254,7 @@ impl ZergApp {
                                     } else {
                                         // 编辑缓冲（懒初始化）
                                         {
-                                            let mut ed = self.adapter_edit.lock().unwrap();
+                                            let mut ed = lock_recover(&self.adapter_edit);
                                             if !ed.contains_key(m.as_str()) {
                                                 let mut init = std::collections::HashMap::new();
                                                 for o in arr {
@@ -2202,12 +2265,16 @@ impl ZergApp {
                                                 ed.insert(m.clone(), init);
                                             }
                                         }
-                                        let cur = self.adapter_edit.lock().unwrap().get(m.as_str()).cloned().unwrap_or_default();
+                                        let cur = lock_recover(&self.adapter_edit).get(m.as_str()).cloned().unwrap_or_default();
                                         let mut changed: Option<(String, serde_json::Value)> = None;
                                         // 垂直卡片流（Mr2109 2026-08-27——参数名+控件一行——描述弱字换行下一行——分隔线——不拥挤）
-                                        // 滚动区自适应填满+应用按钮贴底（2026-08-27——max_height=可用高度-按钮区——不留空缺）
-                                        let avail_h = r_ui.available_height();
-                                        egui::ScrollArea::vertical().id_salt("adapter_edit_scroll").max_height((avail_h - 70.0).max(120.0)).show(r_ui, |ui| {
+                                        // APP-A22（2026-09-10 审计）: 原来这里再套一个纵向 ScrollArea
+                                        // （adapter_edit_scroll，max_height = available_height()-70 每帧重算），
+                                        // 而外层 models_right_scroll 已经是纵向滚动 → 同轴嵌套滚动（滚轮作用层
+                                        // 不稳定、底部「应用」按钮与列表互相排挤、缩放时尺寸抖动），也违背本文件
+                                        // 既定约定（961 行：内层不再套固定高度 ScrollArea，外层统一滚）。
+                                        // 改为纯 scope：不产生第二个滚动容器，参数直接跟着外层滚。
+                                        r_ui.scope(|ui| {
                                             for o in arr {
                                                 let key = o.get("key").and_then(|x| x.as_str()).unwrap_or("?").to_string();
                                                 let typ = o.get("type").and_then(|x| x.as_str()).unwrap_or("string").to_string();
@@ -2267,7 +2334,7 @@ impl ZergApp {
                                             }
                                         });
                                         if let Some((k, v)) = changed {
-                                            self.adapter_edit.lock().unwrap().get_mut(m.as_str()).map(|eb| { eb.insert(k, v); });
+                                            lock_recover(&self.adapter_edit).get_mut(m.as_str()).map(|eb| { eb.insert(k, v); });
                                         }
                                         // 应用按钮（两步确认——Mr2109 2026-08-27——修改后确认才生效）
                                         r_ui.add_space(6.0);
@@ -2285,7 +2352,7 @@ impl ZergApp {
                                             r_ui.horizontal(|ui| {
                                                 ui.colored_label(egui::Color32::from_rgb(220, 180, 60), format!("{} 确认应用这些修改？", icon_text("warning")));
                                                 if ui.button("✅ 确认生效").clicked() {
-                                                    let cfg = self.adapter_edit.lock().unwrap().get(m.as_str()).cloned().unwrap_or_default();
+                                                    let cfg = lock_recover(&self.adapter_edit).get(m.as_str()).cloned().unwrap_or_default();
                                                     let cfg = serde_json::Value::Object(cfg.into_iter().collect());
                                                     let name2 = m.clone();
                                                     let sstore = self.adapter_schema.clone();
@@ -2303,12 +2370,12 @@ impl ZergApp {
                                                                         init.insert(k.to_string(), v.clone());
                                                                     }
                                                                 }
-                                                                edstore.lock().unwrap().insert(name2.clone(), init);
+                                                                lock_recover(&edstore).insert(name2.clone(), init);
                                                             }
                                                         }
-                                                        *sstore.lock().unwrap() = s;
+                                                        *lock_recover(&sstore) = s;
                                                         let d = api::fetch_model_detail_blocking(&name2).await.ok();
-                                                        *dstore.lock().unwrap() = d;
+                                                        *lock_recover(&dstore) = d;
                                                     });
                                                     self.adapter_msg = "已生效".to_string();
                                                     self.adapter_confirm = false;
@@ -2357,7 +2424,7 @@ impl ZergApp {
             } else {
                 api::stop_internal_tasks_blocking().await
             };
-            *out2.lock().unwrap() = Some(r);
+            *lock_recover(&out2) = Some(r);
         });
         out
     }
@@ -2398,12 +2465,12 @@ impl ZergApp {
         });
         ui.add_space(8.0);
         // 拉取内部任务清单（缓存——每 30 秒刷新）
-        if self.internal_tasks.lock().unwrap().is_none() || self.last_it_fetch.elapsed().as_secs() > 30 {
+        if lock_recover(&self.internal_tasks).is_none() || self.last_it_fetch.elapsed().as_secs() > 30 {
             let store = self.internal_tasks.clone();
             let now = std::time::Instant::now();
             api::runtime().spawn(async move {
                 let items = api::fetch_internal_tasks_blocking().await.unwrap_or_default();
-                let mut st = store.lock().unwrap();
+                let mut st = lock_recover(&store);
                 *st = Some(items);
             });
             self.last_it_fetch = now;
@@ -2411,21 +2478,18 @@ impl ZergApp {
         // 周期配置（缓存——60 秒刷新）
         // APP-A06: 改用独立计时器（原来共用 last_it_fetch——被上面每 30s 的清单刷新归零，
         // 60s 条件永远不成立 → 周期下拉一直显示启动时拉的旧值）
-        if self.it_intervals.lock().unwrap().is_none() || self.last_it_interval_fetch.elapsed().as_secs() > 60 {
+        if lock_recover(&self.it_intervals).is_none() || self.last_it_interval_fetch.elapsed().as_secs() > 60 {
             let store = self.it_intervals.clone();
             let now = std::time::Instant::now();
             api::runtime().spawn(async move {
                 let v = api::fetch_internal_intervals_blocking().await.ok();
-                let mut st = store.lock().unwrap();
+                let mut st = lock_recover(&store);
                 *st = v;
             });
             self.last_it_interval_fetch = now;
         }
         // 周期配置 map（defID → 小时）
-        let interval_map: std::collections::HashMap<String, f64> = self
-            .it_intervals
-            .lock()
-            .unwrap()
+        let interval_map: std::collections::HashMap<String, f64> = lock_recover(&self.it_intervals)
             .clone()
             .and_then(|v| v.get("intervals").cloned())
             .and_then(|v| v.as_object().cloned())
@@ -2435,7 +2499,7 @@ impl ZergApp {
                     .collect()
             })
             .unwrap_or_default();
-        let items = self.internal_tasks.lock().unwrap().clone().unwrap_or_default();
+        let items = lock_recover(&self.internal_tasks).clone().unwrap_or_default();
         if items.is_empty() {
             ui.weak("加载中…（或 API 不可用）");
             return;
@@ -2472,7 +2536,7 @@ impl ZergApp {
                             let perr = self.poll_err.clone();
                             api::runtime().spawn(async move {
                                 if let Err(e) = api::run_internal_task_blocking(&id2).await {
-                                    *perr.lock().unwrap() = Some(format!("执行内部任务 {} 失败: {}", id2, e));
+                                    *lock_recover(&perr) = Some(format!("执行内部任务 {} 失败: {}", id2, e));
                                 }
                             });
                         }
@@ -2486,11 +2550,11 @@ impl ZergApp {
                             api::runtime().spawn(async move {
                                 // APP-A11: 失败提示（原 let _ = 静默）
                                 if let Err(e) = api::set_internal_mode_blocking(&id2, new_mode).await {
-                                    *perr.lock().unwrap() = Some(format!("切换运行模式 {} 失败: {}", id2, e));
+                                    *lock_recover(&perr) = Some(format!("切换运行模式 {} 失败: {}", id2, e));
                                 }
                             });
                             // 本地立即翻转（后端刷新 30s 后同步）
-                            if let Some(items_ref) = self.internal_tasks.lock().unwrap().as_mut() {
+                            if let Some(items_ref) = lock_recover(&self.internal_tasks).as_mut() {
                                 for it2 in items_ref.iter_mut() {
                                     if it2.get("id").and_then(|v| v.as_str()) == Some(id.as_str()) {
                                         if let Some(obj) = it2.as_object_mut() {
@@ -2530,7 +2594,7 @@ impl ZergApp {
                                         api::runtime().spawn(async move {
                                             // APP-A11: 失败提示（原 let _ = 静默）
                                             if let Err(e) = api::set_internal_interval_blocking(&id2, opt).await {
-                                                *perr.lock().unwrap() = Some(format!("设置周期 {} 失败: {}", id2, e));
+                                                *lock_recover(&perr) = Some(format!("设置周期 {} 失败: {}", id2, e));
                                             }
                                         });
                                     }
@@ -2549,7 +2613,7 @@ impl ZergApp {
                                                 api::runtime().spawn(async move {
                                                     // APP-A11: 失败提示（原 let _ = 静默）
                                                     if let Err(e) = api::set_internal_interval_blocking(&id2, hv).await {
-                                                        *perr.lock().unwrap() = Some(format!("设置指定周期 {} 失败: {}", id2, e));
+                                                        *lock_recover(&perr) = Some(format!("设置指定周期 {} 失败: {}", id2, e));
                                                     }
                                                 });
                                             }
@@ -2669,7 +2733,21 @@ impl eframe::App for ZergApp {
         let now = ui.ctx().input(|i| i.time);
         // 每帧更新异步（定时触发 + 收集）
         self.update_async(now);
-        ui.ctx().request_repaint();
+        // APP-A17（2026-09-10 审计）: 原来这里是无条件 `request_repaint()`——界面完全静止
+        // 也满速重绘（GPU/CPU 常驻占用、笔记本耗电）。改为按需：
+        //  · 真有后台任务在飞（AI 调用 / 文档写操作 / 内部任务启停）或示例虫茧引擎在跑 → 立即重绘；
+        //  · 其余时候 500ms 唤醒一次（数据轮询是 3/5/10/30/60s 级，帧级重绘没有任何意义，
+        //    但完全不等又会饿死定时轮询，故保留一个低频心跳）。
+        let busy = self.ai_busy
+            || self.ai_pending.is_some()
+            || lock_recover(&self.doc_op_result).is_some()
+            || lock_recover(&self.it_ctrl_result).is_some()
+            || self.rt_active;
+        if busy {
+            ui.ctx().request_repaint();
+        } else {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+        }
 
         if !self.online {
             egui::Panel::top("status").show(ui, |ui| {
@@ -2728,12 +2806,12 @@ impl eframe::App for ZergApp {
 
         egui::CentralPanel::default().show(ui, |ui| {
             // APP-A04/A11: 轮询/操作失败提示条（原来失败全静默——界面看起来"一切正常"）
-            let notice = self.poll_err.lock().unwrap().clone();
+            let notice = lock_recover(&self.poll_err).clone();
             if let Some(msg) = notice {
                 ui.horizontal(|ui| {
                     ui.colored_label(egui::Color32::from_rgb(230, 90, 90), format!("⚠ {}", msg));
                     if ui.small_button("✕ 清除").clicked() {
-                        *self.poll_err.lock().unwrap() = None;
+                        *lock_recover(&self.poll_err) = None;
                     }
                 });
                 ui.separator();
@@ -2748,13 +2826,30 @@ impl eframe::App for ZergApp {
     }
 }
 
+/// APP-A14（2026-09-10 审计）: 共享状态取锁统一走这里——`Mutex::lock().unwrap()`
+/// 在锁中毒（持锁任务 panic 过）时会直接 panic，而本文件所有写侧都跑在 `api::runtime().spawn`
+/// 的线程里，任何一次异常都会让 UI 线程此后每帧崩掉。改用 `into_inner()`：中毒只是
+/// “上一个持有者异常退出”，续用内部值比整页崩溃安全得多（chat_view.rs 同款实现）。
+fn lock_recover<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// 任务 ID 缩短显示
+/// APP-A16（2026-09-10 审计）: 按「字符」取尾 6 个——原来 `&id[id.len() - 6..]` 是字节下标，
+/// 后端若返回含中文/多字节的 id 就会切在字符中间 panic（'byte index is not a char boundary'）
+/// → 整个 UI 退出。本文件 429 行的 AI 截断早就做了 is_char_boundary 保护，此处统一。
 fn short_id(id: &str) -> &str {
-    if id.len() > 6 {
-        &id[id.len() - 6..]
-    } else {
-        id
+    if id.chars().count() <= 6 {
+        return id;
     }
+    // 从后往前数第 6 个字符的起始字节位置（char_indices 保证落在边界上）
+    let idx = id
+        .char_indices()
+        .rev()
+        .nth(5)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    &id[idx..]
 }
 
 /// 任务执行时长（created_at → completed_at——人性化：秒/分/时）
@@ -2825,6 +2920,17 @@ fn humanize_branch(branch: &str) -> String {
 impl ZergApp {
     /// HUD 悬浮层（挂起清单 ③——最小实现：core 状态点 + 当前模块 + running 任务数）
     fn hud_view(&mut self, ctx: &egui::Context) {
+        // APP-A23（2026-09-10 审计——版本号硬编码多处漂移）: 本文件（app.rs）经全文件 grep
+        // 确认**不含任何程序版本号字面量**（HUD/导航都不显示版本），因此这一条在 app.rs 内
+        // 无字面量可改。真正的漂移在其它文件，需 Mr2109 先定「唯一版本源」再统一改，切勿在
+        // 这里再写死一份：
+        //   · ui/src/main.rs:38      with_title("虫族 Zerg v2.5.8")
+        //   · ui/src/modules/chat/chat_view.rs:2002  底栏 "虫族 Zerg v2.5.8"
+        //   · core banner 与 /api/capabilities.version  各一份
+        //   · ui/Cargo.toml version = "0.1.0"（与上面的 v2.5.8 完全对不上——这本身就是漂移证据）
+        // 建议口径：取 `env!("CARGO_PKG_VERSION")`（前提：先把 ui/Cargo.toml 的 version 改成
+        // 与发布版本一致，否则只会显示 0.1.0，漂移更糟）或构建期注入单一版本源，四处一起改，
+        // 改完从运行中的二进制（/api/capabilities）复核。
         // 数据：当前模块名 + running 任务数（复用现有 tasks——不新拉）
         let mod_name: String = self
             .registry
@@ -2833,10 +2939,7 @@ impl ZergApp {
             .find(|m| m.id == self.registry.active)
             .map(|m| m.name.to_string())
             .unwrap_or_else(|| self.registry.active.clone());
-        let running = self
-            .tasks
-            .lock()
-            .unwrap()
+        let running = lock_recover(&self.tasks)
             .as_ref()
             .map(|ts| ts.iter().filter(|t| t.status.as_deref() == Some("running")).count())
             .unwrap_or(0);
