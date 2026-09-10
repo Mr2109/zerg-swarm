@@ -83,7 +83,7 @@ enum FleetFetchState {
 
 // MARK: - API 客户端
 /// 虫族集群状态 API 客户端
-/// 定时刷新 zerg-core 8680 的 /api/fleet/status + /api/fleet/models + /api/fleet/tasks
+/// 定时刷新 zerg-core 8580 的 /api/fleet/status + /api/fleet/models + /api/fleet/tasks
 class FleetAPI: ObservableObject {
     static let shared = FleetAPI()
 

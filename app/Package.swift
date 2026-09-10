@@ -1,6 +1,6 @@
 // swift-tools-version: 5.9
 // 虫族集群状态菜单栏应用 (ZergApp)
-// 纯只读界面壳——只读 zerg-core 8680 API，不参与核心逻辑
+// 纯只读界面壳——只读 zerg-core 8580 API，不参与核心逻辑
 
 import PackageDescription
 
