@@ -1171,13 +1171,13 @@ impl ChatView {
         // 丙批补（2026-09-10）：被压缩原文窗口（召回指针回跳结果）
         if let Some(text) = self.pointer_text.clone() {
             let mut open = true;
-            egui::Window::new(format!("{} 被压缩的原文（软归档）", icon_text("arrow-u-up-left")))
+            egui::Window::new(t!("chat.archived_window", icon = icon_text("arrow-u-up-left")))
                 .open(&mut open)
                 .default_width(680.0)
                 .max_height(560.0)
                 .collapsible(false)
                 .show(ui.ctx(), |ui| {
-                    ui.weak("以下为压缩前的对话（已软归档，界面上不再显示）——仅供查看，不是当前指令。");
+                    ui.weak(t!("chat.archived_hint"));
                     ui.separator();
                     egui::ScrollArea::vertical().id_salt("pointer_window").max_height(480.0).show(ui, |ui| {
                         ui.label(egui::RichText::new(&text).monospace().size(12.0));
@@ -1191,20 +1191,20 @@ impl ChatView {
         if self.image_rx.is_some() || self.search_due.is_some() || self.drain_at.is_some() {
             ui.ctx().request_repaint();
         }
-        ui.heading(format!("{} 对话", icon_text("message-circle")));
+        ui.heading(t!("chat.title", icon = icon_text("message-circle")));
         // 丙批补（2026-09-10）：压缩熔断手动重置（会话级——清冷却/硬熔断，下一次超阈值即重试）
         {
             let mut do_reset = false;
             ui.horizontal(|ui| {
                 if ui
-                    .small_button(format!("{} 重置压缩熔断", icon_text("arrow-counter-clockwise")))
-                    .on_hover_text("清掉本会话的压缩失败冷却/硬熔断（压缩失败被熔断后，否则需等冷却到期）")
+                    .small_button(t!("chat.reset_compact", icon = icon_text("arrow-counter-clockwise")))
+                    .on_hover_text(t!("chat.reset_compact_tip"))
                     .clicked()
                 {
                     do_reset = true;
                 }
                 if self.active_session.is_none() {
-                    ui.weak("（先打开一个会话）");
+                    ui.weak(t!("chat.open_session_first"));
                 }
             });
             if do_reset {
@@ -1255,10 +1255,10 @@ impl ChatView {
     /// 渲染左侧会话列表
     fn render_sidebar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            if ui.button(format!("{} 新会话", icon_text("plus"))).clicked() {
+            if ui.button(t!("chat.new_session", icon = icon_text("plus"))).clicked() {
                 self.new_session();
             }
-            if ui.button(icon_text("arrows-clockwise")).on_hover_text("刷新").clicked() {
+            if ui.button(icon_text("arrows-clockwise")).on_hover_text(t!("action.refresh")).clicked() {
                 self.refresh_sessions();
             }
         });
@@ -1268,7 +1268,7 @@ impl ChatView {
         ui.horizontal(|ui| {
             let resp = ui.add(
                 egui::TextEdit::singleline(&mut self.search_query)
-                    .hint_text(format!("{} 搜索会话…", icon_text("magnifying-glass")))
+                    .hint_text(t!("chat.search_hint", icon = icon_text("magnifying-glass")))
                     .desired_width(140.0),
             );
             if resp.changed() {
@@ -1313,7 +1313,7 @@ impl ChatView {
         }
         if self.sessions_loading && self.sessions.is_empty() {
             ui.spinner();
-            ui.weak("加载中...");
+            ui.weak(t!("common.loading_dots"));
         }
         // 会话列表（分组：📌 已置顶 / 💬 会话——Hermes sidebar 借鉴——P0）
         // M20(2026-09-10 审计): 取走列表（渲染后归还）——避免每帧整数组深拷贝
@@ -1336,9 +1336,9 @@ impl ChatView {
             ui.add_space(2.0);
             for s in items {
                 let id = s.get("id").and_then(|i| i.as_str()).unwrap_or("");
-                let title = s.get("title").and_then(|t| t.as_str()).unwrap_or("新会话");
+                let title = s.get("title").and_then(|t| t.as_str()).map(|x| x.to_string()).unwrap_or_else(|| t!("chat.untitled_session").to_string());
                 let is_active = active_sid.as_deref() == Some(id);
-                let label = if title.is_empty() { "新会话" } else { title };
+                let label = if title.is_empty() { t!("chat.untitled_session").to_string() } else { title.clone() };
                 let ts = s
                     .get("updated_at")
                     .and_then(|t| t.as_f64())
@@ -1438,43 +1438,43 @@ impl ChatView {
                 // P4-32 加 source 显示（desktop/cron/agent——Hermes source 对齐）
                 let model = s.get("model").and_then(|t| t.as_str()).unwrap_or("");
                 let source = s.get("source").and_then(|t| t.as_str()).unwrap_or("desktop");
-                let source_label = match source {
-                    "cron" => "定时任务",
-                    "agent" => "子端任务",
-                    "api" => "API 会话",
-                    _ => "桌面会话",
+                let source_label: String = match source {
+                    "cron" => t!("chat.source_cron").to_string(),
+                    "agent" => t!("chat.source_agent").to_string(),
+                    "api" => t!("chat.source_api").to_string(),
+                    _ => t!("chat.source_desktop").to_string(),
                 };
                 let hover_text = if !model.is_empty() {
-                    format!("{}\n来源: {}\n模型: {}\n建立时间: {}", label, source_label, short_model(model), abs)
+                    t!("chat.session_tip_model", label = label, source = source_label, model = short_model(model), time = abs).to_string()
                 } else {
-                    format!("{}\n来源: {}\n建立时间: {}", label, source_label, abs)
+                    t!("chat.session_tip", label = label, source = source_label, time = abs).to_string()
                 };
                 row_resp.clone().on_hover_text(hover_text);
                 row_resp.context_menu(|ui| {
                     // P4-33 右键菜单：复制ID / 重命名 / 置顶 / 归档 / 删除
-                    if ui.button(format!("{} 复制ID", icon_text("copy"))).clicked() {
+                    if ui.button(t!("chat.copy_id", icon = icon_text("copy"))).clicked() {
                         ui.ctx().copy_text(id.to_string());
                         ui.close();
                     }
                     // P4-10 重命名（行内编辑）
-                    if ui.button(format!("{} 重命名", icon_text("pencil-simple"))).clicked() {
+                    if ui.button(t!("action.rename_icon", icon = icon_text("pencil-simple"))).clicked() {
                         renaming = Some((id.to_string(), label.to_string()));
                         ui.close();
                     }
-                    if ui.button(if is_pinned_for(s) { format!("{} 取消置顶", icon_text("push-pin")) } else { format!("{} 置顶", icon_text("push-pin")) }).clicked() {
+                    if ui.button(if is_pinned_for(s) { t!("chat.unpin", icon = icon_text("push-pin")).to_string() } else { t!("action.pin_icon", icon = icon_text("push-pin")).to_string() }).clicked() {
                         pinned = Some((id.to_string(), !is_pinned_for(s)));
                         ui.close();
                     }
-                    if ui.button(format!("{} 归档", icon_text("archive"))).clicked() {
+                    if ui.button(t!("action.archive", icon = icon_text("archive"))).clicked() {
                         archived = Some(id.to_string());
                         ui.close();
                     }
-                    if ui.button(format!("{} 删除", icon_text("trash"))).clicked() {
+                    if ui.button(format!("{} {}", icon_text("trash"), t!("action.delete"))).clicked() {
                         deleted = Some(id.to_string());
                         ui.close();
                     }
                     // v2.5.7 对话→任务集成: 派任务（整个对话为任务来源——后端附最后用户请求）
-                    if ui.button(format!("{} 派任务", icon_text("rocket-launch"))).clicked() {
+                    if ui.button(t!("chat.delegate_task", icon = icon_text("rocket-launch"))).clicked() {
                         delegate_sid = Some((id.to_string(), label.to_string()));
                         ui.close();
                     }
@@ -1494,11 +1494,11 @@ impl ChatView {
             .id_salt("chat_sidebar")
             .auto_shrink(false)
             .show(ui, |ui| {
-                render_group(ui, &format!("{} 已置顶", icon_text("push-pin")), pinned_items.clone());
+                render_group(ui, &t!("chat.group_pinned", icon = icon_text("push-pin")).to_string(), pinned_items.clone());
                 if !pinned_items.is_empty() && !normal_items.is_empty() {
                     ui.add_space(6.0);
                 }
-                render_group(ui, &format!("{} 会话", icon_text("message-circle")), normal_items.clone());
+                render_group(ui, &t!("chat.group_sessions", icon = icon_text("message-circle")).to_string(), normal_items.clone());
             });
         if let Some((pid, pin)) = pinned {
             // M09(2026-09-10 审计): 不再发起即刷新（竞态）——poll 成功后刷新
@@ -1537,7 +1537,7 @@ impl ChatView {
         // v2.5.7 对话→任务: 会话级派任务（POST /api/tasks——带 parent_session_id——后端附最后用户请求）
         if let Some((sid, label)) = delegate_sid {
             let model = self.current_model.clone();
-            let desc = format!("处理对话「{}」的请求（从对话发起——详见来源会话）", label);
+            let desc = t!("chat.delegate_desc", label = label).to_string();
             self.delegate_pending = Some(api::chat_delegate_task_async(desc, model, Some(sid)));
         }
         // M20: 归还会话列表（本帧借用结束）
@@ -1556,7 +1556,7 @@ impl ChatView {
         if self.messages_loading && self.messages.is_empty() {
             ui.add_space(20.0);
             ui.spinner();
-            ui.weak("加载中...");
+            ui.weak(t!("common.loading_dots"));
             return;
         }
         // M13(2026-09-10 审计): 会话详情加载失败 → 明示 + 重试入口（原来失败后永久空白无提示）
