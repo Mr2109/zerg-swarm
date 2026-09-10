@@ -18,15 +18,12 @@ func AuthMiddleware(token string) func(http.Handler) http.Handler {
 			// 检查 X-Auth-Token 头
 			authToken := r.Header.Get("X-Auth-Token")
 			if authToken == "" {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{
-					"error": "缺少认证令牌 (X-Auth-Token header required)",
-				})
+				// 多语言 L4（2026-09-11）：带分类码（message 不变——双写期）
+				writeErrorCode(w, http.StatusUnauthorized, "AUTH_TOKEN_MISSING", "缺少认证令牌 (X-Auth-Token header required)")
 				return
 			}
 			if authToken != token {
-				writeJSON(w, http.StatusForbidden, map[string]string{
-					"error": "认证令牌无效",
-				})
+				writeErrorCode(w, http.StatusForbidden, "AUTH_TOKEN_INVALID", "认证令牌无效")
 				return
 			}
 
