@@ -272,3 +272,65 @@ fn collect_text_into<'a>(node: &'a AstNode<'a>, out: &mut String) {
         }
     }
 }
+
+#[cfg(test)]
+mod m06_preview_bench {
+    use super::*;
+
+    fn sample_doc_blocks(blocks: usize) -> String {
+        let mut s = String::new();
+        for i in 0..blocks {
+            s.push_str(&format!(
+                "## 标题 {i}\n\n段落 {i}：一段用于测量渲染开销的中文文本，含 **加粗**、*斜体* 与 `代码`。\n\n- 列表项 A {i}\n- 列表项 B {i}\n\n```rust\nfn f{i}() -> usize {{ {i} }}\n```\n\n"
+            ));
+        }
+        s
+    }
+
+    /// 同一 Context、预热一帧后逐帧计时（egui 0.36 的入口是 run_ui）
+    fn time_frames(mut f: impl FnMut(&mut egui::Ui), frames: usize) -> f64 {
+        let ctx = egui::Context::default();
+        let mut warm = ctx.run_ui(Default::default(), |ui| f(ui)); // 预热（字体/纹理首帧不计入）
+        warm.textures_delta.clear();
+        let mut total = 0.0f64;
+        for _ in 0..frames {
+            let t = std::time::Instant::now();
+            let mut out = ctx.run_ui(Default::default(), |ui| f(ui));
+            total += t.elapsed().as_secs_f64() * 1000.0;
+            out.textures_delta.clear(); // 测试环境不应用纹理增量（否则 drop 时 panic）
+        }
+        total / frames as f64
+    }
+
+    /// M06 对比样张的量化证据：同一文档，两套渲染器的每帧耗时
+    /// M06 对比样张的量化证据：两档文档规模 × 两套渲染器
+    /// 运行：cargo test --release -p zerg-ui m06_compare -- --nocapture
+    #[test]
+    fn m06_compare_ferrite_vs_commonmark() {
+        eprintln!("规模 | ferrite(每帧解析) | commonmark(带缓存) | 比值");
+        let mut big_worse = false;
+        for blocks in [150usize, 1500usize] {
+            let doc = sample_doc_blocks(blocks);
+            let ferrite_ms = time_frames(|ui| render_markdown(ui, &doc), 20);
+            let mut cache = egui_commonmark::CommonMarkCache::default();
+            let cm_ms = time_frames(
+                |ui| {
+                    egui_commonmark::CommonMarkViewer::new().show(ui, &mut cache, &doc);
+                },
+                20,
+            );
+            eprintln!(
+                "{} 字节 / {} 块 | {:.2} ms/帧 | {:.2} ms/帧 | {:.1}x",
+                doc.len(),
+                blocks,
+                ferrite_ms,
+                cm_ms,
+                ferrite_ms / cm_ms.max(0.001)
+            );
+            if blocks == 1500 {
+                big_worse = ferrite_ms > cm_ms;
+            }
+        }
+        assert!(big_worse, "大文档下带缓存的渲染器应更快");
+    }
+}
