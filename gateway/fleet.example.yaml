@@ -1,0 +1,52 @@
+# fleet.yaml 示例 —— 复制为 gateway/fleet.yaml 后按自己的机器/模型填写
+#
+# 说明
+#  - 模型名**随意起**：只要在下面登记，且 `file:` 指向真实的权重路径即可
+#  - `host` 取 fleet 段里声明的机器标识；本机 = local
+#  - 共享令牌**不要**写在这里（用 ZERG_AUTH_TOKEN 环境变量或 ~/.zerg/token）
+
+auth:
+  # 令牌留空即可：运行时由环境变量/令牌文件注入（见 .env.example）
+  token: ""
+
+models:
+  # 单机最小示例：一个本机模型
+  example-8b:
+    - name: example-8b
+      host: local
+      backend: llama-server
+      file: /path/to/models/your-model-Q4_K_M.gguf
+      mem_gb: 6
+      ctx_window: 32768
+      modality: text
+
+  # 集群示例：同一模型在多台机器上互为候选（按显存/负载打分选机）
+  example-32b:
+    - name: example-32b
+      host: local
+      backend: llama-server
+      file: /path/to/models/your-model-32b-Q4_K_M.gguf
+      mem_gb: 22
+      ctx_window: 262144
+      modality: text
+    - name: example-32b
+      host: worker1            # 见下方 fleet 段
+      backend: llama-server
+      file: /data/models/your-model-32b-Q4_K_M.gguf
+      mem_gb: 22
+      ctx_window: 262144
+      modality: text
+
+# 客户端别名（可选）：把外部工具发来的模型名映射到上面登记的模型
+aliases:
+  # zerg-example: example-32b
+
+fleet:
+  local:
+    host: 127.0.0.1
+    port: 8100
+    os: macos
+  worker1:
+    host: 192.0.2.10            # 换成你自己的子端地址（192.0.2.0/24 为文档示例段）
+    port: 8100
+    os: ubuntu
