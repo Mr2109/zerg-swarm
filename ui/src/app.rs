@@ -3111,17 +3111,14 @@ fn humanize_branch(branch: &str) -> String {
 impl ZergApp {
     /// HUD 悬浮层（挂起清单 ③——最小实现：core 状态点 + 当前模块 + running 任务数）
     fn hud_view(&mut self, ctx: &egui::Context) {
-        // APP-A23（2026-09-10 审计——版本号硬编码多处漂移）: 本文件（app.rs）经全文件 grep
-        // 确认**不含任何程序版本号字面量**（HUD/导航都不显示版本），因此这一条在 app.rs 内
-        // 无字面量可改。真正的漂移在其它文件，需 Mr2109 先定「唯一版本源」再统一改，切勿在
-        // 这里再写死一份：
-        //   · ui/src/main.rs:38      with_title("虫族 Zerg v2.5.8")
-        //   · ui/src/modules/chat/chat_view.rs:2002  底栏 "虫族 Zerg v2.5.8"
-        //   · core banner 与 /api/capabilities.version  各一份
-        //   · ui/Cargo.toml version = "0.1.0"（与上面的 v2.5.8 完全对不上——这本身就是漂移证据）
-        // 建议口径：取 `env!("CARGO_PKG_VERSION")`（前提：先把 ui/Cargo.toml 的 version 改成
-        // 与发布版本一致，否则只会显示 0.1.0，漂移更糟）或构建期注入单一版本源，四处一起改，
-        // 改完从运行中的二进制（/api/capabilities）复核。
+        // APP-A23（2026-09-10 审计——版本号硬编码多处漂移）: 本文件（app.rs）不含程序版本号字面量，
+        // 故这一条在 app.rs 内无字面量可改。**已收口（92a18189，2026-09-10）**——唯一版本源 = 当前发布版：
+        //   · ui/Cargo.toml version = "2.5.8"
+        //   · ui/src/main.rs:38  with_title("虫族 Zerg v2.5.8")
+        //   · ui/src/modules/chat/chat_view.rs:2114  底栏 "虫族 Zerg v2.5.8"
+        //   · core/cmd/zerg-core/main.go:56  启动横幅 v2.5.8
+        //   · core/internal/api/capabilities.go:17  + /api/openapi.json version
+        // 五处一致；运行中二进制复核：/api/capabilities 与 openapi 均返回 2.5.8。改版本先改这五处。
         // 数据：当前模块名 + running 任务数（复用现有 tasks——不新拉）
         let mod_name: String = self
             .registry
