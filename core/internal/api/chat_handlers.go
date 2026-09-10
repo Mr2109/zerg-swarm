@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"fmt"
 	"net/http"
 	"os"
@@ -68,6 +69,9 @@ var progressiveEnabled = os.Getenv("ZERG_PROGRESSIVE") == "1"
 // 批次B(2026-09-10): 运行中轮次取消注册表（abort 端点 +
 // 客户端断连时部分结果落库——会话 id → CancelFunc）
 var chatTurnCancels sync.Map
+
+// 批次D2(2026-09-10): 会话租约（单写者——同会话并发轮次拒绝）
+var chatSessionBusy sync.Map // sessionID -> struct{}
 
 // 批次C2(2026-09-10): 插话 steer 存储（会话 id → 待挂载文本——挂下一次工具结果）
 var chatSteers sync.Map // sessionID -> *steerBox
@@ -435,6 +439,12 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 		writeChatError(w, http.StatusNotFound, err)
 		return
 	}
+	// 批次D2(2026-09-10): 会话租约（最前置——拒绝请求零副作用）
+	if _, loaded := chatSessionBusy.LoadOrStore(id, struct{}{}); loaded {
+		writeChatError(w, http.StatusConflict, fmt.Errorf("chat: 该会话已有轮次在运行（请等待或先停止）"))
+		return
+	}
+	defer chatSessionBusy.Delete(id)
 	userMsg := &chat.Message{
 		SessionID: id, Role: "user", Content: normalizeChatContent(req.Content),
 		Active: true, Timestamp: chatNow(),
@@ -474,6 +484,13 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 			kr.ToolCalls = append(kr.ToolCalls, loopcore.ToolCall{ID: tc.ID, Name: tc.Name, Args: tc.Args, RawArgs: tc.RawArgs})
 		}
 		return kr, nil
+	}
+	// 批次D1: 消息不变式守卫
+	if fixed, fixes := chat.SanitizeMessages(msgs); true {
+		for _, f := range fixes {
+			log.Printf("🛡️ 对话守卫(send-tool): %s（会话 %s）", f, id)
+		}
+		msgs = fixed
 	}
 	ec := agent.NewExecContext(chat.ChatToolsWorkDir)
 	ec.AgentName = "chat"
@@ -674,6 +691,12 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		writeChatError(w, http.StatusNotFound, err)
 		return
 	}
+	// 批次D2(2026-09-10): 会话租约——最前置检查（不落库、不动历史；被拒请求零副作用）
+	if _, loaded := chatSessionBusy.LoadOrStore(id, struct{}{}); loaded {
+		writeChatError(w, http.StatusConflict, fmt.Errorf("chat: 该会话已有轮次在运行（请等待或先停止）"))
+		return
+	}
+	defer chatSessionBusy.Delete(id)
 	// 1. 存用户消息（D3/P2 图片: base64 → 文件 → image_path——多图逗号分隔）
 	//    批次C3: reuse_user_id>0 → 不新增（重生成路径——软删其后消息——复用既有 user 消息）
 	imagePath := ""
@@ -750,6 +773,15 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	runCtx, runCancel := context.WithCancel(r.Context())
 	chatTurnCancels.Store(id, runCancel)
 	defer func() { chatTurnCancels.Delete(id); runCancel() }()
+	// 批次D1(2026-09-10): 消息不变式守卫（角色交替 + tool 配对——修复记录进日志）
+	if fixed, fixes := chat.SanitizeMessages(msgs); len(fixes) > 0 {
+		for _, f := range fixes {
+			log.Printf("🛡️ 对话守卫: %s（会话 %s）", f, id)
+		}
+		msgs = fixed
+	} else {
+		msgs = fixed
+	}
 	// 压缩耗时 10-30s——用户在 UI 看到"正在压缩历史…"而非静默卡住
 	writeSSE("compacting", `{}`)
 	compacted, _ := h.store.CompressHistory(r.Context(), h.infer, id, se.Model, history)
