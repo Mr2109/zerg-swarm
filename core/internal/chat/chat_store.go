@@ -47,8 +47,9 @@ func (s *ChatStore) GetToolRuntime(sessionID string) *ToolRuntime {
 //
 //	（unicode61 把连续 CJK 当一个 token——实测 MATCH '工具' 零命中；trigram 支持 ≥3 字 MATCH，<3 字由查询侧走 LIKE）
 //
+// v6: 丙批 §4.1——sessions 加 system_prompt/prompt_hash/prompt_model（系统提示会话内冻结）
 // v5: 甲批 T3（2026-09-10 Mr2109拍板）——两阶段清理：sessions 加 purge_after 列（软删→宽限→级联硬删）
-const schemaVersion = 5
+const schemaVersion = 6
 
 // schemaSQL — 建表语句（借鉴 Hermes 精简）
 const schemaSQL = `
@@ -71,7 +72,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     parent_task_id TEXT,
     source TEXT NOT NULL DEFAULT 'desktop',
     parent_session_id TEXT,
-    purge_after REAL
+    purge_after REAL,
+    system_prompt TEXT,
+    prompt_hash TEXT,
+    prompt_model TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(last_activity_at DESC);
 -- 注: idx_sessions_source/parent 在 init() 迁移后创建（旧表无新列时 CREATE INDEX 会失败——P4-32 实测坑）
@@ -168,6 +172,16 @@ func (s *ChatStore) init() error {
 			// v3→v4: 中文检索修复——旧库 messages_fts 是 unicode61 → 重建为 trigram（含全量重建 + 行数校验）
 			if err := s.migrateFTSv4(); err != nil {
 				return fmt.Errorf("chat: 迁移 v4（中文检索）失败: %w", err)
+			}
+		}
+		if v < 6 {
+			// v5→v6（丙批 §4.1）：系统提示会话内冻结——sessions 加 system_prompt/prompt_hash/prompt_model
+			for _, col := range []string{"system_prompt", "prompt_hash", "prompt_model"} {
+				if !s.hasColumn("sessions", col) {
+					if _, err := s.db.Exec("ALTER TABLE sessions ADD COLUMN " + col + " TEXT"); err != nil {
+						return fmt.Errorf("chat: 迁移 v6 %s 失败: %w", col, err)
+					}
+				}
 			}
 		}
 		if v < 5 {
