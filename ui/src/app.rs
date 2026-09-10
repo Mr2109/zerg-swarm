@@ -157,7 +157,7 @@ impl ZergApp {
         Self {
             online: false,
             hud_hidden: false,
-            locale: "zh-CN".to_string(),
+            locale: crate::detect_locale(),   // 决策②：prefs → 系统语言 → en
             tasks: Arc::new(Mutex::new(None)),
             tasks_loaded: false,
             online_result: Arc::new(Mutex::new(None)),
@@ -2524,6 +2524,22 @@ impl ZergApp {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         std::path::PathBuf::from(home).join(".zerg-ui-prefs.json")
     }
+    /// 语言偏好持久化（多语言决策②：显式切换写入 ~/.zerg-ui-prefs.json 的 locale 字段）
+    fn save_locale_pref(locale: &str) {
+        let p = Self::preview_pref_path();
+        let mut v: serde_json::Value = std::fs::read_to_string(&p)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        if !v.is_object() {
+            v = serde_json::json!({});
+        }
+        v["locale"] = serde_json::Value::String(locale.to_string());
+        if let Ok(s) = serde_json::to_string_pretty(&v) {
+            let _ = std::fs::write(&p, s);
+        }
+    }
+
     /// 读取 AI 模型偏好（与 preview_renderer 同一文件 ~/.zerg-ui-prefs.json 的 ai_model 字段）
     fn load_ai_model_pref() -> Option<String> {
         let s = std::fs::read_to_string(Self::preview_pref_path()).ok()?;
@@ -3027,6 +3043,7 @@ impl eframe::App for ZergApp {
                     self.locale = "zh-CN".to_string();
                     rust_i18n::set_locale("zh-CN");
                 }
+                Self::save_locale_pref(&self.locale);
             }
             if open_manager {
                 self.show_module_manager = true; // ➕ 打开吊装系统面板
