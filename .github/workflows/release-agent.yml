@@ -1,18 +1,6 @@
-name: Release（全产物）
+name: Release zerg-agent
 
-# 自动升级模块 P0-c：制品与发布通道。
-#
-# 触发：推 v* 标签（或手动 workflow_dispatch）。
-# 产物形状必须与本地 scripts/pack-release.sh **完全同形**（升级器只认这一套）：
-#   zerg-core-darwin-arm64 / zerg-agent-darwin-arm64 / zerg-ui-darwin-arm64
-#   zerg-core-linux-amd64  / zerg-agent-linux-amd64
-#   + 逐件 .sha256 + checksums.txt + manifest.json
-#
-# ⚠️ 扩大制品矩阵时（例：darwin-amd64）必须**同时**改 scripts/pack-release.sh 与下面的 ui/go 矩阵，
-#    否则"本地假源演练通过、线上真源少件"——升级器会拒绝安装（宁可拒绝，不可装错）。
-#
-# 历史：本文件从前只出 zerg-agent，且从已不存在的 agent/ 目录构建（Go 1.22 硬编码）——
-#      P0-c 重写为全产物；旧路径 agent/ 已由 core/cmd/zerg-agent 取代。
+# 决策 3：子端二进制在 Releases 分发（用户不必装 Go 即可组集群）
 on:
   push:
     tags: ['v*']
@@ -22,152 +10,40 @@ permissions:
   contents: write
 
 jobs:
-  gate:
-    name: 版本门禁
+  build:
+    name: ${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.v.outputs.version }}
-      commit: ${{ steps.v.outputs.commit }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: 版本真源一致 + 标签匹配
-        id: v
-        run: |
-          set -euo pipefail
-          python3 scripts/check_version.py
-          V=$(grep -m1 '^const Version = ' core/internal/version/version.go | sed 's/.*"\(.*\)".*/\1/')
-          C=$(git rev-parse --short HEAD)
-          echo "version=$V" >> "$GITHUB_OUTPUT"
-          echo "commit=$C"  >> "$GITHUB_OUTPUT"
-          echo "版本 $V · 代码 $C"
-          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$V" ]; then
-            echo "❌ 标签 $GITHUB_REF_NAME 与源码版本 v$V 不一致——先改版本真源再打标签"
-            exit 1
-          fi
-
-  go:
-    name: Go ${{ matrix.goos }}-${{ matrix.goarch }}
-    needs: gate
-    # runner 必须按平台给：darwin 制品的 cgo 需要 darwin 工具链——
-    # 在 ubuntu 上交叉编译会 `clang: error: unsupported option '-arch'`（2026-09-11 CI 实测）。
-    runs-on: ${{ matrix.runner }}
     strategy:
-      fail-fast: false
       matrix:
         include:
-          # cgo 差异必须按平台给：core 依赖 github.com/yalue/onnxruntime_go（cgo 包，
-          # 运行时再加载 ONNX 动态库）。CGO_ENABLED=0 时它的构建约束会排除全部文件 →
-          # `build constraints exclude all Go files` 直接构建失败（2026-09-11 CI 实测）。
-          # darwin 用 1（与本机验证过的构建一致）；linux 用 0（实测可编，静态、免工具链）。
-          - { goos: darwin, goarch: arm64, cgo: '1', runner: macos-14 }
-          - { goos: linux,  goarch: amd64, cgo: '0', runner: ubuntu-latest }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: linux,  goarch: amd64 }
+          - { goos: linux,  goarch: arm64 }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: core/go.mod
-          cache-dependency-path: core/go.sum
-      - name: 构建主控 + 子端（写入代码身份 commit + build_time）
-        working-directory: core
+          go-version: '1.22'
+          cache-dependency-path: agent/go.sum
+      - name: 交叉编译（命名规范 zerg-agent-<os>-<arch>）
+        working-directory: agent
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: ${{ matrix.cgo }}
+          CGO_ENABLED: '0'
         run: |
-          set -euo pipefail
-          BT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          SHA="${{ needs.gate.outputs.commit }}"
-          LDF="-s -w -X github.com/Mr2109/zerg-swarm/core/internal/version.Commit=$SHA -X github.com/Mr2109/zerg-swarm/core/internal/version.BuildTime=$BT"
-          mkdir -p ../dist
-          go build -trimpath -buildvcs=false -ldflags "$LDF" -o "../dist/zerg-core-$GOOS-$GOARCH"  ./cmd/zerg-core
-          go build -trimpath -buildvcs=false -ldflags "$LDF" -o "../dist/zerg-agent-$GOOS-$GOARCH" ./cmd/zerg-agent
-          cd ../dist
-          # macOS runner 无 sha256sum（有 shasum）；两种都产出 "hash  name" 同形格式
-          if command -v sha256sum >/dev/null 2>&1; then SH="sha256sum"; else SH="shasum -a 256"; fi
-          for f in zerg-*; do $SH "$f" > "$f.sha256"; done
-          ls -l
+          go build -trimpath -ldflags "-s -w" \
+            -o "zerg-agent-${{ matrix.goos }}-${{ matrix.goarch }}" ./cmd/zerg-agent
+          shasum -a 256 "zerg-agent-${{ matrix.goos }}-${{ matrix.goarch }}" \
+            > "zerg-agent-${{ matrix.goos }}-${{ matrix.goarch }}.sha256"
       - uses: actions/upload-artifact@v4
         with:
-          name: go-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/
-          if-no-files-found: error
-
-  ui:
-    name: UI darwin-arm64
-    needs: gate
-    runs-on: macos-14          # arm64 runner（与本地 Mr2109 同为 Apple Silicon）
-    steps:
-      - uses: actions/checkout@v4
-      - name: Rust 工具链
-        run: |
-          set -euo pipefail
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustc -V
-      - name: cargo 缓存
-        uses: actions/cache@v4
-        with:
+          name: zerg-agent-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ui/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('ui/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-      - name: 构建 UI
-        working-directory: ui
-        run: |
-          set -euo pipefail
-          mkdir -p ../dist
-          cargo build --release -p zerg-ui
-          cp -p target/release/zerg-ui ../dist/zerg-ui-darwin-arm64
-      - name: ad-hoc 重签名（macOS 上签名失效会被秒杀 EXIT137）
-        run: |
-          set -euo pipefail
-          codesign -s - --force dist/zerg-ui-darwin-arm64
-          codesign -dv dist/zerg-ui-darwin-arm64 2>&1 | head -3
-      - name: 校验和
-        run: |
-          set -euo pipefail
-          cd dist && shasum -a 256 zerg-ui-darwin-arm64 > zerg-ui-darwin-arm64.sha256 && cat zerg-ui-darwin-arm64.sha256
-      - uses: actions/upload-artifact@v4
+            agent/zerg-agent-*
+      - name: 附加到 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         with:
-          name: ui-darwin-arm64
-          path: dist/
-          if-no-files-found: error
-
-  release:
-    name: 汇总 + 发布
-    needs: [gate, go, ui]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4          # 取 scripts/make-manifest.py（与本地共用）
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-      - name: 生成 checksums.txt + manifest.json（与本地 pack-release.sh 同形）
-        run: |
-          set -euo pipefail
-          V="${{ needs.gate.outputs.version }}"
-          C="${{ needs.gate.outputs.commit }}"
-          BT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          (cd dist && sha256sum zerg-* | grep -v '\.sha256' > checksums.txt)
-          python3 scripts/make-manifest.py dist "$V" "$C" "$BT"
-          ls -l dist
-      - name: 发布到 Releases
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          TAG="v${{ needs.gate.outputs.version }}"
-          gh release create "$TAG" dist/* \
-            --title "Zerg $TAG" \
-            --notes "自动构建：制品随附 SHA-256 校验和与 manifest.json（自动升级模块据此校验）。" \
-            || gh release upload "$TAG" dist/* --clobber
-      - name: 回读核实（发布必须可验）
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          gh release view "v${{ needs.gate.outputs.version }}" --json tagName,assets \
-            --jq '.tagName, (.assets[] | "  \(.name)  \(.size) 字节")'
+          files: agent/zerg-agent-*

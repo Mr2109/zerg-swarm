@@ -13,17 +13,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          # G6：工具链钉住的单一真源 = core/go.mod 的 go 指令（见 scripts/check-gotoolchain.py）
-          go-version-file: core/go.mod
+          go-version: '1.22'
           cache-dependency-path: |
             core/go.sum
             agent/go.sum
-      - name: 配置 git 身份（zerg-git 相关测试要 git commit）
-        run: |
-          git config --global user.email "ci@example.invalid"
-          git config --global user.name "Zerg CI"
-      - name: shell 静态检查（$VAR 后紧跟非 ASCII → unbound variable）
-        run: python3 scripts/check-shell-unicode-vars.py --check scripts/*.sh *.sh
       - name: core 构建 + 测试
         working-directory: core
         run: |
@@ -45,48 +38,6 @@ jobs:
         working-directory: ui
         run: cargo test -p zerg-ui
 
-  version:
-    name: 版本号一致性（UI ↔ Go 单一来源）
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: 检查
-        run: python3 scripts/check_version.py
-      - name: Go 工具链钉住一致性（G6：core/agent 两模块同值）
-        run: python3 scripts/check-gotoolchain.py
-
-  compat:
-    name: 跨版本状态兼容清单门禁（B7 / G10）
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: 清单 ↔ 代码双向一致（R1–R6）
-        # 只读源码与 core/internal/compat/compat.json；**不碰真机状态目录**（CI 里跑 ~/.zerg/** 是禁忌）。
-        run: python3 scripts/check-compat-manifest.py --selftest && python3 scripts/check-compat-manifest.py
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: core/go.mod
-          cache-dependency-path: core/go.sum
-      - name: 兼容层单测（迁移幂等 / 不覆盖 / 高版本不猜 / 旁路信封）
-        working-directory: core
-        run: go test ./internal/compat/ ./internal/api/ -run 'Compat|Manifest|Migration|Migrate|Schema|Sidecar|Engine|VerifyGuard|Dirs|Path' -count=1
-
-  docs:
-    name: 文档双语门禁（配对/标题/链接）
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: 检查
-        run: python3 scripts/check_docs.py
-
-  i18n:
-    name: i18n 门禁（键对称/引用完整/占位符/中文基线）
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: 检查
-        run: python3 ui/scripts/check-i18n.py
-
   secrets:
     name: 密钥扫描
     runs-on: ubuntu-latest
@@ -95,8 +46,5 @@ jobs:
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
-        # 版本必须与本地/仓库工具一致：8.24.3 会对 memory_test.go 的**合成夹具**误报
-        # generic-api-key（同配置 8.30.1 = 0 命中）。版本漂移 = 门禁结论不可复现。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_VERSION: "8.30.1"
