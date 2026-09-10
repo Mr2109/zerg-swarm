@@ -3,7 +3,9 @@ package modeladapter
 import (
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/Mr2109/zerg-swarm/agent/internal/logx"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
 
@@ -18,7 +20,7 @@ type Ornith struct{}
 func (a *Ornith) Name() string { return "example-35b-v2" }
 
 func (a *Ornith) BuildArgs(entry *registry.ModelEntry, port int) []string {
-	tmpl := a.templatePath()
+	tmpl := a.templatePath(entry)
 	args := []string{
 		"-m", entry.File,
 		"-c", "0", // 自动用模型训练上下文（qwen35moe GQA，262144 增量小 ~4.8GB）
@@ -46,12 +48,24 @@ func (a *Ornith) BuildArgs(entry *registry.ModelEntry, port int) []string {
 	return args
 }
 
-// templatePath 返回 example-35b-v2 外部 chat template 路径（可选；都不存在时不加该参数）。
-// 2026-09-11 开源清理：原写死两处机器绝对路径 → 改为「环境变量 ZERG_ORNITH_TEMPLATE + 家目录/仓库相对候选」。
-func (a *Ornith) templatePath() string {
+// templatePath 解析 example-35b-v2 外部 chat template 路径（可选；都不存在时不加该参数）。
+// 2026-09-11 登记表配置化：优先级如下（前两者命中即返回）
+//  1. 登记表 `chat_template:` 字段 —— 任意机器/任意模型可配，推荐用法
+//  2. 环境变量 ZERG_ORNITH_TEMPLATE
+//  3. ~/.zerg/example-35b-v2_chat_template.jinja
+//  4. 仓库内相对路径 agent/example-35b-v2_chat_template.jinja（及其上一级）
+// 链路上任一处显式配置但文件不存在 → 记 WARN 并继续回退，不会把坏路径传给后端。
+func (a *Ornith) templatePath(entry *registry.ModelEntry) string {
+	if entry != nil && entry.ChatTemplate != "" {
+		p := expandHome(entry.ChatTemplate)
+		if fileExists(p) {
+			return p
+		}
+		logx.Warnf("modeladapter", "登记表 chat_template 不存在，已忽略并回退", "path", entry.ChatTemplate)
+	}
 	candidates := []string{}
 	if p := os.Getenv("ZERG_ORNITH_TEMPLATE"); p != "" {
-		candidates = append(candidates, p)
+		candidates = append(candidates, expandHome(p))
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates, home+"/.zerg/example-35b-v2_chat_template.jinja")
@@ -61,11 +75,30 @@ func (a *Ornith) templatePath() string {
 		"../agent/example-35b-v2_chat_template.jinja",
 	)
 	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
+		if fileExists(c) {
 			return c
 		}
 	}
 	return ""
+}
+
+// expandHome 展开路径开头的 ~（仅 ~ 与 ~/ 形式，其余原样返回）。
+func expandHome(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			if p == "~" {
+				return home
+			}
+			return home + p[1:]
+		}
+	}
+	return p
+}
+
+// fileExists 路径存在且为普通文件。
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
 }
 
 func (a *Ornith) ToolCallStyle() string { return "xml" }
