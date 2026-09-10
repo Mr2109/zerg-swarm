@@ -2,7 +2,7 @@ package inference
 
 import (
 	"context"
-	"zerg/core/internal/localback"
+	"github.com/Mr2109/zerg-swarm/core/internal/localback"
 )
 
 // LocalRuntime 本机推理运行时，封装 LocalBackend。

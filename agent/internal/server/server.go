@@ -22,10 +22,10 @@ import (
 	"sync"
 	"time"
 
-	"zerg/agent/internal/backend"
-	"zerg/agent/internal/modeladapter"
-	"zerg/agent/internal/monitor"
-	"zerg/agent/internal/registry"
+	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
+	"github.com/Mr2109/zerg-swarm/agent/internal/modeladapter"
+	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
+	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
 
 // Server 子端 Agent HTTP 服务器。

@@ -3,8 +3,8 @@ package gateway
 import (
 	"testing"
 
-	"zerg/core/internal/config"
-	"zerg/core/internal/store"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/store"
 )
 
 // helper: 注入快照（模拟机器心跳）

@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"strings"
 
-	"zerg/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 )
 
 // 工具循环上限（防失控——对话是交流——不是任务）

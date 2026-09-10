@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"zerg/core/internal/memory"
+	"github.com/Mr2109/zerg-swarm/core/internal/memory"
 )
 
 // acIsolateMemory — 记忆存储指向临时目录（绝不写真实 ~/.zerg/memory）

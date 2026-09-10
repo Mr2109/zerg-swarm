@@ -30,7 +30,7 @@ import (
 	"sync"
 	"time"
 
-	"zerg/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 // CompactFn — LLMLingua-2 类删除式压缩函数（可空——未加载/不可用时传 nil）

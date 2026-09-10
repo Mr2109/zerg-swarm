@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // mockPluginBase 提供 plugin.Plugin 接口的默认空实现（mock 复用——不全写）

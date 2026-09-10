@@ -28,7 +28,7 @@ import (
 	"sync"
 	"time"
 
-	"zerg/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 // ---------------------------------------------------------------------------

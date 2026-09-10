@@ -3,7 +3,7 @@ package modeladapter
 import (
 	"fmt"
 
-	"zerg/agent/internal/registry"
+	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
 
 // Qwen38Flash Qwen3.8-Flash-Next 适配器。

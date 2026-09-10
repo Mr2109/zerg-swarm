@@ -3,7 +3,7 @@ package modeladapter
 import (
 	"fmt"
 
-	"zerg/agent/internal/registry"
+	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
 
 // DS4 DeepSeek-V4-Flash 适配器（ds4-server 后端，不走 llama-server）。

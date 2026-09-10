@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"zerg/core/internal/chat"
+	"github.com/Mr2109/zerg-swarm/core/internal/chat"
 )
 
 // ChatWindowHandler — 取会话中某条消息前后的一段（召回指针跳转/运维查看）

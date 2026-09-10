@@ -3,7 +3,7 @@ package adapters
 import (
 	"testing"
 
-	"zerg/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
 // ─── 测试 Ds4Adapter 实现 Plugin 接口 ────────────────────────────────────────
