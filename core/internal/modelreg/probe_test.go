@@ -62,9 +62,9 @@ func kv(key string, vtype uint32, val []byte) []byte {
 
 func makeGGUF(kvs ...[]byte) []byte {
 	out := []byte("GGUF")
-	out = append(out, le32(3)...)                 // version
-	out = append(out, le64(0)...)                 // tensor_count
-	out = append(out, le64(uint64(len(kvs)))...)  // kv_count
+	out = append(out, le32(3)...)                // version
+	out = append(out, le64(0)...)                // tensor_count
+	out = append(out, le64(uint64(len(kvs)))...) // kv_count
 	for _, x := range kvs {
 		out = append(out, x...)
 	}
