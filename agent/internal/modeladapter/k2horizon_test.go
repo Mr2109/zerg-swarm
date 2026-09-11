@@ -9,11 +9,6 @@ import (
 
 // TestDispatchK2Horizon K2-Horizon 家族 Dispatch 命中测试（2026-09-08 接入）。
 func TestDispatchK2Horizon(t *testing.T) {
-	// 公开快照会把私有模型名替换成示例名（K2-Horizon-* → example-*），
-	// "按名字派发"的断言前提随之不成立 → 跳过（本机/私有仓照常执行，覆盖不丢）。
-	if Dispatch("K2-Horizon-7B").Name() == "" {
-		t.Skip("模型名已被导出规则改写（公开快照形态）——跳过按名派发断言")
-	}
 	cases := []struct {
 		model  string
 		expect string // 期望命中的适配器 Name
@@ -27,6 +22,12 @@ func TestDispatchK2Horizon(t *testing.T) {
 		{"example-35b-v2", "ornith"},
 		{"deepseek-v4-flash", "deepseek"},
 		{"不认识的模型", ""}, // generic
+	}
+	// 公开快照会把**本文件的用例名**替换成示例名（K2-Horizon-* → example-*），
+	// "按名字派发"的断言前提随之不成立 → 跳过（本机/私有仓照常执行，覆盖不丢）。
+	// 判据必须看"用例表自己"：派发代码本身不会被改写，拿它探测判断不出快照形态。
+	if !strings.Contains(cases[0].model, "K2-Horizon") {
+		t.Skip("用例模型名已被导出规则改写（公开快照形态）——跳过按名派发断言")
 	}
 	for _, c := range cases {
 		got := Dispatch(c.model)
