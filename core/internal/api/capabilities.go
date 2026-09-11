@@ -14,11 +14,11 @@ import (
 // GET /api/capabilities
 func (h *Handlers) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
-		"name":        "虫族 Zerg",
-		"version":     version.Tag,
+		"name":    "虫族 Zerg",
+		"version": version.Tag,
 		// 代码身份（自动升级模块：verify 阶段比对"活进程 vs 目标制品"——混版必须可见）
-		"code_sha":   version.Commit,
-		"build_time": version.BuildTime,
+		"code_sha":    version.Commit,
+		"build_time":  version.BuildTime,
 		"description": "去中心化 AI 任务网络——主控调度 + CA 执行 + 复查验证",
 		"auth":        "X-Auth-Token 请求头（网关/主控配置的 token）",
 		"base_url":    "http://<主控地址>:8580",
