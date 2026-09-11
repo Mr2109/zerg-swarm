@@ -465,7 +465,7 @@ func TestStoreRootSelection(t *testing.T) {
 	}
 }
 
-// 待修补 #24：记录旁的留痕兄弟文件（<version>.trace.json）不是记录，list 必须跳过它，
+// 待修补 #24 / 能力快照：记录旁的兄弟文件（<version>.trace.json）不是记录，list 必须跳过它，
 // 否则会被当成一条坏记录报 error（CLI list 会因此退 2）。
 func TestStoreListIgnoresTraceSiblings(t *testing.T) {
 	root := t.TempDir()
@@ -489,6 +489,34 @@ func TestStoreListIgnoresTraceSiblings(t *testing.T) {
 		t.Fatalf("记录行不该有 error/Err：%+v", rows[0])
 	}
 	if rows[0].Version != wantVersion("7") {
+		t.Fatalf("应列到记录本行：%+v", rows[0])
+	}
+}
+
+// 能力快照兄弟文件（<version>.capabilities.json）同样不是记录，list 也必须跳过它——
+// 否则会被当成一条坏记录报 error（CLI list 会因此退 2）。
+func TestStoreListIgnoresCapabilitySnapshots(t *testing.T) {
+	root := t.TempDir()
+	st := NewStore(root)
+	res, err := st.Put(goodRecord("snap-model", "8"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sib := CapabilitySnapshotPath(res.Path)
+	if err := os.WriteFile(sib, []byte(`{"schema":"`+CapabilitySnapshotSchemaV1+`","capabilities":[]}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.List()
+	if err != nil {
+		t.Fatalf("list 不该报错：%v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("list 应只剩记录 1 行（跳过能力快照兄弟），实际 %d 行：%+v", len(rows), rows)
+	}
+	if rows[0].Err != "" || rows[0].Errors != 0 {
+		t.Fatalf("记录行不该有 error/Err：%+v", rows[0])
+	}
+	if rows[0].Version != wantVersion("8") {
 		t.Fatalf("应列到记录本行：%+v", rows[0])
 	}
 }
