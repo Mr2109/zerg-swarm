@@ -5,12 +5,12 @@ package main
 //
 // 流程: 参数解析 → 创建 Agent → 建日志 → 调 Loop（7 工具）→ 输出结果
 import (
-	"github.com/Mr2109/zerg-swarm/core/internal/version"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/version"
 	"log"
 	"os"
 	"os/signal"
@@ -418,6 +418,6 @@ func formatReason(reason agent.TerminateReason) string {
 	case "model_error":
 		return "模型调用失败"
 	default:
-		return fmt.Sprintf("终止 (%s)", string(reason))
+		return fmt.Sprintf("terminated (%s)", string(reason))
 	}
 }
