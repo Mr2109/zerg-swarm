@@ -12,7 +12,6 @@ package gateway
 import (
 	"log"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -26,24 +25,18 @@ import (
 //   - FailCount: 连续失败次数（failCounts）——熔断判定的输入（>= circuitFailThreshold=8 才熔断，
 //     且 healthy 机器在 < healthyTripLimit=10 时被保护——只降权不摘除）。
 //   - TripCount: tripMachine 触发的熔断次数（tripCounts——外部 failover 调用链的计数）。
-//   - LastError / LastErrorAt / LastErrorRecorded / LastErrorSource: 最后一次失败的原因文本、
-//     时间、是否真的记录过原因、以及记录它的计数路径。**有熔断状态（fail_count/trip_count/open_since
-//     任一非零）却没有任何原因记录时，LastError 不给空串**——空串让人以为「没失败过」，与计数非零
-//     自相矛盾（活系统上出现过 fail_count=11 + state=half-open + last_error=="" 的迷惑现场）。
-//     此时 LastError = breakerNoReasonText 且 LastErrorRecorded=false，消费方据此可判定「未记录」。
+//   - LastError / LastErrorAt: 最后一次转发失败的原因文本与时间（原因可见——本次新增）。
 //   - OpenSince: 首次熔断时间（failSince），RFC3339；从未记录熔断时间时为空串。
 //   - CooldownRemainingS: 剩余冷却秒数（closed/half-open 为 0）。
 type BreakerInfo struct {
 	Host               string  `json:"host"`
-	State              string  `json:"state"`                       // closed / open / half-open
-	FailCount          int     `json:"fail_count"`                  // failCounts——连续失败次数（熔断阈值输入）
-	TripCount          int     `json:"trip_count"`                  // tripCounts——tripMachine 触发次数
-	FailThreshold      int     `json:"fail_threshold"`              // circuitFailThreshold（8）——UI 可显示 3/8
-	HealthyTripLimit   int     `json:"healthy_trip_limit"`          // healthyTripLimit（10）——healthy 保护上限
-	Healthy            bool    `json:"healthy"`                     // 心跳快照是否 healthy（无快照=false）
-	LastError          string  `json:"last_error"`                  // 最后一次失败原因文本；有熔断状态却无原因记录时= breakerNoReasonText（绝不空串）
-	LastErrorRecorded  bool    `json:"last_error_recorded"`         // true=last_error 是真实记录的原因；false=没记录过（值是占位说明）
-	LastErrorSource    string  `json:"last_error_source,omitempty"` // 记下该原因的计数路径（markFailure/tripMachine/pickRouteExcluding）；空=从未记录
+	State              string  `json:"state"`              // closed / open / half-open
+	FailCount          int     `json:"fail_count"`         // failCounts——连续失败次数（熔断阈值输入）
+	TripCount          int     `json:"trip_count"`         // tripCounts——tripMachine 触发次数
+	FailThreshold      int     `json:"fail_threshold"`     // circuitFailThreshold（8）——UI 可显示 3/8
+	HealthyTripLimit   int     `json:"healthy_trip_limit"` // healthyTripLimit（10）——healthy 保护上限
+	Healthy            bool    `json:"healthy"`            // 心跳快照是否 healthy（无快照=false）
+	LastError          string  `json:"last_error"`         // 最后一次失败原因文本（无记录=空串）
 	LastErrorAt        string  `json:"last_error_at,omitempty"`
 	OpenSince          string  `json:"open_since,omitempty"` // RFC3339；为空=尚未记录首次熔断时间
 	CooldownRemainingS float64 `json:"cooldown_remaining_s"` // 剩余冷却秒数；closed=0
@@ -113,9 +106,6 @@ func (g *Gateway) BreakerSnapshot() []BreakerInfo {
 	for h := range g.lastErr {
 		hosts[h] = true
 	}
-	for h := range g.lastErrSrc {
-		hosts[h] = true
-	}
 	// fleet 配置里的候选机器（未失败也要出现——state=closed）
 	if g.config != nil {
 		for h := range g.config.Fleet {
@@ -155,24 +145,8 @@ func (g *Gateway) BreakerSnapshot() []BreakerInfo {
 			FailThreshold:      circuitFailThreshold,
 			HealthyTripLimit:   healthyTripLimit,
 			Healthy:            healthy,
+			LastError:          g.lastErr[h],
 			CooldownRemainingS: left,
-		}
-		// 原因可见，且**有熔断状态就不可能显示空串**：计数非零说明失败过，
-		// 空 last_error 会让读快照的人以为「没失败过」——两者矛盾正是本次要堵死的现场。
-		reason, hasReasonKey := g.lastErr[h]
-		recorded := hasReasonKey && strings.TrimSpace(reason) != ""
-		switch {
-		case recorded:
-			info.LastError = reason
-			info.LastErrorRecorded = true
-			info.LastErrorSource = g.lastErrSrc[h]
-		case info.FailCount > 0 || info.TripCount > 0 || state != "closed":
-			info.LastError = breakerNoReasonText
-			info.LastErrorRecorded = false
-		default:
-			// 没有任何熔断状态（closed + 计数 0）——没有「为什么」可讲，空串不构成误导
-			info.LastError = ""
-			info.LastErrorRecorded = false
 		}
 		if !since.IsZero() {
 			info.OpenSince = since.UTC().Format(time.RFC3339)
@@ -190,12 +164,9 @@ func (g *Gateway) BreakerSnapshot() []BreakerInfo {
 
 // ResetBreakers 手动复位机器熔断状态（运维/UI 手动入口——「怎么恢复」不用等 30s 冷却）。
 //
-// host == ""：清空全部机器的熔断状态（failCounts/failSince/tripCounts/lastErr/lastErrAt/lastErrSrc）；
-// host != "": 只清该 host（不存在则什么也不做）。
+// host == ""：清空全部机器的熔断状态（failCounts/failSince/tripCounts/lastErr/lastErrAt）；
+// host != ""：只清该 host（不存在则什么也不做）。
 // 返回被清掉的机器条数（改动了至少一项熔断状态的机器数）；幂等——无状态时返回 0。
-//
-// lastErrSrc 不单独计入清理条数：它总是与 lastErr 同时写入（见 recordFailureReasonLocked），
-// 是 lastErr 键集的子集，不会引入新的「有过状态的机器」。
 //
 // 锁：先 tripMu（清 tripCounts）后 failMu（清其余），两把锁不同时持有。
 func (g *Gateway) ResetBreakers(host string) int {
@@ -237,7 +208,6 @@ func (g *Gateway) ResetBreakers(host string) int {
 		g.failSince = map[string]time.Time{}
 		g.lastErr = map[string]string{}
 		g.lastErrAt = map[string]time.Time{}
-		g.lastErrSrc = map[string]string{}
 	} else {
 		touched := false
 		if _, ok := g.failCounts[host]; ok {
@@ -254,10 +224,6 @@ func (g *Gateway) ResetBreakers(host string) int {
 		}
 		if _, ok := g.lastErrAt[host]; ok {
 			delete(g.lastErrAt, host)
-			touched = true
-		}
-		if _, ok := g.lastErrSrc[host]; ok {
-			delete(g.lastErrSrc, host)
 			touched = true
 		}
 		if touched && cleared < 1 {

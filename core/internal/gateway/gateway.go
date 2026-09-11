@@ -86,6 +86,13 @@ type Gateway struct {
 	tripMu       sync.Mutex
 	tripCounts   map[string]int // v2.5.4.9 C failover——机器失败计数（熔断用）
 
+	// 熔断原因可见（只读快照 + 手动复位入口）：
+	// failCounts 只记次数——熔断后用户看不到「为什么熔断」。这里额外记最后一次失败原因文本与时间，
+	// 由 BreakerSnapshot() 只读暴露给 /api/gateway/breakers。
+	// 与 failCounts/failSince 同一把锁（failMu）保护——写入点仅 markFailure/markSuccess/ClearFailures/ResetBreakers。
+	lastErr   map[string]string    // host → 最后一次失败原因文本（人类可读——转发错误原文）
+	lastErrAt map[string]time.Time // host → 最后一次失败时间（快照按 RFC3339 输出）
+
 	// 阶段 C：脑手编排器（复合模型 zerg-baiyan（白眼——多视角参考+聚合提炼））
 	orchestrator *orchestrator.Orchestrator
 
@@ -775,7 +782,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 			log.Printf("⚠️ backend %s returned %d — trying another machine (T5b 5xx failover)", route.Host, resp.StatusCode)
 			// 5xx 也是模型错误——记失败（防持续 5xx 机器被熔断）
 			if route.Host != "local" {
-				g.markFailure(route.Host)
+				g.markFailure(route.Host, fmt.Sprintf("backend %s returned %d", route.Host, resp.StatusCode))
 			}
 			// v2.5.6 错误码设计（2026-08-29）: 读取子端错误体——透传真实错误消息（调试关键）
 			// 子端错误如 {"error":"queue full"}(429) / {"error":"inference timeout"}(504)——
@@ -799,7 +806,11 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// v2.5.5 T1 连接层治本: 连接层失败（网络/超时）——重试不立即熔断（给足机会）
 		// 模型错误（HTTP 响应——4xx/5xx）才立即 markFailure（真失败）
 		if route.Host != "local" && isModelError(err) {
-			g.markFailure(route.Host)
+			reason := "model error (unspecified)"
+			if err != nil {
+				reason = err.Error()
+			}
+			g.markFailure(route.Host, reason)
 		}
 		// 连接层失败——不 markFailure（重试成功就没事——偶发网络不熔断）
 	}
@@ -930,10 +941,23 @@ func (g *Gateway) extractModelWithAction(body []byte, path string) (model string
 //
 // 阶段 1 已有 FleetConfig.Models 结构，这里复用。
 // markFailure 记录机器转发失败（熔断计数）。
-func (g *Gateway) markFailure(host string) {
+// reason 可选：本次失败的原因文本（转发错误原文）——写入 lastErr，供只读快照展示「为什么熔断」。
+// 不传 reason 时只计数（保持旧调用语义）。
+func (g *Gateway) markFailure(host string, reason ...string) {
 	g.failMu.Lock()
 	defer g.failMu.Unlock()
 	g.failCounts[host]++
+	// 原因可见：记最后一次失败原因（不改动任何熔断判定逻辑——只多存一个字符串）
+	if len(reason) > 0 && reason[0] != "" {
+		if g.lastErr == nil {
+			g.lastErr = map[string]string{}
+		}
+		if g.lastErrAt == nil {
+			g.lastErrAt = map[string]time.Time{}
+		}
+		g.lastErr[host] = reason[0]
+		g.lastErrAt[host] = time.Now()
+	}
 	slog.Warn("machine forward failed", "host", host, "fail_count", g.failCounts[host], "threshold", 3)
 	log.Printf("🚨 machine %s forward failed (%d/3); exceeding threshold will demote", host, g.failCounts[host])
 }
@@ -947,6 +971,9 @@ func (g *Gateway) markSuccess(host string) {
 		g.failCounts[host] = 0
 	}
 	delete(g.failSince, host)
+	// 失败已恢复——清原因（快照不显示陈旧原因）
+	delete(g.lastErr, host)
+	delete(g.lastErrAt, host)
 }
 
 // ClearFailures 清零机器失败计数（v2.5.5 #9 补充5: 心跳健康时调用——防残留熔断）。
@@ -958,6 +985,9 @@ func (g *Gateway) ClearFailures(host string) {
 		g.failCounts[host] = 0
 	}
 	delete(g.failSince, host)
+	// 心跳健康 = 机器活着——清失败原因（快照不显示陈旧原因）
+	delete(g.lastErr, host)
+	delete(g.lastErrAt, host)
 }
 
 // isModelError 判断转发错误是否是"模型错误"（HTTP 响应错误——4xx/5xx）。
