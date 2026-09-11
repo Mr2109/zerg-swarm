@@ -340,7 +340,7 @@ func TestConcurrencyLimit(t *testing.T) {
 	}
 
 	// 验证并发满错误信息
-	if !strings.Contains(err3.Error(), "并发已满") {
+	if !strings.Contains(err3.Error(), "concurrency full") {
 		t.Errorf("期望错误信息含 '并发已满'，实际: %v", err3)
 	}
 

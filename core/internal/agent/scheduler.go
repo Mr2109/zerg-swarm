@@ -512,10 +512,10 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
 		if strings.HasPrefix(line, "- **重试次数**:") {
-			lines[i] = fmt.Sprintf("- **Retry count**: %d", retryCount)
+			lines[i] = fmt.Sprintf("- **重试次数**: %d", retryCount)
 		}
 		if strings.HasPrefix(line, "- **最后尝试**:") {
-			lines[i] = fmt.Sprintf("- **Last attempt**: %s", time.Now().Format(time.RFC3339))
+			lines[i] = fmt.Sprintf("- **最后尝试**: %s", time.Now().Format(time.RFC3339))
 		}
 	}
 	content = strings.Join(lines, "\n")
