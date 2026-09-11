@@ -31,9 +31,10 @@ import (
 
 // ModelRegistryCapability 是一条能力断言的对外视图（标准 §四：必须带来源）。
 type ModelRegistryCapability struct {
-	Name   string `json:"name"`
-	Value  bool   `json:"value"`
-	Source string `json:"source"`
+	Name     string `json:"name"`
+	Value    bool   `json:"value"`
+	Source   string `json:"source"`
+	Evidence string `json:"evidence,omitempty"`
 }
 
 // ModelRegistryFile 是一份建材的对外视图（标准 §三：一个模型是一组建材）。
@@ -42,6 +43,25 @@ type ModelRegistryFile struct {
 	Name   string `json:"name"`
 	SHA256 string `json:"sha256"`
 	Size   int64  `json:"size"`
+}
+
+// ModelRegistryLicense 是一条记录的许可证块对外视图（标准 §五：读权重，不读仓库徽章）。
+//
+// 与顶层兼容字段 commercial 的关系：顶层 commercial 是既有 UI 已依赖的「商用性」单值
+// （Store.List 的裁剪行只带这一个字段），保留不动；本块是详情层要的完整许可信息
+// ——SPDX 表达式、许可名/链接、是否门控、来源 URL、以及受限许可的人工留痕。
+//
+// 取值纪律：一律照抄 modelreg.License 的真实值；缺值就缺（optional 字段 omitempty，
+// 整块无内容时连 license 都不出现），绝不填 unset/pending/tbd 这类占位串。
+type ModelRegistryLicense struct {
+	SPDX       string `json:"spdx"`
+	Name       string `json:"name,omitempty"`
+	Link       string `json:"link,omitempty"`
+	Commercial string `json:"commercial"`
+	Gated      bool   `json:"gated"`
+	SourceURL  string `json:"source_url,omitempty"`
+	AcceptedBy string `json:"accepted_by,omitempty"`
+	AcceptedAt string `json:"accepted_at,omitempty"`
 }
 
 // ModelRegistryRecord 是目录里一条记录的对外视图。
@@ -53,6 +73,7 @@ type ModelRegistryRecord struct {
 	Digest          string                    `json:"digest,omitempty"`
 	Name            string                    `json:"name,omitempty"`
 	Commercial      string                    `json:"commercial,omitempty"`
+	License         *ModelRegistryLicense     `json:"license,omitempty"`
 	Capabilities    []ModelRegistryCapability `json:"capabilities"`
 	Files           []ModelRegistryFile       `json:"files"`
 	ContextWindow   int                       `json:"context_window"`
@@ -61,6 +82,13 @@ type ModelRegistryRecord struct {
 	Warns           int                       `json:"warns"`
 	DefaultEligible bool                      `json:"default_eligible"`
 	Error           string                    `json:"error,omitempty"`
+}
+
+// licenseBlockEmpty 判定一条记录的许可证块是否整块为空（零值比较，不引入占位串）。
+// 全空 = 目录里这条记录没写任何许可细节 → 对外响应里连 license 字段都不出现（缺值就缺）。
+func licenseBlockEmpty(l modelreg.License) bool {
+	return l.SPDX == "" && l.Name == "" && l.Link == "" && l.Commercial == "" &&
+		!l.Gated && l.SourceURL == "" && l.AcceptedBy == "" && l.AcceptedAt == ""
 }
 
 // modelsRoot 解析模型目录根：handlers 上显式指定的优先（测试注入），否则用标准解析
@@ -120,6 +148,7 @@ func (h *Handlers) ModelRegistryHandler(w http.ResponseWriter, r *http.Request) 
 		for _, c := range rec.Capabilities {
 			item.Capabilities = append(item.Capabilities, ModelRegistryCapability{
 				Name: c.Name, Value: c.Value, Source: c.Source,
+				Evidence: c.Evidence,
 			})
 		}
 		for _, fl := range rec.Files {
@@ -128,6 +157,20 @@ func (h *Handlers) ModelRegistryHandler(w http.ResponseWriter, r *http.Request) 
 			})
 		}
 		item.ContextWindow = rec.ContextWindow
+		// 许可证块：Store.List 的裁剪行只带 Commercial，完整许可信息必须来自 Load 回来的
+		// rec.License（真实值照抄，不做任何默认/推断）。整块无内容 → 不出现 license 字段。
+		if lic := rec.License; !licenseBlockEmpty(lic) {
+			item.License = &ModelRegistryLicense{
+				SPDX:       lic.SPDX,
+				Name:       lic.Name,
+				Link:       lic.Link,
+				Commercial: lic.Commercial,
+				Gated:      lic.Gated,
+				SourceURL:  lic.SourceURL,
+				AcceptedBy: lic.AcceptedBy,
+				AcceptedAt: lic.AcceptedAt,
+			}
+		}
 		for name := range rec.EngineRecipes {
 			item.EngineRecipes = append(item.EngineRecipes, name)
 		}
