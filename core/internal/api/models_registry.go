@@ -19,15 +19,18 @@ import (
 // 通过 HTTP 只读暴露出来。
 //
 // 【严格只读——这是本接口的硬约束，改动时不要破坏】
-//   - 只做 os.ReadDir / os.ReadFile（经 modelreg.Store.List + modelreg.Load），
-//     **绝不**调用 MkdirAll / CreateTemp / WriteFile / rename / os.Remove。
+//   - 只做 os.ReadDir / os.ReadFile（经 modelreg.Store.List + modelreg.Load +
+//     modelreg.LoadCapabilitySnapshot），**绝不**调用 MkdirAll / CreateTemp / WriteFile / rename / os.Remove。
 //   - 根目录不存在或为空 = 正常状态，返回 200 + count=0（不 404、不 500、不建目录）。
 //     UI 需要能渲染空态；"没有模型"不是错误。
 //   - 坏记录（JSON 解析失败等）只计入该条的 errors，不改整个请求的状态码。
+//   - 能力快照兄弟文件（<version>.capabilities.json）读不到/是坏 JSON = 该条能力降级为只用
+//     记录正文的断言，同样不 500、不报错到整体请求失败（与坏记录策略一致）。
 //
 // 枚举复用 modelreg.Store.List 的语义（跳过 .trace.json 兄弟文件、跳过点开头文件、
 // 按 (id, version) 排序、坏文件如实记 Err 而不中断），再对可解析的记录用 modelreg.Load
-// 取完整字段（能力断言的 value/source、建材明细、上下文窗口、引擎配方）。
+// 取完整字段（建材明细、上下文窗口、引擎配方），并用 modelreg.LoadCapabilitySnapshot
+// 读实测能力（待修补 #26：记录正文不再装 capabilities，能力与出处来自快照兄弟文件）。
 
 // ModelRegistryCapability 是一条能力断言的对外视图（标准 §四：必须带来源）。
 type ModelRegistryCapability struct {
@@ -82,6 +85,21 @@ type ModelRegistryRecord struct {
 	Warns           int                       `json:"warns"`
 	DefaultEligible bool                      `json:"default_eligible"`
 	Error           string                    `json:"error,omitempty"`
+
+	// ── 能力快照的出处（待修补 #26）────────────────────────────────────────
+	// 能力现在分层：记录正文（标准 §四，人工/声明）为底，实测能力放在记录旁的
+	// <version>.capabilities.json 快照兄弟文件里。这三个字段回答"上面这些能力是在哪探出来的"，
+	// 让 UI 一眼能分辨能力真假：来源=哪个端点 / 何时探的 / 这次探了没有。
+	//
+	// 出现条件：快照**读到了**且至少提供了一条实测能力（len(capabilities) > 0）——出现即表示
+	// 上面展示的能力里有可溯源到该端点的实测项。快照不存在 / 坏 JSON / 空快照 → 这三个字段
+	// **整键不出现**（omitempty），绝不造值。
+	//
+	// snapshot_online_probed 用指针：false 是真实取值（这次没做在线探测），必须能如实显示，
+	// 不能与"没有快照"混为一谈（缺省=没有快照，false=有快照但没在线探）。
+	SnapshotEndpoint     string `json:"snapshot_endpoint,omitempty"`
+	SnapshotGeneratedAt  string `json:"snapshot_generated_at,omitempty"`
+	SnapshotOnlineProbed *bool  `json:"snapshot_online_probed,omitempty"`
 }
 
 // licenseBlockEmpty 判定一条记录的许可证块是否整块为空（零值比较，不引入占位串）。
@@ -89,6 +107,52 @@ type ModelRegistryRecord struct {
 func licenseBlockEmpty(l modelreg.License) bool {
 	return l.SPDX == "" && l.Name == "" && l.Link == "" && l.Commercial == "" &&
 		!l.Gated && l.SourceURL == "" && l.AcceptedBy == "" && l.AcceptedAt == ""
+}
+
+// toRegistryCapability 把一条断言（记录正文或快照）翻成对外视图。
+// source 与 evidence 一并带出（标准 §四：每句断言可追溯，source=probed 必须带探测证据）。
+func toRegistryCapability(c modelreg.Capability) ModelRegistryCapability {
+	return ModelRegistryCapability{Name: c.Name, Value: c.Value, Source: c.Source, Evidence: c.Evidence}
+}
+
+// mergeRegistryCapabilities 把记录正文的断言（recCaps）与能力快照的断言（snapCaps）合成对外视图。
+//
+// 规则（待修补 #26 原文）：「能力取自快照（当记录正文无该能力时）；两者都有时以快照为准」——
+// 即**按 name 合并**：
+//   - 同名：用快照值（快照是实测 source=probed，比正文的声明/人工可信）；
+//   - 只在正文有：原样保留（不缺不丢——正文里人工标注的能力不该被快照抹掉）；
+//   - 只在快照有：补进来。
+//
+// 顺序确定（响应可复现）：先按正文顺序输出（同名的换成快照值），再按快照顺序追加正文没有的名字。
+// 两侧都空 → 返回非 nil 空切片（保持 capabilities 字段恒为 JSON []，与既有响应形状一致）。
+func mergeRegistryCapabilities(recCaps, snapCaps []modelreg.Capability) []ModelRegistryCapability {
+	snapByName := make(map[string]modelreg.Capability, len(snapCaps))
+	for _, c := range snapCaps {
+		if _, ok := snapByName[c.Name]; !ok {
+			snapByName[c.Name] = c
+		}
+	}
+	out := make([]ModelRegistryCapability, 0, len(recCaps)+len(snapCaps))
+	seen := make(map[string]bool, len(recCaps)+len(snapCaps))
+	for _, c := range recCaps {
+		if seen[c.Name] {
+			continue
+		}
+		if sc, ok := snapByName[c.Name]; ok {
+			out = append(out, toRegistryCapability(sc)) // 同名以快照为准
+		} else {
+			out = append(out, toRegistryCapability(c))
+		}
+		seen[c.Name] = true
+	}
+	for _, c := range snapCaps {
+		if seen[c.Name] {
+			continue
+		}
+		out = append(out, toRegistryCapability(c))
+		seen[c.Name] = true
+	}
+	return out
 }
 
 // modelsRoot 解析模型目录根：handlers 上显式指定的优先（测试注入），否则用标准解析
@@ -145,12 +209,27 @@ func (h *Handlers) ModelRegistryHandler(w http.ResponseWriter, r *http.Request) 
 			records = append(records, item)
 			continue
 		}
-		for _, c := range rec.Capabilities {
-			item.Capabilities = append(item.Capabilities, ModelRegistryCapability{
-				Name: c.Name, Value: c.Value, Source: c.Source,
-				Evidence: c.Evidence,
-			})
+		// 能力分层（待修补 #26）：记录正文（人工/声明）为底，实测能力在记录旁的
+		// <version>.capabilities.json 快照兄弟文件里。合并规则：按 name，同名以快照为准
+		// （它是实测，比声明可信），快照没有、正文有的名字原样保留（不缺不丢），
+		// 快照有、正文没有的补进来。
+		//
+		// 严格只读 + 容忍坏文件：LoadCapabilitySnapshot 只读该兄弟文件；读不到（不存在）
+		// 或不是合法 JSON 一律降级——该条只用正文能力，不 500、不报错到整体请求失败，
+		// 与坏记录策略一致。快照里没有的能力**绝不凭空造**（缺就缺）。
+		var snapCaps []modelreg.Capability
+		if snap, serr := modelreg.LoadCapabilitySnapshot(modelreg.CapabilitySnapshotPath(row.Path)); serr == nil {
+			snapCaps = snap.Capabilities
+			// 快照确有一条实测能力可用时才暴露出处：出现即表示上面有可溯源到该端点的实测项。
+			// 三个字段照抄快照真实值（缺就缺，omitempty），绝不造值。
+			if len(snapCaps) > 0 {
+				item.SnapshotEndpoint = snap.Endpoint
+				item.SnapshotGeneratedAt = snap.GeneratedAt
+				online := snap.OnlineProbed
+				item.SnapshotOnlineProbed = &online
+			}
 		}
+		item.Capabilities = mergeRegistryCapabilities(rec.Capabilities, snapCaps)
 		for _, fl := range rec.Files {
 			item.Files = append(item.Files, ModelRegistryFile{
 				Role: fl.Role, Name: fl.Name, SHA256: fl.SHA256, Size: fl.Size,

@@ -80,11 +80,7 @@ func TestModelRegistryAPI_CapabilitiesFromSnapshot(t *testing.T) {
 		t.Fatalf("能力应完全来自快照（3 条）——实际 %s", mustJSON(t, got.Capabilities))
 	}
 	wantText := ModelRegistryCapability{Name: "text", Value: true, Source: "probed", Evidence: modelreg.EvidenceText}
-	// 逐字段比较（#39 给结构体加了 Engines []string 切片，切片不可用 != 整体比较；
-	// 这里改为等价且更显式的逐字段断言，并额外确认本条无引擎维度——不比原来弱）。
-	if c := registryCapByName(got.Capabilities, "text"); c == nil ||
-		c.Name != wantText.Name || c.Value != wantText.Value ||
-		c.Source != wantText.Source || c.Evidence != wantText.Evidence || len(c.Engines) != 0 {
+	if c := registryCapByName(got.Capabilities, "text"); c == nil || *c != wantText {
 		t.Errorf("text 断言应与快照逐字段一致——got=%+v want=%+v", c, wantText)
 	}
 	if c := registryCapByName(got.Capabilities, "vision"); c == nil || c.Value || c.Source != "probed" || !strings.Contains(c.Evidence, modelreg.EvidenceVision) {
