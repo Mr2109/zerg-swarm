@@ -541,7 +541,7 @@ func createWorktree(repoDir, branch string) (string, error) {
 	wtDir := filepath.Join(filepath.Dir(repoDir), "zerg-wt", branch)
 	cmd := exec.Command("git", "-C", repoDir, "worktree", "add", wtDir, "-b", branch)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("worktree add 失败: %v\n%s", err, tail(string(out), 300))
+		return "", fmt.Errorf("worktree add failed: %v\n%s", err, tail(string(out), 300))
 	}
 	return wtDir, nil
 }
@@ -569,36 +569,36 @@ func mergeWorktree(wtDir, branch string) error {
 		}
 	}
 	if !reportExists {
-		return fmt.Errorf("worktree 无任务报告文件（P1-1 防假完成）——任务未产出报告——不 merge")
+		return fmt.Errorf("worktree has no task report file (P1-1 anti fake-completion) — task produced no report — not merging")
 	}
 	// 0. 先提交 worktree 未跟踪/未提交改动（任务产物——CA 可能只写没 commit）
 	// v2.5.5 测试发现: CA 写文件没 commit——merge 丢产物 + remove 拒绝（未跟踪文件）
 	addCmd := exec.Command("git", "-C", wtDir, "add", "-A")
 	if out, err := addCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("worktree add -A 失败: %v\n%s", err, tail(string(out), 300))
+		return fmt.Errorf("worktree add -A failed: %v\n%s", err, tail(string(out), 300))
 	}
 	commitCmd := exec.Command("git", "-C", wtDir, "-c", "user.email=zerg@local", "-c", "user.name=Zerg AI", "commit", "-m", "task: 任务产物（worktree 自动提交）")
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		// 没有改动（commit 失败——nothing to commit）不算错——继续
-		log.Printf("   （worktree 无新改动——跳过 commit——%s）\n", tail(string(out), 80))
+		log.Printf("   (worktree has no new changes — skipping commit — %s)\n", tail(string(out), 80))
 	}
 	// 1. 切回 main + merge 分支
 	cmd := exec.Command("git", "-C", repoDir, "checkout", "main")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("checkout main 失败: %v\n%s", err, tail(string(out), 300))
+		return fmt.Errorf("checkout main failed: %v\n%s", err, tail(string(out), 300))
 	}
 	cmd = exec.Command("git", "-C", repoDir, "merge", "--no-edit", branch)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("merge %s 失败: %v\n%s", branch, err, tail(string(out), 300))
+		return fmt.Errorf("merge %s failed: %v\n%s", branch, err, tail(string(out), 300))
 	}
 	// 2. 删 worktree + 分支
 	cmd = exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", wtDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("worktree remove 失败: %v\n%s", err, tail(string(out), 300))
+		return fmt.Errorf("worktree remove failed: %v\n%s", err, tail(string(out), 300))
 	}
 	cmd = exec.Command("git", "-C", repoDir, "branch", "-d", branch)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("branch -d 失败: %v\n%s", err, tail(string(out), 300))
+		return fmt.Errorf("branch -d failed: %v\n%s", err, tail(string(out), 300))
 	}
 	return nil
 }
@@ -617,7 +617,7 @@ func (s *MasterScheduler) TerminateTask(taskID string) error {
 	t, ok := s.running[taskID]
 	if !ok {
 		s.mu.Unlock()
-		return fmt.Errorf("任务 %s 不在运行中（仅 running 可终止）", taskID)
+		return fmt.Errorf("task %s is not running (only running tasks can be stopped)", taskID)
 	}
 	t.Status = "failed"
 	t.FailReason = "用户手动终止（右键）"
@@ -630,7 +630,7 @@ func (s *MasterScheduler) TerminateTask(taskID string) error {
 	s.mu.Unlock()
 	// 杀 CA 进程（SIGKILL——强制终止——2026-08-22 Mr2109）
 	s.killTaskProcess(taskID)
-	log.Printf("🛑 任务 %s 被用户终止\n", taskID)
+	log.Printf("🛑 task %s stopped by user\n", taskID)
 	return nil
 }
 
@@ -651,7 +651,7 @@ func (s *MasterScheduler) RequeueTask(taskID string) error {
 	t, ok := s.running[taskID]
 	if !ok {
 		s.mu.Unlock()
-		return fmt.Errorf("任务 %s 不在运行中（仅 running 可重回队列）", taskID)
+		return fmt.Errorf("task %s is not running (only running tasks can be re-queued)", taskID)
 	}
 	t.Status = "queued"
 	t.FailReason = ""
@@ -660,7 +660,7 @@ func (s *MasterScheduler) RequeueTask(taskID string) error {
 	s.mu.Unlock()
 	// 杀旧 CA 进程（停止当前执行——任务重回队列等下次）
 	s.killTaskProcess(taskID)
-	log.Printf("🔁 任务 %s 重回队列（用户操作）\n", taskID)
+	log.Printf("🔁 task %s re-queued (user action)\n", taskID)
 	return nil
 }
 
@@ -686,20 +686,20 @@ func (s *MasterScheduler) PauseTask(taskID string, pause bool) error {
 		if t.ID == taskID {
 			if pause && t.Status == "queued" {
 				t.Status = "paused"
-				log.Printf("⏸️ 总调度: 任务 %s 暂停", taskID)
+				log.Printf("⏸️ scheduler: task %s paused", taskID)
 				return nil
 			}
 			if !pause && t.Status == "paused" {
 				t.Status = "queued"
-				log.Printf("▶️ 总调度: 任务 %s 继续", taskID)
+				log.Printf("▶️ scheduler: task %s resumed", taskID)
 				// 2026-09-09: 恢复即派发(同 RetryTask 修复——防恢复后空等)
 				s.dispatchLocked()
 				return nil
 			}
-			return fmt.Errorf("任务 %s 状态 %s 不可%s", taskID, t.Status, map[bool]string{true: "暂停", false: "继续"}[pause])
+			return fmt.Errorf("task %s status %s cannot be %s", taskID, t.Status, map[bool]string{true: "paused", false: "resumed"}[pause])
 		}
 	}
-	return fmt.Errorf("任务 %s 不在队列", taskID)
+	return fmt.Errorf("task %s is not in the queue", taskID)
 }
 
 // RetryTask 重跑任务（failed→queued——同 ID——RetryCount 重置——2026-08-21 Mr2109右键功能）
@@ -712,14 +712,14 @@ func (s *MasterScheduler) RetryTask(taskID string) error {
 			t.RetryCount = 0
 			t.FailReason = ""
 			heap.Push(&s.queue, t)
-			log.Printf("🔁 总调度: 任务 %s 手动重跑（右键——同 ID）", taskID)
+			log.Printf("🔁 scheduler: task %s manually re-run (context menu — same ID)", taskID)
 			// 2026-09-09 修复（write v1.0.1 验收实证——卡 queued 10 分钟根因）:
 			// 只推堆不派发 → 无后续事件则永不执行——补派发
 			s.dispatchLocked()
 			return nil
 		}
 	}
-	return fmt.Errorf("任务 %s 未找到或不可重跑", taskID)
+	return fmt.Errorf("task %s not found or not re-runnable", taskID)
 }
 
 // MoveTask 重排任务（置顶/置底/上移/下移——队列内——2026-08-21 Mr2109右键功能）
@@ -735,7 +735,7 @@ func (s *MasterScheduler) MoveTask(taskID, action string) error {
 		}
 	}
 	if idx < 0 {
-		return fmt.Errorf("任务 %s 不在队列（仅 queued 可重排）", taskID)
+		return fmt.Errorf("task %s is not queued (only queued tasks can be reordered)", taskID)
 	}
 	q := s.queue
 	switch action {
@@ -760,9 +760,9 @@ func (s *MasterScheduler) MoveTask(taskID, action string) error {
 			heap.Fix(&s.queue, idx)
 		}
 	default:
-		return fmt.Errorf("未知操作: %s", action)
+		return fmt.Errorf("unknown action: %s", action)
 	}
-	log.Printf("↕️ 总调度: 任务 %s 重排（%s）", taskID, action)
+	log.Printf("↕️ scheduler: task %s reordered (%s)", taskID, action)
 	return nil
 }
 
@@ -774,11 +774,11 @@ func (s *MasterScheduler) DeleteTask(taskID string) error {
 		if t.ID == taskID {
 			s.queue = append(s.queue[:i], s.queue[i+1:]...)
 			heap.Init(&s.queue)
-			log.Printf("🗑️ 总调度: 任务 %s 删除（右键）", taskID)
+			log.Printf("🗑️ scheduler: task %s deleted (context menu)", taskID)
 			return nil
 		}
 	}
-	return fmt.Errorf("任务 %s 不在队列（仅 queued 可删除）", taskID)
+	return fmt.Errorf("task %s is not queued (only queued tasks can be deleted)", taskID)
 }
 
 // copyReportToTaskDir 复制 worktree 报告到任务目录（merge 后报告保留——2026-08-21 Mr2109发现修复）
@@ -834,7 +834,7 @@ func CleanupStaleWorktrees(repoDir string) int {
 	cmd := exec.Command("git", "-C", repoDir, "worktree", "list", "--porcelain")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("  worktree list 失败: %v\n", err)
+		log.Printf("  worktree list failed: %v\n", err)
 		return 0
 	}
 	lines := strings.Split(string(out), "\n")
@@ -886,16 +886,16 @@ func cleanupOneStaleWorktree(repoDir, wtDir, branch string) bool {
 	}
 	if reportExists {
 		if err := mergeWorktree(wtDir, branch); err != nil {
-			log.Printf("  残留 %s merge 失败——强制清理: %v\n", branch, err)
+			log.Printf("  stale %s merge failed — forcing cleanup: %v\n", branch, err)
 			exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", wtDir).Run()
 			exec.Command("git", "-C", repoDir, "branch", "-D", branch).Run()
 			return true
 		}
-		log.Printf("  残留 %s 已 merge 回 main（保留任务产物）\n", branch)
+		log.Printf("  stale %s merged back to main (task artifacts kept)\n", branch)
 		return true
 	}
 	exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", wtDir).Run()
 	exec.Command("git", "-C", repoDir, "branch", "-D", branch).Run()
-	log.Printf("  残留 %s 无报告——已清理（任务已死）\n", branch)
+	log.Printf("  stale %s had no report — cleaned up (task is dead)\n", branch)
 	return true
 }
