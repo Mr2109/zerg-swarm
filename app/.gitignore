@@ -1,6 +1,5 @@
 # Swift build artifacts
 .build/
-.build/
 
 # Xcode
 *.xcodeproj/
