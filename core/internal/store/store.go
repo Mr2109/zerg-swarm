@@ -58,10 +58,13 @@ type FleetSnapshot struct {
 	Healthy        bool     `json:"healthy"`
 	BackendState   string   `json:"backend_state"`
 	// B4 v2：CPU/GPU 使用率百分比（本机采集 / 子端上报）
-	CpuPct   float64   `json:"cpu_pct"`
-	GpuPct   float64   `json:"gpu_pct"`
-	Error    *string   `json:"error,omitempty"`
-	LastSeen time.Time `json:"last_seen"` // 最后心跳时间
+	CpuPct float64 `json:"cpu_pct"`
+	GpuPct float64 `json:"gpu_pct"`
+	// 代码身份（自动升级 L3）：机群版本矩阵——混版机群必须看得见
+	CodeVersion string    `json:"code_version,omitempty"`
+	CodeSHA     string    `json:"code_sha,omitempty"`
+	Error       *string   `json:"error,omitempty"`
+	LastSeen    time.Time `json:"last_seen"` // 最后心跳时间
 }
 
 // TaskRequest 任务请求。
@@ -122,6 +125,8 @@ func (s *Store) ReceiveHeartbeat(req HeartbeatRequest) *HeartbeatResponse {
 	snap.Error = req.Error
 	snap.CpuPct = req.CpuPct // B4 v2：CPU/GPU 使用率
 	snap.GpuPct = req.GpuPct
+	snap.CodeVersion = req.CodeVersion // L3：记住子端自报身份
+	snap.CodeSHA = req.CodeSHA
 	snap.LastSeen = time.Now()
 
 	return &HeartbeatResponse{
