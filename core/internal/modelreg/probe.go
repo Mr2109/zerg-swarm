@@ -72,6 +72,10 @@ type Trace struct {
 // （生成时间、每项探测器的耗时，待修补 #24）。
 const TraceSchemaV1 = "zerg.model.probe_trace.v1"
 
+// CapabilitySnapshotSchemaV1 是能力快照兄弟文件（<version>.capabilities.json）的版本号。
+// 与记录 schema 分开：快照不是记录、不进目录语义，承载"它现在能干什么"（能力断言 + 证据）。
+const CapabilitySnapshotSchemaV1 = "zerg.model.capability_snapshot.v1"
+
 // dateRE 认出 RFC3339 形态的时间戳（用于测试断言正文/notes 不含生成时间）。
 var dateRE = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}`)
 
@@ -131,6 +135,72 @@ func WriteProbeTraceSibling(recordPath string, rec *Record, rep *ProbeReport) (s
 	return path, nil
 }
 
+// CapabilitySnapshotArtifact 是能力实测快照，作为记录正文的**兄弟文件**落盘。
+//
+// 为什么能力必须移出正文（本批的核心）：
+//   - 记录正文承载"它是谁"——digest 只吃建材（role+sha256），同一建材重复探测必须逐字节相同；
+//   - 能力承载"它现在能干什么"——随端点/引擎/时间变化，必须带证据（source+evidence）、可刷新。
+//
+// 两者混在一处时，"先 probe --store（无端点，能力为空）、后 probe --endpoint --store
+// （有端点，能力有实测证据）"这条自然流程会撞上 Store.Put 的防覆盖保护（ConflictError）——
+// 同摘要、同路径、内容却因能力而不同。分层后：正文只装身份（换端点也逐字节相同），
+// 能力+证据写本快照（可随时刷新，不影响 identity）。
+type CapabilitySnapshotArtifact struct {
+	Schema       string       `json:"schema"`
+	ID           string       `json:"id,omitempty"`
+	Digest       string       `json:"digest,omitempty"`
+	Target       string       `json:"target,omitempty"`
+	Endpoint     string       `json:"endpoint,omitempty"`
+	GeneratedAt  string       `json:"generated_at,omitempty"`
+	OnlineProbed bool         `json:"online_probed"`
+	Capabilities []Capability `json:"capabilities"`
+}
+
+// NewCapabilitySnapshot 由一次探测的产物构造能力快照（写盘与 --json 共用同一份内容）。
+func NewCapabilitySnapshot(rec *Record, rep *ProbeReport) CapabilitySnapshotArtifact {
+	return CapabilitySnapshotArtifact{
+		Schema:       CapabilitySnapshotSchemaV1,
+		ID:           rec.ID,
+		Digest:       rec.Digest,
+		Target:       rep.Target,
+		Endpoint:     rep.Endpoint,
+		GeneratedAt:  formatGeneratedAt(rep.GeneratedAt),
+		OnlineProbed: rep.OnlineProbed,
+		Capabilities: rep.Capabilities,
+	}
+}
+
+// CapabilitySnapshotPath 由记录路径推出能力快照兄弟文件路径：
+//
+//	<...>/<version>.json → <...>/<version>.capabilities.json
+//
+// 与记录同目录、同摘要前缀（同一条记录只有一个版本 = 一个摘要），命名风格照 TraceSiblingPath。
+func CapabilitySnapshotPath(recordPath string) string {
+	if strings.HasSuffix(recordPath, ".json") {
+		return strings.TrimSuffix(recordPath, ".json") + ".capabilities.json"
+	}
+	return recordPath + ".capabilities.json"
+}
+
+// WriteCapabilitySnapshot 把能力快照原子写成记录旁的兄弟文件。
+//
+// 快照**允许**随探测刷新（它承载的正是"现在能干什么"，端点/引擎一变就该更新），故这里
+// 不比对、允许重写；记录正文的防覆盖保护不受影响——兄弟文件与记录正文互不干扰
+// （Store.Put 一字未改）。
+func WriteCapabilitySnapshot(recordPath string, rec *Record, rep *ProbeReport) (string, error) {
+	art := NewCapabilitySnapshot(rec, rep)
+	data, err := json.MarshalIndent(art, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("序列化能力快照失败：%w", err)
+	}
+	data = append(data, '\n')
+	path := CapabilitySnapshotPath(recordPath)
+	if _, err := WriteFileAtomic(path, data); err != nil {
+		return path, err
+	}
+	return path, nil
+}
+
 func formatGeneratedAt(t time.Time) string {
 	if t.IsZero() {
 		return ""
@@ -167,6 +237,10 @@ type ProbeReport struct {
 	ChatTemplate string
 	TemplateOK   bool
 	OnlineProbed bool
+	// LocalFile 表示本次探测的目标是一个本地文件（而不是端点 URL）。
+	// 记录正文里那句"未做在线探测"的说明由它决定，**不由**是否给了端点决定——
+	// 正文必须随建材确定：同一建材给不给端点、换哪个端点，正文都要逐字节相同。
+	LocalFile bool
 	// GeneratedAt 是本次探测的时间。它**不进记录正文**（正文必须随内容确定），
 	// 只写进留痕兄弟文件（待修补 #24）。
 	GeneratedAt time.Time
@@ -316,6 +390,7 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 			}
 		}
 		endpointBase = opts.Endpoint
+		rep.LocalFile = true
 	}
 
 	ep := Endpoint{BaseURL: endpointBase, Model: opts.Model, Timeout: timeout}
@@ -374,6 +449,11 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 	}
 
 	// probe.template：判定 chat_template 来源（开工方案 §四）。
+	//
+	// 留痕（易变/可刷新）照旧带上"端点在不带模板调用下能回话"这条在线推断，它是证据；
+	// 但 rep.ChatTemplate（**进记录正文**的那份）只认建材（GGUF 里的 tokenizer.chat_template）——
+	// 否则同一建材给不给端点会写出不同的 engine_recipes（无端点→无配方；有端点→多一条
+	// from_gguf），正文就不再逐字节相同，第二遍 probe --store 会撞上防覆盖保护。
 	tmpl, tclass, tok := resolveChatTemplate(rep.Meta, textOK, opts.Engine)
 	ttr := Trace{Probe: EvidenceTemplate, OK: tok}
 	if tok {
@@ -383,9 +463,9 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 		ttr.Summary = "缺模板：既无 GGUF tokenizer.chat_template，端点也未在无模板调用下成功回话"
 	}
 	rep.Traces = append(rep.Traces, ttr)
-	if tok {
-		rep.ChatTemplate = tmpl
-		rep.TemplateOK = true
+	rep.TemplateOK = rep.Meta != nil && strings.TrimSpace(rep.Meta.ChatTemplate) != ""
+	if rep.TemplateOK {
+		rep.ChatTemplate = "from_gguf"
 	}
 
 	// 端点探测无本地文件：用端点模型标识造一条"虚拟建材料"，让记录结构完整
@@ -413,12 +493,16 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 // toRecord 把探测产物落成一条符合标准的 Record。
 func (rep *ProbeReport) toRecord(id string, opts ProbeOptions) *Record {
 	rec := &Record{
-		Schema:       SchemaV1,
-		ID:           sanitizeID(id),
-		Digest:       SynthesizeDigest(rep.Files),
-		Files:        rep.Files,
-		Capabilities: rep.Capabilities,
-		State:        "known",
+		Schema: SchemaV1,
+		ID:     sanitizeID(id),
+		Digest: SynthesizeDigest(rep.Files),
+		Files:  rep.Files,
+		// ⛔ 能力断言**不进记录正文**：正文只装"它是谁"（身份随建材确定）；
+		// 能力 + 证据写记录旁的 <version>.capabilities.json 快照（可刷新，不影响 identity）。
+		// 这样"同一建材、不同端点两次探测 → 正文逐字节相同"，先登记后补能力实测不再撞
+		// Store.Put 的防覆盖保护。Capabilities 字段保留在 schema 里（标准 §十：新增字段
+		// 必须可选），仍由 Verify 校验——供人工/声明的断言使用，只是 probe 不再填它。
+		State: "known",
 	}
 
 	// 许可证：读权重文件里能读到的；读不到写 unknown（标准 §二/§五：绝不默认 yes）。
@@ -442,12 +526,10 @@ func (rep *ProbeReport) toRecord(id string, opts ProbeOptions) *Record {
 		rec.ContextWindow = rep.Meta.ContextWindow
 	}
 
-	// 模态：以实测能力为准（vision 过才写 image 入）。
-	ins := []string{"text"}
-	if hasCap(rep.Capabilities, "vision") {
-		ins = append(ins, "image")
-	}
-	rec.Modalities = map[string][]string{"in": ins, "out": {"text"}}
+	// 模态：只写**建材能确定**的（本批只探单个文件，不猜 mmproj）→ 恒为 text→text。
+	// 不再按"这次探到 vision"往正文里加 image——那会让正文随端点变化。
+	// 能力（含 vision）以实测为准，见 <version>.capabilities.json 快照。
+	rec.Modalities = map[string][]string{"in": {"text"}, "out": {"text"}}
 
 	// 引擎配方：能定出模板来源就写 chat_template；私有开关一律 ZERG_ 前缀放 extra_env。
 	if rep.ChatTemplate != "" || opts.Engine != "" {
@@ -548,13 +630,18 @@ func (rep *ProbeReport) buildNotes() string {
 	b.WriteString("\n待人工补：license.spdx / license.commercial / license.accepted_by / license.accepted_at（标准 §五：拿不到权重许可就写 unknown，绝不默认 yes）。")
 	b.WriteString("\nlicense.accepted_by/accepted_at 留空：探测不代表任何人接受条款。按待修补 #21 的规则（unknown 允许无留痕；no/revenue_gated 必填；任何情况下不许占位），本记录 commercial=unknown 故留痕可为空，且不得写入占位值。人工审许可后填写这两个字段；commercial != yes 之前不得作为默认项（标准 §五 红线）。")
 	if rep.Meta == nil {
-		if rep.Endpoint == "" {
+		if rep.LocalFile {
 			b.WriteString("\n未读到 GGUF 元数据（probe.meta.gguf.v1 no_meta）：context_window / chat_template 待人工补。")
 		} else {
 			b.WriteString("\n端点未提供上下文档位（probe.meta.models.v1 只给出模型标识）：context_window 待人工补。")
 		}
 	}
-	if !rep.OnlineProbed {
+	// 本地文件探测：正文里没有能力断言——能力 + 证据已移到记录旁的
+	// <version>.capabilities.json 快照（可刷新）。这一段的开关只认"目标是不是本地文件"，
+	// **不认**这次给没给端点：同一建材换端点/不给端点重探，正文必须逐字节相同，
+	// 否则第二遍会撞上 Store.Put 的防覆盖保护（ConflictError）。文案逐字保留，
+	// 以便与此前已登记的记录（同一建材、无端点那次）保持字节一致。
+	if rep.LocalFile {
 		b.WriteString("\n未做在线探测：只给了本地文件、未给端点（开工方案 §八 风险2）。text/vision/tools 等能力未实测，故未写断言。")
 	}
 	return b.String()
