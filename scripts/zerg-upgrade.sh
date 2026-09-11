@@ -118,7 +118,8 @@ want_sha() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(ne
 case "$MODE" in
   fleet)
     # ── 跨机升级编排 ────────────────────────────────────────────────────────
-    # 顺序固定：子端 → 主控 → UI → 菜单栏——**动自己那步永远最后**（升级器不升自己所在的进程）。
+    # 顺序固定：子端 → 主控 → UI——**动自己那步永远最后**（升级器不升自己所在的进程）。
+    # 注：原第 4 件「菜单栏 App（Swift ZergApp）」已于 2026-09-11 由Mr2109拍板整体去除（模块不需要了），故本编排只含三件。
     # 远程件（X3 子端）需要特权（unit 在 /etc/systemd/system、二进制在 /usr/local/bin）：
     # 拿不到就**如实标 pending 并打印待执行命令**，绝不假装已完成。
     fetch_manifest
@@ -133,7 +134,6 @@ case "$MODE" in
     say "  1) 子端（X3 等远程）——期望 ${SRC_SHA}"
     say "  2) 主控（local）  ——期望 ${SRC_SHA}"
     say "  3) UI（local）    ——期望 ${SRC_TAG}"
-    say "  4) 菜单栏（local，如有）"
     say ""
     say "机群版本矩阵:"
     printf '%s' "$MATRIX" | python3 -c '
