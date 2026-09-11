@@ -84,7 +84,7 @@ func parseModelResponse(raw []byte) (*ModelResponse, error) {
 	}
 
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, fmt.Errorf("解析响应失败: %w", err)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	resp := &ModelResponse{}
@@ -106,7 +106,7 @@ func parseModelResponse(raw []byte) (*ModelResponse, error) {
 		case "function_call":
 			args := map[string]any{}
 			if err := json.Unmarshal([]byte(item.Arguments), &args); err != nil {
-				log.Printf("解析 function_call arguments 失败: %v (raw: %s)", err, item.Arguments)
+				log.Printf("failed to parse function_call arguments: %v (raw: %s)", err, item.Arguments)
 			}
 			resp.ToolCalls = append(resp.ToolCalls, ToolCall{
 				ID:      item.CallID,
@@ -149,7 +149,7 @@ func parseChatModelResponse(raw []byte) (*ModelResponse, error) {
 		ReasoningContent string `json:"reasoning_content"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, fmt.Errorf("解析响应失败: %w", err)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 	resp := &ModelResponse{}
 	if len(parsed.Choices) > 0 {
@@ -159,7 +159,7 @@ func parseChatModelResponse(raw []byte) (*ModelResponse, error) {
 		for _, tc := range m.ToolCalls {
 			args := map[string]any{}
 			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				log.Printf("解析 tool_call arguments 失败: %v (raw: %s)", err, tc.Function.Arguments)
+				log.Printf("failed to parse tool_call arguments: %v (raw: %s)", err, tc.Function.Arguments)
 			}
 			resp.ToolCalls = append(resp.ToolCalls, ToolCall{
 				ID:      tc.ID,
@@ -195,7 +195,7 @@ func truncate(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
-	return s[:limit] + fmt.Sprintf("\n...（输出过长已截断——共 %d 字符）", len(s))
+	return s[:limit] + fmt.Sprintf("\n...(output truncated — %d chars total)", len(s))
 }
 
 // containsTool 已废弃（2026-08-13——已用导出版 ContainsTools——见 chat.go）

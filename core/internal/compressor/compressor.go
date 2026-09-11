@@ -67,7 +67,7 @@ func (c *Compressor) LoadConfig(cfg Config) error {
 		}
 	}
 	if err := onnxruntime_go.InitializeEnvironment(); err != nil {
-		return fmt.Errorf("初始化 onnxruntime 失败: %w", err)
+		return fmt.Errorf("failed to initialize onnxruntime: %w", err)
 	}
 
 	model, err := onnxruntime_go.NewDynamicAdvancedSession(
@@ -77,13 +77,13 @@ func (c *Compressor) LoadConfig(cfg Config) error {
 		nil,
 	)
 	if err != nil {
-		return fmt.Errorf("加载 ONNX 模型失败: %w", err)
+		return fmt.Errorf("failed to load ONNX model: %w", err)
 	}
 
 	tok, err := sentencepiece.NewTokenizerFromJSON(cfg.TokPath)
 	if err != nil {
 		model.Destroy()
-		return fmt.Errorf("加载 tokenizer 失败: %w", err)
+		return fmt.Errorf("failed to load tokenizer: %w", err)
 	}
 
 	c.model = model
@@ -94,7 +94,7 @@ func (c *Compressor) LoadConfig(cfg Config) error {
 		c.maxTokens = 500
 	}
 	c.loaded = true
-	log.Printf("🧠 压缩器已加载: %s", cfg.ModelPath)
+	log.Printf("🧠 compressor loaded: %s", cfg.ModelPath)
 	return nil
 }
 
@@ -102,7 +102,7 @@ func (c *Compressor) LoadConfig(cfg Config) error {
 // 返回 (压缩后文本, 原始字符数, 压缩后字符数)。
 func (c *Compressor) Compress(text string) (string, int, int, error) {
 	if !c.loaded {
-		return "", 0, 0, fmt.Errorf("压缩器未加载")
+		return "", 0, 0, fmt.Errorf("compressor not loaded")
 	}
 	if strings.TrimSpace(text) == "" {
 		return text, len(text), len(text), nil
@@ -110,7 +110,7 @@ func (c *Compressor) Compress(text string) (string, int, int, error) {
 
 	ids, err := c.tok.Encode(text)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("编码失败: %w", err)
+		return "", 0, 0, fmt.Errorf("encoding failed: %w", err)
 	}
 
 	keptIDs := make([]int, 0, len(ids))
@@ -121,14 +121,14 @@ func (c *Compressor) Compress(text string) (string, int, int, error) {
 		}
 		kept, err := c.compressChunk(ids[start:end])
 		if err != nil {
-			return "", 0, 0, fmt.Errorf("块 %d 压缩失败: %w", start/c.maxTokens, err)
+			return "", 0, 0, fmt.Errorf("chunk %d compression failed: %w", start/c.maxTokens, err)
 		}
 		keptIDs = append(keptIDs, kept...)
 	}
 
 	compressed, err := c.tok.Decode(keptIDs)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("解码失败: %w", err)
+		return "", 0, 0, fmt.Errorf("decoding failed: %w", err)
 	}
 	compressed = strings.TrimSpace(compressed)
 	return compressed, len(text), len(compressed), nil
@@ -151,21 +151,21 @@ func (c *Compressor) compressChunk(ids []int) ([]int, error) {
 	inputTensor, err := onnxruntime_go.NewTensor[int64](
 		onnxruntime_go.NewShape(int64(1), int64(n)), inputData)
 	if err != nil {
-		return nil, fmt.Errorf("创建 input 张量失败: %w", err)
+		return nil, fmt.Errorf("failed to create input tensor: %w", err)
 	}
 	defer inputTensor.Destroy()
 
 	maskTensor, err := onnxruntime_go.NewTensor[int64](
 		onnxruntime_go.NewShape(int64(1), int64(n)), maskData)
 	if err != nil {
-		return nil, fmt.Errorf("创建 mask 张量失败: %w", err)
+		return nil, fmt.Errorf("failed to create mask tensor: %w", err)
 	}
 	defer maskTensor.Destroy()
 
 	output, err := onnxruntime_go.NewEmptyTensor[float32](
 		onnxruntime_go.NewShape(int64(1), int64(n), int64(2)))
 	if err != nil {
-		return nil, fmt.Errorf("创建输出张量失败: %w", err)
+		return nil, fmt.Errorf("failed to create output tensor: %w", err)
 	}
 	defer output.Destroy()
 
@@ -173,7 +173,7 @@ func (c *Compressor) compressChunk(ids []int) ([]int, error) {
 		[]onnxruntime_go.Value{inputTensor, maskTensor},
 		[]onnxruntime_go.Value{output},
 	); err != nil {
-		return nil, fmt.Errorf("ONNX 推理失败: %w", err)
+		return nil, fmt.Errorf("ONNX inference failed: %w", err)
 	}
 
 	logits := output.GetData()

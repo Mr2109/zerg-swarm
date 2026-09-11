@@ -51,7 +51,7 @@ func (s *ChatStore) CreateSession(model, source, parentSessionID, title string) 
 		id, title, model, t, t, source, parentSessionID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("chat: 新建会话失败: %w", err)
+		return nil, fmt.Errorf("chat: failed to create session: %w", err)
 	}
 	return &Session{ID: id, Title: title, Model: model, CreatedAt: t, LastActivityAt: t, Source: source, ParentSessionID: parentSessionID}, nil
 }
@@ -79,7 +79,7 @@ func (s *ChatStore) ListSessionsArchived(limit int, includeArchived bool) ([]*Se
 		includeArchived, limit,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("chat: 会话列表失败: %w", err)
+		return nil, fmt.Errorf("chat: failed to list sessions: %w", err)
 	}
 	defer rows.Close()
 	var out []*Session
@@ -89,7 +89,7 @@ func (s *ChatStore) ListSessionsArchived(limit int, includeArchived bool) ([]*Se
 		if err := rows.Scan(&se.ID, &se.Title, &se.Model, &se.CreatedAt, &se.LastActivityAt,
 			&se.MessageCount, &se.InputTokens, &se.OutputTokens, &se.ReasoningTokens,
 			&pinned, &archived, &se.ParentTaskID, &se.Source, &se.ParentSessionID); err != nil {
-			return nil, fmt.Errorf("chat: 会话扫描失败: %w", err)
+			return nil, fmt.Errorf("chat: failed to scan sessions: %w", err)
 		}
 		se.Pinned = pinned == 1
 		se.Archived = archived == 1
@@ -112,10 +112,10 @@ func (s *ChatStore) GetSession(id string) (*Session, error) {
 		&se.MessageCount, &se.InputTokens, &se.OutputTokens, &se.ReasoningTokens,
 		&pinned, &archived, &se.ParentTaskID, &se.Source, &se.ParentSessionID)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("chat: 会话不存在: %s", id)
+		return nil, fmt.Errorf("chat: session not found: %s", id)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("chat: 读会话失败: %w", err)
+		return nil, fmt.Errorf("chat: failed to read session: %w", err)
 	}
 	se.Pinned = pinned == 1
 	se.Archived = archived == 1
@@ -126,7 +126,7 @@ func (s *ChatStore) GetSession(id string) (*Session, error) {
 func (s *ChatStore) UpdateSessionTitle(id, title string) error {
 	_, err := s.db.Exec("UPDATE sessions SET title = ? WHERE id = ?", title, id)
 	if err != nil {
-		return fmt.Errorf("chat: 更新标题失败: %w", err)
+		return fmt.Errorf("chat: failed to update title: %w", err)
 	}
 	return nil
 }
@@ -135,7 +135,7 @@ func (s *ChatStore) UpdateSessionTitle(id, title string) error {
 func (s *ChatStore) UpdateSessionModel(id, model string) error {
 	_, err := s.db.Exec("UPDATE sessions SET model = ? WHERE id = ?", model, id)
 	if err != nil {
-		return fmt.Errorf("chat: 更新模型失败: %w", err)
+		return fmt.Errorf("chat: failed to update model: %w", err)
 	}
 	return nil
 }
@@ -152,7 +152,7 @@ func (s *ChatStore) TouchSession(id string, inputTokens, outputTokens, reasoning
 		now(), inputTokens, outputTokens, reasoningTokens, id,
 	)
 	if err != nil {
-		return fmt.Errorf("chat: 会话活动更新失败: %w", err)
+		return fmt.Errorf("chat: failed to update session activity: %w", err)
 	}
 	return nil
 }
@@ -161,7 +161,7 @@ func (s *ChatStore) TouchSession(id string, inputTokens, outputTokens, reasoning
 func (s *ChatStore) SetSessionPinned(id string, pinned bool) error {
 	_, err := s.db.Exec("UPDATE sessions SET pinned = ? WHERE id = ?", boolToInt(pinned), id)
 	if err != nil {
-		return fmt.Errorf("chat: 固定会话失败: %w", err)
+		return fmt.Errorf("chat: failed to pin session: %w", err)
 	}
 	return nil
 }
@@ -174,7 +174,7 @@ func (s *ChatStore) SetArchived(id string, archived bool) error {
 	}
 	_, err := s.db.Exec("UPDATE sessions SET archived = ? WHERE id = ?", v, id)
 	if err != nil {
-		return fmt.Errorf("chat: 归档会话失败: %w", err)
+		return fmt.Errorf("chat: failed to archive session: %w", err)
 	}
 	return nil
 }
@@ -183,7 +183,7 @@ func (s *ChatStore) SetArchived(id string, archived bool) error {
 func (s *ChatStore) ArchiveSession(id string) error {
 	_, err := s.db.Exec("UPDATE sessions SET archived = 1 WHERE id = ?", id)
 	if err != nil {
-		return fmt.Errorf("chat: 归档会话失败: %w", err)
+		return fmt.Errorf("chat: failed to archive session: %w", err)
 	}
 	return nil
 }
@@ -195,20 +195,20 @@ func (s *ChatStore) DeleteSession(id string) error {
 	var imgs []string
 	rows, err := s.db.Query("SELECT image_path FROM messages WHERE session_id = ? AND image_path != ''", id)
 	if err != nil {
-		return fmt.Errorf("chat: 查图片失败: %w", err)
+		return fmt.Errorf("chat: failed to query images: %w", err)
 	}
 	for rows.Next() {
 		var p string
 		if err := rows.Scan(&p); err != nil {
 			rows.Close()
-			return fmt.Errorf("chat: 扫图片失败: %w", err)
+			return fmt.Errorf("chat: failed to scan images: %w", err)
 		}
 		imgs = append(imgs, p)
 	}
 	rows.Close()
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("chat: 事务开始失败: %w", err)
+		return fmt.Errorf("chat: failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 	// 先删 FTS 索引（按 rowid——消息 id）
@@ -216,21 +216,21 @@ func (s *ChatStore) DeleteSession(id string) error {
 		`DELETE FROM messages_fts WHERE rowid IN (SELECT id FROM messages WHERE session_id = ?)`,
 		id,
 	); err != nil {
-		return fmt.Errorf("chat: 删 FTS 索引失败: %w", err)
+		return fmt.Errorf("chat: failed to delete FTS index: %w", err)
 	}
 	if _, err := tx.Exec("DELETE FROM messages WHERE session_id = ?", id); err != nil {
-		return fmt.Errorf("chat: 删消息失败: %w", err)
+		return fmt.Errorf("chat: failed to delete messages: %w", err)
 	}
 	if _, err := tx.Exec("DELETE FROM sessions WHERE id = ?", id); err != nil {
-		return fmt.Errorf("chat: 删会话失败: %w", err)
+		return fmt.Errorf("chat: failed to delete session: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("chat: 提交失败: %w", err)
+		return fmt.Errorf("chat: commit failed: %w", err)
 	}
 	// 删图片文件（事务外——失败无害——孤儿由下次清理兜底）
 	for _, p := range imgs {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			log.Printf("[chat] 删图片文件失败 %s: %v", p, err)
+			log.Printf("[chat] failed to delete image file %s: %v", p, err)
 		}
 	}
 	return nil
@@ -245,7 +245,7 @@ func (s *ChatStore) SoftDeleteExpired(cutoff, purgeAfter float64) (int, error) {
 		purgeAfter, cutoff,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("chat: 软删过期会话失败: %w", err)
+		return 0, fmt.Errorf("chat: failed to soft-delete expired sessions: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
@@ -255,14 +255,14 @@ func (s *ChatStore) SoftDeleteExpired(cutoff, purgeAfter float64) (int, error) {
 func (s *ChatStore) PurgeSoftDeleted(now float64) (int, error) {
 	rows, err := s.db.Query("SELECT id FROM sessions WHERE purge_after IS NOT NULL AND purge_after <= ?", now)
 	if err != nil {
-		return 0, fmt.Errorf("chat: 查待清会话失败: %w", err)
+		return 0, fmt.Errorf("chat: failed to query sessions pending cleanup: %w", err)
 	}
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return 0, fmt.Errorf("chat: 扫待清会话失败: %w", err)
+			return 0, fmt.Errorf("chat: failed to scan sessions pending cleanup: %w", err)
 		}
 		ids = append(ids, id)
 	}
@@ -270,7 +270,7 @@ func (s *ChatStore) PurgeSoftDeleted(now float64) (int, error) {
 	done := 0
 	for _, id := range ids {
 		if err := s.DeleteSession(id); err != nil {
-			log.Printf("[chat] 级联硬删失败 %s（下次重试）: %v", id, err)
+			log.Printf("[chat] cascade hard-delete failed %s (retrying next round): %v", id, err)
 			continue
 		}
 		done++
@@ -294,14 +294,14 @@ func (s *ChatStore) CountCleanupPlan(cutoff, now float64) (soft, purge int, err 
 func (s *ChatStore) DeleteOldSessions(cutoff float64) (int, error) {
 	rows, err := s.db.Query("SELECT id FROM sessions WHERE last_activity_at < ?", cutoff)
 	if err != nil {
-		return 0, fmt.Errorf("chat: 查过期会话失败: %w", err)
+		return 0, fmt.Errorf("chat: failed to query expired sessions: %w", err)
 	}
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return 0, fmt.Errorf("chat: 扫过期会话失败: %w", err)
+			return 0, fmt.Errorf("chat: failed to scan expired sessions: %w", err)
 		}
 		ids = append(ids, id)
 	}
