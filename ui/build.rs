@@ -19,8 +19,12 @@ fn main() {
     println!("cargo:rustc-env=ZERG_GIT_SHA={}", sha);
     println!("cargo:rustc-env=ZERG_BUILD_TIME={}", build_time);
 
-    // HEAD 变化时重跑（浅克隆下路径可能不存在——忽略即可）
+    // 何时重跑：**必须覆盖 commit**。
+    // 踩过的坑：只盯 ../.git/HEAD 时，切换分支才会变——而 commit 改的是 .git/refs/heads/<branch>，
+    // 于是身份会停在旧提交（实测 [zerg-ui] 日志里 sha 停留在几小时前）。
+    // 因此同时盯 HEAD（切分支/checkout）与 refs 目录（commit——ref 更新走 rename，会改动该目录）。
     println!("cargo:rerun-if-changed=../.git/HEAD");
+    println!("cargo:rerun-if-changed=../.git/refs/heads");
     println!("cargo:rerun-if-changed=build.rs");
 }
 
