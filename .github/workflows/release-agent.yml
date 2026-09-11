@@ -48,7 +48,9 @@ jobs:
   go:
     name: Go ${{ matrix.goos }}-${{ matrix.goarch }}
     needs: gate
-    runs-on: ubuntu-latest
+    # runner 必须按平台给：darwin 制品的 cgo 需要 darwin 工具链——
+    # 在 ubuntu 上交叉编译会 `clang: error: unsupported option '-arch'`（2026-09-11 CI 实测）。
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
@@ -57,8 +59,8 @@ jobs:
           # 运行时再加载 ONNX 动态库）。CGO_ENABLED=0 时它的构建约束会排除全部文件 →
           # `build constraints exclude all Go files` 直接构建失败（2026-09-11 CI 实测）。
           # darwin 用 1（与本机验证过的构建一致）；linux 用 0（实测可编，静态、免工具链）。
-          - { goos: darwin, goarch: arm64, cgo: '1' }
-          - { goos: linux,  goarch: amd64, cgo: '0' }
+          - { goos: darwin, goarch: arm64, cgo: '1', runner: macos-14 }
+          - { goos: linux,  goarch: amd64, cgo: '0', runner: ubuntu-latest }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -80,7 +82,9 @@ jobs:
           go build -trimpath -buildvcs=false -ldflags "$LDF" -o "../dist/zerg-core-$GOOS-$GOARCH"  ./cmd/zerg-core
           go build -trimpath -buildvcs=false -ldflags "$LDF" -o "../dist/zerg-agent-$GOOS-$GOARCH" ./cmd/zerg-agent
           cd ../dist
-          for f in zerg-*; do sha256sum "$f" > "$f.sha256"; done
+          # macOS runner 无 sha256sum（有 shasum）；两种都产出 "hash  name" 同形格式
+          if command -v sha256sum >/dev/null 2>&1; then SH="sha256sum"; else SH="shasum -a 256"; fi
+          for f in zerg-*; do $SH "$f" > "$f.sha256"; done
           ls -l
       - uses: actions/upload-artifact@v4
         with:
