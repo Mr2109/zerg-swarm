@@ -46,6 +46,19 @@ import (
 // fleet.yaml 路径由配置指定（defaultFleetYAML 已删——2026-08-13 死代码清理）
 
 func main() {
+	// 身份/帮助（升级模块：每件都必须能自报"跑的是哪份代码"；此前 --version 会被当配置文件路径静默吞掉）
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-v", "version":
+			fmt.Println(version.Line("zerg-core"))
+			return
+		case "--help", "-h", "help":
+			fmt.Println("用法: zerg-core [配置文件路径]")
+			fmt.Println("      zerg-core --version     # 打印代码身份（机器可读）")
+			fmt.Println("配置默认 ./fleet.yaml（或 use -c 指定）；环境变量见 docs/CONFIGURATION")
+			return
+		}
+	}
 	// 结构化日志（slog + lumberjack 轮转）：分级/JSON/大小轮转防无限增长
 	// 写入 /tmp/zerg-core.log（供 /api/core/logs 读取，UI 日志面板用）
 	setupLogger("/tmp")
