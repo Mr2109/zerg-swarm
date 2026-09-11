@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/agent/internal/version"
 	"net/http"
 	"time"
 
@@ -97,6 +98,9 @@ func (r *Runner) send() {
 		// B4 v2：CPU/GPU 使用率（主控监看展示）
 		"cpu_pct": r.sampler.CpuPct(),
 		"gpu_pct": r.sampler.GpuPct(),
+		// L3 自动升级：子端自报代码身份（版本矩阵的数据来源）
+		"code_version": version.Version,
+		"code_sha":     version.Commit,
 	}
 
 	payload, err := json.Marshal(body)

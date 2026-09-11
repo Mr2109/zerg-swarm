@@ -28,6 +28,9 @@ type HeartbeatRequest struct {
 	Error          *string  `json:"error"`            // 错误信息（可为 null）
 	CpuPct         float64  `json:"cpu_pct"`          // B4 v2：CPU 使用率 %
 	GpuPct         float64  `json:"gpu_pct"`          // B4 v2：GPU 使用率 %
+	// 代码身份（自动升级 L3）：子端自报版本+提交——"混版机群=不健康"必须看得见（设计稿 §3）
+	CodeVersion string `json:"code_version"` // 子端版本号（如 2.5.9）
+	CodeSHA     string `json:"code_sha"`     // 子端二进制提交（-ldflags 注入）
 }
 
 // HeartbeatResponse 心跳响应。
