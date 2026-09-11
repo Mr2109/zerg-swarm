@@ -112,7 +112,7 @@ func (g *Gateway) setRequestTimeout(model string, sec int) {
 		g.timeoutOverride = map[string]int{}
 	}
 	g.timeoutOverride[model] = sec
-	log.Printf("⏱️ 适配器 %s: 超时覆盖 %ds", model, sec)
+	log.Printf("⏱️ adapter %s: timeout override %ds", model, sec)
 }
 
 // getRequestTimeout — 查询模型超时覆盖（无则 0——用默认）
@@ -129,7 +129,7 @@ func (g *Gateway) SetExcludeLocal(exclude bool) {
 	g.excludeLocalMu.Lock()
 	g.excludeLocal = exclude
 	g.excludeLocalMu.Unlock()
-	log.Printf("🚫 排除本机模式: %v", exclude)
+	log.Printf("🚫 local-exclude mode: %v", exclude)
 	_ = g.persistExcludeLocal(exclude)
 }
 
@@ -146,7 +146,7 @@ func (g *Gateway) LoadExcludeLocal() {
 		g.excludeLocalMu.Lock()
 		g.excludeLocal = true
 		g.excludeLocalMu.Unlock()
-		log.Printf("🚫 排除本机模式（主控重启恢复）: true")
+		log.Printf("🚫 local-exclude mode (restored after controller restart): true")
 	}
 }
 
@@ -226,9 +226,9 @@ func NewGateway(authToken string, cfg *config.FleetConfig, localBack *localback.
 	var ctrlGate *control.Gate
 	if gate, err := control.NewGateFromFile(filepath.Join(statepath.WorkspaceRoot(), "core", "internal", "control", "rules.yaml")); err == nil {
 		ctrlGate = gate
-		log.Printf("🔒 M3 集中控制层已加载（观察模式——记录不拦截）")
+		log.Printf("🔒 M3 central control layer loaded (observe mode — record only, no blocking)")
 	} else {
-		log.Printf("⚠️ M3 控制层加载失败（不启用）: %v", err)
+		log.Printf("⚠️ M3 control layer load failed (disabled): %v", err)
 	}
 
 	g := &Gateway{
@@ -284,7 +284,7 @@ func (g *Gateway) SetCompressor(c *compressor.Compressor) {
 		// 加载 ONNX 模型（异步，不阻塞启动）
 		go func() {
 			if err := c.Load(); err != nil {
-				log.Printf("⚠️ 压缩器加载失败（gemma 兜底继续用）: %v", err)
+				log.Printf("⚠️ compressor load failed (continuing with gemma fallback): %v", err)
 			}
 		}()
 	}
@@ -297,15 +297,15 @@ func (g *Gateway) compressWithLLMLingua2(text string) (string, error) {
 	c := g.comp
 	g.compMu.RUnlock()
 	if c == nil {
-		return "", fmt.Errorf("压缩器未设置")
+		return "", fmt.Errorf("compressor not configured")
 	}
 	compressed, _, _, err := c.Compress(text)
 	if err != nil {
-		return "", fmt.Errorf("LLMLingua-2 压缩失败: %w", err)
+		return "", fmt.Errorf("LLMLingua-2 compression failed: %w", err)
 	}
 	if compressed == "" || len(compressed) >= len(text)*90/100 {
 		// 压缩无效或压缩率过低（<10%），视为失败（gemma 兜底）
-		return "", fmt.Errorf("LLMLingua-2 压缩率过低")
+		return "", fmt.Errorf("LLMLingua-2 compression ratio too low")
 	}
 	return compressed, nil
 }
@@ -434,11 +434,11 @@ func (g *Gateway) handleCompact(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		route, err = g.pickRoute(model, "", "")
 		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"路由失败: %v"}`, err), http.StatusServiceUnavailable)
+			http.Error(w, fmt.Sprintf(`{"error":"routing failed: %v"}`, err), http.StatusServiceUnavailable)
 			return
 		}
 	}
-	log.Printf("📎 压缩路由: %s（%s）", route.Host, route.URL)
+	log.Printf("📎 compaction route: %s (%s)", route.Host, route.URL)
 
 	var resp *http.Response
 	var respBody []byte
@@ -452,8 +452,8 @@ func (g *Gateway) handleCompact(w http.ResponseWriter, r *http.Request) {
 			}
 			// 加载压缩模型（如果未加载或模型不同）
 			if err := g.loadModel(compactModel, route); err != nil {
-				log.Printf("⚠️ 压缩本地模型加载失败: %v", err)
-				http.Error(w, fmt.Sprintf(`{"error":"压缩模型加载失败: %v"}`, err), http.StatusServiceUnavailable)
+				log.Printf("⚠️ compaction local model load failed: %v", err)
+				http.Error(w, fmt.Sprintf(`{"error":"compaction model load failed: %v"}`, err), http.StatusServiceUnavailable)
 				return
 			}
 			resp, err = g.localBack.Infer("/v1/chat/completions", compactBodyJSON)
@@ -461,7 +461,7 @@ func (g *Gateway) handleCompact(w http.ResponseWriter, r *http.Request) {
 			resp, err = g.forwardToBackend(r.Context(), route, "/v1/chat/completions", compactBodyJSON, r.Header)
 		}
 		if err != nil {
-			log.Printf("⚠️ 压缩第 %d 次失败: %v（重试）", attempt+1, err)
+			log.Printf("⚠️ compaction attempt %d failed: %v (retrying)", attempt+1, err)
 			if attempt < 2 {
 				time.Sleep(2 * time.Second)
 			}
@@ -474,19 +474,19 @@ func (g *Gateway) handleCompact(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal(respBody, &chk) == nil {
 			break // 完整响应
 		}
-		log.Printf("⚠️ 压缩第 %d 次响应不完整（%d 字节，截断），重试", attempt+1, len(respBody))
+		log.Printf("⚠️ compaction attempt %d got incomplete response (%d bytes, truncated), retrying", attempt+1, len(respBody))
 		if attempt < 2 {
 			time.Sleep(2 * time.Second)
 		}
 	}
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"压缩失败: %v"}`, err), http.StatusBadGateway)
+		http.Error(w, fmt.Sprintf(`{"error":"compaction failed: %v"}`, err), http.StatusBadGateway)
 		return
 	}
 
 	var obj map[string]interface{}
 	if err := json.Unmarshal(respBody, &obj); err != nil {
-		log.Printf("⚠️ handleCompact 解析失败: %v, body前200: %s", err, string(respBody)[:min(len(respBody), 200)])
+		log.Printf("⚠️ handleCompact parse failed: %v, first 200 bytes: %s", err, string(respBody)[:min(len(respBody), 200)])
 		http.Error(w, `{"error":"压缩响应解析失败"}`, http.StatusBadGateway)
 		return
 	}
@@ -578,7 +578,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// 1. 读取请求体（大 body 支持：按 Content-Length 循环读，不截断）
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		log.Printf("读取请求体失败: %v", err)
+		log.Printf("failed to read request body: %v", err)
 		http.Error(w, "读取请求体失败", http.StatusBadRequest)
 		return
 	}
@@ -586,26 +586,26 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// 1.5 客户端适配器识别（路径/UA/body 格式 → codex/chat/claude/generic）
 	adp := adapter.Dispatch(r, body)
-	log.Printf("🔌 客户端适配器: %s (%s)", adp.Name(), r.URL.Path)
+	log.Printf("🔌 client adapter: %s (%s)", adp.Name(), r.URL.Path)
 
 	// 2. 提取 model 字段（三种标准都在 body.model）
 	// 阶段 B：如果未显式指定 model，走动作路由解析
 	model, usedAction, err := g.extractModelWithAction(body, r.URL.Path)
 	if err != nil {
-		log.Printf("提取 model 失败: %v", err)
-		adp.TransformError(w, http.StatusBadRequest, "invalid_request_error", fmt.Sprintf("提取 model 失败: %v", err))
+		log.Printf("failed to extract model: %v", err)
+		adp.TransformError(w, http.StatusBadRequest, "invalid_request_error", fmt.Sprintf("failed to extract model: %v", err))
 		return
 	}
 	if usedAction {
-		log.Printf("🎯 请求 model（动作路由）: %s", model)
+		log.Printf("🎯 request model (action routing): %s", model)
 	} else {
-		log.Printf("🎯 请求 model: %s", model)
+		log.Printf("🎯 request model: %s", model)
 	}
 
 	// 2.5 入站转换（客户端格式 → 后端格式；Claude 全量转 chat，Codex 基本透传）
 	forwardBody, backendPath, err := adp.TransformRequest(r, body)
 	if err != nil {
-		log.Printf("入站转换失败: %v", err)
+		log.Printf("inbound transform failed: %v", err)
 		adp.TransformError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
@@ -613,7 +613,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// 2.6 模型别名解析：客户端可能用别名请求（Hermes 发 zerg-example-35b-v2 等）。
 	// 不仅路由要用标准名，转发给后端的 body 里的 model 字段也要替换（否则 agent 找不到模型）。
 	if canonical, ok := g.config.Aliases[model]; ok {
-		log.Printf("🎭 模型别名: %s → %s", model, canonical)
+		log.Printf("🎭 model alias: %s → %s", model, canonical)
 		model = canonical
 		forwardBody = adapter.JsonSetField(forwardBody, "model", canonical)
 	}
@@ -621,7 +621,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// 2.65 复合模型：model=zerg-baiyan → 脑手编排器（decompose→dispatch→synthesize）
 	// 不走常规路由——编排器内部按脑/手子任务调不同模型
 	if model == CompositeModelName && g.orchestrator != nil {
-		log.Printf("🧠 复合模型: %s → 脑手编排器", model)
+		log.Printf("🧠 composite model: %s → brain-hand orchestrator", model)
 		// 提取用户消息（最后一条 user 内容）
 		prompt := extractLastUserPrompt(body)
 		if prompt == "" {
@@ -629,8 +629,8 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		result, err := g.orchestrator.Execute(ctxFromReq(r), prompt, 4000)
 		if err != nil {
-			log.Printf("编排器执行失败: %v", err)
-			adp.TransformError(w, http.StatusInternalServerError, "orchestration_error", fmt.Sprintf("编排失败: %v", err))
+			log.Printf("orchestrator execution failed: %v", err)
+			adp.TransformError(w, http.StatusInternalServerError, "orchestration_error", fmt.Sprintf("orchestration failed: %v", err))
 			return
 		}
 		// 返回 OpenAI 兼容响应（chat 格式——客户端用 /v1/chat/completions 请求）
@@ -644,7 +644,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(respJSON))
-		log.Printf("🧠 编排完成: %d 子任务, %v", len(result.TaskResults), result.TotalTime)
+		log.Printf("🧠 orchestration done: %d subtasks, %v", len(result.TaskResults), result.TotalTime)
 		return
 	}
 
@@ -658,14 +658,14 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		out, aerr := ada.Execute(plugin.PluginInput{Data: map[string]any{"model": model}})
 		if aerr != nil {
 			// v2.5.6 错误码设计（2026-08-29）: 适配器执行失败不能静默——记日志（覆盖失败用默认参数——不阻塞请求）
-			log.Printf("⚠️ 适配器 %s 执行失败（用默认参数）: %v", model, aerr)
+			log.Printf("⚠️ adapter %s execution failed (using defaults): %v", model, aerr)
 		}
 		if aerr == nil && out.Result != nil {
 			if res, ok := out.Result.(map[string]any); ok {
 				// 温度/采样参数覆盖
 				if t, ok := res["temperature"].(float64); ok {
 					forwardBody = adapter.JsonSetField(forwardBody, "temperature", t)
-					log.Printf("🎛️ 适配器 %s: 温度覆盖 %.2f", model, t)
+					log.Printf("🎛️ adapter %s: temperature override %.2f", model, t)
 				}
 				// v2.5.6 修复（Mr2109 2026-08-28）: max_tokens 同时覆盖两种格式——
 				// 之前只写 max_tokens（chat 格式）——调度器用 max_output_tokens（responses 格式）
@@ -674,7 +674,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 				if mt, ok := res["max_tokens"].(int); ok && mt > 0 {
 					forwardBody = adapter.JsonSetField(forwardBody, "max_tokens", mt)
 					forwardBody = adapter.JsonSetField(forwardBody, "max_output_tokens", mt)
-					log.Printf("🎛️ 适配器 %s: max_tokens 覆盖 %d（chat+responses 双格式）", model, mt)
+					log.Printf("🎛️ adapter %s: max_tokens override %d (chat+responses both)", model, mt)
 				}
 				// reasoning_effort 覆盖（思考深度——适配器声明——Mr2109 low）
 				if re, ok := res["reasoning_effort"].(string); ok && re != "" {
@@ -691,12 +691,12 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// 2.7 快路径逐字精简（渐进式压缩：50%前每次请求前轻量删噪）
 	// 引擎无关：纯规则（工具输出 observation masking + 填充回复删除），毫秒级
 	if trimmed := trimRequestMessages(&forwardBody); trimmed {
-		log.Printf("✂️ 快路径精简: 工具输出/填充回复已删噪（%s）", sessionID)
+		log.Printf("✂️ fast-path trim: tool output / filler replies de-noised (%s)", sessionID)
 	}
 
 	route, err := g.pickRoute(model, sessionID, prompt)
 	if err != nil {
-		log.Printf("路由选择失败: %v", err)
+		log.Printf("route selection failed: %v", err)
 		// v2.5.6 故障自愈（Mr2109 2026-08-28）: 错误码语义化——调度器按 code 分类处理
 		// 熔断/无候选/被排除 = 环境故障（503 circuit_open——可等——waiting_retry）
 		// 模型不在路由表 = 配置问题（404 model_not_found——不可重试）
@@ -1020,7 +1020,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 	// 别名解析：客户端可能用别名请求（Hermes 发 zerg-example-35b-v2 等），映射到标准模型名
 	if _, ok := g.config.Models[model]; !ok {
 		if canonical, ok2 := g.config.Aliases[model]; ok2 {
-			log.Printf("🎭 模型别名: %s → %s", model, canonical)
+			log.Printf("🎭 model alias: %s → %s", model, canonical)
 			model = canonical
 		}
 	}
