@@ -54,7 +54,7 @@ func (s *ChatStore) SessionSystemPrompt(sessionID, base, model string, rt *ToolR
 	p := BuildTieredSystemPrompt(base, model, sessionID, rt)
 	if sessionID != "" {
 		if err := s.saveFrozenPrompt(sessionID, p, model); err != nil {
-			log.Printf("⚠️ 系统提示冻结落库失败（会话 %s）: %v", sessionID, err)
+			log.Printf("⚠️ failed to persist frozen system prompt (session %s): %v", sessionID, err)
 		}
 	}
 	return p
@@ -66,7 +66,7 @@ func (s *ChatStore) ClearSessionPrompt(sessionID string) {
 		return
 	}
 	if err := s.clearFrozenPrompt(sessionID); err != nil {
-		log.Printf("⚠️ 清理系统提示冻结失败（会话 %s）: %v", sessionID, err)
+		log.Printf("⚠️ failed to clear frozen system prompt (session %s): %v", sessionID, err)
 	}
 }
 

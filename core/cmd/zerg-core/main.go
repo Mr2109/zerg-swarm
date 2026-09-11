@@ -53,9 +53,9 @@ func main() {
 			fmt.Println(version.Line("zerg-core"))
 			return
 		case "--help", "-h", "help":
-			fmt.Println("用法: zerg-core [配置文件路径]")
-			fmt.Println("      zerg-core --version     # 打印代码身份（机器可读）")
-			fmt.Println("配置默认 ./fleet.yaml（或 use -c 指定）；环境变量见 docs/CONFIGURATION")
+			fmt.Println("usage: zerg-core [config-file]")
+			fmt.Println("      zerg-core --version     # print code identity (machine-readable)")
+			fmt.Println("config defaults to ./fleet.yaml (or use -c); environment variables in docs/CONFIGURATION")
 			return
 		}
 	}
