@@ -188,8 +188,10 @@ func recentChanges(n int) string {
 			break
 		}
 		// 提交信息截断 40 字（注意力——全景紧凑）
-		if len(l) > 40 {
-			l = string([]rune(l)[:40]) + "…"
+		// 按**字符**判长再切片：中文一行上百字节但只有几十字符，
+		// 用 len() 判长会过判、再用 []rune 切 [:40] 就越界 panic（2026-09-11 实测：capacity 36）。
+		if r := []rune(l); len(r) > 40 {
+			l = string(r[:40]) + "…"
 		}
 		sb.WriteString("  " + l + "\n")
 	}
