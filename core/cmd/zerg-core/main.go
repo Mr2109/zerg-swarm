@@ -257,6 +257,10 @@ func main() {
 	r.Get("/api/gateway/breakers", handlers.BreakersHandler)             // 只读快照
 	r.Post("/api/gateway/breakers/reset", handlers.BreakersResetHandler) // 手动复位（host 缺省=全部）
 
+	// 模型目录（modelreg）只读快照——UI"模型库"页数据源（Mr2109）
+	// 只读：不建目录不写文件；空目录/根不存在 = 200 + count=0；坏记录只计入该条 errors
+	r.Get("/api/models/registry", handlers.ModelRegistryHandler)
+
 	// v2.5.5 T3 主控总调度器（两级调度——Mr2109原理）
 	// 主控总调度: 管所有内部任务 + 接入的外部任务（全局决策/派发）
 	// CA 子调度: 管分派任务的执行（agent 侧已有 scheduler）

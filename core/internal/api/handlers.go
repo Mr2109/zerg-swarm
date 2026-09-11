@@ -37,6 +37,9 @@ type Handlers struct {
 	Scheduler       *MasterScheduler // v2.5.5 T3: 主控总调度器（两级调度）
 	// v2.5.7 对话→任务集成: 来源对话内容查询（派任务带上下文——main.go 对话模块就绪后注入）
 	ChatStore *chat.ChatStore
+	// 模型目录根覆盖（GET /api/models/registry 用）。空 = 标准解析
+	// （ZERG_MODELS_DIR 优先，缺省 ~/.zerg/models）——测试注入 t.TempDir() 用。
+	ModelsDir string
 }
 
 // writeJSON 辅助函数：写入 JSON 响应。
