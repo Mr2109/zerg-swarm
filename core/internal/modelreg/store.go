@@ -254,6 +254,11 @@ func (s *Store) List() ([]StoredRecord, error) {
 			if f.IsDir() || !strings.HasSuffix(name, ".json") || strings.HasPrefix(name, ".") {
 				continue
 			}
+			// 待修补 #24：记录旁的留痕兄弟文件（<version>.trace.json）不是记录，
+			// 不进目录语义——list 必须跳过它，否则会把它当成一条坏记录报 error。
+			if strings.HasSuffix(name, ".trace.json") {
+				continue
+			}
 			p := filepath.Join(idDir, name)
 			row := StoredRecord{ID: id, Version: strings.TrimSuffix(name, ".json"), Path: p}
 			rec, err := Load(p)

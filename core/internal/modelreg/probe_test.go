@@ -1,7 +1,9 @@
 package modelreg
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,22 @@ import (
 	"testing"
 	"time"
 )
+
+// recordBody 把一条记录按 Store.Put 落盘所用的同一序列化方式编码，用于逐字节比对。
+// 待修补 #24：正文必须随内容确定——它才是内容寻址的锚。
+func recordBody(t *testing.T, rec *Record) []byte {
+	t.Helper()
+	b, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(b, '\n')
+}
+
+func bodyHash(b []byte) string {
+	s := sha256.Sum256(b)
+	return "sha256:" + hex.EncodeToString(s[:])
+}
 
 // ── 假 OpenAI 兼容端点 ─────────────────────────────────────────────────────
 // 测试一律用 httptest 假端点，不碰真实外网/真实引擎（任务硬规则）。
@@ -354,12 +372,12 @@ func TestProbeEndpointRecordExposesLicenseTraceConflict(t *testing.T) {
 	if !hasCap(rec.Capabilities, "text") || !hasCap(rec.Capabilities, "tools") {
 		t.Fatalf("text/tools 应为 true：%+v", rec.Capabilities)
 	}
-	// notes 必须留痕
-	if !strings.Contains(rec.Notes, "probe_trace") || !strings.Contains(rec.Notes, EvidenceVision) {
-		t.Fatalf("notes 必须含 probe_trace 及视觉探测留痕：%s", rec.Notes)
+	// 待修补 #24：探测留痕不再进正文，改由报告（--json / 兄弟文件）承载。
+	if strings.Contains(rec.Notes, "probe_trace") || dateRE.MatchString(rec.Notes) {
+		t.Fatalf("notes 必须随内容确定：不得含 probe_trace 或时间戳：%s", rec.Notes)
 	}
-	if len(rep.Traces) == 0 {
-		t.Fatal("应产出探测留痕")
+	if len(rep.Traces) == 0 || !hasTrace(rep.Traces, EvidenceVision) {
+		t.Fatalf("应产出探测留痕（含视觉）并挂在报告上：%+v", rep.Traces)
 	}
 }
 
@@ -458,5 +476,192 @@ func TestProbeEndpointURLSpellingKeepsDigest(t *testing.T) {
 	}
 	if a.Digest != b.Digest {
 		t.Fatalf("同一端点不同写法 digest 必须一致：%s vs %s", a.Digest, b.Digest)
+	}
+}
+
+// ── 待修补 #24：记录正文必须随内容确定 ──────────────────────────────────────
+
+// 确定性（反例优先）：同一输入 probe 两次，记录正文逐字节相同。
+// 生成时间戳、探测耗时（ms=）、probe_trace 一律不得进正文——否则 --store 第二遍
+// 会命中 Store.Put 的防覆盖保护（ConflictError / exit 3）。
+// 两次探测之间故意隔开 >1s：若正文里还残留秒级时间戳，本用例必然红。
+func TestProbeRecordBodyIsDeterministic(t *testing.T) {
+	cases := []struct {
+		name   string
+		target func(t *testing.T) string
+	}{
+		{
+			name: "本地GGUF（留痕带耗时）",
+			target: func(t *testing.T) string {
+				return writeTestGGUF(t, "", "DetModel-Q4_K_M.gguf")
+			},
+		},
+		{
+			name: "端点（在线探测器 + ms 波动）",
+			target: func(t *testing.T) string {
+				return fakeEngine(t, "image input is not supported by this model").URL
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			target := tc.target(t)
+			r1, _, err := Probe(ProbeOptions{Target: target, Timeout: 5 * time.Second})
+			if err != nil {
+				t.Fatalf("第一次探测失败：%v", err)
+			}
+			time.Sleep(1100 * time.Millisecond) // 跨过秒边界，暴露任何残留的时间戳
+			r2, _, err := Probe(ProbeOptions{Target: target, Timeout: 5 * time.Second})
+			if err != nil {
+				t.Fatalf("第二次探测失败：%v", err)
+			}
+
+			b1, b2 := recordBody(t, r1), recordBody(t, r2)
+			t.Logf("第一次正文 %s", bodyHash(b1))
+			t.Logf("第二次正文 %s", bodyHash(b2))
+			if bodyHash(b1) != bodyHash(b2) {
+				t.Fatalf("同一输入两次 probe 的记录正文必须逐字节相同（待修补 #24）\n  1=%s\n  2=%s", bodyHash(b1), bodyHash(b2))
+			}
+			// 正文里不许出现留痕/耗时/生成时间戳
+			if strings.Contains(string(b1), "probe_trace") {
+				t.Fatalf("记录正文不得内嵌 probe_trace（应移出为兄弟文件）：%s", b1)
+			}
+		})
+	}
+}
+
+// notes 必须是确定的文本：不得含生成时间戳或探测耗时（待修补 #24）。
+func TestProbeNotesHasNoVolatileValues(t *testing.T) {
+	srv := fakeEngine(t, "image input is not supported by this model")
+	rec, rep, err := Probe(ProbeOptions{Target: srv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rec.Notes, "probe_trace") {
+		t.Fatalf("notes 不得含 probe_trace：%s", rec.Notes)
+	}
+	if strings.Contains(rec.Notes, "ms=") {
+		t.Fatalf("notes 不得含探测耗时 ms=：%s", rec.Notes)
+	}
+	if dateRE.MatchString(rec.Notes) {
+		t.Fatalf("notes 不得含 RFC3339 时间戳：%s", rec.Notes)
+	}
+	// 但留痕本身必须仍在（只是搬到了报告里，供 --json 与兄弟文件用）
+	if len(rep.Traces) == 0 {
+		t.Fatal("探测留痕必须仍产出（从正文移到报告/兄弟文件）")
+	}
+	if !hasTrace(rep.Traces, EvidenceVision) {
+		t.Fatalf("报告里应含视觉留痕：%+v", rep.Traces)
+	}
+}
+
+// 留痕兄弟文件：可写、可解析、承载易变信息（生成时间 + 耗时）；且正文里没有它。
+func TestProbeTraceSiblingFile(t *testing.T) {
+	srv := fakeEngine(t, "image input is not supported by this model")
+	rec, rep, err := Probe(ProbeOptions{Target: srv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recPath := filepath.Join(t.TempDir(), rec.ID, VersionOf(rec)+".json")
+	sibPath, err := WriteProbeTraceSibling(recPath, rec, rep)
+	if err != nil {
+		t.Fatalf("写留痕兄弟文件失败：%v", err)
+	}
+	if want := strings.TrimSuffix(recPath, ".json") + ".trace.json"; sibPath != want {
+		t.Fatalf("兄弟文件路径不对：want=%s got=%s", want, sibPath)
+	}
+	b, err := os.ReadFile(sibPath)
+	if err != nil {
+		t.Fatalf("兄弟文件没落盘：%v", err)
+	}
+	var art ProbeTraceArtifact
+	if err := json.Unmarshal(b, &art); err != nil {
+		t.Fatalf("兄弟文件不是合法 JSON：%v", err)
+	}
+	if art.Schema != TraceSchemaV1 {
+		t.Fatalf("兄弟文件 schema 不对：%s", art.Schema)
+	}
+	if len(art.Traces) != len(rep.Traces) {
+		t.Fatalf("留痕条数不对：want=%d got=%d", len(rep.Traces), len(art.Traces))
+	}
+	if art.GeneratedAt == "" {
+		t.Fatal("留痕兄弟文件应承载生成时间（它是易变信息，正该放这里）")
+	}
+	// 正文（记录）里不许有留痕
+	if strings.Contains(string(recordBody(t, rec)), "probe_trace") {
+		t.Fatal("记录正文不得出现 probe_trace")
+	}
+}
+
+func hasTrace(ts []Trace, name string) bool {
+	for _, tr := range ts {
+		if tr.Probe == name {
+			return true
+		}
+	}
+	return false
+}
+
+// --store 幂等的根（待修补 #24 的核心验收）：同一模型 probe 两次 → 正文逐字节相同 →
+// Store.Put 第二遍 changed=false、无 ConflictError、文件不被重写；留痕写兄弟文件、可解析。
+func TestProbeStoreIsIdempotent(t *testing.T) {
+	srv := fakeEngine(t, "image input is not supported by this model")
+	root := t.TempDir()
+	st := NewStore(root)
+
+	rec1, rep1, err := Probe(ProbeOptions{Target: srv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := st.Put(rec1, false)
+	if err != nil {
+		t.Fatalf("首次入目录失败：%v", err)
+	}
+	if !first.Changed {
+		t.Fatal("首次应 changed=true")
+	}
+	// CLI 在记录入目录成功后写留痕兄弟文件；这里复刻同一步（Store.Put 不碰留痕）。
+	sib, err := WriteProbeTraceSibling(first.Path, rec1, rep1)
+	if err != nil {
+		t.Fatalf("写留痕兄弟文件失败：%v", err)
+	}
+	b1, _ := os.ReadFile(first.Path)
+	fi1, _ := os.Stat(first.Path)
+
+	time.Sleep(1100 * time.Millisecond) // 跨秒边界：正文若含时间戳，这里必然 changed=true/Conflict
+	rec2, _, err := Probe(ProbeOptions{Target: srv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := st.Put(rec2, false)
+	var conf *ConflictError
+	if errors.As(err, &conf) {
+		t.Fatalf("重复 probe 不得撞上防覆盖保护（ConflictError）：%v", err)
+	}
+	if err != nil {
+		t.Fatalf("第二次入目录失败：%v", err)
+	}
+	if second.Changed {
+		t.Fatal("第二次应 changed=false（正文一致，不重写）")
+	}
+	b2, _ := os.ReadFile(first.Path)
+	if string(b1) != string(b2) {
+		t.Fatalf("第二次不该改写记录文件：\n  1=%s\n  2=%s", b1, b2)
+	}
+	fi2, _ := os.Stat(first.Path)
+	if !fi1.ModTime().Equal(fi2.ModTime()) {
+		t.Fatalf("记录文件被重写（mtime 变了）：%s → %s", fi1.ModTime(), fi2.ModTime())
+	}
+	// 兄弟留痕存在、可解析、对应同一条记录
+	tb, err := os.ReadFile(sib)
+	if err != nil {
+		t.Fatalf("兄弟留痕没落盘：%v", err)
+	}
+	var art ProbeTraceArtifact
+	if err := json.Unmarshal(tb, &art); err != nil {
+		t.Fatalf("兄弟留痕不是合法 JSON：%v", err)
+	}
+	if art.Digest != rec1.Digest || art.ID != rec1.ID {
+		t.Fatalf("兄弟留痕应对应同一条记录：%+v vs id=%s digest=%s", art, rec1.ID, rec1.Digest)
 	}
 }

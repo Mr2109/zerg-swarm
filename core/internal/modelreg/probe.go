@@ -3,6 +3,7 @@ package modelreg
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -66,6 +67,77 @@ type Trace struct {
 	Summary      string `json:"summary,omitempty"`
 }
 
+// TraceSchemaV1 是留痕兄弟文件（<version>.trace.json）的版本号。
+// 它与记录 schema 分开：留痕不是记录、不进目录语义，只承载易变信息
+// （生成时间、每项探测器的耗时，待修补 #24）。
+const TraceSchemaV1 = "zerg.model.probe_trace.v1"
+
+// dateRE 认出 RFC3339 形态的时间戳（用于测试断言正文/notes 不含生成时间）。
+var dateRE = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}`)
+
+// ProbeTraceArtifact 是探测留痕的独立产物，作为记录正文的**兄弟文件**落盘。
+//
+// 为什么必须移出正文（待修补 #24）：生成时间、每项探测器的耗时（elapsed_ms）都是
+// 易变信息；记录正文是"内容寻址"的锚（digest 只吃 role+sha256），正文一旦含易变值，
+// 同一模型重复 probe 就会被判成"同摘要不同内容"，撞上 Store.Put 的防覆盖保护。
+// 留痕是给人的证据，仍然保留 —— 只是搬到正文之外（--json 里照给，--store 时写兄弟文件）。
+type ProbeTraceArtifact struct {
+	Schema       string  `json:"schema"`
+	ID           string  `json:"id,omitempty"`
+	Digest       string  `json:"digest,omitempty"`
+	Target       string  `json:"target,omitempty"`
+	Endpoint     string  `json:"endpoint,omitempty"`
+	GeneratedAt  string  `json:"generated_at,omitempty"`
+	OnlineProbed bool    `json:"online_probed"`
+	Traces       []Trace `json:"traces"`
+}
+
+// TraceSiblingPath 由记录路径推出留痕兄弟文件路径：
+//
+//	<...>/<version>.json → <...>/<version>.trace.json
+//
+// 与记录同目录、同摘要前缀（同一条记录只有一个版本 = 一个摘要）。
+func TraceSiblingPath(recordPath string) string {
+	if strings.HasSuffix(recordPath, ".json") {
+		return strings.TrimSuffix(recordPath, ".json") + ".trace.json"
+	}
+	return recordPath + ".trace.json"
+}
+
+// WriteProbeTraceSibling 把探测留痕原子写成记录旁的兄弟文件。
+//
+// 留痕**允许**随探测波动（它就是承载耗时与生成时间的），故这里不比对、允许重写；
+// 记录的防覆盖保护不受影响——兄弟文件与记录正文互不干扰（Store.Put 一字未改）。
+func WriteProbeTraceSibling(recordPath string, rec *Record, rep *ProbeReport) (string, error) {
+	art := ProbeTraceArtifact{
+		Schema:       TraceSchemaV1,
+		ID:           rec.ID,
+		Digest:       rec.Digest,
+		Target:       rep.Target,
+		Endpoint:     rep.Endpoint,
+		GeneratedAt:  formatGeneratedAt(rep.GeneratedAt),
+		OnlineProbed: rep.OnlineProbed,
+		Traces:       rep.Traces,
+	}
+	data, err := json.MarshalIndent(art, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("序列化探测留痕失败：%w", err)
+	}
+	data = append(data, '\n')
+	path := TraceSiblingPath(recordPath)
+	if _, err := WriteFileAtomic(path, data); err != nil {
+		return path, err
+	}
+	return path, nil
+}
+
+func formatGeneratedAt(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 // CapabilityProbe 是能力类探测器的结论。
 // Value=false 是"实测没过"，不是"猜它不行"——Evidence 里必须带失败分类与原因。
 type CapabilityProbe struct {
@@ -95,6 +167,9 @@ type ProbeReport struct {
 	ChatTemplate string
 	TemplateOK   bool
 	OnlineProbed bool
+	// GeneratedAt 是本次探测的时间。它**不进记录正文**（正文必须随内容确定），
+	// 只写进留痕兄弟文件（待修补 #24）。
+	GeneratedAt time.Time
 }
 
 // ProbeOptions 是探测入参。
@@ -205,7 +280,7 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 	if timeout <= 0 {
 		timeout = DefaultProbeTimeout
 	}
-	rep := &ProbeReport{Target: opts.Target}
+	rep := &ProbeReport{Target: opts.Target, GeneratedAt: now}
 
 	lower := strings.ToLower(opts.Target)
 	isURL := strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
@@ -331,12 +406,12 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 	if id == "" {
 		id = derivedID
 	}
-	rec := rep.toRecord(id, opts, now)
+	rec := rep.toRecord(id, opts)
 	return rec, rep, nil
 }
 
 // toRecord 把探测产物落成一条符合标准的 Record。
-func (rep *ProbeReport) toRecord(id string, opts ProbeOptions, now time.Time) *Record {
+func (rep *ProbeReport) toRecord(id string, opts ProbeOptions) *Record {
 	rec := &Record{
 		Schema:       SchemaV1,
 		ID:           sanitizeID(id),
@@ -390,7 +465,7 @@ func (rep *ProbeReport) toRecord(id string, opts ProbeOptions, now time.Time) *R
 		rec.EngineRecipes = map[string]EngineRecipe{eng: recipe}
 	}
 
-	rec.Notes = rep.buildNotes(now)
+	rec.Notes = rep.buildNotes()
 	return rec
 }
 
@@ -460,9 +535,16 @@ func capabilityOf(name, probeName string, r runResult) Capability {
 	return Capability{Name: name, Value: r.Value, Source: "probed", Evidence: ev}
 }
 
-func (rep *ProbeReport) buildNotes(now time.Time) string {
+// buildNotes 生成记录的 notes。**必须是确定文本**（待修补 #24 的硬要求）：
+// 不许出现生成时间戳、探测耗时或逐项探测留痕——那些易变信息随留痕搬到兄弟文件
+// （<version>.trace.json）与 `probe --json` 输出；记录正文只留随内容确定的内容说明。
+//
+// 为什么正文必须确定：正文才是内容寻址的锚（digest 只吃 role+sha256）。正文一旦含
+// 易变值，同一模型重复 probe 就会被判成"同摘要不同内容"，撞上 Store.Put 的防覆盖保护，
+// 表现为"重复跑就报错"（CLI exit 3），而不是存储层承诺的 changed=false。
+func (rep *ProbeReport) buildNotes() string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("本记录由 zerg-model probe 自动生成（%s）。", now.Format(time.RFC3339)))
+	b.WriteString("本记录由 zerg-model probe 自动生成：正文确定，不含生成时间与探测耗时（那些易变信息见记录旁的 <version>.trace.json 兄弟文件，以及 probe --json 输出里附的探测留痕）。")
 	b.WriteString("\n待人工补：license.spdx / license.commercial / license.accepted_by / license.accepted_at（标准 §五：拿不到权重许可就写 unknown，绝不默认 yes）。")
 	b.WriteString("\nlicense.accepted_by/accepted_at 留空：探测不代表任何人接受条款。按待修补 #21 的规则（unknown 允许无留痕；no/revenue_gated 必填；任何情况下不许占位），本记录 commercial=unknown 故留痕可为空，且不得写入占位值。人工审许可后填写这两个字段；commercial != yes 之前不得作为默认项（标准 §五 红线）。")
 	if rep.Meta == nil {
@@ -475,21 +557,5 @@ func (rep *ProbeReport) buildNotes(now time.Time) string {
 	if !rep.OnlineProbed {
 		b.WriteString("\n未做在线探测：只给了本地文件、未给端点（开工方案 §八 风险2）。text/vision/tools 等能力未实测，故未写断言。")
 	}
-	b.WriteString("\nprobe_trace:")
-	for _, t := range rep.Traces {
-		b.WriteString("\n  - ")
-		b.WriteString(traceLine(t))
-	}
 	return b.String()
-}
-
-func traceLine(t Trace) string {
-	s := fmt.Sprintf("%s ok=%v status=%d ms=%d", t.Probe, t.OK, t.HTTPStatus, t.ElapsedMS)
-	if t.FailureClass != "" {
-		s += " class=" + t.FailureClass
-	}
-	if t.Summary != "" {
-		s += " resp=" + t.Summary
-	}
-	return s
 }
