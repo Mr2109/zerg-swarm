@@ -25,6 +25,13 @@ var (
 	BuildTime = "unknown"
 )
 
+// Line —— 机器可读的单行身份（升级器/安装器比对用，纯 ASCII 空格分隔）：
+//
+//	zerg-core 2.5.9 e322802c 2026-09-11T05:28:05Z
+func Line(component string) string {
+	return component + " " + Version + " " + Commit + " " + BuildTime
+}
+
 // Describe —— 人类可读的完整身份，如 "v2.5.9+2ddeba9e（2026-09-11T05:33:09Z）"。
 // 用于启动横幅、upgrade --plan 的盘点输出、版本矩阵。
 func Describe() string {
