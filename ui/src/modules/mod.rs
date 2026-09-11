@@ -9,6 +9,7 @@
 pub mod zerg_module;
 pub mod ferrite; // M3 Ferrite 重写 md 编辑器（Mr2109 2026-08-29）
 pub mod chat; // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块）
+pub mod upgrade; // L2 自动升级页（2026-09-11）
 pub mod icons; // P3 图标统一封装（iconflow——14 包 34 TTF——MIT）
 
 use eframe::egui;
@@ -28,6 +29,14 @@ pub fn build_registry() -> ModuleRegistry {
 
     // ⚡ 核心（船体箱——永驻）
     // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块——排任务队列前）
+    reg.register(ModuleManifest {
+        id: "upgrade",
+        name_key: "mod.upgrade.name",
+        icon: icon_text("arrow-up-circle"),
+        desc_key: "mod.upgrade.desc",
+        is_core: false,
+        version: env!("CARGO_PKG_VERSION"),
+    });
     reg.register(ModuleManifest {
         id: "chat",
         name_key: "mod.chat.name",
