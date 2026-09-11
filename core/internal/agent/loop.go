@@ -92,7 +92,7 @@ func Loop(ctx context.Context, agent *Agent, tools []ToolDef, logger *Logger, st
 
 	// 1. 启动循环日志
 	ls.logger.LogEvent(string(EventLoopStart), "info", "loop_start",
-		"", fmt.Sprintf("循环启动: maxTurns=%d, budget=%d, noProgress=%d",
+		"", fmt.Sprintf("loop start: maxTurns=%d, budget=%d, noProgress=%d",
 			ls.maxTurns, ls.budget, ls.noProgressThresh),
 		nil, "", "", "")
 
@@ -118,7 +118,7 @@ func Loop(ctx context.Context, agent *Agent, tools []ToolDef, logger *Logger, st
 				continue
 			}
 			ls.logger.LogEvent(string(EventLoopEnd), "warn", "loop_terminate",
-				"", fmt.Sprintf("循环终止: reason=%s", reason),
+				"", fmt.Sprintf("loop terminated: reason=%s", reason),
 				nil, "", "", "")
 			return LoopResult{Reason: reason, Turns: ls.turn, Tokens: ls.totalTokens}
 		}
@@ -137,7 +137,7 @@ func Loop(ctx context.Context, agent *Agent, tools []ToolDef, logger *Logger, st
 		resp, err := ls.callModelWithRetry(ctx)
 		if err != nil {
 			ls.logger.LogEvent(string(EventToolCall), "error", "model_failed",
-				"", fmt.Sprintf("模型调用失败: %v", err),
+				"", fmt.Sprintf("model call failed: %v", err),
 				nil, err.Error(), "", "")
 			return LoopResult{Reason: ReasonModelError, Turns: ls.turn - 1, Tokens: ls.totalTokens}
 		}
@@ -177,16 +177,16 @@ func Loop(ctx context.Context, agent *Agent, tools []ToolDef, logger *Logger, st
 				if ffp.In(execErr.Error()) {
 					// FFP 2026-09-08: 格式错误≠执行失败——教学文本原样回喂(不加"执行失败"包装)
 					ls.logger.LogEvent(string(EventToolError), "warn", "tool_format_feedback",
-						tc.Name, fmt.Sprintf("第 %d 轮: %s 格式反馈(FFP)", ls.turn, tc.Name),
+						tc.Name, fmt.Sprintf("turn %d: %s format feedback (FFP)", ls.turn, tc.Name),
 						nil, execErr.Error(), "", "")
 					agent.AppendMessage(Message{Role: "user", Content: execErr.Error()})
 					continue
 				}
 				ls.logger.LogEvent(string(EventToolError), "error", "tool_exec_failed",
-					tc.Name, fmt.Sprintf("第 %d 轮: %s 执行失败: %v", ls.turn, tc.Name, execErr),
+					tc.Name, fmt.Sprintf("turn %d: %s execution failed: %v", ls.turn, tc.Name, execErr),
 					nil, execErr.Error(), "", "")
 				// 工具执行失败，回喂错误信息给模型继续（含纠正提示——v2.5）
-				errMsg := fmt.Sprintf("工具 %s 执行失败: %v", tc.Name, execErr)
+				errMsg := fmt.Sprintf("tool %s execution failed: %v", tc.Name, execErr)
 				if tc.Name == "write" || tc.Name == "edit" || tc.Name == "read" {
 					errMsg += "（提示：请用相对路径，如 src/main.py——不要用绝对路径）"
 				}
@@ -197,7 +197,7 @@ func Loop(ctx context.Context, agent *Agent, tools []ToolDef, logger *Logger, st
 			toolResults = append(toolResults, result)
 			ls.toolTrace = append(ls.toolTrace, tc.Name) // v2.5.1 挂单诊断轨迹
 			ls.logger.LogEvent(string(EventToolCall), "info", "tool_execute",
-				tc.Name, fmt.Sprintf("第 %d 轮: 调用 %s", ls.turn, tc.Name),
+				tc.Name, fmt.Sprintf("turn %d: calling %s", ls.turn, tc.Name),
 				tc.Args, result.Content, result.Error, result.Duration)
 			// 调试：打印工具执行结果（v2.5 排查——写文件失败）
 			fmt.Fprintf(os.Stderr, "[tool] %s args=%v → ok=%s err=%s\n", tc.Name, tc.Args,
@@ -281,12 +281,12 @@ func Loop(ctx context.Context, agent *Agent, tools []ToolDef, logger *Logger, st
 		// 10. 写状态
 		if state != nil {
 			state.AddEvidence(
-				fmt.Sprintf("第 %d 轮调用工具: %s", ls.turn, ls.summarizeToolCalls(resp.ToolCalls)),
+				fmt.Sprintf("turn %d tool calls: %s", ls.turn, ls.summarizeToolCalls(resp.ToolCalls)),
 				"工具已执行，结果已回喂", "", "继续循环")
 		}
 
 		ls.logger.LogEvent(string(EventLoopEnd), "info", "loop_iteration_end",
-			"", fmt.Sprintf("第 %d 轮完成, tokens=%d, tools=%d", ls.turn, ls.totalTokens, len(toolResults)),
+			"", fmt.Sprintf("turn %d done, tokens=%d, tools=%d", ls.turn, ls.totalTokens, len(toolResults)),
 			nil, "", "", "")
 
 		// v2.5.4.9 机器级采样（每轮——CA 全量追踪——sysmetrics.jsonl）
@@ -338,7 +338,7 @@ func (ls *loopState) callModelWithRetry(ctx context.Context) (*ModelResponse, er
 		if attempt > 0 {
 			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
 			ls.logger.LogEvent(string(EventToolCall), "warn", "model_retry",
-				"", fmt.Sprintf("第 %d 次重试，退避 %v", attempt, backoff),
+				"", fmt.Sprintf("retry %d, backoff %v", attempt, backoff),
 				nil, "", "", "")
 
 			select {
@@ -365,7 +365,7 @@ func (ls *loopState) callModelWithRetry(ctx context.Context) (*ModelResponse, er
 		ls.retryCount++
 	}
 
-	return nil, fmt.Errorf("模型调用 %d 次后仍失败: %w", maxRetries+1, lastErr)
+	return nil, fmt.Errorf("still failing after %d model calls: %w", maxRetries+1, lastErr)
 }
 
 // 工具执行
@@ -511,7 +511,7 @@ func (ls *loopState) executeTool(ctx context.Context, tc ToolCall) (ToolCallResu
 	}
 	execCtx := ls.agent.execContext
 	if execCtx == nil {
-		return ToolCallResult{}, fmt.Errorf("execContext 未初始化")
+		return ToolCallResult{}, fmt.Errorf("execContext not initialized")
 	}
 	result := execCtx.ExecuteTool(ctx, tc.Name, tc.Args, ls.agent.gate)
 	result.ToolName = tc.Name // 工具名（无进展检测用——v2.5）
@@ -595,14 +595,14 @@ func (ls *loopState) summarizeToolCalls(tools []ToolCall) string {
 // logFinal - 记录最终循环日志
 func (ls *loopState) logFinal(result LoopResult) {
 	ls.logger.LogEvent(string(EventLoopEnd), "info", "loop_complete",
-		"", fmt.Sprintf("循环完成: reason=%s, turns=%d, tokens=%d",
+		"", fmt.Sprintf("loop finished: reason=%s, turns=%d, tokens=%d",
 			result.Reason, result.Turns, result.Tokens),
 		nil, "", "", "")
 
 	if ls.state != nil {
 		ls.state.AddEvidence(
-			fmt.Sprintf("循环终止: %s", result.Reason),
-			fmt.Sprintf("共 %d 轮, %d tokens", result.Turns, result.Tokens),
+			fmt.Sprintf("loop terminated: %s", result.Reason),
+			fmt.Sprintf("%d turns, %d tokens", result.Turns, result.Tokens),
 			"", "结束",
 		)
 	}
