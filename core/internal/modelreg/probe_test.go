@@ -365,12 +365,23 @@ func TestProbeEndpointRecordExposesLicenseTraceConflict(t *testing.T) {
 		t.Fatalf("端点探测无本地文件时应写一条占位建材料：%+v", rec.Files)
 	}
 	assertLicenseTracePolicy(t, rec)
-	// 视觉能力必须 false（假端点 400）
-	if hasCap(rec.Capabilities, "vision") {
+	// 能力实测**不进记录正文**（本批核心）：正文只装身份，能力+证据写 <version>.capabilities.json。
+	if len(rec.Capabilities) != 0 {
+		t.Fatalf("能力断言不进记录正文（应落能力快照），实际：%+v", rec.Capabilities)
+	}
+	if hasCap(rec.Capabilities, "text") || hasCap(rec.Capabilities, "vision") {
+		t.Fatalf("正文里不该有任何能力断言：%+v", rec.Capabilities)
+	}
+	// 但实测结论必须仍在（搬到报告 → 快照），判据不放宽：假端点 400 → vision=false，text/tools=true
+	if v := capByName(rep.Capabilities, "vision"); v != nil && v.Value {
 		t.Fatal("假端点对 image 返回 400，vision 必须为 false")
 	}
-	if !hasCap(rec.Capabilities, "text") || !hasCap(rec.Capabilities, "tools") {
-		t.Fatalf("text/tools 应为 true：%+v", rec.Capabilities)
+	if !hasCap(rep.Capabilities, "text") || !hasCap(rep.Capabilities, "tools") {
+		t.Fatalf("text/tools 应为 true：%+v", rep.Capabilities)
+	}
+	// 快照照旧给出能力断言 + 证据（给人看：--json / 兄弟文件）
+	if v := capByName(NewCapabilitySnapshot(rec, rep).Capabilities, "vision"); v == nil || v.Value || v.Evidence == "" {
+		t.Fatalf("能力快照里应看到带证据的 vision=false：%+v", rep.Capabilities)
 	}
 	// 待修补 #24：探测留痕不再进正文，改由报告（--json / 兄弟文件）承载。
 	if strings.Contains(rec.Notes, "probe_trace") || dateRE.MatchString(rec.Notes) {
@@ -600,6 +611,163 @@ func hasTrace(ts []Trace, name string) bool {
 		}
 	}
 	return false
+}
+
+// capByName 取出某条能力断言（找不到返回 nil）。
+func capByName(caps []Capability, name string) *Capability {
+	for i := range caps {
+		if caps[i].Name == name {
+			return &caps[i]
+		}
+	}
+	return nil
+}
+
+// ── 能力快照落兄弟文件（本批核心）────────────────────────────────────────────
+
+// 本批核心断言：**同一建材、不同端点两次探测 → 记录正文逐字节相同**。
+// 能力实测（含 vision/tools）不再进正文，改由 <version>.capabilities.json 快照承载；
+// 于是"先 probe --store（无端点，登记身份）、后 probe --endpoint --store（补能力实测）"
+// 这条自然流程不再撞上 Store.Put 的防覆盖保护（ConflictError）。
+func TestProbeRecordBodyIgnoresEndpoint(t *testing.T) {
+	gguf := writeTestGGUF(t, "", "SameBrickwork-Q4_K_M.gguf")
+
+	recA, repA, err := Probe(ProbeOptions{Target: gguf, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("无端点探测失败：%v", err)
+	}
+	srvA := fakeEngine(t, "image input is not supported by this model")
+	recB, repB, err := Probe(ProbeOptions{Target: gguf, Endpoint: srvA.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("带端点探测失败：%v", err)
+	}
+
+	// 前提校验：两次探测确实"能力上不同"——否则本用例证明不了什么
+	if repA.OnlineProbed || len(repA.Capabilities) != 0 {
+		t.Fatalf("本用例前提是无端点那次没有在线能力，实际 %+v", repA.Capabilities)
+	}
+	if !repB.OnlineProbed || len(repB.Capabilities) == 0 {
+		t.Fatalf("本用例前提是带端点那次真在线探到了能力，实际 %+v", repB.Capabilities)
+	}
+	if recA.Digest != recB.Digest {
+		t.Fatalf("同一建材 digest 必须相同：%s vs %s", recA.Digest, recB.Digest)
+	}
+
+	bA, bB := recordBody(t, recA), recordBody(t, recB)
+	t.Logf("无端点正文 %s", bodyHash(bA))
+	t.Logf("带端点正文 %s", bodyHash(bB))
+	if bodyHash(bA) != bodyHash(bB) {
+		t.Fatalf("同一建材、不同端点两次探测，记录正文必须逐字节相同（正文只装身份）\n  无端点=%s\n  带端点=%s",
+			bodyHash(bA), bodyHash(bB))
+	}
+	// 反例守护：正文里不得出现能力断言块（出现就又随端点变化了）
+	if strings.Contains(string(bB), "capabilities") {
+		t.Fatalf("记录正文不得内嵌 capabilities（能力应在快照里）：%s", bB)
+	}
+	if len(recB.Capabilities) != 0 {
+		t.Fatalf("probe 不该往正文写能力断言：%+v", recB.Capabilities)
+	}
+
+	// 能力本身必须仍在，且判据不放宽：假端点对 image 返回 400 → vision 必须 false 且带证据
+	vis := capByName(repB.Capabilities, "vision")
+	if vis == nil || vis.Value || vis.Source != "probed" || !strings.Contains(vis.Evidence, EvidenceVision) {
+		t.Fatalf("vision 断言应为 probed/false 且带探测器名：%+v", repB.Capabilities)
+	}
+	if !hasCap(repB.Capabilities, "text") || !hasCap(repB.Capabilities, "tools") {
+		t.Fatalf("text/tools 应为 true：%+v", repB.Capabilities)
+	}
+
+	// 能力 + 证据写进快照（交给兄弟文件），而不是正文
+	snap := NewCapabilitySnapshot(recB, repB)
+	if snap.Schema != CapabilitySnapshotSchemaV1 || snap.Digest != recB.Digest || snap.Endpoint != srvA.URL {
+		t.Fatalf("快照身份字段不对：%+v", snap)
+	}
+	if len(snap.Capabilities) != len(repB.Capabilities) {
+		t.Fatalf("快照应完整承载能力断言：want=%d got=%d", len(repB.Capabilities), len(snap.Capabilities))
+	}
+}
+
+// 能力快照兄弟文件：路径命名、可写、可解析、承载证据与端点；
+// 且**可刷新**（第二遍写不同的快照不报错、不改动记录正文）。
+func TestCapabilitySnapshotSiblingIsRefreshable(t *testing.T) {
+	gguf := writeTestGGUF(t, "", "SnapModel-Q4_K_M.gguf")
+	srv := fakeEngine(t, "image input is not supported by this model")
+	rec, rep, err := Probe(ProbeOptions{Target: gguf, Endpoint: srv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	recPath := filepath.Join(dir, rec.ID, VersionOf(rec)+".json")
+	if _, err := WriteFileAtomic(recPath, recordBody(t, rec)); err != nil {
+		t.Fatal(err)
+	}
+	recBefore, err := os.ReadFile(recPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sib, err := WriteCapabilitySnapshot(recPath, rec, rep)
+	if err != nil {
+		t.Fatalf("写能力快照失败：%v", err)
+	}
+	if want := strings.TrimSuffix(recPath, ".json") + ".capabilities.json"; sib != want {
+		t.Fatalf("快照路径不对：want=%s got=%s", want, sib)
+	}
+	b, err := os.ReadFile(sib)
+	if err != nil {
+		t.Fatalf("快照没落盘：%v", err)
+	}
+	var art CapabilitySnapshotArtifact
+	if err := json.Unmarshal(b, &art); err != nil {
+		t.Fatalf("快照不是合法 JSON：%v", err)
+	}
+	if art.Schema != CapabilitySnapshotSchemaV1 || art.ID != rec.ID || art.Digest != rec.Digest {
+		t.Fatalf("快照身份字段不对：%+v", art)
+	}
+	if art.Endpoint != srv.URL {
+		t.Fatalf("快照应记下用的端点：%q", art.Endpoint)
+	}
+	if art.GeneratedAt == "" {
+		t.Fatal("快照应承载生成时间（它是易变信息，正该放这里）")
+	}
+	if v := capByName(art.Capabilities, "vision"); v == nil || !strings.Contains(v.Evidence, EvidenceVision) {
+		t.Fatalf("快照里应能看到带证据的 vision 断言：%+v", art.Capabilities)
+	}
+
+	// 可刷新：换一份"能力不同、端点不同"的快照重写 → 不报错、内容更新、记录正文一字未动
+	rep2 := *rep
+	rep2.Endpoint = "http://127.0.0.1:1"
+	rep2.Capabilities = []Capability{{Name: "vision", Value: true, Source: "probed", Evidence: EvidenceVision}}
+	if _, err := WriteCapabilitySnapshot(recPath, rec, &rep2); err != nil {
+		t.Fatalf("快照必须可刷新（不报错）：%v", err)
+	}
+	b2, err := os.ReadFile(sib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b2) == string(b) {
+		t.Fatal("第二遍快照应写下新内容（刷新语义）")
+	}
+	var art2 CapabilitySnapshotArtifact
+	if err := json.Unmarshal(b2, &art2); err != nil {
+		t.Fatal(err)
+	}
+	if v := capByName(art2.Capabilities, "vision"); v == nil || !v.Value {
+		t.Fatalf("刷新后应看到新的能力值：%+v", art2.Capabilities)
+	}
+	if art2.Endpoint != rep2.Endpoint {
+		t.Fatalf("刷新后端点应更新：%q", art2.Endpoint)
+	}
+	recAfter, err := os.ReadFile(recPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(recBefore) != string(recAfter) {
+		t.Fatal("刷新能力快照不得改动记录正文（防覆盖保护不受影响）")
+	}
+	if _, err := os.Stat(TraceSiblingPath(recPath)); !os.IsNotExist(err) {
+		t.Fatalf("本用例不该产生留痕兄弟文件：%v", err)
+	}
 }
 
 // --store 幂等的根（待修补 #24 的核心验收）：同一模型 probe 两次 → 正文逐字节相同 →
