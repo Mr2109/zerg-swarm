@@ -724,7 +724,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("📍 路由到: %s:%d", route.Host, route.Port)
+	log.Printf("📍 routed to: %s:%d", route.Host, route.Port)
 
 	// 会话粘性：记录绑定（仅非 local 机器）
 	if sessionID != "" && route.Host != "local" {
@@ -737,7 +737,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// 5. 转发到子端（适配器已做入站转换；含 tools 强制非流式由 chat 适配器在出站处理）
 	hasTools := adapter.ContainsTools(forwardBody)
-	log.Printf("🔍 请求检查: tools=%v stream=%v bodyLen=%d", hasTools, adapter.IsStreamRequest(forwardBody), len(forwardBody))
+	log.Printf("🔍 request check: tools=%v stream=%v bodyLen=%d", hasTools, adapter.IsStreamRequest(forwardBody), len(forwardBody))
 
 	// M3 集中控制层（v2.4）：工具调用拦截检查——观察模式（记录不拦截——等Mr2109确认策略后启用）
 	// gate 检查请求里的工具调用——block 记录告警；require_approval 记录待审（暂不拦截——默认放行保持现有行为）
@@ -745,7 +745,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		for _, toolName := range adapter.ExtractToolNames(forwardBody) {
 			decision := g.gate.Check(toolName, "", "agent")
 			if decision.Action != control.ActionAllow {
-				log.Printf("🔒 M3控制层[观察]: 工具 %s → %s（%s）——暂不拦截（观察模式）",
+				log.Printf("🔒 M3 control[observe]: tool %s → %s (%s) — not blocking (observe mode)",
 					toolName, decision.Action, decision.Message)
 			}
 		}
@@ -758,12 +758,12 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			// 重试：重新路由（熔断机器已被跳过）
-			log.Printf("🔄 第 %d 次重试路由 (%s)", attempt, model)
+			log.Printf("🔄 retry %d: re-routing (%s)", attempt, model)
 			route, err = g.pickRoute(model, sessionID, prompt)
 			if err != nil {
 				break
 			}
-			log.Printf("📍 重试路由到: %s:%d", route.Host, route.Port)
+			log.Printf("📍 retry routed to: %s:%d", route.Host, route.Port)
 		}
 
 		resp, err = g.forwardToBackend(r.Context(), route, backendPath, forwardBody, r.Header)
@@ -772,7 +772,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		// v2.5.5 T5b: 5xx（后端/模型错误）也触发重试换机器（另一台可能正常）
 		if err == nil && resp != nil && resp.StatusCode >= 500 {
-			log.Printf("⚠️ 后端 %s 返回 %d——换机器重试（T5b 5xx failover）", route.Host, resp.StatusCode)
+			log.Printf("⚠️ backend %s returned %d — trying another machine (T5b 5xx failover)", route.Host, resp.StatusCode)
 			// 5xx 也是模型错误——记失败（防持续 5xx 机器被熔断）
 			if route.Host != "local" {
 				g.markFailure(route.Host)
@@ -789,13 +789,13 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 			resp.Body.Close()
 			if bodyMsg != "" {
-				err = fmt.Errorf("后端 %s 返回 %d: %s", route.Host, resp.StatusCode, bodyMsg)
+				err = fmt.Errorf("backend %s returned %d: %s", route.Host, resp.StatusCode, bodyMsg)
 			} else {
-				err = fmt.Errorf("后端 %s 返回 %d", route.Host, resp.StatusCode)
+				err = fmt.Errorf("backend %s returned %d", route.Host, resp.StatusCode)
 			}
 		}
 
-		log.Printf("转发请求失败: %v", err)
+		log.Printf("forward request failed: %v", err)
 		// v2.5.5 T1 连接层治本: 连接层失败（网络/超时）——重试不立即熔断（给足机会）
 		// 模型错误（HTTP 响应——4xx/5xx）才立即 markFailure（真失败）
 		if route.Host != "local" && isModelError(err) {
@@ -825,7 +825,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 			code = "model_not_found"
 			status = http.StatusNotFound
 		}
-		adp.TransformError(w, status, code, fmt.Sprintf("转发请求失败: %v", err))
+		adp.TransformError(w, status, code, fmt.Sprintf("forward request failed: %v", err))
 		return
 	}
 	defer resp.Body.Close()
@@ -847,8 +847,8 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 			g.addSessionTokens(sessionID, tok)
 			// 丙批 §4.2：网关侧是**安全网**（85% 兜底，且 history ≥ 4 条才动）——不与对话侧主压缩抢跑
 			if threshold := g.compactThreshold(model); threshold > 0 && g.sessionTokens(sessionID) > threshold && requestMessageCount(body) >= 4 {
-				slog.Info("会话超压缩阈值，自动 compaction", "session", sessionID, "tokens", g.sessionTokens(sessionID), "threshold", threshold)
-				log.Printf("♻️ 会话 %s 超压缩阈值 (%d/%d)，自动 compaction", sessionID, g.sessionTokens(sessionID), threshold)
+				slog.Info("session exceeded compaction threshold, auto-compacting", "session", sessionID, "tokens", g.sessionTokens(sessionID), "threshold", threshold)
+				log.Printf("♻️ session %s exceeded compaction threshold (%d/%d), auto-compacting", sessionID, g.sessionTokens(sessionID), threshold)
 				g.autoCompact(sessionID, model, body)
 			}
 		}
@@ -881,12 +881,12 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 func extractModel(body []byte) (string, error) {
 	var req map[string]interface{}
 	if err := json.Unmarshal(body, &req); err != nil {
-		return "", fmt.Errorf("解析请求体 JSON 失败: %w", err)
+		return "", fmt.Errorf("failed to parse request body JSON: %w", err)
 	}
 
 	model, ok := req["model"].(string)
 	if !ok || model == "" {
-		return "", fmt.Errorf("请求体中缺少 model 字段")
+		return "", fmt.Errorf("request body missing model field")
 	}
 
 	return model, nil
@@ -904,18 +904,18 @@ func (g *Gateway) extractModelWithAction(body []byte, path string) (model string
 	}
 
 	// 标准提取失败（缺少 model 字段），尝试动作路由
-	log.Printf("🔍 请求未指定 model，尝试动作路由: %v", err)
+	log.Printf("🔍 no model specified, trying action routing: %v", err)
 
 	action := detectAction(body, path)
-	log.Printf("🎯 识别动作类型: %s", action.String())
+	log.Printf("🎯 action type recognized: %s", action.String())
 
 	// 通过动作路由解析目标模型
 	resolved := g.actionRouter.resolveModel(action)
 	if resolved == "" {
-		return "", false, fmt.Errorf("动作路由未找到目标模型: %s", action.String())
+		return "", false, fmt.Errorf("action routing found no target model: %s", action.String())
 	}
 
-	log.Printf("✅ 动作路由解析成功: %s → %s", action.String(), resolved)
+	log.Printf("✅ action routing resolved: %s → %s", action.String(), resolved)
 	return resolved, true, nil
 }
 
@@ -934,8 +934,8 @@ func (g *Gateway) markFailure(host string) {
 	g.failMu.Lock()
 	defer g.failMu.Unlock()
 	g.failCounts[host]++
-	slog.Warn("机器转发失败", "host", host, "fail_count", g.failCounts[host], "threshold", 3)
-	log.Printf("🚨 机器 %s 转发失败 (%d/3)，超过阈值将降权", host, g.failCounts[host])
+	slog.Warn("machine forward failed", "host", host, "fail_count", g.failCounts[host], "threshold", 3)
+	log.Printf("🚨 machine %s forward failed (%d/3); exceeding threshold will demote", host, g.failCounts[host])
 }
 
 // markSuccess 清零机器失败计数（转发成功后调用，恢复权重）。
@@ -943,7 +943,7 @@ func (g *Gateway) markSuccess(host string) {
 	g.failMu.Lock()
 	defer g.failMu.Unlock()
 	if g.failCounts[host] != 0 {
-		log.Printf("✅ 机器 %s 恢复健康，清零失败计数", host)
+		log.Printf("✅ machine %s recovered, failure count reset", host)
 		g.failCounts[host] = 0
 	}
 	delete(g.failSince, host)
@@ -954,7 +954,7 @@ func (g *Gateway) ClearFailures(host string) {
 	g.failMu.Lock()
 	defer g.failMu.Unlock()
 	if g.failCounts[host] != 0 {
-		log.Printf("✅ 机器 %s 心跳健康——清零失败计数", host)
+		log.Printf("✅ machine %s heartbeat healthy — failure count reset", host)
 		g.failCounts[host] = 0
 	}
 	delete(g.failSince, host)
@@ -1003,7 +1003,7 @@ func (g *Gateway) isTripped(host string) bool {
 	}
 	// 已过冷却期 → 自动恢复（尝试放行）
 	if since, ok := g.failSince[host]; ok && time.Since(since) > circuitCooldown {
-		log.Printf("♻️ 机器 %s 熔断冷却期已过，自动恢复尝试", host)
+		log.Printf("♻️ machine %s cooldown elapsed, attempting auto-recovery", host)
 		g.failCounts[host] = 0
 		delete(g.failSince, host)
 		return false
@@ -1030,18 +1030,18 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 	// 2. 其他模型请求 → 按 DS4 状态三分支（未加载→正常 / 闲置→卸 DS4 / 繁忙→local）
 	if model == ds4ModelName {
 		if !g.ensureDS4Room() {
-			log.Printf("⚠️ DS4 清场失败——继续尝试路由（可能熔断兜底）")
+			log.Printf("⚠️ DS4 quiesce failed — continuing to route (circuit-breaker fallback possible)")
 		}
 	} else {
 		forceLocal, reason := g.ds4RouteDecision()
 		if forceLocal {
-			log.Printf("🎯 %s——其他模型 %s 走本机", reason, model)
+			log.Printf("🎯 %s — other models %s go local", reason, model)
 			// 强制 local（排除 X3）
 			if r, err := g.pickRouteLocal(model); err == nil {
 				return r, nil
 			}
 			// local 不可用——回退正常路由（pickRouteExcluding x3）
-			log.Printf("⚠️ 本机不可用——回退路由（排除 X3——不打扰 DS4）")
+			log.Printf("⚠️ local unavailable — falling back (excluding X3 — don't disturb DS4)")
 			if r, err := g.pickRouteExcluding(model, "x3"); err == nil {
 				return r, nil
 			}
@@ -1051,7 +1051,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 	// 在 models 表中查找
 	models, ok := g.config.Models[model]
 	if !ok {
-		return nil, fmt.Errorf("模型 %s 未在路由表中找到", model)
+		return nil, fmt.Errorf("model %s not found in the routing table", model)
 	}
 
 	// 辅助函数：根据 host 名从 Fleet 获取节点（IP + 端口）
@@ -1070,7 +1070,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 				if c.Host == bound {
 					// 机器健康才复用，否则放行重新路由
 					if snap := g.snapshotFor(bound); snap != nil && snap.Healthy {
-						log.Printf("🎯 会话粘性: session=%s 绑定 %s，直接路由", sessionID, bound)
+						log.Printf("🎯 session affinity: session=%s bound to %s, routing directly", sessionID, bound)
 						ip, port := getNode(bound)
 						return &RouteResult{
 							Host:  bound,
@@ -1080,7 +1080,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 							MemGB: int(c.MemGb),
 						}, nil
 					}
-					log.Printf("🎯 会话粘性: session=%s 绑定 %s 但不可用，重新路由", sessionID, bound)
+					log.Printf("🎯 session affinity: session=%s bound to %s but unavailable, re-routing", sessionID, bound)
 				}
 			}
 		}
@@ -1105,7 +1105,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 		for i, candidate := range models {
 			// 熔断（T7）：连续失败 >= 阈值 的机器跳过（降权/摘除）
 			if g.isTripped(candidate.Host) {
-				log.Printf("⛔ 机器 %s 已熔断，跳过路由候选", candidate.Host)
+				log.Printf("⛔ machine %s is circuit-broken, skipping candidate", candidate.Host)
 				continue
 			}
 			// B4 v2：排除本机模式——local 候选直接跳过（用户工作时任务全走远程）
@@ -1206,7 +1206,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 			for _, c := range models {
 				hosts = append(hosts, c.Host)
 			}
-			return nil, fmt.Errorf("模型 %s 无可用候选（全部熔断或排除: %s）", model, strings.Join(hosts, ","))
+			return nil, fmt.Errorf("model %s has no available candidate (all broken or excluded: %s)", model, strings.Join(hosts, ","))
 		}
 
 		// 有可用候选 → 返回 + 轮询计数器 +1
@@ -1230,10 +1230,10 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 	// 单个候选，直接返回（v2.5.5 #9：也要检查熔断/排除——单候选也可能全不可用）
 	c := models[0]
 	if g.isTripped(c.Host) {
-		return nil, fmt.Errorf("模型 %s 唯一候选 %s 已熔断——无可用候选", model, c.Host)
+		return nil, fmt.Errorf("model %s only candidate %s is circuit-broken — no candidate available", model, c.Host)
 	}
 	if c.Host == "local" && g.ExcludeLocal() {
-		return nil, fmt.Errorf("模型 %s 唯一候选 local 已被排除——无可用候选", model)
+		return nil, fmt.Errorf("model %s only candidate local is excluded — no candidate available", model)
 	}
 	if c.Host == "local" {
 		return &RouteResult{
