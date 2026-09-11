@@ -241,11 +241,11 @@ func cmdProbe(args []string) int {
 
 	if asJSON {
 		payload, _ := json.MarshalIndent(struct {
-			Record     *modelreg.Record     `json:"record"`
-			ProbeTrace []modelreg.Trace     `json:"probe_trace"`
-			Findings   []modelreg.Finding   `json:"findings"`
-			Errors     int                  `json:"errors"`
-			Warnings   int                  `json:"warnings"`
+			Record     *modelreg.Record   `json:"record"`
+			ProbeTrace []modelreg.Trace   `json:"probe_trace"`
+			Findings   []modelreg.Finding `json:"findings"`
+			Errors     int                `json:"errors"`
+			Warnings   int                `json:"warnings"`
 		}{rec, rep.Traces, findings, nErr, nWarn}, "", "  ")
 		fmt.Println(string(payload))
 	} else if out == "" {
