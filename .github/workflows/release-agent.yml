@@ -53,8 +53,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { goos: darwin, goarch: arm64 }
-          - { goos: linux,  goarch: amd64 }
+          # cgo 差异必须按平台给：core 依赖 github.com/yalue/onnxruntime_go（cgo 包，
+          # 运行时再加载 ONNX 动态库）。CGO_ENABLED=0 时它的构建约束会排除全部文件 →
+          # `build constraints exclude all Go files` 直接构建失败（2026-09-11 CI 实测）。
+          # darwin 用 1（与本机验证过的构建一致）；linux 用 0（实测可编，静态、免工具链）。
+          - { goos: darwin, goarch: arm64, cgo: '1' }
+          - { goos: linux,  goarch: amd64, cgo: '0' }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -66,7 +70,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: '0'
+          CGO_ENABLED: ${{ matrix.cgo }}
         run: |
           set -euo pipefail
           BT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
