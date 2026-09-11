@@ -45,7 +45,7 @@ if [ "$MODE" = "build" ]; then
   echo "=== 构建 ==="
   bash "$REPO_ROOT/scripts/build-all.sh" --dist
 elif [ "$MODE" = "pack" ]; then
-  echo "=== 跳过构建（复用 $DIST）==="
+  echo "=== 跳过构建（复用 ${DIST}）==="
 fi
 
 if [ "$MODE" != "verify" ]; then
@@ -77,31 +77,12 @@ if [ "$MODE" != "verify" ]; then
   done
   (cd "$REL" && shasum -a 256 zerg-* | grep -v '\.sha256' > checksums.txt)
 
-  python3 - "$REL" "$DIST/build-info.json" <<'PY'
-import hashlib, json, os, sys, datetime
-rel, info_path = sys.argv[1], sys.argv[2]
-info = json.load(open(info_path))
-arts = []
-for name in sorted(os.listdir(rel)):
-    if not name.startswith("zerg-") or name.endswith(".sha256"):
-        continue
-    p = os.path.join(rel, name)
-    h = hashlib.sha256(open(p, "rb").read()).hexdigest()
-    comp = name.split("-")[0] + "-" + name.split("-")[1]
-    parts = name.split("-")
-    arts.append({"name": name, "component": parts[0] + "-" + parts[1],
-                 "os": parts[2], "arch": parts[3],
-                 "size": os.path.getsize(p), "sha256": h})
-manifest = {
-    "schema": 1,
-    "version": info["version"], "tag": "v" + info["version"],
-    "commit": info["commit"], "build_time": info["build_time"],
-    "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "artifacts": arts,
-}
-json.dump(manifest, open(os.path.join(rel, "manifest.json"), "w"), ensure_ascii=False, indent=2)
-print("   📝 manifest.json: %d 件" % len(arts))
-PY
+  # 清单生成走共享脚本（CI 同一份——排除"两处逻辑长歪"）
+  BI="$DIST/build-info.json"
+  python3 "$REPO_ROOT/scripts/make-manifest.py" "$REL" \
+    "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$BI")" \
+    "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["commit"])' "$BI")" \
+    "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["build_time"])' "$BI")"
   echo "✅ 打包完成：$REL"
 fi
 
