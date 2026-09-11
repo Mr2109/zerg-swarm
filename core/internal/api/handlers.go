@@ -825,7 +825,7 @@ func (h *Handlers) modelDescription(name string) string {
 		// 从候选描述/参数拼简介
 		desc := c.Description
 		if desc == "" {
-			desc = fmt.Sprintf("%s 模型（%s 设备——%.0f GB——上下文 %d）", name, c.Host, c.MemGb, c.CtxWindow)
+			desc = fmt.Sprintf("%s model (%s device — %.0f GB — context %d)", name, c.Host, c.MemGb, c.CtxWindow)
 		}
 		return desc
 	}

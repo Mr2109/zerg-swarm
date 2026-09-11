@@ -296,7 +296,7 @@ func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef
 
 	data, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("序列化请求体失败: %w", err)
+		return nil, fmt.Errorf("failed to serialize request body: %w", err)
 	}
 	// v2.5.4.8 日志完善：FULL BODY 加开关（ZERG_DEBUG=1 才打印——平时不打——不刷屏）
 	if os.Getenv("ZERG_DEBUG") == "1" {
@@ -317,7 +317,7 @@ func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef
 	start := time.Now()
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("调用网关失败(%s): %w", time.Since(start).Round(time.Millisecond), err)
+		return nil, fmt.Errorf("gateway call failed (%s): %w", time.Since(start).Round(time.Millisecond), err)
 	}
 	defer resp.Body.Close()
 
@@ -342,7 +342,7 @@ func (a *Agent) callModel(ctx context.Context, sysPrompt string, tools []ToolDef
 	// 流式: 每行 "data: {...}"——聚合 response.delta 文本——结束聚合完整 JSON
 	raw, err := streamReadChat(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("流式读取失败: %w", err)
+		return nil, fmt.Errorf("stream read failed: %w", err)
 	}
 	// Hermes 模式: 从正文解析 <tool_call>（chat 解析器只认 message.tool_calls）
 	if os.Getenv("ZERG_HERMES_TOOLS") == "1" {
@@ -415,7 +415,7 @@ func streamReadChat(body io.Reader) ([]byte, error) {
 			continue // 容错跳过坏 chunk
 		}
 		if ev.Error != nil && ev.Error.Message != "" {
-			return nil, fmt.Errorf("流式错误: %s", ev.Error.Message)
+			return nil, fmt.Errorf("stream error: %s", ev.Error.Message)
 		}
 		has = true
 		for _, ch := range ev.Choices {
@@ -527,7 +527,7 @@ func (a *Agent) callModelHermes(ctx context.Context, sysPrompt string, tools []T
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("序列化请求体失败: %w", err)
+		return nil, fmt.Errorf("failed to serialize request body: %w", err)
 	}
 	if os.Getenv("ZERG_DEBUG") == "1" {
 		fmt.Fprintf(os.Stderr, "[callModelHermes] body=%d bytes history=%d\n", len(data), len(a.history))
@@ -543,7 +543,7 @@ func (a *Agent) callModelHermes(ctx context.Context, sysPrompt string, tools []T
 	start := time.Now()
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("调用网关失败(%s): %w", time.Since(start).Round(time.Millisecond), err)
+		return nil, fmt.Errorf("gateway call failed (%s): %w", time.Since(start).Round(time.Millisecond), err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
