@@ -143,7 +143,7 @@ pub fn ui(ui: &mut egui::Ui) {
     let busy = running();
 
     ui.horizontal(|ui| {
-        // 2026-09-13（设计《UI 大调动》§4.4）：删掉重复标题块（heading）——保留运行态/按钮。
+        ui.heading(t!("upgrade.title").to_string());
         if busy {
             ui.label(RichText::new(t!("upgrade.running").to_string()).italics());
         } else {
