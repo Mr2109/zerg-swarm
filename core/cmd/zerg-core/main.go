@@ -252,6 +252,11 @@ func main() {
 	// v2.5.5 #9 补充5: 网关引用注入 handlers（心跳健康清零熔断用）
 	handlers.Gateway = gw
 
+	// 网关卡表（circuit breaker）手动复位 + 原因可见（Mr2109痛点: 熔断后看不到原因/无手动入口）
+	// 复用全局 AuthMiddleware（挂在本函数顶部的 r.Use）——两接口均走 /api/* 鉴权，不是免鉴权旁路
+	r.Get("/api/gateway/breakers", handlers.BreakersHandler)             // 只读快照
+	r.Post("/api/gateway/breakers/reset", handlers.BreakersResetHandler) // 手动复位（host 缺省=全部）
+
 	// v2.5.5 T3 主控总调度器（两级调度——Mr2109原理）
 	// 主控总调度: 管所有内部任务 + 接入的外部任务（全局决策/派发）
 	// CA 子调度: 管分派任务的执行（agent 侧已有 scheduler）
