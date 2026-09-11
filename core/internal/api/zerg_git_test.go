@@ -38,7 +38,7 @@ func TestZergGitEnsureAndCommit(t *testing.T) {
 
 func TestZergGitEmptyCommitBlocked(t *testing.T) {
 	dir := t.TempDir()
-	z, _ := NewZergGit(dir)
+	z := mustGit(t, dir)
 	// v2.5.6 放宽: 空提交用 --allow-empty（验证类步骤——模型已响应——git 树前进）
 	// 防假完成靠"受控循环验证"（模型响应）——不是强制文件变化
 	if err := z.CommitRound(1, "plan", "验证步骤——无新文件"); err != nil {
@@ -51,7 +51,7 @@ func TestZergGitEmptyCommitBlocked(t *testing.T) {
 
 func TestZergGitRevert(t *testing.T) {
 	dir := t.TempDir()
-	z, _ := NewZergGit(dir)
+	z := mustGit(t, dir)
 	// r1: 写对的东西
 	_ = os.WriteFile(filepath.Join(dir, "good.txt"), []byte("good"), 0o644)
 	_ = z.CommitRound(1, "execute", "完成step1")
@@ -77,7 +77,7 @@ func TestZergGitRevert(t *testing.T) {
 
 func TestCommitRoundWithFS(t *testing.T) {
 	dir := t.TempDir()
-	z, _ := NewZergGit(dir)
+	z := mustGit(t, dir)
 	zf := NewZergTaskFile(dir)
 	_ = zf.Init("task-fs", "internal", "目标")
 	// 方案轮（JSONL + git 联动）

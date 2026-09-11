@@ -17,6 +17,10 @@ jobs:
           cache-dependency-path: |
             core/go.sum
             agent/go.sum
+      - name: 配置 git 身份（zerg-git 相关测试要 git commit）
+        run: |
+          git config --global user.email "ci@example.invalid"
+          git config --global user.name "Zerg CI"
       - name: shell 静态检查（$VAR 后紧跟非 ASCII → unbound variable）
         run: python3 scripts/check-shell-unicode-vars.py --check scripts/*.sh *.sh
       - name: core 构建 + 测试
