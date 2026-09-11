@@ -179,13 +179,13 @@ func (s *MasterScheduler) recoverWaitingLocked() {
 		task.FailReason = "环境故障持续超过 30 分钟——自动放弃（需人工介入）: " + task.FailReason
 		delete(s.waiting, task.ID)
 		s.history[task.ID] = task
-		log.Printf("❌ 总调度: 任务 %s 环境故障超时放弃（>30min——需人工介入）", task.ID)
+		log.Printf("❌ scheduler: task %s environment-failure timeout — abandoned (>30min, manual intervention needed)", task.ID)
 	}
 	for _, task := range recovered {
 		delete(s.waiting, task.ID)
 		task.Status = "queued"
 		heap.Push(&s.queue, task)
-		log.Printf("♻️ 总调度: 任务 %s 环境恢复——重新入队（等待重派）", task.ID)
+		log.Printf("♻️ scheduler: task %s environment recovered — re-queued (awaiting re-dispatch)", task.ID)
 	}
 	// 有恢复——持久化 + 派发
 	if len(s.queue) > 0 {
@@ -224,7 +224,7 @@ func (s *MasterScheduler) Submit(task *Task) {
 		s.pauseInternalsLocked()
 	}
 	heap.Push(&s.queue, task)
-	log.Printf("🔄 总调度: 任务 %s 入队（%s——优先级 %d）", task.ID, task.Type, task.Priority)
+	log.Printf("🔄 scheduler: task %s queued (%s — priority %d)", task.ID, task.Type, task.Priority)
 	// v2.5.5 持久化完整版: 任务提交即落盘（queued 任务重启恢复——不再丢——2026-08-20）
 	saveTasksLocked(s.queue, s.running, s.history)
 	s.dispatchLocked()
@@ -237,7 +237,7 @@ func (s *MasterScheduler) pauseInternalsLocked() {
 	for id, task := range s.running {
 		if task.Priority < PriorityExternal {
 			// 内部任务被外部打断——标记暂停 + 发信号（CA 收信号存 checkpoint 退出）
-			log.Printf("⏸️ 总调度: 内部任务 %s 挂起（外部任务优先——SIGKILL 强制——2026-08-22 修单槽双跑）", id)
+			log.Printf("⏸️ scheduler: internal task %s suspended (external tasks first — forced SIGKILL — 2026-08-22 single-slot double-run fix)", id)
 			if task.cmd != nil && task.cmd.Process != nil {
 				// v2.5.5 修复（2026-08-22 Mr2109发现——单槽双跑）: SIGUSR1 优雅暂停 CA 可能不响应——
 				// 旧进程还占槽+新任务又派发=两个同时跑——改 SIGKILL 强制（旧进程立即死——单槽保住）
@@ -261,7 +261,7 @@ func (s *MasterScheduler) dispatchLocked() {
 		}
 		task.Status = "running"
 		s.running[task.ID] = task
-		log.Printf("🔄 总调度: 派发任务 %s（%s）", task.ID, task.Description)
+		log.Printf("🔄 scheduler: dispatching task %s (%s)", task.ID, task.Description)
 		go s.runTask(task)
 	}
 }
@@ -285,19 +285,19 @@ func (s *MasterScheduler) runTask(task *Task) {
 		wt, err := createWorktree(task.Workdir, branch)
 		if err != nil {
 			// v2.5.5 修复（2026-08-21 发现——重跑任务分支残留冲突）: 强删旧分支重试一次
-			log.Printf("⚠️ 总调度: 任务 %s worktree 创建失败（清旧分支重试）: %v", task.ID, err)
+			log.Printf("⚠️ scheduler: task %s worktree create failed (clearing stale branch, retrying): %v", task.ID, err)
 			_ = exec.Command("git", "worktree", "remove", "--force", filepath.Join(task.Workdir, "zerg-wt", branch)).Run()
 			_ = exec.Command("git", "branch", "-D", branch).Run()
 			wt2, err2 := createWorktree(task.Workdir, branch)
 			if err2 != nil {
-				log.Printf("⚠️ 总调度: 任务 %s worktree 重试仍失败（继续原目录）: %v", task.ID, err2)
+				log.Printf("⚠️ scheduler: task %s worktree retry failed (continuing in original dir): %v", task.ID, err2)
 			} else {
 				worktreeDir = wt2
-				log.Printf("🌿 总调度: 任务 %s worktree 重试成功: %s", task.ID, wt2)
+				log.Printf("🌿 scheduler: task %s worktree retry succeeded: %s", task.ID, wt2)
 			}
 		} else {
 			worktreeDir = wt
-			log.Printf("🌿 总调度: 任务 %s worktree 已建: %s", task.ID, wt)
+			log.Printf("🌿 scheduler: task %s worktree created: %s", task.ID, wt)
 		}
 	}
 
@@ -306,7 +306,7 @@ func (s *MasterScheduler) runTask(task *Task) {
 	// 注: 不用 /var（Mac 普通用户无权限）——用 /tmp/zerg-tasks（可写——与 zerg-* 约定一致）
 	taskDir := filepath.Join(statepath.TaskRoot(), sanitizeID(task.ID))
 	if err := os.MkdirAll(taskDir, 0o755); err != nil {
-		log.Printf("⚠️ 总调度: 任务 %s 目录创建失败: %v", task.ID, err)
+		log.Printf("⚠️ scheduler: task %s directory create failed: %v", task.ID, err)
 	}
 	os.MkdirAll(filepath.Join(taskDir, "work"), 0o755)
 	os.MkdirAll(filepath.Join(taskDir, "logs"), 0o755)
@@ -322,7 +322,7 @@ func (s *MasterScheduler) runTask(task *Task) {
 	if ab, err := json.Marshal(audit); err == nil {
 		os.WriteFile(filepath.Join(taskDir, "audit.jsonl"), append(ab, '\n'), 0o644)
 	}
-	log.Printf("📁 总调度: 任务 %s 目录已建: %s", task.ID, taskDir)
+	log.Printf("📁 scheduler: task %s directory created: %s", task.ID, taskDir)
 
 	// 构建 CA 命令: zerg-agent -model <模型> -task "<描述>" -workdir <工作区>
 	// v2.5.5 修复（2026-08-21 Mr2109发现——735000 假成功）: 必须带 -json——jsonOut 模式退出码语义生效
@@ -362,7 +362,7 @@ func (s *MasterScheduler) runTask(task *Task) {
 	// 外部 CA 任务一律 Hermes 化(XML 模板工具——不带 tools 字段)——Mr2109确认——与内核转正同线）
 	baseEnv = append(baseEnv, "ZERG_HERMES_TOOLS=1")
 	if os.Getenv("ZERG_SUBTASK") != "1" {
-		log.Printf("ℹ️ 总调度: ZERG_SUBTASK=%q（非 1——任务 %s 不走结晶模式——Hermes 化已默认开）", os.Getenv("ZERG_SUBTASK"), task.ID)
+		log.Printf("ℹ️ scheduler: ZERG_SUBTASK=%q (not 1 — task %s skips crystallization mode — Hermes-style is default on)", os.Getenv("ZERG_SUBTASK"), task.ID)
 	}
 	// 2026-09-05 对照验证: ZERG_LOOPCORE 显式转发给 CA（core 进程 env 或 s.agentEnv 任一配置即生效）
 	if os.Getenv("ZERG_LOOPCORE") != "" {
@@ -413,16 +413,16 @@ func (s *MasterScheduler) runTask(task *Task) {
 
 	if err != nil {
 		task.Status = "failed"
-		log.Printf("🔄 总调度: 任务 %s 失败: %v\n%s", task.ID, err, tail(string(out), 500))
+		log.Printf("🔄 scheduler: task %s failed: %v\n%s", task.ID, err, tail(string(out), 500))
 		task.RetryCount++
 		// 2026-09-09(诊断 R3): 模型/后端类失败(exit 3=ReasonModelError——熔断/超时/实例挂死)
 		// 进 waiting_retry(环境恢复自动重派 30s 扫描)——不秒级热重试烧次数——治"卡 queued/秒 failed"连锁
 		if isBackendExit(err) && task.RetryCount <= 3 {
 			task.Status = "waiting_retry"
-			task.FailReason = fmt.Sprintf("模型/后端不可用(第 %d 次——%v)——等待环境恢复自动重试", task.RetryCount, err)
+			task.FailReason = fmt.Sprintf("model/backend unavailable (attempt %d — %v) — waiting for environment recovery to auto-retry", task.RetryCount, err)
 			s.waiting[task.ID] = task
 			saveTasksLocked(s.queue, s.running, s.history, s.waiting)
-			log.Printf("⏳ 总调度: 任务 %s 后端不可用——进等待队列(恢复自动重派——第 %d/3 次)", task.ID, task.RetryCount)
+			log.Printf("⏳ scheduler: task %s backend unavailable — moved to wait queue (auto re-dispatch on recovery — attempt %d/3)", task.ID, task.RetryCount)
 			s.dispatchLocked()
 			return
 		}
@@ -433,16 +433,16 @@ func (s *MasterScheduler) runTask(task *Task) {
 			// v2.5.5 修复（2026-08-24 Mr2109）: 同一个任务不换模型——重跑保持原模型
 			// 之前换模型（nextModelForRetry）导致: 每次换模型→X3 加载切换窗口→请求失败→熔断累计→X3 误熔断
 			// 失败根因是系统（加载切换/超时）不是模型——换模型反而引入新失败点——保持原模型重跑（同配置同后端——恢复概率高）
-			task.FailReason = fmt.Sprintf("第 %d 次失败自动重跑（保持原模型 %s——同 ID）", task.RetryCount, task.Model)
+			task.FailReason = fmt.Sprintf("auto-retry %d after failure (same model %s — same ID)", task.RetryCount, task.Model)
 			heap.Push(&s.queue, task)
-			log.Printf("🔁 总调度: 任务 %s 失败自动重跑（第 %d/3 次——保持原模型 %s——同 ID）", task.ID, task.RetryCount, task.Model)
+			log.Printf("🔁 scheduler: task %s auto-retry after failure (attempt %d/3 — same model %s — same ID)", task.ID, task.RetryCount, task.Model)
 		} else {
-			task.FailReason = fmt.Sprintf("重跑 3 次仍失败: %v", err)
-			log.Printf("❌ 总调度: 任务 %s 重跑 3 次仍失败——放执行完成（查原因）", task.ID)
+			task.FailReason = fmt.Sprintf("still failing after 3 retries: %v", err)
+			log.Printf("❌ scheduler: task %s still failing after 3 retries — releasing as finished (investigate)", task.ID)
 		}
 	} else {
 		task.Status = "done"
-		log.Printf("🔄 总调度: 任务 %s 完成", task.ID)
+		log.Printf("🔄 scheduler: task %s done", task.ID)
 		// v2.5.5 任务git全生命周期（阶段2——设计-20260820）: 复查任务完成 → 决策（通过/打回）
 		if task.Type == "review" {
 			s.handleReviewDoneLocked(task)
@@ -465,7 +465,7 @@ func (s *MasterScheduler) runTask(task *Task) {
 		var vres *VerifyResult
 		if contract := ParseContract(task.Description); contract != nil {
 			vres = contract.Verify(worktreeDir, workdir)
-			log.Printf("📋 总调度: 任务 %s 按契约验证（%d 文件/%d 命令/%d diff）",
+			log.Printf("📋 scheduler: task %s contract validation (%d files/%d commands/%d diff)",
 				task.ID, len(contract.MustWriteFiles), len(contract.MustPassCmds), len(contract.MustDiffPaths))
 		} else {
 			vres = VerifyTaskOutput(verifyDir, reportPath, task.Description)
@@ -473,20 +473,20 @@ func (s *MasterScheduler) runTask(task *Task) {
 		if !vres.Pass {
 			task.Status = "failed"
 			task.FailReason = "确定性验证不过: " + strings.Join(vres.Failures, "; ")
-			log.Printf("❌ 总调度: 任务 %s 确定性验证不过（假完成拦截）: %s", task.ID, strings.Join(vres.Failures, "; "))
+			log.Printf("❌ scheduler: task %s failed deterministic validation (fake-completion blocked): %s", task.ID, strings.Join(vres.Failures, "; "))
 			// v2.5.5 失败自动重跑（Mr2109 2026-08-20）: 验证不过也自动重跑（可能瞬时模型问题——重跑恢复）
 			task.RetryCount++
 			if task.RetryCount <= 3 {
 				task.Status = "queued"
-				task.FailReason = fmt.Sprintf("第 %d 次验证不过自动重跑（上次: %s）", task.RetryCount, strings.Join(vres.Failures, "; "))
+				task.FailReason = fmt.Sprintf("auto-retry %d after validation failure (last: %s)", task.RetryCount, strings.Join(vres.Failures, "; "))
 				heap.Push(&s.queue, task)
-				log.Printf("🔁 总调度: 任务 %s 验证不过自动重跑（第 %d/3 次——同 ID）", task.ID, task.RetryCount)
+				log.Printf("🔁 scheduler: task %s auto-retry after validation failure (attempt %d/3 — same ID)", task.ID, task.RetryCount)
 			} else {
-				task.FailReason = fmt.Sprintf("重跑 3 次仍验证不过: %s", strings.Join(vres.Failures, "; "))
-				log.Printf("❌ 总调度: 任务 %s 重跑 3 次仍验证不过——放执行完成（查原因）", task.ID)
+				task.FailReason = fmt.Sprintf("still failing validation after 3 retries: %s", strings.Join(vres.Failures, "; "))
+				log.Printf("❌ scheduler: task %s still failing validation after 3 retries — releasing as finished (investigate)", task.ID)
 			}
 		} else {
-			log.Printf("✅ 总调度: 任务 %s 确定性验证通过（%d 项检查）", task.ID, len(vres.Checks))
+			log.Printf("✅ scheduler: task %s deterministic validation passed (%d checks)", task.ID, len(vres.Checks))
 			// v2.5.5 任务git全生命周期（阶段2——设计-20260820）: 自动派复查任务（跨家族模型 B）
 			// 复查决定通过/打回——不是执行完直接 done（Mr2109: 成功与否由复查模型决定）
 			s.submitReviewTaskLocked(task, reportPath, worktreeDir)
@@ -505,7 +505,7 @@ func (s *MasterScheduler) runTask(task *Task) {
 		// 失败任务——worktree 强清（无复查——不 merge）
 		_ = exec.Command("git", "worktree", "remove", "--force", worktreeDir).Run()
 		_ = exec.Command("git", "branch", "-D", "task-"+sanitizeID(task.ID)).Run()
-		log.Printf("🗑️ 总调度: 任务 %s 失败——worktree 清理（不 merge）", task.ID)
+		log.Printf("🗑️ scheduler: task %s failed — worktree cleanup (no merge)", task.ID)
 	}
 	// 完成后继续派发（队列里还有任务）
 	s.dispatchLocked()
@@ -516,16 +516,16 @@ func (s *MasterScheduler) runTask(task *Task) {
 func updateIssueStatus(issuePath, status string) {
 	content, err := os.ReadFile(issuePath)
 	if err != nil {
-		log.Printf("⚠️ 总调度: 任务单更新失败（读取）: %v", err)
+		log.Printf("⚠️ scheduler: issue update failed (read): %v", err)
 		return
 	}
 	newContent := regexp.MustCompile(`- 状态: \w+`).ReplaceAllString(string(content), "- 状态: "+status)
 	if newContent != string(content) {
 		if err := os.WriteFile(issuePath, []byte(newContent), 0o644); err != nil {
-			log.Printf("⚠️ 总调度: 任务单更新失败（写入）: %v", err)
+			log.Printf("⚠️ scheduler: issue update failed (write): %v", err)
 			return
 		}
-		log.Printf("📝 总调度: 任务单 %s 状态 → %s", filepath.Base(issuePath), status)
+		log.Printf("📝 scheduler: issue %s status → %s", filepath.Base(issuePath), status)
 	}
 }
 
