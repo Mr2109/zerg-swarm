@@ -73,6 +73,14 @@ pub fn detect_locale() -> String {
 
 fn main() -> eframe::Result<()> {
     rust_i18n::set_locale(&detect_locale());
+    // 代码身份（自动升级 P0-a）：UI 与主控一样必须能自报"跑的是哪份代码"——
+    // 版本号来自 Cargo.toml（编译期），commit/build 由 build.rs 注入（浅克隆/无 git 时回落 unknown）。
+    println!(
+        "[zerg-ui] version={} commit={} build={}",
+        env!("CARGO_PKG_VERSION"),
+        env!("ZERG_GIT_SHA"),
+        env!("ZERG_BUILD_TIME")
+    );
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(t!("app.version_line", version = env!("CARGO_PKG_VERSION")).to_string())
