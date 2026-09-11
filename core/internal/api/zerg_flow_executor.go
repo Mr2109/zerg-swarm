@@ -47,13 +47,13 @@ func NewZergFlowExecutor(task *Task, callModel ModelCaller, skillsRoot string) (
 	// 1. git（任务仓库）
 	git, err := NewZergGit(taskDir)
 	if err != nil {
-		return nil, fmt.Errorf("任务 git 建立失败: %w", err)
+		return nil, fmt.Errorf("failed to set up task git: %w", err)
 	}
 	e.Git = git
 	// 2. task.jsonl（首行元数据）
 	zf := NewZergTaskFile(taskDir)
 	if err := zf.Init(task.ID, task.Type, task.Description); err != nil {
-		return nil, fmt.Errorf("task.jsonl 建立失败: %w", err)
+		return nil, fmt.Errorf("failed to set up task.jsonl: %w", err)
 	}
 	e.TaskFile = zf
 	// 3. Skill（模板起步——执行中进化）
@@ -67,7 +67,7 @@ func (e *ZergFlowExecutor) Run() error {
 	// 0. 模型判断类型（Mr2109——Skill 类型机制）
 	taskType, err := e.assessType()
 	if err != nil {
-		return fmt.Errorf("类型判断失败: %w", err)
+		return fmt.Errorf("type detection failed: %w", err)
 	}
 
 	// 1. 方案轮
@@ -106,9 +106,9 @@ func (e *ZergFlowExecutor) Run() error {
 	if e.Skill.UsingCandidate {
 		promoted, err := e.Skill.PromoteCandidate(e.Task.SkillKey, e.TaskType)
 		if err != nil {
-			log.Printf("⚠️ 任务 %s 候选 skill 转正失败: %v", e.Task.ID, err)
+			log.Printf("⚠️ task %s candidate skill promotion failed: %v", e.Task.ID, err)
 		} else if promoted {
-			log.Printf("🧬 任务 %s 候选 skill 试跑成功——转正（覆盖正式版——下次直接用）", e.Task.ID)
+			log.Printf("🧬 task %s candidate skill trial succeeded — promoted (overwrites official — used next time)", e.Task.ID)
 		}
 	}
 
@@ -122,7 +122,7 @@ func (e *ZergFlowExecutor) assessType() (string, error) {
 	prompt := `请判断这个任务属于什么类型（如"代码修bug"/"文档整理"/"调研"——简洁名称——中文）。只输出类型名（不要多余文字）。`
 	out, err := e.CallModel(prompt, "任务: "+e.Task.Description, 0)
 	if err != nil {
-		return "", fmt.Errorf("类型判断模型调用失败: %w", err)
+		return "", fmt.Errorf("type detection model call failed: %w", err)
 	}
 	taskType := strings.TrimSpace(out)
 	if taskType == "" {
@@ -132,7 +132,7 @@ func (e *ZergFlowExecutor) assessType() (string, error) {
 	// Skill: 有类型库用进化版——没有等执行后注册（Skill 自举）
 	skillContent, _ := e.Skill.Get(taskType)
 	_ = e.Skill.Create(taskType, skillContent)
-	log.Printf("🧠 任务 %s 类型: %s（Skill: %s）", e.Task.ID, taskType, skillContent[:30])
+	log.Printf("🧠 task %s type: %s (Skill: %s)", e.Task.ID, taskType, skillContent[:30])
 	return taskType, nil
 }
 
@@ -147,7 +147,7 @@ func (e *ZergFlowExecutor) planPhase(taskType string) (*PlanOutput, error) {
 	// （qwen38 适配器默认——reasoning+content 都装——模型自然思考自然停——不掐思考）
 	out, err := e.CallModel(prompt, "TOOL:请调用 submit_plan 提交方案", 0)
 	if err != nil {
-		return nil, fmt.Errorf("方案轮模型失败: %w", err)
+		return nil, fmt.Errorf("plan round model failed: %w", err)
 	}
 	plan, err := ParsePlan(extractJSON(out))
 	if err != nil {
@@ -170,7 +170,7 @@ func (e *ZergFlowExecutor) planPhase(taskType string) (*PlanOutput, error) {
 			plan = &PlanOutput{Plans: []PlanItem{
 				{ID: "A", Title: "直接执行任务", Steps: []string{e.Task.Description}, Approach: "按任务描述直接执行"},
 			}}
-			log.Printf("⚠️ 方案轮模型未提交有效方案——程序降级生成默认方案（系统适配——模型不稳不阻塞）")
+			log.Printf("⚠️ plan round produced no valid plan — falling back to a generated default (system adaptation — model instability must not block)")
 		}
 	}
 	// 写 task.jsonl + git commit
@@ -188,7 +188,7 @@ func (e *ZergFlowExecutor) selectPhase(plan *PlanOutput) (*SelectOutput, error) 
 	// 工具调用（模型调 submit_select——输出结构化）
 	out, err := e.CallModel(prompt, "TOOL:请调用 submit_select 选定方案", 0)
 	if err != nil {
-		return nil, fmt.Errorf("选定轮模型失败: %w", err)
+		return nil, fmt.Errorf("selection round model failed: %w", err)
 	}
 	sel, err := ParseSelect(extractJSON(out))
 	if err != nil {
@@ -208,7 +208,7 @@ func (e *ZergFlowExecutor) selectPhase(plan *PlanOutput) (*SelectOutput, error) 
 		// 重试仍失败——程序兜底（选第一个方案——步骤=方案标题）
 		if sel == nil {
 			sel = &SelectOutput{Selected: plan.Plans[0].ID, Reason: "程序兜底（模型未提交有效选定）", RefinedSteps: plan.Plans[0].Steps}
-			log.Printf("⚠️ 选定轮模型未提交有效选定——程序兜底选第一个方案（系统适配——模型不稳不阻塞）")
+			log.Printf("⚠️ selection round produced no valid choice — falling back to the first plan (system adaptation — model instability must not block)")
 		}
 	}
 	// 校验 selected 在 plans 内
@@ -258,7 +258,7 @@ const ActionFormatPrompt = `
 func (e *ZergFlowExecutor) executeStep(step, taskType string) error {
 	// v2.5.6 观感优化（2026-08-29——t10）: 执行轮进度日志——任务在跑但模型长思考时——
 	// UI/日志能看到"正在执行第几步"（不再看起来卡死——思考是正常的不是卡住）
-	log.Printf("▶ 执行任务 %s 步骤: %s\n", e.Task.ID, truncateStr(step, 80))
+	log.Printf("▶ task %s executing step: %s\n", e.Task.ID, truncateStr(step, 80))
 	// 上步总结（记忆接力——无记忆模型靠它）
 	prevSummary, _ := e.TaskFile.Summary(3)
 	loop := NewControlledLoop(e.TaskDir)
@@ -271,7 +271,7 @@ func (e *ZergFlowExecutor) executeStep(step, taskType string) error {
 		prompt := fmt.Sprintf("【当前小任务】%s\n\n【上步总结】\n%s\n\n【Skill 指导】\n%s\n\n%s%s",
 			s, prevSummary, truncateStr(skill, 1200), feedback, ActionFormatPrompt)
 		// v2.5.6 观感优化（t10）: 模型调用前后日志——长思考时看到"思考中"不是卡死
-		log.Printf("  ⏳ 任务 %s 模型思考中…（%s——活性检测——思考不是卡住）\n", e.Task.ID, truncateStr(s, 60))
+		log.Printf("  ⏳ task %s model thinking… (%s — liveness check — thinking is not stuck)\n", e.Task.ID, truncateStr(s, 60))
 		// v2.5.6 自然语言模式: 模型按约定格式表达——程序解析执行（不强制工具调用）
 		// v2.5.6 效率优化（Mr2109 2026-08-28 纠正）: max_tokens 是上限不是目标——
 		// 模型正常完成自然停止（finish_reason=stop）——不会"想满"max_tokens
@@ -283,7 +283,7 @@ func (e *ZergFlowExecutor) executeStep(step, taskType string) error {
 			return "", err
 		}
 		// v2.5.6 观感优化（t10）: 模型产出——任务在推进
-		log.Printf("  ✅ 任务 %s 模型产出（%d 字）——解析动作\n", e.Task.ID, len(out))
+		log.Printf("  ✅ task %s model output (%d chars) — parsing action\n", e.Task.ID, len(out))
 		// Semantic Parse: 从模型自然语言提取动作——程序执行（精准）
 		act := ParseAction(out, e.TaskDir)
 		if act.Type == "other" {
@@ -340,7 +340,7 @@ func (e *ZergFlowExecutor) rebuildAndRetry(step, taskType string) error {
 		return err
 	}
 	if res.NeedRebuild {
-		return fmt.Errorf("重做仍失败: %s", res.FailReason)
+		return fmt.Errorf("retry still failed: %s", res.FailReason)
 	}
 	if _, err := CommitRoundWithFS(e.TaskFile, e.Git, PhaseExecute, step, map[string]interface{}{"result": truncateStr(res.LastOutput, 200)}, "重做成功: "+truncateStr(res.LastOutput, 60)); err != nil {
 		return err
@@ -354,7 +354,7 @@ func (e *ZergFlowExecutor) closePhase() error {
 	prompt := zc.ReportPrompt()
 	out, err := e.CallModel(prompt, "写结论报告（markdown——写入指定路径）", 0)
 	if err != nil {
-		return fmt.Errorf("封闭报告模型失败: %w", err)
+		return fmt.Errorf("closure report model failed: %w", err)
 	}
 	// 报告（模型写的——程序兜底路径）
 	reportPath := filepath.Join(e.TaskDir, "reports", "final.md")
@@ -379,7 +379,7 @@ func (e *ZergFlowExecutor) closePhase() error {
 		if len(strings.TrimSpace(cleaned)) < 100 {
 			// v2.5.6 修复（2026-08-29 实证——外部任务假完成: 报告26字节只有标题——模型"写文件"写空壳蒙混）:
 			// 清理后仍不合格——重试一次（带"报告太短"反馈——让模型重新写实质内容）
-			log.Printf("⚠️ 封闭报告内容单薄（%d 字）——重试生成（模型写空壳——防假完成）\n", len(trimmed))
+			log.Printf("⚠️ closure report too thin (%d chars) — regenerating (model wrote a shell — anti fake-completion)\n", len(trimmed))
 			retryPrompt := "上次报告内容太短（不足100字——疑似空壳）。请写一份实质性的结论报告（markdown——至少200字——包含: 做了什么/验证结果/发现的问题/结论——写入指定路径）。"
 			out2, err2 := e.CallModel(retryPrompt, "写结论报告（markdown——写入指定路径）", 0)
 			if err2 == nil {
@@ -394,7 +394,7 @@ func (e *ZergFlowExecutor) closePhase() error {
 			}
 			// 重试仍不合格——强制失败（假完成拦截——任务不能带着空报告 done）
 			if len(strings.TrimSpace(reportContent)) < 100 {
-				return fmt.Errorf("封闭报告不合格（仅 %d 字——空壳报告）——任务标记失败（防假完成）", len(strings.TrimSpace(reportContent)))
+				return fmt.Errorf("closure report unqualified (%d chars only — shell report) — task marked failed (anti fake-completion)", len(strings.TrimSpace(reportContent)))
 			}
 			// 重试合格——正常走下面 CloseCommit
 		} else {
@@ -409,12 +409,12 @@ func (e *ZergFlowExecutor) closePhase() error {
 	}
 	// 封闭轮也写 task.jsonl——v2.5.6 修复（2026-08-29 q1）: 失败记日志（不阻塞——报告已提交）
 	if _, err := CommitRoundWithFS(e.TaskFile, e.Git, PhaseClose, "", map[string]interface{}{"report": "reports/final.md"}, "封闭——报告提交"); err != nil {
-		log.Printf("⚠️ 任务 %s 封闭轮 task.jsonl 提交失败: %v", e.Task.ID, err)
+		log.Printf("⚠️ task %s closure round task.jsonl commit failed: %v", e.Task.ID, err)
 	}
 	// v2.5.6 Skill 进化自省（Mr2109 2026-08-27）: 任务结束提交 skill 前——读当前 skill——模型判断
 	// 这次任务是否需要优化 skill——需要则进化（内部任务→独属 skill 写回）
 	if err := e.evolveSkillIfNeeded(); err != nil {
-		log.Printf("⚠️ 任务 %s skill 进化自省失败（不阻塞任务完成）: %v", e.Task.ID, err)
+		log.Printf("⚠️ task %s skill evolution introspection failed (does not block completion): %v", e.Task.ID, err)
 	}
 	return nil
 }
@@ -456,11 +456,11 @@ SKILL:
 （优化后的完整 SKILL.md 内容）`, owner, truncateStr(cur, 4000), truncateStr(summary, 2000))
 	out, err := e.CallModel(prompt, "判断并输出（NO 或 SKILL: 开头）", 0)
 	if err != nil {
-		return fmt.Errorf("进化判断模型调用失败: %w", err)
+		return fmt.Errorf("evolution decision model call failed: %w", err)
 	}
 	trimmed := strings.TrimSpace(out)
 	if strings.HasPrefix(trimmed, "NO") || strings.HasPrefix(trimmed, "no") {
-		log.Printf("🧬 任务 %s skill 自省: 无需进化（保持现状）", e.Task.ID)
+		log.Printf("🧬 task %s skill introspection: no evolution needed (keeping as is)", e.Task.ID)
 		return nil
 	}
 	// 提取 SKILL: 之后的内容
@@ -469,7 +469,7 @@ SKILL:
 		content = strings.TrimSpace(trimmed[idx+len("SKILL:"):])
 	}
 	if len(content) < 50 {
-		log.Printf("⚠️ 任务 %s skill 进化产出过短（%d 字）——忽略", e.Task.ID, len(content))
+		log.Printf("⚠️ task %s skill evolution output too short (%d chars) — ignored", e.Task.ID, len(content))
 		return nil
 	}
 	// v2.5.6 候选机制: 进化产出存候选——不覆盖正式版——下次任务试跑成功转正
@@ -480,7 +480,7 @@ SKILL:
 	if key != "" {
 		where = "独属 skills/" + key
 	}
-	log.Printf("🧬 任务 %s skill 进化完成（候选: %s/SKILL.candidate.md——%d 字——下次任务试跑成功转正）", e.Task.ID, where, len(content))
+	log.Printf("🧬 task %s skill evolution done (candidate: %s/SKILL.candidate.md — %d chars — promoted after a successful trial next task)", e.Task.ID, where, len(content))
 	return nil
 }
 
@@ -628,7 +628,7 @@ func (s *MasterScheduler) pingModel(model string) (bool, error) {
 	resp, err := headerClient.Do(req)
 	if err != nil {
 		// 响应头超时——可能连接问题/模型卡死——判故障（挂起等恢复）
-		err = fmt.Errorf("[upstream_fail] ping 失败（响应头超时/连接失败）: %w", err)
+		err = fmt.Errorf("[upstream_fail] ping failed (response-header timeout / connection failure): %w", err)
 		s.cachePing(model, false, err)
 		return false, err
 	}
@@ -788,7 +788,7 @@ func (s *MasterScheduler) runZergFlow(task *Task) {
 	ok, perr := s.pingModel(task.Model)
 	if !ok {
 		// 模型不可用——环境故障——挂起等恢复（不消耗任务重试次数）
-		s.finishTask(task, fmt.Errorf("[%s] 模型探活失败（任务未启动——等环境恢复自动重派）: %v", string(CircuitOpen), perr))
+		s.finishTask(task, fmt.Errorf("[%s] model liveness probe failed (task not started — auto re-dispatch after environment recovery): %v", string(CircuitOpen), perr))
 		return
 	}
 	// 模型调用注入（走网关——HTTP 调模型——JSON 输出）
@@ -798,7 +798,7 @@ func (s *MasterScheduler) runZergFlow(task *Task) {
 	s.taskDirForCall = filepath.Join(statepath.TaskRoot(), sanitizeID(task.ID)) // v2.5.6: write_file 写任务目录
 	executor, err := NewZergFlowExecutor(task, callModel, "/tmp/zerg-tasks/skills")
 	if err != nil {
-		s.finishTask(task, fmt.Errorf("流程执行器创建失败: %w", err))
+		s.finishTask(task, fmt.Errorf("failed to create flow executor: %w", err))
 		return
 	}
 	if err := executor.Run(); err != nil {
@@ -806,14 +806,14 @@ func (s *MasterScheduler) runZergFlow(task *Task) {
 		// 候选作废（删候选——保留正式版——下次任务用回正式版）
 		if executor.Skill.UsingCandidate {
 			_ = executor.Skill.DiscardCandidate(task.SkillKey, executor.TaskType)
-			log.Printf("🧬 任务 %s 候选 skill 试跑失败——作废（保留正式版——下次任务用正式）", task.ID)
+			log.Printf("🧬 task %s candidate skill trial failed — discarded (keeping official — next task uses official)", task.ID)
 		}
 		s.finishTask(task, err)
 		return
 	}
 	// 完成（v2.5.6 修复: 统一走 finishTask——更新状态 + 派发下一个任务）
 	s.finishTask(task, nil)
-	log.Printf("✅ 总调度: 任务 %s 程序定量驱动完成（git 树完整）", task.ID)
+	log.Printf("✅ scheduler: task %s program-driven run completed (git tree intact)", task.ID)
 }
 
 // callGatewayModel 调度器调模型（网关 HTTP——v1/responses——JSON 输出）
@@ -920,7 +920,7 @@ func (s *MasterScheduler) callGatewayModel(model, systemPrompt, userPrompt strin
 	client := httpClient()
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("网关调用失败: %w", err)
+		return "", fmt.Errorf("gateway call failed: %w", err)
 	}
 	defer resp.Body.Close()
 	respBody, _ := ioReadAll(resp.Body)
@@ -943,10 +943,10 @@ func (s *MasterScheduler) callGatewayModel(model, systemPrompt, userPrompt strin
 		} `json:"output"`
 	}
 	if err := json.Unmarshal(respBody, &r); err != nil {
-		return "", fmt.Errorf("网关响应解析失败: %w", err)
+		return "", fmt.Errorf("failed to parse gateway response: %w", err)
 	}
 	if len(r.Output) == 0 {
-		return "", fmt.Errorf("网关响应无输出")
+		return "", fmt.Errorf("gateway response had no output")
 	}
 	// 优先: function_call（工具模式——模型调工具）
 	for _, o := range r.Output {
@@ -986,7 +986,7 @@ func (s *MasterScheduler) callGatewayModel(model, systemPrompt, userPrompt strin
 			return o.Text, nil
 		}
 	}
-	return "", fmt.Errorf("网关响应无有效文本输出（仅思考无答案）")
+	return "", fmt.Errorf("gateway response had no usable text (reasoning only, no answer)")
 }
 
 // taskDirForTask zerg 流程任务目录（/tmp/zerg-tasks/<sanitizeID>——统一规则）
@@ -1011,7 +1011,7 @@ func (s *MasterScheduler) finishTask(task *Task, err error) {
 			// 环境故障——挂起等恢复（不标 failed——不消耗重试次数——任务永远在队列里等机会）
 			task.Status = "waiting_retry"
 			task.FailReason = "环境故障（" + err.Error() + "）——等待机器恢复自动重派"
-			log.Printf("⏳ 总调度: 任务 %s 环境故障挂起（waiting_retry）: %v", task.ID, err)
+			log.Printf("⏳ scheduler: task %s suspended on environment failure (waiting_retry): %v", task.ID, err)
 			s.waiting[task.ID] = task
 			// 持久化（重启不丢——恢复调度器继续处理）
 			saveTasksLocked(s.queue, s.running, s.history, s.waiting)
@@ -1021,7 +1021,7 @@ func (s *MasterScheduler) finishTask(task *Task, err error) {
 		task.Status = "failed"
 		task.FailReason = err.Error()
 		s.history[task.ID] = task
-		log.Printf("❌ 总调度: 任务 %s 程序定量驱动失败: %v", task.ID, err)
+		log.Printf("❌ scheduler: task %s program-driven run failed: %v", task.ID, err)
 	} else {
 		// v2.5.6 三层复查（Mr2109 2026-08-29——zerg 流程补复查——之前直接 done 无复查）
 		// ① 程序确定性验证（机器复查）: git 有真实改动 + 报告非空（>100 字节）——不过 → failed/重跑
@@ -1035,9 +1035,9 @@ func (s *MasterScheduler) finishTask(task *Task, err error) {
 			task.Status = "failed"
 			task.FailReason = "确定性验证不过: " + strings.Join(vres.Failures, "; ")
 			s.history[task.ID] = task
-			log.Printf("❌ 总调度: 任务 %s 确定性验证不过（假完成拦截）: %s", task.ID, strings.Join(vres.Failures, "; "))
+			log.Printf("❌ scheduler: task %s failed deterministic validation (fake-completion blocked): %s", task.ID, strings.Join(vres.Failures, "; "))
 		} else {
-			log.Printf("✅ 总调度: 任务 %s 确定性验证通过（%d 项检查）——派复查", task.ID, len(vres.Checks))
+			log.Printf("✅ scheduler: task %s deterministic validation passed (%d checks) — sending to review", task.ID, len(vres.Checks))
 			// ② 跨家族模型复查（模型复查）——复查任务完成时 handleReviewDoneLocked 决策
 			// 执行任务状态: 待复查（复查通过才 done——Mr2109: 成功与否由复查模型决定）
 			task.Status = "reviewing"
