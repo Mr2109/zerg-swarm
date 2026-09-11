@@ -8,7 +8,7 @@ import (
 
 func TestCloseCommit(t *testing.T) {
 	dir := t.TempDir()
-	z, _ := NewZergGit(dir)
+	z := mustGit(t, dir)
 	zf := NewZergTaskFile(dir)
 	_ = zf.Init("task-close", "internal", "目标")
 	// 方案轮
@@ -67,7 +67,7 @@ func TestParseReviewJSON(t *testing.T) {
 
 func TestReportPrompt(t *testing.T) {
 	dir := t.TempDir()
-	z, _ := NewZergGit(dir)
+	z := mustGit(t, dir)
 	zf := NewZergTaskFile(dir)
 	_ = zf.Init("task-rp", "internal", "目标")
 	_, _ = CommitRoundWithFS(zf, z, PhasePlan, "", map[string]interface{}{"plans": []string{"A"}}, "出方案")
