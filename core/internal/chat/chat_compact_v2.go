@@ -334,7 +334,7 @@ func compactRecordFailure(sessionID string, cause error, now float64, cls Compac
 		d := compactJitter(compactMaxCooldownBase())
 		f.Disabled = true
 		f.Until = now + d.Seconds()
-		log.Printf("⛔ 会话 %s 压缩失败：HTTP %d 不可重试错误→直接熔断（冷却 %s，连续第 %d 次）原因: %v",
+		log.Printf("⛔ session %s compaction failed: HTTP %d non-retryable error → circuit open (cooldown %s, streak %d) cause: %v",
 			sessionID, cls.HTTPStatus, d, f.Streak, cause)
 	default:
 		d := compactCooldownFor(f.Streak) // 正常递进 + full jitter
@@ -345,18 +345,18 @@ func compactRecordFailure(sessionID string, cause error, now float64, cls Compac
 		switch {
 		case f.Streak >= compactHardTripStreak:
 			f.Disabled = true
-			log.Printf("⛔ 会话 %s 压缩硬熔断：连续 %d 次失败——停用压缩（冷却 %s，到期或手动重置恢复）原因: %v",
+			log.Printf("⛔ session %s compaction hard-breaker: %d consecutive failures — compaction disabled (cooldown %s, recovers on expiry or manual reset) cause: %v",
 				sessionID, f.Streak, d, cause)
 		case cls.kind() == compactClass429:
-			log.Printf("⚠️ 会话 %s 压缩失败第 %d 次（HTTP 429/Retry-After=%s）——进入冷却 %s: %v",
+			log.Printf("⚠️ session %s compaction failure #%d (HTTP 429/Retry-After=%s) — entering cooldown %s: %v",
 				sessionID, f.Streak, cls.RetryAfter, d, cause)
 		default:
-			log.Printf("⚠️ 会话 %s 压缩失败第 %d 次——进入冷却 %s: %v", sessionID, f.Streak, d, cause)
+			log.Printf("⚠️ session %s compaction failure #%d — entering cooldown %s: %v", sessionID, f.Streak, d, cause)
 		}
 	}
 	sessions[sessionID] = f
 	if err := saveCompactCooldownLocked(sessions); err != nil {
-		log.Printf("⚠️ 压缩冷却状态落盘失败: %v", err)
+		log.Printf("⚠️ failed to persist compaction cooldown state: %v", err)
 	}
 }
 
@@ -370,7 +370,7 @@ func compactClearFail(sessionID string) {
 	}
 	delete(sessions, sessionID)
 	if err := saveCompactCooldownLocked(sessions); err != nil {
-		log.Printf("⚠️ 压缩冷却状态落盘失败: %v", err)
+		log.Printf("⚠️ failed to persist compaction cooldown state: %v", err)
 	}
 }
 
@@ -386,22 +386,22 @@ func compactAppendJournal(rec compactJournalRecord) {
 	compactStateMu.Lock()
 	defer compactStateMu.Unlock()
 	if err := os.MkdirAll(statepath.Dir(), 0o755); err != nil {
-		log.Printf("⚠️ 召回指针 journal 目录创建失败: %v", err)
+		log.Printf("⚠️ failed to create recall-pointer journal directory: %v", err)
 		return
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {
-		log.Printf("⚠️ 召回指针 journal 序列化失败: %v", err)
+		log.Printf("⚠️ failed to serialize recall-pointer journal: %v", err)
 		return
 	}
 	f, err := os.OpenFile(compactJournalFile(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		log.Printf("⚠️ 召回指针 journal 打开失败: %v", err)
+		log.Printf("⚠️ failed to open recall-pointer journal: %v", err)
 		return
 	}
 	defer f.Close()
 	if _, err := f.Write(append(b, '\n')); err != nil {
-		log.Printf("⚠️ 召回指针 journal 写入失败: %v", err)
+		log.Printf("⚠️ failed to write recall-pointer journal: %v", err)
 	}
 }
 
@@ -474,7 +474,7 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 	fail := compactGetFail(sessionID)
 	if !force && compactInCooldown(fail, now) {
 		if fail != nil && fail.Disabled {
-			log.Printf("⛔ 会话 %s 压缩硬熔断生效中（连续 %d 次失败，冷却至 %.0f）——跳过", sessionID, fail.Streak, fail.Until)
+			log.Printf("⛔ session %s compaction hard-breaker active (%d consecutive failures, cooled until %.0f) — skipping", sessionID, fail.Streak, fail.Until)
 		}
 		return false, nil
 	}
@@ -501,9 +501,9 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 		switch {
 		case lerr != nil:
 			callErr = lerr
-			log.Printf("⚠️ 会话 %s LLMLingua-2 压缩失败，回退 LLM 摘要: %v", sessionID, lerr)
+			log.Printf("⚠️ session %s LLMLingua-2 compression failed, falling back to LLM summary: %v", sessionID, lerr)
 		case strings.TrimSpace(out) == "":
-			log.Printf("⚠️ 会话 %s LLMLingua-2 返回空——回退 LLM 摘要", sessionID)
+			log.Printf("⚠️ session %s LLMLingua-2 returned empty — falling back to LLM summary", sessionID)
 		default:
 			summary = strings.TrimSpace(out)
 		}
@@ -513,7 +513,7 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 	var err error
 	if summary == "" {
 		if sum == nil {
-			err = fmt.Errorf("chat: 压缩失败——LLMLingua-2 不可用且未注入摘要函数")
+			err = fmt.Errorf("chat: compaction failed — LLMLingua-2 unavailable and no summarizer injected")
 		} else {
 			summary, err = sum(ctx, compactSourceMaps(src))
 			if err != nil {
@@ -527,7 +527,7 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 
 	if err != nil || summary == "" {
 		if err == nil {
-			err = fmt.Errorf("chat: 压缩返回空摘要")
+			err = fmt.Errorf("chat: compaction returned an empty summary")
 		}
 		// 错误类型分流：优先用注入函数返回的真实错误；否则用本地合成错误（未知→按 5xx 处理）
 		classSrc := err
@@ -559,7 +559,7 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 	compactAppendJournal(compactJournalRecord{
 		SessionID: sessionID, FromID: fromID, ToID: toID, SummaryID: summaryID, At: now,
 	})
-	log.Printf("✅ 会话 %s 压缩完成：消息 %d..%d → 摘要 #%d（%d 字，来源 %s）",
+	log.Printf("✅ session %s compaction done: messages %d..%d → summary #%d (%d chars, source %s)",
 		sessionID, fromID, toID, summaryID, len([]rune(summary)), compactSummarySource(lingua))
 	return true, nil
 }
@@ -587,7 +587,7 @@ func ResetCompactState(sessionID string) error {
 	if err := saveCompactCooldownLocked(sessions); err != nil {
 		return err
 	}
-	log.Printf("♻️ 会话 %s 压缩冷却/硬熔断已手动重置", sessionID)
+	log.Printf("♻️ session %s compaction cooldown/hard-breaker manually reset", sessionID)
 	return nil
 }
 
@@ -596,7 +596,7 @@ func ResetCompactState(sessionID string) error {
 // Deprecated: 新代码请用 ResetCompactState（可拿到落盘错误）。
 func ResetCompactSession(sessionID string) {
 	if err := ResetCompactState(sessionID); err != nil {
-		log.Printf("⚠️ 压缩冷却状态落盘失败: %v", err)
+		log.Printf("⚠️ failed to persist compaction cooldown state: %v", err)
 	}
 }
 
