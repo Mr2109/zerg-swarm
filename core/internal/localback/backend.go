@@ -76,7 +76,7 @@ func (lb *LocalBackend) AdoptExisting(candidates []string) bool {
 	lb.file = modelFile
 	lb.port = port
 	lb.setState(stateReady)
-	log.Printf("[localback] 探测到本机已加载模型: %s (port=%d)——接管为 ready", modelFile, port)
+	log.Printf("[localback] detected already-loaded local model: %s (port=%d) — adopting as ready", modelFile, port)
 	return true
 }
 
@@ -164,18 +164,18 @@ func (lb *LocalBackend) LoadModel(modelFile string, memGB int) error {
 				_ = lb.ensureMachineLock()
 				lb.failCnt = 0
 				lb.setState(stateReady)
-				log.Printf("[localback] 单槽: 复用已在运行的同模型实例 pid=%d port=%d model=%s",
+				log.Printf("[localback] single-slot: reusing running instance of same model pid=%d port=%d model=%s",
 					pr.PID, pr.Port, filepath.Base(modelFile))
 				return nil
 			}
 		}
 		if killed := sweepOtherModels(modelFile); len(killed) > 0 {
-			log.Printf("[localback] 单槽清场: 已停止 %d 个其它本机实例 %v（整机单模型驻留）", len(killed), killed)
+			log.Printf("[localback] single-slot cleanup: stopped %d other local instance(s) %v (one model resident machine-wide)", len(killed), killed)
 		}
 	}
 	// 进程内残留（本进程自己起的旧实例）也停掉
 	if lb.process != nil && lb.process.ProcessState == nil {
-		log.Printf("[localback] 已有模型在运行 (%s)，先停止...", lb.file)
+		log.Printf("[localback] another model is running (%s), stopping it first...", lb.file)
 		lb.stopProcess()
 	}
 	// 整机单例锁（持锁 = 本机唯一后端；锁文件在状态目录，不用 /tmp）
@@ -187,13 +187,13 @@ func (lb *LocalBackend) LoadModel(modelFile string, memGB int) error {
 	// 检查模型文件是否存在
 	if _, err := os.Stat(modelFile); err != nil {
 		lb.setState(stateBroken)
-		return fmt.Errorf("模型文件不存在: %s: %w", modelFile, err)
+		return fmt.Errorf("model file does not exist: %s: %w", modelFile, err)
 	}
 
 	// 内存预算：记录模型 mem_gb，加载时标记占用
 	lb.memGB = memGB
 	if memGB > 0 {
-		log.Printf("[localback] 内存预算: %.1f GB", float64(memGB))
+		log.Printf("[localback] memory budget: %.1f GB", float64(memGB))
 	}
 
 	// 状态机：loading
@@ -204,7 +204,7 @@ func (lb *LocalBackend) LoadModel(modelFile string, memGB int) error {
 	// 旧 llama-server 进程占着端口/显存——不杀会导致重复实例（Text file busy 类问题）
 	oldPids := findExistingProcess(modelFile)
 	if len(oldPids) > 0 {
-		log.Printf("[localback] 发现 %d 个同模型旧进程 %v——清理", len(oldPids), oldPids)
+		log.Printf("[localback] found %d stale process(es) for the same model %v — cleaning up", len(oldPids), oldPids)
 		for _, pid := range oldPids {
 			// 先 SIGTERM，1 秒后没死再 SIGKILL
 			if proc, err := os.FindProcess(pid); err == nil {
@@ -223,15 +223,15 @@ func (lb *LocalBackend) LoadModel(modelFile string, memGB int) error {
 	port := lb.findFreePort()
 	if port == 0 {
 		lb.setState(stateBroken)
-		return fmt.Errorf("无法找到可用端口 (9000-9999)")
+		return fmt.Errorf("no free port available (9000-9999)")
 	}
 
 	// 构造 llama-server 启动参数
 	logFile, err := os.OpenFile(lb.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Printf("[localback] 无法打开日志文件 %s: %v", lb.logPath, err)
+		log.Printf("[localback] cannot open log file %s: %v", lb.logPath, err)
 		lb.setState(stateBroken)
-		return fmt.Errorf("打开日志文件失败: %w", err)
+		return fmt.Errorf("failed to open log file: %w", err)
 	}
 
 	args := []string{
@@ -249,25 +249,25 @@ func (lb *LocalBackend) LoadModel(modelFile string, memGB int) error {
 	if err := lb.process.Start(); err != nil {
 		logFile.Close()
 		lb.setState(stateBroken)
-		return fmt.Errorf("启动 llama-server 失败: %w", err)
+		return fmt.Errorf("failed to start llama-server: %w", err)
 	}
 
 	lb.port = port
 	pid := lb.process.Process.Pid
-	log.Printf("[localback] llama-server 已启动: pid=%d, port=%d, model=%s", pid, port, modelFile)
+	log.Printf("[localback] llama-server started: pid=%d, port=%d, model=%s", pid, port, modelFile)
 
 	// 等待健康检查通过（最多 60 秒）
 	if err := lb.waitForReady(); err != nil {
-		log.Printf("[localback] 健康检查失败，停止进程: %v", err)
+		log.Printf("[localback] health check failed, stopping process: %v", err)
 		lb.stopProcess()
 		lb.setState(stateBroken)
-		return fmt.Errorf("健康检查失败: %w", err)
+		return fmt.Errorf("health check failed: %w", err)
 	}
 
 	// 状态机：ready，重置熔断计数
 	lb.failCnt = 0
 	lb.setState(stateReady)
-	log.Printf("[localback] 后端就绪: port=%d, state=ready", port)
+	log.Printf("[localback] backend ready: port=%d, state=ready", port)
 	return nil
 }
 
@@ -286,7 +286,7 @@ func (lb *LocalBackend) Infer(path string, body []byte) (*http.Response, error) 
 	if lb.state != stateReady || (lb.process == nil && !adopted) {
 		state := lb.state
 		lb.mu.Unlock()
-		return nil, fmt.Errorf("后端未就绪 (state=%s)", state)
+		return nil, fmt.Errorf("backend not ready (state=%s)", state)
 	}
 	port := lb.port
 	lb.mu.Unlock()
@@ -297,18 +297,18 @@ func (lb *LocalBackend) Infer(path string, body []byte) (*http.Response, error) 
 		lb.failCnt++
 		if lb.failCnt >= lb.circuit {
 			// 熔断：停止进程，重置状态
-			log.Printf("[localback] 熔断触发 (连续失败 %d 次)", lb.failCnt)
+			log.Printf("[localback] circuit breaker tripped (%d consecutive failures)", lb.failCnt)
 			lb.stopProcess()
 			lb.setState(stateBroken)
 			lb.mu.Unlock()
-			return nil, fmt.Errorf("后端已熔断 (state=broken, 连续失败 %d 次)", lb.failCnt)
+			return nil, fmt.Errorf("backend circuit-broken (state=broken, %d consecutive failures)", lb.failCnt)
 		}
-		log.Printf("[localback] 健康检查失败 (%d/%d)，重试中...", lb.failCnt, lb.circuit)
+		log.Printf("[localback] health check failed (%d/%d), retrying...", lb.failCnt, lb.circuit)
 		lb.mu.Unlock()
 		// 重试一次
 		time.Sleep(500 * time.Millisecond)
 		if !lb.healthCheck() {
-			return nil, fmt.Errorf("健康检查重试仍失败 (%d/%d)", lb.failCnt, lb.circuit)
+			return nil, fmt.Errorf("health check still failing after retry (%d/%d)", lb.failCnt, lb.circuit)
 		}
 		lb.mu.Lock()
 		lb.failCnt = 0
@@ -319,7 +319,7 @@ func (lb *LocalBackend) Infer(path string, body []byte) (*http.Response, error) 
 	url := fmt.Sprintf("http://127.0.0.1:%d%s", port, path)
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("构造请求失败: %w", err)
+		return nil, fmt.Errorf("failed to build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -332,13 +332,13 @@ func (lb *LocalBackend) Infer(path string, body []byte) (*http.Response, error) 
 			lb.mu.Lock()
 			lb.failCnt++
 			if lb.failCnt >= lb.circuit {
-				log.Printf("[localback] 连接失败后熔断")
+				log.Printf("[localback] circuit opened after connection failure")
 				lb.stopProcess()
 				lb.setState(stateBroken)
 			}
 			lb.mu.Unlock()
 		}
-		return nil, fmt.Errorf("转发到本机后端失败: %w", err)
+		return nil, fmt.Errorf("failed to forward to local backend: %w", err)
 	}
 
 	// 请求成功，重置失败计数
@@ -533,7 +533,7 @@ func (lb *LocalBackend) setState(s string) {
 	old := lb.state
 	lb.state = s
 	if old != s {
-		log.Printf("[localback] 状态变更: %s → %s", old, s)
+		log.Printf("[localback] state change: %s → %s", old, s)
 	}
 }
 
@@ -544,7 +544,7 @@ func (lb *LocalBackend) stopProcess() {
 	}
 	// 先发送 SIGTERM（优雅退出）
 	if err := lb.process.Process.Signal(syscall.SIGTERM); err != nil {
-		log.Printf("[localback] SIGTERM 发送失败: %v", err)
+		log.Printf("[localback] failed to send SIGTERM: %v", err)
 	}
 
 	// 等待最多 5 秒
@@ -556,12 +556,12 @@ func (lb *LocalBackend) stopProcess() {
 	select {
 	case err := <-done:
 		if err != nil {
-			log.Printf("[localback] 进程退出: %v", err)
+			log.Printf("[localback] process exited: %v", err)
 		} else {
-			log.Printf("[localback] 进程已优雅退出")
+			log.Printf("[localback] process exited gracefully")
 		}
 	case <-time.After(5 * time.Second):
-		log.Printf("[localback] 等待退出超时 (5s)，发送 SIGKILL")
+		log.Printf("[localback] wait-for-exit timed out (5s), sending SIGKILL")
 		_ = lb.process.Process.Kill()
 		lb.process.Wait() // 等待 SIGKILL 生效
 	}
@@ -623,11 +623,11 @@ func (lb *LocalBackend) waitForReady() error {
 		}
 		// 检查进程是否还活着
 		if lb.process != nil && lb.process.ProcessState != nil {
-			return fmt.Errorf("llama-server 进程已退出")
+			return fmt.Errorf("llama-server process already exited")
 		}
 		time.Sleep(interval)
 	}
-	return fmt.Errorf("等待就绪超时 (%v)", timeout)
+	return fmt.Errorf("timed out waiting for readiness (%v)", timeout)
 }
 
 // 内部：在动态端口范围内找第一个可用端口
@@ -802,7 +802,7 @@ func sweepOtherModels(target string) []int {
 		if p.PID <= 1 || p.ModelFile == target {
 			continue
 		}
-		log.Printf("[localback] 单槽清场: 停止其它实例 pid=%d model=%s", p.PID, filepath.Base(p.ModelFile))
+		log.Printf("[localback] single-slot cleanup: stopping other instance pid=%d model=%s", p.PID, filepath.Base(p.ModelFile))
 		if proc, err := os.FindProcess(p.PID); err == nil {
 			_ = proc.Signal(syscall.SIGTERM)
 		}
@@ -820,7 +820,7 @@ func sweepOtherModels(target string) []int {
 	}
 	for _, pid := range killed {
 		if pidAlive(pid) {
-			log.Printf("[localback] 单槽清场: pid=%d 未退出——SIGKILL", pid)
+			log.Printf("[localback] single-slot cleanup: pid=%d did not exit — SIGKILL", pid)
 			if proc, err := os.FindProcess(pid); err == nil {
 				_ = proc.Kill()
 			}
@@ -860,7 +860,7 @@ func (lb *LocalBackend) ensureMachineLock() error {
 		return err
 	}
 	if exists {
-		log.Printf("[localback] 单槽: 整机锁已被其它进程持有（沿用现有实例，本进程不重复启动）")
+		log.Printf("[localback] single-slot: machine-wide lock held by another process (reusing existing instance, not starting a new one)")
 	}
 	lb.lock = lock
 	return nil
