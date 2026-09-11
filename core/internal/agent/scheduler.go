@@ -172,7 +172,7 @@ func (s *Scheduler) ScanIssues() ([]ParsedIssue, error) {
 		if os.IsNotExist(err) {
 			return nil, nil // 目录不存在 = 无 issue
 		}
-		return nil, fmt.Errorf("扫描 issue 目录失败: %w", err)
+		return nil, fmt.Errorf("failed to scan issue directory: %w", err)
 	}
 
 	var issues []ParsedIssue
@@ -303,12 +303,12 @@ func (s *Scheduler) dispatchIssue(issue ParsedIssue) error {
 	s.mu.Lock()
 	if s.activeCount >= s.maxWorkers {
 		s.mu.Unlock()
-		log.Printf("⏳ 并发已满: %d/%d，跳过 %s", s.activeCount, s.maxWorkers, issue.InstanceID)
-		return fmt.Errorf("并发已满（%d/%d），跳过 %s", s.activeCount, s.maxWorkers, issue.InstanceID)
+		log.Printf("⏳ concurrency full: %d/%d, skipping %s", s.activeCount, s.maxWorkers, issue.InstanceID)
+		return fmt.Errorf("concurrency full (%d/%d), skipping %s", s.activeCount, s.maxWorkers, issue.InstanceID)
 	}
 	s.activeCount++
 	s.mu.Unlock()
-	log.Printf("🐛 [调度] 派单成功: %s (优先级=%d, 活跃=%d/%d)", issue.InstanceID, issue.Priority, s.activeCount, s.maxWorkers)
+	log.Printf("🐛 [scheduler] dispatched: %s (priority=%d, active=%d/%d)", issue.InstanceID, issue.Priority, s.activeCount, s.maxWorkers)
 
 	// 2. 派单前标记 running（状态机即锁——防抢——open→queued 已在扫描排队——派单=开始执行→running）
 	targetStatus := StatusRunning
@@ -321,7 +321,7 @@ func (s *Scheduler) dispatchIssue(issue ParsedIssue) error {
 			s.mu.Lock()
 			s.activeCount--
 			s.mu.Unlock()
-			return fmt.Errorf("标记 queued 失败: %w", err)
+			return fmt.Errorf("failed to mark queued: %w", err)
 		}
 		newContent, err = TransitionIssue(queuedContent, StatusQueued, StatusRunning)
 	} else {
@@ -333,7 +333,7 @@ func (s *Scheduler) dispatchIssue(issue ParsedIssue) error {
 			s.mu.Lock()
 			s.activeCount--
 			s.mu.Unlock()
-			return fmt.Errorf("标记 running 失败: %w", err)
+			return fmt.Errorf("failed to mark running: %w", err)
 		}
 		newContent = issue.Content
 	}
@@ -342,7 +342,7 @@ func (s *Scheduler) dispatchIssue(issue ParsedIssue) error {
 			s.mu.Lock()
 			s.activeCount--
 			s.mu.Unlock()
-			return fmt.Errorf("写入 running 状态失败: %w", err)
+			return fmt.Errorf("failed to write running state: %w", err)
 		}
 	}
 
@@ -389,10 +389,10 @@ func (s *Scheduler) runWorker(issuePath string, runner WorkerRunner) {
 			exitCode, err = dw.Run(issuePath, s.workDir)
 		}
 		if err != nil {
-			log.Printf("⚠️ DockerWorker 失败 %s: %v", issuePath, err)
+			log.Printf("⚠️ DockerWorker failed %s: %v", issuePath, err)
 			exitCode = -1
 		} else {
-			log.Printf("✅ DockerWorker 成功: %s", issuePath)
+			log.Printf("✅ DockerWorker succeeded: %s", issuePath)
 		}
 	} else {
 		// 生产默认：exec zerg-agent
@@ -416,7 +416,7 @@ func (s *Scheduler) runWorker(issuePath string, runner WorkerRunner) {
 				exitCode = -1
 			}
 		} else {
-			log.Printf("✅ zerg-agent 成功: %s（退出码: 0）", issuePath)
+			log.Printf("✅ zerg-agent succeeded: %s (exit code: 0)", issuePath)
 		}
 		log.Printf("[scheduler] cmd output (stdout): %s", stdout.String())
 		log.Printf("[scheduler] cmd output (stderr): %s", stderr.String())
@@ -426,11 +426,11 @@ func (s *Scheduler) runWorker(issuePath string, runner WorkerRunner) {
 	if exitCode == 0 {
 		// 成功：标记 verified → done
 		s.handleSuccess(issuePath)
-		log.Printf("✅ [scheduler] issue 处理成功: %s（退出码: 0）", issuePath)
+		log.Printf("✅ [scheduler] issue processed: %s (exit code: 0)", issuePath)
 	} else {
 		// 失败：冷却 + 重试/死信
 		s.handleFailure(issuePath, exitCode, "")
-		log.Printf("❌ [scheduler] issue 处理失败: %s（退出码: %d）", issuePath, exitCode)
+		log.Printf("❌ [scheduler] issue processing failed: %s (exit code: %d)", issuePath, exitCode)
 	}
 }
 
@@ -465,7 +465,7 @@ func (s *Scheduler) SetRunner(r WorkerRunner) {
 func (s *Scheduler) handleSuccess(issuePath string) {
 	data, err := os.ReadFile(issuePath)
 	if err != nil {
-		log.Printf("⚠️ 读取 issue 失败 %s: %v", issuePath, err)
+		log.Printf("⚠️ failed to read issue %s: %v", issuePath, err)
 		return
 	}
 	content := string(data)
@@ -473,7 +473,7 @@ func (s *Scheduler) handleSuccess(issuePath string) {
 	// running → verified
 	newContent, err := TransitionIssue(content, StatusRunning, StatusVerified)
 	if err != nil {
-		log.Printf("⚠️ 标记 verified 失败 %s: %v", issuePath, err)
+		log.Printf("⚠️ failed to mark verified %s: %v", issuePath, err)
 		return
 	}
 
@@ -481,12 +481,12 @@ func (s *Scheduler) handleSuccess(issuePath string) {
 	newContent, err = TransitionIssue(newContent, StatusVerified, StatusWaitReview)
 	if err != nil {
 		// 兼容：verified→waiting_review 不支持则保持 verified
-		log.Printf("⚠️ 标记 waiting_review 失败 %s: %v（保持 verified）", issuePath, err)
+		log.Printf("⚠️ failed to mark waiting_review %s: %v (staying verified)", issuePath, err)
 	}
 
 	if newContent != content {
 		if err := os.WriteFile(issuePath, []byte(newContent), 0o644); err != nil {
-			log.Printf("⚠️ 写入 done 状态失败 %s: %v", issuePath, err)
+			log.Printf("⚠️ failed to write done state %s: %v", issuePath, err)
 		}
 	}
 }
@@ -495,7 +495,7 @@ func (s *Scheduler) handleSuccess(issuePath string) {
 func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string) {
 	data, err := os.ReadFile(issuePath)
 	if err != nil {
-		log.Printf("⚠️ 读取 issue 失败 %s: %v", issuePath, err)
+		log.Printf("⚠️ failed to read issue %s: %v", issuePath, err)
 		return
 	}
 	content := string(data)
@@ -512,10 +512,10 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
 		if strings.HasPrefix(line, "- **重试次数**:") {
-			lines[i] = fmt.Sprintf("- **重试次数**: %d", retryCount)
+			lines[i] = fmt.Sprintf("- **Retry count**: %d", retryCount)
 		}
 		if strings.HasPrefix(line, "- **最后尝试**:") {
-			lines[i] = fmt.Sprintf("- **最后尝试**: %s", time.Now().Format(time.RFC3339))
+			lines[i] = fmt.Sprintf("- **Last attempt**: %s", time.Now().Format(time.RFC3339))
 		}
 	}
 	content = strings.Join(lines, "\n")
@@ -524,15 +524,15 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 	if retryCount >= maxRetries {
 		newContent, terr := CanDead(content, StatusRunning)
 		if terr != nil {
-			log.Printf("⚠️ 标记 dead 失败 %s: %v", issuePath, terr)
+			log.Printf("⚠️ failed to mark dead %s: %v", issuePath, terr)
 		} else {
 			if newContent != content {
 				if err := os.WriteFile(issuePath, []byte(newContent), 0o644); err != nil {
-					log.Printf("⚠️ 写死信失败 %s: %v", issuePath, err)
+					log.Printf("⚠️ failed to write dead letter %s: %v", issuePath, err)
 				}
 			}
 		}
-		log.Printf("📛 死信: %s（重试 %d 次达上限 %d）", issuePath, retryCount, maxRetries)
+		log.Printf("📛 dead letter: %s (retries %d reached limit %d)", issuePath, retryCount, maxRetries)
 		return
 	}
 
@@ -546,13 +546,13 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 		if retryCount >= maxRetries {
 			newContent, terr := CanDead(content, StatusRunning)
 			if terr != nil {
-				log.Printf("⚠️ 冷却中标记 dead 失败 %s: %v", issuePath, terr)
+				log.Printf("⚠️ failed to mark dead during cooldown %s: %v", issuePath, terr)
 			} else if newContent != content {
 				if err := os.WriteFile(issuePath, []byte(newContent), 0o644); err != nil {
-					log.Printf("⚠️ 冷却中写死信失败 %s: %v", issuePath, err)
+					log.Printf("⚠️ failed to write dead letter during cooldown %s: %v", issuePath, err)
 				}
 			}
-			log.Printf("📛 冷却中死信: %s（重试 %d 次达上限 %d——防无限循环）", issuePath, retryCount, maxRetries)
+			log.Printf("📛 dead letter during cooldown: %s (retries %d reached limit %d — preventing infinite loop)", issuePath, retryCount, maxRetries)
 			return
 		}
 		// 未达死信——标记 queued（排队等重派——不保持 running——否则扫描跳过）
@@ -567,29 +567,29 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 			return
 		}
 		if err := os.WriteFile(issuePath, []byte(q), 0o644); err != nil {
-			log.Printf("⚠️ 写 queued 失败 %s: %v", issuePath, err)
+			log.Printf("⚠️ failed to write queued %s: %v", issuePath, err)
 			return
 		}
-		log.Printf("❄️ 冷却中: %s（距上次 %v < %v——排队等重派）", issuePath, time.Since(lastTime), defaultCooldown)
+		log.Printf("❄️ cooling down: %s (since last %v < %v — queued for re-dispatch)", issuePath, time.Since(lastTime), defaultCooldown)
 		return
 	}
 
 	// 冷却结束 / 首次失败 → 标记 retry → queued
 	newContent, err := TransitionIssue(content, StatusRunning, StatusRetry)
 	if err != nil {
-		log.Printf("⚠️ 标记 retry 失败 %s: %v", issuePath, err)
+		log.Printf("⚠️ failed to mark retry %s: %v", issuePath, err)
 		return
 	}
 	newContent, err = TransitionIssue(newContent, StatusRetry, StatusQueued)
 	if err != nil {
-		log.Printf("⚠️ 标记 queued 失败 %s: %v", issuePath, err)
+		log.Printf("⚠️ failed to mark queued %s: %v", issuePath, err)
 		return
 	}
 
 	// 更新文件
 	if newContent != content {
 		if err := os.WriteFile(issuePath, []byte(newContent), 0o644); err != nil {
-			log.Printf("⚠️ 写入 queued 状态失败 %s: %v", issuePath, err)
+			log.Printf("⚠️ failed to write queued state %s: %v", issuePath, err)
 			return
 		}
 	}
@@ -599,7 +599,7 @@ func (s *Scheduler) handleFailure(issuePath string, exitCode int, stderr string)
 	s.lastDispatch[issuePath] = time.Now()
 	s.mu.Unlock()
 
-	log.Printf("🔄 重派: %s（第 %d 次重试）", issuePath, retryCount)
+	log.Printf("🔄 re-dispatched: %s (retry %d)", issuePath, retryCount)
 }
 
 // 核心：轮询循环
@@ -616,7 +616,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 	s.cancelPoll = cancel
 	s.mu.Unlock()
 
-	log.Printf("🚀 调度器启动（max_workers=%d, cooldown=%v, max_retries=%d）",
+	log.Printf("🚀 scheduler started (max_workers=%d, cooldown=%v, max_retries=%d)",
 		s.maxWorkers, defaultCooldown, maxRetries)
 
 	ticker := time.NewTicker(pollInterval)
@@ -628,7 +628,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("🛑 调度器收到停止信号")
+			log.Println("🛑 scheduler received stop signal")
 			s.wg.Wait() // 等待所有 worker 退出
 			s.mu.Lock()
 			s.polling = false
@@ -637,7 +637,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 		case <-ticker.C:
 			s.poll(ctx)
 		case <-s.doneCh:
-			log.Println("🛑 调度器主动停止")
+			log.Println("🛑 scheduler stopped actively")
 			s.wg.Wait()
 			s.mu.Lock()
 			s.polling = false
@@ -666,7 +666,7 @@ func (s *Scheduler) poll(ctx context.Context) {
 
 	issues, err := s.ScanIssues()
 	if err != nil {
-		log.Printf("⚠️ 扫描 issue 失败: %v", err)
+		log.Printf("⚠️ failed to scan issues: %v", err)
 		return
 	}
 
@@ -674,7 +674,7 @@ func (s *Scheduler) poll(ctx context.Context) {
 		return // 无待派单 issue
 	}
 
-	log.Printf("📋 扫描到 %d 个待派单 issue", len(issues))
+	log.Printf("📋 scanned %d issue(s) pending dispatch", len(issues))
 
 	for _, issue := range issues {
 		select {
@@ -687,7 +687,7 @@ func (s *Scheduler) poll(ctx context.Context) {
 		s.mu.Lock()
 		if s.activeCount >= s.maxWorkers {
 			s.mu.Unlock()
-			log.Printf("⏸️ 并发已满（%d/%d），本轮剩余 %d 个 issue 跳过",
+			log.Printf("⏸️ concurrency full (%d/%d), skipping %d remaining issue(s) this round",
 				s.activeCount, s.maxWorkers, len(issues))
 			return // 本轮不再派单，等下一轮
 		}
@@ -699,12 +699,12 @@ func (s *Scheduler) poll(ctx context.Context) {
 		s.mu.Unlock()
 
 		if existed && time.Since(lastTime) < defaultCooldown {
-			log.Printf("❄️ 冷却跳过: %s", issue.InstanceID)
+			log.Printf("❄️ skipping due to cooldown: %s", issue.InstanceID)
 			continue
 		}
 
 		if err := s.dispatchIssue(issue); err != nil {
-			log.Printf("⚠️ 派单失败 %s: %v", issue.InstanceID, err)
+			log.Printf("⚠️ dispatch failed %s: %v", issue.InstanceID, err)
 		}
 	}
 }
