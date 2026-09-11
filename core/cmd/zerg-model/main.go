@@ -22,9 +22,13 @@ import (
 func usage() {
 	fmt.Println("用法:")
 	fmt.Println("  zerg-model verify <record.json> [--strict] [--json]   # 校验一条模型登记记录是否符合标准")
-	fmt.Println("  zerg-model probe  <路径|端点URL> [--out <record.json>] [--json]")
+	fmt.Println("  zerg-model probe  <路径|端点URL> [--out <record.json>|--store] [--json]")
 	fmt.Println("                    [--endpoint <URL>] [--engine llama.cpp|vllm|ollama] [--id <id>] [--timeout 60s]")
 	fmt.Println("                                                          # 探测模型并生成登记记录（默认只打印，不写盘）")
+	fmt.Println("                    --store                               # 写进模型目录 manifests/（标准 §三 布局）")
+	fmt.Println("                    --store-root <dir>                    # 模型目录根（默认 ~/.zerg/models，或 $ZERG_MODELS_DIR）")
+	fmt.Println("  zerg-model list   [--root <模型目录根>] [--manifests <目录>] [--json]")
+	fmt.Println("                                                          # 列出模型目录里的记录（只读；含每条记录的校验结论）")
 }
 
 func main() {
@@ -37,6 +41,8 @@ func main() {
 		os.Exit(cmdVerify(os.Args[2:]))
 	case "probe":
 		os.Exit(cmdProbe(os.Args[2:]))
+	case "list":
+		os.Exit(cmdList(os.Args[2:]))
 	case "-h", "--help", "help":
 		usage()
 		os.Exit(0)
@@ -102,7 +108,8 @@ func cmdVerify(args []string) int {
 }
 
 func cmdProbe(args []string) int {
-	var target, out, endpoint, engine, id string
+	var target, out, endpoint, engine, id, storeRoot string
+	useStore := false
 	asJSON := false
 	timeout := modelreg.DefaultProbeTimeout
 
@@ -126,6 +133,16 @@ func cmdProbe(args []string) int {
 			out = v
 		case strings.HasPrefix(a, "--out="):
 			out = strings.TrimPrefix(a, "--out=")
+		case a == "--store":
+			useStore = true
+		case a == "--store-root":
+			v, ok := needVal(&i, "--store-root")
+			if !ok {
+				return 3
+			}
+			storeRoot = v
+		case strings.HasPrefix(a, "--store-root="):
+			storeRoot = strings.TrimPrefix(a, "--store-root=")
 		case a == "--endpoint":
 			v, ok := needVal(&i, "--endpoint")
 			if !ok {
@@ -239,6 +256,15 @@ func cmdProbe(args []string) int {
 		fmt.Fprintf(os.Stderr, "%s [%s] %s：%s\n", mark, f.Level, f.Field, f.Detail)
 	}
 
+	// 落盘目标（批 3）：--store，或 --out 给的是目录 → 进模型目录；
+	// --out 给文件 → 原子写该文件。
+	storeDir := ""
+	if useStore {
+		storeDir = modelreg.NewStore(storeRoot).ManifestsDir()
+	} else if out != "" && looksLikeDir(out) {
+		storeDir = strings.TrimRight(out, "/")
+	}
+
 	if asJSON {
 		payload, _ := json.MarshalIndent(struct {
 			Record     *modelreg.Record   `json:"record"`
@@ -248,21 +274,165 @@ func cmdProbe(args []string) int {
 			Warnings   int                `json:"warnings"`
 		}{rec, rep.Traces, findings, nErr, nWarn}, "", "  ")
 		fmt.Println(string(payload))
-	} else if out == "" {
+	} else if out == "" && storeDir == "" {
 		// 默认只打印，不写盘
 		fmt.Println(string(recJSON))
 	}
 
-	if out != "" {
-		if err := os.WriteFile(out, append(recJSON, '\n'), 0o644); err != nil {
+	if out != "" && storeDir == "" {
+		changed, err := modelreg.WriteFileAtomic(out, append(recJSON, '\n'))
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "写记录失败: %v\n", err)
 			return 3
 		}
-		fmt.Fprintf(os.Stderr, "已写入：%s\n", out)
+		if changed {
+			fmt.Fprintf(os.Stderr, "已写入：%s\n", out)
+		} else {
+			fmt.Fprintf(os.Stderr, "内容一致，未重写：%s\n", out)
+		}
+	}
+
+	code := 0
+	if storeDir != "" {
+		res, err := modelreg.NewStoreAtManifests(storeDir).Put(rec, false)
+		var adm *modelreg.AdmissionError
+		var conf *modelreg.ConflictError
+		switch {
+		case err == nil && res.Changed:
+			fmt.Fprintf(os.Stderr, "已入目录：%s（version=%s）\n", res.Path, res.Version)
+		case err == nil:
+			fmt.Fprintf(os.Stderr, "目录里已有同内容记录，未重写：%s（version=%s）\n", res.Path, res.Version)
+		case errors.As(err, &adm):
+			// 门禁如实拒绝（标准 §十二.1「verify 不过直接拒」）。本批不许用占位值凑绿，
+			// 所以探针产物在许可留痕补齐前就是进不去——如实报，不降级（见待修补 #21）。
+			fmt.Fprintf(os.Stderr, "✗ 拒绝入目录：%s\n", err)
+			for _, f := range adm.Findings {
+				fmt.Fprintf(os.Stderr, "   [%s] %s：%s\n", f.Level, f.Field, f.Detail)
+			}
+			fmt.Fprintf(os.Stderr, "   （未写入任何文件；补许可证留痕后重跑，见待修补 #21）\n")
+			code = 2
+		case errors.As(err, &conf):
+			fmt.Fprintf(os.Stderr, "✗ %v\n", err)
+			code = 3
+		default:
+			fmt.Fprintf(os.Stderr, "✗ 写模型目录失败：%v\n", err)
+			code = 3
+		}
 	}
 
 	if nErr > 0 {
 		return 2
 	}
+	return code
+}
+
+// looksLikeDir 判定 --out 给的是目录还是文件（开工方案 §七 批 3 要求
+// `probe --out` 能落到 `~/.zerg/models/manifests/`）：
+//   - 以 "/" 结尾 → 目录（可以是还没创建的目录）
+//   - 已存在的目录 → 目录
+//
+// 其余一律当文件路径（批 2 的行为不变）。
+func looksLikeDir(p string) bool {
+	if strings.HasSuffix(p, "/") {
+		return true
+	}
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
+}
+
+func cmdList(args []string) int {
+	root, manifests := "", ""
+	asJSON := false
+
+	needVal := func(i *int, flag string) (string, bool) {
+		if *i+1 >= len(args) {
+			fmt.Fprintf(os.Stderr, "%s 需要一个值\n", flag)
+			return "", false
+		}
+		*i++
+		return args[*i], true
+	}
+
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--json":
+			asJSON = true
+		case a == "--root":
+			v, ok := needVal(&i, "--root")
+			if !ok {
+				return 3
+			}
+			root = v
+		case strings.HasPrefix(a, "--root="):
+			root = strings.TrimPrefix(a, "--root=")
+		case a == "--manifests":
+			v, ok := needVal(&i, "--manifests")
+			if !ok {
+				return 3
+			}
+			manifests = v
+		case strings.HasPrefix(a, "--manifests="):
+			manifests = strings.TrimPrefix(a, "--manifests=")
+		default:
+			fmt.Fprintf(os.Stderr, "list 未知参数: %s\n", a)
+			return 3
+		}
+	}
+
+	st := modelreg.NewStore(root)
+	if manifests != "" {
+		st = modelreg.NewStoreAtManifests(manifests)
+	}
+	rows, err := st.List()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "读取模型目录失败: %v\n", err)
+		return 3
+	}
+
+	if asJSON {
+		out, _ := json.MarshalIndent(struct {
+			ManifestsDir string                  `json:"manifests_dir"`
+			Count        int                     `json:"count"`
+			Records      []modelreg.StoredRecord `json:"records"`
+		}{st.ManifestsDir(), len(rows), rows}, "", "  ")
+		fmt.Println(string(out))
+		return 0
+	}
+
+	fmt.Printf("模型目录（manifests）：%s\n", st.ManifestsDir())
+	if len(rows) == 0 {
+		fmt.Println("（空目录：还没有任何记录。用 `zerg-model probe <路径> --store` 入目录）")
+		return 0
+	}
+	fmt.Printf("%-28s %-16s %-13s %-6s %-24s %-8s %s\n", "ID", "VERSION", "COMMERCIAL", "FILES", "CAPABILITIES", "ERR/WARN", "PATH")
+	totalErr, totalWarn, notEligible := 0, 0, 0
+	for _, r := range rows {
+		caps := strings.Join(r.Capabilities, ",")
+		if caps == "" {
+			caps = "-"
+		}
+		fmt.Printf("%-28s %-16s %-13s %-6d %-24s %d/%-6d %s\n", r.ID, r.Version, orDash(r.Commercial), r.Files, caps, r.Errors, r.Warns, r.Path)
+		if r.Err != "" {
+			fmt.Printf("%-28s %s\n", "", "读取失败："+r.Err)
+		}
+		totalErr += r.Errors
+		totalWarn += r.Warns
+		if !r.DefaultEligible {
+			notEligible++
+		}
+	}
+	fmt.Printf("—— 共 %d 条记录；error %d / warn %d；commercial != yes 的 %d 条不得作为默认项（标准 §五 红线）\n", len(rows), totalErr, totalWarn, notEligible)
+	if totalErr > 0 {
+		fmt.Println("   目录里有不合标准的记录（标准 §十二.1 不该留在目录里）——需人工处置")
+		return 2
+	}
 	return 0
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
