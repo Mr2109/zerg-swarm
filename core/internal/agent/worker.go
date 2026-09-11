@@ -65,15 +65,15 @@ func (w *Worker) Run(issuePath string) (int, error) {
 	// 1. 验证 issue 文件存在
 	data, err := os.ReadFile(issuePath)
 	if err != nil {
-		return -1, fmt.Errorf("读取 issue 失败: %w", err)
+		return -1, fmt.Errorf("failed to read issue: %w", err)
 	}
 	content := string(data)
 
 	// 2. 检查当前状态
 	currentStatus := extractStatus(content)
 	if currentStatus == "" {
-		log.Printf("❌ 无法解析 issue 状态: %s", issuePath)
-		return -1, fmt.Errorf("无法解析 issue 状态: %s", issuePath)
+		log.Printf("❌ cannot parse issue status: %s", issuePath)
+		return -1, fmt.Errorf("cannot parse issue status: %s", issuePath)
 	}
 
 	// 3. 标记 running（如果还不是 running）——open→queued→running 两步（状态机要求）
@@ -84,7 +84,7 @@ func (w *Worker) Run(issuePath string) (int, error) {
 		if cur == statusOpen {
 			q, err := TransitionIssue(work, statusOpen, statusQueued)
 			if err != nil {
-				return -1, fmt.Errorf("标记 queued 失败: %w", err)
+				return -1, fmt.Errorf("failed to mark queued: %w", err)
 			}
 			work = q
 			cur = statusQueued
@@ -93,14 +93,14 @@ func (w *Worker) Run(issuePath string) (int, error) {
 		if cur == statusQueued {
 			r, err := TransitionIssue(work, statusQueued, statusRunning)
 			if err != nil {
-				return -1, fmt.Errorf("标记 running 失败: %w", err)
+				return -1, fmt.Errorf("failed to mark running: %w", err)
 			}
 			work = r
 			cur = statusRunning
 		}
 		if work != content {
 			if err := os.WriteFile(issuePath, []byte(work), 0o644); err != nil {
-				return -1, fmt.Errorf("写入 running 状态失败: %w", err)
+				return -1, fmt.Errorf("failed to write running state: %w", err)
 			}
 			content = work
 		}
@@ -109,23 +109,23 @@ func (w *Worker) Run(issuePath string) (int, error) {
 	// 4. 标记 fixing（running → fixing）
 	newContent, err := TransitionIssue(content, statusRunning, statusFixing)
 	if err != nil {
-		log.Printf("❌ 状态转换 fixing 失败 %s: %v", issuePath, err)
-		return -1, fmt.Errorf("标记 fixing 失败: %w", err)
+		log.Printf("❌ state transition to fixing failed %s: %v", issuePath, err)
+		return -1, fmt.Errorf("failed to mark fixing: %w", err)
 	}
 	if newContent != content {
 		if err := os.WriteFile(issuePath, []byte(newContent), 0o644); err != nil {
-			return -1, fmt.Errorf("写入 fixing 状态失败: %w", err)
+			return -1, fmt.Errorf("failed to write fixing state: %w", err)
 		}
 		content = newContent
 	}
-	log.Printf("📝 状态已转换: %s → fixing", issuePath)
+	log.Printf("📝 state transitioned: %s → fixing", issuePath)
 
-	log.Printf("🔧 Worker 开始执行: %s（当前状态: fixing）", issuePath)
+	log.Printf("🔧 Worker starting: %s (current state: fixing)", issuePath)
 
 	// 5. 执行 zerg-agent
 	exitCode, execErr := w.executeAgent(issuePath)
 	if execErr != nil {
-		log.Printf("❌ Worker 执行异常 %s: %v", issuePath, execErr)
+		log.Printf("❌ Worker execution error %s: %v", issuePath, execErr)
 		return exitCode, execErr
 	}
 
@@ -163,11 +163,11 @@ func (w *Worker) executeAgent(issuePath string) (int, error) {
 
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			log.Printf("🐛 zerg-agent 执行失败，退出码 %d（issue: %s）", exitErr.ExitCode(), issuePath)
+			log.Printf("🐛 zerg-agent failed with exit code %d (issue: %s)", exitErr.ExitCode(), issuePath)
 			return exitErr.ExitCode(), nil // 退出码不是 0 = 失败（正常路径）
 		}
-		log.Printf("🐛 zerg-agent 执行异常（非退出码错误）: %v", err)
-		return -1, fmt.Errorf("执行 zerg-agent 失败: %w", err)
+		log.Printf("🐛 zerg-agent execution error (not an exit-code error): %v", err)
+		return -1, fmt.Errorf("failed to execute zerg-agent: %w", err)
 	}
 
 	return 0, nil
@@ -189,12 +189,12 @@ func (w *Worker) markSuccess(issuePath, content string) (int, error) {
 
 	if newContent != content {
 		if err := os.WriteFile(issuePath, []byte(newContent), 0o644); err != nil {
-			log.Printf("⚠️ 写入 done 状态失败 %s: %v", issuePath, err)
+			log.Printf("⚠️ failed to write done state %s: %v", issuePath, err)
 			return 1, err
 		}
 	}
 
-	log.Printf("✅ Worker 完成: %s（→ done）", issuePath)
+	log.Printf("✅ Worker done: %s (→ done)", issuePath)
 	return 0, nil
 }
 
@@ -202,17 +202,17 @@ func (w *Worker) markSuccess(issuePath, content string) (int, error) {
 func (w *Worker) transitionOrLog(issuePath string, content, from, to string) (string, error) {
 	result, err := TransitionIssue(content, from, to)
 	if err != nil {
-		log.Printf("⚠️ 标记 %s 失败 %s: %v", to, issuePath, err)
+		log.Printf("⚠️ failed to mark %s %s: %v", to, issuePath, err)
 		return "", err
 	}
-	log.Printf("📝 状态转换: %s → %s（issue: %s）", from, to, issuePath)
+	log.Printf("📝 state transition: %s → %s (issue: %s)", from, to, issuePath)
 	return result, nil
 }
 
 // writeContentOrLog — 封装文件写入，统一错误处理
 func (w *Worker) writeContentOrLog(issuePath string, content string) error {
 	if err := os.WriteFile(issuePath, []byte(content), 0o644); err != nil {
-		log.Printf("⚠️ 写入 %s 失败: %v", issuePath, err)
+		log.Printf("⚠️ failed to write %s: %v", issuePath, err)
 		return err
 	}
 	return nil
@@ -223,8 +223,8 @@ func (w *Worker) handleFailure(issuePath, content string, exitCode int) (int, er
 	// 解析当前重试次数
 	issue := parseIssue(issuePath, content)
 	if issue == nil {
-		log.Printf("⚠️ 解析 issue 失败 %s", issuePath)
-		return 1, fmt.Errorf("解析 issue 失败")
+		log.Printf("⚠️ failed to parse issue %s", issuePath)
+		return 1, fmt.Errorf("failed to parse issue")
 	}
 
 	retryCount := issue.RetryCount + 1
@@ -245,7 +245,7 @@ func (w *Worker) handleFailure(issuePath, content string, exitCode int) (int, er
 	if retryCount >= maxRetryBeforeDead {
 		deadContent, terr := CanDead(newContent, statusRunning)
 		if terr != nil {
-			log.Printf("⚠️ 标记 dead 失败 %s: %v", issuePath, terr)
+			log.Printf("⚠️ failed to mark dead %s: %v", issuePath, terr)
 		} else {
 			if deadContent != newContent {
 				if err := w.writeContentOrLog(issuePath, deadContent); err != nil {
@@ -253,7 +253,7 @@ func (w *Worker) handleFailure(issuePath, content string, exitCode int) (int, er
 				}
 			}
 		}
-		log.Printf("📛 死信: %s（重试 %d 次达上限 %d）", issuePath, retryCount, maxRetryBeforeDead)
+		log.Printf("📛 dead letter: %s (retries %d reached limit %d)", issuePath, retryCount, maxRetryBeforeDead)
 		return 1, nil
 	}
 
@@ -267,12 +267,12 @@ func (w *Worker) handleFailure(issuePath, content string, exitCode int) (int, er
 		if err := w.writeContentOrLog(issuePath, newContent); err != nil {
 			// 冷却中写失败不阻塞
 		}
-		log.Printf("❄️ 冷却中: %s（距上次 %v < %v）", issuePath, time.Since(lastTime), cooldownDuration)
+		log.Printf("❄️ cooling down: %s (since last %v < %v)", issuePath, time.Since(lastTime), cooldownDuration)
 		return 1, nil
 	}
 
 	// 冷却结束 / 首次失败 → 标记 retry → queued（用辅助函数减少重复）
-	log.Printf("🔄 冷却结束/首次失败: %s（退出码: %d，重试: %d）", issuePath, exitCode, retryCount)
+	log.Printf("🔄 cooldown ended / first failure: %s (exit code: %d, retry: %d)", issuePath, exitCode, retryCount)
 	newContent, err := w.transitionOrLog(issuePath, newContent, statusRunning, statusRetry)
 	if err != nil {
 		return 1, err
@@ -294,7 +294,7 @@ func (w *Worker) handleFailure(issuePath, content string, exitCode int) (int, er
 	w.dispatch[issuePath] = time.Now()
 	w.mu.Unlock()
 
-	log.Printf("🔄 重派: %s（第 %d 次重试，→ queued）", issuePath, retryCount)
+	log.Printf("🔄 re-dispatched: %s (retry %d, → queued)", issuePath, retryCount)
 	return 1, nil
 }
 
