@@ -42,8 +42,6 @@ var (
 	registryPath = flag.String("registry", "agent_models.yaml", "模型注册表 YAML 路径")
 	logLevel     = flag.String("log-level", "info", "日志级别（debug/info/warn/error）")
 	logFile      = flag.String("log-file", "", "日志文件路径（留空只写 stdout）")
-	// 未托管监听探测：覆盖实测 E2（手工 screen 起的服务）——只读 TCP 探测，只标注不接管。
-	unmanagedScan = flag.String("unmanaged-scan", "9000-9999", "未托管监听探测端口清单（如 9000-9999 / 8100,8101）；空串关闭")
 )
 
 func main() {
@@ -108,16 +106,8 @@ func main() {
 	// 创建应用核心
 	agent := server.NewAgent(m, *token, reg, backendMgr, *controller)
 
-	// 创建心跳上报器：
-	//   - active=agent：active_requests 取真实在飞计数（真值来自 server.Agent.activeReqs）
-	//   - unmanaged：只读探测未托管监听端口（只标注 managed=false，绝不接管/杀）
-	probePorts := backend.ParsePortSpec(*unmanagedScan)
-	hr := heartbeat.NewRunner(*controller, *token, m, backendMgr, monitor.DefaultSampler, agent, func() []backend.UnmanagedProcess {
-		if len(probePorts) == 0 {
-			return nil
-		}
-		return backendMgr.UnmanagedListeners(probePorts)
-	})
+	// 创建心跳上报器
+	hr := heartbeat.NewRunner(*controller, *token, m, backendMgr, monitor.DefaultSampler)
 	hr.Start()
 
 	// 创建 HTTP 服务器
