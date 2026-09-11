@@ -167,6 +167,34 @@ for name, m in ms.items():
       say "远程件（需在目标机上以 root 执行）："
       say "  X3:  scp 新 zerg-agentd → 目标机 /tmp/ → sudo install -m0755 → 改 unit ExecStart → systemctl daemon-reload && restart"
       say "  （远程特权当前不可用则保持 pending——回执里记为 pending-manual，不假装已完成）"
+
+      # 机群级回执（C12 设计意图：每台一份 + 汇总一份，pending 也如实记录）
+      mkdir -p "$RECEIPTS"
+      FTS="$(date -u +%Y%m%dT%H%M%SZ)"
+      FRC="$RECEIPTS/fleet-$FTS.json"
+      printf '%s' "$MATRIX" > /tmp/.zerg-matrix.json 2>/dev/null || true
+      python3 - "$FRC" "$FTS" "$SRC_TAG" "$SRC_SHA" "${PREFIX}" /tmp/.zerg-matrix.json <<'PY'
+import json, sys
+rc, ts, tag, sha, prefix, matrix_path = sys.argv[1:7]
+try:
+    d = json.load(open(matrix_path))
+    ms = d.get("machines") or d.get("snapshots") or d
+    machines = {k: {"code_sha": (v or {}).get("code_sha", ""), "code_version": (v or {}).get("code_version", "")}
+                for k, v in (ms.items() if isinstance(ms, dict) else [])}
+except Exception:
+    machines = {}
+json.dump({
+    "schema": 1, "kind": "fleet", "at": ts, "target": {"tag": tag, "commit": sha},
+    "prefix": prefix,
+    "matrix_before": machines,
+    "order": ["agent(remote)", "core(local)", "ui(local)", "menubar(local)"],
+    "local": "ok",
+    "remote": [{"machine": "x3", "status": "pending-manual",
+                "reason": "unit/binary 需目标机 root；特权不可用时保持 pending"}],
+}, open(rc, "w"), ensure_ascii=False, indent=2)
+print("  📝 机群回执:", rc)
+PY
+      cp -p "$FRC" "$RECEIPTS/latest-fleet.json" 2>/dev/null || true
     fi
     exit 0
     ;;
