@@ -182,6 +182,25 @@ func CapabilitySnapshotPath(recordPath string) string {
 	return recordPath + ".capabilities.json"
 }
 
+// LoadCapabilitySnapshot 只读地读一份能力快照兄弟文件（<version>.capabilities.json）。
+//
+// 与 Load 同一只读纪律：**只**做 os.ReadFile + json.Unmarshal，绝不创建/改写任何文件；
+// 未知字段按 encoding/json 默认被忽略（标准 §十 向后兼容）。
+// 文件不存在 / 不是合法 JSON 一律返回错误，由调用方决定降级策略——例如
+// GET /api/models/registry 据此把该条能力留空，不 500、不造值（读不到 ≠ 没能力，
+// 也 ≠ 编一个出来）。读取逻辑只此一份，写盘（WriteCapabilitySnapshot）与读盘共用同一类型。
+func LoadCapabilitySnapshot(path string) (*CapabilitySnapshotArtifact, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var art CapabilitySnapshotArtifact
+	if err := json.Unmarshal(b, &art); err != nil {
+		return nil, fmt.Errorf("能力快照不是合法 JSON：%w", err)
+	}
+	return &art, nil
+}
+
 // WriteCapabilitySnapshot 把能力快照原子写成记录旁的兄弟文件。
 //
 // 快照**允许**随探测刷新（它承载的正是"现在能干什么"，端点/引擎一变就该更新），故这里
