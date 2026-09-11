@@ -38,19 +38,19 @@ func MigrateIfNeeded(legacyPath, name string) string {
 		return dst // 无旧文件——用新路径（首次创建）
 	}
 	if err := os.MkdirAll(Dir(), 0o755); err != nil {
-		log.Printf("⚠️ 状态目录创建失败（继续用旧路径 %s）：%v", legacyPath, err)
+		log.Printf("⚠️ failed to create state directory (continuing with legacy path %s): %v", legacyPath, err)
 		return legacyPath
 	}
 	if src.IsDir() {
 		if err := copyDir(legacyPath, dst); err != nil {
-			log.Printf("⚠️ 状态目录迁移失败（继续用旧路径 %s）：%v", legacyPath, err)
+			log.Printf("⚠️ state directory migration failed (continuing with legacy path %s): %v", legacyPath, err)
 			return legacyPath
 		}
 	} else if err := copyFile(legacyPath, dst); err != nil {
-		log.Printf("⚠️ 状态文件迁移失败（继续用旧路径 %s）：%v", legacyPath, err)
+		log.Printf("⚠️ state file migration failed (continuing with legacy path %s): %v", legacyPath, err)
 		return legacyPath
 	}
-	log.Printf("✅ 状态已迁出 /tmp：%s → %s（旧文件保留未删）", legacyPath, dst)
+	log.Printf("✅ state migrated out of /tmp: %s → %s (legacy files kept, not deleted)", legacyPath, dst)
 	return dst
 }
 
@@ -185,7 +185,7 @@ func portFromEnv(key string, def int) int {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
 			return n
 		}
-		log.Printf("⚠️ 环境变量 %s=%q 非法，使用默认端口 %d", key, v, def)
+		log.Printf("⚠️ environment variable %s=%q invalid, using default port %d", key, v, def)
 	}
 	return def
 }
