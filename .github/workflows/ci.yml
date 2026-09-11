@@ -17,6 +17,8 @@ jobs:
           cache-dependency-path: |
             core/go.sum
             agent/go.sum
+      - name: shell 静态检查（$VAR 后紧跟非 ASCII → unbound variable）
+        run: python3 scripts/check-shell-unicode-vars.py --check scripts/*.sh *.sh
       - name: core 构建 + 测试
         working-directory: core
         run: |
@@ -70,5 +72,9 @@ jobs:
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
+        # 版本必须与本地/仓库工具一致：8.24.3 会对 memory_test.go 的**合成夹具**误报
+        # generic-api-key（同配置 8.30.1 = 0 命中）。版本漂移 = 门禁结论不可复现。
+        env:
+          GITLEAKS_VERSION: "8.30.1" 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
