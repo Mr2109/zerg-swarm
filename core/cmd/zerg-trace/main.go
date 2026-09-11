@@ -205,24 +205,24 @@ func readMetrics(path string) []SysMetric {
 
 // printTimeline 视图0+1+4：时间线 + 总览 + 机器指标联动
 func printTimeline(steps []StepInfo, sum Summary, metrics []SysMetric) {
-	fmt.Println("═══ CA 全量追踪 ═══")
-	fmt.Printf("任务: %s → %s (总耗时 %s)\n",
+	fmt.Println("═══ CA full trace ═══")
+	fmt.Printf("task: %s → %s (total %s)\n",
 		sum.StartTime.Format("15:04:05"), sum.EndTime.Format("15:04:05"),
 		sum.EndTime.Sub(sum.StartTime).Round(time.Second))
-	fmt.Printf("总事件: %d | 总轮次: %d | 总tokens: %d\n", sum.TotalEvents, sum.TotalSteps, sum.TotalTokens)
+	fmt.Printf("events: %d | steps: %d | tokens: %d\n", sum.TotalEvents, sum.TotalSteps, sum.TotalTokens)
 	if sum.ModelTime > 0 {
-		fmt.Printf("模型耗时: %s | 工具耗时: %s | 平均token速度: %.1f tok/s\n",
+		fmt.Printf("model time: %s | tool time: %s | avg token speed: %.1f tok/s\n",
 			sum.ModelTime.Round(time.Millisecond), sum.ToolTime.Round(time.Millisecond),
 			float64(sum.TotalTokens)/sum.ModelTime.Seconds())
 	}
 	// 空档检测（>30s 轮间间隔）
-	fmt.Println("\n─── 时间线（轮次 + 在做什么 + 机器指标）───")
+	fmt.Println("\n─── timeline (step + activity + machine metrics) ───")
 	prevEnd := sum.StartTime
 	for i, st := range steps {
 		gap := st.StartTime.Sub(prevEnd)
 		gapMark := ""
 		if gap > 30*time.Second {
-			gapMark = fmt.Sprintf(" ⚠️空档%s(30s+)", gap.Round(time.Second))
+			gapMark = fmt.Sprintf(" ⚠️gap %s(30s+)", gap.Round(time.Second))
 		}
 		prevEnd = st.EndTime
 		// 动作摘要
@@ -246,7 +246,7 @@ func printTimeline(steps []StepInfo, sum Summary, metrics []SysMetric) {
 			if cold {
 				marker = "❄冷启动 "
 			}
-			actions = append(actions, fmt.Sprintf("模型[%s%s %.0ftok %.0ft/s]", marker, mc.Duration, ts, speed))
+			actions = append(actions, fmt.Sprintf("model[%s%s %.0ftok %.0ft/s]", marker, mc.Duration, ts, speed))
 		}
 		for _, tc := range st.ToolCalls {
 			actions = append(actions, fmt.Sprintf("%s[%s]", tc.ToolName, tc.Type))
@@ -255,18 +255,18 @@ func printTimeline(steps []StepInfo, sum Summary, metrics []SysMetric) {
 		metricStr := ""
 		for _, m := range metrics {
 			if m.Step == st.Step {
-				metricStr = fmt.Sprintf(" CPU%.0f%% GPU%.0f%% 磁盘%.1f/%.1fMB/s", m.LocalCPU, m.X3GPU, m.DiskRead, m.DiskWrite)
+				metricStr = fmt.Sprintf(" CPU%.0f%% GPU%.0f%% disk%.1f/%.1fMB/s", m.LocalCPU, m.X3GPU, m.DiskRead, m.DiskWrite)
 			}
 		}
 		// 时间点
 		ts := st.StartTime.Format("15:04:05")
-		line := fmt.Sprintf("轮%d %s%s: %s", st.Step, ts, gapMark, strings.Join(actions, " "))
+		line := fmt.Sprintf("step%d %s%s: %s", st.Step, ts, gapMark, strings.Join(actions, " "))
 		if metricStr != "" {
 			line += metricStr
 		}
 		fmt.Println(line)
 		if i > 60 {
-			fmt.Println("...（更多轮次——用 --step N 查看明细）")
+			fmt.Println("...(more steps — use --step N for details)")
 			break
 		}
 	}
@@ -282,10 +282,10 @@ func printStepDetail(steps []StepInfo, n int) {
 		}
 	}
 	if st == nil {
-		fmt.Printf("轮 %d 不存在\n", n)
+		fmt.Printf("step %d does not exist\n", n)
 		return
 	}
-	fmt.Printf("═══ 轮 %d 明细 (%s → %s) ═══\n", st.Step, st.StartTime.Format("15:04:05"), st.EndTime.Format("15:04:05"))
+	fmt.Printf("═══ step %d detail (%s → %s) ═══\n", st.Step, st.StartTime.Format("15:04:05"), st.EndTime.Format("15:04:05"))
 	for _, ev := range st.Events {
 		fmt.Printf("  [%s] %s %s", ev.Timestamp.Format("15:04:05.000"), ev.Type, ev.Action)
 		if ev.ToolName != "" {
@@ -300,18 +300,18 @@ func printStepDetail(steps []StepInfo, n int) {
 			if len(r) > 300 {
 				r = r[:300] + "...（截断）"
 			}
-			fmt.Printf("    结果: %s\n", r)
+			fmt.Printf("    result: %s\n", r)
 		}
 		if ev.Error != "" {
-			fmt.Printf("    错误: %s\n", ev.Error)
+			fmt.Printf("    error: %s\n", ev.Error)
 		}
 	}
 }
 
 // printTokens 视图3：token 分析
 func printTokens(steps []StepInfo) {
-	fmt.Println("═══ Token 分析（每轮）═══")
-	fmt.Printf("%-6s %-10s %-10s %-12s %s\n", "轮", "tokens", "耗时", "速度", "累计")
+	fmt.Println("═══ token analysis (per step) ═══")
+	fmt.Printf("%-6s %-10s %-10s %-12s %s\n", "step", "tokens", "time", "speed", "cumulative")
 	var cum int
 	for _, st := range steps {
 		cum += st.TotalTokens
@@ -325,25 +325,25 @@ func printTokens(steps []StepInfo) {
 
 // printErrors 视图5：错误清单
 func printErrors(steps []StepInfo) {
-	fmt.Println("═══ 错误清单 ═══")
+	fmt.Println("═══ error list ═══")
 	count := 0
 	for _, st := range steps {
 		for _, ev := range st.Events {
 			if ev.Level == "error" || ev.Type == "tool_error" || ev.Error != "" {
 				count++
-				fmt.Printf("  轮%d [%s] %s %s", st.Step, ev.Timestamp.Format("15:04:05"), ev.Type, ev.Action)
+				fmt.Printf("  step%d [%s] %s %s", st.Step, ev.Timestamp.Format("15:04:05"), ev.Type, ev.Action)
 				if ev.ToolName != "" {
 					fmt.Printf(" %s", ev.ToolName)
 				}
 				if ev.Error != "" {
-					fmt.Printf(" 错误: %s", ev.Error)
+					fmt.Printf(" error: %s", ev.Error)
 				}
 				fmt.Println()
 			}
 		}
 	}
 	if count == 0 {
-		fmt.Println("  无错误")
+		fmt.Println("  no errors")
 	}
 }
 
@@ -382,7 +382,7 @@ func tailLive(path string, jsonOut *bool) {
 				}
 				var ev Event
 				if json.Unmarshal([]byte(line), &ev) == nil {
-					fmt.Printf("[%s] 轮%d %s %s %s\n", ev.Timestamp.Format("15:04:05"), ev.Step, ev.Type, ev.Action, ev.ToolName)
+					fmt.Printf("[%s] step%d %s %s %s\n", ev.Timestamp.Format("15:04:05"), ev.Step, ev.Type, ev.Action, ev.ToolName)
 				}
 			}
 			offset = info.Size()
