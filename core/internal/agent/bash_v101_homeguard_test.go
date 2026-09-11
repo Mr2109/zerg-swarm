@@ -33,8 +33,8 @@ func TestBashRmTargetGuard_blocksHomeDeletions(t *testing.T) {
 		"sudo rm -rf ~/Movies",
 		"cd /tmp && rm -rf ~/go",
 		"rm -rf " + home,                // 直接展开形态
+		"rm -rf " + filepath.Dir(home),  // 家目录祖先（macOS=/Users，Linux=/home——此前硬编码 /Users，Linux 上不成立）
 		"rm -rf " + home + "/Documents", // 家目录内子路径
-		"rm -rf /Users",                 // 家目录祖先
 		"rm -rf /",                      // 根
 		"rm -rf '~/Pictures'",           // 引号包裹
 		"rm -rf \"$HOME/Downloads\"",    // 引号+变量

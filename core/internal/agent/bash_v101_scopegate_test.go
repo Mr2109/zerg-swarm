@@ -15,9 +15,9 @@ func TestBashRmScopeGate_blocksOutOfDomain(t *testing.T) {
 	ws := "/work/zerg-ws"
 	roots := []string{ws}
 	blocked := []string{
-		"rm -rf /etc/hosts",            // 域外绝对路径(现状放行——真修复点)
-		"rm -rf <volume-path>",   // AHZ 卷工作区之外
-		"rm -rf ~/Documents", // 家目录(家目录守卫已拦——双保险)
+		"rm -rf /etc/hosts",               // 域外绝对路径(现状放行——真修复点)
+		"rm -rf /opt/zerg-outside/其他项目/x", // 域外绝对路径（跨平台；此前写私有卷路径，导出后被替换成占位符，前提不成立）
+		"rm -rf ~/Documents",    // 家目录(家目录守卫已拦——双保险)
 		"rm -f /Library/Preferences/x.plist",
 		"cd /tmp && rm -rf /etc", // 复合命令
 		"rm -rf ../../escape",    // 相对出域(以 execCwd 为基解析后仍在域外)
