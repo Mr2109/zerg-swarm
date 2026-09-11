@@ -700,7 +700,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// v2.5.6 故障自愈（Mr2109 2026-08-28）: 错误码语义化——调度器按 code 分类处理
 		// 熔断/无候选/被排除 = 环境故障（503 circuit_open——可等——waiting_retry）
 		// 模型不在路由表 = 配置问题（404 model_not_found——不可重试）
-		msg := fmt.Sprintf("路由选择失败: %v", err)
+		msg := fmt.Sprintf("route selection failed: %v", err)
 		code, status := classifyRouteError(err)
 		adp.TransformError(w, status, code, msg)
 		return
@@ -714,9 +714,9 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		// 加载模型（如果未加载或模型不同）
 		if err := g.loadModel(model, route); err != nil {
-			log.Printf("加载本地模型失败: %v", err)
+			log.Printf("failed to load local model: %v", err)
 			// v2.5.6 故障自愈: 加载失败=资源/环境故障（可等——OOM/冷加载——waiting_retry）
-			adp.TransformError(w, http.StatusServiceUnavailable, "circuit_open", fmt.Sprintf("加载本地模型失败: %v", err))
+			adp.TransformError(w, http.StatusServiceUnavailable, "circuit_open", fmt.Sprintf("failed to load local model: %v", err))
 			return
 		}
 		// 通过 LocalBackend 转发
@@ -1357,14 +1357,14 @@ func (g *Gateway) Snapshot(machine string) *store.FleetSnapshot {
 // 转发失败（超时/卡死）→ 熔断失败机器 + 重选候选（强制排除失败机器）
 func (g *Gateway) pickFallbackRoute(failed *RouteResult, model string) (*RouteResult, error) {
 	if model == "" {
-		return nil, fmt.Errorf("模型为空——无法 failover")
+		return nil, fmt.Errorf("model is empty — cannot fail over")
 	}
 	// 熔断失败机器（连续失败计数——isTripped 后续跳过）
 	g.tripMachine(failed.Host)
 	// 重选候选（pickRoute——但强制排除失败机器）
 	route, err := g.pickRouteExcluding(model, failed.Host)
 	if err != nil {
-		return nil, fmt.Errorf("failover 无可用候选: %w", err)
+		return nil, fmt.Errorf("failover has no available candidate: %w", err)
 	}
 	return route, nil
 }
@@ -1396,7 +1396,7 @@ func (g *Gateway) pickRouteExcluding(model, exclude string) (*RouteResult, error
 		return nil, err2
 	}
 	if route2.Host == exclude {
-		return nil, fmt.Errorf("无其他候选——只有 %s", exclude)
+		return nil, fmt.Errorf("no other candidate — only %s", exclude)
 	}
 	return route2, nil
 }
@@ -1421,7 +1421,7 @@ func (g *Gateway) tripMachine(host string) {
 	}
 	fcnt := g.failCounts[host]
 	g.failMu.Unlock()
-	log.Printf("⛔ 机器 %s 失败计数 trip=%d fail=%d", host, cnt, fcnt)
+	log.Printf("⛔ machine %s failure counts trip=%d fail=%d", host, cnt, fcnt)
 }
 
 // modelName — 从请求体提取模型名（failover 用）
@@ -1487,7 +1487,7 @@ func (g *Gateway) applyReasoningFallback(resp *http.Response) *http.Response {
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		return resp
 	}
-	log.Printf("🔄 reasoning 兜底: content 空→用 reasoning_content（思考模型）")
+	log.Printf("🔄 reasoning fallback: content empty → using reasoning_content (thinking model)")
 	resp.Body = io.NopCloser(bytes.NewReader(newBody))
 	return resp
 }
@@ -1547,14 +1547,14 @@ func (g *Gateway) boundSession(sessionID, model string) string {
 func (g *Gateway) pickRouteLocal(model string) (*RouteResult, error) {
 	candidates, ok := g.config.Models[model]
 	if !ok || len(candidates) == 0 {
-		return nil, fmt.Errorf("模型 %s 未配置", model)
+		return nil, fmt.Errorf("model %s is not configured", model)
 	}
 	for _, c := range candidates {
 		if c.Host == "local" {
 			return &RouteResult{Host: "local", URL: "", File: c.File, MemGB: int(c.MemGb)}, nil
 		}
 	}
-	return nil, fmt.Errorf("模型 %s 无 local 候选", model)
+	return nil, fmt.Errorf("model %s has no local candidate", model)
 }
 
 // bindSession 记录会话 → 机器绑定。
@@ -1666,7 +1666,7 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 	// 优先：LLMLingua-2 压缩（Go 进程内，删除式，保真）
 	msgsJSON, _ := json.Marshal(req.Messages)
 	if compressed, err := g.compressWithLLMLingua2(string(msgsJSON)); err == nil {
-		log.Printf("🧠 会话 %s LLMLingua-2 压缩完成（%d→%d 字符），token 重置", sessionID, len(msgsJSON), len(compressed))
+		log.Printf("🧠 session %s LLMLingua-2 compaction done (%d→%d chars), tokens reset", sessionID, len(msgsJSON), len(compressed))
 		g.resetSessionTokens(sessionID)
 		return
 	}
@@ -1688,7 +1688,7 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 
 	route, err := g.pickRoute(compactModel, "", "")
 	if err != nil {
-		log.Printf("⚠️ autoCompact 路由失败: %v", err)
+		log.Printf("⚠️ autoCompact routing failed: %v", err)
 		return
 	}
 
@@ -1702,7 +1702,7 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 		resp, err = g.forwardToBackend(context.Background(), route, "/v1/chat/completions", compactBodyJSON, nil)
 	}
 	if err != nil {
-		log.Printf("⚠️ autoCompact 压缩失败: %v", err)
+		log.Printf("⚠️ autoCompact compaction failed: %v", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -1719,14 +1719,14 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 				}
 				if summary != "" {
 					summary = ParseStructuredSummary(summary)
-					log.Printf("♻️ 会话 %s 压缩完成（摘要 %d 字符），token 重置", sessionID, len(summary))
+					log.Printf("♻️ session %s compaction done (summary %d chars), tokens reset", sessionID, len(summary))
 					g.resetSessionTokens(sessionID)
 					return
 				}
 			}
 		}
 	}
-	log.Printf("⚠️ autoCompact 压缩无结果")
+	log.Printf("⚠️ autoCompact produced no result")
 }
 
 // extractPrompt 从请求体提取 prompt 文本（拼接 messages 内容，用于前缀匹配）。
@@ -1828,21 +1828,21 @@ func (g *Gateway) recordPrefix(host, prompt string) {
 // 如果本地后端已就绪且加载了相同模型，则跳过加载。
 func (g *Gateway) loadModel(model string, route *RouteResult) error {
 	if route.File == "" {
-		return fmt.Errorf("本地模型缺少 file 路径")
+		return fmt.Errorf("local model is missing its file path")
 	}
 
 	// 检查是否已加载相同模型
 	if g.localBack != nil && g.localBack.IsReady() && g.localBack.ModelFile() == route.File {
-		log.Printf("[gateway] 本地模型已就绪: %s (%s)", model, route.File)
+		log.Printf("[gateway] local model ready: %s (%s)", model, route.File)
 		return nil
 	}
 
 	// 加载模型到 LocalBackend
-	log.Printf("[gateway] 加载本地模型: %s → %s (%d GB)", model, route.File, route.MemGB)
+	log.Printf("[gateway] loading local model: %s → %s (%d GB)", model, route.File, route.MemGB)
 	if err := g.localBack.LoadModel(route.File, route.MemGB); err != nil {
 		return fmt.Errorf("LocalBackend.LoadModel: %w", err)
 	}
-	log.Printf("[gateway] 本地模型加载完成: %s (state=%s)", model, g.localBack.State())
+	log.Printf("[gateway] local model loaded: %s (state=%s)", model, g.localBack.State())
 	return nil
 }
 
@@ -1853,7 +1853,7 @@ func (g *Gateway) forwardToLocal(w http.ResponseWriter, r *http.Request, route *
 	// path 透传给 llama-server（如 /v1/chat/completions）
 	resp, err := g.localBack.Infer(r.URL.Path, body)
 	if err != nil {
-		log.Printf("转发到本机后端失败: %v", err)
+		log.Printf("failed to forward to local backend: %v", err)
 		// 后端未就绪或熔断，返回 503
 		adp.TransformError(w, http.StatusServiceUnavailable, "api_error", fmt.Sprintf("local backend unavailable: %s", err.Error()))
 		return
@@ -1893,7 +1893,7 @@ func handleLocalModel(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusServiceUnavailable)
 	w.Write([]byte(`{"error":"local backend not configured"}`))
-	log.Println("⚠️  host=local 模型请求，未配置 LocalBackend")
+	log.Println("⚠️  host=local model request but LocalBackend is not configured")
 }
 
 // RouteResult 路由选择结果。
@@ -1912,7 +1912,7 @@ func (g *Gateway) Start(port int) error {
 
 	// 用 0.0.0.0 显式监听 IPv4（Go 的 ":port" 默认 IPv6-only，子端 IPv4 连不上）
 	addr := fmt.Sprintf("0.0.0.0:%d", port)
-	log.Printf("🚀 网关启动，监听 %s", addr)
+	log.Printf("🚀 gateway started, listening on %s", addr)
 	return http.ListenAndServe(addr, r)
 }
 
@@ -2053,9 +2053,9 @@ func (g *Gateway) loadAdapterOverrides() {
 		if adp, ok := g.adapterRegistry[model]; ok {
 			if o, ok := adp.(plugin.OptionedAdapter); ok {
 				if err := o.UpdateOptions(cfg); err != nil {
-					log.Printf("⚠️ 适配器 %s 覆盖配置重放失败: %v", model, err)
+					log.Printf("⚠️ adapter %s override replay failed: %v", model, err)
 				} else {
-					log.Printf("🧩 适配器 %s 覆盖配置已恢复（%d 项）", model, len(cfg))
+					log.Printf("🧩 adapter %s overrides restored (%d entries)", model, len(cfg))
 				}
 			}
 		}
@@ -2094,11 +2094,11 @@ func (g *Gateway) AdapterSchema(model string) []plugin.OptionDef {
 func (g *Gateway) UpdateAdapterOptions(model string, cfg map[string]interface{}) error {
 	adp, ok := g.adapterRegistry[model]
 	if !ok || adp == nil {
-		return fmt.Errorf("模型 %s 无适配器（走旧路由——不可编辑）", model)
+		return fmt.Errorf("model %s has no adapter (legacy routing — not editable)", model)
 	}
 	o, ok := adp.(plugin.OptionedAdapter)
 	if !ok {
-		return fmt.Errorf("模型 %s 适配器不支持编辑", model)
+		return fmt.Errorf("model %s adapter does not support editing", model)
 	}
 	// 校验 key（只允许 schema 内的参数——各模型各自参数集）
 	schema := o.OptionSchema()
@@ -2108,11 +2108,11 @@ func (g *Gateway) UpdateAdapterOptions(model string, cfg map[string]interface{})
 	}
 	for k := range cfg {
 		if !valid[k] {
-			return fmt.Errorf("参数 %s 不在该模型适配器参数集内（各模型各自不同——可编辑: %v）", k, keysOf(schema))
+			return fmt.Errorf("parameter %s is not in this model's adapter parameter set (differs per model — editable: %v)", k, keysOf(schema))
 		}
 	}
 	if err := o.UpdateOptions(cfg); err != nil {
-		return fmt.Errorf("适配器更新失败: %w", err)
+		return fmt.Errorf("adapter update failed: %w", err)
 	}
 	// 持久化（合并覆盖）
 	if adapterOverrides[model] == nil {
