@@ -73,7 +73,7 @@ func withRetryJitter(label string, fn func() (int, error)) (int, error) {
 			break
 		}
 		delay := time.Duration(float64(base<<attempt) * (0.5 + rand.Float64()*0.5))
-		log.Printf("[chat] %s 第 %d 次失败（%v）——%v 后重试", label, attempt+1, err, delay.Round(time.Millisecond))
+		log.Printf("[chat] %s attempt %d failed (%v) — retrying in %v", label, attempt+1, err, delay.Round(time.Millisecond))
 		time.Sleep(delay)
 	}
 	return n, err
@@ -89,10 +89,10 @@ func (l *Lifecycle) cleanupOnce() {
 	if os.Getenv("ZERG_CHAT_CLEANUP_DRY_RUN") == "1" {
 		soft, purge, err := l.store.CountCleanupPlan(cutoff, now)
 		if err != nil {
-			log.Printf("[chat] 清理干跑统计失败: %v", err)
+			log.Printf("[chat] cleanup dry-run stats failed: %v", err)
 			return
 		}
-		log.Printf("[chat] 清理干跑（dry-run）：将软删 %d 个（%d 天未活动），将级联硬删 %d 个（宽限期满）", soft, retentionDays, purge)
+		log.Printf("[chat] cleanup dry-run: will soft-delete %d (%d days inactive), cascade hard-delete %d (grace expired)", soft, retentionDays, purge)
 		return
 	}
 
@@ -101,10 +101,10 @@ func (l *Lifecycle) cleanupOnce() {
 		return l.store.SoftDeleteExpired(cutoff, purgeAfter)
 	})
 	if err != nil {
-		log.Printf("[chat] 清理阶段1 最终失败（下轮重试）: %v", err)
+		log.Printf("[chat] cleanup phase 1 finally failed (retry next round): %v", err)
 	}
 	if soft > 0 {
-		log.Printf("[chat] 阶段1 软删 %d 个过期会话（%d 天未活动；%d 天宽限后级联硬删）", soft, retentionDays, graceDays)
+		log.Printf("[chat] phase 1 soft-deleted %d expired sessions (%d days inactive; cascade hard-delete after %d days grace)", soft, retentionDays, graceDays)
 	}
 
 	// 阶段2：级联硬删（宽限期满）
@@ -112,9 +112,9 @@ func (l *Lifecycle) cleanupOnce() {
 		return l.store.PurgeSoftDeleted(now)
 	})
 	if err != nil {
-		log.Printf("[chat] 清理阶段2 最终失败（下轮重试）: %v", err)
+		log.Printf("[chat] cleanup phase 2 finally failed (retry next round): %v", err)
 	}
 	if purged > 0 {
-		log.Printf("[chat] 阶段2 级联硬删 %d 个会话（含消息/FTS/图片）", purged)
+		log.Printf("[chat] phase 2 cascade hard-deleted %d sessions (messages/FTS/images)", purged)
 	}
 }
