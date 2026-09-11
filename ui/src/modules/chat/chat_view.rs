@@ -1935,6 +1935,7 @@ impl ChatView {
             let mut resp_out: Option<egui::Response> = None;
             let mut stop_clicked = false;
             let mut send_clicked = false;
+            let mut pick_image_clicked = false; // ③-3：选图片按钮（此前 pick_image() 无调用点）
             // 居中限宽:精确 allocate cw 宽度(水平 side 偏移 + 行内定宽块——修正不居中)
             let input_frame = egui::Frame::new()
                 .fill(ui.visuals().extreme_bg_color.gamma_multiply(0.35))
@@ -1985,6 +1986,11 @@ impl ChatView {
                                 if sbtn.on_hover_text(t!("chat.send_tip")).clicked() {
                                     send_clicked = true;
                                 }
+                            }
+                            // ③-3：选图片入口（此前 pick_image() 无调用点——功能不可达）
+                            let ibtn = ui.add(egui::Button::new(t!("chat.pick_image_icon", icon = icon_text("image"))));
+                            if ibtn.on_hover_text(t!("chat.pick_image_tip")).clicked() {
+                                pick_image_clicked = true;
                             }
                             egui::ComboBox::from_id_salt("chat_model_pill")
                                 .selected_text(format!("{} {}", icon_text("brain"), short_model(&cur)))
@@ -2104,6 +2110,9 @@ impl ChatView {
             // 行内停止/发送处理
             if stop_clicked {
                 self.stop();
+            }
+            if pick_image_clicked {
+                self.pick_image();
             }
             if send_clicked {
                 self.send();
