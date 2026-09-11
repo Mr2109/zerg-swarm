@@ -776,6 +776,18 @@ pub fn fetch_docs_async() -> SharedResult<Vec<String>> {
     out
 }
 
+/// 模型登记库快照（GET /api/models/registry——异步，不阻塞 UI 线程）
+/// 复用 sync_get_public（自动带 X-Auth-Token、走 http_client_json、错误正文经 parse_api_error）
+pub fn fetch_model_registry_async() -> SharedResult<Value> {
+    let out: SharedResult<Value> = Arc::new(Mutex::new(None));
+    let out2 = out.clone();
+    runtime().spawn(async move {
+        let result = sync_get_public("/api/models/registry").await;
+        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+    });
+    out
+}
+
 /// 异步拉取资源库（模型）
 pub fn fetch_resources_async(res_type: String) -> SharedResult<Value> {
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
