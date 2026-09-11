@@ -48,3 +48,6 @@ __pycache__/
 *.so
 *.dylib
 *.class
+
+# 发布制品（scripts/build-all.sh --dist：二进制 + checksums.txt）——入库会让公开快照带编译产物
+/dist/
