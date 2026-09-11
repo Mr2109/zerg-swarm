@@ -233,43 +233,39 @@ func TestSynthesizeDigestIgnoresPathAndName(t *testing.T) {
 	}
 }
 
-// assertLicenseTraceConflict 是批 3 的硬规则守护（取代批 2 的"产物必须过 Verify"）：
+// assertLicenseTracePolicy 是待修补 #21 修改后的硬规则守护（取代批 3 的"产物必有 1 条留痕 error"）：
 //
-//	批 2 让探针产物过 verify 的办法，是往记录里写 accepted_by/accepted_at="unset" ——
-//	那等于用占位值把标准 §五 的留痕规则骗成绿（等于给门禁开洞）。批 3 废除占位值，
-//	于是真实冲突（待修补 #21）必须如实暴露：记录过不了 verify。
+//	按待修补 #21 的规则：commercial=unknown 允许留痕为空（探测出来本来就没人审过许可）；
+//	no/revenue_gated 才必填；任何情况下留痕非空即不许是占位值。
 //
-// 本断言把它钉死：恰好 1 条 error、落在 license 字段、说清是留痕规则；并且
-// **补上人工留痕后必须归零** —— 证明冲突确实只有这一条，记录其余部分合法。
-func assertLicenseTraceConflict(t *testing.T, rec *Record) {
+// 探针产物 commercial 恒为 unknown、留痕留空，于是**必须零 error**（这正是 #21 的核心）；
+// 同时守住两条不许开洞的反例：改成 no 且留痕空 → 必须 error；写占位值 → 必须 error。
+func assertLicenseTracePolicy(t *testing.T, rec *Record) {
 	t.Helper()
-	findings := Verify(rec, false)
-	if n := CountErrors(findings); n != 1 {
-		t.Fatalf("probe 产物应有且只有 1 条 error（§五 留痕，待修补 #21），实际 %d 条：%+v", n, findings)
-	}
-	var only Finding
-	for _, f := range findings {
-		if f.Level == "error" {
-			only = f
-		}
-	}
-	if only.Field != "license" {
-		t.Fatalf("唯一的 error 应落在 license 字段（留痕规则），实际 field=%q detail=%q", only.Field, only.Detail)
-	}
-	if !strings.Contains(only.Detail, "留痕") {
-		t.Fatalf("该 error 应说明是留痕规则：%s", only.Detail)
+	if rec.License.Commercial != "unknown" {
+		t.Fatalf("本断言前提是探针产物 commercial=unknown，实际 %q", rec.License.Commercial)
 	}
 	if rec.License.AcceptedBy != "" || rec.License.AcceptedAt != "" {
 		t.Fatalf("探针不许写占位值：accepted_by=%q accepted_at=%q", rec.License.AcceptedBy, rec.License.AcceptedAt)
 	}
-	if !strings.Contains(rec.Notes, "#21") {
-		t.Fatalf("notes 必须写明该记录待人工审许可（待修补 #21）：%s", rec.Notes)
+	if findings := Verify(rec, false); CountErrors(findings) != 0 {
+		t.Fatalf("unknown 允许留痕为空（待修补 #21），探针产物不该有 error，实际：%+v", findings)
 	}
-	fixed := *rec
-	fixed.License.AcceptedBy = "人工审许可（测试夹具）"
-	fixed.License.AcceptedAt = "2026-09-12T00:00:00Z"
-	if n := CountErrors(Verify(&fixed, false)); n != 0 {
-		t.Fatalf("补上人工留痕后不该还有 error，实际 %d 条：%+v", n, Verify(&fixed, false))
+	if !strings.Contains(rec.Notes, "#21") {
+		t.Fatalf("notes 必须写明许可留痕规则（待修补 #21）：%s", rec.Notes)
+	}
+	// 反例一：同一记录改成 no 且留痕为空 → 必须报 error（证明规则没被放宽）
+	restricted := *rec
+	restricted.License.Commercial = "no"
+	if n := CountErrors(Verify(&restricted, false)); n == 0 {
+		t.Fatal("no 且无留痕必须报 error：留痕规则不许被放宽")
+	}
+	// 反例二：占位值必须被拒
+	placeholder := *rec
+	placeholder.License.AcceptedBy = "unset"
+	placeholder.License.AcceptedAt = "2026-09-12T00:00:00Z"
+	if n := CountErrors(Verify(&placeholder, false)); n == 0 {
+		t.Fatal("占位留痕必须报 error：不许给门禁开洞")
 	}
 }
 
@@ -295,7 +291,7 @@ func TestProbeRecordHasNoPlaceholderLicenseFields(t *testing.T) {
 	}
 }
 
-// 生成的 Record 形态正确；许可留痕冲突如实暴露（批 3：占位值已废除）。
+// 生成的 Record 形态正确；许可留痕按新规则放行（unknown 允许空，待修补 #21）。
 func TestProbeGGUFRecordExposesLicenseTraceConflict(t *testing.T) {
 	p := writeTestGGUF(t, "", "TestModel-8B-Q4_K_M.gguf")
 	rec, rep, err := Probe(ProbeOptions{Target: p, Now: func() time.Time { return time.Unix(0, 0).UTC() }})
@@ -323,7 +319,7 @@ func TestProbeGGUFRecordExposesLicenseTraceConflict(t *testing.T) {
 	if got := rec.EngineRecipes["llama.cpp"].ChatTemplate; got != "from_gguf" {
 		t.Fatalf("EngineRecipe.chat_template 应为 from_gguf，实际 %q", got)
 	}
-	assertLicenseTraceConflict(t, rec)
+	assertLicenseTracePolicy(t, rec)
 
 	// 同一内容换个文件名再探一次：digest 必须不变（硬规则回归）
 	q := filepath.Join(t.TempDir(), "renamed-entirely.gguf")
@@ -340,7 +336,7 @@ func TestProbeGGUFRecordExposesLicenseTraceConflict(t *testing.T) {
 	}
 }
 
-// 端点探测（无本地文件）：记录形态完整，许可留痕冲突同样如实暴露。
+// 端点探测（无本地文件）：记录形态完整，许可留痕按新规则放行。
 func TestProbeEndpointRecordExposesLicenseTraceConflict(t *testing.T) {
 	srv := fakeEngine(t, "image input is not supported by this model")
 	rec, rep, err := Probe(ProbeOptions{Target: srv.URL, Timeout: 5 * time.Second})
@@ -350,7 +346,7 @@ func TestProbeEndpointRecordExposesLicenseTraceConflict(t *testing.T) {
 	if len(rec.Files) != 1 || rec.Files[0].Role != "endpoint" {
 		t.Fatalf("端点探测无本地文件时应写一条占位建材料：%+v", rec.Files)
 	}
-	assertLicenseTraceConflict(t, rec)
+	assertLicenseTracePolicy(t, rec)
 	// 视觉能力必须 false（假端点 400）
 	if hasCap(rec.Capabilities, "vision") {
 		t.Fatal("假端点对 image 返回 400，vision 必须为 false")
