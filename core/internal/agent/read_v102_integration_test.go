@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/testutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,6 +64,7 @@ func buildMinimalDocx(t *testing.T, path, text string) {
 }
 
 func TestReadExtractPDF(t *testing.T) {
+	testutil.RequireTool(t, "pdftotext") // 走公共抽取链，正文无字面量，按测试意图补
 	dir := filepath.Join("/tmp", fmt.Sprintf("zerg-read-pdf-%d", time.Now().UnixNano()))
 	os.MkdirAll(dir, 0o755)
 	defer os.RemoveAll(dir)
@@ -81,6 +83,7 @@ func TestReadExtractPDF(t *testing.T) {
 }
 
 func TestReadExtractDocxRtfHtml(t *testing.T) {
+	testutil.RequireDarwinTool(t, "textutil")
 	dir := filepath.Join("/tmp", fmt.Sprintf("zerg-read-office-%d", time.Now().UnixNano()))
 	os.MkdirAll(dir, 0o755)
 	defer os.RemoveAll(dir)
