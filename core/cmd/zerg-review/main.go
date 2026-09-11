@@ -18,7 +18,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Println("用法: zerg-review <workdir> <issue-id|list> [approve|reject] [-repo <repoDir>]")
+		fmt.Println("usage: zerg-review <workdir> <issue-id|list> [approve|reject] [-repo <repoDir>]")
 		os.Exit(1)
 	}
 	workDir := os.Args[1]
@@ -38,7 +38,7 @@ func main() {
 	}
 
 	if len(os.Args) < 4 {
-		fmt.Println("需要 approve 或 reject")
+		fmt.Println("approve or reject expected")
 		os.Exit(1)
 	}
 	action := os.Args[3]
@@ -46,7 +46,7 @@ func main() {
 	issuePath := filepath.Join(workDir, "docs", "issues", issueID+".md")
 	content, err := os.ReadFile(issuePath)
 	if err != nil {
-		fmt.Printf("❌ 读 issue 失败: %v\n", err)
+		fmt.Printf("❌ failed to read issue: %v\n", err)
 		os.Exit(1)
 	}
 	text := string(content)
@@ -55,7 +55,7 @@ func main() {
 	branch := extractBranch(text)
 	status := extractStatus(text)
 	if status != agent.StatusWaitReview {
-		fmt.Printf("⚠️ issue 状态=%s（需要 waiting_review）\n", status)
+		fmt.Printf("⚠️ issue status=%s (waiting_review required)\n", status)
 		os.Exit(1)
 	}
 
@@ -66,34 +66,34 @@ func main() {
 	case "approve":
 		// merge 分支回 main（分支不存在则报错——不标 done）
 		if branch == "" {
-			fmt.Printf("❌ issue 无分支字段（无法合并）——请检查任务是否开发模式\n")
+			fmt.Printf("❌ issue has no branch field (cannot merge) — check whether the task is in dev mode\n")
 			os.Exit(1)
 		}
 		if err := mergeBranch(repoPath, branch, issueID); err != nil {
-			fmt.Printf("❌ 合并失败: %v（请检查分支 %s 是否存在）\n", err, branch)
+			fmt.Printf("❌ merge failed: %v (check whether branch %s exists)\n", err, branch)
 			os.Exit(1)
 		}
 		// issue → done
 		newContent, err := agent.TransitionIssue(text, agent.StatusWaitReview, agent.StatusDone)
 		if err != nil {
-			fmt.Printf("❌ 标记 done 失败: %v\n", err)
+			fmt.Printf("❌ failed to mark done: %v\n", err)
 			os.Exit(1)
 		}
 		os.WriteFile(issuePath, []byte(newContent), 0o644)
-		fmt.Printf("✅ 已确认合并: %s → main（issue done）\n", issueID)
+		fmt.Printf("✅ merge confirmed: %s → main (issue done)\n", issueID)
 	case "reject":
 		if branch != "" {
 			discardBranch(repoPath, branch)
 		}
 		newContent, err := agent.TransitionIssue(text, agent.StatusWaitReview, agent.StatusRetry)
 		if err != nil {
-			fmt.Printf("❌ 标记 retry 失败: %v\n", err)
+			fmt.Printf("❌ failed to mark retry: %v\n", err)
 			os.Exit(1)
 		}
 		os.WriteFile(issuePath, []byte(newContent), 0o644)
-		fmt.Printf("❌ 已拒绝: %s（分支丢弃——issue retry）\n", issueID)
+		fmt.Printf("❌ rejected: %s (branch discarded — issue retry)\n", issueID)
 	default:
-		fmt.Println("未知动作（approve/reject）")
+		fmt.Println("unknown action (approve/reject)")
 		os.Exit(1)
 	}
 }
@@ -101,7 +101,7 @@ func main() {
 func listWaiting(workDir string) {
 	dir := filepath.Join(workDir, "docs", "issues")
 	entries, _ := os.ReadDir(dir)
-	fmt.Println("📋 等待脑确认（waiting_review）:")
+	fmt.Println("📋 awaiting brain approval (waiting_review):")
 	found := false
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
@@ -116,7 +116,7 @@ func listWaiting(workDir string) {
 		}
 	}
 	if !found {
-		fmt.Println("  （无待确认任务）")
+		fmt.Println("  (no tasks awaiting approval)")
 	}
 }
 
@@ -163,7 +163,7 @@ func discardBranch(repoPath, branch string) {
 func runShell(cmd string) error {
 	out, err := runCmd(cmd)
 	if err != nil {
-		return fmt.Errorf("%s（输出: %s）", err.Error(), out)
+		return fmt.Errorf("%s (output: %s)", err.Error(), out)
 	}
 	return nil
 }
