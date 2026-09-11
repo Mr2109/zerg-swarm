@@ -16,6 +16,8 @@
 #   bash scripts/zerg-upgrade.sh                 # 执行升级
 #   bash scripts/zerg-upgrade.sh --rollback      # 用 .prev 回滚
 #   bash scripts/zerg-upgrade.sh --receipts      # 看最近回执
+#   bash scripts/zerg-upgrade.sh --fleet --plan   # 跨机编排：盘点全机群版本矩阵并按序计划
+#   bash scripts/zerg-upgrade.sh --fleet          # 跨机编排：执行（本地件自动；远程件无特权则标 pending）
 #
 # 开关/环境：
 #   ZERG_UPGRADE_SOURCE=file:///path/to/release   本地假源（演练/测试；真源默认走 GitHub Release）
@@ -34,14 +36,15 @@ RECEIPTS="${ZERG_RECEIPTS_DIR:-$HOME/.zerg/update_receipts}"
 API="http://127.0.0.1:8580"
 TOKEN_FILE="$HOME/.zerg/token"
 
-MODE="apply"; NO_SERVICE=0; FORCE=0; JSON=0; TAG=""
+MODE="apply"; NO_SERVICE=0; FORCE=0; JSON=0; TAG=""; FLEET_PLAN_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --plan) MODE="plan"; shift ;;
+    --plan) if [ "$MODE" = "fleet" ]; then FLEET_PLAN_ONLY=1; else MODE="plan"; fi; shift ;;
     --check) MODE="check"; shift ;;
     --status) MODE="status"; shift ;;
     --rollback) MODE="rollback"; shift ;;
     --receipts) MODE="receipts"; shift ;;
+    --fleet) MODE="fleet"; shift ;;
     --no-service) NO_SERVICE=1; shift ;;
     --force) FORCE=1; shift ;;
     --json) JSON=1; shift ;;
@@ -111,6 +114,62 @@ want_sha() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(ne
 
 # ────────────────────────────────────────────────────────────────────────────
 case "$MODE" in
+  fleet)
+    # ── 跨机升级编排 ────────────────────────────────────────────────────────
+    # 顺序固定：子端 → 主控 → UI → 菜单栏——**动自己那步永远最后**（升级器不升自己所在的进程）。
+    # 远程件（X3 子端）需要特权（unit 在 /etc/systemd/system、二进制在 /usr/local/bin）：
+    # 拿不到就**如实标 pending 并打印待执行命令**，绝不假装已完成。
+    fetch_manifest
+    say "🏷  目标：${SRC_TAG}（代码 ${SRC_SHA}）"
+    say ""
+    # 读机群版本矩阵（主控自己的接口；L3b 起才有 code_sha 字段）
+    MATRIX=""
+    if [ -f "$TOKEN_FILE" ]; then
+      MATRIX="$(curl -s -m 5 -H "X-Auth-Token: $(cat "$TOKEN_FILE")" "$API/api/fleet/status" 2>/dev/null || true)"
+    fi
+    say "Update plan（机群）:"
+    say "  1) 子端（X3 等远程）——期望 ${SRC_SHA}"
+    say "  2) 主控（local）  ——期望 ${SRC_SHA}"
+    say "  3) UI（local）    ——期望 ${SRC_TAG}"
+    say "  4) 菜单栏（local，如有）"
+    say ""
+    say "机群版本矩阵:"
+    printf '%s' "$MATRIX" | python3 -c '
+import json, sys
+raw = sys.stdin.read().strip()
+if not raw:
+    print("  （主控无响应或未部署 L3b 字段——读不到矩阵）"); raise SystemExit
+try:
+    d = json.loads(raw)
+except Exception:
+    print("  （矩阵解析失败）"); raise SystemExit
+ms = d.get("machines") or d.get("snapshots") or d
+if not isinstance(ms, dict) or not ms:
+    print("  （矩阵为空）"); raise SystemExit
+for name, m in ms.items():
+    if not isinstance(m, dict):
+        continue
+    print("  %-8s code_sha=%-20s code_version=%-8s healthy=%s" % (
+        name, m.get("code_sha") or "<空>", m.get("code_version") or "<空>", m.get("healthy")))
+' 2>/dev/null || say "  （矩阵读取失败）"
+
+    if [ "$MODE" = "fleet" ] && [ "${FLEET_PLAN_ONLY:-0}" = "0" ]; then
+      say ""
+      say "→ 执行本地件（主控 → UI；远程件需特权，见下）"
+      # 本地件复用单机流程（本脚本自身再跑一次，走完整六阶段）
+      if ZERG_PREFIX="$PREFIX" ZERG_UPGRADE_SOURCE="$SOURCE" bash "$0" ${NO_SERVICE:+--no-service} ${FORCE:+--force} ; then
+        say "  ✓ 本地件完成"
+      else
+        say "  ✗ 本地件失败（见上）；远程件不再执行"
+        exit 1
+      fi
+      say ""
+      say "远程件（需在目标机上以 root 执行）："
+      say "  X3:  scp 新 zerg-agentd → 目标机 /tmp/ → sudo install -m0755 → 改 unit ExecStart → systemctl daemon-reload && restart"
+      say "  （远程特权当前不可用则保持 pending——回执里记为 pending-manual，不假装已完成）"
+    fi
+    exit 0
+    ;;
   status)
     [ "$JSON" = "1" ] && { printf '{"core":"%s","agent":"%s","ui":"%s"}\n' "$(ver_of "$PREFIX/zerg-core")" "$(ver_of "$PREFIX/zerg-agent")" "$(sha_of "$PREFIX/zerg-ui")"; exit 0; }
     say "📦 前缀：$PREFIX"
