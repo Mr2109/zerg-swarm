@@ -60,6 +60,13 @@ echo "→ 主控 zerg-core"
 echo "→ 子端 zerg-agent"
 (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg-agent" ./cmd/zerg-agent)
 
+# 子端守护进程（agent 模块）：**与 CLI 区分命名**——带 d = daemon/常驻（ps 里一眼看出在跑服务还是任务）
+# 注意：它暂不进 release 制品矩阵（矩阵 5 件是发布契约，要不要加是单独的决定），故始终产出到 bin/。
+echo "→ 守护进程 zerg-agentd（agent 模块，注入 agent 自己的 version 包）"
+(cd agent && GOFLAGS=-mod=mod GOSUMDB=off go build -trimpath -buildvcs=false \
+   -ldflags "-s -w -X github.com/Mr2109/zerg-swarm/agent/internal/version.Version=${VERSION} -X github.com/Mr2109/zerg-swarm/agent/internal/version.Commit=${SHA} -X github.com/Mr2109/zerg-swarm/agent/internal/version.BuildTime=${BUILD_TIME}" \
+   -o "${REPO_ROOT}/bin/zerg-agentd" ./cmd/zerg-agentd)
+
 if [ "$BUILD_UI" = "1" ]; then
   echo "→ UI zerg-ui（cargo release）"
   (cd ui && cargo build --release -p zerg-ui)
@@ -67,7 +74,7 @@ if [ "$BUILD_UI" = "1" ]; then
 fi
 
 if [ "$SIGN" = "1" ] && command -v codesign >/dev/null 2>&1; then
-  for b in "$OUT"/zerg-core "$OUT"/zerg-agent "$OUT"/zerg-ui; do
+  for b in "$OUT"/zerg-core "$OUT"/zerg-agent "$OUT"/zerg-ui "$REPO_ROOT"/bin/zerg-agentd; do
     [ -f "$b" ] || continue
     codesign -s - --force "$b" >/dev/null 2>&1 && echo "   🔏 已重签名 $(basename "$b")"
   done
