@@ -297,10 +297,10 @@ func TestTruncate_Short(t *testing.T) {
 func TestTruncate_Long(t *testing.T) {
 	long := strings.Repeat("a", 300)
 	got := truncate(long, 100)
-	if !strings.HasSuffix(got, "（输出过长已截断——共 300 字符）") {
+	if !strings.Contains(got, "...(output truncated — 300 chars total)") {
 		t.Errorf("expected truncation suffix, got %q", got)
 	}
-	// 截断输出 = 限长 + 后缀（后缀本身约 51 字符）——上限放宽到 limit+60
+	// truncated output = prefix + suffix (suffix itself ~38 chars) — relaxed to limit+60
 	if len(got) > 100+60 {
 		t.Errorf("truncated output too long: %d chars", len(got))
 	}

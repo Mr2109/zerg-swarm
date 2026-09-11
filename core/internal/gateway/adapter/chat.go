@@ -116,12 +116,12 @@ func sanitizePattern(node map[string]interface{}) {
 func (a *Chat) TransformResponse(w http.ResponseWriter, resp *http.Response, req *http.Request, body []byte) {
 	hasTools := ContainsTools(body)
 	isStream := IsStreamRequest(body)
-	log.Printf("[adapter:chat] 响应 status=%d ct=%s hasTools=%v isStream=%v", resp.StatusCode, resp.Header.Get("Content-Type"), hasTools, isStream)
+	log.Printf("[adapter:chat] response status=%d ct=%s hasTools=%v isStream=%v", resp.StatusCode, resp.Header.Get("Content-Type"), hasTools, isStream)
 
 	if resp.StatusCode >= 400 {
 		// 后端错误：透传（龙虾等客户端按自己格式解析）
 		errBody, _ := io.ReadAll(resp.Body)
-		log.Printf("[adapter:chat] 后端错误 %d: %s", resp.StatusCode, string(errBody)[:min(400, len(errBody))])
+		log.Printf("[adapter:chat] backend error %d: %s", resp.StatusCode, string(errBody)[:min(400, len(errBody))])
 		w.WriteHeader(resp.StatusCode)
 		w.Write(errBody)
 		return
