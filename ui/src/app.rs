@@ -468,11 +468,12 @@ impl ZergApp {
             clip_len -= 1;
         }
         let clip = &text[..clip_len];
+        // D3(2026-09-11): 提示词随界面语言（原为硬编码中文——英文界面也发中文提示）
         let prompt = match action {
-            "summarize" => format!("请用中文总结以下 Markdown 文档的核心内容，输出简洁要点列表：\n\n{}", clip),
-            "continue" => format!("请用中文续写以下 Markdown 文档，保持原有风格，直接输出续写内容（不要重复已有内容）：\n\n{}", clip),
-            "translate" => format!("请将以下 Markdown 文档翻译成中文，保持 Markdown 格式（标题/列表/代码块原样）：\n\n{}", clip),
-            "polish" => format!("请润色以下 Markdown 文档，改善表达但不改变原意和结构，输出润色后的完整文档：\n\n{}", clip),
+            "summarize" => t!("ai.prompt_summarize", clip = clip).to_string(),
+            "continue" => t!("ai.prompt_continue", clip = clip).to_string(),
+            "translate" => t!("ai.prompt_translate", clip = clip).to_string(),
+            "polish" => t!("ai.prompt_polish", clip = clip).to_string(),
             _ => return,
         };
         self.ai_busy = true;
