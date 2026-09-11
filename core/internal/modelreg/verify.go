@@ -14,6 +14,20 @@ type Finding struct {
 	Detail string `json:"detail"`
 }
 
+// placeholderLicenseTrace 是留痕（accepted_by / accepted_at）的禁用占位词集合（标准 §五）。
+// 这些值看起来像"填过了"，实际什么都没说——留着它就等于给留痕规则开洞。
+// 比较时：两侧空白先 trim，再转小写。
+var placeholderLicenseTrace = map[string]bool{
+	"unset": true, "pending": true, "tbd": true, "todo": true,
+	"n/a": true, "na": true, "placeholder": true, "unknown": true,
+	"待定": true, "未定": true, "none": true, "null": true, "-": true,
+}
+
+// IsPlaceholderLicenseTrace 判定一个留痕值是否为占位词（大小写不敏感，两侧空白先 trim）。
+func IsPlaceholderLicenseTrace(s string) bool {
+	return placeholderLicenseTrace[strings.ToLower(strings.TrimSpace(s))]
+}
+
 // Verify 按《标准-模型接入与目录贡献》§三–§六 校一条记录。
 // strict=true 时 warn 也算不通过（标准 §十三.1：verify 不过直接拒）。
 func Verify(r *Record, strict bool) []Finding {
@@ -59,9 +73,20 @@ func Verify(r *Record, strict bool) []Finding {
 	} else if !CommercialStates[r.License.Commercial] {
 		errf("license.commercial", "取值越界："+r.License.Commercial)
 	}
-	// §五 留痕：非 yes 必须写接受人/时间
-	if r.License.Commercial != "yes" && (r.License.AcceptedBy == "" || r.License.AcceptedAt == "") {
-		errf("license", "非商用("+r.License.Commercial+")必须留痕：accepted_by / accepted_at 均必填")
+	// §五 留痕规则（待修补 #21 修改后）：
+	//   - no / revenue_gated 是「人明知受限还接受」，必须留名与时间；
+	//   - unknown 是「探测出来本来就没人审过许可」，允许留痕为空（也不加 warn，保持最小改动）。
+	if r.License.Commercial == "no" || r.License.Commercial == "revenue_gated" {
+		if strings.TrimSpace(r.License.AcceptedBy) == "" || strings.TrimSpace(r.License.AcceptedAt) == "" {
+			errf("license", "受限许可("+r.License.Commercial+")必须留痕：accepted_by / accepted_at 均必填")
+		}
+	}
+	// §五 防占位符：对任何 commercial 状态都生效——留痕非空时，值不许是占位词。
+	if v := strings.TrimSpace(r.License.AcceptedBy); v != "" && IsPlaceholderLicenseTrace(v) {
+		errf("license.accepted_by", "留痕必须是真实值，不许占位："+r.License.AcceptedBy)
+	}
+	if v := strings.TrimSpace(r.License.AcceptedAt); v != "" && IsPlaceholderLicenseTrace(v) {
+		errf("license.accepted_at", "留痕必须是真实值，不许占位："+r.License.AcceptedAt)
 	}
 
 	// §四 能力标签与证据规则

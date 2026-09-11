@@ -303,13 +303,12 @@ func cmdProbe(args []string) int {
 		case err == nil:
 			fmt.Fprintf(os.Stderr, "目录里已有同内容记录，未重写：%s（version=%s）\n", res.Path, res.Version)
 		case errors.As(err, &adm):
-			// 门禁如实拒绝（标准 §十二.1「verify 不过直接拒」）。本批不许用占位值凑绿，
-			// 所以探针产物在许可留痕补齐前就是进不去——如实报，不降级（见待修补 #21）。
+			// 门禁如实拒绝（标准 §十二.1「verify 不过直接拒」）：不降级、不写占位值凑绿。
 			fmt.Fprintf(os.Stderr, "✗ 拒绝入目录：%s\n", err)
 			for _, f := range adm.Findings {
 				fmt.Fprintf(os.Stderr, "   [%s] %s：%s\n", f.Level, f.Field, f.Detail)
 			}
-			fmt.Fprintf(os.Stderr, "   （未写入任何文件；补许可证留痕后重跑，见待修补 #21）\n")
+			fmt.Fprintf(os.Stderr, "   （未写入任何文件；按上面每条 error 修好记录后重跑）\n")
 			code = 2
 		case errors.As(err, &conf):
 			fmt.Fprintf(os.Stderr, "✗ %v\n", err)
