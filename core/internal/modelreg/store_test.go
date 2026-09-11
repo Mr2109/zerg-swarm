@@ -464,3 +464,31 @@ func TestStoreRootSelection(t *testing.T) {
 		t.Fatalf("显式 manifests 目录应原样使用：%s", got)
 	}
 }
+
+// 待修补 #24：记录旁的留痕兄弟文件（<version>.trace.json）不是记录，list 必须跳过它，
+// 否则会被当成一条坏记录报 error（CLI list 会因此退 2）。
+func TestStoreListIgnoresTraceSiblings(t *testing.T) {
+	root := t.TempDir()
+	st := NewStore(root)
+	res, err := st.Put(goodRecord("trace-model", "7"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sib := TraceSiblingPath(res.Path)
+	if err := os.WriteFile(sib, []byte(`{"schema":"`+TraceSchemaV1+`","traces":[]}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.List()
+	if err != nil {
+		t.Fatalf("list 不该报错：%v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("list 应只剩记录 1 行（跳过留痕兄弟），实际 %d 行：%+v", len(rows), rows)
+	}
+	if rows[0].Err != "" || rows[0].Errors != 0 {
+		t.Fatalf("记录行不该有 error/Err：%+v", rows[0])
+	}
+	if rows[0].Version != wantVersion("7") {
+		t.Fatalf("应列到记录本行：%+v", rows[0])
+	}
+}

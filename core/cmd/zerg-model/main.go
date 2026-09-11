@@ -290,6 +290,9 @@ func cmdProbe(args []string) int {
 		} else {
 			fmt.Fprintf(os.Stderr, "内容一致，未重写：%s\n", out)
 		}
+		// 待修补 #24：记录正文是确定的（重复跑不重写，changed=false）；易变留痕
+		// （生成时间 / 耗时 / 原始响应片段）另写兄弟文件 <文件>.trace.json。
+		writeTraceSibling(out, rec, rep)
 	}
 
 	code := 0
@@ -317,12 +320,31 @@ func cmdProbe(args []string) int {
 			fmt.Fprintf(os.Stderr, "✗ 写模型目录失败：%v\n", err)
 			code = 3
 		}
+		// 待修补 #24：记录成功入目录后（changed=true 或幂等 changed=false），
+		// 把易变留痕写兄弟文件 <version>.trace.json。被门禁拒绝/冲突时不写留痕。
+		if err == nil {
+			writeTraceSibling(res.Path, rec, rep)
+		}
 	}
 
 	if nErr > 0 {
 		return 2
 	}
 	return code
+}
+
+// writeTraceSibling 把探测留痕（生成时间 / 每项探测器耗时 / 原始响应片段）写成记录旁的
+// 兄弟文件 <version>.trace.json（待修补 #24）。
+//
+// 这些是易变信息，绝不能进记录正文——正文才是内容寻址的锚。留痕本允许随探测波动，
+// 故写失败只告警，不改变记录入库的结论（记录是否 changed / 是否被拒由 Store.Put 定）。
+func writeTraceSibling(recordPath string, rec *modelreg.Record, rep *modelreg.ProbeReport) {
+	p, err := modelreg.WriteProbeTraceSibling(recordPath, rec, rep)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️ 留痕兄弟文件写入失败：%v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "留痕已写：%s\n", p)
 }
 
 // looksLikeDir 判定 --out 给的是目录还是文件（开工方案 §七 批 3 要求
