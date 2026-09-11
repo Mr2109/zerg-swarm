@@ -151,10 +151,10 @@ func checkOneFile(fi *FileIntegrity, name, baseDir string) {
 //   - name 为空 → 不可定位；
 //   - name 是绝对路径 → 直接使用（自带位置）；
 //   - name 是相对路径：
-//     · 给了 --base-dir → <base-dir>/<name>；
-//     · 未给：
-//   - name 自带目录（如 sub/model.gguf）→ 按记录字面量用该相对路径（相对当前工作目录，不猜）；
-//   - name 只有文件名              → 不可定位（提示需要 --base-dir）。
+//       · 给了 --base-dir → <base-dir>/<name>；
+//       · 未给：
+//           - name 自带目录（如 sub/model.gguf）→ 按记录字面量用该相对路径（相对当前工作目录，不猜）；
+//           - name 只有文件名              → 不可定位（提示需要 --base-dir）。
 func resolveIntegrityPath(name, baseDir string) (path string, located bool, why string) {
 	name = strings.TrimSpace(name)
 	if name == "" {
