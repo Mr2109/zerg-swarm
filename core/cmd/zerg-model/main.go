@@ -246,7 +246,7 @@ func cmdProbe(args []string) int {
 		}
 		fmt.Fprintln(os.Stderr, line)
 	}
-	fmt.Fprintf(os.Stderr, "生成记录：id=%s digest=%s files=%d capabilities=%d\n", rec.ID, rec.Digest, len(rec.Files), len(rec.Capabilities))
+	fmt.Fprintf(os.Stderr, "生成记录：id=%s digest=%s files=%d capabilities_snapshot=%d\n", rec.ID, rec.Digest, len(rec.Files), len(rep.Capabilities))
 	fmt.Fprintf(os.Stderr, "自校验：error %d 条，warn %d 条\n", nErr, nWarn)
 	for _, f := range findings {
 		mark := "✗"
@@ -266,13 +266,16 @@ func cmdProbe(args []string) int {
 	}
 
 	if asJSON {
+		// 能力快照内容照旧在 --json 里给（给人看）：能力断言 + 证据 + 端点 + 生成时间。
+		// 它不再出现在 record 正文里（正文只装身份），改由这里与兄弟文件承载。
 		payload, _ := json.MarshalIndent(struct {
-			Record     *modelreg.Record   `json:"record"`
-			ProbeTrace []modelreg.Trace   `json:"probe_trace"`
-			Findings   []modelreg.Finding `json:"findings"`
-			Errors     int                `json:"errors"`
-			Warnings   int                `json:"warnings"`
-		}{rec, rep.Traces, findings, nErr, nWarn}, "", "  ")
+			Record             *modelreg.Record                    `json:"record"`
+			CapabilitySnapshot modelreg.CapabilitySnapshotArtifact `json:"capability_snapshot"`
+			ProbeTrace         []modelreg.Trace                    `json:"probe_trace"`
+			Findings           []modelreg.Finding                  `json:"findings"`
+			Errors             int                                 `json:"errors"`
+			Warnings           int                                 `json:"warnings"`
+		}{rec, modelreg.NewCapabilitySnapshot(rec, rep), rep.Traces, findings, nErr, nWarn}, "", "  ")
 		fmt.Println(string(payload))
 	} else if out == "" && storeDir == "" {
 		// 默认只打印，不写盘
@@ -293,6 +296,9 @@ func cmdProbe(args []string) int {
 		// 待修补 #24：记录正文是确定的（重复跑不重写，changed=false）；易变留痕
 		// （生成时间 / 耗时 / 原始响应片段）另写兄弟文件 <文件>.trace.json。
 		writeTraceSibling(out, rec, rep)
+		// 能力快照（能力断言 + 证据）另写兄弟文件 <文件>.capabilities.json——
+		// 正文只装身份，能力不进正文，避免"先登记、后补能力实测"撞防覆盖保护。
+		writeCapabilitySibling(out, rec, rep)
 	}
 
 	code := 0
@@ -324,6 +330,7 @@ func cmdProbe(args []string) int {
 		// 把易变留痕写兄弟文件 <version>.trace.json。被门禁拒绝/冲突时不写留痕。
 		if err == nil {
 			writeTraceSibling(res.Path, rec, rep)
+			writeCapabilitySibling(res.Path, rec, rep)
 		}
 	}
 
@@ -345,6 +352,20 @@ func writeTraceSibling(recordPath string, rec *modelreg.Record, rep *modelreg.Pr
 		return
 	}
 	fmt.Fprintf(os.Stderr, "留痕已写：%s\n", p)
+}
+
+// writeCapabilitySibling 把能力快照（能力断言 + 证据 + 生成时间 + 端点）写成记录旁的
+// 兄弟文件 <version>.capabilities.json。
+//
+// 与留痕兄弟文件同理：能力快照是"它现在能干什么"，**允许**随探测刷新（端点/引擎一变就该更新），
+// 故写失败只告警，不改变记录入库的结论；记录正文一字未动（防覆盖保护不受影响）。
+func writeCapabilitySibling(recordPath string, rec *modelreg.Record, rep *modelreg.ProbeReport) {
+	p, err := modelreg.WriteCapabilitySnapshot(recordPath, rec, rep)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️ capability snapshot write failed: %v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "capability snapshot written: %s\n", p)
 }
 
 // looksLikeDir 判定 --out 给的是目录还是文件（开工方案 §七 批 3 要求
