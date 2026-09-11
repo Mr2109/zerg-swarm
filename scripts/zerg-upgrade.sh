@@ -166,15 +166,54 @@ for name, m in ms.items():
         exit 1
       fi
       say ""
-      say "远程件（需在目标机上以 root 执行）："
-      say "  X3:  scp 新 zerg-agentd → 目标机 /tmp/ → sudo install -m0755 → 改 unit ExecStart → systemctl daemon-reload && restart"
-      say "  （远程特权当前不可用则保持 pending——回执里记为 pending-manual，不假装已完成）"
+      # ── 远程件：子端守护进程（root 免密可用则真换装，否则如实 pending）─────────
+      # 远程件不在 release 制品矩阵里（矩阵 5 件是发布契约）→ 现编现传：
+      # 本地交叉编 linux/amd64 的 zerg-agentd（带身份），scp 上去，install 覆盖，重启 unit。
+      REMOTE_STATUS="ok"
+      REMOTE_DETAIL=""
+      for spec in ${ZERG_REMOTE_AGENTS:-x3=<worker-host>}; do
+        name="${spec%%=*}"; rhost="${spec##*=}"
+        if ! ssh -o BatchMode=yes -o ConnectTimeout=6 "root@$rhost" 'id -u' >/dev/null 2>&1; then
+          say "  ⏸ 远程 $name($rhost)：root 免密不可用 → pending-manual（不假装完成）"
+          REMOTE_STATUS="pending-manual"
+          REMOTE_DETAIL="$REMOTE_DETAIL $name:no-root"
+          continue
+        fi
+        say "  ▶ 远程 $name($rhost)：现编 linux/amd64 守护进程并换装"
+        if ! (cd "$REPO_ROOT/agent" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-mod=mod GOSUMDB=off \
+              go build -trimpath -buildvcs=false \
+              -ldflags "-s -w -X github.com/Mr2109/zerg-swarm/agent/internal/version.Version=${SRC_VER} -X github.com/Mr2109/zerg-swarm/agent/internal/version.Commit=${SRC_SHA} -X github.com/Mr2109/zerg-swarm/agent/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              -o "/tmp/zerg-agentd-${SRC_SHA}-linux-amd64" ./cmd/zerg-agentd); then
+          say "    ✗ 交叉编译失败"
+          REMOTE_STATUS="failed"; REMOTE_DETAIL="$REMOTE_DETAIL $name:build-fail"
+          continue
+        fi
+        if ! scp -q -o BatchMode=yes "/tmp/zerg-agentd-${SRC_SHA}-linux-amd64" "root@$rhost:/tmp/zerg-agentd.new"; then
+          say "    ✗ 传输失败"
+          REMOTE_STATUS="failed"; REMOTE_DETAIL="$REMOTE_DETAIL $name:scp-fail"
+          continue
+        fi
+        if ssh -o BatchMode=yes -o ConnectTimeout=8 "root@$rhost" \
+             'install -m0755 /tmp/zerg-agentd.new /usr/local/bin/zerg-agentd && rm -f /tmp/zerg-agentd.new && systemctl restart x3-agent && sleep 5 && systemctl is-active x3-agent' >/dev/null 2>&1; then
+          # 回读：目标机上二进制自报的身份必须等于目标提交（不靠"命令没报错"当证据）
+          got="$(ssh -o BatchMode=yes -o ConnectTimeout=6 "root@$rhost" '/usr/local/bin/zerg-agentd --version' 2>/dev/null | head -1)"
+          case "$got" in
+            *"$SRC_SHA"*) say "    ✓ $name 已换装并重启：$got" ;;
+            *) say "    ⚠️ $name 换装了但身份不符：$got"; REMOTE_STATUS="failed"; REMOTE_DETAIL="$REMOTE_DETAIL $name:identity-mismatch" ;;
+          esac
+        else
+          say "    ✗ $name 换装或重启失败（旧件仍在 /usr/local/bin/zerg-agent.prev-*）"
+          REMOTE_STATUS="failed"; REMOTE_DETAIL="$REMOTE_DETAIL $name:install-fail"
+        fi
+      done
+      say "  远程件结果：${REMOTE_STATUS}${REMOTE_DETAIL}"
 
       # 机群级回执（C12 设计意图：每台一份 + 汇总一份，pending 也如实记录）
       mkdir -p "$RECEIPTS"
       FTS="$(date -u +%Y%m%dT%H%M%SZ)"
       FRC="$RECEIPTS/fleet-$FTS.json"
       printf '%s' "$MATRIX" > /tmp/.zerg-matrix.json 2>/dev/null || true
+      ZERG_REMOTE_RESULT="$REMOTE_STATUS" ZERG_REMOTE_DETAIL="$REMOTE_DETAIL" \
       python3 - "$FRC" "$FTS" "$SRC_TAG" "$SRC_SHA" "${PREFIX}" /tmp/.zerg-matrix.json <<'PY'
 import json, sys
 rc, ts, tag, sha, prefix, matrix_path = sys.argv[1:7]
@@ -191,8 +230,9 @@ json.dump({
     "matrix_before": machines,
     "order": ["agent(remote)", "core(local)", "ui(local)", "menubar(local)"],
     "local": "ok",
-    "remote": [{"machine": "x3", "status": "pending-manual",
-                "reason": "unit/binary 需目标机 root；特权不可用时保持 pending"}],
+    "remote": [{"machine": "x3",
+                "status": __import__("os").environ.get("ZERG_REMOTE_RESULT", "unknown"),
+                "detail": __import__("os").environ.get("ZERG_REMOTE_DETAIL", "")}],
 }, open(rc, "w"), ensure_ascii=False, indent=2)
 print("  📝 机群回执:", rc)
 PY
