@@ -28,3 +28,21 @@ func TestHeartbeatIdentityRoundTrip(t *testing.T) {
 		t.Fatalf("JSON 键名不符（线上契约）: %v", back)
 	}
 }
+
+// 心跳带上身份 -> 主控快照必须记住（版本矩阵据此判断混版机群）。
+func TestReceiveHeartbeatKeepsIdentity(t *testing.T) {
+	s := NewStore()
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "x3", Healthy: true, CodeVersion: "2.5.9", CodeSHA: "abc1234"})
+	snap := s.GetSnapshot("x3")
+	if snap == nil {
+		t.Fatal("快照未创建")
+	}
+	if snap.CodeVersion != "2.5.9" || snap.CodeSHA != "abc1234" {
+		t.Fatalf("身份未落库: version=%q sha=%q", snap.CodeVersion, snap.CodeSHA)
+	}
+	// 升级后再报（同机器）-> 必须覆盖为新身份，否则矩阵永远滞后
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "x3", Healthy: true, CodeVersion: "2.6.0", CodeSHA: "def5678"})
+	if got := s.GetSnapshot("x3"); got.CodeSHA != "def5678" || got.CodeVersion != "2.6.0" {
+		t.Fatalf("身份未随心跳更新: version=%q sha=%q", got.CodeVersion, got.CodeSHA)
+	}
+}
