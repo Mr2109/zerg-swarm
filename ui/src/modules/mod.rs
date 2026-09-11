@@ -10,6 +10,7 @@ pub mod zerg_module;
 pub mod ferrite; // M3 Ferrite 重写 md 编辑器（Mr2109 2026-08-29）
 pub mod chat; // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块）
 pub mod upgrade; // L2 自动升级页（2026-09-11）
+pub mod model_registry; // 模型登记库页（GET /api/models/registry——列表+卡片+空态）
 pub mod icons; // P3 图标统一封装（iconflow——14 包 34 TTF——MIT）
 
 use eframe::egui;
@@ -80,6 +81,16 @@ pub fn build_registry() -> ModuleRegistry {
         desc_key: "mod.models.desc",
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
+        version: env!("CARGO_PKG_VERSION"),
+    });
+    // 模型登记库（模型库——登记表：许可/能力/建材/校验；数据源 GET /api/models/registry）
+    // 与上面的「模型库」（机群已加载模型管理）区分：本箱是 ~/.zerg/models 里登记的模型目录。
+    reg.register(ModuleManifest {
+        id: "model-registry",
+        name_key: "mod.model_registry.name",
+        icon: icon_text("package"),
+        desc_key: "mod.model_registry.desc",
+        is_core: false,
         version: env!("CARGO_PKG_VERSION"),
     });
     reg.register(ModuleManifest {
