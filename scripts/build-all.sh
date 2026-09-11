@@ -8,6 +8,7 @@
 #   bash scripts/build-all.sh                    # 产出到 bin/（本机部署用）
 #   bash scripts/build-all.sh --dist             # 产出到 dist/<版本>/（打包发布用，含 sha256）
 #   bash scripts/build-all.sh --no-ui            # 只建 Go 两件（快）
+#   bash scripts/build-all.sh --public          # UI 用 --no-default-features（对齐公开快照形态）
 #   bash scripts/build-all.sh --no-sign          # 跳过 codesign（非 macOS / 调试）
 #
 # 身份注入：
@@ -25,6 +26,7 @@ for arg in "$@"; do
   case "$arg" in
     --dist) DIST=1 ;;
     --no-ui) BUILD_UI=0 ;;
+    --public) PUBLIC=1 ;;   # 本地形态对齐公开快照（关私有默认 feature：示例虫茧等）
     --no-sign) SIGN=0 ;;
     *) echo "未知参数: $arg" >&2; exit 64 ;;
   esac
@@ -69,7 +71,13 @@ echo "→ 守护进程 zerg-agentd（agent 模块，注入 agent 自己的 versi
 
 if [ "$BUILD_UI" = "1" ]; then
   echo "→ UI zerg-ui（cargo release）"
-  (cd ui && cargo build --release -p zerg-ui)
+  # 体积对齐(2026-09-11)：公开快照会解除 ui/Cargo.toml 的 zerg-roundtable 跨仓依赖（私有默认开着）
+  # 实测同一命令/同一 profile 下 __text：私有 32.1MB vs 公开 10.7MB —— 差异来自源码形态，不是构建旗标
+  if [ "${PUBLIC:-0}" = "1" ]; then
+    (cd ui && cargo build --release -p zerg-ui --no-default-features)
+  else
+    (cd ui && cargo build --release -p zerg-ui)
+  fi
   cp -p ui/target/release/zerg-ui "$OUT/zerg-ui"
 fi
 
