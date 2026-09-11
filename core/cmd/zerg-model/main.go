@@ -2,7 +2,7 @@
 //
 // 用法：
 //
-//	zerg-model verify <record.json> [--strict] [--json]
+//	zerg-model verify <record.json> [--strict] [--json] [--integrity] [--base-dir <目录>]
 //	zerg-model probe  <路径|端点URL> [--out record.json] [--json] [--endpoint URL] [--engine llama.cpp|vllm|ollama]
 //
 // 退出码：0 成功 / 1 探测失败 / 2 记录不合标准 / 3 参数或环境错误 / 4 引擎不可达
@@ -21,7 +21,9 @@ import (
 
 func usage() {
 	fmt.Println("用法:")
-	fmt.Println("  zerg-model verify <record.json> [--strict] [--json]   # 校验一条模型登记记录是否符合标准")
+	fmt.Println("  zerg-model verify <record.json> [--strict] [--json] [--integrity] [--base-dir <目录>]")
+	fmt.Println("                                                          # 校验一条模型登记记录是否符合标准")
+	fmt.Println("                                                          # --integrity 额外核对 files[] 与磁盘文件是否一致（流式 sha256 + 大小比对）")
 	fmt.Println("  zerg-model probe  <路径|端点URL> [--out <record.json>|--store] [--json]")
 	fmt.Println("                    [--endpoint <URL>] [--engine llama.cpp|vllm|ollama] [--id <id>] [--timeout 60s]")
 	fmt.Println("                                                          # 探测模型并生成登记记录（默认只打印，不写盘）")
@@ -54,22 +56,47 @@ func main() {
 }
 
 func cmdVerify(args []string) int {
-	strict, asJSON, path := false, false, ""
-	for _, a := range args {
-		switch a {
-		case "--strict":
+	strict, asJSON, integrity := false, false, false
+	path, baseDir := "", ""
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--strict":
 			strict = true
-		case "--json":
+		case a == "--json":
 			asJSON = true
-		default:
-			if path == "" {
-				path = a
+		case a == "--integrity":
+			integrity = true
+		case a == "--base-dir":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "--base-dir 需要一个目录值")
+				return 3
 			}
+			i++
+			baseDir = args[i]
+		case strings.HasPrefix(a, "--base-dir="):
+			baseDir = strings.TrimPrefix(a, "--base-dir=")
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintf(os.Stderr, "verify 未知参数: %s\n", a)
+			return 3
+		default:
+			if path != "" {
+				fmt.Fprintf(os.Stderr, "verify 只接受一个记录文件路径，多余的：%s\n", a)
+				return 3
+			}
+			path = a
 		}
 	}
 	if path == "" {
 		fmt.Fprintln(os.Stderr, "verify 需要一个记录文件路径")
 		return 3
+	}
+	// --base-dir 给错（不是目录）属参数/环境错误 → exit 3（不静默降级成逐文件 unverifiable）。
+	if baseDir != "" {
+		if fi, err := os.Stat(baseDir); err != nil || !fi.IsDir() {
+			fmt.Fprintf(os.Stderr, "--base-dir 不是可用目录：%s\n", baseDir)
+			return 3
+		}
 	}
 	rec, err := modelreg.Load(path)
 	if err != nil {
@@ -78,18 +105,31 @@ func cmdVerify(args []string) int {
 	}
 	findings := modelreg.Verify(rec, strict)
 	nErr := modelreg.CountErrors(findings)
+
+	// --integrity：额外核对 files[] 每个文件是否真的与记录一致（流式 sha256 + 大小比对）。
+	var irep *modelreg.IntegrityReport
+	if integrity {
+		r := modelreg.VerifyIntegrity(rec, baseDir)
+		irep = &r
+	}
+	integrityFailed := irep != nil && irep.HasFailures(strict)
+
 	if asJSON {
-		out, _ := json.MarshalIndent(struct {
-			Path     string             `json:"path"`
-			Schema   string             `json:"schema"`
-			Errors   int                `json:"errors"`
-			Findings []modelreg.Finding `json:"findings"`
-		}{path, rec.Schema, nErr, findings}, "", "  ")
+		payload := struct {
+			Path      string                    `json:"path"`
+			Schema    string                    `json:"schema"`
+			Errors    int                       `json:"errors"`
+			Findings  []modelreg.Finding        `json:"findings"`
+			Integrity *modelreg.IntegrityReport `json:"integrity,omitempty"`
+		}{path, rec.Schema, nErr, findings, irep}
+		out, _ := json.MarshalIndent(payload, "", "  ")
 		fmt.Println(string(out))
 	} else {
 		if len(findings) == 0 {
 			fmt.Printf("✅ 合格：%s（schema=%s）\n", path, rec.Schema)
-			fmt.Println("   注意：本命令只校验【记录格式】，不校验权重文件本身是否可信（--integrity 属后续批，见待修补 #13）")
+			if irep == nil {
+				fmt.Println("   注意：本命令只校验【记录格式】，不校验权重文件本身是否可信（加 --integrity 可一并核对 files[] 与磁盘文件是否一致）")
+			}
 		} else {
 			for _, f := range findings {
 				mark := "✗"
@@ -100,11 +140,60 @@ func cmdVerify(args []string) int {
 			}
 			fmt.Printf("—— error %d 条，warn %d 条\n", nErr, len(findings)-nErr)
 		}
+		if irep != nil {
+			printIntegrity(*irep, strict)
+		}
 	}
-	if nErr > 0 || (strict && len(findings) > 0) {
+	// 退出码沿用：格式有 error（或 strict 下任何 finding）→ 2；完整性任一不符 → 2（同属“不可信”）。
+	if nErr > 0 || (strict && len(findings) > 0) || integrityFailed {
 		return 2
 	}
 	return 0
+}
+
+// printIntegrity 打印逐文件完整性结论 + 汇总一行（--integrity 的可读输出）。
+func printIntegrity(rep modelreg.IntegrityReport, strict bool) {
+	fmt.Println("完整性校验（--integrity）：")
+	if rep.BaseDir != "" {
+		fmt.Printf("  基准目录：%s\n", rep.BaseDir)
+	}
+	mark := map[string]string{
+		modelreg.IntegrityOK:           "✓",
+		modelreg.IntegritySizeMismatch: "✗",
+		modelreg.IntegritySHAMismatch:  "✗",
+		modelreg.IntegrityMissing:      "✗",
+		modelreg.IntegrityUnverifiable: "⚠️",
+	}
+	for _, f := range rep.Files {
+		line := fmt.Sprintf("  %s [%s] role=%s name=%s", mark[f.Status], f.Status, f.Role, f.Name)
+		if f.Path != "" {
+			line += " path=" + f.Path
+		}
+		if f.SizeChecked {
+			line += fmt.Sprintf(" size=%d/%d", f.SizeRecorded, f.SizeActual)
+		} else {
+			line += fmt.Sprintf(" size=%d", f.SizeRecorded)
+		}
+		if f.Status == modelreg.IntegritySHAMismatch {
+			line += " sha期望=" + shortHash(f.SHAExpected) + " 实际=" + shortHash(f.SHAComputed)
+		}
+		if f.Note != "" {
+			line += " —— " + f.Note
+		}
+		fmt.Println(line)
+	}
+	fmt.Printf("  —— integrity: ok %d 条，不符 %d 条，不可定位 %d 条\n", rep.OK, rep.Problems, rep.Unverifiable)
+	if strict && rep.Unverifiable > 0 {
+		fmt.Println("   （--strict：不可定位视为不通过）")
+	}
+}
+
+// shortHash 截短 sha256 便于打印（前 12 位 + 省略号）。
+func shortHash(s string) string {
+	if len(s) > 12 {
+		return s[:12] + "…"
+	}
+	return s
 }
 
 func cmdProbe(args []string) int {
