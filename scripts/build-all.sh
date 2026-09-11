@@ -73,6 +73,17 @@ if [ "$SIGN" = "1" ] && command -v codesign >/dev/null 2>&1; then
   done
 fi
 
+# 构建身份落盘（打包/升级器读它——不靠二进制自报，因为交叉编译的 linux 件跑不起来）
+cat > "$OUT/build-info.json" <<EOF
+{
+  "version": "$VERSION",
+  "commit": "$SHA",
+  "build_time": "$BUILD_TIME",
+  "builder_host": "$(uname -s)/$(uname -m)"
+}
+EOF
+echo "   📝 build-info.json: version=$VERSION commit=$SHA"
+
 if [ "$DIST" = "1" ]; then
   echo "→ 生成校验和（sha256）"
   (cd "$OUT" && shasum -a 256 zerg-* > checksums.txt && cat checksums.txt | sed 's/^/   /')
