@@ -5,6 +5,7 @@ package main
 //
 // 流程: 参数解析 → 创建 Agent → 建日志 → 调 Loop（7 工具）→ 输出结果
 import (
+	"github.com/Mr2109/zerg-swarm/core/internal/version"
 	"context"
 	"encoding/json"
 	"flag"
@@ -70,6 +71,7 @@ func main() {
 		stateFile   string
 	)
 
+	flag.Bool("version", false, "打印代码身份（机器可读）后退出")
 	flag.StringVar(&task, "task", "", "任务描述（必填）")
 	flag.StringVar(&model, "model", "example-35b", "模型名（默认 example-35b）")
 	flag.StringVar(&workdir, "workdir", "/tmp/zerg-agent", "工作区目录（默认 /tmp/zerg-agent）")
@@ -86,6 +88,12 @@ func main() {
 	flag.StringVar(&x3Status, "x3-status", "", "X3 agent 状态地址（机器级采样用——如 http://<worker-ip>:8100/status）")
 	flag.StringVar(&x3Token, "x3-token", "", "X3 认证 token（机器级采样用）")
 	flag.Parse()
+
+	sh := flag.CommandLine.Lookup("version")
+	if sh != nil && sh.Value.String() == "true" {
+		fmt.Println(version.Line("zerg-agent"))
+		return
+	}
 
 	// v2.5.4.9 机器级采样：环境变量兜底（loop 里 NewSysMetricsCollector 读环境）
 	if os.Getenv("ZERG_X3_STATUS") == "" && x3Status != "" {
