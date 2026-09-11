@@ -356,10 +356,9 @@ func (rep *ProbeReport) toRecord(id string, opts ProbeOptions, now time.Time) *R
 		Name:       lname,
 		Link:       llink,
 		Commercial: "unknown", // 绝不默认 yes
-		// accepted_by / accepted_at **留空，不写占位值**（批 3 修正）：
-		// 探测不代表任何人接受条款。标准 §五 要求非 yes 必须留痕，于是本记录
-		// 如实过不了 verify —— 这是待修补 #21 的真实冲突，不许用 "unset" 之类的
-		// 占位串把 error 骗成绿（那等于给门禁开洞）。人工审许可后自行填写。
+		// accepted_by / accepted_at **留空，不写占位值**（批 3 修正；待修补 #21 修改后）：
+		// 探测不代表任何人接受条款。按新规则：commercial=unknown 允许留痕为空；
+		// no/revenue_gated 才必填；任何情况下非空即不许是占位值。人工审许可后自行填写。
 	}
 
 	if rep.Meta != nil {
@@ -465,7 +464,7 @@ func (rep *ProbeReport) buildNotes(now time.Time) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("本记录由 zerg-model probe 自动生成（%s）。", now.Format(time.RFC3339)))
 	b.WriteString("\n待人工补：license.spdx / license.commercial / license.accepted_by / license.accepted_at（标准 §五：拿不到权重许可就写 unknown，绝不默认 yes）。")
-	b.WriteString("\nlicense.accepted_by/accepted_at 留空（不写占位值）：探测不代表任何人接受条款。标准 §五 要求非 yes 必须留痕，故本记录过不了 verify —— 属待修补 #21（许可留痕冲突），须人工审许可后填写这两个字段；填好之前不得作为默认项（标准 §五 红线）。")
+	b.WriteString("\nlicense.accepted_by/accepted_at 留空：探测不代表任何人接受条款。按待修补 #21 的规则（unknown 允许无留痕；no/revenue_gated 必填；任何情况下不许占位），本记录 commercial=unknown 故留痕可为空，且不得写入占位值。人工审许可后填写这两个字段；commercial != yes 之前不得作为默认项（标准 §五 红线）。")
 	if rep.Meta == nil {
 		if rep.Endpoint == "" {
 			b.WriteString("\n未读到 GGUF 元数据（probe.meta.gguf.v1 no_meta）：context_window / chat_template 待人工补。")
