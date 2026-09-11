@@ -181,7 +181,7 @@ func CompactRequest(ctx context.Context, gatewayURL, authToken, sessionID, model
 
 	req, err := http.NewRequestWithContext(ctx, "POST", gatewayURL+"/v1/chat/completions", bytes.NewReader(payload))
 	if err != nil {
-		return "", fmt.Errorf("chat: 压缩请求构造失败: %w", err)
+		return "", fmt.Errorf("chat: failed to build compaction request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if authToken != "" {
@@ -190,12 +190,12 @@ func CompactRequest(ctx context.Context, gatewayURL, authToken, sessionID, model
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("chat: 压缩调用失败: %w", err)
+		return "", fmt.Errorf("chat: compaction call failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", fmt.Errorf("chat: 压缩返回 %d: %s", resp.StatusCode, string(b))
+		return "", fmt.Errorf("chat: compaction returned %d: %s", resp.StatusCode, string(b))
 	}
 	raw, _ := io.ReadAll(resp.Body)
 	var obj struct {
@@ -206,14 +206,14 @@ func CompactRequest(ctx context.Context, gatewayURL, authToken, sessionID, model
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
-		return "", fmt.Errorf("chat: 压缩解析失败: %w", err)
+		return "", fmt.Errorf("chat: failed to parse compaction response: %w", err)
 	}
 	if len(obj.Choices) == 0 || obj.Choices[0].Message.Content == "" {
-		return "", fmt.Errorf("chat: 压缩返回空摘要")
+		return "", fmt.Errorf("chat: compaction returned an empty summary")
 	}
 	summary := strings.TrimSpace(obj.Choices[0].Message.Content)
 	if len([]rune(summary)) < 50 {
-		return "", fmt.Errorf("chat: 摘要过短(%d 字)——视为失败", len([]rune(summary)))
+		return "", fmt.Errorf("chat: summary too short (%d chars) — treated as failure", len([]rune(summary)))
 	}
 	return summary, nil
 }

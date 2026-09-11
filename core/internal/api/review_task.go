@@ -70,7 +70,7 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 	// 找执行任务
 	execTask, ok := s.history[reviewTask.RefTaskID]
 	if !ok {
-		log.Printf("⚠️ 复查 %s 找不到执行任务 %s——复查结果丢弃", reviewTask.ID, reviewTask.RefTaskID)
+		log.Printf("⚠️ review %s cannot find execution task %s — review result discarded", reviewTask.ID, reviewTask.RefTaskID)
 		return
 	}
 	// 读复查结论（复查报告——2026-09-05 治本: 缺失=打回 不默认通过——
@@ -95,7 +95,7 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 			low := strings.ToLower(string(content))
 			// 报告过短（<100 字）= 复查模型敷衍——打回（防 26 字空报告蒙混——实测案例）
 			if len(content) < 100 {
-				log.Printf("🔁 总调度: 复查 %s 报告过短（%d 字节——疑似敷衍）——打回", reviewTask.ID, len(content))
+				log.Printf("🔁 scheduler: review %s report too short (%d bytes — likely perfunctory) — rejected", reviewTask.ID, len(content))
 			} else if strings.Contains(low, "打回") || strings.Contains(low, "不通过") || strings.Contains(low, "rework") {
 				// 打回关键词（去掉裸 "fail"——报告里提 "测试未 fail" 等反述误判）
 				conclusion = "rework"
@@ -108,7 +108,7 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 	// S7 复查误伤治理: 复查自身失败（无报告=复查模型没产出结论——复查环节故障）
 	// ≠ 执行任务不通过。锅不能让执行任务背——重派复查（换模型池）——上限 2 次，超限才打回
 	if conclusion == "rework" && reportPath == "" {
-		log.Printf("🔁 总调度: 复查 %s 无报告——复查自身失败（非执行不通过）——处理见下", reviewTask.ID)
+		log.Printf("🔁 scheduler: review %s produced no report — the review itself failed (not an execution rejection) — handling below", reviewTask.ID)
 	}
 	if conclusion == "rework" && reportPath == "" {
 		// 复查失败重派（换模型池——非打回执行任务）
@@ -132,11 +132,11 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 				CreatedAt:   time.Now(),
 			}
 			heap.Push(&s.queue, retryTask)
-			log.Printf("🔁 总调度: 复查 %s 自身失败——重派复查 %s（模型 %s——第 %d/2 次）", reviewTask.ID, reviewRetryID, nextModel, execTask.ReviewFailedCount)
+			log.Printf("🔁 scheduler: review %s itself failed — re-dispatching review %s (model %s — attempt %d/2)", reviewTask.ID, reviewRetryID, nextModel, execTask.ReviewFailedCount)
 			return
 		}
 		// 复查重派超限——按原逻辑打回（但注记是复查系统失败）
-		log.Printf("⚠️ 总调度: 复查重派 %d 次仍失败——回退打回执行任务 %s（复查系统故障注记）", execTask.ReviewFailedCount, execTask.ID)
+		log.Printf("⚠️ scheduler: review re-dispatch failed %d times — falling back to rejecting execution task %s (review-system-failure note)", execTask.ReviewFailedCount, execTask.ID)
 	}
 	if conclusion == "rework" {
 		// v2.5.5 阶段3（设计-20260820）: Replan 循环——打回 → 派重做任务（同模型 A——带复查意见）
@@ -144,8 +144,8 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 		execTask.ReviewCount++
 		if execTask.ReviewCount > 5 || execTask.ReplanCount >= 3 {
 			execTask.Status = "failed"
-			execTask.FailReason = fmt.Sprintf("复查打回 %d 次超限（重做 %d 次）: %s", execTask.ReviewCount, execTask.ReplanCount, shortReason(reportPath))
-			log.Printf("🔁 总调度: 复查 %s 打回任务 %s 超限（复查%d次/重做%d次）——标 failed", reviewTask.ID, execTask.ID, execTask.ReviewCount, execTask.ReplanCount)
+			execTask.FailReason = fmt.Sprintf("review rejected %d times over limit (reworked %d times): %s", execTask.ReviewCount, execTask.ReplanCount, shortReason(reportPath))
+			log.Printf("🔁 scheduler: review %s rejected task %s over limit (reviews %d / reworks %d) — marking failed", reviewTask.ID, execTask.ID, execTask.ReviewCount, execTask.ReplanCount)
 		} else {
 			// 派重做任务（同模型 A——带复查意见——S6: 续作语义非全量重做）
 			execTask.ReplanCount++
@@ -171,21 +171,21 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 				CreatedAt:   time.Now(), // 修复: rework 也设创建时间（UI 执行时长）
 			}
 			heap.Push(&s.queue, reworkTask)
-			log.Printf("🔁 总调度: 复查 %s 打回任务 %s——派重做（第 %d 次——模型 %s）", reviewTask.ID, execTask.ID, execTask.ReplanCount, execTask.Model)
+			log.Printf("🔁 scheduler: review %s rejected task %s — dispatching rework (attempt %d — model %s)", reviewTask.ID, execTask.ID, execTask.ReplanCount, execTask.Model)
 		}
 	} else {
 		// 通过 → merge 执行任务 worktree（如果还没 merge）
-		log.Printf("✅ 总调度: 复查 %s 通过任务 %s（执行模型 %s——复查模型 %s）", reviewTask.ID, execTask.ID, execTask.Model, reviewTask.Model)
+		log.Printf("✅ scheduler: review %s passed task %s (exec model %s — review model %s)", reviewTask.ID, execTask.ID, execTask.Model, reviewTask.Model)
 		// v2.5.6 修复（2026-08-29 Mr2109——zerg 流程复查）: 执行任务状态 reviewing → done（复查通过才算完成）
 		if execTask.Status == "reviewing" {
 			execTask.Status = "done"
-			log.Printf("✅ 总调度: 任务 %s 复查通过——正式完成（done）", execTask.ID)
+			log.Printf("✅ scheduler: task %s passed review — officially done", execTask.ID)
 		}
 		if execTask.RefWorktree != "" {
 			if err := mergeWorktree(execTask.RefWorktree, "task-"+sanitizeID(execTask.ID)); err != nil {
-				log.Printf("⚠️ 总调度: 任务 %s worktree merge 失败: %v", execTask.ID, err)
+				log.Printf("⚠️ scheduler: task %s worktree merge failed: %v", execTask.ID, err)
 			} else {
-				log.Printf("✅ 总调度: 任务 %s worktree merge 回 main——任务 git 归档完成", execTask.ID)
+				log.Printf("✅ scheduler: task %s worktree merged back to main — task git archived", execTask.ID)
 				// v2.5.5 修复（2026-08-21 Mr2109发现——UI 报告缺失）: merge 后复制报告到任务目录
 				// worktree 删除后报告丢——详情读不到——复制保留（报告不丢）
 				copyReportToTaskDir(execTask.ID, execTask.RefWorktree)
@@ -245,7 +245,7 @@ func (s *MasterScheduler) submitReviewTaskLocked(execTask *Task, reportPath, wor
 	// 执行任务也记 worktree（复查通过后 merge 用）
 	execTask.RefWorktree = worktreeDir
 	heap.Push(&s.queue, reviewTask)
-	log.Printf("🔍 总调度: 任务 %s 派复查（模型 %s——跨家族——复查 %s）", reviewID, reviewModel, execTask.ID)
+	log.Printf("🔍 scheduler: task %s sent to review (model %s — cross-family — review %s)", reviewID, reviewModel, execTask.ID)
 }
 
 // buildReviewPrompt 构造复查任务描述（复查模型读执行结果——rubric 评分）
@@ -303,7 +303,7 @@ func pickAlternateReviewModel(lastReviewModel, execModel string) string {
 		return next
 	}
 	// 池小无备选——同款重试（换 seed 意义靠重跑本身）
-	log.Printf("⚠️ 复查池无备选模型——同款 %s 重派（重跑换随机性）", next)
+	log.Printf("⚠️ review pool has no alternative model — re-dispatching the same %s (rerun for randomness)", next)
 	return next
 }
 
