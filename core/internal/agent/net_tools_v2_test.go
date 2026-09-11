@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/testutil"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 // 1. 基础搜索（默认——引擎全跑）
 func TestV2Basic(t *testing.T) {
+	testutil.RequireEnv(t, "ZERG_TEST_NET", "searx 桥（Python 依赖 + 外网）")
 	t0 := time.Now()
 	r, err := WebSearchV2(SearchParams{Query: "DeepSeek V4 Flash 本地部署", Limit: 5})
 	if err != nil {
@@ -21,6 +23,7 @@ func TestV2Basic(t *testing.T) {
 
 // 2. lang=en（英文结果）
 func TestV2LangEn(t *testing.T) {
+	testutil.RequireEnv(t, "ZERG_TEST_NET", "searx 桥（Python 依赖 + 外网）")
 	t0 := time.Now()
 	r, err := WebSearchV2(SearchParams{Query: "GLM-5.3 Flash GGUF quantization", Limit: 4, Lang: "en"})
 	if err != nil {
@@ -31,6 +34,7 @@ func TestV2LangEn(t *testing.T) {
 
 // 3. time_range=week（最新一周）
 func TestV2TimeWeek(t *testing.T) {
+	testutil.RequireEnv(t, "ZERG_TEST_NET", "searx 桥（Python 依赖 + 外网）")
 	t0 := time.Now()
 	r, err := WebSearchV2(SearchParams{Query: "AI 开源模型", Limit: 4, TimeRange: "week"})
 	if err != nil {
@@ -41,6 +45,7 @@ func TestV2TimeWeek(t *testing.T) {
 
 // 4. query 重写对比（原 query vs 重写后）
 func TestV2RewriteCompare(t *testing.T) {
+	testutil.RequireEnv(t, "ZERG_TEST_NET", "searx 桥（Python 依赖 + 外网）")
 	raw := "请问 帮我查一下 虫族AI 分布式节点 的 最新 进展 怎么样 呢"
 	rewritten := rewriteQuery(raw)
 	t.Logf("④重写对比: %q → %q", raw, rewritten)
@@ -59,6 +64,7 @@ func TestV2RewriteCompare(t *testing.T) {
 
 // 5. 缓存多轮命中
 func TestV2CacheMulti(t *testing.T) {
+	testutil.RequireEnv(t, "ZERG_TEST_NET", "searx 桥（Python 依赖 + 外网）")
 	q := "searxng 部署教程"
 	var times []time.Duration
 	for i := 0; i < 3; i++ {
@@ -77,6 +83,7 @@ func TestV2CacheMulti(t *testing.T) {
 
 // 6. 无结果查询（边界）
 func TestV2NoResult(t *testing.T) {
+	testutil.RequireEnv(t, "ZERG_TEST_NET", "searx 桥（Python 依赖 + 外网）")
 	t0 := time.Now()
 	r, err := WebSearchV2(SearchParams{Query: "zzzqqqxxxyyy 不存在的关键词", Limit: 3})
 	if err != nil {
@@ -97,6 +104,7 @@ func TestV2LongQuery(t *testing.T) {
 
 // 8. 并发（两个同时搜——缓存/goroutine 安全）
 func TestV2Concurrent(t *testing.T) {
+	testutil.RequireEnv(t, "ZERG_TEST_NET", "searx 桥（Python 依赖 + 外网）")
 	done := make(chan string, 2)
 	go func() {
 		r, e := WebSearchV2(SearchParams{Query: "Go 语言", Limit: 2})
