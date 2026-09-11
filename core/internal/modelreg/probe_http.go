@@ -25,8 +25,8 @@ import (
 
 // Endpoint 是一个 OpenAI 兼容引擎端点。
 type Endpoint struct {
-	BaseURL string        // 形如 http://127.0.0.1:9000 或 http://host:port/v1
-	Model   string        // 请求体里的 model 字段（引擎多会忽略）
+	BaseURL string // 形如 http://127.0.0.1:9000 或 http://host:port/v1
+	Model   string // 请求体里的 model 字段（引擎多会忽略）
 	Timeout time.Duration
 	Client  *http.Client
 }
