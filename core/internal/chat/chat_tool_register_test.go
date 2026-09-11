@@ -4,7 +4,9 @@ package chat
 
 import (
 	"context"
+	"net"
 	"testing"
+	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 )
@@ -26,18 +28,25 @@ func TestRegisterChatExtraTools(t *testing.T) {
 	}
 
 	// 2. ExecuteTool 路由执行（无参工具——task_list 连 core API）
-	ec := agent.NewExecContext(t.TempDir())
-	res := ec.ExecuteTool(context.Background(), "task_list", map[string]any{"limit": 3}, nil)
-	if res.Error != "" {
-		t.Errorf("task_list 执行失败: %s", res.Error)
+	// 这一步**依赖活主控**：CI/公开快照上没有 127.0.0.1:8580，实测会 "connection refused" 而整作业变红。
+	// 因此先探测端口：不通就跳过该断言（本机开发时主控在跑，断言照旧执行，覆盖不丢）。
+	if !coreAPIAvailable("127.0.0.1:8580") {
+		t.Log("未检测到主控 API（127.0.0.1:8580）——跳过 task_list 执行断言（CI/快照形态）")
+	} else {
+		ec := agent.NewExecContext(t.TempDir())
+		res := ec.ExecuteTool(context.Background(), "task_list", map[string]any{"limit": 3}, nil)
+		if res.Error != "" {
+			t.Errorf("task_list 执行失败: %s", res.Error)
+		}
+		if res.Content == "" {
+			t.Errorf("task_list 结果为空")
+		}
+		t.Logf("task_list 执行结果: %.120s", res.Content)
 	}
-	if res.Content == "" {
-		t.Errorf("task_list 结果为空")
-	}
-	t.Logf("task_list 执行结果: %.120s", res.Content)
 
-	// 3. 未注册工具仍报未知
-	res2 := ec.ExecuteTool(context.Background(), "__no_such_tool_xyz__", map[string]any{}, nil)
+	// 3. 未注册工具仍报未知（与主控无关，任何形态都必须成立）
+	ec2 := agent.NewExecContext(t.TempDir())
+	res2 := ec2.ExecuteTool(context.Background(), "__no_such_tool_xyz__", map[string]any{}, nil)
 	if res2.Error == "" {
 		t.Errorf("未注册工具应报错")
 	}
@@ -55,4 +64,14 @@ func TestExecuteChatToolCounts(t *testing.T) {
 		t.Errorf("tree 计数未增: before=%d after=%d", before, after)
 	}
 	t.Logf("tree 计数: %d → %d", before, after)
+}
+
+// coreAPIAvailable 探测主控 API 是否可连（用于让"依赖活服务"的断言在 CI 上跳过而不是失败）。
+func coreAPIAvailable(addr string) bool {
+	c, err := net.DialTimeout("tcp", addr, 300*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
 }
