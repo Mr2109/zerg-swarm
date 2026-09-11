@@ -122,6 +122,8 @@ cp -p "$REPO_ROOT/publish/SECURITY.md"             "$OUT/SECURITY.md"
 [ -f "$REPO_ROOT/.env.example" ] && cp -p "$REPO_ROOT/.env.example" "$OUT/.env.example"
 cp -p "$REPO_ROOT/publish/config.example.yaml"     "$OUT/gateway/fleet.example.yaml"
 [ -f "$REPO_ROOT/publish/gitleaks.toml" ] && cp -p "$REPO_ROOT/publish/gitleaks.toml" "$OUT/.gitleaks.toml"
+# 用户安装/升级入口 → 仓库根 install.sh（与根启动器同级，README 直接引用）
+cp -p "$REPO_ROOT/publish/install.sh" "$OUT/install.sh"
 # 公开文档（C 批成果，源在 publish/docs/）
 if [ -d "$REPO_ROOT/publish/docs" ]; then
   mkdir -p "$OUT/docs/design"
