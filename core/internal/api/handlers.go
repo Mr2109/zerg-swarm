@@ -11,6 +11,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
 	"github.com/Mr2109/zerg-swarm/core/internal/subtask"
+	"github.com/Mr2109/zerg-swarm/core/internal/version"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1084,7 +1085,11 @@ func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
 			gpuPct = prevLocal.GpuPct
 		}
 		snapshots["local"] = &store.FleetSnapshot{
-			Machine:        "local",
+			Machine: "local",
+			// C10：本机子端不经心跳上报，身份直接取主控自己的代码身份——
+			// 否则版本矩阵里 local 一行永远为空，"混版"在本机这一格就看不见。
+			CodeVersion:    version.Version,
+			CodeSHA:        version.Commit,
 			Model:          nil,
 			Backend:        nil,
 			Port:           nil,
