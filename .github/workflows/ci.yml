@@ -75,6 +75,5 @@ jobs:
         # 版本必须与本地/仓库工具一致：8.24.3 会对 memory_test.go 的**合成夹具**误报
         # generic-api-key（同配置 8.30.1 = 0 命中）。版本漂移 = 门禁结论不可复现。
         env:
-          GITLEAKS_VERSION: "8.30.1" 
-        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: "8.30.1"
