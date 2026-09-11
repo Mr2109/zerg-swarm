@@ -68,7 +68,7 @@ func (o *Orchestrator) FanOutMoA(ctx context.Context, request string) []MoARefer
 		if err != nil {
 			status = "FAIL: " + err.Error()
 		}
-		log.Printf("[moa] 参考 %s 完成 (%.1fs) %s", model, latency, status)
+		log.Printf("[moa] reference %s done (%.1fs) %s", model, latency, status)
 	}
 
 	// 失败容错：MIN_SUCCESSFUL_REFERENCES=1
@@ -79,7 +79,7 @@ func (o *Orchestrator) FanOutMoA(ctx context.Context, request string) []MoARefer
 		}
 	}
 	if successful < moaCfg.MinSuccessful {
-		log.Printf("[moa] 参考成功 %d/%d < MIN_SUCCESSFUL=%d——退化单模型", successful, len(refs), moaCfg.MinSuccessful)
+		log.Printf("[moa] successful references %d/%d < MIN_SUCCESSFUL=%d — degrading to a single model", successful, len(refs), moaCfg.MinSuccessful)
 	}
 	return refs
 }
@@ -118,7 +118,7 @@ func (o *Orchestrator) callReferenceWithRetry(ctx context.Context, model string,
 			return strings.TrimSpace(out), nil
 		}
 		lastErr = err
-		log.Printf("[moa] 参考 %s 第 %d 次失败: %v", model, attempt+1, err)
+		log.Printf("[moa] reference %s failed (attempt %d): %v", model, attempt+1, err)
 	}
 	return "", lastErr
 }

@@ -379,12 +379,12 @@ func RecordToolError(tool, msg string, args map[string]any) {
 func saveToolErrors() {
 	data, err := json.Marshal(errStore)
 	if err != nil {
-		log.Printf("[chat] 错误桶序列化失败: %v", err)
+		log.Printf("[chat] error-bucket serialization failed: %v", err)
 		return
 	}
 	// 2026-09-03 代码优化(skill 日志查漏): 落盘失败原静默——错误桶是工具进化依据——丢失无痕——记日志
 	if err := os.WriteFile(errStoreFile, data, 0o644); err != nil {
-		log.Printf("[chat] 错误桶落盘失败: %v", err)
+		log.Printf("[chat] error-bucket save failed: %v", err)
 	}
 }
 
@@ -445,13 +445,13 @@ func ToolErrorsSummary(tool string) string {
 func timeAgo(now, t int64) string {
 	d := now - t
 	if d < 60 {
-		return fmt.Sprintf("%ds 前", d)
+		return fmt.Sprintf("%ds ago", d)
 	}
 	if d < 3600 {
-		return fmt.Sprintf("%dm 前", d/60)
+		return fmt.Sprintf("%dm ago", d/60)
 	}
 	if d < 86400 {
-		return fmt.Sprintf("%dh 前", d/3600)
+		return fmt.Sprintf("%dh ago", d/3600)
 	}
-	return fmt.Sprintf("%dd 前", d/86400)
+	return fmt.Sprintf("%dd ago", d/86400)
 }

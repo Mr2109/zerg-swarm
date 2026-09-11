@@ -107,7 +107,7 @@ func (h *ChatHandlers) Steer(w http.ResponseWriter, r *http.Request) {
 		Content string `json:"content"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
-		writeChatError(w, http.StatusBadRequest, fmt.Errorf("chat: 插话内容为空"))
+		writeChatError(w, http.StatusBadRequest, fmt.Errorf("chat: interjection content is empty"))
 		return
 	}
 	_, running := chatTurnCancels.Load(id)
@@ -189,7 +189,7 @@ type chiRouter interface {
 func (h *ChatHandlers) ResolveSession(w http.ResponseWriter, r *http.Request) {
 	ref := r.URL.Query().Get("ref")
 	if ref == "" {
-		writeChatError(w, http.StatusBadRequest, fmt.Errorf("chat: ref 参数必填"))
+		writeChatError(w, http.StatusBadRequest, fmt.Errorf("chat: ref parameter is required"))
 		return
 	}
 	// 兼容新旧 ID 格式（chat_ 前缀直通）——后续支持 resume id/title 解析
@@ -245,7 +245,7 @@ func (h *ChatHandlers) GetSession(w http.ResponseWriter, r *http.Request) {
 func (h *ChatHandlers) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	id := chiURLParam(r, "id")
 	if err := h.store.DeleteSession(id); err != nil {
-		writeChatError(w, http.StatusInternalServerError, fmt.Errorf("chat: 删会话失败: %w", err))
+		writeChatError(w, http.StatusInternalServerError, fmt.Errorf("chat: failed to delete session: %w", err))
 		return
 	}
 	writeChatJSON(w, http.StatusOK, map[string]any{"deleted": true})
@@ -256,7 +256,7 @@ func (h *ChatHandlers) EditMessage(w http.ResponseWriter, r *http.Request) {
 	midStr := chiURLParam(r, "mid")
 	mid, err := strconv.ParseInt(midStr, 10, 64)
 	if err != nil {
-		writeChatError(w, http.StatusBadRequest, fmt.Errorf("chat: 消息 id 非法: %s", midStr))
+		writeChatError(w, http.StatusBadRequest, fmt.Errorf("chat: invalid message id: %s", midStr))
 		return
 	}
 	var req struct {
@@ -264,13 +264,13 @@ func (h *ChatHandlers) EditMessage(w http.ResponseWriter, r *http.Request) {
 		Truncate bool   `json:"truncate"` // 批次C3: 编辑即截断（软删其后消息——可重跑）
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Content) == "" {
-		writeChatError(w, http.StatusBadRequest, fmt.Errorf("chat: 编辑内容为空"))
+		writeChatError(w, http.StatusBadRequest, fmt.Errorf("chat: edited content is empty"))
 		return
 	}
 	// 从消息反查 session_id
 	msgs, err := h.store.ListMessagesByID(mid)
 	if err != nil || len(msgs) == 0 {
-		writeChatError(w, http.StatusNotFound, fmt.Errorf("chat: 消息不存在"))
+		writeChatError(w, http.StatusNotFound, fmt.Errorf("chat: message not found"))
 		return
 	}
 	sid := msgs[0].SessionID
@@ -291,7 +291,7 @@ func (h *ChatHandlers) Regenerate(w http.ResponseWriter, r *http.Request) {
 	id := chiURLParam(r, "id")
 	last, err := h.store.LastUserMessage(id)
 	if err != nil || last == nil {
-		writeChatError(w, http.StatusNotFound, fmt.Errorf("chat: 没有可重生成的用户消息"))
+		writeChatError(w, http.StatusNotFound, fmt.Errorf("chat: no user message to regenerate"))
 		return
 	}
 	n, _ := h.store.SoftDeleteAfter(id, last.ID)
@@ -443,7 +443,7 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	}
 	// 批次D2(2026-09-10): 会话租约（最前置——拒绝请求零副作用）
 	if _, loaded := chatSessionBusy.LoadOrStore(id, struct{}{}); loaded {
-		writeChatError(w, http.StatusConflict, fmt.Errorf("chat: 该会话已有轮次在运行（请等待或先停止）"))
+		writeChatError(w, http.StatusConflict, fmt.Errorf("chat: a turn is already running in this session (wait or stop it first)"))
 		return
 	}
 	defer chatSessionBusy.Delete(id)
@@ -460,7 +460,7 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	if did, cerr := h.store.MaybeCompact(r.Context(), id, se.Model, history, chat.LinguaFn(), chat.SummarizeWithInfer(h.infer, id, se.Model), false); did {
 		h.store.ClearSessionPrompt(id) // §4.1：压缩后系统提示需重建
 	} else if cerr != nil {
-		log.Printf("⚠️ 会话 %s 压缩失败（已记冷却）: %v", id, cerr)
+		log.Printf("⚠️ session %s compaction failed (cooldown recorded): %v", id, cerr)
 	}
 	history, _ = h.store.GetActiveMessages(id)
 	msgs := make([]map[string]any, 0, len(history))
@@ -499,7 +499,7 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	// 批次D1: 消息不变式守卫
 	if fixed, fixes := chat.SanitizeMessages(msgs); true {
 		for _, f := range fixes {
-			log.Printf("🛡️ 对话守卫(send-tool): %s（会话 %s）", f, id)
+			log.Printf("🛡️ chat guard (send-tool): %s (session %s)", f, id)
 		}
 		msgs = fixed
 	}
@@ -706,7 +706,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	// 批次D2(2026-09-10): 会话租约——最前置检查（不落库、不动历史；被拒请求零副作用）
 	if _, loaded := chatSessionBusy.LoadOrStore(id, struct{}{}); loaded {
-		writeChatError(w, http.StatusConflict, fmt.Errorf("chat: 该会话已有轮次在运行（请等待或先停止）"))
+		writeChatError(w, http.StatusConflict, fmt.Errorf("chat: a turn is already running in this session (wait or stop it first)"))
 		return
 	}
 	defer chatSessionBusy.Delete(id)
@@ -776,7 +776,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeChatError(w, http.StatusInternalServerError, fmt.Errorf("SSE 不支持"))
+		writeChatError(w, http.StatusInternalServerError, fmt.Errorf("SSE not supported"))
 		return
 	}
 	// 流式回调：写 SSE 事件
@@ -793,7 +793,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	// 批次D1(2026-09-10): 消息不变式守卫（角色交替 + tool 配对——修复记录进日志）
 	if fixed, fixes := chat.SanitizeMessages(msgs); len(fixes) > 0 {
 		for _, f := range fixes {
-			log.Printf("🛡️ 对话守卫: %s（会话 %s）", f, id)
+			log.Printf("🛡️ chat guard: %s (session %s)", f, id)
 		}
 		msgs = fixed
 	} else {
@@ -803,7 +803,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	writeSSE("compacting", `{}`)
 	compacted, cerr := h.store.MaybeCompact(r.Context(), id, se.Model, history, chat.LinguaFn(), chat.SummarizeWithInfer(h.infer, id, se.Model), false)
 	if cerr != nil {
-		log.Printf("⚠️ 会话 %s 压缩失败（已记冷却）: %v", id, cerr)
+		log.Printf("⚠️ session %s compaction failed (cooldown recorded): %v", id, cerr)
 	}
 	if compacted {
 		h.store.ClearSessionPrompt(id) // §4.1：压缩后系统提示需重建
@@ -907,7 +907,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 					pingPayload, _ := json.Marshal(map[string]any{"name": name, "elapsed": int(time.Since(startT).Seconds())})
 					writeSSE("tool_ping", string(pingPayload))
 				case <-ctx.Done():
-					res = execRes{err: fmt.Errorf("已取消")}
+					res = execRes{err: fmt.Errorf("cancelled")}
 					break waitLoop
 				}
 			}
