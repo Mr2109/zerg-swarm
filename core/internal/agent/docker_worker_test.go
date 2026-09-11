@@ -215,7 +215,7 @@ func TestDockerWorker_Run_FileNotFound(t *testing.T) {
 	if exitCode != -1 {
 		t.Fatalf("期望退出码 -1，实际 %d", exitCode)
 	}
-	if !strings.Contains(err.Error(), "issue 文件不存在") {
+	if !strings.Contains(err.Error(), "issue file not found") {
 		t.Errorf("错误信息应包含 'issue 文件不存在': %v", err)
 	}
 	t.Logf("✅ TestDockerWorker_Run_FileNotFound: 退出码=%d, 错误=%v", exitCode, err)

@@ -45,13 +45,13 @@ func (g *Gateway) forwardToBackend(
 ) (*http.Response, error) {
 	// 构造转发 URL：直接用 pickRoute 算好的 URL（已含 IP + 端口）
 	forwardURL := route.URL
-	log.Printf("🔄 转发到子端: %s", forwardURL)
+	log.Printf("🔄 forwarding to agent: %s", forwardURL)
 
 	// 添加 "_path" 字段到请求体
 	// v1 Python agent 根据 _path 转发到后端对应端点
 	var reqMap map[string]interface{}
 	if err := json.Unmarshal(body, &reqMap); err != nil {
-		return nil, fmt.Errorf("解析请求体失败: %w", err)
+		return nil, fmt.Errorf("failed to parse request body: %w", err)
 	}
 
 	// 添加 _path 字段
@@ -60,7 +60,7 @@ func (g *Gateway) forwardToBackend(
 	// 重新序列化为 JSON
 	forwardBody, err := json.Marshal(reqMap)
 	if err != nil {
-		return nil, fmt.Errorf("序列化请求体失败: %w", err)
+		return nil, fmt.Errorf("failed to serialize request body: %w", err)
 	}
 
 	// 创建转发请求（用独立超时 context，不跟客户端 context 走）
@@ -74,7 +74,7 @@ func (g *Gateway) forwardToBackend(
 	if err != nil {
 		// v2.5.6 修复（2026-08-29 q2 go vet）: 提前 return 必须 cancel——防 context 泄漏（10min 定时器挂着）
 		cancel()
-		return nil, fmt.Errorf("创建转发请求失败: %w", err)
+		return nil, fmt.Errorf("failed to create forward request: %w", err)
 	}
 
 	// 设置 Content-Type（保持原请求的 Content-Type）
@@ -89,7 +89,7 @@ func (g *Gateway) forwardToBackend(
 	token := adapter.ExtractAuthToken(headers)
 	if token != "" {
 		forwardReq.Header.Set("X-Auth-Token", token)
-		log.Printf("🔐 透传认证头: X-Auth-Token")
+		log.Printf("🔐 passing through auth header: X-Auth-Token")
 	}
 
 	// 透传其他重要头（可选）
@@ -100,7 +100,7 @@ func (g *Gateway) forwardToBackend(
 	}
 
 	// 发起转发请求（v2.5.4.10 模型超时覆盖——适配器声明 timeout_sec）
-	log.Printf("📤 发送转发请求到 %s", forwardURL)
+	log.Printf("📤 sending forward request to %s", forwardURL)
 	var resp *http.Response
 	// 模型级超时覆盖（适配器声明——Qwen3.8 120s/Nemotron 60s——覆盖全局 90s）
 	// v2.5.6 故障自愈（Mr2109 2026-08-28）: 语义修正——适配器 timeout_sec 注释是"首 token 超时"
@@ -125,10 +125,10 @@ func (g *Gateway) forwardToBackend(
 		// v2.5.4.9 C failover：转发失败（超时/连接错误——卡死检测）→ 换机器重试 1 次
 		// 场景: X3 单槽卡死——ResponseHeaderTimeout 60s 触发——换本机/其他候选
 		if failoverRoute, ferr := g.pickFallbackRoute(route, modelName(reqMap)); ferr == nil {
-			log.Printf("🔄 C failover: %s 转发失败(%v)——换 %s", route.Host, err, failoverRoute.Host)
+			log.Printf("🔄 C failover: %s forward failed (%v) — switching to %s", route.Host, err, failoverRoute.Host)
 			return g.forwardToBackend(ctx, failoverRoute, originalPath, body, headers)
 		}
-		return nil, fmt.Errorf("转发请求失败: %w", err)
+		return nil, fmt.Errorf("forward request failed: %w", err)
 	}
 
 	// v2.5.4.9 reasoning 兜底：思考模型（Nemotron/Qwen3.8）content 空时拼 reasoning_content
@@ -138,7 +138,7 @@ func (g *Gateway) forwardToBackend(
 	if resp == nil {
 		// v2.5.6 修复（2026-08-29 q2 go vet）: 响应处理失败也要 cancel——防 context 泄漏
 		cancel()
-		return nil, fmt.Errorf("转发响应处理失败")
+		return nil, fmt.Errorf("failed to handle forward response")
 	}
 
 	// 治本（2026-08-12）：cancel 绑定到响应体——读完才取消 context
