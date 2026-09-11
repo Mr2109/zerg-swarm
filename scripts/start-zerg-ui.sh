@@ -41,6 +41,16 @@ os.dup2(log, 1)
 os.dup2(log, 2)
 devnull = os.open(os.devnull, os.O_RDONLY)
 os.dup2(devnull, 0)
+# 2026-09-11 修（UI 拿不到模型列表 /api/fleet/* 全 403）：把权威令牌注入环境再 exec。
+# 原因：api_token() 依次读 env ZERG_AUTH_TOKEN → prefs.json 的 auth_token，而启动器一个都不给；
+# 令牌轮换后 UI 一直拿旧值 → 403。权威位置=~/.zerg/token（600），与主控/子端同一来源（库内零明文）。
+_tok = os.path.expanduser("~/.zerg/token")
+try:
+    _v = open(_tok, encoding="utf-8").read().strip()
+    if _v:
+        os.environ["ZERG_AUTH_TOKEN"] = _v
+except Exception:
+    pass
 os.execv(sys.argv[1], [sys.argv[1]])
 ' "$BIN" "$LOG" >/dev/null 2>&1 &
 
