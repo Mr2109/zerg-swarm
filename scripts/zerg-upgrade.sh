@@ -18,6 +18,7 @@
 #   bash scripts/zerg-upgrade.sh --receipts      # 看最近回执
 #   bash scripts/zerg-upgrade.sh --fleet --plan   # 跨机编排：盘点全机群版本矩阵并按序计划
 #   bash scripts/zerg-upgrade.sh --fleet          # 跨机编排：执行（本地件自动；远程件无特权则标 pending）
+#   ... --allow-downgrade                        # 明确允许把代码换成更旧的提交（默认拒绝降级）
 #
 # 开关/环境：
 #   ZERG_UPGRADE_SOURCE=file:///path/to/release   本地假源（演练/测试；真源默认走 GitHub Release）
@@ -36,7 +37,7 @@ RECEIPTS="${ZERG_RECEIPTS_DIR:-$HOME/.zerg/update_receipts}"
 API="http://127.0.0.1:8580"
 TOKEN_FILE="$HOME/.zerg/token"
 
-MODE="apply"; NO_SERVICE=0; FORCE=0; JSON=0; TAG=""; FLEET_PLAN_ONLY=0
+MODE="apply"; NO_SERVICE=0; FORCE=0; JSON=0; TAG=""; FLEET_PLAN_ONLY=0; ALLOW_DOWNGRADE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --plan) if [ "$MODE" = "fleet" ]; then FLEET_PLAN_ONLY=1; else MODE="plan"; fi; shift ;;
@@ -45,6 +46,7 @@ while [ $# -gt 0 ]; do
     --rollback) MODE="rollback"; shift ;;
     --receipts) MODE="receipts"; shift ;;
     --fleet) MODE="fleet"; shift ;;
+    --allow-downgrade) ALLOW_DOWNGRADE=1; shift ;;
     --no-service) NO_SERVICE=1; shift ;;
     --force) FORCE=1; shift ;;
     --json) JSON=1; shift ;;
@@ -280,6 +282,21 @@ for a in $WANT; do
   [ "$w" = "$g" ] || die "校验失败：${a}（期望 ${w:0:12}… 实际 ${g:0:12}…）——拒绝升级，未动任何文件" 4
   say "   ✅ $a  sha256 ${g:0:12}…"
 done
+
+# ── 降级门（C13）────────────────────────────────────────────────────────────
+# 只校 sha256 不够：那样"源比当前旧"时会照单换装 → 静默降级（2026-09-11 实测踩到）。
+# 判据用 git 祖先关系（同一仓库里两者都在历史中才判得出）；判不出就不拦，只提示。
+CUR_SHA_SHORT="$(printf '%s' "$CUR_CORE" | awk '{print $3}' | sed 's/+.*//')"
+if [ -n "$CUR_SHA_SHORT" ] && [ "$CUR_SHA_SHORT" != "unknown" ] && [ "$CUR_SHA_SHORT" != "$SRC_SHA" ]; then
+  if git -C "$REPO_ROOT" merge-base --is-ancestor "$SRC_SHA" "$CUR_SHA_SHORT" 2>/dev/null; then
+    if [ "$ALLOW_DOWNGRADE" != "1" ]; then
+      die "目标是旧提交（源 ${SRC_SHA} 早于当前运行的 ${CUR_SHA_SHORT}）——拒绝降级；确实要降级请加 --allow-downgrade" 5
+    fi
+    say "⚠️  降级：源 ${SRC_SHA} 早于当前 ${CUR_SHA_SHORT}（--allow-downgrade 已放行）"
+  else
+    say "ℹ️  无法判定新旧（源 ${SRC_SHA} 不在本地历史中）——不做降级拦截"
+  fi
+fi
 
 # ── 停服务（KeepAlive → 必须 bootout）───────────────────────────────────────
 if [ "$NO_SERVICE" != "1" ]; then
