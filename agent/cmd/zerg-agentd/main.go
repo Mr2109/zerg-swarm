@@ -16,6 +16,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/agent/internal/version"
 	"log"
 	"os"
 	"os/signal"
@@ -35,7 +36,7 @@ var (
 	// 命令行参数
 	host         = flag.String("host", "127.0.0.1", "HTTP 监听地址（默认 127.0.0.1，部署时用 0.0.0.0）")
 	port         = flag.Int("port", 8100, "HTTP 监听端口（默认 8100）")
-	token        = flag.String("token", resolveToken(), "共享认证令牌（默认取环境变量 ZERG_AUTH_TOKEN 或文件 ~/.zerg/token）")
+	token        = flag.String("token", "", "共享认证令牌（默认取环境变量 ZERG_AUTH_TOKEN 或文件 ~/.zerg/token）——留空则解析环境变量/文件；默认值不用真值，避免 --help 泄漏")
 	controller   = flag.String("controller", "http://127.0.0.1:8580", "主控地址（心跳上报目标）")
 	machineParam = flag.String("machine", "", "机器标识（默认取主机名）")
 	registryPath = flag.String("registry", "agent_models.yaml", "模型注册表 YAML 路径")
@@ -44,7 +45,17 @@ var (
 )
 
 func main() {
+	_ = flag.Bool("version", false, "打印代码身份（机器可读）后退出")
 	flag.Parse()
+
+	if v := flag.CommandLine.Lookup("version"); v != nil && v.Value.String() == "true" {
+		fmt.Println(version.Line("zerg-agentd"))
+		return
+	}
+	// 令牌在解析后补齐：声明期不解析，避免 --help/未知参数把真实令牌打进日志
+	if *token == "" {
+		*token = resolveToken()
+	}
 
 	// 2026-09-11 A 批（库内零明文）：令牌必须可用，否则拒绝启动——
 	// 空令牌会让心跳/主控调用全部 401，而进程看起来正常运行。
