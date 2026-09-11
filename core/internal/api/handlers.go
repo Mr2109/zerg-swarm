@@ -1055,6 +1055,8 @@ func (h *Handlers) HeartbeatHandler(w http.ResponseWriter, r *http.Request) {
 		"model", modelName,
 		"state", req.BackendState,
 		"healthy", req.Healthy,
+		"code_version", req.CodeVersion,
+		"code_sha", req.CodeSHA,
 	)
 
 	writeJSON(w, http.StatusOK, resp)
