@@ -1206,6 +1206,7 @@ impl ZergApp {
             }
             "tasks" => self.tasks_view(ui),
             "upgrade" => crate::modules::upgrade::ui(ui),
+            "model-registry" => crate::modules::model_registry::ui(ui),
             "internal-tasks" => self.internal_tasks_view(ui),
             "cluster" => {
                 ui.heading(t!("cluster.status"));
