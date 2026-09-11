@@ -205,7 +205,7 @@ func TestVerifyIntegrity_MixedCounts(t *testing.T) {
 
 	rec := recWithFiles(
 		File{Role: "weights", Name: "ok.gguf", SHA256: shaHex(okBody), Size: int64(len(okBody))},
-		File{Role: "mmproj", Name: "gone.gguf", SHA256: strings.Repeat("c", 64), Size: 7},              // missing
+		File{Role: "mmproj", Name: "gone.gguf", SHA256: strings.Repeat("c", 64), Size: 7},                     // missing
 		File{Role: "tokenizer", Name: "bad.gguf", SHA256: strings.Repeat("d", 64), Size: int64(len(badBody))}, // sha_mismatch
 	)
 	rep := VerifyIntegrity(rec, dir)
