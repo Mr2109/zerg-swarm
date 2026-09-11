@@ -958,8 +958,16 @@ func (g *Gateway) markFailure(host string, reason ...string) {
 		g.lastErr[host] = reason[0]
 		g.lastErrAt[host] = time.Now()
 	}
-	slog.Warn("machine forward failed", "host", host, "fail_count", g.failCounts[host], "threshold", 3)
-	log.Printf("🚨 machine %s forward failed (%d/3); exceeding threshold will demote", host, g.failCounts[host])
+	slog.Warn("machine forward failed", "host", host, "fail_count", g.failCounts[host], "threshold", circuitFailThreshold)
+	log.Printf("%s", breakerFailLogLine(host, g.failCounts[host]))
+}
+
+// breakerFailLogLine 组装熔断失败日志行，阈值一律取自真实常量 circuitFailThreshold。
+//
+// 历史上这里写死过 3，而真实阈值是 circuitFailThreshold=8——日志与判定不符会误导运维。
+// 把格式化收敛到本函数，测试即可断言「输出与常量一致」，杜绝再次漂移。
+func breakerFailLogLine(host string, failCount int) string {
+	return fmt.Sprintf("🚨 machine %s forward failed (%d/%d); exceeding threshold will demote", host, failCount, circuitFailThreshold)
 }
 
 // markSuccess 清零机器失败计数（转发成功后调用，恢复权重）。
