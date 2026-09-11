@@ -61,7 +61,7 @@ func (g *Gateway) ensureDS4Room() bool {
 	}
 	// X3 有其他模型占用（或空闲）——需要清场（卸载其他——只留 DS4）
 	if snap.Model != nil || snap.MemAvailableGb < ds4MemGB {
-		log.Printf("🧹 DS4 让位: X3 当前模型=%v 内存余量=%.0fG——卸载腾位（只留 DS4）",
+		log.Printf("🧹 DS4 yielding: X3 current model=%v free memory=%.0fG — unloading to free space (DS4 only)",
 			snap.Model, snap.MemAvailableGb)
 		return g.unloadX3Models()
 	}
@@ -82,15 +82,15 @@ func (g *Gateway) unloadX3Models() bool {
 	req.Header.Set("X-Auth-Token", config.ResolveAuthToken())
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("⚠️ DS4 清场失败（X3 agent 不可达）: %v", err)
+		log.Printf("⚠️ DS4 quiesce failed (X3 agent unreachable): %v", err)
 		return false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
-		log.Printf("✅ DS4 清场成功——X3 模型已卸载（只留 DS4）")
+		log.Printf("✅ DS4 quiesce succeeded — X3 model unloaded (DS4 only)")
 		return true
 	}
-	log.Printf("⚠️ DS4 清场响应 %d——继续尝试", resp.StatusCode)
+	log.Printf("⚠️ DS4 quiesce returned %d — continuing", resp.StatusCode)
 	return false
 }
 
@@ -118,7 +118,7 @@ func (g *Gateway) ensureX3RoomForFile(file string, memGB int) {
 		return // 内存+GPU 都够——X3 agent 按需加载
 	}
 	if g.unloadX3Models() {
-		log.Printf("🧹 X3 让位(通用): 路由 %s 需 %dG 可用 %.0fG GPU %.0f%%——已清场(X3 agent 按需单驻留)", file, memGB, snap.MemAvailableGb, snap.GpuPct)
+		log.Printf("🧹 X3 yielding (generic): route %s needs %dG, available %.0fG GPU %.0f%% — quiesced (X3 agent single-resident on demand)", file, memGB, snap.MemAvailableGb, snap.GpuPct)
 	}
 }
 
