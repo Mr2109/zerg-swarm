@@ -68,10 +68,10 @@ func (dw *DockerWorker) SetCmdRunner(fn func(ctx context.Context, name string, a
 // 返回: exitCode（0=成功）, error
 func (dw *DockerWorker) RunDev(repoDir, workDir, task, branch string) (int, error) {
 	if _, err := os.Stat(dw.agentBin); err != nil {
-		return -1, fmt.Errorf("zerg-agent 二进制不存在 %s: %w", dw.agentBin, err)
+		return -1, fmt.Errorf("zerg-agent binary not found %s: %w", dw.agentBin, err)
 	}
 	if _, err := os.Stat(repoDir); err != nil {
-		return -1, fmt.Errorf("开发仓库不存在 %s: %w", repoDir, err)
+		return -1, fmt.Errorf("dev repository not found %s: %w", repoDir, err)
 	}
 
 	// issue 文件名（instanceID）——branch 是 task-<instanceID>——取 branch 去掉 task- 前缀
@@ -103,10 +103,10 @@ func (dw *DockerWorker) RunDev(repoDir, workDir, task, branch string) (int, erro
 	log.Printf("🐳 DockerWorker[dev]: docker %s", strings.Join(cmd, " "))
 	exitCode, execErr := dw.runCommand(cmd)
 	if execErr != nil {
-		log.Printf("❌ DockerWorker[dev] 执行异常: %v", execErr)
+		log.Printf("❌ DockerWorker[dev] execution error: %v", execErr)
 		return exitCode, execErr
 	}
-	log.Printf("✅ DockerWorker[dev] 完成: 退出码=%d", exitCode)
+	log.Printf("✅ DockerWorker[dev] done: exit code=%d", exitCode)
 	return exitCode, nil
 }
 
@@ -117,10 +117,10 @@ func (dw *DockerWorker) RunDev(repoDir, workDir, task, branch string) (int, erro
 func (dw *DockerWorker) Run(issuePath, workDir string) (int, error) {
 	// 1. 验证宿主机文件存在
 	if _, err := os.Stat(dw.agentBin); err != nil {
-		return -1, fmt.Errorf("zerg-agent 二进制不存在 %s: %w", dw.agentBin, err)
+		return -1, fmt.Errorf("zerg-agent binary not found %s: %w", dw.agentBin, err)
 	}
 	if _, err := os.Stat(issuePath); err != nil {
-		return -1, fmt.Errorf("issue 文件不存在 %s: %w", issuePath, err)
+		return -1, fmt.Errorf("issue file not found %s: %w", issuePath, err)
 	}
 
 	// 2. 构造 docker run 命令
@@ -131,11 +131,11 @@ func (dw *DockerWorker) Run(issuePath, workDir string) (int, error) {
 	// 3. 执行命令
 	exitCode, execErr := dw.runCommand(cmd)
 	if execErr != nil {
-		log.Printf("❌ DockerWorker 执行异常: %v", execErr)
+		log.Printf("❌ DockerWorker execution error: %v", execErr)
 		return exitCode, execErr
 	}
 
-	log.Printf("✅ DockerWorker 完成: 退出码=%d", exitCode)
+	log.Printf("✅ DockerWorker done: exit code=%d", exitCode)
 	return exitCode, nil
 }
 
@@ -212,7 +212,7 @@ func (dw *DockerWorker) runCommand(args []string) (int, error) {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode(), nil // 退出码不是 0 = 失败（正常路径）
 		}
-		return -1, fmt.Errorf("docker 执行失败: %w\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+		return -1, fmt.Errorf("docker execution failed: %w\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
 	}
 
 	return 0, nil
