@@ -145,7 +145,7 @@ func (o *Orchestrator) Executor() ModelExecutor {
 // Execute 执行复合模型请求（白眼 zerg-baiyan——MoA：并行参考 + 聚合提炼）。
 func (o *Orchestrator) Execute(ctx context.Context, request string, maxTokens int) (*SynthesizeResult, error) {
 	startTime := time.Now()
-	log.Printf("[orchestrator] 白眼开始执行 (%d 字符)", len(request))
+	log.Printf("[orchestrator] white-eye started (%d chars)", len(request))
 
 	// M2 harness_state 接入（v2.4）：任务状态记录——供断连恢复/M4 蒸馏
 	statePath := filepath.Join(o.stateDir, fmt.Sprintf("moa_%d.json", time.Now().Unix()))
@@ -159,7 +159,7 @@ func (o *Orchestrator) Execute(ctx context.Context, request string, maxTokens in
 	// Step 1: Fan-out（参考模型并行——gemma + Qwable 无工具纯文本）
 	refs := o.FanOutMoA(ctx, request)
 	hs.SetTodoStatus("todo_refs", agentstate.TodoCompleted)
-	hs.AddEvidence("参考完成", fmt.Sprintf("%d 个参考(成功%d)", len(refs), countSuccess(refs)), "参考质量未验证", "聚合")
+	hs.AddEvidence("references done", fmt.Sprintf("%d references (%d ok)", len(refs), countSuccess(refs)), "reference quality unverified", "aggregate")
 	_ = hs.Save(statePath)
 
 	// Step 2: Aggregate（example-35b-v2 = 主模型——带工具，最终决策）
@@ -168,7 +168,7 @@ func (o *Orchestrator) Execute(ctx context.Context, request string, maxTokens in
 	aggResp, err := o.AggregateMoA(aggCtx, request, refs, maxTokens)
 	if err != nil {
 		// 聚合失败 → best-effort：返回最成功参考输出（不空手）
-		log.Printf("[orchestrator] 聚合失败: %v——返回最成功参考", err)
+		log.Printf("[orchestrator] aggregation failed: %v — returning the most successful reference", err)
 		hs.SetTodoStatus("todo_agg", agentstate.TodoBlocked)
 		hs.AddEvidence("聚合失败", err.Error(), "参考输出可用", "重试或降级")
 		hs.Status = "failed"
@@ -177,25 +177,25 @@ func (o *Orchestrator) Execute(ctx context.Context, request string, maxTokens in
 			if r.Success {
 				return &SynthesizeResult{
 					CombinedResult: r.Output,
-					Summary:        fmt.Sprintf("聚合失败——返回参考 %s 输出", r.Model),
+					Summary:        fmt.Sprintf("aggregation failed — returning reference %s output", r.Model),
 					TotalTime:      time.Since(startTime),
 				}, nil
 			}
 		}
-		return nil, fmt.Errorf("aggregate 失败（参考全失败）: %w", err)
+		return nil, fmt.Errorf("aggregate failed (all references failed): %w", err)
 	}
 
 	result := &SynthesizeResult{
 		CombinedResult: aggResp.Content,
-		Summary:        fmt.Sprintf("白眼 MoA: %d 参考 → example-35b-v2 聚合", len(refs)),
+		Summary:        fmt.Sprintf("white-eye MoA: %d references → example-35b-v2 aggregation", len(refs)),
 		TotalTokens:    aggResp.Tokens,
 		TotalTime:      time.Since(startTime),
 	}
 	hs.SetTodoStatus("todo_agg", agentstate.TodoCompleted)
-	hs.AddEvidence("聚合完成", fmt.Sprintf("耗时 %v tokens %d", result.TotalTime, result.TotalTokens), "无", "归档")
+	hs.AddEvidence("aggregation done", fmt.Sprintf("took %v tokens %d", result.TotalTime, result.TotalTokens), "none", "archive")
 	hs.Status = "completed"
 	_ = hs.Save(statePath)
-	log.Printf("[orchestrator] 白眼完成: 参考 %d 个, 总耗时 %v", len(refs), result.TotalTime)
+	log.Printf("[orchestrator] white-eye done: %d references, total %v", len(refs), result.TotalTime)
 	return result, nil
 }
 
@@ -238,12 +238,12 @@ func (o *Orchestrator) decompose(ctx context.Context, request string) (*Decompos
 
 	response, err := o.executor.ExecuteWithResponse(ctx, o.config.BrainModel, decomposePrompt, 2000)
 	if err != nil {
-		return nil, fmt.Errorf("脑模型分解调用失败: %w", err)
+		return nil, fmt.Errorf("brain-model decomposition call failed: %w", err)
 	}
 
 	tasks := o.parseDecomposeResponse(response.Content)
 	if tasks == nil {
-		log.Printf("[orchestrator] 脑模型输出解析失败，降级为单任务")
+		log.Printf("[orchestrator] failed to parse brain-model output, degrading to a single task")
 		return &DecomposeResult{
 			OriginalRequest: request,
 			Tasks: []Task{
@@ -351,7 +351,7 @@ func (o *Orchestrator) dispatchParallel(ctx context.Context, tasks []Task) (map[
 			defer wg.Done()
 			result, err := o.executeTask(ctx, t)
 			if err != nil {
-				log.Printf("[orchestrator] 并行任务 %s 执行失败: %v", t.ID, err)
+				log.Printf("[orchestrator] parallel task %s failed: %v", t.ID, err)
 				mu.Lock()
 				results[t.ID] = TaskResult{
 					Content: "", Duration: 0, Tokens: 0, Success: false, Error: err.Error(),
@@ -458,7 +458,7 @@ func (o *Orchestrator) synthesize(originalRequest string, taskResults map[string
 		}
 	}
 
-	summary := fmt.Sprintf("复合模型执行完成: %d/%d 任务成功, 总 token: %d, 总耗时: %v",
+	summary := fmt.Sprintf("composite model run done: %d/%d tasks succeeded, total tokens: %d, total time: %v",
 		successCount, len(taskResults), totalTokens, time.Since(startTime))
 
 	return &SynthesizeResult{
