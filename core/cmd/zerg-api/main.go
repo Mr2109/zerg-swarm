@@ -177,7 +177,7 @@ load();setInterval(load,5000);
 	})
 
 	addr := fmt.Sprintf(":%d", *port)
-	log.Printf("🚀 zerg-api 启动 %s（workdir=%s%s）", addr, *workDir, authNote(token))
+	log.Printf("🚀 zerg-api started %s (workdir=%s%s)", addr, *workDir, authNote(token))
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 

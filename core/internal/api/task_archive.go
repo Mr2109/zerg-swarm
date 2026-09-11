@@ -71,7 +71,7 @@ func RunTaskArchive() {
 	}
 
 	if archived > 0 || deleted > 0 {
-		log.Printf("🗄️ 任务归档: %d 归档 + %d 删除（30 天归档/90 天删除——Mr2109）\n", archived, deleted)
+		log.Printf("🗄️ task archive: %d archived + %d deleted (archive at 30 days / delete at 90 days — set by Lao Dao)\n", archived, deleted)
 	}
 }
 
@@ -80,7 +80,7 @@ func archiveTaskDir(dirPath, taskID string) bool {
 	archivePath := filepath.Join(archiveDir, taskID+".tar.gz")
 	cmd := exec.Command("tar", "-czf", archivePath, "-C", tasksDir, taskID)
 	if err := cmd.Run(); err != nil {
-		log.Printf("⚠️ 归档失败 %s: %v\n", taskID, err)
+		log.Printf("⚠️ archive failed %s: %v\n", taskID, err)
 		return false
 	}
 	// 写索引（摘要——任务名/时间/大小——可检索）
@@ -100,7 +100,7 @@ func archiveTaskDir(dirPath, taskID string) bool {
 	}
 	// 删活跃目录（归档后——省空间）
 	os.RemoveAll(dirPath)
-	log.Printf("🗄️ 任务 %s 归档完成（%d 字节）\n", taskID, info.Size())
+	log.Printf("🗄️ task %s archived (%d bytes)\n", taskID, info.Size())
 	return true
 }
 

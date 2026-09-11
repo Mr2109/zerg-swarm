@@ -31,10 +31,10 @@ func ResolveChatDBPath() string {
 		return newPath // 无旧库——新建
 	}
 	if err := migrateChatDB(legacyChatDBPath, newPath); err != nil {
-		log.Printf("⚠️ 对话库迁移失败（继续使用旧路径 %s）：%v", legacyChatDBPath, err)
+		log.Printf("⚠️ chat DB migration failed (continuing with legacy path %s): %v", legacyChatDBPath, err)
 		return legacyChatDBPath
 	}
-	log.Printf("✅ 对话库已迁移：%s → %s（旧库保留未删）", legacyChatDBPath, newPath)
+	log.Printf("✅ chat DB migrated: %s → %s (legacy DB kept, not deleted)", legacyChatDBPath, newPath)
 	return newPath
 }
 
@@ -54,56 +54,56 @@ func chatDBPath() string {
 // 铁律：只用 SQLite API（VACUUM INTO）取快照，绝不裸拷 db/-wal（WAL 是持久状态的一部分，裸拷会丢已提交事务）。
 func migrateChatDB(oldPath, newPath string) error {
 	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
-		return fmt.Errorf("建目录失败: %w", err)
+		return fmt.Errorf("failed to create directory: %w", err)
 	}
 	tmp := newPath + ".migrating"
 	_ = os.Remove(tmp)
 
 	old, err := sql.Open("sqlite", oldPath)
 	if err != nil {
-		return fmt.Errorf("打开旧库失败: %w", err)
+		return fmt.Errorf("failed to open legacy DB: %w", err)
 	}
 	defer old.Close()
 	// VACUUM INTO：生成一致性快照（官方推荐的备份方式，含 WAL 已提交数据）
 	if _, err := old.Exec("VACUUM INTO ?", tmp); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("VACUUM INTO 失败: %w", err)
+		return fmt.Errorf("VACUUM INTO failed: %w", err)
 	}
 
 	// 校验：integrity_check + sessions/messages 行数一致
 	chk, err := sql.Open("sqlite", tmp)
 	if err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("打开快照失败: %w", err)
+		return fmt.Errorf("failed to open snapshot: %w", err)
 	}
 	var ic string
 	if err := chk.QueryRow("PRAGMA integrity_check").Scan(&ic); err != nil || ic != "ok" {
 		chk.Close()
 		_ = os.Remove(tmp)
-		return fmt.Errorf("快照完整性校验失败: %v (%s)", err, ic)
+		return fmt.Errorf("snapshot integrity check failed: %v (%s)", err, ic)
 	}
 	for _, tbl := range []string{"sessions", "messages"} {
 		var a, b int
 		if err := old.QueryRow("SELECT count(*) FROM " + tbl).Scan(&a); err != nil {
 			chk.Close()
 			_ = os.Remove(tmp)
-			return fmt.Errorf("旧库 %s 计数失败: %w", tbl, err)
+			return fmt.Errorf("failed to count legacy DB table %s: %w", tbl, err)
 		}
 		if err := chk.QueryRow("SELECT count(*) FROM " + tbl).Scan(&b); err != nil {
 			chk.Close()
 			_ = os.Remove(tmp)
-			return fmt.Errorf("快照 %s 计数失败: %w", tbl, err)
+			return fmt.Errorf("failed to count snapshot table %s: %w", tbl, err)
 		}
 		if a != b {
 			chk.Close()
 			_ = os.Remove(tmp)
-			return fmt.Errorf("行数不一致（%s：旧 %d / 新 %d）——放弃迁移", tbl, a, b)
+			return fmt.Errorf("row count mismatch (%s: legacy %d / new %d) — aborting migration", tbl, a, b)
 		}
 	}
 	chk.Close()
 	if err := os.Rename(tmp, newPath); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("就位失败: %w", err)
+		return fmt.Errorf("failed to move into place: %w", err)
 	}
 	// 迁移标记（便于排查）
 	_ = os.WriteFile(filepath.Join(filepath.Dir(newPath), ".migrated-from-tmp"), []byte(oldPath+"\n"), 0o644)
@@ -136,7 +136,7 @@ func (s *ChatStore) migrateFTSv4() error {
 	}
 	for _, st := range steps {
 		if _, err := tx.Exec(st); err != nil {
-			return fmt.Errorf("重建 FTS 失败（%s）: %w", st, err)
+			return fmt.Errorf("failed to rebuild FTS (%s): %w", st, err)
 		}
 	}
 	var nMsg, nFts int
@@ -147,11 +147,11 @@ func (s *ChatStore) migrateFTSv4() error {
 		return err
 	}
 	if nMsg != nFts {
-		return fmt.Errorf("FTS 重建行数不一致（messages %d / fts %d）——已回滚", nMsg, nFts)
+		return fmt.Errorf("FTS rebuild row count mismatch (messages %d / fts %d) — rolled back", nMsg, nFts)
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	log.Printf("✅ 中文检索修复：messages_fts 重建为 trigram（%d 行）", nFts)
+	log.Printf("✅ CJK search fix: messages_fts rebuilt as trigram (%d rows)", nFts)
 	return nil
 }
