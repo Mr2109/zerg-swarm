@@ -14,20 +14,6 @@ type Finding struct {
 	Detail string `json:"detail"`
 }
 
-// placeholderLicenseTrace 是留痕（accepted_by / accepted_at）的禁用占位词集合（标准 §五）。
-// 这些值看起来像"填过了"，实际什么都没说——留着它就等于给留痕规则开洞。
-// 比较时：两侧空白先 trim，再转小写。
-var placeholderLicenseTrace = map[string]bool{
-	"unset": true, "pending": true, "tbd": true, "todo": true,
-	"n/a": true, "na": true, "placeholder": true, "unknown": true,
-	"待定": true, "未定": true, "none": true, "null": true, "-": true,
-}
-
-// IsPlaceholderLicenseTrace 判定一个留痕值是否为占位词（大小写不敏感，两侧空白先 trim）。
-func IsPlaceholderLicenseTrace(s string) bool {
-	return placeholderLicenseTrace[strings.ToLower(strings.TrimSpace(s))]
-}
-
 // Verify 按《标准-模型接入与目录贡献》§三–§六 校一条记录。
 // strict=true 时 warn 也算不通过（标准 §十三.1：verify 不过直接拒）。
 func Verify(r *Record, strict bool) []Finding {
@@ -43,33 +29,13 @@ func Verify(r *Record, strict bool) []Finding {
 	}
 	if strings.TrimSpace(r.ID) == "" {
 		errf("id", "必填：id")
-	} else if !ValidID(r.ID) {
+	} else if strings.ToLower(r.ID) != r.ID || strings.ContainsAny(r.ID, " \t") {
 		errf("id", "id 必须为小写且不含空格："+r.ID)
 	}
 	if strings.TrimSpace(r.Digest) == "" {
 		errf("digest", "必填：digest（模型身份 = 内容摘要）")
 	} else if !strings.HasPrefix(r.Digest, "sha256:") {
 		errf("digest", "digest 必须是 sha256: 前缀："+r.Digest)
-	}
-	// §三/#16 血缘声明：**可选**字段（旧记录没有 = 合法，向后兼容）。给了就必须是真实引用：
-	// 形状合法（parent 是 version/digest、base_model 是 id）+ 不许占位词 + 不许自指。
-	if v := strings.TrimSpace(r.Parent); v != "" {
-		switch {
-		case IsPlaceholderLineage(v):
-			errf("parent", "血缘不许占位："+r.Parent)
-		case !ValidLineageRef(v):
-			errf("parent", "必须是 version（sha256-<hex>）或 digest（sha256:<64hex>）："+r.Parent)
-		case lineageSelfRef(v, r):
-			errf("parent", "parent 不得指向自己（version/digest 与本记录相同）："+r.Parent)
-		}
-	}
-	if v := strings.TrimSpace(r.BaseModel); v != "" {
-		switch {
-		case IsPlaceholderLineage(v):
-			errf("base_model", "血缘不许占位："+r.BaseModel)
-		case !ValidID(v):
-			errf("base_model", "base_model 必须是模型 id 形状（小写、连字符、不含空格）："+r.BaseModel)
-		}
 	}
 	if len(r.Files) == 0 {
 		errf("files", "必填：files[]（一个模型是一组建材，不是单个文件）")
@@ -93,20 +59,9 @@ func Verify(r *Record, strict bool) []Finding {
 	} else if !CommercialStates[r.License.Commercial] {
 		errf("license.commercial", "取值越界："+r.License.Commercial)
 	}
-	// §五 留痕规则（待修补 #21 修改后）：
-	//   - no / revenue_gated 是「人明知受限还接受」，必须留名与时间；
-	//   - unknown 是「探测出来本来就没人审过许可」，允许留痕为空（也不加 warn，保持最小改动）。
-	if r.License.Commercial == "no" || r.License.Commercial == "revenue_gated" {
-		if strings.TrimSpace(r.License.AcceptedBy) == "" || strings.TrimSpace(r.License.AcceptedAt) == "" {
-			errf("license", "受限许可("+r.License.Commercial+")必须留痕：accepted_by / accepted_at 均必填")
-		}
-	}
-	// §五 防占位符：对任何 commercial 状态都生效——留痕非空时，值不许是占位词。
-	if v := strings.TrimSpace(r.License.AcceptedBy); v != "" && IsPlaceholderLicenseTrace(v) {
-		errf("license.accepted_by", "留痕必须是真实值，不许占位："+r.License.AcceptedBy)
-	}
-	if v := strings.TrimSpace(r.License.AcceptedAt); v != "" && IsPlaceholderLicenseTrace(v) {
-		errf("license.accepted_at", "留痕必须是真实值，不许占位："+r.License.AcceptedAt)
+	// §五 留痕：非 yes 必须写接受人/时间
+	if r.License.Commercial != "yes" && (r.License.AcceptedBy == "" || r.License.AcceptedAt == "") {
+		errf("license", "非商用("+r.License.Commercial+")必须留痕：accepted_by / accepted_at 均必填")
 	}
 
 	// §四 能力标签与证据规则

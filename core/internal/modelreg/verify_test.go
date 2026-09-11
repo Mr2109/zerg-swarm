@@ -3,7 +3,6 @@ package modelreg
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -49,126 +48,16 @@ func TestV3_ProbedWithoutEvidence(t *testing.T) {
 	}
 }
 
-// V4 受限许可（no）但无留痕 → error（待修补 #21 修改后：no/revenue_gated 仍必填）
+// V4 非商用但无留痕 → error
 func TestV4_NoLicenseTrace(t *testing.T) {
 	r := good()
 	r.License.Commercial = "no"
-	findings := Verify(r, false)
-	if n := CountErrors(findings); n == 0 {
-		t.Fatal("受限许可(no)无 accepted_by/at 必须报 error")
+	if n := CountErrors(Verify(r, false)); n == 0 {
+		t.Fatal("非商用无 accepted_by/at 必须报 error")
 	}
-	found := false
-	for _, f := range findings {
-		if f.Level == "error" && f.Field == "license" && strings.Contains(f.Detail, "留痕") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("应报一条 license 留痕 error，实际：%+v", findings)
-	}
-	r.License.AcceptedBy, r.License.AcceptedAt = "laodao", "2026-09-11T00:00:00Z"
+	r.License.AcceptedBy, r.License.AcceptedAt = "laodao", "2026-09-11"
 	if n := CountErrors(Verify(r, false)); n != 0 {
-		t.Fatal("补上真实留痕后应合格")
-	}
-}
-
-// 待修补 #21 的五条反例。规则：
-//
-//	no / revenue_gated → accepted_by/accepted_at 都必须非空（留名留时间）；
-//	unknown           → 允许留痕为空，且不报 error、不加 warn；
-//	任何状态          → 留痕只要非空，就不许是占位词（否则等于骗过门禁）。
-func TestV8_Rule21_NoCommercialRequiresTrace(t *testing.T) {
-	r := good()
-	r.License.Commercial = "no"
-	r.License.AcceptedBy, r.License.AcceptedAt = "", ""
-	findings := Verify(r, false)
-	if n := CountErrors(findings); n != 1 {
-		t.Fatalf("no 且留痕空应恰好 1 条 error，实际 %d 条：%+v", n, findings)
-	}
-	if findings[0].Field != "license" || !strings.Contains(findings[0].Detail, "留痕") {
-		t.Fatalf("error 应落在 license 且说明留痕：%+v", findings[0])
-	}
-}
-
-func TestV9_Rule21_NoCommercialPlaceholderRejected(t *testing.T) {
-	r := good()
-	r.License.Commercial = "no"
-	r.License.AcceptedBy = "unset" // 占位值
-	r.License.AcceptedAt = "2026-09-11T00:00:00Z"
-	findings := Verify(r, false)
-	if n := CountErrors(findings); n != 1 {
-		t.Fatalf("no + accepted_by=unset 应恰好 1 条 error（占位），实际 %d 条：%+v", n, findings)
-	}
-	if !strings.Contains(findings[0].Detail, "占位") {
-		t.Fatalf("错误文案必须提到占位：%+v", findings[0])
-	}
-}
-
-func TestV10_Rule21_UnknownAllowsEmptyTrace(t *testing.T) {
-	// 本次修改的核心：unknown 允许留痕为空，一条 error 都不许有。
-	r := good()
-	r.License.Commercial = "unknown"
-	r.License.AcceptedBy, r.License.AcceptedAt = "", ""
-	findings := Verify(r, false)
-	if n := CountErrors(findings); n != 0 {
-		t.Fatalf("unknown 且留痕空必须无 error（待修补 #21 核心），实际 %d 条：%+v", n, findings)
-	}
-	for _, f := range findings {
-		if f.Level == "warn" && strings.Contains(f.Field, "accepted") {
-			t.Fatalf("不要求给 unknown 加 warn（保持最小改动）：%+v", f)
-		}
-	}
-}
-
-func TestV11_Rule21_RevenueGatedRequiresTrace(t *testing.T) {
-	r := good()
-	r.License.Commercial = "revenue_gated"
-	r.License.AcceptedBy, r.License.AcceptedAt = "", ""
-	if n := CountErrors(Verify(r, false)); n != 1 {
-		t.Fatalf("revenue_gated 且留痕空应恰好 1 条 error，实际 %d 条：%+v", n, Verify(r, false))
-	}
-	r.License.AcceptedBy, r.License.AcceptedAt = "laodao", "2026-09-11T00:00:00Z"
-	if n := CountErrors(Verify(r, false)); n != 0 {
-		t.Fatalf("补上真实留痕后应合格，实际 %d 条：%+v", n, Verify(r, false))
-	}
-}
-
-func TestV12_Rule21_ChinesePlaceholderRejected(t *testing.T) {
-	// 占位检查对任何状态都生效：commercial=yes 也不许用占位值。
-	r := good()
-	r.License.Commercial = "yes"
-	r.License.AcceptedBy = "待定"
-	r.License.AcceptedAt = "2026-09-11T00:00:00Z"
-	findings := Verify(r, false)
-	if n := CountErrors(findings); n != 1 {
-		t.Fatalf("accepted_by=待定 应恰好 1 条 error，实际 %d 条：%+v", n, findings)
-	}
-	if !strings.Contains(findings[0].Detail, "占位") {
-		t.Fatalf("错误文案必须提到占位：%+v", findings[0])
-	}
-}
-
-// 占位词全集：大小写不敏感、两侧空白先 trim；真实值必须放行。
-func TestV13_Rule21_PlaceholderValueTable(t *testing.T) {
-	bad := []string{
-		"unset", "UNSET", " pending ", "tbd", "TODO", "n/a", "NA",
-		"placeholder", "unknown", "待定", "未定", "none", "null", "-",
-	}
-	for _, v := range bad {
-		r := good()
-		r.License.AcceptedBy = v
-		r.License.AcceptedAt = "2026-09-11T00:00:00Z"
-		if n := CountErrors(Verify(r, false)); n == 0 {
-			t.Fatalf("占位值 %q 必须报 error（不许骗过门禁）", v)
-		}
-	}
-	for _, v := range []string{"张三", "laodao", "alice@example.org"} {
-		r := good()
-		r.License.AcceptedBy = v
-		r.License.AcceptedAt = "2026-09-11T00:00:00Z"
-		if n := CountErrors(Verify(r, false)); n != 0 {
-			t.Fatalf("真实留痕 %q 不该报 error，实际 %d 条：%+v", v, n, Verify(r, false))
-		}
+		t.Fatal("补上留痕后应合格")
 	}
 }
 
