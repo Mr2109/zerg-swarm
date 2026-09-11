@@ -29,36 +29,36 @@ func main() {
 	// 解析 workdir
 	absWorkDir, err := resolveWorkDir(*workdir)
 	if err != nil {
-		log.Fatalf("❌ 解析 workdir 失败: %v", err)
+		log.Fatalf("❌ failed to resolve workdir: %v", err)
 	}
-	log.Printf("📂 工作目录: %s", absWorkDir)
+	log.Printf("📂 working directory: %s", absWorkDir)
 
 	// 创建调度器（不注入 runner → 生产默认 exec zerg-agent；-container 切换容器模式）
 	sched := agent.NewScheduler(absWorkDir)
 	if *container {
 		sched.ContainerMode = true
 		sched.ContainerAgentBin = *agentBin
-		log.Printf("🐳 容器模式: docker run zerg-dev（CA 脱离沙箱——Linux agent=%s）", *agentBin)
+		log.Printf("🐳 container mode: docker run zerg-dev (CA outside sandbox — Linux agent=%s)", *agentBin)
 	}
 	if *dev {
 		sched.DevMode = true
-		log.Printf("🔀 开发模式: 容器内分支开发→commit→PR（C4——等待脑确认合并）")
+		log.Printf("🔀 dev mode: in-container branch work → commit → PR (C4 — merge awaits brain approval)")
 	}
 	if *repo != "" {
 		sched.RepoDir = *repo
-		log.Printf("📦 开发仓库: %s", *repo)
+		log.Printf("📦 dev repository: %s", *repo)
 	} else if *dev {
-		log.Printf("⚠️ DevMode 但未指定 -repo，将用 workDir 作为开发仓库（兼容）")
+		log.Printf("⚠️ DevMode without -repo; using workDir as the dev repository (compatibility)")
 		sched.RepoDir = absWorkDir
 	}
 	if *repo != "" {
 		sched.RepoDir = *repo
-		log.Printf("📦 开发仓库: %s", *repo)
+		log.Printf("📦 dev repository: %s", *repo)
 	} else if *dev {
-		log.Printf("⚠️ DevMode 但未指定 -repo，将用 workDir 作为开发仓库（兼容）")
+		log.Printf("⚠️ DevMode without -repo; using workDir as the dev repository (compatibility)")
 		sched.RepoDir = absWorkDir
 	}
-	log.Printf("⚙️  并发上限: %d workers", sched.MaxWorkers())
+	log.Printf("⚙️  concurrency limit: %d workers", sched.MaxWorkers())
 
 	// 启动调度器（后台 goroutine——让 main 能监听信号）
 	ctx, cancel := context.WithCancel(context.Background())
@@ -71,14 +71,14 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
-	log.Printf("\n📡 收到信号: %v，开始优雅停止...", sig)
+	log.Printf("\n📡 signal received: %v, shutting down gracefully...", sig)
 
 	// 1. 停止轮询
 	sched.Stop()
 	// 2. 取消 context（Stop 已 close doneCh，cancel 确保 goroutine 退出）
 	cancel()
 
-	log.Println("🛑 调度器已停止")
+	log.Println("🛑 scheduler stopped")
 }
 
 // resolveWorkDir — 解析 workdir 为绝对路径
@@ -88,7 +88,7 @@ func resolveWorkDir(wd string) (string, error) {
 	}
 	abs, err := filepath.Abs(wd)
 	if err != nil {
-		return "", fmt.Errorf("路径解析失败: %w", err)
+		return "", fmt.Errorf("failed to resolve path: %w", err)
 	}
 	return abs, nil
 }
@@ -99,6 +99,6 @@ func printStatusLoop(sched *agent.Scheduler) {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		log.Printf("📊 调度器状态: 活跃=%d/%d", sched.ActiveCount(), sched.MaxWorkers())
+		log.Printf("📊 scheduler status: active=%d/%d", sched.ActiveCount(), sched.MaxWorkers())
 	}
 }
