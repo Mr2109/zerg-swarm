@@ -173,11 +173,11 @@ func (d *IdleDetector) SetEnabled(on bool) { d.enabled = on }
 func (d *IdleDetector) Run(stop <-chan struct{}) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
-	log.Printf("🕐 内部任务引擎启动——空闲检测每 5 分钟（v2.5.5 T3）")
+	log.Printf("🕐 Internal task engine started — idle check every 5 minutes (v2.5.5 T3)")
 	for {
 		select {
 		case <-stop:
-			log.Printf("🕐 内部任务引擎停止")
+			log.Printf("🕐 Internal task engine stopped")
 			return
 		case <-ticker.C:
 			d.checkAndTrigger()
@@ -192,12 +192,12 @@ func (d *IdleDetector) checkAndTrigger() {
 	}
 	// 外部任务队列空（无外部任务在跑）
 	if d.externalQueue != nil && d.externalQueue() > 0 {
-		log.Printf("🕐 外部任务在跑（%d）——内部任务让路", d.externalQueue())
+		log.Printf("🕐 External tasks running (%d) — internal tasks yielding", d.externalQueue())
 		return
 	}
 	// 资源空闲（X3/本机 GPU idle）
 	if d.resourceIdle != nil && !d.resourceIdle() {
-		log.Printf("🕐 资源忙——内部任务等空闲")
+		log.Printf("🕐 Resources busy — internal tasks waiting for idle")
 		return
 	}
 
@@ -217,7 +217,7 @@ func (d *IdleDetector) checkAndTrigger() {
 		// 触发该任务
 		issuePath, err := d.triggerTask(def)
 		if err != nil {
-			log.Printf("🕐 内部任务 %s 触发失败: %v", def.ID, err)
+			log.Printf("🕐 internal task %s trigger failed: %v", def.ID, err)
 			continue
 		}
 		lastIssuePath = issuePath
@@ -230,10 +230,10 @@ func (d *IdleDetector) checkAndTrigger() {
 		d.mu.Unlock()
 		// v2.5.5 断点续跑: 触发状态落盘（重启后从暂停处继续）
 		d.saveIdleState()
-		log.Printf("🕐 内部任务触发: %s（%s）", def.ID, def.Description)
+		log.Printf("🕐 internal task triggered: %s (%s)", def.ID, def.Description)
 		return // 一次只触发一个（避免并发内部任务）
 	}
-	log.Printf("🕐 内部任务全部冷却中——本次不触发")
+	log.Printf("🕐 all internal tasks cooling down — none triggered")
 }
 
 // triggerTask 建 issue + 派 CA（复用调度器——写 docs/issues/ 任务单）
@@ -250,7 +250,7 @@ func (d *IdleDetector) triggerTask(def InternalTask) (string, error) {
 	if err := os.WriteFile(issuePath, []byte(content), 0o644); err != nil {
 		return "", err
 	}
-	log.Printf("🕐 内部任务单已建: %s", issuePath)
+	log.Printf("🕐 internal task issue filed: %s", issuePath)
 	return issuePath, nil
 }
 
