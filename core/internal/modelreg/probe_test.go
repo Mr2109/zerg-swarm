@@ -2,6 +2,7 @@ package modelreg
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -232,8 +233,70 @@ func TestSynthesizeDigestIgnoresPathAndName(t *testing.T) {
 	}
 }
 
-// 生成的 Record 必须能过自己的校验（Verify 无 error）。
-func TestProbeRecordPassesVerify(t *testing.T) {
+// assertLicenseTraceConflict 是批 3 的硬规则守护（取代批 2 的"产物必须过 Verify"）：
+//
+//	批 2 让探针产物过 verify 的办法，是往记录里写 accepted_by/accepted_at="unset" ——
+//	那等于用占位值把标准 §五 的留痕规则骗成绿（等于给门禁开洞）。批 3 废除占位值，
+//	于是真实冲突（待修补 #21）必须如实暴露：记录过不了 verify。
+//
+// 本断言把它钉死：恰好 1 条 error、落在 license 字段、说清是留痕规则；并且
+// **补上人工留痕后必须归零** —— 证明冲突确实只有这一条，记录其余部分合法。
+func assertLicenseTraceConflict(t *testing.T, rec *Record) {
+	t.Helper()
+	findings := Verify(rec, false)
+	if n := CountErrors(findings); n != 1 {
+		t.Fatalf("probe 产物应有且只有 1 条 error（§五 留痕，待修补 #21），实际 %d 条：%+v", n, findings)
+	}
+	var only Finding
+	for _, f := range findings {
+		if f.Level == "error" {
+			only = f
+		}
+	}
+	if only.Field != "license" {
+		t.Fatalf("唯一的 error 应落在 license 字段（留痕规则），实际 field=%q detail=%q", only.Field, only.Detail)
+	}
+	if !strings.Contains(only.Detail, "留痕") {
+		t.Fatalf("该 error 应说明是留痕规则：%s", only.Detail)
+	}
+	if rec.License.AcceptedBy != "" || rec.License.AcceptedAt != "" {
+		t.Fatalf("探针不许写占位值：accepted_by=%q accepted_at=%q", rec.License.AcceptedBy, rec.License.AcceptedAt)
+	}
+	if !strings.Contains(rec.Notes, "#21") {
+		t.Fatalf("notes 必须写明该记录待人工审许可（待修补 #21）：%s", rec.Notes)
+	}
+	fixed := *rec
+	fixed.License.AcceptedBy = "人工审许可（测试夹具）"
+	fixed.License.AcceptedAt = "2026-09-12T00:00:00Z"
+	if n := CountErrors(Verify(&fixed, false)); n != 0 {
+		t.Fatalf("补上人工留痕后不该还有 error，实际 %d 条：%+v", n, Verify(&fixed, false))
+	}
+}
+
+// 硬规则守护：记录里任何地方都不许出现 unset/pending 之类占位串（那是骗门禁）。
+func TestProbeRecordHasNoPlaceholderLicenseFields(t *testing.T) {
+	p := writeTestGGUF(t, "", "NoSubstitution-Q4_K_M.gguf")
+	rec, _, err := Probe(ProbeOptions{Target: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := strings.ToLower(string(b))
+	for _, bad := range []string{"unset", "pending", "tbd", "n/a", "todo", "placeholder"} {
+		if strings.Contains(js, bad) {
+			t.Fatalf("记录里出现占位值 %q（禁止：等于给门禁开洞）\n%s", bad, js)
+		}
+	}
+	if rec.License.AcceptedBy != "" || rec.License.AcceptedAt != "" {
+		t.Fatalf("accepted_by/accepted_at 必须留空：%q/%q", rec.License.AcceptedBy, rec.License.AcceptedAt)
+	}
+}
+
+// 生成的 Record 形态正确；许可留痕冲突如实暴露（批 3：占位值已废除）。
+func TestProbeGGUFRecordExposesLicenseTraceConflict(t *testing.T) {
 	p := writeTestGGUF(t, "", "TestModel-8B-Q4_K_M.gguf")
 	rec, rep, err := Probe(ProbeOptions{Target: p, Now: func() time.Time { return time.Unix(0, 0).UTC() }})
 	if err != nil {
@@ -260,10 +323,7 @@ func TestProbeRecordPassesVerify(t *testing.T) {
 	if got := rec.EngineRecipes["llama.cpp"].ChatTemplate; got != "from_gguf" {
 		t.Fatalf("EngineRecipe.chat_template 应为 from_gguf，实际 %q", got)
 	}
-	findings := Verify(rec, false)
-	if n := CountErrors(findings); n != 0 {
-		t.Fatalf("probe 产物必须过 Verify(rec,false)，实际 %d 条 error：%+v", n, findings)
-	}
+	assertLicenseTraceConflict(t, rec)
 
 	// 同一内容换个文件名再探一次：digest 必须不变（硬规则回归）
 	q := filepath.Join(t.TempDir(), "renamed-entirely.gguf")
@@ -280,8 +340,8 @@ func TestProbeRecordPassesVerify(t *testing.T) {
 	}
 }
 
-// 端点探测（无本地文件）也要产出能过 Verify 的记录。
-func TestProbeEndpointRecordPassesVerify(t *testing.T) {
+// 端点探测（无本地文件）：记录形态完整，许可留痕冲突同样如实暴露。
+func TestProbeEndpointRecordExposesLicenseTraceConflict(t *testing.T) {
 	srv := fakeEngine(t, "image input is not supported by this model")
 	rec, rep, err := Probe(ProbeOptions{Target: srv.URL, Timeout: 5 * time.Second})
 	if err != nil {
@@ -290,9 +350,7 @@ func TestProbeEndpointRecordPassesVerify(t *testing.T) {
 	if len(rec.Files) != 1 || rec.Files[0].Role != "endpoint" {
 		t.Fatalf("端点探测无本地文件时应写一条占位建材料：%+v", rec.Files)
 	}
-	if n := CountErrors(Verify(rec, false)); n != 0 {
-		t.Fatalf("端点探测产物必须过 Verify，实际 %d 条 error：%+v", n, Verify(rec, false))
-	}
+	assertLicenseTraceConflict(t, rec)
 	// 视觉能力必须 false（假端点 400）
 	if hasCap(rec.Capabilities, "vision") {
 		t.Fatal("假端点对 image 返回 400，vision 必须为 false")
