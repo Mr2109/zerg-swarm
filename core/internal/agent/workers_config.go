@@ -43,11 +43,11 @@ func loadDeviceMaxWorkers(workDir string) (*DeviceAwareConfig, error) {
 	cfgPath := filepath.Join(workDir, "config", workersConfigPath)
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
-		return nil, fmt.Errorf("读取 workers.yaml 失败: %w", err)
+		return nil, fmt.Errorf("failed to read workers.yaml: %w", err)
 	}
 	var cfg DeviceAwareConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("解析 workers.yaml 失败: %w", err)
+		return nil, fmt.Errorf("failed to parse workers.yaml: %w", err)
 	}
 	return &cfg, nil
 }
@@ -118,14 +118,14 @@ func ValidateWorkersConfig(devices []DeviceConfig) []string {
 	var issues []string
 	for i, d := range devices {
 		if strings.TrimSpace(d.Hostname) == "" {
-			issues = append(issues, fmt.Sprintf("devices[%d]: hostname 不能为空", i))
+			issues = append(issues, fmt.Sprintf("devices[%d]: hostname must not be empty", i))
 			continue
 		}
 		if d.MaxWorkers <= 0 {
-			issues = append(issues, fmt.Sprintf("devices[%d] (%s): max_workers 必须 > 0, 当前=%d", i, d.Hostname, d.MaxWorkers))
+			issues = append(issues, fmt.Sprintf("devices[%d] (%s): max_workers must be > 0, current=%d", i, d.Hostname, d.MaxWorkers))
 		}
 		if d.MaxWorkers > 16 {
-			issues = append(issues, fmt.Sprintf("devices[%d] (%s): max_workers 不建议超过 16, 当前=%d", i, d.Hostname, d.MaxWorkers))
+			issues = append(issues, fmt.Sprintf("devices[%d] (%s): max_workers should not exceed 16, current=%d", i, d.Hostname, d.MaxWorkers))
 		}
 	}
 	return issues
