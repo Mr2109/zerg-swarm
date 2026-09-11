@@ -200,6 +200,13 @@ print(f"  替换规则：改动 {changed} 个文件（字面 {len(rules)} 条 / 
 PY
 
 say "4/6 门禁扫描（命中即中止）"
+# 4.0 shell 静态检查：$VAR 后紧跟非 ASCII（中文/全角括号）→ bash 会把多字节当变量名一部分 → unbound variable。
+# 这条本期真踩过两次（pack-release.sh / publish/install.sh），所以接进闸门——检查器存在但没接线 = 死链。
+if ! python3 "$REPO_ROOT/scripts/check-shell-unicode-vars.py" --check "$OUT"/scripts/*.sh "$OUT"/*.sh; then
+  echo "❌ 脚本里有 \$VAR 后紧跟非 ASCII 的坑——修完再发（python3 scripts/check-shell-unicode-vars.py <files> 可就地修）" >&2
+  exit 1
+fi
+
 python3 - "$OUT" <<'PY'
 import os, re, sys
 out = sys.argv[1]
