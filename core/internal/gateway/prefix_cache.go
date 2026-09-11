@@ -595,13 +595,13 @@ func (t *prefixCacheTracker) load() {
 	b, err := os.ReadFile(t.persistPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Printf("⚠️ [prefix_cache] 持久化文件读取失败（忽略，从空态开始）：%v", err)
+			log.Printf("⚠️ [prefix_cache] failed to read persistence file (ignored, starting empty): %v", err)
 		}
 		return
 	}
 	var pf persistedPrefixCache
 	if err := json.Unmarshal(b, &pf); err != nil {
-		log.Printf("⚠️ [prefix_cache] 持久化文件损坏（忽略，从空态开始）：%v", err)
+		log.Printf("⚠️ [prefix_cache] persistence file corrupted (ignored, starting empty): %v", err)
 		return
 	}
 
@@ -645,7 +645,7 @@ func (t *prefixCacheTracker) load() {
 			t.unknownShapes[sig] = true
 		}
 	}
-	log.Printf("✅ [prefix_cache] 已从 %s 恢复 %d 个模型 / %d 条告警 / %d 次未知形态",
+	log.Printf("✅ [prefix_cache] restored from %s: %d models / %d warnings / %d unknown shapes",
 		t.persistPath, len(models), len(t.alerts), t.unknownForms)
 }
 
@@ -684,20 +684,20 @@ func (t *prefixCacheTracker) saveLocked() {
 	}
 	b, err := json.MarshalIndent(pf, "", "  ")
 	if err != nil {
-		log.Printf("⚠️ [prefix_cache] 持久化序列化失败（跳过本次落盘）：%v", err)
+		log.Printf("⚠️ [prefix_cache] persistence serialization failed (skipping this save): %v", err)
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(t.persistPath), 0o755); err != nil {
-		log.Printf("⚠️ [prefix_cache] 持久化目录创建失败（跳过本次落盘）：%v", err)
+		log.Printf("⚠️ [prefix_cache] failed to create persistence directory (skipping this save): %v", err)
 		return
 	}
 	tmp := t.persistPath + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		log.Printf("⚠️ [prefix_cache] 持久化临时文件写入失败（跳过本次落盘）：%v", err)
+		log.Printf("⚠️ [prefix_cache] failed to write persistence temp file (skipping this save): %v", err)
 		return
 	}
 	if err := os.Rename(tmp, t.persistPath); err != nil {
-		log.Printf("⚠️ [prefix_cache] 持久化原子替换失败：%v", err)
+		log.Printf("⚠️ [prefix_cache] persistence atomic replace failed: %v", err)
 		return
 	}
 	t.lastSaveAt = t.now()
@@ -1021,8 +1021,8 @@ func (g *Gateway) recordPrefixCache(model string, forwardBody, respBody []byte) 
 		// 仅当响应体可解析为 JSON 对象时计数；空/损坏/非对象不计（避免把解析错误误判为形态）。
 		if keys, keyed := unknownFormKeys(respBody); keyed {
 			n := g.prefixCache.markUnknown(keys)
-			log.Printf("⚠️ [prefix_cache][WARN] 未知响应形态（累计第 %d 次）——样本键名: %v", n, keys)
-			slog.Warn("prefix_cache 未知响应形态", "count", n, "keys", keys)
+			log.Printf("⚠️ [prefix_cache][WARN] unknown response shape (cumulative #%d) — sample keys: %v", n, keys)
+			slog.Warn("prefix_cache unknown response shape", "count", n, "keys", keys)
 		}
 		return
 	}
@@ -1031,15 +1031,15 @@ func (g *Gateway) recordPrefixCache(model string, forwardBody, respBody []byte) 
 	// DEBUG：展示真实响应字段原文（需求①：便于以后适配）
 	log.Printf("🔬 [prefix_cache][DEBUG] model=%s form=%s cache_read=%d cache_miss=%d version=%s raw=%s",
 		model, form, read, miss, version, raw)
-	slog.Debug("prefix_cache 采样",
+	slog.Debug("prefix_cache sampling",
 		"model", model, "form", form, "cache_read", read, "cache_miss", miss, "prompt_version", version)
 
 	if changed {
-		log.Printf("🔄 [prefix_cache] 版本变更: model=%s 新版本=%s（窗口重置——开始对比基线）", model, version)
+		log.Printf("🔄 [prefix_cache] version changed: model=%s new version=%s (window reset — comparing against baseline)", model, version)
 	}
 	if alert != nil {
 		// 版本级告警：WARNING 日志 + 计入告警列表（列表在 tracker 内）
-		slog.Warn("前缀命中率版本级下降",
+		slog.Warn("prefix hit rate dropped at version level",
 			"model", alert.Model, "prompt_version", alert.PromptVersion,
 			"ratio", alert.Ratio, "baseline_ratio", alert.BaselineRatio,
 			"delta", alert.Delta, "reason", alert.Reason)
