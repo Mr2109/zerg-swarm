@@ -40,9 +40,9 @@ func TestStoreAdmissionGateRefusesAndWritesNothing(t *testing.T) {
 		field string // 期望 findings 里出现的字段
 	}{
 		{
-			name: "comm_commercial_unknown_缺许可留痕",
+			name: "comm_commercial_no_缺许可留痕",
 			mut: func(r *Record) {
-				r.License.Commercial = "unknown"
+				r.License.Commercial = "no" // 受限许可：必须留痕
 				r.License.AcceptedBy, r.License.AcceptedAt = "", ""
 			},
 			field: "license",
@@ -97,6 +97,43 @@ func TestStoreAdmissionGateRefusesAndWritesNothing(t *testing.T) {
 			}
 			assertNothingWritten(t, st)
 		})
+	}
+}
+
+// 待修补 #21 的核心：commercial=unknown 且无留痕 → 门禁放行、记录真正落盘（写入通路跑通）；
+// 同时守住不许开洞的反例：no 无留痕、占位留痕都必须仍被拒。
+func TestStoreAdmitsUnknownLicenseWithoutTrace(t *testing.T) {
+	root := t.TempDir()
+	rec := goodRecord("unknown-lic-model", "9")
+	rec.License.Commercial = "unknown"
+	rec.License.AcceptedBy, rec.License.AcceptedAt = "", ""
+	if n := CountErrors(Verify(rec, false)); n != 0 {
+		t.Fatalf("unknown 无留痕不该有 error（待修补 #21），实际 %d 条", n)
+	}
+	res, err := NewStore(root).Put(rec, false)
+	if err != nil {
+		t.Fatalf("unknown 无留痕应能入目录（写入通路）：%v", err)
+	}
+	if !res.Changed {
+		t.Fatal("首次写入应 changed=true")
+	}
+	if _, err := os.Stat(res.Path); err != nil {
+		t.Fatalf("文件没落盘：%v", err)
+	}
+
+	// 反例一：no 无留痕必须仍被拒（规则不许被放宽）
+	restricted := goodRecord("restricted-model", "9")
+	restricted.License.Commercial = "no"
+	if _, err := NewStore(root).Put(restricted, false); err == nil {
+		t.Fatal("no 且无留痕必须被门禁拒绝")
+	}
+	// 反例二：占位留痕必须仍被拒
+	ph := goodRecord("placeholder-model", "9")
+	ph.License.Commercial = "unknown"
+	ph.License.AcceptedBy, ph.License.AcceptedAt = "unset", "2026-09-12T00:00:00Z"
+	var adm *AdmissionError
+	if _, err := NewStore(root).Put(ph, false); !errors.As(err, &adm) {
+		t.Fatalf("占位留痕必须被拒（AdmissionError），实际 %v", err)
 	}
 }
 
@@ -354,9 +391,9 @@ func TestStoreList(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := goodRecord("a-model", "d")
-	bad.License.Commercial = "unknown" // 无留痕 → 目录健康检查应看见它的 error
+	bad.License.Commercial = "no" // 受限许可且无留痕 → 目录健康检查应看见它的 error
 	if _, err := st.Put(bad, false); err == nil {
-		t.Fatal("许可未知无留痕的记录不该被门禁放行（本用例前提）")
+		t.Fatal("受限许可(no)无留痕的记录不该被门禁放行（本用例前提）")
 	}
 	bad.License.AcceptedBy, bad.License.AcceptedAt = "人工审许可（测试夹具）", "2026-09-12T00:00:00Z"
 	if _, err := st.Put(bad, false); err != nil {
@@ -385,7 +422,7 @@ func TestStoreList(t *testing.T) {
 		}
 	}
 
-	var broken, healthy, unknownLic *StoredRecord
+	var broken, healthy, noLic *StoredRecord
 	for i := range rows {
 		switch rows[i].Version {
 		case "sha256-broken":
@@ -393,7 +430,7 @@ func TestStoreList(t *testing.T) {
 		case wantVersion("b"):
 			healthy = &rows[i]
 		case wantVersion("d"):
-			unknownLic = &rows[i]
+			noLic = &rows[i]
 		}
 	}
 	if broken == nil || broken.Err == "" {
@@ -405,14 +442,14 @@ func TestStoreList(t *testing.T) {
 	if healthy.Capabilities == nil || len(healthy.Capabilities) != 1 || healthy.Capabilities[0] != "text" {
 		t.Fatalf("能力列不对：%+v", healthy)
 	}
-	if unknownLic == nil {
-		t.Fatalf("没找到许可未知那条：%+v", rows)
+	if noLic == nil {
+		t.Fatalf("没找到受限许可那条：%+v", rows)
 	}
-	if unknownLic.DefaultEligible {
+	if noLic.DefaultEligible {
 		t.Fatal("commercial != yes 必须标为不可作默认项（标准 §五 红线）")
 	}
-	if unknownLic.Errors != 0 {
-		t.Fatalf("补齐留痕后该行不该有 error：%+v", unknownLic)
+	if noLic.Errors != 0 {
+		t.Fatalf("补齐留痕后该行不该有 error：%+v", noLic)
 	}
 }
 
