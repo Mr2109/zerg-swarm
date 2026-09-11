@@ -349,6 +349,16 @@ fi
 swap_one() { # $1=组件名  $2=源制品名
   local name="$1" src="$2"
   cp -p "$work/dl/$src" "$PREFIX/$name.new"
+  # 2026-09-11 修（真机 --fleet 升级被误判 files 失败并回滚）：sha 必须在**签名前**校验。
+  # 实测：macOS ad-hoc 重签**不幂等**——未签 a045aa9d → 签一次 3f5e864c → 再签 74af1a5b。
+  # 故"签名后再拿落盘字节比 manifest 的（签名前）sha"永远不符；正确做法是校验暂存件，
+  # 签名后的正确性由"签名有效 + 活进程自报身份"(verify_live) 保证。
+  if [ "$(sha_of "$PREFIX/$name.new")" != "$(want_sha "$src")" ]; then
+    say "   ✗ $name 暂存件 sha 与 manifest 不符——**未换装**（已丢弃暂存件）"
+    rm -f "$PREFIX/$name.new"
+    SWAP_FAIL=1
+    return 1
+  fi
   [ -f "$PREFIX/$name" ] && mv -f "$PREFIX/$name" "$PREFIX/$name.prev"
   mv -f "$PREFIX/$name.new" "$PREFIX/$name"
   chmod +x "$PREFIX/$name"
@@ -357,16 +367,22 @@ swap_one() { # $1=组件名  $2=源制品名
   fi
   say "   🔁 $name ← ${src}（旧件已留 .prev）"
 }
-swap_one zerg-core  "zerg-core-${PLAT}"
-swap_one zerg-agent "zerg-agent-${PLAT}"
-[ "$PLAT" = "darwin-arm64" ] && swap_one zerg-ui "zerg-ui-${PLAT}"
+SWAP_FAIL=0
+swap_one zerg-core  "zerg-core-${PLAT}"  || swap_one_fail=1
+swap_one zerg-agent "zerg-agent-${PLAT}" || swap_one_fail=1
+[ "$PLAT" = "darwin-arm64" ] && { swap_one zerg-ui "zerg-ui-${PLAT}" || swap_one_fail=1; }
+true
 
 # ── 重启 + verify（起不来就回滚）────────────────────────────────────────────
-verify_files() { # 落盘 sha 必须与 manifest 一致（UI 只能这样验——它不提供自报接口）
+verify_files() { # 2026-09-11 修：不再比落盘 sha（重签名已改字节）——改验"在位 + 可执行 + 签名有效"
+  # 依据：sha 的真值校验已在 swap_one 里对**暂存件**做过（签名前）；这里守的是"能不能跑"这一类失败。
   local ok=1 a n
   for a in $WANT; do
     n="$(echo "$a" | sed "s/-${PLAT}$//")"
-    [ "$(sha_of "$PREFIX/$n")" = "$(want_sha "$a")" ] || { ok=0; say "   ✗ $n 落盘 sha 与 manifest 不符"; }
+    if [ ! -f "$PREFIX/$n" ] || [ ! -x "$PREFIX/$n" ]; then ok=0; say "   ✗ $n 缺失或不可执行"; continue; fi
+    if [ "$os" = "Darwin" ]; then
+      codesign -v "$PREFIX/$n" >/dev/null 2>&1 || { ok=0; say "   ✗ $n 签名无效（macOS 会秒杀 EXIT137）"; }
+    fi
   done
   return $((1-ok))
 }
@@ -380,7 +396,7 @@ verify_live() { # 活进程自报：主控走 capabilities，子端走 --version
 }
 
 RESULT="ok"; FAILED_AT=""
-if ! verify_files; then RESULT="rollback"; FAILED_AT="files"; fi
+if [ "${SWAP_FAIL:-0}" = "1" ] || [ "${swap_one_fail:-0}" = "1" ] || ! verify_files; then RESULT="rollback"; FAILED_AT="files"; fi
 if [ "$RESULT" = "ok" ] && [ "$NO_SERVICE" != "1" ]; then
   say "▶️  启主控"
   bash "$REPO_ROOT/scripts/start-zerg-core.sh" >/dev/null 2>&1 || true
