@@ -6,6 +6,8 @@ package store
 import (
 	"testing"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/resources"
 )
 
 func modelPtr(s string) *string { return &s }
@@ -62,13 +64,51 @@ func TestReceiveHeartbeat_Update(t *testing.T) {
 // TestSetLocalSnapshot 本机快照写入
 func TestSetLocalSnapshot(t *testing.T) {
 	s := NewStore()
-	s.SetLocalSnapshot("local", modelPtr("Qwen3.8-27B"), []string{"Qwen3.8-27B"}, true, "ready", 13.9, 64, 1.79, 0, 9.4, 70)
+	s.SetLocalSnapshot(LocalSnapshotData{
+		Machine: "local", Model: modelPtr("Qwen3.8-27B"), Models: []string{"Qwen3.8-27B"},
+		Healthy: true, State: "ready", MemAvailableGb: 13.9, MemTotalGb: 64, Load: 1.79,
+		CpuPct: 9.4, GpuPct: 70,
+	})
 	snap := s.GetSnapshot("local")
 	if snap == nil || *snap.Model != "Qwen3.8-27B" {
 		t.Fatalf("local 快照未写入: %v", snap)
 	}
 	if snap.BackendState != "ready" || snap.MemTotalGb != 64 {
 		t.Fatalf("状态/内存未保存: %s/%v", snap.BackendState, snap.MemTotalGb)
+	}
+	// 未提供驻留/显存 → 如实缺席（不造值）
+	if len(snap.Resident) != 0 {
+		t.Fatalf("未提供驻留时 resident 应为空，实得 %v", snap.Resident)
+	}
+	if snap.VramKnown || snap.VramUnified {
+		t.Fatalf("未提供显存时 vram_known/vram_unified 应为 false，实得 %v/%v", snap.VramKnown, snap.VramUnified)
+	}
+}
+
+// TestSetLocalSnapshot_CarriesResidentAndVram —— 批 5（#30）：本机账本字段随快照写入
+// （驻留明细 + 显存三态），使 /api/resources/ledger 的 local 一行与远程同口径（§八 Q7）。
+func TestSetLocalSnapshot_CarriesResidentAndVram(t *testing.T) {
+	s := NewStore()
+	s.SetLocalSnapshot(LocalSnapshotData{
+		Machine: "local", Model: modelPtr("example-35b-v2"), Models: []string{"example-35b-v2"},
+		Healthy: true, State: "ready", MemAvailableGb: 20, MemTotalGb: 64,
+		Resident: []resources.ResidentEntry{{
+			Alias: "example-35b-v2", File: "/models/example-35b-v2.gguf",
+			State: resources.StateReady, MemGb: 22, Managed: true, Source: "localback",
+		}},
+		VramUnified: true, // 本机 Apple Silicon：显存即内存
+	})
+	snap := s.GetSnapshot("local")
+	if len(snap.Resident) != 1 {
+		t.Fatalf("驻留明细应写入 1 项，实得 %v", snap.Resident)
+	}
+	r := snap.Resident[0]
+	if r.Alias != "example-35b-v2" || r.File != "/models/example-35b-v2.gguf" || r.State != resources.StateReady ||
+		r.MemGb != 22 || !r.Managed || r.Source != "localback" {
+		t.Fatalf("驻留项字段不符: %+v", r)
+	}
+	if !snap.VramUnified || snap.VramKnown {
+		t.Fatalf("统一内存应 vram_unified=true 且 vram_known=false，实得 %v/%v", snap.VramUnified, snap.VramKnown)
 	}
 }
 

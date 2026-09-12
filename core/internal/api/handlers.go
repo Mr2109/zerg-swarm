@@ -1117,6 +1117,14 @@ func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
 			CpuPct:         cpuPct,
 			GpuPct:         gpuPct,
 			LastSeen:       time.Now(),
+			// 资源账本（批 5 #29/#30）：本机显存如实（拿不到就 vram_known=false + 三值缺席，
+			// 绝不用内存/RSS 冒充）+ 驻留明细（口径同远程子端，§八 Q7）。
+			Resident:    localSnap.Resident,
+			VramKnown:   localSnap.VramKnown,
+			VramUnified: localSnap.VramUnified,
+			VramTotalGb: localSnap.VramTotalGb,
+			VramUsedGb:  localSnap.VramUsedGb,
+			VramFreeGb:  localSnap.VramFreeGb,
 		}
 		// 本机已加载模型时填充 model 字段
 		if len(localSnap.Models) > 0 {
