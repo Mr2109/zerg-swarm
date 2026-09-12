@@ -1,10 +1,87 @@
 package api
 
 import (
+	"fmt"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 )
+
+// ============ 测试时序稳健性辅助（测试专用——绝不改产品代码） ============
+//
+// 背景: 旧用例在固定 time.Sleep(100ms) 后立即断言「队空 + running 空」。
+// 本机整链（1 次执行 + 3 次验证不过重跑 = 4 轮，Mr2109的设计不得删）实测约 37ms——100ms 够；
+// 但慢机/CI 约 130ms——100ms 时第 4 轮还在跑——断言断的是「机器快慢」不是逻辑——
+// 同一提交在 CI 上时红时绿。
+// 改为「上限内轮询到静止」: 达到即通过；超时失败并打印当时真实状态（queue/running/任务态）供 CI 诊断。
+// 断言口径一字不改（仍要求队空 + running 空），只是不再假设固定时长够快——不 skip、不放宽、不加 sleep 了事。
+
+const (
+	// schedIdleLimit 轮询上限（慢机/忙机 CI 也有充足余量——本机整链约 37ms，正常路径几乎不等待）
+	schedIdleLimit = 5 * time.Second
+	// schedIdlePoll 轮询间隔（小——正常路径只轮询十余次）
+	schedIdlePoll = 5 * time.Millisecond
+)
+
+// schedSnapshot 调度器状态快照（轮询判定 + 超时诊断用——全部持锁读——-race 干净）
+type schedSnapshot struct {
+	queueLen   int
+	runningLen int
+	runningIDs []string
+	taskStatus string
+}
+
+// read 持锁取快照（与调度器 goroutine 的字段写入互斥）
+func (sn *schedSnapshot) read(s *MasterScheduler, task *Task) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sn.queueLen = len(s.queue)
+	sn.runningLen = len(s.running)
+	sn.runningIDs = sn.runningIDs[:0]
+	for id := range s.running {
+		sn.runningIDs = append(sn.runningIDs, id)
+	}
+	sort.Strings(sn.runningIDs) // 稳定输出（诊断/日志可比对）
+	if task != nil {
+		sn.taskStatus = task.Status
+	}
+}
+
+// idle 静止判定: 队空 + running 空（与旧断言同口径）
+func (sn schedSnapshot) idle() bool { return sn.queueLen == 0 && sn.runningLen == 0 }
+
+func (sn schedSnapshot) String() string {
+	status := sn.taskStatus
+	if status == "" {
+		status = "<unknown>"
+	}
+	return fmt.Sprintf("queue=%d running=%d %v task_status=%q",
+		sn.queueLen, sn.runningLen, sn.runningIDs, status)
+}
+
+// isTerminalTaskStatus 任务终态（done/failed）——确认任务真跑完而非停在中间态
+func isTerminalTaskStatus(status string) bool {
+	return status == "done" || status == "failed"
+}
+
+// waitSchedulerIdle 上限内轮询到静止: 队空 + running 空 +（给了 task 时）任务已达终态。
+// 达到 → 返回最终快照 true；超时 → 返回最后一次快照 false（调用方打印——CI 上可诊断根因）。
+// 返回轮询次数便于报告「正常路径几乎不等待」。
+func waitSchedulerIdle(s *MasterScheduler, task *Task) (sn schedSnapshot, ok bool, polls int) {
+	deadline := time.Now().Add(schedIdleLimit)
+	for {
+		polls++
+		sn.read(s, task)
+		if sn.idle() && (task == nil || isTerminalTaskStatus(sn.taskStatus)) {
+			return sn, true, polls
+		}
+		if !time.Now().Before(deadline) {
+			return sn, false, polls
+		}
+		time.Sleep(schedIdlePoll)
+	}
+}
 
 // TestMasterScheduler_Priority — 外部任务优先（高优先级先出队）
 func TestMasterScheduler_Priority(t *testing.T) {
@@ -28,8 +105,17 @@ func TestMasterScheduler_SubmitAndQueue(t *testing.T) {
 	tasksFile = filepath.Join(t.TempDir(), "tasks-test.json")
 	defer func() { tasksFile = oldFile }()
 	s := NewMasterScheduler("/bin/echo", 2) // 用 echo（不真跑 CA——测试流程）
-	s.Submit(&Task{ID: "t1", Description: "test", Priority: PriorityInternal})
-	time.Sleep(100 * time.Millisecond)
+	task := &Task{ID: "t1", Description: "test", Priority: PriorityInternal}
+	s.Submit(task)
+	// 时序稳健（2026-09-13 修）: 原为固定 time.Sleep(100ms) + 立即断言——
+	// 慢机/CI 上整链（4 轮）>100ms 时第 4 轮仍在跑 → 误判失败（断时序非逻辑）。
+	// 改为上限内轮询到静止: 队空 + running 空 + 任务达终态；超时打印当时真实状态。
+	sn, ok, polls := waitSchedulerIdle(s, task)
+	if !ok {
+		t.Fatalf("scheduler did not become idle within %s (polled %d time(s) every %s) — actual state: %s",
+			schedIdleLimit, polls, schedIdlePoll, sn)
+	}
+	t.Logf("scheduler idle after %d poll(s) every %s (limit %s): %s", polls, schedIdlePoll, schedIdleLimit, sn)
 	if s.QueueLen() != 0 {
 		t.Fatalf("echo 任务应快速完成——队列应空（实际 %d）", s.QueueLen())
 	}
@@ -41,12 +127,27 @@ func TestMasterScheduler_SubmitAndQueue(t *testing.T) {
 
 // TestMasterScheduler_ConcurrentLimit — 并发限制（maxConcurrent）
 func TestMasterScheduler_ConcurrentLimit(t *testing.T) {
+	// 测试隔离（同 SubmitAndQueue）: 持久化文件切临时目录——不写/不读真机 /tmp/zerg-tasks.json
+	oldFile := tasksFile
+	tasksFile = filepath.Join(t.TempDir(), "tasks-test.json")
+	defer func() { tasksFile = oldFile }()
 	s := NewMasterScheduler("/bin/echo", 1) // 单槽
-	s.Submit(&Task{ID: "t1", Description: "test1", Priority: PriorityInternal})
-	time.Sleep(100 * time.Millisecond)
-	// 第一个任务可能已完成（echo 快）——检查队列状态（不严格断言——只是跑通）
-	if s.QueueLen() < 0 {
-		t.Fatal("队列长度异常")
+	task := &Task{ID: "t1", Description: "test1", Priority: PriorityInternal}
+	s.Submit(task)
+	// 时序稳健（2026-09-13 修）: 原为固定 time.Sleep(100ms) + 立即断言（旧断言 QueueLen() < 0 恒真，
+	// 不构成断言）——现改为上限内轮询到静止后断言单槽任务确实跑完。慢机/CI 不再误判。
+	sn, ok, polls := waitSchedulerIdle(s, task)
+	if !ok {
+		t.Fatalf("scheduler did not become idle within %s (polled %d time(s) every %s) — actual state: %s",
+			schedIdleLimit, polls, schedIdlePoll, sn)
+	}
+	t.Logf("scheduler idle after %d poll(s) every %s (limit %s): %s", polls, schedIdlePoll, schedIdleLimit, sn)
+	// 单槽串行: 任务跑完（含重跑）后队空 + running 空
+	if s.QueueLen() != 0 {
+		t.Fatalf("单槽任务应跑完——队列应空（实际 %d）", s.QueueLen())
+	}
+	if len(s.running) != 0 {
+		t.Fatal("任务完成后 running 应清空")
 	}
 	t.Log("✅ 并发限制逻辑跑通（单槽——任务串行）")
 }
