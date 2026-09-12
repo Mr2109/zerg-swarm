@@ -4,7 +4,7 @@ package api
 // 任务循环周期: 设置后主控按周期自动触发该内部任务（如 health-check 每 6 小时跑一次）
 // POST /api/internal-tasks/{id}/interval  {"hours": N}  设置周期（N<=0 = 取消）
 // GET  /api/internal-tasks/intervals                    查询当前周期
-// 持久化 /tmp/zerg-tasks/intervals.json——重启恢复——主控 goroutine 每 60s 检查到点
+// 持久化 <任务目录根>/intervals.json（ZERG_TASK_ROOT 可覆盖，默认 /tmp/zerg-tasks）——重启恢复——主控 goroutine 每 60s 检查到点
 
 import (
 	"encoding/json"
@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -22,7 +23,8 @@ var (
 	intervalMu   sync.Mutex
 	intervals    = map[string]float64{}   // defID → 周期（小时）
 	intervalLast = map[string]time.Time{} // defID → 上次触发时间
-	intervalFile = "/tmp/zerg-tasks/intervals.json"
+	// 待修补 #36: 任务目录根不再写死——经 statepath.TaskRoot() 解析（ZERG_TASK_ROOT 可覆盖，默认 /tmp/zerg-tasks）
+	intervalFile = filepath.Join(statepath.TaskRoot(), "intervals.json")
 )
 
 // loadIntervals 启动恢复（文件不存在忽略）

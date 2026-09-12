@@ -15,12 +15,16 @@ import (
 )
 
 var (
-	tasksDir     = statepath.TaskRoot()                                                    // 任务目录（活跃——可写路径）
 	archiveDir   = filepath.Join(statepath.RuntimeLogDir(), "zerg-archive")                // 归档目录（压缩包）
 	archiveIndex = filepath.Join(statepath.RuntimeLogDir(), "zerg-archive", "index.jsonl") // 归档索引
 	archiveAfter = 30 * 24 * time.Hour                                                     // 30 天归档（Mr2109）
 	deleteAfter  = 90 * 24 * time.Hour                                                     // 归档保留 90 天删除（Mr2109——GitHub 默认标准）
 )
+
+// tasksRoot 任务目录根（活跃——可写路径）。
+// 待修补 #36: 每次调用解析（statepath.TaskRoot() 读 ZERG_TASK_ROOT，默认 /tmp/zerg-tasks）——
+// 不在包初始化时冻结，否则运行期改配置（或测试隔离切根）不生效。
+func tasksRoot() string { return statepath.TaskRoot() }
 
 // RunTaskArchive 归档器——扫描任务目录:
 // 1. 任务目录最后修改 > 30 天 → 归档（tar.gz 压缩 + 索引 + 删活跃目录）
@@ -32,7 +36,7 @@ func RunTaskArchive() {
 	deleted := 0
 
 	// 1. 归档过期任务目录
-	entries, err := os.ReadDir(tasksDir)
+	entries, err := os.ReadDir(tasksRoot())
 	if err != nil {
 		return
 	}
@@ -40,7 +44,7 @@ func RunTaskArchive() {
 		if !e.IsDir() {
 			continue
 		}
-		dirPath := filepath.Join(tasksDir, e.Name())
+		dirPath := filepath.Join(tasksRoot(), e.Name())
 		info, err := e.Info()
 		if err != nil {
 			continue
@@ -78,7 +82,7 @@ func RunTaskArchive() {
 // archiveTaskDir 归档任务目录（tar.gz 压缩 + 索引 + 删活跃目录）
 func archiveTaskDir(dirPath, taskID string) bool {
 	archivePath := filepath.Join(archiveDir, taskID+".tar.gz")
-	cmd := exec.Command("tar", "-czf", archivePath, "-C", tasksDir, taskID)
+	cmd := exec.Command("tar", "-czf", archivePath, "-C", tasksRoot(), taskID)
 	if err := cmd.Run(); err != nil {
 		log.Printf("⚠️ archive failed %s: %v\n", taskID, err)
 		return false

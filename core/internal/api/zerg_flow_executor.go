@@ -795,8 +795,8 @@ func (s *MasterScheduler) runZergFlow(task *Task) {
 	callModel := func(systemPrompt, userPrompt string, maxTokens int) (string, error) {
 		return s.callGatewayModel(task.Model, systemPrompt, userPrompt, maxTokens)
 	}
-	s.taskDirForCall = filepath.Join(statepath.TaskRoot(), sanitizeID(task.ID)) // v2.5.6: write_file 写任务目录
-	executor, err := NewZergFlowExecutor(task, callModel, "/tmp/zerg-tasks/skills")
+	s.taskDirForCall = filepath.Join(statepath.TaskRoot(), sanitizeID(task.ID))                          // v2.5.6: write_file 写任务目录
+	executor, err := NewZergFlowExecutor(task, callModel, filepath.Join(statepath.TaskRoot(), "skills")) // 待修补 #36: 技能库也随任务目录根（不写死）
 	if err != nil {
 		s.finishTask(task, fmt.Errorf("failed to create flow executor: %w", err))
 		return

@@ -225,8 +225,9 @@ func (s *MasterScheduler) submitReviewTaskLocked(execTask *Task, reportPath, wor
 		}
 	}
 	reviewTask := &Task{
-		ID:          reviewID,
-		Description: buildReviewPrompt(execTask, reportPath) + fmt.Sprintf("\n\n【复查报告要求（硬性）】: 复查报告写到执行任务的任务目录: /tmp/zerg-tasks/%s/review-report.md（绝对路径——用 write 工具写这个路径——复查所有内容都在这个单独文档——不写共享路径——硬性要求）", sanitizeID(execTask.ID)),
+		ID: reviewID,
+		// 待修补 #36: 复查报告路径随任务目录根（statepath.TaskRoot() 读 ZERG_TASK_ROOT，默认 /tmp/zerg-tasks）——不写死
+		Description: buildReviewPrompt(execTask, reportPath) + fmt.Sprintf("\n\n【复查报告要求（硬性）】: 复查报告写到执行任务的任务目录: %s（绝对路径——用 write 工具写这个路径——复查所有内容都在这个单独文档——不写共享路径——硬性要求）", filepath.Join(statepath.TaskRoot(), sanitizeID(execTask.ID), "review-report.md")),
 		Priority:    PriorityExternal - 1, // 外部之下——内部之上
 		Type:        "review",
 		Model:       reviewModel,

@@ -136,6 +136,7 @@ func TestIsEnvFault(t *testing.T) {
 func TestPingModel(t *testing.T) {
 	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	s := NewMasterScheduler("", 1)
 	// 无模型——放行
 	ok, err := s.pingModel("")
@@ -173,6 +174,7 @@ func (m *mockStoreReader) MachineSnapshot(machine string) *FleetSnapshotLite {
 func TestPingModel_SnapshotFastPath(t *testing.T) {
 	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	mock := &mockStoreReader{snapshots: map[string]*FleetSnapshotLite{
 		"local": {Healthy: true, Model: "Qwen3.8-27B-Q4_K_M-vcruz305"},
 	}}
@@ -188,6 +190,7 @@ func TestPingModel_SnapshotFastPath(t *testing.T) {
 func TestPingModel_SnapshotUnhealthy(t *testing.T) {
 	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	mock := &mockStoreReader{snapshots: map[string]*FleetSnapshotLite{
 		"local": {Healthy: false, Model: "Qwen3.8-27B"},
 		"x3":    {Healthy: true, Model: "example-35b"},
@@ -205,6 +208,7 @@ func TestPingModel_SnapshotUnhealthy(t *testing.T) {
 func TestPingModel_SnapshotNilStore(t *testing.T) {
 	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	s := NewMasterScheduler("", 1) // 不注入 store
 	ok, err := s.pingModel("Qwen3.8-27B")
 	_ = ok
@@ -246,6 +250,7 @@ func TestModelFileLoadedLite(t *testing.T) {
 func TestFinishTaskReviewFlow(t *testing.T) {
 	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json，落盘不写真机文件
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	s := NewMasterScheduler("", 1)
 	// 任务目录（临时——避免真实 /tmp/zerg-tasks 污染）
 	task := &Task{
