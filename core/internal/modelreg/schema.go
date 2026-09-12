@@ -44,12 +44,19 @@ type File struct {
 }
 
 // Capability 是一条能力断言，必须带来源与证据（标准 §四）。
+//
+// Engines（待修补 #11）是这条断言被**证过成立**的引擎：
+// 同一条能力在不同引擎上可以真假不同（实测 vision=true 是在 llama.cpp 侧探到的，
+// 而 vLLM 侧没挂 mmproj）。硬门槛必须按**目标引擎**取能力；缺引擎维度 = 不可判定
+// （不等于可用，绝不当作全局可用放行）。新增字段可选：旧记录/旧快照没有它照样合法
+// （标准 §十 向后兼容）——此时按"不可判定"处理（见 EvaluateCapabilityForEngine）。
 type Capability struct {
-	Name     string `json:"name"`
-	Value    bool   `json:"value"`
-	Source   string `json:"source"`
-	Evidence string `json:"evidence,omitempty"`
-	Conflict bool   `json:"conflict,omitempty"`
+	Name     string   `json:"name"`
+	Value    bool     `json:"value"`
+	Source   string   `json:"source"`
+	Evidence string   `json:"evidence,omitempty"`
+	Conflict bool     `json:"conflict,omitempty"`
+	Engines  []string `json:"engines,omitempty"`
 }
 
 // License 是许可证块（标准 §五：读权重，不读仓库徽章）。
