@@ -29,7 +29,7 @@ func TestPickFallbackRoute_SwitchMachine(t *testing.T) {
 		failCounts: map[string]int{}, failSince: map[string]time.Time{}}
 	// 模拟 EDGE-NODE 转发失败——failover
 	failed := &RouteResult{Host: "edge-node"}
-	route, err := g.pickFallbackRoute(failed, "example-35b-v2")
+	route, err := g.pickFallbackRoute(failed, "example-35b-v2", "backend edge-node forward failed: dial tcp <worker-ip>:8100: i/o timeout")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,13 +43,17 @@ func TestPickFallbackRoute_SwitchMachine(t *testing.T) {
 	if g.failCounts["edge-node"] < 1 {
 		t.Errorf("X3 失败计数应 >=1——实际 %d", g.failCounts["edge-node"])
 	}
+	// 本路径必须留下原因：failover 是最典型的「涨计数」路径（tripMachine + 强制熔断）
+	if g.lastErr["edge-node"] == "" {
+		t.Error("failover 路径必须写 lastErr（否则快照出现「计数涨了原因空」）")
+	}
 }
 
 // TestTripMachine_Threshold — 连续失败 3 次触发熔断
 func TestTripMachine_Threshold(t *testing.T) {
 	g := &Gateway{failCounts: map[string]int{}, failSince: map[string]time.Time{}, tripCounts: map[string]int{}}
 	for i := 0; i < 3; i++ {
-		g.tripMachine("edge-node")
+		g.tripMachine("edge-node", "backend edge-node forward failed: connection reset by peer")
 	}
 	if g.failCounts["edge-node"] != 3 {
 		t.Errorf("fail 计数应 3——实际 %d", g.failCounts["edge-node"])

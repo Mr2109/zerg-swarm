@@ -36,6 +36,7 @@ func breakerTestGateway() *Gateway {
 		tripCounts: map[string]int{},
 		lastErr:    map[string]string{},
 		lastErrAt:  map[string]time.Time{},
+		lastErrSrc: map[string]string{},
 	}
 }
 
@@ -226,13 +227,23 @@ func TestBreakerSnapshot_HalfOpenAfterCooldown(t *testing.T) {
 // TestBreakerSnapshot_TripCountFromTripMachine tripMachine 触发次数（trip_count）在快照里可见。
 func TestBreakerSnapshot_TripCountFromTripMachine(t *testing.T) {
 	g := breakerTestGateway()
-	g.tripMachine("mini-node-1")
+	g.tripMachine("mini-node-1", "backend mini-node-1 forward failed: dial tcp <worker-ip>:8100: connect: connection refused")
 	b := findBreaker(g.BreakerSnapshot(), "mini-node-1")
 	if b == nil {
 		t.Fatal("快照里没有 mini-node-1")
 	}
 	if b.TripCount != 1 {
 		t.Errorf("tripMachine 一次后 trip_count 应为 1——实际 %d", b.TripCount)
+	}
+	// tripMachine 同时涨 failCounts——这条路径历史上不写 lastErr，快照因此出现空原因（本仓反例）
+	if b.FailCount == 0 {
+		t.Errorf("tripMachine 应同步涨 fail_count——实际 %d", b.FailCount)
+	}
+	if !b.LastErrorRecorded || b.LastError == "" {
+		t.Errorf("tripMachine 涨了计数就必须有原因——实际 recorded=%v last_error=%q", b.LastErrorRecorded, b.LastError)
+	}
+	if b.LastErrorSource != "tripMachine" {
+		t.Errorf("last_error_source 应标出计数路径 tripMachine——实际 %q", b.LastErrorSource)
 	}
 }
 
@@ -243,7 +254,7 @@ func TestBreakerReset_All(t *testing.T) {
 		g.markFailure("edge-node", "backend edge-node returned 500")
 	}
 	g.markFailure("mini-node-1", "backend mini-node-1 returned 500")
-	g.tripMachine("edge-node")
+	g.tripMachine("edge-node", "backend edge-node forward failed: context deadline exceeded")
 	if n := g.isTripped("edge-node"); !n {
 		t.Fatal("前置条件：edge-node 应处于熔断")
 	}
@@ -273,9 +284,9 @@ func TestBreakerReset_All(t *testing.T) {
 	if g.failCounts["edge-node"] != 0 || g.failCounts["mini-node-1"] != 0 {
 		t.Errorf("复位后 failCounts 应清零——实际 edge-node=%d mini-node-1=%d", g.failCounts["edge-node"], g.failCounts["mini-node-1"])
 	}
-	if len(g.failSince) != 0 || len(g.tripCounts) != 0 || len(g.lastErr) != 0 || len(g.lastErrAt) != 0 {
-		t.Errorf("复位后各 map 应为空——failSince=%v tripCounts=%v lastErr=%v lastErrAt=%v",
-			g.failSince, g.tripCounts, g.lastErr, g.lastErrAt)
+	if len(g.failSince) != 0 || len(g.tripCounts) != 0 || len(g.lastErr) != 0 || len(g.lastErrAt) != 0 || len(g.lastErrSrc) != 0 {
+		t.Errorf("复位后各 map 应为空——failSince=%v tripCounts=%v lastErr=%v lastErrAt=%v lastErrSrc=%v",
+			g.failSince, g.tripCounts, g.lastErr, g.lastErrAt, g.lastErrSrc)
 	}
 	// 幂等：再复位一次返回 0
 	if n := g.ResetBreakers(""); n != 0 {
