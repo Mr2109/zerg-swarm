@@ -20,11 +20,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/resources"
 )
 
 // llamaServerPath 本机 llama-server 可执行文件路径
@@ -374,7 +377,14 @@ func (lb *LocalBackend) MemGB() int {
 	return lb.memGB
 }
 
-// LocalSnapshot 本机子端的资源快照（供主控 status 合并展示）。
+// LocalSnapshot 本机子端的资源快照（供主控 status 合并展示，也供资源账本 #30 复用）。
+//
+// 口径（批 5）：
+//   - GpuUsedGb 只放**真实**显存占用。本机（Apple Silicon 统一内存）拿不到独立显存 →
+//     保持 0 且 VramKnown=false（旧行为 snap.GpuUsedGb = memGB 是拿内存冒充显存，已修，
+//     见 #29）。BackendRssGb 仍是本机后端的"占用"口径（与旧行为一致，未单独采样 RSS）。
+//   - Resident[]：本机驻留明细——由 LocalBackend 自己的状态（ModelFile/MemGB/State）构造，
+//     与远程子端**同一套**账本口径（§八 Q7）。
 type LocalSnapshot struct {
 	Machine        string   `json:"machine"`
 	Model          *string  `json:"model,omitempty"`
@@ -387,6 +397,14 @@ type LocalSnapshot struct {
 	BackendRssGb   float64  `json:"backend_rss_gb"`
 	Healthy        bool     `json:"healthy"`
 	Models         []string `json:"models"`
+
+	// ── 资源账本（批 5 #30/#29）──
+	Resident    []resources.ResidentEntry `json:"resident,omitempty"`
+	VramKnown   bool                      `json:"vram_known"`
+	VramUnified bool                      `json:"vram_unified,omitempty"`
+	VramTotalGb float64                   `json:"vram_total_gb,omitempty"`
+	VramUsedGb  float64                   `json:"vram_used_gb,omitempty"`
+	VramFreeGb  float64                   `json:"vram_free_gb,omitempty"`
 }
 
 // Snapshot 返回本机子端状态快照（machine=local）。
@@ -398,6 +416,10 @@ func (lb *LocalBackend) Snapshot() *LocalSnapshot {
 	memGB := lb.memGB
 	lb.mu.Unlock()
 
+	// 显存（#29）：本机（macOS Apple Silicon 统一内存）没有独立显存额度——如实标未知，
+	// 绝不拿内存量冒充（旧行为已修）。
+	known, unified := localVramShape()
+
 	snap := &LocalSnapshot{
 		Machine:        "local",
 		BackendState:   state,
@@ -407,30 +429,71 @@ func (lb *LocalBackend) Snapshot() *LocalSnapshot {
 		GpuTempC:       sampleLocalGpuTemp(),
 		Healthy:        state == stateReady,
 		Models:         []string{},
+		VramKnown:      known,
+		VramUnified:    unified,
 	}
 	// 本机已加载模型：从模型文件名推断模型名（fleet.yaml 的 file 是绝对路径，取 basename 前缀）
 	if state != stateIdle && modelFile != "" {
-		name := modelFile
-		if idx := lastIndexByte(name, '/'); idx >= 0 {
-			name = name[idx+1:]
-		}
-		// 去掉常见后缀
-		for _, suffix := range []string{".gguf", ".GGUF"} {
-			if len(name) >= len(suffix) && name[len(name)-len(suffix):] == suffix {
-				name = name[:len(name)-len(suffix)]
-				break
-			}
-		}
+		name := modelNameFromFile(modelFile)
 		// 有模型时 healthy=true 且状态 ready
 		if state == stateReady {
 			snap.Healthy = true
 		}
 		snap.Models = []string{name}
-		snap.GpuUsedGb = float64(memGB)
+		// 本机后端占用口径（未单独采样 RSS，与旧行为一致）
 		snap.BackendRssGb = float64(memGB)
+		// 驻留明细（#30）：用 LocalBackend 自己的状态构造，口径同远程（§八 Q7）。
+		// 本机单槽：同时只有一个模型驻留，故 resident[] 最多一项。
+		snap.Resident = []resources.ResidentEntry{{
+			Alias:   name,
+			File:    modelFile,
+			State:   residentState(state),
+			MemGb:   float64(memGB),
+			Managed: true, // 在 LocalBackend 的托管清单里（含接管的外部实例——会被单槽规则替换）
+			Source:  "localback",
+		}}
 	}
 
 	return snap
+}
+
+// localVramShape 报告本机显存的形态（§3.1）：
+//   - macOS（Apple Silicon 统一内存）：无独立显存额度 → known=false, unified=true（显存即内存）
+//   - 其它平台：本机未实现显存采样 → known=false, unified=false（按"真未知"走估算法 fail-closed）
+//
+// 一律不返回"已知"的假值：拿不到就不冒充（#29 铁律）。
+func localVramShape() (known, unified bool) {
+	return false, runtime.GOOS == "darwin"
+}
+
+// residentState 把 localback 状态机的状态翻成账本（shared/resources）的状态取值。
+// broken（熔断）对账本就是 crashed——如实反映"不可用"，不美化。
+func residentState(state string) string {
+	switch state {
+	case stateReady:
+		return resources.StateReady
+	case stateLoading:
+		return resources.StateLoading
+	case stateBroken:
+		return resources.StateCrashed
+	default:
+		return resources.StateIdle
+	}
+}
+
+// modelNameFromFile 从模型文件路径推模型名（basename 去掉 .gguf/.GGUF 后缀）。
+// 过渡期兼容：fleet.yaml 的 file 是绝对路径，账本/路由展示用名字作别名（身份仍是摘要）。
+func modelNameFromFile(file string) string {
+	name := file
+	if idx := lastIndexByte(name, '/'); idx >= 0 {
+		name = name[idx+1:]
+	}
+	for _, suffix := range []string{".gguf", ".GGUF"} {
+		if len(name) >= len(suffix) && name[len(name)-len(suffix):] == suffix {
+			return name[:len(name)-len(suffix)]
+		}
+	}
+	return name
 }
 
 // lastIndexByte 返回最后一个指定字节的位置，无则 -1。

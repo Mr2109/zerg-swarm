@@ -28,6 +28,8 @@ import (
 //     · 该机器没有心跳快照 → 该机器整条不出现；
 //     · 没有驻留明细 → resident 整键不出现；没有未托管项 → unmanaged 整键不出现；
 //     · 显存拿不到 → vram_known=false 且 vram_total/used/free **整键不出现**（不出现假值）；
+//       统一内存平台（Apple Silicon：显存即内存）另标 vram_unified=true——与"真未知"区分：
+//       前者按内存口径判，后者按 §3.2 诚实原则 fail-closed（不许把未知当无限）；
 //     · 内存拿不到 → mem_known=false 且 mem_total/available **整键不出现**；
 //     · 登记库读不动 / 坏记录 → 估算项跳过（registered_models 整键不出现），不改整体状态码。
 //
@@ -49,6 +51,7 @@ type ResourceMachineView struct {
 	MemTotalGb   *float64 `json:"mem_total_gb,omitempty"`
 	MemAvailGb   *float64 `json:"mem_available_gb,omitempty"`
 	VramKnown    bool     `json:"vram_known"`
+	VramUnified  bool     `json:"vram_unified,omitempty"` // 显存即内存（统一内存平台，§3.1）——vram_known=false 但仍可判定
 	VramTotalGb  *float64 `json:"vram_total_gb,omitempty"`
 	VramUsedGb   *float64 `json:"vram_used_gb,omitempty"`
 	VramFreeGb   *float64 `json:"vram_free_gb,omitempty"`
@@ -135,6 +138,8 @@ func (h *Handlers) machineView(snap *store.FleetSnapshot, inputs []fitInput) Res
 		t, u, f := snap.VramTotalGb, snap.VramUsedGb, snap.VramFreeGb
 		mv.VramTotalGb, mv.VramUsedGb, mv.VramFreeGb = &t, &u, &f
 	}
+	// 统一内存平台（显存即内存，§3.1）：如实标注——vram_known=false 但"装得下吗"仍可判定（按内存口径）
+	mv.VramUnified = snap.VramUnified
 	if snap.GpuPct > 0 {
 		gp := snap.GpuPct
 		mv.GpuPct = &gp
@@ -161,12 +166,14 @@ func (h *Handlers) fitEstimatesFor(snap *store.FleetSnapshot, inputs []fitInput)
 		MemAvailGb: snap.MemAvailableGb,
 		Resident:   snap.Resident,
 	}
-	// 显存只在子端真拿到了（vram_known=true）时才进比较式；否则按统一内存口径只判内存
+	// 显存只在子端真拿到了（vram_known=true）时才进比较式；统一内存（显存即内存）按内存口径；
+	// 两者都不是（真未知）→ EstimateFit fail-closed 判装不下（绝不把"未知"当"无限"，§3.2 诚实原则）。
 	if snap.VramKnown {
 		ledger.VramTotalGb = snap.VramTotalGb
 		ledger.VramUsedGb = snap.VramUsedGb
 		ledger.VramFreeGb = snap.VramFreeGb
 	}
+	ledger.UnifiedMemory = snap.VramUnified
 	// 引擎开销：Handler 提供则用真值，否则留 0 → EstimateFit 回退常量并标 estimated
 	if h.EngineOverheadGb > 0 {
 		ledger.EngineOverheadGb = h.EngineOverheadGb

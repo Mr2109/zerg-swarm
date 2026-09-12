@@ -36,6 +36,7 @@ type HeartbeatRequest struct {
 
 	// ── 资源账本新增（《设计-资源管理器》§3.1/§3.4；全部可选，缺省=该机器未提供，旧读者忽略）──
 	VramKnown   bool    `json:"vram_known"`              // 子端能否拿到真实显存；false 时 gpu_used_gb 视为未知
+	VramUnified bool    `json:"vram_unified,omitempty"`  // 统一内存平台（显存即内存，§3.1）——与显存未知不同：不 fail-closed
 	VramTotalGb float64 `json:"vram_total_gb,omitempty"` // 真实显存总量（GB）
 	VramUsedGb  float64 `json:"vram_used_gb,omitempty"`  // 真实显存占用（GB）
 	VramFreeGb  float64 `json:"vram_free_gb,omitempty"`  // 真实显存空闲（GB）
@@ -80,6 +81,7 @@ type FleetSnapshot struct {
 
 	// ── 资源账本新增（《设计-资源管理器》§3.1/§3.4；全部可选，缺省=该机器未提供）──
 	VramKnown   bool    `json:"vram_known,omitempty"`    // 能否拿到真实显存；false/缺省时 gpu_used_gb 视为未知
+	VramUnified bool    `json:"vram_unified,omitempty"`  // 统一内存平台（显存即内存，§3.1）
 	VramTotalGb float64 `json:"vram_total_gb,omitempty"` // 真实显存总量（GB）
 	VramUsedGb  float64 `json:"vram_used_gb,omitempty"`  // 真实显存占用（GB）
 	VramFreeGb  float64 `json:"vram_free_gb,omitempty"`  // 真实显存空闲（GB）
@@ -151,6 +153,7 @@ func (s *Store) ReceiveHeartbeat(req HeartbeatRequest) *HeartbeatResponse {
 	snap.CodeSHA = req.CodeSHA
 	// 资源账本新增字段（§3.1）：逐项透传，旧字段不动
 	snap.VramKnown = req.VramKnown
+	snap.VramUnified = req.VramUnified
 	snap.VramTotalGb = req.VramTotalGb
 	snap.VramUsedGb = req.VramUsedGb
 	snap.VramFreeGb = req.VramFreeGb
@@ -183,23 +186,61 @@ func (s *Store) GetSnapshot(machine string) *FleetSnapshot {
 	return s.snapshots[machine]
 }
 
+// LocalSnapshotData 是本机（local）快照的写入载荷。
+//
+// 为什么用载荷结构：本机不跑独立子端、不经心跳（B13）——主控必须用**自己知道的**信息
+// 把 local 这一行填成与远程**同一套口径**（§八 Q7）：基础状态 + 驻留明细（resident[]）+
+// 显存（拿不到就 VramKnown=false，VramUnified 表示"统一内存：显存即内存"，绝不拿内存冒充显存）。
+type LocalSnapshotData struct {
+	Machine        string
+	Model          *string
+	Models         []string
+	Healthy        bool
+	State          string
+	MemAvailableGb float64
+	MemTotalGb     float64
+	Load           float64
+	ActiveRequests int
+	CpuPct         float64
+	GpuPct         float64
+
+	// ── 资源账本（批 5 #30）：本机驻留明细 + 显存三态 ──
+	// 本机驻留清单来自 LocalBackend 自己的状态（ModelFile/MemGB/State），不是猜的。
+	Resident []resources.ResidentEntry
+	// VramKnown=false 时显存三值一律不填（拿不到就不冒充，与批 2 同口径）。
+	VramKnown   bool
+	VramUnified bool
+	VramTotalGb float64
+	VramUsedGb  float64
+	VramFreeGb  float64
+}
+
 // SetLocalSnapshot 写入本机（local）快照——B13 修复：本机不跑独立 agent 心跳，
 // 由主控周期任务把 LocalBackend 状态写入 store（路由打分需要 local 的健康/加载状态）。
-func (s *Store) SetLocalSnapshot(machine string, model *string, models []string, healthy bool, state string, memAvail, memTotal, load float64, active int, cpuPct, gpuPct float64) {
+//
+// 批 5（#30）：载荷补齐 resident[]/vram_*，使 /api/resources/ledger 的 local 一行
+// 与远程子端同口径（§八 Q7）——不再"只有内存/状态、没有驻留谁"。
+func (s *Store) SetLocalSnapshot(d LocalSnapshotData) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.snapshots[machine] = &FleetSnapshot{
-		Machine:        machine,
-		Model:          model,
-		Models:         models,
-		MemAvailableGb: memAvail,
-		MemTotalGb:     memTotal,
-		Load:           load,
-		Healthy:        healthy,
-		BackendState:   state,
-		ActiveRequests: active,
-		CpuPct:         cpuPct,
-		GpuPct:         gpuPct,
+	s.snapshots[d.Machine] = &FleetSnapshot{
+		Machine:        d.Machine,
+		Model:          d.Model,
+		Models:         d.Models,
+		MemAvailableGb: d.MemAvailableGb,
+		MemTotalGb:     d.MemTotalGb,
+		Load:           d.Load,
+		Healthy:        d.Healthy,
+		BackendState:   d.State,
+		ActiveRequests: d.ActiveRequests,
+		CpuPct:         d.CpuPct,
+		GpuPct:         d.GpuPct,
+		Resident:       d.Resident,
+		VramKnown:      d.VramKnown,
+		VramUnified:    d.VramUnified,
+		VramTotalGb:    d.VramTotalGb,
+		VramUsedGb:     d.VramUsedGb,
+		VramFreeGb:     d.VramFreeGb,
 		LastSeen:       time.Now(),
 	}
 }
