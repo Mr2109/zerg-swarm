@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -831,5 +832,199 @@ func TestProbeStoreIsIdempotent(t *testing.T) {
 	}
 	if art.Digest != rec1.Digest || art.ID != rec1.ID {
 		t.Fatalf("兄弟留痕应对应同一条记录：%+v vs id=%s digest=%s", art, rec1.ID, rec1.Digest)
+	}
+}
+
+// ── 待修补 #27：预算"先小后大"重试 + 区分"预算不足"与"真不支持" ──────────────
+
+// findUnverifiable 取某条不可判定记录（找不到返回 nil）。
+func findUnverifiable(xs []Unverifiable, name string) *Unverifiable {
+	for i := range xs {
+		if xs[i].Name == name {
+			return &xs[i]
+		}
+	}
+	return nil
+}
+
+// 反例 1：思考模型小预算把预算吃光（finish_reason=length、content 空）→
+// 探测器必须自动抬高预算重试；拿到可用回答后正确判 true，且 evidence 里看得到实际预算。
+func TestProbeTextRaisesBudgetOnLengthTruncation(t *testing.T) {
+	var mu sync.Mutex
+	var seen []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var req struct {
+			MaxTokens int `json:"max_tokens"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		seen = append(seen, req.MaxTokens)
+		mu.Unlock()
+		// 小预算：思考把预算吃光 → 撞长度且正文为空
+		if req.MaxTokens < 512 {
+			fmt.Fprint(w, `{"choices":[{"finish_reason":"length","index":0,"message":{"role":"assistant","content":"","reasoning_content":"让我想想……"}}]}`)
+			return
+		}
+		// 大预算：正常回答
+		fmt.Fprint(w, `{"choices":[{"finish_reason":"stop","index":0,"message":{"role":"assistant","content":"你好！"}}]}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	ep := Endpoint{BaseURL: srv.URL, Model: "thinking-fake", Timeout: 5 * time.Second}
+	r := ProbeText(ep)
+	if !r.Value || r.Undetermined {
+		t.Fatalf("抬高预算拿到可用回答后应判 true，实际 %+v", r)
+	}
+	if r.Trace.Budget != 512 {
+		t.Fatalf("实际预算应为抬到的那一档 512，实际 %d", r.Trace.Budget)
+	}
+	mu.Lock()
+	got := append([]int(nil), seen...)
+	mu.Unlock()
+	if len(got) < 2 || got[0] != 16 || got[1] != 512 {
+		t.Fatalf("必须先小后大重试（16→512），实际请求序列 %v", got)
+	}
+	c := capabilityOf("text", EvidenceText, r)
+	if !strings.Contains(c.Evidence, "budget=512") {
+		t.Fatalf("evidence 必须能看出实际预算（budget=512）：%s", c.Evidence)
+	}
+	if !c.Value || c.Source != "probed" {
+		t.Fatalf("能力断言应为 probed/true：%+v", c)
+	}
+}
+
+// fakeAlwaysTruncated 是"无论多大预算都撞长度"的假端点：模拟思考模型把预算全花在思考上。
+func fakeAlwaysTruncated(t *testing.T, reasoning string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/models":
+			fmt.Fprint(w, `{"object":"list","data":[{"id":"thinking-fake","object":"model"}]}`)
+		case "/v1/chat/completions":
+			fmt.Fprintf(w, `{"choices":[{"finish_reason":"length","index":0,"message":{"role":"assistant","content":"","reasoning_content":%q}}]}`, reasoning)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":{"message":"no such route"}}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// 反例 2：无论多大预算都撞长度 → **不得**生成 value=false 条目，改写入 unverifiable。
+// 同时守住区分点：端点明确没有的能力（embeddings/rerank 404）仍照旧判 false。
+func TestProbeBudgetExhaustedIsUnverifiableNotFalse(t *testing.T) {
+	srv := fakeAlwaysTruncated(t, "让我仔细想想这个问题……")
+	rec, rep, err := Probe(ProbeOptions{Target: srv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("预算不足不是异常，探测不该报错：%v", err)
+	}
+	// ① 不得生成 false 能力条目（false = 确定没有；这里是"没探够"）
+	for _, name := range []string{"text", "vision", "tools"} {
+		if c := capByName(rep.Capabilities, name); c != nil {
+			t.Fatalf("%s 因预算不足不可判，绝不许生成 value=false 条目：%+v", name, *c)
+		}
+	}
+	// ② 必须写入不可判定记录，带原因 + 抬到上限的预算证据
+	for _, name := range []string{"text", "vision", "tools"} {
+		uv := findUnverifiable(rep.Unverifiable, name)
+		if uv == nil {
+			t.Fatalf("%s 应写入 unverifiable（缺 = 未知，不等于没有）：%+v", name, rep.Unverifiable)
+		}
+		if uv.Reason != FailBudgetExhausted {
+			t.Fatalf("%s 不可判定原因应为 %s，实际 %q", name, FailBudgetExhausted, uv.Reason)
+		}
+		if !strings.Contains(uv.Evidence, "budget=2048") {
+			t.Fatalf("%s 的不可判定证据应能看出抬到了预算上限：%s", name, uv.Evidence)
+		}
+	}
+	// ③ 区分点：端点明确说没有的能力仍照旧 false，且不进 unverifiable
+	if c := capByName(rep.Capabilities, "embedding"); c == nil || c.Value {
+		t.Fatalf("embedding：端点 404 明确不支持，应照旧 value=false：%+v", c)
+	}
+	if findUnverifiable(rep.Unverifiable, "embedding") != nil {
+		t.Fatalf("embedding 是确定不支持，不该被记成不可判定：%+v", rep.Unverifiable)
+	}
+	// ④ 能力快照必须承载不可判定记录（写盘与 --json 共用同一份）
+	snap := NewCapabilitySnapshot(rec, rep)
+	if findUnverifiable(snap.Unverifiable, "text") == nil || findUnverifiable(snap.Unverifiable, "tools") == nil {
+		t.Fatalf("能力快照应承载 unverifiable：%+v", snap.Unverifiable)
+	}
+	if capByName(snap.Capabilities, "text") != nil {
+		t.Fatalf("快照里也不该有 text=false：%+v", snap.Capabilities)
+	}
+	// ⑤ 分层不变：记录正文仍不含能力断言
+	if len(rec.Capabilities) != 0 {
+		t.Fatalf("正文仍不得内嵌能力：%+v", rec.Capabilities)
+	}
+	// 快照仍向后兼容：schema 不变、身份字段照旧
+	if snap.Schema != CapabilitySnapshotSchemaV1 || snap.ID != rec.ID || snap.Digest != rec.Digest {
+		t.Fatalf("快照身份字段不该变：%+v", snap)
+	}
+}
+
+// fakeExplicitlyUnsupported 是"端点明确表态不支持"的假端点：视觉 400 + mmproj 提示、工具 400。
+func fakeExplicitlyUnsupported(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/models":
+			fmt.Fprint(w, `{"object":"list","data":[{"id":"fake-llama","object":"model"}]}`)
+		case "/v1/chat/completions":
+			body, _ := io.ReadAll(r.Body)
+			bs := string(body)
+			switch {
+			case strings.Contains(bs, "image_url"):
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprint(w, `{"error":{"message":"this model does not support images: mmproj file not loaded","type":"invalid_request_error"}}`)
+			case strings.Contains(bs, `"tools"`):
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprint(w, `{"error":{"message":"tools are not supported by this endpoint","type":"invalid_request_error"}}`)
+			default:
+				fmt.Fprint(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"你好！"}}]}`)
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":{"message":"no such route"}}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// 反例 3（核心区分点）：端点"明确说不行"（4xx / 无 mmproj）→ 仍照旧 value=false + evidence，
+// **绝不**被记成不可判定。与反例 2 形成对照。
+func TestProbeExplicitlyUnsupportedStaysFalse(t *testing.T) {
+	srv := fakeExplicitlyUnsupported(t)
+	_, rep, err := Probe(ProbeOptions{Target: srv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// text：端点正常回话 → true
+	if c := capByName(rep.Capabilities, "text"); c == nil || !c.Value {
+		t.Fatalf("text 应为 true：%+v", c)
+	}
+	// tools：端点 HTTP 400 明确拒绝 → 仍是 value=false + evidence
+	tc := capByName(rep.Capabilities, "tools")
+	if tc == nil || tc.Value {
+		t.Fatalf("tools：端点明确不支持，应照旧 value=false：%+v", tc)
+	}
+	if !strings.Contains(tc.Evidence, FailNoTools) {
+		t.Fatalf("tools evidence 应带失败分类 %s：%s", FailNoTools, tc.Evidence)
+	}
+	// vision：400 + mmproj 提示 → false + mmproj_missing
+	vc := capByName(rep.Capabilities, "vision")
+	if vc == nil || vc.Value {
+		t.Fatalf("vision：端点明确不支持，应 value=false：%+v", vc)
+	}
+	if !strings.Contains(vc.Evidence, FailMmprojMiss) {
+		t.Fatalf("vision evidence 应带 mmproj_missing：%s", vc.Evidence)
+	}
+	// 本场景全是端点的确定态度 → 不该有任何不可判定记录
+	if len(rep.Unverifiable) != 0 {
+		t.Fatalf("端点明确表态的场景不该有不可判定记录：%+v", rep.Unverifiable)
 	}
 }
