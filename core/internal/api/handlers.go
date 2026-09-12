@@ -40,6 +40,15 @@ type Handlers struct {
 	// 模型目录根覆盖（GET /api/models/registry 用）。空 = 标准解析
 	// （ZERG_MODELS_DIR 优先，缺省 ~/.zerg/models）——测试注入 t.TempDir() 用。
 	ModelsDir string
+
+	// ── 资源管理器观测面（《设计-资源管理器》批 4）──────────────────────────
+	// ResourcePins 是 pin/unpin 的动作侧（转发到子端）。nil = 未接线（接口如实返回 503）。
+	ResourcePins ResourcePinController
+	// KvCacheBytesPerElem 是 KV cache 每元素字节（引擎 --cache-type-k/v；如 fp16=2）。
+	// 0 = 未知（GGUF 不记录）→ 估算回退常量并标 estimated=true。测试/运维可注入真值。
+	KvCacheBytesPerElem float64
+	// EngineOverheadGb 是引擎运行时/临时缓冲固定开销（GiB）。0 = 未知 → 回退常量并标 estimated。
+	EngineOverheadGb float64
 }
 
 // writeJSON 辅助函数：写入 JSON 响应。

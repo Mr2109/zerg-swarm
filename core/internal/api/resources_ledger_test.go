@@ -338,8 +338,7 @@ func TestResourceLedger_EstimatedFalseWhenAllInputsReal(t *testing.T) {
 	}
 	h.KvCacheBytesPerElem = 2.0 // 引擎 KV dtype 真值（fp16）
 	h.EngineOverheadGb = 2.0    // 引擎开销真值
-	// 本机是统一内存平台（Apple Silicon：显存即内存）——如实声明，不是"显存未知"
-	h.Store.ReceiveHeartbeat(store.HeartbeatRequest{Machine: "local", MemTotalGb: 128, MemAvailableGb: 120, VramUnified: true})
+	h.Store.ReceiveHeartbeat(store.HeartbeatRequest{Machine: "local", MemTotalGb: 128, MemAvailableGb: 120})
 
 	r := newResourcesTestRouter(h)
 	w := doResReq(t, r, http.MethodGet, "/api/resources/ledger", "test-token", "")
@@ -372,7 +371,7 @@ func TestResourceLedger_EstimatedTrueWhenKVMissing(t *testing.T) {
 	}
 	h.KvCacheBytesPerElem = 2.0
 	h.EngineOverheadGb = 2.0
-	h.Store.ReceiveHeartbeat(store.HeartbeatRequest{Machine: "local", MemTotalGb: 128, MemAvailableGb: 120, VramUnified: true})
+	h.Store.ReceiveHeartbeat(store.HeartbeatRequest{Machine: "local", MemTotalGb: 128, MemAvailableGb: 120})
 
 	r := newResourcesTestRouter(h)
 	w := doResReq(t, r, http.MethodGet, "/api/resources/ledger", "test-token", "")

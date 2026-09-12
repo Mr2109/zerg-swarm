@@ -1,8 +1,8 @@
 {
   "generator": "publish/mirror-public.sh",
-  "last_mirrored_private_sha": "fb7a92d4dc77bf6bded9a4f356aea1d591e32682",
-  "mirror_parent_sha": "574300258f51e0f33620e707adcbc9d75b87c410",
-  "mirrored_commits": 751,
+  "last_mirrored_private_sha": "4abe420e6fa5051b4b947a20b15a6315df663c4a",
+  "mirror_parent_sha": "63f12841bc3f76e21cd5f4172d97c898245eaa03",
+  "mirrored_commits": 752,
   "note": "本仓为私有权威仓的过滤镜像：每笔提交与私有提交一一对应（trailer GitOrigin-RevId）。本文件记录镜像到哪一笔私有提交，不含任何私有内容；内容确定性、无时间戳。",
   "schema": 1
 }

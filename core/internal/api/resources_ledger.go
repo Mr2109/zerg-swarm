@@ -6,9 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
-	"github.com/Mr2109/zerg-swarm/core/internal/localback"
 	"github.com/Mr2109/zerg-swarm/core/internal/modelreg"
 	"github.com/Mr2109/zerg-swarm/core/internal/resources"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
@@ -23,11 +21,6 @@ import (
 //
 // 每台机器一台账本（内存/显存/驻留明细/未托管项）+ 逐登记模型在该机上的估算。
 //
-// 【机器列表来源（本任务修补）】store 心跳快照 + **本机实时快照**，与 /api/fleet/status
-// 共用同一个来源函数（liveLocalFleetSnapshot）——本机不经心跳，store 里的 local 行由
-// cmd/zerg-core 的 30s 周期任务写入（首次写入在启动 30 秒后）；若只读 store，刚启动/刚部署
-// 后的前 30 秒账本里会缺 local 一行，而 status 有（实测缺口 = 来源不对称）。
-//
 // 【严格只读——本接口硬约束，改动时不要破坏】
 //   - 只做 os.ReadDir / os.Open（读登记库 JSON、读 .gguf 元数据）；**绝不**调用
 //     MkdirAll / WriteFile / Rename / Remove（与 /api/models/registry 同一纪律）。
@@ -35,8 +28,6 @@ import (
 //     · 该机器没有心跳快照 → 该机器整条不出现；
 //     · 没有驻留明细 → resident 整键不出现；没有未托管项 → unmanaged 整键不出现；
 //     · 显存拿不到 → vram_known=false 且 vram_total/used/free **整键不出现**（不出现假值）；
-//       统一内存平台（Apple Silicon：显存即内存）另标 vram_unified=true——与"真未知"区分：
-//       前者按内存口径判，后者按 §3.2 诚实原则 fail-closed（不许把未知当无限）；
 //     · 内存拿不到 → mem_known=false 且 mem_total/available **整键不出现**；
 //     · 登记库读不动 / 坏记录 → 估算项跳过（registered_models 整键不出现），不改整体状态码。
 //
@@ -58,7 +49,6 @@ type ResourceMachineView struct {
 	MemTotalGb   *float64 `json:"mem_total_gb,omitempty"`
 	MemAvailGb   *float64 `json:"mem_available_gb,omitempty"`
 	VramKnown    bool     `json:"vram_known"`
-	VramUnified  bool     `json:"vram_unified,omitempty"` // 显存即内存（统一内存平台，§3.1）——vram_known=false 但仍可判定
 	VramTotalGb  *float64 `json:"vram_total_gb,omitempty"`
 	VramUsedGb   *float64 `json:"vram_used_gb,omitempty"`
 	VramFreeGb   *float64 `json:"vram_free_gb,omitempty"`
@@ -106,23 +96,13 @@ func (h *Handlers) ResourceLedgerHandler(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// buildResourceMachines 把每台机器快照翻成对外账本视图（机器名排序，响应可复现）。
-//
-// 机器列表与 /api/fleet/status **同一套来源**：store 里的心跳快照 + 本机（local）实时快照。
-// 为什么必须实时合并 local（本任务根因）：store 里的 local 行由 cmd/zerg-core 的 30s 周期任务
-// 写入，其**首次**写入发生在进程启动 30 秒之后——只读 store 时，刚启动/刚部署后的前 30 秒
-// 账本里没有 local，而 /api/fleet/status 是实时合并的 ⇒ 同一时刻两个接口的机器列表不一致。
+// buildResourceMachines 把 store 里的每台机器快照翻成对外账本视图（机器名排序，响应可复现）。
 func (h *Handlers) buildResourceMachines(inputs []fitInput) []ResourceMachineView {
 	out := []ResourceMachineView{}
 	if h.Store == nil {
 		return out
 	}
 	snaps := h.Store.GetAllSnapshots()
-	// 本机一行以实时快照为准（GetAllSnapshots 返回的是副本，改动不外泄回 store）。
-	// 拿不到实时来源则保持 store 里已有的 local 行（旧行为），不伪造。
-	if localRow := h.liveLocalFleetSnapshot(snaps["local"]); localRow != nil {
-		snaps["local"] = localRow
-	}
 	names := make([]string, 0, len(snaps))
 	for n := range snaps {
 		names = append(names, n)
@@ -136,79 +116,6 @@ func (h *Handlers) buildResourceMachines(inputs []fitInput) []ResourceMachineVie
 		out = append(out, h.machineView(snap, inputs))
 	}
 	return out
-}
-
-// LocalSnapshotProvider 提供本机（local）的实时资源快照——生产实现是 *localback.LocalBackend。
-// 接口存在的唯一理由是可测：LocalBackend 的状态字段在包外不可构造，api 侧造不出"本机有驻留"
-// 的真实快照，只能用替身验证 local 一行的合并口径（Tests only，生产由 main.go 注入 LocalBack）。
-type LocalSnapshotProvider interface {
-	Snapshot() *localback.LocalSnapshot
-}
-
-// localSnapshotSource 返回本机快照来源：测试注入的 provider 优先，否则 LocalBack；都没有则 nil。
-func (h *Handlers) localSnapshotSource() LocalSnapshotProvider {
-	if h.LocalSnapProvider != nil {
-		return h.LocalSnapProvider
-	}
-	if h.LocalBack == nil {
-		return nil
-	}
-	return h.LocalBack
-}
-
-// liveLocalFleetSnapshot 把本机子端快照翻成与远程子端**同一个** store.FleetSnapshot，
-// 供 /api/fleet/status 与 /api/resources/ledger 共用（口径唯一，两个观测面不再各取一套来源）。
-//
-//   - prev = store 里已有的 local 行（可能为 nil）：只借回 LocalBack 不采样的 cpu_pct/gpu_pct，
-//     其余字段一律以实时快照为准——实时不会比 30 秒前那次落盘更差，且本地已卸载的驻留
-//     会立刻从账本消失（不以旧值充数）。
-//   - 拿不到的一律留零值/false（vram_known=false、resident 为空）→ 对外视图整键不出现，不造值（§3.2）。
-//   - 来源不可得（provider/LocalBack 为 nil，或快照为 nil）→ 返回 nil；调用方保持既有行为
-//     （账本侧沿用 store 里那份、status 侧不出现 local），绝不凭空造一行。
-func (h *Handlers) liveLocalFleetSnapshot(prev *store.FleetSnapshot) *store.FleetSnapshot {
-	src := h.localSnapshotSource()
-	if src == nil {
-		return nil
-	}
-	ls := src.Snapshot()
-	if ls == nil {
-		return nil
-	}
-	name := strings.TrimSpace(ls.Machine)
-	if name == "" {
-		name = "local"
-	}
-	var cpuPct, gpuPct float64
-	if prev != nil {
-		cpuPct, gpuPct = prev.CpuPct, prev.GpuPct
-	}
-	snap := &store.FleetSnapshot{
-		Machine:        name,
-		Models:         ls.Models,
-		MemAvailableGb: ls.MemAvailableGb,
-		MemTotalGb:     ls.MemTotalGb,
-		Load:           ls.Load,
-		GpuUsedGb:      ls.GpuUsedGb,
-		GpuTempC:       ls.GpuTempC,
-		BackendRssGb:   ls.BackendRssGb,
-		Healthy:        ls.Healthy,
-		BackendState:   ls.BackendState,
-		CpuPct:         cpuPct,
-		GpuPct:         gpuPct,
-		Resident:       ls.Resident,
-		VramKnown:      ls.VramKnown,
-		VramUnified:    ls.VramUnified,
-		VramTotalGb:    ls.VramTotalGb,
-		VramUsedGb:     ls.VramUsedGb,
-		VramFreeGb:     ls.VramFreeGb,
-		LastSeen:       time.Now(),
-	}
-	// 本机已加载模型时填充 model 字段（口径同 /api/fleet/status）
-	if len(ls.Models) > 0 {
-		m := ls.Models[0]
-		snap.Model = &m
-	}
-	return snap
 }
 
 // machineView 单台机器 → 对外视图。
@@ -228,8 +135,6 @@ func (h *Handlers) machineView(snap *store.FleetSnapshot, inputs []fitInput) Res
 		t, u, f := snap.VramTotalGb, snap.VramUsedGb, snap.VramFreeGb
 		mv.VramTotalGb, mv.VramUsedGb, mv.VramFreeGb = &t, &u, &f
 	}
-	// 统一内存平台（显存即内存，§3.1）：如实标注——vram_known=false 但"装得下吗"仍可判定（按内存口径）
-	mv.VramUnified = snap.VramUnified
 	if snap.GpuPct > 0 {
 		gp := snap.GpuPct
 		mv.GpuPct = &gp
@@ -256,14 +161,12 @@ func (h *Handlers) fitEstimatesFor(snap *store.FleetSnapshot, inputs []fitInput)
 		MemAvailGb: snap.MemAvailableGb,
 		Resident:   snap.Resident,
 	}
-	// 显存只在子端真拿到了（vram_known=true）时才进比较式；统一内存（显存即内存）按内存口径；
-	// 两者都不是（真未知）→ EstimateFit fail-closed 判装不下（绝不把"未知"当"无限"，§3.2 诚实原则）。
+	// 显存只在子端真拿到了（vram_known=true）时才进比较式；否则按统一内存口径只判内存
 	if snap.VramKnown {
 		ledger.VramTotalGb = snap.VramTotalGb
 		ledger.VramUsedGb = snap.VramUsedGb
 		ledger.VramFreeGb = snap.VramFreeGb
 	}
-	ledger.UnifiedMemory = snap.VramUnified
 	// 引擎开销：Handler 提供则用真值，否则留 0 → EstimateFit 回退常量并标 estimated
 	if h.EngineOverheadGb > 0 {
 		ledger.EngineOverheadGb = h.EngineOverheadGb
