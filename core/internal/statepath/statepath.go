@@ -142,6 +142,25 @@ func isRepoRoot(dir string) bool {
 	return false
 }
 
+// SkillsDir — CA（子端）技能目录：每个子目录一份 SKILL.md（v2.5.1 技能库）。
+// 解析顺序：ZERG_SKILLS_DIR → <仓库根>/core/internal/agent/skills（存在才用）→ 空串（不猜、不假装有）。
+// 为什么不写死绝对路径：写死只在作者那台机器上成立，换机器/换安装位置就瞎（B1 环境无关化定案）。
+// 为什么不放进 ~/.zerg：技能是**随仓库发布**的文本资产，不是运行态状态。
+func SkillsDir() string {
+	if d := strings.TrimSpace(os.Getenv("ZERG_SKILLS_DIR")); d != "" {
+		return d
+	}
+	root := WorkspaceRoot()
+	if root == "" {
+		return ""
+	}
+	d := filepath.Join(root, "core", "internal", "agent", "skills")
+	if st, err := os.Stat(d); err == nil && st.IsDir() {
+		return d
+	}
+	return ""
+}
+
 // tmpBase — 临时根（覆盖顺序：ZERG_TMP_DIR → /tmp）。
 // 注意：默认**必须**是字面 "/tmp"，不能换成 os.TempDir()——macOS 的 os.TempDir() 是
 // /var/folders/…，而 CA 任务的执行闸门、文档与既有任务目录约定都按 /tmp 设计（换默认=回归）。
