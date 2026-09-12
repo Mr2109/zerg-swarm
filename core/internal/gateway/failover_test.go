@@ -49,16 +49,28 @@ func TestPickFallbackRoute_SwitchMachine(t *testing.T) {
 	}
 }
 
-// TestTripMachine_Threshold — 连续失败 3 次触发熔断
+// TestTripMachine_Threshold — 连续失败达真实阈值（circuitFailThreshold）才记录熔断时间
+//
+// 历史缺陷 #32：本用例曾断言「连续 3 次失败即记录熔断时间」，而真实阈值是 circuitFailThreshold=8
+// 且 isTripped 只在达该阈值后才读 failSince——断言与判定不一致，已按真实语义修正。
 func TestTripMachine_Threshold(t *testing.T) {
 	g := &Gateway{failCounts: map[string]int{}, failSince: map[string]time.Time{}, tripCounts: map[string]int{}}
-	for i := 0; i < 3; i++ {
+	// 阈值之下：计数照涨，但不记录熔断时间（否则 30s 冷却计时提前起跑）
+	for i := 0; i < circuitFailThreshold-1; i++ {
 		g.tripMachine("x3", "backend x3 forward failed: connection reset by peer")
 	}
-	if g.failCounts["x3"] != 3 {
-		t.Errorf("fail 计数应 3——实际 %d", g.failCounts["x3"])
+	if g.failCounts["x3"] != circuitFailThreshold-1 {
+		t.Errorf("fail 计数应 %d——实际 %d", circuitFailThreshold-1, g.failCounts["x3"])
+	}
+	if _, ok := g.failSince["x3"]; ok {
+		t.Errorf("失败数 < 阈值 %d 时不应记录熔断时间", circuitFailThreshold)
+	}
+	// 达阈值：记录熔断时间
+	g.tripMachine("x3", "backend x3 forward failed: connection reset by peer")
+	if g.failCounts["x3"] != circuitFailThreshold {
+		t.Errorf("fail 计数应 %d——实际 %d", circuitFailThreshold, g.failCounts["x3"])
 	}
 	if _, ok := g.failSince["x3"]; !ok {
-		t.Error("连续 3 次失败应记录熔断时间")
+		t.Errorf("连续失败达阈值 %d 应记录熔断时间", circuitFailThreshold)
 	}
 }
