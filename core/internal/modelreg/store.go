@@ -170,12 +170,20 @@ func (s *Store) Put(rec *Record, strict bool) (PutResult, error) {
 // WriteFileAtomic 原子写盘：先写同目录临时文件（同一分区），fsync 后 rename 到位。
 // 内容与已有文件完全一致时不重写，返回 changed=false（幂等）。
 // 失败路径不留临时文件（defer remove；rename 成功后那个 remove 是 no-op）。
+//
+// 写入权限（待修补 #3 阶段 1）：目录 0o700、文件 0o600 —— **仅属主可读写/进入**。
+// 为什么收紧：manifests 是本地身份库，将来要承载签名记录（阶段 2）；把「谁能把文件
+// 放进来 / 读出去」先压到最小（同机其他用户与组都进不来），是零成本的第一道防线。
+// 边界（如实说）：这只挡本机其他用户，挡不住属主自己、root，也不提供任何**防伪**
+// ——记录的真伪只能靠签名与官方来源交叉核对（阶段 2），权限不是签名。
+// 目录 ModeDir / 文件 ModeFile 是本批唯一权限口径，改动前先看标准
+// 《写入权限与防伪（阶段 1 / 阶段 2 边界）》。
 func WriteFileAtomic(path string, data []byte) (bool, error) {
 	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
 		return false, nil
 	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, ModeDir); err != nil {
 		return false, err
 	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
@@ -196,7 +204,7 @@ func WriteFileAtomic(path string, data []byte) (bool, error) {
 	if err := tmp.Close(); err != nil {
 		return false, err
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
+	if err := os.Chmod(tmpName, ModeFile); err != nil {
 		return false, err
 	}
 	if err := os.Rename(tmpName, path); err != nil {
