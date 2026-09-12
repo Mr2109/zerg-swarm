@@ -39,17 +39,40 @@ const (
 	EvidenceTemplate   = "probe.template.v1"
 )
 
+// chat_template 来源的合法取值（与 ValidChatTemplate 的三条取值一致；该函数未改动）：
+//   - from_gguf：模板来自本地 GGUF 的 tokenizer.chat_template 键；
+//   - from_tokenizer：模板来自端点只读元信息接口返回的 chat_template 字段。
+//
+// 第三条 inline:<模板> 由人工/声明填写，probe 不产出。
+const (
+	ChatTemplateFromGGUF      = "from_gguf"
+	ChatTemplateFromTokenizer = "from_tokenizer"
+)
+
+// TemplateGGUFKey 是 GGUF 元数据里承载模板的键名——from_gguf 路径的证据锚（待修补 #22）。
+const TemplateGGUFKey = "tokenizer.chat_template"
+
+// CapabilityTemplate 是模板来源不可判定时写进 unverifiable[] 的名字。
+// 它沿用探测器主题名（probe.template.v1 → template），与 #27 的 text/vision/tools 同格式；
+// 注意：模板来源**不是**标准 §四 的能力标签，故不进 CapabilityNames、也不出现在 capabilities[]。
+const CapabilityTemplate = "template"
+
 // 失败分类（开工方案 §四 / 标准 §七）：失败必须能归因到"系统哪一环"。
 const (
-	FailCantStart   = "cant_start"
-	FailBadFormat   = "bad_format"
-	FailTimeout     = "timeout"
-	FailNoVision    = "no_vision"
-	FailMmprojMiss  = "mmproj_missing"
-	FailNoTools     = "no_tools"
-	FailNoMeta      = "no_meta"
-	FailNoTemplate  = "no_template"
-	FailUnsupported = "unsupported"
+	FailCantStart  = "cant_start"
+	FailBadFormat  = "bad_format"
+	FailTimeout    = "timeout"
+	FailNoVision   = "no_vision"
+	FailMmprojMiss = "mmproj_missing"
+	FailNoTools    = "no_tools"
+	FailNoMeta     = "no_meta"
+	FailNoTemplate = "no_template"
+	// FailNoTemplateSource 表示"两条真路径都没拿到模板来源"（待修补 #22）：本地 GGUF 无
+	// tokenizer.chat_template 键，端点只读元信息（/props 等）也没返回 chat_template。
+	// 它**不是**"系统没探够"（那是 budget_exhausted/timeout），而是"没有可复现的证据"——
+	// 按与 #27 同一套纪律：不写默认值、不生成条目，改记 unverifiable[]（缺=未知）。
+	FailNoTemplateSource = "no_template_source"
+	FailUnsupported      = "unsupported"
 	// FailBudgetExhausted 表示"预算不足（或超时）导致探不出结论"，**不是**"确定没有这个能力"。
 	// 按项目哲学（没有弱模型，只有不完善的系统）：这种情况不得报 capabilities.value=false，
 	// 改为不生成该能力条目 + 在快照里写一条 unverifiable 记录（待修补 #27，见 Unverifiable）。
@@ -286,6 +309,8 @@ type ProbeReport struct {
 	// Capabilities 里——缺 = 未知，绝不写成 value=false（待修补 #27）。
 	Unverifiable []Unverifiable
 	Traces       []Trace
+	// ChatTemplate 是 probe.template.v1 的结论（from_gguf / from_tokenizer）；为空表示两条
+	// 真路径都没拿到证据——此时**不写默认值**，改在 Unverifiable[] 记一条（待修补 #22）。
 	ChatTemplate string
 	TemplateOK   bool
 	OnlineProbed bool
@@ -302,7 +327,7 @@ type ProbeReport struct {
 type ProbeOptions struct {
 	Target   string        // 本地路径 或 端点 URL
 	Endpoint string        // 本地文件时另给的端点（可选）；只给路径时不做在线探测
-	Engine   string        // llama.cpp / vllm / ollama（可选，影响 chat_template 来源判定）
+	Engine   string        // llama.cpp / vllm / ollama（可选，决定 engine_recipes 的键名）
 	Model    string        // 请求里的 model 字段（可选；默认向端点问 /v1/models）
 	ID       string        // 覆盖自动推导的 id（可选）
 	Timeout  time.Duration // 单次探测超时（默认 60s）
@@ -446,7 +471,6 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 	}
 
 	ep := Endpoint{BaseURL: endpointBase, Model: opts.Model, Timeout: timeout}
-	textOK := false
 
 	if endpointBase != "" {
 		rep.Endpoint = endpointBase
@@ -477,7 +501,6 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 			return nil, rep, &UnreachableError{Endpoint: endpointBase, Err: fmt.Errorf("%s", txt.Trace.Summary)}
 		}
 		rep.OnlineProbed = true
-		textOK = txt.Value
 		addCapability(rep, "text", EvidenceText, txt)
 
 		// probe.vision：本仓最看重的一项——必须实测，不许因为模型自称多模态就写 true。
@@ -500,25 +523,37 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 		addCapability(rep, "rerank", EvidenceRerank, rr)
 	}
 
-	// probe.template：判定 chat_template 来源（开工方案 §四）。
+	// probe.template：判定 chat_template 来源（开工方案 §四）——**只认真证据**（待修补 #22）。
 	//
-	// 留痕（易变/可刷新）照旧带上"端点在不带模板调用下能回话"这条在线推断，它是证据；
-	// 但 rep.ChatTemplate（**进记录正文**的那份）只认建材（GGUF 里的 tokenizer.chat_template）——
-	// 否则同一建材给不给端点会写出不同的 engine_recipes（无端点→无配方；有端点→多一条
-	// from_gguf），正文就不再逐字节相同，第二遍 probe --store 会撞上防覆盖保护。
-	tmpl, tclass, tok := resolveChatTemplate(rep.Meta, textOK, opts.Engine)
-	ttr := Trace{Probe: EvidenceTemplate, OK: tok}
-	if tok {
-		ttr.Summary = "chat_template=" + tmpl
+	// 两条真路径：① 本地 GGUF 元数据里确有非空的 tokenizer.chat_template 键（from_gguf，
+	// 证据写键名）；② 端点只读元信息接口（/props，退一步 /v1/models）返回了非空
+	// chat_template 字段（from_tokenizer，证据写端点字段名）。
+	//
+	// 两条都不成立 → **不给默认值**（缺=未知）：不写 engine_recipes 的 chat_template，改在
+	// unverifiable[] 记一条（reason=no_template_source）。旧实现按"端点能回话"推断来源
+	// （vllm→from_tokenizer、其余→from_gguf），属"推断冒充实测"，整段删除。
+	//
+	// 优先级：本地建材（GGUF）高于端点——GGUF 里有模板时它就是权威来源（本地事实优先于
+	// 这台引擎此刻报的状态）；这样同一建材换端点/不给端点，正文里的 engine_recipes 才一致
+	// （待修补 #24 的正文确定性）。
+	var epTpl *endpointTemplate
+	if endpointBase != "" {
+		t := ProbeChatTemplateFromEndpoint(ep)
+		epTpl = &t
+	}
+	tres := resolveChatTemplate(rep.Meta, epTpl)
+	ttr := Trace{Probe: EvidenceTemplate, OK: tres.Source != ""}
+	if ttr.OK {
+		ttr.Summary = tres.Evidence
+		rep.ChatTemplate = tres.Source
+		rep.TemplateOK = true
 	} else {
-		ttr.FailureClass = tclass
-		ttr.Summary = "缺模板：既无 GGUF tokenizer.chat_template，端点也未在无模板调用下成功回话"
+		uv := templateUnverifiable(rep.Meta, endpointBase != "")
+		ttr.FailureClass = tres.FailClass
+		ttr.Summary = uv.Evidence
+		rep.Unverifiable = append(rep.Unverifiable, uv)
 	}
 	rep.Traces = append(rep.Traces, ttr)
-	rep.TemplateOK = rep.Meta != nil && strings.TrimSpace(rep.Meta.ChatTemplate) != ""
-	if rep.TemplateOK {
-		rep.ChatTemplate = "from_gguf"
-	}
 
 	// 端点探测无本地文件：用端点模型标识造一条"虚拟建材料"，让记录结构完整
 	// （files[] 必填）。它不是真实文件，notes 已注明待人工补。
@@ -634,25 +669,60 @@ func canonicalSPDX(raw, name, link string) (string, string, string) {
 	return "unknown", "", ""
 }
 
-// resolveChatTemplate 判定 chat_template 来源（probe.template.v1）。
+// templateResolution 是 probe.template.v1 的结论（真证据优先；拿不到就如实说不知道）。
+type templateResolution struct {
+	Source    string // from_gguf / from_tokenizer；空表示未定
+	Evidence  string // 证据串：probe.template.v1 (锚)
+	FailClass string // Source=="" 时的原因分类（no_template_source）
+}
+
+// resolveChatTemplate 判定 chat_template 来源（probe.template.v1）——只认真证据，拒绝推断（待修补 #22）。
 //
-// 开工方案 §四 的原意是"故意用不带模板的调用方式触发引擎报错，看是否走兜底链"。
-// 本实现退一步：不改引擎启动参数时无法"故意触发"，只能从两处证据推断来源——
-// GGUF 里的 tokenizer.chat_template，或端点在不带模板调用下仍能回话。
-// 推不出就如实报 no_template 并说明缺什么。
-func resolveChatTemplate(meta *GGUFMeta, textOK bool, engine string) (tmpl, failClass string, ok bool) {
+// 两条真路径：
+//   - from_gguf：本地 GGUF 元数据里确有非空的 tokenizer.chat_template 键；
+//   - from_tokenizer：端点只读元信息接口返回了非空 chat_template 字段（epTpl.OK）。
+//
+// 二者都不成立 → Source 为空、FailClass=no_template_source（缺=未知，**绝不**回退默认值）。
+//
+// 优先级：GGUF 高于端点。GGUF 里的模板是建材自带的权威事实；端点报的模板是"这台引擎此刻
+// 的状态"。同一建材换端点重探时，正文里的 engine_recipes 必须以建材为准（待修补 #24）。
+func resolveChatTemplate(meta *GGUFMeta, epTpl *endpointTemplate) templateResolution {
 	if meta != nil && strings.TrimSpace(meta.ChatTemplate) != "" {
-		return "from_gguf", "", true
-	}
-	if textOK {
-		switch strings.ToLower(engine) {
-		case "vllm":
-			return "from_tokenizer", "", true
-		default:
-			return "from_gguf", "", true
+		return templateResolution{
+			Source:   ChatTemplateFromGGUF,
+			Evidence: templateEvidence("gguf_key: " + TemplateGGUFKey),
 		}
 	}
-	return "", FailNoTemplate, false
+	if epTpl != nil && epTpl.OK {
+		return templateResolution{
+			Source:   ChatTemplateFromTokenizer,
+			Evidence: templateEvidence(epTpl.Anchor),
+		}
+	}
+	return templateResolution{FailClass: FailNoTemplateSource}
+}
+
+// templateEvidence 生成 probe.template.v1 的证据串（形如 `probe.template.v1 (锚)`）。
+func templateEvidence(anchor string) string {
+	return fmt.Sprintf("%s (%s)", EvidenceTemplate, anchor)
+}
+
+// templateUnverifiable 在两条真路径都不成立时，产出一条不可判定记录（待修补 #22，承 #27）：
+// 不生成 engine_recipes 的 chat_template，改在能力快照的 unverifiable[] 留痕。
+func templateUnverifiable(meta *GGUFMeta, endpointGiven bool) Unverifiable {
+	ggufPart := "本地 GGUF 未读到 " + TemplateGGUFKey + " 键"
+	if meta == nil {
+		ggufPart = "本地 GGUF 元数据不可用（未读到 " + TemplateGGUFKey + " 键）"
+	}
+	epPart := "未给端点，无法读只读元信息（/props 等）"
+	if endpointGiven {
+		epPart = "端点只读元信息（/props、/v1/models）未返回非空 chat_template 字段"
+	}
+	return Unverifiable{
+		Name:     CapabilityTemplate,
+		Reason:   FailNoTemplateSource,
+		Evidence: truncate(fmt.Sprintf("%s (%s: %s；%s)", EvidenceTemplate, FailNoTemplateSource, ggufPart, epPart), 200),
+	}
 }
 
 // evidenceName 给探测器名附上实际预算，让读者能分辨这次用了多大预算（待修补 #27）。
