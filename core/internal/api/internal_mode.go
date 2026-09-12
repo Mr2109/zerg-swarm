@@ -5,7 +5,7 @@ package api
 // 默认 auto（兼容现状——16 类全自动）——切换后持久化——重启恢复
 // POST /api/internal-tasks/{id}/mode  {"auto_run": true|false}  设置运行模式
 // GET  /api/internal-tasks/modes                               查询当前模式
-// 持久化 /tmp/zerg-tasks/internal_modes.json——重启恢复
+// 持久化 <任务目录根>/internal_modes.json（ZERG_TASK_ROOT 可覆盖，默认 /tmp/zerg-tasks）——重启恢复
 
 import (
 	"encoding/json"
@@ -14,13 +14,15 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"github.com/go-chi/chi/v5"
 )
 
 var (
-	modeMu   sync.Mutex
-	modes    = map[string]bool{} // defID → auto_run（默认 true——不存在=true）
-	modeFile = "/tmp/zerg-tasks/internal_modes.json"
+	modeMu sync.Mutex
+	modes  = map[string]bool{} // defID → auto_run（默认 true——不存在=true）
+	// 待修补 #36: 任务目录根不再写死——经 statepath.TaskRoot() 解析（ZERG_TASK_ROOT 可覆盖，默认 /tmp/zerg-tasks）
+	modeFile = filepath.Join(statepath.TaskRoot(), "internal_modes.json")
 )
 
 // loadModes 启动恢复（文件不存在忽略——全默认 auto）

@@ -8,6 +8,18 @@ import (
 	"time"
 )
 
+// isolateTaskRoot 测试隔离: 把任务目录根切到 t.TempDir()。
+// 任务目录根（默认 /tmp/zerg-tasks，产品侧经 statepath.TaskRoot() 读 ZERG_TASK_ROOT 可覆盖）——
+// 测试若用固定 ID 建任务（如 t1 / task-flow-test-1 / task-review-test-1），任务目录会落到真机共享根，
+// 与真机在跑的任务互相污染、遗留垃圾、排查时难分真假（待修补 #36——#35 同族第三处）。
+// t.Setenv 在用例结束后自动严格恢复原值（不依赖手写 defer）。
+func isolateTaskRoot(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("ZERG_TASK_ROOT", dir)
+	return dir
+}
+
 // isolateTasksFile 测试隔离: 把包级 tasksFile 切到 t.TempDir() 下的临时文件。
 // tasksFile 是主控调度器的持久化文件（默认指向真机 /tmp/zerg-tasks.json）——
 // 测试若不解耦，构造 MasterScheduler（loadPersistedHistory 读）或任何落盘路径
@@ -117,6 +129,7 @@ func TestMasterScheduler_SubmitAndQueue(t *testing.T) {
 	// v2.5.6 2026-08-28 测试隔离: 主控在跑会写 /tmp/zerg-tasks.json——测试切到临时文件（防恢复真实任务干扰）
 	// 待修补 #35: 统一走 isolateTasksFile（t.Cleanup 严格恢复）——不用手写 defer
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	s := NewMasterScheduler("/bin/echo", 2) // 用 echo（不真跑 CA——测试流程）
 	task := &Task{ID: "t1", Description: "test", Priority: PriorityInternal}
 	s.Submit(task)
@@ -142,6 +155,7 @@ func TestMasterScheduler_SubmitAndQueue(t *testing.T) {
 func TestMasterScheduler_ConcurrentLimit(t *testing.T) {
 	// 测试隔离（同 SubmitAndQueue）: 持久化文件切临时目录——不写/不读真机 /tmp/zerg-tasks.json
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	s := NewMasterScheduler("/bin/echo", 1) // 单槽
 	task := &Task{ID: "t1", Description: "test1", Priority: PriorityInternal}
 	s.Submit(task)
@@ -168,6 +182,7 @@ func TestMasterScheduler_Pause(t *testing.T) {
 	// 待修补 #35: 构造 MasterScheduler 会 loadPersistedHistory 读 tasksFile——
 	// 切临时文件，防真机 /tmp/zerg-tasks.json 的真实任务被恢复入队干扰本用例
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	s := NewMasterScheduler("/bin/echo", 2)
 	// 2026-09-05 修: 清全局持久化残留（其他测试/真实运行写 /tmp/zerg-tasks.json——
 	// NewMasterScheduler 恢复旧任务入队致 QueueLen 断言污染）——再清一次本测试入队的
