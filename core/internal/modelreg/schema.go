@@ -82,13 +82,24 @@ type EngineRecipe struct {
 
 // Record 是一条模型登记记录（标准 §三）。
 type Record struct {
-	Schema        string                  `json:"schema"`
-	ID            string                  `json:"id"`
-	Digest        string                  `json:"digest"`
-	Aliases       []string                `json:"aliases,omitempty"`
-	Name          string                  `json:"name,omitempty"`
-	Params        map[string]interface{}  `json:"params,omitempty"`
-	Format        string                  `json:"format,omitempty"`
+	Schema  string                 `json:"schema"`
+	ID      string                 `json:"id"`
+	Digest  string                 `json:"digest"`
+	Aliases []string               `json:"aliases,omitempty"`
+	Name    string                 `json:"name,omitempty"`
+	Params  map[string]interface{} `json:"params,omitempty"`
+	Format  string                 `json:"format,omitempty"`
+	// Parent 是血缘声明：同一 model_id 的上一版（version 形如 sha256-<hex>，或 digest 形如 sha256:<64hex>）。
+	// BaseModel 是血缘声明：量化/微调前的基座 id（形如 id）。
+	//
+	// ⛔ 两条硬约束（待修补 #16）：
+	//   - **只能由调用方显式传入**（probe --parent/--base），**绝不**由 store 按写入顺序/时间推断
+	//     ——自动推断会让"同一批建材 → 记录正文逐字节相同"这条不变量失效（不同机器/不同写入顺序
+	//     会得出不同的 parent，同一条记录因环境不同而不同字节）；
+	//   - 可选字段：旧记录没有它们照样合法（标准 §十 向后兼容）。
+	Parent    string `json:"parent,omitempty"`
+	BaseModel string `json:"base_model,omitempty"`
+	// 下面的字段见标准 §三/§四/§六。
 	Modalities    map[string][]string     `json:"modalities,omitempty"`
 	Capabilities  []Capability            `json:"capabilities,omitempty"`
 	ContextWindow int                     `json:"context_window,omitempty"`
