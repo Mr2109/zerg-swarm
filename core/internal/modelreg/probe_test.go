@@ -1023,8 +1023,284 @@ func TestProbeExplicitlyUnsupportedStaysFalse(t *testing.T) {
 	if !strings.Contains(vc.Evidence, FailMmprojMiss) {
 		t.Fatalf("vision evidence 应带 mmproj_missing：%s", vc.Evidence)
 	}
-	// 本场景全是端点的确定态度 → 不该有任何不可判定记录
-	if len(rep.Unverifiable) != 0 {
-		t.Fatalf("端点明确表态的场景不该有不可判定记录：%+v", rep.Unverifiable)
+	// 本场景里每一条**能力**都是端点的确定态度 → 能力维度不该有任何不可判定记录。
+	// 注：待修补 #22 起 unverifiable[] 还承载正交的 template 轴（模板来源确实没有可复现
+	// 证据时如实记 no_template_source）——它不是能力标签，故单列一条属预期，不算能力误判。
+	var capUV []Unverifiable
+	for _, uv := range rep.Unverifiable {
+		if uv.Name != CapabilityTemplate {
+			capUV = append(capUV, uv)
+		}
+	}
+	if len(capUV) != 0 {
+		t.Fatalf("端点明确表态的场景不该有任何能力被判为不可判定：%+v", rep.Unverifiable)
+	}
+	if findUnverifiable(rep.Unverifiable, CapabilityTemplate) == nil {
+		t.Fatalf("本场景端点没有只读模板元信息，应如实记 template 不可判定（#22）：%+v", rep.Unverifiable)
+	}
+}
+
+// ── 待修补 #22：probe.template.v1 只认真证据（GGUF 键 / 端点只读元信息）────────────
+//
+// 旧实现按"端点能回话"推断来源（vllm→from_tokenizer、其余→from_gguf），是"推断冒充实测"。
+// 新实现只有两条真路径；两条都不成立就**不给默认值**，改记 unverifiable（缺=未知）。
+
+// findTrace 取某条留痕（找不到返回 nil）。
+func findTrace(ts []Trace, probe string) *Trace {
+	for i := range ts {
+		if ts[i].Probe == probe {
+			return &ts[i]
+		}
+	}
+	return nil
+}
+
+// writeTestGGUFNoTemplate 造一个**没有** tokenizer.chat_template 键的 GGUF（#22 反例必备）。
+func writeTestGGUFNoTemplate(t *testing.T, dir, name string) string {
+	t.Helper()
+	gguf := makeGGUF(
+		kv("general.architecture", ggufTypeString, gstr("llama")),
+		kv("general.name", ggufTypeString, gstr("NoTemplate-8B")),
+		kv("llama.context_length", ggufTypeUint32, le32(4096)),
+	)
+	if dir == "" {
+		dir = t.TempDir()
+	}
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, gguf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// fakePropsEngine 是带只读 /props 的假 llama.cpp 端点：/props 按给定状态码返回 propsBody。
+func fakePropsEngine(t *testing.T, propsBody string, propsStatus int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/props":
+			w.WriteHeader(propsStatus)
+			fmt.Fprint(w, propsBody)
+		case "/v1/models":
+			fmt.Fprint(w, `{"object":"list","data":[{"id":"fake-llama","object":"model"}]}`)
+		case "/v1/chat/completions":
+			fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"你好"}}]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":{"message":"no such route"}}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// fakeModelsTemplateEngine 是只在 /v1/models 里带模板字段的假端点（/props 不存在）。
+func fakeModelsTemplateEngine(t *testing.T, template string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/models":
+			fmt.Fprintf(w, `{"object":"list","data":[{"id":"fake-llama","object":"model","chat_template":%q}]}`, template)
+		case "/v1/chat/completions":
+			fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"你好"}}]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":{"message":"no such route"}}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// #22 反例优先 ①：本地 GGUF 确有 tokenizer.chat_template 键 → from_gguf，证据写键名。
+func TestProbeTemplateFromGGUFEvidence(t *testing.T) {
+	p := writeTestGGUF(t, "", "HasTemplate-Q4_K_M.gguf") // 含 tokenizer.chat_template
+	rec, rep, err := Probe(ProbeOptions{Target: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.ChatTemplate != ChatTemplateFromGGUF {
+		t.Fatalf("GGUF 有 tokenizer.chat_template → 应为 %s，实际 %q", ChatTemplateFromGGUF, rep.ChatTemplate)
+	}
+	if got := rec.EngineRecipes["llama.cpp"].ChatTemplate; got != ChatTemplateFromGGUF {
+		t.Fatalf("engine_recipes.chat_template 应为 from_gguf，实际 %q", got)
+	}
+	tr := findTrace(rep.Traces, EvidenceTemplate)
+	if tr == nil || !tr.OK {
+		t.Fatalf("probe.template.v1 留痕应成功：%+v", tr)
+	}
+	if !strings.Contains(tr.Summary, "gguf_key: "+TemplateGGUFKey) {
+		t.Fatalf("evidence 必须写清 GGUF 键名：%s", tr.Summary)
+	}
+	if findUnverifiable(rep.Unverifiable, CapabilityTemplate) != nil {
+		t.Fatalf("有真证据时不该有 template 不可判定记录：%+v", rep.Unverifiable)
+	}
+}
+
+// #22 反例优先 ②：GGUF 无模板、假端点 /props 返回 chat_template → from_tokenizer，证据写端点字段。
+func TestProbeTemplateFromEndpointProps(t *testing.T) {
+	gguf := writeTestGGUFNoTemplate(t, "", "NoTemplate-Q4_K_M.gguf")
+	srv := fakePropsEngine(t, `{"chat_template":"{{ .Prompt }}<|im_end|>","n_ctx":4096}`, http.StatusOK)
+	rec, rep, err := Probe(ProbeOptions{Target: gguf, Endpoint: srv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.ChatTemplate != ChatTemplateFromTokenizer {
+		t.Fatalf("/props 有 chat_template → 应为 %s，实际 %q", ChatTemplateFromTokenizer, rep.ChatTemplate)
+	}
+	if got := rec.EngineRecipes["llama.cpp"].ChatTemplate; got != ChatTemplateFromTokenizer {
+		t.Fatalf("engine_recipes.chat_template 应取自真探测（from_tokenizer），实际 %q", got)
+	}
+	tr := findTrace(rep.Traces, EvidenceTemplate)
+	if tr == nil || !tr.OK || !strings.Contains(tr.Summary, "/props.chat_template") {
+		t.Fatalf("evidence 必须写清端点字段名 /props.chat_template：%+v", tr)
+	}
+	if findUnverifiable(rep.Unverifiable, CapabilityTemplate) != nil {
+		t.Fatalf("拿到真证据时不该有 template 不可判定记录：%+v", rep.Unverifiable)
+	}
+}
+
+// #22 反例优先 ②b：/props 不可用，退一步 /v1/models 的模板字段 → from_tokenizer（证据锚写 models 字段）。
+func TestProbeTemplateFromModelsFallback(t *testing.T) {
+	gguf := writeTestGGUFNoTemplate(t, "", "NoTemplate2-Q4_K_M.gguf")
+	srv := fakeModelsTemplateEngine(t, "{{ .Prompt }}")
+	_, rep, err := Probe(ProbeOptions{Target: gguf, Endpoint: srv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.ChatTemplate != ChatTemplateFromTokenizer {
+		t.Fatalf("/v1/models 带模板字段 → 应为 %s，实际 %q", ChatTemplateFromTokenizer, rep.ChatTemplate)
+	}
+	tr := findTrace(rep.Traces, EvidenceTemplate)
+	if tr == nil || !tr.OK || !strings.Contains(tr.Summary, "/v1/models.data[0].chat_template") {
+		t.Fatalf("退一步命中的证据锚应写 /v1/models.data[0].chat_template：%+v", tr)
+	}
+}
+
+// #22 反例优先 ③：两边都没有 → **不生成条目**（无 engine_recipes.chat_template），
+// 且 unverifiable 里出现 template（reason=no_template_source）。旧实现的默认值必须消失。
+func TestProbeTemplateNoSourceIsUnverifiable(t *testing.T) {
+	gguf := writeTestGGUFNoTemplate(t, "", "NoTemplate3-Q4_K_M.gguf")
+	srv := fakeEngine(t, "image input is not supported by this model") // 无 /props；/v1/models 无模板字段
+
+	cases := []struct {
+		name string
+		opts ProbeOptions
+	}{
+		{"只有本地文件", ProbeOptions{Target: gguf}},
+		{"文件+端点但端点无模板", ProbeOptions{Target: gguf, Endpoint: srv.URL, Timeout: 5 * time.Second}},
+		{"只有端点且端点无模板", ProbeOptions{Target: srv.URL, Timeout: 5 * time.Second}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, rep, err := Probe(tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rep.ChatTemplate != "" {
+				t.Fatalf("两条真路径都不成立时不得给默认值，实际 %q", rep.ChatTemplate)
+			}
+			if got := rec.EngineRecipes["llama.cpp"].ChatTemplate; got != "" {
+				t.Fatalf("不得生成 engine_recipes.chat_template，实际 %q（%+v）", got, rec.EngineRecipes)
+			}
+			uv := findUnverifiable(rep.Unverifiable, CapabilityTemplate)
+			if uv == nil {
+				t.Fatalf("应写入 unverifiable[template]（缺=未知）：%+v", rep.Unverifiable)
+			}
+			if uv.Reason != FailNoTemplateSource {
+				t.Fatalf("原因分类应为 %s，实际 %q", FailNoTemplateSource, uv.Reason)
+			}
+			if !strings.Contains(uv.Evidence, EvidenceTemplate) {
+				t.Fatalf("证据应带探测器名：%s", uv.Evidence)
+			}
+			tr := findTrace(rep.Traces, EvidenceTemplate)
+			if tr == nil || tr.OK {
+				t.Fatalf("probe.template.v1 留痕应如实记未取到：%+v", tr)
+			}
+			if tr.FailureClass != FailNoTemplateSource {
+				t.Fatalf("留痕失败分类应为 %s，实际 %q", FailNoTemplateSource, tr.FailureClass)
+			}
+			// 快照必须承载该不可判定记录（写盘与 --json 共用同一份）
+			snap := NewCapabilitySnapshot(rec, rep)
+			if findUnverifiable(snap.Unverifiable, CapabilityTemplate) == nil {
+				t.Fatalf("能力快照应承载 unverifiable：%+v", snap.Unverifiable)
+			}
+			// 反例守护：绝不回退到旧的默认值
+			if rep.ChatTemplate == ChatTemplateFromGGUF || rep.ChatTemplate == ChatTemplateFromTokenizer {
+				t.Fatalf("无证据却给了来源 %q（等于推断冒充实测）：%+v", rep.ChatTemplate, rep.Traces)
+			}
+		})
+	}
+}
+
+// #22 反例：/props 有 chat_template 键但为空 / 非 200 / 非 JSON → 都不算证据（缺=未知）。
+func TestProbeTemplatePropsEmptyOrBadIsNotEvidence(t *testing.T) {
+	gguf := writeTestGGUFNoTemplate(t, "", "NoTemplate4-Q4_K_M.gguf")
+	cases := []struct {
+		name   string
+		body   string
+		status int
+	}{
+		{"空模板", `{"chat_template":""}`, http.StatusOK},
+		{"只有空白", `{"chat_template":"   "}`, http.StatusOK},
+		{"无 chat_template 字段", `{"n_ctx":4096}`, http.StatusOK},
+		{"非 200", `{"error":"boom"}`, http.StatusInternalServerError},
+		{"非 JSON 正文", `<html>nope</html>`, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := fakePropsEngine(t, tc.body, tc.status)
+			_, rep, err := Probe(ProbeOptions{Target: gguf, Endpoint: srv.URL, Timeout: 5 * time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rep.ChatTemplate != "" {
+				t.Fatalf("没有真证据不得给结论，实际 %q", rep.ChatTemplate)
+			}
+			if findUnverifiable(rep.Unverifiable, CapabilityTemplate) == nil {
+				t.Fatalf("应记 unverifiable[template]：%+v", rep.Unverifiable)
+			}
+		})
+	}
+}
+
+// #22 取舍钉子：GGUF 的模板与端点 /props 的模板不一致 → 取 GGUF（本地建材权威）。
+func TestProbeTemplateGGUFWinsOverEndpoint(t *testing.T) {
+	gguf := writeTestGGUF(t, "", "Conflict-Q4_K_M.gguf") // 模板 "{{ .Prompt }}"
+	srv := fakePropsEngine(t, `{"chat_template":"SOME-OTHER-ENDPOINT-TEMPLATE"}`, http.StatusOK)
+
+	// 前提校验：端点确实返回了一个**不同**的模板（否则本用例证明不了取舍）
+	epTpl := ProbeChatTemplateFromEndpoint(Endpoint{BaseURL: srv.URL, Timeout: 5 * time.Second})
+	if !epTpl.OK || epTpl.Anchor != "/props.chat_template" {
+		t.Fatalf("前提：端点 /props 应返回模板，实际 %+v", epTpl)
+	}
+	if epTpl.Template == "{{ .Prompt }}" {
+		t.Fatal("前提：端点模板应与 GGUF 里的不同")
+	}
+
+	rec, rep, err := Probe(ProbeOptions{Target: gguf, Endpoint: srv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.ChatTemplate != ChatTemplateFromGGUF {
+		t.Fatalf("GGUF 与端点都有模板时应取 GGUF（建材权威），实际 %q", rep.ChatTemplate)
+	}
+	if got := rec.EngineRecipes["llama.cpp"].ChatTemplate; got != ChatTemplateFromGGUF {
+		t.Fatalf("engine_recipes 应取 from_gguf，实际 %q", got)
+	}
+	tr := findTrace(rep.Traces, EvidenceTemplate)
+	if tr == nil || !strings.Contains(tr.Summary, "gguf_key: "+TemplateGGUFKey) {
+		t.Fatalf("证据应指向 GGUF 键：%+v", tr)
+	}
+	// 同一建材、不同端点 → 正文仍逐字节相同（#24 确定性不被 #22 的修复削弱）
+	noEP, _, err := Probe(ProbeOptions{Target: gguf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bodyHash(recordBody(t, noEP)) != bodyHash(recordBody(t, rec)) {
+		t.Fatalf("GGUF 有模板时，给不给端点正文必须一致（#24）：\n  无端点=%s\n  带端点=%s",
+			bodyHash(recordBody(t, noEP)), bodyHash(recordBody(t, rec)))
 	}
 }
