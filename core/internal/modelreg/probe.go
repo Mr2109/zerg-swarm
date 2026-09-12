@@ -364,6 +364,14 @@ type ProbeOptions struct {
 	ID       string        // 覆盖自动推导的 id（可选）
 	Timeout  time.Duration // 单次探测超时（默认 60s）
 	Now      func() time.Time
+	// Parent / BaseModel 是血缘声明（待修补 #16）——**只能由调用方显式传入**（CLI --parent/--base）。
+	//
+	// ⛔ 绝不在这里做任何"自动推断"（不查存储层、不看写入顺序、不取时间、不读目录）：
+	// 正文的不变量是「同一批建材 → 逐字节相同」，而"上一版是谁"不是建材的一部分——
+	// 一旦由环境推断，同一条记录在不同机器/不同入库顺序下就会字节不同，不变量当场失效。
+	// 显式传入则同一条命令 = 同样的值 = 逐字节相同。
+	Parent    string
+	BaseModel string
 }
 
 // UnreachableError 表示用户显式给出的端点连不上（CLI 映射 exit 4）。
@@ -723,20 +731,24 @@ func (rep *ProbeReport) toRecord(id string, opts ProbeOptions) *Record {
 		State: "known",
 	}
 
-	// 许可证：读权重文件里能读到的；读不到写 unknown（标准 §二/§五：绝不默认 yes）。
-	spdx, lname, llink := "unknown", "", ""
-	if rep.Meta != nil {
-		spdx, lname, llink = canonicalSPDX(rep.Meta.LicenseSPDX, rep.Meta.LicenseName, rep.Meta.LicenseLink)
-	}
+	// 许可证：probe.license.v1 只认**结构化来源**（本地 GGUF 许可键；或与权重同目录、
+	// 明确命名的 LICENSE 文件）——绝不默认 yes、绝不从 README/模型卡的自由文本里猜
+	// （待修补 #12）。拿不到就 spdx=unknown 且 evidence 列出尝试过的来源。
+	lp := ProbeLicense(rep.Meta, rep.ModelDir)
 	rec.License = License{
-		SPDX:       spdx,
-		Name:       lname,
-		Link:       llink,
-		Commercial: "unknown", // 绝不默认 yes
+		SPDX:       lp.SPDX,
+		Name:       lp.Name,
+		Link:       lp.Link,
+		Commercial: lp.Commercial, // 恒 unknown：商业态是法律判断，本地结构化信号答不了（绝不默认 yes）
+		Evidence:   lp.Evidence,
 		// accepted_by / accepted_at **留空，不写占位值**（批 3 修正；待修补 #21 修改后）：
 		// 探测不代表任何人接受条款。按新规则：commercial=unknown 允许留痕为空；
 		// no/revenue_gated 才必填；任何情况下非空即不许是占位值。人工审许可后自行填写。
 	}
+
+	// 血缘声明（待修补 #16）：**只**照抄调用方显式传入的值，不从 store/顺序/时间推断。
+	rec.Parent = strings.TrimSpace(opts.Parent)
+	rec.BaseModel = strings.TrimSpace(opts.BaseModel)
 
 	if rep.Meta != nil {
 		rec.Format = "gguf"
@@ -775,6 +787,9 @@ func (rep *ProbeReport) toRecord(id string, opts ProbeOptions) *Record {
 	}
 
 	rec.Notes = rep.buildNotes()
+	if rec.Parent != "" || rec.BaseModel != "" {
+		rec.Notes += lineageNote(rec.Parent, rec.BaseModel)
+	}
 	return rec
 }
 
