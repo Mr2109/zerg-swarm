@@ -3,7 +3,7 @@
 // 用法：
 //
 //	zerg-model verify <record.json> [--strict] [--json] [--integrity] [--base-dir <目录>]
-//	zerg-model probe  <路径|端点URL> [--out record.json] [--json] [--endpoint URL] [--engine llama.cpp|vllm|ollama]
+//	zerg-model probe  <路径|端点URL> [--out record.json] [--json] [--endpoint URL] [--engine llama.cpp|vllm|ollama] [--parent V] [--base ID]
 //
 // 退出码：0 成功 / 1 探测失败 / 2 记录不合标准 / 3 参数或环境错误 / 4 引擎不可达
 package main
@@ -26,6 +26,7 @@ func usage() {
 	fmt.Println("                                                          # --integrity 额外核对 files[] 与磁盘文件是否一致（流式 sha256 + 大小比对）")
 	fmt.Println("  zerg-model probe  <路径|端点URL> [--out <record.json>|--store] [--json]")
 	fmt.Println("                    [--endpoint <URL>] [--engine llama.cpp|vllm|ollama] [--id <id>] [--timeout 60s]")
+	fmt.Println("                    [--parent <上一版 version|digest>] [--base <基座 id>]   # 血缘声明（可选，只照抄不推断）")
 	fmt.Println("                                                          # 探测模型并生成登记记录（默认只打印，不写盘）")
 	fmt.Println("                    --store                               # 写进模型目录 manifests/（标准 §三 布局）")
 	fmt.Println("                    --store-root <dir>                    # 模型目录根（默认 ~/.zerg/models，或 $ZERG_MODELS_DIR）")
@@ -198,6 +199,7 @@ func shortHash(s string) string {
 
 func cmdProbe(args []string) int {
 	var target, out, endpoint, engine, id, storeRoot string
+	var lineageParent, lineageBase string   // 血缘声明（待修补 #16）：只照抄显式入参，不做任何推断
 	useStore := false
 	asJSON := false
 	timeout := modelreg.DefaultProbeTimeout
@@ -274,6 +276,22 @@ func cmdProbe(args []string) int {
 				return 3
 			}
 			timeout = d
+		case a == "--parent":
+			v, ok := needVal(&i, "--parent")
+			if !ok {
+				return 3
+			}
+			lineageParent = v
+		case strings.HasPrefix(a, "--parent="):
+			lineageParent = strings.TrimPrefix(a, "--parent=")
+		case a == "--base":
+			v, ok := needVal(&i, "--base")
+			if !ok {
+				return 3
+			}
+			lineageBase = v
+		case strings.HasPrefix(a, "--base="):
+			lineageBase = strings.TrimPrefix(a, "--base=")
 		case a == "--json":
 			asJSON = true
 		case strings.HasPrefix(a, "-"):
@@ -294,11 +312,13 @@ func cmdProbe(args []string) int {
 	}
 
 	rec, rep, err := modelreg.Probe(modelreg.ProbeOptions{
-		Target:   target,
-		Endpoint: endpoint,
-		Engine:   engine,
-		ID:       id,
-		Timeout:  timeout,
+		Target:    target,
+		Endpoint:  endpoint,
+		Engine:    engine,
+		ID:        id,
+		Timeout:   timeout,
+		Parent:    lineageParent, // 血缘：上一版（version 或 digest）
+		BaseModel: lineageBase,   // 血缘：基座 id
 	})
 	if err != nil {
 		var un *modelreg.UnreachableError
