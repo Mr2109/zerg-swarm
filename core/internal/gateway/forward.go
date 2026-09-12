@@ -124,7 +124,8 @@ func (g *Gateway) forwardToBackend(
 		cancel()
 		// v2.5.4.9 C failover：转发失败（超时/连接错误——卡死检测）→ 换机器重试 1 次
 		// 场景: X3 单槽卡死——ResponseHeaderTimeout 60s 触发——换本机/其他候选
-		if failoverRoute, ferr := g.pickFallbackRoute(route, modelName(reqMap)); ferr == nil {
+		// reason 传真实错误原文：failover 会涨失败/熔断计数，计数必须带原因（快照 last_error 可见）
+		if failoverRoute, ferr := g.pickFallbackRoute(route, modelName(reqMap), fmt.Sprintf("backend %s forward failed: %v", route.Host, err)); ferr == nil {
 			log.Printf("🔄 C failover: %s forward failed (%v) — switching to %s", route.Host, err, failoverRoute.Host)
 			return g.forwardToBackend(ctx, failoverRoute, originalPath, body, headers)
 		}
