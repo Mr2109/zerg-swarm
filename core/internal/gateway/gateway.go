@@ -1525,9 +1525,12 @@ func (g *Gateway) pickRouteExcluding(model, exclude string, reason string) (*Rou
 	return route2, nil
 }
 
-// tripMachine — 熔断一台机器（加 failCounts——isTripped 连续失败>=3 熔断）
+// tripMachine — 熔断一台机器（加 failCounts——isTripped 连续失败 >= circuitFailThreshold 熔断）
 // reason 必填：本函数同时涨 tripCounts 与 failCounts（两条计数），历史上不写 lastErr——
 // 于是计数涨了而快照原因空。现在与 markFailure 一样必须给出原因（空串会被自动补明确文本）。
+// failSince 的盖章门限必须引用 circuitFailThreshold（历史缺陷 #32：此处曾写死 3，而真实阈值是 8，
+// 使 30s 冷却计时从第 3 次失败就起跑——第 3→第 8 次失败跨越冷却期时，达阈值那一刻即被判「冷却已过」
+// 而清零放行，熔断从未生效）。
 func (g *Gateway) tripMachine(host string, reason string) {
 	g.tripMu.Lock()
 	if g.tripCounts == nil {
@@ -1536,7 +1539,7 @@ func (g *Gateway) tripMachine(host string, reason string) {
 	g.tripCounts[host]++
 	cnt := g.tripCounts[host]
 	g.tripMu.Unlock()
-	// 同步到 failCounts（isTripped 用——连续失败>=3 熔断）
+	// 同步到 failCounts（isTripped 用——连续失败 >= circuitFailThreshold 熔断）
 	g.failMu.Lock()
 	if g.failCounts == nil {
 		g.failCounts = map[string]int{}
@@ -1546,7 +1549,8 @@ func (g *Gateway) tripMachine(host string, reason string) {
 	}
 	g.failCounts[host]++
 	g.recordFailureReasonLocked(host, "tripMachine", reason, 2)
-	if g.failCounts[host] >= 3 {
+	// 阈值之下不盖章（计时起点=首次达阈值的时刻）；用 >= 保留「达阈值后再失败即刷新计时起点」的既有语义
+	if g.failCounts[host] >= circuitFailThreshold {
 		g.failSince[host] = time.Now()
 	}
 	fcnt := g.failCounts[host]
