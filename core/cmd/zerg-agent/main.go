@@ -202,7 +202,12 @@ func main() {
 	defer mcpMgr.Close()
 	a.SetMCPManager(mcpMgr) // 注入（executeTool 路由用）
 	// v2.5.1 skill 管理器（SKILL.md 技能——渐进式加载）
-	skillMgr := agent.NewSkillManager("<repo>/core/internal/agent/skills")
+	// 技能目录：ZERG_SKILLS_DIR → 仓库内 core/internal/agent/skills（不再写死绝对路径）
+	skillsDir := statepath.SkillsDir()
+	if skillsDir == "" {
+		log.Printf("未找到技能目录（ZERG_SKILLS_DIR 未设且仓库内 core/internal/agent/skills 不存在）——本次任务将没有可用技能")
+	}
+	skillMgr := agent.NewSkillManager(skillsDir)
 	a.SetSkillManager(skillMgr)
 
 	// 注入任务到 history（关键——模型必须看到任务指令）

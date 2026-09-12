@@ -736,10 +736,14 @@ func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"type": "tools", "items": items})
 	case "skills":
-		// skill 库——扫描 skills/ 目录 + Hermes skills（SKILL.md）
+		// 技能库 = **CA 实际能加载的那一个目录**（口径唯一）：与 cmd/zerg-agent 共用
+		// statepath.SkillsDir()。原先这里另列了 skills/、agent/skills、~/.hermes/skills 等，
+		// 结果是「列出来的加载不到、能加载的看不见」——资源库成了不可信的验收面。
 		items := []map[string]interface{}{}
-		home, _ := os.UserHomeDir()
-		skillDirs := []string{"skills", "agent/skills", "../skills", filepath.Join(home, ".hermes", "skills"), "docs/00-总览"}
+		skillDirs := []string{}
+		if d := statepath.SkillsDir(); d != "" {
+			skillDirs = append(skillDirs, d)
+		}
 		seen := map[string]bool{}
 		for _, dir := range skillDirs {
 			entries, err := os.ReadDir(dir)
@@ -752,7 +756,7 @@ func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				if e.IsDir() {
-					// skill 目录（含 SKILL.md）
+					// skill 目录（含 SKILL.md）才算技能——松散 .md 不列（CA 加载器只认目录）
 					if _, err := os.Stat(filepath.Join(dir, name, "SKILL.md")); err == nil {
 						items = append(items, map[string]interface{}{
 							"name":   name,
@@ -763,13 +767,6 @@ func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
 						})
 						seen[name] = true
 					}
-				} else if strings.HasSuffix(name, ".md") && strings.Contains(name, "SKILL") {
-					items = append(items, map[string]interface{}{
-						"name":  name,
-						"trust": resourceTrust.GetResourceStatus("skills", name),
-						"uses":  resourceTrust.GetResourceUses("skills", name),
-					})
-					seen[name] = true
 				}
 			}
 		}
