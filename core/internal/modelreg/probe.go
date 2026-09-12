@@ -346,6 +346,10 @@ type ProbeReport struct {
 	// 记录正文里那句"未做在线探测"的说明由它决定，**不由**是否给了端点决定——
 	// 正文必须随建材确定：同一建材给不给端点、换哪个端点，正文都要逐字节相同。
 	LocalFile bool
+	// ModelDir 是本地权重所在目录（只给读权重同目录的建材用：待修补 #12 的
+	// "与权重同目录、明确命名的 LICENSE 文件"）。它**不进记录正文**——目录属"存放位置"，
+	// 写进正文会让同一批建材换个目录就字节不同（证据里只写文件名）。
+	ModelDir string
 	// GeneratedAt 是本次探测的时间。它**不进记录正文**（正文必须随内容确定），
 	// 只写进留痕兄弟文件（待修补 #24）。
 	GeneratedAt time.Time
@@ -582,6 +586,7 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 		modelDir = filepath.Dir(opts.Target)
 		weightsName = filepath.Base(opts.Target)
 	}
+	rep.ModelDir = modelDir
 	ep := Endpoint{BaseURL: endpointBase, Model: opts.Model, Timeout: timeout, ModelDir: modelDir, WeightsName: weightsName}
 
 	if endpointBase != "" {
@@ -913,7 +918,7 @@ func addCapability(rep *ProbeReport, name, probeName string, r runResult) {
 func (rep *ProbeReport) buildNotes() string {
 	var b strings.Builder
 	b.WriteString("本记录由 zerg-model probe 自动生成：正文确定，不含生成时间与探测耗时（那些易变信息见记录旁的 <version>.trace.json 兄弟文件，以及 probe --json 输出里附的探测留痕）。")
-	b.WriteString("\n待人工补：license.spdx / license.commercial / license.accepted_by / license.accepted_at（标准 §五：拿不到权重许可就写 unknown，绝不默认 yes）。")
+	b.WriteString("\n待人工补：license.commercial / license.accepted_by / license.accepted_at（license.spdx 未能从结构化来源取到时也需人工补）（标准 §五：拿不到权重许可就写 unknown，绝不默认 yes）。许可证来源 = probe.license.v1：**只认本地建材的结构化信号**（GGUF 许可键 general.license / general.license.name / general.license.link；或与权重同目录、明确命名的 LICENSE 文件），来源写进 license.evidence；**不认**模型卡/README 的自由文本（不靠文案匹配猜许可证），拿不到即 unknown、仍可人工补。")
 	b.WriteString("\nlicense.accepted_by/accepted_at 留空：探测不代表任何人接受条款。按待修补 #21 的规则（unknown 允许无留痕；no/revenue_gated 必填；任何情况下不许占位），本记录 commercial=unknown 故留痕可为空，且不得写入占位值。人工审许可后填写这两个字段；commercial != yes 之前不得作为默认项（标准 §五 红线）。")
 	if rep.Meta == nil {
 		if rep.LocalFile {

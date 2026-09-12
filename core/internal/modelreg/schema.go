@@ -62,6 +62,12 @@ type License struct {
 	SourceURL  string `json:"source_url,omitempty"`
 	AcceptedBy string `json:"accepted_by,omitempty"`
 	AcceptedAt string `json:"accepted_at,omitempty"`
+	// Evidence 是许可证断言的来源锚（待修补 #12）：probe.license.v1 写"读的是哪个键/哪个文件"，
+	// 例如 `probe.license.v1 (gguf_key: general.license="apache-2.0")`；
+	// 读不到时写 `probe.license.v1 (no_license_source: tried …)`。
+	// 为什么必须有：标准 §二 要求每条断言可追溯；「读权重不读徽章」要能当场看出读的是权重还是别处。
+	// 新增字段可选：旧读者遇未知字段忽略即可（标准 §十 向后兼容）。
+	Evidence string `json:"evidence,omitempty"`
 }
 
 // EngineRecipe 是一个引擎的配方（标准 §六：可缺省；私有开关一律加 ZERG_ 前缀放 extra_env）。
