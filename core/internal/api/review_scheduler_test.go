@@ -15,6 +15,7 @@ import (
 func TestRecoverWaiting_ExpiredDowngrade(t *testing.T) {
 	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json，落盘不写真机文件
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	s := NewMasterScheduler("", 1)
 	task := &Task{
 		ID:          "wait-test-1",
@@ -44,6 +45,7 @@ func TestRecoverWaiting_PingFailStaysWaiting(t *testing.T) {
 	// 治本: 断言目标改为"不丢任务"——恢复入队/waiting/failed 均可——任务必须在系统内可追溯
 	// 待修补 #35: 切临时 tasksFile——构造期不读真机文件，recoverWaitingLocked 落盘也不写真机
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	s := NewMasterScheduler("", 1)
 	task := &Task{
 		ID:          "wait-test-2",
@@ -79,6 +81,7 @@ func TestRecoverWaiting_PingFailStaysWaiting(t *testing.T) {
 func TestSubmitReviewTaskLocked(t *testing.T) {
 	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	s := NewMasterScheduler("", 1)
 	execTask := &Task{
 		ID:          "exec-test-1",
@@ -116,6 +119,7 @@ func TestSubmitReviewTaskLocked(t *testing.T) {
 func TestHandleReviewDone_Pass(t *testing.T) {
 	// 待修补 #35: 切临时 tasksFile——构造期不读真机文件，handleReviewDoneLocked 落盘不写真机
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	s := NewMasterScheduler("", 1)
 	// 2026-09-05 修: 清恢复入队（/tmp/zerg-tasks.json 遗留任务被 recoverWaiting 恢复——
 	// dispatchLocked 并发把 history 逐出/修改——本测试只验 handleReviewDoneLocked 纯逻辑）
@@ -152,6 +156,7 @@ func TestHandleReviewDone_Pass(t *testing.T) {
 func TestHandleReviewDone_Rework(t *testing.T) {
 	// 待修补 #35: 切临时 tasksFile——构造期不读真机文件，handleReviewDoneLocked 落盘不写真机
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	s := NewMasterScheduler("", 1)
 	execTask := &Task{
 		ID:          "exec-test-3",
@@ -189,6 +194,7 @@ func TestHandleReviewDone_Rework(t *testing.T) {
 func TestReviewRetryOnReviewerFailure(t *testing.T) {
 	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json
 	isolateTasksFile(t)
+	isolateTaskRoot(t)
 	s := NewMasterScheduler("", 1)
 	s.mu.Lock()
 	s.queue = s.queue[:0]
