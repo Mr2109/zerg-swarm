@@ -115,9 +115,8 @@ func (s *MasterScheduler) loadPersistedHistory() {
 	if len(data.History) > 0 || restored > 0 || waitingRestored > 0 {
 		log.Printf("📜 恢复任务: 历史 %d + 排队 %d + 挂起 %d（持久化完整版——重启不丢）\n", len(data.History), restored, waitingRestored)
 	}
-	// 恢复后触发派发（排队任务开始执行）
-	if restored > 0 {
-		s.dispatchLocked()
-	}
-	// 恢复调度器已启动（NewMasterScheduler 内）——waiting 任务由它扫描重派
+	// 2026-09-13 并发修复: 恢复只入队——不在此处派发。
+	// 构造期派发 = 实例还没交给调用方就已有 goroutine 在跑任务、改 queue/running/history
+	// （数据竞争 + 无停止手段）；排队任务改由调用方显式 Start() 派发（生产: main.go 装配完成后）。
+	// 恢复调度器（waiting 扫描）同样由 Start() 启动。
 }
