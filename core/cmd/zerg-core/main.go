@@ -283,6 +283,8 @@ func main() {
 	}
 	masterSched := api.NewMasterScheduler(agentBin, 1, &api.StoreSnapshotReader{Store: fleetStore}) // 单槽——串行——v2.5.6 注入 store（ping 快照优先）
 	handlers.Scheduler = masterSched
+	// 2026-09-13: 显式启动（派发恢复的排队任务 + 启动故障自愈扫描）——构造期不再自动执行任务
+	masterSched.Start()
 	fmt.Printf("🔄 Master scheduler started (two-level scheduling)\n")
 
 	// v2.5.5 P1-5 治本: 启动清理残留任务 worktree（上次崩溃/重启悬空——状态丢——worktree 堆积）

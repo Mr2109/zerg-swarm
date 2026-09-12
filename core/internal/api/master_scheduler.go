@@ -89,6 +89,7 @@ type MasterScheduler struct {
 	pingMu         sync.Mutex            // v2.5.6 故障自愈: 模型探活缓存锁
 	pingCache      map[string]pingResult // v2.5.6 模型探活结果缓存（10s——排队任务不重复 ping）
 	store          StoreReader           // v2.5.6 ping 三级漏斗: 快照读取（第1级——快照优先——0ms）
+	started        bool                  // 2026-09-13 并发修复: 是否已显式 Start（构造期不执行任务——防重复启动后台循环）
 }
 
 // StoreReader 快照读取接口（注入——解耦——测试可 mock）
@@ -121,10 +122,34 @@ func NewMasterScheduler(agentCmd string, maxConcurrent int, store ...StoreReader
 	}
 	heap.Init(&s.queue)
 	// v2.5.5 P1-5 补: 恢复历史任务（重启后保留——UI 显示所有任务）
+	// 2026-09-13 并发修复: 构造期只恢复状态（history/queue/waiting）——不派发、不启动后台 goroutine。
+	// 之前构造期就 dispatchLocked 排队任务（tasks_persist.go）并 startRecoveryLoop → 实例在返回给调用方
+	// 之前已有 goroutine 在改自己的 queue/running/history（无所有权交接、无停止手段），调用方把返回值
+	// 当作“刚构造好的静止对象”访问这些字段即为数据竞争。何时开始执行改由调用方显式 Start() 决定。
 	s.loadPersistedHistory()
-	// v2.5.6 故障自愈: 启动恢复调度器（周期扫 waiting_retry——机器恢复自动重派）
-	s.startRecoveryLoop()
 	return s
+}
+
+// Start 显式启动调度器（所有权交接——调用方装配完成后调用一次）
+// 2026-09-13 并发修复: 构造期不再执行任务/起后台循环，改由本方法一次性接手:
+//  1. 派发恢复出来的排队任务（重启续跑——之前是构造期自动做）
+//  2. 启动故障自愈恢复循环（周期扫 waiting_retry——机器恢复自动重派）
+//
+// 幂等: 重复调用只生效一次（防恢复循环重复起 goroutine）。
+func (s *MasterScheduler) Start() {
+	s.mu.Lock()
+	if s.started {
+		s.mu.Unlock()
+		return
+	}
+	s.started = true
+	restored := s.queue.Len()
+	s.dispatchLocked()
+	s.mu.Unlock()
+	if restored > 0 {
+		log.Printf("▶️ scheduler: start — resuming %d restored queued task(s)", restored)
+	}
+	s.startRecoveryLoop()
 }
 
 // startRecoveryLoop 启动恢复调度器（v2.5.6 故障自愈——Mr2109 2026-08-28）
