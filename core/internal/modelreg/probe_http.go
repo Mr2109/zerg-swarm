@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -451,6 +452,119 @@ func ProbeMetaModels(e Endpoint) (string, runResult) {
 	}
 	tr.OK = true
 	return resp.Data[0].ID, runResult{true, "", tr, false}
+}
+
+// ── probe.template.v1 的 from_tokenizer 路径：从端点只读元信息取 chat_template ──────
+//
+// 待修补 #22：模板来源必须"真探测"。llama.cpp 的服务器把 chat_template 挂在只读 GET /props
+// 上（根路径，不在 /v1 下）；部分 OpenAI 兼容服务把它附在 /v1/models 的模型对象里。
+// 只发 GET、不改端点状态、不加载权重；拿不到就如实说不知道（缺=未知，绝不猜）。
+
+// endpointTemplate 是端点只读元信息里读到的 chat_template 及其证据锚。
+type endpointTemplate struct {
+	OK       bool
+	Anchor   string // 证据锚（具体端点字段名），如 /props.chat_template
+	Template string // 读到的模板原文（仅用于断言/留痕，不落记录正文）
+}
+
+// rootURL 拼端点根路径（llama.cpp 的 /props 挂在根，不在 /v1 下）。
+func (e Endpoint) rootURL(path string) string {
+	base := strings.TrimRight(e.BaseURL, "/")
+	base = strings.TrimSuffix(base, "/v1")
+	return base + path
+}
+
+// getAbs 对绝对 URL 发 GET（用于根路径 /props 这类不长在 /v1 下的只读接口）。
+func (e Endpoint) getAbs(rawURL string) (int, []byte, time.Duration, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), e.timeout())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return 0, nil, 0, err
+	}
+	start := time.Now()
+	resp, err := e.client().Do(req)
+	el := time.Since(start)
+	if err != nil {
+		return 0, nil, el, err
+	}
+	defer resp.Body.Close()
+	data, rerr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if rerr != nil {
+		return resp.StatusCode, data, el, rerr
+	}
+	return resp.StatusCode, data, el, nil
+}
+
+// ProbeChatTemplateFromEndpoint 从端点的只读元信息接口尝试取 chat_template（probe.template.v1
+// 的 from_tokenizer 路径，待修补 #22）。顺序：/props → /v1/props → /v1/models 里键名含
+// "template" 的非空字符串字段。全拿不到 → OK=false（缺=未知，绝不猜）。
+func ProbeChatTemplateFromEndpoint(e Endpoint) endpointTemplate {
+	// ① llama.cpp 服务器属性（根路径）/props
+	if et := probePropsTemplate(e, "/props", e.rootURL("/props")); et.OK {
+		return et
+	}
+	// ② 个别实现把属性接口挂在 /v1 下
+	if et := probePropsTemplate(e, "/v1/props", e.url("/props")); et.OK {
+		return et
+	}
+	// ③ 退一步：/v1/models 的模型对象里带模板字段
+	ctx, cancel := context.WithTimeout(context.Background(), e.timeout())
+	defer cancel()
+	st, data, _, err := e.do(ctx, http.MethodGet, "/models", nil)
+	if err == nil && st == http.StatusOK {
+		if anchor, tmpl := templateFieldFromModels(data); tmpl != "" {
+			return endpointTemplate{OK: true, Anchor: anchor, Template: tmpl}
+		}
+	}
+	return endpointTemplate{}
+}
+
+// probePropsTemplate 向一个只读"属性"接口发 GET，取其中的 chat_template 字段。
+// displayPath 仅用于生成证据锚（如 /props → /props.chat_template）。
+// 判据是**结构化字段**（JSON 里 chat_template 为非空字符串），不做文案匹配。
+func probePropsTemplate(e Endpoint, displayPath, rawURL string) endpointTemplate {
+	st, data, _, err := e.getAbs(rawURL)
+	if err != nil || st != http.StatusOK {
+		return endpointTemplate{}
+	}
+	var m map[string]any
+	if json.Unmarshal(data, &m) != nil {
+		return endpointTemplate{}
+	}
+	s, _ := m["chat_template"].(string)
+	if strings.TrimSpace(s) == "" {
+		return endpointTemplate{}
+	}
+	return endpointTemplate{OK: true, Anchor: displayPath + ".chat_template", Template: s}
+}
+
+// templateFieldFromModels 在 /v1/models 响应里找键名含 "template" 的非空字符串字段。
+// 键名排序后取第一个，保证同一响应得到相同的证据锚（可复现）。
+func templateFieldFromModels(data []byte) (anchor, template string) {
+	var resp struct {
+		Data []map[string]any `json:"data"`
+	}
+	if json.Unmarshal(data, &resp) != nil {
+		return "", ""
+	}
+	for i, m := range resp.Data {
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			if strings.Contains(strings.ToLower(k), "template") {
+				keys = append(keys, k)
+			}
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			s, ok := m[k].(string)
+			if !ok || strings.TrimSpace(s) == "" {
+				continue
+			}
+			return fmt.Sprintf("/v1/models.data[%d].%s", i, k), s
+		}
+	}
+	return "", ""
 }
 
 // onePixelPNGDataURL 现场生成 1×1 PNG 的 data URL。
