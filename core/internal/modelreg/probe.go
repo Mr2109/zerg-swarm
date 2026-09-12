@@ -215,7 +215,22 @@ type EndpointChatTemplate struct {
 }
 
 // NewCapabilitySnapshot 由一次探测的产物构造能力快照（写盘与 --json 共用同一份内容）。
+//
+// 引擎维度（待修补 #11）：报告里带了引擎（rep.Engine，即 probe --engine）时，
+// 把还没有引擎维度的能力断言补上它——引擎维度是"这条断言在哪个引擎上被证过"，
+// 在**快照生成这一处**兜底补齐，任何构造路径都不会漏（缺引擎维度的断言在硬门槛里
+// 会被当成"不可判定"，补不上就等于永远 fail-closed）。已有 engines 的断言不动
+// （可能是多引擎/人工声明）。
 func NewCapabilitySnapshot(rec *Record, rep *ProbeReport) CapabilitySnapshotArtifact {
+	caps := make([]Capability, len(rep.Capabilities))
+	copy(caps, rep.Capabilities)
+	if eng := CanonicalEngine(rep.Engine); eng != "" {
+		for i := range caps {
+			if len(caps[i].Engines) == 0 {
+				caps[i].Engines = []string{eng}
+			}
+		}
+	}
 	return CapabilitySnapshotArtifact{
 		Schema:               CapabilitySnapshotSchemaV1,
 		ID:                   rec.ID,
@@ -224,7 +239,7 @@ func NewCapabilitySnapshot(rec *Record, rep *ProbeReport) CapabilitySnapshotArti
 		Endpoint:             rep.Endpoint,
 		GeneratedAt:          formatGeneratedAt(rep.GeneratedAt),
 		OnlineProbed:         rep.OnlineProbed,
-		Capabilities:         rep.Capabilities,
+		Capabilities:         caps,
 		Unverifiable:         rep.Unverifiable,
 		EndpointChatTemplate: rep.EndpointChatTemplate,
 	}
@@ -342,6 +357,10 @@ type ProbeReport struct {
 	// 记录正文**，改由能力快照的 endpoint_chat_template 字段承载；端点没给就是 nil（缺=未知）。
 	EndpointChatTemplate *EndpointChatTemplate
 	OnlineProbed         bool
+	// Engine 是本次探测的目标引擎（规范化标签，如 llama.cpp / vllm；空 = 未给引擎，
+	// 该批能力断言将没有引擎维度）。它只进能力快照的 capabilities[].engines，
+	// **不进记录正文**（正文随建材确定，引擎属"现状"）。
+	Engine string
 	// LocalFile 表示本次探测的目标是一个本地文件（而不是端点 URL）。
 	// 记录正文里那句"未做在线探测"的说明由它决定，**不由**是否给了端点决定——
 	// 正文必须随建材确定：同一建材给不给端点、换哪个端点，正文都要逐字节相同。
@@ -549,6 +568,10 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 		timeout = DefaultProbeTimeout
 	}
 	rep := &ProbeReport{Target: opts.Target, GeneratedAt: now}
+	// 引擎维度（待修补 #11）：把本次探测的目标引擎记进报告，供能力断言附上 engines[]。
+	// 未显式给 --engine 时保持空——**不猜、不默认**（缺 = 未知：该能力断言无引擎维度，
+	// 硬门槛按"不可判定"处理，绝不当作全局可用放行）。
+	rep.Engine = CanonicalEngine(opts.Engine)
 
 	lower := strings.ToLower(opts.Target)
 	isURL := strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
@@ -915,12 +938,20 @@ func unverifiableOf(name, probeName string, r runResult) Unverifiable {
 
 // addCapability 按探测结论分流：探出结论 → 写能力断言；没探出结论（预算不足/超时）→
 // 写 unverifiable，**绝不**写成 value=false（待修补 #27：false 意味着"确定没有"）。
+//
+// 能力断言同时带上**引擎维度**（待修补 #11）：该断言是在哪个引擎上探得的。
+// rep.Engine 为空（未给 --engine）时不附 engines[]——缺 = 未知，绝不默认成某个引擎；
+// 这种断言在硬门槛里按"不可判定"处理（EvaluateCapabilityForEngine）。
 func addCapability(rep *ProbeReport, name, probeName string, r runResult) {
 	if r.Undetermined {
 		rep.Unverifiable = append(rep.Unverifiable, unverifiableOf(name, probeName, r))
 		return
 	}
-	rep.Capabilities = append(rep.Capabilities, capabilityOf(name, probeName, r))
+	c := capabilityOf(name, probeName, r)
+	if eng := CanonicalEngine(rep.Engine); eng != "" {
+		c.Engines = trimEngines([]string{eng})
+	}
+	rep.Capabilities = append(rep.Capabilities, c)
 }
 
 // buildNotes 生成记录的 notes。**必须是确定文本**（待修补 #24 的硬要求）：
