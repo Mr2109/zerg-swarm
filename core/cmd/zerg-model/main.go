@@ -327,6 +327,10 @@ func cmdProbe(args []string) int {
 			mark = "✗"
 		}
 		line := fmt.Sprintf("  %s %s ok=%v status=%d ms=%d", mark, t.Probe, t.OK, t.HTTPStatus, t.ElapsedMS)
+		// 待修补 #27：显示本次实际用掉的生成预算，让"先小后大"重试可被人工核对。
+		if t.Budget > 0 {
+			line += fmt.Sprintf(" budget=%d", t.Budget)
+		}
 		if t.FailureClass != "" {
 			line += " class=" + t.FailureClass
 		}
