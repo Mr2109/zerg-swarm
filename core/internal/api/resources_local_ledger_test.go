@@ -193,8 +193,28 @@ func TestResourceLedger_LocalPresentBeforeTickerWrite(t *testing.T) {
 	if n, _ := resp["count"].(float64); int(n) != 2 {
 		t.Fatalf("local 与 x3 同在时 count 应为 2，实得 %v", resp["count"])
 	}
-	if local["mem_known"] != true {
-		t.Fatalf("本机内存可采样 → mem_known 应为 true，实得 %v", local)
+	// 内存视图必须如实反映"本机实时快照来源"（平台无关的接线契约，两侧都断言，不放宽）：
+	// 来源采到内存（>0）→ mem_known=true 且两个值键在列；来源采不到（=0）→ mem_known=false 且值键整键不出现。
+	// 本机采样走 macOS 专有命令（/usr/sbin/sysctl、/usr/bin/vm_stat）：darwin 采得到、CI（Linux）采不到，
+	// 但"视图如实反映来源"这条契约与平台无关——故意不按 GOOS 分支，避免把环境可用性当契约。
+	src := h.LocalBack.Snapshot()
+	wantKnown := src != nil && src.MemTotalGb > 0
+	if (local["mem_known"] == true) != wantKnown {
+		t.Fatalf("mem_known 应与本机快照来源一致（来源 MemTotalGb=%v → want %v），实得 %v",
+			src.MemTotalGb, wantKnown, local["mem_known"])
+	}
+	if wantKnown {
+		for _, k := range []string{"mem_total_gb", "mem_available_gb"} {
+			if v, has := local[k]; !has || v == nil {
+				t.Fatalf("来源有内存数据时 %s 必须出现，实得 %v", k, local)
+			}
+		}
+	} else {
+		for _, k := range []string{"mem_total_gb", "mem_available_gb"} {
+			if v, has := local[k]; has {
+				t.Fatalf("来源无内存数据时 %s 必须整键不出现（不造值），实得 %v", k, v)
+			}
+		}
 	}
 }
 
