@@ -134,6 +134,8 @@ func TestIsEnvFault(t *testing.T) {
 
 // TestPingModel 探活请求构造（模型名为空=放行；有模型=发请求——本地网关可达时 ok）
 func TestPingModel(t *testing.T) {
+	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json
+	isolateTasksFile(t)
 	s := NewMasterScheduler("", 1)
 	// 无模型——放行
 	ok, err := s.pingModel("")
@@ -169,6 +171,8 @@ func (m *mockStoreReader) MachineSnapshot(machine string) *FleetSnapshotLite {
 
 // TestPingModel_SnapshotFastPath 第1级: 快照 healthy + 已加载模型 → 0ms 通过（不发请求）
 func TestPingModel_SnapshotFastPath(t *testing.T) {
+	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json
+	isolateTasksFile(t)
 	mock := &mockStoreReader{snapshots: map[string]*FleetSnapshotLite{
 		"local": {Healthy: true, Model: "Qwen3.8-27B-Q4_K_M-vcruz305"},
 	}}
@@ -182,6 +186,8 @@ func TestPingModel_SnapshotFastPath(t *testing.T) {
 
 // TestPingModel_SnapshotUnhealthy 快照 unhealthy → 不走快照——发请求探测（走到网络层）
 func TestPingModel_SnapshotUnhealthy(t *testing.T) {
+	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json
+	isolateTasksFile(t)
 	mock := &mockStoreReader{snapshots: map[string]*FleetSnapshotLite{
 		"local": {Healthy: false, Model: "Qwen3.8-27B"},
 		"x3":    {Healthy: true, Model: "example-35b"},
@@ -197,6 +203,8 @@ func TestPingModel_SnapshotUnhealthy(t *testing.T) {
 
 // TestPingModel_SnapshotNilStore 无 store → 跳过快照——直接网络探测（不 panic）
 func TestPingModel_SnapshotNilStore(t *testing.T) {
+	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json
+	isolateTasksFile(t)
 	s := NewMasterScheduler("", 1) // 不注入 store
 	ok, err := s.pingModel("Qwen3.8-27B")
 	_ = ok
@@ -236,6 +244,8 @@ func TestModelFileLoadedLite(t *testing.T) {
 // TestFinishTaskReviewFlow zerg 流程完成 → 三层复查（2026-08-29 Mr2109）
 // 合格报告 → reviewing + 派复查任务；空壳报告 → 确定性验证不过 → failed
 func TestFinishTaskReviewFlow(t *testing.T) {
+	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json，落盘不写真机文件
+	isolateTasksFile(t)
 	s := NewMasterScheduler("", 1)
 	// 任务目录（临时——避免真实 /tmp/zerg-tasks 污染）
 	task := &Task{
