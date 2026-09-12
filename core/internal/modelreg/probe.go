@@ -192,20 +192,37 @@ type CapabilitySnapshotArtifact struct {
 	// "确定不支持"（value=false）严格区分：缺 = 未知，不等于没有（待修补 #27）。
 	// 新增字段可选：旧读者遇未知字段忽略即可（标准 §十 向后兼容）。
 	Unverifiable []Unverifiable `json:"unverifiable,omitempty"`
+	// EndpointChatTemplate 是端点只读元信息探到的 chat_template（from_tokenizer）——"现状"。
+	// 它只进本快照、**绝不进记录正文**：正文里 engine_recipes.chat_template 仅允许来自本地
+	// GGUF（from_gguf）。端点没给/没探到则省略（缺 = 未知，绝不回退默认值）。待修补 #22 收口。
+	// 新增字段可选：旧读者遇未知字段忽略即可（标准 §十 向后兼容）。
+	EndpointChatTemplate *EndpointChatTemplate `json:"endpoint_chat_template,omitempty"`
+}
+
+// EndpointChatTemplate 是端点只读元信息里探到的模板来源与证据，落在能力快照的
+// endpoint_chat_template 字段（待修补 #22 收口）。
+//
+// 为什么不进记录正文：它随"这台引擎此刻报什么"变化——同一建材换端点/不给端点就会不同，
+// 一旦写进正文就让"同一批建材 → 正文逐字节相同"这条不变量（待修补 #24）失效。它属于
+// "它现在能干什么"（现状），与能力断言同层，故落快照，可随探测刷新、不影响 identity。
+type EndpointChatTemplate struct {
+	Value    string `json:"value"`              // 固定 from_tokenizer（与 ValidChatTemplate 取值一致）
+	Evidence string `json:"evidence,omitempty"` // 探测器名 + 版本 + 端点 + 字段名（可复现）
 }
 
 // NewCapabilitySnapshot 由一次探测的产物构造能力快照（写盘与 --json 共用同一份内容）。
 func NewCapabilitySnapshot(rec *Record, rep *ProbeReport) CapabilitySnapshotArtifact {
 	return CapabilitySnapshotArtifact{
-		Schema:       CapabilitySnapshotSchemaV1,
-		ID:           rec.ID,
-		Digest:       rec.Digest,
-		Target:       rep.Target,
-		Endpoint:     rep.Endpoint,
-		GeneratedAt:  formatGeneratedAt(rep.GeneratedAt),
-		OnlineProbed: rep.OnlineProbed,
-		Capabilities: rep.Capabilities,
-		Unverifiable: rep.Unverifiable,
+		Schema:               CapabilitySnapshotSchemaV1,
+		ID:                   rec.ID,
+		Digest:               rec.Digest,
+		Target:               rep.Target,
+		Endpoint:             rep.Endpoint,
+		GeneratedAt:          formatGeneratedAt(rep.GeneratedAt),
+		OnlineProbed:         rep.OnlineProbed,
+		Capabilities:         rep.Capabilities,
+		Unverifiable:         rep.Unverifiable,
+		EndpointChatTemplate: rep.EndpointChatTemplate,
 	}
 }
 
@@ -311,9 +328,16 @@ type ProbeReport struct {
 	Traces       []Trace
 	// ChatTemplate 是 probe.template.v1 的结论（from_gguf / from_tokenizer）；为空表示两条
 	// 真路径都没拿到证据——此时**不写默认值**，改在 Unverifiable[] 记一条（待修补 #22）。
+	//
+	// ⚠️ 注意区分：本字段是**报告层**的结论（供留痕/快照/--json 用）。记录**正文**里
+	// engine_recipes.chat_template 只允许来自 GGUF——当它为 from_tokenizer 时，正文不写
+	// chat_template（端点模板改由 EndpointChatTemplate 进快照，见待修补 #22 收口）。
 	ChatTemplate string
 	TemplateOK   bool
-	OnlineProbed bool
+	// EndpointChatTemplate 是端点只读元信息探到的模板（from_tokenizer）——"现状"。它**不进
+	// 记录正文**，改由能力快照的 endpoint_chat_template 字段承载；端点没给就是 nil（缺=未知）。
+	EndpointChatTemplate *EndpointChatTemplate
+	OnlineProbed         bool
 	// LocalFile 表示本次探测的目标是一个本地文件（而不是端点 URL）。
 	// 记录正文里那句"未做在线探测"的说明由它决定，**不由**是否给了端点决定——
 	// 正文必须随建材确定：同一建材给不给端点、换哪个端点，正文都要逐字节相同。
@@ -536,6 +560,10 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 	// 优先级：本地建材（GGUF）高于端点——GGUF 里有模板时它就是权威来源（本地事实优先于
 	// 这台引擎此刻报的状态）；这样同一建材换端点/不给端点，正文里的 engine_recipes 才一致
 	// （待修补 #24 的正文确定性）。
+	//
+	// 收口（待修补 #22）：正文里的 engine_recipes.chat_template **只允许来自 GGUF**。端点探到
+	// 的模板（from_tokenizer）属于"现状"，只进能力快照的 endpoint_chat_template 字段——
+	// 否则同一建材给不给端点，正文就会不一致，破坏 #24 的逐字节确定性。
 	var epTpl *endpointTemplate
 	if endpointBase != "" {
 		t := ProbeChatTemplateFromEndpoint(ep)
@@ -554,6 +582,16 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 		rep.Unverifiable = append(rep.Unverifiable, uv)
 	}
 	rep.Traces = append(rep.Traces, ttr)
+
+	// 端点探到的模板：记进快照承载结构（证据写清端点 + 字段名），**不进记录正文**。
+	// 与 GGUF 是否也有模板无关——它就是"这台引擎此刻报什么"，端点给了就如实留痕；
+	// 端点没给则保持 nil（缺 = 未知，绝不回退默认值）。
+	if epTpl != nil && epTpl.OK {
+		rep.EndpointChatTemplate = &EndpointChatTemplate{
+			Value:    ChatTemplateFromTokenizer,
+			Evidence: templateEvidence(epTpl.Anchor + " @ " + endpointBase),
+		}
+	}
 
 	// 端点探测无本地文件：用端点模型标识造一条"虚拟建材料"，让记录结构完整
 	// （files[] 必填）。它不是真实文件，notes 已注明待人工补。
@@ -618,18 +656,27 @@ func (rep *ProbeReport) toRecord(id string, opts ProbeOptions) *Record {
 	// 能力（含 vision）以实测为准，见 <version>.capabilities.json 快照。
 	rec.Modalities = map[string][]string{"in": {"text"}, "out": {"text"}}
 
-	// 引擎配方：能定出模板来源就写 chat_template；私有开关一律 ZERG_ 前缀放 extra_env。
-	if rep.ChatTemplate != "" || opts.Engine != "" {
+	// 引擎配方：记录正文里的 chat_template **只允许来自本地 GGUF**（from_gguf，随建材确定）。
+	// 本地 GGUF 没有 tokenizer.chat_template 时，**即使端点探到了模板**，正文也不写
+	// chat_template——端点模板是"这台引擎此刻的状态"，会随端点变；它改由能力快照的
+	// endpoint_chat_template 承载（见 rep.EndpointChatTemplate）。这样同一批建材、给不给端点，
+	// 正文才逐字节相同（待修补 #24 的不变量，收口 #22 时不得被牺牲）。
+	// 私有开关一律 ZERG_ 前缀放 extra_env。
+	ggufTemplate := ""
+	if rep.ChatTemplate == ChatTemplateFromGGUF {
+		ggufTemplate = rep.ChatTemplate
+	}
+	if ggufTemplate != "" || opts.Engine != "" {
 		eng := opts.Engine
 		if eng == "" {
 			eng = "llama.cpp"
 		}
-		recipe := EngineRecipe{ChatTemplate: rep.ChatTemplate}
+		recipe := EngineRecipe{ChatTemplate: ggufTemplate}
 		if rep.Meta != nil && rep.Meta.ContextWindow > 0 {
 			recipe.Args = []string{"--ctx-size", strconv.Itoa(rep.Meta.ContextWindow)}
 		}
-		if rep.ChatTemplate == "" {
-			recipe.Reason = "probe.template.v1 no_template：未能定出模板来源，待人工确认"
+		if ggufTemplate == "" {
+			recipe.Reason = "probe.template.v1 no_template：未从本地 GGUF 定出模板来源，待人工确认"
 		}
 		rec.EngineRecipes = map[string]EngineRecipe{eng: recipe}
 	}
