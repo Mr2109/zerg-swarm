@@ -69,17 +69,31 @@ type Manager struct {
 	registry    *registry.Registry
 	machine     string
 	maxResident int // 驻留上限（<=0 视为默认单槽；见 EnvMaxResident / SetMaxResident）
+	// idleTTL 空闲 TTL（《设计-资源管理器》§3.3(c) 触发①）：某驻留模型空闲（无在飞请求、
+	// 非加载中、pin 未生效）持续超过它即卸载。<=0 = 未启用（设计稿未给定默认秒数，故按"未启用"
+	// 处理——不凭空造默认值；显式设 ZERG_MODEL_TTL_S 或 SetIdleTTL 才生效）。
+	idleTTL time.Duration
+	// reaperStop 后台 TTL 回收循环的停止信号（nil = 未启动）。读写都在 m.mu 下。
+	reaperStop chan struct{}
 }
 
-// NewManager 创建后端管理器。驻留上限取自 ZERG_MAX_RESIDENT（默认单槽，Q1）。
+// defaultReapInterval 是后台 TTL 回收循环的扫描间隔（只决定"多久查一次"，不是 TTL 本身）。
+const defaultReapInterval = 30 * time.Second
+
+// NewManager 创建后端管理器。驻留上限取自 ZERG_MAX_RESIDENT（默认单槽，Q1）；
+// 空闲 TTL 取自 ZERG_MODEL_TTL_S（缺省=不启用）。TTL 启用时同时启动后台回收循环。
 func NewManager(reg *registry.Registry, machine string) *Manager {
-	return &Manager{
+	m := &Manager{
 		procs:       make(map[string]*subproc),
 		loading:     make(map[string]*loadWaiter),
 		registry:    reg,
 		machine:     machine,
 		maxResident: resolveMaxResident(),
+		idleTTL:     resolveIdleTTL(),
 	}
+	// TTL 未启用（idleTTL<=0）→ StartIdleReaper 直接返回：默认行为与改动前逐字一致。
+	m.StartIdleReaper(defaultReapInterval)
+	return m
 }
 
 // Start 启动/复用模型对应的后端进程（多模型驻留）。
