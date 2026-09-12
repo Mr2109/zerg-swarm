@@ -49,6 +49,10 @@ type Handlers struct {
 	KvCacheBytesPerElem float64
 	// EngineOverheadGb 是引擎运行时/临时缓冲固定开销（GiB）。0 = 未知 → 回退常量并标 estimated。
 	EngineOverheadGb float64
+	// LocalSnapProvider 仅测试注入：本机（local）实时快照来源（nil = 用 LocalBack）。
+	// 为什么需要：localback.LocalBackend 的状态字段（state/file/memGB）在包外不可构造，
+	// api 侧造不出"本机有驻留"的真实快照，只能用替身验证 local 一行的合并口径。
+	LocalSnapProvider LocalSnapshotProvider
 }
 
 // writeJSON 辅助函数：写入 JSON 响应。
@@ -1086,51 +1090,16 @@ func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	snapshots := h.Store.GetAllSnapshots()
 	models := h.Store.GetAllModels()
 
-	// 合并本机子端（localback 不通过心跳上报，直接读快照）
-	if h.LocalBack != nil {
-		localSnap := h.LocalBack.Snapshot()
-		// B4 v2：从 store 里保留已写入的 cpu_pct/gpu_pct（SetLocalSnapshot 30s 周期写入）
-		prevLocal := snapshots["local"]
-		var cpuPct, gpuPct float64
-		if prevLocal != nil {
-			cpuPct = prevLocal.CpuPct
-			gpuPct = prevLocal.GpuPct
-		}
-		snapshots["local"] = &store.FleetSnapshot{
-			Machine: "local",
-			// C10：本机子端不经心跳上报，身份直接取主控自己的代码身份——
-			// 否则版本矩阵里 local 一行永远为空，"混版"在本机这一格就看不见。
-			CodeVersion:    version.Version,
-			CodeSHA:        version.Commit,
-			Model:          nil,
-			Backend:        nil,
-			Port:           nil,
-			MemAvailableGb: localSnap.MemAvailableGb,
-			MemTotalGb:     localSnap.MemTotalGb,
-			Load:           localSnap.Load,
-			Models:         localSnap.Models,
-			GpuUsedGb:      localSnap.GpuUsedGb,
-			GpuTempC:       localSnap.GpuTempC,
-			BackendRssGb:   localSnap.BackendRssGb,
-			Healthy:        localSnap.Healthy,
-			BackendState:   localSnap.BackendState,
-			CpuPct:         cpuPct,
-			GpuPct:         gpuPct,
-			LastSeen:       time.Now(),
-			// 资源账本（批 5 #29/#30）：本机显存如实（拿不到就 vram_known=false + 三值缺席，
-			// 绝不用内存/RSS 冒充）+ 驻留明细（口径同远程子端，§八 Q7）。
-			Resident:    localSnap.Resident,
-			VramKnown:   localSnap.VramKnown,
-			VramUnified: localSnap.VramUnified,
-			VramTotalGb: localSnap.VramTotalGb,
-			VramUsedGb:  localSnap.VramUsedGb,
-			VramFreeGb:  localSnap.VramFreeGb,
-		}
-		// 本机已加载模型时填充 model 字段
-		if len(localSnap.Models) > 0 {
-			m := localSnap.Models[0]
-			snapshots["local"].Model = &m
-		}
+	// 合并本机子端（localback 不通过心跳上报，直接读实时快照）——来源函数与
+	// /api/resources/ledger 共用（口径唯一，避免两个观测面漂移）。
+	// 资源账本字段（批 5 #29/#30）：本机显存如实（拿不到就 vram_known=false + 三值缺席，
+	// 绝不用内存/RSS 冒充）+ 驻留明细（口径同远程子端，§八 Q7）——统一由来源函数给出。
+	if localRow := h.liveLocalFleetSnapshot(snapshots["local"]); localRow != nil {
+		// C10：本机子端不经心跳上报，身份直接取主控自己的代码身份——
+		// 否则版本矩阵里 local 一行永远为空，"混版"在本机这一格就看不见。
+		localRow.CodeVersion = version.Version
+		localRow.CodeSHA = version.Commit
+		snapshots["local"] = localRow
 	}
 
 	// 构建状态响应
