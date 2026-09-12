@@ -4,6 +4,12 @@ go 1.25.5
 
 require github.com/go-chi/chi/v5 v5.2.1
 
+// shared 是主控与子端共用的纯计算模块（资源裁决：《设计-资源管理器》§八）。
+// 本地路径替换：仓库内两个模块（core / agent）用同一份实现，不发布、不联网取。
+require github.com/Mr2109/zerg-swarm/shared v0.0.0
+
+replace github.com/Mr2109/zerg-swarm/shared => ../shared
+
 require (
 	github.com/mark3labs/mcp-go v0.58.0
 	github.com/tggo/goSentencePiece v1.1.0

@@ -57,6 +57,14 @@ type GGUFMeta struct {
 	KeyCount      int
 	BytesRead     int64
 	Truncated     bool
+
+	// ── 批 3 补读（《设计-资源管理器》§八 Q4 / §3.2）：KV cache 估算要的真值 ──
+	// 口径：读不到一律 0（缺席）——绝不填经验值冒充实测（估算侧会按架构族回退并标 estimated=true）。
+	AttentionHeadKv int // {arch}.attention.head_count_kv —— KV 头数（n_kv_heads）
+	AttentionHeadN  int // {arch}.attention.head_count    —— 注意力头数（n_head）
+	KeyLength       int // {arch}.attention.key_length    —— 头维度（新式 GGUF 显式给出）
+	ValueLength     int // {arch}.attention.value_length
+	RopeDimCount    int // {arch}.rope.dimension_count    —— 旋转维度（头维度缺失时的代理）
 }
 
 type ggufScanner struct {
@@ -285,6 +293,16 @@ func (s *ggufScanner) assign(m *GGUFMeta, key string, vt uint32) error {
 		return s.wantInt(vt, &m.BlockCount)
 	case strings.HasSuffix(key, ".embedding_length"):
 		return s.wantInt(vt, &m.EmbedLength)
+	case strings.HasSuffix(key, ".attention.head_count_kv"):
+		return s.wantInt(vt, &m.AttentionHeadKv)
+	case strings.HasSuffix(key, ".attention.head_count"):
+		return s.wantInt(vt, &m.AttentionHeadN)
+	case strings.HasSuffix(key, ".attention.key_length"), strings.HasSuffix(key, ".key_length"):
+		return s.wantInt(vt, &m.KeyLength)
+	case strings.HasSuffix(key, ".attention.value_length"), strings.HasSuffix(key, ".value_length"):
+		return s.wantInt(vt, &m.ValueLength)
+	case strings.HasSuffix(key, ".rope.dimension_count"):
+		return s.wantInt(vt, &m.RopeDimCount)
 	default:
 		return s.skipValue(vt)
 	}
@@ -355,8 +373,10 @@ func ProbeMetaGGUFFile(path string) (*GGUFMeta, Trace, error) {
 	meta, perr := parseGGUF(newGGUFScanner(f))
 	tr.ElapsedMS = time.Since(start).Milliseconds()
 	if meta != nil {
-		tr.Summary = fmt.Sprintf("arch=%s context_length=%d chat_template=%v license=%q keys=%d bytes=%d truncated=%v",
-			meta.Architecture, meta.ContextWindow, meta.ChatTemplate != "", meta.LicenseSPDX, meta.KeyCount, meta.BytesRead, meta.Truncated)
+		dim, derived := meta.HeadDim()
+		tr.Summary = fmt.Sprintf("arch=%s context_length=%d layers=%d kv_heads=%d head_dim=%d(head_dim_derived=%v) chat_template=%v license=%q keys=%d bytes=%d truncated=%v",
+			meta.Architecture, meta.ContextWindow, meta.BlockCount, meta.KVHeads(), dim, derived,
+			meta.ChatTemplate != "", meta.LicenseSPDX, meta.KeyCount, meta.BytesRead, meta.Truncated)
 	}
 	if perr != nil {
 		tr.FailureClass = FailNoMeta
