@@ -50,6 +50,10 @@ const (
 	FailNoMeta      = "no_meta"
 	FailNoTemplate  = "no_template"
 	FailUnsupported = "unsupported"
+	// FailBudgetExhausted 表示"预算不足（或超时）导致探不出结论"，**不是**"确定没有这个能力"。
+	// 按项目哲学（没有弱模型，只有不完善的系统）：这种情况不得报 capabilities.value=false，
+	// 改为不生成该能力条目 + 在快照里写一条 unverifiable 记录（待修补 #27，见 Unverifiable）。
+	FailBudgetExhausted = "budget_exhausted"
 )
 
 // DefaultProbeTimeout 是单次探测的超时（开工方案 §四：文本探测超时 60s）。
@@ -59,10 +63,13 @@ const DefaultProbeTimeout = 60 * time.Second
 // 注：标准 §三 的 notes 字段是字符串，无法直接承载 "notes.probe_trace[]" 数组，
 // 故这里序列化成 notes 里的一段可读文本（见 buildNotes）。
 type Trace struct {
-	Probe        string `json:"probe"`
-	OK           bool   `json:"ok"`
-	HTTPStatus   int    `json:"http_status,omitempty"`
-	ElapsedMS    int64  `json:"elapsed_ms"`
+	Probe      string `json:"probe"`
+	OK         bool   `json:"ok"`
+	HTTPStatus int    `json:"http_status,omitempty"`
+	ElapsedMS  int64  `json:"elapsed_ms"`
+	// Budget 是本次探测最终实际用掉的生成预算（max_tokens）。"先小后大"重试后，
+	// 这是重试到的那一档——evidence 里据此可分辨实际预算（待修补 #27）。
+	Budget       int    `json:"budget,omitempty"`
 	FailureClass string `json:"failure_class,omitempty"`
 	Summary      string `json:"summary,omitempty"`
 }
@@ -74,6 +81,10 @@ const TraceSchemaV1 = "zerg.model.probe_trace.v1"
 
 // CapabilitySnapshotSchemaV1 是能力快照兄弟文件（<version>.capabilities.json）的版本号。
 // 与记录 schema 分开：快照不是记录、不进目录语义，承载"它现在能干什么"（能力断言 + 证据）。
+//
+// 待修补 #27 新增可选字段 unverifiable[]：承载"预算不足/超时导致探不出结论"的能力，
+// 与 capabilities 里"确定不支持"（value=false）严格区分（缺 = 未知，绝不 = 没有）。
+// 新增字段可选、旧读者忽略即可（标准 §十：新增字段必须可选，未知字段必须被忽略而不报错）。
 const CapabilitySnapshotSchemaV1 = "zerg.model.capability_snapshot.v1"
 
 // dateRE 认出 RFC3339 形态的时间戳（用于测试断言正文/notes 不含生成时间）。
@@ -154,6 +165,10 @@ type CapabilitySnapshotArtifact struct {
 	GeneratedAt  string       `json:"generated_at,omitempty"`
 	OnlineProbed bool         `json:"online_probed"`
 	Capabilities []Capability `json:"capabilities"`
+	// Unverifiable 是本轮"没探出结论"的能力（预算不足/超时导致），与 capabilities 里
+	// "确定不支持"（value=false）严格区分：缺 = 未知，不等于没有（待修补 #27）。
+	// 新增字段可选：旧读者遇未知字段忽略即可（标准 §十 向后兼容）。
+	Unverifiable []Unverifiable `json:"unverifiable,omitempty"`
 }
 
 // NewCapabilitySnapshot 由一次探测的产物构造能力快照（写盘与 --json 共用同一份内容）。
@@ -167,6 +182,7 @@ func NewCapabilitySnapshot(rec *Record, rep *ProbeReport) CapabilitySnapshotArti
 		GeneratedAt:  formatGeneratedAt(rep.GeneratedAt),
 		OnlineProbed: rep.OnlineProbed,
 		Capabilities: rep.Capabilities,
+		Unverifiable: rep.Unverifiable,
 	}
 }
 
@@ -227,6 +243,17 @@ func formatGeneratedAt(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
+// Unverifiable 是一条"无法判定"记录：这次探测因预算不足（或超时）没能得出结论。
+//
+// 为什么不写进 capabilities 的 value=false：false 意味着"确定没有这个能力"，
+// 而这里的真相是"系统没探够"（待修补 #27）。按项目哲学（没有弱模型，只有不完善的系统），
+// 缺 = 未知、绝不 = 没有：于是不生成能力条目，改在本记录留下可追责的痕迹。
+type Unverifiable struct {
+	Name     string `json:"name"`               // 能力标签（标准 §四 取值表）
+	Reason   string `json:"reason"`             // 原因分类：budget_exhausted / timeout
+	Evidence string `json:"evidence,omitempty"` // 探测器名 + 版本 + 实际预算 + 原始响应摘要
+}
+
 // CapabilityProbe 是能力类探测器的结论。
 // Value=false 是"实测没过"，不是"猜它不行"——Evidence 里必须带失败分类与原因。
 type CapabilityProbe struct {
@@ -242,6 +269,9 @@ type runResult struct {
 	Value        bool
 	FailureClass string
 	Trace        Trace
+	// Undetermined=true 表示"没探出结论"（预算不足 / 超时），既不是通过、也不是确定不支持。
+	// 上层据此**不生成** capabilities 条目，而在 unverifiable[] 留痕（待修补 #27）。
+	Undetermined bool
 }
 
 // ProbeReport 汇总一次探测的全部产物，供生成记录与人工评审。
@@ -252,6 +282,9 @@ type ProbeReport struct {
 	Files        []File
 	Meta         *GGUFMeta
 	Capabilities []Capability
+	// Unverifiable 记录本次"探不出结论"的能力（预算不足/超时）。这些能力**不**出现在
+	// Capabilities 里——缺 = 未知，绝不写成 value=false（待修补 #27）。
+	Unverifiable []Unverifiable
 	Traces       []Trace
 	ChatTemplate string
 	TemplateOK   bool
@@ -445,26 +478,26 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 		}
 		rep.OnlineProbed = true
 		textOK = txt.Value
-		rep.Capabilities = append(rep.Capabilities, capabilityOf("text", EvidenceText, txt))
+		addCapability(rep, "text", EvidenceText, txt)
 
 		// probe.vision：本仓最看重的一项——必须实测，不许因为模型自称多模态就写 true。
 		vis := ProbeVision(ep)
 		rep.Traces = append(rep.Traces, vis.Trace)
-		rep.Capabilities = append(rep.Capabilities, capabilityOf("vision", EvidenceVision, vis))
+		addCapability(rep, "vision", EvidenceVision, vis)
 
 		// probe.tools
 		tools := ProbeTools(ep)
 		rep.Traces = append(rep.Traces, tools.Trace)
-		rep.Capabilities = append(rep.Capabilities, capabilityOf("tools", EvidenceTools, tools))
+		addCapability(rep, "tools", EvidenceTools, tools)
 
 		// 附加：embedding / rerank（端点不支持就如实记 false 并注明）
 		emb := ProbeEmbedding(ep)
 		rep.Traces = append(rep.Traces, emb.Trace)
-		rep.Capabilities = append(rep.Capabilities, capabilityOf("embedding", EvidenceEmbedding, emb))
+		addCapability(rep, "embedding", EvidenceEmbedding, emb)
 
 		rr := ProbeRerank(ep)
 		rep.Traces = append(rep.Traces, rr.Trace)
-		rep.Capabilities = append(rep.Capabilities, capabilityOf("rerank", EvidenceRerank, rr))
+		addCapability(rep, "rerank", EvidenceRerank, rr)
 	}
 
 	// probe.template：判定 chat_template 来源（开工方案 §四）。
@@ -622,18 +655,47 @@ func resolveChatTemplate(meta *GGUFMeta, textOK bool, engine string) (tmpl, fail
 	return "", FailNoTemplate, false
 }
 
+// evidenceName 给探测器名附上实际预算，让读者能分辨这次用了多大预算（待修补 #27）。
+func evidenceName(probeName string, budget int) string {
+	if budget > 0 {
+		return fmt.Sprintf("%s budget=%d", probeName, budget)
+	}
+	return probeName
+}
+
 // capabilityOf 把一次探测落成能力断言（source=probed；失败带分类与原因）。
+// Value=false 只用于"确定不支持"；"预算不足/超时"由 unverifiableOf 另记（待修补 #27）。
 func capabilityOf(name, probeName string, r runResult) Capability {
-	ev := probeName
+	ev := evidenceName(probeName, r.Trace.Budget)
 	if !r.Value {
 		reason := truncate(r.Trace.Summary, 120)
 		if r.FailureClass != "" {
-			ev = probeName + " (" + r.FailureClass + ": " + reason + ")"
+			ev += " (" + r.FailureClass + ": " + reason + ")"
 		} else {
-			ev = probeName + " (false: " + reason + ")"
+			ev += " (false: " + reason + ")"
 		}
 	}
 	return Capability{Name: name, Value: r.Value, Source: "probed", Evidence: ev}
+}
+
+// unverifiableOf 把一次"探不出结论"的探测落成不可判定记录（待修补 #27）。
+// 它与 capabilityOf 泾渭分明：前者是"没探够"，后者是"实测确认（通过或不支持）"。
+func unverifiableOf(name, probeName string, r runResult) Unverifiable {
+	ev := evidenceName(probeName, r.Trace.Budget)
+	if r.FailureClass != "" {
+		ev += " (" + r.FailureClass + ": " + truncate(r.Trace.Summary, 120) + ")"
+	}
+	return Unverifiable{Name: name, Reason: r.FailureClass, Evidence: ev}
+}
+
+// addCapability 按探测结论分流：探出结论 → 写能力断言；没探出结论（预算不足/超时）→
+// 写 unverifiable，**绝不**写成 value=false（待修补 #27：false 意味着"确定没有"）。
+func addCapability(rep *ProbeReport, name, probeName string, r runResult) {
+	if r.Undetermined {
+		rep.Unverifiable = append(rep.Unverifiable, unverifiableOf(name, probeName, r))
+		return
+	}
+	rep.Capabilities = append(rep.Capabilities, capabilityOf(name, probeName, r))
 }
 
 // buildNotes 生成记录的 notes。**必须是确定文本**（待修补 #24 的硬要求）：
