@@ -49,8 +49,8 @@ func TestClassifyRouteError_Default(t *testing.T) {
 // TestMarkFailure_Counts markFailure 累计失败计数（熔断判定输入）
 func TestMarkFailure_Counts(t *testing.T) {
 	g := NewGateway("test-token", nil, nil, nil, nil)
-	g.markFailure("x3")
-	g.markFailure("x3")
+	g.markFailure("x3", "backend x3 returned 502: upstream refused")
+	g.markFailure("x3", "backend x3 returned 502: upstream refused")
 	if g.failCounts["x3"] != 2 {
 		t.Fatalf("failCounts[x3] = %d，应 2", g.failCounts["x3"])
 	}
