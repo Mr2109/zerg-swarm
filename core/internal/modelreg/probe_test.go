@@ -1139,7 +1139,9 @@ func TestProbeTemplateFromGGUFEvidence(t *testing.T) {
 	}
 }
 
-// #22 反例优先 ②：GGUF 无模板、假端点 /props 返回 chat_template → from_tokenizer，证据写端点字段。
+// #22 收口 ②：GGUF 无模板、假端点 /props 返回 chat_template → **报告层**记 from_tokenizer
+// （证据写端点字段名）；但**记录正文不写 chat_template**（正文只装身份，端点模板是"现状"），
+// 它改由能力快照的 endpoint_chat_template 承载。
 func TestProbeTemplateFromEndpointProps(t *testing.T) {
 	gguf := writeTestGGUFNoTemplate(t, "", "NoTemplate-Q4_K_M.gguf")
 	srv := fakePropsEngine(t, `{"chat_template":"{{ .Prompt }}<|im_end|>","n_ctx":4096}`, http.StatusOK)
@@ -1147,11 +1149,16 @@ func TestProbeTemplateFromEndpointProps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 报告层：真探测到端点模板（#22 的两条真路径之一，成果保留）
 	if rep.ChatTemplate != ChatTemplateFromTokenizer {
-		t.Fatalf("/props 有 chat_template → 应为 %s，实际 %q", ChatTemplateFromTokenizer, rep.ChatTemplate)
+		t.Fatalf("/props 有 chat_template → 报告层应为 %s，实际 %q", ChatTemplateFromTokenizer, rep.ChatTemplate)
 	}
-	if got := rec.EngineRecipes["llama.cpp"].ChatTemplate; got != ChatTemplateFromTokenizer {
-		t.Fatalf("engine_recipes.chat_template 应取自真探测（from_tokenizer），实际 %q", got)
+	// 正文层（收口 #22）：**绝不**把端点模板写进 engine_recipes.chat_template
+	if got := rec.EngineRecipes["llama.cpp"].ChatTemplate; got != "" {
+		t.Fatalf("端点模板不得进记录正文的 engine_recipes.chat_template，实际 %q（%+v）", got, rec.EngineRecipes)
+	}
+	if strings.Contains(string(recordBody(t, rec)), `"chat_template"`) {
+		t.Fatalf("记录正文不得出现 chat_template（端点模板属现状）：%s", recordBody(t, rec))
 	}
 	tr := findTrace(rep.Traces, EvidenceTemplate)
 	if tr == nil || !tr.OK || !strings.Contains(tr.Summary, "/props.chat_template") {
@@ -1159,6 +1166,15 @@ func TestProbeTemplateFromEndpointProps(t *testing.T) {
 	}
 	if findUnverifiable(rep.Unverifiable, CapabilityTemplate) != nil {
 		t.Fatalf("拿到真证据时不该有 template 不可判定记录：%+v", rep.Unverifiable)
+	}
+	// 快照层：端点模板必须落在 endpoint_chat_template（信息没丢，只是换了地方）
+	snap := NewCapabilitySnapshot(rec, rep)
+	if snap.EndpointChatTemplate == nil || snap.EndpointChatTemplate.Value != ChatTemplateFromTokenizer {
+		t.Fatalf("能力快照应承载 endpoint_chat_template=from_tokenizer：%+v", snap.EndpointChatTemplate)
+	}
+	if !strings.Contains(snap.EndpointChatTemplate.Evidence, "/props.chat_template") ||
+		!strings.Contains(snap.EndpointChatTemplate.Evidence, srv.URL) {
+		t.Fatalf("endpoint_chat_template.evidence 应写清端点 + 字段名：%+v", snap.EndpointChatTemplate)
 	}
 }
 
@@ -1302,5 +1318,103 @@ func TestProbeTemplateGGUFWinsOverEndpoint(t *testing.T) {
 	if bodyHash(recordBody(t, noEP)) != bodyHash(recordBody(t, rec)) {
 		t.Fatalf("GGUF 有模板时，给不给端点正文必须一致（#24）：\n  无端点=%s\n  带端点=%s",
 			bodyHash(recordBody(t, noEP)), bodyHash(recordBody(t, rec)))
+	}
+}
+
+// ── 待修补 #22 收口：端点模板不进正文；同一批无模板建材给不给端点正文逐字节相同 ──────
+//
+// 本次收口的核心不变量（承 #24）：记录正文里的 engine_recipes.chat_template **只允许来自
+// GGUF**。造一个**没有** tokenizer.chat_template 的 GGUF：
+//
+//	A = 只给文件（无端点）；
+//	B = 文件 + 假端点（该端点 /props 能返回 chat_template）。
+//
+// 断言 A 与 B 的正文逐字节相同（序列化后 sha256 相等），且两者都**不带**
+// engine_recipes.chat_template；同时断言端点模板没丢——它出现在 B 的能力快照
+// endpoint_chat_template 里（value=from_tokenizer，evidence 写清端点 + 字段名）。
+func TestProbeEndpointTemplateNeverEntersRecordBody(t *testing.T) {
+	gguf := writeTestGGUFNoTemplate(t, "", "NoTemplate-Body-Q4_K_M.gguf")
+
+	// A：只给文件
+	recA, repA, err := Probe(ProbeOptions{Target: gguf, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("无端点探测失败：%v", err)
+	}
+	// B：文件 + 假端点（/props 返回 chat_template）
+	srv := fakePropsEngine(t, `{"chat_template":"{{ .Prompt }}<|im_end|>","n_ctx":4096}`, http.StatusOK)
+	recB, repB, err := Probe(ProbeOptions{Target: gguf, Endpoint: srv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("带端点探测失败：%v", err)
+	}
+
+	// 前提校验：带端点那次确实从端点只读元信息探到了模板，否则本用例证明不了什么
+	if repB.ChatTemplate != ChatTemplateFromTokenizer {
+		t.Fatalf("前提：/props 有 chat_template 时报告层应为 %s，实际 %q", ChatTemplateFromTokenizer, repB.ChatTemplate)
+	}
+	if repA.ChatTemplate != "" {
+		t.Fatalf("前提：无端点那次报告层不该有模板来源，实际 %q", repA.ChatTemplate)
+	}
+
+	bA, bB := recordBody(t, recA), recordBody(t, recB)
+	t.Logf("无端点正文 %s", bodyHash(bA))
+	t.Logf("带端点正文 %s", bodyHash(bB))
+	t.Logf("无端点正文原文：\n%s", bA)
+	t.Logf("带端点正文原文：\n%s", bB)
+	if bodyHash(bA) != bodyHash(bB) {
+		t.Fatalf("同一批无模板建材、给不给端点，正文必须逐字节相同（#24 不变量）\n  无端点=%s\n  带端点=%s\n  无端点正文=%s\n  带端点正文=%s",
+			bodyHash(bA), bodyHash(bB), bA, bB)
+	}
+
+	// 两份正文都**不**得带 engine_recipes.chat_template
+	for _, c := range []struct {
+		name string
+		body []byte
+		rec  *Record
+	}{
+		{"无端点", bA, recA},
+		{"带端点", bB, recB},
+	} {
+		if strings.Contains(string(c.body), `"chat_template"`) {
+			t.Fatalf("%s正文不得出现 chat_template（正文只装身份）：%s", c.name, c.body)
+		}
+		if got := c.rec.EngineRecipes["llama.cpp"].ChatTemplate; got != "" {
+			t.Fatalf("%s的 engine_recipes.chat_template 必须为空，实际 %q", c.name, got)
+		}
+	}
+
+	// 信息没丢：端点模板落在能力快照 endpoint_chat_template 里（from_tokenizer + 端点字段证据）
+	snapB := NewCapabilitySnapshot(recB, repB)
+	if snapB.EndpointChatTemplate == nil {
+		t.Fatalf("带端点那次的能力快照应承载 endpoint_chat_template：%+v", snapB)
+	}
+	if snapB.EndpointChatTemplate.Value != ChatTemplateFromTokenizer {
+		t.Fatalf("endpoint_chat_template.value 应为 %s，实际 %q",
+			ChatTemplateFromTokenizer, snapB.EndpointChatTemplate.Value)
+	}
+	if !strings.Contains(snapB.EndpointChatTemplate.Evidence, "/props.chat_template") ||
+		!strings.Contains(snapB.EndpointChatTemplate.Evidence, srv.URL) {
+		t.Fatalf("endpoint_chat_template.evidence 应写清端点 + 字段名：%+v", snapB.EndpointChatTemplate)
+	}
+	// 快照序列化后确实带 endpoint_chat_template 键（omitempty 只在缺时省略）
+	sb, err := json.Marshal(snapB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("带端点快照 endpoint_chat_template=%+v", *snapB.EndpointChatTemplate)
+	t.Logf("带端点快照原文：\n%s", sb)
+	if !strings.Contains(string(sb), `"endpoint_chat_template"`) {
+		t.Fatalf("快照序列化应含 endpoint_chat_template 键：%s", sb)
+	}
+	// 无端点那次的快照里没有该字段（缺 = 未知，omitempty）
+	snapA := NewCapabilitySnapshot(recA, repA)
+	if snapA.EndpointChatTemplate != nil {
+		t.Fatalf("无端点那次不应有 endpoint_chat_template：%+v", snapA.EndpointChatTemplate)
+	}
+	sa, err := json.Marshal(snapA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(sa), `"endpoint_chat_template"`) {
+		t.Fatalf("无端点快照不该出现 endpoint_chat_template 键：%s", sa)
 	}
 }
