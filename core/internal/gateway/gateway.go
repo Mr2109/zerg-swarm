@@ -1189,6 +1189,12 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 				if snap.Load < 0.5 {
 					score++
 				}
+				// §3.5（批 5）：资源账本输入——可用性/成本延迟。账本缺失或未知时增量为 0，
+				// 完全退回上面的既有打分（红线①：绝不因"不知道"降权/排掉候选）。
+				if delta, why := g.ledgerAdjust(snap, candidate); delta != 0 {
+					score += delta
+					logLedgerAdjust(candidate.Host, model, delta, why)
+				}
 			} else if candidate.Host == "local" && g.localBack != nil {
 				// B13: local 无快照（本机不心跳）——用 LocalBackend 状态打分
 				if g.localBack.IsReady() {

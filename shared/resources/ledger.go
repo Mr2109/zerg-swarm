@@ -109,11 +109,22 @@ type MachineLedger struct {
 	// EngineOverheadGb 是引擎运行时/临时缓冲的固定开销（§3.2 overhead，"可配置"）。
 	// <=0 表示未提供，估算时回退经验常量并标 estimated=true。
 	EngineOverheadGb float64 `json:"engine_overhead_gb,omitempty"`
+
+	// UnifiedMemory 报告该机器的显存与内存是不是同一个池（Apple Silicon 统一内存：显存即内存）。
+	// 设计稿 §3.1：Apple Silicon 走统一内存，显存即内存 —— 此时无独立显存额度，按内存口径判。
+	// 为假**且**显存未知（VramKnown=false）时是"真未知"：不能排除显存不足，
+	// 判"装不下"（fail-closed，绝不把"未知"当"无限"默默放行）。
+	UnifiedMemory bool `json:"unified_memory,omitempty"`
 }
 
 // VramKnown 报告该机器是否提供独立显存额度（§4.1：字段缺省=该机器未提供）。
-// Apple Silicon 走统一内存、无独立显存 → false，此时"跑得动吗"只按内存口径判定。
+// 有独立显存（如 X3 的 ROCm 卡）→ true，此时"装得下吗"必须与内存口径取严。
 func (m MachineLedger) VramKnown() bool { return m.VramTotalGb > 0 }
+
+// VramUnknown 报告该机器的显存是"真未知"：既拿不到独立显存额度，也不是统一内存。
+// 设计稿 §3.2/§3.3d 的诚实边界：此时不得按"显存无限"放行 —— 必须 fail-closed 判装不下。
+// （统一内存不算未知：显存即内存，内存口径已表达该约束。）
+func (m MachineLedger) VramUnknown() bool { return !m.VramKnown() && !m.UnifiedMemory }
 
 // ResidentCount 当前驻留项数量。
 func (m MachineLedger) ResidentCount() int { return len(m.Resident) }
@@ -197,7 +208,9 @@ func (m MachineLedger) FreeMemGbForNew() float64 {
 
 // RoomForNeedGb 是账本级的"这台机器还能装下 X 吗"。
 // maxResident<=0 时取默认单槽（Q1）。返回 (能否, 原因)。
-// 内存与显存二者取严：显存未知（统一内存）时只按内存口径判。
+//
+// 口径（§3.3d）：内存与显存**二者取严**（任一不够即判装不下）；
+// 显存未知**且非统一内存** → fail-closed 判装不下（不把"未知"当"无限"放行）。
 func (m MachineLedger) RoomForNeedGb(needGb float64, maxResident int) (bool, string) {
 	if maxResident <= 0 {
 		maxResident = DefaultMaxResident
@@ -210,6 +223,9 @@ func (m MachineLedger) RoomForNeedGb(needGb float64, maxResident int) (bool, str
 	}
 	if free := m.FreeMemGbForNew(); needGb > free {
 		return false, fmt.Sprintf("内存不足：需 %.2f GiB > 可腾退后可用 %.2f GiB", needGb, free)
+	}
+	if m.VramUnknown() {
+		return false, "显存未知且非统一内存：无法排除显存不足（fail-closed，不把未知当无限）"
 	}
 	if m.VramKnown() && needGb > m.VramFreeGb {
 		return false, fmt.Sprintf("显存不足：需 %.2f GiB > 空闲 %.2f GiB", needGb, m.VramFreeGb)

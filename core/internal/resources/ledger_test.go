@@ -3,10 +3,10 @@ package resources
 import "testing"
 
 // TestLedger_RoomForNeed_Table —— 账本"还能装下 X 吗"：装得下/装不下/刚好边界；
-// 单槽默认 vs 显式多槽；显存独立生效 vs 统一内存口径。
+// 单槽默认 vs 显式多槽；显存独立生效（二者取严）vs 统一内存口径 vs 显存未知(fail-closed)。
 func TestLedger_RoomForNeed_Table(t *testing.T) {
 	m := func(memAvail float64, resident ...ResidentEntry) MachineLedger {
-		return MachineLedger{Machine: "local", MemTotalGb: 64, MemAvailGb: memAvail, Resident: resident}
+		return MachineLedger{Machine: "local", MemTotalGb: 64, MemAvailGb: memAvail, Resident: resident, UnifiedMemory: true}
 	}
 	cases := []struct {
 		name        string
@@ -21,7 +21,8 @@ func TestLedger_RoomForNeed_Table(t *testing.T) {
 		{"单槽默认-已有驻留即拒", m(40, ResidentEntry{Digest: "d1", MemGb: 2, Managed: true, State: StateReady}), 2, 0, false},
 		{"显式多槽-内存够即过", m(40, ResidentEntry{Digest: "d1", MemGb: 2, Managed: true, State: StateReady}), 2, 3, true},
 		{"显存不足-拒(内存够)", MachineLedger{Machine: "x3", MemTotalGb: 128, MemAvailGb: 100, VramTotalGb: 24, VramFreeGb: 1}, 2, 0, false},
-		{"统一内存-只按内存口径", MachineLedger{Machine: "mac", MemTotalGb: 64, MemAvailGb: 40}, 20, 0, true},
+		{"显存未知且非统一内存-拒(fail-closed)", MachineLedger{Machine: "x3", MemTotalGb: 128, MemAvailGb: 100}, 2, 0, false},
+		{"统一内存-只按内存口径", MachineLedger{Machine: "mac", MemTotalGb: 64, MemAvailGb: 40, UnifiedMemory: true}, 20, 0, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -94,6 +95,16 @@ func TestLedger_VramKnownAndDefaults(t *testing.T) {
 	}
 	if DefaultMaxResident != 1 {
 		t.Fatalf("Q1 默认单槽应为 1，实得 %d", DefaultMaxResident)
+	}
+	// VramUnknown：既无独立显存、又非统一内存才算"真未知"（统一内存不算未知：显存即内存）
+	if !(MachineLedger{}).VramUnknown() {
+		t.Fatal("无显存且非统一内存应判 VramUnknown=true（fail-closed 口径）")
+	}
+	if (MachineLedger{VramTotalGb: 24}).VramUnknown() {
+		t.Fatal("有独立显存不得判 VramUnknown")
+	}
+	if (MachineLedger{UnifiedMemory: true}).VramUnknown() {
+		t.Fatal("统一内存（显存即内存）不得判 VramUnknown")
 	}
 }
 

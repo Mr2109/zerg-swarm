@@ -125,11 +125,11 @@ func main() {
 	}
 
 	// 初始化存储和处理器
-	store := store.NewStore()
+	fleetStore := store.NewStore()
 	handlers := &api.Handlers{
 		Config:          cfg,
 		ConfigPath:      fleetYAML, // B11: 热加载用
-		Store:           store,
+		Store:           fleetStore,
 		LocalBack:       localBack,
 		HeartbeatLogger: heartbeatLogger, // v2.3 B1: 传入心跳专用 logger
 	}
@@ -233,7 +233,7 @@ func main() {
 	log.Printf("🧩 Model adapter registry: %d adapters (full adapter routing)", len(adapterRegistry))
 
 	// 同时启动网关（:8082），三标准透传 + 本机子端
-	gw := gateway.NewGateway(cfg.Auth.Token, cfg, localBack, store, adapterRegistry)
+	gw := gateway.NewGateway(cfg.Auth.Token, cfg, localBack, fleetStore, adapterRegistry)
 	// v2.5.6 2026-08-28 治本: 网关先启动并等待就绪——再恢复任务/派发（之前 goroutine 晚启动——任务调 8082 connection refused 全失败→熔断连锁）
 	go func() {
 		if err := gw.Start(8082); err != nil {
@@ -281,7 +281,7 @@ func main() {
 	if os.Getenv("ZERG_AGENT_BIN") != "" {
 		agentBin = os.Getenv("ZERG_AGENT_BIN")
 	}
-	masterSched := api.NewMasterScheduler(agentBin, 1, &api.StoreSnapshotReader{Store: store}) // 单槽——串行——v2.5.6 注入 store（ping 快照优先）
+	masterSched := api.NewMasterScheduler(agentBin, 1, &api.StoreSnapshotReader{Store: fleetStore}) // 单槽——串行——v2.5.6 注入 store（ping 快照优先）
 	handlers.Scheduler = masterSched
 	fmt.Printf("🔄 Master scheduler started (two-level scheduling)\n")
 
@@ -538,6 +538,7 @@ func main() {
 
 	// B13: 本机心跳周期任务——LocalBackend 状态定期写入 store（路由打分需要 local 快照）。
 	// 本机不跑独立 agent，主控自己维护 local 快照（每 30s）。
+	// 批 5（#30）：把驻留明细 + 显存形态一并写入——local 一行与远程子端同口径（§八 Q7）。
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -546,19 +547,25 @@ func main() {
 			if snap == nil {
 				continue
 			}
-			store.SetLocalSnapshot(
-				snap.Machine,
-				snap.Model,
-				snap.Models,
-				snap.Healthy,
-				snap.BackendState,
-				snap.MemAvailableGb,
-				snap.MemTotalGb,
-				snap.Load,
-				0,                       // local active requests（暂用 0）
-				loadToCpuPct(snap.Load), // B4 v2：CPU 使用率（load/核数近似）
-				collectGpuPct(),         // B4 v2：GPU 使用率（显存占用近似）
-			)
+			fleetStore.SetLocalSnapshot(store.LocalSnapshotData{
+				Machine:        snap.Machine,
+				Model:          snap.Model,
+				Models:         snap.Models,
+				Healthy:        snap.Healthy,
+				State:          snap.BackendState,
+				MemAvailableGb: snap.MemAvailableGb,
+				MemTotalGb:     snap.MemTotalGb,
+				Load:           snap.Load,
+				ActiveRequests: 0,                       // local active requests（暂用 0）
+				CpuPct:         loadToCpuPct(snap.Load), // B4 v2：CPU 使用率（load/核数近似）
+				GpuPct:         collectGpuPct(),         // B4 v2：GPU 使用率（显存占用近似）
+				Resident:       snap.Resident,           // #30：本机驻留清单（来自 LocalBackend 自身状态）
+				VramKnown:      snap.VramKnown,          // #29：拿不到就 false（本机不冒充显存）
+				VramUnified:    snap.VramUnified,
+				VramTotalGb:    snap.VramTotalGb,
+				VramUsedGb:     snap.VramUsedGb,
+				VramFreeGb:     snap.VramFreeGb,
+			})
 		}
 	}()
 
