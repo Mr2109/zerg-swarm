@@ -37,6 +37,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/gateway/adapter"
 	"github.com/Mr2109/zerg-swarm/core/internal/gateway/orchestrator"
 	"github.com/Mr2109/zerg-swarm/core/internal/localback"
+	"github.com/Mr2109/zerg-swarm/core/internal/modelreg"
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -118,6 +119,12 @@ type Gateway struct {
 	// 丙批 N4（2026-09-10）：前缀命中率闭环——按 (model, prompt_version) 滑动窗口
 	// 统计 cache_read/cache_miss，并做版本级下降告警；GET /api/metrics/prefix_cache 查询。
 	prefixCache *prefixCacheTracker
+
+	// 能力硬门槛（待修补 #11）：按**目标引擎**判定请求必需能力（如 vision）。
+	// capSource 可注入（测试用假实现，绝不写 ~/.zerg）；modelsRootPath 可注入
+	// （测试用 t.TempDir），为空时用 modelreg.DefaultModelsDir()。
+	capSource      CapabilitySnapshotSource
+	modelsRootPath string
 }
 
 // setRequestTimeout — 模型级超时覆盖（适配器声明——Qwen3.8 120s/Nemotron 60s）
@@ -720,7 +727,15 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		log.Printf("✂️ fast-path trim: tool output / filler replies de-noised (%s)", sessionID)
 	}
 
-	route, err := g.pickRoute(model, sessionID, prompt)
+	// 2.8 能力硬门槛（待修补 #11）：请求里出现结构化图像部件 → 必需 vision。
+	// 只有"必要性升档"（不升就做不了）走硬门槛；判定在路由选择处按**目标引擎**进行。
+	// 无必需能力时为零开销（required 为空）。
+	required := RequiredCapabilitiesFromRequest(body)
+	if len(required) > 0 {
+		log.Printf("🧱 request requires capabilities: %v (hard gate, per target engine)", required)
+	}
+
+	route, err := g.pickRoute(model, sessionID, prompt, required...)
 	if err != nil {
 		log.Printf("route selection failed: %v", err)
 		// v2.5.6 故障自愈（Mr2109 2026-08-28）: 错误码语义化——调度器按 code 分类处理
@@ -785,7 +800,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if attempt > 0 {
 			// 重试：重新路由（熔断机器已被跳过）
 			log.Printf("🔄 retry %d: re-routing (%s)", attempt, model)
-			route, err = g.pickRoute(model, sessionID, prompt)
+			route, err = g.pickRoute(model, sessionID, prompt, required...)
 			if err != nil {
 				break
 			}
@@ -1105,7 +1120,12 @@ func (g *Gateway) isTripped(host string) bool {
 }
 
 // pickRoute 返回最优路由（失败重试时排除指定机器）。
-func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*RouteResult, error) {
+//
+// required（可选，待修补 #11）是本次请求的**必需能力**（必要性升档，硬门槛）。
+// 非空时按**目标引擎**逐条判定：目标引擎没被证过支持的能力 → 该候选跳过（不静默降级），
+// 所有候选都不合格 → fail-closed 返回 *CapabilityGateError（写明哪个引擎缺哪条能力证据）。
+// 空则不判定，行为与既往一致。
+func (g *Gateway) pickRoute(model string, sessionID string, prompt string, required ...string) (*RouteResult, error) {
 	// 别名解析：客户端可能用别名请求（Hermes 发 zerg-ornith 等），映射到标准模型名
 	if _, ok := g.config.Models[model]; !ok {
 		if canonical, ok2 := g.config.Aliases[model]; ok2 {
@@ -1127,12 +1147,18 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 			log.Printf("🎯 %s — other models %s go local", reason, model)
 			// 强制 local（排除 X3）
 			if r, err := g.pickRouteLocal(model); err == nil {
-				return r, nil
+				// 能力硬门槛（待修补 #11）：强制 local 也要按**目标引擎**判必需能力——
+				// 目标引擎没被证过支持就不放行，绝不因"让位"而静默降级。
+				if gerr := g.gateRoute(model, r.Host, required); gerr != nil {
+					log.Printf("🧱 capability gate blocked forced-local route: %v — falling through to gated routing", gerr)
+				} else {
+					return r, nil
+				}
 			}
 			// local 不可用——回退正常路由（pickRouteExcluding x3）
 			log.Printf("⚠️ local unavailable — falling back (excluding X3 — don't disturb DS4)")
 			// 这条路径也会强制熔断（若选回 x3 → failCounts[x3]=11）——给原因，别让快照出现空原因
-			if r, err := g.pickRouteExcluding(model, "x3", "DS4 quiesce: local unavailable, X3 temporarily excluded to avoid disturbing DS4"); err == nil {
+			if r, err := g.pickRouteExcluding(model, "x3", "DS4 quiesce: local unavailable, X3 temporarily excluded to avoid disturbing DS4", required...); err == nil {
 				return r, nil
 			}
 		}
@@ -1151,10 +1177,17 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 	if sessionID != "" {
 		if bound := g.boundSession(sessionID, model); bound != "" {
 			// 确认绑定机器仍是该模型的候选
+		affinity:
 			for _, c := range models {
 				if c.Host == bound {
 					// 机器健康才复用，否则放行重新路由
 					if snap := g.snapshotFor(bound); snap != nil && snap.Healthy {
+						// 能力硬门槛（待修补 #11）：粘性不能绕过按目标引擎的必需能力判定——
+						// 绑定机器的引擎没被证过支持就重新路由（绝不静默降级）。
+						if gerr := g.gateRoute(model, bound, required); gerr != nil {
+							log.Printf("🧱 session affinity blocked by capability gate: %v — re-routing", gerr)
+							break affinity
+						}
 						log.Printf("🎯 session affinity: session=%s bound to %s, routing directly", sessionID, bound)
 						ip, port := getNode(bound)
 						return &RouteResult{
@@ -1181,6 +1214,9 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 		var best *config.ModelCandidate
 		var bestScore int = -1
 		var bestMemGB int
+		// blocked 记录被能力硬门槛拦下的候选（host(engine):reason），用于全被拦下时给出明确原因。
+		var blocked []string
+		var firstBlocked *modelreg.CapabilityDecision
 
 		// 轮询计数器：偶数 → local 先，奇数 → 远程先（交替）
 		g.roundRobinMu.Lock()
@@ -1196,6 +1232,18 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 			// B4 v2：排除本机模式——local 候选直接跳过（用户工作时任务全走远程）
 			if candidate.Host == "local" && g.ExcludeLocal() {
 				continue
+			}
+			// 能力硬门槛（待修补 #11）：按**目标引擎**判必需能力——目标引擎没被证过支持
+			// 就跳过这个候选（继续找被证过的引擎），绝不把请求发到未验证引擎上（绝不静默降级）。
+			if len(required) > 0 {
+				if d := g.gateRequiredCapabilities(model, candidate.Backend, required); !d.Allowed {
+					blocked = append(blocked, fmt.Sprintf("%s(engine=%s):%s", candidate.Host, d.Engine, d.Reason))
+					if firstBlocked == nil {
+						dd := d
+						firstBlocked = &dd
+					}
+					continue
+				}
 			}
 			score := 0
 			// B13 轮询倾向：同分时轻微倾向另一台（压力均分——不强制，只打破平局）
@@ -1274,6 +1322,27 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 		// v2.5.5 #9 修复：所有候选都被熔断/排除时——返回明确错误（不兜底空 URL）
 		// 原逻辑: best==nil 时 fallback models[0]（可能 URL:"" 空——转发 Post "" 失败）
 		if best == nil {
+			// 能力硬门槛（待修补 #11）：候选全被"目标引擎未证过支持该必需能力"拦下时，
+			// fail-closed 返回明确原因（哪个引擎缺哪条能力证据）——绝不静默降级、
+			// 也绝不落进下面的 allLocal 兜底（那会绕过门槛）。
+			if len(blocked) > 0 {
+				ge := &CapabilityGateError{
+					Model:      model,
+					Capability: strings.Join(required, ","),
+					Reason:     modelreg.CapReasonNoEvidence,
+					Trace: fmt.Sprintf("capability gate: no candidate engine proven for required capabilities %v — blocked: %s",
+						required, strings.Join(blocked, "; ")),
+				}
+				// 用**第一条真实判定**的原因/引擎/留痕（不同候选可能因不同原因被拦：
+				// 旧快照缺引擎维度 / 引擎未证过 / 快照缺失）——别用一个写死的汇总原因盖掉它。
+				if firstBlocked != nil {
+					ge.Engine = firstBlocked.Engine
+					ge.Capability = firstBlocked.Name
+					ge.Reason = firstBlocked.Reason
+					ge.Trace = firstBlocked.Trace + " — blocked candidates: " + strings.Join(blocked, "; ")
+				}
+				return nil, ge
+			}
 			// 真正"所有候选都是 local 且未排除"才本机兜底
 			allLocal := true
 			for _, c := range models {
@@ -1325,6 +1394,11 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 	}
 	if c.Host == "local" && g.ExcludeLocal() {
 		return nil, fmt.Errorf("model %s only candidate local is excluded — no candidate available", model)
+	}
+	// 能力硬门槛（待修补 #11）：单候选同样按**目标引擎**判定——目标引擎没被证过支持必需
+	// 能力就 fail-closed（明确原因），绝不静默降级。
+	if gerr := g.gateRoute(model, c.Host, required); gerr != nil {
+		return nil, gerr
 	}
 	if c.Host == "local" {
 		return &RouteResult{
@@ -1453,6 +1527,13 @@ func classifyRouteError(err error) (string, int) {
 	if err == nil {
 		return "api_error", http.StatusBadGateway
 	}
+	// 能力硬门槛 fail-closed（待修补 #11）：目标引擎没被证过支持该必需能力 →
+	// 明确 400 + capability_unavailable（不可重试，用户需换模型/引擎或先补探测）——
+	// 绝不静默降级成别的机器/降级模型。
+	var gateErr *CapabilityGateError
+	if errors.As(err, &gateErr) {
+		return "capability_unavailable", http.StatusBadRequest
+	}
 	msg := err.Error()
 	// 熔断/无候选/被排除 → 环境故障（可等——机器恢复后自动重派）
 	if strings.Contains(msg, "熔断") || strings.Contains(msg, "无可用候选") ||
@@ -1493,10 +1574,11 @@ func (g *Gateway) pickFallbackRoute(failed *RouteResult, model string, reason st
 // pickRouteExcluding — 选路但排除指定机器（failover 用——不选回失败机器）
 // reason 必填：本函数在「选回被排除机器」时会强制把 failCounts 顶到 healthyTripLimit+1
 // （11）——这是一次计数写入，必须留下原因与路径，否则快照会出现「fail_count=11 但 last_error 空」。
-func (g *Gateway) pickRouteExcluding(model, exclude string, reason string) (*RouteResult, error) {
+// required（可选，待修补 #11）是必需能力——透传给内部两次 pickRoute，硬门槛不得因"排除重选"被绕过。
+func (g *Gateway) pickRouteExcluding(model, exclude string, reason string, required ...string) (*RouteResult, error) {
 	// v2.5.5 #9 修复: 直接调用 pickRoute 的内部逻辑但跳过 exclude 机器（不走熔断 hack——防 healthy 保护冲突）
 	// 先试正常 pickRoute——若选回 exclude——用"临时排除"重选（设置 failCounts 到超高——强制跳过）
-	route, err := g.pickRoute(model, "", "")
+	route, err := g.pickRoute(model, "", "", required...)
 	if err != nil {
 		return nil, err
 	}
@@ -1515,7 +1597,7 @@ func (g *Gateway) pickRouteExcluding(model, exclude string, reason string) (*Rou
 	g.failCounts[exclude] = healthyTripLimit + 1 // 超高——强制跳过（v2.5.5 #9: 用 healthyTripLimit+1）
 	g.failSince[exclude] = time.Now()
 	g.failMu.Unlock()
-	route2, err2 := g.pickRoute(model, "", "")
+	route2, err2 := g.pickRoute(model, "", "", required...)
 	if err2 != nil {
 		return nil, err2
 	}
