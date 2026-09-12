@@ -199,7 +199,7 @@ func shortHash(s string) string {
 
 func cmdProbe(args []string) int {
 	var target, out, endpoint, engine, id, storeRoot string
-	var lineageParent, lineageBase string   // 血缘声明（待修补 #16）：只照抄显式入参，不做任何推断
+	var lineageParent, lineageBase string // 血缘声明（待修补 #16）：只照抄显式入参，不做任何推断
 	useStore := false
 	asJSON := false
 	timeout := modelreg.DefaultProbeTimeout
