@@ -4,28 +4,60 @@
 //   - 每 5 秒 POST {controller}/api/fleet/heartbeat
 //   - 携带后端状态快照
 //   - 失败时重试 3 次，防止偶发网络错误导致主控判离线
+//
+// 两条诚实纪律（《设计-资源管理器》§3.1/§八 Q4/Q6）：
+//   - gpu_used_gb 只放**真实显存**；拿不到就不出现该字段（vram_known=false），**绝不用进程 RSS 冒充**。
+//   - active_requests 放**真实在飞计数**；没有计数来源就不出现，绝不写死 0。
 package heartbeat
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/Mr2109/zerg-swarm/agent/internal/version"
+	"math"
 	"net/http"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
 	"github.com/Mr2109/zerg-swarm/agent/internal/logx"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
+	"github.com/Mr2109/zerg-swarm/agent/internal/version"
 )
+
+// backendSource 心跳需要的后端事实来源（接口便于测试注入假值）。
+type backendSource interface {
+	CurrentModel() string
+	RegistryNames() []string
+	State() string
+	BackendRssGb() float64
+	IsHealthy() bool
+	ResidentDetail() []backend.ResidentDetail
+}
+
+// vramSource 真实显存来源；ok=false 表示该平台/该机器拿不到显存（绝不冒充）。
+type vramSource interface {
+	VramUsedGb() (float64, bool)
+	VramTotalGb() (float64, bool)
+}
+
+// ActiveCounter 真实在飞请求计数来源（由 server.Agent 实现）。
+type ActiveCounter interface {
+	ActiveRequests() int
+}
+
+// UnmanagedSource 只读的未托管监听探测来源（返回空切片表示没有）。
+type UnmanagedSource func() []backend.UnmanagedProcess
 
 // Runner 心跳上报器。
 type Runner struct {
 	controller string
 	token      string
 	machine    string
-	backend    *backend.Manager
+	backend    backendSource
 	sampler    *monitor.Sampler
+	vram       vramSource
+	active     ActiveCounter
+	unmanaged  UnmanagedSource
 	startedAt  time.Time
 	interval   time.Duration
 	stopCh     chan struct{}
@@ -33,13 +65,18 @@ type Runner struct {
 }
 
 // NewRunner 创建心跳上报器。
-func NewRunner(controller, token, machine string, mgr *backend.Manager, smp *monitor.Sampler) *Runner {
+//   - active：提供真实在飞请求计数（nil 则该字段不出现，绝不写死 0）。
+//   - unmanaged：只读的未托管监听探测（nil 则不上报 unmanaged[]，绝不接管）。
+func NewRunner(controller, token, machine string, mgr *backend.Manager, smp *monitor.Sampler, active ActiveCounter, unmanaged UnmanagedSource) *Runner {
 	return &Runner{
 		controller: controller,
 		token:      token,
 		machine:    machine,
 		backend:    mgr,
 		sampler:    smp,
+		vram:       smp,
+		active:     active,
+		unmanaged:  unmanaged,
 		startedAt:  time.Now(),
 		interval:   5 * time.Second,
 		stopCh:     make(chan struct{}),
@@ -77,31 +114,7 @@ func (r *Runner) Stop() {
 
 // send 发送一次心跳。
 func (r *Runner) send() {
-	// 构建心跳体（补全字段：内存/显存/温度/负载/模型列表/健康状态）
-	curModel := r.backend.CurrentModel()
-	models := r.backend.RegistryNames()
-	body := map[string]interface{}{
-		"machine":          r.machine,
-		"backend_state":    r.backend.State(),
-		"model":            curModel,
-		"mem_available_gb": r.sampler.MemAvailableGb(),
-		"mem_total_gb":     r.sampler.MemTotalGb(),
-		"gpu_used_gb":      r.backend.BackendRssGb(),
-		"gpu_temp_c":       r.sampler.GpuTempC(),
-		"load":             r.sampler.LoadAvg(),
-		"models":           models,
-		"uptime":           time.Since(r.startedAt).Seconds(),
-		"active_requests":  0,
-		"backend_rss_gb":   r.backend.BackendRssGb(),
-		"healthy":          r.backend.IsHealthy(),
-		"error":            nil,
-		// B4 v2：CPU/GPU 使用率（主控监看展示）
-		"cpu_pct": r.sampler.CpuPct(),
-		"gpu_pct": r.sampler.GpuPct(),
-		// L3 自动升级：子端自报代码身份（版本矩阵的数据来源）
-		"code_version": version.Version,
-		"code_sha":     version.Commit,
-	}
+	body := r.buildBody()
 
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -144,3 +157,89 @@ func (r *Runner) send() {
 		logx.Errorf("heartbeat", "心跳上报最终失败", "machine", r.machine, "url", url, "error", lastErr)
 	}
 }
+
+// buildBody 组装心跳体（无 IO 副作用，便于测试断言字段）。
+//
+// 字段口径：
+//   - 旧字段语义不变：machine/backend_state/model/mem_*/load/models/uptime/
+//     backend_rss_gb/healthy/error/cpu_pct/gpu_pct/code_version/code_sha。
+//   - active_requests：真实在飞计数（有来源才出现）。
+//   - gpu_used_gb：真实显存（拿得到才出现）；配套 vram_known/vram_used_gb/vram_total_gb/vram_free_gb。
+//   - resident[]：驻留明细（托管项 managed=true；探测到的未托管项 managed=false）。
+//   - unmanaged[]：未托管但占着端口的进程（只读上报，不接管不杀）。
+func (r *Runner) buildBody() map[string]interface{} {
+	body := map[string]interface{}{
+		"machine":          r.machine,
+		"backend_state":    r.backend.State(),
+		"model":            r.backend.CurrentModel(),
+		"mem_available_gb": r.sampler.MemAvailableGb(),
+		"mem_total_gb":     r.sampler.MemTotalGb(),
+		"gpu_temp_c":       r.sampler.GpuTempC(),
+		"load":             r.sampler.LoadAvg(),
+		"models":           r.backend.RegistryNames(),
+		"uptime":           time.Since(r.startedAt).Seconds(),
+		"backend_rss_gb":   r.backend.BackendRssGb(),
+		"healthy":          r.backend.IsHealthy(),
+		"error":            nil,
+		// B4 v2：CPU/GPU 使用率（主控监看展示）
+		"cpu_pct": r.sampler.CpuPct(),
+		"gpu_pct": r.sampler.GpuPct(),
+		// L3 自动升级：子端自报代码身份（版本矩阵的数据来源）
+		"code_version": version.Version,
+		"code_sha":     version.Commit,
+	}
+
+	// active_requests：真实在飞请求计数。没有来源就不出现——绝不写死 0（旧行为已修）。
+	if r.active != nil {
+		body["active_requests"] = r.active.ActiveRequests()
+	}
+
+	// gpu_used_gb：真实显存占用。拿不到显存 → 该字段**缺席** + vram_known=false；
+	// 绝不再用进程 RSS 冒充（旧行为已修）。backend_rss_gb 仍是真 RSS，两者不再混同。
+	if r.vram != nil {
+		if usedGb, ok := r.vram.VramUsedGb(); ok {
+			body["gpu_used_gb"] = round1(usedGb)
+			body["vram_used_gb"] = round1(usedGb)
+			body["vram_known"] = true
+			if totalGb, okTotal := r.vram.VramTotalGb(); okTotal {
+				body["vram_total_gb"] = round1(totalGb)
+				if free := totalGb - usedGb; free >= 0 {
+					body["vram_free_gb"] = round1(free)
+				}
+			}
+		} else {
+			// 拿不到显存：如实标不可用，不出假值。
+			body["vram_known"] = false
+		}
+	}
+
+	// 未托管探测只做一次（只读），同时并入 resident[] 与 unmanaged[]。
+	var unmanaged []backend.UnmanagedProcess
+	if r.unmanaged != nil {
+		unmanaged = r.unmanaged()
+	}
+
+	// resident[]：驻留明细。托管项（managed=true）来自后端管理器；
+	// 探测到的未托管项以 managed=false 如实并入（Q6：只标注，不接管）。
+	resident := r.backend.ResidentDetail()
+	for _, u := range unmanaged {
+		resident = append(resident, backend.ResidentDetail{
+			Alias:   fmt.Sprintf("unmanaged@127.0.0.1:%d", u.Port),
+			State:   "ready",
+			Managed: false,
+			Source:  "manual",
+			RssGb:   u.RssGb,
+		})
+	}
+	if len(resident) > 0 {
+		body["resident"] = resident
+	}
+	if len(unmanaged) > 0 {
+		body["unmanaged"] = unmanaged
+	}
+
+	return body
+}
+
+// round1 四舍五入到 1 位小数（与 monitor 采样口径一致）。
+func round1(v float64) float64 { return math.Round(v*10) / 10 }

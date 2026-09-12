@@ -404,6 +404,15 @@ func appendReminder(body []byte, reminder string) ([]byte, error) {
 	return json.Marshal(obj)
 }
 
+// ActiveRequests 返回当前在飞（正被推理 worker 处理）的请求数。
+// 这是 server.go 里的 activeReqs 真值（handleInferRequest 里增减）——
+// 心跳的 active_requests 字段取它，取代原先写死的 0。
+func (a *Agent) ActiveRequests() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.activeReqs
+}
+
 // handleStatus 处理 /status 请求。
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAuth(w, r) {

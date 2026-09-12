@@ -32,11 +32,6 @@ type ResidentDetail struct {
 	MemGb        float64 `json:"mem_gb,omitempty"`     // 模型声明内存需求
 	CtxWindow    int     `json:"ctx_window,omitempty"` // 上下文上限
 	Source       string  `json:"source,omitempty"`     // 由谁装载：managed|manual|external
-	// 批 3（Q2 规则④ / Q5）新增：驱逐排序键与 pin 状态。
-	// 两者都只在确有其事时出现（取不到就缺席，不写假值）。
-	WeightsBytes int64   `json:"weights_bytes,omitempty"` // 权重（量化后）字节数——同档"腾得多"者先
-	Pinned       bool    `json:"pinned,omitempty"`        // Q5：pin 中且 TTL 未到期
-	PinTtlS      float64 `json:"pin_ttl_s,omitempty"`     // Q5：pin 剩余 TTL 秒
 }
 
 // UnmanagedProcess 未托管但占着端口的进程（如实呈现；绝不接管、绝不杀）。
@@ -72,11 +67,6 @@ func (m *Manager) ResidentDetail() []ResidentDetail {
 			d.MemGb = sp.entry.MemGB
 			d.CtxWindow = entryCtxWindow(sp.entry)
 			d.Digest = entryDigest(sp.entry)
-			d.WeightsBytes = entryWeightsBytes(sp.entry)
-		}
-		if pinned, remain := pinState(sp, now); pinned {
-			d.Pinned = true
-			d.PinTtlS = remain
 		}
 		if sp.proc != nil && sp.proc.Process != nil {
 			d.RssGb = readProcessRssGb(sp.proc.Process.Pid)
