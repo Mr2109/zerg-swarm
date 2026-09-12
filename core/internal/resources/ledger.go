@@ -69,7 +69,7 @@ func occupiedGb(r ResidentEntry) float64 {
 }
 
 // UnmanagedProcess 是"未托管但占着资源"的进程/端口（覆盖实测 E2：手工 screen 起的服务）。
-// 本包只如实呈现，不自动接管、不自动杀（§八 Q6）。
+// 本包只如实呈现，不自动接管、不自动杀（§八 Q6）。Managed 恒 false——如实标注。
 type UnmanagedProcess struct {
 	PID     int     `json:"pid,omitempty"`
 	Port    int     `json:"port,omitempty"`
@@ -77,6 +77,7 @@ type UnmanagedProcess struct {
 	Model   string  `json:"model,omitempty"`
 	RssGb   float64 `json:"rss_gb,omitempty"`
 	Note    string  `json:"note,omitempty"`
+	Managed bool    `json:"managed"` // 恒 false：未托管项如实标注（Q6）
 }
 
 // MachineLedger 是一台机器的资源账本（§四.2 形状）。

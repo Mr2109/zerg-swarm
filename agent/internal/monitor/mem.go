@@ -26,6 +26,9 @@ type Sampler struct {
 	gpuTempC       float64 // GPU 温度（°C），0 表示无数据
 	cpuPct         float64 // CPU 使用率 %（load/核数近似）
 	gpuPct         float64 // GPU 使用率 %（显存占用近似）
+	vramUsedGb     float64 // 真实显存占用（GB）；vramKnown=false 时无意义
+	vramTotalGb    float64 // 真实显存总量（GB）；vramKnown=false 时无意义
+	vramKnown      bool    // 该平台/该机器能否拿到显存（拿不到就不得冒充——见 vram.go）
 	lastUpdate     time.Time
 }
 
@@ -64,12 +67,17 @@ func (s *Sampler) update() {
 		}
 	}
 	gpuPct := sampleGpuPct()
+	// 真实显存采样（拿不到 → vramOK=false，不得冒充）
+	vramUsed, vramTotal, vramOK := sampleVram()
 	s.mu.Lock()
 	s.memAvailableGb = memAvail
 	s.memTotalGb = memTotal
 	s.gpuTempC = gpuTemp
 	s.cpuPct = cpuPct
 	s.gpuPct = gpuPct
+	s.vramUsedGb = vramUsed
+	s.vramTotalGb = vramTotal
+	s.vramKnown = vramOK
 	s.lastUpdate = time.Now()
 	s.mu.Unlock()
 }
