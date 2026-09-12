@@ -20,9 +20,9 @@ import (
 
 // ── 在线探测器（text / vision / tools / embedding / rerank + 端点 meta）──────
 //
-// 判据遵循开工方案 §八 风险1：只认结构化信号（HTTP 码 + 能否解析出字段），
-// 不拿文案字符串当通过条件；唯一例外是"缺 mmproj"这一条——它是把 no_vision
-// 细分出来的提示，主判据仍是 HTTP 码（见 ProbeVision）。
+// 判据遵循开工方案 §八 风险1：只认结构化信号（HTTP 码 + 能否解析出字段 +
+// 引擎明确的能力声明），不拿文案字符串当通过条件——**没有任何例外**
+// （视觉失败的归因见 ProbeVision；待修补 #23 已删掉"响应体出现 mmproj 就升级"的文案匹配）。
 
 // Endpoint 是一个 OpenAI 兼容引擎端点。
 type Endpoint struct {
@@ -30,6 +30,13 @@ type Endpoint struct {
 	Model   string // 请求体里的 model 字段（引擎多会忽略）
 	Timeout time.Duration
 	Client  *http.Client
+
+	// ModelDir/WeightsName 是本地权重文件所在目录与文件名（可空）。它们只为一条结构化信号
+	// 服务（待修补 #23）：同目录是否放着**本模型**的视觉投影器建材（mmproj*.gguf，按模型名
+	// token 配对），用于把"引擎声明无视觉"细分为 mmproj_missing 还是 no_vision。
+	// 空（如只给 URL 探测）→ 该项无从判断（宁判 no_vision，不误报 mmproj_missing）。
+	ModelDir    string
+	WeightsName string
 }
 
 func (e Endpoint) timeout() time.Duration {
@@ -233,7 +240,15 @@ func ProbeText(e Endpoint) runResult {
 // ProbeVision 视觉探测器（probe.vision.1x1.v1）——本仓最看重的一项。
 // 通过判据：HTTP 200 且响应可解析出正文。失败分类 no_vision / mmproj_missing。
 // 绝不因为模型"自称"多模态就写 true：一律实测。预算"先小后大"重试（待修补 #27）。
-// 端点明确不支持（非 200）照旧判 false；到达预算上限仍无正文 → 判"不可判定"。
+//
+// 归因（待修补 #23）：失败时**只认结构化信号**，绝不匹配响应体文案。
+//   - 引擎能力声明（/props.modalities.vision，退一步 /v1/models 的 capabilities 含
+//     "multimodal"）说明**当前有没有可用的视觉**；
+//   - 本地投影器建材（同目录 mmproj*.gguf，见 projectorPresent）说明**投影器在不在本地**。
+//
+// 两条信号齐全才能判 mmproj_missing（引擎声明无视觉 + 本地确有投影器建材却没被装载）；
+// 引擎声明无视觉但本地没有投影器建材 → no_vision；引擎完全没有结构化声明 → unverifiable
+// （缺=未知，绝不按文案升级、也绝不降级成 value=false）。
 func ProbeVision(e Endpoint) runResult {
 	build := func(maxTokens int) map[string]any {
 		content := []any{
@@ -265,13 +280,35 @@ func ProbeVision(e Endpoint) runResult {
 	}
 	tr.Summary = summarize(data)
 	if st != 200 {
-		cls := FailNoVision
-		// 结构化主判据是 HTTP 码；"mmproj" 只是把 no_vision 细分出来的提示。
-		if strings.Contains(strings.ToLower(string(data)), "mmproj") {
-			cls = FailMmprojMiss
+		// 非 200：归因**只认结构化信号**（待修补 #23）——先问引擎的结构化能力声明，
+		// 再看本地有没有投影器建材；响应体文案一律不看。
+		sig := probeVisionCapSignal(e)
+		base := tr.Summary
+		if sig.Known {
+			tr.Summary = truncate(fmt.Sprintf("%s | 引擎声明 %s=%t", base, sig.Anchor, sig.Active), 200)
+			if sig.Active {
+				// 引擎声明视觉可用，图像请求却失败 → 不是投影器缺失。
+				tr.FailureClass = FailNoVision
+				return runResult{false, FailNoVision, tr, false}
+			}
+			if name, ok := projectorPresent(e.ModelDir, e.WeightsName); ok {
+				tr.FailureClass = FailMmprojMiss
+				tr.Summary = truncate(fmt.Sprintf("%s | 引擎声明 %s=false；本地投影器建材 %s 未被装载", base, sig.Anchor, name), 200)
+				return runResult{false, FailMmprojMiss, tr, false}
+			}
+			// 引擎声明无视觉，且本地没有投影器建材可归因 → no_vision。
+			tr.FailureClass = FailNoVision
+			return runResult{false, FailNoVision, tr, false}
 		}
-		tr.FailureClass = cls
-		return runResult{false, cls, tr, false}
+		// 引擎没给结构化声明：4xx 是引擎对请求的明确拒绝（结构化 HTTP 码，照旧判 false，
+		// 守住 #27 的区分点）；其余（5xx 等）无法归因 → 不可判定，绝不按文案升级（#23 反例①）。
+		if st >= 400 && st < 500 {
+			tr.FailureClass = FailNoVision
+			return runResult{false, FailNoVision, tr, false}
+		}
+		tr.FailureClass = FailNoStructuredSignal
+		tr.Summary = truncate(fmt.Sprintf("%s | 引擎 HTTP %d 且未提供结构化信号（/props.modalities.vision 与 /v1/models capabilities 均无）", base, st), 200)
+		return runResult{FailureClass: FailNoStructuredSignal, Trace: tr, Undetermined: true}
 	}
 	var resp chatResponse
 	if json.Unmarshal(data, &resp) != nil || len(resp.Choices) == 0 {
@@ -285,6 +322,96 @@ func ProbeVision(e Endpoint) runResult {
 	// 200 但无正文（撞长度/空正文），到达预算上限 → 没探够，不判 false。
 	tr.FailureClass = FailBudgetExhausted
 	return runResult{FailureClass: FailBudgetExhausted, Trace: tr, Undetermined: true}
+}
+
+// ── 待修补 #23：视觉失败归因用的结构化信号 ────────────────────────────────
+//
+// 旧实现把"响应体里出现 mmproj 字样"当作 mmproj_missing 的判据，违反开工方案 §八
+// 风险1「只认结构化信号」（引擎文案一变就误判）。本机实测（llama.cpp build 10470，
+// 型号 Ornith-1.5-35B + mmproj-Ornith-1.5-35B-BF16 与纯文本 gemma-4-26B）可用的信号：
+//
+//	信号                                    挂 mmproj     VLM 未挂 mmproj   纯文本模型
+//	GET /props → modalities.vision           true          false             false
+//	GET /v1/models → models[0].capabilities  [completion,  [completion]      [completion]
+//	                                         multimodal]
+//	视觉请求 HTTP 码                          200           500               500
+//	视觉请求响应体                            正常回答      同一条文案         同一条文案
+//
+// 结论：引擎侧信号只回答"当前有没有可用的视觉"，**区分不了** VLM 未挂 mmproj 与纯文本
+// 模型（两者逐字节相同）。要判 mmproj_missing 必须再加一条模型侧信号：本地同目录有没有
+// mmproj*.gguf（projectorPresent）。两条都不成立 → 不可判定，不猜。
+
+// visionCapSignal 是引擎给出的结构化"视觉能力声明"（替代旧的响应体文案匹配）。
+type visionCapSignal struct {
+	Known  bool   // 引擎是否给出了结构化声明
+	Active bool   // 声明里当前视觉是否可用
+	Anchor string // 证据锚（具体字段名），如 /props.modalities.vision
+}
+
+// probeVisionCapSignal 读引擎的只读结构化能力声明。顺序：
+//  1. GET /props        → JSON 对象字段 modalities.vision（布尔）
+//  2. GET /v1/props     → 同上（个别实现把属性接口挂在 /v1 下）
+//  3. GET /v1/models    → models[0].capabilities 数组是否含 "multimodal"
+//
+// 三步都不成立 → Known=false（缺=未知，绝不猜、绝不匹配文案）。
+func probeVisionCapSignal(e Endpoint) visionCapSignal {
+	if sig, ok := propsVisionSignal(e, "/props", e.rootURL("/props")); ok {
+		return sig
+	}
+	if sig, ok := propsVisionSignal(e, "/v1/props", e.url("/props")); ok {
+		return sig
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), e.timeout())
+	defer cancel()
+	st, data, _, err := e.do(ctx, http.MethodGet, "/models", nil)
+	if err == nil && st == http.StatusOK {
+		if sig, ok := modelsVisionSignal(data); ok {
+			return sig
+		}
+	}
+	return visionCapSignal{}
+}
+
+// propsVisionSignal 从只读"属性"接口取 modalities.vision（结构化布尔字段）。
+// 判据是**结构化字段类型**（JSON 对象 → modalities 对象 → vision 布尔），不做文案匹配。
+func propsVisionSignal(e Endpoint, displayPath, rawURL string) (visionCapSignal, bool) {
+	st, data, _, err := e.getAbs(rawURL)
+	if err != nil || st != http.StatusOK {
+		return visionCapSignal{}, false
+	}
+	var m map[string]any
+	if json.Unmarshal(data, &m) != nil {
+		return visionCapSignal{}, false
+	}
+	mods, ok := m["modalities"].(map[string]any)
+	if !ok {
+		return visionCapSignal{}, false
+	}
+	v, ok := mods["vision"].(bool)
+	if !ok {
+		return visionCapSignal{}, false
+	}
+	return visionCapSignal{Known: true, Active: v, Anchor: displayPath + ".modalities.vision"}, true
+}
+
+// modelsVisionSignal 从 /v1/models 的 models[].capabilities 数组判定"是否声明多模态"。
+// 数组存在即视为一次结构化声明：含 "multimodal" → 有视觉；不含 → 没有视觉。
+// 数组缺失（老式 OpenAI 响应只有 data[]）→ Known=false（缺=未知）。
+func modelsVisionSignal(data []byte) (visionCapSignal, bool) {
+	var resp struct {
+		Models []struct {
+			Capabilities []string `json:"capabilities"`
+		} `json:"models"`
+	}
+	if json.Unmarshal(data, &resp) != nil || len(resp.Models) == 0 || resp.Models[0].Capabilities == nil {
+		return visionCapSignal{}, false
+	}
+	for _, c := range resp.Models[0].Capabilities {
+		if strings.EqualFold(strings.TrimSpace(c), "multimodal") {
+			return visionCapSignal{Known: true, Active: true, Anchor: "/v1/models.models[0].capabilities"}, true
+		}
+	}
+	return visionCapSignal{Known: true, Active: false, Anchor: "/v1/models.models[0].capabilities"}, true
 }
 
 // ProbeTools 工具调用探测器（probe.tools.v1）。预算"先小后大"重试（待修补 #27）。

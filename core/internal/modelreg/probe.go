@@ -72,7 +72,11 @@ const (
 	// 它**不是**"系统没探够"（那是 budget_exhausted/timeout），而是"没有可复现的证据"——
 	// 按与 #27 同一套纪律：不写默认值、不生成条目，改记 unverifiable[]（缺=未知）。
 	FailNoTemplateSource = "no_template_source"
-	FailUnsupported      = "unsupported"
+	// FailNoStructuredSignal 表示"引擎没有给出任何结构化信号，无法归因这次视觉失败"（待修补 #23）。
+	// 与 #27 的 budget_exhausted 同列为"不可判定"：**绝不**降级为 value=false
+	// （false 意味着"确定没有"，而这里只是"没探到结构化证据"）。见 ProbeVision。
+	FailNoStructuredSignal = "no_structured_signal"
+	FailUnsupported        = "unsupported"
 	// FailBudgetExhausted 表示"预算不足（或超时）导致探不出结论"，**不是**"确定没有这个能力"。
 	// 按项目哲学（没有弱模型，只有不完善的系统）：这种情况不得报 capabilities.value=false，
 	// 改为不生成该能力条目 + 在快照里写一条 unverifiable 记录（待修补 #27，见 Unverifiable）。
@@ -401,7 +405,8 @@ func SynthesizeDigest(files []File) string {
 }
 
 // HashFile 计算一个本地文件的 (role, sha256, size)。
-// role 只按文件名里的 "mmproj" 提示分类（不做目录扫描——那是批 3）。
+// role 只按文件名里的 "mmproj" 提示分类（不按目录扫描给 role——同目录的兄弟文件另见
+// projectorPresent，那是待修补 #23 的视觉归因信号，不参与 role/digest）。
 func HashFile(path string) (File, error) {
 	fh, err := os.Open(path)
 	if err != nil {
@@ -419,6 +424,82 @@ func HashFile(path string) (File, error) {
 		role = "mmproj"
 	}
 	return File{Role: role, Name: base, SHA256: hex.EncodeToString(h.Sum(nil)), Size: n}, nil
+}
+
+// projectorPresent 判断本地权重文件所在目录里是否放着**属于这个模型**的视觉投影器建材
+// （mmproj*.gguf）。
+//
+// 它是待修补 #23 的**模型侧**结构化信号：引擎只会结构化地声明"当前有没有可用的视觉"
+// （/props.modalities.vision、/v1/models 的 capabilities），实测文本模型与"VLM 未挂
+// mmproj"两者在这些字段上逐字节相同，故还要一条"投影器建材在不在本地"才能把
+// mmproj_missing 与 no_vision 分开。
+//
+// 为什么还要比对名字（而不是"目录里有 mmproj 就算数"）：实测本机 ~/models
+// 同一目录里混放着 gemma-4-26B 的权重与 mmproj-Ornith-1.5-35B 的投影器——只看存在性
+// 会把别人的投影器算到本模型头上，把纯文本模型误判成 mmproj_missing。故按文件名约定
+// （llama.cpp/HF：<模型名>-<量化>.gguf 与 mmproj-<模型名>-<类型>.gguf）要求两者共享
+// 一个"模型名 token"（长度≥4、排除 gguf/mmproj/q4/bf16 这类通用词）。这是结构化约定，
+// 不是响应体文案匹配。
+//
+// 诚实边界：权重 GGUF 不声明视觉（实测 Ornith-1.5-35B 的 47 个键里没有任何 vision/clip
+// 键），所以本函数只回答"本地有没有本模型该用的投影器建材"，回答不了"这个模型需不需要
+// 投影器"。名字对不上、目录里没有、读不动、或压根没给本地权重文件（只给 URL 探测）→
+// 返回 ok=false（缺=未知，绝不猜；宁可判 no_vision 也不误报 mmproj_missing）。
+// 它不参与 files[]/digest，只用于视觉失败的归因分类。
+func projectorPresent(dir, weightsName string) (string, bool) {
+	if dir == "" || weightsName == "" {
+		return "", false
+	}
+	want := modelNameTokens(weightsName)
+	if len(want) == 0 {
+		return "", false
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	for _, en := range ents {
+		if en.IsDir() {
+			continue
+		}
+		name := en.Name()
+		if !strings.EqualFold(filepath.Ext(name), ".gguf") {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(name), "mmproj") {
+			continue
+		}
+		for tok := range modelNameTokens(name) {
+			if want[tok] {
+				return name, true
+			}
+		}
+	}
+	return "", false
+}
+
+// projStopTokens 是文件名里不承载"模型身份"的通用 token（量化档、格式、通用词）。
+var projStopTokens = map[string]bool{
+	"gguf": true, "mmproj": true, "model": true, "weights": true, "embed": true,
+	"f16": true, "f32": true, "bf16": true, "fp16": true, "fp32": true,
+	"iq1": true, "iq2": true, "iq3": true, "iq4": true, "q2": true, "q3": true,
+	"q4": true, "q5": true, "q6": true, "q8": true,
+}
+
+// modelNameTokens 把一个文件名拆成"模型名 token"集合（小写、按非字母数字切分、
+// 只留长度≥4 且不在 projStopTokens 里的 token）。两侧都空 → 无从比对（调用方判 false）。
+func modelNameTokens(name string) map[string]bool {
+	base := strings.TrimSuffix(strings.ToLower(filepath.Base(name)), filepath.Ext(name))
+	parts := strings.FieldsFunc(base, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	})
+	out := map[string]bool{}
+	for _, p := range parts {
+		if len(p) >= 4 && !projStopTokens[p] {
+			out[p] = true
+		}
+	}
+	return out
 }
 
 var idSanitize = regexp.MustCompile(`[^a-z0-9-]+`)
@@ -494,7 +575,14 @@ func Probe(opts ProbeOptions) (*Record, *ProbeReport, error) {
 		rep.LocalFile = true
 	}
 
-	ep := Endpoint{BaseURL: endpointBase, Model: opts.Model, Timeout: timeout}
+	// 本地文件探测时把权重所在目录与文件名带上：它们只为待修补 #23 的一条结构化信号
+	// 服务（同目录是否放着**本模型**的 mmproj*.gguf，用于把视觉失败细分到 mmproj_missing）。
+	modelDir, weightsName := "", ""
+	if !isURL && opts.Target != "" {
+		modelDir = filepath.Dir(opts.Target)
+		weightsName = filepath.Base(opts.Target)
+	}
+	ep := Endpoint{BaseURL: endpointBase, Model: opts.Model, Timeout: timeout, ModelDir: modelDir, WeightsName: weightsName}
 
 	if endpointBase != "" {
 		rep.Endpoint = endpointBase
