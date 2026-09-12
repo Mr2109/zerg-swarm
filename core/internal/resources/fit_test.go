@@ -19,16 +19,16 @@ func realQuery() FitQuery {
 	}
 }
 
-// realMachine 返回一台提供引擎开销的机器（无独立显存=统一内存口径）。
+// realMachine 返回一台提供引擎开销的机器（统一内存：显存即内存，§3.1）。
 func realMachine(memAvailGb float64) MachineLedger {
-	return MachineLedger{Machine: "local", MemTotalGb: 64, MemAvailGb: memAvailGb, EngineOverheadGb: 2}
+	return MachineLedger{Machine: "local", MemTotalGb: 64, MemAvailGb: memAvailGb, EngineOverheadGb: 2, UnifiedMemory: true}
 }
 
 // evictFixture 返回一台"现在装不下、驱逐一（够用的）后装得下"的机器：
-// need 7 GiB；freeNow 3 GiB；仅 a 可腾退 4 GiB；b 在飞、c pin 未到期。
+// need 7 GiB；freeNow 3 GiB；仅 a 可腾退 4 GiB；b 在飞、c pin 未到期。（统一内存机器）
 func evictFixture() MachineLedger {
 	return MachineLedger{
-		Machine: "local", MemTotalGb: 32, MemAvailGb: 3, EngineOverheadGb: 2,
+		Machine: "local", MemTotalGb: 32, MemAvailGb: 3, EngineOverheadGb: 2, UnifiedMemory: true,
 		Resident: []ResidentEntry{
 			{Digest: "sha256-a", State: StateReady, Managed: true, MemGb: 4, WeightsBytes: 4 * gib, LastUsedAgoS: 100},
 			{Digest: "sha256-b", State: StateReady, Managed: true, MemGb: 4, ReqCount: 2},
@@ -56,6 +56,7 @@ func TestEstimateFit_Table(t *testing.T) {
 		{"缺层数-fail-closed", func(q *FitQuery) { q.NLayer = 0 }, realMachine(64), VerdictNoFit, true, 0, 0, nil},
 		{"KV缺失且架构族未登记-fail-closed", func(q *FitQuery) { q.NKvHeads = 0; q.HeadDim = 0; q.ArchFamily = "unknown-fam" }, realMachine(64), VerdictNoFit, true, 0, 0, nil},
 		{"显存不足-no_fit(内存够)", func(q *FitQuery) {}, MachineLedger{Machine: "x3", MemTotalGb: 128, MemAvailGb: 64, VramTotalGb: 24, VramFreeGb: 4, EngineOverheadGb: 2}, VerdictNoFit, false, 7 * gib, 1 * gib, nil},
+		{"显存未知且非统一内存-fail-closed(内存够)", func(q *FitQuery) {}, MachineLedger{Machine: "x3", MemTotalGb: 128, MemAvailGb: 120, EngineOverheadGb: 2}, VerdictNoFit, true, 7 * gib, 1 * gib, nil},
 		{"刚好边界-fit", func(q *FitQuery) {}, realMachine(7), VerdictFit, false, 7 * gib, 0, nil},
 		{"差1GiB-no_fit", func(q *FitQuery) {}, realMachine(6), VerdictNoFit, false, 0, 0, nil},
 		{"现在装不下-驱逐够用即evict(计划有序、排除在飞/pin)", func(q *FitQuery) {}, evictFixture(), VerdictEvict, false, 7 * gib, 1 * gib, []string{"sha256-a"}},
@@ -127,5 +128,64 @@ func TestEstimateFit_EstimatesActualBytes(t *testing.T) {
 	want := int64(2.0 * float64(q.NLayer) * float64(fb.KVHeads) * float64(fb.HeadDim) * DefaultBytesPerElem * float64(q.Ctx))
 	if got := EstimateFit(q, realMachine(8)).KvCacheBytes; got != want {
 		t.Fatalf("回退 KV 应为 %d，实得 %d", want, got)
+	}
+}
+
+// TestEstimateFit_VramStrictest —— 显存三态下的"二者取严"（§3.3d，反例优先）：
+//
+//	(a) 内存够 + 显存够 → fit；
+//	(b) 内存够 + 显存不够 → no_fit（显存独立生效，不得只看内存）；
+//	(c) 内存够 + 显存未知且非统一内存 → no_fit 且 estimated=true（fail-closed，不得默默放行）；
+//	(d) 内存够 + 统一内存（显存即内存）→ fit，且 estimated=false（这是"知道"，不是"猜"）。
+func TestEstimateFit_VramStrictest(t *testing.T) {
+	q := realQuery() // need = 7 GiB
+	gpu := func(free float64) MachineLedger {
+		return MachineLedger{Machine: "x3", MemTotalGb: 128, MemAvailGb: 64, VramTotalGb: 24, VramFreeGb: free, EngineOverheadGb: 2}
+	}
+	cases := []struct {
+		name          string
+		machine       MachineLedger
+		wantVerdict   string
+		wantEstimated bool
+	}{
+		{"内存够+显存够-fit", gpu(32), VerdictFit, false},
+		{"内存够+显存不够-no_fit", gpu(4), VerdictNoFit, false},
+		{"内存够+显存未知(非统一内存)-fail-closed", MachineLedger{Machine: "x3", MemTotalGb: 128, MemAvailGb: 64, EngineOverheadGb: 2}, VerdictNoFit, true},
+		{"内存够+统一内存-按内存口径判", MachineLedger{Machine: "local", MemTotalGb: 64, MemAvailGb: 64, EngineOverheadGb: 2, UnifiedMemory: true}, VerdictFit, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			est := EstimateFit(q, c.machine)
+			if est.Verdict != c.wantVerdict {
+				t.Fatalf("verdict want %s got %s（basis=%s）", c.wantVerdict, est.Verdict, est.Basis)
+			}
+			if est.Estimated != c.wantEstimated {
+				t.Fatalf("estimated want %v got %v（basis=%s）", c.wantEstimated, est.Estimated, est.Basis)
+			}
+			if est.Basis == "" {
+				t.Fatal("basis 不得为空（须可解释）")
+			}
+		})
+	}
+	// 反例守卫：统一内存机器不得被当成"显存未知"而 fail-closed
+	if got := EstimateFit(q, MachineLedger{Machine: "local", MemTotalGb: 64, MemAvailGb: 64, EngineOverheadGb: 2, UnifiedMemory: true}).Verdict; got != VerdictFit {
+		t.Fatalf("统一内存（显存即内存）不得判 no_fit，实得 %s", got)
+	}
+}
+
+// TestEstimateFit_VramEvictPlanUsesStrictestDeficit —— 显存受限时的"驱逐可跑"必须给出**够用的**计划：
+// 内存充裕、显存不够 → verdict=evict 且计划点名能让位的驻留（而不是负缺口/空计划）。
+func TestEstimateFit_VramEvictPlanUsesStrictestDeficit(t *testing.T) {
+	m := MachineLedger{
+		Machine: "x3", MemTotalGb: 128, MemAvailGb: 100, EngineOverheadGb: 2,
+		VramTotalGb: 24, VramFreeGb: 4, // 显存只剩 4 GiB，need 7 GiB
+		Resident: []ResidentEntry{{Digest: "sha256-a", State: StateReady, Managed: true, MemGb: 8, LastUsedAgoS: 100}},
+	}
+	est := EstimateFit(realQuery(), m)
+	if est.Verdict != VerdictEvict {
+		t.Fatalf("内存够、显存不够但腾退后够 → 应判 evict，实得 %s（basis=%s）", est.Verdict, est.Basis)
+	}
+	if len(est.EvictPlan) != 1 || est.EvictPlan[0] != "sha256-a" {
+		t.Fatalf("显存缺口应由腾退该驻留补上（计划=[sha256-a]），实得 %v（basis=%s）", est.EvictPlan, est.Basis)
 	}
 }
