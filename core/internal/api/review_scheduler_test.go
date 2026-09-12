@@ -13,6 +13,8 @@ import (
 
 // TestRecoverWaiting_ExpiredDowngrade 超上限(>30min) → 降级 failed
 func TestRecoverWaiting_ExpiredDowngrade(t *testing.T) {
+	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json，落盘不写真机文件
+	isolateTasksFile(t)
 	s := NewMasterScheduler("", 1)
 	task := &Task{
 		ID:          "wait-test-1",
@@ -40,6 +42,8 @@ func TestRecoverWaiting_ExpiredDowngrade(t *testing.T) {
 func TestRecoverWaiting_PingFailStaysWaiting(t *testing.T) {
 	// 2026-09-05 修: 本测试原依赖"网关 8082 不通"才过——网关在线时任务恢复→真 exec→failed——环境依赖缺陷
 	// 治本: 断言目标改为"不丢任务"——恢复入队/waiting/failed 均可——任务必须在系统内可追溯
+	// 待修补 #35: 切临时 tasksFile——构造期不读真机文件，recoverWaitingLocked 落盘也不写真机
+	isolateTasksFile(t)
 	s := NewMasterScheduler("", 1)
 	task := &Task{
 		ID:          "wait-test-2",
@@ -73,6 +77,8 @@ func TestRecoverWaiting_PingFailStaysWaiting(t *testing.T) {
 
 // TestSubmitReviewTaskLocked 执行完成 → 派复查（跨家族模型——不同源）
 func TestSubmitReviewTaskLocked(t *testing.T) {
+	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json
+	isolateTasksFile(t)
 	s := NewMasterScheduler("", 1)
 	execTask := &Task{
 		ID:          "exec-test-1",
@@ -108,6 +114,8 @@ func TestSubmitReviewTaskLocked(t *testing.T) {
 
 // TestHandleReviewDone_Pass 复查通过 → 执行任务 done
 func TestHandleReviewDone_Pass(t *testing.T) {
+	// 待修补 #35: 切临时 tasksFile——构造期不读真机文件，handleReviewDoneLocked 落盘不写真机
+	isolateTasksFile(t)
 	s := NewMasterScheduler("", 1)
 	// 2026-09-05 修: 清恢复入队（/tmp/zerg-tasks.json 遗留任务被 recoverWaiting 恢复——
 	// dispatchLocked 并发把 history 逐出/修改——本测试只验 handleReviewDoneLocked 纯逻辑）
@@ -142,6 +150,8 @@ func TestHandleReviewDone_Pass(t *testing.T) {
 
 // TestHandleReviewDone_Rework 复查打回 → 派重做任务
 func TestHandleReviewDone_Rework(t *testing.T) {
+	// 待修补 #35: 切临时 tasksFile——构造期不读真机文件，handleReviewDoneLocked 落盘不写真机
+	isolateTasksFile(t)
 	s := NewMasterScheduler("", 1)
 	execTask := &Task{
 		ID:          "exec-test-3",
@@ -177,6 +187,8 @@ func TestHandleReviewDone_Rework(t *testing.T) {
 
 // TestReviewRetryOnReviewerFailure — S7: 复查自身失败（无报告）→ 重派复查非打回
 func TestReviewRetryOnReviewerFailure(t *testing.T) {
+	// 待修补 #35: 切临时 tasksFile——构造期不读真机 /tmp/zerg-tasks.json
+	isolateTasksFile(t)
 	s := NewMasterScheduler("", 1)
 	s.mu.Lock()
 	s.queue = s.queue[:0]

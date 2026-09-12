@@ -8,6 +8,20 @@ import (
 	"time"
 )
 
+// isolateTasksFile 测试隔离: 把包级 tasksFile 切到 t.TempDir() 下的临时文件。
+// tasksFile 是主控调度器的持久化文件（默认指向真机 /tmp/zerg-tasks.json）——
+// 测试若不解耦，构造 MasterScheduler（loadPersistedHistory 读）或任何落盘路径
+// （saveTasksLocked 写）都会读写真机主控在用的同一文件，与真机任务互相污染（待修补 #35）。
+// 返回临时路径；t.Cleanup 在用例结束后严格恢复原值（不依赖手写 defer 防漏）。
+func isolateTasksFile(t *testing.T) string {
+	t.Helper()
+	old := tasksFile
+	p := filepath.Join(t.TempDir(), "zerg-tasks-test.json")
+	tasksFile = p
+	t.Cleanup(func() { tasksFile = old })
+	return p
+}
+
 // ============ 测试时序稳健性辅助（测试专用——绝不改产品代码） ============
 //
 // 背景: 旧用例在固定 time.Sleep(100ms) 后立即断言「队空 + running 空」。
@@ -101,9 +115,8 @@ func TestMasterScheduler_Priority(t *testing.T) {
 // TestMasterScheduler_SubmitAndQueue — 提交任务（echo 快速完成——验证状态流转不崩）
 func TestMasterScheduler_SubmitAndQueue(t *testing.T) {
 	// v2.5.6 2026-08-28 测试隔离: 主控在跑会写 /tmp/zerg-tasks.json——测试切到临时文件（防恢复真实任务干扰）
-	oldFile := tasksFile
-	tasksFile = filepath.Join(t.TempDir(), "tasks-test.json")
-	defer func() { tasksFile = oldFile }()
+	// 待修补 #35: 统一走 isolateTasksFile（t.Cleanup 严格恢复）——不用手写 defer
+	isolateTasksFile(t)
 	s := NewMasterScheduler("/bin/echo", 2) // 用 echo（不真跑 CA——测试流程）
 	task := &Task{ID: "t1", Description: "test", Priority: PriorityInternal}
 	s.Submit(task)
@@ -128,9 +141,7 @@ func TestMasterScheduler_SubmitAndQueue(t *testing.T) {
 // TestMasterScheduler_ConcurrentLimit — 并发限制（maxConcurrent）
 func TestMasterScheduler_ConcurrentLimit(t *testing.T) {
 	// 测试隔离（同 SubmitAndQueue）: 持久化文件切临时目录——不写/不读真机 /tmp/zerg-tasks.json
-	oldFile := tasksFile
-	tasksFile = filepath.Join(t.TempDir(), "tasks-test.json")
-	defer func() { tasksFile = oldFile }()
+	isolateTasksFile(t)
 	s := NewMasterScheduler("/bin/echo", 1) // 单槽
 	task := &Task{ID: "t1", Description: "test1", Priority: PriorityInternal}
 	s.Submit(task)
@@ -154,6 +165,9 @@ func TestMasterScheduler_ConcurrentLimit(t *testing.T) {
 
 // TestMasterScheduler_Pause — 外部任务提交——内部任务挂起重新入队（外部优先执行）
 func TestMasterScheduler_Pause(t *testing.T) {
+	// 待修补 #35: 构造 MasterScheduler 会 loadPersistedHistory 读 tasksFile——
+	// 切临时文件，防真机 /tmp/zerg-tasks.json 的真实任务被恢复入队干扰本用例
+	isolateTasksFile(t)
 	s := NewMasterScheduler("/bin/echo", 2)
 	// 2026-09-05 修: 清全局持久化残留（其他测试/真实运行写 /tmp/zerg-tasks.json——
 	// NewMasterScheduler 恢复旧任务入队致 QueueLen 断言污染）——再清一次本测试入队的
