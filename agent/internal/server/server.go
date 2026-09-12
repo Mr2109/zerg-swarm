@@ -100,6 +100,8 @@ func (s *Server) Start(host string, port int) error {
 	s.mux.HandleFunc("/load", s.handleLoad)
 	s.mux.HandleFunc("/infer", s.handleInfer)
 	s.mux.HandleFunc("/unload", s.handleUnload)
+	s.mux.HandleFunc("/pin", s.handlePin)
+	s.mux.HandleFunc("/unpin", s.handleUnpin)
 	s.mux.HandleFunc("/infer/reload", s.handleReload)
 
 	// 启动推理队列 worker
@@ -533,6 +535,82 @@ func (s *Server) handleUnload(w http.ResponseWriter, r *http.Request) {
 	}
 	result := s.agent.backends.Unload(req.Models)
 	writeJSON(w, 200, result)
+}
+
+// handlePin 处理 /pin 请求（批 4：主控观测面把"在 TTL 内不被自动驱逐"的锁定意图落到本端）。
+//
+// 铁律（逐条不得绕过）：
+//   - 只锁定**已在本端驻留**的模型（backend.Manager.Pin 只认自己 procs 里的名字）；
+//     非驻留项一律拒绝——**绝不**因此启动/接管任何进程（§八 Q6）。
+//   - ttl_s<=0 一律拒绝：无 TTL 的 pin 等同内存泄漏（§八 Q5）。
+func (s *Server) handlePin(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
+	var req struct {
+		Model string `json:"model"`
+		TTLS  int    `json:"ttl_s"`
+	}
+	if r.Body == nil {
+		writeJSON(w, 400, map[string]interface{}{"ok": false, "error": "missing_body"})
+		return
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, 400, map[string]interface{}{"ok": false, "error": "invalid_json"})
+		return
+	}
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		writeJSON(w, 400, map[string]interface{}{"ok": false, "error": "missing_model"})
+		return
+	}
+	if req.TTLS <= 0 {
+		writeJSON(w, 400, map[string]interface{}{
+			"ok":      false,
+			"error":   "pin_ttl_required",
+			"message": "pin must carry a positive ttl_s (no-TTL pin equals a memory leak)",
+		})
+		return
+	}
+	// Manager.Pin 只认已驻留的模型；非驻留 → 返回错误（绝不启动/接管）
+	if err := s.agent.backends.Pin(model, time.Duration(req.TTLS)*time.Second); err != nil {
+		writeJSON(w, 409, map[string]interface{}{"ok": false, "error": "not_resident", "message": err.Error()})
+		return
+	}
+	remain, _ := s.agent.backends.PinRemainS(model)
+	writeJSON(w, 200, map[string]interface{}{
+		"ok":           true,
+		"model":        model,
+		"pin_remain_s": remain,
+	})
+}
+
+// handleUnpin 处理 /unpin 请求（立刻恢复可驱逐）。与 /pin 同理：只认已驻留的托管项。
+func (s *Server) handleUnpin(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
+	var req struct {
+		Model string `json:"model"`
+	}
+	if r.Body == nil {
+		writeJSON(w, 400, map[string]interface{}{"ok": false, "error": "missing_body"})
+		return
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, 400, map[string]interface{}{"ok": false, "error": "invalid_json"})
+		return
+	}
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		writeJSON(w, 400, map[string]interface{}{"ok": false, "error": "missing_model"})
+		return
+	}
+	if err := s.agent.backends.Unpin(model); err != nil {
+		writeJSON(w, 409, map[string]interface{}{"ok": false, "error": "not_resident", "message": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]interface{}{"ok": true, "model": model, "pinned": false})
 }
 
 // checkAuth 检查认证令牌。
