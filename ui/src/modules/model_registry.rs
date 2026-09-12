@@ -20,6 +20,12 @@
 //!
 //! 本批**不做**：自动路由、对话内选模型、发现/本地范围切换（后续批）。
 //! 接口形状一律照现有 /api/models/registry（字段名不变、后端不改）。
+//!
+//! 补批（待修补 #39）**证据链三样**：详情层让"结论是从哪来的"看得见——
+//! ① 能力断言的**引擎维度** `capabilities[].engines`（"这能力是在哪个引擎上测出来的"）；
+//! ② **无法判定**的能力 `unverifiable[]`（"这些能力当时没能判定（预算不够/超时）"）；
+//! ③ 许可证结论的**来源锚** `license.evidence`（"这个许可结论是从哪读来的"）。
+//! 三样都照抄接口值：缺 / 空数组 → 显「—」，绝不填占位（与后端"整键不出现"同一口径）。
 
 use egui::RichText;
 use rust_i18n::t; // 文件级导入——否则 t!() 报 cannot find macro（B2a 同坑）
@@ -414,8 +420,8 @@ fn truncate_chars(s: &str, max: usize) -> String {
     out
 }
 
-/// 许可证 8 个字段的（标签键, 字段名）——字段名照 schema: zerg.model.v1（标准 §五）
-const LICENSE_FIELDS: [(&str, &str); 8] = [
+/// 许可证 9 个字段的（标签键, 字段名）——字段名照 schema: zerg.model.v1（标准 §五 + #12 来源锚）。
+const LICENSE_FIELDS: [(&str, &str); 9] = [
     ("mreg.lic_spdx", "spdx"),
     ("mreg.lic_name", "license_name"),
     ("mreg.lic_link", "license_link"),
@@ -424,6 +430,9 @@ const LICENSE_FIELDS: [(&str, &str); 8] = [
     ("mreg.lic_source_url", "source_url"),
     ("mreg.lic_accepted_by", "accepted_by"),
     ("mreg.lic_accepted_at", "accepted_at"),
+    // 待修补 #39：许可证结论的来源锚（probe.license.v1 读的是哪个键/哪个文件）。
+    // 放最后——保持既有 8 个字段的下标稳定（既有断言不受影响）。
+    ("mreg.lic_evidence", "evidence"),
 ];
 
 /// license 全字段（有就显示、无就「—」）。
@@ -464,8 +473,10 @@ fn license_rows(rec: &serde_json::Value) -> Vec<(&'static str, FieldVal)> {
         .collect()
 }
 
-/// 能力断言逐条：(name, value, source, evidence)——source/evidence 缺则「—」
-fn cap_rows(rec: &serde_json::Value) -> Vec<(String, FieldVal, String, String)> {
+/// 能力断言逐条：(name, value, source, evidence, engines)。
+/// engines（待修补 #39）是这条断言被**证过成立**的引擎——回答"这能力是在哪个引擎上测出来的"；
+/// 去空白、丢空串、保序、去重；缺 / 空数组 → 空 vec（展示层显「—」，绝不填占位）。
+fn cap_rows(rec: &serde_json::Value) -> Vec<(String, FieldVal, String, String, Vec<String>)> {
     rec.get("capabilities")
         .and_then(|c| c.as_array())
         .map(|arr| {
@@ -478,11 +489,66 @@ fn cap_rows(rec: &serde_json::Value) -> Vec<(String, FieldVal, String, String)> 
                     };
                     let src = or_dash(json_str(c.get("source")));
                     let ev = or_dash(json_str(c.get("evidence")));
-                    (if name.is_empty() { "?".to_string() } else { name }, val, src, ev)
+                    let engines = engine_list(c.get("engines"));
+                    (if name.is_empty() { "?".to_string() } else { name }, val, src, ev, engines)
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// 从一条能力的 engines 字段取引擎列表：去空白、丢空串、保序、去重（缺 / 非数组 → 空 vec）。
+fn engine_list(v: Option<&serde_json::Value>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(arr) = v.and_then(|x| x.as_array()) {
+        for e in arr {
+            let s = e.as_str().unwrap_or("").trim();
+            if !s.is_empty() && !out.iter().any(|x| x == s) {
+                out.push(s.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// 引擎列表展示：多个用「, 」连接；空列表 → 「—」（缺值不是错误，不是占位）。
+fn engines_display(engines: &[String]) -> String {
+    if engines.is_empty() {
+        DASH.to_string()
+    } else {
+        engines.join(", ")
+    }
+}
+
+/// 不可判定能力逐条（待修补 #39）：(name, reason 原文码, evidence)。
+/// 三个字段照抄接口（name/reason/evidence 一字不改）；缺项显「—」。
+/// reason 保留原文码（证据完整性），展示用 uv_reason_label 给通俗标签。
+fn unverifiable_rows(rec: &serde_json::Value) -> Vec<(String, String, String)> {
+    rec.get("unverifiable")
+        .and_then(|u| u.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|u| {
+                    let name = json_str(u.get("name"));
+                    (
+                        if name.is_empty() { "?".to_string() } else { name },
+                        json_str(u.get("reason")),
+                        or_dash(json_str(u.get("evidence"))),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 不可判定原因 → 通俗文案（i18n 键）；未知原因码**原样回退**（不猜、不改写原因分类）。
+fn uv_reason_label(reason: &str) -> String {
+    match reason.trim() {
+        "budget_exhausted" => t!("mreg.uv_reason_budget").to_string(),
+        "timeout" => t!("mreg.uv_reason_timeout").to_string(),
+        "" => DASH.to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// 建材逐项：(role, name, sha256, size 人类可读)——缺项「—」，size 缺失显「—」（不是 0）
@@ -1118,7 +1184,8 @@ fn detail_window(ctx: egui::Context, rec: &serde_json::Value, copied: Option<&st
                     }
                 });
 
-            // 能力断言：name / 取值 / 来源 / 证据（证据是"凭什么这么说"——标准 §四）
+            // 能力断言：name / 取值 / 来源 / 证据 / 实测引擎（证据是"凭什么这么说"——标准 §四；
+            // 实测引擎回答"这能力是在哪个引擎上测出来的"——待修补 #39）
             ui.add_space(8.0);
             ui.strong(t!("mreg.detail_caps").to_string());
             let caps = cap_rows(rec);
@@ -1126,7 +1193,7 @@ fn detail_window(ctx: egui::Context, rec: &serde_json::Value, copied: Option<&st
                 ui.weak(t!("mreg.detail_no_caps").to_string());
             } else {
                 egui::Grid::new("mreg_detail_caps")
-                    .num_columns(4)
+                    .num_columns(5)
                     .spacing([12.0, 2.0])
                     .striped(true)
                     .show(ui, |ui| {
@@ -1134,11 +1201,39 @@ fn detail_window(ctx: egui::Context, rec: &serde_json::Value, copied: Option<&st
                         ui.weak(t!("mreg.col_cap_value").to_string());
                         ui.weak(t!("mreg.col_cap_source").to_string());
                         ui.weak(t!("mreg.col_cap_evidence").to_string());
+                        ui.weak(t!("mreg.col_cap_engines").to_string());
                         ui.end_row();
-                        for (name, val, src, ev) in caps {
+                        for (name, val, src, ev, engines) in caps {
                             ui.label(RichText::new(name).small());
                             ui.label(RichText::new(val.display()).small());
                             ui.label(RichText::new(src).small());
+                            ui.label(RichText::new(ev).small());
+                            ui.label(RichText::new(engines_display(&engines)).small());
+                            ui.end_row();
+                        }
+                    });
+            }
+
+            // 无法判定的能力（待修补 #39）：预算不够 / 超时 → 那时没探出结论（不是"没有"）。
+            // 通俗标题 + 通俗原因 + 原始证据：既让人看懂，也保留可追责的原文码。
+            ui.add_space(8.0);
+            ui.strong(t!("mreg.detail_unverifiable").to_string());
+            let uvs = unverifiable_rows(rec);
+            if uvs.is_empty() {
+                ui.weak(t!("mreg.uv_none").to_string());
+            } else {
+                egui::Grid::new("mreg_detail_unverifiable")
+                    .num_columns(3)
+                    .spacing([12.0, 2.0])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.weak(t!("mreg.col_uv_name").to_string());
+                        ui.weak(t!("mreg.col_uv_reason").to_string());
+                        ui.weak(t!("mreg.col_uv_evidence").to_string());
+                        ui.end_row();
+                        for (name, reason, ev) in uvs {
+                            ui.label(RichText::new(name).small());
+                            ui.label(RichText::new(uv_reason_label(&reason)).small());
                             ui.label(RichText::new(ev).small());
                             ui.end_row();
                         }
@@ -1296,9 +1391,16 @@ mod view_tests {
                     "digest": "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
                     "commercial": "yes", "context_window": 32768,
                     "capabilities": [
-                        {"name": "vision", "value": true, "source": "probed", "evidence": "probe.vision.1x1.v1 ok"},
+                        {"name": "vision", "value": true, "source": "probed", "evidence": "probe.vision.1x1.v1 ok",
+                         "engines": ["llama.cpp", "vllm"]},
                         {"name": "text", "value": true, "source": "probed"}
                     ],
+                    "unverifiable": [
+                        {"name": "embedding", "reason": "budget_exhausted",
+                         "evidence": "probe.embedding.v1 budget=2048 (budget_exhausted: truncated)"}
+                    ],
+                    "license": {"spdx": "apache-2.0", "commercial": "yes", "gated": false,
+                                "evidence": "probe.license.v1 (gguf_key: general.license=\"apache-2.0\")"},
                     "files": [{"role": "weights", "name": "a.gguf", "sha256": "aa11", "size": 2048},
                               {"role": "mmproj", "name": "m.gguf", "sha256": "bb22", "size": 512}],
                     "engine_recipes": ["llama.cpp", "vllm"],
@@ -1452,13 +1554,13 @@ mod view_tests {
         assert_eq!(rec_key(&json!({"id": "m1"})), "m1|");
     }
 
-    /// license 全字段：一条都没登记 → 8 行值全是 Missing（显「—」），**不是错误**
+    /// license 全字段：一条都没登记 → 9 行值全是 Missing（显「—」），**不是错误**
     #[test]
     fn test_license_rows_all_missing_is_not_error() {
         let rows = license_rows(&json!({"id": "x"}));
-        assert_eq!(rows.len(), 8);
+        assert_eq!(rows.len(), 9);
         assert!(rows.iter().all(|(_, v)| *v == FieldVal::Missing));
-        // 标签键顺序与 schema 字段一一对应（spdx / license_name / … / accepted_at）
+        // 标签键顺序与 schema 字段一一对应（spdx / license_name / … / accepted_at / evidence）
         let keys: Vec<&str> = rows.iter().map(|(k, _)| *k).collect();
         assert_eq!(
             keys,
@@ -1471,6 +1573,7 @@ mod view_tests {
                 "mreg.lic_source_url",
                 "mreg.lic_accepted_by",
                 "mreg.lic_accepted_at",
+                "mreg.lic_evidence",
             ]
         );
         // 缺值 → 展示为「—」（占位符，不是空串、不是报错）
@@ -1509,7 +1612,7 @@ mod view_tests {
         assert_eq!(blank[3].1, FieldVal::Missing);
     }
 
-    /// 能力断言逐条：name / value / source / evidence；缺 source/evidence 显「—」
+    /// 能力断言逐条：name / value / source / evidence / engines；缺 source/evidence 显「—」
     #[test]
     fn test_cap_rows_source_and_evidence() {
         let v = sample();
@@ -1520,17 +1623,21 @@ mod view_tests {
         assert_eq!(rows[0].1, FieldVal::Flag(true));
         assert_eq!(rows[0].2, "probed");
         assert_eq!(rows[0].3, "probe.vision.1x1.v1 ok");
-        // 第二条没有 evidence → 「—」（缺证据不等于错，只是没写）
+        // 待修补 #39：引擎维度逐条带出（保序）
+        assert_eq!(rows[0].4, vec!["llama.cpp".to_string(), "vllm".to_string()]);
+        // 第二条没有 evidence → 「—」（缺证据不等于错，只是没写）；也没有引擎 → 空
         assert_eq!(rows[1].0, "text");
         assert_eq!(rows[1].3, DASH);
+        assert!(rows[1].4.is_empty());
         // 缺 capabilities 字段 → 空列表，不 panic
         assert!(cap_rows(&recs[2]).is_empty());
-        // name 缺失 → 占位符；value 缺失 → Missing（显「—」）
+        // name 缺失 → 占位符；value 缺失 → Missing（显「—」）；无引擎 → 空 vec（不填占位）
         let odd = cap_rows(&json!({"capabilities": [{"source": "manual", "evidence": "e"}]}));
         assert_eq!(odd[0].0, "?");
         assert_eq!(odd[0].1, FieldVal::Missing);
         assert_eq!(odd[0].2, "manual");
         assert_eq!(odd[0].3, "e");
+        assert!(odd[0].4.is_empty());
     }
 
     /// 建材逐项与引擎配方：逐项字段齐全；size 缺失显「—」（不是 0 B）
@@ -1636,5 +1743,102 @@ mod view_tests {
         }
         let mut out = ctx.run_ui(Default::default(), |ui| super::ui(ui));
         out.textures_delta.clear();
+    }
+
+    /// 待修补 #39：引擎列表取值（去空白/丢空串/保序/去重；缺或非数组 → 空）
+    #[test]
+    fn test_engine_list_and_display() {
+        // 缺字段 / 非数组 / 空数组 → 空 vec（缺 = 未知，不填占位）
+        assert!(engine_list(None).is_empty());
+        assert!(engine_list(Some(&json!("llama.cpp"))).is_empty());
+        assert!(engine_list(Some(&json!([]))).is_empty());
+        // 去空白 + 丢空串 + 去重 + 保序
+        let got = engine_list(Some(&json!([" llama.cpp ", "llama.cpp", "", "  ", "vllm"])));
+        assert_eq!(got, vec!["llama.cpp".to_string(), "vllm".to_string()]);
+        // 非字符串项跳过、不 panic
+        assert!(engine_list(Some(&json!([1, null, true]))).is_empty());
+        // 展示：空 → 「—」，多个用「, 」连接
+        assert_eq!(engines_display(&[]), DASH);
+        assert_eq!(
+            engines_display(&["llama.cpp".to_string(), "vllm".to_string()]),
+            "llama.cpp, vllm"
+        );
+    }
+
+    /// 待修补 #39：不可判定能力逐条（照抄接口值；缺字段/非数组 → 空；缺项用占位）
+    #[test]
+    fn test_unverifiable_rows() {
+        let v = sample();
+        let recs = record_list(&v);
+        let rows = unverifiable_rows(&recs[0]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "embedding");
+        assert_eq!(rows[0].1, "budget_exhausted"); // 原文码照抄——不改写原因分类
+        assert!(rows[0].2.starts_with("probe.embedding.v1"));
+        // 缺 unverifiable 字段 / 非数组 → 空，不 panic（坏记录也不崩）
+        assert!(unverifiable_rows(&recs[2]).is_empty());
+        assert!(unverifiable_rows(&json!({"unverifiable": "oops"})).is_empty());
+        // 缺 name/reason/evidence → 占位符 / 「—」，不 panic
+        let odd = unverifiable_rows(&json!({"unverifiable": [{}]}));
+        assert_eq!(odd[0].0, "?");
+        assert_eq!(odd[0].1, "");
+        assert_eq!(odd[0].2, DASH);
+    }
+
+    /// 待修补 #39：不可判定原因 → 通俗文案；未知原因码原样回退（不猜、不改写）
+    #[test]
+    fn test_uv_reason_label() {
+        assert_eq!(uv_reason_label("budget_exhausted"), t!("mreg.uv_reason_budget").to_string());
+        assert_eq!(uv_reason_label("timeout"), t!("mreg.uv_reason_timeout").to_string());
+        // 已知原因码必须真的译出来（不是把 i18n 键原样吐回）
+        let budget = uv_reason_label("budget_exhausted");
+        assert!(!budget.is_empty() && !budget.contains("mreg."));
+        // 空白 → 「—」；陌生原因码 → 原样回退（含 trim）
+        assert_eq!(uv_reason_label(""), DASH);
+        assert_eq!(uv_reason_label("  weird_reason  "), "weird_reason");
+    }
+
+    /// 待修补 #39：license 来源锚有值即显示、缺则「—」（空值不是错误、不是占位）
+    #[test]
+    fn test_license_rows_includes_evidence() {
+        let with = license_rows(&json!({"id": "x", "license": {
+            "spdx": "apache-2.0", "commercial": "yes",
+            "evidence": "probe.license.v1 (gguf_key: general.license=\"apache-2.0\")"}}));
+        assert_eq!(with[8].0, "mreg.lic_evidence");
+        assert_eq!(
+            with[8].1,
+            FieldVal::Text("probe.license.v1 (gguf_key: general.license=\"apache-2.0\")".to_string())
+        );
+        // 缺 evidence → Missing（显「—」）
+        let without = license_rows(&json!({"id": "x", "commercial": "yes"}));
+        assert_eq!(without[8].1, FieldVal::Missing);
+        // 空白 evidence 不算有值
+        let blank = license_rows(&json!({"id": "x", "license": {"evidence": "   "}}));
+        assert_eq!(blank[8].1, FieldVal::Missing);
+    }
+
+    /// 待修补 #39：证据链三样的渲染路径不 panic（齐全 / 全缺 两种极端都过一遍）
+    #[test]
+    fn test_render_evidence_chain_do_not_panic() {
+        let full = sample();
+        let bare = json!({"count": 1, "bad_records": 0, "root": "/tmp/m",
+            "records": [{"id": "bare", "version": "v1", "commercial": "unknown",
+                         "capabilities": [{"name": "text", "value": true, "source": "declared"}],
+                         "files": []}]});
+        let ctx = egui::Context::default();
+        for payload in [&full, &bare] {
+            let sel = rec_key(&record_list(payload)[0]);
+            let st = ViewState {
+                view: View::Capability,
+                search: "",
+                cap: None,
+                selected: Some(sel.as_str()),
+                copied: None,
+            };
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                let _ = super::render_registry_with(ui, payload, &st);
+            });
+            out.textures_delta.clear();
+        }
     }
 }
