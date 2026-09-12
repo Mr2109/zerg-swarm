@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -33,6 +34,9 @@ import (
 //   - originalPath: 原始端点路径（如 /v1/responses）
 //   - body: 原始请求体
 //   - headers: 需要透传的认证头
+//   - required: 本次请求的必需能力（待修补 #38 ②）——本函数内的换机 failover 会重新选路，
+//     required 必须一并透传给 pickFallbackRoute，保证换机后的目标引擎重新过能力门槛。
+//     没有必需能力的调用点（压缩/摘要等纯文本内部请求）显式传 nil。
 //
 // 返回：
 //   - 子端响应（直接透传，不做格式转换）
@@ -42,6 +46,7 @@ func (g *Gateway) forwardToBackend(
 	originalPath string,
 	body []byte,
 	headers http.Header,
+	required []string,
 ) (*http.Response, error) {
 	// 构造转发 URL：直接用 pickRoute 算好的 URL（已含 IP + 端口）
 	forwardURL := route.URL
@@ -125,9 +130,18 @@ func (g *Gateway) forwardToBackend(
 		// v2.5.4.9 C failover：转发失败（超时/连接错误——卡死检测）→ 换机器重试 1 次
 		// 场景: X3 单槽卡死——ResponseHeaderTimeout 60s 触发——换本机/其他候选
 		// reason 传真实错误原文：failover 会涨失败/熔断计数，计数必须带原因（快照 last_error 可见）
-		if failoverRoute, ferr := g.pickFallbackRoute(route, modelName(reqMap), fmt.Sprintf("backend %s forward failed: %v", route.Host, err)); ferr == nil {
+		// required 透传（待修补 #38 ②）：换机是重新选路，新目标引擎必须重新过按引擎的能力门槛。
+		if failoverRoute, ferr := g.pickFallbackRoute(route, modelName(reqMap), fmt.Sprintf("backend %s forward failed: %v", route.Host, err), required); ferr == nil {
 			log.Printf("🔄 C failover: %s forward failed (%v) — switching to %s", route.Host, err, failoverRoute.Host)
-			return g.forwardToBackend(ctx, failoverRoute, originalPath, body, headers)
+			return g.forwardToBackend(ctx, failoverRoute, originalPath, body, headers, required)
+		} else {
+			// 换机被能力硬门槛拦下（待修补 #38 ②）：把门槛错误**原样上抛**，保住统一原因码
+			// （capability_unavailable/400）。不这样处理，真实原因会被下面的 transport 错误
+			// 盖成 502 upstream_fail——拦截是对的，但原因丢了就不是「同一套原因码」。
+			var ge *CapabilityGateError
+			if errors.As(ferr, &ge) {
+				return nil, ferr
+			}
 		}
 		return nil, fmt.Errorf("forward request failed: %w", err)
 	}
