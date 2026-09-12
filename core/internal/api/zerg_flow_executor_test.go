@@ -50,6 +50,8 @@ func mockModel(systemPrompt, userPrompt string, maxTokens int) (string, error) {
 }
 
 func TestZergFlowExecutorRun(t *testing.T) {
+	// 待修补 #36: 任务目录根切临时目录——本用例固定 ID task-flow-test-1，否则任务目录落到真机 /tmp/zerg-tasks/
+	isolateTaskRoot(t)
 	// 清理旧的 task-flow-test-* 目录（避免 git 残留累积——commit 数错乱）
 	if entries, err := os.ReadDir(statepath.TaskRoot()); err == nil {
 		for _, en := range entries {
