@@ -5,9 +5,10 @@
 //   - 动态端口分配（9000-9999）
 //   - 健康检查（交替探测 /health 和 /v1/models）
 //   - 崩溃自愈（重试 3 次后熔断）
-//   - 多模型驻留 + LRU 淘汰（借鉴 llama.cpp router mode）
+//   - 多模型驻留 + 五档裁决淘汰（§八 Q1 默认单槽 / Q2 五档；裁决逻辑在共享包 shared/resources，
+//     本包只负责"把状态翻译成入参 + 执行裁决"——见 residency.go）
 //   - 请求合并（同模型共享加载槽）
-//   - 内存预算检查 + 卸载腾空间
+//   - 内存预算检查 + 只卸够腾空间（fail-closed：腾不出缺口就 507 拒装）
 //   - 优雅停止（SIGTERM → 等 5s → SIGKILL）
 package backend
 
@@ -37,9 +38,6 @@ const (
 	StateReady    = "ready"
 	StateCrashed  = "crashed"
 	StateSleeping = "sleeping"
-
-	// maxResident 模型驻留上限（LRU 淘汰阈值，借鉴 llama.cpp router mode）
-	maxResident = 3
 )
 
 // subproc 单个模型的后端进程状态。
@@ -52,6 +50,8 @@ type subproc struct {
 	failCnt  int       // 连续健康检查失败次数
 	lastUsed time.Time // 最近使用时间（LRU）
 	reqCount int       // 活跃请求数
+	// pinUntil Q5：显式 pin 的到期时刻（零值 = 未 pin）。无 TTL 的 pin 不允许——见 Manager.Pin。
+	pinUntil time.Time
 }
 
 // loadWaiter 请求合并：同模型并发请求共享一个加载槽
@@ -61,22 +61,24 @@ type loadWaiter struct {
 	err    error
 }
 
-// Manager 后端管理器，线程安全。多模型驻留 + LRU 淘汰。
+// Manager 后端管理器，线程安全。多模型驻留 + 五档裁决淘汰（Q1/Q2）。
 type Manager struct {
-	mu       sync.Mutex
-	procs    map[string]*subproc    // model → subproc（多模型驻留）
-	loading  map[string]*loadWaiter // model → 正在加载的等待组（请求合并）
-	registry *registry.Registry
-	machine  string
+	mu          sync.Mutex
+	procs       map[string]*subproc    // model → subproc（多模型驻留）
+	loading     map[string]*loadWaiter // model → 正在加载的等待组（请求合并）
+	registry    *registry.Registry
+	machine     string
+	maxResident int // 驻留上限（<=0 视为默认单槽；见 EnvMaxResident / SetMaxResident）
 }
 
-// NewManager 创建后端管理器。
+// NewManager 创建后端管理器。驻留上限取自 ZERG_MAX_RESIDENT（默认单槽，Q1）。
 func NewManager(reg *registry.Registry, machine string) *Manager {
 	return &Manager{
-		procs:    make(map[string]*subproc),
-		loading:  make(map[string]*loadWaiter),
-		registry: reg,
-		machine:  machine,
+		procs:       make(map[string]*subproc),
+		loading:     make(map[string]*loadWaiter),
+		registry:    reg,
+		machine:     machine,
+		maxResident: resolveMaxResident(),
 	}
 }
 
@@ -135,31 +137,17 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// 驻留超限 → LRU 淘汰（T1）
+	// 驻留超限 → 五档裁决淘汰（Q1 默认单槽 / Q2 五档）
 	m.evictIfNeededLocked()
 
-	// 内存预算检查（T3 预检，借鉴 llama_cpp_router willModelFit）
-	memRequired := entry.MemGB
-	if memRequired > 0 {
-		memAvail := monitor.DefaultSampler.MemAvailableGb()
-		// 统计已驻留模型占用
-		var residentGB float64
-		for _, sp := range m.procs {
-			if sp.entry != nil {
-				residentGB += sp.entry.MemGB
-			}
+	// 内存预算检查（T3 预检，借鉴 llama_cpp_router willModelFit）——fail-closed
+	if memRequired := entry.MemGB; memRequired > 0 {
+		ok, have, need := m.ensureMemoryForLocked(memRequired, monitor.DefaultSampler.MemAvailableGb())
+		if !ok {
+			// 腾不出缺口 → 拒装（507 语义不变）：不许赌"应该能跑"。
+			return m.rejectInsufficientMemory(have, need), nil
 		}
-		availForNew := memAvail + residentGB
-		if availForNew < memRequired*1.1 {
-			// 尝试卸载旧模型腾空间（LRU 优先）直到能装下（T3）
-			freed := m.evictForMemoryLocked(memRequired * 1.1)
-			if availForNew+freed < memRequired*1.1 {
-				return errResponse(507, "insufficient memory", fmt.Sprintf(
-					"available: %.1f GB, required: %.1f GB", availForNew, memRequired*1.1)), nil
-			}
-		}
-		log.Printf("[backend] 内存预算检查通过: avail=%.1fGB, required=%.1fGB",
-			availForNew, memRequired*1.1)
+		log.Printf("[backend] 内存预算检查通过: avail=%.1fGB, required=%.1fGB", have, need)
 	}
 
 	// 设置 loading 状态
@@ -474,56 +462,81 @@ func (m *Manager) BackendRssGb() float64 {
 	return total
 }
 
-// evictIfNeededLocked 驻留超限时 LRU 淘汰（调用方需持锁）。
+// ensureMemoryForLocked 内存预检（fail-closed，调用方需持锁）。
+//
+// 口径：新模型需要 memRequiredGb*1.1；实测可用 availGb 不够时，先按五档裁决**只卸够**
+// 缺口（avail - need），仍不够就返回 ok=false（调用方回 507 —— 估不出/腾不出就不装）。
+// 返回 (ok, 腾退后的可用量, 需求量)。
+//
+// availGb 由调用方传入（doStart 传 monitor 实测值）——这样"够不够"的判定可被测试注入，
+// 不必去动真机内存。
+func (m *Manager) ensureMemoryForLocked(memRequiredGb, availGb float64) (bool, float64, float64) {
+	need := memRequiredGb * 1.1
+	if availGb >= need {
+		return true, availGb, need
+	}
+	// 只卸够：缺口 = need - avail（不是模型总需求——旧实现传总量，等于多卸）
+	freed := m.evictForMemoryLocked(need - availGb)
+	have := availGb + freed
+	return have >= need, have, need
+}
+
+// rejectInsufficientMemory 内存不足的拒装响应（507 insufficient memory——语义与既有实现一致）。
+func (m *Manager) rejectInsufficientMemory(have, need float64) map[string]interface{} {
+	return errResponse(507, "insufficient memory", fmt.Sprintf("available: %.1f GB, required: %.1f GB", have, need))
+}
+
+// evictIfNeededLocked 驻留超限时按五档裁决淘汰（调用方需持锁）。
+//
+// 上限 = maxResident（默认 1，Q1；配置项 ZERG_MAX_RESIDENT）。淘汰顺序不再只是 LRU，
+// 而是共享裁决的五档：① 崩溃/僵尸（本端 procs 里只有我们自己起的进程，未托管者根本不在其中）
+// → ③ 空闲中 LRU 最旧、同档权重更大者先（腾得多）→ ⑤ 被别处等待/加载中者最后；
+// 在飞请求者（红线①）与 pin 未到期者（红线③）绝不进入列表。
 func (m *Manager) evictIfNeededLocked() {
-	if len(m.procs) < maxResident {
+	limit := m.residentLimitLocked()
+	if len(m.procs) < limit {
 		return
 	}
-	// 找 last_used 最旧且 reqCount==0 的模型
-	var victim *subproc
-	var victimName string
-	for name, sp := range m.procs {
-		if sp.reqCount > 0 || sp.state != StateReady {
+	// 要腾出的槽位数：让新模型进来后不超过上限
+	needSlots := len(m.procs) - limit + 1
+	// 准入过滤后的可动作清单（在飞/未托管/pin 未到期/加载中已被拦住）
+	plan := m.rankActionableLocked()
+	if len(plan) == 0 {
+		// 无可驱逐项（全在飞 / 全 pin 未到期 / 全加载中）：宁可超限也不杀正在用的模型——
+		// 内存预检与 507 兜底（fail-closed），并如实记日志。
+		log.Printf("[backend] 驻留超限但无可驱逐项（在飞/pin/加载中受保护）: resident=%d limit=%d", len(m.procs), limit)
+		return
+	}
+	if len(plan) < needSlots {
+		log.Printf("[backend] 可驱逐 %d 项 < 需腾 %d 槽：只腾能腾的（受保护项不动）", len(plan), needSlots)
+		needSlots = len(plan)
+	}
+	for _, e := range plan[:needSlots] {
+		sp, ok := m.procs[e.Alias]
+		if !ok {
 			continue
 		}
-		if victim == nil || sp.lastUsed.Before(victim.lastUsed) {
-			victim = sp
-			victimName = name
-		}
-	}
-	if victim != nil {
-		log.Printf("[backend] LRU 淘汰: 卸载 %s (last_used=%s)", victimName, victim.lastUsed.Format("15:04:05"))
-		m.stopSubproc(victim)
-		delete(m.procs, victimName)
+		m.evictSubprocLocked(e.Alias, sp, fmt.Sprintf("五档淘汰(tier=%d,%s)", e.Tier, e.Reason))
 	}
 }
 
-// evictForMemoryLocked 卸载模型腾内存（LRU 优先），返回释放的内存 GB。
+// evictForMemoryLocked 只卸够：按五档裁决腾出缺口 needGB，返回实际腾出的 GB。
+//
+// needGB 语义 = "还差多少内存"（不是模型总需求）——调用方传 need - 当前可用，
+// 这样"卸一个就够"才成立（旧实现传总量，等于多卸）。
+// 在飞请求者、pin 未到期者、加载中者、未托管进程一律不进计划（红线①②③）。
 func (m *Manager) evictForMemoryLocked(needGB float64) float64 {
+	if needGB <= 0 {
+		return 0
+	}
+	victims := m.evictVictimsLocked(needGB)
 	var freed float64
-	for freed < needGB {
-		var victim *subproc
-		var victimName string
-		for name, sp := range m.procs {
-			if sp.reqCount > 0 || sp.state != StateReady {
-				continue
-			}
-			if victim == nil || sp.lastUsed.Before(victim.lastUsed) {
-				victim = sp
-				victimName = name
-			}
+	for _, name := range victims {
+		sp, ok := m.procs[name]
+		if !ok {
+			continue
 		}
-		if victim == nil {
-			break
-		}
-		gb := 0.0
-		if victim.entry != nil {
-			gb = victim.entry.MemGB
-		}
-		log.Printf("[backend] 内存腾退: 卸载 %s (释放 %.1fGB)", victimName, gb)
-		m.stopSubproc(victim)
-		delete(m.procs, victimName)
-		freed += gb
+		freed += m.evictSubprocLocked(name, sp, "内存腾退(只卸够)")
 	}
 	return freed
 }

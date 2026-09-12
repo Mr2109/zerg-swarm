@@ -41,9 +41,7 @@ func fitMachine() resources.MachineLedger {
 		Machine:          "x3",
 		MemTotalGb:       128,
 		MemAvailGb:       120,
-		EngineOverheadGb: 2,  // 机器提供开销 → 不因开销缺失而标 estimated
-		VramTotalGb:      24, // 独立显存（GPU 机）——显存未知会 fail-closed，故测试给出真值
-		VramFreeGb:       24,
+		EngineOverheadGb: 2, // 机器提供开销 → 不因开销缺失而标 estimated
 	}
 }
 

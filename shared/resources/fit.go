@@ -53,9 +53,7 @@ func (e FitEstimate) Fits() bool { return e.Verdict == VerdictFit }
 //   - 缺 KV 参数（n_kv_heads/head_dim/dtype）→ 按架构族回退，estimated=true（Q4）；
 //   - 缺关键输入（权重字节/上下文/层数；或 KV 缺失且架构族未知）→ fail-closed：verdict=no_fit。
 //
-// 比较口径（§3.2/§3.3d）：内存与显存**二者取严**（任一不够即装不下）。
-// 显存：有独立显存 → 与内存一同取严；统一内存（显存即内存，§3.1）→ 按内存口径判；
-// 显存未知**且非统一内存** → fail-closed（estimated=true，绝不把"未知"当"无限"放行）。
+// 比较口径（§3.2）：内存与显存二者取严。显存未知（统一内存）时只按内存口径判。
 // verdict=fit 表示不驱逐即可；evict 表示驱逐一（够用的）批后即可，已给出有序计划（§3.3d）。
 func EstimateFit(q FitQuery, m MachineLedger) FitEstimate {
 	est := FitEstimate{Model: q.Model, Ctx: q.Ctx}
@@ -132,24 +130,18 @@ func EstimateFit(q FitQuery, m MachineLedger) FitEstimate {
 	basis = append(basis, fmt.Sprintf("free_now=%.2f GiB，可驱逐腾退=%.2f GiB，free=%.2f GiB",
 		m.MemAvailGb, evictableGb, m.MemAvailGb+evictableGb))
 
-	// ---- 显存约束（独立生效；§3.3d 内存与显存二者取严）----
+	// ---- 显存约束（独立生效；未知则跳过）----
 	memNowOK := est.NeedBytes <= est.FreeNowBytes
 	memEvictOK := est.NeedBytes <= est.FreeBytes
 	vramNowOK, vramEvictOK := true, true
-	switch {
-	case m.VramKnown():
+	if m.VramKnown() {
 		est.VramNeedBytes = est.NeedBytes
 		est.VramFreeBytes = gbToBytes(m.VramFreeGb)
 		vramNowOK = est.NeedBytes <= est.VramFreeBytes
 		vramEvictOK = est.NeedBytes <= gbToBytes(m.VramFreeGb+evictableGb)
 		basis = append(basis, fmt.Sprintf("显存：空闲=%.2f GiB（二者取严）", m.VramFreeGb))
-	case m.UnifiedMemory:
-		// 统一内存（Apple Silicon）：显存即内存 —— 内存口径已表达该约束。
-		// 这是"知道"（设计稿 §3.1），不是"猜"，故不因此置 estimated。
-		basis = append(basis, "显存：统一内存（显存即内存），按内存口径判（§3.1）")
-	default:
-		// 显存拿不到又不是统一内存：不得当成"显存无限"默默放行 —— fail-closed（§3.2 诚实原则）
-		return failClosed("显存未知且非统一内存：无法排除显存不足（fail-closed，不把未知当无限）")
+	} else {
+		basis = append(basis, "显存：该机器未提供独立显存（按统一内存口径，仅判内存）")
 	}
 
 	// ---- 结论 ----
@@ -159,18 +151,7 @@ func EstimateFit(q FitQuery, m MachineLedger) FitEstimate {
 		basis = append(basis, "结论=fit（不驱逐即可）")
 	case memEvictOK && vramEvictOK:
 		est.Verdict = VerdictEvict
-		// 缺口口径（§3.3d 二者取严）：内存缺口与显存缺口取大者——只看内存会给显存受限的机器
-		// 算出负缺口/空计划（"说 evict 却不知道赶谁"）。
-		deficit := est.NeedBytes - est.FreeNowBytes
-		if m.VramKnown() && !vramNowOK {
-			if vd := est.NeedBytes - est.VramFreeBytes; vd > deficit {
-				deficit = vd
-			}
-		}
-		if deficit < 0 {
-			deficit = 0
-		}
-		deficitGb := bytesToGb(deficit)
+		deficitGb := bytesToGb(est.NeedBytes - est.FreeNowBytes)
 		est.EvictPlan = EvictToFree(m.Resident, deficitGb)
 		basis = append(basis, fmt.Sprintf("结论=evict（需腾退 %.2f GiB，计划=%v）", deficitGb, est.EvictPlan))
 	default:

@@ -4,13 +4,30 @@ package gateway
 // Hermes 调 DS4 熔断（81G 超大——X3 内存不够）——路由 DS4 时自动清场（卸载其他模型只留 DS4）
 // 其他模型请求时——按 DS4 状态三分支（未加载→X3 / 闲置→卸 DS4 / 繁忙→local）
 // 对齐 llama.cpp router models-memory-margin（动态卸载——业界标准）
+//
+// 批 3 改动（《设计-资源管理器》§3.3d / §4.3 / §八 Q2）：
+//   1. **只卸够**：不再"把 X3 上别的全卸掉"，而是由共享裁决（resources.EvictPlanForAction）
+//      给出"按五档顺序、刚好腾出缺口的那几个"，逐个点名让子端卸载；卸一个够就只卸一个。
+//   2. **去硬编码 URL**：地址从 fleet.yaml 的 fleet 段解析（fleetNode/agentURLFor），
+//      不再写死 `http://<worker-ip>:8100/unload`。
+//   3. **红线**：有在飞请求时绝不强卸（既有铁律，保留并加注释）；未托管项（子端如实报
+//      managed=false，如手工 screen 起的服务）绝不出现在让位计划里——只报告，不接管不杀（Q6）。
+//
+// 兼容性（重要，如实写明）：主控先升级、子端还是批 2 之前的版本时，快照里没有 resident[]
+// （驻留账本为空）——此时**无法公平裁决**，退回旧口径"请子端全卸"并记日志（见 yieldX3To）。
+// 子端升级后（有账本）自动走"只卸够"。
 
 import (
-	"fmt"
-	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"bytes"
+	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/resources"
+	"github.com/Mr2109/zerg-swarm/core/internal/store"
 )
 
 // DS4 模型名（fleet.yaml 注册名）
@@ -47,34 +64,111 @@ func (g *Gateway) ds4Status() ds4State {
 	return ds4Idle
 }
 
-// ensureDS4Room 确保 DS4 可加载（路由目标=DS4 时——X3 清场）
-// 如果 X3 有其他模型占用内存——调 X3 agent 卸载（只留 DS4）
-// 返回: 清场是否成功（可继续路由）
+// ensureDS4Room 确保 DS4 可加载（路由目标=DS4 时——X3 让位）
+// 只卸够：算出"还差多少内存"，再按五档裁决只卸需要的那些（见 yieldX3To）。
+// 返回: 让位是否成功（可继续路由）
 func (g *Gateway) ensureDS4Room() bool {
 	snap := g.snapshotFor("x3")
 	if snap == nil {
 		return true // 无快照——不阻塞（熔断逻辑兜底）
 	}
-	// DS4 已加载——直接可用（不用清场）
+	// DS4 已加载——直接可用（不用让位）
 	if snap.Model != nil && *snap.Model == ds4ModelName {
 		return true
 	}
-	// X3 有其他模型占用（或空闲）——需要清场（卸载其他——只留 DS4）
+	// X3 有其他模型占用（或内存不够）——需要让位
 	if snap.Model != nil || snap.MemAvailableGb < ds4MemGB {
-		log.Printf("🧹 DS4 yielding: X3 current model=%v free memory=%.0fG — unloading to free space (DS4 only)",
-			snap.Model, snap.MemAvailableGb)
-		return g.unloadX3Models()
+		needGb := ds4MemGB - snap.MemAvailableGb
+		if needGb < 0 {
+			needGb = 0
+		}
+		// 单槽现实：X3 上已有别的模型驻留时也要腾出那个占用者（两个模型不能同时占 X3）
+		if used := x3UsedGb(snap); used > needGb {
+			needGb = used
+		}
+		return g.yieldX3To(snap, needGb, "ds4")
 	}
 	return true
 }
 
-// unloadX3Models 调 X3 agent 卸载模型（清场——释放内存）
-// X3 agent 端点: /unload（agent 服务 8100——认证 X-Auth-Token）
+// x3UsedGb 快照口径下 X3 当前被占用的内存（GiB）；快照缺总量时返回 0（不编造）。
+func x3UsedGb(snap *store.FleetSnapshot) float64 {
+	if snap == nil || snap.MemTotalGb <= 0 {
+		return 0
+	}
+	used := snap.MemTotalGb - snap.MemAvailableGb
+	if used < 0 {
+		return 0
+	}
+	return used
+}
+
+// yieldX3To —— 主控让位（批 3：只卸够 + 只动我们的）。
+//
+// needGb = "还差多少内存才算够"；计划由共享裁决给出：按五档顺序（① 崩溃/僵尸 →
+// ③ 空闲 LRU 最旧、同档权重更大者先 → ⑤ 被别处等待/粘性者最后）取"够用的最小前缀"。
+// 红线：有在飞请求时绝不强卸（子端侧还会再拦一道——它在飞/未到期 pin 项会跳过并报原因）。
+// 未托管项（managed=false）永远不进计划：别人的进程我们不接管、不杀（Q6）。
+//
+// 返回 true 表示"没有阻塞"（无事可做或让位请求已发出），false 表示腾不出来（调用方只记日志，
+// 不改变路由决策——与既有实现一致）。
+func (g *Gateway) yieldX3To(snap *store.FleetSnapshot, needGb float64, why string) bool {
+	if snap == nil {
+		return true
+	}
+	// 既有铁律：有在飞请求时绝不强卸（会杀活跃推理）——路由打分自会转 local/等待
+	if snap.ActiveRequests > 0 {
+		log.Printf("🧹 X3 yield skipped (%s): %d in-flight request(s) — never unload active inference", why, snap.ActiveRequests)
+		return false
+	}
+	if needGb <= 0 {
+		return true // 内存够——无需让位（子端按需装载自会单驻留）
+	}
+	if len(snap.Resident) == 0 {
+		// 驻留账本缺席（子端版本早于批 2）：没有账本就无法公平裁决——退回旧口径"全卸"，
+		// 并如实记日志（不冒充"已按五档让位"）。
+		log.Printf("🧹 X3 yield (%s): need %.0fG but resident ledger absent (子端未上报驻留明细) — falling back to legacy full unload", why, needGb)
+		return g.unloadX3Models()
+	}
+	plan := resources.EvictPlanForAction(snap.Resident, needGb)
+	if len(plan) == 0 {
+		// 无可动作项：全在飞 / 全 pin 未到期 / 全是未托管进程——一条都不许动
+		log.Printf("🧹 X3 yield denied (%s): need %.0fG but no evictable resident (inflight/pinned/unmanaged) — leaving X3 untouched", why, needGb)
+		return false
+	}
+	freed := resources.PlannedFreeGb(snap.Resident, plan)
+	log.Printf("🧹 X3 yield (%s): need %.0fG, unload %d/%d resident %v (freed≈%.0fG) — just enough, not everything",
+		why, needGb, len(plan), len(snap.Resident), plan, freed)
+	return g.postX3Unload(plan)
+}
+
+// unloadX3Models 调 X3 agent 卸载模型（全卸——旧口径）。
+// 保留给两条路径：① 驻留账本缺席时的兼容回退；② 任何仍需要"清场"的显式调用。
+// 地址来自配置（不硬编码）；认证 X-Auth-Token。
 func (g *Gateway) unloadX3Models() bool {
-	// X3 agent 卸载接口（<worker-ip>:8100/unload——认证 X-Auth-Token，令牌来自环境变量/~/.zerg/token）
-	url := "http://<worker-ip>:8100/unload"
+	return g.postX3Unload(nil)
+}
+
+// postX3Unload 向 X3 agent 发卸载请求：targets 非空 = 只卸这几项；为空 = 全卸（旧语义）。
+// 子端 POST /unload 带 {"models":[...]} 即定向卸载；不带体即全卸（老子端忽略体，行为不变）。
+func (g *Gateway) postX3Unload(targets []string) bool {
+	// X3 agent 卸载接口——地址取自 fleet.yaml 的 fleet 段（批 3 去掉硬编码 IP）
+	url := g.agentURLFor("x3", "/unload")
+	if url == "" {
+		log.Printf("⚠️ DS4 quiesce skipped: no fleet node configured for x3")
+		return false
+	}
+	var body io.Reader
+	if len(targets) > 0 {
+		b, err := json.Marshal(map[string][]string{"models": targets})
+		if err != nil {
+			log.Printf("⚠️ DS4 quiesce skipped: marshal targets failed: %v", err)
+			return false
+		}
+		body = bytes.NewReader(b)
+	}
 	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequest("POST", url, nil)
+	req, err := http.NewRequest("POST", url, body)
 	if err != nil {
 		return false
 	}
@@ -82,12 +176,16 @@ func (g *Gateway) unloadX3Models() bool {
 	req.Header.Set("X-Auth-Token", config.ResolveAuthToken())
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("⚠️ DS4 quiesce failed (X3 agent unreachable): %v", err)
+		log.Printf("⚠️ DS4 quiesce failed (X3 agent unreachable at %s): %v", url, err)
 		return false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
-		log.Printf("✅ DS4 quiesce succeeded — X3 model unloaded (DS4 only)")
+		if len(targets) > 0 {
+			log.Printf("✅ DS4 quiesce succeeded — X3 unloaded %d targeted model(s) %v", len(targets), targets)
+		} else {
+			log.Printf("✅ DS4 quiesce succeeded — X3 model unloaded (DS4 only)")
+		}
 		return true
 	}
 	log.Printf("⚠️ DS4 quiesce returned %d — continuing", resp.StatusCode)
@@ -95,8 +193,8 @@ func (g *Gateway) unloadX3Models() bool {
 }
 
 // ensureX3RoomForFile — 2026-09-09(诊断 R2/R4): X3 模型驻留无回收→内存打满→实例挂死
-// 通用让位(DS4 机制推广): 路由目标=X3 且目标模型未加载 + X3 可用内存 < 所需 → 先 unload(agent 清场按需再载)
-// 幂等: 已加载/内存够 → no-op(agent 自行按需加载);DS4 场景其专用分支已先清场——此处二次进入自动 no-op
+// 通用让位(DS4 机制推广): 路由目标=X3 且目标模型未加载 + X3 可用内存 < 所需 → 先只卸够(agent 再按需载)
+// 幂等: 已加载/内存够 → no-op(agent 自行按需加载);DS4 场景其专用分支已先让位——此处二次进入自动 no-op
 func (g *Gateway) ensureX3RoomForFile(file string, memGB int) {
 	if file == "" || memGB <= 0 {
 		return
@@ -113,13 +211,18 @@ func (g *Gateway) ensureX3RoomForFile(file string, memGB int) {
 		return // 目标已加载——无需让位
 	}
 	// 2026-09-09(诊断 R2 深化): GPU 也是单资源——X3 单卡,多实例常驻→gpu_pct=100→
-	// 新加载模型推理被饿(实例 0% CPU 假健康)。内存够但 GPU 忙(≥90%)→同样清场单驻留
+	// 新加载模型推理被饿(实例 0% CPU 假健康)。内存够但 GPU 忙(≥90%)→同样让位到单驻留
+	needGb := float64(memGB) - snap.MemAvailableGb
 	if snap.MemAvailableGb >= float64(memGB) && snap.GpuPct < 90 {
 		return // 内存+GPU 都够——X3 agent 按需加载
 	}
-	if g.unloadX3Models() {
-		log.Printf("🧹 X3 yielding (generic): route %s needs %dG, available %.0fG GPU %.0f%% — quiesced (X3 agent single-resident on demand)", file, memGB, snap.MemAvailableGb, snap.GpuPct)
+	if snap.GpuPct >= 90 {
+		// GPU 忙：要腾出的是"当前占用者"（不是全清）——用实测占用做缺口下限
+		if used := x3UsedGb(snap); used > needGb {
+			needGb = used
+		}
 	}
+	g.yieldX3To(snap, needGb, "generic:"+file)
 }
 
 // ds4RouteDecision 其他模型请求时——按 DS4 状态路由决策
@@ -129,13 +232,17 @@ func (g *Gateway) ds4RouteDecision() (forceLocal bool, reason string) {
 	case ds4Busy:
 		return true, "DS4 繁忙（X3 推理中——其他模型走本机）"
 	case ds4Idle:
-		// DS4 闲置——调用其他模型 = 卸 DS4（X3 跑其他——不空置）
-		g.unloadX3Models()
-		return false, "DS4 闲置——已卸载让位（X3 跑其他模型）"
+		// DS4 闲置——调用其他模型 = 卸 DS4 让位（X3 跑其他——不空置）
+		// 批 3：只卸够——让位目标由五档裁决给出（闲置的 DS4 自己就是最该走的那一个），
+		// 不是把 X3 上所有驻留一把全清。
+		snap := g.snapshotFor("x3")
+		needGb := x3UsedGb(snap)
+		if needGb <= 0 {
+			needGb = ds4MemGB // 快照缺总量/可用时的保守口径：腾出 DS4 所需
+		}
+		g.yieldX3To(snap, needGb, "ds4-idle")
+		return false, "DS4 闲置——已让位（X3 跑其他模型）"
 	default:
 		return false, "DS4 未加载——X3 正常"
 	}
 }
-
-// debug helper（保留——日志用）
-var _ = fmt.Sprintf
