@@ -379,10 +379,14 @@ func (lb *LocalBackend) MemGB() int {
 
 // LocalSnapshot 本机子端的资源快照（供主控 status 合并展示，也供资源账本 #30 复用）。
 //
-// 口径（批 5）：
-//   - GpuUsedGb 只放**真实**显存占用。本机（Apple Silicon 统一内存）拿不到独立显存 →
-//     保持 0 且 VramKnown=false（旧行为 snap.GpuUsedGb = memGB 是拿内存冒充显存，已修，
-//     见 #29）。BackendRssGb 仍是本机后端的"占用"口径（与旧行为一致，未单独采样 RSS）。
+// 口径（批 5 + #33）：
+//   - GpuUsedGb 只放**真实**显存占用：只有平台真采到独立显存（Linux + nvidia-smi/rocm-smi）才填，
+//     macOS（Apple Silicon 统一内存）拿不到 → 保持 0 且 VramKnown=false（旧行为 snap.GpuUsedGb = memGB
+//     是拿内存冒充显存，已修，见 #29）。BackendRssGb 仍是本机后端的"占用"口径（与旧行为一致，未单独采样 RSS）。
+//   - Vram*/显存三值：不变量 = 采到 → VramKnown=true 且三值到场；采不到 → VramKnown=false 且三值缺席
+//     （JSON omitempty 整键不出现）。绝不存在"有值而 known=false"或"known=true 而无值"的半真状态（#33）。
+//   - 内存总量/可用量：macOS 走 sysctl/vm_stat，Linux 走 /proc/meminfo，单位一律 GiB（1024^3），
+//     与账本判定 mem_known（= MemTotalGb > 0）配套；采不到即 0 = 缺席。
 //   - Resident[]：本机驻留明细——由 LocalBackend 自己的状态（ModelFile/MemGB/State）构造，
 //     与远程子端**同一套**账本口径（§八 Q7）。
 type LocalSnapshot struct {
@@ -408,7 +412,8 @@ type LocalSnapshot struct {
 }
 
 // Snapshot 返回本机子端状态快照（machine=local）。
-// 本机不跑独立 agent，内存/负载直接从本机采样；模型信息来自 localback 状态。
+// 本机不跑独立 agent，内存/负载直接从本机采样（#33：macOS 走 sysctl/vm_stat，Linux 走 /proc）；
+// 模型信息来自 localback 状态。
 func (lb *LocalBackend) Snapshot() *LocalSnapshot {
 	lb.mu.Lock()
 	state := lb.state
@@ -416,21 +421,37 @@ func (lb *LocalBackend) Snapshot() *LocalSnapshot {
 	memGB := lb.memGB
 	lb.mu.Unlock()
 
-	// 显存（#29）：本机（macOS Apple Silicon 统一内存）没有独立显存额度——如实标未知，
-	// 绝不拿内存量冒充（旧行为已修）。
+	// 内存：一次采样取齐总量/可用量（口径一致）。采不到 → 0 = 缺席（"知不知道内存"由账本按
+	// MemTotalGb > 0 判定，见 resources_ledger.go）。
+	memTotal, memAvail := sampleLocalMem()
+
+	// 显存（#29 + #33）：先问平台显存采样——只有 Linux 装了 nvidia-smi / rocm-smi 才可能拿到独立显存。
+	// 拿到 → known=true + 三值到场；拿不到 → 保持 localVramShape() 的如实未知（不填假值）。
+	// 本机（macOS Apple Silicon 统一内存）没有独立显存额度——如实标未知，绝不拿内存量冒充（旧行为已修）。
+	pVramKnown, pVramTotal, pVramUsed, pVramFree := samplePlatformVram()
 	known, unified := localVramShape()
+	if pVramKnown {
+		// 独立显存与统一内存互斥：统一内存平台没有"独立显存额度"这个概念。
+		known, unified = true, false
+	}
 
 	snap := &LocalSnapshot{
 		Machine:        "local",
 		BackendState:   state,
-		MemAvailableGb: sampleLocalMemAvailable(),
-		MemTotalGb:     sampleLocalMemTotal(),
+		MemAvailableGb: memAvail,
+		MemTotalGb:     memTotal,
 		Load:           sampleLocalLoad(),
 		GpuTempC:       sampleLocalGpuTemp(),
 		Healthy:        state == stateReady,
 		Models:         []string{},
 		VramKnown:      known,
 		VramUnified:    unified,
+	}
+	if pVramKnown {
+		// 真采到独立显存才带值；拿不到时三键留 0 → JSON omitempty 整键不出现（缺席，不造值）。
+		snap.VramTotalGb, snap.VramUsedGb, snap.VramFreeGb = pVramTotal, pVramUsed, pVramFree
+		// 真实显存占用（与 vram_used_gb 同源）——只在真拿到时填，绝不拿 RSS/内存量冒充（#29）。
+		snap.GpuUsedGb = pVramUsed
 	}
 	// 本机已加载模型：从模型文件名推断模型名（fleet.yaml 的 file 是绝对路径，取 basename 前缀）
 	if state != stateIdle && modelFile != "" {
@@ -457,8 +478,10 @@ func (lb *LocalBackend) Snapshot() *LocalSnapshot {
 	return snap
 }
 
-// localVramShape 报告本机显存的形态（§3.1）：
+// localVramShape 报告本机显存的**形态**（§3.1；#33 后它只答"是不是统一内存"，不再是显存是否已知的唯一来源：
+// Linux 上真采到独立显存时由 samplePlatformVram() 给 known=true，见 Snapshot）：
 //   - macOS（Apple Silicon 统一内存）：无独立显存额度 → known=false, unified=true（显存即内存）
+//   - Linux：多卡/独显不是统一内存 → known=false, unified=false；显存本身另由 nvidia-smi/rocm-smi 尽力采
 //   - 其它平台：本机未实现显存采样 → known=false, unified=false（按"真未知"走估算法 fail-closed）
 //
 // 一律不返回"已知"的假值：拿不到就不冒充（#29 铁律）。
@@ -506,79 +529,31 @@ func lastIndexByte(s string, c byte) int {
 	return -1
 }
 
-// 本机采样（尽力而为，失败返回 0）
-func sampleLocalMemAvailable() float64 {
-	return sampleMacMem("mem_available")
-}
-func sampleLocalMemTotal() float64 {
-	return sampleMacMem("mem_total")
-}
-
-// sampleMacMem 从 sysctl/vm_stat 采样本机内存（主控跑在 macOS）。
-func sampleMacMem(kind string) float64 {
-	out, err := exec.Command("/usr/sbin/sysctl", "-n", "hw.memsize").Output()
-	if err != nil {
-		return 0
+// sampleLocalMem 采样本机内存总量与可用量（GiB）——两个值取自同一次采样，口径一致。
+//
+// 平台差异在 sample_platform.go：macOS 走 sysctl hw.memsize + vm_stat，Linux 走 /proc/meminfo（#33）。
+// 任一字段采不到 → 该项返回 0（缺席）；本机行"知不知道内存"由资源账本按 MemTotalGb > 0 判定
+// （core/internal/api/resources_ledger.go），故这里绝不用 0 充数、也不用估算值。
+func sampleLocalMem() (totalGB, availGB float64) {
+	total, avail, totalOK, availOK := samplePlatformMem()
+	if !totalOK {
+		total = 0
 	}
-	totalBytes, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
-	if err != nil || totalBytes <= 0 {
-		return 0
+	if !availOK {
+		avail = 0
 	}
-	if kind == "mem_total" {
-		return totalBytes / (1024 * 1024 * 1024)
-	}
-	// 可用内存：vm_stat 计算 free + inactive + speculative
-	vout, err := exec.Command("/usr/bin/vm_stat").Output()
-	if err != nil {
-		return 0
-	}
-	free, inactive, speculative := uint64(0), uint64(0), uint64(0)
-	for _, line := range strings.Split(string(vout), "\n") {
-		line = strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(line, "Pages free:"):
-			free = parseVMPages(line)
-		case strings.HasPrefix(line, "Pages inactive:"):
-			inactive = parseVMPages(line)
-		case strings.HasPrefix(line, "Pages speculative:"):
-			speculative = parseVMPages(line)
-		}
-	}
-	// 页大小 16384（Apple Silicon）
-	const pageSize = 16384.0
-	return float64(free+inactive+speculative) * pageSize / (1024 * 1024 * 1024)
+	return total, avail
 }
 
-// parseVMPages 从 "Pages free: 12345." 提取数字
-func parseVMPages(line string) uint64 {
-	parts := strings.Split(line, ":")
-	if len(parts) < 2 {
-		return 0
-	}
-	val := strings.Trim(strings.TrimSpace(parts[1]), ".")
-	n, err := strconv.ParseUint(val, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return n
-}
-
-// sampleLocalLoad 读取本机 1 分钟负载。
+// sampleLocalLoad 读取本机 1 分钟负载（平台差异见 sample_platform.go；采不到 → 0 = 缺席）。
 func sampleLocalLoad() float64 {
-	out, err := exec.Command("/usr/sbin/sysctl", "-n", "vm.loadavg").Output()
-	if err != nil {
-		return 0
-	}
-	fields := strings.Fields(string(out))
-	if len(fields) >= 2 {
-		if val, err := strconv.ParseFloat(fields[1], 64); err == nil {
-			return val
-		}
+	if v, ok := samplePlatformLoad(); ok {
+		return v
 	}
 	return 0
 }
 
-// sampleLocalGpuTemp 本机 GPU 温度（Apple Silicon 不公开，尽力而为返回 0）。
+// sampleLocalGpuTemp 本机 GPU 温度（Apple Silicon 不公开；Linux 侧未采样 → 尽力而为返回 0）。
 func sampleLocalGpuTemp() float64 {
 	return 0
 }
