@@ -35,14 +35,35 @@ func bodyHash(b []byte) string {
 	return "sha256:" + hex.EncodeToString(s[:])
 }
 
+// boolPtr 造一个 *bool（用于"引擎给不给结构化声明"这类可空入参）。
+func boolPtr(v bool) *bool { return &v }
+
 // ── 假 OpenAI 兼容端点 ─────────────────────────────────────────────────────
 // 测试一律用 httptest 假端点，不碰真实外网/真实引擎（任务硬规则）。
 
+// fakeEngine 是"没有结构化能力声明"的假端点：它不提供 /props，/v1/models 也没有
+// models[].capabilities（待修补 #23 的反例场景）。等价于 fakeEngineProps(t, msg, nil)。
 func fakeEngine(t *testing.T, visionErrMsg string) *httptest.Server {
+	t.Helper()
+	return fakeEngineProps(t, visionErrMsg, nil)
+}
+
+// fakeEngineProps 是假 OpenAI 兼容端点。propsVision 非 nil 时提供 llama.cpp 形态的
+// 只读 /props，其 modalities.vision 取该值——这正是待修补 #23 要认的结构化信号
+// （实测：llama.cpp build 10470 挂 mmproj 报 true、未挂报 false）。
+// propsVision=nil 表示引擎不给该声明 → 归因只能落到 HTTP 码或不可判定。
+func fakeEngineProps(t *testing.T, visionErrMsg string, propsVision *bool) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/props":
+			if propsVision == nil {
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `{"error":{"message":"no such route"}}`)
+				return
+			}
+			fmt.Fprintf(w, `{"modalities":{"vision":%t,"video":false,"audio":false}}`, *propsVision)
 		case "/v1/models":
 			fmt.Fprint(w, `{"object":"list","data":[{"id":"fake-llama","object":"model"}]}`)
 		case "/v1/chat/completions":
@@ -122,18 +143,26 @@ func writeTestGGUF(t *testing.T, dir, name string) string {
 
 func TestOnlineProbes(t *testing.T) {
 	cases := []struct {
-		name       string
-		visionErr  string
-		wantClass  string
-		evidSubstr string
+		name        string
+		visionErr   string
+		wantClass   string
+		evidSubstr  string
+		propsVision *bool // 引擎是否给出结构化能力声明（nil = 不给）
+		siblingMMP  bool  // 同目录是否放着 mmproj*.gguf（#23 的模型侧信号）
 	}{
-		{"vision_unsupported", "image input is not supported by this model", FailNoVision, "image input"},
-		{"vision_mmproj_missing", "this model does not support images: mmproj file not loaded", FailMmprojMiss, "mmproj"},
+		// 纯文本模型：引擎结构化声明"无视觉"，本地也没有投影器建材 → no_vision。
+		{"vision_unsupported", "image input is not supported by this model", FailNoVision, "image input", boolPtr(false), false},
+		// VLM 未挂 mmproj：引擎声明无视觉 **且** 本地确有投影器建材却没被装载 → mmproj_missing。
+		{"vision_mmproj_missing", "this model does not support images: mmproj file not loaded", FailMmprojMiss, "mmproj", boolPtr(false), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := fakeEngine(t, tc.visionErr)
+			srv := fakeEngineProps(t, tc.visionErr, tc.propsVision)
 			ep := Endpoint{BaseURL: srv.URL, Model: "fake-llama", Timeout: 5 * time.Second}
+			if tc.siblingMMP {
+				// 模拟"本模型的投影器建材就在本地"（待修补 #23 模型侧信号，按模型名 token 配对）。
+				ep.ModelDir, ep.WeightsName = writeModelDirWithMMProj(t)
+			}
 
 			// 文本：正常回话 → true
 			txt := ProbeText(ep)
@@ -1015,13 +1044,19 @@ func TestProbeExplicitlyUnsupportedStaysFalse(t *testing.T) {
 	if !strings.Contains(tc.Evidence, FailNoTools) {
 		t.Fatalf("tools evidence 应带失败分类 %s：%s", FailNoTools, tc.Evidence)
 	}
-	// vision：400 + mmproj 提示 → false + mmproj_missing
+	// vision：400（引擎对图像请求的明确拒绝）→ 仍照旧 value=false + evidence。
+	// 待修补 #23：响应体虽然写着"mmproj file not loaded"，但**不得**据此升级成
+	// mmproj_missing——本端点没有结构化能力声明（无 /props、无 capabilities），
+	// 复现不了"引擎声明无视觉"这条结构化证据，故归因停在 no_vision。
 	vc := capByName(rep.Capabilities, "vision")
 	if vc == nil || vc.Value {
 		t.Fatalf("vision：端点明确不支持，应 value=false：%+v", vc)
 	}
-	if !strings.Contains(vc.Evidence, FailMmprojMiss) {
-		t.Fatalf("vision evidence 应带 mmproj_missing：%s", vc.Evidence)
+	if !strings.Contains(vc.Evidence, FailNoVision) {
+		t.Fatalf("vision evidence 应带失败分类 %s：%s", FailNoVision, vc.Evidence)
+	}
+	if strings.Contains(vc.Evidence, FailMmprojMiss) {
+		t.Fatalf("无结构化信号时绝不许按响应体文案升级成 mmproj_missing（待修补 #23）：%s", vc.Evidence)
 	}
 	// 本场景里每一条**能力**都是端点的确定态度 → 能力维度不该有任何不可判定记录。
 	// 注：待修补 #22 起 unverifiable[] 还承载正交的 template 轴（模板来源确实没有可复现
@@ -1417,4 +1452,322 @@ func TestProbeEndpointTemplateNeverEntersRecordBody(t *testing.T) {
 	if strings.Contains(string(sa), `"endpoint_chat_template"`) {
 		t.Fatalf("无端点快照不该出现 endpoint_chat_template 键：%s", sa)
 	}
+}
+
+// ── 待修补 #23：mmproj_missing 只认结构化信号，绝不匹配响应体文案 ────────────────
+//
+// 旧实现：非 200 时若响应体里出现 "mmproj" 字样，就把 no_vision 升级成 mmproj_missing——
+// 违反《开工方案-模型探测与校验》§八 风险1「只认结构化信号」，引擎文案一变就误判。
+// 本机实测（llama.cpp build 10470 + Ornith-1.5-35B/mmproj 与纯文本 gemma-4-26B）确认
+// 只有两类结构化信号可用：
+//  ① 引擎能力声明：GET /props → modalities.vision（布尔）；退一步 GET /v1/models →
+//     models[0].capabilities 是否含 "multimodal"；
+//  ② 模型侧建材：权重同目录是否放着 mmproj*.gguf。
+// 两类都不成立 → 必须 unverifiable，绝不降级成 value=false（不能判定 ≠ 不支持）。
+
+// fakeVisionStatusEngine 造一个可控的 #23 假端点：视觉请求返回给定状态码与响应体。
+// propsVision=nil → 不给 /props；caps=nil → /v1/models 不带 models[].capabilities。
+func fakeVisionStatusEngine(t *testing.T, status int, body string, propsVision *bool, caps []string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/props":
+			if propsVision == nil {
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `{"error":{"message":"no such route"}}`)
+				return
+			}
+			fmt.Fprintf(w, `{"modalities":{"vision":%t,"video":false,"audio":false}}`, *propsVision)
+		case "/v1/models":
+			if caps == nil {
+				fmt.Fprint(w, `{"object":"list","data":[{"id":"fake-llama","object":"model"}]}`)
+				return
+			}
+			c, _ := json.Marshal(caps)
+			fmt.Fprintf(w, `{"models":[{"name":"fake-llama","model":"fake-llama","capabilities":%s}],"object":"list","data":[{"id":"fake-llama","object":"model"}]}`, c)
+		case "/v1/chat/completions":
+			b, _ := io.ReadAll(r.Body)
+			if strings.Contains(string(b), "image_url") {
+				w.WriteHeader(status)
+				fmt.Fprint(w, body)
+				return
+			}
+			fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"你好"}}]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":{"message":"no such route"}}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// writeModelDirWithMMProj 造一个"权重 + 同模型投影器"的目录，返回 (目录, 权重文件名)。
+// 名字取自本机实测（Ornith-1.5-35B + mmproj-Ornith-1.5-35B-BF16）——两者共享 "ornith" token。
+func writeModelDirWithMMProj(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	weights := "Ornith-1.5-35B-Q4_K_M.gguf"
+	for _, name := range []string{weights, "mmproj-Ornith-1.5-35B-BF16.gguf"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir, weights
+}
+
+// 反例①（文案诱骗）：响应体里塞满 "mmproj_missing" / "mmproj file not loaded" 字样，
+// 但引擎没有任何结构化信号（无 /props、/v1/models 无 capabilities）→
+// **不得**升级成 mmproj_missing（旧实现会中招）、**不得**判 value=false，必须 unverifiable。
+func TestProbe23TextDecoyNeverUpgradesToMMProjMissing(t *testing.T) {
+	decoy := `{"error":{"code":500,"message":"mmproj_missing: this model does not support images: mmproj file not loaded","type":"server_error"}}`
+	srv := fakeVisionStatusEngine(t, http.StatusInternalServerError, decoy, nil, nil)
+
+	vis := ProbeVision(Endpoint{BaseURL: srv.URL, Model: "fake-llama", Timeout: 5 * time.Second})
+	if vis.Value {
+		t.Fatalf("引擎报错，视觉不得判 true：%+v", vis)
+	}
+	if vis.FailureClass == FailMmprojMiss {
+		t.Fatalf("绝不许按响应体文案升级成 mmproj_missing（待修补 #23）：%+v", vis)
+	}
+	if !vis.Undetermined || vis.FailureClass != FailNoStructuredSignal {
+		t.Fatalf("无结构化信号时必须是不可判定（%s），实际 %+v", FailNoStructuredSignal, vis)
+	}
+	if !strings.Contains(vis.Trace.Summary, "未提供结构化信号") {
+		t.Fatalf("不可判定必须写明原因：%s", vis.Trace.Summary)
+	}
+	// 报告层：落 unverifiable[]，而**不是** capabilities[].value=false。
+	rep := &ProbeReport{}
+	addCapability(rep, "vision", EvidenceVision, vis)
+	if c := capByName(rep.Capabilities, "vision"); c != nil {
+		t.Fatalf("无结构化信号时不得生成 value=false 能力条目：%+v", c)
+	}
+	if uv := findUnverifiable(rep.Unverifiable, "vision"); uv == nil || uv.Reason != FailNoStructuredSignal {
+		t.Fatalf("应写入 unverifiable[vision]/%s：%+v", FailNoStructuredSignal, rep.Unverifiable)
+	}
+}
+
+// 反例②（有结构化信号 → 正确判）：信号的取值决定 mmproj_missing / no_vision / true。
+func TestProbe23StructuredSignalDecides(t *testing.T) {
+	// 实测抄回的引擎文案（真机 500 的原文）：光凭它分不出 no_vision 与 mmproj_missing。
+	engineBody := `{"error":{"code":500,"message":"image input is not supported - hint: if this is unexpected, you may need to provide the mmproj","type":"server_error"}}`
+
+	t.Run("引擎声明无视觉+本地有投影器建材→mmproj_missing", func(t *testing.T) {
+		srv := fakeVisionStatusEngine(t, http.StatusInternalServerError, engineBody, boolPtr(false), nil)
+		ep := Endpoint{BaseURL: srv.URL, Model: "fake-llama", Timeout: 5 * time.Second}
+		ep.ModelDir, ep.WeightsName = writeModelDirWithMMProj(t)
+		vis := ProbeVision(ep)
+		if vis.Value || vis.Undetermined || vis.FailureClass != FailMmprojMiss {
+			t.Fatalf("应为确定不支持且分类 %s，实际 %+v", FailMmprojMiss, vis)
+		}
+		if !strings.Contains(vis.Trace.Summary, "/props.modalities.vision=false") {
+			t.Fatalf("证据必须写清用的结构化信号：%s", vis.Trace.Summary)
+		}
+	})
+
+	t.Run("引擎声明无视觉+本地无投影器建材→no_vision", func(t *testing.T) {
+		srv := fakeVisionStatusEngine(t, http.StatusInternalServerError, engineBody, boolPtr(false), nil)
+		ep := Endpoint{BaseURL: srv.URL, Model: "fake-llama", Timeout: 5 * time.Second}
+		vis := ProbeVision(ep)
+		if vis.Value || vis.Undetermined || vis.FailureClass != FailNoVision {
+			t.Fatalf("应为确定不支持且分类 %s，实际 %+v", FailNoVision, vis)
+		}
+	})
+
+	t.Run("同目录只有别的模型的投影器→不误报（no_vision）", func(t *testing.T) {
+		// 实测本机 ~/models 的形态：gemma 权重与 mmproj-Ornith 同目录混放。
+		srv := fakeVisionStatusEngine(t, http.StatusInternalServerError, engineBody, boolPtr(false), nil)
+		dir := t.TempDir()
+		weights := "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"
+		for _, name := range []string{weights, "mmproj-Ornith-1.5-35B-BF16.gguf"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ep := Endpoint{BaseURL: srv.URL, Model: "fake-llama", Timeout: 5 * time.Second, ModelDir: dir, WeightsName: weights}
+		vis := ProbeVision(ep)
+		if vis.Value || vis.Undetermined || vis.FailureClass != FailNoVision {
+			t.Fatalf("别的模型的投影器不得算到本模型头上（应 %s），实际 %+v", FailNoVision, vis)
+		}
+	})
+
+	t.Run("引擎声明视觉可用却失败→no_vision（不赖投影器）", func(t *testing.T) {
+		srv := fakeVisionStatusEngine(t, http.StatusInternalServerError, engineBody, boolPtr(true), nil)
+		ep := Endpoint{BaseURL: srv.URL, Model: "fake-llama", Timeout: 5 * time.Second}
+		ep.ModelDir, ep.WeightsName = writeModelDirWithMMProj(t)
+		vis := ProbeVision(ep)
+		if vis.Value || vis.Undetermined || vis.FailureClass != FailNoVision {
+			t.Fatalf("引擎声明视觉可用时失败不该归因到投影器，应 %s，实际 %+v", FailNoVision, vis)
+		}
+	})
+
+	t.Run("/v1/models capabilities 兜底信号→mmproj_missing", func(t *testing.T) {
+		// 不给 /props，只用 /v1/models 的 models[].capabilities（不含 multimodal = 声明无视觉）。
+		srv := fakeVisionStatusEngine(t, http.StatusInternalServerError, engineBody, nil, []string{"completion"})
+		ep := Endpoint{BaseURL: srv.URL, Model: "fake-llama", Timeout: 5 * time.Second}
+		ep.ModelDir, ep.WeightsName = writeModelDirWithMMProj(t)
+		vis := ProbeVision(ep)
+		if vis.Value || vis.Undetermined || vis.FailureClass != FailMmprojMiss {
+			t.Fatalf("应为 %s，实际 %+v", FailMmprojMiss, vis)
+		}
+		if !strings.Contains(vis.Trace.Summary, "capabilities") {
+			t.Fatalf("证据应指向 capabilities 信号：%s", vis.Trace.Summary)
+		}
+	})
+
+	t.Run("引擎声明视觉可用且请求通过→true", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/props":
+				fmt.Fprint(w, `{"modalities":{"vision":true,"video":true,"audio":false}}`)
+			case "/v1/chat/completions":
+				fmt.Fprint(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"红色"}}]}`)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		t.Cleanup(srv.Close)
+		vis := ProbeVision(Endpoint{BaseURL: srv.URL, Model: "fake-llama", Timeout: 5 * time.Second})
+		if !vis.Value || !vis.Trace.OK || vis.Undetermined {
+			t.Fatalf("视觉请求通过时应判 true：%+v", vis)
+		}
+	})
+}
+
+// 反例③（拿不到信号 → unverifiable）：引擎对图像报 502（不是 4xx 的明确拒绝），
+// 且不给任何结构化能力声明 → 归因不可判定，理由写明"引擎未提供结构化信号"；
+// 报告与能力快照都落 unverifiable[]，绝不生成 value=false 条目。
+func TestProbe23NoSignalIsUnverifiable(t *testing.T) {
+	srv := fakeVisionStatusEngine(t, http.StatusBadGateway, `{"error":{"message":"upstream error","type":"server_error"}}`, nil, nil)
+
+	gguf := writeTestGGUF(t, "", "NoSignal-Q4_K_M.gguf") // 本地同目录没有 mmproj 兄弟文件
+	rec, rep, err := Probe(ProbeOptions{Target: gguf, Endpoint: srv.URL, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := capByName(rep.Capabilities, "vision"); c != nil {
+		t.Fatalf("拿不到结构化信号时不得生成 value=false 能力条目：%+v", c)
+	}
+	uv := findUnverifiable(rep.Unverifiable, "vision")
+	if uv == nil {
+		t.Fatalf("应写入 unverifiable[vision]：%+v", rep.Unverifiable)
+	}
+	if uv.Reason != FailNoStructuredSignal {
+		t.Fatalf("不可判定理由应为 %s，实际 %q", FailNoStructuredSignal, uv.Reason)
+	}
+	if !strings.Contains(uv.Evidence, "未提供结构化信号") {
+		t.Fatalf("证据须写明引擎未提供结构化信号：%s", uv.Evidence)
+	}
+	// 快照同样承载（写盘与 --json 共用同一份），且同样不含 vision=false。
+	snap := NewCapabilitySnapshot(rec, rep)
+	if findUnverifiable(snap.Unverifiable, "vision") == nil {
+		t.Fatalf("能力快照应承载 unverifiable[vision]：%+v", snap.Unverifiable)
+	}
+	if capByName(snap.Capabilities, "vision") != nil {
+		t.Fatalf("快照里也不该有 vision=false：%+v", snap.Capabilities)
+	}
+}
+
+// projectorPresent 的名字配对守卫：本机实测的混放目录不得误配，缺信息一律 false。
+func TestProjectorPresentNameAffinity(t *testing.T) {
+	dir := t.TempDir()
+	for _, n := range []string{"gemma-4-26B-A4B-it-UD-Q4_K_M.gguf", "mmproj-Ornith-1.5-35B-BF16.gguf"} {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte(n), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 混放目录：gemma 不得配到 Ornith 的投影器
+	if name, ok := projectorPresent(dir, "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf"); ok {
+		t.Fatalf("gemma 不该配到别人的投影器：%s", name)
+	}
+	// Ornith 应配到自己的
+	if name, ok := projectorPresent(dir, "Ornith-1.5-35B-Q4_K_M.gguf"); !ok || name != "mmproj-Ornith-1.5-35B-BF16.gguf" {
+		t.Fatalf("Ornith 应配到自己的投影器，实际 ok=%t name=%s", ok, name)
+	}
+	// 缺信息/空目录一律 false（缺=未知，绝不猜）
+	if _, ok := projectorPresent("", "x.gguf"); ok {
+		t.Fatal("空目录不该配到东西")
+	}
+	if _, ok := projectorPresent(dir, ""); ok {
+		t.Fatal("没给权重文件名时无从配对")
+	}
+	if _, ok := projectorPresent(t.TempDir(), "gemma-4-26B.gguf"); ok {
+		t.Fatal("空目录里不该配到东西")
+	}
+}
+
+// 真机形态回归：把本机实测（llama.cpp build 10470）抄回的原始响应体裁进测试，
+// 钉住信号解析对真实字段名/结构不漂移（字段改名 = 测试红，而不是悄悄判错）。
+func TestProbe23RealLlamaCppSignalShapes(t *testing.T) {
+	propsWith := `{"total_slots":4,"model_alias":"~/models/Ornith-1.5-35B-Q4_K_M.gguf","model_path":"~/models/Ornith-1.5-35B-Q4_K_M.gguf","modalities":{"vision":true,"video":true,"audio":false},"media_marker":"<__media_x__>","chat_template":"{{ .Prompt }}","build_info":"b10470-34af94cd9","is_sleeping":false}`
+	propsWithout := `{"total_slots":4,"model_alias":"~/models/Ornith-1.5-35B-Q4_K_M.gguf","modalities":{"vision":false,"video":false,"audio":false},"media_marker":"<__media_x__>","is_sleeping":false}`
+	modelsWith := `{"models":[{"name":"~/models/Ornith-1.5-35B-Q4_K_M.gguf","model":"~/models/Ornith-1.5-35B-Q4_K_M.gguf","capabilities":["completion","multimodal"]}],"object":"list","data":[{"id":"x","aliases":["x"],"object":"model","owned_by":"llamacpp"}]}`
+	modelsWithout := `{"models":[{"name":"x","capabilities":["completion"]}],"object":"list","data":[{"id":"x","object":"model"}]}`
+	modelsLegacy := `{"object":"list","data":[{"id":"x","object":"model"}]}` // 老式 OpenAI 响应：没有 models[]
+
+	cases := []struct {
+		name       string
+		props      string
+		models     string
+		wantKnown  bool
+		wantActive bool
+		anchorPart string
+	}{
+		{"挂mmproj", propsWith, modelsWith, true, true, "/props.modalities.vision"},
+		{"未挂mmproj", propsWithout, modelsWithout, true, false, "/props.modalities.vision"},
+		{"纯文本模型", propsWithout, modelsWithout, true, false, "/props.modalities.vision"},
+		{"只有老式/v1/models", "", modelsLegacy, false, false, ""},
+		{"/props在/v1下", "", `{}`, false, false, ""}, // 未提供 /v1/props → 未知（此处只验不 panic）
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/props":
+					if tc.props == "" {
+						w.WriteHeader(http.StatusNotFound)
+						fmt.Fprint(w, `{"error":{"message":"no such route"}}`)
+						return
+					}
+					fmt.Fprint(w, tc.props)
+				case "/v1/models":
+					fmt.Fprint(w, tc.models)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+					fmt.Fprint(w, `{"error":{"message":"no such route"}}`)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			sig := probeVisionCapSignal(Endpoint{BaseURL: srv.URL, Timeout: 5 * time.Second})
+			if sig.Known != tc.wantKnown {
+				t.Fatalf("Known 不符：want=%t 实际 %+v", tc.wantKnown, sig)
+			}
+			if sig.Known && sig.Active != tc.wantActive {
+				t.Fatalf("Active 不符：want=%t 实际 %+v", tc.wantActive, sig)
+			}
+			if sig.Known && !strings.Contains(sig.Anchor, tc.anchorPart) {
+				t.Fatalf("证据锚应含 %q，实际 %q", tc.anchorPart, sig.Anchor)
+			}
+		})
+	}
+	// 兜底路径单独验：不给 /props，只给 /v1/models 的 models[].capabilities。
+	t.Run("capabilities兜底", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Path == "/v1/models" {
+				fmt.Fprint(w, modelsWith)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":{"message":"no such route"}}`)
+		}))
+		t.Cleanup(srv.Close)
+		sig := probeVisionCapSignal(Endpoint{BaseURL: srv.URL, Timeout: 5 * time.Second})
+		if !sig.Known || !sig.Active || !strings.Contains(sig.Anchor, "capabilities") {
+			t.Fatalf("应从 capabilities 兜底判定有视觉：%+v", sig)
+		}
+	})
 }
