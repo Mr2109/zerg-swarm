@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -89,9 +90,15 @@ type Gateway struct {
 	// 熔断原因可见（只读快照 + 手动复位入口）：
 	// failCounts 只记次数——熔断后用户看不到「为什么熔断」。这里额外记最后一次失败原因文本与时间，
 	// 由 BreakerSnapshot() 只读暴露给 /api/gateway/breakers。
-	// 与 failCounts/failSince 同一把锁（failMu）保护——写入点仅 markFailure/markSuccess/ClearFailures/ResetBreakers。
+	// 与 failCounts/failSince 同一把锁（failMu）保护——写入点仅 markFailure/tripMachine/
+	// pickRouteExcluding（后两者是历史上漏写原因的计数路径）/markSuccess/ClearFailures/ResetBreakers。
 	lastErr   map[string]string    // host → 最后一次失败原因文本（人类可读——转发错误原文）
 	lastErrAt map[string]time.Time // host → 最后一次失败时间（快照按 RFC3339 输出）
+	// host → 记录该原因的计数路径名（markFailure / tripMachine / pickRouteExcluding）——
+	// 「兜底原因」不在这里区分（那是 last_error 文本的 unspecified 前缀的事），本字段恒为该次计数的来源。
+	// 为什么单独存：活系统上出现过「fail_count=11 但 last_error 为空」——只存自由文本无法判定
+	// 是哪条计数路径涨的计数，本字段让快照能直接指向路径（每一处 ++/赋值都必须写它）。
+	lastErrSrc map[string]string
 
 	// 阶段 C：脑手编排器（复合模型 zerg-baiyan（白眼——多视角参考+聚合提炼））
 	orchestrator *orchestrator.Orchestrator
@@ -196,6 +203,15 @@ const circuitFailThreshold = 8
 // v2.5.5 #9 补充3: X3 偶发转发失败——healthy 保护（失败<10 不熔断——只降权）
 const healthyTripLimit = 10
 
+// breakerReasonUnspecified 兜底原因的前缀：计数点没能给出原因时用它开头，而不是留空串。
+// 禁用 unset/pending/tbd/todo/n/a/placeholder/unknown/待定/未定/none/null 等占位词
+// （标准-模型接入与目录贡献 §五「禁占位符」——命中即 error）。
+const breakerReasonUnspecified = "unspecified"
+
+// breakerNoReasonText 快照对外文本：有熔断状态却一条原因都没记录时用它，绝不给空串。
+// 空串会让人以为「没失败过」，而计数非零又说明失败过——两者矛盾就是这次要堵死的缺口。
+const breakerNoReasonText = "not recorded by this failure path"
+
 // startupGrace 主控启动宽限期（秒）——宽限期内忽略 unhealthy 快照（防重启窗口期误拒）
 // v2.5.5 #9 补充2 治本: 主控重启瞬间 X3 心跳失败（API 未就绪窗口）→ 快照 unhealthy → 路由拒绝
 const startupGrace = 30 * time.Second
@@ -272,6 +288,9 @@ func NewGateway(authToken string, cfg *config.FleetConfig, localBack *localback.
 		prefixes:    make(map[string]map[string]int),
 		failCounts:  make(map[string]int),
 		failSince:   make(map[string]time.Time),
+		lastErr:     make(map[string]string),
+		lastErrAt:   make(map[string]time.Time),
+		lastErrSrc:  make(map[string]string),
 		startupTime: time.Now(), // v2.5.5 重启窗口期治本: 启动宽限期起点
 		// 丙批 N4 / C2：前缀命中率闭环（窗口 50 次 / 10 分钟——见 prefix_cache.go）
 		// C2：带跨重启持久化（statepath ~/.zerg/state/prefix_cache.json + 节流写）
@@ -941,25 +960,55 @@ func (g *Gateway) extractModelWithAction(body []byte, path string) (model string
 //
 // 阶段 1 已有 FleetConfig.Models 结构，这里复用。
 // markFailure 记录机器转发失败（熔断计数）。
-// reason 可选：本次失败的原因文本（转发错误原文）——写入 lastErr，供只读快照展示「为什么熔断」。
-// 不传 reason 时只计数（保持旧调用语义）。
-func (g *Gateway) markFailure(host string, reason ...string) {
+// reason 必填（不是可选参数）：本函数会涨 failCounts，而快照要把「为什么熔断」展示给人看——
+// 让「只计数不记原因」在编译期就不可能（历史上 reason 是可变参数，漏传就成了静默计数）。
+// 若调用点只能给出空串（动态拼接失败），breakerCountReason 会自动补一条带调用点的明确文本，
+// 绝不写空原因。src 记录计数路径名（供快照 last_error_source 取证）。
+func (g *Gateway) markFailure(host string, reason string) {
 	g.failMu.Lock()
 	defer g.failMu.Unlock()
 	g.failCounts[host]++
-	// 原因可见：记最后一次失败原因（不改动任何熔断判定逻辑——只多存一个字符串）
-	if len(reason) > 0 && reason[0] != "" {
-		if g.lastErr == nil {
-			g.lastErr = map[string]string{}
-		}
-		if g.lastErrAt == nil {
-			g.lastErrAt = map[string]time.Time{}
-		}
-		g.lastErr[host] = reason[0]
-		g.lastErrAt[host] = time.Now()
-	}
+	g.recordFailureReasonLocked(host, "markFailure", reason, 2)
 	slog.Warn("machine forward failed", "host", host, "fail_count", g.failCounts[host], "threshold", circuitFailThreshold)
 	log.Printf("%s", breakerFailLogLine(host, g.failCounts[host]))
+}
+
+// breakerCountReason 保证「涨计数」的路径一定带上可读原因。
+//
+// 为什么需要它：失败/熔断计数有几条互相独立的增长路径（markFailure / tripMachine /
+// pickRouteExcluding 的强制熔断），历史上 tripMachine 与 pickRouteExcluding 不写 lastErr，
+// 于是活系统上出现过 fail_count=11（= healthyTripLimit+1，正是 pickRouteExcluding 的强制熔断值）
+// 而 last_error 为空串的迷惑状态。规矩：计数点要么给出原因，要么被自动补一条带调用点的明确文本。
+// 禁用 unset/pending/tbd/todo/n/a/placeholder/unknown/待定/未定/none/null 这类占位词
+// （标准-模型接入与目录贡献 §五「禁占位符」——命中即 error），本函数用 unspecified。
+//
+// skip：runtime.Caller 的帧数（0=本函数，1=调用本函数的计数点，2=计数点的调用方）。
+func breakerCountReason(reason string, skip int) string {
+	if s := strings.TrimSpace(reason); s != "" {
+		return s
+	}
+	_, file, line, ok := runtime.Caller(skip)
+	if !ok {
+		return breakerReasonUnspecified + " (count path gave no reason; caller site unknown)"
+	}
+	return fmt.Sprintf("%s at %s:%d (count path gave no reason)", breakerReasonUnspecified, filepath.Base(file), line)
+}
+
+// recordFailureReasonLocked 写入一次失败原因（调用方必须已持有 g.failMu）。
+// src 是计数路径名（markFailure/tripMachine/pickRouteExcluding）——快照用它回答「哪个计数点涨的」。
+func (g *Gateway) recordFailureReasonLocked(host, src, reason string, skip int) {
+	if g.lastErr == nil {
+		g.lastErr = map[string]string{}
+	}
+	if g.lastErrAt == nil {
+		g.lastErrAt = map[string]time.Time{}
+	}
+	if g.lastErrSrc == nil {
+		g.lastErrSrc = map[string]string{}
+	}
+	g.lastErr[host] = breakerCountReason(reason, skip+1)
+	g.lastErrAt[host] = time.Now()
+	g.lastErrSrc[host] = src
 }
 
 // breakerFailLogLine 组装熔断失败日志行，阈值一律取自真实常量 circuitFailThreshold。
@@ -982,6 +1031,7 @@ func (g *Gateway) markSuccess(host string) {
 	// 失败已恢复——清原因（快照不显示陈旧原因）
 	delete(g.lastErr, host)
 	delete(g.lastErrAt, host)
+	delete(g.lastErrSrc, host)
 }
 
 // ClearFailures 清零机器失败计数（v2.5.5 #9 补充5: 心跳健康时调用——防残留熔断）。
@@ -996,6 +1046,7 @@ func (g *Gateway) ClearFailures(host string) {
 	// 心跳健康 = 机器活着——清失败原因（快照不显示陈旧原因）
 	delete(g.lastErr, host)
 	delete(g.lastErrAt, host)
+	delete(g.lastErrSrc, host)
 }
 
 // isModelError 判断转发错误是否是"模型错误"（HTTP 响应错误——4xx/5xx）。
@@ -1080,7 +1131,8 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 			}
 			// local 不可用——回退正常路由（pickRouteExcluding x3）
 			log.Printf("⚠️ local unavailable — falling back (excluding X3 — don't disturb DS4)")
-			if r, err := g.pickRouteExcluding(model, "x3"); err == nil {
+			// 这条路径也会强制熔断（若选回 x3 → failCounts[x3]=11）——给原因，别让快照出现空原因
+			if r, err := g.pickRouteExcluding(model, "x3", "DS4 quiesce: local unavailable, X3 temporarily excluded to avoid disturbing DS4"); err == nil {
 				return r, nil
 			}
 		}
@@ -1422,14 +1474,16 @@ func (g *Gateway) Snapshot(machine string) *store.FleetSnapshot {
 
 // pickFallbackRoute — v2.5.4.9 C failover：换机器（跳过失败机器——选其他候选）
 // 转发失败（超时/卡死）→ 熔断失败机器 + 重选候选（强制排除失败机器）
-func (g *Gateway) pickFallbackRoute(failed *RouteResult, model string) (*RouteResult, error) {
+// reason 必填：本次失败的原文（调用方持有 err），会写进熔断快照的 last_error——
+// 这条路径（tripMachine + pickRouteExcluding 强制熔断）历史上不写原因，是「计数涨了原因空」的元凶之一。
+func (g *Gateway) pickFallbackRoute(failed *RouteResult, model string, reason string) (*RouteResult, error) {
 	if model == "" {
 		return nil, fmt.Errorf("model is empty — cannot fail over")
 	}
 	// 熔断失败机器（连续失败计数——isTripped 后续跳过）
-	g.tripMachine(failed.Host)
+	g.tripMachine(failed.Host, reason)
 	// 重选候选（pickRoute——但强制排除失败机器）
-	route, err := g.pickRouteExcluding(model, failed.Host)
+	route, err := g.pickRouteExcluding(model, failed.Host, reason)
 	if err != nil {
 		return nil, fmt.Errorf("failover has no available candidate: %w", err)
 	}
@@ -1437,7 +1491,9 @@ func (g *Gateway) pickFallbackRoute(failed *RouteResult, model string) (*RouteRe
 }
 
 // pickRouteExcluding — 选路但排除指定机器（failover 用——不选回失败机器）
-func (g *Gateway) pickRouteExcluding(model, exclude string) (*RouteResult, error) {
+// reason 必填：本函数在「选回被排除机器」时会强制把 failCounts 顶到 healthyTripLimit+1
+// （11）——这是一次计数写入，必须留下原因与路径，否则快照会出现「fail_count=11 但 last_error 空」。
+func (g *Gateway) pickRouteExcluding(model, exclude string, reason string) (*RouteResult, error) {
 	// v2.5.5 #9 修复: 直接调用 pickRoute 的内部逻辑但跳过 exclude 机器（不走熔断 hack——防 healthy 保护冲突）
 	// 先试正常 pickRoute——若选回 exclude——用"临时排除"重选（设置 failCounts 到超高——强制跳过）
 	route, err := g.pickRoute(model, "", "")
@@ -1455,6 +1511,7 @@ func (g *Gateway) pickRouteExcluding(model, exclude string) (*RouteResult, error
 	if g.failSince == nil {
 		g.failSince = map[string]time.Time{}
 	}
+	g.recordFailureReasonLocked(exclude, "pickRouteExcluding", reason, 2)
 	g.failCounts[exclude] = healthyTripLimit + 1 // 超高——强制跳过（v2.5.5 #9: 用 healthyTripLimit+1）
 	g.failSince[exclude] = time.Now()
 	g.failMu.Unlock()
@@ -1469,7 +1526,9 @@ func (g *Gateway) pickRouteExcluding(model, exclude string) (*RouteResult, error
 }
 
 // tripMachine — 熔断一台机器（加 failCounts——isTripped 连续失败>=3 熔断）
-func (g *Gateway) tripMachine(host string) {
+// reason 必填：本函数同时涨 tripCounts 与 failCounts（两条计数），历史上不写 lastErr——
+// 于是计数涨了而快照原因空。现在与 markFailure 一样必须给出原因（空串会被自动补明确文本）。
+func (g *Gateway) tripMachine(host string, reason string) {
 	g.tripMu.Lock()
 	if g.tripCounts == nil {
 		g.tripCounts = map[string]int{}
@@ -1477,12 +1536,16 @@ func (g *Gateway) tripMachine(host string) {
 	g.tripCounts[host]++
 	cnt := g.tripCounts[host]
 	g.tripMu.Unlock()
-	// 同步到 failCounts（isTripped 用——连续失败 >=3 熔断）
+	// 同步到 failCounts（isTripped 用——连续失败>=3 熔断）
 	g.failMu.Lock()
 	if g.failCounts == nil {
 		g.failCounts = map[string]int{}
 	}
+	if g.failSince == nil {
+		g.failSince = map[string]time.Time{}
+	}
 	g.failCounts[host]++
+	g.recordFailureReasonLocked(host, "tripMachine", reason, 2)
 	if g.failCounts[host] >= 3 {
 		g.failSince[host] = time.Now()
 	}
