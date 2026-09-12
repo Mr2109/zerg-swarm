@@ -261,6 +261,19 @@ func main() {
 	// 只读：不建目录不写文件；空目录/根不存在 = 200 + count=0；坏记录只计入该条 errors
 	r.Get("/api/models/registry", handlers.ModelRegistryHandler)
 
+	// 资源管理器观测面（《设计-资源管理器》批 4；§八 Q8：需鉴权 + 只读）
+	//   GET  /api/resources/ledger  —— 每机账本 + 逐模型"跑得动吗"（严格只读：不建目录、不写文件）
+	//   POST /api/resources/pin|unpin —— 显式动作：只对"已在驻留清单内且托管"的项生效；
+	//        非驻留/未托管一律明确拒绝（§八 Q5/Q6：绝不因 pin 去启动/接管任何进程）
+	// 引擎参数（KV dtype / 开销）是运行参数、GGUF 不记录——由环境变量提供；未给则估算标 estimated=true。
+	// chi 里静态段优先于参数段，故本三路不会被既有的 GET /api/resources/{type} 抢走。
+	handlers.KvCacheBytesPerElem = parseEnvFloat("ZERG_KV_CACHE_BYTES_PER_ELEM")
+	handlers.EngineOverheadGb = parseEnvFloat("ZERG_ENGINE_OVERHEAD_GB")
+	handlers.ResourcePins = api.NewSubEndPinController(cfg, cfg.Auth.Token)
+	r.Get("/api/resources/ledger", handlers.ResourceLedgerHandler)
+	r.Post("/api/resources/pin", handlers.ResourcePinHandler)
+	r.Post("/api/resources/unpin", handlers.ResourceUnpinHandler)
+
 	// v2.5.5 T3 主控总调度器（两级调度——Mr2109原理）
 	// 主控总调度: 管所有内部任务 + 接入的外部任务（全局决策/派发）
 	// CA 子调度: 管分派任务的执行（agent 侧已有 scheduler）
@@ -650,4 +663,19 @@ func collectGpuPct() float64 {
 		}
 	}
 	return -1
+}
+
+// parseEnvFloat 读一个十进制浮点环境变量（资源管理器观测面的引擎参数用）。
+// 未设置 / 空白 / 非法 / <=0 一律返回 0——0 表示"未提供"，估算侧会回退常量并标 estimated=true，
+// 绝不因为配错就假装拿到了真值（放宽=冒充实测）。
+func parseEnvFloat(name string) float64 {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return v
 }
