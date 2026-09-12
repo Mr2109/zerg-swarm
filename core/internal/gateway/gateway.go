@@ -491,7 +491,7 @@ func (g *Gateway) handleCompact(w http.ResponseWriter, r *http.Request) {
 			}
 			resp, err = g.localBack.Infer("/v1/chat/completions", compactBodyJSON)
 		} else {
-			resp, err = g.forwardToBackend(r.Context(), route, "/v1/chat/completions", compactBodyJSON, r.Header)
+			resp, err = g.forwardToBackend(r.Context(), route, "/v1/chat/completions", compactBodyJSON, r.Header, nil)
 		}
 		if err != nil {
 			log.Printf("⚠️ compaction attempt %d failed: %v (retrying)", attempt+1, err)
@@ -651,9 +651,39 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		forwardBody = adapter.JsonSetField(forwardBody, "model", canonical)
 	}
 
+	// 2.7 能力硬门槛（待修补 #11 / #38 ①）：请求里出现结构化图像部件 → 必需 vision。
+	// 只有"必要性升档"（不升就做不了）走硬门槛；判定在路由选择处按**目标引擎**进行。
+	// 无必需能力时为零开销（required 为空）。
+	//
+	// 待修补 #38 ①：本求解必须放在复合模型分支**之前**。历史上它在 2.8（复合分支之后），
+	// 而 zerg-baiyan 分支在算必需能力之前就 return——带图请求于是整条绕过门槛。
+	required := RequiredCapabilitiesFromRequest(body)
+	if len(required) > 0 {
+		log.Printf("🧱 request requires capabilities: %v (hard gate, per target engine)", required)
+	}
+
 	// 2.65 复合模型：model=zerg-baiyan → 脑手编排器（decompose→dispatch→synthesize）
 	// 不走常规路由——编排器内部按脑/手子任务调不同模型
 	if model == CompositeModelName && g.orchestrator != nil {
+		// 能力硬门槛（待修补 #38 ①）：复合模型路径只取**纯文本** prompt 交给编排器——
+		// extractLastUserPrompt/extractPrompt 把 content 反序列化进 string，而带图请求的
+		// content 是数组（[{"type":"image_url",...}]）→ 反序列化失败 → prompt 为空。
+		// 即：带图请求会**静默丢图**并降级成一条空 prompt 文本请求；且复合模型不在 fleet 表里，
+		// 无目标引擎、无能力证据可判。⇒ 有必需能力时一律 fail-closed（capability_unavailable/400，
+		// 与 #11 同一套原因码），明确报因，绝不静默降级。纯文本请求（required 为空）行为一字不变。
+		if len(required) > 0 {
+			ge := &CapabilityGateError{
+				Model:      model,
+				Engine:     "orchestrator", // 复合模型不是 fleet 引擎——无目标引擎可解析
+				Capability: strings.Join(required, ","),
+				Reason:     modelreg.CapReasonNoSnapshot, // 复合模型无能力快照 → 不可判定
+				Trace:      fmt.Sprintf("capability gate: composite model %q runs an orchestrator (not a fleet engine) — no capability snapshot / engine evidence for required capabilities %v; structured image parts would be silently dropped here (fail-closed)", model, required),
+			}
+			log.Printf("🚧 capability gate BLOCK model=%s engine=%s capability=%s reason=%s | %s", ge.Model, ge.Engine, ge.Capability, ge.Reason, ge.Trace)
+			code, status := classifyRouteError(ge)
+			adp.TransformError(w, status, code, ge.Error())
+			return
+		}
 		log.Printf("🧠 composite model: %s → brain-hand orchestrator", model)
 		// 提取用户消息（最后一条 user 内容）
 		prompt := extractLastUserPrompt(body)
@@ -727,14 +757,8 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		log.Printf("✂️ fast-path trim: tool output / filler replies de-noised (%s)", sessionID)
 	}
 
-	// 2.8 能力硬门槛（待修补 #11）：请求里出现结构化图像部件 → 必需 vision。
-	// 只有"必要性升档"（不升就做不了）走硬门槛；判定在路由选择处按**目标引擎**进行。
-	// 无必需能力时为零开销（required 为空）。
-	required := RequiredCapabilitiesFromRequest(body)
-	if len(required) > 0 {
-		log.Printf("🧱 request requires capabilities: %v (hard gate, per target engine)", required)
-	}
-
+	// 2.8 必需能力 required 已在 2.7 求解（待修补 #38 ①：前移到复合模型分支之前，
+	// 否则复合分支在求解前就 return，带图请求整条绕过门槛）。此处直接用于按**目标引擎**的路由硬门槛。
 	route, err := g.pickRoute(model, sessionID, prompt, required...)
 	if err != nil {
 		log.Printf("route selection failed: %v", err)
@@ -807,7 +831,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 			log.Printf("📍 retry routed to: %s:%d", route.Host, route.Port)
 		}
 
-		resp, err = g.forwardToBackend(r.Context(), route, backendPath, forwardBody, r.Header)
+		resp, err = g.forwardToBackend(r.Context(), route, backendPath, forwardBody, r.Header, required)
 		if err == nil && resp != nil && resp.StatusCode < 500 {
 			break // 转发成功（非 5xx）
 		}
@@ -849,6 +873,14 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// 连接层失败——不 markFailure（重试成功就没事——偶发网络不熔断）
 	}
 	if err != nil {
+		// 待修补 #38 ②：换机（或重试重路由）被能力硬门槛拦下时，透出统一原因码
+		// capability_unavailable/400（与 #11 同一套），而不是让它被下面默认的 502 upstream_fail 盖掉。
+		// 该分支只对 *CapabilityGateError 生效——其余错误路径行为一字不变。
+		var gateErr *CapabilityGateError
+		if errors.As(err, &gateErr) {
+			adp.TransformError(w, http.StatusBadRequest, "capability_unavailable", gateErr.Error())
+			return
+		}
 		// v2.5.6 故障自愈（Mr2109 2026-08-28）: 错误码语义化——按错误类型区分
 		//   circuit_open    (503) 熔断/无候选——可等（waiting_retry）
 		//   upstream_fail   (502) 转发失败——可重试（换机/换模型）
@@ -1557,14 +1589,19 @@ func (g *Gateway) Snapshot(machine string) *store.FleetSnapshot {
 // 转发失败（超时/卡死）→ 熔断失败机器 + 重选候选（强制排除失败机器）
 // reason 必填：本次失败的原文（调用方持有 err），会写进熔断快照的 last_error——
 // 这条路径（tripMachine + pickRouteExcluding 强制熔断）历史上不写原因，是「计数涨了原因空」的元凶之一。
-func (g *Gateway) pickFallbackRoute(failed *RouteResult, model string, reason string) (*RouteResult, error) {
+//
+// required（必填，待修补 #38 ②）是本次请求的必需能力（必要性升档，硬门槛）。
+// 换机是**重新选路**：新目标引擎必须重新过同一道按引擎的能力门槛——首跳过了不代表换机后也过。
+// 该参数不是可选（不是 ...string）：它曾被漏传，导致换机目标引擎未经能力验证就被放行（静默降级）。
+// 改成必填让「漏传」在编译期不可能；确实没有必需能力的路径显式传 nil。
+func (g *Gateway) pickFallbackRoute(failed *RouteResult, model string, reason string, required []string) (*RouteResult, error) {
 	if model == "" {
 		return nil, fmt.Errorf("model is empty — cannot fail over")
 	}
 	// 熔断失败机器（连续失败计数——isTripped 后续跳过）
 	g.tripMachine(failed.Host, reason)
-	// 重选候选（pickRoute——但强制排除失败机器）
-	route, err := g.pickRouteExcluding(model, failed.Host, reason)
+	// 重选候选（pickRoute——但强制排除失败机器）；required 透传，保证每次换机都重新过门槛。
+	route, err := g.pickRouteExcluding(model, failed.Host, reason, required...)
 	if err != nil {
 		return nil, fmt.Errorf("failover has no available candidate: %w", err)
 	}
@@ -1915,7 +1952,7 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 		}
 		resp, err = g.localBack.Infer("/v1/chat/completions", compactBodyJSON)
 	} else {
-		resp, err = g.forwardToBackend(context.Background(), route, "/v1/chat/completions", compactBodyJSON, nil)
+		resp, err = g.forwardToBackend(context.Background(), route, "/v1/chat/completions", compactBodyJSON, nil, nil)
 	}
 	if err != nil {
 		log.Printf("⚠️ autoCompact compaction failed: %v", err)

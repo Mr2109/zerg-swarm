@@ -29,7 +29,8 @@ func TestPickFallbackRoute_SwitchMachine(t *testing.T) {
 		failCounts: map[string]int{}, failSince: map[string]time.Time{}}
 	// 模拟 X3 转发失败——failover
 	failed := &RouteResult{Host: "x3"}
-	route, err := g.pickFallbackRoute(failed, "example-35b-v2", "backend x3 forward failed: dial tcp <worker-ip>:8100: i/o timeout")
+	// required 显式传 nil（待修补 #38 ②：该参数改必填，漏传在编译期即不可能）
+	route, err := g.pickFallbackRoute(failed, "example-35b-v2", "backend x3 forward failed: dial tcp <worker-ip>:8100: i/o timeout", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
