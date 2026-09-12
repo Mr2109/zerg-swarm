@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,9 +22,11 @@ import (
 
 func usage() {
 	fmt.Println("用法:")
-	fmt.Println("  zerg-model verify <record.json> [--strict] [--json] [--integrity] [--base-dir <目录>]")
+	fmt.Println("  zerg-model verify <record.json> [--strict] [--json] [--integrity] [--base-dir <目录>] [--in-place]")
 	fmt.Println("                                                          # 校验一条模型登记记录是否符合标准")
 	fmt.Println("                                                          # --integrity 额外核对 files[] 与磁盘文件是否一致（流式 sha256 + 大小比对）")
+	fmt.Println("                                                          # --in-place 记录文件或目录：校验记录所在路径名/id 与它自己的 digest/id 是否自洽")
+	fmt.Println("                                                          #            （阶段 1 廉价篡改检出；不做签名，不代表权重可信）")
 	fmt.Println("  zerg-model probe  <路径|端点URL> [--out <record.json>|--store] [--json]")
 	fmt.Println("                    [--endpoint <URL>] [--engine llama.cpp|vllm|ollama] [--id <id>] [--timeout 60s]")
 	fmt.Println("                    [--parent <上一版 version|digest>] [--base <基座 id>]   # 血缘声明（可选，只照抄不推断）")
@@ -57,7 +60,7 @@ func main() {
 }
 
 func cmdVerify(args []string) int {
-	strict, asJSON, integrity := false, false, false
+	strict, asJSON, integrity, inPlace := false, false, false, false
 	path, baseDir := "", ""
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -68,6 +71,8 @@ func cmdVerify(args []string) int {
 			asJSON = true
 		case a == "--integrity":
 			integrity = true
+		case a == "--in-place":
+			inPlace = true
 		case a == "--base-dir":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "--base-dir 需要一个目录值")
@@ -98,6 +103,11 @@ func cmdVerify(args []string) int {
 			fmt.Fprintf(os.Stderr, "--base-dir 不是可用目录：%s\n", baseDir)
 			return 3
 		}
+	}
+	// --in-place（待修补 #3+#17 阶段 1）：先做**身份自洽**校验——记录所在路径名/id 必须
+	// 与它自己的 digest/id 对得上。位置对不上 = 不可信（手改过的记录无法同时自圆其说）。
+	if inPlace {
+		return cmdVerifyInPlace(path, strict, asJSON)
 	}
 	rec, err := modelreg.Load(path)
 	if err != nil {
@@ -147,6 +157,65 @@ func cmdVerify(args []string) int {
 	}
 	// 退出码沿用：格式有 error（或 strict 下任何 finding）→ 2；完整性任一不符 → 2（同属“不可信”）。
 	if nErr > 0 || (strict && len(findings) > 0) || integrityFailed {
+		return 2
+	}
+	return 0
+}
+
+// cmdVerifyInPlace 实现 `verify --in-place <记录文件或目录>`（待修补 #3+#17 阶段 1）。
+//
+// 校验记录的**落盘位置**是否与它自己的身份自洽：文件名必须 = sha256-<digest 前12>，
+// 上级目录名必须 = 记录里的 id。任一不符 = error → exit 2（位置对不上就是不可信）。
+// 目录会递归其下所有**记录正文**（跳过 .trace.json / .capabilities.json 兄弟文件）。
+//
+// 诚实边界：digest 只由 files[] 合成，不覆盖 capabilities/license 声明，故本命令
+// 抓的是「digest 被改」「记录被挪位置/冒充别的 id」；对「声明被改而 digest 与路径都不动」
+// 管不到——那需要签名（阶段 2）。别把它当「记录已可信」。
+func cmdVerifyInPlace(path string, strict, asJSON bool) int {
+	results, err := modelreg.CheckPlacement(path, strict)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "读取失败: %v\n", err)
+		return 3
+	}
+	if len(results) == 0 {
+		fmt.Printf("✅ 空：%s 下没有任何记录正文（目录不存在，或不含 .json 记录）\n", path)
+		return 0
+	}
+	failed := 0
+	for _, r := range results {
+		if r.Failed(strict) {
+			failed++
+		}
+	}
+	if asJSON {
+		out, _ := json.MarshalIndent(struct {
+			Path    string                     `json:"path"`
+			Count   int                        `json:"count"`
+			Failed  int                        `json:"failed"`
+			Records []modelreg.PlacementResult `json:"records"`
+		}{path, len(results), failed, results}, "", "  ")
+		fmt.Println(string(out))
+	} else {
+		for _, r := range results {
+			switch {
+			case r.ReadErr != "":
+				fmt.Printf("✗ [读不动] %s：%s\n", r.Path, r.ReadErr)
+			case r.PlacementErrors() == 0:
+				fmt.Printf("✅ 身份自洽：%s（id=%s，文件名 %s）\n", r.Path, r.ID, filepath.Base(r.Path))
+			default:
+				for _, f := range r.Findings {
+					fmt.Printf("✗ [%s] %s：%s\n", f.Level, f.Field, f.Detail)
+				}
+			}
+			if r.FormatErrors > 0 || r.FormatWarns > 0 {
+				fmt.Printf("   （附：记录格式 error %d / warn %d —— 位置没问题也一并暴露；详见 `zerg-model verify %s`）\n",
+					r.FormatErrors, r.FormatWarns, r.Path)
+			}
+		}
+		fmt.Printf("—— 共 %d 条记录；身份自洽/记录格式不通过 %d 条\n", len(results), failed)
+		fmt.Println("   说明：本命令只校验「记录位置与身份是否自洽」（阶段 1 廉价篡改检出），不做签名，也不代表权重可信。")
+	}
+	if failed > 0 {
 		return 2
 	}
 	return 0
