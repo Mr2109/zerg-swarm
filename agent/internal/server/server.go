@@ -515,12 +515,23 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUnload 处理 /unload 请求。
+//
+// 两种用法（批 3 起）：
+//   - 带 body {"models":["a","b"]} → **定向**卸载这几项（"只卸够"的主控让位用它）；
+//     在飞请求中、pin 未到期的项会被跳过并在响应里给出原因（红线：绝不杀活跃推理）。
+//   - 不带 body / 空清单 → 卸全部（沿用既有语义，运维显式动作那条路不变）。
 func (s *Server) handleUnload(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAuth(w, r) {
 		return
 	}
-
-	result := s.agent.backends.Stop()
+	var req struct {
+		Models []string `json:"models"`
+	}
+	if r.Body != nil {
+		// 解码失败（含空体/老客户端不带体）一律按"全卸"处理——不因格式问题改变旧语义。
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	result := s.agent.backends.Unload(req.Models)
 	writeJSON(w, 200, result)
 }
 

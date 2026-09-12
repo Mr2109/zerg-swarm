@@ -1093,12 +1093,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string) (*Rou
 	}
 
 	// 辅助函数：根据 host 名从 Fleet 获取节点（IP + 端口）
-	getNode := func(host string) (string, int) {
-		if node, ok := g.config.Fleet[host]; ok {
-			return node.Host, node.Port
-		}
-		return host, 8100 // 无配置时回退机器名 + 默认端口
-	}
+	getNode := g.fleetNode
 
 	// 会话粘性（T4）：会话已绑定到某机器且该机器仍可用（健康 + 仍是该模型的候选）→ 直接复用
 	if sessionID != "" {
@@ -1298,6 +1293,34 @@ func (g *Gateway) snapshotFor(machine string) *store.FleetSnapshot {
 		return nil
 	}
 	return g.store.GetSnapshot(machine)
+}
+
+// defaultAgentPort 是子端 agent 的默认 HTTP 端口（fleet.yaml 未给端口时的回退，与既有口径一致）。
+const defaultAgentPort = 8100
+
+// fleetNode 解析一个 fleet 节点：机器名 → (IP, 端口)。
+// 地址一律来自 fleet.yaml 的 fleet 段（配置即事实源）；缺配置/端口时回退机器名 + 默认端口
+// （与既有 pickRoute 内的同口径逻辑一致——批 3 把它提成方法，供让位路径复用，避免硬编码 IP）。
+func (g *Gateway) fleetNode(host string) (string, int) {
+	if g.config != nil {
+		if node, ok := g.config.Fleet[host]; ok && node.Host != "" {
+			port := node.Port
+			if port <= 0 {
+				port = defaultAgentPort
+			}
+			return node.Host, port
+		}
+	}
+	return host, defaultAgentPort
+}
+
+// agentURLFor 拼子端 agent 的 HTTP 地址（如 /unload）——地址只从配置来，绝不写死 IP。
+func (g *Gateway) agentURLFor(host, path string) string {
+	ip, port := g.fleetNode(host)
+	if ip == "" {
+		return ""
+	}
+	return fmt.Sprintf("http://%s:%d%s", ip, port, path)
 }
 
 // modelFileLoaded 判断机器快照是否已加载候选模型文件（v2.5.6 修复——Mr2109 2026-08-28）
