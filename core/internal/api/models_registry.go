@@ -40,6 +40,17 @@ type ModelRegistryCapability struct {
 	Evidence string `json:"evidence,omitempty"`
 }
 
+// ModelRegistryUnverifiable 是一条"无法判定"记录的对外视图（待修补 #28）。
+//
+// 语义：本轮探测因预算耗尽/超时**没探出结论**——既不是"支持"，也不是"确定不支持"。
+// 与 capabilities[].value=false（端点明确表态没有）是两件事，故放独立数组，绝不混进 capabilities。
+// 三个字段照抄快照原文（name/reason/evidence 一字不改），不推断、不补默认、不改写原因分类。
+type ModelRegistryUnverifiable struct {
+	Name     string `json:"name"`
+	Reason   string `json:"reason"`             // 原因分类：budget_exhausted / timeout（照抄）
+	Evidence string `json:"evidence,omitempty"` // 探测器名+版本+实际预算+原始响应摘要（照抄；与快照同形）
+}
+
 // ModelRegistryFile 是一份建材的对外视图（标准 §三：一个模型是一组建材）。
 type ModelRegistryFile struct {
 	Role   string `json:"role"`
@@ -100,6 +111,18 @@ type ModelRegistryRecord struct {
 	SnapshotEndpoint     string `json:"snapshot_endpoint,omitempty"`
 	SnapshotGeneratedAt  string `json:"snapshot_generated_at,omitempty"`
 	SnapshotOnlineProbed *bool  `json:"snapshot_online_probed,omitempty"`
+
+	// ── 不可判定能力（待修补 #28）──────────────────────────────────────────
+	// Unverifiable 照抄能力快照的 unverifiable[]（预算耗尽/超时 → 本轮**没探出结论**），
+	// 与 capabilities[].value=false（端点明确表态"没有"）严格区分：缺 = 未知，绝不 = 没有。
+	//
+	// 出现条件：快照**读到了**且 unverifiable 非空 → 原样带出（name/reason/evidence 一字不改）。
+	// 快照不存在 / 坏 JSON / 无该字段 / 空数组 → 本键**整键不出现**（omitempty），绝不造值、不 500。
+	//
+	// 与上面三个 snapshot_* 出处字段解耦：本数组**不改变**它们的既有出现条件（仍只看
+	// len(capabilities) > 0）。取舍见 Handler 内注释——出处描述的是"能力在哪探出来的"，
+	// 而只有 unverifiable（无实测能力）时没有可溯源的实测项可标注，故出处不出现。
+	Unverifiable []ModelRegistryUnverifiable `json:"unverifiable,omitempty"`
 }
 
 // licenseBlockEmpty 判定一条记录的许可证块是否整块为空（零值比较，不引入占位串）。
@@ -113,6 +136,25 @@ func licenseBlockEmpty(l modelreg.License) bool {
 // source 与 evidence 一并带出（标准 §四：每句断言可追溯，source=probed 必须带探测证据）。
 func toRegistryCapability(c modelreg.Capability) ModelRegistryCapability {
 	return ModelRegistryCapability{Name: c.Name, Value: c.Value, Source: c.Source, Evidence: c.Evidence}
+}
+
+// toRegistryUnverifiable 把快照里一条"无法判定"记录翻成对外视图（待修补 #28）。
+// 三个字段原文照抄（name/reason/evidence），不推断、不补默认、不改写原因分类。
+func toRegistryUnverifiable(u modelreg.Unverifiable) ModelRegistryUnverifiable {
+	return ModelRegistryUnverifiable{Name: u.Name, Reason: u.Reason, Evidence: u.Evidence}
+}
+
+// mapRegistryUnverifiable 按快照原顺序把整条 unverifiable 列表翻成对外视图。
+// 空输入 → 返回 nil（omitempty 因而整键不出现，与"缺就缺"一致，绝不造空数组）。
+func mapRegistryUnverifiable(us []modelreg.Unverifiable) []ModelRegistryUnverifiable {
+	if len(us) == 0 {
+		return nil
+	}
+	out := make([]ModelRegistryUnverifiable, 0, len(us))
+	for _, u := range us {
+		out = append(out, toRegistryUnverifiable(u))
+	}
+	return out
 }
 
 // mergeRegistryCapabilities 把记录正文的断言（recCaps）与能力快照的断言（snapCaps）合成对外视图。
@@ -218,6 +260,7 @@ func (h *Handlers) ModelRegistryHandler(w http.ResponseWriter, r *http.Request) 
 		// 或不是合法 JSON 一律降级——该条只用正文能力，不 500、不报错到整体请求失败，
 		// 与坏记录策略一致。快照里没有的能力**绝不凭空造**（缺就缺）。
 		var snapCaps []modelreg.Capability
+		var snapUnverifiable []modelreg.Unverifiable
 		if snap, serr := modelreg.LoadCapabilitySnapshot(modelreg.CapabilitySnapshotPath(row.Path)); serr == nil {
 			snapCaps = snap.Capabilities
 			// 快照确有一条实测能力可用时才暴露出处：出现即表示上面有可溯源到该端点的实测项。
@@ -228,8 +271,15 @@ func (h *Handlers) ModelRegistryHandler(w http.ResponseWriter, r *http.Request) 
 				online := snap.OnlineProbed
 				item.SnapshotOnlineProbed = &online
 			}
+			// 不可判定能力（待修补 #28）：照抄快照的 unverifiable[]，与 capabilities 解耦。
+			snapUnverifiable = snap.Unverifiable
 		}
 		item.Capabilities = mergeRegistryCapabilities(rec.Capabilities, snapCaps)
+		// unverifiable 只在快照真给了内容时出现（空/缺/坏快照 → 整键不出现，见 omitempty）。
+		// 取舍：不改动 snapshot_* 的既有出现条件（仍只看 len(capabilities)>0）——那三个字段
+		// 标注的是"上面这些能力在哪探出来的"，而纯 unverifiable 场景没有实测能力可溯源；
+		// 若日后 UI 需要"这段不可判定结论出自哪个端点"，再让出处随 unverifiable 出现即可。
+		item.Unverifiable = mapRegistryUnverifiable(snapUnverifiable)
 		for _, fl := range rec.Files {
 			item.Files = append(item.Files, ModelRegistryFile{
 				Role: fl.Role, Name: fl.Name, SHA256: fl.SHA256, Size: fl.Size,
