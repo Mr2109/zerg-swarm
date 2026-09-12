@@ -33,11 +33,21 @@ import (
 // 读实测能力（待修补 #26：记录正文不再装 capabilities，能力与出处来自快照兄弟文件）。
 
 // ModelRegistryCapability 是一条能力断言的对外视图（标准 §四：必须带来源）。
+//
+// Engines（待修补 #39，数据由 #11 加入快照）是这条断言被**证过成立**的引擎（规范化标签，
+// 如 llama.cpp / vllm）。语义：同一能力在不同引擎上可真假不同，硬门槛按目标引擎取证据；
+// 缺引擎维度 = 不可判定（不等于可用）。本字段回答 UI 的"这条能力是在哪个引擎上测出来的"，
+// 是证据链的一环。
+//
+// 出现条件：快照里该能力条**确实带了非空 engines**（原音照抄，只丢空白/空串）。
+// 缺字段 / 空数组 → 本键**整键不出现**（omitempty），与既有 snapshot_* 字段同一口径——
+// 缺 = 未知，绝不填占位值（如 "unknown"/"n/a"），也绝不编造一个默认引擎。
 type ModelRegistryCapability struct {
-	Name     string `json:"name"`
-	Value    bool   `json:"value"`
-	Source   string `json:"source"`
-	Evidence string `json:"evidence,omitempty"`
+	Name     string   `json:"name"`
+	Value    bool     `json:"value"`
+	Source   string   `json:"source"`
+	Evidence string   `json:"evidence,omitempty"`
+	Engines  []string `json:"engines,omitempty"`
 }
 
 // ModelRegistryUnverifiable 是一条"无法判定"记录的对外视图（待修补 #28）。
@@ -76,6 +86,13 @@ type ModelRegistryLicense struct {
 	SourceURL  string `json:"source_url,omitempty"`
 	AcceptedBy string `json:"accepted_by,omitempty"`
 	AcceptedAt string `json:"accepted_at,omitempty"`
+	// Evidence 是许可证结论的**来源锚**（待修补 #39，数据由 #12 加入记录）：
+	// probe.license.v1 写"读的是哪个键/哪个文件"，例如
+	// `probe.license.v1 (gguf_key: general.license="apache-2.0")`；读不到时写
+	// `probe.license.v1 (no_license_source: tried …)`。它回答 UI 的"这个许可证结论是从哪读来的"，
+	// 是证据链的一环。缺（记录没有该字段 / 是空串）→ 本键**整键不出现**（omitempty），
+	// 绝不填占位值——与 license 块内其余可选字段同一口径。
+	Evidence string `json:"evidence,omitempty"`
 }
 
 // ModelRegistryRecord 是目录里一条记录的对外视图。
@@ -127,15 +144,49 @@ type ModelRegistryRecord struct {
 
 // licenseBlockEmpty 判定一条记录的许可证块是否整块为空（零值比较，不引入占位串）。
 // 全空 = 目录里这条记录没写任何许可细节 → 对外响应里连 license 字段都不出现（缺值就缺）。
+// 注：evidence 也计入"非空"——它承载的是"这个结论从哪读来的"，是真实证据而非装饰；
+// 只要它有值，块就不算空（否则会把唯一的一环证据链丢掉）。
 func licenseBlockEmpty(l modelreg.License) bool {
 	return l.SPDX == "" && l.Name == "" && l.Link == "" && l.Commercial == "" &&
-		!l.Gated && l.SourceURL == "" && l.AcceptedBy == "" && l.AcceptedAt == ""
+		!l.Gated && l.SourceURL == "" && l.AcceptedBy == "" && l.AcceptedAt == "" &&
+		l.Evidence == ""
 }
 
 // toRegistryCapability 把一条断言（记录正文或快照）翻成对外视图。
 // source 与 evidence 一并带出（标准 §四：每句断言可追溯，source=probed 必须带探测证据）。
+// engines（待修补 #39）同样照抄：只丢空白/空串、保持原顺序；全空 → nil（omitempty 因而整键不出现）。
 func toRegistryCapability(c modelreg.Capability) ModelRegistryCapability {
-	return ModelRegistryCapability{Name: c.Name, Value: c.Value, Source: c.Source, Evidence: c.Evidence}
+	return ModelRegistryCapability{
+		Name:     c.Name,
+		Value:    c.Value,
+		Source:   c.Source,
+		Evidence: c.Evidence,
+		Engines:  trimRegistryEngines(c.Engines),
+	}
+}
+
+// trimRegistryEngines 收敛对外的引擎列表：去空白、丢空串、保持出现顺序、去重。
+// 空输入 / 全是空串 → nil（omitempty → 整键不出现），绝不造空数组、绝不填占位值。
+// 注意：**不**做引擎名规范化（那是写入侧 CanonicalEngine 的职责，快照里已是规范化标签）——
+// 只读接口照抄即可，避免读侧擅自改写证据。
+func trimRegistryEngines(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, e := range in {
+		e = strings.TrimSpace(e)
+		if e == "" || seen[e] {
+			continue
+		}
+		seen[e] = true
+		out = append(out, e)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // toRegistryUnverifiable 把快照里一条"无法判定"记录翻成对外视图（待修补 #28）。
@@ -298,6 +349,7 @@ func (h *Handlers) ModelRegistryHandler(w http.ResponseWriter, r *http.Request) 
 				SourceURL:  lic.SourceURL,
 				AcceptedBy: lic.AcceptedBy,
 				AcceptedAt: lic.AcceptedAt,
+				Evidence:   lic.Evidence,
 			}
 		}
 		for name := range rec.EngineRecipes {
