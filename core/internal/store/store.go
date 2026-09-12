@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/resources"
 )
 
 // HeartbeatRequest 子端发送的心跳请求体。
@@ -19,10 +21,10 @@ type HeartbeatRequest struct {
 	Load           float64  `json:"load"`             // 系统负载（0-1）
 	Models         []string `json:"models"`           // 当前加载的模型列表
 	Uptime         float64  `json:"uptime"`           // 运行时间（秒）
-	GpuUsedGb      float64  `json:"gpu_used_gb"`      // GPU 已用内存（GB）
+	GpuUsedGb      float64  `json:"gpu_used_gb"`      // 真实显存占用（GB）；vram_known=false 时应视为未知，不再用 RSS 冒充
 	GpuTempC       float64  `json:"gpu_temp_c"`       // GPU 温度（°C），0 表示无数据
-	BackendRssGb   float64  `json:"backend_rss_gb"`   // 后端进程 RSS 内存（GB）
-	ActiveRequests int      `json:"active_requests"`  // 当前活跃请求数
+	BackendRssGb   float64  `json:"backend_rss_gb"`   // 后端进程 RSS 内存（GB，实测）
+	ActiveRequests int      `json:"active_requests"`  // 当前真实在飞请求数（子端 activeReqs）
 	Healthy        bool     `json:"healthy"`          // 是否健康
 	BackendState   string   `json:"backend_state"`    // 后端状态（如 ready, loading, error）
 	Error          *string  `json:"error"`            // 错误信息（可为 null）
@@ -31,6 +33,16 @@ type HeartbeatRequest struct {
 	// 代码身份（自动升级 L3）：子端自报版本+提交——"混版机群=不健康"必须看得见（设计稿 §3）
 	CodeVersion string `json:"code_version"` // 子端版本号（如 2.5.9）
 	CodeSHA     string `json:"code_sha"`     // 子端二进制提交（-ldflags 注入）
+
+	// ── 资源账本新增（《设计-资源管理器》§3.1/§3.4；全部可选，缺省=该机器未提供，旧读者忽略）──
+	VramKnown   bool    `json:"vram_known"`              // 子端能否拿到真实显存；false 时 gpu_used_gb 视为未知
+	VramTotalGb float64 `json:"vram_total_gb,omitempty"` // 真实显存总量（GB）
+	VramUsedGb  float64 `json:"vram_used_gb,omitempty"`  // 真实显存占用（GB）
+	VramFreeGb  float64 `json:"vram_free_gb,omitempty"`  // 真实显存空闲（GB）
+	// 驻留明细：每台机器上驻留的模型（托管 managed=true / 未托管 managed=false 都如实上报）
+	Resident []resources.ResidentEntry `json:"resident,omitempty"`
+	// 未托管但占着端口的进程（覆盖实测 E2；Q6：只标注，不接管不杀）
+	Unmanaged []resources.UnmanagedProcess `json:"unmanaged,omitempty"`
 }
 
 // HeartbeatResponse 心跳响应。
@@ -65,6 +77,16 @@ type FleetSnapshot struct {
 	CodeSHA     string    `json:"code_sha,omitempty"`
 	Error       *string   `json:"error,omitempty"`
 	LastSeen    time.Time `json:"last_seen"` // 最后心跳时间
+
+	// ── 资源账本新增（《设计-资源管理器》§3.1/§3.4；全部可选，缺省=该机器未提供）──
+	VramKnown   bool    `json:"vram_known,omitempty"`    // 能否拿到真实显存；false/缺省时 gpu_used_gb 视为未知
+	VramTotalGb float64 `json:"vram_total_gb,omitempty"` // 真实显存总量（GB）
+	VramUsedGb  float64 `json:"vram_used_gb,omitempty"`  // 真实显存占用（GB）
+	VramFreeGb  float64 `json:"vram_free_gb,omitempty"`  // 真实显存空闲（GB）
+	// 驻留明细（托管 managed=true；未托管 managed=false，均如实呈现）
+	Resident []resources.ResidentEntry `json:"resident,omitempty"`
+	// 未托管但占着端口的进程（E2；只读上报，不接管不杀）
+	Unmanaged []resources.UnmanagedProcess `json:"unmanaged,omitempty"`
 }
 
 // TaskRequest 任务请求。
@@ -127,6 +149,13 @@ func (s *Store) ReceiveHeartbeat(req HeartbeatRequest) *HeartbeatResponse {
 	snap.GpuPct = req.GpuPct
 	snap.CodeVersion = req.CodeVersion // L3：记住子端自报身份
 	snap.CodeSHA = req.CodeSHA
+	// 资源账本新增字段（§3.1）：逐项透传，旧字段不动
+	snap.VramKnown = req.VramKnown
+	snap.VramTotalGb = req.VramTotalGb
+	snap.VramUsedGb = req.VramUsedGb
+	snap.VramFreeGb = req.VramFreeGb
+	snap.Resident = req.Resident
+	snap.Unmanaged = req.Unmanaged
 	snap.LastSeen = time.Now()
 
 	return &HeartbeatResponse{
