@@ -5,6 +5,7 @@ package localback
 // 覆盖 #29（不得拿内存冒充显存）与 #30（本机驻留明细由 LocalBackend 自身状态构造，口径同远程）。
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/resources"
@@ -27,8 +28,14 @@ func TestSnapshot_NoFakeVramWhenModelLoaded(t *testing.T) {
 	if snap.VramKnown {
 		t.Fatal("本机拿不到独立显存，vram_known 必须为 false（不冒充）")
 	}
-	if !snap.VramUnified {
-		t.Fatal("本机（Apple Silicon）是统一内存——应标 vram_unified=true（显存即内存）")
+	// 统一内存形态按平台如实断言（契约：**只有**统一内存平台才可标 vram_unified=true）。
+	// darwin（Apple Silicon）显存即内存 → unified=true；其它平台本机采样不到独立显存 → 真未知
+	// （unified=false，消费方走 fail-closed 估算）。把非统一平台标成 unified=true 会把"未知"
+	// 当成"内存口径"误判（比未知更危险），故两侧都必须断言，不跳过、不放宽。
+	wantUnified := runtime.GOOS == "darwin"
+	if snap.VramUnified != wantUnified {
+		t.Fatalf("vram_unified=%v，%s 平台应为 %v（仅统一内存平台可标 unified）",
+			snap.VramUnified, runtime.GOOS, wantUnified)
 	}
 	if snap.VramTotalGb != 0 || snap.VramUsedGb != 0 || snap.VramFreeGb != 0 {
 		t.Fatalf("显存未知时三值必须缺席（为 0），实得 %v/%v/%v", snap.VramTotalGb, snap.VramUsedGb, snap.VramFreeGb)
