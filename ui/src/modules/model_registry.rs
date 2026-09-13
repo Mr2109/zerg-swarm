@@ -155,8 +155,8 @@ impl FieldVal {
 
 /// 偏好文件路径（与语言/预览渲染器偏好同一文件——见 app.rs::preview_pref_path）
 fn prefs_path() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    std::path::PathBuf::from(home).join(".zerg-ui-prefs.json")
+    // 2026-09-13 Q10：偏好文件落点迁到 <UI 状态目录>/prefs.json（与语言/预览渲染器偏好同一文件）
+    crate::api::prefs_path()
 }
 
 /// 纯解析：偏好文件文本 → 视图。坏 JSON / 缺字段 / 陌生取值一律 None（用默认能力视图）
@@ -180,14 +180,14 @@ fn merge_view_pref(existing: &str, view: View) -> String {
 /// 写盘（读改写——失败静默：偏好丢一次不影响功能）
 fn save_view(view: View) {
     let p = prefs_path();
-    let existing = std::fs::read_to_string(&p).unwrap_or_default();
+    // 读改写：读时兼容旧路径（新落点优先）——保住 locale/ai_model/auth_token 等既有字段
+    let existing = crate::api::read_prefs().unwrap_or_default();
     let _ = std::fs::write(&p, merge_view_pref(&existing, view));
 }
 
 /// 读盘：无文件 / 坏文件 → 默认能力视图（能力视图是设计拍定的默认）
 fn load_view() -> View {
-    std::fs::read_to_string(prefs_path())
-        .ok()
+    crate::api::read_prefs()
         .and_then(|s| parse_view_pref(&s))
         .unwrap_or(View::Capability)
 }
@@ -599,7 +599,7 @@ pub fn ui(ui: &mut egui::Ui) {
     }
 
     ui.horizontal(|ui| {
-        ui.heading(format!("{} {}", icon_text("package"), t!("mreg.title")));
+        // 2026-09-13（设计《UI 大调动》§4.4）：删掉重复标题块（heading）——保留 loading 与「刷新」按钮。
         if loading() {
             ui.label(RichText::new(t!("mreg.loading").to_string()).italics());
         }
