@@ -1908,6 +1908,50 @@ mod ui_dir_tests {
     fn ui_state_file_is_in_migration_whitelist() {
         assert!(UI_STATE_FILES.contains(&"ui_state.json"), "ui_state.json 必须在迁移白名单里");
     }
+
+    // B7 / G10：**跨语言契约测试** —— UI 自己的状态文件必须出现在 Go 侧的兼容清单
+    // （core/internal/compat/compat.json）里，且归属/信封/版本关系自洽。
+    //
+    // 为什么这条测试在 Rust 侧：清单是「哪些文件跨版本必须读懂」的单一真源，而 ui/*.json 是
+    // Rust 写的。只写在 Go 侧就等于「UI 新加一个状态文件，Go 门禁看不见」。这条把两侧钉在一起。
+    #[test]
+    fn ui_state_files_are_declared_in_compat_manifest() {
+        let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("core")
+            .join("internal")
+            .join("compat")
+            .join("compat.json");
+        let text = std::fs::read_to_string(&manifest_path).unwrap_or_else(|e| {
+            panic!("读不到 Go 侧兼容清单 {}: {}（跨版本状态契约不能缺席）", manifest_path.display(), e)
+        });
+        let m: serde_json::Value = serde_json::from_str(&text).expect("兼容清单必须是合法 JSON");
+        let entries = m["entries"].as_array().expect("兼容清单必须有 entries 数组");
+
+        // UI 写出的全部状态文件（相对状态目录）：一个都不能漏登记
+        let want = [
+            "ui/modules.json",
+            "ui/external-modules.json",
+            "ui/ui_state.json",
+            "ui/prefs.json",
+            "ui/ui_layout.json",
+        ];
+        for file in want {
+            let hit = entries.iter().find(|e| e["file"].as_str() == Some(file));
+            let e = hit.unwrap_or_else(|| panic!("{} 未登记在 core/internal/compat/compat.json 里", file));
+            assert_eq!(e["owner"].as_str(), Some("ui"), "{} 的 owner 必须是 ui", file);
+            let env = e["envelope"].as_str().unwrap_or("");
+            assert!(env == "inband" || env == "sidecar", "{} 的 envelope 非法（{}）", file, env);
+            let cur = e["current_schema"].as_i64().unwrap_or(0);
+            let min = e["min_readable"].as_i64().unwrap_or(-1);
+            assert!(cur >= 1, "{} 的 current_schema 必须 ≥1（实际 {}）", file, cur);
+            assert!(cur >= min, "{} 的 current_schema({}) 必须 ≥ min_readable({})", file, cur, min);
+            // 形状是「每个键都是数据」的文件**必须**走旁路信封——在信封里塞 schema 会吃掉用户状态
+            if file == "ui/modules.json" || file == "ui/ui_layout.json" || file == "ui/external-modules.json" {
+                assert_eq!(env, "sidecar", "{} 的形状不允许把 schema 塞进信封（会被读侧当成数据）", file);
+            }
+        }
+    }
 }
 
 /// CA 任务根目录（与主控一致：ZERG_TASK_ROOT → <ZERG_TMP_DIR|/tmp>/zerg-tasks）

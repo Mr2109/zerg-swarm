@@ -1,0 +1,208 @@
+{
+  "schema": 1,
+  "note": "跨版本状态文件兼容清单（B7 / G10：源码式升级后，旧版客户端写出的状态文件会被新版读到，反之亦然）。单一真源：Go 侧 core/internal/compat 用 go:embed 读本文件并在进程启动时注册迁移；CI 门禁 scripts/check-compat-manifest.py 读同一份做「清单↔代码」双向一致性检查。约定：migrate_func=N ⇒ Go 侧必须存在 func migrate<N>（见 core/internal/compat/migrations.go）；anchor_file + anchor 是「该文件真有读写实现」的可 grep 证据。",
+  "dirs": {
+    "state": {
+      "resolver": "statepath.Dir",
+      "env": "ZERG_STATE_DIR",
+      "default": "~/.zerg/state"
+    },
+    "receipts": {
+      "resolver": "compat.ReceiptsDir",
+      "env": "ZERG_RECEIPTS_DIR",
+      "default": "~/.zerg/update_receipts"
+    }
+  },
+  "entries": [
+    {
+      "name": "internal_engine",
+      "file": "internal_engine.json",
+      "dir": "state",
+      "owner": "go",
+      "kind": "file",
+      "envelope": "inband",
+      "schema_field": "schema",
+      "current_schema": 1,
+      "min_readable": 0,
+      "migrate_func": "AddSchemaField",
+      "stamps_schema": "layer",
+      "anchor_file": "core/internal/api/internal_engine.go",
+      "anchor": "func engineStatePath()",
+      "note": "内部任务引擎的用户意图（stopped/since）——重启恢复靠它，丢了就等于用户按的「停止」被升级抹掉。已接线：读走 compat.Read（旧版无 schema ⇒ 一次性迁移），写走 compat.Write（写时带 schema）。"
+    },
+    {
+      "name": "ui_state",
+      "file": "ui/ui_state.json",
+      "dir": "state",
+      "owner": "ui",
+      "kind": "file",
+      "envelope": "inband",
+      "schema_field": "schema",
+      "current_schema": 1,
+      "min_readable": 0,
+      "migrate_func": "AddSchemaField",
+      "stamps_schema": "none",
+      "anchor_file": "ui/src/modules/zerg_module.rs",
+      "anchor": "struct NavState",
+      "note": "导航选中（父箱+记忆子箱）。载体系结构体解析（NavState 带 #[serde(default)]，未知键被忽略）⇒ 顶层加 schema 字段对两侧都无害。UI 本批未改写入路径（保持旧形态写出，读侧一律容忍）。"
+    },
+    {
+      "name": "ui_prefs",
+      "file": "ui/prefs.json",
+      "dir": "state",
+      "owner": "ui",
+      "kind": "file",
+      "envelope": "inband",
+      "schema_field": "schema",
+      "current_schema": 1,
+      "min_readable": 0,
+      "migrate_func": "AddSchemaField",
+      "stamps_schema": "none",
+      "anchor_file": "ui/src/api.rs",
+      "anchor": "pub fn read_prefs() -> Option<String>",
+      "note": "界面偏好（locale/preview_renderer/ai_model/auth_token…）。读侧按 serde_json::Value 取字段 ⇒ 顶层多一个 schema 键无影响。旧落点 ~/.zerg-ui-prefs.json 的读时回退由 ui/src/api.rs::read_prefs 负责（不属于本清单——它在 state 目录之外）。"
+    },
+    {
+      "name": "ui_layout",
+      "file": "ui/ui_layout.json",
+      "dir": "state",
+      "owner": "ui",
+      "kind": "file",
+      "envelope": "sidecar",
+      "schema_field": "schema",
+      "current_schema": 1,
+      "min_readable": 0,
+      "migrate_func": "KeepPayload",
+      "stamps_schema": "sidecar",
+      "anchor_file": "ui/src/app.rs",
+      "anchor": "fn load_layout_ratio(",
+      "note": "分割比例，形状是 HashMap<String,f32> —— 读侧把**每个键都当比例**。信封内塞 schema 会被当成一条比例为 1.0 的条目（并被写回），故版本号走旁路 ui_layout.json.schema.json，载荷逐字节不动。"
+    },
+    {
+      "name": "ui_modules",
+      "file": "ui/modules.json",
+      "dir": "state",
+      "owner": "ui",
+      "kind": "file",
+      "envelope": "sidecar",
+      "schema_field": "schema",
+      "current_schema": 1,
+      "min_readable": 0,
+      "migrate_func": "KeepPayload",
+      "stamps_schema": "sidecar",
+      "anchor_file": "ui/src/modules/zerg_module.rs",
+      "anchor": "pub fn load(&mut self)",
+      "note": "哪些箱被卸下，形状是 BTreeMap<String,bool>（只记禁用项）。信封内塞 \"schema\":1 会让 serde 对**整份**解析失败（整数不是 bool）⇒ 用户全部「卸下」选择丢失。这正是「加 schema 字段」这条通用做法会静默吃掉用户状态的例子，故必须走旁路。"
+    },
+    {
+      "name": "ui_external_modules",
+      "file": "ui/external-modules.json",
+      "dir": "state",
+      "owner": "ui",
+      "kind": "file",
+      "envelope": "sidecar",
+      "schema_field": "schema",
+      "current_schema": 1,
+      "min_readable": 0,
+      "migrate_func": "KeepPayload",
+      "stamps_schema": "sidecar",
+      "anchor_file": "ui/src/modules/zerg_module.rs",
+      "anchor": "pub fn load_external(&mut self)",
+      "note": "外部生态箱声明（JSON 数组，元素是模块结构体）。顶层不是对象 ⇒ 无法携带 schema 键，版本号走旁路。"
+    },
+    {
+      "name": "tool_uses",
+      "file": "tool_uses.json",
+      "dir": "state",
+      "owner": "go",
+      "kind": "file",
+      "envelope": "sidecar",
+      "schema_field": "schema",
+      "current_schema": 1,
+      "min_readable": 0,
+      "migrate_func": "KeepPayload",
+      "stamps_schema": "sidecar",
+      "anchor_file": "core/internal/agent/tool_uses.go",
+      "anchor": "func RecordToolUse(name string)",
+      "note": "工具调用计数，形状是 map<string,int>，且是 flock 读-改-写（持锁 FD 内原地截断重写）。读侧**逐键当工具名**枚举（UI 拉 /api/resources/tools 时会把 schema 显示成一门工具）⇒ 版本号走旁路。"
+    },
+    {
+      "name": "update_check",
+      "file": "update_check.json",
+      "dir": "state",
+      "owner": "go",
+      "kind": "file",
+      "envelope": "inband",
+      "schema_field": "schema",
+      "current_schema": 1,
+      "min_readable": 0,
+      "migrate_func": "AddSchemaField",
+      "stamps_schema": "none",
+      "anchor_file": "core/internal/selfupdate/check.go",
+      "anchor": "func CachePath(stateDir string) string",
+      "note": "升级检查的 6 小时缓存（ts/version/local_sha/status/behind/ahead）。读侧是结构体解析、字段缺失即零值 ⇒ 两个方向都容忍。本批**不改 core/internal/selfupdate 行为面**（缓存窗口/不确定结论不落盘等语义一字不动），故 stamps_schema=none：迁移只在层里补一次标注，之后 selfupdate 重写会退回无 schema 形态——幂等且无害（读侧容忍缺失）。"
+    },
+    {
+      "name": "compact_cooldown",
+      "file": "compact_cooldown.json",
+      "dir": "state",
+      "owner": "go",
+      "kind": "file",
+      "envelope": "inband",
+      "schema_field": "schema",
+      "current_schema": 1,
+      "min_readable": 0,
+      "migrate_func": "AddSchemaField",
+      "stamps_schema": "none",
+      "anchor_file": "core/internal/chat/chat_compact_v2.go",
+      "anchor": "func loadCompactCooldownLocked()",
+      "note": "压缩冷却状态，形状 {sessions:{…}}（结构体信封）。读侧结构体解析 ⇒ 顶层 schema 字段无害。衰减极快（分钟级），跨版本风险低但登记在此以免「漏一个」。"
+    },
+    {
+      "name": "prefix_cache",
+      "file": "prefix_cache.json",
+      "dir": "state",
+      "owner": "go",
+      "kind": "file",
+      "envelope": "inband",
+      "schema_field": "version",
+      "current_schema": 1,
+      "min_readable": 0,
+      "migrate_func": "AddSchemaField",
+      "stamps_schema": "native",
+      "anchor_file": "core/internal/gateway/prefix_cache.go",
+      "anchor": "persistedPrefixCacheVersion = 1",
+      "note": "前缀命中率跨重启快照。**原生就带版本字段**（json 键名是 version，不是 schema）——清单的 schema_field 如实写 version；写侧由 gateway 自己盖（stamps_schema=native），读侧不校验版本、字段缺失即零值 ⇒ 双向容忍。"
+    },
+    {
+      "name": "update_receipts",
+      "file": "*.json",
+      "dir": "receipts",
+      "owner": "go",
+      "kind": "glob",
+      "envelope": "inband",
+      "schema_field": "schema",
+      "current_schema": 1,
+      "min_readable": 1,
+      "migrate_func": "AddSchemaField",
+      "stamps_schema": "native",
+      "anchor_file": "core/internal/selfupdate/receipt.go",
+      "anchor": "func WriteLaunchReceipt(receiptsDir string, r LaunchReceipt) (string, error)",
+      "note": "升级交接/权威回执集合（每笔一份 + latest.json / latest-fleet.json）。zerg-upgrade.sh 内核写权威回执时**已带 schema:1**（B0 起的既有形态），故 min_readable=1：无 schema 的回执不存在，出现即视为旧版遗留并按 0 处理。集合类：迁移逐文件进行（kind=glob）。"
+    }
+  ],
+  "excluded": [
+    {
+      "file": "compact_journal.jsonl",
+      "reason": "append-only JSONL 召回指针日志（每行一条记录）。无对象信封、不该被整体重写（重写会打断追加语义）⇒ 版本化不适用；追加式本身即跨版本：旧行新版照读，新版多写行不影响旧版解析。"
+    },
+    {
+      "file": "tool_events/*.jsonl",
+      "reason": "CA 工具事件流水（append-only，每行一条 JSON）。与 compact_journal.jsonl 同理：只追加、不整体解析，天然跨版本。"
+    },
+    {
+      "file": "llama-local.lock",
+      "reason": "本地模型单槽互斥的文件锁（0 字节）——不是状态，不携带数据。"
+    }
+  ]
+}

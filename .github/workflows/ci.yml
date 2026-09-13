@@ -55,6 +55,22 @@ jobs:
       - name: Go 工具链钉住一致性（G6：core/agent 两模块同值）
         run: python3 scripts/check-gotoolchain.py
 
+  compat:
+    name: 跨版本状态兼容清单门禁（B7 / G10）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 清单 ↔ 代码双向一致（R1–R6）
+        # 只读源码与 core/internal/compat/compat.json；**不碰真机状态目录**（CI 里跑 ~/.zerg/** 是禁忌）。
+        run: python3 scripts/check-compat-manifest.py --selftest && python3 scripts/check-compat-manifest.py
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: 兼容层单测（迁移幂等 / 不覆盖 / 高版本不猜 / 旁路信封）
+        working-directory: core
+        run: go test ./internal/compat/ ./internal/api/ -run 'Compat|Manifest|Migration|Migrate|Schema|Sidecar|Engine|VerifyGuard|Dirs|Path' -count=1
+
   docs:
     name: 文档双语门禁（配对/标题/链接）
     runs-on: ubuntu-latest
