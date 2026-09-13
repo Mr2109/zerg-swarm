@@ -776,14 +776,25 @@ done
 # 只校 sha256 不够：那样"源比当前旧"时会照单换装 → 静默降级（2026-09-11 实测踩到）。
 # 判据用 git 祖先关系（同一仓库里两者都在历史中才判得出）；判不出就不拦，只提示。
 CUR_SHA_SHORT="$(printf '%s' "$CUR_CORE" | awk '{print $3}' | sed 's/+.*//')"
-if [ -n "$CUR_SHA_SHORT" ] && [ "$CUR_SHA_SHORT" != "unknown" ] && [ "$CUR_SHA_SHORT" != "$SRC_SHA" ]; then
-  if git -C "$GITREPO" merge-base --is-ancestor "$SRC_SHA" "$CUR_SHA_SHORT" 2>/dev/null; then
+# 2026-09-13（真机首升暴露）：比对面原先固定用「已装件的 sha」。当装的是**公开仓制品**时，那个 sha
+# 在私有图里根本不存在 ⇒ 恒报「无法判定」⇒ 降级拦截形同没有（公开/私有 sha 混态）。
+# 改为优先与**本地代码树的 HEAD** 比 —— 构建来自这棵树，它必然在本地历史里；再退回已装件 sha 兜底。
+LOCAL_HEAD="$(git -C "$GITREPO" rev-parse --short HEAD 2>/dev/null || true)"
+CMP_SHA="$LOCAL_HEAD"
+CMP_LABEL="本地树"
+if [ -z "$CMP_SHA" ] || ! git -C "$GITREPO" cat-file -e "${SRC_SHA}^{commit}" 2>/dev/null; then
+  CMP_SHA="$CUR_SHA_SHORT"; CMP_LABEL="已装件"
+fi
+if [ -n "$CMP_SHA" ] && [ "$CMP_SHA" != "unknown" ] && [ "$CMP_SHA" != "$SRC_SHA" ]; then
+  if git -C "$GITREPO" merge-base --is-ancestor "$SRC_SHA" "$CMP_SHA" 2>/dev/null; then
     if [ "$ALLOW_DOWNGRADE" != "1" ]; then
-      die "目标是旧提交（源 ${SRC_SHA} 早于当前运行的 ${CUR_SHA_SHORT}）——拒绝降级；确实要降级请加 --allow-downgrade" 5
+      die "目标是旧提交（源 ${SRC_SHA} 早于${CMP_LABEL} ${CMP_SHA}）——拒绝降级；确实要降级请加 --allow-downgrade" 5
     fi
-    say "⚠️  降级：源 ${SRC_SHA} 早于当前 ${CUR_SHA_SHORT}（--allow-downgrade 已放行）"
+    say "⚠️  降级：源 ${SRC_SHA} 早于${CMP_LABEL} ${CMP_SHA}（--allow-downgrade 已放行）"
+  elif git -C "$GITREPO" merge-base --is-ancestor "$CMP_SHA" "$SRC_SHA" 2>/dev/null; then
+    say "✅ 目标比${CMP_LABEL}新（${CMP_SHA} → ${SRC_SHA}），不是降级"
   else
-    say "ℹ️  无法判定新旧（源 ${SRC_SHA} 不在本地历史中）——不做降级拦截"
+    say "ℹ️  无法判定新旧（源 ${SRC_SHA} 与${CMP_LABEL} ${CMP_SHA} 无祖先关系）——不做降级拦截"
   fi
 fi
 
