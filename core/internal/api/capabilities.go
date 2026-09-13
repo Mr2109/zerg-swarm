@@ -40,6 +40,11 @@ func (h *Handlers) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 			{"name": "list_fileroots", "desc": "文件浏览器：五根白名单（docs/repo/models/tasks/weights）+ 可配置项；每根含 exists（根不存在也返回该项，exists=false）", "endpoint": "GET /api/fileroots"},
 			{"name": "open_file", "desc": "用默认应用打开根内目录 / text_exts 内文本文件（白名单校验 + 审计留痕）", "endpoint": "POST /api/fileroots/open"},
 			{"name": "reveal_file", "desc": "在访达中显示根内任意类型文件或目录（白名单校验 + 审计留痕；不执行不解析）", "endpoint": "POST /api/fileroots/reveal"},
+			// 2026-09-13（Mr2109「按建议」）：设计稿曾承诺 /api/resources/fit 与 /api/resources/residency，
+			// 代码未实现（请求返回 400）。按"代码为准、回填文档"的规矩不另设端点——数据统一在 ledger，
+			// 这里如实给出映射，免得外部 agent 按设计稿去找两个不存在的地址。
+			{"name": "resource_fit", "desc": "资源是否装得下（原设计承诺 /api/resources/fit 未实现——数据见 ledger；设计稿已回填）", "endpoint": "GET /api/resources/ledger"},
+			{"name": "resource_residency", "desc": "驻留与未托管模型（原设计承诺 /api/resources/residency 未实现——数据见 ledger；设计稿已回填）", "endpoint": "GET /api/resources/ledger"},
 		},
 		"workflow": "提交任务 → CA 执行（worktree git）→ 确定性验证（机器检查）→ 复查模型（跨家族）→ 通过 merge/打回重做",
 		"notes":    "单槽铁律: 单设备串行——排队慢正常（等更多 X3 并行）",

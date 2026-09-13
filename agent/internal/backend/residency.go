@@ -140,21 +140,27 @@ func pinState(sp *subproc, now time.Time) (bool, float64) {
 //
 // 本项于本次验收才实现（取证：此前只有 pin 的 TTL，没有任何"空闲到期自动卸载"的路径——
 // residency.go 只有 Pin/Unpin/pinState，manager.go 无回收循环）。
-// 设计稿只给了规则、未给默认秒数，故默认**不启用**（不凭空造值）；显式配置才生效。
+// 默认秒数由Mr2109 2026-09-13 拍板定为 **300 秒**（DefaultIdleTTL）；ZERG_MODEL_TTL_S 可覆盖，设 0 即关闭。
 
 // EnvModelTTL 是驻留模型空闲 TTL 的配置项名（环境变量，单位：秒）。
 const EnvModelTTL = "ZERG_MODEL_TTL_S"
 
+// DefaultIdleTTL 是空闲 TTL 的默认值：**300 秒**（Mr2109 2026-09-13 拍板「300 秒」）。
+//
+// 语义：驻留模型连续空闲（无在飞请求、非加载中、pin 未生效）超过该时长即被卸载，把显存让出来；
+// 想关掉就把 ZERG_MODEL_TTL_S 显式设成 0（逃生门），不要在代码里改这个常量。
+const DefaultIdleTTL = 300 * time.Second
+
 // resolveIdleTTLFromEnv 解析空闲 TTL（纯函式，便于测试注入 getenv）。
-// 缺省/空 → 0（不启用）；非法（非数字/负数）→ 记日志并回落 0（不静默接受怪值；
-// 配错不启用是安全方向——配错不会导致驻留被意外卸掉）。
+// 缺省/空（含 getenv 为 nil，即读不到环境）→ DefaultIdleTTL（300 秒）；
+// 非法（非数字/负数）→ 记日志并回落 0（不启用）——配错时钟宁可不卸，也不按猜出来的数字卸。
 func resolveIdleTTLFromEnv(getenv func(string) string) time.Duration {
 	if getenv == nil {
-		return 0
+		return DefaultIdleTTL
 	}
 	raw := strings.TrimSpace(getenv(EnvModelTTL))
 	if raw == "" {
-		return 0
+		return DefaultIdleTTL
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 0 {
