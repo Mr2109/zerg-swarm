@@ -368,25 +368,23 @@ pub async fn fetch_logs_blocking() -> Result<Vec<String>, String> {
 /// 文档目录（blocking）——v2.5.6 返回 files + dirs（Mr2109 2026-08-29: 目录树+文件列表）
 pub async fn fetch_docs_blocking() -> Result<(Vec<String>, Vec<String>), String> {
     let v = sync_get_public("/api/docs").await?;
-    let files = v
-        .get("files")
-        .and_then(|f| f.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| x.as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
-    let dirs = v
-        .get("dirs")
-        .and_then(|f| f.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| x.as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
-    Ok((files, dirs))
+    Ok(docs_listing(&v))
+}
+
+/// 列表响应解析（files + dirs）——老 `fetch_docs_blocking` 与文件浏览器「按根列表」共用同一份解析
+/// （避免两处各写一遍 filter_map，语义一旦分叉就会出现「老端点有目录、新端点没有」的诡异差异）
+fn docs_listing(v: &Value) -> (Vec<String>, Vec<String>) {
+    let pick = |key: &str| -> Vec<String> {
+        v.get(key)
+            .and_then(|f| f.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    (pick("files"), pick("dirs"))
 }
 
 /// 文档内容（blocking）
@@ -397,6 +395,56 @@ pub async fn fetch_doc_content_blocking(path: String) -> Result<String, String> 
     Ok(v.get("content")
         .and_then(|c| c.as_str().map(|s| s.to_string()))
         .unwrap_or_default())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 文件浏览器阶段 1（2026-09-13 设计「文件浏览器集装箱」§4.2）：根集合 + 按根读取
+// 说明：GET 侧在此（本模块可复用私有的 urlencode 做查询串转义）；
+//      POST 侧（open/reveal）在 ui/src/modules/filebrowse/actions.rs（要按错误码映射文案）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 根集合 + 界面显示配置（GET /api/fileroots）
+/// 200 → {"roots":[{"id","label","path","default","writable"}...],
+///        "config":{"display_max":1048576,"allow_all_types":false,"text_exts":[".md",...]}}
+pub async fn fetch_fileroots_blocking() -> Result<Value, String> {
+    sync_get_public("/api/fileroots").await
+}
+
+/// 按根列目录（GET /api/docs?root=<id>）
+/// root=None ⇒ 不带 root 参数 ⇒ **与改造前的 /api/docs 逐字节等价**（§4.5 老行为不变）
+pub async fn fetch_docs_root_blocking(root: Option<&str>) -> Result<(Vec<String>, Vec<String>), String> {
+    let path = match root {
+        Some(r) if !r.is_empty() => format!("/api/docs?root={}", urlencode(r)),
+        _ => "/api/docs".to_string(),
+    };
+    let v = sync_get_public(&path).await?;
+    Ok(docs_listing(&v))
+}
+
+/// 按根读文件（GET /api/docs?root=<id>&path=<rel>）→（内容, 后端报的字节数）
+/// **读取不设上限**（§4.4 拍板：文本整份取回）——这里不做任何截断，截断只发生在界面渲染。
+pub async fn fetch_doc_content_in_root_blocking(root: &str, path: &str) -> Result<(String, Option<u64>), String> {
+    let p = format!("/api/docs?root={}&path={}", urlencode(root), urlencode(path));
+    let v = sync_get_public(&p).await?;
+    let content = v
+        .get("content")
+        .and_then(|c| c.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let size = v.get("size").and_then(|s| s.as_u64());
+    Ok((content, size))
+}
+
+/// 按根读文件（统一入口）——文档模块与文件浏览器共用：
+/// root 为空或 "docs" 走**老端点** `/api/docs/<rel>`（§4.5 兼容），其余根走参数化端点。
+pub async fn fetch_doc_content_any_root_blocking(root: &str, path: String) -> Result<String, String> {
+    if root.is_empty() || root == "docs" {
+        fetch_doc_content_blocking(path).await
+    } else {
+        fetch_doc_content_in_root_blocking(root, &path)
+            .await
+            .map(|(c, _size)| c)
+    }
 }
 
 /// 文档操作（blocking）——v2.5.6 右键菜单/编辑器（Mr2109 2026-08-29）

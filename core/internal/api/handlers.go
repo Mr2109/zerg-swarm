@@ -53,6 +53,14 @@ type Handlers struct {
 	// 为什么需要：localback.LocalBackend 的状态字段（state/file/memGB）在包外不可构造，
 	// api 侧造不出"本机有驻留"的真实快照，只能用替身验证 local 一行的合并口径。
 	LocalSnapProvider LocalSnapshotProvider
+
+	// ── 文件/目录浏览器（《设计-文件浏览器集装箱-20260913》阶段 1）──────────────
+	// FileBrowserAudit 仅测试注入：open/reveal 审计的目录与轮转参数（nil = ~/.zerg/logs +
+	// 1 MiB/留 5 份/清 30 天）。测试要"造小上限 + 伪时钟"验证轮转与过期清理，又不能碰 ~/.zerg。
+	FileBrowserAudit *fileBrowserAuditParams
+	// FileBrowserRun 仅测试注入："交给系统"动作的执行器（nil = 真跑 open/xdg-open）。
+	// 为什么必须可注入：测试若真执行 open，会弹出访达窗口——那不是一个可重复的测试。
+	FileBrowserRun func(action, abs string) error
 }
 
 // writeJSON 辅助函数：写入 JSON 响应。
@@ -965,7 +973,14 @@ func (h *Handlers) LogsHandler2(w http.ResponseWriter, r *http.Request) {
 
 // DocsHandler 文档 API（v2.5.5 虫族UI: docs/ 目录列表 + 内容）
 // GET /api/docs（目录）+ GET /api/docs/{path}（内容）
+//
+// 2026-09-13 文件浏览器阶段 1：带 root/path 查询参数时走参数化读取（白名单根 + 类型规则，
+// 实现见 fileroots.go）；不带任何查询参数时**原样**走改造前的 docs 逻辑——老 UI 逐字不受影响。
 func (h *Handlers) DocsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("root") || r.URL.Query().Has("path") {
+		h.docsParameterized(w, r)
+		return
+	}
 	// v2.5.6 多段路径: {path} 单段 → catch-all 用 "*"（00-总览/xxx.md）
 	docPath := chi.URLParam(r, "path")
 	if docPath == "" {
@@ -975,7 +990,9 @@ func (h *Handlers) DocsHandler(w http.ResponseWriter, r *http.Request) {
 	if unescaped, err := url.PathUnescape(docPath); err == nil {
 		docPath = unescaped
 	}
-	docsDir := "<repo>/docs"
+	// 2026-09-13：写死的 docs 绝对路径换成既有解析器（取值不变，且与 /api/fileroots 的 docs 根同源，
+	// 否则 ZERG_WORKSPACE 一改就会出现"清单指着 A、读取读的是 B"）
+	docsDir := docsRootPath()
 	if docPath == "" {
 		// 目录列表——递归收集所有 md（书结构——docs/0X-类型/xxx.md 完整路径）
 		files := []string{}
