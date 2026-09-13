@@ -129,7 +129,9 @@ pub struct ZergApp {
     #[cfg(feature = "zerg-roundtable")]
     roundtable: Option<Box<zerg_roundtable::ui::RoundtableApp>>,
     // T8 虫茧平台态（false=平台启动器应用栅格；true=示例虫茧全屏）
-    rt_active: bool,
+    /// 虫茧平台里**当前打开的应用卡**（None = 停在平台栅格）。2026-09-13 Mr2109纠正：
+    /// 「文档」是平台的一张独立应用卡（与示例虫茧平级），不是虫茧的子标签 ⇒ 用箱 id 记录。
+    cocoon_app: Option<String>,
     // 选中的任务
     selected_task: Option<TaskInfo>,
     // 当前请求的任务 ID
@@ -247,7 +249,7 @@ impl ZergApp {
             show_module_manager: false,
             #[cfg(feature = "zerg-roundtable")]
             roundtable: None,
-            rt_active: false,
+            cocoon_app: None,
             selected_task: None,
             detail_id: String::new(),
             last_refresh: 0.0,
@@ -1293,6 +1295,13 @@ impl ZergApp {
     /// 当前**有效**箱（父箱 ⇒ 记忆子箱 / order 最小子箱）。渲染分发、HUD 面包屑都用它。
     /// 纯查询（只读注册表）——三个父箱因此不需要各自的渲染臂（设计 §五）。
     fn effective_active(&self) -> String {
+        // 2026-09-13（Mr2109纠正）：虫茧平台栅格里打开的应用（如「文档」）**直接走它自己的渲染臂**
+        // ——与子页签同款「零重复实现」，且一级导航高亮仍停在「虫茧」（人还在平台里）。
+        if self.registry.active == "roundtable" {
+            if let Some(app) = &self.cocoon_app {
+                return app.clone();
+            }
+        }
         let remembered = self
             .registry
             .remembered_child
@@ -1315,6 +1324,14 @@ impl ZergApp {
         if empty_group {
             ui.weak(t!("nav.no_submodules"));
             return;
+        }
+        // 2026-09-13（Mr2109纠正）：从虫茧平台栅格打开的**应用** → 顶部一条「← 虫茧平台」面包屑。
+        // 应用自身是完整界面（不加标题，设计 §4.4），宿主只提供一层返回。
+        if self.registry.active == "roundtable" && self.cocoon_app.is_some() {
+            if ui.button(format!("← {}", t!("cocoon.platform"))).clicked() {
+                self.cocoon_app = None;
+            }
+            ui.add_space(6.0);
         }
         match eff.as_str() {
             "chat" => {
@@ -1442,25 +1459,46 @@ impl ZergApp {
             "roundtable" => {
                 #[cfg(not(feature = "zerg-roundtable"))]
                 {
-                    // 未装载该集装箱：永远停在平台栅格（不进入不存在的视图）
-                    self.rt_active = false;
+                    // 未装载该集装箱：永远停在平台栅格（不进入不存在的视图）。
+                    // 注意只踢「示例虫茧」——内置应用（文档）不受 feature 限制。
+                    if self.cocoon_app.as_deref() == Some("roundtable") {
+                        self.cocoon_app = None;
+                    }
                 }
-                if !self.rt_active {
+                if self.cocoon_app.is_none() {
                     // ── 平台界面：应用栅格（无数茧——每个=独立集装箱应用——示例虫茧=第一个）──
                     ui.heading(format!("{} {}", icon_text("boxes"), t!("cocoon.platform")));
                     ui.weak(t!("cocoon.platform_hint"));
                     ui.add_space(10.0);
                     // 应用清单（平台雏形——未来读集装箱注册/目录扫描——现静态声明可扩展）
                     // 结构：每卡=独立 git 集装箱应用（id/名字/描述/打开）
-                    let cards: [(String, String, String); 1] = [(
-                        "roundtable".into(),
-                        t!("cocoon.roundtable.name").to_string(),
-                        t!("cocoon.roundtable.desc").to_string(),
-                    )];
+                    // 2026-09-13（Mr2109纠正）：栅格里**每个茧 = 一张独立应用卡**。「文档」是内置模块，
+                    // 但在这里与示例虫茧平级——点进去是完整界面（顶部一条「← 虫茧平台」面包屑返回）。
+                    // 卡片清单由注册表给出（platform_apps）⇒ 文档被卸下则卡片消失，不写死。
+                    let cards: Vec<(String, String, String, String)> = self
+                        .registry
+                        .platform_apps()
+                        .into_iter()
+                        .filter_map(|id| match id {
+                            "docs" => Some((
+                                "docs".to_string(),
+                                "📚".to_string(),
+                                t!("mod.docs.name").to_string(),
+                                t!("mod.docs.desc").to_string(),
+                            )),
+                            "roundtable" => Some((
+                                "roundtable".to_string(),
+                                "📖".to_string(),
+                                t!("cocoon.roundtable.name").to_string(),
+                                t!("cocoon.roundtable.desc").to_string(),
+                            )),
+                            _ => None,
+                        })
+                        .collect();
                     // 卡片网格（wrap 布局——每卡固定宽 260）
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                         egui::Grid::new("cocoon_grid").num_columns(3).spacing([14.0, 14.0]).show(ui, |ui| {
-                            for (id, name, desc) in &cards {
+                            for (id, glyph, name, desc) in &cards {
                                 let (rect, _) = ui.allocate_exact_size(egui::vec2(260.0, 132.0), egui::Sense::click());
                                 let hover = rect.contains(ui.ctx().pointer_interact_pos().unwrap_or_default());
                                 let (fill, stroke) = if hover {
@@ -1475,18 +1513,19 @@ impl ZergApp {
                                         .max_rect(egui::Rect::from_min_max(rect.min + egui::vec2(14.0, 12.0), rect.max - egui::vec2(14.0, 12.0)))
                                         .layout(egui::Layout::top_down(egui::Align::Min)),
                                 );
-                                card_ui.label(egui::RichText::new(format!("📖 {name}")).size(16.0).strong());
+                                card_ui.label(egui::RichText::new(format!("{glyph} {name}")).size(16.0).strong());
                                 card_ui.add_space(6.0);
                                 card_ui.label(egui::RichText::new(desc.as_str()).size(12.0).color(egui::Color32::from_rgb(170, 175, 185)));
                                 card_ui.with_layout(egui::Layout::right_to_left(egui::Align::BOTTOM), |ui| {
                                     if ui.button(egui::RichText::new(t!("action.open")).size(12.0)).clicked() {
-                                        // 2026-09-11 B 批（决策 5）：集装箱需编译时装载（feature）
-                                        if cfg!(feature = "zerg-roundtable") {
-                                            self.rt_active = true;
+                                        // 2026-09-11 B 批（决策 5）：**跨仓**集装箱需编译时装载（feature）；
+                                        // 内置应用（文档）不受此限。
+                                        if id == "docs" || cfg!(feature = "zerg-roundtable") {
+                                            self.cocoon_app = Some(id.clone());
                                         }
                                     }
                                 });
-                                if !cfg!(feature = "zerg-roundtable") {
+                                if id == "roundtable" && !cfg!(feature = "zerg-roundtable") {
                                     card_ui.label(
                                         egui::RichText::new(t!("cocoon.not_loaded"))
                                             .size(11.0)
@@ -1495,9 +1534,9 @@ impl ZergApp {
                                 }
                                 if card_ui.rect_contains_pointer(rect)
                                     && ui.ctx().input(|i| i.pointer.any_click())
-                                    && cfg!(feature = "zerg-roundtable")
+                                    && (id == "docs" || cfg!(feature = "zerg-roundtable"))
                                 {
-                                    self.rt_active = true;
+                                    self.cocoon_app = Some(id.clone());
                                 }
                                 ui.allocate_exact_size(egui::vec2(0.0, 0.0), egui::Sense::hover());
                                 ui.end_row();
@@ -1509,7 +1548,7 @@ impl ZergApp {
                 // 三层收一层（2026-09-04）：宿主不再画返回条——示例虫茧面包屑自带"← 虫茧平台"
                 // 2026-09-11 B 批（决策 5）：整块随 feature 编译——未启用时不存在该视图
                 #[cfg(feature = "zerg-roundtable")]
-                if self.rt_active {
+                if self.cocoon_app.as_deref() == Some("roundtable") {
                     if self.roundtable.is_none() {
                         self.roundtable = Some(Box::new(zerg_roundtable::ui::RoundtableApp::new()));
                     }
@@ -1518,7 +1557,7 @@ impl ZergApp {
                     rt.render(ui);
                     // 面包屑"← 虫茧平台"点击请求 → 退出回平台栅格（引擎后台继续 M2）
                     if rt.exit_platform {
-                        self.rt_active = false;
+                        self.cocoon_app = None;
                     }
                 }
             }
@@ -3217,7 +3256,7 @@ impl eframe::App for ZergApp {
             || lock_recover(&self.doc_op_result).is_some()
             || lock_recover(&self.it_ctrl_result).is_some()
             || self.it_ctrl_busy.is_some()
-            || self.rt_active;
+            || self.cocoon_app.is_some();
         if busy {
             ui.ctx().request_repaint();
         } else {
