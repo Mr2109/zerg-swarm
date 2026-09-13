@@ -51,3 +51,7 @@ __pycache__/
 
 # 发布制品（scripts/build-all.sh --dist：二进制 + checksums.txt）——入库会让公开快照带编译产物
 /dist/
+
+# 安装方式印记（B3 `zerg update`：代码树旁的 .install_method = git/fleet/unknown）
+# 是"这台机器怎么装的"的运行时属性，不该入库（照抄 Hermes 的 /.install_method）
+/.install_method
