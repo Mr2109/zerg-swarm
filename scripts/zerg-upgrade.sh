@@ -17,6 +17,7 @@
 #   bash scripts/zerg-upgrade.sh --rollback      # 用 .prev 回滚
 #   bash scripts/zerg-upgrade.sh --receipts      # 看最近回执
 #   bash scripts/zerg-upgrade.sh --fleet --plan  # 机群：只盘点（名册 + 目标 + 矩阵，无副作用）
+#   bash scripts/zerg-upgrade.sh --fleet --roster # 机群：只打印名册 TSV（供 scripts/fleet-relay.sh 复用同一份解析）
 #   bash scripts/zerg-upgrade.sh --fleet         # 机群：每台**各自**跑源码式更新，最后核对版本矩阵
 #   ... --allow-downgrade                        # 明确允许把代码换成更旧的提交（默认拒绝降级）
 #   ... --role controller|node                   # 本机角色（默认 controller）
@@ -40,7 +41,15 @@
 #   主控只负责：① 编排（顺序、共享构建时间戳）② 核对版本矩阵（/api/fleet/status 三台 code_sha
 #   一致且 = 目标）③ 回收各机回执（逐台一份 + 汇总一份）。
 #   名册：ZERG_FLEET_NODES（env，优先）或 gateway/fleet.yaml 的 update.nodes（私有）；
-#         每项 "name=ssh目标[,root=…,prefix=…,api=…,components=…,role=…]"。
+#         每项 "name=ssh目标[,root=…,prefix=…,api=…,components=…,role=…,relay=…]"。
+#   取源（B5.1，2026-09-13 拍板「主控镜像中继」）：节点从**自己的本地裸仓**取源码——
+#     名册 relay=<该机裸仓路径>（缺省＝该机检出目录的父目录下 zerg-relay.git，通常即家目录）；
+#     中继由 `scripts/fleet-relay.sh --from <镜像仓>` 显式跑（**不在 --fleet 内自动跑**：
+#     往远端建仓/推送是对**其它机器**的写操作，必须可单独执行、可回读、可失败点名；
+#     自动塞进「升级」会让失败归因变模糊，也让 --plan 的零副作用保证失效）。
+#     节点步的注入口径：**该机上裸仓存在 ⇒ 显式注入 ZERG_UPDATE_REMOTE=<裸仓路径>**；
+#     不存在 ⇒ 不注入 + 响亮告警（该机回落自己配置的 origin；出不了网就会失败并被点名）。
+#     ZERG_FLEET_RELAY_PATH 可覆盖全部节点的 relay 路径（机群级）。
 #
 # 开关/环境：
 #   ZERG_UPGRADE_SOURCE=file:///path/to/staging   git 树构建产物目录（默认取件源）
@@ -51,6 +60,7 @@
 #   --force                 有在途任务也照升（默认拒绝）
 #   --json                  机器可读
 #   ZERG_FLEET_NODES        机群更新名册（空格分隔的 name=ssh目标[,k=v…]）
+#   ZERG_FLEET_RELAY_PATH   机群级节点裸仓路径（覆盖名册里的 relay=；缺省按名册/默认推导）
 #   ZERG_FLEET_LOCAL_CMD    本机 update 入口（默认 <prefix>/zerg-core；沙箱注入）
 #   ZERG_FLEET_SSH          ssh 命令（默认 ssh；沙箱注入假 ssh——**绝不连真机**）
 #   ZERG_FLEET_WAIT_S       矩阵收敛等待上限（默认 90 秒）
@@ -81,10 +91,11 @@ AGENTD_UNIT="${ZERG_AGENTD_UNIT:-x3-agent}"
 START_AGENTD="${ZERG_START_AGENTD:-}"
 
 MODE="apply"; NO_SERVICE=0; FORCE=0; JSON=0; TAG=""; FLEET_PLAN_ONLY=0; ALLOW_DOWNGRADE=0
-FROM_ASSETS=0; NO_UI=0; ROLE="controller"; COMPONENTS=""; PLAN_GIVEN=0
+FROM_ASSETS=0; NO_UI=0; ROLE="controller"; COMPONENTS=""; PLAN_GIVEN=0; ROSTER_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --plan) PLAN_GIVEN=1; if [ "$MODE" = "fleet" ]; then FLEET_PLAN_ONLY=1; else MODE="plan"; fi; shift ;;
+    --roster) ROSTER_ONLY=1; shift ;;
     --check) MODE="check"; shift ;;
     --status) MODE="status"; shift ;;
     --rollback) MODE="rollback"; shift ;;
@@ -245,7 +256,7 @@ case "$MODE" in
 import os, re, sys
 repo, prefix, api, comp = sys.argv[1:5]
 print("\t".join([os.environ.get("ZERG_FLEET_LOCAL_NAME", "local"), "-", repo, prefix, api, comp,
-                 "controller", "$HOME/.zerg/update_receipts"]))
+                 "controller", "$HOME/.zerg/update_receipts", "-"]))
 spec = os.environ.get("ZERG_FLEET_NODES", "").strip()
 nodes = []
 if spec:
@@ -295,7 +306,8 @@ for n in nodes:
     target = n.get("ssh") or n.get("host") or ""
     print("\t".join([name, target, root, n.get("prefix") or os.path.join(root, "bin"),
                      n.get("api") or "http://127.0.0.1:8580", n.get("components") or "core,agentd",
-                     n.get("role") or "node", n.get("receipts") or "$HOME/.zerg/update_receipts"]))
+                     n.get("role") or "node", n.get("receipts") or "$HOME/.zerg/update_receipts",
+                     n.get("relay") or os.path.join(os.path.dirname(root), "zerg-relay.git")]))
 PY
     }
 
@@ -340,6 +352,16 @@ for name, m in ms.items():
 
     ROSTER="$(fleet_roster)"
     [ -n "$ROSTER" ] || die "机群名册为空：设 ZERG_FLEET_NODES，或在 gateway/fleet.yaml 写 update.nodes" 1
+    # 机群级 relay 覆盖（在名册 relay= 之上——一次改全部节点的裸仓路径；`--roster` 也要看到它）
+    if [ -n "${ZERG_FLEET_RELAY_PATH:-}" ]; then
+      ROSTER="$(printf '%s\n' "$ROSTER" | awk -F'\t' -v r="$ZERG_FLEET_RELAY_PATH" 'BEGIN{OFS="\t"}{ if (NF>=9) $9=r; print }')"
+    fi
+    # ── --roster：只打印名册 TSV（单一真源；scripts/fleet-relay.sh 复用它）──────────
+    # 零副作用：在算目标提交/连任何机器之前就退出（不 ssh、不写任何文件）。
+    if [ "$ROSTER_ONLY" = "1" ]; then
+      printf '%s\n' "$ROSTER"
+      exit 0
+    fi
     NODE_COUNT="$(printf '%s\n' "$ROSTER" | grep -c . || true)"
     REMOTE_COUNT=$((NODE_COUNT - 1))
 
@@ -359,15 +381,18 @@ for name, m in ms.items():
     say ""
     say "Update plan（机群 · 顺序：远程 → 本机——动自己那步永远最后）:"
     idx=0
-    while IFS=$'\t' read -r n_name n_ssh n_root n_prefix n_api n_comp n_role n_rc; do
+    while IFS=$'\t' read -r n_name n_ssh n_root n_prefix n_api n_comp n_role n_rc n_relay; do
       [ -n "$n_name" ] || continue
       idx=$((idx + 1))
       if [ "$n_role" = "controller" ]; then
-        say "  ${idx}) ${n_name}（本机 · controller）: 本机 \`zerg update\`（组件 ${n_comp}）"
+        say "  ${idx}) ${n_name}（本机 · controller）: 本机「zerg update」（组件 ${n_comp}）"
       else
-        say "  ${idx}) ${n_name}（远程 · node ${n_ssh}）: ssh 该机 \`zerg update --role node\`（组件 ${n_comp}，root=${n_root}）"
+        say "  ${idx}) ${n_name}（远程 · node ${n_ssh}）: ssh 该机「zerg update --role node」（组件 ${n_comp}，root=${n_root}，取源裸仓=${n_relay}）"
       fi
     done < <(printf '%s\n' "$ROSTER")
+    say ""
+    say "取源（B5.1 主控镜像中继）：节点从**自己的本地裸仓**取源码（节点无需出网/无需 root）——"
+    say "  先行一步：bash scripts/fleet-relay.sh --from <镜像仓>   （把镜像 main 推到各节点的裸仓）"
     say ""
     say "机群版本矩阵（升级前）:"
     MATRIX_BEFORE="$(fleet_matrix)"
@@ -387,14 +412,14 @@ for name, m in ms.items():
     local_rows="$(printf '%s\n' "$ROSTER" | awk -F'\t' 'NR==1')"
 
     run_remote_node() {
-      local nm="$1" tgt="$2" root="$3" px="$4" api="$5" comp="$6" rc_dir="$7"
-      local pre missing="" out rrc st detail lr kr
-      [ -n "$tgt" ] && [ "$tgt" != "-" ] || { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$nm" "-" "pending-manual" "名册缺 ssh 目标" "-" "-" "-" "-" "-" >> "$NODES_TSV"; return 0; }
+      local nm="$1" tgt="$2" root="$3" px="$4" api="$5" comp="$6" rc_dir="$7" relay="$8"
+      local pre missing="" out rrc st detail lr kr src_remote=""
+      [ -n "$tgt" ] && [ "$tgt" != "-" ] || { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$nm" "-" "pending-manual" "名册缺 ssh 目标" "-" "-" "-" "-" "-" "-" >> "$NODES_TSV"; return 0; }
       say "  ▶ 远程 ${nm}（${tgt}）：让该机自己 fetch→构建→本地六阶段换装"
       # 预检：该机上必须真的有「git 检出 + 内核脚本 + 能自更新的 CLI + Go 工具链」——缺一不可。
       # 缺什么就如实说 pending-manual 并打印 bootstrap 待执行命令（**绝不假装完成**）。
       pre="$("$FLEET_SSH" -o BatchMode=yes -o ConnectTimeout="$FLEET_TIMEOUT" "$tgt" \
-        "test -d '$root/.git' && echo git-ok; test -f '$root/scripts/zerg-upgrade.sh' && echo kernel-ok; test -x '$px/zerg-core' && echo cli-ok; (command -v go >/dev/null && go version) 2>/dev/null" 2>&1 || true)"
+        "test -d '$root/.git' && echo git-ok; test -f '$root/scripts/zerg-upgrade.sh' && echo kernel-ok; test -x '$px/zerg-core' && echo cli-ok; test -d '$relay/objects' && echo relay-ok; (command -v go >/dev/null && go version) 2>/dev/null" 2>&1 || true)"
       for need in git-ok kernel-ok cli-ok; do
         case "$pre" in *"$need"*) ;; *) missing="$missing ${need%-ok}" ;; esac
       done
@@ -402,12 +427,27 @@ for name, m in ms.items():
         say "    ⏸ 该机不可自更新（缺：${missing# }）→ pending-manual"
         say "       bootstrap 待执行（在 ${nm} 上，root=${root}）："
         say "         git clone --depth 1 ${FLEET_REMOTE:-https://github.com/Mr2109/zerg-swarm.git} $root && cd $root && bash scripts/zerg-upgrade.sh --plan"
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$nm" "$tgt" "pending-manual" "缺：${missing# }" "-" "-" "-" "-" "-" >> "$NODES_TSV"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$nm" "$tgt" "pending-manual" "缺：${missing# }" "-" "-" "-" "-" "-" "-" >> "$NODES_TSV"
         return 0
       fi
+      # 取源（B5.1 主控镜像中继）：节点从**自己的本地裸仓**取源码。
+      #   · 裸仓在该机上存在 ⇒ **显式注入** ZERG_UPDATE_REMOTE=<裸仓路径>（不靠该机的环境；
+      #     `zerg update` 的取源解析里 ZERG_UPDATE_REMOTE 优先级最高，且本地路径即 git 可用的 remote）
+      #   · 不存在 ⇒ 不注入 + 响亮告警（该机回落自己配置的 origin / 内置公开仓 URL；
+      #     出不了网的节点会 fetch 失败 ⇒ 该台被判 failed 并点名，不假装完成）
+      case "$pre" in
+        *relay-ok*) src_remote="$relay" ;;
+      esac
       local cmd
       cmd="cd '$root' && ZERG_UPDATE_ROLE=node ZERG_UPDATE_REPO='$root' ZERG_PREFIX='$px' ZERG_API_BASE='$api' ZERG_UPGRADE_SCRIPT='$root/scripts/zerg-upgrade.sh' ZERG_BUILD_TIME='$BUILD_TIME' ZERG_UPDATE_REF='$FLEET_REF'"
-      [ -n "$FLEET_REMOTE" ] && cmd="$cmd ZERG_UPDATE_REMOTE='$FLEET_REMOTE'"
+      if [ -n "$src_remote" ]; then
+        cmd="$cmd ZERG_UPDATE_REMOTE='$src_remote'"
+        say "    · 取源：该机本地裸仓 ${src_remote}（主控镜像中继推过去的）"
+      else
+        say "    ⚠️ 该机没有本地裸仓（${relay}）⇒ 未注入取源；该机将用自己配置的 origin"
+        say "       节点出不了网时先跑：bash scripts/fleet-relay.sh --from <镜像仓> --node ${nm}"
+        [ -n "$FLEET_REMOTE" ] && cmd="$cmd ZERG_UPDATE_REMOTE='$FLEET_REMOTE'" && src_remote="$FLEET_REMOTE"
+      fi
       cmd="$cmd '$px/zerg-core' update --role node --components '$comp'"
       [ "$FORCE" = "1" ] && cmd="$cmd --force"
       [ "$NO_UI" = "1" ] && cmd="$cmd --no-ui"
@@ -462,17 +502,17 @@ print(d.get("build_time") or "")' 2>/dev/null || true)"
           lr_sha=""
         fi
       fi
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$nm" "$tgt" "$st" "$detail" "${lr_sha:--}" "${kr_res:--}" "${kr_live:--}" "${lr_tc:--}" "${lr_bt:--}" >> "$NODES_TSV"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$nm" "$tgt" "$st" "$detail" "${lr_sha:--}" "${kr_res:--}" "${kr_live:--}" "${lr_tc:--}" "${lr_bt:--}" "${src_remote:--}" >> "$NODES_TSV"
     }
 
-    while IFS=$'\t' read -r n_name n_ssh n_root n_prefix n_api n_comp n_role n_rc; do
+    while IFS=$'\t' read -r n_name n_ssh n_root n_prefix n_api n_comp n_role n_rc n_relay; do
       [ -n "$n_name" ] || continue
       [ "$n_role" = "controller" ] && continue
-      run_remote_node "$n_name" "$n_ssh" "$n_root" "$n_prefix" "$n_api" "$n_comp" "$n_rc"
+      run_remote_node "$n_name" "$n_ssh" "$n_root" "$n_prefix" "$n_api" "$n_comp" "$n_rc" "$n_relay"
     done < <(printf '%s\n' "$remote_rows")
 
     # 本机（最后动——升级器不先升自己所在的那台）
-    IFS=$'\t' read -r l_name l_ssh l_root l_prefix l_api l_comp l_role l_rc <<< "$local_rows"
+    IFS=$'\t' read -r l_name l_ssh l_root l_prefix l_api l_comp l_role l_rc l_relay <<< "$local_rows"
     LOCAL_CMD="${ZERG_FLEET_LOCAL_CMD:-$l_prefix/zerg-core}"
     local_st="failed"; local_detail=""
     say "  ▶ 本机 ${l_name}（${LOCAL_CMD} update）：源码式自更新"
@@ -509,7 +549,7 @@ print("%s|%s|%s" % (t.get("pin",""), t.get("actual",""), t.get("policy","")))' 2
 try: d=json.load(sys.stdin)
 except Exception: print(""); raise SystemExit
 print(d.get("build_time") or "")' 2>/dev/null || true)"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$l_name" "-" "$local_st" "$local_detail" "${l_sha:--}" "-" "-" "${l_tc:--}" "${l_bt:--}" >> "$NODES_TSV"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$l_name" "-" "$local_st" "$local_detail" "${l_sha:--}" "-" "-" "${l_tc:--}" "${l_bt:--}" "-" >> "$NODES_TSV"
 
     # ── 核对：矩阵收敛（三台 code_sha 一致且 = 目标）──────────────────────────
     MATRIX_FINAL=""; CONVERGED=0
@@ -524,7 +564,7 @@ print(d.get("build_time") or "")' 2>/dev/null || true)"
       while : ; do
         MATRIX_FINAL="$(fleet_matrix)"
         CONVERGED=0
-        while IFS=$'\t' read -r n_name _ _ _ _ _ _ _; do
+        while IFS=$'\t' read -r n_name _ _ _ _ _ _ _ _; do
           [ -n "$n_name" ] || continue
           sha="$(printf '%s' "$MATRIX_FINAL" | matrix_sha "$n_name")"
           fmatch "$sha" "$TARGET_SHA" || CONVERGED=1
@@ -538,7 +578,7 @@ print(d.get("build_time") or "")' 2>/dev/null || true)"
     say ""
     say "机群版本矩阵核对（口径：/api/fleet/status 的 code_sha == 目标 $(printf '%s' "$TARGET_SHA" | cut -c1-12)）:"
     MATRIX_OK=1
-    while IFS=$'\t' read -r n_name _ _ _ _ _ _ _; do
+    while IFS=$'\t' read -r n_name _ _ _ _ _ _ _ _; do
       [ -n "$n_name" ] || continue
       sha="$(printf '%s' "$MATRIX_FINAL" | matrix_sha "$n_name")"
       if fmatch "$sha" "$TARGET_SHA"; then
@@ -590,10 +630,10 @@ for line in open(nodes_tsv, encoding="utf-8"):
     f = line.rstrip("\n").split("\t")
     if not f or not f[0]:
         continue
-    f += [""] * (9 - len(f))
+    f += [""] * (10 - len(f))
     nodes.append({"name": f[0], "ssh": f[1], "status": f[2], "detail": f[3],
                   "receipt_target": f[4], "kernel_result": f[5], "live_code_sha": f[6],
-                  "toolchain": f[7], "build_time": f[8]})
+                  "toolchain": f[7], "build_time": f[8], "source_remote": f[9]})
 after = load(after_p)
 for n in nodes:
     n["code_sha_after"] = after.get(n["name"], {}).get("code_sha", "")
