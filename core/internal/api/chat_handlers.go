@@ -24,10 +24,24 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 	"github.com/Mr2109/zerg-swarm/core/internal/chat"
 	"github.com/Mr2109/zerg-swarm/core/internal/loopcore"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 // P4-11 系统提示词（借鉴 Hermes 精华——行为规格而非特质列表——
 // 身份/风格/知识库铁律/完成任务/工具并行——Mr2109: 旧版"弱爆了"）
+// chatSystemPromptResolved 把提示词里的 {{REPO_ROOT}} 换成真实工作目录。
+//
+// 为什么不在常量里写死路径（待修补 #44）：公开快照导出时 <volume-path>
+// 而机群的二进制是从公开快照编的 ⇒ 写死的路径在机群上会指向不存在的目录（同批已修 6 处）。
+// 注意：本机解析结果与改动前的字面文本**逐字相同**。
+func chatSystemPromptResolved() string {
+	root := statepath.WorkspaceRoot()
+	if root == "" {
+		root = "（未解析到工作目录）"
+	}
+	return strings.ReplaceAll(chatSystemPrompt, "{{REPO_ROOT}}", root)
+}
+
 const chatSystemPrompt = `你是虫族 AI（Zerg）的对话助手——运行在虫族本地模型集群上。
 
 # 回答风格
@@ -53,7 +67,7 @@ const chatSystemPrompt = `你是虫族 AI（Zerg）的对话助手——运行�
 # 工具使用
 - 多个独立查询/搜索/读取（不互相依赖）批量合并到同一次回复（运行时并行执行）——不要一个工具一轮。
 - 仅当后一步依赖前一步结果时才串行（如先读文件再改文件）。
-- 工作目录是虫族项目根（<repo>）——查项目文件用 glob（按名找）/grep（按内容搜）/read（读文件）——不要用 bash 的 find/搜索绕路。
+- 工作目录是虫族项目根（{{REPO_ROOT}}）——查项目文件用 glob（按名找）/grep（按内容搜）/read（读文件）——不要用 bash 的 find/搜索绕路。
 - 工具失败或结果不满足时——换工具/换参数/换思路继续——不要停下来问用户"要不要继续"。
 - 任务未完成不要自己停——持续调用工具推进直到给出完整答案。只有真的收到"（已经尽力尝试了多种方式…）"这样的收尾指令时才收尾。
 - 【工具分层（重要）】主提示只带基础工具（bash/read/write/edit/glob/grep/ls/kb_search/web_search/web_fetch/skill_load）。**需要其他能力时用 tool_search 搜索发现**——如查系统状态搜"系统"（cpu_status/mem_status/port_check/port_services——**本机服务/端口清单用 port_services——不要 bash lsof（输出截断）**）、查影音搜"剪辑"（media_info/ffmpeg/footage/fcpx）、查效率搜"计算"（calc/json_format）、查知识库搜"知识库"（kb_read/kb_stats）。发现后直接调用。
@@ -480,7 +494,7 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	chat.BeginMemoryTurn(id)
 	// 乙批（2026-09-10）：记忆块参与系统提示 volatile 层——取自会话冻结快照（会话内字节稳定，写盘不改已发出请求）
 	// 丙批 §4.1（2026-09-10）：三档组装 + 会话内冻结——首次构建落库，后续轮原样复用（模型切换自动重建）
-	sysPrompt := h.store.SessionSystemPrompt(id, chatSystemPrompt, se.Model, progRT)
+	sysPrompt := h.store.SessionSystemPrompt(id, chatSystemPromptResolved(), se.Model, progRT)
 	gate := &chat.ChatGate{}
 
 	inferAdapter := func(ctx context.Context, model, sysP string, m []map[string]any,
@@ -766,7 +780,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	chat.BeginMemoryTurn(id)
 	// 乙批（2026-09-10）：记忆块参与系统提示 volatile 层——取自会话冻结快照（会话内字节稳定，写盘不改已发出请求）
 	// 丙批 §4.1（2026-09-10）：三档组装 + 会话内冻结——首次构建落库，后续轮原样复用（模型切换自动重建）
-	sysPrompt := h.store.SessionSystemPrompt(id, chatSystemPrompt, se.Model, progRT)
+	sysPrompt := h.store.SessionSystemPrompt(id, chatSystemPromptResolved(), se.Model, progRT)
 	gate := &chat.ChatGate{}
 	// P4-46 Hermes 模式: 不带 tools 字段（内核 Deps.Tools=nil——模板 XML 分支不渲染——模型输出 <tool_call>JSON</tool_call>）
 
