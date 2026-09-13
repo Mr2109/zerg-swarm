@@ -134,6 +134,11 @@ pub struct ZergApp {
     /// 虫茧平台里**当前打开的应用卡**（None = 停在平台栅格）。2026-09-13 Mr2109纠正：
     /// 「文档」是平台的一张独立应用卡（与示例虫茧平级），不是虫茧的子标签 ⇒ 用箱 id 记录。
     cocoon_app: Option<String>,
+    /// C9 第 3 步：**宿主能力通道**（借用宿主的 Ferrite 编辑器池 + 共享令牌）——**跨帧存活**
+    /// （编辑器池要保光标/撤销/滚动）。宿主每帧只清 `exit_requested` 就交给茧（见 `cocoon_view`）。
+    cocoon_ctx: crate::modules::cocoon::CocoonCtx,
+    /// C9 第 3 步：正在显示「安装指引」的**未装载茧** id（None = 没弹窗）——点平台卡「安装」时置位。
+    cocoon_install_hint: Option<String>,
     // 选中的任务
     selected_task: Option<TaskInfo>,
     // 当前请求的任务 ID
@@ -254,6 +259,11 @@ impl ZergApp {
             // C9 第 1 步：已装载的茧实例（空起步——打开平台栅格里的应用卡时才懒建）
             cocoons: Vec::new(),
             cocoon_app: None,
+            // C9 第 3 步：宿主能力通道——令牌从宿主既有解析链取（`api::api_token`），只驻内存。
+            cocoon_ctx: crate::modules::cocoon::CocoonCtx::with_host_token(
+                crate::modules::cocoon::host_token(),
+            ),
+            cocoon_install_hint: None,
             selected_task: None,
             detail_id: String::new(),
             last_refresh: 0.0,
@@ -1352,11 +1362,24 @@ impl ZergApp {
             }
         }
         if let Some(idx) = self.cocoons.iter().position(|c| c.meta().id == id) {
-            let mut ctx = crate::modules::cocoon::CocoonCtx::default();
-            self.cocoons[idx].render(ui, &mut ctx);
-            if ctx.exit_requested {
+            // C9 第 3 步：通道**跨帧复用**（宿主能力：Ferrite 编辑器池 + 令牌）——只清「回平台」请求。
+            self.cocoon_ctx.exit_requested = false;
+            let ctx = &mut self.cocoon_ctx;
+            self.cocoons[idx].render(ui, ctx);
+            if self.cocoon_ctx.exit_requested {
                 self.cocoon_app = None;
             }
+        }
+    }
+
+    /// C9 第 3 步：未装载茧的「安装指引」弹窗——平台页点卡上的「安装」时置位 `cocoon_install_hint`，
+    /// 这里画；用户关掉即清状态（`None` ⇒ 什么都不画，绝不空白页/报错）。
+    fn render_cocoon_install_hint(&mut self, ui: &egui::Ui) {
+        let Some(id) = self.cocoon_install_hint.clone() else {
+            return;
+        };
+        if cocoon_install_hint_window(ui, &id) {
+            self.cocoon_install_hint = None;
         }
     }
 
@@ -1522,6 +1545,8 @@ impl ZergApp {
                 // 注：未装载的茧在 `main_view` 开头就被清掉打开态（铭牌 `loaded` 驱动——
                 // 不再逐茧写 `#[cfg(not(feature))]` 分支，C9 第 1 步）。
                 if self.cocoon_app.is_none() {
+                    // C9 第 3 步：未装载茧的「安装指引」弹窗（点卡上的「安装」触发）——先画，浮在栅格上。
+                    self.render_cocoon_install_hint(ui);
                     // ── 平台界面：应用栅格（无数茧——每个=独立虫茧应用——示例虫茧=第一个）──
                     ui.heading(format!("{} {}", icon_text("boxes"), t!("cocoon.platform")));
                     ui.weak(t!("cocoon.platform_hint"));
@@ -1584,11 +1609,17 @@ impl ZergApp {
                                 card_ui.add_space(6.0);
                                 card_ui.label(egui::RichText::new(desc.as_str()).size(12.0).color(egui::Color32::from_rgb(170, 175, 185)));
                                 card_ui.with_layout(egui::Layout::right_to_left(egui::Align::BOTTOM), |ui| {
-                                    if ui.button(egui::RichText::new(t!("action.open")).size(12.0)).clicked() {
+                                    if cocoon_openable(id) {
                                         // 能不能打开 = 铭牌驱动（C9 第 1 步）：契约茧看 `loaded`
                                         // （未装载 ⇒ 卡片照常但打不开）；宿主内建应用（文档）恒可。
-                                        if cocoon_openable(id) {
+                                        if ui.button(egui::RichText::new(t!("action.open")).size(12.0)).clicked() {
                                             self.cocoon_app = Some(id.clone());
+                                        }
+                                    } else if crate::modules::cocoon::install_guide(id).is_some() {
+                                        // C9 第 3 步：**未安装 ⇒ 提示安装**（设计 §4.3 / Q1）——按钮指向
+                                        // 它的独立仓；点击弹安装指引（不报错、不空白，也绝不假装可用）。
+                                        if ui.button(egui::RichText::new(t!("cocoon.install")).size(12.0)).clicked() {
+                                            self.cocoon_install_hint = Some(id.clone());
                                         }
                                     }
                                 });
@@ -3401,10 +3432,52 @@ impl eframe::App for ZergApp {
 }
 
 /// 平台卡片能否打开（C9 第 1 步——**铭牌驱动**，宿主不再写死「哪个茧已装载」）：
-/// - 契约茧：看铭牌的 `loaded`（未装载 ⇒ 卡片照常显示 + 标「未装载」+ 打不开）
-/// - 非茧 id（宿主内建应用，如「文档」）：恒可——它们走主仓自己的渲染臂（C9 第 2 步才迁往<container-repo>）
+/// - 契约茧：看铭牌的 `loaded`（未装载 ⇒ 卡片照常显示 + 标「未装载」+ 打不开 + 给安装指引）
+/// - 非茧 id（宿主内建应用，如「文档」成茧前）：恒可——它们走主仓自己的渲染臂
 fn cocoon_openable(id: &str) -> bool {
-    crate::modules::cocoon::meta_of(id).map(|m| m.loaded).unwrap_or(true)
+    match crate::modules::cocoon::meta_of(id) {
+        Some(m) => crate::modules::cocoon::openable(m),
+        None => true,
+    }
+}
+
+/// C9 第 3 步：未装载茧的**安装指引**弹窗（设计 §4.3：「点开或点『安装』⇒ 平台给出安装指引：
+/// 告知茧的独立仓地址与目标目录，并提示 clone 后重新编译装载。绝不静默失败、绝不假装可用」）。
+///
+/// 返回 `true` = 用户点了「关闭」（宿主清掉打开态）。**纯渲染**：数据只从铭牌与 i18n 取。
+/// 不是茧 / 已装载 ⇒ 直接返回 `true`（不画窗口——免得弹出个空窗）。
+fn cocoon_install_hint_window(ui: &egui::Ui, id: &str) -> bool {
+    let Some(repo) = crate::modules::cocoon::install_guide(id) else {
+        return true;
+    };
+    let name = crate::modules::cocoon::meta_of(id)
+        .map(|m| {
+            if m.name_key.is_empty() {
+                m.name.to_string()
+            } else {
+                t!(m.name_key).to_string()
+            }
+        })
+        .unwrap_or_else(|| id.to_string());
+    let mut close = false;
+    egui::Window::new(t!("cocoon.install_title"))
+        .collapsible(false)
+        .resizable(false)
+        .id(egui::Id::new("cocoon_install_hint"))
+        .show(ui.ctx(), |ui| {
+            ui.strong(name);
+            ui.add_space(6.0);
+            ui.label(t!("cocoon.install_repo"));
+            // 可选中 ⇒ 能直接复制（不写死路径，不含任何私有绝对路径）
+            ui.add(egui::Label::new(egui::RichText::new(repo).monospace()).selectable(true));
+            ui.add_space(8.0);
+            ui.label(t!("cocoon.install_steps"));
+            ui.add_space(10.0);
+            if ui.button(t!("action.close")).clicked() {
+                close = true;
+            }
+        });
+    close
 }
 
 /// APP-A14（2026-09-10 审计）: 共享状态取锁统一走这里——`Mutex::lock().unwrap()`
@@ -3661,5 +3734,74 @@ mod nav_trim_tests {
             assert!(en.contains(k), "locales/en.yml 缺新键 {}", k);
         }
         assert_eq!(zh, en, "zh-CN 与 en 的键集合必须完全一致（少一个键某语言就露出键名）");
+    }
+}
+
+#[cfg(test)]
+mod cocoon_platform_tests {
+    //! C9 第 3 步（2026-09-13）：平台页「未安装 ⇒ 提示安装」**两态** + 安装指引弹窗（能失败的检查）。
+
+    use super::{cocoon_install_hint_window, cocoon_openable};
+    use crate::modules::cocoon;
+
+    const APP: &str = include_str!("app.rs");
+
+    /// **两态**：未装载的茧 ⇒ 给得出安装指引；可进入性由 `cocoon::openable` 决定 —— 宿主仍内建渲染的页（docs）**保留入口**，避免迁移期功能空档。
+    #[test]
+    fn platform_card_two_states() {
+        // ① 未安装态（本步的文档茧）
+        assert!(
+            cocoon_openable("docs"),
+            "docs 未装载但宿主仍内建渲染 ⇒ 保留入口（不留功能空档；第 4 步把文档界面迁走后应改回 false）"
+        );
+        assert_eq!(
+            cocoon::install_guide("docs"),
+            cocoon::meta_of("docs").map(|m| m.repo),
+            "未装载 ⇒ 给得出安装指引（指向独立仓）"
+        );
+        // ② 宿主内建 / 非茧 id 照旧可进（不降级既有行为）
+        assert!(cocoon_openable("chat"), "宿主内建箱恒可进入");
+        assert!(cocoon_openable("not-a-cocoon-id"), "非茧 id 恒可（走主仓自己的渲染臂）");
+        // ③ 已装载的示例虫茧照旧——按铭牌判定，不写死
+        let rt = cocoon::meta_of("roundtable").expect("示例虫茧在册");
+        assert_eq!(cocoon_openable("roundtable"), rt.loaded);
+        // ④ 反例：已装载的茧必须可开（防「一律不可开」的假实现）
+        assert!(cocoon::openable(&cocoon::CocoonMeta { loaded: true, ..cocoon::ROUNDTABLE }));
+        assert!(!cocoon::openable(&cocoon::CocoonMeta { loaded: false, ..cocoon::ROUNDTABLE }));
+    }
+
+    /// 安装指引弹窗：未装载的茧 ⇒ **画得出来**（不 panic、不空白，返回「未关闭」）；
+    /// 不是茧 / 未知 id ⇒ 不弹空窗（返回「可关」）。
+    #[test]
+    fn install_hint_window_renders_for_uninstalled_only() {
+        let ctx = egui::Context::default();
+        for id in ["docs", "roundtable"] {
+            if cocoon::install_guide(id).is_none() {
+                continue; // 该构建已装载 ⇒ 本条不适用（两态都对）
+            }
+            let mut closed = true;
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                closed = cocoon_install_hint_window(ui, id);
+            });
+            out.textures_delta.clear();
+            assert!(!closed, "{}：安装指引必须画出来且不自行关闭", id);
+        }
+        for id in ["chat", "not-a-cocoon-id"] {
+            let mut closed = false;
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                closed = cocoon_install_hint_window(ui, id);
+            });
+            out.textures_delta.clear();
+            assert!(closed, "{} 不是茧 ⇒ 不该弹安装指引（免得空白窗）", id);
+        }
+    }
+
+    /// 源码级守线（能失败）：卡片上的「安装」按钮 + 弹窗接线必须在（防误删）。
+    #[test]
+    fn platform_wires_the_install_affordance() {
+        assert!(APP.contains("t!(\"cocoon.install\")"), "卡片上的「安装」按钮被删了");
+        assert!(APP.contains("cocoon::install_guide(id)"), "「安装」按钮没接指引数据源");
+        assert!(APP.contains("cocoon_install_hint_window"), "安装指引窗口被删了");
+        assert!(APP.contains("self.render_cocoon_install_hint(ui)"), "平台页没画安装指引");
     }
 }

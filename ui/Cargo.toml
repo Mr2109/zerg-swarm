@@ -31,6 +31,13 @@ egui_virtual_list = "0.12"
 
 [features]
 zerg-roundtable = []  # 公开镜像：该虫茧（独立仓）不随发布——保留同名空 feature 以消除 cfg 警告
+# 文档茧（C9 第 3/4 步）：**装载态开关**（铭牌 `cocoon::DOCS.loaded` 读它）。
+# 第 3 步只登记铭牌、**不**把茧代码编进宿主 ⇒ 本条只有声明、没有 `dep:`（default 里也不含）
+# ⇒ 永不被启用 ⇒ 平台页显「未安装文档 → 安装」（指向独立仓，见 cocoon::install_guide）。
+# 第 4 步接上 path 依赖后改成 `zerg-cocoon-docs = ["dep:zerg-cocoon-docs"]` 并加进 default。
+# 公开快照同款口径：保留同名空 feature 以消除 cfg 警告（publish-public.sh §3a 同思路）。
+zerg-cocoon-docs = []
+
 [profile.release]
 opt-level = 3
 lto = true
