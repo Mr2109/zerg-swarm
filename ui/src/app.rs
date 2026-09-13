@@ -1166,58 +1166,86 @@ impl ZergApp {
 
     /// 渲染模块管理面板（➕ 吊装系统——Mr2109 2026-08-29 M2）
     /// 核心箱（船体——不可禁用）+ 可装卸箱（checkbox 开关——变更即持久化）
+    /// 模块管理（➕）——2026-09-13 重构：**镜像顶栏**。
+    ///
+    /// 旧版按「核心箱 / 可装卸箱」两张平铺清单罗列（导航大调动之前的形状）✗：
+    /// 三个父箱被当普通核心箱列着、子箱平铺在下面只会「（父箱名）」小注 ⇒ 面板与顶栏对不上。
+    /// 现在：按 `top_level()`（＝顶栏顺序）逐项成组，**父箱作组头（▾ + 🔒）**，其下箱缩进一行；
+    /// 虫茧平台里的应用箱（`parent = 虫茧`，如文档）同样落在虫茧下面。全部箱都列（含已卸下的
+    /// —— 否则卸下后就再也装不回来）。
     fn module_manager_view(&mut self, ctx: &egui::Context) {
         let mut close = false;
+        // 预先收集成纯数据，避免渲染闭包与 registry 的借用冲突。
+        // 行：(id, 标签, 简介, 是否锁定, 缩进层级)
+        let mut rows: Vec<(String, String, String, bool, usize)> = Vec::new();
+        for m in self.registry.top_level() {
+            let marker = if m.is_group { " ▾" } else { "" };
+            rows.push((
+                m.id.to_string(),
+                format!("{} {}{}", m.icon, t!(m.name_key), marker),
+                t!(m.desc_key).to_string(),
+                m.is_core,
+                0,
+            ));
+            // 其下箱：parent == 本箱 的全部箱（父箱的子模块；虫茧平台里的应用箱也在此列）
+            let mut kids: Vec<&crate::modules::zerg_module::ModuleManifest> =
+                self.registry.modules.iter().filter(|c| c.parent == Some(m.id)).collect();
+            kids.sort_by_key(|c| c.order);
+            for c in kids {
+                rows.push((
+                    c.id.to_string(),
+                    format!("{} {}", c.icon, t!(c.name_key)),
+                    t!(c.desc_key).to_string(),
+                    c.is_core,
+                    1,
+                ));
+            }
+        }
+        let ext_rows: Vec<(String, String, String)> = self
+            .registry
+            .external
+            .iter()
+            .map(|m| (m.id.clone(), format!("{} {}", m.icon, m.name), m.description.clone()))
+            .collect();
+
         egui::Window::new(t!("modules.title"))
             .collapsible(false)
             .resizable(true)
-            .default_size([420.0, 380.0])
+            .default_size([480.0, 430.0])
             .show(ctx, |ui| {
-                ui.label(t!("modules.core_section"));
-                ui.separator();
                 let mut changed = false;
-                for m in self.registry.modules.iter().filter(|m| m.is_core) {
-                    // E20（2026-09-13）：面板加「归属父」标注（一行信息——零结构改动）。
-                    let parent_label = m
-                        .parent
-                        .and_then(|p| self.registry.find(p))
-                        .map(|p| format!("（{}）", t!(p.name_key)));
-                    ui.horizontal(|ui| {
-                        ui.label(format!("{} {}", m.icon, t!(m.name_key)));
-                        if let Some(pl) = &parent_label {
-                            ui.weak(pl);
-                        }
-                        ui.weak(t!(m.desc_key));
-                        ui.label("🔒");
-                    });
-                }
-                ui.add_space(8.0);
-                ui.label(t!("modules.loadable_section"));
-                ui.separator();
-                // 先收集切换请求（避免迭代中改 registry——借用冲突）
                 let mut to_toggle: Option<String> = None;
-                for m in self.registry.modules.iter().filter(|m| !m.is_core) {
-                    let on = self.registry.enabled.get(m.id).copied().unwrap_or(true);
-                    let mut next = on;
-                    // E20：归属父标注（父箱不可卸 ⇒ 只可能出现在 loadable 列表里做信息展示）
-                    let parent_label = m
-                        .parent
-                        .and_then(|p| self.registry.find(p))
-                        .map(|p| format!("（{}）", t!(p.name_key)));
-                    ui.horizontal(|ui| {
-                        if ui.checkbox(&mut next, format!("{} {}", m.icon, t!(m.name_key))).changed() {
-                            if next != on {
-                                to_toggle = Some(m.id.to_string());
+                ui.label(t!("modules.nav_section"));
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .max_height(300.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for (id, label, desc, locked, depth) in &rows {
+                            ui.horizontal(|ui| {
+                                if *depth > 0 {
+                                    ui.add_space(22.0);
+                                }
+                                if *locked {
+                                    ui.label(label.as_str());
+                                    ui.weak(desc.as_str());
+                                    ui.label("🔒").on_hover_text(t!("modules.group_badge"));
+                                } else {
+                                    let on = self.registry.enabled.get(id).copied().unwrap_or(true);
+                                    let mut next = on;
+                                    if ui.checkbox(&mut next, label.as_str()).changed() && next != on {
+                                        to_toggle = Some(id.clone());
+                                    }
+                                    ui.weak(desc.as_str());
+                                }
+                            });
+                            if *depth == 0 {
+                                ui.add_space(3.0);
                             }
                         }
-                        if let Some(pl) = &parent_label {
-                            ui.weak(pl);
-                        }
-                        ui.weak(t!(m.desc_key));
                     });
-                }
                 if let Some(id) = to_toggle {
-                    // 切换——卸下时若正在查看该箱——回退到其父箱首个子箱（E15；原来写死 "tasks"）
+                    // 装卸——卸下时若正在查看该箱 ⇒ 回退（父箱首个启用子箱；平台应用 ⇒ 回平台自身）
                     self.registry.toggle(&id);
                     if !self.registry.enabled.get(&id).copied().unwrap_or(true) && self.registry.active == id {
                         self.registry.active = self.registry.fallback_after_disable(&id);
@@ -1226,28 +1254,24 @@ impl ZergApp {
                     changed = true;
                 }
                 // M4 生态箱（外部模块——配置文件声明——第三方开发者挂船）
-                if !self.registry.external.is_empty() {
+                if !ext_rows.is_empty() {
                     ui.add_space(8.0);
                     ui.label(t!("modules.ext_section"));
                     ui.separator();
                     let mut ext_toggle: Option<String> = None;
-                    let ext_list = self.registry.external.clone();
-                    for m in &ext_list {
-                        let on = self.registry.enabled.get(&m.id).copied().unwrap_or(true);
+                    for (id, label, desc) in &ext_rows {
+                        let on = self.registry.enabled.get(id).copied().unwrap_or(true);
                         let mut next = on;
                         ui.horizontal(|ui| {
-                            if ui.checkbox(&mut next, format!("{} {}", m.icon, m.name)).changed() {
-                                if next != on {
-                                    ext_toggle = Some(m.id.clone());
-                                }
+                            if ui.checkbox(&mut next, label.as_str()).changed() && next != on {
+                                ext_toggle = Some(id.clone());
                             }
-                            ui.weak(&m.description);
+                            ui.weak(desc.as_str());
                         });
                     }
                     if let Some(id) = ext_toggle {
                         self.registry.toggle(&id);
                         if !self.registry.enabled.get(&id).copied().unwrap_or(true) && self.registry.active == id {
-                            // E15：外部箱无父 ⇒ 回退到默认一级箱
                             self.registry.active = self.registry.fallback_after_disable(&id);
                             self.registry.save_state();
                         }
