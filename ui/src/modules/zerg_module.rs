@@ -243,13 +243,32 @@ impl ModuleRegistry {
     /// 纯函数（不修改，只在给定"已加载过 enabled"的注册表上查询）。
     pub fn fallback_after_disable(&self, disabled_id: &str) -> String {
         match self.parent_of(disabled_id) {
-            Some(p) => self
+            // 归属**父箱**（is_group）⇒ 落到该父箱的第一个子箱；归属**平台**（非 group，
+            // 如「文档」之于虫茧）⇒ 落到平台自身（栅格还在，文档只是被卸下的应用卡）。
+            Some(p) if self.find(p).map(|m| m.is_group).unwrap_or(false) => self
                 .children_of(p)
                 .first()
                 .map(|c| c.id.to_string())
                 .unwrap_or_else(|| p.to_string()),
+            Some(p) => p.to_string(),
             None => "chat".to_string(),
         }
+    }
+
+    /// **二级页签的父箱**：只有 `is_group` 父箱才有页签行。
+    /// 归属平台的应用（文档 ⇒ 虫茧）返回 `None` ⇒ 导航不出现页签、也不出现在一级。
+    pub fn sub_tabs_parent_of(&self, effective: &str) -> Option<&'static str> {
+        self.parent_of(effective)
+            .filter(|p| self.find(p).map(|m| m.is_group).unwrap_or(false))
+    }
+
+    /// **虫茧平台栅格的应用卡 id**（顺序 = 展示顺序）：归属本平台的启用箱（文档）+ 平台自带的
+    /// 跨仓应用（示例虫茧，排最后）。文档被卸下 ⇒ 卡片消失；示例虫茧未编译进来 ⇒ 由渲染层显示「未装载」。
+    pub fn platform_apps(&self) -> Vec<&'static str> {
+        let mut v: Vec<&'static str> = self.children_of("roundtable").iter().map(|m| m.id).collect();
+        v.push("roundtable");
+        v.retain(|id| self.is_enabled(id));
+        v
     }
 
     /// HUD/面包屑「父 › 子」的 **i18n 键序列**（E16——原来只显示箱 id 对应的名字）。
@@ -418,9 +437,11 @@ mod tests {
         // Mr2109 2026-09-13 二次调整后的顺序：主控在线 → 对话 → 任务 → 模型 → 资源库 → 虫茧
         assert_eq!(
             got,
-            vec!["main-online", "chat", "tasks-group", "models-group", "resources", "cocoon"],
-            "一级六项顺序（二次调整）"
+            vec!["main-online", "chat", "tasks-group", "models-group", "resources", "roundtable"],
+            "一级六项顺序（二次调整）；虫茧仍是普通箱，占第 6 位"
         );
+        // 「文档」已移入虫茧平台 ⇒ **不再是一级导航项**
+        assert!(!got.iter().any(|x| x == "docs"), "文档不应出现在一级导航：{:?}", got);
     }
 
     /// 设计 §4.1/§七18：children_of("main-online") 顺序 = 集群/文件浏览器/升级/Git/日志。
@@ -440,8 +461,9 @@ mod tests {
         let reg = crate::modules::build_registry();
         assert_eq!(ids(&reg.children_of("tasks-group")), vec!["tasks", "internal-tasks"]);
         assert_eq!(ids(&reg.children_of("models-group")), vec!["models", "model-registry"]);
-        // 二次调整：文档移入虫茧（平台在前、文档在后）
-        assert_eq!(ids(&reg.children_of("cocoon")), vec!["roundtable", "docs"]);
+        // 二次调整（Mr2109纠正版）：文档归属虫茧平台，是平台的**应用卡**而非页签
+        assert_eq!(ids(&reg.children_of("roundtable")), vec!["docs"]);
+        assert_eq!(reg.platform_apps(), vec!["docs", "roundtable"]);
         assert!(reg.children_of("chat").is_empty(), "无子箱的顶级箱 children_of 应为空");
         assert!(reg.children_of("nope").is_empty());
     }
@@ -502,8 +524,10 @@ mod tests {
         let reg = crate::modules::build_registry();
         assert_eq!(reg.fallback_after_disable("git"), "cluster");
         assert_eq!(reg.fallback_after_disable("internal-tasks"), "tasks");
-        // 二次调整后 docs 属「虫茧」⇒ 回退到虫茧的首个页签（平台）
+        // 文档归属虫茧平台（非 group）⇒ 卸下后回退到**平台自身**（栅格照常，只是少一张卡）
         assert_eq!(reg.fallback_after_disable("docs"), "roundtable");
+        assert_eq!(reg.sub_tabs_parent_of("docs"), None, "归属平台的应用不该有二级页签");
+        assert_eq!(reg.sub_tabs_parent_of("cluster"), Some("main-online"));
         assert_eq!(reg.fallback_after_disable("chat"), "chat"); // 真正的无父一级箱 → 默认 chat
     }
 
@@ -511,7 +535,7 @@ mod tests {
     #[test]
     fn groups_unloadable_protected_and_icons_resolve() {
         let mut reg = crate::modules::build_registry();
-        for g in ["main-online", "tasks-group", "models-group", "cocoon"] {
+        for g in ["main-online", "tasks-group", "models-group"] {
             let m = reg.find(g).unwrap();
             assert!(m.is_group, "{} 必须是父箱（is_group）", g);
             assert!(m.is_core, "{} 必须不可卸（is_core）", g);

@@ -69,18 +69,6 @@ pub fn build_registry() -> ModuleRegistry {
         is_group: true,
     });
 
-    // 🐛 虫茧（父箱：平台 + 文档 —— Mr2109 2026-09-13 二次调整：文档移入虫茧）
-    reg.register(ModuleManifest {
-        id: "cocoon",
-        name_key: "mod.roundtable.name", // 父箱名沿用「虫茧」（子箱「平台」另起键，避免页签重名）
-        icon: icon_text("boxes"),
-        desc_key: "mod.roundtable.desc",
-        is_core: true, // 父箱不可卸（导航骨架）
-        version: env!("CARGO_PKG_VERSION"),
-        parent: None,
-        order: 60,
-        is_group: true,
-    });
     // ⚡ 核心（船体箱——永驻；一级：chat / resources；子箱：tasks / internal-tasks / cluster / models）
     // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块）
     reg.register(ModuleManifest {
@@ -189,16 +177,16 @@ pub fn build_registry() -> ModuleRegistry {
     // 仍在船、可装卸；其平台页标题 **保留**（设计 §4.4）。
     reg.register(ModuleManifest {
         id: "roundtable",
-        name_key: "mod.cocoon_platform.name",
+        name_key: "mod.roundtable.name",
         icon: icon_text("boxes"),
-        desc_key: "mod.cocoon_platform.desc",
+        desc_key: "mod.roundtable.desc",
         is_core: false,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
-        // 2026-09-13 二次调整：虫茧升为**父箱**，本箱是它的「平台」页（默认页签）。
-        // 公开快照解除跨仓依赖时本页显示「未装载」，但同父箱下的「文档」照常可用。
-        parent: Some("cocoon"),
-        order: 10,
+        // 2026-09-13（Mr2109纠正）：虫茧仍是**普通箱**——它的页面就是「平台栅格」，
+        // 栅格里每个茧 = 一张独立应用卡（示例虫茧、文档……）。公开快照解除跨仓依赖时本卡显示「未装载」。
+        parent: None,
+        order: 60,
         is_group: false,
     });
     reg.register(ModuleManifest {
@@ -209,9 +197,10 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: false,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
-        // 2026-09-13 Mr2109二次调整：**文档移入「虫茧」**（虫茧第 2 个页签）
-        parent: Some("cocoon"),
-        order: 20,
+        // 2026-09-13（Mr2109纠正）：文档移入虫茧**平台**，作为与示例虫茧平级的**独立应用卡**；
+        // 归属用 parent 表达，但父箱非 group ⇒ 导航不生成二级页签、文档也不出现在一级导航里。
+        parent: Some("roundtable"),
+        order: 10,
         is_group: false,
     });
     reg.register(ModuleManifest {
@@ -287,7 +276,8 @@ pub fn top_nav_bar(
         .unwrap_or("");
     let effective = registry.effective_module(&registry.active, remembered);
     // 当前二级页签所属父箱（None ⇒ 不画二级行：顶级箱/外部箱）
-    let active_parent: Option<&'static str> = registry.parent_of(&effective);
+    // 2026-09-13（Mr2109纠正）：二级页签**只在 is_group 父箱**下出现——归属平台的应用（文档）不算。
+    let active_parent: Option<&'static str> = registry.sub_tabs_parent_of(&effective);
 
     ui.vertical(|ui| {
         // ── 一级导航（含可点状态灯）────────────────────────────────────────────
