@@ -114,6 +114,16 @@ impl FileBrowse {
         if self.root_id.is_empty() {
             return;
         }
+        // §尾巴 a：当前根已知不存在 ⇒ 不发起列表请求（闸门是纯函数 should_fetch_listing，单测钉死），
+        // 并清掉旧列表——别把上一根的目录挂到这颗不存在的根名下；空态由 render 显示。
+        let fetch = {
+            let g = lock(&self.roots);
+            roots::should_fetch_listing(&self.root_id, g.as_ref())
+        };
+        if !fetch {
+            *lock(&self.listing) = None;
+            return;
+        }
         let due = self
             .last_listing
             .map(|t| t.elapsed().as_secs() >= 5)
@@ -266,11 +276,18 @@ impl FileBrowse {
         let content = lock(&self.content).clone();
         let cerr = lock(&self.content_err).clone();
         let files_loaded = lock(&self.listing).is_some();
+        // §尾巴 a：当前根已知不存在（纯函数判定）⇒ 左栏走空态、右栏不展示
+        let root_id = self.root_id.clone();
+        let missing = roots::root_missing(&root_id, state.as_ref());
         ui.columns(2, |cols| {
             egui::ScrollArea::vertical()
                 .id_salt("fb_col2_list")
                 .auto_shrink(false)
                 .show(&mut cols[0], |ui| {
+                    if missing {
+                        roots::render_root_missing(ui, state.as_ref(), &root_id, &mut out);
+                        return;
+                    }
                     if !files_loaded {
                         ui.spinner();
                         ui.weak(rust_i18n::t!("common.loading"));
@@ -282,6 +299,9 @@ impl FileBrowse {
                 .id_salt("fb_col2_content")
                 .auto_shrink(false)
                 .show(&mut cols[1], |ui| {
+                    if missing {
+                        return; // 根不存在：右栏不展示（空态已在左栏给出）
+                    }
                     if view.file.is_empty() && cerr.is_none() {
                         ui.weak(rust_i18n::t!("docs.pick_hint"));
                         return;
@@ -302,7 +322,7 @@ impl FileBrowse {
 
 #[cfg(test)]
 mod tests {
-    use super::browser::{can_open, display_window, mib};
+    use super::browser::{can_open, display_window, mib, truncated_open_allowed};
     use super::roots::{
         default_root_id, root_label, FilerootsConfig, RootInfo, RootsState, DEFAULT_DISPLAY_MAX,
     };
@@ -342,12 +362,12 @@ mod tests {
     #[test]
     fn default_root_id_prefers_backend_flag() {
         let flagged = vec![
-            RootInfo { id: "a".into(), label: "A".into(), path: "/a".into(), is_default: false, writable: false },
-            RootInfo { id: "b".into(), label: "B".into(), path: "/b".into(), is_default: true, writable: false },
+            RootInfo { id: "a".into(), label: "A".into(), path: "/a".into(), is_default: false, writable: false, exists: true },
+            RootInfo { id: "b".into(), label: "B".into(), path: "/b".into(), is_default: true, writable: false, exists: true },
         ];
         assert_eq!(default_root_id(&flagged).as_deref(), Some("b"));
         let none_flagged = vec![
-            RootInfo { id: "a".into(), label: "A".into(), path: "/a".into(), is_default: false, writable: false },
+            RootInfo { id: "a".into(), label: "A".into(), path: "/a".into(), is_default: false, writable: false, exists: true },
         ];
         assert_eq!(default_root_id(&none_flagged).as_deref(), Some("a"));
         assert_eq!(default_root_id(&[]), None);
@@ -440,6 +460,89 @@ mod tests {
         assert!(can_open("model.gguf", false, &all), "放开类型=改配置即生效（不改代码）");
     }
 
+    /// §尾巴 a【关键回归点】：`exists` 字段缺失（旧后端）必须按 **true** 处理——
+    /// 若默认成 false，所有旧后端的根都会被误报为「该根不存在」。
+    #[test]
+    fn exists_field_defaults_to_true_for_old_backend() {
+        // 旧后端：响应里根本没有 exists 字段
+        let old = serde_json::json!({
+            "roots": [
+                {"id":"docs","label":"虫族文档","path":"/d","default":true,"writable":true}
+            ]
+        });
+        let s = RootsState::from_json(&old);
+        let r = s.find("docs").unwrap();
+        assert!(r.exists, "缺 exists 字段必须落成 true（旧后端回归点）");
+        assert!(!s.known_missing("docs"), "旧后端的根不得被判为「不存在」");
+        assert!(!roots::root_missing("docs", Some(&s)), "纯函数也不得误报");
+        // 新后端：显式 exists=false ⇒ 识别为不存在；显式 true ⇒ 存在
+        let new = serde_json::json!({
+            "roots": [
+                {"id":"weights","label":"模型权重","path":"/w","writable":false,"exists":false},
+                {"id":"docs","label":"虫族文档","path":"/d","writable":true,"exists":true}
+            ]
+        });
+        let s2 = RootsState::from_json(&new);
+        assert!(!s2.find("weights").unwrap().exists, "显式 false 必须被解析出来");
+        assert!(s2.known_missing("weights"));
+        assert!(!s2.known_missing("docs"));
+        // 清单未到 / 未知根 id：不误报（未知 ≠ 不存在）
+        assert!(!roots::root_missing("weights", None), "根清单未到不得判不存在");
+        assert!(!roots::root_missing("brand-new-root", Some(&s2)), "未知根 id 不得判不存在");
+    }
+
+    /// §尾巴 a：当前根已知不存在 ⇒ **不发起列表请求**（纯函数闸门）；存在/未知/无清单照常拉。
+    #[test]
+    fn missing_root_skips_listing_fetch() {
+        let s = RootsState::from_json(&serde_json::json!({
+            "roots": [
+                {"id":"weights","label":"模型权重","path":"/w","writable":false,"exists":false},
+                {"id":"docs","label":"虫族文档","path":"/d","writable":true,"exists":true}
+            ]
+        }));
+        assert!(
+            !roots::should_fetch_listing("weights", Some(&s)),
+            "根不存在 ⇒ 不拉列表（进入空态），否则每 5s 白刷一次必然失败的请求"
+        );
+        assert!(roots::should_fetch_listing("docs", Some(&s)), "存在的根照常拉");
+        assert!(
+            roots::should_fetch_listing("docs", None),
+            "根清单未到不得因此不拉（离线/首帧照常尝试）"
+        );
+        assert!(
+            roots::should_fetch_listing("unknown-root", Some(&s)),
+            "未知根 id 不误判——照常拉"
+        );
+        assert!(!roots::should_fetch_listing("", Some(&s)), "未选根不拉");
+    }
+
+    /// §尾巴 b【类型闸门】：截断提示里的「用默认应用打开」按钮仅在 `can_open` 放行时出现
+    /// （清单外只保留「在访达中显示」——§4.4）。
+    #[test]
+    fn truncation_open_button_respects_type_gate() {
+        let cfg = FilerootsConfig::from_json(Some(&serde_json::json!({
+            "allow_all_types": false, "text_exts": [".md", ".txt"]
+        })));
+        assert!(
+            truncated_open_allowed("notes/long.md", &cfg),
+            "清单内文本：截断提示给「用默认应用打开」（看全文）"
+        );
+        assert!(
+            !truncated_open_allowed("weights/model.gguf", &cfg),
+            "清单外（.gguf）：截断提示不得出现 open 按钮，只留 reveal"
+        );
+        assert!(
+            !truncated_open_allowed("Makefile", &cfg),
+            "无扩展名同样不给 open 按钮"
+        );
+        // 放开类型 = 改配置即生效（不改代码）
+        let all = FilerootsConfig::from_json(Some(&serde_json::json!({"allow_all_types": true})));
+        assert!(
+            truncated_open_allowed("weights/model.gguf", &all),
+            "allow_all_types 后按钮随之出现"
+        );
+    }
+
     /// 错误码 → 文案：六个码映射到**互不相同**的键，且键在 yml 里真实存在（文案 ≠ 键名）
     #[test]
     fn fileroot_error_mapping_is_distinct_and_readable() {
@@ -472,25 +575,56 @@ mod tests {
     /// 错误体解析：两种形态 + 畸形体——都不 panic，且给出可读文案（不糊原始 JSON）
     #[test]
     fn fileroot_error_bodies_never_panic() {
+        // 注意：这里**不能**写 `assert_eq!(from_body(x), fileroot_error_text(code))`——
+        // 两边各读一次全局 locale，而 main.rs::locale_tests 会在并行运行中 `set_locale`，
+        // 两次读可能跨越切换点拿到不同语言而偶发失败（本仓库既有 flake）。
+        // 改为断言「结果 ∈ 该键在全部内置 locale 下的译文」：语义不变、与 locale 无关。
         // 形态一：{"error":{"type","message"}}
         let b1 = serde_json::json!({"error":{"type":"NOT_ALLOWED","message":"该类型不允许"}});
         assert_eq!(actions::fileroot_error_code(&b1).as_deref(), Some("NOT_ALLOWED"));
-        assert_eq!(actions::fileroot_error_from_body(&b1), actions::fileroot_error_text("NOT_ALLOWED"));
+        assert!(
+            translations_of("fb.error.not_allowed").contains(&actions::fileroot_error_from_body(&b1)),
+            "NOT_ALLOWED 须落 fb.error.not_allowed 的文案（当前语言）"
+        );
         // 形态二：{"error":"NOT_FOUND"}
         let b2 = serde_json::json!({"error":"NOT_FOUND"});
-        assert_eq!(actions::fileroot_error_from_body(&b2), actions::fileroot_error_text("NOT_FOUND"));
+        assert!(
+            translations_of("fb.error.not_found").contains(&actions::fileroot_error_from_body(&b2)),
+            "NOT_FOUND 须落 fb.error.not_found 的文案（当前语言）"
+        );
         // 未收录码：附码便于排查
         let b3 = serde_json::json!({"error":{"type":"WEIRD_CODE","message":"x"}});
         assert!(actions::fileroot_error_from_body(&b3).contains("WEIRD_CODE"));
-        // 无码有 message：回退服务端文案
+        // 无码有 message：回退服务端文案（与语言无关）
         let b4 = serde_json::json!({"error":{"message":"后端说明"}});
         assert_eq!(actions::fileroot_error_from_body(&b4), "后端说明");
         // 完全空/畸形：通用文案，不 panic
-        assert_eq!(
-            actions::fileroot_error_from_body(&serde_json::Value::Null),
-            actions::fileroot_error_text("some_unknown_code")
+        assert!(
+            translations_of("fb.error.unknown")
+                .contains(&actions::fileroot_error_from_body(&serde_json::Value::Null)),
+            "畸形/空体须落通用文案 fb.error.unknown（当前语言）"
         );
         assert!(!actions::fileroot_error_from_body(&serde_json::json!("oops")).is_empty());
+    }
+
+    /// 取某扁平键在**全部内置 locale**（zh-CN + en）下的文案集合。
+    /// 消除「两次 `t!()` 互等」与 main.rs 并行 `set_locale` 的竞态（见上面测试注释）。
+    fn translations_of(key: &str) -> Vec<String> {
+        const ZH: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/zh-CN.yml"));
+        const EN: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/en.yml"));
+        [ZH, EN].iter().filter_map(|y| flat_value(y, key)).collect()
+    }
+
+    /// 从扁平 yml 取单个键的值（去首尾双引号）
+    fn flat_value(yml: &str, key: &str) -> Option<String> {
+        yml.lines().find_map(|l| {
+            let (k, v) = l.trim().split_once(':')?;
+            if k.trim() == key {
+                Some(v.trim().trim_matches('"').to_string())
+            } else {
+                None
+            }
+        })
     }
 
     /// 集装箱图标名必须真实存在（拼错会每帧告警并回退成文字）
@@ -533,6 +667,7 @@ mod tests {
             "fb.root.models",
             "fb.root.tasks",
             "fb.root.weights",
+            "fb.root.missing",
             "fb.action.reveal",
             "fb.action.open",
             "fb.path.copy",
