@@ -78,6 +78,14 @@ pub fn can_open(path: &str, is_dir: bool, cfg: &FilerootsConfig) -> bool {
     is_dir || cfg.ext_allowed(path)
 }
 
+/// 截断提示栏里是否给「用默认应用打开」按钮（**纯函数**，§4.4）：
+/// open 与读入共用同一份可配置类型清单——清单外只保留「在访达中显示」。
+/// 截断提示恒针对**已读入的内容文件**（is_dir 恒 false），与右键菜单共用同一套 `can_open`，
+/// 两处不许各写一套判定（否则清单放开后难免一处漏掉）。
+pub fn truncated_open_allowed(file: &str, cfg: &FilerootsConfig) -> bool {
+    can_open(file, false, cfg)
+}
+
 /// 显示窗口（**纯函数**）：返回（可渲染前缀, 渲染字节数, 是否截断）。
 /// 截断按**字符边界**回退——中文 3 字节/字，绝不能切在中间（否则 egui 渲染乱码/panic 风险）。
 pub fn display_window(content: &str, display_max: usize) -> (&str, usize, bool) {
@@ -203,7 +211,9 @@ pub fn render_content(
                 )
                 .to_string(),
             );
-            if ui.button(rust_i18n::t!("fb.action.open")).clicked() {
+            if truncated_open_allowed(&view.file, &view.cfg)
+                && ui.button(rust_i18n::t!("fb.action.open")).clicked()
+            {
                 out.push(FbIntent::Open {
                     root: view.root.clone(),
                     path: view.file.clone(),
