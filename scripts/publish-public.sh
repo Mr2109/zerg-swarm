@@ -261,6 +261,16 @@ for rel, i, why, sample in hits[:40]:
 if hits:
     sys.exit(1)
 PY
+# 4a. 私有面门禁（Mr2109 2026-09-13：虫族项目文档不能进仓库，那是私有的东西）
+#     黑名单 = publish/private-paths.txt（可 `!` 豁免）；命中即中止，一个字节都不推。
+if [ -f "$REPO_ROOT/scripts/check-public-tree-private.py" ]; then
+  if python3 "$REPO_ROOT/scripts/check-public-tree-private.py" "$OUT"; then
+    echo "  私有面门禁: 通过"
+  else
+    echo "  ❌ 公开树出现私有面路径——已中止导出（一个字节都不推）" >&2
+    exit 1
+  fi
+fi
 if command -v gitleaks >/dev/null 2>&1; then
   echo "  → 追加 gitleaks 通用密钥扫描"
   if [ -f "$OUT/.gitleaks.toml" ]; then
