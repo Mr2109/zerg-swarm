@@ -68,7 +68,7 @@ func DefaultOptions() Options {
 	home, _ := os.UserHomeDir()
 	o := Options{
 		RepoDir:   firstNonEmpty(os.Getenv("ZERG_UPDATE_REPO"), root),
-		Remote:    firstNonEmpty(os.Getenv("ZERG_UPDATE_REMOTE"), "origin"),
+		Remote:    ResolveUpdateRemote(root), // 环境变量 > 已配置 origin > 内置公开仓 URL
 		Ref:       firstNonEmpty(os.Getenv("ZERG_UPDATE_REF"), "main"),
 		Prefix:    firstNonEmpty(os.Getenv("ZERG_PREFIX"), filepath.Join(root, "bin")),
 		Kernel:    firstNonEmpty(os.Getenv("ZERG_UPGRADE_SCRIPT"), filepath.Join(root, "scripts", "zerg-upgrade.sh")),

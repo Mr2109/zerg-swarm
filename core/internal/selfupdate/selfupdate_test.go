@@ -307,3 +307,89 @@ func TestSpawnKernel_IndependentProcess(t *testing.T) {
 		t.Fatalf("内核应收到 git 树构建产物（file://staging）：%s", got)
 	}
 }
+
+// ── 取源解析（2026-09-13 真机发现：私有仓无 origin）────────────────────────
+
+func TestResolveUpdateRemote_PrefersEnv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ZERG_UPDATE_REMOTE", "https://example.com/x.git")
+	if got := ResolveUpdateRemote(dir); got != "https://example.com/x.git" {
+		t.Fatalf("环境变量应优先：got %q", got)
+	}
+}
+
+func TestResolveUpdateRemote_FallsBackToPublicURLWhenNoOrigin(t *testing.T) {
+	dir := t.TempDir()
+	gitRun(t, dir, "init", "-q")
+	t.Setenv("ZERG_UPDATE_REMOTE", "")
+	if got := ResolveUpdateRemote(dir); got != DefaultPublicRepoURL {
+		t.Fatalf("无 origin 时应回落到内置公开仓 URL：got %q want %q", got, DefaultPublicRepoURL)
+	}
+}
+
+func TestResolveUpdateRemote_UsesOriginWhenPresent(t *testing.T) {
+	dir := t.TempDir()
+	gitRun(t, dir, "init", "-q")
+	gitRun(t, dir, "remote", "add", "origin", "https://example.com/priv.git")
+	t.Setenv("ZERG_UPDATE_REMOTE", "")
+	if got := ResolveUpdateRemote(dir); got != "origin" {
+		t.Fatalf("配了 origin 就用它：got %q", got)
+	}
+}
+
+// ── 镜像仓 trailer 映射（2026-09-13 真机：公开仓 sha 全被重写）────────────
+
+func TestOriginRevID_ReadsTrailer(t *testing.T) {
+	dir := t.TempDir()
+	gitRun(t, dir, "init", "-q", "-b", "main")
+	commitFile(t, dir, "a.txt", "1", "c1")
+	origin := gitRun(t, dir, "rev-parse", "HEAD")
+	commitFile(t, dir, "a.txt", "2", "c2\n\nGitOrigin-RevId: "+origin)
+	if got := (Git{Dir: dir}).OriginRevID("HEAD"); got != origin {
+		t.Fatalf("应读到 trailer 里的私有 sha：got %q want %q", got, origin)
+	}
+	// 没有 trailer ⇒ 空串
+	gitRun(t, dir, "checkout", "-q", "-b", "plain", origin)
+	if got := (Git{Dir: dir}).OriginRevID("plain"); got != "" {
+		t.Fatalf("无 trailer 应返回空串：got %q", got)
+	}
+}
+
+func TestCheck_MirrorTipMapsBackToLocalUpToDate(t *testing.T) {
+	// 私有仓（有完整历史）
+	priv := t.TempDir()
+	gitRun(t, priv, "init", "-q", "-b", "main")
+	commitFile(t, priv, "a.txt", "1", "priv1")
+	local := gitRun(t, priv, "rev-parse", "HEAD")
+	// 镜像仓：内容被过滤改写（sha 不同），但 tip 带 GitOrigin-RevId 回指私有 sha
+	mir := t.TempDir()
+	gitRun(t, mir, "init", "-q", "-b", "main")
+	commitFile(t, mir, "a.txt", "FILTERED", "mirror(priv1)\n\nGitOrigin-RevId: "+local)
+	stateDir := t.TempDir()
+	r := Check(Git{Dir: priv}, mir, "main", stateDir, "v0.0.1", false)
+	if r.Status != StatusUpToDate {
+		t.Fatalf("镜像 tip 回指的正是本地 sha ⇒ 应 up-to-date；got status=%s behind=%d ahead=%d msg=%s",
+			r.Status, r.Behind, r.Ahead, r.Message)
+	}
+	if r.RemoteSHA == local {
+		t.Fatalf("对外仍应报公开 sha（与本地不同）：RemoteSHA=%s", r.RemoteSHA)
+	}
+}
+
+func TestCheck_MirrorTipMapsBackToDescendantIsBehind(t *testing.T) {
+	priv := t.TempDir()
+	gitRun(t, priv, "init", "-q", "-b", "main")
+	commitFile(t, priv, "a.txt", "1", "priv1")
+	// 本地停在 priv1，但镜像回指的是私有仓里再往后的 sha ⇒ 落后 1 笔
+	gitRun(t, priv, "checkout", "-q", "-b", "tip")
+	commitFile(t, priv, "a.txt", "2", "tip2")
+	tipSHA := gitRun(t, priv, "rev-parse", "HEAD")
+	gitRun(t, priv, "checkout", "-q", "main")
+	mir := t.TempDir()
+	gitRun(t, mir, "init", "-q", "-b", "main")
+	commitFile(t, mir, "a.txt", "FILTERED", "mirror(tip2)\n\nGitOrigin-RevId: "+tipSHA)
+	r := Check(Git{Dir: priv}, mir, "main", t.TempDir(), "v0.0.1", false)
+	if r.Status != StatusBehind {
+		t.Fatalf("镜像回指后代 ⇒ 应 behind；got status=%s ahead=%d msg=%s", r.Status, r.Ahead, r.Message)
+	}
+}
