@@ -119,43 +119,6 @@ func (g Git) CountAhead(from, to string) int {
 // 假的"落后 12492 笔"（Hermes banner.py 注释里踩过这个坑）。`--depth 1` 保住浅边界。
 //
 // 浅检出的 `clone --depth 1` 不建 `origin/main` 跟踪引用 ⇒ 优先 FETCH_HEAD。
-// OriginRevID —— 读 ref 的提交信息里的 `GitOrigin-RevId` trailer（镜像仓用它回指私有提交）。
-//
-// 2026-09-13（真机验收）：公开仓是**过滤镜像**，逐提交都被重写 ⇒ 私有与公开两条历史在 sha 图上
-// 互不为祖先，直接 rev-list 会报「落后 = 整部公开史」（实测 393 笔），而真相应是「已是最新」。
-// 口径：镜像 tip 带 `GitOrigin-RevId: <私有 sha>` ⇒ 拿它映射回私有图再比祖先。读不到就返回空串。
-func (g Git) OriginRevID(ref string) string {
-	cmd := exec.Command("git", "-C", g.Dir, "log", "-1",
-		"--format=%(trailers:key=GitOrigin-RevId,valueonly)", ref)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// DefaultPublicRepoURL —— 更新取源的**内置默认**：公开镜像仓（匿名可拉，无需凭据）。
-//
-// 2026-09-13 真机只读验收发现的问题：私有权威仓**没有 `origin`**（它一直是独立仓），
-// 而取源原先只认 "origin" ⇒ `zerg update` 在真机上一次都跑不通。沙箱里的玩具仓恰好配了
-// origin，所以套件全绿也验不出来 —— 平台/环境常量类的缺口，必须拿真仓跑一次才现形。
-const DefaultPublicRepoURL = "https://github.com/Mr2109/zerg-swarm.git"
-
-// ResolveUpdateRemote —— 取源解析顺序：① 环境变量 ZERG_UPDATE_REMOTE
-// ② 已配置的 `origin`（尊重本机既有配置）③ 内置公开仓 URL（设计稿口径：匿名拉公开仓）。
-func ResolveUpdateRemote(repoDir string) string {
-	if v := strings.TrimSpace(os.Getenv("ZERG_UPDATE_REMOTE")); v != "" {
-		return v
-	}
-	cmd := exec.Command("git", "-C", repoDir, "remote", "get-url", "origin")
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	if out, err := cmd.Output(); err == nil && strings.TrimSpace(string(out)) != "" {
-		return "origin"
-	}
-	return DefaultPublicRepoURL
-}
-
 func (g Git) FetchTarget(remote, ref string) (string, error) {
 	if strings.TrimSpace(remote) == "" {
 		remote = "origin"

@@ -194,30 +194,23 @@ func Check(g Git, remote, ref, stateDir, version string, useCache bool) CheckRes
 		}
 	}
 
-	// 2026-09-13（真机验收修正）：镜像仓的 sha 全被重写 ⇒ 先经 `GitOrigin-RevId` trailer
-	// 映射回私有图的节点再比祖先；无 trailer（普通远端仓）则照旧直接比 sha。
-	compareSHA := remoteSHA
-	if mapped := g.OriginRevID("FETCH_HEAD"); mapped != "" {
-		compareSHA = mapped
-	}
-	res := Compare(local, compareSHA, g.IsAncestor, 0)
-	res.RemoteSHA = remoteSHA // 对外仍报公开 sha（tag / 回执 / UI 用）
+	res := Compare(local, remoteSHA, g.IsAncestor, 0)
 	res.Source = "live"
 	res.Dirty = g.IsDirty()
 	// 补齐提交数（用真实 rev-list，越界时保 -1）
 	switch res.Status {
 	case StatusBehind:
-		if n := g.CountAhead(local, compareSHA); n >= 0 {
+		if n := g.CountAhead(local, remoteSHA); n >= 0 {
 			res.Behind = n
 		}
 	case StatusLocalAhead:
-		if n := g.CountAhead(compareSHA, local); n >= 0 {
+		if n := g.CountAhead(remoteSHA, local); n >= 0 {
 			res.Ahead = n
-		} else if n := g.CountAhead(compareSHA, "HEAD"); n >= 0 {
+		} else if n := g.CountAhead(remoteSHA, "HEAD"); n >= 0 {
 			res.Ahead = n
 		}
 	case StatusDiverged:
-		if n := g.CountAhead(compareSHA, local); n >= 0 {
+		if n := g.CountAhead(remoteSHA, local); n >= 0 {
 			res.Ahead = n
 		}
 	}

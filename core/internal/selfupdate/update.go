@@ -27,14 +27,12 @@ const (
 
 // Options —— `zerg update` 的全部入参（含测试用的可注入接缝）。
 type Options struct {
-	CheckOnly  bool
-	To         string
-	Force      bool
-	JSON       bool
-	NoUI       bool
-	UseCache   bool
-	Role       string   // controller（默认）| node —— 决定要构建/换装哪些件与管哪些服务
-	Components []string // 显式组件覆盖（空 ⇒ 由 role 推默认集）
+	CheckOnly bool
+	To        string
+	Force     bool
+	JSON      bool
+	NoUI      bool
+	UseCache  bool
 
 	// ── 可注入接缝（默认从环境/工作区推导；沙箱测试用 ZERG_* 覆盖）──
 	RepoDir   string // 本地检出
@@ -46,33 +44,8 @@ type Options struct {
 	Receipts  string // ~/.zerg/update_receipts
 	FleetYAML string // 配置（updates.check）
 
-	// BuildTime —— 本次构建的时间戳（空 ⇒ 现在）。机群 `--fleet` 会给三台同一个戳，
-	// 否则「同 commit + 同平台 ⇒ 同 sha256」在跨机比对时永远不成立（G6）。
-	BuildTime string
-
 	Stdout io.Writer
 	Stderr io.Writer
-}
-
-// 角色（B5）：controller = 主控机（core + UI）；node = 机群节点（core + agentd，无 UI）。
-const (
-	RoleController = "controller"
-	RoleNode       = "node"
-)
-
-// componentsForRole —— role → 组件集；显式 Components 优先。
-func componentsForRole(role string, explicit []string) ([]string, error) {
-	if len(explicit) > 0 {
-		return NormalizeComponents(explicit)
-	}
-	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "", RoleController:
-		return NormalizeComponents(DefaultComponents())
-	case RoleNode:
-		return NormalizeComponents(NodeComponents())
-	default:
-		return nil, fmt.Errorf("未知角色 %q（可选：controller/node）", role)
-	}
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -95,21 +68,16 @@ func DefaultOptions() Options {
 	home, _ := os.UserHomeDir()
 	o := Options{
 		RepoDir:   firstNonEmpty(os.Getenv("ZERG_UPDATE_REPO"), root),
-		Remote:    ResolveUpdateRemote(root), // 环境变量 > 已配置 origin > 内置公开仓 URL
+		Remote:    firstNonEmpty(os.Getenv("ZERG_UPDATE_REMOTE"), "origin"),
 		Ref:       firstNonEmpty(os.Getenv("ZERG_UPDATE_REF"), "main"),
 		Prefix:    firstNonEmpty(os.Getenv("ZERG_PREFIX"), filepath.Join(root, "bin")),
 		Kernel:    firstNonEmpty(os.Getenv("ZERG_UPGRADE_SCRIPT"), filepath.Join(root, "scripts", "zerg-upgrade.sh")),
 		StateDir:  firstNonEmpty(os.Getenv("ZERG_STATE_DIR"), statepath.Dir()),
 		Receipts:  firstNonEmpty(os.Getenv("ZERG_RECEIPTS_DIR"), filepath.Join(home, ".zerg", "update_receipts")),
 		FleetYAML: firstNonEmpty(os.Getenv("ZERG_FLEET_YAML"), filepath.Join(root, "gateway", "fleet.yaml")),
-		Role:      firstNonEmpty(os.Getenv("ZERG_UPDATE_ROLE"), RoleController),
-		BuildTime: strings.TrimSpace(os.Getenv("ZERG_BUILD_TIME")),
 		UseCache:  true,
 		Stdout:    os.Stdout,
 		Stderr:    os.Stderr,
-	}
-	if v := strings.TrimSpace(os.Getenv("ZERG_UPDATE_COMPONENTS")); v != "" {
-		o.Components = []string{v}
 	}
 	return o
 }
@@ -133,10 +101,10 @@ func (o *Options) warn(format string, a ...interface{}) { fmt.Fprintf(o.errw(), 
 
 // Usage —— `zerg update` 帮助。
 const Usage = `用法：
-  zerg update [--check] [--to <ref>] [--force] [--json] [--no-ui] [--role controller|node] [--components <列表>]
+  zerg update [--check] [--to <ref>] [--force] [--json] [--no-ui]
 
 源码式自更新（对齐 Hermes 的 hermes update）：
-  解析安装方式 → scoped fetch 公开仓 → 比较目标 commit → 本机构建（按角色选组件）
+  解析安装方式 → scoped fetch 公开仓 → 比较目标 commit → 本机构建（主控/子端 Go；UI 仅 darwin）
   → 交既有六阶段内核换装 → verify（运行进程自报 sha）→ 回执
 
 选项：
@@ -145,10 +113,6 @@ const Usage = `用法：
   --to <ref>   指定目标 ref/commit（显式降级需 --force，回执标注）
   --force      越过安装方式拒绝 / 开发态分叉
   --no-ui      跳过 UI 构建（快的自检）
-  --role       构建/换装的角色（B5 机群）：
-                 controller（默认）= core + agent（+ darwin 上的 ui）
-                 node             = core + agentd（机群节点：X3 上真正在跑的是 zerg-agentd；无 ui）
-  --components 显式组件覆盖（core,agent,agentd,ui；ui 仅 darwin）——优先于 --role
   --json       机器可读输出
   --no-cache   本次不走 6 小时缓存（强制 live 检查）
 
@@ -160,16 +124,14 @@ func CLIMain(args []string) int {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var (
-		check      = fs.Bool("check", false, "只检查")
-		plan       = fs.Bool("plan", false, "只检查（别名）")
-		to         = fs.String("to", "", "目标 ref/commit")
-		force      = fs.Bool("force", false, "越过拒绝")
-		jsonOut    = fs.Bool("json", false, "机器可读")
-		noUI       = fs.Bool("no-ui", false, "跳过 UI 构建")
-		noCache    = fs.Bool("no-cache", false, "不走缓存")
-		role       = fs.String("role", "", "角色：controller|node")
-		components = fs.String("components", "", "组件列表（core,agent,agentd,ui）")
-		help       = fs.Bool("help", false, "帮助")
+		check   = fs.Bool("check", false, "只检查")
+		plan    = fs.Bool("plan", false, "只检查（别名）")
+		to      = fs.String("to", "", "目标 ref/commit")
+		force   = fs.Bool("force", false, "越过拒绝")
+		jsonOut = fs.Bool("json", false, "机器可读")
+		noUI    = fs.Bool("no-ui", false, "跳过 UI 构建")
+		noCache = fs.Bool("no-cache", false, "不走缓存")
+		help    = fs.Bool("help", false, "帮助")
 	)
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, "❌ 参数错误：", err)
@@ -186,12 +148,6 @@ func CLIMain(args []string) int {
 	o.Force = *force
 	o.JSON = *jsonOut
 	o.NoUI = *noUI
-	if strings.TrimSpace(*role) != "" {
-		o.Role = *role
-	}
-	if strings.TrimSpace(*components) != "" {
-		o.Components = []string{*components}
-	}
 	if *noCache {
 		o.UseCache = false
 	}
@@ -285,14 +241,6 @@ func Run(o Options) int {
 	o.say("🏷  目标：%s（%s）", ref, short(remoteSHA))
 
 	// ② 本机构建（git 树构建产物 → 临时区）
-	components, err := componentsForRole(o.Role, o.Components)
-	if err != nil {
-		o.warn("❌ %v", err)
-		return ExitUsage
-	}
-	if o.NoUI {
-		components = dropUI(components)
-	}
 	staging, err := os.MkdirTemp("", "zerg-update-staging-")
 	if err != nil {
 		o.warn("❌ 建临时区失败：%v", err)
@@ -306,16 +254,8 @@ func Run(o Options) int {
 	}
 	defer cleanup()
 
-	// G6：工具链低于钉住值 ⇒ 明确拒绝（在构建之前，什么也不动）
-	if pin, actual, terr := VerifyToolchain(src); terr != nil {
-		o.warn("❌ 工具链核对不过（钉住 %s / 本机 %s）：%v", pin, actual, terr)
-		os.RemoveAll(staging)
-		return ExitFail
-	}
-
-	o.say("🔨 本机构建（角色 %s · 组件 %s · 平台 %s）…", roleName(o.Role), strings.Join(components, ","), Platform())
-	br, err := Build(BuildOptions{Source: src, Staging: staging, Commit: remoteSHA,
-		Components: components, NoUI: o.NoUI, BuildTime: o.BuildTime, LogWriter: o.out()})
+	o.say("🔨 本机构建（平台 %s）…", Platform())
+	br, err := Build(BuildOptions{Source: src, Staging: staging, Commit: remoteSHA, NoUI: o.NoUI, LogWriter: o.out()})
 	if err != nil {
 		o.warn("❌ 构建失败：%v", err)
 		o.warn("   未换装——本机现状毫发无损。")
@@ -324,7 +264,7 @@ func Run(o Options) int {
 	}
 
 	// ③ 交**独立进程**（G2：zerg update 自己要换的正是主控二进制 ⇒ 绝不进程内自换）
-	pid, klog, err := o.spawnKernel(staging, components)
+	pid, klog, err := o.spawnKernel(staging)
 	if err != nil {
 		o.warn("❌ 拉起独立升级进程失败：%v", err)
 		os.RemoveAll(staging)
@@ -334,16 +274,14 @@ func Run(o Options) int {
 	// ④ 交接回执（权威回执由内核写同目录）
 	rc, _ := WriteLaunchReceipt(o.Receipts, LaunchReceipt{
 		Method: method, Prefix: o.Prefix, Repo: o.RepoDir, From: local,
-		Role: roleName(o.Role), Components: components, Toolchain: br.Toolchain,
-		BuildTime: br.BuildTime,
-		Target:    TargetInfo{Tag: br.Tag, Commit: br.Commit},
-		Staging:   staging, Artifacts: br.Artifacts,
+		Target:  TargetInfo{Tag: br.Tag, Commit: br.Commit},
+		Staging: staging, Artifacts: br.Artifacts,
 		Kernel: o.Kernel, KernelPID: pid, KernelLog: klog, ReceiptDir: o.Receipts,
 	})
 
 	if o.JSON {
-		fmt.Fprintf(o.out(), "{\"status\":\"dispatched\",\"kernel_pid\":%d,\"target_commit\":%q,\"components\":%q,\"staging\":%q,\"launch_receipt\":%q}\n",
-			pid, br.Commit, strings.Join(components, ","), staging, rc)
+		fmt.Fprintf(o.out(), "{\"status\":\"dispatched\",\"kernel_pid\":%d,\"target_commit\":%q,\"staging\":%q,\"launch_receipt\":%q}\n",
+			pid, br.Commit, staging, rc)
 	} else {
 		o.say("🚀 已交给独立升级进程（pid %d）；换装/重启/verify 由它完成（zerg update 自身不换自己）", pid)
 		o.say("   内核日志：%s", klog)
@@ -411,8 +349,7 @@ func (o *Options) prepareSource(g Git, target, staging string) (src string, clea
 }
 
 // spawnKernel —— 以**独立进程**拉起六阶段内核（setsid，不 Wait），返回 pid 与日志路径。
-// 角色与组件随行下发：内核按同样的组件集换装（清单里缺哪件就在换装前拒绝）。
-func (o *Options) spawnKernel(staging string, components []string) (int, string, error) {
+func (o *Options) spawnKernel(staging string) (int, string, error) {
 	if _, err := os.Stat(o.Kernel); err != nil {
 		return 0, "", fmt.Errorf("内核脚本不存在：%s", o.Kernel)
 	}
@@ -424,10 +361,7 @@ func (o *Options) spawnKernel(staging string, components []string) (int, string,
 	if err != nil {
 		return 0, "", err
 	}
-	args := []string{o.Kernel, "--role", roleName(o.Role)}
-	if len(components) > 0 {
-		args = append(args, "--components", strings.Join(components, ","))
-	}
+	args := []string{o.Kernel}
 	if o.NoUI {
 		args = append(args, "--no-ui") // 与本次构建一致：跳过了 UI 构建，内核也别碰 UI
 	}
@@ -438,9 +372,6 @@ func (o *Options) spawnKernel(staging string, components []string) (int, string,
 		"ZERG_RECEIPTS_DIR="+o.Receipts,
 		"ZERG_STATE_DIR="+o.StateDir,
 	)
-	if strings.TrimSpace(o.BuildTime) != "" {
-		cmd.Env = append(cmd.Env, "ZERG_BUILD_TIME="+o.BuildTime)
-	}
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = lf, lf, nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -451,23 +382,4 @@ func (o *Options) spawnKernel(staging string, components []string) (int, string,
 	// 不 Wait：内核是独立进程，zerg update 立即退出（G2）。
 	go func() { _ = cmd.Wait(); lf.Close() }()
 	return pid, klog, nil
-}
-
-// roleName —— 归一化的角色名（空 ⇒ controller）。
-func roleName(role string) string {
-	if strings.EqualFold(strings.TrimSpace(role), RoleNode) {
-		return RoleNode
-	}
-	return RoleController
-}
-
-// dropUI —— 去掉 ui 组件（--no-ui 时构建与核保必须一致）。
-func dropUI(components []string) []string {
-	out := []string{}
-	for _, c := range components {
-		if c != CompUI {
-			out = append(out, c)
-		}
-	}
-	return out
 }

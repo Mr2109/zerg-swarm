@@ -20,24 +20,41 @@
 #   bash scripts/zerg-upgrade.sh --fleet          # 跨机编排：执行（本地件自动；远程件无特权则标 pending）
 #   ... --allow-downgrade                        # 明确允许把代码换成更旧的提交（默认拒绝降级）
 #
+# 取件源（B4 改造，2026-09-13）：
+#   · **默认 = 本地 git 树构建产物**（`zerg update` fetch→本机构建→写到临时区，
+#     用 ZERG_UPGRADE_SOURCE=file://<staging> 交本内核；内核只做校验+换装，构建不在这里）
+#   · `--from-assets`（默认关）= 应急通道：从 GitHub Release 下载预编译资产（断网/工具链故障兜底）
+#   两条通道的 manifest 同形（version/commit/tag/artifacts[].sha256），内核读法一致。
+#
 # 开关/环境：
-#   ZERG_UPGRADE_SOURCE=file:///path/to/release   本地假源（演练/测试；真源默认走 GitHub Release）
+#   ZERG_UPGRADE_SOURCE=file:///path/to/staging   git 树构建产物目录（默认取件源）
+#   --from-assets                                改用 GitHub Release 资产（应急，默认关）
 #   ZERG_PREFIX=<dir>       安装前缀（默认 <repo>/bin）
 #   --no-service            不碰 launchd/服务（沙箱测试用）
+#   --no-ui                 不构建/换装 UI（快的自检；沙箱用）
 #   --force                 有在途任务也照升（默认拒绝）
 #   --json                  机器可读
+#   测试接缝（沙箱隔离真机，绝不误杀在跑的服务）：
+#     ZERG_API_BASE / ZERG_START_CORE / ZERG_STOP_CORE / ZERG_START_UI / ZERG_UI_PATTERN / ZERG_UPGRADE_REPO
 #
 # 退出码：0 成功 / 1 失败(已尝试回滚) / 2 无需升级 / 3 拒绝(有在途任务) / 4 校验不通过(未动文件)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SOURCE="${ZERG_UPGRADE_SOURCE:-https://github.com/Mr2109/zerg-swarm}"
+SOURCE="${ZERG_UPGRADE_SOURCE:-}"
 PREFIX="${ZERG_PREFIX:-$REPO_ROOT/bin}"
 RECEIPTS="${ZERG_RECEIPTS_DIR:-$HOME/.zerg/update_receipts}"
-API="http://127.0.0.1:8580"
+API="${ZERG_API_BASE:-http://127.0.0.1:8580}"
 TOKEN_FILE="$HOME/.zerg/token"
+# git 副作用（降级门判祖先）作用在哪个检出上：默认本仓；沙箱指向玩具仓
+GITREPO="${ZERG_UPGRADE_REPO:-$REPO_ROOT}"
+# 服务启停入口（可注入——沙箱用假脚本，**绝不**去动真机的 launchd/UI）
+STARTCORE="${ZERG_START_CORE:-$REPO_ROOT/scripts/start-zerg-core.sh}"
+STARTUI="${ZERG_START_UI:-$REPO_ROOT/scripts/start-zerg-ui.sh}"
+UI_PATTERN="${ZERG_UI_PATTERN:-bin/zerg-ui}"
 
 MODE="apply"; NO_SERVICE=0; FORCE=0; JSON=0; TAG=""; FLEET_PLAN_ONLY=0; ALLOW_DOWNGRADE=0
+FROM_ASSETS=0; NO_UI=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --plan) if [ "$MODE" = "fleet" ]; then FLEET_PLAN_ONLY=1; else MODE="plan"; fi; shift ;;
@@ -46,13 +63,15 @@ while [ $# -gt 0 ]; do
     --rollback) MODE="rollback"; shift ;;
     --receipts) MODE="receipts"; shift ;;
     --fleet) MODE="fleet"; shift ;;
+    --from-assets) FROM_ASSETS=1; shift ;;
     --allow-downgrade) ALLOW_DOWNGRADE=1; shift ;;
     --no-service) NO_SERVICE=1; shift ;;
+    --no-ui) NO_UI=1; shift ;;
     --force) FORCE=1; shift ;;
     --json) JSON=1; shift ;;
     --prefix) PREFIX="$2"; shift 2 ;;
     --tag) TAG="$2"; shift 2 ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 64 ;;
   esac
 done
@@ -90,26 +109,32 @@ print(sum(1 for t in ts if str(t.get("status","")).lower() in live))
 ' 2>/dev/null || echo 0
 }
 
-# ── 取源（file:// 假源 或 GitHub Release）───────────────────────────────────
+# ── 取源（默认：本地 git 树构建产物 ｜ --from-assets：GitHub Release 应急通道）──
+# 默认取件源 = "git 树构建产物"：由 `zerg update` fetch→本机构建写到临时区后交本内核
+# （ZERG_UPGRADE_SOURCE=file://<staging>）。**内核不亲自动手构建**——构建是 update 的活，
+# 内核只守六阶段（drain→swap→restart→verify→report）；资产通道（--from-assets）是应急兜底。
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 fetch_manifest() {
-  if [[ "$SOURCE" == file://* ]]; then
-    local d="${SOURCE#file://}"
-    [ -f "$d/manifest.json" ] || die "假源缺 manifest.json：$d"
-    cp -p "$d/manifest.json" "$work/manifest.json"; SRCDIR="$d"
-  else
-    command -v gh >/dev/null || die "读 GitHub Release 需要 gh；或用 ZERG_UPGRADE_SOURCE=file://… 演练"
-    gh release download ${TAG:+"$TAG"} --repo Mr2109/zerg-swarm --pattern manifest.json --dir "$work" --clobber 2>/dev/null \
+  if [ "$FROM_ASSETS" = "1" ]; then
+    command -v gh >/dev/null || die "读 GitHub Release 需要 gh；或改用默认的 git 树构建产物通道（ZERG_UPGRADE_SOURCE=file://…）"
+    gh release download ${TAG:+"$TAG"} --repo "${ZERG_ASSETS_REPO:-Mr2109/zerg-swarm}" --pattern manifest.json --dir "$work" --clobber 2>/dev/null \
       || die "取不到 Release manifest（仓库可能还没有 Release）"
     SRCDIR=""
+  else
+    local d="${SOURCE#file://}"
+    [ -n "$d" ] || die "未提供 git 树构建产物：请先跑 \`zerg update\`（它 fetch→构建→交本内核），或加 --from-assets 走应急资产通道"
+    [ -f "$d/manifest.json" ] || die "构建产物目录缺 manifest.json：${d}（半成品一律不换装）"
+    cp -p "$d/manifest.json" "$work/manifest.json"; SRCDIR="$d"
   fi
   mj() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(eval(sys.argv[2],{"d":d}))' "$work/manifest.json" "$1"; }
   SRC_VER="$(mj 'd["version"]')"; SRC_SHA="$(mj 'd["commit"]')"; SRC_TAG="$(mj 'd["tag"]')"
 }
 pull_artifact() { # $1=制品名 → $work/dl/<name>
   mkdir -p "$work/dl"
-  if [ -n "${SRCDIR:-}" ]; then cp -p "$SRCDIR/$1" "$work/dl/$1"; else
-    gh release download ${TAG:+"$TAG"} --repo Mr2109/zerg-swarm --pattern "$1" --dir "$work/dl" --clobber
+  if [ "$FROM_ASSETS" = "1" ]; then
+    gh release download ${TAG:+"$TAG"} --repo "${ZERG_ASSETS_REPO:-Mr2109/zerg-swarm}" --pattern "$1" --dir "$work/dl" --clobber
+  else
+    cp -p "$SRCDIR/$1" "$work/dl/$1"
   fi
 }
 want_sha() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(next(x["sha256"] for x in d["artifacts"] if x["name"]==sys.argv[2]))' "$work/manifest.json" "$1"; }
@@ -118,6 +143,11 @@ want_sha() { python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(ne
 case "$MODE" in
   fleet)
     # ── 跨机升级编排 ────────────────────────────────────────────────────────
+    # B4 说明（2026-09-13）：单机取件源已改「git 树构建产物」；**机群（B5）尚未改造**，
+    # 无显式取件源时仍自动走资产通道（--from-assets），保证本次改造不打断既有编排。
+    if [ -z "$SOURCE" ] && [ "$FROM_ASSETS" != "1" ]; then
+      FROM_ASSETS=1; say "ℹ️  机群模式暂走资产通道（自动 --from-assets）；B5 将改为每台各自 \`zerg update\`"
+    fi
     # 顺序固定：子端 → 主控 → UI——**动自己那步永远最后**（升级器不升自己所在的进程）。
     # 注：原第 4 件「菜单栏 App（Swift ZergApp）」已于 2026-09-11 由Mr2109拍板整体去除（模块不需要了），故本编排只含三件。
     # 远程件（X3 子端）需要特权（unit 在 /etc/systemd/system、二进制在 /usr/local/bin）：
@@ -272,8 +302,16 @@ PY
     ;;
 esac
 
+# 只有 apply（真换装）强制「git 树构建产物」；plan/check 无源时退回应急资产通道，
+# 保持"随手看一眼版本"可用（与改造前一致）。
+if [ "$FROM_ASSETS" != "1" ] && [ -z "$SOURCE" ] && [ "$MODE" != "apply" ]; then
+  FROM_ASSETS=1; say "ℹ️  ${MODE} 模式无取件源 ⇒ 退回应急资产通道（--from-assets）"
+fi
+
 fetch_manifest
-say "🏷  源：${SRC_TAG}（代码 ${SRC_SHA}）"
+SRC_KIND="git-tree"
+if [ "$FROM_ASSETS" = "1" ]; then SRC_KIND="assets(应急)"; fi
+say "🏷  源：${SRC_TAG}（代码 ${SRC_SHA}）· 取件源=${SRC_KIND}"
 
 # 盘点（plan / check / apply 共用）
 CUR_CORE="$(ver_of "$PREFIX/zerg-core")"
@@ -295,7 +333,7 @@ INFLIGHT="$(inflight)"
 if [ "$MODE" = "plan" ]; then
   say "Update plan:"
   say "  install : ${PREFIX}（平台 ${PLAT}）"
-  say "  source  : ${SOURCE}"
+  say "  source  : ${SRC_KIND} ${SOURCE}"
   say "  当前版本 : 主控 $( [ -n "$CUR_CORE" ] && echo "$CUR_CORE" || echo '未安装' )"
   say "            子端 $( [ -n "$CUR_AGENT" ] && echo "$CUR_AGENT" || echo '未安装' )"
   say "            UI  sha $( echo "$CUR_UI_SHA" | cut -c1-16 )…"
@@ -315,7 +353,7 @@ fi
 
 # ── 下载 + 校验（不过就拒绝，且不动已装文件）────────────────────────────────
 WANT="zerg-core-${PLAT} zerg-agent-${PLAT}"
-[ "$PLAT" = "darwin-arm64" ] && WANT="$WANT zerg-ui-${PLAT}"
+[ "$PLAT" = "darwin-arm64" ] && [ "$NO_UI" != "1" ] && WANT="$WANT zerg-ui-${PLAT}"
 for a in $WANT; do
   pull_artifact "$a"
   w="$(want_sha "$a")"; g="$(shasum -a 256 "$work/dl/$a" | awk '{print $1}')"
@@ -328,7 +366,7 @@ done
 # 判据用 git 祖先关系（同一仓库里两者都在历史中才判得出）；判不出就不拦，只提示。
 CUR_SHA_SHORT="$(printf '%s' "$CUR_CORE" | awk '{print $3}' | sed 's/+.*//')"
 if [ -n "$CUR_SHA_SHORT" ] && [ "$CUR_SHA_SHORT" != "unknown" ] && [ "$CUR_SHA_SHORT" != "$SRC_SHA" ]; then
-  if git -C "$REPO_ROOT" merge-base --is-ancestor "$SRC_SHA" "$CUR_SHA_SHORT" 2>/dev/null; then
+  if git -C "$GITREPO" merge-base --is-ancestor "$SRC_SHA" "$CUR_SHA_SHORT" 2>/dev/null; then
     if [ "$ALLOW_DOWNGRADE" != "1" ]; then
       die "目标是旧提交（源 ${SRC_SHA} 早于当前运行的 ${CUR_SHA_SHORT}）——拒绝降级；确实要降级请加 --allow-downgrade" 5
     fi
@@ -339,10 +377,13 @@ if [ -n "$CUR_SHA_SHORT" ] && [ "$CUR_SHA_SHORT" != "unknown" ] && [ "$CUR_SHA_S
 fi
 
 # ── 停服务（KeepAlive → 必须 bootout）───────────────────────────────────────
+UI_WAS_RUNNING=0
 if [ "$NO_SERVICE" != "1" ]; then
   say "⏸  停主控（launchctl bootout——KeepAlive=true 时直接 kill 会被旧二进制抢重启）"
-  bash "$REPO_ROOT/scripts/start-zerg-core.sh" --stop >/dev/null 2>&1 || true
-  if pgrep -f "bin/zerg-ui" >/dev/null 2>&1; then say "⏸  停 UI"; pkill -f "bin/zerg-ui" || true; sleep 1; fi
+  bash "$STARTCORE" --stop >/dev/null 2>&1 || true
+  if pgrep -f "$UI_PATTERN" >/dev/null 2>&1; then
+    UI_WAS_RUNNING=1; say "⏸  停 UI"; pkill -f "$UI_PATTERN" || true; sleep 1
+  fi
 fi
 
 # ── 原子换装（.new → mv；旧件留 .prev；macOS 重签名）────────────────────────
@@ -370,7 +411,7 @@ swap_one() { # $1=组件名  $2=源制品名
 SWAP_FAIL=0
 swap_one zerg-core  "zerg-core-${PLAT}"  || swap_one_fail=1
 swap_one zerg-agent "zerg-agent-${PLAT}" || swap_one_fail=1
-[ "$PLAT" = "darwin-arm64" ] && { swap_one zerg-ui "zerg-ui-${PLAT}" || swap_one_fail=1; }
+[ "$PLAT" = "darwin-arm64" ] && [ "$NO_UI" != "1" ] && { swap_one zerg-ui "zerg-ui-${PLAT}" || swap_one_fail=1; }
 true
 
 # ── 重启 + verify（起不来就回滚）────────────────────────────────────────────
@@ -386,32 +427,76 @@ verify_files() { # 2026-09-11 修：不再比落盘 sha（重签名已改字节�
   done
   return $((1-ok))
 }
-verify_live() { # 活进程自报：主控走 capabilities，子端走 --version
-  local v
-  v="$(ver_of "$PREFIX/zerg-core")"
-  case "$v" in *"$SRC_SHA"*|*"$SRC_VER"*) say "   ✓ 主控自报：$v" ;; *) say "   ✗ 主控自报异常：$v"; return 1 ;; esac
+# 运行进程自报的 code_sha（修 #42：verify 的口径是「**跑着的那份代码**自报的身份」，
+# 不是磁盘二进制 --version——旧口径会把"换了盘上文件但活进程还是旧的"判成成功）。
+live_sha() {
+  curl -s -m 5 -H "X-Auth-Token: $(cat "$TOKEN_FILE" 2>/dev/null)" "$API/api/capabilities" 2>/dev/null \
+    | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: print(""); raise SystemExit
+print(d.get("code_sha") or "")' 2>/dev/null
+}
+sha_match() { # $1=实际 $2=期望（互为前缀即算匹配——短 sha/长 sha 混用是常态）
+  [ -n "$1" ] || return 1
+  case "$1" in "$2"*) return 0 ;; esac
+  case "$2" in "$1"*) return 0 ;; esac
+  return 1
+}
+
+verify_live() { # 修 #42：主控 = 运行进程自报 sha；子端 = 落盘二进制自报（本机无子端守护进程）
+  local got v
+  got="$(live_sha)"
+  if [ -z "$got" ]; then
+    say "   ✗ 运行中的主控未自报 code_sha（$API/api/capabilities 读不到）——无法证明活进程已换版"
+    return 1
+  fi
+  if sha_match "$got" "$SRC_SHA"; then say "   ✓ 主控（运行进程）自报 code_sha=$got"
+  else say "   ✗ 混版：运行进程 code_sha=$got ≠ 目标 ${SRC_SHA}（换了盘、没换活进程）"; return 1; fi
   v="$(ver_of "$PREFIX/zerg-agent")"
-  case "$v" in *"$SRC_SHA"*|*"$SRC_VER"*) say "   ✓ 子端自报：$v" ;; *) say "   ✗ 子端自报异常：$v"; return 1 ;; esac
+  case "$v" in *"$SRC_SHA"*|*"$SRC_VER"*) say "   ✓ 子端（落盘）自报：$v" ;; *) say "   ✗ 子端自报异常：$v"; return 1 ;; esac
+  return 0
+}
+
+# 组件管辖（修 #42）：只重启**它管辖的**组件；管不到就**明确提示**（绝不静默放过）。
+#   主控：由启动脚本/launchd 管 ⇒ 本内核管；UI（darwin）：经 start-zerg-ui.sh 拉起 ⇒ 本内核管。
+#   若 UI 换装后**没能**被本内核拉起来（如别处托管/启动失败）⇒ 记入 UNMANAGED 并在收尾明确告警。
+UNMANAGED=""
+restart_managed() {
+  say "▶️  启主控"
+  bash "$STARTCORE" >/dev/null 2>&1 || true
+  ready=0
+  for i in $(seq 1 20); do
+    if curl -s -m 2 -H "X-Auth-Token: $(cat "$TOKEN_FILE" 2>/dev/null)" "$API/api/capabilities" >/dev/null 2>&1; then ready=1; break; fi
+    sleep 1
+  done
+  [ "$ready" = "1" ] || { say "   ✗ 主控 20s 内未就绪"; return 1; }
+  if [ "$PLAT" = "darwin-arm64" ] && [ "$NO_UI" != "1" ]; then
+    say "▶️  启 UI"
+    bash "$STARTUI" >/dev/null 2>&1 || true
+    sleep 1
+    if pgrep -f "$UI_PATTERN" >/dev/null 2>&1; then
+      say "   ✓ UI 已重启（pid $(pgrep -f "$UI_PATTERN" | head -1)）"
+    elif [ "${UI_WAS_RUNNING:-0}" = "1" ]; then
+      say "   ⚠️ UI 原在运行，重启后**未起来**——请手动重启 UI（${STARTUI}），否则界面仍跑旧件"
+      UNMANAGED="ui"
+    else
+      say "   ℹ️ UI 未在运行：仅换装，未代为启动（需要时执行 ${STARTUI}）"
+    fi
+  fi
   return 0
 }
 
 RESULT="ok"; FAILED_AT=""
 if [ "${SWAP_FAIL:-0}" = "1" ] || [ "${swap_one_fail:-0}" = "1" ] || ! verify_files; then RESULT="rollback"; FAILED_AT="files"; fi
 if [ "$RESULT" = "ok" ] && [ "$NO_SERVICE" != "1" ]; then
-  say "▶️  启主控"
-  bash "$REPO_ROOT/scripts/start-zerg-core.sh" >/dev/null 2>&1 || true
-  ready=0
-  for i in $(seq 1 20); do
-    if curl -s -m 2 -H "X-Auth-Token: $(cat "$TOKEN_FILE" 2>/dev/null || echo x)" "$API/api/capabilities" >/dev/null 2>&1; then ready=1; break; fi
-    sleep 1
-  done
-  if [ "$ready" != "1" ]; then RESULT="rollback"; FAILED_AT="core-start"; say "   ✗ 主控 20s 内未就绪"; fi
-  if [ "$RESULT" = "ok" ]; then say "▶️  启 UI"; bash "$REPO_ROOT/scripts/start-zerg-ui.sh" >/dev/null 2>&1 || true; fi
+  if ! restart_managed; then RESULT="rollback"; FAILED_AT="core-start"; fi
 fi
 
-if [ "$RESULT" = "ok" ]; then
-  say "🔎 verify"
+if [ "$RESULT" = "ok" ] && [ "$NO_SERVICE" != "1" ]; then
+  say "🔎 verify（口径：运行进程自报 sha）"
   if ! verify_live; then RESULT="rollback"; FAILED_AT="identity"; fi
+elif [ "$RESULT" = "ok" ]; then
+  say "ℹ️  --no-service：跳过「运行进程自报」verify（无服务可查；sha 已在换装前对暂存件校验）"
 fi
 
 if [ "$RESULT" = "rollback" ]; then
@@ -422,20 +507,24 @@ if [ "$RESULT" = "rollback" ]; then
     mv -f "$PREFIX/$name.prev" "$PREFIX/$name"
     [ "$os" = "Darwin" ] && codesign -s - --force "$PREFIX/$name" >/dev/null 2>&1 || true
   done
-  if [ "$NO_SERVICE" != "1" ]; then bash "$REPO_ROOT/scripts/start-zerg-core.sh" >/dev/null 2>&1 || true; fi
+  if [ "$NO_SERVICE" != "1" ]; then bash "$STARTCORE" >/dev/null 2>&1 || true; fi
 fi
 
 # ── 回执（成功与失败都写——失败路径才是回执存在的理由）──────────────────────
 mkdir -p "$RECEIPTS"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RC="$RECEIPTS/$TS.json"
-python3 - "$RC" "$TS" "$RESULT" "$FAILED_AT" "$PREFIX" "$PLAT" "$SOURCE" "$SRC_TAG" "$SRC_SHA" "$CUR_CORE" "$CUR_AGENT" "$INFLIGHT" "$(ver_of "$PREFIX/zerg-core")" "$(ver_of "$PREFIX/zerg-agent")" <<'PY'
+python3 - "$RC" "$TS" "$RESULT" "$FAILED_AT" "$PREFIX" "$PLAT" "$SOURCE" "$SRC_TAG" "$SRC_SHA" "$CUR_CORE" "$CUR_AGENT" "$INFLIGHT" "$(ver_of "$PREFIX/zerg-core")" "$(ver_of "$PREFIX/zerg-agent")" "$SRC_KIND" "${UNMANAGED:-}" "$(live_sha)" <<'PY'
 import json, sys
 (rc, ts, result, failed_at, prefix, plat, source, tag, sha, cur_core, cur_agent,
- inflight, new_core, new_agent) = sys.argv[1:15]
+ inflight, new_core, new_agent, source_kind, unmanaged, live) = sys.argv[1:18]
 json.dump({
     "schema": 1, "at": ts, "result": result, "failed_at": failed_at or None,
     "prefix": prefix, "platform": plat, "source": source,
+    "source_kind": source_kind,
+    "verify": {"mode": "running-process-self-reported", "target_commit": sha,
+               "live_code_sha": live or None, "matched": bool(live) and (live == sha or sha.startswith(live) or live.startswith(sha))},
+    "unmanaged_components": [u for u in (unmanaged or "").split() if u],
     "from": {"core": cur_core, "agent": cur_agent},
     "to": {"tag": tag, "commit": sha},
     "now": {"core": new_core, "agent": new_agent},
@@ -448,6 +537,9 @@ ls -1t "$RECEIPTS"/*.json 2>/dev/null | tail -n +21 | xargs -r rm -f    # 只留
 
 if [ "$RESULT" = "ok" ]; then
   say "✅ 升级完成：${SRC_TAG}（代码 ${SRC_SHA}）→ $PREFIX"
+  if [ -n "${UNMANAGED:-}" ]; then
+    say "⚠️  以下组件不在本内核管辖内、**需手动重启**：${UNMANAGED}（否则仍跑旧件）"
+  fi
   exit 0
 else
   say "❌ 升级失败（${FAILED_AT}）——已回滚，回执见 $RC"
