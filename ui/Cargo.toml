@@ -23,7 +23,7 @@ iconflow = { version = "1.0", features = ["all-packs"] } # P3 图标：14 开源
 chrono = "0.4"
 rust-i18n = "4"
 egui_virtual_list = "0.12"
-# 虫茧集装箱（T8——zerg-cocoon 示例虫茧——path 跨仓独立 git）
+# 虫茧虫茧（T8——zerg-cocoon 示例虫茧——path 跨仓独立 git）
 # 2026-09-11 B 批（决策 5）：示例虫茧未完善，**首版不随公开快照发布**。
 # 因此依赖改为 optional：私有仓通过下方 default feature 保持启用（本机行为不变），
 # 公开快照删除本依赖与 default feature 后仍可编译（未启用时虫茧平台显示空栅格 + 未装载提示）。
