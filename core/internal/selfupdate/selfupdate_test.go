@@ -50,10 +50,13 @@ func seedAndClone(t *testing.T, commits int) (local, remote string) {
 	}
 	remote = filepath.Join(base, "remote.git")
 	gitRun(t, base, "init", "-q", "--bare", remote)
+	// 2026-09-13（CI 红排查）：裸远端必须显式把 HEAD 指向 main —— 老 git 的默认分支是 master，
+	// 从它克隆出来的 local 也就是 master，后面 `push origin main` 直接 "src refspec main does not match any"。
+	gitRun(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
 	gitRun(t, seed, "remote", "add", "origin", remote)
-	gitRun(t, seed, "push", "-q", "origin", "main")
+	gitRun(t, seed, "push", "-q", "origin", "HEAD:refs/heads/main")
 	local = filepath.Join(base, "local")
-	gitRun(t, base, "clone", "-q", remote, local)
+	gitRun(t, base, "clone", "-q", "-b", "main", remote, local)
 	return local, remote
 }
 
@@ -152,7 +155,7 @@ func TestFetchTarget_Scoped(t *testing.T) {
 	local, remote := seedAndClone(t, 2)
 	// 远端再加一笔
 	commitFile(t, local, "f.txt", "newer", "c2")
-	gitRun(t, local, "push", "-q", "origin", "main")
+	gitRun(t, local, "push", "-q", "origin", "HEAD:refs/heads/main")
 	target := gitRun(t, local, "rev-parse", "HEAD")
 	gitRun(t, local, "reset", "-q", "--hard", "HEAD~1") // 本地退回一笔
 
@@ -170,7 +173,7 @@ func TestFetchTarget_PreservesShallow(t *testing.T) {
 	local, remote := seedAndClone(t, 3)
 	// 远端再加一笔
 	commitFile(t, local, "f.txt", "c4", "c4")
-	gitRun(t, local, "push", "-q", "origin", "main")
+	gitRun(t, local, "push", "-q", "origin", "HEAD:refs/heads/main")
 	gitRun(t, local, "reset", "-q", "--hard", "HEAD~1")
 
 	// 用浅克隆替换本地检出（本地路径 remote 会被 git 优化成非浅；用 file:// 强制 depth）
