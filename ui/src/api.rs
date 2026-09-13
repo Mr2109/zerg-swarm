@@ -1649,6 +1649,12 @@ pub fn ui_dir() -> std::path::PathBuf {
             return std::path::PathBuf::from(v);
         }
     }
+    // 测试进程一律用临时目录：既有用例会经由本函数读/写集装箱状态，
+    // 旧位置是 /tmp/zerg-ui（无害），改到 ~/.zerg/state/ui 后就变成"测试写用户真实状态"——
+    // 属 skill 里那条"测试别写真机状态（同族会复发）"的事故，这里从源头隔离，连迁移也不做。
+    if cfg!(test) {
+        return std::env::temp_dir().join("zerg-ui-state-under-test");
+    }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let dir = std::path::PathBuf::from(home)
         .join(".zerg")
