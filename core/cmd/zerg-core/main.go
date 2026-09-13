@@ -281,9 +281,17 @@ func main() {
 	// v2.5.5 T3 主控总调度器（两级调度——Mr2109原理）
 	// 主控总调度: 管所有内部任务 + 接入的外部任务（全局决策/派发）
 	// CA 子调度: 管分派任务的执行（agent 侧已有 scheduler）
-	agentBin := "<repo>/bin/zerg-agent" // CA 二进制（编译后的路径）
-	if os.Getenv("ZERG_AGENT_BIN") != "" {
-		agentBin = os.Getenv("ZERG_AGENT_BIN")
+	// CA 二进制解析（待修补 #44：不再写死本机私有路径——公开快照会脱敏替换它，机群上就指向不存在的目录）：
+	//   ① ZERG_AGENT_BIN 显式指定（与改造前逻辑一致，保持最高优先）；
+	//   ② 否则取「主控自身可执行文件的同级」——本机从 <仓库>/bin/zerg-core 启动 ⇒ <仓库>/bin/zerg-agent（与旧字面量逐字相同）；
+	//   ③ 只有 os.Executable() 失败时才回退到 <工作区>/bin/zerg-agent。
+	agentBin := ""
+	if env := os.Getenv("ZERG_AGENT_BIN"); env != "" {
+		agentBin = env
+	} else if exe, err := os.Executable(); err == nil {
+		agentBin = filepath.Join(filepath.Dir(exe), "zerg-agent")
+	} else {
+		agentBin = filepath.Join(statepath.WorkspaceRoot(), "bin", "zerg-agent")
 	}
 	masterSched := api.NewMasterScheduler(agentBin, 1, &api.StoreSnapshotReader{Store: fleetStore}) // 单槽——串行——v2.5.6 注入 store（ping 快照优先）
 	handlers.Scheduler = masterSched
@@ -372,7 +380,10 @@ func main() {
 
 	// v2.5.5 T3 内部任务引擎（空闲检测——挂主控）
 	// 外部任务队列空 + 资源空闲 → 触发内部任务（进化）
-	idleDetector := agent.NewIdleDetector("<repo>/docs/issues")
+	// 仓库内路径一律经 statepath 解析器（待修补 #44：写死的私有路径在机群上指向不存在的目录）——
+	// 本机解析结果与旧字面量逐字相同（<仓库>/docs/issues、<仓库>/core）。
+	coreDir := filepath.Join(statepath.WorkspaceRoot(), "core")
+	idleDetector := agent.NewIdleDetector(filepath.Join(statepath.WorkspaceRoot(), "docs", "issues"))
 	api.InitInternalModes()                       // v2.5.6: 内部任务运行模式开关持久化恢复（自动/手动——Mr2109 2026-08-28）
 	idleDetector.SetAutoCheck(api.IsInternalAuto) // v2.5.6: 运行模式开关——手动任务不自动触发（空闲检测跳过）
 	idleDetector.SetExternalQueue(func() int { return masterSched.RunningCount() })
@@ -407,7 +418,7 @@ func main() {
 			Priority:    api.PriorityInternal,
 			Type:        "internal",
 			Model:       model,
-			Workdir:     "<repo>/core",
+			Workdir:     coreDir,
 			Status:      "queued",
 			IssuePath:   issuePath, // P1-3: 任务单路径——完成时更新状态
 			Flow:        "zerg",    // v2.5.6 Mr2109 2026-08-27: 内部任务走新机制（程序定量驱动——内部任务=最佳测试任务）
@@ -467,7 +478,7 @@ func main() {
 							Priority:    api.PriorityInternal,
 							Type:        "internal",
 							Model:       model,
-							Workdir:     "<repo>/core",
+							Workdir:     coreDir,
 							Status:      "queued",
 							Flow:        "zerg",
 							SkillKey:    d.ID,
@@ -519,8 +530,8 @@ func main() {
 	}
 
 	// V22-压缩：LLMLingua-2 一体化压缩器（ONNX，纯 Go 进程内）
-	// 路径：compress_models/llmlingua2-onnx/（模型已转换 ONNX）
-	compressorPath := filepath.Join("<volume-path>", "Zerg", "compress_models", "llmlingua2-onnx")
+	// 路径：<压缩模型目录>/llmlingua2-onnx/（模型已转换 ONNX）——目录经 statepath.CompressModelsDir 解析，尊重 ZERG_COMPRESS_MODELS
+	compressorPath := filepath.Join(statepath.CompressModelsDir(), "llmlingua2-onnx")
 	linguaCompressor := compressor.New(compressor.Config{
 		ModelPath: filepath.Join(compressorPath, "model.onnx"),
 		TokPath:   filepath.Join(compressorPath, "tokenizer.json"),
@@ -605,8 +616,8 @@ func resolveFleetYAML() string {
 		return defaultPath
 	}
 
-	// 如果默认路径不存在，返回硬编码路径
-	return filepath.Join("<volume-path>", "Zerg", "gateway", "fleet.yaml")
+	// 默认路径不存在：回退到「工作区根」下的 gateway/fleet.yaml（经解析器取根——不再写死本机私有路径）
+	return filepath.Join(statepath.WorkspaceRoot(), "gateway", "fleet.yaml")
 }
 
 // setupLogFile 已废弃（2026-08-11 改由 setupLogger 的 lumberjack 轮转接管，
