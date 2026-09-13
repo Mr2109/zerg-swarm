@@ -53,7 +53,7 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: true,
         version: env!("CARGO_PKG_VERSION"),
         parent: None,
-        order: 20,
+        order: 30, // Mr2109 2026-09-13 二次调整：让「对话」排到第 2 位
         is_group: true,
     });
     // 💻 模型（父箱：模型库 + 模型登记库）
@@ -65,10 +65,22 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: true,
         version: env!("CARGO_PKG_VERSION"),
         parent: None,
-        order: 30,
+        order: 40, // Mr2109 2026-09-13 二次调整
         is_group: true,
     });
 
+    // 🐛 虫茧（父箱：平台 + 文档 —— Mr2109 2026-09-13 二次调整：文档移入虫茧）
+    reg.register(ModuleManifest {
+        id: "cocoon",
+        name_key: "mod.roundtable.name", // 父箱名沿用「虫茧」（子箱「平台」另起键，避免页签重名）
+        icon: icon_text("boxes"),
+        desc_key: "mod.roundtable.desc",
+        is_core: true, // 父箱不可卸（导航骨架）
+        version: env!("CARGO_PKG_VERSION"),
+        parent: None,
+        order: 60,
+        is_group: true,
+    });
     // ⚡ 核心（船体箱——永驻；一级：chat / resources；子箱：tasks / internal-tasks / cluster / models）
     // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块）
     reg.register(ModuleManifest {
@@ -79,8 +91,8 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
-        parent: None, // 不分组——保持一级（设计 Q7）
-        order: 40,
+        parent: None, // 不分组——保持一级（设计 Q7；顺序由Mr2109 2026-09-13 二次调整定为第 2 位）
+        order: 20,
         is_group: false,
     });
     reg.register(ModuleManifest {
@@ -152,7 +164,7 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
-        parent: None, // 不分组——保持一级（设计 Q7）
+        parent: None, // 不分组——保持一级（设计 Q7；二次调整后为第 5 位）
         order: 50,
         is_group: false,
     });
@@ -177,16 +189,16 @@ pub fn build_registry() -> ModuleRegistry {
     // 仍在船、可装卸；其平台页标题 **保留**（设计 §4.4）。
     reg.register(ModuleManifest {
         id: "roundtable",
-        name_key: "mod.roundtable.name",
+        name_key: "mod.cocoon_platform.name",
         icon: icon_text("boxes"),
-        desc_key: "mod.roundtable.desc",
+        desc_key: "mod.cocoon_platform.desc",
         is_core: false,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
-        // 2026-09-13：Mr2109 R2 原话只把 集群/文件浏览器/升级/Git/日志 放进「主控在线」，
-        // 虫茧不属于运维父箱 ⇒ **保持顶级**（可选箱：公开快照解除跨仓依赖后不在船上）。
-        parent: None,
-        order: 70,
+        // 2026-09-13 二次调整：虫茧升为**父箱**，本箱是它的「平台」页（默认页签）。
+        // 公开快照解除跨仓依赖时本页显示「未装载」，但同父箱下的「文档」照常可用。
+        parent: Some("cocoon"),
+        order: 10,
         is_group: false,
     });
     reg.register(ModuleManifest {
@@ -197,8 +209,9 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: false,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
-        parent: None, // 不分组——保持一级（设计 Q7）
-        order: 60,
+        // 2026-09-13 Mr2109二次调整：**文档移入「虫茧」**（虫茧第 2 个页签）
+        parent: Some("cocoon"),
+        order: 20,
         is_group: false,
     });
     reg.register(ModuleManifest {
