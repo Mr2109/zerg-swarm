@@ -39,10 +39,8 @@ fn find_pingfang_assets() -> Option<String> {
 /// 切换后写入 `~/.zerg-ui-prefs.json` 的 `locale` 字段（下次启动优先于系统语言）。
 pub fn detect_locale() -> String {
     const SUPPORTED: [&str; 2] = ["zh-CN", "en"];
-    let prefs = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
-        .join(".zerg-ui-prefs.json");
-    // ① 偏好文件显式值
-    if let Ok(raw) = std::fs::read_to_string(&prefs) {
+    // ① 偏好文件显式值（2026-09-13 Q10：新落点 <UI 状态目录>/prefs.json 优先，旧 ~/.zerg-ui-prefs.json 兼容）
+    if let Some(raw) = crate::api::read_prefs() {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
             if let Some(l) = v.get("locale").and_then(|x| x.as_str()) {
                 if SUPPORTED.contains(&l) {

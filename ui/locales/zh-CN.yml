@@ -604,3 +604,13 @@ fb.error.open_failed: "打开失败（OPEN_FAILED）"
 fb.error.unknown: "操作失败（主控未给出原因）"
 mod.file_browser.name: "文件浏览器"
 mod.file_browser.desc: "通用文件/目录浏览——五个白名单根 + 在访达中显示／用默认应用打开（文档模块复用同一份能力）"
+# ── 2026-09-13 导航精简与分组（设计《UI 大调动-导航精简与分组》§4.1/§4.3）────────────
+# 父箱名/简介 6 键 + 状态灯 hover 提示 1 键 + 「子模块均未装载」1 键（zh/en 对称由测试守）
+status.light_tip: "点击进入「主控在线」（集群 / 文件浏览器 / 升级 / Git / 日志 / 虫茧）"
+mod.main_online.name: "主控在线"
+mod.main_online.desc: "主控状态——集群 / 文件浏览器 / 升级 / Git / 日志 / 虫茧（点开=首个页签「集群」）"
+mod.tasks_group.name: "任务"
+mod.tasks_group.desc: "AI 任务体系——任务队列 / 内部任务（子模块页签）"
+mod.models_group.name: "模型"
+mod.models_group.desc: "模型管理——模型库 / 模型登记库（子模块页签）"
+nav.no_submodules: "子模块均未装载"

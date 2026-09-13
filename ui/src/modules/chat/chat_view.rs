@@ -1191,7 +1191,7 @@ impl ChatView {
         if self.image_rx.is_some() || self.search_due.is_some() || self.drain_at.is_some() {
             ui.ctx().request_repaint();
         }
-        ui.heading(t!("chat.title", icon = icon_text("message-circle")));
+        // 2026-09-13（设计《UI 大调动》§4.4）：删掉重复标题块（模块名 heading）——第一行即内容。
         // 丙批补（2026-09-10）：压缩熔断手动重置（会话级——清冷却/硬熔断，下一次超阈值即重试）
         {
             let mut do_reset = false;
