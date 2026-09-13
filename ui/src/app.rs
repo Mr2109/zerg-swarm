@@ -166,6 +166,8 @@ pub struct ZergApp {
 
 impl ZergApp {
     pub fn new() -> Self {
+        // 2026-09-13 Q10/E18：偏好 + 布局的落点迁移（首访一次性；目标已存在绝不覆盖；测试环境跳过）
+        crate::api::migrate_persistent_state_once();
         Self {
             online: false,
             hud_hidden: false,
@@ -239,6 +241,7 @@ impl ZergApp {
             registry: {
                 let mut r = crate::modules::build_registry();
                 r.load(); // v2.5.6 恢复持久化状态（哪些箱卸下了）
+                r.load_state(); // 2026-09-13（Q9）：恢复导航选中（父 + 子）
                 r
             },
             show_module_manager: false,
@@ -649,8 +652,7 @@ impl ZergApp {
     /// 渲染主视图（v2.5.6——内容区由集装箱注册表分发）
     /// 渲染任务视图（主区——队列 + 详情各占一半——水平布局）
     fn tasks_view(&mut self, ui: &mut egui::Ui) {
-        ui.heading(t!("task.queue"));
-        ui.add_space(4.0);
+        // 设计 §4.4：删重复标题块。
         let list: Vec<TaskInfo> = lock_recover(&self.tasks).clone().unwrap_or_default();
         // 默认选中最新任务（第一条——加载后自动）
         if self.selected_task.is_none() && !list.is_empty() {
@@ -1173,8 +1175,16 @@ impl ZergApp {
                 ui.separator();
                 let mut changed = false;
                 for m in self.registry.modules.iter().filter(|m| m.is_core) {
+                    // E20（2026-09-13）：面板加「归属父」标注（一行信息——零结构改动）。
+                    let parent_label = m
+                        .parent
+                        .and_then(|p| self.registry.find(p))
+                        .map(|p| format!("（{}）", t!(p.name_key)));
                     ui.horizontal(|ui| {
                         ui.label(format!("{} {}", m.icon, t!(m.name_key)));
+                        if let Some(pl) = &parent_label {
+                            ui.weak(pl);
+                        }
                         ui.weak(t!(m.desc_key));
                         ui.label("🔒");
                     });
@@ -1187,20 +1197,29 @@ impl ZergApp {
                 for m in self.registry.modules.iter().filter(|m| !m.is_core) {
                     let on = self.registry.enabled.get(m.id).copied().unwrap_or(true);
                     let mut next = on;
+                    // E20：归属父标注（父箱不可卸 ⇒ 只可能出现在 loadable 列表里做信息展示）
+                    let parent_label = m
+                        .parent
+                        .and_then(|p| self.registry.find(p))
+                        .map(|p| format!("（{}）", t!(p.name_key)));
                     ui.horizontal(|ui| {
                         if ui.checkbox(&mut next, format!("{} {}", m.icon, t!(m.name_key))).changed() {
                             if next != on {
                                 to_toggle = Some(m.id.to_string());
                             }
                         }
+                        if let Some(pl) = &parent_label {
+                            ui.weak(pl);
+                        }
                         ui.weak(t!(m.desc_key));
                     });
                 }
                 if let Some(id) = to_toggle {
-                    // 切换——卸下时若正在查看该箱——回任务队列
+                    // 切换——卸下时若正在查看该箱——回退到其父箱首个子箱（E15；原来写死 "tasks"）
                     self.registry.toggle(&id);
                     if !self.registry.enabled.get(&id).copied().unwrap_or(true) && self.registry.active == id {
-                        self.registry.active = "tasks".to_string();
+                        self.registry.active = self.registry.fallback_after_disable(&id);
+                        self.registry.save_state();
                     }
                     changed = true;
                 }
@@ -1226,7 +1245,9 @@ impl ZergApp {
                     if let Some(id) = ext_toggle {
                         self.registry.toggle(&id);
                         if !self.registry.enabled.get(&id).copied().unwrap_or(true) && self.registry.active == id {
-                            self.registry.active = "tasks".to_string();
+                            // E15：外部箱无父 ⇒ 回退到默认一级箱
+                            self.registry.active = self.registry.fallback_after_disable(&id);
+                            self.registry.save_state();
                         }
                         changed = true;
                     }
@@ -1269,8 +1290,33 @@ impl ZergApp {
             crate::modules::filebrowse::actions::fileroot_action_async(action, root, path, mode);
     }
 
+    /// 当前**有效**箱（父箱 ⇒ 记忆子箱 / order 最小子箱）。渲染分发、HUD 面包屑都用它。
+    /// 纯查询（只读注册表）——三个父箱因此不需要各自的渲染臂（设计 §五）。
+    fn effective_active(&self) -> String {
+        let remembered = self
+            .registry
+            .remembered_child
+            .get(&self.registry.active)
+            .map(String::as_str)
+            .unwrap_or("");
+        self.registry.effective_module(&self.registry.active, remembered)
+    }
+
     fn main_view(&mut self, ui: &mut egui::Ui) {
-        match self.registry.active.as_str() {
+        // 2026-09-13（设计《UI 大调动-导航精简与分组》§4.3/§五）：先解析**有效**箱——
+        // active 是父箱时下钻到记忆/首个子箱 ⇒ 三个父箱**不需要独立的渲染臂**，各模块既有实现零改动。
+        let eff = self.effective_active();
+        // 父箱下已无启用子箱 ⇒ 内容区空态（设计 §4.2 规则 4「不留孤儿」）；二级页签行给同款提示。
+        let empty_group = self
+            .registry
+            .find(&eff)
+            .map(|m| m.is_group && self.registry.children_of(&eff).is_empty())
+            .unwrap_or(false);
+        if empty_group {
+            ui.weak(t!("nav.no_submodules"));
+            return;
+        }
+        match eff.as_str() {
             "chat" => {
                 // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块）
                 self.chat_view.render(ui);
@@ -1282,19 +1328,12 @@ impl ZergApp {
             // **薄壳箱**——真正实现是内建组件 ui/src/modules/filebrowse/（文档/模型/任务多处吊装）。
             // 首版：顶部根选择器 + 第一栏目录/文件列表 + 第二栏选中文件内容预览（不做内嵌编辑器）。
             "file-browser" => {
-                ui.heading(format!(
-                    "{} {}",
-                    icon_text("folder-open"),
-                    t!("mod.file_browser.name")
-                ));
-                ui.weak(t!("mod.file_browser.desc"));
-                ui.add_space(6.0);
+                // 2026-09-13（设计 §4.4）：删掉重复标题块（模块名/简介）——第一行即内容。
                 self.fb.render(ui);
             }
             "internal-tasks" => self.internal_tasks_view(ui),
             "cluster" => {
-                ui.heading(t!("cluster.status"));
-                ui.add_space(4.0);
+                // 设计 §4.4：删重复标题块。
                 if let Some(r) = lock_recover(&self.cluster).clone() {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         // 总览
@@ -1329,8 +1368,7 @@ impl ZergApp {
                 }
             }
             "git" => {
-                ui.heading(t!("git.overview"));
-                ui.add_space(4.0);
+                // 设计 §4.4：删重复标题块。
                 if let Some(g) = lock_recover(&self.git_status).clone() {
                     // 分支（通俗化——task-xxx → 任务类型名）
                     egui::CollapsingHeader::new(format!("🌿 {}（{}）", t!("git.branches"), g.branches.as_ref().map(|b| b.len()).unwrap_or(0)))
@@ -1379,8 +1417,7 @@ impl ZergApp {
                 }
             }
             "logs" => {
-                ui.heading(t!("page.logs"));
-                ui.add_space(4.0);
+                // 设计 §4.4：删重复标题块。
                 if let Some(lines) = lock_recover(&self.logs).clone() {
                     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                         for l in lines {
@@ -1486,8 +1523,7 @@ impl ZergApp {
                 }
             }
             "docs" => {
-                ui.heading(t!("page.docs"));
-                ui.add_space(4.0);
+                // 设计 §4.4：删重复标题块。
                 let docs_snap = lock_recover(&self.docs).clone(); // 先释放借用——内部闭包要 &mut self（F5 AI 按钮）
                 // ── 文件浏览器阶段 1（2026-09-13 设计「文件浏览器集装箱」§4.3）─────────
                 // 根集合（根选择器 + 显示上限 + 类型闸门）——先克隆成局部量，避免闭包内再借 self
@@ -2098,8 +2134,7 @@ impl ZergApp {
                         *lock_recover(&store) = r;
                     });
                 }
-                ui.heading(t!("page.resources"));
-                ui.add_space(4.0);
+                // 设计 §4.4：删重复标题块（其下的「3 库切换」是操作控件——保留）。
                 // 3 库切换（模型库已独立板块——Mr2109 2026-08-27）
                 ui.horizontal(|ui| {
                     let types = [(t!("resources.tools").to_string(), "tools"), (t!("resources.skills").to_string(), "skills"), (t!("resources.mcp").to_string(), "mcp")];
@@ -2253,7 +2288,7 @@ impl ZergApp {
             }
             _ => {
                 // M4 生态箱（外部模块——配置文件声明——第三方开发者挂船）
-                let active_id = self.registry.active.clone();
+                let active_id = eff.clone();
                 let ext = self
                     .registry
                     .external
@@ -2709,14 +2744,15 @@ impl ZergApp {
     /// async fn（无异步句柄版），这里在 app.rs 内本地包装，不改 api.rs 签名。
     /// M06 双渲染器：预览渲染器偏好持久化（~/.zerg-ui-prefs.json——重启后保持Mr2109的选择）
     fn preview_pref_path() -> std::path::PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        std::path::PathBuf::from(home).join(".zerg-ui-prefs.json")
+        // 2026-09-13 Q10：偏好文件落点迁到 <UI 状态目录>/prefs.json
+        // （读时兼容旧 ~/.zerg-ui-prefs.json——见 api::read_prefs）
+        crate::api::prefs_path()
     }
     /// 语言偏好持久化（多语言决策②：显式切换写入 ~/.zerg-ui-prefs.json 的 locale 字段）
     fn save_locale_pref(locale: &str) {
         let p = Self::preview_pref_path();
-        let mut v: serde_json::Value = std::fs::read_to_string(&p)
-            .ok()
+        // 读：新落点优先 → 旧 HOME 根文件回退（不丢既有字段）
+        let mut v: serde_json::Value = crate::api::read_prefs()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_else(|| serde_json::json!({}));
         if !v.is_object() {
@@ -2730,13 +2766,14 @@ impl ZergApp {
 
     /// 读取 AI 模型偏好（与 preview_renderer 同一文件 ~/.zerg-ui-prefs.json 的 ai_model 字段）
     fn load_ai_model_pref() -> Option<String> {
-        let s = std::fs::read_to_string(Self::preview_pref_path()).ok()?;
+        // 读时兼容旧路径（api::read_prefs：新落点优先 → 旧 HOME 根文件回退）
+        let s = crate::api::read_prefs()?;
         let v: serde_json::Value = serde_json::from_str(&s).ok()?;
         v.get("ai_model").and_then(|x| x.as_str()).map(|x| x.to_string()).filter(|m| !m.trim().is_empty())
     }
 
     fn load_preview_pref() -> Option<bool> {
-        let s = std::fs::read_to_string(Self::preview_pref_path()).ok()?;
+        let s = crate::api::read_prefs()?;
         Self::parse_preview_pref(&s)
     }
         /// 纯解析（可单测）：ferrite→false / commonmark→true / 其它或坏 JSON→None（用默认）
@@ -2770,10 +2807,7 @@ impl ZergApp {
 
     /// 内部任务视图（Mr2109 2026-08-22——看到所有内部任务 + 手动执行按钮）
     fn internal_tasks_view(&mut self, ui: &mut egui::Ui) {
-        ui.heading(t!("it.title"));
-        ui.add_space(4.0);
-        ui.weak(t!("it.desc"));
-
+        // 设计 §4.4：删重复标题块（heading + 简介 weak）。
         // 丙批 N4（2026-09-10）：前缀缓存命中率面板（网关 8082——数据来自 /api/metrics/prefix_cache）
         {
             let pc = lock_recover(&self.prefix_cache).clone();
@@ -3135,9 +3169,9 @@ impl ZergApp {
 
     // ─── 布局持久化（Mr2109 2026-08-27——左右分割比例——拖动后下次启动默认）───
     fn layout_path() -> std::path::PathBuf {
-        let mut p = api::task_root();
-        p.push("ui_layout.json");
-        p
+        // E18/Q10（2026-09-13）：布局比例从 <任务根>/ui_layout.json 搬到 <UI 状态目录>/ui_layout.json
+        // （~/.zerg/state/ui）——首访由 api::migrate_persistent_state_once() 一次性迁移，不覆盖已有目标。
+        api::ui_dir().join("ui_layout.json")
     }
     fn save_layout_ratio(&self, key: &str, val: f32) {
         let path = Self::layout_path();
@@ -3157,8 +3191,7 @@ impl ZergApp {
 
 // 布局比例持久化（Mr2109 2026-08-27——左右分割——拖动后下次启动默认）
 fn load_layout_ratio(key: &str, default: f32) -> f32 {
-    let mut p = api::task_root();
-    p.push("ui_layout.json");
+    let p = api::ui_dir().join("ui_layout.json");
     if let Ok(s) = std::fs::read_to_string(p) {
         if let Ok(m) = serde_json::from_str::<std::collections::HashMap<String, f32>>(&s) {
             if let Some(v) = m.get(key) {
@@ -3216,6 +3249,8 @@ impl eframe::App for ZergApp {
         egui::Panel::top("nav").show(ui, |ui| {
             let mut switch_locale = false;
             let mut open_manager = false;
+            // 记住「父 + 子」（Q9/Q10）：导航切换后若选中/记忆变了 ⇒ 落盘 ui_state.json
+            let nav_before = (self.registry.active.clone(), self.registry.remembered_child.clone());
             crate::modules::top_nav_bar(ui, &mut self.registry, self.online, &self.locale, &mut || {
                 switch_locale = true;
             }, &mut || {
@@ -3235,6 +3270,9 @@ impl eframe::App for ZergApp {
             }
             if open_manager {
                 self.show_module_manager = true; // ➕ 打开吊装系统面板
+            }
+            if nav_before.0 != self.registry.active || nav_before.1 != self.registry.remembered_child {
+                self.registry.save_state();
             }
         });
 
@@ -3259,6 +3297,8 @@ impl eframe::App for ZergApp {
                 });
                 ui.separator();
             }
+            // 设计 §4.4/E19（2026-09-13）：内容区统一加一层顶部呼吸（**一处**——不在每页自己写）。
+            ui.add_space(6.0);
             self.main_view(ui);
         });
 
@@ -3370,13 +3410,19 @@ impl ZergApp {
         //   · 两处一致性由门禁 scripts/check_version.py 断言（CI + 发布导出）
         // 收版时改这两处 + 运行中二进制复核（/api/capabilities、/api/openapi.json、窗口标题）。
         // 数据：当前模块名 + running 任务数（复用现有 tasks——不新拉）
-        let mod_name: String = self
-            .registry
-            .modules
-            .iter()
-            .find(|m| m.id == self.registry.active)
-            .map(|m| t!(m.name_key).to_string())
-            .unwrap_or_else(|| self.registry.active.clone());
+        // E16（2026-09-13）：HUD「当前模块」显示 **父 › 子** 两段。
+        // 纯函数 breadcrumb_keys() 产出 i18n 键序列（可单测）——无父箱时只显示自身名。
+        let eff = self.effective_active();
+        let crumb_keys = self.registry.breadcrumb_keys(&eff);
+        let mod_name: String = if crumb_keys.is_empty() {
+            eff.clone()
+        } else {
+            crumb_keys
+                .iter()
+                .map(|k| t!(*k).to_string())
+                .collect::<Vec<_>>()
+                .join(" › ")
+        };
         let running = lock_recover(&self.tasks)
             .as_ref()
             .map(|ts| ts.iter().filter(|t| t.status.as_deref() == Some("running")).count())
@@ -3432,5 +3478,90 @@ mod m06_preview_pref_tests {
         assert_eq!(ZergApp::parse_preview_pref(r#"{"preview_renderer":"weird"}"#), None);
         assert_eq!(ZergApp::parse_preview_pref("not json"), None);
         assert_eq!(ZergApp::parse_preview_pref("{}"), None);
+    }
+}
+
+
+#[cfg(test)]
+mod nav_trim_tests {
+    //! 2026-09-13 设计《UI 大调动-导航精简与分组》§4.4/§七6：源码级断言（能失败）。
+    //! 11 处「重复标题块」必须消失；对照组（保留项）必须仍在。
+
+    const APP: &str = include_str!("app.rs");
+    const CHAT: &str = include_str!("modules/chat/chat_view.rs");
+    const MREG: &str = include_str!("modules/model_registry.rs");
+    const UPGRADE: &str = include_str!("modules/upgrade.rs");
+    const ZH_YML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/zh-CN.yml"));
+    const EN_YML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/en.yml"));
+
+    /// §4.4 要删的 11 处（app.rs 8 + chat_view 1 + model_registry 1 + upgrade 1）全部消失。
+    #[test]
+    fn eleven_duplicate_title_blocks_are_gone() {
+        for pat in [
+            "ui.heading(t!(\"cluster.status\"))",
+            "ui.heading(t!(\"git.overview\"))",
+            "ui.heading(t!(\"page.logs\"))",
+            "ui.heading(t!(\"page.docs\"))",
+            "ui.heading(t!(\"page.resources\"))",
+            "ui.heading(t!(\"task.queue\"))",
+            "ui.heading(t!(\"it.title\"))",
+        ] {
+            assert!(!APP.contains(pat), "app.rs 仍残留重复标题块: {}", pat);
+        }
+        // file-browser 臂：模块名 heading + 简介 weak 整块删（这两个键整个源文件里只在该块用过）
+        assert!(!APP.contains("t!(\"mod.file_browser.name\")"), "file-browser 标题块未删干净");
+        assert!(!APP.contains("t!(\"mod.file_browser.desc\")"), "file-browser 简介块未删干净");
+        // 另 3 处（其它文件）
+        assert!(!CHAT.contains("ui.heading(t!(\"chat.title\""), "chat_view 标题块仍在");
+        assert!(!MREG.contains("t!(\"mreg.title\")"), "model_registry 标题块仍在");
+        assert!(!UPGRADE.contains("ui.heading(t!(\"upgrade.title\")"), "upgrade 标题块仍在");
+    }
+
+    /// §4.4 保留项 / 功能控件仍在（防误删）。
+    #[test]
+    fn retained_headings_and_controls_still_present() {
+        assert!(APP.contains("t!(\"cocoon.platform\")"), "虫茧平台标题被误删（§4.4 要求保留）");
+        assert!(APP.contains("t!(\"resources.mcp\")"), "资源库「3 库切换」工具条被误删");
+        assert!(UPGRADE.contains("upgrade.btn_check"), "升级「检查更新」按钮被误删");
+        assert!(MREG.contains("mreg.refresh"), "模型登记库「刷新」按钮被误删");
+        // 内容区统一顶部呼吸（E19——一处，不在每页自己写）；needle 用 concat! 拼以免命中本断言自身
+        let needle = concat!("// 设计 §4.4", "/E19");
+        assert_eq!(APP.matches(needle).count(), 1, "内容区呼吸应恰好一处");
+    }
+
+    fn key_lines(yml: &str) -> std::collections::BTreeSet<String> {
+        yml.lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+            .filter_map(|l| {
+                let k = l.split_once(':')?.0.trim();
+                if k.is_empty() || k.contains(' ') {
+                    None
+                } else {
+                    Some(k.to_string())
+                }
+            })
+            .collect()
+    }
+
+    /// 设计 §4.6/§七10：新增 8 键 zh-CN/en **两侧齐全**，且全键集合相等。
+    #[test]
+    fn i18n_new_keys_symmetric_and_key_sets_equal() {
+        let new_keys = [
+            "status.light_tip",
+            "mod.main_online.name",
+            "mod.main_online.desc",
+            "mod.tasks_group.name",
+            "mod.tasks_group.desc",
+            "mod.models_group.name",
+            "mod.models_group.desc",
+            "nav.no_submodules",
+        ];
+        let zh = key_lines(ZH_YML);
+        let en = key_lines(EN_YML);
+        for k in new_keys {
+            assert!(zh.contains(k), "locales/zh-CN.yml 缺新键 {}", k);
+            assert!(en.contains(k), "locales/en.yml 缺新键 {}", k);
+        }
+        assert_eq!(zh, en, "zh-CN 与 en 的键集合必须完全一致（少一个键某语言就露出键名）");
     }
 }
