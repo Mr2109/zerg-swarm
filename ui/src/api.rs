@@ -33,8 +33,8 @@ pub fn api_token() -> &'static str {
             }
             if let Some(home) = std::env::var_os("HOME") {
                 let home = std::path::PathBuf::from(home);
-                // UI 偏好文件（用户可在其中持久化令牌）
-                if let Ok(txt) = std::fs::read_to_string(home.join(".zerg-ui-prefs.json")) {
+                // UI 偏好文件（用户可在其中持久化令牌）——2026-09-13：新落点优先、旧落点兼容
+                if let Some(txt) = read_prefs() {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
                         if let Some(t) = v.get("auth_token").and_then(|x| x.as_str()) {
                             let t = t.trim();
@@ -1719,7 +1719,8 @@ fn legacy_ui_dir() -> std::path::PathBuf {
 }
 
 /// 随容器状态一起搬的文件（两者都是"用户选择"类状态）
-const UI_STATE_FILES: [&str; 2] = ["modules.json", "external-modules.json"];
+/// 2026-09-13：加入 `ui_state.json`（导航选中：父+子——Q9/Q10，与 modules.json 同目录的用户选择状态）。
+const UI_STATE_FILES: [&str; 3] = ["modules.json", "external-modules.json", "ui_state.json"];
 
 /// 一次性迁移（进程内只做一次）：把旧 /tmp/zerg-ui 的状态搬到新目录。
 fn migrate_legacy_ui_state(new_dir: &std::path::Path) {
@@ -1745,6 +1746,69 @@ fn migrate_ui_state_files(new_dir: &std::path::Path, old_dir: &std::path::Path) 
             Err(e) => eprintln!("[zerg-ui] failed to migrate legacy UI state {} -> {}: {}", old.display(), new.display(), e),
         }
     }
+}
+
+/// UI 界面偏好文件（**新落点**）：`<UI 状态目录>/prefs.json`
+/// （2026-09-13 Q10：由散在 HOME 根的 `~/.zerg-ui-prefs.json` 迁移到 ~/.zerg/state/ui）
+pub fn prefs_path() -> std::path::PathBuf {
+    ui_dir().join("prefs.json")
+}
+
+/// 界面偏好的**旧落点**（2026-09-13 之前）：`~/.zerg-ui-prefs.json`
+/// ——读时兼容：迁移未及/旧机器上仍能读到（含 auth_token/locale/ai_model/mreg_view…）
+pub fn legacy_prefs_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    std::path::PathBuf::from(home).join(".zerg-ui-prefs.json")
+}
+
+/// 读界面偏好**文本**：新落点优先，缺则回退旧落点（保证既有字段一个不丢——尤其 auth_token）。
+pub fn read_prefs() -> Option<String> {
+    if let Ok(s) = std::fs::read_to_string(prefs_path()) {
+        return Some(s);
+    }
+    std::fs::read_to_string(legacy_prefs_path()).ok()
+}
+
+/// 迁移一对文件：目标已存在则不覆盖；旧文件不存在则跳过；失败打日志不静默。
+/// （模块级复用——modules.json 与 prefs.json / ui_layout.json 同一语义。）
+fn migrate_file(new_path: &std::path::Path, old_path: &std::path::Path, what: &str) {
+    if new_path == old_path || new_path.exists() || !old_path.exists() {
+        return;
+    }
+    if let Some(dir) = new_path.parent() {
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            eprintln!("[zerg-ui] failed to create the state directory {}: {}", dir.display(), e);
+            return;
+        }
+    }
+    match std::fs::copy(old_path, new_path) {
+        Ok(_) => eprintln!("[zerg-ui] migrated legacy {} {} -> {}", what, old_path.display(), new_path.display()),
+        Err(e) => eprintln!("[zerg-ui] failed to migrate legacy {} {} -> {}: {}", what, old_path.display(), new_path.display(), e),
+    }
+}
+
+/// 迁移界面偏好：`~/.zerg-ui-prefs.json` → `<UI 状态目录>/prefs.json`（目标已存在绝不覆盖）
+pub fn migrate_prefs_file(new_path: &std::path::Path, old_path: &std::path::Path) {
+    migrate_file(new_path, old_path, "UI prefs");
+}
+
+/// 迁移布局比例文件：`<任务根>/ui_layout.json` → `<UI 状态目录>/ui_layout.json`（E18）
+pub fn migrate_layout_file(new_path: &std::path::Path, old_path: &std::path::Path) {
+    migrate_file(new_path, old_path, "layout");
+}
+
+/// 进程内一次性自动迁移（偏好 + 布局）。测试环境跳过——不读写真机 HOME/任务根。
+pub fn migrate_persistent_state_once() {
+    if cfg!(test) {
+        return;
+    }
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        migrate_prefs_file(&prefs_path(), &legacy_prefs_path());
+        let old_layout = task_root().join("ui_layout.json");
+        migrate_layout_file(&ui_dir().join("ui_layout.json"), &old_layout);
+    });
 }
 
 #[cfg(test)]
@@ -1787,6 +1851,62 @@ mod ui_dir_tests {
         migrate_ui_state_files(&new, &old);
         assert!(!new.join("modules.json").exists());
         assert!(!new.join("external-modules.json").exists());
+    }
+
+    // ─── E18/§七17：布局比例文件迁移（两态——内容保持 / 不覆盖已有目标）─────────────
+
+    #[test]
+    fn layout_migration_keeps_content_when_target_missing() {
+        let old = tmp("layout-old");
+        let new = tmp("layout-new");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("ui_layout.json"), r#"{"split_model":0.41,"split_it":0.5}"#).unwrap();
+        migrate_layout_file(&new.join("ui_layout.json"), &old.join("ui_layout.json"));
+        let got = std::fs::read_to_string(new.join("ui_layout.json")).unwrap();
+        assert_eq!(got, r#"{"split_model":0.41,"split_it":0.5}"#, "非默认比例必须原样搬过去");
+    }
+
+    #[test]
+    fn layout_migration_never_overwrites_existing_target() {
+        let old = tmp("layout-old2");
+        let new = tmp("layout-new2");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(old.join("ui_layout.json"), r#"{"split_model":0.41}"#).unwrap();
+        std::fs::write(new.join("ui_layout.json"), r#"{"split_model":0.9}"#).unwrap(); // 目标已有
+        migrate_layout_file(&new.join("ui_layout.json"), &old.join("ui_layout.json"));
+        assert_eq!(
+            std::fs::read_to_string(new.join("ui_layout.json")).unwrap(),
+            r#"{"split_model":0.9}"#,
+            "目标已存在 ⇒ 绝不覆盖（新落点为准）"
+        );
+    }
+
+    // ─── §十 Q10：界面偏好迁移（含 auth_token——别弄丢 token 读取）─────────────────
+
+    #[test]
+    fn prefs_migration_moves_and_never_overwrites() {
+        let old = tmp("prefs-old");
+        let new = tmp("prefs-new");
+        std::fs::create_dir_all(&old).unwrap();
+        let old_file = old.join(".zerg-ui-prefs.json");
+        std::fs::write(&old_file, r#"{"auth_token":"t0k","locale":"zh-CN"}"#).unwrap();
+        let new_path = new.join("prefs.json");
+        migrate_prefs_file(&new_path, &old_file);
+        assert_eq!(
+            std::fs::read_to_string(&new_path).unwrap(),
+            r#"{"auth_token":"t0k","locale":"zh-CN"}"#,
+            "旧偏好（含 auth_token）必须原样搬到新落点"
+        );
+        // 第二次：目标已存在 ⇒ 不覆盖
+        std::fs::write(&new_path, r#"{"auth_token":"keep"}"#).unwrap();
+        migrate_prefs_file(&new_path, &old_file);
+        assert_eq!(std::fs::read_to_string(&new_path).unwrap(), r#"{"auth_token":"keep"}"#);
+    }
+
+    #[test]
+    fn ui_state_file_is_in_migration_whitelist() {
+        assert!(UI_STATE_FILES.contains(&"ui_state.json"), "ui_state.json 必须在迁移白名单里");
     }
 }
 

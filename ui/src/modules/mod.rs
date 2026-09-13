@@ -30,16 +30,47 @@ pub use zerg_module::{ModuleManifest, ModuleRegistry};
 pub fn build_registry() -> ModuleRegistry {
     let mut reg = ModuleRegistry::default();
 
-    // ⚡ 核心（船体箱——永驻）
-    // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块——排任务队列前）
+    // ── 父箱（导航骨架——纯分组：没有自己的页面，内容 = 子箱的二级页签；不可卸载）──
+    // 2026-09-13 设计《UI 大调动-导航精简与分组》§4.1/§4.2：顶栏一级 = 3 父箱 + 3 无父箱。
+    // ⚡ 主控在线（父箱）——首个页签=集群（Mr2109 2026-09-13 定：不另设「概览」页）
     reg.register(ModuleManifest {
-        id: "upgrade",
-        name_key: "mod.upgrade.name",
-        icon: icon_text("arrow-up-circle"),
-        desc_key: "mod.upgrade.desc",
-        is_core: false,
+        id: "main-online",
+        name_key: "mod.main_online.name",
+        icon: icon_text("monitor"), // 图标名必须真实存在（icons 测试守）
+        desc_key: "mod.main_online.desc",
+        is_core: true, // 父箱不可卸（导航骨架）
         version: env!("CARGO_PKG_VERSION"),
+        parent: None,
+        order: 10,
+        is_group: true,
     });
+    // 📋 任务（父箱：任务队列 + 内部任务）
+    reg.register(ModuleManifest {
+        id: "tasks-group",
+        name_key: "mod.tasks_group.name",
+        icon: icon_text("list-checks"),
+        desc_key: "mod.tasks_group.desc",
+        is_core: true,
+        version: env!("CARGO_PKG_VERSION"),
+        parent: None,
+        order: 20,
+        is_group: true,
+    });
+    // 💻 模型（父箱：模型库 + 模型登记库）
+    reg.register(ModuleManifest {
+        id: "models-group",
+        name_key: "mod.models_group.name",
+        icon: icon_text("computer-tower"),
+        desc_key: "mod.models_group.desc",
+        is_core: true,
+        version: env!("CARGO_PKG_VERSION"),
+        parent: None,
+        order: 30,
+        is_group: true,
+    });
+
+    // ⚡ 核心（船体箱——永驻；一级：chat / resources；子箱：tasks / internal-tasks / cluster / models）
+    // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块）
     reg.register(ModuleManifest {
         id: "chat",
         name_key: "mod.chat.name",
@@ -48,6 +79,9 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
+        parent: None, // 不分组——保持一级（设计 Q7）
+        order: 40,
+        is_group: false,
     });
     reg.register(ModuleManifest {
         id: "tasks",
@@ -57,6 +91,9 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
+        parent: Some("tasks-group"),
+        order: 10,
+        is_group: false,
     });
     reg.register(ModuleManifest {
         id: "internal-tasks",
@@ -66,6 +103,9 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
+        parent: Some("tasks-group"),
+        order: 20,
+        is_group: false,
     });
     reg.register(ModuleManifest {
         id: "cluster",
@@ -75,6 +115,9 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
+        parent: Some("main-online"),
+        order: 10, // 主控在线默认页签（Mr2109 2026-09-13 定）
+        is_group: false,
     });
     reg.register(ModuleManifest {
         id: "models",
@@ -84,6 +127,9 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
+        parent: Some("models-group"),
+        order: 10, // 模型父页默认页签
+        is_group: false,
     });
     // 模型登记库（模型库——登记表：许可/能力/建材/校验；数据源 GET /api/models/registry）
     // 与上面的「模型库」（机群已加载模型管理）区分：本箱是 ~/.zerg/models 里登记的模型目录。
@@ -94,6 +140,9 @@ pub fn build_registry() -> ModuleRegistry {
         desc_key: "mod.model_registry.desc",
         is_core: false,
         version: env!("CARGO_PKG_VERSION"),
+        parent: Some("models-group"),
+        order: 20,
+        is_group: false,
     });
     reg.register(ModuleManifest {
         id: "resources",
@@ -103,6 +152,9 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: true,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
+        parent: None, // 不分组——保持一级（设计 Q7）
+        order: 50,
+        is_group: false,
     });
 
     // 🧩 可装卸箱（甲板箱——默认在船）
@@ -116,8 +168,13 @@ pub fn build_registry() -> ModuleRegistry {
         desc_key: "mod.file_browser.desc",
         is_core: false,
         version: env!("CARGO_PKG_VERSION"),
+        parent: Some("main-online"),
+        order: 20,
+        is_group: false,
     });
     // 🦋 虫茧（T8——zerg-cocoon 第一个茧——示例虫茧 egui 集装箱——破茧换新）
+    // 虫茧 = 独立应用平台（集装箱平台），**保持顶级**、不并进「主控在线」（Mr2109 2026-09-13：R2 只列了五项）。
+    // 仍在船、可装卸；其平台页标题 **保留**（设计 §4.4）。
     reg.register(ModuleManifest {
         id: "roundtable",
         name_key: "mod.roundtable.name",
@@ -126,6 +183,11 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: false,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
+        // 2026-09-13：Mr2109 R2 原话只把 集群/文件浏览器/升级/Git/日志 放进「主控在线」，
+        // 虫茧不属于运维父箱 ⇒ **保持顶级**（可选箱：公开快照解除跨仓依赖后不在船上）。
+        parent: None,
+        order: 70,
+        is_group: false,
     });
     reg.register(ModuleManifest {
         id: "docs",
@@ -135,6 +197,9 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: false,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
+        parent: None, // 不分组——保持一级（设计 Q7）
+        order: 60,
+        is_group: false,
     });
     reg.register(ModuleManifest {
         id: "git",
@@ -144,6 +209,9 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: false,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
+        parent: Some("main-online"),
+        order: 40,
+        is_group: false,
     });
     reg.register(ModuleManifest {
         id: "logs",
@@ -153,20 +221,40 @@ pub fn build_registry() -> ModuleRegistry {
         is_core: false,
         // 箱版本 = 构建版本（Cargo.toml 单一来源；勿写死——APP-A23 收口）
         version: env!("CARGO_PKG_VERSION"),
+        parent: Some("main-online"),
+        order: 50,
+        is_group: false,
+    });
+    // ↑ L2 自动升级页（2026-09-11）——2026-09-13 起并入「主控在线」父页
+    reg.register(ModuleManifest {
+        id: "upgrade",
+        name_key: "mod.upgrade.name",
+        icon: icon_text("arrow-up-circle"),
+        desc_key: "mod.upgrade.desc",
+        is_core: false,
+        version: env!("CARGO_PKG_VERSION"),
+        parent: Some("main-online"),
+        order: 30,
+        is_group: false,
     });
 
-    // M4 生态箱接入——配置文件声明外部模块（/tmp/zerg-ui/external-modules.json）
+    // M4 生态箱接入——配置文件声明外部模块（<UI 状态目录>/external-modules.json；暂不支持 parent——设计 §4.2 规则 5）
     reg.load_external();
 
     reg
 }
 
-/// 渲染顶部导航栏（船桥——Mr2109 2026-08-29）
+/// 状态灯 = 「主控在线」父箱（设计 §4.1：第一个一级项就是 ● 主控在线，可点）
+const STATUS_GROUP_ID: &str = "main-online";
+
+/// 渲染顶部导航栏（船桥——**两段式**：一级 + 二级页签；Mr2109 2026-09-13）
 ///
-/// 布局: [🐝 虫族] [● 主控在线] [📋 任务队列] [🔧 内部任务] ... [➕] ... [English] [👤 Mr2109]
-/// - 板块按钮 = 集装箱（点击切换——选中高亮）
-/// - ➕ = 吊装系统入口（模块管理——M2）
-/// - 右侧固定: 语言切换 + 登录用户
+/// 布局: [● 主控在线] [📋 任务] [💻 模型] [💬 对话] [📦 资源库] [📚 文档] [➕] … [English] [👤 Mr2109]
+///        集群 | 文件浏览器 | 升级 | Git | 日志 | 虫茧     ← 二级页签（仅当前 effective 箱属于某父箱时）
+/// - 一级 = `top_level()`（父箱 + 无父箱），父箱按钮可点（点=切到该父箱，自动落到记忆/首个子箱）
+/// - **状态灯可点**：保留 ● 与绿/红，点它 = 进「主控在线」父箱（hover 提示 status.light_tip）
+/// - 二级 = 当前 effective 箱所属父箱的 `children_of()`（`selectable_label`——与一级同款视觉）
+/// - ➕ = 吊装系统入口（模块管理）；右侧固定: 语言切换 + HUD 开关 + 登录用户
 pub fn top_nav_bar(
     ui: &mut egui::Ui,
     registry: &mut ModuleRegistry,
@@ -178,72 +266,168 @@ pub fn top_nav_bar(
     hud_on: bool,
     on_toggle_hud: &mut dyn FnMut(),
 ) {
-    ui.horizontal(|ui| {
-        // 主控在线状态灯（第一个——Mr2109 2026-08-29 删品牌——第一个=主控在线）
-        if online {
-            ui.colored_label(egui::Color32::from_rgb(80, 200, 120), format!("● {}", t!("status.online")));
-        } else {
-            ui.colored_label(egui::Color32::from_rgb(220, 80, 80), format!("● {}", t!("status.offline")));
-        }
-        ui.separator();
+    // 当前**有效**箱（父箱 ⇒ 记忆子箱 / order 最小子箱）——二级页签高亮与父箱归属都用它。
+    let remembered = registry
+        .remembered_child
+        .get(&registry.active)
+        .map(String::as_str)
+        .unwrap_or("");
+    let effective = registry.effective_module(&registry.active, remembered);
+    // 当前二级页签所属父箱（None ⇒ 不画二级行：顶级箱/外部箱）
+    let active_parent: Option<&'static str> = registry.parent_of(&effective);
 
-        // 板块切换（集装箱排布）——M31(2026-09-10 审计): 只读借用注册表，
-        // 原来每帧 clone 全部清单（含 String 图标）与 active；点击只在循环后落一次 active。
-        let mut switched: Option<String> = None;
-        for m in registry.visible() {
-            let label = format!("{} {}", m.icon, t!(m.name_key));
-            if ui.selectable_label(registry.active == m.id, label).clicked() {
-                switched = Some(m.id.to_string());
-            }
-        }
-        // M4 生态箱（外部模块——配置文件声明——第三方开发者挂船）
-        let ext_visible = registry.external_visible();
-        if !ext_visible.is_empty() {
-            ui.separator();
-        }
-        for m in &ext_visible {
-            let label = format!("{} {}", m.icon, m.name);
-            if ui.selectable_label(registry.active == m.id, label).clicked() {
-                switched = Some(m.id.clone());
-            }
-        }
-        if let Some(id) = switched {
-            // M32(2026-09-10 审计): 注册表目前仅"元数据"——此处只切 active。
-            // trait ZergModule 的 on_load/on_unload 生命周期**尚未接线**（见 zerg_module.rs），
-            // 待模块真正持有状态后再在此处调用（旧注释"懒加载 M2 完整实现"是误导，已更正）。
-            registry.active = id;
-        }
-
-        // 吊装系统入口（➕——模块管理——Mr2109 2026-08-29 M2）
-        if ui.button("➕").on_hover_text(t!("modules.open_tip")).clicked() {
-            on_open_manager();
-        }
-        ui.separator();
-
-        // 右侧对齐：English + 登录用户（右到左布局）
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // 登录用户（v2.5.6——固定 Mr2109——未来登录系统）
-            ui.label(format!("👤 {}", std::env::var("USER").unwrap_or_else(|_| "user".to_string())));   // 环境无关化：不再硬编码用户名
-            ui.separator();
-            // v2.5.7 HUD 开关（English 旁——Mr2109：图标开关——⌘H 是系统键冲突）
-            let hud_label = format!("{}", icon_text("gauge"));
-            let hud_btn = ui
-                .button(if hud_on { egui::RichText::new(&hud_label).strong() } else { egui::RichText::new(&hud_label).weak() })
-                .on_hover_text(if hud_on { t!("hud.tip_on") } else { t!("hud.tip_off") });
-            if hud_btn.clicked() {
-                on_toggle_hud();
-            }
-            ui.separator();
-            // 语言切换（多语言——中文/English）
-            if locale == "zh-CN" {
-                if ui.button("English").clicked() {
-                    on_switch_locale();
-                }
-            } else {
-                if ui.button("中文").clicked() {
-                    on_switch_locale();
+    ui.vertical(|ui| {
+        // ── 一级导航（含可点状态灯）────────────────────────────────────────────
+        ui.horizontal(|ui| {
+            let mut switched: Option<String> = None;
+            for m in registry.top_level() {
+                // 选中判定：active 就是它，或其子箱（effective）正挂在它下面
+                let selected = registry.active == m.id || active_parent == Some(m.id);
+                if m.id == STATUS_GROUP_ID {
+                    // 主控在线状态灯——**可点按钮**（保留 ● 与绿/红；点=切到该父箱）
+                    let (dot, color) = if online {
+                        ("●", egui::Color32::from_rgb(80, 200, 120))
+                    } else {
+                        ("●", egui::Color32::from_rgb(220, 80, 80))
+                    };
+                    let text = if online { t!("status.online") } else { t!("status.offline") };
+                    let btn = ui
+                        .add(
+                            egui::Button::new(egui::RichText::new(format!("{} {}", dot, text)).color(color))
+                                .frame(selected),
+                        )
+                        .on_hover_text(t!("status.light_tip"));
+                    if btn.clicked() {
+                        switched = Some(m.id.to_string());
+                    }
+                } else {
+                    let label = format!("{} {}", m.icon, t!(m.name_key));
+                    if ui.selectable_label(selected, label).clicked() {
+                        switched = Some(m.id.to_string());
+                    }
                 }
             }
+            // M4 生态箱（外部模块——配置文件声明——第三方开发者挂船；暂不支持 parent——设计 §4.2 规则 5）
+            let ext_visible = registry.external_visible();
+            if !ext_visible.is_empty() {
+                ui.separator();
+            }
+            for m in &ext_visible {
+                let label = format!("{} {}", m.icon, m.name);
+                if ui.selectable_label(registry.active == m.id, label).clicked() {
+                    switched = Some(m.id.clone());
+                }
+            }
+            if let Some(id) = switched {
+                // M32(2026-09-10 审计): 注册表目前仅"元数据"——此处只切 active。
+                // trait ZergModule 的 on_load/on_unload 生命周期**尚未接线**（见 zerg_module.rs）。
+                // 父箱可以直接设为 active ⇒ 渲染前由 `effective_module()` 下钻到子箱。
+                registry.active = id;
+            }
+
+            // 吊装系统入口（➕——模块管理——Mr2109 2026-08-29 M2）
+            if ui.button("➕").on_hover_text(t!("modules.open_tip")).clicked() {
+                on_open_manager();
+            }
+            ui.separator();
+
+            // 右侧对齐：English + 登录用户（右到左布局）
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // 登录用户（v2.5.6——固定 Mr2109——未来登录系统）
+                ui.label(format!("👤 {}", std::env::var("USER").unwrap_or_else(|_| "user".to_string())));   // 环境无关化：不再硬编码用户名
+                ui.separator();
+                // v2.5.7 HUD 开关（English 旁——Mr2109：图标开关——⌘H 是系统键冲突）
+                let hud_label = format!("{}", icon_text("gauge"));
+                let hud_btn = ui
+                    .button(if hud_on { egui::RichText::new(&hud_label).strong() } else { egui::RichText::new(&hud_label).weak() })
+                    .on_hover_text(if hud_on { t!("hud.tip_on") } else { t!("hud.tip_off") });
+                if hud_btn.clicked() {
+                    on_toggle_hud();
+                }
+                ui.separator();
+                // 语言切换（多语言——中文/English）
+                if locale == "zh-CN" {
+                    if ui.button("English").clicked() {
+                        on_switch_locale();
+                    }
+                } else {
+                    if ui.button("中文").clicked() {
+                        on_switch_locale();
+                    }
+                }
+            });
         });
+
+        // ── 二级页签（仅当当前 effective 箱属于某个父箱时显示）──────────────────
+        if let Some(parent) = active_parent {
+            ui.horizontal(|ui| {
+                let kids = registry.children_of(parent);
+                if kids.is_empty() {
+                    // 设计 §4.2 规则 4：父箱下全部子箱被卸下 ⇒ 父箱仍在，给一句提示
+                    ui.weak(t!("nav.no_submodules"));
+                } else {
+                    let mut pick: Option<String> = None;
+                    for c in &kids {
+                        let label = format!("{} {}", c.icon, t!(c.name_key));
+                        if ui.selectable_label(effective == c.id, label).clicked() {
+                            pick = Some(c.id.to_string());
+                        }
+                    }
+                    if let Some(child) = pick {
+                        // 记住「父 + 子」：切到子箱并记入记忆（app.rs 落盘 ui_state.json）
+                        registry.remembered_child.insert(parent.to_string(), child.clone());
+                        registry.active = child;
+                    }
+                }
+            });
+        }
     });
+}
+
+
+#[cfg(test)]
+mod nav_tests {
+    use super::*;
+
+    /// 顶栏**两段**渲染冒烟（无头 egui——能失败：借用冲突/空态/离线分支 panic 即红）。
+    /// 覆盖：① 顶级箱（不画二级）② 父箱在线/离线（状态灯 + 二级页签）③ 父箱无子箱（空态提示）。
+    #[test]
+    fn top_nav_bar_renders_two_tiers_without_panic() {
+        let ctx = egui::Context::default();
+        let mut reg = build_registry();
+
+        // ① 顶级箱（chat）——无二级页签行
+        reg.active = "chat".to_string();
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            top_nav_bar(ui, &mut reg, true, "zh-CN", &mut (|| {}), &mut (|| {}), false, &mut (|| {}));
+        });
+        out.textures_delta.clear();
+
+        // ② 父箱（main-online）——状态灯（在线/离线各一次）+ 二级页签
+        reg.active = "main-online".to_string();
+        for online in [true, false] {
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                top_nav_bar(ui, &mut reg, online, "zh-CN", &mut (|| {}), &mut (|| {}), true, &mut (|| {}));
+            });
+            out.textures_delta.clear();
+        }
+        // 状态灯是主控在线父箱的选中按钮 ⇒ active 仍是父箱
+        assert_eq!(reg.active, "main-online");
+
+        // ③ 父箱下全部子箱被卸下 ⇒ 空态提示（设计 §4.2 规则 4）——不 panic
+        // 注：虫茧（roundtable）2026-09-13 起是**顶级**箱，不在本父箱下，故不在此列
+        for id in ["cluster", "file-browser", "upgrade", "git", "logs"] {
+            reg.enabled.insert(id.to_string(), false);
+        }
+        assert!(reg.children_of("main-online").is_empty());
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            top_nav_bar(ui, &mut reg, true, "en", &mut (|| {}), &mut (|| {}), false, &mut (|| {}));
+        });
+        out.textures_delta.clear();
+
+        // ④ 二级页签点击目标语义：设置记忆子箱后 effective 就是它（纯函数已单测；此处锁父子记忆）
+        reg.remembered_child.insert("main-online".to_string(), "git".to_string());
+        reg.enabled.insert("git".to_string(), true);
+        assert_eq!(reg.effective_module("main-online", "git"), "git");
+    }
 }
