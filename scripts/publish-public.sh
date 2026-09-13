@@ -111,6 +111,8 @@ find "$OUT" -name '*.bak' -delete
 find "$OUT" -type f -name '*.[0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' -delete 2>/dev/null || true
 find "$OUT" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 find "$OUT" -type f \( -name '*.pyc' -o -name '*.pyo' -o -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.class' \) -delete 2>/dev/null || true
+# 发布机制自身不入公开面（Mr2109 2026-09-13：私有面收口 —— 这些文件含私有目录名/替换规则）
+rm -f "$OUT/scripts/check-public-tree-private.py" "$OUT/scripts/publish-public.sh" "$OUT/scripts/mirror-public.sh"
 echo "导出文件数: $(find "$OUT" -type f | wc -l | tr -d ' ')"
 
 say "2/6 套用发布专属文件（publish/ → 快照）"
