@@ -780,18 +780,23 @@ CUR_SHA_SHORT="$(printf '%s' "$CUR_CORE" | awk '{print $3}' | sed 's/+.*//')"
 # 在私有图里根本不存在 ⇒ 恒报「无法判定」⇒ 降级拦截形同没有（公开/私有 sha 混态）。
 # 改为优先与**本地代码树的 HEAD** 比 —— 构建来自这棵树，它必然在本地历史里；再退回已装件 sha 兜底。
 LOCAL_HEAD="$(git -C "$GITREPO" rev-parse --short HEAD 2>/dev/null || true)"
+# 2026-09-13（本机换装暴露）：源 sha 可能带 `+dirty`/`+<buildtime>` 后缀（构建身份约定），
+# git 解析不了它 ⇒ 比较恒失败、降级门形同虚设。比较前一律剥后缀。
+SRC_SHA_CMP="${SRC_SHA%%+*}"
+CUR_SHA_SHORT="${CUR_SHA_SHORT%%+*}"
+LOCAL_HEAD="${LOCAL_HEAD%%+*}"
 CMP_SHA="$LOCAL_HEAD"
 CMP_LABEL="本地树"
 if [ -z "$CMP_SHA" ] || ! git -C "$GITREPO" cat-file -e "${SRC_SHA}^{commit}" 2>/dev/null; then
   CMP_SHA="$CUR_SHA_SHORT"; CMP_LABEL="已装件"
 fi
-if [ -n "$CMP_SHA" ] && [ "$CMP_SHA" != "unknown" ] && [ "$CMP_SHA" != "$SRC_SHA" ]; then
-  if git -C "$GITREPO" merge-base --is-ancestor "$SRC_SHA" "$CMP_SHA" 2>/dev/null; then
+if [ -n "$CMP_SHA" ] && [ "$CMP_SHA" != "unknown" ] && [ "$CMP_SHA" != "$SRC_SHA_CMP" ]; then
+  if git -C "$GITREPO" merge-base --is-ancestor "$SRC_SHA_CMP" "$CMP_SHA" 2>/dev/null; then
     if [ "$ALLOW_DOWNGRADE" != "1" ]; then
       die "目标是旧提交（源 ${SRC_SHA} 早于${CMP_LABEL} ${CMP_SHA}）——拒绝降级；确实要降级请加 --allow-downgrade" 5
     fi
     say "⚠️  降级：源 ${SRC_SHA} 早于${CMP_LABEL} ${CMP_SHA}（--allow-downgrade 已放行）"
-  elif git -C "$GITREPO" merge-base --is-ancestor "$CMP_SHA" "$SRC_SHA" 2>/dev/null; then
+  elif git -C "$GITREPO" merge-base --is-ancestor "$CMP_SHA" "$SRC_SHA_CMP" 2>/dev/null; then
     say "✅ 目标比${CMP_LABEL}新（${CMP_SHA} → ${SRC_SHA}），不是降级"
   else
     say "ℹ️  无法判定新旧（源 ${SRC_SHA} 与${CMP_LABEL} ${CMP_SHA} 无祖先关系）——不做降级拦截"
@@ -886,7 +891,7 @@ verify_live() {
     if [ -z "$got" ]; then
       say "   ✗ 运行中的主控未自报 code_sha（$API/api/capabilities 读不到）——无法证明活进程已换版"
       ok=0
-    elif sha_match "$got" "$SRC_SHA"; then
+    elif sha_match "$got" "$SRC_SHA_CMP"; then
       say "   ✓ 主控（运行进程）自报 code_sha=$got"
     else
       say "   ✗ 混版：运行进程 code_sha=$got ≠ 目标 ${SRC_SHA}（换了盘、没换活进程）"; ok=0
@@ -896,7 +901,7 @@ verify_live() {
     has_component "$c" || continue
     v="$(ver_of "$PREFIX/zerg-$c")"
     case "$v" in
-      *"$SRC_SHA"*|*"$SRC_VER"*) say "   ✓ ${c}（落盘）自报：${v}" ;;
+      *"$SRC_SHA_CMP"*|*"$SRC_VER"*) say "   ✓ ${c}（落盘）自报：${v}" ;;
       *) say "   ✗ $c 自报异常：$v"; ok=0 ;;
     esac
   done
@@ -980,7 +985,7 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RC="$RECEIPTS/$TS.json"
 LIVE_FOR_RECEIPT=""
 if manages_core; then LIVE_FOR_RECEIPT="$(live_sha)"; fi   # 节点上无主控 API——不白连（其"运行身份"由主控矩阵核对）
-python3 - "$RC" "$TS" "$RESULT" "$FAILED_AT" "$PREFIX" "$PLAT" "$SOURCE" "$SRC_TAG" "$SRC_SHA" "$CUR_CORE" "$CUR_AGENT" "$INFLIGHT" "$(ver_of "$PREFIX/zerg-core")" "$(ver_of "$PREFIX/zerg-agent")" "$SRC_KIND" "${UNMANAGED:-}" "$LIVE_FOR_RECEIPT" "$ROLE" "$COMP_LIST" "$work/manifest.json" "$(ver_of "$PREFIX/zerg-agentd")" <<'PY'
+python3 - "$RC" "$TS" "$RESULT" "$FAILED_AT" "$PREFIX" "$PLAT" "$SOURCE" "$SRC_TAG" "$SRC_SHA_CMP" "$CUR_CORE" "$CUR_AGENT" "$INFLIGHT" "$(ver_of "$PREFIX/zerg-core")" "$(ver_of "$PREFIX/zerg-agent")" "$SRC_KIND" "${UNMANAGED:-}" "$LIVE_FOR_RECEIPT" "$ROLE" "$COMP_LIST" "$work/manifest.json" "$(ver_of "$PREFIX/zerg-agentd")" <<'PY'
 import json, sys
 (rc, ts, result, failed_at, prefix, plat, source, tag, sha, cur_core, cur_agent,
  inflight, new_core, new_agent, source_kind, unmanaged, live, role, components, manifest,
