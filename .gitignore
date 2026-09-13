@@ -55,3 +55,6 @@ __pycache__/
 # 安装方式印记（B3 `zerg update`：代码树旁的 .install_method = git/fleet/unknown）
 # 是"这台机器怎么装的"的运行时属性，不该入库（照抄 Hermes 的 /.install_method）
 /.install_method
+# macOS 目录元数据（登记层忽略，不改物理文件）
+.DS_Store
+**/.DS_Store
