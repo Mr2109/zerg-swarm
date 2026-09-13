@@ -87,14 +87,16 @@ func TestTTL_InflightAndLoadingNotReaped(t *testing.T) {
 	}
 }
 
-// 反例：TTL 未启用（<=0，默认）→ TTL 回收是空操作（默认行为不变）。
-func TestTTL_DisabledByDefault(t *testing.T) {
+// 反例：TTL 显式设成 0（关闭）→ TTL 回收是空操作（逃生门：不想让空闲卸载生效时用它）。
+// 注：默认值已由Mr2109 2026-09-13 定为 300 秒（DefaultIdleTTL），所以"关"必须显式表达。
+func TestTTL_ExplicitZeroDisables(t *testing.T) {
 	now := ttlNow()
 	m := newEvictTestManager(3, map[string]*subproc{
 		"stale": {model: "stale", state: StateReady, lastUsed: now.Add(-24 * time.Hour)},
 	})
+	m.SetIdleTTL(0)
 	if m.IdleTTL() != 0 {
-		t.Fatalf("测试管理器未设 TTL 时应为 0（未启用），实得 %v", m.IdleTTL())
+		t.Fatalf("显式设 0 后应为 0（未启用），实得 %v", m.IdleTTL())
 	}
 	if reaped := m.ReapIdle(now); len(reaped) != 0 {
 		t.Fatalf("TTL 未启用时不得卸载任何驻留，实得 %v", reaped)
@@ -104,13 +106,13 @@ func TestTTL_DisabledByDefault(t *testing.T) {
 	}
 }
 
-// 配置解析：缺省/空=不启用；正数=秒；0=不启用；非法（非数字/负数）=不启用（不静默接受怪值）。
+// 配置解析：缺省/空=默认 300 秒；正数=秒；0=关闭；非法（非数字/负数）=关闭（不静默接受怪值）。
 func TestTTL_EnvParse(t *testing.T) {
 	cases := []struct {
 		env  string
 		want time.Duration
 	}{
-		{"", 0},
+		{"", DefaultIdleTTL}, // 缺省 = 300 秒（Mr2109 2026-09-13 拍板）
 		{"300", 300 * time.Second},
 		{" 600 ", 600 * time.Second},
 		{"0", 0},
@@ -123,18 +125,23 @@ func TestTTL_EnvParse(t *testing.T) {
 			t.Fatalf("%s=%q 应得 %v，实得 %v", EnvModelTTL, c.env, c.want, got)
 		}
 	}
-	if got := resolveIdleTTLFromEnv(nil); got != 0 {
-		t.Fatalf("nil getenv 应得 0（未启用），实得 %v", got)
+	if got := resolveIdleTTLFromEnv(nil); got != DefaultIdleTTL {
+		t.Fatalf("nil getenv（读不到环境）应回落到默认 %v，实得 %v", DefaultIdleTTL, got)
 	}
 }
 
-// 接线：环境变量启用 TTL 时 NewManager 生效并可停；缺省时不启用（无默认秒数被凭空造出）。
+// 接线：缺省 = DefaultIdleTTL（300 秒，Mr2109 2026-09-13 拍板）；ZERG_MODEL_TTL_S 可覆盖；设 0 = 关闭。
 func TestTTL_WiredThroughNewManager(t *testing.T) {
 	t.Setenv(EnvMaxResident, "")
 	t.Setenv(EnvModelTTL, "")
-	if got := NewManager(nil, "x3").IdleTTL(); got != 0 {
-		t.Fatalf("未配置 TTL 时应不启用（0），实得 %v", got)
+	if got := NewManager(nil, "x3").IdleTTL(); got != DefaultIdleTTL {
+		t.Fatalf("未配置 TTL 时应取默认 %v，实得 %v", DefaultIdleTTL, got)
 	}
+	t.Setenv(EnvModelTTL, "0")
+	if got := NewManager(nil, "x3").IdleTTL(); got != 0 {
+		t.Fatalf("显式设 0 应关闭 TTL（0），实得 %v", got)
+	}
+	t.Setenv(EnvModelTTL, "")
 	t.Setenv(EnvModelTTL, "300")
 	m := NewManager(nil, "x3")
 	defer m.StopIdleReaper()
