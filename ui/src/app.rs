@@ -57,6 +57,18 @@ pub struct ZergApp {
     doc_op_result: api::SharedResult<()>,
     doc_op_ctx: Option<(String, String)>, // (kind, path)——成功后据此改本地状态
     doc_op_err: Option<String>,           // 失败提示(下次成功时清除)
+    // ── 文件浏览器阶段 1（2026-09-13 设计「文件浏览器集装箱」§4.3）──────────────
+    // 根集合缓存（GET /api/fileroots——文档模块的根选择器与 file-browser 箱共用一份）
+    fb_roots: Arc<Mutex<Option<crate::modules::filebrowse::roots::RootsState>>>,
+    last_fb_roots: f64, // 根集合轮询计时（根清单几乎不变——60s）
+    // 文档模块当前根（默认 "docs"：不带 root 参数 ⇒ 与改造前逐字节等价，§4.5）
+    doc_root: String,
+    // 「交给系统」动作（open/reveal）的结果——成功提示 / 失败红字（不静默）
+    fb_action_result: api::SharedResult<String>,
+    fb_action_msg: Option<String>,
+    fb_action_err: Option<String>,
+    // file-browser 薄壳箱的组件实例（**独立状态**——与文档模块那套互不干扰）
+    fb: crate::modules::filebrowse::FileBrowse,
     // F4 滚动同步（编辑→预览单向——防反馈环）
     preview_sync_line: usize,     // 上次同步的编辑滚动行
     preview_content_h: f32,       // 预览内容高度（上次渲染）
@@ -178,6 +190,14 @@ impl ZergApp {
             doc_op_result: Arc::new(Mutex::new(None)),
             doc_op_ctx: None,
             doc_op_err: None,
+            // 文件浏览器阶段 1（2026-09-13）：根集合待拉 + 文档模块默认根 = docs
+            fb_roots: Arc::new(Mutex::new(None)),
+            last_fb_roots: 0.0,
+            doc_root: "docs".to_string(),
+            fb_action_result: Arc::new(Mutex::new(None)),
+            fb_action_msg: None,
+            fb_action_err: None,
+            fb: crate::modules::filebrowse::FileBrowse::new(),
             preview_sync_line: 0,
             preview_content_h: 0.0,
             preview_last_offset: 0.0,
@@ -389,13 +409,26 @@ impl ZergApp {
             });
         }
         // 拉文档目录（5s——v2.5.6 实时显示变动：Mr2109 2026-08-29 之前 30s 太慢——文档改动等半分钟）
+        // 文件浏览器阶段 1（2026-09-13）：按**当前根**拉（doc_root 默认 "docs" ⇒ root 参数不带，
+        // 与改造前逐字节等价，§4.5；切到其它根才带 ?root=<id>）
         if self.online && now - self.last_docs > 5.0 {
             self.last_docs = now;
             let store = self.docs.clone();
             let perr = self.poll_err.clone();
+            let root = self.doc_root.clone();
+            let root_param = if root.is_empty() || root == "docs" {
+                None
+            } else {
+                Some(root)
+            };
             api::runtime().spawn(async move {
                 // APP-A04: 失败保留旧值
-                match api::fetch_docs_blocking().await {
+                // 不带 root（docs 根）走**老函数**（老端点题面逐字不变，§4.5）；其余根走参数化端点
+                let r = match root_param.as_deref() {
+                    None => api::fetch_docs_blocking().await,
+                    Some(root) => api::fetch_docs_root_blocking(Some(root)).await,
+                };
+                match r {
                     Ok(v) => {
                         *lock_recover(&store) = Some(v);
                         *lock_recover(&perr) = None;
@@ -403,6 +436,34 @@ impl ZergApp {
                     Err(e) => *lock_recover(&perr) = Some(t!("err.docs", err = e).to_string()),
                 }
             });
+        }
+        // 文件浏览器阶段 1：拉根集合（首次即拉 + 60s——根清单几乎不变）+ 收「交给系统」动作结果
+        if self.online && (lock_recover(&self.fb_roots).is_none() || now - self.last_fb_roots > 60.0) {
+            self.last_fb_roots = now;
+            let store = self.fb_roots.clone();
+            api::runtime().spawn(async move {
+                match api::fetch_fileroots_blocking().await {
+                    Ok(v) => {
+                        *lock_recover(&store) =
+                            Some(crate::modules::filebrowse::roots::RootsState::from_json(&v))
+                    }
+                    // 失败保留旧值（离线时界面照旧可用）；不静默但不刷红字（poll_err 留给数据面）
+                    Err(e) => eprintln!("[zerg-ui] /api/fileroots failed: {}", e),
+                }
+            });
+        }
+        // APP-A02 同款纪律：open/reveal 先确认成功再提示；失败红字、不静默、不改状态
+        if let Some(r) = lock_recover(&self.fb_action_result).take() {
+            match r {
+                Ok(abs) => {
+                    self.fb_action_msg = Some(t!("fb.action.done", abs = abs).to_string());
+                    self.fb_action_err = None;
+                }
+                Err(e) => {
+                    self.fb_action_err = Some(e);
+                    self.fb_action_msg = None;
+                }
+            }
         }
         // 拉资源库（30s——用当前类型——Mr2109 2026-08-27 修复: 之前硬编码 models 导致资源库被刷成模型库）
         if self.online && now - self.last_res > 30.0 {
@@ -1198,6 +1259,16 @@ impl ZergApp {
         t
     }
 
+    /// 文件浏览器阶段 1（2026-09-13 设计「文件浏览器集装箱」§4.3）：「交给系统」动作
+    /// （open/reveal——后端执行 open / open -R 并落审计）。异步 + 结果回报：
+    /// 与 APP-A02 同纪律——**不丢结果**，成功弱提示、失败红字（结果由 update_async 收口）。
+    fn fb_start_action(&mut self, action: &str, root: String, path: String, mode: Option<&'static str>) {
+        self.fb_action_msg = None;
+        self.fb_action_err = None;
+        self.fb_action_result =
+            crate::modules::filebrowse::actions::fileroot_action_async(action, root, path, mode);
+    }
+
     fn main_view(&mut self, ui: &mut egui::Ui) {
         match self.registry.active.as_str() {
             "chat" => {
@@ -1207,6 +1278,19 @@ impl ZergApp {
             "tasks" => self.tasks_view(ui),
             "upgrade" => crate::modules::upgrade::ui(ui),
             "model-registry" => crate::modules::model_registry::ui(ui),
+            // 文件浏览器（阶段 1——2026-09-13 设计「文件浏览器集装箱」§4.1/§4.3）：
+            // **薄壳箱**——真正实现是内建组件 ui/src/modules/filebrowse/（文档/模型/任务多处吊装）。
+            // 首版：顶部根选择器 + 第一栏目录/文件列表 + 第二栏选中文件内容预览（不做内嵌编辑器）。
+            "file-browser" => {
+                ui.heading(format!(
+                    "{} {}",
+                    icon_text("folder-open"),
+                    t!("mod.file_browser.name")
+                ));
+                ui.weak(t!("mod.file_browser.desc"));
+                ui.add_space(6.0);
+                self.fb.render(ui);
+            }
             "internal-tasks" => self.internal_tasks_view(ui),
             "cluster" => {
                 ui.heading(t!("cluster.status"));
@@ -1405,6 +1489,25 @@ impl ZergApp {
                 ui.heading(t!("page.docs"));
                 ui.add_space(4.0);
                 let docs_snap = lock_recover(&self.docs).clone(); // 先释放借用——内部闭包要 &mut self（F5 AI 按钮）
+                // ── 文件浏览器阶段 1（2026-09-13 设计「文件浏览器集装箱」§4.3）─────────
+                // 根集合（根选择器 + 显示上限 + 类型闸门）——先克隆成局部量，避免闭包内再借 self
+                let fb_roots_snap = lock_recover(&self.fb_roots).clone();
+                // 写菜单只对**可写根**出现（§九 Q2：非 docs 一律只读）。
+                // 根清单还没到（后端旧版/离线）时按老规则保守判定：只有 docs 根可写——
+                // 绝不因为新接口拉不到就把既有文档写功能封掉。
+                let doc_root_writable = match fb_roots_snap.as_ref() {
+                    Some(s) if s.roots.iter().any(|r| r.id == self.doc_root) => s.is_writable(&self.doc_root),
+                    _ => self.doc_root == "docs",
+                };
+                // 渲染视图参数（第一/二/三栏共用——渲染层只产意图，状态在本分支末尾统一改）
+                let fb_view = crate::modules::filebrowse::browser::FbView {
+                    root: self.doc_root.clone(),
+                    writable: doc_root_writable,
+                    dir: self.doc_dir.clone(),
+                    file: self.doc_file.clone(),
+                    cfg: fb_roots_snap.as_ref().map(|s| s.config.clone()).unwrap_or_default(),
+                };
+                let mut fb_intents: Vec<crate::modules::filebrowse::browser::FbIntent> = Vec::new();
                 if let Some((files, dirs)) = docs_snap {
                     // 环境无关化（2026-09-11）：未选目录时自动选第一个可用目录（原先硬编码 "00-总览"，外部用户没有该目录）
                     if self.doc_dir.is_empty() {
@@ -1430,6 +1533,24 @@ impl ZergApp {
                         egui::ScrollArea::vertical().id_salt("docs_col1").auto_shrink(false).show(&mut c1_ui, |ui| {
                             ui.heading(t!("docs.tree"));
                             ui.add_space(4.0);
+                            // ── 文件浏览器阶段 1（§4.3）：第一栏顶部 = 根栏（根选择器 + 当前根绝对路径 + 「复制路径」）
+                            crate::modules::filebrowse::roots::root_bar(
+                                ui,
+                                fb_roots_snap.as_ref(),
+                                &mut self.doc_root,
+                                &mut fb_intents,
+                            );
+                            if !doc_root_writable {
+                                ui.weak(t!("fb.readonly")); // 只读根提示（写菜单也不出现）
+                            }
+                            // 「交给系统」动作的结果：失败红字 / 成功弱提示（不静默）
+                            if let Some(e) = self.fb_action_err.clone() {
+                                ui.colored_label(egui::Color32::from_rgb(230, 90, 90), format!("⚠ {}", e));
+                            }
+                            if let Some(m) = self.fb_action_msg.clone() {
+                                ui.weak(m);
+                            }
+                            ui.separator();
                             for dir in &dirs {
                                 let depth = dir.split('/').count() - 1; // 子目录缩进
                                 // v2.5.6 只显示目录名（不含父路径前缀——Mr2109: 项目文档/v2.5.6 显示为 v2.5.6）
@@ -1441,27 +1562,32 @@ impl ZergApp {
                                 };
                                 let resp = ui.selectable_label(self.doc_dir == *dir, label);
                                 // v2.5.6 目录右键（Mr2109 2026-08-29: 重命名/删除/新建子目录）
+                                // 文件浏览器阶段 1（§4.3/§九 Q2）：**写菜单只对可写根**出现；
+                                // 「在访达中显示/用默认应用打开」是只读根也有的两项（打开 ≠ 改）
                                 resp.context_menu(|ui| {
-                                    if ui.button(t!("action.rename")).clicked() {
-                                        self.doc_input = Some((t!("docs.rename_dir").to_string(), dir.clone(), "rename_dir".to_string()));
-                                        self.doc_input_buf = dir.clone(); // APP-A09
-                                        self.doc_input_new = true;
-                                        ui.close();
+                                    if doc_root_writable {
+                                        if ui.button(t!("action.rename")).clicked() {
+                                            self.doc_input = Some((t!("docs.rename_dir").to_string(), dir.clone(), "rename_dir".to_string()));
+                                            self.doc_input_buf = dir.clone(); // APP-A09
+                                            self.doc_input_new = true;
+                                            ui.close();
+                                        }
+                                        if ui.button(format!("{} {}", icon_text("trash"), t!("action.delete"))).clicked() {
+                                            let path = dir.clone();
+                                            // APP-A02: 先确认成功再改本地状态(原实现丢结果 + 立即切目录)
+                                            self.doc_op_ctx = Some(("del_dir".to_string(), path.clone()));
+                                            self.doc_op_result = api::doc_op_async("delete", serde_json::json!({"path": path}));
+                                            ui.close();
+                                        }
+                                        if ui.button(format!("{} {}", icon_text("folder-plus"), t!("docs.new_subdir"))).clicked() {
+                                            let base = dir.clone();
+                                            self.doc_input = Some((t!("docs.new_subdir").to_string(), format!("{}/", base), "new_subdir".to_string()));
+                                            self.doc_input_buf = format!("{}/", base); // APP-A09
+                                            self.doc_input_new = true;
+                                            ui.close();
+                                        }
                                     }
-                                    if ui.button(format!("{} {}", icon_text("trash"), t!("action.delete"))).clicked() {
-                                        let path = dir.clone();
-                                        // APP-A02: 先确认成功再改本地状态(原实现丢结果 + 立即切目录)
-                                        self.doc_op_ctx = Some(("del_dir".to_string(), path.clone()));
-                                        self.doc_op_result = api::doc_op_async("delete", serde_json::json!({"path": path}));
-                                        ui.close();
-                                    }
-                                    if ui.button(format!("{} {}", icon_text("folder-plus"), t!("docs.new_subdir"))).clicked() {
-                                        let base = dir.clone();
-                                        self.doc_input = Some((t!("docs.new_subdir").to_string(), format!("{}/", base), "new_subdir".to_string()));
-                                        self.doc_input_buf = format!("{}/", base); // APP-A09
-                                        self.doc_input_new = true;
-                                        ui.close();
-                                    }
+                                    crate::modules::filebrowse::browser::system_menu(ui, &fb_view, dir, true, &mut fb_intents);
                                 });
                                 if resp.clicked() {
                                     self.doc_dir = dir.clone();
@@ -1513,35 +1639,39 @@ impl ZergApp {
                                 let selected = self.doc_file == f.as_str();
                                 let resp = ui.selectable_label(selected, format!("📄 {}", fname));
                                 // v2.5.6 文件右键（Mr2109 2026-08-29: 重命名/复制/粘贴/删除）
+                                // 文件浏览器阶段 1（§4.3）：写菜单只对可写根；两项「交给系统」任何根都有
                                 resp.context_menu(|ui| {
-                                    if ui.button(t!("action.rename")).clicked() {
-                                        self.doc_input = Some((t!("docs.rename_file").to_string(), f.to_string(), "rename_file".to_string()));
-                                        self.doc_input_buf = f.to_string(); // APP-A09
-                                        self.doc_input_new = true;
-                                        ui.close();
-                                    }
-                                    if ui.button(format!("{} {}", icon_text("copy"), t!("action.copy"))).clicked() {
-                                        self.doc_clipboard = Some(f.to_string());
-                                        ui.close();
-                                    }
-                                    if let Some(src) = self.doc_clipboard.clone() {
-                                        if ui.button(format!("{} {}", icon_text("clipboard"), t!("docs.paste_here"))).clicked() {
-                                            // 目标 = 当前目录 + 源文件名（冲突加副本后缀）
-                                            let fname_src = src.split('/').last().unwrap_or(&src).to_string();
-                                            let target = format!("{}/{}", self.doc_dir, fname_src);
-                                            // APP-A02: 粘贴(复制)也走结果回报——失败可见
-                                            self.doc_op_ctx = Some(("copy".to_string(), String::new()));
-                                            self.doc_op_result = api::doc_op_async("copy", serde_json::json!({"from": src, "to": target}));
+                                    if doc_root_writable {
+                                        if ui.button(t!("action.rename")).clicked() {
+                                            self.doc_input = Some((t!("docs.rename_file").to_string(), f.to_string(), "rename_file".to_string()));
+                                            self.doc_input_buf = f.to_string(); // APP-A09
+                                            self.doc_input_new = true;
+                                            ui.close();
+                                        }
+                                        if ui.button(format!("{} {}", icon_text("copy"), t!("action.copy"))).clicked() {
+                                            self.doc_clipboard = Some(f.to_string());
+                                            ui.close();
+                                        }
+                                        if let Some(src) = self.doc_clipboard.clone() {
+                                            if ui.button(format!("{} {}", icon_text("clipboard"), t!("docs.paste_here"))).clicked() {
+                                                // 目标 = 当前目录 + 源文件名（冲突加副本后缀）
+                                                let fname_src = src.split('/').last().unwrap_or(&src).to_string();
+                                                let target = format!("{}/{}", self.doc_dir, fname_src);
+                                                // APP-A02: 粘贴(复制)也走结果回报——失败可见
+                                                self.doc_op_ctx = Some(("copy".to_string(), String::new()));
+                                                self.doc_op_result = api::doc_op_async("copy", serde_json::json!({"from": src, "to": target}));
+                                                ui.close();
+                                            }
+                                        }
+                                        if ui.button(format!("{} {}", icon_text("trash"), t!("action.delete"))).clicked() {
+                                            let path = f.to_string();
+                                            // APP-A02: 成功才清空选中/内容
+                                            self.doc_op_ctx = Some(("del_file".to_string(), path.clone()));
+                                            self.doc_op_result = api::doc_op_async("delete", serde_json::json!({"path": path}));
                                             ui.close();
                                         }
                                     }
-                                    if ui.button(format!("{} {}", icon_text("trash"), t!("action.delete"))).clicked() {
-                                        let path = f.to_string();
-                                        // APP-A02: 成功才清空选中/内容
-                                        self.doc_op_ctx = Some(("del_file".to_string(), path.clone()));
-                                        self.doc_op_result = api::doc_op_async("delete", serde_json::json!({"path": path}));
-                                        ui.close();
-                                    }
+                                    crate::modules::filebrowse::browser::system_menu(ui, &fb_view, f, false, &mut fb_intents);
                                 });
                                 if resp.clicked() {
                                     self.doc_file = f.to_string();
@@ -1554,10 +1684,12 @@ impl ZergApp {
                                     let path = f.to_string();
                                     let store = self.doc_content.clone();
                                     let err = self.doc_content_err.clone();
+                                    // 文件浏览器阶段 1：按**当前根**读（docs 根走老端点——§4.5 兼容）
+                                    let root = self.doc_root.clone();
                                     *lock_recover(&self.doc_content) = None;
                                     *lock_recover(&self.doc_content_err) = None;
                                     api::runtime().spawn(async move {
-                                        match api::fetch_doc_content_blocking(path).await {
+                                        match api::fetch_doc_content_any_root_blocking(&root, path).await {
                                             Ok(txt) => {
                                                 *lock_recover(&store) = Some(txt);
                                                 *lock_recover(&err) = None;
@@ -1777,10 +1909,17 @@ impl ZergApp {
                                     },
                                 );
                             } else if let Some(content) = lock_recover(&self.doc_content).clone() {
-                                egui::ScrollArea::vertical().id_salt("docs_col3").auto_shrink(false).show(&mut c3_ui, |ui| {
-                                    // v2.5.6 md 渲染（egui_commonmark CommonMarkViewer——支持标题/列表/代码块/表格）
-                                    egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.doc_md_cache, &content);
-                                });
+                                // 文件浏览器阶段 1（§4.4 Q3）：**读取不限、只有界面渲染有上限**——
+                                // 超出 config.display_max 即截断渲染 + 「已显示前 X MiB／共 Y MiB」提示
+                                // + 「用默认应用打开」入口（不做内嵌编辑器）
+                                crate::modules::filebrowse::browser::render_content(
+                                    &mut c3_ui,
+                                    &fb_view,
+                                    Some(&content),
+                                    None,
+                                    &mut self.doc_md_cache,
+                                    &mut fb_intents,
+                                );
                             } else if let Some(e) = lock_recover(&self.doc_content_err).clone() {
                                 // APP-A20: 拉取失败——红字报错（原来只写 None，这里永远转圈）
                                 c3_ui.add_space(8.0);
@@ -1792,9 +1931,11 @@ impl ZergApp {
                                     let path = self.doc_file.clone();
                                     let store = self.doc_content.clone();
                                     let err = self.doc_content_err.clone();
+                                    // 文件浏览器阶段 1：重读同样按当前根（与首读同一条路）
+                                    let root = self.doc_root.clone();
                                     *lock_recover(&self.doc_content_err) = None;
                                     api::runtime().spawn(async move {
-                                        match api::fetch_doc_content_blocking(path).await {
+                                        match api::fetch_doc_content_any_root_blocking(&root, path).await {
                                             Ok(txt) => {
                                                 *lock_recover(&store) = Some(txt);
                                                 *lock_recover(&err) = None;
@@ -1883,8 +2024,52 @@ impl ZergApp {
                         }
                     }
                 } else {
+                    // 列表还没到（切根中/首次拉取/离线）：**根栏照旧在**——用户总能切回 docs，
+                    // 不会因为「新根拉不到」被困在一个空页面上（§4.3 空态不做自动创建）
+                    crate::modules::filebrowse::roots::root_bar(
+                        ui,
+                        fb_roots_snap.as_ref(),
+                        &mut self.doc_root,
+                        &mut fb_intents,
+                    );
+                    if !doc_root_writable {
+                        ui.weak(t!("fb.readonly"));
+                    }
+                    ui.separator();
                     ui.spinner();
                     ui.weak(t!("common.loading"));
+                }
+                // ── 文件浏览器阶段 1：意图落地（渲染层只产意图——状态与请求在这里统一改）──
+                {
+                    use crate::modules::filebrowse::browser::FbIntent;
+                    for it in fb_intents {
+                        match it {
+                            FbIntent::RootChanged(_id) => {
+                                // 切根：清空旧根的选中与缓存内容（**绝不**让上一根的正文落在这根名下）
+                                self.doc_dir.clear();
+                                self.doc_file.clear();
+                                *lock_recover(&self.doc_content) = None;
+                                *lock_recover(&self.doc_content_err) = None;
+                                *lock_recover(&self.docs) = None; // 列表也清——下一帧按新根拉
+                                self.doc_edit_dirty = false;
+                                self.ferrite_loaded = false;
+                                self.last_docs = 0.0; // 立即重拉（不等 5s 轮询）
+                                self.fb_action_msg = None;
+                                self.fb_action_err = None;
+                            }
+                            FbIntent::Reveal { root, path } => {
+                                self.fb_start_action("reveal", root, path, None)
+                            }
+                            FbIntent::Open { root, path, mode } => {
+                                self.fb_start_action("open", root, path, Some(mode.as_str()))
+                            }
+                            FbIntent::CopyPath(p) => {
+                                crate::modules::filebrowse::actions::copy_path(ui.ctx(), &p)
+                            }
+                            // 文档模块的目录/文件选中在上面的点击分支就地处理（不经意图）
+                            FbIntent::PickDir(_) | FbIntent::PickFile(_) => {}
+                        }
+                    }
                 }
             }
             "models" => {

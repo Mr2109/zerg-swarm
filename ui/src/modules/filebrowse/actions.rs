@@ -98,7 +98,7 @@ pub async fn fileroot_action_blocking(
         .to_string())
 }
 
-/// open / reveal（异步——结果交回 UI 轮询；不阻塞 UI 线程，与宿主既有异步操作同款纪律）
+/// open / reveal（异步——结果交回 UI 轮询；与 api::doc_op_async 同款，不阻塞 UI 线程）
 pub fn fileroot_action_async(
     action: &str,
     root: String,

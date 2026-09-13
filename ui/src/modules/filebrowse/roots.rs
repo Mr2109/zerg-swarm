@@ -1,4 +1,4 @@
-//! 根集合与选择（文件浏览器阶段 1——2026-09-13 设计「文件浏览器虫茧」§4.2 / §4.3）
+//! 根集合与选择（文件浏览器阶段 1——2026-09-13 设计「文件浏览器集装箱」§4.2 / §4.3）
 //!
 //! 后端契约（GET /api/fileroots）：
 //! ```json
@@ -35,8 +35,6 @@ pub struct RootInfo {
     pub is_default: bool,
     /// 是否可写（阶段 1 只有 docs 根可写——写菜单只对可写根出现）
     pub writable: bool,
-    /// 根目录在磁盘上是否存在（新后端字段；**缺字段 = true**——旧后端绝不误报「不存在」）
-    pub exists: bool,
 }
 
 impl RootInfo {
@@ -47,9 +45,6 @@ impl RootInfo {
             path: v.get("path").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
             is_default: v.get("default").and_then(|x| x.as_bool()).unwrap_or(false),
             writable: v.get("writable").and_then(|x| x.as_bool()).unwrap_or(false),
-            // §尾巴 a：缺字段按 true（=未知/存在）。**绝不** `unwrap_or(false)`——
-            // 那会把所有旧后端的根一律误报成「该根不存在」。
-            exists: v.get("exists").and_then(|x| x.as_bool()).unwrap_or(true),
         }
     }
 }
@@ -154,61 +149,6 @@ impl RootsState {
     pub fn is_writable(&self, id: &str) -> bool {
         self.find(id).map(|r| r.writable).unwrap_or(false)
     }
-
-    /// 当前根是否**已知不存在**（§尾巴 a）——只有后端明确给 `exists=false` 才为 true。
-    /// 根 id 不在清单里 ⇒ false（未知 ≠ 不存在——不误报）。缺 exists 字段已在
-    /// [`RootInfo::from_json`] 里落成 true，故旧后端恒为 false。
-    pub fn known_missing(&self, id: &str) -> bool {
-        self.find(id).map(|r| !r.exists).unwrap_or(false)
-    }
-}
-
-/// 当前根是否已知不存在（**纯函数——单测钉死**）：`None`（清单未到）或未知根一律 false。
-/// 关键回归点：旧后端缺 `exists` 字段时**绝不**误报「该根不存在」。
-pub fn root_missing(id: &str, state: Option<&RootsState>) -> bool {
-    state.map(|s| s.known_missing(id)).unwrap_or(false)
-}
-
-/// 是否应发起列表请求（**纯函数**）：根为空、或当前根已知不存在 ⇒ 不拉。
-/// 清单未到（None）或未知根 ⇒ 照常拉（不能因为没清单/新增根就不拉）。
-pub fn should_fetch_listing(root_id: &str, state: Option<&RootsState>) -> bool {
-    if root_id.is_empty() {
-        return false;
-    }
-    !root_missing(root_id, state)
-}
-
-/// 当前根不存在的空态（§尾巴 a）：文案走 i18n 键 `fb.root.missing`（带路径），
-/// 右侧给「在访达中显示」入口（显示该根本身；后端若报错也只是可读错误，不 panic）。
-/// 返回 true = 本帧渲染了空态（调用方不必再渲染文件列表）。
-pub fn render_root_missing(
-    ui: &mut egui::Ui,
-    state: Option<&RootsState>,
-    root_id: &str,
-    out: &mut Vec<FbIntent>,
-) -> bool {
-    if !root_missing(root_id, state) {
-        return false;
-    }
-    let path = state
-        .and_then(|s| s.path_of(root_id))
-        .unwrap_or_default()
-        .to_string();
-    ui.add_space(8.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.colored_label(
-            egui::Color32::from_rgb(240, 200, 80),
-            rust_i18n::t!("fb.root.missing", path = path.clone()).to_string(),
-        );
-        // 根不存在时仍可「在访达中显示」——揭示该路径本身（父目录非白名单内相对路径，不做）
-        if ui.button(rust_i18n::t!("fb.action.reveal")).clicked() {
-            out.push(FbIntent::Reveal {
-                root: root_id.to_string(),
-                path: String::new(),
-            });
-        }
-    });
-    true
 }
 
 /// 默认根 id（**纯函数——单测钉死**）：

@@ -1,6 +1,6 @@
 package api
 
-// fileroots.go — 文件/目录浏览器 阶段 1 后端（《设计-文件浏览器虫茧-20260913》§4.2 / §4.4）
+// fileroots.go — 文件/目录浏览器 阶段 1 后端（《设计-文件浏览器集装箱-20260913》§4.2 / §4.4）
 //
 // 三件事：
 //  ① GET  /api/fileroots             —— 五根白名单 + 可配置项（类型清单 / 界面显示上限）
@@ -36,11 +36,6 @@ type FileRoot struct {
 	Path     string `json:"path"`
 	Default  bool   `json:"default"`
 	Writable bool   `json:"writable"`
-	// Exists 是该根此刻是否真实存在（构造时 os.Stat 判定）。
-	// 为什么要它：根的路径由环境变量/解析器给出（换机器、换安装位置都会变），
-	// 根本不存在的形态是常态而非异常——接口照常返回该项、不跳过也不建目录，
-	// 由 UI 据 exists=false 显示「根不存在」空态，而不是把一个空列表当成「根是空的」。
-	Exists bool `json:"exists"`
 }
 
 // weightsDirEnv 是「模型权重」根的环境变量（不设时用 <HOME>/models）。
@@ -68,31 +63,16 @@ func docsRootPath() string { return filepath.Join(statepath.WorkspaceRoot(), "do
 // fileRoots 返回五项白名单根（顺序即接口契约顺序）。
 // 路径全部由既有解析器给出（statepath / modelreg / HOME），不写死绝对路径：
 // 换机器、换安装位置、测试注入都只改环境变量，不改代码（设计 §八 R2）。
-// 路径不存在也照样返回——列表接口对不存在的根返回空列表 + Exists=false，
-// 「不存在」这一事实由接口如实给出（不在响应里造假目录），显示交给 UI。
+// 路径不存在也照样返回——列表接口对不存在的根返回空列表，由 UI 显示「不存在」。
 func fileRoots() []FileRoot {
 	ws := statepath.WorkspaceRoot()
-	roots := []FileRoot{
+	return []FileRoot{
 		{ID: "docs", Label: "虫族文档", Path: docsRootPath(), Default: true, Writable: true},
 		{ID: "repo", Label: "虫族仓库", Path: ws},
 		{ID: "models", Label: "模型登记库", Path: modelreg.DefaultModelsDir()},
 		{ID: "tasks", Label: "任务目录", Path: statepath.TaskRoot()},
 		{ID: "weights", Label: "模型权重", Path: weightsDir()},
 	}
-	// 存在性逐根判定：只 os.Stat（不建目录、不列内容、不跟随展开）——列表接口的只读契约不变。
-	for i := range roots {
-		roots[i].Exists = rootExists(roots[i].Path)
-	}
-	return roots
-}
-
-// rootExists 判定根是否真实存在（空路径一律 false——没有路径就谈不上存在）。
-func rootExists(path string) bool {
-	if path == "" {
-		return false
-	}
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 // findFileRoot 按 id 查白名单根。
@@ -462,16 +442,6 @@ func (h *Handlers) FileOpenHandler(w http.ResponseWriter, r *http.Request) {
 // FileRevealHandler POST /api/fileroots/reveal {"root","path"} —— 在访达中显示
 func (h *Handlers) FileRevealHandler(w http.ResponseWriter, r *http.Request) {
 	h.fileBrowserAction(w, r, "reveal")
-}
-
-// readJSONBody 读请求体并解析 JSON——**通用**小工具（原定义在 docs_ops.go；该文件随文档写端点
-// 迁出宿主后，此处保留/补回：/api/fileroots/open|reveal 仍在用）。
-func readJSONBody(r *http.Request, v interface{}) error {
-	body, err := ioReadAll(r.Body)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(body, v)
 }
 
 // fileBrowserAction 是 open/reveal 的共同流程：解析 → 校验 → 交给系统 → 审计。
