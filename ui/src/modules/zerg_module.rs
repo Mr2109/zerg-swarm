@@ -412,18 +412,14 @@ mod tests {
 
     /// 设计 §4.1/§七1/Q5：一级导航恰 6 项、顺序 = 主控在线 → 任务 → 模型 → 对话 → 资源库 → 文档。
     #[test]
-    fn top_level_is_design_six_plus_roundtable() {
+    fn top_level_is_six_in_lao_dao_order() {
         let reg = crate::modules::build_registry();
         let got = ids(&reg.top_level());
-        // 设计 §4.1 的六项按顺序在前；虫茧（可选箱，公开快照不在船上）排最后
-        assert_eq!(
-            &got[..6],
-            &["main-online", "tasks-group", "models-group", "chat", "resources", "docs"],
-            "一级六项顺序（主控在线 / 任务 / 模型 / 对话 / 资源库 / 文档）"
-        );
+        // Mr2109 2026-09-13 二次调整后的顺序：主控在线 → 对话 → 任务 → 模型 → 资源库 → 虫茧
         assert_eq!(
             got,
-            vec!["main-online", "tasks-group", "models-group", "chat", "resources", "docs", "roundtable"]
+            vec!["main-online", "chat", "tasks-group", "models-group", "resources", "cocoon"],
+            "一级六项顺序（二次调整）"
         );
     }
 
@@ -444,6 +440,8 @@ mod tests {
         let reg = crate::modules::build_registry();
         assert_eq!(ids(&reg.children_of("tasks-group")), vec!["tasks", "internal-tasks"]);
         assert_eq!(ids(&reg.children_of("models-group")), vec!["models", "model-registry"]);
+        // 二次调整：文档移入虫茧（平台在前、文档在后）
+        assert_eq!(ids(&reg.children_of("cocoon")), vec!["roundtable", "docs"]);
         assert!(reg.children_of("chat").is_empty(), "无子箱的顶级箱 children_of 应为空");
         assert!(reg.children_of("nope").is_empty());
     }
@@ -504,14 +502,16 @@ mod tests {
         let reg = crate::modules::build_registry();
         assert_eq!(reg.fallback_after_disable("git"), "cluster");
         assert_eq!(reg.fallback_after_disable("internal-tasks"), "tasks");
-        assert_eq!(reg.fallback_after_disable("docs"), "chat"); // 一级箱无父 → 默认 chat
+        // 二次调整后 docs 属「虫茧」⇒ 回退到虫茧的首个页签（平台）
+        assert_eq!(reg.fallback_after_disable("docs"), "roundtable");
+        assert_eq!(reg.fallback_after_disable("chat"), "chat"); // 真正的无父一级箱 → 默认 chat
     }
 
     /// 父箱：is_group + 不可卸（toggle 拒绝）；图标名真实存在；子箱 toggle 生效。
     #[test]
     fn groups_unloadable_protected_and_icons_resolve() {
         let mut reg = crate::modules::build_registry();
-        for g in ["main-online", "tasks-group", "models-group"] {
+        for g in ["main-online", "tasks-group", "models-group", "cocoon"] {
             let m = reg.find(g).unwrap();
             assert!(m.is_group, "{} 必须是父箱（is_group）", g);
             assert!(m.is_core, "{} 必须不可卸（is_core）", g);
