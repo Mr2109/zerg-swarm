@@ -284,7 +284,7 @@ func TestSpawnKernel_IndependentProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := Options{Kernel: kernel, Receipts: dir, Prefix: filepath.Join(dir, "bin")}
-	pid, _, err := o.spawnKernel(staging)
+	pid, _, err := o.spawnKernel(staging, []string{CompCore, CompAgent})
 	if err != nil {
 		t.Fatalf("spawnKernel 失败: %v", err)
 	}
