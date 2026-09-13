@@ -32,64 +32,10 @@ pub struct ZergApp {
     task_detail: Arc<Mutex<Option<serde_json::Value>>>,
     git_status: Arc<Mutex<Option<api::GitStatusResp>>>,
     logs: Arc<Mutex<Option<Vec<String>>>>,
-    docs: Arc<Mutex<Option<(Vec<String>, Vec<String>)>>>, // v2.5.6 (files, dirs)——目录树+文件列表
-    // 文档视图状态（三栏——Mr2109 2026-08-29: 目录树|文件|正文）
-    doc_dir: String, // 第一栏选中的目录（如 "项目文档/v2.5.6"）
-    doc_file: String,
-    doc_content: Arc<Mutex<Option<String>>>,
-    // APP-A20（2026-09-10 审计）: 正文拉取失败文案——原来失败写 None，第三栏只剩
-    // 永久 spinner（无法区分「在读」与「读失败」）。失败时置此字段，渲染成红字。
-    doc_content_err: Arc<Mutex<Option<String>>>,
-    // v2.5.6 md 编辑器（Mr2109 2026-08-29: 第三栏=md 编辑器——编辑/预览/保存）
-    // APP-A15（2026-09-10 审计）: 删除死状态 `doc_edit`——全文件只有声明/初始化/一处赋值
-    // （「切到编辑模式时同步缓冲」），没有任何读取点，等于空操作；真实编辑缓冲是
-    // Ferrite 编辑器 rope（ferrite_editor）。删除原因：留着会让维护者以为还有一层同步逻辑。
-    doc_edit_mode: bool,    // true=编辑模式 / false=预览模式
-    doc_edit_dirty: bool,   // 有未保存修改
-    doc_md_cache: egui_commonmark::CommonMarkCache, // markdown 渲染缓存
-    // M3 Ferrite 重写编辑器（Mr2109 2026-08-29——替换 TextEdit——rope 缓冲）
-    ferrite_editor: crate::modules::ferrite::MdEditor,
-    ferrite_loaded: bool, // 是否已载入当前文件到编辑器（切文件重置）
-    // M06(2026-09-10 审计): 编辑器全量文本缓存——(epoch, text)。每帧 text() 是 Rope→String 全量克隆，
-    // 大文档直接拖垮帧率；按 cache_epoch 失效，仅在内容变更后重建。
-    ferrite_text_cache: Option<(u64, String)>,
-    // 2026-09-10 审计 APP-A02: 文档操作(save/delete/rename/mkdir/copy)结果回报——
-    // 先确认成功再改本地状态;失败红字提示且不动状态(reject-before-persist)
-    doc_op_result: api::SharedResult<()>,
-    doc_op_ctx: Option<(String, String)>, // (kind, path)——成功后据此改本地状态
-    doc_op_err: Option<String>,           // 失败提示(下次成功时清除)
-    // ── 文件浏览器阶段 1（2026-09-13 设计「文件浏览器虫茧」§4.3）──────────────
-    // 根集合缓存（GET /api/fileroots——文档模块的根选择器与 file-browser 箱共用一份）
-    fb_roots: Arc<Mutex<Option<crate::modules::filebrowse::roots::RootsState>>>,
-    last_fb_roots: f64, // 根集合轮询计时（根清单几乎不变——60s）
-    // 文档模块当前根（默认 "docs"：不带 root 参数 ⇒ 与改造前逐字节等价，§4.5）
-    doc_root: String,
-    // 「交给系统」动作（open/reveal）的结果——成功提示 / 失败红字（不静默）
-    fb_action_result: api::SharedResult<String>,
-    fb_action_msg: Option<String>,
-    fb_action_err: Option<String>,
-    // file-browser 薄壳箱的组件实例（**独立状态**——与文档模块那套互不干扰）
+    // file-browser 薄壳箱的组件实例（**独立状态**——它自己那套根/选中/内容，与别处互不干扰）
     fb: crate::modules::filebrowse::FileBrowse,
-    // F4 滚动同步（编辑→预览单向——防反馈环）
-    preview_sync_line: usize,     // 上次同步的编辑滚动行
-    preview_content_h: f32,       // 预览内容高度（上次渲染）
-    preview_last_offset: f32,     // 预览当前滚动位置（用户手动滚动保持）
-    // APP-A15（2026-09-10 审计）: 删除死状态 `preview_syncing`——全文件只被赋值、
-    // 没有任何读取点（原注释承诺的「防覆盖」从未参与判断，滚动同步实际只靠
-    // preview_sync_line 比较）。删除原因：留着会让维护者以为还有一层保护。
-    // F5 AI 动力（Mr2109统一接口——网关 8082）
-    ai_busy: bool,                // AI 调用中
-    ai_status: String,            // AI 状态提示（busy 时显示）
-    ai_pending: Option<(String, api::SharedResult<String>)>, // (动作, 异步结果) 待处理
-    ai_output: Option<(String, String)>, // (动作, 结果) 完成显示
     // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块）
     chat_view: crate::modules::chat::ChatView,
-    // v2.5.6 文档右键操作（Mr2109 2026-08-29）
-    doc_clipboard: Option<String>, // 复制缓冲（复制的文件路径）
-    doc_input: Option<(String, String, String)>, // 输入对话框 (标题, 当前值, 动作令牌)——令牌用于逻辑判断(不依赖文案语言)
-    // APP-A09: 输入缓冲提升到 self（原来每帧从初值重建局部变量 → 打不进字、提交的是打开时的旧值）
-    doc_input_buf: String, // 编辑中的输入内容
-    doc_input_new: bool,   // 刚打开——仅首帧 request_focus（防每帧抢焦点/断中文 IME）
     resources: Arc<Mutex<Option<serde_json::Value>>>,
     // 集群状态
     cluster: Arc<Mutex<Option<serde_json::Value>>>,
@@ -108,8 +54,6 @@ pub struct ZergApp {
     adapter_confirm: bool, // v2.5.6 适配器修改确认态（Mr2109 2026-08-27——点应用后确认才生效）
     split_model: f32, // v2.5.6 模型库左右分割比例（可拖拽——持久化）
     split_it: f32, // v2.5.6 内部任务左右分割比例（可拖拽——持久化）
-    split_docs1: f32, // v2.5.6 文档三栏: 分类栏宽度比例（可拖拽——持久化）
-    split_docs2: f32, // v2.5.6 文档三栏: 文件栏宽度比例（可拖拽——持久化）
     adapter_schema: std::sync::Arc<std::sync::Mutex<Option<serde_json::Value>>>, // v2.5.6 当前模型适配器 schema（编辑控件渲染）
     // 触发计时
     last_ping: f64,
@@ -117,7 +61,6 @@ pub struct ZergApp {
     last_detail: f64,
     last_git: f64,
     last_logs: f64,
-    last_docs: f64,
     last_res: f64,
     last_cluster: f64,
     // 导航（v2.5.6 虫茧注册表——顶部导航——Mr2109 2026-08-29）
@@ -154,9 +97,6 @@ pub struct ZergApp {
     // 丙批 N4（2026-09-10）：前缀缓存命中率（网关 8082——30s 轮询）
     prefix_cache: api::SharedResult<serde_json::Value>,
     last_pc_fetch: std::time::Instant,
-    // M06 双渲染器（2026-09-10 Mr2109：两种都保留，含切换）——ferrite=自研样式 / commonmark=带缓存，选择持久化
-    preview_renderer_cm: bool,
-    preview_cm_cache: egui_commonmark::CommonMarkCache,
     engine_state: api::SharedResult<serde_json::Value>,
     last_engine_fetch: std::time::Instant,
     it_ctrl_busy: Option<bool>, // 请求在飞（按钮显示“切换中…”）
@@ -190,40 +130,8 @@ impl ZergApp {
             task_detail: Arc::new(Mutex::new(None)),
             git_status: Arc::new(Mutex::new(None)),
             logs: Arc::new(Mutex::new(None)),
-            docs: Arc::new(Mutex::new(None)),
-            doc_dir: String::new(), // 空 = 首次拉到目录树后自动选第一个（环境无关化——不再硬编码某台机器的中文目录名）
-            doc_file: String::new(),
-            doc_content: Arc::new(Mutex::new(None)),
-            doc_content_err: Arc::new(Mutex::new(None)),
-            doc_edit_mode: false, // 默认预览模式
-            doc_edit_dirty: false,
-            ferrite_editor: crate::modules::ferrite::MdEditor::new(),
-            ferrite_loaded: false,
-            ferrite_text_cache: None,
-            doc_op_result: Arc::new(Mutex::new(None)),
-            doc_op_ctx: None,
-            doc_op_err: None,
-            // 文件浏览器阶段 1（2026-09-13）：根集合待拉 + 文档模块默认根 = docs
-            fb_roots: Arc::new(Mutex::new(None)),
-            last_fb_roots: 0.0,
-            doc_root: "docs".to_string(),
-            fb_action_result: Arc::new(Mutex::new(None)),
-            fb_action_msg: None,
-            fb_action_err: None,
             fb: crate::modules::filebrowse::FileBrowse::new(),
-            preview_sync_line: 0,
-            preview_content_h: 0.0,
-            preview_last_offset: 0.0,
-            ai_busy: false,
-            ai_status: String::new(),
-            ai_pending: None,
-            ai_output: None,
             chat_view: crate::modules::chat::ChatView::new(),
-            doc_md_cache: egui_commonmark::CommonMarkCache::default(),
-            doc_clipboard: None,
-            doc_input: None,
-            doc_input_buf: String::new(),
-            doc_input_new: false,
             resources: Arc::new(Mutex::new(None)),
             cluster: Arc::new(Mutex::new(None)),
             res_type: "tools".to_string(), // 资源库默认工具库（模型库已独立板块——2026-08-27）
@@ -239,14 +147,11 @@ impl ZergApp {
             adapter_schema: std::sync::Arc::new(std::sync::Mutex::new(None)),
             split_model: load_layout_ratio("split_model", 0.32), // v2.5.6 布局持久化（Mr2109——拖动后下次默认）
             split_it: load_layout_ratio("split_it", 0.36),
-            split_docs1: load_layout_ratio("split_docs1", 0.22),
-            split_docs2: load_layout_ratio("split_docs2", 0.35),
             last_ping: 0.0,
             last_tasks: 0.0,
             last_detail: 0.0,
             last_git: 0.0,
             last_logs: 0.0,
-            last_docs: 0.0,
             last_res: 0.0,
             last_cluster: 0.0,
             registry: {
@@ -270,9 +175,6 @@ impl ZergApp {
             internal_tasks: std::sync::Arc::new(std::sync::Mutex::new(None)),
             last_it_fetch: std::time::Instant::now(),
             last_it_interval_fetch: std::time::Instant::now(),
-            // M06 双渲染器（2026-09-10 Mr2109：两种都保留）：选择持久化，重启后保持
-            preview_renderer_cm: Self::load_preview_pref().or_else(|| std::env::var("ZERG_PREVIEW_RENDERER").ok().map(|v| v == "commonmark")).unwrap_or(false),
-            preview_cm_cache: Default::default(),
             prefix_cache: Arc::new(Mutex::new(None)),
             last_pc_fetch: std::time::Instant::now(),
             engine_state: Arc::new(Mutex::new(None)),
@@ -307,36 +209,6 @@ impl ZergApp {
         // 收集在线结果
         if let Some(ok) = lock_recover(&self.online_result).take() {
             self.online = ok;
-        }
-        // 文档操作结果(APP-A02 2026-09-10 审计)——成功才改本地状态;失败只提示、不改状态
-        if let Some(r) = lock_recover(&self.doc_op_result).take() {
-            let ctx = self.doc_op_ctx.take();
-            match r {
-                Ok(()) => {
-                    if let Some((kind, path)) = ctx {
-                        match kind.as_str() {
-                            "del_dir" => {
-                                if self.doc_dir == path {
-                                    self.doc_dir = String::new(); // 选中目录被删 → 回到"未选"，下一帧自动选第一个
-                                }
-                            }
-                            "del_file" => {
-                                if self.doc_file == path {
-                                    self.doc_file = String::new();
-                                    *lock_recover(&self.doc_content) = None;
-                                }
-                            }
-                            "save" => {
-                                self.doc_edit_dirty = false;
-                                self.doc_edit_mode = false; // 保存成功才回预览
-                            }
-                            _ => {}
-                        }
-                    }
-                    self.doc_op_err = None;
-                }
-                Err(e) => self.doc_op_err = Some(e),
-            }
         }
         // 丙批 N4（2026-09-10）：前缀缓存命中率轮询（网关 8082——30s）
         if lock_recover(&self.prefix_cache).is_none() || self.last_pc_fetch.elapsed().as_secs() >= 30 {
@@ -427,63 +299,6 @@ impl ZergApp {
                 }
             });
         }
-        // 拉文档目录（5s——v2.5.6 实时显示变动：Mr2109 2026-08-29 之前 30s 太慢——文档改动等半分钟）
-        // 文件浏览器阶段 1（2026-09-13）：按**当前根**拉（doc_root 默认 "docs" ⇒ root 参数不带，
-        // 与改造前逐字节等价，§4.5；切到其它根才带 ?root=<id>）
-        if self.online && now - self.last_docs > 5.0 {
-            self.last_docs = now;
-            let store = self.docs.clone();
-            let perr = self.poll_err.clone();
-            let root = self.doc_root.clone();
-            let root_param = if root.is_empty() || root == "docs" {
-                None
-            } else {
-                Some(root)
-            };
-            api::runtime().spawn(async move {
-                // APP-A04: 失败保留旧值
-                // 不带 root（docs 根）走**老函数**（老端点题面逐字不变，§4.5）；其余根走参数化端点
-                let r = match root_param.as_deref() {
-                    None => api::fetch_docs_blocking().await,
-                    Some(root) => api::fetch_docs_root_blocking(Some(root)).await,
-                };
-                match r {
-                    Ok(v) => {
-                        *lock_recover(&store) = Some(v);
-                        *lock_recover(&perr) = None;
-                    }
-                    Err(e) => *lock_recover(&perr) = Some(t!("err.docs", err = e).to_string()),
-                }
-            });
-        }
-        // 文件浏览器阶段 1：拉根集合（首次即拉 + 60s——根清单几乎不变）+ 收「交给系统」动作结果
-        if self.online && (lock_recover(&self.fb_roots).is_none() || now - self.last_fb_roots > 60.0) {
-            self.last_fb_roots = now;
-            let store = self.fb_roots.clone();
-            api::runtime().spawn(async move {
-                match api::fetch_fileroots_blocking().await {
-                    Ok(v) => {
-                        *lock_recover(&store) =
-                            Some(crate::modules::filebrowse::roots::RootsState::from_json(&v))
-                    }
-                    // 失败保留旧值（离线时界面照旧可用）；不静默但不刷红字（poll_err 留给数据面）
-                    Err(e) => eprintln!("[zerg-ui] /api/fileroots failed: {}", e),
-                }
-            });
-        }
-        // APP-A02 同款纪律：open/reveal 先确认成功再提示；失败红字、不静默、不改状态
-        if let Some(r) = lock_recover(&self.fb_action_result).take() {
-            match r {
-                Ok(abs) => {
-                    self.fb_action_msg = Some(t!("fb.action.done", abs = abs).to_string());
-                    self.fb_action_err = None;
-                }
-                Err(e) => {
-                    self.fb_action_err = Some(e);
-                    self.fb_action_msg = None;
-                }
-            }
-        }
         // 拉资源库（30s——用当前类型——Mr2109 2026-08-27 修复: 之前硬编码 models 导致资源库被刷成模型库）
         if self.online && now - self.last_res > 30.0 {
             self.last_res = now;
@@ -516,152 +331,6 @@ impl ZergApp {
                     Err(e) => *lock_recover(&perr) = Some(t!("err.cluster", err = e).to_string()),
                 }
             });
-        }
-    }
-
-    /// F5 AI 动力——发起 AI 操作（总结/续写/翻译/润色——网关 8082）
-    fn ai_run(&mut self, action: &str) {
-        // 取文本：编辑器优先，未 load（预览模式）则从文档缓存取
-        let text = if self.ferrite_loaded {
-            self.ferrite_editor.text()
-        } else {
-            lock_recover(&self.doc_content).clone().unwrap_or_default()
-        };
-        if text.trim().is_empty() {
-            self.ai_output = Some(("error".to_string(), t!("ai.empty_doc").to_string()));
-            return;
-        }
-        // AI 模型解析（环境无关化 2026-09-11）：ZERG_AI_MODEL → ~/.zerg-ui-prefs.json 的 ai_model
-        // 原先硬编码私有模型名（外部用户没有该模型 → 四个 AI 动作必然失败）；缺配置时明确告知怎么配。
-        let model = std::env::var("ZERG_AI_MODEL")
-            .ok()
-            .filter(|m| !m.trim().is_empty())
-            .or_else(Self::load_ai_model_pref)
-            .unwrap_or_default();
-        if model.is_empty() {
-            self.ai_output = Some(("error".to_string(), t!("ai.no_model").to_string()));
-            return;
-        }
-        // 安全截断（按 char 边界——中文 3 字节/字不能切中间）
-        let mut clip_len = text.len().min(6000);
-        while !text.is_char_boundary(clip_len) {
-            clip_len -= 1;
-        }
-        let clip = &text[..clip_len];
-        // D3(2026-09-11): 提示词随界面语言（原为硬编码中文——英文界面也发中文提示）
-        let prompt = match action {
-            "summarize" => t!("ai.prompt_summarize", clip = clip).to_string(),
-            "continue" => t!("ai.prompt_continue", clip = clip).to_string(),
-            "translate" => t!("ai.prompt_translate", clip = clip).to_string(),
-            "polish" => t!("ai.prompt_polish", clip = clip).to_string(),
-            _ => return,
-        };
-        self.ai_busy = true;
-        self.ai_status = t!("ai.running", action = action).to_string();
-        let result: api::SharedResult<String> = Arc::new(Mutex::new(None));
-        let r2 = result.clone();
-        api::runtime().spawn(async move {
-            let res = api::ai_prompt_blocking(&model, &prompt).await;
-            *lock_recover(&r2) = Some(res);
-        });
-        self.ai_pending = Some((action.to_string(), result));
-    }
-
-    /// F5 AI 结果轮询（每帧检查 pending 是否完成）
-    fn ai_poll(&mut self) {
-        if let Some((action, result)) = self.ai_pending.clone() {
-            if let Some(res) = lock_recover(&result).clone() {
-                self.ai_pending = None;
-                self.ai_busy = false;
-                match res {
-                    Ok(text) => {
-                        self.ai_output = Some((action, text));
-                        self.ai_status = String::new();
-                    }
-                    Err(e) => {
-                        // 失败弹窗提示（不能静默）
-                        self.ai_output = Some(("error".to_string(), t!("ai.call_failed", err = e).to_string()));
-                        self.ai_status = String::new();
-                    }
-                }
-            }
-        }
-    }
-
-    /// APP-A10（2026-09-10 审计）: 确保 Ferrite 已载入当前文件——预览模式下做 AI 插入/替换前调用。
-    /// 原来 rope 里只有 AI 那段，进编辑模式时的 `if !ferrite_loaded { load(文件内容) }` 会把它覆盖掉。
-    fn ensure_editor_loaded(&mut self) {
-        if !self.ferrite_loaded {
-            let cur = lock_recover(&self.doc_content).clone().unwrap_or_default();
-            self.ferrite_editor.load(&cur);
-            self.ferrite_text_cache = None;
-            self.ferrite_loaded = true;
-        }
-    }
-
-    /// APP-A10: 预览模式渲染的是 doc_content（编辑模式渲染 rope）——AI 结果同步过去才看得见
-    fn sync_preview_after_ai(&mut self) {
-        if !self.doc_edit_mode {
-            let txt = self.ferrite_editor.text();
-            *lock_recover(&self.doc_content) = Some(txt);
-            self.ferrite_text_cache = None;
-        }
-    }
-
-    /// F5 AI 结果弹窗（总结/翻译/续写结果——可插入/替换/复制）
-    fn ai_result_view(&mut self, ctx: &egui::Context) {
-        if let Some((action, text)) = self.ai_output.clone() {
-            let title = match action.as_str() {
-                "summarize" => t!("ai.summarize", icon = icon_text("sparkles")).to_string(),
-                "continue" => t!("ai.continue", icon = icon_text("pencil-simple")).to_string(),
-                "translate" => t!("ai.translate", icon = icon_text("translate")).to_string(),
-                "polish" => t!("ai.polish", icon = icon_text("sparkles")).to_string(),
-                "error" => t!("ai.error_title", icon = icon_text("warning")).to_string(),
-                _ => t!("ai.result", icon = icon_text("sparkles")).to_string(),
-            };
-            // 窗口占界面 70% 高度（Mr2109 2026-08-29——太高挡内容）
-            let screen_rect = ctx.viewport_rect();
-            let win_h = (screen_rect.height() * 0.7).max(240.0);
-            let win_w = (screen_rect.width() * 0.6).clamp(420.0, 900.0);
-            egui::Window::new(title)
-                .collapsible(false)
-                .resizable(true)
-                .default_size([win_w, win_h])
-                .max_height(win_h)
-                .show(ctx, |ui| {
-                    egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-                        ui.label(&text); // 借用——避免 move（后面按钮还要用）
-                    });
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        if action == "error" {
-                            if ui.button(t!("action.close_icon", icon = icon_text("x-circle"))).clicked() {
-                                self.ai_output = None;
-                            }
-                            return;
-                        }
-                        if ui.button(t!("ai.insert_at_end")).clicked() {
-                            // APP-A10: 编辑器未载入（预览模式点的）→ 先载入当前文档再追加，
-                            // 否则结果既看不见、进编辑模式时又会被文件内容 load 覆盖掉
-                            self.ensure_editor_loaded();
-                            self.ferrite_editor.append_text(&format!("\n\n{}", text));
-                            self.doc_edit_dirty = true;
-                            self.sync_preview_after_ai();
-                            self.ai_output = None;
-                        }
-                        if ui.button(t!("ai.replace_all", icon = icon_text("note-pencil"))).clicked() {
-                            // APP-A10: 同上——预览模式渲染的是 doc_content，结果同步过去才看得见
-                            self.ensure_editor_loaded();
-                            self.ferrite_editor.load(&text);
-                            self.doc_edit_dirty = true;
-                            self.sync_preview_after_ai();
-                            self.ai_output = None;
-                        }
-                        if ui.button(t!("action.close_icon", icon = icon_text("x-circle"))).clicked() {
-                            self.ai_output = None;
-                        }
-                    });
-                });
         }
     }
 
@@ -1307,28 +976,6 @@ impl ZergApp {
 
     /// 渲染主区（v2.5.6——虫茧注册表分发——Mr2109 2026-08-29）
 
-    /// M06(2026-09-10 审计): 取编辑器全量文本（带 epoch 缓存——避免每帧 Rope→String 克隆）
-    fn ferrite_text_cached(&mut self) -> String {
-        let epoch = self.ferrite_editor.epoch();
-        if let Some((e, t)) = &self.ferrite_text_cache {
-            if *e == epoch {
-                return t.clone();
-            }
-        }
-        let t = self.ferrite_editor.text();
-        self.ferrite_text_cache = Some((epoch, t.clone()));
-        t
-    }
-
-    /// 文件浏览器阶段 1（2026-09-13 设计「文件浏览器虫茧」§4.3）：「交给系统」动作
-    /// （open/reveal——后端执行 open / open -R 并落审计）。异步 + 结果回报：
-    /// 与 APP-A02 同纪律——**不丢结果**，成功弱提示、失败红字（结果由 update_async 收口）。
-    fn fb_start_action(&mut self, action: &str, root: String, path: String, mode: Option<&'static str>) {
-        self.fb_action_msg = None;
-        self.fb_action_err = None;
-        self.fb_action_result =
-            crate::modules::filebrowse::actions::fileroot_action_async(action, root, path, mode);
-    }
 
     /// 当前**有效**箱（父箱 ⇒ 记忆子箱 / order 最小子箱）。渲染分发、HUD 面包屑都用它。
     /// 纯查询（只读注册表）——三个父箱因此不需要各自的渲染臂（设计 §五）。
@@ -1400,7 +1047,7 @@ impl ZergApp {
         // 2026-09-13（Mr2109纠正）：从虫茧平台栅格打开的**应用** → 顶部一条「← 虫茧平台」面包屑。
         // 应用自身是完整界面（不加标题，设计 §4.4），宿主只提供一层返回。
         // C9 第 1 步（2026-09-13）：茧**按契约装载**——打开的是契约茧 ⇒ 直接走 `Cocoon::render`
-        // 吊点并返回（宿主不再为某个茧写渲染臂）；宿主内建应用（文档）⇒ 落到它自己的渲染臂。
+        // 吊点并返回（宿主不再为任何茧写渲染臂——C9 第 4 步文档界面也已迁出）。
         if self.registry.active == zerg_module::PLATFORM_PAGE_ID {
             if let Some(open) = self.cocoon_app.clone() {
                 if !cocoon_openable(&open) {
@@ -1427,7 +1074,7 @@ impl ZergApp {
             "upgrade" => crate::modules::upgrade::ui(ui),
             "model-registry" => crate::modules::model_registry::ui(ui),
             // 文件浏览器（阶段 1——2026-09-13 设计「文件浏览器虫茧」§4.1/§4.3）：
-            // **薄壳箱**——真正实现是内建组件 ui/src/modules/filebrowse/（文档/模型/任务多处吊装）。
+            // **薄壳箱**——真正实现是内建组件 ui/src/modules/filebrowse/（宿主通用文件浏览能力）。
             // 首版：顶部根选择器 + 第一栏目录/文件列表 + 第二栏选中文件内容预览（不做内嵌编辑器）。
             "file-browser" => {
                 // 2026-09-13（设计 §4.4）：删掉重复标题块（模块名/简介）——第一行即内容。
@@ -1562,6 +1209,7 @@ impl ZergApp {
                         .into_iter()
                         .filter_map(|id| {
                             // ① 契约茧：铭牌即数据源（名字/简介走 i18n 键——仍是双语文案）
+                            // C9 第 4 步：宿主**不再**为任何应用写死卡片（文档也是茧了 ⇒ 走本分支）
                             if let Some(m) = crate::modules::cocoon::meta_of(id) {
                                 let name = if m.name_key.is_empty() {
                                     m.name.to_string()
@@ -1575,16 +1223,8 @@ impl ZergApp {
                                 };
                                 return Some((id.to_string(), m.icon.to_string(), name, desc));
                             }
-                            // ② 宿主内建应用（文档）——C9 **第 2 步**迁往<container-repo>前保持既有路径
-                            match id {
-                                "docs" => Some((
-                                    "docs".to_string(),
-                                    "📚".to_string(),
-                                    t!("mod.docs.name").to_string(),
-                                    t!("mod.docs.desc").to_string(),
-                                )),
-                                _ => None,
-                            }
+                            // ② 非茧：不是契约注册表里的应用 ⇒ 不出卡（宿主零硬编码）
+                            None
                         })
                         .collect();
                     // 卡片网格（wrap 布局——每卡固定宽 260）
@@ -1611,7 +1251,7 @@ impl ZergApp {
                                 card_ui.with_layout(egui::Layout::right_to_left(egui::Align::BOTTOM), |ui| {
                                     if cocoon_openable(id) {
                                         // 能不能打开 = 铭牌驱动（C9 第 1 步）：契约茧看 `loaded`
-                                        // （未装载 ⇒ 卡片照常但打不开）；宿主内建应用（文档）恒可。
+                                        // （未装载 ⇒ 卡片照常但打不开）。
                                         if ui.button(egui::RichText::new(t!("action.open")).size(12.0)).clicked() {
                                             self.cocoon_app = Some(id.clone());
                                         }
@@ -1642,592 +1282,6 @@ impl ZergApp {
                             }
                         });
                     });
-                }
-            }
-            "docs" => {
-                // 设计 §4.4：删重复标题块。
-                let docs_snap = lock_recover(&self.docs).clone(); // 先释放借用——内部闭包要 &mut self（F5 AI 按钮）
-                // ── 文件浏览器阶段 1（2026-09-13 设计「文件浏览器虫茧」§4.3）─────────
-                // 根集合（根选择器 + 显示上限 + 类型闸门）——先克隆成局部量，避免闭包内再借 self
-                let fb_roots_snap = lock_recover(&self.fb_roots).clone();
-                // 写菜单只对**可写根**出现（§九 Q2：非 docs 一律只读）。
-                // 根清单还没到（后端旧版/离线）时按老规则保守判定：只有 docs 根可写——
-                // 绝不因为新接口拉不到就把既有文档写功能封掉。
-                let doc_root_writable = match fb_roots_snap.as_ref() {
-                    Some(s) if s.roots.iter().any(|r| r.id == self.doc_root) => s.is_writable(&self.doc_root),
-                    _ => self.doc_root == "docs",
-                };
-                // 渲染视图参数（第一/二/三栏共用——渲染层只产意图，状态在本分支末尾统一改）
-                let fb_view = crate::modules::filebrowse::browser::FbView {
-                    root: self.doc_root.clone(),
-                    writable: doc_root_writable,
-                    dir: self.doc_dir.clone(),
-                    file: self.doc_file.clone(),
-                    cfg: fb_roots_snap.as_ref().map(|s| s.config.clone()).unwrap_or_default(),
-                };
-                let mut fb_intents: Vec<crate::modules::filebrowse::browser::FbIntent> = Vec::new();
-                if let Some((files, dirs)) = docs_snap {
-                    // 环境无关化（2026-09-11）：未选目录时自动选第一个可用目录（原先硬编码 "00-总览"，外部用户没有该目录）
-                    if self.doc_dir.is_empty() {
-                        if let Some(first) = dirs.first() {
-                            self.doc_dir = first.clone();
-                        }
-                    }
-                    // v2.5.6 三栏（Mr2109 2026-08-29）: 第一栏=目录树（dirs）| 第二栏=选中目录文件 | 第三栏=正文
-                    // 目录树——层级缩进（如 "项目文档" 顶层 / "项目文档/v2.5.6" 子级缩进）
-                    let total_w = ui.available_width();
-                    let avail_h = ui.available_height().max(200.0);
-                    let col1_w = (total_w * self.split_docs1).clamp(140.0, 320.0);
-                    let col2_w = (total_w * self.split_docs2).clamp(160.0, total_w - col1_w - 420.0);
-                    let mut drag1 = false;
-                    let mut drag2 = false;
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(total_w, avail_h),
-                        egui::Layout::left_to_right(egui::Align::TOP),
-                        |ui| {
-                        // 栏1——目录树
-                        let (c1, _) = ui.allocate_exact_size(egui::vec2(col1_w, avail_h), egui::Sense::hover());
-                        let mut c1_ui = ui.new_child(egui::UiBuilder::new().max_rect(c1).layout(egui::Layout::top_down(egui::Align::Min)));
-                        egui::ScrollArea::vertical().id_salt("docs_col1").auto_shrink(false).show(&mut c1_ui, |ui| {
-                            ui.heading(t!("docs.tree"));
-                            ui.add_space(4.0);
-                            // ── 文件浏览器阶段 1（§4.3）：第一栏顶部 = 根栏（根选择器 + 当前根绝对路径 + 「复制路径」）
-                            crate::modules::filebrowse::roots::root_bar(
-                                ui,
-                                fb_roots_snap.as_ref(),
-                                &mut self.doc_root,
-                                &mut fb_intents,
-                            );
-                            if !doc_root_writable {
-                                ui.weak(t!("fb.readonly")); // 只读根提示（写菜单也不出现）
-                            }
-                            // 「交给系统」动作的结果：失败红字 / 成功弱提示（不静默）
-                            if let Some(e) = self.fb_action_err.clone() {
-                                ui.colored_label(egui::Color32::from_rgb(230, 90, 90), format!("⚠ {}", e));
-                            }
-                            if let Some(m) = self.fb_action_msg.clone() {
-                                ui.weak(m);
-                            }
-                            ui.separator();
-                            for dir in &dirs {
-                                let depth = dir.split('/').count() - 1; // 子目录缩进
-                                // v2.5.6 只显示目录名（不含父路径前缀——Mr2109: 项目文档/v2.5.6 显示为 v2.5.6）
-                                let dir_name = dir.split('/').last().unwrap_or(dir);
-                                let label = if depth == 0 {
-                                    format!("📁 {}", dir_name)
-                                } else {
-                                    format!("{}└ 📁 {}", "  ".repeat(depth), dir_name)
-                                };
-                                let resp = ui.selectable_label(self.doc_dir == *dir, label);
-                                // v2.5.6 目录右键（Mr2109 2026-08-29: 重命名/删除/新建子目录）
-                                // 文件浏览器阶段 1（§4.3/§九 Q2）：**写菜单只对可写根**出现；
-                                // 「在访达中显示/用默认应用打开」是只读根也有的两项（打开 ≠ 改）
-                                resp.context_menu(|ui| {
-                                    if doc_root_writable {
-                                        if ui.button(t!("action.rename")).clicked() {
-                                            self.doc_input = Some((t!("docs.rename_dir").to_string(), dir.clone(), "rename_dir".to_string()));
-                                            self.doc_input_buf = dir.clone(); // APP-A09
-                                            self.doc_input_new = true;
-                                            ui.close();
-                                        }
-                                        if ui.button(format!("{} {}", icon_text("trash"), t!("action.delete"))).clicked() {
-                                            let path = dir.clone();
-                                            // APP-A02: 先确认成功再改本地状态(原实现丢结果 + 立即切目录)
-                                            self.doc_op_ctx = Some(("del_dir".to_string(), path.clone()));
-                                            self.doc_op_result = api::doc_op_async("delete", serde_json::json!({"path": path}));
-                                            ui.close();
-                                        }
-                                        if ui.button(format!("{} {}", icon_text("folder-plus"), t!("docs.new_subdir"))).clicked() {
-                                            let base = dir.clone();
-                                            self.doc_input = Some((t!("docs.new_subdir").to_string(), format!("{}/", base), "new_subdir".to_string()));
-                                            self.doc_input_buf = format!("{}/", base); // APP-A09
-                                            self.doc_input_new = true;
-                                            ui.close();
-                                        }
-                                    }
-                                    crate::modules::filebrowse::browser::system_menu(ui, &fb_view, dir, true, &mut fb_intents);
-                                });
-                                if resp.clicked() {
-                                    self.doc_dir = dir.clone();
-                                    self.doc_file = String::new();
-                                    self.doc_edit_dirty = false;
-                                    self.ferrite_loaded = false; // M3 切目录重置编辑器
-                                    *lock_recover(&self.doc_content) = None;
-                                }
-                            }
-                            // v2.5.6 空白右键——新建目录（Mr2109 2026-08-29）
-                            ui.add_space(4.0);
-                            if ui.button(format!("{} {}", icon_text("folder-plus"), t!("docs.new_dir"))).clicked() {
-                                self.doc_input = Some((t!("docs.new_dir").to_string(), String::new(), "new_dir".to_string()));
-                                self.doc_input_buf = String::new(); // APP-A09
-                                self.doc_input_new = true;
-                            }
-                        });
-                        // 拖拽条1
-                        let (d1, dr1) = ui.allocate_exact_size(egui::vec2(8.0, avail_h), egui::Sense::drag());
-                        ui.painter().rect_filled(d1, 0.0, ui.visuals().faint_bg_color);
-                        ui.painter().vline(d1.center().x, d1.y_range(), egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
-                        let _ = dr1.clone().on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-                        if dr1.dragged() {
-                            let dx = ui.input(|i| i.pointer.delta().x);
-                            self.split_docs1 = (self.split_docs1 + dx / total_w).clamp(0.12, 0.35);
-                        }
-                        // APP-A12: 拖动中只改内存——松手那一帧才落盘（原来每帧同步读写 JSON，拖 UI 卡顿）
-                        if dr1.drag_stopped() {
-                            drag1 = true;
-                        }
-                        // 栏2——选中目录的文件（直接子文件——不含更深子目录）
-                        let (c2, _) = ui.allocate_exact_size(egui::vec2(col2_w, avail_h), egui::Sense::hover());
-                        let mut c2_ui = ui.new_child(egui::UiBuilder::new().max_rect(c2).layout(egui::Layout::top_down(egui::Align::Min)));
-                        egui::ScrollArea::vertical().id_salt("docs_col2").auto_shrink(false).show(&mut c2_ui, |ui| {
-                            ui.heading(format!("📄 {}", self.doc_dir));
-                            ui.add_space(4.0);
-                            let dir_prefix = format!("{}/", self.doc_dir);
-                            let dir_files: Vec<&String> = files
-                                .iter()
-                                .filter(|f| f.starts_with(&dir_prefix))
-                                .filter(|f| {
-                                    // 直接子文件（去掉前缀后不含更深的 /）
-                                    let rest = &f[dir_prefix.len()..];
-                                    !rest.contains('/')
-                                })
-                                .collect();
-                            for f in &dir_files {
-                                let fname = f.split('/').last().unwrap_or(f);
-                                let selected = self.doc_file == f.as_str();
-                                let resp = ui.selectable_label(selected, format!("📄 {}", fname));
-                                // v2.5.6 文件右键（Mr2109 2026-08-29: 重命名/复制/粘贴/删除）
-                                // 文件浏览器阶段 1（§4.3）：写菜单只对可写根；两项「交给系统」任何根都有
-                                resp.context_menu(|ui| {
-                                    if doc_root_writable {
-                                        if ui.button(t!("action.rename")).clicked() {
-                                            self.doc_input = Some((t!("docs.rename_file").to_string(), f.to_string(), "rename_file".to_string()));
-                                            self.doc_input_buf = f.to_string(); // APP-A09
-                                            self.doc_input_new = true;
-                                            ui.close();
-                                        }
-                                        if ui.button(format!("{} {}", icon_text("copy"), t!("action.copy"))).clicked() {
-                                            self.doc_clipboard = Some(f.to_string());
-                                            ui.close();
-                                        }
-                                        if let Some(src) = self.doc_clipboard.clone() {
-                                            if ui.button(format!("{} {}", icon_text("clipboard"), t!("docs.paste_here"))).clicked() {
-                                                // 目标 = 当前目录 + 源文件名（冲突加副本后缀）
-                                                let fname_src = src.split('/').last().unwrap_or(&src).to_string();
-                                                let target = format!("{}/{}", self.doc_dir, fname_src);
-                                                // APP-A02: 粘贴(复制)也走结果回报——失败可见
-                                                self.doc_op_ctx = Some(("copy".to_string(), String::new()));
-                                                self.doc_op_result = api::doc_op_async("copy", serde_json::json!({"from": src, "to": target}));
-                                                ui.close();
-                                            }
-                                        }
-                                        if ui.button(format!("{} {}", icon_text("trash"), t!("action.delete"))).clicked() {
-                                            let path = f.to_string();
-                                            // APP-A02: 成功才清空选中/内容
-                                            self.doc_op_ctx = Some(("del_file".to_string(), path.clone()));
-                                            self.doc_op_result = api::doc_op_async("delete", serde_json::json!({"path": path}));
-                                            ui.close();
-                                        }
-                                    }
-                                    crate::modules::filebrowse::browser::system_menu(ui, &fb_view, f, false, &mut fb_intents);
-                                });
-                                if resp.clicked() {
-                                    self.doc_file = f.to_string();
-                                    self.doc_edit_dirty = false;
-                                    self.ferrite_loaded = false; // M3 切文件重置编辑器
-                                    // APP-A20（2026-09-10 审计）: 切文件立即清空旧正文+旧错误——
-                                    // 新内容到达前不再短暂显示上一个文件的正文；
-                                    // 拉取失败也不写 None 了事（原来第三栏永远转圈、无法判断读失败），
-                                    // 失败文案落到 doc_content_err 由第三栏红字渲染。
-                                    let path = f.to_string();
-                                    let store = self.doc_content.clone();
-                                    let err = self.doc_content_err.clone();
-                                    // 文件浏览器阶段 1：按**当前根**读（docs 根走老端点——§4.5 兼容）
-                                    let root = self.doc_root.clone();
-                                    *lock_recover(&self.doc_content) = None;
-                                    *lock_recover(&self.doc_content_err) = None;
-                                    api::runtime().spawn(async move {
-                                        match api::fetch_doc_content_any_root_blocking(&root, path).await {
-                                            Ok(txt) => {
-                                                *lock_recover(&store) = Some(txt);
-                                                *lock_recover(&err) = None;
-                                            }
-                                            Err(e) => {
-                                                *lock_recover(&store) = None;
-                                                *lock_recover(&err) = Some(t!("docs.read_failed", err = e).to_string());
-                                            }
-                                        }
-                                    });
-                                }
-                            }
-                            if dir_files.is_empty() {
-                                ui.weak(t!("common.none"));
-                            }
-                        });
-                        // 拖拽条2
-                        let (d2, dr2) = ui.allocate_exact_size(egui::vec2(8.0, avail_h), egui::Sense::drag());
-                        ui.painter().rect_filled(d2, 0.0, ui.visuals().faint_bg_color);
-                        ui.painter().vline(d2.center().x, d2.y_range(), egui::Stroke::new(1.0, ui.visuals().weak_text_color()));
-                        let _ = dr2.clone().on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-                        if dr2.dragged() {
-                            let dx = ui.input(|i| i.pointer.delta().x);
-                            self.split_docs2 = (self.split_docs2 + dx / total_w).clamp(0.15, 0.45);
-                        }
-                        // APP-A12: 松手才落盘
-                        if dr2.drag_stopped() {
-                            drag2 = true;
-                        }
-                        // 栏3——文件内容
-                        let c3_w = (ui.available_width() - 8.0).max(300.0);
-                        let (c3, _) = ui.allocate_exact_size(egui::vec2(c3_w, avail_h), egui::Sense::hover());
-                        let mut c3_ui = ui.new_child(egui::UiBuilder::new().max_rect(c3).layout(egui::Layout::top_down(egui::Align::Min)));
-                        if self.doc_file.is_empty() {
-                            c3_ui.weak(t!("docs.pick_hint"));
-                        } else {
-                            c3_ui.horizontal(|ui| {
-                                ui.label(format!("📄 {}", self.doc_file.split('/').last().unwrap_or("")));
-                                // v2.5.6 md 编辑器工具栏（Mr2109 2026-08-29）
-                                if ui.button(if self.doc_edit_mode { t!("docs.preview").to_string() } else { format!("{} {}", icon_text("note-pencil"), t!("action.edit")) }).clicked() {
-                                    // APP-A15: 原来这里还有一段「切到编辑时同步 doc_edit 缓冲」——
-                                    // doc_edit 已证明是只写不读的死状态（且 rope 缓冲由下方
-                                    // `if !ferrite_loaded { load(文件内容) }` 负责），整段删除。
-                                    self.doc_edit_mode = !self.doc_edit_mode;
-                                }
-                                // APP-A02: 文档操作失败红字提示（不改本地状态）
-                                let doc_err = self.doc_op_err.clone();
-                                if let Some(e) = doc_err {
-                                    ui.colored_label(
-                                        egui::Color32::from_rgb(230, 90, 90),
-                                        format!("⚠ {}", e.chars().take(80).collect::<String>()),
-                                    );
-                                }
-                                if self.doc_edit_dirty {
-                                    if ui.button(format!("{} {}", icon_text("floppy-disk"), t!("action.save"))).clicked() {
-                                        // 保存——调 /api/docs/save（M3: 取 Ferrite 编辑器文本）
-                                        let path = self.doc_file.clone();
-                                        // APP-A01 修复(2026-09-10): 编辑器从未载入(预览模式 AI 插入等)时，
-                                        // 绝不能用空/不完整缓冲覆盖整份文档——回落到当前文档内容
-                                        let content = if self.ferrite_loaded {
-                                            self.ferrite_editor.text()
-                                        } else {
-                                            lock_recover(&self.doc_content).clone().unwrap_or_default()
-                                        };
-                                        // APP-A02: 保存成功才清 dirty/回预览；失败红字提示
-                                        self.doc_op_ctx = Some(("save".to_string(), path.clone()));
-                                        self.doc_op_result = api::doc_op_async("save", serde_json::json!({"path": path, "content": content}));
-                                    }
-                                }
-                                // F5 AI 动力（Mr2109统一接口——网关 8082——虫族版编辑器本质特征）
-                                if !self.ai_busy {
-                                    if ui.button(t!("docs.ai_summary")).clicked() {
-                                        self.ai_run("summarize");
-                                    }
-                                    if ui.button(format!("{} {}", icon_text("pencil-simple"), t!("docs.ai_continue"))).clicked() {
-                                        self.ai_run("continue");
-                                    }
-                                    if ui.button(format!("{} {}", icon_text("translate"), t!("docs.ai_translate"))).clicked() {
-                                        self.ai_run("translate");
-                                    }
-                                    if ui.button(t!("docs.ai_polish")).clicked() {
-                                        self.ai_run("polish");
-                                    }
-                                } else {
-                                    ui.spinner();
-                                    ui.weak(&self.ai_status);
-                                }
-                            });
-                            c3_ui.separator();
-                            if self.doc_edit_mode {
-                                // 编辑模式——M3 Ferrite 重写编辑器 split 并排（左编辑 + 右 comrak 实时预览）
-                                let avail_h3 = c3_ui.available_height().max(200.0);
-                                // 首次进入编辑——载入内容到 rope 缓冲
-                                if !self.ferrite_loaded {
-                                    if let Some(content) = lock_recover(&self.doc_content).clone() {
-                                        self.ferrite_editor.load(&content);
-                                    }
-                                    self.ferrite_text_cache = None; // M06: 载入新内容 → 失效
-                                    self.ferrite_loaded = true;
-                                }
-                                // F4 大纲条（标题横向——点击跳转）
-                                let edit_text = self.ferrite_text_cached(); // M06: 带缓存
-                                let toc_entries = crate::modules::ferrite::toc::parse_toc(&edit_text);
-                                if !toc_entries.is_empty() {
-                                    c3_ui.horizontal(|ui| {
-                                        ui.weak(t!("docs.outline"));
-                                        let mut jump: Option<usize> = None;
-                                        egui::ScrollArea::horizontal()
-                                            .id_salt("ferrite_toc")
-                                            .auto_shrink(false)
-                                            .max_height(24.0)
-                                            .show(ui, |ui| {
-                                                for e in &toc_entries {
-                                                    let label = match e.level {
-                                                        1 => format!("{} {}", "#", e.text),
-                                                        2 => format!("{} {}", "##", e.text),
-                                                        _ => format!("{} {}", "###", e.text),
-                                                    };
-                                                    if ui
-                                                        .selectable_label(
-                                                            e.line == self.ferrite_editor.cursor_line(),
-                                                            egui::RichText::new(label).size(12.0),
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        jump = Some(e.line);
-                                                    }
-                                                    ui.separator();
-                                                }
-                                            });
-                                        if let Some(line) = jump {
-                                            self.ferrite_editor.jump_to_line(line);
-                                        }
-                                    });
-                                    c3_ui.separator();
-                                }
-                                // split: 左编辑 55% + 右预览 45%
-                                let total_w = c3_ui.available_width();
-                                let edit_w = total_w * 0.55;
-                                let preview_w = total_w - edit_w;
-                                c3_ui.allocate_ui_with_layout(
-                                    egui::vec2(total_w, avail_h3),
-                                    egui::Layout::left_to_right(egui::Align::TOP),
-                                    |ui| {
-                                        // 左——编辑器
-                                        let (erect, _) = ui.allocate_exact_size(
-                                            egui::vec2(edit_w, avail_h3),
-                                            egui::Sense::hover(),
-                                        );
-                                        let mut e_ui = ui.new_child(
-                                            egui::UiBuilder::new()
-                                                .max_rect(erect)
-                                                .layout(egui::Layout::top_down(egui::Align::Min)),
-                                        );
-                                        self.ferrite_editor.render(&mut e_ui);
-                                        if self.ferrite_editor.dirty {
-                                            self.doc_edit_dirty = true;
-                                            self.ferrite_editor.dirty = false;
-                                        }
-                                        // 右——实时预览（comrak + F4 滚动同步 编辑→预览单向）
-                                        let (prect, _) = ui.allocate_exact_size(
-                                            egui::vec2(preview_w, avail_h3),
-                                            egui::Sense::hover(),
-                                        );
-                                        let mut p_ui = ui.new_child(
-                                            egui::UiBuilder::new()
-                                                .max_rect(prect)
-                                                .layout(egui::Layout::top_down(egui::Align::Min)),
-                                        );
-                                        p_ui.separator();
-                                        // M06 双渲染器（2026-09-10 Mr2109：两种都保留，含切换）
-                                        // ferrite=自研样式（每帧 comrak 解析）；commonmark=带缓存（大文档省一半，且支持图片/公式/任务列表）
-                                        let mut flip = false;
-                                        p_ui.horizontal(|ui| {
-                                            let cur = if self.preview_renderer_cm { t!("docs.renderer_cm").to_string() } else { t!("docs.renderer_ferrite").to_string() };
-                                            if ui.small_button(t!("docs.renderer_switch", cur = cur)).clicked() {
-                                                flip = true;
-                                            }
-                                            ui.weak(t!("docs.renderer_remember"));
-                                        });
-                                        if flip {
-                                            self.preview_renderer_cm = !self.preview_renderer_cm;
-                                            Self::save_preview_pref(self.preview_renderer_cm);
-                                        }
-                                        let preview_text = self.ferrite_text_cached(); // M06: 带缓存
-                                        // F4 滚动同步：编辑 scroll_line 变化 → 预览跟随（比例换算）
-                                        let line_count = self.ferrite_editor.line_count().max(1);
-                                        let editor_line = self.ferrite_editor.scroll_line();
-                                        let sync_target = if editor_line != self.preview_sync_line {
-                                            self.preview_sync_line = editor_line;
-                                            let ratio = editor_line as f32 / line_count as f32;
-                                            let viewport = avail_h3;
-                                            (ratio * (self.preview_content_h - viewport)).max(0.0)
-                                        } else {
-                                            self.preview_last_offset
-                                        };
-                                        // 借用规则：缓存先取出为局部变量，闭包内不再触碰 self（egui 嵌套闭包不可再借 &mut self）
-                                        let use_cm = self.preview_renderer_cm;
-                                        let mut cm_cache = std::mem::take(&mut self.preview_cm_cache);
-                                        let out = egui::ScrollArea::vertical()
-                                            .id_salt("ferrite_preview")
-                                            .auto_shrink(false)
-                                            .vertical_scroll_offset(sync_target)
-                                            .show(&mut p_ui, |ui| {
-                                                if use_cm {
-                                                    // 能力对齐：带公式渲染（与对话/消息同款 KaTeX→SVG），否则切过去公式退化为纯文本
-                                                    egui_commonmark::CommonMarkViewer::new()
-                                                        .render_math_fn(Some(&crate::modules::chat::chat_view::render_math))
-                                                        .show(ui, &mut cm_cache, &preview_text);
-                                                } else {
-                                                    crate::modules::ferrite::markdown::render_markdown(ui, &preview_text);
-                                                }
-                                            });
-                                        self.preview_cm_cache = cm_cache;
-                                        self.preview_content_h = out.content_size.y;
-                                        self.preview_last_offset = out.state.offset.y;
-                                    },
-                                );
-                            } else if let Some(content) = lock_recover(&self.doc_content).clone() {
-                                // 文件浏览器阶段 1（§4.4 Q3）：**读取不限、只有界面渲染有上限**——
-                                // 超出 config.display_max 即截断渲染 + 「已显示前 X MiB／共 Y MiB」提示
-                                // + 「用默认应用打开」入口（不做内嵌编辑器）
-                                crate::modules::filebrowse::browser::render_content(
-                                    &mut c3_ui,
-                                    &fb_view,
-                                    Some(&content),
-                                    None,
-                                    &mut self.doc_md_cache,
-                                    &mut fb_intents,
-                                );
-                            } else if let Some(e) = lock_recover(&self.doc_content_err).clone() {
-                                // APP-A20: 拉取失败——红字报错（原来只写 None，这里永远转圈）
-                                c3_ui.add_space(8.0);
-                                c3_ui.colored_label(
-                                    egui::Color32::from_rgb(230, 90, 90),
-                                    format!("⚠ {}", e),
-                                );
-                                if c3_ui.button(t!("action.reload")).clicked() {
-                                    let path = self.doc_file.clone();
-                                    let store = self.doc_content.clone();
-                                    let err = self.doc_content_err.clone();
-                                    // 文件浏览器阶段 1：重读同样按当前根（与首读同一条路）
-                                    let root = self.doc_root.clone();
-                                    *lock_recover(&self.doc_content_err) = None;
-                                    api::runtime().spawn(async move {
-                                        match api::fetch_doc_content_any_root_blocking(&root, path).await {
-                                            Ok(txt) => {
-                                                *lock_recover(&store) = Some(txt);
-                                                *lock_recover(&err) = None;
-                                            }
-                                            Err(e2) => {
-                                                *lock_recover(&store) = None;
-                                                *lock_recover(&err) = Some(t!("docs.read_failed", err = e2).to_string());
-                                            }
-                                        }
-                                    });
-                                }
-                            } else {
-                                c3_ui.spinner();
-                                c3_ui.weak(t!("common.loading"));
-                            }
-                        }
-                        });
-                    if drag1 {
-                        self.save_layout_ratio("split_docs1", self.split_docs1);
-                    }
-                    if drag2 {
-                        self.save_layout_ratio("split_docs2", self.split_docs2);
-                    }
-                    // v2.5.6 输入对话框（重命名/新建目录——Mr2109 2026-08-29）
-                    // APP-A09: 输入内容存 self.doc_input_buf（原来每帧从打开时的初值重建局部变量——
-                    // 用户输入只活在当帧：打不进字、点确定提交的还是旧值；request_focus 也改成仅首帧）
-                    if let Some((title, current, action)) = self.doc_input.clone() {
-                        let mut new_val = std::mem::take(&mut self.doc_input_buf);
-                        let mut needs_focus = self.doc_input_new;
-                        let mut close = false;
-                        let mut do_submit = false;
-                        egui::Window::new(title.as_str())
-                            .collapsible(false)
-                            .resizable(false)
-                            .show(ui.ctx(), |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(t!("common.name_label"));
-                                    let resp = ui.text_edit_singleline(&mut new_val);
-                                    if needs_focus {
-                                        resp.request_focus(); // 仅首帧——原来每帧抢焦点（中文 IME 打不进）
-                                        needs_focus = false;
-                                    }
-                                    if ui.button(t!("action.ok")).clicked() {
-                                        do_submit = true;
-                                    }
-                                    if ui.button(t!("action.cancel")).clicked() {
-                                        close = true;
-                                    }
-                                });
-                                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                    do_submit = true;
-                                }
-                            });
-                        self.doc_input_buf = new_val; // 回写——下一帧继续编辑
-                        self.doc_input_new = false;
-                        if do_submit {
-                            // 提交——根据标题判断操作类型
-                            let v = self.doc_input_buf.trim().to_string();
-                            let current_path = current.clone();
-                            if !v.is_empty() {
-                                // 动作判定用 ASCII 令牌（原实现按标题文案 contains —— 语言一改即失效；
-                                // 且 "新建子目录" 不含 "新建目录" → 子目录提交曾经什么都不发生，此处一并修复）
-                                if action == "rename_dir" || action == "rename_file" {
-                                    // old=当前完整路径, new=父目录+v（目录）或 v（文件）
-                                    let parent = current_path.rfind('/').map(|i| current_path[..i].to_string()).unwrap_or_default();
-                                    let new_path = if parent.is_empty() { v.clone() } else { format!("{}/{}", parent, v) };
-                                    self.doc_op_ctx = Some(("rename".to_string(), String::new()));
-                                    self.doc_op_result = api::doc_op_async("rename", serde_json::json!({"old": current_path, "new": new_path}));
-                                } else if action == "new_dir" || action == "new_subdir" {
-                                    let new_path = if current_path.ends_with('/') {
-                                        format!("{}{}", current_path, v)
-                                    } else if current_path.is_empty() {
-                                        v.clone()
-                                    } else {
-                                        format!("{}/{}", current_path, v)
-                                    };
-                                    self.doc_op_ctx = Some(("mkdir".to_string(), String::new()));
-                                    self.doc_op_result = api::doc_op_async("mkdir", serde_json::json!({"dir": new_path}));
-                                }
-                            }
-                            close = true;
-                        }
-                        if close {
-                            self.doc_input = None;
-                            self.doc_input_buf.clear();
-                        }
-                    }
-                } else {
-                    // 列表还没到（切根中/首次拉取/离线）：**根栏照旧在**——用户总能切回 docs，
-                    // 不会因为「新根拉不到」被困在一个空页面上（§4.3 空态不做自动创建）
-                    crate::modules::filebrowse::roots::root_bar(
-                        ui,
-                        fb_roots_snap.as_ref(),
-                        &mut self.doc_root,
-                        &mut fb_intents,
-                    );
-                    if !doc_root_writable {
-                        ui.weak(t!("fb.readonly"));
-                    }
-                    ui.separator();
-                    ui.spinner();
-                    ui.weak(t!("common.loading"));
-                }
-                // ── 文件浏览器阶段 1：意图落地（渲染层只产意图——状态与请求在这里统一改）──
-                {
-                    use crate::modules::filebrowse::browser::FbIntent;
-                    for it in fb_intents {
-                        match it {
-                            FbIntent::RootChanged(_id) => {
-                                // 切根：清空旧根的选中与缓存内容（**绝不**让上一根的正文落在这根名下）
-                                self.doc_dir.clear();
-                                self.doc_file.clear();
-                                *lock_recover(&self.doc_content) = None;
-                                *lock_recover(&self.doc_content_err) = None;
-                                *lock_recover(&self.docs) = None; // 列表也清——下一帧按新根拉
-                                self.doc_edit_dirty = false;
-                                self.ferrite_loaded = false;
-                                self.last_docs = 0.0; // 立即重拉（不等 5s 轮询）
-                                self.fb_action_msg = None;
-                                self.fb_action_err = None;
-                            }
-                            FbIntent::Reveal { root, path } => {
-                                self.fb_start_action("reveal", root, path, None)
-                            }
-                            FbIntent::Open { root, path, mode } => {
-                                self.fb_start_action("open", root, path, Some(mode.as_str()))
-                            }
-                            FbIntent::CopyPath(p) => {
-                                crate::modules::filebrowse::actions::copy_path(ui.ctx(), &p)
-                            }
-                            // 文档模块的目录/文件选中在上面的点击分支就地处理（不经意图）
-                            FbIntent::PickDir(_) | FbIntent::PickFile(_) => {}
-                        }
-                    }
                 }
             }
             "models" => {
@@ -2886,32 +1940,6 @@ impl ZergApp {
         }
     }
 
-    /// 读取 AI 模型偏好（与 preview_renderer 同一文件 ~/.zerg-ui-prefs.json 的 ai_model 字段）
-    fn load_ai_model_pref() -> Option<String> {
-        // 读时兼容旧路径（api::read_prefs：新落点优先 → 旧 HOME 根文件回退）
-        let s = crate::api::read_prefs()?;
-        let v: serde_json::Value = serde_json::from_str(&s).ok()?;
-        v.get("ai_model").and_then(|x| x.as_str()).map(|x| x.to_string()).filter(|m| !m.trim().is_empty())
-    }
-
-    fn load_preview_pref() -> Option<bool> {
-        let s = crate::api::read_prefs()?;
-        Self::parse_preview_pref(&s)
-    }
-        /// 纯解析（可单测）：ferrite→false / commonmark→true / 其它或坏 JSON→None（用默认）
-        fn parse_preview_pref(s: &str) -> Option<bool> {
-            let v: serde_json::Value = serde_json::from_str(s).ok()?;
-            match v.get("preview_renderer").and_then(|x| x.as_str())? {
-                "commonmark" => Some(true),
-                "ferrite" => Some(false),
-                _ => None,
-            }
-        }
-
-    fn save_preview_pref(cm: bool) {
-        let v = serde_json::json!({ "preview_renderer": if cm { "commonmark" } else { "ferrite" } });
-        let _ = std::fs::write(Self::preview_pref_path(), v.to_string());
-    }
 
     fn it_ctrl_async(start: bool) -> api::SharedResult<()> {
         let out: api::SharedResult<()> = Arc::new(Mutex::new(None));
@@ -3331,13 +2359,11 @@ impl eframe::App for ZergApp {
         self.update_async(now);
         // APP-A17（2026-09-10 审计）: 原来这里是无条件 `request_repaint()`——界面完全静止
         // 也满速重绘（GPU/CPU 常驻占用、笔记本耗电）。改为按需：
-        //  · 真有后台任务在飞（AI 调用 / 文档写操作 / 内部任务启停）或示例虫茧引擎在跑 → 立即重绘；
+        //  · 真有后台任务在飞（内部任务启停）或某个茧在跑 → 立即重绘；
         //  · 其余时候 500ms 唤醒一次（数据轮询是 3/5/10/30/60s 级，帧级重绘没有任何意义，
         //    但完全不等又会饿死定时轮询，故保留一个低频心跳）。
-        let busy = self.ai_busy
-            || self.ai_pending.is_some()
-            || lock_recover(&self.doc_op_result).is_some()
-            || lock_recover(&self.it_ctrl_result).is_some()
+        // 2026-09-13（C9 第 4 步）：文档界面的 AI/写操作随茧迁出 ⇒ 这两路不再由宿主驱动重绘。
+        let busy = lock_recover(&self.it_ctrl_result).is_some()
             || self.it_ctrl_busy.is_some()
             || self.cocoon_app.is_some();
         if busy {
@@ -3403,10 +2429,6 @@ impl eframe::App for ZergApp {
             self.module_manager_view(ui.ctx());
         }
 
-        // F5 AI 动力（结果轮询 + 结果弹窗）
-        self.ai_poll();
-        self.ai_result_view(ui.ctx());
-
         egui::CentralPanel::default().show(ui, |ui| {
             // APP-A04/A11: 轮询/操作失败提示条（原来失败全静默——界面看起来"一切正常"）
             let notice = lock_recover(&self.poll_err).clone();
@@ -3433,7 +2455,7 @@ impl eframe::App for ZergApp {
 
 /// 平台卡片能否打开（C9 第 1 步——**铭牌驱动**，宿主不再写死「哪个茧已装载」）：
 /// - 契约茧：看铭牌的 `loaded`（未装载 ⇒ 卡片照常显示 + 标「未装载」+ 打不开 + 给安装指引）
-/// - 非茧 id（宿主内建应用，如「文档」成茧前）：恒可——它们走主仓自己的渲染臂
+/// - 非茧 id（宿主自己的页：对话/任务/集群……）：恒可——它们走主仓自己的渲染臂
 fn cocoon_openable(id: &str) -> bool {
     match crate::modules::cocoon::meta_of(id) {
         Some(m) => crate::modules::cocoon::openable(m),
@@ -3638,22 +2660,6 @@ impl ZergApp {
 }
 
 #[cfg(test)]
-mod m06_preview_pref_tests {
-    use super::ZergApp;
-
-    /// M06 双渲染器：偏好解析（Mr2109的"记住选择"）
-    #[test]
-    fn parse_preview_pref_cases() {
-        assert_eq!(ZergApp::parse_preview_pref(r#"{"preview_renderer":"commonmark"}"#), Some(true));
-        assert_eq!(ZergApp::parse_preview_pref(r#"{"preview_renderer":"ferrite"}"#), Some(false));
-        assert_eq!(ZergApp::parse_preview_pref(r#"{"preview_renderer":"weird"}"#), None);
-        assert_eq!(ZergApp::parse_preview_pref("not json"), None);
-        assert_eq!(ZergApp::parse_preview_pref("{}"), None);
-    }
-}
-
-
-#[cfg(test)]
 mod nav_trim_tests {
     //! 2026-09-13 设计《UI 大调动-导航精简与分组》§4.4/§七6：源码级断言（能失败）。
     //! 11 处「重复标题块」必须消失；对照组（保留项）必须仍在。
@@ -3746,21 +2752,24 @@ mod cocoon_platform_tests {
 
     const APP: &str = include_str!("app.rs");
 
-    /// **两态**：未装载的茧 ⇒ 给得出安装指引；可进入性由 `cocoon::openable` 决定 —— 宿主仍内建渲染的页（docs）**保留入口**，避免迁移期功能空档。
+    /// **两态**：可进入性由 `cocoon::openable` 决定 —— C9 第 4 步宿主**不再**内建渲染文档界面
+    /// （已整块迁进茧）⇒ 文档茧与示例虫茧**同一判据**（纯 `loaded`），没有「宿主内建回退」。
     #[test]
     fn platform_card_two_states() {
-        // ① 未安装态（本步的文档茧）
-        assert!(
+        // ① 文档茧：可进 = 它自己的装载态（本机默认构建＝已装载；公开镜像＝未装载 ⇒ 打不开 + 给指引）
+        let docs = cocoon::meta_of("docs").expect("文档茧在册");
+        assert_eq!(
             cocoon_openable("docs"),
-            "docs 未装载但宿主仍内建渲染 ⇒ 保留入口（不留功能空档；第 4 步把文档界面迁走后应改回 false）"
+            docs.loaded,
+            "未装载 ⇒ 打不开（宿主已不内建渲染文档界面——第 4 步回归纯 loaded 判据）"
         );
         assert_eq!(
-            cocoon::install_guide("docs"),
-            cocoon::meta_of("docs").map(|m| m.repo),
-            "未装载 ⇒ 给得出安装指引（指向独立仓）"
+            cocoon::install_guide("docs").is_some(),
+            !docs.loaded,
+            "未装载 ⇒ 给得出安装指引（指向独立仓）；已装载 ⇒ 不给指引"
         );
-        // ② 宿主内建 / 非茧 id 照旧可进（不降级既有行为）
-        assert!(cocoon_openable("chat"), "宿主内建箱恒可进入");
+        // ② 宿主自己的页 / 非茧 id 照旧可进（不降级既有行为）
+        assert!(cocoon_openable("chat"), "宿主自己的页恒可进入");
         assert!(cocoon_openable("not-a-cocoon-id"), "非茧 id 恒可（走主仓自己的渲染臂）");
         // ③ 已装载的示例虫茧照旧——按铭牌判定，不写死
         let rt = cocoon::meta_of("roundtable").expect("示例虫茧在册");

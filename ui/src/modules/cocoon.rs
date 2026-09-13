@@ -106,9 +106,9 @@ pub struct CocoonCtx {
     ///
     /// `MdEditor` 是宿主**自有**能力（`modules/ferrite/`，对话等模块共用）：这里只是**借出**，
     /// 不复制进任何茧（红旗：不把 Ferrite 代码复制进任何地方）。
-    editors: std::collections::HashMap<String, crate::modules::ferrite::MdEditor>,
-    /// 上一次交给每个编辑器渲染的文本——用来识别「调用方换了内容」⇒ 重新载入缓冲。
-    handed: std::collections::HashMap<String, String>,
+    /// 池子走 `Arc<Mutex>` ⇒ 同一份池子既给宿主自己的 `markdown_editor`，
+    /// 也给茧侧适配器（见 `DocsHostBridge`）——**不是两份缓冲**。
+    pool: std::sync::Arc<std::sync::Mutex<EditorPool>>,
 }
 
 impl std::fmt::Debug for CocoonCtx {
@@ -116,9 +116,75 @@ impl std::fmt::Debug for CocoonCtx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CocoonCtx")
             .field("exit_requested", &self.exit_requested)
-            .field("editors", &self.editors.len())
+            .field("editors", &lock_pool(&self.pool).editors.len())
             .field("token", &self.token.is_some())
             .finish()
+    }
+}
+
+/// 宿主编池（借用给茧的绳编辑器缓冲 + 「上次交给编辑器」的文本）。
+///
+/// 单独成结构 + `Arc<Mutex<..>>` **共享**：① 宿主跨帧保状态（光标/撤销/滚动）；
+/// ② 茧侧适配器（`HostEditor`，契约要求 `'static`）拿**同一份池子** ⇒ 两条入口语义
+/// 完全一致（实现只有一份：`render_editor`）。
+#[derive(Default)]
+pub struct EditorPool {
+    /// 每个 `id` 一份 `MdEditor`（跨帧保留光标/撤销/滚动）。
+    editors: std::collections::HashMap<String, crate::modules::ferrite::MdEditor>,
+    /// 上一次交给每个编辑器渲染的文本——用来识别「调用方换了内容」⇒ 重新载入缓冲。
+    handed: std::collections::HashMap<String, String>,
+}
+
+impl std::fmt::Debug for EditorPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EditorPool").field("editors", &self.editors.len()).finish()
+    }
+}
+
+/// 取池锁（中毒也照用——与宿主 `lock_recover` 同款纪律）。
+fn lock_pool(pool: &std::sync::Arc<std::sync::Mutex<EditorPool>>) -> std::sync::MutexGuard<'_, EditorPool> {
+    pool.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// **借用宿主 md 编辑器**的唯一实现（宿主 `CocoonCtx::markdown_editor` 与茧侧适配器共用）。
+///
+/// - `id`：这份编辑缓冲在宿主里的键——同一个茧的同一份文档要一直用同一个 `id`
+///   （否则每次都是新缓冲，光标与撤销会丢）；
+/// - `text`：进 = 当前内容；出 = 编辑后的内容（有改动时宿主**已写回**）；
+/// - 返回 [`EditorOutcome`]：没改 / 改过 / 要求保存。
+fn render_editor(
+    pool: &std::sync::Arc<std::sync::Mutex<EditorPool>>,
+    ui: &mut egui::Ui,
+    id: &str,
+    text: &mut String,
+) -> EditorOutcome {
+    let changed;
+    {
+        let mut p = lock_pool(pool);
+        // 调用方换了内容（首次 / 切换文档 / 宿主回填）⇒ 重新装载；否则保留编辑器里的编辑与历史。
+        let needs_load = p.handed.get(id).map(|prev| prev != text).unwrap_or(true);
+        let ed = p
+            .editors
+            .entry(id.to_string())
+            .or_insert_with(crate::modules::ferrite::MdEditor::new);
+        if needs_load {
+            ed.load(text);
+        }
+        ed.render(ui);
+        let now = ed.text();
+        changed = now != *text;
+        if changed {
+            *text = now;
+        }
+        p.handed.insert(id.to_string(), text.clone());
+    }
+    // 保存快捷键优先于「改动」——茧看到 SaveRequested 就知道该落盘了。
+    if save_shortcut(ui) {
+        EditorOutcome::SaveRequested
+    } else if changed {
+        EditorOutcome::Changed
+    } else {
+        EditorOutcome::Unchanged
     }
 }
 
@@ -133,39 +199,11 @@ impl CocoonCtx {
 
     /// **宿主能力：借用宿主的 md 编辑器（Ferrite）渲染一段可编辑文本。**
     ///
-    /// - `id`：这份编辑缓冲在宿主里的键——同一个茧的同一份文档要一直用同一个 `id`
-    ///   （否则每次都是新缓冲，光标与撤销会丢）；
-    /// - `text`：进 = 当前内容；出 = 编辑后的内容（有改动时宿主**已写回**）；
-    /// - 返回 [`EditorOutcome`]：没改 / 改过 / 要求保存。
-    ///
     /// 为什么契约上要有这条：茧是**独立仓**，不能反向依赖宿主、更不能把船体的 Ferrite
     /// （rope/comrak/syntect，约 1500 行）复制一份；没有它，茧只能用 `TextEdit` 凑合 ⇒
     /// **体验降级**（C9 第 3 步要消除的正是它）。接口刻意窄：只给「渲染一段文本 + 三态返回」。
     pub fn markdown_editor(&mut self, ui: &mut egui::Ui, id: &str, text: &mut String) -> EditorOutcome {
-        // 调用方换了内容（首次 / 切换文档 / 宿主回填）⇒ 重新装载；否则保留编辑器里的编辑与历史。
-        let needs_load = self.handed.get(id).map(|prev| prev != text).unwrap_or(true);
-        let ed = self
-            .editors
-            .entry(id.to_string())
-            .or_insert_with(crate::modules::ferrite::MdEditor::new);
-        if needs_load {
-            ed.load(text);
-        }
-        ed.render(ui);
-        let now = ed.text();
-        let changed = now != *text;
-        if changed {
-            *text = now;
-        }
-        self.handed.insert(id.to_string(), text.clone());
-        // 保存快捷键优先于「改动」——茧看到 SaveRequested 就知道该落盘了。
-        if save_shortcut(ui) {
-            EditorOutcome::SaveRequested
-        } else if changed {
-            EditorOutcome::Changed
-        } else {
-            EditorOutcome::Unchanged
-        }
+        render_editor(&self.pool, ui, id, text)
     }
 
     /// 该茧自家服务所需的令牌（宿主从 `ZERG_AUTH_TOKEN` / `ZERG_API_TOKEN` / 偏好文件 /
@@ -236,10 +274,13 @@ pub const ROUNDTABLE: CocoonMeta = CocoonMeta {
 
 /// 文档茧铭牌（**第一个服务型茧**——独立仓 `Mr2109/zerg-cocoon-docs`，自带 Go 服务，端口默认 8610）
 ///
-/// ⚠ C9 第 3 步：本步**只登记铭牌**（发现 + 未安装提示）——**不**把茧代码编进宿主（第 4 步才
-///   加 path 依赖 + feature）。故 `loaded` 恒为 false ⇒ 平台页出「未安装文档 → 安装」（指向其独立仓）。
-/// `version`：跨仓在编译期取不到依赖 crate 的 `CARGO_PKG_VERSION` ⇒ 与茧自己的 `Cargo.toml`
-/// **手工同步**（同示例虫茧口径；第 4 步接上依赖后改由 `zerg_cocoon_docs::version()` 守）。
+/// C9 第 4 步（2026-09-13，Mr2109「好 拆」）：宿主已把文档界面与它的写后端**整块迁出**，
+/// 本茧经 `ui/Cargo.toml` 的 path 依赖在编译期装载 ⇒ `loaded` 由 feature 决定（默认构建 = 真）。
+/// 未装载（公开快照口径）⇒ 平台页出「未安装文档 → 安装」（指向其独立仓），**不留功能空档**：
+/// 宿主编译期也没了文档界面 ⇒ 「未装载 ⇒ 打不开」正是本步要回归的口径（`openable`）。
+/// `version`：跨仓编译期取不到依赖 crate 的 `CARGO_PKG_VERSION`（cargo 不给消费者导出），
+/// 故与茧自己的 `Cargo.toml` **手工同步**——由本模块测试守（`zerg_cocoon_docs::version()`；
+/// 公开镜像未启用该 feature ⇒ 该测试不编译）。
 pub const DOCS: CocoonMeta = CocoonMeta {
     id: "docs",
     name: "Docs",
@@ -253,8 +294,7 @@ pub const DOCS: CocoonMeta = CocoonMeta {
     // 服务型茧**必须**申领能力（fail-closed，见 service_kind_requires_service_flag_and_capabilities）：
     // docs.read / docs.write = 对它**自己那份**文档目录的读写；service.self = 自带进程自管。
     capabilities: &["docs.read", "docs.write", "service.self"],
-    // 装载态 = 编译期 feature：第 4 步装上 `zerg-cocoon-docs` 后才是 true。
-    // 本步该 feature 无 `dep:`（只有声明，见 Cargo.toml）⇒ 永不被启用 ⇒ 卡片恒显「未安装」。
+    // 装载态 = 编译期 feature：接上 `zerg-cocoon-docs`（默认构建）⇒ true；公开镜像解依赖 ⇒ false。
     loaded: cfg!(feature = "zerg-cocoon-docs"),
 };
 
@@ -279,18 +319,17 @@ pub fn load(id: &str) -> Option<Box<dyn Cocoon>> {
     match id {
         #[cfg(feature = "zerg-roundtable")]
         "roundtable" => Some(Box::new(zerg_roundtable::ui::RoundtableApp::new()) as Box<dyn Cocoon>),
+        #[cfg(feature = "zerg-cocoon-docs")]
+        "docs" => Some(Box::new(zerg_cocoon_docs::DocsApp::new()) as Box<dyn Cocoon>),
         _ => None,
     }
 }
 
 /// 平台卡片能否进入（**铭牌驱动**）：未装载 ⇒ 不可进入（卡片照常 + 安装指引，绝不静默失败）。
 /// 宿主 `app::cocoon_openable` 用同一判据 ⇒ 这条口径只有一处（纯函数，可单测两态）。
+///
+/// C9 第 4 步：宿主**不再**内建渲染任何茧的界面（文档界面已迁出）⇒ 判据回归到纯 `loaded`。
 pub fn openable(m: &CocoonMeta) -> bool {
-    // 宿主仍内建渲染的内置页（如 docs）：即使该茧未装载，也保留可进入 —— 避免「未装载 ⇒ 安装」
-    // 期间出现功能空档（Mr2109 口径：不留可见空档）。茧装载后走 loaded 分支。
-    if host_builtin_openable(m.id) {
-        return true;
-    }
     m.loaded
 }
 
@@ -334,6 +373,67 @@ impl Cocoon for zerg_roundtable::ui::RoundtableApp {
         zerg_roundtable::ui::RoundtableApp::render(self, ui);
         // 茧 → 宿主：面包屑被点 ⇒ 请求回平台栅格（示例虫茧每帧开头重置该标志）
         if self.exit_platform {
+            ctx.exit_requested = true;
+        }
+    }
+}
+
+// ─── 文档茧 = 契约的第二个实现（宿主侧 glue——只做契约适配）─────────────────────
+//
+// 茧**不依赖宿主**（独立仓，不能反向依赖 zerg-ui）：这份 glue 写在宿主侧。
+// 适配的两件事（C9 第 3/4 步的宿主能力通道）：
+//   ① 茧的 `HostEditor`（窄接口）← 本宿主的 `CocoonCtx`（绳编辑器池 + 令牌）；
+//   ② 茧的 `exit_requested` → 宿主通道。
+// **不复制任何茧代码**（界面/服务/编辑器都在<container-repo>；宿主只借出 Ferrite 编辑器池）。
+
+/// 宿主能力 → 茧窄接口 `HostEditor` 的**适配器**。
+///
+/// 为什么是适配器而不是直接用宿主的 `CocoonCtx`：茧侧的 `attach_host` 要求 `Box<dyn HostEditor>`
+/// （即 `'static`），而宿主 `CocoonCtx` 是 `&mut` 借用。故适配器只持**共享池的 `Arc` 句柄**
+/// （`EditorPool`——与宿主自己那条入口同一份池子，不是两份缓冲）+ 令牌副本。
+#[cfg(feature = "zerg-cocoon-docs")]
+struct DocsHostBridge {
+    pool: std::sync::Arc<std::sync::Mutex<EditorPool>>,
+    token: Option<String>,
+}
+
+#[cfg(feature = "zerg-cocoon-docs")]
+impl zerg_cocoon_docs::contract::HostEditor for DocsHostBridge {
+    fn markdown_editor(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: &str,
+        text: &mut String,
+    ) -> zerg_cocoon_docs::contract::EditorOutcome {
+        use zerg_cocoon_docs::contract::EditorOutcome as CocoonOutcome;
+        match render_editor(&self.pool, ui, id, text) {
+            EditorOutcome::Unchanged => CocoonOutcome::Unchanged,
+            EditorOutcome::Changed => CocoonOutcome::Changed,
+            EditorOutcome::SaveRequested => CocoonOutcome::SaveRequested,
+        }
+    }
+
+    fn cocoon_token(&self) -> Option<&str> {
+        self.token.as_deref()
+    }
+}
+
+#[cfg(feature = "zerg-cocoon-docs")]
+impl Cocoon for zerg_cocoon_docs::DocsApp {
+    fn meta(&self) -> CocoonMeta {
+        DOCS
+    }
+
+    fn render(&mut self, ui: &mut egui::Ui, ctx: &mut CocoonCtx) {
+        // 契约适配（每个茧一份、4 行）：宿主通道 → 茧的窄接口，再把退出请求带回宿主通道。
+        let mut cocoon_ctx = zerg_cocoon_docs::contract::CocoonCtx::default();
+        cocoon_ctx.attach_host(Box::new(DocsHostBridge {
+            pool: std::sync::Arc::clone(&ctx.pool),
+            token: ctx.token.clone(),
+        }));
+        // 显式走它自己的 inherent render_view（避免与 trait 同名方法混淆）
+        zerg_cocoon_docs::DocsApp::render_view(self, ui, &mut cocoon_ctx);
+        if cocoon_ctx.exit_requested {
             ctx.exit_requested = true;
         }
     }
@@ -609,14 +709,18 @@ mod tests {
         frame(&ctx, Default::default(), &mut cocoon, &mut ch);
         // ① 首次：把文本交给编辑器渲染（本次没改动）
         assert_eq!(cocoon.outcomes, vec![EditorOutcome::Unchanged]);
-        let ed = ch
-            .editors
-            .get("channel-fixture")
-            .expect("宿主必须为该 id 真建出编辑器（通道真接线，不是空壳）");
-        assert_eq!(ed.text(), "# 标题\n正文", "茧的文本必须进了宿主编辑器缓冲");
+        {
+            let p = lock_pool(&ch.pool);
+            let ed = p
+                .editors
+                .get("channel-fixture")
+                .expect("宿主必须为该 id 真建出编辑器（通道真接线，不是空壳）");
+            assert_eq!(ed.text(), "# 标题\n正文", "茧的文本必须进了宿主编辑器缓冲");
+        }
 
         // ② 反向：在宿主编辑器里编辑 ⇒ 下一帧把改动写回茧
-        ch.editors
+        lock_pool(&ch.pool)
+            .editors
             .get_mut("channel-fixture")
             .unwrap()
             .insert_text("X");
@@ -628,7 +732,7 @@ mod tests {
         frame(&ctx, Default::default(), &mut cocoon, &mut ch);
         assert_eq!(cocoon.outcomes[2], EditorOutcome::Unchanged);
         // 编辑缓冲跨帧存活（同一个 id 用同一个编辑器）
-        assert_eq!(ch.editors.len(), 1, "同一个 id 只能有一份编辑缓冲（光标/撤销要跨帧）");
+        assert_eq!(lock_pool(&ch.pool).editors.len(), 1, "同一个 id 只能有一份编辑缓冲（光标/撤销要跨帧）");
         assert_eq!(cocoon.token_checks, 3, "每帧都真读了通道（不是摆设）");
     }
 
@@ -695,32 +799,53 @@ mod tests {
         assert!(dbg.contains("token: true"), "Debug 只报「有没有令牌」：{}", dbg);
     }
 
-    /// 文档茧铭牌（本步＝**未安装**态）：形态是服务型 + 独立仓地址 + 版本口径。
+    /// 文档茧铭牌（C9 第 4 步＝路径依赖已接上）：形态是服务型 + 独立仓地址 + 装载态随 feature。
     #[test]
-    fn docs_meta_declares_the_service_cocoon_as_uninstalled() {
-        let m = meta_of("docs").expect("文档茧必须在册（未安装也要能被『发现』）");
+    fn docs_meta_declares_the_service_cocoon() {
+        let m = meta_of("docs").expect("文档茧必须在册（未装载也要能被『发现』）");
         assert_eq!(m.id, "docs");
         assert_eq!(m.kind, CocoonKind::Service);
         assert!(m.needs_service, "服务型茧 ⇒ needs_service 必须 true");
         assert!(!m.capabilities.is_empty(), "服务型茧必须申领能力（fail-closed）");
         assert_eq!(m.repo, "https://github.com/Mr2109/zerg-cocoon-docs");
         assert_eq!(m.version, "0.1.0", "铭牌版本与<container-repo> Cargo.toml 手工同步（跨仓编译期取不到）");
-        // 本步**不**集成茧代码 ⇒ feature 不得被启用（第 4 步接上 path 依赖后此处随之更新）
-        assert!(
-            !cfg!(feature = "zerg-cocoon-docs"),
-            "C9 第 3 步：宿主未编入文档茧 ⇒ 该 feature 不得被启用"
+        // 装载态 = 编译期 feature（第 4 步接上 path 依赖 ⇒ 默认构建为真；公开镜像解依赖 ⇒ 假）
+        assert_eq!(m.loaded, cfg!(feature = "zerg-cocoon-docs"));
+        assert_eq!(DOCS.loaded, m.loaded);
+    }
+
+    /// 文档茧铭牌 = 它自己 crate 的版本（能失败：茧升版而铭牌没跟着改）。
+    /// 公开镜像未启用该 feature ⇒ 不编译。
+    #[cfg(feature = "zerg-cocoon-docs")]
+    #[test]
+    fn docs_meta_version_matches_the_cocoon_crate() {
+        assert_eq!(
+            DOCS.version,
+            zerg_cocoon_docs::version(),
+            "铭牌版本与文档茧 crate 的版本漂移了（跨仓编译期取不到，只能手工同步）"
         );
-        assert!(!DOCS.loaded, "未安装 ⇒ 铭牌 loaded=false");
     }
 
     /// **两态**（验收）：已装载 ⇒ 可开；未装载 ⇒ 不可开 + 给得出安装指引（指向独立仓）。
+    /// C9 第 4 步：宿主**不再**内建渲染文档界面（已迁进茧）⇒ 文档茧与示例虫茧**同一判据**（纯 `loaded`），
+    /// 不再有「宿主内建回退」。
     #[test]
     fn platform_two_states_installed_vs_not_installed() {
-        // ① 未装载态（本步的文档茧）
+        // ① 文档茧：判据就是它自己的装载态（本机默认构建＝已装载；公开镜像＝未装载）
         let docs = meta_of("docs").unwrap();
-        assert!(openable(docs),
-            "docs 未装载但宿主仍内建渲染 ⇒ 保留入口（不留功能空档；第 4 步迁走后应改回 false）");
-        assert_eq!(install_guide("docs"), Some(docs.repo), "未装载 ⇒ 安装指引指向它的独立仓");
+        assert_eq!(
+            openable(docs),
+            DOCS.loaded,
+            "宿主已不内建渲染文档界面 ⇒ 未装载就是不可进入（第 4 步回归纯 loaded 判据）"
+        );
+        assert_eq!(
+            install_guide("docs").is_some(),
+            !DOCS.loaded,
+            "未装载 ⇒ 安装指引指向它的独立仓；已装载 ⇒ 不给指引（没有要装的东西）"
+        );
+        if !DOCS.loaded {
+            assert_eq!(install_guide("docs"), Some(docs.repo));
+        }
         assert!(docs.repo.starts_with("http"), "安装指引要可点/可复制");
 
         // ② 已装载态：同一判据必须为「可开」——用夹具铭牌（绝不 new() 真茧）
@@ -737,10 +862,4 @@ mod tests {
             "示例虫茧按它自己的装载态（默认构建已装载 ⇒ 无指引；公开镜像 ⇒ 有指引）"
         );
     }
-}
-
-/// 宿主**自身**仍内建渲染的内置页（未迁移进独立茧之前，平台不夺走入口）。
-/// 目前只有 `docs`：它的界面代码仍内联在宿主里（第 4 步迁走后才从本表移除）。
-pub fn host_builtin_openable(id: &str) -> bool {
-    id == "docs"
 }

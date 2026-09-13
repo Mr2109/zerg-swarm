@@ -79,6 +79,11 @@ pub fn ai_base() -> &'static str {
 /// 返回 clone()（Client 内部是 Arc，浅拷贝共享连接池），调用方签名与用法不变。
 static CLIENT_DEFAULT: OnceLock<reqwest::Client> = OnceLock::new();
 static CLIENT_JSON: OnceLock<reqwest::Client> = OnceLock::new();
+// 2026-09-13（C9 第 4 步）：F5 AI 动力（总结/续写/翻译/润色）的唯一消费者是**旧文档界面**——
+// 它已整块迁进文档茧，本构建里这三件（client/工厂/调用）暂无消费者。**保留**：AI 网关调用是
+// **宿主能力**（茧侧按口径走宿主网关，只是本茧还没接），不删能力；标 dead_code 免得噪声掩盖真问题。
+// （下一批：给对话/任务接上，或随文档茧的 AI 按钮一起回来。）
+#[allow(dead_code)]
 static CLIENT_AI: OnceLock<reqwest::Client> = OnceLock::new();
 
 pub fn http_client() -> reqwest::Client {
@@ -114,6 +119,8 @@ pub fn http_client_json() -> reqwest::Client {
 }
 
 /// AI 网关 client（A03 2026-09-10）：连接 3s + 总 120s——模型生成慢，20s 会误杀
+/// （见上：C9 第 4 步后宿主内暂无消费者，保留为宿主能力面）
+#[allow(dead_code)]
 pub fn http_client_ai() -> reqwest::Client {
     CLIENT_AI
         .get_or_init(|| match reqwest::Client::builder()
@@ -131,7 +138,8 @@ pub fn http_client_ai() -> reqwest::Client {
 
 /// parse_api_error（A19 2026-09-10 审计）：统一解析错误响应体——主控/网关两种格式
 /// `{"error":"msg"}` 或 `{"error":{"type":"code","message":"msg"}}`；非 JSON（网关 HTML / 空 body）回显前 200 字符。
-/// 供 sync_get_public / doc_op_blocking / json_body 共用——原 doc_op_blocking 缺 message 分支，错误提示退化成"HTTP 500"。
+/// 供 sync_get_public / json_body 共用——原缺 message 分支时错误提示会退化成"HTTP 500"
+/// （2026-09-13 C9 第 4 步：原第三个消费者 `doc_op_blocking` 已随文档写端点迁进文档茧）。
 fn parse_api_error(status: reqwest::StatusCode, body: &str) -> String {
     if let Ok(v) = serde_json::from_str::<Value>(body) {
         if let Some(e) = v.get("error") {
@@ -185,6 +193,8 @@ async fn json_body(r: reqwest::Response) -> Result<Value, String> {
 
 /// F5 AI 调用（网关 8082 /v1/responses——OpenAI responses 格式）
 /// 解析 output 里的 output_text 文本（跳过 reasoning）
+/// （见上：C9 第 4 步后宿主内暂无消费者——旧文档界面的四个 AI 按钮随界面迁出，保留为宿主能力面）
+#[allow(dead_code)]
 pub async fn ai_prompt_blocking(model: &str, prompt: &str) -> Result<String, String> {
     let client = http_client_ai();
     let url = format!("{}/v1/responses", ai_base());
@@ -366,12 +376,10 @@ pub async fn fetch_logs_blocking() -> Result<Vec<String>, String> {
 }
 
 /// 文档目录（blocking）——v2.5.6 返回 files + dirs（Mr2109 2026-08-29: 目录树+文件列表）
-pub async fn fetch_docs_blocking() -> Result<(Vec<String>, Vec<String>), String> {
-    let v = sync_get_public("/api/docs").await?;
-    Ok(docs_listing(&v))
-}
-
-/// 列表响应解析（files + dirs）——老 `fetch_docs_blocking` 与文件浏览器「按根列表」共用同一份解析
+/// ⚠ 2026-09-13（C9 第 4 步）：**无 root 参数的「文档目录」函数已删**——旧文档界面随文档茧迁出；
+/// 宿主只剩**通用**文件浏览（见下方 `fetch_docs_root_blocking`：始终按白名单根取，root=None 亦走
+/// `/api/docs` 的缺省根，与文件浏览器同一条路）。
+/// 列表响应解析（files + dirs）——文件浏览器「按根列表」与老端点共用同一份解析
 /// （避免两处各写一遍 filter_map，语义一旦分叉就会出现「老端点有目录、新端点没有」的诡异差异）
 fn docs_listing(v: &Value) -> (Vec<String>, Vec<String>) {
     let pick = |key: &str| -> Vec<String> {
@@ -447,40 +455,11 @@ pub async fn fetch_doc_content_any_root_blocking(root: &str, path: String) -> Re
     }
 }
 
-/// 文档操作（blocking）——v2.5.6 右键菜单/编辑器（Mr2109 2026-08-29）
-pub async fn doc_op_blocking(action: &str, payload: serde_json::Value) -> Result<(), String> {
-    let client = http_client_json();
-    let url = format!("{}/api/docs/{}", api_base(), action);
-    let resp = client
-        .post(&url)
-        .header("X-Auth-Token", api_token())
-        .json(&payload)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        // A19（2026-09-10 审计）：与 sync_get_public 统一走 parse_api_error——
-        // 原实现只认 {"error":"str"}，漏了 {"error":{"type":..,"message":".."}}，错误提示退化成"HTTP 500"
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(parse_api_error(status, &body));
-    }
-    Ok(())
-}
-
-/// 文档操作（异步——结果交回 UI 轮询；APP-A02 2026-09-10 审计修复）
-/// 与 doc_op_blocking 同语义，但不阻塞 UI 线程、不丢结果：UI 拿到 Ok 才改本地状态，Err 红字提示
-pub fn doc_op_async(action: &str, payload: serde_json::Value) -> SharedResult<()> {
-    let out: SharedResult<()> = Arc::new(Mutex::new(None));
-    let out2 = out.clone();
-    let action = action.to_string();
-    runtime().spawn(async move {
-        let r = doc_op_blocking(&action, payload).await;
-        *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
-    });
-    out
-}
+// ── 文档操作客户端（`doc_op_blocking` / `doc_op_async`）2026-09-13（C9 第 4 步）已删 ──
+// 原因：文档**写**后端（`/api/docs/{mkdir,rename,delete,copy,save}`）随文档茧整块迁出，
+// 客户端实现由茧自带（`zerg-cocoon/文档` 的 `src/api.rs`）。宿主只剩**通用**文件浏览：
+//   · 根清单/打开/显示 → `/api/fileroots*`（POST 侧在 modules/filebrowse/actions.rs）
+//   · 读（含 docs 根）  → `/api/docs?root=&path=`（含老路径 `/api/docs/<rel>`，见上方）
 
 // task_retry_blocking 重跑任务（右键——failed→queued）
 pub async fn task_retry_blocking(id: &str) -> Result<(), String> {
