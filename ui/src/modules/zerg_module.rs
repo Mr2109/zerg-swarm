@@ -120,7 +120,7 @@ impl ModuleRegistry {
             .collect()
     }
 
-    /// 加载外部生态箱（M4——/tmp/zerg-ui/external-modules.json 配置文件声明）
+    /// 加载外部生态箱（M4——<UI 状态目录>/external-modules.json 配置文件声明；2026-09-13 起默认 ~/.zerg/state/ui）
     /// 格式: {"modules": [{"id","name","icon","description","version","url"}]}
     /// 找不到文件 = 无外部箱（正常）；读取/解析失败（M33 2026-09-10 审计：不再静默）
     /// 打一次日志便于定位（用户写的 JSON 写错时不再无声无息）。
@@ -168,7 +168,7 @@ impl ModuleRegistry {
         *e = !*e;
     }
 
-    /// 持久化——哪些箱在船上（/tmp/zerg-ui/modules.json）
+    /// 持久化——哪些箱在船上（<UI 状态目录>/modules.json；2026-09-13 起默认 ~/.zerg/state/ui，旧 /tmp 文件首次访问自动搬）
     /// 只存 enabled 状态——模块清单是代码内建的（集装箱注册）
     pub fn save(&self) {
         let dir = crate::api::ui_dir();

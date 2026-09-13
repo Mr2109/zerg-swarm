@@ -1640,11 +1640,100 @@ mod a08_abort_tests {
 
 /// UI 运行目录（ZERG_UI_DIR 可覆盖，默认 <tmp>/zerg-ui）——模块清单/外部模块声明落此
 pub fn ui_dir() -> std::path::PathBuf {
+    // 2026-09-13（Mr2109拍板 Q8）：默认位置由 /tmp/zerg-ui 改为跟随主控状态根 ~/.zerg/state/ui。
+    // 原因：/tmp 不是持久位置 —— 状态一旦被清，用户"卸下（禁用）"的集装箱会按默认全在船而复live；
+    // 且与本项目既有纪律（运行态状态进 ~/.zerg，见 statepath.Dir 的同一规则）不一致。
+    // ZERG_UI_DIR 仍可显式覆盖（本机行为不变）；首次访问会把旧 /tmp 文件搬一次，绝不覆盖已有目标。
+    if let Ok(v) = std::env::var("ZERG_UI_DIR") {
+        if !v.trim().is_empty() {
+            return std::path::PathBuf::from(v);
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let dir = std::path::PathBuf::from(home)
+        .join(".zerg")
+        .join("state")
+        .join("ui");
+    migrate_legacy_ui_state(&dir);
+    dir
+}
+
+/// 旧位置（本次改动之前）：`<ZERG_TMP_DIR|/tmp>/zerg-ui`
+fn legacy_ui_dir() -> std::path::PathBuf {
     let base = std::env::var("ZERG_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
-    std::env::var("ZERG_UI_DIR")
-        .ok()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(base).join("zerg-ui"))
+    std::path::PathBuf::from(base).join("zerg-ui")
+}
+
+/// 随容器状态一起搬的文件（两者都是"用户选择"类状态）
+const UI_STATE_FILES: [&str; 2] = ["modules.json", "external-modules.json"];
+
+/// 一次性迁移（进程内只做一次）：把旧 /tmp/zerg-ui 的状态搬到新目录。
+fn migrate_legacy_ui_state(new_dir: &std::path::Path) {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| migrate_ui_state_files(new_dir, &legacy_ui_dir()));
+}
+
+/// 迁移实现（与调用点分离，便于测试）：目标已存在则不覆盖；旧文件不存在则跳过；失败打日志不静默。
+fn migrate_ui_state_files(new_dir: &std::path::Path, old_dir: &std::path::Path) {
+    for name in UI_STATE_FILES {
+        let old = old_dir.join(name);
+        let new = new_dir.join(name);
+        if new.exists() || !old.exists() {
+            continue;
+        }
+        if let Err(e) = std::fs::create_dir_all(new_dir) {
+            eprintln!("[zerg-ui] failed to create the state directory {}: {}", new_dir.display(), e);
+            continue;
+        }
+        match std::fs::copy(&old, &new) {
+            Ok(_) => eprintln!("[zerg-ui] migrated legacy UI state {} -> {}", old.display(), new.display()),
+            Err(e) => eprintln!("[zerg-ui] failed to migrate legacy UI state {} -> {}: {}", old.display(), new.display(), e),
+        }
+    }
+}
+
+#[cfg(test)]
+mod ui_dir_tests {
+    use super::*;
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("zerg-ui-state-test-{}-{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    #[test]
+    fn migrate_copies_when_target_missing() {
+        let old = tmp("old-a");
+        let new = tmp("new-a");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("modules.json"), r#"{"git":false,"logs":false}"#).unwrap();
+        migrate_ui_state_files(&new, &old);
+        let got = std::fs::read_to_string(new.join("modules.json")).unwrap();
+        assert_eq!(got, r#"{"git":false,"logs":false}"#); // 字面值断言：逐字节相同
+    }
+
+    #[test]
+    fn migrate_never_overwrites_existing_target() {
+        let old = tmp("old-b");
+        let new = tmp("new-b");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(old.join("modules.json"), r#"{"git":false}"#).unwrap();
+        std::fs::write(new.join("modules.json"), r#"{"logs":false}"#).unwrap(); // 目标已有 → 不许动
+        migrate_ui_state_files(&new, &old);
+        assert_eq!(std::fs::read_to_string(new.join("modules.json")).unwrap(), r#"{"logs":false}"#);
+    }
+
+    #[test]
+    fn migrate_skips_when_legacy_missing() {
+        let old = tmp("old-c");   // 故意不创建
+        let new = tmp("new-c");
+        migrate_ui_state_files(&new, &old);
+        assert!(!new.join("modules.json").exists());
+        assert!(!new.join("external-modules.json").exists());
+    }
 }
 
 /// CA 任务根目录（与主控一致：ZERG_TASK_ROOT → <ZERG_TMP_DIR|/tmp>/zerg-tasks）
