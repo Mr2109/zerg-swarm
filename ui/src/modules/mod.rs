@@ -11,6 +11,8 @@ pub mod ferrite; // M3 Ferrite 重写 md 编辑器（Mr2109 2026-08-29）
 pub mod chat; // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块）
 pub mod upgrade; // L2 自动升级页（2026-09-11）
 pub mod model_registry; // 模型登记库页（GET /api/models/registry——列表+卡片+空态）
+pub mod filebrowse; // 文件/目录浏览器**组件库**（阶段 1——2026-09-13 设计「文件浏览器集装箱」§4.1）
+                    // 注意：本目录是内建**组件**（供多处吊装），不是顶栏箱；顶栏只多一只薄壳箱 file-browser
 pub mod icons; // P3 图标统一封装（iconflow——14 包 34 TTF——MIT）
 
 use eframe::egui;
@@ -104,6 +106,17 @@ pub fn build_registry() -> ModuleRegistry {
     });
 
     // 🧩 可装卸箱（甲板箱——默认在船）
+    // 文件浏览器（阶段 1——2026-09-13 设计「文件浏览器集装箱」§4.1）：只是一只**薄壳箱**，
+    // 真正的实现是内建组件 ui/src/modules/filebrowse/（供文档/模型/任务等多处吊装）。
+    // 卸下本箱不影响文档模块内的「在访达中显示/用默认应用打开」（§七 12 条）。
+    reg.register(ModuleManifest {
+        id: "file-browser",
+        name_key: "mod.file_browser.name",
+        icon: icon_text("folder-open"),
+        desc_key: "mod.file_browser.desc",
+        is_core: false,
+        version: env!("CARGO_PKG_VERSION"),
+    });
     // 🦋 虫茧（T8——zerg-cocoon 第一个茧——示例虫茧 egui 集装箱——破茧换新）
     reg.register(ModuleManifest {
         id: "roundtable",
