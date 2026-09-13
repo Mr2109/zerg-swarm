@@ -5,6 +5,7 @@ use rust_i18n::t;
 
 use crate::api::{self, TaskInfo};
 use crate::modules::icons::icon_text; // P3 图标（iconflow）
+use crate::modules::zerg_module; // 模块注册表（平台页 id 常量——C9 第 1 步）
 
 // APP-A15（2026-09-10 审计）: 删除死代码 `struct AsyncData<T>` 及其 take()/is_done()。
 // 依据：全文件 grep 只有这里的声明与 impl，从未被实例化（模块内改用
@@ -123,11 +124,12 @@ pub struct ZergApp {
     registry: crate::modules::ModuleRegistry,
     // v2.5.6 模块管理面板开关（➕ 吊装系统——M2）
     show_module_manager: bool,
-    // T8 虫茧虫茧（示例虫茧——懒加载——点虫茧首次建——切走引擎后台继续 M2）
-    // 2026-09-11 B 批（决策 5）：示例虫茧为独立仓（zerg-cocoon）的**可选**虫茧——
-    // 公开快照不启用该 feature（不编译、不链接）；未启用时平台栅格显示"未装载"。
-    #[cfg(feature = "zerg-roundtable")]
-    roundtable: Option<Box<zerg_roundtable::ui::RoundtableApp>>,
+    // C9 第 1 步（2026-09-13）：虫茧改**按契约装载**——宿主只认
+    // `CocoonMeta`（铭牌）+ `Cocoon::render`（吊点），不再持有某个茧的具体类型。
+    // 已装载的茧实例（懒加载缓存：第一次「打开」才建——示例虫茧 new() 会开库 + 起 runtime）。
+    // 用 trait 对象 ⇒ 新增一个茧宿主零改动（登记见 modules/cocoon.rs 的 REGISTERED 表）。
+    // 2026-09-11 B 批（决策 5）的口径不变：跨仓茧未启用 feature ⇒ 实例为空，平台卡片显「未装载」。
+    cocoons: Vec<Box<dyn crate::modules::cocoon::Cocoon>>,
     // T8 虫茧平台态（false=平台启动器应用栅格；true=示例虫茧全屏）
     /// 虫茧平台里**当前打开的应用卡**（None = 停在平台栅格）。2026-09-13 Mr2109纠正：
     /// 「文档」是平台的一张独立应用卡（与示例虫茧平级），不是虫茧的子标签 ⇒ 用箱 id 记录。
@@ -170,6 +172,8 @@ impl ZergApp {
     pub fn new() -> Self {
         // 2026-09-13 Q10/E18：偏好 + 布局的落点迁移（首访一次性；目标已存在绝不覆盖；测试环境跳过）
         crate::api::migrate_persistent_state_once();
+        // C9 第 1 步：把在册的茧打一行日志（诊断「平台上有哪些茧、装载没装载」；一次）
+        crate::modules::cocoon::log_catalog_once();
         Self {
             online: false,
             hud_hidden: false,
@@ -247,8 +251,8 @@ impl ZergApp {
                 r
             },
             show_module_manager: false,
-            #[cfg(feature = "zerg-roundtable")]
-            roundtable: None,
+            // C9 第 1 步：已装载的茧实例（空起步——打开平台栅格里的应用卡时才懒建）
+            cocoons: Vec::new(),
             cocoon_app: None,
             selected_task: None,
             detail_id: String::new(),
@@ -1321,7 +1325,7 @@ impl ZergApp {
     fn effective_active(&self) -> String {
         // 2026-09-13（Mr2109纠正）：虫茧平台栅格里打开的应用（如「文档」）**直接走它自己的渲染臂**
         // ——与子页签同款「零重复实现」，且一级导航高亮仍停在「虫茧」（人还在平台里）。
-        if self.registry.active == "roundtable" {
+        if self.registry.active == zerg_module::PLATFORM_PAGE_ID {
             if let Some(app) = &self.cocoon_app {
                 return app.clone();
             }
@@ -1333,6 +1337,27 @@ impl ZergApp {
             .map(String::as_str)
             .unwrap_or("");
         self.registry.effective_module(&self.registry.active, remembered)
+    }
+
+    /// 按契约渲染一个已装载的茧（C9 第 1 步——宿主只认 `Cocoon::render` 吊点）。
+    ///
+    /// 懒装载：实例第一次被打开时才建（`cocoon::load`），此后缓存在 `self.cocoons`
+    /// ⇒ 切走再回来仍是**同一个实例**（示例虫茧引擎后台继续——与契约化前行为一致）。
+    /// 退出通道：茧在 `render` 里把「回平台栅格」写进 `ctx`，宿主在这里读并清打开态
+    /// （实例保留——再打开即回到原状）。
+    fn cocoon_view(&mut self, ui: &mut egui::Ui, id: &str) {
+        if !self.cocoons.iter().any(|c| c.meta().id == id) {
+            if let Some(app) = crate::modules::cocoon::load(id) {
+                self.cocoons.push(app);
+            }
+        }
+        if let Some(idx) = self.cocoons.iter().position(|c| c.meta().id == id) {
+            let mut ctx = crate::modules::cocoon::CocoonCtx::default();
+            self.cocoons[idx].render(ui, &mut ctx);
+            if ctx.exit_requested {
+                self.cocoon_app = None;
+            }
+        }
     }
 
     fn main_view(&mut self, ui: &mut egui::Ui) {
@@ -1351,11 +1376,24 @@ impl ZergApp {
         }
         // 2026-09-13（Mr2109纠正）：从虫茧平台栅格打开的**应用** → 顶部一条「← 虫茧平台」面包屑。
         // 应用自身是完整界面（不加标题，设计 §4.4），宿主只提供一层返回。
-        if self.registry.active == "roundtable" && self.cocoon_app.is_some() {
-            if ui.button(format!("← {}", t!("cocoon.platform"))).clicked() {
-                self.cocoon_app = None;
+        // C9 第 1 步（2026-09-13）：茧**按契约装载**——打开的是契约茧 ⇒ 直接走 `Cocoon::render`
+        // 吊点并返回（宿主不再为某个茧写渲染臂）；宿主内建应用（文档）⇒ 落到它自己的渲染臂。
+        if self.registry.active == zerg_module::PLATFORM_PAGE_ID {
+            if let Some(open) = self.cocoon_app.clone() {
+                if !cocoon_openable(&open) {
+                    // 未装载的茧：不停在它的视图（铭牌 loaded 驱动——不再逐茧写 cfg）
+                    self.cocoon_app = None;
+                } else {
+                    if ui.button(format!("← {}", t!("cocoon.platform"))).clicked() {
+                        self.cocoon_app = None;
+                    }
+                    ui.add_space(6.0);
+                    if crate::modules::cocoon::meta_of(&open).is_some() {
+                        self.cocoon_view(ui, &open);
+                        return;
+                    }
+                }
             }
-            ui.add_space(6.0);
         }
         match eff.as_str() {
             "chat" => {
@@ -1481,42 +1519,47 @@ impl ZergApp {
             // 🐛 虫茧=平台（Mr2109 2026-09-03：平台界面呈现无数应用——示例虫茧只是其一）
             // rt_active=false → 平台启动器（应用栅格）；true → 示例虫茧全屏（引擎后台继续 M2）
             "roundtable" => {
-                #[cfg(not(feature = "zerg-roundtable"))]
-                {
-                    // 未装载该虫茧：永远停在平台栅格（不进入不存在的视图）。
-                    // 注意只踢「示例虫茧」——内置应用（文档）不受 feature 限制。
-                    if self.cocoon_app.as_deref() == Some("roundtable") {
-                        self.cocoon_app = None;
-                    }
-                }
+                // 注：未装载的茧在 `main_view` 开头就被清掉打开态（铭牌 `loaded` 驱动——
+                // 不再逐茧写 `#[cfg(not(feature))]` 分支，C9 第 1 步）。
                 if self.cocoon_app.is_none() {
                     // ── 平台界面：应用栅格（无数茧——每个=独立虫茧应用——示例虫茧=第一个）──
                     ui.heading(format!("{} {}", icon_text("boxes"), t!("cocoon.platform")));
                     ui.weak(t!("cocoon.platform_hint"));
                     ui.add_space(10.0);
-                    // 应用清单（平台雏形——未来读虫茧注册/目录扫描——现静态声明可扩展）
-                    // 结构：每卡=独立 git 虫茧应用（id/名字/描述/打开）
-                    // 2026-09-13（Mr2109纠正）：栅格里**每个茧 = 一张独立应用卡**。「文档」是内置模块，
+                    // 应用清单：**契约注册表驱动**（C9 第 1 步）——每卡的 id/图标/名字/简介
+                    // 全部来自茧自己的铭牌（`cocoon::catalog()`），宿主不再为某个茧写死。
+                    // 2026-09-13（Mr2109纠正）：栅格里**每个茧 = 一张独立应用卡**。「文档」是内置应用，
                     // 但在这里与示例虫茧平级——点进去是完整界面（顶部一条「← 虫茧平台」面包屑返回）。
-                    // 卡片清单由注册表给出（platform_apps）⇒ 文档被卸下则卡片消失，不写死。
+                    // 卡片清单由 platform_apps 给出 ⇒ 卸下的卡消失；未装载的茧照常出卡（铭牌在册）。
                     let cards: Vec<(String, String, String, String)> = self
                         .registry
                         .platform_apps()
                         .into_iter()
-                        .filter_map(|id| match id {
-                            "docs" => Some((
-                                "docs".to_string(),
-                                "📚".to_string(),
-                                t!("mod.docs.name").to_string(),
-                                t!("mod.docs.desc").to_string(),
-                            )),
-                            "roundtable" => Some((
-                                "roundtable".to_string(),
-                                "📖".to_string(),
-                                t!("cocoon.roundtable.name").to_string(),
-                                t!("cocoon.roundtable.desc").to_string(),
-                            )),
-                            _ => None,
+                        .filter_map(|id| {
+                            // ① 契约茧：铭牌即数据源（名字/简介走 i18n 键——仍是双语文案）
+                            if let Some(m) = crate::modules::cocoon::meta_of(id) {
+                                let name = if m.name_key.is_empty() {
+                                    m.name.to_string()
+                                } else {
+                                    t!(m.name_key).to_string()
+                                };
+                                let desc = if m.desc_key.is_empty() {
+                                    String::new()
+                                } else {
+                                    t!(m.desc_key).to_string()
+                                };
+                                return Some((id.to_string(), m.icon.to_string(), name, desc));
+                            }
+                            // ② 宿主内建应用（文档）——C9 **第 2 步**迁往<container-repo>前保持既有路径
+                            match id {
+                                "docs" => Some((
+                                    "docs".to_string(),
+                                    "📚".to_string(),
+                                    t!("mod.docs.name").to_string(),
+                                    t!("mod.docs.desc").to_string(),
+                                )),
+                                _ => None,
+                            }
                         })
                         .collect();
                     // 卡片网格（wrap 布局——每卡固定宽 260）
@@ -1542,14 +1585,15 @@ impl ZergApp {
                                 card_ui.label(egui::RichText::new(desc.as_str()).size(12.0).color(egui::Color32::from_rgb(170, 175, 185)));
                                 card_ui.with_layout(egui::Layout::right_to_left(egui::Align::BOTTOM), |ui| {
                                     if ui.button(egui::RichText::new(t!("action.open")).size(12.0)).clicked() {
-                                        // 2026-09-11 B 批（决策 5）：**跨仓**虫茧需编译时装载（feature）；
-                                        // 内置应用（文档）不受此限。
-                                        if id == "docs" || cfg!(feature = "zerg-roundtable") {
+                                        // 能不能打开 = 铭牌驱动（C9 第 1 步）：契约茧看 `loaded`
+                                        // （未装载 ⇒ 卡片照常但打不开）；宿主内建应用（文档）恒可。
+                                        if cocoon_openable(id) {
                                             self.cocoon_app = Some(id.clone());
                                         }
                                     }
                                 });
-                                if id == "roundtable" && !cfg!(feature = "zerg-roundtable") {
+                                if !cocoon_openable(id) {
+                                    // 未装载：明示「未装载」（绝不静默失败——设计 §4.3）
                                     card_ui.label(
                                         egui::RichText::new(t!("cocoon.not_loaded"))
                                             .size(11.0)
@@ -1558,7 +1602,7 @@ impl ZergApp {
                                 }
                                 if card_ui.rect_contains_pointer(rect)
                                     && ui.ctx().input(|i| i.pointer.any_click())
-                                    && (id == "docs" || cfg!(feature = "zerg-roundtable"))
+                                    && cocoon_openable(id)
                                 {
                                     self.cocoon_app = Some(id.clone());
                                 }
@@ -1567,22 +1611,6 @@ impl ZergApp {
                             }
                         });
                     });
-                }
-                // ── 示例虫茧全屏（嵌中央区——面包屑一层——切走引擎后台继续 M2）──
-                // 三层收一层（2026-09-04）：宿主不再画返回条——示例虫茧面包屑自带"← 虫茧平台"
-                // 2026-09-11 B 批（决策 5）：整块随 feature 编译——未启用时不存在该视图
-                #[cfg(feature = "zerg-roundtable")]
-                if self.cocoon_app.as_deref() == Some("roundtable") {
-                    if self.roundtable.is_none() {
-                        self.roundtable = Some(Box::new(zerg_roundtable::ui::RoundtableApp::new()));
-                    }
-                    let rt = self.roundtable.as_mut().unwrap();
-                    rt.embedded = true;
-                    rt.render(ui);
-                    // 面包屑"← 虫茧平台"点击请求 → 退出回平台栅格（引擎后台继续 M2）
-                    if rt.exit_platform {
-                        self.cocoon_app = None;
-                    }
                 }
             }
             "docs" => {
@@ -3370,6 +3398,13 @@ impl eframe::App for ZergApp {
             self.hud_view(ui.ctx());
         }
     }
+}
+
+/// 平台卡片能否打开（C9 第 1 步——**铭牌驱动**，宿主不再写死「哪个茧已装载」）：
+/// - 契约茧：看铭牌的 `loaded`（未装载 ⇒ 卡片照常显示 + 标「未装载」+ 打不开）
+/// - 非茧 id（宿主内建应用，如「文档」）：恒可——它们走主仓自己的渲染臂（C9 第 2 步才迁往<container-repo>）
+fn cocoon_openable(id: &str) -> bool {
+    crate::modules::cocoon::meta_of(id).map(|m| m.loaded).unwrap_or(true)
 }
 
 /// APP-A14（2026-09-10 审计）: 共享状态取锁统一走这里——`Mutex::lock().unwrap()`
