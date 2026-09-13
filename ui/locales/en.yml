@@ -604,3 +604,13 @@ fb.error.open_failed: "Open failed (OPEN_FAILED)"
 fb.error.unknown: "Operation failed (no reason given by the controller)"
 mod.file_browser.name: "File browser"
 mod.file_browser.desc: "Shared file/directory browsing — five whitelisted roots + reveal in Finder / open with default app (the docs module reuses the same capability)"
+# ── 2026-09-13 navigation trim & grouping (design "UI overhaul — navigation trim & grouping", 4.1/4.3)
+# parent box name/desc 6 keys + status light hover 1 key + "no submodules loaded" 1 key (zh/en symmetry guarded by tests)
+status.light_tip: "Click to open Main Control (Cluster / File browser / Upgrade / Git / Logs / Cocoon)"
+mod.main_online.name: "Main Control"
+mod.main_online.desc: "Controller status — Cluster / File browser / Upgrade / Git / Logs / Cocoon (opens on the first tab, Cluster)"
+mod.tasks_group.name: "Tasks"
+mod.tasks_group.desc: "AI task system — Task Queue / Internal Tasks (submodule tabs)"
+mod.models_group.name: "Models"
+mod.models_group.desc: "Model management — Model Library / Model Registry (submodule tabs)"
+nav.no_submodules: "No submodules loaded"
