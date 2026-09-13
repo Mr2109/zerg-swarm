@@ -35,7 +35,7 @@ func (h *Handlers) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 			{"name": "list_resources", "desc": "资源库（模型/工具/skill/mcp——信任度）", "endpoint": "GET /api/resources/{type}"},
 			{"name": "list_docs", "desc": "项目文档（设计/计划）", "endpoint": "GET /api/docs"},
 			{"name": "git_status", "desc": "任务 git 状态（分支/diff）", "endpoint": "GET /api/git/status"},
-			// 2026-09-13 文件/目录浏览器 阶段 1（《设计-文件浏览器集装箱-20260913》§4.2）：
+			// 2026-09-13 文件/目录浏览器 阶段 1（《设计-文件浏览器虫茧-20260913》§4.2）：
 			// 三条端点已在 main.go 注册，能力清单也必须能发现它们——别的 agent 只 curl 这一份清单。
 			{"name": "list_fileroots", "desc": "文件浏览器：五根白名单（docs/repo/models/tasks/weights）+ 可配置项；每根含 exists（根不存在也返回该项，exists=false）", "endpoint": "GET /api/fileroots"},
 			{"name": "open_file", "desc": "用默认应用打开根内目录 / text_exts 内文本文件（白名单校验 + 审计留痕）", "endpoint": "POST /api/fileroots/open"},
