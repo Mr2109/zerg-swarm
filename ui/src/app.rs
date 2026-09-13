@@ -57,7 +57,7 @@ pub struct ZergApp {
     doc_op_result: api::SharedResult<()>,
     doc_op_ctx: Option<(String, String)>, // (kind, path)——成功后据此改本地状态
     doc_op_err: Option<String>,           // 失败提示(下次成功时清除)
-    // ── 文件浏览器阶段 1（2026-09-13 设计「文件浏览器集装箱」§4.3）──────────────
+    // ── 文件浏览器阶段 1（2026-09-13 设计「文件浏览器虫茧」§4.3）──────────────
     // 根集合缓存（GET /api/fileroots——文档模块的根选择器与 file-browser 箱共用一份）
     fb_roots: Arc<Mutex<Option<crate::modules::filebrowse::roots::RootsState>>>,
     last_fb_roots: f64, // 根集合轮询计时（根清单几乎不变——60s）
@@ -119,12 +119,12 @@ pub struct ZergApp {
     last_docs: f64,
     last_res: f64,
     last_cluster: f64,
-    // 导航（v2.5.6 集装箱注册表——顶部导航——Mr2109 2026-08-29）
+    // 导航（v2.5.6 虫茧注册表——顶部导航——Mr2109 2026-08-29）
     registry: crate::modules::ModuleRegistry,
     // v2.5.6 模块管理面板开关（➕ 吊装系统——M2）
     show_module_manager: bool,
-    // T8 虫茧集装箱（示例虫茧——懒加载——点虫茧首次建——切走引擎后台继续 M2）
-    // 2026-09-11 B 批（决策 5）：示例虫茧为独立仓（zerg-cocoon）的**可选**集装箱——
+    // T8 虫茧虫茧（示例虫茧——懒加载——点虫茧首次建——切走引擎后台继续 M2）
+    // 2026-09-11 B 批（决策 5）：示例虫茧为独立仓（zerg-cocoon）的**可选**虫茧——
     // 公开快照不启用该 feature（不编译、不链接）；未启用时平台栅格显示"未装载"。
     #[cfg(feature = "zerg-roundtable")]
     roundtable: Option<Box<zerg_roundtable::ui::RoundtableApp>>,
@@ -651,7 +651,7 @@ impl ZergApp {
         }
     }
 
-    /// 渲染主视图（v2.5.6——内容区由集装箱注册表分发）
+    /// 渲染主视图（v2.5.6——内容区由虫茧注册表分发）
     /// 渲染任务视图（主区——队列 + 详情各占一半——水平布局）
     fn tasks_view(&mut self, ui: &mut egui::Ui) {
         // 设计 §4.4：删重复标题块。
@@ -1267,7 +1267,7 @@ impl ZergApp {
         }
     }
 
-    /// 渲染主区（v2.5.6——集装箱注册表分发——Mr2109 2026-08-29）
+    /// 渲染主区（v2.5.6——虫茧注册表分发——Mr2109 2026-08-29）
 
     /// M06(2026-09-10 审计): 取编辑器全量文本（带 epoch 缓存——避免每帧 Rope→String 克隆）
     fn ferrite_text_cached(&mut self) -> String {
@@ -1282,7 +1282,7 @@ impl ZergApp {
         t
     }
 
-    /// 文件浏览器阶段 1（2026-09-13 设计「文件浏览器集装箱」§4.3）：「交给系统」动作
+    /// 文件浏览器阶段 1（2026-09-13 设计「文件浏览器虫茧」§4.3）：「交给系统」动作
     /// （open/reveal——后端执行 open / open -R 并落审计）。异步 + 结果回报：
     /// 与 APP-A02 同纪律——**不丢结果**，成功弱提示、失败红字（结果由 update_async 收口）。
     fn fb_start_action(&mut self, action: &str, root: String, path: String, mode: Option<&'static str>) {
@@ -1341,7 +1341,7 @@ impl ZergApp {
             "tasks" => self.tasks_view(ui),
             "upgrade" => crate::modules::upgrade::ui(ui),
             "model-registry" => crate::modules::model_registry::ui(ui),
-            // 文件浏览器（阶段 1——2026-09-13 设计「文件浏览器集装箱」§4.1/§4.3）：
+            // 文件浏览器（阶段 1——2026-09-13 设计「文件浏览器虫茧」§4.1/§4.3）：
             // **薄壳箱**——真正实现是内建组件 ui/src/modules/filebrowse/（文档/模型/任务多处吊装）。
             // 首版：顶部根选择器 + 第一栏目录/文件列表 + 第二栏选中文件内容预览（不做内嵌编辑器）。
             "file-browser" => {
@@ -1459,19 +1459,19 @@ impl ZergApp {
             "roundtable" => {
                 #[cfg(not(feature = "zerg-roundtable"))]
                 {
-                    // 未装载该集装箱：永远停在平台栅格（不进入不存在的视图）。
+                    // 未装载该虫茧：永远停在平台栅格（不进入不存在的视图）。
                     // 注意只踢「示例虫茧」——内置应用（文档）不受 feature 限制。
                     if self.cocoon_app.as_deref() == Some("roundtable") {
                         self.cocoon_app = None;
                     }
                 }
                 if self.cocoon_app.is_none() {
-                    // ── 平台界面：应用栅格（无数茧——每个=独立集装箱应用——示例虫茧=第一个）──
+                    // ── 平台界面：应用栅格（无数茧——每个=独立虫茧应用——示例虫茧=第一个）──
                     ui.heading(format!("{} {}", icon_text("boxes"), t!("cocoon.platform")));
                     ui.weak(t!("cocoon.platform_hint"));
                     ui.add_space(10.0);
-                    // 应用清单（平台雏形——未来读集装箱注册/目录扫描——现静态声明可扩展）
-                    // 结构：每卡=独立 git 集装箱应用（id/名字/描述/打开）
+                    // 应用清单（平台雏形——未来读虫茧注册/目录扫描——现静态声明可扩展）
+                    // 结构：每卡=独立 git 虫茧应用（id/名字/描述/打开）
                     // 2026-09-13（Mr2109纠正）：栅格里**每个茧 = 一张独立应用卡**。「文档」是内置模块，
                     // 但在这里与示例虫茧平级——点进去是完整界面（顶部一条「← 虫茧平台」面包屑返回）。
                     // 卡片清单由注册表给出（platform_apps）⇒ 文档被卸下则卡片消失，不写死。
@@ -1518,7 +1518,7 @@ impl ZergApp {
                                 card_ui.label(egui::RichText::new(desc.as_str()).size(12.0).color(egui::Color32::from_rgb(170, 175, 185)));
                                 card_ui.with_layout(egui::Layout::right_to_left(egui::Align::BOTTOM), |ui| {
                                     if ui.button(egui::RichText::new(t!("action.open")).size(12.0)).clicked() {
-                                        // 2026-09-11 B 批（决策 5）：**跨仓**集装箱需编译时装载（feature）；
+                                        // 2026-09-11 B 批（决策 5）：**跨仓**虫茧需编译时装载（feature）；
                                         // 内置应用（文档）不受此限。
                                         if id == "docs" || cfg!(feature = "zerg-roundtable") {
                                             self.cocoon_app = Some(id.clone());
@@ -1564,7 +1564,7 @@ impl ZergApp {
             "docs" => {
                 // 设计 §4.4：删重复标题块。
                 let docs_snap = lock_recover(&self.docs).clone(); // 先释放借用——内部闭包要 &mut self（F5 AI 按钮）
-                // ── 文件浏览器阶段 1（2026-09-13 设计「文件浏览器集装箱」§4.3）─────────
+                // ── 文件浏览器阶段 1（2026-09-13 设计「文件浏览器虫茧」§4.3）─────────
                 // 根集合（根选择器 + 显示上限 + 类型闸门）——先克隆成局部量，避免闭包内再借 self
                 let fb_roots_snap = lock_recover(&self.fb_roots).clone();
                 // 写菜单只对**可写根**出现（§九 Q2：非 docs 一律只读）。
@@ -3443,7 +3443,7 @@ impl ZergApp {
     /// HUD 悬浮层（挂起清单 ③——最小实现：core 状态点 + 当前模块 + running 任务数）
     fn hud_view(&mut self, ctx: &egui::Context) {
         // APP-A23 收口（2026-09-11 单一来源改造）: 版本号**不再多处硬编码**——
-        //   · UI 侧唯一来源 = ui/Cargo.toml `version`（窗口标题 + 底栏 + 10 个集装箱箱版本全用
+        //   · UI 侧唯一来源 = ui/Cargo.toml `version`（窗口标题 + 底栏 + 10 个虫茧箱版本全用
         //     env!("CARGO_PKG_VERSION") 编译期取值，改一处即全改）
         //   · Go 侧唯一来源 = core/internal/version.Version（启动横幅 + /api/capabilities + openapi info.version）
         //   · 两处一致性由门禁 scripts/check_version.py 断言（CI + 发布导出）

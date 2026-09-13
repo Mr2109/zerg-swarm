@@ -1,11 +1,11 @@
-//! 集装箱标准接口（v2.5.6 UI 蓝图——Mr2109 2026-08-29）
+//! 虫茧标准接口（v2.5.6 UI 蓝图——Mr2109 2026-08-29）
 //!
-//! 虫族 UI = 集装箱船：船体（核心）标准化，集装箱（模块）可吊装可卸下。
-//! 本文件定义"集装箱标准"——任何独立应用套上这个接口 = 一个集装箱。
+//! 虫族 UI = 虫茧船：船体（核心）标准化，虫茧（模块）可吊装可卸下。
+//! 本文件定义"虫茧标准"——任何独立应用套上这个接口 = 一个虫茧。
 //! 设计借鉴 dsh/Cordis（贡献 + 可逆生命周期）、VS Code（自举验证/懒加载）。
 //!
 //! M1 阶段：定义标准 + 注册表元数据 + 顶部导航布局（渲染仍走 ZergApp 现有方法）。
-//! M3 阶段：Ferrite 适配器用 trait 对象实现（真集装箱——升级=换 crate 版本——船体不动）。
+//! M3 阶段：Ferrite 适配器用 trait 对象实现（真虫茧——升级=换 crate 版本——船体不动）。
 //! 未来：生态箱接入（外部应用实现本 trait 挂上船）。
 
 use eframe::egui;
@@ -40,7 +40,7 @@ pub struct ModuleManifest {
     pub is_group: bool,
 }
 
-/// 集装箱标准接口——任何独立应用实现它 = 一个集装箱
+/// 虫茧标准接口——任何独立应用实现它 = 一个虫茧
 ///
 /// 借鉴 Cordis：贡献（render/ai_hook）+ 可逆生命周期（on_load/on_unload 成对）
 pub trait ZergModule {
@@ -77,11 +77,11 @@ pub struct ExternalModule {
     pub url: String,
 }
 
-/// 模块注册表（吊装系统——船体管理所有集装箱）
+/// 模块注册表（吊装系统——船体管理所有虫茧）
 ///
 /// M1 阶段：元数据注册表——顶部导航渲染 + 启用状态管理。
 /// 渲染仍由 ZergApp 现有方法承担（match id）——功能不变风险最小。
-/// M3 起：Ferrite 等独立应用以 trait 对象注册——真集装箱。
+/// M3 起：Ferrite 等独立应用以 trait 对象注册——真虫茧。
 /// M4：外部生态箱——配置文件声明（external-modules.json）——第三方挂船。
 pub struct ModuleRegistry {
     /// 所有模块清单（含核心箱 + 可装卸箱）
@@ -110,7 +110,7 @@ impl Default for ModuleRegistry {
 }
 
 impl ModuleRegistry {
-    /// 注册一个集装箱（吊装上船）
+    /// 注册一个虫茧（吊装上船）
     pub fn register(&mut self, m: ModuleManifest) {
         let id = m.id.to_string();
         self.modules.push(m);
@@ -123,7 +123,7 @@ impl ModuleRegistry {
     /// 可显示的模块列表（启用的全部箱——**平铺**）
     ///
     /// 2026-09-13（导航精简）：顶栏改走 `top_level()`/`children_of()`（父子分组），本函数不再是
-    /// 导航数据源；作为集装箱体系的**平铺视图 API**保留（E17：find()/visible() 是既有查询面，
+    /// 导航数据源；作为虫茧体系的**平铺视图 API**保留（E17：find()/visible() 是既有查询面，
     /// 供未来 M3 trait 接线与外部调用）。故显式允许 dead_code，避免"导航换了就删 API"。
     #[allow(dead_code)]
     pub fn visible(&self) -> Vec<&ModuleManifest> {
@@ -296,7 +296,7 @@ impl ModuleRegistry {
     }
 
     /// 持久化——哪些箱在船上（<UI 状态目录>/modules.json；2026-09-13 起默认 ~/.zerg/state/ui，旧 /tmp 文件首次访问自动搬）
-    /// 只存 enabled 状态——模块清单是代码内建的（集装箱注册）
+    /// 只存 enabled 状态——模块清单是代码内建的（虫茧注册）
     pub fn save(&self) {
         let dir = crate::api::ui_dir();
         // M33(2026-09-10 审计): 目录/写盘失败不再静默——用户禁用/启用选择重启即失效却无感知
