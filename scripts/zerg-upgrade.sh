@@ -753,8 +753,36 @@ stop_agentd() {
   if [ -n "$START_AGENTD" ]; then bash "$START_AGENTD" stop; return $?; fi
   systemctl stop "$AGENTD_UNIT" >/dev/null 2>&1
 }
+# agentd_mainpid —— 只读取单元主进程 pid（systemctl show 不需要特权）。
+agentd_mainpid() { systemctl show -p MainPID --value "$AGENTD_UNIT" 2>/dev/null | tr -d '[:space:]'; }
+
+# 免 root 重启回落：节点上 `systemctl restart` 要特权（sudo 往往要交互认证 ⇒ 非交互不可用），
+# 但单元是 Restart=always 且进程属主是运行用户 ⇒ **该用户自己发 TERM** 即可：
+# systemd 会按**同一个 ExecStart 路径**把它拉起来 —— 而路径没变、`bin/` 里的文件已换成新件 ⇒
+# 效果等同重启到新版本，全程不需要 root。
+kill_restart_agentd() {
+  local pid; pid="$(agentd_mainpid)"
+  case "$pid" in ''|0|*[!0-9]*) say "   ⚠️ 取不到 agentd 主进程 pid（${AGENTD_UNIT}）——无法走免 root 回落"; return 1;; esac
+  say "   ↻ 免 root 重启回落：TERM 主进程 pid=${pid}（单元 Restart=always ⇒ systemd 会用新件拉起）"
+  kill -TERM "$pid" 2>/dev/null || return 1
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    sleep 1
+    local now; now="$(agentd_mainpid)"
+    if [ -n "$now" ] && [ "$now" != "0" ] && [ "$now" != "$pid" ]; then
+      sleep 2; return 0            # 已是新 pid ⇒ systemd 重建完成
+    fi
+  done
+  return 1
+}
+
 restart_agentd() {
-  if [ -n "$START_AGENTD" ]; then bash "$START_AGENTD" restart || return 1; else systemctl restart "$AGENTD_UNIT" >/dev/null 2>&1 || return 1; fi
+  if [ -n "$START_AGENTD" ]; then bash "$START_AGENTD" restart || return 1; else
+    if ! systemctl restart "$AGENTD_UNIT" >/dev/null 2>&1; then
+      say "   ⚠️ systemctl restart 失败（无特权？）——尝试免 root 回落"
+      kill_restart_agentd || return 1
+    fi
+  fi
   sleep 2
   if [ -n "$START_AGENTD" ]; then bash "$START_AGENTD" is-active >/dev/null 2>&1; return $?; fi
   systemctl is-active "$AGENTD_UNIT" >/dev/null 2>&1

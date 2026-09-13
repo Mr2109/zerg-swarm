@@ -50,6 +50,8 @@ REAL_RC_SNAP="$(ls -la "$HOME/.zerg/update_receipts" 2>/dev/null | shasum -a 256
 
 # ── 沙箱骨架 ─────────────────────────────────────────────────────────────────
 rm -rf "$SANDBOX"; mkdir -p "$FAKEBIN" "$SANDBOX/x3" "$SANDBOX/mini1" "$SANDBOX/mini0"
+# 清理前先给只读目录松绑：上一轮可能留下 chmod -w 的夹具目录 ⇒ 直接 rm 会 Permission denied（2026-09-14 偶发实测）
+[ -d "$SANDBOX" ] && chmod -R u+w "$SANDBOX" 2>/dev/null
 : > "$SSHLOG"
 
 # ══ 0. 备料：镜像仓（main 初值 c1）+ 节点骨架 + 假 ssh ══════════════════════════

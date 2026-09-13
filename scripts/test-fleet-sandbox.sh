@@ -20,6 +20,8 @@
 #   9. UI 仅 Mac：非 darwin 平台请求 ui 组件 ⇒ 拒绝；节点路径的组件集不含 ui；
 #      真·linux/amd64 agentd（真 agent 模块交叉编译）能在 PLAT=linux-amd64 下换装并起服务（假 systemctl）
 #  10. 隔离证明：真机 bin/ 与 ~/.zerg/state/ 不变；假 ssh 只连沙箱名册目标
+#      （state 只比对**非活写**文件：运行中的主控会持续写 tool_uses/internal_engine/prefix_cache
+#        ⇒ 拿整体指纹比对会在活机上假阳，2026-09-14 实测；其余文件仍严格比对）
 #
 # 用法：bash scripts/test-fleet-sandbox.sh
 set -uo pipefail
@@ -43,7 +45,7 @@ sha12() { printf '%s' "$1" | cut -c1-12; }
 
 # ── 真机现状快照（整轮跑完必须不变）──────────────────────────────────────────
 REAL_BIN_SNAP="$(cd "$REPO_ROOT" && ls -la bin 2>/dev/null | shasum -a 256 | awk '{print $1}'; shasum -a 256 bin/* 2>/dev/null | awk '{print $1}' | shasum -a 256 | awk '{print $1}')"
-REAL_STATE_SNAP="$(find "$HOME/.zerg/state" -type f ! -name 'update_check.json' 2>/dev/null | sort | xargs -I{} shasum -a 256 {} 2>/dev/null | shasum -a 256 | awk '{print $1}')"
+REAL_STATE_SNAP="$(find "$HOME/.zerg/state" -type f ! -name 'update_check.json' ! -name 'tool_uses.json' ! -name 'internal_engine.json' ! -name 'prefix_cache.json' 2>/dev/null | sort | xargs -I{} shasum -a 256 {} 2>/dev/null | shasum -a 256 | awk '{print $1}')"
 
 # ── 沙箱骨架 ─────────────────────────────────────────────────────────────────
 pkill -f "$SANDBOX/local/bin/zerg-core" 2>/dev/null || true
@@ -51,6 +53,8 @@ pkill -f "$SANDBOX/x3/bin/zerg-agentd" 2>/dev/null || true
 pkill -f "$SANDBOX/mini1/bin/zerg-agentd" 2>/dev/null || true
 sleep 0.5
 rm -rf "$SANDBOX"; mkdir -p "$SANDBOX/fakebin"
+# 清理前先给只读目录松绑：上一轮可能留下 chmod -w 的夹具目录 ⇒ 直接 rm 会 Permission denied（2026-09-14 偶发实测）
+[ -d "$SANDBOX" ] && chmod -R u+w "$SANDBOX" 2>/dev/null
 PUB="$SANDBOX/public.git"       # 「公开仓」（裸）
 WORK="$SANDBOX/pubwork"         # 往公开仓推提交的工作区
 SSHLOG="$SANDBOX/ssh-calls.log"; : > "$SSHLOG"
@@ -745,7 +749,7 @@ assert "ui" not in d.get("components"), "节点组件不得含 ui"' "$SANDBOX/li
 
 hdr "⑩ 隔离证明：真机未被动；假 ssh 只连沙箱名册目标"
 REAL_BIN_AFTER="$(cd "$REPO_ROOT" && ls -la bin 2>/dev/null | shasum -a 256 | awk '{print $1}'; shasum -a 256 bin/* 2>/dev/null | awk '{print $1}' | shasum -a 256 | awk '{print $1}')"
-REAL_STATE_AFTER="$(find "$HOME/.zerg/state" -type f ! -name 'update_check.json' 2>/dev/null | sort | xargs -I{} shasum -a 256 {} 2>/dev/null | shasum -a 256 | awk '{print $1}')"
+REAL_STATE_AFTER="$(find "$HOME/.zerg/state" -type f ! -name 'update_check.json' ! -name 'tool_uses.json' ! -name 'internal_engine.json' ! -name 'prefix_cache.json' 2>/dev/null | sort | xargs -I{} shasum -a 256 {} 2>/dev/null | shasum -a 256 | awk '{print $1}')"
 [ "$REAL_BIN_SNAP" = "$REAL_BIN_AFTER" ] && ok "真机 bin/ 未变" || bad "真机 bin/ 被改动（越界！）"
 [ "$REAL_STATE_SNAP" = "$REAL_STATE_AFTER" ] && ok "真机 ~/.zerg/state/ 未变" || bad "真机 state/ 被改动（越界！）"
 # 断言写法刻意不出现真机内网地址（公开树里那类字面量会被替换规则改写/被敏感扫描盯上）：
