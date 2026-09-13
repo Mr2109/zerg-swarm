@@ -159,7 +159,7 @@ s = open(p, encoding="utf-8").read()
 s = re.sub(r'^.*zerg-roundtable\s*=\s*\{\s*path\s*=.*$', '', s, flags=re.M)
 s = re.sub(r'^\s*default\s*=\s*\["zerg-roundtable"\]\s*$', '', s, flags=re.M)
 s = re.sub(r'^\s*zerg-roundtable\s*=\s*\["dep:zerg-roundtable"\]\s*$',
-           'zerg-roundtable = []  # 公开快照：该集装箱（独立仓）不随发布——保留同名空 feature 以消除 cfg 警告', s, flags=re.M)
+           'zerg-roundtable = []  # 公开快照：该虫茧（独立仓）不随发布——保留同名空 feature 以消除 cfg 警告', s, flags=re.M)
 open(p, "w", encoding="utf-8").write(s)
 print("  Cargo.toml: 已解除跨仓依赖")
 PY

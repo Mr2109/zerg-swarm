@@ -126,7 +126,7 @@ POST /api/tasks
 | 接入新模型家族（特殊启动参数/思考格式/工具风格） | `core/internal/chat/...` 适配器（按模型名前缀派发）+ `agent/internal/modeladapter` |
 | 接入新推理引擎 | 子端登记表 `backend:` + 自定义 `cmd:`；或实现一个新的 adapter |
 | 加一个工具 | `core/internal/agent`（实现 + 注册表 + 简介），并同步 `tools/<name>.md` 履历 |
-| 加一个"集装箱"应用（UI 里的独立面板） | `ui/src/modules/`（可选 feature 方式编译进来，见 `zerg-roundtable` 的处理） |
+| 加一个"虫茧"应用（UI 里的独立面板） | `ui/src/modules/`（可选 feature 方式编译进来，见 `zerg-roundtable` 的处理） |
 | 换掉 UI | 只要遵守 HTTP API + 令牌，任意前端都可以 |
 
 ---

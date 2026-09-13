@@ -350,7 +350,7 @@ func main() {
 	r.Post("/api/docs/delete", handlers.DocDeleteHandler)
 	r.Post("/api/docs/copy", handlers.DocCopyHandler)
 	r.Post("/api/docs/save", handlers.DocSaveHandler)
-	// 2026-09-13 文件/目录浏览器 阶段 1（《设计-文件浏览器集装箱-20260913》§4.2）
+	// 2026-09-13 文件/目录浏览器 阶段 1（《设计-文件浏览器虫茧-20260913》§4.2）
 	//   GET  /api/fileroots         —— 五根白名单 + 可配置项（只读：不探目录、不建目录）
 	//   POST /api/fileroots/open    —— 用默认应用打开（目录 / text_exts 内类型）
 	//   POST /api/fileroots/reveal  —— 在访达中显示

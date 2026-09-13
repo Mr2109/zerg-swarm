@@ -54,7 +54,7 @@ type Handlers struct {
 	// api 侧造不出"本机有驻留"的真实快照，只能用替身验证 local 一行的合并口径。
 	LocalSnapProvider LocalSnapshotProvider
 
-	// ── 文件/目录浏览器（《设计-文件浏览器集装箱-20260913》阶段 1）──────────────
+	// ── 文件/目录浏览器（《设计-文件浏览器虫茧-20260913》阶段 1）──────────────
 	// FileBrowserAudit 仅测试注入：open/reveal 审计的目录与轮转参数（nil = ~/.zerg/logs +
 	// 1 MiB/留 5 份/清 30 天）。测试要"造小上限 + 伪时钟"验证轮转与过期清理，又不能碰 ~/.zerg。
 	FileBrowserAudit *fileBrowserAuditParams
