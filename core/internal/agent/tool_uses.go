@@ -10,6 +10,7 @@ package agent
 //   新实现=RecordToolUse 直接 flock 文件锁 读-改-写——多进程原子累加——进程内不再持写缓存。
 
 import (
+	"io"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -52,11 +53,17 @@ func flockFile() (*os.File, error) {
 	return f, nil
 }
 
-// recordToolUseLocked — 持锁写盘: 读盘 → 累加 → 截断写回
+// recordToolUseLocked — 持锁写盘: 读（**同一个 FD**）→ 累加 → 截断写回
+//
+// 2026-09-13（同前）：原来用 os.ReadFile(toolUsesFile) 会**另开一个 FD**读同一路径，
+// 一旦路径被替换（不同 inode）就可能与已持有的锁不完全对应——改为从持锁的那个 f 读，
+// 读/改/写全程落在同一 inode 上。
 func recordToolUseLocked(f *os.File, name string) error {
 	counts := map[string]int{}
-	if b, err := os.ReadFile(toolUsesFile); err == nil {
-		_ = json.Unmarshal(b, &counts)
+	if _, err := f.Seek(0, 0); err == nil {
+		if b, err := io.ReadAll(f); err == nil && len(b) > 0 {
+			_ = json.Unmarshal(b, &counts)
+		}
 	}
 	counts[name]++
 	b, _ := json.Marshal(counts)
@@ -76,6 +83,10 @@ func RecordToolUse(name string) {
 	if name == "" || name[0] == '_' {
 		return // 跳过内部工具（__bad_format__ 等）
 	}
+	// 2026-09-13（CI 偶发丢计数排查）：**进程内先串行**。flock 管跨进程，但在同进程里
+	// 依赖 flock 语义不够稳（各调用各开一个 FD）——先拿进程内互斥，再拿文件锁，两层都不省。
+	toolUseMu.Lock()
+	defer toolUseMu.Unlock()
 	f, err := flockFile()
 	if err != nil {
 		return
@@ -102,6 +113,8 @@ func ToolUsesAll() map[string]int {
 
 // ResetToolUses 归零所有工具计数（Mr2109 2026-09-02——重新计数）
 func ResetToolUses() {
+	toolUseMu.Lock()
+	defer toolUseMu.Unlock()
 	f, err := flockFile()
 	if err != nil {
 		return

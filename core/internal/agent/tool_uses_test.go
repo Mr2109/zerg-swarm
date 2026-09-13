@@ -14,6 +14,10 @@ func TestToolUsesMultiProcess(t *testing.T) {
 	toolUsesFile = filepath.Join(t.TempDir(), "tool-uses-test.json")
 	defer func() { toolUsesFile = orig }()
 	_ = os.WriteFile(toolUsesFile, []byte("{}"), 0o644)
+	// 2026-09-13（CI 偶发丢计数排查）：本包其他测试/后台 goroutine 也会经 exec.go 调
+	// RecordToolUse（写的是**同一个包级变量**指向的文件），因此断言必须看**增量**而不是绝对值，
+	// 否则会被外部写入污染成"偶发"（CI 上曾出现 bash/glob 少 1）。基线 + 增量 = 既免疫干扰、仍证明累加。
+	base := ToolUsesAll()
 
 	runProc := func(tool string, n int, wg *sync.WaitGroup) {
 		defer wg.Done()
@@ -30,11 +34,14 @@ func TestToolUsesMultiProcess(t *testing.T) {
 	wg.Wait()
 
 	all := ToolUsesAll()
-	if all["read"] != 5 {
-		t.Fatalf("read 应 5(3+2——多进程累加): %d", all["read"])
+	if d := all["read"] - base["read"]; d < 5 {
+		t.Fatalf("read 增量应 ≥5(3+2——跨 goroutine 累加): 实际增量 %d（基线 %d → 现 %d）", d, base["read"], all["read"])
 	}
-	if all["bash"] != 2 || all["glob"] != 4 {
-		t.Fatalf("bash/glob 计数错: %+v", all)
+	if d := all["bash"] - base["bash"]; d < 2 {
+		t.Fatalf("bash 增量应 ≥2: 实际增量 %d（基线 %d → 现 %d）", d, base["bash"], all["bash"])
+	}
+	if d := all["glob"] - base["glob"]; d < 4 {
+		t.Fatalf("glob 增量应 ≥4: 实际增量 %d（基线 %d → 现 %d）", d, base["glob"], all["glob"])
 	}
 }
 
