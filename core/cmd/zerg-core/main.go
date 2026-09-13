@@ -38,6 +38,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/localback"
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin/adapters"
+	"github.com/Mr2109/zerg-swarm/core/internal/selfupdate"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -52,9 +53,14 @@ func main() {
 		case "--version", "-v", "version":
 			fmt.Println(version.Line("zerg-core"))
 			return
+		case "update":
+			// 源码式自更新（B3）：`zerg update` —— 与 hermes update 同形。
+			// 它自己不是换装者：构建后 spawn 独立进程（scripts/zerg-upgrade.sh 六阶段内核）。
+			os.Exit(selfupdate.CLIMain(os.Args[2:]))
 		case "--help", "-h", "help":
 			fmt.Println("usage: zerg-core [config-file]")
 			fmt.Println("      zerg-core --version     # print code identity (machine-readable)")
+			fmt.Println("      zerg update [--check]   # source-based self-update (fetch→build→six-phase swap)")
 			fmt.Println("config defaults to ./fleet.yaml (or use -c); environment variables in docs/CONFIGURATION")
 			return
 		}
