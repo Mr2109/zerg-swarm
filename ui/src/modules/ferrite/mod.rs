@@ -6,13 +6,12 @@
 //! 追写等）在宿主里**暂无消费者**——但它们是**宿主能力**（设计 §4.2：Ferrite 绳编辑器留主仓），
 //! 且茧侧借用的正是本模块（`MdEditor` 经 `HostEditor` 通道）。**不删能力**（红线：不把宿主
 //! 能力删掉、也不把它的代码复制进茧），只在本模块统一免责，免得一大片 dead_code 噪声掩盖真问题。
+// 保留：本模块部分 API 经 `dyn`（茧契约的 HostEditor 等）调用，rustc 看不见 ⇒ 会误报 dead_code。
+// 2026-09-14：确凿死掉的 markdown/syntax/toc 三块已删除（各 336/175/73 行），此处只为动态调用留豁免。
 #![allow(dead_code)]
 
 pub mod buffer;
 pub mod editor;
 pub mod history;
-pub mod markdown;
-pub mod syntax; // F6 语法高亮（syntect——代码块）
-pub mod toc;
 
 pub use editor::MdEditor;
