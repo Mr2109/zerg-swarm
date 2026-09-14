@@ -1,9 +1,14 @@
 //go:build linux
 
-// baseline_proc_linux.go —— P2 的 Linux 侧：只读定位「谁在监听这个端口」并采集
-// 存档所需的事实（argv / cwd / starttime / cgroup / 祖先命令行）。
+// baseline_proc_linux.go —— Linux 侧只读进程事实（P4 退场清理后的残余保留面）。
 //
-// 全部只读（/proc 读取），绝不发送信号、绝不改状态——写动作在 P3 且必须走租约存档。
+// 设计依据：设计-子端沙箱化-20260914.md §10.1 baseline_proc_linux.go 行——
+// 保留：readDrmMemoryGb / readProcessMemGb（显存账逐进程归因用，P3）、
+// findListenerProcess / tcpListenInode / pidOfSocketInode（**只读**发现"谁占着"，§2.2 E4）。
+// 退场：readArgv / readStartTime / currentStartTime / collectAncestry 与
+// procInfo 的存档用途（停前存档 + 托管方式分类没有对象了——附录 C·C2）。
+//
+// 全部只读（/proc 读取），绝不发送信号、绝不改状态。
 package backend
 
 import (
@@ -13,15 +18,12 @@ import (
 	"strings"
 )
 
-// procInfo 一个已定位进程的事实集合（P3 的停前存档直接用它）。
+// procInfo 一个已定位进程的事实集合（只读发现"谁占着"；不再承载停前存档字段）。
 type procInfo struct {
-	PID       int
-	Argv      []string
-	Cwd       string
-	StartTime uint64     // /proc/<pid>/stat 第 22 字段（jiffies 起点）——PID 复用守卫
-	Cgroup    string     // /proc/<pid>/cgroup 原文——判定 systemd 单元
-	Ancestry  [][]string // 自身 + 各级父进程的 argv（近→远，最多 6 层）——判定 screen
-	MemGB     float64    // 实测占用（GB）：GPU 宿主取 drm fdinfo 的 gtt+vram，取不到才回落 RSS
+	PID    int
+	Argv   []string
+	Cgroup string  // /proc/<pid>/cgroup 原文
+	MemGB  float64 // 实测占用（GB）：GPU 宿主取 drm fdinfo 的 gtt+vram，取不到才回落 RSS
 }
 
 // readProcessMemGb 取一个推理进程的**真实占用**（GB）。
@@ -57,9 +59,6 @@ func readDrmMemoryGb(pid int) float64 {
 
 // parseDrmMemoryGb 的实现在 baseline_mem.go（无平台标签，两平台都能单测）。
 
-// currentStartTime 读 pid 此刻的 start_time（PID 复用守卫用；Linux 有真值）。
-func currentStartTime(pid int) uint64 { return readStartTime(pid) }
-
 // findListenerProcess 定位监听 127.0.0.1:port 的进程。找不到返回 (零值,false)。
 func findListenerProcess(port int) (procInfo, bool) {
 	inode := tcpListenInode(port)
@@ -72,13 +71,10 @@ func findListenerProcess(port int) (procInfo, bool) {
 	}
 	info := procInfo{PID: pid}
 	info.Argv = readArgv(pid)
-	info.Cwd = readLink(filepath.Join("/proc", strconv.Itoa(pid), "cwd"))
-	info.StartTime = readStartTime(pid)
 	if b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cgroup")); err == nil {
 		info.Cgroup = string(b)
 	}
 	info.MemGB = readProcessMemGb(pid)
-	info.Ancestry = collectAncestry(pid, 6)
 	return info, len(info.Argv) > 0
 }
 
@@ -142,7 +138,7 @@ func pidOfSocketInode(inode string) int {
 	return 0
 }
 
-// readArgv 读 /proc/<pid>/cmdline（NUL 分隔）。
+// readArgv 读 /proc/<pid>/cmdline（NUL 分隔）——只读身份判别用。
 func readArgv(pid int) []string {
 	b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
 	if err != nil {
@@ -158,72 +154,10 @@ func readArgv(pid int) []string {
 	return out
 }
 
-// readStartTime 读 /proc/<pid>/stat 的第 22 字段（starttime）——PID 复用守卫的判据。
-func readStartTime(pid int) uint64 {
-	b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
-	if err != nil {
-		return 0
-	}
-	s := string(b)
-	// comm 可能含空格/括号 ⇒ 从最后一个 ') ' 之后再切字段
-	if i := strings.LastIndex(s, ") "); i >= 0 {
-		s = s[i+2:]
-	}
-	f := strings.Fields(s)
-	// 切掉 comm 后：第 1 个字段是 state（原始第 3 字段）⇒ starttime（原始第 22）是索引 19
-	if len(f) < 20 {
-		return 0
-	}
-	n, err := strconv.ParseUint(f[19], 10, 64)
-	if err != nil {
-		return 0
-	}
-	return n
-}
-
 func readLink(p string) string {
 	s, err := os.Readlink(p)
 	if err != nil {
 		return ""
 	}
 	return s
-}
-
-// collectAncestry 采集自身与各级父进程的 argv（近→远，最多 depth 层）。
-func collectAncestry(pid int, depth int) [][]string {
-	var out [][]string
-	cur := pid
-	for i := 0; i < depth && cur > 0; i++ {
-		argv := readArgv(cur)
-		if len(argv) == 0 {
-			break
-		}
-		out = append(out, argv)
-		cur = readPPID(cur)
-		if cur <= 1 {
-			break
-		}
-	}
-	return out
-}
-
-// readPPID 读 /proc/<pid>/stat 的第 4 字段（ppid）。
-func readPPID(pid int) int {
-	b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
-	if err != nil {
-		return 0
-	}
-	s := string(b)
-	if i := strings.LastIndex(s, ") "); i >= 0 {
-		s = s[i+2:]
-	}
-	f := strings.Fields(s)
-	if len(f) < 2 {
-		return 0
-	}
-	n, err := strconv.Atoi(f[1])
-	if err != nil {
-		return 0
-	}
-	return n
 }
