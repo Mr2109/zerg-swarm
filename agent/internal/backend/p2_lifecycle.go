@@ -383,7 +383,11 @@ func (q *p2Queue) push(r qReq) bool {
 //   - 不一致（卵已换/已被收）⇒ **不得直接转发**：把该项重新送回队首并返回 mismatch，
 //     让上层重走孵化流程（Start/doStart 那条）；重走时该项仍留在队首，避免饿死。
 //
-// 返回 (item, ok, mismatch)。ok=false 表示队列空（等待 notify 或直接返回）。
+// 返回 (item, ok, mismatch)。ok=false 且 mismatch=false 表示队列空（等待 notify 或直接返回）。
+// 并发消费语义：每项恰好被一个消费者取走——重校验（currentModel 回调）与摘除在同一个
+// 临界区内完成，检查通过即摘除；检查失败（卵已换）⇒ 不摘、上报 mismatch。
+// （注：currentModel 回调在持锁状态下调用——实现必须只做无阻塞的读；如需读 Manager
+// 状态请用已缓存的值或 Manager 提供的快照，不得回调里再抢同一把锁。）
 func (q *p2Queue) popDequeue(currentModel func() string, wait bool) (qReq, bool, bool) {
 	for {
 		q.mu.Lock()
@@ -396,21 +400,15 @@ func (q *p2Queue) popDequeue(currentModel func() string, wait bool) (qReq, bool,
 			continue
 		}
 		head := q.items[0]
-		q.mu.Unlock()
-		cur := currentModel()
-		if cur == head.model {
-			// 重校验一致：真正出队（再锁一次取走队头——CAS 式两段，避免持锁做外部调用）
-			q.mu.Lock()
-			if len(q.items) > 0 && q.items[0].model == head.model {
-				q.items = q.items[1:]
-				q.mu.Unlock()
-				return head, true, false
-			}
+		if head.model != currentModel() {
+			// 重校验不一致：卵已换 ⇒ 不出队、上报 mismatch（上层重走孵化；队列保持队头）
 			q.mu.Unlock()
-			continue // 队头已变（并发出队），重来
+			return head, false, true
 		}
-		// 重校验不一致：卵已换 ⇒ 不出队、上报 mismatch（上层重走孵化；队列保持队头）
-		return head, false, true
+		// 一致 ⇒ 同临界区内摘除（每项恰好被一个消费者取走）
+		q.items = q.items[1:]
+		q.mu.Unlock()
+		return head, true, false
 	}
 }
 
@@ -419,6 +417,15 @@ func (q *p2Queue) lenOf() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return len(q.items)
+}
+
+// peekAll 取当前队列快照（观测面/测试断言用，不出队）。
+func (q *p2Queue) peekAll() []qReq {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	out := make([]qReq, len(q.items))
+	copy(out, q.items)
+	return out
 }
 
 // p2QueueCapacity 队列限长默认值（Q5：队列必须限长——一满立即 429，防雪崩）。
