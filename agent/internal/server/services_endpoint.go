@@ -1,11 +1,17 @@
-// services_endpoint.go —— P7：只读可观测面（基线服务与借用租约）。
+// services_endpoint.go —— P4：只读可观测面（重定义载荷）。
 //
-// 设计依据：《设计-子端服务切换与基线服务声明》§11 M9 ——
+// 设计依据：设计-子端沙箱化-20260914.md §10.1 services_endpoint.go 行、§5.4 观测面——
+// 快照字段由旧的 {declared_ports, reclaim, baseline, leases} 重定义为
+// **{slot, eggs[], external_occupancy[], gtt}**：
+//   - slot：当前槽位状态（单槽现实下的卵位）；
+//   - eggs[]：本端托管的卵（虫卵化后的上报对象——P1 孵化器接线后由卵注册表填）；
+//   - external_occupancy[]：**只含非引擎 GPU 使用者**（§8.7 本轮收窄：
+//     不再有"外部推理服务"这一类；数据来自逐进程 GTT 归因，接线点见 TODO）；
+//   - gtt：全局 GTT 账（主口径，monitor VitalsRecorder 的 GttSample）。
 //
-//	「增只读接口（谁在借 / 剩余时间 / 状态）+ UI 显示借用徽标；发现结果同时可用于
-//	  回填 baseline（解决声明漂移）」。
-//
-// 本文件只读：GET /services 返回基线与租约的快照，**不含任何写动作**（红线②）。
+// 本文件只读：GET /services 返回快照，**不含任何写动作**（红线②）。
+// 旧字段（declared_ports / reclaim / baseline / leases）已随 P4 退场清理删除
+// （附录 C·C8：env 真源与 ReclaimMode 等导出符号一并摘除）。
 package server
 
 import (
@@ -13,48 +19,57 @@ import (
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
+	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 )
+
+// servicesSlot /services 载荷的槽位块（单槽现实下至多一枚在位卵）。
+type servicesSlot struct {
+	Occupied bool   `json:"occupied"`          // 槽位上是否有在位卵
+	Model    string `json:"model,omitempty"`   // 当前模型名（有才出现）
+	State    string `json:"state,omitempty"`   // 该卵当前状态（ready/loading/…）
+	Port     int    `json:"port,omitempty"`    // 引擎监听端口（有才出现）
+	Backend  string `json:"backend,omitempty"` // 后端类型（有才出现）
+}
+
+// servicesEgg /services 载荷的卵条目。
+//
+// ⚠ TODO(P1 接线点)：P1 孵化器落地后由卵注册表填
+// {egg_id, unit, cgroup, engine_impl, model, port, gtt_gb, state}——
+// 今天的托管面只有旧 subproc 口径，先如实给出可得字段，缺的字段缺席（不编造）。
+type servicesEgg struct {
+	EggID   string  `json:"egg_id,omitempty"`
+	Unit    string  `json:"unit,omitempty"`
+	Model   string  `json:"model,omitempty"`
+	State   string  `json:"state,omitempty"`
+	Port    int     `json:"port,omitempty"`
+	GttGb   float64 `json:"gtt_gb,omitempty"`
+	Managed bool    `json:"managed"` // 恒 true：eggs[] 只装本端托管项
+}
 
 // servicesSnapshot 组装只读快照（纯函数，便于测试）。
 //
-// 字段：
-//   - declared_ports：baseline 声明的端口（真源：ZERG_BASELINE_PORTS）
-//   - reclaim：借还档位（borrow | refuse）
-//   - baseline：每个声明端口的只读检查结果（端口→身份→进程→托管方式）
-//   - leases：借用租约（谁在借 / 状态 / 期限 / 是否该归还）
-func servicesSnapshot(svcs []backend.BaselineService, leases []backend.ServiceLease,
-	reclaim string, declared []int, now time.Time) map[string]interface{} {
-
-	leaseViews := make([]map[string]interface{}, 0, len(leases))
-	for _, l := range leases {
-		should, why := backend.LeaseActionable(l, now)
-		leaseViews = append(leaseViews, map[string]interface{}{
-			"port":          l.Port,
-			"kind":          l.Kind,
-			"class":         l.Class,
-			"identity":      l.Identity,
-			"state":         l.State,
-			"acquired_at":   l.AcquiredAt,
-			"last_activity": l.LastActive,
-			"ttl_s":         l.TTLS,
-			"max_hold_s":    l.MaxHoldS,
-			"approx_gb":     l.ApproxGB,
-			"should_return": should,
-			"return_reason": why,
-			"pipeline_pids": l.Pipeline,
-		})
+// ⚠ TODO(P3 接线点)：external_occupancy[] 只含**非引擎 GPU 使用者**（§8.7）——
+// 数据来自 monitor 逐进程 GTT 归因（vitals.go AttribSample），并要排除本端托管卵的 pid；
+// P4 暂以占位空数组如实呈现（没有数据就给空，不编造），接线时替换。
+func servicesSnapshot(slot *servicesSlot, eggs []servicesEgg, gtt monitor.GttSample, now time.Time) map[string]interface{} {
+	payload := map[string]interface{}{
+		"slot":               slot,
+		"eggs":               eggs,
+		"external_occupancy": []map[string]interface{}{},
+		"gtt": map[string]interface{}{
+			"known":    gtt.Ok,
+			"used_gb":  round1f(gtt.UsedGb()),
+			"total_gb": round1f(gtt.TotalGb()),
+		},
+		"generated_at": now.UTC().Format(time.RFC3339),
 	}
-
-	return map[string]interface{}{
-		"declared_ports": declared,
-		"reclaim":        reclaim,
-		"baseline":       svcs,
-		"leases":         leaseViews,
-		"generated_at":   now.UTC().Format(time.RFC3339),
-	}
+	return payload
 }
 
-// handleServices GET /services —— 只读：基线与租约现状。
+// round1f 四舍五入到 1 位小数（与心跳上报的口径一致）。
+func round1f(v float64) float64 { return float64(int64(v*10+0.5)) / 10 }
+
+// handleServices GET /services —— 只读：槽位与卵的现状。
 func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAuth(w, r) {
 		return
@@ -66,11 +81,40 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mgr := s.agent.backends
-	writeJSON(w, http.StatusOK, servicesSnapshot(
-		mgr.BaselineServices(),
-		backend.ListLeases(),
-		backend.ReclaimMode(),
-		backend.DeclaredBaselinePorts(),
-		time.Now(),
-	))
+
+	// slot：单槽现实——取驻留面里最新的就绪/加载项（P2 状态机接线后由槽位状态填）。
+	var slot *servicesSlot
+	if name := mgr.CurrentModel(); name != "" {
+		slot = &servicesSlot{
+			Occupied: true,
+			Model:    name,
+			State:    mgr.State(),
+			Port:     mgr.CurrentPort(),
+			Backend:  mgr.CurrentBackend(),
+		}
+	} else if mgr.State() != backend.StateIdle {
+		slot = &servicesSlot{Occupied: true, State: mgr.State()}
+	}
+
+	// eggs[]：托管卵明细（subproc 口径；P1 卵注册表落地后换 egg_id/unit/engine_impl）。
+	eggs := make([]servicesEgg, 0)
+	for _, d := range mgr.ResidentDetail() {
+		eggs = append(eggs, servicesEgg{
+			EggID:   d.Alias, // TODO(P1 接线点)：换成真 egg_id
+			Model:   d.Alias,
+			State:   d.State,
+			GttGb:   d.RssGb, // TODO(P3 接线点)：换成 GTT 口径实测值
+			Managed: true,
+		})
+	}
+
+	// gtt：全局 GTT 账（monitor 主口径；该平台读不到时 known=false，不编造）。
+	var gtt monitor.GttSample
+	if s.agent.vitals != nil {
+		if v := s.agent.vitals.Snapshot(); v.Gtt.Ok {
+			gtt = v.Gtt
+		}
+	}
+
+	writeJSON(w, http.StatusOK, servicesSnapshot(slot, eggs, gtt, time.Now()))
 }

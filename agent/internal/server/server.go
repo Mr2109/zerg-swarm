@@ -42,6 +42,7 @@ type Agent struct {
 	registry   *registry.Registry
 	backends   *backend.Manager
 	sampler    *monitor.Sampler
+	vitals     *monitor.VitalsRecorder
 	controller string
 
 	mu         sync.Mutex
@@ -76,6 +77,7 @@ func NewAgent(machine, token string, reg *registry.Registry, backends *backend.M
 		registry:   reg,
 		backends:   backends,
 		sampler:    monitor.DefaultSampler,
+		vitals:     monitor.NewVitalsRecorder(), // P4：/services 的全局 GTT 账来源（只读快照）
 		controller: ctrl,
 		startedAt:  time.Now(),
 		inferCh:    make(chan inferReq, 20),
