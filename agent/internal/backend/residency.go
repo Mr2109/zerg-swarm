@@ -190,17 +190,12 @@ func (m *Manager) IdleTTL() time.Duration {
 	return m.idleTTL
 }
 
-// ReapIdle 卸载"空闲超过 TTL"的驻留模型（调用方需不持锁），返回被卸载的别名（已排序）。
-//
-// 四条保护一条不少（与五档裁决同源，不因为是"回收"就放宽）：
-//   - reqCount>0 有在飞请求 → 不卸（红线①）；
-//   - state==loading 正被请求等待 → 不卸（杀它等于让该请求失败）；
-//   - pin 且 TTL 未到期（pinUntil>now）→ 不卸（红线③ / Q5）；
-//   - 未托管进程本就不在 procs 里，不参与（红线②）。
-//
-// TTL<=0（未启用）→ 空操作（默认行为不变）。
-// now 由调用方注入——判据不读时钟，既便于确定性测试，也让"过期即卸"可复现。
-func (m *Manager) ReapIdle(now time.Time) []string {
+// reapIdleLegacy 是 P2 之前的 ReapIdle 实现（直判 lastUsed/reqCount，不经「空窗计时中」状态）。
+// P2（设计 §7.7 修补 1–3）后生产路径只走 p2_lifecycle.go 的新 ReapIdle：
+//   - 新版判据 = 状态==空窗计时中 且 到期 且 在飞引用计数==0（唯一真源），锁内赢权、出锁才停进程；
+//   - 旧版直判 lastUsed/reqCount，无显式状态、无赢权语义——仅保留对照与故障回退用，
+//     不得再被生产路径调用（reaper 循环已切到新版）。
+func (m *Manager) reapIdleLegacy(now time.Time) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ttl := m.idleTTL
@@ -405,8 +400,87 @@ func (m *Manager) rankActionableLocked() []resources.RankedEviction {
 	return out
 }
 
+// ── P1：服务类型互斥（llama xor ds4）────────────────────────────────────────
+//
+// 设计依据：docs/01-设计/设计-子端服务切换与基线服务声明-20260914.md §7 S1/S2。
+// 单槽/多槽机上一次只允许「当前工作模型」所属的那类推理服务在跑：装 ds4 前必先卸 llama，
+// 反之亦然。本机制只作用于**本端 spawn 的**驻留（红线②不变）；未托管的手工服务由
+// baseline/借用机制处理（该设计 §9），此处绝不触碰。
+
+const (
+	// kindLlama = llama.cpp 系（llama-server 及其 fork）。
+	kindLlama = "llama"
+	// kindDS4 = DwarfStar 系（ds4-server）。
+	kindDS4 = "ds4"
+)
+
+// serviceKind 判定模型所属推理服务类型（纯函数，便于测试）。
+// 判据取「实际会执行的可执行文件」：有 cmd: 覆盖时取它的第一个词，否则按后端类型。
+func serviceKind(entry *registry.ModelEntry) string {
+	if entry == nil {
+		return kindLlama
+	}
+	if cmd := strings.TrimSpace(string(entry.Cmd)); cmd != "" {
+		if f := strings.Fields(cmd); len(f) > 0 {
+			return kindFromExecutable(f[0])
+		}
+	}
+	if entry.Backend == "ds4-server" {
+		return kindDS4
+	}
+	return kindLlama
+}
+
+// kindFromExecutable 从可执行文件名/路径判定服务类型（不认识的一律按 llama）。
+func kindFromExecutable(p string) string {
+	b := strings.ToLower(strings.TrimSpace(p))
+	if i := strings.LastIndexByte(b, '/'); i >= 0 {
+		b = b[i+1:]
+	}
+	if strings.Contains(b, "ds4") {
+		return kindDS4
+	}
+	return kindLlama
+}
+
+// evictOtherKindsLocked 卸下所有「服务类型与 targetKind 不同」的驻留模型（调用方需持锁）。
+//
+// 复用 rankActionableLocked 的红线过滤：可动作的即刻卸载；被红线挡住的（有在飞请求、
+// pin 未到期、加载中）**不硬来**，而是计入 blocked 交给调用方拒装 —— 宁可拒装，
+// 也不让两类服务同时在跑。返回的两个清单均已排序，便于测试与日志稳定。
+func (m *Manager) evictOtherKindsLocked(exceptModel, targetKind string) (evicted, blocked []string) {
+	actionable := make(map[string]bool)
+	for _, e := range m.rankActionableLocked() {
+		actionable[e.Alias] = true
+	}
+	for name, sp := range m.procs {
+		if name == exceptModel || sp == nil || sp.entry == nil {
+			continue
+		}
+		if serviceKind(sp.entry) == targetKind {
+			continue
+		}
+		if actionable[name] {
+			m.evictSubprocLocked(name, sp, "服务类型互斥（目标 "+targetKind+"）")
+			evicted = append(evicted, name)
+			continue
+		}
+		blocked = append(blocked, name)
+	}
+	sort.Strings(evicted)
+	sort.Strings(blocked)
+	return evicted, blocked
+}
+
 // evictSubprocLocked 停止并移除一个驻留项（调用方需持锁），返回它腾出的 GB。
 func (m *Manager) evictSubprocLocked(name string, sp *subproc, why string) float64 {
+	// M10 铁律：外部复用项（手工起的基线服务）**绝不进驱逐/停服路径**。
+	// 它本就不带进程句柄（proc==nil），这里再加一道**显式**守卫：
+	// 哪怕将来有人给外部项塞了句柄，也不会因为一次内存腾退就把别人的服务杀掉。
+	if sp != nil && sp.external {
+		log.Printf("[backend] %s: **拒绝卸载外部复用项** %s（基线服务，不是本端起的）", why, name)
+		return 0
+	}
 	gb := 0.0
 	if sp != nil {
 		gb = resources.OccupiedGb(residentEntryOf(name, sp, time.Now()))

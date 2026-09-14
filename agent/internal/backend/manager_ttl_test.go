@@ -27,9 +27,11 @@ func ttlManager(ttl time.Duration, procs map[string]*subproc) *Manager {
 // 正例 + 反例：超 TTL 的空闲驻留被卸且从 resident 移除；未超 TTL 的留着。
 func TestTTL_ReapsIdleExpiredOnly(t *testing.T) {
 	now := ttlNow()
+	// P2（§7.7 修补 1）：空窗回收只作用于「空窗计时中」的卵——ready（在跑）不参与；
+	// 两个用例卵都置为空窗计时中（idle_armed），计时起点 = lastUsed。
 	m := ttlManager(300*time.Second, map[string]*subproc{
-		"stale": {model: "stale", state: StateReady, lastUsed: now.Add(-time.Hour)},   // 空闲 3600s > 300s → 卸
-		"fresh": {model: "fresh", state: StateReady, lastUsed: now.Add(-time.Minute)}, // 空闲 60s < 300s → 留
+		"stale": {model: "stale", state: StateIdleArmed, lastUsed: now.Add(-time.Hour)},   // 空窗 3600s > 300s → 卸
+		"fresh": {model: "fresh", state: StateIdleArmed, lastUsed: now.Add(-time.Minute)}, // 空窗 60s < 300s → 留
 	})
 	// 前置断言：两者此刻都在 resident 清单里（否则"移除"无从谈起）
 	if got := m.ResidentDetail(); len(got) != 2 {
@@ -52,8 +54,9 @@ func TestTTL_ReapsIdleExpiredOnly(t *testing.T) {
 // 反例：pin 未到期的驻留即便空闲超 TTL 也不卸；pin 到期后立刻恢复可卸（Q5）。
 func TestTTL_PinnedNotReapedUntilExpiry(t *testing.T) {
 	now := ttlNow()
+	// P2：置「空窗计时中」——pin 保护与状态机正交（红线③在新旧口径下同样成立）。
 	m := ttlManager(300*time.Second, map[string]*subproc{
-		"pinned": {model: "pinned", state: StateReady, lastUsed: now.Add(-time.Hour), pinUntil: now.Add(10 * time.Minute)},
+		"pinned": {model: "pinned", state: StateIdleArmed, lastUsed: now.Add(-time.Hour), pinUntil: now.Add(10 * time.Minute)},
 	})
 	if reaped := m.ReapIdle(now); len(reaped) != 0 {
 		t.Fatalf("pin 未到期的驻留不得被 TTL 卸载，实得 %v", reaped)
@@ -150,7 +153,8 @@ func TestTTL_WiredThroughNewManager(t *testing.T) {
 	}
 	// 已驻留的空闲模型在启用后能被回收（接线可用，不只是变量被读）
 	m.mu.Lock()
-	m.procs["idle"] = &subproc{model: "idle", state: StateReady, entry: &registry.ModelEntry{MemGB: 4}, lastUsed: time.Now().Add(-time.Hour)}
+	// P2：置「空窗计时中」（idle_armed）——空窗回收只收处于该状态的卵（§7.7 修补 1）。
+	m.procs["idle"] = &subproc{model: "idle", state: StateIdleArmed, entry: &registry.ModelEntry{MemGB: 4}, lastUsed: time.Now().Add(-time.Hour)}
 	m.mu.Unlock()
 	if reaped := m.ReapIdle(time.Now()); len(reaped) != 1 || reaped[0] != "idle" {
 		t.Fatalf("启用 TTL 后空闲置留应被回收，实得 %v", reaped)

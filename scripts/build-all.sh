@@ -69,6 +69,22 @@ echo "→ 守护进程 zerg-agentd（agent 模块，注入 agent 自己的 versi
    -ldflags "-s -w -X github.com/Mr2109/zerg-swarm/agent/internal/version.Version=${VERSION} -X github.com/Mr2109/zerg-swarm/agent/internal/version.Commit=${SHA} -X github.com/Mr2109/zerg-swarm/agent/internal/version.BuildTime=${BUILD_TIME}" \
    -o "${REPO_ROOT}/bin/zerg-agentd" ./cmd/zerg-agentd)
 
+# 文档虫茧的自带 Go 服务（`cocoon-docs-service`）——**独立仓** `zerg-cocoon/文档/service`。
+# 为什么由宿主构建链产出：茧侧 `DocsService::default_bin()` 按「**与宿主可执行文件同目录**」
+# 找它 ⇒ 必须与 zerg-ui 同落 `bin/`（服务跑在本机）。
+# 边界（红线）：只构建不启动、只落 `bin/`（**不进** dist 制品矩阵、不上 scp）、
+# **绝不交叉编译**（非 darwin-arm64 直接跳过）；<container-repo>不在（公开快照形态/未 clone）或无 go ⇒
+# 打印原因后跳过，**不阻断**构建（茧未配置 ⇒ 界面提示「未就绪」，优雅降级）。
+COCOON_SERVICE_DIR="$REPO_ROOT/../zerg-cocoon/文档/service"
+if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ] \
+   && [ -d "$COCOON_SERVICE_DIR" ] && command -v go >/dev/null 2>&1; then
+  echo "→ 文档茧自带服务 cocoon-docs-service（独立仓）"
+  (cd "$COCOON_SERVICE_DIR" && GOFLAGS=-mod=mod GOSUMDB=off go build -trimpath -buildvcs=false \
+     -o "${REPO_ROOT}/bin/cocoon-docs-service" .)
+else
+  echo "→ 跳过 cocoon-docs-service（非 darwin-arm64 本机 / <container-repo>不在 / 无 go）"
+fi
+
 if [ "$BUILD_UI" = "1" ]; then
   echo "→ UI zerg-ui（cargo release）"
   # 体积对齐(2026-09-11)：公开快照会解除 ui/Cargo.toml 的 zerg-roundtable 跨仓依赖（私有默认开着）
@@ -82,9 +98,29 @@ if [ "$BUILD_UI" = "1" ]; then
 fi
 
 if [ "$SIGN" = "1" ] && command -v codesign >/dev/null 2>&1; then
-  for b in "$OUT"/zerg-core "$OUT"/zerg-agent "$OUT"/zerg-ui "$REPO_ROOT"/bin/zerg-agentd; do
+  # 2026-09-14：用**稳定签名身份**（自签证书 "Zerg Local Signing"）+ 固定 identifier。
+  # 背景：ad-hoc 重签每次都会改变 cdhash ⇒ macOS 的 TCC「本地网络」把每个新 cdhash 当新应用
+  #      ⇒ 授权列表越堆越多，且旧授权失效（现象：主控拨号报 no route to host）。
+  # 用稳定身份后，同一条授权终身有效。无证书的机器回退 ad-hoc（不阻断构建）。
+  ZERG_SIGN_ID="${ZERG_SIGN_ID:-Zerg Local Signing}"
+  if security find-identity -p codesigning 2>/dev/null | grep -q "$ZERG_SIGN_ID" \
+     || codesign -s "$ZERG_SIGN_ID" --force /tmp/.zerg-sign-probe 2>/dev/null; then
+    SIGN_MODE="stable:$ZERG_SIGN_ID"
+  else
+    ZERG_SIGN_ID="-"; SIGN_MODE="adhoc"
+  fi
+  [ "$SIGN_MODE" = "adhoc" ] && echo "   ⚠️  未找到签名身份「${ZERG_SIGN_ID}」，回退 ad-hoc（本机 TCC 授权会随重编失效）"
+  for b in "$OUT"/zerg-core "$OUT"/zerg-agent "$OUT"/zerg-ui "$REPO_ROOT"/bin/zerg-agentd "$REPO_ROOT"/bin/cocoon-docs-service; do
     [ -f "$b" ] || continue
-    codesign -s - --force "$b" >/dev/null 2>&1 && echo "   🔏 已重签名 $(basename "$b")"
+    case "$(basename "$b")" in
+      zerg-core)   ZID=com.zerg.core ;;
+      zerg-agent)  ZID=com.zerg.agent ;;
+      zerg-agentd) ZID=com.zerg.agentd ;;
+      zerg-ui)     ZID=com.zerg.ui ;;
+      *)           ZID="com.zerg.$(basename "$b")" ;;
+    esac
+    codesign -s "$ZERG_SIGN_ID" --identifier "$ZID" --force "$b" >/dev/null 2>&1 \
+      && echo "   🔏 已重签名 $(basename "$b")（${ZID}，${SIGN_MODE}）"
   done
 fi
 
@@ -109,3 +145,8 @@ for b in "$OUT"/zerg-*; do
   [ -f "$b" ] || continue
   printf "   %-14s %s 字节\n" "$(basename "$b")" "$(stat -f%z "$b" 2>/dev/null || stat -c%s "$b")"
 done
+# 茧服务始终落 bin/（不进 dist 制品矩阵）——单独列出，免得它没进上面的 zerg-* 清单被漏看。
+if [ -f "${REPO_ROOT}/bin/cocoon-docs-service" ]; then
+  printf "   %-14s %s 字节（文档茧自带服务）\n" "cocoon-docs-service" \
+    "$(stat -f%z "${REPO_ROOT}/bin/cocoon-docs-service" 2>/dev/null || stat -c%s "${REPO_ROOT}/bin/cocoon-docs-service")"
+fi

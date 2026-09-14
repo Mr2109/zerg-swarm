@@ -19,11 +19,12 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
+	"github.com/Mr2109/zerg-swarm/core/internal/compat"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
@@ -55,6 +56,7 @@ var (
 	engineFile string
 )
 
+// engineStatePath —— 路径解析器（与 compat 清单的 internal_engine 条目同源；排障/测试用）。
 func engineStatePath() string {
 	if engineFile == "" {
 		engineFile = statepath.File("internal_engine.json")
@@ -63,12 +65,23 @@ func engineStatePath() string {
 }
 
 // InitInternalEngine 启动恢复（main.go 调用——早于 SetEngineEnabled）
-// 恢复用户意图（stopped/since）；文件不存在=默认未停止（兼容现状）
+// 恢复用户意图（stopped/since）；文件不存在=默认未停止（兼容现状）。
+//
+// B7 / G10：读取走 compat 兼容层——旧版（无 schema）文件**原地**迁移一次（备份 + 回读校验），
+// 比本机认知更新的 schema 则**只读降级**（不猜、不回写）并提示升级本机二进制。
 func InitInternalEngine() {
 	engineMu.Lock()
 	defer engineMu.Unlock()
-	data, err := os.ReadFile(engineStatePath())
-	if err == nil {
+	data, out, err := compat.Read("internal_engine", compat.DefaultConfig())
+	switch {
+	case err != nil:
+		log.Printf("⚠️ [internal_engine] 状态文件不可用（沿用默认：未停止；不阻断启动）：%v", err)
+	case out == compat.OutcomeFuture:
+		log.Printf("⚠️ [internal_engine] 状态文件 schema 高于本机二进制认知——本次只读降级（已识别字段照常恢复），请升级本机二进制")
+	case out == compat.OutcomeMigrated:
+		log.Printf("✅ [internal_engine] 旧版状态文件已迁移到 schema %d", 1)
+	}
+	if len(data) > 0 {
 		var raw engineState
 		if json.Unmarshal(data, &raw) == nil {
 			engine.Stopped = raw.Stopped
@@ -81,16 +94,12 @@ func InitInternalEngine() {
 	engine.UpdatedAt = time.Now()
 }
 
-// saveEngineLocked 持久化（调用方持锁——目录不存在则创建；失败仅告警不阻断）
+// saveEngineLocked 持久化（调用方持锁——经 compat 层写回，写时带 schema 版本号）。
+// 失败仅告警不阻断（状态持久化不该成为主控的失败点）。
 func saveEngineLocked() {
-	data, err := json.MarshalIndent(engine, "", "  ")
-	if err != nil {
-		return
+	if _, err := compat.Write("internal_engine", engine, compat.DefaultConfig()); err != nil {
+		log.Printf("⚠️ [internal_engine] 状态落盘失败（不阻断）：%v", err)
 	}
-	if err := os.MkdirAll(statepath.Dir(), 0o755); err != nil {
-		return
-	}
-	_ = os.WriteFile(engineStatePath(), data, 0o644)
 }
 
 // SetEngineEnabled 设置环境门控（main.go 启动时按 ZERG_INTERNAL_TASKS 调用）

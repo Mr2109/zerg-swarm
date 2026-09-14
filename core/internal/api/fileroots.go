@@ -464,6 +464,16 @@ func (h *Handlers) FileRevealHandler(w http.ResponseWriter, r *http.Request) {
 	h.fileBrowserAction(w, r, "reveal")
 }
 
+// readJSONBody 读请求体并解析 JSON——**通用**小工具（原定义在 docs_ops.go；该文件随文档写端点
+// 迁出宿主后，此处保留/补回：/api/fileroots/open|reveal 仍在用）。
+func readJSONBody(r *http.Request, v interface{}) error {
+	body, err := ioReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(body, v)
+}
+
 // fileBrowserAction 是 open/reveal 的共同流程：解析 → 校验 → 交给系统 → 审计。
 // 每个出口都审计（含失败），结果列 "ok" 或错误码。
 func (h *Handlers) fileBrowserAction(w http.ResponseWriter, r *http.Request, action string) {

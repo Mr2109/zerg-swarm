@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
 	"github.com/Mr2109/zerg-swarm/agent/internal/heartbeat"
@@ -104,6 +105,9 @@ func main() {
 
 	// 创建后端管理器
 	backendMgr := backend.NewManager(reg, m)
+	// P3b：租约看护（设计 §11 M1）——启动即先把上次遗留的 borrowed 租约归还，
+	// 此后每 30s 扫一次；子端活着时租约绝不会过期无人管（崩溃场景由下次启动这条补齐）。
+	backendMgr.StartLeaseWatchdog(30 * time.Second)
 
 	// 创建应用核心
 	agent := server.NewAgent(m, *token, reg, backendMgr, *controller)

@@ -7,6 +7,7 @@
 //! 模块注册表 + 顶部导航渲染入口。
 
 pub mod zerg_module;
+pub mod cocoon; // 虫茧契约（C9 第 1 步——CocoonMeta 铭牌 + Cocoon::render 吊点 + 契约注册表）
 pub mod ferrite; // M3 Ferrite 重写 md 编辑器（Mr2109 2026-08-29）
 pub mod chat; // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块）
 pub mod upgrade; // L2 自动升级页（2026-09-11）
@@ -175,6 +176,11 @@ pub fn build_registry() -> ModuleRegistry {
     // 🦋 虫茧（T8——zerg-cocoon 第一个茧——示例虫茧 egui 虫茧——破茧换新）
     // 虫茧 = 独立应用平台（虫茧平台），**保持顶级**、不并进「主控在线」（Mr2109 2026-09-13：R2 只列了五项）。
     // 仍在船、可装卸；其平台页标题 **保留**（设计 §4.4）。
+    //
+    // ⚠ C9 第 1 步（2026-09-13）：本段只注册**平台页本身**（它是宿主的一部分——设计 Q3）。
+    //   茧（平台栅格里的应用卡：示例虫茧、文档……）**不**在模块注册表里——改由
+    //   `modules/cocoon.rs` 的**契约注册表**给出（`CocoonMeta` 铭牌 + `Cocoon::render` 吊点）：
+    //   新增一个茧 = 新仓 + 一行依赖 + 一行 impl，**宿主其余代码零改动**。
     reg.register(ModuleManifest {
         id: "roundtable",
         name_key: "mod.roundtable.name",
@@ -199,6 +205,8 @@ pub fn build_registry() -> ModuleRegistry {
         version: env!("CARGO_PKG_VERSION"),
         // 2026-09-13（Mr2109纠正）：文档移入虫茧**平台**，作为与示例虫茧平级的**独立应用卡**；
         // 归属用 parent 表达，但父箱非 group ⇒ 导航不生成二级页签、文档也不出现在一级导航里。
+        // ⚠ C9 第 2 步才把「文档」做成茧（独立仓 `zerg-cocoon/文档` + 自带后端）：那时本卡改由
+        //   茧自己的铭牌给出；**本步不动它**（保持既有路径与既有 i18n 键 mod.docs.*）。
         parent: Some("roundtable"),
         order: 10,
         is_group: false,

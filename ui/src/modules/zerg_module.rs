@@ -109,6 +109,13 @@ impl Default for ModuleRegistry {
     }
 }
 
+/// 虫茧**平台页**的箱 id（宿主自己的页面——设计 Q3「平台页留主仓」）。
+///
+/// ⚠ 与第一个茧的铭牌 id **同名**（历史沿革）：平台页在**模块注册表**（本文件），
+/// 示例虫茧在**契约注册表**（`modules/cocoon.rs`）——导航/路由沿用同一个 id（点开茧时
+/// `ZergApp::effective_active` 用 `cocoon_app` 把它解析成茧）。
+pub const PLATFORM_PAGE_ID: &str = "roundtable";
+
 impl ModuleRegistry {
     /// 注册一个虫茧（吊装上船）
     pub fn register(&mut self, m: ModuleManifest) {
@@ -262,11 +269,17 @@ impl ModuleRegistry {
             .filter(|p| self.find(p).map(|m| m.is_group).unwrap_or(false))
     }
 
-    /// **虫茧平台栅格的应用卡 id**（顺序 = 展示顺序）：归属本平台的启用箱（文档）+ 平台自带的
-    /// 跨仓应用（示例虫茧，排最后）。文档被卸下 ⇒ 卡片消失；示例虫茧未编译进来 ⇒ 由渲染层显示「未装载」。
+    /// **虫茧平台栅格的应用卡 id**（顺序 = 展示顺序）：归属本平台的启用箱（文档）+ **契约注册表**
+    /// 里的茧（`modules/cocoon.rs`——C9 第 1 步：原来这里写死 `v.push("roundtable")`）。
+    /// 文档被卸下 ⇒ 卡片消失；茧未编译进来 ⇒ 铭牌仍在册（`loaded=false`）⇒ 渲染层显「未装载」。
     pub fn platform_apps(&self) -> Vec<&'static str> {
-        let mut v: Vec<&'static str> = self.children_of("roundtable").iter().map(|m| m.id).collect();
-        v.push("roundtable");
+        let mut v: Vec<&'static str> = self.children_of(PLATFORM_PAGE_ID).iter().map(|m| m.id).collect();
+        // 契约茧：铭牌在册即出卡（装载与否由铭牌 loaded 表达——设计 §4.3 未装载也给卡）
+        for m in crate::modules::cocoon::catalog() {
+            if !v.contains(&m.id) {
+                v.push(m.id);
+            }
+        }
         v.retain(|id| self.is_enabled(id));
         v
     }
@@ -466,6 +479,32 @@ mod tests {
         assert_eq!(reg.platform_apps(), vec!["docs", "roundtable"]);
         assert!(reg.children_of("chat").is_empty(), "无子箱的顶级箱 children_of 应为空");
         assert!(reg.children_of("nope").is_empty());
+    }
+
+    /// C9 第 1 步：平台栅格的茧卡片来自**契约注册表**（原来写死 `push("roundtable")`）
+    /// ⇒ 新增一个茧不必改这里（宿主零改动）。
+    #[test]
+    fn platform_apps_come_from_the_cocoon_registry() {
+        let reg = crate::modules::build_registry();
+        let apps = reg.platform_apps();
+        // ① 在册的茧一个不少（未装载也在册 ⇒ 卡片照常 + 「未装载」+ 安装指引）
+        for m in crate::modules::cocoon::catalog() {
+            assert!(apps.contains(&m.id), "在册的茧 {} 没出现在平台栅格：{:?}", m.id, apps);
+        }
+        // ② 每张卡都必须有来源（茧注册表 or 模块注册表）——防「凭空多出一张卡」
+        for id in &apps {
+            assert!(
+                crate::modules::cocoon::meta_of(id).is_some() || reg.find(id).is_some(),
+                "平台卡片 {} 既不在茧注册表也不在模块注册表",
+                id
+            );
+        }
+        // ③ 卸下某张卡 ⇒ 它从栅格消失（既有 is_enabled 闸门不变）
+        let mut off = crate::modules::build_registry();
+        off.enabled.insert("docs".to_string(), false);
+        off.enabled.insert("roundtable".to_string(), false);
+        assert!(!off.platform_apps().contains(&"docs"), "卸下的文档卡应消失");
+        assert!(!off.platform_apps().contains(&"roundtable"), "卸下的虫茧卡应消失");
     }
 
     /// 卸下的子箱自动跳过（设计 §4.2 规则 4「不留孤儿」）。
