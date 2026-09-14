@@ -1,80 +1,61 @@
-// services_endpoint_test.go —— P7 只读快照的回归（设计 §11 M9）。
+// services_endpoint_test.go —— P4 只读快照的回归（载荷重定义：{slot, eggs[], external_occupancy[], gtt}）。
 package server
 
 import (
 	"testing"
 	"time"
 
-	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
+	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 )
 
 func TestServicesSnapshot_Shape(t *testing.T) {
 	now := time.Now()
-	svcs := []backend.BaselineService{{
-		Port: 9001, PID: 1129430, Kind: "llama", Class: "screen",
-		Identity: "/data/models/k2/k2horizon-q4_k_m.gguf", ApproxGB: 24, Listening: true,
-	}}
-	leases := []backend.ServiceLease{{
-		Port: 9001, State: backend.LeaseBorrowed, Kind: "llama", Class: "screen",
-		Identity:   "/data/models/k2/k2horizon-q4_k_m.gguf",
-		AcquiredAt: now.Add(-time.Minute), LastActive: now.Add(-time.Minute),
-		TTLS: 300, MaxHoldS: 1800,
-	}}
+	slot := &servicesSlot{Occupied: true, Model: "m1", State: "ready", Port: 58100, Backend: "llama-server"}
+	eggs := []servicesEgg{{EggID: "m1", Model: "m1", State: "ready", Port: 58100, Managed: true}}
 
-	got := servicesSnapshot(svcs, leases, "borrow", []int{9001}, now)
+	got := servicesSnapshot(slot, eggs, monitor.GttSample{UsedBytes: 32 << 30, TotalBytes: 64 << 30, Ok: true}, now)
 
-	if got["reclaim"] != "borrow" {
-		t.Errorf("reclaim 应为 borrow，实得 %v", got["reclaim"])
+	if s, ok := got["slot"].(*servicesSlot); !ok || s.Model != "m1" || s.Port != 58100 {
+		t.Errorf("slot 形状不对，实得 %v", got["slot"])
 	}
-	if dp, ok := got["declared_ports"].([]int); !ok || len(dp) != 1 || dp[0] != 9001 {
-		t.Errorf("declared_ports 应为 [9001]，实得 %v", got["declared_ports"])
+	eg, ok := got["eggs"].([]servicesEgg)
+	if !ok || len(eg) != 1 || eg[0].Model != "m1" || !eg[0].Managed {
+		t.Errorf("eggs 应为 1 条托管卵，实得 %v", got["eggs"])
 	}
-	if b, ok := got["baseline"].([]backend.BaselineService); !ok || len(b) != 1 {
-		t.Errorf("baseline 应回原样数组（1 条），实得 %v", got["baseline"])
+	// external_occupancy[]：只含非引擎 GPU 使用者——P4 占位为空数组（不得编造条目）。
+	eo, ok := got["external_occupancy"].([]map[string]interface{})
+	if !ok || len(eo) != 0 {
+		t.Errorf("external_occupancy 应为空数组（P3 接线点），实得 %v", got["external_occupancy"])
 	}
-	lv, ok := got["leases"].([]map[string]interface{})
-	if !ok || len(lv) != 1 {
-		t.Fatalf("leases 应为 1 条视图，实得 %v", got["leases"])
-	}
-	if lv[0]["port"] != 9001 || lv[0]["state"] != backend.LeaseBorrowed {
-		t.Errorf("租约视图字段不对：%v", lv[0])
-	}
-	if lv[0]["should_return"] != false {
-		t.Errorf("刚借出、未到期的租约不该标记归还，实得 %v", lv[0]["should_return"])
+	g, ok := got["gtt"].(map[string]interface{})
+	if !ok || g["known"] != true {
+		t.Errorf("gtt 应带 known/used_gb/total_gb，实得 %v", got["gtt"])
 	}
 	if _, ok := got["generated_at"].(string); !ok {
 		t.Error("应带 generated_at（可观测面的时间基准）")
 	}
-}
-
-func TestServicesSnapshot_ExpiredLeaseFlagsReturn(t *testing.T) {
-	// 可观测面要能回答"谁该还了"：超 max_hold 的租约必须标记 should_return=true 并给原因。
-	now := time.Now()
-	l := backend.ServiceLease{
-		Port: 9000, State: backend.LeaseBorrowed,
-		AcquiredAt: now.Add(-2 * time.Hour), LastActive: now.Add(-2 * time.Hour),
-		TTLS: 300, MaxHoldS: 1800,
-	}
-	got := servicesSnapshot(nil, []backend.ServiceLease{l}, "borrow", nil, now)
-	lv, ok := got["leases"].([]map[string]interface{})
-	if !ok || len(lv) != 1 {
-		t.Fatalf("应回 1 条租约视图，实得 %v", got["leases"])
-	}
-	if lv[0]["should_return"] != true {
-		t.Fatalf("超 max_hold 的租约应标记为需归还，实得 %v", lv[0]["should_return"])
-	}
-	if s, _ := lv[0]["return_reason"].(string); s == "" {
-		t.Fatal("应给出归还原因（谁该还、为什么）")
+	// 旧字段必须已退场（附录 C·C8）。
+	for _, k := range []string{"declared_ports", "reclaim", "baseline", "leases"} {
+		if _, exists := got[k]; exists {
+			t.Errorf("旧字段 %s 已随 P4 退场，不得再出现在 /services 载荷里", k)
+		}
 	}
 }
 
-func TestServicesSnapshot_EmptyIsValid(t *testing.T) {
-	// 未声明基线、无租约 ⇒ 合法空快照（不是错误）。
-	got := servicesSnapshot(nil, nil, "borrow", nil, time.Now())
-	if got["reclaim"] != "borrow" {
-		t.Errorf("空快照也应带档位，实得 %v", got["reclaim"])
+func TestServicesSnapshot_GttUnknownNoFake(t *testing.T) {
+	// GTT 读不到 ⇒ known=false，used/total 如实为 0（绝不编数）。
+	got := servicesSnapshot(nil, nil, monitor.GttSample{}, time.Now())
+	g, ok := got["gtt"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("gtt 块缺失: %v", got["gtt"])
 	}
-	if lv, ok := got["leases"].([]map[string]interface{}); !ok || len(lv) != 0 {
-		t.Errorf("空租约应为长度 0 的数组，实得 %v", got["leases"])
+	if g["known"] != false || g["used_gb"] != 0.0 || g["total_gb"] != 0.0 {
+		t.Fatalf("GTT 未知时必须 known=false 且数值缺席/为 0，实得 %v", g)
+	}
+	if s, ok := got["slot"].(*servicesSlot); !ok || s != nil {
+		t.Fatalf("无驻留时 slot 应为 nil（空槽），实得 %v", got["slot"])
+	}
+	if eg, ok := got["eggs"].([]servicesEgg); !ok || len(eg) != 0 {
+		t.Fatalf("无卵应为长度 0 的数组，实得 %v", got["eggs"])
 	}
 }
