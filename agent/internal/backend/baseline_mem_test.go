@@ -1,9 +1,9 @@
 // baseline_mem_test.go —— M15：基线/托管项占用必须取 drm fdinfo（gtt+vram），不能取 RSS。
 //
-// 用例文本**逐字照抄 X3 实测**（2026-09-14，两条基线服务）：
+// 用例文本**逐字照抄 X3 实测**（2026-09-14，两条手工推理服务，端口语义见设计附录 A）：
 //
-//	:9000 Qwen3.8-27B  → drm-memory-gtt 34286572 KiB = 32.70 GB（旧口径 RSS 只报 1.41 GB）
-//	:9001 k2horizon    → drm-memory-gtt 25144840 KiB = 23.98 GB（旧口径 RSS 只报 0.77 GB）
+//	Qwen3.8-27B → drm-memory-gtt 34286572 KiB = 32.70 GB（旧口径 RSS 只报 1.41 GB）
+//	k2horizon   → drm-memory-gtt 25144840 KiB = 23.98 GB（旧口径 RSS 只报 0.77 GB）
 //
 // 两者之和 56.68 GB 与全局 mem_info_gtt_used 完全吻合 ⇒ 逐进程归因正确。
 package backend
