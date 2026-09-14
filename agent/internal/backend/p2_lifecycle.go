@@ -261,6 +261,79 @@ func (m *Manager) inflightCount(model string) int {
 	return 0
 }
 
+// ── 批 2：异模型提前收卵（§7.7 末条「更优路径」）与观测面 ────────────────────────
+
+// RequestModel 请求入口的状态机迁移（§7.7 末条 / §7.1 补记，同一把锁内完成）：
+//   - 同模型请求（model == 当前在孵卵）：取消空窗——计时戳归零（刷新 lastUsed）、转回 ready、
+//     继续用当前卵（不换卵、不停进程，§7.7 修补 3 请求侧）；
+//   - 异模型请求（model != 当前在孵卵）：当前卵**无在飞** ⇒ 锁内赢权转 draining，返回 needUnload=true
+//     ——调用方出锁后停进程、再走孵化流程装新模型（「600s 只是没人用的优化，不是必须占满」，§1.1）；
+//     当前卵**有在飞** ⇒ 拒绝提前收卵（needUnload=false 且 blocked=true），等待在飞生成跑完
+//     （不打断在飞——§7.2 / §13 Q6），调用方走排队等待路径。
+//
+// 返回 (needUnload, blocked)。请求未涉及当前卵（无驻留/卵不匹配）时返回 (false, false)。
+func (m *Manager) RequestModel(model string) (needUnload, blocked bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// 当前在孵卵 = ready / 空窗计时中 的那个（draining 已在收尾，无需重复动作）
+	for name, sp := range m.procs {
+		if sp.state != StateReady && sp.state != StateIdleArmed {
+			continue
+		}
+		if name == model {
+			// 同模型：取消空窗（§7.1 补记第 2 行）——计时戳归零、转 ready，不换卵不停进程
+			sp.lastUsed = time.Now()
+			sp.state = StateReady
+			log.Printf("[backend] 空窗取消（同模型请求到达）: model=%s 回 ready", model)
+			return false, false
+		}
+		// 异模型：提前收卵（前提无在飞；有在飞先等生成跑完——不硬杀，§7.2/Q6）
+		if sp.inflight != 0 {
+			log.Printf("[backend] 异模型请求 %s：当前卵 %s 有在飞（%d），先等生成跑完再收", model, name, sp.inflight)
+			return false, true
+		}
+		if pinned, _ := pinState(sp, time.Now()); pinned {
+			// 红线③：pin 未到期的卵不许提前收——走原加载路径（会按五档裁决处理 pin）
+			return false, true
+		}
+		if sp.external {
+			// M10 铁律：外部复用项不进收卵路径（不接管、不停止）
+			return false, true
+		}
+		sp.state = StateDraining // 锁内赢权
+		log.Printf("[backend] 异模型请求 %s：提前收卵 %s（无在飞，锁内置 draining）", model, name)
+		return true, false
+	}
+	return false, false
+}
+
+// StateOf 读某模型当前状态（观测面 / §5.4 只读回答「此刻处于 ready 还是空窗计时中」）。
+// 未驻留返回空串。
+func (m *Manager) StateOf(model string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if sp, ok := m.procs[model]; ok {
+		return sp.state
+	}
+	return ""
+}
+
+// IdleArmedRemainingS 某模型「空窗计时中」的剩余秒数；ok=false 表示不在计时中（或未驻留）。
+func (m *Manager) IdleArmedRemainingS(model string) (float64, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sp, ok := m.procs[model]
+	if !ok || sp.state != StateIdleArmed {
+		return 0, false
+	}
+	threshold := eggIdleUnloadThreshold(sp.entry)
+	remain := threshold - time.Since(sp.lastUsed)
+	if remain <= 0 {
+		return 0, true
+	}
+	return remain.Seconds(), true
+}
+
 // ── 队列出队重校验 + 不打断在飞（批 3，§7.7 修补 4 / §7.2）────────────────────────
 
 // qReq 等待队列项：切换期到达的请求挂起在此，出队时必须重校验当前卵。
