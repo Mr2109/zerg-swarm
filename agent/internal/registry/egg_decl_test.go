@@ -251,6 +251,72 @@ func TestValidateEggDeclaration_NilEntry(t *testing.T) {
 	}
 }
 
+// ═══ P5 批 1：KV 盘声明校验（设计 §9.7①：写盘上限不许留成「无限」）══════════
+
+// TestValidateEggDeclaration_KVDiskSpaceMBRequired 声明了 KV 盘却不给正数上限 ⇒ 拒孵
+// （KV 落盘是持续写，不限大小等于把持续写敞成无限）。
+func TestValidateEggDeclaration_KVDiskSpaceMBRequired(t *testing.T) {
+	for _, mb := range []int{0, -100} {
+		e := &ModelEntry{File: "/data/models/v4.gguf", SchemaVersion: 1,
+			KVDisk: &KVDiskDecl{SpaceMB: mb, Dir: "/tmp/kv"}}
+		e.SetEggNameForTest("DeepSeek-V4-Flash")
+		res := ValidateEggDeclaration("不限大小的卵", e)
+		if res.OK() {
+			t.Fatalf("kv_disk.space_mb=%d 必须拒孵（设计 §9.7①）", mb)
+		}
+		if msg := res.ErrorString(); !strings.Contains(msg, "space_mb") {
+			t.Fatalf("拒孵理由必须点名 space_mb: %s", msg)
+		}
+	}
+}
+
+// TestValidateEggDeclaration_KVDiskNeedsDirOrEggName 声明了 KV 盘但既无显式目录
+// 又无卵名 ⇒ 按卵分目录无从落地 ⇒ 拒孵；有卵名或有显式目录 ⇒ 可孵。
+func TestValidateEggDeclaration_KVDiskNeedsDirOrEggName(t *testing.T) {
+	// 两者皆无 ⇒ 拒孵。
+	e := &ModelEntry{File: "/data/models/v4.gguf", SchemaVersion: 1,
+		KVDisk: &KVDiskDecl{SpaceMB: 3500}}
+	res := ValidateEggDeclaration("没名也没目录的卵", e)
+	if res.OK() {
+		t.Fatal("KV 盘既无显式目录又无卵名必须拒孵（按卵分目录无从落地，设计 §9.7④）")
+	}
+	// 有卵名 ⇒ 可孵（缺省 ~/.zerg/kvdisk/<卵名>/）。
+	e2 := &ModelEntry{File: "/data/models/v4.gguf", SchemaVersion: 1,
+		KVDisk: &KVDiskDecl{SpaceMB: 3500}}
+	e2.SetEggNameForTest("DeepSeek-V4-Flash")
+	if res := ValidateEggDeclaration("有名字的卵", e2); !res.OK() {
+		t.Fatalf("有卵名即可按卵分目录，不应拒孵: %v", res.Fatal)
+	}
+	// 有显式目录（无卵名）⇒ 可孵。
+	e3 := &ModelEntry{File: "/data/models/v4.gguf", SchemaVersion: 1,
+		KVDisk: &KVDiskDecl{SpaceMB: 3500, Dir: "/tmp/kv-x"}}
+	if res := ValidateEggDeclaration("有目录的卵", e3); !res.OK() {
+		t.Fatalf("有显式目录即可落地，不应拒孵: %v", res.Fatal)
+	}
+}
+
+// TestValidateEggDeclaration_PreloadExpertsNegative 预热专家数为负 ⇒ 拒孵
+// （0 = 未声明 = 无档案不预热，合法；正数 = 实测档案口径，合法）。
+func TestValidateEggDeclaration_PreloadExpertsNegative(t *testing.T) {
+	e := &ModelEntry{File: "/data/models/v4.gguf", SchemaVersion: 1,
+		SsdStreamingPreloadExperts: -8}
+	res := ValidateEggDeclaration("负预热的卵", e)
+	if res.OK() {
+		t.Fatal("预热专家数为负必须拒孵")
+	}
+	if msg := res.ErrorString(); !strings.Contains(msg, "ssd_streaming_preload_experts") {
+		t.Fatalf("拒孵理由必须点名 ssd_streaming_preload_experts: %s", msg)
+	}
+	// 0（未声明）与正数（实测档案）都合法。
+	for _, p := range []int{0, 512} {
+		e2 := &ModelEntry{File: "/data/models/v4.gguf", SchemaVersion: 1,
+			SsdStreamingPreloadExperts: p}
+		if res := ValidateEggDeclaration("正常的卵", e2); !res.OK() {
+			t.Fatalf("ssd_streaming_preload_experts=%d 不应拒孵: %v", p, res.Fatal)
+		}
+	}
+}
+
 // TestValidateEgg_RegistryLookup 注册表入口：未登记的模型不能孵；空注册表不能孵。
 func TestValidateEgg_RegistryLookup(t *testing.T) {
 	dir := t.TempDir()
