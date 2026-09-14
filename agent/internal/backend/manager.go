@@ -38,6 +38,8 @@ const (
 	StateReady    = "ready"
 	StateCrashed  = "crashed"
 	StateSleeping = "sleeping"
+	// P2（设计 §7.7 修补 1）：显式状态「空窗计时中」与「draining」——定义在 p2_lifecycle.go。
+	// 状态串：ready → 空窗计时中 → draining → stopped。
 )
 
 // subproc 单个模型的后端进程状态。
@@ -46,12 +48,23 @@ type subproc struct {
 	port     int
 	model    string
 	entry    *registry.ModelEntry
-	state    string    // ready / loading / crashed / sleeping
+	state    string    // ready / loading / crashed / sleeping / idle_armed(空窗计时中) / draining
 	failCnt  int       // 连续健康检查失败次数
-	lastUsed time.Time // 最近使用时间（LRU）
-	reqCount int       // 活跃请求数
+	lastUsed time.Time // 最近使用时间（LRU）；P2 起兼作「最后一次活动时间戳」（§7.7 修补 2）
+	reqCount int       // 活跃请求数（旧口径：InferForward 延迟减计数的观测面）
+	// inflight 在飞引用计数（P2，设计 §7.7 修补 3）——「在飞」的唯一真源：
+	// 请求进入生成中 +1（acquireInflight）、完成/失败 −1（releaseInflight）。
+	// 卸载/切换判据一律取它；引擎 /slots 只作交叉校验，不作为条件。
+	inflight int
 	// pinUntil Q5：显式 pin 的到期时刻（零值 = 未 pin）。无 TTL 的 pin 不允许——见 Manager.Pin。
 	pinUntil time.Time
+	// external（M10）：本项**不是本端起的**，而是复用的手工基线服务。
+	// 铁律：外部项绝不进驱逐/停服路径 —— 它**不带进程句柄**（proc 为 nil），结构上无从 kill；
+	// 且 evictSubprocLocked 里有显式守卫。它只登记"这个模型现在可用、端口是哪个"。
+	external bool
+	// baselineGB（M10）：外部项的内存占用不能靠 residentMemGbOf 现场读（没有句柄），
+	// 直接沿用基线探测到的实测占用，否则内存核算会漏掉这一大块（X3 上 K2 就是 23.98 GB）。
+	baselineGB float64
 }
 
 // loadWaiter 请求合并：同模型并发请求共享一个加载槽
@@ -75,6 +88,14 @@ type Manager struct {
 	idleTTL time.Duration
 	// reaperStop 后台 TTL 回收循环的停止信号（nil = 未启动）。读写都在 m.mu 下。
 	reaperStop chan struct{}
+	// borrowMu 借/还编排的串行锁（P3b，§11 M6）。**锁序：先 m.mu，再 m.borrowMu**。
+	borrowMu sync.Mutex
+	// leaseWatchStop 租约看护的停止信号（nil = 未启动）。读写都在 m.mu 下。
+	leaseWatchStop chan struct{}
+	// stopHook（P2，测试注入）：stopSubproc 执行真正停进程动作前回调（nil = 无回调）。
+	// 用途：验收「锁内置 draining ⇒ 出锁后才停进程」（§7.7 修补 3 的可观测面）。
+	// 回调里如需读状态须自行加锁（回调发生在锁外）。
+	stopHook func(sp *subproc)
 }
 
 // defaultReapInterval 是后台 TTL 回收循环的扫描间隔（只决定"多久查一次"，不是 TTL 本身）。
@@ -114,6 +135,7 @@ func (m *Manager) Start(modelName string) (map[string]interface{}, error) {
 	if sp, ok := m.procs[modelName]; ok && sp.state == StateReady {
 		sp.lastUsed = time.Now()
 		sp.reqCount++
+		sp.inflight++ // P2（§7.7 修补 3）：在飞引用计数 +1（唯一真源）；对应 release 在 doStart 失败路径与调用方
 		m.mu.Unlock()
 		log.Printf("[backend] 模型 %s 已驻留，直接复用 (port=%d)", modelName, sp.port)
 		return okResponse(modelName, entry.Backend, sp.port), nil
@@ -151,15 +173,84 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// P1 接线（最先做）：适配器声明「本架构必须由非主线引擎承载」⇒ 卵声明必须带 cmd:
+	// （专用 fork + 包装脚本含 env 处理），缺失即拒孵（502 语义），绝不静默退回主线
+	// llama-server。放在一切裁决之前：声明校验属于「孵化前校验」（设计 §6.8.4），
+	// 不该被内存采样/端口等因素抢先返回别的错误码。
+	// 依据：设计-子端沙箱化-20260914 §1.2 / §4.7 / 附录 C·C1（fleet.yaml 无 cmd: 时第二台
+	// 设备孵 K2 会静默退回主线 llama-server ⇒ 起不来或误链且不报错）。
+	adpEarly := modeladapter.Dispatch(modelName)
+	if nonMainline, ok := adpEarly.(modeladapter.NonMainlineEngine); ok && nonMainline.RequiresNonMainlineEngine() && entry.Cmd == "" {
+		log.Printf("[backend] ✗ 拒孵 %s：该架构必须由非主线引擎承载（专用 fork + 包装脚本），卵声明缺少 cmd: 字段", modelName)
+		return errResponse(502, "engine implementation missing",
+			fmt.Sprintf("model %s requires a non-mainline engine (cmd: field in the egg manifest); refusing to silently fall back to the mainline llama-server", modelName)), nil
+	}
+
+	// M10（设计 §11）：请求的模型如果就是某个手工起的基线服务（同一个权重）⇒ **直接复用**它的端口。
+	// 不借、不停、不加载 —— 只登记一个**不带进程句柄**的外部项（external=true）。
+	// 位置刻意放在最前面：连"腾内存/服务类型清场"都不该为本机已有的模型去做。
+	if bs, ok := baselineReuseCandidateLocked(
+		m.baselineServicesLocked(),
+		baselineReuseIdentities(modelName, entry.File),
+		nil, // skipPorts：baselineServicesLocked 已排除本端占用的端口
+	); ok {
+		m.procs[modelName] = &subproc{
+			port: bs.Port, model: modelName, entry: entry, state: StateReady,
+			lastUsed: time.Now(), external: true, baselineGB: bs.ApproxGB,
+		}
+		log.Printf("[backend] M10 复用基线服务: model=%s 端口=%d 身份=%s（不接管、不加载、不停止）",
+			modelName, bs.Port, bs.Identity)
+		return okResponse(modelName, entry.Backend, bs.Port), nil
+	}
+
 	// 驻留超限 → 五档裁决淘汰（Q1 默认单槽 / Q2 五档）
 	m.evictIfNeededLocked()
 
+	// P1：跨服务类型强制清场（llama xor ds4）——受管侧保证「同一时间只有一种服务在跑」
+	// （设计 §7 S2）。异类且可动作 ⇒ 卸下；异类被红线挡住（在飞/pin/加载中）⇒ 拒装，
+	// 绝不硬来。未托管的手工服务不在此列（走 baseline/借用机制，见设计 §9）。
+	kind := serviceKind(entry)
+	if ev, blocked := m.evictOtherKindsLocked(modelName, kind); len(ev) > 0 || len(blocked) > 0 {
+		log.Printf("[backend] 服务类型互斥(%s): 卸下=%v 红线挡住=%v", kind, ev, blocked)
+		if len(blocked) > 0 {
+			return errResponse(507, "service-kind conflict",
+				fmt.Sprintf("另一类服务(%s)仍有受保护驻留: %v；本机同一时间只允许一种推理服务在跑",
+					kind, blocked)), nil
+		}
+	}
+
 	// 内存预算检查（T3 预检，借鉴 llama_cpp_router willModelFit）——fail-closed
+	// M8：可用内存按「min(系统可用, 机型配额) − 预留 − 基线服务实测占用 − 已驻留托管项」算，
+	// 让手工起的基线服务（9000/9001 等）**先把坑占掉**，避免"子端说够、引擎说不够"（今天 502 的成因）。
 	if memRequired := entry.MemGB; memRequired > 0 {
-		ok, have, need := m.ensureMemoryForLocked(memRequired, monitor.DefaultSampler.MemAvailableGb())
+		avail := m.effectiveAvailableGbLocked(monitor.DefaultSampler.MemAvailableGb())
+		ok, have, need := m.ensureMemoryForLocked(memRequired, avail)
+		borrowNote := ""
+		if !ok {
+			// P3b：先尝试"借用"基线服务的坑（声明 + 空闲检定 + 停前存档）。
+			// 成功则重算可用内存；失败则把原因带进拒装响应，让人知道"谁挡着"。
+			borrowed, berr := m.tryBorrowForMemoryLocked(memRequired)
+			if len(borrowed) > 0 {
+				log.Printf("[backend] 已借用基线服务 %v 腾坑，重算内存预算", borrowed)
+				// n16：采样会滞后（内核回收 GTT/页需要时间，真机实测借用释放 32.7GB 后采样仍是旧值）
+				// ⇒ 不能只信采样；与"借用前 + 本次腾出量"取较大者，既防滞后读旧值、也防采样跟上后重复计数。
+				freedGb := m.borrowedOccupiedGbLocked(borrowed)
+				sampled := m.effectiveAvailableGbLocked(monitor.DefaultSampler.MemAvailableGb())
+				avail = recomputeAfterBorrow(sampled, avail, freedGb)
+				log.Printf("[backend] 借用后重算：采样 %.1f GB、本次腾出 %.1f GB ⇒ 取 %.1f GB",
+					sampled, freedGb, avail)
+				ok, have, need = m.ensureMemoryForLocked(memRequired, avail)
+			} else if berr != nil {
+				borrowNote = "；借用未成：" + berr.Error()
+			}
+		}
 		if !ok {
 			// 腾不出缺口 → 拒装（507 语义不变）：不许赌"应该能跑"。
-			return m.rejectInsufficientMemory(have, need), nil
+			resp := m.rejectInsufficientMemory(have, need)
+			if borrowNote != "" {
+				resp["detail"] = fmt.Sprintf("%v%s", resp["detail"], borrowNote)
+			}
+			return resp, nil
 		}
 		log.Printf("[backend] 内存预算检查通过: avail=%.1fGB, required=%.1fGB", have, need)
 	}
@@ -182,6 +273,7 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 	sp.port = port
 
 	// 构建启动命令（模型适配层：按模型名选适配器，管理启动参数/工具风格/重提示）
+	// （P1 的「非主线引擎必须带 cmd:」守卫在 doStart 最前面，见函数开头。）
 	adp := modeladapter.Dispatch(modelName)
 	cmdArgs := adp.BuildArgs(entry, port)
 	cmdPath := ""
@@ -217,6 +309,10 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 		execArgs = cmdArgs
 	}
 
+	// P6（R6）：受管模型的空闲自退透传 —— 只对 llama 家族、且仅在配置了 ZERG_IDLE_SLEEP_S 时才加。
+	// 位置刻意放在 cmd 覆盖之后：无论走适配器还是走 cmd:，最终参数都经过这一道。
+	execArgs = applyIdleSelfSleep(execArgs, entry.Backend)
+
 	cmd := exec.Command(cmdPath, execArgs...)
 	sp.proc = cmd
 	log.Printf("[backend] spawn 命令: %s %v", cmdPath, execArgs)
@@ -251,6 +347,19 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 		sp.state = StateCrashed
 		return errResponse(500, "health check failed", err.Error()), nil
 	}
+
+	// M3：**功能预检** —— "加载成功 ≠ 可用"（今天 502 的直接成因）。
+	// 引擎自己还有守卫：`rocm prefill failed` 正是在"装好了"之后才发生。
+	// 判据必须是一次**真实生成**（max_tokens=1）：只看 /health 只能证明端口活。
+	if probeErr := probeInference(port, modelName, probeTimeout()); probeErr != nil {
+		log.Printf("[backend] 功能预检未通过: model=%s port=%d: %v", modelName, port, probeErr)
+		// 设计 §11 M3 ③：明确报错 + **归还**（停掉本端起的进程），绝不对外声称已就绪。
+		m.stopSubproc(sp)
+		sp.state = StateCrashed
+		delete(m.procs, modelName)
+		return errResponse(502, "model unusable after load (functional probe failed)", probeErr.Error()), nil
+	}
+	log.Printf("[backend] 功能预检通过: model=%s port=%d", modelName, port)
 
 	// 就绪
 	sp.failCnt = 0
@@ -447,14 +556,10 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 	sp.failCnt = 0
 	sp.lastUsed = time.Now()
 	sp.reqCount++
-	// 延迟减计数
-	go func() {
-		time.Sleep(2 * time.Second)
-		m.mu.Lock()
-		sp.reqCount--
-		m.mu.Unlock()
-	}()
 	m.mu.Unlock()
+	// P2（§7.7 修补 3）：转发返回即本次推理完成 ⇒ 在飞 −1（完成/失败都算完成）。
+	// 归零时由 releaseInflight 转「空窗计时中」（只记时间戳，不起定时器）。
+	m.releaseInflight(model)
 	return resp, nil
 }
 
@@ -557,7 +662,14 @@ func (m *Manager) evictForMemoryLocked(needGB float64) float64 {
 
 // 内部：停止进程（SIGTERM → 等 5s → SIGKILL）
 func (m *Manager) stopSubproc(sp *subproc) {
-	if sp == nil || sp.proc == nil || sp.proc.Process == nil {
+	if sp == nil {
+		return
+	}
+	// P2（§7.7 修补 3）：真正动手前的观测钩子——此刻调用方应已在锁内置 draining 并出锁。
+	if m.stopHook != nil {
+		m.stopHook(sp)
+	}
+	if sp.proc == nil || sp.proc.Process == nil {
 		return
 	}
 
@@ -630,9 +742,34 @@ func (m *Manager) waitForReady(sp *subproc) error {
 	return fmt.Errorf("等待后端就绪超时 (%s)", timeout)
 }
 
-// 内部：分配空闲端口（9000-9999）
+// EnvPortPool 子端专用端口区间（如 "9400-9999"）。未设置时仍用既有 9000-9999，
+// 但**一律跳过 baseline 声明的端口**（见 findFreePort 注释）。
+const EnvPortPool = "ZERG_PORT_POOL"
+
+// findFreePort 分配空闲端口（含 P4 端口池隔离，设计 §7 S6 / §11 M11）。
+//
+// 关键修复：**跳过 baseline 声明的端口**——那是 Mr2109 手工常驻服务的坑，子端绝不能占用。
+// （今天实测：9000 的 Qwen 停机期间被子端当空闲端口征用，恢复时才发现端口被抢。）
+// 另可用 ZERG_PORT_POOL="9400-9999" 把子端完全隔离到专用区间。
 func (m *Manager) findFreePort() int {
-	for port := 9000; port <= 9999; port++ {
+	excluded := make(map[int]bool)
+	for _, p := range baselinePorts() {
+		excluded[p] = true
+	}
+	lo, hi := 9000, 9999
+	if v := strings.TrimSpace(os.Getenv(EnvPortPool)); v != "" {
+		if a, b, ok := strings.Cut(v, "-"); ok {
+			if n1, err1 := strconv.Atoi(strings.TrimSpace(a)); err1 == nil {
+				if n2, err2 := strconv.Atoi(strings.TrimSpace(b)); err2 == nil && n1 > 0 && n2 <= 65535 && n1 <= n2 {
+					lo, hi = n1, n2
+				}
+			}
+		}
+	}
+	for port := lo; port <= hi; port++ {
+		if excluded[port] {
+			continue // baseline 声明的端口：绝不占用
+		}
 		// 跳过已被本管理器其他模型占用的端口
 		taken := false
 		for _, sp := range m.procs {

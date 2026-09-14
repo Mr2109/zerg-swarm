@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 )
 
@@ -46,5 +47,42 @@ func TestApplyReasoningFallback_NoReasoning(t *testing.T) {
 	newBody, _ := io.ReadAll(out.Body)
 	if !bytes.Contains(newBody, []byte(`"content":""`)) {
 		t.Errorf("都空——不应改——实际 %s", newBody)
+	}
+}
+
+// TestApplyReasoningFallback_SyncsContentLength — 2026-09-14 修复回归：
+// 兜底改写 body 后必须同步 ContentLength 与 Content-Length 头，
+// 否则转发层按旧长度抄写 ⇒ "wrote more than the declared Content-Length" ⇒ 客户端空响应。
+func TestApplyReasoningFallback_SyncsContentLength(t *testing.T) {
+	g := &Gateway{}
+	body := `{"choices":[{"message":{"role":"assistant","content":"","reasoning_content":"思考过程"}}]}`
+	resp := &http.Response{
+		Body:          io.NopCloser(bytes.NewReader([]byte(body))),
+		ContentLength: int64(len(body)), // 模拟上游给的旧长度
+		Header:        http.Header{"Content-Length": []string{strconv.Itoa(len(body))}},
+	}
+	out := g.applyReasoningFallback(resp)
+	newBody, _ := io.ReadAll(out.Body)
+	if out.ContentLength != int64(len(newBody)) {
+		t.Fatalf("ContentLength 必须等于新 body 长度：got %d want %d", out.ContentLength, len(newBody))
+	}
+	if h := out.Header.Get("Content-Length"); h != strconv.Itoa(len(newBody)) {
+		t.Fatalf("Content-Length 头必须同步：got %q want %q", h, strconv.Itoa(len(newBody)))
+	}
+}
+
+// TestApplyReasoningFallback_NoChangePlainBody — 非 JSON 原样返回时长度也要对
+func TestApplyReasoningFallback_NoChangePlainBody(t *testing.T) {
+	g := &Gateway{}
+	body := "not-json-body"
+	resp := &http.Response{
+		Body:          io.NopCloser(bytes.NewReader([]byte(body))),
+		ContentLength: 999, // 故意给错
+		Header:        http.Header{},
+	}
+	out := g.applyReasoningFallback(resp)
+	newBody, _ := io.ReadAll(out.Body)
+	if len(newBody) != len(body) || out.ContentLength != int64(len(body)) {
+		t.Fatalf("非 JSON 路径长度必须同步：len(body)=%d ContentLength=%d", len(newBody), out.ContentLength)
 	}
 }

@@ -12,7 +12,9 @@ package api
 //   TestFileroots_DefaultDocsByteIdentical      → §七 1（缺省输出逐字节一致）
 //   TestFileroots_RootIsolation                 → §七 2（各根只列自己 + 跨根读 400）
 //   TestFileroots_TraversalAndSymlinkRejected   → §七 3（穿越/绝对路径/符号链接逃逸）
-//   TestFileroots_WriteEndpointsDocsOnly        → §七 4（只读根写操作被拒）
+//   （§七 4「只读根写操作被拒」随**五个文档写端点**一并迁出宿主——2026-09-13 C9 第 4 步：
+//     写操作已归文档茧自带的 Go 服务，宿主的 /api/docs 只剩**读**（参数化 + 老路径），
+//     所以本文件不再有写端点的用例。）
 //   TestFileroots_ActionsOpenReveal             → §七 5（目录/文本/非白名单/不存在）
 //   TestFileroots_AuditLog                      → §七 6（一行一动作、失败留痕、不记内容、轮转、30 天）
 //   TestFileroots_ReadNoSizeLimit               → §七 7（3 MiB 完整返回）
@@ -103,6 +105,8 @@ func newFBHandlers(t *testing.T) (*Handlers, *fbAuditStub) {
 }
 
 // newFBTestRouter 组一个与 main.go 注册方式一致的路由（同一套 AuthMiddleware）。
+// 2026-09-13（C9 第 4 步）：五个文档**写**端点（mkdir/rename/delete/copy/save）随文档茧迁出
+// ⇒ 这里只注册宿主保留的**读/浏览**面（fileroots 三端点 + /api/docs 读）。
 func newFBTestRouter(h *Handlers) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(AuthMiddleware(fbToken))
@@ -111,11 +115,6 @@ func newFBTestRouter(h *Handlers) *chi.Mux {
 	r.Post("/api/fileroots/reveal", h.FileRevealHandler)
 	r.Get("/api/docs", h.DocsHandler)
 	r.Get("/api/docs/*", h.DocsHandler)
-	r.Post("/api/docs/mkdir", h.DocMkdirHandler)
-	r.Post("/api/docs/rename", h.DocRenameHandler)
-	r.Post("/api/docs/delete", h.DocDeleteHandler)
-	r.Post("/api/docs/copy", h.DocCopyHandler)
-	r.Post("/api/docs/save", h.DocSaveHandler)
 	return r
 }
 
@@ -398,89 +397,6 @@ func TestFileroots_TraversalAndSymlinkRejected(t *testing.T) {
 			t.Fatalf("合法路径被拒或解析错: abs=%q code=%q", abs, code)
 		}
 	})
-}
-
-// ── §七 4：只读根上写操作被拒 ──────────────────────────────────────────────
-
-func TestFileroots_WriteEndpointsDocsOnly(t *testing.T) {
-	f := setupFB(t)
-	mustWriteFile(t, filepath.Join(f.repo, "docs", "INDEX.md"), "# 索引\n")
-	mustWriteFile(t, filepath.Join(f.weights, "w.md"), "w\n")
-	mustWriteFile(t, filepath.Join(f.models, "m.json"), "{}\n")
-	mustWriteFile(t, filepath.Join(f.tasks, "t.md"), "t\n")
-
-	snapshot := func(dir string) string {
-		t.Helper()
-		var names []string
-		_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
-			if err != nil {
-				return nil
-			}
-			rel, _ := filepath.Rel(dir, p)
-			names = append(names, rel)
-			return nil
-		})
-		return strings.Join(names, ",")
-	}
-	before := map[string]string{
-		f.weights: snapshot(f.weights),
-		f.models:  snapshot(f.models),
-		f.tasks:   snapshot(f.tasks),
-	}
-
-	h, _ := newFBHandlers(t)
-	r := newFBTestRouter(h)
-
-	// 既有五个写端点都不接受 root 参数、且只认 docs 根内的相对路径——
-	// 所以"在只读根上写"的每条可达路径都必须是 400（且不落盘）。
-	cases := []struct {
-		name, endpoint string
-		body           interface{}
-	}{
-		{"mkdir 穿到权重根", "/api/docs/mkdir", map[string]interface{}{"dir": "../weights/新建"}},
-		{"mkdir 带 root 字段", "/api/docs/mkdir", map[string]interface{}{"root": "weights", "dir": "../weights/x"}},
-		{"rename 目标穿出", "/api/docs/rename", map[string]interface{}{"old": "INDEX.md", "new": "../../weights/x.md"}},
-		{"rename 带 root 字段", "/api/docs/rename", map[string]interface{}{"root": "weights", "old": "INDEX.md", "new": "../weights/x.md"}},
-		{"delete 穿到权重根", "/api/docs/delete", map[string]interface{}{"path": "../weights/w.md"}},
-		{"delete 带 root 字段", "/api/docs/delete", map[string]interface{}{"root": "weights", "path": "../weights/w.md"}},
-		{"copy 目标穿出", "/api/docs/copy", map[string]interface{}{"from": "INDEX.md", "to": "../weights/x.md"}},
-		{"copy 带 root 字段", "/api/docs/copy", map[string]interface{}{"root": "weights", "from": "INDEX.md", "to": "../weights/x.md"}},
-		{"save 绝对路径", "/api/docs/save", map[string]interface{}{"path": "/tmp/不该写", "content": "x"}},
-		{"save 穿到任务根", "/api/docs/save", map[string]interface{}{"path": "../tasks/x.md", "content": "x"}},
-		{"save 空路径(带 root)", "/api/docs/save", map[string]interface{}{"root": "weights", "path": "", "content": "x"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			w := doFB(t, r, http.MethodPost, tc.endpoint, tc.body)
-			if w.Code != http.StatusBadRequest {
-				t.Fatalf("状态码 = %d，期望 400（body=%s）", w.Code, w.Body.String())
-			}
-			if got := respErrorCode(t, w); got != "INVALID_PATH" {
-				t.Fatalf("错误码 = %q，期望 INVALID_PATH", got)
-			}
-		})
-	}
-
-	// 只读根的文件树必须一字未动
-	for dir, want := range before {
-		if got := snapshot(dir); got != want {
-			t.Fatalf("只读根被写脏：%s\n got=%q\nwant=%q", dir, got, want)
-		}
-	}
-
-	// 声明侧：只有 docs 可写
-	wf := doFB(t, r, http.MethodGet, "/api/fileroots", nil)
-	var roots struct {
-		Roots []FileRoot `json:"roots"`
-	}
-	if err := json.Unmarshal(wf.Body.Bytes(), &roots); err != nil {
-		t.Fatalf("fileroots 响应不是 JSON: %v", err)
-	}
-	for _, root := range roots.Roots {
-		if want := root.ID == "docs"; root.Writable != want {
-			t.Fatalf("根 %s 的 writable = %v，期望 %v（只有 docs 可写）", root.ID, root.Writable, want)
-		}
-	}
 }
 
 // ── §七 5：open / reveal 三条路径判定 ───────────────────────────────────────

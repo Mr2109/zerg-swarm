@@ -64,21 +64,49 @@
 
 ## Quick start
 
-```bash
-git clone <this-repo> && cd zerg-swarm
+**Install from source, one command.** `scripts/setup-zerg.sh` bootstraps a new machine end to end:
+fetch the public mirror → verify the Go toolchain against the version pinned in `core/go.mod`
+→ build for the role → install atomically (`bin/*.prev` kept for rollback) → register and
+restart the service → check the **running process's self-reported commit** against the installed
+artifact. It refuses rather than guesses: a too-old toolchain, a dirty checkout or a UI build
+requested off macOS all stop it with a plain explanation.
 
-# 1. Token (shared by all components; never commit it)
+```bash
+git clone https://github.com/Mr2109/zerg-swarm.git && cd zerg-swarm
+
+bash scripts/setup-zerg.sh                 # controller (macOS): core + agent (+ ui)
+bash scripts/setup-zerg.sh --role node     # cluster node (Linux): core + agentd
+bash scripts/setup-zerg.sh --dry-run       # print the plan, touch nothing
+```
+
+Then configure the shared token and the model registry (the controller is already supervised by
+launchd on macOS; a node gets a systemd unit for `zerg-agentd`):
+
+```bash
 cp .env.example .env
 printf '%s\n' "$(openssl rand -hex 32)" > .env.tmp && sed -i '' "s/^ZERG_AUTH_TOKEN=.*/ZERG_AUTH_TOKEN=$(cat .env.tmp)/" .env && rm .env.tmp
 set -a; . ./.env; set +a
-
-# 2. Model registry
 cp gateway/fleet.example.yaml gateway/fleet.yaml   # edit for your machines/weights
-
-# 3. Controller
-cd core && go build -o ../bin/zerg-core ./cmd/zerg-core && cd ..
-./bin/zerg-core
 ```
+
+Updates are source-based too — the client fetches the repository, builds on that machine and
+hands the artifacts to the six-phase swap kernel:
+
+```bash
+zerg update            # no-op prints "already up to date" and exits 2
+zerg update --check    # ask first (6-hour cache, no side effects)
+```
+
+## How this repository is published
+
+This repository is a **filtered mirror** of a private authoritative repository. It is an ordinary
+git repository with real history, mapped **commit for commit**: every commit here corresponds
+one-to-one with a commit in the private repository, and each carries a `GitOrigin-RevId:` trailer
+recording the original commit id. Author names, dates and commit messages are preserved; the
+private surface and private naming are replaced during mirroring (private paths, internal
+hostnames, credentials — if any commit's tree fails the leak scan, the whole batch is aborted and
+not a byte is pushed). So `git log`, `git blame`, `git diff` and `git bisect` all work here, but a
+commit's short SHA will differ from its private counterpart: cross-reference through the trailer.
 
 Details (adding an agent, wiring models, installing the desktop UI) are in [docs/QUICKSTART.en.md](docs/QUICKSTART.en.md).
 The full configuration reference is [docs/CONFIGURATION.en.md](docs/CONFIGURATION.en.md).
@@ -87,7 +115,7 @@ The full configuration reference is [docs/CONFIGURATION.en.md](docs/CONFIGURATIO
 
 | Component | Requirement |
 |---|---|
-| Controller / agent | Go 1.22+ (to build). No runtime dependencies (SQLite via a pure-Go driver) |
+| Controller / agent | Go, version **pinned by `core/go.mod`** (to build). No runtime dependencies (SQLite via a pure-Go driver) |
 | Desktop UI | Rust stable (to build); runs on macOS 14+ / Linux |
 | Model backend | [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-server` (recommended) or any OpenAI-compatible engine |
 | Web search (optional) | Your own [searxng](https://github.com/searxng/searxng) (AGPL, **not distributed with this repo**) — see `scripts/install-searxng.sh` |

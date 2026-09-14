@@ -143,6 +143,9 @@ func (g *Gateway) forwardToBackend(
 				return nil, ferr
 			}
 		}
+		// 诊断（2026-09-14）：主控自身进程拨号失败时，做三层对照以定位层级
+		// 背景：同机其它进程（终端/launchd/同签名身份）都能拨通本地址，唯独主控不行。
+		g.logDialDiagnostics(forwardURL, err)
 		return nil, fmt.Errorf("forward request failed: %w", err)
 	}
 

@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -71,8 +72,12 @@ type Gateway struct {
 	// 每机器连续转发失败计数，超阈值后短期降权（不再选为最优），
 	// 心跳恢复健康后自动回池。
 	failMu     sync.Mutex
-	failCounts map[string]int       // host → 连续失败次数
-	failSince  map[string]time.Time // host → 首次熔断时间（自动恢复用）
+	failCounts map[string]int // host → 连续失败次数
+	// modelFailCounts host → 模型级失败次数（引擎自己报的 5xx、子端 507 拒装等）。
+	// **不计入熔断**（设计-子端服务切换 §11 M4）：上游不可达才降级整机；
+	// 模型级错误只记原因 + 有限重试。与 failCounts 同一把锁（failMu）保护。
+	modelFailCounts map[string]int
+	failSince       map[string]time.Time // host → 首次熔断时间（自动恢复用）
 
 	// v2.5.5 重启窗口期治本: 主控启动时间——宽限期内（startupGrace 秒）忽略 unhealthy 快照
 	// 根因: 主控重启瞬间 X3 心跳失败（主控 API 未就绪窗口期）→ 快照 unhealthy → 路由拒绝
@@ -289,16 +294,17 @@ func NewGateway(authToken string, cfg *config.FleetConfig, localBack *localback.
 				ResponseHeaderTimeout: 90 * time.Second,
 			},
 		},
-		localBack:   localBack,
-		store:       st,
-		sessions:    make(map[string]sessionBinding),
-		prefixes:    make(map[string]map[string]int),
-		failCounts:  make(map[string]int),
-		failSince:   make(map[string]time.Time),
-		lastErr:     make(map[string]string),
-		lastErrAt:   make(map[string]time.Time),
-		lastErrSrc:  make(map[string]string),
-		startupTime: time.Now(), // v2.5.5 重启窗口期治本: 启动宽限期起点
+		localBack:       localBack,
+		store:           st,
+		sessions:        make(map[string]sessionBinding),
+		prefixes:        make(map[string]map[string]int),
+		failCounts:      make(map[string]int),
+		modelFailCounts: make(map[string]int),
+		failSince:       make(map[string]time.Time),
+		lastErr:         make(map[string]string),
+		lastErrAt:       make(map[string]time.Time),
+		lastErrSrc:      make(map[string]string),
+		startupTime:     time.Now(), // v2.5.5 重启窗口期治本: 启动宽限期起点
 		// 丙批 N4 / C2：前缀命中率闭环（窗口 50 次 / 10 分钟——见 prefix_cache.go）
 		// C2：带跨重启持久化（statepath ~/.zerg/state/prefix_cache.json + 节流写）
 		prefixCache: newPrefixCachePersistent(defaultPrefixWindowN, defaultPrefixWindowDur),
@@ -838,9 +844,10 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// v2.5.5 T5b: 5xx（后端/模型错误）也触发重试换机器（另一台可能正常）
 		if err == nil && resp != nil && resp.StatusCode >= 500 {
 			log.Printf("⚠️ backend %s returned %d — trying another machine (T5b 5xx failover)", route.Host, resp.StatusCode)
-			// 5xx 也是模型错误——记失败（防持续 5xx 机器被熔断）
+			// 5xx 是**模型级**错误（引擎自报，如 ds4 的 rocm prefill failed）——
+			// 记入 modelFailCounts 而**不涨熔断**（设计 §11 M4）：不该因"这个模型跑不了"就 demote 整机。
 			if route.Host != "local" {
-				g.markFailure(route.Host, fmt.Sprintf("backend %s returned %d", route.Host, resp.StatusCode))
+				g.markModelFailure(route.Host, fmt.Sprintf("backend %s returned %d", route.Host, resp.StatusCode))
 			}
 			// v2.5.6 错误码设计（2026-08-29）: 读取子端错误体——透传真实错误消息（调试关键）
 			// 子端错误如 {"error":"queue full"}(429) / {"error":"inference timeout"}(504)——
@@ -868,7 +875,8 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				reason = err.Error()
 			}
-			g.markFailure(route.Host, reason)
+			// 模型级（后端 4xx/5xx —— 引擎/子端自报的语义错误）⇒ **不计熔断**，只记原因（§11 M4）
+			g.markModelFailure(route.Host, reason)
 		}
 		// 连接层失败——不 markFailure（重试成功就没事——偶发网络不熔断）
 	}
@@ -1018,6 +1026,26 @@ func (g *Gateway) markFailure(host string, reason string) {
 	g.recordFailureReasonLocked(host, "markFailure", reason, 2)
 	slog.Warn("machine forward failed", "host", host, "fail_count", g.failCounts[host], "threshold", circuitFailThreshold)
 	log.Printf("%s", breakerFailLogLine(host, g.failCounts[host]))
+}
+
+// markModelFailure 记录一次**模型级失败**（引擎自己报的 5xx、子端 507 拒装等）。
+//
+// 与 markFailure 的关键区别：**不涨熔断计数**，因此不会把整机 demote 掉。
+// 设计依据：《设计-子端服务切换与基线服务声明》§11 M4 ——
+//
+//	「上游不可达/连接失败 ⇒ 计入熔断；引擎 5xx（模型级：rocm prefill failed、
+//	  insufficient memory）⇒ 记错 + 有限重试，不计熔断。」
+//
+// 2026-09-14 实测教训：DS4@1M 遭遇 rocm prefill failed，被记成 machine x3 forward failed (8/8)
+// 并 demote（随后靠心跳复位）——而问题只在"该模型 + 该上下文"，不该牵连整机。
+func (g *Gateway) markModelFailure(host string, reason string) {
+	g.failMu.Lock()
+	defer g.failMu.Unlock()
+	g.modelFailCounts[host]++
+	g.recordFailureReasonLocked(host, "markModelFailure", reason, 2)
+	slog.Warn("model-level failure (not counted toward breaker)",
+		"host", host, "model_fail_count", g.modelFailCounts[host], "reason", reason)
+	log.Printf("⚠️ 模型级失败（不计熔断）: %s — %s", host, reason)
 }
 
 // breakerCountReason 保证「涨计数」的路径一定带上可读原因。
@@ -1685,6 +1713,19 @@ func modelName(reqMap map[string]interface{}) string {
 	return ""
 }
 
+// setRespBody 替换响应体并**同步长度**。
+//
+// 2026-09-14 修复：此前只换 Body 不换 ContentLength/Content-Length 头，
+// 于是转发层按旧长度抄写正文 ⇒ `io.Copy` 报 "wrote more than the declared
+// Content-Length" ⇒ 客户端收到 200 但**空正文**（GLM 5.3 思考模型实测复现）。
+func setRespBody(resp *http.Response, body []byte) {
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	if resp.Header != nil {
+		resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	}
+}
+
 // applyReasoningFallback — v2.5.4.9 reasoning 兜底（思考模型 content 空时拼 reasoning）
 // 场景: Nemotron/Qwen3.8 思考模式——生成全在 reasoning_content——content 空
 // 处理: 读 body——chat.completions 响应里 message.content 空但有 reasoning_content
@@ -1704,12 +1745,12 @@ func (g *Gateway) applyReasoningFallback(resp *http.Response) *http.Response {
 	var obj map[string]interface{}
 	if err := json.Unmarshal(body, &obj); err != nil {
 		// 非 JSON——原样返回
-		resp.Body = io.NopCloser(bytes.NewReader(body))
+		setRespBody(resp, body)
 		return resp
 	}
 	choices, ok := obj["choices"].([]interface{})
 	if !ok || len(choices) == 0 {
-		resp.Body = io.NopCloser(bytes.NewReader(body))
+		setRespBody(resp, body)
 		return resp
 	}
 	changed := false
@@ -1731,17 +1772,17 @@ func (g *Gateway) applyReasoningFallback(resp *http.Response) *http.Response {
 		}
 	}
 	if !changed {
-		resp.Body = io.NopCloser(bytes.NewReader(body))
+		setRespBody(resp, body)
 		return resp
 	}
 	// 重新序列化
 	newBody, err := json.Marshal(obj)
 	if err != nil {
-		resp.Body = io.NopCloser(bytes.NewReader(body))
+		setRespBody(resp, body)
 		return resp
 	}
 	log.Printf("🔄 reasoning fallback: content empty → using reasoning_content (thinking model)")
-	resp.Body = io.NopCloser(bytes.NewReader(newBody))
+	setRespBody(resp, newBody)
 	return resp
 }
 

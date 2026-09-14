@@ -3,11 +3,14 @@
 package api
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/compat"
 )
 
 // 每个用例独立状态目录（避免污染真实 ~/.zerg/state）
@@ -104,5 +107,82 @@ func TestEngineDefaultNotStopped(t *testing.T) {
 	InitInternalEngine()
 	if InternalEngineStopped() {
 		t.Fatal("无持久化文件时应默认未停止")
+	}
+}
+
+// ─────────────── B7 / G10：跨版本状态文件兼容层接线验收 ───────────────
+
+// 路径必须「同源」：compat 清单解析出的路径与引擎自己的解析器必须一致，
+// 否则兼容层迁的是 A、引擎读的是 B —— 迁移「成功」但状态依旧读旧文件。
+func TestEngineStatePathMatchesCompatManifest(t *testing.T) {
+	resetEngineForTest(t)
+	e, ok := compat.Lookup("internal_engine")
+	if !ok {
+		t.Fatal("compat 清单缺 internal_engine 条目")
+	}
+	want := e.Path(compat.DefaultDirs())
+	if got := engineStatePath(); got != want {
+		t.Fatalf("两套路径解析不一致：engine=%s compat=%s", got, want)
+	}
+}
+
+// 端到端：旧版（无 schema）文件被 InitInternalEngine **原地**迁移，用户意图照常恢复，且二跑幂等。
+func TestEngineLegacyFileMigratedOnStartup(t *testing.T) {
+	resetEngineForTest(t)
+	path := filepath.Join(os.Getenv("ZERG_STATE_DIR"), "internal_engine.json")
+	legacy := `{"stopped":true,"since":"2026-01-02T03:04:05Z"}`
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatalf("写旧版夹具失败: %v", err)
+	}
+
+	InitInternalEngine()
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("迁移后文件必须还在: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("迁移后不是合法 JSON: %v", err)
+	}
+	if got["schema"] != float64(1) {
+		t.Errorf("应被迁移到 schema=1，实际 %v", got["schema"])
+	}
+	if got["stopped"] != true || got["since"] != "2026-01-02T03:04:05Z" {
+		t.Errorf("用户意图字段必须一个不少，实际 %v", got)
+	}
+	if !InternalEngineStopped() {
+		t.Error("旧版 stopped=true 必须被恢复")
+	}
+	if baks, _ := filepath.Glob(path + ".bak-*"); len(baks) != 1 {
+		t.Errorf("应恰好 1 份迁移前备份，实际 %d", len(baks))
+	}
+
+	InitInternalEngine() // 二次启动 = 幂等
+	if baks, _ := filepath.Glob(path + ".bak-*"); len(baks) != 1 {
+		t.Errorf("二次启动不得新增备份，实际 %d", len(baks))
+	}
+}
+
+// 端到端：高版本 schema ⇒ 只读降级——已识别字段照常恢复，但**不迁移、不回写、不备份**。
+func TestEngineFutureSchemaIsReadOnly(t *testing.T) {
+	resetEngineForTest(t)
+	path := filepath.Join(os.Getenv("ZERG_STATE_DIR"), "internal_engine.json")
+	future := `{"schema":99,"stopped":true,"since":"2026-01-02T03:04:05Z"}`
+	if err := os.WriteFile(path, []byte(future), 0o644); err != nil {
+		t.Fatalf("写高版本夹具失败: %v", err)
+	}
+
+	InitInternalEngine()
+
+	body, _ := os.ReadFile(path)
+	if string(body) != future {
+		t.Errorf("高版本文件不得被改写（不猜），实际 %q", string(body))
+	}
+	if !InternalEngineStopped() {
+		t.Error("只读降级仍应恢复已识别字段 stopped=true")
+	}
+	if baks, _ := filepath.Glob(path + ".bak-*"); len(baks) != 0 {
+		t.Errorf("高版本不该触发备份，实际 %d", len(baks))
 	}
 }

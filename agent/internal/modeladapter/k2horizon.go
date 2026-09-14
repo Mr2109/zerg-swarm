@@ -18,6 +18,13 @@ type K2Horizon struct{}
 
 func (a *K2Horizon) Name() string { return "k2-horizon" } // 前缀匹配 K2-Horizon-*（MoVA-36B 等）
 
+// RequiresNonMainlineEngine 实现 modeladapter.NonMainlineEngine（P1）：
+// 主线 llama.cpp **不支持** k2-horizon 架构（报 unknown model architecture）⇒ 这枚卵**必须**
+// 由非主线引擎实现承载（IFM fork 的 llama-server，经 run-k2.sh 清 LD_LIBRARY_PATH）。
+// 卵声明里没有 cmd: 时 **拒孵**——绝不静默落回 detectLlamaServerPath() 的主线 llama-server
+// （那会起不来或误链，而且不报错）。依据：设计-子端沙箱化-20260914 §1.2 / §4.7 / 附录 C·C1。
+func (a *K2Horizon) RequiresNonMainlineEngine() bool { return true }
+
 func (a *K2Horizon) BuildArgs(entry *registry.ModelEntry, port int) []string {
 	return []string{
 		"-m", entry.File,

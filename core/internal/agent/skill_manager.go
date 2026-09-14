@@ -46,6 +46,11 @@ func (sm *SkillManager) scan() {
 		if !e.IsDir() {
 			continue
 		}
+		// 跳过 macOS 传输残留（AppleDouble：._*）与隐藏目录——它们不是技能，
+		// 且在跨机拷贝（tar/scp/rsync）后经常出现（2026-09-14 X3 实测 785 个）。
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
 		skillPath := filepath.Join(sm.dir, e.Name(), "SKILL.md")
 		data, err := os.ReadFile(skillPath)
 		if err != nil {

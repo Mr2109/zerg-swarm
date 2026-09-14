@@ -2,6 +2,7 @@ package agent
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -80,4 +81,33 @@ func TestToolEventsAppend(t *testing.T) {
 	if len(evs3) != 3 {
 		t.Fatalf("坏行应跳过: %d", len(evs3))
 	}
+}
+
+// TestMain —— 2026-09-13：本包测试会经 exec.go 调 RecordToolUse，默认落在**真机**
+// `~/.zerg/state/tool_uses.json`（实测整包跑一次 glob/todo 计数各 +1，见 B7 复核记录）。
+// 测试不得污染真机状态 ⇒ 先尝试进程内改环境（若 statepath 是惰性读则足够），
+// 再用**重执行自身**的兜底（statepath 若在包初始化时就把目录定下，进程内改已太晚）。
+func TestMain(m *testing.M) {
+	if os.Getenv("ZERG_TEST_STATE_ISOLATED") == "1" {
+		os.Exit(m.Run())
+	}
+	if os.Getenv("ZERG_STATE_DIR") == "" {
+		d, err := os.MkdirTemp("", "zerg-agent-test-state-")
+		if err == nil {
+			// 兜底：带环境重执行自身，确保包初始化期就能看到隔离目录
+			cmd := exec.Command(os.Args[0], os.Args[1:]...)
+			cmd.Env = append(os.Environ(), "ZERG_STATE_DIR="+d, "ZERG_TEST_STATE_ISOLATED=1")
+			cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
+			err := cmd.Run()
+			_ = os.RemoveAll(d)
+			if cmd.ProcessState != nil {
+				os.Exit(cmd.ProcessState.ExitCode())
+			}
+			if err != nil {
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+	}
+	os.Exit(m.Run())
 }

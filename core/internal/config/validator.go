@@ -54,6 +54,49 @@ var KnownFamilies = []string{
 	"falcon", "command-r", "dbrx", "mixtral", "codellama", "wizardlm",
 }
 
+// MainlineUnsupportedArchitectures 主线 llama.cpp **不支持**的架构清单。
+//
+// 判据来源（不是推测）：这类架构必须由**非主线引擎实现**（专用 fork 二进制 + 包装脚本）
+// 承载，卵清单里必须有 cmd:，否则会静默退回主线引擎 —— 后果是起不来
+// （主线报 unknown model architecture）或误链，**而且都不报错**。
+//   - k2-horizon：agent/internal/modeladapter/k2horizon.go 文件头（llama.cpp IFM fork 专用，
+//     主线未支持 issue#28361）；
+//   - 设计-子端沙箱化-20260914 §1.2（引擎实现/变体是卵的必需字段）、§4.7（卵清单必须带上它，
+//     集群级统一）、附录 C·C1（fleet.yaml 全篇 0 处 cmd: ⇒ 第二台设备孵 K2 会静默退回主线）。
+var MainlineUnsupportedArchitectures = []string{"k2-horizon"}
+
+// eggArch 卵的架构标识（architecture 优先，回落 arch）。
+func eggArch(c ModelCandidate) string {
+	if s := strings.TrimSpace(c.Architecture); s != "" {
+		return s
+	}
+	return strings.TrimSpace(c.Arch)
+}
+
+// NeedsEngineImpl 这枚卵是否**必须显式声明引擎实现/变体**（即 cmd: 必须非空）。
+//
+// 两种触发（任一）：
+//  1. 架构在 MainlineUnsupportedArchitectures 里（主线引擎根本起不来）；
+//  2. 条目显式打了 engine_impl_required: true（新引擎进清单前的通用开关，不必改本函数）。
+//
+// 不适用的情形：backend 已是非 llama 家族（如 ds4-server）——那时「引擎实现」由 backend 字段
+// 承载（manager 侧按 backend 直接取 ds4 可执行文件），不重复要求 cmd:。
+func NeedsEngineImpl(c ModelCandidate) bool {
+	if c.Backend != "" && c.Backend != "llama-server" {
+		return false
+	}
+	if c.EngineImplRequired {
+		return true
+	}
+	arch := strings.ToLower(eggArch(c))
+	for _, a := range MainlineUnsupportedArchitectures {
+		if arch == a {
+			return true
+		}
+	}
+	return false
+}
+
 // isKnownHost 检查主机是否在 fleet 已知列表中
 func isKnownHost(host string) bool {
 	known := []string{"local", "x3", "mini1", "mini2", "mini3"}
@@ -188,6 +231,21 @@ func Validate(name string, candidate ModelCandidate) ValidationResult {
 			Field:   "tool_support",
 			Level:   WarnLevel,
 			Message: "工具支持标记为空——默认 false（存量兼容）",
+		})
+	}
+
+	// ===== V016: 卵清单必须承载「引擎实现/变体」（P1；设计 §1.2 / §4.7 / 附录 C·C1）=====
+	// 判据：需要非主线引擎实现的卵（NeedsEngineImpl）**缺 cmd:** ⇒ Fatal（拒孵）。
+	// 理由：缺失时 manager 会落到 detectLlamaServerPath() 的**主线** llama-server ⇒
+	// 起不来（主线报 unknown model architecture: k2-horizon）或误链，**而且不报错**
+	// ——「静默退回主线引擎」是本项要堵的那一个坑，故判 Fatal 而不是 Warn。
+	if NeedsEngineImpl(candidate) && len(candidate.Cmd) == 0 {
+		errs = append(errs, ValidationError{
+			Field: "cmd",
+			Level: FatalLevel,
+			Message: "引擎实现/变体缺失：架构 " + eggArch(candidate) +
+				" 主线引擎不支持，必须声明 cmd:（专用 fork 二进制 + 包装脚本，含 env 处理）" +
+				"——不许静默退回主线 llama-server",
 		})
 	}
 
