@@ -48,8 +48,34 @@ type ModelEntry struct {
 	// 小模型（嵌入 / 重排 / 分类类）建议 120。**已废弃「常驻卵」类别**
 	// ——「默认空」无例外，差别只在阈值长短。
 	IdleUnloadS int `yaml:"idle_unload_s,omitempty"`
+	// ═══ 硬盘流与权重供给（P5，设计-子端沙箱化-20260914 §9.4 / §9.5 / §9.7）═══
+	// 归属铁律（§9.2）：--ssd-streaming* 与 --kv-disk-* 是 **ds4 的参数**，不是 llama.cpp 的；
+	// llama.cpp 的对应物是 --moe-stream*（机制同源、page cache 策略相反）。
+	// 适配器只按本声明发参数，孵化器不做任何推断（§9.5 结论句：虫卵提供条件，引擎自己控流）。
+	//
+	// SsdStreamingPreloadExperts 预热专家数（ds4 --ssd-streaming-preload-experts，§9.4）：
+	// **必须来自实测档案**（P5 验收③：扫 512/1024/2048 的 prefill 实测表，按「标定铁律」
+	// 凡数字必实测、禁估值、禁硬编码，§8.4）——无声明（<=0）⇒ 适配器**不发**该参数
+	// （F6 的落地通路；无档案不预热）。
+	SsdStreamingPreloadExperts int `yaml:"ssd_streaming_preload_experts,omitempty"`
+	// KVDisk KV 盘声明（ds4 --kv-disk-dir / --kv-disk-space-mb，§9.4 / §9.7）：
+	// **默认关闭**（nil = 不发）；声明了则 space_mb 必填（写盘上限**不许留成无限**，§9.7①），
+	// 目录**按卵分目录**（缺省 ~/.zerg/kvdisk/<卵名>/，§9.7④），落「跨孵化保留」侧（§6.6）。
+	KVDisk *KVDiskDecl `yaml:"kv_disk,omitempty"`
+	// name 这枚卵的名字（注册表键；load/Reload 时盖进条目，见 EggName）。
+	name string
 	// Custom 存储任意额外字段（如 ssd、ssd_streaming_cache_experts 等）
 	Custom map[string]interface{} `yaml:",inline"`
+}
+
+// KVDiskDecl 卵的 KV 盘声明（P5，设计 §9.4 / §9.7）。
+type KVDiskDecl struct {
+	// SpaceMB 写盘上限（MB；--kv-disk-space-mb）。**必填正数**——KV 落盘是持续写，
+	// 上限不许留成「无限」（§9.7①）；校验见 ValidateEggDeclaration（缺失即拒孵）。
+	SpaceMB int `yaml:"space_mb"`
+	// Dir 显式目录覆盖（可选）。缺省按「按卵分目录」取 ~/.zerg/kvdisk/<卵名>/（§9.7④）；
+	// 支持 ~ 前缀（展开由适配器负责）。
+	Dir string `yaml:"dir,omitempty"`
 }
 
 // CmdString 自定义类型：YAML 中既接受字符串也接受字符串数组。
@@ -108,6 +134,13 @@ func (r *Registry) load() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// 把注册表键（卵名）盖进条目：适配器做「按卵分目录」（KV 盘缺省 ~/.zerg/kvdisk/<卵名>/，
+	// 设计 §9.7④）需要知道这枚卵叫什么——路径规则不该散在适配器里重猜。
+	for name, entry := range models {
+		if entry != nil {
+			entry.name = name
+		}
+	}
 	r.models = models
 	return nil
 }
@@ -127,6 +160,12 @@ func (r *Registry) Reload() error {
 		return fmt.Errorf("解析注册表 YAML: %w", err)
 	}
 
+	// 同 load：重载后卵名照样要盖进条目（否则热更新一轮 KV 盘目录就丢了卵名）。
+	for name, entry := range models {
+		if entry != nil {
+			entry.name = name
+		}
+	}
 	r.models = models
 	return nil
 }
