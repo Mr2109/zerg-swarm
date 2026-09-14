@@ -473,14 +473,8 @@ func (m *Manager) evictOtherKindsLocked(exceptModel, targetKind string) (evicted
 }
 
 // evictSubprocLocked 停止并移除一个驻留项（调用方需持锁），返回它腾出的 GB。
+// （M10 external 守卫已随 P4 退场清理删除——外部复用项不再存在，附录 C·C2。）
 func (m *Manager) evictSubprocLocked(name string, sp *subproc, why string) float64 {
-	// M10 铁律：外部复用项（手工起的基线服务）**绝不进驱逐/停服路径**。
-	// 它本就不带进程句柄（proc==nil），这里再加一道**显式**守卫：
-	// 哪怕将来有人给外部项塞了句柄，也不会因为一次内存腾退就把别人的服务杀掉。
-	if sp != nil && sp.external {
-		log.Printf("[backend] %s: **拒绝卸载外部复用项** %s（基线服务，不是本端起的）", why, name)
-		return 0
-	}
 	gb := 0.0
 	if sp != nil {
 		gb = resources.OccupiedGb(residentEntryOf(name, sp, time.Now()))
