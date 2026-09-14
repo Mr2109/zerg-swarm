@@ -165,6 +165,9 @@ func TestEvict_RedLine_PinTTL(t *testing.T) {
 }
 
 // ── 红线②：未托管进程绝不被接管、绝不被杀（Q6） ──────────────────────────────
+//
+// 语义保持（P4 退场清理后）：托管清单只装本端 spawn 的进程；驱逐/腾退全流程
+// 只能发生在托管清单内，绝不允许触及清单之外的任何监听。
 
 func TestEvict_RedLine_UnmanagedUntouched(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -174,19 +177,15 @@ func TestEvict_RedLine_UnmanagedUntouched(t *testing.T) {
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port
 
-	// 只读探测：它只该被"看见"（managed=false），不进托管清单
+	// 起一个与本监听无关的托管项
 	m := newEvictTestManager(2, map[string]*subproc{
 		"managed": {model: "managed", state: StateReady, entry: &registry.ModelEntry{MemGB: 4}, lastUsed: time.Now().Add(-time.Hour)},
 	})
-	got := m.UnmanagedListeners([]int{port})
-	if len(got) != 1 || got[0].Managed {
-		t.Fatalf("未托管监听应被如实报告且 managed=false，实得 %+v", got)
-	}
 	if len(m.procs) != 1 {
-		t.Fatalf("探测不得写进托管清单，实得 %v", keysOf(m.procs))
+		t.Fatalf("前置：托管清单应有 1 项，实得 %v", keysOf(m.procs))
 	}
 
-	// 驱逐/腾退全流程跑一遍：未托管端口必须还活着
+	// 驱逐/腾退全流程跑一遍：清单外的未托管端口必须还活着
 	m.evictIfNeededLocked()
 	if freed := m.evictForMemoryLocked(1000); freed == 0 {
 		t.Fatal("托管项应被腾退（否则本用例没测到驱逐路径）")

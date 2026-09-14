@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
 	"github.com/Mr2109/zerg-swarm/agent/internal/heartbeat"
@@ -43,8 +42,6 @@ var (
 	registryPath = flag.String("registry", "agent_models.yaml", "模型注册表 YAML 路径")
 	logLevel     = flag.String("log-level", "info", "日志级别（debug/info/warn/error）")
 	logFile      = flag.String("log-file", "", "日志文件路径（留空只写 stdout）")
-	// 未托管监听探测：覆盖实测 E2（手工 screen 起的服务）——只读 TCP 探测，只标注不接管。
-	unmanagedScan = flag.String("unmanaged-scan", "9000-9999", "未托管监听探测端口清单（如 9000-9999 / 8100,8101）；空串关闭")
 )
 
 func main() {
@@ -105,23 +102,13 @@ func main() {
 
 	// 创建后端管理器
 	backendMgr := backend.NewManager(reg, m)
-	// P3b：租约看护（设计 §11 M1）——启动即先把上次遗留的 borrowed 租约归还，
-	// 此后每 30s 扫一次；子端活着时租约绝不会过期无人管（崩溃场景由下次启动这条补齐）。
-	backendMgr.StartLeaseWatchdog(30 * time.Second)
 
 	// 创建应用核心
 	agent := server.NewAgent(m, *token, reg, backendMgr, *controller)
 
-	// 创建心跳上报器：
-	//   - active=agent：active_requests 取真实在飞计数（真值来自 server.Agent.activeReqs）
-	//   - unmanaged：只读探测未托管监听端口（只标注 managed=false，绝不接管/杀）
-	probePorts := backend.ParsePortSpec(*unmanagedScan)
-	hr := heartbeat.NewRunner(*controller, *token, m, backendMgr, monitor.DefaultSampler, agent, func() []backend.UnmanagedProcess {
-		if len(probePorts) == 0 {
-			return nil
-		}
-		return backendMgr.UnmanagedListeners(probePorts)
-	})
+	// 创建心跳上报器：active=agent：active_requests 取真实在飞计数（真值来自 server.Agent.activeReqs）。
+	// （unmanaged[] 未托管探测已随 P4 退场清理删除——卵之外无引擎，附录 C·C7。）
+	hr := heartbeat.NewRunner(*controller, *token, m, backendMgr, monitor.DefaultSampler, agent)
 	hr.Start()
 
 	// 创建 HTTP 服务器

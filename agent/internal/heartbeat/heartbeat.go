@@ -45,9 +45,6 @@ type ActiveCounter interface {
 	ActiveRequests() int
 }
 
-// UnmanagedSource 只读的未托管监听探测来源（返回空切片表示没有）。
-type UnmanagedSource func() []backend.UnmanagedProcess
-
 // Runner 心跳上报器。
 type Runner struct {
 	controller string
@@ -57,7 +54,6 @@ type Runner struct {
 	sampler    *monitor.Sampler
 	vram       vramSource
 	active     ActiveCounter
-	unmanaged  UnmanagedSource
 	startedAt  time.Time
 	interval   time.Duration
 	stopCh     chan struct{}
@@ -66,8 +62,7 @@ type Runner struct {
 
 // NewRunner 创建心跳上报器。
 //   - active：提供真实在飞请求计数（nil 则该字段不出现，绝不写死 0）。
-//   - unmanaged：只读的未托管监听探测（nil 则不上报 unmanaged[]，绝不接管）。
-func NewRunner(controller, token, machine string, mgr *backend.Manager, smp *monitor.Sampler, active ActiveCounter, unmanaged UnmanagedSource) *Runner {
+func NewRunner(controller, token, machine string, mgr *backend.Manager, smp *monitor.Sampler, active ActiveCounter) *Runner {
 	return &Runner{
 		controller: controller,
 		token:      token,
@@ -76,7 +71,6 @@ func NewRunner(controller, token, machine string, mgr *backend.Manager, smp *mon
 		sampler:    smp,
 		vram:       smp,
 		active:     active,
-		unmanaged:  unmanaged,
 		startedAt:  time.Now(),
 		interval:   5 * time.Second,
 		stopCh:     make(chan struct{}),
@@ -213,29 +207,12 @@ func (r *Runner) buildBody() map[string]interface{} {
 		}
 	}
 
-	// 未托管探测只做一次（只读），同时并入 resident[] 与 unmanaged[]。
-	var unmanaged []backend.UnmanagedProcess
-	if r.unmanaged != nil {
-		unmanaged = r.unmanaged()
-	}
-
-	// resident[]：驻留明细。托管项（managed=true）来自后端管理器；
-	// 探测到的未托管项以 managed=false 如实并入（Q6：只标注，不接管）。
+	// resident[]：驻留明细，全部来自后端管理器（托管项 managed=true）。
+	// （unmanaged[] 未托管探测已随 P4 退场清理删除——卵之外无引擎，附录 C·C7；
+	//   心跳里不再有"外部服务"这一类上报对象。）
 	resident := r.backend.ResidentDetail()
-	for _, u := range unmanaged {
-		resident = append(resident, backend.ResidentDetail{
-			Alias:   fmt.Sprintf("unmanaged@127.0.0.1:%d", u.Port),
-			State:   "ready",
-			Managed: false,
-			Source:  "manual",
-			RssGb:   u.RssGb,
-		})
-	}
 	if len(resident) > 0 {
 		body["resident"] = resident
-	}
-	if len(unmanaged) > 0 {
-		body["unmanaged"] = unmanaged
 	}
 
 	return body

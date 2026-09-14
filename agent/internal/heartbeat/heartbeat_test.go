@@ -40,14 +40,14 @@ type fakeActive struct{ n int }
 func (a *fakeActive) ActiveRequests() int { return a.n }
 
 // newTestRunner 组装一个只走注入源的心跳器（不触网、不起进程）。
-func newTestRunner(b *fakeBackend, v vramSource, a ActiveCounter, u UnmanagedSource) *Runner {
+// （第 7 参数 UnmanagedSource 已随 P4 退场清理删除——附录 C·C7。）
+func newTestRunner(b *fakeBackend, v vramSource, a ActiveCounter) *Runner {
 	return &Runner{
 		machine:   "x3",
 		backend:   b,
 		sampler:   &monitor.Sampler{},
 		vram:      v,
 		active:    a,
-		unmanaged: u,
 		startedAt: time.Now(),
 	}
 }
@@ -62,7 +62,7 @@ func baseBackend() *fakeBackend {
 // 心跳里**不得出现** gpu_used_gb（更不得等于 RSS），只如实标 vram_known=false。
 func TestBuildBody_VramUnknown_NoFakeGpuUsed(t *testing.T) {
 	b := baseBackend()
-	r := newTestRunner(b, fakeVram{known: false}, &fakeActive{}, nil)
+	r := newTestRunner(b, fakeVram{known: false}, &fakeActive{})
 	body := r.buildBody()
 
 	if _, ok := body["gpu_used_gb"]; ok {
@@ -87,7 +87,7 @@ func TestBuildBody_VramUnknown_NoFakeGpuUsed(t *testing.T) {
 // 断言 gpu_used_gb 也绝不等同于 backend_rss_gb（缺席即不等同）。
 func TestBuildBody_VramUnknown_NeverEqualsRss(t *testing.T) {
 	b := baseBackend()
-	r := newTestRunner(b, fakeVram{known: false}, &fakeActive{}, nil)
+	r := newTestRunner(b, fakeVram{known: false}, &fakeActive{})
 	body := r.buildBody()
 
 	if v, ok := body["gpu_used_gb"]; ok && v == body["backend_rss_gb"] {
@@ -98,7 +98,7 @@ func TestBuildBody_VramUnknown_NeverEqualsRss(t *testing.T) {
 // TestBuildBody_VramKnown_EqualsInjected —— 显存可拿到时等于注入真值（且非 RSS）。
 func TestBuildBody_VramKnown_EqualsInjected(t *testing.T) {
 	b := baseBackend()
-	r := newTestRunner(b, fakeVram{used: 7.5, total: 24, known: true}, &fakeActive{}, nil)
+	r := newTestRunner(b, fakeVram{used: 7.5, total: 24, known: true}, &fakeActive{})
 	body := r.buildBody()
 
 	if got := body["gpu_used_gb"]; got != 7.5 {
@@ -127,7 +127,7 @@ func TestBuildBody_VramKnown_EqualsInjected(t *testing.T) {
 func TestBuildBody_ActiveRequests_TracksCounter(t *testing.T) {
 	b := baseBackend()
 	counter := &fakeActive{n: 0}
-	r := newTestRunner(b, fakeVram{known: false}, counter, nil)
+	r := newTestRunner(b, fakeVram{known: false}, counter)
 
 	if got := r.buildBody()["active_requests"]; got != 0 {
 		t.Fatalf("真实 0 应如实报 0，实得 %v", got)
@@ -148,81 +148,34 @@ func TestBuildBody_ActiveRequests_TracksCounter(t *testing.T) {
 
 // TestBuildBody_ActiveRequests_NoSourceAbsent —— 无计数来源时该字段缺席（绝不写死 0）。
 func TestBuildBody_ActiveRequests_NoSourceAbsent(t *testing.T) {
-	r := newTestRunner(baseBackend(), fakeVram{known: false}, nil, nil)
+	r := newTestRunner(baseBackend(), fakeVram{known: false}, nil)
 	if _, ok := r.buildBody()["active_requests"]; ok {
 		t.Fatal("无在飞计数来源时不得出现 active_requests（旧行为写死 0）")
 	}
 }
 
-// ── 驻留明细：托管 + 未托管 ───────────────────────────────────────
+// ── 驻留明细 ──────────────────────────────────────────────────────
 
-// TestBuildBody_Resident_ManagedAndUnmanaged —— 托管项 managed=true、未托管项 managed=false 都如实上报。
-func TestBuildBody_Resident_ManagedAndUnmanaged(t *testing.T) {
+// TestBuildBody_Resident_ManagedOnly —— 托管项 managed=true 如实上报。
+// （unmanaged[] 未托管探测已随 P4 退场清理删除——附录 C·C7。）
+func TestBuildBody_Resident_ManagedOnly(t *testing.T) {
 	b := baseBackend()
 	b.resident = []backend.ResidentDetail{{
 		Alias: "example-35b", File: "/data/models/ornith.gguf", State: "ready",
 		ReqCount: 1, RssGb: 22.3, Managed: true, MemGb: 22, CtxWindow: 262144, Source: "managed",
 	}}
-	unmanaged := func() []backend.UnmanagedProcess {
-		return []backend.UnmanagedProcess{{
-			Port: 9001, Managed: false,
-			Note: "listening on 127.0.0.1, not managed by agent (managed=false); read-only report, never taken over",
-		}}
-	}
-	r := newTestRunner(b, fakeVram{known: false}, &fakeActive{}, unmanaged)
+	r := newTestRunner(b, fakeVram{known: false}, &fakeActive{})
 	body := r.buildBody()
 
 	res, ok := body["resident"].([]backend.ResidentDetail)
 	if !ok {
 		t.Fatalf("resident 应为明细列表，实得 %T", body["resident"])
 	}
-	if len(res) != 2 {
-		t.Fatalf("应有 2 项驻留（1 托管 + 1 未托管），实得 %d: %+v", len(res), res)
+	if len(res) != 1 || !res[0].Managed || res[0].Source != "managed" {
+		t.Fatalf("resident 应只有 1 个托管项，实得 %+v", res)
 	}
-
-	managedCount, unmanagedCount := 0, 0
-	for _, e := range res {
-		if e.Managed {
-			managedCount++
-			if e.Source != "managed" || e.CtxWindow != 262144 || e.ReqCount != 1 {
-				t.Fatalf("托管项明细不完整: %+v", e)
-			}
-		} else {
-			unmanagedCount++
-			if e.Source != "manual" || e.Alias != "unmanaged@127.0.0.1:9001" {
-				t.Fatalf("未托管项应标 source=manual 且带别名: %+v", e)
-			}
-		}
-	}
-	if managedCount != 1 || unmanagedCount != 1 {
-		t.Fatalf("managed 区分错: managed=%d unmanaged=%d", managedCount, unmanagedCount)
-	}
-
-	un, ok := body["unmanaged"].([]backend.UnmanagedProcess)
-	if !ok || len(un) != 1 {
-		t.Fatalf("unmanaged[] 应有 1 项，实得 %T %v", body["unmanaged"], body["unmanaged"])
-	}
-	if un[0].Managed {
-		t.Fatalf("未托管项 managed 必须为 false，实得 %+v", un[0])
-	}
-	if un[0].Port != 9001 {
-		t.Fatalf("未托管项端口应为 9001，实得 %d", un[0].Port)
-	}
-}
-
-// TestBuildBody_UnmanagedNil_NoKey —— 无探测来源时不出现 unmanaged[]，resident 仍只有托管项。
-func TestBuildBody_UnmanagedNil_NoKey(t *testing.T) {
-	b := baseBackend()
-	b.resident = []backend.ResidentDetail{{Alias: "m1", State: "ready", Managed: true, Source: "managed"}}
-	r := newTestRunner(b, fakeVram{known: false}, &fakeActive{}, nil)
-	body := r.buildBody()
-
-	if _, ok := body["unmanaged"]; ok {
-		t.Fatal("无未托管探测来源时不得出现 unmanaged[]")
-	}
-	res, ok := body["resident"].([]backend.ResidentDetail)
-	if !ok || len(res) != 1 || !res[0].Managed {
-		t.Fatalf("resident 应只有 1 个托管项，实得 %v", body["resident"])
+	if _, exists := body["unmanaged"]; exists {
+		t.Fatal("unmanaged[] 已随 P4 退场清理删除，不得再出现在心跳里（附录 C·C7）")
 	}
 }
 
@@ -230,7 +183,7 @@ func TestBuildBody_UnmanagedNil_NoKey(t *testing.T) {
 
 // TestBuildBody_OldFieldsStillPresent —— 旧字段名与语义不变。
 func TestBuildBody_OldFieldsStillPresent(t *testing.T) {
-	r := newTestRunner(baseBackend(), fakeVram{used: 7.5, total: 24, known: true}, &fakeActive{n: 1}, nil)
+	r := newTestRunner(baseBackend(), fakeVram{used: 7.5, total: 24, known: true}, &fakeActive{n: 1})
 	body := r.buildBody()
 
 	for _, k := range []string{
@@ -251,7 +204,7 @@ func TestBuildBody_OldFieldsStillPresent(t *testing.T) {
 func TestBuildBody_JSON_OldReaderIgnoresNewFields(t *testing.T) {
 	b := baseBackend()
 	b.resident = []backend.ResidentDetail{{Alias: "m1", State: "ready", Managed: true, Source: "managed"}}
-	r := newTestRunner(b, fakeVram{used: 7.5, total: 24, known: true}, &fakeActive{n: 2}, nil)
+	r := newTestRunner(b, fakeVram{used: 7.5, total: 24, known: true}, &fakeActive{n: 2})
 
 	raw, err := json.Marshal(r.buildBody())
 	if err != nil {
