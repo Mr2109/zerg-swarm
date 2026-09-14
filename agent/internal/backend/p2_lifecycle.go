@@ -86,9 +86,6 @@ func (m *Manager) p2pickExpiredLocked(now time.Time) []p2ReapResult {
 		if pinned, _ := pinState(sp, now); pinned {
 			continue // 红线③：pin 未到期不卸
 		}
-		if sp.external {
-			continue // M10 铁律：外部复用项绝不进收卵路径
-		}
 		threshold := eggIdleUnloadThreshold(sp.entry)
 		if threshold <= 0 {
 			threshold = time.Duration(registry.DefaultIdleUnloadSeconds) * time.Second
@@ -294,10 +291,6 @@ func (m *Manager) RequestModel(model string) (needUnload, blocked bool) {
 		}
 		if pinned, _ := pinState(sp, time.Now()); pinned {
 			// 红线③：pin 未到期的卵不许提前收——走原加载路径（会按五档裁决处理 pin）
-			return false, true
-		}
-		if sp.external {
-			// M10 铁律：外部复用项不进收卵路径（不接管、不停止）
 			return false, true
 		}
 		sp.state = StateDraining // 锁内赢权

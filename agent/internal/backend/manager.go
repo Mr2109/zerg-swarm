@@ -58,13 +58,6 @@ type subproc struct {
 	inflight int
 	// pinUntil Q5：显式 pin 的到期时刻（零值 = 未 pin）。无 TTL 的 pin 不允许——见 Manager.Pin。
 	pinUntil time.Time
-	// external（M10）：本项**不是本端起的**，而是复用的手工基线服务。
-	// 铁律：外部项绝不进驱逐/停服路径 —— 它**不带进程句柄**（proc 为 nil），结构上无从 kill；
-	// 且 evictSubprocLocked 里有显式守卫。它只登记"这个模型现在可用、端口是哪个"。
-	external bool
-	// baselineGB（M10）：外部项的内存占用不能靠 residentMemGbOf 现场读（没有句柄），
-	// 直接沿用基线探测到的实测占用，否则内存核算会漏掉这一大块（X3 上 K2 就是 23.98 GB）。
-	baselineGB float64
 }
 
 // loadWaiter 请求合并：同模型并发请求共享一个加载槽
@@ -88,10 +81,6 @@ type Manager struct {
 	idleTTL time.Duration
 	// reaperStop 后台 TTL 回收循环的停止信号（nil = 未启动）。读写都在 m.mu 下。
 	reaperStop chan struct{}
-	// borrowMu 借/还编排的串行锁（P3b，§11 M6）。**锁序：先 m.mu，再 m.borrowMu**。
-	borrowMu sync.Mutex
-	// leaseWatchStop 租约看护的停止信号（nil = 未启动）。读写都在 m.mu 下。
-	leaseWatchStop chan struct{}
 	// stopHook（P2，测试注入）：stopSubproc 执行真正停进程动作前回调（nil = 无回调）。
 	// 用途：验收「锁内置 draining ⇒ 出锁后才停进程」（§7.7 修补 3 的可观测面）。
 	// 回调里如需读状态须自行加锁（回调发生在锁外）。
@@ -234,22 +223,8 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 			fmt.Sprintf("model %s requires a non-mainline engine (cmd: field in the egg manifest); refusing to silently fall back to the mainline llama-server", modelName)), nil
 	}
 
-	// M10（设计 §11）：请求的模型如果就是某个手工起的基线服务（同一个权重）⇒ **直接复用**它的端口。
-	// 不借、不停、不加载 —— 只登记一个**不带进程句柄**的外部项（external=true）。
-	// 位置刻意放在最前面：连"腾内存/服务类型清场"都不该为本机已有的模型去做。
-	if bs, ok := baselineReuseCandidateLocked(
-		m.baselineServicesLocked(),
-		baselineReuseIdentities(modelName, entry.File),
-		nil, // skipPorts：baselineServicesLocked 已排除本端占用的端口
-	); ok {
-		m.procs[modelName] = &subproc{
-			port: bs.Port, model: modelName, entry: entry, state: StateReady,
-			lastUsed: time.Now(), external: true, baselineGB: bs.ApproxGB,
-		}
-		log.Printf("[backend] M10 复用基线服务: model=%s 端口=%d 身份=%s（不接管、不加载、不停止）",
-			modelName, bs.Port, bs.Identity)
-		return okResponse(modelName, entry.Backend, bs.Port), nil
-	}
+	// M10「身份一致直接复用基线服务」已随 P4 退场清理删除（设计 §10.2 F1 / 附录 C·C2）：
+	// 卵之外无引擎（§1.3）——子端之外的推理进程不是后端，不再登记复用。
 
 	// 驻留超限 → 五档裁决淘汰（Q1 默认单槽 / Q2 五档）
 	m.evictIfNeededLocked()
@@ -268,37 +243,12 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 	}
 
 	// 内存预算检查（T3 预检，借鉴 llama_cpp_router willModelFit）——fail-closed
-	// M8：可用内存按「min(系统可用, 机型配额) − 预留 − 基线服务实测占用 − 已驻留托管项」算，
-	// 让手工起的基线服务（9000/9001 等）**先把坑占掉**，避免"子端说够、引擎说不够"（今天 502 的成因）。
 	if memRequired := entry.MemGB; memRequired > 0 {
-		avail := m.effectiveAvailableGbLocked(monitor.DefaultSampler.MemAvailableGb())
+		avail := monitor.DefaultSampler.MemAvailableGb()
 		ok, have, need := m.ensureMemoryForLocked(memRequired, avail)
-		borrowNote := ""
-		if !ok {
-			// P3b：先尝试"借用"基线服务的坑（声明 + 空闲检定 + 停前存档）。
-			// 成功则重算可用内存；失败则把原因带进拒装响应，让人知道"谁挡着"。
-			borrowed, berr := m.tryBorrowForMemoryLocked(memRequired)
-			if len(borrowed) > 0 {
-				log.Printf("[backend] 已借用基线服务 %v 腾坑，重算内存预算", borrowed)
-				// n16：采样会滞后（内核回收 GTT/页需要时间，真机实测借用释放 32.7GB 后采样仍是旧值）
-				// ⇒ 不能只信采样；与"借用前 + 本次腾出量"取较大者，既防滞后读旧值、也防采样跟上后重复计数。
-				freedGb := m.borrowedOccupiedGbLocked(borrowed)
-				sampled := m.effectiveAvailableGbLocked(monitor.DefaultSampler.MemAvailableGb())
-				avail = recomputeAfterBorrow(sampled, avail, freedGb)
-				log.Printf("[backend] 借用后重算：采样 %.1f GB、本次腾出 %.1f GB ⇒ 取 %.1f GB",
-					sampled, freedGb, avail)
-				ok, have, need = m.ensureMemoryForLocked(memRequired, avail)
-			} else if berr != nil {
-				borrowNote = "；借用未成：" + berr.Error()
-			}
-		}
 		if !ok {
 			// 腾不出缺口 → 拒装（507 语义不变）：不许赌"应该能跑"。
-			resp := m.rejectInsufficientMemory(have, need)
-			if borrowNote != "" {
-				resp["detail"] = fmt.Sprintf("%v%s", resp["detail"], borrowNote)
-			}
-			return resp, nil
+			return m.rejectInsufficientMemory(have, need), nil
 		}
 		log.Printf("[backend] 内存预算检查通过: avail=%.1fGB, required=%.1fGB", have, need)
 	}
@@ -790,20 +740,15 @@ func (m *Manager) waitForReady(sp *subproc) error {
 	return fmt.Errorf("等待后端就绪超时 (%s)", timeout)
 }
 
-// EnvPortPool 子端专用端口区间（如 "9400-9999"）。未设置时仍用既有 9000-9999，
-// 但**一律跳过 baseline 声明的端口**（见 findFreePort 注释）。
+// EnvPortPool 子端专用端口区间（如 "9400-9999"）。未设置时用默认 9000-9999。
 const EnvPortPool = "ZERG_PORT_POOL"
 
-// findFreePort 分配空闲端口（含 P4 端口池隔离，设计 §7 S6 / §11 M11）。
+// findFreePort 分配空闲端口。
 //
-// 关键修复：**跳过 baseline 声明的端口**——那是 Mr2109 手工常驻服务的坑，子端绝不能占用。
-// （今天实测：9000 的 Qwen 停机期间被子端当空闲端口征用，恢复时才发现端口被抢。）
-// 另可用 ZERG_PORT_POOL="9400-9999" 把子端完全隔离到专用区间。
+// 可用 ZERG_PORT_POOL="9400-9999" 把子端完全隔离到专用区间。
+// （baseline 声明端口的那道排除已随 P4 退场清理删除——卵之外无引擎后不存在
+// "手工服务的坑"，附录 C·C8。）
 func (m *Manager) findFreePort() int {
-	excluded := make(map[int]bool)
-	for _, p := range baselinePorts() {
-		excluded[p] = true
-	}
 	lo, hi := 9000, 9999
 	if v := strings.TrimSpace(os.Getenv(EnvPortPool)); v != "" {
 		if a, b, ok := strings.Cut(v, "-"); ok {
@@ -815,9 +760,6 @@ func (m *Manager) findFreePort() int {
 		}
 	}
 	for port := lo; port <= hi; port++ {
-		if excluded[port] {
-			continue // baseline 声明的端口：绝不占用
-		}
 		// 跳过已被本管理器其他模型占用的端口
 		taken := false
 		for _, sp := range m.procs {
