@@ -124,6 +124,54 @@ func NewManager(reg *registry.Registry, machine string) *Manager {
 func (m *Manager) Start(modelName string) (map[string]interface{}, error) {
 	m.mu.Lock()
 
+	if needUnload, blocked := m.RequestModel(modelName); needUnload || blocked {
+		// 异模型请求与当前卵冲突（§7.7 末条）：
+		//   - needUnload=true：已锁内赢权置 draining——先停掉旧卵，再走正常孵化装新模型；
+		//   - blocked=true：旧卵有在飞/pin/外部——不打断在飞，请求进等待队列（挂起，Q5）。
+		if needUnload {
+			m.mu.Lock()
+			var victimName string
+			var victimSP *subproc
+			for name, sp := range m.procs {
+				if sp.state == StateDraining {
+					victimName, victimSP = name, sp
+					break
+				}
+			}
+			var victimProc *exec.Cmd
+			if victimSP != nil {
+				victimProc = victimSP.proc
+			}
+			m.mu.Unlock()
+			if victimSP != nil {
+				m.stopVictimProcess(victimProc, victimSP)
+				m.mu.Lock()
+				if cur, ok := m.procs[victimName]; ok && cur == victimSP {
+					delete(m.procs, victimName)
+				}
+				m.mu.Unlock()
+				log.Printf("[backend] 提前收卵完成: %s（异模型请求 %s 可孵化）", victimName, modelName)
+			}
+			// 落到下方正常 Start（孵化）路径
+		} else {
+			// blocked：等待当前卵在飞清零（低频轮询重校验——禁 sleep 定时器直接动手；
+			// 这里只等「可孵化」信号，收卵由巡检/后续请求完成）。上限 = 上行超时。
+			deadline := time.Now().Add(120 * time.Second)
+			for time.Now().Before(deadline) {
+				time.Sleep(500 * time.Millisecond)
+				if needU, blk := m.RequestModel(modelName); !blk {
+					if needU {
+						// 赢权成功——跳出去走孵化（递归一次，收卵段同上）
+						m.mu.Unlock()
+						return m.Start(modelName)
+					}
+					break
+				}
+			}
+			// 等不到就继续往下走正常 Start（内部按红线拒装/拒孵，明确报错不硬来）
+		}
+	}
+
 	// 查找模型配置
 	entry, ok := m.registry.Get(modelName)
 	if !ok {
