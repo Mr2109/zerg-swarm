@@ -37,6 +37,14 @@ type ModelCandidate struct {
 	Description string   `yaml:"description,omitempty"`  // 模型描述
 	Added       string   `yaml:"added,omitempty"`        // 接入日期
 	Verified    bool     `yaml:"verified,omitempty"`     // 验证状态
+
+	// ═══ P1：虫卵的「引擎实现/变体」（设计-子端沙箱化-20260914 §1.2 / §4.7 / 附录 C·C1）═══
+	// 承载字段就是上面的 Cmd（哪个二进制 / build / fork，**含包装脚本与 env 处理**）——
+	// 「引擎实现/变体」是卵的**必需字段**，不能只给引擎名（§1.2）。
+	// 本布尔是**通用声明开关**：当架构还没进 MainlineUnsupportedArchitectures 清单、
+	// 而这枚卵确实要非主线实现时用它显式声明。两者任一为真且缺 cmd: ⇒ **Fatal（拒孵）**，
+	// 不得静默退回主线 llama-server（详见 validator.go V016）。
+	EngineImplRequired bool `yaml:"engine_impl_required,omitempty"`
 }
 
 // FleetNode 集群中一个节点的配置信息。

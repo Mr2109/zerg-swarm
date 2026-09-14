@@ -32,6 +32,22 @@ type ModelEntry struct {
 	//   数组:   ["llama-server", "-m", "{file}", "--port", "{port}"]
 	// 可含 {file}/{port}/{dir} 占位符。不填则用默认命令。
 	Cmd CmdString `yaml:"cmd,omitempty"`
+	// ═══ 虫卵声明字段（P1，设计-子端沙箱化-20260914 §4.3 九项字段表）═══
+	// 校验与失败语义见 egg_decl.go（ValidateEggDeclaration）；本处只放字段。
+	//
+	// SchemaVersion 卵声明格式版本号（设计 §4.3 第八项 / §6.8.4）：
+	// 子端升级后据此判断「这枚旧卵我还认不认得」；**孵化前校验**。
+	// 认不得 ⇒ 明确报错、拒孵；0 = 未声明（遗留条目，按告警处理，清单落地 P7 时强制补齐）。
+	SchemaVersion int `yaml:"schema_version,omitempty"`
+	// EnvReq 环境需求（设计 §4.3 第七项 / §6.7）：设备与卡号 / 库路径与版本 /
+	// 环境变量（含按引擎覆盖 LD_LIBRARY_PATH）/ 权重路径 / ulimit 与 mmap 限额。
+	// nil = 未声明（遗留条目）；非 nil 时**必填项缺一即拒孵**（孵化器只照单执行，不许自己推断）。
+	EnvReq *EnvReq `yaml:"env_req,omitempty"`
+	// IdleUnloadS 空窗收走阈值（秒；设计 §4.3 第九项 / §6.5 / §13 Q21）：
+	// 这枚卵空闲多久被收走。缺省（<=0）取 DefaultIdleUnloadSeconds = 600；
+	// 小模型（嵌入 / 重排 / 分类类）建议 120。**已废弃「常驻卵」类别**
+	// ——「默认空」无例外，差别只在阈值长短。
+	IdleUnloadS int `yaml:"idle_unload_s,omitempty"`
 	// Custom 存储任意额外字段（如 ssd、ssd_streaming_cache_experts 等）
 	Custom map[string]interface{} `yaml:",inline"`
 }

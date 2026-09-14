@@ -12,6 +12,11 @@ import sys
 #   python3 scripts/check-shell-unicode-vars.py scripts/*.sh           # 就地修（$VAR → ${VAR}）
 CHECK = "--check" in sys.argv[1:]
 FILES = [a for a in sys.argv[1:] if a != "--check"]
+if not FILES:
+    sys.stderr.write("✗ 必须显式传入要扫描的脚本（例如 scripts/*.sh）。\n"
+                     "  无参数时不静默空转——这正是本工具此前的漏报根因（$VAR后接全角标点未被发现）。\n"
+                     "  用法: python3 scripts/check-shell-unicode-vars.py [--check] scripts/*.sh publish/*.sh\n")
+    sys.exit(2)
 
 # $VAR（不含 ${...} 形式、不含 $1 等位置参数）后面紧跟一个 >=0x80 的字节
 PAT = re.compile(rb"\$([A-Za-z_][A-Za-z0-9_]*)(?=[\x80-\xff])")

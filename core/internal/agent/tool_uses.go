@@ -10,8 +10,8 @@ package agent
 //   新实现=RecordToolUse 直接 flock 文件锁 读-改-写——多进程原子累加——进程内不再持写缓存。
 
 import (
-	"io"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"

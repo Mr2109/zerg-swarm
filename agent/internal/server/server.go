@@ -103,6 +103,8 @@ func (s *Server) Start(host string, port int) error {
 	s.mux.HandleFunc("/pin", s.handlePin)
 	s.mux.HandleFunc("/unpin", s.handleUnpin)
 	s.mux.HandleFunc("/infer/reload", s.handleReload)
+	// P7：只读可观测面（基线与借用租约）——设计 §11 M9
+	s.mux.HandleFunc("/services", s.handleServices)
 
 	// 启动推理队列 worker
 	go s.inferLoop()

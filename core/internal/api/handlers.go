@@ -971,11 +971,17 @@ func (h *Handlers) LogsHandler2(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// DocsHandler 文档 API（v2.5.5 虫族UI: docs/ 目录列表 + 内容）
-// GET /api/docs（目录）+ GET /api/docs/{path}（内容）
+// DocsHandler 文件读取 API（v2.5.5 虫族UI 起；2026-09-13 C9 第 4 步收口为**通用**能力）
 //
-// 2026-09-13 文件浏览器阶段 1：带 root/path 查询参数时走参数化读取（白名单根 + 类型规则，
-// 实现见 fileroots.go）；不带任何查询参数时**原样**走改造前的 docs 逻辑——老 UI 逐字不受影响。
+// 三条入口：
+//   · 带 root/path 查询参数   → 参数化读取（白名单根 + 类型闸门，实现见 fileroots.go）
+//   · URL 里带路径（/api/docs/<rel>）→ 读**缺省 docs 根**的那个文件（宿主文件浏览器在用，§4.5 兼容）
+//   · 什么都不带（GET /api/docs）→ 缺省根（docs）的**通用列目录**（与 ?root=docs 同一份实现）
+//
+// 2026-09-13（C9 第 4 步「拆」）：文档**专属**的那套（只收 .md、排除 issues/thunderbolt 的递归
+// 列目录 + 五个写端点）随文档界面整块迁进文档茧（`zerg-cocoon/文档` 自带 Go 服务）。
+// 缺省列目录改走 `docsParameterized` ⇒ `listFileRoot`（docs 根本来就是同一套过滤口径），
+// 输出与迁移前**逐字节一致**（fileroots_test 的黄金用例仍然钉着它）。
 func (h *Handlers) DocsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Has("root") || r.URL.Query().Has("path") {
 		h.docsParameterized(w, r)
@@ -990,34 +996,13 @@ func (h *Handlers) DocsHandler(w http.ResponseWriter, r *http.Request) {
 	if unescaped, err := url.PathUnescape(docPath); err == nil {
 		docPath = unescaped
 	}
-	// 2026-09-13：写死的 docs 绝对路径换成既有解析器（取值不变，且与 /api/fileroots 的 docs 根同源，
-	// 否则 ZERG_WORKSPACE 一改就会出现"清单指着 A、读取读的是 B"）
-	docsDir := docsRootPath()
 	if docPath == "" {
-		// 目录列表——递归收集所有 md（书结构——docs/0X-类型/xxx.md 完整路径）
-		files := []string{}
-		dirs := []string{} // v2.5.6 目录树（Mr2109 2026-08-29: UI 第一栏=目录树——第二栏=目录下文件——第三栏=正文）
-		filepath.Walk(docsDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return nil
-			}
-			rel, _ := filepath.Rel(docsDir, path)
-			if info.IsDir() {
-				// 收集目录（排除根、排除 issues/thunderbolt 噪音）
-				if rel != "." && !strings.Contains(rel, "/issues") && !strings.Contains(rel, "/thunderbolt") && rel != "issues" && rel != "thunderbolt" {
-					dirs = append(dirs, rel)
-				}
-				return nil
-			}
-			if strings.HasSuffix(path, ".md") && !strings.Contains(path, "/issues/") && !strings.Contains(path, "/thunderbolt/") {
-				files = append(files, rel)
-			}
-			return nil
-		})
-		writeJSON(w, http.StatusOK, map[string]interface{}{"files": files, "dirs": dirs})
+		// 不带路径 ⇒ 缺省根列目录（通用实现；缺省 root=docs，见 docsParameterized）
+		h.docsParameterized(w, r)
 		return
 	}
 	// 内容（防路径穿越）
+	docsDir := docsRootPath()
 	if strings.Contains(docPath, "..") {
 		writeErrorCode(w, http.StatusBadRequest, "INVALID_PATH", "非法路径")
 		return

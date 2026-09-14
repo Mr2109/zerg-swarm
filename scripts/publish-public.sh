@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# ⚠️  已弃用（DEPRECATED）· 2026-09-13 · 设计稿《源码式发布与升级》§十二 B8 / 拍板 Q5
+#
+#   已被  publish/mirror-public.sh（逐提交镜像） 取代 —— 正式发布一律走镜像器。
+#   计划删除：**下一个版本（v2.6.0）**；本版（v2.5.9）只标弃用、不删，留一个版本缓冲。
+#   保留理由：① **应急** —— 镜像器不可用时的后备通道；② **对照** —— B8「两器产出一致性」验收。
+#   运行时会先打印同一句醒目警告再继续（Q5 是「一个版本后删」，不在这里直接拒绝执行）。
+#   两器一致性（树内容逐 blob 对比 + 已知差异走显式契约）见 scripts/test-publish-parity.sh。
+# ══════════════════════════════════════════════════════════════════════════════════════════
+#
 # publish-public.sh — 私有权威仓 → 公开快照仓（Google Copybara SQUASH 模式的等价实现）
 #
 # 2026-09-11 设计：docs/项目文档/v2.5.9/设计-publish-public快照发布-20260911.md（Mr2109已拍板 8/8）
@@ -31,13 +41,22 @@ PUSH=0
 DRY_RUN=0
 REMOTE="${ZERG_PUBLIC_REMOTE:-}"
 
+# ── 弃用警告（运行时先打，再继续；Q5：只标弃用，下一个版本才删）──────────────────────────
+# 输出到 **stderr**，这样 stdout 被管道/重定向时警告依然可见。
+deprecation_warning() {
+  printf '\n\033[1;33m⚠️  已弃用：scripts/publish-public.sh（压平快照发布器）\033[0m\n' >&2
+  printf '\033[1;33m   → 已被 publish/mirror-public.sh（逐提交镜像）取代；正式发布请走镜像器。\033[0m\n' >&2
+  printf '\033[1;33m   → 计划在**下一个版本（v2.6.0）**删除；现仅作应急后备与两器对照保留。\033[0m\n\n' >&2
+}
+deprecation_warning
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT="$2"; shift 2 ;;
     --push) PUSH=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --remote) REMOTE="$2"; shift 2 ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
 done
@@ -100,7 +119,19 @@ EXCLUDES=(
   "gateway/install.sh"
   "gateway/deploy"
   "gateway/scripts/fleet_logs.py"
-  "scripts/publish-public.sh"   # 发布工具自身不进快照（含私有规则表引用）
+  # 发布机制自身**不入公开面**：这些脚本含私有目录名 / 规则表引用 / 门禁实现。
+  # 2026-09-13 B8：此前只显式删 3 个 ⇒ 导出树仍残留 scripts/check-history-secrets.py，
+  # 命中私有面门禁（publish/private-paths.txt）整批中止。现改为**在此统一登记**——
+  # 这里同时是镜像器的单一真源（publish/mirror-public-lib.py 的 Assets 会解析本数组），
+  # 两器的排除口径由此对齐，不再靠「各自记一份清单」。
+  "scripts/publish-public.sh"
+  "scripts/check-public-tree-private.py"
+  "scripts/check-history-secrets.py"
+  "scripts/check-hardcoded-private-paths.py"
+  "scripts/mirror-public.sh"
+  "scripts/mirror-public-lib.py"
+  "scripts/mirror-acceptance.sh"
+  "scripts/mirror-verify-tree.py"
 )
 # 编译缓存 / 原生产物（即使被跟踪也不该出现在源码快照里）
 for e in "${EXCLUDES[@]}"; do rm -rf "${OUT:?}/$e"; done
@@ -111,8 +142,8 @@ find "$OUT" -name '*.bak' -delete
 find "$OUT" -type f -name '*.[0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' -delete 2>/dev/null || true
 find "$OUT" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 find "$OUT" -type f \( -name '*.pyc' -o -name '*.pyo' -o -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.class' \) -delete 2>/dev/null || true
-# 发布机制自身不入公开面（Mr2109 2026-09-13：私有面收口 —— 这些文件含私有目录名/替换规则）
-rm -f "$OUT/scripts/check-public-tree-private.py" "$OUT/scripts/publish-public.sh" "$OUT/scripts/mirror-public.sh"
+# 发布机制自身不入公开面 —— 已于 2026-09-13（B8）**上移到上面的 EXCLUDES**（单一真源：
+# 镜像器解析的也是那一份）。此处不再另留一份 rm 清单，避免两处漂移。
 echo "导出文件数: $(find "$OUT" -type f | wc -l | tr -d ' ')"
 
 say "2/6 套用发布专属文件（publish/ → 快照）"
@@ -153,17 +184,41 @@ rm -rf "$OUT/publish"
 
 say "3/6 快照变换（跨仓依赖解除 + 替换规则）"
 # 3a. ui/Cargo.toml：彻底解除 zerg-cocoon 跨仓 path 依赖（保留同名空 feature 以消除 cfg 警告）
+# 逐茧解依赖（C9 第 4 步：示例虫茧 + 文档）——与 publish/mirror-public-lib.py 的 CARGO_SUBS **同一套口径**
 if [ -f "$OUT/ui/Cargo.toml" ]; then
   python3 - "$OUT/ui/Cargo.toml" <<'PY'
 import re, sys
 p = sys.argv[1]
 s = open(p, encoding="utf-8").read()
 s = re.sub(r'^.*zerg-roundtable\s*=\s*\{\s*path\s*=.*$', '', s, flags=re.M)
-s = re.sub(r'^\s*default\s*=\s*\["zerg-roundtable"\]\s*$', '', s, flags=re.M)
+s = re.sub(r'^.*zerg-cocoon-docs\s*=\s*\{\s*path\s*=.*$', '', s, flags=re.M)
+s = re.sub(r'^\s*default\s*=\s*\[[^\]]*\]\s*$', '', s, flags=re.M)
 s = re.sub(r'^\s*zerg-roundtable\s*=\s*\["dep:zerg-roundtable"\]\s*$',
-           'zerg-roundtable = []  # 公开快照：该虫茧（独立仓）不随发布——保留同名空 feature 以消除 cfg 警告', s, flags=re.M)
+           'zerg-roundtable = []  # 公开镜像：该虫茧（独立仓）不随发布——保留同名空 feature 以消除 cfg 警告', s, flags=re.M)
+s = re.sub(r'^\s*zerg-cocoon-docs\s*=\s*\["dep:zerg-cocoon-docs"\]\s*$',
+           'zerg-cocoon-docs = []  # 公开镜像：该虫茧（独立仓）不随发布——保留同名空 feature 以消除 cfg 警告', s, flags=re.M)
 open(p, "w", encoding="utf-8").write(s)
 print("  Cargo.toml: 已解除跨仓依赖")
+PY
+fi
+# 3a-2. ui/Cargo.lock：剔除茧包条目（块 + 依赖引用 + 悬空逗号）——与镜像器的
+#       publish/mirror-public-lib.py::strip_cocoon_lock_entries **同一套口径**
+if [ -f "$OUT/ui/Cargo.lock" ]; then
+  python3 - "$OUT/ui/Cargo.lock" <<'PY'
+import re, sys
+COCOON = ("zerg-roundtable", "zerg-cocoon-docs")
+p = sys.argv[1]
+blocks = open(p, encoding="utf-8").read().split("[[package]]")
+kept = [blocks[0]]
+for blk in blocks[1:]:
+    head = "\n".join(blk.split("\n")[:3])
+    if any(('name = "%s"' % c) in head for c in COCOON):
+        continue
+    lines = [ln for ln in blk.split("\n")
+             if not any(re.match(r'^\s*"%s",?\s*$' % re.escape(c), ln) for c in COCOON)]
+    kept.append("\n".join(lines))
+open(p, "w", encoding="utf-8").write("[[package]]".join(kept))
+print("  Cargo.lock: 已剔除茧包条目")
 PY
 fi
 # 3b. 替换规则（字面 + 正则）
@@ -219,7 +274,13 @@ PATTERNS = [
     (r'21092109',                       "已知机器密码"),
     (r'/Volumes/(AHZ|BXC)',             "私有卷路径"),
     (r'~',                    "私有家目录"),
-    (r'Mr2109',                            "人物称谓"),
+    # ── 私有称谓（2026-09-13 B8 修正）────────────────────────────────────────────
+    # 原来的 `Mr2109` 是**误伤**：它现在是**公开身份**（GitHub 用户名，合法出现在 LICENSE/NOTICE/
+    # install.sh/README/代码注释里）⇒ 当成「人物称谓」拦下会得到 963 处假阳性、dry-run 一次都跑不过。
+    # 真正的私有形式是「拍板人昵称」与「助手署名」，它们至今仍残留在私有文档里（未入公开面），
+    # 因此门禁必须盯着**这两者**；配套替换规则见 publish/replace-rules.tsv（同名规则把它们映射为公开身份）。
+    (r'Mr2109',                              "私有拍板人称谓"),
+    (r'Mr2109|脑\(Hermes\)',          "私有助手署名"),
     (r'\b(192\.168\.\d+\.\d+|10\.0\.\d+\.\d+)\b', "内网地址（未替换）"),
     (r'Mr2109deMac-Studio',               "主机名"),
     (r'-----BEGIN [A-Z ]*PRIVATE KEY-----', "私钥"),
@@ -317,6 +378,19 @@ if [ -f "$REPO_ROOT/scripts/check_version.py" ]; then
   else
     echo "  ❌ 版本号不一致——已中止导出" >&2
     python3 "$REPO_ROOT/scripts/check_version.py" "$REPO_ROOT" >&2
+    exit 1
+  fi
+fi
+
+# 4e. 跨版本状态兼容清单门禁（B7 / G10：清单↔代码双向一致 + current_schema ≥ min_readable）
+#     跑在 REPO_ROOT（与 check_version.py 同一口径）：本门禁只读源码与清单，
+#     **绝不读写真机状态目录**——CI/发布链里碰 ~/.zerg/** 是禁忌。
+if [ -f "$REPO_ROOT/scripts/check-compat-manifest.py" ]; then
+  if python3 "$REPO_ROOT/scripts/check-compat-manifest.py" "$REPO_ROOT" >/dev/null; then
+    echo "  兼容清单门禁: 通过"
+  else
+    echo "  ❌ 跨版本状态兼容清单与代码不一致——已中止导出" >&2
+    python3 "$REPO_ROOT/scripts/check-compat-manifest.py" "$REPO_ROOT" >&2
     exit 1
   fi
 fi

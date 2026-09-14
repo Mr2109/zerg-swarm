@@ -64,21 +64,44 @@
 
 ## 快速开始
 
-```bash
-git clone <this-repo> && cd zerg-swarm
+**从源码装，一条命令。** `scripts/setup-zerg.sh` 把一台新机器一次引导到位：
+取公开镜像仓 → 按 `core/go.mod` 钉住的版本核验 Go 工具链 → 按角色构建 → 原子安装
+（留 `bin/*.prev` 供回滚）→ 注册并重启服务 → 用**运行进程自报的提交号**与安装件对账。
+它只会如实拒绝、绝不猜：工具链太旧、检出是脏树、在非 macOS 上要 UI —— 都会停下来说明原因。
 
-# 1. 令牌（所有组件共用；绝不写进仓库）
+```bash
+git clone https://github.com/Mr2109/zerg-swarm.git && cd zerg-swarm
+
+bash scripts/setup-zerg.sh                 # 主控（macOS）：core + agent（+ ui）
+bash scripts/setup-zerg.sh --role node     # 机群节点（Linux）：core + agentd
+bash scripts/setup-zerg.sh --dry-run       # 只打印计划，零副作用
+```
+
+再配置共享令牌与模型登记表（macOS 上主控已由 launchd 托管；节点会得到一个管 `zerg-agentd`
+的 systemd 单元）：
+
+```bash
 cp .env.example .env
 printf '%s\n' "$(openssl rand -hex 32)" > .env.tmp && sed -i '' "s/^ZERG_AUTH_TOKEN=.*/ZERG_AUTH_TOKEN=$(cat .env.tmp)/" .env && rm .env.tmp
 set -a; . ./.env; set +a
-
-# 2. 模型登记表
 cp gateway/fleet.example.yaml gateway/fleet.yaml   # 按自己的机器/权重路径改
-
-# 3. 主控
-cd core && go build -o ../bin/zerg-core ./cmd/zerg-core && cd ..
-./bin/zerg-core
 ```
+
+升级同样走源码 —— 客户端自己拉仓库、在本机构建，再把制品交给六阶段换装内核：
+
+```bash
+zerg update            # 已是最新则打印「无需更新」并以 2 退出
+zerg update --check    # 先问一句（6 小时缓存，无副作用）
+```
+
+## 本仓库如何发布
+
+本仓库是私有权威仓的**过滤镜像**。它是带真实历史的普通 git 仓，**逐提交一一对应**：
+这里的每一笔提交与私有仓的一笔提交一一对应，并各自带 `GitOrigin-RevId:` trailer 记录原始
+提交号。作者、日期与提交信息予以保留；私有面与私有称谓在镜像时已被替换（私有路径、内网
+主机名、凭据 —— 某一笔的树若过不了泄露扫描，整批中止，一个字节都不推）。因此这里的
+`git log`、`git blame`、`git diff`、`git bisect` 都能用；但某一笔的短 sha 与私有仓不同，
+跨仓对照请用 trailer 回指。
 
 细节（加子端、接模型、装桌面 UI）见 [docs/QUICKSTART.zh-CN.md](docs/QUICKSTART.zh-CN.md)。
 配置项清单见 [docs/CONFIGURATION.zh-CN.md](docs/CONFIGURATION.zh-CN.md)。
@@ -87,7 +110,7 @@ cd core && go build -o ../bin/zerg-core ./cmd/zerg-core && cd ..
 
 | 组件 | 要求 |
 |---|---|
-| 主控 / 子端 | Go 1.22+（构建）。运行时无额外依赖（SQLite 走纯 Go 驱动） |
+| 主控 / 子端 | Go，版本由 **`core/go.mod` 钉住**（构建）。运行时无额外依赖（SQLite 走纯 Go 驱动） |
 | 桌面 UI | Rust stable（构建）；运行支持 macOS 14+ / Linux |
 | 模型后端 | [llama.cpp](https://github.com/ggml-org/llama.cpp) 的 `llama-server`（推荐）或其他 OpenAI 兼容引擎 |
 | 联网搜索（可选） | 自建 [searxng](https://github.com/searxng/searxng)（AGPL，**不随本仓库分发**）——见 `scripts/install-searxng.sh` |
