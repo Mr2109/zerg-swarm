@@ -97,6 +97,23 @@ func (e *ModelEntry) IdleUnloadSeconds() int {
 	return e.IdleUnloadS
 }
 
+// EggName 这枚卵的名字（注册表键；load/Reload 时由注册表盖进条目）。
+// 手工构造的条目（单测/临时孵化）可能没有名字 ⇒ 返回空串，调用方自行决定回退口径。
+// 用途：KV 盘「按卵分目录」的目录名（设计 §9.7④：~/.zerg/kvdisk/<卵名>/）。
+func (e *ModelEntry) EggName() string {
+	if e == nil {
+		return ""
+	}
+	return e.name
+}
+
+// SetEggNameForTest 测试专用：给手工构造的条目盖上卵名（生产路径由注册表盖，见 load/Reload）。
+func (e *ModelEntry) SetEggNameForTest(name string) {
+	if e != nil {
+		e.name = name
+	}
+}
+
 // Declared 这枚卵是否声明了新格式的卵声明字段（三者任一）。
 // 三者全空 = 遗留条目（P1 之前写的注册表，如 X3 本机的 agent_models.yaml）——
 // 按告警处理而不是拒孵：本仓读不到那份文件，清单落地（P7）时才由清单侧强制补齐。
@@ -160,6 +177,28 @@ func ValidateEggDeclaration(name string, entry *ModelEntry) EggDeclarationResult
 			"卵 %s：未显式声明 idle_unload_s（空窗收走阈值）——取缺省 %ds；"+
 				"小模型（嵌入 / 重排 / 分类类）建议 %ds（设计 §13 Q21）",
 			displayName(name), DefaultIdleUnloadSeconds, SmallModelIdleUnloadSeconds))
+	}
+
+	// ===== 4) kv_disk：KV 盘声明（P5，设计 §9.4 / §9.7）=====
+	// 默认关闭（nil = 不发 --kv-disk-*）；一旦声明，写盘上限就是硬要求——
+	// KV 落盘是持续写，上限不许留成「无限」（§9.7①），负数更是声明错误。
+	switch {
+	case entry.KVDisk != nil && entry.KVDisk.SpaceMB <= 0:
+		res.Fatal = append(res.Fatal, fmt.Sprintf(
+			"卵 %s：kv_disk.space_mb=%d 不合法（KV 盘写盘上限必须为正——声明了 KV 盘却不限大小，"+
+				"等于把持续写敞成无限，设计 §9.7①）",
+			displayName(name), entry.KVDisk.SpaceMB))
+	case entry.KVDisk != nil && entry.KVDisk.SpaceMB > 0 && entry.KVDisk.Dir == "" && entry.EggName() == "":
+		// 显式覆盖目录给得出就不需要卵名；两者都没有 ⇒ 按卵分目录无从落地 ⇒ 拒孵。
+		res.Fatal = append(res.Fatal, fmt.Sprintf(
+			"卵 %s：kv_disk 未声明目录且卵名缺失——按卵分目录（~/.zerg/kvdisk/<卵名>/，设计 §9.7④）无从落地；"+
+				"请补 kv_disk.dir 或让注册表带上条目名",
+			displayName(name)))
+	case entry.SsdStreamingPreloadExperts < 0:
+		res.Fatal = append(res.Fatal, fmt.Sprintf(
+			"卵 %s：ssd_streaming_preload_experts=%d 不合法（预热专家数不能为负；"+
+				"无实测档案就不声明，适配器自然不发该参数——无档案不预热，设计 §9.4 / §8.4 标定铁律）",
+			displayName(name), entry.SsdStreamingPreloadExperts))
 	}
 
 	return res
