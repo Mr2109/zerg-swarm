@@ -1,19 +1,17 @@
-// 驻留明细与未托管进程上报（《设计-资源管理器》§3.1 驻留明细 / §八 Q6）。
+// 驻留明细上报（《设计-资源管理器》§3.1 驻留明细 / §八 Q6）。
 //
-// 两条纪律：
-//  1. 托管项：如实报状态/最后使用/在飞请求/实测 RSS/是否托管(managed=true)。
-//  2. 未托管项（实测 E2：手工 screen 起的服务）：只做**只读端口探测**如实标注
-//     managed=false；**绝不接管、绝不杀**（Q6 拍板）。
+// 纪律：托管项如实报状态/最后使用/在飞请求/实测 RSS/是否托管(managed=true)。
+// （未托管端口探测层已随 P4 退场清理删除——卵之外无引擎，附录 C·C7；
+//
+//	"非引擎 GPU 使用者"的只读上报归 §8.7 / monitor 逐进程 GTT 归因。）
 package backend
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
@@ -39,19 +37,7 @@ type ResidentDetail struct {
 	PinTtlS      float64 `json:"pin_ttl_s,omitempty"`     // Q5：pin 剩余 TTL 秒
 }
 
-// UnmanagedProcess 未托管但占着端口的进程（如实呈现；绝不接管、绝不杀）。
-type UnmanagedProcess struct {
-	PID     int     `json:"pid,omitempty"`
-	Port    int     `json:"port,omitempty"`
-	Command string  `json:"command,omitempty"`
-	Model   string  `json:"model,omitempty"`
-	RssGb   float64 `json:"rss_gb,omitempty"`
-	Note    string  `json:"note,omitempty"`
-	Managed bool    `json:"managed"` // 恒 false——未托管项如实标注
-}
-
 // ResidentDetail 返回当前托管驻留模型的明细列表（按别名排序，结果可复现）。
-// last_used_ago_s 与 req_count 来自 subproc（manager.go 的 lastUsed/reqCount）。
 func (m *Manager) ResidentDetail() []ResidentDetail {
 	m.mu.Lock()
 	now := time.Now()
@@ -85,110 +71,6 @@ func (m *Manager) ResidentDetail() []ResidentDetail {
 	}
 	m.mu.Unlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].Alias < out[j].Alias })
-	return out
-}
-
-// UnmanagedListeners 对给定端口做**只读** TCP 探测，返回"有人在听但不归本管理器管"的项。
-// 覆盖实测 E2（手工 screen 起的服务）；绝不接管、绝不 kill、不发任何模型指令。
-func (m *Manager) UnmanagedListeners(ports []int) []UnmanagedProcess {
-	m.mu.Lock()
-	owned := make(map[int]bool, len(m.procs))
-	for _, sp := range m.procs {
-		if sp.port > 0 {
-			owned[sp.port] = true
-		}
-	}
-	m.mu.Unlock()
-
-	hits := probeListeners(ports)
-	out := make([]UnmanagedProcess, 0, len(hits))
-	for _, port := range hits {
-		if owned[port] {
-			continue // 本管理器自己的进程——托管项，不在未托管清单里
-		}
-		out = append(out, UnmanagedProcess{
-			Port:    port,
-			Note:    "listening on 127.0.0.1, not managed by agent (managed=false); read-only report, never taken over",
-			Managed: false,
-		})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Port < out[j].Port })
-	return out
-}
-
-// probeListeners 并发探测 127.0.0.1 上哪些端口在监听（只做 TCP 连接，不发送数据）。
-func probeListeners(ports []int) []int {
-	const workers = 128
-	const dialTimeout = 150 * time.Millisecond
-
-	sem := make(chan struct{}, workers)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var hits []int
-
-	for _, p := range ports {
-		if p <= 0 || p > 65535 {
-			continue
-		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(port int) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), dialTimeout)
-			if err != nil {
-				return
-			}
-			conn.Close()
-			mu.Lock()
-			hits = append(hits, port)
-			mu.Unlock()
-		}(p)
-	}
-	wg.Wait()
-	return hits
-}
-
-// ParsePortSpec 解析端口清单（如 "9000-9999" 或 "8100,8101,9000-9002"）。
-// 非法片段跳过；最多 4096 个端口（防止意外铺满整段）。空串返回 nil。
-func ParsePortSpec(spec string) []int {
-	const maxPorts = 4096
-	var out []int
-	seen := make(map[int]bool)
-	add := func(p int) bool {
-		if p <= 0 || p > 65535 || seen[p] {
-			return true
-		}
-		seen[p] = true
-		out = append(out, p)
-		return len(out) < maxPorts
-	}
-	for _, part := range strings.Split(spec, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		if lo, hi, ok := strings.Cut(part, "-"); ok {
-			loN, err1 := strconv.Atoi(strings.TrimSpace(lo))
-			hiN, err2 := strconv.Atoi(strings.TrimSpace(hi))
-			if err1 != nil || err2 != nil || loN > hiN {
-				continue
-			}
-			for p := loN; p <= hiN; p++ {
-				if !add(p) {
-					return out
-				}
-			}
-			continue
-		}
-		n, err := strconv.Atoi(part)
-		if err != nil {
-			continue
-		}
-		if !add(n) {
-			return out
-		}
-	}
 	return out
 }
 
