@@ -47,6 +47,12 @@ import (
 // fleet.yaml 路径由配置指定（defaultFleetYAML 已删——2026-08-13 死代码清理）
 
 func main() {
+	// 启动期拨号诊断（2026-09-14 临时排查）：ZERG_DIAG_STARTUP_DIAL="host:port,host:port"
+	// 挂在进程出生处，用于区分"二进制静态属性/策略"与"运行时状态"两类原因。
+	if t := os.Getenv("ZERG_DIAG_STARTUP_DIAL"); t != "" {
+		gateway.StartupDialDiagnostics(t)
+	}
+
 	// 身份/帮助（升级模块：每件都必须能自报"跑的是哪份代码"；此前 --version 会被当配置文件路径静默吞掉）
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -348,14 +354,14 @@ func main() {
 	// v2.5.5 虫族UI: 资源库/日志/文档
 	r.Get("/api/resources/{type}", handlers.ResourcesHandler)
 	r.Get("/api/logs/{kind}", handlers.LogsHandler2)
+	// 2026-09-13（C9 第 4 步）：宿主只留**读/浏览**——文档界面 + 它的写后端（原
+	// docs_ops.go 的 mkdir/rename/delete/copy/save 五端点）**整块迁进文档茧**
+	// （独立仓 zerg-cocoon/文档，自带 Go 服务，端口默认 8610）⇒ 那五条 POST 路由已删。
+	// 剩下的 /api/docs 是**通用文件读取**（白名单根 + 类型闸门）：
+	//   GET /api/docs?root=&path=  参数化读（文件浏览器用）
+	//   GET /api/docs/<rel>        缺省 docs 根的老路径读（同上，文档茧迁移后仍被宿主文件浏览器用）
 	r.Get("/api/docs", handlers.DocsHandler)
-	r.Get("/api/docs/*", handlers.DocsHandler) // v2.5.6 catch-all 多段路径（00-总览/xxx.md——之前 {path} 单段404导致UI一直加载中）
-	// v2.5.6 文档文件操作（Mr2109 2026-08-29: UI 右键菜单——新建/重命名/删除/复制/保存）
-	r.Post("/api/docs/mkdir", handlers.DocMkdirHandler)
-	r.Post("/api/docs/rename", handlers.DocRenameHandler)
-	r.Post("/api/docs/delete", handlers.DocDeleteHandler)
-	r.Post("/api/docs/copy", handlers.DocCopyHandler)
-	r.Post("/api/docs/save", handlers.DocSaveHandler)
+	r.Get("/api/docs/*", handlers.DocsHandler) // v2.5.6 catch-all 多段路径（00-总览/xxx.md）
 	// 2026-09-13 文件/目录浏览器 阶段 1（《设计-文件浏览器虫茧-20260913》§4.2）
 	//   GET  /api/fileroots         —— 五根白名单 + 可配置项（只读：不探目录、不建目录）
 	//   POST /api/fileroots/open    —— 用默认应用打开（目录 / text_exts 内类型）

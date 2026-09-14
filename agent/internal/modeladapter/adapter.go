@@ -31,6 +31,17 @@ type ModelAdapter interface {
 	ContextWindow() int
 }
 
+// NonMainlineEngine 可选接口（P1）：适配器声明「**本架构必须由非主线引擎实现承载**」。
+//
+// 语义：不实现该接口 = 走主线引擎即可（默认）；实现且返回 true ⇒ 卵声明里**必须**有 cmd:
+// （专用 fork 二进制 + 包装脚本，含 env 处理）——缺失即**拒孵**，绝不静默退回主线 llama-server。
+// 单独一个接口（而不是往 ModelAdapter 里加方法）是为了不动既有适配器的方法集。
+// 依据：设计-子端沙箱化-20260914 §1.2（引擎实现/变体是卵的必需字段）/ §4.7（卵清单必须带上它、
+// 集群级统一）/ 附录 C·C1（fleet.yaml 无 cmd: ⇒ 第二台设备孵 K2 静默退回主线引擎）。
+type NonMainlineEngine interface {
+	RequiresNonMainlineEngine() bool
+}
+
 // Registry 适配器注册表。
 var (
 	mu       sync.RWMutex

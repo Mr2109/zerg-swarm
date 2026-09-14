@@ -21,6 +21,11 @@ import os
 import sys
 
 # 制品矩阵的权威定义：改这里 = 改发布契约（同时要改 scripts/pack-release.sh 与 CI 的 matrix）
+# 本机模式：只按「本机平台实际构建出的件」出清单（B5 后本地不再交叉编译 linux）
+# 开法：环境变量 ZERG_MANIFEST_LOCAL=1（默认严格 5 件契约，CI/发布用）
+import os as _os
+LOCAL_MODE = _os.environ.get("ZERG_MANIFEST_LOCAL") == "1"
+
 EXPECTED = {
     "zerg-core-darwin-arm64",
     "zerg-agent-darwin-arm64",
@@ -42,7 +47,11 @@ def main() -> int:
     found = [n for n in sorted(os.listdir(d))
              if n.startswith("zerg-") and not n.endswith(".sha256") and os.path.isfile(os.path.join(d, n))]
 
-    missing, extra = sorted(EXPECTED - set(found)), sorted(set(found) - EXPECTED)
+    exp = set(EXPECTED)
+    if LOCAL_MODE:
+        # 只保留本机平台（darwin-arm64）的件，其余不作为契约
+        exp = {n for n in exp if "-darwin-" in n}
+    missing, extra = sorted(exp - set(found)), sorted(set(found) - exp)
     if missing or extra:
         print("❌ 制品矩阵与契约不符——拒绝生成清单")
         for m in missing:
