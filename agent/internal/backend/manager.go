@@ -28,6 +28,7 @@ import (
 
 	"encoding/json"
 	"errors"
+	"github.com/Mr2109/zerg-swarm/agent/internal/enclosure"
 	"github.com/Mr2109/zerg-swarm/agent/internal/modeladapter"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
@@ -68,6 +69,10 @@ type subproc struct {
 	// enclosureNote 核验留痕（一句话，进观测面 enclosure_note）：
 	// 通过 = 结论 + 各项实测值；读不到 = 「未核验：<原因>」；不符 = 「核验不符：<哪几项>」。
 	enclosureNote string
+	// enclosure 茧壁本次产出的**等级声明**（§4.2 四级 / §六 判据 8；形状与卵档案同一份）。
+	// nil = 本端从未声称过隔离（裸 exec 路径）。别把「未申报 expected」与「nil」混了：
+	// 前者是 Verdict 里一个空字段，后者是「这条路根本不声称隔离」。
+	enclosure *enclosure.Verdict
 	// enginePID 孵化路径下**空间内引擎进程**的 pid（核验时实读到的那个；2026-09-15 缺陷 14）。
 	//
 	// 为什么需要它：孵化路径 sp.proc 恒 nil（引擎不是本端的子进程）⇒ 观测面原先拿不到 pid
