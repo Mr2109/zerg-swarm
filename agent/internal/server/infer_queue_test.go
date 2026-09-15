@@ -94,3 +94,51 @@ func TestInfer_ETAComesFromProfileOnly(t *testing.T) {
 		t.Fatalf("亚秒 ETA 至少给 1 秒（不得为 0），实得 %d", got)
 	}
 }
+
+// 执行期**不受排队上限约束**（2026-09-16 治本：秒数只管排队）。
+// 变异可验：把 handler 里的 `case <-startedCh:` 分支去掉 ⇒ 本用例必红（1s 后回 503）。
+func TestInfer_ExecutionPhaseNotCutByQueueTimeout(t *testing.T) {
+	t.Setenv("ZERG_INFER_WAIT_TIMEOUT_S", "1") // 排队上限压到 1 秒
+	s := inferServer()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/infer", strings.NewReader(`{"model":"qwen","stream":false,"messages":[]}`))
+	req.Header.Set("X-Auth-Token", "tok")
+	done := make(chan struct{})
+	go func() { defer close(done); s.handleInfer(rec, req) }()
+
+	// 等它入队（不启动真 worker：由测试精确模拟一次出队）
+	deadline := time.Now().Add(2 * time.Second)
+	for s.agent.backends.WaitQLen() != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("请求没能入队")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// currentModel 返回我们刚入队那个模型 ⇒ 走向"匹配"分支（不触发换卵重校验）
+	_, payload, ok, _ := s.agent.backends.WaitQPop(func() string { return "qwen" }, false)
+	if !ok {
+		t.Fatal("取不到队头")
+	}
+	markStarted(payload) // 与产品路径同一个函数：模拟"worker 已取走、进入执行期"
+
+	// 执行期：等 2.5×排队上限。**不得**因为排队到点而返回。
+	time.Sleep(2500 * time.Millisecond)
+	select {
+	case <-done:
+		t.Fatalf("执行期被排队上限砍断：提前返回 code=%d body=%s", rec.Code, rec.Body.String())
+	default:
+	}
+
+	// 交付结果让 handler 正常收口（不泄漏 goroutine）
+	if r, isReq := payload.(inferReq); isReq {
+		r.resultCh <- inferResult{status: 200, body: []byte(`{"ok":true}`)}
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("交付结果后 handler 仍未收口")
+	}
+	if rec.Code == http.StatusServiceUnavailable && strings.Contains(rec.Body.String(), "queued timeout") {
+		t.Fatal("执行期不得回 queued timeout")
+	}
+}
