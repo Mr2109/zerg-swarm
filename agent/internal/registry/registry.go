@@ -35,6 +35,18 @@ type ModelEntry struct {
 	// ═══ 虫卵声明字段（P1，设计-子端沙箱化-20260914 §4.3 九项字段表）═══
 	// 校验与失败语义见 egg_decl.go（ValidateEggDeclaration）；本处只放字段。
 	//
+	// EngineImpl 引擎实现 / 变体（设计 §1.2「引擎（含具体实现 / fork）是卵的一部分」/
+	// §4.7「卵清单必须带上它」）：**卵必须体现出用的是什么引擎**，否则"同一模型、不同引擎
+	// 版本"（§6.8）表达不出来、第二台设备也可能静默退回主线。
+	//
+	// 写法 = 「可辨识的短名」，例：
+	//   build-hip-flash/llama-server    X3 的统一库（支持 qwen4exp/PLE）
+	//   build-k2/llama-server           K2-Horizon 的 IFM fork
+	//   run-k2.sh                       wrapper 脚本（清 LD_LIBRARY_PATH 那类）
+	// 留空 ⇒ 按「实际会执行的可执行文件」自动推（backend.shortEngineName；见 EngineImplOf），
+	// 声明了就必须与实际执行的可执行文件相符（不符 ⇒ 拒孵，declared 与 exec 不许分叉）。
+	EngineImpl string `yaml:"engine_impl,omitempty"`
+	//
 	// SchemaVersion 卵声明格式版本号（设计 §4.3 第八项 / §6.8.4）：
 	// 子端升级后据此判断「这枚旧卵我还认不认得」；**孵化前校验**。
 	// 认不得 ⇒ 明确报错、拒孵；0 = 未声明（遗留条目，按告警处理，清单落地 P7 时强制补齐）。
