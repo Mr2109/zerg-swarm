@@ -11,8 +11,8 @@
 
 --- 1) 门禁真跑：python3 scripts/compare-wall-argv.py --self-test --evidence … ---
 === 茧壁迁移桥（任务 2'.3）：Go hatch.BuildBwrapArgv ↔ zerg-wall plan ===
-配方目录：<repo>/wall/testdata/bridge-specs（5 份：ok 3 / reject 2）
-茧壁二进制：<repo>/wall/target/debug/zerg-wall
+配方目录：wall/testdata/bridge-specs（5 份：ok 3 / reject 2）
+茧壁二进制：wall/target/debug/zerg-wall
 绿    ok-01-full.json                            60 项逐条一致（含可执行名共 61 项）
 绿    ok-02-minimal.json                         36 项逐条一致（含可执行名共 37 项）
 绿    ok-03-multi-weight-no-env.json             52 项逐条一致（含可执行名共 53 项）
@@ -353,12 +353,12 @@
   茧壁 ：rc=2
 
 --- 制品与源码 sha256（本机制品对拍时用于复核）---
-8bc8689a207dda90811acfd34ea512ff9a2eb6451c44a9e7a79559eff08feb75  <repo>/wall/target/debug/zerg-wall
-d7870b42462056febc50aded49823c8391e91cfbdf816fe4c7ee97304f2ead0f  <repo>/wall/src/platform/linux.rs
-83b3c5ccf8ddd7670b513166068bd3b6668521b78a9a645c42b4c947300a85d0  <repo>/wall/tests/plan_linux.rs
-3930e1b732714cfcd31ad90f8b27b2a8463d9fab3f389d0ca0a4c246d36399d7  <repo>/agent/internal/hatch/hatch.go
-35f856ce2c427beaeafbf699895606dd9578f3790c06a14210093f4c2bf8ceae  <repo>/agent/internal/hatch/wall_bridge_test.go
-deb173fdcc5961454624256ec11b5022757e1a3ac007c429ebab1a7e2c7631b1  <repo>/scripts/compare-wall-argv.py
+8bc8689a207dda90811acfd34ea512ff9a2eb6451c44a9e7a79559eff08feb75  wall/target/debug/zerg-wall
+d7870b42462056febc50aded49823c8391e91cfbdf816fe4c7ee97304f2ead0f  wall/src/platform/linux.rs
+83b3c5ccf8ddd7670b513166068bd3b6668521b78a9a645c42b4c947300a85d0  wall/tests/plan_linux.rs
+3930e1b732714cfcd31ad90f8b27b2a8463d9fab3f389d0ca0a4c246d36399d7  agent/internal/hatch/hatch.go
+35f856ce2c427beaeafbf699895606dd9578f3790c06a14210093f4c2bf8ceae  agent/internal/hatch/wall_bridge_test.go
+3208b51b5edc4e8cdb81b9da4ef4b8633ceebdea5bc21abd4df97e79d42bb624  scripts/compare-wall-argv.py
 
 --- 2) 变异验证（两侧各一次；红 ⇒ 还原 ⇒ sha 逐字节一致 ⇒ 复跑绿）---
 [M1 Rust 侧] 拿掉 `--die-with-parent`（wall/src/platform/linux.rs）
@@ -383,5 +383,4 @@ d7870b42462056febc50aded49823c8391e91cfbdf816fe4c7ee97304f2ead0f  wall/src/platf
 83b3c5ccf8ddd7670b513166068bd3b6668521b78a9a645c42b4c947300a85d0  wall/tests/plan_linux.rs
 3930e1b732714cfcd31ad90f8b27b2a8463d9fab3f389d0ca0a4c246d36399d7  agent/internal/hatch/hatch.go
 35f856ce2c427beaeafbf699895606dd9578f3790c06a14210093f4c2bf8ceae  agent/internal/hatch/wall_bridge_test.go
-deb173fdcc5961454624256ec11b5022757e1a3ac007c429ebab1a7e2c7631b1  scripts/compare-wall-argv.py
 
