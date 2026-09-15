@@ -570,7 +570,10 @@ func (m *Manager) IsHealthy() bool {
 	total := 0
 	for _, sp := range m.procs {
 		total++
-		if sp.state == StateReady && sp.port > 0 {
+		// idle_armed（空窗计时中）**也是活的、能服务** —— 只是"暂时没人用"（§7.1 补记）。
+		// 漏掉它会出现「卵好好地在空窗里 ⇒ health=false」（2026-09-15 生产实测抓到）：
+		// 主控看板在每次空窗窗口内把该机记成不健康 ⇒ 又回到"空着/闲着=不健康"的失真。
+		if (sp.state == StateReady || sp.state == StateIdleArmed) && sp.port > 0 {
 			candidates = append(candidates, sp)
 		}
 	}
