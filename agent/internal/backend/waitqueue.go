@@ -78,3 +78,17 @@ func (m *Manager) WaitQHeadETA() (float64, bool) {
 	}
 	return items[0].eta.Seconds(), true
 }
+
+// WaitQDropHead 摘除队头并返回它（ok=false = 队空）。
+// 用途（§7.7 修补 4 的兜底）：worker 重走孵化后仍不匹配 ⇒ 该模型装不起来，
+// 必须把这一项摘掉并回报失败，否则队头会永远卡住（饿死后面所有项）或热旋重试。
+func (m *Manager) WaitQDropHead() (WaitItem, interface{}, bool) {
+	item, ok := m.waitQueue().dropHead()
+	if !ok {
+		return WaitItem{}, nil, false
+	}
+	return WaitItem{Model: item.model, ETA: item.eta}, item.req, true
+}
+
+// WaitQueueCapacityForTest 默认队列限长（供包外测试构造"队列满"场景；产品路径不读它）。
+func WaitQueueCapacityForTest() int { return p2QueueCapacity }

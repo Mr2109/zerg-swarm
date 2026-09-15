@@ -100,3 +100,26 @@ func TestWaitQueue_EmptyPopNonBlocking(t *testing.T) {
 		t.Fatal("空队列非等待 pop 阻塞了（应立即可返回）")
 	}
 }
+
+// dropHead：摘除队头（"重走孵化后仍不匹配"的兜底，防队头卡死饿死后续项）。
+func TestWaitQueue_DropHead(t *testing.T) {
+	m := &Manager{}
+	m.WaitQPush("a", "pa", 0)
+	m.WaitQPush("b", "pb", 0)
+	item, payload, ok := m.WaitQDropHead()
+	if !ok || item.Model != "a" || payload != "pa" {
+		t.Fatalf("应摘除并返回队头 a，实得 ok=%v %+v %v", ok, item, payload)
+	}
+	if m.WaitQLen() != 1 {
+		t.Fatalf("摘除后应剩 1 项，实得 %d", m.WaitQLen())
+	}
+	if items := m.WaitQPeek(); len(items) != 1 || items[0].Model != "b" {
+		t.Fatalf("剩下的应是 b，实得 %+v", items)
+	}
+	if _, _, ok := m.WaitQDropHead(); !ok {
+		t.Fatal("应能摘掉最后一项")
+	}
+	if _, _, ok := m.WaitQDropHead(); ok {
+		t.Fatal("队空时 dropHead 必须返回 ok=false")
+	}
+}
