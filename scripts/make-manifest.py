@@ -45,6 +45,15 @@ def _git(args: list) -> str:
         return ""
 
 
+def _cmd(argv: list) -> str:
+    """跑一条只读命令取工具链指纹；失败/缺失返回空串（如实缺席，不编造）。"""
+    try:
+        out = subprocess.run(argv, capture_output=True, text=True)
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
 def main() -> int:
     if len(sys.argv) != 5:
         print(__doc__)
@@ -97,6 +106,14 @@ def main() -> int:
         "source_sha": _git(["rev-parse", "HEAD"]),
         "source_sha_short": _git(["rev-parse", "--short", "HEAD"]),
         "dirty": bool(_git(["status", "--porcelain"])),
+        # 构建自证（2026-09-16 加固①）：本机构建路线下"下件+校官方摘要"不存在 ⇒
+        # 唯一判据是"同源同环境 ⇒ 逐字节相同"，故把**当时的环境与工具链**如实记下来。
+        # 取不到就如实缺席（空串），不编造。
+        "toolchain": {
+            "go": _cmd(["go", "version"]),
+            "rustc": _cmd(["rustc", "-V"]),
+        },
+        "host": _cmd(["uname", "-sm"]),
         "artifacts": arts,
     }
     out = os.path.join(d, "manifest.json")
