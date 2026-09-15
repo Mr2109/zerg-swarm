@@ -64,6 +64,10 @@ type inferReq struct {
 	forwardPath string
 	resultCh    chan inferResult
 	ctx         context.Context // v2.5.6 治本（2026-08-28——x3 幽灵请求）: 客户端 context——断开自动取消后端请求——释放单槽
+	// startedCh 由 worker 在**出队开始执行**时非阻塞发一次；等待方据此把"排队期"与"执行期"分开：
+	// 排队期有可配上限（排队中没有任何可推进的证据可看 ⇒ 时间只能兜底），执行期**不设时长上限**、
+	// 活性一律交看门狗按证据判（输出 / 引擎自报进度 / 本单元 CPU 工时）。
+	startedCh chan struct{}
 }
 
 // inferResult 推理结果。
@@ -186,6 +190,7 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 
 	// 创建结果 channel（带超时）
 	resultCh := make(chan inferResult, 1)
+	startedCh := make(chan struct{}, 1)
 
 	// 放入等待队列（P7 批 3：p2Queue 取代原 20 槽 channel——限长 + ETA + 出队重校验）
 	req := inferReq{
@@ -194,6 +199,7 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 		stream:      stream,
 		forwardPath: forwardPath,
 		resultCh:    resultCh,
+		startedCh:   startedCh,
 		ctx:         r.Context(), // v2.5.6 治本: 客户端 context——断开取消后端请求——释放单槽
 	}
 	eta := estimateWaitETA(model)
@@ -204,9 +210,20 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 等待结果；排队+执行的总时长超过上限 ⇒ 503 + Retry-After（可等的失败，不是服务故障）。
+	// 等待结果：**秒数只用于排队期**（排队中没有可观察的推进 ⇒ 时间兜底）；
+	// 一旦 worker 出队开始执行（startedCh 收到信号），就不再计时，执行期活性交看门狗按证据判。
+	var res inferResult
 	select {
-	case res := <-resultCh:
+	case res = <-resultCh:
+	case <-startedCh:
+		res = <-resultCh // 执行期：无时长上限（真卡死由看门狗判死；客户端断开由 ctx 取消）
+	case <-time.After(s.inferWaitTimeout()):
+		// 排队上限到达：明确告知"可稍后重试"，并让客户端知道等多久合理（不静默、不硬截断）。
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfterSeconds(eta)))
+		http.Error(w, `{"error":"queued timeout","hint":"retry later"}`, http.StatusServiceUnavailable)
+		return
+	}
+	{
 		if res.err != nil {
 			writeInferError(w, 500, "inference failed", res.err)
 			return
@@ -228,14 +245,11 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-	case <-time.After(s.inferWaitTimeout()):
-		// 排队上限到达：明确告知"可稍后重试"，并让客户端知道等多久合理（不静默、不硬截断）。
-		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfterSeconds(eta)))
-		http.Error(w, `{"error":"queued timeout","hint":"retry later"}`, http.StatusServiceUnavailable)
 	}
 }
 
-// inferWaitTimeout 排队+执行的总等待上限（ZERG_INFER_WAIT_TIMEOUT_S 可覆盖；缺省 600s）。
+// inferWaitTimeout **排队**上限（ZERG_INFER_WAIT_TIMEOUT_S 可覆盖；缺省 600s）。
+// 语义已于 2026-09-16 收窄：**只管排队**（等槽位/等孵化）——执行期不设时长上限，活性由看门狗按证据判。
 func (s *Server) inferWaitTimeout() time.Duration {
 	if v := os.Getenv("ZERG_INFER_WAIT_TIMEOUT_S"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -297,6 +311,13 @@ func (s *Server) inferLoop() {
 		}
 		if !ok {
 			continue
+		}
+		// 排队期结束：非阻塞地给该请求发一次"开始执行"信号（缓冲 1 ⇒ 幂等；等待方只读一次）
+		if req, isReq := payload.(inferReq); isReq && req.startedCh != nil {
+			select {
+			case req.startedCh <- struct{}{}:
+			default:
+			}
 		}
 		mismatchStreak = 0
 		if req, isReq := payload.(inferReq); isReq {
