@@ -215,6 +215,7 @@ func TestHatchOn_HatchesThroughHatcher(t *testing.T) {
 	withHatchGateRead(t, 100, 100, nil)
 
 	fake := &fakeHatcher{mainPID: os.Getpid(), enclose: enclosedReport()}
+	fake.enclose.PID = 4242 // 核验报告里实读到的「空间内引擎 pid」——用来验它落到了 sp.enginePID（缺陷 14）
 	m := newHatchTestManager(fake)
 	defer fake.closeEngines()
 
@@ -248,6 +249,11 @@ func TestHatchOn_HatchesThroughHatcher(t *testing.T) {
 	sp := m.procs["GLM-5.3-Flash"]
 	if sp == nil {
 		t.Fatal("孵化出的卵应在驻留清单里")
+	}
+	// 缺陷 14：核验实读到的空间内引擎 pid 必须落到 sp（观测面靠它给 unit/gtt、并把本端自己
+	// 孵的卵从「外部占用者」里排除；孵化路径 sp.proc 恒 nil，没有它就拿不到 pid）。
+	if sp.enginePID != 4242 {
+		t.Fatalf("核验实读的 pid 应落到 sp.enginePID=4242，实得 %d", sp.enginePID)
 	}
 	if want := hatch.UnitName("GLM-5.3-Flash"); sp.Unit != want {
 		t.Fatalf("单元名应记进 subproc.Unit（%q），实得 %q", want, sp.Unit)
@@ -432,7 +438,7 @@ func enclosedReport() hatch.EnclosureReport {
 func TestHatchOn_VerifyWithoutPIDIsNotPassed(t *testing.T) {
 	fake := &fakeHatcher{} // mainPID=0 ⇒ MainPID 报错
 	m := newHatchTestManager(fake)
-	state, note := m.verifyEnclosure("zerg-x", nil)
+	state, note, _ := m.verifyEnclosure(&subproc{Unit: "zerg-x"}, nil)
 	if fake.verifyHits != 0 {
 		t.Fatal("拿不到 pid 时不得调用核验（更不得当成通过）")
 	}
@@ -453,7 +459,7 @@ func TestHatchOn_VerifyMismatchIsThreeState(t *testing.T) {
 	}
 	fake := &fakeHatcher{mainPID: os.Getpid(), enclose: notEnclosed}
 	m := newHatchTestManager(fake)
-	state, note := m.verifyEnclosure("zerg-x", nil)
+	state, note, _ := m.verifyEnclosure(&subproc{Unit: "zerg-x"}, nil)
 	if state != enclosureMismatch {
 		t.Fatalf("实读不符必须判 mismatch，实得 %v", state)
 	}
@@ -463,14 +469,14 @@ func TestHatchOn_VerifyMismatchIsThreeState(t *testing.T) {
 
 	unreadable := &fakeHatcher{mainPID: os.Getpid(), verifyErr: fmt.Errorf("read failed")}
 	m2 := newHatchTestManager(unreadable)
-	if st, _ := m2.verifyEnclosure("zerg-x", nil); st != enclosureUnreadable {
+	if st, _, _ := m2.verifyEnclosure(&subproc{Unit: "zerg-x"}, nil); st != enclosureUnreadable {
 		t.Fatalf("读不到必须判 unreadable（与不符分开），实得 %v", st)
 	}
 
 	// 通过 ⇒ verified
 	ok := &fakeHatcher{mainPID: os.Getpid(), enclose: enclosedReport()}
 	m3 := newHatchTestManager(ok)
-	st3, note3 := m3.verifyEnclosure("zerg-x", nil)
+	st3, note3, _ := m3.verifyEnclosure(&subproc{Unit: "zerg-x"}, nil)
 	if st3 != enclosureVerified {
 		t.Fatalf("七项全过应判 verified，实得 %v", st3)
 	}
