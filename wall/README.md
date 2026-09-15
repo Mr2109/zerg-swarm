@@ -93,10 +93,17 @@ cd wall
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test                 # 单元 6 + 集成 10（含三条负例组与「不许放宽」不变式）+ CLI 4
-bash scripts/build-all.sh  # 暂未接茧壁：是否进 5 件制品矩阵是发布契约（待拍板）
 ```
 
-**对拍门禁**（在仓根跑；需要 Go 工具链）：`python3 scripts/compare-wall-argv.py --self-test`
+**对拍门禁**（在**仓根**跑；需要 Go 工具链）：
+
+```bash
+python3 scripts/compare-wall-argv.py --self-test   # 0 全绿 / 1 有不一致 / 2 硬失败
+python3 scripts/wall-bridge-mutate.py              # 变异验证：两侧各改坏一次，门禁**必须红**
+```
+
+**制品分发**：**暂未接** `scripts/build-all.sh` —— 是否进 5 件制品矩阵属**发布契约**，待 Mr2109 拍板 ⚠
+（不进矩阵也能随卵分发：先落 `bin/`）。
 
 **本批尚未做的**：macOS 一档（直调 Seatbelt / `sandbox_init`，任务 2'.4 —— 现在**明确拒绝**并说明原因）、
 二档（直调原语）、Windows、制品矩阵接入（是否进 5 件矩阵是发布契约，待 Mr2109 决定）。
