@@ -103,6 +103,8 @@ type EggObservation struct {
 	Port       int
 	PID        int // 引擎进程 pid（0 = 无进程句柄）；逐进程 GTT 归因与排除的键
 	Inflight   int // P2 在飞引用计数（唯一真源）
+	// Watchdog 最近一次活性看门狗判词（设计-活性看门狗 §6）；nil = 本卵还没被看过。
+	Watchdog *WatchdogObservation
 	// IdleArmedRemainS 空窗计时剩余秒数；nil = 不在空窗计时中。
 	// 与 IdleArmedRemainingS 同口径（同一把锁内的状态 + 每卵阈值），只是随快照一次读出。
 	IdleArmedRemainS *float64
@@ -170,6 +172,7 @@ func (m *Manager) EggObservations() []EggObservation {
 			State:             sp.state,
 			Port:              sp.port,
 			Inflight:          sp.inflight,
+			Watchdog:          sp.watchdog,
 			EnclosureVerified: sp.enclosureVerified,
 			EnclosureNote:     sp.enclosureNote,
 		}
