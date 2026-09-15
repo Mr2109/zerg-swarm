@@ -48,12 +48,18 @@ type WatchdogConfig struct {
 	Sample     time.Duration // 两次工时读数间隔（默认 5 s）
 }
 
-// watchdogConfigFromEnv 读环境变量。默认开；`ZERG_WATCHDOG=0/false/off` 关（一键回退到固定超时）。
+// watchdogConfigFromEnv 读环境变量。
+//
+// 开关口径（与 `ZERG_HATCH` 同一先例）：**默认关，显式开** —— `ZERG_WATCHDOG=1/true/yes/on`。
+// 为什么默认关（2026-09-15 实测教训）：开着时若证据读不到（测试环境/非 Linux 没有 cgroup）
+// 会走 degraded 回落固定超时，把"对不响应引擎"的既有用例拖到 90s/15min；且本机制属行为变化，
+// 按"先沙箱验证、再生产 drop-in 显式开"的纪律更稳。关着时行为与旧口径**逐字一致**（一键回退）。
 // 窗口/采样用**秒（可小数）**，便于沙箱压秒验证。
 func watchdogConfigFromEnv(get func(string) string) WatchdogConfig {
-	cfg := WatchdogConfig{Enabled: true, Window: 90 * time.Second, MaxWindows: 5, Sample: 5 * time.Second}
-	if v := strings.TrimSpace(get("ZERG_WATCHDOG")); v == "0" || strings.EqualFold(v, "false") || strings.EqualFold(v, "off") {
-		cfg.Enabled = false
+	cfg := WatchdogConfig{Enabled: false, Window: 90 * time.Second, MaxWindows: 5, Sample: 5 * time.Second}
+	switch v := strings.ToLower(strings.TrimSpace(get("ZERG_WATCHDOG"))); v {
+	case "1", "true", "yes", "on":
+		cfg.Enabled = true
 	}
 	if v := strings.TrimSpace(get("ZERG_WATCHDOG_WINDOW_S")); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {

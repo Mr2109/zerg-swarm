@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"errors"
 	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
 	"github.com/Mr2109/zerg-swarm/agent/internal/modeladapter"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
@@ -353,12 +354,18 @@ func (s *Server) handleInferRequest(req inferReq) {
 		// **不是**故障：回 503 + Retry-After，别让上游把它当故障去换机
 		// （真机缺陷 17 附带，2026-09-15：重叠请求时子端曾直接回 500）。
 		if backend.IsBackendBusy(err) {
-			b, _ := json.Marshal(map[string]interface{}{
+			payload := map[string]interface{}{
 				"error":         "backend busy",
 				"status":        503,
 				"message":       err.Error(),
 				"retry_after_s": 5,
-			})
+			}
+			// 活性看门狗的判词/理由/窗口/工时增量：主控据此 failover，人据此复盘
+			var bbe *backend.BackendBusyError
+			if errors.As(err, &bbe) {
+				payload["watchdog"] = bbe.Obs
+			}
+			b, _ := json.Marshal(payload)
 			req.resultCh <- inferResult{
 				status:  503,
 				headers: http.Header{"Retry-After": []string{"5"}},
