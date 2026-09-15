@@ -19,6 +19,7 @@ package backend
 import (
 	"context"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/agent/internal/hatch"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -36,7 +37,15 @@ var unitCmdRunner unitCmdRunnerFunc = func(timeout time.Duration, name string, a
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, name, args...)
+	// 用户总线可达性（2026-09-15 真机：子端是**系统服务**，环境里没有 XDG_RUNTIME_DIR ⇒
+	// 一切 `systemctl --user` 都会失败 ⇒ 缺陷 9 的「单元已死 ⇒ 秒级报错」在生产上退化成干等 120s）。
+	// 这里补上本 uid 的运行时目录；补不出来（非 Linux / linger 未开）就按原样跑 —— 这是**只读探针**，
+	// best-effort 比 fail-closed 合适：真失败会由 systemctl 自己报出来，不会静默。
+	if env, envErr := hatch.UserScopeEnv(); envErr == nil {
+		cmd.Env = env
+	}
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 

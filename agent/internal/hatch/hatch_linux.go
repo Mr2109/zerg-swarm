@@ -26,6 +26,50 @@ type Hatcher struct {
 	StopTimeout time.Duration
 }
 
+// ── 用户总线可达性（2026-09-15 真机踩到，缺陷 15）──────────────────────────────
+//
+// 现象：生产子端跑在 **系统服务** 里（`/system.slice/x3-agent.service`），它的环境里既没有
+// `XDG_RUNTIME_DIR` 也没有 `DBUS_SESSION_BUS_ADDRESS` ⇒ 一切 `systemd-run --user` /
+// `systemctl --user` 都会当场失败：
+//
+//	Failed to connect to user scope bus via local transport:
+//	$DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined
+//
+// 为什么此前没暴露：真机测试是**从 ssh 会话**起的实例（继承了这两个变量）⇒ 在测试环境里
+// 失败不了。**「在它跑过的那个环境里失败不了，就不是证据」**——这类缺陷只能靠「按生产形态
+// 启动实例」才能抓到。
+//
+// 判据：给子进程显式补上本用户 uid 对应的运行时目录（linger 已开时它一定存在）；
+// **拿不到就明确报错**，绝不静默退回「以系统单元起」那条能跑但归属全错的路
+// （那会让卵不再独立于子端存活，E1 的结论也就没了）。
+func UserScopeEnv() ([]string, error) {
+	if v := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); v != "" {
+		return os.Environ(), nil // 已经够得到（会话里起的测试实例就是这种）
+	}
+	uid := os.Getuid()
+	rt := fmt.Sprintf("/run/user/%d", uid)
+	if st, err := os.Stat(rt); err != nil || !st.IsDir() {
+		return nil, fmt.Errorf("用户运行时目录 %s 不可用（linger 未开？）：%v —— 孵化需要它才能建用户级单元；拒绝改用系统单元（那会丢掉归属）", rt, err)
+	}
+	env := os.Environ()
+	env = append(env,
+		"XDG_RUNTIME_DIR="+rt,
+		"DBUS_SESSION_BUS_ADDRESS=unix:path="+rt+"/bus",
+	)
+	return env, nil
+}
+
+// userScoped 构造一条「够得到本用户 systemd 管理器」的命令（所有 --user 调用都必须走它）。
+func userScoped(ctx context.Context, name string, args ...string) (*exec.Cmd, error) {
+	env, err := UserScopeEnv()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
+	return cmd, nil
+}
+
 // Hatch 孵一枚卵：创建瞬态单元（内含 bwrap 封闭空间 + 引擎）。
 // 返回单元名（后续收卵/观测都用它）。
 func (h Hatcher) Hatch(ctx context.Context, spec Spec) (string, error) {
@@ -34,7 +78,10 @@ func (h Hatcher) Hatch(ctx context.Context, spec Spec) (string, error) {
 	if err != nil {
 		return unit, err
 	}
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd, cerr := userScoped(ctx, argv[0], argv[1:]...)
+	if cerr != nil {
+		return unit, cerr
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// 失败必须回原文：孵化失败的原因（polkit/userns/权限）都在这里
@@ -51,7 +98,10 @@ func (h Hatcher) Collect(ctx context.Context, unit string) error {
 	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "systemctl", "--user", "stop", unit)
+	cmd, cerr := userScoped(cctx, "systemctl", "--user", "stop", unit)
+	if cerr != nil {
+		return cerr
+	}
 	out, err := cmd.CombinedOutput()
 	rc := 0
 	if err != nil {
@@ -66,7 +116,10 @@ func (h Hatcher) Collect(ctx context.Context, unit string) error {
 
 // Active 单元是否还在跑（收卵后用于核验"真的收干净了"）。
 func (h Hatcher) Active(ctx context.Context, unit string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "systemctl", "--user", "is-active", unit)
+	cmd, cerr := userScoped(ctx, "systemctl", "--user", "is-active", unit)
+	if cerr != nil {
+		return false, cerr
+	}
 	out, _ := cmd.CombinedOutput()
 	switch strings.TrimSpace(string(out)) {
 	case "active", "activating", "reloading":
@@ -81,7 +134,10 @@ func (h Hatcher) Active(ctx context.Context, unit string) (bool, error) {
 
 // UnitCgroup 单元的 cgroup 路径（观测面：核"它确实不在 x3-agent.service 里"）。
 func (h Hatcher) UnitCgroup(ctx context.Context, unit string) (string, error) {
-	cmd := exec.CommandContext(ctx, "systemctl", "--user", "show", unit, "-p", "ControlGroup", "--value")
+	cmd, cerr := userScoped(ctx, "systemctl", "--user", "show", unit, "-p", "ControlGroup", "--value")
+	if cerr != nil {
+		return "", cerr
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("读单元 cgroup 失败（%s）：%v：%s", unit, err, strings.TrimSpace(string(out)))
@@ -103,7 +159,10 @@ func (h Hatcher) MainPID(ctx context.Context, unit string) (int, error) {
 	if strings.TrimSpace(unit) == "" {
 		return 0, fmt.Errorf("缺单元名")
 	}
-	cmd := exec.CommandContext(ctx, "systemctl", "--user", "show", unit, "-p", "MainPID", "--value")
+	cmd, cerr := userScoped(ctx, "systemctl", "--user", "show", unit, "-p", "MainPID", "--value")
+	if cerr != nil {
+		return 0, cerr
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return 0, fmt.Errorf("读单元主进程 pid 失败（%s）：%v：%s", unit, err, strings.TrimSpace(string(out)))
