@@ -974,9 +974,10 @@ func (h *Handlers) LogsHandler2(w http.ResponseWriter, r *http.Request) {
 // DocsHandler 文件读取 API（v2.5.5 虫族UI 起；2026-09-13 C9 第 4 步收口为**通用**能力）
 //
 // 三条入口：
-//   · 带 root/path 查询参数   → 参数化读取（白名单根 + 类型闸门，实现见 fileroots.go）
-//   · URL 里带路径（/api/docs/<rel>）→ 读**缺省 docs 根**的那个文件（宿主文件浏览器在用，§4.5 兼容）
-//   · 什么都不带（GET /api/docs）→ 缺省根（docs）的**通用列目录**（与 ?root=docs 同一份实现）
+//
+//	· 带 root/path 查询参数   → 参数化读取（白名单根 + 类型闸门，实现见 fileroots.go）
+//	· URL 里带路径（/api/docs/<rel>）→ 读**缺省 docs 根**的那个文件（宿主文件浏览器在用，§4.5 兼容）
+//	· 什么都不带（GET /api/docs）→ 缺省根（docs）的**通用列目录**（与 ?root=docs 同一份实现）
 //
 // 2026-09-13（C9 第 4 步「拆」）：文档**专属**的那套（只收 .md、排除 issues/thunderbolt 的递归
 // 列目录 + 五个写端点）随文档界面整块迁进文档茧（`zerg-cocoon/文档` 自带 Go 服务）。
