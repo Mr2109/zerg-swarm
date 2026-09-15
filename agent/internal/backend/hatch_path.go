@@ -218,6 +218,10 @@ func (m *Manager) hatchStartLocked(modelName string, entry *registry.ModelEntry,
 	if err != nil {
 		log.Printf("[backend] 孵化失败: model=%s unit=%s: %v", modelName, unit, err)
 		sp.state = StateCrashed
+		// 缺陷 19（2026-09-15）：孵化失败**不得**把占位条目留在账本里。
+		// 原来只置 crashed 不删 ⇒ 幻影条目（Unit 空）留在 m.procs 里；下一次同名 /load 更会
+		// 用幻影覆盖真卵条目 ⇒ 真单元失去记账成孤儿（占显存、/eggs 失真）。
+		delete(m.procs, modelName)
 		return errResponse(500, "failed to start backend", err.Error()), nil
 	}
 	sp.Unit = unit
