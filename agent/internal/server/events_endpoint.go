@@ -112,7 +112,7 @@ func eventTick(seq int64, now time.Time, state, model string, queueLen int, head
 	return buildEventFrame(seq, now, state, model, changed, queueLen, headETA, inflight), true, seq
 }
 
-// observeTick 一次只读巡检（P7 接线点 1）：**先驱动体征器**（频率分层由记录器自己管：
+// observeTick 一次只读巡检（P7 接线点 1）：**先驱动虫须**（频率分层由记录器自己管：
 // 快采 2s 五类 / 慢采 15s 逐进程归因），再取状态机与队列快照。
 //
 // 为什么必须驱动：不驱动 ⇒ 逐进程归因永远为空 ⇒ `/services` 的 external_occupancy[] 与

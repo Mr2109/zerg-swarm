@@ -185,8 +185,8 @@ func TestEventFrame_JSONShape(t *testing.T) {
 	}
 }
 
-// 接线点 1：巡检必须**驱动体征器**（不驱动 ⇒ 逐进程归因恒空 ⇒ external_occupancy[] 恒空，
-// 真机实测过这个缺口）。断言：连续两次巡检后体征器里确实落了采样。
+// 接线点 1：巡检必须**驱动虫须**（不驱动 ⇒ 逐进程归因恒空 ⇒ external_occupancy[] 恒空，
+// 真机实测过这个缺口）。断言：连续两次巡检后虫须里确实落了采样。
 func TestObserveTick_DrivesVitalsRecorder(t *testing.T) {
 	s := eventsServer()
 	if got := len(s.agent.vitals.RecentRaw(4)); got != 0 {
@@ -196,7 +196,7 @@ func TestObserveTick_DrivesVitalsRecorder(t *testing.T) {
 	s.observeTick(now)
 	s.observeTick(now.Add(3 * time.Second)) // 越过快采间隔（2s）
 	if got := len(s.agent.vitals.RecentRaw(4)); got == 0 {
-		t.Fatal("巡检必须驱动体征器采样（否则归因/外部占用永远为空）")
+		t.Fatal("巡检必须驱动虫须采样（否则归因/外部占用永远为空）")
 	}
 	// 巡检同时给回状态机快照（供事件帧用）
 	state, _, qLen, eta, inflight := s.observeTick(now.Add(6 * time.Second))

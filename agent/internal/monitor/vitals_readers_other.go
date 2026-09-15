@@ -1,10 +1,10 @@
 //go:build !linux
 
-// vitals_readers_other.go —— 体征器的非 Linux 桩层（开发机 darwin / 其它平台）。
+// vitals_readers_other.go —— 虫须的非 Linux 桩层（开发机 darwin / 其它平台）。
 //
 // 学 vram.go / baseline_proc_other.go 的诚实纪律：拿不到就 ok=false，绝不编数冒充。
 // 本设计是 Linux-only（§12.1 第 4 条：依赖 /proc/<pid>/fdinfo、/sys/class/drm）；
-// mac 主控机上体征器可编译、可跑、可测（环/钩子/分层逻辑全在平台无关层），只是
+// mac 主控机上虫须可编译、可跑、可测（环/钩子/分层逻辑全在平台无关层），只是
 // 五类读数一律"未知"。
 package monitor
 
