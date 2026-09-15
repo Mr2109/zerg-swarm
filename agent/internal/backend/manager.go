@@ -274,45 +274,10 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 	sp.port = port
 
 	// 构建启动命令（模型适配层：按模型名选适配器，管理启动参数/工具风格/重提示）
-	// （P1 的「非主线引擎必须带 cmd:」守卫在 doStart 最前面，见函数开头。）
-	adp := modeladapter.Dispatch(modelName)
-	cmdArgs := adp.BuildArgs(entry, port)
-	cmdPath := ""
-	if entry.Backend == "ds4-server" {
-		cmdPath = "ds4-server"
-	} else {
-		cmdPath = detectLlamaServerPath()
-	}
-	// 替换 {file}/{port} 占位符（适配器可返回占位符）
-	for i, arg := range cmdArgs {
-		cur := strings.ReplaceAll(arg, "{port}", fmt.Sprintf("%d", port))
-		cur = strings.ReplaceAll(cur, "{file}", entry.File)
-		cmdArgs[i] = cur
-	}
-
-	// 如果有自定义 cmd（字符串，空格分隔），优先使用（兼容旧配置覆盖）
-	if entry.Cmd != "" {
-		cmdArgs = strings.Fields(string(entry.Cmd))
-		for i, arg := range cmdArgs {
-			cur := strings.ReplaceAll(arg, "{port}", fmt.Sprintf("%d", port))
-			cur = strings.ReplaceAll(cur, "{file}", entry.File)
-			cmdArgs[i] = cur
-		}
-		if len(cmdArgs) > 0 {
-			cmdPath = cmdArgs[0]
-		}
-	}
-
-	var execArgs []string
-	if len(cmdArgs) > 0 && cmdArgs[0] == cmdPath {
-		execArgs = cmdArgs[1:]
-	} else {
-		execArgs = cmdArgs
-	}
-
-	// P6（R6）：受管模型的空闲自退透传 —— 只对 llama 家族、且仅在配置了 ZERG_IDLE_SLEEP_S 时才加。
-	// 位置刻意放在 cmd 覆盖之后：无论走适配器还是走 cmd:，最终参数都经过这一道。
-	execArgs = applyIdleSelfSleep(execArgs, entry.Backend)
+	// （P1 的「非主线引擎必须带 cmd:」守卫在 doStart 最前面，见函数开头。
+	//  批 1：构造整段抽成 buildEngineArgv —— 孵化路径（hatch_spec.go）要用**同一份**参数，
+	//  两处各写一遍必然漂移；此处逐字保持原逻辑，行为不变。）
+	cmdPath, execArgs := buildEngineArgv(modelName, entry, port)
 
 	cmd := exec.Command(cmdPath, execArgs...)
 	sp.proc = cmd
