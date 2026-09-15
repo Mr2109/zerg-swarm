@@ -10,6 +10,7 @@
 package backend
 
 import (
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -20,27 +21,68 @@ import (
 // EngineImplOf 实际会执行的引擎实现名（设计 §1.2：引擎实现/变体是卵的必需字段）。
 //
 // 判据与 serviceKind 同源（residency.go），按「实际会执行什么」给真值：
-//  1. cmd: 覆盖 → 取首词的可执行基名（专用 fork 的真实名字）；
-//  2. 否则取声明的 backend（registry 声明，如 "ds4-server"）；
-//  3. 两者都缺 → 按本仓口径视为 llama 家族（serviceKind 测试「空后端按 llama」；
-//     doStart 缺省也走 detectLlamaServerPath）。
+//  1. 卵声明了 engine_impl → 原样采用（声明即事实；与实际执行的相符性由孵化映射校验）；
+//  2. cmd: → 取首词的可执行「可辨识短名」（见 shortEngineName）；
+//  3. backend 声明且非 llama 家族（如 "ds4-server"）→ 原样返回（那是引擎家族名）；
+//  4. 其余（llama 家族 / 未声明）→ **按实际探测到的可执行文件给真值**：
+//     例：X3 上是 `build-hip-flash/llama-server` —— 这正是「卵要体现出用的是什么引擎」：
+//     只取基名会把 hip-flash 与主线 llama-server 混成一个名字，两枚不同的卵看起来一样。
+//     探测不到任何可执行文件时退回 "llama-server"。
 func EngineImplOf(entry *registry.ModelEntry) string {
 	if entry == nil {
-		return "llama-server"
+		return shortEngineName(detectLlamaServerPath())
+	}
+	if v := strings.TrimSpace(entry.EngineImpl); v != "" {
+		return v
 	}
 	if cmd := strings.TrimSpace(string(entry.Cmd)); cmd != "" {
 		if f := strings.Fields(cmd); len(f) > 0 {
-			base := f[0]
-			if i := strings.LastIndexByte(base, '/'); i >= 0 {
-				base = base[i+1:]
-			}
-			return base
+			return shortEngineName(f[0])
 		}
 	}
-	if entry.Backend != "" {
-		return entry.Backend
+	if b := strings.TrimSpace(entry.Backend); b != "" && b != "llama-server" {
+		return b
 	}
-	return "llama-server"
+	return shortEngineName(detectLlamaServerPath())
+}
+
+// engineImplGenericDirs 命名时跳过的通用可执行目录：这些目录名不携带「哪个引擎实现」的信息。
+var engineImplGenericDirs = map[string]bool{
+	"bin": true, "sbin": true, "lib": true, "libexec": true,
+	"usr": true, "local": true, "opt": true, "homebrew": true, ".brew": true,
+}
+
+// shortEngineName 把引擎可执行路径压成「可辨识短名」：跳过通用目录，
+// 取最近的一个非通用目录名 + 基名 ⇒ **不同的 build / fork 彼此可区分**。
+//
+//	/home/g01/llama.cpp-src/build-hip-flash/bin/llama-server → build-hip-flash/llama-server
+//	/home/g01/llama-k2/build-k2/bin/llama-server             → build-k2/llama-server
+//	/home/g01/agent/run-k2.sh                                → agent/run-k2.sh
+//	/opt/homebrew/bin/llama-server                           → llama-server
+//	llama-server                                             → llama-server
+func shortEngineName(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	clean := filepath.Clean(p)
+	base := filepath.Base(clean)
+	dir := filepath.Dir(clean)
+	for i := 0; i < 8; i++ { // 有界上溯：最多看 8 层，避免病态路径下空转
+		d := filepath.Base(dir)
+		if d == "" || d == "." || d == string(filepath.Separator) {
+			return base
+		}
+		if !engineImplGenericDirs[d] {
+			return d + "/" + base
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return base
+		}
+		dir = parent
+	}
+	return base
 }
 
 // EggObservation 观测面单枚卵的只读事实卡（server 层 /eggs 与 /services 的装配输入）。
