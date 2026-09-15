@@ -10,13 +10,28 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/agent/internal/enclosure"
 )
 
 // timeAt unix 秒 → UTC 时间（测试辅助）。
 func timeAt(unix int64) time.Time { return time.Unix(unix, 0).UTC() }
 
-// validProfile 返回一份过校验的档案（X3 Qwen 实测口径）。
+// validProfile 返回一份过校验的档案（X3 Qwen 实测口径；**v2**：带 enclosure 块）。
 func validProfile() EggProfile {
+	p := validProfileV1()
+	p.SchemaVersion = EggProfileSchemaVersion
+	p.Enclosure = &enclosure.Verdict{
+		Expected:  enclosure.LevelKernel,
+		Observed:  enclosure.LevelKernel,
+		Allowlist: []string{"ipc:in-space", "net:loopback"},
+		CheckedAt: timeAt(1700000001),
+	}
+	return p
+}
+
+// validProfileV1 v1 旧档案（**无 enclosure 块**）：必须仍可读，等级按 unverified 处理。
+func validProfileV1() EggProfile {
 	return EggProfile{
 		WeightSizeGb:         54.2,
 		PeakGttGb:            32.70,
@@ -24,7 +39,7 @@ func validProfile() EggProfile {
 		LoadSeconds:          42,
 		ThroughputTokS:       35.5,
 		SuggestedIdleUnloadS: 600,
-		SchemaVersion:        EggProfileSchemaVersion,
+		SchemaVersion:        EggProfileSchemaVersionV1,
 		Machine:              "x3",
 		MeasuredAt:           timeAt(1700000000),
 		CalibRuns:            3,
