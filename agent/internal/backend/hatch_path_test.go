@@ -229,6 +229,22 @@ func TestHatchOn_HatchesThroughHatcher(t *testing.T) {
 	if fake.hatchCalls != 1 {
 		t.Fatalf("孵化器应恰好被调 1 次，实得 %d", fake.hatchCalls)
 	}
+	// 接线证据（2026-09-15 父代理）：核验必须拿到**卵声明的权重文件清单**（spec.WeightFiles），
+	// 否则「挂了别的文件」在核验里看不见（只能验结构形态），§6.9 的「看得见才算凭据」就不成立。
+	if len(fake.specs) != 1 {
+		t.Fatalf("应记录 1 份孵化声明，实得 %d", len(fake.specs))
+	}
+	want := fake.specs[0].WeightFiles
+	if len(want) == 0 {
+		t.Fatal("测试前置失效：孵化声明的 WeightFiles 不该为空（否则这条接线断言没意义）")
+	}
+	same := len(fake.verifyFiles) == len(want)
+	for i := 0; same && i < len(want); i++ {
+		same = fake.verifyFiles[i] == want[i]
+	}
+	if !same {
+		t.Fatalf("核验层收到的声明清单应与 spec.WeightFiles 一致；\n实得 %v\n期望 %v", fake.verifyFiles, want)
+	}
 	sp := m.procs["GLM-5.3-Flash"]
 	if sp == nil {
 		t.Fatal("孵化出的卵应在驻留清单里")
@@ -416,7 +432,7 @@ func enclosedReport() hatch.EnclosureReport {
 func TestHatchOn_VerifyWithoutPIDIsNotPassed(t *testing.T) {
 	fake := &fakeHatcher{} // mainPID=0 ⇒ MainPID 报错
 	m := newHatchTestManager(fake)
-	state, note := m.verifyEnclosure("zerg-x")
+	state, note := m.verifyEnclosure("zerg-x", nil)
 	if fake.verifyHits != 0 {
 		t.Fatal("拿不到 pid 时不得调用核验（更不得当成通过）")
 	}
@@ -437,7 +453,7 @@ func TestHatchOn_VerifyMismatchIsThreeState(t *testing.T) {
 	}
 	fake := &fakeHatcher{mainPID: os.Getpid(), enclose: notEnclosed}
 	m := newHatchTestManager(fake)
-	state, note := m.verifyEnclosure("zerg-x")
+	state, note := m.verifyEnclosure("zerg-x", nil)
 	if state != enclosureMismatch {
 		t.Fatalf("实读不符必须判 mismatch，实得 %v", state)
 	}
@@ -447,14 +463,14 @@ func TestHatchOn_VerifyMismatchIsThreeState(t *testing.T) {
 
 	unreadable := &fakeHatcher{mainPID: os.Getpid(), verifyErr: fmt.Errorf("read failed")}
 	m2 := newHatchTestManager(unreadable)
-	if st, _ := m2.verifyEnclosure("zerg-x"); st != enclosureUnreadable {
+	if st, _ := m2.verifyEnclosure("zerg-x", nil); st != enclosureUnreadable {
 		t.Fatalf("读不到必须判 unreadable（与不符分开），实得 %v", st)
 	}
 
 	// 通过 ⇒ verified
 	ok := &fakeHatcher{mainPID: os.Getpid(), enclose: enclosedReport()}
 	m3 := newHatchTestManager(ok)
-	st3, note3 := m3.verifyEnclosure("zerg-x")
+	st3, note3 := m3.verifyEnclosure("zerg-x", nil)
 	if st3 != enclosureVerified {
 		t.Fatalf("七项全过应判 verified，实得 %v", st3)
 	}
@@ -604,6 +620,7 @@ type fakeHatcher struct {
 	verifyErr    error // 非 nil ⇒ 核验读不到（模拟 /proc/<pid>/mountinfo 读失败）
 	verifyPID    int
 	verifyHits   int
+	verifyFiles  []string // 最近一次核验收到的**声明清单**（接线证据：spec.WeightFiles 真的送到了核验层）
 	engines      []*http.Server
 }
 
@@ -638,6 +655,12 @@ func (f *fakeHatcher) MainPID(_ context.Context, _ string) (int, error) {
 		return 0, fmt.Errorf("假孵化器没有主进程 pid")
 	}
 	return f.mainPID, nil
+}
+
+// VerifyEnclosureDeclared 记录 backend 传下来的声明清单（证明接线真把 spec.WeightFiles 送到了核验层）。
+func (f *fakeHatcher) VerifyEnclosureDeclared(pid int, declaredWeightFiles []string) (hatch.EnclosureReport, error) {
+	f.verifyFiles = append([]string(nil), declaredWeightFiles...)
+	return f.VerifyEnclosure(pid)
 }
 
 func (f *fakeHatcher) VerifyEnclosure(pid int) (hatch.EnclosureReport, error) {
