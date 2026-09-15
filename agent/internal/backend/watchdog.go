@@ -46,6 +46,9 @@ type WatchdogConfig struct {
 	Window     time.Duration // 卡点窗口（默认 90 s）
 	MaxWindows int           // 最多重置几次（默认 5 ⇒ 硬上界 450 s）
 	Sample     time.Duration // 两次工时读数间隔（默认 5 s）
+	// DeadFlatSamples 正文阶段（T14）：连续几次采样"无推进且 CPU 工时也不动"就**立刻判死**
+	// （提前判死，不必等窗口用满；默认 2 ⇒ 10 s）。这是"彻底停摆"的证据，与"忙但不推进"区分开。
+	DeadFlatSamples int
 }
 
 // watchdogConfigFromEnv 读环境变量。
@@ -56,7 +59,7 @@ type WatchdogConfig struct {
 // 按"先沙箱验证、再生产 drop-in 显式开"的纪律更稳。关着时行为与旧口径**逐字一致**（一键回退）。
 // 窗口/采样用**秒（可小数）**，便于沙箱压秒验证。
 func watchdogConfigFromEnv(get func(string) string) WatchdogConfig {
-	cfg := WatchdogConfig{Enabled: false, Window: 90 * time.Second, MaxWindows: 5, Sample: 5 * time.Second}
+	cfg := WatchdogConfig{Enabled: false, Window: 90 * time.Second, MaxWindows: 5, Sample: 5 * time.Second, DeadFlatSamples: 2}
 	switch v := strings.ToLower(strings.TrimSpace(get("ZERG_WATCHDOG"))); v {
 	case "1", "true", "yes", "on":
 		cfg.Enabled = true
@@ -74,6 +77,11 @@ func watchdogConfigFromEnv(get func(string) string) WatchdogConfig {
 	if v := strings.TrimSpace(get("ZERG_WATCHDOG_SAMPLE_S")); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
 			cfg.Sample = time.Duration(f * float64(time.Second))
+		}
+	}
+	if v := strings.TrimSpace(get("ZERG_WATCHDOG_DEAD_FLAT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.DeadFlatSamples = n
 		}
 	}
 	return cfg
