@@ -1,0 +1,7 @@
+[package]
+name = "zerg-wall"
+version = "0.1.0"
+edition = "2021"
+description = "茧壁（锁壳 + 门禁）：卵配方 → 平台命令 + 放行清单（一档：Linux 调 bwrap / macOS 直调 Seatbelt）"
+# 依赖政策（批 2'.1 冻结）：**零第三方依赖优先**。一档只需要 std（进程创建）+ extern "C"（Seatbelt FFI）；
+# 新增依赖必须单独拍板 —— 同一个「不造第二份真相」的口径：能少一份外部真相就少一份。
