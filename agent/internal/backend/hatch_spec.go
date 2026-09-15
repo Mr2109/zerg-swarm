@@ -4,24 +4,26 @@
 // 包内注释一律以「隔离化」指代同一份文件）
 //
 //	§4.3 卵声明字段表 · §6.6 目录二分（一次性 vs 跨孵化保留）· §6.7 环境供给五类 + 三个真坑
-//	§8.4 标定铁律（无实测档案不许孵）· §6.9 静默失效不得当凭据
+//	§8.4 标定铁律（无实测档案不许孵）· §6.9 静默失效不得当凭据 · §9.7④ KV 盘按卵分目录
 //
 // 本文件只做一件事：把「卵声明（registry.ModelEntry）+ 引擎实现名 + 端口 + 实测档案」翻译成
-// hatch.Spec —— 孵化器的全部输入。三条口径：
+// hatch.Spec —— 孵化器的全部输入。四条口径：
 //
 //	① fail-closed：卵名 / 权重 / 引擎路径任一拿不到就报错拒孵，绝不编造默认值
 //	   （孵化器只照单执行，不推断、不补默认，§6.7）；
 //	② 只挂该卵自己的东西：权重按「文件所在目录 → /models」挂，参数里的宿主权重路径改写为
 //	   空间内路径 ⇒ 别的模型与整个 /data 在空间内根本不存在（§6.6 / §9.3）；
-//	③ 空间内路径约定写死在本文件（/models、/engine、/templates），与 hatch 包的命令行配方一一对应。
+//	③ 空间内路径约定写死在本文件（/models、/engine、/templates、/work、/kvdisk），
+//	   与 hatch 包的命令行配方一一对应；
+//	④ 要**写**的落点一律走可写绑定（ExtraRWBinds → bwrap `--bind`）：WorkDir 给**空间内**
+//	   /work（宿主每卵一次性目录绑过去）、KV 盘给空间内 /kvdisk（宿主 ~/.zerg/kvdisk/<卵名>/
+//	   绑过去并把引擎参数里的宿主 KV 路径改写掉）——见文件末「2026-09-15 修正」一节。
 //
-// 纯函数：不 exec、不写盘（只建一次性工作目录 + os.Stat 判模板文件是否存在），可在 macOS 上
-// 直接单测；真正的孵化在 hatch 包（非 Linux 明确拒绝）——本包只负责「把声明翻译成孵化器的输入」。
+// 纯函数：不 exec、不写盘（只建一次性工作目录 / KV 盘目录 + os.Stat 判模板文件是否存在），
+// 可在 macOS 上直接单测；真正的孵化在 hatch 包（非 Linux 明确拒绝）——本包只负责「把声明
+// 翻译成孵化器的输入」。
 //
 // ⚠ 已知待拍板（如实标出，不擅自改 hatch 包的 X3 实测配方）：
-//   - hatch.Spec.WorkDir 的注释是「**空间内**工作目录」，本批按口径映射成**宿主**一次性目录
-//     ~/.zerg/work/<卵名>；两者要同时成立，需要在封闭空间里给它一个**可写落点**（现 Spec 只有
-//     只读 ExtraROBinds，没有可写绑定）⇒ 本批按宿主路径映射，并把这一点写进回报问 Mr2109。
 //   - 卵声明里的 env_req.weights / lib_paths 尚未接线：weights 与 entry.file 的一致性校验、
 //     lib_paths 的「空间内落点」（多个库目录都挂 /engine 会互相遮挡）都要先拍板；本批只原样
 //     透传 env_req.env（含显式声明的 LD_LIBRARY_PATH，空串 = 显式清空）。
@@ -51,7 +53,24 @@ const (
 	// spaceTemplatesDir 卵声明引用的模板类只读输入（ExtraROBinds 的「输入通道」：
 	// 如 chat_template 落在权重目录之外时，只读挂进来并改写参数）。
 	spaceTemplatesDir = "/templates"
+	// spaceWorkDir 每卵一次性工作目录在**空间内**的落点（§6.6「一次性」侧）。
+	//
+	// 宿主侧那份数据住在 ~/.zerg/work/<卵名>/，经 ExtraRWBinds 可写绑到这里。
+	// `hatch.Spec.WorkDir` 的契约是**空间内**路径（BuildBwrapArgv 会 `--chdir` 它）——
+	// 往它填宿主路径，空间里根本没有那个目录，真孵化必以 chdir 失败告终。
+	spaceWorkDir = "/work"
+	// spaceKVDiskDir KV 盘在空间内的落点（§6.6「跨孵化保留」侧 / §9.7④）。
+	//
+	// 宿主侧目录（缺省 ~/.zerg/kvdisk/<卵名>/）可写绑到这里；引擎参数里**精确等于**该宿主
+	// 目录的那个值同时改写成它 ⇒ 引擎在空间内照常读写，数据落在跨孵化保留的宿主卷上。
+	// 保留语义的由来：ds4 的 --kv-disk-dir 就是「跨服务器重启存活」（§9.4）⇒ 放进一次性
+	// 目录等于每次收卵白扔一次复用机会。
+	spaceKVDiskDir = "/kvdisk"
 )
+
+// kvDiskFlag KV 盘目录参数名（**ds4 归属**，§9.2：--kv-disk-* 是 ds4 的参数、不是 llama.cpp 的）。
+// 本文件只**读**它（找宿主目录），不改变归属、不替任何引擎发这个参数。
+const kvDiskFlag = "--kv-disk-dir"
 
 // kfdNode AMD 计算接口节点（ROCm 必需）；renderNodeBase /dev/dri/renderD<N> 的基数
 // （约定：第 0 张可见卡 = renderD128）。
@@ -117,25 +136,53 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 	spec.EnginePathInSpace = spaceEngineDir + "/" + filepath.Base(hostEngine)
 
 	// ④ 参数：与裸 exec 路径**同一份构造**（buildEngineArgv），再把宿主侧输入改写成空间内路径
-	rewrites, binds, err := spaceInputMappings(eggID, entry, weightDir, hostWeightFile)
+	rewrites, roBinds, err := spaceInputMappings(eggID, entry, weightDir, hostWeightFile)
 	if err != nil {
 		return spec, err
 	}
 	_, engineArgs := buildEngineArgv(eggID, entry, port)
+
+	// ④b KV 盘（§6.6「跨孵化保留」侧 / §9.7④）：宿主 KV 目录可写绑到 /kvdisk，并把引擎参数里
+	//     精确等于它的那个值改写成 /kvdisk。判据用**引擎真正会收到的参数**，不再按卵名算一遍
+	//     目录：路径规则只有一处真源（适配器的 kvDiskDir，落在 --kv-disk-dir 的值上），重算就是
+	//     第二套规则 —— 两处一漂移，「绑的目录」与「引擎写的目录」就不是同一个了。
+	kvRWBind := ""
+	if kvHost, err := kvDiskHostDir(engineArgs); err != nil {
+		return spec, fmt.Errorf("卵 %s：%w", eggID, err)
+	} else if kvHost != "" {
+		if err := os.MkdirAll(kvHost, 0o755); err != nil {
+			return spec, fmt.Errorf("卵 %s：KV 盘目录 %s 建不出来：%w —— 拒孵（KV 盘属跨孵化保留侧，建不出就没有可写落点，§6.6）",
+				eggID, kvHost, err)
+		}
+		rewrites = append(rewrites, pathRewrite{host: kvHost, space: spaceKVDiskDir})
+		if kvRWBind, err = rwBind(kvHost, spaceKVDiskDir); err != nil {
+			return spec, fmt.Errorf("卵 %s：%w", eggID, err)
+		}
+	}
+
 	spec.EngineArgs = rewriteArgsToSpace(engineArgs, rewrites)
-	spec.ExtraROBinds = binds
+	spec.ExtraROBinds = roBinds
 
 	// ⑤ 环境与设备：卵声明照单执行；声明了卡号才决定可见的渲染节点
 	cardIdx, cardKnown := declaredCardIndex(entry)
 	spec.Env = hatchEnv(entry, cardIdx, cardKnown)
 	spec.Devices = hatchDevices(entry, cardIdx, cardKnown)
 
-	// ⑥ 一次性工作目录（每卵一份；不存在就建）
-	workDir, err := ensureEggWorkDir(eggID)
+	// ⑥ 一次性工作目录（每卵一份；不存在就建）——**空间内**路径 + 宿主目录可写绑过去。
+	//     顺序与 §6.6 的表一致：先一次性（工作目录），再跨孵化保留（KV 盘）。
+	hostWorkDir, err := ensureEggWorkDir(eggID)
 	if err != nil {
 		return spec, fmt.Errorf("卵 %s：%w", eggID, err)
 	}
-	spec.WorkDir = workDir
+	workRWBind, err := rwBind(hostWorkDir, spaceWorkDir)
+	if err != nil {
+		return spec, fmt.Errorf("卵 %s：%w", eggID, err)
+	}
+	spec.WorkDir = spaceWorkDir
+	spec.ExtraRWBinds = append(spec.ExtraRWBinds, workRWBind)
+	if kvRWBind != "" {
+		spec.ExtraRWBinds = append(spec.ExtraRWBinds, kvRWBind)
+	}
 
 	// ⑦ mmap 限额（§6.7 C②：RLIMIT_MEMLOCK 给不足直接崩，不是变慢）——声明了才下发，不猜
 	if entry.EnvReq != nil && entry.EnvReq.MemlockKB > 0 {
@@ -370,7 +417,10 @@ func workDirRoot() string {
 	return filepath.Join(home, ".zerg", "work")
 }
 
-// ensureEggWorkDir 建（如缺）每卵一次性工作目录，返回其宿主路径。
+// ensureEggWorkDir 建（如缺）每卵一次性工作目录，返回其**宿主路径**。
+//
+// 返回值是**可写绑定的宿主侧来源**（ExtraRWBinds 的 host 半边），不是 `Spec.WorkDir` 的值
+// ——后者是空间内路径（/work）。两者分工见 spaceWorkDir 的注释。
 func ensureEggWorkDir(eggID string) (string, error) {
 	root := workDirRoot()
 	if root == "" {
@@ -381,6 +431,48 @@ func ensureEggWorkDir(eggID string) (string, error) {
 		return "", fmt.Errorf("一次性工作目录 %s 建不出来：%w —— 拒孵（工作目录是卵的一次性空间，建不出就没有可写处）", dir, err)
 	}
 	return dir, nil
+}
+
+// ── KV 盘与可写绑定（④b / ⑥）─────────────────────────────────────────────────
+
+// kvDiskHostDir 从引擎参数里取 KV 盘的**宿主目录**（`--kv-disk-dir` 紧随其后的那个值）。
+//
+// 返回 (目录, nil) = 参数里确实有 KV 盘；(“”, nil) = 没有 ⇒ 不加绑定、不做改写（**不编造**）。
+//
+// 为什么从参数里取、而不是照 §9.7④ 再按卵名算一遍：目录规则的真源在适配器的 kvDiskDir，
+// 它的产物就是这个参数值。在这里重算是**第二套规则**，两处一漂移就会出现「绑的目录」与
+// 「引擎写的目录」不是同一个 —— 那是最难查的一类静默故障。取执行面真值 ⇒ 绑定与改写必然一致。
+//
+// 目录不是宿主绝对路径 ⇒ 报错拒孵：相对路径在空间里会落到一次性工作目录上（本文件的
+// `--chdir` 落点是 /work）⇒ KV 活不过收卵，与 §6.6 / §9.7④ 的「跨孵化保留」直接冲突。
+// 这类形态要么是声明错、要么是 cmd: 写错，两种都不该静默降级跑起来（§6.9 同一精神）。
+func kvDiskHostDir(args []string) (string, error) {
+	for i, a := range args {
+		if a != kvDiskFlag || i+1 >= len(args) {
+			continue
+		}
+		dir := strings.TrimSpace(args[i+1])
+		if dir == "" {
+			return "", fmt.Errorf("%s 的值为空——拒孵（KV 盘目录拿不到，不许猜路径）", kvDiskFlag)
+		}
+		if !filepath.IsAbs(dir) {
+			return "", fmt.Errorf("KV 盘目录 %q 不是宿主绝对路径——拒孵：空间内只认绝对落点，相对路径会落进一次性工作目录（%s），"+
+				"KV 就活不过收卵（§6.6 / §9.7④ 要求它落在跨孵化保留侧）", dir, spaceWorkDir)
+		}
+		return dir, nil
+	}
+	return "", nil
+}
+
+// rwBind 组装一条可写绑定（bwrap `--bind` 的 `<host>:<space>` 形式）。
+//
+// 宿主路径里带 `:` 一律拒孵：`:` 就是 <host>:<space> 的分隔符，带它的宿主路径会被对侧**拆错**
+// （host 截在第一个冒号上）⇒ 静默挂到别的落点，比挂不上更糟。
+func rwBind(host, space string) (string, error) {
+	if strings.Contains(host, ":") {
+		return "", fmt.Errorf("可写绑定的宿主路径 %q 含 `:`——拒孵（`:` 是 <host>:<space> 的分隔符，带它的路径会被拆错、挂到别的落点上）", host)
+	}
+	return host + ":" + space, nil
 }
 
 // eggDirUnsafe 卵名里不许进目录名的字符（防路径穿越：卵名可能带 / 或 ..，绝不许逃出工作根）。
@@ -464,3 +556,31 @@ func buildEngineArgv(modelName string, entry *registry.ModelEntry, port int) (st
 	// 位置刻意放在 cmd 覆盖之后：无论走适配器还是走 cmd:，最终参数都经过这一道。
 	return cmdPath, applyIdleSelfSleep(execArgs, entry.Backend)
 }
+
+// ═══ 2026-09-15 修正：WorkDir 的语义缺陷与 KV 落点（Mr2109 拍板）═════════════
+//
+// 缺陷：`hatch.Spec.WorkDir` 的契约是**空间内**路径（孵化器会 `--chdir` 它），本文件原先把
+// **宿主**每卵目录填了进去 ⇒ 那个目录在空间里根本不存在 ⇒ 真孵化必以 chdir 失败告终。
+//
+// 修法（三条，本文件与 hatch 包两侧都改了）：
+//
+//	① `Spec.ExtraRWBinds`（新）：`<host>:<space>` 的可写绑定（bwrap `--bind`），与只读的
+//	   ExtraROBinds 并列、**同严格**（格式不对即拒孵）；
+//	② `WorkDir` 填空间内 `/work`，宿主每卵目录 `~/.zerg/work/<卵名>/` 经 ExtraRWBinds 绑过去；
+//	③ KV 盘（§6.6「跨孵化保留」侧 / §9.7④）：宿主目录可写绑到 `/kvdisk`，并把引擎参数里
+//	   **精确等于**该宿主目录的那个值改写成 `/kvdisk`（只改整 token，不做前缀/子串替换）。
+//
+// 边界（**明确不改什么、为什么不改**，免得下一轮按「应该也能改吧」去猜）：
+//   - 只认 `--kv-disk-dir <值>` 的**两段式**，且只认**第一个**：适配器（ds4.go）就是这个形状；
+//     `--kv-disk-dir=<值>` 的等号形态不认（重写成 `--kv-disk-dir=/kvdisk` 属于对参数做加工，
+//     本批不做）。
+//   - 参数里没有该 flag ⇒ 不加绑定、不改写、**不报错**（没声明 KV 盘 / 适配器按归属铁律没发
+//     该参数，两者都没有可绑的落点，不编造）。注意这是**执行面**判据：卵声明了 kv_disk 但
+//     适配器没发（如 llama 系——§9.2 归属铁律）⇒ 同样不加绑定；反之 cmd: 里手写了该参数 ⇒
+//     照样绑定与改写（引擎真会往那儿写，不绑就等于让它写一个空间内不存在的宿主路径）。
+//   - 参数值不是宿主绝对路径 ⇒ **报错拒孵**（见 kvDiskHostDir）；「找不到就不改，不报错」
+//     只适用于「压根没有该参数」，不适用于「有、但落点认不得」。
+//   - 只改**引擎参数**，不改环境变量、不碰 `cmd:` 的其它部分、不动归属（谁发参数还是谁发）。
+//
+// ⚠ 未接（如实登记，别当已做）：`kv_disk.space_mb` 的**盘闸门**（到顶怎么办：清最旧还是拒孵）
+// 与"N 天未用即清"的保留策略都还没有实现（§9.7 ②③ / §9.8），当前只保证「落点对 + 参数带上限」。
