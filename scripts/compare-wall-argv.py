@@ -162,6 +162,20 @@ def sha256(path):
     return h.hexdigest()
 
 
+def rel(path):
+    """回执里的路径一律走**仓内相对路径**。
+
+    为什么：`wall/` 在 `publish/whitelist.txt` 里 ⇒ 这份回执会进公开面（本仓祖先目录名是私有串，
+    快照脱敏只把卷根换成占位符，**后半截私有目录名会原样留下**）。前一份回执
+    （`evidence-plan-cli-20260916.txt`）就是相对路径形态，这里保持一致。
+    """
+    try:
+        r = os.path.relpath(path, ROOT)
+    except ValueError:  # 跨盘符（本仓不会发生，防御）
+        return path
+    return r if not r.startswith("..") else path
+
+
 # ── 自检：先证「这面镜子能红」 ───────────────────────────────────────────────
 
 def self_test(rows, emit=None):
@@ -297,8 +311,8 @@ def main():
             bad_rows.append(rows[-1])
 
     say("=== 茧壁迁移桥（任务 2'.3）：Go hatch.BuildBwrapArgv ↔ zerg-wall plan ===")
-    say("配方目录：%s（%d 份：ok %d / reject %d）" % (args.specs, len(names), n_ok, n_rej))
-    say("茧壁二进制：%s" % wall_bin)
+    say("配方目录：%s（%d 份：ok %d / reject %d）" % (rel(args.specs), len(names), n_ok, n_rej))
+    say("茧壁二进制：%s" % rel(wall_bin))
     for r in rows:
         say("%-4s %-42s %s" % ("绿" if r["ok"] else "红", r["name"], r["detail"]))
 
@@ -343,7 +357,7 @@ def main():
                       # 本脚本自己的 sha 也写进来：回执被引用时能自证「是哪一版门禁跑的」
                       os.path.abspath(__file__)]:
                 if os.path.exists(p):
-                    f.write("%s  %s\n" % (sha256(p), p))
+                    f.write("%s  %s\n" % (sha256(p), rel(p)))
         print("回执已落：%s" % args.evidence)
 
     return verdict
