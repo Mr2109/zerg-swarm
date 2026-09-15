@@ -91,7 +91,7 @@ var (
 	hatchVitalsRec  *monitor.VitalsRecorder
 )
 
-// hatchVitalsSnapshot 后端自用的体征器**只读快照**（不启 goroutine、不落盘、不入环，§5.4 口径）。
+// hatchVitalsSnapshot 后端自用的虫须**只读快照**（不启 goroutine、不落盘、不入环，§5.4 口径）。
 //
 // 为什么是后端自起一台：server.NewAgent 那台 *monitor.VitalsRecorder 只给观测面用，backend
 // 拿不到实例（Manager 无该字段）⇒ 若要接 OnHatch/OnCollect 钩子，需要 server 侧把实例交给
@@ -295,7 +295,7 @@ func (m *Manager) collectUnit(unit string) {
 }
 
 // TODO（批 2 未接，如实记）：
-//   - 体征器钩子（OnHatch / OnCollect / MaybeCollect）未接：backend 拿不到 server.NewAgent 持有的
+//   - 虫须钩子（OnHatch / OnCollect / MaybeCollect）未接：backend 拿不到 server.NewAgent 持有的
 //     *monitor.VitalsRecorder（Manager 无该字段）⇒ 需要 server 侧把实例交给 backend（如 SetVitals）
 //     才能接「孵化前后各取一次体征」；本批不擅自加一个没人调用的 setter。
-//   - 收卵后的 GTT 归零校验（§8.5）同理：需要体征器实例 + 逐进程归因，归 P4 观测面接线。
+//   - 收卵后的 GTT 归零校验（§8.5）同理：需要虫须实例 + 逐进程归因，归 P4 观测面接线。
