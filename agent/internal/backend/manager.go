@@ -110,7 +110,8 @@ type Manager struct {
 	// 回调里如需读状态须自行加锁（回调发生在锁外）。
 	stopHook func(sp *subproc)
 	// watchdogCPUFor（批 B，测试注入）：活性看门狗的证据源（nil = 生产：读本单元 cgroup 累计 CPU 工时）。
-	watchdogCPUFor func(*subproc) func() (uint64, error)
+	watchdogCPUFor      func(*subproc) func() (uint64, error)
+	watchdogProgressFor func(*subproc) func() (uint64, error) // 进度证据测试缝
 	// waitQ 等待队列（P7：切换期到达的请求挂起在此，出队须重校验当前卵）。
 	// ⚠ 锁序：任何持 m.mu 的路径都不得调用 WaitQ* 方法（见 waitqueue.go 文件头不变式）。
 	waitQ *p2Queue
@@ -751,15 +752,7 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 
 	verdict, reason := wd.Wait(done)
 	// 观测面：无论什么判词都留痕（含 ok/degraded），供 /eggs 与复盘读
-	{
-		obs := wd.Observation()
-		m.mu.Lock()
-		if cur, ok := m.procs[model]; ok && cur == sp {
-			o := obs
-			cur.watchdog = &o
-		}
-		m.mu.Unlock()
-	}
+	m.setEggWatchdog(sp, wd.Observation())
 	switch verdict {
 	case WatchdogStuckCPUStalled, WatchdogStuckNoProgress:
 		cancelReq()
@@ -801,7 +794,21 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 	// 在飞 −1 不在这里：交给响应体 Close（见函数头注释）——转发返回只是"头回来了"，
 	// 客户端把 body 读干净才算本次推理结束；归零时 releaseInflight 转「空窗计时中」。
 	// Close 时**先取消请求 ctx**（释放 transport），再释放在飞计数。
-	resp.Body = &releaseOnCloseBody{ReadCloser: resp.Body, release: func() { cancelReq(); release() }}
+	inner := &releaseOnCloseBody{ReadCloser: resp.Body, release: func() { cancelReq(); release() }}
+	resp.Body = inner
+	// T14 阶段二：**头到了 ≠ 出字了** —— 看门狗不在"头到了"退场，挂到响应体上继续守到"有推进"。
+	// （A8 根因：流式下引擎立刻回头 + 预填充期只发保活注释 ⇒ 原先只剩固定总超时那一堵墙。）
+	if wdCfg.Enabled {
+		prog := m.eggProgressFunc(sp)
+		if m.watchdogProgressFor != nil {
+			prog = m.watchdogProgressFor(sp)
+		}
+		resp.Body = newProgressGuard(inner, wdCfg, prog, cpuFn, func(v WatchdogVerdict, reason string) {
+			cancelReq() // 掐掉请求：正文流随即中断（头已发出⇒改不了状态码，但判词会落日志+观测面）
+			m.noteWatchdogStuck(sp, v, reason)
+			m.setEggWatchdog(sp, WatchdogObservation{Verdict: v, Reason: reason})
+		})
+	}
 	handedOff = true
 	return resp, nil
 }
