@@ -72,6 +72,10 @@ type hatcher interface {
 	Active(ctx context.Context, unit string) (bool, error)
 	MainPID(ctx context.Context, unit string) (int, error)
 	VerifyEnclosure(pid int) (hatch.EnclosureReport, error)
+	// VerifyEnclosureDeclared 带**卵声明的权重文件清单**的核验（2026-09-15 接线）：
+	// 判据从「结构形态」收紧到「正好是这几个声明文件各自一条只读挂载」——
+	// 否则「挂了别的文件」在核验里看不见（§6.9：看得见的才算凭据）。
+	VerifyEnclosureDeclared(pid int, declaredWeightFiles []string) (hatch.EnclosureReport, error)
 }
 
 // 编译期断言：真孵化器（Linux 真实现 / 非 Linux 明确拒绝桩）必须满足该接口。
@@ -240,7 +244,7 @@ func (m *Manager) hatchStartLocked(modelName string, entry *registry.ModelEntry,
 	//   - 实读且不符 ⇒ 立刻**收卵 + 拒孵**（下面这一段），绝不继续对外服务；
 	//   - 读不到     ⇒ 告警 + 在观测面标出（enclosure_verified=false + note），**不拒服务**；
 	//   - 通过       ⇒ enclosure_verified=true。
-	est, note := m.verifyEnclosure(unit)
+	est, note := m.verifyEnclosure(unit, spec.WeightFiles)
 	sp.enclosureVerified = est == enclosureVerified
 	sp.enclosureNote = note
 	if est == enclosureMismatch {
@@ -288,7 +292,7 @@ const (
 // 声称隔离生效却读不到证据，必须是一个**看得见**的状态；日志会被冲掉、也没人翻。
 //
 // 返回 (状态, 一句话留痕)：留痕原样进观测面的 enclosure_note（错误信息里也会带上同一句话）。
-func (m *Manager) verifyEnclosure(unit string) (enclosureState, string) {
+func (m *Manager) verifyEnclosure(unit string, declaredWeightFiles []string) (enclosureState, string) {
 	h := m.hatcherImpl()
 	pid, err := h.MainPID(context.Background(), unit)
 	if err != nil || pid <= 0 {
@@ -296,7 +300,7 @@ func (m *Manager) verifyEnclosure(unit string) (enclosureState, string) {
 		log.Printf("[backend] ⚠ 封闭性核验未执行: %s —— §6.9：未核验不等于通过（本卵照常服务，但「已核验」不成立）", note)
 		return enclosureUnreadable, note
 	}
-	rep, err := h.VerifyEnclosure(pid)
+	rep, err := h.VerifyEnclosureDeclared(pid, declaredWeightFiles)
 	if err != nil {
 		note := fmt.Sprintf("未核验：读不到 pid=%d 的 mountinfo：%v", pid, err)
 		log.Printf("[backend] ⚠ 封闭性核验未执行: unit=%s %s —— §6.9：未核验不等于通过（本卵照常服务，但「已核验」不成立）",
