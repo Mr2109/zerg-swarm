@@ -41,6 +41,10 @@ type servicesEgg struct {
 	HasProfile    bool     `json:"has_profile"`              // 实测档案是否可用（§8.4）
 	GttGb         float64  `json:"gtt_gb,omitempty"`         // 逐进程 GTT 归因；无归因缺席
 	Managed       bool     `json:"managed"`                  // 恒 true：eggs[] 只装本端托管项
+	// EnclosureVerified 封闭性是否**实读核验通过**（§6.9：静默失效不得当凭据）。
+	// false 与 EnclosureNote 合起来读：「未核验/读不到」还是「不符」；note 空 = 从未声称过隔离。
+	EnclosureVerified bool   `json:"enclosure_verified"`
+	EnclosureNote     string `json:"enclosure_note,omitempty"`
 }
 
 // externalOccupant external_occupancy[] 条目：非引擎 GPU 使用者（§8.7 收窄口径）。
@@ -57,16 +61,18 @@ func eggEntries(obs []backend.EggObservation, attrib map[int]monitor.ProcAttrib,
 	out := make([]servicesEgg, 0, len(obs))
 	for _, o := range obs {
 		e := servicesEgg{
-			EggID:         o.EggID,
-			EngineImpl:    o.EngineImpl,
-			Model:         o.Model,
-			State:         o.State,
-			Port:          o.Port,
-			Inflight:      o.Inflight,
-			IdleArmedS:    o.IdleArmedRemainS,
-			SchemaVersion: o.SchemaVersion,
-			HasProfile:    profileOf != nil && profileOf(o.EggID),
-			Managed:       true,
+			EggID:             o.EggID,
+			EngineImpl:        o.EngineImpl,
+			Model:             o.Model,
+			State:             o.State,
+			Port:              o.Port,
+			Inflight:          o.Inflight,
+			IdleArmedS:        o.IdleArmedRemainS,
+			SchemaVersion:     o.SchemaVersion,
+			HasProfile:        profileOf != nil && profileOf(o.EggID),
+			Managed:           true,
+			EnclosureVerified: o.EnclosureVerified,
+			EnclosureNote:     o.EnclosureNote,
 		}
 		if a, ok := attrib[o.PID]; ok {
 			e.GttGb = round1f(a.GttGb)

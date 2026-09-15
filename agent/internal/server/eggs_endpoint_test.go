@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
@@ -107,6 +108,51 @@ func TestEggEntries_AttribAndProfileHonesty(t *testing.T) {
 		if !e.Managed {
 			t.Errorf("%s：eggs[] 只装本端托管项，managed 恒 true", e.EggID)
 		}
+	}
+}
+
+// 封闭性核验不许只写日志（§6.9 静默失效不得当凭据）：载荷里必须看得见
+// enclosure_verified + enclosure_note，且「未核验」与「从未声称隔离」两种 false 靠 note 区分。
+func TestEggEntries_EnclosureFieldsVisible(t *testing.T) {
+	obs := []backend.EggObservation{
+		{EggID: "verified", EnclosureVerified: true, EnclosureNote: "封闭性核验通过（models_ro=true …）"},
+		{EggID: "unverified", EnclosureNote: "未核验：拿不到引擎 pid（unit=zerg-x）"},
+		{EggID: "bare"}, // 裸 exec 路径（孵化开关关）：从未声称过隔离 ⇒ 无留痕
+	}
+	got := eggEntries(obs, nil, nil)
+	if len(got) != 3 {
+		t.Fatalf("应 3 条，实得 %d", len(got))
+	}
+	if !got[0].EnclosureVerified || got[0].EnclosureNote == "" {
+		t.Errorf("核验通过必须如实透传 verified + 留痕，实得 %+v", got[0])
+	}
+	if got[1].EnclosureVerified {
+		t.Errorf("未核验绝不许显示成已核验，实得 %+v", got[1])
+	}
+	if got[2].EnclosureVerified || got[2].EnclosureNote != "" {
+		t.Errorf("未声称过隔离的卵（裸 exec 路径）不得编造核验留痕，实得 %+v", got[2])
+	}
+
+	// JSON 键名（观测面口径）：enclosure_verified 恒出现；note 空则缺席（不编造空话术）
+	b, err := json.Marshal(got[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"enclosure_verified":false`) {
+		t.Errorf("载荷应带 enclosure_verified=false，实得 %s", b)
+	}
+	if !strings.Contains(string(b), `"enclosure_note":"未核验`) {
+		t.Errorf("载荷应带 enclosure_note（写明未核验），实得 %s", b)
+	}
+	b0, err := json.Marshal(got[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b0), "enclosure_note") {
+		t.Errorf("无留痕时 enclosure_note 应缺席，实得 %s", b0)
+	}
+	if !strings.Contains(string(b0), `"enclosure_verified":false`) {
+		t.Errorf("未核验的卵也要如实给出 enclosure_verified=false，实得 %s", b0)
 	}
 }
 

@@ -214,7 +214,7 @@ func TestHatchOn_HatchesThroughHatcher(t *testing.T) {
 	writeHatchProfile(t, dir, "GLM-5.3-Flash", 4, 4)
 	withHatchGateRead(t, 100, 100, nil)
 
-	fake := &fakeHatcher{mainPID: os.Getpid(), enclose: hatch.EnclosureReport{ModelsReadOnly: true}}
+	fake := &fakeHatcher{mainPID: os.Getpid(), enclose: enclosedReport()}
 	m := newHatchTestManager(fake)
 	defer fake.closeEngines()
 
@@ -268,19 +268,198 @@ func TestHatchOn_HatchesThroughHatcher(t *testing.T) {
 	if want := filepath.Join(workRoot, "GLM-5.3-Flash") + ":/work"; len(spec.ExtraRWBinds) == 0 || spec.ExtraRWBinds[0] != want {
 		t.Fatalf("宿主一次性工作目录应可写绑到 /work（%q），实得 %v", want, spec.ExtraRWBinds)
 	}
-	// 封闭性核验：孵化后确实核了（pid 取自单元主进程）
+	// 封闭性核验：孵化后确实核了（pid 取自单元主进程），且**实测通过 ⇒ 观测面记已验证**
 	if fake.verifyHits != 1 || fake.verifyPID != os.Getpid() {
 		t.Fatalf("孵化后应核一次封闭性（pid 取 MainPID），实得 hits=%d pid=%d", fake.verifyHits, fake.verifyPID)
 	}
+	if !sp.enclosureVerified || sp.enclosureNote == "" {
+		t.Fatalf("核验通过时应记 enclosure_verified=true 且留痕非空，实得 verified=%v note=%q",
+			sp.enclosureVerified, sp.enclosureNote)
+	}
+	obs := m.EggObservations()
+	if len(obs) != 1 || !obs[0].EnclosureVerified || obs[0].EnclosureNote == "" {
+		t.Fatalf("观测面应能看见「已核验」这一条事实，实得 %+v", obs)
+	}
 }
 
-// TestHatchOn_VerifyWithoutPIDIsNotPassed 拿不到 pid ⇒ 记为「未核验」（绝不当成通过）。
+// TestHatchOn_EnclosureUnreadableStillServes 读不到核验证据（拿不到 pid / 读不到 mountinfo）⇒
+// **不拒服务**（卵照常对外），但必须**在观测面标出来**（enclosure_verified=false + note）——
+// 「没读到」与「读到不符」是两回事，不得混为一谈（§6.9 静默失效不得当凭据）。
+func TestHatchOn_EnclosureUnreadableStillServes(t *testing.T) {
+	cases := []struct {
+		name         string
+		fake         *fakeHatcher
+		wantNote     string
+		wantVerifyNo int // 该情形下核验应被调用几次
+	}{
+		{"拿不到引擎 pid", &fakeHatcher{}, "拿不到引擎 pid", 0},
+		{"读不到 mountinfo", &fakeHatcher{mainPID: os.Getpid(),
+			verifyErr: fmt.Errorf("读 /proc/%d/mountinfo 失败：no such process", os.Getpid())}, "读不到", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(EnvHatch, "1")
+			t.Setenv(EnvWorkDirRoot, t.TempDir())
+			dir := t.TempDir()
+			t.Setenv("ZERG_EGG_PROFILE_DIR", dir)
+			writeHatchProfile(t, dir, "GLM-5.3-Flash", 4, 4)
+			withHatchGateRead(t, 100, 100, nil)
+
+			fake := tc.fake
+			m := newHatchTestManager(fake)
+			defer fake.closeEngines()
+
+			resp, err := m.doStart("GLM-5.3-Flash", hatchTestEntry("GLM-5.3-Flash"))
+			if err != nil {
+				t.Fatalf("doStart 返回 err=%v", err)
+			}
+			if ok, _ := resp["ok"].(bool); !ok {
+				t.Fatalf("读不到核验证据不得拒服务（卵照常对外），实得 %v", resp)
+			}
+			sp := m.procs["GLM-5.3-Flash"]
+			if sp == nil {
+				t.Fatal("读不到核验证据时卵仍应在驻留清单里（不拒服务）")
+			}
+			if sp.state != StateReady {
+				t.Fatalf("读不到核验证据时应照常就绪，实得 %q", sp.state)
+			}
+			if sp.enclosureVerified {
+				t.Fatal("读不到证据时绝不许声称「已核验」（未核验不等于通过）")
+			}
+			if !strings.Contains(sp.enclosureNote, tc.wantNote) {
+				t.Fatalf("留痕应写明 %q，实得 %q", tc.wantNote, sp.enclosureNote)
+			}
+			if fake.verifyHits != tc.wantVerifyNo {
+				t.Fatalf("核验调用次数应为 %d，实得 %d", tc.wantVerifyNo, fake.verifyHits)
+			}
+			// 观测面必须看得见（这正是本批的理由：不能只写日志）
+			obs := m.EggObservations()
+			if len(obs) != 1 {
+				t.Fatalf("观测面应有 1 枚卵，实得 %+v", obs)
+			}
+			if obs[0].EnclosureVerified {
+				t.Error("观测面不得把「读不到」当成「已核验」")
+			}
+			if !strings.Contains(obs[0].EnclosureNote, "未核验") {
+				t.Errorf("观测面 enclosure_note 应写明「未核验：…」，实得 %q", obs[0].EnclosureNote)
+			}
+		})
+	}
+}
+
+// TestHatchOn_EnclosureMismatchCollectsAndRefuses 实读且不符 ⇒ **收卵 + 拒孵**：
+// 返 502、错误里写清哪一项不符、单元真被收（Collect）、驻留清单干净（不得继续对外服务）。
+func TestHatchOn_EnclosureMismatchCollectsAndRefuses(t *testing.T) {
+	t.Setenv(EnvHatch, "1")
+	t.Setenv(EnvWorkDirRoot, t.TempDir())
+	dir := t.TempDir()
+	t.Setenv("ZERG_EGG_PROFILE_DIR", dir)
+	writeHatchProfile(t, dir, "GLM-5.3-Flash", 4, 4)
+	withHatchGateRead(t, 100, 100, nil)
+
+	// 实读到的 mountinfo 判定不符：/data 漏进来 + /work 不是可写落点（两种典型形态）
+	fake := &fakeHatcher{mainPID: os.Getpid(), enclose: hatch.EnclosureReport{
+		ModelsReadOnly:  true,
+		DataHidden:      false,
+		HomeHidden:      true,
+		TmpIsTmpfs:      true,
+		NewPIDNamespace: true,
+		WorkReadWrite:   false,
+		KVDiskReadWrite: true,
+	}}
+	m := newHatchTestManager(fake)
+	defer fake.closeEngines()
+
+	resp, err := m.doStart("GLM-5.3-Flash", hatchTestEntry("GLM-5.3-Flash"))
+	if err != nil {
+		t.Fatalf("doStart 返回 err=%v", err)
+	}
+	if got, _ := resp["status"].(int); got != 502 {
+		t.Fatalf("核验不符必须拒孵（502），实得 %v", resp)
+	}
+	if code, _ := resp["code"].(string); code != "enclosure verification failed" {
+		t.Fatalf("code 应为 enclosure verification failed，实得 %q", code)
+	}
+	msg, _ := resp["error"].(string)
+	for _, want := range []string{"已收卵", "/data", "/work"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("错误信息应含 %q（写清哪一项不符 + 已收卵），实得 %q", want, msg)
+		}
+	}
+	if want := hatch.UnitName("GLM-5.3-Flash"); len(fake.collected) != 1 || fake.collected[0] != want {
+		t.Fatalf("核验不符必须收卵（走 Collect），实得 %v", fake.collected)
+	}
+	if len(m.procs) != 0 {
+		t.Fatalf("拒孵后不得留在驻留清单（不许继续对外服务），实得 %v", keysOf(m.procs))
+	}
+	if now := m.EggObservations(); len(now) != 0 {
+		t.Fatalf("收卵后的卵不得再出现在观测面，实得 %+v", now)
+	}
+}
+
+// enclosedReport 一份「七项全过」的核验报告（真实核验由 hatch 包读 mountinfo 得出；
+// 单测里用替身给确定值，好把上层的三态分级单独钉住）。
+func enclosedReport() hatch.EnclosureReport {
+	return hatch.EnclosureReport{
+		ModelsReadOnly:  true,
+		DataHidden:      true,
+		HomeHidden:      true,
+		TmpIsTmpfs:      true,
+		NewPIDNamespace: true,
+		WorkReadWrite:   true,
+		KVDiskReadWrite: true,
+	}
+}
+
+// TestHatchOn_VerifyWithoutPIDIsNotPassed 拿不到 pid ⇒ 三态里的「读不到」：
+// 记「未核验」（绝不判通过）、且给出一句话留痕（供观测面 enclosure_note）。
 func TestHatchOn_VerifyWithoutPIDIsNotPassed(t *testing.T) {
 	fake := &fakeHatcher{} // mainPID=0 ⇒ MainPID 报错
 	m := newHatchTestManager(fake)
-	m.verifyEnclosure("zerg-x")
+	state, note := m.verifyEnclosure("zerg-x")
 	if fake.verifyHits != 0 {
 		t.Fatal("拿不到 pid 时不得调用核验（更不得当成通过）")
+	}
+	if state != enclosureUnreadable {
+		t.Fatalf("拿不到 pid 时必须按「读不到」处置（不是通过、也不是不符），实得 %v", state)
+	}
+	if !strings.Contains(note, "未核验") || !strings.Contains(note, "拿不到引擎 pid") {
+		t.Fatalf("留痕应写明未核验与原因，实得 %q", note)
+	}
+}
+
+// TestHatchOn_VerifyMismatchIsThreeState 三态不许塌成一个布尔：
+// 实读不符 ⇒ enclosureMismatch（调用方据此收卵拒孵）；读不到 ⇒ enclosureUnreadable（不拒服务）。
+func TestHatchOn_VerifyMismatchIsThreeState(t *testing.T) {
+	notEnclosed := hatch.EnclosureReport{
+		ModelsReadOnly: true, DataHidden: true, HomeHidden: true,
+		TmpIsTmpfs: true, NewPIDNamespace: true, WorkReadWrite: true, KVDiskReadWrite: false,
+	}
+	fake := &fakeHatcher{mainPID: os.Getpid(), enclose: notEnclosed}
+	m := newHatchTestManager(fake)
+	state, note := m.verifyEnclosure("zerg-x")
+	if state != enclosureMismatch {
+		t.Fatalf("实读不符必须判 mismatch，实得 %v", state)
+	}
+	if !strings.Contains(note, "核验不符") || !strings.Contains(note, "/kvdisk") {
+		t.Fatalf("留痕应点名不符的那一项（/kvdisk），实得 %q", note)
+	}
+
+	unreadable := &fakeHatcher{mainPID: os.Getpid(), verifyErr: fmt.Errorf("read failed")}
+	m2 := newHatchTestManager(unreadable)
+	if st, _ := m2.verifyEnclosure("zerg-x"); st != enclosureUnreadable {
+		t.Fatalf("读不到必须判 unreadable（与不符分开），实得 %v", st)
+	}
+
+	// 通过 ⇒ verified
+	ok := &fakeHatcher{mainPID: os.Getpid(), enclose: enclosedReport()}
+	m3 := newHatchTestManager(ok)
+	st3, note3 := m3.verifyEnclosure("zerg-x")
+	if st3 != enclosureVerified {
+		t.Fatalf("七项全过应判 verified，实得 %v", st3)
+	}
+	if !strings.Contains(note3, "封闭性核验通过") {
+		t.Fatalf("通过时的留痕应写结论与实测值，实得 %q", note3)
 	}
 }
 
@@ -422,6 +601,7 @@ type fakeHatcher struct {
 	stillActive  bool // true ⇒ 收卵后复核仍报「在跑」（用于验「Collect 成功 ≠ 收干净」的留痕）
 	mainPID      int
 	enclose      hatch.EnclosureReport
+	verifyErr    error // 非 nil ⇒ 核验读不到（模拟 /proc/<pid>/mountinfo 读失败）
 	verifyPID    int
 	verifyHits   int
 	engines      []*http.Server
@@ -463,6 +643,9 @@ func (f *fakeHatcher) MainPID(_ context.Context, _ string) (int, error) {
 func (f *fakeHatcher) VerifyEnclosure(pid int) (hatch.EnclosureReport, error) {
 	f.verifyHits++
 	f.verifyPID = pid
+	if f.verifyErr != nil {
+		return hatch.EnclosureReport{}, f.verifyErr // 读不到 ≠ 不符（上层要按「未核验」处置）
+	}
 	return f.enclose, nil
 }
 
