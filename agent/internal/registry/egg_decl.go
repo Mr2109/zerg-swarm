@@ -44,16 +44,23 @@ const SmallModelIdleUnloadSeconds = 120
 // 三个真坑（§6.7 C，写进必填要求）：
 //
 //	① **多卡必须声明用哪张卡**（引擎会挑错卡）⇒ Devices；
-//	② **大模型 mmap 限额给不足直接崩**（不是慢）⇒ MemlockKB / MmapMaxCount；
+//	② **大模型 mmap 限额给不足直接崩**（不是慢）⇒ MemlockKB / MmapMaxCount
+//	   ⚠ 其中 **MmapMaxCount 暂不生效**（2026-09-15 第一枚卵真机实测缺陷 11 登记）：它是**机器级
+//	   sysctl**（`vm.max_map_count`）、不是按进程的 rlimit，孵化单元里没有可下发的落点 ——
+//	   声明它目前只是**声明完整性**（缺项仍拒孵），**不是保障**，别读成「已经管住了」；
 //	③ **库版本冲突（K2 真实案例）**：同机两个引擎要不同版本的同一个库
-//	   ⇒ LibPaths 给引擎自己的库目录；**要清空**时用 Env 里的 `LD_LIBRARY_PATH: ""`
+//	   ⇒ LibPaths 给引擎自己的库目录（孵化器据它只读落到 `/libs/<目录名>` **并生成空间内
+//	   `LD_LIBRARY_PATH`**）；**要清空**时用 Env 里的 `LD_LIBRARY_PATH: ""`
 //	   显式清空（K2 的包装脚本正是 `exec env -u LD_LIBRARY_PATH`，附录 A.2 / 附录 C·C4）。
 type EnvReq struct {
 	// Devices 设备与卡号：要哪张卡（HIP_VISIBLE_DEVICES / ROCR_VISIBLE_DEVICES / CUDA_VISIBLE_DEVICES）。
 	// 单卡机器可留空（无从挑错卡）。
 	Devices []string `yaml:"devices,omitempty"`
 	// LibPaths 库路径与版本：引擎自己的库目录（.so 所在目录）。
-	// 孵化器据此给出 LD_LIBRARY_PATH；**库按卵给，不许「全机一套」**（§6.7 C③）。
+	// 孵化器据它给出 LD_LIBRARY_PATH：每个目录**只读**落到空间内 `/libs/<目录名>`（独立只读挂载点，
+	// 不再嵌在只读的 /engine 之下 —— 2026-09-15 真机实测缺陷 5），并**按声明顺序生成**空间内
+	// `LD_LIBRARY_PATH`（`/libs/<名>`… 在前、`/engine` 垫尾；卵在 Env 里显式写了该变量就以卵的为准）；
+	// **库按卵给，不许「全机一套」**（§6.7 C③）。
 	LibPaths []string `yaml:"lib_paths,omitempty"`
 	// Env 环境变量：HSA_* / HIP_* / CUDA_* / OMP_NUM_THREADS，
 	// 以及按引擎覆盖 LD_LIBRARY_PATH（值为空串 = 显式清空，合法且必须显式写出来）。
@@ -63,6 +70,12 @@ type EnvReq struct {
 	// MemlockKB RLIMIT_MEMLOCK 限额（KB）——给不足直接崩，孵化器不许猜（§6.7 C②）。
 	MemlockKB int `yaml:"memlock_kb,omitempty"`
 	// MmapMaxCount vm.max_map_count 限额（映射区段数上限）——同上，给不足直接崩。
+	//
+	// ⚠ **暂不生效**（2026-09-15 第一枚卵真机实测缺陷 11，二选一里取「明说暂不生效」这一支）：
+	// 它是**机器级 sysctl**，不是按进程的 rlimit —— 孵化单元里下发不了（`sysctl -w` 要 root、
+	// 一改全机生效，systemd 也没有对应属性），孵化声明（hatch.Spec）里同样没有承载它的字段
+	// ⇒ 当前**没有任何执行点**读它。**缺项仍然拒孵**（声明完整性），但那不等于保障：
+	// 要真生效得另做机器级前置校验（与 `/proc/sys/vm/max_map_count` 比、不够就拒孵），先拍板。
 	MmapMaxCount int `yaml:"mmap_max_count,omitempty"`
 }
 
