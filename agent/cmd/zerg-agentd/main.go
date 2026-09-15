@@ -18,11 +18,14 @@ import (
 	"fmt"
 	"github.com/Mr2109/zerg-swarm/agent/internal/version"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
 	"github.com/Mr2109/zerg-swarm/agent/internal/heartbeat"
@@ -119,11 +122,24 @@ func main() {
 
 	// 创建 HTTP 服务器
 	srv := server.NewServer(agent)
-	if err := srv.Start(*host, *port); err != nil {
-		log.Fatalf("启动 HTTP 服务器失败: %v", err)
+	// srv.Start 是**阻塞**的（2026-09-16 实测：写在它后面的两行永远执行不到 ⇒ /ready 恒 503）
+	go func() {
+		if err := srv.Start(*host, *port); err != nil {
+			log.Fatalf("启动 HTTP 服务器失败: %v", err)
+		}
+	}()
+	// 就绪判据 = **自己的监听真的能被连上**（读状态，不睡秒数）：
+	// 连得上 ⇒ 监听已建立 ⇒ Mark + Ready；这段时间里的每一次失败都是"还没到"，不是"坏了"。
+	addr := net.JoinHostPort(*host, strconv.Itoa(*port))
+	for i := 0; i < 400; i++ {
+		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			_ = c.Close()
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	startup.Mark("HTTP 已监听")
-	// 启动完成：此后 /ready 返回 200（外部守卫读这个信号，不读秒、不读 systemd 的 activating）
 	startup.Ready()
 
 	// 优雅退出：捕获 SIGTERM / SIGINT
