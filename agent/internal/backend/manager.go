@@ -122,6 +122,10 @@ func NewManager(reg *registry.Registry, machine string) *Manager {
 	}
 	// TTL 未启用（idleTTL<=0，例如显式设成 0）→ StartIdleReaper 直接返回，不产生后台 goroutine。
 	m.StartIdleReaper(defaultReapInterval)
+	// 启动 GC（§6.5「任何启动先把遗留卵清干净」）：上一轮子端留下的 zerg-* 卵单元不被 KillMode
+	// 带走 ⇒ 会一直占着 GTT 且没有任何账本认领它们；启动时清掉（只清本子端名下的卵单元）。
+	// 只在孵化开关开时执行（见 egg_gc.go 的两条口径：范围铁律 / 清不掉必须留痕）。
+	gcLeftoverEggsAtStartup()
 	return m
 }
 
@@ -130,13 +134,19 @@ func NewManager(reg *registry.Registry, machine string) *Manager {
 // - 模型正在加载（其他请求已触发）→ 等待同一加载槽（请求合并）
 // - 不在驻留列表 → 加载新进程；驻留数超上限 → LRU 卸载
 func (m *Manager) Start(modelName string) (map[string]interface{}, error) {
-	m.mu.Lock()
-
+	// ⚠ 这里**不许**持 m.mu（2026-09-15 第一枚卵真机实测缺陷 1：自锁死）：
+	// 本函数第一件事就是 m.RequestModel，而它自己会 m.mu.Lock()（p2_lifecycle.go RequestModel）
+	// ——sync.Mutex 不可重入 ⇒ 持锁再调它 = 当场死锁：第一次 /load 就卡死，且同一把锁被
+	// /status、心跳、巡检、事件循环争用 ⇒ 整个子端僵死（真机：/load 290s 无返回，
+	// goroutine dump 停在 RequestModel:279）。
+	// 锁改在下面「进入正常加载路径」处取（那条路径上的每条 return 都已配对解锁）。
 	if needUnload, blocked := m.RequestModel(modelName); needUnload || blocked {
 		// 异模型请求与当前卵冲突（§7.7 末条）：
 		//   - needUnload=true：已锁内赢权置 draining——先停掉旧卵，再走正常孵化装新模型；
 		//   - blocked=true：旧卵有在飞/pin/外部——不打断在飞，请求进等待队列（挂起，Q5）。
 		if needUnload {
+			// 本段自己取锁/放锁（Start 未持锁，见函数头注释）：只把「找出受害者」与
+			// 「从账本摘掉」放在锁内，停进程在锁外（§7.7 修补 3 的锁序不变）。
 			m.mu.Lock()
 			var victimName string
 			var victimSP *subproc
@@ -170,7 +180,7 @@ func (m *Manager) Start(modelName string) (map[string]interface{}, error) {
 				if needU, blk := m.RequestModel(modelName); !blk {
 					if needU {
 						// 赢权成功——跳出去走孵化（递归一次，收卵段同上）
-						m.mu.Unlock()
+						// ⚠ 此处不得 Unlock：本函数**未**持 m.mu（自锁死修法见函数头注释）。
 						return m.Start(modelName)
 					}
 					break
@@ -179,6 +189,11 @@ func (m *Manager) Start(modelName string) (map[string]interface{}, error) {
 			// 等不到就继续往下走正常 Start（内部按红线拒装/拒孵，明确报错不硬来）
 		}
 	}
+
+	// ── 进入正常加载路径：**此处**才取锁（本次改动前它在函数头上，见函数头注释）──────
+	// 下面到 return 之间的每条路径都已配对解锁（unknown model / 已驻留复用 / 合并等待 /
+	// 出锁后 doStart）。
+	m.mu.Lock()
 
 	// 查找模型配置
 	entry, ok := m.registry.Get(modelName)
@@ -217,9 +232,12 @@ func (m *Manager) Start(modelName string) (map[string]interface{}, error) {
 
 	m.mu.Lock()
 	delete(m.loading, modelName)
-	close(w.done)
+	// ⚠ 顺序有讲究：**先写结果、再 close**。close 是等待方的 happens-before 边（<-w.done 之后才读
+	// w.err/w.result）；原来的「先 close 后写」会让并发等待的请求与这两行写入竞争——真机并发
+	// /load 时会读到半截结果，-race 也必报（本次并发 /load 用例抓到）。本改动不改变任何语义。
 	w.result = result
 	w.err = err
+	close(w.done)
 	m.mu.Unlock()
 	return result, err
 }
@@ -244,6 +262,32 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 
 	// M10「身份一致直接复用基线服务」已随 P4 退场清理删除（设计 §10.2 F1 / 附录 C·C2）：
 	// 卵之外无引擎（§1.3）——子端之外的推理进程不是后端，不再登记复用。
+
+	// 批 2 开关（纯环境读，无状态、无锁）：本函数里所有「孵化专属」动作都看它。
+	// 开关**关** ⇒ 下面每一段孵化专属代码都跳过，doStart 的代码路径与孵化器落地前逐字一致。
+	hatchMode := hatchEnabled()
+
+	// P1 接线（§6.8.4「先判格式，再算账」）：**卵声明校验排在一切算账与裁决之前** ——
+	// 先判格式（认不认得这枚卵的声明），再算账（淘汰、内存预检、双闸门 GTT/内存账）。
+	// 与上面「非主线引擎必须带 cmd:」同一处口径：声明类错误不该被内存采样 / 端口 / 账读不到
+	// 抢先返回别的错误码（拒因必须可归因），也不该为了一枚格式就不对的卵去驱逐在孵的卵。
+	//
+	// 接线理由（2026-09-15 第一枚卵真机实测缺陷 8）：registry.ValidateEggDeclaration /
+	// ValidateEgg 此前**在生产路径无任何调用点**（全仓只有定义）⇒ schema_version / env_req
+	// 必填项校验实际不生效（env_req 缺 lib_paths（设计上是 Fatal）也照孵）。
+	// 开关关时不执行：本子端不孵任何卵，卵声明的孵化语义无从生效（且离线路径承诺逐字不变）。
+	if hatchMode {
+		dec := registry.ValidateEggDeclaration(modelName, entry)
+		if !dec.OK() {
+			detail := dec.ErrorString()
+			log.Printf("[backend] ✗ 拒孵 %s：卵声明校验不过（§6.8.4 先判格式、再算账）：%s", modelName, detail)
+			return errResponse(502, "egg declaration rejected", detail), nil
+		}
+		// Warnings 照孵，但**必须报出去**（绝不静默按缺省值跑，§6.9 第 3 条）。
+		if w := dec.WarningString(); w != "" {
+			log.Printf("[backend] ⚠ 卵声明告警（照孵，但必须报出去）%s：%s", modelName, w)
+		}
+	}
 
 	// 驻留超限 → 五档裁决淘汰（Q1 默认单槽 / Q2 五档）
 	m.evictIfNeededLocked()
@@ -273,9 +317,9 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 	}
 
 	// ── 批 2：开关开 ⇒ 先判实测档案、再过双闸门（§8.4 / §6.8.4「先判格式，再算账」）─────────
+	// 声明校验（格式侧）已在函数开头接好；此处是**算账侧**（实测档案 + 两账）。
 	// 开关**关** ⇒ 这一段整体不执行（hatchMode=false），doStart 的代码路径与孵化器落地前逐字一致。
 	// 拒孵一律在**建 subproc / 分配端口之前**返回：不起任何单元、不登记任何驻留（账本干净）。
-	hatchMode := hatchEnabled()
 	var hatchProfile monitor.EggProfile
 	if hatchMode {
 		prof, reject := m.hatchGateLocked(modelName, entry)
@@ -736,10 +780,21 @@ func (m *Manager) healthCheck(sp *subproc) bool {
 }
 
 // 内部：等待后端就绪（最多 120 秒）
+//
+// 三条出口（**不许**把 120s 硬等改成更短的硬等——那只是把「慢」当「死」，慢启动的正确卵会被误杀）：
+//
+//	① 健康检查通过 ⇒ 就绪；
+//	② 裸 exec 路径：本端进程已退出（sp.proc 有句柄）⇒ 明确报错；
+//	③ 孵化路径：单元已不在运行 ⇒ 读 systemd 的 ActiveState/SubState/Result/ExecMainStatus
+//	   给明确报错。③ 是 2026-09-15 第一枚卵真机实测缺陷 9 的修法：孵化路径下 sp.proc 恒 nil
+//	   （引擎不是子端的子进程）⇒ 原先两条出口都不成立，单元 1 秒死也只能**干等满 120s**
+//	   （真机实测 120.16s）才回「等待后端就绪超时」，失败原因不可归因。
+//	   探不到单元状态（非 Linux / systemctl 不在）⇒ **不下结论**，继续按 ① 等（与既有行为一致）。
 func (m *Manager) waitForReady(sp *subproc) error {
 	const timeout = 120 * time.Second
 	deadline := time.Now().Add(timeout)
 	interval := 2 * time.Second
+	probeLogged := false
 
 	for time.Now().Before(deadline) {
 		if m.healthCheck(sp) {
@@ -747,6 +802,25 @@ func (m *Manager) waitForReady(sp *subproc) error {
 		}
 		if sp.proc != nil && sp.proc.ProcessState != nil {
 			return fmt.Errorf("后端进程已退出")
+		}
+		if sp.Unit != "" {
+			st, err := unitStateProbe(sp.Unit)
+			switch {
+			case err != nil:
+				// §6.9 同一精神：读不到就不下结论（既不说「死了」，也不说「好了」）。
+				if !probeLogged {
+					log.Printf("[backend] ⚠ 单元状态探不到，按「还没就绪」继续等: unit=%s: %v", sp.Unit, err)
+					probeLogged = true
+				}
+			default:
+				if dead, why := st.dead(); dead {
+					detail := why
+					if st.JournalTail != "" {
+						detail += "；单元日志尾部：" + st.JournalTail
+					}
+					return fmt.Errorf("孵化单元已退出（%s）", detail)
+				}
+			}
 		}
 		time.Sleep(interval)
 	}
