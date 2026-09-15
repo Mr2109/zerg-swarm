@@ -26,9 +26,11 @@ import (
 	"syscall"
 	"time"
 
+	"errors"
 	"github.com/Mr2109/zerg-swarm/agent/internal/modeladapter"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
+	"io"
 )
 
 // 状态机常量
@@ -168,6 +170,15 @@ func (m *Manager) Start(modelName string) (map[string]interface{}, error) {
 			}
 			m.mu.Unlock()
 			if victimSP != nil {
+				// 真机缺陷 18（2026-09-15 复现于生产事故后半段 + 沙箱）：**先判能不能孵，再收卵**。
+				// 原本顺序是「先收卵 → 再在 hatchGateLocked 里判声明/档案/资源」⇒ 一个注定被 507
+				// 的异模型请求会白白把正在服务的卵收走、然后自己失败 ⇒ 服务归零。
+				if rej := m.hatchPrecheck(modelName); rej != nil {
+					m.restoreVictimLocked(victimName)
+					log.Printf("[backend] ✗ 拒孵 %s（收卵前静态预检未过：卵未收、服务不受影响）: %v",
+						modelName, rej["code"])
+					return rej, nil
+				}
 				m.stopVictimProcess(victimProc, victimSP)
 				m.mu.Lock()
 				if cur, ok := m.procs[victimName]; ok && cur == victimSP {
@@ -175,6 +186,10 @@ func (m *Manager) Start(modelName string) (map[string]interface{}, error) {
 				}
 				m.mu.Unlock()
 				log.Printf("[backend] 提前收卵完成: %s（异模型请求 %s 可孵化）", victimName, modelName)
+				// 真机缺陷 17 附带：收卵后**有界等内存真正归还**再进内存闸门。
+				// 症状：收掉一枚卵后立刻采样还是旧的（~35 GB 尚未归还/被观测到）⇒ 闸门判「不足」
+				// ⇒ 卸了却没装上：卵没了、新模型 507、服务归零。
+				waitMemoryReturn(10 * time.Second)
 			}
 			// 落到下方正常 Start（孵化）路径
 		} else {
@@ -208,11 +223,23 @@ func (m *Manager) Start(modelName string) (map[string]interface{}, error) {
 		return errResponse(404, "unknown model", modelName), nil
 	}
 
-	// 已驻留且就绪 → 直接复用
-	if sp, ok := m.procs[modelName]; ok && sp.state == StateReady {
+	// 已驻留且可用 → 直接复用（**不加载**）。
+	//
+	// 真机缺陷 17（2026-09-15 切生产后抓到）：
+	//   ① 判据原本只认 StateReady，**不认 idle_armed**（空窗计时中的卵是活的、仍能服务）
+	//      ⇒ 空窗中的卵被点名会掉进完整加载路径 ⇒ 内存闸门必然拒（内存正被它自己占着）
+	//      ⇒ 507「insufficient memory」+ 可能触发收卵；
+	//   ② 原本在这里 sp.inflight++（把「加载」记成「在飞」），而唯一的 releaseInflight 在
+	//      InferForward 尾部（推理完成）⇒ 计数两头错位：加载 +1、推理 −1。
+	//   现在：复用**不动** inflight —— inflight 的语义只有一种=正在被服务的推理请求数，
+	//   获取/释放全在 InferForward（acquire 转发前、release 响应体读完时）。
+	if sp, ok := m.procs[modelName]; ok && (sp.state == StateReady || sp.state == StateIdleArmed) {
+		if sp.state == StateIdleArmed {
+			log.Printf("[backend] 空窗取消（同模型 /load 复用）: model=%s 回 ready", modelName)
+		}
 		sp.lastUsed = time.Now()
 		sp.reqCount++
-		sp.inflight++ // P2（§7.7 修补 3）：在飞引用计数 +1（唯一真源）；对应 release 在 doStart 失败路径与调用方
+		sp.state = StateReady
 		m.mu.Unlock()
 		log.Printf("[backend] 模型 %s 已驻留，直接复用 (port=%d)", modelName, sp.port)
 		return okResponse(modelName, entry.Backend, sp.port), nil
@@ -537,13 +564,34 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 		sp.failCnt = 0
 		sp.state = StateLoading
 	}
-	if sp.state != StateReady || sp.port == 0 {
+	// idle_armed（空窗计时中）也是活的、能服务——只是"没人用"而已（§7.1 补记）。
+	if (sp.state != StateReady && sp.state != StateIdleArmed) || sp.port == 0 {
 		state := sp.state
 		m.mu.Unlock()
 		return nil, fmt.Errorf("后端未就绪 (state=%s)", state)
 	}
 	port := sp.port
 	m.mu.Unlock()
+
+	// ── 在飞记账（真机缺陷 17 核心修复，2026-09-15）─────────────────────────
+	// 语义（唯一一种）：inflight = 「正在被服务的推理请求数」。
+	//   acquire：转发**之前**；release：响应体**读完并 Close** 时（转发返回 ≠ 推理完成，
+	//   流式尤其如此——所以把 release 挂在 body.Close 上）。
+	// 为什么必须补：本函数原来只在尾部 releaseInflight（−1），而 acquire 侧**零调用点**
+	//   ⇒ 生成进行中 inflight==0 ⇒ RequestModel 的「异模型请求：有在飞就先等生成跑完」
+	//   判据永不成立 ⇒ 异模型 /load 会当场收卵，把正在出字的请求砍断（客户端 500 EOF）。
+	if !m.acquireInflight(model) {
+		return nil, fmt.Errorf("后端不可服务 (state=%s)", sp.state)
+	}
+	// relOnce：释放恰好一次（defer 兜底 + body.Close 两条路都走这个幂等闭包）。
+	var relOnce sync.Once
+	release := func() { relOnce.Do(func() { m.releaseInflight(model) }) }
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			release() // 未把响应体交出去（构造/转发失败）⇒ 在此释放，绝不留悬挂计数
+		}
+	}()
 
 	// 请求前健康检查
 	if !m.healthCheck(sp) {
@@ -610,10 +658,135 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 	sp.lastUsed = time.Now()
 	sp.reqCount++
 	m.mu.Unlock()
-	// P2（§7.7 修补 3）：转发返回即本次推理完成 ⇒ 在飞 −1（完成/失败都算完成）。
-	// 归零时由 releaseInflight 转「空窗计时中」（只记时间戳，不起定时器）。
-	m.releaseInflight(model)
+	// 在飞 −1 不在这里：交给响应体 Close（见函数头注释）——转发返回只是"头回来了"，
+	// 客户端把 body 读干净才算本次推理结束；归零时 releaseInflight 转「空窗计时中」。
+	resp.Body = &releaseOnCloseBody{ReadCloser: resp.Body, release: release}
+	handedOff = true
 	return resp, nil
+}
+
+// hatchPrecheck 孵前静态预检（**只读**：不淘汰、不收卵、不改任何状态）。
+//
+// 真机缺陷 18（2026-09-15，生产事故后半段与沙箱各复现一次）：`Start` 原本先把当前卵收掉，
+// 之后才在 hatchGateLocked 里判「新模型有没有档案 / 资源够不够」⇒ 一个注定被 507 的请求
+// 会白白把正在服务的卵收走、然后自己失败 ⇒ 净结果服务归零。
+// 现在：动手收卵**之前**先跑同一套静态判据（声明 → 档案 → 资源 dry-run），不过就原样退回。
+//
+// 资源 dry-run 口径：把「将被收掉的那枚卵」的占用**算作可用**（模拟收掉之后），
+// 这样正常的「换卵」流程不受影响；只有「收了也不够 / 不合规」才会在这里被挡下。
+func (m *Manager) hatchPrecheck(modelName string) map[string]interface{} {
+	if !hatchEnabled() {
+		return nil // 未开孵化：这条静态判据不适用（行为与开关关时逐字一致）
+	}
+	entry, ok := m.registry.Get(modelName)
+	if !ok {
+		return errResponse(404, "unknown model", modelName)
+	}
+	if dec := registry.ValidateEggDeclaration(modelName, entry); !dec.OK() {
+		return errResponse(502, "egg declaration rejected", dec.ErrorString())
+	}
+	profilePath := monitor.EggProfilePath(strings.TrimSpace(entry.EggName()))
+	if profilePath == "" {
+		return errResponse(507, "no measured profile", "卵名拿不到，实测档案路径算不出来")
+	}
+	prof, err := monitor.LoadEggProfile(profilePath)
+	if err != nil {
+		return errResponse(507, "no measured profile",
+			fmt.Sprintf("无有效实测档案，拒孵（标定铁律 §8.4：闸门与预算只读实测档案，卵声明里的估值不参与）（档案=%s：%v）", profilePath, err))
+	}
+	gttAvail, memAvail, acctErr := hatchGateRead()
+	if acctErr != nil {
+		return errResponse(507, "hatch gate unreadable",
+			fmt.Sprintf("闸门两账读不到，拒孵（fail-closed：算不出就不装）：%v", acctErr))
+	}
+	// dry-run：把「将被收掉的卵」（draining）的占用加回来
+	m.mu.Lock()
+	for _, sp := range m.procs {
+		if sp.state != StateDraining || sp.entry == nil {
+			continue
+		}
+		if vp, verr := monitor.LoadEggProfile(monitor.EggProfilePath(strings.TrimSpace(sp.entry.EggName()))); verr == nil {
+			gttAvail += vp.PeakGttGb
+			memAvail += vp.PeakMemGb
+		} else if sp.entry.MemGB > 0 {
+			gttAvail += sp.entry.MemGB
+			memAvail += sp.entry.MemGB
+		}
+	}
+	m.mu.Unlock()
+	if res := monitor.CanHatchWithProfile(true, gttAvail, memAvail, prof); !res.Ok {
+		return errResponse(507, "insufficient memory",
+			fmt.Sprintf("%s（dry-run：把待收卵的占用算作可用后，GTT 可用 %.1f GB / 内存可用 %.1f GB；档案 peak_gtt=%.1f GB peak_mem=%.1f GB）",
+				res.Reason, gttAvail, memAvail, prof.PeakGttGb, prof.PeakMemGb))
+	}
+	return nil
+}
+
+// restoreVictimLocked 静态预检挡下时，把「已置 draining 但尚未动手」的卵放回 ready——
+// 没停进程、没清账本 ⇒ 服务不受影响（只是白点了一次名，指针回零）。
+func (m *Manager) restoreVictimLocked(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if sp, ok := m.procs[name]; ok && sp.state == StateDraining {
+		sp.state = StateReady
+		sp.lastUsed = time.Now()
+		log.Printf("[backend] 卵已放回（收卵前预检未过）: %s 回 ready", name)
+	}
+}
+
+// releaseOnCloseBody 把「在飞 −1」挂在响应体 Close 上。
+//
+// 非流式：调用方 io.ReadAll 后 Close ⇒ 读干净即释放；流式：边读边写客户端，Close 即释放。
+// ⚠ release 自身必须是幂等的（本类型**不**再套一层 Once——否则同一把 Once 嵌套自锁：
+// 首版就踩了，见缺陷 17 的用例 TestDefect17_InferForwardMaintainsInflight）。
+type releaseOnCloseBody struct {
+	io.ReadCloser
+	release func()
+}
+
+func (b *releaseOnCloseBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.release()
+	return err
+}
+
+// IsBackendBusy 判断转发失败是否属于「后端忙/在忙别的」这一类（真机缺陷 17 附带）。
+//
+// 语义：单槽引擎被占、响应头超时、连接被引擎主动断开 ⇒ 应当**稍后重试**，
+// 而不是「后端坏了」。调用方据此回 503 + retry_after（而不是 500/502 让上游当故障换机）。
+func IsBackendBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	var nerr net.Error
+	if errors.As(err, &nerr) && nerr.Timeout() {
+		return true
+	}
+	s := err.Error()
+	return strings.Contains(s, "timeout awaiting response headers") ||
+		strings.Contains(s, "connection reset by peer") ||
+		strings.HasSuffix(s, ": EOF")
+}
+
+// waitMemoryReturn 收卵后**有界**等可用内存真正归还（判据：连续两次采样不再上升即稳定）。
+// 上限 max；调用方不应持锁（本函数会 sleep）。
+func waitMemoryReturn(max time.Duration) {
+	prev := monitor.DefaultSampler.MemAvailableGb()
+	flat := 0
+	deadline := time.Now().Add(max)
+	for time.Now().Before(deadline) {
+		time.Sleep(300 * time.Millisecond)
+		cur := monitor.DefaultSampler.MemAvailableGb()
+		if cur > prev+0.05 {
+			flat = 0
+			prev = cur
+			continue
+		}
+		flat++
+		if flat >= 2 {
+			return
+		}
+	}
 }
 
 // RegistryNames 返回注册表模型名列表（心跳上报用）。
@@ -650,6 +823,14 @@ func (m *Manager) ensureMemoryForLocked(memRequiredGb, availGb float64) (bool, f
 	// 只卸够：缺口 = need - avail（不是模型总需求——旧实现传总量，等于多卸）
 	freed := m.evictForMemoryLocked(need - availGb)
 	have := availGb + freed
+	if have < need && freed > 0 {
+		// 腾退过但仍不够：归还可能还没被观测到（真机缺陷 17 附带）——短重采样再判一次。
+		// 有界（≤1.2s），调用方持锁但时长可控。
+		for i := 0; i < 4 && have < need; i++ {
+			time.Sleep(300 * time.Millisecond)
+			have = monitor.DefaultSampler.MemAvailableGb()
+		}
+	}
 	return have >= need, have, need
 }
 

@@ -349,6 +349,23 @@ func (s *Server) handleInferRequest(req inferReq) {
 	// 转发到后端（按请求模型选进程）——v2.5.6 带客户端 context（断开取消——释放单槽）
 	resp, err := s.agent.backends.InferForward(req.ctx, req.model, req.forwardPath, req.body)
 	if err != nil {
+		// 后端忙（单槽被占 / 响应头超时 / 被引擎断开）⇒ 语义是「等会儿再试」，
+		// **不是**故障：回 503 + Retry-After，别让上游把它当故障去换机
+		// （真机缺陷 17 附带，2026-09-15：重叠请求时子端曾直接回 500）。
+		if backend.IsBackendBusy(err) {
+			b, _ := json.Marshal(map[string]interface{}{
+				"error":         "backend busy",
+				"status":        503,
+				"message":       err.Error(),
+				"retry_after_s": 5,
+			})
+			req.resultCh <- inferResult{
+				status:  503,
+				headers: http.Header{"Retry-After": []string{"5"}},
+				body:    b,
+			}
+			return
+		}
 		req.resultCh <- inferResult{
 			status: 502,
 			err:    err,
