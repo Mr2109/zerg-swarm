@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"encoding/json"
 	"errors"
 	"github.com/Mr2109/zerg-swarm/agent/internal/modeladapter"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
@@ -342,6 +343,16 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 		}
 	}
 
+	// 静态预检（缺陷 18 的**通用**形态，2026-09-15 生产复验补）：**任何**为腾地方而收卵
+	// （五档淘汰 / 类型互斥 / 内存腾退）之前，先判「这枚新卵到底能不能孵」——
+	// 否则注定被拒的请求会先把正在服务的卵收掉（生产复验实测：五档淘汰收了 Qwen、GLM 随后 507）。
+	if hatchMode {
+		if rej := m.hatchPrecheckLocked(modelName, entry); rej != nil {
+			log.Printf("[backend] ✗ 拒孵 %s（腾退前静态预检未过：未动任何驻留）: %v", modelName, rej["code"])
+			return rej, nil
+		}
+	}
+
 	// 驻留超限 → 五档裁决淘汰（Q1 默认单槽 / Q2 五档）
 	m.evictIfNeededLocked()
 
@@ -356,6 +367,12 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 				fmt.Sprintf("另一类服务(%s)仍有受保护驻留: %v；本机同一时间只允许一种推理服务在跑",
 					kind, blocked)), nil
 		}
+	}
+
+	// 腾退之后：有界等可用内存真正归还再进内存闸门（2026-09-15 生产复验：曾出现
+	// 「五档淘汰收了 35 GB，闸门却读到 18.4 GB」⇒ 卸了却没装上）。连续两次采样不再上升即稳定。
+	if hatchMode {
+		waitMemoryReturn(3 * time.Second)
 	}
 
 	// 内存预算检查（T3 预检，借鉴 llama_cpp_router willModelFit）——fail-closed
@@ -550,13 +567,24 @@ func (m *Manager) CurrentPort() int {
 func (m *Manager) IsHealthy() bool {
 	m.mu.Lock()
 	var candidates []*subproc
+	total := 0
 	for _, sp := range m.procs {
+		total++
 		if sp.state == StateReady && sp.port > 0 {
 			candidates = append(candidates, sp)
 		}
 	}
 	m.mu.Unlock()
 
+	// 口径修正（Mr2109 2026-09-15 拍板「空着也算健康」）：
+	//   - 无驻留（空着）= 正常态：能孵/能加载就是可用（§1.1「卵默认空着」）⇒ healthy。
+	//   - 有驻留：任何一枚 ready 且自检通过即 healthy。
+	//   - 有驻留但**全部** crashed / 自检不过 ⇒ unhealthy（真信号保留）。
+	// 旧口径是「至少一个 ready 驻留且 /health 通过」⇒ 空着恒 false ⇒ 主控 healthy_count 恒 0，
+	// 而 master_scheduler 的「等待任务重派」双条件里含机器 healthy ⇒ 空着的机器永远接不到重派。
+	if total == 0 {
+		return true
+	}
 	for _, sp := range candidates {
 		if m.healthCheck(sp) {
 			return true
@@ -653,16 +681,28 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	// 首字节超时**按请求形态**选（2026-09-15 生产复验修）：
+	//   · 流式：llama-server 立刻回响应头 ⇒ 90s 无头 = 真卡死（看门狗语义保留，失败即释放槽位）；
+	//   · 非流式：llama-server 要**等整个生成完**才回响应头 ⇒ 90s 会误杀所有长生成
+	//     （生产实测：1500 token ≈ 130s > 90s ⇒ 请求被掐成「timeout awaiting response headers」）。
+	//     故非流式放宽到 15 分钟，并让 client 总超时随之放宽到 20 分钟。
+	streaming := bodyStreams(body)
+	firstByteTO := 90 * time.Second
+	clientTimeout := 5 * time.Minute
+	if !streaming {
+		firstByteTO = 15 * time.Minute
+		clientTimeout = 20 * time.Minute
+	}
 	client := &http.Client{
-		Timeout: 5 * time.Minute,
+		Timeout: clientTimeout,
 		// 治本（2026-08-12）：禁 keep-alive——llama-server 连接空闲被关，
 		// agent 复用断连接 → 长响应读断（IncompleteRead——网关 EOF 根因链）
 		Transport: &http.Transport{
 			DisableKeepAlives: true,
-			// v2.5.4.9 首 token 超时（90s——llama-server 卡死检测——active 释放）
+			// v2.5.4.9 首 token 超时（llama-server 卡死检测——active 释放）
 			// 知识库经验: 大请求(含tools)→ornith 38-60s 推理(正常)——60s 误杀——调 90s
-			// 真卡死: 90s 无响应头 → 返回错误 → active 释放 → 主控 failover
-			ResponseHeaderTimeout: 90 * time.Second,
+			// 真卡死: 无响应头到点 → 返回错误 → active 释放 → 主控 failover
+			ResponseHeaderTimeout: firstByteTO,
 		},
 	}
 	resp, err := client.Do(req)
@@ -705,9 +745,24 @@ func (m *Manager) hatchPrecheck(modelName string) map[string]interface{} {
 	if !hatchEnabled() {
 		return nil // 未开孵化：这条静态判据不适用（行为与开关关时逐字一致）
 	}
+	// 调用方（Start 的「动手收卵之前」）**不持锁** ⇒ 这里取锁并转持锁版。
+	// ⚠ 反向注意：doStart 已持锁 ⇒ 那里必须直接调 hatchPrecheckLocked，否则自锁死。
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.registry == nil {
+		return nil
+	}
 	entry, ok := m.registry.Get(modelName)
 	if !ok {
 		return errResponse(404, "unknown model", modelName)
+	}
+	return m.hatchPrecheckLocked(modelName, entry)
+}
+
+// hatchPrecheckLocked 同上，但**调用方必须已持锁**（doStart 里腾退之前调用）。
+func (m *Manager) hatchPrecheckLocked(modelName string, entry *registry.ModelEntry) map[string]interface{} {
+	if !hatchEnabled() || entry == nil {
+		return nil
 	}
 	if dec := registry.ValidateEggDeclaration(modelName, entry); !dec.OK() {
 		return errResponse(502, "egg declaration rejected", dec.ErrorString())
@@ -726,10 +781,12 @@ func (m *Manager) hatchPrecheck(modelName string) map[string]interface{} {
 		return errResponse(507, "hatch gate unreadable",
 			fmt.Sprintf("闸门两账读不到，拒孵（fail-closed：算不出就不装）：%v", acctErr))
 	}
-	// dry-run：把「将被收掉的卵」（draining）的占用加回来
-	m.mu.Lock()
-	for _, sp := range m.procs {
-		if sp.state != StateDraining || sp.entry == nil {
+	// dry-run 口径（2026-09-15 生产复验修正）：把**所有别的驻留**都算作已释放。
+	// 理由：单槽机器上换卵必然释放旧卵；预检问的是「**空机也装不下吗**」，
+	// 不是「此刻腾不出吗」——后者由收卵之后的真闸门去判（那里有 waitMemoryReturn 兜采样延迟）。
+	// （本函数要求调用方已持锁 ⇒ 下面直接读 m.procs。）
+	for name, sp := range m.procs {
+		if name == modelName || sp.entry == nil {
 			continue
 		}
 		if vp, verr := monitor.LoadEggProfile(monitor.EggProfilePath(strings.TrimSpace(sp.entry.EggName()))); verr == nil {
@@ -740,7 +797,6 @@ func (m *Manager) hatchPrecheck(modelName string) map[string]interface{} {
 			memAvail += sp.entry.MemGB
 		}
 	}
-	m.mu.Unlock()
 	if res := monitor.CanHatchWithProfile(true, gttAvail, memAvail, prof); !res.Ok {
 		return errResponse(507, "insufficient memory",
 			fmt.Sprintf("%s（dry-run：把待收卵的占用算作可用后，GTT 可用 %.1f GB / 内存可用 %.1f GB；档案 peak_gtt=%.1f GB peak_mem=%.1f GB）",
@@ -775,6 +831,18 @@ func (b *releaseOnCloseBody) Close() error {
 	err := b.ReadCloser.Close()
 	b.release()
 	return err
+}
+
+// bodyStreams 从请求体判断是否流式（只看 "stream" 字段，宽松解析：解析不了按非流式处理，
+// 宁可给宽超时也不误杀长生成）。
+func bodyStreams(body []byte) bool {
+	var probe struct {
+		Stream bool `json:"stream"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return false
+	}
+	return probe.Stream
 }
 
 // IsBackendBusy 判断转发失败是否属于「后端忙/在忙别的」这一类（真机缺陷 17 附带）。
