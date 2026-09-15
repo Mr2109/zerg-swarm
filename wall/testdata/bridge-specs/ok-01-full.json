@@ -1,0 +1,21 @@
+{
+  "egg_id": "bridge-full",
+  "schema_version": 1,
+  "engine_path_in_space": "/engine/bin/llama-server",
+  "engine_args": ["--host", "127.0.0.1", "--port", "9100", "--model", "/models/model.gguf"],
+  "engine_roots": ["/opt/llama/build/bin"],
+  "weight_path": "/opt/models/demo",
+  "weight_files": ["/opt/models/demo/model.gguf"],
+  "env": {
+    "HIP_VISIBLE_DEVICES": "0",
+    "LD_LIBRARY_PATH": "/libs/bin"
+  },
+  "devices": ["/dev/kfd", "/dev/dri/renderD128"],
+  "extra_ro_binds": [
+    "/opt/models/demo/model.gguf:/models/model.gguf",
+    "/opt/llama/build/lib:/libs/bin"
+  ],
+  "extra_rw_binds": ["/var/tmp/zerg-work/bridge-full:/work"],
+  "work_dir": "/work",
+  "memlock_bytes": 67108864
+}
