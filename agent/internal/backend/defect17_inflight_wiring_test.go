@@ -158,3 +158,21 @@ func TestIsBackendBusy(t *testing.T) {
 		}
 	}
 }
+
+// 首字节超时按请求形态区分（2026-09-15 生产复验）：非流式长生成曾被 90s 看门狗误杀。
+func TestBodyStreams(t *testing.T) {
+	cases := []struct {
+		body string
+		want bool
+	}{
+		{`{"model":"m","stream":true}`, true},
+		{`{"model":"m","stream":false}`, false},
+		{`{"model":"m"}`, false},
+		{`{bad json`, false}, // 解析不了 ⇒ 按非流式（给宽超时，宁松不误杀）
+	}
+	for _, c := range cases {
+		if got := bodyStreams([]byte(c.body)); got != c.want {
+			t.Errorf("bodyStreams(%q)=%v 期望 %v", c.body, got, c.want)
+		}
+	}
+}
