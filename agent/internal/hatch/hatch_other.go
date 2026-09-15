@@ -42,6 +42,22 @@ func (h Hatcher) MainPID(_ context.Context, _ string) (int, error) {
 	return 0, ErrUnsupportedPlatform
 }
 
+// SpacePID 非 Linux 版：拿不到「空间内进程」（没有 bwrap/单元这一层）。返回错误、绝不假报一个
+// pid —— 上层据此记「未核验」，而不是拿一个编出来的 pid 去核（缺陷 2 的教训：选错进程的核验
+// 比不核验更坏）。
+func (h Hatcher) SpacePID(_ context.Context, _ string) (int, string, error) {
+	return 0, "", ErrUnsupportedPlatform
+}
+
+// VerifyEnclosureForUnit 非 Linux 版：同 SpacePID（一条龙在 Linux 上实现）。
+func (h Hatcher) VerifyEnclosureForUnit(_ context.Context, _ string) (EnclosureReport, error) {
+	return EnclosureReport{}, ErrUnsupportedPlatform
+}
+
+func (h Hatcher) VerifyEnclosureDeclared(_ int, _ []string) (EnclosureReport, error) {
+	return EnclosureReport{}, ErrUnsupportedPlatform
+}
+
 func (h Hatcher) VerifyEnclosure(_ int) (EnclosureReport, error) {
 	return EnclosureReport{}, ErrUnsupportedPlatform
 }
