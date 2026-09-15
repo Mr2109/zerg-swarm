@@ -261,8 +261,12 @@ func TestHatchOn_HatchesThroughHatcher(t *testing.T) {
 			t.Fatalf("参数里不得残留宿主权重路径：%q", a)
 		}
 	}
-	if want := filepath.Join(workRoot, "GLM-5.3-Flash"); spec.WorkDir != want {
-		t.Fatalf("工作目录应是每卵一次性目录 %q，实得 %q", want, spec.WorkDir)
+	// 工作目录：WorkDir 是**空间内**路径；宿主每卵目录经可写绑定落进空间（§6.6「一次性」侧）
+	if spec.WorkDir != "/work" {
+		t.Fatalf("WorkDir 应是空间内路径 /work（宿主路径填它 ⇒ 真孵化 --chdir 必失败），实得 %q", spec.WorkDir)
+	}
+	if want := filepath.Join(workRoot, "GLM-5.3-Flash") + ":/work"; len(spec.ExtraRWBinds) == 0 || spec.ExtraRWBinds[0] != want {
+		t.Fatalf("宿主一次性工作目录应可写绑到 /work（%q），实得 %v", want, spec.ExtraRWBinds)
 	}
 	// 封闭性核验：孵化后确实核了（pid 取自单元主进程）
 	if fake.verifyHits != 1 || fake.verifyPID != os.Getpid() {

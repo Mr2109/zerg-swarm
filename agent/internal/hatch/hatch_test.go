@@ -55,6 +55,13 @@ func TestSpec_ValidateFailClosed(t *testing.T) {
 		{"缺引擎路径", func(s *Spec) { s.EnginePathInSpace = "" }, "引擎在空间内的路径"},
 		{"引擎路径非绝对", func(s *Spec) { s.EnginePathInSpace = "llama-server" }, "绝对路径"},
 		{"缺权重", func(s *Spec) { s.WeightPath = "" }, "权重路径"},
+		{"工作目录非空间内绝对路径", func(s *Spec) { s.WorkDir = "work" }, "空间内"},
+		{"工作目录是 ~ 形态", func(s *Spec) { s.WorkDir = "~/.zerg/work/K2-Horizon" }, "空间内"},
+		{"只读绑定缺分隔符", func(s *Spec) { s.ExtraROBinds = []string{"/data/x"} }, "额外只读绑定"},
+		{"可写绑定缺分隔符", func(s *Spec) { s.ExtraRWBinds = []string{"/home/g01/.zerg/work/K2"} }, "额外可写绑定"},
+		{"可写绑定空宿主", func(s *Spec) { s.ExtraRWBinds = []string{":/work"} }, "额外可写绑定"},
+		{"可写绑定空落点", func(s *Spec) { s.ExtraRWBinds = []string{"/home/g01/.zerg/work/K2:"} }, "额外可写绑定"},
+		{"可写绑定只有空白", func(s *Spec) { s.ExtraRWBinds = []string{"  :  "} }, "额外可写绑定"},
 		{"无实测档案", func(s *Spec) { s.Profile = monitor.EggProfile{} }, "实测档案"},
 		{"档案标定轮数不足", func(s *Spec) { p := s.Profile; p.CalibRuns = 1; s.Profile = p }, "实测档案"},
 	}
@@ -160,6 +167,86 @@ func TestBuildBwrapArgv_DeterministicEnvOrder(t *testing.T) {
 	if !(ia < im && im < iz) {
 		t.Fatal("环境变量应按 key 排序（可复现）")
 	}
+}
+
+// ExtraRWBinds：**可写**绑定必须落成 bwrap `--bind`（不是 --ro-bind），与只读绑定共存时顺序稳定，
+// 且 `--chdir` 用的是**空间内**路径 —— 宿主路径填 WorkDir 会让真孵化 chdir 失败（本用例钉住它）。
+func TestBuildBwrapArgv_ExtraRWBindsAreWritable(t *testing.T) {
+	const (
+		hostWork = "/home/g01/.zerg/work/K2-Horizon"
+		hostKV   = "/home/g01/.zerg/kvdisk/K2-Horizon"
+	)
+	s := goodSpec()
+	s.WorkDir = "/work"
+	s.ExtraROBinds = []string{"/tmp/tpl:/templates"}
+	s.ExtraRWBinds = []string{hostWork + ":/work", hostKV + ":/kvdisk"}
+
+	argv, err := BuildBwrapArgv(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(argv, " ")
+
+	// ① 可写绑定 → `--bind <host> <space>`（**不是** --ro-bind）
+	for _, want := range []string{"--bind " + hostWork + " /work", "--bind " + hostKV + " /kvdisk"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("缺可写绑定 %q，实得 %q", want, joined)
+		}
+	}
+	for _, banned := range []string{"--ro-bind " + hostWork + " /work", "--ro-bind " + hostKV + " /kvdisk"} {
+		if strings.Contains(joined, banned) {
+			t.Errorf("可写绑定不得落成只读绑定：%q", banned)
+		}
+	}
+	// ② 与只读绑定共存：只读仍走 --ro-bind，两边不串味
+	if !strings.Contains(joined, "--ro-bind /tmp/tpl /templates") {
+		t.Errorf("只读绑定应仍走 --ro-bind，实得 %q", joined)
+	}
+	if strings.Contains(joined, "--bind /tmp/tpl /templates") {
+		t.Error("只读绑定不得被当成可写绑定")
+	}
+	// ③ 顺序稳定：只读绑定在前 → 可写绑定按清单顺序 → --chdir 在所有绑定之后
+	iRO := strings.Index(joined, "--ro-bind /tmp/tpl")
+	iWork := strings.Index(joined, "--bind "+hostWork)
+	iKV := strings.Index(joined, "--bind "+hostKV)
+	iChdir := strings.Index(joined, "--chdir")
+	if !(iRO >= 0 && iRO < iWork && iWork < iKV && iKV < iChdir) {
+		t.Fatalf("顺序应为 只读 → 工作目录 → KV 盘 → --chdir（ro=%d work=%d kv=%d chdir=%d）：%q",
+			iRO, iWork, iKV, iChdir, joined)
+	}
+	// ④ `--chdir` 必须是**空间内**路径；宿主路径只许出现在绑定里
+	ci := indexOf(argv, "--chdir")
+	if ci < 0 || ci+1 >= len(argv) {
+		t.Fatalf("argv 里找不到 --chdir，实得 %v", argv)
+	}
+	if got := argv[ci+1]; got != "/work" {
+		t.Fatalf("--chdir 必须用空间内路径 /work，实得 %q", got)
+	}
+	if argv[ci+1] == hostWork {
+		t.Fatal("--chdir 不得用宿主路径（空间内不存在该目录 ⇒ 真孵化必 chdir 失败）")
+	}
+	// ⑤ 同一 Spec 两次构造逐字一致（可复现）
+	a1, _ := BuildBwrapArgv(s)
+	a2, _ := BuildBwrapArgv(s)
+	if strings.Join(a1, " ") != strings.Join(a2, " ") {
+		t.Fatal("同一 Spec 两次构造 argv 应完全一致（可复现）")
+	}
+	// ⑥ 格式非法 ⇒ 校验阶段就拒（fail-closed，与只读同口径）
+	bad := goodSpec()
+	bad.ExtraRWBinds = []string{"/only-host-side"}
+	if err := bad.Validate(); err == nil {
+		t.Fatal("格式非法的可写绑定必须在校验阶段被拒（fail-closed）")
+	}
+}
+
+// indexOf 取 argv 里第一个等于 want 的下标（找不到返回 -1）。
+func indexOf(argv []string, want string) int {
+	for i, a := range argv {
+		if a == want {
+			return i
+		}
+	}
+	return -1
 }
 
 // systemd-run 只管归属：slice / 单元名 / Type=exec / 限额；**不得**在它上面挂挂载类选项

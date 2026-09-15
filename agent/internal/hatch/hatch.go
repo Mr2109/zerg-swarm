@@ -7,6 +7,9 @@
 //	     `x3-agent.service` 的 KillMode 带走 = E1 的正面解法）。单用任一个都不完整。
 //	§6.9 **静默失效不得当凭据**：隔离是否生效必须运行时核（读 `/proc/<pid>/mountinfo`），
 //	     不得以单元状态为凭 —— 实测遇到过 `Result=success` 却零约束的挂载类选项。
+//	§6.6 孵化边界（目录二分）：**一次性**（工作目录）随收卵销毁、**跨孵化保留**（KV 盘、
+//	     留证日志）必须活下来 ⇒ 这两类落点都要用**可写绑定**（ExtraRWBinds → bwrap `--bind`）
+//	     进空间，且 `Spec.WorkDir` 必须是**空间内**路径（宿主路径填它 ⇒ `--chdir` 必失败）。
 //	§6.7 环境需求（EnvReq）：设备与卡号 / 库路径与版本 / 环境变量（含按卵覆盖
 //	     `LD_LIBRARY_PATH`）/ 权重路径 / ulimit 与 mmap 限额 —— 孵化器**只照单执行**。
 //	§4.3 第八项：`schema_version` 认不得就**明确报错**，不许静默按新格式跑错。
@@ -51,7 +54,19 @@ type Spec struct {
 	Devices []string          // 要暴露的设备节点（缺省 /dev/kfd + /dev/dri/renderD128）
 
 	ExtraROBinds []string // 额外只读绑定，形如 "<host>:<space>"（如输入通道）
-	WorkDir      string   // 空间内工作目录（可写，一次性语义）
+	// ExtraRWBinds 额外**可写**绑定，形如 "<host>:<space>"，语义 = bwrap `--bind`（可写）。
+	//
+	// 为什么必须有它（2026-09-15 拍定）：封闭空间里凡要**写**的落点都得自己绑进来——
+	// 一次性工作目录与 KV 盘（§6.6 的「跨孵化保留」侧 / §9.7④）都走这里。
+	// 与 ExtraROBinds 并列且**同严格**：格式不对一律拒孵（认不得就报错，绝不猜落点）。
+	ExtraRWBinds []string
+	// WorkDir 工作目录——**空间内**路径（不是宿主路径！）。
+	//
+	// 契约（写死）：BuildBwrapArgv 在本空间里 `--chdir s.WorkDir`，故它必须是**空间内**的
+	// 绝对路径（如 /work）；宿主侧目录要用 ExtraRWBinds 绑到那个落点上。
+	// 宿主路径填这里 ⇒ 空间里根本不存在该目录 ⇒ 真孵化必以 chdir 失败告终（本字段的语义缺陷
+	// 就在此，Validate 已把它变成明确的拒孵）。
+	WorkDir string
 
 	MemlockBytes int64 // >0 ⇒ 给 LimitMEMLOCK（大模型 mmap 需要；0 = 不设）
 
@@ -80,10 +95,50 @@ func (s Spec) Validate() error {
 	if s.WeightPath == "" {
 		return fmt.Errorf("孵化声明缺权重路径（只挂该卵自己的权重）")
 	}
+	// 工作目录的契约是**空间内**路径（BuildBwrapArgv 在空间里 --chdir 它）。
+	// 诚实说明这一道能拦什么：宿主绝对路径与空间内落点**在语法上无法区分**（两者都是 / 开头）
+	// ⇒ 本检查只能拦住非绝对的形态（相对路径、~ 前缀——`~` 在空间里不会被展开成家目录）；
+	// 「宿主路径填进 WorkDir」这个原始缺陷由**映射侧**关掉（hatch_spec.go 恒填 /work + 可写绑定），
+	// 并有用例钉住。
+	if s.WorkDir != "" && !strings.HasPrefix(s.WorkDir, "/") {
+		return fmt.Errorf("工作目录必须是**空间内**的绝对路径（如 /work），实得 %q（宿主侧形态）——"+
+			"宿主目录要经 ExtraRWBinds 绑到该落点上，不能填进 WorkDir", s.WorkDir)
+	}
+	// 额外绑定：只读与可写**同严格**（格式不对即拒孵，绝不猜一个落点）
+	if err := validateBinds("只读", s.ExtraROBinds); err != nil {
+		return err
+	}
+	if err := validateBinds("可写", s.ExtraRWBinds); err != nil {
+		return err
+	}
 	if err := s.Profile.Validate(); err != nil {
 		return fmt.Errorf("实测档案不可用，拒孵（§8.4 标定铁律）：%w", err)
 	}
 	return nil
+}
+
+// validateBinds 逐条校验额外绑定清单（形式 `<host>:<space>`）。
+//
+// 只读（--ro-bind）与可写（--bind）用**同一口径**：任一侧缺（或只有空白）就报错。
+// 理由：绑定的目的就是「给空间里一个确切的落点」，形式认不得时任何「补一个默认值」的猜测
+// 都会把卵挂到别的地方 —— 那正是 §6.9 要防的静默失效，故一律拒孵。
+func validateBinds(kind string, binds []string) error {
+	for _, b := range binds {
+		if _, _, err := splitBind(kind, b); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// splitBind 把一条额外绑定拆成 (宿主路径, 空间内路径)。
+// kind 只用于错误信息（「只读」/「可写」），两条路径的校验口径完全相同。
+func splitBind(kind, b string) (string, string, error) {
+	parts := strings.SplitN(b, ":", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return "", "", fmt.Errorf("额外%s绑定必须是 <host>:<space> 形式，实得 %q", kind, b)
+	}
+	return parts[0], parts[1], nil
 }
 
 // unitSafe 把卵名收敛成合法的 systemd 单元名片段（只留小写字母/数字/连字符）。
@@ -129,11 +184,22 @@ func BuildBwrapArgv(s Spec) ([]string, error) {
 	}
 	// ⑤ 额外只读绑定（host:space）
 	for _, b := range s.ExtraROBinds {
-		parts := strings.SplitN(b, ":", 2)
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			return nil, fmt.Errorf("额外只读绑定必须是 <host>:<space> 形式，实得 %q", b)
+		host, space, err := splitBind("只读", b)
+		if err != nil {
+			return nil, err
 		}
-		argv = append(argv, "--ro-bind", parts[0], parts[1])
+		argv = append(argv, "--ro-bind", host, space)
+	}
+	// ⑤b 额外**可写**绑定（host:space）——bwrap `--bind`（**可写**，不是 --ro-bind）。
+	//     一次性工作目录与 KV 盘（§6.6「跨孵化保留」侧 / §9.7④）都靠它落进空间：
+	//     空间里的落点是新根上的目录（bwrap 自己造），宿主侧那份才是数据真正住的地方。
+	//     顺序 = 清单顺序（不改序）⇒ 同一 Spec 构造出的 argv 逐字可复现。
+	for _, b := range s.ExtraRWBinds {
+		host, space, err := splitBind("可写", b)
+		if err != nil {
+			return nil, err
+		}
+		argv = append(argv, "--bind", host, space)
 	}
 	// ⑥ GPU：**必须显式**（默认 --dev 看不到）
 	devices := s.Devices

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mr2109/zerg-swarm/agent/internal/hatch"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
@@ -122,12 +123,25 @@ func TestHatchSpec_MainlineEgg(t *testing.T) {
 	if len(spec.Devices) != 2 || spec.Devices[0] != wantDev[0] || spec.Devices[1] != wantDev[1] {
 		t.Errorf("声明卡号 1 时应挂 renderD129，实得 %v", spec.Devices)
 	}
-	// 工作目录：每卵一次性目录（不存在就建）
-	if want := filepath.Join(workRoot, "GLM-5.3-Flash"); spec.WorkDir != want {
-		t.Errorf("WorkDir 应是每卵一次性目录 %q，实得 %q", want, spec.WorkDir)
+	// 工作目录：WorkDir 是**空间内**路径；宿主每卵目录经可写绑定落进空间（§6.6「一次性」侧）
+	hostWork := filepath.Join(workRoot, "GLM-5.3-Flash")
+	if spec.WorkDir != "/work" {
+		t.Errorf("WorkDir 必须是空间内路径 /work（宿主路径填它 ⇒ 真孵化 --chdir 必失败），实得 %q", spec.WorkDir)
 	}
-	if st, err := os.Stat(spec.WorkDir); err != nil || !st.IsDir() {
-		t.Errorf("WorkDir 应已被创建，stat 结果 err=%v", err)
+	if st, err := os.Stat(hostWork); err != nil || !st.IsDir() {
+		t.Errorf("宿主一次性工作目录应已被创建，stat 结果 err=%v", err)
+	}
+	if want := hostWork + ":/work"; len(spec.ExtraRWBinds) != 1 || spec.ExtraRWBinds[0] != want {
+		t.Errorf("宿主工作目录应可写绑到 /work（%q），实得 %v", want, spec.ExtraRWBinds)
+	}
+	// 未声明 KV 盘 ⇒ 一个 KV 相关的东西都不许有（不编造）
+	for _, b := range spec.ExtraRWBinds {
+		if strings.Contains(b, "/kvdisk") {
+			t.Errorf("未声明 KV 盘不得出现 /kvdisk 绑定，实得 %v", spec.ExtraRWBinds)
+		}
+	}
+	if got := argAfter(spec.EngineArgs, "--kv-disk-dir"); got != "" {
+		t.Errorf("未声明 KV 盘不得出现 --kv-disk-dir，实得 %q", got)
 	}
 	// mmap 限额：memlock_kb 换算成字节（§6.7 C②：给不足直接崩）
 	if spec.MemlockBytes != 1015488*1024 {
@@ -295,12 +309,14 @@ func TestHatchSpec_ChatTemplateInputChannel(t *testing.T) {
 	}
 }
 
-// TestHatchSpec_WorkDirPerEggAndNoEscape 一次性工作目录：每卵一份，且卵名不许逃出工作根。
+// TestHatchSpec_WorkDirPerEggAndNoEscape 一次性工作目录：WorkDir 恒为**空间内** /work，宿主目录
+// 每卵一份、经可写绑定落进空间；且卵名不许逃出工作根。
 func TestHatchSpec_WorkDirPerEggAndNoEscape(t *testing.T) {
 	withMainlineEngineProbe(t, "/opt/llama/bin/llama-server")
 	root := withWorkDirRoot(t)
 
-	mk := func(name string) string {
+	// 返回 (空间内工作目录, 宿主工作目录)；宿主那份从可写绑定里取——它才是每卵目录的真身
+	mk := func(name string) (string, string) {
 		e := &registry.ModelEntry{Backend: "llama-server", File: "/data/models/a.gguf",
 			SchemaVersion: registry.EggSchemaVersionCurrent}
 		e.SetEggNameForTest(name)
@@ -308,21 +324,173 @@ func TestHatchSpec_WorkDirPerEggAndNoEscape(t *testing.T) {
 		if err != nil {
 			t.Fatalf("卵 %q 映射失败: %v", name, err)
 		}
-		return spec.WorkDir
+		if len(spec.ExtraRWBinds) == 0 {
+			t.Fatalf("卵 %q 缺宿主工作目录的可写绑定：%+v", name, spec.ExtraRWBinds)
+		}
+		b := spec.ExtraRWBinds[0]
+		if !strings.HasSuffix(b, ":/work") {
+			t.Fatalf("卵 %q 的工作目录可写绑定应以 :/work 结尾，实得 %q", name, b)
+		}
+		return spec.WorkDir, strings.TrimSuffix(b, ":/work")
 	}
 
-	a := mk("GLM-5.3-Flash")
-	b := mk("Qwen3.8-Flash-Next")
-	if a == b {
+	spaceA, hostA := mk("GLM-5.3-Flash")
+	spaceB, hostB := mk("Qwen3.8-Flash-Next")
+	if spaceA != "/work" || spaceB != "/work" {
+		t.Fatalf("WorkDir 应恒为空间内路径 /work，实得 %q / %q", spaceA, spaceB)
+	}
+	if hostA == hostB {
 		t.Fatal("不同卵必须各有一份一次性工作目录")
 	}
-	// 穿越尝试：work dir 必须仍在工作根下、且是单层目录
+	// 穿越尝试：宿主工作目录必须仍在工作根下、且是单层目录
 	for _, name := range []string{"../../evil", "/etc/passwd", "..", "."} {
-		dir := mk(name)
-		if filepath.Dir(dir) != filepath.Clean(root) {
-			t.Fatalf("卵名 %q 的工作目录逃出了工作根：%q（根=%q）", name, dir, root)
+		_, host := mk(name)
+		if filepath.Dir(host) != filepath.Clean(root) {
+			t.Fatalf("卵名 %q 的工作目录逃出了工作根：%q（根=%q）", name, host, root)
 		}
 	}
+}
+
+// TestHatchSpec_KVDiskRWBind KV 盘（§6.6「跨孵化保留」侧 / §9.7④）：宿主按卵分目录
+// `<home>/.zerg/kvdisk/<卵名>/` 可写绑到空间内 /kvdisk，引擎参数里的宿主 KV 路径被**精确改写**
+// 成 /kvdisk（写盘上限原样保留）；映射产物喂进 hatch.BuildBwrapArgv 必须真的落成 `--bind`
+// 且 `--chdir` 用空间内路径（本缺陷正是「映射与命令行配方语义不一致」，故这里两端连起来验）。
+func TestHatchSpec_KVDiskRWBind(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home) // KV 目录缺省按 §9.7④ 从 HOME 推——单测不许往真家目录写东西
+	withMainlineEngineProbe(t, "/opt/ds4/bin/ds4-server")
+	workRoot := withWorkDirRoot(t)
+
+	entry := &registry.ModelEntry{
+		Backend:       "ds4-server",
+		File:          "/data/models/ds4/deepseek-v4-flash.gguf",
+		SchemaVersion: registry.EggSchemaVersionCurrent,
+		KVDisk:        &registry.KVDiskDecl{SpaceMB: 3500},
+	}
+	entry.SetEggNameForTest("DeepSeek-V4-Flash")
+
+	spec, err := hatchSpecFor(entry, EngineImplOf(entry), 9411, hatchTestProfile())
+	if err != nil {
+		t.Fatalf("声明了 KV 盘的卵映射应成功，实得 %v", err)
+	}
+	kvHost := filepath.Join(home, ".zerg", "kvdisk", "DeepSeek-V4-Flash")
+
+	// ① 参数：宿主 KV 路径 → /kvdisk（只改这一个 token），写盘上限原样保留
+	if got := argAfter(spec.EngineArgs, "--kv-disk-dir"); got != "/kvdisk" {
+		t.Errorf("--kv-disk-dir 应改写成空间内 /kvdisk，实得 %q（参数=%v）", got, spec.EngineArgs)
+	}
+	for _, a := range spec.EngineArgs {
+		if strings.Contains(a, kvHost) {
+			t.Errorf("参数里不得残留宿主 KV 盘路径：%q", a)
+		}
+	}
+	if got := argAfter(spec.EngineArgs, "--kv-disk-space-mb"); got != "3500" {
+		t.Errorf("写盘上限 --kv-disk-space-mb 应原样保留，实得 %q", got)
+	}
+	// ② 绑定：宿主 KV 目录可写绑到 /kvdisk；且宿主目录真的建出来了（绑定源不存在 ⇒ bwrap 孵不起来）
+	wantKV := kvHost + ":/kvdisk"
+	found := false
+	for _, b := range spec.ExtraRWBinds {
+		if b == wantKV {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("宿主 KV 目录应可写绑到 /kvdisk（%q），实得 %v", wantKV, spec.ExtraRWBinds)
+	}
+	if st, err := os.Stat(kvHost); err != nil || !st.IsDir() {
+		t.Errorf("宿主 KV 目录应已被创建（%q），stat 结果 err=%v", kvHost, err)
+	}
+	// ③ 顺序：一次性（工作目录）在前、跨孵化保留（KV 盘）在后，逐字可复现
+	if want := filepath.Join(workRoot, "DeepSeek-V4-Flash") + ":/work"; len(spec.ExtraRWBinds) != 2 || spec.ExtraRWBinds[0] != want {
+		t.Errorf("可写绑定应为 [工作目录, KV 盘]，实得 %v", spec.ExtraRWBinds)
+	}
+	if err := spec.Validate(); err != nil {
+		t.Errorf("映射产物应能过孵化声明校验，实得 %v", err)
+	}
+	// ④ 命令行这一侧真跑一遍：必须是 --bind（可写）、--chdir 是空间内路径
+	argv, err := hatch.BuildBwrapArgv(spec)
+	if err != nil {
+		t.Fatalf("映射产物应能构造出 bwrap 命令行，实得 %v", err)
+	}
+	joined := strings.Join(argv, " ")
+	for _, want := range []string{"--bind " + kvHost + " /kvdisk", "--bind " + filepath.Join(workRoot, "DeepSeek-V4-Flash") + " /work", "--chdir /work"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("bwrap 命令行缺 %q，实得 %q", want, joined)
+		}
+	}
+	if strings.Contains(joined, "--ro-bind "+kvHost) {
+		t.Errorf("KV 盘是可写落点，不得落成只读绑定：%q", joined)
+	}
+}
+
+// TestHatchSpec_KVDiskOnlyWhenEngineAsks 判据是**执行面**（引擎真会收到的参数）：
+//   - 声明了 kv_disk 但适配器按归属铁律没发该参数（llama 系，§9.2）⇒ 不加绑定、不改写、不报错；
+//   - cmd: 里手写了宿主绝对路径的 --kv-disk-dir ⇒ 照样绑定与改写（引擎真会往那儿写）；
+//   - 手写的值是相对路径 ⇒ 拒孵（空间里会落进一次性工作目录，与 §9.7④「跨孵化保留」冲突）。
+func TestHatchSpec_KVDiskOnlyWhenEngineAsks(t *testing.T) {
+	kvHost := filepath.Join(t.TempDir(), "kvdisk", "K2-Horizon")
+	withMainlineEngineProbe(t, "/opt/llama/bin/llama-server")
+	withWorkDirRoot(t)
+
+	t.Run("llama 系没发该参数 ⇒ 不绑不改", func(t *testing.T) {
+		e := &registry.ModelEntry{
+			Backend:       "llama-server",
+			File:          "/data/models/glm/glm.gguf",
+			SchemaVersion: registry.EggSchemaVersionCurrent,
+			KVDisk:        &registry.KVDiskDecl{SpaceMB: 3500}, // 声明了，但适配器按归属铁律不发
+		}
+		e.SetEggNameForTest("GLM-5.3-Flash")
+		spec, err := hatchSpecFor(e, EngineImplOf(e), 9000, hatchTestProfile())
+		if err != nil {
+			t.Fatalf("映射应成功（声明未落到执行面 ⇒ 没有可绑的落点，但不是错误），实得 %v", err)
+		}
+		if got := argAfter(spec.EngineArgs, "--kv-disk-dir"); got != "" {
+			t.Errorf("llama 系不得出现 --kv-disk-dir，实得 %q", got)
+		}
+		for _, b := range spec.ExtraRWBinds {
+			if strings.Contains(b, "/kvdisk") {
+				t.Errorf("执行面没有 KV 盘 ⇒ 不得编造 /kvdisk 绑定，实得 %v", spec.ExtraRWBinds)
+			}
+		}
+	})
+
+	t.Run("cmd 手写宿主 KV 路径 ⇒ 照样绑定与改写", func(t *testing.T) {
+		e := &registry.ModelEntry{
+			Backend:       "llama-server",
+			File:          "/data/models/k2/k2horizon.gguf",
+			SchemaVersion: registry.EggSchemaVersionCurrent,
+			Cmd:           registry.CmdString("/home/g01/agent/run-k2.sh -m {file} --kv-disk-dir " + kvHost + " --port {port}"),
+		}
+		e.SetEggNameForTest("K2-Horizon")
+		spec, err := hatchSpecFor(e, EngineImplOf(e), 9000, hatchTestProfile())
+		if err != nil {
+			t.Fatalf("映射应成功，实得 %v", err)
+		}
+		if got := argAfter(spec.EngineArgs, "--kv-disk-dir"); got != "/kvdisk" {
+			t.Errorf("宿主 KV 路径应改写成 /kvdisk，实得 %q（参数=%v）", got, spec.EngineArgs)
+		}
+		if want := kvHost + ":/kvdisk"; len(spec.ExtraRWBinds) != 2 || spec.ExtraRWBinds[1] != want {
+			t.Errorf("应加上可写绑定 %q，实得 %v", want, spec.ExtraRWBinds)
+		}
+	})
+
+	t.Run("相对路径 ⇒ 拒孵", func(t *testing.T) {
+		e := &registry.ModelEntry{
+			Backend:       "llama-server",
+			File:          "/data/models/k2/k2horizon.gguf",
+			SchemaVersion: registry.EggSchemaVersionCurrent,
+			Cmd:           registry.CmdString("/home/g01/agent/run-k2.sh -m {file} --kv-disk-dir kvlocal --port {port}"),
+		}
+		e.SetEggNameForTest("K2-Horizon")
+		_, err := hatchSpecFor(e, EngineImplOf(e), 9000, hatchTestProfile())
+		if err == nil {
+			t.Fatal("相对 KV 盘目录必须拒孵（空间内会落进一次性工作目录，KV 活不过收卵）")
+		}
+		if !strings.Contains(err.Error(), "绝对路径") {
+			t.Errorf("错误信息应说明必须是宿主绝对路径，实得 %q", err.Error())
+		}
+	})
 }
 
 // TestHatchSpec_NoProfileIsRejectedByValidate 映射只搬档案；档案缺失要在孵化声明校验那一步被拒
