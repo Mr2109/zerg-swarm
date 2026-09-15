@@ -40,43 +40,52 @@ pub fn default_devices() -> Vec<String> {
 pub fn plan(s: &Spec) -> Result<Plan, Error> {
     s.validate()?;
 
-    // ① 固定前缀：全新根（与 Go 侧顺序逐条一致）
-    let mut argv: Vec<String> = [
-        "--ro-bind",
-        "/usr",
-        "/usr",
-        "--symlink",
-        "usr/bin",
-        "/bin",
-        "--symlink",
-        "usr/sbin",
-        "/sbin",
-        "--symlink",
-        "usr/lib",
-        "/lib",
-        "--symlink",
-        "usr/lib64",
-        "/lib64",
-        "--proc",
-        "/proc",
-        "--dev",
-        "/dev",
-        "--tmpfs",
-        "/tmp",
-        // 宿主 /sys **只读**进空间：设备「可不可用」由 /sys 下的拓扑/属性描述（GPU 如此，
-        // 别的加速器同理）；缺它时 X3 真机上引擎报 `no ROCm-capable device is detected`
-        // 并**静默降级 CPU**（真机实测，2026-09-15）。只读 ⇒ 不放开写面。
-        "--ro-bind",
-        "/sys",
-        "/sys",
-        // /models 只造一个**空目录**：宿主权重由 extra_ro_binds 逐文件绑到 /models/<基名>。
-        // 用 --dir 而不是 --tmpfs：既不构成挂载点（判据才有判别力），也明确它在逐文件绑定之前。
-        "--dir",
-        SPACE_MODELS_DIR,
-    ]
-    .iter()
-    .map(|s| (*s).to_string())
-    .collect();
+    // ① `argv[0]` = **可执行名**（`bwrap`）—— 冻结接口（`README.md`「计划的形状」与任务单 §3：
+    //    「`argv` —— 执行面 … `argv[0]` 是 `bwrap`」；退出码表里的「可执行不在 PATH ⇒ 2」也只有
+    //    在 `argv[0]` 是可执行名时才说得通，`run` 正是 `Command::new(argv[0])`）。
+    //
+    // ⚠ **与 Go 侧 `hatch.BuildBwrapArgv` 的唯一差异就在这里**：那个函数只给**参数**序列（`bwrap`
+    //    由 `BuildSystemdRunArgv` 补在前面）。⇒ 迁移桥（`scripts/compare-wall-argv.py`，任务 2'.3）
+    //    的判据写成两半：① `wall.argv[0] == "bwrap"`；② `wall.argv[1..]` 与 Go 的 argv **逐条相同**。
+    //    两侧都不许在自己的那半边「顺手改」—— 改了就是同一个落点两套真相。
+    let mut argv: Vec<String> = vec![BWRAP.to_string()];
+    argv.extend(
+        [
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--symlink",
+            "usr/bin",
+            "/bin",
+            "--symlink",
+            "usr/sbin",
+            "/sbin",
+            "--symlink",
+            "usr/lib",
+            "/lib",
+            "--symlink",
+            "usr/lib64",
+            "/lib64",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            // 宿主 /sys **只读**进空间：设备「可不可用」由 /sys 下的拓扑/属性描述（GPU 如此，
+            // 别的加速器同理）；缺它时 X3 真机上引擎报 `no ROCm-capable device is detected`
+            // 并**静默降级 CPU**（真机实测，2026-09-15）。只读 ⇒ 不放开写面。
+            "--ro-bind",
+            "/sys",
+            "/sys",
+            // /models 只造一个**空目录**：宿主权重由 extra_ro_binds 逐文件绑到 /models/<基名>。
+            // 用 --dir 而不是 --tmpfs：既不构成挂载点（判据才有判别力），也明确它在逐文件绑定之前。
+            "--dir",
+            SPACE_MODELS_DIR,
+        ]
+        .iter()
+        .map(|s| (*s).to_string()),
+    );
 
     // ② 引擎自己的库/构建目录（宿主侧）→ /engine（只读）
     let mut allowlist: Vec<String> =

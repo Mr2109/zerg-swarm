@@ -19,10 +19,15 @@ zerg-wall --version
 ## 计划的形状（一行 JSON）
 
 ```json
-{"schema_version":1,"platform":"linux","argv":["--ro-bind","/usr","/usr",…],"allowlist":["ro-mount:/sys（设备拓扑：任何要认设备的引擎都读它）","device:/dev/kfd",…],"note":"…"}
+{"schema_version":1,"platform":"linux","argv":["bwrap","--ro-bind","/usr","/usr",…],"allowlist":["ro-mount:/sys（设备拓扑：任何要认设备的引擎都读它）","device:/dev/kfd",…],"note":"…"}
 ```
 
-- `argv` —— **执行面**（逐字可复现；Linux 一档 = bwrap 参数序列，`argv[0]` 是 `bwrap`）；
+- `argv` —— **执行面**（**一条完整命令行**：`argv[0]` = 可执行名 `bwrap`，其后是它的参数序列；
+  逐字可复现）。⚠ 与 Go 侧 `hatch.BuildBwrapArgv` 的**唯一差异**就在这个可执行名上：那个函数只给
+  **参数**（`bwrap` 由 `BuildSystemdRunArgv` 补）⇒ 迁移桥比的是 `argv[1..]`，`argv[0]` 另有一条断言。
+  为什么必须是完整命令行：`run` 就是 `Command::new(argv[0])`，退出码表里的「可执行不在 PATH ⇒ 2」
+  也只有这时才说得通 —— 早先把 `argv[0]` 写成 `--ro-bind` 的版本，`plan` 载荷看起来完全正常，
+  而 `run` 在**任何** Linux 机器上都只能以「起不来」收场（批 2'.3 修，见 `evidence-bridge-argv-20260916.txt`）；
 - `allowlist` —— **自报面**：只列**超出基线**的授权（基线见 `note`；基线项不进清单）；
 - `note` —— 如实说明（含「哪些不在本 argv 内」：归属层 `systemd-run` 的 slice/单元/限额、
   `memlock_bytes` 的落点；以及**等级由谁给**）。
@@ -58,15 +63,40 @@ zerg-wall --version
 4. **argv 逐字对齐 Go 侧** `hatch.BuildBwrapArgv`（迁移桥 = 同一配方两侧 argv 逐条一致，任务单 2'.3）；
    要改配方先改设计稿与 Go 侧，两侧同批改。
 
+## 迁移桥：与 Go 侧 `hatch.BuildBwrapArgv` 逐条对拍（任务 2'.3）
+
+茧壁是「同一个落点」的**第二份实现** ⇒ 两侧任一处「顺手改进」（少一个 `--unshare-*`、绑定顺序换一下、
+包装 exec 少个 `$0`）在真机上都是「看着起来了、封闭面却不同」的静默故障。对拍是**不换件**前提下唯一
+能把这种漂移钉死的手段：
+
+```bash
+python3 scripts/compare-wall-argv.py             # 门禁：0 全绿 / 1 有不一致 / 2 硬失败
+python3 scripts/compare-wall-argv.py --self-test # 先证「这面镜子能红」，再跑门禁
+```
+
+- **配方**（两侧同读一批文件）：`wall/testdata/bridge-specs/*.json`，**文件名即期望值**
+  （`ok-*` 两侧都应接受 ⇒ 再比 argv；`reject-*` 两侧都应拒绝）—— 成因见该目录 `README.md`；
+- **两侧出口**：Go = `agent/internal/hatch/wall_bridge_test.go` 那条 `TestWallBridgeDumpBwrapArgv`
+  （测试即出口：`BuildBwrapArgv` 是 Go 侧唯一真源，再包一个 cmd 就是多开一个会漂移的出口）；
+  茧壁 = `zerg-wall plan --platform linux`；
+- **判据两半**：① `argv[0] == "bwrap"`（可执行名，且不得以 `-` 开头）；② `argv[1..]` 与 Go 的 argv
+  **逐条相同**（长度也在内）；不一致时打印**第几项**与两边原文；
+- **fail-closed**：配方目录不在 / 只有 `ok-`（无区分度）/ 文件名前缀认不得 / Go 侧出口跑不起来 /
+  茧壁二进制不在且 `--no-build` / 判据自检不过 —— 一律 **rc=2 硬失败**，**不许静默跳过**；
+- **回执**：`wall/evidence-bridge-argv-20260916.txt`（含两侧 argv 逐条原文、自检输出、两侧各一次
+  变异验证的真实红与还原后 sha 一致、制品与源码 sha256）。
+
 ## 门禁与跑法
 
 ```bash
 cd wall
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test                 # 单元 6 + 集成 9（含三条负例组与「不许放宽」不变式）
-python3 /tmp/mutate-wall.py   # 变异验证（脚本在交付回执里；每条变异必须有用例红）
+cargo test                 # 单元 6 + 集成 10（含三条负例组与「不许放宽」不变式）+ CLI 4
+bash scripts/build-all.sh  # 暂未接茧壁：是否进 5 件制品矩阵是发布契约（待拍板）
 ```
+
+**对拍门禁**（在仓根跑；需要 Go 工具链）：`python3 scripts/compare-wall-argv.py --self-test`
 
 **本批尚未做的**：macOS 一档（直调 Seatbelt / `sandbox_init`，任务 2'.4 —— 现在**明确拒绝**并说明原因）、
 二档（直调原语）、Windows、制品矩阵接入（是否进 5 件矩阵是发布契约，待 Mr2109 决定）。

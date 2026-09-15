@@ -1,0 +1,6 @@
+{
+  "egg_id": "bridge-minimal",
+  "schema_version": 1,
+  "engine_path_in_space": "/engine/bin/llama-server",
+  "weight_path": "/opt/models/demo"
+}
