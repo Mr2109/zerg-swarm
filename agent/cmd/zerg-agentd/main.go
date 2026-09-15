@@ -70,7 +70,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "日志文件设置失败: %v\n", err)
 		}
 	}
-	logx.Infof("main", "zerg-agent 启动", "version", "v2.0", "host", *host, "port", *port, "machine", *machineParam)
+	logx.Infof("main", "zerg-agent 启动", "version", version.Version, "host", *host, "port", *port, "machine", *machineParam)
 
 	// 机器标识：参数优先，否则取主机名
 	m := *machineParam
