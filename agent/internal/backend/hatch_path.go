@@ -30,7 +30,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/Mr2109/zerg-swarm/agent/internal/enclosure"
 	"github.com/Mr2109/zerg-swarm/agent/internal/hatch"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
@@ -251,6 +253,10 @@ func (m *Manager) hatchStartLocked(modelName string, entry *registry.ModelEntry,
 	est, note, enginePID := m.verifyEnclosure(sp, spec.WeightFiles)
 	sp.enclosureVerified = est == enclosureVerified
 	sp.enclosureNote = note
+	// 茧壁批 1（§4.2 等级 / §六 判据 8）：同一次核验同时产出**两字段等级声明**。
+	// expected 取**卵档案的申报**（同一枚卵的档案里那一格；v1/未申报 ⇒ 如实留空，不回落成实测值），
+	// observed 取本次实读；放行清单在批 1 尚无来源 ⇒ 如实缺席（不编一份出来）。
+	sp.enclosure = enclosureVerdictOf(profile.EnclosureExpected(), est, note, time.Now())
 	// 缺陷 14：孵化路径的观测面要用这个 pid（给 unit/gtt、并把自己孵的卵从「外部占用」里排除）
 	if sp != nil && enginePID > 0 {
 		sp.enginePID = enginePID
@@ -286,6 +292,40 @@ const (
 	// enclosureMismatch 实读且判定不符 ⇒ **收卵 + 拒孵**（对外不服务）。
 	enclosureMismatch
 )
+
+// enclosureVerdictOf 把「三态核验结局」升成茧壁的等级声明（§4.2 四级 / §六 判据 8）。
+//
+// 证据口径（Judge 的输入必须是**外部实读**的证据，不许拿单元状态或声明当证据）：
+//
+//	① 读不到 mountinfo（enclosureUnreadable）⇒ Read=false ⇒ observed=`unverified`
+//	   —— 独立一级：**既不作拒绝，也不作 `enclosed.*`**；
+//	② 实读通过（enclosureVerified，七项判据全过）⇒ MountIsolated=true ⇒ observed=`enclosed.kernel`
+//	   （视图级：宿主权重树 / 数据目录在空间内看不见 + /proc 是新的 ⇒ 判据 2 的形态）；
+//	③ 实读不符（enclosureMismatch）⇒ Read=true 但没有任何封闭项成立 ⇒ observed=`none`
+//	   （该卵正常已被收卵 + 拒孵，不会出现在观测面里；这里仍如实给结论，不留给"没结论"的缝）。
+//
+// expected 取自**卵档案的申报**（调用方传 profile.EnclosureExpected()）：v1 旧档案 / 未申报 ⇒ 空串
+// ⇒ 如实呈现「未申报」，**不许**回落到实测值。放行清单（allowlist）在批 1 还没有可信来源
+// （配方声明里尚无这一项）⇒ 传 nil 如实缺席，等批 2' 的茧壁外壳产出，**不在这里编一份**。
+//
+// 留痕（note）以核验现场那句话为准（含七项实测值）：Judge 的判词只在有话说时**前置**——
+// 现场证据不可被一句结论替换掉（§6.9：留痕要能复盘）。
+func enclosureVerdictOf(expected enclosure.Level, est enclosureState, note string, at time.Time) *enclosure.Verdict {
+	ev := enclosure.Evidence{Read: est != enclosureUnreadable}
+	if est == enclosureVerified {
+		// 只有实读通过才算得上"视图级证据"；读不到与不符都不许走到这里（无证据永不给 enclosed.*）。
+		ev.MountIsolated = true
+	}
+	v := enclosure.Judge(expected, ev, nil, at)
+	switch {
+	case note == "":
+	case v.Note == "":
+		v.Note = note
+	default:
+		v.Note = v.Note + "；" + note
+	}
+	return &v
+}
 
 // verifyEnclosure 孵化后的封闭性核验（§6.9 硬要求）。
 //

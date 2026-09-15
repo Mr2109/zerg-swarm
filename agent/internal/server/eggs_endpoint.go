@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
+	"github.com/Mr2109/zerg-swarm/agent/internal/enclosure"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 )
 
@@ -45,8 +46,16 @@ type servicesEgg struct {
 	Managed       bool                         `json:"managed"`                  // 恒 true：eggs[] 只装本端托管项
 	// EnclosureVerified 封闭性是否**实读核验通过**（§6.9：静默失效不得当凭据）。
 	// false 与 EnclosureNote 合起来读：「未核验/读不到」还是「不符」；note 空 = 从未声称过隔离。
+	//
+	// Deprecated（茧壁批 1）：旧口径的布尔摘要 —— 它把「期望什么等级」与「实测什么等级」压成了一格。
+	// 保留只为不一次性打断既有消费侧；新消费侧一律读下方 Enclosure（expected/observed 分开）。
 	EnclosureVerified bool   `json:"enclosure_verified"`
 	EnclosureNote     string `json:"enclosure_note,omitempty"`
+	// Enclosure 茧壁的等级声明（§4.2 四级 / §六 判据 8）：expected 与 observed **两个字段都出现**、
+	// 可不等（未申报期望时 expected 为空串）；形状与卵档案同一份（`enclosure.Verdict`）。
+	//
+	// nil = 本端从未声称过隔离（裸 exec 路径，孵化开关关）—— 与「声称了但读不到」不是一回事。
+	Enclosure *enclosure.Verdict `json:"enclosure,omitempty"`
 }
 
 // externalOccupant external_occupancy[] 条目：非引擎 GPU 使用者（§8.7 收窄口径）。
@@ -80,6 +89,7 @@ func eggEntries(obs []backend.EggObservation, attrib map[int]monitor.ProcAttrib,
 			Managed:           true,
 			EnclosureVerified: o.EnclosureVerified,
 			EnclosureNote:     o.EnclosureNote,
+			Enclosure:         o.Enclosure,
 		}
 		if a, ok := attrib[o.PID]; ok {
 			e.GttGb = round1f(a.GttGb)
