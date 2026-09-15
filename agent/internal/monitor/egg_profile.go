@@ -15,6 +15,7 @@ package monitor
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -87,6 +88,27 @@ func (p EggProfile) Validate() error {
 		return fmt.Errorf("实测档案 suggested_idle_unload_s=%v 非（>0）", p.SuggestedIdleUnloadS)
 	}
 	return nil
+}
+
+// EggProfileDir 实测档案目录（环境变量 ZERG_EGG_PROFILE_DIR 可覆盖；缺省 ~/.zerg/egg-profiles）。
+func EggProfileDir() string {
+	if d := os.Getenv("ZERG_EGG_PROFILE_DIR"); d != "" {
+		return d
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".zerg", "egg-profiles")
+}
+
+// EggProfilePath 一枚卵的实测档案文件路径（<dir>/<egg_id>.yaml）。
+func EggProfilePath(eggID string) string {
+	dir := EggProfileDir()
+	if dir == "" || eggID == "" {
+		return ""
+	}
+	return filepath.Join(dir, filepath.Base(eggID)+".yaml")
 }
 
 // LoadEggProfile 从 YAML 文件读一份实测档案并校验。
