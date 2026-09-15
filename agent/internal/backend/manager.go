@@ -65,6 +65,12 @@ type subproc struct {
 	// enclosureNote 核验留痕（一句话，进观测面 enclosure_note）：
 	// 通过 = 结论 + 各项实测值；读不到 = 「未核验：<原因>」；不符 = 「核验不符：<哪几项>」。
 	enclosureNote string
+	// enginePID 孵化路径下**空间内引擎进程**的 pid（核验时实读到的那个；2026-09-15 缺陷 14）。
+	//
+	// 为什么需要它：孵化路径 sp.proc 恒 nil（引擎不是本端的子进程）⇒ 观测面原先拿不到 pid
+	// ⇒ /eggs 缺 unit/gtt_gb，且 external_occupancy[] 把**本端自己孵的卵**误列为「外部占用者」。
+	// 裸 exec 路径恒 0（那时用 sp.proc.Process.Pid）。
+	enginePID int
 	// inflight 在飞引用计数（P2，设计 §7.7 修补 3）——「在飞」的唯一真源：
 	// 请求进入生成中 +1（acquireInflight）、完成/失败 −1（releaseInflight）。
 	// 卸载/切换判据一律取它；引擎 /slots 只作交叉校验，不作为条件。

@@ -119,14 +119,35 @@ type EggObservation struct {
 	EnclosureNote string
 }
 
+// enginePIDOf 取一枚托管卵的引擎进程 pid（只读）：
+//   - 孵化路径（sp.proc == nil）：核验时实读到的空间内引擎 pid（sp.enginePID）；
+//   - 裸 exec 路径：本端子进程 pid。
+//
+// 两条路径都要能给 pid，否则观测面会把本端自己孵的卵当成「外部占用者」（缺陷 14，真机实测）。
+// 拿不到就如实返回 0（不编造）。
+func enginePIDOf(sp *subproc) int {
+	if sp == nil {
+		return 0
+	}
+	if sp.enginePID > 0 {
+		return sp.enginePID
+	}
+	if sp.proc != nil && sp.proc.Process != nil {
+		return sp.proc.Process.Pid
+	}
+	return 0
+}
+
 // PIDSet 当前托管卵的引擎进程 pid 集合（只读快照；§8.7 排除本端托管项用）。
 func (m *Manager) PIDSet() map[int]struct{} {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make(map[int]struct{}, len(m.procs))
 	for _, sp := range m.procs {
-		if sp != nil && sp.proc != nil && sp.proc.Process != nil {
-			out[sp.proc.Process.Pid] = struct{}{}
+		// 孵化路径（sp.proc == nil）：用核验时实读到的**空间内引擎 pid**——
+		// 不加这一支，本端自己孵的卵会被 external_occupancy[] 误报成「外部占用者」（缺陷 14，真机实测）。
+		if pid := enginePIDOf(sp); pid > 0 {
+			out[pid] = struct{}{}
 		}
 	}
 	return out
@@ -155,10 +176,12 @@ func (m *Manager) EggObservations() []EggObservation {
 		if sp.entry != nil {
 			o.SchemaVersion = sp.entry.SchemaVersion
 		}
-		if sp.proc != nil && sp.proc.Process != nil {
-			o.PID = sp.proc.Process.Pid
-			o.RssGb = readProcessRssGb(sp.proc.Process.Pid)
+		if pid := enginePIDOf(sp); pid > 0 {
+			o.PID = pid
+			o.RssGb = readProcessRssGb(pid)
 		}
+		// 单元名（孵化路径才有；裸 exec 路径如实空 —— 那是本端进程，不属任何单元）
+		o.Unit = sp.Unit
 		if sp.state == StateIdleArmed {
 			// 与 IdleArmedRemainingS 同口径：阈值 − 距最后活动；已到期如实给 0
 			//（到期但巡检尚未收走的短暂窗口，不谎报为正值）。
