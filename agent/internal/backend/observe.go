@@ -91,7 +91,9 @@ func shortEngineName(p string) string {
 //   - IdleArmedRemainS nil = 不在空窗计时中（或已到期待巡检收走）；
 //   - SchemaVersion 0 = 卵声明未声明格式版本号（遗留条目，如实标出）；
 //   - Unit 空 = 孵化器（P1 单元化）尚未落地，无单元归属可报；
-//   - RssGb 是进程实测 RSS——逐进程 GTT 归因按 pid 匹配由 server 层接线（§8.7）。
+//   - RssGb 是进程实测 RSS——逐进程 GTT 归因按 pid 匹配由 server 层接线（§8.7）；
+//   - EnclosureVerified=false 且 EnclosureNote 非空 = 孵化后**没核到**隔离证据（读不到）；
+//     Note 空 + false = 本端从未声称过隔离（裸 exec 路径），两者不是一回事（§6.9）。
 type EggObservation struct {
 	EggID      string // 注册表卵名（=驻留键，真 egg_id）
 	Model      string
@@ -106,6 +108,15 @@ type EggObservation struct {
 	IdleArmedRemainS *float64
 	SchemaVersion    int     // 卵声明格式版本号；0 = 未声明（如实标出）
 	RssGb            float64 // 进程实测 RSS（GB）；GTT 逐进程口径由 server 层按 PID 接线
+	// EnclosureVerified 封闭性是否**实读核验通过**（§6.9：静默失效不得当凭据）。
+	//
+	// false 有且只有两种含义，靠 EnclosureNote 区分：
+	//   - 「未核验 / 读不到」（拿不到 pid、读不到 mountinfo）—— 卵**照常服务**，但「已核验」不成立；
+	//   - 「实读核验不符」—— 该卵已被**收卵 + 拒孵**，正常情况下不会出现在快照里。
+	// 裸 exec 路径（孵化开关关）恒 false 且 Note 空 = 本端从未声称过隔离，不是「核验失败」。
+	EnclosureVerified bool
+	// EnclosureNote 核验留痕（一句话）：通过 = 结论 + 各项实测值；未核验 = 「未核验：<原因>」。
+	EnclosureNote string
 }
 
 // PIDSet 当前托管卵的引擎进程 pid 集合（只读快照；§8.7 排除本端托管项用）。
@@ -132,12 +143,14 @@ func (m *Manager) EggObservations() []EggObservation {
 			continue
 		}
 		o := EggObservation{
-			EggID:      name,
-			Model:      name,
-			EngineImpl: EngineImplOf(sp.entry),
-			State:      sp.state,
-			Port:       sp.port,
-			Inflight:   sp.inflight,
+			EggID:             name,
+			Model:             name,
+			EngineImpl:        EngineImplOf(sp.entry),
+			State:             sp.state,
+			Port:              sp.port,
+			Inflight:          sp.inflight,
+			EnclosureVerified: sp.enclosureVerified,
+			EnclosureNote:     sp.enclosureNote,
 		}
 		if sp.entry != nil {
 			o.SchemaVersion = sp.entry.SchemaVersion
