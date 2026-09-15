@@ -412,6 +412,19 @@ func (q *p2Queue) lenOf() int {
 	return len(q.items)
 }
 
+// dropHead 摘除并返回队头（队空 ⇒ ok=false）。供「重走孵化后仍不匹配」的兜底使用，
+// 避免队头卡死饿死后续项（见 waitqueue.go WaitQDropHead）。
+func (q *p2Queue) dropHead() (qReq, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.items) == 0 {
+		return qReq{}, false
+	}
+	head := q.items[0]
+	q.items = q.items[1:]
+	return head, true
+}
+
 // peekAll 取当前队列快照（观测面/测试断言用，不出队）。
 func (q *p2Queue) peekAll() []qReq {
 	q.mu.Lock()
