@@ -280,6 +280,26 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// ── 占位冲突处置（缺陷 19）：必须在**任何资源判据/淘汰之前**做 ──
+	if old, exists := m.procs[modelName]; exists {
+		// ① 卡死的 draining 自愈：卵还活着（Unit 非空）⇒ **放回复用**，不打断服务。
+		//    真机形态就是它：赢了权的那个请求被挡/失败，没人接手收卵 ⇒ 状态卡在 draining、
+		//    /load 再点名时既不复用也不收，最后被同名孵化搞成孤儿。
+		if old.state == StateDraining && old.Unit != "" {
+			old.state = StateReady
+			old.lastUsed = time.Now()
+			old.reqCount++
+			log.Printf("[backend] 卡死 draining 自愈（%s）：卵还活着 ⇒ 放回 ready 并发复用 (port=%d)（缺陷 19）",
+				modelName, old.port)
+			return okResponse(modelName, entry.Backend, old.port), nil
+		}
+		// ② 其它在途状态（loading/crashed 等）⇒ 先收干净再孵，账本里绝不出现两个同名卵。
+		log.Printf("[backend] 同名占位冲突（%s，旧条目 state=%s unit=%q）⇒ 先收干净再孵（缺陷 19）",
+			modelName, old.state, old.Unit)
+		m.stopSubproc(old)
+		delete(m.procs, modelName)
+	}
+
 	// P1 接线（最先做）：适配器声明「本架构必须由非主线引擎承载」⇒ 卵声明必须带 cmd:
 	// （专用 fork + 包装脚本含 env 处理），缺失即拒孵（502 语义），绝不静默退回主线
 	// llama-server。放在一切裁决之前：声明校验属于「孵化前校验」（设计 §6.8.4），
@@ -362,6 +382,13 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 		hatchProfile = prof
 	}
 
+	// 缺陷 19（2026-09-15 沙箱复现）：同名占位**不得覆盖**在途条目。
+	//
+	// 真机形态：卵卡在 draining（上一个异模型请求赢了权、收卵动作却没执行）⇒ 同名 /load
+	// 走到这里把 m.procs[model] 覆盖成新条目（Unit 空）⇒ **真卵的 Unit/账本被顶掉** ⇒
+	// 之后任何路径都无法再停掉那个真单元 ⇒ 成孤儿（占显存、/eggs 失真、同名孵化永久失败：
+	// systemd-run 报 "Unit ... was already loaded"）。
+	// 处置：先把它**停干净**（collectUnit 幂等）再登记新条目 —— 账本里绝不出现两个同名卵。
 	// 设置 loading 状态
 	sp := &subproc{
 		model:    modelName,
