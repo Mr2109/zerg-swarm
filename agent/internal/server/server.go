@@ -29,6 +29,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/agent/internal/modeladapter"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
+	"github.com/Mr2109/zerg-swarm/agent/internal/startup"
 )
 
 // Server 子端 Agent HTTP 服务器。
@@ -102,6 +103,7 @@ func (s *Server) Start(host string, port int) error {
 	s.listener = listener
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("/status", s.handleStatus)
+	s.mux.HandleFunc("/ready", s.handleReady)
 	s.mux.HandleFunc("/load", s.handleLoad)
 	s.mux.HandleFunc("/infer", s.handleInfer)
 	s.mux.HandleFunc("/unload", s.handleUnload)
@@ -517,6 +519,22 @@ func (a *Agent) ActiveRequests() int {
 }
 
 // handleStatus 处理 /status 请求。
+// handleReady 启动就绪信号（治本口径：外部判「到没到」读程序自己的话，不读秒、不读 systemd 的 activating）。
+// 未就绪返回 503 + 当前阶段的 JSON（那个阶段名就是"卡在哪"的答案）。
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	phase, ready, elapsedMS, history := startup.Snapshot()
+	w.Header().Set("Content-Type", "application/json")
+	if !ready {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ready":      ready,
+		"phase":      phase,
+		"elapsed_ms": elapsedMS,
+		"phases":     history,
+	})
+}
+
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAuth(w, r) {
 		return

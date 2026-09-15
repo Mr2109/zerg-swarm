@@ -30,6 +30,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 	"github.com/Mr2109/zerg-swarm/agent/internal/server"
+	"github.com/Mr2109/zerg-swarm/agent/internal/startup"
 )
 
 var (
@@ -70,6 +71,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "日志文件设置失败: %v\n", err)
 		}
 	}
+	startup.Mark("参数与令牌校验通过")
 	logx.Infof("main", "zerg-agent 启动", "version", version.Version, "host", *host, "port", *port, "machine", *machineParam)
 
 	// 机器标识：参数优先，否则取主机名
@@ -96,12 +98,15 @@ func main() {
 		log.Fatalf("加载模型注册表失败: %v", err)
 	}
 	log.Printf("模型注册表加载完成: %d 个模型", len(reg.Names()))
+	startup.Mark("注册表加载完成")
 
 	// 启动系统资源采样
 	monitor.DefaultSampler.StartLoop()
+	startup.Mark("资源采样已启动")
 
 	// 创建后端管理器
 	backendMgr := backend.NewManager(reg, m)
+	startup.Mark("后端/孵化管理器已建")
 
 	// 创建应用核心
 	agent := server.NewAgent(m, *token, reg, backendMgr, *controller)
@@ -110,12 +115,16 @@ func main() {
 	// （unmanaged[] 未托管探测已随 P4 退场清理删除——卵之外无引擎，附录 C·C7。）
 	hr := heartbeat.NewRunner(*controller, *token, m, backendMgr, monitor.DefaultSampler, agent)
 	hr.Start()
+	startup.Mark("心跳上报已启动")
 
 	// 创建 HTTP 服务器
 	srv := server.NewServer(agent)
 	if err := srv.Start(*host, *port); err != nil {
 		log.Fatalf("启动 HTTP 服务器失败: %v", err)
 	}
+	startup.Mark("HTTP 已监听")
+	// 启动完成：此后 /ready 返回 200（外部守卫读这个信号，不读秒、不读 systemd 的 activating）
+	startup.Ready()
 
 	// 优雅退出：捕获 SIGTERM / SIGINT
 	sigCh := make(chan os.Signal, 1)
