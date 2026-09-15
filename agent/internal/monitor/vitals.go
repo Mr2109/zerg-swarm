@@ -1,11 +1,11 @@
-// vitals.go —— 体征器：五类采集 + 频率分层 + 环形缓冲 + 事件钩子。
+// vitals.go —— 虫须：五类采集 + 频率分层 + 环形缓冲 + 事件钩子。
 //
 // 设计真源：《设计-子端隔离化-20260914》（仓库内文档标题含「沙箱」二字，为避免
 // 代码里新增该词，此处以「隔离化」指代同一文件）。
 //   - §8.2 度量口径：全局 GTT（mem_info_gtt_used）是账的主口径（F5），
 //     逐进程 fdinfo 降为交叉校验 + 归因展示（回答"是谁占的"）。
 //   - §8.5：收卵后必须校验 GTT 归零 ⇒ OnCollect 的 After 采样就是归零校验的读数来源。
-//   - §5.4：体征器是只读观测面——本文件只读数、只入内存环形缓冲，**绝不持续写盘**。
+//   - §5.4：虫须是只读观测面——本文件只读数、只入内存环形缓冲，**绝不持续写盘**。
 //   - §11 P3：全局 GTT 读取是本批核心工作量。
 //
 // 五类采集（频率分层，快采 1-2s 一轮）：① 全局 GTT ② 内存 ③ CPU（/proc/stat 差分）
@@ -154,7 +154,7 @@ func (r *ringBuf[T]) Slice() []T {
 	return out
 }
 
-// ══════════════ 体征器本体 ══════════════
+// ══════════════ 虫须本体 ══════════════
 
 // 频率与容量默认值（快采 2s / 慢采 15s / 聚合窗 1min）。
 // 标定铁律（§8.4）：这些是采样节奏不是容量阈值，不属"凡数字必实测"的账；可调。
@@ -169,7 +169,7 @@ const (
 	defaultVitalsDataDir = "/data"
 )
 
-// VitalsRecorder 体征器：五类采集 + 频率分层 + 环形缓冲 + 事件钩子。线程安全。
+// VitalsRecorder 虫须：五类采集 + 频率分层 + 环形缓冲 + 事件钩子。线程安全。
 //
 // 频率分层的驱动方式：调用方（backend 接线，P4/P7）定时调 MaybeCollect(now)——
 // 到期才真正采样，不到期立即返回 ⇒ 分层节奏完全由调用方的时钟注入控制，
@@ -206,7 +206,7 @@ type VitalsRecorder struct {
 	aggMemHasVal bool
 }
 
-// NewVitalsRecorder 创建体征器（默认节奏：快 2s / 慢 15s / 聚合窗 1min）。
+// NewVitalsRecorder 创建虫须（默认节奏：快 2s / 慢 15s / 聚合窗 1min）。
 func NewVitalsRecorder() *VitalsRecorder {
 	return &VitalsRecorder{
 		fastInterval: DefaultFastInterval,
