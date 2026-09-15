@@ -85,6 +85,9 @@ type Manager struct {
 	// 用途：验收「锁内置 draining ⇒ 出锁后才停进程」（§7.7 修补 3 的可观测面）。
 	// 回调里如需读状态须自行加锁（回调发生在锁外）。
 	stopHook func(sp *subproc)
+	// waitQ 等待队列（P7：切换期到达的请求挂起在此，出队须重校验当前卵）。
+	// ⚠ 锁序：任何持 m.mu 的路径都不得调用 WaitQ* 方法（见 waitqueue.go 文件头不变式）。
+	waitQ *p2Queue
 }
 
 // defaultReapInterval 是后台 TTL 回收循环的扫描间隔（只决定"多久查一次"，不是 TTL 本身）。
