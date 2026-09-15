@@ -32,7 +32,7 @@ def _git(repo: str, args: list) -> str:
         return ""
 
 
-def diagnose(mf: dict, repo: str, max_age_hours: float, now: datetime.datetime | None = None) -> list:
+def diagnose(mf: dict, repo: str, max_age_hours: float, now=None) -> list:
     """返回告警列表（每条一个字符串）。**不做拒绝判定** —— 拒绝与否由调用方按 --strict 决定。"""
     warns = []
     now = now or datetime.datetime.now(datetime.timezone.utc)
