@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mr2109/zerg-swarm/agent/internal/enclosure"
 	"github.com/Mr2109/zerg-swarm/agent/internal/hatch"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
@@ -369,6 +370,84 @@ func TestHatchOn_EnclosureUnreadableStillServes(t *testing.T) {
 	}
 }
 
+// TestHatchOn_EnclosureVerdictTwoFields 茧壁批 1（§4.2 四级 / §六 判据 8）：同一次核验要产出
+// **两字段等级声明** —— expected（卵档案申报）与 observed（本次实读）**各自呈现、可不等**：
+//
+//	① 实读通过 ⇒ observed=enclosed.kernel（视图级：判据 2 的形态）；
+//	② 读不到   ⇒ observed=unverified（**不是 none、也不是 enclosed.***，且 expected 仍要在）；
+//	③ v1 档案未申报 ⇒ expected 如实留空，**不许**回落到实测值（回落 = 换个姿势合并两字段）；
+//	④ 申报 os 而实测 kernel ⇒ 两字段如实不等（不是错误，是要留档的事实）。
+func TestHatchOn_EnclosureVerdictTwoFields(t *testing.T) {
+	cases := []struct {
+		name         string
+		profileV2    bool   // 档案里有没有 enclosure 申报（v2）/ 只有 v1
+		declared     string // 档案申报的期望等级（v2 时写进 YAML）
+		verifyErr    error  // 非 nil ⇒ 核验读不到
+		wantExpected enclosure.Level
+		wantObserved enclosure.Level
+	}{
+		{"实读通过 + 申报 kernel", true, "enclosed.kernel", nil, enclosure.LevelKernel, enclosure.LevelKernel},
+		{"读不到 + 申报 kernel（两字段都在且不等）", true, "enclosed.kernel",
+			fmt.Errorf("读 /proc/%d/mountinfo 失败：no such process", os.Getpid()),
+			enclosure.LevelKernel, enclosure.LevelUnverified},
+		{"实读通过 + v1 档案（未申报 ⇒ expected 留空）", false, "", nil, "", enclosure.LevelKernel},
+		{"申报 os 而实测 kernel（如实不等）", true, "enclosed.os", nil, enclosure.LevelOS, enclosure.LevelKernel},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(EnvHatch, "1")
+			t.Setenv(EnvWorkDirRoot, t.TempDir())
+			dir := t.TempDir()
+			t.Setenv("ZERG_EGG_PROFILE_DIR", dir)
+			if tc.profileV2 {
+				writeHatchProfileV2(t, dir, "GLM-5.3-Flash", tc.declared, 4, 4)
+			} else {
+				writeHatchProfile(t, dir, "GLM-5.3-Flash", 4, 4)
+			}
+			withHatchGateRead(t, 100, 100, nil)
+
+			fake := &fakeHatcher{mainPID: os.Getpid(), enclose: enclosedReport()}
+			if tc.verifyErr != nil {
+				fake.verifyErr = tc.verifyErr
+			}
+			m := newHatchTestManager(fake)
+			defer fake.closeEngines()
+
+			if _, err := m.doStart("GLM-5.3-Flash", hatchTestEntry("GLM-5.3-Flash")); err != nil {
+				t.Fatalf("doStart 返回 err=%v", err)
+			}
+			obs := m.EggObservations()
+			if len(obs) != 1 || obs[0].Enclosure == nil {
+				t.Fatalf("观测面必须带等级声明（expected/observed 的载体），实得 %+v", obs)
+			}
+			v := obs[0].Enclosure
+			if v.Expected != tc.wantExpected {
+				t.Errorf("expected 应为 %q，实得 %q（未申报必须留空，不许回落成实测值）", tc.wantExpected, v.Expected)
+			}
+			if v.Observed != tc.wantObserved {
+				t.Errorf("observed 应为 %q，实得 %q", tc.wantObserved, v.Observed)
+			}
+			if v.CheckedAt.IsZero() {
+				t.Error("等级声明必须带 checked_at（§4.3 第 3 条：核验有有效期）")
+			}
+			// 留痕以核验现场那句话为准（含七项实测值）——判词不得把现场证据替换掉。
+			if v.Note == "" {
+				t.Error("等级声明必须带留痕（§6.9 静默失效不得当凭据）")
+			}
+			if tc.wantObserved == enclosure.LevelUnverified && !strings.Contains(v.Note, "未核验") {
+				t.Errorf("读不到时留痕应写明现场原因（「未核验…」），实得 %q", v.Note)
+			}
+			// 旧口径摘要仍在（兼容演进：两个字段不打架 —— 读不到时旧布尔恒 false）。
+			if tc.wantObserved == enclosure.LevelKernel && !obs[0].EnclosureVerified {
+				t.Error("observed=enclosed.kernel 时旧摘要 enclosure_verified 也应为 true（同一事实的两种粒度）")
+			}
+			if tc.wantObserved != enclosure.LevelKernel && obs[0].EnclosureVerified {
+				t.Error("observed 不是 kernel 时旧摘要不得为 true")
+			}
+		})
+	}
+}
+
 // TestHatchOn_EnclosureMismatchCollectsAndRefuses 实读且不符 ⇒ **收卵 + 拒孵**：
 // 返 502、错误里写清哪一项不符、单元真被收（Collect）、驻留清单干净（不得继续对外服务）。
 func TestHatchOn_EnclosureMismatchCollectsAndRefuses(t *testing.T) {
@@ -596,6 +675,39 @@ measured_at: 2026-09-15T10:00:00+08:00
 machine: x3
 calib_runs: 3
 `, peakGtt, peakMem)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, eggID+".yaml")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// writeHatchProfileV2 写一份 v2 档案（带 enclosure 申报块）：**期望等级**是孵化的输入之一
+// （判据 8：expected 从档案的申报来，observed 从孵化时的实读来）。
+//
+// 档案里的 `observed` 那一格是**上次核验的历史值**（本用例不读它，只看 expected 被取用）；
+// 写 `unverified` 是刻意的 —— 免得有人把档案里的历史 observed 误当成本次孵化产出的那一格。
+func writeHatchProfileV2(t *testing.T, dir, eggID, expected string, peakGtt, peakMem float64) string {
+	t.Helper()
+	body := fmt.Sprintf(`weight_size_gb: 90
+peak_gtt_gb: %v
+peak_mem_gb: %v
+load_seconds: 120
+throughput_tok_s: 4.8
+suggested_idle_unload_s: 600
+schema_version: 2
+measured_at: 2026-09-15T10:00:00+08:00
+machine: x3
+calib_runs: 3
+enclosure:
+  expected: %s
+  observed: unverified
+  checked_at: 2026-09-15T10:00:00+08:00
+  note: 标定时的历史核验留痕（本用例不读这一格）
+`, peakGtt, peakMem, expected)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

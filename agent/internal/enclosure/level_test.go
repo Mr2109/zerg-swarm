@@ -83,3 +83,23 @@ func TestJudge_ExpectedObservedBothPresent(t *testing.T) {
 		t.Fatalf("放行清单必须随等级一起出现：%v", v.Allowlist)
 	}
 }
+
+// 未申报（expected 空串，例：v1 旧档案没有 expected 这一项）：
+// expected 如实留空、不与实测比较、也**不许回落成实测值**（那等于把两个字段合并着造假）。
+func TestJudge_ExpectedUndeclared(t *testing.T) {
+	now := time.Now()
+	v := Judge("", Evidence{Read: true, MountIsolated: true}, nil, now)
+	if v.Expected != "" {
+		t.Fatalf("未申报时期望必须如实留空，实得 %q（回落成实测值 = 把两字段合并）", v.Expected)
+	}
+	if v.Observed != LevelKernel {
+		t.Fatalf("实测有视图级证据应判 kernel，实得 %s", v.Observed)
+	}
+	if !strings.Contains(v.Note, "未申报") {
+		t.Fatalf("未申报时必须留痕说明（不许写成「期望与实测不一致」），实得 %q", v.Note)
+	}
+	// 无证据时同样不许给 enclosed.*（未申报不影响这条铁律）
+	if u := Judge("", Evidence{}, nil, now); u.Observed != LevelUnverified {
+		t.Fatalf("未申报 + 读不到证据 ⇒ unverified，实得 %s", u.Observed)
+	}
+}

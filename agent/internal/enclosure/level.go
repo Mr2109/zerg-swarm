@@ -10,6 +10,7 @@
 package enclosure
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -77,6 +78,10 @@ type Verdict struct {
 //   - 视图级成立          ⇒ enclosed.kernel
 //   - 仅授权级成立        ⇒ enclosed.os
 //   - 读到但无任何封闭证据 ⇒ none
+//
+// expected 允许为空串 = **未申报**（例：v1 旧档案里没有 expected 这一项）：此时 expected 如实留空、
+// **不与实测比较**，也**绝不回落到实测值**——判据 8 要的是「期望与实测各自呈现」，不是复制一份
+// 让两个字段看起来一致（那正是"把两个字段合并"的另一种形态）。
 func Judge(expected Level, ev Evidence, allowlist []string, at time.Time) Verdict {
 	v := Verdict{Expected: expected, Allowlist: allowlist, CheckedAt: at}
 	switch {
@@ -89,6 +94,10 @@ func Judge(expected Level, ev Evidence, allowlist []string, at time.Time) Verdic
 		v.Observed = LevelOS
 	default:
 		v.Observed = LevelNone
+	}
+	if !v.Expected.Valid() {
+		v.Note = fmt.Sprintf("未申报期望等级（expected 留空，不与实测比较，也不回落成实测值）；本次实测=%s", v.Observed)
+		return v
 	}
 	if v.Observed != v.Expected {
 		v.Note = "期望等级与实测等级不一致（两字段各自保留，不许合并）"

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Mr2109/zerg-swarm/agent/internal/enclosure"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
 )
 
@@ -93,7 +94,8 @@ func shortEngineName(p string) string {
 //   - Unit 空 = 孵化器（P1 单元化）尚未落地，无单元归属可报；
 //   - RssGb 是进程实测 RSS——逐进程 GTT 归因按 pid 匹配由 server 层接线（§8.7）；
 //   - EnclosureVerified=false 且 EnclosureNote 非空 = 孵化后**没核到**隔离证据（读不到）；
-//     Note 空 + false = 本端从未声称过隔离（裸 exec 路径），两者不是一回事（§6.9）。
+//     Note 空 + false = 本端从未声称过隔离（裸 exec 路径），两者不是一回事（§6.9）；
+//   - Enclosure nil = 本端从未声称过隔离（裸 exec 路径）；非 nil = 本次核验的等级声明（见下）。
 type EggObservation struct {
 	EggID      string // 注册表卵名（=驻留键，真 egg_id）
 	Model      string
@@ -119,6 +121,15 @@ type EggObservation struct {
 	EnclosureVerified bool
 	// EnclosureNote 核验留痕（一句话）：通过 = 结论 + 各项实测值；未核验 = 「未核验：<原因>」。
 	EnclosureNote string
+	// Enclosure 茧壁的**等级声明**（§4.2 四级 / §六 判据 8）：expected 与 observed 两个字段都在里面、
+	// 可不等（v1 旧档案未申报期望时 expected 如实留空）；形状与卵档案同一份（`enclosure.Verdict`），
+	// 不许在这里另造一套字段名。
+	//
+	// 与上面两个字段的关系（**兼容演进，不是平行真相**）：
+	//   - EnclosureVerified/EnclosureNote 是旧口径的布尔摘要（保留给既有消费侧，标 deprecated）；
+	//   - Enclosure 是同一个事实的完整形态（含 expected/observed/allowlist/checked_at）。
+	//   - Enclosure == nil ⇔ 本端从未声称过隔离（裸 exec 路径），此时旧两字段也恒为 false/空。
+	Enclosure *enclosure.Verdict
 }
 
 // enginePIDOf 取一枚托管卵的引擎进程 pid（只读）：
@@ -175,6 +186,7 @@ func (m *Manager) EggObservations() []EggObservation {
 			Watchdog:          sp.watchdog,
 			EnclosureVerified: sp.enclosureVerified,
 			EnclosureNote:     sp.enclosureNote,
+			Enclosure:         sp.enclosure,
 		}
 		if sp.entry != nil {
 			o.SchemaVersion = sp.entry.SchemaVersion

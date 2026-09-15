@@ -10,8 +10,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
+	"github.com/Mr2109/zerg-swarm/agent/internal/enclosure"
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 )
 
@@ -153,6 +155,80 @@ func TestEggEntries_EnclosureFieldsVisible(t *testing.T) {
 	}
 	if !strings.Contains(string(b0), `"enclosure_verified":false`) {
 		t.Errorf("未核验的卵也要如实给出 enclosure_verified=false，实得 %s", b0)
+	}
+}
+
+// 茧壁批 1（§4.2 等级 / §六 判据 8）：观测面必须把封闭等级**两字段分开**给出来 ——
+// expected（申报）与 observed（实读）各自出现、可不等。
+//
+// 反面就是这条用例要钉死的形态：只给一个布尔（旧 enclosure_verified）时，「申报 kernel 而实测 os」
+// 与「申报 kernel 而实测 kernel」在载荷上长得一模一样，读的人无从分辨 —— 判据 8 明写不许这样。
+func TestEggEntries_EnclosureLevelTwoFields(t *testing.T) {
+	at := time.Date(2026, 9, 16, 5, 0, 0, 0, time.UTC)
+	obs := []backend.EggObservation{
+		{EggID: "kernel-os", Enclosure: &enclosure.Verdict{
+			Expected:  enclosure.LevelKernel,
+			Observed:  enclosure.LevelOS,
+			Allowlist: []string{"net:loopback"},
+			CheckedAt: at,
+			Note:      "期望等级与实测等级不一致（两字段各自保留，不许合并）",
+		}},
+		{EggID: "unreadable", Enclosure: &enclosure.Verdict{
+			Expected: enclosure.LevelKernel, Observed: enclosure.LevelUnverified, CheckedAt: at,
+		}},
+		{EggID: "bare"}, // 裸 exec 路径（孵化开关关）：从未声称过隔离
+	}
+	got := eggEntries(obs, nil, nil)
+	if len(got) != 3 {
+		t.Fatalf("应装配 3 条，实得 %d", len(got))
+	}
+	// 装配器丢了整块（只留旧布尔）= 本用例要抓的第一种形态
+	if got[0].Enclosure == nil {
+		t.Fatalf("装配器必须把两字段等级声明透出去（缺失 = 判据 8 不成立），实得 %+v", got[0])
+	}
+	if got[0].Enclosure.Expected != enclosure.LevelKernel || got[0].Enclosure.Observed != enclosure.LevelOS {
+		t.Fatalf("两字段必须各自保留（合并成一个布尔就会丢一态），实得 %+v", got[0].Enclosure)
+	}
+
+	b, err := json.Marshal(got[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{
+		`"expected":"enclosed.kernel"`,        // 申报那一格
+		`"observed":"enclosed.os"`,            // 实测那一格（与 expected 不等，必须都在）
+		`"allowlist":["net:loopback"]`,        // 放行清单（额外放行了什么）
+		`"checked_at":"2026-09-16T05:00:00Z"`, // 有效期凭据
+		`"enclosure_verified":false`,          // 旧口径摘要仍在（兼容演进，不一次性打断消费侧）
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("载荷应含 %s，实得 %s", want, s)
+		}
+	}
+
+	// 读不到证据 ⇒ observed=unverified（**不是 none、也不是 enclosed.***），且 expected 仍在
+	b1, err := json.Marshal(got[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b1), `"observed":"unverified"`) {
+		t.Errorf("读不到必须如实给 observed=unverified（不许给 none / enclosed.*），实得 %s", b1)
+	}
+	if !strings.Contains(string(b1), `"expected":"enclosed.kernel"`) {
+		t.Errorf("实测读不到时申报那一格仍须在（两字段拆开的意义就在这里），实得 %s", b1)
+	}
+
+	// 从未声称过隔离 ⇒ 整块缺席（不编造），旧摘要照旧给出 false
+	b2, err := json.Marshal(got[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b2), `"enclosure":`) {
+		t.Errorf("裸 exec 路径从未声称过隔离，不得编造等级块，实得 %s", b2)
+	}
+	if !strings.Contains(string(b2), `"enclosure_verified":false`) {
+		t.Errorf("旧摘要仍须如实给出 false，实得 %s", b2)
 	}
 }
 
