@@ -33,6 +33,8 @@ type Server struct {
 	agent    *Agent
 	listener net.Listener
 	mux      *http.ServeMux
+	// events SSE 事件广播（P7 批 2：只读观测面；由 eventLoop 巡检驱动）。
+	events *eventHub
 }
 
 // Agent 应用核心，持有所有状态。
@@ -86,7 +88,7 @@ func NewAgent(machine, token string, reg *registry.Registry, backends *backend.M
 
 // NewServer 创建 HTTP 服务器。
 func NewServer(agent *Agent) *Server {
-	return &Server{agent: agent}
+	return &Server{agent: agent, events: newEventHub()}
 }
 
 // Start 启动推理队列 worker 和 HTTP 服务器。
@@ -109,9 +111,13 @@ func (s *Server) Start(host string, port int) error {
 	s.mux.HandleFunc("/services", s.handleServices)
 	// P7 批 1：卵清单只读端点（设计 §5.4 端点名定案 (a)）
 	s.mux.HandleFunc("/eggs", s.handleEggs)
+	// P7 批 2：SSE 只读事件流（状态迁移 + 排队深度 + ETA）
+	s.mux.HandleFunc("/events", s.handleEvents)
 
 	// 启动推理队列 worker
 	go s.inferLoop()
+	// P7 批 2：事件巡检（1s 低频、只读采样——不在热路径上）
+	go s.eventLoop(time.Second)
 
 	log.Printf("[server] Agent 启动: machine=%s, listener=%s", s.agent.machine, addr)
 	if err := http.Serve(listener, s.mux); err != nil && err != http.ErrServerClosed {
