@@ -133,3 +133,29 @@ func TestWatchdogWire_FastEngineNeverSamples(t *testing.T) {
 		t.Fatalf("有输出时看门狗不得采样，实得 %d 次", calls)
 	}
 }
+
+// 批 C（T6）：判词必须出现在观测面（/eggs 读的就是 EggObservations）。
+func TestWatchdogWire_ObservationSurfacesVerdict(t *testing.T) {
+	srv := silentEngine(t)
+	m, _, done := wireTestManager(t, portOf17(t, srv.URL), func(*subproc) func() (uint64, error) {
+		return func() (uint64, error) { return 42, nil } // 工时不动 ⇒ 提前判死
+	})
+	defer done()
+
+	_, err := m.InferForward(context.Background(), "m", "/v1/chat/completions", []byte(`{"model":"m"}`))
+	if err == nil {
+		t.Fatal("应判死")
+	}
+	var found *WatchdogObservation
+	for _, o := range m.EggObservations() {
+		if o.EggID == "m" {
+			found = o.Watchdog
+		}
+	}
+	if found == nil {
+		t.Fatal("观测面必须带 watchdog 判词（/eggs 就靠它给运维看）")
+	}
+	if found.Verdict != WatchdogStuckCPUStalled || found.Reason == "" || found.WindowIdx < 1 {
+		t.Fatalf("判词/理由/窗口号都要在：%+v", *found)
+	}
+}
