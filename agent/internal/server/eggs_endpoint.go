@@ -30,7 +30,7 @@ type servicesSlot struct {
 // eggs[] / egg_id / engine_impl / schema_version；缺的缺席，不编造）。
 type servicesEgg struct {
 	EggID         string   `json:"egg_id"`                // 卵名（注册表键，真 egg_id）
-	Unit          string   `json:"unit,omitempty"`        // 孵化器单元归属（P1 单元化落地前缺席）
+	Unit          string   `json:"unit,omitempty"`        // 孵化器单元归属（孵化路径才有；裸 exec 如实缺席）
 	EngineImpl    string   `json:"engine_impl,omitempty"` // 实际会执行的引擎实现名
 	Model         string   `json:"model,omitempty"`
 	State         string   `json:"state,omitempty"`
@@ -61,7 +61,11 @@ func eggEntries(obs []backend.EggObservation, attrib map[int]monitor.ProcAttrib,
 	out := make([]servicesEgg, 0, len(obs))
 	for _, o := range obs {
 		e := servicesEgg{
-			EggID:             o.EggID,
+			EggID: o.EggID,
+			// Unit 必须在这里透出去（缺陷 14 真机补漏）：backend 侧的 o.Unit 已填，
+			// 但装配器原先没赋这一格 ⇒ /eggs 里 unit 恒缺席。孵化路径才有单元名；
+			// 裸 exec 路径如实空（那是本端进程，不属任何单元）。
+			Unit:              o.Unit,
 			EngineImpl:        o.EngineImpl,
 			Model:             o.Model,
 			State:             o.State,
