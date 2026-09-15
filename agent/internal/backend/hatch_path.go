@@ -216,8 +216,8 @@ func (m *Manager) hatchStartLocked(modelName string, entry *registry.ModelEntry,
 		return errResponse(500, "failed to start backend", err.Error()), nil
 	}
 	sp.Unit = unit
-	log.Printf("[backend] 孵化单元已建: model=%s unit=%s port=%d 权重=%s 引擎=%s 工作目录=%s",
-		modelName, unit, port, spec.WeightPath, spec.EnginePathInSpace, spec.WorkDir)
+	log.Printf("[backend] 孵化单元已建: model=%s unit=%s port=%d 权重=%s 引擎=%s 工作目录=%s（空间内）可写绑定=%v",
+		modelName, unit, port, spec.WeightPath, spec.EnginePathInSpace, spec.WorkDir, spec.ExtraRWBinds)
 
 	// 就绪：沿用既有判据（§7.4 两层——端口/健康检查 + 一次真实生成的功能预检），不新造一套
 	if err := m.waitForReady(sp); err != nil {
