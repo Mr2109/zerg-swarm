@@ -1,0 +1,16 @@
+{
+  "egg_id": "bridge-multi-weight",
+  "schema_version": 1,
+  "engine_path_in_space": "/engine/bin/llama-server",
+  "engine_args": ["--port", "9200"],
+  "engine_roots": ["/opt/llama-k2/build"],
+  "weight_files": ["/data/models/big/model.gguf", "/data/models/big/mmproj.gguf"],
+  "extra_ro_binds": [
+    "/data/models/big/model.gguf:/models/model.gguf",
+    "/data/models/big/mmproj.gguf:/models/mmproj.gguf"
+  ],
+  "extra_rw_binds": ["/var/tmp/zerg-work/bridge-multi:/work"],
+  "work_dir": "/work",
+  "memlock_bytes": 0,
+  "bridge_note": "决策面字段（茧壁不消费）：两侧都必须忽略未知键，不许拿它当必需项"
+}

@@ -1,0 +1,387 @@
+=== 茧壁迁移桥（任务 2'.3）真跑回执 — 2026-09-16（批 2' 第三轮）===
+本机: Darwin 25.5.0 arm64 · rustc 1.98.1 (48a229cea 2026-09-01) · cargo 1.98.1 (797e8a9bc 2026-08-05) · go version go1.26.4 darwin/arm64
+
+--- 0) 本轮先修的缺陷：argv[0] 不是可执行名 ---
+上一份回执 wall/evidence-plan-cli-20260916.txt 第 6 节里，plan 的 argv 第 0 项是 `--ro-bind`：
+`argv` 被当成了「bwrap 参数序列」，而冻结接口与 `run` 的实现都把它当**完整命令行**
+（`run` = `Command::new(argv[0])`；退出码表里的「可执行不在 PATH ⇒ 2」也只有这时才成立）
+⇒ 后果是 `run` 在任何 Linux 机器上都只能以「起不来」收场，而 `plan` 的载荷看起来完全正常。
+修法：`wall/src/platform/linux.rs` 的 `plan()` 在参数序列前补 `bwrap`（**只此一处差异**，
+两侧注释互相点名）；新增用例 `argv0_is_the_executable_not_a_flag` 钉住它。
+
+--- 1) 门禁真跑：python3 scripts/compare-wall-argv.py --self-test --evidence … ---
+=== 茧壁迁移桥（任务 2'.3）：Go hatch.BuildBwrapArgv ↔ zerg-wall plan ===
+配方目录：<repo>/wall/testdata/bridge-specs（5 份：ok 3 / reject 2）
+茧壁二进制：<repo>/wall/target/debug/zerg-wall
+绿    ok-01-full.json                            60 项逐条一致（含可执行名共 61 项）
+绿    ok-02-minimal.json                         36 项逐条一致（含可执行名共 37 项）
+绿    ok-03-multi-weight-no-env.json             52 项逐条一致（含可执行名共 53 项）
+绿    reject-01-weight-not-mounted.json          两侧都拒（茧壁 rc=2；Go：权重文件 "/data/models/ghost/model.gguf" 没有对应的只读绑定（缺 "/data/models/ghost/model.gguf:/models/model.gguf"）——拒孵：声明了却没挂进空间，引擎在 /models/model.gguf 下根本找不到它）
+绿    reject-02-unknown-schema.json              两侧都拒（茧壁 rc=2；Go：卵声明格式版本 99 认不得（本端认得 1）——拒孵，不按新格式猜着跑）
+
+--- 判据自检（先证这面镜子能红）---
+  [自检 ok] ① 两侧一致 ⇒ 绿
+  [自检 ok] ② 中段漂移 ⇒ 红
+  [自检 ok] ③ 少一项 ⇒ 红
+  [自检 ok] ④ 可执行名不对 ⇒ 红
+  [自检 ok] ⑤ 可执行名以 '-' 开头 ⇒ 红
+  [自检 ok] ⑥ 空 argv ⇒ 红
+  [自检 ok] ① 真实产物 ok-01-full.json：原样 ⇒ 绿
+  [自检 ok] ② 真实产物 ok-01-full.json：茧壁中段改坏 ⇒ 红
+  [自检 ok] ③ 真实产物 ok-01-full.json：茧壁可执行名改坏 ⇒ 红
+对拍全绿：5 份配方两侧 argv 逐条一致
+
+--- 逐份明细（两侧 argv 原文）---
+
+[绿] ok-01-full.json
+  Go   ：60 项
+      0 --ro-bind
+      1 /usr
+      2 /usr
+      3 --symlink
+      4 usr/bin
+      5 /bin
+      6 --symlink
+      7 usr/sbin
+      8 /sbin
+      9 --symlink
+     10 usr/lib
+     11 /lib
+     12 --symlink
+     13 usr/lib64
+     14 /lib64
+     15 --proc
+     16 /proc
+     17 --dev
+     18 /dev
+     19 --tmpfs
+     20 /tmp
+     21 --ro-bind
+     22 /sys
+     23 /sys
+     24 --dir
+     25 /models
+     26 --ro-bind
+     27 /opt/llama/build/bin
+     28 /engine
+     29 --ro-bind
+     30 /opt/models/demo/model.gguf
+     31 /models/model.gguf
+     32 --ro-bind
+     33 /opt/llama/build/lib
+     34 /libs/bin
+     35 --bind
+     36 /var/tmp/zerg-work/bridge-full
+     37 /work
+     38 --dev-bind
+     39 /dev/kfd
+     40 /dev/kfd
+     41 --dev-bind
+     42 /dev/dri/renderD128
+     43 /dev/dri/renderD128
+     44 --unshare-pid
+     45 --die-with-parent
+     46 --chdir
+     47 /work
+     48 --
+     49 /bin/sh
+     50 -c
+     51 export HIP_VISIBLE_DEVICES='0' LD_LIBRARY_PATH='/libs/bin'; exec "$@"
+     52 zerg-egg
+     53 /engine/bin/llama-server
+     54 --host
+     55 127.0.0.1
+     56 --port
+     57 9100
+     58 --model
+     59 /models/model.gguf
+  茧壁 ：rc=0
+      0 bwrap
+      1 --ro-bind
+      2 /usr
+      3 /usr
+      4 --symlink
+      5 usr/bin
+      6 /bin
+      7 --symlink
+      8 usr/sbin
+      9 /sbin
+     10 --symlink
+     11 usr/lib
+     12 /lib
+     13 --symlink
+     14 usr/lib64
+     15 /lib64
+     16 --proc
+     17 /proc
+     18 --dev
+     19 /dev
+     20 --tmpfs
+     21 /tmp
+     22 --ro-bind
+     23 /sys
+     24 /sys
+     25 --dir
+     26 /models
+     27 --ro-bind
+     28 /opt/llama/build/bin
+     29 /engine
+     30 --ro-bind
+     31 /opt/models/demo/model.gguf
+     32 /models/model.gguf
+     33 --ro-bind
+     34 /opt/llama/build/lib
+     35 /libs/bin
+     36 --bind
+     37 /var/tmp/zerg-work/bridge-full
+     38 /work
+     39 --dev-bind
+     40 /dev/kfd
+     41 /dev/kfd
+     42 --dev-bind
+     43 /dev/dri/renderD128
+     44 /dev/dri/renderD128
+     45 --unshare-pid
+     46 --die-with-parent
+     47 --chdir
+     48 /work
+     49 --
+     50 /bin/sh
+     51 -c
+     52 export HIP_VISIBLE_DEVICES='0' LD_LIBRARY_PATH='/libs/bin'; exec "$@"
+     53 zerg-egg
+     54 /engine/bin/llama-server
+     55 --host
+     56 127.0.0.1
+     57 --port
+     58 9100
+     59 --model
+     60 /models/model.gguf
+
+[绿] ok-02-minimal.json
+  Go   ：36 项
+      0 --ro-bind
+      1 /usr
+      2 /usr
+      3 --symlink
+      4 usr/bin
+      5 /bin
+      6 --symlink
+      7 usr/sbin
+      8 /sbin
+      9 --symlink
+     10 usr/lib
+     11 /lib
+     12 --symlink
+     13 usr/lib64
+     14 /lib64
+     15 --proc
+     16 /proc
+     17 --dev
+     18 /dev
+     19 --tmpfs
+     20 /tmp
+     21 --ro-bind
+     22 /sys
+     23 /sys
+     24 --dir
+     25 /models
+     26 --dev-bind
+     27 /dev/kfd
+     28 /dev/kfd
+     29 --dev-bind
+     30 /dev/dri/renderD128
+     31 /dev/dri/renderD128
+     32 --unshare-pid
+     33 --die-with-parent
+     34 --
+     35 /engine/bin/llama-server
+  茧壁 ：rc=0
+      0 bwrap
+      1 --ro-bind
+      2 /usr
+      3 /usr
+      4 --symlink
+      5 usr/bin
+      6 /bin
+      7 --symlink
+      8 usr/sbin
+      9 /sbin
+     10 --symlink
+     11 usr/lib
+     12 /lib
+     13 --symlink
+     14 usr/lib64
+     15 /lib64
+     16 --proc
+     17 /proc
+     18 --dev
+     19 /dev
+     20 --tmpfs
+     21 /tmp
+     22 --ro-bind
+     23 /sys
+     24 /sys
+     25 --dir
+     26 /models
+     27 --dev-bind
+     28 /dev/kfd
+     29 /dev/kfd
+     30 --dev-bind
+     31 /dev/dri/renderD128
+     32 /dev/dri/renderD128
+     33 --unshare-pid
+     34 --die-with-parent
+     35 --
+     36 /engine/bin/llama-server
+
+[绿] ok-03-multi-weight-no-env.json
+  Go   ：52 项
+      0 --ro-bind
+      1 /usr
+      2 /usr
+      3 --symlink
+      4 usr/bin
+      5 /bin
+      6 --symlink
+      7 usr/sbin
+      8 /sbin
+      9 --symlink
+     10 usr/lib
+     11 /lib
+     12 --symlink
+     13 usr/lib64
+     14 /lib64
+     15 --proc
+     16 /proc
+     17 --dev
+     18 /dev
+     19 --tmpfs
+     20 /tmp
+     21 --ro-bind
+     22 /sys
+     23 /sys
+     24 --dir
+     25 /models
+     26 --ro-bind
+     27 /opt/llama-k2/build
+     28 /engine
+     29 --ro-bind
+     30 /data/models/big/model.gguf
+     31 /models/model.gguf
+     32 --ro-bind
+     33 /data/models/big/mmproj.gguf
+     34 /models/mmproj.gguf
+     35 --bind
+     36 /var/tmp/zerg-work/bridge-multi
+     37 /work
+     38 --dev-bind
+     39 /dev/kfd
+     40 /dev/kfd
+     41 --dev-bind
+     42 /dev/dri/renderD128
+     43 /dev/dri/renderD128
+     44 --unshare-pid
+     45 --die-with-parent
+     46 --chdir
+     47 /work
+     48 --
+     49 /engine/bin/llama-server
+     50 --port
+     51 9200
+  茧壁 ：rc=0
+      0 bwrap
+      1 --ro-bind
+      2 /usr
+      3 /usr
+      4 --symlink
+      5 usr/bin
+      6 /bin
+      7 --symlink
+      8 usr/sbin
+      9 /sbin
+     10 --symlink
+     11 usr/lib
+     12 /lib
+     13 --symlink
+     14 usr/lib64
+     15 /lib64
+     16 --proc
+     17 /proc
+     18 --dev
+     19 /dev
+     20 --tmpfs
+     21 /tmp
+     22 --ro-bind
+     23 /sys
+     24 /sys
+     25 --dir
+     26 /models
+     27 --ro-bind
+     28 /opt/llama-k2/build
+     29 /engine
+     30 --ro-bind
+     31 /data/models/big/model.gguf
+     32 /models/model.gguf
+     33 --ro-bind
+     34 /data/models/big/mmproj.gguf
+     35 /models/mmproj.gguf
+     36 --bind
+     37 /var/tmp/zerg-work/bridge-multi
+     38 /work
+     39 --dev-bind
+     40 /dev/kfd
+     41 /dev/kfd
+     42 --dev-bind
+     43 /dev/dri/renderD128
+     44 /dev/dri/renderD128
+     45 --unshare-pid
+     46 --die-with-parent
+     47 --chdir
+     48 /work
+     49 --
+     50 /engine/bin/llama-server
+     51 --port
+     52 9200
+
+[绿] reject-01-weight-not-mounted.json
+  Go   ：拒 —— 权重文件 "/data/models/ghost/model.gguf" 没有对应的只读绑定（缺 "/data/models/ghost/model.gguf:/models/model.gguf"）——拒孵：声明了却没挂进空间，引擎在 /models/model.gguf 下根本找不到它
+  茧壁 ：rc=2
+
+[绿] reject-02-unknown-schema.json
+  Go   ：拒 —— 卵声明格式版本 99 认不得（本端认得 1）——拒孵，不按新格式猜着跑
+  茧壁 ：rc=2
+
+--- 制品与源码 sha256（本机制品对拍时用于复核）---
+8bc8689a207dda90811acfd34ea512ff9a2eb6451c44a9e7a79559eff08feb75  <repo>/wall/target/debug/zerg-wall
+d7870b42462056febc50aded49823c8391e91cfbdf816fe4c7ee97304f2ead0f  <repo>/wall/src/platform/linux.rs
+83b3c5ccf8ddd7670b513166068bd3b6668521b78a9a645c42b4c947300a85d0  <repo>/wall/tests/plan_linux.rs
+3930e1b732714cfcd31ad90f8b27b2a8463d9fab3f389d0ca0a4c246d36399d7  <repo>/agent/internal/hatch/hatch.go
+35f856ce2c427beaeafbf699895606dd9578f3790c06a14210093f4c2bf8ceae  <repo>/agent/internal/hatch/wall_bridge_test.go
+deb173fdcc5961454624256ec11b5022757e1a3ac007c429ebab1a7e2c7631b1  <repo>/scripts/compare-wall-argv.py
+
+--- 2) 变异验证（两侧各一次；红 ⇒ 还原 ⇒ sha 逐字节一致 ⇒ 复跑绿）---
+[M1 Rust 侧] 拿掉 `--die-with-parent`（wall/src/platform/linux.rs）
+    变异后：红    ok-01-full.json                            长度不同：Go 60 项 / 茧壁 59 项（去掉可执行名后）
+    变异后：红    ok-02-minimal.json                         长度不同：Go 36 项 / 茧壁 35 项（去掉可执行名后）
+    变异后：红    ok-03-multi-weight-no-env.json             长度不同：Go 52 项 / 茧壁 51 项（去掉可执行名后）
+    变异后：!! 对拍不一致 3 份（见上）
+    还原后：对拍全绿：5 份配方两侧 argv 逐条一致
+    还原 sha256 = d7870b42462056febc50aded49823c8391e91cfbdf816fe4c7ee97304f2ead0f（与变异前逐字节一致）
+[M2 Go 侧] 对调 `--proc /proc` 与 `--dev /dev`（agent/internal/hatch/hatch.go）
+    变异后：红    ok-01-full.json                            第 15 项不同：Go '--dev' ≠ 茧壁 '--proc'
+    变异后：红    ok-02-minimal.json                         第 15 项不同：Go '--dev' ≠ 茧壁 '--proc'
+    变异后：红    ok-03-multi-weight-no-env.json             第 15 项不同：Go '--dev' ≠ 茧壁 '--proc'
+    变异后：!! 对拍不一致 3 份（见上）
+    还原后：对拍全绿：5 份配方两侧 argv 逐条一致
+    还原 sha256 = 3930e1b732714cfcd31ad90f8b27b2a8463d9fab3f389d0ca0a4c246d36399d7（与变异前逐字节一致）
+
+--- 3) 制品与源码 sha256（复核用）---
+8bc8689a207dda90811acfd34ea512ff9a2eb6451c44a9e7a79559eff08feb75  wall/target/debug/zerg-wall
+d7870b42462056febc50aded49823c8391e91cfbdf816fe4c7ee97304f2ead0f  wall/src/platform/linux.rs
+18c42cae7ee7d60c2e605fcb657138620149a319721d1e51611617b5a42582ec  wall/src/spec.rs
+83b3c5ccf8ddd7670b513166068bd3b6668521b78a9a645c42b4c947300a85d0  wall/tests/plan_linux.rs
+3930e1b732714cfcd31ad90f8b27b2a8463d9fab3f389d0ca0a4c246d36399d7  agent/internal/hatch/hatch.go
+35f856ce2c427beaeafbf699895606dd9578f3790c06a14210093f4c2bf8ceae  agent/internal/hatch/wall_bridge_test.go
+deb173fdcc5961454624256ec11b5022757e1a3ac007c429ebab1a7e2c7631b1  scripts/compare-wall-argv.py
+

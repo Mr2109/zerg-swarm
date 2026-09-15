@@ -1,0 +1,6 @@
+{
+  "egg_id": "bridge-reject-weight-not-mounted",
+  "schema_version": 1,
+  "engine_path_in_space": "/engine/bin/llama-server",
+  "weight_files": ["/data/models/ghost/model.gguf"]
+}
