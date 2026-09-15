@@ -162,6 +162,12 @@ func (m *Manager) stopVictimProcess(cmd *exec.Cmd, sp *subproc) {
 	if sp != nil && m.stopHook != nil {
 		m.stopHook(sp)
 	}
+	// 批 2：孵化路径的卵没有本端进程句柄（cmd 为 nil）⇒ 收卵 = 停单元（Collect 幂等）。
+	// 开关关时 sp.Unit 恒空 ⇒ 判据与原来逐字等价（ReapIdle / 淘汰 / 定向卸载三条路都经这里）。
+	if sp != nil && sp.Unit != "" {
+		m.collectUnit(sp.Unit)
+		return
+	}
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
