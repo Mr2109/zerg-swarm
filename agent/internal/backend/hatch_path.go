@@ -274,12 +274,21 @@ func (m *Manager) verifyEnclosure(unit string) {
 
 // collectUnit 收卵：停单元（幂等；systemctl --user stop）。
 // 幂等语义在 hatch 包（二次停视为成功）；这里只如实记日志——收不掉必须留痕。
+//
+// 收完**再问一次**单元是否真在跑（单元状态不是凭据、退出码也不是，§6.9 同一精神：
+// 「命令成功返回」只说明命令跑完了）——它还在跑就必须留痕，不许把「停命令成功」当「收干净了」。
 func (m *Manager) collectUnit(unit string) {
 	if strings.TrimSpace(unit) == "" {
 		return
 	}
-	if err := m.hatcherImpl().Collect(context.Background(), unit); err != nil {
+	h := m.hatcherImpl()
+	ctx := context.Background()
+	if err := h.Collect(ctx, unit); err != nil {
 		log.Printf("[backend] 收卵失败: unit=%s: %v", unit, err)
+		return
+	}
+	if active, err := h.Active(ctx, unit); err == nil && active {
+		log.Printf("[backend] ⚠ 收卵后单元仍在跑: unit=%s —— §6.9：Collect 报成功不等于收干净了", unit)
 		return
 	}
 	log.Printf("[backend] 收卵完成: unit=%s", unit)
