@@ -175,3 +175,18 @@ func TestExternalOccupants_ExcludesManaged(t *testing.T) {
 		t.Fatalf("应只列出非托管 pid 7777，实得 %v（托管项 %v 被排除；卵 %v）", listed, managed, obs)
 	}
 }
+
+// 缺陷 14 真机补漏：装配器必须把 backend 快照里的 Unit 透出去。
+//
+// 背景：f6ab0e64 只改了 backend 侧（observe.go 填 o.Unit），而载荷那一格在 eggEntries()
+// 里从未被赋值 ⇒ 真机 /eggs 里 unit 恒缺席（用线上件孵一枚卵实测：gtt_gb 有了、unit 没有）。
+func TestEggEntries_UnitPassthrough(t *testing.T) {
+	obs := []backend.EggObservation{{EggID: "e1", Unit: "zerg-e1.service", State: "ready"}}
+	got := eggEntries(obs, nil, nil)
+	if len(got) != 1 {
+		t.Fatalf("应装配出 1 条，实得 %d", len(got))
+	}
+	if got[0].Unit != "zerg-e1.service" {
+		t.Fatalf("unit 必须透出装配器，实得 %q（整条=%+v）", got[0].Unit, got[0])
+	}
+}
