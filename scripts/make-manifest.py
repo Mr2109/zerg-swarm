@@ -15,6 +15,7 @@
       （宁可让发布失败，也不能发出升级器读不懂的清单）
 """
 import datetime
+import subprocess
 import hashlib
 import json
 import os
@@ -33,6 +34,15 @@ EXPECTED = {
     "zerg-core-linux-amd64",
     "zerg-agent-linux-amd64",
 }
+
+
+def _git(args: list) -> str:
+    """在仓内跑一条只读 git 命令；任何失败都返回空串（如实缺席，不编造值）。"""
+    try:
+        out = subprocess.run(["git"] + args, capture_output=True, text=True, cwd=os.path.dirname(os.path.abspath(__file__)) + "/..")
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except Exception:
+        return ""
 
 
 def main() -> int:
@@ -81,6 +91,12 @@ def main() -> int:
         "commit": commit,
         "build_time": build_time,
         "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        # 新鲜度（2026-09-16 加固③，依据 Debian apt.conf(5)：对"可能滞后的分发"是**放宽窗口**而非关掉检查）：
+        # source_sha = 产出这批资产时的本地提交；dirty = 当时工作树是否有未提交改动。
+        # 消费侧看到 source_sha 与当前分支头不一致、或 generated_at 过旧 ⇒ **只告警不拒绝**（标 stale）。
+        "source_sha": _git(["rev-parse", "HEAD"]),
+        "source_sha_short": _git(["rev-parse", "--short", "HEAD"]),
+        "dirty": bool(_git(["status", "--porcelain"])),
         "artifacts": arts,
     }
     out = os.path.join(d, "manifest.json")
