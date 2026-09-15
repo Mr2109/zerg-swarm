@@ -158,8 +158,17 @@ func TestWatchdog_DisabledFallsBackToFixedTimeout(t *testing.T) {
 // 配置口径：默认与覆盖（含沙箱压秒用的小数秒）。
 func TestWatchdogConfigFromEnv(t *testing.T) {
 	def := watchdogConfigFromEnv(func(string) string { return "" })
-	if !def.Enabled || def.Window != 90*time.Second || def.MaxWindows != 5 || def.Sample != 5*time.Second {
-		t.Fatalf("默认口径应为 开/90s/5/5s，实得 %+v", def)
+	if def.Enabled || def.Window != 90*time.Second || def.MaxWindows != 5 || def.Sample != 5*time.Second {
+		t.Fatalf("默认口径应为 **关**/90s/5/5s（显式开同孵化先例），实得 %+v", def)
+	}
+	on := watchdogConfigFromEnv(func(k string) string {
+		if k == "ZERG_WATCHDOG" {
+			return "1"
+		}
+		return ""
+	})
+	if !on.Enabled {
+		t.Fatal("ZERG_WATCHDOG=1 应开")
 	}
 	env := map[string]string{
 		"ZERG_WATCHDOG":             "0",
