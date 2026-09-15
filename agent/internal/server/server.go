@@ -107,6 +107,8 @@ func (s *Server) Start(host string, port int) error {
 	s.mux.HandleFunc("/infer/reload", s.handleReload)
 	// P7：只读可观测面（基线与借用租约）——设计 §11 M9
 	s.mux.HandleFunc("/services", s.handleServices)
+	// P7 批 1：卵清单只读端点（设计 §5.4 端点名定案 (a)）
+	s.mux.HandleFunc("/eggs", s.handleEggs)
 
 	// 启动推理队列 worker
 	go s.inferLoop()
