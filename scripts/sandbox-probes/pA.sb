@@ -1,0 +1,7 @@
+(version 1)
+(deny default)
+(allow process*)
+(allow sysctl-read)
+(allow mach-lookup)
+(allow file-read*)
+(allow file-write* (subpath "/private/tmp/ipc-test"))
