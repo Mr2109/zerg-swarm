@@ -116,6 +116,10 @@ func (h Hatcher) VerifyEnclosure(pid int) (EnclosureReport, error) {
 	if err != nil {
 		return EnclosureReport{}, fmt.Errorf("读 /proc/%d/mountinfo 失败：%w", pid, err)
 	}
+	// 「读到了但一行都认不得」也算**读不到**（空报告会被上层误判成「实读且不符」，两者的处置不同）。
+	if err := mountinfoParseable(string(b)); err != nil {
+		return EnclosureReport{}, fmt.Errorf("pid=%d：%w", pid, err)
+	}
 	rep := CheckEnclosure(string(b))
 	// 进程视图隔离的间接证据：空间内 /proc 里进程数极少（宿主宿主看不到）
 	if n, err := countProcs(pid); err == nil {

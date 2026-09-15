@@ -332,31 +332,170 @@ func TestCollectOutcome_IdempotentButHonest(t *testing.T) {
 
 // 封闭性核验判据（§6.9）：以 X3 实测真值形态为样例。
 func TestCheckEnclosure_Verdict(t *testing.T) {
-	// 达标样例：/models ro、无 /data 无 /home、/tmp 是 tmpfs
-	ok := CheckEnclosure(`25 30 0:23 / / rw,relatime - tmpfs tmpfs rw
-30 25 8:1 /data/models/k2 /models ro,relatime - ext4 /dev/nvme0n1p7 ro
-31 25 0:5 / /tmp rw - tmpfs tmpfs rw`)
-	ok.NewPIDNamespace = true
+	// mountinfo 样例（第 6 段 = 每挂载点选项；第 5 段 = 挂载点）
+	const (
+		rootLine = `25 30 0:23 / / rw,relatime - tmpfs tmpfs rw`
+		tmpLine  = `31 25 0:5 / /tmp rw - tmpfs tmpfs rw`
+		modelsRO = `30 25 8:1 /data/models/k2 /models ro,relatime - ext4 /dev/nvme0n1p7 ro`
+		workRW   = `32 25 8:1 /home/g01/.zerg/work/k2 /work rw,nosuid,nodev - ext4 /dev/nvme0n1p7 rw`
+		kvRW     = `33 25 8:1 /home/g01/.zerg/kvdisk/k2 /kvdisk rw,nosuid,nodev - ext4 /dev/nvme0n1p7 rw`
+	)
+	// 进程视图那一项（NewPIDNamespace）不入 mountinfo，由调用方按空间内实际进程数置位。
+	verdict := func(lines ...string) EnclosureReport {
+		rep := CheckEnclosure(strings.Join(lines, "\n"))
+		rep.NewPIDNamespace = true
+		return rep
+	}
+
+	// 达标样例：/models ro、无 /data 无 /home、/tmp 是 tmpfs、/work 可写；该卵没有 KV 盘 ⇒ 通过
+	ok := verdict(rootLine, modelsRO, tmpLine, workRW)
 	if !ok.Enclosed() {
 		t.Fatalf("达标样例应判通过，实得 %s", ok)
 	}
+	if len(ok.Failures()) != 0 {
+		t.Errorf("通过时不应列出任何不符项，实得 %v", ok.Failures())
+	}
+	// 有 KV 盘且可写 ⇒ 仍通过（「没这个落点」与「有且可写」都算过）
+	if okKV := verdict(rootLine, modelsRO, tmpLine, workRW, kvRW); !okKV.Enclosed() {
+		t.Fatalf("KV 盘可写时也应判通过，实得 %s", okKV)
+	}
+
 	// 漏：/data 可见（正是"静默失效"的形态）
-	leak := CheckEnclosure(`25 30 0:23 / / rw,relatime - tmpfs tmpfs rw
-30 25 8:1 /data /data ro,relatime - ext4 /dev/nvme0n1p7 ro
-31 25 0:5 / /tmp rw - tmpfs tmpfs rw`)
-	leak.NewPIDNamespace = true
+	leak := verdict(rootLine,
+		`30 25 8:1 /data /data ro,relatime - ext4 /dev/nvme0n1p7 ro`, tmpLine, workRW)
 	if leak.Enclosed() {
 		t.Fatalf("/data 可见时不得判通过，实得 %s", leak)
 	}
 	if leak.DataHidden {
 		t.Fatal("/data 出现时必须标记为未隐藏")
 	}
+	if !strings.Contains(strings.Join(leak.Failures(), "；"), "/data") {
+		t.Errorf("不符项应点名 /data，实得 %v", leak.Failures())
+	}
+
 	// 权重不是只读 ⇒ 不得判通过
-	notro := CheckEnclosure(`25 30 0:23 / / rw - tmpfs tmpfs rw
-30 25 8:1 /data/models/k2 /models rw,relatime - ext4 /dev/nvme0n1p7 rw
-31 25 0:5 / /tmp rw - tmpfs tmpfs rw`)
-	notro.NewPIDNamespace = true
+	notro := verdict(rootLine,
+		`30 25 8:1 /data/models/k2 /models rw,relatime - ext4 /dev/nvme0n1p7 rw`, tmpLine, workRW)
 	if notro.Enclosed() {
 		t.Fatal("权重非只读时不得判通过")
+	}
+	if !strings.Contains(strings.Join(notro.Failures(), "；"), "/models 不是只读") {
+		t.Errorf("不符项应点名 /models，实得 %v", notro.Failures())
+	}
+
+	// /home 漏进来 ⇒ 不通过
+	home := verdict(rootLine, modelsRO, tmpLine, workRW,
+		`34 25 8:1 /home /home ro,relatime - ext4 /dev/nvme0n1p7 ro`)
+	home.NewPIDNamespace = true
+	if home.Enclosed() {
+		t.Fatal("/home 可见时不得判通过")
+	}
+}
+
+// /work 与 /kvdisk 的可写性判据（三态口径里「实读且不符」的形态之一，2026-09-15 拍）：
+// **/work 必须见到且可写**（每枚孵出来的卵都有工作目录：映射侧恒填 /work + 可写绑定）；
+// **/kvdisk 没见到就是「该卵没有这个落点」**（缺省可写），见到却不可写才算不符。
+func TestCheckEnclosure_WritableLandings(t *testing.T) {
+	const (
+		rootLine = `25 30 0:23 / / rw,relatime - tmpfs tmpfs rw`
+		tmpLine  = `31 25 0:5 / /tmp rw - tmpfs tmpfs rw`
+		modelsRO = `30 25 8:1 /data/models/k2 /models ro,relatime - ext4 /dev/nvme0n1p7 ro`
+	)
+	verdict := func(lines ...string) EnclosureReport {
+		rep := CheckEnclosure(strings.Join(lines, "\n"))
+		rep.NewPIDNamespace = true
+		return rep
+	}
+	workLine := func(opts string) string {
+		return `32 25 8:1 /home/g01/.zerg/work/k2 /work ` + opts + ` - ext4 /dev/nvme0n1p7 rw`
+	}
+	kvLine := func(opts string) string {
+		return `33 25 8:1 /home/g01/.zerg/kvdisk/k2 /kvdisk ` + opts + ` - ext4 /dev/nvme0n1p7 rw`
+	}
+
+	t.Run("/work 挂成只读 ⇒ 不符", func(t *testing.T) {
+		rep := verdict(rootLine, modelsRO, tmpLine, workLine("ro,relatime"))
+		if rep.WorkReadWrite {
+			t.Fatal("/work 是只读时必须标记为不可写")
+		}
+		if rep.Enclosed() {
+			t.Fatalf("/work 不可写时不得判通过，实得 %s", rep)
+		}
+		if !strings.Contains(strings.Join(rep.Failures(), "；"), "/work") {
+			t.Errorf("不符项应点名 /work，实得 %v", rep.Failures())
+		}
+	})
+
+	t.Run("/work 缺席 ⇒ 不符（那条可写绑定没生效）", func(t *testing.T) {
+		rep := verdict(rootLine, modelsRO, tmpLine)
+		if rep.WorkReadWrite || rep.Enclosed() {
+			t.Fatalf("见不到 /work 时必须判不符（不是「该卵没工作目录」而是绑定没生效），实得 %s", rep)
+		}
+	})
+
+	t.Run("/work 可写按整词认（rw,nosuid,nodev 算可写）", func(t *testing.T) {
+		if rep := verdict(rootLine, modelsRO, tmpLine, workLine("rw,nosuid,nodev")); !rep.Enclosed() {
+			t.Fatalf("rw,nosuid,nodev 必须算可写，实得 %s", rep)
+		}
+	})
+
+	t.Run("ro 与 rw 同时出现 ⇒ 从严按只读", func(t *testing.T) {
+		if rep := verdict(rootLine, modelsRO, tmpLine, workLine("ro,rw")); rep.WorkReadWrite {
+			t.Fatalf("ro 与 rw 并存这种畸形必须按只读处理，实得 %s", rep)
+		}
+	})
+
+	t.Run("/kvdisk 挂成只读 ⇒ 不符", func(t *testing.T) {
+		rep := verdict(rootLine, modelsRO, tmpLine, workLine("rw,relatime"), kvLine("ro,relatime"))
+		if rep.KVDiskReadWrite || rep.Enclosed() {
+			t.Fatalf("KV 盘只读时不得判通过（写盘会静默失败），实得 %s", rep)
+		}
+	})
+
+	t.Run("/kvdisk 缺席 ⇒ 该卵没有这个落点，不算不符", func(t *testing.T) {
+		rep := verdict(rootLine, modelsRO, tmpLine, workLine("rw,relatime"))
+		if !rep.KVDiskReadWrite {
+			t.Fatal("没见到 /kvdisk 时应按「该卵无此落点」处理，不得当成不符")
+		}
+	})
+}
+
+// 「读到了但一行都认不得」= 读不到，**不是**不符：空/垃圾 mountinfo 必须在读的那一层报错，
+// 不许拿一份零值报告当「实读结论」（否则上层按「不符」收卵拒孵，而真相是「没读到」）。
+func TestMountinfoParseable(t *testing.T) {
+	for _, txt := range []string{"", "   \n\n", "这不是 mountinfo\n随便两行\n"} {
+		if err := mountinfoParseable(txt); err == nil {
+			t.Errorf("文本 %q 一行都解析不出来，必须按「读不到」报错", txt)
+		}
+	}
+	if err := mountinfoParseable("25 30 0:23 / / rw,relatime - tmpfs tmpfs rw\n"); err != nil {
+		t.Errorf("正常 mountinfo 应算读到了，实得 %v", err)
+	}
+}
+
+// Failures 与 Enclosed 必须同源：不符项清单为空 ⇔ 判通过；清单点名每一项不符（拒孵理由靠它写清）。
+func TestEnclosureReport_Failures(t *testing.T) {
+	var none EnclosureReport // 零值：七项全不符
+	fails := none.Failures()
+	if len(fails) != 7 {
+		t.Fatalf("零值 report 应列出 7 项不符，实得 %d：%v", len(fails), fails)
+	}
+	for _, want := range []string{"/models", "/data", "/home", "/tmp", "/proc", "/work", "/kvdisk"} {
+		if !strings.Contains(strings.Join(fails, "；"), want) {
+			t.Errorf("不符清单应含 %q，实得 %v", want, fails)
+		}
+	}
+	if none.Enclosed() {
+		t.Fatal("零值 report 不得判通过")
+	}
+	full := EnclosureReport{
+		ModelsReadOnly: true, DataHidden: true, HomeHidden: true,
+		TmpIsTmpfs: true, NewPIDNamespace: true, WorkReadWrite: true, KVDiskReadWrite: true,
+	}
+	if !full.Enclosed() || len(full.Failures()) != 0 {
+		t.Fatalf("七项全过必须判通过且不符清单为空，实得 %s / %v", full, full.Failures())
+	}
+	if !strings.Contains(full.String(), "封闭性核验通过") {
+		t.Errorf("通过的结论话术应可读，实得 %q", full.String())
 	}
 }
