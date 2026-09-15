@@ -328,9 +328,7 @@ func (s *Server) handleInferRequest(req inferReq) {
 		if loadErr != nil || result == nil || result["ok"] == false {
 			status := 500
 			if result != nil {
-				if st, ok := result["status"].(float64); ok {
-					status = int(st)
-				}
+				status = responseStatus(result, status)
 			}
 			req.resultCh <- inferResult{
 				status: status,
@@ -569,14 +567,38 @@ func (s *Server) handleLoad(w http.ResponseWriter, r *http.Request) {
 
 	status := 200
 	if result["ok"] == false {
-		if st, ok := result["status"].(float64); ok {
-			status = int(st)
-		} else {
-			status = 500
-		}
+		status = responseStatus(result, 500)
 	}
 
 	writeJSON(w, status, result)
+}
+
+// responseStatus 从 backend 的失败响应体里取它自称的 status 码（取不到 / 认不得 ⇒ fallback）。
+//
+// ⚠ 这里曾是一条**真机缺陷**（2026-09-15 第一枚卵实测 · 报告 §12 缺陷 7）：backend.errResponse
+// 用 **int** 装 status（`map[string]interface{}{"status": 507}`），而本文件原先只断言
+// `.(float64)`（那是 JSON 反序列化后的形态，不是内进程 map 的形态）⇒ 断言恒失败 ⇒
+// **HTTP 状态码恒为 500**，而 body 里明明写着 `"status":507`/`502`（拒孵闸门码与 HTTP 行自相矛盾）。
+//
+// 兼容 int / float64 / int64 / 数字字符串四种形态：**本函数是唯一的映射点**，
+// 任何调用方都不许再自己 `.(float64)` 断言。
+func responseStatus(result map[string]interface{}, fallback int) int {
+	if result == nil {
+		return fallback
+	}
+	switch v := result["status"].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return n
+		}
+	}
+	return fallback
 }
 
 // handleReload 热加载 agent_models.yaml → 更新注册表 → 返回 {status: ok, models: N}
