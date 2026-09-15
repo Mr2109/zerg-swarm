@@ -39,11 +39,15 @@ fn base_spec() -> Spec {
 }
 
 /// ① 黄金 argv：逐字对齐 Go 侧 `hatch.BuildBwrapArgv` 的顺序与取值。
+///
+/// **两半判据**（与 `scripts/compare-wall-argv.py` 同口径）：`argv[0]` = 可执行名 `bwrap`
+/// （冻结接口：`argv` 是**执行面**），`argv[1..]` 才与 Go 侧 `BuildBwrapArgv` 逐条相同。
 #[test]
 fn golden_argv_matches_go_recipe() {
     let s = base_spec();
     let p = plan_for("linux", &s).expect("好配方必须能出计划");
     let expected: Vec<String> = [
+        "bwrap",
         "--ro-bind",
         "/usr",
         "/usr",
@@ -114,6 +118,28 @@ fn golden_argv_matches_go_recipe() {
     assert_eq!(p.argv, expected, "argv 与 Go 侧配方不逐字一致 ⇒ 迁移桥断了");
     assert_eq!(p.platform, "linux");
     assert_eq!(p.schema_version, 1);
+}
+
+/// ①b `argv[0]` 必须是**可执行名**（`run` 就是 `Command::new(argv[0])`；退出码表里的
+/// 「可执行不在 PATH ⇒ 2」也只有这时才说得通）。
+///
+/// 这条是从缺陷反推出来的（2026-09-16 批 2'.3）：早先的实现把 `argv` 只当「bwrap 参数序列」，
+/// 于是 `argv[0] == "--ro-bind"` —— `run` 在任何 Linux 机器上都只能以「起不来」收场，
+/// 而 `plan` 的载荷看起来完全正常（**一个「看着正常、跑不起来」的形态**）。
+/// 所以这里断言两件事：①可执行名在首位；②其后**恰好**是 Go 侧那套参数（顺序不变）。
+#[test]
+fn argv0_is_the_executable_not_a_flag() {
+    let p = plan_for("linux", &base_spec()).expect("好配方必须能出计划");
+    assert_eq!(p.argv[0], "bwrap", "argv[0] 必须是可执行名：{:?}", p.argv);
+    assert!(
+        !p.argv[0].starts_with('-'),
+        "argv[0] 是选项开头 ⇒ `run` 永远起不来（缺陷形态）：{:?}",
+        p.argv[0]
+    );
+    assert_eq!(
+        p.argv[1], "--ro-bind",
+        "可执行名之后必须直接接 Go 侧参数序列的第一项"
+    );
 }
 
 /// ② fail-closed 一组负例（每一条都必须红）。
