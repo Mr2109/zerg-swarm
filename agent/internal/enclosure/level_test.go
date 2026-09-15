@@ -1,9 +1,37 @@
 package enclosure
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
+
+// 等级取值校验：四级合法；陌生串一律不合法（不许当"某种更严的等级"放过去）。
+func TestLevelValid(t *testing.T) {
+	for _, l := range AllLevels {
+		if !l.Valid() {
+			t.Fatalf("%q 应为合法等级", l)
+		}
+	}
+	for _, bad := range []Level{"", "trusted", "sandboxed", "enclosed", "ENCLOSED.KERNEL", "kernel", "none "} {
+		if bad.Valid() {
+			t.Fatalf("%q 不该被认成合法等级（陌生值必须拒，判 fail-closed）", bad)
+		}
+	}
+}
+
+// 合法值清单与四级同源（错误信息不许各处手抄 —— 手抄就会与枚举漂移）。
+func TestLevelsString(t *testing.T) {
+	s := LevelsString()
+	for _, want := range []string{"enclosed.kernel", "enclosed.os", "unverified", "none"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("清单应含 %q，实得 %q", want, s)
+		}
+	}
+	if got := strings.Count(s, "|"); got != len(AllLevels)-1 {
+		t.Fatalf("清单分隔符 %d 个，应与等级数 %d 一致：%q", got, len(AllLevels), s)
+	}
+}
 
 // 表驱动：**无证据时永不给 enclosed.***（读不到 = unverified，独立一级）。
 func TestJudge_NeverEnclosedWithoutEvidence(t *testing.T) {
