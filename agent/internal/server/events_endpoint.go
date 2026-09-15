@@ -3,9 +3,10 @@
 // 设计真源：设计-子端沙箱化-20260914.md §5.4（观测面：状态迁移 + 排队深度 + ETA）·
 // §13 Q5（排队必须含 ETA，客户端要"读得懂还要等多久"）· §11 P4（只读，红线②）。
 //
-// 鉴权（默认口径，待 Mr2109 拍）：与既有端点同门——`X-Auth-Token` 头；
-// **另支持 `?token=` 查询参数**，因为浏览器原生 `EventSource` 不能自定义请求头。
-// ⚠ 安全权衡：查询参数会进访问日志/代理日志（头不会）。取舍与替代方案见回报，未拍前按此实现。
+// 鉴权（**Mr2109 2026-09-15 拍定**）：只认 `X-Auth-Token` 请求头，与既有端点同门；
+// **不接受 `?token=` 查询参数**——查询参数会进访问日志/代理日志/浏览器历史，等于把全权令牌
+// 抄在明信片上。首版曾为迁就浏览器原生 EventSource（不能自定义请求头）两者都支持，现按拍定
+// 收敛为只认头；将来若确需给浏览器用，另开「一次性短票据」接口，不得把主令牌塞进 URL。
 //
 // 事件形状（每行一个 SSE data 帧，JSON）：
 //
@@ -159,14 +160,26 @@ func (s *Server) eventLoop(interval time.Duration) {
 	}
 }
 
-// checkAuthSSE SSE 鉴权：优先 X-Auth-Token 头（与既有端点同门），退化到 ?token=
-// （浏览器 EventSource 无法设头）。两处都不对 ⇒ 401。
+// checkAuthSSE SSE 鉴权：**只认 `X-Auth-Token` 请求头**（与既有端点同门）。
+//
+// 为什么不支持 `?token=` 查询参数（Mr2109 2026-09-15 拍定）：
+//
+//	查询参数会进服务器访问日志、代理日志与浏览器历史 —— 等于把全权令牌抄在明信片上。
+//	首版曾两者都支持以迁就浏览器原生 EventSource（它不能自定义请求头），但代价不值：
+//	本项目的客户端是自研的（主控 / Rust 桌面端），自己读流不受浏览器 API 限制。
+//	将来若确需给浏览器用，应另开「一次性短票据」接口（用一次即废），**不得**把主令牌塞进 URL。
 func (s *Server) checkAuthSSE(w http.ResponseWriter, r *http.Request) bool {
 	if r.Header.Get("X-Auth-Token") == s.agent.token {
 		return true
 	}
-	if q := r.URL.Query().Get("token"); q != "" && q == s.agent.token {
-		return true
+	if q := r.URL.Query().Get("token"); q != "" {
+		// 显式拒绝并留下可排查的日志：这不是"少写了个参数"，而是被拍定禁止的用法。
+		log.Printf("[server] SSE 鉴权拒绝：不接受 ?token= 查询参数（令牌只能走 X-Auth-Token 头）")
+		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{
+			"error": "unauthorized",
+			"hint":  "token 只能走 X-Auth-Token 请求头；不接受查询参数（避免进日志/历史）",
+		})
+		return false
 	}
 	log.Printf("[server] SSE 认证失败: token mismatch")
 	writeJSON(w, http.StatusUnauthorized, map[string]interface{}{"error": "unauthorized"})

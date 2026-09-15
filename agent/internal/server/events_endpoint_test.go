@@ -28,8 +28,10 @@ func TestEvents_AuthRequired(t *testing.T) {
 	}
 }
 
-// 查询参数令牌可用（浏览器 EventSource 不能设头），但**头优先**且两者都不对 ⇒ 401。
-func TestEvents_QueryTokenAcceptedAndWrongRejected(t *testing.T) {
+// 鉴权只认 `X-Auth-Token` 头（Mr2109 2026-09-15 拍：不接受 ?token= 查询参数——
+// 查询参数会进访问/代理日志与浏览器历史）。故：错令牌 401、**查询参数即使正确也 401**、
+// 只有请求头正确才放行进流。
+func TestEvents_HeaderOnlyAuth(t *testing.T) {
 	// 错的 token（头 + 查询）⇒ 401
 	s := eventsServer()
 	req := httptest.NewRequest(http.MethodGet, "/events?token=nope", nil)
@@ -40,27 +42,36 @@ func TestEvents_QueryTokenAcceptedAndWrongRejected(t *testing.T) {
 		t.Fatalf("错令牌应 401，实得 %d", rec.Code)
 	}
 
-	// 对的 token 走查询参数 ⇒ 进入流（首帧必到）
+	// **正确的 token 走查询参数也一律 401**（这是被拍定禁止的用法，不是"能用但次要"）
 	s2 := eventsServer()
+	req2 := httptest.NewRequest(http.MethodGet, "/events?token=tok", nil)
+	rec2 := httptest.NewRecorder()
+	s2.handleEvents(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("查询参数即使令牌正确也必须 401（拍定只认请求头），实得 %d", rec2.Code)
+	}
+	if !strings.Contains(rec2.Body.String(), "X-Auth-Token") {
+		t.Errorf("拒绝时应给出可排查的提示（指向请求头），实得 %q", rec2.Body.String())
+	}
+
+	// 请求头正确 ⇒ 放行进流（首帧必到）
+	s3 := eventsServer()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	req2 := httptest.NewRequest(http.MethodGet, "/events?token=tok", nil).WithContext(ctx)
-	rec2 := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodGet, "/events", nil).WithContext(ctx)
+	req3.Header.Set("X-Auth-Token", "tok")
+	rec3 := httptest.NewRecorder()
 	done := make(chan struct{})
-	go func() { s2.handleEvents(rec2, req2); close(done) }()
-	// 首帧在进入流后立即写出；给一点时间后取消——**读缓冲必须在处理返回之后**
-	// （httptest.ResponseRecorder 的 Buffer 不是并发安全的：一边写一边读会触发 race）。
+	go func() { s3.handleEvents(rec3, req3); close(done) }()
+	// 首帧在进入流后立即写出；读缓冲必须在处理返回之后（ResponseRecorder 非并发安全）
 	time.Sleep(150 * time.Millisecond)
 	cancel()
 	<-done
-	body := rec2.Body.String()
-	if !strings.Contains(body, "data: ") {
-		t.Fatalf("应至少发出首帧快照，实得 %q", body)
+	body := rec3.Body.String()
+	if !strings.Contains(body, "data: ") || !strings.Contains(body, `"state"`) {
+		t.Fatalf("头鉴权正确时应发出首帧快照，实得 %q", body)
 	}
-	if !strings.Contains(body, `"state"`) {
-		t.Fatalf("首帧应带 state 字段，实得 %q", body)
-	}
-	if ct := rec2.Header().Get("Content-Type"); ct != "text/event-stream" {
+	if ct := rec3.Header().Get("Content-Type"); ct != "text/event-stream" {
 		t.Fatalf("Content-Type 应为 text/event-stream，实得 %q", ct)
 	}
 }
