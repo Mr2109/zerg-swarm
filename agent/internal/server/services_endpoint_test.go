@@ -13,7 +13,7 @@ func TestServicesSnapshot_Shape(t *testing.T) {
 	slot := &servicesSlot{Occupied: true, Model: "m1", State: "ready", Port: 58100, Backend: "llama-server"}
 	eggs := []servicesEgg{{EggID: "m1", Model: "m1", State: "ready", Port: 58100, Managed: true}}
 
-	got := servicesSnapshot(slot, eggs, monitor.GttSample{UsedBytes: 32 << 30, TotalBytes: 64 << 30, Ok: true}, now)
+	got := servicesSnapshot(slot, eggs, nil, monitor.GttSample{UsedBytes: 32 << 30, TotalBytes: 64 << 30, Ok: true}, now)
 
 	if s, ok := got["slot"].(*servicesSlot); !ok || s.Model != "m1" || s.Port != 58100 {
 		t.Errorf("slot 形状不对，实得 %v", got["slot"])
@@ -22,10 +22,10 @@ func TestServicesSnapshot_Shape(t *testing.T) {
 	if !ok || len(eg) != 1 || eg[0].Model != "m1" || !eg[0].Managed {
 		t.Errorf("eggs 应为 1 条托管卵，实得 %v", got["eggs"])
 	}
-	// external_occupancy[]：只含非引擎 GPU 使用者——P4 占位为空数组（不得编造条目）。
-	eo, ok := got["external_occupancy"].([]map[string]interface{})
+	// external_occupancy[]：只含非引擎 GPU 使用者——无归因时为空数组（不得编造条目）。
+	eo, ok := got["external_occupancy"].([]externalOccupant)
 	if !ok || len(eo) != 0 {
-		t.Errorf("external_occupancy 应为空数组（P3 接线点），实得 %v", got["external_occupancy"])
+		t.Errorf("external_occupancy 无归因时应为空数组，实得 %v", got["external_occupancy"])
 	}
 	g, ok := got["gtt"].(map[string]interface{})
 	if !ok || g["known"] != true {
@@ -44,7 +44,7 @@ func TestServicesSnapshot_Shape(t *testing.T) {
 
 func TestServicesSnapshot_GttUnknownNoFake(t *testing.T) {
 	// GTT 读不到 ⇒ known=false，used/total 如实为 0（绝不编数）。
-	got := servicesSnapshot(nil, nil, monitor.GttSample{}, time.Now())
+	got := servicesSnapshot(nil, nil, nil, monitor.GttSample{}, time.Now())
 	g, ok := got["gtt"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("gtt 块缺失: %v", got["gtt"])
