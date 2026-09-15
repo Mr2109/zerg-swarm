@@ -715,6 +715,12 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 	headerTO := firstByteTO
 	if wdCfg.Enabled {
 		headerTO = 0
+		// T13（Mr2109 2026-09-15 晚拍板：**尽量不用时间限制**）：看门狗开着时连**总超时也撤掉**。
+		// 依据：A8 实测——30 万 token 的预填充跑了 5 分多，正好被子端「流式 5 分钟总超时」掐断，
+		// 客户端只拿到 200 + 9 条 SSE 保活注释（既非答案也非报错）。
+		// 撤掉后请求生命周期的两端 = 「客户端断连」（ctx 取消，既有机制）+「看门狗判死」（证据制）。
+		// 关着看门狗 ⇒ 保留旧口径（一键回退 = 精确回到旧世界）。
+		clientTimeout = 0
 	}
 	client := &http.Client{
 		Timeout: clientTimeout,
