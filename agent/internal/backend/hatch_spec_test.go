@@ -12,6 +12,7 @@ package backend
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -92,9 +93,10 @@ func TestHatchSpec_MainlineEgg(t *testing.T) {
 	if spec.SchemaVersion != registry.EggSchemaVersionCurrent {
 		t.Errorf("schema_version 应原样带上，实得 %d", spec.SchemaVersion)
 	}
-	// 权重：只挂该卵自己的权重**目录**
+	// 权重：WeightPath 仍是权重文件所在**宿主目录**（缺陷 12 之后它只用于出证/日志：hatch 侧的
+	// 整目录挂载必须同批去掉）；真正决定「空间里挂了什么」的是下面逐文件的只读绑定。
 	if spec.WeightPath != "/data/models/glm-5.3" {
-		t.Errorf("WeightPath 应是权重文件所在目录，实得 %q", spec.WeightPath)
+		t.Errorf("WeightPath 应是权重文件所在目录（出证/日志用），实得 %q", spec.WeightPath)
 	}
 	// 引擎：宿主目录进 EngineRoots，空间内路径 = /engine/<可执行名>
 	if len(spec.EngineRoots) != 1 || spec.EngineRoots[0] != "/home/g01/llama.cpp-src/build-hip-flash/bin" {
@@ -125,11 +127,20 @@ func TestHatchSpec_MainlineEgg(t *testing.T) {
 	if spec.Env["HIP_VISIBLE_DEVICES"] != "1" {
 		t.Errorf("声明了卡号应补 HIP_VISIBLE_DEVICES=1，实得 %q", spec.Env["HIP_VISIBLE_DEVICES"])
 	}
-	// 库目录落点（env_req.lib_paths → /engine/lib/<目录名>，**只读**）：声明了就必须有一条只读绑定。
-	// 这里声明的目录名就是 build-hip-flash ⇒ 落点 /engine/lib/build-hip-flash。
-	wantLib := libDir + ":/engine/lib/build-hip-flash"
-	if len(spec.ExtraROBinds) != 1 || spec.ExtraROBinds[0] != wantLib {
-		t.Errorf("库目录应只读落到 /engine/lib/<目录名>（%q），实得 %v", wantLib, spec.ExtraROBinds)
+	// 库目录落点（env_req.lib_paths → /libs/<目录名>，**只读**）：声明了就必须有一条只读绑定。
+	// 这里声明的目录名就是 build-hip-flash ⇒ 落点 /libs/build-hip-flash。
+	// 顺序口径（本文件写死）：**文件类绑定在前（本卵权重 → mmproj → 模板），库目录绑定在后**。
+	wantWeightBind := entry.File + ":/models/GLM-5.3-Flash-Q4_K_M.gguf"
+	wantLibBind := libDir + ":/libs/build-hip-flash"
+	if len(spec.ExtraROBinds) != 2 || spec.ExtraROBinds[0] != wantWeightBind || spec.ExtraROBinds[1] != wantLibBind {
+		t.Errorf("只读绑定应为 [权重文件 → /models/<基名>, 库目录 → /libs/<目录名>]（%q / %q），实得 %v",
+			wantWeightBind, wantLibBind, spec.ExtraROBinds)
+	}
+	// 只读绑定里不得出现「整目录挂 /models」的形态（缺陷 12：那会让同目录别的模型也进空间）
+	for _, b := range spec.ExtraROBinds {
+		if strings.HasSuffix(b, ":/models") {
+			t.Errorf("不得再有「整目录挂到 /models」的绑定（缺陷 12），实得 %q", b)
+		}
 	}
 	// 设备：卡号 ⇒ /dev/kfd + 该卡渲染节点（第 1 张 = renderD129）
 	wantDev := []string{"/dev/kfd", "/dev/dri/renderD129"}
@@ -165,11 +176,14 @@ func TestHatchSpec_MainlineEgg(t *testing.T) {
 	}
 }
 
-// TestHatchSpec_LibPathsLandingAndEnvRewrite env_req.lib_paths 的两件事（2026-09-15 拍）：
+// TestHatchSpec_LibPathsLandingAndEnvRewrite env_req.lib_paths 的三件事（2026-09-15 拍，
+// 落点在缺陷 5 修正后为 /libs/<目录名>）：
 //
-//	① 每个宿主库目录**只读**落到 /engine/lib/<目录名>（目录名 = filepath.Base(清理后路径)）；
+//	① 每个宿主库目录**只读**落到 /libs/<目录名>（目录名 = filepath.Base(清理后路径)；独立只读
+//	   挂载点 —— 原来落 /engine/lib/<名>，而 /engine 是只读挂载，bwrap 建不出中间目录）；
 //	② 环境变量的**值**里出现的库宿主路径（按 `:` 切段）改写成对应空间内路径 —— 整段精确匹配，
-//	   不做前缀/子串替换；空串保持清空语义；没在 lib_paths 里声明的宿主路径不管。
+//	   不做前缀/子串替换；空串保持清空语义；没在 lib_paths 里声明的宿主路径不管；
+//	③ 卵**自己**显式声明了 LD_LIBRARY_PATH ⇒ 生成逻辑一句都不补（不出现「两头都写」）。
 func TestHatchSpec_LibPathsLandingAndEnvRewrite(t *testing.T) {
 	withMainlineEngineProbe(t, "/opt/llama/bin/llama-server")
 	withWorkDirRoot(t)
@@ -206,10 +220,15 @@ func TestHatchSpec_LibPathsLandingAndEnvRewrite(t *testing.T) {
 		t.Fatalf("映射应成功，实得 %v", err)
 	}
 
-	// ① 落点：按声明顺序各占一格，且是**只读**通道
-	want := []string{libA + ":/engine/lib/build-k2", libB + ":/engine/lib/hipflash"}
-	if len(spec.ExtraROBinds) != 2 || spec.ExtraROBinds[0] != want[0] || spec.ExtraROBinds[1] != want[1] {
-		t.Errorf("库目录应各占一格只读落点（%v），实得 %v", want, spec.ExtraROBinds)
+	// ① 落点：按声明顺序各占一格，且是**只读**通道；权重文件绑定在前（逐文件挂载，缺陷 12）
+	want := []string{
+		"/data/models/k2/k2horizon.gguf:/models/k2horizon.gguf",
+		libA + ":/libs/build-k2",
+		libB + ":/libs/hipflash",
+	}
+	if len(spec.ExtraROBinds) != 3 || spec.ExtraROBinds[0] != want[0] ||
+		spec.ExtraROBinds[1] != want[1] || spec.ExtraROBinds[2] != want[2] {
+		t.Errorf("只读绑定应为 %v，实得 %v", want, spec.ExtraROBinds)
 	}
 	// 命令行那一侧真跑一遍：必须落成 --ro-bind，不得落成可写绑定
 	argv, err := hatch.BuildBwrapArgv(spec)
@@ -217,21 +236,30 @@ func TestHatchSpec_LibPathsLandingAndEnvRewrite(t *testing.T) {
 		t.Fatalf("映射产物应能构造出 bwrap 命令行，实得 %v", err)
 	}
 	joined := strings.Join(argv, " ")
-	for _, wantBind := range []string{"--ro-bind " + libA + " /engine/lib/build-k2", "--ro-bind " + libB + " /engine/lib/hipflash"} {
+	for _, wantBind := range []string{
+		"--ro-bind " + libA + " /libs/build-k2",
+		"--ro-bind " + libB + " /libs/hipflash",
+		"--ro-bind /data/models/k2/k2horizon.gguf /models/k2horizon.gguf",
+	} {
 		if !strings.Contains(joined, wantBind) {
 			t.Errorf("bwrap 命令行缺 %q，实得 %q", wantBind, joined)
 		}
+	}
+	// 旧落点（嵌在只读 /engine 之下）必须彻底消失：bwrap 在那里建不出中间目录（缺陷 5 原文
+	// `Can't mkdir parents for /engine/lib/bin: Read-only file system`）
+	if strings.Contains(joined, "/engine/lib/") {
+		t.Errorf("不得再出现 /engine/lib/<名> 落点（缺陷 5：只读挂载之下建不出中间目录）：%q", joined)
 	}
 	if strings.Contains(joined, "--bind "+libA+" ") || strings.Contains(joined, "--bind "+libB+" ") {
 		t.Errorf("库目录是只读输入，不得落成可写绑定：%q", joined)
 	}
 
-	// ② 值改写：整段精确匹配
+	// ② 值改写：整段精确匹配（③ 一并核：显式声明过 ⇒ 生成逻辑不许掺进来）
 	cases := map[string]string{
-		"LD_LIBRARY_PATH": "/engine/lib/build-k2:/shared/other:/engine/lib/hipflash",
+		"LD_LIBRARY_PATH": "/libs/build-k2:/shared/other:/libs/hipflash",
 		"K2_CLEAR":        "",
-		"SINGLE":          "/engine/lib/build-k2",
-		"UNRELATED":       undeclared + ":/engine/lib/build-k2",
+		"SINGLE":          "/libs/build-k2",
+		"UNRELATED":       undeclared + ":/libs/build-k2",
 		"PREFIX_TRAP":     libA + "x:" + libA + "/sub",
 	}
 	for k, wantV := range cases {
@@ -239,8 +267,281 @@ func TestHatchSpec_LibPathsLandingAndEnvRewrite(t *testing.T) {
 			t.Errorf("%s 应为 %q，实得 %q", k, wantV, got)
 		}
 	}
+	if got := spec.Env["LD_LIBRARY_PATH"]; strings.Contains(got, spaceEngineDir) {
+		t.Errorf("卵自己显式声明了 LD_LIBRARY_PATH ⇒ 生成逻辑一句都不许补（不得出现 %s），实得 %q",
+			spaceEngineDir, got)
+	}
 	if err := spec.Validate(); err != nil {
 		t.Errorf("映射产物应能过孵化声明校验，实得 %v", err)
+	}
+}
+
+// TestHatchSpec_LibPathsGeneratesLDLibraryPath 缺陷 6（2026-09-15 真机实测）：
+// 引擎 RUNPATH 写死宿主构建目录（`readelf -d` → `RUNPATH [/home/g01/…/build-hip-flash/bin:]`）
+// ⇒ 空间内必须有人补上 LD_LIBRARY_PATH，否则 `libllama-server-impl.so` 找不到 + 单元 127。
+// 口径三条（逐条钉住）：
+//
+//	① 卵声明了 lib_paths 且**没**自己写 LD_LIBRARY_PATH ⇒ 孵化器生成「声明的库落点（按声明顺序）
+//	   在前、/engine 垫尾」；
+//	② 卵自己显式写了（含空串 = 清空）⇒ **一句都不补**（不许两头都写，谁赢说不清）；
+//	③ 没声明 lib_paths ⇒ 一个变量都不发明。
+func TestHatchSpec_LibPathsGeneratesLDLibraryPath(t *testing.T) {
+	withMainlineEngineProbe(t, "/opt/llama/bin/llama-server")
+	withWorkDirRoot(t)
+
+	root := t.TempDir()
+	libA := filepath.Join(root, "a", "build-hip-flash")
+	libB := filepath.Join(root, "b", "vendor-libs")
+	for _, d := range []string{libA, libB} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cases := []struct {
+		name    string
+		envReq  *registry.EnvReq
+		wantLDP string
+		wantSet bool // LD_LIBRARY_PATH 该不该出现在 Env 里
+	}{
+		{
+			name:    "声明了库目录、没自己写 ⇒ 生成（声明在前、/engine 垫尾）",
+			envReq:  &registry.EnvReq{LibPaths: []string{libA, libB}},
+			wantLDP: "/libs/build-hip-flash:/libs/vendor-libs:/engine",
+			wantSet: true,
+		},
+		{
+			name:    "卵自己写了 ⇒ 以卵的为准，一句都不补",
+			envReq:  &registry.EnvReq{LibPaths: []string{libA}, Env: map[string]string{"LD_LIBRARY_PATH": "/自己写的:/engine"}},
+			wantLDP: "/自己写的:/engine",
+			wantSet: true,
+		},
+		{
+			name:    "卵显式清空（空串）⇒ 保持清空语义，不补",
+			envReq:  &registry.EnvReq{LibPaths: []string{libA}, Env: map[string]string{"LD_LIBRARY_PATH": ""}},
+			wantLDP: "",
+			wantSet: true,
+		},
+		{
+			name:    "没声明 lib_paths ⇒ 不发明这个变量",
+			envReq:  &registry.EnvReq{Env: map[string]string{"HSA_OVERRIDE_GFX_VERSION": "11.0.0"}},
+			wantLDP: "",
+			wantSet: false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := &registry.ModelEntry{
+				Backend:       "llama-server",
+				File:          "/data/models/k2/k2horizon.gguf",
+				SchemaVersion: registry.EggSchemaVersionCurrent,
+				EnvReq:        c.envReq,
+			}
+			e.SetEggNameForTest("K2-Lib-Test")
+			spec, err := hatchSpecFor(e, EngineImplOf(e), 9000, hatchTestProfile())
+			if err != nil {
+				t.Fatalf("映射应成功，实得 %v", err)
+			}
+			got, ok := spec.Env["LD_LIBRARY_PATH"]
+			if ok != c.wantSet {
+				t.Fatalf("LD_LIBRARY_PATH 是否该出现：want %v，实得 %v（Env=%v）", c.wantSet, ok, spec.Env)
+			}
+			if got != c.wantLDP {
+				t.Errorf("LD_LIBRARY_PATH 应为 %q，实得 %q", c.wantLDP, got)
+			}
+			if err := spec.Validate(); err != nil {
+				t.Errorf("映射产物应能过孵化声明校验，实得 %v", err)
+			}
+		})
+	}
+}
+
+// TestHatchSpec_OnlyDeclaredWeightFiles 缺陷 12（2026-09-15 真机实测）：口径是「只挂该卵自己的
+// 权重」，而旧实现挂的是权重**所在目录** ⇒ 空间内 `ls /models` 能列出同目录的别的模型
+// （真机列出 Qwen2.5-VL-32B / Qwen3.6-35B / Flash-Next …）。本用例逐字钉住修法：
+//
+//	① 每个声明文件各有一条自己的只读绑定（落 /models/<基名>），**没有任何「整目录挂 /models」**；
+//	② 同目录的**别的模型**既不出现在绑定里，也不出现在引擎参数/bwrap 命令行里（基名与全路径都查）；
+//	③ mmproj 的「必须与权重同目录」旧限制退役（它是整目录挂载的副产物），仍守「基名撞车即拒孵」。
+func TestHatchSpec_OnlyDeclaredWeightFiles(t *testing.T) {
+	withMainlineEngineProbe(t, "/opt/llama/bin/llama-server")
+	withWorkDirRoot(t)
+
+	weightDir := t.TempDir()
+	weight := filepath.Join(weightDir, "Qwen3.8-27B-Q4_K_M-vcruz305.gguf")
+	mmproj := filepath.Join(weightDir, "mmproj-Qwen3.8-27B-f16.gguf")
+	tmpl := filepath.Join(weightDir, "qwen38-chat-template.jinja")
+	siblings := []string{
+		filepath.Join(weightDir, "Qwen2.5-VL-32B-Instruct-Q4_K_M.gguf"),
+		filepath.Join(weightDir, "Qwen3.6-35B-A3B-Q4_K_M.gguf"),
+		filepath.Join(weightDir, "Flash-Next-Q4_K_M.gguf"),
+	}
+	for _, f := range append([]string{weight, mmproj, tmpl}, siblings...) {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	entry := &registry.ModelEntry{
+		Backend:       "llama-server",
+		File:          weight,
+		MMProj:        mmproj,
+		ChatTemplate:  tmpl,
+		SchemaVersion: registry.EggSchemaVersionCurrent,
+	}
+	entry.SetEggNameForTest("example-35b-v2-Egg12-Test")
+	spec, err := hatchSpecFor(entry, EngineImplOf(entry), 9010, hatchTestProfile())
+	if err != nil {
+		t.Fatalf("映射应成功，实得 %v", err)
+	}
+
+	// ① 逐文件绑定：三个声明文件各有自己的一格，顺序 = 权重 → 投影 → 模板
+	want := []string{
+		weight + ":/models/Qwen3.8-27B-Q4_K_M-vcruz305.gguf",
+		mmproj + ":/models/mmproj-Qwen3.8-27B-f16.gguf",
+		tmpl + ":/models/qwen38-chat-template.jinja",
+	}
+	if len(spec.ExtraROBinds) != len(want) {
+		t.Fatalf("只读绑定应恰好 %d 条（每声明文件一条），实得 %v", len(want), spec.ExtraROBinds)
+	}
+	for i, w := range want {
+		if spec.ExtraROBinds[i] != w {
+			t.Errorf("只读绑定[%d] 应为 %q，实得 %q", i, w, spec.ExtraROBinds[i])
+		}
+	}
+	for _, b := range spec.ExtraROBinds {
+		if strings.HasSuffix(b, ":"+spaceWeightsDir) {
+			t.Errorf("不得有「整目录挂到 %s」的绑定（缺陷 12 的原形态）：%q", spaceWeightsDir, b)
+		}
+	}
+
+	// ② 同目录别的模型：绑定、参数、bwrap 命令行里都不许出现（全路径与基名都查）
+	argv, err := hatch.BuildBwrapArgv(spec)
+	if err != nil {
+		t.Fatalf("映射产物应能构造出 bwrap 命令行，实得 %v", err)
+	}
+	haystack := append([]string{}, spec.ExtraROBinds...)
+	haystack = append(haystack, spec.ExtraRWBinds...)
+	haystack = append(haystack, spec.EngineArgs...)
+	haystack = append(haystack, argv...)
+	for _, sib := range siblings {
+		for _, h := range haystack {
+			if strings.Contains(h, sib) {
+				t.Errorf("同目录别的模型 %q 不得出现在产物里，却在 %q 里命中了", sib, h)
+			}
+			if strings.Contains(h, filepath.Base(sib)) {
+				t.Errorf("同目录别的模型基名 %q 不得出现在产物里，却在 %q 里命中了", filepath.Base(sib), h)
+			}
+		}
+	}
+	// 声明文件本身仍在（没被「顺手一起删干净」）
+	for _, declared := range []string{weight, mmproj, tmpl} {
+		found := false
+		for _, h := range haystack {
+			if strings.Contains(h, declared) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("声明文件 %q 应作为只读绑定源出现", declared)
+		}
+	}
+	// 参数里只认空间内路径（宿主权重路径一个都不许残留，含权重目录本身）
+	for _, a := range spec.EngineArgs {
+		if strings.Contains(a, weightDir) {
+			t.Errorf("引擎参数里不得残留宿主权重目录路径：%q", a)
+		}
+	}
+	if got := argAfter(spec.EngineArgs, "-m"); got != "/models/Qwen3.8-27B-Q4_K_M-vcruz305.gguf" {
+		t.Errorf("-m 应改写成 /models/<基名>，实得 %q（参数=%v）", got, spec.EngineArgs)
+	}
+	if got := argAfter(spec.EngineArgs, "-mm"); got != "/models/mmproj-Qwen3.8-27B-f16.gguf" {
+		t.Errorf("-mm 应改写成 /models/<基名>，实得 %q（参数=%v）", got, spec.EngineArgs)
+	}
+	if got := argAfter(spec.EngineArgs, "--chat-template-file"); got != "/models/qwen38-chat-template.jinja" {
+		t.Errorf("--chat-template-file 应改写成 /models/<基名>，实得 %q（参数=%v）", got, spec.EngineArgs)
+	}
+	if err := spec.Validate(); err != nil {
+		t.Errorf("映射产物应能过孵化声明校验，实得 %v", err)
+	}
+
+	t.Run("mmproj 与权重不同目录 ⇒ 逐文件挂载，各自成格（旧限制退役）", func(t *testing.T) {
+		other := t.TempDir()
+		mmOther := filepath.Join(other, "mmproj-elsewhere-f16.gguf")
+		if err := os.WriteFile(mmOther, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		e := &registry.ModelEntry{
+			Backend:       "llama-server",
+			File:          weight,
+			MMProj:        mmOther,
+			SchemaVersion: registry.EggSchemaVersionCurrent,
+		}
+		e.SetEggNameForTest("Egg12-mm-Test")
+		sp, err := hatchSpecFor(e, EngineImplOf(e), 9011, hatchTestProfile())
+		if err != nil {
+			t.Fatalf("逐文件挂载之后，投影可以在别的目录（旧限制已退役），实得 %v", err)
+		}
+		wantB := mmOther + ":/models/mmproj-elsewhere-f16.gguf"
+		ok := false
+		for _, b := range sp.ExtraROBinds {
+			if b == wantB {
+				ok = true
+			}
+		}
+		if !ok {
+			t.Errorf("投影应自带一条只读绑定 %q，实得 %v", wantB, sp.ExtraROBinds)
+		}
+		if got := argAfter(sp.EngineArgs, "-mm"); got != "/models/mmproj-elsewhere-f16.gguf" {
+			t.Errorf("-mm 应改写成空间内路径，实得 %q", got)
+		}
+	})
+}
+
+// TestHatchSpec_MmapMaxCountNotEffective 缺陷 11（2026-09-15 二选一里取「暂不生效」）：
+// `env_req.mmap_max_count`（vm.max_map_count）是**机器级 sysctl**、不是按进程 rlimit，孵化单元里
+// 没有可下发的落点 ⇒ 本批**有意不映射**。本用例钉住的正是「不生效」这句话本身：声明与不声明，
+// **映射产物逐字段相同**（即它绝不是一个看着像保障、其实没人执行的东西）。
+// 将来若给它接上下发通路（或机器级前置校验），本用例会先红 —— 那时要连注释一起改口径。
+func TestHatchSpec_MmapMaxCountNotEffective(t *testing.T) {
+	withMainlineEngineProbe(t, "/opt/llama/bin/llama-server")
+	withWorkDirRoot(t)
+
+	// 同一份档案喂两次（档案里带 MeasuredAt=time.Now()，各造一份会让 DeepEqual 死在时钟上，
+	// 那是用例自己的噪声，不是被测语义）
+	prof := hatchTestProfile()
+	build := func(mmapMaxCount int) hatch.Spec {
+		e := &registry.ModelEntry{
+			Backend:       "llama-server",
+			File:          "/data/models/glm/glm.gguf",
+			SchemaVersion: registry.EggSchemaVersionCurrent,
+			EnvReq: &registry.EnvReq{
+				MemlockKB:    8192,
+				MmapMaxCount: mmapMaxCount,
+			},
+		}
+		e.SetEggNameForTest("GLM-Mmap-Test")
+		sp, err := hatchSpecFor(e, EngineImplOf(e), 9000, prof)
+		if err != nil {
+			t.Fatalf("映射应成功，实得 %v", err)
+		}
+		return sp
+	}
+
+	declared := build(1048576) // 真机实测值（sysctl -n vm.max_map_count）
+	absent := build(0)
+	if !reflect.DeepEqual(declared, absent) {
+		t.Errorf("mmap_max_count 暂不生效 ⇒ 声明与不声明必须产出同一份孵化声明；差异：\n声明=%+v\n不声明=%+v",
+			declared, absent)
+	}
+	// 逐项直说（与 DeepEqual 双保险：将来有人给它接上半条通路，也能一眼看出是哪一项动了）
+	for _, a := range append(append([]string{}, declared.EngineArgs...), declared.ExtraROBinds...) {
+		if strings.Contains(a, "max_map_count") || strings.Contains(a, "1048576") {
+			t.Errorf("mmap_max_count 当前无下发通路，产物里不得出现它的痕迹：%q", a)
+		}
+	}
+	if got := declared.MemlockBytes; got != 8192*1024 {
+		t.Errorf("memlock_kb 仍必须照常下发（它与 mmap_max_count 是两回事），实得 %d", got)
 	}
 }
 
@@ -368,9 +669,11 @@ func TestHatchSpec_FailClosed(t *testing.T) {
 		{"引擎实现名与执行分叉", func(e *registry.ModelEntry) {
 			e.Cmd = registry.CmdString("/home/g01/agent/run-k2.sh -m {file}")
 		}, "不一致"},
-		{"投影与权重不同目录", func(e *registry.ModelEntry) {
-			e.MMProj = "/data/mmproj/other/mmproj-k2.gguf"
-		}, "静默降级"},
+		{"文件与投影落点撞车（基名相同）", func(e *registry.ModelEntry) {
+			// 逐文件挂载后「投影必须与权重同目录」的限制退役了，但**同一空间落点**只能有一份来源
+			e.MMProj = "/data/mmproj/other/Qwen3.8-27B-Q4_K_M.gguf" // 与权重基名相同
+			e.File = "/data/models/k2/Qwen3.8-27B-Q4_K_M.gguf"
+		}, "落点"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -396,7 +699,9 @@ func TestHatchSpec_FailClosed(t *testing.T) {
 }
 
 // TestHatchSpec_ChatTemplateInputChannel 模板类只读输入（ExtraROBinds 输入通道）：
-// 落在权重目录之外 ⇒ 只读挂进 /templates 并把参数改写成空间内路径；落在权重目录内 ⇒ 顺带可见、不额外挂。
+// 落在权重目录之外 ⇒ 只读挂进 /templates/<基名> 并把参数改写成空间内路径；
+// 落在权重目录之内 ⇒ 与权重一样是**逐文件**绑定到 /models/<基名>
+// （缺陷 12 之后「同目录就顺带可见」不再成立：整目录不挂了，同目录的东西也得自己挂进来）。
 func TestHatchSpec_ChatTemplateInputChannel(t *testing.T) {
 	withMainlineEngineProbe(t, "/opt/llama/bin/llama-server")
 	withWorkDirRoot(t)
@@ -419,15 +724,19 @@ func TestHatchSpec_ChatTemplateInputChannel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("外部模板应被只读挂进来，实得 %v", err)
 	}
-	wantBind := extTemplate + ":/templates/example-35b-v2_chat_template.jinja"
-	if len(spec.ExtraROBinds) != 1 || spec.ExtraROBinds[0] != wantBind {
-		t.Errorf("外部模板应只读挂进 /templates，实得 %v", spec.ExtraROBinds)
+	wantBinds := []string{
+		"/data/models/example-35b-v2/example-35b-v2-Q4.gguf:/models/example-35b-v2-Q4.gguf",
+		extTemplate + ":/templates/example-35b-v2_chat_template.jinja",
+	}
+	if len(spec.ExtraROBinds) != 2 ||
+		spec.ExtraROBinds[0] != wantBinds[0] || spec.ExtraROBinds[1] != wantBinds[1] {
+		t.Errorf("只读绑定应为 [权重文件, 外部模板]（%v），实得 %v", wantBinds, spec.ExtraROBinds)
 	}
 	if got := argAfter(spec.EngineArgs, "--chat-template-file"); got != "/templates/example-35b-v2_chat_template.jinja" {
 		t.Errorf("模板参数应改写成空间内路径，实得 %q（参数=%v）", got, spec.EngineArgs)
 	}
 
-	// 与权重同目录的模板：不必额外挂（/models 已经把它带进去了）
+	// 与权重同目录的模板：同为逐文件绑定（/models/<基名>），不再依赖「目录顺带可见」
 	weightDir := t.TempDir()
 	sameDir := filepath.Join(weightDir, "same.jinja")
 	if err := os.WriteFile(sameDir, []byte("{{ }}"), 0o644); err != nil {
@@ -444,8 +753,9 @@ func TestHatchSpec_ChatTemplateInputChannel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("同目录模板映射应成功，实得 %v", err)
 	}
-	if len(spec2.ExtraROBinds) != 0 {
-		t.Errorf("模板与权重同目录时不应额外绑定，实得 %v", spec2.ExtraROBinds)
+	want2 := sameDir + ":/models/same.jinja"
+	if len(spec2.ExtraROBinds) != 2 || spec2.ExtraROBinds[1] != want2 {
+		t.Errorf("同目录模板应逐文件绑到 %q（第二条），实得 %v", want2, spec2.ExtraROBinds)
 	}
 	if got := argAfter(spec2.EngineArgs, "--chat-template-file"); got != "/models/same.jinja" {
 		t.Errorf("同目录模板应改写成 /models/<basename>，实得 %q", got)

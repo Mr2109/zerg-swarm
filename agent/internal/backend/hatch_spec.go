@@ -11,25 +11,33 @@
 //
 //	① fail-closed：卵名 / 权重 / 引擎路径任一拿不到就报错拒孵，绝不编造默认值
 //	   （孵化器只照单执行，不推断、不补默认，§6.7）；
-//	② 只挂该卵自己的东西：权重按「文件所在目录 → /models」挂，参数里的宿主权重路径改写为
-//	   空间内路径 ⇒ 别的模型与整个 /data 在空间内根本不存在（§6.6 / §9.3）；
-//	③ 空间内路径约定写死在本文件（/models、/engine、/templates、/work、/kvdisk），
+//	② 只挂该卵在声明里点名的**文件**：entry.file → `/models/<基名>`、mmproj → `/models/<基名>`、
+//	   chat_template → 与权重同目录落 `/models/<基名>`、否则落 `/templates/<基名>`（都是逐文件
+//	   只读绑定），参数里的宿主路径改写成对应空间内路径 ⇒ **权重所在目录整体不再挂载** ——
+//	   同目录的别的模型与整个 /data 在空间内根本不存在（§6.6 / §9.3）；
+//	③ 空间内路径约定写死在本文件（/models、/engine、/libs、/templates、/work、/kvdisk），
 //	   与 hatch 包的命令行配方一一对应；
 //	④ 要**写**的落点一律走可写绑定（ExtraRWBinds → bwrap `--bind`）：WorkDir 给**空间内**
 //	   /work（宿主每卵一次性目录绑过去）、KV 盘给空间内 /kvdisk（宿主 ~/.zerg/kvdisk/<卵名>/
-//	   绑过去并把引擎参数里的宿主 KV 路径改写掉）——见文件末「2026-09-15 修正」一节。
+//	   绑过去并把引擎参数里的宿主 KV 路径改写掉）——见文件末「2026-09-15 修正」一节；
+//	⑤ 库目录与环境变量的关系（缺陷 6 修正）：env_req.lib_paths 里声明的库目录只读落到
+//	   **独立的只读挂载点** `/libs/<目录名>`（不再嵌在 /engine 之下），并且**由孵化器据它生成**
+//	   空间内的 `LD_LIBRARY_PATH`（引擎的 RUNPATH 写死宿主路径 ⇒ 空间内不设这个变量就找不到
+//	   impl 库、单元 127）——见文件末「缺陷 5/6/11/12 修正」。
 //
 // 纯函数：不 exec、不写盘（只建一次性工作目录 / KV 盘目录 + os.Stat 判模板文件是否存在），
 // 可在 macOS 上直接单测；真正的孵化在 hatch 包（非 Linux 明确拒绝）——本包只负责「把声明
 // 翻译成孵化器的输入」。
 //
-// ⚠ 已知待拍板（如实标出，不擅自改 hatch 包的 X3 实测配方）：
+// ⚠ 已知待拍板 / 未接线（如实标出，不擅自改 hatch 包的 X3 实测配方）：
 //   - 卵声明里的 env_req.**weights** 与 entry.file 的一致性校验尚未接线：两边不一致时以谁为准
 //     （还是干脆拒孵）要先拍板；本批不猜。
-//   - env_req.**lib_paths** 已接线（2026-09-15 拍）：宿主库目录只读落到 /engine/lib/<目录名>，
-//     并把 env 值里出现的库宿主路径改写成对应空间内路径（见 engineLibMappings）。
-//   - 「lib_paths 直接推出 LD_LIBRARY_PATH」**未做**（§6.7 原文里那句「孵化器据此给出
-//     LD_LIBRARY_PATH」还没有口径）⇒ 本批只改**卵自己写了**的值，不替卵发明一个环境变量。
+//   - env_req.**mmap_max_count**（vm.max_map_count）**暂不生效**（2026-09-15 二选一里取的这一支）：
+//     它是**机器级 sysctl**、不是按进程的 rlimit，改它要 root 且影响整机，systemd 也没有对应属性
+//     ⇒ 孵化层没有可下发的落点。字段注释已明说，绝不许让它看着像保障（详见文件末）。
+//   - **逐文件挂载需要 hatch 侧同步**（本批只做到映射边界，见文件末「缺陷 12」）：hatch 侧必须去掉
+//     `--ro-bind <WeightPath> /models` 那一条**整目录**挂载，否则本文件产出的逐文件绑定会落进
+//     只读的 /models ⇒ bwrap 建不出文件（与缺陷 5 同一类失败）。
 package backend
 
 import (
@@ -49,18 +57,22 @@ import (
 
 // ── 空间内路径约定（与 hatch 包 BuildBwrapArgv 的挂载点一一对应；改这里要同步改那边）──
 const (
-	// spaceWeightsDir 该卵自己的权重目录（只读；只挂它 ⇒ 别的模型在空间内不存在）。
+	// spaceWeightsDir 该卵点名的权重文件（entry.file / mmproj / 同目录模板）在空间内的**目录**：
+	// 每个文件各占一格（`/models/<基名>`，只读）⇒ 同目录的别的模型在空间内不存在。
 	spaceWeightsDir = "/models"
 	// spaceEngineDir 引擎自己的可执行 + 库/构建目录（只读）。
 	spaceEngineDir = "/engine"
-	// spaceEngineLibRoot 卵声明的库目录（env_req.lib_paths）在**空间内**的落点前缀：
-	// 每个宿主库目录 → `/engine/lib/<目录名>`（只读，见 engineLibMappings）。
+	// spaceLibRoot 卵声明的库目录（env_req.lib_paths）在**空间内**的落点前缀：
+	// 每个宿主库目录 → `/libs/<目录名>`（只读，见 engineLibMappings）。
 	//
-	// 为什么带一层 <目录名>：多个库目录若都挂 /engine 会互相遮挡（后挂的盖住先挂的，说不清谁赢），
-	// 而 /engine 本身已经是引擎构建目录的落点 ⇒ 与其「挑一个」不如各占一格。
-	spaceEngineLibRoot = "/engine/lib"
+	// 为什么是**独立**挂载点 `/libs`（缺陷 5，2026-09-15 真机实测）：原来落在 `/engine/lib/<名>`，
+	// 而 `/engine` 已经是引擎构建目录的**只读**挂载 ⇒ bwrap 要在只读挂载之下建中间目录，直接失败：
+	// `bwrap: Can't mkdir parents for /engine/lib/bin: Read-only file system`（单元 status=1，
+	// 1–3ms 秒死）⇒ **整卵孵不起来**。独立挂载点的父目录 /libs 是新根上的普通目录（可写），
+	// bwrap 建得出，落点也就成了。`<目录名>` 那一层保留：多个库目录各占一格，谁都不遮挡谁。
+	spaceLibRoot = "/libs"
 	// spaceTemplatesDir 卵声明引用的模板类只读输入（ExtraROBinds 的「输入通道」：
-	// 如 chat_template 落在权重目录之外时，只读挂进来并改写参数）。
+	// 如 chat_template 落在权重目录之外时，只读挂到 /templates/<基名> 并改写参数）。
 	spaceTemplatesDir = "/templates"
 	// spaceWorkDir 每卵一次性工作目录在**空间内**的落点（§6.6「一次性」侧）。
 	//
@@ -124,7 +136,7 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 	spec.SchemaVersion = entry.SchemaVersion
 	spec.Profile = profile
 
-	// ② 权重：只挂该卵自己的权重目录（文件 → 所在目录；参数里的宿主路径 → 空间内路径）
+	// ② 权重：只挂该卵**点名的文件**（逐文件只读绑定；整目录不再挂）
 	hostWeightFile := expandTilde(entry.File)
 	if hostWeightFile == "" {
 		return spec, fmt.Errorf("卵 %s：权重文件未声明（file 字段）——拒孵（孵化器不替卵挑权重）", eggID)
@@ -133,8 +145,9 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 		return spec, fmt.Errorf("卵 %s：权重路径 %q 不是宿主侧绝对路径——拒孵（空间内只读挂载与 %s 内的相对路径都要求绝对路径）",
 			eggID, entry.File, spaceWeightsDir)
 	}
-	weightDir := filepath.Dir(hostWeightFile)
-	spec.WeightPath = weightDir
+	// WeightPath 仍是权重**所在宿主目录**：缺陷 12 之后它只用于出证/日志（hatch 侧的整目录挂载
+	// 必须同批去掉，见文件末）；真正决定「空间里挂了什么」的是下面逐文件算出的 ExtraROBinds。
+	spec.WeightPath = filepath.Dir(hostWeightFile)
 
 	// ③ 引擎：宿主路径 → 宿主目录（只读挂进 /engine）+ 空间内路径（/engine/<可执行名>）
 	hostEngine, err := engineHostPath(entry, engineImpl)
@@ -145,16 +158,16 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 	spec.EnginePathInSpace = spaceEngineDir + "/" + filepath.Base(hostEngine)
 
 	// ④ 参数：与裸 exec 路径**同一份构造**（buildEngineArgv），再把宿主侧输入改写成空间内路径
-	rewrites, roBinds, err := spaceInputMappings(eggID, entry, weightDir, hostWeightFile)
+	rewrites, roBinds, err := spaceInputMappings(eggID, entry, hostWeightFile)
 	if err != nil {
 		return spec, err
 	}
 	_, engineArgs := buildEngineArgv(eggID, entry, port)
 
 	// ④a 库目录（§6.7 第 3 类 / env_req.lib_paths）：每个宿主库目录**只读**落到
-	//     /engine/lib/<目录名>，并把 **env 值**里出现的库宿主路径改写成对应空间内路径。
-	//     同名 / 不存在 / 非绝对一律拒孵（见 engineLibMappings）。
-	libRewrites, libROBinds, err := engineLibMappings(eggID, entry)
+	//     /libs/<目录名>（独立只读挂载点，缺陷 5），并把 **env 值**里出现的库宿主路径改写成
+	//     对应空间内路径。同名 / 不存在 / 非绝对一律拒孵（见 engineLibMappings）。
+	libRewrites, libROBinds, libSpaces, err := engineLibMappings(eggID, entry)
 	if err != nil {
 		return spec, err
 	}
@@ -181,9 +194,24 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 	spec.EngineArgs = rewriteArgsToSpace(engineArgs, rewrites)
 	spec.ExtraROBinds = roBinds
 
-	// ⑤ 环境与设备：卵声明照单执行（值里的库宿主路径改写成空间内落点）；声明了卡号才决定可见的渲染节点
+	// WeightFiles：落进 %s 的**声明文件**清单（宿主侧绝对路径），与上面逐文件绑定**同源**算出 ——
+	// 核验层拿它把判据从「结构形态」收紧到「正好是这几个文件、各自一条只读挂载」
+	// （2026-09-15 接线；此前核验只能验结构，挂了别的文件看不见）。基名撞车已在上游拒孵。
+	for _, rw := range rewrites {
+		if rw.space == spaceWeightsDir || strings.HasPrefix(rw.space, spaceWeightsDir+"/") {
+			spec.WeightFiles = append(spec.WeightFiles, rw.host)
+		}
+	}
+	if len(spec.WeightFiles) == 0 {
+		return spec, fmt.Errorf("卵 %s：权重文件清单算不出来（%s 下没有任何声明文件）——拒孵（无清单 ⇒ 核验无从证「挂的是该挂的」）",
+			eggID, spaceWeightsDir)
+	}
+
+	// ⑤ 环境与设备：卵声明照单执行（值里的库宿主路径改写成空间内落点 /libs/<名>），
+	//     并据 lib_paths **生成**空间内 LD_LIBRARY_PATH（缺陷 6；卵自己显式写了就以它为准）；
+	//     声明了卡号才决定可见的渲染节点
 	cardIdx, cardKnown := declaredCardIndex(entry)
-	spec.Env = hatchEnv(entry, cardIdx, cardKnown, libRewrites)
+	spec.Env = hatchEnv(entry, cardIdx, cardKnown, libRewrites, libSpaces)
 	spec.Devices = hatchDevices(entry, cardIdx, cardKnown)
 
 	// ⑥ 一次性工作目录（每卵一份；不存在就建）——**空间内**路径 + 宿主目录可写绑过去。
@@ -202,10 +230,16 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 		spec.ExtraRWBinds = append(spec.ExtraRWBinds, kvRWBind)
 	}
 
-	// ⑦ mmap 限额（§6.7 C②：RLIMIT_MEMLOCK 给不足直接崩，不是变慢）——声明了才下发，不猜
+	// ⑦ memlock 限额（§6.7 C②：RLIMIT_MEMLOCK 给不足直接崩，不是变慢）——声明了才下发，不猜
 	if entry.EnvReq != nil && entry.EnvReq.MemlockKB > 0 {
 		spec.MemlockBytes = int64(entry.EnvReq.MemlockKB) * 1024
 	}
+	// ⑦b env_req.**mmap_max_count**（vm.max_map_count）：**有意不映射**（缺陷 11，2026-09-15 二选一）。
+	//     它是**机器级 sysctl**、不是按进程的 rlimit：没有「按卵下发」的落点（sysctl -w 要 root、
+	//     一改全机生效，systemd 单元也没有对应属性），而 hatch.Spec 里同样没有可承载它的字段。
+	//     ⇒ 明说「暂不生效」，绝不产出一个看着像保障、其实没人执行的东西（§6.9 同一精神）。
+	//     要真生效只有两条路（都超本批范围，待拍板）：机器级前置校验（拿 /proc/sys/vm/max_map_count
+	//     与声明值比，不够就拒孵）或给 hatch.Spec 加字段 + 由需要 root 的部署步骤统一改本机 sysctl。
 	return spec, nil
 }
 
@@ -279,65 +313,71 @@ func checkEngineImplConsistency(hostEngine, engineImpl string) (string, error) {
 
 // ── 库目录落点与库路径改写（④a，§6.7 第 3 类）────────────────────────────────
 
-// engineLibMappings env_req.lib_paths → 「空间内落点（只读绑定）+ 值改写表」。
+// engineLibMappings env_req.lib_paths → 「空间内落点（只读绑定）+ 值改写表 + 落点清单」。
 //
 // 口径（Mr2109 2026-09-15 拍，逐条落到本函数）：
 //
-//	① 每个宿主库目录 **只读** 绑到 `/engine/lib/<目录名>`，<目录名> = filepath.Base(清理后的路径)；
+//	① 每个宿主库目录 **只读** 绑到 `/libs/<目录名>`（**独立只读挂载点**，缺陷 5 修正：
+//	   原来落 `/engine/lib/<名>` 而 `/engine` 本身是只读挂载 ⇒ bwrap 建不出中间目录、整卵孵不起来），
+//	   <目录名> = filepath.Base(清理后的路径)；
 //	② **两个库目录同名 ⇒ 拒孵**（落点撞车，说不清谁盖谁 —— 不许挑一个，也不许后来的赢）；
 //	③ 宿主上**不存在** ⇒ 拒孵：不许静默留一个空间内也不存在的路径，那是「看着好了其实没生效」；
 //	④ 值的改写只认**整段精确匹配**（`:` 切段；见 rewriteEnvValue），不做前缀/子串泛化；
 //	⑤ **不在 lib_paths 里声明的宿主路径不管**（不猜、不自动挂）—— 本函数只看声明，不扫环境变量。
 //
-// 返回 (值改写表, 只读绑定清单, error)：error ≠ nil ⇒ 调用方拒孵；声明为空 ⇒ 三者全空（不编造）。
-func engineLibMappings(eggID string, entry *registry.ModelEntry) ([]pathRewrite, []string, error) {
+// 返回 (值改写表, 只读绑定清单, 空间内落点清单, error)：error ≠ nil ⇒ 调用方拒孵；
+// 声明为空 ⇒ 四者全空（不编造）。**落点清单按声明顺序**，是「据 lib_paths 生成空间内
+// LD_LIBRARY_PATH」的唯一依据（见 hatchEnv；顺序即搜索顺序，不是随手排的）。
+func engineLibMappings(eggID string, entry *registry.ModelEntry) ([]pathRewrite, []string, []string, error) {
 	if entry == nil || entry.EnvReq == nil || len(entry.EnvReq.LibPaths) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	var (
-		rws   []pathRewrite
-		binds []string
-		seen  = make(map[string]string, len(entry.EnvReq.LibPaths)) // 目录名 → 已见声明（判同名）
+		rws    []pathRewrite
+		binds  []string
+		spaces []string
+		seen   = make(map[string]string, len(entry.EnvReq.LibPaths)) // 目录名 → 已见声明（判同名）
 	)
 	for _, raw := range entry.EnvReq.LibPaths {
 		decl := strings.TrimSpace(raw)
 		if decl == "" {
-			return nil, nil, fmt.Errorf("卵 %s：env_req.lib_paths 里有一项是空串——拒孵（库目录拿不到，不猜）", eggID)
+			return nil, nil, nil, fmt.Errorf("卵 %s：env_req.lib_paths 里有一项是空串——拒孵（库目录拿不到，不猜）", eggID)
 		}
 		host := expandTilde(decl)
 		if !filepath.IsAbs(host) {
-			return nil, nil, fmt.Errorf("卵 %s：库目录 %q 不是宿主侧绝对路径——拒孵（空间内只读落点与库路径改写都要求宿主绝对路径）",
+			return nil, nil, nil, fmt.Errorf("卵 %s：库目录 %q 不是宿主侧绝对路径——拒孵（空间内只读落点与库路径改写都要求宿主绝对路径）",
 				eggID, decl)
 		}
 		clean := filepath.Clean(host)
 		name := filepath.Base(clean)
 		if name == "" || name == "." || name == ".." || name == string(filepath.Separator) {
-			return nil, nil, fmt.Errorf("卵 %s：库目录 %q 推不出目录名——拒孵（落点 %s/<目录名> 定不下来）",
-				eggID, decl, spaceEngineLibRoot)
+			return nil, nil, nil, fmt.Errorf("卵 %s：库目录 %q 推不出目录名——拒孵（落点 %s/<目录名> 定不下来）",
+				eggID, decl, spaceLibRoot)
 		}
 		if prev, dup := seen[name]; dup {
-			return nil, nil, fmt.Errorf("卵 %s：库目录 %q 与 %q 的目录名都是 %q——拒孵：两个库目录同名会互相遮挡，不说谁盖谁",
+			return nil, nil, nil, fmt.Errorf("卵 %s：库目录 %q 与 %q 的目录名都是 %q——拒孵：两个库目录同名会互相遮挡，不说谁盖谁",
 				eggID, prev, decl, name)
 		}
 		seen[name] = decl
 		st, err := os.Stat(clean)
 		if err != nil {
-			return nil, nil, fmt.Errorf("卵 %s：库目录 %q 在宿主上不存在（%v）——拒孵：声明了却不存在的路径，空间内同样不存在，"+
+			return nil, nil, nil, fmt.Errorf("卵 %s：库目录 %q 在宿主上不存在（%v）——拒孵：声明了却不存在的路径，空间内同样不存在，"+
 				"绑定与改写都会变成「看着好了其实没生效」", eggID, decl, err)
 		}
 		if !st.IsDir() {
-			return nil, nil, fmt.Errorf("卵 %s：库路径 %q 不是目录——拒孵（lib_paths 声明的是库**目录**，落点 %s/%s 是整目录挂载）",
-				eggID, decl, spaceEngineLibRoot, name)
+			return nil, nil, nil, fmt.Errorf("卵 %s：库路径 %q 不是目录——拒孵（lib_paths 声明的是库**目录**，落点 %s/%s 是整目录挂载）",
+				eggID, decl, spaceLibRoot, name)
 		}
-		space := spaceEngineLibRoot + "/" + name
+		space := spaceLibRoot + "/" + name
 		bind, err := roBind(clean, space)
 		if err != nil {
-			return nil, nil, fmt.Errorf("卵 %s：%w", eggID, err)
+			return nil, nil, nil, fmt.Errorf("卵 %s：%w", eggID, err)
 		}
 		binds = append(binds, bind)
+		spaces = append(spaces, space)
 		rws = append(rws, pathRewrite{host: clean, raw: decl, space: space})
 	}
-	return rws, binds, nil
+	return rws, binds, spaces, nil
 }
 
 // roBind 组装一条只读绑定（ExtraROBinds 的 `<host>:<space>` 形式）。
@@ -353,7 +393,7 @@ func roBind(host, space string) (string, error) {
 
 // rewriteEnvValue 环境变量**值**里的库宿主路径改写：按 `:` 切段，**整段精确匹配**才改。
 //
-//	/old/bin:/old/other  → /engine/lib/bin:/engine/lib/other
+//	/old/bin:/old/other  → /libs/bin:/libs/other
 //
 // 三条边界（都是口径里写死的）：
 //   - **不做前缀/子串替换**（见 pathRewrite.matches）：「/a/b」不等于「/a/bc」，也不许把
@@ -404,27 +444,50 @@ func (r pathRewrite) matches(tok string) bool {
 
 // spaceInputMappings 算出需要改写的宿主侧输入，以及需要额外只读绑定的清单（ExtraROBinds）。
 //
-// 覆盖三类输入（都只读）：
-//   - 权重文件（必给）：空间内 = /models/<basename>，其目录就是 WeightPath 的挂载源；
-//   - 视觉投影 mmproj（可选）：必须与权重同目录——不同目录一律拒孵（少挂了不是「少一点」，
-//     而是「装好了但看不见图」的静默降级，正是 §6.9 要防的形态）；
+// **逐文件**覆盖三类输入（都只读；缺陷 12 修正：整**目录**不再挂载 —— 旧实现把权重所在目录
+// 整体挂成 /models，真机上空间内 `ls /models` 能列出同目录的别的模型，与「只挂该卵自己的权重」
+// 的表述直接矛盾）：
+//   - 权重文件（必给）：`<entry.file>:/models/<基名>`；
+//   - 视觉投影 mmproj（可选）：`<mmproj>:/models/<基名>`（逐文件挂载后不再要求「与权重同目录」
+//     —— 那条限制的由来就是整目录挂载，理由已随之消失；真危险的是**基名撞车**，见下）；
 //   - 聊天模板 chat_template（可选）：文件存在才处理（适配器也只在存在时才发该参数）；
-//     与权重同目录 ⇒ 顺带可见；否则只读挂进 /templates/<basename>（ExtraROBinds 输入通道）。
-func spaceInputMappings(eggID string, entry *registry.ModelEntry, weightDir, hostWeightFile string) ([]pathRewrite, []string, error) {
+//     与权重同目录 ⇒ `/models/<基名>`，否则 ⇒ `/templates/<基名>`（沿用既有的输入通道落点）。
+//
+// 两条 fail-closed（都只针对「说不清谁赢」的形态）：
+//   - **同一空间目录下基名撞车**（如权重与投影同名，或两个模板同名）⇒ 拒孵：逐文件挂载时后挂的
+//     会盖住先挂的，落点相同就等于「有一份静默不见了」；
+//   - 宿主路径里带 `:` ⇒ 拒孵（见 roBind：`:` 是 <host>:<space> 的分隔符，会被拆错落点）。
+func spaceInputMappings(eggID string, entry *registry.ModelEntry, hostWeightFile string) ([]pathRewrite, []string, error) {
+	weightDir := filepath.Dir(hostWeightFile)
+	weightSpace := spaceWeightsDir + "/" + filepath.Base(hostWeightFile)
+
 	rewrites := []pathRewrite{{
 		host:  hostWeightFile,
 		raw:   strings.TrimSpace(entry.File),
-		space: spaceWeightsDir + "/" + filepath.Base(hostWeightFile),
+		space: weightSpace,
 	}}
-	var binds []string
+	// 空间内落点 → 声明来源（判「基名撞车」；同一个空间路径只能有一份来源）
+	claimed := map[string]string{weightSpace: "权重 " + entry.File}
+	weightBind, err := roBind(hostWeightFile, weightSpace)
+	if err != nil {
+		return nil, nil, fmt.Errorf("卵 %s：%w", eggID, err)
+	}
+	binds := []string{weightBind}
 
 	if p := strings.TrimSpace(entry.MMProj); p != "" {
 		host := expandTilde(p)
-		if filepath.Dir(host) != weightDir {
-			return nil, nil, fmt.Errorf("卵 %s：视觉投影 %q 与权重不在同一目录（权重目录 %s）——拒孵：空间内只挂该卵自己的权重目录，投影挂不进去会变成「装好了但看不见图」的静默降级",
-				eggID, entry.MMProj, weightDir)
+		space := spaceWeightsDir + "/" + filepath.Base(host)
+		if prev, dup := claimed[space]; dup {
+			return nil, nil, fmt.Errorf("卵 %s：视觉投影 %q 与 %s 的空间内落点都是 %q——拒孵：逐文件挂载时后挂的会盖住先挂的，"+
+				"落点撞车等于有一份静默不见了", eggID, entry.MMProj, prev, space)
 		}
-		rewrites = append(rewrites, pathRewrite{host: host, raw: p, space: spaceWeightsDir + "/" + filepath.Base(host)})
+		claimed[space] = "视觉投影 " + entry.MMProj
+		b, err := roBind(host, space)
+		if err != nil {
+			return nil, nil, fmt.Errorf("卵 %s：%w", eggID, err)
+		}
+		binds = append(binds, b)
+		rewrites = append(rewrites, pathRewrite{host: host, raw: p, space: space})
 	}
 
 	if p := strings.TrimSpace(entry.ChatTemplate); p != "" {
@@ -433,8 +496,17 @@ func spaceInputMappings(eggID string, entry *registry.ModelEntry, weightDir, hos
 			space := spaceWeightsDir + "/" + filepath.Base(host)
 			if filepath.Dir(host) != weightDir {
 				space = spaceTemplatesDir + "/" + filepath.Base(host)
-				binds = append(binds, host+":"+space) // ExtraROBinds 形式：<host>:<space>
 			}
+			if prev, dup := claimed[space]; dup {
+				return nil, nil, fmt.Errorf("卵 %s：聊天模板 %q 与 %s 的空间内落点都是 %q——拒孵：逐文件挂载时后挂的会盖住先挂的，"+
+					"落点撞车等于有一份静默不见了", eggID, entry.ChatTemplate, prev, space)
+			}
+			claimed[space] = "聊天模板 " + entry.ChatTemplate
+			b, err := roBind(host, space)
+			if err != nil {
+				return nil, nil, fmt.Errorf("卵 %s：%w", eggID, err)
+			}
+			binds = append(binds, b)
 			rewrites = append(rewrites, pathRewrite{host: host, raw: p, space: space})
 		}
 	}
@@ -527,18 +599,48 @@ func renderNode(idx int) string { return fmt.Sprintf("/dev/dri/renderD%d", rende
 //
 //	env_req.env **照单执行**（含按卵覆盖 LD_LIBRARY_PATH；空串 = 显式清空，K2 的包装脚本就是
 //	清它，§6.7 C③）；
-//	**值**里出现的库宿主路径按 `:` 切段整段改写成空间内落点 /engine/lib/<目录名>
+//	**值**里出现的库宿主路径按 `:` 切段整段改写成空间内落点 /libs/<目录名>
 //	（改写表来自 libRWs / engineLibMappings；空值原样保留 —— 清空是故意的）；
+//	**据 lib_paths 生成空间内 LD_LIBRARY_PATH**（缺陷 6 修正，见下）；
 //	声明了卡号再补一条 HIP_VISIBLE_DEVICES（卵已自己声明 HIP_VISIBLE_DEVICES 的以声明为准，不覆盖）。
 //
 // 未声明任何环境变量 ⇒ nil（不注入空壳）。
-func hatchEnv(entry *registry.ModelEntry, cardIdx int, cardKnown bool, libRWs []pathRewrite) map[string]string {
+//
+// 缺陷 6（2026-09-15 真机实测）：引擎的 RUNPATH 里写死的是**宿主**构建目录
+// （`readelf -d` → `RUNPATH [/home/g01/llama.cpp-src/build-hip-flash/bin:]`）⇒ 空间内不设
+// `LD_LIBRARY_PATH` 就是 `error while loading shared libraries: libllama-server-impl.so`
+// + 单元 127（秒死）。所以孵化器**据 lib_paths 生成**它，不再指望每个引擎都手工声明。
+//
+// 生成口径（三条，都有意为之）：
+//
+//	① **只在卵声明了 lib_paths 时生成**（没声明就一个变量都不发明 —— 不猜）；
+//	② **卵自己显式写了 LD_LIBRARY_PATH 就以它为准**（连空串「清空」语义也照旧），生成逻辑
+//	   完全不插手 ⇒ 不会出现「声明与生成两头都写」的形态（谁赢说不清的那种）；
+//	③ 生成值 = **声明的库落点在前、`/engine` 在最后**：
+//	   - 声明的在前 ⇒ 卵点名的库版本优先命中（lib_paths 存在的理由就是「库版本按卵给，不许全机一套」）；
+//	   - `/engine` 垫尾 ⇒ 引擎自己目录里的 impl/依赖库（宿主上正是 RUNPATH 指的那个目录）仍然找得到，
+//	     新引擎不必再手工声明一次（这正是缺陷 6 的诉求：RUNPATH 写死宿主路径，空间内得有人补上）。
+func hatchEnv(entry *registry.ModelEntry, cardIdx int, cardKnown bool, libRWs []pathRewrite, libSpaces []string) map[string]string {
 	var env map[string]string
 	if entry != nil && entry.EnvReq != nil && len(entry.EnvReq.Env) > 0 {
-		env = make(map[string]string, len(entry.EnvReq.Env)+1)
+		env = make(map[string]string, len(entry.EnvReq.Env)+2)
 		for k, v := range entry.EnvReq.Env {
 			env[k] = rewriteEnvValue(v, libRWs)
 		}
+	}
+	// ② 卵显式声明过 LD_LIBRARY_PATH（含空串 = 清空）⇒ 一句都不补
+	declaredLibPath := false
+	if entry != nil && entry.EnvReq != nil {
+		_, declaredLibPath = entry.EnvReq.Env["LD_LIBRARY_PATH"]
+	}
+	if len(libSpaces) > 0 && !declaredLibPath {
+		if env == nil {
+			env = map[string]string{}
+		}
+		search := make([]string, 0, len(libSpaces)+1)
+		search = append(search, libSpaces...)
+		search = append(search, spaceEngineDir)
+		env["LD_LIBRARY_PATH"] = strings.Join(search, ":")
 	}
 	if !cardKnown {
 		return env
@@ -733,3 +835,53 @@ func buildEngineArgv(modelName string, entry *registry.ModelEntry, port int) (st
 //
 // ⚠ 未接（如实登记，别当已做）：`kv_disk.space_mb` 的**盘闸门**（到顶怎么办：清最旧还是拒孵）
 // 与"N 天未用即清"的保留策略都还没有实现（§9.7 ②③ / §9.8），当前只保证「落点对 + 参数带上限」。
+
+// ═══ 2026-09-15 修正：缺陷 5 / 6 / 11 / 12（第一枚卵真机实测）═══════════════════
+//
+// 报告：`docs/issues/报告-第一枚卵真机实测-20260915.md` §12。与本文件相关的四条逐条落到本文件
+// ——**只到映射边界**（hatch 包的配方不归本文件，见 ⓵）。
+//
+//	5. **lib_paths 落点嵌在只读的 /engine 之下 ⇒ 整卵孵不起来**（原文
+//	   `bwrap: Can't mkdir parents for /engine/lib/bin: Read-only file system`，单元 status=1，
+//	   1–3ms 秒死）。改：落点 `/engine/lib/<名>` → **独立只读挂载点 `/libs/<名>`**
+//	   （见 spaceLibRoot 注释：父目录 /libs 是新根上的普通目录，bwrap 建得出中间目录）。
+//
+//	6. **引擎 RUNPATH 写死宿主路径**（`readelf -d` → `RUNPATH [/home/g01/…/build-hip-flash/bin:]`）
+//	   ⇒ 空间内不设 `LD_LIBRARY_PATH` 就是 `libllama-server-impl.so` 找不到 + 单元 127。
+//	   改：**由孵化器据 `lib_paths` 生成空间内 `LD_LIBRARY_PATH`**（见 hatchEnv：声明的库落点
+//	   在前、`/engine` 垫尾；**卵自己显式写了该变量就完全以卵的为准**，绝不两头都写）。
+//
+//	12. **「只挂该卵自己的权重」与实现不符**：旧实现挂的是权重**所在目录** ⇒ 同目录别的模型在
+//	   空间内可见（真机 `ls /models` 列出 Qwen2.5-VL-32B / Qwen3.6-35B / Flash-Next 等）。
+//	   改：**逐文件挂载**（entry.file + mmproj + chat_template 各有自己的只读绑定，落
+//	   `/models/<基名>`；模板在权重目录之外时落 `/templates/<基名>`）⇒ 同目录别的模型既不在
+//	   绑定里、也不在参数里（ship 了用例钉住）。一处副作用、**有意为之**：mmproj「必须与权重
+//	   同目录」的限制**退役**（它的由来正是整目录挂载），改守真危险的那条 —— **同一空间目录下
+//	   基名撞车即拒孵**（后挂的会盖住先挂的，等于有一份静默不见了）。
+//
+//	11. **env_req.mmap_max_count 在孵化器里无对应字段**：取「**暂不生效**」这一支（另一支是接进
+//	   spec，但落地手段不存在，见 ⓶）。字段注释已明说（`registry/egg_decl.go`），本文件 ⑦b
+//	   也写清为什么不映射 —— 宁可白纸黑字写「暂不生效」，也不留一个看着像保障、其实没人执行的东西。
+//
+// ⓵ **需要 hatch 侧同批同步（否则本次改动反而孵不起来）**：
+//
+//	hatch 包 `BuildBwrapArgv` 里那条 `--ro-bind s.WeightPath /models` 是**整目录**挂载，与逐文件
+//	绑定**冲突**：/models 被它挂成只读之后，再往里绑 `/models/<基名>` 会以
+//	`Can't create file …: Read-only file system` 失败（与缺陷 5 同一类）。hatch 侧要做的两件事：
+//
+//	  ① 去掉整目录挂载，换成「一个**空 /models** + 逐文件只读挂进来」（建议 `--tmpfs /models`
+//	     打底，再由 ExtraROBinds 把每个文件落到 `/models/<基名>`）；
+//	  ② **封闭性判据同步**：`hatch_check.go` 现在只认「/models 存在且 ro」这一条挂载，逐文件
+//	     之后 /models 自己不再是那个只读挂载 ⇒ 判据须改成「/models 下每个声明文件都是 ro 挂载，
+//	     且没有任何宿主目录被整挂进来」。报告 §12 缺陷 12 说的「判据侧同步」就是这条。
+//
+//	本文件这一侧已经就位：ExtraROBinds 里**只有**声明文件的逐文件绑定（基名与顺序可断言），
+//	`WeightPath` 保留为「权重所在宿主目录」仅供出证/日志 —— hatch 侧去掉整挂后它自然退出挂载面。
+//
+// ⓶ **建议给 hatch.Spec 加的字段（本批用现有字段实现，请该包负责人/父代理拍）**：
+//
+//	- `WeightFiles []string`：要挂进 /models 的**逐个文件**（本文件已算好）。有了它，hatch 侧不必
+//	  从 ExtraROBinds 里反推「哪些是权重文件」，`WeightPath` 也可以顺势退役（或改成单文件语义）；
+//	- `MmapMaxCount int`：**不建议**照现在的形态加 —— `vm.max_map_count` 是**机器级 sysctl**、
+//	  不是按进程的 rlimit，单元里下发不了；要真生效得配一条机器级前置校验（拿
+//	  `/proc/sys/vm/max_map_count` 与声明值比，不够就拒孵），那是另一件事，得先拍板。
