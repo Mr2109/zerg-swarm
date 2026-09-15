@@ -89,6 +89,26 @@ func (h Hatcher) UnitCgroup(ctx context.Context, unit string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// MainPID 单元主进程 pid（孵化后核封闭性要用它读 /proc/<pid>/mountinfo，§6.9）。
+// 拿不到（单元不存在 / 还没起 / 输出不是正数）⇒ 返回错误：调用方必须如实记「未核验」，
+// **不许**把「没核」当「核过了」。
+func (h Hatcher) MainPID(ctx context.Context, unit string) (int, error) {
+	if strings.TrimSpace(unit) == "" {
+		return 0, fmt.Errorf("缺单元名")
+	}
+	cmd := exec.CommandContext(ctx, "systemctl", "--user", "show", unit, "-p", "MainPID", "--value")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("读单元主进程 pid 失败（%s）：%v：%s", unit, err, strings.TrimSpace(string(out)))
+	}
+	raw := strings.TrimSpace(string(out))
+	pid, perr := strconv.Atoi(raw)
+	if perr != nil || pid <= 0 {
+		return 0, fmt.Errorf("单元 %s 的主进程 pid 不是正数（%q）——按「拿不到 pid」处理，不做核验", unit, raw)
+	}
+	return pid, nil
+}
+
 // VerifyEnclosure 运行时封闭性核验（§6.9 硬要求）：读 `/proc/<pid>/mountinfo` 实地核，
 // **不得以单元状态为凭**。pid 可由调用方从单元内进程取（引擎进程）。
 func (h Hatcher) VerifyEnclosure(pid int) (EnclosureReport, error) {

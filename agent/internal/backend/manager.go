@@ -52,6 +52,10 @@ type subproc struct {
 	failCnt  int       // 连续健康检查失败次数
 	lastUsed time.Time // 最近使用时间（LRU）；P2 起兼作「最后一次活动时间戳」（§7.7 修补 2）
 	reqCount int       // 活跃请求数（旧口径：InferForward 延迟减计数的观测面）
+	// Unit 孵化单元的归属名（批 2，开关 ZERG_HATCH 开时由孵化器返回；开关关时**恒空**）。
+	// 收卵判据就是它：非空 ⇒ 调 Hatcher.Collect（幂等），空 ⇒ 走既有进程句柄路径。
+	// 它与 proc 是两种互斥形态：孵化路径没有本端进程句柄（proc 恒 nil），裸 exec 路径没有单元名。
+	Unit string
 	// inflight 在飞引用计数（P2，设计 §7.7 修补 3）——「在飞」的唯一真源：
 	// 请求进入生成中 +1（acquireInflight）、完成/失败 −1（releaseInflight）。
 	// 卸载/切换判据一律取它；引擎 /slots 只作交叉校验，不作为条件。
@@ -88,6 +92,9 @@ type Manager struct {
 	// waitQ 等待队列（P7：切换期到达的请求挂起在此，出队须重校验当前卵）。
 	// ⚠ 锁序：任何持 m.mu 的路径都不得调用 WaitQ* 方法（见 waitqueue.go 文件头不变式）。
 	waitQ *p2Queue
+	// hatcher 孵化器实现（批 2：开关 ZERG_HATCH 开时用；nil ⇒ 默认 hatch.Hatcher{}）。
+	// 抽成小接口只为测试注入假孵化器（见 hatch_path.go）——生产恒 nil，不改变任何现有行为。
+	hatcher hatcher
 }
 
 // defaultReapInterval 是后台 TTL 回收循环的扫描间隔（只决定"多久查一次"，不是 TTL 本身）。
@@ -256,6 +263,19 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 		log.Printf("[backend] 内存预算检查通过: avail=%.1fGB, required=%.1fGB", have, need)
 	}
 
+	// ── 批 2：开关开 ⇒ 先判实测档案、再过双闸门（§8.4 / §6.8.4「先判格式，再算账」）─────────
+	// 开关**关** ⇒ 这一段整体不执行（hatchMode=false），doStart 的代码路径与孵化器落地前逐字一致。
+	// 拒孵一律在**建 subproc / 分配端口之前**返回：不起任何单元、不登记任何驻留（账本干净）。
+	hatchMode := hatchEnabled()
+	var hatchProfile monitor.EggProfile
+	if hatchMode {
+		prof, reject := m.hatchGateLocked(modelName, entry)
+		if reject != nil {
+			return reject, nil
+		}
+		hatchProfile = prof
+	}
+
 	// 设置 loading 状态
 	sp := &subproc{
 		model:    modelName,
@@ -272,6 +292,12 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 		return errResponse(500, "no free port", ""), nil
 	}
 	sp.port = port
+
+	// 批 2：开关开 ⇒ 走孵化器（起单元 + 既有就绪判据 + 封闭性核验）；开关关 ⇒ 走下方既有裸 exec
+	// 路径（一行不变）。两者共用同一份参数构造（buildEngineArgv）。
+	if hatchMode {
+		return m.hatchStartLocked(modelName, entry, sp, port, hatchProfile)
+	}
 
 	// 构建启动命令（模型适配层：按模型名选适配器，管理启动参数/工具风格/重提示）
 	// （P1 的「非主线引擎必须带 cmd:」守卫在 doStart 最前面，见函数开头。
@@ -340,7 +366,9 @@ func (m *Manager) Stop() map[string]interface{} {
 	defer m.mu.Unlock()
 
 	for name, sp := range m.procs {
-		if sp.proc != nil && sp.proc.ProcessState == nil {
+		// 批 2：孵化路径的卵没有本端进程句柄（sp.proc 恒 nil）⇒ 凭 sp.Unit 非空判定它需要收卵。
+		// 开关关时 sp.Unit 恒空（没有任何代码写它）⇒ 判据与原来逐字等价。
+		if (sp.proc != nil && sp.proc.ProcessState == nil) || sp.Unit != "" {
 			log.Printf("[backend] 停止进程: model=%s", name)
 			m.stopSubproc(sp)
 		}
@@ -634,6 +662,14 @@ func (m *Manager) stopSubproc(sp *subproc) {
 	// P2（§7.7 修补 3）：真正动手前的观测钩子——此刻调用方应已在锁内置 draining 并出锁。
 	if m.stopHook != nil {
 		m.stopHook(sp)
+	}
+	// 批 2：孵化路径收卵 —— sp.Unit 非空 ⇒ 改调孵化器 Collect（幂等，systemctl --user stop），
+	// 没有本端进程句柄可发信号。开关关时 sp.Unit 恒空 ⇒ 这段与既有句柄路径互不干扰。
+	if sp.Unit != "" {
+		m.collectUnit(sp.Unit)
+		sp.proc = nil
+		sp.port = 0
+		return
 	}
 	if sp.proc == nil || sp.proc.Process == nil {
 		return
