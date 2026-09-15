@@ -20,6 +20,7 @@ package backend
 
 import (
 	"io"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -124,6 +125,8 @@ func (g *progressGuard) run(
 	}
 
 	lastProgress := g.progressValue(progress)
+	progressReadable := false
+	_ = progressReadable
 	lastCPU, _ := cpu()
 	flatCPU := 0
 	stalls := 0
@@ -138,7 +141,7 @@ func (g *progressGuard) run(
 		case <-g.stop:
 			return // 正文读完/被关 ⇒ 守卫退场（正常路径）
 		case <-tick.C:
-			cur := g.progressValue(progress)
+			cur, readable := g.progressValue2(progress)
 			curCPU, err := cpu()
 			if cur > lastProgress {
 				// 有推进 ⇒ 清空停滞计数（合法长 prefill 就靠这条活着）
@@ -156,20 +159,44 @@ func (g *progressGuard) run(
 				}
 			}
 			lastCPU = curCPU
+			progressReadable = readable
 		case <-deadline.C:
-			if g.progressValue(progress) > lastProgress {
-				lastProgress = g.progressValue(progress)
+			curW, readableW := g.progressValue2(progress)
+			advanced := curW > lastProgress
+			// ⚠ 关键口径（沙箱批 D 抓到的假阳性）：**进度读数不可读时绝不能按窗口判死** ——
+			// 读不到 ≠ 没推进；否则一次 /slots 读取失败就会把合法的长预填充（实测 ≈30 min 那种）杀掉。
+			// 不可读时只保留"CPU 工时也不动"这条（那是真停摆的证据）。
+			if advanced {
+				lastProgress = curW
 				stalls, flatCPU = 0, 0
+			} else if !readableW && g.content.Load() == 0 {
+				log.Printf("[看门狗] 正文阶段窗口 %d：进度不可读且无内容 ⇒ 只按 CPU 判（不累计停滞）", stalls)
 			} else {
 				stalls++
+				log.Printf("[看门狗] 正文阶段窗口 %d/%d：无推进（进度可读=%v 内容=%dB CPU增量见上）",
+					stalls, maxStall, readableW, g.content.Load())
 				if stalls >= maxStall {
 					onStuck(WatchdogStuckNoProgress, "正文阶段：无推进已累计 "+itoa(stalls)+" 个窗口（上限 "+itoa(maxStall)+"）")
 					return
 				}
 			}
+			progressReadable = readableW
 			deadline.Reset(window)
 		}
 	}
+}
+
+// progressValue2 返回 (进度值, 引擎侧读数是否可读)。不可读 ≠ 没推进 —— 见窗口结算处注释。
+func (g *progressGuard) progressValue2(progress func() (uint64, error)) (uint64, bool) {
+	total := g.content.Load()
+	readable := false
+	if progress != nil {
+		if v, err := progress(); err == nil {
+			total += v
+			readable = true
+		}
+	}
+	return total, readable
 }
 
 func (g *progressGuard) progressValue(progress func() (uint64, error)) uint64 {
