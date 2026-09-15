@@ -51,11 +51,7 @@ type Agent struct {
 
 	mu         sync.Mutex
 	activeReqs int
-	// inferCh 【已停用｜P7 批 3】原 20 槽推理 channel，已被 backend 等待队列（p2Queue）取代
-	// （队列满立即 429 + Retry-After、排队含 ETA、出队重校验当前卵）。
-	// 保留字段仅为兼容：**不再有任何读写**。是否删除待 Mr2109 点头（删代码需先问）。
-	inferCh   chan inferReq
-	startedAt time.Time
+	startedAt  time.Time
 }
 
 // inferReq 推理请求项，包含 done channel 用于结果回传。
@@ -87,7 +83,6 @@ func NewAgent(machine, token string, reg *registry.Registry, backends *backend.M
 		vitals:     monitor.NewVitalsRecorder(), // P4：/services 的全局 GTT 账来源（只读快照）
 		controller: ctrl,
 		startedAt:  time.Now(),
-		inferCh:    make(chan inferReq, 20),
 	}
 }
 
@@ -270,7 +265,8 @@ func retryAfterSeconds(eta time.Duration) int {
 }
 
 // inferLoop 推理队列 worker：从 p2Queue 取队头，**出队须重校验当前卵**（§7.7 修补 4）。
-// 原先的 20 槽 channel（agent.inferCh）已停用——保留字段仅为兼容，见 Agent 结构注释。
+// （P7 批 3 起，原 20 槽 channel 队列已被 backend 等待队列取代；Mr2109 2026-09-15 拍：
+// 停用的旧队列字段直接删除，需要时由 git 还原。）
 func (s *Server) inferLoop() {
 	mismatchStreak := 0
 	for {
