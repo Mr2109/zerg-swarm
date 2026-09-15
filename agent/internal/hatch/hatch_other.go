@@ -10,6 +10,7 @@ package hatch
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 )
 
@@ -53,6 +54,10 @@ func (h Hatcher) SpacePID(_ context.Context, _ string) (int, string, error) {
 func (h Hatcher) VerifyEnclosureForUnit(_ context.Context, _ string) (EnclosureReport, error) {
 	return EnclosureReport{}, ErrUnsupportedPlatform
 }
+
+// UserScopeEnv 非 Linux 桩：没有「用户总线」这个概念，原样返回环境。
+// （调用方都是 Linux-only 路径；这里不假装能给出 /run/user/<uid>。）
+func UserScopeEnv() ([]string, error) { return os.Environ(), nil }
 
 func (h Hatcher) VerifyEnclosureDeclared(_ int, _ []string) (EnclosureReport, error) {
 	return EnclosureReport{}, ErrUnsupportedPlatform
