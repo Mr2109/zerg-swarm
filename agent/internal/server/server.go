@@ -281,6 +281,19 @@ func retryAfterSeconds(eta time.Duration) int {
 	return 30 // 未知 ETA 的保守建议（Q5：让客户端"读得懂还要等多久"）
 }
 
+// markStarted 通知等待方"该请求已出队、进入执行期"（非阻塞、幂等：startedCh 缓冲 1，等待方只读一次）。
+// 产品路径由 inferLoop 在出队后调用；测试用它精确模拟"worker 已取走"这一时刻（无需真引擎）。
+func markStarted(payload any) {
+	req, isReq := payload.(inferReq)
+	if !isReq || req.startedCh == nil {
+		return
+	}
+	select {
+	case req.startedCh <- struct{}{}:
+	default:
+	}
+}
+
 // inferLoop 推理队列 worker：从 p2Queue 取队头，**出队须重校验当前卵**（§7.7 修补 4）。
 // （P7 批 3 起，原 20 槽 channel 队列已被 backend 等待队列取代；Mr2109 2026-09-15 拍：
 // 停用的旧队列字段直接删除，需要时由 git 还原。）
@@ -312,13 +325,7 @@ func (s *Server) inferLoop() {
 		if !ok {
 			continue
 		}
-		// 排队期结束：非阻塞地给该请求发一次"开始执行"信号（缓冲 1 ⇒ 幂等；等待方只读一次）
-		if req, isReq := payload.(inferReq); isReq && req.startedCh != nil {
-			select {
-			case req.startedCh <- struct{}{}:
-			default:
-			}
-		}
+		markStarted(payload)
 		mismatchStreak = 0
 		if req, isReq := payload.(inferReq); isReq {
 			s.handleInferRequest(req)
