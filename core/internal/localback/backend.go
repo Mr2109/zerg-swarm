@@ -442,10 +442,15 @@ func (lb *LocalBackend) Snapshot() *LocalSnapshot {
 		MemTotalGb:     memTotal,
 		Load:           sampleLocalLoad(),
 		GpuTempC:       sampleLocalGpuTemp(),
-		Healthy:        state == stateReady,
-		Models:         []string{},
-		VramKnown:      known,
-		VramUnified:    unified,
+		// 健康口径（2026-09-16 与子端统一）：**空着也算健康** ——
+		// 健康 = 心跳正常 + 引擎可用/可孵（而非"此刻有模型驻留"）。
+		// 只有 broken（熔断：连续健康检查失败）才判不健康；idle（空着）/loading/ready 都算健康。
+		// 理由：主控 master_scheduler 的等待任务重派要求「熔断冷却过 + 机器 healthy」，
+		// 空闲即不健康会让本机永远接不到重派（与 2026-09-15 子端同一处失真）。
+		Healthy:     state != stateBroken,
+		Models:      []string{},
+		VramKnown:   known,
+		VramUnified: unified,
 	}
 	if pVramKnown {
 		// 真采到独立显存才带值；拿不到时三键留 0 → JSON omitempty 整键不出现（缺席，不造值）。
