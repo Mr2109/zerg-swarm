@@ -244,9 +244,13 @@ func (m *Manager) hatchStartLocked(modelName string, entry *registry.ModelEntry,
 	//   - 实读且不符 ⇒ 立刻**收卵 + 拒孵**（下面这一段），绝不继续对外服务；
 	//   - 读不到     ⇒ 告警 + 在观测面标出（enclosure_verified=false + note），**不拒服务**；
 	//   - 通过       ⇒ enclosure_verified=true。
-	est, note := m.verifyEnclosure(unit, spec.WeightFiles)
+	est, note, enginePID := m.verifyEnclosure(sp, spec.WeightFiles)
 	sp.enclosureVerified = est == enclosureVerified
 	sp.enclosureNote = note
+	// 缺陷 14：孵化路径的观测面要用这个 pid（给 unit/gtt、并把自己孵的卵从「外部占用」里排除）
+	if sp != nil && enginePID > 0 {
+		sp.enginePID = enginePID
+	}
 	if est == enclosureMismatch {
 		log.Printf("[backend] ✗ 收卵 + 拒孵 %s（封闭性核验不符）: unit=%s %s", modelName, unit, note)
 		m.stopSubproc(sp) // 收卵（sp.Unit 非空 ⇒ 走 Hatcher.Collect，幂等）
@@ -292,29 +296,38 @@ const (
 // 声称隔离生效却读不到证据，必须是一个**看得见**的状态；日志会被冲掉、也没人翻。
 //
 // 返回 (状态, 一句话留痕)：留痕原样进观测面的 enclosure_note（错误信息里也会带上同一句话）。
-func (m *Manager) verifyEnclosure(unit string, declaredWeightFiles []string) (enclosureState, string) {
+// verifyEnclosure 孵化后运行时核验封闭性（§6.9，三态）。
+//
+// 第三个返回值 = **实读到的空间内引擎进程 pid**（0 = 没读到）。孵化路径 sp.proc 恒 nil，
+// 观测面要靠它给 unit/gtt 与「排除本端自己孵的卵」（缺陷 14，真机实测：不加这一支，
+// external_occupancy[] 会把本端自己孵的卵误报成外部占用者）。
+func (m *Manager) verifyEnclosure(sp *subproc, declaredWeightFiles []string) (enclosureState, string, int) {
+	unit := ""
+	if sp != nil {
+		unit = sp.Unit
+	}
 	h := m.hatcherImpl()
 	pid, err := h.MainPID(context.Background(), unit)
 	if err != nil || pid <= 0 {
 		note := fmt.Sprintf("未核验：拿不到引擎 pid（unit=%s）：%v", unit, err)
 		log.Printf("[backend] ⚠ 封闭性核验未执行: %s —— §6.9：未核验不等于通过（本卵照常服务，但「已核验」不成立）", note)
-		return enclosureUnreadable, note
+		return enclosureUnreadable, note, 0
 	}
 	rep, err := h.VerifyEnclosureDeclared(pid, declaredWeightFiles)
 	if err != nil {
 		note := fmt.Sprintf("未核验：读不到 pid=%d 的 mountinfo：%v", pid, err)
 		log.Printf("[backend] ⚠ 封闭性核验未执行: unit=%s %s —— §6.9：未核验不等于通过（本卵照常服务，但「已核验」不成立）",
 			unit, note)
-		return enclosureUnreadable, note
+		return enclosureUnreadable, note, 0
 	}
 	if rep.Enclosed() {
 		note := rep.String()
 		log.Printf("[backend] 封闭性核验通过: unit=%s pid=%d %s", unit, pid, note)
-		return enclosureVerified, note
+		return enclosureVerified, note, rep.PID
 	}
 	note := fmt.Sprintf("核验不符：%s（%s）", strings.Join(rep.Failures(), "；"), rep)
 	log.Printf("[backend] ✗ 封闭性核验**未通过**（§6.9 静默失效形态）: unit=%s pid=%d %s —— 收卵 + 拒孵", unit, pid, note)
-	return enclosureMismatch, note
+	return enclosureMismatch, note, rep.PID
 }
 
 // ── 收卵（开关开时走孵化器 Collect；开关关时 sp.Unit 恒空 ⇒ 走既有句柄路径）──────
