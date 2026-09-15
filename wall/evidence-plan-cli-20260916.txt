@@ -1,0 +1,105 @@
+=== 茧壁 zerg-wall：plan / CLI 真跑回执（2026-09-16，批 2'.1~2'.2）===
+本机平台: Darwin arm64 · rustc: rustc 1.98.1 (48a229cea 2026-09-01) · cargo: cargo 1.98.1 (797e8a9bc 2026-08-05)
+探针缺失或路径漂移 ⇒ 本脚本 fail（下面的 rc 逐条列出，非 0/2 都是错）
+
+--- 制品与源码 sha256（三源一物）---
+1cae444d7d0ee111e81781d7d64b002eacd1920196a23ce69bfbbc32768cd785  ./target/debug/zerg-wall
+92601ae1fcb8b4d1a9100f70fcb00a4ee2839ed32d4123c8a2a2db09cf7db8b8  src/lib.rs
+18c42cae7ee7d60c2e605fcb657138620149a319721d1e51611617b5a42582ec  src/spec.rs
+d811dc6b0cc6f77cc0ee3898e533a0be3bfd4d0b96192797e89d0d365fef75b0  src/json.rs
+91f77b4862e7785d1ca145e02325d83c376735d4033e9a6fb8cfe8146a3106ec  src/main.rs
+906279940cd9966c0aa0b0512d6aa42aad2914162be761aa21b07fa16da7075a  src/platform/linux.rs
+068a859511514cb7edbbb4daf367ba9a309e125ff4a10e948fb920191a48e1a7  src/platform/mod.rs
+
+--- 1) 版本 ---
+zerg-wall 0.1.0
+rc=0
+
+--- 2) plan（离线点名 linux）⇒ 一行 JSON 到 stdout ---
+{"schema_version":1,"platform":"linux","argv":["--ro-bind","/usr","/usr","--symlink","usr/bin","/bin","--symlink","usr/sbin","/sbin","--symlink","usr/lib","/lib","--symlink","usr/lib64","/lib64","--proc","/proc","--dev","/dev","--tmpfs","/tmp","--ro-bind","/sys","/sys","--dir","/models","--ro-bind","/opt/llama/build/bin","/engine","--ro-bind","/opt/models/demo/model.gguf","/models/model.gguf","--ro-bind","/opt/llama/build/lib","/libs/bin","--bind","/var/tmp/zerg-work/demo-egg","/work","--dev-bind","/dev/kfd","/dev/kfd","--dev-bind","/dev/dri/renderD128","/dev/dri/renderD128","--unshare-pid","--die-with-parent","--chdir","/work","--","/bin/sh","-c","export HIP_VISIBLE_DEVICES='0' LD_LIBRARY_PATH='/libs/bin'; exec \"$@\"","zerg-egg","/engine/bin/llama-server","--host","127.0.0.1","--port","9100","--model","/models/model.gguf"],"allowlist":["ro-mount:/sys（设备拓扑：任何要认设备的引擎都读它）","ro-mount:/models/model.gguf","ro-mount:/libs/bin","rw-mount:/work","device:/dev/kfd","device:/dev/dri/renderD128","chdir:/work","env:HIP_VISIBLE_DEVICES","env:LD_LIBRARY_PATH"],"note":"一档：调用 bwrap（封闭强度来自内核原语 + bubblewrap，茧壁不自研锁芯）；基线 = 只读 /usr + usrmerge 四个符号链接（/bin /sbin /lib /lib64）+ /proc + /dev + tmpfs /tmp + 空目录 /models（`--dir`，不是挂载点）；allowlist 只列超出基线的授权；observed 等级由**外部实读**给出（茧壁不判定等级，照 GKE「沙箱内自报不可信」）；归属层（systemd-run --user 的 slice/单元/限额）不在本 argv 内；memlock_bytes=67108864 由归属层（systemd-run LimitMEMLOCK）下发，**不在本 argv 内**；weight_path=/opt/models/demo 仅出证用、不参与挂载（逐文件绑定见 extra_ro_binds）"}
+rc=0
+
+--- 3) plan（默认=本机 macOS 一档未落地）⇒ 必须硬失败 rc=2，理由写明不回落 ---
+茧壁（zerg-wall）：macOS 一档（直调 Seatbelt / sandbox_init）尚未落地（批 2'.4）——拒绝：绝不回落成裸跑
+rc=2
+
+--- 4) run 点名平台 ⇒ 必须硬失败 rc=2（要跑的就是本机这一格，且本机没有 bwrap）---
+茧壁（zerg-wall）：run 不接受 --platform "linux"——拒：要跑的就是本机平台（macos）；交叉平台的计划只能用 plan 离线出
+rc=2
+
+--- 5) 坏配方（权重声明了却没有对应绑定）⇒ rc=2 且理由指到具体缺陷 ---
+茧壁（zerg-wall）：权重文件 "/opt/models/bad/model.gguf" 没有对应的只读绑定（缺 "/opt/models/bad/model.gguf:/models/model.gguf"）——拒：声明了却没挂进空间
+rc=2
+
+--- 6) 计划里的 argv 逐条（便于与 Go 侧 BuildBwrapArgv 对拍：任务 2'.3）---
+ 0 --ro-bind
+ 1 /usr
+ 2 /usr
+ 3 --symlink
+ 4 usr/bin
+ 5 /bin
+ 6 --symlink
+ 7 usr/sbin
+ 8 /sbin
+ 9 --symlink
+10 usr/lib
+11 /lib
+12 --symlink
+13 usr/lib64
+14 /lib64
+15 --proc
+16 /proc
+17 --dev
+18 /dev
+19 --tmpfs
+20 /tmp
+21 --ro-bind
+22 /sys
+23 /sys
+24 --dir
+25 /models
+26 --ro-bind
+27 /opt/llama/build/bin
+28 /engine
+29 --ro-bind
+30 /opt/models/demo/model.gguf
+31 /models/model.gguf
+32 --ro-bind
+33 /opt/llama/build/lib
+34 /libs/bin
+35 --bind
+36 /var/tmp/zerg-work/demo-egg
+37 /work
+38 --dev-bind
+39 /dev/kfd
+40 /dev/kfd
+41 --dev-bind
+42 /dev/dri/renderD128
+43 /dev/dri/renderD128
+44 --unshare-pid
+45 --die-with-parent
+46 --chdir
+47 /work
+48 --
+49 /bin/sh
+50 -c
+51 export HIP_VISIBLE_DEVICES='0' LD_LIBRARY_PATH='/libs/bin'; exec "$@"
+52 zerg-egg
+53 /engine/bin/llama-server
+54 --host
+55 127.0.0.1
+56 --port
+57 9100
+58 --model
+59 /models/model.gguf
+allowlist:
+   ro-mount:/sys（设备拓扑：任何要认设备的引擎都读它）
+   ro-mount:/models/model.gguf
+   ro-mount:/libs/bin
+   rw-mount:/work
+   device:/dev/kfd
+   device:/dev/dri/renderD128
+   chdir:/work
+   env:HIP_VISIBLE_DEVICES
+   env:LD_LIBRARY_PATH
+rc=0
