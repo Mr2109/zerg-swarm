@@ -73,9 +73,11 @@ func TestRegistry_LocalSnapshot(t *testing.T) {
 	if snap.Host != "local" {
 		t.Fatalf("快照 Host = %s，应 local", snap.Host)
 	}
-	// 未加载 → 不健康/空模型
-	if snap.Healthy {
-		t.Fatal("未加载模型不应 healthy")
+	// 健康口径（2026-09-16 统一，与子端一致）：**空着也算健康** —— 只有 broken/熔断才不健康。
+	// 本用例原先断言"未加载 ⇒ 不健康"，正是本次要改掉的那处失真：主控 master_scheduler 的等待任务重派
+	// 要求「熔断冷却过 + 机器 healthy」，空闲即不健康会让本机永远接不到重派。
+	if !snap.Healthy {
+		t.Fatal("未加载模型（空着）在新口径下也应 healthy（除非 broken）")
 	}
 }
 
