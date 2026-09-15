@@ -111,6 +111,26 @@ func eventTick(seq int64, now time.Time, state, model string, queueLen int, head
 	return buildEventFrame(seq, now, state, model, changed, queueLen, headETA, inflight), true, seq
 }
 
+// observeTick 一次只读巡检（P7 接线点 1）：**先驱动体征器**（频率分层由记录器自己管：
+// 快采 2s 五类 / 慢采 15s 逐进程归因），再取状态机与队列快照。
+//
+// 为什么必须驱动：不驱动 ⇒ 逐进程归因永远为空 ⇒ `/services` 的 external_occupancy[] 与
+// `/eggs` 的 gtt_gb 全是空（真机实测过这个缺口），"外部占用只读数"这条就等于没落地。
+func (s *Server) observeTick(now time.Time) (state, model string, queueLen int, headETA float64, inflight int) {
+	if s.agent.vitals != nil {
+		s.agent.vitals.MaybeCollect(now)
+	}
+	mgr := s.agent.backends
+	state = mgr.State()
+	model = mgr.CurrentModel()
+	queueLen = mgr.WaitQLen()
+	headETA, _ = mgr.WaitQHeadETA()
+	for _, o := range mgr.EggObservations() {
+		inflight += o.Inflight
+	}
+	return state, model, queueLen, headETA, inflight
+}
+
 // eventLoop 低频巡检（1s）：状态机迁移 + 排队深度 + ETA ⇒ 广播。
 // 这是**只读巡检**：只读快照、不改任何状态（与 §7.7 修补 2「时间戳 + 低频巡检」同风格）。
 func (s *Server) eventLoop(interval time.Duration) {
@@ -124,16 +144,9 @@ func (s *Server) eventLoop(interval time.Duration) {
 	var lastLen int
 	var lastETA float64
 	for range t.C {
-		mgr := s.agent.backends
-		state := mgr.State()
-		model := mgr.CurrentModel()
-		qLen := mgr.WaitQLen()
-		headETA, _ := mgr.WaitQHeadETA()
-		inflight := 0
-		for _, o := range mgr.EggObservations() {
-			inflight += o.Inflight
-		}
-		frame, send, newSeq := eventTick(seq, time.Now(), state, model, qLen, headETA, inflight,
+		now := time.Now()
+		state, model, qLen, headETA, inflight := s.observeTick(now)
+		frame, send, newSeq := eventTick(seq, now, state, model, qLen, headETA, inflight,
 			lastState, lastModel, lastLen, lastETA)
 		seq = newSeq
 		if !send {
