@@ -1,6 +1,6 @@
 //go:build linux
 
-// vitals_readers_linux.go —— 体征器的 Linux 实读层（X3 的真机路径）。
+// vitals_readers_linux.go —— 虫须的 Linux 实读层（X3 的真机路径）。
 //
 // 真源（全部只读）：
 //   - 全局 GTT：/sys/class/drm/card*/device/mem_info_gtt_used（配套 mem_info_gtt_total）。
