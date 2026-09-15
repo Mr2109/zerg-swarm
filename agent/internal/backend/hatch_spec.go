@@ -237,15 +237,26 @@ func resolveEngineExecutable(p string) (string, error) {
 		p, spaceEngineDir)
 }
 
-// checkEngineImplConsistency 引擎实现名（卵声明口径）与「实际会执行的可执行名」必须一致：
+// checkEngineImplConsistency 引擎实现名（卵声明口径）与「实际会执行的可执行文件」必须相符：
 // 声明与执行分叉时 fail-closed 拒孵，绝不静默按其中一个跑（§6.8.4 认不得就报错的精神）。
+//
+// 接受两种写法（都指向同一个可执行文件才算相符）：
+//   - 可辨识短名：`build-hip-flash/llama-server`（推荐，能与主线 llama-server 区分开）
+//   - 纯基名：`llama-server`
+//
+// 声明为空 ⇒ 不校验（调用方走自动推导，两侧同源必然一致）。
 func checkEngineImplConsistency(hostEngine, engineImpl string) (string, error) {
-	base := filepath.Base(hostEngine)
-	if want := filepath.Base(strings.TrimSpace(engineImpl)); engineImpl != "" && want != "" && want != base {
-		return "", fmt.Errorf("引擎实现名 %q 与实际会执行的可执行名 %q 不一致——拒孵（声明与执行分叉，不静默按其一跑）",
-			engineImpl, base)
+	impl := strings.TrimSpace(engineImpl)
+	if impl == "" {
+		return hostEngine, nil
 	}
-	return hostEngine, nil
+	base := filepath.Base(hostEngine)
+	short := shortEngineName(hostEngine)
+	if impl == base || impl == short {
+		return hostEngine, nil
+	}
+	return "", fmt.Errorf("引擎实现名 %q 与实际会执行的可执行文件 %q（可辨识短名 %q）不一致——拒孵（声明与执行分叉，不静默按其一跑）",
+		impl, hostEngine, short)
 }
 
 // ── 宿主侧输入 → 空间内路径（②）─────────────────────────────────────────────
