@@ -30,7 +30,20 @@ func phase2Env(t *testing.T) {
 // sseEngine 假引擎：立刻回头（200 + SSE），随后按 contentFn 决定正文写什么。
 // contentFn 返回 "" 表示"只发保活注释"（= 预填充期不出字的样子）。
 func sseEngine(contentFn func(tick int) string) *httptest.Server {
+	return sseEngineSlots(contentFn, `[{"id":0,"is_processing":true,"n_prompt_tokens":198698,"n_prompt_tokens_processed":196650}]`)
+}
+
+// sseEngineSlots：slotsBody 为空串 ⇒ `/slots` 不可读（用于"不可读不得判死"的回归）。
+func sseEngineSlots(contentFn func(tick int) string, slotsBody string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/slots" {
+			if slotsBody == "" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = io.WriteString(w, slotsBody)
+			return
+		}
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -182,3 +195,28 @@ func TestSlotsProgress_ParsesMeasuredShape(t *testing.T) {
 }
 
 var _ = json.Marshal
+
+// ⑤ 回归（沙箱批 D 抓到的假阳性）：**进度读数不可读时，绝不能按窗口判死**。
+// 读不到 ≠ 没推进；否则一次 /slots 读取失败就会把合法的长预填充（实测 ≈30 min 那种）杀掉。
+func TestPhase2_ProgressUnreadable_MustNotJudge(t *testing.T) {
+	phase2Env(t)
+	srv := sseEngineSlots(func(int) string { return "" }, "") // /slots 不可读，正文只有保活
+	defer srv.Close()
+
+	var n uint64 = 500
+	m, _, done := wireTestManager(t, portOf17(t, srv.URL), func(*subproc) func() (uint64, error) {
+		return func() (uint64, error) { n += 100000; return n, nil } // CPU 一直涨（"看着在忙"）
+	})
+	defer done()
+
+	resp, err := m.InferForward(context.Background(), "m", "/v1/chat/completions", []byte(`{"model":"m","stream":true}`))
+	if err != nil {
+		t.Fatalf("阶段一不该失败：%v", err)
+	}
+	defer resp.Body.Close()
+
+	// 跑满远超"窗口数"的时间（0.10s × 2 窗的 3 倍以上）
+	if obs := m.waitVerdict(t, "m", WatchdogStuckNoProgress, 700*time.Millisecond); obs != nil {
+		t.Fatalf("进度不可读时按窗口判死 = 误杀合法长预填充：%+v", *obs)
+	}
+}
