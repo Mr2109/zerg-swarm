@@ -18,6 +18,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,8 +51,11 @@ type Agent struct {
 
 	mu         sync.Mutex
 	activeReqs int
-	inferCh    chan inferReq
-	startedAt  time.Time
+	// inferCh 【已停用｜P7 批 3】原 20 槽推理 channel，已被 backend 等待队列（p2Queue）取代
+	// （队列满立即 429 + Retry-After、排队含 ETA、出队重校验当前卵）。
+	// 保留字段仅为兼容：**不再有任何读写**。是否删除待 Mr2109 点头（删代码需先问）。
+	inferCh   chan inferReq
+	startedAt time.Time
 }
 
 // inferReq 推理请求项，包含 done channel 用于结果回传。
@@ -183,9 +188,8 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 
 	// 创建结果 channel（带超时）
 	resultCh := make(chan inferResult, 1)
-	timeout := time.After(600 * time.Second) // 10 分钟超时
 
-	// 放入推理队列
+	// 放入等待队列（P7 批 3：p2Queue 取代原 20 槽 channel——限长 + ETA + 出队重校验）
 	req := inferReq{
 		body:        body,
 		model:       model,
@@ -194,44 +198,111 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 		resultCh:    resultCh,
 		ctx:         r.Context(), // v2.5.6 治本: 客户端 context——断开取消后端请求——释放单槽
 	}
-	select {
-	case s.agent.inferCh <- req:
-		// 等待结果
-		select {
-		case res := <-resultCh:
-			if res.err != nil {
-				writeInferError(w, 500, "inference failed", res.err)
-				return
-			}
-			// 写响应头
-			for k, vals := range res.headers {
-				for _, v := range vals {
-					w.Header().Add(k, v)
-				}
-			}
-			// 治本（2026-08-12）：显式 Content-Length——避免 Go 自动 chunked 传输长响应
-			// 中断（网关读 IncompleteRead——chunked 无长度歧义，显式长度让客户端明确读完）
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(res.body)))
-			// 排查日志：记录响应体实际长度（网关读到 3902 截断——确认 agent 发了多少）
-			log.Printf("[server] infer 响应: status=%d body_len=%d", res.status, len(res.body))
-			w.WriteHeader(res.status)
-			w.Write(res.body)
-			// 治本（2026-08-12）：显式 Flush——确保完整写出（网关读截断 3902/4082——写缓冲未完整发出）
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-		case <-timeout:
-			http.Error(w, `{"error":"inference timeout"}`, http.StatusGatewayTimeout)
-		}
-	default:
+	eta := estimateWaitETA(model)
+	if !s.agent.backends.WaitQPush(model, req, eta) {
+		// §5.3 / Q5：队列满 ⇒ **立即** 429（不挂起、不排队），并给出建议重试间隔。
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfterSeconds(eta)))
 		http.Error(w, `{"error":"queue full"}`, http.StatusTooManyRequests)
+		return
+	}
+
+	// 等待结果；排队+执行的总时长超过上限 ⇒ 503 + Retry-After（可等的失败，不是服务故障）。
+	select {
+	case res := <-resultCh:
+		if res.err != nil {
+			writeInferError(w, 500, "inference failed", res.err)
+			return
+		}
+		// 写响应头
+		for k, vals := range res.headers {
+			for _, v := range vals {
+				w.Header().Add(k, v)
+			}
+		}
+		// 治本（2026-08-12）：显式 Content-Length——避免 Go 自动 chunked 传输长响应
+		// 中断（网关读 IncompleteRead——chunked 无长度歧义，显式长度让客户端明确读完）
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(res.body)))
+		// 排查日志：记录响应体实际长度（网关读到 3902 截断——确认 agent 发了多少）
+		log.Printf("[server] infer 响应: status=%d body_len=%d", res.status, len(res.body))
+		w.WriteHeader(res.status)
+		w.Write(res.body)
+		// 治本（2026-08-12）：显式 Flush——确保完整写出（网关读截断 3902/4082——写缓冲未完整发出）
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	case <-time.After(s.inferWaitTimeout()):
+		// 排队上限到达：明确告知"可稍后重试"，并让客户端知道等多久合理（不静默、不硬截断）。
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfterSeconds(eta)))
+		http.Error(w, `{"error":"queued timeout","hint":"retry later"}`, http.StatusServiceUnavailable)
 	}
 }
 
-// inferLoop 推理队列 worker，串行处理推理请求。
+// inferWaitTimeout 排队+执行的总等待上限（ZERG_INFER_WAIT_TIMEOUT_S 可覆盖；缺省 600s）。
+func (s *Server) inferWaitTimeout() time.Duration {
+	if v := os.Getenv("ZERG_INFER_WAIT_TIMEOUT_S"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 600 * time.Second
+}
+
+// estimateWaitETA 排队预计等待：有实测档案（装载耗时）就用它，否则 0（未知，不编造）。
+// 依据 §8.4 标定铁律——ETA 只能来自实测档案，不许猜。
+func estimateWaitETA(model string) time.Duration {
+	p, err := monitor.LoadEggProfile(monitor.EggProfilePath(model))
+	if err != nil || p.LoadSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(p.LoadSeconds * float64(time.Second))
+}
+
+// retryAfterSeconds Retry-After 建议值：ETA 已知用 ETA，未知给一个保守缺省（秒）。
+func retryAfterSeconds(eta time.Duration) int {
+	if eta > 0 {
+		secs := int(eta.Seconds())
+		if secs < 1 {
+			return 1
+		}
+		return secs
+	}
+	return 30 // 未知 ETA 的保守建议（Q5：让客户端"读得懂还要等多久"）
+}
+
+// inferLoop 推理队列 worker：从 p2Queue 取队头，**出队须重校验当前卵**（§7.7 修补 4）。
+// 原先的 20 槽 channel（agent.inferCh）已停用——保留字段仅为兼容，见 Agent 结构注释。
 func (s *Server) inferLoop() {
-	for req := range s.agent.inferCh {
-		s.handleInferRequest(req)
+	mismatchStreak := 0
+	for {
+		item, payload, ok, mismatch := s.agent.backends.WaitQPop(s.agent.backends.CurrentModel, true)
+		if mismatch {
+			// 卵已换（或还没孵）：**不得直接转发**，先重走孵化流程（Start 幂等）。
+			if mismatchStreak == 0 {
+				if item.Model != "" {
+					if _, err := s.agent.backends.Start(item.Model); err != nil {
+						log.Printf("[server] 出队重校验：重走孵化 %s 失败: %v", item.Model, err)
+					}
+				}
+				mismatchStreak++
+				continue
+			}
+			// 第二次仍不匹配 ⇒ 孵化没能把它变成当前卵：摘除队头并把失败回给该请求，
+			// 避免热旋（不放回队列——放回会饿死后面的项，也不断重试这个装不起来的模型）。
+			s.agent.backends.WaitQDropHead()
+			if req, isReq := payload.(inferReq); isReq {
+				req.resultCh <- inferResult{status: 503, body: []byte(`{"error":"model not available"}`)}
+			}
+			mismatchStreak = 0
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		mismatchStreak = 0
+		if req, isReq := payload.(inferReq); isReq {
+			s.handleInferRequest(req)
+		}
 	}
 }
 
