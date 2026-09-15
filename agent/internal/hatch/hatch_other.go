@@ -38,6 +38,10 @@ func (h Hatcher) UnitCgroup(_ context.Context, _ string) (string, error) {
 	return "", ErrUnsupportedPlatform
 }
 
+func (h Hatcher) MainPID(_ context.Context, _ string) (int, error) {
+	return 0, ErrUnsupportedPlatform
+}
+
 func (h Hatcher) VerifyEnclosure(_ int) (EnclosureReport, error) {
 	return EnclosureReport{}, ErrUnsupportedPlatform
 }
