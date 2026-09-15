@@ -9,7 +9,10 @@
 //	   （AR4SI：证据不足不得被当作肯定断言；GKE：沙箱内自报不可信 ⇒ 证据必须来自空间之外）。
 package enclosure
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Level 封闭等级。
 type Level string
@@ -24,6 +27,32 @@ const (
 	// LevelNone 实读无任何封闭证据。
 	LevelNone Level = "none"
 )
+
+// AllLevels 四个等级取值（单一真源：错误信息、文档、校验都从这里抄）。
+var AllLevels = []Level{LevelKernel, LevelOS, LevelUnverified, LevelNone}
+
+// Valid 判一个等级取值是不是四级之一。
+//
+// 为什么必须有这个校验：档案里写了个陌生串（`trusted` / `sandboxed` / 空串）时，
+// 若默默当"某种更严的等级"放过去，就又回到"宣称等级与实际强制不一致"那条路上
+// （PraisonAI 三个公告的形态）。陌生值一律拒，由消费侧判 fail-closed。
+func (l Level) Valid() bool {
+	for _, v := range AllLevels {
+		if l == v {
+			return true
+		}
+	}
+	return false
+}
+
+// LevelsString 四级取值的可读清单（错误信息用；与 AllLevels 同源，不许各处手抄）。
+func LevelsString() string {
+	parts := make([]string, 0, len(AllLevels))
+	for _, l := range AllLevels {
+		parts = append(parts, string(l))
+	}
+	return strings.Join(parts, "|")
+}
 
 // Evidence 外部实读证据（**必须取自空间之外**；空间内自报一律不可信）。
 type Evidence struct {
