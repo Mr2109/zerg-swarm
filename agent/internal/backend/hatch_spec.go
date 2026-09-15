@@ -24,9 +24,12 @@
 // 翻译成孵化器的输入」。
 //
 // ⚠ 已知待拍板（如实标出，不擅自改 hatch 包的 X3 实测配方）：
-//   - 卵声明里的 env_req.weights / lib_paths 尚未接线：weights 与 entry.file 的一致性校验、
-//     lib_paths 的「空间内落点」（多个库目录都挂 /engine 会互相遮挡）都要先拍板；本批只原样
-//     透传 env_req.env（含显式声明的 LD_LIBRARY_PATH，空串 = 显式清空）。
+//   - 卵声明里的 env_req.**weights** 与 entry.file 的一致性校验尚未接线：两边不一致时以谁为准
+//     （还是干脆拒孵）要先拍板；本批不猜。
+//   - env_req.**lib_paths** 已接线（2026-09-15 拍）：宿主库目录只读落到 /engine/lib/<目录名>，
+//     并把 env 值里出现的库宿主路径改写成对应空间内路径（见 engineLibMappings）。
+//   - 「lib_paths 直接推出 LD_LIBRARY_PATH」**未做**（§6.7 原文里那句「孵化器据此给出
+//     LD_LIBRARY_PATH」还没有口径）⇒ 本批只改**卵自己写了**的值，不替卵发明一个环境变量。
 package backend
 
 import (
@@ -50,6 +53,12 @@ const (
 	spaceWeightsDir = "/models"
 	// spaceEngineDir 引擎自己的可执行 + 库/构建目录（只读）。
 	spaceEngineDir = "/engine"
+	// spaceEngineLibRoot 卵声明的库目录（env_req.lib_paths）在**空间内**的落点前缀：
+	// 每个宿主库目录 → `/engine/lib/<目录名>`（只读，见 engineLibMappings）。
+	//
+	// 为什么带一层 <目录名>：多个库目录若都挂 /engine 会互相遮挡（后挂的盖住先挂的，说不清谁赢），
+	// 而 /engine 本身已经是引擎构建目录的落点 ⇒ 与其「挑一个」不如各占一格。
+	spaceEngineLibRoot = "/engine/lib"
 	// spaceTemplatesDir 卵声明引用的模板类只读输入（ExtraROBinds 的「输入通道」：
 	// 如 chat_template 落在权重目录之外时，只读挂进来并改写参数）。
 	spaceTemplatesDir = "/templates"
@@ -142,6 +151,15 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 	}
 	_, engineArgs := buildEngineArgv(eggID, entry, port)
 
+	// ④a 库目录（§6.7 第 3 类 / env_req.lib_paths）：每个宿主库目录**只读**落到
+	//     /engine/lib/<目录名>，并把 **env 值**里出现的库宿主路径改写成对应空间内路径。
+	//     同名 / 不存在 / 非绝对一律拒孵（见 engineLibMappings）。
+	libRewrites, libROBinds, err := engineLibMappings(eggID, entry)
+	if err != nil {
+		return spec, err
+	}
+	roBinds = append(roBinds, libROBinds...)
+
 	// ④b KV 盘（§6.6「跨孵化保留」侧 / §9.7④）：宿主 KV 目录可写绑到 /kvdisk，并把引擎参数里
 	//     精确等于它的那个值改写成 /kvdisk。判据用**引擎真正会收到的参数**，不再按卵名算一遍
 	//     目录：路径规则只有一处真源（适配器的 kvDiskDir，落在 --kv-disk-dir 的值上），重算就是
@@ -163,9 +181,9 @@ func hatchSpecFor(entry *registry.ModelEntry, engineImpl string, port int, profi
 	spec.EngineArgs = rewriteArgsToSpace(engineArgs, rewrites)
 	spec.ExtraROBinds = roBinds
 
-	// ⑤ 环境与设备：卵声明照单执行；声明了卡号才决定可见的渲染节点
+	// ⑤ 环境与设备：卵声明照单执行（值里的库宿主路径改写成空间内落点）；声明了卡号才决定可见的渲染节点
 	cardIdx, cardKnown := declaredCardIndex(entry)
-	spec.Env = hatchEnv(entry, cardIdx, cardKnown)
+	spec.Env = hatchEnv(entry, cardIdx, cardKnown, libRewrites)
 	spec.Devices = hatchDevices(entry, cardIdx, cardKnown)
 
 	// ⑥ 一次性工作目录（每卵一份；不存在就建）——**空间内**路径 + 宿主目录可写绑过去。
@@ -259,13 +277,129 @@ func checkEngineImplConsistency(hostEngine, engineImpl string) (string, error) {
 		impl, hostEngine, short)
 }
 
+// ── 库目录落点与库路径改写（④a，§6.7 第 3 类）────────────────────────────────
+
+// engineLibMappings env_req.lib_paths → 「空间内落点（只读绑定）+ 值改写表」。
+//
+// 口径（Mr2109 2026-09-15 拍，逐条落到本函数）：
+//
+//	① 每个宿主库目录 **只读** 绑到 `/engine/lib/<目录名>`，<目录名> = filepath.Base(清理后的路径)；
+//	② **两个库目录同名 ⇒ 拒孵**（落点撞车，说不清谁盖谁 —— 不许挑一个，也不许后来的赢）；
+//	③ 宿主上**不存在** ⇒ 拒孵：不许静默留一个空间内也不存在的路径，那是「看着好了其实没生效」；
+//	④ 值的改写只认**整段精确匹配**（`:` 切段；见 rewriteEnvValue），不做前缀/子串泛化；
+//	⑤ **不在 lib_paths 里声明的宿主路径不管**（不猜、不自动挂）—— 本函数只看声明，不扫环境变量。
+//
+// 返回 (值改写表, 只读绑定清单, error)：error ≠ nil ⇒ 调用方拒孵；声明为空 ⇒ 三者全空（不编造）。
+func engineLibMappings(eggID string, entry *registry.ModelEntry) ([]pathRewrite, []string, error) {
+	if entry == nil || entry.EnvReq == nil || len(entry.EnvReq.LibPaths) == 0 {
+		return nil, nil, nil
+	}
+	var (
+		rws   []pathRewrite
+		binds []string
+		seen  = make(map[string]string, len(entry.EnvReq.LibPaths)) // 目录名 → 已见声明（判同名）
+	)
+	for _, raw := range entry.EnvReq.LibPaths {
+		decl := strings.TrimSpace(raw)
+		if decl == "" {
+			return nil, nil, fmt.Errorf("卵 %s：env_req.lib_paths 里有一项是空串——拒孵（库目录拿不到，不猜）", eggID)
+		}
+		host := expandTilde(decl)
+		if !filepath.IsAbs(host) {
+			return nil, nil, fmt.Errorf("卵 %s：库目录 %q 不是宿主侧绝对路径——拒孵（空间内只读落点与库路径改写都要求宿主绝对路径）",
+				eggID, decl)
+		}
+		clean := filepath.Clean(host)
+		name := filepath.Base(clean)
+		if name == "" || name == "." || name == ".." || name == string(filepath.Separator) {
+			return nil, nil, fmt.Errorf("卵 %s：库目录 %q 推不出目录名——拒孵（落点 %s/<目录名> 定不下来）",
+				eggID, decl, spaceEngineLibRoot)
+		}
+		if prev, dup := seen[name]; dup {
+			return nil, nil, fmt.Errorf("卵 %s：库目录 %q 与 %q 的目录名都是 %q——拒孵：两个库目录同名会互相遮挡，不说谁盖谁",
+				eggID, prev, decl, name)
+		}
+		seen[name] = decl
+		st, err := os.Stat(clean)
+		if err != nil {
+			return nil, nil, fmt.Errorf("卵 %s：库目录 %q 在宿主上不存在（%v）——拒孵：声明了却不存在的路径，空间内同样不存在，"+
+				"绑定与改写都会变成「看着好了其实没生效」", eggID, decl, err)
+		}
+		if !st.IsDir() {
+			return nil, nil, fmt.Errorf("卵 %s：库路径 %q 不是目录——拒孵（lib_paths 声明的是库**目录**，落点 %s/%s 是整目录挂载）",
+				eggID, decl, spaceEngineLibRoot, name)
+		}
+		space := spaceEngineLibRoot + "/" + name
+		bind, err := roBind(clean, space)
+		if err != nil {
+			return nil, nil, fmt.Errorf("卵 %s：%w", eggID, err)
+		}
+		binds = append(binds, bind)
+		rws = append(rws, pathRewrite{host: clean, raw: decl, space: space})
+	}
+	return rws, binds, nil
+}
+
+// roBind 组装一条只读绑定（ExtraROBinds 的 `<host>:<space>` 形式）。
+//
+// 与 rwBind 同严格：宿主路径里带 `:` 一律拒孵（`:` 就是分隔符，带它的路径会被对侧拆错 ⇒ 静默挂到
+// 别的落点，比挂不上更糟）。
+func roBind(host, space string) (string, error) {
+	if strings.Contains(host, ":") {
+		return "", fmt.Errorf("只读绑定的宿主路径 %q 含 `:`——拒孵（`:` 是 <host>:<space> 的分隔符，带它的路径会被拆错、挂到别的落点上）", host)
+	}
+	return host + ":" + space, nil
+}
+
+// rewriteEnvValue 环境变量**值**里的库宿主路径改写：按 `:` 切段，**整段精确匹配**才改。
+//
+//	/old/bin:/old/other  → /engine/lib/bin:/engine/lib/other
+//
+// 三条边界（都是口径里写死的）：
+//   - **不做前缀/子串替换**（见 pathRewrite.matches）：「/a/b」不等于「/a/bc」，也不许把
+//     「/a/b/c」当「/a/b」——「乱改」比不改更糟，认不出就**原样传下去**；
+//   - **空串保持清空语义**：`LD_LIBRARY_PATH=""` 是**故意**清空（§6.7 C③ 的 K2 那种 ABI 隔离）
+//     ⇒ 原样执行、不改写、不报错；值里的空段（`::` 或结尾的 `:`）同样原样保留；
+//   - 不在 lib_paths 里声明的路径**不管**（本函数只认改写表，表里没有的一律原样）。
+func rewriteEnvValue(v string, rws []pathRewrite) string {
+	if v == "" || len(rws) == 0 {
+		return v
+	}
+	segs := strings.Split(v, ":")
+	changed := false
+	for i, s := range segs {
+		if s == "" {
+			continue // 空段不是路径：原样保留（清空语义的一部分）
+		}
+		for _, r := range rws {
+			if r.matches(s) {
+				segs[i] = r.space
+				changed = true
+				break
+			}
+		}
+	}
+	if !changed {
+		return v
+	}
+	return strings.Join(segs, ":")
+}
+
 // ── 宿主侧输入 → 空间内路径（②）─────────────────────────────────────────────
 
-// pathRewrite 一条「宿主侧输入 → 空间内路径」的改写（整 token 精确匹配）。
+// pathRewrite 一条「宿主侧输入 → 空间内路径」的改写（整 token / 整段精确匹配）。
 type pathRewrite struct {
 	host  string // 展开后的宿主路径
-	raw   string // 卵声明里的原样字符串（可能带 ~；参数里出现的可能正是它）
+	raw   string // 卵声明里的原样字符串（可能带 ~；参数/环境变量里出现的可能正是它）
 	space string // 空间内路径
+}
+
+// matches 待改写的**整段/token**是不是这一条声明的宿主路径。两种写法任一相符即算：
+// 展开后的宿主路径（host）与声明里的原样字符串（raw，如带 `~` 的形态）。
+//
+// 刻意**只有相等**：没有前缀匹配、没有子串匹配、没有大小写宽容 —— 改错了比不改更难查。
+func (r pathRewrite) matches(tok string) bool {
+	return (r.host != "" && tok == r.host) || (r.raw != "" && tok == r.raw)
 }
 
 // spaceInputMappings 算出需要改写的宿主侧输入，以及需要额外只读绑定的清单（ExtraROBinds）。
@@ -316,7 +450,7 @@ func rewriteArgsToSpace(args []string, rws []pathRewrite) []string {
 	for i, arg := range args {
 		out[i] = arg
 		for _, r := range rws {
-			if (r.host != "" && arg == r.host) || (r.raw != "" && arg == r.raw) {
+			if r.matches(arg) {
 				out[i] = r.space
 				break
 			}
@@ -392,14 +526,18 @@ func renderNode(idx int) string { return fmt.Sprintf("/dev/dri/renderD%d", rende
 // hatchEnv 按卵给环境变量（§6.7 第 4 类）：
 //
 //	env_req.env **照单执行**（含按卵覆盖 LD_LIBRARY_PATH；空串 = 显式清空，K2 的包装脚本就是
-//	清它，§6.7 C③）；声明了卡号再补一条 HIP_VISIBLE_DEVICES（卵已自己声明 HIP_VISIBLE_DEVICES
-//	的以声明为准，不覆盖）。未声明任何环境变量 ⇒ nil（不注入空壳）。
-func hatchEnv(entry *registry.ModelEntry, cardIdx int, cardKnown bool) map[string]string {
+//	清它，§6.7 C③）；
+//	**值**里出现的库宿主路径按 `:` 切段整段改写成空间内落点 /engine/lib/<目录名>
+//	（改写表来自 libRWs / engineLibMappings；空值原样保留 —— 清空是故意的）；
+//	声明了卡号再补一条 HIP_VISIBLE_DEVICES（卵已自己声明 HIP_VISIBLE_DEVICES 的以声明为准，不覆盖）。
+//
+// 未声明任何环境变量 ⇒ nil（不注入空壳）。
+func hatchEnv(entry *registry.ModelEntry, cardIdx int, cardKnown bool, libRWs []pathRewrite) map[string]string {
 	var env map[string]string
 	if entry != nil && entry.EnvReq != nil && len(entry.EnvReq.Env) > 0 {
 		env = make(map[string]string, len(entry.EnvReq.Env)+1)
 		for k, v := range entry.EnvReq.Env {
-			env[k] = v
+			env[k] = rewriteEnvValue(v, libRWs)
 		}
 	}
 	if !cardKnown {

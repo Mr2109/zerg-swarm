@@ -13,7 +13,8 @@
 //	未设 / 空 / "0"         ⇒ **关（缺省）**：doStart / Stop / ReapIdle 走原有句柄路径，
 //	                          一行代码路径都不变（X3 未验证前不得改变现有行为）；
 //	"1" / "true" / "yes" / "on" ⇒ 开：doStart 先判实测档案与两账（不过 ⇒ 507 拒孵，不起任何单元）
-//	                          → hatch.Hatcher.Hatch 起单元 → 既有就绪判据 → 核封闭性（只告警）；
+//	                          → hatch.Hatcher.Hatch 起单元 → 既有就绪判据 → 核封闭性
+//	                          （三态：实读不符 ⇒ 收卵 + 拒孵；读不到 ⇒ 告警 + 观测面标记，不拒服务）；
 //	                          收卵改走 Hatcher.Collect（幂等）。
 //
 // 开关关时如何保证「一行不变」：只有开关开的路径才会写 subproc.Unit；收卵一律以「Unit 非空」
@@ -235,39 +236,81 @@ func (m *Manager) hatchStartLocked(modelName string, entry *registry.ModelEntry,
 	}
 
 	// §6.9：孵化后**运行时核验**封闭性（读 /proc/<pid>/mountinfo，不以单元状态为凭）。
-	// 核验不过 ⇒ 只告警（是否拒服务待 Mr2109 拍，本批不擅自改口径）。
-	m.verifyEnclosure(unit)
+	// **三态分级**（Mr2109 2026-09-15 拍）：
+	//   - 实读且不符 ⇒ 立刻**收卵 + 拒孵**（下面这一段），绝不继续对外服务；
+	//   - 读不到     ⇒ 告警 + 在观测面标出（enclosure_verified=false + note），**不拒服务**；
+	//   - 通过       ⇒ enclosure_verified=true。
+	est, note := m.verifyEnclosure(unit)
+	sp.enclosureVerified = est == enclosureVerified
+	sp.enclosureNote = note
+	if est == enclosureMismatch {
+		log.Printf("[backend] ✗ 收卵 + 拒孵 %s（封闭性核验不符）: unit=%s %s", modelName, unit, note)
+		m.stopSubproc(sp) // 收卵（sp.Unit 非空 ⇒ 走 Hatcher.Collect，幂等）
+		sp.state = StateCrashed
+		delete(m.procs, modelName)
+		return errResponse(502, "enclosure verification failed",
+			fmt.Sprintf("封闭空间核验不符，已收卵、不对外服务：%s", note)), nil
+	}
 
 	sp.failCnt = 0
 	sp.state = StateReady
-	log.Printf("[backend] 后端就绪（孵化路径）: unit=%s port=%d model=%s", unit, port, modelName)
+	log.Printf("[backend] 后端就绪（孵化路径）: unit=%s port=%d model=%s 封闭性=%s", unit, port, modelName, sp.enclosureNote)
 	return okResponse(modelName, entry.Backend, port), nil
 }
 
-// verifyEnclosure 孵化后的封闭性核验与记账告警（§6.9 硬要求）。
+// enclosureState 封闭性核验的三种结局（**三态，不许压成一个布尔**）。
 //
-// 三种结局都如实记日志，绝不混为一谈（§6.9 第 3 条：配置「被接受」与「生效」是两件事）：
-//   - 拿到 pid + 核验通过      ⇒ 记一条「核验通过」；
-//   - 拿到 pid + 核验未通过    ⇒ 记一条**告警**（本批只告警不拒服务）；
-//   - 拿不到 pid / 读不到 mountinfo ⇒ 记「未核验」——**未核验不等于通过**。
-func (m *Manager) verifyEnclosure(unit string) {
+// 为什么必须分开（§6.9「静默失效不得当凭据」）：「没读到证据」与「读到反证」是两回事 ——
+// 前者只能说「不知道」，后者是「确知没生效」。把两者混成一个 false 会得出「都在告警，大概没事」，
+// 而把「没读到」当「通过」则是本项目明令禁止的静默失效。
+type enclosureState int
+
+const (
+	// enclosureVerified 实读 mountinfo 且判定通过。
+	enclosureVerified enclosureState = iota
+	// enclosureUnreadable 拿不到 pid / 读不到 mountinfo / 解析不了 ⇒ 告警 + 观测面标出，
+	// **不拒服务**（卵照常对外服务，但它那条「已核验」的宣称不成立）。
+	enclosureUnreadable
+	// enclosureMismatch 实读且判定不符 ⇒ **收卵 + 拒孵**（对外不服务）。
+	enclosureMismatch
+)
+
+// verifyEnclosure 孵化后的封闭性核验（§6.9 硬要求）。
+//
+// 三种结局都如实记账，绝不混为一谈（§6.9 第 3 条：配置「被接受」与「生效」是两件事）：
+//  1. **实读且不符**（拿到 mountinfo，判定不满足：/models 不是只读、宿主路径在空间内可见、
+//     /work 或 /kvdisk 不是 rw…）⇒ enclosureMismatch：由调用方**收卵 + 拒孵**；
+//  2. **读不到**（拿不到 pid / pid 已死 / 读不到或解析不了 mountinfo）⇒ enclosureUnreadable：
+//     **不拒服务**，但必须**在观测面标出来**（enclosure_verified=false + enclosure_note）；
+//  3. **通过** ⇒ enclosureVerified（观测面 enclosure_verified=true）。
+//
+// 为什么「读不到」也要上观测面、而不只是打日志：本项目硬要求「静默失效不得当凭据」（§6.9）——
+// 声称隔离生效却读不到证据，必须是一个**看得见**的状态；日志会被冲掉、也没人翻。
+//
+// 返回 (状态, 一句话留痕)：留痕原样进观测面的 enclosure_note（错误信息里也会带上同一句话）。
+func (m *Manager) verifyEnclosure(unit string) (enclosureState, string) {
 	h := m.hatcherImpl()
 	pid, err := h.MainPID(context.Background(), unit)
 	if err != nil || pid <= 0 {
-		log.Printf("[backend] ⚠ 封闭性核验未执行（拿不到引擎 pid）: unit=%s err=%v —— §6.9：未核验不等于通过", unit, err)
-		return
+		note := fmt.Sprintf("未核验：拿不到引擎 pid（unit=%s）：%v", unit, err)
+		log.Printf("[backend] ⚠ 封闭性核验未执行: %s —— §6.9：未核验不等于通过（本卵照常服务，但「已核验」不成立）", note)
+		return enclosureUnreadable, note
 	}
 	rep, err := h.VerifyEnclosure(pid)
 	if err != nil {
-		log.Printf("[backend] ⚠ 封闭性核验未执行（读不到 mountinfo）: unit=%s pid=%d: %v —— §6.9：未核验不等于通过", unit, pid, err)
-		return
+		note := fmt.Sprintf("未核验：读不到 pid=%d 的 mountinfo：%v", pid, err)
+		log.Printf("[backend] ⚠ 封闭性核验未执行: unit=%s %s —— §6.9：未核验不等于通过（本卵照常服务，但「已核验」不成立）",
+			unit, note)
+		return enclosureUnreadable, note
 	}
 	if rep.Enclosed() {
-		log.Printf("[backend] 封闭性核验通过: unit=%s pid=%d %s", unit, pid, rep)
-		return
+		note := rep.String()
+		log.Printf("[backend] 封闭性核验通过: unit=%s pid=%d %s", unit, pid, note)
+		return enclosureVerified, note
 	}
-	log.Printf("[backend] ⚠ 封闭性核验**未通过**（§6.9 静默失效形态）: unit=%s pid=%d %s —— 本批只告警不拒服务（是否拒服务待拍）",
-		unit, pid, rep)
+	note := fmt.Sprintf("核验不符：%s（%s）", strings.Join(rep.Failures(), "；"), rep)
+	log.Printf("[backend] ✗ 封闭性核验**未通过**（§6.9 静默失效形态）: unit=%s pid=%d %s —— 收卵 + 拒孵", unit, pid, note)
+	return enclosureMismatch, note
 }
 
 // ── 收卵（开关开时走孵化器 Collect；开关关时 sp.Unit 恒空 ⇒ 走既有句柄路径）──────

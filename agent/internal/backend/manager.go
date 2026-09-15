@@ -56,6 +56,15 @@ type subproc struct {
 	// 收卵判据就是它：非空 ⇒ 调 Hatcher.Collect（幂等），空 ⇒ 走既有进程句柄路径。
 	// 它与 proc 是两种互斥形态：孵化路径没有本端进程句柄（proc 恒 nil），裸 exec 路径没有单元名。
 	Unit string
+	// enclosureVerified 孵化后的封闭性**实读核验**是否通过（§6.9 三态里的「通过」）。
+	//
+	// 只有拿到 /proc/<pid>/mountinfo 且判定通过才是 true；**「读不到」与「读到不符」都是 false**
+	// ——两者靠 enclosureNote 区分，绝不把「没核到」当「核过了」。
+	// 裸 exec 路径（孵化开关关）恒 false 且 note 空 = 本端从未声称过隔离。
+	enclosureVerified bool
+	// enclosureNote 核验留痕（一句话，进观测面 enclosure_note）：
+	// 通过 = 结论 + 各项实测值；读不到 = 「未核验：<原因>」；不符 = 「核验不符：<哪几项>」。
+	enclosureNote string
 	// inflight 在飞引用计数（P2，设计 §7.7 修补 3）——「在飞」的唯一真源：
 	// 请求进入生成中 +1（acquireInflight）、完成/失败 −1（releaseInflight）。
 	// 卸载/切换判据一律取它；引擎 /slots 只作交叉校验，不作为条件。

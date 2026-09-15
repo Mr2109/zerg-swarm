@@ -61,13 +61,20 @@ func TestHatchSpec_MainlineEgg(t *testing.T) {
 	withMainlineEngineProbe(t, engineHost)
 	workRoot := withWorkDirRoot(t)
 
+	// 库目录（env_req.lib_paths）必须在宿主上真实存在（2026-09-15 拍：不存在 ⇒ 拒孵）
+	// ⇒ 单测用临时目录当库目录，目录名要与断言一致。
+	libDir := filepath.Join(t.TempDir(), "build-hip-flash")
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
 	entry := &registry.ModelEntry{
 		Backend:       "llama-server",
 		File:          "/data/models/glm-5.3/GLM-5.3-Flash-Q4_K_M.gguf",
 		SchemaVersion: registry.EggSchemaVersionCurrent,
 		EnvReq: &registry.EnvReq{
 			Devices:   []string{"1"}, // 用第 1 张卡
-			LibPaths:  []string{"/home/g01/llama.cpp-src/build-hip-flash/bin"},
+			LibPaths:  []string{libDir},
 			Env:       map[string]string{"LD_LIBRARY_PATH": "/engine", "HSA_OVERRIDE_GFX_VERSION": "11.0.0"},
 			MemlockKB: 1015488,
 		},
@@ -118,6 +125,12 @@ func TestHatchSpec_MainlineEgg(t *testing.T) {
 	if spec.Env["HIP_VISIBLE_DEVICES"] != "1" {
 		t.Errorf("声明了卡号应补 HIP_VISIBLE_DEVICES=1，实得 %q", spec.Env["HIP_VISIBLE_DEVICES"])
 	}
+	// 库目录落点（env_req.lib_paths → /engine/lib/<目录名>，**只读**）：声明了就必须有一条只读绑定。
+	// 这里声明的目录名就是 build-hip-flash ⇒ 落点 /engine/lib/build-hip-flash。
+	wantLib := libDir + ":/engine/lib/build-hip-flash"
+	if len(spec.ExtraROBinds) != 1 || spec.ExtraROBinds[0] != wantLib {
+		t.Errorf("库目录应只读落到 /engine/lib/<目录名>（%q），实得 %v", wantLib, spec.ExtraROBinds)
+	}
 	// 设备：卡号 ⇒ /dev/kfd + 该卡渲染节点（第 1 张 = renderD129）
 	wantDev := []string{"/dev/kfd", "/dev/dri/renderD129"}
 	if len(spec.Devices) != 2 || spec.Devices[0] != wantDev[0] || spec.Devices[1] != wantDev[1] {
@@ -149,6 +162,136 @@ func TestHatchSpec_MainlineEgg(t *testing.T) {
 	}
 	if err := spec.Validate(); err != nil {
 		t.Errorf("映射产物应能过孵化声明校验，实得 %v", err)
+	}
+}
+
+// TestHatchSpec_LibPathsLandingAndEnvRewrite env_req.lib_paths 的两件事（2026-09-15 拍）：
+//
+//	① 每个宿主库目录**只读**落到 /engine/lib/<目录名>（目录名 = filepath.Base(清理后路径)）；
+//	② 环境变量的**值**里出现的库宿主路径（按 `:` 切段）改写成对应空间内路径 —— 整段精确匹配，
+//	   不做前缀/子串替换；空串保持清空语义；没在 lib_paths 里声明的宿主路径不管。
+func TestHatchSpec_LibPathsLandingAndEnvRewrite(t *testing.T) {
+	withMainlineEngineProbe(t, "/opt/llama/bin/llama-server")
+	withWorkDirRoot(t)
+
+	root := t.TempDir()
+	libA := filepath.Join(root, "build-k2") // 目录名 build-k2
+	libB := filepath.Join(root, "hipflash") // 目录名 hipflash
+	undeclared := filepath.Join(root, "not-declared")
+	for _, d := range []string{libA, libB, undeclared} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	entry := &registry.ModelEntry{
+		Backend:       "llama-server",
+		File:          "/data/models/k2/k2horizon.gguf",
+		SchemaVersion: registry.EggSchemaVersionCurrent,
+		EnvReq: &registry.EnvReq{
+			LibPaths: []string{libA, libB},
+			Env: map[string]string{
+				"LD_LIBRARY_PATH": libA + ":/shared/other:" + libB,
+				"K2_CLEAR":        "",                          // 故意清空（§6.7 C③）⇒ 原样、不改写、不报错
+				"SINGLE":          libA,                        // 单段同样改写
+				"UNRELATED":       undeclared + ":" + libA,     // 未声明的那一段不管，声明的那一段照改
+				"PREFIX_TRAP":     libA + "x:" + libA + "/sub", // 前缀 / 子串形态一律不得被改
+			},
+		},
+	}
+	entry.SetEggNameForTest("K2-Lib-Test")
+
+	spec, err := hatchSpecFor(entry, EngineImplOf(entry), 9000, hatchTestProfile())
+	if err != nil {
+		t.Fatalf("映射应成功，实得 %v", err)
+	}
+
+	// ① 落点：按声明顺序各占一格，且是**只读**通道
+	want := []string{libA + ":/engine/lib/build-k2", libB + ":/engine/lib/hipflash"}
+	if len(spec.ExtraROBinds) != 2 || spec.ExtraROBinds[0] != want[0] || spec.ExtraROBinds[1] != want[1] {
+		t.Errorf("库目录应各占一格只读落点（%v），实得 %v", want, spec.ExtraROBinds)
+	}
+	// 命令行那一侧真跑一遍：必须落成 --ro-bind，不得落成可写绑定
+	argv, err := hatch.BuildBwrapArgv(spec)
+	if err != nil {
+		t.Fatalf("映射产物应能构造出 bwrap 命令行，实得 %v", err)
+	}
+	joined := strings.Join(argv, " ")
+	for _, wantBind := range []string{"--ro-bind " + libA + " /engine/lib/build-k2", "--ro-bind " + libB + " /engine/lib/hipflash"} {
+		if !strings.Contains(joined, wantBind) {
+			t.Errorf("bwrap 命令行缺 %q，实得 %q", wantBind, joined)
+		}
+	}
+	if strings.Contains(joined, "--bind "+libA+" ") || strings.Contains(joined, "--bind "+libB+" ") {
+		t.Errorf("库目录是只读输入，不得落成可写绑定：%q", joined)
+	}
+
+	// ② 值改写：整段精确匹配
+	cases := map[string]string{
+		"LD_LIBRARY_PATH": "/engine/lib/build-k2:/shared/other:/engine/lib/hipflash",
+		"K2_CLEAR":        "",
+		"SINGLE":          "/engine/lib/build-k2",
+		"UNRELATED":       undeclared + ":/engine/lib/build-k2",
+		"PREFIX_TRAP":     libA + "x:" + libA + "/sub",
+	}
+	for k, wantV := range cases {
+		if got := spec.Env[k]; got != wantV {
+			t.Errorf("%s 应为 %q，实得 %q", k, wantV, got)
+		}
+	}
+	if err := spec.Validate(); err != nil {
+		t.Errorf("映射产物应能过孵化声明校验，实得 %v", err)
+	}
+}
+
+// TestHatchSpec_LibPathsFailClosed lib_paths 的五条拒孵（2026-09-15 拍）：
+// 同名（两个库目录同名 / 同一目录声明两次）· 宿主上不存在 · 不是目录 · 相对路径 · 空项。
+func TestHatchSpec_LibPathsFailClosed(t *testing.T) {
+	withMainlineEngineProbe(t, "/opt/llama/bin/llama-server")
+	withWorkDirRoot(t)
+
+	root := t.TempDir()
+	libA := filepath.Join(root, "a", "shared-libs")
+	libB := filepath.Join(root, "b", "shared-libs") // 目录名与 libA 相同 ⇒ 同名
+	for _, d := range []string{libA, libB} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	notDir := filepath.Join(root, "not-a-dir.so")
+	if err := os.WriteFile(notDir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		libs []string
+		want string
+	}{
+		{"两个库目录同名", []string{libA, libB}, "同名"},
+		{"同一个宿主目录声明两次", []string{libA, libA}, "同名"},
+		{"宿主上不存在", []string{filepath.Join(root, "no-such-lib-dir")}, "不存在"},
+		{"不是目录", []string{notDir}, "不是目录"},
+		{"相对路径", []string{"libs/k2"}, "绝对路径"},
+		{"空项", []string{libA, "  "}, "空串"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := &registry.ModelEntry{
+				Backend:       "llama-server",
+				File:          "/data/models/k2/k2horizon.gguf",
+				SchemaVersion: registry.EggSchemaVersionCurrent,
+				EnvReq:        &registry.EnvReq{LibPaths: c.libs},
+			}
+			e.SetEggNameForTest("K2-Lib-Test")
+			_, err := hatchSpecFor(e, EngineImplOf(e), 9000, hatchTestProfile())
+			if err == nil {
+				t.Fatalf("应拒孵（%s），却映射成功了", c.want)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("错误信息应提到 %q，实得 %q", c.want, err.Error())
+			}
+		})
 	}
 }
 
