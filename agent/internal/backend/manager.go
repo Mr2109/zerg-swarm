@@ -107,6 +107,8 @@ type Manager struct {
 	// 用途：验收「锁内置 draining ⇒ 出锁后才停进程」（§7.7 修补 3 的可观测面）。
 	// 回调里如需读状态须自行加锁（回调发生在锁外）。
 	stopHook func(sp *subproc)
+	// watchdogCPUFor（批 B，测试注入）：活性看门狗的证据源（nil = 生产：读本单元 cgroup 累计 CPU 工时）。
+	watchdogCPUFor func(*subproc) func() (uint64, error)
 	// waitQ 等待队列（P7：切换期到达的请求挂起在此，出队须重校验当前卵）。
 	// ⚠ 锁序：任何持 m.mu 的路径都不得调用 WaitQ* 方法（见 waitqueue.go 文件头不变式）。
 	waitQ *p2Queue
@@ -642,12 +644,21 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 		return nil, fmt.Errorf("后端不可服务 (state=%s)", sp.state)
 	}
 	// relOnce：释放恰好一次（defer 兜底 + body.Close 两条路都走这个幂等闭包）。
+	// 请求 ctx 的取消：**由 body 的 Close（成功路径）或未交出去时的 defer（失败路径）调**——
+	// 故意不在函数返回时无条件取消：转发返回只是"头回来了"，body 还没读（流式边读边写），
+	// 一取消 body 当场死（2026-09-15 单测抓到，会在生产直接坏掉流式）。兜 nil 在此一并做。
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	reqCtx, cancelReq := context.WithCancel(ctx)
+
 	var relOnce sync.Once
 	release := func() { relOnce.Do(func() { m.releaseInflight(model) }) }
 	handedOff := false
 	defer func() {
 		if !handedOff {
-			release() // 未把响应体交出去（构造/转发失败）⇒ 在此释放，绝不留悬挂计数
+			cancelReq() // 没交出去：掐掉后台请求（判死路径已自行 cancel，幂等无害）
+			release()   // 并释放计数，绝不留悬挂
 		}
 	}()
 
@@ -696,6 +707,13 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 		firstByteTO = 15 * time.Minute
 		clientTimeout = 20 * time.Minute
 	}
+	// 活性看门狗（批 B 接线）：开着时**不设固定首字节超时**，由证据判活
+	// （长 prefill / 非流式长文不再被误杀）；关闭或降级时按旧口径兜底。
+	wdCfg := watchdogConfigFromEnv(watchdogEnv)
+	headerTO := firstByteTO
+	if wdCfg.Enabled {
+		headerTO = 0
+	}
 	client := &http.Client{
 		Timeout: clientTimeout,
 		// 治本（2026-08-12）：禁 keep-alive——llama-server 连接空闲被关，
@@ -705,10 +723,43 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 			// v2.5.4.9 首 token 超时（llama-server 卡死检测——active 释放）
 			// 知识库经验: 大请求(含tools)→ornith 38-60s 推理(正常)——60s 误杀——调 90s
 			// 真卡死: 无响应头到点 → 返回错误 → active 释放 → 主控 failover
-			ResponseHeaderTimeout: firstByteTO,
+			ResponseHeaderTimeout: headerTO,
 		},
 	}
-	resp, err := client.Do(req)
+	req = req.WithContext(reqCtx)
+
+	cpuFn := m.eggCPUUsecFunc(sp)
+	if m.watchdogCPUFor != nil {
+		cpuFn = m.watchdogCPUFor(sp) // 单测注入（与 stopHook 同一风格）
+	}
+	wd := newRealWatchdog(wdCfg, cpuFn, nil)
+	done := make(chan struct{})
+	var resp *http.Response
+	var derr error
+	go func() {
+		defer close(done)
+		resp, derr = client.Do(req)
+	}()
+
+	switch verdict, reason := wd.Wait(done); verdict {
+	case WatchdogStuckCPUStalled, WatchdogStuckNoProgress:
+		cancelReq()
+		<-done
+		m.noteWatchdogStuck(sp, verdict, reason)
+		return nil, &BackendBusyError{Verdict: verdict, Reason: reason, Obs: wd.Observation()}
+	case WatchdogDegraded:
+		// 读不到证据 ⇒ 回落固定超时（与旧口径一致；绝不因缺读数误杀）
+		select {
+		case <-done:
+		case <-time.After(firstByteTO):
+			cancelReq()
+			<-done
+			return nil, fmt.Errorf("转发到后端失败: %w",
+				fmt.Errorf("timeout awaiting response headers（看门狗降级⇒固定超时 %s）", firstByteTO))
+		}
+	}
+
+	err = derr
 	if err != nil {
 		if !m.healthCheck(sp) {
 			m.mu.Lock()
@@ -730,7 +781,8 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 	m.mu.Unlock()
 	// 在飞 −1 不在这里：交给响应体 Close（见函数头注释）——转发返回只是"头回来了"，
 	// 客户端把 body 读干净才算本次推理结束；归零时 releaseInflight 转「空窗计时中」。
-	resp.Body = &releaseOnCloseBody{ReadCloser: resp.Body, release: release}
+	// Close 时**先取消请求 ctx**（释放 transport），再释放在飞计数。
+	resp.Body = &releaseOnCloseBody{ReadCloser: resp.Body, release: func() { cancelReq(); release() }}
 	handedOff = true
 	return resp, nil
 }
@@ -855,6 +907,11 @@ func bodyStreams(body []byte) bool {
 func IsBackendBusy(err error) bool {
 	if err == nil {
 		return false
+	}
+	// 看门狗判死：同属"可重试的忙"（服务端回 503 + Retry-After + watchdog 详情）
+	var bbe *BackendBusyError
+	if errors.As(err, &bbe) {
+		return true
 	}
 	var nerr net.Error
 	if errors.As(err, &nerr) && nerr.Timeout() {
