@@ -78,6 +78,8 @@ type subproc struct {
 	// 请求进入生成中 +1（acquireInflight）、完成/失败 −1（releaseInflight）。
 	// 卸载/切换判据一律取它；引擎 /slots 只作交叉校验，不作为条件。
 	inflight int
+	// watchdog 最近一次活性看门狗的判词/理由/窗口/工时增量（观测面用；nil = 本卵还没被看过）。
+	watchdog *WatchdogObservation
 	// pinUntil Q5：显式 pin 的到期时刻（零值 = 未 pin）。无 TTL 的 pin 不允许——见 Manager.Pin。
 	pinUntil time.Time
 }
@@ -741,7 +743,18 @@ func (m *Manager) InferForward(ctx context.Context, model string, path string, b
 		resp, derr = client.Do(req)
 	}()
 
-	switch verdict, reason := wd.Wait(done); verdict {
+	verdict, reason := wd.Wait(done)
+	// 观测面：无论什么判词都留痕（含 ok/degraded），供 /eggs 与复盘读
+	{
+		obs := wd.Observation()
+		m.mu.Lock()
+		if cur, ok := m.procs[model]; ok && cur == sp {
+			o := obs
+			cur.watchdog = &o
+		}
+		m.mu.Unlock()
+	}
+	switch verdict {
 	case WatchdogStuckCPUStalled, WatchdogStuckNoProgress:
 		cancelReq()
 		<-done

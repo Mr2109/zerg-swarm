@@ -29,18 +29,20 @@ type servicesSlot struct {
 // servicesEgg /services 与 /eggs 载荷的卵条目（字段对齐设计 §5.4 定案：
 // eggs[] / egg_id / engine_impl / schema_version；缺的缺席，不编造）。
 type servicesEgg struct {
-	EggID         string   `json:"egg_id"`                // 卵名（注册表键，真 egg_id）
-	Unit          string   `json:"unit,omitempty"`        // 孵化器单元归属（孵化路径才有；裸 exec 如实缺席）
-	EngineImpl    string   `json:"engine_impl,omitempty"` // 实际会执行的引擎实现名
-	Model         string   `json:"model,omitempty"`
-	State         string   `json:"state,omitempty"`
-	Port          int      `json:"port,omitempty"`
-	Inflight      int      `json:"inflight"`                 // P2 在飞引用计数（唯一真源）
-	IdleArmedS    *float64 `json:"idle_armed_remaining_s"`   // null = 不在空窗计时中
-	SchemaVersion int      `json:"schema_version,omitempty"` // 0 = 未声明（如实缺席）
-	HasProfile    bool     `json:"has_profile"`              // 实测档案是否可用（§8.4）
-	GttGb         float64  `json:"gtt_gb,omitempty"`         // 逐进程 GTT 归因；无归因缺席
-	Managed       bool     `json:"managed"`                  // 恒 true：eggs[] 只装本端托管项
+	EggID      string `json:"egg_id"`                // 卵名（注册表键，真 egg_id）
+	Unit       string `json:"unit,omitempty"`        // 孵化器单元归属（孵化路径才有；裸 exec 如实缺席）
+	EngineImpl string `json:"engine_impl,omitempty"` // 实际会执行的引擎实现名
+	Model      string `json:"model,omitempty"`
+	State      string `json:"state,omitempty"`
+	Port       int    `json:"port,omitempty"`
+	Inflight   int    `json:"inflight"` // P2 在飞引用计数（唯一真源）
+	// Watchdog 活性看门狗判词/理由/窗口/工时增量（设计-活性看门狗 §6）；缺席 = 本卵没被看过。
+	Watchdog      *backend.WatchdogObservation `json:"watchdog,omitempty"`
+	IdleArmedS    *float64                     `json:"idle_armed_remaining_s"`   // null = 不在空窗计时中
+	SchemaVersion int                          `json:"schema_version,omitempty"` // 0 = 未声明（如实缺席）
+	HasProfile    bool                         `json:"has_profile"`              // 实测档案是否可用（§8.4）
+	GttGb         float64                      `json:"gtt_gb,omitempty"`         // 逐进程 GTT 归因；无归因缺席
+	Managed       bool                         `json:"managed"`                  // 恒 true：eggs[] 只装本端托管项
 	// EnclosureVerified 封闭性是否**实读核验通过**（§6.9：静默失效不得当凭据）。
 	// false 与 EnclosureNote 合起来读：「未核验/读不到」还是「不符」；note 空 = 从未声称过隔离。
 	EnclosureVerified bool   `json:"enclosure_verified"`
@@ -71,6 +73,7 @@ func eggEntries(obs []backend.EggObservation, attrib map[int]monitor.ProcAttrib,
 			State:             o.State,
 			Port:              o.Port,
 			Inflight:          o.Inflight,
+			Watchdog:          o.Watchdog,
 			IdleArmedS:        o.IdleArmedRemainS,
 			SchemaVersion:     o.SchemaVersion,
 			HasProfile:        profileOf != nil && profileOf(o.EggID),
