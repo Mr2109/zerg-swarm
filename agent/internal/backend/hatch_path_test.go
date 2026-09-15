@@ -295,8 +295,29 @@ func TestHatchCollect_StopAndHandlePaths(t *testing.T) {
 	if len(fake.collected) != 1 || fake.collected[0] != "zerg-hatched" {
 		t.Fatalf("孵化卵收卵应走 Collect（幂等），实得 %v", fake.collected)
 	}
+	if fake.activeChecks == 0 {
+		t.Fatal("收卵后必须再问一次单元是否真在跑（§6.9：Collect 报成功不等于收干净了）")
+	}
 	if len(m.procs) != 0 {
 		t.Fatalf("Stop 后驻留清单应为空，实得 %v", keysOf(m.procs))
+	}
+}
+
+// TestHatchCollect_StillActiveIsReported 收卵后单元仍在跑 ⇒ 如实留痕（不许把「停命令成功」当收干净）。
+func TestHatchCollect_StillActiveIsReported(t *testing.T) {
+	fake := &fakeHatcher{stillActive: true}
+	m := newHatchTestManager(fake)
+	m.collectUnit("zerg-stuck")
+	if len(fake.collected) != 1 || fake.collected[0] != "zerg-stuck" {
+		t.Fatalf("Collect 应被调用一次，实得 %v", fake.collected)
+	}
+	if fake.activeChecks != 1 {
+		t.Fatalf("应恰好复核一次单元活性，实得 %d", fake.activeChecks)
+	}
+	// 未设 Unit 的空串：不许触发任何收卵动作
+	m.collectUnit("")
+	if len(fake.collected) != 1 {
+		t.Fatalf("空单元名不得触发 Collect，实得 %v", fake.collected)
 	}
 }
 
@@ -390,14 +411,16 @@ func withHatchGateRead(t *testing.T, gtt, mem float64, readErr error) {
 
 // fakeHatcher 假孵化器：只记账 + 按声明里的端口起一个假引擎，绝不碰真实 systemd。
 type fakeHatcher struct {
-	specs      []hatch.Spec
-	hatchCalls int
-	collected  []string
-	mainPID    int
-	enclose    hatch.EnclosureReport
-	verifyPID  int
-	verifyHits int
-	engines    []*http.Server
+	specs        []hatch.Spec
+	hatchCalls   int
+	collected    []string
+	activeChecks int
+	stillActive  bool // true ⇒ 收卵后复核仍报「在跑」（用于验「Collect 成功 ≠ 收干净」的留痕）
+	mainPID      int
+	enclose      hatch.EnclosureReport
+	verifyPID    int
+	verifyHits   int
+	engines      []*http.Server
 }
 
 func (f *fakeHatcher) Hatch(_ context.Context, spec hatch.Spec) (string, error) {
@@ -421,7 +444,10 @@ func (f *fakeHatcher) Collect(_ context.Context, unit string) error {
 	return nil
 }
 
-func (f *fakeHatcher) Active(_ context.Context, _ string) (bool, error) { return true, nil }
+func (f *fakeHatcher) Active(_ context.Context, _ string) (bool, error) {
+	f.activeChecks++
+	return f.stillActive, nil
+}
 
 func (f *fakeHatcher) MainPID(_ context.Context, _ string) (int, error) {
 	if f.mainPID <= 0 {
