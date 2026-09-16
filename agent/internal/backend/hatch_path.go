@@ -152,7 +152,12 @@ var hatchGateRead = func() (float64, float64, error) {
 //   - 两账不够 ⇒ 507 + 列明「谁挡着 / 差多少」。
 //
 // **拒孵一律不起任何单元**（本函数只读账、只读档案，没有任何动作）。
-func (m *Manager) hatchGateLocked(modelName string, entry *registry.ModelEntry) (monitor.EggProfile, map[string]interface{}) {
+// profileGateLocked **实测档案闸门**（§8.4）—— **不分路径**：裸 exec 与孵化都必须过。
+//
+// 甲（Mr2109 2026-09-16 拍）：此前这半被包在 `if hatchMode` 里 ⇒ 未开 ZERG_HATCH 的机器
+// （本机 Mr2109）会在**没有实测档案**的情况下把引擎拉起来（探针实证：挪走档案后 /load 仍 200、
+// 且日志里连一行闸门记录都没有）。闸门就是闸门，不该因为走哪条路而松。
+func (m *Manager) profileGateLocked(modelName string, entry *registry.ModelEntry) (monitor.EggProfile, map[string]interface{}) {
 	eggID := strings.TrimSpace(entry.EggName())
 	profilePath := monitor.EggProfilePath(eggID)
 	var (
@@ -164,23 +169,26 @@ func (m *Manager) hatchGateLocked(modelName string, entry *registry.ModelEntry) 
 	} else {
 		prof, profileErr = monitor.LoadEggProfile(profilePath)
 	}
-	gttAvail, memAvail, acctErr := hatchGateRead()
+	if profileErr == nil {
+		return prof, nil
+	}
+	// 纯函式裁决：档案无效 ⇒ 一律不放行（理由以它为准，口径与 P4 闸门同源）
+	dec := monitor.CanHatchWithProfile(false, 0, 0, monitor.EggProfile{})
+	detail := fmt.Sprintf("%s（档案=%s：%v）", dec.Reason, profilePath, profileErr)
+	log.Printf("[backend] ✗ 拒孵 %s（实测档案闸门）：%s", modelName, detail)
+	return monitor.EggProfile{}, errResponse(507, "no measured profile", detail)
+}
 
-	profileOk := profileErr == nil
-	if !profileOk || acctErr != nil {
-		// 纯函式裁决：档案无效 ⇒ 一律不放行（理由以它为准，口径与 P4 闸门同源）
-		dec := monitor.CanHatchWithProfile(false, 0, 0, monitor.EggProfile{})
-		detail := dec.Reason
-		code := "no measured profile"
-		switch {
-		case !profileOk:
-			detail = fmt.Sprintf("%s（档案=%s：%v）", dec.Reason, profilePath, profileErr)
-		case acctErr != nil:
-			code = "hatch gate unreadable"
-			detail = fmt.Sprintf("闸门两账读不到，拒孵（fail-closed：算不出就不装）：%v", acctErr)
-		}
+func (m *Manager) hatchGateLocked(modelName string, entry *registry.ModelEntry) (monitor.EggProfile, map[string]interface{}) {
+	prof, reject := m.profileGateLocked(modelName, entry)
+	if reject != nil {
+		return prof, reject
+	}
+	gttAvail, memAvail, acctErr := hatchGateRead()
+	if acctErr != nil {
+		detail := fmt.Sprintf("闸门两账读不到，拒孵（fail-closed：算不出就不装）：%v", acctErr)
 		log.Printf("[backend] ✗ 拒孵 %s（孵化闸门）：%s", modelName, detail)
-		return monitor.EggProfile{}, errResponse(507, code, detail)
+		return monitor.EggProfile{}, errResponse(507, "hatch gate unreadable", detail)
 	}
 
 	if res := monitor.CanHatchWithProfile(true, gttAvail, memAvail, prof); !res.Ok {
