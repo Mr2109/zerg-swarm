@@ -251,7 +251,7 @@ func main() {
 	log.Printf("🧩 Model adapter registry: %d adapters (full adapter routing)", len(adapterRegistry))
 
 	// 同时启动网关（:8082），三标准透传 + 本机子端
-	gw := gateway.NewGateway(cfg.Auth.Token, cfg, nil, fleetStore, adapterRegistry) // 3a：本机角色退役
+	gw := gateway.NewGateway(cfg.Auth.Token, cfg, fleetStore, adapterRegistry) // 3a/3c：本机角色退役（网关已不带本机后端）
 	// v2.5.6 2026-08-28 治本: 网关先启动并等待就绪——再恢复任务/派发（之前 goroutine 晚启动——任务调 8082 connection refused 全失败→熔断连锁）
 	go func() {
 		if err := gw.Start(8082); err != nil {
