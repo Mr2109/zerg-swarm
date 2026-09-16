@@ -467,15 +467,13 @@ func (g *Gateway) handleCompact(w http.ResponseWriter, r *http.Request) {
 
 	// 内部转发（不走外部 HTTP，直接路由到机器）
 	model := compactModel
-	// 压缩模型优先走 local（本机）——X3 agent 响应截断 bug（issue-3889字节）导致压缩不可靠
-	// local 不可用（本机没加载 gemma）时 fallback 到 X3
-	route, err := g.pickRouteLocal(model)
+	// 3c（2026-09-16）：原先"压缩模型优先走 local（本机）"是为绕过 X3 agent 的响应截断 bug 的**历史绕行**，
+	// 本机角色退役后本机 = 名为 Mr2109 的普通子端 ⇒ 压缩也走**通用路由**（按账本/快照打分）。
+	// ⚠ 验收项：改完必须实测一次压缩（若 X3 那个截断 bug 仍在，压缩可能重新踩上）。
+	route, err := g.pickRoute(model, "", "")
 	if err != nil {
-		route, err = g.pickRoute(model, "", "")
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"routing failed: %v"}`, err), http.StatusServiceUnavailable)
-			return
-		}
+		http.Error(w, fmt.Sprintf(`{"error":"routing failed: %v"}`, err), http.StatusServiceUnavailable)
+		return
 	}
 	log.Printf("📎 compaction route: %s (%s)", route.Host, route.URL)
 
@@ -1205,8 +1203,8 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 		forceLocal, reason := g.ds4RouteDecision()
 		if forceLocal {
 			log.Printf("🎯 %s — other models %s go local", reason, model)
-			// 强制 local（排除 X3）
-			if r, err := g.pickRouteLocal(model); err == nil {
+			// 强制走本机那一台（3c：原 "local" ⇒ 名为 Mr2109 的子端；排除 X3）
+			if r, err := g.pickRouteHost(model, "Mr2109"); err == nil {
 				// 能力硬门槛（待修补 #11）：强制 local 也要按**目标引擎**判必需能力——
 				// 目标引擎没被证过支持就不放行，绝不因"让位"而静默降级。
 				if gerr := g.gateRoute(model, r.Host, required); gerr != nil {
@@ -1832,19 +1830,22 @@ func (g *Gateway) boundSession(sessionID, model string) string {
 	return b.host
 }
 
-// pickRouteLocal 强制选择 local（本机）候选——用于压缩模型避开 X3 截断 bug。
-// 若无 local 候选或本机后端不可用，返回错误（调用方 fallback 到 pickRoute）。
-func (g *Gateway) pickRouteLocal(model string) (*RouteResult, error) {
+// pickRouteHost 强制选择**指定机器**的候选（3c：原 pickRouteLocal，硬编码 "local"）。
+//
+// 为什么保留这个函数（而不是删掉）：DS4 让位策略要用它 —— "为 DS4 让位 ⇒ 其他模型强制走本机那一台"
+// 是有意设计的功能（见 ds4RouteDecision 调用处），不是残留 ⇒ 所以是**改名 + 改指**：
+// 本机角色退役后"本机"= 名为 Mr2109 的普通子端，硬编码的 "local" 改为**传参**（部署选择，不是代码分支）。
+func (g *Gateway) pickRouteHost(model, host string) (*RouteResult, error) {
 	candidates, ok := g.config.Models[model]
 	if !ok || len(candidates) == 0 {
 		return nil, fmt.Errorf("model %s is not configured", model)
 	}
 	for _, c := range candidates {
-		if c.Host == "local" {
-			return &RouteResult{Host: "local", URL: "", File: c.File, MemGB: int(c.MemGb)}, nil
+		if c.Host == host {
+			return &RouteResult{Host: host, URL: "", File: c.File, MemGB: int(c.MemGb)}, nil
 		}
 	}
-	return nil, fmt.Errorf("model %s has no local candidate", model)
+	return nil, fmt.Errorf("model %s has no candidate on host %s", model, host)
 }
 
 // bindSession 记录会话 → 机器绑定。
