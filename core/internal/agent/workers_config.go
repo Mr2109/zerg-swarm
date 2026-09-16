@@ -32,7 +32,7 @@ type DeviceAwareConfig struct {
 var defaultDeviceMap = map[string]int{
 	"mini1": 1,
 	"x3":    3,
-	"local": 2,
+	"Mr2109":  2, // 3c：本机角色 localback 退役 ⇒ 本机 = 名为 Mr2109 的子端
 	"mini2": 1,
 }
 
