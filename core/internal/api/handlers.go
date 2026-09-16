@@ -11,7 +11,6 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
 	"github.com/Mr2109/zerg-swarm/core/internal/subtask"
-	"github.com/Mr2109/zerg-swarm/core/internal/version"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1089,18 +1088,6 @@ func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
 
 	snapshots := h.Store.GetAllSnapshots()
 	models := h.Store.GetAllModels()
-
-	// 合并本机子端（localback 不通过心跳上报，直接读实时快照）——来源函数与
-	// /api/resources/ledger 共用（口径唯一，避免两个观测面漂移）。
-	// 资源账本字段（批 5 #29/#30）：本机显存如实（拿不到就 vram_known=false + 三值缺席，
-	// 绝不用内存/RSS 冒充）+ 驻留明细（口径同远程子端，§八 Q7）——统一由来源函数给出。
-	if localRow := h.liveLocalFleetSnapshot(snapshots["local"]); localRow != nil {
-		// C10：本机子端不经心跳上报，身份直接取主控自己的代码身份——
-		// 否则版本矩阵里 local 一行永远为空，"混版"在本机这一格就看不见。
-		localRow.CodeVersion = version.Version
-		localRow.CodeSHA = version.Commit
-		snapshots["local"] = localRow
-	}
 
 	// 构建状态响应
 	// 统计健康/不健康节点
