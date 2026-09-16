@@ -28,3 +28,12 @@ cd ../ui && cargo test -p zerg-ui
 ## 提交信息
 
 `<类型>: <一句话>` —— 类型用 `feat` / `fix` / `docs` / `refactor` / `chore` / `test`。
+
+## Release notes & repo About: always bilingual (中文 + English)
+
+All public-facing summaries are bilingual, in this shape:
+
+- Release notes: a Chinese section first, then a `---` separator, then an English section — with **symmetric sub-headings** (发布形态/本版要点/升级/校验 ↔ Release format/Highlights/Upgrade/Verification).
+- Repository About (description): one line, Chinese sentence + ` · ` + English sentence.
+
+This is a standing convention for every release and every public-facing blurb, not a one-off.
