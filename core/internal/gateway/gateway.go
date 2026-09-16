@@ -37,7 +37,6 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/control"
 	"github.com/Mr2109/zerg-swarm/core/internal/gateway/adapter"
 	"github.com/Mr2109/zerg-swarm/core/internal/gateway/orchestrator"
-	"github.com/Mr2109/zerg-swarm/core/internal/localback"
 	"github.com/Mr2109/zerg-swarm/core/internal/modelreg"
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
@@ -50,10 +49,9 @@ import (
 type Gateway struct {
 	authToken string // 从 fleet.yaml auth.token 读取
 	config    *config.FleetConfig
-	client    *http.Client            // 转发用 HTTP 客户端
-	localBack *localback.LocalBackend // 本机子端（阶段 3）
-	store     *store.Store            // fleet 快照（路由决策用：已加载模型/活跃请求/健康）
-	comp      *compressor.Compressor  // LLMLingua-2 压缩器（V22，Go 一体化）
+	client    *http.Client           // 转发用 HTTP 客户端
+	store     *store.Store           // fleet 快照（路由决策用：已加载模型/活跃请求/健康）
+	comp      *compressor.Compressor // LLMLingua-2 压缩器（V22，Go 一体化）
 	compMu    sync.RWMutex
 	gate      *control.Gate // M3 集中控制层（v2.4——工具调用拦截；nil=不启用）
 
@@ -243,10 +241,11 @@ const sessionTTL = 30 * time.Minute
 // 128K 覆盖典型 agent 会话；超预算由客户端或编排层 compaction。
 const maxSessionTokens = 131072
 
-// NewGateway 创建网关实例，附带本机后端。
-// localBack 可为 nil（此时 host=local 的模型仍返回 503）。
+// NewGateway 创建网关实例。
+// 3c（2026-09-16）：本机后端（localBack）参数已删 —— 本机角色退役后本机 = 名为 Mr2109 的普通子端，
+// 它的模型与 x3 一样经通用转发到达，网关不再需要"自己起/直连本机引擎"的能力。
 // adapters v2.5.4.10：模型适配器注册表（模型名→插件）——可为 nil（回退旧路由）。
-func NewGateway(authToken string, cfg *config.FleetConfig, localBack *localback.LocalBackend, st *store.Store, adapters map[string]plugin.Plugin) *Gateway {
+func NewGateway(authToken string, cfg *config.FleetConfig, st *store.Store, adapters map[string]plugin.Plugin) *Gateway {
 	// v2.5.4.10 适配器注册表（nil→空 map——回退旧路由）
 	if adapters == nil {
 		adapters = map[string]plugin.Plugin{}
@@ -294,7 +293,6 @@ func NewGateway(authToken string, cfg *config.FleetConfig, localBack *localback.
 				ResponseHeaderTimeout: 90 * time.Second,
 			},
 		},
-		localBack:       localBack,
 		store:           st,
 		sessions:        make(map[string]sessionBinding),
 		prefixes:        make(map[string]map[string]int),

@@ -34,7 +34,7 @@ func newBreakerTestRouter(h *Handlers) *chi.Mux {
 func newBreakerTestHandlers(t *testing.T) *Handlers {
 	t.Helper()
 	h := newTestHandlers()
-	h.Gateway = gateway.NewGateway("test-token", h.Config, nil, store.NewStore(), nil)
+	h.Gateway = gateway.NewGateway("test-token", h.Config, store.NewStore(), nil)
 	if h.Gateway == nil {
 		t.Fatal("Gateway 构造失败")
 	}
