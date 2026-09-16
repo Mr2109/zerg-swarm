@@ -19,6 +19,7 @@
 
 use std::collections::BTreeSet;
 use std::ffi::{CStr, CString};
+#[cfg(target_os = "macos")]
 use std::os::raw::{c_char, c_int, c_ulong};
 
 use crate::error::Error;
@@ -28,6 +29,10 @@ use crate::{Plan, PLAN_SCHEMA_VERSION};
 
 // Seatbelt 的库入口（libSystem）。`flags = 0` ⇒ 第一个参数按**策略文本**解释
 // （`SANDBOX_NAMED = 1` 才是「按名字取预置 profile」，我们不走那条：预置 profile 不受卵声明控制）。
+// **平台门控**（2026-09-16）：这段 FFI 只能在 macOS 上链接 —— Linux runner 上
+// `cargo build` 会因 `undefined symbol: sandbox_init` 直接链接失败（公开面 CI 实测 ✗）。
+// 声明与**调用**一起门控：非 macOS 上不引入符号，也不生成会调它的代码。
+#[cfg(target_os = "macos")]
 extern "C" {
     fn sandbox_init(profile: *const c_char, flags: c_ulong, errorbuf: *mut *mut c_char) -> c_int;
     fn sandbox_free_error(errorbuf: *mut c_char);
@@ -114,6 +119,7 @@ pub fn policy(s: &Spec) -> Result<Policy, Error> {
 ///
 /// 失败一律**报错退出**，绝不改道：**不回落成裸跑**、不换别的沙箱、不「尽力而为」✓
 /// （回落 = 一个没有封闭、却看起来正常的空间 —— 设计稿 §五/§六 反复点名的形态）。
+#[cfg(target_os = "macos")]
 pub fn apply(profile: &str) -> Result<(), Error> {
     let c = CString::new(profile).map_err(|_| Error::new("策略文本里有 NUL 字节——拒（不猜）"))?;
     let mut err: *mut c_char = std::ptr::null_mut();
@@ -131,6 +137,18 @@ pub fn apply(profile: &str) -> Result<(), Error> {
     Err(Error::new(&format!(
         "sandbox_init 失败（rc={rc}：{detail}）——拒：**绝不**回落成裸跑（不换沙箱、不尽力而为）"
     )))
+}
+
+/// 非 macOS 平台上的 `apply`：**显式拒绝**，不回落成裸跑（本 crate 铁律 ✓）。
+///
+/// 为什么需要这个桩：茧壁要能在**一台主机上产出另一平台的计划**（设计稿：一条命令两侧都能跑 ✓），
+/// 所以 `plan()` 必须各平台都能编；但「由本进程直调 Seatbelt 施加封闭」这件事**只有 macOS 能做** ✗
+/// ⇒ 非 macOS 上必须报错，绝不静默变成「没有封闭却看起来正常」的空间 ✓。
+#[cfg(not(target_os = "macos"))]
+pub fn apply(_profile: &str) -> Result<(), Error> {
+    Err(Error::new(
+        "本平台不支持由茧壁本进程直调 Seatbelt 施加封闭（macOS 专有）——拒：绝不回落成裸跑",
+    ))
 }
 
 /// 出计划：配方 ⇒ 策略（本进程施加）+ 命令 + 放行清单 + 如实说明。
