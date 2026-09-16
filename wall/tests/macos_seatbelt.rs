@@ -45,17 +45,36 @@ fn python3() -> String {
     p.to_string()
 }
 
-fn tmp_space(tag: &str) -> PathBuf {
-    let p = PathBuf::from(format!(
-        "/private/tmp/zerg-wall-seatbelt-{}-{}",
-        std::process::id(),
-        tag
-    ));
-    let _ = std::fs::remove_dir_all(&p);
-    std::fs::create_dir_all(p.join("work")).expect("建靶子目录");
-    std::fs::create_dir_all(p.join("weights")).expect("建权重目录");
-    std::fs::write(p.join("weights/model.gguf"), b"not-a-real-weight").expect("造权重占位");
-    p
+/// 靶子目录：**离开作用域就清**（含用例 panic 那条路 —— 早先失败的那几跑在 `/private/tmp` 留了残骸，
+/// 「红的跑留下一地临时目录」是用例卫生问题，不是实现的）。
+struct Space(PathBuf);
+
+impl Space {
+    fn new(tag: &str) -> Self {
+        let p = PathBuf::from(format!(
+            "/private/tmp/zerg-wall-seatbelt-{}-{}",
+            std::process::id(),
+            tag
+        ));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(p.join("work")).expect("建靶子目录");
+        std::fs::create_dir_all(p.join("weights")).expect("建权重目录");
+        std::fs::write(p.join("weights/model.gguf"), b"not-a-real-weight").expect("造权重占位");
+        Self(p)
+    }
+}
+
+impl std::ops::Deref for Space {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Space {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 /// 写一份 macOS 形态的配方（路径按**宿主路径**：macOS 没有视图级封闭 ⇒ 声明即宿主路径）。
@@ -166,7 +185,7 @@ fn egress_target() -> (String, String) {
 /// 出网必须被拦；基线对照必须有区分度。
 #[test]
 fn macos_four_states_match_the_measured_receipt() {
-    let space = tmp_space("four");
+    let space = Space::new("four");
     let (host, port) = egress_target();
     let extra: Vec<(&str, String)> = vec![
         ("PROBE_EGRESS_HOST", host.clone()),
@@ -219,8 +238,6 @@ fn macos_four_states_match_the_measured_receipt() {
         got_egress.starts_with("BLOCKED"),
         "出网必须被拦（基线可达 ⇒ 有区分度）：封闭态={got_egress}\n{out}"
     );
-
-    let _ = std::fs::remove_dir_all(&space);
 }
 
 /// **写空间外必须被拦**（授权级封闭的本体）：基线能写、封闭态写不进去。
@@ -229,7 +246,7 @@ fn macos_four_states_match_the_measured_receipt() {
 /// 而封闭态这格会变成 `OPEN` ⇒ 用例红。
 #[test]
 fn macos_write_outside_the_declared_space_is_refused() {
-    let space = tmp_space("writeout");
+    let space = Space::new("writeout");
     let outside = space.join("outside.txt");
     let extra: Vec<(&str, String)> = vec![("PROBE_OUTSIDE", outside.display().to_string())];
 
@@ -265,8 +282,6 @@ fn macos_write_outside_the_declared_space_is_refused() {
         "空间外的文件竟然真的被创建了：{}",
         outside.display()
     );
-
-    let _ = std::fs::remove_dir_all(&space);
 }
 
 /// 负例：**策略文本不合法** ⇒ `sandbox_init` 返回非 0 ⇒ `apply` **必须报错**（不许吞掉）。
@@ -306,7 +321,7 @@ fn macos_bad_profile_is_refused() {
 /// —— 那是同一条链上两个不同的失败面（见 `wall/README.md` 的口径表），不是同一个判据。
 #[test]
 fn macos_missing_engine_is_a_hard_failure() {
-    let space = tmp_space("missing");
+    let space = Space::new("missing");
     let spec = write_spec(&space, "miniprobe.py", "");
     let text = std::fs::read_to_string(&spec).expect("读配方");
     assert!(
@@ -326,6 +341,4 @@ fn macos_missing_engine_is_a_hard_failure() {
         err.contains("绝不"),
         "理由要写明绝不改道（不换执行方式、不裸跑）：{err}"
     );
-
-    let _ = std::fs::remove_dir_all(&space);
 }
