@@ -729,6 +729,10 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 				// 旧行为：直接用适配器写死值（2000）⇒ 思考型模型思考一开就吃光额度 ⇒ 正文为空（实测 content='' + finish=length）。
 				if mt0, ok0 := res["max_tokens"].(int); ok0 && mt0 > 0 {
 					ctxDecl := 0
+					ctxSrc := "声明(意图)" // 来源三态：档案(事实) ⇒ 声明(意图) ⇒ 默认（卵未声明）
+					if ctxDecl == 0 {
+						ctxSrc = "默认（卵未声明）"
+					}
 					if cw, okc := res["ctx_window"].(int); okc && cw > 0 {
 						ctxDecl = cw
 					}
@@ -739,11 +743,18 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 						ctxDecl = v
 						ctxSrcLabel = "档案(事实)"
 					}
+
+					if ctxDecl == 0 {
+						ctxSrc = "默认（卵未声明）"
+					}
 					dyn, ctxUsed, promptEst := DynamicMaxTokens(model, ctxDecl, EstimatePromptTokens(len(forwardBody)))
 					if dyn <= 0 {
 						log.Printf("⚠️ 输出预算：提示已超上下文（ctx=%d prompt≈%d）——拒绝并按教学式报错处理", ctxUsed, promptEst)
 					} else {
-						ctxSrc := "声明(意图)"
+						ctxSrc = "声明(意图)" // 已在外层声明
+						if strings.Contains(ctxSrcLabel, "档案") {
+							ctxSrc = ctxSrcLabel
+						}
 						if ctxDecl == 0 {
 							ctxSrc = "默认（卵未声明）"
 						}
