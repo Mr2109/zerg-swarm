@@ -158,8 +158,12 @@ func TestParseModelResponse_MalformedJSON(t *testing.T) {
 	}
 }
 
-// TestParseModelResponse_ReasoningFallback — content 空时 fallback 到 reasoning
-func TestParseModelResponse_ReasoningFallback(t *testing.T) {
+// TestParseModelResponse_ReasoningOnly — content 为空、只有思考时：**只标记、不搬运**（缺陷 A 的契约）
+//
+// 历史（2026-09-17）：旧行为是 `if Content == "" && Reasoning != "" { Content = Reasoning }`，
+// 结果思考被当成正文回灌进历史 ⇒ 下一轮模型照抄该口吻 ⇒ 自我延续（缺陷 A）。已废。
+// 新契约：Content 保持为空 + ReasoningOnly=true（思考照跑、不算正文、不入正文）。
+func TestParseModelResponse_ReasoningOnly(t *testing.T) {
 	raw := `{
 		"output": [
 			{"type": "reasoning", "content": [{"type": "reasoning_text", "text": "Thinking..."}]}
@@ -170,9 +174,15 @@ func TestParseModelResponse_ReasoningFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// content 为空，reasoning 有值 → fallback：content = reasoning
-	if resp.Content != "Thinking..." {
-		t.Errorf("expected content fallback to reasoning 'Thinking...', got %q", resp.Content)
+	// 契约：只标记、不搬运
+	if resp.Content != "" {
+		t.Errorf("思考不得被搬进正文（缺陷 A）：Content=%q", resp.Content)
+	}
+	if resp.Reasoning != "Thinking..." {
+		t.Errorf("思考应保留在思考通道：Reasoning=%q", resp.Reasoning)
+	}
+	if !resp.ReasoningOnly {
+		t.Error("应标记 ReasoningOnly=true（供上层决定回灌策略）")
 	}
 }
 
