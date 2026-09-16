@@ -195,3 +195,20 @@ func obsTool(session string, round int, tool string, d time.Duration, ok bool, r
 		TotalMS: d.Milliseconds(), Result: res, ToolRounds: rounds, ToolMax: max,
 	})
 }
+
+// ChatInferError — 带分类码的推理错误（OBS-2）。
+// 判据：任何"非正常收尾"都必须是这三类之一；调用方按 Code 分类处置/上报。
+type ChatInferError struct {
+	Code string // ChatErrUpstreamTimeout / ChatErrClientAborted / ChatErrStreamTruncated
+	Err  error
+}
+
+func (e *ChatInferError) Error() string {
+	if e.Err == nil {
+		return fmt.Sprintf("chat: %s", e.Code)
+	}
+	return fmt.Sprintf("chat: %s: %v", e.Code, e.Err)
+}
+
+// Unwrap — 让 errors.Is/As 能穿透到根因（便于上层按超时/取消分别处置）
+func (e *ChatInferError) Unwrap() error { return e.Err }
