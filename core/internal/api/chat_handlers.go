@@ -1016,6 +1016,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		tracesJSON := string(tb)
 		_ = tracesJSON
 	}
+	chat.DumpInferResult(id, kres.Content, kres.Reasoning) // 取证（默认关，ZERG_DUMP_INFER 开启）
 	result = &chat.InferResult{
 		Content: kres.Content, Reasoning: kres.Reasoning,
 		InputTokens: int(kres.Usage.TotalTokens), // 内核只回总量——落库按 input 计（output 在 done 事件单算）
