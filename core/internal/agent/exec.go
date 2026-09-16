@@ -1652,7 +1652,16 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 			}
 			return ToolCallResult{Content: content}
 		}
-		return ToolCallResult{Error: fmt.Sprintf("未知工具: %s", toolName)}
+		// 教学式错误（2026-09-17 实测：模型把示例里的占位词「工具名」照抄成工具名 ⇒ 调用必败 ⇒ 反复空转）
+		// 原则：错误反馈＝教学（可行动、给正确示例、列出可用工具）——不让人/模型猜。
+		if isPlaceholderToolName(toolName) {
+			return ToolCallResult{Error: fmt.Sprintf(`你把示例里的占位符当成工具名了：「%s」不是工具。name 必须换成真实工具名；正确形态示例：{"name": "read", "arguments": {"path": "core/internal/agent/exec.go"}}`, toolName)}
+		}
+		return ToolCallResult{Error: fmt.Sprintf(`未知工具: %s。当前可用：%s。正确形态示例：{"name": "read", "arguments": {"path": "core/internal/agent/exec.go"}}`, toolName, availableToolNames())}
+
+		// isPlaceholderToolName — 教学示例中的占位词（被照抄即成假工具名）
+
+		// availableToolNames — 当前注册的工具名（供教学式错误列出；取前 12 个够用）
 	}
 }
 
@@ -1752,4 +1761,24 @@ func globRecursive(root, pattern string) ([]string, error) {
 
 	walk(root, 0)
 	return results, nil
+}
+
+// ── 以下两个 helper 由 2026-09-17 修复「模型照抄占位词」时加入（顶格：函数不能嵌套在函数体内）──
+func isPlaceholderToolName(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "工具名", "参数名", "参数值", "tool_name", "tool", "name", "函数名", "工具":
+		return true
+	}
+	return false
+}
+
+func availableToolNames() string {
+	var names []string
+	for _, t := range AllTools() {
+		names = append(names, t.Function.Name)
+		if len(names) >= 12 {
+			break
+		}
+	}
+	return strings.Join(names, " · ")
 }
