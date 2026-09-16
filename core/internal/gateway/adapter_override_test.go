@@ -69,9 +69,11 @@ func TestAdapterRegistry_Override(t *testing.T) {
 	if mt != 32768 {
 		t.Errorf("max_tokens 应 32768——实际 %v", mt)
 	}
-	// 超时覆盖
-	if g.getRequestTimeout("Qwen3.8-27B") != 0 { // 还没 set——覆盖逻辑里 set
-		t.Error("超时未设置")
+	// 超时覆盖：这里断言的是「**适配器声明的**超时还没 set」（map 里应为空）。
+	// 注意：getRequestTimeout 自 2026-09-17（Mr2109 拍「甲：按卵可配、只放宽不收窄」）后返回**生效值**
+	// —— 它会按卵放宽（思考型下限/档案实测值）⇒ 未声明时也可能非 0。故此处改查 map 本身，保住原意。
+	if v, ok := g.timeoutOverride["Qwen3.8-27B"]; ok && v != 0 {
+		t.Errorf("适配器声明不应存在——实际 timeoutOverride[Qwen3.8-27B]=%d", v)
 	}
 }
 
