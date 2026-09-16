@@ -191,6 +191,7 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 		}
 	}
 	data, err := json.Marshal(body)
+	dumpPrompt(data) // 诊断：ZERG_DUMP_PROMPT 存在时转储实际请求体（默认关）
 	if err != nil {
 		return nil, fmt.Errorf("chat: 序列化失败: %w", err)
 	}
@@ -644,4 +645,25 @@ func extractJSONObjects(s string) []string {
 func stripXMLToolCalls(content string) string {
 	reCall := regexp.MustCompile(`(?s)<tool_call>.*?</tool_call>\s*`)
 	return strings.TrimSpace(reCall.ReplaceAllString(content, ""))
+}
+
+// dumpPrompt — 按需把"实际发给引擎的请求体"落盘（**诊断专用，默认关闭，绝不常开**）。
+//
+// 用途：当出现"直连引擎正常、经对话层异常"这类缺陷时，看真实提示才能定性（不猜）。
+// 开关：ZERG_DUMP_PROMPT=<文件路径>（追加写，每条带时间戳分隔）。生产环境不设即为零开销。
+// 权限：0600（提示里可能含用户内容 ⇒ 不放开）。
+func dumpPrompt(data []byte) {
+	path := os.Getenv("ZERG_DUMP_PROMPT")
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️ dumpPrompt: open failed: %v\n", err)
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString("=== " + time.Now().Format(time.RFC3339Nano) + " ===\n")
+	_, _ = f.Write(data)
+	_, _ = f.WriteString("\n")
 }
