@@ -75,10 +75,13 @@ def local_user_reply(prof, history, tok):
         msgs.append({"role": role, "content": text})
     body = {"model": os.environ.get("ZERG_DRIVER_MODEL", "example-35b-v2"),
             "messages": msgs, "max_tokens": 800, "stream": False,
-            # 实测（2026-09-16）：本机 gemma 默认把额度花在思考上 ⇒ content='' 全是 reasoning。
-            # 唯一有效办法是**引擎侧关思考**：enable_thinking=false ⇒ content 直接可用（0.5s）。
-            # 提示词 /no_think、换模型（Nemotron/review）都无效。
-            "chat_template_kwargs": {"enable_thinking": False}}
+            # 思考开关按模型而定（实测 2026-09-16）：
+            #   gemma-4-26B：默认把额度花在思考上 ⇒ content='' 全是 reasoning；只有关思考才可用。
+            #   example-35b-v2：**思考通道正常**，开思考更快更像人（3.6s）⇒ 不要关。
+            # 故：默认**不传**（让模型按自身最佳行为跑）；需要时用 ZERG_DRIVER_NO_THINK=1 强制关。
+            } 
+    if os.environ.get("ZERG_DRIVER_NO_THINK") == "1":
+        body["chat_template_kwargs"] = {"enable_thinking": False}
     with post(AGENT + "/infer", body, tok, timeout=300) as r:
         d = json.loads(r.read().decode())
     # llama-server 风格响应
