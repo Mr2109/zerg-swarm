@@ -118,11 +118,6 @@ func (h *Handlers) buildResourceMachines(inputs []fitInput) []ResourceMachineVie
 		return out
 	}
 	snaps := h.Store.GetAllSnapshots()
-	// 本机一行以实时快照为准（GetAllSnapshots 返回的是副本，改动不外泄回 store）。
-	// 拿不到实时来源则保持 store 里已有的 local 行（旧行为），不伪造。
-	if localRow := h.liveLocalFleetSnapshot(snaps["local"]); localRow != nil {
-		snaps["local"] = localRow
-	}
 	names := make([]string, 0, len(snaps))
 	for n := range snaps {
 		names = append(names, n)
