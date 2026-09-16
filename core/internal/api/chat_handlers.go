@@ -560,7 +560,10 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	}
 	var traces []chat.ToolTrace
 	for _, tr := range kres.Traces {
-		traces = append(traces, chat.ToolTrace(tr))
+		tr2 := chat.ToolTrace(tr)
+		traces = append(traces, tr2)
+		// OBS-3（v2.5.10 前置档②）：工具轮次上日志面（**不改 loopcore** ✓ 只读它交回的轨迹）
+		chat.ObsTool(id, tr2.Round, tr2.Name, tr2.Duration, tr2.Error == "", len(traces), chat.MaxToolRounds)
 	}
 	var toolCallsStr string
 	if len(traces) > 0 {
@@ -1005,7 +1008,10 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	traces = traces[:0]
 	for _, tr := range kres.Traces {
-		traces = append(traces, chat.ToolTrace(tr))
+		tr2 := chat.ToolTrace(tr)
+		traces = append(traces, tr2)
+		// OBS-3（v2.5.10 前置档②）：工具轮次上日志面（**不改 loopcore** ✓ 只读它交回的轨迹）
+		chat.ObsTool(id, tr2.Round, tr2.Name, tr2.Duration, tr2.Error == "", len(traces), chat.MaxToolRounds)
 	}
 	cur = msgs
 	_ = cur
