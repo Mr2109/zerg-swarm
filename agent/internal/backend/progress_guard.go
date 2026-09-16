@@ -10,6 +10,8 @@ package backend
 //
 // 判据（只看证据不看表，Mr2109 2026-09-15 拍板"尽量不用时间限制"）：
 //   · 有推进（引擎自报已处理 token 数在涨，或正文内容字节在涨） ⇒ 清空停滞计数，继续等；
+//   · 正文读完（EOF）/被关 ⇒ **立刻退场**：流结束之后「无推进」是必然的，不退场就会把已经
+//     正常完成的请求判成卡死（2026-09-16 第十四轮实测的假判死，见 Read 里的注释）；
 //   · 无推进，且本单元 CPU 工时也不动（连续 DeadFlat 次采样） ⇒ **立刻判死**（提前，不必等窗口用满）；
 //   · 无推进，但 CPU 在涨（"占着 CPU 在磨"） ⇒ 停滞窗口计数 +1，累计到 MaxStall ⇒ 判死；
 //   · 进度读数不可用 ⇒ 退化为只用 CPU：涨 = 继续等，不动 = 按上面两条处理（仍收敛，不会永远等）。
@@ -59,6 +61,15 @@ func (g *progressGuard) Read(p []byte) (int, error) {
 	n, err := g.rc.Read(p)
 	if n > 0 {
 		g.countContent(p[:n])
+	}
+	if err != nil {
+		// 正文读完（io.EOF，正常路径）或读失败 ⇒ 立刻让守卫退场。
+		// 为什么必须在这里退场（2026-09-16 第十四轮 -race 实测）：守卫只认「有没有推进」，
+		// 而**流结束之后「无推进」是必然的** —— 不退场就会在 EOF 之后的第 deadFlat 次采样
+		// 把**已经正常完成**的请求判成 stuck_cpu_stalled（选中用例 TestPhase2_Progressing_NotJudged
+		// 偶发红，实测 1/4~1/5；生产 Sample=5s/DeadFlat=2 时这个窗口约 10 s，等于给
+		// 「读完之后还没 Close」的调用方埋一颗假判死的雷）。
+		g.once.Do(func() { close(g.stop) })
 	}
 	return n, err
 }
@@ -154,6 +165,12 @@ func (g *progressGuard) run(
 			} else {
 				flatCPU++
 				if flatCPU >= deadFlat {
+					// 判死前的现场（供复盘假判死）：内容字节数 + 进度读数 + 采样口径。
+					// 这条日志是 2026-09-16 第十四轮抓 EOF 后假判死时缺的那块拼图 —— 判词里
+					// 只有「连续 N 次采样」，没有「当时读到多少字节」，分不清是"压根没出字"
+					// 还是"字早就出完了"。
+					log.Printf("[看门狗] 正文阶段：连续 %d 次采样无推进且 CPU 工时不动（content=%dB 进度读数=%d）⇒ 提前判死",
+						flatCPU, g.content.Load(), cur)
 					onStuck(WatchdogStuckCPUStalled, "正文阶段：无推进且本单元 CPU 工时不动（连续 "+itoa(flatCPU)+" 次采样）")
 					return
 				}
