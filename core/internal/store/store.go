@@ -79,9 +79,13 @@ type FleetSnapshot struct {
 	Error       *string   `json:"error,omitempty"`
 	LastSeen    time.Time `json:"last_seen"` // 最后心跳时间
 
-	// ── 资源账本新增（《设计-资源管理器》§3.1/§3.4；全部可选，缺省=该机器未提供）──
-	VramKnown   bool    `json:"vram_known,omitempty"`    // 能否拿到真实显存；false/缺省时 gpu_used_gb 视为未知
-	VramUnified bool    `json:"vram_unified,omitempty"`  // 统一内存平台（显存即内存，§3.1）
+	// ── 资源账本新增（《设计-资源管理器》§3.1/§3.4）──
+	// ⚠ 两个布尔**绝不能带 omitempty**（2026-09-16 修，实测踩过）：false 是**有意义的值** ——
+	//   `vram_known=false` 表示"该机器拿不到显存"（口径见 #29：拿不到就 false，绝不用内存/RSS 冒充），
+	//   `vram_unified=false` 表示"独显平台"；被 omitempty 吞掉后，消费方**分不清"没有"与"没报"** ✗。
+	//   （实测形态：x3 的 vram_known=true 看得见 ✓，Mr2109 的 false 整个消失 ✗。）
+	VramKnown   bool    `json:"vram_known"`              // 能否拿到真实显存；false 时 gpu_used_gb 视为未知
+	VramUnified bool    `json:"vram_unified"`            // 统一内存平台（显存即内存，§3.1）；false = 独显平台
 	VramTotalGb float64 `json:"vram_total_gb,omitempty"` // 真实显存总量（GB）
 	VramUsedGb  float64 `json:"vram_used_gb,omitempty"`  // 真实显存占用（GB）
 	VramFreeGb  float64 `json:"vram_free_gb,omitempty"`  // 真实显存空闲（GB）
