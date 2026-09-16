@@ -31,11 +31,25 @@ import (
 //
 // 数字单位与既有口径对齐：体积用 GB（GiB，与 baseline_mem / MemAvailableGb 一致），
 // 时长用秒，吞吐用 tokens/s。
+// 「GPU 账」种类（丙4，Mr2109 2026-09-16 拍）：同一个 peak_gtt_gb 字段名装两种账 ⇒ 种类必须能申报。
+const (
+	GpuMemKindGTT   = "gtt"   // Linux/Radeon：GTT（graphics translation table）
+	GpuMemKindWired = "wired" // macOS/Apple Silicon：GPU wired memory（钉住、不可压缩不可换出）
+)
+
 type EggProfile struct {
 	// WeightSizeGb 权重体积（GB）：权重文件实测字节数换算。装载下限与两笔账的输入端（§9.6）。
 	WeightSizeGb float64 `yaml:"weight_size_gb"`
-	// PeakGttGb 峰值显存（GTT，GB）：装载+推理期间全局 GTT 增量的实测上界（反复三次取上界）。
+	// PeakGttGb 峰值「GPU 账」（GB）：装载+推理期间该账增量的实测上界（反复三次取上界）。
+	// ⚠ 这笔账**是哪种账**由 GpuMemKind 说明（丙4，Mr2109 2026-09-16 拍）：同一个字段名在
+	// macOS 上装的是 GPU wired、在 Linux/Radeon 上装的是 GTT ⇒ 读档案的人必须看 kind，
+	// 否则会以为 macOS 也出了 GTT。
 	PeakGttGb float64 `yaml:"peak_gtt_gb"`
+
+	// GpuMemKind 「GPU 账」的种类：`gtt`（Linux/Radeon 的 GTT）或 `wired`（macOS 的
+	// GPU wired memory，统一内存里被 GPU 钉住、不可压缩不可换出的部分）。
+	// 空 = 未申报（v1 旧档案）⇒ 按平台惯例读即可，**不据此判拒**（兼容读，不制造新门槛）。
+	GpuMemKind string `yaml:"gpu_mem_kind,omitempty"`
 	// PeakMemGb 峰值内存（GB）：MemAvailable 谷值对应峰值占用的实测上界。
 	PeakMemGb float64 `yaml:"peak_mem_gb"`
 	// LoadSeconds 装载耗时（秒）：冷装载实测。
@@ -102,6 +116,12 @@ func (p EggProfile) Validate() error {
 		if p.Enclosure.CheckedAt.IsZero() {
 			return fmt.Errorf("实测档案 enclosure 缺 checked_at（核验有有效期：证据必须带时间，§4.3 第 3 条）")
 		}
+	}
+	// 「GPU 账」种类：空 = 未申报（v1 旧档案）⇒ 按平台惯例读、不判拒（兼容读，不制造新门槛）；
+	// 申报了就必须合法 —— 同一字段名装两种账，含糊了读档案的人就会误读（丙4）。
+	if p.GpuMemKind != "" && p.GpuMemKind != GpuMemKindGTT && p.GpuMemKind != GpuMemKindWired {
+		return fmt.Errorf("实测档案 gpu_mem_kind=%q 不是合法值（合法：%q / %q）",
+			p.GpuMemKind, GpuMemKindGTT, GpuMemKindWired)
 	}
 	if p.Machine == "" {
 		return fmt.Errorf("实测档案缺 machine（档案绑定机型，跨机不得互抄）")
