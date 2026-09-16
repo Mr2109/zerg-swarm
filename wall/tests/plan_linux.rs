@@ -9,7 +9,8 @@
 use std::collections::BTreeMap;
 
 use zerg_wall::json;
-use zerg_wall::platform::linux::{exec_wrapper_script, BASELINE_NOTE};
+use zerg_wall::platform::linux::BASELINE_NOTE;
+use zerg_wall::shim::exec_wrapper_script;
 use zerg_wall::spec::Spec;
 use zerg_wall::{plan_for, Error};
 
@@ -215,7 +216,7 @@ fn refuses_bad_specs() {
     s.env.insert("BAD-NAME".to_string(), "1".to_string());
     assert!(plan_for("linux", &s).is_err(), "非法 env 名必须拒");
 
-    // 认不得的平台 / 一档没落地：都必须拒（绝不回落成裸 exec）
+    // 认不得的平台：必须拒（绝不回落成裸 exec）
     let s = base_spec();
     let err = plan_for("windows", &s).expect_err("windows 必须拒");
     assert!(
@@ -223,11 +224,13 @@ fn refuses_bad_specs() {
         "拒绝理由要写明不许降级：{}",
         err.msg()
     );
-    let err = plan_for("macos", &s).expect_err("macOS 一档未落地必须拒");
-    assert!(
-        err.msg().contains("不回落") || err.msg().contains("绝不回落"),
-        "macOS 拒绝必须写明不回落成裸跑：{}",
-        err.msg()
+    // macOS 一档（批 2'.4 起已落地）：**不再**是「没落地」，但仍是**另一套命令**——
+    // 判据是「同契约不同落地」，不是「同一条 argv」（详见 `tests/plan_macos.rs`）
+    let p = plan_for("macos", &s).expect("macOS 一档已落地，好配方必须能出计划");
+    assert_eq!(p.platform, "macos");
+    assert_eq!(
+        p.argv[0], "/bin/sh",
+        "有 env 时 macOS 侧同样走包装 exec（与 Linux 共用一份构造）"
     );
 }
 

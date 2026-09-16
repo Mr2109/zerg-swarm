@@ -16,6 +16,7 @@
 pub mod error;
 pub mod json;
 pub mod platform;
+pub mod shim;
 pub mod spec;
 
 pub use error::Error;
@@ -35,7 +36,10 @@ pub struct Plan {
     pub schema_version: u32,
     /// 出这份计划的平台（`linux` / `macos`）。
     pub platform: String,
-    /// 要执行的命令（`argv[0]` 是可执行名，其余是参数）；Linux 一档 = `bwrap` 参数序列。
+    /// 要执行的命令（`argv[0]` 是可执行名，其余是参数）。
+    ///
+    /// Linux 一档 = `bwrap` 的**完整命令行**（封闭由 bwrap 施加）；macOS 一档 = **封闭之内**要跑的
+    /// 那条命令行（封闭由茧壁本进程经 `sandbox_init` 施加，不经 argv —— 见 `platform::macos`）。
     pub argv: Vec<String>,
     /// 放行清单：**超出基线**的每一项授权（基线见 `platform::linux::BASELINE_NOTE`）。
     pub allowlist: Vec<String>,
@@ -87,9 +91,7 @@ pub fn plan(spec: &Spec) -> Result<Plan, Error> {
 pub fn plan_for(os: &str, spec: &Spec) -> Result<Plan, Error> {
     match os {
         "linux" => platform::linux::plan(spec),
-        "macos" => Err(Error::new(
-            "macOS 一档（直调 Seatbelt / sandbox_init）尚未落地（批 2'.4）——拒绝：绝不回落成裸跑",
-        )),
+        "macos" => platform::macos::plan(spec),
         other => Err(Error::new(&format!(
             "平台 {other:?} 认不得（本端只认 linux / macos）——拒绝：不许降级成裸 exec"
         ))),
