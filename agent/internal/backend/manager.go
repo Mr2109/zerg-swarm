@@ -401,6 +401,12 @@ func (m *Manager) doStart(modelName string, entry *registry.ModelEntry) (map[str
 	// 开关**关** ⇒ 这一段整体不执行（hatchMode=false），doStart 的代码路径与孵化器落地前逐字一致。
 	// 拒孵一律在**建 subproc / 分配端口之前**返回：不起任何单元、不登记任何驻留（账本干净）。
 	var hatchProfile monitor.EggProfile
+	// 甲（Mr2109 2026-09-16 拍）：**实测档案闸门不分路径** —— 裸 exec 也必须过。
+	// 缺口现场（探针 + 日志双证）：此前闸门被包在 `if hatchMode` 内 ⇒ 未开 ZERG_HATCH 的机器
+	// （本机 Mr2109）会在没有实测档案的情况下把引擎拉起来（挪走档案后 /load 仍 200，且日志无闸门记录）。
+	if _, reject := m.profileGateLocked(modelName, entry); reject != nil {
+		return reject, nil
+	}
 	if hatchMode {
 		prof, reject := m.hatchGateLocked(modelName, entry)
 		if reject != nil {
