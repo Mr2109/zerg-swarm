@@ -1986,8 +1986,15 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 	}
 
 	// 兜底：gemma 摘要（重写式，结构化 prompt 保针）
+	// 3c-补（2026-09-16）：首选压缩模型必须**真能路由到**才用 —— 光『在配置里』不够：
+	// gemma-4-12B 的唯一候选是预留机位 mini1（未部署），活性过滤排掉幽灵机后它无候选，
+	// 压缩整次失败（实测 16:14:40 "only candidate mini1 has no heartbeat"）、会话 token 不复位。
+	// 口径：首选不可用 ⇒ 回退用本次请求的原模型（它必然有可用候选，否则请求自己也走不通）。
 	compactModel := "gemma-4-12B"
 	if _, ok := g.config.Models[compactModel]; !ok {
+		compactModel = model
+	} else if _, rerr := g.pickRoute(compactModel, "", ""); rerr != nil {
+		log.Printf("♻️ compact model %s unroutable (%v) — falling back to %s", compactModel, rerr, model)
 		compactModel = model
 	}
 
