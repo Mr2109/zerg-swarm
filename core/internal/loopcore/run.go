@@ -47,6 +47,7 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 	}
 
 	loopStart := time.Now()
+	seenCalls := map[string]int{} // 本轮「同工具+同参数」出现次数（治重复劳动：实测 15 轮里同一份设计稿被读 6 次）
 	emptyArgsStreak := 0
 	badFormatStreak := 0
 	searchStreak := map[string]int{}
@@ -157,6 +158,8 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 		for _, tc := range result.ToolCalls {
 			normalizeToolArgs(&tc)
 			argsJSON := mustJSON(tc.Args)
+			callKey := tc.Name + "|" + argsJSON
+			seenCalls[callKey]++
 			emit("tool_start", mustJSON(map[string]any{"name": tc.Name, "args": argsJSON}))
 			startT := time.Now()
 
@@ -172,6 +175,11 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 			// 耗时兜底（2026-09-17 实测：部分工具 d.Exec 不回耗时 ⇒ 轨迹里 Duration 恒空、观测面拿不到「工具耗了多久」）；空则用真实墙钟补，有值（bash 自带）则尊重原值。
 			if dur == "" {
 				dur = time.Since(startT).Round(time.Millisecond).String()
+			}
+			// 重复调用提示（2026-09-17 实测：模型反复读同一文件/同一段代码 ⇒ 轮数被「找东西」吃光）
+			// 只做提示、不改结果内容；第 2 次起提示，避免噪声。
+			if n := seenCalls[callKey]; n > 1 && execErr == nil {
+				content = fmt.Sprintf("【提示】这是本轮第 %d 次完全相同的调用（前次已执行，结果同上）。若信息已足够，请直接给结论或换一种做法；不要重复调用。\n%s", n, content)
 			}
 			if d.Hooks.RecordOutcome != nil && tc.Name != "tool_search" {
 				if execErr != nil {
