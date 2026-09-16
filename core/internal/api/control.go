@@ -37,7 +37,7 @@ func NewControlHandlers(token string, cfg *config.FleetConfig, lb *localback.Loc
 }
 
 // LoadHandler 处理 POST /api/control/load
-// body: {"machine": "x3"|"local"|"mini1", "model": "deepseek-v4-flash"}
+// body: {"machine": "x3"|"Mr2109"|"mini1", "model": "deepseek-v4-flash"}
 func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 POST 方法")
@@ -75,13 +75,12 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 本机：走 localback
+	// 本机角色（localback）已于 2026-09-16 退役（Mr2109 拍：所有可推理的计算机都是子端）。
+	// ⚠ 必须**显式拒绝**：三处注入已改传 nil ⇒ 若还走进老分支（h.LocalBack.LoadModel）就是
+	// 空指针 panic（崩溃比报错糟得多）。本机 = 名为 Mr2109 的普通子端，照远程子端走。
 	if req.Machine == "local" {
-		if err := h.LocalBack.LoadModel(candidate.File, int(candidate.MemGb)); err != nil {
-			writeErrorCode(w, http.StatusInternalServerError, "MODEL_LOAD_FAILED", "本机加载失败: "+err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "machine": "local", "model": req.Model})
+		writeErrorCode(w, http.StatusGone, "MACHINE_RETIRED",
+			"本机角色已退役：本机 = 名为 Mr2109 的普通子端，请用 machine=Mr2109")
 		return
 	}
 
@@ -101,7 +100,7 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // UnloadHandler 处理 POST /api/control/unload
-// body: {"machine": "x3"|"local"|"mini1"}
+// body: {"machine": "x3"|"Mr2109"|"mini1"}（"local" 已退役 ⇒ 410 MACHINE_RETIRED）
 func (h *ControlHandlers) UnloadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErrorCode(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "仅支持 POST 方法")
@@ -120,10 +119,10 @@ func (h *ControlHandlers) UnloadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 本机：走 localback
+	// 本机角色已退役（同上）：显式拒绝，绝不 deref nil 的 LocalBack。
 	if req.Machine == "local" {
-		h.LocalBack.Stop()
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "machine": "local"})
+		writeErrorCode(w, http.StatusGone, "MACHINE_RETIRED",
+			"本机角色已退役：本机 = 名为 Mr2109 的普通子端，请用 machine=Mr2109")
 		return
 	}
 
