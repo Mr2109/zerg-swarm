@@ -45,9 +45,7 @@ ROLE_PAT = re.compile(r"""(host\s*:\s*['"]?local\b|Machine\s*:\s*['"]local['"]|M
 ROLE_EXEMPT_HINT = ("_test.go", "selfupdate", "toolchain")
 
 # 已判定的假红（精确到「文件:行」+ 理由）。仍会在报告中单独列出——豁免不等于隐藏。
-KNOWN_FP = {
-    ("scripts/publish-public.sh", 420): "shell 跨行双引号提交信息体（跨行引号状态尚未建模）",
-}
+KNOWN_FP = {}  # 跨行引号已建模（2026-09-16）⇒ 原 publish-public.sh:420 豁免撤销
 
 RE_TRIPLE = re.compile(r"""(\"\"\"|''')[\s\S]*?\1""")
 RE_CMDSUB = re.compile(r"""\$\((?:[^()]|\([^()]*\))*\)""")
@@ -77,6 +75,46 @@ def mask_heredocs(text):
                 tag = None
             else:
                 out.append("")
+    return "\n".join(out)
+
+
+def _open_quote(line):
+    """返回该行**留下的未闭合引号字符**（None = 行内成对）。转义与单双引号交替的简化处理。"""
+    q, i = None, 0
+    while i < len(line):
+        c = line[i]
+        if c == "\\":
+            i += 2
+            continue
+        if q:
+            if c == q:
+                q = None
+        elif c in "\"'":
+            q = c
+        i += 1
+    return q
+
+
+def mask_multiline_quotes(text):
+    """屏蔽 shell **跨行引号字符串**的内部（如 git commit -m "…\n…" 的多行提交信息体）。
+
+    逐行状态机看不见跨行引号 ⇒ 把正文当代码（实测 publish-public.sh:420 假红）。
+    只有"跨行未闭合"才屏蔽中间行（空行替换保住行号）；行内成对的仍交给 strip_noncode。
+    """
+    out, quote = [], None
+    for l in text.split("\n"):
+        if quote:
+            idx = l.find(quote)
+            if idx < 0:
+                out.append("")
+                continue
+            out.append(" " * (idx + 1) + l[idx + 1:])
+            quote = None
+            continue
+        out.append(l)
+        # 注释行**永不**开引号：中文注释里常有撇号（如「批 2'.6」），否则会把后续注释行
+        # 也当成跨行字符串吞掉，连 "#" 一起屏蔽 ⇒ 注释正文被误判为代码（实测 build-wall.sh:5）。
+        quote = None if l.lstrip().startswith("#") else _open_quote(l)
     return "\n".join(out)
 
 
@@ -132,7 +170,7 @@ def scan():
                 if ext == ".py":
                     body = strip_blocks(raw)
                 elif ext in (".sh", ".plist", ".conf"):
-                    body = mask_heredocs(raw)
+                    body = mask_multiline_quotes(mask_heredocs(raw))
                 else:
                     body = raw
                 for i, l in enumerate(body.split("\n"), 1):
@@ -175,8 +213,9 @@ def selftest():
         (".json", '{"a": "，"}', False),
         (".json", '{"a": 1，}', True),
         (".toml", "k = '，'", False),
+        (".sh", "echo x='，'", False),
     ]
-    assert len(cases) == 13, "自证用例数必须为 13，实际 %d（少跑即失效）" % len(cases)
+    assert len(cases) == 14, "自证用例数必须为 14，实际 %d（少跑即失效）" % len(cases)
     for ext, line, want in cases:
         got = any(ch in strip_noncode(line, ext) for ch in FULLW)
         ok = ok and (got == want)
@@ -193,7 +232,23 @@ def selftest():
     hc = any(ch in strip_noncode(l, ".sh") for ch in FULLW for l in hl[3:])
     ok = ok and (not hb) and hc
     print("  %s [heredoc] 正文不抓=%s（期望 False）· 段外真代码抓=%s（期望 True）" % ("✓" if (not hb and hc) else "✗", hb, hc))
-    print("  自证：%s（13 条单行 + 2 条跨行结构）" % ("通过 ✓" if ok else "**失败** ✗"))
+    mq = chr(10).join(['git commit -q -m "第一行（全角）',
+                       '第二行，仍属字符串',
+                       '第三行"',
+                       'echo ，真代码',
+                       ''])
+    ml = mask_multiline_quotes(mq).split("\n")
+    mb = any(ch in strip_noncode(l, ".sh") for ch in FULLW for l in ml[1:3])
+    mc = any(ch in strip_noncode(l, ".sh") for ch in FULLW for l in ml[3:])
+    ok = ok and (not mb) and mc
+    print("  %s [跨行引号] 串内不抓=%s（期望 False）· 串外真代码抓=%s（期望 True）" % ("✓" if (not mb and mc) else "✗", mb, mc))
+    cm = "# 批 2'.6 注释里带撇号（全角括号）" + chr(10) + "echo ，真代码" + chr(10)
+    cl = mask_multiline_quotes(cm).split(chr(10))
+    cb = any(ch in strip_noncode(l, ".sh") for ch in FULLW for l in cl[:1])
+    cc = any(ch in strip_noncode(l, ".sh") for ch in FULLW for l in cl[1:])
+    ok = ok and (not cb) and cc
+    print("  %s [注释撇号] 注释内不抓=%s（期望 False）· 下一行真代码抓=%s（期望 True）" % ("✓" if (not cb and cc) else "✗", cb, cc))
+    print("  自证：%s（14 条单行 + 4 条跨行结构）" % ("通过 ✓" if ok else "**失败** ✗"))
     return ok
 
 
