@@ -155,7 +155,7 @@ func TestValidate_MissingRequiredFields(t *testing.T) {
 // TestValidate_FileNotFound_Local 文件不存在 -> Fatal
 func TestValidate_FileNotFound_Local(t *testing.T) {
 	c := validCandidate()
-	c.Host = "local"
+	c.Host = "Mr2109"
 	c.File = "/nonexistent/path/model.gguf"
 	result := Validate("test-model", c)
 	if !result.HasFatal() {
@@ -259,7 +259,7 @@ func TestValidate_UnknownHost(t *testing.T) {
 
 // TestValidate_KnownHostsNoWarning 已知主机不触发 V011
 func TestValidate_KnownHostsNoWarning(t *testing.T) {
-	knownHosts := []string{"local", "x3", "mini1", "mini2", "mini3"}
+	knownHosts := []string{"Mr2109", "x3", "mini1", "mini2", "mini3"}
 	for _, host := range knownHosts {
 		t.Run(host, func(t *testing.T) {
 			c := validCandidate()
