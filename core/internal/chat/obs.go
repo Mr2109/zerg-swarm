@@ -65,7 +65,8 @@ const (
 // ⚠ 内部字段**一律不带 omitempty**：0 是有效测量值（瞬时），不得与"未知"混同。
 type TurnObs struct {
 	FirstByteMS int64 `json:"first_byte_ms"` // 首字节耗时
-	MaxGapMS    int64 `json:"max_gap_ms"`    // 最长停顿（"卡死感"的客观来源）
+	MaxGapMS    int64 `json:"max_gap_ms"`    // 最长空档（**含**首字节前的等待）
+	StallMS     int64 `json:"stall_ms"`      // 首字节**之后**的最大空档（真正区分"慢"与"卡"）
 	TotalMS     int64 `json:"total_ms"`      // 总时长
 	Chunks      int   `json:"chunks"`        // 分块数
 }
@@ -162,6 +163,7 @@ type ObsTimer struct {
 	last      time.Time
 	chunks    int
 	maxGap    time.Duration
+	stall     time.Duration // 首字节之后的最大空档
 }
 
 // NewObsTimer — 建一个轮次计时器
@@ -176,11 +178,18 @@ func (t *ObsTimer) MarkChunk() {
 		return
 	}
 	now := time.Now()
-	if t.firstByte.IsZero() {
+	isFirst := t.firstByte.IsZero()
+	if isFirst {
 		t.firstByte = now
 	}
 	if d := now.Sub(t.last); d > t.maxGap {
 		t.maxGap = d
+	}
+	// stall 只统计"已经出字之后"的空档：首块之前的等待属于 TTFT（first_byte_ms），两者不可混
+	if !isFirst {
+		if d := now.Sub(t.last); d > t.stall {
+			t.stall = d
+		}
 	}
 	t.last = now
 	t.chunks++
@@ -203,6 +212,7 @@ func (t *ObsTimer) Finish(endReason string) {
 		Turn: &TurnObs{
 			TotalMS:  time.Since(t.start).Milliseconds(),
 			MaxGapMS: t.maxGap.Milliseconds(),
+			StallMS:  t.stall.Milliseconds(),
 			Chunks:   t.chunks,
 		},
 	}
