@@ -48,10 +48,6 @@ type Handlers struct {
 	KvCacheBytesPerElem float64
 	// EngineOverheadGb 是引擎运行时/临时缓冲固定开销（GiB）。0 = 未知 → 回退常量并标 estimated。
 	EngineOverheadGb float64
-	// LocalSnapProvider 仅测试注入：本机（local）实时快照来源（nil = 用 LocalBack）。
-	// 为什么需要：localback.LocalBackend 的状态字段（state/file/memGB）在包外不可构造，
-	// api 侧造不出"本机有驻留"的真实快照，只能用替身验证 local 一行的合并口径。
-	LocalSnapProvider LocalSnapshotProvider
 
 	// ── 文件/目录浏览器（《设计-文件浏览器虫茧-20260913》阶段 1）──────────────
 	// FileBrowserAudit 仅测试注入：open/reveal 审计的目录与轮转参数（nil = ~/.zerg/logs +
