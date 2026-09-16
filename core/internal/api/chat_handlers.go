@@ -1024,6 +1024,16 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		_ = tracesJSON
 	}
 	chat.DumpInferResult(id, kres.Content, kres.Reasoning) // 取证（默认关，ZERG_DUMP_INFER 开启）
+	// 交付轮窄判据切分（Mr2109 语义：思考→工具调用→…→**最后输出正文**）：
+	// 正文若以过程叙述开头，把该段并回思考列，正文只留交付内容（判据见 chat/narration_split.go）。
+	if narr, nbody := chat.SplitLeadingNarration(kres.Content); narr != "" {
+		if kres.Reasoning != "" {
+			kres.Reasoning = kres.Reasoning + "\n\n" + narr
+		} else {
+			kres.Reasoning = narr
+		}
+		kres.Content = nbody
+	}
 	result = &chat.InferResult{
 		Content: kres.Content, Reasoning: kres.Reasoning,
 		InputTokens: int(kres.Usage.TotalTokens), // 内核只回总量——落库按 input 计（output 在 done 事件单算）
