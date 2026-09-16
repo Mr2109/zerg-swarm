@@ -1167,12 +1167,24 @@ func (h *Handlers) ModelDetailHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := cands[0]
-	// 本机加载状态（LocalBack 当前加载的是否此模型）
+	// 3c（2026-09-16）：加载状态改读**该机器的心跳快照**（本机角色退役 ⇒ 不再有 LocalBack 可问；
+	// 本机那一台 = 名为 Mr2109 的普通子端，其驻留与 x3 一样经心跳上报）。
 	status := "未加载"
 	loaded := false
-	if h.LocalBack != nil && h.LocalBack.IsReady() && h.LocalBack.ModelFile() == c.File {
-		status = "已加载"
-		loaded = true
+	if h.Store != nil {
+		if snap := h.Store.GetSnapshot(c.Host); snap != nil {
+			if snap.Model != nil && *snap.Model == name {
+				loaded = true
+			}
+			for _, m := range snap.Models {
+				if m == name {
+					loaded = true
+				}
+			}
+			if loaded {
+				status = "已加载"
+			}
+		}
 	}
 	// 架构兜底（architecture 优先——arch 兼容旧 key）
 	arch := c.Architecture
@@ -1207,9 +1219,9 @@ func (h *Handlers) ModelDetailHandler(w http.ResponseWriter, r *http.Request) {
 		"verified":     c.Verified,
 		"status":       status,
 		"loaded":       loaded,
-		"can_start":    c.Host == "local",
+		"can_start":    true,                   // 3c：有候选机即可启动（由主控转发到子端；原来仅限 host=="local"）
 		"adapter_opts": h.AdapterOptions(name), // v2.5.6: 适配器调用选项（Temperature/APIFormat/ReasoningEffort 等——反射读适配器实例）
-		"note":         "适配器选项=fleet.yaml 配置字段——本机模型可手动启动/停止（远程设备走 agent 加载）",
+		"note":         "适配器选项=fleet.yaml 配置字段——启动/停止由主控转发到候选子端执行（3c：引擎一律由子端起）",
 	})
 }
 
@@ -1217,8 +1229,8 @@ func (h *Handlers) ModelDetailHandler(w http.ResponseWriter, r *http.Request) {
 // POST /api/models/{name}/start——仅本机模型（LocalBack 直接加载）
 func (h *Handlers) ModelStartHandler(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	if h.Config == nil || h.LocalBack == nil {
-		writeErrorCode(w, http.StatusServiceUnavailable, "LOCAL_BACKEND_NOT_READY", "本机后端未就绪")
+	if h.Config == nil {
+		writeErrorCode(w, http.StatusServiceUnavailable, "CONFIG_NOT_LOADED", "配置未加载")
 		return
 	}
 	cands, ok := h.Config.Models[name]
@@ -1226,24 +1238,40 @@ func (h *Handlers) ModelStartHandler(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusNotFound, "MODEL_NOT_FOUND", "模型不存在: "+name)
 		return
 	}
-	c := cands[0]
-	if c.Host != "local" {
-		writeErrorCode(w, http.StatusBadRequest, "NOT_LOCAL_MODEL", "仅本机模型可手动启动（"+name+" 在 "+c.Host+"——远程加载走 agent）")
+	node, host, ok := h.firstCandidateNode(cands)
+	if !ok {
+		writeErrorCode(w, http.StatusServiceUnavailable, "NO_CANDIDATE_NODE", "该模型没有可用候选机")
 		return
 	}
-	if err := h.LocalBack.LoadModel(c.File, int(c.MemGb)); err != nil {
-		writeErrorCode(w, http.StatusInternalServerError, "MODEL_LOAD_FAILED", "模型加载失败: "+err.Error())
+	body, _ := json.Marshal(map[string]string{"model": name})
+	status, respBody, err := forwardToNode(h.Config.Auth.Token, node, "/load", body)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadGateway, "FORWARD_FAILED", "转发到 "+host+" 失败: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "name": name, "status": "已启动（加载中）"})
+	if status != http.StatusOK {
+		writeJSON(w, status, json.RawMessage(respBody))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "name": name, "host": host, "status": "已提交加载（子端接管）"})
+}
+
+// firstCandidateNode 取该模型的第一个"在机群里有节点信息"的候选（3c：手动启动/停止改为转发到子端）。
+func (h *Handlers) firstCandidateNode(cands []config.ModelCandidate) (config.FleetNode, string, bool) {
+	for _, c := range cands {
+		if node, ok := h.Config.Fleet[c.Host]; ok {
+			return node, c.Host, true
+		}
+	}
+	return config.FleetNode{}, "", false
 }
 
 // ModelStopHandler 手动停止模型（Mr2109 2026-08-27——UI 开关）
 // POST /api/models/{name}/stop——本机已加载该模型才停止
 func (h *Handlers) ModelStopHandler(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	if h.Config == nil || h.LocalBack == nil {
-		writeErrorCode(w, http.StatusServiceUnavailable, "LOCAL_BACKEND_NOT_READY", "本机后端未就绪")
+	if h.Config == nil {
+		writeErrorCode(w, http.StatusServiceUnavailable, "CONFIG_NOT_LOADED", "配置未加载")
 		return
 	}
 	cands, ok := h.Config.Models[name]
@@ -1251,11 +1279,22 @@ func (h *Handlers) ModelStopHandler(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusNotFound, "MODEL_NOT_FOUND", "模型不存在: "+name)
 		return
 	}
-	c := cands[0]
-	if h.LocalBack.IsReady() && h.LocalBack.ModelFile() == c.File {
-		h.LocalBack.Stop()
+	node, host, ok := h.firstCandidateNode(cands)
+	if !ok {
+		writeErrorCode(w, http.StatusServiceUnavailable, "NO_CANDIDATE_NODE", "该模型没有可用候选机")
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "name": name, "status": "已停止"})
+	body, _ := json.Marshal(map[string]string{"model": name})
+	status, respBody, err := forwardToNode(h.Config.Auth.Token, node, "/unload", body)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadGateway, "FORWARD_FAILED", "转发到 "+host+" 失败: "+err.Error())
+		return
+	}
+	if status != http.StatusOK {
+		writeJSON(w, status, json.RawMessage(respBody))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "name": name, "host": host, "status": "已提交卸载（子端接管）"})
 }
 
 // AdapterOptions 模型适配器配置项（Mr2109 2026-08-27——UI 显示适配器所有选项）
