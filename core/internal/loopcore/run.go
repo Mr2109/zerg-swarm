@@ -169,6 +169,10 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 			default:
 				content, dur, execErr = d.Exec(ctx, tc.Name, tc.Args)
 			}
+			// 耗时兜底（2026-09-17 实测：部分工具 d.Exec 不回耗时 ⇒ 轨迹里 Duration 恒空、观测面拿不到「工具耗了多久」）；空则用真实墙钟补，有值（bash 自带）则尊重原值。
+			if dur == "" {
+				dur = time.Since(startT).Round(time.Millisecond).String()
+			}
 			if d.Hooks.RecordOutcome != nil && tc.Name != "tool_search" {
 				if execErr != nil {
 					typ := errTypeOf(execErr.Error())
