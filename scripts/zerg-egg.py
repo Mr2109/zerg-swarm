@@ -51,6 +51,7 @@ TOOL_NAME = "zerg-egg"
 TOOL_VERSION = "1.0.0"
 MIN_ALIGN = 4096
 HEADER_PREFIX = 32   # 固定前缀：magic(4)+ver(4)+align(u64)+index_len(u64)+保留(8)
+CHUNK_SIZE = 64 << 20  # 分块大小（§13.2：卵的传输按块 sha 校验 + 断点续传）
 LEN_SLOT = 8          # 兼容旧笔记的命名，实际不再使用尾槽
 
 
@@ -171,6 +172,39 @@ def parse_index(path):
     return idx
 
 
+def xfer(src, dst, chunk_size=CHUNK_SIZE, quiet=False):
+    """按块可续传地把一枚卵拷到目标（§13.2）。
+
+    行为：逐块比较目标与源（块内 sha256）⇒ 缺的/坏的块才写 ⇒ **中断后重跑即续传**，
+    且能顺手修掉传输中损坏的块。返回 (写入块数, 总块数)；源比目标短时按源长度截断。
+    """
+    import os as _os
+    total = _os.path.getsize(src)
+    n_chunks = (total + chunk_size - 1) // chunk_size
+    wrote = 0
+    if not _os.path.exists(dst):
+        open(dst, "wb").close()
+    with open(src, "rb") as fs, open(dst, "r+b" if _os.path.getsize(dst) else "w+b") as fd:
+        for i in range(n_chunks):
+            off = i * chunk_size
+            want = min(chunk_size, total - off)
+            fs.seek(off)
+            data = fs.read(want)
+            h = hashlib.sha256(data).hexdigest()
+            got = b""
+            if _os.path.getsize(dst) >= off + want:
+                fd.seek(off)
+                got = fd.read(want)
+            if hashlib.sha256(got).hexdigest() != h:
+                fd.seek(off)
+                fd.write(data)
+                wrote += 1
+        fd.truncate(total)
+    if not quiet:
+        print("xfer：%d/%d 块需写（其余已就绪）⇒ %s" % (wrote, n_chunks, dst))
+    return wrote, n_chunks
+
+
 def verify(path, rebuild_into=None):
     """校验头块、对齐、逐段 sha256；可选重建到目录。返回 (problems, index)。"""
     problems = []
@@ -279,18 +313,47 @@ def _self_test():
             raise AssertionError("align=3000 竟被接受")
         except ValueError:
             ok += 1
-    print("self-test 通过（%d 项：3 条正例 + 4 条负例）" % ok)
+    # xfer ①：全新拷贝 ⇒ 必须与源逐字节相同
+    # 注意：必须用**独立的**源树 —— 前面的负例动过原树，复用会假红（本轮实测踩到）。
+    src_x = os.path.join(t, "xtree")
+    os.makedirs(os.path.join(src_x, "sub"), exist_ok=True)
+    open(os.path.join(src_x, "a.bin"), "wb").write(os.urandom(100000))
+    open(os.path.join(src_x, "sub", "b.bin"), "wb").write(os.urandom(50000))
+    src2, dst2 = os.path.join(t, "d.egg"), os.path.join(t, "d.copy")
+    pack(src_x, src2, align=4096)
+    w1, n1 = xfer(src2, dst2, chunk_size=64 * 1024, quiet=True)
+    assert w1 == n1, "全新拷贝应写全部块（%d/%d）" % (w1, n1)
+    assert open(src2, "rb").read() == open(dst2, "rb").read(), "拷贝后内容不同"
+    ok += 1
+    # xfer ②：中断（把目标截一半）⇒ 重跑必须续传补齐且逐字节相同
+    half = os.path.getsize(dst2) // 2
+    with open(dst2, "r+b") as f:
+        f.truncate(half)
+    w2, _ = xfer(src2, dst2, chunk_size=64 * 1024, quiet=True)
+    assert 0 < w2 < n1, "半截目标只应补一部分块（实得 %d）" % w2
+    assert open(src2, "rb").read() == open(dst2, "rb").read(), "续传后内容不同"
+    ok += 1
+    # xfer ③：坏块 ⇒ 必须被发现并修复
+    with open(dst2, "r+b") as f:
+        f.seek(0)
+        f.write(b"XXXX")
+    w3, _ = xfer(src2, dst2, chunk_size=64 * 1024, quiet=True)
+    assert w3 >= 1, "坏块必须被重写（实得 %d）" % w3
+    assert open(src2, "rb").read() == open(dst2, "rb").read(), "修复后内容不同"
+    ok += 1
+    print("self-test 通过（%d 项：3 正例 + 4 负例 + 3 条 xfer 用例）" % ok)
     return 0
 
 
 def main():
     ap = argparse.ArgumentParser(description="卵的单文件封装工具（*.egg）")
-    ap.add_argument("cmd", nargs="?", choices=["pack", "info", "verify"])
+    ap.add_argument("cmd", nargs="?", choices=["pack", "info", "verify", "xfer"])
     ap.add_argument("a", nargs="?")
     ap.add_argument("b", nargs="?")
     ap.add_argument("--align", type=int, default=None)
     ap.add_argument("--rebuild-into", default=None)
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--chunk-size", type=int, default=CHUNK_SIZE, help="xfer 的分块大小（默认 64 MiB）")
     args = ap.parse_args()
     if args.self_test:
         return _self_test()
@@ -304,6 +367,17 @@ def main():
         return 0
     if args.cmd == "info":
         return cmd_info(args.a)
+    if args.cmd == "xfer":
+        if not (args.a and args.b):
+            print("用法：xfer <源.egg> <目标.egg>", file=sys.stderr)
+            return 64
+        wrote, n = xfer(args.a, args.b, chunk_size=args.chunk_size)
+        probs, _ = verify(args.b)
+        if probs:
+            print("✗ 目标校验失败 %d 项：" % len(probs))
+            return 1
+        print("✓ 目标与索引一致（本次写 %d/%d 块）" % (wrote, n))
+        return 0
     if args.cmd == "verify":
         probs, idx = verify(args.a, rebuild_into=args.rebuild_into)
         if probs:
