@@ -35,7 +35,6 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/compressor"
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"github.com/Mr2109/zerg-swarm/core/internal/gateway"
-	"github.com/Mr2109/zerg-swarm/core/internal/localback"
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin/adapters"
 	"github.com/Mr2109/zerg-swarm/core/internal/selfupdate"
@@ -116,31 +115,10 @@ func main() {
 	// 铁律：无模块模型拒绝调用——启动时暴露配置问题（接入时发现而非运行才失败）
 	validateModels(cfg)
 
-	// 阶段 3：初始化本机子端（LocalBackend）
-	// 日志路径用绝对路径（进程可能从任意目录启动，相对路径会找不到目录）
-	logPath := filepath.Join(statepath.RuntimeLogDir(), "zerg-localback.log")
-	localBack := localback.NewLocalBackend(logPath)
-	// v2.5.4.9 分配改进：探测本机已运行模型（9000 ornith 等）——接管为 ready——本机候选参与路由
-	// 候选 = fleet.yaml 中 host=local 的模型文件（匹配才接管——避免接错残留进程）
-	var localCandidates []string
-	for _, cands := range cfg.Models {
-		for _, c := range cands {
-			if c.Host == "local" {
-				localCandidates = append(localCandidates, c.File)
-			}
-		}
-	}
-	if localBack.AdoptExisting(localCandidates) {
-		fmt.Printf("📦 Local agent: adopting existing models (%s)\n", localBack.ModelFile())
-	} else {
-		fmt.Printf("📦 Local agent: initialized (log: %s)\n", logPath)
-	}
-
+	// 3c（2026-09-16）：本机后端（localback）初始化与"自收养本机已跑模型"已删 —— 本机角色退役后
+	// 本机 = 名为 Mr2109 的普通子端，由 launchd 托管、经心跳上报；主控不再自己起/接管引擎。
 	// 初始化存储和处理器
 	fleetStore := store.NewStore()
-	// B13/#31：本机（local）行由主控自己维护（本机不跑独立 agent、不经心跳）。
-	// 注册周期刷新时**先同步写一次**：保证任何只读 store 的消费方（路由打分/调度探活/
-	// 模型聚合/pin 校验）在启动窗口内就能看到 local 行，不再等 30s 首拍。周期刷新不变（30s）。
 	// 3a（2026-09-16 Mr2109 拍：所有可推理的计算机都是子端）：**本机角色退役** ⇒
 	// 不再维护 store 的 local 行（原先靠 startLocalSnapshotRefresh 首写+周期刷）。
 	// 本机 = 名字叫 Mr2109 的普通子端，它的资源与身份**经心跳上报**，与 x3 同形。
@@ -148,7 +126,6 @@ func main() {
 		Config:          cfg,
 		ConfigPath:      fleetYAML, // B11: 热加载用
 		Store:           fleetStore,
-		LocalBack:       nil,             // 3a：本机角色退役（原先传 localBack）——nil ⇒ 观测面不再造 local 行
 		HeartbeatLogger: heartbeatLogger, // v2.3 B1: 传入心跳专用 logger
 	}
 
@@ -638,57 +615,6 @@ func resolveFleetYAML() string {
 // 避免 Dup2 与轮转文件冲突——轮转后旧 fd 写不到新文件）。
 
 // 监看面板（B4）——goroutine 启动，8581 端口
-
-// refreshLocalSnapshot 采一次本机子端（LocalBackend）状态并写入 store 的 local 行。
-//
-// B13/#31：本机不跑独立 agent、不经心跳——local 行由主控自己维护。抽成函式是为了让
-// 「启动同步首写」与「周期刷新」共用同一份取值口径（避免两处漂移）。
-// 批 5（#30）：把驻留明细 + 显存形态一并写入——local 一行与远程子端同口径（§八 Q7）。
-func refreshLocalSnapshot(localBack *localback.LocalBackend, fleetStore *store.Store) {
-	snap := localBack.Snapshot()
-	if snap == nil {
-		return // 取不到本机状态：本次不写（保留既有 local 行，不造假值）
-	}
-	fleetStore.SetLocalSnapshot(store.LocalSnapshotData{
-		Machine:        snap.Machine,
-		Model:          snap.Model,
-		Models:         snap.Models,
-		Healthy:        snap.Healthy,
-		State:          snap.BackendState,
-		MemAvailableGb: snap.MemAvailableGb,
-		MemTotalGb:     snap.MemTotalGb,
-		Load:           snap.Load,
-		ActiveRequests: 0,                       // local active requests（暂用 0）
-		CpuPct:         loadToCpuPct(snap.Load), // B4 v2：CPU 使用率（load/核数近似）
-		GpuPct:         collectGpuPct(),         // B4 v2：GPU 使用率（显存占用近似）
-		Resident:       snap.Resident,           // #30：本机驻留清单（来自 LocalBackend 自身状态）
-		VramKnown:      snap.VramKnown,          // #29：拿不到就 false（本机不冒充显存）
-		VramUnified:    snap.VramUnified,
-		VramTotalGb:    snap.VramTotalGb,
-		VramUsedGb:     snap.VramUsedGb,
-		VramFreeGb:     snap.VramFreeGb,
-	})
-}
-
-// startLocalSnapshotRefresh 维护 store 的 local 行：**注册时先同步写一次**，再按 interval 周期刷新。
-//
-// #31 修复：此前只有周期任务、且首拍在注册后 interval 才发生（30s）——启动窗口内 store 里没有
-// local 行，只读 store 的消费方看到的 local 与稳态不同：路由打分拿不到账本增量（退到 LocalBack
-// 状态打分）、调度探活退到 HTTP 探测、模型聚合少 local 的模型、pin 校验报「未知机器」。
-// 这里在注册时同步执行一次刷新，保证首拍之前 store 里就有 local 行；周期刷新行为不变。
-//
-// 注：调用点放在 fleetStore 创建之后、网关/调度器启动之前——把「网关已能路由」到「30s 首拍」
-// 之间的整段窗口一起关掉（否则首写虽到，仍未覆盖网关先行启动的那段）。
-func startLocalSnapshotRefresh(localBack *localback.LocalBackend, fleetStore *store.Store, interval time.Duration) {
-	refreshLocalSnapshot(localBack, fleetStore) // 同步首写——注册即生效，消除启动空窗
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for range ticker.C {
-			refreshLocalSnapshot(localBack, fleetStore)
-		}
-	}()
-}
 
 // loadToCpuPct 从 load 换算 CPU 使用率近似（load/核数——macOS load 1 分钟平均）
 func loadToCpuPct(load float64) float64 {
