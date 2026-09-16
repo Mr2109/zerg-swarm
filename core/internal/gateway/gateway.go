@@ -482,21 +482,10 @@ func (g *Gateway) handleCompact(w http.ResponseWriter, r *http.Request) {
 	// 压缩模型可能忙（gemma 单槽）+ X3 agent 响应偶发截断（issue-3889字节）——重试 5 次
 	// 注意：截断是"成功返回但 body 不完整"（err=nil），必须解析失败也重试
 	for attempt := 0; attempt < 5; attempt++ {
-		if route.Host == "local" {
-			if g.localBack == nil {
-				http.Error(w, `{"error":"本机后端不可用"}`, http.StatusServiceUnavailable)
-				return
-			}
-			// 加载压缩模型（如果未加载或模型不同）
-			if err := g.loadModel(compactModel, route); err != nil {
-				log.Printf("⚠️ compaction local model load failed: %v", err)
-				http.Error(w, fmt.Sprintf(`{"error":"compaction model load failed: %v"}`, err), http.StatusServiceUnavailable)
-				return
-			}
-			resp, err = g.localBack.Infer("/v1/chat/completions", compactBodyJSON)
-		} else {
-			resp, err = g.forwardToBackend(r.Context(), route, "/v1/chat/completions", compactBodyJSON, r.Header, nil)
-		}
+		// 3c（2026-09-16）：原 `if route.Host == "local"` 分支已删 —— 本机角色退役后 fleet 里
+		// 不可能再有 host=="local" 的候选 ⇒ 该分支恒不成立（它曾负责"本机直接装载 + Infer"）。
+		// 所有机器（含本机那一台，名为 Mr2109）一律走通用转发，与 x3 同形。
+		resp, err = g.forwardToBackend(r.Context(), route, "/v1/chat/completions", compactBodyJSON, r.Header, nil)
 		if err != nil {
 			log.Printf("⚠️ compaction attempt %d failed: %v (retrying)", attempt+1, err)
 			if attempt < 2 {
