@@ -151,9 +151,29 @@ python3 scripts/compare-wall-argv.py --self-test   # 0 全绿 / 1 有不一致 /
 python3 scripts/wall-bridge-mutate.py              # 变异验证：两侧各改坏一次，门禁**必须红**
 ```
 
+**判据 7 门禁 · 茧壁路线**（任务 2'.5；在**仓根**跑，先 `cd wall && cargo build`）：
+
+```bash
+python3 scripts/sandbox-probes/verify-two-states.py --wall wall/target/debug/zerg-wall
+python3 scripts/sandbox-probes/verify-two-states.py --self-test --wall wall/target/debug/zerg-wall
+python3 scripts/two-states-wall-evidence.py        # 生成回执 scripts/sandbox-probes/evidence-two-states-wall-20260916.txt
+python3 scripts/two-states-gate-mutate.py          # 变异验证：改坏门禁 ⇒ 自检必须红（G1/G2/G3）
+```
+
+- **默认路线一字未改**（`sandbox-exec` + `pF.sb` / 自组 bwrap argv）；`--wall` 在时**多一条**：封闭态改由
+  `zerg-wall run --spec <配方>` 施加（配方由门禁按探针生成），并与原生「黄金配方」路线**逐项对拍**（A/B/JIT）
+  —— 茧壁是同一落点的第二份实现，**它的验收就是与基准一致**；
+- **防假绿的判据落在「谁施加的封闭」上**：`--wall` 时茧壁**自己的留痕**（计划 JSON + 策略原文）必须在，
+  缺一个即硬失败 —— 否则「路线被改坏成静默回落」会表现为**一路全绿**；
+- **茧壁拒配方（`rc=2`）⇒ 门禁整体硬失败**，绝不把「没跑起来」读成「全被拦」（起不来的沙箱看起来最安全）；
+- **已知缺口照实红**：Linux 侧茧壁沿用现行生产配方（只 `--unshare-pid`，缺 `--unshare-net`）⇒ 出网仍开，
+  对拍必红 —— 那条红是**如实反映**（补它 = 改孵化行为，属待 Mr2109 拍板），不是门禁坏了；
+- **回执里的制品 sha 只在可复现构建下才有意义**：dev profile 默认开增量编译，**同一份源码连编两次 sha 不同**
+  （实测 `98bc845e…` / `c11b85ad…`），`CARGO_INCREMENTAL=0` 下逐字节相同 ⇒ 回执生成器第一步就做这条自检，
+  通过后才记录制品 sha。
+
 **制品分发**：**暂未接** `scripts/build-all.sh` —— 是否进 5 件制品矩阵属**发布契约**，待 Mr2109 拍板 ⚠
 （不进矩阵也能随卵分发：先落 `bin/`）。
 
 **本批尚未做的**：二档（直调原语）、Windows（本机无靶子 ⇒ 不许宣称）、制品矩阵接入（是否进 5 件矩阵是
-发布契约，待 Mr2109 决定）、任务 2'.5（`verify-two-states.py --wall`：把茧壁接进判据 7 那条既有门禁）、
-以及上面「如实标三条差距」里的路径映射（设计缺口）。
+发布契约，待 Mr2109 决定）、以及上面「如实标三条差距」里的路径映射（设计缺口）—— 任务 **2'.1 ~ 2'.5 已全部落地**。
