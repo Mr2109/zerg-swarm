@@ -221,7 +221,10 @@ func BuildHermesToolPrompt(rt *ToolRuntime) string {
 	b.WriteString("每次函数调用输出一个 JSON 对象（函数名+参数）——包在 <tool_call></tool_call> XML 标签内:\n")
 	b.WriteString("{" + callSchema + "}\n")
 	b.WriteString("格式（name/arguments 必填，arguments 内参数按 schema 必填、不可为空）:\n")
-	b.WriteString("<tool_call>\n{\"name\": \"工具名\", \"arguments\": {\"参数名\": \"参数值\"}}\n</tool_call>\n\n")
+	b.WriteString("\n" + "<tool_call>\n{\"name\": \"read\", \"arguments\": {\"path\": \"core/internal/agent/exec.go\"}}\n</tool_call>\n\n")
+	// 示例必须**真可执行**（Poka-yoke）：旧示例用「工具名/参数名/参数值」占位词，实测被模型照抄成工具名
+	// ⇒ 调用必然失败 ⇒ 反复重试空转（2026-09-17 观测三条 err 行的 name 就是字面量「工具名」）。
+	b.WriteString("【注意】上面是**示例**：把 name 与 arguments 换成你真正要调用的工具与参数，不要照抄示例里的内容。\n")
 	b.WriteString("工具结果会以 <tool_response> 标签回传。\n")
 	b.WriteString(ffp.Conventions + "\n")
 	if rt != nil {
