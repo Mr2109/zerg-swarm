@@ -1958,14 +1958,8 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 	}
 
 	var resp *http.Response
-	if route.Host == "local" {
-		if g.localBack == nil {
-			return
-		}
-		resp, err = g.localBack.Infer("/v1/chat/completions", compactBodyJSON)
-	} else {
-		resp, err = g.forwardToBackend(context.Background(), route, "/v1/chat/completions", compactBodyJSON, nil, nil)
-	}
+	// 3c（2026-09-16）：原 `if route.Host == "local"` 分支已删（恒不成立）⇒ 一律走通用转发。
+	resp, err = g.forwardToBackend(context.Background(), route, "/v1/chat/completions", compactBodyJSON, nil, nil)
 	if err != nil {
 		log.Printf("⚠️ autoCompact compaction failed: %v", err)
 		return
@@ -2089,35 +2083,13 @@ func (g *Gateway) recordPrefix(host, prompt string) {
 	}
 }
 
-// loadModel 加载本地模型到 LocalBackend（按需加载）。
-// 如果本地后端已就绪且加载了相同模型，则跳过加载。
-func (g *Gateway) loadModel(model string, route *RouteResult) error {
-	if route.File == "" {
-		return fmt.Errorf("local model is missing its file path")
-	}
-
-	// 检查是否已加载相同模型
-	if g.localBack != nil && g.localBack.IsReady() && g.localBack.ModelFile() == route.File {
-		log.Printf("[gateway] local model ready: %s (%s)", model, route.File)
-		return nil
-	}
-
-	// 加载模型到 LocalBackend
-	log.Printf("[gateway] loading local model: %s → %s (%d GB)", model, route.File, route.MemGB)
-	if err := g.localBack.LoadModel(route.File, route.MemGB); err != nil {
-		return fmt.Errorf("LocalBackend.LoadModel: %w", err)
-	}
-	log.Printf("[gateway] local model loaded: %s (state=%s)", model, g.localBack.State())
-	return nil
-}
-
 // RouteResult 路由选择结果。
 type RouteResult struct {
 	Host  string // 目标机器名（x3, mini1 等）
 	Port  int    // 目标端口（默认 8100）
 	URL   string // 完整转发 URL（http://{host}:{port}/infer）
-	File  string // 模型文件路径（仅 host=local 时有效）
-	MemGB int    // 内存预算 GB（仅 host=local 时有效）
+	File  string // 模型文件路径（本机直供时代使用；3c 后仅作路由信息保留）
+	MemGB int    // 内存预算 GB（同上）
 }
 
 // Start 启动网关服务器。
