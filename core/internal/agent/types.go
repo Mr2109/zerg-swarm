@@ -57,9 +57,11 @@ type ToolCallResult struct {
 type ModelResponse struct {
 	Content   string
 	Reasoning string
-	ToolCalls []ToolCall
-	Finish    string
-	Usage     struct {
+	// ReasoningOnly 标记「只有思考、无正文」（不把思考搬进 Content——见事故注释）
+	ReasoningOnly bool
+	ToolCalls     []ToolCall
+	Finish        string
+	Usage         struct {
 		TotalTokens int64
 	}
 }
@@ -117,9 +119,13 @@ func parseModelResponse(raw []byte) (*ModelResponse, error) {
 		}
 	}
 	resp.Usage.TotalTokens = parsed.Usage.TotalTokens
-	// 思考模型 fallback（content 空读 reasoning）
+	// ⚠ 铁律（2026-09-17 实测事故后立，Mr2109 定）：**思考不得顶替正文**。
+	// 旧实现（「思考模型 fallback：content 空读 reasoning」）把思考搬进 Content ⇒ reasoning 列空 ⇒
+	// 下一轮回灌时它成了「上一轮助手说的话」⇒ 模型照抄该口吻 ⇒ 正文污染 + 复读（实测链条见
+	// docs/项目文档/v2.5.10/变更-v2.5.10.md）。此处**只记录事实、不做搬运**：
+	// Content 空就是空（交付轮没有正文），思考一律留在 Reasoning。
 	if resp.Content == "" && resp.Reasoning != "" {
-		resp.Content = resp.Reasoning
+		resp.ReasoningOnly = true
 	}
 	return resp, nil
 }
@@ -174,9 +180,13 @@ func parseChatModelResponse(raw []byte) (*ModelResponse, error) {
 		resp.Reasoning = parsed.ReasoningContent
 	}
 	resp.Usage.TotalTokens = parsed.Usage.TotalTokens
-	// 思考模型 fallback（content 空读 reasoning）
+	// ⚠ 铁律（2026-09-17 实测事故后立，Mr2109 定）：**思考不得顶替正文**。
+	// 旧实现（「思考模型 fallback：content 空读 reasoning」）把思考搬进 Content ⇒ reasoning 列空 ⇒
+	// 下一轮回灌时它成了「上一轮助手说的话」⇒ 模型照抄该口吻 ⇒ 正文污染 + 复读（实测链条见
+	// docs/项目文档/v2.5.10/变更-v2.5.10.md）。此处**只记录事实、不做搬运**：
+	// Content 空就是空（交付轮没有正文），思考一律留在 Reasoning。
 	if resp.Content == "" && resp.Reasoning != "" {
-		resp.Content = resp.Reasoning
+		resp.ReasoningOnly = true
 	}
 	return resp, nil
 }
