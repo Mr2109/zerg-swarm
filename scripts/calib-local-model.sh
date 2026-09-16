@@ -67,12 +67,21 @@ for i in 1 2 3; do
   mem_gb=$(echo "scale=3; ${rss_kb:-0}/1048576" | bc)
   w1=$(gpu_wired_bytes); [ -n "${w1:-}" ] || w1=0
   t2=$(date +%s.%N)
-  n=$(curl -s -m 240 "http://127.0.0.1:$PORT/v1/chat/completions" \
-      -H 'Content-Type: application/json' \
-      -d '{"messages":[{"role":"user","content":"用一句话说明什么是本地推理。"}],"max_tokens":64,"temperature":0}' \
-      | python3 -c "import json,sys
-try: print(json.load(sys.stdin).get('usage',{}).get('completion_tokens',0))
+  # 生成段：**必须真的出字**才算这轮有效（假绿洞修于 2026-09-16：此前只看 /health=200，
+  # Qwen3.8-27B 三轮 HTTP 立刻失败、吞吐 0，却被写成了合法档案 ✗）。
+  GEN_JSON="/tmp/calib-gen-$NAME-$i.json"
+  GEN_CODE=$(curl -s -m 240 -o "$GEN_JSON" -w '%{http_code}' \
+      "http://127.0.0.1:$PORT/v1/chat/completions" -H 'Content-Type: application/json' \
+      -d '{"messages":[{"role":"user","content":"用一句话说明什么是本地推理。"}],"max_tokens":64,"temperature":0}')
+  n=$(python3 -c "import json
+try: print(json.load(open('$GEN_JSON')).get('usage',{}).get('completion_tokens',0))
 except Exception: print(0)")
+  if [ "${GEN_CODE:-000}" != "200" ] || [ "${n:-0}" -le 0 ]; then
+    echo "  生成未通过（HTTP=${GEN_CODE:-?} tokens=${n:-0}）⇒ **该轮无效、不计入**；正文前 200 字：$(head -c 200 "$GEN_JSON" 2>/dev/null)"
+    pkill -f "llama-server.*--port $PORT" 2>/dev/null
+    sleep 3
+    continue
+  fi
   t3=$(date +%s.%N)
   w2=$(gpu_wired_bytes); [ -n "${w2:-}" ] || w2=0
   wired_b=$(python3 -c "print(max(0, max(${w1:-0}, ${w2:-0}) - ${w0:-0}))")   # 差值 = 这枚卵自己钉住的量
