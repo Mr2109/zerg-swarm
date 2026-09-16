@@ -15,7 +15,7 @@ import (
 // 已设置 XDG_RUNTIME_DIR ⇒ 原样返回（不覆盖别人给的环境）。
 func TestUserScopeEnv_KeepsExistingRuntimeDir(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", "/run/user/4242")
-	env, err := userScopeEnv()
+	env, err := UserScopeEnv()
 	if err != nil {
 		t.Fatalf("已设置时不该报错：%v", err)
 	}
@@ -40,7 +40,7 @@ func TestUserScopeEnv_FailsClosedWhenMissing(t *testing.T) {
 	}
 	t.Setenv("XDG_RUNTIME_DIR", "")
 	// 用真实 uid 目录做正例：存在则要求补上两个变量；不存在则要求报错。
-	env, err := userScopeEnv()
+	env, err := UserScopeEnv()
 	if err != nil {
 		if !strings.Contains(err.Error(), "用户运行时目录") {
 			t.Fatalf("错误信息应点明「用户运行时目录」：%v", err)
