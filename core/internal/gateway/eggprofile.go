@@ -75,3 +75,67 @@ func ProfileCtxWindow(model string) (int, bool) {
 	}
 	return 0, false
 }
+
+// ProfileFirstTokenSec — 读档案里的"首 token 闸"实测值（事实）；无档案/无字段 ⇒ false。
+// 复用档案格式（<state>/egg-profiles/<模型>.yaml），字段名 first_token_sec。
+func ProfileFirstTokenSec(model string) (int, bool) {
+	return profileIntField(model, "first_token_sec")
+}
+
+// thinkingModelFirstTokenMin — 思考型/大参数模型的保守下限（离线表；无档案时的兜底）。
+// 只用于「放宽」首 token 闸：本地 27B 思考型 + 十几 k 提示，首 token 远超 120s（实测 Mr2109 69.7s / X3 105.5s 仅 32token 小请求）。
+func thinkingModelFirstTokenMin(model string) int {
+	m := strings.ToLower(model)
+	for _, k := range []string{"qwen3.8-27b", "qwen3.8", "nemotron", "deepseek", "qwen3"} {
+		if strings.Contains(m, k) {
+			return 600
+		}
+	}
+	return 0
+}
+
+// profileIntField — 通用：读档案中某个整数字段（受控格式，扫一行；忽略注释；坏值不采信）
+func profileIntField(model, field string) (int, bool) {
+	dir := EggProfileDir()
+	if dir == "" || model == "" {
+		return 0, false
+	}
+	tryRead := func(path string) ([]byte, bool) {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil, false
+		}
+		return b, true
+	}
+	path := filepath.Join(dir, model+".yaml")
+	b, ok := tryRead(path)
+	if !ok {
+		ents, derr := os.ReadDir(dir)
+		if derr != nil {
+			return 0, false
+		}
+		for _, e := range ents {
+			if strings.EqualFold(strings.TrimSuffix(e.Name(), ".yaml"), model) {
+				if bb, ok2 := tryRead(filepath.Join(dir, e.Name())); ok2 {
+					b, ok = bb, true
+				}
+				break
+			}
+		}
+		if !ok {
+			return 0, false
+		}
+	}
+	prefix := field + ":"
+	for _, line := range strings.Split(string(b), "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "#") || !strings.HasPrefix(t, prefix) {
+			continue
+		}
+		n, perr := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(t, prefix)))
+		if perr == nil && n > 0 {
+			return n, true
+		}
+	}
+	return 0, false
+}

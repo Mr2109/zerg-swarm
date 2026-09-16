@@ -141,10 +141,26 @@ func (g *Gateway) setRequestTimeout(model string, sec int) {
 
 // getRequestTimeout — 查询模型超时覆盖（无则 0——用默认）
 func (g *Gateway) getRequestTimeout(model string) int {
-	if g.timeoutOverride == nil {
-		return 0
+	base := 0
+	if g.timeoutOverride != nil {
+		base = g.timeoutOverride[model]
 	}
-	return g.timeoutOverride[model]
+	// 首 token 闸「只放宽、不收窄」——按卵给足（2026-09-17 Mr2109 指方向后调研定）：
+	//   业界不主张写死时限：时限应**按 provider/model 可配**、且本地模型（思考型/大上下文/冷启动）要更宽。
+	//   实测病象：X3 的 Qwen3.8-27B（思考型，256k 上下文）撞 120s 首 token 闸 ⇒ net/http: timeout awaiting
+	//   response headers ⇒ failover 回落 ⇒ 缓存失效 ⇒ 更慢 ⇒ 恶性循环（v2.5.6 已定性过一次同款病）。
+	//   依据顺序：思考型下限（离线表，保守）⇒ 档案实测值（事实，优先）⇒ 适配器声明（意图）⇒ 取最大。
+	eff := base
+	if min := thinkingModelFirstTokenMin(model); min > eff {
+		eff = min
+	}
+	if v, ok := ProfileFirstTokenSec(model); ok && v > eff {
+		eff = v
+	}
+	if eff != base && eff > 0 {
+		log.Printf("⏱️ 首 token 闸 %s: %ds（适配器声明 %ds ⇒ 按卵放宽）", model, eff, base)
+	}
+	return eff
 }
 
 // SetExcludeLocal 切换排除本机模式（true=路由跳过 local 候选）。
