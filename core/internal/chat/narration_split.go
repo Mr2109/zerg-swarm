@@ -17,7 +17,7 @@ var narrationMarkers = []string{
 	"用户问", "用户让我", "用户要求", "用户似乎", "用户想", "用户要",
 	"我需要", "让我先", "让我总结", "让我回顾", "让我分析", "让我看看",
 	"我已经读到", "我已经读完", "我读完了", "文件已经读出来", "我找到了",
-	"现在我有", "从内容看", "从文件内容来看",
+	"现在我有", "从内容看", "从文件内容来看", "从文件内容看", "从代码来看", "从注释看", "从结构看",
 	"The user", "Now I", "Let me", "I've now", "I have a clear", "First, let me",
 }
 
@@ -28,8 +28,11 @@ func SplitLeadingNarration(content string) (string, string) {
 	if trimmed == "" {
 		return "", content
 	}
-	// 首段 = 到第一个空行为止（若无空行 ⇒ 整段视为首段）
+	// 首段边界：优先空行；没有空行时以第一个换行为界（实测该模型常用「过程句：\n1. …」形态）
 	idx := strings.Index(trimmed, "\n\n")
+	if idx < 0 {
+		idx = strings.Index(trimmed, "\n")
+	}
 	first := trimmed
 	rest := ""
 	if idx >= 0 {
