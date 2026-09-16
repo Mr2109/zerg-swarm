@@ -73,7 +73,7 @@ def local_user_reply(prof, history, tok):
     msgs = [{"role": "system", "content": prof["system"]}]
     for role, text in history[-8:]:
         msgs.append({"role": role, "content": text})
-    body = {"model": os.environ.get("ZERG_DRIVER_MODEL", "gemma-4-26B"),
+    body = {"model": os.environ.get("ZERG_DRIVER_MODEL", "example-35b-v2"),
             "messages": msgs, "max_tokens": 800, "stream": False,
             # 实测（2026-09-16）：本机 gemma 默认把额度花在思考上 ⇒ content='' 全是 reasoning。
             # 唯一有效办法是**引擎侧关思考**：enable_thinking=false ⇒ content 直接可用（0.5s）。
@@ -100,7 +100,7 @@ def local_user_reply(prof, history, tok):
         # 重试一次：强制"只回一句话、不许分析"，并限制额度（不给它"想"的空间）
         strict = msgs[:-1] + [{"role": "user", "content": "只回**一句**你要对助手说的话（中文，一两句，口语）。禁止分析、禁止英文、禁止列表。"}]
         try:
-            with post(AGENT + "/infer", {"model": os.environ.get("ZERG_DRIVER_MODEL", "gemma-4-26B"),
+            with post(AGENT + "/infer", {"model": os.environ.get("ZERG_DRIVER_MODEL", "example-35b-v2"),
                                          "messages": strict, "max_tokens": 120, "stream": False}, tok, timeout=180) as r2:
                 d2 = json.loads(r2.read().decode())
             txt = ((d2.get("choices", [{}])[0].get("message", {}) or {}).get("content") or "").strip()
@@ -176,7 +176,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--profession", default="P1")
     ap.add_argument("--max-turns", type=int, default=3)
-    ap.add_argument("--model", default=os.environ.get("ZERG_UNDER_TEST_MODEL", ""))
+    ap.add_argument("--model", default=os.environ.get("ZERG_UNDER_TEST_MODEL", "Qwen3.8-27B"))
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     prof = PROFESSIONS.get(a.profession) or sys.exit("未知职业：%s" % a.profession)
