@@ -480,7 +480,7 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	history, _ = h.store.GetActiveMessages(id)
 	msgs := make([]map[string]any, 0, len(history))
 	for _, m := range history {
-		msgs = append(msgs, map[string]any{"role": m.Role, "content": m.Content})
+		msgs = append(msgs, historyMsg(m))
 	}
 	var progRT *chat.ToolRuntime
 	if progressiveEnabled {
@@ -669,6 +669,21 @@ var tableSepFix = regexp.MustCompile(`(\|[^\n]*\|)\n\n(\|[-| :]+\|)\n`)
 // 根因①Scan缺ImagePath(图从未传出——纯上下文延续) ②Mr2109实测: 发"你好"回复"红色"
 func chatMessageToReq(m *chat.Message, keepImage bool) map[string]any {
 	m.Content = normalizeChatContent(m.Content)
+	// ⚠ 铁律（2026-09-17 实测事故后立）：**思考只能分开，不能合并**（Mr2109：思考不能关，本地模型再关思考就没法打了）。
+	// assistant 历史必须带 `reasoning_content`；否则 Qwen3/Gemma 等官方模板在"无该字段且无 </think> 标签"时
+	// 会把整段思考当正文 ⇒ 下一轮模型照抄该口吻 ⇒ 正文污染 + 复读。证据：修复前请求体里历史 assistant 键恒为
+	// ['content','role']（27/27 条）。分离逻辑与用例见 internal/chat/reasoning_split.go(.test.go)。
+	var reasoningContent string
+	if m.Role == "assistant" {
+		reasoningContent, m.Content = chat.SplitReasoningForHistory(m.Content, m.Reasoning)
+	}
+	// 统一出口：assistant 一律附上 reasoning_content（有则带、无则不带，绝不合并）
+	finish := func(out map[string]any) map[string]any {
+		if m.Role == "assistant" && reasoningContent != "" {
+			out["reasoning_content"] = reasoningContent
+		}
+		return out
+	}
 	if keepImage && m.ImagePath != "" {
 		parts := []map[string]any{}
 		seen := 0
@@ -693,14 +708,14 @@ func chatMessageToReq(m *chat.Message, keepImage bool) map[string]any {
 		}
 		if len(parts) > 0 {
 			parts = append([]map[string]any{{"type": "text", "text": m.Content}}, parts...)
-			return map[string]any{"role": m.Role, "content": parts}
+			return finish(map[string]any{"role": m.Role, "content": parts})
 		}
 	}
 	// 历史图片消息（或图片读失败）——纯文本 + 省略标注（模型不再延续图片话题）
 	if m.ImagePath != "" {
-		return map[string]any{"role": m.Role, "content": m.Content + " [用户在此消息附带了图片——当前仅文字可见，图片已省略]"}
+		return finish(map[string]any{"role": m.Role, "content": m.Content + " [用户在此消息附带了图片——当前仅文字可见，图片已省略]"})
 	}
-	return map[string]any{"role": m.Role, "content": m.Content}
+	return finish(map[string]any{"role": m.Role, "content": m.Content})
 }
 
 // SendMessage — 发消息（C3 流式 + D2 流式工具循环——SSE）
@@ -1174,4 +1189,23 @@ func wrapObsDelta(timer *chat.ObsTimer, onDelta func(deltaType, text string)) fu
 			onDelta(deltaType, text)
 		}
 	}
+}
+
+// historyMsg — 把库里的一条历史消息转成发给引擎的 message。
+//
+// ⚠ 铁律（2026-09-17 实测事故后立）：**思考只能分开，不能合并**（Mr2109：思考不能关）。
+// assistant 消息必须把思考放进 `reasoning_content`；否则 Qwen3 等官方模板在
+// "无 reasoning_content 且无标签"时会把整段思考当正文 ⇒ 模型照抄该口吻 ⇒ 正文污染、复读。
+// 证据：修复前实际请求体里历史 assistant 的键恒为 ['content','role']（27/27 条）。
+func historyMsg(m *chat.Message) map[string]any {
+	out := map[string]any{"role": m.Role, "content": m.Content}
+	if m.Role != "assistant" {
+		return out
+	}
+	rc, clean := chat.SplitReasoningForHistory(m.Content, m.Reasoning)
+	out["content"] = clean
+	if rc != "" {
+		out["reasoning_content"] = rc
+	}
+	return out
 }
