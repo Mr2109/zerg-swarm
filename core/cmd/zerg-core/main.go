@@ -192,7 +192,7 @@ func main() {
 	fmt.Printf("🚀 Server listening on %s\n", addr)
 
 	// 控制端点（加载/卸载/退出主控）
-	ctrl := api.NewControlHandlers(cfg.Auth.Token, cfg, nil) // 3a：本机角色退役
+	ctrl := api.NewControlHandlers(cfg.Auth.Token, cfg) // 3a：本机角色退役
 	r.Post("/api/control/load", ctrl.LoadHandler)
 	r.Post("/api/control/unload", ctrl.UnloadHandler)
 	r.Post("/api/control/stop", ctrl.StopHandler)
