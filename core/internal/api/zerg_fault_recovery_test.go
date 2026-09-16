@@ -176,10 +176,11 @@ func TestPingModel_SnapshotFastPath(t *testing.T) {
 	isolateTasksFile(t)
 	isolateTaskRoot(t)
 	mock := &mockStoreReader{snapshots: map[string]*FleetSnapshotLite{
-		"local": {Healthy: true, Model: "Qwen3.8-27B-Q4_K_M-vcruz305"},
+		// 3a：本机角色改名 local → Mr2109（生产代码快路径查的就是这个键）
+		"Mr2109": {Healthy: true, Model: "Qwen3.8-27B-Q4_K_M-vcruz305"},
 	}}
 	s := NewMasterScheduler("", 1, mock)
-	// local 已加载 Qwen3.8——直接通过（不发网络请求——快）
+	// Mr2109 已加载 Qwen3.8——直接通过（不发网络请求——快）
 	ok, err := s.pingModel("Qwen3.8-27B")
 	if !ok || err != nil {
 		t.Fatalf("快照优先应通过（0ms）: ok=%v err=%v", ok, err)
