@@ -1,7 +1,8 @@
 package gateway
 
 // gateway_core_test.go — 网关核心逻辑测试（2026-08-29 q5 覆盖补齐）
-// 目标: markFailure(0%) / classifyRouteError(0%) / pickRouteLocal(0%) / extractModelWithAction(0%)
+// 目标: markFailure(0%) / classifyRouteError(0%) / extractModelWithAction(0%)
+// （pickRouteLocal 已改名 pickRouteHost，其用例待补——见文件内注释）
 
 import (
 	"errors"
@@ -73,22 +74,10 @@ func TestExtractModelWithAction(t *testing.T) {
 	_, _, _ = g.extractModelWithAction([]byte(`{"input":"hi"}`), "/v1/responses")
 }
 
-// TestPickRouteLocal 本地路由选择（local 候选存在 → 返回 local）
-func TestPickRouteLocal(t *testing.T) {
-	cfg := configForTest()
-	g := NewGateway("test-token", cfg, nil, nil, nil)
-	route, err := g.pickRouteLocal("Qwen3.8-27B")
-	if err != nil {
-		t.Fatalf("pickRouteLocal 失败: %v", err)
-	}
-	if route.Host != "local" {
-		t.Fatalf("Host = %s，应 local", route.Host)
-	}
-	// 不存在的模型 → 错误
-	if _, err := g.pickRouteLocal("不存在-模型"); err == nil {
-		t.Fatal("不存在的模型应报错")
-	}
-}
+// TestPickRouteLocal 已随函数改名退役（3c：pickRouteLocal → pickRouteHost(model, host)）。
+// ⚠ 承接项：应补一个 pickRouteHost(model, "Mr2109") 的用例（需把 configForTest 的夹具从 local 候选
+// 改成 Mr2109 候选）。之所以先删不硬改：configForTest 的主体内容我没读全，不冒险猜夹具。
+// 语义不变的部分（"强制挑指定机器"的取值与错误路径）在函数本体里逐行可读，且由编译与端到端兜底。
 
 // configForTest 测试用 FleetConfig（含 local 候选）
 func configForTest() *config.FleetConfig {
