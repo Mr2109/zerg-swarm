@@ -10,6 +10,7 @@
 #   bash scripts/build-all.sh --no-ui            # 只建 Go 两件（快）
 #   bash scripts/build-all.sh --public          # UI 用 --no-default-features（对齐公开快照形态）
 #   bash scripts/build-all.sh --no-sign          # 跳过 codesign（非 macOS / 调试）
+#   （无论哪个形态都会另编茧壁 zerg-wall → bin/，见 scripts/build-wall.sh；它不进 dist 制品矩阵）
 #
 # 身份注入：
 #   Go  → -ldflags -X .../internal/version.{Commit,BuildTime}（version.go 里是 var，可注入）
@@ -85,6 +86,18 @@ else
   echo "→ 跳过 cocoon-docs-service（非 darwin-arm64 本机 / <container-repo>不在 / 无 go）"
 fi
 
+# 茧壁 zerg-wall（批 2'.6）：**随卵分发**的沙箱外壳（一档：Linux 调 bwrap / macOS 直调 Seatbelt）。
+# 为什么只落 bin/、**不进** dist 制品矩阵：矩阵 5 件是**发布契约**，要不要加茧壁是单独的决定（待拍板）
+#   —— 与 cocoon-docs-service 同一条边界。
+# 为什么跳过只在「本机无 cargo」这一种情形：`wall/` 在发布白名单里 ⇒ 源码不在就是**仓坏了**
+#   （那由 build-wall.sh 硬失败接住，不许在这里被吞）；而缺 cargo 是**环境缺工具**，与 cocoon 块同一口径。
+if command -v cargo >/dev/null 2>&1; then
+  echo "→ 茧壁 zerg-wall（随卵分发；不进 dist 制品矩阵）"
+  bash "$REPO_ROOT/scripts/build-wall.sh"
+else
+  echo "→ 跳过茧壁 zerg-wall（本机无 cargo）"
+fi
+
 if [ "$BUILD_UI" = "1" ]; then
   echo "→ UI zerg-ui（cargo release）"
   # 体积对齐(2026-09-11)：公开快照会解除 ui/Cargo.toml 的 zerg-roundtable 跨仓依赖（私有默认开着）
@@ -110,13 +123,14 @@ if [ "$SIGN" = "1" ] && command -v codesign >/dev/null 2>&1; then
     ZERG_SIGN_ID="-"; SIGN_MODE="adhoc"
   fi
   [ "$SIGN_MODE" = "adhoc" ] && echo "   ⚠️  未找到签名身份「${ZERG_SIGN_ID}」，回退 ad-hoc（本机 TCC 授权会随重编失效）"
-  for b in "$OUT"/zerg-core "$OUT"/zerg-agent "$OUT"/zerg-ui "$REPO_ROOT"/bin/zerg-agentd "$REPO_ROOT"/bin/cocoon-docs-service; do
+  for b in "$OUT"/zerg-core "$OUT"/zerg-agent "$OUT"/zerg-ui "$REPO_ROOT"/bin/zerg-agentd "$REPO_ROOT"/bin/cocoon-docs-service "${REPO_ROOT}"/bin/zerg-wall; do
     [ -f "$b" ] || continue
     case "$(basename "$b")" in
       zerg-core)   ZID=com.zerg.core ;;
       zerg-agent)  ZID=com.zerg.agent ;;
       zerg-agentd) ZID=com.zerg.agentd ;;
       zerg-ui)     ZID=com.zerg.ui ;;
+      zerg-wall)   ZID=com.zerg.wall ;;
       *)           ZID="com.zerg.$(basename "$b")" ;;
     esac
     codesign -s "$ZERG_SIGN_ID" --identifier "$ZID" --force "$b" >/dev/null 2>&1 \
