@@ -49,7 +49,7 @@ func TestClassifyRouteError_Default(t *testing.T) {
 
 // TestMarkFailure_Counts markFailure 累计失败计数（熔断判定输入）
 func TestMarkFailure_Counts(t *testing.T) {
-	g := NewGateway("test-token", nil, nil, nil, nil)
+	g := NewGateway("test-token", nil, nil, nil)
 	g.markFailure("x3", "backend x3 returned 502: upstream refused")
 	g.markFailure("x3", "backend x3 returned 502: upstream refused")
 	if g.failCounts["x3"] != 2 {
@@ -64,7 +64,7 @@ func TestMarkFailure_Counts(t *testing.T) {
 
 // TestExtractModelWithAction 标准提取优先——动作路由兜底
 func TestExtractModelWithAction(t *testing.T) {
-	g := NewGateway("test-token", nil, nil, nil, nil)
+	g := NewGateway("test-token", nil, nil, nil)
 	// 标准提取（body 有 model）
 	model, usedAction, err := g.extractModelWithAction([]byte(`{"model":"Qwen3.8-27B","input":"hi"}`), "/v1/responses")
 	if err != nil || model != "Qwen3.8-27B" || usedAction {
