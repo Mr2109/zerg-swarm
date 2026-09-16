@@ -107,7 +107,7 @@ func TestNormalizeComponents_DefaultAndNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(node) != 2 || node[0] != CompCore || node[1] != CompAgentd {
+	if len(node) != 3 || node[0] != CompCore || node[1] != CompAgentd || node[2] != CompWall {
 		t.Fatalf("节点组件应为 core,agentd，得 %v", node)
 	}
 	for _, c := range node {
@@ -139,7 +139,7 @@ func TestNormalizeComponents_UIOnlyOnDarwin(t *testing.T) {
 
 func TestComponentsForRole(t *testing.T) {
 	c, err := componentsForRole(RoleNode, nil)
-	if err != nil || len(c) != 2 || c[1] != CompAgentd {
+	if err != nil || len(c) != 3 || c[1] != CompAgentd || c[2] != CompWall {
 		t.Fatalf("node 角色应得 core,agentd：%v %v", c, err)
 	}
 	c, err = componentsForRole(RoleController, nil)

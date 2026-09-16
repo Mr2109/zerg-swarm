@@ -35,6 +35,9 @@ const (
 	CompAgent  = "agent"
 	CompAgentd = "agentd"
 	CompUI     = "ui"
+	// wall = 茧壁（Rust 自研的封闭外壳，§五之二）：**两平台都有**（macOS 一档直调 Seatbelt / Linux 调 bwrap），
+	// 且机群节点也必须带（孵卵要用它）——与 ui 的"仅 darwin"不同。
+	CompWall = "wall"
 )
 
 // DefaultComponents —— 主控机默认：core + agent（darwin 再加 ui）。
@@ -43,12 +46,14 @@ func DefaultComponents() []string {
 	if runtime.GOOS == "darwin" {
 		c = append(c, CompUI)
 	}
+	// 茧壁两平台都带（§五之三：机器上装的那一份，可升级可审计；卵里另带一份自包含兜底）
+	c = append(c, CompWall)
 	return c
 }
 
 // NodeComponents —— 机群节点（如 X3）：core（装上它，该机将来才能自己 `zerg-core update`）
 // + agentd（该机真正在跑的守护进程）。**不含 ui**。
-func NodeComponents() []string { return []string{CompCore, CompAgentd} }
+func NodeComponents() []string { return []string{CompCore, CompAgentd, CompWall} }
 
 // NormalizeComponents —— 规范化组件列表（小写、去重、保序）+ 校验。
 // 空列表 ⇒ DefaultComponents()；未知组件或 ui 出现在非 darwin ⇒ 报错（**不静默忽略**）。
@@ -69,13 +74,13 @@ func NormalizeComponents(list []string) ([]string, error) {
 	out := []string{}
 	for _, c := range flat {
 		switch c {
-		case CompCore, CompAgent, CompAgentd:
+		case CompCore, CompAgent, CompAgentd, CompWall:
 		case CompUI:
 			if runtime.GOOS != "darwin" {
 				return nil, fmt.Errorf("ui 组件仅在 darwin 编译（当前 %s）——设计 §3：UI 只出 Mac", runtime.GOOS)
 			}
 		default:
-			return nil, fmt.Errorf("未知组件 %q（可选：core/agent/agentd/ui）", c)
+			return nil, fmt.Errorf("未知组件 %q（可选：core/agent/agentd/ui/wall）", c)
 		}
 		if !seen[c] {
 			seen[c] = true
