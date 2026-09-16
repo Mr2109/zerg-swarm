@@ -6,9 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
-	"github.com/Mr2109/zerg-swarm/core/internal/localback"
 	"github.com/Mr2109/zerg-swarm/core/internal/modelreg"
 	"github.com/Mr2109/zerg-swarm/core/internal/resources"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
@@ -131,79 +129,6 @@ func (h *Handlers) buildResourceMachines(inputs []fitInput) []ResourceMachineVie
 		out = append(out, h.machineView(snap, inputs))
 	}
 	return out
-}
-
-// LocalSnapshotProvider 提供本机（local）的实时资源快照——生产实现是 *localback.LocalBackend。
-// 接口存在的唯一理由是可测：LocalBackend 的状态字段在包外不可构造，api 侧造不出"本机有驻留"
-// 的真实快照，只能用替身验证 local 一行的合并口径（Tests only，生产由 main.go 注入 LocalBack）。
-type LocalSnapshotProvider interface {
-	Snapshot() *localback.LocalSnapshot
-}
-
-// localSnapshotSource 返回本机快照来源：测试注入的 provider 优先，否则 LocalBack；都没有则 nil。
-func (h *Handlers) localSnapshotSource() LocalSnapshotProvider {
-	if h.LocalSnapProvider != nil {
-		return h.LocalSnapProvider
-	}
-	if h.LocalBack == nil {
-		return nil
-	}
-	return h.LocalBack
-}
-
-// liveLocalFleetSnapshot 把本机子端快照翻成与远程子端**同一个** store.FleetSnapshot，
-// 供 /api/fleet/status 与 /api/resources/ledger 共用（口径唯一，两个观测面不再各取一套来源）。
-//
-//   - prev = store 里已有的 local 行（可能为 nil）：只借回 LocalBack 不采样的 cpu_pct/gpu_pct，
-//     其余字段一律以实时快照为准——实时不会比 30 秒前那次落盘更差，且本地已卸载的驻留
-//     会立刻从账本消失（不以旧值充数）。
-//   - 拿不到的一律留零值/false（vram_known=false、resident 为空）→ 对外视图整键不出现，不造值（§3.2）。
-//   - 来源不可得（provider/LocalBack 为 nil，或快照为 nil）→ 返回 nil；调用方保持既有行为
-//     （账本侧沿用 store 里那份、status 侧不出现 local），绝不凭空造一行。
-func (h *Handlers) liveLocalFleetSnapshot(prev *store.FleetSnapshot) *store.FleetSnapshot {
-	src := h.localSnapshotSource()
-	if src == nil {
-		return nil
-	}
-	ls := src.Snapshot()
-	if ls == nil {
-		return nil
-	}
-	name := strings.TrimSpace(ls.Machine)
-	if name == "" {
-		name = "local"
-	}
-	var cpuPct, gpuPct float64
-	if prev != nil {
-		cpuPct, gpuPct = prev.CpuPct, prev.GpuPct
-	}
-	snap := &store.FleetSnapshot{
-		Machine:        name,
-		Models:         ls.Models,
-		MemAvailableGb: ls.MemAvailableGb,
-		MemTotalGb:     ls.MemTotalGb,
-		Load:           ls.Load,
-		GpuUsedGb:      ls.GpuUsedGb,
-		GpuTempC:       ls.GpuTempC,
-		BackendRssGb:   ls.BackendRssGb,
-		Healthy:        ls.Healthy,
-		BackendState:   ls.BackendState,
-		CpuPct:         cpuPct,
-		GpuPct:         gpuPct,
-		Resident:       ls.Resident,
-		VramKnown:      ls.VramKnown,
-		VramUnified:    ls.VramUnified,
-		VramTotalGb:    ls.VramTotalGb,
-		VramUsedGb:     ls.VramUsedGb,
-		VramFreeGb:     ls.VramFreeGb,
-		LastSeen:       time.Now(),
-	}
-	// 本机已加载模型时填充 model 字段（口径同 /api/fleet/status）
-	if len(ls.Models) > 0 {
-		m := ls.Models[0]
-		snap.Model = &m
-	}
-	return snap
 }
 
 // machineView 单台机器 → 对外视图。
