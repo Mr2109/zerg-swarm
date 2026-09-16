@@ -6,6 +6,7 @@ name: Release（全产物）
 # 产物形状必须与本地 scripts/pack-release.sh **完全同形**（升级器只认这一套）：
 #   zerg-core-darwin-arm64 / zerg-agent-darwin-arm64 / zerg-ui-darwin-arm64
 #   zerg-core-linux-amd64  / zerg-agent-linux-amd64
+#   zerg-wall-darwin-arm64 / zerg-wall-linux-amd64
 #   + 逐件 .sha256 + checksums.txt + manifest.json
 #
 # ⚠️ 扩大制品矩阵时（例：darwin-amd64）必须**同时**改 scripts/pack-release.sh 与下面的 ui/go 矩阵，
@@ -81,6 +82,9 @@ jobs:
           mkdir -p ../dist
           go build -trimpath -buildvcs=false -ldflags "$LDF" -o "../dist/zerg-core-$GOOS-$GOARCH"  ./cmd/zerg-core
           go build -trimpath -buildvcs=false -ldflags "$LDF" -o "../dist/zerg-agent-$GOOS-$GOARCH" ./cmd/zerg-agent
+          # 茧壁（Rust）：在 Linux runner 上原生构建（不做跨编）
+          ( cd wall && cargo build --release )
+          cp -p wall/target/release/zerg-wall ../dist/zerg-wall-$GOOS-$GOARCH 2>/dev/null || cp -p wall/target/release/wall ../dist/zerg-wall-$GOOS-$GOARCH
           cd ../dist
           # macOS runner 无 sha256sum（有 shasum）；两种都产出 "hash  name" 同形格式
           if command -v sha256sum >/dev/null 2>&1; then SH="sha256sum"; else SH="shasum -a 256"; fi
