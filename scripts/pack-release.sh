@@ -9,6 +9,7 @@
 #   zerg-core-darwin-arm64        + .sha256
 #   zerg-agent-darwin-arm64       + .sha256
 #   zerg-ui-darwin-arm64          + .sha256
+#   zerg-wall-darwin-arm64        + .sha256      ← 茧壁（Rust；linux 件由 CI 出）
 #   zerg-core-linux-amd64         + .sha256      ← 纯 Go 交叉编译（modernc sqlite，CGO_ENABLED=0）
 #   zerg-agent-linux-amd64        + .sha256
 #   checksums.txt                  ← 全部 sha256（sha256sum -c 兼容格式）
@@ -68,6 +69,10 @@ if [ "$MODE" != "verify" ]; then
   cp -p "$DIST/zerg-core"  "$REL/zerg-core-darwin-$HOST_ARCH"
   cp -p "$DIST/zerg-agent" "$REL/zerg-agent-darwin-$HOST_ARCH"
   cp -p "$DIST/zerg-ui"    "$REL/zerg-ui-darwin-$HOST_ARCH"
+  # 茧壁（Rust）：本机只出 darwin；linux 件由 CI 的 ubuntu runner 产出（Rust 不做本地交叉编）。
+  ( cd "$REPO_ROOT/wall" && cargo build --release >/dev/null 2>&1 ) || { echo "!! 茧壁构建失败（wall/）"; exit 1; }
+  cp -p "$REPO_ROOT/wall/target/release/zerg-wall" "$REL/zerg-wall-darwin-$HOST_ARCH" 2>/dev/null || \
+    cp -p "$REPO_ROOT/wall/target/release/wall" "$REL/zerg-wall-darwin-$HOST_ARCH" || { echo "!! 茧壁产物名不符（找 zerg-wall/wall）"; exit 1; }
   cp -p "$DIST/zerg-core-linux-amd64"  "$REL/zerg-core-linux-amd64"
   cp -p "$DIST/zerg-agent-linux-amd64" "$REL/zerg-agent-linux-amd64"
 
