@@ -570,10 +570,11 @@ func (s *MasterScheduler) pingModel(model string) (bool, error) {
 	// 机器 healthy + 已加载目标模型 → 直接通过
 	// 快照每 30s 心跳更新——模型常驻时覆盖 90% 场景——ping 零成本
 	if s.store != nil {
-		// ⚠ 本分支是**承重的**（TestPingModel_SnapshotFastPath 钉着它）：local 的快照命中即跳过 ping。
-		// 3a 的正确改法不是删，而是**改名**：local → Mr2109（本机角色换了名字，语义不变），
-		// 并同步更新该用例的夹具（夹具里写的是 "local"）。见日志 2026-09-16。
-		if lite := s.store.MachineSnapshot("local"); lite != nil {
+		// 本机角色改名（3a，2026-09-16 Mr2109 拍：所有可推理的计算机都是子端）：
+		// 原先查 "local"（localback 不经心跳上报）⇒ 现在本机 = 名字叫 **Mr2109** 的普通子端，
+		// 它的快照经心跳上报，键就是 "Mr2109"。⚠ 该分支是**承重的**
+		// （TestPingModel_SnapshotFastPath 钉着它：命中即跳过 ping）⇒ 所以是改名、不是删除。
+		if lite := s.store.MachineSnapshot("Mr2109"); lite != nil {
 			if lite.Healthy && lite.Model != "" && modelFileLoadedLite(lite, model) {
 				s.cachePing(model, true, nil)
 				return true, nil
