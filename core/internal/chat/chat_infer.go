@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -117,6 +118,13 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 
 	resp, err := c.client.Do(req)
 	if err != nil {
+		// OBS-2：区分「上游超时」与「客户端取消」——两者处置不同（可重试 vs 不重试）
+		if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+			return nil, &ChatInferError{Code: ChatErrUpstreamTimeout, Err: err}
+		}
+		if ctx.Err() != nil {
+			return nil, &ChatInferError{Code: ChatErrClientAborted, Err: err}
+		}
 		return nil, fmt.Errorf("chat: 调网关失败: %w", err)
 	}
 	defer resp.Body.Close()
@@ -198,6 +206,13 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 
 	resp, err := c.client.Do(req)
 	if err != nil {
+		// OBS-2：区分「上游超时」与「客户端取消」——两者处置不同（可重试 vs 不重试）
+		if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+			return nil, &ChatInferError{Code: ChatErrUpstreamTimeout, Err: err}
+		}
+		if ctx.Err() != nil {
+			return nil, &ChatInferError{Code: ChatErrClientAborted, Err: err}
+		}
 		return nil, fmt.Errorf("chat: 调网关失败: %w", err)
 	}
 	defer resp.Body.Close()
