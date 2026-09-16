@@ -1446,6 +1446,12 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 	if g.isTripped(c.Host) {
 		return nil, fmt.Errorf("model %s only candidate %s is circuit-broken — no candidate available", model, c.Host)
 	}
+	// 活性过滤（2026-09-16）：单候选同样按心跳判活性 —— 多候选分支已加同一道过滤，这里此前漏掉，
+	// 唯一候选若是"配置里的预留机位/未部署机器"（fleet.yaml 的 mini 系列），会一路撞连接超时。
+	// 安全阀与多候选分支同口径：仅当机群里**有**机器在心跳时才过滤，避免主控刚重启（首拍未到）拒绝一切请求。
+	if snap := g.snapshotFor(c.Host); snap == nil && g.anyMachineAlive() {
+		return nil, fmt.Errorf("model %s only candidate %s has no heartbeat (not deployed or offline) — no candidate available", model, c.Host)
+	}
 	if c.Host == "local" && g.ExcludeLocal() {
 		return nil, fmt.Errorf("model %s only candidate local is excluded — no candidate available", model)
 	}
@@ -1479,6 +1485,23 @@ func (g *Gateway) snapshotFor(machine string) *store.FleetSnapshot {
 		return nil
 	}
 	return g.store.GetSnapshot(machine)
+}
+
+// anyMachineAlive 报告机群里是否有**任一**台机器在心跳（有快照）。
+//
+// 用途：活性过滤的安全阀 —— 主控刚重启、首拍心跳尚未到达时，所有机器都没有快照，
+// 此时若照常过滤会把一切路由判死。故仅当"至少有一台活着"时才启用活性过滤。
+// 机器名清单来自配置（fleet.yaml 的 fleet 段），不依赖 store 的枚举接口。
+func (g *Gateway) anyMachineAlive() bool {
+	if g.config == nil {
+		return false
+	}
+	for host := range g.config.Fleet {
+		if g.snapshotFor(host) != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultAgentPort 是子端 agent 的默认 HTTP 端口（fleet.yaml 未给端口时的回退，与既有口径一致）。
