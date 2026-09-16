@@ -99,7 +99,9 @@ func NeedsEngineImpl(c ModelCandidate) bool {
 
 // isKnownHost 检查主机是否在 fleet 已知列表中
 func isKnownHost(host string) bool {
-	known := []string{"local", "x3", "mini1", "mini2", "mini3"}
+	// 3c（2026-09-16）：本机角色（localback）退役 ⇒ 本机 = 名为 Mr2109 的普通子端（与 x3 同形）。
+	// ⚠ 这份名单是**硬编码**的：以后加机器别忘了同步（或改为从 fleet 动态取，承接项）。
+	known := []string{"Mr2109", "x3", "mini1", "mini2", "mini3"}
 	for _, h := range known {
 		if h == host {
 			return true
@@ -187,8 +189,9 @@ func Validate(name string, candidate ModelCandidate) ValidationResult {
 		})
 	}
 
-	// ===== V006: file 本地存在性（仅 host=local 时检查）=====
-	if candidate.File != "" && candidate.Host == "local" {
+	// ===== V006: file 本地存在性（仅本机子端时检查；3c：host 名 local → Mr2109）=====
+	// 口径不变：只有"跑在主控这台机器上"的候选才能由主控直接 stat；远程机由子端自己核。
+	if candidate.File != "" && candidate.Host == "Mr2109" {
 		if _, err := os.Stat(candidate.File); os.IsNotExist(err) {
 			errs = append(errs, ValidationError{
 				Field:   "file",
