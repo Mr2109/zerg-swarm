@@ -1247,6 +1247,18 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 		// blocked 记录被能力硬门槛拦下的候选（host(engine):reason），用于全被拦下时给出明确原因。
 		var blocked []string
 		var firstBlocked *modelreg.CapabilityDecision
+		// skippedNoBeat：没有心跳快照、被活性过滤跳过的候选（配置里的预留机位，如尚未部署的 mini 系列）
+		var skippedNoBeat []string
+
+		// 活性安全阀（2026-09-16）：只要这批候选里有**任一**台有心跳快照，就启用活性过滤；
+		// 一台都没有（例如主控刚重启、首拍心跳未到）⇒ 不做过滤，避免路由全空。
+		anyAlive := false
+		for _, c := range models {
+			if g.snapshotFor(c.Host) != nil {
+				anyAlive = true
+				break
+			}
+		}
 
 		// 轮询计数器：偶数 → local 先，奇数 → 远程先（交替）
 		g.roundRobinMu.Lock()
@@ -1258,6 +1270,16 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 			if g.isTripped(candidate.Host) {
 				log.Printf("⛔ machine %s is circuit-broken, skipping candidate", candidate.Host)
 				continue
+			}
+			// 活性过滤（2026-09-16）：**没有心跳快照的机器不参与路由** —— 配置里的预留机位
+			// （mini1/2/3 等）尚未部署时表现为"快照为 nil"，此前会被选中并撞连接超时。
+			// 实测：压缩兜底挑了 <worker-ip>:8100（fleet.yaml 的 mini1）⇒ 超时 ⇒ 整次压缩失败。
+			// 策略：按心跳**动态**判定——预留机哪天起来心跳，就自动成为候选（无需改配置）。
+			if anyAlive {
+				if snap := g.snapshotFor(candidate.Host); snap == nil {
+					skippedNoBeat = append(skippedNoBeat, candidate.Host)
+					continue
+				}
 			}
 			// B4 v2：排除本机模式——local 候选直接跳过（用户工作时任务全走远程）
 			if candidate.Host == "local" && g.ExcludeLocal() {
