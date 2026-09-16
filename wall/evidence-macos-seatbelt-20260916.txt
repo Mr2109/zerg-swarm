@@ -1,7 +1,7 @@
 === 环境 ===
 macOS：26.5.1（arm64）
 茧壁：zerg-wall 0.1.0（rc=0）
-茧壁制品 sha256（wall/target/debug/zerg-wall）：afd704b3a3d5da2eb615e658abd284705d60fc94aea97c25a1ac3e33a9ea71be
+茧壁制品 sha256（wall/target/debug/zerg-wall）：d133e318b2b25d4b28935653530c37ec63c6eada8790e5761bd8e9b46b5fddc8
 源码 sha256（wall/src/platform/macos.rs）：44cba4e3dcb2fa4429e69f73dfdffbaea38378aef6000372cdab758a8442e725
 源码 sha256（wall/src/platform/mod.rs）：4af7ab5deb140386890f69c6ad4e544deda28706490e1297fbcfba75985752bb
 源码 sha256（wall/src/platform/linux.rs）：a82cca7810faeadc261b92d92b0496e3feb8811e23a63f54a4702006097c647a
@@ -9,22 +9,22 @@ macOS：26.5.1（arm64）
 源码 sha256（wall/src/lib.rs）：31b8144c6316758a3b50725002d1e949981f51cafb073805fe9be45922f90b9f
 源码 sha256（wall/src/main.rs）：6f98c79fc44de5fc94a81d585da9bb4893520488b30804d68216fc2c5cdaa935
 源码 sha256（wall/tests/plan_macos.rs）：48afa364913bc4c6dbb19b112c5b7b0affb1bf423e4a60835215a2696e15cd04
-源码 sha256（wall/tests/macos_seatbelt.rs）：c4ec68371a07283a42f05090177c144e8f2a3883b67ad6bd057c2b0796f1636e
+源码 sha256（wall/tests/macos_seatbelt.rs）：33f9516411af7e1e74ff33b1e495d63159db1cf86dbebb72632714da3e3d659a
 源码 sha256（scripts/wall-macos-evidence.py）：8e09327d8c497620e6dbd67bbc83e862beffcbbd72e6e635fb6cdb76d09d60e9
 源码 sha256（scripts/wall-macos-mutate.py）：5c04345c6476650076ac58ecd7c44413efc20e61742fd3e8df071612b18cd42c
 源码 sha256（scripts/sandbox-probes/writeout-probe.py）：4cbf47a85d9542e4ac1a8af761e345cc67e1c3c7734a6db0d09d8c0194ff274b
-生成时的 HEAD（本批的父提交；回执与它证据的改动同批提交）：a37e194712567d171eca6685f888a41c26765fdb
+生成时的 HEAD（本批的父提交；回执与它证据的改动同批提交）：f53de422e6e7215a94663a2b78787fb405e2a06d
 判据（可复跑）：python3 scripts/wall-macos-evidence.py · 变异验证：python3 scripts/wall-macos-mutate.py · 纯函数用例：cd wall && cargo test
 
 === ① 四态（靶子 = scripts/sandbox-probes/miniprobe.py，已复制进 /private/tmp 靶子目录）===
 基线命令（无封闭，同一判别目标 1.1.1.1:443）：
   python3 <靶子>/probe/miniprobe.py   ⇒ rc=0
-  输出：{"unix_bind": "ok", "tcp_bind": "ok:54045", "write_work": "ok", "egress": "OPEN", "egress_target": "1.1.1.1:443"}
+  输出：{"unix_bind": "ok", "tcp_bind": "ok:54484", "write_work": "ok", "egress": "OPEN", "egress_target": "1.1.1.1:443"}
 茧壁命令：
   wall/target/debug/zerg-wall run --spec <靶子>/spec-miniprobe.json   ⇒ rc=0
-  子进程输出（stdout）：{"unix_bind": "ok", "tcp_bind": "ok:54048", "write_work": "ok", "egress": "BLOCKED:PermissionError", "egress_target": "1.1.1.1:443"}
+  子进程输出（stdout）：{"unix_bind": "ok", "tcp_bind": "ok:54487", "write_work": "ok", "egress": "BLOCKED:PermissionError", "egress_target": "1.1.1.1:443"}
   茧壁留痕（stderr，含计划与**策略原文**）：
-    茧壁计划（run）：{"schema_version":1,"platform":"macos","argv":["/bin/sh","-c","export PROBE_DIR='/private/tmp/zerg-wall-evidence-four-1789517572/work' PROBE_EGRESS_HOST='1.1.1.1' PROBE_EGRESS_PORT='443'; exec \"$@\"","zerg-egg","/usr/bin/python3","/private/tmp/zerg-wall-evidence-four-1789517572/probe/miniprobe.py"],"allowlist":["file-read*:全局（**比基线大得多**：macOS 没有视图级封闭，只读面收不到声明路径）","rw-path:/private/tmp/zerg-wall-evidence-four-1789517572/work（宿主路径）","network-bind（**不过滤** —— 加过滤会把 unix socket 挡掉：§10.6 实测 PermissionError:1）","network-inbound:localhost","network-outbound:localhost","env:PROBE_DIR","env:PROBE_EGRESS_HOST","env:PROBE_EGRESS_PORT"],"note":"一档：直调 Seatbelt（沙箱强度受平台限制，只有授权级、没有「看不见」那一级）；基线 = (deny default) + (allow process*) + (allow sysctl-read) + (allow mach-lookup)；macOS **没有视图级封闭** ⇒ 声明里的路径按**宿主路径原样**使用（茧壁不做「空间↔宿主」映射）；策略由茧壁**本进程**经 sandbox_init 施加（不经 argv），`argv` 是**封闭之内**要跑的那条命令行；设备面（devices）在 macOS 上不产生策略项（Seatbelt 的对应原语是 iokit-open，**未实测** ⇒ 只记不宣称）；声明的只读面（engine_roots / weight_files / extra_ro_binds）在 macOS 上**不产生额外授权**（已被 file-read* 覆盖）；observed 等级由**外部实读**给出（茧壁不判定等级，照 GKE「沙箱内自报不可信」）；weight_path=/private/tmp/zerg-wall-evidence-four-1789517572/weights 仅出证用、不参与任何授权（只读已全局放行）"}
+    茧壁计划（run）：{"schema_version":1,"platform":"macos","argv":["/bin/sh","-c","export PROBE_DIR='/private/tmp/zerg-wall-evidence-four-1789517870/work' PROBE_EGRESS_HOST='1.1.1.1' PROBE_EGRESS_PORT='443'; exec \"$@\"","zerg-egg","/usr/bin/python3","/private/tmp/zerg-wall-evidence-four-1789517870/probe/miniprobe.py"],"allowlist":["file-read*:全局（**比基线大得多**：macOS 没有视图级封闭，只读面收不到声明路径）","rw-path:/private/tmp/zerg-wall-evidence-four-1789517870/work（宿主路径）","network-bind（**不过滤** —— 加过滤会把 unix socket 挡掉：§10.6 实测 PermissionError:1）","network-inbound:localhost","network-outbound:localhost","env:PROBE_DIR","env:PROBE_EGRESS_HOST","env:PROBE_EGRESS_PORT"],"note":"一档：直调 Seatbelt（沙箱强度受平台限制，只有授权级、没有「看不见」那一级）；基线 = (deny default) + (allow process*) + (allow sysctl-read) + (allow mach-lookup)；macOS **没有视图级封闭** ⇒ 声明里的路径按**宿主路径原样**使用（茧壁不做「空间↔宿主」映射）；策略由茧壁**本进程**经 sandbox_init 施加（不经 argv），`argv` 是**封闭之内**要跑的那条命令行；设备面（devices）在 macOS 上不产生策略项（Seatbelt 的对应原语是 iokit-open，**未实测** ⇒ 只记不宣称）；声明的只读面（engine_roots / weight_files / extra_ro_binds）在 macOS 上**不产生额外授权**（已被 file-read* 覆盖）；observed 等级由**外部实读**给出（茧壁不判定等级，照 GKE「沙箱内自报不可信」）；weight_path=/private/tmp/zerg-wall-evidence-four-1789517870/weights 仅出证用、不参与任何授权（只读已全局放行）"}
     茧壁策略（本进程直调 Seatbelt，309 字节）：
     (version 1)
     (deny default)
@@ -32,17 +32,17 @@ macOS：26.5.1（arm64）
     (allow sysctl-read)
     (allow mach-lookup)
     (allow file-read*)
-    (allow file-write* (subpath "/private/tmp/zerg-wall-evidence-four-1789517572/work"))
+    (allow file-write* (subpath "/private/tmp/zerg-wall-evidence-four-1789517870/work"))
     (allow network-bind)
     (allow network-inbound (local ip "localhost:*"))
     (allow network-outbound (remote ip "localhost:*"))
 
 === ② 写空间外（授权级封闭的本体：空间内可写、空间外写不进去）===
 基线命令：python3 <靶子>/probe/writeout-probe.py   ⇒ rc=0
-  输出：{"write_inside": "ok", "write_outside": "OPEN", "write_outside_target": "/private/tmp/zerg-wall-evidence-writeout-1789517572/outside.txt"}
+  输出：{"write_inside": "ok", "write_outside": "OPEN", "write_outside_target": "/private/tmp/zerg-wall-evidence-writeout-1789517870/outside.txt"}
 基线产物已删（否则「封闭态不许造出该文件」那条断言恒假）：exists=False
 茧壁命令：wall/target/debug/zerg-wall run --spec <靶子>/spec-writeout.json   ⇒ rc=0
-  子进程输出（stdout）：{"write_inside": "ok", "write_outside": "BLOCKED:PermissionError", "write_outside_target": "/private/tmp/zerg-wall-evidence-writeout-1789517572/outside.txt"}
+  子进程输出（stdout）：{"write_inside": "ok", "write_outside": "BLOCKED:PermissionError", "write_outside_target": "/private/tmp/zerg-wall-evidence-writeout-1789517870/outside.txt"}
 
 === ③ 变异验证（scripts/wall-macos-mutate.py：四条各自红在一个不同的判据上）===
   === macOS 一档变异验证（目标 wall/src/platform/macos.rs · 门禁 = cargo test 全套）===
@@ -71,7 +71,7 @@ macOS：26.5.1（arm64）
   PASS ①-b 基线出网可达（⇒ 出网断言有区分度）  —— 基线 egress=OPEN（目标 1.1.1.1:443）
   PASS ①-c 封闭态 rc=0（跑起来了）  —— rc=0
   PASS ①-d 封闭态 unix socket 仍可用（bind 那一档没加过滤）  —— unix_bind=ok
-  PASS ①-e 封闭态 loopback bind 仍可用  —— tcp_bind=ok:54048
+  PASS ①-e 封闭态 loopback bind 仍可用  —— tcp_bind=ok:54487
   PASS ①-f 封闭态空间内可写  —— write_work=ok
   PASS ①-g 封闭态出网被拦（与历史回执 pF 一致）  —— egress=BLOCKED:PermissionError
   PASS ①-h run 留下策略留痕（封闭那一步真的发生了）
@@ -79,5 +79,5 @@ macOS：26.5.1（arm64）
   PASS ②-b 基线空间外写得进去（⇒ 这一格有区分度）  —— write_outside=OPEN
   PASS ②-c 封闭态空间内仍可写  —— write_inside=ok
   PASS ②-d 封闭态空间外被拦  —— write_outside=BLOCKED:PermissionError
-  PASS ②-e 空间外的文件确实不存在  —— /private/tmp/zerg-wall-evidence-writeout-1789517572/outside.txt
+  PASS ②-e 空间外的文件确实不存在  —— /private/tmp/zerg-wall-evidence-writeout-1789517870/outside.txt
   PASS ③ 变异验证全绿（四条都「红 ⇒ 还原 sha 一致 ⇒ 复跑绿」）  —— rc=0
