@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -843,9 +844,20 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 
 	// 工具循环——2026-09-05 换装 loopcore 内核（对话循环两份合一第一步——
 	// 五重防护/心跳/引导收尾全部沉淀进内核——此处只做装配）
+	// OBS-1（v2.5.10 前置档②）：**轮次级**时序——包一层 onDelta 即可（chat_infer 无需改动）。
+	// 这条打点只在 loopcore 每轮调用处做一次，记录：首字节 / 最长停顿 / 总时长 / 分块数 / 结束原因。
+	// 判活仍只看证据（这里只记事实，不做"是否卡死"的判断）。
+	var obsRound int64
 	inferAdapter := func(ctx context.Context, model, sysPrompt string, m []map[string]any,
 		onDelta func(deltaType, text string), toolsParam []map[string]any) (*loopcore.Response, error) {
-		ir, ierr := h.infer.InferStream(chat.WithSessionID(ctx, id), model, sysPrompt, m, onDelta, toolsParam)
+		n := atomic.AddInt64(&obsRound, 1)
+		timer := chat.NewObsTimer(id, int(n), model)
+		wrapped := func(deltaType, text string) {
+			timer.MarkChunk()
+			onDelta(deltaType, text)
+		}
+		ir, ierr := h.infer.InferStream(chat.WithSessionID(ctx, id), model, sysPrompt, m, wrapped, toolsParam)
+		timer.Finish(chat.ObsEndReason(ierr))
 		if ierr != nil {
 			return nil, ierr
 		}

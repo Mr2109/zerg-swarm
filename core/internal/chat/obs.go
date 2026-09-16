@@ -14,7 +14,9 @@
 package chat
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -117,11 +119,11 @@ func obsRotate(path string) {
 
 // ── OBS-1：轮次时序采集器（挂在流式回调外层，最小侵入）──
 //
-// 用法：rec := newObsTimer(session, round, model)
+// 用法：t := NewObsTimer(session, round, model)
 //
-//	rec.markChunk()   // 每收到一个分块调用（onDelta 里包一层）
-//	rec.finish(end)   // 轮次结束时调用（end=finish 或分类码）⇒ 落一行
-type obsTimer struct {
+//	t.MarkChunk()   // 每收到一个分块调用（onDelta 里包一层）
+//	t.Finish(end)   // 轮次结束时调用（end=finish 或分类码）⇒ 落一行
+type ObsTimer struct {
 	session   string
 	round     int
 	model     string
@@ -132,13 +134,13 @@ type obsTimer struct {
 	maxGap    time.Duration
 }
 
-func newObsTimer(session string, round int, model string) *obsTimer {
+func NewObsTimer(session string, round int, model string) *ObsTimer {
 	now := time.Now()
-	return &obsTimer{session: session, round: round, model: model, start: now, last: now}
+	return &ObsTimer{session: session, round: round, model: model, start: now, last: now}
 }
 
-// markChunk — 记录一个分块的到达（常数内存：只保留"最大间隔"）
-func (t *obsTimer) markChunk() {
+// MarkChunk — 记录一个分块的到达（常数内存：只保留"最大间隔"）
+func (t *ObsTimer) MarkChunk() {
 	now := time.Now()
 	if t.firstByte.IsZero() {
 		t.firstByte = now
@@ -151,7 +153,7 @@ func (t *obsTimer) markChunk() {
 }
 
 // finish — 轮次结束：落一行观测（endReason 为空按"正常收尾"处理）
-func (t *obsTimer) finish(endReason string) {
+func (t *ObsTimer) Finish(endReason string) {
 	if t == nil {
 		return
 	}
@@ -212,3 +214,22 @@ func (e *ChatInferError) Error() string {
 
 // Unwrap — 让 errors.Is/As 能穿透到根因（便于上层按超时/取消分别处置）
 func (e *ChatInferError) Unwrap() error { return e.Err }
+
+// ObsEndReason — OBS-1：把轮次结束原因归一为"分类码或 finish"。
+// 判据（OBS-2 同源）：非正常收尾必须落到三类之一，不许无分类。
+func ObsEndReason(err error) string {
+	if err == nil {
+		return "finish"
+	}
+	var cie *ChatInferError
+	if errors.As(err, &cie) {
+		return cie.Code
+	}
+	if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+		return ChatErrUpstreamTimeout
+	}
+	if errors.Is(err, context.Canceled) {
+		return ChatErrClientAborted
+	}
+	return "error"
+}
