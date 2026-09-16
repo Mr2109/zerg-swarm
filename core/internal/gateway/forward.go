@@ -133,6 +133,8 @@ func (g *Gateway) forwardToBackend(
 		// required 透传（待修补 #38 ②）：换机是重新选路，新目标引擎必须重新过按引擎的能力门槛。
 		if failoverRoute, ferr := g.pickFallbackRoute(route, modelName(reqMap), fmt.Sprintf("backend %s forward failed: %v", route.Host, err), required); ferr == nil {
 			log.Printf("🔄 C failover: %s forward failed (%v) — switching to %s", route.Host, err, failoverRoute.Host)
+			// 丁：把「回落给谁、为什么」落进观测（不再只活在日志里；best-effort，不影响转发）
+			ObsFailover(route.Host, failoverRoute.Host, err.Error(), modelName(reqMap))
 			return g.forwardToBackend(ctx, failoverRoute, originalPath, body, headers, required)
 		} else {
 			// 换机被能力硬门槛拦下（待修补 #38 ②）：把门槛错误**原样上抛**，保住统一原因码
