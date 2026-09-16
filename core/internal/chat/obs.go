@@ -69,6 +69,11 @@ type TurnObs struct {
 	StallMS     int64 `json:"stall_ms"`      // 首字节**之后**的最大空档（真正区分"慢"与"卡"）
 	TotalMS     int64 `json:"total_ms"`      // 总时长
 	Chunks      int   `json:"chunks"`        // 分块数
+	// 丁（超时留痕，2026-09-17 Mr2109 拍「都做」）：把"闸多少、等了多久、排队多久"记下来，
+	// 让"超时"这件事不必翻日志就能在观测面看清；乙（排队分离）：排队时长**只观测、不进任何闸**。
+	QueuedMS int64 `json:"queued_ms"` // 排队时长（乙：排队≠推理，只进观测）
+	GateSec  int   `json:"gate_sec"`  // 首 token 闸（秒）——本次生效值（含按卵放宽后的结果）
+	WaitedMS int64 `json:"waited_ms"` // 首字节实际等待（与 GateSec 对照即知"差多少被掐"）
 }
 
 // ObsRecord — 一条观测记录（定长字段集：不随轮数膨胀）
@@ -82,6 +87,10 @@ type ObsRecord struct {
 
 	// OBS-1：只在 turn 记录里出现（嵌套 ⇒ 别的种类不带这些字段，也不丢 0）
 	Turn *TurnObs `json:"turn,omitempty"`
+
+	// 丁：超时/回落留痕（turn 记录里出现）——不再靠翻日志才知道"回落给谁、为什么"
+	FailoverTo     string `json:"failover_to,omitempty"`
+	FailoverReason string `json:"failover_reason,omitempty"`
 
 	// OBS-4 压缩专用（本路径不可得的字段留空 ⇒ omitempty = 未知，不编造）
 	Cause        string `json:"cause,omitempty"`
