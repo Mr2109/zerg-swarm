@@ -732,11 +732,18 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 					if cw, okc := res["ctx_window"].(int); okc && cw > 0 {
 						ctxDecl = cw
 					}
+					// 取值顺序：**档案（事实）⇒ 配置声明（意图）⇒ 保守默认** —— 与「闸门只读实测档案」同一条理
+					// 实测教训：X3 的 Qwen 配置声明 1M 而实跑 -c 262144 ⇒ 信声明会算错额度。
+					ctxSrcLabel := "默认（无档案、无声明）"
+					if v, ok := ProfileCtxWindow(model); ok {
+						ctxDecl = v
+						ctxSrcLabel = "档案(事实)"
+					}
 					dyn, ctxUsed, promptEst := DynamicMaxTokens(model, ctxDecl, EstimatePromptTokens(len(forwardBody)))
 					if dyn <= 0 {
 						log.Printf("⚠️ 输出预算：提示已超上下文（ctx=%d prompt≈%d）——拒绝并按教学式报错处理", ctxUsed, promptEst)
 					} else {
-						ctxSrc := "声明"
+						ctxSrc := "声明(意图)"
 						if ctxDecl == 0 {
 							ctxSrc = "默认（卵未声明）"
 						}
