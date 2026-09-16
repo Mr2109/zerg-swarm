@@ -2024,6 +2024,17 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 
 	// 压缩成功 → token 重置（摘要替代历史，上下文变小）
 	respBody, _ := io.ReadAll(resp.Body)
+	// 2026-09-16 补：**必须检查上游状态码**。此前只看 JSON 形状 ⇒ 上游回 503/429 等错误体时
+	// 一律落到末尾的 "produced no result"，日志里看不出任何原因（实测 16:24:29：回退到 K2 后
+	// 同一秒就 produced no result，根因无从查起）。错误体前 200 字符入日志。
+	if resp.StatusCode != http.StatusOK {
+		msg := strings.TrimSpace(string(respBody))
+		if len(msg) > 200 {
+			msg = msg[:200]
+		}
+		log.Printf("⚠️ autoCompact upstream %s returned %d: %s", route.Host, resp.StatusCode, msg)
+		return
+	}
 	var obj map[string]interface{}
 	if err := json.Unmarshal(respBody, &obj); err == nil {
 		if choices, ok := obj["choices"].([]interface{}); ok && len(choices) > 0 {
@@ -2041,7 +2052,11 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 			}
 		}
 	}
-	log.Printf("⚠️ autoCompact produced no result")
+	snippet := strings.TrimSpace(string(respBody))
+	if len(snippet) > 200 {
+		snippet = snippet[:200]
+	}
+	log.Printf("⚠️ autoCompact produced no result (upstream=%s body=%s)", route.Host, snippet)
 }
 
 // extractPrompt 从请求体提取 prompt 文本（拼接 messages 内容，用于前缀匹配）。
