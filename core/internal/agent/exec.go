@@ -1386,6 +1386,16 @@ func toolHelp(name string) ToolCallResult {
 // ExecuteTool — 根据工具名路由到对应执行函数
 // 执行前过 gate 检查，返回 ToolCallResult
 func (ec *ExecContext) ExecuteTool(ctx context.Context, toolName string, args map[string]any, gate ToolGater) ToolCallResult {
+	// 工具名规范化（2026-09-17 实测：模型发 `Read`（大写）⇒ 区分大小写匹配 ⇒ 报未知工具 ⇒ 白耗一轮）
+	// 原则：行为上宽容（大小写不敏感 + 去空白），契约上严格（执行一律用注册表真名）。歧义 ⇒ 拒绝，不猜。
+	if canon, rerr := resolveToolName(toolName); rerr == nil {
+		if canon != toolName {
+			fmt.Fprintf(os.Stderr, "⚠️ 工具名纠正：%q → %q\n", toolName, canon)
+		}
+		toolName = canon
+	} else {
+		return ToolCallResult{Error: rerr.Error()}
+	}
 	// P4-49 统一工具计数（CA 调用计入——成功执行才计）
 	// 2026-09-06: 计数+事件流双写(事件=未来账本源——含耗时)
 	start := time.Now()
@@ -1781,4 +1791,31 @@ func availableToolNames() string {
 		}
 	}
 	return strings.Join(names, " · ")
+}
+
+// ── 工具名规范化（2026-09-17 Mr2109 拍：② 程序层大小写锁定为主，① 约定/教学为辅）────────────────
+
+// resolveToolName — 把模型给的工具名解析成注册表里的**真名**。
+//
+// 规则（Poka-yoke：行为宽容、契约严格）：
+//
+//	· 去首尾空白 + 大小写不敏感（Read/READ/ read  都指向 read）
+//	· 歧义零容忍：若注册表中存在只差大小写的多个名字 ⇒ 拒绝执行并返回教学式错误（不猜）
+//	· 返回的永远是注册表真名 ⇒ 日志/观测/权限/计数/履历不分裂
+func resolveToolName(raw string) (string, error) {
+	name := strings.ToLower(strings.TrimSpace(raw))
+	var hits []string
+	for _, t := range AllTools() {
+		if strings.ToLower(t.Function.Name) == name {
+			hits = append(hits, t.Function.Name)
+		}
+	}
+	switch len(hits) {
+	case 0:
+		return raw, fmt.Errorf("未知工具: %s。当前可用：%s。正确形态示例：{\"name\": \"read\", \"arguments\": {\"path\": \"core/internal/agent/exec.go\"}}", raw, availableToolNames())
+	case 1:
+		return hits[0], nil
+	default:
+		return raw, fmt.Errorf("工具名有歧义：%s 同时存在。请用完整真名（本系统工具名一律小写）", strings.Join(hits, " / "))
+	}
 }
