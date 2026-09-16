@@ -2015,7 +2015,14 @@ func (g *Gateway) autoCompact(sessionID, model string, body []byte) {
 
 	var resp *http.Response
 	// 3c（2026-09-16）：原 `if route.Host == "local"` 分支已删（恒不成立）⇒ 一律走通用转发。
-	resp, err = g.forwardToBackend(context.Background(), route, "/v1/chat/completions", compactBodyJSON, nil, nil)
+	// 3c-补（2026-09-16）：**必须带子端认证头** —— 原实现 headers 传 nil ⇒ 没有 token ⇒ 子端回 401
+	// unauthorized（实测 16:34:08 "autoCompact upstream x3 returned 401"）。以前不暴露是因为压缩
+	// 走主控内置本机后端（不经 HTTP、不要 token）；本机角色退役后一律走真子端 ⇒ 必须带认证。
+	// 下游 forwardToBackend 会用 adapter.ExtractAuthToken 从这里取 token 并转成子端认的 X-Auth-Token。
+	compactHeaders := http.Header{}
+	compactHeaders.Set("X-Auth-Token", g.authToken)
+	compactHeaders.Set("Content-Type", "application/json")
+	resp, err = g.forwardToBackend(context.Background(), route, "/v1/chat/completions", compactBodyJSON, compactHeaders, nil)
 	if err != nil {
 		log.Printf("⚠️ autoCompact compaction failed: %v", err)
 		return
