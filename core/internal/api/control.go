@@ -154,7 +154,11 @@ func (h *ControlHandlers) StopHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // forward 转发请求到子端 agent（带认证头）。
-func (h *ControlHandlers) forward(node config.FleetNode, path string, body []byte) (int, []byte, error) {
+// forwardToNode 向一台子端发一条控制请求（/load、/unload 等）并回传其响应。
+//
+// 3c（2026-09-16）：从 ControlHandlers.forward 抽出为**包级函数**，供 Handlers 复用
+// （步2：handlers 的"手动启动/停止模型"要从"主控自己起引擎"改成"转发到目标子端" ⇒ 同一实现，不复制）。
+func forwardToNode(token string, node config.FleetNode, path string, body []byte) (int, []byte, error) {
 	url := fmt.Sprintf("http://%s:%d%s", node.Host, node.Port, path)
 	var reader io.Reader
 	if body != nil {
@@ -165,7 +169,7 @@ func (h *ControlHandlers) forward(node config.FleetNode, path string, body []byt
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Auth-Token", h.Token)
+	req.Header.Set("X-Auth-Token", token)
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
@@ -178,6 +182,11 @@ func (h *ControlHandlers) forward(node config.FleetNode, path string, body []byt
 		return 0, nil, err
 	}
 	return resp.StatusCode, respBody, nil
+}
+
+// forward 控制面自用：委托给包级 forwardToNode（保持既有调用点不变）。
+func (h *ControlHandlers) forward(node config.FleetNode, path string, body []byte) (int, []byte, error) {
+	return forwardToNode(h.Token, node, path, body)
 }
 
 // CoreStatusHandler 处理 GET /api/core/status——主控自身状态。
