@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # negctl-two-states.sh —— verify-two-states.py 的**负例活体控制**（判据 7 的「红的版本」落到门禁自身）
 #
-# 两条负例都必须**硬失败 rc=2**（不许静默跳过）：
+# 四条负例都必须**硬失败 rc=2**（不许静默跳过）：
 #   ① 探针缺失/路径漂移 —— 临时把 pF.sb 挪出仓，跑门禁 ⇒ 必须 rc=2；随即还原并比对 sha（逐字节一致）
 #   ② 基线无区分度 —— 指定一个本机不可达的判别目标 ⇒ 必须 rc=2（防止「出网被拦」被探针本身坏了刷成假绿）
+#   ③ （--wall）茧壁二进制路径漂移 —— 给一个不存在的路径 ⇒ 必须 rc=2
+#   ④ 参数拼错（--wal）⇒ 必须 rc=2（认不得的参数一律拒；静默忽略会让「跑错路线」看不出来）
 #
 # 用法：bash scripts/sandbox-probes/negctl-two-states.sh
-# 退出码：0 = 两条负例都按期望硬失败且现场已还原；1 = 有负例没按期望失败 / 还原失败（停手人工看）
+# 退出码：0 = 四条负例都按期望硬失败且现场已还原；1 = 有负例没按期望失败 / 还原失败（停手人工看）
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || { echo "!! 进不了仓根 ⇒ 停手"; exit 1; }
 P="scripts/sandbox-probes"
@@ -30,6 +32,18 @@ echo "=== 负例② 基线无区分度（指定一个不可达的判别目标）
 TWO_STATE_TARGETS="<worker-ip>:9" python3 "${P}/verify-two-states.py"; rc=$?
 echo "负例② rc=$rc （期望 2）"
 [ "$rc" -eq 2 ] || { echo "!! 负例② 未按期望硬失败"; exit 1; }
+
+echo ""
+echo "=== 负例③（--wall）路径漂移：茧壁二进制不存在 ⇒ 必须 rc=2 ==="
+python3 "${P}/verify-two-states.py" --wall /private/tmp/没有这个茧壁-zerg-wall; rc=$?
+echo "负例③ rc=$rc （期望 2）"
+[ "$rc" -eq 2 ] || { echo "!! 负例③ 未按期望硬失败（--wall 路径漂移必须硬失败，不许静默跳过）"; exit 1; }
+
+echo ""
+echo "=== 负例④ 参数拼错（--wal）⇒ 必须 rc=2（认不得的参数一律拒，不许跑成另一条路线）==="
+python3 "${P}/verify-two-states.py" --wal /private/tmp/x; rc=$?
+echo "负例④ rc=$rc （期望 2）"
+[ "$rc" -eq 2 ] || { echo "!! 负例④ 未按期望硬失败（认不得的参数必须拒）"; exit 1; }
 
 echo ""
 echo "=== 还原确认（该件应无改动）==="

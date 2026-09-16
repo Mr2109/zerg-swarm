@@ -12,9 +12,10 @@
 | `conn_jit.py` | loopback **自己连自己** + W^X JIT（本机与 X3 四跑一致） | §10.10 |
 | `lx2-linux.py` | Linux 侧四态探针（含**局域网**目标，因 X3 本身无出网） | §10.7 |
 | `egg-prototype-pack.py` | 单文件封装**原型**（正式工具已是 `scripts/zerg-egg.py` ✓，此件仅存历史） | §10.8 |
-| `verify-two-states.py` | **判据 7 门禁**：两态可验（断言 A 空间内通信可用 / 断言 B 出网被拦），`--self-test` = 护栏自检 + 四态成对 | 判据 7 |
-| `negctl-two-states.sh` | 判据 7 门禁的**负例活体控制**（探针缺失、基线无区分度 ⇒ 都必须硬失败 rc=2） | 判据 7 |
+| `verify-two-states.py` | **判据 7 门禁**：两态可验（断言 A 空间内通信可用 / 断言 B 出网被拦），`--self-test` = 护栏自检 + 四态成对；**`--wall <茧壁二进制>`**（批 2'.5）= 多跑一条**茧壁路线**并与原生黄金配方**对拍**（含留痕断言与路线自检） | 判据 7 / 批 2'.5 |
+| `negctl-two-states.sh` | 判据 7 门禁的**负例活体控制**（探针缺失、基线无区分度、`--wall` 路径漂移、参数拼错 ⇒ 都必须硬失败 rc=2） | 判据 7 |
 | `evidence-two-states-20260916.txt` | 上面三跑的**真实回执**（含 sha256、逐条输出、负例脚本原文） | 判据 7 |
+| `evidence-two-states-wall-20260916.txt` | 批 2'.5 的**真实回执**（⓪ 制品可复现自检 + 默认路线 + 茧壁路线对拍 + 自检 + 负例 + 变异验证；生成器 `scripts/two-states-wall-evidence.py`，变异脚本 `scripts/two-states-gate-mutate.py`） | 批 2'.5 |
 
 跑法示例（本机）：
 ```bash
@@ -22,9 +23,15 @@ python3 scripts/sandbox-probes/conn_jit.py
 sandbox-exec -f scripts/sandbox-probes/pF.sb python3 scripts/sandbox-probes/conn_jit.py
 
 # 判据 7 门禁（退出码 0 绿 / 1 断言红 / 2 环境或探针问题**硬失败**，不许静默跳过）
-python3 scripts/sandbox-probes/verify-two-states.py             # 真验
+python3 scripts/sandbox-probes/verify-two-states.py             # 真验（原生路线，行为与历史一致）
 python3 scripts/sandbox-probes/verify-two-states.py --self-test # 变异验证（四态成对）
-bash    scripts/sandbox-probes/negctl-two-states.sh             # 负例控制（两条都必须 rc=2）
+bash    scripts/sandbox-probes/negctl-two-states.sh             # 负例控制（四条都必须 rc=2）
+
+# 判据 7 门禁 · 茧壁路线（批 2'.5；先把茧壁编出来：cd wall && cargo build）
+python3 scripts/sandbox-probes/verify-two-states.py --wall wall/target/debug/zerg-wall
+python3 scripts/sandbox-probes/verify-two-states.py --self-test --wall wall/target/debug/zerg-wall
+python3 scripts/two-states-wall-evidence.py                     # 生成回执（脚本自己会红）
+python3 scripts/two-states-gate-mutate.py                       # 变异验证：改坏门禁 ⇒ 自检必须红
 ```
 
 **出网判别目标可用环境覆盖**（宿主本身没出网时必用 —— 实测 X3 基线对公网即 Timeout ⇒ 那一格没有区分度，
