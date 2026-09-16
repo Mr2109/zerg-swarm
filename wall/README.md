@@ -172,7 +172,35 @@ python3 scripts/two-states-gate-mutate.py          # 变异验证：改坏门禁
   （实测 `98bc845e…` / `c11b85ad…`），`CARGO_INCREMENTAL=0` 下逐字节相同 ⇒ 回执生成器第一步就做这条自检，
   通过后才记录制品 sha。
 
-**制品分发**：**暂未接** `scripts/build-all.sh` —— 是否进 5 件制品矩阵属**发布契约**，待 Mr2109 拍板 ⚠
+## 制品与构建（任务 2'.6）
+
+```bash
+bash scripts/build-wall.sh                   # release → bin/zerg-wall（本机平台）
+bash scripts/build-wall.sh --debug           # debug   → wall/target/debug/zerg-wall（上面那些门禁读它）
+bash scripts/negctl-build-wall.sh            # 负例活体控制：C0 真树必绿 · N1/N2/N3 各自真红在 rc=2
+python3 scripts/build-wall-mutate.py         # 变异验证：改坏实现 ⇒ 负例控制**必须红在那一条**对照项上
+bash scripts/probe-build-all-wall-wiring.sh  # 证 build-all.sh 的接线（桩树里跑原文，不碰生产 bin/）
+```
+
+- **构建入口只有一个**：`scripts/build-wall.sh`（`build-all.sh` 也调它，不复制第二份构造）。
+  它**不交叉编译** —— 茧壁要在**目标机**上编（与 zerg-agent「该机自编」同一口径）；
+- **只落 `bin/`、不进 dist 制品矩阵**：矩阵 5 件是**发布契约**，要不要加茧壁**待 Mr2109 拍板** ⚠
+  （与 `cocoon-docs-service` 同一条边界）。接线已接上、也在桩树里照跑过 —— 但**跑真的 `build-all.sh`
+  会覆盖 `bin/` 里正在被托管的生产制品**（= 换件，属自主作业禁区）⇒ 取证的等价做法是**桩树**：
+  在 `/private/tmp` 搭一棵假 `go`、真 `cargo`、真 `wall/` 源码的树，把**未改动的 `build-all.sh` 原文**
+  放进去跑（`--no-ui --no-sign`），产物落在桩树的 `bin/` ⇒ 接线验到、生产零接触。取证脚本
+  `scripts/probe-build-all-wall-wiring.sh` 跑三次：R1 正例（rc=0 且桩树 `bin/zerg-wall` **在**）·
+  R2 守卫另一支（无 cargo ⇒ rc=0、**没有**产物、留痕说明原因）· R3 区分度（把调用行换成 `:` ⇒
+  产物**不在**，证明 R1 的产物断言真的会红）；
+- **签名**：落 `bin/` 的件由 `build-all.sh` 的签名环节**统一**施加（稳定身份 + `com.zerg.wall`）——
+  同一件事只有一处实现；`build-wall.sh` 单独跑时**只编不签**（cargo 产出的件自带 ad-hoc 签名，能跑）；
+- **构建脚本永不「跳过」**：`build-wall.sh` 不成功一律 `rc=2`（构建脚本若以「跳过」成功退出，
+  「没编出茧壁」就会看起来像绿）；要不要跳过由**调用方**决定 —— `build-all.sh` 只在**本机无 cargo**
+  这一种情形跳过（环境缺工具），且**打印原因**；`wall/` 源码不在属**仓坏了**，硬失败（不许在这里被吞）。
+- **「Linux 目标机能编」的现状（实测说清）**：`cargo check --target x86_64-unknown-linux-gnu` **rc=0**
+  （Linux cfg 分支**类型检查级**通过；`rustup target add` 走代理装过 std）；`cargo build --target
+  x86_64-unknown-linux-gnu` **rc=101**（本机无 Linux 链接器：`ld: unknown options: --as-needed …`）⇒
+  **真编只能在目标机上做** —— 这正是不交叉编译的理由。
 （不进矩阵也能随卵分发：先落 `bin/`）。
 
 **本批尚未做的**：二档（直调原语）、Windows（本机无靶子 ⇒ 不许宣称）、制品矩阵接入（是否进 5 件矩阵是
