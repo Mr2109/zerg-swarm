@@ -736,7 +736,11 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 					if dyn <= 0 {
 						log.Printf("⚠️ 输出预算：提示已超上下文（ctx=%d prompt≈%d）——拒绝并按教学式报错处理", ctxUsed, promptEst)
 					} else {
-						log.Printf("🎛️ adapter %s: max_tokens 动态 = %d（写死值 %d 仅作参考；ctx=%d prompt≈%d）", model, dyn, mt0, ctxUsed, promptEst)
+						ctxSrc := "声明"
+						if ctxDecl == 0 {
+							ctxSrc = "默认（卵未声明）"
+						}
+						log.Printf("🎛️ adapter %s: max_tokens 动态 = %d（写死值 %d 仅参考；ctx=%d[来源=%s] prompt≈%d）", model, dyn, mt0, ctxUsed, ctxSrc, promptEst)
 						forwardBody = adapter.JsonSetField(forwardBody, "max_tokens", dyn)
 						forwardBody = adapter.JsonSetField(forwardBody, "max_output_tokens", dyn)
 					}
