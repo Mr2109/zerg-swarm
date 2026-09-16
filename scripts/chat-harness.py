@@ -74,7 +74,11 @@ def local_user_reply(prof, history, tok):
     for role, text in history[-8:]:
         msgs.append({"role": role, "content": text})
     body = {"model": os.environ.get("ZERG_DRIVER_MODEL", "gemma-4-26B"),
-            "messages": msgs, "max_tokens": 800, "stream": False}
+            "messages": msgs, "max_tokens": 800, "stream": False,
+            # 实测（2026-09-16）：本机 gemma 默认把额度花在思考上 ⇒ content='' 全是 reasoning。
+            # 唯一有效办法是**引擎侧关思考**：enable_thinking=false ⇒ content 直接可用（0.5s）。
+            # 提示词 /no_think、换模型（Nemotron/review）都无效。
+            "chat_template_kwargs": {"enable_thinking": False}}
     with post(AGENT + "/infer", body, tok, timeout=300) as r:
         d = json.loads(r.read().decode())
     # llama-server 风格响应
@@ -84,7 +88,7 @@ def local_user_reply(prof, history, tok):
     except Exception:
         msg = {}
     txt = (msg.get("content") or "").strip()
-    if not txt:
+    if not txt and False:  # 已废弃：从 reasoning 抽句会抽出分析文本（实测越兜越糟），改为引擎侧关思考
         r = (msg.get("reasoning_content") or "").strip()
         # 从思路里抽最后一句"像人说的话"（去掉编号/星号/英文分析行）
         cand = [l.strip(" *-\t") for l in r.split("\n") if l.strip(" *-\t")]
@@ -92,6 +96,22 @@ def local_user_reply(prof, history, tok):
         txt = cand[-1] if cand else ""
         if txt:
             print("        （驱动：content 为空，已从 reasoning 抽句 ✓）")
+    if not txt:
+        # 重试一次：强制"只回一句话、不许分析"，并限制额度（不给它"想"的空间）
+        strict = msgs[:-1] + [{"role": "user", "content": "只回**一句**你要对助手说的话（中文，一两句，口语）。禁止分析、禁止英文、禁止列表。"}]
+        try:
+            with post(AGENT + "/infer", {"model": os.environ.get("ZERG_DRIVER_MODEL", "gemma-4-26B"),
+                                         "messages": strict, "max_tokens": 120, "stream": False}, tok, timeout=180) as r2:
+                d2 = json.loads(r2.read().decode())
+            txt = ((d2.get("choices", [{}])[0].get("message", {}) or {}).get("content") or "").strip()
+            if txt:
+                print("        （驱动：严格重试成功 ✓）")
+        except Exception as e:
+            print("        （驱动：严格重试失败 %s）" % str(e)[:80])
+    if not txt:
+        # 兜底：不中断会话 —— 用脚本续问（并如实标注"这条不是模型说的"）
+        txt = "那你再具体一点说，我怎么验证它真的在工作？"
+        print("        ⚠ [harness 缺口] 驱动两次都空 ⇒ 用脚本兜底续问（**如实标注：非模型生成**）")
     return txt
 
 
@@ -196,6 +216,10 @@ def main():
         events, end, tail = send_turn(sid, user, tok)
         dt = time.time() - t0
         print("        助手> 事件 %d 个 · 用时 %.1fs · 收尾=%s" % (events, dt, end[:60]))
+        if end == "no-end" or end.startswith(("exception", "http_")):
+            print("        ⚠ 收尾异常 ⇒ 打流尾 12 行（**留证据，不猜**）：")
+            for _l in tail[-12:]:
+                print("          尾| %s" % _l[:150])
         # 助手回话（从消息表读最后一条 assistant）
         try:
             with urllib.request.urlopen(
