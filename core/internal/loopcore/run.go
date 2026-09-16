@@ -282,6 +282,27 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 	if res.ExitKind == "" {
 		res.ExitKind = "max_rounds"
 	}
+	// ⑤ 四终局（2026-09-17）：预算/轮数用尽**不得只是 return 半成品** ✗ ——
+	// 依业界口径：「agent 永不直接崩，它要**做出决定**」；只有"返回答案/抛异常"两种终局是生产级缺口。
+	// 依据只取**本层可知的事实**（不猜）：已完成步数=工具轨迹条数；是否还有未完成工作=是否因轮数用尽而退出。
+	if res.ExitKind != "natural" && res.ExitKind != "" {
+		in := TerminalInput{
+			CompletedSteps:   len(res.Traces),
+			HasRemainingWork: res.ExitKind == "max_rounds",
+			Checkpointable:   len(res.Traces) > 0,
+			NeedsHumanJudgment: res.ExitKind == "loopguard_escalate" || res.ExitKind == "round_timeout" ||
+				res.ExitKind == "wall_clock" || res.ExitKind == "stream_broken",
+			// HasIrreversible：本层看不到"是否已改文件"（在工具层）⇒ 保守留 false，**不猜**；
+			// 待 v2.5.11 由工具轨迹带"写类"标记后启用（承接项 S3）。
+		}
+		st, reason := ChooseTerminal(in)
+		note := TerminalNote(st, reason+"（退出原因："+res.ExitKind+"）")
+		if res.Content == "" {
+			res.Content = note
+		} else {
+			res.Content = res.Content + "\n\n" + note
+		}
+	}
 	return res
 }
 
