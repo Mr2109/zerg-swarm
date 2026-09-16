@@ -15,24 +15,21 @@ import (
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
-	"github.com/Mr2109/zerg-swarm/core/internal/localback"
 )
 
 // ControlHandlers 控制端点处理器。
 type ControlHandlers struct {
-	Token     string
-	Fleet     map[string]config.FleetNode
-	Models    map[string][]config.ModelCandidate
-	LocalBack *localback.LocalBackend
+	Token  string
+	Fleet  map[string]config.FleetNode
+	Models map[string][]config.ModelCandidate
 }
 
 // NewControlHandlers 创建控制处理器。
-func NewControlHandlers(token string, cfg *config.FleetConfig, lb *localback.LocalBackend) *ControlHandlers {
+func NewControlHandlers(token string, cfg *config.FleetConfig) *ControlHandlers {
 	return &ControlHandlers{
-		Token:     token,
-		Fleet:     cfg.Fleet,
-		Models:    cfg.Models,
-		LocalBack: lb,
+		Token:  token,
+		Fleet:  cfg.Fleet,
+		Models: cfg.Models,
 	}
 }
 
@@ -198,11 +195,11 @@ func (h *ControlHandlers) CoreStatusHandler(w http.ResponseWriter, r *http.Reque
 	}
 	pid := os.Getpid()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"ok":            true,
-		"pid":           pid,
-		"started_at":    time.Now().Format(time.RFC3339),
-		"version":       "zerg-core v2",
-		"local_backend": h.LocalBack.State(),
+		"ok":         true,
+		"pid":        pid,
+		"started_at": time.Now().Format(time.RFC3339),
+		"version":    "zerg-core v2",
+		// 3c：原 "local_backend" 字段（LocalBackend 状态）已删 —— 本机角色退役，引擎由子端托管。
 	})
 }
 

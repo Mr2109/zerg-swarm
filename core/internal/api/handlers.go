@@ -7,7 +7,6 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/chat"
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"github.com/Mr2109/zerg-swarm/core/internal/gateway"
-	"github.com/Mr2109/zerg-swarm/core/internal/localback"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
 	"github.com/Mr2109/zerg-swarm/core/internal/subtask"
@@ -30,7 +29,6 @@ type Handlers struct {
 	Config          *config.FleetConfig
 	ConfigPath      string // B11: 配置文件路径（热加载用）
 	Store           *store.Store
-	LocalBack       *localback.LocalBackend
 	HeartbeatLogger *slog.Logger     // v2.3 B1: 心跳专用日志，分离到 /tmp/zerg-heartbeat.log
 	Gateway         *gateway.Gateway // v2.5.5 #9 补充5: 心跳健康清零熔断用
 	Scheduler       *MasterScheduler // v2.5.5 T3: 主控总调度器（两级调度）
