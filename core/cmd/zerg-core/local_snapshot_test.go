@@ -46,6 +46,13 @@ func TestStartLocalSnapshotRefresh_WritesBeforeFirstTick(t *testing.T) {
 //
 // 短周期下应观察到 store 的 local 行被反复替换（SetLocalSnapshot 每次写新指针）；
 // 保证修法没有把「周期刷新」这一半丢掉。
+//
+// 2026-09-16 第十四轮：**上限从 5s 抬到 30s**（判据一字未改：仍要求"观察到新一次写入"）。
+// 依据（实测）：全量 `-race` 套件（18 个包并行）里本用例红过一次、用例自身耗时 8.93s（= 5s 上限被打满）；
+// 同命令单跑（`-run TestStartLocalSnapshotRefresh -count=1 -race`）连跑 3 次全绿 ⇒ **负载相关的墙太近**，
+// 不是"周期刷新退化"。机制解释（非实测）：每次刷新要跑 `localBack.Snapshot()` 与 `collectGpuPct()`，
+// 后者是 `exec.Command("ioreg", "-l")` —— 真机重命令。这里**没有**改周期、也**没有**放宽任何断言，
+// 只把「等一个可观察事件」的上限放到"一次重命令 + 调度迟延"的量级。
 func TestStartLocalSnapshotRefresh_PeriodicStillRefreshes(t *testing.T) {
 	lb := localback.NewLocalBackend("")
 	st := store.NewStore()
@@ -55,12 +62,12 @@ func TestStartLocalSnapshotRefresh_PeriodicStillRefreshes(t *testing.T) {
 	if first == nil {
 		t.Fatal("同步首写缺失：local 行不存在")
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if cur := st.GetSnapshot("local"); cur != nil && cur != first {
 			return // 观察到新一次写入——周期刷新在跑
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("周期刷新未发生（5s 内 local 行未被再次写入）——周期行为退化")
+	t.Fatal("周期刷新未发生（30s 内 local 行未被再次写入）——周期行为退化")
 }

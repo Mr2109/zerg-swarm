@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -60,8 +61,15 @@ exit 0
 // mockRunner — 模拟 docker 命令执行
 // 返回: 被调用的 cmd, args, 以及预设的退出码
 type mockRunner struct {
+	// mu 保护写侧：测试 7（并发命名）里 5 个 goroutine 共用同一个 mockRunner、真并发调用 run()。
+	// 2026-09-16 第十四轮全量 `-race` 套件里 race detector 当场抓到这里的写-写竞争
+	// （`docker_worker_test.go:77/78`：`m.called` 与 `m.args` 无任何同步，且判据是"5 次调用的
+	// 容器名两两不同"——并发用例的夹具本身就带 race，等于套件永远过不去）。
+	// 读侧一律在所有 goroutine 经 results 通道汇合之后进行，故仍是安全的。
+	mu        sync.Mutex
 	called    bool
 	args      []string
+	calls     [][]string // 历次调用的参数（并发用例要看"全部"，而不是"最后一次"）
 	exitCode  int
 	err       error
 	agentBin  string // 期望的宿主机路径
@@ -74,9 +82,22 @@ func newMockRunner() *mockRunner {
 }
 
 func (m *mockRunner) run(_ context.Context, name string, args ...string) (int, error) {
+	cp := append([]string(nil), args...)
+	m.mu.Lock()
 	m.called = true
-	m.args = args
+	m.args = cp
+	m.calls = append(m.calls, cp)
+	m.mu.Unlock()
 	return m.exitCode, m.err
+}
+
+// allArgs 返回历次调用的参数副本（调用方须在所有并发 goroutine 汇合之后调用）。
+func (m *mockRunner) allArgs() [][]string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([][]string, len(m.calls))
+	copy(out, m.calls)
+	return out
 }
 
 // ─── 测试 1: 成功退出码 0 ─────────────────────────────────
@@ -399,18 +420,31 @@ func TestDockerWorker_Run_ConcurrentNaming(t *testing.T) {
 		}
 	}
 
-	// 验证所有容器名唯一
+	// 验证所有容器名唯一（**逐次**看，不是只看"最后一次调用"）
+	// 2026-09-16 第十四轮修：这里原先只遍历 `mr.args`（= 最后一次调用的参数），并发下最后写的那次
+	// 会盖掉其余 4 次 ⇒ 断言退化成"看过一个名字、它当然唯一"——用例日志当时打出的正是
+	// 「5 次调用，**1 个唯一容器名**」而照样通过（假绿）。现在遍历历次调用的参数，并把
+	// "唯一名字数 == 调用次数" 立成硬断言。
 	names := make(map[string]bool)
-	for _, arg := range mr.args {
-		if strings.HasPrefix(arg, "zerg-worker-") {
-			if names[arg] {
-				t.Errorf("容器名重复: %s", arg)
+	calls := mr.allArgs()
+	for _, args := range calls {
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "zerg-worker-") {
+				if names[arg] {
+					t.Errorf("容器名重复: %s", arg)
+				}
+				names[arg] = true
 			}
-			names[arg] = true
 		}
 	}
+	if len(calls) != n {
+		t.Errorf("应记录 %d 次调用，实得 %d 次", n, len(calls))
+	}
+	if len(names) != n {
+		t.Errorf("应有 %d 个唯一容器名，实得 %d 个——容器名唯一性正是本用例的全部意义", n, len(names))
+	}
 
-	t.Logf("✅ TestDockerWorker_Run_ConcurrentNaming: %d 次调用，%d 个唯一容器名", n, len(names))
+	t.Logf("✅ TestDockerWorker_Run_ConcurrentNaming: %d 次调用，%d 个唯一容器名", len(calls), len(names))
 }
 
 // ─── 测试 8: 超时处理 ─────────────────────────────────────
