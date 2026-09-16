@@ -132,6 +132,19 @@ EXCLUDES=(
   "scripts/mirror-public-lib.py"
   "scripts/mirror-acceptance.sh"
   "scripts/mirror-verify-tree.py"
+  # 2026-09-16（批 2'.6 发布面复核）**补齐漂移**：下面三个发布机制脚本早已收进
+  # publish/private-paths.txt（私有面黑名单）与镜像器自带的 DROP_EXACT，却**没有**同步到本数组
+  # —— 后果实测（不是推断）：旧器真跑把这三个文件导出 ⇒ 被自己的私有面门禁抓住 ⇒ **整批自中止**
+  # （「一个字节都不推」），应急后备通道形同失效，而两器一致性验收要跑 6 分钟才看得见。
+  # 本数组是 B8 声明的**单一真源**（镜像器解析的就是它）⇒ 一律收这里，不再各自记一份。
+  # 漂移的秒级镜子 = scripts/check-publish-face-sync.py（判据①：镜像器丢、旧器不排 ⇒ 红）。
+  "scripts/publish-preflight.sh"
+  "scripts/check-placeholder-residue.py"
+  "scripts/check-public-tree-hazards.py"
+  # 2026-09-16（同上）：本轮新增的漂移镜子本身也是**发布机制脚本**（复用
+  # scripts/check-history-secrets.py 与 scripts/check-public-tree-private.py 两个私有侧门禁，
+  # 公开树里没有它们 ⇒ 导出去只会是一个跑不起来的文件）⇒ 与同类同规，不进公开面。
+  "scripts/check-publish-face-sync.py"
 )
 # 编译缓存 / 原生产物（即使被跟踪也不该出现在源码快照里）
 for e in "${EXCLUDES[@]}"; do rm -rf "${OUT:?}/$e"; done

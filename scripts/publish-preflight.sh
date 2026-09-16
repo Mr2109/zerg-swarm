@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
-# 发布前置硬闸：对「镜像产物目录」跑五道检查；任一不过 ⇒ 非零退出（不得推送）
+# 发布前置硬闸：对「镜像产物目录」跑六道检查；任一不过 ⇒ 非零退出（不得推送）
 # 用法: bash scripts/publish-preflight.sh <产物目录>
 set +e
 D="${1:?用法: publish-preflight.sh <产物目录>}"
 Z="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$PATH:/opt/homebrew/bin"
 FAIL=0
+
+echo "── 闸⓪ 发布面同步（配置级·秒级，不依赖产物目录）──"
+# 为什么放在最前面：它判的是**私有仓的配置**（白名单 × EXCLUDES × 私有面黑名单 × 镜像器丢弃口径），
+# 成本 ~2 秒。2026-09-16 实测过一次漂移（三个发布机制脚本只进了镜像器的自带清单、没进 EXCLUDES ⇒
+# 旧器真跑把私有面路径导出、被自己的闸②抓住而整批自中止）。这类问题在**推之前几秒**就能看见，
+# 不必等跑到闸⑤（go build + UI 测试，几分钟）才发现。
+python3 "$Z/scripts/check-publish-face-sync.py" > /tmp/pf0.log 2>&1; RC0=$?
+tail -3 /tmp/pf0.log | sed 's/^/   /'
+[ "$RC0" != "0" ] && { echo "   ✗ 闸⓪ 不过（rc=${RC0}）"; FAIL=1; }
 
 echo "── 闸① 占位符截断残留（逐笔）──"
 python3 "$Z/scripts/check-placeholder-residue.py" "$D" --all > /tmp/pf1.log 2>&1; RC1=$?
@@ -48,4 +57,4 @@ echo "   ui 镜像形态 rc=$RC5b | $(grep -oE '[0-9]+ passed' /tmp/pf5b.log | a
 [ "$RC5b" != "0" ] && FAIL=1
 
 if [ "$FAIL" != "0" ]; then echo "❌ 发布前置未过 ⇒ 不得推送"; exit 1; fi
-echo "✅ 五道闸全过 ⇒ 允许推送"
+echo "✅ 六道闸全过 ⇒ 允许推送"
