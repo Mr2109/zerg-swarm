@@ -51,6 +51,7 @@ type ObsRecord struct {
 	FirstByteMS int64  `json:"first_byte_ms,omitempty"` // 首字节耗时（OBS-1）
 	MaxGapMS    int64  `json:"max_gap_ms,omitempty"`    // 最长停顿（OBS-1：卡死感的客观来源）
 	TotalMS     int64  `json:"total_ms,omitempty"`      // 总时长
+	DurText     string `json:"dur,omitempty"`           // 工具耗时的原始文本（ToolTrace.Duration 是字符串）
 	Chunks      int    `json:"chunks,omitempty"`        // 分块数
 	EndReason   string `json:"end_reason,omitempty"`    // 正常收尾=finish；否则为分类码
 
@@ -186,15 +187,15 @@ func obsCompact(session string, cause string, in, out, summaryChars int, d time.
 	})
 }
 
-// obsTool — OBS-3：工具轮次一行
-func obsTool(session string, round int, tool string, d time.Duration, ok bool, rounds, max int) {
+// ObsTool — OBS-3：工具轮次一行
+func ObsTool(session string, round int, tool string, durText string, ok bool, rounds, max int) {
 	res := "ok"
 	if !ok {
 		res = "err"
 	}
 	obsWrite(ObsRecord{
 		Kind: "tool", Session: session, Round: round, Tool: tool,
-		TotalMS: d.Milliseconds(), Result: res, ToolRounds: rounds, ToolMax: max,
+		DurText: durText, Result: res, ToolRounds: rounds, ToolMax: max,
 	})
 }
 
