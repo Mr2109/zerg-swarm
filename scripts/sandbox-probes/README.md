@@ -6,6 +6,7 @@
 | 文件 | 用途 | 对应节 |
 |---|---|---|
 | `miniprobe.py` | 空间内 unix socket / loopback TCP bind / 写空间内 / 出网 四态 | §10.6 |
+| `writeout-probe.py` | **写空间外**那一格（授权级封闭的本体：空间内可写、空间外写不进去）—— 批 2'.4 起给 macOS 一档当活体判据 | §10.6 / 批 2'.4 |
 | `pA.sb` `pD.sb` `pE.sb` `pF.sb` `pJ.sb` | macOS Seatbelt 各 profile 变体（pF = 黄金配方：bind 不过滤 + in/outbound 限 localhost） | §10.6 |
 | `jitprobe.py` | RWX 单次映射 / W^X 路径（写码→mprotect RX→调用） | §10.8 |
 | `conn_jit.py` | loopback **自己连自己** + W^X JIT（本机与 X3 四跑一致） | §10.10 |

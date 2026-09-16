@@ -56,20 +56,36 @@ fn cli_plan_linux_is_one_line_json() {
     );
 }
 
-/// 负例：本机是 macOS、且 macOS 一档还没落地 ⇒ **默认平台必须拒绝**（不许回落成裸跑）。
+/// 默认平台 = **本机平台**（不再有「一档没落地」这一态：macOS 一档批 2'.4 起已落地）。
+///
+/// 判据是「本机平台出得出计划」+「载荷里写的平台与运行平台一致」——两件事都要**看证据**：
+/// 出计划的平台若与运行平台不符（比如 macOS 上出了 linux 计划），`run` 那一步就是说不清的事。
 #[test]
-fn cli_plan_defaults_to_host_and_refuses_unimplemented_tier() {
+fn cli_plan_defaults_to_host_platform() {
     let spec = example_spec();
     let (rc, out, err) = run(&["plan", "--spec", spec.to_str().unwrap()]);
-    if cfg!(target_os = "macos") {
-        assert_eq!(rc, 2, "macOS 一档未落地 ⇒ 必须硬失败；stdout={out}");
-        assert!(
-            err.contains("绝不回落") || err.contains("不回落"),
-            "拒绝理由必须写明不回落成裸跑：{err}"
-        );
-    } else if cfg!(target_os = "linux") {
-        assert_eq!(rc, 0, "Linux 上应能出计划；stderr={err}");
-    }
+    assert_eq!(rc, 0, "默认平台应能出计划；stderr={err}");
+    let host = std::env::consts::OS;
+    assert!(
+        out.contains(&format!("\"platform\":\"{host}\"")),
+        "载荷里的平台必须是本机平台 {host}：{out}"
+    );
+    assert_eq!(out.lines().count(), 1, "stdout 必须是一行 JSON：{out}");
+}
+
+/// 负例：**认不得的平台**照旧必须拒（不许回落成裸 exec）——这条是「不许降级」那一半。
+#[test]
+fn cli_plan_refuses_unknown_platform() {
+    let spec = example_spec();
+    let (rc, out, err) = run(&[
+        "plan",
+        "--spec",
+        spec.to_str().unwrap(),
+        "--platform",
+        "windows",
+    ]);
+    assert_eq!(rc, 2, "认不得的平台必须硬失败；stdout={out}");
+    assert!(err.contains("裸 exec"), "拒绝理由要写明不许降级：{err}");
 }
 
 /// 负例：硬失败一律 rc=2（缺参数 / 认不得的参数 / 坏配方 / run 点名平台）。
