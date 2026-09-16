@@ -149,12 +149,7 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 	// 乙-2（排队可见，2026-09-17 Mr2109 拍「都做」）：把「我接到 → 我真正开始干活」的耗时回给上游。
 	// 为什么放在响应头：对**流式与非流式都成立**（头在首字节前发出），上游一拿到就能算出排队时长。
 	// 语义：这是**子端侧的等待**（含解析、等槽位/在途请求）；排队 ≠ 推理 ⇒ 只用于观测，不进任何时限。
-	inferT0 := time.Now()
-	defer func() {
-		if w.Header().Get("X-Zerg-Queued-Ms") == "" {
-			w.Header().Set("X-Zerg-Queued-Ms", strconv.FormatInt(time.Since(inferT0).Milliseconds(), 10))
-		}
-	}()
+	inferT0 := time.Now() // 乙-2：排队计时起点（进门即记）
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -225,6 +220,8 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 	select {
 	case res = <-resultCh:
 	case <-startedCh:
+		// 乙-2：出队那一刻 = 排队结束 ⇒ 在此设排队时长（幂等；放"结果到手后"✗ 会把推理也算进排队）
+		w.Header().Set("X-Zerg-Queued-Ms", strconv.FormatInt(time.Since(inferT0).Milliseconds(), 10))
 		res = <-resultCh // 执行期：无时长上限（真卡死由看门狗判死；客户端断开由 ctx 取消）
 	case <-time.After(s.inferWaitTimeout()):
 		// 排队上限到达：明确告知"可稍后重试"，并让客户端知道等多久合理（不静默、不硬截断）。
@@ -237,6 +234,9 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 			writeInferError(w, 500, "inference failed", res.err)
 			return
 		}
+		// 乙-2：出队/开始执行之后、写响应之前，把排队时长回给上游
+		// （响应头写了就冻结 ⇒ 必须在这里设 ✗ 不能放 defer）。排队 ≠ 推理，是两笔账。
+		w.Header().Set("X-Zerg-Queued-Ms", strconv.FormatInt(time.Since(inferT0).Milliseconds(), 10))
 		// 写响应头
 		for k, vals := range res.headers {
 			for _, v := range vals {
