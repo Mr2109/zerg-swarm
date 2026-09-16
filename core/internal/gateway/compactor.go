@@ -14,8 +14,8 @@ import (
 
 // 工具输出保留策略：只保留首尾 N 行（中间省略）
 const (
-	toolOutputHeadLines = 5   // 工具输出保留开头行数
-	toolOutputTailLines = 3   // 工具输出保留结尾行数
+	toolOutputHeadLines = 60  // 工具输出保留开头行数
+	toolOutputTailLines = 40  // 工具输出保留结尾行数
 	toolOutputMaxLen    = 800 // 单个工具输出最大保留字符
 )
 
@@ -73,7 +73,7 @@ func maskToolOutput(content string) string {
 	if len(lines) > toolOutputHeadLines+toolOutputTailLines+1 {
 		head := strings.Join(lines[:toolOutputHeadLines], "\n")
 		tail := strings.Join(lines[len(lines)-toolOutputTailLines:], "\n")
-		return head + "\n...[省略 " + itoa(len(lines)-toolOutputHeadLines-toolOutputTailLines) + " 行]...\n" + tail
+		return head + "\n...[此处省略 " + itoa(len(lines)-toolOutputHeadLines-toolOutputTailLines) + " 行：为省上下文被裁掉——如需完整内容请用 read offset/limit 分段重读]...\n" + tail
 	}
 
 	// 行数少但单行超长 → 按字符截断中间
