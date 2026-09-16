@@ -667,3 +667,36 @@ func dumpPrompt(data []byte) {
 	_, _ = f.Write(data)
 	_, _ = f.WriteString("\n")
 }
+
+// DumpInferResult — 按需把「引擎交给内核的终值」落盘（诊断专用，默认关，零开销）。
+//
+// 用途：区分两种可能 —— ①引擎给的正文本身就带过程叙述（按语义切开即可）；
+// ②引擎给的干净而库里脏（说明落库/回传夹带）。开关：ZERG_DUMP_INFER=<文件路径>，权限 0600。
+func DumpInferResult(session, content, reasoning string) {
+	path := os.Getenv("ZERG_DUMP_INFER")
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️ DumpInferResult: open failed: %v\n", err)
+		return
+	}
+	defer f.Close()
+	rec, _ := json.Marshal(map[string]any{
+		"ts": time.Now().Format(time.RFC3339Nano), "session": session,
+		"content": content, "reasoning": reasoning,
+		"content_bytes": len(content), "reasoning_bytes": len(reasoning),
+		"content_head": firstN(content, 160),
+	})
+	_, _ = f.Write(append(rec, '\n'))
+}
+
+// firstN — 取前 n 个字符（按 rune 截，避免切坏多字节）
+func firstN(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
+}
