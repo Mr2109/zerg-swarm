@@ -2,17 +2,17 @@
 # -*- coding: utf-8 -*-
 """check-zh-en.py —— 中英文与术语检查（code-quality §8 的可执行版）
 
-设计要点（2026-09-16 两轮假红的教训）：
+设计要点（2026-09-16 三轮假红的教训）：
   ① 检查对象按文件类型分流：
      - 「全角标点」只扫**没有编译器兜底**的文件（.sh/.yaml/.json/.toml/.py/.plist）
-       —— .go 里全角标点编译即报错，扫它只会制造假红（第一轮 5,725 处假红）
-     - 「术语/旧角色词」对 .go 也要扫（它跟编译器无关，只有人眼会滑过）
-  ② 剥注释/字符串**必须跨行**：Python 三引号文档字符串整段是字符串，
-     只处理单行引号会把它当代码（第二轮的 312 处假红）——故先按整文剥三引号块
-     （用等量换行替换，保住行号）
+       —— .go 里全角标点编译即报错，扫它只会制造假红（第一轮 5,725 处）
+     - 「术语/旧角色词」对 .go 也要扫（与编译器无关，只有人眼会滑过）
+  ② 剥注释/字符串必须覆盖**跨行结构**：
+     - Python 三引号文档字符串（第二轮 312 处假红）
+     - shell heredoc 正文、$( … ) 命令替换内部（第三轮 2 处假红）
   ③ 白名单：防泄漏词表（发布拦截脚本）与规则文本本身必须能写出禁用词
   ④ 零输入即报错 —— 绝不静默空转（假绿）
-  ⑤ 自带自证 —— 样本取自**真实文件形态**（含三引号跨行），该抓的抓、不该抓的不抓
+  ⑤ 自带自证，且**断言用例条数** —— 用例被静默截断时不得打印"通过"
 
 用法：python3 scripts/check-zh-en.py [--selftest]
 退出码：0 = 无命中；1 = 有命中；2 = 环境/输入异常（不静默）
@@ -23,11 +23,10 @@ import sys
 
 ROOTS = ["core", "agent", "gateway", "scripts", "deploy", "docs/skills"]
 SKIP_DIRS = ("node_modules", "target", "vendor", ".git", "dist", "build", ".venv")
-# 全角标点检查范围（无编译器兜底者）
 FULLW_EXT = (".sh", ".yaml", ".yml", ".json", ".toml", ".py", ".plist", ".conf")
-# 术语/旧角色词检查范围（含 .go）
 TERM_EXT = FULLW_EXT + (".go",)
 FULLW = "，。：；（）！？“”‘’　"
+
 FORBID = {
     "虫巢": "术语铁律：只有「虫茧」",
     "集装箱": "术语铁律：只有「虫茧」",
@@ -42,20 +41,54 @@ WHITELIST = {
     "docs/skills/code-quality.md",
     "scripts/check-zh-en.py",
 }
-ROLE_PAT = re.compile(r"(host\s*:\s*['\"]?local\b|Machine\s*:\s*['\"]local['\"]|MachineSnapshot\(['\"]local['\"]\))")
+ROLE_PAT = re.compile(r"""(host\s*:\s*['"]?local\b|Machine\s*:\s*['"]local['"]|MachineSnapshot\(['"]local['"]\))""")
 ROLE_EXEMPT_HINT = ("_test.go", "selfupdate", "toolchain")
 
-RE_TRIPLE = re.compile(r'(\"\"\"|\'\'\')(?:.|\n)*?\1', re.S)
+# 已判定的假红（精确到「文件:行」+ 理由）。仍会在报告中单独列出——豁免不等于隐藏。
+KNOWN_FP = {
+    ("scripts/publish-public.sh", 420): "shell 跨行双引号提交信息体（跨行引号状态尚未建模）",
+}
+
+RE_TRIPLE = re.compile(r"""(\"\"\"|''')[\s\S]*?\1""")
+RE_CMDSUB = re.compile(r"""\$\((?:[^()]|\([^()]*\))*\)""")
+RE_HEREDOC_START = re.compile(r"""<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?""")
 
 
 def strip_blocks(text):
-    """剥掉跨行三引号块（等量换行替换，保住行号）。分号/嵌套不追求完备。"""
+    """剥掉跨行三引号块（等量换行替换，保住行号）。"""
     return RE_TRIPLE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
 
 
+def mask_heredocs(text):
+    """屏蔽 heredoc 段：`<<[-]?['\"]?TAG['\"]?` 起始行之后、直到只含 TAG 的那一行。
+
+    正文属字符串（非代码）。用空行替换以保住行号。
+    行式实现 —— 正则版实测匹配不上真实文件（2026-09-16）。
+    """
+    out, tag = [], None
+    for l in text.split("\n"):
+        if tag is None:
+            out.append(l)
+            m = RE_HEREDOC_START.search(l)
+            tag = m.group(1) if m else None
+        else:
+            if l.strip() == tag:
+                out.append(l)
+                tag = None
+            else:
+                out.append("")
+    return "\n".join(out)
+
+
 def strip_noncode(line, ext):
-    """剥掉单行注释与单行字符串，返回「代码区」子串。"""
+    """剥掉单行注释与单行字符串，返回「代码区」子串。
+
+    先屏蔽 $( … )（命令替换内部等价于字符串；shell 嵌套引号会打乱引号配平）。
+    """
+    if "$(" in line:
+        line = RE_CMDSUB.sub(lambda m: " " * len(m.group(0)), line)
     out, i, n, quote = [], 0, len(line), None
+    hash_comment = ext in (".sh", ".py", ".yaml", ".yml", ".toml", ".conf", ".plist")
     while i < n:
         c = line[i]
         if quote:
@@ -70,7 +103,7 @@ def strip_noncode(line, ext):
             quote = c
             i += 1
             continue
-        if line.startswith("//", i) or (ext in (".sh", ".py", ".yaml", ".yml", ".toml", ".conf", ".plist") and c == "#"):
+        if line.startswith("//", i) or (hash_comment and c == "#"):
             break
         out.append(c)
         i += 1
@@ -79,7 +112,7 @@ def strip_noncode(line, ext):
 
 def scan():
     files = 0
-    hits = {"禁用词": [], "全角标点(代码区)": [], "旧角色词": []}
+    hits = {"禁用词": [], "全角标点(代码区)": [], "旧角色词": [], "已登记假红(豁免)": []}
     for root in ROOTS:
         if not os.path.isdir(root):
             continue
@@ -96,7 +129,12 @@ def scan():
                 except Exception as e:
                     print("  ⚠ 读不了 %s：%s" % (p, e), file=sys.stderr)
                     continue
-                body = strip_blocks(raw) if ext == ".py" else raw
+                if ext == ".py":
+                    body = strip_blocks(raw)
+                elif ext in (".sh", ".plist", ".conf"):
+                    body = mask_heredocs(raw)
+                else:
+                    body = raw
                 for i, l in enumerate(body.split("\n"), 1):
                     if p not in WHITELIST:
                         for w, why in FORBID.items():
@@ -104,10 +142,13 @@ def scan():
                                 hits["禁用词"].append("%s:%d  [%s]  %s" % (p, i, why, l.strip()[:70]))
                     code = strip_noncode(l, ext)
                     if ext in FULLW_EXT:
-                        for ch in FULLW:
-                            if ch in code:
-                                hits["全角标点(代码区)"].append("%s:%d  全角「%s」  %s" % (p, i, ch, l.strip()[:70]))
-                                break
+                        if (p, i) in KNOWN_FP:
+                            hits["已登记假红(豁免)"].append("%s:%d  [%s]  %s" % (p, i, KNOWN_FP[(p, i)], l.strip()[:60]))
+                        else:
+                            for ch in FULLW:
+                                if ch in code:
+                                    hits["全角标点(代码区)"].append("%s:%d  全角「%s」  %s" % (p, i, ch, l.strip()[:70]))
+                                    break
                     m = ROLE_PAT.search(code)
                     if m and not any(h in p for h in ROLE_EXEMPT_HINT):
                         hits["旧角色词"].append("%s:%d  %s  %s" % (p, i, m.group(1), l.strip()[:70]))
@@ -115,35 +156,44 @@ def scan():
 
 
 def selftest():
-    """校验器先自证：样本取自真实文件形态（含三引号跨行）。"""
+    """校验器先自证：样本取自真实文件形态（注释 / 字符串 / 三引号 / heredoc / $( )）。
+
+    条数必须为 13 —— 少跑一条即判失败（防"用例被静默截断还打印通过"）。
+    """
     ok = True
-    # ① 整文剥三引号：文档字符串里的全角不该抓
-    py_src = '"""\n模块说明（含全角括号）\n"""\nx = 1，2\ny = "，"\n'
-    stripped = strip_blocks(py_src).split("\n")
-    doc_hit = any(ch in strip_noncode(l, ".py") for l in stripped[:2] for ch in FULLW)
-    code_hit = any(ch in strip_noncode(l, ".py") for ch in FULLW for l in stripped)
-    print("  %s 三引号段落（第 1~2 行）不抓：期望 False 实际 %s" % ("✓" if not doc_hit else "✗", doc_hit))
-    ok = ok and not doc_hit
-    print("  %s 三引号之后仍抓真代码（x = 1，2）：期望 True 实际 %s" % ("✓" if code_hit else "✗", code_hit))
-    ok = ok and code_hit
-    print("  %s 字符串内全角不抓（y = \"，\"）：期望 False 实际 %s" % ("✓" if not any("，" in strip_noncode(l, ".py") for l in stripped[4:]) else "✗", any("，" in strip_noncode(l, ".py") for l in stripped[4:])))
-    ok = ok and not any("，" in strip_noncode(l, ".py") for l in stripped[4:])
-    # ② 单行：注释/字符串不抓、真代码抓
-    for ext, line, want in [
+    cases = [
         (".sh", "x=1  # 注释里的全角逗号，不该抓", False),
         (".sh", "echo '字符串里的全角逗号，不该抓'", False),
         (".sh", "if [ $a = 1，]; then", True),
+        (".sh", 'say "x: $( [ "$A" = "1" ] && echo \'不触碰（a）\')"', False),
         (".yaml", "cmd: run  --flag，x", True),
         (".yaml", "# 注释，不抓", False),
         (".py", "s = '，'  # 字符串，不抓", False),
         (".py", "x = 1，2", True),
         (".go", 'if s == "，" {', False),
-    ]:
+        (".go", "// 注释里的（全角）不抓", False),
+        (".json", '{"a": "，"}', False),
+        (".json", '{"a": 1，}', True),
+        (".toml", "k = '，'", False),
+    ]
+    assert len(cases) == 13, "自证用例数必须为 13，实际 %d（少跑即失效）" % len(cases)
+    for ext, line, want in cases:
         got = any(ch in strip_noncode(line, ext) for ch in FULLW)
-        flag = "✓" if got == want else "✗"
-        ok = ok and got == want
-        print("  %s [%s] 期望命中=%s 实际=%s  « %s" % (flag, ext, want, got, line))
-    print("  自证：%s" % ("通过 ✓" if ok else "**失败** ✗"))
+        ok = ok and (got == want)
+        print("  %s [%s] 期望=%s 实际=%s  « %s" % ("✓" if got == want else "✗", ext, want, got, line[:56]))
+    py = '"""\n模块说明（含全角括号）\n"""\nx = 1，2\ny = "，"\n'
+    pl = strip_blocks(py).split("\n")
+    d = any(ch in strip_noncode(l, ".py") for ch in FULLW for l in pl[:2])
+    c = any(ch in strip_noncode(l, ".py") for ch in FULLW for l in pl[3:4])
+    ok = ok and (not d) and c
+    print("  %s [三引号] 段落不抓=%s（期望 False）· 段外真代码抓=%s（期望 True）" % ("✓" if (not d and c) else "✗", d, c))
+    hd = "cat <<'EOF' > x\n不触碰（body）\nEOF\necho ，真代码\n"
+    hl = mask_heredocs(hd).split("\n")
+    hb = any(ch in strip_noncode(l, ".sh") for ch in FULLW for l in hl[1:2])
+    hc = any(ch in strip_noncode(l, ".sh") for ch in FULLW for l in hl[3:])
+    ok = ok and (not hb) and hc
+    print("  %s [heredoc] 正文不抓=%s（期望 False）· 段外真代码抓=%s（期望 True）" % ("✓" if (not hb and hc) else "✗", hb, hc))
+    print("  自证：%s（13 条单行 + 2 条跨行结构）" % ("通过 ✓" if ok else "**失败** ✗"))
     return ok
 
 
@@ -157,7 +207,7 @@ def main():
     if files == 0:
         print("✗ 扫到 0 个文件——拒绝静默空转（假绿）", file=sys.stderr)
         return 2
-    total = sum(len(v) for v in hits.values())
+    total = sum(len(hits[k]) for k in ("禁用词", "全角标点(代码区)", "旧角色词"))
     print("扫描文件数 = %d（全角标点只扫无编译器兜底的文件；.go 仅扫术语/旧角色词）" % files)
     for k, v in hits.items():
         print("\n── %s：%d 处" % (k, len(v)))
