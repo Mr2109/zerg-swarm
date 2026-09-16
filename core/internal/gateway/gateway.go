@@ -764,23 +764,8 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. host=local 的模型：通过 LocalBackend 转发到本机 llama-server
-	if route.Host == "local" {
-		if g.localBack == nil {
-			handleLocalModel(w)
-			return
-		}
-		// 加载模型（如果未加载或模型不同）
-		if err := g.loadModel(model, route); err != nil {
-			log.Printf("failed to load local model: %v", err)
-			// v2.5.6 故障自愈: 加载失败=资源/环境故障（可等——OOM/冷加载——waiting_retry）
-			adp.TransformError(w, http.StatusServiceUnavailable, "circuit_open", fmt.Sprintf("failed to load local model: %v", err))
-			return
-		}
-		// 通过 LocalBackend 转发
-		g.forwardToLocal(w, r, route, forwardBody, body, adp)
-		return
-	}
+	// 3c（2026-09-16）：原 `if route.Host == "local"` 分支已删（本机角色退役 ⇒ 不可能有该候选）。
+	// 本机那一台（名为 Mr2109）与 x3 同形，一律走下面的通用转发（子端负责装载与推理）。
 
 	log.Printf("📍 routed to: %s:%d", route.Host, route.Port)
 
@@ -2124,56 +2109,6 @@ func (g *Gateway) loadModel(model string, route *RouteResult) error {
 	}
 	log.Printf("[gateway] local model loaded: %s (state=%s)", model, g.localBack.State())
 	return nil
-}
-
-// forwardToLocal 通过 LocalBackend 转发请求到本机 llama-server。
-// 健康检查由 LocalBackend.Infer() 内部处理（崩溃自愈 + 熔断）。
-func (g *Gateway) forwardToLocal(w http.ResponseWriter, r *http.Request, route *RouteResult, body []byte, origBody []byte, adp adapter.Adapter) {
-	// 调用 LocalBackend.Infer() 转发到本机 llama-server
-	// path 透传给 llama-server（如 /v1/chat/completions）
-	resp, err := g.localBack.Infer(r.URL.Path, body)
-	if err != nil {
-		log.Printf("failed to forward to local backend: %v", err)
-		// 后端未就绪或熔断，返回 503
-		adp.TransformError(w, http.StatusServiceUnavailable, "api_error", fmt.Sprintf("local backend unavailable: %s", err.Error()))
-		return
-	}
-	defer resp.Body.Close()
-
-	// 丙批 N4：前缀命中率闭环——本机 llama-server 也返回缓存计量（timings/usage）。
-	// 仅非流式响应读取缓冲（流式直通，不破坏 SSE）。
-	if g.prefixCache != nil && !adapter.IsStreamResponse(resp) {
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		resp.Body = io.NopCloser(bytes.NewReader(respBody))
-		if model, merr := extractModel(body); merr == nil {
-			g.recordPrefixCache(model, body, respBody)
-		}
-	}
-
-	// 丙批 N4 补齐（2026-09-10）：本机 llama-server 走这条路径——流式同样采样（tee 尾窗 → 末块 timings）
-	var usageTeeLocal *sseUsageTee
-	if g.prefixCache != nil && adapter.IsStreamResponse(resp) {
-		usageTeeLocal = newSSEUsageTee(resp.Body)
-		resp.Body = usageTeeLocal
-	}
-	// 出站转换（按客户端适配器）——用原始 body 判断流式（forwardBody 已被强制 stream:false）
-	adp.TransformResponse(w, resp, r, origBody)
-	if g.prefixCache != nil && usageTeeLocal != nil {
-		if ub := usageTeeLocal.UsageJSON(); len(ub) > 0 {
-			if model, merr := extractModel(body); merr == nil {
-				g.recordPrefixCache(model, body, ub)
-			}
-		}
-	}
-}
-
-// handleLocalModel host=local 且无 LocalBackend 时的回退处理。
-func handleLocalModel(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusServiceUnavailable)
-	w.Write([]byte(`{"error":"local backend not configured"}`))
-	log.Println("⚠️  host=local model request but LocalBackend is not configured")
 }
 
 // RouteResult 路由选择结果。
