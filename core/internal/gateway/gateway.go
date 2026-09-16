@@ -1414,6 +1414,12 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 			for _, c := range models {
 				hosts = append(hosts, c.Host)
 			}
+			// 活性过滤（2026-09-16）也可能把候选跳空：把"因无心跳被跳过"的机器一并写进原因，
+			// 否则只看到 "all broken or excluded"，分不清是"未部署的预留机位"还是"刚掉线的机器"。
+			if len(skippedNoBeat) > 0 {
+				return nil, fmt.Errorf("model %s has no available candidate (all broken/excluded: %s; skipped for no heartbeat: %s)",
+					model, strings.Join(hosts, ","), strings.Join(skippedNoBeat, ","))
+			}
 			return nil, fmt.Errorf("model %s has no available candidate (all broken or excluded: %s)", model, strings.Join(hosts, ","))
 		}
 
