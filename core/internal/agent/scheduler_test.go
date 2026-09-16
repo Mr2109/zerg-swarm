@@ -134,7 +134,12 @@ func TestDispatchIssue(t *testing.T) {
 
 	path := createTestIssue(t, workDir, "dispatch-test", "high", "open")
 	s := NewScheduler(workDir)
-	s.SetRunner(func(path string) int { return 0 }) // mock——不启动真实 agent
+	// 闸门（2026-09-16）：mock worker 停在 channel 上，断言完成后再放行。
+	// 为什么需要：dispatchIssue 内是 `go runWorker(...)`（异步），runWorker 的 defer 会 activeCount--
+	// ⇒ mock 瞬间返回时，下面的 `ActiveCount() != 1` 断言就在与 goroutine 抢时序：
+	// 本机偶然先看到 1（过），CI 调度不同则可能已减到 0（flaky FAIL —— 公开 CI 实测）。加闸门后不依赖时序。
+	release := make(chan struct{})
+	s.SetRunner(func(path string) int { <-release; return 0 }) // mock——不启动真实 agent；停在闸门后
 	issue := ParsedIssue{
 		Path:       path,
 		InstanceID: "dispatch-test",
@@ -158,6 +163,7 @@ func TestDispatchIssue(t *testing.T) {
 	if s.ActiveCount() != 1 {
 		t.Errorf("期望 1 个活跃 worker，实际 %d", s.ActiveCount())
 	}
+	close(release) // 断言已完成 ⇒ 放行 mock worker，让收尾逻辑（activeCount-- 等）正常跑完
 
 	// 清理：模拟 worker 完成（完整状态链——running→fixing→verified→done）
 	content := readContent(t, path)
