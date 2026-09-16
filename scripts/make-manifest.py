@@ -33,6 +33,10 @@ EXPECTED = {
     "zerg-ui-darwin-arm64",
     "zerg-core-linux-amd64",
     "zerg-agent-linux-amd64",
+    # 茧壁（Rust）：随卵分发 + 机器上装的那一份（§五之二/§五之三）。本机只出 darwin，
+    # linux 件由 CI 的 ubuntu runner 构建（与 core/agent 的纯 Go 交叉编不同，Rust 本地不跨编）。
+    "zerg-wall-darwin-arm64",
+    "zerg-wall-linux-amd64",
 }
 
 
