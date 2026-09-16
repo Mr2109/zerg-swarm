@@ -96,7 +96,7 @@ echo "== 汇总 runs=$runs 装载=${best_load}s RSS=${best_mem}GiB GTT=${best_gt
 if [ "$runs" -ge 3 ]; then
   cat > "$OUT/$NAME.yaml" <<YML
 # $NAME 实测档案（X3 标定；§8.4 六字段 + 溯源）
-# 引擎：$ENG；GTT 为实测差（基线 $G0 B）。
+# 引擎：${ENG}；GTT 为实测差（基线 $G0 B）。
 # 账种（丙4，Mr2109 2026-09-16 拍）：Linux/Radeon 侧这笔账是 **GTT**（macOS 侧对应的是 GPU wired）。
 gpu_mem_kind: gtt
 # 额外参数（原样传给引擎）：${EXTRA_DISPLAY:-（无）}
