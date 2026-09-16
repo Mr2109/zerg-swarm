@@ -8,6 +8,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -137,4 +138,40 @@ func TestObsCodeStringsStable(t *testing.T) {
 		t.Fatalf("分类码已变：%s / %s / %s", ChatErrUpstreamTimeout, ChatErrClientAborted, ChatErrStreamTruncated)
 	}
 	_ = errors.Is // 保留导入（Unwrap 依赖 errors 语义）
+}
+
+// TestObsStallSeparatesSlowFromStuck —— 回归守卫：stall_ms 必须只统计**首字节之后**的空档。
+// 构造：首块很快（≈0ms）⇒ 中间停 300ms ⇒ 断言 stall ≫ first_byte（若两者混同，这条必红）。
+func TestObsStallSeparatesSlowFromStuck(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ZERG_STATE_DIR", dir)
+	got := NewObsTimer("sess-stall", 1, "m")
+	got.MarkChunk()                    // 首块：立刻
+	time.Sleep(300 * time.Millisecond) // 出字之后停住（这才是"卡"）
+	got.MarkChunk()
+	got.Finish("finish")
+	b, err := os.ReadFile(filepath.Join(dir, obsFileName))
+	if err != nil {
+		t.Fatalf("读不到观测文件：%v", err)
+	}
+	out := string(b)
+	var rec struct {
+		Turn struct {
+			FirstByteMS int64 `json:"first_byte_ms"`
+			StallMS     int64 `json:"stall_ms"`
+			MaxGapMS    int64 `json:"max_gap_ms"`
+		} `json:"turn"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &rec); err != nil {
+		t.Fatalf("解析失败：%v\n原文：%s", err, out)
+	}
+	if rec.Turn.StallMS < 250 {
+		t.Errorf("stall_ms=%d 应≈300（首字节之后的停顿被漏掉了 ✗）原文：%s", rec.Turn.StallMS, out)
+	}
+	if rec.Turn.FirstByteMS > 100 {
+		t.Errorf("first_byte_ms=%d 应≈0（首块很快 ✓）原文：%s", rec.Turn.FirstByteMS, out)
+	}
+	if rec.Turn.MaxGapMS < rec.Turn.StallMS {
+		t.Errorf("max_gap(%d) 应 ≥ stall(%d)", rec.Turn.MaxGapMS, rec.Turn.StallMS)
+	}
 }

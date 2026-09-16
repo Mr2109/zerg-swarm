@@ -58,8 +58,11 @@ PROFESSIONS = {
     "P1": {
         "name": "程序员",
         "goal": "定位仓里一处小问题并说明改法（指到 file:line）",
-        "system": ("你是一名程序员，正在和一个 AI 助手对话。你要用它解决真实的小活。"
-                   "说话像真人：简短、具体、偶尔改口。不要写代码块给自己看，直接把话说完。"),
+        "system": ("你就是用户本人（程序员），正在用一个 AI 助手干你的活。\n"
+                   "铁律：**你不是助手**。绝对不要写你的思考过程、计划、分析、步骤清单；"
+                   "绝对不要用「The user wants…」「I need to…」这类旁白。\n"
+                   "只输出**你要对助手说的那一句话**：像真人一样简短（一到两句）、具体、可以带口语和追问。\n"
+                   "禁止输出任何英文分析，禁止输出编号列表。"),
         "opening": "帮我看看 core/internal/chat/obs.go 这个文件是干什么的？",
     },
 }
@@ -71,14 +74,25 @@ def local_user_reply(prof, history, tok):
     for role, text in history[-8:]:
         msgs.append({"role": role, "content": text})
     body = {"model": os.environ.get("ZERG_DRIVER_MODEL", "gemma-4-26B"),
-            "messages": msgs, "max_tokens": 200, "stream": False}
+            "messages": msgs, "max_tokens": 800, "stream": False}
     with post(AGENT + "/infer", body, tok, timeout=300) as r:
         d = json.loads(r.read().decode())
     # llama-server 风格响应
+    # 实测：content 可能为空而全文落在 reasoning_content（模型把额度用在了"想"上）⇒ 必须兜底，不当作"模型没说话"
     try:
-        return d["choices"][0]["message"]["content"].strip()
+        msg = d["choices"][0]["message"]
     except Exception:
-        return (d.get("content") or "").strip()
+        msg = {}
+    txt = (msg.get("content") or "").strip()
+    if not txt:
+        r = (msg.get("reasoning_content") or "").strip()
+        # 从思路里抽最后一句"像人说的话"（去掉编号/星号/英文分析行）
+        cand = [l.strip(" *-\t") for l in r.split("\n") if l.strip(" *-\t")]
+        cand = [l for l in cand if l and not l.startswith(("*", "#")) and not l[0].isascii()]
+        txt = cand[-1] if cand else ""
+        if txt:
+            print("        （驱动：content 为空，已从 reasoning 抽句 ✓）")
+    return txt
 
 
 def send_turn(session_id, text, tok, timeout=900):
@@ -87,15 +101,24 @@ def send_turn(session_id, text, tok, timeout=900):
     events, end, tail = 0, "no-end", []
     try:
         with post(url, {"content": text}, tok, timeout=timeout) as r:
+            cur_ev = ""
             for raw in r:
-                line = raw.decode("utf-8", "replace").strip()
+                line = raw.decode("utf-8", "replace").rstrip()
+                if line.startswith("event:"):          # 实测分帧：event: delta / compacting / done / error
+                    cur_ev = line.split(":", 1)[1].strip()
+                    if cur_ev in ("done", "finish", "error", "aborted"):
+                        end = cur_ev
+                    if len(tail) < 200:
+                        tail.append(line[:200])
+                    continue
                 if not line.startswith("data:"):
                     continue
                 events += 1
+                payload = line[5:].strip()
+                if cur_ev in ("done", "finish", "error", "aborted"):
+                    end = "%s %s" % (cur_ev, payload[:120])
                 if len(tail) < 200:
                     tail.append(line[:200])
-                if any(k in line for k in ('"finish"', '"done"', '"error"')):
-                    end = line[:200]
     except urllib.error.HTTPError as e:
         return events, "http_%d" % e.code, [str(e)]
     except Exception as e:  # 网络/超时
@@ -182,7 +205,9 @@ def main():
                 arr = msgs if isinstance(msgs, list) else msgs.get("messages", [])
                 last = [m for m in arr if m.get("role") == "assistant"]
                 if last:
-                    history.append(("assistant", last[-1].get("content", "")))
+                    _a = last[-1].get("content", "")
+                    history.append(("assistant", _a))
+                    print("        助手> %s" % _a.replace("\n", " ")[:200])
         except Exception as e:
             findings.append(("read-back", str(e)[:120]))
 
