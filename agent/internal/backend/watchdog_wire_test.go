@@ -40,6 +40,10 @@ func silentEngine(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// ⚠ 注意：本构造函数**会覆写**看门狗环境变量（下方四个 t.Setenv）—— 调用方若要别的口径，
+// **必须写在本函数返回之后**（写在调用之前会被无声覆盖：2026-09-16 第十四轮我在这里踩过一次，
+// 把提前判死门槛算成 250ms、实际生效的是 20ms）。窗口/采样压到几十毫秒是为了让用例跑得快，
+// 代价是"夹具分片节奏（10ms/片）"与"判死门槛"变得同量级 ⇒ 需要大余量的用例请自己覆写。
 func wireTestManager(t *testing.T, port int, cpu func(*subproc) func() (uint64, error)) (*Manager, *subproc, func()) {
 	mk := newEvictTestManager(1, map[string]*subproc{})
 	sp := &subproc{model: "m", port: port, state: StateReady, lastUsed: time.Now(), entry: inflightEntry()}
