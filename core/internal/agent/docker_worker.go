@@ -13,8 +13,21 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+// containerNameSeq 容器名里的进程内递增序号 —— 让名字**结构上**唯一，而不是靠时钟精度。
+//
+// 2026-09-16 第十四轮实证（不是推测）：把「并发 5 次调用的容器名两两不同」立成硬断言后，
+// 全量测试（非 -race）里当场红过一次 —— `zerg-worker-1789529840264087000` 出现两次
+// （`time.Now().UnixNano()` 在同一时钟粒度内可重复）。而 `docker run --name` 重名会被 docker
+// 直接拒绝 ⇒ 两路并发任务必有一路当场失败。故名字 = 时间戳 + 进程内序号。
+var containerNameSeq uint64
+
+func uniqueContainerName() string {
+	return fmt.Sprintf("zerg-worker-%d-%d", time.Now().UnixNano(), atomic.AddUint64(&containerNameSeq, 1))
+}
 
 // 常量
 
@@ -95,7 +108,7 @@ func (dw *DockerWorker) RunDev(repoDir, workDir, task, branch string) (int, erro
 		"-v", fmt.Sprintf("%s:/tasks", workDir),
 		"--network", dw.network,
 		"--add-host", "host.docker.internal:host-gateway",
-		"--name", fmt.Sprintf("zerg-worker-%d", time.Now().UnixNano()),
+		"--name", uniqueContainerName(),
 		dw.image,
 		"sh", "-c", shellCmd,
 	}
@@ -158,11 +171,12 @@ func (dw *DockerWorker) Run(issuePath, workDir string) (int, error) {
 //   - -v workDir:/workspace: 挂载任务工作区
 //   - --network host: 容器共享宿主网络（访问网关）
 //   - --add-host: 容器内解析 host.docker.internal → 宿主网关
-//   - --name: 容器命名（带时间戳防冲突）
+//   - --name: 容器命名（时间戳 + 进程内序号 —— 结构上唯一，见 uniqueContainerName）
 //   - sh -c: 容器入口——跑 zerg-agent --issue（接单模式）
 func (dw *DockerWorker) buildCommand(issuePath, workDir string) []string {
-	timestamp := time.Now().UnixNano()
-	containerName := fmt.Sprintf("zerg-worker-%d", timestamp)
+	// 容器名**结构上唯一**（时间戳 + 进程内序号）——并发调用下时钟粒度不足以区分两次调用，
+	// 见 uniqueContainerName 的注释（2026-09-16 实测到过重名，docker 会直接拒绝同名容器）。
+	containerName := uniqueContainerName()
 
 	// 容器内工作区路径
 	workDirInCont := "/workspace"
