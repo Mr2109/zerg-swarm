@@ -146,6 +146,15 @@ func (s *Server) handleInfer(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAuth(w, r) {
 		return
 	}
+	// 乙-2（排队可见，2026-09-17 Mr2109 拍「都做」）：把「我接到 → 我真正开始干活」的耗时回给上游。
+	// 为什么放在响应头：对**流式与非流式都成立**（头在首字节前发出），上游一拿到就能算出排队时长。
+	// 语义：这是**子端侧的等待**（含解析、等槽位/在途请求）；排队 ≠ 推理 ⇒ 只用于观测，不进任何时限。
+	inferT0 := time.Now()
+	defer func() {
+		if w.Header().Get("X-Zerg-Queued-Ms") == "" {
+			w.Header().Set("X-Zerg-Queued-Ms", strconv.FormatInt(time.Since(inferT0).Milliseconds(), 10))
+		}
+	}()
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

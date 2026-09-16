@@ -21,6 +21,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -123,6 +124,14 @@ func (g *Gateway) forwardToBackend(
 		resp, err = overrideClient.Do(forwardReq)
 	} else {
 		resp, err = g.client.Do(forwardReq)
+	}
+	// 乙-2：读子端自报的排队时长（响应头；best-effort，缺失就是不写，不编造 0）
+	if resp != nil {
+		if v := resp.Header.Get("X-Zerg-Queued-Ms"); v != "" {
+			if n, perr := strconv.ParseInt(v, 10, 64); perr == nil {
+				ObsQueued(route.Host, modelName(reqMap), n)
+			}
+		}
 	}
 	if err != nil {
 		// v2.5.6 修复（2026-08-29 q2 go vet）: 请求失败提前 return 必须 cancel——防 context 泄漏

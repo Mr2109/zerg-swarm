@@ -54,3 +54,32 @@ func ObsFailover(from, to, reason, model string) {
 	defer f.Close()
 	_, _ = f.Write(append(b, '\n'))
 }
+
+// ObsQueued — 乙-2：记一条「子端侧排队时长」（kind=queued）。
+// 数据来自子端响应头 X-Zerg-Queued-Ms（子端自报「接到 → 开始干活」的耗时）。
+// 语义纪律：排队 ≠ 推理 ⇒ 这条记录**只用于观测**，不参与任何时限判定（业界口径：waiting 是容量信号）。
+func ObsQueued(host, model string, queuedMS int64) {
+	p := obsFailoverPath()
+	if p == "" || queuedMS < 0 {
+		return
+	}
+	rec := map[string]any{
+		"ts":        time.Now().Format(time.RFC3339),
+		"kind":      "queued",
+		"host":      host,
+		"queued_ms": queuedMS,
+	}
+	if model != "" {
+		rec["model"] = model
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(append(b, '\n'))
+}
