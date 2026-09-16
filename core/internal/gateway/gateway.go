@@ -1355,15 +1355,11 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 					score += delta
 					logLedgerAdjust(candidate.Host, model, delta, why)
 				}
-			} else if candidate.Host == "local" && g.localBack != nil {
-				// B13: local 无快照（本机不心跳）——用 LocalBackend 状态打分
-				if g.localBack.IsReady() {
-					score++ // 健康
-				}
-				if g.localBack.ModelFile() == candidate.File {
-					score += 10 // 已加载目标模型
-				}
 			}
+			// 3c（2026-09-16）：原 B13 分支已删 —— 它给 host=="local" 的候选按 LocalBackend 状态打分，
+			// 注释原话是"local 无快照（本机不心跳）"。本机角色退役后本机 = 名为 Mr2109 的普通子端，
+			// **它是心跳上报的**（resident/vram_known 实测都在）⇒ 该特例的前提已反转：
+			// 现在所有机器一律靠账本与快照打分（即上面那条 if），不再有"本机不心跳"的例外。
 			// cache-aware（T5）：该机器处理过相似 prompt → 加分
 			if prompt != "" {
 				if ps := g.prefixScore(candidate.Host, prompt); ps > 0 {
