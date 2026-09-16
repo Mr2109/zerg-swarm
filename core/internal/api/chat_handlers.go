@@ -855,10 +855,9 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		onDelta func(deltaType, text string), toolsParam []map[string]any) (*loopcore.Response, error) {
 		n := atomic.AddInt64(&obsRound, 1)
 		timer := chat.NewObsTimer(id, int(n), model)
-		wrapped := func(deltaType, text string) {
-			timer.MarkChunk()
-			onDelta(deltaType, text)
-		}
+		// ⚠ 铁律：**包装不得改变原有语义** —— InferStream 内部对 onDelta 判 nil（非流式路径传 nil），
+		// 包一层之后必须保留该保护，否则非流式路径直接空指针 panic（2026-09-16 实测事故）。
+		wrapped := wrapObsDelta(timer, onDelta)
 		ir, ierr := h.infer.InferStream(chat.WithSessionID(ctx, id), model, sysPrompt, m, wrapped, toolsParam)
 		timer.Finish(chat.ObsEndReason(ierr))
 		if ierr != nil {
@@ -1161,4 +1160,18 @@ func isChineseAnswer(s string) bool {
 		}
 	}
 	return false
+}
+
+// wrapObsDelta — OBS-1 轮次计时的 onDelta 包装器。
+//
+// **必须 nil-safe**：InferStream 允许 onDelta 为 nil（非流式路径），包装后若无条件调用，
+// 非流式路径会空指针 panic ⇒ handler 静默死掉 ⇒ 客户端看到"半句话 + 断开"、助手回复不落库。
+// 这条是 2026-09-16 实测事故的直接教训，配有用例 TestWrapObsDeltaNilSafe 守门。
+func wrapObsDelta(timer *chat.ObsTimer, onDelta func(deltaType, text string)) func(deltaType, text string) {
+	return func(deltaType, text string) {
+		timer.MarkChunk()
+		if onDelta != nil {
+			onDelta(deltaType, text)
+		}
+	}
 }
