@@ -250,9 +250,13 @@ func (t *ObsTimer) Finish(endReason string) {
 		rec.Turn.FirstByteMS = t.firstByte.Sub(t.start).Milliseconds()
 	}
 	// 丙：把看门狗结论落进记录（判「卡」必须同时看首字节时长——本引擎突发式送达，stall 常为 0）
-	rec.Turn.GateSec = t.gateSec
+	gate := t.gateSec
+	if gate == 0 {
+		gate = EffectiveGateSec(t.model) // 未回填 ⇒ 按卵推导（档案事实优先 ⇒ 思考型下限 ⇒ 0=未知）
+	}
+	rec.Turn.GateSec = gate
 	rec.Turn.WaitedMS = rec.Turn.FirstByteMS
-	rec.Turn.Verdict = string(StallVerdictOf(rec.Turn.FirstByteMS, rec.Turn.StallMS, t.gateSec, stalledAfterMS))
+	rec.Turn.Verdict = string(StallVerdictOf(rec.Turn.FirstByteMS, rec.Turn.StallMS, gate, stalledAfterMS))
 	if t.queued > 0 {
 		rec.Turn.QueuedMS = t.queued.Milliseconds() // 乙：排队只观测，不进任何闸
 	}
