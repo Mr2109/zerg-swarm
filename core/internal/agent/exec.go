@@ -1034,7 +1034,8 @@ func (ec *ExecContext) executeGlob(ctx context.Context, pattern string, gate Too
 	}
 
 	// 匹配文件（v2.5 修复：filepath.Glob 不支持 ** 递归——手写）
-	matches, err := globRecursive(ec.WorkDir, pattern)
+	budget := newWalkBudget()
+	matches, err := globRecursive(ec.WorkDir, pattern, budget)
 	if err != nil {
 		return "", fmt.Errorf("glob 匹配失败: %w", err)
 	}
@@ -1068,7 +1069,7 @@ func (ec *ExecContext) executeGlob(ctx context.Context, pattern string, gate Too
 		return "无匹配文件", nil
 	}
 
-	return strings.Join(files, "\n"), nil
+	return strings.Join(files, "\n") + budget.Note(), nil
 }
 
 // executeGrep — 搜索文件内容
@@ -1105,9 +1106,13 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 	if info.IsDir() {
 		// 目录递归搜索
 		var matches []string
+		budget := newWalkBudget()
 		filepath.Walk(absPath, func(p string, fi os.FileInfo, err error) error {
 			if err != nil || fi.IsDir() {
 				return nil
+			}
+			if !budget.Allowed() { // 丙：预算到顶 ⇒ 早停（少走，而不是事后掐断）
+				return filepath.SkipAll
 			}
 			// 跳过二进制/隐藏文件
 			if strings.HasPrefix(fi.Name(), ".") {
@@ -1679,7 +1684,7 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 
 // globRecursive — 支持 ** 递归的 glob 匹配（v2.5——filepath.Glob 不支持 **）
 // 实现：拆分段——** 递归遍历目录，其余段用 filepath.Match
-func globRecursive(root, pattern string) ([]string, error) {
+func globRecursive(root, pattern string, budget *walkBudget) ([]string, error) {
 	// 统一分隔符
 	pattern = strings.ReplaceAll(pattern, "\\", "/")
 	root = filepath.Clean(root)
@@ -1708,6 +1713,9 @@ func globRecursive(root, pattern string) ([]string, error) {
 					if err != nil {
 						return nil
 					}
+					if !budget.Allowed() { // 丙：预算到顶 ⇒ 早停（大卷上少走）
+						return filepath.SkipAll
+					}
 					if !fi.IsDir() {
 						rel, _ := filepath.Rel(root, p)
 						results = append(results, rel)
@@ -1720,6 +1728,9 @@ func globRecursive(root, pattern string) ([]string, error) {
 			filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error {
 				if err != nil {
 					return nil
+				}
+				if !budget.Allowed() { // 丙：预算到顶 ⇒ 早停
+					return filepath.SkipAll
 				}
 				if fi.IsDir() {
 					// 递归尝试后续段
