@@ -354,6 +354,8 @@ func compactRecordFailure(sessionID string, cause error, now float64, cls Compac
 			log.Printf("⚠️ session %s compaction failure #%d — entering cooldown %s: %v", sessionID, f.Streak, d, cause)
 		}
 	}
+	// OBS-4：压缩失败也落一行（失败不阻塞对话 ✓ 但必须可取证）
+	obsCompact(sessionID, "threshold", 0, 0, 0, 0, "fail", fmt.Sprintf("%v (streak=%d)", cause, f.Streak), false)
 	sessions[sessionID] = f
 	if err := saveCompactCooldownLocked(sessions); err != nil {
 		log.Printf("⚠️ failed to persist compaction cooldown state: %v", err)
@@ -561,6 +563,8 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 	})
 	log.Printf("✅ session %s compaction done: messages %d..%d → summary #%d (%d chars, source %s)",
 		sessionID, fromID, toID, summaryID, len([]rune(summary)), compactSummarySource(lingua))
+	// OBS-4（v2.5.10 前置档②）：结构化一行，供长跑批量分析。
+	obsCompact(sessionID, "threshold", 0, 0, len([]rune(summary)), 0, "ok", "", false) // 耗时本现场不可得 ⇒ 0（omitempty=未知）
 	return true, nil
 }
 
