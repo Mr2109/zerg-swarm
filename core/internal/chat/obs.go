@@ -71,9 +71,10 @@ type TurnObs struct {
 	Chunks      int   `json:"chunks"`        // 分块数
 	// 丁（超时留痕，2026-09-17 Mr2109 拍「都做」）：把"闸多少、等了多久、排队多久"记下来，
 	// 让"超时"这件事不必翻日志就能在观测面看清；乙（排队分离）：排队时长**只观测、不进任何闸**。
-	QueuedMS int64 `json:"queued_ms"` // 排队时长（乙：排队≠推理，只进观测）
-	GateSec  int   `json:"gate_sec"`  // 首 token 闸（秒）——本次生效值（含按卵放宽后的结果）
-	WaitedMS int64 `json:"waited_ms"` // 首字节实际等待（与 GateSec 对照即知"差多少被掐"）
+	QueuedMS int64  `json:"queued_ms"` // 排队时长（乙：排队≠推理，只进观测）
+	GateSec  int    `json:"gate_sec"`  // 首 token 闸（秒）——本次生效值（含按卵放宽后的结果）
+	WaitedMS int64  `json:"waited_ms"` // 首字节实际等待（与 GateSec 对照即知"差多少被掐"）
+	Verdict  string `json:"verdict"`   // 丙：卡 / 慢 / 正常（看门狗结论，一眼可读）
 }
 
 // ObsRecord — 一条观测记录（定长字段集：不随轮数膨胀）
@@ -173,6 +174,8 @@ type ObsTimer struct {
 	chunks    int
 	maxGap    time.Duration
 	stall     time.Duration // 首字节之后的最大空档
+	gateSec   int           // 首 token 闸有效值（秒；0=未知）
+	queued    time.Duration // 排队时长（乙：只观测）
 }
 
 // NewObsTimer — 建一个轮次计时器
@@ -205,6 +208,24 @@ func (t *ObsTimer) MarkChunk() {
 }
 
 // Finish — 轮次结束：落一行观测（endReason 为空按"正常收尾"处理）
+// stalledAfterMS —— 判「中途卡住」的阈值：首字节之后连续这么久没有新块 ⇒ 判「卡」。
+// 取 60s：本地思考型模型出字本就慢，阈值给小了会把「慢」误判成「卡」（业界口径：看门狗而非总闸）。
+const stalledAfterMS int64 = 60000
+
+// SetGate —— 记录本轮**首 token 闸的生效值**（秒）⇒ 观测面能算出「差多少被掐」。0=未知（不编造）。
+func (t *ObsTimer) SetGate(sec int) {
+	if t != nil {
+		t.gateSec = sec
+	}
+}
+
+// SetQueued —— 记录本轮**排队时长**（乙：只观测、不进闸；0=未测到）。
+func (t *ObsTimer) SetQueued(d time.Duration) {
+	if t != nil {
+		t.queued = d
+	}
+}
+
 func (t *ObsTimer) Finish(endReason string) {
 	if t == nil {
 		return
@@ -227,6 +248,13 @@ func (t *ObsTimer) Finish(endReason string) {
 	}
 	if !t.firstByte.IsZero() {
 		rec.Turn.FirstByteMS = t.firstByte.Sub(t.start).Milliseconds()
+	}
+	// 丙：把看门狗结论落进记录（判「卡」必须同时看首字节时长——本引擎突发式送达，stall 常为 0）
+	rec.Turn.GateSec = t.gateSec
+	rec.Turn.WaitedMS = rec.Turn.FirstByteMS
+	rec.Turn.Verdict = string(StallVerdictOf(rec.Turn.FirstByteMS, rec.Turn.StallMS, t.gateSec, stalledAfterMS))
+	if t.queued > 0 {
+		rec.Turn.QueuedMS = t.queued.Milliseconds() // 乙：排队只观测，不进任何闸
 	}
 	obsWrite(rec)
 }
