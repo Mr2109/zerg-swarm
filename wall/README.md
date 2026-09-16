@@ -13,8 +13,13 @@ zerg-wall run  --spec <spec.json>   # 先出计划（写 stderr 留痕），再�
 zerg-wall --version
 ```
 
-**退出码**：`0` 成功 · `2` **硬失败**（配方被拒 / 用法错 / 平台没落地 / 可执行不在 PATH）。
+**退出码**：`0` 成功 · `2` **硬失败**（配方被拒 / 用法错 / 认不得的平台 / 可执行不在 PATH）。
 硬失败与「跑起来了」必须一眼分得开：对消费侧而言两者都按红灯处理，绝不允许被读成「没封闭但照跑」。
+
+⚠ **一个如实记下的差别（批 2'.4 实测）**：配方里**声明了 env** 时，`argv[0]` 是 `/bin/sh`（包装 exec），
+引擎自己起不来是**包装里**的 `exec "$@"` 失败 ⇒ 退出码是 shell 的 **127**；只有**不带 env**（直 exec 引擎）时
+「可执行不在」才落在茧壁这一层、是 **2**。两者都是「起不来」，但消费侧读码时要知道这个分岔
+（Linux 侧同形：bwrap 前面也有一层包装）。
 
 ## 计划的形状（一行 JSON）
 
@@ -31,6 +36,11 @@ zerg-wall --version
 - `allowlist` —— **自报面**：只列**超出基线**的授权（基线见 `note`；基线项不进清单）；
 - `note` —— 如实说明（含「哪些不在本 argv 内」：归属层 `systemd-run` 的 slice/单元/限额、
   `memlock_bytes` 的落点；以及**等级由谁给**）。
+
+**两个一档的形态差异（macOS 就是那个不同）**：Linux 把封闭**写进 argv**（`argv[0] = bwrap`）；
+macOS 没有可写进去的外部沙箱程序（一档 = 直调 Seatbelt）⇒ 封闭由茧壁**本进程**施加，
+`argv` 是**封闭之内**要跑的那条命令行。**载荷形状一字不加**：这件事由 `allowlist` + `note` 如实交代
+（`note` 里明写「策略由茧壁本进程经 sandbox_init 施加（不经 argv）」；`run` 时策略原文另进 stderr 留痕）。
 
 ## 配方（`spec.json`）的键
 
@@ -63,6 +73,38 @@ zerg-wall --version
 4. **argv 逐字对齐 Go 侧** `hatch.BuildBwrapArgv`（迁移桥 = 同一配方两侧 argv 逐条一致，任务单 2'.3）；
    要改配方先改设计稿与 Go 侧，两侧同批改。
 
+## macOS 一档：直调 Seatbelt（批 2'.4）
+
+`zerg-wall` 在 macOS 上**不经** `sandbox-exec` 命令行，而是 `extern "C"` 直调 libSystem 的
+`sandbox_init`（`flags = 0` ⇒ 第一参数按**策略文本**解释），随后 exec `plan` 的 argv。
+理由（设计稿 §五之二）：`sandbox-exec` 自 Sierra 起被 Apple 标 DEPRECATED、官方替代至今缺席
+（`apple/containerization#737` 2026-05-12 起 Open）；`sandbox_init` 是同一条内核接口的库入口，
+**本机实测（macOS 26）仍可用**（坏策略 `rc=-1` 且**不施加任何封闭** —— 这条正是「失败就是失败」判据的前提）。
+
+**策略 = `scripts/sandbox-probes/pF.sb` 的黄金配方**（本机四态实测过，少放一条是一条）：
+`(deny default)` + `process*` + `sysctl-read` + `mach-lookup`（基线）+ `file-read*` +
+`file-write* (subpath 声明的可写区 = work_dir ∪ 可写绑定的**宿主侧**)` + **`(allow network-bind)`（不过滤）** +
+`network-inbound/outbound` 限 localhost。
+
+**如实标三条差距（别当 macOS 也有 Linux 那一级）** ✗：
+1. **没有视图级封闭** ⇒ 拿不到 `enclosed.kernel`：声明里的路径**按宿主路径原样使用**，茧壁**不做**
+   「空间↔宿主」映射（映射是视图层的事，凭空映射 = 造第二份真相）。⇒ 若一枚卵的声明是 Linux 形态
+   （引擎 `/engine/bin/…`、权重 `/models/…`），macOS 上**跑不起来**（会以「起不来」收场，不会静默换个跑法）；
+   要支持它就得有一层路径映射 —— **属设计缺口，已登记待 Mr2109 拍**（见自主作业日志的「等他拍板区」）；
+2. **只读面收不窄** ⇒ 黄金配方给的是**全局 `file-read*`**（dyld/Framework/解释器的加载面无法按声明路径收口；
+   收窄方案**未实测**）⇒ 它已**如实列进 `allowlist`**，且声明的只读面**不冒充额外授权**；
+3. **设备/GPU（IOKit）通路未实测** ⇒ 不产生策略项、也不宣称（少放一条是一条；将来要 Metal 时先实测再放）。
+
+**活体判据（脚本自己会红）**：
+
+```bash
+python3 scripts/wall-macos-evidence.py   # 四态 + 写空间外 + 变异验证 ⇒ 回执 wall/evidence-macos-seatbelt-20260916.txt
+python3 scripts/wall-macos-mutate.py     # 四条变异：改坏实现 ⇒ 用例必须红 ⇒ 还原 sha 一致 ⇒ 复跑绿
+```
+
+回执里两种对照都在：**基线（无封闭）** 与 **封闭态** —— 出网基线不可达、或空间外本来就写不进去
+⇒ 断言**没有区分度** ⇒ 脚本 rc=2 硬失败（不许把「测不出来」刷成绿）。
+
 ## 迁移桥：与 Go 侧 `hatch.BuildBwrapArgv` 逐条对拍（任务 2'.3）
 
 茧壁是「同一个落点」的**第二份实现** ⇒ 两侧任一处「顺手改进」（少一个 `--unshare-*`、绑定顺序换一下、
@@ -92,7 +134,14 @@ python3 scripts/compare-wall-argv.py --self-test # 先证「这面镜子能红�
 cd wall
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test                 # 单元 6 + 集成 10（含三条负例组与「不许放宽」不变式）+ CLI 4
+cargo test                 # 单元 8 + plan_linux 10 + plan_macos 10 + CLI 5 + 活体(macOS) 4
+```
+
+**macOS 侧的两条活体门禁**（在**仓根**跑）：
+
+```bash
+python3 scripts/wall-macos-evidence.py   # 0 全绿 / 1 断言红 / 2 硬失败（含基线无区分度）
+python3 scripts/wall-macos-mutate.py     # 变异验证：改坏实现 ⇒ 用例必须红 ⇒ 还原 sha 一致 ⇒ 复跑绿
 ```
 
 **对拍门禁**（在**仓根**跑；需要 Go 工具链）：
@@ -105,5 +154,6 @@ python3 scripts/wall-bridge-mutate.py              # 变异验证：两侧各改
 **制品分发**：**暂未接** `scripts/build-all.sh` —— 是否进 5 件制品矩阵属**发布契约**，待 Mr2109 拍板 ⚠
 （不进矩阵也能随卵分发：先落 `bin/`）。
 
-**本批尚未做的**：macOS 一档（直调 Seatbelt / `sandbox_init`，任务 2'.4 —— 现在**明确拒绝**并说明原因）、
-二档（直调原语）、Windows、制品矩阵接入（是否进 5 件矩阵是发布契约，待 Mr2109 决定）。
+**本批尚未做的**：二档（直调原语）、Windows（本机无靶子 ⇒ 不许宣称）、制品矩阵接入（是否进 5 件矩阵是
+发布契约，待 Mr2109 决定）、任务 2'.5（`verify-two-states.py --wall`：把茧壁接进判据 7 那条既有门禁）、
+以及上面「如实标三条差距」里的路径映射（设计缺口）。

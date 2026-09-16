@@ -6,6 +6,8 @@
 //!                                     # --platform 仅供**离线**出别的平台的计划（交叉对拍/取证）；默认本机平台
 //! zerg-wall run  --spec <spec.json>   # 先出计划（写到 stderr 留痕），再按 argv exec；子进程退出码原样透传
 //!                                     # run **不接受** --platform：要跑的就是本机这一格
+//!                                     # macOS 一档：exec 之前由**本进程**直调 Seatbelt 施加策略
+//!                                     #（策略原文也进 stderr 留痕）；施加失败 ⇒ rc=2，**绝不回落成裸跑**
 //! zerg-wall --version
 //! ```
 //!
@@ -68,11 +70,21 @@ fn run() -> Result<i32, Error> {
                 println!("{}", p.to_json());
                 return Ok(0);
             }
-            // run：计划留痕到 stderr（stdout 留给子进程），再 exec
+            // run：计划留痕到 stderr（stdout 留给子进程），再施加封闭、最后 exec
             eprintln!("茧壁计划（run）：{}", p.to_json());
             if p.argv.is_empty() {
                 return Err(Error::new("计划里没有可执行的 argv——拒（不猜）"));
             }
+            // 封闭由谁施加：Linux 由 argv 里的 bwrap 施加；macOS 没有外部沙箱程序 ⇒ 本进程直调
+            // Seatbelt。两种形态都**留痕**（策略原文进 stderr），失败一律报错、绝不改道 ✓
+            let conf = zerg_wall::platform::confinement_for(&os, &spec)?;
+            if let zerg_wall::platform::Confinement::InProcess { profile } = &conf {
+                eprintln!(
+                    "茧壁策略（本进程直调 Seatbelt，{} 字节）：\n{profile}",
+                    profile.len()
+                );
+            }
+            conf.enforce()?;
             let status = Command::new(&p.argv[0])
                 .args(&p.argv[1..])
                 .status()
