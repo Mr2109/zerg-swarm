@@ -141,12 +141,14 @@ func main() {
 	// B13/#31：本机（local）行由主控自己维护（本机不跑独立 agent、不经心跳）。
 	// 注册周期刷新时**先同步写一次**：保证任何只读 store 的消费方（路由打分/调度探活/
 	// 模型聚合/pin 校验）在启动窗口内就能看到 local 行，不再等 30s 首拍。周期刷新不变（30s）。
-	startLocalSnapshotRefresh(localBack, fleetStore, 30*time.Second)
+	// 3a（2026-09-16 Mr2109 拍：所有可推理的计算机都是子端）：**本机角色退役** ⇒
+	// 不再维护 store 的 local 行（原先靠 startLocalSnapshotRefresh 首写+周期刷）。
+	// 本机 = 名字叫 Mr2109 的普通子端，它的资源与身份**经心跳上报**，与 x3 同形。
 	handlers := &api.Handlers{
 		Config:          cfg,
 		ConfigPath:      fleetYAML, // B11: 热加载用
 		Store:           fleetStore,
-		LocalBack:       localBack,
+		LocalBack:       nil,             // 3a：本机角色退役（原先传 localBack）——nil ⇒ 观测面不再造 local 行
 		HeartbeatLogger: heartbeatLogger, // v2.3 B1: 传入心跳专用 logger
 	}
 
@@ -213,7 +215,7 @@ func main() {
 	fmt.Printf("🚀 Server listening on %s\n", addr)
 
 	// 控制端点（加载/卸载/退出主控）
-	ctrl := api.NewControlHandlers(cfg.Auth.Token, cfg, localBack)
+	ctrl := api.NewControlHandlers(cfg.Auth.Token, cfg, nil) // 3a：本机角色退役
 	r.Post("/api/control/load", ctrl.LoadHandler)
 	r.Post("/api/control/unload", ctrl.UnloadHandler)
 	r.Post("/api/control/stop", ctrl.StopHandler)
@@ -249,7 +251,7 @@ func main() {
 	log.Printf("🧩 Model adapter registry: %d adapters (full adapter routing)", len(adapterRegistry))
 
 	// 同时启动网关（:8082），三标准透传 + 本机子端
-	gw := gateway.NewGateway(cfg.Auth.Token, cfg, localBack, fleetStore, adapterRegistry)
+	gw := gateway.NewGateway(cfg.Auth.Token, cfg, nil, fleetStore, adapterRegistry) // 3a：本机角色退役
 	// v2.5.6 2026-08-28 治本: 网关先启动并等待就绪——再恢复任务/派发（之前 goroutine 晚启动——任务调 8082 connection refused 全失败→熔断连锁）
 	go func() {
 		if err := gw.Start(8082); err != nil {
