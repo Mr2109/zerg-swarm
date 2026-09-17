@@ -279,6 +279,10 @@ func toolGrep() ToolDef {
 						"type":        "boolean",
 						"description": "忽略大小写匹配（默认 false）",
 					},
+					"type": map[string]any{
+						"type":        "string",
+						"description": "按文件扩展名筛选（如 go/py/md/js/sh——不带点；空=不过滤）",
+					},
 				},
 				"required": []string{"path", "pattern"},
 			},
