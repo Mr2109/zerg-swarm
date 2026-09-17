@@ -52,10 +52,99 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 	if maxRounds <= 0 {
 		maxRounds = 10
 	}
+	nowFn := d.Now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
 	emit := func(event, payload string) {
 		if d.Events != nil {
 			d.Events(event, payload)
 		}
+	}
+
+	// ── T5.6 并发恢复互斥：**执行前置门**（位置本身是语义的一部分）──
+	// 这一段必须在**任何节点执行之前**：本函数里第一次推理、第一次工具执行都在它之后。
+	// 落败者在这里**直接返回** —— 不推理、不执行工具、**也不写检查点**（不去踩赢家的 run 状态；
+	// 否则两个进程会往同一个 JSONL 里交错写，把恢复点写坏）。
+	// 依据（实测）：k 个恢复者 ⇒ k 次受闸副作用，窗口 = 节点自身执行时间 ⇒ 事后去重救不回来。
+	if d.Lease != nil && strings.TrimSpace(d.Session) != "" {
+		holder := strings.TrimSpace(d.Holder)
+		if holder == "" {
+			holder = defaultHolder()
+		}
+		ttl := d.LeaseTTL
+		if ttl <= 0 {
+			ttl = DefaultLeaseTTL
+		}
+		release, _, err := d.Lease.Enter(d.Session, holder, ttl, nowFn())
+		if err != nil {
+			// 专项错误码（errors.Is ErrLeaseHeld）+ 当前持有者：调用方能答"谁挡住了我"
+			res.ExitKind = "lease_rejected"
+			res.Err = err.Error()
+			return res
+		}
+		defer release()
+	}
+
+	// ── T5.5 恢复：从最后一份快照继续（**先认领、再恢复**，顺序不能反）──
+	startRound := 1
+	completedStep := 0
+	if d.Resume != nil {
+		if !Resumable(d.Resume.State.ExitKind) {
+			// 完成过的 run 不再跑第二遍（"并发两次恢复 ⇒ 效果恰好一次"的第二道闸：即使两次恢复
+			// 在时间上错开、lease 早已释放，也不重复执行已给出终答的那些节点）。
+			res.ExitKind = "already_done"
+			res.Err = fmt.Sprintf("loopcore: run=%s 已完成（终局 %q，无待办）⇒ 拒绝再恢复（防重复劳动/重复副作用）",
+				d.Resume.RunID, d.Resume.State.ExitKind)
+			return res
+		}
+		msgs = append([]map[string]any(nil), d.Resume.State.Messages...)
+		res.Traces = append(res.Traces, d.Resume.State.Traces...)
+		res.Usage.TotalTokens = d.Resume.State.TotalTokens
+		completedStep = d.Resume.State.StepIndex
+		startRound = completedStep + 1
+		emit("resume", mustJSON(map[string]any{
+			"run_id": d.Resume.RunID, "from_step": completedStep, "start_round": startRound,
+			"version_marker": d.Resume.VersionMarker,
+		}))
+	}
+	// 恢复的轮次预算：maxRounds 是**本次运行**可用的轮数（不是全程总数）——
+	// 否则 max_rounds 退出后再恢复会因为 startRound > maxRounds 而一步都跑不动（那是死循环式失效）。
+	lastRound := startRound - 1 + maxRounds
+
+	// ── T5.5 每步快照（粒度 = 步：一轮收尾后的完整状态；步内不落盘）──
+	// 只在"过了前置门"之后接线：落败者/已完成者上面就返回了，一步都不写。
+	// 存不下 ⇒ 如实记进 res.CheckpointErr 并发事件，**不改变循环行为**（快照不该变成新的失败点）。
+	persist := func(step int, exitKind string) {
+		if d.Checkpoints == nil || strings.TrimSpace(d.RunID) == "" || step <= 0 {
+			return
+		}
+		st := CheckpointState{
+			RunID: d.RunID, Session: d.Session, StepIndex: step, Round: step,
+			Messages: msgs, Traces: res.Traces, ExitKind: exitKind,
+			TotalTokens: res.Usage.TotalTokens, Model: model,
+		}
+		if _, err := d.Checkpoints.Save(st); err != nil {
+			res.CheckpointErr = fmt.Sprintf("step=%d: %v", step, err)
+			emit("checkpoint_failed", mustJSON(map[string]any{
+				"run_id": d.RunID, "step": step, "error": err.Error(),
+			}))
+		}
+	}
+	if d.Checkpoints != nil && strings.TrimSpace(d.RunID) != "" {
+		// 终局快照：一处收口**全部**返回路径（与 T1.3 的观测 defer 同一纪律），
+		// 带上 ExitKind ⇒ 下次恢复据此判"还有没有活要干"（Resumable）。
+		// 步号的取法（只在这一处分岔，别处不再判）：
+		//   · 可继续的终局（max_rounds/wall_clock/…）⇒ 停在**最后一个完整走完的步**上，
+		//     恢复时从下一步继续（崩在半路的那一轮会被重跑 —— 跨崩溃 at-least-once）。
+		//   · 已给答的终局（natural 等）⇒ 当前这一轮也已收尾 ⇒ 步号跟到本轮（不谎报"还差一步"）。
+		defer func() {
+			step := completedStep
+			if res.ExitKind != "" && !Resumable(res.ExitKind) && obsRound > step {
+				step = obsRound
+			}
+			persist(step, res.ExitKind)
+		}()
 	}
 	// 上下文轻量化（旧工具结果压缩——keepRecent 3）
 	compact := func() {
@@ -71,7 +160,7 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 	searchStreak := map[string]int{}
 	guard := loopguardNew()
 
-	for round := 1; round <= maxRounds; round++ {
+	for round := startRound; round <= lastRound; round++ {
 		obsRound = round // T1.3：本层真实轮次（会话级结论用它当 Rounds，不猜）
 		// 墙钟
 		if cfg.WallClock > 0 && time.Since(loopStart) > cfg.WallClock {
@@ -322,6 +411,10 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 		// T1.3 观测：本轮工具全部执行完 ⇒ 上报轮级行为信号（本轮几次调用 + 其中几次写成功）。
 		// 这是**每轮**都要落的一条：它让"跑到第几轮了、到目前为都没写过东西"在观测面直接可读。
 		obsBehaviorRound(d.Session, round, len(result.ToolCalls), writeOK)
+		// T5.5：**一步收尾**（本轮推理 + 本轮全部工具执行都完成了）⇒ 落这一份快照。
+		// 位置是语义的一部分：只在这一步的边界上落，绝不在步内落（半个状态不可执行也不可解释）。
+		completedStep = round
+		persist(round, "")
 	}
 	if res.ExitKind == "" {
 		res.ExitKind = "max_rounds"
