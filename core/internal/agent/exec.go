@@ -1128,13 +1128,19 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 		var matches []string
 		budget := newWalkBudget()
 		filepath.Walk(absPath, func(p string, fi os.FileInfo, err error) error {
-			if err != nil || fi.IsDir() {
+			if err != nil {
+				return nil
+			}
+			if fi.IsDir() {
+				if strings.HasPrefix(fi.Name(), ".") {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			if !budget.Allowed() { // 丙：预算到顶 ⇒ 早停（少走，而不是事后掐断）
 				return filepath.SkipAll
 			}
-			// 跳过二进制/隐藏文件
+			// 跳过隐藏文件
 			if strings.HasPrefix(fi.Name(), ".") {
 				return nil
 			}
