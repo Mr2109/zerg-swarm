@@ -297,6 +297,10 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 		}
 		st, reason := ChooseTerminal(in)
 		note := TerminalNote(st, reason+"（退出原因："+res.ExitKind+"）")
+		// 实验开关（默认关）：ZERG_SENDBACK=1 ⇒ 改为"打回重做"（供 A/B 实测"打回是帮助还是伤害"）
+		if SendBackEnabled() && res.ExitKind == "max_rounds" {
+			note = SendBackNote(reason + "（退出原因：" + res.ExitKind + "）")
+		}
 		if res.Content == "" {
 			res.Content = note
 		} else {
