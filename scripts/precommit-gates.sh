@@ -18,13 +18,20 @@
 #
 # 用法
 # ----
-#     bash scripts/precommit-gates.sh                  # 默认跑全部（go + rust + pub）
+#     bash scripts/precommit-gates.sh                  # 默认跑全部（go + rust + pub + tags）
 #     bash scripts/precommit-gates.sh --scope go       # 只跑 Go 侧（可重复：--scope go --scope rust）
+#     bash scripts/precommit-gates.sh --scope tags     # 只跑双构建工程门禁（T6.3）
 #     bash scripts/precommit-gates.sh --outdir /tmp/gates-14   # 指定日志目录
 #     bash scripts/precommit-gates.sh --list           # 只看步骤清单，不跑
 #     bash scripts/precommit-gates.sh --self-test      # 只跑自检（合成步骤，不碰真目标）
 #
 # 退出码：0 全绿 · 1 有失败项 · 2 用法错/前置缺件/自检不过（**不给结论**）
+#
+# scope 说明（2026-09-17 加 tags）：
+#   go   = gofmt/build/vet/test（**单侧**：默认 tag 配置）
+#   rust = wall 的 fmt/clippy/test
+#   pub  = 公开面两侧都有的脚本静态检查
+#   tags = 双构建工程门禁（脚本自带正反用例自检；它自己会在两种 tag 配置下成对跑 build/vet）
 #
 # 自检不通过 ⇒ 拒绝跑真目标（项目口径：门禁自己先能被证明「会红」）。
 
@@ -236,8 +243,15 @@ sys.exit(1 if bad else 0)
 PYEOF"
         add_step pub "check-shell-unicode-vars.py --check"         rc "${REPO_ROOT}" "python3 scripts/check-shell-unicode-vars.py --check scripts/*.sh"
         ;;
+      tags)
+        # 双构建工程门禁（任务表 T6.3 / 设计稿 §〇 A3–A6）：tag 命名 · 两个构建都过 · vet 成对跑 ·
+        # 导出面奇偶校验 · GOFLAGS 断言。**单独一个 scope**：它比 go scope 里的单侧检查慢
+        # （每个模块两套配置），且口径不同（它守的是「两个构建配置等价」），不该混进现有 scope 语义。
+        # --scope go 跳不到它，要单跑：bash scripts/precommit-gates.sh --scope tags
+        add_step tags "双构建工程门禁（tag/构建/vet/导出面/GOFLAGS）" rc "${REPO_ROOT}" "python3 scripts/check-build-tags.py"
+        ;;
       *)
-        printf '✗ 未知 scope: %s（可用: go / rust / pub）\n' "${s}" >&2
+        printf '✗ 未知 scope: %s（可用: go / rust / pub / tags）\n' "${s}" >&2
         return 2
         ;;
     esac
@@ -269,13 +283,13 @@ main() {
       --outdir) outdir="$2"; shift 2 ;;
       --list) list_only=1; shift ;;
       --self-test) self_only=1; shift ;;
-      -h|--help) sed -n '20,30p' "${BASH_SOURCE[0]}"; return 0 ;;
+      -h|--help) sed -n '19,36p' "${BASH_SOURCE[0]}"; return 0 ;;
       *) printf '✗ 未知参数: %s\n' "$1" >&2; return 2 ;;
     esac
   done
 
   if [ "${#scopes[@]}" -eq 0 ]; then
-    scopes=(go rust pub)
+    scopes=(go rust pub tags)
   fi
 
   # 自检先跑（--self-test 时只跑自检）
@@ -327,6 +341,7 @@ main() {
 }
 
 main "$@"
+MAIN_RC=$?
 
 
 # ── 中英文与术语检查（软门禁·报告不阻断；2026-09-16 Mr2109 拍板）────────────────────────
@@ -337,3 +352,9 @@ if [ -f scripts/check-zh-en.py ]; then
   echo "── 软门禁：中英文与术语检查（报告不阻断）──"
   python3 scripts/check-zh-en.py || echo "⚠ 中英文/术语检查有命中（不阻断提交）——见上；判定真伪后修正"
 fi
+
+# ── 总控退出码：必须由 main 决定，不许被尾部软门禁吃掉（2026-09-17 实测修）──────────────
+# 现场：`--scope tags` 在 GOFLAGS 污染下报「⇒ 门禁红灯（rc=1）」，而**整脚本退出码是 0**
+# —— 尾部那条软门禁的 rc 成了脚本的 rc，调用方（人、脚本、CI）一律读到绿。
+# 这类「报红却退 0」正是本脚本开头点名的那类假绿，故在此显式出口。
+exit "${MAIN_RC}"
