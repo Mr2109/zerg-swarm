@@ -577,6 +577,10 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 	// 都在上面返回了 ⇒ 一条 compaction 事件都不会落（这是本族事件的防误报底线，用例 ③ 钉住）。
 	// 事实块在起点算（终态时库里已被改过：软归档 + 插入摘要 ⇒ 只有此刻的布局才是"压缩前"）。
 	h := obsCompactionStart(compactObsFactsOf(sessionID, model, compactTriggerReasonOf(force, opts), msgs, src, ids))
+	// T3.2：**即将被压掉的那段里的硬约束先入册** —— 否则"压缩吃掉一条 must_survive"这件事在
+	// 首次提示检查之前发生（首轮即超阈值的会话）时，我们连它存在都不知道（关键用例的前提）。
+	// 只登记、不改变压缩语义：不重注入、不改摘要、不阻断（观测面铁律①）。
+	indexConstraints(sessionID, msgs)
 
 	// 选路: LLMLingua-2 优先
 	var summary string
