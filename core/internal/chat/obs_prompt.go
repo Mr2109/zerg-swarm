@@ -325,6 +325,15 @@ type PromptRender struct {
 	// Reminders — 本轮额外注入的**代码写**的提醒字串（插话/纠正/引导）。只用于纯净度扫描（不入分段账）。
 	Reminders []string
 
+	// T3.4 prompt 版本外键（H4）：本次提示的**装配处名字**与**发布标签**。
+	// 两者是调用方声明的事实 —— 声明不了就传空 ⇒ 对应键**缺席**（不写空串冒充，见 obs_prompt_version.go 口径②）。
+	// prompt_version **不用传**：它是渲染后模板的 sha256 前 8 字节，由观测面在真字节上算出（口径①）。
+	PromptName  string
+	PromptLabel string
+
+	// T3.6 提示脚手架策略（H7）：调用方声明的配置事实；**nil ⇒ 四个策略键一个都不落**（不写 0/空串冒充）。
+	Strategy *PromptStrategyIn
+
 	// Sources — 这些历史消息的**原消息**（含 ID）——用于登记约束（拿不到就登记不了：
 	// source_msg_id 不许编造）。可传 nil（则本轮不登记新约束，只做检索）。
 	Sources []*Message
@@ -392,6 +401,21 @@ func ObservePromptCheck(r PromptRender) {
 		ClockISO:    r.Identity.ClockISO,
 		RequestSeed: &seed,
 	}
+
+	// ③′ T3.4 版本外键（H4）：版本对**模板**取指纹（渲染后系统提示去掉记忆块 ⇒ 只改记忆块不改版本），
+	// 名字/标签是调用方声明的事实（声明不了 ⇒ 键缺席）。label→version 快照**随事件落盘**（事件是权威）。
+	base.PromptVersion = PromptTemplateVersion(template)
+	base.PromptName = r.PromptName
+	base.PromptLabel = r.PromptLabel
+	if r.PromptName != "" && r.PromptLabel != "" {
+		RegisterPromptLabelVersion(r.PromptName, r.PromptLabel, base.PromptVersion)
+		base.PromptLabelVersions = PromptLabelVersionsOf(r.PromptName)
+	}
+
+	// ③″ T3.6 策略版本化（H7）：调用方没声明 ⇒ 四个键**一个都不落**（不写 0/空串冒充）；
+	// 声明了 false 也照落（"没声明"与"声明了没有"必须可分）。
+	base.StrategyID, base.StepIndex, base.HasAcceptanceCriteria, base.RequiresToolCallFirst =
+		strategyFieldsOf(r.Strategy, r.Session)
 	obsWrite(base)
 
 	// ④ 告警（missing 非空）——**不阻断请求**：观测面只报告，处置留给上层/人
