@@ -76,10 +76,11 @@ type TurnObs struct {
 	Chunks      int   `json:"chunks"`        // 分块数
 	// 丁（超时留痕，2026-09-17 Mr2109 拍「都做」）：把"闸多少、等了多久、排队多久"记下来，
 	// 让"超时"这件事不必翻日志就能在观测面看清；乙（排队分离）：排队时长**只观测、不进任何闸**。
-	QueuedMS int64  `json:"queued_ms"` // 排队时长（乙：排队≠推理，只进观测）
-	GateSec  int    `json:"gate_sec"`  // 首 token 闸（秒）——本次生效值（含按卵放宽后的结果）
-	WaitedMS int64  `json:"waited_ms"` // 首字节实际等待（与 GateSec 对照即知"差多少被掐"）
-	Verdict  string `json:"verdict"`   // 丙：卡 / 慢 / 正常（看门狗结论，一眼可读）
+	QueuedMS int64  `json:"queued_ms"`          // 排队时长（乙：排队≠推理，只进观测）
+	ErrText  string `json:"err_text,omitempty"` // 非正常收尾的错误原文（治"无名氏"）
+	GateSec  int    `json:"gate_sec"`           // 首 token 闸（秒）——本次生效值（含按卵放宽后的结果）
+	WaitedMS int64  `json:"waited_ms"`          // 首字节实际等待（与 GateSec 对照即知"差多少被掐"）
+	Verdict  string `json:"verdict"`            // 丙：卡 / 慢 / 正常（看门狗结论，一眼可读）
 }
 
 // ObsRecord — 一条观测记录（定长字段集：不随轮数膨胀）
@@ -181,6 +182,7 @@ type ObsTimer struct {
 	stall     time.Duration // 首字节之后的最大空档
 	gateSec   int           // 首 token 闸有效值（秒；0=未知）
 	queued    time.Duration // 排队时长（乙：只观测）
+	errText   string        // 非正常收尾的错误原文（best-effort）
 }
 
 // NewObsTimer — 建一个轮次计时器
@@ -231,6 +233,13 @@ func (t *ObsTimer) SetQueued(d time.Duration) {
 	}
 }
 
+// SetErrText — 记录导致本轮非正常收尾的**错误原文**（best-effort；拿不到就不写 ⇒ 不编造）。
+func (t *ObsTimer) SetErrText(e string) {
+	if t != nil {
+		t.errText = e
+	}
+}
+
 func (t *ObsTimer) Finish(endReason string) {
 	if t == nil {
 		return
@@ -261,6 +270,9 @@ func (t *ObsTimer) Finish(endReason string) {
 	}
 	rec.Turn.GateSec = gate
 	rec.Turn.WaitedMS = rec.Turn.FirstByteMS
+	if t.errText != "" {
+		rec.Turn.ErrText = trunca(t.errText, 300) // 截断：不撑爆观测
+	}
 	rec.Turn.Verdict = string(StallVerdictOf(rec.Turn.FirstByteMS, rec.Turn.StallMS, gate, stalledAfterMS))
 	if t.queued > 0 {
 		rec.Turn.QueuedMS = t.queued.Milliseconds() // 乙：排队只观测，不进任何闸
@@ -320,4 +332,12 @@ func ObsTool(session string, round int, tool string, durText string, ok bool, ro
 		Kind: "tool", Session: session, Round: round, Tool: tool,
 		DurText: durText, Result: res, ToolRounds: rounds, ToolMax: max,
 	})
+}
+
+// trunca — 截断（观测用；不动原字符串语义，只在末尾标注省略）
+func trunca(s string, n int) string {
+	if n <= 0 || len(s) <= n {
+		return s
+	}
+	return s[:n] + "…（已截断）"
 }
