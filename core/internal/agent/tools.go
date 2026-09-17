@@ -255,7 +255,7 @@ func toolGrep() ToolDef {
 		Function: FunctionDef{
 			Name: "grep",
 			Description: "按正则搜索文件内容（不要用 bash grep/rg）。path 可为文件或目录（目录递归）；匹配多时自动分页（最多 200 条，用 offset 翻页）。\n\n" +
-				"【示例】\"grep\" path=src pattern=\"func \"\n\n本工具实现版本 v1.0.0（以 tools/versions.json 台账为准）。",
+				"【示例】\"grep\" path=src pattern=\"func \"\n\n本工具实现版本 v1.0.1（以 tools/versions.json 台账为准）。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
