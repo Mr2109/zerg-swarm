@@ -173,6 +173,13 @@ type ObsRecord struct {
 	// 它与 turn 平级（不是 TurnObs 的成员）：TurnObs 的字段**不带 omitempty**（0 是有效测量值），
 	// 而几何字段必须能表达「缺席」⇒ 一律指针 + omitempty，两种语义不混。
 	Geometry *GeometryObs `json:"geometry,omitempty"`
+
+	// ── T1.3 早退/空转行为信号（kind=behavior）──
+	// 轮级块（event_name=behavior_round）挂 Behavior；会话级结论（event_name=behavior_session）挂
+	// BehaviorSession —— 两者**互斥**：轮级块是"截至目前"，会话级结论是"算不算早退"，语义不同不混一个块。
+	// 同 TurnObs 的口径：**块内字段不带 omitempty**（0 是有效测量值，不得与"未知"混同）。
+	Behavior        *BehaviorObs        `json:"behavior,omitempty"`
+	BehaviorSession *BehaviorSessionObs `json:"behavior_session,omitempty"`
 }
 
 var obsMu sync.Mutex
