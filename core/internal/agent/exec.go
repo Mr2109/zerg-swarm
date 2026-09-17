@@ -1149,6 +1149,11 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 		if h, ok := args["hidden"].(bool); ok {
 			hidden = h
 		}
+		// G5: 按文件扩展名筛选
+		fileType := ""
+		if ft, ok := args["type"].(string); ok {
+			fileType = strings.ToLower(ft)
+		}
 		filepath.Walk(absPath, func(p string, fi os.FileInfo, err error) error {
 			if err != nil {
 				return nil
@@ -1165,6 +1170,13 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 			// 跳过隐藏文件（除非 hidden=true）
 			if !hidden && strings.HasPrefix(fi.Name(), ".") {
 				return nil
+			}
+			// G5: 按文件扩展名筛选
+			if fileType != "" {
+				ext := strings.TrimPrefix(filepath.Ext(fi.Name()), ".")
+				if ext != fileType {
+					return nil
+				}
 			}
 			data, rerr := os.ReadFile(p)
 			if rerr != nil {

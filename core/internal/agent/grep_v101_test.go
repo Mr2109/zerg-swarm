@@ -121,3 +121,41 @@ func TestGrepIgnoreCase(t *testing.T) {
 		t.Errorf("ignore_case=false 时搜小写 needle 不应命中大写 NEEDLE——got:\n%s", outFalse)
 	}
 }
+
+// TestGrepFileType — G5: type=go 只命中 .go 文件，不含 .md；type 缺席时两个都命中
+func TestGrepFileType(t *testing.T) {
+	dir := t.TempDir()
+	// 同目录下 .go 和 .md 都含同一关键字 "ZERG_TOKEN"
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nconst ZERG_TOKEN = \"abc\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Doc\n\nZERG_TOKEN is a test keyword.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ec := &ExecContext{WorkDir: dir}
+
+	// type=go → 只命中 .go，不含 .md
+	outGo, err := ec.executeGrep(context.Background(), ".", "ZERG_TOKEN", map[string]any{"type": "go"}, nil)
+	if err != nil {
+		t.Fatalf("grep type=go: %v", err)
+	}
+	if !strings.Contains(outGo, "main.go") {
+		t.Errorf("type=go 应命中 main.go——got:\n%s", outGo)
+	}
+	if strings.Contains(outGo, "README.md") {
+		t.Errorf("type=go 不应命中 README.md——got:\n%s", outGo)
+	}
+
+	// type 缺席 → 两个文件都命中
+	outAll, err := ec.executeGrep(context.Background(), ".", "ZERG_TOKEN", map[string]any{}, nil)
+	if err != nil {
+		t.Fatalf("grep no type: %v", err)
+	}
+	if !strings.Contains(outAll, "main.go") {
+		t.Errorf("无 type 时应命中 main.go——got:\n%s", outAll)
+	}
+	if !strings.Contains(outAll, "README.md") {
+		t.Errorf("无 type 时应命中 README.md——got:\n%s", outAll)
+	}
+}
