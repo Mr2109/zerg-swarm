@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """扫描 shell 脚本里 `$VAR` 后紧跟非 ASCII 字节的隐患（bash 会把多字节当变量名一部分 → unbound variable）。
 
-规则：把 $VAR 改成 ${VAR}。只处理本类风险，不改动其它内容；逐文件报告改动数。
+规则：把 $VAR 改成 ${VAR}。只处理本类风险，不改动其它内容；逐文件报告改动数。整行注释（首个非空白字符为 #）一律跳过（注释里的示例不是真隐患）。
 """
 import re
 import sys
@@ -27,11 +27,25 @@ for path in FILES:
         raw = open(path, "rb").read()
     except FileNotFoundError:
         continue
-    hits = PAT.findall(raw)
+    def _mask_comments(b):
+        """把整行注释（首个非空白字符为 #）的字节换成空格，保留换行与偏移。"""
+        keep = bytearray(b); start = 0
+        for ln in b.split(b"\n"):
+            if ln.lstrip().startswith(b"#"):
+                for i in range(start, start + len(ln)):
+                    if keep[i] != 0x0a:
+                        keep[i] = 0x20
+            start += len(ln) + 1
+        return bytes(keep)
+    masked = _mask_comments(raw)
+    hits = PAT.findall(masked)
     if not hits:
         continue
     if not CHECK:
-        new = PAT.sub(lambda m: b"${" + m.group(1) + b"}", raw)
+        out = bytearray(raw)
+        for m in PAT.finditer(masked):
+            out[m.start():m.end()] = b"${" + m.group(1) + b"}"
+        new = bytes(out)
         open(path, "wb").write(new)
     total += len(hits)
     print("  %-34s 修 %d 处: %s" % (path.split("/")[-1], len(hits),
