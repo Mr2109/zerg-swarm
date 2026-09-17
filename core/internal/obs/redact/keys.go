@@ -184,6 +184,7 @@ func truncateValue(s string) string {
 	if limit <= 0 || int64(len(s)) <= limit {
 		return s
 	}
+	valueTruncations.Add(1) // 诊断计数：被值长上限截断的值个数（gate.go）
 	keep := int(limit) - len(PlaceholderTruncated)
 	if keep < 0 {
 		keep = 0

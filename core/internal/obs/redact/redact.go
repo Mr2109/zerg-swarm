@@ -127,8 +127,14 @@ func isTokenByte(c byte) bool {
 // 两处的读者视角都是标准令牌形态。做法：摘掉不可见字符得到「可见视图」，在可见视图上扫令牌区间，
 // 再把区间映射回原文（区间内的不可见字符一并遮蔽）。没有不可见字符时走原串直扫的快路径
 // （绝大多数值走这里，零额外分配）。
+//
+// 必要条件门（T2.7）：**没有可见令牌前缀、也没有不可见字符 ⇒ 什么都不可能命中**，直接返回。
+// 两支都要保留：Cf 藏在前缀里时原文不含任何前缀，只能靠 hasInvisible 那一支兜住。
 func maskTokenShapes(s string) string {
 	if !hasInvisible(s) {
+		if !hasTokenPrefix(s) {
+			return s // 必要条件门：绝大多数值在这里返回（C 类被丢弃、A 类零扫描，剩下的都走这条）
+		}
 		return maskTokenRangesIn(s, s, nil)
 	}
 	vis, idx := stripInvisible(s)
@@ -196,9 +202,15 @@ func maskTokenRangesIn(src, vis string, idx []int) string {
 }
 
 // tokenRanges 扫出 vis 上需要遮蔽的字节区间（互不重叠、按序）。
+// tokenFirst 表先把「首字节不可能是任何前缀开头」的位置一次索引跳掉（原实现每个字节一次
+// map 哈希；合成事件上 tokenRanges 是 Tier-0 里最热的一段）。
 func tokenRanges(vis string) [][2]int {
 	var out [][2]int
 	for i := 0; i < len(vis); {
+		if !tokenFirst[vis[i]] {
+			i++
+			continue
+		}
 		matched := false
 		for _, p := range tokenIdx[lowerByte(vis[i])] {
 			if i+len(p) <= len(vis) && strings.EqualFold(vis[i:i+len(p)], p) {
@@ -367,6 +379,7 @@ const maxRedactRounds = 3
 // ⇒ 一轮即返回就破坏幂等，而重试/重放/二次导出路径全都依赖幂等。做法：**只对已被改写过的值**
 // 迭代到不动点（绝大多数值一轮即稳，例如基准里的 "read /tmp/f0 ok" ⇒ 零额外成本）。
 func RedactValue(s string) string {
+	pipelineEntries.Add(1) // 诊断计数：进值管线的字符串个数（A 类零扫描不计，见 gate.go）
 	out := redactPass(s)
 	if out != s {
 		for i := 0; i < maxRedactRounds; i++ {
@@ -398,21 +411,47 @@ func redactPass(s string) string {
 	if !maybeSensitive(s) {
 		return s
 	}
-	s = foldWidth(s)
-	s = replaceLiteral(reSessTok, s, PlaceholderRedacted)
-	keywordVals := keywordRuleValues(s)
-	s = reURLQuery.ReplaceAllStringFunc(s, func(m string) string {
-		g := reURLQuery.FindStringSubmatch(m)
-		return g[1] + PlaceholderRedacted
-	})
-	s = reBearer.ReplaceAllStringFunc(s, func(m string) string {
-		g := reBearer.FindStringSubmatch(m)
-		return g[1] + "=" + PlaceholderRedacted
-	})
+	// 归一化（全角↔半角 + 去 Cf）只在含非 ASCII 字节时做：foldWidth 只可能改变 ≥0x80 的 rune
+	// ⇒ 纯 ASCII 值上它是恒等变换（原实现每条值都白付一次 strings.Map 的整串分配）。
+	if hasNonASCII(s) {
+		s = foldWidth(s)
+	}
+	// 令牌规则：整条 reSessTok 被「含不含令牌前缀」一道必要条件门买下（替换串原样写，D14）。
+	if hasTokenPrefix(s) {
+		s = replaceLiteral(reSessTok, s, PlaceholderRedacted)
+	}
+	// 关键字类规则（URL query / Bearer）：「关键字 + 分隔符」是它们的形态，先用必要条件门
+	// （含 '=' / ':' 或 '?' / '&'，且含关键字）买下这三条正则的扫描 —— pprof 实测
+	// keywordRuleValues 的两次 FindAllStringSubmatch 与两次 ReplaceAllStringFunc 合计占事件成本
+	// 的三成以上，而绝大多数值（代码行、日志行）连一个关键字都没有。
+	//
+	// 两份值都在**改写之前**的同一个 s 上取（与原来的 keywordRuleValues 完全同口径），
+	// 只是各自套上自己的必要条件门 —— 门失败（不可能命中）时它本来也取不到值。
+	var keywordVals []string
+	if hasURLQueryHint(s) {
+		keywordVals = append(keywordVals, urlQueryValues(s)...)
+	}
+	if hasBearerHint(s) {
+		keywordVals = append(keywordVals, bearerValues(s)...)
+	}
+	if hasURLQueryHint(s) {
+		s = reURLQuery.ReplaceAllStringFunc(s, func(m string) string {
+			g := reURLQuery.FindStringSubmatch(m)
+			return g[1] + PlaceholderRedacted
+		})
+	}
+	if hasBearerHint(s) {
+		s = reBearer.ReplaceAllStringFunc(s, func(m string) string {
+			g := reBearer.FindStringSubmatch(m)
+			return g[1] + "=" + PlaceholderRedacted
+		})
+	}
 	// 关键字类规则只遮蔽「关键字=值」这一处 ⇒ 值的**其余拷贝**还在同一字符串里（fuzz 实测命中：
-	// "AuthoriZAtion:000I00 000I00" 的尾部那份会原样留下 —— 那是真泄漏，而且门禁会为它报警）。
+	// "AuthoriZAtion:*** 000I00" 的尾部那份会原样留下 —— 那是真泄漏，而且门禁会为它报警）。
 	// 既然这个值已被判定为秘密，就把同一字符串里它的其余出现一并遮蔽。
-	s = maskValuesEverywhere(s, keywordVals)
+	if len(keywordVals) > 0 {
+		s = maskValuesEverywhere(s, keywordVals)
+	}
 	// 折叠可能刚刚「露出」Tier-0 的形态 ⇒ 重跑一遍 Tier-0（全角/零宽探针就靠这一步）
 	if hasHomePath(s) {
 		s = replaceLiteral(reHomeDir, s, PlaceholderPath)
@@ -421,10 +460,13 @@ func redactPass(s string) string {
 		st := userFold.Load()
 		s = replaceLiteral(st.re, s, PlaceholderUser)
 	}
-	if strings.IndexByte(s, '@') >= 0 {
+	if hasAtSign(s) {
 		s = replaceLiteral(reEmail, s, PlaceholderRedacted)
 	}
-	s = replaceLiteral(reIPv4, s, PlaceholderRedacted)
+	// reIPv4 的必要条件：至少含一个数字（形态是 \d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}）。
+	if hasDigit(s) {
+		s = replaceLiteral(reIPv4, s, PlaceholderRedacted)
+	}
 
 	// 字节级收口：把已判定秘密的**字面量**在同一字符串里的其余出现也遮蔽掉。
 	// 为什么必须做：IPv4 规则要 `\b` 词边界 ⇒ "0.0.0.0 A0.0.0.0" 里第二处不命中（前面是字母），
@@ -433,9 +475,16 @@ func redactPass(s string) string {
 	// 成本：只在**确实被改写过的值**上做（未改写 ⇒ 没有已判定的秘密值），且都是一遍线性扫描。
 	if s != orig {
 		prop := append([]string{}, keywordVals...)
-		prop = append(prop, reIPv4.FindAllString(orig, -1)...)
-		prop = append(prop, reEmail.FindAllString(orig, -1)...)
-		s = maskValuesEverywhere(s, prop)
+		// 两条取值同样先过必要条件门（原实现无条件跑两遍 FindAllString）。
+		if hasDigit(orig) {
+			prop = append(prop, reIPv4.FindAllString(orig, -1)...)
+		}
+		if hasAtSign(orig) {
+			prop = append(prop, reEmail.FindAllString(orig, -1)...)
+		}
+		if len(prop) > 0 {
+			s = maskValuesEverywhere(s, prop)
+		}
 	}
 	return s
 }
@@ -450,16 +499,30 @@ func redactPass(s string) string {
 // 把普通文本里的 Bearer/token 等词无谓遮掉同样破坏可调试性（D12：过度遮蔽与漏脱敏是同一种伤害）。
 var reBareKeyword = regexp.MustCompile(`(?i)^(bearer|token|authorization|api[_-]?key|key|secret|sig|signature|access_token|password|passwd)$`)
 
-// keywordRuleValues 取出这一轮关键字类规则认定的秘密值（按出现顺序）。
-func keywordRuleValues(s string) []string {
+// urlQueryValues / bearerValues 取出这一轮关键字类规则认定的秘密值（按出现顺序）。
+// 拆成两个函数只为一件事：让每条规则各自被自己的**必要条件门**买下（见 redactPass 的调用点）。
+// 取值的口径一个字没变（g[2] = 捕获到的值）。
+func urlQueryValues(s string) []string {
 	var out []string
 	for _, g := range reURLQuery.FindAllStringSubmatch(s, -1) {
 		out = append(out, g[2])
 	}
+	return out
+}
+
+func bearerValues(s string) []string {
+	var out []string
 	for _, g := range reBearer.FindAllStringSubmatch(s, -1) {
 		out = append(out, g[2])
 	}
 	return out
+}
+
+// keywordRuleValues 是两份取值的合并（两个消费者共用一份策略的口径，D18）。
+// 生产路径走上面的门控分支；这里保留给「一次拿全」的调用方与用例。
+func keywordRuleValues(s string) []string {
+	out := urlQueryValues(s)
+	return append(out, bearerValues(s)...)
 }
 
 // maskValuesEverywhere 把已判定的秘密值在同一字符串里的所有出现逐字遮蔽。
@@ -499,8 +562,11 @@ func walkMap(in map[string]any, out map[string]any, depth int) {
 		switch Classify(k) {
 		case ClassDrop, ClassMask:
 			// C 直接丢弃 / B 键级遮蔽：写成占位符而不是删键 —— 「缺席」必须可判定
-			// （否则读日志的人分不清「没采到」和「被丢了」）。
+			// （否则读日志的人分不清「没采到」和「被丢了」）。值一个字节都不看（分级第 ① 层）。
 			out[k] = PlaceholderRedacted
+		case ClassKeep:
+			// 分级第 ② 层：A 类标量**零扫描**（不进值管线），容器仍递归（见 gate.go 的说明）。
+			out[k] = keepValue(v, depth)
 		default:
 			out[k] = walkValue(v, depth)
 		}
