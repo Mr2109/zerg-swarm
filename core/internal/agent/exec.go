@@ -1173,7 +1173,7 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 			for i, line := range lines {
 				if re.MatchString(line) {
 					rel, _ := filepath.Rel(absPath, p)
-					matches = append(matches, fmt.Sprintf("%s:%d: %s", rel, i+1, strings.TrimSpace(line)))
+					matches = append(matches, fmt.Sprintf("%s:%d: %s", rel, i+1, line))
 				}
 			}
 			return nil
