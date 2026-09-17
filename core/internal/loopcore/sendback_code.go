@@ -30,11 +30,14 @@
 //	给它配一个码就是**编一个责任归属** ⇒ 故本批**不改它、不动 run.go 一行**（零回归），
 //	并把「实验路径仍是无码路径」登记为未接线项（见回报）。判据侧（谁判红、判的是哪条）走本文件的出口。
 //
-// ── 本批边界 ──
+// ── 本批边界（B 项⑤ 更新：观测出口已接）──
 //
 //	· 只新增：`VerifyClaims`（四态裁决的计算）**一行不动**、终局与挂单的行为一行不动。
-//	· 不落盘、不打观测：本文件只产出**落账形态**（`SendBackRecord`，可序列化）与打回指令文本；
-//	  观测出口/HTTP 面属接线批（与 api 侧的片 schema 同一分工）。
+//	· B 项⑤（2026-09-18）起：打回成功时**落一行 `slice_rejected` 观测事件**
+//	  （同一套片事件机制 —— `core/internal/sliceobs`，与挂板事件同形状同落点）。
+//	  观测是 best-effort：写失败只记日志，**不改变本函数的返回**（SendBack 的判定逐字节不变）。
+//	· 事件里**只落低基数值**（片 id / 原因码 / R 编号 / 责任标签 / 计数）——
+//	  不回显 `Detail` 自由文本与建议原文（那可能夹带请求体原文/凭据/私有路径）。
 package loopcore
 
 import (
@@ -42,6 +45,7 @@ import (
 	"strings"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/policy"
+	"github.com/Mr2109/zerg-swarm/core/internal/sliceobs"
 )
 
 // SendBackRequest — 一次打回的完整入参。**原因码是必填项**（`Code` 为单值 ⇒ 天然「一个打回一个主原因码」）。
@@ -138,7 +142,7 @@ func SendBack(req SendBackRequest) (SendBackRecord, error) {
 			"（keep/revise/retract 都不是打回：revise 是补引用、retract 是撤回该主张）⇒ 无可发回项",
 			strings.TrimSpace(req.SliceID), len(req.Verdicts))
 	}
-	return SendBackRecord{
+	rec := SendBackRecord{
 		SliceID:             strings.TrimSpace(req.SliceID),
 		Code:                req.Code.String(),
 		Responsibility:      string(req.Code.Resp),
@@ -148,5 +152,37 @@ func SendBack(req SendBackRequest) (SendBackRecord, error) {
 		Detail:              strings.TrimSpace(req.Detail),
 		SendBackCount:       sendBacks,
 		VerdictCount:        len(req.Verdicts),
-	}, nil
+	}
+	// ── B 项⑤ 观测（② 打回带原因码时）: 恰一行 `slice_rejected` ──
+	// best-effort：Emit 无返回值 ⇒ 无论写失败与否，返回值与上面的记录**逐字节一致**。
+	emitSliceRejectedBySendBack(rec)
+	return rec, nil
+}
+
+// emitSliceRejectedBySendBack — 打回 = 片被拒 ⇒ 落一行 `slice_rejected`（同一套片事件机制）。
+//
+// 字段口径：
+//
+//	event            = slice_rejected（设计稿 §6.1）
+//	outcome          = rejected（低基数）
+//	slice_id         = 被拒的片
+//	code / r         = 打回原因码（PRE_/POST_/INV_ + R<n>）+ R 编号（§3.4 闭集）
+//	criteria_version = 无来源 ⇒ 显式「未标定」（**不编造**）
+//	detail           = **由低基数值拼出来的一句可行动话** —— 不回显 `Detail`/`Advice` 原文
+//	                   （那是调用方给的自由文本，可能夹带请求体原文、凭据或私有路径）
+func emitSliceRejectedBySendBack(rec SendBackRecord) {
+	r := rec.Judge
+	sliceobs.Emit(sliceobs.Event{
+		Event:           sliceobs.EventSliceRejected,
+		OK:              false,
+		Outcome:         sliceobs.OutcomeRejected,
+		SliceID:         rec.SliceID,
+		Code:            rec.Code,
+		R:               &r,
+		CriteriaVersion: sliceobs.CriteriaVersionUncalibrated,
+		Detail: fmt.Sprintf("片 %s 被打回（原因码 %s = 责任「%s」+ 判据 R%d）："+
+			"按该责任层做最小修复后，带**工具回执**重交（无回执的主张不算完成）；"+
+			"本批裁决 %d 条、其中判成 send_back %d 条。",
+			rec.SliceID, rec.Code, rec.ResponsibilityLabel, r, rec.VerdictCount, rec.SendBackCount),
+	})
 }

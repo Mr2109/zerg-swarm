@@ -25,18 +25,23 @@ package api
 // 观测出口: 本包原先没有「片/挂板」类事件；沿用 api 包既有习惯（log.Printf + 状态目录下
 // append-only JSONL，同 tasks_persist.go / CA 侧 events.jsonl），**不新造框架**，也不借用
 // toolobs（那是「工具调用判定」的专用形状: Tool/ArgsDigest/allow-deny，语义不对口）。
+//
+// ── B 项⑤（2026-09-18）: 事件名扩成设计稿 §6.1 闭集，**机制仍只有这一套** ──
+//
+//	出口下沉到 `core/internal/sliceobs`（唯一写入函数 Emit、唯一落点 slice-mount-events.jsonl、
+//	唯一形状 sliceobs.Event）。本文件现在的 SliceMountEvent / SliceMountEventsFile 是它的
+//	**别名与转发**（见下）；挂板放行发 `slice_created`、拒绝发 `slice_rejected`，
+//	旧名 `slice_mount` 归并成 `alias` 字段（不再作为 event 值发出）。
+//	打回（loopcore）与第 4 态（policy）两处接同一套出口 —— 详见 sliceobs 的包注释。
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/sliceobs"
 )
 
 // ---- 挂板校验错误码（低基数、可枚举；HTTP 错误码与观测事件共用同一个值，不解析错误原文）----
@@ -47,8 +52,15 @@ const (
 	SliceErrDependsCycle      = "SLICE_DEPENDS_CYCLE"      // ④ depends_on 成环（不可拓扑排序）
 )
 
-// sliceMountEventName 观测事件名（与 CA 侧 events.jsonl 同习惯: 事件名 + 低基数原因码 + 不落原文）
-const sliceMountEventName = "slice_mount"
+// 观测事件名（B 项⑤: 设计稿 §6.1 闭集四名；常量本身以 sliceobs 为唯一真源 —— 不在此处抄一份）。
+const (
+	sliceCreatedEventName   = sliceobs.EventSliceCreated           // 挂板放行
+	sliceRejectedEventName  = sliceobs.EventSliceRejected          // 挂板拒绝
+	sliceEscalatedEventName = sliceobs.EventSliceEscalated         // 第 4 态（loopcore/policy 侧接）
+	sliceSkippedEventName   = sliceobs.EventSliceSkippedByExecutor // 越片动作（执行者侧接）
+	// sliceMountEventName — B 项③ 的旧名，**归并后只作 `alias` 字段值**（不再作为 event 值发出）。
+	sliceMountEventName = sliceobs.AliasSliceMount
+)
 
 // SliceInput 片的挂板入参（JSON 解码目标；也可由已建 Task 反推 —— 见 SliceInputFromTask）。
 //
@@ -120,45 +132,45 @@ type SliceValidationError struct {
 func (e *SliceValidationError) Error() string { return e.Message }
 
 // SliceMountEvent 挂板事件的观测形状（append-only JSONL 一行）。
+//
+// **B 项⑤ 起它是 `sliceobs.Event` 的别名**（同一套机制、同一份形状、同一落点）：
+// 事件名扩成设计稿 §6.1 闭集，旧名 `slice_mount` 归并进 `alias` 字段。
 // 作用（与 toolobs 的同一条教训同源）: 「被挂板校验拒绝」与「根本没声明片字段」在观测面上
 // 原本长得一模一样（都只是「没有这条事件」）⇒ 无法归因；故把判定落成事件。
-type SliceMountEvent struct {
-	Event     string   `json:"event"`                // 固定 slice_mount
-	Time      string   `json:"time"`                 // RFC3339
-	OK        bool     `json:"ok"`                   // true=放行入队 / false=拒绝入队
-	TaskID    string   `json:"task_id,omitempty"`    // 任务的 task_id（可能为空——任务尚未建）
-	SliceID   string   `json:"slice_id,omitempty"`   // 片 id（缺 slice_id 的事件里为空）
-	Code      string   `json:"code,omitempty"`       // 拒绝原因码（SliceErr*）；放行为空
-	Field     string   `json:"field,omitempty"`      // 出错字段
-	DependsOn []string `json:"depends_on,omitempty"` // 声明的依赖（排障用）
-	// AcceptanceDeclared 是否**显式声明**了 acceptance（false = 缺失；true + 空列表 = 显式空）
-	AcceptanceDeclared bool   `json:"acceptance_declared"`
-	Detail             string `json:"detail,omitempty"` // 拒绝原因原文（可行动）
-}
+type SliceMountEvent = sliceobs.Event
 
 // SliceMountEventsFile 挂板事件落点（append-only JSONL，状态目录下——与仓库既有落盘同根）。
 // 函数而非常量: 测试经 ZERG_STATE_DIR 切到临时目录（仓库既有测试隔离习惯）。
-func SliceMountEventsFile() string { return statepath.File("slice-mount-events.jsonl") }
+// **转发**到 sliceobs.EventsFile()（唯一真源）—— 本包不再自己拼路径。
+func SliceMountEventsFile() string { return sliceobs.EventsFile() }
 
-// emitSliceMount 打一条挂板观测事件 —— **唯一观测出口**（best-effort: 落盘失败只记日志，绝不改判定）。
+// emitSliceMount 打一条挂板观测事件（**唯一观测出口**在 sliceobs.Emit；本函数只组装事件）。
 //
-//	serr == nil ⇒ 放行入队；serr != nil ⇒ 拒绝入队。
+//	serr == nil ⇒ `slice_created`（放行入队）；serr != nil ⇒ `slice_rejected`（拒绝入队）。
 //
 // 调用点只有两处（同一实现点，保证「每次挂板尝试恰好一条事件」）:
 // ① 入队闸（Submit 内）② HTTP 侧前置校验拒绝时（那时 Submit 不会被调用）。
+//
+// best-effort：落盘失败只记日志，**绝不改判定**（Emit 无返回值 ⇒ 本函数也无从据此改判）。
 func emitSliceMount(task *Task, serr *SliceValidationError) {
-	ev := SliceMountEvent{
-		Event:   sliceMountEventName,
-		Time:    time.Now().Format(time.RFC3339),
-		OK:      serr == nil,
-		TaskID:  taskIDOf(task),
-		SliceID: sliceIDOf(task),
+	ev := sliceobs.Event{
+		Event:           sliceCreatedEventName,
+		Alias:           sliceMountEventName, // 旧名归并：历史读取方按 alias 仍认得出挂板事件
+		Time:            time.Now().Format(time.RFC3339),
+		OK:              serr == nil,
+		Outcome:         sliceobs.OutcomeCreated,
+		TaskID:          taskIDOf(task),
+		SliceID:         sliceIDOf(task),
+		CriteriaVersion: sliceobs.CriteriaVersionUncalibrated, // 无来源 ⇒ 显式「未标定」（不编造）
 	}
 	if task != nil {
 		ev.DependsOn = task.DependsOn
 		ev.AcceptanceDeclared = task.Acceptance != nil
 	}
 	if serr != nil {
+		ev.Event = sliceRejectedEventName
+		ev.OK = false
+		ev.Outcome = sliceobs.OutcomeRejected
 		ev.Code = serr.Code
 		ev.Field = serr.Field
 		ev.Detail = serr.Message
@@ -168,23 +180,12 @@ func emitSliceMount(task *Task, serr *SliceValidationError) {
 		log.Printf("⛔ scheduler: slice mount rejected — task %s slice %q [%s]: %s",
 			ev.TaskID, ev.SliceID, serr.Code, serr.Message)
 	} else {
+		ev.Detail = "片已挂板放行入队：其它片的 depends_on 可引用它" +
+			"（挂板只判「依赖的片存在」与「依赖图无环」，不判完成度）。"
 		log.Printf("🧩 scheduler: slice mounted — task %s slice %q (depends_on=%v acceptance_declared=%v)",
 			ev.TaskID, ev.SliceID, ev.DependsOn, ev.AcceptanceDeclared)
 	}
-	line, err := json.Marshal(ev)
-	if err != nil {
-		return
-	}
-	path := SliceMountEventsFile()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	_, _ = f.Write(append(line, '\n'))
+	sliceobs.Emit(ev)
 }
 
 func taskIDOf(t *Task) string {
