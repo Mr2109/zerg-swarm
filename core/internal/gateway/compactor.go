@@ -66,6 +66,16 @@ func TrimNoise(messages []map[string]interface{}) ([]map[string]interface{}, boo
 
 // maskToolOutput 工具输出精简：只保留首尾 N 行，中间省略。
 // 判断：行数 > 首尾+1 就精简（不管字符数）；单行超长按字符截断。
+//
+// ⚠ 字符窗口 = 前 toolOutputHeadLines*40 = 2400 字节 + 后 toolOutputTailLines*40 = 1600 字节
+// ⇒ **两个窗口装得下（len ≤ 4000）就不裁**（标记比省下的字还长，裁了也白裁）。
+// 事故（2026-09-17 23:45–00:03，实测）：旧写法只查 len(content) > toolOutputMaxLen(800) 就切
+// content[:2400] / content[len-1600:] ⇒ **801…3999 字节的单行输出必然越界 panic**
+// （日志原文 `http: panic serving 127.0.0.1:65272: runtime error: slice bounds out of range [:0] with length 1210`），
+// 而 net/http 在 handler panic 后**只记日志、不写任何响应、直接关连接** ⇒ 客户端只收到
+// `Post "http://127.0.0.1:8082/v1/chat/completions": EOF`（对话层分类落到 other_error 兜底）。
+// 边界值必须与窗口对齐：guard 必须是 len > headN+tailN，且切口要落在 UTF-8 字符边界上
+// （中文工具输出按字节切会把一个汉字切成半个 ⇒ 提示词里出现非法序列）。
 func maskToolOutput(content string) string {
 	lines := strings.Split(content, "\n")
 
@@ -78,10 +88,43 @@ func maskToolOutput(content string) string {
 
 	// 行数少但单行超长 → 按字符截断中间
 	if len(content) > toolOutputMaxLen {
-		return content[:toolOutputHeadLines*40] + "\n...[省略 " + itoa(len(content)-toolOutputMaxLen) + " 字符]...\n" + content[len(content)-toolOutputTailLines*40:]
+		headN, tailN := toolOutputHeadLines*40, toolOutputTailLines*40
+		if len(content) <= headN+tailN {
+			return content // 装不下首尾两个窗口 ⇒ 不裁（不是"短输出"，是"裁不动"）
+		}
+		h := runeStartBackward(content, headN)             // 头部切口退回字符起始
+		t := runeStartForward(content, len(content)-tailN) // 尾部切口前进到字符起始
+		if t <= h {
+			return content
+		}
+		return content[:h] + "\n...[省略 " + itoa(t-h) + " 字符]...\n" + content[t:]
 	}
 
 	return content // 短输出不精简
+}
+
+// runeStartBackward — 把切口 i 向前退到最近的 UTF-8 字符起始（≤ i）。
+// 用于"取前缀"：传进来的是窗口右端，退回边界即可保证 content[:h] 是合法 UTF-8。
+func runeStartBackward(s string, i int) int {
+	if i > len(s) {
+		i = len(s)
+	}
+	for i > 0 && s[i]&0xC0 == 0x80 { // 0x80==续字节 ⇒ 正落在字符中间
+		i--
+	}
+	return i
+}
+
+// runeStartForward — 把切口 i 向后推到最近的 UTF-8 字符起始（≥ i）。
+// 用于"取后缀"：传进来的是窗口左端，推到边界即可保证 content[t:] 是合法 UTF-8。
+func runeStartForward(s string, i int) int {
+	if i < 0 {
+		i = 0
+	}
+	for i < len(s) && s[i]&0xC0 == 0x80 {
+		i++
+	}
+	return i
 }
 
 // hasToolCalls 判断 assistant 消息是否带工具调用（带工具调用不能删）。

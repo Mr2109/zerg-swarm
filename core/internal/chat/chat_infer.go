@@ -39,8 +39,24 @@ func NewChatInfer(gatewayURL, authToken string) *ChatInfer {
 	return &ChatInfer{
 		GatewayURL: gatewayURL,
 		AuthToken:  authToken,
-		client:     &http.Client{Timeout: 120 * time.Second},
+		// ⚠ 这里**不许**再写死 http.Client.Timeout：单轮时长的唯一真源是**按卵推导**
+		//（loopcore 每轮用 chat.RoundTimeoutFor(model) 包 roundCtx；网关侧首 token 闸同表）。
+		// 写死 120s 就是第二个、且更短的真相 ⇒ 思考型长轮必被它先掐死：
+		// 实测 2026-09-17 23:56:42 `upstream_timeout: … Client.Timeout exceeded while awaiting headers`
+		// total_ms=120006，而同一轮引擎真跑了 174s（子端 task 926：14150 token，23:54:42→23:57:36 正常完成）
+		// ⇒ 掐死它的是这个 120s，不是闸（GATE 是 600s，roundCtx 是 1200s，都来不及生效）。
+		client: &http.Client{},
 	}
+}
+
+// roundCtxFor — 本轮请求的 ctx：调用方已带截止（loopcore 的 RoundTimeout）就**原样**用它；
+// 没带才按卵推导补一个（≥ 首 token 闸）⇒ 任何情况下都不会出现"闸还没到就被掐"的自相矛盾，
+// 也不会退化成无限期裸挂（RoundTimeoutFor 恒 ≥ 120s）。
+func roundCtxFor(ctx context.Context, model string) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, RoundTimeoutFor(model))
 }
 
 // reasoningEffortChat — 对话推理的思考深度（Mr2109 定 low；**思考不能关**）。
@@ -123,7 +139,9 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 		return nil, fmt.Errorf("chat: 序列化失败: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.GatewayURL+"/v1/chat/completions", bytes.NewReader(data))
+	reqCtx, cancel := roundCtxFor(ctx, model)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, "POST", c.GatewayURL+"/v1/chat/completions", bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("chat: 构造请求失败: %w", err)
 	}
@@ -223,7 +241,9 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 		return nil, fmt.Errorf("chat: 序列化失败: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.GatewayURL+"/v1/chat/completions", bytes.NewReader(data))
+	reqCtx, cancel := roundCtxFor(ctx, model)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, "POST", c.GatewayURL+"/v1/chat/completions", bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("chat: 构造请求失败: %w", err)
 	}
