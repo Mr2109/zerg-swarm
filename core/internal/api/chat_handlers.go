@@ -590,7 +590,8 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 		tr2 := chat.ToolTrace(tr)
 		traces = append(traces, tr2)
 		// OBS-3（v2.5.10 前置档②）：工具轮次上日志面（**不改 loopcore** ✓ 只读它交回的轨迹）
-		chat.ObsTool(id, tr2.Round, tr2.Name, tr2.Duration, tr2.Error == "", len(traces), chat.MaxToolRounds)
+		// T6.2：带上 CallID ⇒ gen_ai.tool.call.id（model 侧 tool_call ↔ 执行侧 span 的对接键）
+		chat.ObsTool(id, tr2.Round, tr2.Name, tr2.Duration, tr2.Error == "", len(traces), chat.MaxToolRounds, tr2.CallID)
 	}
 	var toolCallsStr string
 	if len(traces) > 0 {
@@ -923,6 +924,8 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 			// T1.4 批量几何：把上游响应里的 cache_n/prompt_n/cached_tokens/system_fingerprint…
 			// 写进本轮观测（拿不到 ⇒ ir.Geometry 为 nil ⇒ 字段缺席，不写 0）。
 			timer.SetGeometry(ir.Geometry)
+			// T6.2：token 用量落 gen_ai.usage.*（>0 才落；上游不给 ⇒ 字段缺席，不写 0 顶替）
+			timer.SetUsage(ir.InputTokens, ir.OutputTokens, ir.ReasoningTokens)
 		}
 		if ierr != nil {
 			timer.SetErrText(ierr.Error()) // 非正常收尾带原文 ⇒ 下次可定案
