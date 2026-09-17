@@ -24,6 +24,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,6 +34,10 @@ import (
 // ── 分类码（OBS-2）：任何"非正常收尾"都必须落到这三类之一 ──
 const (
 	ChatErrUpstreamTimeout = "upstream_timeout" // 上游模型超时（client.Timeout / RoundTimeout）
+	ChatErrOther           = "other_error"      // 兜底分类（有名字，不再是无分类）
+	ChatErrUpstreamFail    = "upstream_fail"    // 上游 5xx/upstream
+	ChatErrStreamBroken    = "stream_broken"    // 流中断
+	ChatErrBadRequest      = "bad_request"      // 请求不合法
 	ChatErrClientAborted   = "client_aborted"   // 客户端主动中断（abort 端点 / 断连）
 	ChatErrStreamTruncated = "stream_truncated" // 流被截断（未收到 [DONE]/finish_reason 即结束）
 )
@@ -279,7 +284,19 @@ func ObsEndReason(err error) string {
 	if errors.Is(err, context.Canceled) {
 		return ChatErrClientAborted
 	}
-	return "error"
+	// 2026-09-17 修：原来这里 `return "error"` ⇒ 观测里出现「非正常收尾却无分类：error」✗（实测 8 条）。
+	// 原则：**凡非正常收尾必须落到一个有名字的分类** ⇒ 兜底也给名字（other_error），且原文另行记录（不丢信息）。
+	txt := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(txt, "502") || strings.Contains(txt, "500") || strings.Contains(txt, "upstream"):
+		return ChatErrUpstreamFail
+	case strings.Contains(txt, "stream") || strings.Contains(txt, "unexpected eof"):
+		return ChatErrStreamBroken
+	case strings.Contains(txt, "400") || strings.Contains(txt, "invalid") || strings.Contains(txt, "bad request"):
+		return ChatErrBadRequest
+	default:
+		return ChatErrOther
+	}
 }
 
 // obsCompact — OBS-4：压缩事件一行（成功与失败都调）。
