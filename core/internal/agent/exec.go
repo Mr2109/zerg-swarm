@@ -1092,6 +1092,20 @@ func (ec *ExecContext) executeGlob(ctx context.Context, pattern string, gate Too
 	return strings.Join(files, "\n") + budget.Note(), nil
 }
 
+// isBinary — 检测二进制内容（前 8000 字节含 NUL ⇒ 二进制）
+func isBinary(data []byte) bool {
+	n := len(data)
+	if n > 8000 {
+		n = 8000
+	}
+	for i := 0; i < n; i++ {
+		if data[i] == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // executeGrep — 搜索文件内容
 // 返回匹配行 + 行号
 func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern string, args map[string]any, gate ToolGater) (string, error) {
@@ -1148,6 +1162,9 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 			if rerr != nil {
 				return nil
 			}
+			if isBinary(data) {
+				return nil // G2: 跳过二进制
+			}
 			lines := strings.Split(string(data), "\n")
 			for i, line := range lines {
 				if re.MatchString(line) {
@@ -1186,6 +1203,9 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return "", fmt.Errorf("读取文件失败: %w", err)
+	}
+	if isBinary(data) {
+		return "（二进制文件——跳过）", nil
 	}
 
 	// 逐行搜索
