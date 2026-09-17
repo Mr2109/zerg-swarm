@@ -39,6 +39,7 @@ check-build-tags.py — 双构建工程门禁（任务表 T6.3；设计稿 §〇
 纪律：无 sudo · 不联网（只用本机模块缓存）· 临时目录 mktemp -d + 退出即清理 · 前台跑、不起后台进程。
 """
 
+import atexit
 import json
 import os
 import re
@@ -442,27 +443,68 @@ def check_goflags(rep):
 # ══════════════════════════════════════════════════════════════════
 
 STEPS = [
-    ('b', '默认构建 go build ./...', ['build', '-buildvcs=false', './...']),
-    ('b', '调试构建 go build -tags=debug ./...', ['build', '-buildvcs=false', '-tags=debug', './...']),
+    ('b', '默认构建 go build ./...', ['build', '-buildvcs=false', '-o', '@OUT@', './...']),
+    ('b', '调试构建 go build -tags=debug ./...', ['build', '-buildvcs=false', '-tags=debug', '-o', '@OUT@', './...']),
     ('c', '默认 vet  go vet ./...', ['vet', './...']),
     ('c', '调试 vet  go vet -tags=debug ./...', ['vet', '-tags=debug', './...']),
 ]
+# 注意旗标顺序：`-o` 必须在包模式（./...）**之前** —— go 的旗标解析遇到第一个非旗标参数就停，
+# 写成 `go build ./... -o dir/` 会把 `-o` 当包名（本次实测就是这么炸的：夹具里两个构建都红）。
+
+# 构建产物落点：**显式 -o 到临时目录**。为什么必须这样（实测踩到）：
+# `go build ./...` 会把每个 main 包的二进制**写进当前目录** —— 本次实测在 scripts/exportnames/
+# 里冒出 7 MB 的 `zerg-exportnames`、core/ 里落一串 zerg-core/zerg-api/…。门禁不该往仓里写散件
+# （也正因如此，暂存时必须按路径点名，绝不能用 git add -A）。
+_BUILD_OUT = []
+
+
+def build_outdir():
+    if not _BUILD_OUT:
+        d = tempfile.mkdtemp(prefix='zerg-buildtags-out-')
+        _BUILD_OUT.append(d)
+        atexit.register(cleanup_outdir)
+    return _BUILD_OUT[0] + os.sep
+
+
+def cleanup_outdir():
+    for d in _BUILD_OUT:
+        shutil.rmtree(d, ignore_errors=True)
+    del _BUILD_OUT[:]
 
 
 def check_builds(mods, go, rep):
+    outdir = build_outdir()
     for mp, md in mods:
-        rel = os.path.relpath(md, os.path.dirname(os.path.abspath(md)))
         name = os.path.basename(md)
         for judgement, label, args in STEPS:
+            args = [outdir if a == '@OUT@' else a for a in args]
             rc, out = run([go] + args, cwd=md, env=tag_env())
+            extra = ''
+            if rc is not None and rc != 0 and 'no main packages to build' in out:
+                # 纯库模块：`-o <目录>/` 会硬报这个错。此时模块里没有 main 包 ⇒ **不带 -o 跑也不会
+                # 往仓里写任何二进制**（散件的成因只在有 main 包时成立）⇒ 去掉 -o 重跑，不是放宽判据。
+                # 注意要连**旗标与它的值一起**去掉：只删值会留下裸 `-o`，于是 `-o ./...` 被当成输出
+                # 文件名（本次实测：夹具全红在「no Go files in …」上，是正控夹具把它逮住的）。
+                plain, skip = [], False
+                for a in args:
+                    if skip:
+                        skip = False
+                        continue
+                    if a == '-o':
+                        skip = True
+                        continue
+                    plain.append(a)
+                rc, out = run([go] + plain, cwd=md, env=tag_env())
+                extra = '（该模块无 main 包 ⇒ 不带 -o 重跑，无产物可落）'
             if rc is None:
                 rep.cannot('[%s] %s: %s —— %s' % (name, label, '超时/起不来', tail(out, 3)))
                 continue
             mark = '✓' if rc == 0 else '✗'
-            print('     %s [%s] %-38s rc=%s' % (mark, name, label, rc))
+            print('     %s [%s] %-38s rc=%s%s' % (mark, name, label, rc, extra))
             if rc != 0:
                 rep.fail(judgement, '[%s] %s 真实退出码=%d；输出尾部:\n%s'
                          % (name, label, rc, tail(out)))
+    rep.note('构建产物落点：%s（显式 -o 到临时目录，仓内不留散件；退出即清理）' % outdir.rstrip('/'))
     return True
 
 
