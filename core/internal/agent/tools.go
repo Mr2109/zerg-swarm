@@ -283,6 +283,10 @@ func toolGrep() ToolDef {
 						"type":        "string",
 						"description": "按文件扩展名筛选（如 go/py/md/js/sh——不带点；空=不过滤）",
 					},
+					"context_lines": map[string]any{
+						"type":        "integer",
+						"description": "每条命中行前后各显示 n 行上下文（默认 0=不显示，上限 5）",
+					},
 				},
 				"required": []string{"path", "pattern"},
 			},

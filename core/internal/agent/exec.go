@@ -1136,6 +1136,23 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 		return "", fmt.Errorf("正则表达式无效: %w", err)
 	}
 
+	// G5: context_lines——每条命中行前后各 n 行上下文（默认 0，上限 5）
+	ctxN := 0
+	if cl, ok := args["context_lines"]; ok {
+		switch v := cl.(type) {
+		case float64:
+			ctxN = int(v)
+		case int:
+			ctxN = v
+		}
+		if ctxN > 5 {
+			ctxN = 5
+		}
+		if ctxN < 0 {
+			ctxN = 0
+		}
+	}
+
 	// 读取文件（目录→递归搜索所有文本文件——v2.5 修复）
 	info, err := os.Stat(absPath)
 	if err != nil {
@@ -1189,7 +1206,21 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 			for i, line := range lines {
 				if re.MatchString(line) {
 					rel, _ := filepath.Rel(absPath, p)
+					if ctxN > 0 {
+						start := i - ctxN
+						if start < 0 {
+							start = 0
+						}
+						for j := start; j < i; j++ {
+							matches = append(matches, fmt.Sprintf("%s:%d- %s", rel, j+1, lines[j]))
+						}
+					}
 					matches = append(matches, fmt.Sprintf("%s:%d: %s", rel, i+1, line))
+					if ctxN > 0 {
+						for j := i + 1; j < len(lines) && j <= i+ctxN; j++ {
+							matches = append(matches, fmt.Sprintf("%s:%d- %s", rel, j+1, lines[j]))
+						}
+					}
 				}
 			}
 			return nil
@@ -1233,7 +1264,21 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 	var results []string
 	for i, line := range lines {
 		if re.MatchString(line) {
+			if ctxN > 0 {
+				start := i - ctxN
+				if start < 0 {
+					start = 0
+				}
+				for j := start; j < i; j++ {
+					results = append(results, fmt.Sprintf("%d- %s", j+1, lines[j]))
+				}
+			}
 			results = append(results, fmt.Sprintf("%d: %s", i+1, line))
+			if ctxN > 0 {
+				for j := i + 1; j < len(lines) && j <= i+ctxN; j++ {
+					results = append(results, fmt.Sprintf("%d- %s", j+1, lines[j]))
+				}
+			}
 		}
 	}
 
