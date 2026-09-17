@@ -186,7 +186,7 @@ func RaiseClarification(store PendingStore, req ClarificationRequest, now time.T
 		return FourthStateOutcome{}, fmt.Errorf("第 4 态（追问/阻滞）：片 %s 开单失败 ⇒ 不静默放行（片不得带着缺规格继续）：%w",
 			slice, err)
 	}
-	return FourthStateOutcome{
+	out := FourthStateOutcome{
 		PendingID:   p.ID,
 		Kind:        p.Kind,
 		SliceID:     slice,
@@ -201,7 +201,11 @@ func RaiseClarification(store PendingStore, req ClarificationRequest, now time.T
 		Note: fmt.Sprintf("第 4 态（追问/阻滞）开单 %s：片 %s · 退给 %s · 原因码 %s · 期限 %s · 凭什么 %s",
 			p.ID, slice, strings.TrimSpace(req.Upstream), code.String(),
 			req.Deadline.UTC().Format(time.RFC3339), ruleText(req.RuleID)),
-	}, nil
+	}
+	// ── B 项⑤ 观测（③ 第 4 态进态）: 恰一行 `slice_escalated` ──
+	// best-effort：Emit 无返回值 ⇒ 无论写失败与否，返回值与上面的 outcome **逐字段一致**。
+	emitSliceEscalatedFromRaise(out, req.Upstream, req.Deadline)
+	return out, nil
 }
 
 // buildClarificationPending — 组装挂单。字段映射写在这里（一处，便于审计回查）：
@@ -357,6 +361,10 @@ func SettleClarification(store PendingStore, pendingID string, now time.Time) (F
 		return FourthStateOutcome{}, fmt.Errorf("第 4 态（追问/阻滞）：挂单 %s 的状态「%s」认不出 ⇒ 不裁决、不放行",
 			p.ID, string(p.State))
 	}
+	// ── B 项⑤ 观测（③ 第 4 态超时 / 上游拒答）: 升级类结局恰一行 `slice_escalated` ──
+	// 只在 Disposition ∈ {escalate, void} 时落（awaiting 还在等、supplied 是上游补了规格 ——
+	// 两者都不是「升级」，落事件会把低基数结局稀释掉）。best-effort：不改下面的返回值。
+	emitSliceEscalatedFromSettle(out)
 	return out, nil
 }
 
