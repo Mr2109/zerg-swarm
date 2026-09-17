@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Mr2109/zerg-swarm/core/internal/infergeom"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
@@ -189,125 +190,24 @@ func (t *prefixCacheTracker) autoFlushLoop() {
 //	③ Anthropic 式：usage.cache_read_input_tokens / usage.cache_creation_input_tokens
 //	④ llama.cpp 式：timings.cache_n（命中）/ timings.prompt_n（本次实际处理的未命中 token）
 //
+// T1.4（2026-09-17）：解析核心**收敛到 internal/infergeom**（叶子包，零内部依赖）——
+// 因为同一份响应字段现在有两个消费方（此处的命中率统计 + chat 观测面的批量几何）。
+// 本函数只留**形态适配**：签名与语义一字不改（既有用例就是这次收敛的守卫）。
+// 几何字段（cache_n/prompt_n/cached_tokens/ubatch_n/slot_id/system_fingerprint）请用
+// infergeom.Parse 直接取——那里每个字段都带 Has* 存在标志，缺席与 0 可分。
+//
 // 返回：cacheRead / cacheMiss / 形态名 / 原始片段（DEBUG 日志用）/ 是否解析成功。
 // 缺失字段、类型不符、JSON 损坏一律返回 ok=false，绝不 panic。
 func parsePrefixCacheUsage(respBody []byte) (cacheRead, cacheMiss int, form, raw string, ok bool) {
-	if len(respBody) == 0 {
+	g, ok := infergeom.Parse(respBody)
+	if !ok {
 		return 0, 0, "", "", false
 	}
-	var obj map[string]interface{}
-	if err := json.Unmarshal(respBody, &obj); err != nil {
-		return 0, 0, "", "", false
-	}
-
-	usage, _ := obj["usage"].(map[string]interface{})
-	timings, _ := obj["timings"].(map[string]interface{})
-
-	// ① DeepSeek 式（最显式：直接给 hit/miss 两个字段）
-	if usage != nil {
-		hit, hasHit := intField(usage, "prompt_cache_hit_tokens")
-		miss, hasMiss := intField(usage, "prompt_cache_miss_tokens")
-		if hasHit || hasMiss {
-			return hit, miss, "deepseek", rawSnippet(usage, timings), true
-		}
-	}
-
-	// ② OpenAI 式（cached_tokens；miss = prompt_tokens - cached_tokens）
-	if usage != nil {
-		if cached, hasCached := intField(usage, "prompt_tokens_details", "cached_tokens"); hasCached {
-			prompt, hasPrompt := intField(usage, "prompt_tokens")
-			miss := 0
-			if hasPrompt && prompt > cached {
-				miss = prompt - cached
-			}
-			return cached, miss, "openai", rawSnippet(usage, timings), true
-		}
-	}
-
-	// ③ Anthropic 式（cache_read / cache_creation）
-	if usage != nil {
-		read, hasRead := intField(usage, "cache_read_input_tokens")
-		creation, hasCreation := intField(usage, "cache_creation_input_tokens")
-		if hasRead || hasCreation {
-			return read, creation, "anthropic", rawSnippet(usage, timings), true
-		}
-	}
-
-	// ⑤ OpenAI Responses 式（2026-09-10 实测发现——未知形态探针抓到 12 条：
-	//    键名 output/status/usage.input_tokens/usage.input_tokens_details.cached_tokens）
-	if usage != nil {
-		if _, isResponses := obj["output"]; isResponses {
-			cached, hasCached := intField(usage, "input_tokens_details", "cached_tokens")
-			input, hasInput := intField(usage, "input_tokens")
-			if hasCached || hasInput {
-				miss := 0
-				if hasInput && input > cached {
-					miss = input - cached
-				}
-				return cached, miss, "openai-responses", rawSnippet(usage, timings), true
-			}
-		}
-	}
-
-	// ④ llama.cpp 式（timings.cache_n / timings.prompt_n）
-	if timings != nil {
-		cacheN, hasCacheN := intField(timings, "cache_n")
-		promptN, hasPromptN := intField(timings, "prompt_n")
-		if hasCacheN || hasPromptN {
-			return cacheN, promptN, "llamacpp", rawSnippet(usage, timings), true
-		}
-	}
-
-	return 0, 0, "", "", false
+	return g.CacheRead, g.CacheMiss, g.Form, g.Raw, true
 }
 
-// intField 从嵌套 map 逐层取整数字段（兼容 JSON 数字解析为 float64）。
-// 返回 (值, 是否存在)。任一中间层缺失或类型不符即返回 false。
-func intField(m map[string]interface{}, path ...string) (int, bool) {
-	cur := interface{}(m)
-	for _, key := range path {
-		mm, ok := cur.(map[string]interface{})
-		if !ok {
-			return 0, false
-		}
-		cur, ok = mm[key]
-		if !ok {
-			return 0, false
-		}
-	}
-	switch v := cur.(type) {
-	case float64:
-		return int(v), true
-	case int:
-		return v, true
-	case json.Number:
-		if i, err := v.Int64(); err == nil {
-			return int(i), true
-		}
-	}
-	return 0, false
-}
-
-// rawSnippet 拼装原始 usage/timings 片段（DEBUG 日志展示——便于以后适配新形态）。
-// 上限 600 字符，避免污染日志。
-func rawSnippet(usage, timings map[string]interface{}) string {
-	out := map[string]interface{}{}
-	if usage != nil {
-		out["usage"] = usage
-	}
-	if timings != nil {
-		out["timings"] = timings
-	}
-	b, err := json.Marshal(out)
-	if err != nil {
-		return ""
-	}
-	s := string(b)
-	if len(s) > 600 {
-		s = s[:600] + "…"
-	}
-	return s
-}
+// intField / rawSnippet —— T1.4 起已随解析核心一并收敛到 internal/infergeom
+// （那边是唯一实现；网关侧不再保留副本，避免两套解析口径漂移）。
 
 // ---------------------------------------------------------------------------
 // prompt 版本 = 工具 schema 集合 + 系统提示模板 的哈希
