@@ -15,6 +15,11 @@
 //	· 其余（零进展 / 需要人的判断 / 死胡同）        ⇒ **escalate**（升级给人，带状态摘要与建议下一步）
 package loopcore
 
+import (
+	"os"
+	"strings"
+)
+
 // TerminalState — 四终局（对齐行业口径）
 type TerminalState string
 
@@ -66,4 +71,22 @@ func TerminalNote(st TerminalState, detail string) string {
 		return prefix
 	}
 	return prefix + " " + detail
+}
+
+// SendBackEnabled — 实验开关（默认关 ⇒ 行为不变）。
+// ZERG_SENDBACK=1 ⇒ 轮数/预算用尽且"未完成"时，**打回重做**（产出改为"重做指令"）；
+// 默认 0 ⇒ 走四终局（降级/续跑/补偿/升级）。
+//
+// 为什么用环境变量：这是**待实测课题**的开关（学界对"打回重做是帮助还是伤害"结论相左，见调研报告）。
+// 实验期只许用开关切换，不许改代码路径 ⇒ 两组跑的是同一份二进制，差异只来自开关（可比性 ✓）。
+func SendBackEnabled() bool {
+	return strings.TrimSpace(os.Getenv("ZERG_SENDBACK")) == "1"
+}
+
+// SendBackNote — 打回重做时给的可行动指令（写明"打回"与"重做要求"，便于机器与人都能识别）
+func SendBackNote(reason string) string {
+	if reason == "" {
+		reason = "未完成"
+	}
+	return "【打回重做】" + reason + " —— 请带**工具回执**重交：每条主张必须附「回执ID + 原文片段」；无回执的主张不算完成。"
 }
