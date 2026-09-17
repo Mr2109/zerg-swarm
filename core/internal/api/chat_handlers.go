@@ -918,6 +918,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		})
 		// ⚠ 铁律：**包装不得改变原有语义** —— InferStream 内部对 onDelta 判 nil（非流式路径传 nil），
 		// 包一层之后必须保留该保护，否则非流式路径直接空指针 panic（2026-09-16 实测事故）。
+		// 第 ① 层（loopcore.callInfer 归一化）已保证内核不再传裸 nil；这里不依赖它 —— 兜底仍判 nil。
 		wrapped := wrapObsDelta(timer, onDelta)
 		ir, ierr := h.infer.InferStream(chat.WithSessionID(ctx, id), model, sysPrompt, m, wrapped, toolsParam)
 		if ir != nil {
@@ -1289,12 +1290,15 @@ func sentToolsOf(tools []map[string]any) []map[string]any {
 // **必须 nil-safe**：InferStream 允许 onDelta 为 nil（非流式路径），包装后若无条件调用，
 // 非流式路径会空指针 panic ⇒ handler 静默死掉 ⇒ 客户端看到"半句话 + 断开"、助手回复不落库。
 // 这条是 2026-09-16 实测事故的直接教训，配有用例 TestWrapObsDeltaNilSafe 守门。
+//
+// nil 语义一律走 loopcore.EmitDelta（真 nil 跳过 / 非 nil 原样透传）——本包内**不得**再出现
+// 对可选回调的直接调用（机检守卫：TestOptionalCallbackCallsAreNilGuarded）。
 func wrapObsDelta(timer *chat.ObsTimer, onDelta func(deltaType, text string)) func(deltaType, text string) {
+	// 注意：即使 onDelta 为 nil，也**必须返回非 nil 的包装器** —— InferStream 只有在 onDelta
+	// 非 nil 时才回调；返回 nil 会让计时器不再记分块（观测面丢数据）。
 	return func(deltaType, text string) {
 		timer.MarkChunk()
-		if onDelta != nil {
-			onDelta(deltaType, text)
-		}
+		loopcore.EmitDelta(onDelta, deltaType, text)
 	}
 }
 

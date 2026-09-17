@@ -183,13 +183,13 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 			deltaOnce = true
 			emit("delta", mustJSON(map[string]any{"type": deltaType, "text": text}))
 		}
-		result, err := d.Infer(roundCtx, model, sysPrompt, msgs, sink, d.Tools)
+		result, err := d.callInfer(roundCtx, model, sysPrompt, msgs, sink, d.Tools)
 		cancel()
 		if err != nil && isTimeout(err) {
 			res.ExitKind = "round_timeout"
 			emit("loop_hint", `{"kind":"round_timeout"}`)
 			msgs = append(msgs, map[string]any{"role": "user", "content": "（时间到——请立即把已获得的信息整理成最终回答——不要继续调用工具或推理——直接给出结论——信息不足就说明没找到——绝不编造。）"})
-			result, err = d.Infer(ctx, model, sysPrompt, msgs, nil, nil) // 收尾轮不带工具
+			result, err = d.callInfer(ctx, model, sysPrompt, msgs, NoopDelta, nil) // 收尾轮不带工具（无增量消费者 ⇒ 显式 Noop，不再传裸 nil —— 见 delta.go）
 		}
 		if err != nil {
 			// 瞬时故障重试（502/500——只在未流出 delta 时——防重复输出）
@@ -198,7 +198,7 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				for attempt := 1; attempt <= 2; attempt++ {
 					time.Sleep(2 * time.Second)
 					emit("retry", mustJSON(map[string]any{"attempt": attempt, "reason": "X3 瞬时故障"}))
-					result, err = d.Infer(ctx, model, sysPrompt, msgs, sink, d.Tools)
+					result, err = d.callInfer(ctx, model, sysPrompt, msgs, sink, d.Tools)
 					if err == nil {
 						retried = true
 						break
@@ -368,7 +368,7 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 					emit("loop_hint", `{"kind":"loopguard_escalate"}`)
 					msgs = append(msgs, map[string]any{"role": "user", "content": guide})
 					// 收尾轮——不带工具让它总结
-					final, ferr := d.Infer(ctx, model, sysPrompt, msgs, nil, nil)
+					final, ferr := d.callInfer(ctx, model, sysPrompt, msgs, NoopDelta, nil)
 					if ferr == nil {
 						res.Content = final.Content
 						res.Reasoning = appendReasoning(res.Reasoning, final.Reasoning)
@@ -384,7 +384,7 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 			if emptyArgsStreak >= 3 {
 				emit("loop_hint", `{"kind":"empty_args"}`)
 				msgs = append(msgs, map[string]any{"role": "user", "content": "（连续多次空参数调用。请把到目前为止获得的信息整理成最终回答——信息不足就说明没找到——绝不编造。）"})
-				final, ferr := d.Infer(ctx, model, sysPrompt, msgs, nil, nil)
+				final, ferr := d.callInfer(ctx, model, sysPrompt, msgs, NoopDelta, nil)
 				if ferr == nil {
 					res.Content = final.Content
 					res.Usage.TotalTokens += final.TotalTokens

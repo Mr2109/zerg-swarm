@@ -38,6 +38,12 @@ type Decision struct {
 
 // Infer — 模型调用抽象
 // deltaType: "reasoning"/"output"——text: 增量文本
+//
+// onDelta 契约（2026-09-16 主控 panic 事故后写明，见 delta.go）：
+//   - 内核经 Deps.callInfer 统一出口调用，**永远不传裸 nil** —— 无增量消费者的收尾轮传
+//     NoopDelta（非 nil、调用安全、不产出任何 delta）。
+//   - 实现方**仍应**对 onDelta 判 nil（别的调用方可能直接调本函数），包装可选回调时更必须
+//     保留 nil 语义（真 nil 跳过 / 非 nil 原样透传），不得无条件调用。
 type Infer func(ctx context.Context, model, sysPrompt string, msgs []map[string]any,
 	onDelta func(deltaType, text string), tools []map[string]any) (*Response, error)
 
