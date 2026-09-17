@@ -557,8 +557,8 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 		return result.Content + extra, result.Duration, nil
 	}
 	kres := loopcore.Run(r.Context(), loopcore.Config{
-		MaxRounds: chat.MaxToolRounds, WallClock: 600 * time.Second,
-		RoundTimeout: 120 * time.Second, KeepRecent: 3,
+		MaxRounds: chat.MaxToolRounds, WallClock: chat.WallClockFor(se.Model),
+		RoundTimeout: chat.RoundTimeoutFor(se.Model), KeepRecent: 3,
 	}, se.Model, sysPrompt, msgs, loopcore.Deps{Infer: inferAdapter, Exec: execFn, Hooks: progHooks})
 	if kres.Err != "" {
 		_ = h.store.DeleteMessage(id, userMsg.ID)
@@ -897,8 +897,8 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 	var tracesMu sync.Mutex
 	kres := loopcore.Run(runCtx, loopcore.Config{
 		MaxRounds:    chat.MaxToolRounds,
-		WallClock:    600 * time.Second,
-		RoundTimeout: 120 * time.Second,
+		WallClock:    chat.WallClockFor(se.Model),
+		RoundTimeout: chat.RoundTimeoutFor(se.Model),
 		KeepRecent:   3,
 	}, se.Model, sysPrompt, msgs, loopcore.Deps{
 		Infer: inferAdapter,
