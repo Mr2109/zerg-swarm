@@ -143,6 +143,10 @@ func ParseMode(s string) (Mode, error) {
 
 // Rule — 一条已解析的规则。字段全部导出：调用方（观测/审计/UI）要能如实回显"是哪一条规则判的"。
 type Rule struct {
+	// ID — 稳定标识（T5.2）：**内置清单条目**填带命名空间的 id（`any.*` / `never.*`，见 builtin_rules.go），
+	// 文本规则为空串（文本没有 id，取证靠 Raw + 行号）。Verdict.MatchedRule.ID 非空即"命中内置条目"，
+	// 审计据此回查"为何永不自动批"（BuiltinRuleByID）。
+	ID        string
 	Effect    Effect   // allow | ask | deny
 	Tool      string   // 归一化后的工具名（小写、去首尾空白）
 	Specifier string   // 匹配式原文（空 = 无匹配式，按工具名匹配）
