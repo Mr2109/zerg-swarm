@@ -71,6 +71,32 @@ type Deps struct {
 	// T1.2 观测：会话 id（**只用于观测**）。内核侧的拒绝分支（工具被隐藏 ⇒ 不执行）要能落观测面，
 	// 且要挂上会话的 trace/span 骨架；空串=无会话（骨架缺席，不编造）。
 	Session string
+
+	// ── T5.5 检查点（每步快照 + 耐久分档 + 版本标记；见 checkpoint.go）──
+	//
+	//	Checkpoints —— 检查点存储；**非 nil 且 RunID 非空**才写（少了任何一个：宁可不写，
+	//	              也不写一份"归不了属/取不回来"的快照）。
+	//	RunID       —— 检查点归属（与 Session 分开：一个会话可以跑多轮 run，恢复点属于 run）。
+	//	Resume      —— 恢复入口：非 nil ⇒ 从该快照继续（消息/轨迹/已完成步数都来自它）。
+	//	              **恢复必须与 T5.6 的 Lease 一起用** —— "并发两次恢复 ⇒ 效果恰好一次"
+	//	              靠的是 lease 前置门 + 完成判定，不是靠快照本身。
+	Checkpoints *CheckpointStore
+	RunID       string
+	Resume      *Snapshot
+
+	// ── T5.6 并发恢复互斥：session 级 lease（**执行前置门**；见 lease.go）──
+	//
+	//	Lease    —— 非 nil 且 Session 非空 ⇒ 在**任何节点执行之前**先认领该会话；
+	//	            认领失败 ⇒ 立即返回（ExitKind="lease_rejected"，一条节点都不执行）。
+	//	Holder   —— 认领者标识（空 ⇒ host/pid 兜底：不猜"我是谁"，也绝不空着当认领成功）。
+	//	LeaseTTL —— 租约时长（≤0 ⇒ DefaultLeaseTTL）。
+	Lease    *LeaseStore
+	Holder   string
+	LeaseTTL time.Duration
+
+	// Now —— 时钟注入（nil = time.Now）：只用于租约/快照的时间戳，**不参与任何判定**
+	//（判据一律来自显式输入，与 T5.9 审计层同一纪律）。
+	Now func() time.Time
 }
 
 // Hooks — 渐进式常驻钩子（chat.ToolRuntime 的行为接口——内核不依赖 chat 包）
@@ -90,8 +116,12 @@ type Result struct {
 		TotalTokens int64
 	}
 	Traces   []Trace
-	ExitKind string // natural/bad_format/wall_clock/round_timeout/stream_broken/loopguard_escalate/empty_args/max_rounds
+	ExitKind string // natural/bad_format/wall_clock/round_timeout/stream_broken/loopguard_escalate/empty_args/max_rounds/lease_rejected/already_done
 	Err      string // 模型调用失败（重试后仍败）——非空=异常终止
+	// CheckpointErr —— T5.5：某一步的快照**没写成**（磁盘满/权限/刷盘失败）。
+	// 为什么不把它塞进 Err 让整轮失败：快照写不成不该改变循环的行为（它不是新的失败模式），
+	// 但也**绝不静默** —— 调用方据此知道"这个 run 的恢复点不成立"（并已同步发 checkpoint_failed 事件）。
+	CheckpointErr string
 }
 
 // Terminator — 终止仲裁接口（内核在模型无工具调用时征询——CA 传契约判定/对话传 nil=自然终止）
