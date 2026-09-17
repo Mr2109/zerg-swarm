@@ -1141,12 +1141,16 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 		// 目录递归搜索
 		var matches []string
 		budget := newWalkBudget()
+		hidden := false
+		if h, ok := args["hidden"].(bool); ok {
+			hidden = h
+		}
 		filepath.Walk(absPath, func(p string, fi os.FileInfo, err error) error {
 			if err != nil {
 				return nil
 			}
 			if fi.IsDir() {
-				if strings.HasPrefix(fi.Name(), ".") {
+				if !hidden && strings.HasPrefix(fi.Name(), ".") {
 					return filepath.SkipDir
 				}
 				return nil
@@ -1154,8 +1158,8 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 			if !budget.Allowed() { // 丙：预算到顶 ⇒ 早停（少走，而不是事后掐断）
 				return filepath.SkipAll
 			}
-			// 跳过隐藏文件
-			if strings.HasPrefix(fi.Name(), ".") {
+			// 跳过隐藏文件（除非 hidden=true）
+			if !hidden && strings.HasPrefix(fi.Name(), ".") {
 				return nil
 			}
 			data, rerr := os.ReadFile(p)

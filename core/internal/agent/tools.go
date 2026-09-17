@@ -271,6 +271,10 @@ func toolGrep() ToolDef {
 						"type":        "integer",
 						"description": "跳过前 N 条匹配（分页用——看后续传 offset=200/400）",
 					},
+					"hidden": map[string]any{
+						"type":        "boolean",
+						"description": "搜索隐藏文件（.env/.gitignore 等——默认 false 跳过）",
+					},
 				},
 				"required": []string{"path", "pattern"},
 			},
