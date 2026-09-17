@@ -95,6 +95,9 @@ func (h *Handlers) SubmitTaskHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
+		// B 项③ 片（单子）最小 schema: slice_id / depends_on / owner / acceptance。
+		// **只在声明了片字段时**才过挂板校验（未声明 ⇒ 与改动前逐字节等价——现有任务零回归）。
+		SliceInput
 		ID          string `json:"id"`
 		Description string `json:"description"`
 		Type        string `json:"type"`     // internal/external
@@ -155,7 +158,23 @@ func (h *Handlers) SubmitTaskHandler(w http.ResponseWriter, r *http.Request) {
 		ParentMessageID: req.ParentMessageID,
 		CreatedAt:       time.Now(),
 	}
-	h.Scheduler.Submit(task)
+	// B 项③ 片（单子）: 片字段落进任务（未声明片字段 ⇒ 全是零值，等价于没这一行）
+	req.SliceInput.ApplyTo(task)
+	if req.SliceInput.Declared() {
+		// 声明了片字段 ⇒ **挂板校验**后入队（缺 slice_id / 缺 acceptance 声明 / depends_on 环 / 悬空依赖
+		// ⇒ 400 + 机器可判错误码，**拒绝入队**）。校验与入队共用 SubmitSlice 这一个判定点。
+		if err := h.Scheduler.SubmitSlice(task); err != nil {
+			if serr, ok := err.(*SliceValidationError); ok {
+				writeErrorCode(w, http.StatusBadRequest, serr.Code, serr.Message)
+				return
+			}
+			writeErrorCode(w, http.StatusBadRequest, "SLICE_MOUNT_REJECTED", err.Error())
+			return
+		}
+	} else {
+		// 非片（现有全部任务走这条）: 原实现逐字不变——零回归
+		h.Scheduler.Submit(task)
+	}
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"id":       task.ID,
 		"status":   task.Status,

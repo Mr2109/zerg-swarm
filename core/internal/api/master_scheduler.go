@@ -57,7 +57,15 @@ type Task struct {
 	SkillKey          string    `json:"skill_key,omitempty"`           // v2.5.6: skill 归属 key（内部任务=def.ID——独属 skill；空=外部任务按类型共享）
 	ExtraEnv          []string  `json:"extra_env,omitempty"`           // S6: 任务级 env 透传（rework 续作——ZERG_TASK_DIR/ZERG_REVIEW_NOTE）
 	ReviewFailedCount int       `json:"review_failed_count,omitempty"` // S7: 复查自身失败重派次数（上限 2）
-	cmd               *exec.Cmd // 运行中的 CA 进程（打断发信号用——非导出）
+	// ============ B 项③ 片（单子）最小 schema（2026-09-18）============
+	// 术语（设计-任务模块骨架 v1.0 §0.2）: 任务(mission_id) → 片/单子(slice_id) → 步。
+	// 片 = 单子（同一实体）；本组字段**只在声明了片字段的任务上**生效——全 omitempty
+	// ⇒ 现有任务序列化形态逐字节不变（零回归）。校验/环检测/悬空依赖见 slice_schema.go。
+	SliceID    string    `json:"slice_id,omitempty"`   // 片真源 id（空 ⇒ 挂板校验拒绝）
+	DependsOn  []string  `json:"depends_on,omitempty"` // 该片依赖的其它片 id（有环 / 悬空 ⇒ 拒绝入队）
+	Owner      string    `json:"owner,omitempty"`      // 片归属者（本轮不参与判定——只随片记录）
+	Acceptance *[]string `json:"acceptance,omitempty"` // 验收判据（**必须显式声明**: nil=没写（拒）；&[]=显式空（允许））
+	cmd        *exec.Cmd // 运行中的 CA 进程（打断发信号用——非导出）
 }
 
 // TaskQueue 优先级队列（container/heap）
@@ -239,6 +247,16 @@ func isBackendExit(err error) bool {
 // Submit 提交任务（外部/内部都走这——优先级排队）
 func (s *MasterScheduler) Submit(task *Task) {
 	s.mu.Lock()
+	// ---- B 项③ 挂板校验（2026-09-18）: **只对声明了片字段的任务生效** ----
+	// 未声明片字段（= 现有全部任务）⇒ 闸函数第一行返回 nil ⇒ 下面的路径与改动前逐字节一致（零回归）。
+	// 拒绝时**不入队**；且**不在锁内做落盘 I/O**（观测事件在解锁后打——与 recoverWaitingLocked 同规）。
+	if serr := validateSliceMountLocked(task, s.sliceBoardLocked()); serr != nil {
+		s.mu.Unlock()
+		emitSliceMount(task, serr)
+		return // 拒绝入队: 缺 slice_id / 缺 acceptance 声明 / depends_on 环 / 悬空依赖
+	}
+	// 是不是片（过了闸 ⇒ 声明了且 slice_id 非空）——决定发不发那条放行观测事件
+	isSlice := task != nil && task.SliceID != ""
 	// v2.5.5 虫族UI: 任务创建时间（UI 显示执行时长用——之前是零值）
 	if task.CreatedAt.IsZero() {
 		task.CreatedAt = time.Now()
@@ -254,6 +272,72 @@ func (s *MasterScheduler) Submit(task *Task) {
 	saveTasksLocked(s.queue, s.running, s.history)
 	s.dispatchLocked()
 	s.mu.Unlock()
+	// ---- B 项③ 观测: 片放行入队（**锁外**——落盘 I/O 不进锁；非片任务零事件、零开销）----
+	if isSlice {
+		emitSliceMount(task, nil)
+	}
+}
+
+// SubmitSlice 挂板提交（片专用入口；返回**可行动错误**——非 HTTP 调用方用它）。
+//
+// 与 Submit 的关系: 两者**共用同一道闸**（validateSliceMountLocked），判定只有一处实现。
+// 本方法把同一判定提前到「调用方看得见」的位置（拿到 *SliceValidationError，而不是「静默没入队」），
+// 供 HTTP 侧回 400 + 机器可判错误码；Submit 内那道闸仍是最后防线（兜住其它入队调用方）。
+//
+// 未声明片字段的任务 ⇒ 与直接调 Submit 等价（SubmitSlice 对它们不加任何判定）。
+func (s *MasterScheduler) SubmitSlice(task *Task) error {
+	s.mu.Lock()
+	serr := validateSliceMountLocked(task, s.sliceBoardLocked())
+	s.mu.Unlock()
+	if serr != nil {
+		emitSliceMount(task, serr) // 拒绝放行 —— 每次挂板尝试恰好一条事件
+		return serr
+	}
+	s.Submit(task) // 放行（放行事件由 Submit 打——同一次尝试只有一条）
+	return nil
+}
+
+// validateSliceMountLocked 挂板闸（**调用方持锁**；唯一实现点，Submit / SubmitSlice 都走它）。
+// 未声明片字段 ⇒ 第一行就返回 nil（不进任何图计算、不落任何事件）——这就是「现有任务零回归」的机制。
+func validateSliceMountLocked(task *Task, board SliceBoard) *SliceValidationError {
+	in := SliceInputFromTask(task)
+	if !in.Declared() {
+		return nil
+	}
+	return ValidateSliceMount(in, board)
+}
+
+// sliceBoardLocked 挂板视图（**调用方持锁**）: 板上已挂片的 slice_id → depends_on。
+// 组成 = queue + running + waiting + history 四处里声明过 slice_id 的片。
+// 为什么含 history: 本轮只判「依赖的片是否**存在**」与「依赖图是否**无环**」，
+// 不判完成度（完成度属状态机——本轮 ✗ 不实现）。去掉 history 会让「依赖的片已跑完」变成悬空误拒。
+func (s *MasterScheduler) sliceBoardLocked() SliceBoard {
+	board := make(SliceBoard)
+	add := func(t *Task) {
+		if t != nil && t.SliceID != "" {
+			board[t.SliceID] = append([]string(nil), t.DependsOn...)
+		}
+	}
+	for _, t := range s.queue {
+		add(t)
+	}
+	for _, t := range s.running {
+		add(t)
+	}
+	for _, t := range s.waiting {
+		add(t)
+	}
+	for _, t := range s.history {
+		add(t)
+	}
+	return board
+}
+
+// SliceBoard 挂板视图（外部只读查询——持锁取副本，调用方可安全遍历）。
+func (s *MasterScheduler) SliceBoard() SliceBoard {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sliceBoardLocked()
 }
 
 // pauseInternalsLocked 打断所有运行中的内部任务（外部任务优先——Mr2109原理）
