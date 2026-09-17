@@ -32,6 +32,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
 )
 
 // ── 读回结构 ──────────────────────────────────────────────────────────
@@ -67,13 +69,16 @@ type promptObsLine struct {
 	RequiresToolCallFirst *bool             `json:"requires_tool_call_first"`
 }
 
-// promptIsolate — 隔离状态目录 + 重置登记表进程内缓存（测试在同一进程里换目录，缓存必须丢）
+// promptIsolate — 隔离状态目录 + 重置登记表与**重注入周期状态**的进程内缓存
+// （测试在同一进程里换目录/换会话，缓存与周期状态必须丢，否则用例互相污染）
 func promptIsolate(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("ZERG_STATE_DIR", dir)
 	resetConstraintRegistryCache()
+	ResetReinjectState("")
 	t.Cleanup(resetConstraintRegistryCache)
+	t.Cleanup(func() { ResetReinjectState("") })
 	return dir
 }
 
@@ -856,12 +861,351 @@ func TestObsTimerCarriesRequestIdentity(t *testing.T) {
 	}
 }
 
+// ── 用例 ④【治本】重注入落账：事件能区分"重注入"与"模板变更" ────────────────
+//
+// 现场（实测缺陷②）：must_survive 的约束在**实际发出的提示**里检索不到（真缺失），老实现只落告警、不治本。
+// 本用例钉三件事：① 缺了要**补上**（返回的字节头尾各一份）且**诊断口径不许被治本弄瞎**（present=0 + 告警照落）；
+// ② 装配点采纳后的下一轮：字节原样不再改（幂等），且 template_stripped_hash 与上一轮 template_hash 相等
+// ⇒ 判得出"只是重注入"；③ 模板**真的**变了时 template_stripped_hash 必须变（两种情形必须可分）。
+
+// pvLastCheck — 取最近一条 constraint_check 的读回行（缺块即失败）
+func pvLastCheck(t *testing.T, event string) promptObsLine {
+	t.Helper()
+	checks := promptEvents(readPromptObsLines(t), event)
+	if len(checks) == 0 {
+		t.Fatalf("没有 %s 事件", event)
+	}
+	return checks[len(checks)-1]
+}
+
+func TestConstraintReinjectionEventFacts(t *testing.T) {
+	promptIsolate(t)
+
+	const sid = "sess-T32-reinj"
+	constraintText := "只做 G2，不要动别的缺陷，也不要动 git"
+	canonical := CanonicalConstraint(constraintText)
+	wantID := pfConstraintID(canonical) // 测试侧独立复算 id 口径
+	if !RegisterConstraint(sid, NewConstraint(constraintText, 1, true, injectWhereHistory)) {
+		t.Fatal("显式登记应成功")
+	}
+
+	baseTmpl := "TEMPLATE-BASE\n\n# 你的身份\n- 虫族本地集群"
+	hist := []map[string]any{{"role": "user", "content": "接着做 G2"}}
+	sep := "\x00"
+	// 独立复算：模板哈希 = sha256(模板 ‖ \x00 ‖ 历史渲染 ‖ \x00 ‖ 工具渲染)
+	wantTmplHash1 := pfSHA(baseTmpl + sep + pfRenderHistory(hist) + sep + pfRenderTools(nil))
+
+	// ── 第 1 轮：提示里检索不到那条 must_survive ⇒ 报警（诊断）+ 补上（治疗）──
+	r1 := PromptRender{
+		Session: sid, Round: 1, Model: "gemma-12B",
+		System: baseTmpl, History: hist,
+		Identity: FixedRequestIdentity("2026-09-18T10:00:00Z", 7),
+	}
+	res1 := ObservePromptCheck(r1)
+
+	// ① 诊断口径没被治本弄瞎：present/missing/alert 描述的是**入参字节**
+	if res1.Check.Total != 1 || res1.Check.Present != 0 || !res1.Check.Alert ||
+		len(res1.Check.MissingIDs) != 1 || res1.Check.MissingIDs[0] != wantID {
+		t.Fatalf("入参字节上应判出真缺失（present=0 + missing=[%s] + alert）：%+v", wantID, res1.Check)
+	}
+	// ② 治疗：返回值就是重注入后的字节（头尾各一份；原字节逐字不动）
+	if !res1.Reinjection.Injected || res1.Reinjection.Reason != ReinjectReasonMissing {
+		t.Fatalf("缺 must_survive ⇒ 应重注入（reason=missing）：%+v", res1.Reinjection)
+	}
+	if res1.Reinjection.InjectionCount != 1 || res1.Reinjection.Round != 1 {
+		t.Errorf("注入计数/轮次应如实回传：%+v", res1.Reinjection)
+	}
+	wantBlock := reinjectMarkOpen + "\n" + reinjectHeader + "\n- " + canonical + "\n" + reinjectMarkClose
+	if res1.System != wantBlock+"\n"+baseTmpl+"\n"+wantBlock {
+		t.Errorf("放置形态必须逐字是「头块 ‖ 换行 ‖ 原字节 ‖ 换行 ‖ 尾块」：\n%q", res1.System)
+	}
+	if res1.Reinjection.InjectionSHA256 != pfSHA(wantBlock) || res1.Reinjection.InjectionID != pfSHA(wantBlock)[:16] {
+		t.Errorf("注入块指纹应可被读侧独立复算（sha256(块原文)）：%+v", res1.Reinjection)
+	}
+
+	// ③ 事件事实（读回层）：诊断 + 治疗 + 可解释性三样都在
+	lines := readPromptObsLines(t)
+	if len(promptEvents(lines, obsEventConstraintMissingAlert)) != 1 {
+		t.Error("真缺失必须留一条告警（治本不等于不报警：两者并行，读侧才知道\"曾经缺过、已补\"）")
+	}
+	c1 := pvLastCheck(t, obsEventConstraintCheck)
+	if c1.Constraints == nil || c1.Prompt == nil {
+		t.Fatal("constraint_check 必须带 constraints + prompt 两块")
+	}
+	f1 := c1.Constraints
+	if !f1.Reinjected || f1.ReinjectReason != ReinjectReasonMissing || len(f1.ReinjectedIDs) != 1 ||
+		f1.ReinjectedIDs[0] != wantID || f1.InjectionCount != 1 || f1.InjectionRound != 1 ||
+		f1.InjectionID != pfSHA(wantBlock)[:16] || f1.InjectionSHA256 != pfSHA(wantBlock) {
+		t.Errorf("事件里的重注入事实不完整/不符：%+v", f1)
+	}
+	if f1.InjectionClockISO != "2026-09-18T10:00:00Z" {
+		t.Errorf("注入时钟应落宿主注入的请求时钟（只进事件，不进提示——H6）：%q", f1.InjectionClockISO)
+	}
+	if c1.Prompt.TemplateHash != wantTmplHash1 || c1.Prompt.ReinjectStripped {
+		t.Errorf("第 1 轮入参里没有注入块：template_hash=%s（应 %s）reinject_stripped=%v",
+			c1.Prompt.TemplateHash, wantTmplHash1, c1.Prompt.ReinjectStripped)
+	}
+	// wire 层：键真的在 JSONL 原文里（只断 Go 字段 = 自证）
+	raw := readObs(t)
+	for _, key := range []string{
+		`"reinjected":true`, `"reinject_reason":"missing"`, `"reinjected_ids"`,
+		`"injection_count":1`, `"injection_id":"`, `"injection_sha256":"`,
+		`"injection_round":1`, `"injection_clock_iso":"2026-09-18T10:00:00Z"`,
+		`"template_stripped_hash":"`, `"reinject_stripped":`,
+	} {
+		if !strings.Contains(raw, key) {
+			t.Errorf("wire 层缺键（读侧要靠键，不靠 Go 字段）：%s", key)
+		}
+	}
+
+	// ── 第 2 轮：装配点**采纳**上一轮给的重注入字节（一行接线）⇒ 判据：只是重注入，模板没变 ──
+	r2 := r1
+	r2.Round, r2.System = 2, res1.System
+	r2.Identity = FixedRequestIdentity("2026-09-18T10:00:02Z", 8)
+	res2 := ObservePromptCheck(r2)
+	if res2.Reinjection.Injected {
+		t.Error("约束已在场（块里带着）且未到周期 ⇒ 不得再动字节（幂等）")
+	}
+	if res2.System != r2.System {
+		t.Error("不注入 ⇒ 返回值必须与入参**逐字节相同**（不许顺手重排/清洗）")
+	}
+	c2 := pvLastCheck(t, obsEventConstraintCheck)
+	if c2.Constraints == nil || c2.Prompt == nil {
+		t.Fatal("第 2 轮缺块")
+	}
+	if c2.Constraints.Present != 1 || c2.Constraints.Alert {
+		t.Errorf("采纳后约束应在场（present=1、不告警）：%+v", c2.Constraints)
+	}
+	if !c2.Prompt.ReinjectStripped {
+		t.Error("入参里确实带了我们的注入块 ⇒ reinject_stripped 必须为 true（这是\"上一轮被采纳\"的取证）")
+	}
+	if c2.Prompt.TemplateHash == c1.Prompt.TemplateHash {
+		t.Error("块进了系统提示 ⇒ template_hash 必然变（这正是需要解释的地方）")
+	}
+	if c2.Prompt.TemplateStrippedHash != c1.Prompt.TemplateHash {
+		t.Errorf("剔除注入块后必须与上一轮模板哈希**相等** ⇒ 读侧才判得出\"只是重注入\"：%s vs %s",
+			c2.Prompt.TemplateStrippedHash, c1.Prompt.TemplateHash)
+	}
+	if c2.Prompt.TemplateStrippedHash != wantTmplHash1 {
+		t.Errorf("独立复算：剔除后应等于 pvSHA(原模板 ‖ 历史 ‖ 工具)：%s vs %s",
+			c2.Prompt.TemplateStrippedHash, wantTmplHash1)
+	}
+	if c2.Constraints.InjectionCount != 1 {
+		t.Errorf("没注入 ⇒ 累计次数不许涨：%d", c2.Constraints.InjectionCount)
+	}
+
+	// ── 第 3 轮：模板**真的**变了（加了会话环境行）⇒ template_stripped_hash 必须变（两种情形可分）──
+	added := "\n\n# 会话环境\n- 模型: gemma-12B（换了标示）"
+	r3 := r2
+	r3.Round, r3.System = 3, res2.System+added
+	r3.Identity = FixedRequestIdentity("2026-09-18T10:00:04Z", 9)
+	res3 := ObservePromptCheck(r3)
+	if res3.Reinjection.Injected || res3.System != r3.System {
+		t.Errorf("missing 空 + 未到周期（锚点 1，3-1<4）⇒ 不得注入：%+v", res3.Reinjection)
+	}
+	c3 := pvLastCheck(t, obsEventConstraintCheck)
+	if c3.Prompt.TemplateStrippedHash == c2.Prompt.TemplateStrippedHash {
+		t.Error("模板真的变了 ⇒ template_stripped_hash 必须跟着变（否则\"重注入\"与\"模板变更\"同形，哈希还是不可解释）")
+	}
+	if want := pfSHA(baseTmpl + added + sep + pfRenderHistory(hist) + sep + pfRenderTools(nil)); c3.Prompt.TemplateStrippedHash != want {
+		t.Errorf("独立复算：剔除块后应等于 原模板+新增行 ‖ 历史 ‖ 工具：%s vs %s", c3.Prompt.TemplateStrippedHash, want)
+	}
+	if c3.Constraints.InjectionCount != 1 || c3.Constraints.Reinjected {
+		t.Errorf("第 3 轮没注入 ⇒ 计数不动、reinjected=false：%+v", c3.Constraints)
+	}
+}
+
+// ── 用例 ④′：定时重注在**入口**这一层也接通（轮次/会话/时钟都从入参来）──────────
+
+func TestConstraintReinjectPeriodicThroughEntry(t *testing.T) {
+	promptIsolate(t)
+
+	const sid = "sess-T32-reinj-periodic"
+	canonical := CanonicalConstraint("提交信息必须带 --author")
+	if !RegisterConstraint(sid, NewConstraint("提交信息必须带 --author", 5, true, injectWhereSystem)) {
+		t.Fatal("显式登记应成功")
+	}
+	// 约束**在原文里在场** ⇒ missing 恒空 ⇒ 只可能被"每 N 轮"触发（默认 4）
+	sys := "TEMPLATE-BASE\n- " + canonical
+
+	cur, reasons := sys, []string{}
+	for round := 1; round <= 5; round++ {
+		res := ObservePromptCheck(PromptRender{
+			Session: sid, Round: round, Model: "gemma-12B", System: cur,
+			History:  []map[string]any{{"role": "user", "content": "继续"}},
+			Identity: FixedRequestIdentity("2026-09-18T10:00:00Z", int64(round)),
+		})
+		cur = res.System // 模拟装配点采纳（把补过的字节当下一轮待发提示）
+		c := pvLastCheck(t, obsEventConstraintCheck)
+		if c.Constraints == nil {
+			t.Fatalf("第 %d 轮缺 constraints 块", round)
+		}
+		reasons = append(reasons, c.Constraints.ReinjectReason)
+		if round == 4 {
+			if !c.Constraints.Reinjected || c.Constraints.ReinjectReason != ReinjectReasonPeriodic ||
+				c.Constraints.InjectionCount != 1 || c.Constraints.InjectionRound != 4 {
+				t.Errorf("第 4 轮应定时重注（reason=periodic、计数 1、injection_round=4）：%+v", c.Constraints)
+			}
+			if strings.Count(cur, reinjectMarkOpen) != 2 {
+				t.Errorf("第 4 轮后块应头尾各一份：%d 处", strings.Count(cur, reinjectMarkOpen))
+			}
+		}
+		if round == 5 {
+			if c.Constraints.Reinjected {
+				t.Error("第 5 轮（锚点 4）未到周期 ⇒ 不得注入")
+			}
+			if c.Prompt == nil || !c.Prompt.ReinjectStripped {
+				t.Error("第 5 轮的入参是第 4 轮的产出 ⇒ reinject_stripped 应为 true")
+			}
+			if strings.Count(cur, reinjectMarkOpen) != 2 {
+				t.Errorf("采纳后不得堆叠：第 5 轮仍应恰好 2 处，实得 %d", strings.Count(cur, reinjectMarkOpen))
+			}
+		}
+	}
+	want := []string{ReinjectReasonNone, ReinjectReasonNone, ReinjectReasonNone, ReinjectReasonPeriodic, ReinjectReasonNone}
+	for i := range want {
+		if reasons[i] != want[i] {
+			t.Errorf("第 %d 轮 reinject_reason 应为 %s，实得 %s（全序列 %v）", i+1, want[i], reasons[i], reasons)
+		}
+	}
+}
+
+// ── 用例 ⑤【反例·防误报】：模板里的**静态示例**不得报警 ────────────────────
+//
+// 现场（实测缺陷③）：`prompt_impurity` 报的是我们**自己指令里**那句「日期用 ISO 8601（2026-09-11）」
+// （住在 ffp.Conventions 常量里，是模板源的一部分）——误报会把守卫关掉，而"守卫被关掉 = 真盲区"。
+// 判据改正后：命中串**在模板源里** ⇒ 静态示例 ⇒ 不报警。
+
+func TestPromptPurityStaticExampleNoAlert(t *testing.T) {
+	promptIsolate(t)
+
+	// 前提：那句静态示例**确实**在模板源里（否则本用例什么也证明不了）
+	if !strings.Contains(ffp.Conventions, "日期用 ISO 8601（2026-09-11）") {
+		t.Fatalf("前提不成立：ffp.Conventions 应含那句静态示例：%q", ffp.Conventions)
+	}
+	src := promptTemplateSource()
+	if !strings.Contains(src, "2026-09-11") {
+		t.Fatalf("前提不成立：模板源（判定时采集）应含静态示例里的日期：%q", src)
+	}
+
+	// ① 现场复现：系统模板里就是我们自己那句指令（含静态示例日期）⇒ 一条 impurity 都不许落
+	r := pfBaseRender("sess-T33-3-static", 1)
+	r.System = "TEMPLATE-BASE\n" + ffp.Conventions + "\n\n# 会话环境\n- 模型: gemma-12B"
+	ObservePromptCheck(r)
+	if imps := promptEvents(readPromptObsLines(t), obsEventPromptImpurity); len(imps) != 0 {
+		for _, im := range imps {
+			t.Errorf("静态示例被误判为脏：host=%s patterns=%v sample=%q", im.Impurity.Host, im.Impurity.Patterns, im.Impurity.Sample)
+		}
+		t.Fatal("模板源里的静态示例（ISO 8601 示范）**不得**落 prompt_impurity")
+	}
+	// 纯净（无杂质）也要落账（每请求一条 constraint_check）
+	if len(promptEvents(readPromptObsLines(t), obsEventConstraintCheck)) != 1 {
+		t.Error("纯净也必须有本请求的账")
+	}
+
+	// ② 声明路径（api base 常量那种"本包拿不到原文"的模板走这条）：把模板源交给观测面 ⇒ 静态示例同样放行
+	r2 := pfBaseRender("sess-T33-3-declared", 1)
+	r2.System = "OUR-TEMPLATE 示例日期 2025-12-31 / 版本 v1.2.3\n正文"
+	r2.TemplateSource = r2.System
+	ObservePromptCheck(r2)
+	if imps := promptEvents(readPromptObsLines(t), obsEventPromptImpurity); len(imps) != 0 {
+		t.Fatalf("声明了模板源 ⇒ 模板里的静态示例一律不得报警：%+v", imps)
+	}
+
+	// ③ 但声明**不许**把活值也放行（防"用声明把守卫改宽成永远不报"）
+	live := "2026-09-18T10:00:00Z"
+	r3 := r2
+	r3.Session = "sess-T33-3-declared-live"
+	r3.System = r2.System + "\n当前时刻 " + live
+	ObservePromptCheck(r3)
+	imps := promptEvents(readPromptObsLines(t), obsEventPromptImpurity)
+	if len(imps) != 1 || imps[0].Impurity == nil || imps[0].Impurity.Host != "system_template" {
+		t.Fatalf("声明了模板源也**不许**放行不在源里的活时间戳：%+v", imps)
+	}
+	if !strings.Contains(imps[0].Impurity.Sample, strings.TrimSuffix(live, "Z")) {
+		t.Errorf("sample 应是那个不在源里的命中：%q", imps[0].Impurity.Sample)
+	}
+}
+
+// ── 用例 ⑥【正控·防漏报】：**活时间戳**（注入的当前时间）必须报警 ──────────────
+//
+// 判据改正的风险面是"改宽成永远不报" ⇒ 正控必须够狠：同一宿主里**同时**放静态示例与活时钟，
+// 只报警后者（并落 suppressed_static_hits 取证，读侧能看出"没报警的那处是被静态示例规则放行的"）。
+
+func TestPromptPurityLiveTimestampAlerts(t *testing.T) {
+	promptIsolate(t)
+
+	// 活值 = 真实墙上时钟格式化的时刻（正是"代码里漏了 now()"会漏出来的那种串）
+	now := time.Now().UTC()
+	live := now.Format(time.RFC3339)
+
+	r := pfBaseRender("sess-T33-3-live", 1)
+	r.System = "TEMPLATE-BASE\n" + ffp.Conventions + "\n当前时间：" + live // 静态示例 + 活时钟，同一个宿主
+	ObservePromptCheck(r)
+
+	imps := promptEvents(readPromptObsLines(t), obsEventPromptImpurity)
+	if len(imps) != 1 {
+		t.Fatalf("活时间戳必须报警（否则守卫被改宽成永远不报）：%+v", imps)
+	}
+	imp := imps[0].Impurity
+	if imp == nil || imp.Host != "system_template" {
+		t.Fatalf("应命中 system_template：%+v", imps[0])
+	}
+	if !pfHasStr(imp.Patterns, "rfc3339") {
+		t.Errorf("应报 rfc3339 形态，实得 %v", imp.Patterns)
+	}
+	if !strings.Contains(imp.Sample, now.Format("2006-01-02T15:04")) {
+		t.Errorf("sample 应含那个活时刻：%q（活值 %s）", imp.Sample, live)
+	}
+	// 判据②的取证：同一个宿主里那处**静态示例**被放行了（suppressed>0）——证明守卫在"判"而不是"全放"
+	if imp.SuppressedStaticHits < 1 {
+		t.Errorf("同一宿主里的静态示例应被记为放行（suppressed_static_hits≥1）：%+v", imp)
+	}
+	if imp.TemplateSourceSHA256 != pfSHA(promptTemplateSource()) {
+		t.Errorf("模板源指纹应可被读侧独立复算：%s", imp.TemplateSourceSHA256)
+	}
+	if !strings.Contains(readObs(t), `"suppressed_static_hits"`) {
+		t.Error("wire 层应落 suppressed_static_hits（否则读侧分不清\"没命中\"与\"被静态示例规则放行\"）")
+	}
+
+	// 提醒（reminder）也是代码注入的字串 ⇒ 活时钟同样报警（T3.5 的原始现场）
+	r2 := pfBaseRender("sess-T33-3-live-rem", 2)
+	r2.Reminders = []string{"注意：现在是 " + live + "，请以此刻为准。"}
+	ObservePromptCheck(r2)
+	found := false
+	for _, im := range promptEvents(readPromptObsLines(t), obsEventPromptImpurity) {
+		if im.Impurity != nil && im.Impurity.Host == "reminder" && pfHasStr(im.Impurity.Patterns, "rfc3339") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("提醒字串里的活时钟必须报（这正是守卫存在的理由）")
+	}
+
+	// 单点钉住口径边界：**没给模板源** ⇒ 不豁免（判据退化为老口径，绝不"什么都能放行"）
+	if imp := scanPromptImpurity(PromptPuritySource{Host: "reminder", Text: "现在是 " + live}); imp == nil {
+		t.Error("没给模板源 ⇒ 命中即报警（不给源 ≠ 什么都能放行）")
+	}
+	if imp := scanPromptImpurity(PromptPuritySource{
+		Host: "reminder", Text: "现在是 " + live, TemplateSource: "现在是 " + live,
+	}); imp != nil {
+		t.Errorf("命中的串逐字在模板源里 ⇒ 静态示例 ⇒ 不报：%+v", imp)
+	}
+}
+
 // ── 口径守卫：事件名/闭集是公开契约（改动即红）────────────────────────────
 
 func TestPromptObsContractStrings(t *testing.T) {
 	if obsKindPrompt != "prompt" || obsEventConstraintCheck != "constraint_check" ||
 		obsEventConstraintMissingAlert != "constraint_missing_alert" || obsEventPromptImpurity != "prompt_impurity" {
 		t.Fatal("本族事件名是公开契约（读侧按 event_name 挑行）：改动必须是有意的并同步文档")
+	}
+	// 重注入原因闭集（读侧按字符串分派：none/missing/periodic）＋ 默认周期（每 3–5 轮那条口径取中值 4）
+	if ReinjectReasonNone != "none" || ReinjectReasonMissing != "missing" || ReinjectReasonPeriodic != "periodic" {
+		t.Error("reinject_reason 是公开契约（事件里落字符串）：改动必须是有意的")
+	}
+	if reinjectEveryDefault != 4 {
+		t.Errorf("定时重注默认周期应为 4 轮（调研口径 3–5 取中值）：%d", reinjectEveryDefault)
 	}
 	// 分段 id 闭集（四段固定、顺序固定）
 	got := []string{segmentSystem, segmentTools, segmentHistory, segmentMemory}
