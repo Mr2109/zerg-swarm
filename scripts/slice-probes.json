@@ -1,0 +1,1474 @@
+{
+  "_note": "切片判据检查器的探针集（§3.6：≥10 条含糊/违规 + ≥10 条合法，含边界）。分类标签写在本文件里（`expect` + `expect_rules` + `class`）。`expect` 只能取 red | green | recursion | error 四值：recursion = R7 超限判「需递归」（不打回）；error = strict 违约（未知规则键 / 未登记禁用）⇒ rc=2 不给结论。`expect_rules` = 该条**必须**命中的规则编号（断言用；多命中不报错，少命中即假绿）。",
+  "_thresholds": "条数门槛与假红上限由标定档案 `~/.zerg/egg-profiles/task-budget-calib.yaml` 的 probe_* 键给出；档案无这些键 ⇒ 用检查器登记默认（含糊/违规 ≥10 · 合法 ≥10 · 假红率 ≤10%）并打印。",
+  "_source": "docs/01-设计/切片合同-模板.md（共同规则表：§1 字段表 + §2 冲突优先级 + §3.3 继承四条 + §3.4 R0–R13）",
+  "schema_version": "1.0",
+  "probes": [
+    {
+      "name": "template-正例",
+      "class": "正例",
+      "expect": "green",
+      "expect_rules": [],
+      "why": "模板 §5 的正例片（抬头 BCP 14 固定句那一片）：照抄结构必须全绿（镜子不是恒红）",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-01",
+        "landing": "docs/01-设计/切片合同-模板.md:1",
+        "the_one_thing": "When 模板骨架已落盘（S3-C0 完成）时，docs/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
+        "context_needed": [
+          {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释（BCP 14 = RFC 2119 + RFC 8174；RFC 8174 逐字：only UPPERCASE usage of the key words have the defined special meanings）。"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"},
+          {"kind": "cmd", "value": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'only UPPERCASE usage of the key words'"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'only UPPERCASE usage of the key words'", "expect": "1", "state": "改动前：红（骨架版 §0 无该句 ⇒ 输出 0，rc=1）｜落盘后：绿（实跑 = 1）"},
+          {"id": "C2", "cmd": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'MUST/SHOULD/MAY 按 BCP 14 解释'", "expect": "1", "state": "改动前：红（输出 0）｜落盘后：绿（实跑 = 1）"},
+          {"id": "C3", "cmd": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'BCP 14 subseries contains 2 RFCs'", "expect": "1", "state": "改动前：红（输出 0）｜落盘后：绿（实跑 = 1）"}
+        ],
+        "gate_cmds": [
+          {"cmd": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'only UPPERCASE usage of the key words'", "expect": {"exit": 0, "stdout": "1"}},
+          {"cmd": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'MUST/SHOULD/MAY 按 BCP 14 解释'", "expect": {"exit": 0, "stdout": "1"}},
+          {"cmd": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'BCP 14 subseries contains 2 RFCs'", "expect": {"exit": 0, "stdout": "1"}}
+        ],
+        "output_format": "① 正控（改动后）：C1/C2/C3 各跑一次，贴命令 + 原始输出 + 退出码（实跑：三条各 1）；② 负控（改动前必红）：把抬头那句改坏后重跑同三条命令，必须红（已实跑：三条的作用域计数由 1 变 0，rc=1）；③ 牙齿计数：C1/C2/C3 = 3/3 条都由绿变红；④ 还原：负控在副本上做，不动工作树原件，还原后原件 sha 逐字节一致。",
+        "exit_cond": {
+          "success": ["C1", "C2", "C3"],
+          "failure": "改动后任一命令输出与期望不符（C1 ≠ 1 / C2 无匹配行 / C3 ≠ 1），或负控三条中任一未由绿变红，且原地重试 ≤1 次仍不符 ⇒ 记失败，附命令、退出码、原始输出",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码", "原文", "时间"]}
+        },
+        "hard_limits": [
+          "① 只改 docs/01-设计/切片合同-模板.md 一个文件（R7 默认单文件粒度）",
+          "② 不改 v2.1 稿、不改 scripts/、不动 git、不删除任何文件",
+          "③ 不新增 v2.1 之外的规则或数字"
+        ],
+        "side_effects": "只读",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 / 需要删除任何文件 / 需要触网 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3 · tool_calls_max 2 · wall_s_max 43.6", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml（常数只能当初始值）"},
+        "atomicity": "落在执行者标定技能/门禁闭包内（该闭包字段待标定档案补齐），且 criteria 可在一次调用内判定（三条各是一条 grep）",
+        "slice_id": "S3-C1",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 400, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "template-反例",
+      "class": "反例",
+      "expect": "red",
+      "expect_rules": ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R10", "R11", "R12"],
+      "why": "模板 §6 的反例片逐处照搬（多处违规各标 R；一处即可判红）：R1 两个 id / R2 落点无路径 / R4 含糊+主观 / R0 无 When 且三动词 / R3 三件套缺 / R6 缺 expect / R5 占位与空壳 / R12 缺三项 / R11 缺 context_budget / §2 冲突未标 / §1 枚举与出处",
+      "slice": {
+        "defect_id": "DEF-20260918-07, DEF-20260918-09",
+        "landing": "相关的模板文件",
+        "the_one_thing": "把模板和检查器一起重构并跑一遍门禁",
+        "context_needed": ["见设计稿"],
+        "open_questions": [],
+        "criteria": "自测通过，效果良好；全量 go test ./... 必须绿",
+        "gate_cmds": [{"cmd": "gofmt -l ."}],
+        "output_format": "按惯例",
+        "exit_cond": "做完为止",
+        "hard_limits": [],
+        "side_effects": "看情况",
+        "budget": "大概 1 小时",
+        "atomicity": "一次做完",
+        "slice_id": "待定",
+        "depends_on": "无"
+      }
+    },
+    {
+      "name": "真隐患-缺期望输出",
+      "class": "真隐患",
+      "expect": "red",
+      "expect_rules": ["R3", "R6"],
+      "why": "自造真隐患：criteria 有一条缺「期望输出」（无 expect 即无从判红绿）+ gate_cmds 只给退出码期望（go test 无测试文件仍 exit 0 ⇒ 假绿形态）。这类片最容易被放过，必须判红",
+      "slice": {
+        "defect_id": "DEF-20260918-S4-07",
+        "landing": "scripts/check-placeholder-residue.py:16",
+        "the_one_thing": "When 判据脚本跑完时，scripts/check-placeholder-residue.py 的退出码必须写明期望值。",
+        "context_needed": [
+          {"kind": "snippet", "value": "LINE_RE = re.compile(r\"^(?:([0-9a-f]{7,40}):)?(.*?):(\\d+):(.*)$\", re.S)"},
+          {"kind": "file", "value": "scripts/check-placeholder-residue.py"},
+          {"kind": "cmd", "value": "python3 scripts/check-placeholder-residue.py . HEAD; echo rc=$?"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "python3 scripts/check-placeholder-residue.py . HEAD; echo rc=$?", "expect": "0", "state": "改动前：绿（实跑 rc=0）"},
+          {"id": "C2", "cmd": "pytest -q tests/", "state": "改动前：红（无收集单列退码 5）"}
+        ],
+        "gate_cmds": [
+          {"cmd": "python3 scripts/check-placeholder-residue.py . HEAD", "expect": {"exit": 0, "stdout": "结果: 通过"}},
+          {"cmd": "go test ./...", "expect": {"exit": 0}}
+        ],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：把匹配式改坏后重跑，必须红（已实跑：由 rc=0 变 rc=1）；③ 牙齿计数 2/2；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "改动后 C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码、原始输出",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码", "原文", "时间"]}
+        },
+        "hard_limits": [
+          "① 只改 scripts/check-placeholder-residue.py 一个文件",
+          "② 不动 git、不删除任何文件、不触网"
+        ],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 / 需要删除任何文件 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3 · wall_s_max 43.6", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 python3 调用）",
+        "slice_id": "S4-C7",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 300, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "conflicts": [{"a": "criteria", "b": "budget", "where": "全量 go test ./... 必须绿 vs wall_s_max 43.6（已标记，不自行裁量）"}]
+      }
+    },
+    {
+      "name": "违规-一片绑两个缺陷",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["R1"],
+      "why": "一片只绑一个 defect_id（R1）：逗号分隔两个 id ⇒ 两名两体",
+      "slice": {
+        "defect_id": "DEF-20260918-07, DEF-20260918-09",
+        "landing": "docs/01-设计/切片合同-模板.md:41",
+        "the_one_thing": "When 模板已落盘时，docs/01-设计/切片合同-模板.md 的 §1 表必须补一行。",
+        "context_needed": [
+          {"kind": "snippet", "value": "| `depends_on` | invariant | 是 | 列表 / 「无」 | **可拓扑排序且无环**（R8）"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c '可拓扑排序且无环' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c '可拓扑排序且无环' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 1 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码、原始输出",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C9",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "违规-落点无路径且带含糊词",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["R2", "R4"],
+      "why": "R2（landing 无路径样式、当前不可读）+ R4（含糊词「相关」且未附改写成什么 ⇒ 不算有效报红）",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-11",
+        "landing": "相关的模板文件",
+        "the_one_thing": "When 模板落盘后，模板的 §1 表必须补一行字段。",
+        "context_needed": [
+          {"kind": "snippet", "value": "| `hard_limits` | invariant | 是 | 列表 | 非空且非占位（R5）"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c '非空且非占位' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c '非空且非占位' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 1 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C11",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "违规-落点路径不存在",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["R2"],
+      "why": "R2 的前状态检查：路径样式齐全但**当前不存在**（文案还没落盘）⇒ 判红（不是「未来会存在」）",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-12",
+        "landing": "docs/01-设计/切片合同-模板-v9.md:1",
+        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板-v9.md 的抬头必须写明 BCP 14 固定句。",
+        "context_needed": [
+          {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑：由 1 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板-v9.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C12",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "违规-criteria 是自由文本且带主观词",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["R3", "R4"],
+      "why": "R3 三件套（命令/期望输出/红绿）全缺 + R4 主观词「效果良好」（未附改写建议则不算有效报红）",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-13",
+        "landing": "docs/01-设计/切片合同-模板.md:32",
+        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 criteria 行必须给出三件套。",
+        "context_needed": [
+          {"kind": "snippet", "value": "| `criteria` | post | 是 | 列表，每项 = **三件套** |"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": "自测通过，效果良好",
+        "gate_cmds": [{"cmd": "grep -c '三件套' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "3"}}],
+        "output_format": "① 正控：实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉三件套那句后重跑，必须红（已实跑：由 3 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C13",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "违规-hard_limits 空壳与占位 output_format",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["R5", "R11"],
+      "why": "R5 空壳检测：hard_limits = []（未替换的 `[]` 形态）+ output_format 命中登记占位词「按惯例」；另缺 context_budget ⇒ R11",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-14",
+        "landing": "docs/01-设计/切片合同-模板.md:36",
+        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 hard_limits 行必须写明不变量。",
+        "context_needed": [
+          {"kind": "snippet", "value": "| `hard_limits` | invariant | 是 | 列表 | 非空且非占位（R5）"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'hard_limits' docs/01-设计/切片合同-模板.md", "expect": "6", "state": "改动前：绿（实跑 = 6）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c 'hard_limits' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "6"}}],
+        "output_format": "按惯例",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": [],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C14",
+        "depends_on": "无"
+      }
+    },
+    {
+      "name": "违规-gate_cmds 缺 expect 与 exit-only 假绿",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["R6"],
+      "why": "R6：一条无 expect；另一条只给 exit 期望而命令是登记过的假绿形态（gofmt -l 列出文件仍 exit 0）",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-15",
+        "landing": "docs/01-设计/切片合同-模板.md:33",
+        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 gate_cmds 行必须每条带 expect。",
+        "context_needed": [
+          {"kind": "snippet", "value": "| `gate_cmds` | post | 是 | `[{cmd, expect}]` | **可解析且每条带 expect**（R6）"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c '每条带 expect' docs/01-设计/切片合同-模板.md", "expect": "2", "state": "改动前：绿（实跑 = 2）"}
+        ],
+        "gate_cmds": [
+          {"cmd": "gofmt -l ."},
+          {"cmd": "gofmt -l .", "expect": {"exit": 0}}
+        ],
+        "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 2 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C15",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "违规-exit_cond 自由文本",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["R12", "R5"],
+      "why": "R12：成功/失败/升级三项全缺（自由文本）；R5：命中登记占位词「做完为止」",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-16",
+        "landing": "docs/01-设计/切片合同-模板.md:35",
+        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 exit_cond 行必须写成结构化三项。",
+        "context_needed": [
+          {"kind": "snippet", "value": "| `exit_cond` | post | 是 | 结构化三项 |"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'exit_cond' docs/01-设计/切片合同-模板.md", "expect": "5", "state": "改动前：绿（实跑 = 5）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c 'exit_cond' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "5"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 5 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": "做完为止",
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C16",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "违规-side_effects 枚举外且缺 escalate_if",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["§1-inv-side_effects", "§1-inv-escalate_if", "R5"],
+      "why": "§1 invariant 栏：side_effects 不在 {只读,写工作树,触网,git 写,删除} 枚举内，且表外字段 escalate_if 缺失；同时「看情况」是登记占位词 ⇒ R5",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-17",
+        "landing": "docs/01-设计/切片合同-模板.md:37",
+        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 side_effects 行必须取枚举之一。",
+        "context_needed": [
+          {"kind": "snippet", "value": "| `side_effects` | invariant | 是 | 枚举之一 |"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'side_effects' docs/01-设计/切片合同-模板.md", "expect": "9", "state": "改动前：绿（实跑 = 9）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c 'side_effects' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "9"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 9 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "看情况",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C17",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "违规-the_one_thing 多动词",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["R0"],
+      "why": "R0：句式套得上但⟨单一动作⟩段含三个动词（重构/跑/…）⇒ 只含一个动词不成立",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-18",
+        "landing": "docs/01-设计/切片合同-模板.md:43",
+        "the_one_thing": "When 模板已落盘时，docs/01-设计/切片合同-模板.md 的抬头必须重构模板并同步检查器并跑一遍门禁。",
+        "context_needed": [
+          {"kind": "snippet", "value": "| `the_one_thing` | **表外**（R0 的判据对象）| 是 | 一句话 |"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'the_one_thing' docs/01-设计/切片合同-模板.md", "expect": "3", "state": "改动前：绿（实跑 = 3）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c 'the_one_thing' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "3"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 3 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C18",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "违规-the_one_thing 缺 When 条件",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["R0"],
+      "why": "R0：无 When/While ⟨条件⟩（正面句式套不上）⇒ 判红，与多动词是两条独立原因码",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-19",
+        "landing": "docs/01-设计/切片合同-模板.md:43",
+        "the_one_thing": "docs/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
+        "context_needed": [
+          {"kind": "snippet", "value": "| `the_one_thing` | **表外**（R0 的判据对象）| 是 | 一句话 |"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'the_one_thing' docs/01-设计/切片合同-模板.md", "expect": "3", "state": "改动前：绿（实跑 = 3）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c 'the_one_thing' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "3"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 3 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C19",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "违规-context_needed 见设计稿",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["R10", "R4"],
+      "why": "R10 自包含性：把设计稿当上下文（无设计稿就复现不出）+ 无落点原文片段；R4：含糊词「设计稿」",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-20",
+        "landing": "docs/01-设计/切片合同-模板.md:30",
+        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 context_needed 行必须带落点原文片段。",
+        "context_needed": ["见设计稿", "context_needed 的最小集"],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'context_needed' docs/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c 'context_needed' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 4 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C20",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "违规-budget 无标定出处",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["§1-inv-budget", "R4"],
+      "why": "§1 invariant：budget 必须给标定出处（无出处的常数判红）；R4：含糊词「大概」",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-21",
+        "landing": "docs/01-设计/切片合同-模板.md:38",
+        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 budget 行必须写明标定出处。",
+        "context_needed": [
+          {"kind": "snippet", "value": "| `budget` | invariant | 是 | 数值 + **标定出处** |"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'budget' docs/01-设计/切片合同-模板.md", "expect": "9", "state": "改动前：绿（实跑 = 9）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c 'budget' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "9"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 9 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": "大概 1 小时",
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C21",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "违规-可选词小写 can/may 未大写",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["R4"],
+      "why": "R4 可选词层（can·may·可选）：BCP 14 只认全大写关键词，小写 must/should 不计入机器判据 ⇒ 模糊承诺必须判红",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-22",
+        "landing": "docs/01-设计/切片合同-模板.md:15",
+        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
+        "context_needed": [
+          {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
+        "output_format": "输出可以按惯例贴日志；① 正控实跑；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C22",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "违规-criteria 未置顶且片段未置首",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["R11"],
+      "why": "R11 两条顺序断言：context_needed 首条不是落点原文片段；criteria 的键序排在 output_format/exit_cond 等之后（长上下文 U 型曲线 ⇒ 片段与判据必须固定放最前）",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-23",
+        "landing": "docs/01-设计/切片合同-模板.md:31",
+        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 criteria 行必须固定放最前。",
+        "context_needed": [
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"},
+          {"kind": "snippet", "value": "| `criteria` | post | 是 | 列表，每项 = **三件套** |"}
+        ],
+        "open_questions": "无",
+        "gate_cmds": [{"cmd": "grep -c 'criteria' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "9"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 9 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'criteria' docs/01-设计/切片合同-模板.md", "expect": "9", "state": "改动前：绿（实跑 = 9）"}
+        ],
+        "slice_id": "S3-C23",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "违规-冲突未标 CONFLICT",
+      "class": "含糊/违规",
+      "expect": "red",
+      "expect_rules": ["§2-conflict"],
+      "why": "§2 冲突优先级：criteria 要求全量 go test ./... 必须绿，而 budget 给了数值上界 ⇒ 潜在冲突必须有 CONFLICT 标记，有冲突却未标记 ⇒ 判红（且不得自行裁量）",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-24",
+        "landing": "docs/01-设计/切片合同-模板.md:57",
+        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的优先级行必须写明冲突优先级。",
+        "context_needed": [
+          {"kind": "snippet", "value": "**优先级**：`hard_limits` > `criteria` > `output_format` > `budget`"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "go test ./... ", "expect": "全量绿", "state": "改动前：红（尚未有测试文件，rc=1）"}
+        ],
+        "gate_cmds": [{"cmd": "go test ./... | grep -c '^ok'", "expect": {"exit": 0, "stdout": "1"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：把测试删掉后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码、原始输出",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "只读",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "wall_s_max 43.6", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 go test）",
+        "slice_id": "S3-C24",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "边界-有路径但判据含糊",
+      "class": "边界",
+      "expect": "red",
+      "expect_rules": ["R4"],
+      "why": "边界样例（§3.6 逐字列举的两种之一）：落点现读得出（R2 过），但判据是含糊动作「跑一下测试」⇒ 必须仍判红（否则就是假绿）",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-25",
+        "landing": "scripts/check-placeholder-residue.py:35",
+        "the_one_thing": "When 判据脚本跑完时，scripts/check-placeholder-residue.py 的 selftest 必须贴出输出。",
+        "context_needed": [
+          {"kind": "snippet", "value": "def selftest():"},
+          {"kind": "file", "value": "scripts/check-placeholder-residue.py"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "跑一下测试", "expect": "通过", "state": "改动前：绿（自测打印「全过」）"}
+        ],
+        "gate_cmds": [{"cmd": "python3 scripts/check-placeholder-residue.py . HEAD | grep -c '通过'", "expect": {"exit": 0, "stdout": "1"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：把 regex 改坏后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 scripts/check-placeholder-residue.py 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "只读",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 python3 调用）",
+        "slice_id": "S3-C25",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "边界-有命令但落点含糊",
+      "class": "边界",
+      "expect": "red",
+      "expect_rules": ["R2", "R4"],
+      "why": "边界样例（§3.6 逐字列举的两种之二）：命令可复制、expect 齐全（R3/R6 过），但落点写成「模板那边」⇒ 必须仍判红",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-26",
+        "landing": "模板那边",
+        "the_one_thing": "When 模板落盘时，模板那边的抬头必须写明 BCP 14 固定句。",
+        "context_needed": [
+          {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑：由 4 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C26",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "边界-未知规则键 ⇒ strict 错误",
+      "class": "边界",
+      "expect": "error",
+      "expect_rules": ["STRICT"],
+      "why": "strict 等价（§3.5：未知规则键＝错误）：片里出现 R0–R13 之外的键 ⇒ 报错 rc=2，**不给结论**（不是判红）",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-27",
+        "landing": "docs/01-设计/切片合同-模板.md:1",
+        "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
+        "context_needed": [
+          {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C27",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "r14_new_rule": "自造的规则键（不存在于 R0–R13）⇒ strict 必须报错"
+      }
+    },
+    {
+      "name": "边界-片内试图禁用未登记规则",
+      "class": "边界",
+      "expect": "error",
+      "expect_rules": ["STRICT"],
+      "why": "§3.5：禁用任何规则必须显式登记并打印 ⇒ 片内 `rules` 段想关掉 R2（未登记）⇒ 报错 rc=2",
+      "slice": {
+        "defect_id": "DEF-20260918-S3-28",
+        "landing": "docs/01-设计/切片合同-模板.md:1",
+        "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
+        "context_needed": [
+          {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S3-C28",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "rules": {"R2": "off"}
+      }
+    },
+    {
+      "name": "合法-只读片最小形态",
+      "class": "合法",
+      "expect": "green",
+      "expect_rules": [],
+      "why": "最小合法片：单文件落点、片段置首、criteria 三件套齐、expect 带 stdout、四字段非空非占位、budget 与 context_budget 都标出标定档案",
+      "slice": {
+        "defect_id": "DEF-20260918-S5-01",
+        "landing": "scripts/check-placeholder-residue.py:16",
+        "the_one_thing": "When 判据脚本跑完时，scripts/check-placeholder-residue.py 的 selftest 必须打印用例计数。",
+        "context_needed": [
+          {"kind": "snippet", "value": "LINE_RE = re.compile(r\"^(?:([0-9a-f]{7,40}):)?(.*?):(\\d+):(.*)$\", re.S)"},
+          {"kind": "file", "value": "scripts/check-placeholder-residue.py"},
+          {"kind": "cmd", "value": "python3 scripts/check-placeholder-residue.py . HEAD; echo rc=$?"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "python3 scripts/check-placeholder-residue.py . HEAD | grep -c '自测: 全过'", "expect": "1", "state": "改动前：绿（实跑 = 1）"},
+          {"id": "C2", "cmd": "python3 scripts/check-placeholder-residue.py . HEAD; echo rc=$?", "expect": "rc=0", "state": "改动前：绿（实跑 rc=0）"}
+        ],
+        "gate_cmds": [
+          {"cmd": "python3 scripts/check-placeholder-residue.py . HEAD | grep -c '自测: 全过'", "expect": {"exit": 0, "stdout": "1"}}
+        ],
+        "output_format": "① 正控：C1/C2 实跑贴命令 + 原始输出 + 退出码（实跑：1 与 rc=0）；② 负控（改动前必红）：把 LINE_RE 改坏后重跑，必须红（已实跑：由 rc=0 变 rc=1）；③ 牙齿计数 2/2；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1", "C2"],
+          "failure": "改动后 C1 输出与期望不符或 C2 的 rc ≠ 0，或负控未由绿变红 ⇒ 记失败，附命令、退出码、原始输出",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码", "原文", "时间"]}
+        },
+        "hard_limits": [
+          "① 只读 scripts/check-placeholder-residue.py 一个文件（本片不写工作树）",
+          "② 不动 git、不删除任何文件、不触网"
+        ],
+        "side_effects": "只读",
+        "escalate_if": "需要写工作树 / 需要 git 写 / 需要删除任何文件 ⇒ 升级 Mr2109",
+        "budget": {"value": "tool_calls_max 2 · wall_s_max 43.6", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（两条各一次 python3 调用）",
+        "slice_id": "S5-C1",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 300, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "合法-未决写 NEEDS-CLARIFICATION",
+      "class": "合法",
+      "expect": "green",
+      "expect_rules": [],
+      "why": "R5 逐字：未决**必须写成 NEEDS-CLARIFICATION**（不得留空、不得留 `[]`/`<>`）⇒ 这样写是合法的，不是空壳",
+      "slice": {
+        "defect_id": "DEF-20260918-S5-02",
+        "landing": "docs/01-设计/切片合同-模板.md:30",
+        "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的 context_needed 行必须写明落点片段。",
+        "context_needed": [
+          {"kind": "snippet", "value": "| `context_needed` | pre | 是 | 列表（文件 / 符号 / 原文片段）|"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": ["上下文上界是否 2000 token 够用？"],
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c 'context_needed' docs/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c 'context_needed' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 4 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码", "原文", "时间"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "NEEDS-CLARIFICATION", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml（缺此行则记未标定，不猜）"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S5-C2",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "合法-已标 CONFLICT 的片",
+      "class": "合法",
+      "expect": "green",
+      "expect_rules": [],
+      "why": "§2 的正向路径：criteria 是全量命令而 budget 有上界 ⇒ 已显式标 CONFLICT（哪两个字段、冲突在哪一句）⇒ 合法（标记不是解决，是交回上游）",
+      "slice": {
+        "defect_id": "DEF-20260918-S5-03",
+        "landing": "docs/01-设计/切片合同-模板.md:55",
+        "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的优先级行必须写明冲突优先级。",
+        "context_needed": [
+          {"kind": "snippet", "value": "**优先级**：`hard_limits` > `criteria` > `output_format` > `budget`"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c '硬界限' docs/01-设计/切片合同-模板.md", "expect": "0", "state": "改动前：绿（实跑 = 0，rc=1 属期望输出非退出码判据）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c '优先级' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "2"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：把优先级那句删掉后重跑，必须红（已实跑：由 2 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "只读",
+        "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "wall_s_max 43.6", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S5-C3",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "conflicts": [{"a": "criteria", "b": "budget", "where": "全量 go test ./... 必须绿 vs wall_s_max 43.6（已标记，裁量权交回上游）"}]
+      }
+    },
+    {
+      "name": "合法-gate_cmds 带 stdout 期望（含 pytest）",
+      "class": "合法",
+      "expect": "green",
+      "expect_rules": [],
+      "why": "R6 的正向路径：pytest/gofmt 这类易假绿命令**只要带了 stdout 期望**就不判红（假绿陷阱只在 exit-only 时成立）——防「一律判红」的假红",
+      "slice": {
+        "defect_id": "DEF-20260918-S5-04",
+        "landing": "scripts/check-build-tags.py:1",
+        "the_one_thing": "When 门禁跑完时，scripts/check-build-tags.py 的输出必须带退出码与判词。",
+        "context_needed": [
+          {"kind": "snippet", "value": "退出码：0 全绿 · 1 有 FAIL 项 · 2 用法错/前置缺件/自检不过（**不给结论**）"},
+          {"kind": "file", "value": "scripts/check-build-tags.py"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "python3 scripts/check-build-tags.py --list | grep -c '判据'", "expect": "1", "state": "改动前：绿（实跑 ≥1）"}
+        ],
+        "gate_cmds": [
+          {"cmd": "python3 scripts/check-build-tags.py --self-test 2>&1 | tail -n 1 | grep -c '自检结论: 全过'", "expect": {"exit": 0, "stdout": "1"}},
+          {"cmd": "python3 scripts/check-build-tags.py --list | grep -c '判据'", "expect": {"contains": "判据", "exit": 0}}
+        ],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：把判据打印关掉后重跑，必须红（已实跑：由 1 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码", "原文", "时间"]}
+        },
+        "hard_limits": ["① 只改 scripts/check-build-tags.py 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "只读",
+        "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3 · wall_s_max 43.6", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 python3 调用）",
+        "slice_id": "S5-C4",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 300, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "合法-照抄示例片的字段序",
+      "class": "合法",
+      "expect": "green",
+      "expect_rules": [],
+      "why": "R11 顺序断言的合法侧：landing 片段在 context_needed 首条、criteria 键序在 post/invariant 其他字段之前",
+      "slice": {
+        "defect_id": "DEF-20260918-S5-05",
+        "landing": "docs/01-设计/设计-协作骨架-v2.1-20260918.md:150",
+        "the_one_thing": "When 模板落盘时，docs/01-设计/设计-协作骨架-v2.1-20260918.md 的 §3.4 抬头必须写明判据口径。",
+        "context_needed": [
+          {"kind": "snippet", "value": "### 3.4 机器判据 **R0–R13**（B §2.4；执行前只做句法与状态事实）"},
+          {"kind": "file", "value": "docs/01-设计/设计-协作骨架-v2.1-20260918.md"},
+          {"kind": "cmd", "value": "grep -c '执行前只做句法与状态事实' docs/01-设计/设计-协作骨架-v2.1-20260918.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c '执行前只做句法与状态事实' docs/01-设计/设计-协作骨架-v2.1-20260918.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c '执行前只做句法与状态事实' docs/01-设计/设计-协作骨架-v2.1-20260918.md", "expect": {"exit": 0, "stdout": "1"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑：由 1 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码", "原文", "时间"]}
+        },
+        "hard_limits": ["① 只读 docs/01-设计/设计-协作骨架-v2.1-20260918.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "只读",
+        "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S5-C5",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 300, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "边界-多文件落点 ⇒ 需递归不打回",
+      "class": "边界",
+      "expect": "recursion",
+      "expect_rules": ["R7"],
+      "why": "R7 逐字：超限判「需递归」，**而不是打回** ⇒ 多文件落点必须产出「需递归」标记而**不**判红（否则就是与 §3.4-R7 不一致的假红）",
+      "slice": {
+        "defect_id": "DEF-20260918-S5-06",
+        "landing": "scripts/check-slice.py:1",
+        "the_one_thing": "When 检查器落盘时，scripts/check-slice.py 的头部必须写明退出码语义。",
+        "context_needed": [
+          {"kind": "snippet", "value": "退出码: 0 全部合法 / 1 有非法 / 2 用法错·前置缺件（不给结论）"},
+          {"kind": "file", "value": "scripts/check-slice.py"},
+          {"kind": "file", "value": "scripts/slice-probes.json"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c '退出码' scripts/check-slice.py", "expect": "3", "state": "改动前：绿（实跑 ≥3）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c '退出码' scripts/check-slice.py", "expect": {"exit": 0, "stdout": "3"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉退出码段后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 scripts/check-slice.py 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "只读",
+        "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S5-C6",
+        "depends_on": "无",
+        "context_budget": {"files": 2, "tokens": 400, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "边界-行数上界未标定 ⇒ 不猜不判红",
+      "class": "边界",
+      "expect": "green",
+      "expect_rules": [],
+      "why": "R7 的上界数值「= 本仓标定取值（待实测复核）」：现档案没有 slice_lines_max ⇒ 记「未标定」，**不猜**（不因此判红）——这条专门防止检查器自己造一个常数",
+      "slice": {
+        "defect_id": "DEF-20260918-S5-07",
+        "landing": "docs/01-设计/切片合同-模板.md:93",
+        "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的 R7 行必须写明「本仓标定取值」。",
+        "context_needed": [
+          {"kind": "snippet", "value": "| **R7** | 粒度：默认**单文件** + 行数上界（**上界数值 = 本仓标定取值（待实测复核）**）；**超限判\"需递归\"，而不是打回** ✗ | 是 | 低 |"},
+          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c '本仓标定取值' docs/01-设计/切片合同-模板.md", "expect": "7", "state": "改动前：绿（实跑 ≥7）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c '本仓标定取值' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "7"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+        },
+        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S5-C7",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "集合-两片有序依赖（合法）",
+      "class": "合法",
+      "expect": "green",
+      "expect_rules": [],
+      "why": "R8/R9 的正向路径：depends_on 可拓扑排序、无环、闭包闭合（被依赖的片在同批里）⇒ 全绿",
+      "slices": [
+        {
+          "defect_id": "DEF-20260918-S6-01",
+          "landing": "docs/01-设计/切片合同-模板.md:14",
+          "the_one_thing": "When 片文件已有先例时，docs/01-设计/切片合同-模板.md 的抬头必须照抄 BCP 14 固定句。",
+          "context_needed": [
+            {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释（BCP 14 = RFC 2119 + RFC 8174）"},
+            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          ],
+          "open_questions": "无",
+          "criteria": [
+            {"id": "C1", "cmd": "grep -c 'BCP 14 = RFC 2119 + RFC 8174' docs/01-设计/切片合同-模板.md", "expect": "2", "state": "改动前：绿（实跑 ≥2）"}
+          ],
+          "gate_cmds": [{"cmd": "grep -c 'BCP 14 = RFC 2119 + RFC 8174' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "2"}}],
+          "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+          "exit_cond": {
+            "success": ["C1"],
+            "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+            "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+          },
+          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "side_effects": "只读",
+          "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+          "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+          "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+          "slice_id": "S6-C1",
+          "depends_on": "无",
+          "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+        },
+        {
+          "defect_id": "DEF-20260918-S6-02",
+          "landing": "docs/01-设计/切片合同-模板.md:19",
+          "the_one_thing": "When 上一片落盘后，docs/01-设计/切片合同-模板.md 的 §0 注释必须写明 RFC 8174 逐字句。",
+          "context_needed": [
+            {"kind": "snippet", "value": "RFC 8174 逐字：\"only **UPPERCASE** usage of the key words have the defined special meanings\""},
+            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          ],
+          "open_questions": "无",
+          "criteria": [
+            {"id": "C1", "cmd": "grep -c 'UPPERCASE' docs/01-设计/切片合同-模板.md", "expect": "3", "state": "改动前：绿（实跑 ≥3）"}
+          ],
+          "gate_cmds": [{"cmd": "grep -c 'UPPERCASE' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "3"}}],
+          "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+          "exit_cond": {
+            "success": ["C1"],
+            "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+            "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+          },
+          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "side_effects": "只读",
+          "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+          "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+          "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+          "slice_id": "S6-C2",
+          "depends_on": ["S6-C1"],
+          "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+        }
+      ]
+    },
+    {
+      "name": "集合-依赖成环（违规）",
+      "class": "集合",
+      "expect": "red",
+      "expect_rules": ["R8"],
+      "why": "R8：depends_on 必须可拓扑排序且无环 ⇒ 两片互指 = 成环，判红（拓扑排序失败）",
+      "slices": [
+        {
+          "defect_id": "DEF-20260918-S7-01",
+          "landing": "docs/01-设计/切片合同-模板.md:184",
+          "the_one_thing": "When 前一片就绪时，docs/01-设计/切片合同-模板.md 的 §5 自查必须写明 R0 例句。",
+          "context_needed": [
+            {"kind": "snippet", "value": "R0 ✓（单动词）· R1 ✓（一个 `defect_id`）"},
+            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          ],
+          "open_questions": "无",
+          "criteria": [
+            {"id": "C1", "cmd": "grep -c 'R0 ✓（单动词）' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+          ],
+          "gate_cmds": [{"cmd": "grep -c 'R0 ✓（单动词）' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+          "exit_cond": {
+            "success": ["C1"],
+            "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+            "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+          },
+          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "side_effects": "只读",
+          "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+          "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+          "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+          "slice_id": "S7-C1",
+          "depends_on": ["S7-C2"],
+          "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+        },
+        {
+          "defect_id": "DEF-20260918-S7-02",
+          "landing": "docs/01-设计/切片合同-模板.md:193",
+          "the_one_thing": "When 前一片就绪时，docs/01-设计/切片合同-模板.md 的 §5 自查必须写明 R9 那一行。",
+          "context_needed": [
+            {"kind": "snippet", "value": "R9/R10（片集合级，由集合侧判）"},
+            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          ],
+          "open_questions": "无",
+          "criteria": [
+            {"id": "C1", "cmd": "grep -c 'R9/R10（片集合级，由集合侧判）' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+          ],
+          "gate_cmds": [{"cmd": "grep -c 'R9/R10（片集合级，由集合侧判）' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+          "exit_cond": {
+            "success": ["C1"],
+            "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+            "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+          },
+          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "side_effects": "只读",
+          "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+          "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+          "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+          "slice_id": "S7-C2",
+          "depends_on": ["S7-C1"],
+          "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+        }
+      ]
+    },
+    {
+      "name": "集合-依赖闭包未闭合（违规）",
+      "class": "集合",
+      "expect": "red",
+      "expect_rules": ["R9"],
+      "why": "R9 集合停机判据的一半（依赖闭包闭合）：depends_on 指向集合外的片 ⇒ 闭包未闭合，判红（未覆盖/未闭合清单随打回附上）。若该批确实不是完整集合，应显式加 `--set-open` 让它记「不可判」",
+      "slices": [
+        {
+          "defect_id": "DEF-20260918-S8-01",
+          "landing": "docs/01-设计/切片合同-模板.md:76",
+          "the_one_thing": "When 上一批落盘后，docs/01-设计/切片合同-模板.md 的继承四条必须写明。",
+          "context_needed": [
+            {"kind": "snippet", "value": "- 子 pre ⊇ 父 pre"},
+            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          ],
+          "open_questions": "无",
+          "criteria": [
+            {"id": "C1", "cmd": "grep -c '子 pre ⊇ 父 pre' docs/01-设计/切片合同-模板.md", "expect": "2", "state": "改动前：绿（实跑 ≥2）"}
+          ],
+          "gate_cmds": [{"cmd": "grep -c '子 pre ⊇ 父 pre' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "2"}}],
+          "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+          "exit_cond": {
+            "success": ["C1"],
+            "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+            "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+          },
+          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "side_effects": "只读",
+          "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+          "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+          "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+          "slice_id": "S8-C1",
+          "depends_on": ["S8-C0"],
+          "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+        },
+        {
+          "defect_id": "DEF-20260918-S8-02",
+          "landing": "docs/01-设计/切片合同-模板.md:78",
+          "the_one_thing": "When 上一片落盘后，docs/01-设计/切片合同-模板.md 的继承四条必须写明判红口径。",
+          "context_needed": [
+            {"kind": "snippet", "value": "⇒ **违反任一条判红**（防子片绕过父片边界 ✗）"},
+            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          ],
+          "open_questions": "无",
+          "criteria": [
+            {"id": "C1", "cmd": "grep -c '违反任一条判红' docs/01-设计/切片合同-模板.md", "expect": "2", "state": "改动前：绿（实跑 ≥2）"}
+          ],
+          "gate_cmds": [{"cmd": "grep -c '违反任一条判红' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "2"}}],
+          "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+          "exit_cond": {
+            "success": ["C1"],
+            "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+            "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+          },
+          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "side_effects": "只读",
+          "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+          "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+          "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+          "slice_id": "S8-C2",
+          "depends_on": "无",
+          "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+        }
+      ]
+    },
+    {
+      "name": "集合-子合同继承违反（违规）",
+      "class": "集合",
+      "expect": "red",
+      "expect_rules": ["§3.3-inherit"],
+      "why": "§3.3 继承四条：子片丢掉父片的一条 open_questions（子 pre ⊉ 父 pre）、多出一条父片没有的判据（子 post ⊄ 父 post）、多出一条硬界限（子 hard_limits ⊄ 父 hard_limits）⇒ 逐条判红",
+      "slices": [
+        {
+          "defect_id": "DEF-20260918-S9-00",
+          "landing": "docs/01-设计/切片合同-模板.md:109",
+          "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的 §5 正例必须写出抬头区。",
+          "context_needed": [
+            {"kind": "snippet", "value": "## 5. 正例：一片填满（示例，结构照抄即可）"},
+            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          ],
+          "open_questions": ["是否需要先落 S9-C0 的骨架片？"],
+          "criteria": [
+            {"id": "P1", "cmd": "grep -c '正例：一片填满' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"},
+            {"id": "P2", "cmd": "grep -c '结构照抄即可' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+          ],
+          "gate_cmds": [{"cmd": "grep -c '结构照抄即可' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "output_format": "① 正控：P1/P2 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 2/2；④ 还原：负控在副本上做，原件 sha 一致。",
+          "exit_cond": {
+            "success": ["P1", "P2"],
+            "failure": "P1/P2 输出与期望不符 ⇒ 记失败，附命令、退出码",
+            "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+          },
+          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "side_effects": "只读",
+          "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+          "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+          "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（两条各一次 grep）",
+          "slice_id": "S9-P0",
+          "depends_on": "无",
+          "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+        },
+        {
+          "defect_id": "DEF-20260918-S9-01",
+          "landing": "docs/01-设计/切片合同-模板.md:118",
+          "the_one_thing": "When 父片落盘后，docs/01-设计/切片合同-模板.md 的 §5 抬头区必须写出 BCP 14 抬头。",
+          "context_needed": [
+            {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释（BCP 14 = RFC 2119 + RFC 8174）"},
+            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          ],
+          "open_questions": "无",
+          "criteria": [
+            {"id": "C1", "cmd": "grep -c '正例：一片填满' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"},
+            {"id": "C2", "cmd": "grep -c '顺便改 UI 导航' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+          ],
+          "gate_cmds": [{"cmd": "grep -c '正例：一片填满' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "output_format": "① 正控：C1/C2 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 2/2；④ 还原：负控在副本上做，原件 sha 一致。",
+          "exit_cond": {
+            "success": ["C1"],
+            "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+            "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+          },
+          "hard_limits": [
+            "① 只改 docs/01-设计/切片合同-模板.md 一个文件",
+            "③ 顺便把 UI 导航也一起改掉（父片没有这条）"
+          ],
+          "side_effects": "写工作树",
+          "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
+          "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+          "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（两条各一次 grep）",
+          "slice_id": "S9-C1",
+          "depends_on": "S9-P0",
+          "parent": "S9-P0",
+          "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+        }
+      ]
+    },
+    {
+      "name": "集合-子合同继承合规（合法）",
+      "class": "合法",
+      "expect": "green",
+      "expect_rules": [],
+      "why": "§3.3 继承四条的正向路径：子 pre ⊇ 父 pre · 子 post ⊆ 父 post · 子 hard_limits ⊆ 父 hard_limits · 父 exit_cond 由**子集合**共同满足（两个子片合起来承接 P1/P2）⇒ 全绿",
+      "slices": [
+        {
+          "defect_id": "DEF-20260918-S10-00",
+          "landing": "docs/01-设计/切片合同-模板.md:224",
+          "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的 §6 反例必须写出 R5 那一行。",
+          "context_needed": [
+            {"kind": "snippet", "value": "hard_limits: []"},
+            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          ],
+          "open_questions": "无",
+          "criteria": [
+            {"id": "P1", "cmd": "grep -c 'R5（空壳：含未替换的' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"},
+            {"id": "P2", "cmd": "grep -c 'R6（该条无 expect）' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+          ],
+          "gate_cmds": [{"cmd": "grep -c 'R6（该条无 expect）' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "output_format": "① 正控：P1/P2 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑）；③ 牙齿计数 2/2；④ 还原：负控在副本上做，原件 sha 一致。",
+          "exit_cond": {
+            "success": ["P1", "P2"],
+            "failure": "P1/P2 输出与期望不符 ⇒ 记失败，附命令、退出码",
+            "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+          },
+          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "side_effects": "只读",
+          "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+          "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+          "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（两条各一次 grep）",
+          "slice_id": "S10-P0",
+          "depends_on": "无",
+          "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+        },
+        {
+          "defect_id": "DEF-20260918-S10-01",
+          "landing": "docs/01-设计/切片合同-模板.md:224",
+          "the_one_thing": "When 父片落盘后，docs/01-设计/切片合同-模板.md 的 §6 空壳行必须写明 R5。",
+          "context_needed": [
+            {"kind": "snippet", "value": "hard_limits: []"},
+            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          ],
+          "open_questions": "无",
+          "criteria": [
+            {"id": "C1", "cmd": "grep -c 'R5（空壳：含未替换的' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+          ],
+          "gate_cmds": [{"cmd": "grep -c 'R5（空壳：含未替换的' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+          "exit_cond": {
+            "success": ["C1"],
+            "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+            "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+          },
+          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件"],
+          "side_effects": "只读",
+          "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+          "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+          "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+          "slice_id": "S10-C1",
+          "depends_on": "S10-P0",
+          "parent": "S10-P0",
+          "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+        },
+        {
+          "defect_id": "DEF-20260918-S10-02",
+          "landing": "docs/01-设计/切片合同-模板.md:216",
+          "the_one_thing": "When 父片落盘后，docs/01-设计/切片合同-模板.md 的 §6 假绿行必须写明 R6。",
+          "context_needed": [
+            {"kind": "snippet", "value": "gate_cmds: [{\"cmd\": \"gofmt -l .\"}]"},
+            {"kind": "snippet", "value": "hard_limits: []"},
+            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          ],
+          "open_questions": "无",
+          "criteria": [
+            {"id": "C1", "cmd": "grep -c 'R6（该条无 expect）' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+          ],
+          "gate_cmds": [{"cmd": "grep -c 'R6（该条无 expect）' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+          "exit_cond": {
+            "success": ["C1"],
+            "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
+            "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
+          },
+          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件"],
+          "side_effects": "只读",
+          "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+          "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+          "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+          "slice_id": "S10-C2",
+          "depends_on": "S10-P0",
+          "parent": "S10-P0",
+          "context_budget": {"files": 1, "tokens": 200, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+        }
+      ]
+    },
+    {
+      "name": "合法-落点为脚本自身（另一文件）",
+      "class": "合法",
+      "expect": "green",
+      "expect_rules": [],
+      "why": "合法片的泛化检查：换一个现存落点（accept-no-probe.sh）仍全绿 —— 防「只认某一个路径」的过拟合",
+      "slice": {
+        "defect_id": "DEF-20260918-S5-08",
+        "landing": "scripts/accept-no-probe.sh:23",
+        "the_one_thing": "When 验收脚本跑完时，scripts/accept-no-probe.sh 的用法行必须写明三态退出码。",
+        "context_needed": [
+          {"kind": "snippet", "value": "退出码: 0 接受 / 1 拒绝 / 2 用法或环境错误（含负控失效）"},
+          {"kind": "file", "value": "scripts/accept-no-probe.sh"},
+          {"kind": "cmd", "value": "grep -c 'rc = ' scripts/accept-no-probe.sh"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "grep -c '负控检出条数' scripts/accept-no-probe.sh", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+        ],
+        "gate_cmds": [{"cmd": "grep -c '负控检出条数' scripts/accept-no-probe.sh", "expect": {"exit": 0, "stdout": "1"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 1 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码", "原文", "时间"]}
+        },
+        "hard_limits": ["① 只读 scripts/accept-no-probe.sh 一个文件", "② 不动 git、不删除任何文件、不触网"],
+        "side_effects": "只读",
+        "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3 · tool_calls_max 2", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
+        "slice_id": "S5-C8",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 300, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    },
+    {
+      "name": "合法-本检查器自己的片（自指检查）",
+      "class": "合法",
+      "expect": "green",
+      "expect_rules": [],
+      "why": "自指：为 scripts/check-slice.py 本身写的片必须合法（不然就是「检查器给不了自己的片判绿」）",
+      "slice": {
+        "defect_id": "DEF-20260918-S5-09",
+        "landing": "scripts/check-slice.py:36",
+        "the_one_thing": "When 检查器落盘时，scripts/check-slice.py 的正文必须写明退出码语义。",
+        "context_needed": [
+          {"kind": "snippet", "value": "    2  用法错 · 前置缺件 · **strict 违约**（未知字段键 / 未知规则键 / 未登记的禁用请求）"},
+          {"kind": "file", "value": "scripts/check-slice.py"},
+          {"kind": "cmd", "value": "python3 scripts/check-slice.py --list-rules | grep -c 'R13'"}
+        ],
+        "open_questions": "无",
+        "criteria": [
+          {"id": "C1", "cmd": "python3 scripts/check-slice.py --probe | tail -n 1 | grep -c 'rc = 0'", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+        ],
+        "gate_cmds": [{"cmd": "python3 scripts/check-slice.py --probe | tail -n 1 | grep -c 'rc = 0'", "expect": {"exit": 0, "stdout": "1"}}],
+        "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：把 probe 门槛判定改坏后重跑，必须红（已实跑：由 1 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
+        "exit_cond": {
+          "success": ["C1"],
+          "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码",
+          "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码", "原文", "时间"]}
+        },
+        "hard_limits": ["① 只改 scripts/check-slice.py 一个文件", "② 不动 git、不删除任何文件"],
+        "side_effects": "写工作树",
+        "escalate_if": "需要写工作树之外的文件 / 需要 git 写 / 需要删除任何文件 ⇒ 升级 Mr2109",
+        "budget": {"value": "steps_max 3 · assistant_tokens_est_max 118", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
+        "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 python3 调用）",
+        "slice_id": "S5-C9",
+        "depends_on": "无",
+        "context_budget": {"files": 1, "tokens": 400, "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"}
+      }
+    }
+  ]
+}
