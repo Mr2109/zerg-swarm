@@ -111,18 +111,27 @@ func estimateTokens(s string) int {
 	return int(float64(cjk)/0.7) + ascii/4 // 中文 1.43 token/字 ÷ 系数表述——即 0.7 字/token；英文 4 字符/token
 }
 
+// compactMessageTokens — 单条消息计入压缩阈值的 token 估算（内容 + 思考 + 工具调用）。
+//
+// 触发判定（compactOverThreshold）与观测（T3.1 事件的 tokens_before/tokens_after）**共用**它
+// ⇒ 事件里的 token 数与阈值同一口径，可直接对照（"离阈值还有多远"不必再换算）。
+func compactMessageTokens(m Message) int {
+	n := estimateTokens(m.Content)
+	if m.Reasoning != "" {
+		n += estimateTokens(m.Reasoning)
+	}
+	if m.ToolCalls != "" {
+		n += estimateTokens(m.ToolCalls)
+	}
+	return n
+}
+
 // compactOverThreshold — token 估算超阈值（P4-39 含工具 JSON——2026-09-05 用 estimateTokens）
 func compactOverThreshold(msgs []Message, model string) bool {
 	trigger := CompactTriggerTokens(model)
 	total := 0
 	for _, m := range msgs {
-		total += estimateTokens(m.Content)
-		if m.Reasoning != "" {
-			total += estimateTokens(m.Reasoning)
-		}
-		if m.ToolCalls != "" {
-			total += estimateTokens(m.ToolCalls)
-		}
+		total += compactMessageTokens(m) // 与观测同一估算器（见 compactMessageTokens 注释）
 	}
 	return float64(total) > float64(trigger)
 }
