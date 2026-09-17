@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Mr2109/zerg-swarm/core/internal/behaviorobs"
 	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
 	"github.com/Mr2109/zerg-swarm/core/internal/toolobs"
 )
@@ -31,6 +32,22 @@ func appendReasoning(acc, round string) string {
 
 func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[string]any, d Deps) *Result {
 	res := &Result{}
+	// T1.3 观测（会话级结论）：用 defer 在**全部**返回路径上收口 —— 一处接线覆盖所有终局
+	// （自然收尾/轮数用尽/墙钟/超时/坏格式/守卫升级/推理失败），且不改任何一条既有 return 的语义：
+	// 只**读** res 上报事实，不抛错、不阻塞、不参与判定（叶包 best-effort，见 internal/behaviorobs）。
+	// 判据（在叶包里写死）：整会话零「写类工具**成功**」且已给出终答 ⇒ early_exit_suspected。
+	// Rounds 用本层的真实轮次计数（不猜：由轮次循环自己数）。
+	obsRound := 0
+	defer func() {
+		behaviorobs.EmitSession(behaviorobs.SessionFact{
+			Session:  d.Session,
+			Rounds:   obsRound,
+			ExitKind: res.ExitKind,
+			// 「已给出终答」的唯一判据：正常收尾（模型自己停了工具、交了正文）。
+			// **不含**超时/轮数用尽/坏格式等终局 —— 那些是"没干完"而不是"早退交差"（防误报）。
+			FinalAnswer: res.ExitKind == "natural" && strings.TrimSpace(res.Content) != "",
+		})
+	}()
 	maxRounds := cfg.MaxRounds
 	if maxRounds <= 0 {
 		maxRounds = 10
@@ -55,6 +72,7 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 	guard := loopguardNew()
 
 	for round := 1; round <= maxRounds; round++ {
+		obsRound = round // T1.3：本层真实轮次（会话级结论用它当 Rounds，不猜）
 		// 墙钟
 		if cfg.WallClock > 0 && time.Since(loopStart) > cfg.WallClock {
 			res.ExitKind = "wall_clock"
@@ -127,6 +145,9 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 
 		// 无工具调用
 		if len(result.ToolCalls) == 0 {
+			// T1.3 观测（**一处覆盖本分支全部出口**：终结仲裁引导/坏格式重试/自然收尾/坏格式收尾）：
+			// 本轮工具调用数恒为 0 ⇒ 连续零调用轮数 +1、首次调用之前轮数 +1（由叶包累加）。
+			obsBehaviorRound(d.Session, round, 0, 0)
 			// Terminator 仲裁（CA 契约判定/对话 nil=自然终止）
 			if d.Terminator != nil {
 				done, feedback := d.Terminator.OnNoToolCall(result)
@@ -156,6 +177,8 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 		badFormatStreak = 0
 
 		// 执行工具（逐个）
+		// T1.3 观测：本轮**成功**的写类工具计数（只数、不改行为；判据 = 判定层没挡 + 执行无错 + 名字在写类白名单）
+		writeOK := 0
 		for _, tc := range result.ToolCalls {
 			normalizeToolArgs(&tc)
 			argsJSON := mustJSON(tc.Args)
@@ -179,6 +202,12 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 				content = fmt.Sprintf("【系统】工具 %s 本对话已隐藏（连续 3 次执行失败）。请换其他工具或 tool_search 搜索替代。", tc.Name)
 			default:
 				content, dur, execErr = d.Exec(ctx, tc.Name, tc.Args)
+			}
+			// T1.3 观测（只数、不改行为）：本次调用是**成功的写类工具**吗？
+			// 三条件缺一不可 —— ① 没被隐藏（被系统挡下不算干活）② 执行无错（失败不算写成功）
+			// ③ 工具名在写类白名单里（闭集，见 behaviorobs.IsWriteTool；bash 不在其中 ⇒ 本信号取"写"的下界）。
+			if !hidden && execErr == nil && behaviorobs.IsWriteTool(tc.Name) {
+				writeOK++
 			}
 			// 耗时兜底（2026-09-17 实测：部分工具 d.Exec 不回耗时 ⇒ 轨迹里 Duration 恒空、观测面拿不到「工具耗了多久」）；空则用真实墙钟补，有值（bash 自带）则尊重原值。
 			if dur == "" {
@@ -257,6 +286,8 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 						res.Usage.TotalTokens += final.TotalTokens
 					}
 					res.ExitKind = "loopguard_escalate"
+					// T1.3 观测：本轮确实执行过工具 ⇒ 照常上报（否则这条终局会在行为观测面留一个空档）
+					obsBehaviorRound(d.Session, round, len(result.ToolCalls), writeOK)
 					return res
 				}
 				msgs = append(msgs, map[string]any{"role": "user", "content": guide})
@@ -270,6 +301,8 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 					res.Usage.TotalTokens += final.TotalTokens
 				}
 				res.ExitKind = "empty_args"
+				// T1.3 观测：同上——本轮执行过工具，不能因为提前收尾就少一轮信号
+				obsBehaviorRound(d.Session, round, len(result.ToolCalls), writeOK)
 				return res
 			}
 			// 重复搜索计数（同一 query ≥2 强制提示）
@@ -286,6 +319,9 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 			}
 			_ = startT
 		}
+		// T1.3 观测：本轮工具全部执行完 ⇒ 上报轮级行为信号（本轮几次调用 + 其中几次写成功）。
+		// 这是**每轮**都要落的一条：它让"跑到第几轮了、到目前为都没写过东西"在观测面直接可读。
+		obsBehaviorRound(d.Session, round, len(result.ToolCalls), writeOK)
 	}
 	if res.ExitKind == "" {
 		res.ExitKind = "max_rounds"
@@ -319,6 +355,17 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 }
 
 // ── 小工具 ──
+
+// obsBehaviorRound — T1.3：把「本轮调了几次工具 / 其中几次是**成功**的写类工具」上报行为观测面
+// （internal/behaviorobs 叶子包）。
+//
+// 纪律（与 T1.2 的 toolobs.Emit 同源）：**只上报事实、没有任何返回值** ⇒ 结构上不可能因它改变循环行为；
+// 无会话（chat 侧一定给，CA 侧可能为空）时叶包忽略——行为信号按会话归因才有意义（不编造会话）。
+func obsBehaviorRound(session string, round, toolCalls, writeOK int) {
+	behaviorobs.EmitRound(behaviorobs.Fact{
+		Session: session, Round: round, ToolCalls: toolCalls, WriteOK: writeOK,
+	})
+}
 
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
