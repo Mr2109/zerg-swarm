@@ -205,6 +205,27 @@ type ObsRecord struct {
 	// 代码注入进提示的字串里检出时间戳/随机形态 ⇒ 报一条（提醒字串漏 now() 是可判定的，不靠人眼）。
 	Impurity *PromptImpurityObs `json:"impurity,omitempty"`
 
+	// ── T3.4 prompt 版本外键 + label→version 快照（kind=prompt；H4）──
+	// 治「这次劣化是哪个提示版本造成的」答不出来。口径见 obs_prompt_version.go 文件头：
+	// prompt_version 对**模板**（渲染后系统提示去掉记忆块）取 sha256 前 8 字节 ⇒ 只改记忆块不改版本；
+	// prompt_name 是装配处的稳定名字、prompt_label 由运行环境声明（ZERG_PROMPT_LABEL）——
+	// **声明不了就缺席**（键不出现），不写空串冒充。prompt_label_versions 是观察当时的 label→version
+	// 快照 ⇒ 回滚后翻当时的行也能复现"那一刻线上哪几个通道各指哪版"。
+	PromptName          string            `json:"prompt_name,omitempty"`
+	PromptVersion       string            `json:"prompt_version,omitempty"`
+	PromptLabel         string            `json:"prompt_label,omitempty"`
+	PromptLabelVersions map[string]string `json:"prompt_label_versions,omitempty"`
+
+	// ── T3.6 提示脚手架策略版本化（kind=prompt；H7）──
+	// 治「大目标⇒只读不交差；小目标⇒真动手」无法归因（这是我们实测到的**提示脚手架差异**，
+	// 不落字段就永远只能凭印象）。口径见 obs_prompt_version.go 文件头：
+	// strategy_id 由**生效配置**规范化取指纹（配置改一个字节 ⇒ id 变）；step_index = 本会话第几步（1 起）；
+	// 两个布尔是**三态指针**（nil=没声明 ⇒ 键缺席、显式 false 照落）——「没声明」与「声明了没有」必须可分。
+	StrategyID            string `json:"strategy_id,omitempty"`
+	StepIndex             *int   `json:"step_index,omitempty"`
+	HasAcceptanceCriteria *bool  `json:"has_acceptance_criteria,omitempty"`
+	RequiresToolCallFirst *bool  `json:"requires_tool_call_first,omitempty"`
+
 	// ── T3.5 时钟与种子制度化（**每个请求**都要带；turn 记录与 prompt 记录同源同值）──
 	// 语义：clock_iso 是宿主注入的请求时钟（**只进事件，不进提示**）；request_seed 由
 	// sha256(会话‖轮次‖时钟) 推导 ⇒ 可复算，回放时注入录制值即可复现同一支账（见 obs_prompt.go）。
