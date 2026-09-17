@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // eggProfileDir — 卵档案目录（ZERG_EGG_PROFILE_DIR 可覆盖，测试用）。
@@ -78,4 +79,34 @@ func profileFirstTokenSec(model string) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// RoundTimeoutFor — 单轮推理限时（原写死 120s ✗ ⇒ 实测每批 4 次 upstream_timeout，真凶即此）。
+// 口径与首 token 闸一致（甲：按卵可配、**只放宽不收窄**）：取 max(120s, 首 token 闸 × 2, 思考型下限 600s)。
+// 为什么 ≥ 首 token 闸：闸是"等到第一个字"的时间 ⇒ 单轮限时若比它短，等于闸还没到就被掐（自相矛盾）✓
+func RoundTimeoutFor(model string) time.Duration {
+	base := 120 * time.Second
+	g := EffectiveGateSec(model)
+	if g > 0 {
+		if d := time.Duration(g) * 2 * time.Second; d > base {
+			base = d
+		}
+	}
+	if thinkingFloorSec(model) > 0 && base < 600*time.Second {
+		base = 600 * time.Second
+	}
+	return base
+}
+
+// WallClockFor — 整任务墙钟（原写死 600s ✗ 思考型长任务会被整体掐断）。
+// 只放宽：至少 600s；思考型给 1800s（30 分钟）—— 且**始终 ≥ 单轮限时**。
+func WallClockFor(model string) time.Duration {
+	base := 600 * time.Second
+	if thinkingFloorSec(model) > 0 {
+		base = 1800 * time.Second
+	}
+	if rt := RoundTimeoutFor(model); rt > base {
+		base = rt
+	}
+	return base
 }
