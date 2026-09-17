@@ -159,3 +159,49 @@ func TestGrepFileType(t *testing.T) {
 		t.Errorf("无 type 时应命中 README.md——got:\n%s", outAll)
 	}
 }
+
+// TestGrepContextLines — G5: context_lines=1 时命中行正上方与正下方各有一行上下文（前缀 "-"）；
+// context_lines=0（缺席）时不出现上下文行。
+func TestGrepContextLines(t *testing.T) {
+	dir := t.TempDir()
+	// 构造 5 行文件，第 3 行含 NEEDLE
+	content := "line1\nline2\nNEEDLE here\nline4\nline5\n"
+	if err := os.WriteFile(filepath.Join(dir, "test.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ec := &ExecContext{WorkDir: dir}
+
+	// context_lines=1 → 命中行(第3行)上方(line2)和下方(line4)各一行上下文
+	out, err := ec.executeGrep(context.Background(), ".", "NEEDLE", map[string]any{"context_lines": 1}, nil)
+	if err != nil {
+		t.Fatalf("grep context_lines=1: %v", err)
+	}
+	// 命中行格式: test.txt:3: NEEDLE here
+	if !strings.Contains(out, "test.txt:3: NEEDLE here") {
+		t.Errorf("应包含命中行 test.txt:3: NEEDLE here——got:\n%s", out)
+	}
+	// 上下文行格式: test.txt:2- line2（上方）和 test.txt:4- line4（下方）
+	if !strings.Contains(out, "test.txt:2- line2") {
+		t.Errorf("应包含上方上下文 test.txt:2- line2——got:\n%s", out)
+	}
+	if !strings.Contains(out, "test.txt:4- line4") {
+		t.Errorf("应包含下方上下文 test.txt:4- line4——got:\n%s", out)
+	}
+	// line1 和 line5 不应出现（超出 context_lines=1 范围）
+	if strings.Contains(out, "test.txt:1- ") || strings.Contains(out, "test.txt:5- ") {
+		t.Errorf("context_lines=1 时 line1/line5 不应出现——got:\n%s", out)
+	}
+
+	// context_lines 缺席（默认 0）→ 不出现任何上下文行
+	outNoCtx, err := ec.executeGrep(context.Background(), ".", "NEEDLE", map[string]any{}, nil)
+	if err != nil {
+		t.Fatalf("grep no context_lines: %v", err)
+	}
+	if !strings.Contains(outNoCtx, "test.txt:3: NEEDLE here") {
+		t.Errorf("应包含命中行——got:\n%s", outNoCtx)
+	}
+	if strings.Contains(outNoCtx, "test.txt:2- ") || strings.Contains(outNoCtx, "test.txt:4- ") {
+		t.Errorf("context_lines 缺席时不应出现上下文行——got:\n%s", outNoCtx)
+	}
+}
