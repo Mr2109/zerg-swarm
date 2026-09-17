@@ -54,6 +54,17 @@ type promptObsLine struct {
 	ConstraintMissing []ConstraintMissingObs `json:"constraint_missing"`
 	Prompt            *PromptLedgerObs       `json:"prompt"`
 	Impurity          *PromptImpurityObs     `json:"impurity"`
+	// T3.4（H4）版本外键 + label→version 快照 / T3.6（H7）策略四字段。
+	// 口径（同 obs_prompt_version_test.go）：**键缺席 ⇒ 零值/nil** —— 这正是"这类量没落"的判据，
+	// 所以三态量一律用指针（能与"落了一个 0/false"区分开）。
+	PromptName            string            `json:"prompt_name"`
+	PromptVersion         string            `json:"prompt_version"`
+	PromptLabel           string            `json:"prompt_label"`
+	PromptLabelVersions   map[string]string `json:"prompt_label_versions"`
+	StrategyID            string            `json:"strategy_id"`
+	StepIndex             *int              `json:"step_index"`
+	HasAcceptanceCriteria *bool             `json:"has_acceptance_criteria"`
+	RequiresToolCallFirst *bool             `json:"requires_tool_call_first"`
 }
 
 // promptIsolate — 隔离状态目录 + 重置登记表进程内缓存（测试在同一进程里换目录，缓存必须丢）

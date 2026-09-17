@@ -519,6 +519,10 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 			System: sysP, Memory: chat.MemoryBlock(id),
 			Tools: nil, History: m,
 			Sources: history, Identity: ident,
+			// T3.4 版本外键 + T3.6 策略（H4/H7）：名字=三档装配处；标签=运行环境声明（未声明 ⇒ 键缺席）；
+			// 策略=本路径**确实知道**的循环配置与"无验收判定/不要求先出工具调用"（见 chat_strategy.go）。
+			PromptName: chatPromptName(), PromptLabel: chat.PromptLabelFromEnv(),
+			Strategy: chatPromptStrategy(model),
 		})
 		ir, ierr := h.infer.Infer(chat.WithSessionID(ctx, id), model, sysP, m) // 非流式——Hermes 模式不带 tools 字段
 		if ierr != nil {
@@ -907,6 +911,9 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 			System: sysPrompt, Memory: chat.MemoryBlock(id),
 			Tools: sentToolsOf(toolsParam), History: m,
 			Sources: history, Identity: ident,
+			// T3.4 版本外键 + T3.6 策略（H4/H7）——口径同 chat_strategy.go（本路径的配置事实）
+			PromptName: chatPromptName(), PromptLabel: chat.PromptLabelFromEnv(),
+			Strategy: chatPromptStrategy(model),
 		})
 		// ⚠ 铁律：**包装不得改变原有语义** —— InferStream 内部对 onDelta 判 nil（非流式路径传 nil），
 		// 包一层之后必须保留该保护，否则非流式路径直接空指针 panic（2026-09-16 实测事故）。
@@ -1114,6 +1121,9 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 			System: sysPrompt, Memory: chat.MemoryBlock(id),
 			Tools: nil, History: cur, Reminders: []string{reminder},
 			Sources: history, Identity: retryIdent,
+			// T3.4 版本外键 + T3.6 策略（H4/H7）——重试是**另一次装配** ⇒ 自带版本外键与步序（step_index +1）
+			PromptName: chatPromptName(), PromptLabel: chat.PromptLabelFromEnv(),
+			Strategy: chatPromptStrategy(se.Model),
 		})
 		retryRes, _ = h.infer.InferStream(retryCtx, se.Model, sysPrompt, cur, func(deltaType, text string) {
 			payload, _ := json.Marshal(map[string]any{"type": deltaType, "text": text})
