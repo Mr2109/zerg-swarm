@@ -238,8 +238,9 @@ func TestSliceMount_AcceptsLegalSliceAndTopoSorts(t *testing.T) {
 		t.Fatalf("三片应恰有 3 条 allow 事件，实际 %d 条: %+v", len(evs), evs)
 	}
 	for _, ev := range evs {
-		if !ev.OK || ev.Code != "" || !ev.AcceptanceDeclared || ev.Event != sliceMountEventName {
-			t.Fatalf("allow 事件字段不符: %+v", ev)
+		if !ev.OK || ev.Code != "" || !ev.AcceptanceDeclared || ev.Event != sliceCreatedEventName ||
+			ev.Alias != sliceMountEventName {
+			t.Fatalf("allow 事件字段不符（B 项⑤: event=slice_created，旧名归并为 alias=slice_mount）: %+v", ev)
 		}
 	}
 	t.Logf("④ allow 事件（首条）= %+v", evs[0])
