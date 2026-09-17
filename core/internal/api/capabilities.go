@@ -68,6 +68,13 @@ func (h *Handlers) OpenAPIHandler(w http.ResponseWriter, r *http.Request) {
 					"description": map[string]interface{}{"type": "string", "description": "任务描述（自包含）"},
 					"model":       map[string]interface{}{"type": "string", "description": "模型名（不传=默认调度）"},
 					"priority":    map[string]interface{}{"type": "integer", "description": "优先级（默认 3——高优先小）"},
+					// B 项③ 片（单子）最小 schema（2026-09-18）: 声明了其中任一字段 ⇒ 该任务按「片」过挂板校验
+					// （缺 slice_id / 缺 acceptance 声明 / depends_on 环 / 悬空依赖 ⇒ 400，拒绝入队）。
+					// 未声明片字段的任务不受影响（现有调用方行为不变）。
+					"slice_id":   map[string]interface{}{"type": "string", "description": "片（单子）真源 id；声明了任一 slice 字段就必须给出，否则 400 SLICE_MISSING_ID"},
+					"depends_on": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "依赖的其它片 id 列表；成环 ⇒ 400 SLICE_DEPENDS_CYCLE；指向板上不存在的片 ⇒ 400 SLICE_DEPENDS_DANGLING"},
+					"owner":      map[string]interface{}{"type": "string", "description": "片归属者（可选——本轮不参与判定，只随片记录）"},
+					"acceptance": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "验收判据；**必须显式声明**（缺失 ⇒ 400 SLICE_MISSING_ACCEPTANCE；显式空数组 [] 允许——「没写」与「写了空」是两件事）"},
 				}}}}}},
 				"get": map[string]interface{}{"summary": "任务列表", "description": "所有任务（running/queued/done/failed）"},
 			},
