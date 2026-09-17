@@ -18,6 +18,8 @@ package chat
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,12 +116,175 @@ type ObsRecord struct {
 	DurText    string `json:"dur,omitempty"` // 工具耗时的原始文本（ToolTrace.Duration 是字符串）
 	ToolRounds int    `json:"tool_rounds,omitempty"`
 	ToolMax    int    `json:"tool_max,omitempty"`
+
+	// ── T1.1 追踪骨架（九字段；任务表 v2.5.10 T1.1 / 设计稿 v1.2 B1）──
+	// 目的：让每条记录可拼成父子结构（trace → 本轮 span → parent），从而「父子 span 分层」在后端**可校验**，
+	// 而不是只靠自称。全部是**附加键**：既有字段一律不改名、不改语义；读侧宽容 ⇒ 旧行照样能解析。
+	// 口径：① 有会话才补骨架（无会话 ⇒ 这几个键**缺席**，绝不编造）② 调用方已给的不覆盖
+	//      ③ **event_name 非空即事件**（缺席者为陪衬/属性载体，不是事件）。
+	TraceID      string `json:"trace_id,omitempty"`           // 链路 ID（同一会话内不变）
+	SpanID       string `json:"span_id,omitempty"`            // 本记录自身的 span（轮次 ⇒ 每轮新生成）
+	ParentSpanID string `json:"parent_span_id,omitempty"`     // 父 span（轮次 ⇒ 上一轮；首轮 ⇒ 会话根）
+	SpanKind     string `json:"span_kind,omitempty"`          // internal | client | server
+	StartedAtMS  int64  `json:"started_at_unix_ms,omitempty"` // span 起点（Unix 毫秒；0=未知 ⇒ 缺席）
+	EndedAtMS    int64  `json:"ended_at_unix_ms,omitempty"`   // span 终点（Unix 毫秒；0=未知 ⇒ 缺席）
+	// recorded/sampled 用**指针**表达三态：nil=未定（缺席）、显式 false 也照样落盘。
+	// 为什么不用裸 bool：裸 bool 分不出「明确的 false」与「没给」，而这两者在本进程里有实际区别
+	// （recorded=false 表示"知道这件事但没记"，sampled=false 表示"知道但没采"）。
+	Recorded  *bool  `json:"recorded,omitempty"`   // 是否已记录（本进程全量落盘 ⇒ 默认 true）
+	Sampled   *bool  `json:"sampled,omitempty"`    // 是否落在采样集合内（首版不采样 ⇒ 默认 true）
+	EventName string `json:"event_name,omitempty"` // 事件名（非空 ⇒ 这条是事件）；默认取 kind（kind 已是既有事实）
 }
 
 var obsMu sync.Mutex
 
+// ── T1.1 追踪骨架：id 生成、会话→trace 表、父子链 ──
+//
+// 三条口径（与文件头三条铁律同源，改这里先读它）：
+//  1. **有会话才有骨架**：拿不到 session ⇒ 这几个键缺席（不是编 0、不是编假 id）；读侧应把「缺席」读成"未知"。
+//  2. **调用方给了就不覆盖**：观测面只填空缺，不改任何既有字段的语义（既有用例必须继续绿）。
+//  3. **span 链只由轮次推进**：turn 每轮开一个新 span（parent=上一轮，首轮=会话根），
+//     tool/compact 这类事件挂在**当前轮**之下，不推进「上一轮」指针 —— 否则工具事件会把父子链截断。
+const (
+	// span_kind 取值（仿 OTel：server=处理外部请求的 span、client=向外发出的调用、internal=进程内部步骤）
+	ObsSpanKindInternal = "internal"
+	ObsSpanKindClient   = "client"
+	ObsSpanKindServer   = "server"
+
+	// obsTraceSessionsMax — 会话→trace 表的容量上限。长跑守护进程里会话数无界，表必须有界：
+	// 表满时淘汰**最久未出现**的会话，它此后的新事件会开一条新 trace（观测可容忍；内存不可无界）。
+	obsTraceSessionsMax = 4096
+)
+
+// obsSessionTrace — 一个会话的追踪骨架（trace 不变、span 每轮新开、parent 指上一轮或会话根）
+type obsSessionTrace struct {
+	traceID    string
+	rootSpanID string // 会话根 span（首轮的 parent 指向它）
+	lastSpanID string // 最近一轮的 span（下一轮 parent 的来源）
+	seq        int64  // LRU 序号（淘汰最久未出现者）
+}
+
+var (
+	obsTraceMu  sync.Mutex
+	obsTraceSeq int64
+	obsTraceTab = map[string]*obsSessionTrace{}
+)
+
+// obsNewID — 16 字节 crypto/rand 的十六进制（32 字符）。
+// 拿不到随机源 ⇒ 返回空串（骨架**缺席**，不编造一个看着像 id 的值）。
+func obsNewID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// obsSessionOfLocked — 取（必要时建）会话骨架 + 更新 LRU 序号。调用方须持 obsTraceMu。
+func obsSessionOfLocked(session string) *obsSessionTrace {
+	st := obsTraceTab[session]
+	if st == nil {
+		if len(obsTraceTab) >= obsTraceSessionsMax {
+			obsTraceEvictOldestLocked()
+		}
+		st = &obsSessionTrace{traceID: obsNewID(), rootSpanID: obsNewID()}
+		obsTraceTab[session] = st
+	}
+	obsTraceSeq++
+	st.seq = obsTraceSeq
+	return st
+}
+
+// obsTraceEvictOldestLocked — 表满时淘汰最久未出现的会话。调用方须持 obsTraceMu。
+func obsTraceEvictOldestLocked() {
+	var oldestKey string
+	var oldestSeq int64 = -1
+	for k, v := range obsTraceTab {
+		if oldestSeq < 0 || v.seq < oldestSeq {
+			oldestKey, oldestSeq = k, v.seq
+		}
+	}
+	if oldestKey != "" {
+		delete(obsTraceTab, oldestKey)
+	}
+}
+
+// obsNewTurnSpan — T1.1：为**一轮**开新 span（trace 同会话不变；parent=上一轮，首轮=会话根），
+// 并把本轮 span 记为「上一轮」供下一轮指回来。无会话 ⇒ 全空（骨架缺席）。
+func obsNewTurnSpan(session string) (traceID, spanID, parentSpanID string) {
+	if session == "" {
+		return "", "", ""
+	}
+	obsTraceMu.Lock()
+	defer obsTraceMu.Unlock()
+	st := obsSessionOfLocked(session)
+	span := obsNewID()
+	parent := st.lastSpanID
+	if parent == "" {
+		parent = st.rootSpanID
+	}
+	st.lastSpanID = span
+	return st.traceID, span, parent
+}
+
+// obsCurrentSpan — T1.1：非轮次事件（tool/compact 等）的挂点 = **当前轮**（无轮次 ⇒ 会话根）。
+// 它**不**推进「上一轮」指针：父子链只由轮次推进。
+func obsCurrentSpan(session string) (traceID, parentSpanID string) {
+	if session == "" {
+		return "", ""
+	}
+	obsTraceMu.Lock()
+	defer obsTraceMu.Unlock()
+	st := obsSessionOfLocked(session)
+	if st.lastSpanID != "" {
+		return st.traceID, st.lastSpanID
+	}
+	return st.traceID, st.rootSpanID
+}
+
+// obsTruePtr — 三态布尔用的"明确 true"
+func obsTruePtr() *bool { b := true; return &b }
+
+// fillTraceSkeleton — T1.1：把九字段里**空缺**的补上（调用方已给的一律不覆盖），best-effort、不 panic。
+// 它是 obsWrite 的第一步 ⇒ 每条落盘记录都带骨架；无会话 ⇒ 整块缺席。
+func (r *ObsRecord) fillTraceSkeleton() {
+	if r.Session == "" {
+		return // 无会话 ⇒ 骨架缺席（不编造）
+	}
+	traceID, parent := obsCurrentSpan(r.Session)
+	if r.TraceID == "" {
+		r.TraceID = traceID
+	}
+	if r.ParentSpanID == "" {
+		r.ParentSpanID = parent
+	}
+	if r.SpanID == "" {
+		r.SpanID = obsNewID() // 轮次 span 已在 NewObsTimer 开好 ⇒ 这里只给非轮次事件补
+	}
+	if r.SpanKind == "" {
+		r.SpanKind = ObsSpanKindInternal
+	}
+	now := time.Now().UnixMilli()
+	if r.StartedAtMS == 0 {
+		r.StartedAtMS = now // 单点事件：起止同一时刻（时长另有 dur_ms / turn.total_ms）
+	}
+	if r.EndedAtMS == 0 {
+		r.EndedAtMS = now
+	}
+	if r.Recorded == nil {
+		r.Recorded = obsTruePtr() // 本进程全量落盘 ⇒ "已记录"是事实，不是编造
+	}
+	if r.Sampled == nil {
+		r.Sampled = obsTruePtr() // 首版不采样 ⇒ 每条都在采样集合内
+	}
+	if r.EventName == "" {
+		r.EventName = r.Kind // kind 已是既有事实 ⇒ 拿它当事件名不是编造（非空 event_name 即事件）
+	}
+}
+
 // obsWrite — 追加一行 JSONL（best-effort：失败只记日志，绝不外抛、绝不 panic）
 func obsWrite(rec ObsRecord) {
+	rec.fillTraceSkeleton() // T1.1：唯一写入口补骨架 ⇒ 每条记录都带 trace/span/parent（有会话时）
 	rec.TS = time.Now().Format(time.RFC3339)
 	b, err := json.Marshal(rec)
 	if err != nil {
@@ -183,12 +348,19 @@ type ObsTimer struct {
 	gateSec   int           // 首 token 闸有效值（秒；0=未知）
 	queued    time.Duration // 排队时长（乙：只观测）
 	errText   string        // 非正常收尾的错误原文（best-effort）
+
+	// T1.1 追踪骨架：本轮 span 在 NewObsTimer 时就开好（这样 started_at 才是真正的轮次起点），Finish 原样落盘
+	traceID      string
+	spanID       string
+	parentSpanID string
 }
 
-// NewObsTimer — 建一个轮次计时器
+// NewObsTimer — 建一个轮次计时器（T1.1：同会话 trace 不变、每轮新开 span、parent 指上一轮/会话根）
 func NewObsTimer(session string, round int, model string) *ObsTimer {
 	now := time.Now()
-	return &ObsTimer{session: session, round: round, model: model, start: now, last: now}
+	t := &ObsTimer{session: session, round: round, model: model, start: now, last: now}
+	t.traceID, t.spanID, t.parentSpanID = obsNewTurnSpan(session)
+	return t
 }
 
 // MarkChunk — 记录一个分块的到达（常数内存：只保留"最大间隔"）
@@ -253,6 +425,13 @@ func (t *ObsTimer) Finish(endReason string) {
 		Round:     t.round,
 		Model:     t.model,
 		EndReason: endReason,
+		// T1.1 追踪骨架：span 在 NewObsTimer 开好（本轮 span），started_at = 轮次起点（不是落盘时刻）；
+		// span_kind=server —— 本轮 span 处理的是客户端发来的请求（tool/compact 事件为 internal）。
+		TraceID:      t.traceID,
+		SpanID:       t.spanID,
+		ParentSpanID: t.parentSpanID,
+		SpanKind:     ObsSpanKindServer,
+		StartedAtMS:  t.start.UnixMilli(),
 		Turn: &TurnObs{
 			TotalMS:  time.Since(t.start).Milliseconds(),
 			MaxGapMS: t.maxGap.Milliseconds(),
