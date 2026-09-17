@@ -92,3 +92,32 @@ func TestGrepKeepIndent(t *testing.T) {
 		t.Errorf("命中条数应为 4——got %d:\n%s", n, out)
 	}
 }
+
+// TestGrepIgnoreCase — G5: ignore_case=true 搜小写能命中大写；ignore_case=false（默认）时不命中
+func TestGrepIgnoreCase(t *testing.T) {
+	dir := t.TempDir()
+	// 文件中只有大写 NEEDLE
+	if err := os.WriteFile(filepath.Join(dir, "data.txt"), []byte("hello NEEDLE world\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ec := &ExecContext{WorkDir: dir}
+
+	// ignore_case=true——搜小写 needle 应命中大写 NEEDLE
+	outTrue, err := ec.executeGrep(context.Background(), ".", "needle", map[string]any{"ignore_case": true}, nil)
+	if err != nil {
+		t.Fatalf("grep ignore_case=true: %v", err)
+	}
+	if !strings.Contains(outTrue, "NEEDLE") {
+		t.Errorf("ignore_case=true 时搜小写 needle 应命中大写 NEEDLE——got:\n%s", outTrue)
+	}
+
+	// ignore_case=false（默认）——搜小写 needle 不应命中大写 NEEDLE
+	outFalse, err := ec.executeGrep(context.Background(), ".", "needle", map[string]any{"ignore_case": false}, nil)
+	if err != nil {
+		t.Fatalf("grep ignore_case=false: %v", err)
+	}
+	if strings.Contains(outFalse, "NEEDLE") {
+		t.Errorf("ignore_case=false 时搜小写 needle 不应命中大写 NEEDLE——got:\n%s", outFalse)
+	}
+}
