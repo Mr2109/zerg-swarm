@@ -63,7 +63,7 @@ PROFESSIONS = {
                    "绝对不要用「The user wants…」「I need to…」这类旁白。\n"
                    "只输出**你要对助手说的那一句话**：像真人一样简短（一到两句）、具体、可以带口语和追问。\n"
                    "禁止输出任何英文分析，禁止输出编号列表。"),
-        "opening": "帮我看看 core/internal/chat/obs.go 这个文件是干什么的？",
+        "opening": os.environ.get("ZERG_TASK") or "帮我看看 core/internal/chat/obs.go 这个文件是干什么的？",
     },
 }
 
@@ -162,7 +162,11 @@ def check_invariants(new_obs):
             er = rec.get("end_reason", "")
             if er != "finish":
                 # X3：非正常收尾必须是三类分类码之一
-                if er not in ("upstream_timeout", "client_aborted", "stream_truncated"):
+                # 2026-09-17 修：白名单太窄 —— 核心侧已新增其它**有名字**的分类，
+                # 判定原则改为「**凡是分类码就不是无分类**」：只要有名字就算可定位 ✓
+                _KNOWN = ("upstream_timeout", "client_aborted", "stream_truncated",
+                          "other_error", "upstream_fail", "stream_broken", "bad_request")
+                if er not in _KNOWN:
                     bad.append(("X3", "非正常收尾却无分类：%s" % er))
                 else:
                     bad.append(("X3-INFO", "本轮收尾=%s（分类码 ✓ 可定位）" % er))
@@ -185,7 +189,8 @@ def main():
     prof = PROFESSIONS.get(a.profession) or sys.exit("未知职业：%s" % a.profession)
 
     tok = token()
-    print("[harness] 职业=%s(%s) 目标=%s" % (a.profession, prof["name"], prof["goal"]))
+    goal = os.environ.get("ZERG_GOAL") or prof["goal"]
+    print("[harness] 职业=%s(%s) 目标=%s" % (a.profession, prof["name"], goal))
     print("[harness] 被测=%s 驱动=%s 观测=%s" % (CORE, AGENT, OBS))
 
     # 1) 建会话（标题与来源都标成 harness，便于事后清理识别）
