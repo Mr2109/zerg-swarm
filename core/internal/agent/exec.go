@@ -1127,7 +1127,11 @@ func (ec *ExecContext) executeGrep(ctx context.Context, path string, pattern str
 	}
 
 	// 编译正则
-	re, err := regexp.Compile(pattern)
+	compilePattern := pattern
+	if ic, ok := args["ignore_case"].(bool); ok && ic {
+		compilePattern = "(?i)" + pattern
+	}
+	re, err := regexp.Compile(compilePattern)
 	if err != nil {
 		return "", fmt.Errorf("正则表达式无效: %w", err)
 	}

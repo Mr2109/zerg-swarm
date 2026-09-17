@@ -275,6 +275,10 @@ func toolGrep() ToolDef {
 						"type":        "boolean",
 						"description": "搜索隐藏文件（.env/.gitignore 等——默认 false 跳过）",
 					},
+					"ignore_case": map[string]any{
+						"type":        "boolean",
+						"description": "忽略大小写匹配（默认 false）",
+					},
 				},
 				"required": []string{"path", "pattern"},
 			},
