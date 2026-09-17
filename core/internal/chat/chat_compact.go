@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/tracectx"
 )
 
 // 压缩参数（Hermes config.yaml 实测——2026-08-29——threshold 0.5/protect_last_n 20/protect_first_n 3）
@@ -187,6 +189,8 @@ func CompactRequest(ctx context.Context, gatewayURL, authToken, sessionID, model
 	if authToken != "" {
 		req.Header.Set("X-Auth-Token", authToken)
 	}
+	// T1.6 传播：压缩调用（本地摘要模型）同样是这条链上的一跳 ⇒ 带 traceparent + 会话 baggage。
+	tracectx.Propagate(req.Header, nil, sessionID, tracectx.ReplayMarked())
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {

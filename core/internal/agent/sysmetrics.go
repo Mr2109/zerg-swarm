@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/tracectx"
 )
 
 // SysMetric 单次采样（一轮）
@@ -136,6 +138,9 @@ func (c *SysMetricsCollector) sampleX3(m *SysMetric) {
 	if c.token != "" {
 		req.Header.Set("X-Auth-Token", c.token)
 	}
+	// T1.6 传播（出站到子端）：X3 /status 采集也是"主控→子端"的 HTTP 调用 ⇒ 带 traceparent，
+	// 让这条采样的链在两侧也对得上（无会话 ⇒ 本侧 root，如实）。
+	tracectx.Propagate(req.Header, nil, "", tracectx.ReplayMarked())
 	client := &http.Client{Timeout: 1500 * time.Millisecond}
 	resp, err := client.Do(req)
 	if err != nil {

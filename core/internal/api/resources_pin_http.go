@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/tracectx"
 )
 
 // resources_pin_http.go —— pin/unpin 的默认动作侧：把主控的锁定意图转发到子端 agent 的 HTTP 接口
@@ -94,6 +95,9 @@ func (c *SubEndPinController) post(host, path string, body map[string]interface{
 	if c.Token != "" {
 		req.Header.Set("X-Auth-Token", c.Token)
 	}
+	// T1.6 传播（出站到子端）：/pin、/unpin 也是"主控→子端"的 HTTP 调用，带 traceparent
+	// （无会话上下文 ⇒ 本侧新生成 root，如实反映"这是一次独立的资源操作"）。
+	tracectx.Propagate(req.Header, nil, "", tracectx.ReplayMarked())
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return err

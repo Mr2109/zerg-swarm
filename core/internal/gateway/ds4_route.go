@@ -28,6 +28,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"github.com/Mr2109/zerg-swarm/core/internal/resources"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
+	"github.com/Mr2109/zerg-swarm/core/internal/tracectx"
 )
 
 // DS4 模型名（fleet.yaml 注册名）
@@ -174,6 +175,8 @@ func (g *Gateway) postX3Unload(targets []string) bool {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Auth-Token", config.ResolveAuthToken())
+	// T1.6 传播（控制面出站）：/unload 也是"主控→子端"，同样带 traceparent（否则一条链在控制面断掉）
+	tracectx.Propagate(req.Header, nil, "", tracectx.ReplayMarked())
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("⚠️ DS4 quiesce failed (X3 agent unreachable at %s): %v", url, err)
