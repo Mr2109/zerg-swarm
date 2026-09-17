@@ -38,8 +38,11 @@
 //	· 时间：只用来量 DurationMS（且可注入 Dispatcher.Now）；时间**不参与**匹配、不参与指纹。
 //	· 绝不读取环境变量 / 网络 / 时钟来做决定（唯一例外：BaseDir 为空时用 os.Getwd() 解析相对路径）。
 //	· 零内部依赖：只 import 标准库，不 import chat / gateway / agent（叶包纪律，见 T5.1 同款）。
+//	· 保真度与失效（T4.4/T4.5/T4.6，2026-09-17 补齐）：见 fidelity.go（三指标 + 二分定位）、
+//	  determinism_audit.go（十类非确定性源清单化审计）、invalidation.go（schema_version /
+//	  tool_fingerprint / 引擎指纹不匹配即作废）；可执行验收：`bash scripts/replay-fidelity.sh`。
 //	· 未接项（后续批）：① 把 agent 的工具执行路径整体切到本包的 Dispatcher；② 落盘层（压缩/轮转）；
-//	  ③ schema_version + tool_fingerprint + 引擎指纹的失效机制（T4.6）；④ 保真度三指标与二分定位（T4.4）。
+//	  ③ 服务端唯一约束那一档去重存储（E4 的第三档）。
 package replay
 
 import (
