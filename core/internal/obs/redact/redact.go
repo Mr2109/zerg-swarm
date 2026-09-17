@@ -56,6 +56,11 @@ var (
 	reIPv4     = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
 	reURLQuery = regexp.MustCompile(`(?i)([?&](?:token|key|sig|signature|access_token|api_key|secret)=)([^\s"'&#]+)`)
 	reHomeDir  = regexp.MustCompile(`/(?:Users|home)/[A-Za-z0-9._-]+`)
+	// reHomeEscape：与 reHomeDir 只差一件事 —— 分隔符既可以是 `/` 也可以是 `\`。
+	// 覆盖「写者把斜杠写成 `\/`（或 Windows 风格 `C:\Users\me`）」的逃逸形态：读者还原后看到的
+	// 是一条真路径 ⇒ 只按原始字节跑 reHomeDir 会漏（fuzz 实测语料 462d9f1cd05fbb5e：
+	// `/home/0/home\/0` 的第二处 `\/` 形态；D19 把 `\/` 列为四类藏法之一）。
+	reHomeEscape = regexp.MustCompile(`[\\/]+(?:Users|home)[\\/]+[A-Za-z0-9._-]+`)
 	// reSessTok 与下面的 tokenPrefixes **必须描述同一批形态**（D18/策略不一致的教训）：
 	// 门禁认为「sk0000000000000000」是秘密而脱敏器不遮 ⇒ CI 在非泄漏上红；
 	// 反过来 ⇒ 泄漏进仓。一份策略，两个消费者。
@@ -363,6 +368,15 @@ func hasHomePath(s string) bool {
 	return strings.Contains(s, "/Users/") || strings.Contains(s, "/home/")
 }
 
+// hasEscapedPath 是 reHomeEscape 的**必要条件**门：任何 `\/` / `\Users` 形态都必然含反斜杠，
+// 且正则要求 Users/home 字面量。两个条件都便宜（IndexByte + Contains），不满足即整段跳过。
+func hasEscapedPath(s string) bool {
+	if strings.IndexByte(s, 0x5C) < 0 {
+		return false
+	}
+	return strings.Contains(s, "Users") || strings.Contains(s, "home")
+}
+
 // ── 值管线（唯一入口：RedactValue）──────────────────────────────────────────
 
 // maxRedactRounds 是迭代到不动点的轮数上限（脱敏是重写系统，见 RedactValue 的说明）。
@@ -401,6 +415,10 @@ func redactPass(s string) string {
 	s = maskEncodedPayloads(s) // 需要 '%' 或 ≥24 字符的 b64 候选
 	if hasHomePath(s) {
 		s = replaceLiteral(reHomeDir, s, PlaceholderPath)
+	}
+	// 逃逸形态（`\/` / `\Users`）：读者还原后是一条真路径 ⇒ 与上面同一条口径（D19 的 `\/` 通道）。
+	if hasEscapedPath(s) {
+		s = replaceLiteral(reHomeEscape, s, PlaceholderPath)
 	}
 	if hasUser(s) {
 		st := userFold.Load()
