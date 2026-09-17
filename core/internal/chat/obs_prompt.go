@@ -40,11 +40,34 @@
 //	不要把"哈希变了"读成"有动态注入"。若记忆块文本在系统提示里找不到（例如取块发生在提示冻结之后），
 //	落 memory_embedded=false（= 本次**没判准**，读侧别当"无注入"用）。
 //
+// ── 2026-09-18 两处口径改正（都来自实测，不是理论）──────────────────────
+//
+// ① **纯净度判据**（缺陷③：误报）：原口径是"命中形态即报警"，实测里砸出一堆误报——
+//
+//	命中在 host=system_template，样本却是我们自己指令里的**静态示例**「日期用 ISO 8601（2026-09-11）」
+//	（那句住在 ffp.Conventions 常量里，是模板源的一部分）。误报的代价是守卫被关掉（守卫被关掉 = 真盲区）。
+//	新判据（写死）：**在实际发送的前缀上匹配到 且 该串不在模板源里 ⇒ 才报警**。
+//	模板源 = ①调用方显式声明（PromptRender.TemplateSource，最准）②没有声明 ⇒ 本文件在**判定时采集**
+//	的"代码侧字面量集合"（promptTemplateSource：ffp.Conventions + 装配处字面量清单）。
+//	**已知限制（如实）**：系统提示的 base 常量住在 internal/api（chatSystemPrompt）——本包拿不到它的原文，
+//	也拿不到调用方在别处拼进模板的字面量 ⇒ 那些字面量里的静态示例仍会被报脏；缓解就是①那条声明路径。
+//	判据的固有代价：与模板源里**同形同值**的活时间戳判别不出来（会漏报那一例）——用声明收窄，别用放宽收窄。
+//
+// ② **约束重注入（治本）**（缺陷②：真缺失只报警不治本）：本文件是唯一入口，重注入在这里装配。
+//
+//	口径：ObservePromptCheck **只描述调用点给的字节**（H3 不变：segments/两个哈希/prompt_impurity 全部按入参算），
+//	重注入是**产出**——`PromptCheckResult.System` 就是重注入后的系统提示，装配点用它当本请求真正发送的系统提示
+//	（一行接线）；事件里落 reinjected / reinject_reason / reinjected_ids / injection_count / injection_id(+sha256)
+//	/ injection_round，**这些是"这次入口产出了什么"的事实**，不代表调用方已经采纳（采纳后下一轮的入参会含注入块，
+//	于是 reinject_stripped=true、且 template_stripped_hash 与上一轮 template_hash 相等 ⇒ 读侧能区分
+//	"模板真的变了"与"只是重注入"）。
+//
 // 纪律（与 obs.go 文件头三条铁律同源）：
-//  1. **观测绝不改变对话行为**：本文件只读入参、只写盘；不改一个字节的提示、不阻断、不重注入。
+//  1. **入口不自作主张**：本文件读入参、算账、写盘，并把重注入后的**字节**交回调用方（采纳与否在调用方）；
+//     它自己不发送、不改别人持有的字符串、不阻断请求。
 //  2. **best-effort**：写失败只记日志；入口自带 recover 兜底（观测面绝不许把对话搞崩）。
 //  3. **不落原文**：只落分段指纹/长度/估算 token、时钟与种子、以及（截断的）命中片段；
-//     提示正文与消息正文一个字都不落。
+//     提示正文与消息正文一个字都不落（注入块原文也不落——只落它的指纹与所注入的约束 id）。
 package chat
 
 import (
@@ -56,7 +79,10 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
 )
 
 // ── 事件名与记录种类（非空 event_name ⇒ 这条是事件）──
@@ -93,15 +119,34 @@ type PromptLedgerObs struct {
 	MemoryEmbedded     bool               `json:"memory_embedded"`   // 记忆块是否确实嵌在系统提示里（false ⇒ 本次没判准）
 	ClockISO           string             `json:"clock_iso"`         // T3.5：宿主注入的请求时钟（UTC RFC3339Nano）
 	RequestSeed        int64              `json:"request_seed"`      // T3.5：本请求种子（可复算，见 NewRequestIdentity）
+
+	// ── 重注入的可解释性（2026-09-18；H3"哈希变了要说清为什么"，见文件头口径②）──
+	// 判读（写死，读侧照此复算）：
+	//   TemplateStrippedHash —— 把**我们注入过的块**逐字剔除后**再算**的模板哈希（与 template_hash 同一对象类：
+	//     模板去掉记忆块 ‖ history ‖ tools）。
+	//   ReinjectStripped     —— 本次入参里**确实**含我们注入过的块（⇒ 上一轮的 PromptCheckResult.System 被采纳了）。
+	// 于是：rendered_prefix_hash 变了不是问号 ——
+	//   · template_stripped_hash 与上一轮相等（而 template_hash 变了）⇒ **只是重注入**（模板字节没变）；
+	//   · template_stripped_hash 也变了 ⇒ **模板真的变了**（或注入了不同内容的块，那看 injection_id 就够了）。
+	TemplateStrippedHash string `json:"template_stripped_hash"`
+	ReinjectStripped     bool   `json:"reinject_stripped"`
 }
 
 // PromptImpurityObs — T3.5 提示纯净度守卫的事实块。
+//
+// 判据（2026-09-18 改正，见文件头口径①）：**在实际发送的前缀上匹配到 且 该串不在模板源里 ⇒ 才报警**。
+// 于是这个块只在"真的脏"时出现：命中串必须在**我们写死的字面量**里找不到（= 它不是模板源里的静态示例）。
 type PromptImpurityObs struct {
 	Host     string   `json:"host"`     // 命中位置（闭集：system_template | tools | reminder）
 	Patterns []string `json:"patterns"` // 命中的形态名（低基数：rfc3339/iso_date/clock_sec/cjk_date/epoch_ms/now_call/rand_call）
-	Sample   string   `json:"sample"`   // 首个命中片段（截断 ≤60）
+	Sample   string   `json:"sample"`   // 首个**不在模板源里**的命中片段（截断 ≤60）
 	Excerpt  string   `json:"excerpt"`  // 命中处上下文（截断 ≤120）——"可行动"：看得见是哪句提醒在漏时间
 	SHA256   string   `json:"sha256"`   // 被扫文本整体指纹（不落全文）
+	// 判据②的取证（**只在真的要报警时**落——全被静态示例规则放行 ⇒ 一条事件都不落，否则"不报警"就说不通了）：
+	// 模板源指纹（不落源原文）+ 本宿主里有多少个形态命中因"在模板源里"被放行。
+	// 为什么要落它：否则读侧分不清"守卫正常只是判得细"与"守卫被改宽了"——那正是误报改正后的新盲区。
+	TemplateSourceSHA256 string `json:"template_source_sha256,omitempty"`
+	SuppressedStaticHits int    `json:"suppressed_static_hits,omitempty"`
 }
 
 // ── T3.5 时钟与种子制度化 ──────────────────────────────────────────────
@@ -225,12 +270,21 @@ func splitSystemMemory(system, memory string) (template string, embedded bool) {
 
 // ── 提示纯净度守卫（T3.5 的"可判定"那半）────────────────────────────────
 //
-// 判据（写死）：**代码注入进提示的字串**里不得出现时间戳/时随机形态。
+// 判据（2026-09-18 改正后写死）：**在实际发送的前缀上匹配到 且 该串不在模板源里 ⇒ 才报警**。
+// 为什么改（实测缺陷③）：老口径"命中形态即报警"把**我们自己写的静态示例**也报成脏
+// ——命中在 host=system_template，样本是 ffp.Conventions 里那句「日期用 ISO 8601（2026-09-11）」。
+// 误报的直接后果是守卫被关掉，而"守卫被关掉 = 真盲区"（见下"豁免"段的同一逻辑）。
+//
 // 扫描范围（闭集，宿主名即读数）：
 //
 //	system_template —— 系统提示去掉记忆块后的**模板部分**（基础指令 + 身份 + 工具清单说明）——代码写的，必须纯净
 //	tools           —— 工具定义渲染——代码写的，必须纯净
 //	reminder        —— 本轮额外注入的提醒字串（插话/纠正/引导）——代码写的，必须纯净
+//
+// 模板源（判据②的右边那一半，见文件头口径①）：
+//
+//	PromptPuritySource.TemplateSource —— 调用方声明优先；空 ⇒ promptTemplateSource() 判定时采集的代码侧字面量集合。
+//	"在模板源里" = 命中串**逐字**能在它里面找到 ⇒ 那是我们自己写死的静态示例（示例永远是示例，不是活时间戳）。
 //
 // 豁免（H6 逐字给的合法通道，**不扫**，且豁免理由写在调用处注释里）：
 //
@@ -264,9 +318,23 @@ type PromptPuritySource struct {
 	Host        string
 	Text        string
 	TimeAllowed bool
+	// TemplateSource — 本宿主的"模板源"（= 我们自己写死的字面量集合；调用方声明优先，空 ⇒ 判定时采集）。
+	// 空 ⇒ **不豁免**：判据退化为老口径"匹配即报警"（这保证"没给源"不会被读成"什么都能放行"）。
+	TemplateSource string
 }
 
-// scanPromptImpurity — 扫一个宿主字串，命中则产出事实块（多个形态按闭集顺序去重）。
+// promptSampleInTemplateSource — 判据②：命中串是否**在模板源里**（= 静态示例 ⇒ 不算脏）。
+// 逐字比对（不做规范化）：模板源就是字节，示例也是字节——一边折叠一边比会把"活值恰好被折叠掉"变成漏报。
+func promptSampleInTemplateSource(sample, source string) bool {
+	if sample == "" || source == "" {
+		return false
+	}
+	return strings.Contains(source, sample)
+}
+
+// scanPromptImpurity — 扫一个宿主字串，**只对"不在模板源里"的命中**产出事实块（判据②）。
+// 返回 nil 的三种情形要分清（读侧别混）：① 文本为空/属豁免通道；② 一个形态都没命中；
+// ③ 命中了但每一个都在模板源里（静态示例）——第③种是本条改动的目的，**不落事件**。
 func scanPromptImpurity(src PromptPuritySource) *PromptImpurityObs {
 	if src.Text == "" || src.TimeAllowed {
 		return nil
@@ -274,19 +342,30 @@ func scanPromptImpurity(src PromptPuritySource) *PromptImpurityObs {
 	var names []string
 	firstMatch := ""
 	excerpt := ""
+	suppressed := 0
 	for _, p := range promptImpurityPatterns {
-		loc := p.Re.FindStringIndex(src.Text)
-		if loc == nil {
+		dirtyIdx := -1
+		dirtySample := ""
+		for _, loc := range p.Re.FindAllStringIndex(src.Text, -1) {
+			s := src.Text[loc[0]:loc[1]]
+			if promptSampleInTemplateSource(s, src.TemplateSource) {
+				suppressed++ // 静态示例：我们自己写死的（含在模板源里）⇒ 不算脏（缺陷③的误报就在这里）
+				continue
+			}
+			dirtyIdx, dirtySample = loc[0], s
+			break
+		}
+		if dirtyIdx < 0 {
 			continue
 		}
 		names = append(names, p.Name)
 		if firstMatch == "" {
-			firstMatch = p.Re.FindString(src.Text)
-			lo := loc[0] - 30
+			firstMatch = dirtySample
+			lo := dirtyIdx - 30
 			if lo < 0 {
 				lo = 0
 			}
-			hi := loc[1] + 60
+			hi := dirtyIdx + len(dirtySample) + 60
 			if hi > len(src.Text) {
 				hi = len(src.Text)
 			}
@@ -296,13 +375,61 @@ func scanPromptImpurity(src PromptPuritySource) *PromptImpurityObs {
 	if len(names) == 0 {
 		return nil
 	}
-	return &PromptImpurityObs{
+	imp := &PromptImpurityObs{
 		Host:     src.Host,
 		Patterns: names,
 		Sample:   trunca(firstMatch, promptImpuritySampleMax),
 		Excerpt:  trunca(excerpt, promptImpurityExcerptMax),
 		SHA256:   sha256HexOf(src.Text),
 	}
+	if src.TemplateSource != "" {
+		imp.TemplateSourceSHA256 = sha256HexOf(src.TemplateSource)
+		imp.SuppressedStaticHits = suppressed
+	}
+	return imp
+}
+
+// ── 模板源（判据②的右边那一半）────────────────────────────────────────
+
+// promptTemplateLiterals — 装配处字面量清单（与 chat_prompt.go 三档模板**同源的只读副本**）。
+// 只用于判据②的"静态示例"识别，**不参与渲染** ⇒ 它漂移的最坏后果 = 一处静态示例被误报（退回老口径），
+// 不会改变任何一个提示字节。
+var promptTemplateLiterals = []string{
+	"# 你的身份",
+	"- 你当前运行在虫族本地模型集群——Mr2109的对话助手——不要调查或质疑自己的身份。",
+	"# 会话环境",
+}
+
+var (
+	promptTemplateSrcOnce sync.Once
+	promptTemplateSrc     string
+)
+
+// promptTemplateSource — 模板源（**代码侧字面量集合**，判定时采集一次并缓存）。
+//
+// 口径与限制（如实写死，别顺口美化）：
+//   - 现在能直接取到的是：ffp.Conventions（执行接口约定常量——静态示例「日期用 ISO 8601（2026-09-11）」就住在这句里）
+//   - promptTemplateLiterals（装配处字面量清单）。采集是**判定时**做的（不是从 template_hash 反推：
+//     哈希回不到原文，拿渲染后的模板当自己的源 ⇒ 判据②恒真，守卫等于被改宽成永远不报）。
+//   - **已知限制**：系统提示的 base 常量住在 internal/api（chatSystemPrompt），本包（chat）拿不到它的原文，
+//     也拿不到调用方在别处拼进模板的字面量 ⇒ 那些字面量里的静态示例仍会被报脏。缓解 = 调用方把模板源
+//     **显式声明**进 PromptRender.TemplateSource（一行接线），那条路不受此限。
+//   - 判据的固有代价：与模板源里**同形同值**的活时间戳判别不出来（会漏报那一例）。这是"用静态源区分静态/动态"
+//     的必然代价；要收窄就补声明，**不许**靠放宽形态闭集（那是把守卫改成永远不报）。
+func promptTemplateSource() string {
+	promptTemplateSrcOnce.Do(func() {
+		parts := append([]string{ffp.Conventions}, promptTemplateLiterals...)
+		promptTemplateSrc = strings.Join(parts, "\n")
+	})
+	return promptTemplateSrc
+}
+
+// promptTemplateSourceOf — 取本次判定用的模板源：调用方声明优先，空 ⇒ 采集值。
+func promptTemplateSourceOf(declared string) string {
+	if declared != "" {
+		return declared
+	}
+	return promptTemplateSource()
 }
 
 // ── 唯一入口：一次请求一次账 ───────────────────────────────────────────
@@ -325,6 +452,11 @@ type PromptRender struct {
 	// Reminders — 本轮额外注入的**代码写**的提醒字串（插话/纠正/引导）。只用于纯净度扫描（不入分段账）。
 	Reminders []string
 
+	// TemplateSource — 纯净度判据②的"模板源"（调用方**可选**声明；见文件头口径①）。
+	// 声明了 ⇒ 以声明为准（把模板原文交给观测面 ⇒ 静态示例不会被误报）；
+	// 空 ⇒ 用 obs_prompt.go 判定时采集的代码侧字面量集合（已知限制见 promptTemplateSource 注释）。
+	TemplateSource string
+
 	// T3.4 prompt 版本外键（H4）：本次提示的**装配处名字**与**发布标签**。
 	// 两者是调用方声明的事实 —— 声明不了就传空 ⇒ 对应键**缺席**（不写空串冒充，见 obs_prompt_version.go 口径②）。
 	// prompt_version **不用传**：它是渲染后模板的 sha256 前 8 字节，由观测面在真字节上算出（口径①）。
@@ -341,15 +473,36 @@ type PromptRender struct {
 	Identity RequestIdentity
 }
 
+// PromptCheckResult — 唯一入口的返回值：装配点据此**采纳**重注入（一行接线：`sysPrompt = res.System`）。
+//
+// 语义（写死）：
+//
+//	System      —— 重注入后的系统提示（本次没发生重注入 ⇒ 与入参**逐字节相同**）。装配点把它当本请求真正
+//	               发送的系统提示 ⇒ "头尾各一份"才真的进了上下文（治本那半的落点）。⚠ 若装配点不采纳，
+//	               System 与入参相同（本函数不改别人持有的字符串）。
+//	Reinjection —— 这次重注入的事实（原因/条数/指纹/本会话累计次数/轮次/时钟）
+//	Check       —— constraint_check 的事实块（含重注入字段）——**描述的是入参字节**（诊断口径不动：
+//	               治本不许把"这一刻缺了什么"弄瞎，见 checkConstraints 注释）
+//	Ledger      —— 分段落账块（同样描述入参字节；template_stripped_hash 用来解释哈希变化）
+type PromptCheckResult struct {
+	System      string
+	Reinjection Reinjection
+	Check       ConstraintCheckObs
+	Ledger      *PromptLedgerObs
+}
+
 // ObservePromptCheck — T3.2 + T3.3 + T3.5 的唯一落账入口（best-effort；绝不外抛/阻断/panic）。
 //
 // 落三件事（同一入口，读侧按 event_name 分派）：
-//  1. `constraint_check` —— 约束保留率（total/present/missing_ids）+ 分段落账（segments/两个哈希）
+//  1. `constraint_check` —— 约束保留率（total/present/missing_ids）+ 重注入事实 + 分段落账（segments/两个哈希）
 //     + 时钟与种子（clock_iso/request_seed）。**每请求一条**（登记表为空也落：它是本请求的账）。
 //  2. `constraint_missing_alert` —— 有缺失时的告警（带可行动明细；**不阻断请求**）。
-//  3. `prompt_impurity` —— 纯净度守卫命中时每条一个（宿主 + 形态 + 片段）。
-func ObservePromptCheck(r PromptRender) {
-	defer func() { // 观测面绝不许把对话搞崩（与 obs.go 铁律①同源）
+//  3. `prompt_impurity` —— 纯净度守卫命中时每条一个（宿主 + 形态 + 片段；判据②见文件头口径①）。
+//
+// 返回值见 PromptCheckResult（重注入后的系统提示就在里面）。
+func ObservePromptCheck(r PromptRender) (res PromptCheckResult) {
+	res.System = r.System // 默认：不重注入 ⇒ 原样退回（panic 时调用方也不会拿到空串）
+	defer func() {        // 观测面绝不许把对话搞崩（与 obs.go 铁律①同源）
 		if v := recover(); v != nil {
 			log.Printf("⚠️ prompt_check: panic recovered (对话不受影响): %v", v)
 		}
@@ -377,21 +530,41 @@ func ObservePromptCheck(r PromptRender) {
 	if r.Memory != "" && memEmbedded {
 		dynamicParts = append(dynamicParts, segmentMemory)
 	}
+	// 重注入可解释性（H3）：把**我们注入过的块**剔掉再算一次模板哈希（同一对象类）。
+	// 采纳了重注入的下一轮：template_hash 变了而 template_stripped_hash 与上一轮相等 ⇒ 是重注入，不是模板变了。
+	templateStripped, reinjectStripped := stripReinjectBlocks(template)
+	templateStrippedHash := sha256HexOf(templateStripped + segJoinSep + histRender + segJoinSep + toolsRender)
 
 	// ③ 约束存在性检索（H2）：在**本次实际发出的提示**上检索 canonical 或其指纹
 	cs := SessionConstraints(r.Session)
 	check := checkConstraints(cs, promptHaystack(r))
 
-	ledger := &PromptLedgerObs{
-		Segments:           segments,
-		RenderedPrefixHash: renderedPrefixHash,
-		TemplateHash:       templateHash,
-		DynamicInjection:   renderedPrefixHash != templateHash,
-		DynamicParts:       dynamicParts,
-		MemoryEmbedded:     memEmbedded,
-		ClockISO:           r.Identity.ClockISO,
-		RequestSeed:        r.Identity.Seed,
+	// ③′【治本】重注入（2026-09-18 缺陷②）：missing 的 must_survive ⇒ 头尾各补一份；
+	// 没 missing 但到周期（默认每 4 轮）⇒ 定时补一次；幂等（先剔后放，见 constraints.go「重注入」节）。
+	// 时钟用**本请求的制度化身份**（不读墙上时钟：渲染不吃时钟那条性质不许破——H6）。
+	rej := ReinjectConstraints(r.System, cs, ReinjectOptions{
+		Session: r.Session, Round: r.Round, ClockISO: r.Identity.ClockISO,
+	})
+	applyReinjectionToObs(&check, rej)
+	res.System, res.Reinjection, res.Check = rej.Prompt, rej, check
+	if rej.Injected {
+		log.Printf("📌 constr_reinject: session %s round %d reason=%s 注入 %d 条（累计 %d；该会话 must_survive=%d）",
+			r.Session, rej.Round, rej.Reason, rej.Count, rej.InjectionCount, len(cs))
 	}
+
+	ledger := &PromptLedgerObs{
+		Segments:             segments,
+		RenderedPrefixHash:   renderedPrefixHash,
+		TemplateHash:         templateHash,
+		DynamicInjection:     renderedPrefixHash != templateHash,
+		DynamicParts:         dynamicParts,
+		MemoryEmbedded:       memEmbedded,
+		ClockISO:             r.Identity.ClockISO,
+		RequestSeed:          r.Identity.Seed,
+		TemplateStrippedHash: templateStrippedHash,
+		ReinjectStripped:     reinjectStripped,
+	}
+	res.Ledger = ledger
 	seed := r.Identity.Seed
 	base := ObsRecord{
 		Kind: obsKindPrompt, Session: r.Session, Round: r.Round, Model: r.Model,
@@ -402,7 +575,7 @@ func ObservePromptCheck(r PromptRender) {
 		RequestSeed: &seed,
 	}
 
-	// ③′ T3.4 版本外键（H4）：版本对**模板**取指纹（渲染后系统提示去掉记忆块 ⇒ 只改记忆块不改版本），
+	// ③″ T3.4 版本外键（H4）：版本对**模板**取指纹（渲染后系统提示去掉记忆块 ⇒ 只改记忆块不改版本），
 	// 名字/标签是调用方声明的事实（声明不了 ⇒ 键缺席）。label→version 快照**随事件落盘**（事件是权威）。
 	base.PromptVersion = PromptTemplateVersion(template)
 	base.PromptName = r.PromptName
@@ -412,13 +585,13 @@ func ObservePromptCheck(r PromptRender) {
 		base.PromptLabelVersions = PromptLabelVersionsOf(r.PromptName)
 	}
 
-	// ③″ T3.6 策略版本化（H7）：调用方没声明 ⇒ 四个键**一个都不落**（不写 0/空串冒充）；
+	// ③‴ T3.6 策略版本化（H7）：调用方没声明 ⇒ 四个键**一个都不落**（不写 0/空串冒充）；
 	// 声明了 false 也照落（"没声明"与"声明了没有"必须可分）。
 	base.StrategyID, base.StepIndex, base.HasAcceptanceCriteria, base.RequiresToolCallFirst =
 		strategyFieldsOf(r.Strategy, r.Session)
 	obsWrite(base)
 
-	// ④ 告警（missing 非空）——**不阻断请求**：观测面只报告，处置留给上层/人
+	// ④ 告警（missing 非空）——**不阻断请求**：观测面只报告，处置已由上面的重注入给出（治本那半）
 	if check.Alert {
 		alert := base
 		alert.EventName = obsEventConstraintMissingAlert
@@ -426,13 +599,15 @@ func ObservePromptCheck(r PromptRender) {
 		obsWrite(alert)
 	}
 
-	// ⑤ 纯净度守卫（T3.5）：只扫**代码注入**的字串（豁免记忆/历史，理由见 promptImpurityPatterns 上方注释）
+	// ⑤ 纯净度守卫（T3.5 + 判据②）：只扫**代码注入**的字串（豁免记忆/历史，理由见 promptImpurityPatterns 上方注释）；
+	// "在模板源里"的命中 = 我们自己写死的静态示例 ⇒ 放行（缺陷③的误报改正）。
+	tmplSrc := promptTemplateSourceOf(r.TemplateSource)
 	sources := []PromptPuritySource{
-		{Host: "system_template", Text: template},
-		{Host: "tools", Text: toolsRender},
+		{Host: "system_template", Text: template, TemplateSource: tmplSrc},
+		{Host: "tools", Text: toolsRender, TemplateSource: tmplSrc},
 	}
 	for _, rem := range r.Reminders {
-		sources = append(sources, PromptPuritySource{Host: "reminder", Text: rem})
+		sources = append(sources, PromptPuritySource{Host: "reminder", Text: rem, TemplateSource: tmplSrc})
 	}
 	emitted := 0
 	for _, src := range sources {
@@ -449,6 +624,7 @@ func ObservePromptCheck(r PromptRender) {
 		obsWrite(rec)
 		emitted++
 	}
+	return res
 }
 
 // segObs — 一个分段的账目（空段也落：tokens:0/bytes:0 是**测到的 0**，不是"没有这段"）

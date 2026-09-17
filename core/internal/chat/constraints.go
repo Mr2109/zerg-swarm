@@ -33,7 +33,10 @@
 //   - 要精确就把约束**显式登记**（RegisterConstraint）：抽取只是兜底，不是唯一入口。
 //
 // 纪律（与 obs.go 文件头三条铁律同源）：
-//  1. **观测绝不改变对话行为**：本文件只登记/检索/写盘，不重注入、不改任何 prompt 字节、不阻断请求。
+//  1. **登记/检索/写盘不改变对话**：本文件自己不改任何 prompt 字节、不阻断请求。**重注入**（见文末「重注入」节）
+//     是**纯函数**：给"当前待发提示 + must_survive 约束"回"重注入后的提示"——采纳与否在装配点（ObservePromptCheck
+//     的调用方），本文件不发送、不持有别人的字符串。（此条此前写的是"不重注入"；2026-09-18 按实测缺陷②
+//     ——"真缺失只报警不治本"——把口径改成"报警 + 治本"，依据与实现口径见文末该节。）
 //  2. **best-effort**：写盘失败只记日志（obsWrite 已保证）；登记表读写失败不 panic、不外抛。
 //  3. **只落指纹与（截断的）约束原文，不落整段对话**：告警里带 text 是为了"可行动"（看得见是哪条），
 //     上限 constraintAlertTextMax 字符；消息正文一个字都不落。
@@ -46,8 +49,10 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
@@ -407,18 +412,38 @@ func resetConstraintRegistryCache() {
 
 // ── 存在性检索 + 事件块 ───────────────────────────────────────────────
 
-// ConstraintCheckObs — `constraint_check` 事件的事实块（H2 逐字三字段 + 两处口径扩展）。
+// ConstraintCheckObs — `constraint_check` 事件的事实块（H2 逐字三字段 + 两处口径扩展 + 重注入事实）。
 //
 // 扩展（写死，读侧据此判读）：
 //
 //	MustSurviveMissingIDs —— missing 里 must_survive=true 的子集（告警的主判据；全缺时两者相等）
 //	Alert                  —— 与 len(MissingIDs)>0 恒等（把它显式写出来，读侧不必再推导）
+//
+// 重注入事实（2026-09-18 缺陷②的治本那半；口径与实现见文末「重注入」节）：
+//
+//	Reinjected      —— 本次入口**产出了**重注入（调用方采纳返回的 PromptCheckResult.System 后才落到发送字节上）
+//	ReinjectReason  —— 触发原因闭集：none / missing（刚检到缺失）/ periodic（每 N 轮的定时补注）
+//	ReinjectedIDs   —— 本次真正注入的约束 id（**永不为 null**：空集合落 []）
+//	InjectionCount  —— 本会话累计注入次数（0 = 一次没注过；幂等重注也计数）
+//	InjectionID/SHA256 —— 本次注入块指纹（前 16 位 / 全串）——**哈希可解释性**的支点：
+//	                       与上一轮比：injection_id 不变而 rendered_prefix_hash 变 ⇒ 模板/历史变了（不是重注）；
+//	                       injection_id 变 + injection_count +1 ⇒ **就是重注入**（块内容变了）。
 type ConstraintCheckObs struct {
 	Total                 int      `json:"total"`       // 登记表里本会话的约束总数（分母）
 	Present               int      `json:"present"`     // 在**本次实际发出的提示**上检索到的条数（分子）
 	MissingIDs            []string `json:"missing_ids"` // 没检索到的约束 id（**永不为 null**：空集合落 []）
 	MustSurviveMissingIDs []string `json:"must_survive_missing_ids"`
 	Alert                 bool     `json:"alert"`
+
+	// ── 重注入（治本）──
+	Reinjected        bool     `json:"reinjected"`
+	ReinjectReason    string   `json:"reinject_reason"`     // none | missing | periodic
+	ReinjectedIDs     []string `json:"reinjected_ids"`      // 永不为 null
+	InjectionCount    int      `json:"injection_count"`     // 本会话截至本轮的累计注入次数（0 = 该会话一次没注过）
+	InjectionID       string   `json:"injection_id"`        // 注入块指纹前 16 位（无注入 ⇒ ""）
+	InjectionSHA256   string   `json:"injection_sha256"`    // 注入块指纹全串（无注入 ⇒ ""）
+	InjectionRound    int      `json:"injection_round"`     // 本次注入发生在第几轮（0 ⇒ 调用方没给轮次）
+	InjectionClockISO string   `json:"injection_clock_iso"` // 注入时的**宿主注入时钟**（只进事件，不进提示——H6）
 }
 
 // ConstraintMissingObs — 告警事件里的一条缺失明细（"可行动"= 看得见是哪条、本该在哪、从哪来）。
@@ -452,16 +477,35 @@ func constraintPresentOn(c Constraint, haystack, haystackLower string) bool {
 	return false
 }
 
-// checkConstraints — 在 haystack 上做存在性检索，产出事实块。
-// missing_ids 顺序 = 登记顺序（可复算、可 diff；不用 map 迭代序）。
-func checkConstraints(cs []Constraint, haystack string) ConstraintCheckObs {
-	obs := ConstraintCheckObs{Total: len(cs), MissingIDs: []string{}, MustSurviveMissingIDs: []string{}}
+// missingConstraints — 在 haystack 上找**不在场**的约束（canonical 子串 或 指纹）。
+// 顺序 = 登记顺序（可复算、可 diff；不用 map 迭代序）。**唯一口径**：
+// checkConstraints（落账）与重注入的目标选择（见文末）都调它——两处口径若各写一份，判据就不可复算了。
+func missingConstraints(cs []Constraint, haystack string) []Constraint {
 	hayLower := strings.ToLower(haystack)
+	var out []Constraint
 	for _, c := range cs {
 		if constraintPresentOn(c, haystack, hayLower) {
-			obs.Present++
 			continue
 		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// checkConstraints — 在 haystack 上做存在性检索，产出事实块（**只描述给定字节**，不含重注入）。
+// 为什么重注入不参与本块：missing 是"这一刻的提示缺了什么"的**事实**——若拿重注入后的提示再检一遍，
+// missing 恒为空、告警事件消失，缺陷②那种"真缺失"就又看不见了（治本不许把诊断弄瞎）。
+// missing_ids 顺序 = 登记顺序（可复算、可 diff；不用 map 迭代序）。
+func checkConstraints(cs []Constraint, haystack string) ConstraintCheckObs {
+	missing := missingConstraints(cs, haystack)
+	obs := ConstraintCheckObs{
+		Total:      len(cs),
+		Present:    len(cs) - len(missing),
+		MissingIDs: []string{}, MustSurviveMissingIDs: []string{},
+		// 重注入字段的零值即"没注"（读侧三态：reinject_reason=none + injection_count=0 + 空 id）
+		ReinjectReason: ReinjectReasonNone, ReinjectedIDs: []string{},
+	}
+	for _, c := range missing {
 		obs.MissingIDs = append(obs.MissingIDs, c.ID)
 		if c.MustSurvive {
 			obs.MustSurviveMissingIDs = append(obs.MustSurviveMissingIDs, c.ID)
@@ -469,6 +513,353 @@ func checkConstraints(cs []Constraint, haystack string) ConstraintCheckObs {
 	}
 	obs.Alert = len(obs.MissingIDs) > 0
 	return obs
+}
+
+// ── 重注入（治本：从"报警"到"补上"）────────────────────────────────────
+//
+// 依据（实测，别当理论）：`constraint_missing_alert` 抓到过**真缺失**——缺的正是任务书那句
+// 「只做 G2，不要动别的缺陷，也不要动 git」（must_survive=true, inject_where=history），
+// 而那一刻**实际发出的提示里确实检索不到它**；当时只有"检测 + 报警"、没有"治疗" ⇒
+// 告警响了、模型照样不照做。这一节就是"治疗"那一半。
+//
+// 定案口径（调研后写死，改前先读；四条的出处见任务书）：
+//
+//	a) **每 3–5 轮重注入一次浓缩规则提醒** ⇒ 本文件默认 N=4（`ZERG_CONSTRAINT_REINJECT_EVERY` 可配）；
+//	b) **关键约束同时放上下文的开头与结尾**（头一份 + 尾一份，逐字节同一块）；
+//	c) 注入块**只放规则、不放示例、不带时间/随机** ⇒ 块内**不含轮次/时钟/随机数**：
+//	   H6 禁"提示里进时间"，且字节稳定 ⇒ 我们自己不把前缀缓存打碎（同一约束集 ⇒ 同一块 ⇒ 同一字节）；
+//	d) 关键约束走 pinned、永不参与摘要 —— 本文件的判据是 must_survive（抽取时 inject_where=history，
+//	   显式登记时可由调用方给 injectWherePinned；两者都在"必须活着"这个集合里）。
+//
+// 幂等（"已存在的不得重复堆叠"）的实现口径 = **先剔后放**：
+//
+//	剔除 —— 只剔**我们自己**注入的块（标记 + 头行双条件；别人写了同形标记不会被误删）；
+//	判在 —— 注入前对每条约束在当前整串上做存在性检索（missingConstraints，与落账同一函数、同一口径）；
+//	        已在 ⇒ 本次不放它（避免"每轮叠一份"把提示词撑爆）；
+//	结果 —— 同一 (提示, 约束集, 轮次) 再调一次 ⇒ **逐字节相同**（用例②钉住）。
+//
+// 放置形态（写死，strip 的可逆性就靠它）：
+//
+//	重注入后 = 块 ‖ "\n" ‖ **原字节** ‖ "\n" ‖ 块     （原字节原样、不动一个字符；不注入 ⇒ 逐字节等于入参）
+//
+// 口径边界（如实）：本函数**只认字节**——装配点把哪串交给它，头尾就是那串的头尾。当前唯一入口交的是
+// **系统提示**（r.System）⇒ 头份在上下文最前、尾份紧挨历史之前（这是"开头与结尾"在本装配口径下的落点）；
+// 若将来装配方要尾份落在整个提示的最末，把同一函数用在"含历史的整串"上即可，字节口径一个字都不用改。
+const (
+	reinjectMarkOpen   = "⟦zerg:硬约束⟧"
+	reinjectMarkClose  = "⟦/zerg:硬约束⟧"
+	reinjectHeader     = "【硬约束重注入】以下约束整场会话有效——直接照做，不要复述："
+	reinjectLinePrefix = "- "
+)
+
+// reinjectEveryDefault — 定时重注入的默认周期（轮）。调研口径 a 给的区间是 3–5，取中值 4。
+const reinjectEveryDefault = 4
+
+// reinjectMaxSessions — 周期状态表的会话数上限（与约束登记表同源的有界策略：满则淘汰"最久没注入"的那个）
+const reinjectMaxSessions = 512
+
+// 重注入触发原因闭集（低基数、可枚举；事件里落字符串，读侧按它分派）
+const (
+	ReinjectReasonNone     = "none"     // 没注入（约束都在场 且 未到周期）
+	ReinjectReasonMissing  = "missing"  // 刚检到 must_survive 缺失 ⇒ 立刻补
+	ReinjectReasonPeriodic = "periodic" // 到周期（每 N 轮）⇒ 定时补一次
+)
+
+// reinjectEveryNRounds — 周期 N（可配）：`ZERG_CONSTRAINT_REINJECT_EVERY` 为正整数则用它，否则默认 4。
+// 非法/非正/空 ⇒ 默认（不猜、不写死 0——0 会把定时重注整个关掉，那正是"忘了就没人管"）。
+func reinjectEveryNRounds() int {
+	if v := strings.TrimSpace(os.Getenv("ZERG_CONSTRAINT_REINJECT_EVERY")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return reinjectEveryDefault
+}
+
+// ReinjectOptions — 一次重注入的输入事实（**纯函数入参**：不读墙上时钟、不读全局态之外的任何东西）。
+//
+//	Session      —— 会话（周期状态的键；空 ⇒ 只做"刚检到缺失"的即时补充，不编造定时状态）
+//	Round        —— 当前轮次（周期判据用；≤0 ⇒ 视为"调用方没给轮次" ⇒ 只做即时补充）
+//	EveryNRounds —— 周期 N（≤0 ⇒ 取 reinjectEveryNRounds()）
+//	ClockISO     —— 宿主注入的请求时钟（**只进事件，不进提示**——H6；空 ⇒ 事件里该键为空）
+type ReinjectOptions struct {
+	Session      string
+	Round        int
+	EveryNRounds int
+	ClockISO     string
+}
+
+// Reinjection — 一次重注入的结果事实（装配点据此采纳 Prompt；事件据此落账）。
+type Reinjection struct {
+	Prompt          string   // 重注入后的提示（未重注入 ⇒ 与入参**逐字节相同**）
+	Injected        bool     // 本次是否真的重注入了
+	Reason          string   // none | missing | periodic
+	IDs             []string // 本次注入的约束 id（**永不为 null**）
+	Count           int      // 本次注入条数
+	InjectionCount  int      // 本会话**截至本轮**的累计注入次数（会话级事实：未注入也回报现状；无会话 ⇒ 0）
+	InjectionID     string   // 注入块指纹前 16 位（本轮没注入 ⇒ ""）
+	InjectionSHA256 string   // 注入块指纹全串（本轮没注入 ⇒ ""）
+	Round           int      // 本次注入发生在第几轮
+	ClockISO        string   // 注入时的宿主注入时钟（只进事件）
+}
+
+// ReinjectConstraints — **治本入口**：给"当前待发提示 + 本会话约束"，回"重注入后的提示"。
+//
+// 判据（顺序写死，别换）：
+//  1. 只看 must_survive（软约束不进注入块——否则块越长越像摘要，"浓缩规则提醒"就退化了）；
+//  2. missing = 在当前整串上检索不到的那些（同一口径 missingConstraints）⇒ 有 ⇒ reason=missing，注入 missing；
+//  3. 没 missing 但**到周期**（round - 最近一次注入轮次 ≥ N，起点锚 = 会话第 0 轮）⇒ reason=periodic，注入**全部** must_survive
+//     （"浓缩规则提醒"要的是头尾都在，不只是缺的那条）；
+//  4. 其余 ⇒ 一个字都不动（Reason=none，Prompt 逐字节等于入参）。
+//
+// 纯函数：除"周期状态表"（每会话一个计数 + 最近注入轮次）外无副作用；状态表**有界**（满则淘汰最久没注入的会话）。
+func ReinjectConstraints(prompt string, cs []Constraint, opt ReinjectOptions) Reinjection {
+	every := opt.EveryNRounds
+	if every <= 0 {
+		every = reinjectEveryNRounds()
+	}
+	res := Reinjection{
+		Prompt: prompt, Reason: ReinjectReasonNone, IDs: []string{},
+		Round: opt.Round, ClockISO: opt.ClockISO,
+		InjectionCount: reinjectCountOf(opt.Session), // 会话级事实：本轮不注入也回报现状（读侧不用自己攒）
+	}
+	ms := make([]Constraint, 0, len(cs))
+	for _, c := range cs {
+		if c.MustSurvive && (c.Canonical != "" || c.Text != "") {
+			ms = append(ms, c)
+		}
+	}
+	if len(ms) == 0 {
+		return res // 没有"必须活着"的约束 ⇒ 没什么可补的（不编造块）
+	}
+	var targets []Constraint
+	switch missing := missingConstraints(ms, prompt); {
+	case len(missing) > 0:
+		targets, res.Reason = missing, ReinjectReasonMissing
+	case reinjectDue(opt.Session, opt.Round, every):
+		targets, res.Reason = ms, ReinjectReasonPeriodic
+	default:
+		return res
+	}
+	block := buildReinjectBlock(targets)
+	base, _ := stripReinjectBlocks(prompt) // 先剔（把我们上次放的剔掉）⇒ 后面放的不会叠上去
+	res.Prompt = block + "\n" + base + "\n" + block
+	res.Injected = true
+	res.InjectionSHA256 = ConstraintFingerprint(block) // 指纹口径**只此一处**（同一 canonical 同指纹）
+	res.InjectionID = res.InjectionSHA256[:16]
+	res.IDs = constraintIDsOf(targets)
+	res.Count = len(targets)
+	res.InjectionCount = noteReinjection(opt.Session, opt.Round)
+	return res
+}
+
+// constraintIDsOf — 约束 id 列表（id 缺失 ⇒ 按 canonical 现算，不编造）
+func constraintIDsOf(cs []Constraint) []string {
+	out := make([]string, 0, len(cs))
+	for _, c := range cs {
+		id := c.ID
+		if id == "" {
+			id = ConstraintID(c.Canonical)
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+// buildReinjectBlock — 注入块原文（逐字节确定：同约束集 ⇒ 同块）。
+// 块内**不带**轮次/时钟/随机（H6 + 前缀缓存：见本节口径 c）。**不截断**约束原文——
+// 截断会让下一轮的在场检索（canonical 子串）认不出它，等于自己造一条永久 missing。
+func buildReinjectBlock(cs []Constraint) string {
+	var b strings.Builder
+	b.WriteString(reinjectMarkOpen)
+	b.WriteByte('\n')
+	b.WriteString(reinjectHeader)
+	b.WriteByte('\n')
+	for _, c := range cs {
+		text := c.Canonical
+		if text == "" {
+			text = CanonicalConstraint(c.Text)
+		}
+		if text == "" {
+			continue
+		}
+		b.WriteString(reinjectLinePrefix)
+		b.WriteString(text)
+		b.WriteByte('\n')
+	}
+	b.WriteString(reinjectMarkClose)
+	return b.String()
+}
+
+// stripReinjectBlocks — 逐字剔除**我们自己**注入过的块（返回剔除后的串 + 是否真的剔到了）。
+//
+// 双条件（防误删别人）：① 有我们的开/闭标记；② 标记之间的内容含我们的头行 reinjectHeader。
+// 两条都满足才剔，且**连同紧邻的那一个分隔换行**一起剔（那个换行是放置时加的）——
+// 于是 strip(块 ‖ "\n" ‖ base ‖ "\n" ‖ 块) == base，逐字节可逆（用例②钉住）。
+func stripReinjectBlocks(prompt string) (string, bool) {
+	if !strings.Contains(prompt, reinjectMarkOpen) {
+		return prompt, false
+	}
+	var b strings.Builder
+	rest, removed := prompt, false
+	for {
+		i := strings.Index(rest, reinjectMarkOpen)
+		if i < 0 {
+			break
+		}
+		w := rest[i+len(reinjectMarkOpen):]
+		j := strings.Index(w, reinjectMarkClose)
+		if j < 0 {
+			break
+		}
+		end := i + len(reinjectMarkOpen) + j + len(reinjectMarkClose)
+		if !strings.Contains(w[:j], reinjectHeader) {
+			// 同形标记但不是我们的块 ⇒ 原样保留，继续往后找（别人的字节一个都不许动）
+			b.WriteString(rest[:end])
+			rest = rest[end:]
+			continue
+		}
+		start := i
+		stop := end
+		// 剔除我们放置时加的那**一个**分隔换行：优先左邻（尾份），没有才取右邻（头份放在开头时）。
+		// 为什么必须二选一而不是两边都剔：调用方若在尾份之后又接了自己的文本（下一轮拼接），
+		// 那个文本自带的换行不是我们的 —— 两边都剔会吃掉它（strip 就不再可逆了，用例里钉住）。
+		if start > 0 && rest[start-1] == '\n' {
+			start--
+		} else if stop < len(rest) && rest[stop] == '\n' {
+			stop++
+		}
+		b.WriteString(rest[:start])
+		rest = rest[stop:]
+		removed = true
+	}
+	b.WriteString(rest)
+	if !removed {
+		return prompt, false
+	}
+	return b.String(), true
+}
+
+// ── 周期状态（每会话：累计注入次数 + 最近一次注入的轮次）────────────────────
+//
+// 为什么只放进程内（不落盘，与登记表不同）：周期是**运行期节奏**，不是"这条约束存在过"那种事实。
+// 重启后锚点归零 ⇒ 下一轮 round ≥ N 时立刻补一次（宁可多补一次，不可长期不补）；
+// 而"补了几次"这件事照样进事件（injection_count 从零重数——事件里同一会话会看到计数回绕，
+// 读侧按"同一进程内的段"读，别把回绕当异常）。
+type reinjectState struct {
+	Count     int
+	LastRound int
+}
+
+var (
+	reinjectMu     sync.Mutex
+	reinjectStates map[string]reinjectState
+)
+
+// reinjectDue — 到周期了吗（round - 锚点 ≥ N）。锚点 = 上次注入的轮次；没状态 ⇒ 0（会话起点）。
+// 无会话/无轮次 ⇒ false（不编造节奏）。
+func reinjectDue(session string, round, every int) bool {
+	if session == "" || round <= 0 || every <= 0 {
+		return false
+	}
+	reinjectMu.Lock()
+	defer reinjectMu.Unlock()
+	anchor := 0
+	if st, ok := reinjectStates[session]; ok {
+		anchor = st.LastRound
+	}
+	return round-anchor >= every
+}
+
+// reinjectCountOf — 本会话**截至此刻**的累计注入次数（会话级事实：本轮没注入也回报现状；无会话 ⇒ 0）
+func reinjectCountOf(session string) int {
+	if session == "" {
+		return 0
+	}
+	reinjectMu.Lock()
+	defer reinjectMu.Unlock()
+	return reinjectStates[session].Count
+}
+
+// noteReinjection — 记一次注入（返回本会话累计次数）。无会话 ⇒ 0（不编造全局计数）。调用方不持锁。
+func noteReinjection(session string, round int) int {
+	if session == "" {
+		return 0
+	}
+	reinjectMu.Lock()
+	defer reinjectMu.Unlock()
+	if reinjectStates == nil {
+		reinjectStates = map[string]reinjectState{}
+	}
+	if _, ok := reinjectStates[session]; !ok && len(reinjectStates) >= reinjectMaxSessions {
+		dropStalestReinjectLocked()
+	}
+	st := reinjectStates[session]
+	st.Count++
+	st.LastRound = round
+	reinjectStates[session] = st
+	return st.Count
+}
+
+// dropStalestReinjectLocked — 状态表满 ⇒ 淘汰"最近注入轮次最小"的会话（确定性地选一个，不靠 map 迭代序）。调用方持锁。
+func dropStalestReinjectLocked() {
+	victim, found := "", false
+	for s, st := range reinjectStates {
+		if !found || st.LastRound < reinjectStates[victim].LastRound || (st.LastRound == reinjectStates[victim].LastRound && s < victim) {
+			victim, found = s, true
+		}
+	}
+	if found {
+		delete(reinjectStates, victim)
+		log.Printf("⚠️ constr_reinject: 状态表已满(%d)，淘汰最久未注入的会话 %s", reinjectMaxSessions, victim)
+	}
+}
+
+// ReinjectStats — 某会话的注入状态（诊断/用例：累计次数 + 最近注入轮次）
+func ReinjectStats(session string) (count, lastRound int) {
+	reinjectMu.Lock()
+	defer reinjectMu.Unlock()
+	st := reinjectStates[session]
+	return st.Count, st.LastRound
+}
+
+// ResetReinjectState — 清周期状态（维护/用例用；幂等）。空串 ⇒ 全清。
+func ResetReinjectState(session string) {
+	reinjectMu.Lock()
+	defer reinjectMu.Unlock()
+	if session == "" {
+		reinjectStates = nil
+		return
+	}
+	delete(reinjectStates, session)
+}
+
+// ── 事件侧的装配（ObservePromptCheck 用：把纯函数结果写进事实块）────────────
+
+// applyReinjectionToObs — 把一次重注入的结果写进 constraint_check 事实块（**只写事实**，不改检索口径）。
+func applyReinjectionToObs(obs *ConstraintCheckObs, rej Reinjection) {
+	obs.Reinjected = rej.Injected
+	obs.ReinjectReason = rej.Reason
+	obs.ReinjectedIDs = rej.IDs
+	if obs.ReinjectedIDs == nil {
+		obs.ReinjectedIDs = []string{} // 永不为 null（wire 层判据与 missing_ids 同源）
+	}
+	obs.InjectionCount = rej.InjectionCount
+	obs.InjectionID = rej.InjectionID
+	obs.InjectionSHA256 = rej.InjectionSHA256
+	obs.InjectionRound = rej.Round
+	obs.InjectionClockISO = rej.ClockISO
+}
+
+// ── 供测试与诊断的时钟口径（避免用例各自发明格式）───────────────────────
+
+// ReinjectClockISO — 把时间格式化成事件里用的宿主注入时钟口径（UTC RFC3339Nano；与 RequestIdentity 同源）。
+// 存在意义：调用方（含用例）把一个时点转成 clock_iso 时**不必**再写一遍格式串（口径只有一处）。
+func ReinjectClockISO(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
 }
 
 // missingDetailsOf — 把缺失 id 还原成可行动明细（id → 登记记录；找不到的 id 跳过，不编造）。
