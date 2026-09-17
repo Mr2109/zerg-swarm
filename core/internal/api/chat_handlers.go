@@ -514,7 +514,7 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 		// + rendered_prefix_hash/template_hash）+ 时钟与种子（clock_iso/request_seed）+ 纯净度守卫。
 		// 非流式路径**不带 tools 字段**（下面 Infer 不传 tools）⇒ Tools 段按事实给 nil（不编造）。
 		ident := chat.NewRequestIdentity(id, n)
-		chat.ObservePromptCheck(chat.PromptRender{
+		if res := chat.ObservePromptCheck(chat.PromptRender{
 			Session: id, Round: n, Model: model,
 			System: sysP, Memory: chat.MemoryBlock(id),
 			Tools: nil, History: m,
@@ -523,7 +523,9 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 			// 策略=本路径**确实知道**的循环配置与"无验收判定/不要求先出工具调用"（见 chat_strategy.go）。
 			PromptName: chatPromptName(), PromptLabel: chat.PromptLabelFromEnv(),
 			Strategy: chatPromptStrategy(model),
-		})
+		}); res.System != "" {
+			sysP = res.System
+		}
 		ir, ierr := h.infer.Infer(chat.WithSessionID(ctx, id), model, sysP, m) // 非流式——Hermes 模式不带 tools 字段
 		if ierr != nil {
 			return nil, ierr
@@ -907,7 +909,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		// 口径：System/History/Tools 与之下的 InferStream 调用是**同一份对象**（同变量）——
 		// 指纹对象必须是"真的发出去的那串字节"，不是另拼一份（H3 的第二半）。
 		// Tools 走 sentToolsOf：与 chat_infer 剥掉 __temp__ 标记后的**实际请求体**一致（不把温度标记算进账）。
-		chat.ObservePromptCheck(chat.PromptRender{
+		if res := chat.ObservePromptCheck(chat.PromptRender{
 			Session: id, Round: int(n), Model: model,
 			System: sysPrompt, Memory: chat.MemoryBlock(id),
 			Tools: sentToolsOf(toolsParam), History: m,
@@ -915,7 +917,9 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 			// T3.4 版本外键 + T3.6 策略（H4/H7）——口径同 chat_strategy.go（本路径的配置事实）
 			PromptName: chatPromptName(), PromptLabel: chat.PromptLabelFromEnv(),
 			Strategy: chatPromptStrategy(model),
-		})
+		}); res.System != "" {
+			sysPrompt = res.System
+		}
 		// ⚠ 铁律：**包装不得改变原有语义** —— InferStream 内部对 onDelta 判 nil（非流式路径传 nil），
 		// 包一层之后必须保留该保护，否则非流式路径直接空指针 panic（2026-09-16 实测事故）。
 		// 第 ① 层（loopcore.callInfer 归一化）已保证内核不再传裸 nil；这里不依赖它 —— 兜底仍判 nil。
@@ -1120,7 +1124,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		// T3.2/T3.3/T3.5：重试是一次**新的请求**（另一份提示）⇒ 另落一笔账（同一套口径）
 		retryRound := int(atomic.AddInt64(&obsRound, 1))
 		retryIdent := chat.NewRequestIdentity(id, retryRound)
-		chat.ObservePromptCheck(chat.PromptRender{
+		if res := chat.ObservePromptCheck(chat.PromptRender{
 			Session: id, Round: retryRound, Model: se.Model,
 			System: sysPrompt, Memory: chat.MemoryBlock(id),
 			Tools: nil, History: cur, Reminders: []string{reminder},
@@ -1128,7 +1132,9 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 			// T3.4 版本外键 + T3.6 策略（H4/H7）——重试是**另一次装配** ⇒ 自带版本外键与步序（step_index +1）
 			PromptName: chatPromptName(), PromptLabel: chat.PromptLabelFromEnv(),
 			Strategy: chatPromptStrategy(se.Model),
-		})
+		}); res.System != "" {
+			sysPrompt = res.System
+		}
 		retryRes, _ = h.infer.InferStream(retryCtx, se.Model, sysPrompt, cur, func(deltaType, text string) {
 			payload, _ := json.Marshal(map[string]any{"type": deltaType, "text": text})
 			writeSSE("delta", string(payload))
