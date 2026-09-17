@@ -164,6 +164,7 @@ type compactClassifyFn func(error) CompactErrClass
 // compactOptions — MaybeCompact 的可选入参聚合
 type compactOptions struct {
 	classify compactClassifyFn
+	trigger  string // T3.1：本次压缩的触发原因（闭集；空=未指定 ⇒ 按 force 推导）
 }
 
 // CompactOption — MaybeCompact 新增的「可选入参」：不改签名形态的扩展点（变参）。
@@ -198,6 +199,80 @@ func resolveCompactClassify(opts []CompactOption) compactClassifyFn {
 		return DefaultErrClass
 	}
 	return o.classify
+}
+
+// WithTriggerReason — T3.1：显式声明本次压缩的触发原因（闭集见 CompactTrigger* 常量）。
+//
+// 为什么要这个扩展点：`force=true` 一条路要区分两种**完全不同**的事 ——
+//   - 人工/接口主动压（manual）；
+//   - 上游明确报「上下文超限」后的补救性压缩（error_recovery）。
+//
+// 两者在观测面上必须分得开（前者是"我们主动"，后者是"被逼的"，H1 的 trigger_reason 闭集里
+// 各占一格）。非法/未知取值**忽略**（不编造、不落到事件里），退回默认推导。
+func WithTriggerReason(reason string) CompactOption {
+	return func(o *compactOptions) {
+		switch reason {
+		case CompactTriggerTokenBudget, CompactTriggerManual, CompactTriggerErrorRecovery:
+			o.trigger = reason
+		}
+	}
+}
+
+// compactTriggerReasonOf — 本次压缩的触发原因（默认推导，写死）：
+// 显式声明优先；否则 force ⇒ manual（强制压缩），非 force ⇒ token_budget（阈值）。
+func compactTriggerReasonOf(force bool, opts []CompactOption) string {
+	o := compactOptions{}
+	for _, fn := range opts {
+		if fn != nil {
+			fn(&o)
+		}
+	}
+	if o.trigger != "" {
+		return o.trigger
+	}
+	if force {
+		return CompactTriggerManual
+	}
+	return CompactTriggerTokenBudget
+}
+
+// compactObsFactsOf — T3.1：组装三态事件的公共事实（在**确定要压**之后、摘要调用**之前**调用一次）。
+//
+// 口径（写死，读侧据此复算）:
+//   - tokens_before：**全部**活动消息按 compactMessageTokens 加总（与触发阈值同一估算器）
+//   - kept/summarized ids：被摘要段 = compactMiddleSegment 的 ids；其余 = 保留段 ——
+//     两者**互补且不重叠**，并集 = 本次入参的全部消息（这是事件可校验的不变式，用例 ⑤ 钉住）
+//   - turns_summarized：被摘要段里 **role=user** 的条数（一轮以用户消息起算；纯 assistant 段 ⇒ 0）
+//   - summarizer_model：取 MaybeCompact 的 model 入参 —— live 路径的摘要器
+//     （SummarizeWithInfer(h.infer, id, se.Model)）用的就是同一个值，故同源；拿不到就缺席（omitempty）
+func compactObsFactsOf(sessionID, model, trigger string, msgs []*Message, summarized []Message, ids []int64) compactObsFacts {
+	f := compactObsFacts{
+		Session:        sessionID,
+		Model:          model,
+		Trigger:        trigger,
+		MessagesBefore: len(msgs),
+		SummarizedIDs:  append([]int64{}, ids...),
+	}
+	inSummary := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		inSummary[id] = struct{}{}
+	}
+	f.KeptIDs = make([]int64, 0, len(msgs)-len(ids))
+	for _, m := range msgs {
+		t := compactMessageTokens(*m)
+		f.TokensBefore += t
+		if _, compressed := inSummary[m.ID]; compressed {
+			continue
+		}
+		f.KeptIDs = append(f.KeptIDs, m.ID)
+		f.KeptTokens += t
+	}
+	for _, m := range summarized {
+		if m.Role == "user" {
+			f.TurnsSummarized++
+		}
+	}
+	return f
 }
 
 // compactSessionFail — 单会话压缩失败态（持久化结构）
@@ -309,13 +384,15 @@ func compactGetFail(sessionID string) *compactSessionFail {
 	return loadCompactCooldownLocked()[sessionID]
 }
 
-// compactRecordFailure — 记一次压缩失败（连续次数 +1；按错误类型分流冷却 / 熔断）。
+// compactRecordFailure — 记一次压缩失败（连续次数 +1；按错误类型分流冷却 / 熔断）；返回**累计连续失败次数**。
 //
 // 分流规则（§9.4 R6）:
 //   - cls.nonRetryable()（4xx 非 429）: 不可重试 → 直接硬熔断 Disabled，冷却取 full jitter 最大档 base（900s）；
 //   - cls.hasRetryFloor()（429 或带 Retry-After）: 冷却 = max(full jitter base, Retry-After)；
 //   - 其余（5xx/网络/超时/unknown）: 正常递进 + full jitter（现状不变）。
-func compactRecordFailure(sessionID string, cause error, now float64, cls CompactErrClass) {
+//
+// 返回值（T3.1）：streak 供观测面写进 compaction_failed 的失败原文（与旧 OBS-4 行的 streak 同值）。
+func compactRecordFailure(sessionID string, cause error, now float64, cls CompactErrClass) int {
 	compactStateMu.Lock()
 	defer compactStateMu.Unlock()
 	sessions := loadCompactCooldownLocked()
@@ -360,6 +437,7 @@ func compactRecordFailure(sessionID string, cause error, now float64, cls Compac
 	if err := saveCompactCooldownLocked(sessions); err != nil {
 		log.Printf("⚠️ failed to persist compaction cooldown state: %v", err)
 	}
+	return f.Streak
 }
 
 // compactClearFail — 压缩成功 → 清该会话失败态（连续计数归零）
@@ -495,6 +573,11 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 	}
 	fromID, toID := ids[0], ids[len(ids)-1]
 
+	// T3.1：**确定要压**之后才落 compaction_started —— 阈值不足/冷却内/无可压段三条早退路径
+	// 都在上面返回了 ⇒ 一条 compaction 事件都不会落（这是本族事件的防误报底线，用例 ③ 钉住）。
+	// 事实块在起点算（终态时库里已被改过：软归档 + 插入摘要 ⇒ 只有此刻的布局才是"压缩前"）。
+	h := obsCompactionStart(compactObsFactsOf(sessionID, model, compactTriggerReasonOf(force, opts), msgs, src, ids))
+
 	// 选路: LLMLingua-2 优先
 	var summary string
 	var callErr error // 注入函数（压缩/摘要）返回的真实错误——供错误类型分流
@@ -512,6 +595,7 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 	}
 
 	// 回退: LLM 结构化摘要
+	llmSummary := false // T3.1：摘要是否来自**结构化摘要器**（决定 field_coverage 能不能判——删除式压缩不是结构化的）
 	var err error
 	if summary == "" {
 		if sum == nil {
@@ -523,6 +607,7 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 				summary = ""
 			} else {
 				summary = strings.TrimSpace(summary)
+				llmSummary = summary != ""
 			}
 		}
 	}
@@ -537,7 +622,9 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 			classSrc = callErr
 		}
 		cls := resolveCompactClassify(opts)(classSrc)
-		compactRecordFailure(sessionID, err, now, cls)
+		streak := compactRecordFailure(sessionID, err, now, cls)
+		// T3.1：终态 = failed（与旧 OBS-4 行的 fail_reason 同文本，含 streak）——**不落 completed**
+		h.failed(fmt.Sprintf("%v (streak=%d)", err, streak))
 		return false, err
 	}
 
@@ -546,16 +633,20 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 
 	// Phase 1: 剪除中间段旧工具结果（沿用旧语义）
 	if perr := s.PruneOldToolResults(sessionID, src); perr != nil {
+		h.failed(perr.Error()) // 终态 = failed：摘要有了但布局没落地 ⇒ 不能报 completed（否则事件流说谎）
 		return false, perr
 	}
 	// 软归档（active=0, compacted=1）——语义不动
 	if merr := s.MarkCompacted(sessionID, ids); merr != nil {
+		h.failed(merr.Error())
 		return false, merr
 	}
 	// 摘要插在被压缩段首条之前 + 尾部召回指针
 	pointer := fmt.Sprintf(compactRecallPointerFmt, sessionID, fromID)
-	summaryID, ierr := s.InsertSummaryMid(sessionID, summary+pointer, fromID)
+	inserted := summary + pointer
+	summaryID, ierr := s.InsertSummaryMid(sessionID, inserted, fromID)
 	if ierr != nil {
+		h.failed(ierr.Error())
 		return false, ierr
 	}
 	compactAppendJournal(compactJournalRecord{
@@ -565,6 +656,9 @@ func (s *ChatStore) MaybeCompact(ctx context.Context, sessionID, model string, m
 		sessionID, fromID, toID, summaryID, len([]rune(summary)), compactSummarySource(lingua))
 	// OBS-4（v2.5.10 前置档②）：结构化一行，供长跑批量分析。
 	obsCompact(sessionID, "threshold", 0, 0, len([]rune(summary)), 0, "ok", "", false) // 耗时本现场不可得 ⇒ 0（omitempty=未知）
+	// T3.1：终态 = completed —— 传**实际插入库里的那段文本**（正文 + 召回指针），
+	// 因此 summary_sha256 对的就是库里那条摘要消息（去掉「【历史摘要】」前缀后逐字可复算）。
+	h.completed(summary, inserted, llmSummary)
 	return true, nil
 }
 
