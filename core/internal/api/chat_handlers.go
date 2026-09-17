@@ -885,6 +885,11 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		// 包一层之后必须保留该保护，否则非流式路径直接空指针 panic（2026-09-16 实测事故）。
 		wrapped := wrapObsDelta(timer, onDelta)
 		ir, ierr := h.infer.InferStream(chat.WithSessionID(ctx, id), model, sysPrompt, m, wrapped, toolsParam)
+		if ir != nil {
+			// T1.4 批量几何：把上游响应里的 cache_n/prompt_n/cached_tokens/system_fingerprint…
+			// 写进本轮观测（拿不到 ⇒ ir.Geometry 为 nil ⇒ 字段缺席，不写 0）。
+			timer.SetGeometry(ir.Geometry)
+		}
 		if ierr != nil {
 			timer.SetErrText(ierr.Error()) // 非正常收尾带原文 ⇒ 下次可定案
 		}

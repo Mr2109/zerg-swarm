@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
+	"github.com/Mr2109/zerg-swarm/core/internal/infergeom"
 )
 
 // ChatInfer — 对话推理器（网关客户端）
@@ -46,6 +47,9 @@ type InferResult struct {
 	ReasoningTokens int    `json:"reasoning_tokens"`
 	// C4b 工具循环: 响应含 tool_calls 时填充（chat 格式 choices[].message.tool_calls）
 	ToolCalls []agent.ToolCall `json:"tool_calls,omitempty"`
+	// T1.4 批量几何：上游响应里抄下来的几何证据（nil = 上游不给/未取到 ⇒ 事件流里字段缺席，绝不编造）。
+	// 消费方：internal/api 的轮次适配器 → chat.ObsTimer.SetGeometry → chat_obs.jsonl 的 geometry 块。
+	Geometry *infergeom.Geometry `json:"geometry,omitempty"`
 }
 
 // sessionIDKey — 批次B(2026-09-10): 对话 session_id 经 ctx 透传给推理层
@@ -141,7 +145,15 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 	if os.Getenv("ZERG_DEBUG") != "" {
 		fmt.Printf("[chat:infer] status=%d raw_len=%d raw_head=%s\n", resp.StatusCode, len(raw), truncateArgs(string(raw), 200))
 	}
-	return parseChatResult(raw)
+	res, perr := parseChatResult(raw)
+	// T1.4 批量几何：非流式响应体里同样抄一份（拿不到 ⇒ 不设 ⇒ 事件流里字段缺席，绝不编造）。
+	// ⚠ 响应被截断（X3 截断容错路径）时 JSON 不完整 ⇒ 解析不出几何 ⇒ 缺席（宁缺不编）。
+	if res != nil {
+		if g, _ := infergeom.Parse(raw); g.Any() {
+			res.Geometry = &g
+		}
+	}
+	return res, perr
 }
 
 // InferStream — 流式推理（SSE——reasoning/content 逐段回调）
@@ -224,6 +236,9 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 
 	// 解析 chat SSE 流（data: {...delta...}——D2 流式 tool_calls 完整 JSON）
 	res := &InferResult{}
+	// T1.4 批量几何：llama.cpp 把 timings/usage/system_fingerprint 放在**末块**（实测），
+	// 这里只留**最后一条**"像几何"的块，流结束后统一解析（不逐块解析：省成本 + 只认最终几何）。
+	var geomTail []byte
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -234,6 +249,10 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 		payload := strings.TrimPrefix(line, "data: ")
 		if payload == "[DONE]" {
 			break
+		}
+		// 先抄几何尾窗，再解析 delta——不依赖 choices 形态（末块 choices 可能为空/无 delta）
+		if infergeom.CarriesGeometry([]byte(payload)) {
+			geomTail = []byte(payload)
 		}
 		var ev struct {
 			Choices []struct {
@@ -293,6 +312,12 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 			res.ToolCalls = xmlCalls
 			res.Content = stripXMLToolCalls(res.Content)
 		}
+	}
+	// T1.4 批量几何：从尾窗那一块里取（**拿不到 ⇒ res.Geometry 保持 nil ⇒ 事件流里字段缺席**）。
+	// 注：上游"只给 system_fingerprint 不给 timings"也算拿到了几何（g.Any() 为真）；
+	//     纯内容块（无 timings/usage/fingerprint）⇒ Parse 什么都认不出 ⇒ 缺席。
+	if g, _ := infergeom.Parse(geomTail); g.Any() {
+		res.Geometry = &g
 	}
 	if err := scanner.Err(); err != nil && ctx.Err() == nil {
 		return res, fmt.Errorf("chat: 流读取失败: %w", err)

@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Mr2109/zerg-swarm/core/internal/infergeom"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"github.com/Mr2109/zerg-swarm/core/internal/toolobs"
 )
@@ -84,6 +85,30 @@ type TurnObs struct {
 	GateSec  int    `json:"gate_sec"`           // 首 token 闸（秒）——本次生效值（含按卵放宽后的结果）
 	WaitedMS int64  `json:"waited_ms"`          // 首字节实际等待（与 GateSec 对照即知"差多少被掐"）
 	Verdict  string `json:"verdict"`            // 丙：卡 / 慢 / 正常（看门狗结论，一眼可读）
+}
+
+// GeometryObs — T1.4：**大模型调用**（kind=turn）的批量几何（llama.cpp batch geometry）。
+//
+// 为什么必须记（docs/调研/实验-批量几何与可复现性-T7.1-T7.2-20260917.md 实测坐实）：
+// cache_n（前缀复用 KV）/ prompt_n（本次**实际评估**）**确实改变 logits**——dense 模型在
+// 固定几何下逐比特可复现（0 ulp），MoE 跨几何差 2.4e-02；串行独占 5/5 相同，而同批有他人
+// 25/25 全不同（差异率 ≥94.7%）。没有这两个字段，回放/回归的差异**无法归因**。
+//
+// 口径（与文件头三条铁律同源，改这里先读它）：
+//  1. **上游不给 ⇒ 字段缺席**：计量一律用**指针**表达存在性——`cache_n:0`（冷缓存，冷启动命不中
+//     是有效测量值）与「上游根本没给 cache_n」必须可分；读侧**不许**把缺席读成 0。
+//  2. `geometry_recorded` 是**观测面自己的结论**（我们问了、有没有记到什么），不是上游字段：
+//     每条 turn 记录都带它——false = 问过了但上游什么都没给（不是"没问"，更不是"没有这回事"）。
+//  3. 只挂在**大模型调用**那类记录上；工具/压缩事件不带（拿不到就是拿不到，不硬凑）。
+type GeometryObs struct {
+	CacheN            *int   `json:"cache_n,omitempty"`            // llama.cpp timings.cache_n（前缀命中，复用 KV）
+	PromptN           *int   `json:"prompt_n,omitempty"`           // llama.cpp timings.prompt_n（本次实际评估）
+	CachedTokens      *int   `json:"cached_tokens,omitempty"`      // usage.prompt_tokens_details.cached_tokens
+	UbatchN           *int   `json:"ubatch_n,omitempty"`           // ubatch 划分规模（上游通常不给 ⇒ 缺席）
+	SlotID            *int   `json:"slot_id,omitempty"`            // 命中的槽位（-np 多槽几何要素）
+	SystemFingerprint string `json:"system_fingerprint,omitempty"` // 引擎白送（实测形如 b10470-34af94cd9）
+	Form              string `json:"form,omitempty"`               // 计量形态（openai/llamacpp/…，便于归因）
+	Recorded          bool   `json:"geometry_recorded"`            // 观测面结论：本轮几何记到没有（每条 turn 恒有）
 }
 
 // ObsRecord — 一条观测记录（定长字段集：不随轮数膨胀）
@@ -142,6 +167,12 @@ type ObsRecord struct {
 	Recorded  *bool  `json:"recorded,omitempty"`   // 是否已记录（本进程全量落盘 ⇒ 默认 true）
 	Sampled   *bool  `json:"sampled,omitempty"`    // 是否落在采样集合内（首版不采样 ⇒ 默认 true）
 	EventName string `json:"event_name,omitempty"` // 事件名（非空 ⇒ 这条是事件）；默认取 kind（kind 已是既有事实）
+
+	// ── T1.4 批量几何（llama.cpp batch geometry）──
+	// 挂在**大模型调用**那一类记录（kind=turn）上：见 GeometryObs 的口径（上游不给 ⇒ 字段缺席）。
+	// 它与 turn 平级（不是 TurnObs 的成员）：TurnObs 的字段**不带 omitempty**（0 是有效测量值），
+	// 而几何字段必须能表达「缺席」⇒ 一律指针 + omitempty，两种语义不混。
+	Geometry *GeometryObs `json:"geometry,omitempty"`
 }
 
 var obsMu sync.Mutex
@@ -361,6 +392,9 @@ type ObsTimer struct {
 	traceID      string
 	spanID       string
 	parentSpanID string
+
+	// T1.4 批量几何：本轮大模型**响应**里抄下来的几何（nil = 上游不给/未取到 ⇒ 记录里字段缺席）
+	geometry *infergeom.Geometry
 }
 
 // NewObsTimer — 建一个轮次计时器（T1.1：同会话 trace 不变、每轮新开 span、parent 指上一轮/会话根）
@@ -420,6 +454,48 @@ func (t *ObsTimer) SetErrText(e string) {
 	}
 }
 
+// SetGeometry — T1.4：记录本轮大模型调用的**批量几何**（来自上游响应；nil = 上游不给/未取到 ⇒ 字段缺席）。
+// 纪律：只存指针、不做任何判断、不改对话语义（观测面铁律①）——拿不到就缺席，绝不写 0 顶替。
+func (t *ObsTimer) SetGeometry(g *infergeom.Geometry) {
+	if t != nil {
+		t.geometry = g
+	}
+}
+
+// geometryObsOf — infergeom.Geometry → 观测形态。
+// 口径：**上游没给的字段一个都不写**（指针 nil ⇒ 键缺席）；只有 system_fingerprint 是非空才写。
+// 返回 nil 只在 g == nil 时（调用方对 turn 记录一律挂 GeometryObs：Recorded 是"我们问过"的结论）。
+func geometryObsOf(g *infergeom.Geometry) *GeometryObs {
+	out := &GeometryObs{}
+	if g == nil {
+		return out // 一项几何都没拿到 ⇒ 只有 geometry_recorded:false
+	}
+	out.Form = g.Form
+	if g.HasCacheN {
+		v := g.CacheN
+		out.CacheN = &v
+	}
+	if g.HasPromptN {
+		v := g.PromptN
+		out.PromptN = &v
+	}
+	if g.HasCachedTokens {
+		v := g.CachedTokens
+		out.CachedTokens = &v
+	}
+	if g.HasUbatchN {
+		v := g.UbatchN
+		out.UbatchN = &v
+	}
+	if g.HasSlotID {
+		v := g.SlotID
+		out.SlotID = &v
+	}
+	out.SystemFingerprint = g.SystemFingerprint // 空 = 上游不给 ⇒ omitempty 抹掉（不写空串）
+	out.Recorded = g.Any()
+	return out
+}
+
 func (t *ObsTimer) Finish(endReason string) {
 	if t == nil {
 		return
@@ -440,6 +516,9 @@ func (t *ObsTimer) Finish(endReason string) {
 		ParentSpanID: t.parentSpanID,
 		SpanKind:     ObsSpanKindServer,
 		StartedAtMS:  t.start.UnixMilli(),
+		// T1.4 批量几何：上游响应里抄下来的几何（cache_n/prompt_n/cached_tokens/system_fingerprint…）；
+		// nil/一项都没有 ⇒ geometry_recorded:false 且各计量字段**缺席**（不写 0 顶替）。
+		Geometry: geometryObsOf(t.geometry),
 		Turn: &TurnObs{
 			TotalMS:  time.Since(t.start).Milliseconds(),
 			MaxGapMS: t.maxGap.Milliseconds(),
