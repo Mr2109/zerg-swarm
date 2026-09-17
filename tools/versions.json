@@ -44,7 +44,7 @@
   "footage_video_clips": "v1.0.0",
   "glob": "v1.0.0",
   "gpu_status": "v1.0.0",
-  "grep": "v1.0.0",
+  "grep": "v1.0.1",
   "hash_calc": "v1.0.0",
   "head_file": "v1.0.0",
   "http_get": "v1.0.0",
