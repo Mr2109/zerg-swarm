@@ -25,18 +25,55 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
+// ── 默认口径：去噪 / 路径 / 空白 / 缺省-vs-null ─────────────────────────────
+//
+// 四张默认表共同定义"默认口径"（可用 Normalizer 的四个字段逐个覆盖）：
+//
+//	DefaultNoiseFields       去噪（不进指纹）：时间戳 / trace_id 类 / 重试计数 / 耗时读数
+//	DefaultPathFields        绝对化（Clean + 相对转绝对）
+//	DefaultWhitespaceFields  折叠空白（只对命令行/查询/提示词一类字段）
+//	NullEqualsAbsent         缺省 ≡ 显式 null 的字段集（**默认空** ⇒ 默认不等价，见 Normalizer.NullEqualsAbsent）
+//
+// 默认匹配口径（T4.2 写死）= method（工具名，**不可**被 MatchOn 关掉，见 Fingerprint）
+// + args-canonical（规范化后的参数，可被 MatchOn 收窄）。指纹域**不含**时间戳、trace_id、
+// 重试计数、耗时这类噪声字段 —— 它们在 DefaultNoiseFields 里被基线丢掉的，且 NoiseFieldNames
+// 会拦住"把它们配回匹配集"的配置错误（Normalizer.Validate）。
+//
 // DefaultNoiseFields —— 默认**去噪**字段（点路径）。
 //
-// 只放"确定与语义无关"的：时间戳、请求/追踪 id、随机串、纯耗时读数。
+// 只放"确定与语义无关"的：时间戳、请求/追踪 id、随机串、重试计数、纯耗时读数。
 // **不确定的一律不默认丢** —— 丢错一个字段的后果是"回放期命中了一条**不是这次**的录播"，
 // 比"未命中"危险得多（未命中会立刻报错，错命中会顺着错的结果往下跑）。
 // 想彻底关掉去噪：显式给 `Drop: []string{}`（非 nil 空切片 ≠ nil）。
 var DefaultNoiseFields = []string{
-	"ts", "timestamp", "time_ms", "created_at", "request_id", "req_id", "nonce",
-	"call_id", "trace_id", "span_id", "duration_ms", "latency_ms",
+	// 时间戳类
+	"ts", "timestamp", "time_ms", "ts_ms", "timestamp_ms",
+	"created_at", "started_at", "finished_at", "updated_at",
+	// 请求/追踪 id 类（每次调用都不同，留着只会让命中率归零）
+	"request_id", "req_id", "call_id", "trace_id", "span_id", "traceparent", "nonce",
+	// 重试计数类
+	"attempt", "attempts", "retry", "retries", "retry_count", "retry_index",
+	// 耗时读数类
+	"duration_ms", "latency_ms", "elapsed", "elapsed_ms", "cost_ms",
 }
+
+// NoiseFieldNames —— **噪声字段名黑名单**（按路径**末段**匹配）。
+//
+// 与 DefaultNoiseFields 的分工：DefaultNoiseFields 是"默认丢掉"（调用方可以覆盖 Drop 把它留住），
+// 这张表是"不管你 Drop 怎么配，都不许把它们写进**匹配集** MatchOn"。理由：
+// 把 ts / trace_id / 重试计数 / 耗时配进匹配集 ⇒ 同一个逻辑调用每次算出不同指纹 ⇒ 命中率直接归零
+// （E3 的病根）。这**一定**是配置写错了，所以在 Normalize/Validate 里当场报错，
+// 而不是等回放期大面积未命中才回头查。
+//
+// 逃生舱：确有语义的字段（例如工具真把 `attempt` 当业务参数）走 Normalizer.AllowNoiseInMatchOn
+// **显式**声明放行 —— 显式声明留痕，才不至于让黑名单变成一张可以随便绕过的纸。
+var NoiseFieldNames = func() []string {
+	out := make([]string, 0, len(DefaultNoiseFields))
+	return append(out, DefaultNoiseFields...)
+}()
 
 // DefaultPathFields —— 默认**需要绝对化**的字段（点路径；按**路径末段**匹配，故 `opts.path` 也算）。
 //
@@ -45,6 +82,20 @@ var DefaultNoiseFields = []string{
 var DefaultPathFields = []string{
 	"path", "file", "filepath", "file_path", "cwd", "dir", "directory", "workdir",
 	"dest", "destination", "target", "root", "root_dir", "out_path", "src_path",
+}
+
+// DefaultWhitespaceFields —— 默认**折叠空白**的字段（点路径；按路径末段或子树匹配）。
+//
+// 只吃"命令行 / 查询 / 提示词"这一类**空白不承载意义**的字段：`"  echo   a "` 与 `"echo a"`
+// 是同一件事，不该算两个指纹。折叠口径：去掉首尾空白 + 把连续空白（空格/制表/换行，含全角空格）
+// 折成一个半角空格。
+//
+// **内容类字段（content / text / body / diff / 正文）默认不折叠**：那里空白是字节的一部分
+// （缩进、换行都是语义），折叠会造出"两个不同内容算出同一个指纹"的**错命中**——
+// 比未命中危险得多。要折叠请显式声明（Normalizer.CollapseWhitespace）。
+var DefaultWhitespaceFields = []string{
+	"command", "cmd", "cmdline", "script", "shell", "argv", "args_line",
+	"query", "prompt", "instruction",
 }
 
 // Normalizer —— 参数规范化器（纯函数：同输入必然同输出，无时间/无随机/无网络）。
@@ -68,6 +119,22 @@ type Normalizer struct {
 	// NumberPrecision —— 数字统一精度。0（默认）= 用**最短往返表示**统一（1 / 1.0 / 1.00 ⇒ "1"）；
 	// >0 = 额外截断到该小数位（用于浮点噪声很大的场景）。
 	NumberPrecision int
+	// CollapseWhitespace —— 需要**折叠空白**的字段（点路径，按末段或子树匹配）。
+	// **nil = 用 DefaultWhitespaceFields**；显式 `[]string{}` = 不折叠（与 Drop 同款双态语义）。
+	CollapseWhitespace []string
+	// NullEqualsAbsent —— "**显式 null ≡ 缺省**"的字段集（点路径；写 `"*"` = 全部字段）。
+	//
+	// 口径选择（写明，且有用例钉住）：**默认不等价**（nil / 空集）。缺省字段整条丢弃、
+	// 显式 null 记成 `null`，两者指纹不同 ⇒ 回放未命中。选这个方向是因为把 null 与缺省合并是
+	// **放松**匹配：只有当工具确实把两者当同一件事时才对，猜错的方向是"错命中"
+	// （回放了一条不是这次的录播）——比未命中危险。要合并必须**显式声明**（这些字段确实可空）。
+	NullEqualsAbsent []string
+	// AllowNoiseInMatchOn —— 噪声字段黑名单（NoiseFieldNames）的**显式豁免**（点路径或末段名）。
+	//
+	// 两道闸都要显式：① 这里豁免"不许进匹配集"，② 还要把该字段从 Drop 里去掉（默认去噪表含它）。
+	// 只写①不写② ⇒ Validate 报错并点明"Drop 会赢"（不是静默忽略）——
+	// 只有两道都写下来，才叫"这个字段确实参与语义"。写了就进指纹。
+	AllowNoiseInMatchOn []string
 }
 
 // Call —— 一次调用的规范化结果（匹配、指纹、效果键都基于它）。
@@ -93,8 +160,21 @@ func (n Normalizer) pathFields() []string {
 	return n.PathFields
 }
 
+func (n Normalizer) wsFields() []string {
+	if n.CollapseWhitespace == nil {
+		return DefaultWhitespaceFields
+	}
+	return n.CollapseWhitespace
+}
+
 // Normalize —— 规范化参数并算指纹。
+//
+// 顺序（写死，有用例钉住）：① 口径自检（Validate：噪声字段不许进匹配集、MatchOn 与 Drop 不许打架）
+// → ② 键排序 → ③ 去噪 / 缺省-vs-null → ④ 数字统一 → ⑤ 空白折叠 → ⑥ 路径绝对化。
 func (n Normalizer) Normalize(tool string, args map[string]any) (Call, error) {
+	if err := n.Validate(); err != nil {
+		return Call{}, err
+	}
 	if strings.TrimSpace(tool) == "" {
 		return Call{}, fmt.Errorf("%w: 工具名为空", ErrNormalize)
 	}
@@ -112,6 +192,8 @@ func (n Normalizer) Normalize(tool string, args map[string]any) (Call, error) {
 		matchOn:   n.MatchOn,
 		drop:      n.dropFields(),
 		pathField: n.pathFields(),
+		wsField:   n.wsFields(),
+		nullEq:    n.NullEqualsAbsent,
 		fields:    map[string]string{},
 	}
 	if err := enc.encodeMap(args, ""); err != nil {
@@ -135,6 +217,8 @@ type encoder struct {
 	matchOn   []string
 	drop      []string
 	pathField []string
+	wsField   []string
+	nullEq    []string
 	buf       bytes.Buffer
 	fields    map[string]string
 }
@@ -150,6 +234,37 @@ func inSet(set []string, path string) bool {
 		}
 	}
 	return false
+}
+
+// inSetOrAll —— 同 inSet，但集合里的 `"*"` 表示"全部字段"（NullEqualsAbsent 用它一次性开关）。
+func inSetOrAll(set []string, path string) bool {
+	if contains(set, "*") {
+		return true
+	}
+	return inSet(set, path)
+}
+
+// collapseWhitespace —— 空白折叠：去首尾空白 + 连续空白折成一个半角空格。
+//
+// "空白"按 unicode.IsSpace 判（含全角空格 U+3000 与各类 Unicode 空格）；折出来的**一律是半角空格**，
+// 于是同一个逻辑命令行不管录制时用了几个空格、几个制表符，都落到同一个指纹。
+// 这是纯函数：只依赖入参字节，不读 locale、不做大小写/归一化（排序与比较一律字节序）。
+func collapseWhitespace(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	space := false
+	for _, r := range s {
+		if unicode.IsSpace(r) {
+			space = true
+			continue
+		}
+		if space && b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		space = false
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // lastSegment —— 路径末段（去掉数组下标），用于 PathFields 的末段匹配。
@@ -190,6 +305,11 @@ func (e *encoder) encodeMap(m map[string]any, prefix string) error {
 		if !e.keep(path) {
 			continue
 		}
+		if m[k] == nil && e.nullEqualsAbsent(path) {
+			// 显式 null ≡ 缺省（**仅**在该字段被显式声明为可空等价时）：整条键都不写，
+			// 于是 "k": null 与"没有 k"落到同一份规范化字节 ⇒ 同指纹。
+			continue
+		}
 		if !first {
 			e.buf.WriteByte(',')
 		}
@@ -203,6 +323,16 @@ func (e *encoder) encodeMap(m map[string]any, prefix string) error {
 	}
 	e.buf.WriteByte('}')
 	return nil
+}
+
+// nullEqualsAbsent —— 该路径上的"显式 null ≡ 缺省"是否成立（默认**不成立**；见 Normalizer.NullEqualsAbsent）。
+func (e *encoder) nullEqualsAbsent(path string) bool {
+	return inSetOrAll(e.nullEq, path)
+}
+
+// foldWS —— 该路径上的字符串是否需要折叠空白（末段或子树匹配，与 PathFields 同款）。
+func (e *encoder) foldWS(path string) bool {
+	return inSet(e.wsField, path) || inSet(e.wsField, lastSegment(path))
 }
 
 func (e *encoder) encodeSlice(s []any, path string) error {
@@ -232,6 +362,9 @@ func (e *encoder) encodeValue(v any, path string) error {
 		}
 	case string:
 		s := t
+		if e.foldWS(path) {
+			s = collapseWhitespace(s)
+		}
 		if inSet(e.pathField, lastSegment(path)) || contains(e.pathField, path) {
 			s = e.absolutize(s)
 		}
@@ -391,18 +524,35 @@ func (e *MissError) Error() string {
 func (e *MissError) Is(target error) bool { return target == ErrReplayMiss }
 
 // StateMismatchError —— 前置状态不符（E5）：报"状态不匹配"，而不是默默回放。
+//
+// 两处会用到它：回放命中录播时（按 Rec 字段填）；效果账本判"已发生"时
+// （按 Effect/Scope/CallID/Index 填 —— 那种情况下"命中的是效果"而不是"trace 里的第 N 条"）。
 type StateMismatchError struct {
 	Tool        string
-	Seq         int    // 命中的录播序号
+	Seq         int    // 命中的录播序号（效果账本场景无意义，用 0）
 	Want        string // 录制时记录的前置状态指纹
 	Got         string // 本次调用方给出的当前状态指纹
 	Fingerprint string
 	Reason      string
+	// 效果账本场景（Effect 非空时按效果报，不按录播行报）：
+	Effect   string // effect_key
+	Scope    string // 效果范围
+	CallID   string // 调用 id
+	Index    int    // 调用内的效果序号
+	IsEffect bool   // 显式标明"这是效果账本的判定"（且 Index 有意义）
 }
 
 func (e *StateMismatchError) Error() string {
-	return fmt.Sprintf("%v：工具 %s 命中录播 seq=%d（fingerprint %s），但前置状态不符 —— %s（录制时 %q，本次 %q）；拒绝在此状态上回放",
-		ErrStateMismatch, e.Tool, e.Seq, e.Fingerprint, e.Reason, e.Want, e.Got)
+	var b strings.Builder
+	fmt.Fprintf(&b, "%v：", ErrStateMismatch)
+	if e.IsEffect {
+		fmt.Fprintf(&b, "效果 %s（工具 %s，范围 %s，call_id=%q 第 %d 个）已发生过，",
+			e.Effect, e.Tool, e.Scope, e.CallID, e.Index)
+	} else {
+		fmt.Fprintf(&b, "工具 %s 命中录播 seq=%d（fingerprint %s），", e.Tool, e.Seq, e.Fingerprint)
+	}
+	fmt.Fprintf(&b, "但前置状态不符 —— %s（录制时 %q，本次 %q）；拒绝在此状态上回放", e.Reason, e.Want, e.Got)
+	return b.String()
 }
 
 // Is —— 支持 errors.Is(err, ErrStateMismatch)。
