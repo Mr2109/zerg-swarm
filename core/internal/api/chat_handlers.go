@@ -527,13 +527,16 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	}
 	ec := agent.NewExecContext(chat.ChatToolsWorkDir)
 	ec.AgentName = "chat"
+	ec.Session = id // T1.2 观测：把会话透给工具判定事件（只观测；有会话才落 trace/span 骨架）
 	execFn := func(ctx context.Context, name string, targs map[string]any) (string, string, error) {
 		// 批次A(2026-09-10): tool_search 执行器接线（此前无执行器——模型调用必空转）
 		if name == "tool_search" {
+			agent.ObserveToolAllow(id, name, targs) // T1.2 观测：判定层之外的执行路径同样必须有判定事件
 			q, _ := targs["query"].(string)
 			return chat.ToolSearchExecute(q, progRT, 8), "", nil
 		}
 		if name == "kb_search" {
+			agent.ObserveToolAllow(id, name, targs) // T1.2 观测
 			query, _ := targs["query"].(string)
 			limit := 10
 			if l, ok := targs["limit"].(float64); ok {
@@ -559,7 +562,7 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	kres := loopcore.Run(r.Context(), loopcore.Config{
 		MaxRounds: chat.MaxToolRounds, WallClock: chat.WallClockFor(se.Model),
 		RoundTimeout: chat.RoundTimeoutFor(se.Model), KeepRecent: 3,
-	}, se.Model, sysPrompt, msgs, loopcore.Deps{Infer: inferAdapter, Exec: execFn, Hooks: progHooks})
+	}, se.Model, sysPrompt, msgs, loopcore.Deps{Infer: inferAdapter, Exec: execFn, Hooks: progHooks, Session: id}) // T1.2: Session 只供观测
 	if kres.Err != "" {
 		_ = h.store.DeleteMessage(id, userMsg.ID)
 		writeChatError(w, http.StatusBadGateway, fmt.Errorf("%s", kres.Err))
@@ -857,6 +860,7 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 
 	ec := agent.NewExecContext(chat.ChatToolsWorkDir)
 	ec.AgentName = "chat"
+	ec.Session = id // T1.2 观测：把会话透给工具判定事件（只观测；有会话才落 trace/span 骨架）
 	var traces []chat.ToolTrace
 	var result *chat.InferResult
 	cur := msgs
@@ -905,7 +909,9 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		KeepRecent:   3,
 	}, se.Model, sysPrompt, msgs, loopcore.Deps{
 		Infer: inferAdapter,
-		Hooks: progHooks,
+		// T1.2 观测：会话透给内核（内核侧"工具被隐藏 ⇒ 不执行"这类拒绝要能归因；allow 由工具执行路径记）
+		Session: id,
+		Hooks:   progHooks,
 		Exec: func(ctx context.Context, name string, targs map[string]any) (string, string, error) {
 			// P4-36 异步+心跳（工具执行期间 SSE 不断流——UI 实时"执行中 N 秒"）
 			type execRes struct {
@@ -921,9 +927,11 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 				var execErr error
 				// 批次A(2026-09-10): tool_search 执行器接线（流式主路径）
 				if name == "tool_search" {
+					agent.ObserveToolAllow(id, name, targs) // T1.2 观测：判定层之外的执行路径同样必须有判定事件
 					q, _ := targs["query"].(string)
 					content = chat.ToolSearchExecute(q, progRT, 8)
 				} else if name == "kb_search" {
+					agent.ObserveToolAllow(id, name, targs) // T1.2 观测
 					query, _ := targs["query"].(string)
 					limit := 10
 					if l, ok := targs["limit"].(float64); ok {
