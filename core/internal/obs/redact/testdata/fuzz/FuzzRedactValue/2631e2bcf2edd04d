@@ -1,0 +1,2 @@
+go test fuzz v1
+string("/hoMe/0/home/0")

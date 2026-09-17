@@ -1,0 +1,2 @@
+go test fuzz v1
+string("AKIA000000000000 AKIA00000000\u06dd0000")
