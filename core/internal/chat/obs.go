@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/toolobs"
 )
 
 // ── 分类码（OBS-2）：任何"非正常收尾"都必须落到这三类之一 ──
@@ -116,6 +117,13 @@ type ObsRecord struct {
 	DurText    string `json:"dur,omitempty"` // 工具耗时的原始文本（ToolTrace.Duration 是字符串）
 	ToolRounds int    `json:"tool_rounds,omitempty"`
 	ToolMax    int    `json:"tool_max,omitempty"`
+
+	// ── T1.2 工具调用判定（允许/拒绝 + 拒绝原因）──
+	// 语义（写死，勿混）：decision 是**判定层**结论（安全门/白名单/参数约定/危险命令…），
+	// 不是执行结果——执行成败仍在 result（OBS-3）与工具轨迹 Trace.Error 上。
+	Decision   string `json:"decision,omitempty"`    // allow | deny
+	DenyReason string `json:"deny_reason,omitempty"` // 拒绝原因码（低基数、可枚举——见 internal/toolobs）
+	ArgsDigest string `json:"args_digest,omitempty"` // 参数摘要（sha256 前 16 位；**不落参数原文**）
 
 	// ── T1.1 追踪骨架（九字段；任务表 v2.5.10 T1.1 / 设计稿 v1.2 B1）──
 	// 目的：让每条记录可拼成父子结构（trace → 本轮 span → parent），从而「父子 span 分层」在后端**可校验**，
@@ -510,6 +518,41 @@ func ObsTool(session string, round int, tool string, durText string, ok bool, ro
 	obsWrite(ObsRecord{
 		Kind: "tool", Session: session, Round: round, Tool: tool,
 		DurText: durText, Result: res, ToolRounds: rounds, ToolMax: max,
+	})
+}
+
+// ── T1.2 工具调用判定（允许/拒绝 + 原因）：事件名与落盘入口 ──
+
+// obsEventToolDecision — T1.2 事件名（非空 event_name ⇒ 这条是事件；与 OBS-3 的 kind=tool 执行行**并存**）。
+const obsEventToolDecision = "tool_decision"
+
+// ObsToolDecision — T1.2：工具调用的「允许/拒绝」一行。
+//
+// 要治的盲区：一个调用**被系统拒绝**（权限/白名单/参数不合法/危险命令/被隐藏…）与**模型根本没想调**，
+// 在原观测里同形（都只是"没有那条工具事件"）⇒ 无法归因。有了本事件，三态可分：
+//
+//	· 有 event_name=tool_decision 且 decision=allow ⇒ 判定层放行（工具可能随后因自身原因失败，那是执行层的事）
+//	· 有 event_name=tool_decision 且 decision=deny  ⇒ 判定层拒绝，工具**未执行**，deny_reason 给出可枚举原因
+//	· **完全没有这条事件**                          ⇒ 模型没发起这个调用（不是"被拒了但没记"）
+//
+// 隐私：只落参数**摘要**（sha256 前 16 位），不落参数原文（路径/命令/正文可能含隐私）。
+// 纪律：与 obsWrite 同源——best-effort，写失败只记日志，绝不外抛/阻塞/panic。
+func ObsToolDecision(session, tool, decision, reason, argsDigest string) {
+	obsWrite(ObsRecord{
+		Kind: "tool", Session: session, Tool: tool,
+		Decision: decision, DenyReason: reason, ArgsDigest: argsDigest,
+		EventName: obsEventToolDecision,
+	})
+}
+
+// obsToolDecisionWire — T1.2 唯一接线点：把工具执行/轮次循环侧的判定（internal/toolobs 上报）接到观测面。
+//
+// 为什么走回调而不是让 agent 直接写盘：依赖方向是 chat → agent → loopcore 单向，agent 侧**不能** import chat
+// （成环）⇒ agent 只上报到无依赖的叶子包 toolobs，由这里（chat）决定落到 chat_obs.jsonl。
+// 未接 sink 时事件丢弃（不是错误）；本函数在进程内只注册一次。
+func init() {
+	toolobs.SetSink(func(d toolobs.Decision) {
+		ObsToolDecision(d.Session, d.Tool, d.Decision, d.Reason, d.ArgsDigest)
 	})
 }
 

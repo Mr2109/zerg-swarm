@@ -25,6 +25,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/toolobs"
 )
 
 // bash v1.0.1 输出预算（本地模型上下文纪律弱——收紧默认）
@@ -223,30 +225,39 @@ func BashCheckRmHome(command string) error {
 
 // bashExpandDangerScan — 危险命令双检（原文 + 常见变量展开后重扫）
 // 防绕过: base64 -d | sh / eval / $() / 变量拼接 rm（$HOME/$ROOT 展开到真实路径）
+//
+// T1.2：判定逻辑只有 bashExpandDangerScanCoded 一份（本函数转调它）——
+// 观测要的"拒绝原因码"就在每个分支上给出，**不用错误文本反推**（反推=脆且会漂）。
 func bashExpandDangerScan(command string) error {
+	_, err := bashExpandDangerScanCoded(command)
+	return err
+}
+
+// bashExpandDangerScanCoded — 同上，另返回**拒绝原因码**（toolobs.ReasonXxx；无拒绝=空串）。
+func bashExpandDangerScanCoded(command string) (string, error) {
 	// 第一层: 原文直接查（现状 checkDangerousCommand 已做——此处查展开形态）
 	expanded := bashExpandHomeOnly(command)
 	// 空变量展开危险: rm -rf $VAR（VAR 未设→rm -rf 后空——bash 会报参数缺——不真删根）
 	// 但 rm -rf $VAR/ (VAR空→rm -rf /) 危险——已含 rm -rf / 模式，展开扫兜底
 	if err := checkDangerousCommand(expanded); err != nil {
-		return err
+		return toolobs.ReasonDangerousCmd, err
 	}
 	// 事故修复(2026-09-07): rm 参数级目标防护——endOnly 黑名单放行 ~/xxx、$HOME/xxx、
 	// 家目录绝对路径(endOnly 本意放行 /tmp/xxx,同规则漏掉家目录)——展开后逐目标判定
 	if err := bashRmTargetGuard(expanded); err != nil {
-		return err
+		return toolobs.ReasonRmHome, err
 	}
 	// 解码执行链: base64 -d 后管道到 sh/bash 或 eval（绕过文字黑名单）
 	lower := strings.ToLower(command)
 	if strings.Contains(lower, "base64") && strings.Contains(lower, "-d") {
 		if strings.Contains(lower, "| sh") || strings.Contains(lower, "| bash") || strings.Contains(lower, "eval") || strings.Contains(lower, "`") || strings.Contains(lower, "$(") {
-			return fmt.Errorf("命令含解码后执行链（base64 -d → shell/eval）——高风险绕过——拒绝。建议: 直接写明文命令")
+			return toolobs.ReasonObfuscatedCmd, fmt.Errorf("命令含解码后执行链（base64 -d → shell/eval）——高风险绕过——拒绝。建议: 直接写明文命令")
 		}
 	}
 	if strings.Contains(lower, "eval") && (strings.Contains(lower, "$(") || strings.Contains(lower, "`") || strings.Contains(lower, "base64")) {
-		return fmt.Errorf("命令含 eval 动态执行（$()/反引号/base64）——高风险——拒绝。建议: 直接写明文命令")
+		return toolobs.ReasonObfuscatedCmd, fmt.Errorf("命令含 eval 动态执行（$()/反引号/base64）——高风险——拒绝。建议: 直接写明文命令")
 	}
-	return nil
+	return "", nil
 }
 
 // bashRmTargetGuard — rm 参数级目标防护（2026-09-07 家目录清空事故修复）
@@ -377,12 +388,17 @@ func rmInAllowedRoot(cleaned string, roots []string) bool {
 func (ec *ExecContext) executeBashV101(ctx context.Context, command string, cwd string, timeoutS int, gate ToolGater) (string, error) {
 	start := time.Now()
 
-	// 1. 危险命令双检（原文 + 展开形态）
-	if err := bashExpandDangerScan(command); err != nil {
+	// 1. 危险命令双检（原文 + 展开形态）——T1.2：形态判定带原因码（**只用于观测**，拦截判定不变）
+	if reason, err := bashExpandDangerScanCoded(command); err != nil {
+		if reason == "" {
+			reason = toolobs.ReasonDangerousCmd // 兜底：原因码不得缺席（空原因=无法归因）
+		}
+		ec.obsDeny(reason)
 		return "", err
 	}
 	// 2. Poka-yoke 防呆形态（结构性拦截）
 	if err := bashPokaYokeCheck(command); err != nil {
+		ec.obsDeny(toolobs.ReasonBashPokaYoke) // T1.2 观测：结构性防呆拦截 = 拒绝分支
 		return "", err
 	}
 	// 3. Gate 检查
@@ -395,6 +411,8 @@ func (ec *ExecContext) executeBashV101(ctx context.Context, command string, cwd 
 		case "block":
 			return "", fmt.Errorf("命令被 gate 拦截: %s — %s", command, decision.Message)
 		case "require_approval":
+			// T1.2 观测：需审批且无审批通道 ⇒ 本轮不执行（拒绝类判定；block 已由 ExecuteTool 的 obsGater 记）
+			ec.obsDeny(toolobs.ReasonGateApproval)
 			return "", fmt.Errorf("命令需要审批: %s — %s", command, decision.Message)
 		}
 	}
@@ -414,6 +432,7 @@ func (ec *ExecContext) executeBashV101(ctx context.Context, command string, cwd 
 			return "", fmt.Errorf("cwd 路径解析失败: %w", err)
 		}
 		if !(strings.HasPrefix(absCwd, absWorkDir+string(os.PathSeparator)) || absCwd == absWorkDir) {
+			ec.obsDeny(toolobs.ReasonCwdOutside) // T1.2 观测：cwd 出域 = 拒绝分支
 			return "", fmt.Errorf("cwd %q 不在工作区 %q 内——拒绝执行（bash 沙盒=工作区；任务目录/白名单目录用 read/write 访问）", cwd, ec.WorkDir)
 		}
 		if fi, err := os.Stat(absCwd); err != nil || !fi.IsDir() {
@@ -425,6 +444,7 @@ func (ec *ExecContext) executeBashV101(ctx context.Context, command string, cwd 
 	// v1.0.2 删除范围门控(2026-09-07 Mr2109确认): 工作目录解析后、执行前——rm 目标必须落
 	// 在允许删除域(工作区//tmp/ExtraAllowDirs)——家目录守卫在 step1(bashExpandDangerScan)已先行
 	if err := bashRmScopeGate(command, workDir, append([]string{ec.WorkDir}, ec.ExtraAllowDirs...)); err != nil {
+		ec.obsDeny(toolobs.ReasonRmOutOfScope) // T1.2 观测：rm 目标出允许删除域 = 拒绝分支
 		return "", err
 	}
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
+	"github.com/Mr2109/zerg-swarm/core/internal/toolobs"
 )
 
 // Run — 运行工具循环（唯一实现——Deps.Infer 内部决定流式与否，内核只透传 delta 回调）
@@ -168,6 +169,13 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 			hidden := d.Hooks.IsHidden != nil && d.Hooks.IsHidden(tc.Name) && tc.Name != "tool_search"
 			switch {
 			case hidden:
+				// T1.2 观测：**内核侧拒绝分支** —— 工具被隐藏 ⇒ 本次调用不执行。
+				// 没有这一条，"被系统挡下"与"模型根本没调"在观测面同形（本任务要治的盲区）。
+				// 注意：allow 一律由工具执行路径（agent.ExecuteTool）记，此处**只记拒绝**，避免同一次调用两条判定。
+				toolobs.Emit(toolobs.Decision{
+					Session: d.Session, Tool: tc.Name, Decision: toolobs.DecisionDeny,
+					Reason: toolobs.ReasonToolHidden, ArgsDigest: toolobs.Digest(tc.Args),
+				})
 				content = fmt.Sprintf("【系统】工具 %s 本对话已隐藏（连续 3 次执行失败）。请换其他工具或 tool_search 搜索替代。", tc.Name)
 			default:
 				content, dur, execErr = d.Exec(ctx, tc.Name, tc.Args)

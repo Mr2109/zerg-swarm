@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
+	"github.com/Mr2109/zerg-swarm/core/internal/toolobs"
 )
 
 // 执行上下文
@@ -37,6 +38,11 @@ type ExecContext struct {
 	Parent *Agent
 	// S10: 白名单目录（任务目录——结晶模式报告写入——validatePath 例外）
 	ExtraAllowDirs []string
+	// ── T1.2 观测（实现见 tool_decision.go）──
+	// Session: 会话 id（**只观测**；空 ⇒ 观测面无 trace/span 骨架——不编造 id）
+	// obs:     本次调用的判定作用域（工具名/参数摘要/是否已记拒绝）
+	Session string
+	obs     toolObsScope
 }
 
 // NewExecContext — 创建执行上下文
@@ -97,6 +103,8 @@ func (ec *ExecContext) validatePath(relPath string) (string, error) {
 				return absPath, nil
 			}
 		}
+		// T1.2 观测：路径出白名单 = 一个**拒绝分支** ⇒ 记一条 deny（只写观测，判定/错误文本一字不改）
+		ec.obsDeny(toolobs.ReasonPathOutside)
 		// FFP 式可行动拒绝(2026-09-08——报告路径沙盒冲突治本): 拒绝=教学——
 		// 报出合法落点(ZERG_TASK_DIR 已在白名单——报告应写任务目录而非越界自创路径)
 		allowed := ""
@@ -255,15 +263,20 @@ func (ec *ExecContext) executeRead(ctx context.Context, path string, args map[st
 	if !forceRaw {
 		switch kind {
 		case "binary":
+			ec.obsDeny(toolobs.ReasonUnsupported) // T1.2 观测：本工具不执行该目标（二进制）= 拒绝分支
 			return "", fmt.Errorf("文件是二进制(%.0f KB)——不输出原文(防乱码/幻觉)。需要解析可委托专用工具或人工。", float64(info.Size())/1024)
 		case "img":
+			ec.obsDeny(toolobs.ReasonUnsupported) // T1.2 观测：本工具不执行该目标（图像）= 拒绝分支
 			return "", fmt.Errorf("文件是图像——read 不读像素。用 image_desc(描述)或 image_ocr(取文字)工具。")
 		case "audio":
+			ec.obsDeny(toolobs.ReasonUnsupported) // T1.2 观测：本工具不执行该目标（音频）= 拒绝分支
 			return "", fmt.Errorf("文件是音频——read 不支持。用 audio 系工具(如 asr_transcribe 转文字)。")
 		case "video":
+			ec.obsDeny(toolobs.ReasonUnsupported) // T1.2 观测：本工具不执行该目标（视频）= 拒绝分支
 			return "", fmt.Errorf("文件是视频——read 不支持。用 media_info/ffprobe 系工具看元数据。")
 		case "pdf", "docx", "doc", "rtf", "html", "epub", "odt", "xlsx":
 			if info.Size() > 100*1024*1024 {
+				ec.obsDeny(toolobs.ReasonContentTooLarge) // T1.2 观测：超抽取上限 = 拒绝分支
 				return "", fmt.Errorf("文档过大 (%.0f MB)——超过 100MB 抽取上限", float64(info.Size())/1024/1024)
 			}
 			text, note, err := extractDocument(ctx, kind, absPath)
@@ -460,6 +473,8 @@ func extractDocument(ctx context.Context, kind, absPath string) (string, string,
 	case "xlsx":
 		text, err = xlsxToTSV(absPath)
 	default:
+		// 该 default 在调用方（executeRead 的外层 switch）已过滤未知类型，实际不可达；
+		// T1.2 观测口径见文件头：不虚构原因码，故此处不记判定事件。
 		err = fmt.Errorf("不支持的抽取类型: %s", kind)
 	}
 	if err != nil {
@@ -715,6 +730,7 @@ func (ec *ExecContext) executeWrite(ctx context.Context, path string, content st
 
 	// 目录目标拒绝
 	if st, err := os.Stat(absPath); err == nil && st.IsDir() {
+		ec.obsDeny(toolobs.ReasonPathIsDir) // T1.2 观测：write 目标为目录 = 拒绝分支
 		return "", fmt.Errorf("目标是目录——write 需指向文件路径")
 	}
 
@@ -734,12 +750,14 @@ func (ec *ExecContext) executeWrite(ctx context.Context, path string, content st
 	}
 	// 大小上限(10MB——L0 预检)
 	if len(s) > 10*1024*1024 {
+		ec.obsDeny(toolobs.ReasonContentTooLarge) // T1.2 观测：内容超上限 = 拒绝分支
 		return "", fmt.Errorf("内容过大 (%d KB > 10MB 上限)——拒绝写入(防 OOM/误写巨型内容)", len(s)/1024)
 	}
 
 	// 类型防呆(2.1——format=raw 逃生门跳过)
 	if o.Format != "raw" {
 		if blk := writeTargetBlock(absPath); blk != "" {
+			ec.obsDeny(toolobs.ReasonNonTextTarget) // T1.2 观测：类型防呆（非文本目标）= 拒绝分支
 			return "", fmt.Errorf("%s", blk)
 		}
 	}
@@ -807,6 +825,7 @@ func (ec *ExecContext) executeEdit(ctx context.Context, path string, search stri
 
 	// v1.0.1 类型防呆(与 write 共用——search/replace 落文档类同样毁文件——拍板 1)
 	if blk := writeTargetBlock(absPath); blk != "" {
+		ec.obsDeny(toolobs.ReasonNonTextTarget) // T1.2 观测：类型防呆（非文本目标）= 拒绝分支
 		return "", fmt.Errorf("%s", blk)
 	}
 
@@ -897,6 +916,7 @@ func (ec *ExecContext) executeSpawnAgent(ctx context.Context, prompt, subType, m
 
 	// 派子 agent（同机——独立上下文——精简摘要）
 	if ec.Parent == nil {
+		ec.obsDeny(toolobs.ReasonUnsupported) // T1.2 观测：能力缺失（无父上下文）⇒ 不执行 = 拒绝分支
 		return "", fmt.Errorf("父 agent 未注入（spawn_agent 需要父上下文——当前环境不支持）")
 	}
 	res, err := SpawnSubagent(ec.Parent, TaskInput{
@@ -1391,20 +1411,30 @@ func toolHelp(name string) ToolCallResult {
 // ExecuteTool — 根据工具名路由到对应执行函数
 // 执行前过 gate 检查，返回 ToolCallResult
 func (ec *ExecContext) ExecuteTool(ctx context.Context, toolName string, args map[string]any, gate ToolGater) ToolCallResult {
+	// T1.2 观测：开启本次调用的判定作用域（**先于**名字规范化——未知工具名的拒绝也要带上模型发来的原名）
+	ec.obsBeginCall(toolName, args)
 	// 工具名规范化（2026-09-17 实测：模型发 `Read`（大写）⇒ 区分大小写匹配 ⇒ 报未知工具 ⇒ 白耗一轮）
 	// 原则：行为上宽容（大小写不敏感 + 去空白），契约上严格（执行一律用注册表真名）。歧义 ⇒ 拒绝，不猜。
-	if canon, rerr := resolveToolName(toolName); rerr == nil {
+	if canon, denyReason, rerr := resolveToolNameCoded(toolName); rerr == nil {
 		if canon != toolName {
 			fmt.Fprintf(os.Stderr, "⚠️ 工具名纠正：%q → %q\n", toolName, canon)
 		}
 		toolName = canon
+		ec.obsSetTool(canon) // 观测与执行同真名（日志/观测/计数不分裂）
 	} else {
+		// T1.2 观测：工具名不合法（未知/歧义）= 拒绝分支 ⇒ 记一条 deny
+		ec.obsDeny(denyReason)
 		return ToolCallResult{Error: rerr.Error()}
+	}
+	// T1.2 观测：gate 包装（纯透传）——10 处工具内的 gate 拒绝由这一处集中落观测（判定不变）
+	if gate != nil {
+		gate = &obsGater{inner: gate, ec: ec}
 	}
 	// P4-49 统一工具计数（CA 调用计入——成功执行才计）
 	// 2026-09-06: 计数+事件流双写(事件=未来账本源——含耗时)
 	start := time.Now()
 	res := ec.executeToolInner(ctx, toolName, args, gate)
+	ec.obsEndCall() // T1.2 收尾：本次无任何拒绝 ⇒ 记一条 allow（有拒绝则已在分支里记过，一次调用只有一条判定）
 	if res.Error == "" && toolName != "" && toolName[0] != '_' {
 		RecordToolUse(toolName)
 		appendToolEvent(ToolEvent{Ts: time.Now().Unix(), Node: nodeName, Tool: toolName, DurMs: time.Since(start).Milliseconds()})
@@ -1422,6 +1452,8 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 	// 只认 schema 声明的约定，未声明参数一律放行（中文路径/中文查询词合法——防误伤）。
 	if def, ok := ToolDefOf(toolName); ok {
 		if vs := ffp.CheckContract(toolName, def.Function.Parameters, args); len(vs) > 0 {
+			// T1.2 观测：参数不合约（enum/x-zerg-format）= 拒绝分支 ⇒ 记一条 deny
+			ec.obsDeny(toolobs.ReasonParamContract)
 			return ToolCallResult{Error: ffp.BuildParamContract(vs[0])}
 		}
 	}
@@ -1431,6 +1463,7 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 		if !ok || strings.TrimSpace(command) == "" {
 			// FFP 2026-09-08: 格式错误≠执行失败——回结构化教学文本(分类+原文回显+最小示例)
 			// 实测样本: 空 command 旧反馈"命令参数为空"零信息→模型原样重发死循环
+			ec.obsDeny(toolobs.ReasonParamMissing) // T1.2 观测：参数缺失/空（参数不合法）= 拒绝分支
 			kind := "参数缺失: bash.command"
 			sent := "<空/缺失>"
 			if !ok {
@@ -1471,6 +1504,7 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 	case "read":
 		path, ok := args["path"].(string)
 		if !ok || path == "" {
+			ec.obsDeny(toolobs.ReasonParamMissing) // T1.2 观测：参数缺失/空（参数不合法）= 拒绝分支
 			return ToolCallResult{Error: "路径参数为空"}
 		}
 		content, err := ec.executeRead(ctx, path, args, gate)
@@ -1483,6 +1517,7 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 		path, _ := args["path"].(string)
 		content, _ := args["content"].(string)
 		if path == "" || content == "" {
+			ec.obsDeny(toolobs.ReasonParamMissing) // T1.2 观测：参数缺失/空（参数不合法）= 拒绝分支
 			return ToolCallResult{Error: "路径或内容参数为空"}
 		}
 		// write v1.0.1: bom/line_end/format
@@ -1507,6 +1542,7 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 		search, _ := args["search"].(string)
 		replace, _ := args["replace"].(string)
 		if path == "" || search == "" || replace == "" {
+			ec.obsDeny(toolobs.ReasonParamMissing) // T1.2 观测：参数缺失/空（参数不合法）= 拒绝分支
 			return ToolCallResult{Error: "路径/搜索/替换参数为空"}
 		}
 		result, err := ec.executeEdit(ctx, path, search, replace, gate)
@@ -1520,6 +1556,7 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 		path, _ := args["path"].(string)
 		patch, _ := args["patch"].(string)
 		if path == "" || patch == "" {
+			ec.obsDeny(toolobs.ReasonParamMissing) // T1.2 观测：参数缺失/空（参数不合法）= 拒绝分支
 			return ToolCallResult{Error: "路径/补丁参数为空"}
 		}
 		result, err := ec.executeApplyPatch(ctx, path, patch, gate)
@@ -1534,6 +1571,7 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 		subType, _ := args["type"].(string)
 		machine, _ := args["machine"].(string)
 		if prompt == "" {
+			ec.obsDeny(toolobs.ReasonParamMissing) // T1.2 观测：参数缺失/空（参数不合法）= 拒绝分支
 			return ToolCallResult{Error: "prompt 参数为空"}
 		}
 		result, err := ec.executeSpawnAgent(ctx, prompt, subType, machine, gate)
@@ -1557,6 +1595,7 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 	case "glob":
 		pattern, ok := args["pattern"].(string)
 		if !ok || pattern == "" {
+			ec.obsDeny(toolobs.ReasonParamMissing) // T1.2 观测：参数缺失/空（参数不合法）= 拒绝分支
 			return ToolCallResult{Error: "模式参数为空"}
 		}
 		result, err := ec.executeGlob(ctx, pattern, gate)
@@ -1569,6 +1608,7 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 		path, _ := args["path"].(string)
 		pattern, _ := args["pattern"].(string)
 		if path == "" || pattern == "" {
+			ec.obsDeny(toolobs.ReasonParamMissing) // T1.2 观测：参数缺失/空（参数不合法）= 拒绝分支
 			return ToolCallResult{Error: "路径或模式参数为空"}
 		}
 		result, err := ec.executeGrep(ctx, path, pattern, args, gate)
@@ -1605,6 +1645,7 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 	case "web_search":
 		query, _ := args["query"].(string)
 		if query == "" {
+			ec.obsDeny(toolobs.ReasonParamMissing) // T1.2 观测：参数缺失/空（参数不合法）= 拒绝分支
 			return ToolCallResult{Error: "查询参数为空"}
 		}
 		// v1.0.1: 参数解析（lang/time_range/domains/fetch_top/rewrite）
@@ -1640,6 +1681,7 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 	case "web_fetch":
 		url, _ := args["url"].(string)
 		if url == "" {
+			ec.obsDeny(toolobs.ReasonParamMissing) // T1.2 观测：参数缺失/空（参数不合法）= 拒绝分支
 			return ToolCallResult{Error: "URL 参数为空"}
 		}
 		result, err := WebFetch(url)
@@ -1670,8 +1712,10 @@ func (ec *ExecContext) executeToolInner(ctx context.Context, toolName string, ar
 		// 教学式错误（2026-09-17 实测：模型把示例里的占位词「工具名」照抄成工具名 ⇒ 调用必败 ⇒ 反复空转）
 		// 原则：错误反馈＝教学（可行动、给正确示例、列出可用工具）——不让人/模型猜。
 		if isPlaceholderToolName(toolName) {
+			ec.obsDeny(toolobs.ReasonPlaceholderTool) // T1.2 观测：占位词当工具名 = 拒绝分支
 			return ToolCallResult{Error: fmt.Sprintf(`你把示例里的占位符当成工具名了：「%s」不是工具。name 必须换成真实工具名；正确形态示例：{"name": "read", "arguments": {"path": "core/internal/agent/exec.go"}}`, toolName)}
 		}
+		ec.obsDeny(toolobs.ReasonUnknownTool) // T1.2 观测：未知工具（默认分支）= 拒绝分支
 		return ToolCallResult{Error: fmt.Sprintf(`未知工具: %s。当前可用：%s。正确形态示例：{"name": "read", "arguments": {"path": "core/internal/agent/exec.go"}}`, toolName, availableToolNames())}
 
 		// isPlaceholderToolName — 教学示例中的占位词（被照抄即成假工具名）
@@ -1814,6 +1858,13 @@ func availableToolNames() string {
 //	· 歧义零容忍：若注册表中存在只差大小写的多个名字 ⇒ 拒绝执行并返回教学式错误（不猜）
 //	· 返回的永远是注册表真名 ⇒ 日志/观测/权限/计数/履历不分裂
 func resolveToolName(raw string) (string, error) {
+	name, _, err := resolveToolNameCoded(raw)
+	return name, err
+}
+
+// resolveToolNameCoded — 同 resolveToolName，另返回**拒绝原因码**（T1.2 观测用）。
+// 判定逻辑只有这一份（resolveToolName 转调本函数）——观测绝不分叉出第二套"名字合法性"判断。
+func resolveToolNameCoded(raw string) (string, string, error) {
 	name := strings.ToLower(strings.TrimSpace(raw))
 	var hits []string
 	for _, t := range AllTools() {
@@ -1823,10 +1874,10 @@ func resolveToolName(raw string) (string, error) {
 	}
 	switch len(hits) {
 	case 0:
-		return raw, fmt.Errorf("未知工具: %s。当前可用：%s。正确形态示例：{\"name\": \"read\", \"arguments\": {\"path\": \"core/internal/agent/exec.go\"}}", raw, availableToolNames())
+		return raw, toolobs.ReasonUnknownTool, fmt.Errorf("未知工具: %s。当前可用：%s。正确形态示例：{\"name\": \"read\", \"arguments\": {\"path\": \"core/internal/agent/exec.go\"}}", raw, availableToolNames())
 	case 1:
-		return hits[0], nil
+		return hits[0], "", nil
 	default:
-		return raw, fmt.Errorf("工具名有歧义：%s 同时存在。请用完整真名（本系统工具名一律小写）", strings.Join(hits, " / "))
+		return raw, toolobs.ReasonAmbiguousTool, fmt.Errorf("工具名有歧义：%s 同时存在。请用完整真名（本系统工具名一律小写）", strings.Join(hits, " / "))
 	}
 }

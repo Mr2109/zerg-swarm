@@ -68,6 +68,9 @@ type Deps struct {
 	Hooks        Hooks            // 渐进式常驻/错误桶钩子（可零值——chat 包适配注入）
 	Terminator   Terminator       // 终止仲裁（可 nil——nil=模型无工具调用即自然终止）
 	OnToolResult OnToolResult     // 工具结果钩子（可 nil——CA 侧产出验证）
+	// T1.2 观测：会话 id（**只用于观测**）。内核侧的拒绝分支（工具被隐藏 ⇒ 不执行）要能落观测面，
+	// 且要挂上会话的 trace/span 骨架；空串=无会话（骨架缺席，不编造）。
+	Session string
 }
 
 // Hooks — 渐进式常驻钩子（chat.ToolRuntime 的行为接口——内核不依赖 chat 包）
