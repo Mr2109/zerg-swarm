@@ -505,8 +505,21 @@ func (h *ChatHandlers) SendMessageTool(w http.ResponseWriter, r *http.Request) {
 	sysPrompt := h.store.SessionSystemPrompt(id, chatSystemPromptResolved(), se.Model, progRT)
 	gate := &chat.ChatGate{}
 
+	var obsRoundNS int64 // T3.5：本请求（非流式路径）的轮次计数——提示账的 round 与它同源
 	inferAdapter := func(ctx context.Context, model, sysP string, m []map[string]any,
 		onDelta func(deltaType, text string), toolsParam []map[string]any) (*loopcore.Response, error) {
+		n := int(atomic.AddInt64(&obsRoundNS, 1))
+		// T3.2/T3.3/T3.5（v2.5.10 批次三）：在**本次实际发给模型的提示**上落账 ——
+		// 约束保留率（constraint_check / 缺失时 constraint_missing_alert）+ 分段落账（四段 sha256/tokens
+		// + rendered_prefix_hash/template_hash）+ 时钟与种子（clock_iso/request_seed）+ 纯净度守卫。
+		// 非流式路径**不带 tools 字段**（下面 Infer 不传 tools）⇒ Tools 段按事实给 nil（不编造）。
+		ident := chat.NewRequestIdentity(id, n)
+		chat.ObservePromptCheck(chat.PromptRender{
+			Session: id, Round: n, Model: model,
+			System: sysP, Memory: chat.MemoryBlock(id),
+			Tools: nil, History: m,
+			Sources: history, Identity: ident,
+		})
 		ir, ierr := h.infer.Infer(chat.WithSessionID(ctx, id), model, sysP, m) // 非流式——Hermes 模式不带 tools 字段
 		if ierr != nil {
 			return nil, ierr
@@ -881,6 +894,20 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 		onDelta func(deltaType, text string), toolsParam []map[string]any) (*loopcore.Response, error) {
 		n := atomic.AddInt64(&obsRound, 1)
 		timer := chat.NewObsTimer(id, int(n), model)
+		// T3.5（v2.5.10 批次三）：本轮请求的**制度化身份** —— clock_iso 只进事件不进提示；
+		// request_seed 由 sha256(会话‖轮次‖时钟) 推导（可复算，回放时注入录制值即可复现）。
+		ident := chat.NewRequestIdentity(id, int(n))
+		timer.SetRequestIdentity(ident)
+		// T3.2/T3.3/T3.5：在**本次实际发出的提示**上落账（约束保留率 + 分段指纹 + 时钟/种子 + 纯净度）。
+		// 口径：System/History/Tools 与之下的 InferStream 调用是**同一份对象**（同变量）——
+		// 指纹对象必须是"真的发出去的那串字节"，不是另拼一份（H3 的第二半）。
+		// Tools 走 sentToolsOf：与 chat_infer 剥掉 __temp__ 标记后的**实际请求体**一致（不把温度标记算进账）。
+		chat.ObservePromptCheck(chat.PromptRender{
+			Session: id, Round: int(n), Model: model,
+			System: sysPrompt, Memory: chat.MemoryBlock(id),
+			Tools: sentToolsOf(toolsParam), History: m,
+			Sources: history, Identity: ident,
+		})
 		// ⚠ 铁律：**包装不得改变原有语义** —— InferStream 内部对 onDelta 判 nil（非流式路径传 nil），
 		// 包一层之后必须保留该保护，否则非流式路径直接空指针 panic（2026-09-16 实测事故）。
 		wrapped := wrapObsDelta(timer, onDelta)
@@ -1073,10 +1100,21 @@ func (h *ChatHandlers) SendMessage(w http.ResponseWriter, r *http.Request) {
 
 	// P4-48 最终回答质量检测: content 是推理文本（英文推理开头/无中文——example-35b-v2 通病）→ 重试一次"请用中文直接回答"
 	if !isChineseAnswer(result.Content) && len(traces) > 0 {
-		cur = append(cur, map[string]any{"role": "user", "content": "（你的上一条输出是思考过程——不是回答。请用中文直接回答用户的问题——基于已获取的工具结果——简洁总结。）"})
+		// T3.5：这条提醒是**代码注入进提示**的字串 ⇒ 必须过纯净度守卫（提醒里漏 now()/随机数是可判定的）
+		reminder := "（你的上一条输出是思考过程——不是回答。请用中文直接回答用户的问题——基于已获取的工具结果——简洁总结。）"
+		cur = append(cur, map[string]any{"role": "user", "content": reminder})
 		var retryRes *chat.InferResult
 		// P4-50 重试轮也限时（模型可能继续绕——不答中文——60s 截断）
 		retryCtx, retryCancel := context.WithTimeout(runCtx, 60*time.Second)
+		// T3.2/T3.3/T3.5：重试是一次**新的请求**（另一份提示）⇒ 另落一笔账（同一套口径）
+		retryRound := int(atomic.AddInt64(&obsRound, 1))
+		retryIdent := chat.NewRequestIdentity(id, retryRound)
+		chat.ObservePromptCheck(chat.PromptRender{
+			Session: id, Round: retryRound, Model: se.Model,
+			System: sysPrompt, Memory: chat.MemoryBlock(id),
+			Tools: nil, History: cur, Reminders: []string{reminder},
+			Sources: history, Identity: retryIdent,
+		})
 		retryRes, _ = h.infer.InferStream(retryCtx, se.Model, sysPrompt, cur, func(deltaType, text string) {
 			payload, _ := json.Marshal(map[string]any{"type": deltaType, "text": text})
 			writeSSE("delta", string(payload))
@@ -1209,6 +1247,28 @@ func isChineseAnswer(s string) bool {
 		}
 	}
 	return false
+}
+
+// sentToolsOf — 复算 chat_infer 真正塞进请求体的工具定义（剥掉 __temp__ 温度标记的那一步）。
+//
+// 为什么要它：T3.3 的分段账要求指纹对象是"**渲染后实际发送的**那串字节"。温度标记
+// （`{"__temp__":0.3}`）只在 core 内部传递、**不会**进请求体（chat_infer 会剥掉）⇒
+// 提示账里也不能把它算进 tools 段，否则账与事实对不上（账比事实多一段 = 假账）。
+func sentToolsOf(tools []map[string]any) []map[string]any {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(tools))
+	for _, t := range tools {
+		if _, isTemp := t["__temp__"]; isTemp {
+			continue
+		}
+		out = append(out, t)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // wrapObsDelta — OBS-1 轮次计时的 onDelta 包装器。

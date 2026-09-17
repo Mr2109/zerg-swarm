@@ -187,6 +187,30 @@ type ObsRecord struct {
 	// 块内「终态才知道的量」一律指针 + omitempty ⇒ 缺席 = 未知，绝不写 0 顶替（见该文件口径 ③）。
 	// 旧 OBS-4 行（Result/SummaryChars/FailReason/Cause）原样保留，新终态行也带这些字段（兼容老读侧）。
 	Compaction *CompactionObs `json:"compaction,omitempty"`
+
+	// ── T3.2 约束登记表与保留率（kind=prompt；event_name=constraint_check / constraint_missing_alert）──
+	// 「模型忘了硬约束」的可判定化：每次请求在**实际发出的提示**上检索登记表里的约束，
+	// 落 total/present/missing_ids；missing 非空时另落一条可行动告警（**不阻断请求**）。
+	// 块口径见 constraints.go；本字段只是挂点（字段口径不在此处另写一份）。
+	Constraints *ConstraintCheckObs `json:"constraints,omitempty"`
+	// ConstraintMissing 只在告警事件里出现（可行动明细：id/指纹/是否必须活着/本该从哪进/来源消息/截断原文）。
+	ConstraintMissing []ConstraintMissingObs `json:"constraint_missing,omitempty"`
+
+	// ── T3.3 分段落账 + 渲染后 prefix 哈希 / T3.5 时钟与种子（kind=prompt）──
+	// 段账（system/tools/history/memory 四段）+ rendered_prefix_hash + template_hash（不等 ⇔ 存在动态注入）
+	// + clock_iso/request_seed（每请求一条账）。块口径见 obs_prompt.go。
+	Prompt *PromptLedgerObs `json:"prompt,omitempty"`
+
+	// ── T3.5 提示纯净度守卫（kind=prompt；event_name=prompt_impurity）──
+	// 代码注入进提示的字串里检出时间戳/随机形态 ⇒ 报一条（提醒字串漏 now() 是可判定的，不靠人眼）。
+	Impurity *PromptImpurityObs `json:"impurity,omitempty"`
+
+	// ── T3.5 时钟与种子制度化（**每个请求**都要带；turn 记录与 prompt 记录同源同值）──
+	// 语义：clock_iso 是宿主注入的请求时钟（**只进事件，不进提示**）；request_seed 由
+	// sha256(会话‖轮次‖时钟) 推导 ⇒ 可复算，回放时注入录制值即可复现同一支账（见 obs_prompt.go）。
+	// ClockISO 为空 = 未知（缺席）；RequestSeed 用指针 ⇒ 缺席（没给）与 0（真的抽到 0）可分。
+	ClockISO    string `json:"clock_iso,omitempty"`
+	RequestSeed *int64 `json:"request_seed,omitempty"`
 }
 
 var obsMu sync.Mutex
@@ -421,6 +445,10 @@ type ObsTimer struct {
 
 	// T1.4 批量几何：本轮大模型**响应**里抄下来的几何（nil = 上游不给/未取到 ⇒ 记录里字段缺席）
 	geometry *infergeom.Geometry
+
+	// T3.5 时钟与种子：本轮请求的制度化身份（零值 = 调用方没给 ⇒ 记录里字段缺席，不编造）
+	identity RequestIdentity
+	hasIdent bool
 }
 
 // NewObsTimer — 建一个轮次计时器（T1.1：同会话 trace 不变、每轮新开 span、parent 指上一轮/会话根）
@@ -485,6 +513,19 @@ func (t *ObsTimer) SetErrText(e string) {
 func (t *ObsTimer) SetGeometry(g *infergeom.Geometry) {
 	if t != nil {
 		t.geometry = g
+	}
+}
+
+// SetRequestIdentity — T3.5：把本轮请求的**制度化身份**（clock_iso + request_seed）钉进轮次记录。
+//
+// 为什么要挂在 turn 上（而不只挂在 prompt 事件上）：H6 要的是"**每个请求**都带"。
+// 一条请求在事件流里是若干行（turn + tool + prompt…），它们靠 trace/round 归组；
+// 轮次行带身份 ⇒ 即使只看轮次行也能回答"这次用的是哪个时钟、哪个种子"（回放/回归的基线）。
+// 纪律：调用方没给（hasIdent=false）⇒ 字段**缺席**（不编造时钟、不编 0 种子）。
+func (t *ObsTimer) SetRequestIdentity(id RequestIdentity) {
+	if t != nil {
+		t.identity = id
+		t.hasIdent = true
 	}
 }
 
@@ -568,6 +609,12 @@ func (t *ObsTimer) Finish(endReason string) {
 	rec.Turn.Verdict = string(StallVerdictOf(rec.Turn.FirstByteMS, rec.Turn.StallMS, gate, stalledAfterMS))
 	if t.queued > 0 {
 		rec.Turn.QueuedMS = t.queued.Milliseconds() // 乙：排队只观测，不进任何闸
+	}
+	// T3.5：本轮请求的制度化身份（调用方没给 ⇒ 字段缺席，不编造）
+	if t.hasIdent {
+		rec.ClockISO = t.identity.ClockISO
+		seed := t.identity.Seed
+		rec.RequestSeed = &seed
 	}
 	obsWrite(rec)
 }
