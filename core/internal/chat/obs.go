@@ -181,6 +181,12 @@ type ObsRecord struct {
 	// 同 TurnObs 的口径：**块内字段不带 omitempty**（0 是有效测量值，不得与"未知"混同）。
 	Behavior        *BehaviorObs        `json:"behavior,omitempty"`
 	BehaviorSession *BehaviorSessionObs `json:"behavior_session,omitempty"`
+
+	// ── T3.1 compaction 三态事件（kind=compact；event_name=compaction_started/completed/failed）──
+	// 为什么独立成块（不改旧 OBS-4 字段）：三态共用一个事实块，字段口径只写一处（obs_compaction.go）；
+	// 块内「终态才知道的量」一律指针 + omitempty ⇒ 缺席 = 未知，绝不写 0 顶替（见该文件口径 ③）。
+	// 旧 OBS-4 行（Result/SummaryChars/FailReason/Cause）原样保留，新终态行也带这些字段（兼容老读侧）。
+	Compaction *CompactionObs `json:"compaction,omitempty"`
 }
 
 var obsMu sync.Mutex
