@@ -27,7 +27,7 @@ def ver_of(name):
         if isinstance(x, dict) and x.get('name') == name:
             return x.get('version')
     return None
-pat_head = re.compile(r'版本[：: ]+\**v(\d+\.\d+\.\d+)')
+pat_head = re.compile(r'\*{0,2}版本\*{0,2}\s*[：:]\s*\**\s*v(\d+\.\d+\.\d+)')
 bad, nohead, ok = [], [], 0
 for name in (sorted(tools) if isinstance(tools, dict) else [t.get('name') for t in tools]):
     if not name: continue
