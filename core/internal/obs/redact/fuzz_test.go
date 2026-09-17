@@ -72,13 +72,12 @@ func FuzzRedactValue(f *testing.F) {
 			if len(m) < 4 || !distinctive(m) {
 				return
 			}
-			views := []string{m}
-			if u := jsonUnescapeRaw(m); u != m {
-				views = append(views, u)
-			}
+			// needle 视图与门禁**同源**（needleViews）：含非法 UTF-8 的 needle 换成落盘形态 ——
+			// 落盘行一定是合法 UTF-8，拿原始字节比只会撞出「合法内容的字节窗口」误报。
+			views := needleViews(m)
 			outViews := Projections(jsonUnescapeRaw(string(line)))
 			for _, nv := range views {
-				if len(nv) < 4 || isDeletionOf(m, nv) {
+				if len(nv) < 4 || weakViewOf(m, nv) {
 					continue
 				}
 				for _, p := range outViews {

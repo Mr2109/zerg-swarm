@@ -3,10 +3,10 @@ package redact
 import (
 	"encoding/base64"
 	"encoding/json"
-	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // ── 回扫门禁（D7 / D18 / D19 / D20）─────────────────────────────────────────
@@ -38,20 +38,162 @@ import (
 
 // ── 五类投影 ────────────────────────────────────────────────────────────────
 
-var reJSONU = regexp.MustCompile(`\\u[0-9a-fA-F]{4}`)
-
-// jsonUnescapeRaw 还原写者可能在字符串**内部**做过的转义：\/、\uXXXX、\n、\t、\"、\\ ——
-// 这正是「查看原始日志」看到的形态。
+// jsonUnescapeRaw 把「写者/查看器眼里的一行」还原成**读者解析后真正拿到的那串字符**：
+// 短转义（斜杠、换行、制表、回车、退格、换页、引号、反斜杠）+ unicode 转义。
+//
+// 两条必须遵守的口径：
+//
+//	① 退格/换页也要还原（fuzz 实测真误报，语料 testdata/fuzz/FuzzRedactValue/31f635b2df5ec393）：
+//	   encoding/json 把 0x08/0x0C 写成短转义，**不是** unicode 转义形式；不还原就会把 `\`+`b`
+//	   当成数据字节，与前一个 23 字节 base64 候选拼成 24 字节 ⇒ 报出解析后并不存在的残留。
+//	② **一趟扫描**，产物不再被当转义重新解释（fuzz 实测的假阴性，反向控制用例抓出）：
+//	   旧实现先跑 unicode 正则、再跑短转义表 —— 遇到 `\\u0000`（转义过的反斜杠 + 字面 u0000）
+//	   会把第二个反斜杠与 `u0000` 当成 unicode 转义 ⇒ 还原成 NUL，字面 `u0000` 凭空消失 ⇒
+//	   该值真落盘时门禁反而看不见。现在 `\`+`\` 成对吃掉、`\uXXXX` 在同一趟里识别。
+//
+// 代理对（`\uD83D\uDE00`）按两次独立解码处理（与旧实现一致：单个代理码位 → U+FFFD）。
 func jsonUnescapeRaw(s string) string {
-	s = reJSONU.ReplaceAllStringFunc(s, func(m string) string {
-		v, err := strconv.ParseUint(m[2:], 16, 32)
-		if err != nil {
-			return m
+	return jsonUnescapeShort(s)
+}
+
+// jsonUnescapeShort 是 jsonUnescapeRaw 的实现：**一趟扫描**的转义还原器。
+//
+// 为什么逐字节手写而不是 strings.Replacer + 正则：转义表的字符**全部用十六进制字面量写**，
+// 源码里没有一个反斜杠转义 —— 免得改这行的人在编辑器/工具链转义上再踩一次
+// （本轮真踩过：`	` 被写成真实制表符，于是「制表符转义」静默不再还原 ⇒ 门禁对
+// 带制表符的秘密漏检；用例 TestJSONUnescapeRawCoversAllShortEscapes 当场抓红）。
+//
+// 0x2F=斜杠 0x6E=换行 0x74=制表 0x72=回车 0x62=退格 0x66=换页 0x22=引号 0x5C=反斜杠
+// 0x75=u 0x55=U（unicode 转义的两个大小写开头）。
+func jsonUnescapeShort(s string) string {
+	if !strings.ContainsRune(s, 0x5C) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] != 0x5C || i+1 >= len(s) {
+			b.WriteByte(s[i])
+			i++
+			continue
 		}
-		return string(rune(v))
-	})
-	r := strings.NewReplacer(`\/`, `/`, `\n`, "\n", `\t`, "\t", `\r`, "\r", `\"`, `"`, `\\`, `\`)
-	return r.Replace(s)
+		switch s[i+1] {
+		case 0x2F:
+			b.WriteByte(0x2F)
+			i += 2
+		case 0x6E, 0x74, 0x72, 0x62, 0x66, 0x22:
+			b.WriteByte(jsonShortEscape[s[i+1]])
+			i += 2
+		case 0x5C:
+			// 转义过的反斜杠：**成对吃掉**，产物不再被当转义解释（这一条修的是假阴性，见 jsonUnescapeRaw）。
+			b.WriteByte(0x5C)
+			i += 2
+		case 0x75, 0x55:
+			if r, ok := jsonHex4(s[i+2:]); ok {
+				b.WriteRune(r)
+				i += 6
+				continue
+			}
+			b.WriteByte(s[i]) // 不是 4 位十六进制 ⇒ 原样保留（与 JSON 的宽松处理一致）
+			i++
+		default:
+			// 不认识的转义：**两个字节都保留**。少写一个字节就是视图侧的数据损坏 ——
+			// 门禁会因此漏检或误报（本轮实测过）。
+			b.WriteByte(s[i])
+			b.WriteByte(s[i+1])
+			i += 2
+		}
+	}
+	return b.String()
+}
+
+// jsonHex4 解析 unicode 转义的 4 位十六进制码位；不足 4 位或含非十六进制字符即失败。
+func jsonHex4(s string) (rune, bool) {
+	if len(s) < 4 {
+		return 0, false
+	}
+	var v rune
+	for i := 0; i < 4; i++ {
+		c := s[i]
+		switch {
+		case c >= 0x30 && c <= 0x39:
+			v = v<<4 | rune(c-0x30)
+		case c >= 0x61 && c <= 0x66:
+			v = v<<4 | rune(c-0x61+10)
+		case c >= 0x41 && c <= 0x46:
+			v = v<<4 | rune(c-0x41+10)
+		default:
+			return 0, false
+		}
+	}
+	return v, true
+}
+
+// jsonShortEscape 把转义字母映射到它代表的控制字符（只含上面 switch 放行的那些）。
+var jsonShortEscape = map[byte]byte{
+	0x6E: 0x0A, // n → 换行
+	0x74: 0x09, // t → 制表
+	0x72: 0x0D, // r → 回车
+	0x62: 0x08, // b → 退格
+	0x66: 0x0C, // f → 换页
+	0x22: 0x22, // " → 引号
+}
+
+// ── needle 的比较视图（门禁与 fuzz 共用同一个函数 = 同源，D18）──────────────────
+
+// diskFormUTF8 把一个串变成「它若被 encoding/json 落盘会呈现的形态」：每个**非法字节**
+// （utf8.DecodeRuneInString 返回 RuneError 且宽度 1）都写成 U+FFFD。
+//
+// 逐字节替换（不是 strings.ToValidUTF8）：后者把一整段非法 run 合成**一个**替换，
+// 与 encoding/json 的实际口径不同 —— json 是逐字节写 U+FFFD。
+//
+//	实测（本轮校准）：in=83 89 → json 往返 = efbfbd efbfbd（两个替身）；ToValidUTF8 只给一个。
+func diskFormUTF8(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			b.WriteRune(0xFFFD)
+			i++
+			continue
+		}
+		b.WriteString(s[i : i+size])
+		i += size
+	}
+	return b.String()
+}
+
+// needleViews 给出 needle 的比较视图：原样 + JSON 反转义；**含非法 UTF-8 的视图一律换成落盘形态**。
+//
+// 为什么（fuzz 实测的真误报，语料 testdata/fuzz/FuzzRedactValue/f6243093e7100ee2）：
+//
+//	值 = "\x83ЏڄĴ\xd5"（非合法 UTF-8），而输入前缀 = "ǃЏڄĴո" —— 前者的字节是后者字节的一个**窗口**
+//	（ǃ 的第二个字节就是 0x83）。于是「值还在行里」在 raw 子串意义上成立，但那不是值的**字符串**出现，
+//	而是合法内容的字节重叠（读者取窗口得到的是跨 rune 的半截字节，不是那个值）。
+//
+// 更根本的一条：**落盘行一定是合法 UTF-8**（encoding/json 把非法字节写成 U+FFFD）⇒ 含非法字节的
+// needle 永远不可能以原始字节出现在行里 ⇒ 拿原始字节比只可能撞出这种窗口误报，而误报会让门禁被关掉（D18）。
+// 换成落盘形态后两头都对：真漏（脱敏器没遮那个值）必然在行里呈现 U+FFFD 形态 ⇒ 照样抓得到；
+// 字节窗口重叠不再命中。
+func needleViews(s string) []string {
+	raw := diskFormUTF8(s) // 主视图：原样（含非法字节时是它的落盘形态）
+	out := []string{raw}
+	if u := jsonUnescapeRaw(s); u != s {
+		// 反转义视图只在它是主视图的**删字节**结果时才计入（信息只少不多）。
+		//
+		// 为什么必须加这条限制（fuzz 实测语料 618e416840bfd820）：`\u0000` 这类转义**换**字节（6 字符 → 1 个
+		// NUL），会把 needle 里根本不存在的字节带进视图，再与行里别的普通内容撞上 ⇒ 假 leak。
+		// 而「真漏」不需要这个视图也抓得到：值若原样落盘，主视图（落盘形态）必然命中；
+		// 值若以**解码后**的形态落盘，输出侧的 `\uXXXX` 投影本来就会解码 ⇒ 也命中。
+		if uu := diskFormUTF8(u); isDeletionOf(raw, uu) {
+			out = append(out, uu)
+		}
+	}
+	return out
 }
 
 func b64decodeAll(s string) string {
@@ -246,7 +388,7 @@ func sufficientSignal(v string) bool {
 }
 
 // isDeletionOf 判定 small 是否由 big **只删字节**得到（顺序保持、不替换）。
-// 这样的投影比原串更弱（信息只少不多），拿它比子串容易与脱敏器故意保留的片段重合（见调用点）。
+// 这样的投影比原串更弱（信息只少不多），拿它比子串容易与脱敏器故意保留的片段重合（见 weakViewOf）。
 func isDeletionOf(big, small string) bool {
 	if len(small) >= len(big) {
 		return false
@@ -258,6 +400,25 @@ func isDeletionOf(big, small string) bool {
 		}
 	}
 	return j == len(small)
+}
+
+// weakViewOf 判定 nv 是不是 raw 的**弱视图**：只经「删字节」与「非法字节 → U+FFFD（落盘形态）」得到，
+// 即信息只少不多（顺序保持、不替换、不新增语义）。弱视图**不参与比较**。
+//
+// 为什么必须做（两例都来自 fuzz，语料在案）：
+//
+//	① `\/` → `/`、`\\` → `\`：JSON 反转义视图本来就比原样弱；
+//	② **弱视图长度会因落盘形态而回升**，于是「长度更短」这个短路条件不再成立：
+//	   raw = `\\\\0000\x801`（4 个反斜杠 + 0x80，非合法 UTF-8）的反转义视图是
+//	   `\\0000<FFFD>1` —— 少了 2 字节又把 1 个非法字节撑成 3 字节 ⇒ 与 raw 等长，
+//	   isDeletionOf 的 `len(small) < len(big)` 短路失效 ⇒ 弱视图参与比较 ⇒ 命中行里
+//	   与它同形的**普通内容**（语料 37e18001cc557c49）。口径不变，只把判据从「长度更短」
+//	   换成「按落盘形态对齐后的删字节」。
+func weakViewOf(raw, nv string) bool {
+	if nv == raw {
+		return false
+	}
+	return isDeletionOf(diskFormUTF8(raw), nv)
 }
 
 // distinctive 判定 needle 是否有区分度：**单字节重复**的 needle（"0000000"、"aaaa"）无法与
@@ -396,17 +557,15 @@ func VerifyNoResidueString(original map[string]any, emitted string) []Leak {
 
 	var leaks []Leak
 	for _, n := range needles {
-		// needle 侧：**只按原样 + JSON 反转义**比较（不对称口径，见 needleItem 的说明）。
-		views := []string{n.item.s}
-		if u := jsonUnescapeRaw(n.item.s); u != n.item.s {
-			views = append(views, u)
-		}
+		// needle 侧：**只按原样 + JSON 反转义**比较（不对称口径，见 needleItem 的说明），
+		// 且含非法 UTF-8 的 needle 换成「落盘形态」（见 needleViews 的说明）。
+		views := needleViews(n.item.s)
 		for _, nv := range views {
 			if len(nv) < 4 {
 				continue
 			}
-			// 反转义视图若只是把 needle 删掉若干字节（`\/` → `/`），比原串更弱，跳过。
-			if len(nv) < len(n.item.s) && isDeletionOf(n.item.s, nv) {
+			// 弱视图（只删字节 + 落盘形态替换）不参与比较，见 weakViewOf 的说明。
+			if weakViewOf(n.item.s, nv) {
 				continue
 			}
 			// 大小写折叠比较只对**规则本身就是大小写无关**的 needle 开放（见 needleItem.fold）。
