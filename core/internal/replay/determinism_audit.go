@@ -190,7 +190,9 @@ var AuditTable = []AuditItem{
 			Pattern: `os\.Getwd\(`,
 			Reason:  "BaseDir 为空时的兜底：这是**显式声明的降级**，且录制与回放必须同基准（不符会在错误里逐字段指出）",
 		}},
-		ExpectHits: 20, // 实测：1 处豁免（match.go 的 BaseDir 兜底）+ 19 处必要性调用（读/写/建目录/改名/stat）
+		ExpectHits: 24, // 实测：1 处豁免（match.go 的 BaseDir 兜底）+ 23 处必要性调用
+		//          （读/写/建目录/改名/stat；其中 4 处是 T4.3 的**效果账本本地文件档**：
+		//           读账本 / 建账本目录 / 写临时件 / 改名为正式账本 —— 原子落盘本身就要这几步）
 	},
 	{
 		ID:     "env",

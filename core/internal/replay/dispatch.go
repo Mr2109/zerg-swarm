@@ -152,8 +152,12 @@ func (d *Dispatcher) record(ctx context.Context, call Call, args map[string]any)
 	}
 	entries := d.effectEntries(call, args, ModeRecord)
 	ranges := rangesOf(entries)
-	if res, done := d.claimBeforeExecute(entries, ranges); done {
-		return res, nil // 先认领后执行：任一效果已发生 ⇒ 整调用不再真发
+	deduped, done, err := d.claimBeforeExecute(entries, ranges)
+	if err != nil {
+		return Result{}, err
+	}
+	if done {
+		return deduped, nil // 先认领后执行：任一效果已发生 ⇒ 整调用不再真发
 	}
 	pre := d.currentStateHash()
 	start := d.now()
@@ -162,6 +166,10 @@ func (d *Dispatcher) record(ctx context.Context, call Call, args map[string]any)
 	res.Source = SourceLive
 	res.Effects = ranges
 	after := d.currentStateHash()
+	// 执行后收尾（E5）：把 observed_after_hash 记进账本。记不上 ⇒ 报错（不许"做了但没记账"）。
+	if err := d.completeAfterExecute(entries, after); err != nil {
+		return Result{}, err
+	}
 	rec := Record{
 		CallID:            callIDOf(args),
 		Tool:              call.Tool,
@@ -189,14 +197,21 @@ func (d *Dispatcher) live(ctx context.Context, call Call, args map[string]any) (
 	}
 	entries := d.effectEntries(call, args, ModeLive)
 	ranges := rangesOf(entries)
-	if res, done := d.claimBeforeExecute(entries, ranges); done {
-		return res, nil
+	deduped, done, err := d.claimBeforeExecute(entries, ranges)
+	if err != nil {
+		return Result{}, err
+	}
+	if done {
+		return deduped, nil
 	}
 	start := d.now()
 	res := d.Live(ctx, call, args)
 	res.DurationMS = d.now().Sub(start).Milliseconds()
 	res.Source = SourceLive
 	res.Effects = ranges
+	if err := d.completeAfterExecute(entries, d.currentStateHash()); err != nil {
+		return Result{}, err
+	}
 	return res, nil
 }
 
@@ -234,22 +249,62 @@ func rangesOf(entries []EffectEntry) []EffectRange {
 // 整调用不执行（部分执行没有好语义：一次工具调用是一个原子动作，只做一半比不做更糟）。
 //
 // 注意：命中"已发生"时**不再认领其余效果**（它们没有被执行，账本里就不该有）。
-func (d *Dispatcher) claimBeforeExecute(entries []EffectEntry, ranges []EffectRange) (Result, bool) {
+//
+// VerifyPrecondition 打开时（E5）：认领/命中的同时**校验前置状态**，不符 ⇒ 返回错误
+// （*StateMismatchError）且**一条都不执行** —— 在错误的状态上跳过一个效果，比报错危险得多。
+func (d *Dispatcher) claimBeforeExecute(entries []EffectEntry, ranges []EffectRange) (Result, bool, error) {
 	if d.Effects == nil || len(entries) == 0 {
-		return Result{}, false
+		return Result{}, false, nil
 	}
 	// 只读检查一遍：任一条已发生 ⇒ 整体跳过（不认领、不执行、不真发）
 	for _, e := range entries {
-		if first, ok := d.Effects.Applied(e.Key); ok {
-			return d.dedupedResult(ranges, first), true
+		first, ok := d.Effects.Applied(e.Key)
+		if !ok {
+			continue
 		}
+		if d.VerifyPrecondition {
+			if err := d.Effects.VerifyState(e.Key, d.currentStateHash()); err != nil {
+				return Result{}, false, err
+			}
+		}
+		return d.dedupedResult(ranges, first), true, nil
 	}
 	for _, e := range entries {
+		if d.VerifyPrecondition {
+			claim, first, err := d.Effects.ClaimChecked(e, d.currentStateHash())
+			if err != nil {
+				return Result{}, false, err
+			}
+			if claim == EffectAlreadyApplied {
+				return d.dedupedResult(ranges, first), true, nil
+			}
+			continue
+		}
 		if claim, first := d.Effects.Claim(e); claim == EffectAlreadyApplied {
-			return d.dedupedResult(ranges, first), true
+			return d.dedupedResult(ranges, first), true, nil
 		}
 	}
-	return Result{}, false
+	return Result{}, false, nil
+}
+
+// completeAfterExecute —— 执行后把 observed_after_hash 记进账本（E5 的收尾）。
+//
+// 装了账本 + 装了 StateHash 才记；StateHash 返回空串 ⇒ 报错（"装了却拿不出状态"是配置错，
+// 不许用空串糊过去 —— 那样下次启动会当这条效果没收尾）。
+func (d *Dispatcher) completeAfterExecute(entries []EffectEntry, after string) error {
+	if d.Effects == nil || len(entries) == 0 || d.StateHash == nil {
+		return nil
+	}
+	if after == "" {
+		return fmt.Errorf("%w: StateHash 已装上却返回空串，无法记下 observed_after_hash（拒绝用空串糊过去）",
+			ErrEffectLedger)
+	}
+	for _, e := range entries {
+		if err := d.Effects.Complete(e.Key, after); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // dedupedResult —— "已发生"的统一返回形态：不执行、不报错，但把"是哪条效果"说清楚。

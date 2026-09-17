@@ -12,16 +12,22 @@
 //
 //	Record / Trace       录播事实与 JSONL 载体：追加写 + 顺序读 + **消费游标**（E6：进程重启续读，
 //	                     不从头重放）+ trace 损坏/截断**明确报错**（绝不静默跳过）
-//	Normalizer / Call    **参数规范化与请求指纹**（E3）：键排序 / 数字统一 / 路径绝对化 / 去噪字段
-//	                     ⇒ ArgsCanonical + ArgsDigest + Fingerprint。**默认不使用原始字节哈希**——
-//	                     一个 ts 字段就能把命中率打到 0
+//	Normalizer / Call    **参数规范化与请求指纹**（E3）：键排序 / 数字统一 / 路径绝对化 / 空白折叠 /
+//	                     去噪字段 / 缺省-vs-显式-null 策略 ⇒ ArgsCanonical + ArgsDigest + Fingerprint。
+//	                     **默认不使用原始字节哈希**——一个 ts 字段就能把命中率打到 0。
+//	                     口径本身可读可比（Policy/PolicyID）+ 配错当场报错（Validate：噪声字段不许进
+//	                     匹配集、MatchOn 与 Drop 不许打架、豁免不许过期），见 normalize_policy.go
 //	Player / MissError   **严格语义**（E1）：未命中 ⇒ 报错，错误里带 **fingerprint 与最近邻候选**；
 //	                     **禁止静默放行**，也**禁止"顺手新录一条"**
 //	EffectKey/Ledger     **效果级幂等键与账本**（E4）：effect_key = sha256(工具名 + ArgsCanonical +
 //	                     效果范围)；同一 key 第二次出现 ⇒ 返回"已发生"，不重放；一次调用多效果时
-//	                     按 (call_id, effect_index) **逐条**判重；账本可序列化
+//	                     按 (call_id, effect_index) **逐条**判重；账本可序列化，且有**内存 + 本地文件**
+//	                     两档（effect_store.go：先落盘后认领、落盘失败即撤销认领）
+//	ResumePlan/ResumePending  **部分成功后的补做**：只补做**没发生过**的效果（见 resume.go ——
+//	                     写文件/发通知这类多效果调用中断后，已完成的一条都不重做）
 //	Precondition         **前置状态校验**（E5）：PreconditionHash / ObservedAfterHash 不符 ⇒
-//	                     报"状态不匹配"，而不是默默回放
+//	                     报"状态不匹配"，而不是默默回放；账本侧同样逐效果记
+//	                     precondition_state_hash / observed_after_hash（ClaimChecked / Complete）
 //	Dispatcher           录制 / 回放 / 真发 三态的唯一分发口
 //
 // ── 三条写死的纪律（本包的"为什么这么做"都收敛到这里）──
@@ -41,7 +47,9 @@
 //	· 保真度与失效（T4.4/T4.5/T4.6，2026-09-17 补齐）：见 fidelity.go（三指标 + 二分定位）、
 //	  determinism_audit.go（十类非确定性源清单化审计）、invalidation.go（schema_version /
 //	  tool_fingerprint / 引擎指纹不匹配即作废）；可执行验收：`bash scripts/replay-fidelity.sh`。
-//	· 未接项（后续批）：① 把 agent 的工具执行路径整体切到本包的 Dispatcher；② 落盘层（压缩/轮转）；
+//	· 未接项（后续批）：① 把 agent 的工具执行路径整体切到本包的 Dispatcher；
+//	  ② **trace 本体**的落盘层（压缩/轮转）—— 效果账本的"本地文件档"本批已补（整份快照原子落盘，
+//	     逐条认领即全量重写；效果条数很大时应换追加写 KV，属后续批）；
 //	  ③ 服务端唯一约束那一档去重存储（E4 的第三档）。
 package replay
 
