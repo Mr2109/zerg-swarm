@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/tracectx"
 )
 
 // ── 在线探测器（text / vision / tools / embedding / rerank + 端点 meta）──────
@@ -78,6 +80,9 @@ func (e Endpoint) do(ctx context.Context, method, path string, body any) (int, [
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	// T1.6 传播（出站到模型端点/子端）：探测请求也带 traceparent —— 探到的异常能在两侧对上号。
+	// 无会话上下文 ⇒ 本侧 root（如实：一次探测就是一条独立的链）。
+	tracectx.Propagate(req.Header, nil, "", tracectx.ReplayMarked())
 	start := time.Now()
 	resp, err := e.client().Do(req)
 	el := time.Since(start)

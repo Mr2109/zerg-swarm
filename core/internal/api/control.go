@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/tracectx"
 )
 
 // ControlHandlers 控制端点处理器。
@@ -167,6 +168,10 @@ func forwardToNode(token string, node config.FleetNode, path string, body []byte
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Auth-Token", token)
+	// T1.6 传播（控制面出站）：/load、/unload、/stop 也是"主控→子端"，一并带 traceparent。
+	// 控制面没有会话上下文（不是某轮对话的一部分）⇒ 本侧新生成一条 root trace 是**如实**的：
+	// 这次控制操作就是一条独立的链，不该硬塞进某个会话的链里。
+	tracectx.Propagate(req.Header, nil, "", tracectx.ReplayMarked())
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)

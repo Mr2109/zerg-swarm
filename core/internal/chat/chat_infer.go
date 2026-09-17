@@ -20,6 +20,7 @@ import (
 
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 	"github.com/Mr2109/zerg-swarm/core/internal/infergeom"
+	"github.com/Mr2109/zerg-swarm/core/internal/tracectx"
 )
 
 // ChatInfer — 对话推理器（网关客户端）
@@ -119,6 +120,9 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 	if c.AuthToken != "" {
 		req.Header.Set("X-Auth-Token", c.AuthToken)
 	}
+	// T1.6 传播：对话客户端 → 网关 也是这条链上的一跳（会话取 ctx 里注入的 session_id）。
+	// 带上后：网关入站会**沿用**同一条 trace，再转发给子端时仍是同一条 ⇒ 一条链从轮次事件贯穿到子端。
+	tracectx.Propagate(req.Header, nil, SessionIDFromCtx(ctx), tracectx.ReplayMarked())
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -216,6 +220,9 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 	if c.AuthToken != "" {
 		req.Header.Set("X-Auth-Token", c.AuthToken)
 	}
+	// T1.6 传播：对话客户端 → 网关 也是这条链上的一跳（会话取 ctx 里注入的 session_id）。
+	// 带上后：网关入站会**沿用**同一条 trace，再转发给子端时仍是同一条 ⇒ 一条链从轮次事件贯穿到子端。
+	tracectx.Propagate(req.Header, nil, SessionIDFromCtx(ctx), tracectx.ReplayMarked())
 
 	resp, err := c.client.Do(req)
 	if err != nil {

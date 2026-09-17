@@ -33,6 +33,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/infergeom"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"github.com/Mr2109/zerg-swarm/core/internal/toolobs"
+	"github.com/Mr2109/zerg-swarm/core/internal/tracectx"
 )
 
 // ── 分类码（OBS-2）：任何"非正常收尾"都必须落到这三类之一 ──
@@ -234,6 +235,18 @@ func obsSessionOfLocked(session string) *obsSessionTrace {
 			obsTraceEvictOldestLocked()
 		}
 		st = &obsSessionTrace{traceID: obsNewID(), rootSpanID: obsNewID()}
+		// T1.6 传播：本会话入站时沿用了上游 trace（网关侧 tracectx.BindSession）⇒ 轮次事件必须
+		// 落在**同一条** trace 上（这正是"写进本轮事件"）。只在**会话骨架首次创建**时采纳：
+		// 此后本会话 trace_id 恒定 —— T1.1 的不变式"同一会话 trace_id 不变"不破。
+		if tc, ok := tracectx.SessionTrace(session); ok {
+			st.traceID = tc.TraceID
+		}
+		// 反向也钉一次：把本条 trace 登记成**出站可用**的线上上下文（只对齐 trace-id，线上 span 另开）
+		// —— 这样"对话客户端 → 网关 → 子端"每一跳的 traceparent 都是本轮事件这一条 trace，
+		// 一次调用从轮次事件到子端全部对得上（否则客户端会另生成一条，两侧永远对不上账）。
+		if st.traceID != "" {
+			tracectx.BindSessionTraceID(session, st.traceID)
+		}
 		obsTraceTab[session] = st
 	}
 	obsTraceSeq++
