@@ -87,7 +87,7 @@ func toolBash() ToolDef {
 			Description: "执行 shell 命令（测试/构建/脚本/命令）。文件操作走专用工具（read/write/edit/glob/grep——有结构化输入与权限检查）。\n\n" +
 				"【删除安全】rm 目标限 { 工作区, /tmp, 白名单 }；家目录/根目录/系统路径一律拦截。拦截=预期，勿用变量/base64/换拼写绕过（同样拦截）。\n\n" +
 				"【成败判定】首行「⚠️ exit N — 命令失败」=失败（附引导）；正常看 [exit_code] 0。空命令/坏参数回格式教学（勿原样重发）。超长输出头尾保留+溢出落盘路径（read 可续读）。\n\n" +
-				"【示例】\"go test ./...\" 跑测试；{\"command\":\"go build\",\"timeout_s\":300} 长编译；{\"command\":\"ls\",\"cwd\":\"sub/dir\"} 指定目录",
+				"【示例】\"go test ./...\" 跑测试；{\"command\":\"go build\",\"timeout_s\":300} 长编译；{\"command\":\"ls\",\"cwd\":\"sub/dir\"} 指定目录\n\n本工具实现版本 v1.0.3（以 tools/versions.json 台账为准）。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -118,7 +118,7 @@ func toolRead() ToolDef {
 			Name: "read",
 			Description: "读取文件内容（文本/PDF/Office/epub 自动抽取；图像/音频/视频给委托指引）。\n\n" +
 				"【用法】文本→带行号原文（num=false 关）；PDF/Office→自动抽取（附类型注记）；.xlsx→首 sheet 抽 TSV、.csv 原样；GBK/UTF-16→自动转 UTF-8；大文件→offset/limit 分页，超长行自动截断。\n\n" +
-				"【示例】\"read\" path=main.go；{\"path\":\"报告.pdf\",\"offset\":1,\"limit\":100}；{\"path\":\"旧.txt\",\"format\":\"raw\",\"num\":false}",
+				"【示例】\"read\" path=main.go；{\"path\":\"报告.pdf\",\"offset\":1,\"limit\":100}；{\"path\":\"旧.txt\",\"format\":\"raw\",\"num\":false}\n\n本工具实现版本 v1.0.2（以 tools/versions.json 台账为准）。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -158,7 +158,7 @@ func toolWrite() ToolDef {
 			Name: "write",
 			Description: "写文件（原子写：临时+回读校验+rename；覆盖整个文件，追加先 read 再写）。路径相对 WorkDir。\n\n" +
 				"【行为】文档/二进制类（.pdf/.docx/.xlsx/.pptx/.epub/.odt/图片/音视频）拒绝文本写入（防毁）；.json/.xml 自动语法自检，坏则回滚报错。\n\n" +
-				"【示例】\"write\" path=src/main.go content=\"...\"；{\"path\":\"a.json\",\"content\":\"{}\"}（自动校验）；{\"path\":\"win.csv\",\"content\":\"a,b\\n1,2\",\"bom\":true,\"line_end\":\"crlf\"}",
+				"【示例】\"write\" path=src/main.go content=\"...\"；{\"path\":\"a.json\",\"content\":\"{}\"}（自动校验）；{\"path\":\"win.csv\",\"content\":\"a,b\\n1,2\",\"bom\":true,\"line_end\":\"crlf\"}\n\n本工具实现版本 v1.0.1（以 tools/versions.json 台账为准）。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -199,7 +199,7 @@ func toolEdit() ToolDef {
 			Name: "edit",
 			Description: "精准替换文件中的字符串（search → replace）。\n\n" +
 				"【注意】编辑前必须先 read 该文件（read-before-edit）；search 必须唯一匹配（否则失败——加长上下文或用 replace_all）；保持原缩进；文档/二进制类（.pdf/.docx/.xlsx 等）拒绝替换。\n\n" +
-				"【示例】\"edit\" path=main.go search=\"a / b\" replace=\"a // b\"",
+				"【示例】\"edit\" path=main.go search=\"a / b\" replace=\"a // b\"\n\n本工具实现版本 v1.0.0（以 tools/versions.json 台账为准）。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -233,7 +233,7 @@ func toolGlob() ToolDef {
 		Function: FunctionDef{
 			Name: "glob",
 			Description: "按模式查找文件（不要用 find/ls）。\n\n" +
-				"【示例】\"glob\" pattern=\"**/*.go\"",
+				"【示例】\"glob\" pattern=\"**/*.go\"\n\n本工具实现版本 v1.0.0（以 tools/versions.json 台账为准）。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -255,7 +255,7 @@ func toolGrep() ToolDef {
 		Function: FunctionDef{
 			Name: "grep",
 			Description: "按正则搜索文件内容（不要用 bash grep/rg）。path 可为文件或目录（目录递归）；匹配多时自动分页（最多 200 条，用 offset 翻页）。\n\n" +
-				"【示例】\"grep\" path=src pattern=\"func \"",
+				"【示例】\"grep\" path=src pattern=\"func \"\n\n本工具实现版本 v1.0.0（以 tools/versions.json 台账为准）。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -289,7 +289,7 @@ func toolLs() ToolDef {
 		Function: FunctionDef{
 			Name: "ls",
 			Description: "列出目录内容（默认：目录在前、隐藏点项、最多 60 行）。ls=本层概览（可 pattern 收窄）；glob=跨层找文件；grep=内容搜索。\n\n" +
-				"【示例】\"ls\"；{\"path\":\".\",\"dir_only\":true}；{\"pattern\":\"*.go\",\"limit\":0}（不截断）；{\"sort_by\":\"time\"}（附时间列）。超限请缩小 pattern，勿重发大列表。",
+				"【示例】\"ls\"；{\"path\":\".\",\"dir_only\":true}；{\"pattern\":\"*.go\",\"limit\":0}（不截断）；{\"sort_by\":\"time\"}（附时间列）。超限请缩小 pattern，勿重发大列表。\n\n本工具实现版本 v1.0.2（以 tools/versions.json 台账为准）。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -330,8 +330,10 @@ func toolWebSearch() ToolDef {
 	return ToolDef{
 		Type: "function",
 		Function: FunctionDef{
-			Name:        "web_search",
-			Description: `网络搜索（searxng 聚合——调研/查证）。query 必填；可选 lang/time_range/domains/fetch_top/rewrite。不确定先 help:true`,
+			Name: "web_search",
+			Description: `网络搜索（searxng 聚合——调研/查证）。query 必填；可选 lang/time_range/domains/fetch_top/rewrite。不确定先 help:true
+
+本工具实现版本 v1.0.2（以 tools/versions.json 台账为准）。`,
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -354,8 +356,10 @@ func toolWebFetch() ToolDef {
 	return ToolDef{
 		Type: "function",
 		Function: FunctionDef{
-			Name:        "web_fetch",
-			Description: `抓取网页正文（去标签，截断 10000）。url 必填（http/https）。不确定先 help:true`,
+			Name: "web_fetch",
+			Description: `抓取网页正文（去标签，截断 10000）。url 必填（http/https）。不确定先 help:true
+
+本工具实现版本 v1.0.0（以 tools/versions.json 台账为准）。`,
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -372,8 +376,10 @@ func toolSkillLoad() ToolDef {
 	return ToolDef{
 		Type: "function",
 		Function: FunctionDef{
-			Name:        "skill_load",
-			Description: `加载技能正文 SKILL.md。name 必填（系统提示列出的技能名，任务匹配时用）`,
+			Name: "skill_load",
+			Description: `加载技能正文 SKILL.md。name 必填（系统提示列出的技能名，任务匹配时用）
+
+本工具实现版本 v1.0.0（以 tools/versions.json 台账为准）。`,
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -391,8 +397,10 @@ func toolToolSearch() ToolDef {
 	return ToolDef{
 		Type: "function",
 		Function: FunctionDef{
-			Name:        "tool_search",
-			Description: `搜索发现可用工具（按需）。query 必填（描述需要的能力，工具列表没有时用，发现后直接调用）`,
+			Name: "tool_search",
+			Description: `搜索发现可用工具（按需）。query 必填（描述需要的能力，工具列表没有时用，发现后直接调用）
+
+本工具实现版本 v1.0.0（以 tools/versions.json 台账为准）。`,
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -410,8 +418,10 @@ func toolScreenshot() ToolDef {
 	return ToolDef{
 		Type: "function",
 		Function: FunctionDef{
-			Name:        "screenshot",
-			Description: `截图+OCR 识别看界面（开发调试——UI 验证/看报错）。vision 可选(true=视觉模型理解)。不确定先 help:true`,
+			Name: "screenshot",
+			Description: `截图+OCR 识别看界面（开发调试——UI 验证/看报错）。vision 可选(true=视觉模型理解)。不确定先 help:true
+
+本工具实现版本 v1.0.0（以 tools/versions.json 台账为准）。`,
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -433,7 +443,7 @@ func toolApplyPatch() ToolDef {
 			Description: "按精确补丁修改文件（标准 diff——行号+上下文严格匹配，位置错则失败，不默默改错）。编辑前必须先 read 该文件。\n\n" +
 				"【补丁格式】git diff 风格：--- a/文件名 / +++ b/文件名 / @@ -起始行,行数 +起始行,行数 @@ / 上下文行（锚定）/ -删除行 / +添加行；必须给足上下文锚定唯一位置。\n\n" +
 				"【与 edit 的区别】edit=模糊替换（search→replace）；apply_patch=精确补丁（改错位置会失败）。\n\n" +
-				"【示例】apply_patch path=main.go patch=\"--- a/main.go\\n+++ b/main.go\\n@@ -10,3 +10,3 @@\\n func old() {\\n-    return oldValue\\n+    return newValue\\n }\"",
+				"【示例】apply_patch path=main.go patch=\"--- a/main.go\\n+++ b/main.go\\n@@ -10,3 +10,3 @@\\n func old() {\\n-    return oldValue\\n+    return newValue\\n }\"\n\n本工具实现版本 v1.0.0（以 tools/versions.json 台账为准）。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -452,7 +462,7 @@ func toolSpawnAgent() ToolDef {
 			Name: "spawn_agent",
 			Description: "派子 agent 执行独立子任务（独立上下文，不污染父；返回 1-2K 精简摘要）。\n\n" +
 				"【适合】独立调研/独立文件处理/独立验证；不适合需要父上下文的子任务。machine 指定机器：x3/local/mini1/mini2（不传=默认调度）。\n\n" +
-				"【示例】\"spawn_agent\" prompt=\"调研 X 项目的依赖结构\" type=\"explore\" machine=\"x3\"",
+				"【示例】\"spawn_agent\" prompt=\"调研 X 项目的依赖结构\" type=\"explore\" machine=\"x3\"\n\n本工具实现版本 v1.0.0（以 tools/versions.json 台账为准）。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -475,7 +485,7 @@ func toolTodo() ToolDef {
 			Name: "todo",
 			Description: "任务清单管理（复杂任务拆解防遗漏；持久化到工作区 .zerg/todo.json，跨轮次保留）。\n\n" +
 				"【用法】复杂任务（多步骤/多文件）先建清单逐步勾选。action=create（items 传 [{content, status}]）/ update（item_id + status）/ list。status: pending/in_progress/completed/cancelled。\n\n" +
-				"【示例】\"todo\" action=\"create\" items=[{\"content\":\"调研依赖\",\"status\":\"completed\"},{\"content\":\"实现核心逻辑\",\"status\":\"in_progress\"},{\"content\":\"验证结果\",\"status\":\"pending\"}]",
+				"【示例】\"todo\" action=\"create\" items=[{\"content\":\"调研依赖\",\"status\":\"completed\"},{\"content\":\"实现核心逻辑\",\"status\":\"in_progress\"},{\"content\":\"验证结果\",\"status\":\"pending\"}]\n\n本工具实现版本 v1.0.0（以 tools/versions.json 台账为准）。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
