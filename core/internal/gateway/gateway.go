@@ -40,6 +40,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/modelreg"
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
+	"github.com/Mr2109/zerg-swarm/core/internal/tracectx"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -623,6 +624,35 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.Body.Close()
+
+	// 1.6 ── T1.6 传播（入站）：从请求头读 W3C traceparent ──
+	// 有则**沿用**（root=false，本跳开新 span）；无则**本侧新生成**（root=true）——绝不静默拿空串当 trace_id。
+	// 上游给了非法值 ⇒ 拒绝（不沿用）+ 生成 + 记原因（对端实现有问题是真实缺陷信号，不能吞）。
+	// 采纳结果钉到会话上（tracectx.BindSession）⇒ 本轮事件、以及往下转发给子端的那一跳都落在**同一条** trace。
+	// best-effort：拿不到随机源就只记日志，绝不因为观测/传播失败拦请求（观测面铁律①）。
+	if inTrace := tracectx.AcceptRequest(r.Header); inTrace.Trace.IsZero() {
+		log.Printf("⚠️ 传播: 入站未能拿到 trace 上下文（%v）——本轮不落传播事件", inTrace.TraceErr)
+	} else {
+		traceSession := extractSessionID(body)
+		if traceSession != "" {
+			tracectx.BindSession(traceSession, inTrace.Trace)
+		}
+		ObsTrace(ObsTraceFact{
+			Dir: "in", Session: traceSession,
+			TraceID:      inTrace.Trace.TraceID,
+			SpanID:       inTrace.Trace.SpanID,
+			ParentSpanID: traceUpstreamSpanID(inTrace),
+			ParentSource: traceParentSourceOf(inTrace),
+			Traceparent:  inTrace.Raw,
+			Baggage:      tracectx.HeaderValue(r.Header, tracectx.HeaderBaggage),
+			Root:         inTrace.Root,
+			Upstream:     inTrace.Upstream,
+			RejectReason: traceErrText(inTrace.TraceErr),
+		})
+		if inTrace.TraceErr != nil {
+			log.Printf("⚠️ 传播: 上游 traceparent 非法，已拒绝并本侧新生成（%v）", inTrace.TraceErr)
+		}
+	}
 
 	// 1.5 客户端适配器识别（路径/UA/body 格式 → codex/chat/claude/generic）
 	adp := adapter.Dispatch(r, body)

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/gateway/adapter"
+	"github.com/Mr2109/zerg-swarm/core/internal/tracectx"
 )
 
 // forwardToBackend 转发请求到子端 :8100/infer。
@@ -103,6 +104,32 @@ func (g *Gateway) forwardToBackend(
 		if value := headers.Get(header); value != "" {
 			forwardReq.Header.Set(header, value)
 		}
+	}
+
+	// ── T1.6 传播：出站到子端必须带上 W3C traceparent + baggage ──
+	// 目的（设计稿 v1.2 B16）：跨进程/跨节点这条链要能拼上 —— 主控这侧的事件、子端那侧的日志
+	// 靠同一个 trace_id 对账。三档来源（见 tracectx.SetOutbound）：① 上游请求头 ② 本会话入站已采纳的
+	// trace ③ 本侧新生成 root；三档都不动业务语义（拿不到随机源 ⇒ 一个字都不写，绝不拦转发）。
+	traceSession := extractSessionID(body)
+	traceOut := tracectx.SetOutbound(forwardReq.Header, headers, traceSession, tracectx.ReplayMarked())
+	ObsTrace(ObsTraceFact{
+		Dir: "out", Session: traceSession, Model: modelName(reqMap),
+		PeerHost: route.Host, PeerPath: "/infer",
+		TraceID:      traceOut.Trace.TraceID,
+		SpanID:       traceOut.Trace.SpanID,
+		ParentSpanID: traceOut.ParentSpanID,
+		ParentSource: traceOut.ParentSource,
+		Traceparent:  traceOut.Traceparent,
+		Baggage:      traceOut.BaggageHeader,
+		Root:         traceOut.Root,
+		Upstream:     traceOut.Upstream,
+		RejectReason: traceErrText(traceOut.Err),
+	})
+	if traceOut.BaggageErr != nil {
+		log.Printf("⚠️ 传播: baggage 未带上（%v）——traceparent 照常", traceOut.BaggageErr)
+	}
+	if traceOut.Err != nil {
+		log.Printf("⚠️ 传播: 本轮未写传播头（%v）——不影响转发", traceOut.Err)
 	}
 
 	// 发起转发请求（v2.5.4.10 模型超时覆盖——适配器声明 timeout_sec）
