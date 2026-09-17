@@ -102,6 +102,11 @@ const (
 	ReasonInvalidRequest        Reason = "invalid_request"        // 工具名为空 ⇒ 判不了
 	ReasonInvalidMode           Reason = "invalid_mode"           // 档位取值非法 ⇒ 判不了
 	ReasonEngineDisabled        Reason = "engine_disabled"        // 引擎未启用（解析失败/未注入）⇒ 判不了
+	// ── T5.8（长暂停）新增一条 ──
+	// ReasonApprovalTimeout — 工具批准的挂单**超时** ⇒ 按拒绝结算（pending.go 的 timeoutOutcome）。
+	// 它是 deny 这一侧的原因码：**超时绝不被读作同意**（没有"同意"这件事发生过），
+	// 故绝不与 ReasonRuleAllow / ReasonBypassAllow 混用。
+	ReasonApprovalTimeout Reason = "approval_timeout"
 )
 
 // ── 档位（自主阶梯）──────────────────────────────────────────────────────────
