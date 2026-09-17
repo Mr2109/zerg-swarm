@@ -20,6 +20,14 @@
 //
 //	事件名 · 时间 · 低基数结局 · slice_id / task_id · R 编号（若有）· 判据版本（无来源 ⇒ 未标定）· 可行动 detail
 //
+// ── B 项⑥（2026-09-18）：**在同一套机制上**加两件东西，事件名闭集**一个都不动** ──
+//
+//	① **升级信号闭集**（§4.7 六条逐字）+「不在闭集内必须给理由码」的校验 ⇒ `signal` / `reason_code`
+//	   两个字段 + `ValidateEscalationSignal` + `EmitSliceEscalatedSignal`（escalation_signal.go）。
+//	   **`EventNames()` 仍是四名**：信号闭集是**另一个**闭集（`signal` 的值域），不是第五个事件名。
+//	② **越片统计的聚合口径**（§4.8-2）⇒ 纯函数 `AggregateSkips` + 标定读数的两处「未标定」
+//	   （skip_aggregate.go）。**不新增事件名、不新增落点、不加第二套出口**。
+//
 // ── 硬规则（写死在代码里，由用例逐条钉住）────────────────────────────────
 //
 //	① 事件名闭集：认不出的 `event` 名一律**不落**（不猜、不产生垃圾基数）。
@@ -130,6 +138,16 @@ type Event struct {
 	R *int `json:"r,omitempty"`
 	// CriteriaVersion — 判据版本（指向规则集版本串）。**无来源 ⇒ 「未标定」**，由 Emit 兜底。
 	CriteriaVersion string `json:"criteria_version"`
+	// Signal — 升级信号（设计稿 v2.1 §4.7 的**六条闭集**之一，逐字取值；见 escalation_signal.go）。
+	// 只有 `slice_escalated` 事件带它；其它事件不带（omitempty ⇒ 字段整个不出现）。
+	//
+	// 注意：**这是第二个闭集**（`signal` 的值域），与 §6.1 的**事件名闭集**（`event` 的值域）是两回事，
+	// 互不派生、交集为空（用例钉住）。放进事件里而不另立一套观测出口：B 项⑥ 要求「扩机制不另建」。
+	Signal string `json:"signal,omitempty"`
+	// ReasonCode — 升级裁决的**理由码**（§4.7-9g 逐字：「不在枚举内的「无需升级」必须给理由码」）。
+	// 空 ⇒ 字段整个不出现。**本件不做语法校验**（稿面没给理由码的语法，登记见 escalation_signal.go）；
+	// 闭集内信号**不要求**它（带了就是补充理由），不在闭集内时**必填**（`ValidateEscalationSignal`）。
+	ReasonCode string `json:"reason_code,omitempty"`
 	// Field — 出错字段名（挂板校验用）。
 	Field string `json:"field,omitempty"`
 	// DependsOn — 声明的依赖（排障用）。
