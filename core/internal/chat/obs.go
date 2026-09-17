@@ -232,6 +232,45 @@ type ObsRecord struct {
 	// ClockISO 为空 = 未知（缺席）；RequestSeed 用指针 ⇒ 缺席（没给）与 0（真的抽到 0）可分。
 	ClockISO    string `json:"clock_iso,omitempty"`
 	RequestSeed *int64 `json:"request_seed,omitempty"`
+
+	// ── T6.1 对外对齐（OTel GenAI 语义约定的标准字段）──
+	// 键名**逐字**用 semconv 点分名；映射表与全部口径见 obs_semconv.go（改这里先读它的文件头）：
+	//  ① **只对齐，不冒充**：`gen_ai.*` / `error.type` / `server.*` 只放规范里真有的名字；
+	//     我们自造的（semconv 版本 / 捕获档位 / 标准 span 名 / 四终局 / verdict）一律 `zerg.*`；
+	//  ② **拿不到就缺席**（conversation.id 不许用新 UUID/trace_id/内容 hash 兜底；server 拿不到不写）；
+	//  ③ **只 true 不得设 false**：conversation.compacted 显式 false 会在唯一写入口被剥掉。
+	GenAIOperationName         string   `json:"gen_ai.operation.name,omitempty"`               // 建 span 时给（sampling-relevant）
+	GenAIProviderName          string   `json:"gen_ai.provider.name,omitempty"`                // 自研集群 ⇒ 自定义值 zerg.local
+	GenAIRequestModel          string   `json:"gen_ai.request.model,omitempty"`                // 只落推理类记录（agent span 不许写死 —— B3）
+	GenAIRequestStream         *bool    `json:"gen_ai.request.stream,omitempty"`               // 证据：收到过流式分块才算流式
+	GenAIRequestReasoningLevel string   `json:"gen_ai.request.reasoning.level,omitempty"`      // 与请求体同源（reasoning.effort）
+	GenAIResponseStatus        string   `json:"gen_ai.response.status,omitempty"`              // queued/in_progress/completed/incomplete/failed/cancelled
+	GenAIResponseTTFC          *float64 `json:"gen_ai.response.time_to_first_chunk,omitempty"` // 秒；首字节闸的标准落点
+	GenAIUsageInputTokens      *int     `json:"gen_ai.usage.input_tokens,omitempty"`           // 计费口径；上游不给 ⇒ 缺席
+	GenAIUsageOutputTokens     *int     `json:"gen_ai.usage.output_tokens,omitempty"`
+	GenAIUsageReasoningTokens  *int     `json:"gen_ai.usage.reasoning.output_tokens,omitempty"` // 思考 token（不是字符数）
+	GenAIConversationID        string   `json:"gen_ai.conversation.id,omitempty"`               // 有会话才有；不编造
+	GenAIConversationCompacted *bool    `json:"gen_ai.conversation.compacted,omitempty"`        // **只 true**
+	GenAIToolName              string   `json:"gen_ai.tool.name,omitempty"`
+	GenAIToolType              string   `json:"gen_ai.tool.type,omitempty"`        // function/extension/datastore；未登记 ⇒ 缺席
+	GenAIToolDescription       string   `json:"gen_ai.tool.description,omitempty"` // 查得到才落
+	GenAIToolCallID            string   `json:"gen_ai.tool.call.id,omitempty"`     // model 侧 tool_call ↔ 执行侧 span 的对接键
+	GenAIPromptName            string   `json:"gen_ai.prompt.name,omitempty"`
+	GenAIPromptVersion         string   `json:"gen_ai.prompt.version,omitempty"`
+	GenAIOutputType            string   `json:"gen_ai.output.type,omitempty"` // text/json/image/speech
+	ErrorType                  string   `json:"error.type,omitempty"`         // **Stable**；每个出错 span 都要（低基数）
+	ServerAddress              string   `json:"server.address,omitempty"`     // **Stable**；多节点定位
+	ServerPort                 *int     `json:"server.port,omitempty"`
+
+	// ── 自造字段（规范里**没有**对应项 ⇒ 一律 zerg.* 命名空间，绝不伪装 `gen_ai.*`）──
+	ZergSemconvVersion  string `json:"zerg.semconv.version"` // 对齐基准（常量；升级做字段兼容检查 —— B15）
+	ZergSemconvCommit   string `json:"zerg.semconv.commit"`
+	ZergCaptureLevel    string `json:"zerg.capture.level,omitempty"` // 我们四档（标准开关生效时**缺席**）
+	ZergCaptureStd      string `json:"zerg.capture.std"`             // 生效的标准枚举（内容类属性的总闸）
+	ZergCaptureFallback bool   `json:"zerg.capture.fallback,omitempty"`
+	ZergOTelSpanName    string `json:"zerg.span.name,omitempty"` // 本记录对应的标准 span 名（映射表算出）
+	ZergTerminal        string `json:"zerg.terminal,omitempty"`  // 四终局（B12：留在 zerg.*）
+	ZergVerdict         string `json:"zerg.verdict,omitempty"`   // 判卡结论（B12：留在 zerg.*）
 }
 
 var obsMu sync.Mutex
@@ -395,6 +434,7 @@ func (r *ObsRecord) fillTraceSkeleton() {
 // obsWrite — 追加一行 JSONL（best-effort：失败只记日志，绝不外抛、绝不 panic）
 func obsWrite(rec ObsRecord) {
 	rec.fillTraceSkeleton() // T1.1：唯一写入口补骨架 ⇒ 每条记录都带 trace/span/parent（有会话时）
+	rec.fillSemconv()       // T6.1/T6.2：唯一写入口补标准字段 ⇒ error.type/semconv 版本/会话/工具/状态**构造性**成立
 	rec.TS = time.Now().Format(time.RFC3339)
 	b, err := json.Marshal(rec)
 	if err != nil {
@@ -470,6 +510,9 @@ type ObsTimer struct {
 	// T3.5 时钟与种子：本轮请求的制度化身份（零值 = 调用方没给 ⇒ 记录里字段缺席，不编造）
 	identity RequestIdentity
 	hasIdent bool
+
+	// T6.2 token 用量（gen_ai.usage.*）：0 = 上游没给 ⇒ 记录里**缺席**（不写 0 顶替）
+	usageIn, usageOut, usageReasoning int
 }
 
 // NewObsTimer — 建一个轮次计时器（T1.1：同会话 trace 不变、每轮新开 span、parent 指上一轮/会话根）
@@ -534,6 +577,17 @@ func (t *ObsTimer) SetErrText(e string) {
 func (t *ObsTimer) SetGeometry(g *infergeom.Geometry) {
 	if t != nil {
 		t.geometry = g
+	}
+}
+
+// SetUsage — T6.2：本轮大模型调用的 token 用量（gen_ai.usage.* 的标准落点）。
+//
+// 口径（写死）：**>0 才落**——上游不给 usage 时调用方拿到的是 0，与"上游真的报了 0 token"
+// 在本进程**不可分** ⇒ 宁可字段缺席，也不写 0 顶替（与 T1.4 几何同纪律；口径②拿不到就缺席）。
+// reasoning 是**思考 token 数**（gen_ai.usage.reasoning.output_tokens），不是思考字符数。
+func (t *ObsTimer) SetUsage(in, out, reasoning int) {
+	if t != nil {
+		t.usageIn, t.usageOut, t.usageReasoning = in, out, reasoning
 	}
 }
 
@@ -637,6 +691,31 @@ func (t *ObsTimer) Finish(endReason string) {
 		seed := t.identity.Seed
 		rec.RequestSeed = &seed
 	}
+	// T6.2 token 用量：>0 才落（上游不给 ⇒ 缺席，不写 0 顶替）——计费口径
+	if t.usageIn > 0 {
+		v := t.usageIn
+		rec.GenAIUsageInputTokens = &v
+	}
+	if t.usageOut > 0 {
+		v := t.usageOut
+		rec.GenAIUsageOutputTokens = &v
+	}
+	if t.usageReasoning > 0 {
+		v := t.usageReasoning
+		rec.GenAIUsageReasoningTokens = &v
+	}
+	// T6.2 流式与 TTFC（B12）：
+	//  · gen_ai.request.stream —— 规范：未设置即被假定非流式；**证据**口径：收到过分块才算流式；
+	//  · gen_ai.response.time_to_first_chunk —— 秒（double），首字节相对**请求起点**；
+	//    0（瞬时）是有效测量值（指针 ⇒ 照样落盘，不被 omitempty 抹掉）。
+	if t.chunks > 0 {
+		yes := true
+		rec.GenAIRequestStream = &yes
+		if !t.firstByte.IsZero() {
+			sec := t.firstByte.Sub(t.start).Seconds()
+			rec.GenAIResponseTTFC = &sec
+		}
+	}
 	obsWrite(rec)
 }
 
@@ -683,15 +762,23 @@ func obsCompact(session string, cause string, in, out, summaryChars int, d time.
 }
 
 // ObsTool — OBS-3：工具轮次一行（durText 用 ToolTrace 原生的耗时文本）
-func ObsTool(session string, round int, tool string, durText string, ok bool, rounds, max int) {
+//
+// callID（**可选**，T6.2）：model 侧 tool_call 的 id ⇒ 落 gen_ai.tool.call.id ——
+// 这是把「模型想调的工具」与「执行侧的 span」对上号的唯一标准键。用可变参数是为了**不改既有调用方**；
+// 不传 = 拿不到 ⇒ 键缺席（不编造 id 兜底）。
+func ObsTool(session string, round int, tool string, durText string, ok bool, rounds, max int, callID ...string) {
 	res := "ok"
 	if !ok {
 		res = "err"
 	}
-	obsWrite(ObsRecord{
+	rec := ObsRecord{
 		Kind: "tool", Session: session, Round: round, Tool: tool,
 		DurText: durText, Result: res, ToolRounds: rounds, ToolMax: max,
-	})
+	}
+	if len(callID) > 0 && callID[0] != "" {
+		rec.GenAIToolCallID = callID[0]
+	}
+	obsWrite(rec)
 }
 
 // ── T1.2 工具调用判定（允许/拒绝 + 原因）：事件名与落盘入口 ──

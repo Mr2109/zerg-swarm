@@ -32,12 +32,23 @@ type ChatInfer struct {
 
 // NewChatInfer — 创建推理器
 func NewChatInfer(gatewayURL, authToken string) *ChatInfer {
+	// T6.2（B11）：把我们**实际拨号**的对端登记到观测面 ⇒ 每条推理记录的 server.address/server.port
+	// （Stable + sampling-relevant，多节点本地集群区分节点的标准位置）。只写一个变量，best-effort，
+	// 不影响任何转发语义；网关**之后**的真实推理节点在本进程不可知 ⇒ 不猜（见 obs_semconv.go）。
+	ObsSetInferEndpoint(gatewayURL)
 	return &ChatInfer{
 		GatewayURL: gatewayURL,
 		AuthToken:  authToken,
 		client:     &http.Client{Timeout: 120 * time.Second},
 	}
 }
+
+// reasoningEffortChat — 对话推理的思考深度（Mr2109 定 low；**思考不能关**）。
+//
+// 这个常量是**两处同源**的关键：它既进发给 provider 的请求体（reasoning.effort），
+// 又经 obs_semconv.go 落成 `gen_ai.request.reasoning.level`（规范：值 SHOULD 是发给 provider 的
+// 原始字符串）⇒ 改这里就同时改了两边，观测面**永远**不会与请求体漂移。
+const reasoningEffortChat = "low"
 
 // InferResult — 推理结果（思考 + 正文分离——Hermes/Claude 式）
 type InferResult struct {
@@ -87,8 +98,8 @@ func (c *ChatInfer) Infer(ctx context.Context, model string, sysPrompt string, m
 	body := map[string]any{
 		"model":     model,
 		"messages":  msgsAll,
-		"stream":    false,                           // C3 流式走 InferStream——这里保持非流式（C2 兼容）
-		"reasoning": map[string]any{"effort": "low"}, // 思考不能关——low 控深度（Mr2109）
+		"stream":    false,                                         // C3 流式走 InferStream——这里保持非流式（C2 兼容）
+		"reasoning": map[string]any{"effort": reasoningEffortChat}, // 思考不能关——low 控深度（Mr2109）
 	}
 	// 批次B(2026-09-10): 带 session_id → 网关 LLMLingua 压缩 + 粘性前缀缓存对对话生效
 	if sid := SessionIDFromCtx(ctx); sid != "" {
@@ -186,7 +197,7 @@ func (c *ChatInfer) InferStream(ctx context.Context, model string, sysPrompt str
 		"model":     model,
 		"messages":  msgsAll,
 		"stream":    true,
-		"reasoning": map[string]any{"effort": "low"},
+		"reasoning": map[string]any{"effort": reasoningEffortChat},
 	}
 	// 批次B(2026-09-10): 带 session_id（同 Infer——粘性缓存/LLMLingua 对对话生效）
 	if sid := SessionIDFromCtx(ctx); sid != "" {
