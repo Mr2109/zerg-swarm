@@ -216,8 +216,10 @@ func TestParsePlanJSONTruncatedSalvage(t *testing.T) {
 
 // TestPlanCache — S11b: 计划缓存存取+检索
 func TestPlanCache(t *testing.T) {
-	// 清环境
-	os.RemoveAll("/tmp/zerg-plan-templates")
+	// 隔离（2026-09-18 批 B-1）: 原「清环境」直接 os.RemoveAll("/tmp/zerg-plan-templates") ——
+	// 那是真机旧目录（旧版本攒下的计划模板，只读保留不搬口径下不得删）。
+	// 改为显式覆盖到临时目录 + 旧目录指不存在路径：写/读都只走隔离路径，且不复旧目录。
+	setPlanTemplateDirs(t, t.TempDir(), filepath.Join(t.TempDir(), "legacy-plan-templates-missing"))
 	desc := "在工作区创建 calc.go 实现 Add 函数。然后创建 calc_test.go 测试 Add。最后写报告 internal-task-report.md。"
 	plan := &Plan{Steps: []Step{
 		{ID: "A", Goal: "写 calc.go", Produces: []string{"calc.go"}},
