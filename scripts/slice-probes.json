@@ -1,7 +1,7 @@
 {
   "_note": "切片判据检查器的探针集（§3.6：≥10 条含糊/违规 + ≥10 条合法，含边界）。分类标签写在本文件里（`expect` + `expect_rules` + `class`）。`expect` 只能取 red | green | recursion | error 四值：recursion = R7 超限判「需递归」（不打回）；error = strict 违约（未知规则键 / 未登记禁用）⇒ rc=2 不给结论。`expect_rules` = 该条**必须**命中的规则编号（断言用；多命中不报错，少命中即假绿）。",
   "_thresholds": "条数门槛与假红上限由标定档案 `~/.zerg/egg-profiles/task-budget-calib.yaml` 的 probe_* 键给出；档案无这些键 ⇒ 用检查器登记默认（含糊/违规 ≥10 · 合法 ≥10 · 假红率 ≤10%）并打印。",
-  "_source": "docs/01-设计/切片合同-模板.md（共同规则表：§1 字段表 + §2 冲突优先级 + §3.3 继承四条 + §3.4 R0–R13）",
+  "_source": "../Zerg-内部文档/01-设计/切片合同-模板.md（共同规则表：§1 字段表 + §2 冲突优先级 + §3.3 继承四条 + §3.4 R0–R13）",
   "schema_version": "1.0",
   "probes": [
     {
@@ -12,23 +12,23 @@
       "why": "模板 §5 的正例片（抬头 BCP 14 固定句那一片）：照抄结构必须全绿（镜子不是恒红）",
       "slice": {
         "defect_id": "DEF-20260918-S3-01",
-        "landing": "docs/01-设计/切片合同-模板.md:1",
-        "the_one_thing": "When 模板骨架已落盘（S3-C0 完成）时，docs/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:1",
+        "the_one_thing": "When 模板骨架已落盘（S3-C0 完成）时，../Zerg-内部文档/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
         "context_needed": [
           {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释（BCP 14 = RFC 2119 + RFC 8174；RFC 8174 逐字：only UPPERCASE usage of the key words have the defined special meanings）。"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"},
-          {"kind": "cmd", "value": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'only UPPERCASE usage of the key words'"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"},
+          {"kind": "cmd", "value": "awk '/^## 0\\./,/^## 1\\./' ../Zerg-内部文档/01-设计/切片合同-模板.md | grep -c 'only UPPERCASE usage of the key words'"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'only UPPERCASE usage of the key words'", "expect": "1", "state": "改动前：红（骨架版 §0 无该句 ⇒ 输出 0，rc=1）｜落盘后：绿（实跑 = 1）"},
-          {"id": "C2", "cmd": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'MUST/SHOULD/MAY 按 BCP 14 解释'", "expect": "1", "state": "改动前：红（输出 0）｜落盘后：绿（实跑 = 1）"},
-          {"id": "C3", "cmd": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'BCP 14 subseries contains 2 RFCs'", "expect": "1", "state": "改动前：红（输出 0）｜落盘后：绿（实跑 = 1）"}
+          {"id": "C1", "cmd": "awk '/^## 0\\./,/^## 1\\./' ../Zerg-内部文档/01-设计/切片合同-模板.md | grep -c 'only UPPERCASE usage of the key words'", "expect": "1", "state": "改动前：红（骨架版 §0 无该句 ⇒ 输出 0，rc=1）｜落盘后：绿（实跑 = 1）"},
+          {"id": "C2", "cmd": "awk '/^## 0\\./,/^## 1\\./' ../Zerg-内部文档/01-设计/切片合同-模板.md | grep -c 'MUST/SHOULD/MAY 按 BCP 14 解释'", "expect": "1", "state": "改动前：红（输出 0）｜落盘后：绿（实跑 = 1）"},
+          {"id": "C3", "cmd": "awk '/^## 0\\./,/^## 1\\./' ../Zerg-内部文档/01-设计/切片合同-模板.md | grep -c 'BCP 14 subseries contains 2 RFCs'", "expect": "1", "state": "改动前：红（输出 0）｜落盘后：绿（实跑 = 1）"}
         ],
         "gate_cmds": [
-          {"cmd": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'only UPPERCASE usage of the key words'", "expect": {"exit": 0, "stdout": "1"}},
-          {"cmd": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'MUST/SHOULD/MAY 按 BCP 14 解释'", "expect": {"exit": 0, "stdout": "1"}},
-          {"cmd": "awk '/^## 0\\./,/^## 1\\./' docs/01-设计/切片合同-模板.md | grep -c 'BCP 14 subseries contains 2 RFCs'", "expect": {"exit": 0, "stdout": "1"}}
+          {"cmd": "awk '/^## 0\\./,/^## 1\\./' ../Zerg-内部文档/01-设计/切片合同-模板.md | grep -c 'only UPPERCASE usage of the key words'", "expect": {"exit": 0, "stdout": "1"}},
+          {"cmd": "awk '/^## 0\\./,/^## 1\\./' ../Zerg-内部文档/01-设计/切片合同-模板.md | grep -c 'MUST/SHOULD/MAY 按 BCP 14 解释'", "expect": {"exit": 0, "stdout": "1"}},
+          {"cmd": "awk '/^## 0\\./,/^## 1\\./' ../Zerg-内部文档/01-设计/切片合同-模板.md | grep -c 'BCP 14 subseries contains 2 RFCs'", "expect": {"exit": 0, "stdout": "1"}}
         ],
         "output_format": "① 正控（改动后）：C1/C2/C3 各跑一次，贴命令 + 原始输出 + 退出码（实跑：三条各 1）；② 负控（改动前必红）：把抬头那句改坏后重跑同三条命令，必须红（已实跑：三条的作用域计数由 1 变 0，rc=1）；③ 牙齿计数：C1/C2/C3 = 3/3 条都由绿变红；④ 还原：负控在副本上做，不动工作树原件，还原后原件 sha 逐字节一致。",
         "exit_cond": {
@@ -37,7 +37,7 @@
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码", "原文", "时间"]}
         },
         "hard_limits": [
-          "① 只改 docs/01-设计/切片合同-模板.md 一个文件（R7 默认单文件粒度）",
+          "① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件（R7 默认单文件粒度）",
           "② 不改 v2.1 稿、不改 scripts/、不动 git、不删除任何文件",
           "③ 不新增 v2.1 之外的规则或数字"
         ],
@@ -126,24 +126,24 @@
       "why": "一片只绑一个 defect_id（R1）：逗号分隔两个 id ⇒ 两名两体",
       "slice": {
         "defect_id": "DEF-20260918-07, DEF-20260918-09",
-        "landing": "docs/01-设计/切片合同-模板.md:41",
-        "the_one_thing": "When 模板已落盘时，docs/01-设计/切片合同-模板.md 的 §1 表必须补一行。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:41",
+        "the_one_thing": "When 模板已落盘时，../Zerg-内部文档/01-设计/切片合同-模板.md 的 §1 表必须补一行。",
         "context_needed": [
           {"kind": "snippet", "value": "| `depends_on` | invariant | 是 | 列表 / 「无」 | **可拓扑排序且无环**（R8）"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c '可拓扑排序且无环' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+          {"id": "C1", "cmd": "grep -c '可拓扑排序且无环' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c '可拓扑排序且无环' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+        "gate_cmds": [{"cmd": "grep -c '可拓扑排序且无环' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 1 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码、原始输出",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -165,20 +165,20 @@
         "the_one_thing": "When 模板落盘后，模板的 §1 表必须补一行字段。",
         "context_needed": [
           {"kind": "snippet", "value": "| `hard_limits` | invariant | 是 | 列表 | 非空且非占位（R5）"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c '非空且非占位' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+          {"id": "C1", "cmd": "grep -c '非空且非占位' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c '非空且非占位' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+        "gate_cmds": [{"cmd": "grep -c '非空且非占位' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 1 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -200,13 +200,13 @@
         "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板-v9.md 的抬头必须写明 BCP 14 固定句。",
         "context_needed": [
           {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+          {"id": "C1", "cmd": "grep -c 'BCP 14' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+        "gate_cmds": [{"cmd": "grep -c 'BCP 14' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑：由 1 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
@@ -231,22 +231,22 @@
       "why": "R3 三件套（命令/期望输出/红绿）全缺 + R4 主观词「效果良好」（未附改写建议则不算有效报红）",
       "slice": {
         "defect_id": "DEF-20260918-S3-13",
-        "landing": "docs/01-设计/切片合同-模板.md:32",
-        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 criteria 行必须给出三件套。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:32",
+        "the_one_thing": "When 模板落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的 criteria 行必须给出三件套。",
         "context_needed": [
           {"kind": "snippet", "value": "| `criteria` | post | 是 | 列表，每项 = **三件套** |"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": "自测通过，效果良好",
-        "gate_cmds": [{"cmd": "grep -c '三件套' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "3"}}],
+        "gate_cmds": [{"cmd": "grep -c '三件套' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "3"}}],
         "output_format": "① 正控：实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉三件套那句后重跑，必须红（已实跑：由 3 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -264,17 +264,17 @@
       "why": "R5 空壳检测：hard_limits = []（未替换的 `[]` 形态）+ output_format 命中登记占位词「按惯例」；另缺 context_budget ⇒ R11",
       "slice": {
         "defect_id": "DEF-20260918-S3-14",
-        "landing": "docs/01-设计/切片合同-模板.md:36",
-        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 hard_limits 行必须写明不变量。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:36",
+        "the_one_thing": "When 模板落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的 hard_limits 行必须写明不变量。",
         "context_needed": [
           {"kind": "snippet", "value": "| `hard_limits` | invariant | 是 | 列表 | 非空且非占位（R5）"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'hard_limits' docs/01-设计/切片合同-模板.md", "expect": "6", "state": "改动前：绿（实跑 = 6）"}
+          {"id": "C1", "cmd": "grep -c 'hard_limits' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "6", "state": "改动前：绿（实跑 = 6）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c 'hard_limits' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "6"}}],
+        "gate_cmds": [{"cmd": "grep -c 'hard_limits' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "6"}}],
         "output_format": "按惯例",
         "exit_cond": {
           "success": ["C1"],
@@ -298,15 +298,15 @@
       "why": "R6：一条无 expect；另一条只给 exit 期望而命令是登记过的假绿形态（gofmt -l 列出文件仍 exit 0）",
       "slice": {
         "defect_id": "DEF-20260918-S3-15",
-        "landing": "docs/01-设计/切片合同-模板.md:33",
-        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 gate_cmds 行必须每条带 expect。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:33",
+        "the_one_thing": "When 模板落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的 gate_cmds 行必须每条带 expect。",
         "context_needed": [
           {"kind": "snippet", "value": "| `gate_cmds` | post | 是 | `[{cmd, expect}]` | **可解析且每条带 expect**（R6）"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c '每条带 expect' docs/01-设计/切片合同-模板.md", "expect": "2", "state": "改动前：绿（实跑 = 2）"}
+          {"id": "C1", "cmd": "grep -c '每条带 expect' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "2", "state": "改动前：绿（实跑 = 2）"}
         ],
         "gate_cmds": [
           {"cmd": "gofmt -l ."},
@@ -318,7 +318,7 @@
           "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -336,20 +336,20 @@
       "why": "R12：成功/失败/升级三项全缺（自由文本）；R5：命中登记占位词「做完为止」",
       "slice": {
         "defect_id": "DEF-20260918-S3-16",
-        "landing": "docs/01-设计/切片合同-模板.md:35",
-        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 exit_cond 行必须写成结构化三项。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:35",
+        "the_one_thing": "When 模板落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的 exit_cond 行必须写成结构化三项。",
         "context_needed": [
           {"kind": "snippet", "value": "| `exit_cond` | post | 是 | 结构化三项 |"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'exit_cond' docs/01-设计/切片合同-模板.md", "expect": "5", "state": "改动前：绿（实跑 = 5）"}
+          {"id": "C1", "cmd": "grep -c 'exit_cond' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "5", "state": "改动前：绿（实跑 = 5）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c 'exit_cond' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "5"}}],
+        "gate_cmds": [{"cmd": "grep -c 'exit_cond' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "5"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 5 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": "做完为止",
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -367,24 +367,24 @@
       "why": "§1 invariant 栏：side_effects 不在 {只读,写工作树,触网,git 写,删除} 枚举内，且表外字段 escalate_if 缺失；同时「看情况」是登记占位词 ⇒ R5",
       "slice": {
         "defect_id": "DEF-20260918-S3-17",
-        "landing": "docs/01-设计/切片合同-模板.md:37",
-        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 side_effects 行必须取枚举之一。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:37",
+        "the_one_thing": "When 模板落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的 side_effects 行必须取枚举之一。",
         "context_needed": [
           {"kind": "snippet", "value": "| `side_effects` | invariant | 是 | 枚举之一 |"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'side_effects' docs/01-设计/切片合同-模板.md", "expect": "9", "state": "改动前：绿（实跑 = 9）"}
+          {"id": "C1", "cmd": "grep -c 'side_effects' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "9", "state": "改动前：绿（实跑 = 9）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c 'side_effects' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "9"}}],
+        "gate_cmds": [{"cmd": "grep -c 'side_effects' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "9"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 9 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "看情况",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
         "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
@@ -401,24 +401,24 @@
       "why": "R0：句式套得上但⟨单一动作⟩段含三个动词（重构/跑/…）⇒ 只含一个动词不成立",
       "slice": {
         "defect_id": "DEF-20260918-S3-18",
-        "landing": "docs/01-设计/切片合同-模板.md:43",
-        "the_one_thing": "When 模板已落盘时，docs/01-设计/切片合同-模板.md 的抬头必须重构模板并同步检查器并跑一遍门禁。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:43",
+        "the_one_thing": "When 模板已落盘时，../Zerg-内部文档/01-设计/切片合同-模板.md 的抬头必须重构模板并同步检查器并跑一遍门禁。",
         "context_needed": [
           {"kind": "snippet", "value": "| `the_one_thing` | **表外**（R0 的判据对象）| 是 | 一句话 |"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'the_one_thing' docs/01-设计/切片合同-模板.md", "expect": "3", "state": "改动前：绿（实跑 = 3）"}
+          {"id": "C1", "cmd": "grep -c 'the_one_thing' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "3", "state": "改动前：绿（实跑 = 3）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c 'the_one_thing' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "3"}}],
+        "gate_cmds": [{"cmd": "grep -c 'the_one_thing' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "3"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 3 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -436,24 +436,24 @@
       "why": "R0：无 When/While ⟨条件⟩（正面句式套不上）⇒ 判红，与多动词是两条独立原因码",
       "slice": {
         "defect_id": "DEF-20260918-S3-19",
-        "landing": "docs/01-设计/切片合同-模板.md:43",
-        "the_one_thing": "docs/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:43",
+        "the_one_thing": "../Zerg-内部文档/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
         "context_needed": [
           {"kind": "snippet", "value": "| `the_one_thing` | **表外**（R0 的判据对象）| 是 | 一句话 |"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'the_one_thing' docs/01-设计/切片合同-模板.md", "expect": "3", "state": "改动前：绿（实跑 = 3）"}
+          {"id": "C1", "cmd": "grep -c 'the_one_thing' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "3", "state": "改动前：绿（实跑 = 3）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c 'the_one_thing' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "3"}}],
+        "gate_cmds": [{"cmd": "grep -c 'the_one_thing' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "3"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 3 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -471,21 +471,21 @@
       "why": "R10 自包含性：把设计稿当上下文（无设计稿就复现不出）+ 无落点原文片段；R4：含糊词「设计稿」",
       "slice": {
         "defect_id": "DEF-20260918-S3-20",
-        "landing": "docs/01-设计/切片合同-模板.md:30",
-        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 context_needed 行必须带落点原文片段。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:30",
+        "the_one_thing": "When 模板落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的 context_needed 行必须带落点原文片段。",
         "context_needed": ["见设计稿", "context_needed 的最小集"],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'context_needed' docs/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
+          {"id": "C1", "cmd": "grep -c 'context_needed' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c 'context_needed' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
+        "gate_cmds": [{"cmd": "grep -c 'context_needed' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 4 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -503,24 +503,24 @@
       "why": "§1 invariant：budget 必须给标定出处（无出处的常数判红）；R4：含糊词「大概」",
       "slice": {
         "defect_id": "DEF-20260918-S3-21",
-        "landing": "docs/01-设计/切片合同-模板.md:38",
-        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 budget 行必须写明标定出处。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:38",
+        "the_one_thing": "When 模板落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的 budget 行必须写明标定出处。",
         "context_needed": [
           {"kind": "snippet", "value": "| `budget` | invariant | 是 | 数值 + **标定出处** |"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'budget' docs/01-设计/切片合同-模板.md", "expect": "9", "state": "改动前：绿（实跑 = 9）"}
+          {"id": "C1", "cmd": "grep -c 'budget' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "9", "state": "改动前：绿（实跑 = 9）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c 'budget' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "9"}}],
+        "gate_cmds": [{"cmd": "grep -c 'budget' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "9"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 9 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": "大概 1 小时",
@@ -538,24 +538,24 @@
       "why": "R4 可选词层（can·may·可选）：BCP 14 只认全大写关键词，小写 must/should 不计入机器判据 ⇒ 模糊承诺必须判红",
       "slice": {
         "defect_id": "DEF-20260918-S3-22",
-        "landing": "docs/01-设计/切片合同-模板.md:15",
-        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:15",
+        "the_one_thing": "When 模板落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
         "context_needed": [
           {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
+          {"id": "C1", "cmd": "grep -c 'BCP 14' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
+        "gate_cmds": [{"cmd": "grep -c 'BCP 14' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
         "output_format": "输出可以按惯例贴日志；① 正控实跑；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -573,27 +573,27 @@
       "why": "R11 两条顺序断言：context_needed 首条不是落点原文片段；criteria 的键序排在 output_format/exit_cond 等之后（长上下文 U 型曲线 ⇒ 片段与判据必须固定放最前）",
       "slice": {
         "defect_id": "DEF-20260918-S3-23",
-        "landing": "docs/01-设计/切片合同-模板.md:31",
-        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的 criteria 行必须固定放最前。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:31",
+        "the_one_thing": "When 模板落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的 criteria 行必须固定放最前。",
         "context_needed": [
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"},
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"},
           {"kind": "snippet", "value": "| `criteria` | post | 是 | 列表，每项 = **三件套** |"}
         ],
         "open_questions": "无",
-        "gate_cmds": [{"cmd": "grep -c 'criteria' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "9"}}],
+        "gate_cmds": [{"cmd": "grep -c 'criteria' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "9"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 9 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "输出与期望不符 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
         "atomicity": "落在执行者标定技能/门禁闭包内，且 criteria 可在一次调用内判定（一条 grep）",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'criteria' docs/01-设计/切片合同-模板.md", "expect": "9", "state": "改动前：绿（实跑 = 9）"}
+          {"id": "C1", "cmd": "grep -c 'criteria' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "9", "state": "改动前：绿（实跑 = 9）"}
         ],
         "slice_id": "S3-C23",
         "depends_on": "无",
@@ -608,11 +608,11 @@
       "why": "§2 冲突优先级：criteria 要求全量 go test ./... 必须绿，而 budget 给了数值上界 ⇒ 潜在冲突必须有 CONFLICT 标记，有冲突却未标记 ⇒ 判红（且不得自行裁量）",
       "slice": {
         "defect_id": "DEF-20260918-S3-24",
-        "landing": "docs/01-设计/切片合同-模板.md:57",
-        "the_one_thing": "When 模板落盘后，docs/01-设计/切片合同-模板.md 的优先级行必须写明冲突优先级。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:57",
+        "the_one_thing": "When 模板落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的优先级行必须写明冲突优先级。",
         "context_needed": [
           {"kind": "snippet", "value": "**优先级**：`hard_limits` > `criteria` > `output_format` > `budget`"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
@@ -625,7 +625,7 @@
           "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码、原始输出",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "只读",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "wall_s_max 43.6", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -682,20 +682,20 @@
         "the_one_thing": "When 模板落盘时，模板那边的抬头必须写明 BCP 14 固定句。",
         "context_needed": [
           {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
+          {"id": "C1", "cmd": "grep -c 'BCP 14' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
+        "gate_cmds": [{"cmd": "grep -c 'BCP 14' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑：由 4 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -713,24 +713,24 @@
       "why": "strict 等价（§3.5：未知规则键＝错误）：片里出现 R0–R13 之外的键 ⇒ 报错 rc=2，**不给结论**（不是判红）",
       "slice": {
         "defect_id": "DEF-20260918-S3-27",
-        "landing": "docs/01-设计/切片合同-模板.md:1",
-        "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:1",
+        "the_one_thing": "When 模板落盘时，../Zerg-内部文档/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
         "context_needed": [
           {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
+          {"id": "C1", "cmd": "grep -c 'BCP 14' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
+        "gate_cmds": [{"cmd": "grep -c 'BCP 14' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -749,24 +749,24 @@
       "why": "§3.5：禁用任何规则必须显式登记并打印 ⇒ 片内 `rules` 段想关掉 R2（未登记）⇒ 报错 rc=2",
       "slice": {
         "defect_id": "DEF-20260918-S3-28",
-        "landing": "docs/01-设计/切片合同-模板.md:1",
-        "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:1",
+        "the_one_thing": "When 模板落盘时，../Zerg-内部文档/01-设计/切片合同-模板.md 的抬头必须写明 BCP 14 固定句。",
         "context_needed": [
           {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
+          {"id": "C1", "cmd": "grep -c 'BCP 14' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c 'BCP 14' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
+        "gate_cmds": [{"cmd": "grep -c 'BCP 14' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -827,24 +827,24 @@
       "why": "R5 逐字：未决**必须写成 NEEDS-CLARIFICATION**（不得留空、不得留 `[]`/`<>`）⇒ 这样写是合法的，不是空壳",
       "slice": {
         "defect_id": "DEF-20260918-S5-02",
-        "landing": "docs/01-设计/切片合同-模板.md:30",
-        "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的 context_needed 行必须写明落点片段。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:30",
+        "the_one_thing": "When 模板落盘时，../Zerg-内部文档/01-设计/切片合同-模板.md 的 context_needed 行必须写明落点片段。",
         "context_needed": [
           {"kind": "snippet", "value": "| `context_needed` | pre | 是 | 列表（文件 / 符号 / 原文片段）|"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": ["上下文上界是否 2000 token 够用？"],
         "criteria": [
-          {"id": "C1", "cmd": "grep -c 'context_needed' docs/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
+          {"id": "C1", "cmd": "grep -c 'context_needed' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "4", "state": "改动前：绿（实跑 = 4）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c 'context_needed' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
+        "gate_cmds": [{"cmd": "grep -c 'context_needed' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "4"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑：由 4 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码", "原文", "时间"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "NEEDS-CLARIFICATION", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml（缺此行则记未标定，不猜）"},
@@ -862,24 +862,24 @@
       "why": "§2 的正向路径：criteria 是全量命令而 budget 有上界 ⇒ 已显式标 CONFLICT（哪两个字段、冲突在哪一句）⇒ 合法（标记不是解决，是交回上游）",
       "slice": {
         "defect_id": "DEF-20260918-S5-03",
-        "landing": "docs/01-设计/切片合同-模板.md:55",
-        "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的优先级行必须写明冲突优先级。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:55",
+        "the_one_thing": "When 模板落盘时，../Zerg-内部文档/01-设计/切片合同-模板.md 的优先级行必须写明冲突优先级。",
         "context_needed": [
           {"kind": "snippet", "value": "**优先级**：`hard_limits` > `criteria` > `output_format` > `budget`"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c '硬界限' docs/01-设计/切片合同-模板.md", "expect": "0", "state": "改动前：绿（实跑 = 0，rc=1 属期望输出非退出码判据）"}
+          {"id": "C1", "cmd": "grep -c '硬界限' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "0", "state": "改动前：绿（实跑 = 0，rc=1 属期望输出非退出码判据）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c '优先级' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "2"}}],
+        "gate_cmds": [{"cmd": "grep -c '优先级' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "2"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：把优先级那句删掉后重跑，必须红（已实跑：由 2 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "只读",
         "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "wall_s_max 43.6", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -936,25 +936,25 @@
       "why": "R11 顺序断言的合法侧：landing 片段在 context_needed 首条、criteria 键序在 post/invariant 其他字段之前",
       "slice": {
         "defect_id": "DEF-20260918-S5-05",
-        "landing": "docs/01-设计/设计-协作骨架-v2.1.md:150",
-        "the_one_thing": "When 模板落盘时，docs/01-设计/设计-协作骨架-v2.1.md 的 §3.4 抬头必须写明判据口径。",
+        "landing": "../Zerg-内部文档/01-设计/设计-协作骨架-v2.1.md:150",
+        "the_one_thing": "When 模板落盘时，../Zerg-内部文档/01-设计/设计-协作骨架-v2.1.md 的 §3.4 抬头必须写明判据口径。",
         "context_needed": [
           {"kind": "snippet", "value": "### 3.4 机器判据 **R0–R13**（B §2.4；执行前只做句法与状态事实）"},
-          {"kind": "file", "value": "docs/01-设计/设计-协作骨架-v2.1.md"},
-          {"kind": "cmd", "value": "grep -c '执行前只做句法与状态事实' docs/01-设计/设计-协作骨架-v2.1.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/设计-协作骨架-v2.1.md"},
+          {"kind": "cmd", "value": "grep -c '执行前只做句法与状态事实' ../Zerg-内部文档/01-设计/设计-协作骨架-v2.1.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c '执行前只做句法与状态事实' docs/01-设计/设计-协作骨架-v2.1.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+          {"id": "C1", "cmd": "grep -c '执行前只做句法与状态事实' ../Zerg-内部文档/01-设计/设计-协作骨架-v2.1.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c '执行前只做句法与状态事实' docs/01-设计/设计-协作骨架-v2.1.md", "expect": {"exit": 0, "stdout": "1"}}],
+        "gate_cmds": [{"cmd": "grep -c '执行前只做句法与状态事实' ../Zerg-内部文档/01-设计/设计-协作骨架-v2.1.md", "expect": {"exit": 0, "stdout": "1"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑：由 1 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码", "原文", "时间"]}
         },
-        "hard_limits": ["① 只读 docs/01-设计/设计-协作骨架-v2.1.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只读 ../Zerg-内部文档/01-设计/设计-协作骨架-v2.1.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "只读",
         "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -1008,24 +1008,24 @@
       "why": "R7 的上界数值「= 本仓标定取值（待实测复核）」：现档案没有 slice_lines_max ⇒ 记「未标定」，**不猜**（不因此判红）——这条专门防止检查器自己造一个常数",
       "slice": {
         "defect_id": "DEF-20260918-S5-07",
-        "landing": "docs/01-设计/切片合同-模板.md:93",
-        "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的 R7 行必须写明「本仓标定取值」。",
+        "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:93",
+        "the_one_thing": "When 模板落盘时，../Zerg-内部文档/01-设计/切片合同-模板.md 的 R7 行必须写明「本仓标定取值」。",
         "context_needed": [
           {"kind": "snippet", "value": "| **R7** | 粒度：默认**单文件** + 行数上界（**上界数值 = 本仓标定取值（待实测复核）**）；**超限判\"需递归\"，而不是打回** ✗ | 是 | 低 |"},
-          {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+          {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c '本仓标定取值' docs/01-设计/切片合同-模板.md", "expect": "7", "state": "改动前：绿（实跑 ≥7）"}
+          {"id": "C1", "cmd": "grep -c '本仓标定取值' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "7", "state": "改动前：绿（实跑 ≥7）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c '本仓标定取值' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "7"}}],
+        "gate_cmds": [{"cmd": "grep -c '本仓标定取值' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "7"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
         },
-        "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "写工作树",
         "escalate_if": "需要写工作树之外的文件 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -1044,24 +1044,24 @@
       "slices": [
         {
           "defect_id": "DEF-20260918-S6-01",
-          "landing": "docs/01-设计/切片合同-模板.md:14",
-          "the_one_thing": "When 片文件已有先例时，docs/01-设计/切片合同-模板.md 的抬头必须照抄 BCP 14 固定句。",
+          "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:14",
+          "the_one_thing": "When 片文件已有先例时，../Zerg-内部文档/01-设计/切片合同-模板.md 的抬头必须照抄 BCP 14 固定句。",
           "context_needed": [
             {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释（BCP 14 = RFC 2119 + RFC 8174）"},
-            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+            {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
           ],
           "open_questions": "无",
           "criteria": [
-            {"id": "C1", "cmd": "grep -c 'BCP 14 = RFC 2119 + RFC 8174' docs/01-设计/切片合同-模板.md", "expect": "2", "state": "改动前：绿（实跑 ≥2）"}
+            {"id": "C1", "cmd": "grep -c 'BCP 14 = RFC 2119 + RFC 8174' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "2", "state": "改动前：绿（实跑 ≥2）"}
           ],
-          "gate_cmds": [{"cmd": "grep -c 'BCP 14 = RFC 2119 + RFC 8174' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "2"}}],
+          "gate_cmds": [{"cmd": "grep -c 'BCP 14 = RFC 2119 + RFC 8174' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "2"}}],
           "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
           "exit_cond": {
             "success": ["C1"],
             "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
             "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
           },
-          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
           "side_effects": "只读",
           "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
           "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -1072,24 +1072,24 @@
         },
         {
           "defect_id": "DEF-20260918-S6-02",
-          "landing": "docs/01-设计/切片合同-模板.md:19",
-          "the_one_thing": "When 上一片落盘后，docs/01-设计/切片合同-模板.md 的 §0 注释必须写明 RFC 8174 逐字句。",
+          "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:19",
+          "the_one_thing": "When 上一片落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的 §0 注释必须写明 RFC 8174 逐字句。",
           "context_needed": [
             {"kind": "snippet", "value": "RFC 8174 逐字：\"only **UPPERCASE** usage of the key words have the defined special meanings\""},
-            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+            {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
           ],
           "open_questions": "无",
           "criteria": [
-            {"id": "C1", "cmd": "grep -c 'UPPERCASE' docs/01-设计/切片合同-模板.md", "expect": "3", "state": "改动前：绿（实跑 ≥3）"}
+            {"id": "C1", "cmd": "grep -c 'UPPERCASE' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "3", "state": "改动前：绿（实跑 ≥3）"}
           ],
-          "gate_cmds": [{"cmd": "grep -c 'UPPERCASE' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "3"}}],
+          "gate_cmds": [{"cmd": "grep -c 'UPPERCASE' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "3"}}],
           "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
           "exit_cond": {
             "success": ["C1"],
             "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
             "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
           },
-          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
           "side_effects": "只读",
           "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
           "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -1109,24 +1109,24 @@
       "slices": [
         {
           "defect_id": "DEF-20260918-S7-01",
-          "landing": "docs/01-设计/切片合同-模板.md:184",
-          "the_one_thing": "When 前一片就绪时，docs/01-设计/切片合同-模板.md 的 §5 自查必须写明 R0 例句。",
+          "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:184",
+          "the_one_thing": "When 前一片就绪时，../Zerg-内部文档/01-设计/切片合同-模板.md 的 §5 自查必须写明 R0 例句。",
           "context_needed": [
             {"kind": "snippet", "value": "R0 ✓（单动词）· R1 ✓（一个 `defect_id`）"},
-            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+            {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
           ],
           "open_questions": "无",
           "criteria": [
-            {"id": "C1", "cmd": "grep -c 'R0 ✓（单动词）' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+            {"id": "C1", "cmd": "grep -c 'R0 ✓（单动词）' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
           ],
-          "gate_cmds": [{"cmd": "grep -c 'R0 ✓（单动词）' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "gate_cmds": [{"cmd": "grep -c 'R0 ✓（单动词）' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
           "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
           "exit_cond": {
             "success": ["C1"],
             "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
             "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
           },
-          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
           "side_effects": "只读",
           "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
           "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -1137,24 +1137,24 @@
         },
         {
           "defect_id": "DEF-20260918-S7-02",
-          "landing": "docs/01-设计/切片合同-模板.md:193",
-          "the_one_thing": "When 前一片就绪时，docs/01-设计/切片合同-模板.md 的 §5 自查必须写明 R9 那一行。",
+          "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:193",
+          "the_one_thing": "When 前一片就绪时，../Zerg-内部文档/01-设计/切片合同-模板.md 的 §5 自查必须写明 R9 那一行。",
           "context_needed": [
             {"kind": "snippet", "value": "R9/R10（片集合级，由集合侧判）"},
-            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+            {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
           ],
           "open_questions": "无",
           "criteria": [
-            {"id": "C1", "cmd": "grep -c 'R9/R10（片集合级，由集合侧判）' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+            {"id": "C1", "cmd": "grep -c 'R9/R10（片集合级，由集合侧判）' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
           ],
-          "gate_cmds": [{"cmd": "grep -c 'R9/R10（片集合级，由集合侧判）' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "gate_cmds": [{"cmd": "grep -c 'R9/R10（片集合级，由集合侧判）' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
           "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
           "exit_cond": {
             "success": ["C1"],
             "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
             "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
           },
-          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
           "side_effects": "只读",
           "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
           "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -1174,24 +1174,24 @@
       "slices": [
         {
           "defect_id": "DEF-20260918-S8-01",
-          "landing": "docs/01-设计/切片合同-模板.md:76",
-          "the_one_thing": "When 上一批落盘后，docs/01-设计/切片合同-模板.md 的继承四条必须写明。",
+          "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:76",
+          "the_one_thing": "When 上一批落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的继承四条必须写明。",
           "context_needed": [
             {"kind": "snippet", "value": "- 子 pre ⊇ 父 pre"},
-            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+            {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
           ],
           "open_questions": "无",
           "criteria": [
-            {"id": "C1", "cmd": "grep -c '子 pre ⊇ 父 pre' docs/01-设计/切片合同-模板.md", "expect": "2", "state": "改动前：绿（实跑 ≥2）"}
+            {"id": "C1", "cmd": "grep -c '子 pre ⊇ 父 pre' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "2", "state": "改动前：绿（实跑 ≥2）"}
           ],
-          "gate_cmds": [{"cmd": "grep -c '子 pre ⊇ 父 pre' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "2"}}],
+          "gate_cmds": [{"cmd": "grep -c '子 pre ⊇ 父 pre' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "2"}}],
           "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
           "exit_cond": {
             "success": ["C1"],
             "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
             "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
           },
-          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
           "side_effects": "只读",
           "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
           "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -1202,24 +1202,24 @@
         },
         {
           "defect_id": "DEF-20260918-S8-02",
-          "landing": "docs/01-设计/切片合同-模板.md:78",
-          "the_one_thing": "When 上一片落盘后，docs/01-设计/切片合同-模板.md 的继承四条必须写明判红口径。",
+          "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:78",
+          "the_one_thing": "When 上一片落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的继承四条必须写明判红口径。",
           "context_needed": [
             {"kind": "snippet", "value": "⇒ **违反任一条判红**（防子片绕过父片边界 ✗）"},
-            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+            {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
           ],
           "open_questions": "无",
           "criteria": [
-            {"id": "C1", "cmd": "grep -c '违反任一条判红' docs/01-设计/切片合同-模板.md", "expect": "2", "state": "改动前：绿（实跑 ≥2）"}
+            {"id": "C1", "cmd": "grep -c '违反任一条判红' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "2", "state": "改动前：绿（实跑 ≥2）"}
           ],
-          "gate_cmds": [{"cmd": "grep -c '违反任一条判红' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "2"}}],
+          "gate_cmds": [{"cmd": "grep -c '违反任一条判红' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "2"}}],
           "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
           "exit_cond": {
             "success": ["C1"],
             "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
             "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
           },
-          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
           "side_effects": "只读",
           "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
           "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -1239,25 +1239,25 @@
       "slices": [
         {
           "defect_id": "DEF-20260918-S9-00",
-          "landing": "docs/01-设计/切片合同-模板.md:109",
-          "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的 §5 正例必须写出抬头区。",
+          "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:109",
+          "the_one_thing": "When 模板落盘时，../Zerg-内部文档/01-设计/切片合同-模板.md 的 §5 正例必须写出抬头区。",
           "context_needed": [
             {"kind": "snippet", "value": "## 5. 正例：一片填满（示例，结构照抄即可）"},
-            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+            {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
           ],
           "open_questions": ["是否需要先落 S9-C0 的骨架片？"],
           "criteria": [
-            {"id": "P1", "cmd": "grep -c '正例：一片填满' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"},
-            {"id": "P2", "cmd": "grep -c '结构照抄即可' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+            {"id": "P1", "cmd": "grep -c '正例：一片填满' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"},
+            {"id": "P2", "cmd": "grep -c '结构照抄即可' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
           ],
-          "gate_cmds": [{"cmd": "grep -c '结构照抄即可' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "gate_cmds": [{"cmd": "grep -c '结构照抄即可' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
           "output_format": "① 正控：P1/P2 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 2/2；④ 还原：负控在副本上做，原件 sha 一致。",
           "exit_cond": {
             "success": ["P1", "P2"],
             "failure": "P1/P2 输出与期望不符 ⇒ 记失败，附命令、退出码",
             "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
           },
-          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
           "side_effects": "只读",
           "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
           "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -1268,18 +1268,18 @@
         },
         {
           "defect_id": "DEF-20260918-S9-01",
-          "landing": "docs/01-设计/切片合同-模板.md:118",
-          "the_one_thing": "When 父片落盘后，docs/01-设计/切片合同-模板.md 的 §5 抬头区必须写出 BCP 14 抬头。",
+          "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:118",
+          "the_one_thing": "When 父片落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的 §5 抬头区必须写出 BCP 14 抬头。",
           "context_needed": [
             {"kind": "snippet", "value": "本片中的 MUST/SHOULD/MAY 按 BCP 14 解释（BCP 14 = RFC 2119 + RFC 8174）"},
-            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+            {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
           ],
           "open_questions": "无",
           "criteria": [
-            {"id": "C1", "cmd": "grep -c '正例：一片填满' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"},
-            {"id": "C2", "cmd": "grep -c '顺便改 UI 导航' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+            {"id": "C1", "cmd": "grep -c '正例：一片填满' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"},
+            {"id": "C2", "cmd": "grep -c '顺便改 UI 导航' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
           ],
-          "gate_cmds": [{"cmd": "grep -c '正例：一片填满' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "gate_cmds": [{"cmd": "grep -c '正例：一片填满' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
           "output_format": "① 正控：C1/C2 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑）；③ 牙齿计数 2/2；④ 还原：负控在副本上做，原件 sha 一致。",
           "exit_cond": {
             "success": ["C1"],
@@ -1287,7 +1287,7 @@
             "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
           },
           "hard_limits": [
-            "① 只改 docs/01-设计/切片合同-模板.md 一个文件",
+            "① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件",
             "③ 顺便把 UI 导航也一起改掉（父片没有这条）"
           ],
           "side_effects": "写工作树",
@@ -1310,25 +1310,25 @@
       "slices": [
         {
           "defect_id": "DEF-20260918-S10-00",
-          "landing": "docs/01-设计/切片合同-模板.md:224",
-          "the_one_thing": "When 模板落盘时，docs/01-设计/切片合同-模板.md 的 §6 反例必须写出 R5 那一行。",
+          "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:224",
+          "the_one_thing": "When 模板落盘时，../Zerg-内部文档/01-设计/切片合同-模板.md 的 §6 反例必须写出 R5 那一行。",
           "context_needed": [
             {"kind": "snippet", "value": "hard_limits: []"},
-            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+            {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
           ],
           "open_questions": "无",
           "criteria": [
-            {"id": "P1", "cmd": "grep -c 'R5（空壳：含未替换的' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"},
-            {"id": "P2", "cmd": "grep -c 'R6（该条无 expect）' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+            {"id": "P1", "cmd": "grep -c 'R5（空壳：含未替换的' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"},
+            {"id": "P2", "cmd": "grep -c 'R6（该条无 expect）' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
           ],
-          "gate_cmds": [{"cmd": "grep -c 'R6（该条无 expect）' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "gate_cmds": [{"cmd": "grep -c 'R6（该条无 expect）' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
           "output_format": "① 正控：P1/P2 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑）；③ 牙齿计数 2/2；④ 还原：负控在副本上做，原件 sha 一致。",
           "exit_cond": {
             "success": ["P1", "P2"],
             "failure": "P1/P2 输出与期望不符 ⇒ 记失败，附命令、退出码",
             "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
           },
-          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
+          "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件", "② 不动 git、不删除任何文件"],
           "side_effects": "只读",
           "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
           "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -1339,24 +1339,24 @@
         },
         {
           "defect_id": "DEF-20260918-S10-01",
-          "landing": "docs/01-设计/切片合同-模板.md:224",
-          "the_one_thing": "When 父片落盘后，docs/01-设计/切片合同-模板.md 的 §6 空壳行必须写明 R5。",
+          "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:224",
+          "the_one_thing": "When 父片落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的 §6 空壳行必须写明 R5。",
           "context_needed": [
             {"kind": "snippet", "value": "hard_limits: []"},
-            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+            {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
           ],
           "open_questions": "无",
           "criteria": [
-            {"id": "C1", "cmd": "grep -c 'R5（空壳：含未替换的' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+            {"id": "C1", "cmd": "grep -c 'R5（空壳：含未替换的' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
           ],
-          "gate_cmds": [{"cmd": "grep -c 'R5（空壳：含未替换的' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "gate_cmds": [{"cmd": "grep -c 'R5（空壳：含未替换的' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
           "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
           "exit_cond": {
             "success": ["C1"],
             "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
             "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
           },
-          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件"],
+          "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件"],
           "side_effects": "只读",
           "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
           "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
@@ -1368,25 +1368,25 @@
         },
         {
           "defect_id": "DEF-20260918-S10-02",
-          "landing": "docs/01-设计/切片合同-模板.md:216",
-          "the_one_thing": "When 父片落盘后，docs/01-设计/切片合同-模板.md 的 §6 假绿行必须写明 R6。",
+          "landing": "../Zerg-内部文档/01-设计/切片合同-模板.md:216",
+          "the_one_thing": "When 父片落盘后，../Zerg-内部文档/01-设计/切片合同-模板.md 的 §6 假绿行必须写明 R6。",
           "context_needed": [
             {"kind": "snippet", "value": "gate_cmds: [{\"cmd\": \"gofmt -l .\"}]"},
             {"kind": "snippet", "value": "hard_limits: []"},
-            {"kind": "file", "value": "docs/01-设计/切片合同-模板.md"}
+            {"kind": "file", "value": "../Zerg-内部文档/01-设计/切片合同-模板.md"}
           ],
           "open_questions": "无",
           "criteria": [
-            {"id": "C1", "cmd": "grep -c 'R6（该条无 expect）' docs/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+            {"id": "C1", "cmd": "grep -c 'R6（该条无 expect）' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
           ],
-          "gate_cmds": [{"cmd": "grep -c 'R6（该条无 expect）' docs/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
+          "gate_cmds": [{"cmd": "grep -c 'R6（该条无 expect）' ../Zerg-内部文档/01-设计/切片合同-模板.md", "expect": {"exit": 0, "stdout": "1"}}],
           "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该行后重跑，必须红（已实跑）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
           "exit_cond": {
             "success": ["C1"],
             "failure": "C1 输出与期望不符 ⇒ 记失败，附命令、退出码",
             "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码"]}
           },
-          "hard_limits": ["① 只改 docs/01-设计/切片合同-模板.md 一个文件"],
+          "hard_limits": ["① 只改 ../Zerg-内部文档/01-设计/切片合同-模板.md 一个文件"],
           "side_effects": "只读",
           "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
           "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},
