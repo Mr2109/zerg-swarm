@@ -301,7 +301,14 @@ python3 scripts/check-doc-name.py --self-test    # → rc 0 · 自检 21/21 ✓�
 - **N4 只认 `-vX.Y` 段**（`-v2.5.10-` 命中、`-v102-` 也命中）；尾位形态 `…-v1.2` 与 `…-v1.2.md` 均**不判**。
 - **N7 按「同一分隔段」**（`- _ . 空格` 切段）判**相邻**字符；命中即告警，**不给改名建议**（需人审：专有名词 / 产品名）。
 - **扫描域与《清单》§0 同一排除名单**：`.git` `node_modules` `vendor` `tools/ocr/venv`
-  `docs/调研/multi-agent-源码/`（第三方）`**/target` `**/__pycache__` `dist` `docs/.history` `docs/.obsidian` `.zerg` `zerg-wt`。
+  `**/target` `**/__pycache__` `dist` `docs/.history` `docs/.obsidian` `.zerg` `zerg-wt`。
+- **`docs/调研/multi-agent-源码/`（第三方源码摘录）条目已于 2026-09-19 删除**：该树（445 件 6.2M）
+  先 `cp -a` 到 `Zerg-内部文档/调研/multi-agent-源码/`，同日按用户令**从主仓删除**（主仓盘上已不存在）
+  ⇒ 仓内**零命中** ⇒ 死条目删除（零命中条目留着 = 假覆盖）。**反向探针**（同日 · /tmp 仿真造树
+  `…/x/SKILL.md` + `…/y/README-20260901.md`）：**条目在** ⇒ 扫描域 **7** 项 / 不合规 **0**（rc=0）；
+  **条目删** ⇒ 扫描域 **11** 项 / 不合规 **2**（`SKILL.md` 大写 N1 · 日期后缀 N3，rc=1）
+  ⇒ 条目确在起作用。真仓侧删前删后 `--scope repo` 扫描域与不合规数**逐位一致**（该树今天在盘上
+  不存在 ⇒ 无对象可排，既不加红也不生假绿）。源树若日后回到 `docs/调研/`，请把该条加回 `EXCL_PREFIX`。
 - **`docs/虫族文档/`（镜像副本）条目已于 2026-09-19 退役** ⇒ 该条从扫描域排除名单**删除**
   （备份 = `~/zerg-backup/docs-虫族文档-mirror-20260919.tar.gz` · sha256 `2a829937…8ced2ca` +
   解包副本 `~/zerg-backup/retired-docs-虫族文档-20260919/`，逐文件 sha256 与原目录全量一致）。
