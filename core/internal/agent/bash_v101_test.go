@@ -65,16 +65,19 @@ func TestBashV101CommandNotFoundGuide(t *testing.T) {
 
 // 4. 长输出 → 溢出落盘（省略标注含路径）
 func TestBashV101Overflow(t *testing.T) {
+	// 隔离: 溢出落点走显式覆盖（不碰真机状态目录/旧 /tmp 目录）
+	spillDir := t.TempDir()
+	setBashOverflowPaths(t, spillDir, filepath.Join(t.TempDir(), "legacy-overflow-missing"))
 	out := runBash101(t, "seq 1 50000 | head -50000")
 	// seq 输出 ~255K——必然溢出
 	if !strings.Contains(out, "中间省略") {
 		t.Fatalf("溢出省略标注缺失（输出长=%d）: %s", len(out), out[:minInt(len(out), 200)])
 	}
-	if !strings.Contains(out, BashOverflowDir) {
+	if !strings.Contains(out, spillDir) {
 		t.Fatalf("溢出落盘路径缺失: %s", out[:minInt(len(out), 300)])
 	}
 	// 落盘文件真实存在且可读
-	files, _ := filepath.Glob(filepath.Join(BashOverflowDir, "bash-overflow-*.log"))
+	files, _ := filepath.Glob(filepath.Join(spillDir, "bash-overflow-*.log"))
 	if len(files) == 0 {
 		t.Fatalf("溢出文件未落盘")
 	}
