@@ -217,7 +217,17 @@ REQUIRED_FIELDS = [
 ]
 
 # 片文件的**已知键**（strict：别的键 ⇒ 错误 rc=2）
-FIELD_KEYS = [f for f, _ in REQUIRED_FIELDS] + ['escalate_if']
+# ★ 可选字段登记表（Q15 / C5 · 2026-09-18 edit-assert 开工时登记）：
+#   依据：`docs/01-设计/设计-改码与变异安全门-v1.1-20260918.md` §4.2（期望命中数写进片）
+#        + §9 Q15 + 附录A C5（strict 白名单是「期望值写进片」的**硬墙**：未知键 ⇒ rc=2）。
+#   口径三条：① **不**进 REQUIRED_FIELDS（那 16 个一个不动）；② **只**进 KNOWN_SLICE_KEYS（strict 白名单）；
+#            ③ 不给该字段的片 ⇒ 行为与登记前**逐字一致**（不得因此变红；本条即「反例」的守卫）。
+#   值形态（由 edit-assert 消费，本检查器**不**判其内部结构）：一组 {target, expect, reason}。
+OPTIONAL_FIELDS = [
+    ('edit_assert_expect', '§1-post-edit_assert_expect',
+     '期望命中数（写盘门 edit-assert 的 E2 判据对象）：一组 `(target, expect, reason)`，形态见 §4.2 四形态'),
+]
+FIELD_KEYS = [f for f, _ in REQUIRED_FIELDS] + ['escalate_if'] + [f for f, _ref, _desc in OPTIONAL_FIELDS]
 META_KEYS = ['conflicts', 'parent', 'task_id', 'rules', '_note']
 KNOWN_SLICE_KEYS = set(FIELD_KEYS) | set(META_KEYS)
 
@@ -1479,8 +1489,11 @@ def print_registration(opts, calib, quiet=False):
     print('      取值来源：含糊 %s · 合法 %s · 假红 %s'
           % (th['probe_vague_min'][1], th['probe_legal_min'][1], th['probe_fp_rate_max'][1]))
     print('  ' + calib_note(calib))
-    print('  片文件已知键（strict：别的键 ⇒ rc=2）：%d 个 —— 表内 14 + 表外 3 + 元键 %s'
-          % (len(KNOWN_SLICE_KEYS), ' · '.join(META_KEYS)))
+    print('  片文件已知键（strict：别的键 ⇒ rc=2）：%d 个 —— 必填 %d + 表外 1 + **可选 %d**（%s）+ 元键 %s'
+          % (len(KNOWN_SLICE_KEYS), len(REQUIRED_FIELDS), len(OPTIONAL_FIELDS),
+             ' · '.join(f for f, _ref, _desc in OPTIONAL_FIELDS), ' · '.join(META_KEYS)))
+    print('  可选字段登记（Q15/C5）：不给 ⇒ 与登记前逐字一致、**不得变红**；只放宽 strict 白名单，'
+          '不进 REQUIRED_FIELDS')
     print('  非 R 判据（模板 §1 表 / §2 / §3.3 的另一半，**不是新规则**）：%d 条' % len(CLAUSE_TABLE))
     for ref, code, _text in CLAUSE_TABLE:
         print('       %-24s → %s' % (ref, code))
@@ -1521,6 +1534,10 @@ def print_list_rules(opts, calib):
     for f, ref in REQUIRED_FIELDS:
         print('  必填 %-16s ← %s' % (f, ref))
     print('  表外 %-16s ← §1-inv-escalate_if（有 side_effects 即须配）' % 'escalate_if')
+    for f, ref, desc in OPTIONAL_FIELDS:
+        print('  可选 %-16s ← %s' % (f, ref))
+        print('        ↑ **可选**（%s；应到 §9-Q15 / 附录A C5 登记；edit-assert 消费，'
+              '本检查器不判其内部结构）' % desc)
     for m in META_KEYS:
         print('  元键 %-16s' % m)
     print('── R4 三层词表（每条都带改写建议；无 fix 的命中 ⇒ 拒判 rc=2）──')

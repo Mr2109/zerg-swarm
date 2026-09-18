@@ -1,0 +1,95 @@
+{
+  "schema": "zerg-cli-tools-1",
+  "note": [
+    "CLI 依赖账 —— **不是** agent 工具台账（后者 = tools/versions.json，141 键：bash/calc/apply_patch…，不含任何 CLI 二进制）。",
+    "依据：docs/01-设计/设计-改码与变异安全门-v1.1-20260918.md §6.4（Q9 落点定案）+ 附录A C10/M15（工具自身会漂移）。",
+    "字段：工具名 · 版本（或「不可考」）· 绝对路径 · binary sha256 · 安装方式 · 联网前提 · 登记日期。",
+    "门（scripts/edit-assert）启动做断言：ast-grep 的路径与 binary sha256 必须与本账一致，否则 rc=2 BLOCKED_UNREGISTERED_TOOL（不许静默用另一个二进制）。"
+  ],
+  "登记日期": "2026-09-18",
+  "tools": [
+    {
+      "name": "ast-grep",
+      "version": "0.45.3",
+      "abs_path": "/opt/homebrew/bin/ast-grep",
+      "real_path": "/opt/homebrew/Cellar/ast-grep/0.45.3/bin/ast-grep",
+      "binary_sha256": "98d041ccd19ac7f2a5cc36f57330bd4e96e5c062e03bdff96fe7ae9a32c70420",
+      "install": "brew install ast-grep（2026-09-18 由调研子代理装入本机；Mr2109 口径「需要就用到不用再清」）",
+      "network": "安装需联网；运行不需要（门内不联网）",
+      "registered_at": "2026-09-18",
+      "status": "已登记依赖 · 腿二主定位器（唯一路径：edit-assert 只走 `scan -r <rule.yml> --json`）",
+      "evidence": "本次现读：`ast-grep --version` ⇒ ast-grep 0.45.3；`shasum -a 256 /opt/homebrew/bin/ast-grep` ⇒ 上列值；`sg` 是同体入口"
+    },
+    {
+      "name": "comby",
+      "version": "1.8.1",
+      "abs_path": "/opt/homebrew/bin/comby",
+      "real_path": "/opt/homebrew/Cellar/comby/1.8.1_1/bin/comby",
+      "binary_sha256": "78e6fa3d1d09741de2d27a00185332805c989ec68dd54382c2fe2c41c5656d55",
+      "install": "brew install comby（2026-09-18 同批装入，属越界已登记）",
+      "network": "安装需联网；运行不需要",
+      "registered_at": "2026-09-18",
+      "status": "已登记（L-TEMPLATE，兜底形态）—— **腿二当前未使用**：edit-assert 不调用 comby（其零命中/坏 pattern/语法错三态本轮未重跑，见附录A「未验证」）；要用须先把它的三态行为补测并写进本账",
+      "evidence": "本次现读：`comby -version` ⇒ 1.8.1；sha256 实算如上"
+    },
+    {
+      "name": "timeout",
+      "version": "不可考",
+      "abs_path": null,
+      "binary_sha256": null,
+      "install": "（不装）GNU coreutils 未安装",
+      "network": "—",
+      "registered_at": "2026-09-18",
+      "status": "**本机不存在**（`command -v timeout` 零命中，rc=1）⇒ 墙钟符只能门自带（edit-assert 的 run_clocked：subprocess + 进程组 SIGKILL）",
+      "evidence": "本次现读 `command -v timeout` ⇒ 零命中"
+    },
+    {
+      "name": "gremlins",
+      "version": "不可考",
+      "abs_path": null,
+      "binary_sha256": null,
+      "install": "未安装（腿一开工时登）—— 装到**仓外固定登记目录**，不落 /tmp",
+      "network": "安装需联网（实测离线 `GOPROXY=off go install …@v0.6.0` ⇒ module lookup disabled，失败）",
+      "registered_at": null,
+      "status": "未安装（腿一开工时登）",
+      "evidence": "现读：/tmp/mutgate2/bin/gremlins **存在**、`--version` 自报 `dev`（版本不可考）—— 但落点 /tmp 会被「重启即清 + tmp_cleaner 3 天未访问即删」（core/internal/statepath/statepath.go:1-3）⇒ **不构成登记依赖**；按任务书口径记「未安装（腿一开工时登）」，装好并定路径后再登版本 + binary sha256"
+    },
+    {
+      "name": "cosmic-ray",
+      "version": "不可考",
+      "abs_path": null,
+      "binary_sha256": null,
+      "install": "未安装（腿一开工时登）—— 装到**仓外固定登记目录**（本机现存的是 /tmp/mutvenv，非登记落点）",
+      "network": "安装需联网",
+      "registered_at": null,
+      "status": "未安装（腿一开工时登）",
+      "evidence": "现读：/tmp/mutvenv/bin/cosmic-ray 存在（深挖 D2/D6 实测 8.7.0 可用）—— 落点 /tmp ⇒ 同上，不作为登记依赖"
+    },
+    {
+      "name": "go-mutesting",
+      "version": "不可考",
+      "abs_path": null,
+      "binary_sha256": null,
+      "install": "未安装（腿一开工时登）；**必须逐字定仓 `github.com/avito-tech/go-mutesting`**",
+      "network": "安装需联网",
+      "registered_at": null,
+      "status": "未安装（腿一开工时登）",
+      "evidence": "现读：/tmp/mutgate2/bin/go-mutesting 存在（avito-tech 支，实测可用）；zimmski 支 `go-mutesting ./...` 必崩（panic/SIGSEGV、退出码 2）⇒ **不得作为备选出现**（附录A C8）"
+    },
+    {
+      "name": "mutmut",
+      "version": "不可考（本机 3.3.1 亦不可用）",
+      "abs_path": null,
+      "binary_sha256": null,
+      "install": "（不装）",
+      "network": "—",
+      "registered_at": "2026-09-18",
+      "status": "**本机不可用**（实测 6/6 变异体全 segfault，`exit_code_by_key` 全为 -11，**而进程退出码是 0**）⇒ 登记在案，**不得作为备选**（附录A C9 / §6.3）",
+      "evidence": "深挖 D6 实测（本轮为转述，未重跑）"
+    }
+  ],
+  "not_registered": [
+    "libcst（Python 侧 L-AST 备选）：**未安装**（`import libcst` ⇒ ImportError，本机 python3 = 3.9.6）",
+    "semgrep：未登记（实测命中/未命中/解析失败全退 0，除 `--error` 外无牙齿，§4.3）"
+  ]
+}
