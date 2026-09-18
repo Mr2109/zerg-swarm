@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -378,8 +379,53 @@ type searchCacheEntry struct {
 	Expire int64  `json:"expire"` // unix 秒
 }
 
-const searchCacheFile = "/tmp/zerg-search-cache.json"
+// 2026-09-18 修（/tmp 硬编码——口径同 api/tasks_persist.go）: 原写死 const searchCacheFile = "/tmp/zerg-search-cache.json"。
+// 缓存落 /tmp = macOS 重启即清 + tmp_cleaner 3 天未访问即删；改为 statepath 统一状态目录派生
+// （ZERG_STATE_DIR → ~/.zerg/state/zerg-search-cache.json）。
+// 迁移兼容（首次）: 新路径不存在而旧 /tmp 存在 ⇒ **读旧一次**；**写只写新路径**；旧文件**不删、不改**。
+// 新路径已存在 ⇒ 旧路径完全不看。显式覆盖（测试隔离）⇒ 不走旧回退。
+const searchCacheFileName = "zerg-search-cache.json"
+
+// searchCacheLegacyDefaultPath 旧硬编码落点字面量。只作**首次迁移读取**来源：读一次；不删、不改、永不写入。
+const searchCacheLegacyDefaultPath = "/tmp/zerg-search-cache.json"
+
+// legacySearchCacheFile 旧路径（包级变量 = 上面的字面量；迁移用例/测试进程隔离可切换）。
+var legacySearchCacheFile = searchCacheLegacyDefaultPath
+
+// searchCacheFile 缓存文件（包级变量——测试可切换隔离路径）。
+// 语义: 非空 ⇒ 直接用该路径（测试隔离/显式覆盖）；空 ⇒ 走 statepath 统一状态目录派生（生产默认）。
+var searchCacheFile = ""
+
 const searchCacheTTL = 5 * 60 // 5 分钟
+
+// searchCacheWritePath 写路径：永远是统一状态目录。永不写旧 /tmp 路径。
+func searchCacheWritePath() string {
+	if p := strings.TrimSpace(searchCacheFile); p != "" {
+		return p
+	}
+	return statepath.File(searchCacheFileName)
+}
+
+// searchCacheReadPath 读路径：统一状态目录优先；新路径不存在且旧 /tmp 存在 ⇒ 读旧一次（迁移兼容）。
+// 新路径存在 ⇒ 旧路径完全不看。显式覆盖 searchCacheFile（测试隔离）时不退旧路径。
+func searchCacheReadPath() string {
+	p := searchCacheWritePath()
+	if _, err := os.Stat(p); err == nil {
+		return p // 新路径已存在——旧路径完全不看
+	}
+	if strings.TrimSpace(searchCacheFile) != "" {
+		return p
+	}
+	legacy := strings.TrimSpace(legacySearchCacheFile)
+	if legacy == "" {
+		return p
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		return p // 无旧文件——首次运行（空缓存）
+	}
+	log.Printf("📜 搜索缓存首次迁移: 读旧 %s（只读一次——旧文件保留不删；写入只落 %s）\n", legacy, p)
+	return legacy
+}
 
 func searchCacheGet(key string) string {
 	searchCacheMu.Lock()
@@ -402,18 +448,23 @@ func searchCachePut(key, result string) {
 		searchCacheMap = map[string]searchCacheEntry{}
 	}
 	searchCacheMap[key] = searchCacheEntry{Result: result, Expire: time.Now().Unix() + searchCacheTTL}
-	// 异步持久化（失败静默——缓存非关键）
+	// 异步持久化（失败静默——缓存非关键）；写只写新路径（统一状态目录——旧 /tmp 永不写）
 	go func() {
 		searchCacheMu.Lock()
 		b, _ := json.Marshal(searchCacheMap)
 		searchCacheMu.Unlock()
-		_ = os.WriteFile(searchCacheFile, b, 0o644)
+		dst := searchCacheWritePath()
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return
+		}
+		_ = os.WriteFile(dst, b, 0o644)
 	}()
 }
 
 // LoadSearchCache — 启动时加载缓存（main 调用）
+// 读路径：新（统一状态目录）优先；新缺失 + 旧 /tmp 在 ⇒ 读旧一次（2026-09-18 迁移兼容）
 func LoadSearchCache() {
-	b, err := os.ReadFile(searchCacheFile)
+	b, err := os.ReadFile(searchCacheReadPath())
 	if err != nil {
 		return
 	}
