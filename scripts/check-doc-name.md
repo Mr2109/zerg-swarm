@@ -52,7 +52,7 @@ python3 scripts/check-doc-name.py --no-self-test ...   # 内部子进程用（�
 |---|---|---|---|
 | **A** | **22** | 《清单-命名规范化》**已登记**的「不改」条目（逐条抄 TSV 行号 + 不规范类型码 + 建议列原话） | = 《清单》§3「可改 124 · **不改 22**」的 22；脚本启动时**断言条数 = 22**，不符 ⇒ rc=2 |
 | **B** | **3** | **规则级规范豁免**（不在 22 条里）：① `README.md`/`AGENTS.md`/`SKILL.md`/`VERSION` 等**保留名 —— 只在文档面之外生效**（`docs/` 内同名件照判，K8 要的就是这个）② 构建工具链同基名（`go.mod/go.sum` · `Cargo.toml/lock`）**休眠申报**（N6 的口径已把它们挡在门外 ⇒ 本仓 0 命中）③ **人读件 + 机读件同基名**（`.md` + `.tsv/.csv/.json`） | ①②：行业/工具链约定；③：本仓既有形态（`清单-命名规范化.md/.tsv` = 设计件 + 机读件）—— **我方判断，差异见下** |
-| **C** | **4** | **本轮新增登记**（`C01–C03` 待父代理批准 · **`C04` 已拍 2026-09-18（Mr2109）**）：`脚本 + 说明书` 四对（`check-doc-meta.{py,md}` · `check-doc-name.{py,md}` · `check-doc-freshness.{py,md}` · **`precommit-gates.{sh,md}`**） | 前三对同 `scripts/edit-assert`、`scripts/mutate-scan` 的既有约定（A 档已登记同类）；`C04` = **路 D 本轮新增件**，**已拍：认下为允许对**（见差异 ⑧） |
+| **C** | **7** | **新增登记**（`C01–C03` 待父代理批准 · **`C04` 已拍 2026-09-18（Mr2109）** · **`C05–C07` 第二波任务书登记 2026-09-18**）：`脚本 + 说明书` 七对（`check-doc-meta.{py,md}` · `check-doc-name.{py,md}` · `check-doc-freshness.{py,md}` · **`precommit-gates.{sh,md}`** · **`check-gate-coverage.{py,md}`（门①）** · **`check-version-sources.{py,md}`（门②）** · **`check-wired-scripts.{py,md}`（门③）**） | 前三对同 `scripts/edit-assert`、`scripts/mutate-scan` 的既有约定（A 档已登记同类）；`C04` = **路 D 本轮新增件**，**已拍：认下为允许对**（见差异 ⑧）；`C05–C07` = 第二波新建并挂进 `gates` scope 的三只门（见差异 ⑨ 与 §第二波） |
 | **D** | **2** | **本轮 A 路拍板「允许对 / 登记不改」**：`D01` = `docs/` 内的 `README.md`（5 处命中 = 语言层入口件 / 重定向存根）· `D02` = `bin/_history/zerg-core.prev-20260912.bak`（1 处命中 = 备件残片，`bin/` 在 `.gitignore` 内） | 父代理 2026-09-18 拍板；`D01` 与 B01 同源（README = 行业约定保留名）②`D02` 处置形态同《清单》A19/A21「移出仓」= 父代理动作 |
 
 - **A 档 22 条**（与《清单》TSV 逐行对应）：`A01` 四目录无 NN- 前缀（TSV 2）· `A02` 仓根 `README.md`(3) · `A03`/`A04` `core/internal/compat/compat.go|.json`(5,6) ·
@@ -76,7 +76,7 @@ python3 scripts/check-doc-name.py --no-self-test ...   # 内部子进程用（�
 | ④ 同基名 | 未登记的 `.md/.py` 对**必红**(N6)；已豁免的 `.md/.tsv` 对**必绿**(B03) | rc=1 / rc=0 |
 | ⑤ 前缀混用 | 同层 `01-a,02-b,c,d` | rc=0 + N5 告警 |
 | ⑥ **缺件必 rc=2** | 目标路径不存在 · 扫描域为空（只有目录） | rc=2 |
-| ⑦ 例外表条数自证 | `--list-exempt` 输出 **A22 / B3 / C4 / D2** | 四个数都对 |
+| ⑦ 例外表条数自证 | `--list-exempt` 输出 **A22 / B3 / C7 / D2** | 四个数都对 |
 | ⑧ 只报告不改 | 跑完后夹具树 **sha256 逐字节不变** | 一致 |
 | ⑨ **N6 判据有牙** | **同一棵好件树**只多一条**未登记**同基名对（`设计-文档体系-v1.0.md`+`.py`） | rc=1 + 命中 N6 |
 | ⑩ `--scope` 可用 | `--scope repo` 扫坏树＝仓根口径(rc=1)；`--scope docs` 解析到 `<仓根>/docs` | rc=1 / rc=2（缺件）+ 路径逐字可查 |
@@ -108,7 +108,8 @@ python3 scripts/check-doc-name.py --json --scope repo
 N3 也仍在咬（12 条 `docs/issues/` 冻结区 + 自检 ② 的 `…-20260918.md`）。
 **C04×1 与这 6 条无关**：那是**路 D** 本轮新增的 `scripts/precommit-gates.{sh,md}`（N6 同基名对）——非本路文件，单独登记（见 C 档）。
 
-**N6（同基名）全部 11 组的逐组归属**（这就是「例外表可数」的样子）：
+**N6（同基名）全部 15 组的逐组归属**（现跑 `--json --scope repo` · `per_rule.N6 = 15` · 15 组全部落在已登记/豁免里，
+即 `per_rule_live` 不含 N6 ⇒ 这就是「例外表可数」的样子）：
 
 | 组 | 扩展 | 归属 |
 |---|---|---|
@@ -119,6 +120,9 @@ N3 也仍在咬（12 条 `docs/issues/` 冻结区 + 自检 ② 的 `…-20260918
 | `scripts/check-doc-meta` · `scripts/check-doc-name` | `.md/.py` | C01 · C02（**本轮新增登记 · 待批准**） |
 | `scripts/check-doc-freshness` | `.md/.py` | C03（**本轮新增登记 · 待批准**，见差异 ⑤） |
 | `scripts/precommit-gates` | `.sh/.md` | C04（**已拍 2026-09-18（Mr2109）** · 允许对，见差异 ⑧） |
+| `scripts/check-gate-coverage` | `.md/.py` | **C05**（第二波登记 2026-09-18 · 门①「门脚本 + 说明书」，见差异 ⑨） |
+| `scripts/check-version-sources` | `.md/.py` | **C06**（第二波登记 2026-09-18 · 门②，同上） |
+| `scripts/check-wired-scripts` | `.md/.py` | **C07**（第二波登记 2026-09-18 · 门③，同上） |
 
 **登记前那 6 条可改面不合规的去向（逐条 · 都是「名字即功能」或「无 git 名可分」）**
 
@@ -236,6 +240,37 @@ python3 scripts/check-doc-name.py --self-test    # → rc 0 · 自检 21/21 ✓�
    2026-09-18 20:43 新增，与 `scripts/precommit-gates.sh` 构成 N6 同基名对（`脚本 + 说明书`，同 C01–C03 / A06/A07 / A12/A13 形态）
    ⇒ **不是「待批准」**：C 档计数 **3→4**（`EXEMPT_C_EXPECTED = 4`）· 自检 ⑦ 断言 **C4** · `--list-exempt` 逐条可见（理由 + 出处）。
    **撤法**：删 C04 行并把 `EXEMPT_C_EXPECTED` 4→3 ⇒ 该对判红照实回来（登记可数、可撤，不是静默豁免）。
+
+9. **C05–C07 = 第二波（2026-09-18 22:5x · 把《债务台账-20260918》§7 的三条建议门挂进提交闸）新建的三对 · 任务书点名登记**：
+   `scripts/check-gate-coverage.{py,md}`（门①）· `scripts/check-version-sources.{py,md}`（门②）· `scripts/check-wired-scripts.{py,md}`（门③）
+   —— 与 C01–C04 / A06/A07 / A12/A13 **同一形态**（门脚本 + 说明书）⇒ 登记为**允许对**：
+   C 档计数 **4→7**（`EXEMPT_C_EXPECTED = 7`）· 自检 ⑦ 断言 **C7** · `--list-exempt` 逐条可见（理由 + 出处）。
+   **撤法**：删任一行并把 `EXEMPT_C_EXPECTED` 7→6 ⇒ 该对判红照实回来（登记可数、可撤，不是静默豁免）。
+
+## 第二波（2026-09-18 22:5x · **C05–C07 登记之后**）—— 回 rc 0
+
+```bash
+python3 scripts/check-doc-name.py --scope repo
+# → 扫描域 2935 个文件/目录 · rc 0 · 不合规 0（冻结区 1433）· 告警 6（冻结区 1）
+#   per_rule：       N1 39 · N2 2 · N3 1262 · N4 48 · N5 7 · N6 15 · N7 127
+#   per_rule_live：  N3 1（目录，只告警）· N5 5（告警）—— **N6 不在 live 里**（15 组全部落登记/豁免）
+#   豁免命中（合计 60）：A01×1 · A02×1 · A03×1 · A05×1 · A06×1 · A08×1 · A10×1 · A12×1 · A15×17 ·
+#            A16×1 · A17×1 · A18×2 · A22×5 · B01×10 · B03×3 · C01×1 · C02×1 · C03×1 · C04×1 ·
+#            **C05×1 · C06×1 · C07×1** · D01×5 · D02×1
+#   OK：无不合规命中（告警 6 · 已豁免 60）
+python3 scripts/check-doc-name.py --self-test    # → rc 0 · 自检 21/21 ✓（例外表条数自证 = A22/B3/C7/D2）
+```
+
+- **登记前那 3 条 live FAIL 正是这三对**（同一跑法 rc=1 ⇒ 登记后 rc=0）：`scripts/check-gate-coverage →
+  同基名不同扩展 .md/.py` · `scripts/check-version-sources → …` · `scripts/check-wired-scripts → …`。
+- **C05 登记的牙齿（成对负控 · 2026-09-18 实测 · 只在 `/tmp` 副本上做，仓内脚本从未被变异）**：
+  副本删掉 C05 整行并把 `EXEMPT_C_EXPECTED` 7→6（`grep -c '"C05"'` 由 1 → 0 自证注入真的生效）⇒ 同一跑法
+  `--no-self-test --scope repo` = **rc 1**，命中行逐字为 `scripts/check-gate-coverage → 同基名不同扩展 .md/.py`；
+  未变异原件 = **rc 0**（`已豁免 60`）⇒ 这一对是靠 C05 登记过的，**不是靠放松判据**。
+  ★ 该副本走**默认跑法**（带自检）时是 **rc 2**（不是 1）：自检 ⑦「例外表条数自证」先拦下 ——
+  抬头从 `7 条（期望 7）` 变成 `6 条（期望 6）`，与断言逐字不符 ⇒ 打印「自检未过 ⇒ 拒绝扫真目标（rc=2 不给结论）」。
+- **判据与其它档一字未动**：A22 / B3 / D2 三个数不变；本轮只**增登记行 + 同步抬头/断言**，
+  没碰任何判据正则、没改任何文件名（`--no-self-test` 的 rc 1 → 0 只有登记这一个自变量）。
 
 ## 边界（写死，别猜）
 
