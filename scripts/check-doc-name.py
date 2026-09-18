@@ -82,12 +82,17 @@ REPO_ROOT_DEFAULT = os.path.dirname(HERE)
 #     --scope docs 不变 ⇒ 删除只去掉一个零命中条目，没有别的路径被误纳/误排。
 EXCL_DIRS = ("node_modules", "target", "__pycache__", ".history", ".obsidian", "dist",
              ".zerg", "zerg-wt", "venv", ".cargo", ".git")
-#   ★ 2026-09-19 开发文档分家：`docs/调研/multi-agent-源码/`（第三方源码摘录，97 篇）**已 `cp -a`
-#     到 `Zerg-内部文档/调研/multi-agent-源码/`，但源树此刻仍在工作树里**（未跟踪、97 篇 md 在盘上）
-#     ⇒ 本条**命中未清零 ⇒ 保留不动**（口径：仓内零命中才删；反向探针实测：删掉它 ⇒ 扫描域
-#     1680 → 2190、不合规 0 → 4（`SKILL.md` 大写 N1）⇒ 删了就造红）。待源树真正移出仓后再删。
-EXCL_PREFIX = (".git/", "vendor/", "docs/调研/multi-agent-源码/",
-               "tools/ocr/venv/")
+#   ★ 2026-09-19 分家第二步（源树从主仓删除）：`docs/调研/multi-agent-源码/`（第三方源码摘录，
+#     445 件 6.2M）先 `cp -a` 到 `Zerg-内部文档/调研/multi-agent-源码/`，同日按用户令**从主仓删除**
+#     ⇒ 主仓盘上已不存在（`git status` 未跟踪项归零）⇒ 本条**仓内零命中 ⇒ 删除**
+#     （口径：零命中即删；死条目留着 = 假覆盖）。源树若日后回到 `docs/调研/`，请把
+#     "docs/调研/multi-agent-源码/" 加回本列表，否则那批第三方摘录会被当本仓文档面判。
+#     ★ 反向探针（2026-09-19 实测 · /tmp 仿真造树）：造出 `docs/调研/multi-agent-源码/x/SKILL.md`
+#       + `y/README-20260901.md` ⇒ **条目在**：扫描域 7 项 / 不合规 0（rc=0）；**条目删**：扫描域
+#       11 项 / 不合规 2（`SKILL.md` 大写 N1 · `README-20260901.md` 日期后缀 N3），rc=1
+#       ⇒ 条目确在起作用（不是在名单里装样子）。真仓侧该树已不在盘上 ⇒ 删条目前后 `--scope repo`
+#       扫描域与不合规数**逐位一致**（无对象可排 ⇒ 既不加红、也不因空转生假绿）。
+EXCL_PREFIX = (".git/", "vendor/", "tools/ocr/venv/")
 #   ★ 2026-09-19 分家：`docs/issues/`（1086 篇引擎数据）**整目录已迁至 `Zerg-内部文档/issues/`**
 #     ⇒ 删第二项，只留仍在仓内的 `docs/项目文档/`（17 套快照）。对象换了位置，
 #     「冻结区只登记不改」的口径不变。反向探针：删条目前后 `--scope repo` 扫描域
