@@ -1057,7 +1057,8 @@ def cmd_list_rules(cfg, tree, args):
         print("  · %-14s %s" % (k, v))
     print("\n【排除名单（不计入、也不判红）】")
     print("  · 硬排除（永不扫）   ：%s" % ", ".join(cfg.get("hard_exclude", [])))
-    print("  · 镜像副本           ：%s" % ", ".join(cfg.get("mirror_paths", [])))
+    print("  · 镜像副本           ：%s" % (", ".join(cfg.get("mirror_paths", []))
+                                           or "（无 —— `docs/虫族文档` 已于 2026-09-19 退役，条目已从 config 删除；镜像重建请加回本列）"))
     print("  · 冻结归档（只登记） ：%d 套：%s" % (len(cfg.get("frozen_paths", [])), ", ".join(cfg.get("frozen_paths", []))))
     print("  · 第三方源码摘录     ：%s" % ", ".join(cfg.get("third_party_paths", [])))
     print("  · 引擎数据           ：%s" % ", ".join(cfg.get("engine_data_paths", [])))
@@ -1119,6 +1120,8 @@ def base_cfg(root):
         "corpus": ["docs"],
         "base_roots": ["", "core", "docs", "tools"],
         "hard_exclude": [".git", "node_modules", "target"],
+        # 夹具用（合成树）：镜像副本**机制**仍在；真配置里 `docs/虫族文档` 一条
+        # 已于 2026-09-19 退役并从 scripts/doc-freshness.config.json 删除（见该文件的 _mirror_note）。
         "mirror_paths": ["docs/虫族文档"],
         "frozen_paths": [],
         "third_party_paths": [],
