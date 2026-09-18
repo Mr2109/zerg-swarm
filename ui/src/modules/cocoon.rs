@@ -75,12 +75,19 @@ pub enum EditorOutcome {
 }
 
 impl EditorOutcome {
+    // 未接线（计划：茧侧据此置「未保存 ●」标记——茧拿到三态后自己判；宿主侧不需要）；
+    // 如需即接线，见同族已连线点 `markdown_editor` 的茧侧消费者（zerg-cocoon/文档 的 editor.rs，经 HostEditor 注入）。
+    // 保留理由：**模块契约的活口**——三态返回值配套的判读入口，删了茧就只能自己 match 枚举。
     /// 是否产生改动（`Changed` 或 `SaveRequested`）。
+    #[allow(dead_code)]
     pub fn changed(self) -> bool {
         !matches!(self, EditorOutcome::Unchanged)
     }
 
+    // 未接线（计划：茧侧在 ⌘S 时落盘自己的文档——判定入口）；如需即接线，见同族已连线点同 `changed`。
+    // 保留理由：同上（契约配套判读入口）。
     /// 是否触发了保存。
+    #[allow(dead_code)]
     pub fn save_requested(self) -> bool {
         matches!(self, EditorOutcome::SaveRequested)
     }
@@ -203,6 +210,10 @@ impl CocoonCtx {
     /// 为什么契约上要有这条：茧是**独立仓**，不能反向依赖宿主、更不能把船体的 Ferrite
     /// （rope/comrak/syntect，约 1500 行）复制一份；没有它，茧只能用 `TextEdit` 凑合 ⇒
     /// **体验降级**（C9 第 3 步要消除的正是它）。接口刻意窄：只给「渲染一段文本 + 三态返回」。
+    // 未接线（计划：茧借宿主的绳编辑器渲染自家文档——C9 第 3 步消除「文档茧编辑器降级」）；
+    // 如需即接线，见同族已连线点 `HostEditor` 注入链（zerg-cocoon/文档 的 editor.rs 消费本通道）。
+    // 保留理由：**宿主 ↔ 茧 的既定契约通道**（跨仓消费者不在 ui 树内，ui 侧因此显示「零调用」）。
+    #[allow(dead_code)]
     pub fn markdown_editor(
         &mut self,
         ui: &mut egui::Ui,
@@ -215,6 +226,9 @@ impl CocoonCtx {
     /// 该茧自家服务所需的令牌（宿主从 `ZERG_AUTH_TOKEN` / `ZERG_API_TOKEN` / 偏好文件 /
     /// `~/.zerg/token` 的既有链取；**只驻内存，不落盘、不写日志**）。
     /// 未注入（宿主没配令牌）⇒ `None`——茧据此显「未配置」，而不是拿空串去撞 401。
+    // 未接线（计划：茧取自家服务的令牌去做自家 API 调用）；如需即接线，见同族已连线点 `HostEditor`/文档茧服务。
+    // 保留理由：同上（契约通道；跨仓消费者 ⇒ ui 侧零调用点）。
+    #[allow(dead_code)]
     pub fn cocoon_token(&self) -> Option<&str> {
         self.token.as_deref()
     }

@@ -1,10 +1,10 @@
 //! 图标辅助（P3——iconflow 统一封装——14 包 34 TTF——MIT——v2.6 开源干净）
 //!
-//! 用法：`ui.button(icon_text("plus"))`；带字号/图标字体族用 `ui.label(icon_rt("trash", 14.0))`
+//! 用法：`ui.button(icon_text("plus"))`；需要字号/图标字体族时由调用方包一层 `RichText`
 //! 主力风格：Phosphor（6 字重现代）——导航/线条用 Lucide
 //! 替换 emoji 缺字清单（2026-08-29 实证 NotoEmoji 缺）：⚙️→settings 🖥️→monitor 🗑️→trash ✏️→edit 🟢→status
 
-use eframe::egui::{FontData, FontDefinitions, FontFamily, FontId, RichText};
+use eframe::egui::{FontData, FontDefinitions, FontFamily};
 
 /// 注册 iconflow 全部字体（追加到现有 FontDefinitions——保中文字体——egui 0.36 API）
 pub fn install_iconflow_fonts(definitions: &mut FontDefinitions) {
@@ -40,7 +40,8 @@ pub fn install_iconflow_fonts(definitions: &mut FontDefinitions) {
 /// M29(2026-09-10 审计)：返回的是**纯字形 `String`，不含字号信息**——字号由调用方
 /// （`RichText`/`TextFormat`）决定。原 `icon_text_n(name, size)` 的 `size` 参数从未被
 /// 使用（`icon_glyph` 里是 `_size`），属功能沉默失效，已删除该函数与参数。
-/// 需要"图标自带字体族 + 指定字号"请改用 [`icon_rt`]。
+/// 同理（2026-09-18 clippy）：`icon_rt(name, size)` 全仓零调用点 ⇒ 已删；需要
+/// 「图标自带字体族 + 指定字号」时，调用方自己 `egui::RichText::new(icon_text(name)).size(n)` 即可。
 pub fn icon_text(name: &str) -> String {
     icon_glyph(iconflow::Pack::Phosphor, name)
         .or_else(|| icon_glyph(iconflow::Pack::Lucide, name))
@@ -75,32 +76,4 @@ fn warn_missing_icon(name: &str) {
             eprintln!("[icons] unknown icon name (falling back to text): {}", name);
         }
     }
-}
-
-/// 图标 RichText（默认字号 14——按钮/标签用）
-pub fn icon_rt(name: &str, size: f32) -> RichText {
-    // 取图标所在字体族——渲染时用该字体
-    if let Some(r) = iconflow::try_icon(
-        iconflow::Pack::Phosphor,
-        name,
-        iconflow::Style::Regular,
-        iconflow::Size::Regular,
-    )
-    .ok()
-    .or_else(|| {
-        iconflow::try_icon(
-            iconflow::Pack::Lucide,
-            name,
-            iconflow::Style::Regular,
-            iconflow::Size::Regular,
-        )
-        .ok()
-    }) {
-        let glyph = char::from_u32(r.codepoint).unwrap_or('?');
-        return RichText::new(glyph.to_string())
-            .font(FontId::new(size, FontFamily::Name(r.family.into())));
-    }
-    // M30: 未收录图标名回退为文本时告警一次（便于发现遗漏/拼错）
-    warn_missing_icon(name);
-    RichText::new(name.to_string()).size(size)
 }

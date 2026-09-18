@@ -62,7 +62,6 @@ pub struct ZergApp {
     // 触发计时
     last_ping: f64,
     last_tasks: f64,
-    last_detail: f64,
     last_git: f64,
     last_logs: f64,
     last_res: f64,
@@ -90,8 +89,6 @@ pub struct ZergApp {
     selected_task: Option<TaskInfo>,
     // 当前请求的任务 ID
     detail_id: String,
-    // 刷新计时
-    last_refresh: f64,
     // 内部任务清单（Mr2109 2026-08-22）
     internal_tasks: std::sync::Arc<std::sync::Mutex<Option<Vec<serde_json::Value>>>>,
     last_it_fetch: std::time::Instant,
@@ -155,7 +152,6 @@ impl ZergApp {
             split_it: load_layout_ratio("split_it", 0.36),
             last_ping: 0.0,
             last_tasks: 0.0,
-            last_detail: 0.0,
             last_git: 0.0,
             last_logs: 0.0,
             last_res: 0.0,
@@ -177,7 +173,6 @@ impl ZergApp {
             cocoon_install_hint: None,
             selected_task: None,
             detail_id: String::new(),
-            last_refresh: 0.0,
             internal_tasks: std::sync::Arc::new(std::sync::Mutex::new(None)),
             last_it_fetch: std::time::Instant::now(),
             last_it_interval_fetch: std::time::Instant::now(),
@@ -1533,9 +1528,9 @@ impl ZergApp {
                                                 {
                                                     // C9 第 3 步：**未安装 ⇒ 提示安装**（设计 §4.3 / Q1）——按钮指向
                                                     // 它的独立仓；点击弹安装指引（不报错、不空白，也绝不假装可用）。
-                                                    // 文案先取出到局部量：源码级守线（`platform_wires_the_install_affordance`）
-                                                    // 按字面找 `t!` 宏里的 `cocoon.install` 键，而整条 if 超 100 列时
-                                                    // rustfmt 会把宏参数拆行、把这条子串断开 ⇒ 两者只能二者之一绿。
+                                                    // 文案取出到局部量只是为可读（2026-09-18：守线用例
+                                                    // `platform_wires_the_install_affordance` 已改成**键表/行为断言**，
+                                                    // 不再依赖本处源码字面 ⇒ 这里怎么换行都不影响它）。
                                                     let install_label = t!("cocoon.install");
                                                     if ui
                                                         .button(
@@ -2283,7 +2278,13 @@ impl ZergApp {
                                                     let dstore = self.model_detail.clone();
                                                     let edstore = self.adapter_edit.clone();
                                                     api::runtime().spawn(async move {
-                                                        let r = api::update_adapter_opts_blocking(&name2, cfg).await;
+                                                        // D 档（2026-09-18 clippy 清理）：这里把
+                                                        // `update_adapter_opts_blocking` 的返回值（`Result<(), String>`）
+                                                        // **整体丢弃**——apply 失败时下面的 schema/detail 照旧刷新，
+                                                        // 界面看起来「已应用」⇒ 错误被无声吞掉。
+                                                        // 消 lint 只做「显式丢弃」：改名 `_r` **不改行为**
+                                                        // （await 与副作用一字未变）；判据与推荐改法见任务报告 D 档。
+                                                        let _r = api::update_adapter_opts_blocking(&name2, cfg).await;
                                                         // 刷新 schema + detail + 编辑缓冲
                                                         let s = api::fetch_adapter_schema_blocking(&name2).await.ok();
                                                         if let Some(ref sv) = s {
@@ -3020,15 +3021,17 @@ impl eframe::App for ZergApp {
                 &mut self.registry,
                 self.online,
                 &self.locale,
-                &mut || {
-                    switch_locale = true;
-                },
-                &mut || {
-                    open_manager = true;
-                },
                 !self.hud_hidden,
-                &mut || {
-                    self.hud_hidden = !self.hud_hidden;
+                &mut crate::modules::NavBarHooks {
+                    on_switch_locale: &mut || {
+                        switch_locale = true;
+                    },
+                    on_open_manager: &mut || {
+                        open_manager = true;
+                    },
+                    on_toggle_hud: &mut || {
+                        self.hud_hidden = !self.hud_hidden;
+                    },
                 },
             );
             if switch_locale {
@@ -3296,8 +3299,10 @@ mod nav_trim_tests {
     const CHAT: &str = include_str!("modules/chat/chat_view.rs");
     const MREG: &str = include_str!("modules/model_registry.rs");
     const UPGRADE: &str = include_str!("modules/upgrade.rs");
-    const ZH_YML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/zh-CN.yml"));
-    const EN_YML: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/en.yml"));
+    pub(super) const ZH_YML: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/zh-CN.yml"));
+    pub(super) const EN_YML: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/en.yml"));
 
     /// §4.4 要删的 11 处（app.rs 8 + chat_view 1 + model_registry 1 + upgrade 1）全部消失。
     #[test]
@@ -3361,7 +3366,8 @@ mod nav_trim_tests {
         assert_eq!(APP.matches(needle).count(), 1, "内容区呼吸应恰好一处");
     }
 
-    fn key_lines(yml: &str) -> std::collections::BTreeSet<String> {
+    /// （`pub(super)`：兄弟测试模块 `cocoon_platform_tests` 的**键断言**复用同一份解析——不另造一份。）
+    pub(super) fn key_lines(yml: &str) -> std::collections::BTreeSet<String> {
         yml.lines()
             .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
             .filter_map(|l| {
@@ -3405,10 +3411,20 @@ mod nav_trim_tests {
 mod cocoon_platform_tests {
     //! C9 第 3 步（2026-09-13）：平台页「未安装 ⇒ 提示安装」**两态** + 安装指引弹窗（能失败的检查）。
 
+    use super::nav_trim_tests::{key_lines, EN_YML, ZH_YML}; // 键表断言复用同一份解析（不另造）
     use super::{cocoon_install_hint_window, cocoon_openable};
     use crate::modules::cocoon;
 
     const APP: &str = include_str!("app.rs");
+
+    /// **生产侧源码**：`APP` 里**第一个 `#[cfg(test)]` 之前**的部分。
+    ///
+    /// 为什么必须切掉测试段：本用例的 needle 是**源码字面**，而 needle 自身就写在测试段里 ⇒
+    /// 不切的话断言会被**本用例自己的源码**喂饱（那是自证、不是守线）。这一格是实测出来的：
+    /// 把平台页那行接线删掉、测试段照旧 ⇒ needle 命中测试段自己 ⇒ 假绿。
+    fn prod_src(src: &str) -> &str {
+        src.split("#[cfg(test)]").next().unwrap_or(src)
+    }
 
     /// **两态**：可进入性由 `cocoon::openable` 决定 —— C9 第 4 步宿主**不再**内建渲染文档界面
     /// （已整块迁进茧）⇒ 文档茧与示例虫茧**同一判据**（纯 `loaded`），没有「宿主内建回退」。
@@ -3472,24 +3488,126 @@ mod cocoon_platform_tests {
         }
     }
 
-    /// 源码级守线（能失败）：卡片上的「安装」按钮 + 弹窗接线必须在（防误删）。
+    /// **键表 + 行为**守线（能失败）：平台卡上的「安装」按钮 + 安装指引弹窗**接线**必须在（防误删）。
+    ///
+    /// 2026-09-18 改造（用户已批）：原来四条全是对 `include_str!("app.rs")` 的**字面子串**断言，
+    /// 其中「文案」那条找的是 `t!` 宏里那个 `cocoon.install` **键的字面** —— rustfmt 一旦把宏参数
+    /// 拆行（把键名单独塞一行）这条子串就断开，于是「格式」与「用例」二选一红（脆性）。现在改成：
+    ///   ① **键断言**：`cocoon.install` 及同族三键在 zh-CN / en 两侧**键表里都在**（键表 = locales/*.yml）；
+    ///   ①′ **行为断言**：运行期 `t!(.., locale = ..)` 真解得出一句人话（键缺/表没装载时 rust-i18n 会把
+    ///      键名**原样吐回来** ⇒ 以「等于键名」为失败条件；locale 走参数，**不碰全局** —— main.rs 的
+    ///      `set_locale` 与测试并行，动全局会引入竞态，见 modules/filebrowse 的既有教训）；
+    ///   ② **行为断言**：指引数据源真在（真调 `cocoon::install_guide`：非茧一律不给、未装载的茧给 http 仓地址）；
+    ///   ③ **行为断言**：指引弹窗真画得出来（真调 `cocoon_install_hint_window`：非茧 ⇒ 不弹空窗）；
+    ///   ④ 调用点仍在 —— 仍看源码，但用**去掉所有空白**的形态匹配 ⇒ 换行/缩进/拆行怎么变都不影响。
     #[test]
     fn platform_wires_the_install_affordance() {
-        assert!(
-            APP.contains("t!(\"cocoon.install\")"),
-            "卡片上的「安装」按钮被删了"
-        );
-        assert!(
-            APP.contains("cocoon::install_guide(id)"),
-            "「安装」按钮没接指引数据源"
-        );
-        assert!(
-            APP.contains("cocoon_install_hint_window"),
-            "安装指引窗口被删了"
-        );
-        assert!(
-            APP.contains("self.render_cocoon_install_hint(ui)"),
-            "平台页没画安装指引"
-        );
+        // ── ① 键表：文案键两个语言都在（少一边就露键名）────────────────────────
+        let install_keys = [
+            "cocoon.install",
+            "cocoon.install_title",
+            "cocoon.install_repo",
+            "cocoon.install_steps",
+        ];
+        for (loc, yml) in [("zh-CN", ZH_YML), ("en", EN_YML)] {
+            let keys = key_lines(yml);
+            for k in install_keys {
+                assert!(
+                    keys.contains(k),
+                    "locales/{}.yml 缺键 {}（平台卡「安装」按钮 / 指引弹窗文案）",
+                    loc,
+                    k
+                );
+            }
+        }
+        // ── ①′ 行为：这两条键真解得出来（不是把键名原样返回）──────────────────
+        //     key / locale 一律**字面量**（`t!` 是 proc-macro，参数不吃变量）；locale 显式给 ⇒
+        //     全程不碰全局 locale（main.rs 的 set_locale 与测试并行，动全局会引入竞态）。
+        for (loc, key, value) in [
+            (
+                "zh-CN",
+                "cocoon.install",
+                rust_i18n::t!("cocoon.install", locale = "zh-CN"),
+            ),
+            (
+                "en",
+                "cocoon.install",
+                rust_i18n::t!("cocoon.install", locale = "en"),
+            ),
+            (
+                "zh-CN",
+                "cocoon.install_title",
+                rust_i18n::t!("cocoon.install_title", locale = "zh-CN"),
+            ),
+            (
+                "en",
+                "cocoon.install_title",
+                rust_i18n::t!("cocoon.install_title", locale = "en"),
+            ),
+        ] {
+            assert!(!value.trim().is_empty(), "{}：{} 解出空文案", loc, key);
+            assert_ne!(
+                value.as_ref(),
+                key,
+                "{}：{} 没解出译文（rust-i18n 原样返回键名 ⇒ 键表没被装载）",
+                loc,
+                key
+            );
+        }
+        // ── ② 行为：指引数据源 ────────────────────────────────────────────────
+        for bad in ["chat", "not-a-cocoon-id"] {
+            assert!(
+                cocoon::install_guide(bad).is_none(),
+                "{} 不是茧 ⇒ 不该给安装指引（否则卡片会挂一个假入口）",
+                bad
+            );
+        }
+        let unloaded: Vec<&str> = ["docs", "roundtable"]
+            .into_iter()
+            .filter(|id| !cocoon::meta_of(id).expect("茧在册").loaded)
+            .collect();
+        for id in &unloaded {
+            let url = cocoon::install_guide(id)
+                .unwrap_or_else(|| panic!("{} 未装载 ⇒ 必须给得出安装指引（指向独立仓）", id));
+            assert!(
+                url.starts_with("http") && url.len() > 10,
+                "{} 的安装指引必须是可用仓地址，实际 {:?}",
+                id,
+                url
+            );
+        }
+        // ── ③ 行为：弹窗（非茧不弹空窗；未装载的茧一定要画得出来）─────────────
+        let ctx = egui::Context::default();
+        let mut closed = false;
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            closed = cocoon_install_hint_window(ui, "chat");
+        });
+        out.textures_delta.clear();
+        assert!(closed, "非茧 id ⇒ 不该弹安装指引窗（免得一张空白窗）");
+        for id in &unloaded {
+            let mut closed = true;
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                closed = cocoon_install_hint_window(ui, id);
+            });
+            out.textures_delta.clear();
+            assert!(!closed, "{} 未装载 ⇒ 安装指引窗必须画得出来", id);
+        }
+        // ── ④ 调用点：只看**生产段**、且 needle 用 `concat!` 拼（双重防「命中本用例自己」）──
+        //     匹配形态 = 去掉所有空白 ⇒ 换行/缩进/拆行怎么变都不影响（这正是旧写法红的那种改法）。
+        let flat: String = prod_src(APP)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        for needle in [
+            concat!("cocoon::install_guide", "(id).is_some()"),
+            concat!("self.cocoon_install_hint", "=Some(id.clone());"),
+            concat!("self.render_cocoon_install_hint", "(ui);"),
+        ] {
+            assert!(
+                flat.contains(needle),
+                "平台页「安装」接线被删了（去空白后找不到 {}）",
+                needle
+            );
+        }
     }
 }

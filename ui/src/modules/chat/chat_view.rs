@@ -4,7 +4,6 @@
 use crate::modules::icons::icon_text; // P3 图标（iconflow——替换 emoji）
 use eframe::egui;
 use serde_json::Value;
-use std::sync::{Arc, Mutex};
 
 use crate::api;
 use egui_commonmark::CommonMarkViewer;
@@ -281,6 +280,10 @@ pub struct ChatView {
     session_load_failed: bool, // M13: 会话详情加载失败（消息区给重试入口）
     // 输入
     pub input: String,
+    // 未接线（计划：多模态发送在途态——发送按钮在图片上传/请求在飞时置灰，避免连点重复发送）；
+    // 如需即接线，见同族已连线点 `pending_images`（发送路径 chat_view.rs 的 paste/send 处理）。
+    // 保留理由：多模态待接线的状态位，删了等于把计划中的发送闸门一起砍掉。
+    #[allow(dead_code)]
     pub sending: bool,
     pub send_error: Option<String>,
     // 异步句柄
@@ -318,7 +321,15 @@ pub struct ChatView {
     // C7 派单
     delegate_pending: Option<api::SharedResult<Value>>,
     // D3 多模态：待发送图片（data URL + 文件名）
+    // 未接线（计划：单图暂存槽——旧版选图流程的落点，现走 `pending_images` 多图列表）；
+    // 如需即接线，见同族已连线点 `pending_images`（chat_view.rs 的 `paste_clipboard_async` 与发送组装）。
+    // 保留理由：多模态功能面（与「代码里可见、功能面保留」口径一致）。
+    #[allow(dead_code)]
     pending_image: Option<String>,
+    // 未接线（计划：同 `pending_image` 的显示名——选图后在气泡旁显示文件名）；
+    // 如需即接线，见同族已连线点 `pending_images`（`Vec<(数据URL, 文件名)>` 的第 2 元已在用）。
+    // 保留理由：同上（多模态功能面）。
+    #[allow(dead_code)]
     pending_image_name: String,
     image_rx: Option<std::sync::mpsc::Receiver<(String, String)>>, // M21: 后台图片编码结果（data URL, 名称）
     // D4 固定
@@ -365,6 +376,22 @@ pub struct ChatView {
     pointer_text: Option<String>,
     // P2-3 侧栏宽度（可拖拽——egui 拖拽分栏）
     sidebar_w: f32,
+}
+
+/// `render_message` 的**拆借上下文**（2026-09-18 clippy `too_many_arguments`：11 个参数收口成结构体）。
+///
+/// 为什么是一堆 `&mut`：虚拟列表闭包（`FnMut`）里不能再借 `&mut self`（P4-29 的约束），
+/// 调用点先把要用到的字段逐个借出来、装进本结构再传进去——**语义与逐个传参一字不差**。
+struct MsgRenderCtx<'a> {
+    msg_md_cache: &'a mut std::collections::HashMap<i64, egui_commonmark::CommonMarkCache>,
+    streaming: bool,
+    editing_id: &'a mut Option<i64>,
+    editing_content: &'a mut String,
+    thinking_open: &'a mut std::collections::HashSet<i64>,
+    tools_open: &'a mut std::collections::HashSet<i64>,
+    speaking_id: &'a mut Option<i64>,
+    reactions: &'a mut std::collections::HashMap<i64, String>,
+    reacting_id: &'a mut Option<i64>,
 }
 
 impl Default for ChatView {
@@ -1776,15 +1803,17 @@ impl ChatView {
                         if let Some(a) = Self::render_message(
                             ui,
                             &msgs[i],
-                            msg_md_cache,
-                            streaming,
-                            editing_id,
-                            editing_content,
-                            thinking_open,
-                            tools_open,
-                            speaking_id,
-                            &mut self.reactions,
-                            &mut self.reacting_id,
+                            &mut MsgRenderCtx {
+                                msg_md_cache,
+                                streaming,
+                                editing_id,
+                                editing_content,
+                                thinking_open,
+                                tools_open,
+                                speaking_id,
+                                reactions: &mut self.reactions,
+                                reacting_id: &mut self.reacting_id,
+                            },
                         ) {
                             *action = Some(a);
                         }
@@ -2401,16 +2430,18 @@ impl ChatView {
     fn render_message(
         ui: &mut egui::Ui,
         m: &Value,
-        msg_md_cache: &mut std::collections::HashMap<i64, egui_commonmark::CommonMarkCache>,
-        streaming: bool,
-        editing_id: &mut Option<i64>,
-        editing_content: &mut String,
-        thinking_open: &mut std::collections::HashSet<i64>,
-        tools_open: &mut std::collections::HashSet<i64>,
-        speaking_id: &mut Option<i64>,
-        reactions: &mut std::collections::HashMap<i64, String>,
-        reacting_id: &mut Option<i64>,
+        cx: &mut MsgRenderCtx<'_>,
     ) -> Option<MsgAction> {
+        // 逐个字段重借成函数体原本用的名字 ⇒ 下面几百行一字未改。
+        let streaming = cx.streaming;
+        let msg_md_cache = &mut *cx.msg_md_cache;
+        let editing_id = &mut *cx.editing_id;
+        let editing_content = &mut *cx.editing_content;
+        let thinking_open = &mut *cx.thinking_open;
+        let tools_open = &mut *cx.tools_open;
+        let speaking_id = &mut *cx.speaking_id;
+        let reactions = &mut *cx.reactions;
+        let reacting_id = &mut *cx.reacting_id;
         let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("");
         let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
         let reasoning = m
@@ -2874,8 +2905,8 @@ fn base64_std(bytes: &[u8]) -> String {
     out
 }
 
-/// 供 app.rs 使用的类型别名（避免循环引用）
-pub type ChatState = Arc<Mutex<ChatView>>;
+// 2026-09-18 clippy（A 档真死代码）：原 `pub type ChatState = Arc<Mutex<ChatView>>;` 全仓零引用 ⇒ 已删
+// （app.rs 直接持有 `modules::chat::chat_view::ChatView` 实体，从未需要这层别名）。
 
 // P4-50 工具调用 JSON → Markdown（Mr2109: 工具调用记录密密麻麻一大团——完全不适合人类看——转MD: 每轮工具=标题+参数代码块+结果/错误）
 fn tool_calls_to_md(tc: &str) -> String {
