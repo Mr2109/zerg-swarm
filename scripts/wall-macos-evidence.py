@@ -9,7 +9,7 @@
 
 退出码：`0` 全绿 · `1` 断言红 · `2` 硬失败（环境/探针/二进制问题，**不静默跳过**）。
 
-回执落仓 `wall/evidence-macos-seatbelt-20260916.txt`。**回执里一律用仓内相对路径 + `/private/tmp/…`
+回执落仓 `wall/evidence-macos-seatbelt.txt`。**回执里一律用仓内相对路径 + `/private/tmp/…`
 靶子路径**（`wall/` 在发布白名单里 ⇒ 回执会进公开面，私有绝对路径不许出现 —— 上一份回执在这上面
 踩过一次，见 `76a15ddb`）。
 
@@ -29,7 +29,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WALL = os.path.join(ROOT, "wall")
 BIN = os.path.join(WALL, "target", "debug", "zerg-wall")
 PROBES = os.path.join(ROOT, "scripts", "sandbox-probes")
-RECEIPT = os.path.join(WALL, "evidence-macos-seatbelt-20260916.txt")
+RECEIPT = os.path.join(WALL, "evidence-macos-seatbelt.txt")
 PY = "/usr/bin/python3"
 
 EXIT_OK, EXIT_RED, EXIT_HARD = 0, 1, 2

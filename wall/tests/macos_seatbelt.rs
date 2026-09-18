@@ -1,7 +1,7 @@
 //! macOS 一档（Seatbelt 直调）的**活体四态**用例（批 2'.4）。
 //!
 //! 判据（任务单 §3 2'.4）：**本地靶子四态与 `scripts/sandbox-probes/` 历史回执一致**
-//! （`evidence-two-states-20260916.txt` 的 pF 那一行：unix socket ok · loopback ok · 写空间内 ok ·
+//! （`evidence-two-states.txt` 的 pF 那一行：unix socket ok · loopback ok · 写空间内 ok ·
 //! **出网 BLOCKED**），外加写**空间外**必须被拦（授权级封闭的本体）。
 //!
 //! **两条防假绿**（这是本用例最要紧的部分）：

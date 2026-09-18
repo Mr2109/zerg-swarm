@@ -3,8 +3,8 @@
 """check-doc-name.py —— 命名规范化门（把《清单-命名规范化》已落地的规则写成可执行判据）
 
 规格与真源（只读）
-  `docs/01-设计/清单-命名规范化-20260918.md`（182 行 · 17,025 B）
-  `docs/01-设计/清单-命名规范化-20260918.tsv`（147 行 = 表头 1 + 条目 146；列 =
+  `docs/01-设计/清单-命名规范化.md`（182 行 · 17,025 B）
+  `docs/01-设计/清单-命名规范化.tsv`（147 行 = 表头 1 + 条目 146；列 =
      当前路径 · 建议路径 · 不规范类型 · 引用它的文件数 · 风险档 · 备注）
   `docs/01-设计/设计-文档体系-v1.0.md`（v1.2 稿）§16.1（K8 扩项 = 命名规范化专项）
 
@@ -34,12 +34,15 @@
      豁免不是隐藏 —— 报告里每一档都有命中计数。
 
 用法
-    python3 scripts/check-doc-name.py                    # 全仓扫描域（同《清单》§0 口径）
-    python3 scripts/check-doc-name.py --target docs      # 只看 docs/
+    python3 scripts/check-doc-name.py                    # 全仓扫描域（同《清单》§0 口径）= --scope repo
+    python3 scripts/check-doc-name.py --scope repo        # 同上（与 check-doc-meta.py 的 --scope 同名口径）
+    python3 scripts/check-doc-name.py --scope docs        # 只看 <仓根>/docs
+    python3 scripts/check-doc-name.py --target docs       # 更细的形态（--target 在时以 --target 为准）
     python3 scripts/check-doc-name.py --json
     python3 scripts/check-doc-name.py --list-rules
     python3 scripts/check-doc-name.py --list-exempt
-    python3 scripts/check-doc-name.py --self-test         # 成对负控（好件必绿 / 坏件必红 / 缺件必 rc=2）
+    python3 scripts/check-doc-name.py --self-test         # 成对负控三层（好件必绿 / 坏件必红 / 缺件必 rc=2
+                                                         #   + 元自检：自检未过 ⇒ rc=2 且拒绝扫真目标）
     python3 scripts/check-doc-name.py --no-self-test ...  # 内部子进程用（防递归）
 
 退出码（三档）
@@ -208,7 +211,7 @@ EXEMPT_B = [
                "**休眠申报**：N6 的口径（至少一方是文档/脚本面扩展）已把它们挡在门外 ⇒ 本仓当前 0 命中"},
     {"id": "B03", "kind": "pair_doc_machine", "rules": ["N6"],
      "paths": [((".md", ".markdown", ".mdx"), (".tsv", ".csv", ".json"))],
-     "reason": "人读件 + 机读件同基名（本仓既有形态：`清单-命名规范化-20260918.md/.tsv` = 设计件 + 机读件）。"
+     "reason": "人读件 + 机读件同基名（本仓既有形态：`清单-命名规范化.md/.tsv` = 设计件 + 机读件）。"
                "**我方判断 · 与本脚本自身的差异已登记**：去掉这一条，该对会被判 ⑥（见 `scripts/check-doc-name.md` §差异）"},
 ]
 
@@ -218,10 +221,13 @@ EXEMPT_C = [
      "reason": "本轮 W2 交付：门脚本 + 说明书（同 `scripts/edit-assert` 既有约定）· **待父代理批准**"},
     {"id": "C02", "kind": "pair", "rules": ["N6"], "paths": [("scripts", "check-doc-name")],
      "reason": "同上（本文档脚本 + 说明书）· **待父代理批准**"},
+    {"id": "C03", "kind": "pair", "rules": ["N6"], "paths": [("scripts", "check-doc-freshness")],
+     "reason": "文档体系 P1 同批交付的第三条门脚本 + 说明书（`check-doc-freshness.{py,md}`）——"
+               "与 C01/C02、A06/A07、A12/A13 同一形态 · **待父代理批准**"},
 ]
 EXEMPT_A_EXPECTED = 22
 EXEMPT_B_EXPECTED = 3
-EXEMPT_C_EXPECTED = 2
+EXEMPT_C_EXPECTED = 3
 
 
 def _rule_ids(type_code):
@@ -576,7 +582,8 @@ def _sub(script, *args):
     return p.returncode, p.stdout
 
 
-def self_test(script_path):
+def self_test(script_path, meta=True):
+    """meta=False 只由「元自检」的注入副本用（防无限递归）——见 main() 里的 CHECK_DOC_NAME_META_OFF。"""
     lines = []
     ok = True
     tmp = tempfile.mkdtemp(prefix="check-doc-name-", dir="/tmp")
@@ -597,6 +604,11 @@ def self_test(script_path):
     pairs = os.path.join(tmp, "pairs")
     _write(os.path.join(pairs, "docs", "01-设计", "机读对.md"), "# x\n")
     _write(os.path.join(pairs, "docs", "01-设计", "机读对.tsv"), "x\n")
+    # ⑨ 同一棵**好件树**，只多一条**未登记**的同基名对（N6 判据必须有牙）
+    goodpair = os.path.join(tmp, "goodpair")
+    for rel, text in GOOD_FILES.items():
+        _write(os.path.join(goodpair, rel), text)
+    _write(os.path.join(goodpair, "docs", "01-设计", "设计-文档体系-v1.0.py"), "x\n")
     empty = os.path.join(tmp, "empty")
     os.makedirs(empty, exist_ok=True)
 
@@ -651,8 +663,8 @@ def self_test(script_path):
     rc, out = _sub(script_path, "--list-exempt")
     cnt_ok = (rc == 0 and ("A 档 · 《清单-命名规范化》已登记的「不改」条目：22 条（期望 22）" in out)
               and ("B 档 · 规则级规范豁免：3 条（期望 3）" in out)
-              and ("C 档 · 本轮新增登记（待父代理批准）：2 条（期望 2）" in out))
-    lines.append("%s 例外表条数自证（A22 / B3 / C2）" % ("✓" if cnt_ok else "✗"))
+              and ("C 档 · 本轮新增登记（待父代理批准）：3 条（期望 3）" in out))
+    lines.append("%s 例外表条数自证（A22 / B3 / C3）" % ("✓" if cnt_ok else "✗"))
     ok &= cnt_ok
     # ⑧ 只报告不改
     import hashlib
@@ -674,6 +686,38 @@ def self_test(script_path):
     lines.append("%s 只报告不改（夹具树逐字节不变：%s）"
                  % ("✓" if same else "✗", "一致" if same else "被改动"))
     ok &= same
+    # ⑨ N6 判据**有牙**（成对负控）：对照组 = ① 好件必绿 ⇒ 说明「好件绿」不是靠关掉 N6 换来的
+    ok &= case("好件树 + 未登记同基名对必红（N6 判据有牙）", 1,
+               ["--target", goodpair, "--repo-root", goodpair], must_contain=["N6"])
+    # ⑩ --scope 可用（此前 `--scope repo` 会被 argparse 当用法错 ⇒ rc=2，把「不给结论」误读成「自检相冲」）
+    ok &= case("--scope repo 可用（= 仓根口径）", 1, ["--scope", "repo", "--target", bad],
+               must_contain=["N6"])
+    ok &= case("--scope docs 解析到 <仓根>/docs", 2, ["--scope", "docs"],
+               must_contain=["不给结论", os.path.join(tmp, "docs")])
+    # ⑪ 用法错（未知参数）必 rc=2 且**不产出结论行**
+    ok &= case("用法错（未知参数）必 rc=2 不给结论", 2, ["--scope", "nonsense"],
+               must_not_contain=["OK："])
+    # ⑫ **元自检**：把「好件必绿」的期望改成不可能达成 ⇒ 自检未过 ⇒ rc=2 且**拒绝扫真目标**
+    if meta:
+        needle = '("好件必绿（含允许对 edit-assert）", 0,'
+        src = open(script_path, encoding="utf-8").read()
+        assert needle in src, "元自检注入点未找到（脚本被改过？）"
+        mutant = os.path.join(tmp, "mutant-self-test.py")
+        _write(mutant, src.replace(needle, '("好件必绿（含允许对 edit-assert）", 7,'))
+        p = subprocess.run([PY, mutant, "--repo-root", tmp, "--target", good],
+                           env=dict(os.environ, CHECK_DOC_NAME_META_OFF="1"),
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           universal_newlines=True)
+        out_lines = [l for l in p.stdout.splitlines() if l.strip()]
+        # 判定要点：rc=2 · **第一行**就是拒绝上岗的抬头（不是结论行）· 末行不是结论行
+        meta_ok = (p.returncode == 2
+                   and out_lines[:1] == ["自检未过 ⇒ 拒绝扫真目标（rc=2 不给结论）"]
+                   and not out_lines[-1].startswith(("OK：", "FAIL：")))
+        lines.append("%s 自检未过 ⇒ rc=2 且拒绝扫真目标（元自检 · 注入副本）" % ("✓" if meta_ok else "✗"))
+        if not meta_ok:
+            lines.append("    注入副本 rc=%d 尾：%s"
+                         % (p.returncode, p.stdout.strip().splitlines()[-3:]))
+        ok &= meta_ok
 
     expected = (1                                   # ① 好件必绿
                 + len([1 for _r, x in BAD_FILES if x])   # ② 坏件必红（逐条）
@@ -684,7 +728,9 @@ def self_test(script_path):
                 + 1                                 # ⑤ 前缀混用只告警
                 + 2                                 # ⑥ 缺件 ×2（目标 / 空扫描域）
                 + 1                                 # ⑦ 例外表条数自证
-                + 1)                                # ⑧ 只报告不改
+                + 1                                 # ⑧ 只报告不改
+                + 4                                 # ⑨ N6 有牙 · ⑩ --scope ×2 · ⑪ 用法错
+                + (1 if meta else 0))               # ⑫ 元自检（注入副本）
     got = sum(1 for ln in lines if ln[:1] in ("✓", "✗"))
     lines.append("自检用例：期望 %d 条 · 实跑 %d 条" % (expected, got))
     if got != expected:
@@ -701,6 +747,9 @@ def main(argv):
     ap.add_argument("--repo-root", default=REPO_ROOT_DEFAULT)
     ap.add_argument("--max-examples", type=int, default=5)
     ap.add_argument("--count-frozen", action="store_true", help="把冻结区计入退码")
+    ap.add_argument("--scope", choices=["repo", "docs"], default=None,
+                    help="repo = 仓根（同《清单》§0 口径，默认）· docs = <仓根>/docs"
+                         "（显式给了 --target/位置参数时，以 --target 为准）")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--list-rules", action="store_true")
     ap.add_argument("--list-exempt", action="store_true")
@@ -719,14 +768,16 @@ def main(argv):
         return 0
     if args.list_exempt:
         return list_exempt()
+    meta = os.environ.get("CHECK_DOC_NAME_META_OFF") != "1"
     if args.self_test:
-        ok, lines = self_test(os.path.abspath(__file__))
-        print("check-doc-name 自检（成对负控：好件必绿 / 坏件必红 / 缺件必 rc=2）")
+        ok, lines = self_test(os.path.abspath(__file__), meta=meta)
+        print("check-doc-name 自检（成对负控三层：好件必绿 / 坏件必红 / 缺件必 rc=2"
+              " + 元自检·注不进真仓）")
         for ln in lines:
             print("  " + ln)
         return 0 if ok else 2
     if not args.no_self_test:
-        ok, lines = self_test(os.path.abspath(__file__))
+        ok, lines = self_test(os.path.abspath(__file__), meta=meta)
         if not ok:
             print("自检未过 ⇒ 拒绝扫真目标（rc=2 不给结论）")
             for ln in lines:
@@ -737,7 +788,11 @@ def main(argv):
     if not os.path.isdir(root):
         print("BLOCKED：仓根不是目录 ⇒ 不给结论：%s" % root)
         return 2
-    targets = [os.path.abspath(x) for x in (list(args.targets) + list(args.target))] or [root]
+    targets = [os.path.abspath(x) for x in (list(args.targets) + list(args.target))]
+    if not targets and args.scope == "docs":
+        targets = [os.path.join(root, "docs")]
+    if not targets:
+        targets = [root]
     for t in targets:
         if not os.path.exists(t):
             print("BLOCKED：目标不存在 ⇒ 不给结论：%s" % t)

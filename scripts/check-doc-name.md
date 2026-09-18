@@ -1,9 +1,11 @@
 # check-doc-name — 命名规范化门（《清单-命名规范化》七类判据的可执行版）
 
 > **规格（真源，只读）**
-> `docs/01-设计/清单-命名规范化-20260918.md`（182 行 · 17,025 B）与机读件 `…-20260918.tsv`
+> `docs/01-设计/清单-命名规范化.md`（182 行 · 17,025 B）与机读件 `docs/01-设计/清单-命名规范化.tsv`
 > （147 行 = 表头 1 + 条目 146；列 = 当前路径 · 建议路径 · 不规范类型 · 引用它的文件数 · 风险档 · 备注）·
 > `docs/01-设计/设计-文档体系-v1.0.md`（v1.2 稿）**§16.1**（K8 扩项 = 命名规范化专项）。
+> 两份清单件自身已于 2026-09-18 按本门 N3 收尾（文件名去掉 `-20260918`，日期归 frontmatter / 表头），
+> 改名与引用改写见 §收尾登记。
 > 本脚本把《清单》§1 的**七类**、§2 的**风险档**、§5 的**处置口径**写成可执行判据；**从不改任何文件**。
 
 ## 七条判据（规则号 ↔ 《清单》§1 七类）
@@ -30,12 +32,14 @@
 ```bash
 cd "<repo>"
 
-python3 scripts/check-doc-name.py                      # 全仓扫描域（排除名单同《清单》§0）
-python3 scripts/check-doc-name.py --target docs --max-examples 40
+python3 scripts/check-doc-name.py                      # 全仓扫描域（排除名单同《清单》§0）= --scope repo
+python3 scripts/check-doc-name.py --scope repo         # 同上（与 check-doc-meta.py 的 --scope 同名口径）
+python3 scripts/check-doc-name.py --scope docs         # 只看 <仓根>/docs
+python3 scripts/check-doc-name.py --target docs --max-examples 40   # 更细的形态（--target 在时以它为准）
 python3 scripts/check-doc-name.py --json               # 机读：live/frozen 分桶 + 逐规则命中 + 豁免命中
 python3 scripts/check-doc-name.py --list-rules         # 七条判据 + 出处 + 档位口径
 python3 scripts/check-doc-name.py --list-exempt        # 例外表三档全列（含条数自证）
-python3 scripts/check-doc-name.py --self-test          # 成对负控（16 条用例，真命令行 + 真退出码）
+python3 scripts/check-doc-name.py --self-test          # 成对负控三层（21 条用例，真命令行 + 真退出码）
 python3 scripts/check-doc-name.py --no-self-test ...   # 内部子进程用（防递归）
 ```
 
@@ -47,8 +51,8 @@ python3 scripts/check-doc-name.py --no-self-test ...   # 内部子进程用（�
 | 档 | 条数 | 内容 | 依据 |
 |---|---|---|---|
 | **A** | **22** | 《清单-命名规范化》**已登记**的「不改」条目（逐条抄 TSV 行号 + 不规范类型码 + 建议列原话） | = 《清单》§3「可改 124 · **不改 22**」的 22；脚本启动时**断言条数 = 22**，不符 ⇒ rc=2 |
-| **B** | **3** | **规则级规范豁免**（不在 22 条里）：① `README.md`/`AGENTS.md`/`SKILL.md`/`VERSION` 等**保留名 —— 只在文档面之外生效**（`docs/` 内同名件照判，K8 要的就是这个）② 构建工具链同基名（`go.mod/go.sum` · `Cargo.toml/lock`）**休眠申报**（N6 的口径已把它们挡在门外 ⇒ 本仓 0 命中）③ **人读件 + 机读件同基名**（`.md` + `.tsv/.csv/.json`） | ①②：行业/工具链约定；③：本仓既有形态（`清单-命名规范化-20260918.md/.tsv` = 设计件 + 机读件）—— **我方判断，差异见下** |
-| **C** | **2** | **本轮新增登记（待父代理批准）**：本脚本自己的 `脚本 + 说明书` 两对（`check-doc-meta.{py,md}` · `check-doc-name.{py,md}`） | 同 `scripts/edit-assert`、`scripts/mutate-scan` 的既有约定（A 档已登记同类） |
+| **B** | **3** | **规则级规范豁免**（不在 22 条里）：① `README.md`/`AGENTS.md`/`SKILL.md`/`VERSION` 等**保留名 —— 只在文档面之外生效**（`docs/` 内同名件照判，K8 要的就是这个）② 构建工具链同基名（`go.mod/go.sum` · `Cargo.toml/lock`）**休眠申报**（N6 的口径已把它们挡在门外 ⇒ 本仓 0 命中）③ **人读件 + 机读件同基名**（`.md` + `.tsv/.csv/.json`） | ①②：行业/工具链约定；③：本仓既有形态（`清单-命名规范化.md/.tsv` = 设计件 + 机读件）—— **我方判断，差异见下** |
+| **C** | **3** | **本轮新增登记（待父代理批准）**：`脚本 + 说明书` 三对（`check-doc-meta.{py,md}` · `check-doc-name.{py,md}` · `check-doc-freshness.{py,md}`） | 同 `scripts/edit-assert`、`scripts/mutate-scan` 的既有约定（A 档已登记同类） |
 
 - **A 档 22 条**（与《清单》TSV 逐行对应）：`A01` 四目录无 NN- 前缀（TSV 2）· `A02` 仓根 `README.md`(3) · `A03`/`A04` `core/internal/compat/compat.go|.json`(5,6) ·
   `A05` `AGENTS.md`(8) · `A06`/`A07` `scripts/edit-assert`+`.md`(15,16) · `A08`/`A09` `tools/doc_index_gen.md|.py`(21,22) · `A10`/`A11` `tools/kb_docs_sync.md|.py`(23,24) ·
@@ -58,7 +62,7 @@ python3 scripts/check-doc-name.py --no-self-test ...   # 内部子进程用（�
 - **豁免不是隐藏**：报告末尾逐档打印命中计数（如 `A15×17 · B01×9`）；`--json` 里也有 `exempt_hits`。
 - **维护规矩**：新增/删除任何豁免行 ⇒ 同时改 `EXEMPT_A/B/C_EXPECTED` 三个常量（否则启动即 rc=2）**并**写进《清单》或报父代理 —— **不许只改脚本**。
 
-## 自检：成对负控 16 条（`--self-test`）
+## 自检：成对负控三层 21 条（`--self-test`）
 
 | 组 | 用例 | 期望 |
 |---|---|---|
@@ -68,22 +72,30 @@ python3 scripts/check-doc-name.py --no-self-test ...   # 内部子进程用（�
 | ④ 同基名 | 未登记的 `.md/.py` 对**必红**(N6)；已豁免的 `.md/.tsv` 对**必绿**(B03) | rc=1 / rc=0 |
 | ⑤ 前缀混用 | 同层 `01-a,02-b,c,d` | rc=0 + N5 告警 |
 | ⑥ **缺件必 rc=2** | 目标路径不存在 · 扫描域为空（只有目录） | rc=2 |
-| ⑦ 例外表条数自证 | `--list-exempt` 输出 **A22 / B3 / C2** | 三个数都对 |
+| ⑦ 例外表条数自证 | `--list-exempt` 输出 **A22 / B3 / C3** | 三个数都对 |
 | ⑧ 只报告不改 | 跑完后夹具树 **sha256 逐字节不变** | 一致 |
-| ★ 用例条数自证 | 期望 16 条 = 实跑 16 条 | 相等 |
+| ⑨ **N6 判据有牙** | **同一棵好件树**只多一条**未登记**同基名对（`设计-文档体系-v1.0.md`+`.py`） | rc=1 + 命中 N6 |
+| ⑩ `--scope` 可用 | `--scope repo` 扫坏树＝仓根口径(rc=1)；`--scope docs` 解析到 `<仓根>/docs` | rc=1 / rc=2（缺件）+ 路径逐字可查 |
+| ⑪ 用法错 | 未知参数（`--scope nonsense`） | rc=2 且**不产出结论行** |
+| ⑫ **元自检** | 把副本的「好件必绿」期望改成不可能达成 ⇒ 自检必挂 | 副本 rc=2 · **首行**=「自检未过 ⇒ 拒绝扫真目标」· 末行不是结论 |
+| ★ 用例条数自证 | 期望 21 条 = 实跑 21 条 | 相等 |
+
+**⑨ 与 ① 是一对负控**：①（好件树）绿 + ⑨（同一棵树 + 一条未登记同基名对）红 ⇒ 证明「好件绿」**不是靠关掉 N6**
+换来的；**⑫ 是「自检未过 ⇒ 拒绝扫真目标」这条守门逻辑自己的负控**（注入副本永不落进真仓，只用 `/tmp`）。
+`⑫` 在副本里靠环境变量 `CHECK_DOC_NAME_META_OFF=1` 关掉自身（防无限递归），这是自检专用开关，不是给真仓用的。
 
 夹具落在 `/tmp/check-doc-name-*/`（保留备查），**不碰真仓**；判据按目录成组 ⇒ 同基名用例扫的是**所在目录**。
 
-## 真仓现跑（2026-09-18 19:47，**只报告不改**）
+## 真仓现跑（2026-09-18 20:35 · **本轮收尾后** · 只报告不改）
 
 ```bash
-python3 scripts/check-doc-name.py --json
-# → entries 2908（文件 + 目录）· live: FAIL 20 / WARN 6 · frozen: FAIL 1431 / WARN 1
-#   per_rule:      N1 36 · N2 2 · N3 1269 · N4 54 · N5 7 · N6 10 · N7 127
-#   per_rule_live: N1 3  · N3 11 · N4 6  · N5 5 · N6 1
+python3 scripts/check-doc-name.py --json --scope repo
+# → entries 2917（文件 + 目录）· rc 1 · live: FAIL 6 / WARN 6 · frozen: FAIL 1431 / WARN 1
+#   per_rule:        N1 39 · N2 2 · N3 1260 · N4 48 · N5 7 · N6 10 · N7 127
+#   per_rule_live:   N1 5  · N3 2 · N5 5
 #   per_rule_frozen: N2 2 · N3 1257 · N4 48 · N7 125
 #   豁免命中：A01×1 · A02×1 · A03×1 · A05×1 · A06×1 · A08×1 · A10×1 · A12×1 · A15×17 · A16×1 · A17×1
-#            · A18×2 · A22×5 · B01×9 · B03×2 · C01×1 · C02×1
+#            · A18×2 · A22×5 · B01×10 · B03×2 · C01×1 · C02×1 · C03×1
 ```
 
 **N6（同基名）全部 10 组的逐组归属**（这就是「例外表可数」的样子）：
@@ -93,24 +105,49 @@ python3 scripts/check-doc-name.py --json
 | `core/internal/compat/compat` | `.go/.json` | A03（允许对 · 登记） |
 | `scripts/edit-assert` · `scripts/mutate-scan` | `/.md` | A06 · A12（允许对 · 登记） |
 | `tools/doc_index_gen` · `tools/kb_docs_sync` | `.md/.py` | A08 · A10（允许对 · 登记） |
-| `docs/01-设计/清单-命名规范化-20260918` · `docs/术语表` | `.md/.tsv` | B03（人读+机读 · 规则级豁免） |
+| `docs/01-设计/清单-命名规范化` · `docs/术语表` | `.md/.tsv` | B03（人读+机读 · 规则级豁免） |
 | `scripts/check-doc-meta` · `scripts/check-doc-name` | `.md/.py` | C01 · C02（**本轮新增登记 · 待批准**） |
-| `scripts/check-doc-freshness` | `.md/.py` | **未登记 ⇒ 红**（并行分路新建，见差异 ⑤） |
+| `scripts/check-doc-freshness` | `.md/.py` | C03（**本轮新增登记 · 待批准**，见差异 ⑤） |
 
-**可改面 20 条不合规（逐条）**
+**可改面 6 条不合规（逐条 · 都是「名字即功能」或「无 git 名可分」）**
 
-| 规则 | 条数 | 清单 |
-|---|---|---|
-| N1 | 3 | `docs/README.md` · `docs/site/README.md`（并行分路新建）· `docs/调研/子报告-内建调试版-20260917/redaction-probe/README.md` |
-| N3 | 10 | `docs/01-设计/清单-命名规范化-20260918.{md,tsv}` · `scripts/sandbox-probes/evidence-*-20260916.txt`×4 · `wall/evidence-*-20260916.txt`×6 |
-| N4 | 6 | `core/internal/agent/设计-v2.5.2-任务执行体.md` · `docs/01-设计/设计-bash-工具-v1.0.1-AI-专用执行契约.md` · `…-v1.0.2-删除范围门控` · `…-ls-工具-v1.0.2-目录概览升级` · `…-read-工具-v1.0.2-多类型读取升级` · `…-write-工具-v1.0.1-类型感知写入升级` |
-| N6 | 1 | `scripts/check-doc-freshness`（`.md`+`.py`，并行分路新建，**未登记**） |
+| 规则 | 条数 | 清单 | 为什么留着 |
+|---|---|---|---|
+| N1 | 5 | `docs/README.md` · `docs/en/README.md` · `docs/en/_drafts/README.md` · `docs/site/README.md` · `docs/zh/README.md` | ① `docs/README.md` 是**重定向存根**（并入 `docs/index-nav.md` 后按零删除保留旧路径，《清单》TSV 第 4 行备注明写「改名须与入口收敛**同批**」）；② 两个 `docs/…/README.md` 是**语言层入口件**，且 `scripts/check-glossary.py:157` 用 `rel.endswith("README.md")` 做译页豁免 ⇒ 改名会**同时改掉别门的判据**（跨门相冲，不由本门单方面动）；③ `docs/zh/` · `docs/site/` 属并行路在改的面 ⇒ 只登记 |
+| N3 | 1 | `bin/_history/zerg-core.prev-20260912.bak` | `bin/` 被 `.gitignore:22` 忽略、**未纳入版本控制** ⇒ `git mv` 不可用（硬规矩：禁 `mv`/`rm`）；处置建议同《清单》A19/A21 = **移出仓**，属父代理动作 |
 
 **可改面 6 条告警**：N5 ×5（`docs/thunderbolt` 前缀6/无前缀3 · `docs/项目文档/v2.5.6` 16/26 · `v2.5.7` 18/23 · `v2.5.8` 18/7 · `v2.5.9` 18/12）
 + N3 ×1（目录 `docs/调研/子报告-内建调试版-20260917`，目录名只告警）。
 
 **读法**：《清单》里 **124 条可改**的主体（③日期后缀 84 + 33、⑥同基名 10、①大小写 10…）**大部分已经不在树上了** ——
-`docs/01-设计/`、`gateway/`、`docs/INDEX.md` 等已按建议路径落地（本门复跑证实），剩下的 20 条 = **本轮新增件**（清单自身、证据件、并行分路新件）+ **6 条版本段不尾**。
+`docs/01-设计/`、`gateway/`、`docs/INDEX.md` 等已按建议路径落地（本门复跑证实）；**本轮又把 20 条「新增件」里的 16 条收尾**（见下），
+剩下的 6 条不是「没人管」，是**名字与功能绑在一起**（重定向存根 / 语言层入口 / 另一门判据 / 未入版本控制的备件）⇒ 登记待拍，不硬改。
+
+## 收尾登记（2026-09-18 · 16 条改名 · 39 处引用改写 · **零删除**）
+
+| 规则 | 旧 → 新 |
+|---|---|
+| N3 | `docs/01-设计/清单-命名规范化-20260918.md/.tsv` → `清单-命名规范化.md/.tsv` |
+| N3 | `scripts/sandbox-probes/evidence-{gate-and-watchdog,linux-bwrap,two-states,two-states-wall}-20260916.txt` → 去掉 `-20260916` |
+| N3 | `wall/evidence-{bridge-argv,macos-seatbelt,plan-cli,publish-face}-20260916.txt` → 去掉 `-20260916` |
+| N4 | `docs/01-设计/设计-{bash,ls,read,write}-工具-vX.Y-<标题>.md` ×5 → 版本段移尾 `设计-<工具>-<标题>-vX.Y.md` |
+| N1 | `docs/调研/子报告-内建调试版-20260917/redaction-probe/README.md` → `readme.md`（该目录已有 `report.md`，TSV 第 46 行的建议名已占用 ⇒ 只做大小写规范化） |
+
+- **只 `git mv` + 就地改写文本**：`git diff --diff-filter=D` 空（零删除）、`git status` 记 16 条 `R`；内容 sha256 逐条先记后比，
+  改名阶段「消失 16 / 新增 16 / 额外改动 0」。
+- **引用改写 39 处 / 19 个文件**，**分两轮**：第一轮许可名单 12 个文件 **29 处**（设计件 2 · 门脚本 2 · 证据脚本 2 · `wall/README.md` · Go 源 3（注释）· `tools/write.md` · 调研稿 1）；
+  第二轮**靠残留扫描抓出第一轮漏掉的 8 处裸名引用**（无目录前缀）再补 7 个文件 **10 处**：`scripts/sandbox-probes/README.md`（证据表 ×2）· `wall/tests/macos_seatbelt.rs`（注释）·
+  `scripts/compare-wall-argv.py`（注释）· `docs/01-设计/设计-茧壁-统一封闭契约与等级自证.md` · `tools/{bash,ls,read}.md`（版本表引用设计稿）· 外加清单自身命令示例与本说明书 B 档行。
+  ⇒ **教训写死**：改名收尾必须**反过来搜旧名**（含裸基名），不能只盯着「我以为引用它的那几个文件」；许可名单是「防误伤」，不是「完整性证明」。
+- 每处给**命中数断言**（期望值不符即中止）；同一脚本复跑第二遍命中 0 = **幂等**；**全仓 2707 个跟踪文件逐一对比 sha256** ⇒ 两轮都**意外改动 0**。
+- **旧名残留 = 登记性提及（逐类说明，不追改；收尾后实测计数）**：① `docs/项目文档/**` 冻结快照 **23 处**与 `docs/issues/**` —— 冻结区原文不追改（本仓既有落地惯例，前几批改名同样如此）；
+  ② `docs/01-设计/清单-命名规范化.tsv` 的「当前路径/建议路径」两列 **5 处** —— 它就是**改名计划表**，旧名是它的本职；
+  ③ `docs/调研/协作骨架v2.1-仓内核对-20260918/live-task*.log` **5 处** —— 作业日志是**记录**；
+  ④ 证据 `.txt` 正文互引 **3 处**（`evidence-two-states.txt` 自引、`evidence-two-states-wall.txt` 自引、`evidence-bridge-argv.txt` 引 `evidence-plan-cli.txt`）—— 证据件正文不改写（只改名）；
+  ⑤ 本门说明书 §收尾登记那两行「旧 → 新」**2 处** —— 登记表天生要写旧名。
+  合计 **38 处**，全部落在上面前五类；**可改面（非冻结、非记录、非登记表）旧名残留 = 0**。
+- **`scripts/check-doc-freshness.{py,md}` 的 ⑥ 判红本轮改判为 C03 登记**（同 C01/C02 与 A06/A07/A12/A13 的既有「脚本 + 说明书」形态）——
+  **待父代理批准**；不批准就把 C03 那两行删掉（同时改 `EXEMPT_C_EXPECTED` 3→2），判红会照实回来。
 
 ## 与《清单》的实测差异（**登记 · 不静默**）
 
@@ -118,12 +155,18 @@ python3 scripts/check-doc-name.py --json
    `docs/项目文档/v2.5.0/研究 - 自我纠错.md`（都含 `U+0020`）。**两条都在 `docs/项目文档/` 冻结快照内** ⇒ 本门按冻结区报（不进 rc）。
 2. **④ 措辞与实测不符**：《清单》§5 ④ 写「v2.5.0–v2.5.9 全套有 `NN-` 前缀」；实测 **v2.5.6–v2.5.9 同层混用**（16/26 · 18/23 · 18/7 · 18/12），另 `docs/thunderbolt`（6/3）也混用。
    本门按**实测**报 WARN，不改《清单》。
-3. **《清单》146 条之外的新命中（10 文件 + 1 目录）**：`scripts/sandbox-probes/evidence-*.txt`×4 · `wall/evidence-*.txt`×6 —— 名字带 `-YYYYMMDD` 的证据件；
-   它们是《清单》§0 扫描域内、但 TSV 里没有的项 ⇒ 本门列进「可改面」，**是否改由父代理拍**（改 = 断引用，先按 §6 的备份与前后对照纪律）。
+3. **《清单》146 条之外的新命中（8 文件 + 1 目录）**：`scripts/sandbox-probes/evidence-*.txt`×4 · `wall/evidence-*.txt`×4（早先误记 6）—— 名字带 `-YYYYMMDD` 的证据件；
+   它们是《清单》§0 扫描域内、但 TSV 里没有的项。**本轮 8 条已按 N3 收尾**（去日期 + 引用改写）；引用只在**冻结区**与证据正文里残留，按登记性提及处理。
 4. **B03 是「我方判断」，不是《清单》的裁定**：人读件 + 机读件同基名（`.md`+`.tsv`）**不判 ⑥** —— 依据是本仓既有形态
-   `清单-命名规范化-20260918.md/.tsv`（《清单》自己也没把它列进 ⑥）。**去掉 B03 则该对会被判 ⑥**（自检 ④′ 就是这条的负控）。
-5. **`scripts/check-doc-freshness.{py,md}`（并行分路新建）判 ⑥ 红**：它属于与 `scripts/edit-assert` 同一类「脚本 + 说明书」对 ⇒
-   若认定该形态合法，应**登记进 A 档**（或让 C 档这类登记走一次统一批准）；本门**不替它登记**，只如实报红。
+   `清单-命名规范化.md/.tsv`（《清单》自己也没把它列进 ⑥）。**去掉 B03 则该对会被判 ⑥**（自检 ④′ 就是这条的负控）。
+5. **`scripts/check-doc-freshness.{py,md}` 的 ⑥ 判红 → 本轮改判为 C03 登记**（同 C01/C02 与 A06/A07、A12/A13 的既有「脚本 + 说明书」形态）：
+   **待父代理批准** —— 不批就把 C03 行删掉并把 `EXEMPT_C_EXPECTED` 3→2，判红会照实回来（登记可数、可撤，不是静默豁免）。
+6. **5 条 `README.md` 保留名留在 `docs/` 内，本轮**登记不改**：`docs/README.md`（重定向存根）· `docs/en/README.md` · `docs/en/_drafts/README.md` ·
+   `docs/site/README.md` · `docs/zh/README.md`。B01 的保留名豁免**只在 `docs/` 之外生效**（K8 要的就是「`docs/` 内照判」）⇒ 它们被判 N1 是**设计如此**。
+   要它们变绿只有两条路（都要父代理拍）：(a) 逐个大小写改名（代价：`docs/README.md` 旧路径在大小写敏感宿主上失效，「重定向存根」语义打折；
+   `docs/en/*` 改名会同时破 `scripts/check-glossary.py:157` 的 `endswith("README.md")` 译页豁免）；(b) 给「语言层入口 README + 重定向存根」加 B 档规则级豁免（那是**改判据口径**，不是改文件）。
+7. **`bin/_history/*.bak` 命中的是「不可 git 名分」的件**：`bin/` 在 `.gitignore:22` 里 ⇒ `git mv` 不可用（本轮硬规矩：禁 `mv`/`rm`），
+   处置形态同《清单》A19/A21「移出仓」= 父代理动作。
 
 ## 边界（写死，别猜）
 
@@ -136,5 +179,7 @@ python3 scripts/check-doc-name.py --json
 - **N7 按「同一分隔段」**（`- _ . 空格` 切段）判**相邻**字符；命中即告警，**不给改名建议**（需人审：专有名词 / 产品名）。
 - **扫描域与《清单》§0 同一排除名单**：`.git` `node_modules` `vendor` `tools/ocr/venv` `docs/虫族文档/`（镜像副本）
   `docs/调研/multi-agent-源码/`（第三方）`**/target` `**/__pycache__` `dist` `docs/.history` `docs/.obsidian` `.zerg` `zerg-wt`。
+- **`--scope`**：`repo`（默认）= 仓根扫描域；`docs` = `<仓根>/docs`。显式给了 `--target`/位置参数时**以 `--target` 为准**（`--scope` 只提供默认目标，不叠加）。
+- **自检开关**：`--no-self-test`（内部子进程防递归）· 环境变量 `CHECK_DOC_NAME_META_OFF=1`（**只给元自检的注入副本用**，别在真仓里设）。
 - **未挂进 `scripts/precommit-gates.sh`**（三档退码与那套 `rc`/`empty` 两模式不相容，Q14 未选型）；语法已被 `pub` scope 的 `scripts/*.py` 步骤覆盖。
 - **本门从不写盘**（自检除外，且只写 `/tmp`）。
