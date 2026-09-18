@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -32,6 +33,33 @@ func isolateTasksFile(t *testing.T) string {
 	tasksFile = p
 	t.Cleanup(func() { tasksFile = old })
 	return p
+}
+
+// TestMain 包级（进程级）隔离兜底 —— 2026-09-18 修 /tmp 硬编码缺陷配套。
+//
+// 背景：tasks_persist.go 原写死 /tmp/zerg-tasks.json；默认落点改走统一状态目录后，
+// 落点变成 ~/.zerg/state/zerg-tasks.json —— 而**真机生产主控正在读同一份文件**。
+// isolateTasksFile 是「用例级」隔离，挡不住两类真实泄漏：
+//   - 未调用 isolateTasksFile 的用例（构造 MasterScheduler / 触发 saveTasksLocked）；
+//   - t.Cleanup 恢复默认值**之后**才写盘的后台循环（recoverWaiting/dispatch/自动重跑）——
+//     实测 review 用例在 cleanup 后仍写出真机状态文件（此前写的是真机 /tmp/zerg-tasks.json）。
+//
+// 两类泄漏都会：① 覆盖真机主控的任务历史；② 让同一次/下一次跑的用例读回假历史（时红时绿）。
+// 故在测试进程启动时把状态目录与旧路径都指到临时目录：整包测试绝不碰真机状态文件、
+// 也绝不碰真机 /tmp/zerg-tasks.json（待修补 #35 的进程级兜底）。
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "zerg-api-test-state")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "测试隔离目录创建失败: %v\n", err)
+		os.Exit(1)
+	}
+	// os.Setenv（不是 t.Setenv）：TestMain 无 *testing.T，且必须覆盖整包。
+	// 用例内仍可用 t.Setenv 覆盖（结束后自动恢复到这里的值）。
+	_ = os.Setenv("ZERG_STATE_DIR", dir)
+	legacyTasksFile = filepath.Join(dir, "legacy-zerg-tasks.json") // 不存在 ⇒ 用例不会读真机 /tmp
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 // ============ 测试时序稳健性辅助（测试专用——绝不改产品代码） ============
