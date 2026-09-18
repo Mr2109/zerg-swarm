@@ -23,7 +23,7 @@
 ```bash
 R="<repo>"
 
-# ① 门自证（20 条子用例，真命令行 + 真退出码；不过 ⇒ 拒绝跑真目标）
+# ① 门自证（26 条子用例，真命令行 + 真退出码；含负控三格：成对 / 坏名 / 无牙 —— 不过 ⇒ 拒绝跑真目标）
 python3 scripts/mutate-scan --self-test
 
 # ② Go：一包干跑清单 + 归一（--j3 = 双跑，验「归一后一致」）
@@ -39,7 +39,10 @@ python3 scripts/mutate-scan --lang py --repo "$R" --target scripts/check_version
     --operator core/ReplaceComparisonOperator_NotEq_Eq --occurrence 0 --test-cmd 'bash judge.sh'
 #    只拿 Python 清单不跑：加 --manifest-only
 
-python3 scripts/mutate-scan --list-reasons | --help | --version
+python3 scripts/mutate-scan --list-reasons        # 原因码全集 + 六态 + 白名单 + 台账落点
+python3 scripts/mutate-scan --list-assertions     # 断言登记表（负控点名的名字从这来）
+python3 scripts/mutate-scan --neg-control=<断言名> [--neg-form manifest|point|manifest-j3|py-point]
+python3 scripts/mutate-scan --help | --version
 ```
 
 自检不过 ⇒ **拒绝跑真目标**（`precommit-gates.sh:36` 的项目口径）。`--no-self-test` 只给内部子进程用（防递归）。
@@ -55,13 +58,53 @@ python3 scripts/mutate-scan --list-reasons | --help | --version
 
 ## 退出码三档 + 原因码（三档**语义**与 `edit-assert` 相同；**原因码各自一套、不通用**）
 
-| rc | 含义 | 原因码（节选；全集见 `--list-reasons`，37 条） |
+| rc | 含义 | 原因码（节选；全集见 `--list-reasons`，**41 条**） |
 |---|---|---|
 | **0** | 通过 | `OK_SELFTEST` · `OK_MANIFEST` · `OK_POINT_KILLED` · `OK_MANIFEST_GREEN`（+ `WARN_*` 不阻断） |
-| **1** | 失败（真红：机制没被覆盖） | `FAIL_MUTANT_LIVED` · `FAIL_MUTANT_NOT_COVERED` · `FAIL_MUTANTS_UNPROTECTED` |
-| **2** | **不给结论**（不是红） | `BLOCKED_BASELINE_RED` · `BLOCKED_UNREGISTERED_TOOL` · `BLOCKED_MISSING_TOOL` · `BLOCKED_SANDBOX_UNSAFE` · `BLOCKED_SANDBOX_INCOMPLETE` · `BLOCKED_MANIFEST_MISSING/_UNPARSABLE/_EMPTY` · `BLOCKED_TIMEOUT` · `BLOCKED_TOOL_ERROR` · `BLOCKED_DIFF_NO_MATCH` · `BLOCKED_POINT_NOT_FOUND/AMBIGUOUS` · `BLOCKED_MUTANT_TIMED_OUT/_NOT_VIABLE/_SKIPPED` · `BLOCKED_CR_INIT` · `BLOCKED_OUTCOME_MISSING` · `BLOCKED_RESIDUAL` · `BLOCKED_UNFINISHED` · `BLOCKED_LEDGER_*` · `BLOCKED_USAGE` · `BLOCKED_SELFTEST` · `BLOCKED_ACCOUNT` |
+| **1** | 失败（真红：机制没被覆盖） | `FAIL_MUTANT_LIVED` · `FAIL_MUTANT_NOT_COVERED` · `FAIL_MUTANTS_UNPROTECTED` · `FAIL_NEG_INVERTED`（该断言被负控取反后判红 —— 负控形态专用） |
+| **1** | **负控成立** | `OK_NEGCONTROL`（成对证据在输出里；进程用非 0 档表明这**不是一次通过** —— 负控不是绿） |
+| **2** | **不给结论**（不是红） | `BLOCKED_BASELINE_RED` · `BLOCKED_UNREGISTERED_TOOL` · `BLOCKED_MISSING_TOOL` · `BLOCKED_SANDBOX_UNSAFE` · `BLOCKED_SANDBOX_INCOMPLETE` · `BLOCKED_MANIFEST_MISSING/_UNPARSABLE/_EMPTY` · `BLOCKED_TIMEOUT` · `BLOCKED_TOOL_ERROR` · `BLOCKED_DIFF_NO_MATCH` · `BLOCKED_POINT_NOT_FOUND/AMBIGUOUS` · `BLOCKED_MUTANT_TIMED_OUT/_NOT_VIABLE/_SKIPPED` · `BLOCKED_CR_INIT` · `BLOCKED_OUTCOME_MISSING` · `BLOCKED_RESIDUAL` · `BLOCKED_UNFINISHED` · `BLOCKED_LEDGER_*` · `BLOCKED_USAGE` · `BLOCKED_SELFTEST` · `BLOCKED_ACCOUNT` · `BLOCKED_NEGCONTROL_NAME`（负控坏名）· `BLOCKED_NEGCONTROL_NOTOOTH`（取反后不翻转） |
 
 **没有降级路径**（M5/C10）：缺件/未登记/基线红/清单缺件/超时**一律 rc=2**，不许换工具、不许改用文本匹配。
+
+## 负控（与腿二 `scripts/edit-assert` **同口径**）—— C11：没有负控，就分不出「断言在工作」还是「断言是摆设」
+
+| 件 | 落地 | 退码 |
+|---|---|---|
+| **成对** | 同输入跑两遍：正常形态（断言全开）与取反形态（只把该断言取反，内部开关 `--neg=`）⇒ 两条结论必须不同（正常 rc=0 / 取反 rc≠0），且**指名道姓**（被点名断言逐行打印） | 成立 ⇒ rc=1 `OK_NEGCONTROL` |
+| **坏名** | `--neg-control=NOT_A_NAME` ⇒ 打印已登记断言名与别名，**不给结论** | rc=2 `BLOCKED_NEGCONTROL_NAME` |
+| **无牙** | 取反后结论**没翻转**（该断言在本次形态下没接在判定上）⇒ **不给结论**，并提示换 `--neg-form` | rc=2 `BLOCKED_NEGCONTROL_NOTOOTH` |
+| **夹具** | 合成件（微 Go 模块 + 微 Python 目标）+ **假工具**，登记在夹具自己的 `ZERG_TOOLS_DIR` ⇒ 不碰真仓 · 不碰真工具 · 不碰 `~/.zerg/state`（台账钉在夹具根） | —— |
+
+四种负控形态（`--neg-form`）：`manifest`（清单）· `point`（Go 单点，收窄到唯一）· `manifest-j3`（清单双跑）·
+`py-point`（cosmic-ray 单点，判据读 stdout JSON）。**默认形态按断言登记表选**：
+A6/A7 ⇒ `point` · A15 ⇒ `py-point` · A16 ⇒ `manifest-j3` · 其余 ⇒ `manifest`。
+
+17 条可点名断言（`--list-assertions` 打全表；`NO_SILENT_DOWNGRADE` 是 `A14_NO_SILENT_DOWNGRADE` 的**别名**）：
+
+| 断言 | 取反钩子落点（代码里那一段） | 取反后判红 |
+|---|---|---|
+| `A1_TOOL_REGISTERED` | `resolve_tool` | rc=2 `BLOCKED_UNREGISTERED_TOOL` |
+| `A2_BASELINE_GREEN` | `run_baseline` | rc=2 `BLOCKED_BASELINE_RED` |
+| `A3_MANIFEST_EXISTS` | `load_manifest` | rc=2 `BLOCKED_MANIFEST_MISSING` |
+| `A4_NORMALIZE` | `load_manifest` | rc=1 `FAIL_NEG_INVERTED` |
+| `A5_FINGERPRINT` | `gate`（指纹算出后） | rc=1 `FAIL_NEG_INVERTED` |
+| `A6_NARROW_SINGLE` | `go_single_point`（需 point 形态） | rc=2 `BLOCKED_POINT_AMBIGUOUS` |
+| `A7_SIX_STATES` | `judge_point_state`（需 point 形态） | rc=1 `FAIL_MUTANT_LIVED` |
+| `A8_CLOCK` | `run_baseline`（上界判定处） | rc=2 `BLOCKED_TIMEOUT` |
+| `A9_SANDBOX_COPY` | `assert_sandbox_complete` | rc=2 `BLOCKED_SANDBOX_INCOMPLETE` |
+| `A10_SANDBOX_NO_REPO` | `make_sandbox` | rc=2 `BLOCKED_SANDBOX_UNSAFE` |
+| `A11_RESTORE_SHA` | `judge_point_state`（**只在 point 形态接**） | 清单形态 ⇒ 如实 `NOTOOTH`；`--neg-form point` ⇒ rc=2 `BLOCKED_RESIDUAL` |
+| `A12_LEDGER_PAIR` | `assert_ledger_pair`（绿路径上的显式断言） | rc=2 `BLOCKED_LEDGER_CORRUPT` |
+| `A13_LEDGER_UNFINISHED` | `Ledger.unfinished_check` | rc=2 `BLOCKED_UNFINISHED` |
+| `A14_NO_SILENT_DOWNGRADE`（别名 `NO_SILENT_DOWNGRADE`） | `resolve_tool`（降级闸的**反面**） | rc=2 `BLOCKED_MISSING_TOOL` |
+| `A15_CR_STDOUT_JSON` | `py_single_point`（需 py-point 形态） | rc=1（取反 ⇒ 改读进程 rc ⇒ 结论反向） |
+| `A16_J3_STABLE` | `gate` 的 J3 比较处（**需 `--j3`**） | 不带 `--j3` ⇒ 如实 `NOTOOTH`；带 ⇒ rc=2 |
+| `A17_TOOL_BROKEN` | `load_manifest` | rc=2 `BLOCKED_TOOL_ERROR` |
+
+★ 17 条**全部**接了取反钩子，逐条实测两两成对（`正常 rc=0` / `取反 rc≠0`；命令与原始输出见收尾报告）。
+★ `A11` / `A16` 在各自**默认形态**下给出 `NOTOOTH` 是**如实报告**（那两条断言本来只挂在单一形态上）——
+自检 T23 就用 A11 的清单形态演「无牙」这一格，T24 再换 `--neg-form point` 证明同一条断言确实有牙。
 
 ## 六态（§2.1.3；**不许把 SKIPPED/TIMED OUT/NOT VIABLE 当结论**）
 
@@ -124,4 +167,7 @@ baseline(cmd,rc) · pre_sha / post_sha（前像/后像）· cmd + **cmd_rc**（�
 - **墙钟符自带**（C7）：本机**没有** `timeout`；`perl -e 'alarm shift; exec @ARGV' N -- cmd`（设计稿原样**带 `--`**）
   实测**什么都不跑却退 0** ⇒ 门内不用它，一律 python `subprocess` + 进程组 SIGKILL。
   **默认上界 `--clock` = 900 秒**（`--help` / 代码现读；腿二 `edit-assert` 默认 60）；超时 ⇒ rc=2 `BLOCKED_TIMEOUT` + 先复原再报。
-- **没挂进 `precommit-gates.sh`**：Q14（三档 rc 与门禁 `rc`/`empty` 两模式不相容）**未选型** ⇒ 本轮不改门禁，也不许挂成尾部软检查（B8）。
+- **没挂成 `precommit-gates.sh` 的步骤**：Q14（三档 rc 与门禁 `rc`/`empty` 两模式不相容）**未选型** ⇒
+  不许挂成尾部软检查（B8）。**但**：2026-09-18 起 `precommit-gates.sh` 的 `pub` scope 新增一步
+  「`scripts/*`（无后缀 + 首行 `#!`）按 shebang 语法」，把本脚本（**无文件扩展名**）纳入 python 语法检查
+  —— **只查语法、不跑它**，所以 Q14 仍未选型；那一步自带负控（门禁自检第 ⑦ 条：坏件必红 / 好件必绿 / 空转必红）。

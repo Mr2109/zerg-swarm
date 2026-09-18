@@ -62,6 +62,9 @@
             --operator core/ReplaceComparisonOperator_Gt_LtE --occurrence 0 --test-cmd 'bash judge.sh'
     python3 scripts/mutate-scan --self-test        # 自证：不过 ⇒ 拒绝跑真目标
     python3 scripts/mutate-scan --list-reasons     # 原因码全集 + 六态 + 白名单 + 台账落点
+    python3 scripts/mutate-scan --list-assertions  # 断言登记表（负控点名的名字从这来）
+    python3 scripts/mutate-scan --neg-control=<断言名> [--neg-form manifest|point|manifest-j3|py-point]
+                                                   # 负控（**成对 + 点名**；与腿二 scripts/edit-assert 同口径）
     python3 scripts/mutate-scan --help / --version
 
 退出码（三档 0/1/2，与 scripts/edit-assert 完全相同）
@@ -175,15 +178,21 @@ REASON_CODES = [
      "cosmic-ray stdout 里没有可解析 JSON / 没有 test_outcome ⇒ 判据无从读（不读 rc，§2.1.5-③）"),
     ("BLOCKED_RESIDUAL", EXIT_BLOCKED,
      "跑完/超时后目标 sha256 与前像不一致 ⇒ **残留变异态**（C2）⇒ 先复原再报，不给结论"),
+    ("BLOCKED_NEGCONTROL_NAME", EXIT_BLOCKED,
+     "负控给了不存在的断言名（与腿二 edit-assert **同口径** J1：坏名 rc=2，不给结论）"),
+    ("BLOCKED_NEGCONTROL_NOTOOTH", EXIT_BLOCKED,
+     "负控把该断言取反后结论**没翻转** ⇒ 这条断言在本次形态下没接在判定上（C11：不给结论）"),
     # 档 1：失败（真红）
     ("FAIL_MUTANT_LIVED", EXIT_FAIL, "该点 = LIVED ⇒ 覆盖缺口 / 判据太弱（M12 继续分诊）"),
     ("FAIL_MUTANT_NOT_COVERED", EXIT_FAIL, "该点 = NOT COVERED ⇒ 没有任何用例跑到它（覆盖缺口，真红）"),
     ("FAIL_MUTANTS_UNPROTECTED", EXIT_FAIL, "清单可跑集合里出现 LIVED / NOT COVERED ⇒ 机制没被覆盖（逐点点名）"),
+    ("FAIL_NEG_INVERTED", EXIT_FAIL, "该断言被负控**取反**后判红（其余断言不动 —— 负控形态专用）"),
     # 档 0：通过 / 不阻断
     ("OK_SELFTEST", EXIT_OK, "自检全过"),
     ("OK_MANIFEST", EXIT_OK, "清单生成 + 归一 + 指纹（**未跑变异**；清单 = 可审计的输入）"),
     ("OK_POINT_KILLED", EXIT_OK, "单点被 KILLED ⇒ 判据有牙齿（这一格才是「门在工作」的证据）"),
     ("OK_MANIFEST_GREEN", EXIT_OK, "清单可跑集合全 KILLED（NOT VIABLE 已剔除不计分）"),
+    ("OK_NEGCONTROL", EXIT_FAIL, "负控成立（进程用 rc=1：负控**不是绿**；区分度证据见输出两行）"),
     ("WARN_SKIPPED_PRESENT", EXIT_OK, "不阻断但要点名：清单里存在 SKIPPED ⇒ 这些点**未验**，不计入任何结论"),
     ("WARN_NOT_VIABLE_DROPPED", EXIT_OK, "不阻断：NOT VIABLE 的变异体已剔除、不计分"),
     ("WARN_LEDGER_TMP", EXIT_OK, "不阻断但显式告警：台账落点在 /tmp（显式覆盖；生产用不可）"),
@@ -195,41 +204,99 @@ REASON_DESC = dict((c, d) for c, _t, d in REASON_CODES)
 # ── 断言登记表（自检用例点名用；--list-reasons 打印）────────────────────────────────
 ASSERTIONS = [
     ("A1_TOOL_REGISTERED", "工具必须在登记目录（~/.zerg/tools/）且 binary sha256 与 tools/cli-tools.json 一致",
-     "路径前缀断言 + sha256(binary)", "取反 ⇒ 未登记的工具也被放行 ⇒ rc≠0（M5/C10）"),
+     "路径前缀断言 + sha256(binary)", "取反 ⇒ 已登记且指纹一致的工具被判「不符」⇒ rc=2 BLOCKED_UNREGISTERED_TOOL（M5/C10）"),
     ("A2_BASELINE_GREEN", "★ 基线绿是前置：基线不绿 ⇒ rc=2 BLOCKED_BASELINE_RED（绝不当「没有变异点」）",
-     "先跑基线命令，读**真实 rc**", "取反 ⇒ 基线红被读成「无变异点」⇒ rc≠0（C3）"),
+     "先跑基线命令，读**真实 rc**", "取反 ⇒ **绿**的基线被判成红 ⇒ rc=2 BLOCKED_BASELINE_RED（C3）"),
     ("A3_MANIFEST_EXISTS", "清单先落盘再跑：文件存在 + 非空 + 可解析（rc 一律不采信）",
-     "产物存在性 + JSON 解析", "取反 ⇒ 缺件当空 ⇒ rc≠0（§2.1.6/M7）"),
+     "产物存在性 + JSON 解析", "取反 ⇒ 已落盘的清单被判缺件 ⇒ rc=2 BLOCKED_MANIFEST_MISSING（§2.1.6/M7）"),
     ("A4_NORMALIZE", "归一：变异点按 (file,line,column,type) 排序 + 剔登记过的白名单字段",
-     "规范化 JSON（排序 + 白名单）", "取反 ⇒ 归一断言作废 ⇒ rc≠0（C4/Q10）"),
+     "规范化 JSON（排序 + 白名单）", "取反 ⇒ 归一结果不被采信 ⇒ rc=1 FAIL_NEG_INVERTED（C4/Q10）"),
     ("A5_FINGERPRINT", "指纹 = **四元组多集摘要**（gremlins 无 id、cosmic-ray job_id 是 UUID）",
-     "sha256(排序后四元组多集的规范 JSON)", "取反 ⇒ 指纹不可复核 ⇒ rc≠0（C6）"),
+     "sha256(排序后四元组多集的规范 JSON)", "取反 ⇒ 指纹不被采信 ⇒ rc=1 FAIL_NEG_INVERTED（C6）"),
     ("A6_NARROW_SINGLE", "四维收窄（路径/包 · --diff · 类型 · 逐点）后必须**唯一**，收不到就明说收不到",
-     "可跑集合 == 1 且 == --point", "取反 ⇒ 收窄失败也被当单点 ⇒ rc≠0（§2.1.1）"),
+     "可跑集合 == 1 且 == --point", "取反 ⇒ 已收窄到唯一也被判「收不到唯一」⇒ rc=2 BLOCKED_POINT_AMBIGUOUS（需单点形态）"),
     ("A7_SIX_STATES", "六态归类（KILLED/LIVED/NOT COVERED/TIMED OUT/NOT VIABLE/SKIPPED）",
-     "状态字符串 → 枚举 + 每态一句话证据", "取反 ⇒ 状态被错归 ⇒ rc≠0（§2.1.3）"),
+     "状态字符串 → 枚举 + 每态一句话证据", "取反 ⇒ KILLED 被错归成 LIVED ⇒ rc=1 FAIL_MUTANT_LIVED（需单点形态）"),
     ("A8_CLOCK", "墙钟符：一切外部命令带上界；超时 ⇒ rc=2 + 先复原再报（本机无 timeout 命令）",
-     "subprocess + 进程组 SIGKILL", "取反 ⇒ 超时不判 ⇒ 门挂死 ⇒ rc≠0（C7）"),
+     "subprocess + 进程组 SIGKILL", "取反 ⇒ 上界判定反向（按上界完成的也被判超时）⇒ rc=2 BLOCKED_TIMEOUT（C7）"),
     ("A9_SANDBOX_COPY", "副本一律 cp -a，且**兄弟模块同带**（core + shared；replace 目标必须在）",
-     "cp -a + go.mod 解析 replace", "取反 ⇒ 缺 ../shared ⇒ 覆盖率收集失败（M11 实例）"),
+     "cp -a + go.mod 解析 replace", "取反 ⇒ **完整**副本被判不完整 ⇒ rc=2 BLOCKED_SANDBOX_INCOMPLETE（M11/M17）"),
     ("A10_SANDBOX_NO_REPO", "副本根 ≠ 真仓根、不在真仓内、不复用非空目录（B1/B7）",
-     "realpath 前缀断言", "取反 ⇒ 允许在真仓里变异 ⇒ rc≠0（B1）"),
+     "realpath 前缀断言", "取反 ⇒ 安全副本根被判成落在真仓内 ⇒ rc=2 BLOCKED_SANDBOX_UNSAFE（B1/B7）"),
     ("A11_RESTORE_SHA", "跑前/跑后目标 sha256 必须逐字节一致（cosmic-ray 就地改；gremlins 也会改副本）",
-     "sha256(文件字节) 比对", "取反 ⇒ 残留变异态被放过 ⇒ rc≠0（C2）"),
+     "sha256(文件字节) 比对", "取反 ⇒ 已逐字节复原也被判残留 ⇒ rc=2 BLOCKED_RESIDUAL（**只有单点真跑形态接得上**；清单形态如实给 NOTOOTH）"),
     ("A12_LEDGER_PAIR", "台账 begin/end 成对，append-only；落点 = edit-assert-ledger.jsonl（同文件不同 role）",
-     "JSONL 两行 + run_id 配对", "取反 ⇒ 台账不成对 ⇒ rc≠0（§2.1.7/§7.4）"),
+     "JSONL 两行 + run_id 配对", "取反 ⇒ 台账形状/成对断言判红 ⇒ rc=2 BLOCKED_LEDGER_CORRUPT（§2.1.7/§7.4）"),
     ("A13_LEDGER_UNFINISHED", "启动做未收尾检测（有 begin 无 end ⇒ rc=2 + 打印残留路径与当前 sha256）",
-     "读 JSONL 配对 run_id", "取反 ⇒ 未收尾被放过 ⇒ rc≠0（J6/C2）"),
+     "读 JSONL 配对 run_id", "取反 ⇒ 干净台账被判「有 begin 无 end」⇒ rc=2 BLOCKED_UNFINISHED（J6/C2）"),
     ("A14_NO_SILENT_DOWNGRADE", "缺件/未登记/基线红/清单缺件/超时一律 rc=2，没有「换工具/文本匹配」的降级路径",
-     "无降级代码路径 + 原因码分档", "取反 ⇒ 缺件被当通过 ⇒ rc≠0（M5）"),
+     "无降级代码路径 + 原因码分档", "取反（别名 NO_SILENT_DOWNGRADE）⇒ 就位工具被判缺件（闸门反向）⇒ rc=2 BLOCKED_MISSING_TOOL（M5）"),
     ("A15_CR_STDOUT_JSON", "cosmic-ray 判据只读 stdout JSON 的 test_outcome（rc 不区分 killed/survived）",
-     "stdout JSON 解析 + 字段断言", "取反 ⇒ 读 rc ⇒ 结论反向 ⇒ rc≠0（§2.1.5-③）"),
+     "stdout JSON 解析 + 字段断言", "取反 ⇒ 改读进程 rc（rc=0 记 LIVED）⇒ 结论反向 ⇒ rc=1（需 py 单点形态）"),
     ("A16_J3_STABLE", "J3：同输入连跑两次 ⇒ **归一后一致**（不要求字节一致）",
-     "两次清单归一排之后比指纹", "取反 ⇒ 归一稳定性断言作废 ⇒ rc≠0（C4）"),
+     "两次清单归一排之后比指纹", "取反 ⇒ 一致的也被判不一致 ⇒ rc=2（**需 --j3**；不带 --j3 时该断言不接 ⇒ 如实给 NOTOOTH）"),
     ("A17_TOOL_BROKEN", "工具连续 error 态/全坏态 ⇒ 判「工具坏」rc=2，不许当「变异结果」",
-     "产物缺失/自相矛盾 + 原因码", "取反 ⇒ 坏工具被读成跑过 ⇒ rc≠0（J5/C9）"),
+     "产物缺失/自相矛盾 + 原因码", "取反 ⇒ 正常产物被判「工具坏」⇒ rc=2 BLOCKED_TOOL_ERROR（J5/C9）"),
 ]
 ASSERT_NAMES = [a[0] for a in ASSERTIONS]
+
+# 别名：附录 A 点名的 NO_SILENT_DOWNGRADE = 表里的 A14_NO_SILENT_DOWNGRADE（**同一个断言**；
+# 两个名字都能被 --neg-control 点名，--list-assertions 会把别名一并打出）
+ASSERT_ALIASES = {"NO_SILENT_DOWNGRADE": "A14_NO_SILENT_DOWNGRADE"}
+
+
+def canon_assert(name):
+    """断言名 → 表里的正名（支持别名）；不存在 ⇒ None。"""
+    if name in ASSERT_NAMES:
+        return name
+    return ASSERT_ALIASES.get(name)
+
+
+def assert_meta(name):
+    """断言名 → (名, 判什么, 形态, 取反后)；不存在 ⇒ None。"""
+    c = canon_assert(name)
+    if c is None:
+        return None
+    for a in ASSERTIONS:
+        if a[0] == c:
+            return a
+    return None
+
+
+# ── 负控取反钩子：**取反后在哪一段接上**（与腿二 scripts/edit-assert 同口径：成对 + 点名）──
+# `--neg-control=<名>` 同输入跑两遍 —— 正常形态（断言全开）与取反形态（只把该断言取反）；
+# 两条结论必须不同（正常 rc=0 / 取反 rc≠0），否则 rc=2 BLOCKED_NEGCONTROL_NOTOOTH
+# —— C11：禁「拆的和判的是同一段代码」的自我确认。
+NEG_HOOKS = {
+    "A1_TOOL_REGISTERED": "resolve_tool（登记目录 + binary sha256 断言之后）",
+    "A2_BASELINE_GREEN": "run_baseline（基线 rc 判定处）",
+    "A3_MANIFEST_EXISTS": "load_manifest（产物存在性/可解析断言处）",
+    "A4_NORMALIZE": "load_manifest（归一断言处）",
+    "A5_FINGERPRINT": "gate（四元组多集摘要算出后）",
+    "A6_NARROW_SINGLE": "go_single_point（唯一性判定处）—— 需单点形态（--point）",
+    "A7_SIX_STATES": "judge_point_state（六态归类处）—— 需单点形态",
+    "A8_CLOCK": "run_baseline（墙钟上界判定处）",
+    "A9_SANDBOX_COPY": "assert_sandbox_complete（兄弟模块同带断言处）",
+    "A10_SANDBOX_NO_REPO": "make_sandbox（副本根安全断言处）",
+    "A11_RESTORE_SHA": "judge_point_state（残留判定处）—— **只有单点真跑形态会接上**",
+    "A12_LEDGER_PAIR": "assert_ledger_pair（绿路径上的台账形状/成对断言）",
+    "A13_LEDGER_UNFINISHED": "Ledger.unfinished_check（有 begin 无 end 判定处）",
+    "A14_NO_SILENT_DOWNGRADE": "resolve_tool（降级闸的**反面**：取反 ⇒ 就位工具被判缺件）",
+    "A15_CR_STDOUT_JSON": "py_single_point（判据读 stdout JSON 处）—— 需 py 单点形态",
+    "A16_J3_STABLE": "gate 的 J3 比较处 —— **需 --j3**",
+    "A17_TOOL_BROKEN": "load_manifest（工具坏判定处）",
+}
+
+# 负控的「绿形态」（**只有在该形态下这条断言才接在判定上**；--neg-form 可覆盖）
+NEG_FORMS = ("manifest", "point", "manifest-j3", "py-point")
+NEG_GREEN_FORM = {
+    "A6_NARROW_SINGLE": "point",
+    "A7_SIX_STATES": "point",
+    "A15_CR_STDOUT_JSON": "py-point",
+    "A16_J3_STABLE": "manifest-j3",
+    # A11_RESTORE_SHA 故意留在清单形态：清单不写目标 ⇒ 残留判定不接 ⇒ 负控如实报 NOTOOTH
+    # （自检就用这一格证明「无牙」检测在工作；要成对：--neg-control=A11_RESTORE_SHA --neg-form point）
+}
 
 GREMLINS_TYPE_FLAGS = {
     "arithmetic-base": "ARITHMETIC_BASE",
@@ -350,10 +417,15 @@ class Failed(Exception):
 class Ctx(object):
     def __init__(self, cfg):
         self.cfg = cfg
+        self.neg = set(cfg.get("neg") or [])   # 被负控**取反**的断言名（负控形态专用；正常形态为空集）
         self.warnings = []
         self.steps = []
         self.states = {}          # 六态计数
         self.points = []          # 归一后的变异点
+
+    def inverted(self, name):
+        """本跑是否把该断言**取反**（--neg-control=<名> 的取反形态；正常形态恒 False）。"""
+        return name in self.neg
 
     def say(self, line=""):
         print(line)
@@ -461,6 +533,11 @@ class Ledger(object):
             elif r.get("phase") == "end":
                 ends[rid] = r
         open_runs = [rid for rid in begins if rid not in ends]
+        if not open_runs and self.ctx.inverted("A13_LEDGER_UNFINISHED"):
+            raise Blocked("BLOCKED_UNFINISHED",
+                          "负控形态：断言 [A13_LEDGER_UNFINISHED] **已取反** ⇒ 干净的台账"
+                          "（begin %d · end %d）被判成「有 begin 无 end」⇒ 不给结论（J6/C2）"
+                          % (len(begins), len(ends)))
         if not open_runs:
             self.ctx.say("   未收尾检测（J6）：✓ 无「有 begin 无 end」的组（begin %d · end %d）"
                          % (len(begins), len(ends)))
@@ -564,6 +641,14 @@ def resolve_tool(ctx, name, override):
                       "%s（%s）的 binary sha256=%s，登记账写的是 %s ⇒ **指纹不符** ⇒ 不给结论"
                       "（确认后更新 tools/cli-tools.json 再跑；M15 防漂移）"
                       % (name, path, sha, (reg_sha or "(无)")))
+    if ctx.inverted("A14_NO_SILENT_DOWNGRADE"):
+        raise Blocked("BLOCKED_MISSING_TOOL",
+                      "负控形态：断言 [A14_NO_SILENT_DOWNGRADE]（别名 NO_SILENT_DOWNGRADE）**已取反** ⇒ "
+                      "就位的工具被判成缺件（降级闸的反面）⇒ 不给结论（M5）")
+    if ctx.inverted("A1_TOOL_REGISTERED"):
+        raise Blocked("BLOCKED_UNREGISTERED_TOOL",
+                      "负控形态：断言 [A1_TOOL_REGISTERED] **已取反** ⇒ 路径在登记目录内且 binary sha256 "
+                      "一致的工具被判成「不符」⇒ 不给结论（这一段证明该断言确实接在判定上；M5/M15/C10）")
     res = run_clocked([path, "--version"], min(cfg["clock"], 30), cwd=os.path.dirname(path) or None)
     ver = "(不可考)"
     if not res["timeout"]:
@@ -610,6 +695,10 @@ def make_sandbox(ctx):
     if os.path.isdir(root) and os.listdir(root):
         raise Blocked("BLOCKED_SANDBOX_UNSAFE",
                       "副本根 %s 已存在且非空 ⇒ 拒绝复用（避免从未知状态的副本里得出结论；B3）" % root)
+    if ctx.inverted("A10_SANDBOX_NO_REPO"):
+        raise Blocked("BLOCKED_SANDBOX_UNSAFE",
+                      "负控形态：断言 [A10_SANDBOX_NO_REPO] **已取反** ⇒ 安全的副本根被判成「= 真仓根 / "
+                      "在真仓内 / 复用非空目录」⇒ 不给结论（B1/B7）")
     if not os.path.isdir(root):
         os.makedirs(root)
     paths = [p for p in (cfg.get("copy_paths") or "").split(",") if p.strip()]
@@ -655,6 +744,10 @@ def count_files(roots):
 def assert_sandbox_complete(ctx, root, repo=None):
     """M17：副本里关键前置件必须在 —— 含 go.mod 的 replace 目标（少了它覆盖率都收不了 = M11 实例）。"""
     cfg = ctx.cfg
+    if ctx.inverted("A9_SANDBOX_COPY"):
+        raise Blocked("BLOCKED_SANDBOX_INCOMPLETE",
+                      "负控形态：断言 [A9_SANDBOX_COPY] **已取反** ⇒ 兄弟模块同带的**完整**副本被判成不完整 ⇒ "
+                      "不给结论（M11/M17）")
     if cfg["lang"] != "go":
         return
     mod = os.path.join(root, cfg["module_dir"])
@@ -834,6 +927,17 @@ def gremlins_run(ctx, tool, sandbox, out_path, dry):
 
 
 def load_manifest(ctx, path, what):
+    if ctx.inverted("A3_MANIFEST_EXISTS"):
+        raise Blocked("BLOCKED_MANIFEST_MISSING",
+                      "负控形态：断言 [A3_MANIFEST_EXISTS] **已取反** ⇒ 已落盘的清单（%s）被判成缺件/为空 ⇒ "
+                      "不给结论（**缺件 ≠ 没有变异点**；§2.1.2/C3）" % path)
+    if ctx.inverted("A17_TOOL_BROKEN"):
+        raise Blocked("BLOCKED_TOOL_ERROR",
+                      "负控形态：断言 [A17_TOOL_BROKEN] **已取反** ⇒ 正常产物被判成「工具坏」⇒ 不给结论"
+                      "（J5/C9：工具失效不得被读成结果）")
+    if ctx.inverted("A4_NORMALIZE"):
+        raise Failed("FAIL_NEG_INVERTED",
+                     "负控形态：断言 [A4_NORMALIZE] **已取反** ⇒ 归一结果不被采信 ⇒ 判红（C4/Q10）")
     if not os.path.isfile(path) or os.path.getsize(path) == 0:
         raise Blocked("BLOCKED_MANIFEST_MISSING",
                       "%s：清单文件缺件/为空（%s）⇒ 当**产物缺件**，rc=2 不给结论；"
@@ -873,6 +977,10 @@ def run_baseline(ctx, sandbox, env):
     ctx.say("── 基线绿前置（§2.1.2 ★ 前置：不绿 ⇒ 清单**根本不生成**）──")
     ctx.say("   基线命令：%s（cwd=%s）" % (cmd, cwd))
     res = run_clocked(["/bin/bash", "-lc", cmd], cfg["clock"], cwd=cwd, env=env)
+    if ctx.inverted("A8_CLOCK"):
+        raise Blocked("BLOCKED_TIMEOUT",
+                      "负控形态：断言 [A8_CLOCK] **已取反** ⇒ 墙钟上界判定反向（本次**按上界完成**也被判超时）⇒ "
+                      "不给结论（C7：本机没有 `timeout` 命令，上界只能门自带）")
     if res["timeout"]:
         raise Blocked("BLOCKED_TIMEOUT", "基线命令超时（>%ds）⇒ 不给结论（C7）" % cfg["clock"])
     if res["rc"] != 0:
@@ -881,6 +989,10 @@ def run_baseline(ctx, sandbox, env):
                       "★ 基线**不绿**（rc=%s）⇒ rc=2 **不给结论**；因果链：基线不绿 → 清单不生成 → "
                       "**这不是「没有变异点」**（C3/§2.1.2）。先修基线/换更窄的 --pkg，再来跑腿一。"
                       "\n      基线输出末尾：\n      | %s" % (res["rc"], tail.replace("\n", "\n      | ")))
+    if ctx.inverted("A2_BASELINE_GREEN"):
+        raise Blocked("BLOCKED_BASELINE_RED",
+                      "负控形态：断言 [A2_BASELINE_GREEN] **已取反** ⇒ 基线的 rc=0 被判成「不绿」⇒ 不给结论；"
+                      "★ 顺序口径不变：先判基线 ⇒ 绝不许报成「没有变异点」（C3/§2.1.2）")
     ctx.say("   基线 rc=0 ⇒ ✓ 绿（%.2fs）" % res["elapsed"])
     return {"cmd": cmd, "rc": res["rc"], "elapsed": round(res["elapsed"], 3)}
 
@@ -932,6 +1044,13 @@ def judge_point_state(ctx, state, point_desc, pre_sha, post_sha, orig_sha, evide
         exc.post_sha = post_sha
         raise exc
 
+    if ctx.inverted("A11_RESTORE_SHA"):
+        boom(Blocked, "BLOCKED_RESIDUAL",
+             "负控形态：断言 [A11_RESTORE_SHA] **已取反** ⇒ 已逐字节复原也被判成「残留变异态」⇒ 不给结论（C2）")
+    if ctx.inverted("A7_SIX_STATES"):
+        ctx.say("★ 负控形态：断言 [A7_SIX_STATES] **已取反** ⇒ 六态归类整体错位（KILLED ↔ 其余互换）；"
+                "真跑清单上的原状态见下面「证据」行")
+        state = "LIVED" if state == "KILLED" else "KILLED"
     ctx.say("── 单点结论（六态之一 + 一句话证据）──")
     ctx.say("   点：%s" % point_desc)
     ctx.say("   状态：%s ⇒ %s" % (state, STATE_MEANING.get(state, "(未知状态)")))
@@ -974,6 +1093,10 @@ def go_single_point(ctx, tool, sandbox, ledger, baseline, orig_shas, narrow_norm
                       % (tup, tuples_of(narrow_norm)[:8]))
     if status_of(narrow_norm, tup) == "SKIPPED":
         raise Blocked("BLOCKED_MUTANT_SKIPPED", "目标点被 --diff 跳过（SKIPPED）⇒ **未验** ⇒ 不给结论")
+    if ctx.inverted("A6_NARROW_SINGLE"):
+        raise Blocked("BLOCKED_POINT_AMBIGUOUS",
+                      "负控形态：断言 [A6_NARROW_SINGLE] **已取反** ⇒ 已收窄到唯一变异点也被判成「收不到唯一」⇒ "
+                      "不给结论（§2.1.1）")
     if len(runnable) != 1 or runnable[0] != tup:
         raise Blocked("BLOCKED_POINT_AMBIGUOUS",
                       "四维收窄后仍有 %d 个可跑变异点（目标 %r）⇒ **收不到唯一** ⇒ 不给结论；"
@@ -1079,6 +1202,10 @@ def py_single_point(ctx, tool, sandbox, ledger, baseline, orig_shas):
         raise Blocked("BLOCKED_OUTCOME_MISSING", "test_outcome 取值未知：%r（映射表：%s）"
                       % (outcome["test_outcome"], sorted(CR_OUTCOME_MAP)))
     st = CR_OUTCOME_MAP[oc]
+    if ctx.inverted("A15_CR_STDOUT_JSON"):
+        st = "LIVED" if res["rc"] == 0 else "KILLED"
+        ctx.say("★ 负控形态：断言 [A15_CR_STDOUT_JSON] **已取反** ⇒ 判据改读进程 rc（rc=0 记 LIVED）⇒ "
+                "结论与读 stdout JSON 相反（§2.1.5-③ 的**反面**；进程 rc=%s）" % res["rc"])
     if outcome.get("worker_outcome") not in (None, "normal"):
         raise Blocked("BLOCKED_TOOL_ERROR",
                       "worker_outcome=%r（非 normal）⇒ 工具失效不得被读成结果（J5）" % outcome.get("worker_outcome"))
@@ -1138,6 +1265,41 @@ def py_init(ctx, tool, sandbox):
     return {"points": len(specs), "fingerprint": fp, "session": sess, "specs": specs}
 
 
+def assert_ledger_pair(ctx, ledger):
+    """A12_LEDGER_PAIR 的**显式断言**：append-only JSONL · gate_id 已登记 · begin/end 无悬空。
+
+    放在追加本次 run 的行**之前**：断言不过就不写行 ⇒ 台账里不会留下「结论与台账对不上」的残迹。
+    """
+    rows, bad = ledger.lines()
+    if bad:
+        raise Blocked("BLOCKED_LEDGER_CORRUPT",
+                      "台账（%s）里有 %d 行不可解析 ⇒ 形状/成对断言不可信 ⇒ 不给结论（§7.4）"
+                      % (ledger.path, len(bad)))
+    unknown = sorted(set(r.get("gate_id") for r in rows
+                         if r.get("gate_id") not in (GATE_ID, "edit-assert")))
+    begins, ends = {}, {}
+    for r in rows:
+        rid = r.get("run_id")
+        if not rid:
+            continue
+        if r.get("phase") == "begin":
+            begins[rid] = r
+        elif r.get("phase") == "end":
+            ends[rid] = r
+    open_runs = [rid for rid in begins if rid not in ends]
+    if ctx.inverted("A12_LEDGER_PAIR"):
+        raise Blocked("BLOCKED_LEDGER_CORRUPT",
+                      "负控形态：断言 [A12_LEDGER_PAIR] **已取反** ⇒ 现有台账（%d 行：begin %d · end %d）"
+                      "被判成形状/成对不过 ⇒ 不给结论（§2.1.7/§7.4）"
+                      % (len(rows), len(begins), len(ends)))
+    if unknown or open_runs:
+        raise Blocked("BLOCKED_LEDGER_CORRUPT",
+                      "台账形状断言不过：未登记的 gate_id=%s / 有 begin 无 end 的 run_id=%s ⇒ 结论不可信"
+                      % (unknown or "（无）", open_runs or "（无）"))
+    ctx.say("   台账成对性断言（A12）：✓ %d 行 · gate_id 已登记 · begin/end 无悬空" % len(rows))
+    return 0
+
+
 # ══════════════════════════════════════════════════════════════════
 # 10. 主流程
 # ══════════════════════════════════════════════════════════════════
@@ -1147,6 +1309,7 @@ def gate(ctx):
     ledger = Ledger(ctx)
     env = dict(os.environ)
     ledger.startup()
+    assert_ledger_pair(ctx, ledger)   # A12：绿路径上的显式断言（负控点名的名字从这来）
 
     # ① 装前自证（工具）
     if cfg["lang"] == "go":
@@ -1225,6 +1388,9 @@ def gate(ctx):
             raise Blocked("BLOCKED_TIMEOUT", "干跑清单超时（>%ds）⇒ 不给结论（C7）" % cfg["clock"])
         doc1, norm1, stat1 = load_manifest(ctx, m1, "干跑清单")
         fp1 = fingerprint(norm1)
+        if ctx.inverted("A5_FINGERPRINT"):
+            raise Failed("FAIL_NEG_INVERTED",
+                         "负控形态：断言 [A5_FINGERPRINT] **已取反** ⇒ 四元组多集摘要不被采信 ⇒ 判红（C6）")
         ctx.say("   归一：files 排序 + mutations 按 (line,column,type) 排序 + 剔白名单 %s"
                 % "、".join(NORM_WHITELIST_KEYS))
         ctx.say("   归一前：%s" % json.dumps({k: doc1.get(k) for k in sorted(doc1) if k in NORM_WHITELIST_KEYS
@@ -1271,6 +1437,10 @@ def gate(ctx):
             ctx.say("   其中 mutation **顺序整体错位**的位置数：%d 个（归一后应归零；这就是 C4 的现场）" % order_pos)
             ctx.say("   归一后：指纹1=%s · 指纹2=%s ⇒ %s"
                     % (fp1[:16], fp2[:16], "**一致** ✓（J3 通过）" if fp1 == fp2 else "**不一致** ✗"))
+            if ctx.inverted("A16_J3_STABLE"):
+                raise Blocked("BLOCKED_MANIFEST_UNPARSABLE",
+                              "负控形态：断言 [A16_J3_STABLE] **已取反** ⇒ 归一后一致的两次清单也被判不一致 ⇒ "
+                              "不给结论（C4；要成对，负控必须带 --j3 —— 不带 --j3 时该断言不被执行）")
             if fp1 != fp2:
                 raise Blocked("BLOCKED_MANIFEST_UNPARSABLE",
                               "J3：归一后两次清单仍不一致 ⇒ 不确定的东西不许给结论（rc=2）")
@@ -1745,6 +1915,50 @@ def run_self_test():
     else:
         add("T20 [A7_SIX_STATES] 默认系数下同一单点的归因", False, "缺件：gremlins 不在登记目录")
 
+    # T21–T26 负控（成对 / 坏名 / 无牙 / 同断言换形态 / 登记表）
+    def run_neg_ctl(name, extra=None):
+        return sub_run(["--neg-control=" + name] + list(extra or []), state_dir=state, cwd=root,
+                       env_extra={"ZERG_TOOLS_DIR": root}, timeout=300)
+
+    # T21 成对：正常形态 rc=0 / 取反形态 rc≠0，且**指名道姓**（与腿二 edit-assert 同口径）
+    rc, out = run_neg_ctl("A2_BASELINE_GREEN")
+    add("T21 [负控] --neg-control=A2_BASELINE_GREEN：成对（正常 rc=0 / 取反 rc≠0）+ 点名 ⇒ rc=1 OK_NEGCONTROL",
+        rc == 1 and "OK_NEGCONTROL" in out and "A2_BASELINE_GREEN" in out
+        and "正常 rc=0 vs 取反 rc=" in out and "**不同** ✓" in out,
+        "rc=%d · 区分度行=%s" % (rc, "有" if "**不同** ✓" in out else "无"), out)
+
+    # T22 坏名 ⇒ rc=2（新原因码，与腿二同名同义）
+    rc, out = run_neg_ctl("NOT_A_NAME")
+    add("T22 [负控] 坏名 ⇒ rc=2 BLOCKED_NEGCONTROL_NAME（并打印已登记断言名）",
+        rc == 2 and "BLOCKED_NEGCONTROL_NAME" in out and "已登记断言" in out,
+        "rc=%d 原因码=%s" % (rc, reason_of(out)), out)
+
+    # T23 无牙：A11 的残留判定只在**单点真跑**形态生效；清单形态下取反不该翻转 ⇒ 如实报 NOTOOTH
+    rc, out = run_neg_ctl("A11_RESTORE_SHA")
+    add("T23 [负控] 无牙：A11_RESTORE_SHA 在**清单形态**下不接（清单不写目标）⇒ rc=2 BLOCKED_NEGCONTROL_NOTOOTH",
+        rc == 2 and "BLOCKED_NEGCONTROL_NOTOOTH" in out and "正常 rc=0" in out,
+        "rc=%d 原因码=%s" % (rc, reason_of(out)), out)
+
+    # T24 同一条断言换形态 ⇒ 成对（证明「无牙」是形态问题，不是这条断言没接线）
+    rc, out = run_neg_ctl("A11_RESTORE_SHA", ["--neg-form", "point"])
+    add("T24 [负控] 同一断言换形态（--neg-form point）⇒ 成对 rc=1 OK_NEGCONTROL",
+        rc == 1 and "OK_NEGCONTROL" in out and "A11_RESTORE_SHA" in out and "**不同** ✓" in out,
+        "rc=%d" % rc, out)
+
+    # T25 --j3 形态的断言（A16）也能成对
+    rc, out = run_neg_ctl("A16_J3_STABLE")
+    add("T25 [负控] A16_J3_STABLE（默认形态 manifest-j3）⇒ 成对 rc=1 OK_NEGCONTROL",
+        rc == 1 and "OK_NEGCONTROL" in out and "A16_J3_STABLE" in out, "rc=%d" % rc, out)
+
+    # T26 断言登记表：全部断言名可点名 + 别名 + 原因码条数
+    rc, out = sub_run(["--list-assertions"], state_dir=state)
+    missing = [a for a in ASSERT_NAMES if a not in out]
+    add("T26 --list-assertions：%d 条断言全在 + 别名 NO_SILENT_DOWNGRADE + 原因码 %d 条"
+        % (len(ASSERT_NAMES), len(REASON_CODES)),
+        rc == 0 and not missing and "NO_SILENT_DOWNGRADE" in out
+        and ("原因码全集（%d 条" % len(REASON_CODES)) in out,
+        "rc=%d · 缺 %s · 原因码 %d 条" % (rc, missing or "无", len(REASON_CODES)), out)
+
     bad = [c for c in checks if not c[1]]
     print("── 自检逐条（全部走**真实命令行 + 真实退出码**）──")
     for name, ok, note, out in checks:
@@ -1760,6 +1974,177 @@ def run_self_test():
         print("✗ 自检不过 ⇒ **拒绝跑真目标**（rc=2；precommit-gates.sh:36 的项目口径）")
         return EXIT_BLOCKED
     return EXIT_OK
+
+
+
+# ══════════════════════════════════════════════════════════════════
+# 12.5 负控（--neg-control=<断言名>）：成对 + 点名（与腿二 edit-assert 同口径）
+#      C11：没有负控，就分不出「断言在工作」还是「断言是摆设」。
+# ══════════════════════════════════════════════════════════════════
+
+NEG_FAKE_GREMLINS = '''#!/usr/bin/env python3
+# 负控夹具用的**假 gremlins**（登记在夹具的 ZERG_TOOLS_DIR 里；不碰真工具、不碰真目标）
+import json
+import sys
+
+argv = sys.argv[1:]
+if not argv or argv[0] in ("--version", "-version"):
+    print("gremlins fake (neg-control fixture)")
+    sys.exit(0)
+out = None
+i = 0
+while i < len(argv):
+    if argv[i] == "-o" and i + 1 < len(argv):
+        out = argv[i + 1]
+    i += 1
+status = "RUNNABLE" if "--dry-run" in argv else "KILLED"
+doc = {"go_module": "msfix", "elapsed_time": 0.01, "test_efficacy": 1.0, "mutations_coverage": 1.0,
+       "mutants_total": 1, "mutants_killed": 0, "mutants_lived": 0, "mutants_not_viable": 0,
+       "mutants_not_covered": 0,
+       "files": [{"file_name": "calc.go", "mutations": [
+           {"type": "INVERT_NEGATIVES", "status": status, "line": 4, "column": 30}]}]}
+if out:
+    fh = open(out, "w")
+    json.dump(doc, fh)
+    fh.close()
+sys.exit(0)
+'''
+
+NEG_FAKE_CR = '''#!/usr/bin/env python3
+# 负控夹具用的**假 cosmic-ray**（判据读它的 stdout JSON 的 test_outcome，不读 rc）
+import json
+import sys
+
+argv = sys.argv[1:]
+if not argv or argv[0] in ("--version", "-V"):
+    print("cosmic-ray fake (neg-control fixture)")
+    sys.exit(0)
+cmd = argv[0]
+if cmd == "init":
+    fh = open(argv[2], "w")
+    fh.write("fake-session")
+    fh.close()
+    sys.exit(0)
+if cmd == "dump":
+    print(json.dumps([{"mutations": [{"module_path": "py.check",
+                                      "operator_name": "core/ReplaceComparisonOperator_Gt_LtE",
+                                      "occurrence": 0, "start_pos": [3, 7]}]}]))
+    sys.exit(0)
+if cmd == "mutate-and-test":
+    print(json.dumps({"worker_outcome": "normal", "test_outcome": "killed"}))
+    sys.exit(0)
+sys.exit(0)
+'''
+
+
+def neg_form_argv(form, root, mod, fake_gremlins, fake_cr, ledger, clock=120):
+    """负控的「绿形态」参数（**夹具内**：假工具已按 §6.4 口径登记在夹具的 ZERG_TOOLS_DIR 里）。"""
+    if form == "py-point":
+        return ["--lang", "py", "--repo", root, "--target", "py/check.py", "--copy-paths", "py",
+                "--operator", "core/ReplaceComparisonOperator_Gt_LtE", "--occurrence", "0",
+                "--test-cmd", "true", "--clock", str(clock), "--ledger-path", ledger,
+                "--tools-account", os.path.join(root, "acct-cr.json"), "--cosmic-ray", fake_cr]
+    base = ["--lang", "go", "--repo", root, "--module-dir", os.path.basename(mod), "--pkg", "./p1/",
+            "--copy-paths", os.path.basename(mod), "--baseline-cmd", "true", "--clock", str(clock),
+            "--ledger-path", ledger, "--tools-account", os.path.join(root, "acct-gremlins.json"),
+            "--gremlins", fake_gremlins]
+    if form == "point":
+        base += ["--only-types", "invert-negatives", "--point", "calc.go:4:30:INVERT_NEGATIVES"]
+    if form == "manifest-j3":
+        base += ["--j3"]
+    return base
+
+
+def last_conclusion(out):
+    for ln in reversed((out or "").splitlines()):
+        s = ln.strip()
+        if s.startswith("结论：") or s.startswith("✗ [") or s.startswith("✓ "):
+            return s
+    return None
+
+
+def run_neg_control(name, form=None):
+    """负控（成对 + 点名）：同输入跑两遍 —— 正常形态 / 只把该断言取反的形态。"""
+    canon = canon_assert(name)
+    if canon is None:
+        print("✗ 断言名不存在：%r" % name)
+        print("  已登记断言（%d 条）：%s" % (len(ASSERT_NAMES), " · ".join(ASSERT_NAMES)))
+        print("  别名：%s" % (" · ".join(sorted(ASSERT_ALIASES)) or "（无）"))
+        print("✗ 结论：rc=2 **不给结论**（BLOCKED_NEGCONTROL_NAME —— 与腿二同口径 J1：坏名 rc=2）")
+        return EXIT_BLOCKED
+    if form and form not in NEG_FORMS:
+        print("✗ --neg-form 只允许：%s（给了 %r）" % ("|".join(NEG_FORMS), form))
+        print("✗ 结论：rc=2 **不给结论**（BLOCKED_USAGE）")
+        return EXIT_BLOCKED
+    form = form or NEG_GREEN_FORM.get(canon, "manifest")
+    meta = assert_meta(canon)
+    print("════════════════════════════════════════════════════════════════")
+    print("mutate-scan %s 负控（成对 + 点名 · 与腿二 scripts/edit-assert 同口径）" % VERSION)
+    print("被点名的断言：[%s]%s" % (canon, "（别名 %s）" % name if name != canon else ""))
+    print("  判什么：%s" % meta[1])
+    print("  形态：%s" % meta[2])
+    print("  取反钩子：%s" % NEG_HOOKS.get(canon, "（未登记）"))
+    print("  负控形态：%s（--neg-form 可换）" % form)
+    root = os.path.join(os.environ.get("TMPDIR", "/tmp"), "mutate-scan-neg-%s" % uuid.uuid4().hex[:8])
+    os.makedirs(root)
+    print("── 夹具（**合成件 + 假工具**：不碰真仓 · 不碰真工具 · 台账钉在夹具里）──")
+    print("   夹具根：%s" % root)
+    try:
+        mod, _py, _fake = make_fixture(root)
+        tools_dir = os.path.join(root, "tools")
+        os.makedirs(os.path.join(tools_dir, "bin"))
+        os.makedirs(os.path.join(tools_dir, "mutvenv", "bin"))
+        fg = os.path.join(tools_dir, "bin", "gremlins")
+        fc = os.path.join(tools_dir, "mutvenv", "bin", "cosmic-ray")
+        for path, text in ((fg, NEG_FAKE_GREMLINS), (fc, NEG_FAKE_CR)):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            os.chmod(path, 0o755)
+        write_account(os.path.join(root, "acct-gremlins.json"),
+                      [{"name": "gremlins", "abs_path": fg, "binary_sha256": sha256_file(fg),
+                        "version": "neg-fixture"}])
+        write_account(os.path.join(root, "acct-cr.json"),
+                      [{"name": "cosmic-ray", "abs_path": fc, "binary_sha256": sha256_file(fc),
+                        "version": "neg-fixture"}])
+        state = os.path.join(root, "state")
+        os.makedirs(state)
+        ledger = os.path.join(state, LEDGER_NAME)
+        argv = neg_form_argv(form, root, mod, fg, fc, ledger)
+
+        def one(extra):
+            return sub_run(argv + extra, state_dir=state, cwd=root,
+                           env_extra={"ZERG_TOOLS_DIR": tools_dir}, timeout=300)
+
+        rc_normal, out_normal = one([])
+        rc_inv, out_inv = one(["--neg=" + canon])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    print("── 形态① 正常（断言全开）──")
+    print("[%s] 正常形态 rc=%d" % (canon, rc_normal))
+    print("   结论行：%s" % (last_conclusion(out_normal) or "（无）"))
+    print("── 形态② 负控（只把 [%s] 取反，其余断言不动）──" % canon)
+    print("[%s] 负控形态 rc=%d" % (canon, rc_inv))
+    print("   结论行：%s" % (last_conclusion(out_inv) or "（无）"))
+    print("   原因码：%s" % (reason_of(out_inv) or "（无 —— 取反未生效）"))
+    proven = (rc_normal == 0) and (rc_inv != 0)
+    print("── 区分度（**同一输入**，两条结论必须不同）──")
+    print("区分度：正常 rc=%d vs 取反 rc=%d ⇒ %s"
+          % (rc_normal, rc_inv,
+             "**不同** ✓ ⇒ 断言 [%s] 确实接在判定上（有牙齿）" % canon if proven
+             else "**相同** ✗ ⇒ 断言 [%s] 在**本次形态**（%s）下没接在判定上" % (canon, form)))
+    if not proven:
+        print("✗ 取反后结论没翻转 ⇒ rc=2 **不给结论**（BLOCKED_NEGCONTROL_NOTOOTH）")
+        print("   口径（C11）：只有「拆的和判的不是同一段代码」才算有牙齿。先看正常形态是不是绿的：")
+        print("   正常 rc=%d ⇒ %s" % (rc_normal, "绿（可作对照）" if rc_normal == 0 else
+                                     "**本身就不绿 ⇒ 取反对比无意义，先修夹具/参数**"))
+        print("   若这条断言只在**别的形态**下接得上（见 --list-assertions 的「形态」列），再来：")
+        print("   python3 scripts/mutate-scan --neg-control=%s --neg-form <%s>"
+              % (canon, "|".join(NEG_FORMS)))
+        return EXIT_BLOCKED
+    print("✓ 负控成立：正常 rc=0 / 取反 rc=%d（≠0 ✓ —— **负控不是绿**：进程用非 0 档表明这不是一次通过）"
+          % rc_inv)
+    print("结论：rc=1（OK_NEGCONTROL —— 负控**成立**；区分度证据见上面两行）")
+    return EXIT_FAIL
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1778,7 +2163,8 @@ USAGE = """用法：
   python3 scripts/mutate-scan --lang py --target scripts/check_version.py \\
           --operator core/ReplaceComparisonOperator_Gt_LtE --occurrence 0 --test-cmd 'bash judge.sh'
           # 只拿 Python 清单不跑：加 --manifest-only
-  python3 scripts/mutate-scan --self-test | --list-reasons | --help | --version
+  python3 scripts/mutate-scan --self-test | --list-reasons | --list-assertions | --help | --version
+  python3 scripts/mutate-scan --neg-control=<断言名> [--neg-form manifest|point|manifest-j3|py-point]
 
 选项：
   --lang go|py          语言（go = gremlins；py = cosmic-ray，**只认这两条**）
@@ -1809,12 +2195,41 @@ USAGE = """用法：
   --tools-account PATH  覆盖 CLI 依赖账（默认 tools/cli-tools.json；测试注入用）
   --gremlins/--cosmic-ray PATH  覆盖工具路径（**仍须过**「登记目录 + binary sha256」断言）
   --no-self-test        跳过「真跑前先自检」（内部子进程形态，防递归）
-  --self-test / --list-reasons / --help / --version
+  --neg=<断言名>        内部开关：把该断言**取反**（负控形态专用；坏名 ⇒ rc=2 BLOCKED_NEGCONTROL_NAME）
+  --neg-form FORM       负控用哪种形态跑（manifest|point|manifest-j3|py-point；默认按断言登记表选）
+  --self-test / --list-reasons / --list-assertions / --neg-control / --help / --version
 
 退出码：0 通过（清单归一 / 单点 KILLED）/ 1 失败（LIVED · NOT COVERED = 覆盖缺口，真红）/
         2 **不给结论**（缺件 · 未登记 · 副本不安全或不完整 · **基线不绿** · 清单缺件/空/不可解析 · 超时 ·
         收窄不到唯一变异点 · TIMED OUT/NOT VIABLE/SKIPPED · 台账未收尾 · 用法错 · 自检不过 · 工具失效）
         —— 2 不是红，是**没有结论**；且**没有**「换工具 / 文本匹配」的降级路径（M5）"""
+
+
+def print_list_assertions():
+    print("════════════════════════════════════════════════════════════════")
+    print("mutate-scan %s 断言登记表（负控 `--neg-control=<断言名>` 点名的名字从这来）" % VERSION)
+    print("── 与腿二 scripts/edit-assert **同口径**：成对（正常 rc=0 / 取反 rc≠0）· 点名 · 坏名 rc=2 · 无牙 rc=2 ──")
+    alias_of = {}
+    for _a, _c in ASSERT_ALIASES.items():
+        alias_of.setdefault(_c, []).append(_a)
+    for i, (name, what, how, inv) in enumerate(ASSERTIONS, 1):
+        print("[%2d] %s%s" % (i, name, "（别名：%s）" % "/".join(alias_of[name]) if name in alias_of else ""))
+        print("     判什么：%s" % what)
+        print("     形态：%s" % how)
+        print("     取反后：%s" % inv)
+        print("     取反钩子：%s" % NEG_HOOKS.get(name, "（未登记 ⇒ 负控会如实给 NOTOOTH）"))
+        print("     负控默认形态：%s" % NEG_GREEN_FORM.get(name, "manifest"))
+    print("── 负控用法 ──")
+    print("  python3 scripts/mutate-scan --neg-control=<断言名> [--neg-form %s]" % "|".join(NEG_FORMS))
+    print("  形态含义：manifest=清单（夹具假工具 + 基线 true）· point=Go 单点（收窄到唯一）·")
+    print("            manifest-j3=清单双跑（J3）· py-point=cosmic-ray 单点（判据读 stdout JSON）")
+    print("  夹具：**合成件 + 假工具**（登记在夹具自己的 ZERG_TOOLS_DIR 里）—— 不碰真仓、不碰真工具、")
+    print("        不碰 ~/.zerg/state（台账钉在夹具根）；`--neg=` 是内部取反开关（负控形态专用）")
+    print("── 原因码全集（%d 条 · 每条自带档位；全表见 --list-reasons）──" % len(REASON_CODES))
+    for code, tier, desc in REASON_CODES:
+        if code.startswith(("BLOCKED_NEGCONTROL", "OK_NEGCONTROL", "FAIL_NEG_INVERTED")):
+            print("  rc=%d  %-28s %s" % (tier, code, desc))
+    return EXIT_OK
 
 
 def print_list_reasons():
@@ -1853,7 +2268,8 @@ def parse_args(argv):
            "sandbox_root": None, "keep_sandbox": False, "manifest_out": None, "clock": 900,
            "ledger_path": None, "actor": None, "role": "author", "tools_account": None,
            "gremlins_path": None, "cr_path": None, "no_self_test": False, "mode": None,
-           "work_dir": None, "sandbox_auto": False}
+           "work_dir": None, "sandbox_auto": False,
+           "neg": set(), "neg_control": None, "neg_form": None}
     i = 0
     while i < len(argv):
         v = argv[i]
@@ -1949,6 +2365,30 @@ def parse_args(argv):
             cfg["mode"] = "self-test"; i += 1
         elif v == "--list-reasons":
             cfg["mode"] = "list"; i += 1
+        elif v == "--list-assertions":
+            cfg["mode"] = "list-assertions"; i += 1
+        elif v.startswith("--neg-control="):
+            cfg["neg_control"] = v.split("=", 1)[1]; cfg["mode"] = "neg-control"; i += 1
+        elif v == "--neg-control":
+            cfg["neg_control"] = need(v); cfg["mode"] = "neg-control"; i += 2
+        elif v.startswith("--neg-form="):
+            cfg["neg_form"] = v.split("=", 1)[1]; i += 1
+        elif v == "--neg-form":
+            cfg["neg_form"] = need(v); i += 2
+        elif v.startswith("--neg="):
+            nm = v.split("=", 1)[1]
+            if canon_assert(nm) is None:
+                raise Blocked("BLOCKED_NEGCONTROL_NAME",
+                              "断言名不存在：%r（已登记 %d 条；`--list-assertions` 看全表）"
+                              % (nm, len(ASSERT_NAMES)))
+            cfg["neg"].add(canon_assert(nm)); i += 1
+        elif v == "--neg":
+            nm = need(v)
+            if canon_assert(nm) is None:
+                raise Blocked("BLOCKED_NEGCONTROL_NAME",
+                              "断言名不存在：%r（已登记 %d 条；`--list-assertions` 看全表）"
+                              % (nm, len(ASSERT_NAMES)))
+            cfg["neg"].add(canon_assert(nm)); i += 2
         elif v in ("-h", "--help"):
             cfg["mode"] = "help"; i += 1
         elif v in ("-V", "--version"):
@@ -2007,6 +2447,10 @@ def main(argv):
         return EXIT_OK
     if cfg["mode"] == "list":
         return print_list_reasons()
+    if cfg["mode"] == "list-assertions":
+        return print_list_assertions()
+    if cfg["mode"] == "neg-control":
+        return run_neg_control(cfg["neg_control"], cfg.get("neg_form"))
     if cfg["mode"] == "self-test":
         return run_self_test()
     if not argv:
