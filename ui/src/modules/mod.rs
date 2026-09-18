@@ -6,19 +6,19 @@
 //!
 //! 模块注册表 + 顶部导航渲染入口。
 
-pub mod zerg_module;
+pub mod chat; // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块）
 pub mod cocoon; // 虫茧契约（C9 第 1 步——CocoonMeta 铭牌 + Cocoon::render 吊点 + 契约注册表）
 pub mod ferrite; // M3 Ferrite 重写 md 编辑器（Mr2109 2026-08-29）
-pub mod chat; // v2.5.7 对话模块（Mr2109——完全借鉴 Hermes——第一板块）
-pub mod upgrade; // L2 自动升级页（2026-09-11）
+pub mod filebrowse;
 pub mod model_registry; // 模型登记库页（GET /api/models/registry——列表+卡片+空态）
-pub mod filebrowse; // 文件/目录浏览器**组件库**（阶段 1——2026-09-13 设计「文件浏览器虫茧」§4.1）
-                    // 注意：本目录是内建**组件**（供多处吊装），不是顶栏箱；顶栏只多一只薄壳箱 file-browser
+pub mod upgrade; // L2 自动升级页（2026-09-11）
+pub mod zerg_module; // 文件/目录浏览器**组件库**（阶段 1——2026-09-13 设计「文件浏览器虫茧」§4.1）
+                     // 注意：本目录是内建**组件**（供多处吊装），不是顶栏箱；顶栏只多一只薄壳箱 file-browser
 pub mod icons; // P3 图标统一封装（iconflow——14 包 34 TTF——MIT）
 
-use eframe::egui;
-use rust_i18n::t;   // i18n（B1 抽取：导航/模块名走键）
 use crate::modules::icons::icon_text; // P3 图标（iconflow）
+use eframe::egui;
+use rust_i18n::t; // i18n（B1 抽取：导航/模块名走键）
 pub use zerg_module::{ModuleManifest, ModuleRegistry};
 
 /// 构建全量模块注册表（船体 5 核心箱 + 甲板 3 可装卸箱）
@@ -26,6 +26,7 @@ pub use zerg_module::{ModuleManifest, ModuleRegistry};
 /// 核心箱（不可禁用——船体骨架）:
 /// - tasks / internal-tasks: AI 任务体系（心脏）
 /// - cluster / models / resources: 基础设施三件套（骨架）
+///
 /// 可装卸箱（默认在船）:
 /// - docs / git / logs: 预置模块
 pub fn build_registry() -> ModuleRegistry {
@@ -302,11 +303,17 @@ pub fn top_nav_bar(
                     } else {
                         ("●", egui::Color32::from_rgb(220, 80, 80))
                     };
-                    let text = if online { t!("status.online") } else { t!("status.offline") };
+                    let text = if online {
+                        t!("status.online")
+                    } else {
+                        t!("status.offline")
+                    };
                     let btn = ui
                         .add(
-                            egui::Button::new(egui::RichText::new(format!("{} {}", dot, text)).color(color))
-                                .frame(selected),
+                            egui::Button::new(
+                                egui::RichText::new(format!("{} {}", dot, text)).color(color),
+                            )
+                            .frame(selected),
                         )
                         .on_hover_text(t!("status.light_tip"));
                     if btn.clicked() {
@@ -326,7 +333,10 @@ pub fn top_nav_bar(
             }
             for m in &ext_visible {
                 let label = format!("{} {}", m.icon, m.name);
-                if ui.selectable_label(registry.active == m.id, label).clicked() {
+                if ui
+                    .selectable_label(registry.active == m.id, label)
+                    .clicked()
+                {
                     switched = Some(m.id.clone());
                 }
             }
@@ -338,7 +348,11 @@ pub fn top_nav_bar(
             }
 
             // 吊装系统入口（➕——模块管理——Mr2109 2026-08-29 M2）
-            if ui.button("➕").on_hover_text(t!("modules.open_tip")).clicked() {
+            if ui
+                .button("➕")
+                .on_hover_text(t!("modules.open_tip"))
+                .clicked()
+            {
                 on_open_manager();
             }
             ui.separator();
@@ -346,13 +360,24 @@ pub fn top_nav_bar(
             // 右侧对齐：English + 登录用户（右到左布局）
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // 登录用户（v2.5.6——固定 Mr2109——未来登录系统）
-                ui.label(format!("👤 {}", std::env::var("USER").unwrap_or_else(|_| "user".to_string())));   // 环境无关化：不再硬编码用户名
+                ui.label(format!(
+                    "👤 {}",
+                    std::env::var("USER").unwrap_or_else(|_| "user".to_string())
+                )); // 环境无关化：不再硬编码用户名
                 ui.separator();
                 // v2.5.7 HUD 开关（English 旁——Mr2109：图标开关——⌘H 是系统键冲突）
-                let hud_label = format!("{}", icon_text("gauge"));
+                let hud_label = icon_text("gauge").to_string();
                 let hud_btn = ui
-                    .button(if hud_on { egui::RichText::new(&hud_label).strong() } else { egui::RichText::new(&hud_label).weak() })
-                    .on_hover_text(if hud_on { t!("hud.tip_on") } else { t!("hud.tip_off") });
+                    .button(if hud_on {
+                        egui::RichText::new(&hud_label).strong()
+                    } else {
+                        egui::RichText::new(&hud_label).weak()
+                    })
+                    .on_hover_text(if hud_on {
+                        t!("hud.tip_on")
+                    } else {
+                        t!("hud.tip_off")
+                    });
                 if hud_btn.clicked() {
                     on_toggle_hud();
                 }
@@ -387,7 +412,9 @@ pub fn top_nav_bar(
                     }
                     if let Some(child) = pick {
                         // 记住「父 + 子」：切到子箱并记入记忆（app.rs 落盘 ui_state.json）
-                        registry.remembered_child.insert(parent.to_string(), child.clone());
+                        registry
+                            .remembered_child
+                            .insert(parent.to_string(), child.clone());
                         registry.active = child;
                     }
                 }
@@ -395,7 +422,6 @@ pub fn top_nav_bar(
         }
     });
 }
-
 
 #[cfg(test)]
 mod nav_tests {
@@ -411,7 +437,16 @@ mod nav_tests {
         // ① 顶级箱（chat）——无二级页签行
         reg.active = "chat".to_string();
         let mut out = ctx.run_ui(Default::default(), |ui| {
-            top_nav_bar(ui, &mut reg, true, "zh-CN", &mut (|| {}), &mut (|| {}), false, &mut (|| {}));
+            top_nav_bar(
+                ui,
+                &mut reg,
+                true,
+                "zh-CN",
+                &mut (|| {}),
+                &mut (|| {}),
+                false,
+                &mut (|| {}),
+            );
         });
         out.textures_delta.clear();
 
@@ -419,7 +454,16 @@ mod nav_tests {
         reg.active = "main-online".to_string();
         for online in [true, false] {
             let mut out = ctx.run_ui(Default::default(), |ui| {
-                top_nav_bar(ui, &mut reg, online, "zh-CN", &mut (|| {}), &mut (|| {}), true, &mut (|| {}));
+                top_nav_bar(
+                    ui,
+                    &mut reg,
+                    online,
+                    "zh-CN",
+                    &mut (|| {}),
+                    &mut (|| {}),
+                    true,
+                    &mut (|| {}),
+                );
             });
             out.textures_delta.clear();
         }
@@ -433,12 +477,22 @@ mod nav_tests {
         }
         assert!(reg.children_of("main-online").is_empty());
         let mut out = ctx.run_ui(Default::default(), |ui| {
-            top_nav_bar(ui, &mut reg, true, "en", &mut (|| {}), &mut (|| {}), false, &mut (|| {}));
+            top_nav_bar(
+                ui,
+                &mut reg,
+                true,
+                "en",
+                &mut (|| {}),
+                &mut (|| {}),
+                false,
+                &mut (|| {}),
+            );
         });
         out.textures_delta.clear();
 
         // ④ 二级页签点击目标语义：设置记忆子箱后 effective 就是它（纯函数已单测；此处锁父子记忆）
-        reg.remembered_child.insert("main-online".to_string(), "git".to_string());
+        reg.remembered_child
+            .insert("main-online".to_string(), "git".to_string());
         reg.enabled.insert("git".to_string(), true);
         assert_eq!(reg.effective_module("main-online", "git"), "git");
     }
