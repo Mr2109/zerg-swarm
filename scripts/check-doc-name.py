@@ -27,10 +27,15 @@
 三条硬口径（都是被咬过的）
   ① **目录名与文件名的档位不同**：改**目录名**是结构级动作（牵动 nav / 白名单 / 引用），
      《清单》§5 ④ 明写「只登记不改」⇒ 目录名命中一律 **WARN**；文件名命中才算 FAIL。
-  ② **冻结区不计入退码**：`docs/项目文档/`（17 套快照 §8.1）与 `docs/issues/`（引擎数据 §1.3）
-     按《清单》§2「高（冻结·不改）」**只登记不改** ⇒ 命中数照报，但不进 rc（`--count-frozen` 可改）。
+  ② **冻结区不计入退码**：`docs/项目文档/`（17 套快照 §8.1）按《清单》§2「高（冻结·不改）」
+     **只登记不改** ⇒ 命中数照报，但不进 rc（`--count-frozen` 可改）。
+     ★ 2026-09-19 开发文档分家：原第二项 `docs/issues/`（引擎数据 §1.3）**整目录已迁至
+     `Zerg-内部文档/issues/`**（工作树之外）⇒ 从 `FROZEN_PREFIX` **删除**（它今天匹配 0 条路径 ⇒
+     删它不改任何计数；反向探针：删条目前后 `--scope repo` 扫描域逐位一致）。§1.3「只登记不改」
+     的口径不变，只是对象换成了工作树外的 `Zerg-内部文档/issues/`。
   ③ **例外必须可数**：例外分四档、逐条给理由与出处，`--list-exempt` 全列出并**自证条数**
-     （A 档 = 《清单》已登记的 **22 条**；B 档 = 规则级规范豁免；
+     （A 档 = 《清单》已登记的 **20 条** —— 原件 22 条，其中 A17/A18 两条的对象已随 2026-09-19
+     分家整树迁出 `Zerg-内部文档/`、**仓内零命中** ⇒ 按「零命中 = 假覆盖」删除；B 档 = 规则级规范豁免；
      C 档 = 新增登记 **7 条** = C01–C03 **待批准** + C04 **已拍 2026-09-18（Mr2109）**
            + C05–C07 **第二波任务书点名登记（2026-09-18）** = 门①②③（覆盖/版本源/接线）的
            「门脚本 + 说明书」对；
@@ -74,9 +79,17 @@ REPO_ROOT_DEFAULT = os.path.dirname(HERE)
 #     --scope docs 不变 ⇒ 删除只去掉一个零命中条目，没有别的路径被误纳/误排。
 EXCL_DIRS = ("node_modules", "target", "__pycache__", ".history", ".obsidian", "dist",
              ".zerg", "zerg-wt", "venv", ".cargo", ".git")
+#   ★ 2026-09-19 开发文档分家：`docs/调研/multi-agent-源码/`（第三方源码摘录，97 篇）**已 `cp -a`
+#     到 `Zerg-内部文档/调研/multi-agent-源码/`，但源树此刻仍在工作树里**（未跟踪、97 篇 md 在盘上）
+#     ⇒ 本条**命中未清零 ⇒ 保留不动**（口径：仓内零命中才删；反向探针实测：删掉它 ⇒ 扫描域
+#     1680 → 2190、不合规 0 → 4（`SKILL.md` 大写 N1）⇒ 删了就造红）。待源树真正移出仓后再删。
 EXCL_PREFIX = (".git/", "vendor/", "docs/调研/multi-agent-源码/",
                "tools/ocr/venv/")
-FROZEN_PREFIX = ("docs/项目文档/", "docs/issues/")
+#   ★ 2026-09-19 分家：`docs/issues/`（1086 篇引擎数据）**整目录已迁至 `Zerg-内部文档/issues/`**
+#     ⇒ 删第二项，只留仍在仓内的 `docs/项目文档/`（17 套快照）。对象换了位置，
+#     「冻结区只登记不改」的口径不变。反向探针：删条目前后 `--scope repo` 扫描域
+#     1680 个文件/目录 **逐位一致**（`docs/issues` 今天在盘上不存在）。
+FROZEN_PREFIX = ("docs/项目文档/",)
 
 FULLW = "\u3000\uff08\uff09\u3010\u3011\u300c\u300d\uff0c\u3002\u3001\uff1a\uff1b\uff01\uff1f\u201c\u201d"
 DOCISH_EXT = (".md", ".markdown", ".mdx", ".tsv", ".csv", ".json", ".yaml", ".yml", ".py",
@@ -114,14 +127,20 @@ RULES = [
      "《清单》§5 ⑤（机械插 `-` 需人审）"),
 ]
 
-# ── A 档：《清单-命名规范化》已登记的「不改」条目 22 条 ──────────────────
+# ── A 档：《清单-命名规范化》已登记的「不改」条目 **20 条** ────────────────
+#   ★ 2026-09-19 开发文档分家：原 22 条里的 A17（`docs/issues/tmp-产物清单-20260914.md`）与
+#     A18（`docs/调研/协作骨架v2.0-核验-20260918/` 等两条目录）**对象已整树迁出仓** ⇒
+#     仓内零命中 ⇒ 删除（豁免表的语义是「已登记**不改**」，不是保险网：对象不在仓里，
+#     这条豁免永远不会命中 ⇒ 留着 = 假覆盖）。A19/A21 是**仓内件移出登记**，形态不同 ⇒ 保留。
 # 逐条抄自清单/TSV：id · TSV 行号 · 不规范类型码 · 匹配形态 · 理由 · 出处。
 # 匹配形态四选一：path（精确相对路径）· prefix（目录前缀）· name（基名，任意深度）
 #               · pair（目录 + 去最后扩展名的基名）
 EXEMPT_A = [
     {"id": "A01", "row": 2, "type": "④", "kind": "prefix", "rules": ["N5"],
-     "paths": ["docs/常青/", "docs/skills/", "docs/调研/", "docs/03-评审/"],
-     "reason": "四个正式面候选目录**无 NN- 前缀**，而 01-设计/02-调研/thunderbolt 有 ⇒ 结构级",
+     "paths": ["docs/常青/", "docs/skills/"],
+     "reason": "两个正式面候选目录**无 NN- 前缀**，而 01-设计/02-调研/thunderbolt 有 ⇒ 结构级"
+               "（2026-09-19 分家：原列四项里的 `docs/调研/` `docs/03-评审/` 已迁出仓 ⇒ "
+               "从 paths 删除，只留仓内两项）",
      "src": "清单 §5 ④ · TSV 第 2 行（建议 = 不改 · 结构级，仅登记）"},
     {"id": "A02", "row": 3, "type": "①", "kind": "path", "rules": ["N1"],
      "paths": ["README.md"],
@@ -184,14 +203,11 @@ EXEMPT_A = [
      "paths": ["docs/项目文档/v2.5.10/"],
      "reason": "同目录内 01-..13- 前缀与无前缀条目并存 ⇒ 冻结归档",
      "src": "清单 §5 ④ · TSV 第 32 行（建议 = 不改 · 冻结归档）"},
-    {"id": "A17", "row": 33, "type": "⑦", "kind": "path", "rules": ["N3", "N4", "N6"],
-     "paths": ["docs/issues/tmp-产物清单-20260914.md"],
-     "reason": "`tmp-` 临时前缀进了正式目录 ⇒ 冻结归档（docs/issues/ 在外）",
-     "src": "清单 §5 ⑦ · TSV 第 33 行（建议 = 不改 · 冻结归档）"},
-    {"id": "A18", "row": 78, "type": "④+⑤", "kind": "prefix", "rules": ["N5", "N7"],
-     "paths": ["docs/调研/协作骨架v2.0-核验-20260918/", "docs/调研/协作骨架v2.1-仓内核对-20260918/"],
-     "reason": "目录名里中英紧邻（`骨架v2.0`）+ 版本号 + 日期三件混写 ⇒ 结构级只登记",
-     "src": "清单 §5 ④ · TSV 第 78 行（建议 = 不改 · 结构级，仅登记）"},
+    # ★ 2026-09-19 开发文档分家：原 A17 / A18 两条**已删**（对象整树迁出仓、仓内零命中 ⇒
+    #   留着 = 假覆盖）。原文留档（不进代码，只在 git 历史与本注里）：
+    #   A17 row 33 ⑦ path ["docs/issues/tmp-产物清单-20260914.md"] —— 迁至 `Zerg-内部文档/issues/`
+    #   A18 row 78 ④+⑤ prefix ["docs/调研/协作骨架v2.0-核验-20260918/",
+    #                            "docs/调研/协作骨架v2.1-仓内核对-20260918/"] —— 迁至 `Zerg-内部文档/调研/`
     {"id": "A19", "row": 95, "type": "⑦", "kind": "path", "rules": ["N3", "N4", "N6"],
      "paths": ["gateway/fleet.yaml.bak"],
      "reason": "移出仓（或 `gateway/.bak/`）—— 备件残片不入正式树",
@@ -259,7 +275,7 @@ EXEMPT_C = [
                "同 C05（第二波新建 · 挂 `gates` scope · 模式 `tri-report` 只报告）。"
                "撤法：删本行并把 `EXEMPT_C_EXPECTED` 7→6 ⇒ 该对判红照实回来"},
 ]
-EXEMPT_A_EXPECTED = 22
+EXEMPT_A_EXPECTED = 20     # 2026-09-19 分家：原 22 条里 A17/A18 的对象已迁出仓（零命中）⇒ 删
 EXEMPT_B_EXPECTED = 3
 EXEMPT_C_EXPECTED = 7
 
@@ -537,7 +553,8 @@ def print_report(rep, args):
     print("  不合规 %d（冻结区 %d）· 告警 %d（冻结区 %d）"
           % (rep["live"]["FAIL"], rep["frozen"]["FAIL"],
              rep["live"]["WARN"], rep["frozen"]["WARN"]))
-    print("  ★ 冻结区 = docs/项目文档/ · docs/issues/（《清单》§2「高（冻结·不改）」）⇒ 只报不计退码")
+    print("  ★ 冻结区 = docs/项目文档/（《清单》§2「高（冻结·不改）」）⇒ 只报不计退码"
+          "（原第二项 `docs/issues/` 已于 2026-09-19 分家至 `Zerg-内部文档/`，条目已删）")
     for rid, sev, what, src in RULES:
         n = rep["per_rule"].get(rid, 0)
         if not n:
@@ -567,7 +584,8 @@ def list_rules():
         print("  %-3s [%-4s] %s" % (rid, sev, what))
         print("       出处：%s" % src)
     print("  档位口径：**文件名**命中才计入退码；**目录名**命中一律 WARN（结构级 · 只登记不改）；")
-    print("            N5/N7 为 WARN；冻结区（docs/项目文档/ · docs/issues/）不进退码。")
+    print("            N5/N7 为 WARN；冻结区（docs/项目文档/）不进退码 —— 原第二项 `docs/issues/` 已于"
+          " 2026-09-19 分家至 `Zerg-内部文档/`，条目已删。")
     print("  退码：0 全绿 · 1 有不合规项 · 2 不给结论（优先级 2>1>0）。")
 
 
@@ -728,14 +746,14 @@ def self_test(script_path, meta=True):
     ok &= case("缺件 · 目标路径不存在", 2, ["--target", os.path.join(tmp, "no-such")],
                must_contain=["不给结论"])
     ok &= case("缺件 · 扫描域为空", 2, ["--target", empty], must_contain=["不给结论"])
-    # ⑦ 例外表条数自证（A 档 22 条 · B 档 3 条 · C 档 7 条 · D 档 2 条）
+    # ⑦ 例外表条数自证（A 档 20 条 · B 档 3 条 · C 档 7 条 · D 档 2 条）
     rc, out = _sub(script_path, "--list-exempt")
-    cnt_ok = (rc == 0 and ("A 档 · 《清单-命名规范化》已登记的「不改」条目：22 条（期望 22）" in out)
+    cnt_ok = (rc == 0 and ("A 档 · 《清单-命名规范化》已登记的「不改」条目：20 条（期望 20）" in out)
               and ("B 档 · 规则级规范豁免：3 条（期望 3）" in out)
               and ("C 档 · 新增登记（C01–C03 待批准 · C04 已拍 2026-09-18 · "
                    "C05–C07 第二波任务书登记 2026-09-18）：7 条（期望 7）" in out)
               and ("D 档 · 本轮 A 路拍板登记（登记不改）：2 条（期望 2）" in out))
-    lines.append("%s 例外表条数自证（A22 / B3 / C7 / D2）" % ("✓" if cnt_ok else "✗"))
+    lines.append("%s 例外表条数自证（A20 / B3 / C7 / D2）" % ("✓" if cnt_ok else "✗"))
     ok &= cnt_ok
     # ⑧ 只报告不改
     import hashlib

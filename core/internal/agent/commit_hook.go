@@ -80,7 +80,7 @@ func gitCommitWithRunner(gr gitRunner, repoDir, message string) error {
 // CommitOnStateChange — testonly: 导出仅测试用，无外部调用者（见 commit_hook_test.go）
 // issue 状态变更时触发 commit
 // workDir: 工作区根目录（issue 文件所在仓库）
-// issuePath: issue 文件相对路径（如 "docs/issues/20260814-150405-abc1.md"）
+// issuePath: issue 文件相对路径（如 "issues/20260814-150405-abc1.md"——任务区目录；旧目录 docs/issues/ 已于 2026-09-19 分家）
 // newState: 新状态（如 "queued" / "running" / "done"）
 // 返回 (committed bool, error) — committed 表示是否真正执行了 commit
 func CommitOnStateChange(workDir, issuePath, newState string) (bool, error) {

@@ -24,6 +24,9 @@
   ③ **不算不合规的类别要显式剔出并计数**：`docs/调研/multi-agent-源码/`（第三方源码摘录）·
      `SKILL.md`（Hermes/技能格式是**另一套** frontmatter 契约：只有 name/description，不带文档
      6 件套）⇒ 剔除不是隐藏，报告里逐类给数。
+     ★ 2026-09-19 开发文档分家：`docs/调研/multi-agent-源码/` 已 `cp -a` 到
+     `Zerg-内部文档/调研/multi-agent-源码/`，但**源树仍在工作树里**（未跟踪，97 篇 md 在盘上）⇒
+     `EXCL_PREFIX` 条目**保留不动**（仓内零命中才删；删了就会把 97 篇第三方摘录拉进扫描域）。
      ★ 原第三类「`docs/虫族文档/`（主树镜像副本 §2.7）」**已于 2026-09-19 退役** ⇒ 条目删除
      （它今天匹配 0 篇 ⇒ 删它不改任何计数；备份见 ~/zerg-backup/…）。
 
@@ -67,9 +70,16 @@ EXCL_DIRS = ("node_modules", "target", "__pycache__", ".history", ".obsidian", "
              ".zerg", "zerg-wt", "venv", ".cargo", ".git")
 EXCL_PREFIX = (".git/", "vendor/", "docs/调研/multi-agent-源码/",
                "tools/ocr/venv/")
+#   ★ 2026-09-19 开发文档分家：`docs/调研/multi-agent-源码/` 已 `cp -a` 到 `Zerg-内部文档/调研/`，
+#     但**源树仍在工作树里**（未跟踪，97 篇 md 在盘上）⇒ 本条**命中未清零 ⇒ 保留不动**
+#     （口径：仓内零命中才删）。待源树真正移出仓后再删；剔出类别数不变。
+#     剔出类别从 4 类变 3 类（镜像退役那次已先减一类），「剔出要显式计数」的口径不变。
 
 # 冻结区（只登记不改：《清单-命名规范化》§2 + 设计稿 §8.1/§1.3）
-FROZEN_PREFIX = ("docs/项目文档/", "docs/issues/")
+#   ★ 2026-09-19 分家：`docs/issues/`（1086 篇引擎数据）整目录已迁至 `Zerg-内部文档/issues/` ⇒ 删第二项，
+#     只留仍在仓内的 `docs/项目文档/`（17 套快照）。反向探针：删条目前后 `--scope repo`
+#     扫描域 = 1770 篇 **逐位一致**（`docs/issues` 今天在盘上不存在）。
+FROZEN_PREFIX = ("docs/项目文档/",)
 
 # 正式面候选第一波（设计稿 §8.4③ / §16.1⑤ = 39 篇 + 双语正式面 docs/zh/ · docs/en/，§5.6②）
 FORMAL_PREFIX = ("docs/项目文档/v2.5.10/", "docs/常青/", "docs/skills/", "docs/zh/", "docs/en/")
@@ -80,12 +90,14 @@ CORE_SIX = ("title", "type", "status", "source_of_truth", "owner", "updated_at")
 SKILL_CONTRACT_KEYS = frozenset(("name", "description"))
 
 # 目录 → type 默认值（§B2 表；只提供**默认值**，不作判据 ⇒ 不一致只告警 M16）
+#   ★ 2026-09-19 分家：`docs/01-设计/` 与下面 UNSURE 里的四个目录**已迁出仓**（`Zerg-内部文档/`）⇒
+#     本表**保留并留作反例**（分家后零命中；删了等于少一道「这些目录的 type 默认值」声明）。
 TYPE_DEFAULT_EXACT = {
     "docs/skills/": "how-to",
     "docs/01-设计/": "explanation",
 }
 TYPE_DEFAULT_UNSURE = ("docs/调研/", "docs/02-调研/", "docs/03-评审/", "docs/thunderbolt/",
-                       "docs/常青/")  # 规范给了「或」⇒ 本脚本不判（不发明）
+                       "docs/常青/")  # 规范给了「或」⇒ 本脚本不判（不发明）；前四项分家后零命中
 
 RULES = [
     ("M1", "WARN", "文件无 frontmatter 块（未回填）",
@@ -532,7 +544,8 @@ def print_report(rep, args):
           % (t["ok"], t["violation"], t["warn"], t["blocked"], t["skipped"]))
     if rep["frozen"] and any(rep["frozen"].values()):
         f = rep["frozen"]
-        print("  冻结区（docs/项目文档/ · docs/issues/ · 只登记不改 ⇒ 不计入退码）："
+        print("  冻结区（docs/项目文档/ · 只登记不改 ⇒ 不计入退码；原第二项 `docs/issues/` 已于"
+              " 2026-09-19 分家至 `Zerg-内部文档/`、条目已删）："
               " 合规 %d · 不合规 %d · 告警 %d · 不可判定 %d · 剔除 %d"
               % (f["ok"], f["violation"], f["warn"], f["blocked"], f["skipped"]))
     if rep["skipped_cls"]:
@@ -767,7 +780,8 @@ def main(argv):
                     help="repo=全仓文档面 · docs=仅 docs/ · formal=正式面候选第一波（§8.4③）")
     ap.add_argument("--missing", choices=["warn", "fail"], default="warn",
                     help="无 frontmatter 块的档位（默认 warn；正式面第一波用 fail）")
-    ap.add_argument("--count-frozen", action="store_true", help="把冻结区（项目文档/issues）计入退码")
+    ap.add_argument("--count-frozen", action="store_true", help="把冻结区（项目文档/）计入退码；"
+                    "`docs/issues/` 已于 2026-09-19 分家至 `Zerg-内部文档/` ⇒ 不再有该区")
     ap.add_argument("--max-examples", type=int, default=5)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--list-rules", action="store_true")

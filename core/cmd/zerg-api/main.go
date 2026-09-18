@@ -25,7 +25,7 @@ import (
 
 func main() {
 	port := flag.Int("port", 8083, "监听端口")
-	workDir := flag.String("workdir", ".", "工作目录（有 docs/issues/ 的目录）")
+	workDir := flag.String("workdir", ".", "工作目录（有任务单目录 docs/issues/ 的目录）")
 	flag.Parse()
 
 	token := os.Getenv("ZERG_API_TOKEN")
@@ -41,7 +41,7 @@ func main() {
 			http.Error(w, `{"error":"invalid JSON"}`, 400)
 			return
 		}
-		// 临时切工作目录（SubmitTask 用相对 docs/issues/）
+		// 临时切工作目录（SubmitTask 用相对任务单目录）
 		orig, _ := os.Getwd()
 		os.Chdir(*workDir)
 		path, err := agent.SubmitTask(spec)

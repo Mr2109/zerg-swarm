@@ -100,7 +100,8 @@ func taskPriorityStatus(priority string) string {
 // 流程：
 //  1. 校验 TaskSpec
 //  2. 计算 task hash，检查去重（同 hash 且未关闭 → 返回已有路径）
-//  3. 生成 issue 文件写入 docs/issues/
+//  3. 生成 issue 文件写入任务区（旧目录 <工作区>/docs/issues/ 已于 2026-09-19 分家至 Zerg-内部文档/issues/；
+//     「内部任务单目录可配」落地后写单落点见 statepath.IssuesDir()）
 //
 // 返回：issue 文件路径
 func SubmitTask(spec TaskSpec) (string, error) {

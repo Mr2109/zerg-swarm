@@ -1,7 +1,7 @@
 package agent
 
 // cluster.go — v2.5.2 失败任务聚类（根因聚类——同类失败合并）
-// 职责：扫描 docs/issues/ 的终态 issue → 按失败类型+任务关键词聚类 → 输出簇列表
+// 职责：扫描任务区（issuesDir）的终态 issue → 按失败类型+任务关键词聚类 → 输出簇列表
 
 import (
 	"fmt"
@@ -94,7 +94,7 @@ func parseIssueFile(path string) (*issueParsed, error) {
 }
 
 // ClusterFailures — 扫描 issuesDir 中的失败 issue（escalated/dead），按失败类型+任务关键词聚类
-// issuesDir: docs/issues/ 目录路径
+// issuesDir: 任务区目录路径（旧目录 docs/issues/ 已于 2026-09-19 分家至 Zerg-内部文档/issues/）
 // 返回: 簇列表（按 Count 降序排列）
 func ClusterFailures(issuesDir string) ([]FailureCluster, error) {
 	// 1. 读取目录下所有 issue 文件

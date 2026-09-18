@@ -3,7 +3,7 @@
 // 本文件的存在理由（缺陷 15，2026-09-15 真机踩到）：子端跑在**系统服务**里，
 // 环境里没有 XDG_RUNTIME_DIR ⇒ 一切 `systemctl --user` / `systemd-run --user` 当场失败。
 // macOS 上跑不到这条路径，所以这里只做**判据级**断言；真正的验收是「按生产形态启动实例后
-// 真孵一枚卵」（见 docs/issues 里的报告）。
+// 真孵一枚卵」（见 `Zerg-内部文档/issues/` 里的报告，2026-09-19 已随开发文档分家迁出工作树；原路径 `docs/issues/`）。
 package hatch
 
 import (
