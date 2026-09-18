@@ -44,6 +44,8 @@
     1 = 有不合规项（**只报告，不改文件** —— 本脚本从不写目标树）
     2 = 不给结论（用法错 / 输入或 schema 缺件 / 有不可判定项 / schema 用了未实现的关键字 / 自检未过）
     ★ 优先级 2 > 1 > 0：只要有一条「判不了」，就不许报绿也不许报红。
+    ★ 公开树侧（无 `docs/`，开发文档分家后正式面未进公开树）：本 scope = **BLOCKED、不适用** ——
+      正式面候选目录一个都不存在 ⇒ rc=2 并逐条打印缺件路径；私有树正常判（判据一字未改）。
 """
 import argparse
 import datetime
@@ -825,6 +827,9 @@ def main(argv):
         targets = sorted(set(keep))
         if not targets:
             print("BLOCKED：正式面候选目录一个都不存在 ⇒ 不给结论")
+            for pre in FORMAL_PREFIX:
+                print("  缺件路径：%s（仓根下解析 = %s）" % (pre, os.path.join(root, pre)))
+            print("  口径：公开树侧（无 docs/）本 scope 为 BLOCKED、不适用；私有树正常判（判据一字未改）。")
             return 2
     if not os.path.isdir(root):
         print("BLOCKED：仓根不是目录 ⇒ 不给结论：%s" % root)
