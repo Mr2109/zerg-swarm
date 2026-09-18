@@ -31,6 +31,11 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// 当前根的文件列表槽（**dirs, files**——都是相对根的相对路径，None = 还没拉到）。
+/// 2026-09-18 clippy（type_complexity）：把 `Arc<Mutex<Option<(Vec<String>, Vec<String>)>>>`
+/// 收成一个别名——纯可读性重构，语义/加锁点一字未改（读取处仍 `lock(&self.listing)` 拿同一份）。
+type ListingSlot = Arc<Mutex<Option<(Vec<String>, Vec<String>)>>>;
+
 /// 文件浏览器组件实例（**多处吊装 = 各持一份实例**——互不干扰）
 pub struct FileBrowse {
     /// 根集合 + 配置（异步拉取结果；None = 还没到）
@@ -44,7 +49,7 @@ pub struct FileBrowse {
     /// 当前选中文件（相对根的相对路径）
     file: String,
     /// 当前根的列表（files, dirs——相对路径）
-    listing: Arc<Mutex<Option<(Vec<String>, Vec<String>)>>>,
+    listing: ListingSlot,
     /// 列表拉取周期（5s——与既有文档模块同频）
     last_listing: Option<std::time::Instant>,
     /// 列表错误（异步槽 → 界面）
