@@ -1,6 +1,6 @@
 // eggs_endpoint.go —— P7 批 1：GET /eggs 只读端点 + /services 真数据接线。
 //
-// 设计真源：设计-子端沙箱化-20260914.md
+// 设计真源：设计-子端沙箱化.md
 //
 //	§5.4 观测面（端点名定案：只读端点名为 /eggs，字段一律 eggs[] / egg_id；
 //	/services 亦可、载荷同上）· §4.3 第八项（schema_version 如实标出）· §8.7

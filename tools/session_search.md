@@ -29,7 +29,7 @@
 
 ### v1.0.0（2026-09-10）
 
-**落地**（设计：`docs/01-设计/设计-虫族记忆体系-20260910.md` §3.3）
+**落地**（设计：`docs/01-设计/设计-虫族记忆体系.md` §3.3）
 
 - 执行器 `core/internal/chat/chat_tool_session_search.go`（复用 `SearchMessages` + 新增按 id 取窗口查询 + 最近会话列表）
 - 注册：对话族 deferred（`tool_search` 发现）+ CA 族（同一注册通道）

@@ -113,7 +113,7 @@ EXCLUDES=(
   "tools/ocr/.venv"
   "gateway/fleet.yaml"
   "gateway/fleet.yaml.bak"
-  "gateway/TASKS.md"
+  "gateway/tasks.md"
   "gateway/deploy_x3.sh"
   "gateway/deploy_mini.sh"
   "gateway/install.sh"

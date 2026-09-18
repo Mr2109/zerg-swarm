@@ -1,6 +1,6 @@
 // services_endpoint.go —— P4→P7：只读可观测面。
 //
-// 设计依据：设计-子端沙箱化-20260914.md §5.4 观测面——
+// 设计依据：设计-子端沙箱化.md §5.4 观测面——
 // 载荷 **{slot, eggs[], external_occupancy[], gtt}**。
 //
 // P7 批 1 起装配逻辑真数据接线完成，全部搬进 eggs_endpoint.go（本文件只留历史注脚，

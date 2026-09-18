@@ -1,7 +1,7 @@
 // obs_prompt_version.go — T3.4 **prompt 版本外键 + label→version 快照**（H4）
 //   - T3.6 **提示脚手架策略版本化**（H7）
 //
-// 设计依据（逐字，取自 docs/01-设计/设计-内建调试版-v1.2-20260917.md 第〇节）：
+// 设计依据（逐字，取自 docs/01-设计/设计-内建调试版-v1.2.md 第〇节）：
 //
 //	「H4 缺 prompt 版本外键与 label→version 快照 ⇒ "这次劣化是哪个提示版本造成的"无法回答｜★★★｜
 //	  记 `prompt_name/version/label` + 快照；回滚也能复现当时线上状态」。

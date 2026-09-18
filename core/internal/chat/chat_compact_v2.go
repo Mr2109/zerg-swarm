@@ -1,5 +1,5 @@
 // chat_compact_v2.go — 丙批（2026-09-10 Mr2109拍板）：压缩单一入口 MaybeCompact
-// 设计依据: docs/01-设计/设计-虫族记忆体系-20260910.md §4.2「压缩单一入口 + 冷却 + 召回指针」
+// 设计依据: docs/01-设计/设计-虫族记忆体系.md §4.2「压缩单一入口 + 冷却 + 召回指针」
 //
 //	① 单一入口: 阈值 max(min(ctx×0.5, 8000), 2000)（沿用 chat_compact.go 的 CompactTriggerTokens）
 //	② 算法选路: LLMLingua-2（注入式 CompactFn——删除式、快）优先；

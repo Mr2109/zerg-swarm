@@ -1,6 +1,6 @@
 // chat_memory_wire.go — 乙批接线（2026-09-10）：记忆体系的对话层落点
 //
-// 设计：docs/01-设计/设计-虫族记忆体系-20260910.md §3.1（MemoryStore 接线）/ §3.2（memory 工具）/ §3.3（session_search）
+// 设计：docs/01-设计/设计-虫族记忆体系.md §3.1（MemoryStore 接线）/ §3.2（memory 工具）/ §3.3（session_search）
 //
 // 三件事：
 //  1) 记忆存储单例（两级作用域：global + agents/<id>）——目录 ~/.zerg/memory/（ZERG_MEMORY_DIR 可覆盖）

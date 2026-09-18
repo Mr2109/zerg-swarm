@@ -2,7 +2,7 @@
   "schema": "zerg-cli-tools-1",
   "note": [
     "CLI 依赖账 —— **不是** agent 工具台账（后者 = tools/versions.json，141 键：bash/calc/apply_patch…，不含任何 CLI 二进制）。",
-    "依据：docs/01-设计/设计-改码与变异安全门-v1.1-20260918.md §6.4（Q9 落点定案）+ 附录A C10/M15（工具自身会漂移）。",
+    "依据：docs/01-设计/设计-改码与变异安全门-v1.1.md §6.4（Q9 落点定案）+ 附录A C10/M15（工具自身会漂移）。",
     "字段：工具名 · 版本（或「不可考」）· 绝对路径 · binary sha256 · 安装方式 · 联网前提 · 登记日期。",
     "门（scripts/edit-assert，腿二）启动做断言：ast-grep 的路径与 binary sha256 必须与本账一致，否则 rc=2 BLOCKED_UNREGISTERED_TOOL（不许静默用另一个二进制）。",
     "门（scripts/mutate-scan，腿一）启动做断言：gremlins / cosmic-ray 必须**在登记目录 ~/.zerg/tools/ 内**且 binary sha256 与本账一致，否则 rc=2 BLOCKED_UNREGISTERED_TOOL / BLOCKED_MISSING_TOOL（M5/C10：不许降级、不许改用 PATH 上的同名件）。",
