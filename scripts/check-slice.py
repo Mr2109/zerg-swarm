@@ -14,7 +14,8 @@
     python3 scripts/check-slice.py --check <片.json> [<片.json> ...]   # 判合法性
     python3 scripts/check-slice.py --probe                            # 跑探针集 + 混淆矩阵
     python3 scripts/check-slice.py --list-rules                       # 列规则 / 启用状态 / 全部登记表
-    python3 scripts/check-slice.py --selftest                         # 四条自证（正例·反例·strict·真隐患）
+    python3 scripts/check-slice.py --selftest                         # 成对自证（正例·反例·strict·真隐患
+                                                                      #   + 前置缺件闸正反两半）
 
 选项
 ----
@@ -27,8 +28,21 @@
     0  全部合法（可有「需递归」标记 —— R7 超限**判需递归、不打回**，逐字 §3.4-R7）
     1  有非法片（逐条打印原因码 + 命中哪条 R）；或探针假绿 > 0；或假红率 > 10%；
        或「错误类 / 需递归类」探针未命中
-    2  用法错 · 前置缺件（片/探针/标定档案相关问题）· **strict 违约**（未知字段键 / 未知规则键 /
-       未登记的禁用请求）· 自检不过 · 命中缺「改写建议」（R4：无改写建议不算有效报红）—— **不给结论**
+    2  用法错 · 前置缺件（片/探针/标定档案相关问题 · **探针公共根不可达**）· **strict 违约**
+       （未知字段键 / 未知规则键 / 未登记的禁用请求）· 自检不过 · 命中缺「改写建议」
+       （R4：无改写建议不算有效报红）—— **不给结论**
+
+公开树侧（无 `../Zerg-内部文档` 与 `docs/`）的行为（2026-09-19 开发文档分家后新增）
+----
+    ★ 探针集引用的源件（切片合同模板等）随开发文档分家搬到**工作树之外**的同级目录
+      `../Zerg-内部文档/`。公开树（`publish/whitelist.txt` 只收 `scripts/`）里没有它 ⇒ 每条探针的
+      `landing` / `context_needed` 都落 R2-NOT-FOUND ⇒ 全被算成「假红」（实测假红率 63.6%，
+      把「本仓缺件」错报成「探针写错了」）。
+    ⇒ **前置缺件闸**（`probe_external_roots` / `precheck_probe_sources`）：探针引用的**仓外公共根**
+      （现读 = `../Zerg-内部文档/01-设计`）在本仓不可达 ⇒ **rc=2 BLOCKED、不给结论**，并逐条打印缺件
+      路径与引用它的探针名（**不**把每条探针判成假红）。
+    ⇒ 本 scope 在公开树侧 = **BLOCKED、不适用**（既不是红也不是绿）；私有树按原口径正常判。
+    ★ 只闸**公共根目录**：根可达而具体源件真丢 ⇒ 各条探针照旧判红（R2-NOT-FOUND）—— 判据一字不放宽。
 
 strict 等价（§3.5 逐字：未知规则键＝错误）
 ----
@@ -1601,6 +1615,105 @@ PROBE_EXPECTS = ['red', 'green', 'recursion', 'error']
 PROBE_EXPECT_CN = {'red': '红/违规', 'green': '绿/合法', 'recursion': '需递归', 'error': '错误(rc=2)'}
 PROBE_GOT_CN = {'red': '判红', 'green': '判绿', 'recursion': '判需递归', 'error': '判错误'}
 
+# ── 前置缺件闸：探针引用的**仓外公共根**（2026-09-19 开发文档分家后新增）─────────────────
+#   背景（实测）：探针集引用的源件（`切片合同-模板.md` 等）随开发文档分家搬到**工作树之外**
+#   的同级目录 `../Zerg-内部文档/`。公开树（`publish/whitelist.txt` 只收 `scripts/`）里没有它 ⇒
+#   每条探针的 landing / context_needed 都落 R2-NOT-FOUND ⇒ 全被算成「假红」（实测假红率
+#   63.6%）——「本仓缺件」被错报成「探针写错了」。口径与仓内同族（缺件不许静默降级）：
+#   探针引用的**仓外公共根**在本仓不可达 ⇒ rc=2 **不给结论**（BLOCKED），逐条打印缺件路径。
+#   ★ 只闸**公共根目录**：根可达而具体源件真丢 ⇒ 各条探针照旧判红（R2-NOT-FOUND），判据不放宽。
+#   ★ 私有树（`../Zerg-内部文档/` 在位）行为一字未改：本闸放行，其余判定逐条与改前一致。
+EXTERNAL_REF_RE = re.compile(r'(?:\.\./)+[^\s\'"，,；;、）)】」》|<>`]+')
+
+
+def _clean_ref(tok):
+    """去引号后缀标点与 `:行号` / `:行号-行号`（`../Zerg-内部文档/…/模板.md:12-14` ⇒ 路径）。"""
+    tok = tok.strip().rstrip('。，,;；、）)】」》`')
+    return re.sub(r':\d+(?:-\d+)?$', '', tok)
+
+
+def probe_external_refs(p):
+    """一条探针里所有 `../` 出仓的路径引用（landing / context_needed / criteria / gate_cmds）。"""
+    objs = []
+    if isinstance(p.get('slice'), dict):
+        objs.append(p['slice'])
+    if isinstance(p.get('slices'), list):
+        objs += [o for o in p['slices'] if isinstance(o, dict)]
+    out = []
+    for o in objs:
+        bag = [o.get('landing')]
+        cn = o.get('context_needed')
+        if isinstance(cn, list):
+            for it in cn:
+                bag.append(it.get('value') if isinstance(it, dict) else it)
+        for key in ('criteria', 'gate_cmds'):
+            v = o.get(key)
+            if isinstance(v, list):
+                for it in v:
+                    if isinstance(it, dict):
+                        bag.append(it.get('cmd'))
+        for s in bag:
+            if not isinstance(s, str):
+                continue
+            for m in EXTERNAL_REF_RE.findall(s):
+                c = _clean_ref(m)
+                if c and c not in out:
+                    out.append(c)
+    return out
+
+
+def probe_external_roots(probes, repo_root=None):
+    """返回 (公共根, info, missing)。
+
+    info = {仓外根（相对仓根）: {'probes': [探针名…], 'refs': [例引用…]}}；
+    公共根 = 所有出仓引用的**目录前缀的公共前缀**（分家后现读只有一棵：`../Zerg-内部文档/01-设计`）；
+    missing = 在本仓（repo_root，默认 REPO_ROOT）**不可达**的那些根（相对写法原样返回）。
+    """
+    base = REPO_ROOT if repo_root is None else os.path.abspath(repo_root)
+    info = {}
+    for p in probes:
+        nm = p.get('name', '?')
+        for ref in probe_external_refs(p):
+            d = os.path.normpath(os.path.dirname(ref))
+            if not d or d == '.':
+                continue
+            slot = info.setdefault(d, {'probes': [], 'refs': []})
+            if nm not in slot['probes']:
+                slot['probes'].append(nm)
+            if ref not in slot['refs']:
+                slot['refs'].append(ref)
+    roots = sorted(info)
+    common = ''
+    if roots:
+        try:
+            common = os.path.commonpath(roots)
+        except ValueError:
+            common = ''
+    missing = [r for r in roots if not os.path.exists(os.path.join(base, r))]
+    return common, info, missing
+
+
+def precheck_probe_sources(probes, repo_root=None):
+    """前置缺件闸的判据出口：返回 (公共根, info, missing)。missing 非空 ⇒ rc=2 不给结论。"""
+    return probe_external_roots(probes, repo_root)
+
+
+def print_probe_source_gate(common, info, missing):
+    """缺件打印：公共根 + 逐条缺件路径 + 引用它的探针名 + 公开树/私有树口径。"""
+    print('✗ 前置缺件：探针集引用的**仓外公共根**在本仓不可达 ⇒ rc=2，不给结论（BLOCKED）')
+    print('  探针公共根：%s（仓根下解析 = %s）'
+          % (common or '（无法归一）',
+             os.path.join(REPO_ROOT, common) if common else '（无）'))
+    for r in missing:
+        slot = info[r]
+        print('  缺件路径：%s（仓根下解析 = %s）' % (r, os.path.join(REPO_ROOT, r)))
+        print('      引用它的探针 %d 条（例：%s）｜例引用：%s'
+              % (len(slot['probes']), ' · '.join(slot['probes'][:3]),
+                 slot['refs'][0] if slot['refs'] else '—'))
+    print('  口径：公开树侧（无 `../Zerg-内部文档` 与 `docs/`）本 scope 为 BLOCKED、不适用；'
+          '私有树把 `Zerg-内部文档/` 放回同级目录再跑。')
+    print('  只闸**公共根目录**：根可达而具体源件真丢 ⇒ 各条探针照旧判红（R2-NOT-FOUND），判据不放宽。')
+
 
 def load_probes():
     if not os.path.isfile(PROBE_PATH):
@@ -1656,6 +1769,13 @@ def run_probe(opts, calib):
     if errs:
         for e in errs:
             print('✗ %s' % e)
+        return 2
+    # ── 前置缺件闸（2026-09-19 分家后新增）：探针引用的**仓外公共根**不可达 ⇒ rc=2 不给结论。
+    #   为什么在跑探针之前：缺件时继续跑只会把每条探针判成「假红」（实测 63.6%），
+    #   把「本仓缺件」错报成「探针写错了」——那是假红，不是判据。私有树本闸放行、行为不变。
+    common, _info, missing = precheck_probe_sources(probes)
+    if missing:
+        print_probe_source_gate(common, _info, missing)
         return 2
     print_registration(opts, calib, quiet=opts['quiet'])
     th = probe_thresholds(calib)
@@ -1857,6 +1977,29 @@ def run_selftest(opts, calib):
             json.dump(p['slice'], fh, ensure_ascii=False, indent=2)
         rc, out = _run_check_cmd(fd)
         checks.append(('(d) 真隐患（criteria 缺期望输出）⇒ 期望 rc=1', rc == 1, rc, out))
+        # (e) 前置缺件闸·**正**：本仓（私有树）探针公共根可达 ⇒ 闸放行、--probe 照判（rc 与改前一致）
+        common, info, missing = precheck_probe_sources(probes, REPO_ROOT)
+        rc, out = _run_check_cmd(None, ['--probe'])
+        ok_e = (rc == 0) and (not missing)
+        checks.append(('(e) 前置缺件闸·正：探针公共根可达（%s）⇒ 闸放行、--probe 照判 rc=0'
+                       % (common or '—'), ok_e, rc,
+                       out + '\n[进程内] 出仓引用根：%s；缺件：%s'
+                       % (' · '.join(sorted(info)) or '无', ' · '.join(missing) or '无')))
+        # (f) 前置缺件闸·**反**：/tmp 仿真公开树（仓根无 docs/、同级无 Zerg-内部文档/）⇒ 期望 rc=2 且打印缺件路径。
+        #     夹具放在 tmp 下自成父目录 ⇒ `../Zerg-内部文档` 一定不存在（不赌 /tmp 里有没有同名目录）。
+        import subprocess
+        sim_repo = os.path.join(tmp, 'sim-public', 'repo')
+        os.makedirs(os.path.join(sim_repo, 'scripts'))
+        shutil.copy2(os.path.abspath(__file__), os.path.join(sim_repo, 'scripts', 'check-slice.py'))
+        shutil.copy2(PROBE_PATH, os.path.join(sim_repo, 'scripts', 'slice-probes.json'))
+        pr = subprocess.Popen([sys.executable,
+                               os.path.join(sim_repo, 'scripts', 'check-slice.py'), '--probe'],
+                              cwd=sim_repo, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out = pr.communicate()[0].decode('utf-8', 'replace')
+        rc = pr.returncode
+        ok_f = (rc == 2) and ('缺件路径' in out) and ('../Zerg-内部文档' in out)
+        checks.append(('(f) 前置缺件闸·反：仿真公开树（无 ../Zerg-内部文档）⇒ 期望 rc=2 且打印缺件路径',
+                       ok_f, rc, out))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     # R4 约束的守卫（无改写建议的命中 ⇒ 拒判 rc=2）——进程内验证
@@ -1874,7 +2017,9 @@ def run_selftest(opts, calib):
             s = ln.strip()
             if not s:
                 continue
-            if ('✗ [R' in s) or ('STRICT' in s) or s.startswith('结论') or s.startswith('[进程内]'):
+            if (('✗ [R' in s) or ('STRICT' in s) or s.startswith('结论')
+                    or s.startswith('[进程内]') or s.startswith('✗ 前置缺件')
+                    or s.startswith('缺件路径') or s.startswith('探针公共根')):
                 print('      | %s' % s)
     print('%s R4 约束守卫：无改写建议的命中必须拒判（InternalError）' % ('✓' if guard_ok else '✗'))
     if not guard_ok:
