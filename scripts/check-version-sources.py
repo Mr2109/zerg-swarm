@@ -9,7 +9,9 @@
   ④ wall/Cargo.toml                     —— `[package] version = "X"`（茧壁 crate，升级比较要用）
 
 另**只报告**（**不进退码**）：**活文档里仍写着旧版本号字面量**的清单
-  · 旧版集合默认 = 「直接前驱版」= `docs/项目文档/v*/` 里已知的 3 段版本号中 < 当前版的最大者
+  · 旧版集合默认 = 「直接前驱版」= 快照目录里已知的 3 段版本号中 < 当前版的最大者
+    （★ 2026-09-19 二次分家批2：快照目录**取源根双认** = 仓内 `docs/项目文档` 优先、缺则仓外
+     `../Zerg-内部文档/项目文档`；两处都缺 ⇒ **rc=2 不给结论**，不给「没有历史版本可比」的假绿）
   · 排除域（冻结/镜像/证据/Tool 目录）见 RULES 的 doc_excludes；命中逐条列 `文件:行`
   · 命中**分两类**：`版本名/路径形态`（`v2.5.9`、`…/v2.5.9/…`、`变更-v2.5.9.md` —— 指的是旧版的名字，登记为主）
     与 `裸数字形态`（`2.5.9 → 2.5.10`、`2.5.9 增补` 之类 —— 需人判读：可能是陈旧陈述、也可能是沿革陈述）
@@ -81,6 +83,10 @@ DOC_EXCLUDES_FIXED = [
 # ★ 2026-09-19：原第一项 `docs/虫族文档/`（镜像副本，公开面镜像 · 冻结）**已退役**（备份见
 #   ~/zerg-backup/…）⇒ 死条目删除（它今天匹配 0 个文件 ⇒ 删它不改任何计数：语料/清单逐位一致）。
 #   镜像若日后重建，请把 ("docs/虫族文档/", "镜像副本（已退役后重建）") 加回本列。
+#   ★ 2026-09-19 「项目文档」二次分家**批2**（**只加注、两条一字不动**）：这两条的域是 `docs/项目文档/`，
+#     **批3** 把该目录移出工作树后本门语料（`docs/**`）里必然零命中 ⇒ 届时按「零命中即删」删除，
+#     并按仓外口径改述（本门只扫仓内 `docs/**` ⇒ 那批文件移出后**不再进本门语料**，不是「改指仓外」能救的：
+#     真要判它们，得先给本门加仓外语料根 = 改判据，属另批）。本批不删：对象今天仍在仓内、仍有命中在咬。
 DOC_EXCLUDES_RULE = [
     ("docs/项目文档/v<X>/（X ≠ 当前版）", "他版快照目录（17 套历史快照，冻结归档，勿改）"),
     ("docs/项目文档/v<X>/（X = 当前版）", "**不排除** —— 它是活文档，命中要进清单"),
@@ -141,15 +147,35 @@ def version_key(v):
 
 # ─────────────────────────── 只报告：活文档旧版本号 ───────────────────────────
 
+# ★ 2026-09-19 「项目文档」二次分家**批2**（双认 · 先仓内、缺则仓外取源根）：
+#   快照目录的**取源根**两处都认 —— `docs/项目文档`（仓内）优先，缺则同级仓外目录
+#   `../Zerg-内部文档/项目文档`（与 `docs/site/export-and-build.sh` 的 `ZERG_DOCS_ALT` 同一根、同一默认值）。
+#   两处**都不在盘上** ⇒ 旧版集合判据不可判 ⇒ 本门 **rc=2 不给结论**（原先会静默报「没有历史版本目录
+#   可比」= 假绿：域没了却照样给结论）。批3 前仓内那棵在（现跑仍在咬），批3 后仓外那棵在。
+DOCS_REL_CANDIDATES = ("docs/项目文档", os.path.join("..", "Zerg-内部文档", "项目文档"))
+
+
+def docs_snapshot_root(root):
+    """返回 (绝对路径, 来源说明)；两处都缺 ⇒ (None, 说明)。"""
+    for rel in DOCS_REL_CANDIDATES:
+        p = os.path.abspath(os.path.join(root, rel))
+        if os.path.isdir(p):
+            src = "仓内 docs/项目文档" if not rel.startswith("..") else "仓外取源根 ../Zerg-内部文档/项目文档"
+            return p, src
+    return None, ("两处取源根都缺（仓内 docs/项目文档 · 仓外 ../Zerg-内部文档/项目文档）"
+                  "⇒ 快照目录不在盘上")
+
+
 def derive_stale_set(root, canonical, use_all=False):
-    """旧版集合 = `docs/项目文档/v*/` 里已知的 3 段版本号中 < 当前版者。
+    """旧版集合 = 快照目录（仓内 `docs/项目文档`，缺则仓外 `../Zerg-内部文档/项目文档`）里
+    已知的 3 段版本号中 < 当前版者。
 
     默认只取**直接前驱版**（max of those < canonical）；use_all=True 时取全部。
     返回 (stale_list, known_list, note)。
     """
-    d = os.path.join(root, "docs", "项目文档")
+    d, dsrc = docs_snapshot_root(root)
     known = []
-    if os.path.isdir(d):
+    if d:
         for name in sorted(os.listdir(d)):
             if not name.startswith("v"):
                 continue
@@ -161,10 +187,11 @@ def derive_stale_set(root, canonical, use_all=False):
     older = sorted([v for v in set(known) if v != canonical and version_key(v) < version_key(canonical)],
                    key=version_key)
     if not older:
-        return [], known, "没有历史版本目录可比 ⇒ 旧版集合为空（只报告项，不进退出码）"
+        return [], known, ("没有历史版本目录可比 ⇒ 旧版集合为空（只报告项，不进退出码）"
+                           "·取源根 = %s" % (dsrc if d else "（无）"))
     if use_all:
-        return older, known, "旧版集合 = 全部历史版本（--stale-all）"
-    return [older[-1]], known, "旧版集合 = 直接前驱版（默认；要收全部用 --stale-all）"
+        return older, known, "旧版集合 = 全部历史版本（--stale-all）·取源根 = %s" % dsrc
+    return [older[-1]], known, "旧版集合 = 直接前驱版（默认；要收全部用 --stale-all）·取源根 = %s" % dsrc
 
 
 def is_excluded_zone(rel, canonical):
@@ -173,6 +200,9 @@ def is_excluded_zone(rel, canonical):
         if rel.startswith(pref):
             return "固定排除域"
     if rel.startswith("docs/项目文档/"):
+        #   ★ 2026-09-19 二次分家批2（**只加注、逻辑一字不动**）：本条「他版快照」规则的对象随**批3**
+        #     移出工作树 ⇒ 本门语料（仓内 `docs/**`）里届时零命中（不是放宽：移出的文件本就不进货架）。
+        #     保留原因：批3 前它仍在咬（现跑清单里「当前 2.5.9」= 陈旧陈述那一类正是它兜住的）。
         rest = rel[len("docs/项目文档/"):]
         dirver = rest.split("/")[0]
         if dirver.startswith("v") and canonical and dirver[1:] != canonical:
@@ -747,6 +777,17 @@ def main(argv):
     if a.list_rules:
         print_rules({"canonical": canonical, "stale": stale, "known": known, "stale_note": stale_note})
         return RC_OK
+
+    #   ★ 2026-09-19 二次分家批2：快照目录取源根（仓内 `docs/项目文档` → 仓外 `../Zerg-内部文档/项目文档`）
+    #     **两处都缺** ⇒ 旧版集合/活文档域判据不可判 ⇒ rc=2 不给结论（不给「没有历史版本」这种假绿结论）。
+    #     放在 self_test / list_rules 之后 ⇒ 自检与规则表照旧可跑（判据代码一字未改）。
+    _d, _dsrc = docs_snapshot_root(root)
+    if _d is None:
+        print("✗ %s" % _dsrc)
+        for _rel in DOCS_REL_CANDIDATES:
+            print("    缺件路径：%s（解析 = %s）" % (_rel, os.path.abspath(os.path.join(root, _rel))))
+        print("  口径：旧版集合判据不可判 ⇒ rc=2（不给结论；不假绿、也不空转成绿）")
+        return RC_BLOCKED
 
     res = check_sources(root, stale_set=stale, strict_docs=a.strict_docs)
     res["stale_note"] = stale_note
