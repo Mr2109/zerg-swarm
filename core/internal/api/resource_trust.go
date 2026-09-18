@@ -2,22 +2,78 @@ package api
 
 // resource_trust.go — 资源信任度标记（2026-08-21 Mr2109）
 // 所有资源（模型/工具/skill/mcp）——新入库 🆕 → 实际任务用 100 次无故障 → ✅ 正式（标记消除）
-// 存储: /tmp/zerg-resources.json（状态/使用次数/故障次数）
+//
+// 存储（2026-09-18 修 /tmp 硬编码——口径同本包 tasks_persist.go）:
+//
+//	原写死 const resTrustFile = "/tmp/zerg-resources.json" —— macOS 重启 /tmp 即清 +
+//	tmp_cleaner 3 天未访问即删（实测本机两者都在）⇒ 使用次数/故障次数/转正标记全部归零
+//	（用了 99 次的资源又一次回到「🆕」）；多实例还共用同一份文件互相覆盖。
+//	改为 statepath 统一状态目录派生（ZERG_STATE_DIR → ~/.zerg/state/zerg-resources.json）。
+//	迁移兼容（首次）: 新路径不存在而旧 /tmp/zerg-resources.json 存在 ⇒ **读旧一次**（不丢计数）；
+//	**写只写新路径**；旧文件**不删、不改**。新路径已存在 ⇒ 旧路径完全不看。
 
 import (
 	"encoding/json"
+	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 const (
-	resTrustFile = "/tmp/zerg-resources.json"
-	resTrustMax  = 100 // 100 次无故障转正式（Mr2109）
+	resTrustMax = 100 // 100 次无故障转正式（Mr2109）
+
+	// resTrustStateFileName 信任表在统一状态目录下的文件名。
+	resTrustStateFileName = "zerg-resources.json"
+	// resTrustLegacyDefaultPath 旧硬编码落点字面量（2026-08-21 起写死）。
+	// 只作**首次迁移读取**来源：读一次；不删、不改、永不写入。
+	resTrustLegacyDefaultPath = "/tmp/zerg-resources.json"
 )
+
+// legacyResTrustFile 旧路径（包级变量 = 上面的字面量；迁移用例/测试进程隔离可切换）。
+var legacyResTrustFile = resTrustLegacyDefaultPath
+
+// resTrustFile 信任表落点（包级变量——测试可切换隔离路径——2026-08-21）。
+// 语义（2026-09-18）: 非空 ⇒ 直接用该路径（测试隔离/显式覆盖）；
+// 空 ⇒ 走 statepath 统一状态目录派生（生产默认，见 resTrustWritePath）。
+var resTrustFile = ""
+
+// resTrustWritePath 写路径：永远是统一状态目录（ZERG_STATE_DIR → ~/.zerg/state/<resTrustStateFileName>）。
+// 永不写旧 /tmp 路径——多实例各写各的（不再互相覆盖计数）。
+func resTrustWritePath() string {
+	if p := strings.TrimSpace(resTrustFile); p != "" {
+		return p
+	}
+	return statepath.File(resTrustStateFileName)
+}
+
+// resTrustReadPath 读路径：统一状态目录优先；新路径不存在且旧 /tmp 存在 ⇒ 读旧一次（迁移兼容）。
+// 新路径存在 ⇒ 旧路径完全不看（不 stat、不读——旧内容不夹除）。
+// 显式覆盖 resTrustFile（测试隔离）时不退旧路径：覆盖即「我已指定唯一来源」，避免测试读真机 /tmp。
+func resTrustReadPath() string {
+	p := resTrustWritePath()
+	if _, err := os.Stat(p); err == nil {
+		return p // 新路径已存在——旧路径完全不看
+	}
+	if strings.TrimSpace(resTrustFile) != "" {
+		return p
+	}
+	legacy := strings.TrimSpace(legacyResTrustFile)
+	if legacy == "" {
+		return p
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		return p // 无旧文件——首次运行（空信任表）
+	}
+	log.Printf("📜 资源信任表首次迁移: 读旧 %s（只读一次——旧文件保留不删；写入只落 %s）\n", legacy, p)
+	return legacy
+}
 
 // ResTrustEntry 资源信任状态
 type ResTrustEntry struct {
@@ -44,8 +100,9 @@ var resourceTrust = &ResourceTrust{
 }
 
 // LoadResourceTrust 加载信任表（启动时调用——存量资源默认正式）
+// 读路径（2026-09-18）: 新（统一状态目录）优先；新缺失 + 旧 /tmp 在 ⇒ 读旧一次（迁移兼容）。
 func LoadResourceTrust() {
-	if b, err := os.ReadFile(resTrustFile); err == nil {
+	if b, err := os.ReadFile(resTrustReadPath()); err == nil {
 		var t ResourceTrust
 		if json.Unmarshal(b, &t) == nil {
 			resourceTrust.mu.Lock()
@@ -71,9 +128,17 @@ func LoadResourceTrust() {
 }
 
 // saveResourceTrust 保存信任表
+// 写只写新路径（统一状态目录，目录首次自动建）——旧 /tmp 路径永不写（2026-09-18）
 func saveResourceTrust() {
 	b, _ := json.MarshalIndent(resourceTrust, "", "  ")
-	os.WriteFile(resTrustFile, b, 0o644)
+	dst := resTrustWritePath()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		log.Printf("⚠️ 资源信任表目录不可用（%s）: %v\n", dst, err)
+		return
+	}
+	if err := os.WriteFile(dst, b, 0o644); err != nil {
+		log.Printf("⚠️ 资源信任表写盘失败（%s）: %v\n", dst, err)
+	}
 }
 
 // ensureEntry 获取条目（不存在则创建——新资源默认 🆕）
