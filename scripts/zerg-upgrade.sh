@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # zerg-upgrade.sh — 虫族本机升级器内核（L1）
 #
-# 设计要点（对齐 Hermes 的升级纪律，详见 docs/01-设计/设计-自动升级模块-20260911.md）：
+# 设计要点（对齐 Hermes 的升级纪律，详见 docs/01-设计/设计-自动升级模块.md）：
 #   · 六阶段：plan → drain → swap → restart → verify → report；每阶段只守一个真实失败类
 #   · **自己不是被升级进程**：本脚本是独立短命进程，换装由它做，重启交给 launchd/启动脚本
 #   · 停服务必须 bootout（主控 plist KeepAlive=true，直接 kill 会被旧二进制抢着重启）

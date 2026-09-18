@@ -20,7 +20,7 @@
 | 版本 | 日期 | 改动 | 原因 |
 |---|---|---|---|
 | v1.0.0 | 2026-09-02 | 初始版本 | 工具资产化（版本号 + 履历——Mr2109 2026-09-02） |
-| v1.0.2 | 2026-09-09 | **多文件类型读取**: 类型感知分层路由(魔数+后缀)——PDF(pdftotext)/docx·doc·rtf·html(textutil)/epub·odt(pandoc)/xlsx(内置 zip+XML 单 sheet TSV);GBK/UTF-16 自动转码(iconv);二进制/图像/音频/视频委托防护;行号默认开(1-based `N │ `)+超长行 [截断];format=raw;零新依赖 | Mr2109核心诉求"多文件类型可读"+"带行号"描述兑现(拍板 6 条——设计-read工具v1.0.2-多类型读取升级-20260908.md) |
+| v1.0.2 | 2026-09-09 | **多文件类型读取**: 类型感知分层路由(魔数+后缀)——PDF(pdftotext)/docx·doc·rtf·html(textutil)/epub·odt(pandoc)/xlsx(内置 zip+XML 单 sheet TSV);GBK/UTF-16 自动转码(iconv);二进制/图像/音频/视频委托防护;行号默认开(1-based `N │ `)+超长行 [截断];format=raw;零新依赖 | Mr2109核心诉求"多文件类型可读"+"带行号"描述兑现(拍板 6 条——设计-read-工具-v1.0.2-多类型读取升级.md) |
 
 ## 使用统计
 
