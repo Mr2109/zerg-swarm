@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""check-wired-scripts.py — 门③：脚本接线自检（**只报告档**起步）
+"""check-wired-scripts.py — 门③：脚本接线自检（**挂闸档：`tri` + `--strict-report` = 阻断**）
+
+挂接现状（2026-09-18 ③批次 · 升阻断）
+------------------------------------
+本门起初按门③ 自己的建议**只报告档**起步（2026-09-18 首跑如实报「断言 A 命中 8 只未挂」= 存量债，
+直接阻断等于把提交闸锁死 ⇒ 同 D2 先例）。③批次把这 8 只**逐只挂了闸**（docs +2 · pub +2 ·
+新 scope `tools` +1 · 新 scope `slice` +1 · 发布闸 闸②b/闸⑥），首跑 A 命中 8→0、B 未登记 0
+⇒ 按「清到 0 再升阻断」的拍板把它升成：提交闸 `gates` scope · 步骤 `门③ 接线：scripts 门脚本有没有被闸调用（阻断）`
+· 模式 `tri` · 命令串 `python3 scripts/check-wired-scripts.py --strict-report`。
+★ 升档要**两处一起改**（模式 `tri-report`→`tri` **且**命令串加 `--strict-report`）：脚本自身默认仍是
+「只报告」（rc=0，命中只入清单）——**不带这个开关就等于挂了个恒绿步**（假阻断）。成对证据：
+同一夹具同一命中，不带开关 rc=0 / 带开关 rc=1（`--root <夹具> --strict-report`）；升档全过程见
+`scripts/check-wired-scripts.md` §五（已执行）。
+★ 判据与退码**一字未改**：改的只是「挂闸时的档位 + 一个开关」。
 
 为什么存在
 ----------
@@ -67,8 +80,8 @@ GATES = [
     # (路径, 类别, 标签, 现读到的调用方式)
     ("scripts/precommit-gates.sh", "commit", "提交闸",
      "bash scripts/precommit-gates.sh [--scope go|rust|pub|tags|docs]（步骤表 add_step 的 STEP_CMD）"),
-    ("scripts/publish-preflight.sh", "release", "发布闸·推送前置（闸⓪~⑤）",
-     'bash scripts/publish-preflight.sh <产物目录>（推送前硬闸，六道全过才允许推）'),
+    ("scripts/publish-preflight.sh", "release", "发布闸·推送前置（闸⓪~⑥，含闸②b）",
+     'bash scripts/publish-preflight.sh <产物目录>（推送前硬闸，八道全过才允许推；rc=2 = 有闸缺件不给结论）'),
     ("publish/mirror-public.sh", "release", "发布闸·逐提交镜像器",
      "publish/mirror-public.sh --out DIR [--push]（对产出树跑门禁）"),
     ("publish/mirror-public-lib.py", "release", "发布闸·镜像器库（跑 checker 的那半边）",
@@ -471,7 +484,7 @@ def report(root, opts, files, mode, a_cands, b_cands, hits_a, wired_a, n_gate_pr
     head, dirty = header(root, files, mode, len(files))
     n_check = len([c for c in a_cands if c["kind"] == "命名 check-"])
     n_decl = len([c for c in a_cands if c["kind"] == "说明书自称门"])
-    out.append("门③ check-wired-scripts — 脚本接线自检（**只报告档**）")
+    out.append("门③ check-wired-scripts — 脚本接线自检（挂闸档 `tri` + `--strict-report` ⇒ 阻断；不带开关时默认只报告）")
     out.append("")
     out.append("仓根   : %s" % root)
     out.append("快照   : %s ｜ HEAD %s ｜ 工作树改动 %s 件" % (ts, head, dirty))
@@ -572,9 +585,14 @@ def report(root, opts, files, mode, a_cands, b_cands, hits_a, wired_a, n_gate_pr
         out.append("        rc=2（缺件/配置错/空转 ⇒ 不给结论，不许静默）")
     elif opts.strict_report and hit_n:
         out.append("        --strict-report 且命中 %d ⇒ rc=1" % hit_n)
+    elif opts.strict_report:
+        out.append("        阻断档（`--strict-report`）且**零命中** ⇒ rc=0"
+                   "（挂闸档：此后新增一只未挂/未登记即 rc=1）")
     else:
         out.append("        只报告档 ⇒ rc=0（命中不阻断；挂闸时用 --strict-report 或按 .md §五 走棘轮）")
-    out.append("升阻断路径：见 scripts/check-wired-scripts.md §五（基线棘轮 · 同 D2 先例）")
+    out.append("升阻断：**已执行**（2026-09-18 ③批次 · 提交闸 `gates` scope · `tri` + `--strict-report`）"
+               "—— 存量 A 命中 8→0 后升档，此后新增一只未挂/未登记即红；全过程见 "
+               "scripts/check-wired-scripts.md §五")
     return "\n".join(out)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -612,8 +630,14 @@ def list_rules():
     L.append("")
     L.append("退码：0 = 只报告档正常出口（命中不阻断）· 1 = 仅 --strict-report 且有命中 ·"
              " 2 = 缺件/配置错/空转/自检不过（不给结论）")
-    L.append("升级路径（.md §五）：清存量债 → 记基线快照（逐文件计数）→ --strict-report 挂进闸（新增一条即红）"
-             "→ 只许减不许增，每还掉 N 条下调一格 → 降到 0 转完全阻断、基线表退役。")
+    L.append("升级路径（.md §五 · **已执行 2026-09-18 ③批次**）：清存量债 → 记基线快照（逐文件计数）→ "
+             "--strict-report 挂进闸（新增一条即红）→ 只许减不许增，每还掉 N 条下调一格 → "
+             "降到 0 转完全阻断、基线表退役。")
+    L.append("  现状：8 只未挂门脚本逐只上岗 ⇒ A 命中 8→0 · B 未登记 0 ⇒ 已挂 `tri` + `--strict-report`（阻断档）。")
+    L.append("  ★ 与第 2 步的差异（如实登记）：**基线快照表未建** —— 存量是**当批清到 0** 而不是逐格下调，")
+    L.append("    正落在 §五 第 5 步「A 命中 0 且 B 未登记 0 ⇒ 转完全阻断、撤掉基线表」那一格，故不需要棘轮表。")
+    L.append("  ★ 阻断面由**闸的步骤**给（模式 `tri` + 开关 `--strict-report`）；本脚本的默认档位**未改**")
+    L.append("    （默认仍只报告 ⇒ 手工跑一下不会突然拦人），谁摘掉那个开关就会退化成恒绿步（自检 ⑩ 已钉住）。")
     return "\n".join(L)
 
 # ─────────────────────────────────────────────────────────────────────────────

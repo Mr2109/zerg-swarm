@@ -18,11 +18,13 @@
 #
 # 用法
 # ----
-#     bash scripts/precommit-gates.sh                  # 默认跑全部（go + rust + pub + tags + docs + gates ⇒ 39 步）
+#     bash scripts/precommit-gates.sh                  # 默认跑全部（go + rust + pub + tags + docs + gates + tools + slice ⇒ 45 步）
 #     bash scripts/precommit-gates.sh --scope go       # 只跑 Go 侧（可重复：--scope go --scope rust）
 #     bash scripts/precommit-gates.sh --scope tags     # 只跑双构建工程门禁（T6.3）
-#     bash scripts/precommit-gates.sh --scope docs     # 只跑文档面门禁（meta/name/freshness D1–D3 ⇒ 5 步）
+#     bash scripts/precommit-gates.sh --scope docs     # 只跑文档面门禁（meta/name/freshness D1–D3 + glossary + i18n-drift ⇒ 7 步）
 #     bash scripts/precommit-gates.sh --scope gates    # 只跑「门自己的门」（覆盖/版本源/接线 ⇒ 3 步）
+#     bash scripts/precommit-gates.sh --scope tools    # 只跑工具版本三处一致（⇒ 1 步）
+#     bash scripts/precommit-gates.sh --scope slice    # 只跑切片合同探针集（⇒ 1 步）
 #     bash scripts/precommit-gates.sh --outdir /tmp/gates-14   # 指定日志目录
 #     bash scripts/precommit-gates.sh --list           # 只看步骤清单，不跑
 #     bash scripts/precommit-gates.sh --self-test      # 只跑自检（合成步骤，不碰真目标）
@@ -40,7 +42,8 @@
 #                 `tri-report` ⇒ 四档里的「rc=1 落 REPORT」那一格（其余三格与 `tri` 一字不差）。
 #   rc / empty 两模式的语义**一字未改**（现有 20 步靠它们，自检 ⑧d 钉住）。
 #
-# scope 说明（2026-09-17 加 tags · 2026-09-18 加 docs · 2026-09-18 第二波加 gates，三者**都进默认集**）
+# scope 说明（2026-09-17 加 tags · 2026-09-18 加 docs · 2026-09-18 第二波加 gates ·
+#            2026-09-18 ③批次加 tools 与 slice，五者**都进默认集**）
 #   go   = gofmt/build/vet/test（**单侧**：默认 tag 配置）—— 2026-09-18 第二波由**两棵**扩到**四棵** Go module：
 #          core · agent（原有 12 步）+ **shared**（build/vet/test 3 步）· **scripts/exportnames**（build/vet 2 步）。
 #          ★ 2026-09-18 收尾（本批）：这两棵新 module 补上 `gofmt -l` 步（各 1 条，风格逐字对齐 core/agent
@@ -71,19 +74,42 @@
 #          · 门① `check-gate-coverage.py`（模式 `tri` ⇒ **阻断**）：断言「含 go.mod/Cargo.toml 的目录都被某步收进」
 #            ＋「scripts 脚本要么在步骤表、要么在白名单」的基线棘轮；
 #          · 门② `check-version-sources.py`（模式 `tri` ⇒ **阻断**）：版本单一真源四处同版；
-#          · 门③ `check-wired-scripts.py`（模式 `tri-report` ⇒ **只报告**）：scripts 门脚本有没有被某个闸调用。
+#          · 门③ `check-wired-scripts.py`（2026-09-18 ③批次：由 `tri-report` **升为 `tri` 阻断** +
+#            `--strict-report`）：scripts 门脚本有没有被某个闸按名调用 / 零引用件有没有登记。
 #          三条都**自带 `--self-test`**（成对负控），本 scope **不传 `--no-self-test`**：先自证「会红」再扫真目标。
-#          为什么门③只报告：它今天如实报「A 命中 8 · B 未登记 0」（8 只门脚本不在任何闸里）= 存量债，
-#          起步按 D2 先例**不锁死提交闸**（升阻断路径 = 基线棘轮，见 `scripts/check-wired-scripts.md` §五）。
+#          为什么门③ 起初只报告、现在为什么能阻断：它首跑如实报「A 命中 8 · B 未登记 0」（8 只门脚本不在任何闸里）
+#          = 存量债 ⇒ 先按 D2 先例**不锁死提交闸**；③批次把这 8 只**逐只挂了闸**（见 docs/pub/tools/slice 与发布闸）
+#          ⇒ A 命中 8→0、B 未登记 0 ⇒ 按「清到 0 再升阻断」的拍板把它升成 `tri` + `--strict-report`
+#          （**新增一只未挂/未登记就红**）。升档记录：`scripts/check-wired-scripts.md` §五（已执行）。
+#   tools = 工具版本三处一致（2026-09-18 ③批次新 scope · 进默认集）——
+#          · `check-tool-version-sync.sh`（模式 `tri` ⇒ 阻断）：台账 `tools/versions.json` / 工具文档抬头 /
+#            履历首行三处同版；脚本自带前置自检（缺台账 / 台账 0 个工具 ⇒ rc=2），与 tri 三档一一对应。
+#          为什么现在才挂：它从造出来那天起就只被手检清单（docs/skills/tool-upgrade-checklist.md）点名，
+#          **从没被任何闸跑过**（门③ 断言 A 的第 3 只）；③批次给它 141 个工具的现读实跑 rc=0 ⇒ 直接阻断档。
+#   slice = 切片合同探针集（2026-09-18 ③批次新 scope · 进默认集）——
+#          · `check-slice.py --probe`（模式 `tri-report` ⇒ 只报告起步）：跑探针集 + 混淆矩阵，判据 = §3.5
+#            质量门槛（假绿率必须 0 · 假红率 ≤ 10%）；`--selftest`（四条自证）现跑同样 rc=0。
+#          为什么起步只报告：门③ 的现读建议写「体量大（109 KB + slice-probes.json）· 成本未标定 ⇒ 起步只报告」；
+#          ③批次实测 `--probe` 0.05s、rc=0（假绿 0 / 假红 0.0%，探针 36 条）⇒ 可升 `tri`（留待拍，见 .md §待拍）。
 #          ★ 它们都是**步骤表里的一等步骤**（不是本脚本尾部那种软检查位），rc 一律取真退出码、**不接管道**。
 #          默认 scope 集 = go+rust+pub+tags+docs+**gates**（2026-09-18 第二波 ⇒ 默认全量 37 步；
-#          2026-09-18 收尾再 +2 条 gofmt 步 ⇒ **39 步**）。
+#          2026-09-18 收尾再 +2 条 gofmt 步 ⇒ 39 步；2026-09-18 **③批次**再 +6 步
+#          （docs +2 · pub +2 · 新 scope `tools` +1 · 新 scope `slice` +1）⇒ **45 步**）。
 #   docs 的**阻断面**（拍板①；落地形态 = 每步的判定模式）：
 #     阻断（rc=1 计失败项 · rc=2 计 BLOCKED）= `meta` · `name` · `D1` · `D3`（模式 `tri`）；
 #     **只报告 = `D2`**（模式 `tri-report` ⇒ 红只入清单，不计失败项、不计 BLOCKED、不影响退出码）。
 #     理由：D2 今天红 ≈235 条，几乎全是历史稿件里的陈旧 `文件:行` 引用（存量债），
 #     直接阻断等于把提交闸锁死 ⇒ 先只报告，待存量债清到可接受再谈加严。
 #     ★ 这是**改判定档位**，不是放宽 D2 的判据 —— check-doc-freshness.py 的判据一字未改。
+#   ★ 2026-09-18 ③批次（门③ 存量清偿）：docs scope 再追加**两步**，**都起步 `tri-report`**（理由逐条附在步骤旁）：
+#     · `docs: glossary 术语表（zh+en · 只报告）` —— `python3 scripts/check-glossary.py`（现跑 rc=1：T2 术语档 3 处；
+#       T1 阻塞档 0 处 ⇒ 该脚本的 rc=1 就是「告警」不是「错」，正对 `tri-report` 那一格）；**不传 `--enforce`**：
+#       术语档收敛进度未到（脚本自述「收敛后再把默认值翻过来」，那要一句令）。
+#     · `docs: i18n-drift 双语漂移（只报告）` —— `bash scripts/check-i18n-drift.sh`（**现跑 rc=2**：相① 缺 en 侧 9 页 ·
+#       相② 1 篇译页 source_commit 过期）。★ **如实说明**：它在 `tri-report`/`tri` 下都落 **BLOCKED**（rc=2 那一格），
+#       而它自己的三档口径把 rc=2 用作「阻塞相失败」⇒ 「真红」与「不给结论」在这一点上语义错位，
+#       属**待拍**（见 `scripts/precommit-gates.md` §待拍）：要么给它加一档 rc，要么把它换挂/换档。
+#       本批次只按门③ 的现读建议挂上（不改它一个字），红照实进清单、不粉饰。
 #
 # 自检不通过 ⇒ 拒绝跑真目标（项目口径：门禁自己先能被证明「会红」）。
 
@@ -94,7 +120,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ── 默认 scope 集与「门自己的门」scope 名（**单来源**：main() 与自检 ⑩ 共用，不许各写一份）──────
 #   ★ 2026-09-18 第二波：默认集追加 `gates`（门①②③），并把这一串提成常量 —— 自检 ⑩ 要能断言
 #     「新 scope 真的在默认集里」，写两份字符串就会漂。
-DEFAULT_SCOPES=(go rust pub tags docs gates)
+#   ★ 2026-09-18 ③批次（收尾二）：门③ 报的 8 只未挂门脚本逐只上岗 ⇒ 再追加两个新 scope
+#     `tools`（check-tool-version-sync.sh · tri）与 `slice`（check-slice.py · tri-report），**都进默认集**
+#     —— 新挂的步骤若不在默认集里跑，「上岗」就只是文件里的一行字（本仓最恨的那种假覆盖）。
+#     同时把 `gates` 的门③ 由 `tri-report` 升成 `tri` + `--strict-report`（存量已清到 0）。
+DEFAULT_SCOPES=(go rust pub tags docs gates tools slice)
 GATE_SCOPE="gates"
 
 # ── 步骤表（indexed arrays，bash 3.2 可用）──────────────────────────
@@ -485,19 +515,24 @@ self_test() {
   assert_eq "⑨c 只报告档：BLOCKED 数 = 1（不许当绿）" "$(count_blocked "${t}/r.tsv")" "1"
   assert_eq "⑨c 只报告档：这一组退出码仍是 1（失败优先于不给结论）" "$(_exit_rc "${t}/r.tsv")" "1"
 
-  # ⑩ **第二波新挂的「门自己的门」三步：档位申报 + 三档各就各位**（本波硬要求 · 成对断言）
+  # ⑩ **「门自己的门」三步：档位申报 + 三档各就各位**（第二波挂接 · 2026-09-18 ③批次同步升档）
   #    镜子取的是**步骤表里那三步真申报的模式**（不是合成模式名）⇒ 一次钉两件事：
-  #      ① 三步申报的档位对不对：门①/门② = `tri`（**阻断**）· 门③ = `tri-report`（**只报告**）；
-  #      ② 每一档在 0/1/2 三格上的计账（0 ⇒ PASS · 1 ⇒ 阻断进失败项 / 只报告只入清单且**不动退出码** ·
-  #         2 ⇒ BLOCKED 且**不计失败项**、也不许当绿）。
-  #    ★ 谁把门③改成阻断、或把门①改成只报告，本组立刻红；谁给新步骤接管道取 rc，也立刻红。
+  #      ① 三步申报的档位对不对：`tri` × 3（**门①②③ 全阻断** —— ③批次把门③ 由 `tri-report` 升上来的，
+  #         因为它的存量命中 8→0 已清；且它的命令串必须带 `--strict-report`，否则就是「恒绿的假阻断」）；
+  #      ② 每一档在 0/1/2 三格上的计账（0 ⇒ PASS · 1 ⇒ 阻断进失败项 · 2 ⇒ BLOCKED 且**不计失败项**、
+  #         也不许当绿）；「只报告 vs 阻断」的区分度由 ⑨/⑨b/⑨c 用**同一串 rc=1 的合成成对**继续钉住
+  #         （本组末尾的成对断言改成跨档对照：门③（阻断）⇒ 退出码 1 · ⑨b 那步（只报告）⇒ REPORT 1 且退出码 0）。
+  #    ★ 谁把门③ 改回只报告、或把门① 改成只报告、或给门③ 摘掉 `--strict-report`，本组立刻红；
+  #      谁给新步骤接管道取 rc，也立刻红。
   clear_steps
   build_steps "${GATE_SCOPE}" >/dev/null 2>&1
   assert_eq "⑩ ${GATE_SCOPE} scope：步数" "${#STEP_NAME[@]}" "3"
-  assert_eq "⑩ 三步申报的档位（门①②阻断 · 门③只报告）" \
-    "$(printf '%s ' "${STEP_MODE[@]}")" "tri tri tri-report "
+  assert_eq "⑩ 三步申报的档位（门①②③ 全阻断）" \
+    "$(printf '%s ' "${STEP_MODE[@]}")" "tri tri tri "
   assert_eq "⑩ 三步的命令串分别点名三只新门脚本" \
     "$(printf '%s\n' "${STEP_CMD[@]}" | grep -cE 'check-gate-coverage\.py|check-version-sources\.py|check-wired-scripts\.py')" "3"
+  assert_eq "⑩ 门③ 升阻断后命令串**必须带 --strict-report**（不带 = 只挂了个恒绿的步）" \
+    "$(printf '%s\n' "${STEP_CMD[2]}" | grep -c -- '--strict-report')" "1"
   assert_eq "⑩ 三步都不接管道取 rc（命令串里 0 个竖线）" \
     "$(printf '%s\n' "${STEP_CMD[@]}" | grep -c '|')" "0"
   assert_eq "⑩ 三步的工作目录都 = 仓根" \
@@ -531,8 +566,55 @@ self_test() {
       "$(_exit_rc "${t}/z${gi}c.tsv")" "2"
     gi=$((gi + 1))
   done
-  assert_eq "⑩ 成对：同一串 rc=1 —— 门①（阻断）⇒ 退出码 1 · 门③（只报告）⇒ REPORT 1 且退出码 0" \
-    "$(_exit_rc "${t}/z1b.tsv")/$(count_report "${t}/z3b.tsv")/$(count_fail "${t}/z3b.tsv")" "1/1/0"
+  assert_eq "⑩ 成对：同一串 rc=1 —— 门①（阻断）⇒ 退出码 1 · 门③（现同阻断）⇒ 失败项 1 且不落 REPORT" \
+    "$(_exit_rc "${t}/z1b.tsv")/$(count_fail "${t}/z3b.tsv")/$(count_report "${t}/z3b.tsv")" "1/1/0"
+  assert_eq "⑩ 成对（跨档）：同一串 rc=1 —— 阻断（门③，升档后）⇒ 退出码 1 · 只报告（⑨b 那步）⇒ REPORT 1 且退出码 0" \
+    "$(_exit_rc "${t}/z3b.tsv")/$(count_report "${t}/p.tsv")/$(count_fail "${t}/p.tsv")" "1/1/0"
+
+  # ⑪ **③批次新挂 6 步的挂接纪律**（本批硬要求逐条钉住；镜子取真步骤表，不取合成模式名）
+  #    新挂 = docs +2（glossary · i18n-drift）· pub +2（edit-assert · mutate-scan 各自检）·
+  #           新 scope `tools` +1 · 新 scope `slice` +1。钉这四条：
+  #      ① 命令串**无管道**（接管道 = rc 变成管道尾的 rc，项目铁律）；
+  #      ② 工作目录**都 = 仓根**（与上一批同口径）；
+  #      ③ 档位申报都在表内（`rc`/`empty`/`tri`/`tri-report`），且**新挂这 6 步只用 tri / tri-report**
+  #         （新步不借老档 `rc`/`empty` —— 那两档把 rc=2 也算失败/不看三档）；
+  #      ④ **每一步都真的进结果表**（用同一套四档合成步骤跑一遍，四档计数之和必须 = 步数 ⇒
+  #         「挂上了但没记账」这种假覆盖不可能通过）。
+  #    ★ 本组不碰真目标（只用 `build_steps` 读步骤表 + 合成步骤），符合自检「不碰真目标」的口径。
+  clear_steps
+  build_steps docs pub tools slice >/dev/null 2>&1
+  local nnew=${#STEP_NAME[@]}
+  assert_eq "⑪ 新挂步所在四个 scope 的步数（docs 7 + pub 7 + tools 1 + slice 1）" "${nnew}" "16"
+  assert_eq "⑪ 四只门脚本按名出现在命令串里（glossary · i18n-drift · tool-version-sync · slice）" \
+    "$(printf '%s\n' "${STEP_CMD[@]}" | grep -cE 'check-glossary\.py|check-i18n-drift\.sh|check-tool-version-sync\.sh|check-slice\.py')" "4"
+  assert_eq "⑪ 两只「说明书自称门」的自检按名上榜（edit-assert · mutate-scan）" \
+    "$(printf '%s\n' "${STEP_CMD[@]}" | grep -cE 'edit-assert --self-test|mutate-scan --self-test')" "2"
+  # 只挑本批这 6 步：**按命令串里的脚本名挑**（不按序号 —— 序号会随别人加步漂）
+  local nm6="" ii=0
+  while [ "${ii}" -lt "${nnew}" ]; do
+    case "${STEP_CMD[${ii}]}" in
+      *check-glossary.py*|*check-i18n-drift.sh*|*check-tool-version-sync.sh*|*check-slice.py*|*edit-assert*--self-test*|*mutate-scan*--self-test*)
+        nm6="${nm6}${STEP_MODE[${ii}]}"$'\n' ;;
+    esac
+    ii=$((ii + 1))
+  done
+  assert_eq "⑪ 本批新挂 6 步被「点名命令」选中（不多不少）" "$(printf '%s' "${nm6}" | grep -c .)" "6"
+  assert_eq "⑪ 本批新挂 6 步的档位只在 tri / tri-report 两档（新步不借 rc/empty 老档）" \
+    "$(printf '%s' "${nm6}" | grep -vcE '^(tri|tri-report)$')" "0"
+  assert_eq "⑪ 命令串里 0 个单竖线管道（不接管道取 rc；\`||\` 不算管道）" \
+    "$(printf '%s\n' "${STEP_CMD[@]}" | grep -cE '(^|[^|])\|([^|]|$)')" "0"
+  assert_eq "⑪ 工作目录全部 = 仓根" \
+    "$(printf '%s\n' "${STEP_DIR[@]}" | grep -c "^${REPO_ROOT}$")" "${nnew}"
+  assert_eq "⑪ 档位申报都在表内（rc / empty / tri / tri-report —— 表外模式名会被 _judge 硬红）" \
+    "$(printf '%s\n' "${STEP_MODE[@]}" | grep -vcE '^(rc|empty|tri|tri-report)$')" "0"
+  clear_steps
+  add_step self "自检-记账-1" tri        "${t}" "exit 0"
+  add_step self "自检-记账-2" tri        "${t}" "exit 1"
+  add_step self "自检-记账-3" tri        "${t}" "exit 2"
+  add_step self "自检-记账-4" tri-report "${t}" "exit 1"
+  run_suite "${t}/acc" "${t}/acc.tsv" >/dev/null 2>&1
+  assert_eq "⑪ 四档计数之和 = 步数（每一步都进结果表 ⇒ 新步不会被漏记）" \
+    "$(( $(count_pass "${t}/acc.tsv") + $(count_fail "${t}/acc.tsv") + $(count_blocked "${t}/acc.tsv") + $(count_report "${t}/acc.tsv") ))" "4"
 
   printf '自检结论: %s（断言失败 %d 条）\n' "$([ "${SELF_BAD}" -eq 0 ] && echo 全过 || echo 不过)" "${SELF_BAD}"
   rm -rf "${t}"
@@ -777,6 +859,17 @@ PYEOF"
         #   **零命中必红**（空转 = 假覆盖，同上面的无后缀语法步）；排除 vendor/venv/构建产物/隐藏缓存；
         #   两个顶层入口**必须存在**（缺件即红 —— 它们是 start-zerg-core/ui 的真身）。
         add_step pub "mcp/gateway/publish/tools + 顶层入口 脚本语法（ast.parse / bash -n）" rc "${REPO_ROOT}" "$(ext_syntax_cmd .)"
+        # ── 2026-09-18 ③批次（门③ 断言 A 存量清偿第 ⑦⑧只）：两只「说明书自称门」的自检 ──────────
+        # 为什么现在才挂：`scripts/edit-assert` 与 `scripts/mutate-scan` 是无后缀脚本、且是门（各自说明书自称门），
+        #   但它们今天**只被上面那条无后缀语法步按 glob 覆盖语法**，**从没按名跑过自检** ⇒ 门③ 判它们「未挂」。
+        # 挂法 = 各一步 `--self-test`（两只的自检都是「真命令行 + 真退出码」的成对负控：edit-assert 16 条 ·
+        #   mutate-scan 26 条），自检不过 ⇒ 拒绝跑真目标（它们自己的口径）。
+        # 档位 = `tri`（**阻断**）：两只现跑都 rc=0（16/16 · 26/26 全过）⇒ 直接上阻断档。
+        # 为什么放 pub scope：本 scope 是「公开面两侧都有的脚本静态检查」，而这两只**在公开树里都在**
+        #   （不在 publish/mirror-public-lib.py 的 DROP_EXACT 里）⇒ 与上面两条语法步同族、同工作目录（仓根）。
+        # 硬规矩同上一批：一等步骤 · rc 取真退出码 · **命令串无管道** · 进 results.tsv 计数。
+        add_step pub "edit-assert --self-test（16 条成对负控）"   tri "${REPO_ROOT}" "python3 scripts/edit-assert --self-test"
+        add_step pub "mutate-scan --self-test（26 条成对负控）"   tri "${REPO_ROOT}" "python3 scripts/mutate-scan --self-test"
         ;;
       tags)
         # 双构建工程门禁（任务表 T6.3 / 设计稿 §〇 A3–A6）：tag 命名 · 两个构建都过 · vet 成对跑 ·
@@ -805,6 +898,16 @@ PYEOF"
         add_step docs "docs: freshness D1 引用路径存在"           tri "${REPO_ROOT}" "python3 scripts/check-doc-freshness.py d1"
         add_step docs "docs: freshness D2 引用 文件:行 有效（只报告）" tri-report "${REPO_ROOT}" "python3 scripts/check-doc-freshness.py d2"
         add_step docs "docs: freshness D3 断链断锚"               tri "${REPO_ROOT}" "python3 scripts/check-doc-freshness.py d3"
+        # ── 2026-09-18 ③批次（门③ 断言 A 存量清偿第 ①②只）：术语表 + 双语漂移 ────────────────────
+        # 为什么现在才挂：这两只门脚本写好了、跑起来绿过，但**从没被任何闸按名调用** ⇒ 提交时等于不存在
+        #   （门③ 断言 A 的第 1/2 只）。归属 = 「与 check-doc-* 同族（文档/术语面）」· docs 已在默认集里。
+        # 档位 = `tri-report`（起步）：两只的 rc=1 都表示「告警/存量债」而不是「错」——
+        #   · glossary 现跑 rc=1（T2 术语档 3 处 · T1 阻塞档 0 处）
+        #   · i18n-drift 现跑 rc=2（相① 缺 en 侧 9 页 + 相② 1 篇过期）⇒ 在 tri/tri-report 下都落 BLOCKED
+        #     ★ 它的 rc=2 是「阻塞相失败」不是「不给结论」⇒ 语义错位已列待拍，本批次**不改它一个字**。
+        # 硬规矩同上一批：一等步骤（**不是尾部软检查位**）· rc 取真退出码 · **命令串无管道** · 进 results.tsv 计数。
+        add_step docs "docs: glossary 术语表 zh+en（只报告）"       tri-report "${REPO_ROOT}" "python3 scripts/check-glossary.py"
+        add_step docs "docs: i18n-drift 双语漂移（只报告）"         tri-report "${REPO_ROOT}" "bash scripts/check-i18n-drift.sh"
         ;;
       gates)
         # ── 「门自己的门」（2026-09-18 第二波挂接 · 来源 = 债务台账 §7 的三条建议门）───────────────
@@ -815,19 +918,38 @@ PYEOF"
         # 档位落点：三只门脚本的退码口径本身就是 0/1/2（2 = 缺件/不可判/空转）⇒
         #   ⇒ 门①/门② 用 `tri`（**阻断**：rc=1 进失败项、rc=2 记 BLOCKED 不计失败项也不当绿、
         #      rc>=3 跑不起来仍按红算）；
-        #   ⇒ 门③ 用 `tri-report`（**只报告**：rc=1 落 REPORT ⇒ 不计失败项、不计 BLOCKED、
-        #      **不影响退出码**；rc=2 依旧是 BLOCKED，不许当绿 —— 按 D2 先例挂存量债）。
-        #   ★ 门③今天为什么不能阻断：它如实报「A 命中 8 · B 未登记 0」（8 只门脚本不在任何闸里），
-        #     直接阻断等于把提交闸锁死 ⇒ 起步只报告；升阻断路径见 scripts/check-wired-scripts.md §五
-        #     （基线棘轮：先记基线、门立刻按阻断档上岗、只许减不许增）。
+        #   ⇒ 门③ 用 `tri` + `--strict-report`（**阻断** · 2026-09-18 ③批次升档）：存量 8 只未挂门脚本
+        #      **逐只挂完**（docs +2 · pub +2 · 新 scope tools +1 · 新 scope slice +1 · 发布闸 +2）⇒
+        #      A 命中 8→0 · B 未登记 0 ⇒ 按「清到 0 再升阻断」的拍板升档：**从此新增一只未挂/未登记即红**。
+        #      ★ 升档要**两处一起改**：模式 `tri-report`→`tri`，且命令串加 `--strict-report`
+        #        （脚本自身默认仍只报告 rc=0；不带这个开关就等于只挂了个恒绿的步 —— 那是假阻断）。
+        #      ★ 旧状态（已被事实取代，留档）：门③ 起初报「A 命中 8 · B 未登记 0」= 存量债，
+        #        起步按 D2 先例只报告；升阻断路径见 scripts/check-wired-scripts.md §五（已执行）。
         # 每只门脚本自带 --self-test，本 scope **不传 --no-self-test**：先自证「会红」再扫真目标。
         # ★ 三条命令串里**没有管道** —— 自检 ⑩ 有一条断言直接钉住这一点（`grep -c '|'` = 0）。
         add_step gates "门① 覆盖：构建清单目录 + 脚本接线（阻断）" tri        "${REPO_ROOT}" "python3 scripts/check-gate-coverage.py"
         add_step gates "门② 版本源：四处同版（阻断）"              tri        "${REPO_ROOT}" "python3 scripts/check-version-sources.py"
-        add_step gates "门③ 接线：scripts 门脚本有没有被闸调用（只报告）" tri-report "${REPO_ROOT}" "python3 scripts/check-wired-scripts.py"
+        add_step gates "门③ 接线：scripts 门脚本有没有被闸调用（阻断）" tri "${REPO_ROOT}" "python3 scripts/check-wired-scripts.py --strict-report"
+        ;;
+      tools)
+        # ── 2026-09-18 ③批次新 scope：工具版本三处一致（门③ 断言 A 存量清偿第 ③只）─────────────────
+        # 位置：**在 run_suite 的步骤表里**（一等步骤），不是脚本尾部那个软检查位（同 docs/gates 两段的口径）。
+        # 判定：**不接管道**，rc 直接取进程退出码；档位 `tri`（阻断）——脚本自带前置自检（缺 tools/versions.json
+        #   或台账 0 个工具 ⇒ rc=2），0/1/2 与 tri 三档一一对应，所以**不需要**「先只报告」。
+        # 现跑：台账工具数 = 141 · 抬头一致 = 141 · 抬头不一致 = 0 ⇒ rc=0（门③ 也点名它「早已自测/实跑绿」）。
+        add_step tools "tools: 工具版本三处一致（台账/文档抬头/履历）" tri "${REPO_ROOT}" "bash scripts/check-tool-version-sync.sh"
+        ;;
+      slice)
+        # ── 2026-09-18 ③批次新 scope：切片合同探针集 + 混淆矩阵门槛（门③ 断言 A 存量清偿第 ④只）──────
+        # 判据 = 该脚本自己登记的 §3.5 质量门槛：**假绿率必须 0 · 假红率 ≤ 10%**，外加探针条数门槛；
+        #   现跑 rc=0（探针 36 条：期望红 22 全拦住 / 期望绿 11 全放行 / 需递归 1 / 期望错 2；假绿 0 · 假红 0.0%）。
+        # 档位 = `tri-report`（起步 · 门③ 的现读建议如此：它体量大、成本当时未标定）；实测 0.05s ⇒ 可升 `tri`（待拍）。
+        # ★ 为什么用 `--probe` 而不是 `--selftest`：前者判的是**判据本身的质量门槛**（会红吗/会不会假红），
+        #   后者只是四条自证；两个现跑都 rc=0，本批次挂前者（更强的那一个）。
+        add_step slice "slice: 切片合同探针集 + 混淆矩阵门槛（只报告）" tri-report "${REPO_ROOT}" "python3 scripts/check-slice.py --probe"
         ;;
       *)
-        printf '✗ 未知 scope: %s（可用: go / rust / pub / tags / docs / gates）\n' "${s}" >&2
+        printf '✗ 未知 scope: %s（可用: go / rust / pub / tags / docs / gates / tools / slice）\n' "${s}" >&2
         return 2
         ;;
     esac
@@ -864,22 +986,30 @@ main() {
       --list) list_only=1; shift ;;
       --self-test) self_only=1; shift ;;
       --emit-cmd) emit_cmd="$2"; shift 2 ;;
-      -h|--help) sed -n '19,82p' "${BASH_SOURCE[0]}"; return 0 ;;
+      -h|--help) sed -n '19,114p' "${BASH_SOURCE[0]}"; return 0 ;;   # 打印文件头「用法…自检不过」整段（2026-09-18 ③批次：头变长 ⇒ 范围随之放宽到 19–114）
       *) printf '✗ 未知参数: %s\n' "$1" >&2; return 2 ;;
     esac
   done
 
   if [ "${#scopes[@]}" -eq 0 ]; then
-    # 默认 scope 集 = `DEFAULT_SCOPES` 常量 = go rust pub tags docs **gates**
-    #   （2026-09-18 第二波把 `gates` 追加进默认集 ⇒ 默认全量 37 步）。
+    # 默认 scope 集 = `DEFAULT_SCOPES` 常量 = go rust pub tags docs **gates tools slice**
+    #   （2026-09-18 第二波把 `gates` 追加进默认集 ⇒ 默认全量 37 步；
+    #     2026-09-18 ③批次再把 `tools` 与 `slice` 追加进默认集）。
     # ★ 老步骤（go 12 · rust 3 · pub 4 · tags 1 · docs 5）的名字/命令串/模式/目录**一字未改**；
-    #   本波只**追加**：go +5（shared 3 · exportnames 2）· rust +3（ui）· pub +1（外围脚本语法）·
+    #   第二波只**追加**：go +5（shared 3 · exportnames 2）· rust +3（ui）· pub +1（外围脚本语法）·
     #   新 scope `gates` 3 步。一条都没删、一条都没改语义。
-    # ★ 2026-09-18 收尾（本批）再**追加 2 步**（go：`gofmt -l shared` · `gofmt -l scripts/exportnames`，
-    #   模式 `empty`，风格与 core/agent 那两条逐字一致）⇒ 默认全量 **39 步**；pub 那一条步的扫描面
-    #   由四棵扩到八棵（**步数不变**）。同样一条没删、一条没改语义。
+    # ★ 2026-09-18 收尾（上一批）再**追加 2 步**（go：`gofmt -l shared` · `gofmt -l scripts/exportnames`，
+    #   模式 `empty`，风格与 core/agent 那两条逐字一致）；pub 那一条步的扫描面由四棵扩到八棵（步数不变）。
+    # ★ 2026-09-18 **③批次**（本批）再追加 **6 步**：docs +2（glossary · i18n-drift，`tri-report`）·
+    #   pub +2（edit-assert / mutate-scan 各自检，`tri`）· 新 scope `tools` +1（check-tool-version-sync.sh，`tri`）·
+    #   新 scope `slice` +1（check-slice.py --probe，`tri-report`）⇒ 默认全量 **45 步**。
+    #   本批**唯一被改模式的既有步骤 = `gates` 的门③**（`tri-report` → `tri` + `--strict-report`，
+    #   因为它的存量命中已被本批清到 0；名字里的档位标注同步由「只报告」改成「阻断」，
+    #   命令串只**增加** `--strict-report` 一个开关 —— 步骤身份、scope、工作目录、门脚本判据都没动）。
+    #   其余老步骤一条没删、一条没改语义。
     # ★ 默认跑法的退出码由阻断面决定（见文件头「docs 的阻断面」与 `gates` scope 段）：
-    #   阻断步骤仍能把它拉成 rc=1 / rc=2；**只报告档**（docs 的 D2 · gates 的门③）不参与退出码。
+    #   阻断步骤（含本批升档的门③）能把它拉成 rc=1 / rc=2；**只报告档**（docs 的 D2 · docs 的 glossary ·
+    #   docs 的 i18n-drift · slice 的探针步）rc=1 时不参与退出码（rc=2 仍记 BLOCKED、不许当绿）。
     scopes=("${DEFAULT_SCOPES[@]}")
   fi
 

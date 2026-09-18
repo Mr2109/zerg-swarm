@@ -5,9 +5,12 @@
 > 的 §0 表 #11（「5 只门脚本既不在提交闸也不在发布闸」）与 §5（孤岛死重：`scripts/` 零引用 4 只），
 > 以及该文末的三条建门建议之③（「`check-wired-scripts.py`（脚本接线自检 · 只报告档起步）」）。
 > 本批**只新建**这两个文件：不挂闸、不改任何既有文件（挂接与升档见 §五）。
-> ★ **状态更新（2026-09-18 收尾）：已挂闸** —— `gates` scope · 模式 **`tri-report`**（只报告）· 在默认集内。
+> ★ **状态更新（2026-09-18 收尾 · 第二波）：已挂闸** —— `gates` scope · 模式 **`tri-report`**（只报告）· 在默认集内。
 > 步骤名：`门③ 接线：scripts 门脚本有没有被闸调用（只报告）`。自检数字：**`--self-test` rc=0 · 16/16 通过**。
-> 上行「不挂闸」是当时的实况，**已被事实取代**；**升阻断档**（`--strict-report`）仍未做，见 §五。
+> ★ **状态更新（2026-09-18 ③批次 · 升阻断已执行）**：§四 那张 A 命中表里的 **8 只已逐只上岗** ⇒
+> 现跑 **A 命中 0 · B 未登记 0** ⇒ 门③ 已升成 **`tri` + `--strict-report`（阻断档）**，
+> 步骤名同步改为 `门③ 接线：scripts 门脚本有没有被闸调用（阻断）`（判据与退码一字未改）。
+> 升档全过程（含「同一夹具同命中、只换开关 ⇒ rc 0/1」的真命令行成对证据）见 §五。
 
 ## 一、它判什么（两条断言）
 
@@ -29,7 +32,7 @@
 | 类别 | 文件 | 标签 | 现读到的调用方式 |
 |---|---|---|---|
 | 提交闸 | `scripts/precommit-gates.sh` | 提交前门禁总控 | `bash scripts/precommit-gates.sh [--scope go\|rust\|pub\|tags\|docs]`（步骤表 `add_step` 的 `STEP_CMD`） |
-| 发布闸 | `scripts/publish-preflight.sh` | 推送前置硬闸（闸⓪~⑤） | `bash scripts/publish-preflight.sh <产物目录>` —— 六道全过才允许推 |
+| 发布闸 | `scripts/publish-preflight.sh` | 推送前置硬闸（闸⓪~⑥ · 含闸②b） | `bash scripts/publish-preflight.sh <产物目录>` —— 八道全过才允许推（rc=2 = 有闸缺件「不给结论」，也不许推） |
 | 发布闸 | `publish/mirror-public.sh` | 逐提交镜像器 | `publish/mirror-public.sh --out DIR [--push]`（对物化后的产出树跑门禁） |
 | 发布闸 | `publish/mirror-public-lib.py` | 镜像器库（跑 checker 的那半边） | 被 `publish/mirror-public.sh` / `publish/parity-compare.py` 调用；`check-history-secrets.py` / `check-public-tree-private.py` 的调用方 |
 | 发布闸 | `publish/ci/ci.yml` | CI（公开仓推后闸） | GitHub Actions：`run: python3 scripts/…` |
@@ -54,6 +57,17 @@
     python3 "$Z/scripts/check-public-tree-private.py"    # 闸②（第 25 行）· publish/mirror-public.sh:89
     python3 "$Z/scripts/check-public-tree-hazards.py"    # 闸④（第 47 行）
     python3 scripts/check_version.py · check-gotoolchain.py · check-compat-manifest.py · check_docs.py  # publish/ci/ci.yml:54/56/65/80
+
+③批次（2026-09-18）新挂的 8 处调用点（门③ 断言 A 的存量全部清偿 · 逐只落点）：
+
+    python3 scripts/check-glossary.py                      # precommit-gates.sh docs scope（tri-report）
+    bash scripts/check-i18n-drift.sh                        # precommit-gates.sh docs scope（tri-report）
+    bash scripts/check-tool-version-sync.sh                 # precommit-gates.sh tools scope（tri · 新 scope）
+    python3 scripts/check-slice.py --probe                  # precommit-gates.sh slice scope（tri-report · 新 scope）
+    python3 scripts/edit-assert --self-test                 # precommit-gates.sh pub scope（tri）
+    python3 scripts/mutate-scan --self-test                 # precommit-gates.sh pub scope（tri）
+    python3 "$Z/scripts/check-hardcoded-private-paths.py"   # publish-preflight.sh 闸②b（紧跟闸② 私有面 · 私有源树）
+    python3 "$Z/scripts/check-manifest-freshness.py"        # publish-preflight.sh 闸⑥（发布制品清单新鲜度 · --strict）
 
 ## 三、口径（数字随口径写；三条排除必须说清）
 
@@ -92,6 +106,10 @@
 B 候选 84 只；引用面 2713 个已跟踪文件（排除 自指 2 · 记录面 2）；闸清单在位 6/6。
 
 ### 断言 A —— 命中 8 只（未挂）
+
+> ★ **③批次（2026-09-18）状态**：下表 8 只**已逐只上岗** ⇒ 现跑 **A 命中 0 只**（`已挂门脚本 25 只`）、
+> **B 未登记 0 只**、配置错 0 ⇒ 门③ 已升 `tri` + `--strict-report`（阻断档）。下表保留为**首跑记录**
+> （当时的实话：8 只确实没被任何闸按名调用），**别当现状读**。逐只落点见 §二 末尾「③批次新挂的 8 处调用点」。
 
 | # | 脚本 | 类型 | 闸里按名调用 | 建议挂到哪里 |
 |---|---|---|---|---|
@@ -139,9 +157,10 @@ B 候选 84 只；引用面 2713 个已跟踪文件（排除 自指 2 · 记录�
 **本门自身的接线状态（2026-09-18 收尾更新）**：`scripts/check-wired-scripts.py` 也已**挂闸**——
 按名出现在 `gates` scope 的步骤串里（`python3 scripts/check-wired-scripts.py`，模式 `tri-report`），
 所以它自己的断言 A 也把它算作「已上岗」。★ 原文写「此刻也还没挂闸（本批只准新建两个文件，不许改
-`precommit-gates.sh`）」——那是挂闸前时点，**已被事实取代**；升档（§五）仍未做。
+`precommit-gates.sh`）」——那是挂闸前时点，**已被事实取代**；**升档（§五）已于 2026-09-18 ③批次执行**
+（`tri` + `--strict-report`）。
 
-## 五、怎么升到阻断（基线棘轮 · 同 D2 先例）
+## 五、怎么升到阻断（基线棘轮 · 同 D2 先例）—— ★ 2026-09-18 ③批次：**已执行**（前后对照见本节末）
 
 **为什么起步只报告**：今天断言 A 的命中里最熟的那 5 只都是**存量债**——门写好了、跑起来还可能是红的
 （例如 D2 那档 235 条陈旧引用）。直接阻断 = 把提交闸当场锁死 ⇒ 与 D2 同一处理：**先只报告，
@@ -160,13 +179,24 @@ B 候选 84 只；引用面 2713 个已跟踪文件（排除 自指 2 · 记录�
    （它的 0/1/2 与 `tri` 三档一一对应：0=无命中 · 1=有命中 · 2=缺件/配置错/空转/自检不过）。
    **挂闸那一刻起就是阻断档**：命中即红（`--strict-report` ⇒ rc=1）。
    ★ **实况（2026-09-18 收尾）**：第 1 步早已先做了半格 —— 本门已以 **`tri-report`（只报告）+ 不带
-   `--strict-report`** 挂进 `gates` scope（在默认集内）。⇒ 本条第 3 项剩下的动作**只有**「加 `--strict-report`
-   并把模式由 `tri-report` 改成 `tri`」两处（升档本身仍待批，本项未执行）。
+   `--strict-report`** 挂进 `gates` scope（在默认集内）。
+   ★ **实况（2026-09-18 ③批次 · 已执行）**：第 1 步（清存量）与第 5 步（转完全阻断）**一并落地**——
+   8 只逐只上岗 ⇒ A 命中 0 · B 未登记 0，于是把本步改成
+   `python3 scripts/check-wired-scripts.py --strict-report` + 模式 **`tri`**（步骤名里的档位标注同步由
+   「只报告」改为「阻断」）。**两处必须一起改**：只改模式不加开关 = 挂了个恒绿步（脚本默认 rc=0）。
+   第 2 步的**基线快照表未建**：存量是当批清到 0、不是逐格下调 ⇒ 直接落在第 5 步那一格，不需要棘轮表。
 4. **只许减不许增（棘轮）**：基线表里的每一条都对应「要么接线、要么保留有理由」；
    新出现的命中（**包括新写的零引用件**）一律红。每还掉 N 条就把基线表对应行删掉，
    基线表**只缩不长**；白名单同理（本门已有提示：已登记的件一旦有了引用就打印「可下架」）。
 5. **转完全阻断**：A 命中 0 且 B 未登记 0 时，撤掉基线表与「可容忍」语义，
    从此任何新命中都是硬红（这一步之后 `--strict-report` 变成默认行为，脚本里改默认值即可）。
+   ★ **实况（③批次 · 已执行）**：A=0 · B=0 已到，故**撤掉了「可容忍」语义**（不再有基线表）。
+   与 .md 原文字的**一处偏差**：**没有**把 `--strict-report` 改成脚本默认值 ——
+   那样会改这个脚本对**其它调用方**的行为（本批次只允许改它的「白名单/基线与说明」）。
+   改法是「阻断面由闸的步骤给」：模式 `tri` + 命令串带 `--strict-report`（步骤名标注「阻断」）。
+   效果等价（提交闸里命中即红），且**手工单独跑一下不会突然拦人**；代价是「谁摘掉那个开关就会退化成
+   恒绿步」—— 这一格由 `precommit-gates.sh --self-test` 的 ⑩ 组**逐字钉住**（断言命令串里含
+   `--strict-report`）。
 
 **退码对照（本门三档，与仓内 0/1/2 惯例一致）**：
 
@@ -179,6 +209,44 @@ B 候选 84 只；引用面 2713 个已跟踪文件（排除 自指 2 · 记录�
 `rc=2` 触发条件（都显式打印，不许静默）：仓根缺 `scripts/` · 闸清单**一个都不在位** ·
 候选 0 只（空转） · 引用面 0 个文件 · 白名单缺 reason / 缺 date / date 形态不对 / 重名 /
 **悬空**（点名的脚本已不存在） · `--self-test` 任一用例不过（自检不过 ⇒ 拒绝扫真目标）。
+
+### 五之一、升阻断**前后对照**（③批次实测 · 每格都是真命令行 + 真退出码）
+
+**① 本门在提交闸里的档位与请求串**
+
+| 时点 | 步骤名 | 模式 | 命令串 | 真目标 rc（本机现跑） | 在提交闸里的落点 |
+|---|---|---|---|---|---|
+| 升档前（第二波） | `门③ 接线：scripts 门脚本有没有被闸调用（只报告）` | `tri-report` | `python3 scripts/check-wired-scripts.py` | **rc=0**（脚本默认档；命中 8 只只进清单） | `REPORT`（不影响退出码） |
+| 升档后（③批次） | `门③ 接线：scripts 门脚本有没有被闸调用（阻断）` | **`tri`** | `python3 scripts/check-wired-scripts.py --strict-report` | **rc=0**（**A 命中 0** · B 未登记 0） | **`PASS`**；此后**命中即 `FAIL`** |
+
+**② 成对证据：同一夹具、同一命中，只换「档位/开关」⇒ rc = 0 / 1**（升档的机制本体，不是印象）
+
+    # 夹具 /tmp/wired-pair：scripts/{precommit-gates.sh, publish-preflight.sh} 在位，另有 1 只没被任何闸调用的
+    # check-unwired.py；白名单传空表（[]），故 A 命中 1 · B 未登记 3 —— 两跑**同一夹具、同一命中数**
+    python3 scripts/check-wired-scripts.py --root /tmp/wired-pair --whitelist /tmp/wired-wl.json --no-self-test
+      ⇒ 【结论】A 命中 1 · B 未登记 3 · 配置错 0 ／ 只报告档 ⇒ **rc=0**
+    python3 scripts/check-wired-scripts.py --root /tmp/wired-pair --whitelist /tmp/wired-wl.json --no-self-test --strict-report
+      ⇒ 【结论】A 命中 1 · B 未登记 3 · 配置错 0 ／ --strict-report 且命中 4 ⇒ **rc=1**
+
+⇒ 「从只报告变阻断」只需**同一个开关**：升档前挂着它也是阻断（本次就是**加开关 + 改模式标注**两处，
+不涉及判据）。脚本自身的默认档**没动**（理由见 §五 第 5 条）。
+
+**③ 门③ 报的 8 只 —— 逐只上岗的落点与首跑 rc（现跑）**
+
+| # | 脚本 | 落点 | 模式 | 首跑 rc（现读） | 状态落点 |
+|---|---|---|---|---|---|
+| ① | `check-glossary.py` | 提交闸 `docs` scope | `tri-report` | **rc=1**（T2 术语档 3 处 · T1 阻塞档 0 ⇒ 「告警」不是「错」） | `REPORT`（不计失败项） |
+| ② | `check-i18n-drift.sh` | 提交闸 `docs` scope | `tri-report` | **rc=2**（相① 缺 en 侧 9 页 · 相② 1 篇译页过期） | **`BLOCKED`**（它把 rc=2 当「阻塞相失败」，与三档的「不给结论」语义错位 ⇒ 已列待拍） |
+| ③ | `check-tool-version-sync.sh` | 提交闸 **新 scope `tools`** | **`tri`** | **rc=0**（台账 141 工具 · 抬头一致 141 · 不一致 0） | `PASS`（可直接阻断） |
+| ④ | `check-slice.py --probe` | 提交闸 **新 scope `slice`** | `tri-report` | **rc=0**（探针 36 条 · 假绿 0 · 假红 0.0% ⇒ 过 §3.5 门槛） | `PASS`（起步只报告；实测 0.05s ⇒ 可升 tri，留待拍） |
+| ⑤ | `check-manifest-freshness.py` | 发布闸 **闸⑥**（`--strict`） | 阻断（0/1/64） | 真镜像树**缺同一版清单 ⇒ 缺件（BLOCKED）**；夹具正控 rc=0 / 负控（dirty=true）rc=1 | 缺件不许当绿、也不许推（rc=2） |
+| ⑥ | `check-hardcoded-private-paths.py` | 发布闸 **闸②b**（紧跟闸② 私有面） | 阻断（0/1） | **rc=0**（私有源树 + 产物树两面都绿；负控夹具注入一处 `<volume-path>` ⇒ rc=1） | `PASS` |
+| ⑦ | `edit-assert --self-test` | 提交闸 `pub` scope | **`tri`** | **rc=0**（自检 16/16 全过） | `PASS` |
+| ⑧ | `mutate-scan --self-test` | 提交闸 `pub` scope | **`tri`** | **rc=0**（自检 26/26 全过） | `PASS` |
+
+**④ 复跑（③批次收尾 · 本机）**：`python3 scripts/check-wired-scripts.py --strict-report` ⇒
+**rc=0 · 【结论】A 命中 0 · B 未登记 0 · 配置错 0**（`已挂门脚本 25 只`）；`--self-test` 16/16 通过。
+默认全量（45 步）与逐 scope 数字见 `scripts/precommit-gates.md` §七。
 
 ## 六、两条断言各自的自证方式
 
@@ -229,6 +297,13 @@ B 候选 84 只；引用面 2713 个已跟踪文件（排除 自指 2 · 记录�
   并把新旧口径的零引用只数一起写进来说明为什么会变。
 - **判据面不重开**：「引用」= 出现次数；「在闸里」= 按名调用形态（排除纯注释行 / 纯清单项）。
   想放宽这两条（例如「注释里提过也算」）等于把本门变成字面匹配 —— 那是另一件事，先谈设计。
+- **升档后新增命中怎么处置**（2026-09-18 ③批次起本门是**阻断档**）：
+  新写一只门脚本 / 新写一个零引用件 ⇒ 提交闸的 `门③` 步骤**立刻红**。处置只有两条路 ——
+  **真接线**（在 `precommit-gates.sh` 或 `publish-preflight.sh` 里加一条按名调用，**不许**只写进注释或
+  EXCLUDES 清单项）或**白名单登记**（`name`+`reason`+`date` 三件齐）。★ 不许把新命中压进白名单当消红手段。
+- **阻断面在闸的步骤里，不在脚本默认值里**：本脚本默认仍是只报告（rc=0）——
+  阻断由 `gates` scope 那一步的「模式 `tri` + `--strict-report`」给。要临时跑一次「只报告」，
+  去掉开关即可；**要恢复阻断就别把开关删掉**（删了 = 恒绿假阻断，`precommit-gates.sh --self-test` ⑩ 组会红）。
 - **与 `edit-assert` 的分工**：本门**只读**（不写任何文件、不跑别的门、不改仓），
   需要写盘的改动一律走 `scripts/edit-assert`。
 - **已知的一笔「新增命名命中」（留给父代理收口，本批不许改既有文件）**：
