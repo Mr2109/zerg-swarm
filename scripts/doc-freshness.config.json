@@ -33,9 +33,8 @@
     "vendor",
     "tools/ocr/venv"
   ],
-  "mirror_paths": [
-    "docs/虫族文档"
-  ],
+  "mirror_paths": [],
+  "_mirror_note": "★ 2026-09-19：原「docs/虫族文档」（主树镜像副本，1651 篇 20M）**已退役**（用户拍板「退」；备份 = ~/zerg-backup/docs-虫族文档-mirror-20260919.tar.gz + 解包副本 retired-docs-虫族文档-20260919/，逐文件 sha256 与原目录一致）⇒ **条目删除**（零命中条目留着 = 假覆盖）。反向探针（同日实测）：删条目前后 --scope main/wide/mirror 的语料与解析域计数**逐位一致**（main 305 篇/2027 文件 · wide 591 篇/2037 文件 · mirror=wide 591 篇/2037 文件 —— 镜像域今天本就零命中，故 `--scope mirror` ≡ `--scope wide`）。★ 镜像若日后重建（从备份解包回 docs/），请把 \"docs/虫族文档\" 加回本列，否则镜像内的引用会被当本地判红。",
   "frozen_paths": [
     "docs/项目文档/v2.0.0",
     "docs/项目文档/v2.1",
@@ -67,10 +66,9 @@
   "_fixture_note": "夹具目录：自检在 $TMPDIR 造件（仓内今天为零），此条目是**声明式排除** —— 若将来有人往仓内落夹具，不许它进语料/解析域。",
   "external_domain_paths": [
     "docs/02-调研/raw",
-    "docs/调研/multi-agent-源码",
-    "docs/虫族文档"
+    "docs/调研/multi-agent-源码"
   ],
-  "_external_note": "引用域开关：这些目录里的 md 引用的是**别人的仓**（源码摘录/第三方 README/镜像副本）。默认「扫、计数、不判红」，要判红用 --strict-all。",
+  "_external_note": "引用域开关：这些目录里的 md 引用的是**别人的仓**（源码摘录/第三方 README）。默认「扫、计数、不判红」，要判红用 --strict-all。★ 2026-09-19：原第三项「docs/虫族文档」（镜像副本）随镜像退役已**删除**（零命中条目）；镜像重建请加回。",
   "normalize_whitelist": {
     "外链": "scheme:// · mailto: · 协议相对 // —— 分流，不入相对引用判定（外链超时见 §6.1 G-5：不阻塞）",
     "页内锚": "纯 #anchor —— 归 D3 判定，D1 只计数",
