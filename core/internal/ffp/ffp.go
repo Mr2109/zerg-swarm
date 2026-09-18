@@ -1,5 +1,5 @@
 // Package ffp — 工具调用格式反馈协议(Format Feedback Protocol)
-// 2026-09-08 实施,设计稿: docs/01-设计/设计-工具调用格式反馈协议-20260908.md
+// 2026-09-08 实施,设计稿: docs/01-设计/设计-工具调用格式反馈协议.md
 // 原则: 格式错误是"执行前的系统层异常"——反馈=教学(分类+原文回显+最小合法示例),
 // 让模型看见自己发了什么、缺了什么、抄什么能过——而非干错误文本(实测空 command 死循环根因)。
 // 独立 leaf 包: agent(exec.go)/loopcore(run.go)/chat(chat_tool_runtime.go) 三方引用,防 import 环。
