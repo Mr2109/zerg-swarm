@@ -68,9 +68,16 @@ MAX_FILE_BYTES = 2 * 1024 * 1024  # 超过 2 MB 的文档不读（登记为跳�
 
 # 排除域（**冻结/镜像/证据/历史报告**）：这些域里的旧版本号是设计，不是债
 DOC_EXCLUDES_FIXED = [
-    ("docs/02-调研/raw/", "原始调研证据（一手日志，冻结）"),
-    ("docs/issues/", "历史报告/事故记录（记录型，冻结）"),
+    ("Zerg-内部文档/", "开发文档分家（2026-09-19）：设计稿/调研稿/评审稿/问题单整树在**工作树之外**的"
+                   "同级目录 ⇒ 仓内若出现同名路径（搬回 / 软链 / 副本），其版本号属归档料，只登记不判"),
 ]
+#   ★ 2026-09-19 开发文档分家批6：原两条 `docs/02-调研/raw/`（原始调研证据）与 `docs/issues/`（历史报告 /
+#     事故记录）**已整目录迁至 `Zerg-内部文档/`**（零命中：两者今天在盘上都不存在）⇒ 条目**删除**。
+#     **同时补牙**：删掉两条后本列若不补，就只剩 `DOC_EXCLUDES_RULE` 的「他版快照」一域在咬 ⇒ 排除域判据
+#     变弱。故新增一条 `Zerg-内部文档/` 域，并在自检夹具里造一份假 `Zerg-内部文档/01-设计/旧文.md`（写着旧版号）
+#     ⇒ 自检⑯ 的「排除域零命中」仍被这条咬住，另加**防空转断言**：每个声明在 `DOC_EXCLUDES_FIXED` 里的
+#     前缀，夹具里必须真的有文件（域被改名/删掉而忘了改夹具 ⇒ 自检红，不许悄悄变弱）。
+#   原第一项 `docs/虫族文档/`（镜像副本）已于更早一次退役时删除，沿革见说明书 §3。
 # ★ 2026-09-19：原第一项 `docs/虫族文档/`（镜像副本，公开面镜像 · 冻结）**已退役**（备份见
 #   ~/zerg-backup/…）⇒ 死条目删除（它今天匹配 0 个文件 ⇒ 删它不改任何计数：语料/清单逐位一致）。
 #   镜像若日后重建，请把 ("docs/虫族文档/", "镜像副本（已退役后重建）") 加回本列。
@@ -487,7 +494,7 @@ serde = { version = "%s", features = ["derive"] }
 
 def _mk_fixture(base, go_v, ui_v, wall_v, version_text):
     for d in ("core/internal/version", "ui", "wall", "docs/zh", "docs/项目文档/v9.9.8",
-              "docs/02-调研/raw", "docs/issues"):
+              "Zerg-内部文档/01-设计"):
         if not os.path.isdir(os.path.join(base, d)):
             os.makedirs(os.path.join(base, d))
     w = lambda rel, txt: io.open(os.path.join(base, rel), "w", encoding="utf-8").write(txt)
@@ -499,8 +506,7 @@ def _mk_fixture(base, go_v, ui_v, wall_v, version_text):
     w("docs/zh/活文档.md", u"# 活文档\n当前版本 9.9.8 已发布。\n见 `docs/项目文档/v9.9.8/变更-v9.9.8.md`。\n")
     # 冻结节（他版快照 + 固定排除域 ⇒ 不入清单）
     w("docs/项目文档/v9.9.8/变更-v9.9.8.md", u"旧账：9.9.8 于昨日发布。\n")
-    w("docs/02-调研/raw/调研-旧.md", u"原始证据：9.9.8。\n")
-    w("docs/issues/报告-旧.md", u"历史报告：9.9.8。\n")
+    w("Zerg-内部文档/01-设计/旧文.md", u"旧设计（已分家到工作树之外）：9.9.8。\n")
 
 
 def self_test():
@@ -629,13 +635,23 @@ def self_test():
                 detail += u" · 清单含活文档=%s" % (u"docs/zh/活文档.md" in paths)
             elif ok and needle == u"__EXCLUDE_ONLY__":
                 paths = [h["path"] for h in (res["docs"]["hits"] if res["docs"] else [])]
-                # ★ 2026-09-19：原 `docs/虫族文档/`（镜像副本）一条随镜像退役已从 DOC_EXCLUDES_FIXED
-                #   删除，夹具里也不再造该件 ⇒ 本格改由其余**三个**排除域（他版快照 / docs/02-调研/raw /
-                #   docs/issues）把牙咬住（去镜像不等于放宽排除域）。
-                bad = [p for p in paths if p.startswith("docs/项目文档/")
-                       or p.startswith("docs/02-调研/raw/") or p.startswith("docs/issues/")]
-                ok = not bad and u"docs/zh/活文档.md" in paths
-                detail += u" · 排除域零命中=%s" % (not bad)
+                # ★ 2026-09-19 分家批6：原「镜像副本」域退役时已删；原 `docs/02-调研/raw/` 与 `docs/issues/`
+                #   两条随分家删除（零命中）⇒ **补牙**：本格改由新补的 `Zerg-内部文档/` 固定排除域（夹具里那份
+                #   假 `Zerg-内部文档/01-设计/旧文.md`，写着旧版号）+ 「他版快照」规则把牙咬住（补牙 ≠ 放宽）。
+                #   另加**防空转断言**：每个声明在 `DOC_EXCLUDES_FIXED` / 他版快照里的域，夹具必须真的有文件
+                #   （域被删/改名而忘了改夹具 ⇒ 本格红，排除域判据不许悄悄变弱）。
+                prefixes = [p for p, _why in DOC_EXCLUDES_FIXED] + [u"docs/项目文档/"]
+                bad = [p for p in paths if any(p.startswith(x) for x in prefixes)]
+                vac = []
+                for pfx in prefixes:
+                    n = 0
+                    for _dp, _dns, _fns in os.walk(os.path.join(base, pfx)):
+                        n += len(_fns)
+                    if n == 0:
+                        vac.append(pfx)
+                ok = (not bad) and (u"docs/zh/活文档.md" in paths) and (not vac)
+                detail += u" · 排除域零命中=%s · 夹具覆盖各排除域=%s%s" % (
+                    not bad, not vac, (u"（空转域：%s）" % u", ".join(vac)) if vac else u"")
             elif ok and needle:
                 blob = u"\n".join(res["problems"] + res["blockers"])
                 ok = needle in blob

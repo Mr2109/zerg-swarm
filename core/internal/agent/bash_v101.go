@@ -359,7 +359,7 @@ func bashRmTargetGuard(expanded string) error {
 				}
 				target := strings.Trim(tok, "'\"")
 				if target == "/" || target == "//" {
-					return fmt.Errorf("危险命令拦截: rm 目标 %q 命中家目录保护(2026-09-07 事故修复)——拒绝。家目录/根目录及其内部不可 rm——请用精确工作区路径或专用文件工具;误删主目录事故教训见 docs/issues/rm-home-guard-fix-20260907.md", target)
+					return fmt.Errorf("危险命令拦截: rm 目标 %q 命中家目录保护(2026-09-07 事故修复)——拒绝。家目录/根目录及其内部不可 rm——请用精确工作区路径或专用文件工具;误删主目录事故教训见 Zerg-内部文档/issues/rm-home-guard-fix-20260907.md（已分家）", target)
 				}
 				target = strings.TrimSuffix(target, "/")
 				// 空目标/纯重定向等非路径 token 跳过(rm 无操作数会自行报错)
@@ -367,7 +367,7 @@ func bashRmTargetGuard(expanded string) error {
 					continue
 				}
 				if rmTargetDangerous(target, home) {
-					return fmt.Errorf("危险命令拦截: rm 目标 %q 命中家目录保护(2026-09-07 事故修复)——拒绝。家目录/根目录及其内部不可 rm——请用精确工作区路径或专用文件工具;误删主目录事故教训见 docs/issues/rm-home-guard-fix-20260907.md", target)
+					return fmt.Errorf("危险命令拦截: rm 目标 %q 命中家目录保护(2026-09-07 事故修复)——拒绝。家目录/根目录及其内部不可 rm——请用精确工作区路径或专用文件工具;误删主目录事故教训见 Zerg-内部文档/issues/rm-home-guard-fix-20260907.md（已分家）", target)
 				}
 			}
 		}

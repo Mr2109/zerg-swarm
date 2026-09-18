@@ -32,7 +32,9 @@ python3 scripts/check-doc-meta.py --no-self-test ...     # 内部子进程用（
 
 `--scope`：`docs`（默认，仅 `docs/`）· `repo`（全仓文档面）· `formal`（`docs/项目文档/v2.5.10/` + `docs/常青/` + `docs/skills/` + `docs/zh/` + `docs/en/`）。
 `--missing=warn|fail`：无 frontmatter 块的档位（默认 `warn` = §A1.3③ 的回填期口径；**正式面第一波用 `fail`**）。
-`--count-frozen`：把冻结区（`docs/项目文档/` · `docs/issues/`）也计入退码（默认不进：《清单》§2「高（冻结·不改）」）。
+`--count-frozen`：把冻结区（`docs/项目文档/`）也计入退码（默认不进：《清单》§2「高（冻结·不改）」）。
+**2026-09-19 开发文档分家**：原第二项 `docs/issues/` 整目录已迁至 `Zerg-内部文档/issues/` ⇒ 从 `FROZEN_PREFIX` 删除
+（零命中），冻结区今天只剩 `docs/项目文档/`（17 套快照）。
 
 ## 规则表（`--list-rules` 同内容）
 
@@ -82,8 +84,8 @@ python3 scripts/check-doc-meta.py --no-self-test ...     # 内部子进程用（
 |---|---|---|
 | **技能契约件** | 基名 `SKILL.md`，或 frontmatter 键集 ⊆ {`name`,`description`} | 那是**另一套** frontmatter 契约（Hermes/技能格式），不带文档 6 件套 |
 | ~~主树镜像副本~~ **已退役** | `docs/虫族文档/` —— **已于 2026-09-19 退役**（源目录已从 `docs/` 移除；备份见 `~/zerg-backup/…`） | §2.7 的理由（主树镜像，**同一篇两份地址**）随镜像消失 ⇒ 该条从 `EXCL_PREFIX` **删除**（零命中条目留着 = 假覆盖）；镜像重建则需加回，否则镜像内 frontmatter 会按主树判 |
-| 第三方源码摘录 | `docs/调研/multi-agent-源码/` | 外仓 README（`name`/`description`），不属本仓文档面 |
-| 冻结区 | `docs/项目文档/` · `docs/issues/` | §8.1/§1.3：**只登记不改** ⇒ 命中数照报，不进退码 |
+| 第三方源码摘录 | `docs/调研/multi-agent-源码/` | 外仓 README（`name`/`description`），不属本仓文档面。**2026-09-19 分家**：已 `cp -a` 到 `Zerg-内部文档/调研/multi-agent-源码/`，但**源树仍在工作树里**（未跟踪）⇒ 条目**保留不动**（仓内零命中才删） |
+| 冻结区 | `docs/项目文档/` | §8.1/§1.3：**只登记不改** ⇒ 命中数照报，不进退码。**2026-09-19 分家**：原第二项 `docs/issues/` 已迁至 `Zerg-内部文档/issues/` ⇒ 条目已删（零命中） |
 
 ## 值域差异登记（**待设计稿一句话**）
 

@@ -2,7 +2,8 @@ package agent
 
 // issue_tracker.go — v2.5.1 错误自愈闭环 P0：失败挂单（SWE-bench 格式）
 // 设计：docs/设计-错误自愈闭环.md
-// 职责：失败分类 → 写 docs/issues/instance_id.md（错误入工作流非知识库）
+// 职责：失败分类 → 写任务区 <issuesDir>/instance_id.md（错误入工作流非知识库；
+// 旧目录 docs/issues/ 已于 2026-09-19 分家至 Zerg-内部文档/issues/）
 
 import (
 	"fmt"
@@ -12,7 +13,7 @@ import (
 	"time"
 )
 
-// IssueRecord — 失败问题单（SWE-bench 8 字段——本地 docs/issues/）
+// IssueRecord — 失败问题单（SWE-bench 8 字段——本地任务区 issue 目录）
 // v2.5.2 状态机：open→queued→running→fixing→verified→done（+retry→queued, escalated/dead 终态）
 
 // Issue Status — v2.5.2 完整状态枚举
@@ -141,7 +142,7 @@ func isTerminalStatus(s string) bool {
 	return s == StatusDone || s == StatusEscalated || s == StatusDead
 }
 
-// IssueRecord — 失败问题单（SWE-bench 8 字段——本地 docs/issues/）
+// IssueRecord — 失败问题单（SWE-bench 8 字段——本地任务区 issue 目录）
 type IssueRecord struct {
 	InstanceID    string   `json:"instance_id"`          // 唯一标识（时间戳+任务hash）
 	Task          string   `json:"task"`                 // 任务描述（截断 200）
@@ -172,7 +173,7 @@ func ClassifyFailure(reason TerminateReason) string {
 	}
 }
 
-// CreateIssue — 挂单（失败 → docs/issues/instance_id.md——git 提交由调用方）
+// CreateIssue — 挂单（失败 → 任务区 <issuesDir>/instance_id.md——git 提交由调用方）
 // 返回 issue 文件路径
 func CreateIssue(workDir string, task string, reason TerminateReason, retryCount int, toolTrace []string) (string, error) {
 	// 去重检查（缺漏4——一级：任务 hash 相似已存在则复用——简单版：同任务同原因不重复）

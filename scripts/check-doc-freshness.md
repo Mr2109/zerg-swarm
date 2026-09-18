@@ -186,7 +186,7 @@ python3 scripts/check-doc-freshness.py d1 --scope wide --no-whitelist
 | ~~镜像副本~~ **已退役** | `docs/虫族文档`（1651 篇）—— **已于 2026-09-19 退役**（源目录已从 `docs/` 移除；备份 = `~/zerg-backup/docs-虫族文档-mirror-20260919.tar.gz` + 解包副本 `retired-docs-虫族文档-20260919/`，逐文件 sha256 与原目录一致） | 条目已从 `scripts/doc-freshness.config.json` 的 `mirror_paths` **删除**（零命中条目留着 = 假覆盖）⇒ 今天 `--scope mirror` ≡ `--scope wide`（591 篇 / 2037 文件，删条目前后报告**逐字节一致**）。★ 镜像若从备份重建，请把 `docs/虫族文档` 加回 `mirror_paths`，否则镜像内的引用会被当本地判红 |
 | 冻结归档 | `docs/项目文档/v2.0.0 · v2.1 · v2.2 · v2.3 · v2.4 · v2.5.0–v2.5.9 · v2.6`（16 套，含 `v2.6` —— 它只有 2 篇却在 AGENTS 的「取最大版本号」口径里抢位，M14 未拍 ⇒ 不拿它当判据） | `wide/mirror` 扫、记**单列**；`--strict-all` 才判红 |
 | 第三方源码摘录 | `docs/调研/multi-agent-源码` | 同上 |
-| 引擎数据 | `docs/issues`（1086 篇） | **任何 scope 都不扫**（它不是文档，是 issue 流水） |
+| 引擎数据 | `Zerg-内部文档/issues/`（原 `docs/issues/`，1086 篇，**2026-09-19 已分家**；config 条目已删） | **任何 scope 都不扫**（它不是文档，是 issue 流水）；新落点 `statepath.IssuesDir()` 本就在语料域之外 |
 | 夹具 | `scripts/doc-freshness-fixtures`（**仓内今天为空**） | 声明式排除：自检在 `$TMPDIR` 造件，仓内不落夹具；将来若有人落夹具，不许它进语料 |
 | 在用版 | `docs/项目文档/v2.5.10` | **默认判红**（它是唯一未冻结的版本目录） |
 

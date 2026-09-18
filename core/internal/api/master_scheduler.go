@@ -51,7 +51,7 @@ type Task struct {
 	CreatedAt         time.Time `json:"created_at"`
 	CompletedAt       time.Time `json:"completed_at"`                  // v2.5.5 虫族UI: 完成时间（耗时计算）
 	Checkpoint        string    `json:"checkpoint"`                    // 检查点（打断恢复用——.zerg/logs/<ID>/checkpoint.json）
-	IssuePath         string    `json:"issue_path"`                    // v2.5.5 P1-3: 任务单路径（idle_detector 建的 docs/issues/*.md——完成时更新状态）
+	IssuePath         string    `json:"issue_path"`                    // v2.5.5 P1-3: 任务单路径（idle_detector 建的任务区 *.md——落点见 statepath.IssuesDir()；完成时更新状态）
 	Flow              string    `json:"flow,omitempty"`                // v2.5.6: 执行流程（"zerg"=程序定量驱动新流程——空=旧 CA 流程）
 	Machine           string    `json:"machine,omitempty"`             // v2.5.6: 执行设备（模型所在机器——handlers 按 modelMachineMap 推算——UI 详情显示）
 	SkillKey          string    `json:"skill_key,omitempty"`           // v2.5.6: skill 归属 key（内部任务=def.ID——独属 skill；空=外部任务按类型共享）
@@ -620,7 +620,7 @@ func (s *MasterScheduler) runTask(task *Task) {
 	}
 	// v2.5.5 P1-5 补: 任务状态落盘（重启后保留——UI 早上能看到所有任务）
 	saveTasksLocked(s.queue, s.running, s.history)
-	// v2.5.5 P1-3: 更新任务单状态（任务单文件——idle_detector 建的 docs/issues/*.md）
+	// v2.5.5 P1-3: 更新任务单状态（任务单文件——idle_detector 建的任务区 *.md）
 	if task.IssuePath != "" {
 		updateIssueStatus(task.IssuePath, task.Status)
 	}
