@@ -18,7 +18,7 @@
 #
 # 用法
 # ----
-#     bash scripts/precommit-gates.sh                  # 默认跑全部（go + rust + pub + tags + docs + gates ⇒ 37 步）
+#     bash scripts/precommit-gates.sh                  # 默认跑全部（go + rust + pub + tags + docs + gates ⇒ 39 步）
 #     bash scripts/precommit-gates.sh --scope go       # 只跑 Go 侧（可重复：--scope go --scope rust）
 #     bash scripts/precommit-gates.sh --scope tags     # 只跑双构建工程门禁（T6.3）
 #     bash scripts/precommit-gates.sh --scope docs     # 只跑文档面门禁（meta/name/freshness D1–D3 ⇒ 5 步）
@@ -43,6 +43,8 @@
 # scope 说明（2026-09-17 加 tags · 2026-09-18 加 docs · 2026-09-18 第二波加 gates，三者**都进默认集**）
 #   go   = gofmt/build/vet/test（**单侧**：默认 tag 配置）—— 2026-09-18 第二波由**两棵**扩到**四棵** Go module：
 #          core · agent（原有 12 步）+ **shared**（build/vet/test 3 步）· **scripts/exportnames**（build/vet 2 步）。
+#          ★ 2026-09-18 收尾（本批）：这两棵新 module 补上 `gofmt -l` 步（各 1 条，风格逐字对齐 core/agent
+#            那两条）⇒ shared 4 步 · scripts/exportnames 3 步（go scope 17 → 19 步）。
 #          为什么原来没有：`--scope go` 只 add_step core/agent 两棵（债务台账 §0 第 2 行）⇒ 两个 module
 #          编译失败而闸全绿。★ exportnames 实测**无 `_test.go`** ⇒ 按「有测试就加」不加 test 步（不缝空转步）。
 #          ★ 它是 main 包：`go build ./...` 会把二进制**写进当前目录**（实测冒出 7 MB `zerg-exportnames`）
@@ -59,6 +61,9 @@
 #          start-zerg-ui.sh」语法（.py ⇒ ast.parse · .sh ⇒ bash -n）⇒ 债务台账 §0 第 3 行点名的那批脚本
 #          第一次有门。口径：一条步里**遍历**（单来源函数 `ext_syntax_cmd`，与自检负控共用同一串命令）；
 #          **零命中必红**（空转 = 假覆盖，同无后缀语法步）；排除 vendor/venv/构建产物。
+#          ★ 2026-09-18 收尾（本批）：这一步的扫描面由四棵扩到**八棵**（`ROOTS += ["ui","zerg-evals","deploy","core"]`
+#            一行）⇒ 实测被检查到 38 个（原 32 + 新 6：ui/2 · zerg-evals/2 · deploy/1 · core/1），逐条语法全过，
+#            步数与档位都没动（仍是 `rc` 模式那一条步）。
 #   tags = 双构建工程门禁（脚本自带正反用例自检；它自己会在两种 tag 配置下成对跑 build/vet）
 #   docs = 文档面只读门禁：check-doc-meta(--scope formal --missing=fail) · check-doc-name(--scope repo)
 #          · check-doc-freshness 的 D1/D2/D3（D4 生成式 drift 归发布面，不在此）。
@@ -71,7 +76,8 @@
 #          为什么门③只报告：它今天如实报「A 命中 8 · B 未登记 0」（8 只门脚本不在任何闸里）= 存量债，
 #          起步按 D2 先例**不锁死提交闸**（升阻断路径 = 基线棘轮，见 `scripts/check-wired-scripts.md` §五）。
 #          ★ 它们都是**步骤表里的一等步骤**（不是本脚本尾部那种软检查位），rc 一律取真退出码、**不接管道**。
-#          默认 scope 集 = go+rust+pub+tags+docs+**gates**（2026-09-18 第二波 ⇒ 默认全量 37 步）。
+#          默认 scope 集 = go+rust+pub+tags+docs+**gates**（2026-09-18 第二波 ⇒ 默认全量 37 步；
+#          2026-09-18 收尾再 +2 条 gofmt 步 ⇒ **39 步**）。
 #   docs 的**阻断面**（拍板①；落地形态 = 每步的判定模式）：
 #     阻断（rc=1 计失败项 · rc=2 计 BLOCKED）= `meta` · `name` · `D1` · `D3`（模式 `tri`）；
 #     **只报告 = `D2`**（模式 `tri-report` ⇒ 红只入清单，不计失败项、不计 BLOCKED、不影响退出码）。
@@ -591,17 +597,21 @@ nosuffix_syntax_cmd() {  # nosuffix_syntax_cmd <相对目录> ⇒ 打印检查�
   printf 'python3 - %s <<PYEOF\n%s\nPYEOF' "$1" "${NOSUFFIX_CHECK_PY}"
 }
 
-# ── 四棵外围目录 + 顶层入口的脚本语法检查命令（**唯一来源**：pub 真步骤与自检 ⑦′ 负控共用同一串文本）──
+# ── 八棵外围目录 + 顶层入口的脚本语法检查命令（**唯一来源**：pub 真步骤与自检 ⑦′ 负控共用同一串文本）──
 # 为什么需要（2026-09-18 第二波，债务台账 §0 第 3 行）：pub scope 原来只收 `scripts/*.sh|*.py` 与
 # `scripts/` 无后缀件 ⇒ `mcp/`(9) · `gateway/`(9) · `publish/`(8) · `tools/`(4) 的 .py/.sh 与顶层两个
 # 运行入口（`start-zerg-core.sh` / `start-zerg-ui.sh`）**不在任何一步里**（假覆盖）。
-# 判法：一条步里**遍历**这四棵目录的 .py（`ast.parse`）与 .sh（`bash -n`），外加两个顶层入口（`bash -n`）；
+# ★ 2026-09-18 收尾（本批）：ROOTS **再加四棵**（只加一行 `ROOTS += [...]`）——
+#   `ui/`(2：ui/scripts/check-i18n.py · i18n_audit.py) · `zerg-evals/`(2) · `deploy/`(1) · `core/`(1)
+#   （实测 `cd <仓根> && <本串>` rc=0、被检查到 38 个 = 原 32 + 新 6，逐条语法全过 ⇒ 不需要改 tri-report）。
+# 判法：一条步里**遍历**这八棵目录的 .py（`ast.parse`）与 .sh（`bash -n`），外加两个顶层入口（`bash -n`）；
 #   排除 vendor/venv/node_modules/target/dist/__pycache__ 等构建与虚拟环境目录（同各门硬排除名单）。
 # 硬规矩：**一个都没检查到 ⇒ 红**（空转就是假覆盖，不许给绿）；两个顶层入口缺件也 ⇒ 红。
 # ★ 全篇**不用单引号**是为了能整段放进单引号 bash 字符串（与 NOSUFFIX_CHECK_PY 同法）。
 EXT_SYNTAX_PY='
 import ast, os, subprocess, sys
 ROOTS = ["mcp", "gateway", "publish", "tools"]
+ROOTS += ["ui", "zerg-evals", "deploy", "core"]   # 2026-09-18 收尾：再收四棵（同口径 .py ast.parse / .sh bash -n）
 EXCL_DIRS = {"vendor", "node_modules", "__pycache__", ".git", "target", ".venv", "venv",
              "dist", "build", ".history", ".mypy_cache"}
 EXCL_PREFIX = ("tools/ocr/venv",)
@@ -657,10 +667,12 @@ for rel in TOP_ENTRIES:
 for b in bad:
     print("✗ 语法不过：%s" % b)
 if not picked:
-    print("✗ 四棵外围目录 + 顶层入口里 0 个脚本被检查到 ⇒ 本步空转 = 假覆盖 ⇒ 红"
+    print("✗ 外围目录（mcp/ gateway/ publish/ tools/ ui/ zerg-evals/ deploy/ core/）+ 顶层入口里"
+          " 0 个脚本被检查到 ⇒ 本步空转 = 假覆盖 ⇒ 红"
           "（若本树确实没有这些脚本，请改本步的选择条件）")
     sys.exit(1)
-print("✓ 外围脚本语法：%d 个（mcp/ · gateway/ · publish/ · tools/ + 顶层两个入口）" % len(picked))
+print("✓ 外围脚本语法：%d 个（mcp/ · gateway/ · publish/ · tools/ · ui/ · zerg-evals/ · deploy/ · core/"
+      " + 顶层两个入口）" % len(picked))
 sys.exit(1 if bad else 0)
 '
 ext_syntax_cmd() {  # ext_syntax_cmd <根> ⇒ 打印检查命令串（真步骤与自检 ⑦′ 负控共用同一串）
@@ -687,6 +699,12 @@ build_steps() {  # build_steps <scope…>
         add_step go "agent: go test -race ./... -count=1" rc "${REPO_ROOT}/agent" "go test -race ./... -count=1"
         # ── 2026-09-18 第二波（债务台账 §0 第 2 行 / §7 建议门①）：两个**原先不在任何门里**的 Go module ──
         #   写法逐条对齐上面 core/agent 的老步骤（build/vet/test），只换工作目录 ⇒ A 段「工作目录命中」。
+        # ── 2026-09-18 收尾（本批）：上面两个新 module **原先没有 gofmt 步**（只有 build/vet/test）⇒ 补齐。
+        #   风格逐字对齐最上面 core/agent 的两条 gofmt 步：模式 `empty`（`gofmt -l .` 列出文件 ⇒ 非空 ⇒ 红；
+        #   零命中 ⇒ 输出为空 ⇒ 绿）、工作目录 = 该 module 自己、命令串 `gofmt -l .`。
+        #   实测（收尾时点 · 本机）：`cd shared && gofmt -l .` ⇒ 0 行；`cd scripts/exportnames && gofmt -l .` ⇒ 0 行。
+        add_step go "gofmt -l shared"              empty "${REPO_ROOT}/shared"              "gofmt -l ."
+        add_step go "gofmt -l scripts/exportnames" empty "${REPO_ROOT}/scripts/exportnames" "gofmt -l ."
         add_step go "shared: build ./..."            rc "${REPO_ROOT}/shared" "go build -buildvcs=false ./..."
         add_step go "shared: go vet ./..."           rc "${REPO_ROOT}/shared" "go vet ./..."
         add_step go "shared: go test ./... -count=1" rc "${REPO_ROOT}/shared" "go test ./... -count=1"
@@ -715,6 +733,12 @@ build_steps() {  # build_steps <scope…>
         #   ⇒ 本波**按真退出码如实上报，不放宽、不填白名单、不缝**：三条一律 `rc` 模式（与 wall 逐行对齐），
         #     所以 fmt 与 clippy 今天会让默认全量多两个失败项 —— 这是把闸真正上岗的代价，不是判据被动过。
         #     （「要不要按 D2 先例降成只报告」是父代理的拍板项：本脚本说明书 §待拍 记了逐条数字与一行改法。）
+        #   ★ 2026-09-18 收尾（本批）复测：`cargo fmt --check` 已转绿（全树 rustfmt 过）；
+        #     `cargo clippy -- -D warnings` 由 **43 条 → 22 条**（语义不变的 21 条已直修：collapsible_if 5 ·
+        #     useless_format 3 · manual_div_ceil 2 · op_ref 2 · unnecessary_to_owned 2 · doc_lazy_continuation 2 ·
+        #     empty_line_after_doc_comments 1 · map_clone 1 · option_map_unit_fn 1 · or_insert_with→or_default 1 ·
+        #     unused_import 1）；**余下 22 条全是 dead_code（17）/ 需人判（unused variable · inherent_to_string ·
+        #     type_complexity · too_many_arguments ×2）——按口径只列不改、不用 `#[allow]` 盖债** ⇒ 这一步今天仍红。
         add_step rust "ui: cargo fmt --check"              rc "${REPO_ROOT}/ui" "cargo fmt --check"
         add_step rust "ui: cargo clippy -- -D warnings"    rc "${REPO_ROOT}/ui" "cargo clippy -- -D warnings"
         add_step rust "ui: cargo test"                     rc "${REPO_ROOT}/ui" "cargo test"
@@ -811,10 +835,14 @@ PYEOF"
   return 0
 }
 
-# ── 前置检查：必须真在 Zerg 仓里，且三棵构建树的入口都在 ────────────
+# ── 前置检查：必须真在 Zerg 仓里，且构建树入口都在（四棵构建树 + 两个第二波 Go module + 发布白名单 = **7 件**）───
+#   ★ 2026-09-18 收尾（本批）把 `shared/go.mod` 与 `scripts/exportnames/go.mod` 补进清单：
+#     上一波给这两个 module 加了步骤，但**缺件检查没跟着补** ⇒ 那两个 module 目录整个不在时，
+#     闸会照跑那几步（各步自己红、报错却是「不行的工作目录」），而不是**前置缺件 ⇒ rc=2 不给结论**。
+#     同步改了 `scripts/check-gate-coverage.py` 里那句「precheck 要 …五件」的提示文字（改成七件并点名）。
 precheck() {
   local miss=0 p
-  for p in core/go.mod agent/go.mod wall/Cargo.toml ui/Cargo.toml publish/whitelist.txt; do
+  for p in core/go.mod agent/go.mod shared/go.mod scripts/exportnames/go.mod wall/Cargo.toml ui/Cargo.toml publish/whitelist.txt; do
     if [ ! -f "${REPO_ROOT}/${p}" ]; then
       printf '✗ 缺少前置：%s\n' "${p}" >&2
       miss=$((miss + 1))
@@ -847,6 +875,9 @@ main() {
     # ★ 老步骤（go 12 · rust 3 · pub 4 · tags 1 · docs 5）的名字/命令串/模式/目录**一字未改**；
     #   本波只**追加**：go +5（shared 3 · exportnames 2）· rust +3（ui）· pub +1（外围脚本语法）·
     #   新 scope `gates` 3 步。一条都没删、一条都没改语义。
+    # ★ 2026-09-18 收尾（本批）再**追加 2 步**（go：`gofmt -l shared` · `gofmt -l scripts/exportnames`，
+    #   模式 `empty`，风格与 core/agent 那两条逐字一致）⇒ 默认全量 **39 步**；pub 那一条步的扫描面
+    #   由四棵扩到八棵（**步数不变**）。同样一条没删、一条没改语义。
     # ★ 默认跑法的退出码由阻断面决定（见文件头「docs 的阻断面」与 `gates` scope 段）：
     #   阻断步骤仍能把它拉成 rc=1 / rc=2；**只报告档**（docs 的 D2 · gates 的门③）不参与退出码。
     scopes=("${DEFAULT_SCOPES[@]}")

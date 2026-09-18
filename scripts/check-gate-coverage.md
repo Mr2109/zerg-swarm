@@ -178,15 +178,21 @@ python3 scripts/check-gate-coverage.py     # 自检 28 条全过 · 真目标 rc
 本门首跑是 **74 / 85**（`.sh/.py`）+ 2 条无后缀 = **87**。差的 **+3** 是**并发会话在同一个 22:4x 时点新建的脚本**：
 `scripts/check-gate-coverage.py`（**本门自身**）、`scripts/check-version-sources.py`（门②）、`scripts/check-wired-scripts.py`（门③）。
 ⇒ 三个数字都是真的，只是**时点不同**（台账现跑时点 22:2x–22:4x vs 本门首跑 22:4x）。
-**第二波**把三只新门挂进步骤表后，这 3 条会从 ③ 落到 ①/②，命中数回落 **74 → 71**，届时按 §3 号令把 `baseline` 改成 71。
+**第二波**把三只新门挂进步骤表后，这 3 条从 ③ 落到 ①/②，命中数回落 **74 → 69**
+（= 74 − 3 只新门 − 2 条只因新增的「外围脚本语法」步**点到了同名兄弟**而进 ② 档的件；
+2026-09-18 收尾复测：**③ = 69 = baseline**，`baseline` 已按 §3 号令由 74 下调为 **69**，见 `scripts/gate-coverage.config.json` 的 `_baseline_note`）。
 
-## 7. 与既有门的接口（**本波不挂**）
+## 7. 与既有门的接口（**已挂 · 2026-09-18 收尾更新**）
 
-本波只交**脚本 + 说明书 + config + 自检**；**不挂进** `scripts/precommit-gates.sh`（第二波由父代理统一挂）。
-挂法（本门退码正是仓内三档 0/1/2，`2` = 缺件/不可判/空转 ⇒ 用 **`tri`** 模式）：
+> ★ 本节原文写于「本波不挂」时点，**已被事实取代**：本门**已挂进** `scripts/precommit-gates.sh`——
+> **`gates` scope · 模式 `tri`（阻断）· 在默认集内**（`DEFAULT_SCOPES` 含 `gates`）。
+> 步骤名：`门① 覆盖：构建清单目录 + 脚本接线（阻断）`。自检数字：**`--self-test` rc=0 · 28/28 断言全过**。
+> 复测真目标（2026-09-18 收尾时点）：**rc=0** · A 收进 6 + 白名单 2 + 红 0 = 8 ✓ · B ① 8 + ② 10 + ③ 69 = 87 ✓
+> · 棘轮命中 **69 = baseline 69**（baseline 已按 §3 号令由 74 下调为 **69**，理由见 `scripts/gate-coverage.config.json` 的 `_baseline_note`）。
+> 下面保留原「挂法」正文（含真实落入步骤表的形态，供核对）：
 
 ```bash
-add_step cov "门覆盖自检（构建清单目录 A + 脚本接线 B）" tri "${REPO_ROOT}" \
+add_step gates "门① 覆盖：构建清单目录 + 脚本接线（阻断）" tri "${REPO_ROOT}" \
          "python3 scripts/check-gate-coverage.py"
 ```
 

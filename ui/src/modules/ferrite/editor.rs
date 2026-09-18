@@ -106,7 +106,7 @@ impl MdEditor {
             return;
         }
         let cursor_before = self.cursor; // M36: 记录编辑前光标（撤销恢复用）
-        // 有选择——先删
+                                         // 有选择——先删
         let ops = self.replace_selection_ops();
         let mut ops = ops.unwrap_or_default();
         ops.push(EditOp::Insert {
@@ -296,7 +296,9 @@ impl MdEditor {
         if line > 0 {
             let line_start = self.buffer.line_to_char(line - 1);
             let col = self.cursor - self.buffer.line_to_char(line);
-            self.cursor = (line_start + col).min(self.buffer.line_to_char(line) - 1).max(line_start);
+            self.cursor = (line_start + col)
+                .min(self.buffer.line_to_char(line) - 1)
+                .max(line_start);
         }
         self.selection = None;
     }
@@ -439,7 +441,8 @@ impl MdEditor {
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
         if pointer_over && scroll_delta.abs() > 0.0 {
             let lines = (scroll_delta / row_height).round() as i64;
-            self.scroll_line = (self.scroll_line as i64 + lines).clamp(0, scroll_max as i64) as usize;
+            self.scroll_line =
+                (self.scroll_line as i64 + lines).clamp(0, scroll_max as i64) as usize;
         }
 
         // F3 点击定位光标（鼠标点击 → 行 → 字符位置）
@@ -514,44 +517,50 @@ impl MdEditor {
             Vec::new()
         } else {
             ui.ctx().input(|i| {
-            let mut out: Vec<KeyAction> = Vec::new();
-            for e in &i.events {
-                match e {
-                    egui::Event::Text(t) => out.push(KeyAction::Text(t.clone())),
-                    egui::Event::Key {
-                        key,
-                        pressed: true,
-                        modifiers,
-                        ..
-                    } => match key {
-                        egui::Key::Backspace => out.push(KeyAction::Backspace),
-                        egui::Key::Delete => out.push(KeyAction::DeleteForward),
-                        egui::Key::Enter => out.push(KeyAction::Enter),
-                        egui::Key::ArrowLeft if !modifiers.shift => out.push(KeyAction::Left),
-                        egui::Key::ArrowRight if !modifiers.shift => out.push(KeyAction::Right),
-                        egui::Key::ArrowUp if !modifiers.shift => out.push(KeyAction::Up),
-                        egui::Key::ArrowDown if !modifiers.shift => out.push(KeyAction::Down),
-                        egui::Key::Home if !modifiers.shift => out.push(KeyAction::Home),
-                        egui::Key::End if !modifiers.shift => out.push(KeyAction::End),
-                        // M35: Shift+方向键/Home/End → 扩展选择（原来被排除=选择功能死代码）
-                        egui::Key::ArrowLeft if modifiers.shift => out.push(KeyAction::SelectLeft),
-                        egui::Key::ArrowRight if modifiers.shift => out.push(KeyAction::SelectRight),
-                        egui::Key::ArrowUp if modifiers.shift => out.push(KeyAction::SelectUp),
-                        egui::Key::ArrowDown if modifiers.shift => out.push(KeyAction::SelectDown),
-                        egui::Key::Home if modifiers.shift => out.push(KeyAction::SelectHome),
-                        egui::Key::End if modifiers.shift => out.push(KeyAction::SelectEnd),
-                        egui::Key::Z if modifiers.command && !modifiers.shift => {
-                            out.push(KeyAction::Undo)
-                        }
-                        egui::Key::Z if modifiers.command && modifiers.shift => {
-                            out.push(KeyAction::Redo)
-                        }
+                let mut out: Vec<KeyAction> = Vec::new();
+                for e in &i.events {
+                    match e {
+                        egui::Event::Text(t) => out.push(KeyAction::Text(t.clone())),
+                        egui::Event::Key {
+                            key,
+                            pressed: true,
+                            modifiers,
+                            ..
+                        } => match key {
+                            egui::Key::Backspace => out.push(KeyAction::Backspace),
+                            egui::Key::Delete => out.push(KeyAction::DeleteForward),
+                            egui::Key::Enter => out.push(KeyAction::Enter),
+                            egui::Key::ArrowLeft if !modifiers.shift => out.push(KeyAction::Left),
+                            egui::Key::ArrowRight if !modifiers.shift => out.push(KeyAction::Right),
+                            egui::Key::ArrowUp if !modifiers.shift => out.push(KeyAction::Up),
+                            egui::Key::ArrowDown if !modifiers.shift => out.push(KeyAction::Down),
+                            egui::Key::Home if !modifiers.shift => out.push(KeyAction::Home),
+                            egui::Key::End if !modifiers.shift => out.push(KeyAction::End),
+                            // M35: Shift+方向键/Home/End → 扩展选择（原来被排除=选择功能死代码）
+                            egui::Key::ArrowLeft if modifiers.shift => {
+                                out.push(KeyAction::SelectLeft)
+                            }
+                            egui::Key::ArrowRight if modifiers.shift => {
+                                out.push(KeyAction::SelectRight)
+                            }
+                            egui::Key::ArrowUp if modifiers.shift => out.push(KeyAction::SelectUp),
+                            egui::Key::ArrowDown if modifiers.shift => {
+                                out.push(KeyAction::SelectDown)
+                            }
+                            egui::Key::Home if modifiers.shift => out.push(KeyAction::SelectHome),
+                            egui::Key::End if modifiers.shift => out.push(KeyAction::SelectEnd),
+                            egui::Key::Z if modifiers.command && !modifiers.shift => {
+                                out.push(KeyAction::Undo)
+                            }
+                            egui::Key::Z if modifiers.command && modifiers.shift => {
+                                out.push(KeyAction::Redo)
+                            }
+                            _ => {}
+                        },
                         _ => {}
-                    },
-                    _ => {}
+                    }
                 }
-            }
-            out
+                out
             })
         };
 
@@ -619,9 +628,19 @@ mod m01_tests {
                 continue;
             }
             ed.backspace();
-            assert_eq!(ed.buffer.len(), before_len - 1, "退格应删一个字符: {}", original);
+            assert_eq!(
+                ed.buffer.len(),
+                before_len - 1,
+                "退格应删一个字符: {}",
+                original
+            );
             ed.undo();
-            assert_eq!(ed.buffer.to_string(), original, "撤销后应还原原文: {}", original);
+            assert_eq!(
+                ed.buffer.to_string(),
+                original,
+                "撤销后应还原原文: {}",
+                original
+            );
         }
     }
 
@@ -631,8 +650,19 @@ mod m01_tests {
         let mut ed = MdEditor::new();
         ed.load("你好a🙂bc");
         for pos in 0..=ed.buffer.len() {
-            let expected = ed.buffer.to_string().chars().take(pos).map(|c| c.len_utf8()).sum::<usize>();
-            assert_eq!(ed.buffer.char_to_byte(pos), expected, "char {} 字节偏移不一致", pos);
+            let expected = ed
+                .buffer
+                .to_string()
+                .chars()
+                .take(pos)
+                .map(|c| c.len_utf8())
+                .sum::<usize>();
+            assert_eq!(
+                ed.buffer.char_to_byte(pos),
+                expected,
+                "char {} 字节偏移不一致",
+                pos
+            );
         }
     }
 

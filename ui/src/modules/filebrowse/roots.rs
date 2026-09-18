@@ -19,8 +19,27 @@ pub const DEFAULT_DISPLAY_MAX: usize = 1048576;
 
 /// 文本类扩展名缺省清单（仅在后端 config.text_exts 缺失时兜底——权威清单在后端，可配置）
 pub const DEFAULT_TEXT_EXTS: [&str; 21] = [
-    ".md", ".markdown", ".txt", ".json", ".yaml", ".yml", ".toml", ".rs", ".go", ".py", ".sh",
-    ".ts", ".js", ".html", ".css", ".sql", ".csv", ".log", ".ini", ".c", ".h",
+    ".md",
+    ".markdown",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".rs",
+    ".go",
+    ".py",
+    ".sh",
+    ".ts",
+    ".js",
+    ".html",
+    ".css",
+    ".sql",
+    ".csv",
+    ".log",
+    ".ini",
+    ".c",
+    ".h",
 ];
 
 /// 一个根（后端白名单里的一项）
@@ -42,9 +61,21 @@ pub struct RootInfo {
 impl RootInfo {
     pub fn from_json(v: &serde_json::Value) -> RootInfo {
         RootInfo {
-            id: v.get("id").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
-            label: v.get("label").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
-            path: v.get("path").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+            id: v
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            label: v
+                .get("label")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            path: v
+                .get("path")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
             is_default: v.get("default").and_then(|x| x.as_bool()).unwrap_or(false),
             writable: v.get("writable").and_then(|x| x.as_bool()).unwrap_or(false),
             // §尾巴 a：缺字段按 true（=未知/存在）。**绝不** `unwrap_or(false)`——
@@ -111,7 +142,10 @@ impl FilerootsConfig {
             return true;
         }
         let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
-        let has_ext = name.rsplit_once('.').map(|(_, e)| !e.is_empty()).unwrap_or(false);
+        let has_ext = name
+            .rsplit_once('.')
+            .map(|(_, e)| !e.is_empty())
+            .unwrap_or(false);
         if !has_ext {
             return false;
         }

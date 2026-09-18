@@ -4,7 +4,7 @@
 //! 主力风格：Phosphor（6 字重现代）——导航/线条用 Lucide
 //! 替换 emoji 缺字清单（2026-08-29 实证 NotoEmoji 缺）：⚙️→settings 🖥️→monitor 🗑️→trash ✏️→edit 🟢→status
 
-use eframe::egui::{self, FontData, FontDefinitions, FontFamily, FontId, RichText};
+use eframe::egui::{FontData, FontDefinitions, FontFamily, FontId, RichText};
 
 /// 注册 iconflow 全部字体（追加到现有 FontDefinitions——保中文字体——egui 0.36 API）
 pub fn install_iconflow_fonts(definitions: &mut FontDefinitions) {
@@ -20,7 +20,7 @@ pub fn install_iconflow_fonts(definitions: &mut FontDefinitions) {
             .or_default();
         fam.insert(0, font.family.to_string());
         for fb in &fallback {
-            if fb != &font.family {
+            if fb != font.family {
                 fam.push(fb.clone());
             }
         }
@@ -28,7 +28,7 @@ pub fn install_iconflow_fonts(definitions: &mut FontDefinitions) {
         // → PUA 字形字符（icon_text 返回）可混合中文渲染（CJK 缺字 → fallback 图标字体）
         for family in [FontFamily::Proportional, FontFamily::Monospace] {
             let fam = definitions.families.entry(family).or_default();
-            if !fam.iter().any(|f| f == &font.family) {
+            if !fam.iter().any(|f| f == font.family) {
                 fam.push(font.family.to_string());
             }
         }
@@ -53,7 +53,13 @@ pub fn icon_text(name: &str) -> String {
 
 /// 解析 codepoint → 字形字符串
 fn icon_glyph(pack: iconflow::Pack, name: &str) -> Option<String> {
-    let r = iconflow::try_icon(pack, name, iconflow::Style::Regular, iconflow::Size::Regular).ok()?;
+    let r = iconflow::try_icon(
+        pack,
+        name,
+        iconflow::Style::Regular,
+        iconflow::Size::Regular,
+    )
+    .ok()?;
     Some(char::from_u32(r.codepoint)?.to_string())
 }
 
