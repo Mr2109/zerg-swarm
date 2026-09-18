@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """fleet_logs.py — 主控侧日志查询工具（DESIGN v2.3 §3.5）
 
-调用主控 :8580 日志查询 API（PROTOCOL.md §3）:
+调用主控 :8580 日志查询 API（protocol.md §3）:
   logs query  --machine edge-node --component agent --since 10m
   logs trace  <request_id>
   logs errors --since 1h

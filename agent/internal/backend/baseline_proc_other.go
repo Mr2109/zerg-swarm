@@ -2,7 +2,7 @@
 
 // baseline_proc_other.go —— 非 Linux 平台（如主控所在的 macOS）的桩实现。
 //
-// 设计依据：设计-子端沙箱化-20260914.md §10.1 baseline_proc_linux.go 行——
+// 设计依据：设计-子端沙箱化.md §10.1 baseline_proc_linux.go 行——
 // findListenerProcess / readProcessMemGb 的非 Linux 桩；存档类字段已随 P4 退场（附录 C·C2）。
 package backend
 

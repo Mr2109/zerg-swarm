@@ -436,9 +436,9 @@ func TestSliceMountHandler_RejectsAndAcceptsOverHTTP(t *testing.T) {
 //   - 观测面的判据 = 真读 SliceMountEventsFile() 落盘的那一行（Code/Field 逐字对）
 //   - 「落进 Task」的判据 = 真 json.Marshal 出来的字节里能看到该键（指针 ⇒「没写」与「写了空」可分）
 //
-// 出处（逐字，只引用）: docs/01-设计/设计-协作骨架-v2.1-20260918.md:190（Lead 角色）/ :203（提分工方案
+// 出处（逐字，只引用）: docs/01-设计/设计-协作骨架-v2.1.md:190（Lead 角色）/ :203（提分工方案
 // ⇒ 等 Mr2109 确认 ⇒ 挂板）/ :69（s13「提出分工 ✓ 等确认 ✓」+ `plan approval`）/:211（黑板 = 归属 Lead/Member）；
-// 设计-任务模块骨架-v1.0-20260918.md:59（须由 Lead/人声明）；§4.6-2（成员是带 id 的实例）。
+// 设计-任务模块骨架-v1.0.md:59（须由 Lead/人声明）；§4.6-2（成员是带 id 的实例）。
 
 // ---- 用例 8: Lead 字段（缺失 ⇒ 放 · 存在 ⇒ 放 + 落盘 · 非法 ⇒ 拒）----
 

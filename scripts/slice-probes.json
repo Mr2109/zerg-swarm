@@ -936,25 +936,25 @@
       "why": "R11 顺序断言的合法侧：landing 片段在 context_needed 首条、criteria 键序在 post/invariant 其他字段之前",
       "slice": {
         "defect_id": "DEF-20260918-S5-05",
-        "landing": "docs/01-设计/设计-协作骨架-v2.1-20260918.md:150",
-        "the_one_thing": "When 模板落盘时，docs/01-设计/设计-协作骨架-v2.1-20260918.md 的 §3.4 抬头必须写明判据口径。",
+        "landing": "docs/01-设计/设计-协作骨架-v2.1.md:150",
+        "the_one_thing": "When 模板落盘时，docs/01-设计/设计-协作骨架-v2.1.md 的 §3.4 抬头必须写明判据口径。",
         "context_needed": [
           {"kind": "snippet", "value": "### 3.4 机器判据 **R0–R13**（B §2.4；执行前只做句法与状态事实）"},
-          {"kind": "file", "value": "docs/01-设计/设计-协作骨架-v2.1-20260918.md"},
-          {"kind": "cmd", "value": "grep -c '执行前只做句法与状态事实' docs/01-设计/设计-协作骨架-v2.1-20260918.md"}
+          {"kind": "file", "value": "docs/01-设计/设计-协作骨架-v2.1.md"},
+          {"kind": "cmd", "value": "grep -c '执行前只做句法与状态事实' docs/01-设计/设计-协作骨架-v2.1.md"}
         ],
         "open_questions": "无",
         "criteria": [
-          {"id": "C1", "cmd": "grep -c '执行前只做句法与状态事实' docs/01-设计/设计-协作骨架-v2.1-20260918.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
+          {"id": "C1", "cmd": "grep -c '执行前只做句法与状态事实' docs/01-设计/设计-协作骨架-v2.1.md", "expect": "1", "state": "改动前：绿（实跑 = 1）"}
         ],
-        "gate_cmds": [{"cmd": "grep -c '执行前只做句法与状态事实' docs/01-设计/设计-协作骨架-v2.1-20260918.md", "expect": {"exit": 0, "stdout": "1"}}],
+        "gate_cmds": [{"cmd": "grep -c '执行前只做句法与状态事实' docs/01-设计/设计-协作骨架-v2.1.md", "expect": {"exit": 0, "stdout": "1"}}],
         "output_format": "① 正控：C1 实跑贴命令 + 原始输出 + 退出码；② 负控（改动前必红）：删掉该句后重跑，必须红（已实跑：由 1 变 0）；③ 牙齿计数 1/1；④ 还原：负控在副本上做，原件 sha 一致。",
         "exit_cond": {
           "success": ["C1"],
           "failure": "C1 输出与期望不符，或负控未由绿变红 ⇒ 记失败，附命令、退出码",
           "escalate": {"to": "Mr2109", "times": 2, "fields": ["片 id", "命令", "退出码", "原文", "时间"]}
         },
-        "hard_limits": ["① 只读 docs/01-设计/设计-协作骨架-v2.1-20260918.md 一个文件", "② 不动 git、不删除任何文件"],
+        "hard_limits": ["① 只读 docs/01-设计/设计-协作骨架-v2.1.md 一个文件", "② 不动 git、不删除任何文件"],
         "side_effects": "只读",
         "escalate_if": "需要写工作树 / 需要 git 写 ⇒ 升级 Mr2109",
         "budget": {"value": "steps_max 3", "source": "~/.zerg/egg-profiles/task-budget-calib.yaml"},

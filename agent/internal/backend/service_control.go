@@ -1,6 +1,6 @@
 // service_control.go —— 引擎侧判忙探针（P4 退场清理后的残余保留面）。
 //
-// 设计依据：设计-子端沙箱化-20260914.md §10.1 service_control.go 行、§7.7 修补 3：
+// 设计依据：设计-子端沙箱化.md §10.1 service_control.go 行、§7.7 修补 3：
 // `probeServiceIdle` / `parseSlotBusy`（/slots 的 is_processing 判忙）**降为交叉校验**——
 // draining / 卸载 / 切换的唯一依据是子端的在飞引用计数（§7.7 修补 3），
 // /slots 是**引擎侧信号**，ds4 类引擎未必提供 ⇒ 正确性不挂在引擎特性上。

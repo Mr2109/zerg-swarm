@@ -1,5 +1,5 @@
 // chat_tool_session_search.go — 乙批 session_search 工具执行器（v2.5.8——2026-09-10）
-// 设计: docs/01-设计/设计-虫族记忆体系-20260910.md §3.3
+// 设计: docs/01-设计/设计-虫族记忆体系.md §3.3
 // 形态: session_search(query?, session_id?, around_id?) → 三种模式:
 //
 //	search —— 有 query: FTS5 全文检索（复用 SearchMessages——trigram + <3 字 CJK 走 LIKE + 排除 archived）
