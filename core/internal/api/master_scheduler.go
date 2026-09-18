@@ -375,6 +375,18 @@ func (s *MasterScheduler) dispatchLocked() {
 	}
 }
 
+// caLogEnv — 派发 CA 任务时注入的日志根 env（v2.5.5 P1-2 修复: 日志写固定位置防 worktree merge 后丢失）。
+//
+// 2026-09-18 硬编码治理批 D: 原先直接写死字面量 "ZERG_LOG_DIR=/tmp/zerg-ca-logs"，
+// 与「读取侧」口径不一致——handlers.findTaskLogDir 走 statepath.CAEventLogRoot()
+// （覆盖顺序 ZERG_CA_LOG_DIR → <ZERG_TMP_DIR|/tmp>/zerg-ca-logs）。
+// 于是设了 ZERG_CA_LOG_DIR（publish/docs/CONFIGURATION 记载的官方开关）时:
+// 读在新根、写还在旧根 ⇒ CA 日志（UI 轮次/耗时/取证）读不到。
+// 改由 statepath.CAEventLogRoot() 派生 ⇒ 写读同源；默认值仍等价（tmpBase 默认字面 "/tmp"）。
+// 变量名必须仍是 ZERG_LOG_DIR: CA 子进程（core/cmd/zerg-agent/main.go）只认这个字面量，
+// 不认 ZERG_CA_LOG_DIR，改错一侧等于丢日志（生产链路——不得改）。
+func caLogEnv() string { return "ZERG_LOG_DIR=" + statepath.CAEventLogRoot() }
+
 // runTask 执行任务（spawn zerg-agent——CA 子调度接管执行）
 // v2.5.5 打断/恢复: 记录 cmd 进程——PauseRunning 可发信号打断（SIGUSR1——CA 存 checkpoint 退出）
 // v2.5.5 T2 worktree: 内部任务用 git worktree 隔离开发（独立目录——merge 回 main——任务 git 底座）
@@ -461,7 +473,7 @@ func (s *MasterScheduler) runTask(task *Task) {
 		args = append(args, "-subtask")
 	}
 	cmd := exec.Command(s.agentCmd, args...)
-	// v2.5.5 P1-2 修复: 日志写固定位置（/tmp/zerg-ca-logs/）——防 worktree merge 后日志丢失
+	// v2.5.5 P1-2 修复: 日志写固定位置（默认 /tmp/zerg-ca-logs/）——防 worktree merge 后日志丢失
 	// 默认写 workdir/.zerg/logs（worktree 内）——merge 删 worktree——跟踪数据断
 	baseEnv := s.agentEnv
 	if len(baseEnv) == 0 {
@@ -479,7 +491,8 @@ func (s *MasterScheduler) runTask(task *Task) {
 	}
 	// S6: 任务级 env 透传（rework 续作断点数据）
 	baseEnv = append(baseEnv, task.ExtraEnv...)
-	cmd.Env = append(baseEnv, "ZERG_LOG_DIR=/tmp/zerg-ca-logs")
+	// 2026-09-18 硬编码治理批 D: 原写死 "ZERG_LOG_DIR=/tmp/zerg-ca-logs" → 走 statepath.CAEventLogRoot()
+	cmd.Env = append(baseEnv, caLogEnv())
 	// v2.5.5 任务目录唯一化（2026-08-20 设计）: 注入任务目录——CA 写报告到任务目录（不共享）
 	cmd.Env = append(cmd.Env, "ZERG_TASK_DIR="+taskDir)
 
