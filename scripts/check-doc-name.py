@@ -56,7 +56,10 @@
 
 退出码（三档）
     0 = 全绿（告警不阻断）· 1 = 有不合规项（只报告不改）·
-    2 = 不给结论（用法错 / 目标缺件 / 扫描域为空 / 例外表条数不符 / 自检未过）
+    2 = 不给结论（用法错 / 目标缺件 / 扫描域为空 / **默认文档面缺件（无 docs/ 或 docs/ 下 0 篇 md）** /
+        例外表条数不符 / 自检未过）
+    ★ 公开树侧（无 `docs/`，开发文档分家后正式面未进公开树）：本 scope = **BLOCKED、不适用**
+      （2026-09-19 新增前置缺件闸；私有树正常判，判据一字未改）。
 """
 import argparse
 import json
@@ -746,6 +749,17 @@ def self_test(script_path, meta=True):
     ok &= case("缺件 · 目标路径不存在", 2, ["--target", os.path.join(tmp, "no-such")],
                must_contain=["不给结论"])
     ok &= case("缺件 · 扫描域为空", 2, ["--target", empty], must_contain=["不给结论"])
+    # ⑥′ 前置缺件闸（2026-09-19 分家后新增）：默认文档面缺件/空转 ⇒ 必 rc=2，**不是假绿**
+    nodocs = os.path.join(tmp, "nodocs")
+    _write(os.path.join(nodocs, "scripts", "x.py"), "x\n")
+    ok &= case("缺件 · 默认文档面 docs/ 不存在 ⇒ BLOCKED（不是假绿）", 2,
+               ["--repo-root", nodocs, "--scope", "repo"],
+               must_contain=["不给结论", os.path.join(nodocs, "docs")])
+    emptydocs = os.path.join(tmp, "emptydocs")
+    _write(os.path.join(emptydocs, "docs", "readme.txt"), "x\n")
+    ok &= case("缺件 · docs/ 下 0 篇 md（无可扫内容）⇒ BLOCKED（不是假绿）", 2,
+               ["--repo-root", emptydocs, "--scope", "repo"],
+               must_contain=["不给结论", "0 篇 md"])
     # ⑦ 例外表条数自证（A 档 20 条 · B 档 3 条 · C 档 7 条 · D 档 2 条）
     rc, out = _sub(script_path, "--list-exempt")
     cnt_ok = (rc == 0 and ("A 档 · 《清单-命名规范化》已登记的「不改」条目：20 条（期望 20）" in out)
@@ -816,6 +830,7 @@ def self_test(script_path, meta=True):
                 + 1                                 # ④′ 同基名 B03 豁免
                 + 1                                 # ⑤ 前缀混用只告警
                 + 2                                 # ⑥ 缺件 ×2（目标 / 空扫描域）
+                + 2                                 # ⑥′ 前置缺件闸 ×2（默认文档面缺 docs/ / 0 篇 md）
                 + 1                                 # ⑦ 例外表条数自证
                 + 1                                 # ⑧ 只报告不改
                 + 4                                 # ⑨ N6 有牙 · ⑩ --scope ×2 · ⑪ 用法错
@@ -878,10 +893,31 @@ def main(argv):
         print("BLOCKED：仓根不是目录 ⇒ 不给结论：%s" % root)
         return 2
     targets = [os.path.abspath(x) for x in (list(args.targets) + list(args.target))]
+    explicit = bool(targets)
     if not targets and args.scope == "docs":
         targets = [os.path.join(root, "docs")]
     if not targets:
         targets = [root]
+    # ── 前置缺件闸（2026-09-19 开发文档分家后新增）：缺 `docs/` 或 docs/ 下无可扫内容 ⇒
+    #   rc=2 **不给结论**（BLOCKED）—— 判成 rc=0 就是**假绿**（实测：仿真公开树里
+    #   `--scope repo` 扫全仓 127 项、docs 面 0 篇 md 却报 rc=0）。本门判据面 = 文档面
+    #   （《清单》§0 的扫描域以 docs 为主）⇒ 文档面整个不在时判据不可判，缺件不许静默降级。
+    #   ★ 只在**默认文档面**上闸（未显式给 --target/位置参数）：显式点名目标的口径一字未改
+    #     （目标缺件仍走下面的「目标不存在 ⇒ 不给结论」）。
+    if not explicit:
+        doc_root = os.path.join(root, "docs")
+        if not os.path.isdir(doc_root):
+            print("BLOCKED：文档面根不存在（缺件不许静默降级）⇒ 不给结论：%s" % doc_root)
+            print("  口径：公开树侧（无 docs/）本 scope 为 BLOCKED、不适用；私有树正常判（判据一字未改）。")
+            return 2
+        n_md = 0
+        for _dp, dns, fns in os.walk(doc_root):
+            dns[:] = [d for d in dns if d not in EXCL_DIRS and not d.startswith(".")]
+            n_md += len([f for f in fns if f.endswith(".md") and not f.startswith(".")])
+        if n_md == 0:
+            print("BLOCKED：docs/ 下扫到 0 篇 md（无可扫内容 ⇒ 空转）⇒ 不给结论：%s" % doc_root)
+            print("  口径：公开树侧（无 docs/）本 scope 为 BLOCKED、不适用；私有树正常判（判据一字未改）。")
+            return 2
     for t in targets:
         if not os.path.exists(t):
             print("BLOCKED：目标不存在 ⇒ 不给结论：%s" % t)

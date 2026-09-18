@@ -511,10 +511,40 @@ class Result:
 
 # ─────────────────────────── D1 ───────────────────────────
 
+def corpus_missing_roots(tree):
+    """配置里的**语料根**在仓内不存在 / 扫不到 md 的那些 —— 缺件必须**点名路径**，不许只说「空转」。
+
+    为什么（2026-09-19 开发文档分家）：公开树侧没有 `docs/`（正式面未进公开树）⇒ 语料根扫到
+    0 篇 md。此时 rc=2 的原文只说「语料清单为空」，看不出**缺的是哪个根**（人得自己去猜是哪棵
+    树没进公开树）。口径一字未改（仍是 rc=2 不给结论），只是把缺件路径打出来。
+    """
+    out = []
+    for c in (tree.cfg.get("corpus") or []):
+        d = os.path.join(tree.repo, c)
+        if not os.path.isdir(d):
+            out.append("%s（目录不存在）" % c)
+            continue
+        n = 0
+        for _dp, dns, fns in os.walk(d):
+            dns[:] = [x for x in dns if x not in (tree.cfg.get("hard_exclude") or ())]
+            n += len([f for f in fns if f.endswith(".md") and not f.startswith(".")])
+        if n == 0:
+            out.append("%s（0 篇 md）" % c)
+    return out
+
+
+def corpus_empty_msg(tree):
+    """空语料的统一报错串（含缺件路径）。"""
+    miss = corpus_missing_roots(tree)
+    return ("语料清单为空（扫到 0 篇 md）⇒ 空转，不给结论；缺件：%s"
+            "（公开树侧无 docs/ ⇒ 本 scope 为 BLOCKED、不适用；私有树正常判）"
+            % (' · '.join(miss) if miss else '—'))
+
+
 def gate_d1(tree, args):
     r = Result("d1", tree)
     if not tree.corpus:
-        r.errors.append("语料清单为空（扫到 0 篇 md）⇒ 空转，不给结论")
+        r.errors.append(corpus_empty_msg(tree))
         return r
     r.counted("语料篇数", len(tree.corpus))
     for rel in tree.corpus:
@@ -660,7 +690,7 @@ def gate_d2(tree, args):
         r.errors.append("解析基准集配置缺失（config.base_roots 空）⇒ 判据不可判")
         return r
     if not tree.corpus:
-        r.errors.append("语料清单为空（扫到 0 篇 md）⇒ 空转，不给结论")
+        r.errors.append(corpus_empty_msg(tree))
         return r
     r.counted("语料篇数", len(tree.corpus))
     suffix_on = bool(tree.cfg.get("d2", {}).get("resolve_package_relative", True))
@@ -1168,6 +1198,14 @@ def cmd_self_test(args):
     t = Tree(r3, base_cfg(r3))
     res = gate_d1(t, args)
     check("缺件（空语料）rc=2", res.rc() == 2, res.rc())
+    # 前置缺件闸：语料根**整个不存在**（公开树侧没有 docs/）⇒ 仍 rc=2，且报错要**点名缺件路径**
+    r3b = os.path.join(tmp, "d1nodocs")
+    os.makedirs(r3b, exist_ok=True)
+    t = Tree(r3b, base_cfg(r3b))
+    res = gate_d1(t, args)
+    check("缺件（语料根 docs/ 不存在 ⇒ 公开树侧）rc=2 且点名缺件路径",
+          res.rc() == 2 and any("缺件" in e and "docs" in e for e in res.errors),
+          " · ".join(res.errors))
 
     # ---------- D2 ----------
     print("[D2] 三格")
@@ -1198,6 +1236,14 @@ def cmd_self_test(args):
     t = Tree(r3, c)
     res = gate_d2(t, args)
     check("缺件（基准集缺失）rc=2", res.rc() == 2, (res.rc(), res.errors))
+    # 前置缺件闸：语料根**整个不存在**（公开树侧没有 docs/）⇒ 仍 rc=2，且报错要**点名缺件路径**
+    r4 = os.path.join(tmp, "d2nodocs")
+    os.makedirs(r4, exist_ok=True)
+    t = Tree(r4, base_cfg(r4))
+    res = gate_d2(t, args)
+    check("缺件（语料根 docs/ 不存在 ⇒ 公开树侧）rc=2 且点名缺件路径",
+          res.rc() == 2 and any("缺件" in e and "docs" in e for e in res.errors),
+          " · ".join(res.errors))
 
     # ---------- D3 ----------
     print("[D3] 三格")
