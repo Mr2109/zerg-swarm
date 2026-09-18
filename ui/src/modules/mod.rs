@@ -258,6 +258,18 @@ pub fn build_registry() -> ModuleRegistry {
 /// 状态灯 = 「主控在线」父箱（设计 §4.1：第一个一级项就是 ● 主控在线，可点）
 const STATUS_GROUP_ID: &str = "main-online";
 
+/// 顶栏的三个动作回调（2026-09-18 clippy `too_many_arguments`：8 个参数 ⇒ 6 个）。
+///
+/// 只改参数个数与可读性：三个回调的**调用时机与语义一字未改**（点 ➕ / 切语言 / 切 HUD）。
+pub struct NavBarHooks<'a> {
+    /// 点「English」/「中文」——切语言
+    pub on_switch_locale: &'a mut dyn FnMut(),
+    /// 点 ➕——开模块管理面板
+    pub on_open_manager: &'a mut dyn FnMut(),
+    /// 点 HUD 开关——切 HUD 显隐
+    pub on_toggle_hud: &'a mut dyn FnMut(),
+}
+
 /// 渲染顶部导航栏（船桥——**两段式**：一级 + 二级页签；Mr2109 2026-09-13）
 ///
 /// 布局（2026-09-13 大调动后）: [● 主控在线] [💬 对话] [📋 任务] [💻 模型] [📦 资源库] [🐛 虫茧] [➕] … [English] [👤 Mr2109]
@@ -272,11 +284,9 @@ pub fn top_nav_bar(
     registry: &mut ModuleRegistry,
     online: bool,
     locale: &str,
-    on_switch_locale: &mut dyn FnMut(),
-    on_open_manager: &mut dyn FnMut(),
     // v2.5.7 HUD 开关（English 旁图标——Mr2109: ⌘H 是系统键冲突——改显式按钮）
     hud_on: bool,
-    on_toggle_hud: &mut dyn FnMut(),
+    hooks: &mut NavBarHooks<'_>,
 ) {
     // 当前**有效**箱（父箱 ⇒ 记忆子箱 / order 最小子箱）——二级页签高亮与父箱归属都用它。
     let remembered = registry
@@ -353,7 +363,7 @@ pub fn top_nav_bar(
                 .on_hover_text(t!("modules.open_tip"))
                 .clicked()
             {
-                on_open_manager();
+                (hooks.on_open_manager)();
             }
             ui.separator();
 
@@ -379,17 +389,17 @@ pub fn top_nav_bar(
                         t!("hud.tip_off")
                     });
                 if hud_btn.clicked() {
-                    on_toggle_hud();
+                    (hooks.on_toggle_hud)();
                 }
                 ui.separator();
                 // 语言切换（多语言——中文/English）
                 if locale == "zh-CN" {
                     if ui.button("English").clicked() {
-                        on_switch_locale();
+                        (hooks.on_switch_locale)();
                     }
                 } else {
                     if ui.button("中文").clicked() {
-                        on_switch_locale();
+                        (hooks.on_switch_locale)();
                     }
                 }
             });
@@ -437,16 +447,12 @@ mod nav_tests {
         // ① 顶级箱（chat）——无二级页签行
         reg.active = "chat".to_string();
         let mut out = ctx.run_ui(Default::default(), |ui| {
-            top_nav_bar(
-                ui,
-                &mut reg,
-                true,
-                "zh-CN",
-                &mut (|| {}),
-                &mut (|| {}),
-                false,
-                &mut (|| {}),
-            );
+            let mut hooks = NavBarHooks {
+                on_switch_locale: &mut || {},
+                on_open_manager: &mut || {},
+                on_toggle_hud: &mut || {},
+            };
+            top_nav_bar(ui, &mut reg, true, "zh-CN", false, &mut hooks);
         });
         out.textures_delta.clear();
 
@@ -454,16 +460,12 @@ mod nav_tests {
         reg.active = "main-online".to_string();
         for online in [true, false] {
             let mut out = ctx.run_ui(Default::default(), |ui| {
-                top_nav_bar(
-                    ui,
-                    &mut reg,
-                    online,
-                    "zh-CN",
-                    &mut (|| {}),
-                    &mut (|| {}),
-                    true,
-                    &mut (|| {}),
-                );
+                let mut hooks = NavBarHooks {
+                    on_switch_locale: &mut || {},
+                    on_open_manager: &mut || {},
+                    on_toggle_hud: &mut || {},
+                };
+                top_nav_bar(ui, &mut reg, online, "zh-CN", true, &mut hooks);
             });
             out.textures_delta.clear();
         }
@@ -477,16 +479,12 @@ mod nav_tests {
         }
         assert!(reg.children_of("main-online").is_empty());
         let mut out = ctx.run_ui(Default::default(), |ui| {
-            top_nav_bar(
-                ui,
-                &mut reg,
-                true,
-                "en",
-                &mut (|| {}),
-                &mut (|| {}),
-                false,
-                &mut (|| {}),
-            );
+            let mut hooks = NavBarHooks {
+                on_switch_locale: &mut || {},
+                on_open_manager: &mut || {},
+                on_toggle_hud: &mut || {},
+            };
+            top_nav_bar(ui, &mut reg, true, "en", false, &mut hooks);
         });
         out.textures_delta.clear();
 

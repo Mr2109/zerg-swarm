@@ -289,6 +289,11 @@ pub struct TaskInfo {
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct TaskListResp {
     pub tasks: Option<Vec<TaskInfo>>,
+    // 未接线（计划：任务页/状态条直接显示后端给的「总数」，不再用本地 tasks.len() 推断）；
+    // 如需即接线，见同族已连线点 app.rs 的任务轮询（`fetch_tasks_blocking` 的两个调用点）。
+    // 保留理由：它是**后端应答契约**的一部分（`/api/tasks` 已在 Respond 里带 count，
+    // serde 反序列化在用）——删掉等于把契约字段砍掉，而当前无读点仅因 UI 尚未接上。
+    #[allow(dead_code)]
     pub count: Option<i64>,
 }
 
@@ -853,6 +858,11 @@ pub async fn update_adapter_opts_blocking(
 }
 
 /// 异步拉取任务（tokio spawn——结果存 SharedResult）
+// 未接线（计划：任务列表——本函数是给 UI 用的 `SharedResult` 槽版本，接上即可与对话模块同一套轮询）；
+// 如需即接线，见同族已连线点 app.rs 现有任务轮询块（`fetch_tasks_blocking` 调用点）与同族的 `fetch_model_registry_async`（消费者 modules/model_registry.rs:70）。
+// 保留理由：API 客户端已整批写好（与已连线的 fetch_chat_*/fetch_model_registry_async 同源同款），
+// 删了等于把「还没接上的一根线」连同线一起砍掉；接线成本经核为「重写 app.rs 轮询形态」⇒ 本轮不动。
+#[allow(dead_code)]
 pub fn fetch_tasks_async() -> SharedResult<Vec<TaskInfo>> {
     let out: SharedResult<Vec<TaskInfo>> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
@@ -875,6 +885,11 @@ pub fn fetch_tasks_async() -> SharedResult<Vec<TaskInfo>> {
 }
 
 /// 异步拉取 git 状态
+// 未接线（计划：Git 状态——本函数是给 UI 用的 `SharedResult` 槽版本，接上即可与对话模块同一套轮询）；
+// 如需即接线，见同族已连线点 app.rs 现有 `fetch_git_status_blocking().await` 轮询块（同族的 `fetch_model_registry_async` 见 modules/model_registry.rs:70）。
+// 保留理由：API 客户端已整批写好（与已连线的 fetch_chat_*/fetch_model_registry_async 同源同款），
+// 删了等于把「还没接上的一根线」连同线一起砍掉；接线成本经核为「重写 app.rs 轮询形态」⇒ 本轮不动。
+#[allow(dead_code)]
 pub fn fetch_git_status_async() -> SharedResult<GitStatusResp> {
     let out: SharedResult<GitStatusResp> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
@@ -893,6 +908,11 @@ pub fn fetch_git_status_async() -> SharedResult<GitStatusResp> {
 }
 
 /// 异步拉取任务详情（含 trace）
+// 未接线（计划：任务详情（含 trace）——本函数是给 UI 用的 `SharedResult` 槽版本，接上即可与对话模块同一套轮询）；
+// 如需即接线，见同族已连线点 app.rs 现有 `fetch_task_detail_blocking(id).await` 的两个调用点（点开任务时拉详情）。
+// 保留理由：API 客户端已整批写好（与已连线的 fetch_chat_*/fetch_model_registry_async 同源同款），
+// 删了等于把「还没接上的一根线」连同线一起砍掉；接线成本经核为「重写 app.rs 轮询形态」⇒ 本轮不动。
+#[allow(dead_code)]
 pub fn fetch_task_detail_async(id: String) -> SharedResult<Value> {
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
@@ -905,6 +925,11 @@ pub fn fetch_task_detail_async(id: String) -> SharedResult<Value> {
 }
 
 /// 异步拉取主控日志
+// 未接线（计划：主控日志尾部——本函数是给 UI 用的 `SharedResult` 槽版本，接上即可与对话模块同一套轮询）；
+// 如需即接线，见同族已连线点 app.rs 现有 `fetch_logs_blocking().await` 轮询块（日志页 5s 刷新）。
+// 保留理由：API 客户端已整批写好（与已连线的 fetch_chat_*/fetch_model_registry_async 同源同款），
+// 删了等于把「还没接上的一根线」连同线一起砍掉；接线成本经核为「重写 app.rs 轮询形态」⇒ 本轮不动。
+#[allow(dead_code)]
 pub fn fetch_main_logs_async() -> SharedResult<Vec<String>> {
     let out: SharedResult<Vec<String>> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
@@ -928,6 +953,11 @@ pub fn fetch_main_logs_async() -> SharedResult<Vec<String>> {
 }
 
 /// 异步拉取文档目录
+// 未接线（计划：文档目录清单——本函数是给 UI 用的 `SharedResult` 槽版本，接上即可与对话模块同一套轮询）；
+// 如需即接线，见同族已连线点 app.rs / modules 现有 `fetch_docs_root_blocking(..)` 调用点（文档页目录树）。
+// 保留理由：API 客户端已整批写好（与已连线的 fetch_chat_*/fetch_model_registry_async 同源同款），
+// 删了等于把「还没接上的一根线」连同线一起砍掉；接线成本经核为「重写 app.rs 轮询形态」⇒ 本轮不动。
+#[allow(dead_code)]
 pub fn fetch_docs_async() -> SharedResult<Vec<String>> {
     let out: SharedResult<Vec<String>> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
@@ -963,6 +993,11 @@ pub fn fetch_model_registry_async() -> SharedResult<Value> {
 }
 
 /// 异步拉取资源库（模型）
+// 未接线（计划：资源库（模型/工具）——本函数是给 UI 用的 `SharedResult` 槽版本，接上即可与对话模块同一套轮询）；
+// 如需即接线，见同族已连线点 app.rs 现有 `fetch_resources_blocking(rt).await` 的三个调用点（资源库轮询 + 应用栅格）。
+// 保留理由：API 客户端已整批写好（与已连线的 fetch_chat_*/fetch_model_registry_async 同源同款），
+// 删了等于把「还没接上的一根线」连同线一起砍掉；接线成本经核为「重写 app.rs 轮询形态」⇒ 本轮不动。
+#[allow(dead_code)]
 pub fn fetch_resources_async(res_type: String) -> SharedResult<Value> {
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
@@ -1031,6 +1066,10 @@ pub struct ChatStreamState {
     pub reasoning: String,
     // P4-35 工具执行状态（tool_start 事件——UI 显示执行中）
     pub tool_name: Option<String>,
+    // 未接线（计划：多工具回合在流式气泡上显示「第 N 个工具」，当前只显示 tool_name）；
+    // 如需即接线，见同族已连线点 chat_view.rs 的流式气泡渲染（`stream_tool`/`stream_tool_elapsed` 的读点）。
+    // 保留理由：**观测面**——SSE 事件里已经带这个量，删字段等于把可观测性砍一格。
+    #[allow(dead_code)]
     pub tool_count: usize,
     pub compacting: bool,
     pub tool_elapsed: usize,
@@ -1298,6 +1337,11 @@ pub fn delete_chat_session_async(session_id: String) -> SharedResult<bool> {
 }
 
 /// 搜索对话（异步）
+// 未接线（计划：对话内搜索（后端 /api/chat/search）——本函数是给 UI 用的 `SharedResult` 槽版本，接上即可与对话模块同一套轮询）；
+// 如需即接线，见同族已连线点 chat_view.rs 已连线的 `api::chat_search_async(q)`（搜索框去抖调用点，chat_view.rs:808）。
+// 保留理由：API 客户端已整批写好（与已连线的 fetch_chat_*/fetch_model_registry_async 同源同款），
+// 删了等于把「还没接上的一根线」连同线一起砍掉；接线成本经核为「重写 app.rs 轮询形态」⇒ 本轮不动。
+#[allow(dead_code)]
 pub fn search_chat_async(query: String) -> SharedResult<Value> {
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();

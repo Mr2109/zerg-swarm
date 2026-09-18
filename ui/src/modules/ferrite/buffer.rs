@@ -76,11 +76,6 @@ impl TextBuffer {
         self.rope.remove(s..e);
     }
 
-    /// 全量文本（预览/保存用）
-    pub fn to_string(&self) -> String {
-        self.rope.to_string()
-    }
-
     /// 行数→字符位置（M37：越界行 debug 断言，release 夹取到最后一行）
     pub fn line_to_char(&self, line: usize) -> usize {
         debug_assert!(
@@ -132,5 +127,16 @@ impl TextBuffer {
         );
         let line = line.min(self.line_count().saturating_sub(1));
         self.rope.line(line).to_string()
+    }
+}
+
+/// 全量文本（预览/保存用）。
+///
+/// 2026-09-18 clippy（inherent_to_string）：原来这里是固有方法 `fn to_string(&self) -> String`，
+/// 改成 `Display` —— 调用侧 `.to_string()` / `format!("{}", buf)` / `String::from` 一字不用改
+/// （`ToString` 由 `Display` 自动获得），且与 `Debug` 一致地走标准格式化协议。
+impl std::fmt::Display for TextBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.rope.to_string())
     }
 }

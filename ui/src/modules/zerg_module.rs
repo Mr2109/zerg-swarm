@@ -24,7 +24,11 @@ pub struct ModuleManifest {
     pub desc_key: &'static str,
     /// 是否核心箱（船体箱——不可禁用——任务体系+基础设施）
     pub is_core: bool,
+    // 未接线（计划：模块管理面板显示每个箱的版本（Ferrite 升级 ⇒ 版本变，船体无感））；
+    // 如需即接线，见同族已连线点 `ModuleManifest` 其余字段的渲染处（modules/mod.rs 的 `build_registry` 各箱登记 + app.rs 模块管理面板）。
+    // 保留理由：**铭牌契约字段**——各箱已经在填（登记表里逐箱写死），删了要连带改全部登记点。
     /// 版本（箱内容版本——Ferrite 升级=版本变——船体无感）
+    #[allow(dead_code)]
     pub version: &'static str,
     /// **父箱 id**（`None` = 一级/顶级箱）。父箱必须是"容器式"箱（`is_group: true`）且不可卸载。
     /// 语义：本箱挂在哪个父箱的二级页签下；`None` ⇒ 出现在顶栏一级（`top_level()`）。
@@ -43,6 +47,10 @@ pub struct ModuleManifest {
 /// 虫茧标准接口——任何独立应用实现它 = 一个虫茧
 ///
 /// 借鉴 Cordis：贡献（render/ai_hook）+ 可逆生命周期（on_load/on_unload 成对）
+// 未接线（计划：C9 的模块装载统一走本契约——贡献（render/ai_hook）+ 可逆生命周期（on_load/on_unload））；
+// 如需即接线，见同族已连线点 `modules::cocoon::Cocoon`（当前实际装载走的是茧契约，本 trait 是下一版的统一口）。
+// 保留理由：**模块契约的活口**——用户口径「未接线的功能面保留而非删弃」。
+#[allow(dead_code)]
 pub trait ZergModule {
     /// 吊装元数据
     fn manifest(&self) -> ModuleManifest;
