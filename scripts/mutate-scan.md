@@ -53,7 +53,7 @@ python3 scripts/mutate-scan --list-reasons | --help | --version
 | 维3 类型 | `--only-types a,b`（11 个开关**全部显式写死**） | 只开 `invert-negatives` ⇒ **2 点** |
 | 维4 逐点 | `--point <file>:<line>:<column>:<TYPE>` | 断言**可跑集合 == 1**，打印「**已收窄到唯一变异点**」；收不到 ⇒ `BLOCKED_POINT_AMBIGUOUS` / `BLOCKED_POINT_NOT_FOUND`（**明说收不到，不猜**） |
 
-## 退出码三档 + 原因码（与 `edit-assert` **完全相同**）
+## 退出码三档 + 原因码（三档**语义**与 `edit-assert` 相同；**原因码各自一套、不通用**）
 
 | rc | 含义 | 原因码（节选；全集见 `--list-reasons`，37 条） |
 |---|---|---|
@@ -108,9 +108,10 @@ GOBIN=~/.zerg/tools/bin GOPATH=~/.zerg/tools/gopath go install github.com/avito-
 ${ZERG_STATE_DIR:-$HOME/.zerg/state}/edit-assert-ledger.jsonl     # 文件名不含日期（日期在行内 ts）
 ```
 路径解析**逐字抄** `scripts/chat-harness.py:30`；**不许静默退化到 `/tmp`**（显式给才允许，且告警）。
-字段：`ts · run_id · phase(begin|end) · gate_id=mutate-scan · actor · role(author|verifier) ·
-spec_fingerprint(四元组多集摘要) · manifest_sha256 · tool+version+binary sha256 · pkg/target/point ·
-diff/only_types/exclude_files · baseline(cmd,rc) · pre_sha/post_sha（前像/后像）· cmd/rc · status/reason_code · sandbox_root`。
+字段（**以代码为真源**，2026-09-18 逐字段核过）：`ts · run_id · phase(begin|end) · gate_id=mutate-scan · actor · role(author|verifier) · pid ·
+spec_fingerprint(四元组多集摘要) · manifest_sha256 · lang · tool + tool_version + tool_binary_sha256 + tool_path ·
+repo · pkg / target(`target_abs`) / point(`points`) · diff / only_types / exclude_files · clock ·
+baseline(cmd,rc) · pre_sha / post_sha（前像/后像）· cmd + **cmd_rc**（不是 `rc`）· status / reason_code · elapsed_s · sandbox_root`。
 **启动做未收尾检测（J6/C2）**：有 `begin` 无 `end` ⇒ `rc=2 BLOCKED_UNFINISHED` + 打印残留路径与**当前 sha256**
 （与前像是否一致）。★ 门内正常失败也会补一行 `end`（`ABORTED` + 原因码），只有**进程被杀**才真留 `begin` 悬空。
 
@@ -122,4 +123,5 @@ diff/only_types/exclude_files · baseline(cmd,rc) · pre_sha/post_sha（前像/�
 - **git 只读**（B4）· 不改用户工作树（B1）· 不碰 `~/.zerg/state`（除台账那一份）。
 - **墙钟符自带**（C7）：本机**没有** `timeout`；`perl -e 'alarm shift; exec @ARGV' N -- cmd`（设计稿原样**带 `--`**）
   实测**什么都不跑却退 0** ⇒ 门内不用它，一律 python `subprocess` + 进程组 SIGKILL。
+  **默认上界 `--clock` = 900 秒**（`--help` / 代码现读；腿二 `edit-assert` 默认 60）；超时 ⇒ rc=2 `BLOCKED_TIMEOUT` + 先复原再报。
 - **没挂进 `precommit-gates.sh`**：Q14（三档 rc 与门禁 `rc`/`empty` 两模式不相容）**未选型** ⇒ 本轮不改门禁，也不许挂成尾部软检查（B8）。

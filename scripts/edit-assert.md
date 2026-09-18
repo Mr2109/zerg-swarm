@@ -51,7 +51,8 @@ python3 scripts/edit-assert --neg-control=<断言名>    # 负控：成对 + 点
 | **2** | **不给结论**（不是红） | `BLOCKED_MISSING_TOOL` · `BLOCKED_MISSING_TARGET` · `BLOCKED_UNREGISTERED_TOOL` · `BLOCKED_UNPARSABLE` · `BLOCKED_NO_PARSER` · `BLOCKED_RULE_SCOPE` · `BLOCKED_SCAN_UNPARSEABLE` · `BLOCKED_TIMEOUT` · `BLOCKED_UNFINISHED` · `BLOCKED_LEDGER_UNWRITABLE` · `BLOCKED_LEDGER_TMP` · `BLOCKED_LEDGER_CORRUPT` · `BLOCKED_WRITE_ABORTED` · `BLOCKED_USAGE` · `BLOCKED_SELFTEST` · `BLOCKED_NEGCONTROL_NAME` · `BLOCKED_NEGCONTROL_NOTOOTH` |
 
 不阻断但**不静默**：`WARN_RULE_FIELD` · `WARN_GIT_SKIPPED` · `WARN_LEDGER_TMP`。
-全集见 `--list-assertions`（每条带档位与含义）。
+全集见 `--list-assertions`（**原因码 33 条**：rc=0 六条 · rc=1 十条 · rc=2 十七条；每条带档位与含义；同页还给出**断言登记表 15 条** —— 负控点名的名字从这来）。
+★ 上面三档表按代码逐条核过（2026-09-18）：与 `--list-assertions` 的 33 条**一一对上**。
 
 ### 三态前置顺序（写死，顺序错会让原因码互串 —— D4 实测）
 
@@ -91,6 +92,7 @@ ${ZERG_STATE_DIR:-$HOME/.zerg/state}/edit-assert-ledger.jsonl     # 文件名不
 | 字段 | 含义 |
 |---|---|
 | `ts` · `run_id` · `phase` | 时间（行内）· 一组 begin/end 的关联 id · `begin`｜`end` |
+| `gate_id` | `edit-assert/<版本>`（与腿一 `mutate-scan` 共用同一个台账文件，靠它 + `role` 分辨） |
 | `actor` · `role` | 谁改的 · `author`｜`verifier`（verifier 行须带 `sandbox_root`） |
 | `target` · `rule` · `rule_sha256` | 目标绝对路径 · 规则文件 · 规则内容 sha256 |
 | `expect` · `expect_form` · `reason` | 期望值 · 形态（精确/唯一/集合/一组）· 期望值的理由 |
