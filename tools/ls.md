@@ -22,7 +22,7 @@
 | 版本 | 日期 | 改动 | 原因 |
 |---|---|---|---|
 | v1.0.0 | 2026-09-02 | 初始版本 | 工具资产化（版本号 + 履历——Mr2109 2026-09-02） |
-| v1.0.2 | 2026-09-08 | **目录概览升级**: 权限格式修复(标准 rwx/rwx/rwx——旧 drrrw--xxx 畸形)+摘要行+limit 截断引导+排序(dir 恒前/sort_by)+参数(dir_only/hidden/pattern/sort_by)+sort_by=time 时间列+symlink -> 目标 | 2026-09-08 实战: 权限串畸形实锤/120k token 上下文爆炸/.zerg 噪音(Mr2109拍板——设计-ls工具v1.0.2-目录概览升级-20260908.md) |
+| v1.0.2 | 2026-09-08 | **目录概览升级**: 权限格式修复(标准 rwx/rwx/rwx——旧 drrrw--xxx 畸形)+摘要行+limit 截断引导+排序(dir 恒前/sort_by)+参数(dir_only/hidden/pattern/sort_by)+sort_by=time 时间列+symlink -> 目标 | 2026-09-08 实战: 权限串畸形实锤/120k token 上下文爆炸/.zerg 噪音(Mr2109拍板——设计-ls-工具-v1.0.2-目录概览升级.md) |
 
 ## 使用统计
 

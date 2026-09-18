@@ -43,7 +43,7 @@ func TestGrepHidden(t *testing.T) {
 }
 
 // TestGrepKeepIndent — G4：命中行保留行首空白（不 TrimSpace），行号前缀格式仍为「路径:行号: 原文」
-// 设计依据：docs/01-设计/设计-grep工具升级-v1.0.1-20260917.md §2.1-3 与边界案例 B3。
+// 设计依据：docs/01-设计/设计-grep-工具升级-v1.0.1.md §2.1-3 与边界案例 B3。
 // 变异自证：把 exec.go 目录分支的 `fmt.Sprintf("%s:%d: %s", rel, i+1, line)` 改回
 // `strings.TrimSpace(line)` 时，本用例必须 FAIL（缩进丢失 ⇒ 正向断言与反向断言同时报错）。
 func TestGrepKeepIndent(t *testing.T) {

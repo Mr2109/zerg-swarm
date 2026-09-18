@@ -1,6 +1,6 @@
 // service_kind_test.go —— P1「服务类型互斥」的回归测试（llama xor ds4）。
 //
-// 设计依据：docs/01-设计/设计-子端服务切换与基线服务声明-20260914.md §7 S1/S2、§11 M6。
+// 设计依据：docs/01-设计/设计-子端服务切换与基线服务声明.md §7 S1/S2、§11 M6。
 // 覆盖两类断言：
 //  1. 纯函数 serviceKind / kindFromExecutable 的判定口径（含 cmd: 覆盖与未知可执行名）；
 //  2. evictOtherKindsLocked 的动作：异类可动作⇒卸下、同类⇒保留、
