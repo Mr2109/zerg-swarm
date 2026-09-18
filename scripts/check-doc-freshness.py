@@ -902,6 +902,38 @@ def _fill(s, repo, **kw):
     return s
 
 
+def alt_glob_targets(repo, alt_root, pats):
+    """仓外取源根的 glob ⇒ **仓相对（带 `../`）** 目标列表（2026-09-19 二次分家批2 加）。
+
+    口径与 `docs/site/export-and-build.sh` 的 `ZERG_DOCS_ALT` **同根同默认**（`alt_root` 默认 `../Zerg-内部文档`）：
+    **先仓内匹配**（调用方先跑仓内 glob）、仓内零命中才走本函数；两处都零命中 ⇒ 返回空表 ⇒ 调用方
+    按原口径「未声明产物 ⇒ 缺件，不给结论」rc=2（不假绿）。
+    只 walk 命中模式的**首段目录**（`项目文档/…` ⇒ 只走 `<alt_root>/项目文档`），避免扫整棵仓外树。
+    """
+    base = os.path.abspath(os.path.join(repo, alt_root))
+    if not os.path.isdir(base):
+        return []
+    tops = set()
+    for pat in pats:
+        seg = pat.split("/")[0]
+        if seg and not any(ch in seg for ch in "*?["):
+            tops.add(seg)
+    roots = [os.path.join(base, t) for t in sorted(tops)] if tops else [base]
+    out = []
+    for r in roots:
+        for dp, dns, fns in os.walk(r):
+            dns[:] = [d for d in dns if not d.startswith(".")]
+            rel = os.path.relpath(dp, base).replace(os.sep, "/")
+            rel = "" if rel == "." else rel + "/"
+            for fn in sorted(fns):
+                cand = rel + fn
+                for pat in pats:
+                    if fnmatch.fnmatch(cand, pat):
+                        out.append(posixpath.join(alt_root, cand))
+                        break
+    return sorted(set(out))
+
+
 def gate_d4(tree, args):
     r = Result("d4", tree)
     cfg = tree.cfg.get("d4", {})
@@ -921,6 +953,14 @@ def gate_d4(tree, args):
                 for p in tree.files:
                     if fnmatch.fnmatch(p, pat):
                         targets.append(p)
+            #   ★ 2026-09-19 二次分家批2（生成器靶双认 · 先仓内、缺则仓外取源根）：仓内零命中 ⇒ 试
+            #     `alt_root`（默认 `../Zerg-内部文档`，与 export-and-build.sh 的 `ZERG_DOCS_ALT` 同根同默认）
+            #     下的 `targets_glob_alt`（相对 alt_root 的路径）。**两处都零命中 ⇒ 不补 targets ⇒**
+            #     照原口径「未声明产物…⇒ 缺件，不给结论」rc=2（不假绿）。两棵都在（批3 的 `cp -a` 窗口）
+            #     ⇒ 只判仓内那批（仓内先匹配，不双计）。
+            if not targets and g.get("targets_glob_alt"):
+                targets += alt_glob_targets(tree.repo, g.get("alt_root", "../Zerg-内部文档"),
+                                            g["targets_glob_alt"])
         elif g.get("output"):
             targets.append(g["output"])
         # 缺件判定
