@@ -66,7 +66,9 @@ func NewExecContext(workDir string) *ExecContext {
 		}
 	}
 	// bash v1.0.1: 溢出落盘目录白名单（超长输出 spill——模型 read 可续读）
-	ec.ExtraAllowDirs = append(ec.ExtraAllowDirs, BashOverflowDir)
+	// 2026-09-18: 写落点由 statepath 派生（BashOverflowDir()）；旧 /tmp/zerg-bash-overflow
+	// 若存在则作为**只读**入口保留（老溢出文件仍可续读；永不写入旧目录）
+	ec.ExtraAllowDirs = append(ec.ExtraAllowDirs, bashOverflowAllowDirs()...)
 	return ec
 }
 

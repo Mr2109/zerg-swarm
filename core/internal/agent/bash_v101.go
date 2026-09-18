@@ -17,15 +17,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"github.com/Mr2109/zerg-swarm/core/internal/toolobs"
 )
 
@@ -34,14 +37,72 @@ const (
 	bashOutLimit  = 6000 // bash 默认输出上限（v1.0.0 16000 → 6000——弱模型防淹没）
 	bashHeadLimit = 2000 // 头部保留
 	bashTailLimit = 4000 // 尾部保留（错误/日志终点常在尾）
-	// 溢出落盘目录（read 可续读——NewExecContext 统一加入 ExtraAllowDirs）
-	BashOverflowDir = "/tmp/zerg-bash-overflow"
+
+	// bashOverflowDirName 溢出落盘目录在统一状态目录下的目录名。
+	bashOverflowDirName = "zerg-bash-overflow"
+	// bashOverflowLegacyDefaultDir 旧硬编码落点字面量（2026-09-06 起写死 const BashOverflowDir）。
+	// 只作**迁移兼容的只读来源**：旧目录仍在访问白名单里（旧溢出文件还能被 read 续读）；
+	// 不删、不改、**永不再写入**。
+	bashOverflowLegacyDefaultDir = "/tmp/zerg-bash-overflow"
 )
+
+// legacyBashOverflowDir 旧溢出目录（包级变量 = 上面的字面量；用例/测试进程隔离可切换）。
+var legacyBashOverflowDir = bashOverflowLegacyDefaultDir
+
+// bashOverflowDirOverride 显式覆盖（测试隔离）：非空 ⇒ 写/白名单都用它，且不复旧目录。
+var bashOverflowDirOverride = ""
+
+// BashOverflowDir 溢出落盘目录（2026-09-18 修 /tmp 硬编码——口径同 api/tasks_persist.go）。
+//
+//	原写死 const BashOverflowDir = "/tmp/zerg-bash-overflow" —— macOS 重启 /tmp 即清、
+//	tmp_cleaner 3 天未访问即删（溢出原文丢）；多实例还共用同一目录。
+//	改为 statepath 统一状态目录派生（ZERG_STATE_DIR → ~/.zerg/state/zerg-bash-overflow）；
+//	新目录不存在则首次使用自动创建（bashSpillDir）。
+//
+// 由常量改为函数：常量无法按 ZERG_STATE_DIR 派生，且测试需要可覆盖。
+func BashOverflowDir() string {
+	if p := strings.TrimSpace(bashOverflowDirOverride); p != "" {
+		return p
+	}
+	return statepath.File(bashOverflowDirName)
+}
+
+// bashOverflowAllowDirs 溢出目录的访问白名单（NewExecContext 注入 ExtraAllowDirs——模型 read 续读）。
+// 第一个永远是写落点（统一状态目录派生）；旧 /tmp/zerg-bash-overflow 若存在 ⇒ 追加为**只读**入口。
+// 为什么目录类保留旧目录（与文件类「新在则旧完全不看」的差异，理由写在这）:
+//
+//	文件的迁移兼容是「读旧内容一次」（内容会夹除，故新在则必须不看旧）；
+//	目录类没有「读内容」这一步——这里是访问**许可**，不夹除任何内容。
+//	去掉旧目录 = 用过旧版本留下的溢出文件从此读不了（真回归）；保留它只是多一条只读白名单前缀，
+//	写路径永远只走新目录（永不写旧目录）。显式覆盖（测试隔离）⇒ 不追加旧目录。
+func bashOverflowAllowDirs() []string {
+	writeDir := BashOverflowDir()
+	dirs := []string{writeDir}
+	if strings.TrimSpace(bashOverflowDirOverride) != "" {
+		return dirs // 显式覆盖 ⇒ 不复旧（覆盖即「已指定唯一来源」）
+	}
+	legacy := strings.TrimSpace(legacyBashOverflowDir)
+	if legacy == "" || legacy == writeDir {
+		return dirs
+	}
+	if st, err := os.Stat(legacy); err != nil || !st.IsDir() {
+		return dirs // 无旧目录——首次运行
+	}
+	// 本函数每次 NewExecContext（每个工具调用/任务）都会跑——迁移提示只喊一次，防日志刷屏
+	bashOverflowLegacyNoticeOnce.Do(func() {
+		log.Printf("📜 bash 溢出目录迁移兼容: 旧 %s 保留只读（写入只落 %s；旧目录不删不改）\n", legacy, writeDir)
+	})
+	return append(dirs, legacy)
+}
+
+// bashOverflowLegacyNoticeOnce 旧目录只读兼容提示（进程内一次）。
+var bashOverflowLegacyNoticeOnce sync.Once
 
 // bashSpillDir — 返回溢出目录并确保存在
 func bashSpillDir() string {
-	os.MkdirAll(BashOverflowDir, 0o755)
-	return BashOverflowDir
+	dir := BashOverflowDir()
+	os.MkdirAll(dir, 0o755)
+	return dir
 }
 
 // spillBashOutput — 超长/二进制输出全量落盘，返回文件路径

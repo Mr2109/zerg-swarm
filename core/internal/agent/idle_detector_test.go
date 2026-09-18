@@ -45,8 +45,9 @@ func TestIdleDetector_ExternalBusy(t *testing.T) {
 // TestIdleDetector_Cooldown — 冷却期内不重复触发同类型（不同类型可触发）
 func TestIdleDetector_Cooldown(t *testing.T) {
 	dir := t.TempDir()
-	// 清持久化状态（防上次运行污染——/tmp/zerg-idle-state.json）
-	os.Remove(idleStateFile)
+	// 2026-09-18 隔离（口径同 tasks_persist 迁移用例）: 断点状态切到临时路径——
+	// 既不读真机 /tmp/zerg-idle-state.json，也不写统一状态目录（原来直接 os.Remove 真机文件）
+	setIdleStatePaths(t, filepath.Join(t.TempDir(), "zerg-idle-state.json"), filepath.Join(t.TempDir(), "legacy-idle-missing.json"))
 	d := NewIdleDetector(dir)
 	d.SetExternalQueue(func() int { return 0 })
 	d.SetResourceIdle(func() bool { return true })
