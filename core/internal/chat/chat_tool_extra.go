@@ -647,7 +647,11 @@ func logTail(args map[string]any) (string, error) {
 	case "core":
 		path = filepath.Join(statepath.RuntimeLogDir(), "zerg-core.log")
 	case "ui":
-		path = "/tmp/zerg-ui.log"
+		// 2026-09-18 硬编码治理批 B-2：原写死 "/tmp/zerg-ui.log"（状态落点类硬编码）
+		// ⇒ 与 "core" 分支同口径走 statepath 运行期日志目录派生（ZERG_LOG_DIR → ZERG_TMP_DIR → /tmp）。
+		// 生产默认不变（仍是 /tmp/zerg-ui.log——UI 侧落点见 scripts/start-zerg-ui.sh 的 ZERG_UI_LOG），
+		// 第二个实例/ZERG_LOG_DIR 改道后才读得到自己那份 UI 日志。
+		path = filepath.Join(statepath.RuntimeLogDir(), "zerg-ui.log")
 	case "", "default":
 		path = filepath.Join(statepath.RuntimeLogDir(), "zerg-core.log")
 	default:
@@ -925,7 +929,10 @@ func sqlQuery(args map[string]any) (string, error) {
 		return "", fmt.Errorf("参数 query 不能为空")
 	}
 	if dbPath == "" {
-		dbPath = "/tmp/zerg-chat/chat.db"
+		// 2026-09-18 硬编码治理批 B-2：原写死 "/tmp/zerg-chat/chat.db"（迁移前的旧库——本机该路径已不存在
+		// ⇒ 默认查的是空库）⇒ 改为解析「真实在用」的库：ZERG_CHAT_DB_PATH → 新库存在用新库 →
+		// 新无旧有 ⇒ 读旧（只读判定：不搬、不删、不建目录——迁移只在启动时做一次）。
+		dbPath = activeChatDBPath()
 	}
 	// 只读查询（禁写）
 	ql := strings.ToLower(strings.TrimSpace(query))
@@ -944,7 +951,10 @@ func sqlQuery(args map[string]any) (string, error) {
 func dbTables(args map[string]any) (string, error) {
 	dbPath, _ := args["db"].(string)
 	if dbPath == "" {
-		dbPath = "/tmp/zerg-chat/chat.db"
+		// 2026-09-18 硬编码治理批 B-2：原写死 "/tmp/zerg-chat/chat.db"（迁移前的旧库——本机该路径已不存在
+		// ⇒ 默认查的是空库）⇒ 改为解析「真实在用」的库：ZERG_CHAT_DB_PATH → 新库存在用新库 →
+		// 新无旧有 ⇒ 读旧（只读判定：不搬、不删、不建目录——迁移只在启动时做一次）。
+		dbPath = activeChatDBPath()
 	}
 	out, err := exec.Command("sh", "-c", fmt.Sprintf("sqlite3 %s '.tables' 2>&1", dbPath)).Output()
 	if err != nil {
