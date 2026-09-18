@@ -1,6 +1,6 @@
 // eggs_endpoint_test.go —— P7 批 1：GET /eggs 只读端点验收（鉴权 / 只读 / 不编造）。
 //
-// 设计真源：设计-子端沙箱化-20260914.md §5.4（端点名定案 /eggs；字段 eggs[] / egg_id /
+// 设计真源：设计-子端沙箱化.md §5.4（端点名定案 /eggs；字段 eggs[] / egg_id /
 // engine_impl / schema_version）· §8.4（has_profile 无档案必须 false，不许编造）。
 package server
 

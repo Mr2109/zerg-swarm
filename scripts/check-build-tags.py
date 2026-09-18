@@ -5,7 +5,7 @@ check-build-tags.py — 双构建工程门禁（任务表 T6.3；设计稿 §〇
 
 一句话：把「默认构建」与「-tags=debug 构建」当成**两个必须等价的工程配置**来守。
 背景（已实测，勿推翻）见 skill `references/debug-build-and-verification.md` 与
-`docs/01-设计/设计-内建调试版-v1.2-20260917.md`（第〇节 A 组）。
+`docs/01-设计/设计-内建调试版-v1.2.md`（第〇节 A 组）。
 
 六条判据
 --------

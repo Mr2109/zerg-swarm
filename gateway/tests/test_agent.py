@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """test_agent.py — 子端 Agent 单元测试（mock 后端 + mock 主控，不真实加载模型）。
 
-覆盖（对应 PROTOCOL.md §1/§2 与 DESIGN v2.3 验收）:
+覆盖（对应 protocol.md §1/§2 与 DESIGN v2.3 验收）:
   - Token 认证（无/错/对 → 401/401/200）
   - /status 字段完整性
   - /load: 成功 / 幂等 / 未知模型 404 / 内存不足 507 / 队列满 429 / 熔断 503 / 双后端 409

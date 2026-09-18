@@ -1,6 +1,6 @@
 // obs_compaction.go — T3.1：compaction **三态事件**（started/completed/failed），写进**既有** chat_obs.jsonl
 //
-// 设计依据：docs/01-设计/设计-内建调试版-v1.2-20260917.md 第〇节 H1 ——
+// 设计依据：docs/01-设计/设计-内建调试版-v1.2.md 第〇节 H1 ——
 //
 //	「事件表里完全没有 compaction 事件（而长对话档必然触发它）⇒ 我们怀疑的失败路径
 //	 （压缩后丢关键约束 / 重复劳动 / 悬空 tool_call）恰好不可观测」。

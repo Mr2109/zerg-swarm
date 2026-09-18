@@ -2,7 +2,7 @@
 // 内容捕获四档 → 标准枚举映射**；T6.2「补齐标准字段」：error.type / tool.* / conversation.* /
 // server.* / TTFC / response.status / output.type / reasoning.level / prompt.*。
 //
-// 设计依据（逐字，取自 docs/01-设计/设计-内建调试版-v1.2-20260917.md 第〇节 B 组）：
+// 设计依据（逐字，取自 docs/01-设计/设计-内建调试版-v1.2.md 第〇节 B 组）：
 //
 //	B4 「`error.type` 只在 S6 记；规范要求**每个出错 span** 都要，且它是全表唯一 Stable 之一」
 //	B5 「S4 span 名/kind 不合规；缺 `tool.type`/`tool.description`/`tool.call.id`」

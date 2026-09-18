@@ -1,6 +1,6 @@
 // baseline.go —— 模型级身份探针 + 内存扣减教训（P4 退场清理后的残余保留面）。
 //
-// 设计依据：设计-子端沙箱化-20260914.md §10.1 baseline.go 行——
+// 设计依据：设计-子端沙箱化.md §10.1 baseline.go 行——
 // 基线服务声明/检查/占用扣减那一整套（声明端口 env、BaselineService、
 // serviceClassFrom、baselineServicesLocked、baselineOccupiedGb、机型配额/预留两 env）
 // 随「卵之外无引擎」（§1.3）**整体退场**（附录 C·C8）。

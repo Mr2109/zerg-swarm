@@ -2,7 +2,7 @@
 
 // baseline_proc_linux.go —— Linux 侧只读进程事实（P4 退场清理后的残余保留面）。
 //
-// 设计依据：设计-子端沙箱化-20260914.md §10.1 baseline_proc_linux.go 行——
+// 设计依据：设计-子端沙箱化.md §10.1 baseline_proc_linux.go 行——
 // 保留：readDrmMemoryGb / readProcessMemGb（显存账逐进程归因用，P3）、
 // findListenerProcess / tcpListenInode / pidOfSocketInode（**只读**发现"谁占着"，§2.2 E4）。
 // 退场：readArgv / readStartTime / currentStartTime / collectAncestry 与
