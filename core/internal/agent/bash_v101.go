@@ -1,7 +1,7 @@
 package agent
 
 // bash_v101.go — bash 工具 v1.0.1「AI 专用执行契约」（2026-09-06 设计定稿）
-// 设计: docs/01-设计/设计-bash-工具-v1.0.1-AI-专用执行契约.md
+// 设计: docs/01-设计/设计-bash-工具-AI-专用执行契约-v1.0.1.md
 // 核心: 系统断言成败（模型不猜）+ 三段式返回 + 本地模型弥补层（防呆/引导/预算）
 //
 // 返回契约（模型可靠解析）:
@@ -425,7 +425,7 @@ func bashRmScopeGate(command, execCwd string, allowRoots []string) error {
 				}
 				cleaned := filepath.Clean(target)
 				if !rmInAllowedRoot(cleaned, roots) {
-					return fmt.Errorf("危险命令拦截: rm 目标 %q 不在允许删除域(工作区//tmp/白名单)——v1.0.2 删除范围门控。请改工作区内路径或用专用文件工具;确需他处删除请加白名单或人工执行(设计: docs/01-设计/设计-bash-工具-v1.0.2-删除范围门控.md)", target)
+					return fmt.Errorf("危险命令拦截: rm 目标 %q 不在允许删除域(工作区//tmp/白名单)——v1.0.2 删除范围门控。请改工作区内路径或用专用文件工具;确需他处删除请加白名单或人工执行(设计: docs/01-设计/设计-bash-工具-删除范围门控-v1.0.2.md)", target)
 				}
 			}
 		}

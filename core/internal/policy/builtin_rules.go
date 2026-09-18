@@ -100,7 +100,7 @@ var builtinInteractivePrograms = []string{
 //	  全部调用降级成问人），清单记账见 BuiltinPendingEntries() 的 pending.any.rm_critical_full。
 //	· 带通配 `rm -rf /*` 会把 `/tmp` 与工作区内的正常清理一起 deny（过度拦截，与工具层 v1.0.2 的
 //	  "允许删除域 = 工作区 + /tmp + 白名单"直接冲突）；拼写变体的**全集**已由工具层按**目标集合**
-//	  判定（与拼写无关，见 docs/01-设计/设计-bash-工具-v1.0.2-删除范围门控.md）。
+//	  判定（与拼写无关，见 docs/01-设计/设计-bash-工具-删除范围门控-v1.0.2.md）。
 //
 // 故策略层只钉"家目录被整条删掉"这几种最典型的写法（拼写全集由工具层兜），作为纵深第二道。
 var builtinCriticalDeleteRules = []BuiltinRule{

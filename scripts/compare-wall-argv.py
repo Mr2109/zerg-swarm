@@ -167,7 +167,7 @@ def rel(path):
 
     为什么：`wall/` 在 `publish/whitelist.txt` 里 ⇒ 这份回执会进公开面（本仓祖先目录名是私有串，
     快照脱敏只把卷根换成占位符，**后半截私有目录名会原样留下**）。前一份回执
-    （`evidence-plan-cli-20260916.txt`）就是相对路径形态，这里保持一致。
+    （`evidence-plan-cli.txt`）就是相对路径形态，这里保持一致。
     """
     try:
         r = os.path.relpath(path, ROOT)

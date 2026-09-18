@@ -172,7 +172,7 @@ func checkDangerousCommand(command string) error {
 // → v1.0.1: 三段式返回+系统断言+防呆拦截+溢出落盘+错误分类引导
 
 // executeRead — 读取文件内容(v1.0.2:类型感知分层路由——多文件类型可读)
-// 设计: docs/01-设计/设计-read-工具-v1.0.2-多类型读取升级.md
+// 设计: docs/01-设计/设计-read-工具-多类型读取升级-v1.0.2.md
 // 路由: 文本(iconv 编码修正+行号)/PDF(pdftotext)/docx·doc·rtf·html(textutil)/epub·odt(pandoc)/
 //
 //	xlsx(内置 zip+XML 单 sheet TSV)/图像·音频·视频(委托专用工具)/二进制(仅提示)
@@ -711,7 +711,7 @@ func validateYAML(absPath string) (string, string) {
 }
 
 // executeWrite — 原子写文件(v1.0.1:类型防呆+回读校验+结构化自检+编码/行尾)
-// 设计: docs/01-设计/设计-write-工具-v1.0.1-类型感知写入升级.md
+// 设计: docs/01-设计/设计-write-工具-类型感知写入升级-v1.0.1.md
 func (ec *ExecContext) executeWrite(ctx context.Context, path string, content string, o writeOpts, gate ToolGater) (string, error) {
 	// Gate 检查
 	if gate != nil {
