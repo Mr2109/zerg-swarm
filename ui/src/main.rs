@@ -10,7 +10,7 @@ mod modules; // v2.5.6 虫茧模块系统（Mr2109 2026-08-29——注册表+顶
 // fallback 方向 = en（设计稿 §7-7 拍板 2026-09-11）：不支持的系统语言回落英文，
 // 中文键本就全覆盖，中文用户不会撞到 fallback；启动仍显式 set_locale（L2 改为跟随系统）。
 rust_i18n::i18n!("locales", fallback = "en");
-use rust_i18n::t;   // i18n（B3：窗口标题/应用名走键）
+use rust_i18n::t; // i18n（B3：窗口标题/应用名走键）
 
 /// 搜索 macOS 26+ 动态字体包里的 PingFang（AssetsV2——路径随系统更新变）
 fn find_pingfang_assets() -> Option<String> {
@@ -133,9 +133,10 @@ fn setup_fonts(ctx: &egui::Context) {
     let mut loaded = false;
     for path in candidates {
         if let Ok(bytes) = std::fs::read(&path) {
-            fonts
-                .font_data
-                .insert("cjk".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+            fonts.font_data.insert(
+                "cjk".to_owned(),
+                std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+            );
             // 中文字体放字体族【第一位】（主字体——拉丁+中文都用它——替代默认 Ubuntu 粗糙字体）
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                 let fam = fonts.families.entry(family).or_default();
@@ -148,11 +149,15 @@ fn setup_fonts(ctx: &egui::Context) {
     }
     // 找不到系统字体时——用 macOS 通用字体（SF/Helvetica——拉丁清晰）
     if !loaded {
-        for path in ["/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/Helvetica.ttc"] {
+        for path in [
+            "/System/Library/Fonts/SFNS.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+        ] {
             if let Ok(bytes) = std::fs::read(path) {
-                fonts
-                    .font_data
-                    .insert("latin".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+                fonts.font_data.insert(
+                    "latin".to_owned(),
+                    std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+                );
                 for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                     let fam = fonts.families.entry(family).or_default();
                     fam.insert(0, "latin".to_owned());
@@ -164,12 +169,19 @@ fn setup_fonts(ctx: &egui::Context) {
     // P3 图标字体（iconflow——14 包 34 TTF——追加注册——保中文字体）
     crate::modules::icons::install_iconflow_fonts(&mut fonts);
     // P3-2 等宽字体对齐 Hermes（Menlo——macOS 原生等宽——代码/diff 同款）
-    for path in ["/System/Library/Fonts/Menlo.ttc", "/System/Library/Fonts/Monaco.ttf"] {
+    for path in [
+        "/System/Library/Fonts/Menlo.ttc",
+        "/System/Library/Fonts/Monaco.ttf",
+    ] {
         if let Ok(bytes) = std::fs::read(path) {
-            fonts
-                .font_data
-                .insert("mono".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
-            let fam = fonts.families.entry(egui::FontFamily::Monospace).or_default();
+            fonts.font_data.insert(
+                "mono".to_owned(),
+                std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+            );
+            let fam = fonts
+                .families
+                .entry(egui::FontFamily::Monospace)
+                .or_default();
             fam.insert(0, "mono".to_owned());
             break;
         }
@@ -245,10 +257,7 @@ mod locale_tests {
         use rust_i18n::t;
         rust_i18n::set_locale("en");
         assert_eq!(&*t!("app.title"), "Zerg");
-        assert_eq!(
-            &*t!("app.version_line", version = "9.9.9"),
-            "Zerg v9.9.9"
-        );
+        assert_eq!(&*t!("app.version_line", version = "9.9.9"), "Zerg v9.9.9");
         assert_eq!(
             &*t!("chat.start_hint"),
             "← Pick a session or create one to start chatting"
@@ -271,7 +280,11 @@ mod locale_tests {
             Some("Scheduler is not running"),
             "大小写不敏感（服务端恒大写，键恒小写）"
         );
-        assert_eq!(crate::api::localized_api_error("SOME_FUTURE_CODE"), None, "未收录的码须返回 None（回退服务端 message）");
+        assert_eq!(
+            crate::api::localized_api_error("SOME_FUTURE_CODE"),
+            None,
+            "未收录的码须返回 None（回退服务端 message）"
+        );
         assert_eq!(&*t!("chat.ready", icon = "*"), "* ready");
         rust_i18n::set_locale("zh-CN");
         assert_eq!(&*t!("app.title"), "虫族 Zerg");

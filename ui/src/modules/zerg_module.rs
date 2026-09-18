@@ -158,7 +158,11 @@ impl ModuleRegistry {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return, // 无文件=正常
             Err(e) => {
-                eprintln!("[modules] failed to read the external module config {}: {}", path.display(), e); // M33
+                eprintln!(
+                    "[modules] failed to read the external module config {}: {}",
+                    path.display(),
+                    e
+                ); // M33
                 return;
             }
         };
@@ -169,7 +173,11 @@ impl ModuleRegistry {
         let cfg = match serde_json::from_str::<Config>(&s) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("[modules] failed to parse the external module config {}: {}", path.display(), e); // M33
+                eprintln!(
+                    "[modules] failed to parse the external module config {}: {}",
+                    path.display(),
+                    e
+                ); // M33
                 return;
             }
         };
@@ -231,9 +239,7 @@ impl ModuleRegistry {
         match self.find(active) {
             Some(m) if m.is_group => {
                 let kids = self.children_of(active);
-                if !remembered_child.is_empty()
-                    && kids.iter().any(|c| c.id == remembered_child)
-                {
+                if !remembered_child.is_empty() && kids.iter().any(|c| c.id == remembered_child) {
                     return remembered_child.to_string();
                 }
                 match kids.first() {
@@ -273,7 +279,11 @@ impl ModuleRegistry {
     /// 里的茧（`modules/cocoon.rs`——C9 第 1 步：原来这里写死 `v.push("roundtable")`）。
     /// 文档被卸下 ⇒ 卡片消失；茧未编译进来 ⇒ 铭牌仍在册（`loaded=false`）⇒ 渲染层显「未装载」。
     pub fn platform_apps(&self) -> Vec<&'static str> {
-        let mut v: Vec<&'static str> = self.children_of(PLATFORM_PAGE_ID).iter().map(|m| m.id).collect();
+        let mut v: Vec<&'static str> = self
+            .children_of(PLATFORM_PAGE_ID)
+            .iter()
+            .map(|m| m.id)
+            .collect();
         // 契约茧：铭牌在册即出卡（装载与否由铭牌 loaded 表达——设计 §4.3 未装载也给卡）
         for m in crate::modules::cocoon::catalog() {
             if !v.contains(&m.id) {
@@ -314,7 +324,11 @@ impl ModuleRegistry {
         let dir = crate::api::ui_dir();
         // M33(2026-09-10 审计): 目录/写盘失败不再静默——用户禁用/启用选择重启即失效却无感知
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            eprintln!("[modules] failed to create the config directory {}: {}", dir.display(), e);
+            eprintln!(
+                "[modules] failed to create the config directory {}: {}",
+                dir.display(),
+                e
+            );
             return;
         }
         let path = format!("{}/modules.json", dir.display());
@@ -327,7 +341,8 @@ impl ModuleRegistry {
         match serde_json::to_string(&enabled) {
             Ok(s) => {
                 if let Err(e) = std::fs::write(&path, s) {
-                    eprintln!("[modules] failed to save the module state {}: {}", path, e); // M33
+                    eprintln!("[modules] failed to save the module state {}: {}", path, e);
+                    // M33
                 }
             }
             Err(e) => eprintln!("[modules] failed to serialize the module state: {}", e), // M33
@@ -342,14 +357,22 @@ impl ModuleRegistry {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
             Err(e) => {
-                eprintln!("[modules] failed to read the module state {}: {}", path.display(), e); // M33
+                eprintln!(
+                    "[modules] failed to read the module state {}: {}",
+                    path.display(),
+                    e
+                ); // M33
                 return;
             }
         };
         let disabled: std::collections::BTreeMap<String, bool> = match serde_json::from_str(&s) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("[modules] failed to parse the module state {}: {}", path.display(), e); // M33
+                eprintln!(
+                    "[modules] failed to parse the module state {}: {}",
+                    path.display(),
+                    e
+                ); // M33
                 return;
             }
         };
@@ -374,7 +397,11 @@ impl ModuleRegistry {
     pub fn save_state(&self) {
         let dir = crate::api::ui_dir();
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            eprintln!("[modules] failed to create the state directory {}: {}", dir.display(), e);
+            eprintln!(
+                "[modules] failed to create the state directory {}: {}",
+                dir.display(),
+                e
+            );
             return;
         }
         let state = NavState {
@@ -385,7 +412,11 @@ impl ModuleRegistry {
         match serde_json::to_string(&state) {
             Ok(s) => {
                 if let Err(e) = std::fs::write(&path, s) {
-                    eprintln!("[modules] failed to save the navigation state {}: {}", path.display(), e);
+                    eprintln!(
+                        "[modules] failed to save the navigation state {}: {}",
+                        path.display(),
+                        e
+                    );
                 }
             }
             Err(e) => eprintln!("[modules] failed to serialize the navigation state: {}", e),
@@ -400,14 +431,22 @@ impl ModuleRegistry {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
             Err(e) => {
-                eprintln!("[modules] failed to read the navigation state {}: {}", path.display(), e);
+                eprintln!(
+                    "[modules] failed to read the navigation state {}: {}",
+                    path.display(),
+                    e
+                );
                 return;
             }
         };
         let state: NavState = match serde_json::from_str(&s) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("[modules] failed to parse the navigation state {}: {}", path.display(), e);
+                eprintln!(
+                    "[modules] failed to parse the navigation state {}: {}",
+                    path.display(),
+                    e
+                );
                 return;
             }
         };
@@ -433,7 +472,6 @@ struct NavState {
     children: std::collections::BTreeMap<String, String>,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,11 +488,22 @@ mod tests {
         // Mr2109 2026-09-13 二次调整后的顺序：主控在线 → 对话 → 任务 → 模型 → 资源库 → 虫茧
         assert_eq!(
             got,
-            vec!["main-online", "chat", "tasks-group", "models-group", "resources", "roundtable"],
+            vec![
+                "main-online",
+                "chat",
+                "tasks-group",
+                "models-group",
+                "resources",
+                "roundtable"
+            ],
             "一级六项顺序（二次调整）；虫茧仍是普通箱，占第 6 位"
         );
         // 「文档」已移入虫茧平台 ⇒ **不再是一级导航项**
-        assert!(!got.iter().any(|x| x == "docs"), "文档不应出现在一级导航：{:?}", got);
+        assert!(
+            !got.iter().any(|x| x == "docs"),
+            "文档不应出现在一级导航：{:?}",
+            got
+        );
     }
 
     /// 设计 §4.1/§七18：children_of("main-online") 顺序 = 集群/文件浏览器/升级/Git/日志。
@@ -472,12 +521,21 @@ mod tests {
     #[test]
     fn children_of_tasks_and_models_groups() {
         let reg = crate::modules::build_registry();
-        assert_eq!(ids(&reg.children_of("tasks-group")), vec!["tasks", "internal-tasks"]);
-        assert_eq!(ids(&reg.children_of("models-group")), vec!["models", "model-registry"]);
+        assert_eq!(
+            ids(&reg.children_of("tasks-group")),
+            vec!["tasks", "internal-tasks"]
+        );
+        assert_eq!(
+            ids(&reg.children_of("models-group")),
+            vec!["models", "model-registry"]
+        );
         // 二次调整（Mr2109纠正版）：文档归属虫茧平台，是平台的**应用卡**而非页签
         assert_eq!(ids(&reg.children_of("roundtable")), vec!["docs"]);
         assert_eq!(reg.platform_apps(), vec!["docs", "roundtable"]);
-        assert!(reg.children_of("chat").is_empty(), "无子箱的顶级箱 children_of 应为空");
+        assert!(
+            reg.children_of("chat").is_empty(),
+            "无子箱的顶级箱 children_of 应为空"
+        );
         assert!(reg.children_of("nope").is_empty());
     }
 
@@ -489,7 +547,12 @@ mod tests {
         let apps = reg.platform_apps();
         // ① 在册的茧一个不少（未装载也在册 ⇒ 卡片照常 + 「未装载」+ 安装指引）
         for m in crate::modules::cocoon::catalog() {
-            assert!(apps.contains(&m.id), "在册的茧 {} 没出现在平台栅格：{:?}", m.id, apps);
+            assert!(
+                apps.contains(&m.id),
+                "在册的茧 {} 没出现在平台栅格：{:?}",
+                m.id,
+                apps
+            );
         }
         // ② 每张卡都必须有来源（茧注册表 or 模块注册表）——防「凭空多出一张卡」
         for id in &apps {
@@ -504,7 +567,10 @@ mod tests {
         off.enabled.insert("docs".to_string(), false);
         off.enabled.insert("roundtable".to_string(), false);
         assert!(!off.platform_apps().contains(&"docs"), "卸下的文档卡应消失");
-        assert!(!off.platform_apps().contains(&"roundtable"), "卸下的虫茧卡应消失");
+        assert!(
+            !off.platform_apps().contains(&"roundtable"),
+            "卸下的虫茧卡应消失"
+        );
     }
 
     /// 卸下的子箱自动跳过（设计 §4.2 规则 4「不留孤儿」）。
@@ -513,7 +579,10 @@ mod tests {
         let mut reg = crate::modules::build_registry();
         reg.enabled.insert("git".into(), false);
         let got = ids(&reg.children_of("main-online"));
-        assert!(!got.iter().any(|x| x == "git"), "卸下的 git 不应出现在页签清单");
+        assert!(
+            !got.iter().any(|x| x == "git"),
+            "卸下的 git 不应出现在页签清单"
+        );
     }
 
     /// E17：effective_module 三态（记忆子箱 / 回退父箱首子箱 / 父箱无子箱回自己）。
@@ -524,10 +593,23 @@ mod tests {
         assert_eq!(reg.effective_module("main-online", "git"), "git");
         // ② 记忆子箱被卸下/不存在 → 回退到该父箱 order 最小的启用子箱
         reg.enabled.insert("cluster".into(), false);
-        assert_eq!(reg.effective_module("main-online", "no-such-child"), "file-browser");
-        assert_eq!(reg.effective_module("main-online", "cluster"), "file-browser"); // 记忆的也被卸
-        // ③ 父箱无启用子箱 → 返回父箱自己
-        for id in ["cluster", "file-browser", "upgrade", "git", "logs", "roundtable"] {
+        assert_eq!(
+            reg.effective_module("main-online", "no-such-child"),
+            "file-browser"
+        );
+        assert_eq!(
+            reg.effective_module("main-online", "cluster"),
+            "file-browser"
+        ); // 记忆的也被卸
+           // ③ 父箱无启用子箱 → 返回父箱自己
+        for id in [
+            "cluster",
+            "file-browser",
+            "upgrade",
+            "git",
+            "logs",
+            "roundtable",
+        ] {
             reg.enabled.insert(id.to_string(), false);
         }
         assert_eq!(reg.effective_module("main-online", ""), "main-online");
@@ -548,7 +630,10 @@ mod tests {
         assert_eq!(reg.parent_of("chat"), None);
         assert_eq!(reg.parent_of("nope"), None);
         // HUD 面包屑：子页 = [父名键, 子名键]；一级页 = [自身名键]
-        assert_eq!(reg.breadcrumb_keys("git"), vec!["mod.main_online.name", "mod.git.name"]);
+        assert_eq!(
+            reg.breadcrumb_keys("git"),
+            vec!["mod.main_online.name", "mod.git.name"]
+        );
         assert_eq!(
             reg.breadcrumb_keys("internal-tasks"),
             vec!["mod.tasks_group.name", "mod.internal_tasks.name"]
@@ -565,7 +650,11 @@ mod tests {
         assert_eq!(reg.fallback_after_disable("internal-tasks"), "tasks");
         // 文档归属虫茧平台（非 group）⇒ 卸下后回退到**平台自身**（栅格照常，只是少一张卡）
         assert_eq!(reg.fallback_after_disable("docs"), "roundtable");
-        assert_eq!(reg.sub_tabs_parent_of("docs"), None, "归属平台的应用不该有二级页签");
+        assert_eq!(
+            reg.sub_tabs_parent_of("docs"),
+            None,
+            "归属平台的应用不该有二级页签"
+        );
         assert_eq!(reg.sub_tabs_parent_of("cluster"), Some("main-online"));
         assert_eq!(reg.fallback_after_disable("chat"), "chat"); // 真正的无父一级箱 → 默认 chat
     }
@@ -582,7 +671,8 @@ mod tests {
                 m.icon.chars().count(),
                 1,
                 "{} 图标名未收录（回退成了文本）: {}",
-                g, m.icon
+                g,
+                m.icon
             );
             reg.toggle(g); // 尝试卸下
             assert!(reg.is_enabled(g), "父箱 {} 不可被卸下（导航骨架）", g);

@@ -57,7 +57,9 @@ fn script_path() -> Option<std::path::PathBuf> {
 /// Run the upgrade script with the given flags on a worker thread, streaming stdout/stderr lines.
 fn spawn(args: Vec<String>) {
     let Some(script) = script_path() else {
-        push(String::from("[err] scripts/zerg-upgrade.sh not found (set ZERG_ROOT)"));
+        push(String::from(
+            "[err] scripts/zerg-upgrade.sh not found (set ZERG_ROOT)",
+        ));
         return;
     };
     {

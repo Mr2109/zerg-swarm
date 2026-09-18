@@ -8,13 +8,18 @@
 use std::process::Command;
 
 fn main() {
-    let sha = cmd("git", &["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".to_string());
+    let sha =
+        cmd("git", &["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".to_string());
     let dirty = cmd("git", &["status", "--porcelain"])
         .map(|s| !s.trim().is_empty())
         .unwrap_or(false);
-    let sha = if dirty && sha != "unknown" { format!("{}+dirty", sha) } else { sha };
-    let build_time = cmd("date", &["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .unwrap_or_else(|| "unknown".to_string());
+    let sha = if dirty && sha != "unknown" {
+        format!("{}+dirty", sha)
+    } else {
+        sha
+    };
+    let build_time =
+        cmd("date", &["-u", "+%Y-%m-%dT%H:%M:%SZ"]).unwrap_or_else(|| "unknown".to_string());
 
     println!("cargo:rustc-env=ZERG_GIT_SHA={}", sha);
     println!("cargo:rustc-env=ZERG_BUILD_TIME={}", build_time);

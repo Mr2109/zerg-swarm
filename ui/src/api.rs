@@ -1,8 +1,8 @@
 // 主控 API 客户端（8580——X-Auth-Token）
 // 异步: tokio runtime（egui-async 在 eframe 0.36 下有帧号 bug——自己管理）
+use rust_i18n::t; // i18n（B3 抽取：错误文案走键）
 use serde::Deserialize;
 use serde_json::Value;
-use rust_i18n::t;   // i18n（B3 抽取：错误文案走键）
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// 主控 API 基址（2026-09-11 B 批：环境无关化——ZERG_api_base() 可覆盖，默认本机 8580）
@@ -89,15 +89,17 @@ static CLIENT_AI: OnceLock<reqwest::Client> = OnceLock::new();
 pub fn http_client() -> reqwest::Client {
     // A03（2026-09-10 审计）：连接超时 3s——服务器不可达时不再挂死 worker；**不设总超时**（流式生成可能数分钟）
     CLIENT_DEFAULT
-        .get_or_init(|| match reqwest::Client::builder()
-            .no_proxy()
-            .connect_timeout(std::time::Duration::from_secs(3))
-            .build()
-        {
-            Ok(c) => c,
-            // 兜底（构建失败极罕见：TLS 后端初始化异常）——宁可退回默认 client，也绝不递归调用自身
-            // （2026-09-10 审计 A01 修正：原写法 unwrap_or_else(|_| http_client()) 会无限递归 → 栈溢出）
-            Err(_) => reqwest::Client::new(),
+        .get_or_init(|| {
+            match reqwest::Client::builder()
+                .no_proxy()
+                .connect_timeout(std::time::Duration::from_secs(3))
+                .build()
+            {
+                Ok(c) => c,
+                // 兜底（构建失败极罕见：TLS 后端初始化异常）——宁可退回默认 client，也绝不递归调用自身
+                // （2026-09-10 审计 A01 修正：原写法 unwrap_or_else(|_| http_client()) 会无限递归 → 栈溢出）
+                Err(_) => reqwest::Client::new(),
+            }
         })
         .clone()
 }
@@ -105,15 +107,17 @@ pub fn http_client() -> reqwest::Client {
 /// JSON 短请求 client（A03 2026-09-10）：连接 3s + 总 20s——轮询/列表/操作类，防单请求挂死拖垮 2 线程 runtime
 pub fn http_client_json() -> reqwest::Client {
     CLIENT_JSON
-        .get_or_init(|| match reqwest::Client::builder()
-            .no_proxy()
-            .connect_timeout(std::time::Duration::from_secs(3))
-            .timeout(std::time::Duration::from_secs(20))
-            .build()
-        {
-            // 兜底：默认档单例（http_client 用独立 OnceLock，不会递归）
-            Err(_) => http_client(),
-            Ok(c) => c,
+        .get_or_init(|| {
+            match reqwest::Client::builder()
+                .no_proxy()
+                .connect_timeout(std::time::Duration::from_secs(3))
+                .timeout(std::time::Duration::from_secs(20))
+                .build()
+            {
+                // 兜底：默认档单例（http_client 用独立 OnceLock，不会递归）
+                Err(_) => http_client(),
+                Ok(c) => c,
+            }
         })
         .clone()
 }
@@ -123,15 +127,17 @@ pub fn http_client_json() -> reqwest::Client {
 #[allow(dead_code)]
 pub fn http_client_ai() -> reqwest::Client {
     CLIENT_AI
-        .get_or_init(|| match reqwest::Client::builder()
-            .no_proxy()
-            .connect_timeout(std::time::Duration::from_secs(3))
-            .timeout(std::time::Duration::from_secs(120))
-            .build()
-        {
-            // 兜底：默认档单例（http_client 用独立 OnceLock，不会递归）
-            Err(_) => http_client(),
-            Ok(c) => c,
+        .get_or_init(|| {
+            match reqwest::Client::builder()
+                .no_proxy()
+                .connect_timeout(std::time::Duration::from_secs(3))
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+            {
+                // 兜底：默认档单例（http_client 用独立 OnceLock，不会递归）
+                Err(_) => http_client(),
+                Ok(c) => c,
+            }
         })
         .clone()
 }
@@ -225,8 +231,13 @@ pub async fn ai_prompt_blocking(model: &str, prompt: &str) -> Result<String, Str
         return Err(t!(
             "err.ai_status",
             status = status,
-            brief = if brief.is_empty() { t!("common.empty_response").to_string() } else { brief }
-        ).to_string());
+            brief = if brief.is_empty() {
+                t!("common.empty_response").to_string()
+            } else {
+                brief
+            }
+        )
+        .to_string());
     }
     let json: Value =
         serde_json::from_str(&text).map_err(|e| t!("err.ai_parse", err = e).to_string())?;
@@ -420,7 +431,9 @@ pub async fn fetch_fileroots_blocking() -> Result<Value, String> {
 
 /// 按根列目录（GET /api/docs?root=<id>）
 /// root=None ⇒ 不带 root 参数 ⇒ **与改造前的 /api/docs 逐字节等价**（§4.5 老行为不变）
-pub async fn fetch_docs_root_blocking(root: Option<&str>) -> Result<(Vec<String>, Vec<String>), String> {
+pub async fn fetch_docs_root_blocking(
+    root: Option<&str>,
+) -> Result<(Vec<String>, Vec<String>), String> {
     let path = match root {
         Some(r) if !r.is_empty() => format!("/api/docs?root={}", urlencode(r)),
         _ => "/api/docs".to_string(),
@@ -431,8 +444,15 @@ pub async fn fetch_docs_root_blocking(root: Option<&str>) -> Result<(Vec<String>
 
 /// 按根读文件（GET /api/docs?root=<id>&path=<rel>）→（内容, 后端报的字节数）
 /// **读取不设上限**（§4.4 拍板：文本整份取回）——这里不做任何截断，截断只发生在界面渲染。
-pub async fn fetch_doc_content_in_root_blocking(root: &str, path: &str) -> Result<(String, Option<u64>), String> {
-    let p = format!("/api/docs?root={}&path={}", urlencode(root), urlencode(path));
+pub async fn fetch_doc_content_in_root_blocking(
+    root: &str,
+    path: &str,
+) -> Result<(String, Option<u64>), String> {
+    let p = format!(
+        "/api/docs?root={}&path={}",
+        urlencode(root),
+        urlencode(path)
+    );
     let v = sync_get_public(&p).await?;
     let content = v
         .get("content")
@@ -445,7 +465,10 @@ pub async fn fetch_doc_content_in_root_blocking(root: &str, path: &str) -> Resul
 
 /// 按根读文件（统一入口）——文档模块与文件浏览器共用：
 /// root 为空或 "docs" 走**老端点** `/api/docs/<rel>`（§4.5 兼容），其余根走参数化端点。
-pub async fn fetch_doc_content_any_root_blocking(root: &str, path: String) -> Result<String, String> {
+pub async fn fetch_doc_content_any_root_blocking(
+    root: &str,
+    path: String,
+) -> Result<String, String> {
     if root.is_empty() || root == "docs" {
         fetch_doc_content_blocking(path).await
     } else {
@@ -465,39 +488,80 @@ pub async fn fetch_doc_content_any_root_blocking(root: &str, path: String) -> Re
 pub async fn task_retry_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/tasks/{}/retry", api_base(), id);
-    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
-    if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
+    let resp = client
+        .post(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", resp.status()))
+    }
 }
 
 // task_move_blocking 重排任务（右键——top/bottom/up/down）
 pub async fn task_move_blocking(id: &str, action: &str) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/tasks/{}/move?action={}", api_base(), id, action);
-    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
-    if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
+    let resp = client
+        .post(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", resp.status()))
+    }
 }
 
 // task_delete_blocking 删除任务（右键——queued 移除）
 pub async fn task_delete_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/tasks/{}", api_base(), id);
-    let resp = client.delete(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
-    if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
+    let resp = client
+        .delete(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", resp.status()))
+    }
 }
 
 // task_pause_blocking 暂停/继续任务（右键——queued→paused / paused→queued）
 pub async fn task_pause_blocking(id: &str, pause: bool) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/tasks/{}/pause?pause={}", api_base(), id, pause);
-    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
-    if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
+    let resp = client
+        .post(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", resp.status()))
+    }
 }
 
 // fetch_internal_tasks_blocking 拉内部任务清单（Mr2109 2026-08-22）
 pub async fn fetch_internal_tasks_blocking() -> Result<Vec<serde_json::Value>, String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks", api_base());
-    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     // A05（2026-09-10 审计）：先判 HTTP 状态（json_body），字段缺失返回 Err——不再把 500 错误体当成"空列表"
     let v = json_body(resp).await?;
     v.get("items")
@@ -510,7 +574,12 @@ pub async fn fetch_internal_tasks_blocking() -> Result<Vec<serde_json::Value>, S
 pub async fn run_internal_task_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks/{}/run", api_base(), id);
-    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .post(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
     } else {
@@ -524,7 +593,12 @@ pub async fn run_internal_task_blocking(id: &str) -> Result<(), String> {
 pub async fn stop_internal_tasks_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks/stop", api_base());
-    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .post(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     json_body(resp).await
 }
 
@@ -534,7 +608,12 @@ pub async fn stop_internal_tasks_blocking() -> Result<serde_json::Value, String>
 pub async fn start_internal_tasks_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks/start", api_base());
-    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .post(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     json_body(resp).await
 }
 
@@ -542,7 +621,12 @@ pub async fn start_internal_tasks_blocking() -> Result<serde_json::Value, String
 pub async fn fetch_internal_state_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks/state", api_base());
-    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     json_body(resp).await
 }
 
@@ -587,7 +671,12 @@ pub async fn set_internal_mode_blocking(id: &str, auto_run: bool) -> Result<(), 
 pub async fn fetch_internal_intervals_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
     let url = format!("{}/api/internal-tasks/intervals", api_base());
-    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     // A05（2026-09-10 审计）：先判 HTTP 状态——5xx 错误体不再被当成"成功但空数据"
     json_body(resp).await
 }
@@ -596,23 +685,46 @@ pub async fn fetch_internal_intervals_blocking() -> Result<serde_json::Value, St
 pub async fn task_terminate_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/tasks/{}/terminate", api_base(), id);
-    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
-    if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
+    let resp = client
+        .post(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", resp.status()))
+    }
 }
 
 // task_requeue_blocking 执行中任务重回队列（右键——running→queued）
 pub async fn task_requeue_blocking(id: &str) -> Result<(), String> {
     let client = http_client_json();
     let url = format!("{}/api/tasks/{}/requeue", api_base(), id);
-    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
-    if resp.status().is_success() { Ok(()) } else { Err(format!("HTTP {}", resp.status())) }
+    let resp = client
+        .post(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", resp.status()))
+    }
 }
 
 // fetch_archive_blocking 拉归档列表（Mr2109 2026-08-22）
 pub async fn fetch_archive_blocking() -> Result<Vec<serde_json::Value>, String> {
     let client = http_client_json();
     let url = format!("{}/api/archive", api_base());
-    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     // A05（2026-09-10 审计）：先判 HTTP 状态；entries 字段缺失返回 Err——不再把错误显示成"无数据"
     let v = json_body(resp).await?;
     v.get("entries")
@@ -638,7 +750,12 @@ pub async fn fetch_model_detail_blocking(name: &str) -> Result<Value, String> {
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名（fleet 键可能含空格/斜杠）编码后入路径
     let url = format!("{}/api/models/{}", api_base(), urlencode_path(name));
-    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         resp.json().await.map_err(|e| e.to_string())
     } else {
@@ -651,7 +768,12 @@ pub async fn model_start_blocking(name: &str) -> Result<(), String> {
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名编码后入路径
     let url = format!("{}/api/models/{}/start", api_base(), urlencode_path(name));
-    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .post(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
     } else {
@@ -664,7 +786,12 @@ pub async fn model_stop_blocking(name: &str) -> Result<(), String> {
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名编码后入路径
     let url = format!("{}/api/models/{}/stop", api_base(), urlencode_path(name));
-    let resp = client.post(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .post(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         Ok(())
     } else {
@@ -676,8 +803,17 @@ pub async fn model_stop_blocking(name: &str) -> Result<(), String> {
 pub async fn fetch_adapter_schema_blocking(name: &str) -> Result<serde_json::Value, String> {
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名编码后入路径
-    let url = format!("{}/api/models/{}/adapter-opts", api_base(), urlencode_path(name));
-    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
+    let url = format!(
+        "{}/api/models/{}/adapter-opts",
+        api_base(),
+        urlencode_path(name)
+    );
+    let resp = client
+        .get(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if resp.status().is_success() {
         resp.json().await.map_err(|e| e.to_string())
     } else {
@@ -686,10 +822,17 @@ pub async fn fetch_adapter_schema_blocking(name: &str) -> Result<serde_json::Val
 }
 
 // update_adapter_opts_blocking 更新适配器配置（实时生效）
-pub async fn update_adapter_opts_blocking(name: &str, cfg: serde_json::Value) -> Result<(), String> {
+pub async fn update_adapter_opts_blocking(
+    name: &str,
+    cfg: serde_json::Value,
+) -> Result<(), String> {
     let client = http_client_json();
     // A20（2026-09-10 审计）：模型名编码后入路径
-    let url = format!("{}/api/models/{}/adapter-opts", api_base(), urlencode_path(name));
+    let url = format!(
+        "{}/api/models/{}/adapter-opts",
+        api_base(),
+        urlencode_path(name)
+    );
     let resp = client
         .put(&url)
         .header("X-Auth-Token", api_token())
@@ -701,7 +844,11 @@ pub async fn update_adapter_opts_blocking(name: &str, cfg: serde_json::Value) ->
         Ok(())
     } else {
         let txt = resp.text().await.unwrap_or_default();
-        Err(if txt.is_empty() { t!("err.http").to_string() } else { txt })
+        Err(if txt.is_empty() {
+            t!("err.http").to_string()
+        } else {
+            txt
+        })
     }
 }
 
@@ -828,7 +975,6 @@ pub fn fetch_resources_async(res_type: String) -> SharedResult<Value> {
     out
 }
 
-
 // ═══════════ v2.5.7 对话模块客户端（/api/chat/*——Mr2109借鉴 Hermes）═══════════
 
 /// 会话列表（异步）
@@ -869,7 +1015,10 @@ pub fn create_chat_session_async(model: String) -> SharedResult<Value> {
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
+            Err(e) => {
+                *out2.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(Err(t!("err.request", err = e).to_string()))
+            }
         }
     });
     out
@@ -901,7 +1050,10 @@ static STREAM_PANIC: Mutex<Option<String>> = Mutex::new(None);
 
 /// 取走最近一次流式任务 panic 信息（UI 每帧调用——取走即清空）
 pub fn take_stream_panic() -> Option<String> {
-    STREAM_PANIC.lock().unwrap_or_else(|e| e.into_inner()).take()
+    STREAM_PANIC
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
 }
 
 /// A08 备选（2026-09-10）：主动取消流式任务——abort 立即丢弃 HTTP 响应流 → 连接断开 →
@@ -931,7 +1083,13 @@ impl Drop for StreamDoneGuard {
 
 /// 发消息（C3 流式——POST /send——SSE 读取——边收边更新状态）
 /// image: 可选单图 data URL（D3）——images: 多图数组（P2——优先）
-pub fn chat_send_stream_async(session_id: String, content: String, image: Option<String>, images: Vec<String>, reuse_user_id: Option<i64>) -> SharedChatStream {
+pub fn chat_send_stream_async(
+    session_id: String,
+    content: String,
+    image: Option<String>,
+    images: Vec<String>,
+    reuse_user_id: Option<i64>,
+) -> SharedChatStream {
     use futures_util::StreamExt;
     let state: SharedChatStream = Arc::new(Mutex::new(ChatStreamState::default()));
     let s2 = state.clone();
@@ -1094,7 +1252,8 @@ pub fn chat_send_stream_async(session_id: String, content: String, image: Option
         if let Some(h) = h {
             if let Err(e) = h.await {
                 if e.is_panic() {
-                    *STREAM_PANIC.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!("{}", e));
+                    *STREAM_PANIC.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some(format!("{}", e));
                 }
             }
         }
@@ -1126,8 +1285,13 @@ pub fn delete_chat_session_async(session_id: String) -> SharedResult<bool> {
             .send()
             .await;
         match resp {
-            Ok(r) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(r.status().is_success())),
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
+            Ok(r) => {
+                *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(r.status().is_success()))
+            }
+            Err(e) => {
+                *out2.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(Err(t!("err.request", err = e).to_string()))
+            }
         }
     });
     out
@@ -1221,7 +1385,10 @@ pub fn chat_update_model_async(session_id: String, model: String) -> SharedResul
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
+            Err(e) => {
+                *out2.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(Err(t!("err.request", err = e).to_string()))
+            }
         }
     });
     out
@@ -1245,7 +1412,10 @@ pub fn chat_abort_async(session_id: String) -> SharedResult<Value> {
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
+            Err(e) => {
+                *out2.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(Err(t!("err.request", err = e).to_string()))
+            }
         }
     });
     out
@@ -1270,7 +1440,10 @@ pub fn chat_steer_async(session_id: String, content: String) -> SharedResult<Val
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
+            Err(e) => {
+                *out2.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(Err(t!("err.request", err = e).to_string()))
+            }
         }
     });
     out
@@ -1294,7 +1467,10 @@ pub fn chat_regenerate_async(session_id: String) -> SharedResult<Value> {
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
+            Err(e) => {
+                *out2.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(Err(t!("err.request", err = e).to_string()))
+            }
         }
     });
     out
@@ -1317,7 +1493,11 @@ pub fn chat_search_async(q: String) -> SharedResult<Value> {
 
 /// 对话→任务派单（C7——POST /api/tasks——parent 关联）
 /// 派单到任务队列（C7——POST /api/tasks——v2.5.7 带 parent_session_id 关联来源对话）
-pub fn chat_delegate_task_async(description: String, model: String, parent_session_id: Option<String>) -> SharedResult<Value> {
+pub fn chat_delegate_task_async(
+    description: String,
+    model: String,
+    parent_session_id: Option<String>,
+) -> SharedResult<Value> {
     let out: SharedResult<Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
@@ -1362,7 +1542,10 @@ pub fn chat_set_archived_async(session_id: String, archived: bool) -> SharedResu
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
+            Err(e) => {
+                *out2.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(Err(t!("err.request", err = e).to_string()))
+            }
         }
     });
     out
@@ -1385,7 +1568,10 @@ pub fn chat_set_pinned_async(session_id: String, pinned: bool) -> SharedResult<V
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
+            Err(e) => {
+                *out2.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(Err(t!("err.request", err = e).to_string()))
+            }
         }
     });
     out
@@ -1409,7 +1595,10 @@ pub fn chat_rename_session_async(session_id: String, title: String) -> SharedRes
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
+            Err(e) => {
+                *out2.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(Err(t!("err.request", err = e).to_string()))
+            }
         }
     });
     out
@@ -1433,7 +1622,10 @@ pub fn chat_edit_message_async(mid: i64, content: String, truncate: bool) -> Sha
                 Ok(v) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ok(v)),
                 Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(e)),
             },
-            Err(e) => *out2.lock().unwrap_or_else(|e| e.into_inner()) = Some(Err(t!("err.request", err = e).to_string())),
+            Err(e) => {
+                *out2.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(Err(t!("err.request", err = e).to_string()))
+            }
         }
     });
     out
@@ -1449,10 +1641,22 @@ mod api_error_parse_tests {
     fn parse_api_error_handles_all_shapes() {
         let s = reqwest::StatusCode::BAD_REQUEST;
         let a = parse_api_error(s, r#"{"error":"任务不存在: abc"}"#);
-        assert!(a.contains("任务不存在: abc"), "形态一（error 字符串）未解析: {a}");
-        let b = parse_api_error(s, r#"{"error":{"type":"not_found","message":"会话不存在: 42"}}"#);
-        assert!(b.contains("会话不存在: 42"), "形态二（error.message）未解析: {b}");
-        let c = parse_api_error(reqwest::StatusCode::BAD_GATEWAY, "<html>502 Bad Gateway</html>");
+        assert!(
+            a.contains("任务不存在: abc"),
+            "形态一（error 字符串）未解析: {a}"
+        );
+        let b = parse_api_error(
+            s,
+            r#"{"error":{"type":"not_found","message":"会话不存在: 42"}}"#,
+        );
+        assert!(
+            b.contains("会话不存在: 42"),
+            "形态二（error.message）未解析: {b}"
+        );
+        let c = parse_api_error(
+            reqwest::StatusCode::BAD_GATEWAY,
+            "<html>502 Bad Gateway</html>",
+        );
         assert!(c.contains("502 Bad Gateway"), "非 JSON 正文未回显: {c}");
         let d = parse_api_error(reqwest::StatusCode::BAD_GATEWAY, "");
         assert_eq!(d, "HTTP 502 Bad Gateway", "空 body 格式异常: {d}");
@@ -1467,7 +1671,10 @@ mod proxy_root_fix_tests {
     struct EnvGuard(Vec<(&'static str, Option<String>)>);
     impl EnvGuard {
         fn set(vars: &[(&'static str, &str)]) -> Self {
-            let saved = vars.iter().map(|(k, _)| (*k, std::env::var(k).ok())).collect();
+            let saved = vars
+                .iter()
+                .map(|(k, _)| (*k, std::env::var(k).ok()))
+                .collect();
             for (k, v) in vars {
                 std::env::set_var(k, v);
             }
@@ -1566,7 +1773,10 @@ mod proxy_root_fix_tests {
                 .build()
                 .expect("client 构造失败"),
         );
-        eprintln!("no_proxy client 成功=true; 显式死代理裸 client 结果={:?}（None=被死代理吞掉）", bare);
+        eprintln!(
+            "no_proxy client 成功=true; 显式死代理裸 client 结果={:?}（None=被死代理吞掉）",
+            bare
+        );
         assert_eq!(
             bare, None,
             "对照失效：显式死代理下裸 client 竟然连上了 127.0.0.1（对照本身不成立，需检查 reqwest 行为）"
@@ -1578,16 +1788,26 @@ mod proxy_root_fix_tests {
 
 /// 取会话某段窗口（召回指针"回到原文"——GET /api/chat/sessions/{id}/window）
 /// 返回 {session_id, around_id, limit, text}；text 为可直接展示的窗口文本
-pub fn fetch_chat_window_async(session_id: String, around_id: i64) -> SharedResult<serde_json::Value> {
+pub fn fetch_chat_window_async(
+    session_id: String,
+    around_id: i64,
+) -> SharedResult<serde_json::Value> {
     let out: SharedResult<serde_json::Value> = Arc::new(Mutex::new(None));
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
         let url = format!(
             "{}/api/chat/sessions/{}/window?around_id={}&limit=20",
-            api_base(), session_id, around_id
+            api_base(),
+            session_id,
+            around_id
         );
-        let r = match client.get(&url).header("X-Auth-Token", api_token()).send().await {
+        let r = match client
+            .get(&url)
+            .header("X-Auth-Token", api_token())
+            .send()
+            .await
+        {
             Ok(resp) => json_body(resp).await,
             Err(e) => Err(t!("err.request", err = e).to_string()),
         };
@@ -1602,8 +1822,17 @@ pub fn chat_compact_reset_async(session_id: String) -> SharedResult<serde_json::
     let out2 = out.clone();
     runtime().spawn(async move {
         let client = http_client_json();
-        let url = format!("{}/api/chat/sessions/{}/compact-reset", api_base(), session_id);
-        let r = match client.post(&url).header("X-Auth-Token", api_token()).send().await {
+        let url = format!(
+            "{}/api/chat/sessions/{}/compact-reset",
+            api_base(),
+            session_id
+        );
+        let r = match client
+            .post(&url)
+            .header("X-Auth-Token", api_token())
+            .send()
+            .await
+        {
             Ok(resp) => json_body(resp).await,
             Err(e) => Err(t!("err.request", err = e).to_string()),
         };
@@ -1616,7 +1845,12 @@ pub fn chat_compact_reset_async(session_id: String) -> SharedResult<serde_json::
 pub async fn fetch_prefix_cache_blocking() -> Result<serde_json::Value, String> {
     let client = http_client_json();
     let url = format!("{}/api/metrics/prefix_cache", ai_base());
-    let resp = client.get(&url).header("X-Auth-Token", api_token()).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .header("X-Auth-Token", api_token())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     json_body(resp).await
 }
 
@@ -1643,7 +1877,10 @@ mod a08_abort_tests {
         }
         chat_stream_abort(&state);
         std::thread::sleep(std::time::Duration::from_millis(700));
-        assert!(!flag.load(Ordering::SeqCst), "abort 后任务仍在跑——A08 立即断流机制失效");
+        assert!(
+            !flag.load(Ordering::SeqCst),
+            "abort 后任务仍在跑——A08 立即断流机制失效"
+        );
     }
 
     /// A09 备选：句柄入状态后，正常结束应能被 join（不 panic → 不上报）
@@ -1717,12 +1954,25 @@ fn migrate_ui_state_files(new_dir: &std::path::Path, old_dir: &std::path::Path) 
             continue;
         }
         if let Err(e) = std::fs::create_dir_all(new_dir) {
-            eprintln!("[zerg-ui] failed to create the state directory {}: {}", new_dir.display(), e);
+            eprintln!(
+                "[zerg-ui] failed to create the state directory {}: {}",
+                new_dir.display(),
+                e
+            );
             continue;
         }
         match std::fs::copy(&old, &new) {
-            Ok(_) => eprintln!("[zerg-ui] migrated legacy UI state {} -> {}", old.display(), new.display()),
-            Err(e) => eprintln!("[zerg-ui] failed to migrate legacy UI state {} -> {}: {}", old.display(), new.display(), e),
+            Ok(_) => eprintln!(
+                "[zerg-ui] migrated legacy UI state {} -> {}",
+                old.display(),
+                new.display()
+            ),
+            Err(e) => eprintln!(
+                "[zerg-ui] failed to migrate legacy UI state {} -> {}: {}",
+                old.display(),
+                new.display(),
+                e
+            ),
         }
     }
 }
@@ -1756,13 +2006,28 @@ fn migrate_file(new_path: &std::path::Path, old_path: &std::path::Path, what: &s
     }
     if let Some(dir) = new_path.parent() {
         if let Err(e) = std::fs::create_dir_all(dir) {
-            eprintln!("[zerg-ui] failed to create the state directory {}: {}", dir.display(), e);
+            eprintln!(
+                "[zerg-ui] failed to create the state directory {}: {}",
+                dir.display(),
+                e
+            );
             return;
         }
     }
     match std::fs::copy(old_path, new_path) {
-        Ok(_) => eprintln!("[zerg-ui] migrated legacy {} {} -> {}", what, old_path.display(), new_path.display()),
-        Err(e) => eprintln!("[zerg-ui] failed to migrate legacy {} {} -> {}: {}", what, old_path.display(), new_path.display(), e),
+        Ok(_) => eprintln!(
+            "[zerg-ui] migrated legacy {} {} -> {}",
+            what,
+            old_path.display(),
+            new_path.display()
+        ),
+        Err(e) => eprintln!(
+            "[zerg-ui] failed to migrate legacy {} {} -> {}: {}",
+            what,
+            old_path.display(),
+            new_path.display(),
+            e
+        ),
     }
 }
 
@@ -1795,7 +2060,11 @@ mod ui_dir_tests {
     use super::*;
 
     fn tmp(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("zerg-ui-state-test-{}-{}", std::process::id(), name));
+        let d = std::env::temp_dir().join(format!(
+            "zerg-ui-state-test-{}-{}",
+            std::process::id(),
+            name
+        ));
         let _ = std::fs::remove_dir_all(&d);
         d
     }
@@ -1820,12 +2089,15 @@ mod ui_dir_tests {
         std::fs::write(old.join("modules.json"), r#"{"git":false}"#).unwrap();
         std::fs::write(new.join("modules.json"), r#"{"logs":false}"#).unwrap(); // 目标已有 → 不许动
         migrate_ui_state_files(&new, &old);
-        assert_eq!(std::fs::read_to_string(new.join("modules.json")).unwrap(), r#"{"logs":false}"#);
+        assert_eq!(
+            std::fs::read_to_string(new.join("modules.json")).unwrap(),
+            r#"{"logs":false}"#
+        );
     }
 
     #[test]
     fn migrate_skips_when_legacy_missing() {
-        let old = tmp("old-c");   // 故意不创建
+        let old = tmp("old-c"); // 故意不创建
         let new = tmp("new-c");
         migrate_ui_state_files(&new, &old);
         assert!(!new.join("modules.json").exists());
@@ -1839,10 +2111,17 @@ mod ui_dir_tests {
         let old = tmp("layout-old");
         let new = tmp("layout-new");
         std::fs::create_dir_all(&old).unwrap();
-        std::fs::write(old.join("ui_layout.json"), r#"{"split_model":0.41,"split_it":0.5}"#).unwrap();
+        std::fs::write(
+            old.join("ui_layout.json"),
+            r#"{"split_model":0.41,"split_it":0.5}"#,
+        )
+        .unwrap();
         migrate_layout_file(&new.join("ui_layout.json"), &old.join("ui_layout.json"));
         let got = std::fs::read_to_string(new.join("ui_layout.json")).unwrap();
-        assert_eq!(got, r#"{"split_model":0.41,"split_it":0.5}"#, "非默认比例必须原样搬过去");
+        assert_eq!(
+            got, r#"{"split_model":0.41,"split_it":0.5}"#,
+            "非默认比例必须原样搬过去"
+        );
     }
 
     #[test]
@@ -1880,12 +2159,18 @@ mod ui_dir_tests {
         // 第二次：目标已存在 ⇒ 不覆盖
         std::fs::write(&new_path, r#"{"auth_token":"keep"}"#).unwrap();
         migrate_prefs_file(&new_path, &old_file);
-        assert_eq!(std::fs::read_to_string(&new_path).unwrap(), r#"{"auth_token":"keep"}"#);
+        assert_eq!(
+            std::fs::read_to_string(&new_path).unwrap(),
+            r#"{"auth_token":"keep"}"#
+        );
     }
 
     #[test]
     fn ui_state_file_is_in_migration_whitelist() {
-        assert!(UI_STATE_FILES.contains(&"ui_state.json"), "ui_state.json 必须在迁移白名单里");
+        assert!(
+            UI_STATE_FILES.contains(&"ui_state.json"),
+            "ui_state.json 必须在迁移白名单里"
+        );
     }
 
     // B7 / G10：**跨语言契约测试** —— UI 自己的状态文件必须出现在 Go 侧的兼容清单
@@ -1902,10 +2187,16 @@ mod ui_dir_tests {
             .join("compat")
             .join("compat.json");
         let text = std::fs::read_to_string(&manifest_path).unwrap_or_else(|e| {
-            panic!("读不到 Go 侧兼容清单 {}: {}（跨版本状态契约不能缺席）", manifest_path.display(), e)
+            panic!(
+                "读不到 Go 侧兼容清单 {}: {}（跨版本状态契约不能缺席）",
+                manifest_path.display(),
+                e
+            )
         });
         let m: serde_json::Value = serde_json::from_str(&text).expect("兼容清单必须是合法 JSON");
-        let entries = m["entries"].as_array().expect("兼容清单必须有 entries 数组");
+        let entries = m["entries"]
+            .as_array()
+            .expect("兼容清单必须有 entries 数组");
 
         // UI 写出的全部状态文件（相对状态目录）：一个都不能漏登记
         let want = [
@@ -1917,17 +2208,46 @@ mod ui_dir_tests {
         ];
         for file in want {
             let hit = entries.iter().find(|e| e["file"].as_str() == Some(file));
-            let e = hit.unwrap_or_else(|| panic!("{} 未登记在 core/internal/compat/compat.json 里", file));
-            assert_eq!(e["owner"].as_str(), Some("ui"), "{} 的 owner 必须是 ui", file);
+            let e = hit
+                .unwrap_or_else(|| panic!("{} 未登记在 core/internal/compat/compat.json 里", file));
+            assert_eq!(
+                e["owner"].as_str(),
+                Some("ui"),
+                "{} 的 owner 必须是 ui",
+                file
+            );
             let env = e["envelope"].as_str().unwrap_or("");
-            assert!(env == "inband" || env == "sidecar", "{} 的 envelope 非法（{}）", file, env);
+            assert!(
+                env == "inband" || env == "sidecar",
+                "{} 的 envelope 非法（{}）",
+                file,
+                env
+            );
             let cur = e["current_schema"].as_i64().unwrap_or(0);
             let min = e["min_readable"].as_i64().unwrap_or(-1);
-            assert!(cur >= 1, "{} 的 current_schema 必须 ≥1（实际 {}）", file, cur);
-            assert!(cur >= min, "{} 的 current_schema({}) 必须 ≥ min_readable({})", file, cur, min);
+            assert!(
+                cur >= 1,
+                "{} 的 current_schema 必须 ≥1（实际 {}）",
+                file,
+                cur
+            );
+            assert!(
+                cur >= min,
+                "{} 的 current_schema({}) 必须 ≥ min_readable({})",
+                file,
+                cur,
+                min
+            );
             // 形状是「每个键都是数据」的文件**必须**走旁路信封——在信封里塞 schema 会吃掉用户状态
-            if file == "ui/modules.json" || file == "ui/ui_layout.json" || file == "ui/external-modules.json" {
-                assert_eq!(env, "sidecar", "{} 的形状不允许把 schema 塞进信封（会被读侧当成数据）", file);
+            if file == "ui/modules.json"
+                || file == "ui/ui_layout.json"
+                || file == "ui/external-modules.json"
+            {
+                assert_eq!(
+                    env, "sidecar",
+                    "{} 的形状不允许把 schema 塞进信封（会被读侧当成数据）",
+                    file
+                );
             }
         }
     }

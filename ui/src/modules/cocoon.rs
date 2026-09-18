@@ -137,12 +137,16 @@ pub struct EditorPool {
 
 impl std::fmt::Debug for EditorPool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EditorPool").field("editors", &self.editors.len()).finish()
+        f.debug_struct("EditorPool")
+            .field("editors", &self.editors.len())
+            .finish()
     }
 }
 
 /// 取池锁（中毒也照用——与宿主 `lock_recover` 同款纪律）。
-fn lock_pool(pool: &std::sync::Arc<std::sync::Mutex<EditorPool>>) -> std::sync::MutexGuard<'_, EditorPool> {
+fn lock_pool(
+    pool: &std::sync::Arc<std::sync::Mutex<EditorPool>>,
+) -> std::sync::MutexGuard<'_, EditorPool> {
     pool.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -163,10 +167,7 @@ fn render_editor(
         let mut p = lock_pool(pool);
         // 调用方换了内容（首次 / 切换文档 / 宿主回填）⇒ 重新装载；否则保留编辑器里的编辑与历史。
         let needs_load = p.handed.get(id).map(|prev| prev != text).unwrap_or(true);
-        let ed = p
-            .editors
-            .entry(id.to_string())
-            .or_insert_with(crate::modules::ferrite::MdEditor::new);
+        let ed = p.editors.entry(id.to_string()).or_default();
         if needs_load {
             ed.load(text);
         }
@@ -202,7 +203,12 @@ impl CocoonCtx {
     /// 为什么契约上要有这条：茧是**独立仓**，不能反向依赖宿主、更不能把船体的 Ferrite
     /// （rope/comrak/syntect，约 1500 行）复制一份；没有它，茧只能用 `TextEdit` 凑合 ⇒
     /// **体验降级**（C9 第 3 步要消除的正是它）。接口刻意窄：只给「渲染一段文本 + 三态返回」。
-    pub fn markdown_editor(&mut self, ui: &mut egui::Ui, id: &str, text: &mut String) -> EditorOutcome {
+    pub fn markdown_editor(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: &str,
+        text: &mut String,
+    ) -> EditorOutcome {
         render_editor(&self.pool, ui, id, text)
     }
 
@@ -318,7 +324,9 @@ pub fn meta_of(id: &str) -> Option<&'static CocoonMeta> {
 pub fn load(id: &str) -> Option<Box<dyn Cocoon>> {
     match id {
         #[cfg(feature = "zerg-roundtable")]
-        "roundtable" => Some(Box::new(zerg_roundtable::ui::RoundtableApp::new()) as Box<dyn Cocoon>),
+        "roundtable" => {
+            Some(Box::new(zerg_roundtable::ui::RoundtableApp::new()) as Box<dyn Cocoon>)
+        }
         #[cfg(feature = "zerg-cocoon-docs")]
         "docs" => Some(Box::new(zerg_cocoon_docs::DocsApp::new()) as Box<dyn Cocoon>),
         _ => None,
@@ -512,14 +520,22 @@ mod tests {
         for m in all {
             assert!(!m.id.is_empty(), "茧 id 不能为空");
             assert!(seen.insert(m.id), "茧 id 重复：{}", m.id);
-            assert!(!m.name.is_empty(), "{} 缺默认名（本地化键缺失时要有兜底）", m.id);
+            assert!(
+                !m.name.is_empty(),
+                "{} 缺默认名（本地化键缺失时要有兜底）",
+                m.id
+            );
             assert!(
                 !m.name_key.is_empty() || !m.name.is_empty(),
                 "{} 既无 i18n 名键也无默认名 ⇒ 卡片会空白",
                 m.id
             );
             assert!(!m.icon.is_empty(), "{} 缺图标", m.id);
-            assert!(!m.repo.is_empty(), "{} 缺独立仓地址（未装载时给不出安装指引）", m.id);
+            assert!(
+                !m.repo.is_empty(),
+                "{} 缺独立仓地址（未装载时给不出安装指引）",
+                m.id
+            );
             assert!(
                 m.repo.starts_with("http"),
                 "{} 的仓地址应是可点击/可复制的地址：{}",
@@ -536,7 +552,11 @@ mod tests {
         for m in catalog() {
             match m.kind {
                 CocoonKind::Service => {
-                    assert!(m.needs_service, "{} 是服务型茧 ⇒ needs_service 必须 true", m.id);
+                    assert!(
+                        m.needs_service,
+                        "{} 是服务型茧 ⇒ needs_service 必须 true",
+                        m.id
+                    );
                     assert!(
                         !m.capabilities.is_empty(),
                         "{} 是服务型茧但没申领任何能力（fail-closed）",
@@ -576,7 +596,10 @@ mod tests {
     #[test]
     fn render_channel_carries_exit_request() {
         let ctx = egui::Context::default();
-        let mut app = FakeCocoon { request_exit: true, renders: 0 };
+        let mut app = FakeCocoon {
+            request_exit: true,
+            renders: 0,
+        };
         let mut ch = CocoonCtx::default();
         let mut out = ctx.run_ui(Default::default(), |ui| {
             assert_eq!(app.meta().id, "fake");
@@ -587,7 +610,10 @@ mod tests {
         assert_eq!(app.renders, 1, "渲染一次（吊点被调用）");
 
         // 反例：不请求退出 ⇒ 通道保持默认（宿主不会误退出）
-        let mut quiet = FakeCocoon { request_exit: false, renders: 0 };
+        let mut quiet = FakeCocoon {
+            request_exit: false,
+            renders: 0,
+        };
         let mut ch2 = CocoonCtx::default();
         let mut out2 = ctx.run_ui(Default::default(), |ui| quiet.render(ui, &mut ch2));
         out2.textures_delta.clear();
@@ -617,15 +643,23 @@ mod tests {
         const ZH: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/zh-CN.yml"));
         const EN: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/en.yml"));
         fn has(yml: &str, key: &str) -> bool {
-            yml.lines()
-                .any(|l| l.split_once(':').map(|(k, _)| k.trim() == key).unwrap_or(false))
+            yml.lines().any(|l| {
+                l.split_once(':')
+                    .map(|(k, _)| k.trim() == key)
+                    .unwrap_or(false)
+            })
         }
         for m in catalog() {
             for key in [m.name_key, m.desc_key] {
                 if key.is_empty() {
                     continue;
                 }
-                assert!(has(ZH, key), "zh-CN.yml 缺茧铭牌的键 {}（茧 {}）", key, m.id);
+                assert!(
+                    has(ZH, key),
+                    "zh-CN.yml 缺茧铭牌的键 {}（茧 {}）",
+                    key,
+                    m.id
+                );
                 assert!(has(EN, key), "en.yml 缺茧铭牌的键 {}（茧 {}）", key, m.id);
             }
         }
@@ -725,14 +759,22 @@ mod tests {
             .unwrap()
             .insert_text("X");
         frame(&ctx, Default::default(), &mut cocoon, &mut ch);
-        assert_eq!(cocoon.outcomes[1], EditorOutcome::Changed, "编辑器改过 ⇒ 必须报 Changed");
+        assert_eq!(
+            cocoon.outcomes[1],
+            EditorOutcome::Changed,
+            "编辑器改过 ⇒ 必须报 Changed"
+        );
         assert_eq!(cocoon.text, "X# 标题\n正文", "改动必须写回茧的缓冲");
 
         // ③ 变异对照：两边一致 ⇒ 不得再报「改过」（证明 Changed 不是恒真）
         frame(&ctx, Default::default(), &mut cocoon, &mut ch);
         assert_eq!(cocoon.outcomes[2], EditorOutcome::Unchanged);
         // 编辑缓冲跨帧存活（同一个 id 用同一个编辑器）
-        assert_eq!(lock_pool(&ch.pool).editors.len(), 1, "同一个 id 只能有一份编辑缓冲（光标/撤销要跨帧）");
+        assert_eq!(
+            lock_pool(&ch.pool).editors.len(),
+            1,
+            "同一个 id 只能有一份编辑缓冲（光标/撤销要跨帧）"
+        );
         assert_eq!(cocoon.token_checks, 3, "每帧都真读了通道（不是摆设）");
     }
 
@@ -761,11 +803,17 @@ mod tests {
             "⌘S ⇒ 茧必须收到 SaveRequested"
         );
         frame(&ctx, press(egui::Modifiers::NONE), &mut cocoon, &mut ch);
-        assert_eq!(cocoon.outcomes[1], EditorOutcome::Unchanged, "光按 S 不是保存");
+        assert_eq!(
+            cocoon.outcomes[1],
+            EditorOutcome::Unchanged,
+            "光按 S 不是保存"
+        );
 
         // 三态语义自证（能失败：谁改 changed()/save_requested() 的判定）
         assert!(EditorOutcome::Changed.changed() && !EditorOutcome::Changed.save_requested());
-        assert!(EditorOutcome::SaveRequested.changed() && EditorOutcome::SaveRequested.save_requested());
+        assert!(
+            EditorOutcome::SaveRequested.changed() && EditorOutcome::SaveRequested.save_requested()
+        );
         assert!(!EditorOutcome::Unchanged.changed() && !EditorOutcome::Unchanged.save_requested());
     }
 
@@ -796,7 +844,11 @@ mod tests {
             "令牌不得出现在 Debug 输出里：{}",
             dbg
         );
-        assert!(dbg.contains("token: true"), "Debug 只报「有没有令牌」：{}", dbg);
+        assert!(
+            dbg.contains("token: true"),
+            "Debug 只报「有没有令牌」：{}",
+            dbg
+        );
     }
 
     /// 文档茧铭牌（C9 第 4 步＝路径依赖已接上）：形态是服务型 + 独立仓地址 + 装载态随 feature。
@@ -806,9 +858,15 @@ mod tests {
         assert_eq!(m.id, "docs");
         assert_eq!(m.kind, CocoonKind::Service);
         assert!(m.needs_service, "服务型茧 ⇒ needs_service 必须 true");
-        assert!(!m.capabilities.is_empty(), "服务型茧必须申领能力（fail-closed）");
+        assert!(
+            !m.capabilities.is_empty(),
+            "服务型茧必须申领能力（fail-closed）"
+        );
         assert_eq!(m.repo, "https://github.com/Mr2109/zerg-cocoon-docs");
-        assert_eq!(m.version, "0.1.0", "铭牌版本与<container-repo> Cargo.toml 手工同步（跨仓编译期取不到）");
+        assert_eq!(
+            m.version, "0.1.0",
+            "铭牌版本与<container-repo> Cargo.toml 手工同步（跨仓编译期取不到）"
+        );
         // 装载态 = 编译期 feature（第 4 步接上 path 依赖 ⇒ 默认构建为真；公开镜像解依赖 ⇒ 假）
         assert_eq!(m.loaded, cfg!(feature = "zerg-cocoon-docs"));
         assert_eq!(DOCS.loaded, m.loaded);
@@ -849,12 +907,22 @@ mod tests {
         assert!(docs.repo.starts_with("http"), "安装指引要可点/可复制");
 
         // ② 已装载态：同一判据必须为「可开」——用夹具铭牌（绝不 new() 真茧）
-        assert!(openable(&FAKE_META), "已装载 ⇒ 可开（防「一律不可开」的假实现）");
-        let unloaded = CocoonMeta { loaded: false, ..FAKE_META };
+        assert!(
+            openable(&FAKE_META),
+            "已装载 ⇒ 可开（防「一律不可开」的假实现）"
+        );
+        let unloaded = CocoonMeta {
+            loaded: false,
+            ..FAKE_META
+        };
         assert!(!openable(&unloaded));
 
         // ③ 不需要指引的场合：已装载的茧、不是茧的 id、未知 id
-        assert_eq!(install_guide("chat"), None, "宿主内建应用不是茧 ⇒ 无安装指引");
+        assert_eq!(
+            install_guide("chat"),
+            None,
+            "宿主内建应用不是茧 ⇒ 无安装指引"
+        );
         assert_eq!(install_guide("nope"), None);
         assert_eq!(
             install_guide("roundtable").is_some(),

@@ -193,14 +193,22 @@ impl FileBrowse {
         if let Some(Some(r)) = pending {
             self.action_result = None;
             match r {
-                Ok(abs) => self.action_msg = Some(rust_i18n::t!("fb.action.done", abs = abs).to_string()),
+                Ok(abs) => {
+                    self.action_msg = Some(rust_i18n::t!("fb.action.done", abs = abs).to_string())
+                }
                 Err(e) => self.err = Some(e),
             }
         }
     }
 
     /// 发起一个「交给系统」的动作（open / reveal）
-    fn start_action(&mut self, action: &str, root: String, path: String, mode: Option<&'static str>) {
+    fn start_action(
+        &mut self,
+        action: &str,
+        root: String,
+        path: String,
+        mode: Option<&'static str>,
+    ) {
         self.action_msg = None;
         self.err = None;
         self.action_result = Some(actions::fileroot_action_async(action, root, path, mode));
@@ -348,13 +356,19 @@ mod tests {
         let s = RootsState::from_json(&fileroots_fixture());
         let ids: Vec<&str> = s.roots.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, vec!["docs", "repo", "models", "tasks", "weights"]);
-        assert!(s.find("docs").unwrap().writable, "docs 根必须可写（写菜单依赖它）");
+        assert!(
+            s.find("docs").unwrap().writable,
+            "docs 根必须可写（写菜单依赖它）"
+        );
         for ro in ["repo", "models", "tasks", "weights"] {
             assert!(!s.find(ro).unwrap().writable, "{} 根必须只读（§九 Q2）", ro);
         }
         assert_eq!(s.path_of("weights"), Some("~/models"));
         assert_eq!(s.config.display_max, 1048576);
-        assert_eq!(s.config.text_exts, vec![".md".to_string(), ".txt".to_string()]);
+        assert_eq!(
+            s.config.text_exts,
+            vec![".md".to_string(), ".txt".to_string()]
+        );
         assert!(!s.config.allow_all_types);
     }
 
@@ -362,13 +376,32 @@ mod tests {
     #[test]
     fn default_root_id_prefers_backend_flag() {
         let flagged = vec![
-            RootInfo { id: "a".into(), label: "A".into(), path: "/a".into(), is_default: false, writable: false, exists: true },
-            RootInfo { id: "b".into(), label: "B".into(), path: "/b".into(), is_default: true, writable: false, exists: true },
+            RootInfo {
+                id: "a".into(),
+                label: "A".into(),
+                path: "/a".into(),
+                is_default: false,
+                writable: false,
+                exists: true,
+            },
+            RootInfo {
+                id: "b".into(),
+                label: "B".into(),
+                path: "/b".into(),
+                is_default: true,
+                writable: false,
+                exists: true,
+            },
         ];
         assert_eq!(default_root_id(&flagged).as_deref(), Some("b"));
-        let none_flagged = vec![
-            RootInfo { id: "a".into(), label: "A".into(), path: "/a".into(), is_default: false, writable: false, exists: true },
-        ];
+        let none_flagged = vec![RootInfo {
+            id: "a".into(),
+            label: "A".into(),
+            path: "/a".into(),
+            is_default: false,
+            writable: false,
+            exists: true,
+        }];
         assert_eq!(default_root_id(&none_flagged).as_deref(), Some("a"));
         assert_eq!(default_root_id(&[]), None);
     }
@@ -379,9 +412,15 @@ mod tests {
         let c = FilerootsConfig::from_json(None);
         assert_eq!(c.display_max, DEFAULT_DISPLAY_MAX);
         assert!(!c.allow_all_types);
-        assert!(c.text_exts.iter().any(|e| e == ".md"), "缺省文本清单须含 .md");
+        assert!(
+            c.text_exts.iter().any(|e| e == ".md"),
+            "缺省文本清单须含 .md"
+        );
         let zero = FilerootsConfig::from_json(Some(&serde_json::json!({"display_max": 0})));
-        assert_eq!(zero.display_max, DEFAULT_DISPLAY_MAX, "display_max=0 视为未配置");
+        assert_eq!(
+            zero.display_max, DEFAULT_DISPLAY_MAX,
+            "display_max=0 视为未配置"
+        );
         let custom = FilerootsConfig::from_json(Some(&serde_json::json!({"display_max": 4096})));
         assert_eq!(custom.display_max, 4096);
     }
@@ -391,7 +430,11 @@ mod tests {
     fn root_label_prefers_i18n_then_backend_label() {
         // 命中键：返回键值（不返回后端中文 label —— 英文界面才不会露中文）
         let hit = root_label("docs", "虫族文档", |k| {
-            if k == "fb.root.docs" { "Docs".to_string() } else { k.to_string() }
+            if k == "fb.root.docs" {
+                "Docs".to_string()
+            } else {
+                k.to_string()
+            }
         });
         assert_eq!(hit, "Docs");
         // 未命中键（rust-i18n 原样返回键名）：退回后端 label
@@ -408,7 +451,10 @@ mod tests {
         assert_eq!(shown.len(), 1024, "小文件必须整份渲染");
         // 恰好等于上限：不算截断
         let exact = "y".repeat(DEFAULT_DISPLAY_MAX);
-        assert_eq!(display_window(&exact, DEFAULT_DISPLAY_MAX).1, DEFAULT_DISPLAY_MAX);
+        assert_eq!(
+            display_window(&exact, DEFAULT_DISPLAY_MAX).1,
+            DEFAULT_DISPLAY_MAX
+        );
         assert!(!display_window(&exact, DEFAULT_DISPLAY_MAX).2);
         // 3 MiB 文本：只渲染前 1 MiB，且必须给提示
         let big = "z".repeat(3 * 1024 * 1024);
@@ -453,11 +499,20 @@ mod tests {
         })));
         assert!(can_open("a/b.md", false, &cfg), "清单内文本可开");
         assert!(can_open("a/b.TXT", false, &cfg), "扩展名大小写不敏感");
-        assert!(!can_open("model.gguf", false, &cfg), "二进制默认不读入 UI / 不开（Q4）");
-        assert!(!can_open("Makefile", false, &cfg), "无扩展名默认只给「在访达中显示」");
+        assert!(
+            !can_open("model.gguf", false, &cfg),
+            "二进制默认不读入 UI / 不开（Q4）"
+        );
+        assert!(
+            !can_open("Makefile", false, &cfg),
+            "无扩展名默认只给「在访达中显示」"
+        );
         assert!(can_open("任何目录", true, &cfg), "目录恒可开");
         let all = FilerootsConfig::from_json(Some(&serde_json::json!({"allow_all_types": true})));
-        assert!(can_open("model.gguf", false, &all), "放开类型=改配置即生效（不改代码）");
+        assert!(
+            can_open("model.gguf", false, &all),
+            "放开类型=改配置即生效（不改代码）"
+        );
     }
 
     /// §尾巴 a【关键回归点】：`exists` 字段缺失（旧后端）必须按 **true** 处理——
@@ -483,12 +538,21 @@ mod tests {
             ]
         });
         let s2 = RootsState::from_json(&new);
-        assert!(!s2.find("weights").unwrap().exists, "显式 false 必须被解析出来");
+        assert!(
+            !s2.find("weights").unwrap().exists,
+            "显式 false 必须被解析出来"
+        );
         assert!(s2.known_missing("weights"));
         assert!(!s2.known_missing("docs"));
         // 清单未到 / 未知根 id：不误报（未知 ≠ 不存在）
-        assert!(!roots::root_missing("weights", None), "根清单未到不得判不存在");
-        assert!(!roots::root_missing("brand-new-root", Some(&s2)), "未知根 id 不得判不存在");
+        assert!(
+            !roots::root_missing("weights", None),
+            "根清单未到不得判不存在"
+        );
+        assert!(
+            !roots::root_missing("brand-new-root", Some(&s2)),
+            "未知根 id 不得判不存在"
+        );
     }
 
     /// §尾巴 a：当前根已知不存在 ⇒ **不发起列表请求**（纯函数闸门）；存在/未知/无清单照常拉。
@@ -504,7 +568,10 @@ mod tests {
             !roots::should_fetch_listing("weights", Some(&s)),
             "根不存在 ⇒ 不拉列表（进入空态），否则每 5s 白刷一次必然失败的请求"
         );
-        assert!(roots::should_fetch_listing("docs", Some(&s)), "存在的根照常拉");
+        assert!(
+            roots::should_fetch_listing("docs", Some(&s)),
+            "存在的根照常拉"
+        );
         assert!(
             roots::should_fetch_listing("docs", None),
             "根清单未到不得因此不拉（离线/首帧照常尝试）"
@@ -564,12 +631,25 @@ mod tests {
             assert!(!t.trim().is_empty(), "{} 的文案不能为空", c);
             texts.insert(t);
         }
-        assert_eq!(texts.len(), codes.len(), "六个码的文案必须互不相同（否则界面无法分辨）");
+        assert_eq!(
+            texts.len(),
+            codes.len(),
+            "六个码的文案必须互不相同（否则界面无法分辨）"
+        );
         // 大小写不敏感（服务端恒大写，调用方可能传小写）
-        assert_eq!(actions::fileroot_error_key("not_allowed"), "fb.error.not_allowed");
+        assert_eq!(
+            actions::fileroot_error_key("not_allowed"),
+            "fb.error.not_allowed"
+        );
         // 未收录码 → 通用兜底，不 panic
-        assert_eq!(actions::fileroot_error_key("SOME_FUTURE_CODE"), "fb.error.unknown");
-        assert_ne!(actions::fileroot_error_text("SOME_FUTURE_CODE"), "fb.error.unknown");
+        assert_eq!(
+            actions::fileroot_error_key("SOME_FUTURE_CODE"),
+            "fb.error.unknown"
+        );
+        assert_ne!(
+            actions::fileroot_error_text("SOME_FUTURE_CODE"),
+            "fb.error.unknown"
+        );
     }
 
     /// 错误体解析：两种形态 + 畸形体——都不 panic，且给出可读文案（不糊原始 JSON）
@@ -581,9 +661,13 @@ mod tests {
         // 改为断言「结果 ∈ 该键在全部内置 locale 下的译文」：语义不变、与 locale 无关。
         // 形态一：{"error":{"type","message"}}
         let b1 = serde_json::json!({"error":{"type":"NOT_ALLOWED","message":"该类型不允许"}});
-        assert_eq!(actions::fileroot_error_code(&b1).as_deref(), Some("NOT_ALLOWED"));
+        assert_eq!(
+            actions::fileroot_error_code(&b1).as_deref(),
+            Some("NOT_ALLOWED")
+        );
         assert!(
-            translations_of("fb.error.not_allowed").contains(&actions::fileroot_error_from_body(&b1)),
+            translations_of("fb.error.not_allowed")
+                .contains(&actions::fileroot_error_from_body(&b1)),
             "NOT_ALLOWED 须落 fb.error.not_allowed 的文案（当前语言）"
         );
         // 形态二：{"error":"NOT_FOUND"}
@@ -631,7 +715,12 @@ mod tests {
     #[test]
     fn file_browser_icon_name_exists() {
         let g = crate::modules::icons::icon_text("folder-open");
-        assert_eq!(g.chars().count(), 1, "folder-open 未收录/拼错——回退成了文本: {}", g);
+        assert_eq!(
+            g.chars().count(),
+            1,
+            "folder-open 未收录/拼错——回退成了文本: {}",
+            g
+        );
     }
 
     /// 只读根不给写入口（§七 11 条）——用真实根清单判定
@@ -640,7 +729,11 @@ mod tests {
         let s = RootsState::from_json(&fileroots_fixture());
         assert!(s.is_writable("docs"));
         for ro in ["repo", "models", "tasks", "weights"] {
-            assert!(!s.is_writable(ro), "{} 是只读根（只读根不得出现写菜单）", ro);
+            assert!(
+                !s.is_writable(ro),
+                "{} 是只读根（只读根不得出现写菜单）",
+                ro
+            );
         }
         assert!(!s.is_writable("nonexistent"), "未知根按只读处理（保守）");
         // 根选择器的默认根解析与契约一致（docs 在船即有默认根）
@@ -655,7 +748,11 @@ mod tests {
         const EN: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/en.yml"));
         let zh = keys_with_prefix(ZH, "fb.");
         let en = keys_with_prefix(EN, "fb.");
-        assert!(zh.len() >= 10, "fb.* 键数量不足（设计 §4.3 约 10 键）：{}", zh.len());
+        assert!(
+            zh.len() >= 10,
+            "fb.* 键数量不足（设计 §4.3 约 10 键）：{}",
+            zh.len()
+        );
         assert_eq!(
             zh, en,
             "zh-CN 与 en 的 fb.* 键集合必须一致：缺的一方会直接显示键名"
@@ -684,7 +781,14 @@ mod tests {
             assert!(zh.contains(k), "locales/zh-CN.yml 缺少键 {}", k);
         }
         // 错误码映射里出现的每个键都必须真实存在（否则界面直接显示键名）
-        for code in ["INVALID_ROOT", "INVALID_PATH", "NOT_FOUND", "NOT_ALLOWED", "READ_FAILED", "OPEN_FAILED"] {
+        for code in [
+            "INVALID_ROOT",
+            "INVALID_PATH",
+            "NOT_FOUND",
+            "NOT_ALLOWED",
+            "READ_FAILED",
+            "OPEN_FAILED",
+        ] {
             assert!(
                 zh.contains(actions::fileroot_error_key(code)),
                 "错误码 {} 的键未收录进 locales",
@@ -695,8 +799,14 @@ mod tests {
         let zh_mod = keys_with_prefix(ZH, "mod.file_browser.");
         let en_mod = keys_with_prefix(EN, "mod.file_browser.");
         assert_eq!(zh_mod, en_mod, "mod.file_browser.* 键集合必须一致");
-        assert!(zh_mod.contains("mod.file_browser.name"), "缺少 mod.file_browser.name");
-        assert!(zh_mod.contains("mod.file_browser.desc"), "缺少 mod.file_browser.desc");
+        assert!(
+            zh_mod.contains("mod.file_browser.name"),
+            "缺少 mod.file_browser.name"
+        );
+        assert!(
+            zh_mod.contains("mod.file_browser.desc"),
+            "缺少 mod.file_browser.desc"
+        );
     }
 
     /// 抽 yml 里以某前缀开头的扁平键（取每行第一个 ':' 之前的部分）

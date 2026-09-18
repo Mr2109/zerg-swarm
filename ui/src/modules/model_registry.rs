@@ -6,6 +6,7 @@
 //! - 拉取中 → 转圈 + 文案；
 //! - 失败   → 可读错误 + 「重试」按钮（页面内自愈，不重启 UI）；
 //! - 空目录 → 友好空态 + 一行「怎么加模型」（zerg-model probe --store）。
+//!
 //! 坏记录（errors>0 / 带 error 文案）仍照常列出，用同情的语气说明——坏记录不能弄坏整页。
 //!
 //! 数据拉取在 tokio runtime 内异步执行（见 api::fetch_model_registry_async），
@@ -27,10 +28,10 @@
 //! ③ 许可证结论的**来源锚** `license.evidence`（"这个许可结论是从哪读来的"）。
 //! 三样都照抄接口值：缺 / 空数组 → 显「—」，绝不填占位（与后端"整键不出现"同一口径）。
 
-use egui::RichText;
-use rust_i18n::t; // 文件级导入——否则 t!() 报 cannot find macro（B2a 同坑）
 use crate::api::{self, SharedResult};
 use crate::modules::icons::icon_text;
+use egui::RichText;
+use rust_i18n::t; // 文件级导入——否则 t!() 报 cannot find macro（B2a 同坑）
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -169,7 +170,8 @@ fn parse_view_pref(s: &str) -> Option<View> {
 /// **必须保留其它字段**（locale / ai_model / preview_renderer…）——整文件覆盖会吃掉用户偏好。
 /// 坏 JSON / 非对象 → 视为空对象重来（不 panic、不丢文件）。
 fn merge_view_pref(existing: &str, view: View) -> String {
-    let mut v: serde_json::Value = serde_json::from_str(existing).unwrap_or_else(|_| serde_json::json!({}));
+    let mut v: serde_json::Value =
+        serde_json::from_str(existing).unwrap_or_else(|_| serde_json::json!({}));
     if !v.is_object() {
         v = serde_json::json!({});
     }
@@ -270,7 +272,11 @@ fn or_dash(s: String) -> String {
 
 /// 显示名：优先 name，缺则退回 id（缺 id 再退回占位符）——「名字是别名，id 是身份」
 fn display_name(rec: &serde_json::Value) -> String {
-    let name = rec.get("name").and_then(|x| x.as_str()).unwrap_or("").trim();
+    let name = rec
+        .get("name")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim();
     if !name.is_empty() {
         return name.to_string();
     }
@@ -287,8 +293,14 @@ fn license_badge(commercial: &str) -> (&'static str, egui::Color32) {
     match commercial {
         "yes" => ("mreg.license_yes", egui::Color32::from_rgb(80, 200, 120)),
         "no" => ("mreg.license_no", egui::Color32::from_rgb(220, 80, 80)),
-        "revenue_gated" => ("mreg.license_revenue_gated", egui::Color32::from_rgb(240, 200, 80)),
-        _ => ("mreg.license_unknown", egui::Color32::from_rgb(150, 150, 150)),
+        "revenue_gated" => (
+            "mreg.license_revenue_gated",
+            egui::Color32::from_rgb(240, 200, 80),
+        ),
+        _ => (
+            "mreg.license_unknown",
+            egui::Color32::from_rgb(150, 150, 150),
+        ),
     }
 }
 
@@ -398,7 +410,10 @@ fn filter_records<'a>(
     query: &str,
     cap: Option<&str>,
 ) -> Vec<&'a serde_json::Value> {
-    records.iter().filter(|r| matches_filter(r, query, cap)).collect()
+    records
+        .iter()
+        .filter(|r| matches_filter(r, query, cap))
+        .collect()
 }
 
 /// digest 前 12 位（表格列用；空 = 「—」）
@@ -490,7 +505,17 @@ fn cap_rows(rec: &serde_json::Value) -> Vec<(String, FieldVal, String, String, V
                     let src = or_dash(json_str(c.get("source")));
                     let ev = or_dash(json_str(c.get("evidence")));
                     let engines = engine_list(c.get("engines"));
-                    (if name.is_empty() { "?".to_string() } else { name }, val, src, ev, engines)
+                    (
+                        if name.is_empty() {
+                            "?".to_string()
+                        } else {
+                            name
+                        },
+                        val,
+                        src,
+                        ev,
+                        engines,
+                    )
                 })
                 .collect()
         })
@@ -531,7 +556,11 @@ fn unverifiable_rows(rec: &serde_json::Value) -> Vec<(String, String, String)> {
                 .map(|u| {
                     let name = json_str(u.get("name"));
                     (
-                        if name.is_empty() { "?".to_string() } else { name },
+                        if name.is_empty() {
+                            "?".to_string()
+                        } else {
+                            name
+                        },
                         json_str(u.get("reason")),
                         or_dash(json_str(u.get("evidence"))),
                     )
@@ -658,13 +687,19 @@ fn controls(ui: &mut egui::Ui, v: &serde_json::Value, view: View) {
     ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new(t!("mreg.view_label").to_string()).small());
         if ui
-            .selectable_label(view == View::Capability, t!("mreg.view_capability").to_string())
+            .selectable_label(
+                view == View::Capability,
+                t!("mreg.view_capability").to_string(),
+            )
             .clicked()
         {
             new_view = Some(View::Capability);
         }
         if ui
-            .selectable_label(view == View::Engineering, t!("mreg.view_engineering").to_string())
+            .selectable_label(
+                view == View::Engineering,
+                t!("mreg.view_engineering").to_string(),
+            )
             .clicked()
         {
             new_view = Some(View::Engineering);
@@ -778,7 +813,11 @@ fn apply_action(ui: &mut egui::Ui, action: MregAction) {
 }
 
 /// 有数据：摘要 + 空态 / 卡片列表（能力视图）或紧凑表格（工程视图） + 详情层
-fn render_registry_with(ui: &mut egui::Ui, v: &serde_json::Value, st: &ViewState<'_>) -> MregAction {
+fn render_registry_with(
+    ui: &mut egui::Ui,
+    v: &serde_json::Value,
+    st: &ViewState<'_>,
+) -> MregAction {
     let count = v.get("count").and_then(|c| c.as_u64()).unwrap_or(0);
     let bad = v.get("bad_records").and_then(|c| c.as_u64()).unwrap_or(0);
     let root = v.get("root").and_then(|c| c.as_str()).unwrap_or("");
@@ -809,7 +848,11 @@ fn render_registry_with(ui: &mut egui::Ui, v: &serde_json::Value, st: &ViewState
     }
 
     // 能力筛选只在能力视图生效（芯片只在能力视图可见——避免"看不见的筛选"）
-    let cap_eff = if st.view == View::Capability { st.cap } else { None };
+    let cap_eff = if st.view == View::Capability {
+        st.cap
+    } else {
+        None
+    };
     let shown = filter_records(all, st.search, cap_eff);
 
     ui.add_space(6.0);
@@ -825,8 +868,15 @@ fn render_registry_with(ui: &mut egui::Ui, v: &serde_json::Value, st: &ViewState
     } else {
         if shown.len() != all.len() {
             ui.weak(
-                RichText::new(t!("mreg.filtered_count", shown = shown.len(), total = all.len()).to_string())
-                    .small(),
+                RichText::new(
+                    t!(
+                        "mreg.filtered_count",
+                        shown = shown.len(),
+                        total = all.len()
+                    )
+                    .to_string(),
+                )
+                .small(),
             );
         }
         match st.view {
@@ -868,10 +918,16 @@ fn card(ui: &mut egui::Ui, rec: &serde_json::Value, is_selected: bool) -> bool {
     let version = rec.get("version").and_then(|x| x.as_str()).unwrap_or("");
     let name = display_name(rec);
     let commercial = rec.get("commercial").and_then(|x| x.as_str()).unwrap_or("");
-    let ctx = rec.get("context_window").and_then(|x| x.as_i64()).unwrap_or(0);
+    let ctx = rec
+        .get("context_window")
+        .and_then(|x| x.as_i64())
+        .unwrap_or(0);
     let errors = rec.get("errors").and_then(|x| x.as_u64()).unwrap_or(0);
     let warns = rec.get("warns").and_then(|x| x.as_u64()).unwrap_or(0);
-    let default_eligible = rec.get("default_eligible").and_then(|x| x.as_bool()).unwrap_or(false);
+    let default_eligible = rec
+        .get("default_eligible")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false);
     let err_msg = rec.get("error").and_then(|x| x.as_str()).unwrap_or("");
     let files = rec.get("files").and_then(|x| x.as_array());
     let caps = rec.get("capabilities").and_then(|x| x.as_array());
@@ -904,32 +960,37 @@ fn card(ui: &mut egui::Ui, rec: &serde_json::Value, is_selected: bool) -> bool {
         });
 
         // 第二行：能力标签（capabilities[].name——必要时带 source 小字）
-        ui.horizontal_wrapped(|ui| {
-            match caps {
-                Some(arr) if !arr.is_empty() => {
-                    for c in arr {
-                        let cn = c.get("name").and_then(|x| x.as_str()).unwrap_or("");
-                        if cn.is_empty() {
-                            continue;
-                        }
-                        let src = c.get("source").and_then(|x| x.as_str()).unwrap_or("");
-                        let label = if src.is_empty() {
-                            cn.to_string()
-                        } else {
-                            t!("mreg.cap_tag", name = cn, src = src).to_string()
-                        };
-                        ui.label(RichText::new(label).small());
+        ui.horizontal_wrapped(|ui| match caps {
+            Some(arr) if !arr.is_empty() => {
+                for c in arr {
+                    let cn = c.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                    if cn.is_empty() {
+                        continue;
                     }
+                    let src = c.get("source").and_then(|x| x.as_str()).unwrap_or("");
+                    let label = if src.is_empty() {
+                        cn.to_string()
+                    } else {
+                        t!("mreg.cap_tag", name = cn, src = src).to_string()
+                    };
+                    ui.label(RichText::new(label).small());
                 }
-                _ => {
-                    ui.weak(t!("mreg.no_caps").to_string());
-                }
+            }
+            _ => {
+                ui.weak(t!("mreg.no_caps").to_string());
             }
         });
 
         // 第三行：建材（文件数 + 合计体积） + 上下文窗口
         ui.horizontal_wrapped(|ui| {
-            ui.label(t!("mreg.files", count = file_count, size = human_size(file_bytes)).to_string());
+            ui.label(
+                t!(
+                    "mreg.files",
+                    count = file_count,
+                    size = human_size(file_bytes)
+                )
+                .to_string(),
+            );
             if ctx > 0 {
                 ui.label(t!("mreg.context", ctx = ctx).to_string());
             } else {
@@ -1015,7 +1076,8 @@ fn table(ui: &mut egui::Ui, rows: &[&serde_json::Value], selected: Option<&str>)
                 let errors = rec.get("errors").and_then(|x| x.as_u64()).unwrap_or(0);
                 let warns = rec.get("warns").and_then(|x| x.as_u64()).unwrap_or(0);
                 let path = rec.get("path").and_then(|x| x.as_str()).unwrap_or("");
-                let (file_count, file_bytes) = file_summary(rec.get("files").and_then(|x| x.as_array()));
+                let (file_count, file_bytes) =
+                    file_summary(rec.get("files").and_then(|x| x.as_array()));
                 let (lk, color) = license_badge(commercial);
 
                 body.row(20.0, |mut row| {
@@ -1024,14 +1086,19 @@ fn table(ui: &mut egui::Ui, rows: &[&serde_json::Value], selected: Option<&str>)
                         ui.label(RichText::new(truncate_chars(id, 24)).monospace().small());
                     });
                     row.col(|ui| {
-                        ui.label(RichText::new(truncate_chars(version, 12)).monospace().small());
+                        ui.label(
+                            RichText::new(truncate_chars(version, 12))
+                                .monospace()
+                                .small(),
+                        );
                     });
                     row.col(|ui| {
                         ui.label(RichText::new(short_digest(digest)).monospace().small());
                     });
                     row.col(|ui| {
                         ui.label(
-                            RichText::new(format!("{} · {}", file_count, human_size(file_bytes))).small(),
+                            RichText::new(format!("{} · {}", file_count, human_size(file_bytes)))
+                                .small(),
                         );
                     });
                     row.col(|ui| {
@@ -1075,10 +1142,16 @@ fn detail_window(ctx: egui::Context, rec: &serde_json::Value, copied: Option<&st
     let path = json_str(rec.get("path"));
     let digest = json_str(rec.get("digest"));
     let commercial = json_str(rec.get("commercial"));
-    let ctx_win = rec.get("context_window").and_then(|x| x.as_i64()).unwrap_or(0);
+    let ctx_win = rec
+        .get("context_window")
+        .and_then(|x| x.as_i64())
+        .unwrap_or(0);
     let errors = rec.get("errors").and_then(|x| x.as_u64()).unwrap_or(0);
     let warns = rec.get("warns").and_then(|x| x.as_u64()).unwrap_or(0);
-    let default_eligible = rec.get("default_eligible").and_then(|x| x.as_bool()).unwrap_or(false);
+    let default_eligible = rec
+        .get("default_eligible")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false);
     let err_msg = json_str(rec.get("error"));
     let (file_count, file_bytes) = file_summary(rec.get("files").and_then(|x| x.as_array()));
     let (lk, color) = license_badge(&commercial);
@@ -1120,10 +1193,19 @@ fn detail_window(ctx: egui::Context, rec: &serde_json::Value, copied: Option<&st
                     ui.label(name.as_str());
                     ui.end_row();
                     ui.weak(t!("mreg.detail_id").to_string());
-                    ui.label(RichText::new(if id.is_empty() { DASH } else { id.as_str() }).monospace());
+                    ui.label(
+                        RichText::new(if id.is_empty() { DASH } else { id.as_str() }).monospace(),
+                    );
                     ui.end_row();
                     ui.weak(t!("mreg.detail_version").to_string());
-                    ui.label(RichText::new(if version.is_empty() { DASH } else { version.as_str() }).monospace());
+                    ui.label(
+                        RichText::new(if version.is_empty() {
+                            DASH
+                        } else {
+                            version.as_str()
+                        })
+                        .monospace(),
+                    );
                     ui.end_row();
                     ui.weak(t!("mreg.detail_context").to_string());
                     ui.label(if ctx_win > 0 {
@@ -1133,10 +1215,21 @@ fn detail_window(ctx: egui::Context, rec: &serde_json::Value, copied: Option<&st
                     });
                     ui.end_row();
                     ui.weak(t!("mreg.detail_files").to_string());
-                    ui.label(t!("mreg.files", count = file_count, size = human_size(file_bytes)).to_string());
+                    ui.label(
+                        t!(
+                            "mreg.files",
+                            count = file_count,
+                            size = human_size(file_bytes)
+                        )
+                        .to_string(),
+                    );
                     ui.end_row();
                     ui.weak(t!("mreg.detail_issues").to_string());
-                    ui.label(t!("mreg.errors", n = errors).to_string() + " · " + &t!("mreg.warns", n = warns));
+                    ui.label(
+                        t!("mreg.errors", n = errors).to_string()
+                            + " · "
+                            + &t!("mreg.warns", n = warns),
+                    );
                     ui.end_row();
                     ui.weak(t!("mreg.detail_digest").to_string());
                     ui.label(RichText::new(or_dash(digest.clone())).monospace().small());
@@ -1298,7 +1391,10 @@ mod tests {
     fn test_license_badge_mapping() {
         assert_eq!(license_badge("yes").0, "mreg.license_yes");
         assert_eq!(license_badge("no").0, "mreg.license_no");
-        assert_eq!(license_badge("revenue_gated").0, "mreg.license_revenue_gated");
+        assert_eq!(
+            license_badge("revenue_gated").0,
+            "mreg.license_revenue_gated"
+        );
         assert_eq!(license_badge("unknown").0, "mreg.license_unknown");
         // 空/陌生取值一律按「待核」——绝不默认成可商用
         assert_eq!(license_badge("").0, "mreg.license_unknown");
@@ -1308,7 +1404,10 @@ mod tests {
     /// 显示名：缺 name 退回 id，两者都缺退回占位符
     #[test]
     fn test_display_name_fallback() {
-        assert_eq!(display_name(&json!({"id": "m1", "name": "好模型"})), "好模型");
+        assert_eq!(
+            display_name(&json!({"id": "m1", "name": "好模型"})),
+            "好模型"
+        );
         assert_eq!(display_name(&json!({"id": "m1", "name": ""})), "m1");
         assert_eq!(display_name(&json!({"id": "m1"})), "m1");
         assert_eq!(display_name(&json!({})), "?");
@@ -1425,8 +1524,14 @@ mod view_tests {
     /// 视图偏好的纯解析：显式值 / 大小写 / 坏 JSON / 陌生取值
     #[test]
     fn test_view_pref_parse() {
-        assert_eq!(parse_view_pref(r#"{"mreg_view":"engineering"}"#), Some(View::Engineering));
-        assert_eq!(parse_view_pref(r#"{"mreg_view":"Capability"}"#), Some(View::Capability));
+        assert_eq!(
+            parse_view_pref(r#"{"mreg_view":"engineering"}"#),
+            Some(View::Engineering)
+        );
+        assert_eq!(
+            parse_view_pref(r#"{"mreg_view":"Capability"}"#),
+            Some(View::Capability)
+        );
         // 坏 JSON / 缺字段 / 陌生取值 → None（用默认，不猜）
         assert_eq!(parse_view_pref("{oops"), None);
         assert_eq!(parse_view_pref("{}"), None);
@@ -1472,7 +1577,10 @@ mod view_tests {
     #[test]
     fn test_chip_toggle() {
         assert_eq!(chip_toggle(None, "vision"), Some("vision".to_string()));
-        assert_eq!(chip_toggle(Some("vision"), "text"), Some("text".to_string()));
+        assert_eq!(
+            chip_toggle(Some("vision"), "text"),
+            Some("text".to_string())
+        );
         assert_eq!(chip_toggle(Some("vision"), "vision"), None);
     }
 
@@ -1597,12 +1705,18 @@ mod view_tests {
         }));
         assert_eq!(full[0].1, FieldVal::Text("CC-BY-NC-4.0".to_string()));
         assert_eq!(full[1].1, FieldVal::Text("CC BY-NC 4.0".to_string()));
-        assert_eq!(full[2].1, FieldVal::Text("https://example.org/l".to_string()));
+        assert_eq!(
+            full[2].1,
+            FieldVal::Text("https://example.org/l".to_string())
+        );
         assert_eq!(full[3].1, FieldVal::Text("no".to_string()));
         assert_eq!(full[4].1, FieldVal::Flag(true));
         assert_eq!(full[5].1, FieldVal::Text("https://hf.co/repo".to_string()));
         assert_eq!(full[6].1, FieldVal::Text("Mr2109".to_string()));
-        assert_eq!(full[7].1, FieldVal::Text("2026-09-11T10:00:00Z".to_string()));
+        assert_eq!(
+            full[7].1,
+            FieldVal::Text("2026-09-11T10:00:00Z".to_string())
+        );
         // ③ license.commercial 优先于顶层（两处冲突时以 license 块为准）
         let both = license_rows(&json!({"id": "x", "commercial": "yes",
                                         "license": {"commercial": "unknown"}}));
@@ -1647,7 +1761,15 @@ mod view_tests {
         let recs = record_list(&v);
         let f = file_rows(&recs[0]);
         assert_eq!(f.len(), 2);
-        assert_eq!(f[0], ("weights".into(), "a.gguf".into(), "aa11".into(), "2.0 KB".into()));
+        assert_eq!(
+            f[0],
+            (
+                "weights".into(),
+                "a.gguf".into(),
+                "aa11".into(),
+                "2.0 KB".into()
+            )
+        );
         // 缺 name/sha256/role 显「—」；缺 size 显「—」（不伪装成 0 B）
         let g = file_rows(&json!({"files": [{"size": 0}, {}]}));
         assert_eq!(g[0], (DASH.into(), DASH.into(), DASH.into(), "0 B".into()));
@@ -1670,7 +1792,13 @@ mod view_tests {
         let ctx = egui::Context::default();
         let states = vec![
             // 能力视图 + 无筛选
-            ViewState { view: View::Capability, search: "", cap: None, selected: None, copied: None },
+            ViewState {
+                view: View::Capability,
+                search: "",
+                cap: None,
+                selected: None,
+                copied: None,
+            },
             // 能力视图 + 能力芯片 + 搜索叠加
             ViewState {
                 view: View::Capability,
@@ -1720,7 +1848,13 @@ mod view_tests {
         }
         // 空目录 + 工程视图（空态优先，不画空表格）
         let empty = json!({"count": 0, "bad_records": 0, "root": "/tmp/none", "records": []});
-        let st = ViewState { view: View::Engineering, search: "", cap: None, selected: None, copied: None };
+        let st = ViewState {
+            view: View::Engineering,
+            search: "",
+            cap: None,
+            selected: None,
+            copied: None,
+        };
         let mut out = ctx.run_ui(Default::default(), |ui| {
             let _ = super::render_registry_with(ui, &empty, &st);
         });
@@ -1788,8 +1922,14 @@ mod view_tests {
     /// 待修补 #39：不可判定原因 → 通俗文案；未知原因码原样回退（不猜、不改写）
     #[test]
     fn test_uv_reason_label() {
-        assert_eq!(uv_reason_label("budget_exhausted"), t!("mreg.uv_reason_budget").to_string());
-        assert_eq!(uv_reason_label("timeout"), t!("mreg.uv_reason_timeout").to_string());
+        assert_eq!(
+            uv_reason_label("budget_exhausted"),
+            t!("mreg.uv_reason_budget").to_string()
+        );
+        assert_eq!(
+            uv_reason_label("timeout"),
+            t!("mreg.uv_reason_timeout").to_string()
+        );
         // 已知原因码必须真的译出来（不是把 i18n 键原样吐回）
         let budget = uv_reason_label("budget_exhausted");
         assert!(!budget.is_empty() && !budget.contains("mreg."));
@@ -1807,7 +1947,9 @@ mod view_tests {
         assert_eq!(with[8].0, "mreg.lic_evidence");
         assert_eq!(
             with[8].1,
-            FieldVal::Text("probe.license.v1 (gguf_key: general.license=\"apache-2.0\")".to_string())
+            FieldVal::Text(
+                "probe.license.v1 (gguf_key: general.license=\"apache-2.0\")".to_string()
+            )
         );
         // 缺 evidence → Missing（显「—」）
         let without = license_rows(&json!({"id": "x", "commercial": "yes"}));

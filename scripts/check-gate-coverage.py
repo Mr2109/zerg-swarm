@@ -181,8 +181,8 @@ def extract_steps(root, tmpdir):
         tail = err.strip().splitlines()[-1] if err.strip() else "（stderr 为空）"
         return [], ("闸脚本 `--list` 非零退出（rc=%d）⇒ **不给结论**（判不了 = 不报绿也不报红）。"
                     "常见原因：闸自己的自检不过、或 precheck 缺件（precheck 要 "
-                    "core/go.mod · agent/go.mod · wall/Cargo.toml · ui/Cargo.toml · "
-                    "publish/whitelist.txt 五件）、或仓不完整；stderr 末行：%s"
+                    "core/go.mod · agent/go.mod · shared/go.mod · scripts/exportnames/go.mod · "
+                    "wall/Cargo.toml · ui/Cargo.toml · publish/whitelist.txt 七件）、或仓不完整；stderr 末行：%s"
                     % (proc.returncode, tail))
     steps = []
     for line in out.split("\n"):

@@ -106,10 +106,20 @@ pub fn mib(bytes: usize) -> String {
 
 /// 交给系统的两项（§4.3 右键菜单）——**只读根同样可用**（打开 ≠ 改，§九 Q2）。
 /// 「用默认应用打开」受类型闸门限制（清单外只给「在访达中显示」）。
-pub fn system_menu(ui: &mut egui::Ui, view: &FbView, path: &str, is_dir: bool, out: &mut Vec<FbIntent>) {
+pub fn system_menu(
+    ui: &mut egui::Ui,
+    view: &FbView,
+    path: &str,
+    is_dir: bool,
+    out: &mut Vec<FbIntent>,
+) {
     ui.separator();
     if ui
-        .button(format!("{} {}", crate::modules::icons::icon_text("folder-open"), rust_i18n::t!("fb.action.reveal")))
+        .button(format!(
+            "{} {}",
+            crate::modules::icons::icon_text("folder-open"),
+            rust_i18n::t!("fb.action.reveal")
+        ))
         .clicked()
     {
         out.push(FbIntent::Reveal {
@@ -120,13 +130,21 @@ pub fn system_menu(ui: &mut egui::Ui, view: &FbView, path: &str, is_dir: bool, o
     }
     if view.can_open(path, is_dir)
         && ui
-            .button(format!("{} {}", crate::modules::icons::icon_text("folder-open"), rust_i18n::t!("fb.action.open")))
+            .button(format!(
+                "{} {}",
+                crate::modules::icons::icon_text("folder-open"),
+                rust_i18n::t!("fb.action.open")
+            ))
             .clicked()
     {
         out.push(FbIntent::Open {
             root: view.root.clone(),
             path: path.to_string(),
-            mode: if is_dir { FbOpenMode::Dir } else { FbOpenMode::File },
+            mode: if is_dir {
+                FbOpenMode::Dir
+            } else {
+                FbOpenMode::File
+            },
         });
         ui.close();
     }
