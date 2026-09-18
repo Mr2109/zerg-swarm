@@ -1,0 +1,44 @@
+# edit-assert 规则模板（ast-grep 规则文件 · 抄它改 pattern/符号名即可）
+#
+# 依据：docs/01-设计/设计-改码与变异安全门-v1.1-20260918.md §3.2 R-7（规则模板强制三件套）
+#       + §4.3 结论 4（R-8：命中数只取 `scan -r … --json` 的数组长度，rc 一律不采信）
+#
+# 两个**必写项**（都是实测，删掉任何一条都会静默出错）：
+#
+#   ① `stopBy: end`
+#      官方默认是 `stopBy: neighbor`：关系节点必须**紧邻**才匹配 ⇒ 同一条规则去掉 `stopBy: end`
+#      后在真文件上 **0 命中、`scan` rc=0、stdout 空**（本机实测，见 §4.3 结论 4 与 R-7 实测）
+#      —— 也就是「静默零命中」：门会以为锚点没命中，而其实是规则写窄了。
+#      ⇒ edit-assert 见到 `inside:`/`has:` 而没写 `stopBy` ⇒ rc=2 BLOCKED_RULE_SCOPE（不给结论）。
+#
+#   ② `has: {field: name, pattern: <符号名>}`
+#      不写 `field: name` 时，`has` 只看「子树里有没有这个模式」：同一文件里**别的函数体内**
+#      也出现同名标识符时就会误伤（实测：不限作用域时同一模式在 `scripts/` 里命中 15 处，
+#      而真目标只有 1 处，误伤比 15:1，§3.3）。
+#      ⇒ edit-assert 见到 `has:` 而全文件没写 `field:` ⇒ 打 WARN_RULE_FIELD（不阻断但**不静默**）。
+#
+# 用法（edit-assert 只走这一条路径）：
+#     python3 scripts/edit-assert --rule scripts/edit-assert-rule-template.yml \
+#         --target <文件> --expect 1 --reason '只改这一处' [--write \
+#         --replace-from '<命中文本>' --replace-to '<新文本>']
+
+id: edit-assert-template        # 规则 id（台账里记 rule 路径 + 规则文件 sha256）
+language: Go                     # 语言（与目标扩展名对应；本机已登记解析前置：.go → gofmt -e）
+rule:
+  kind: return_statement         # ← 要改的**节点类型**（AST 级，不是字符串）
+  pattern: return $A == $B       # ★ 必写项③：**把「要被换掉的那段内容」钉住**
+                                 #   只写 kind 不写 pattern ⇒ 换完之后规则**仍然命中**（比如
+                                 #   `==` 换成 `!=` 之后还是 return_statement）⇒ E5 会如实报
+                                 #   FAIL_NOT_IDEMPOTENT「这条命令不只做一件事」并**复原写盘**。
+                                 #   本机实测过这一弹（2026-09-18，模板加 pattern 前）。
+  inside:                        # ← 作用域限定：必须在「某个函数」里
+    kind: function_declaration
+    stopBy: end                  # ★ 必写项①：end = 一直往上找，不是只看紧邻那一层
+    has:
+      field: name                # ★ 必写项②：只认「函数名」这个字段
+      pattern: teamOutcomeOK     # ← 符号名（改成你的目标函数/方法名）
+
+# 说明（不是规则的一部分，ast-grep 忽略非规则键的注释）：
+#   · 定位结果里 `range.start.line` 是 **0 基**；edit-assert 打印时已 +1（对齐编辑器行号）。
+#   · 命中数 = `--json` 数组长度；`[]` 是零命中；**不要**拿 rc 判命中（三态 rc 全 0）。
+#   · 跨文件/一组目标时用 `--group <一组断言.json>`（§4.2 形态 4），不要写三条命令用 `&&` 拼。
