@@ -154,9 +154,135 @@
       "target": "字不丢",
       "reason": "原文 `+[继续提问/丢弃](字不丢)`：`(字不丢)` 是「字不丢」的说明性括号，作者笔误被解析成了链接目标，不是真引用",
       "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/01-设计/设计-UI-大调动-导航精简与分组.md",
+      "target": "ui/src/app.rs:3136-3164",
+      "reason": "历史引证·2026-09-18·父代批准口径：设计稿 2026-09-13 记的「现状落点」。行内容已变：ui_layout 已由 <任务根>/tmp 搬至 <UI 状态目录>（现 ui/src/app.rs:2322-2344，带 E18/Q10 注），原行号处已非该内容 ⇒ 按「行内容已变」记历史引证，不改数字",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/01-设计/设计-UI-大调动-导航精简与分组.md",
+      "target": "ui/src/app.rs:3137-3164",
+      "reason": "历史引证·2026-09-18·父代批准口径：设计稿 E18 记的「现状落点」。行内容已变：旧布局文件迁移已施工（同 E18/Q10 注，现 ui/src/app.rs:2322-2344）⇒ 记历史引证，不改数字",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/01-设计/设计-UI-大调动-导航精简与分组.md",
+      "target": "ui/src/app.rs:3377-3379",
+      "reason": "历史引证·2026-09-18·父代批准口径：设计稿 E16 记的「现状落点」。行内容已变：HUD 查询现为 .find(|m| m.id == active_id)（现 ui/src/app.rs:1472），被引的 m.id == active 形态已不存在 ⇒ 记历史引证，不改数字",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/01-设计/设计-改码与变异安全门-v1.1.md",
+      "target": "internal/diff/diff.go:55-67",
+      "reason": "历史引证·2026-09-18·父代批准口径：引的是**本仓之外**的源码（原文自述「读 gremlins v0.6.0 源码」；本仓树内无 internal/diff/diff.go）⇒ 判据不可达，记历史引证",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/01-设计/设计-文件浏览器虫茧.md",
+      "target": "core/internal/api/docs_ops.go:15",
+      "reason": "历史引证·2026-09-18·父代批准口径：目标**已退役**：docs_ops.go 的 mkdir/rename/delete/copy/save 五端点整块迁进文档茧（core/cmd/zerg-core/main.go:337 注；同源登记见 core/internal/api/fileroots.go:64）⇒ 原文件已删，无法重映射",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/01-设计/设计-文件浏览器虫茧.md",
+      "target": "core/internal/api/docs_ops.go:22",
+      "reason": "历史引证·2026-09-18·父代批准口径：目标**已退役**：同上（safeDocPath 所在的 docs_ops.go 随文档写端点整块迁出；reader 侧现见 core/internal/api/fileroots.go）⇒ 无法重映射",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/01-设计/设计-源码式发布与升级.md",
+      "target": "banner.py:285",
+      "reason": "历史引证·2026-09-18·父代批准口径：引的是**本仓之外**的源码（本仓树内无 banner.py 同名文件；原文为外部安装器逐字摘录）⇒ 判据不可达，记历史引证",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/01-设计/设计-源码式发布与升级.md",
+      "target": "hermes_cli/_early_recovery.py:380-400",
+      "reason": "历史引证·2026-09-18·父代批准口径：引的是**本仓之外**的源码（Hermes 中断恢复机制逐字摘录；本仓树内无 hermes_cli/）⇒ 记历史引证",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/01-设计/设计-源码式发布与升级.md",
+      "target": "hermes_constants.py:468",
+      "reason": "历史引证·2026-09-18·父代批准口径：引的是**本仓之外**的源码（Hermes 升级机制逐字摘录，同段另有 hermes update / cli_loops_mixin.py；本仓树内无此文件）⇒ 记历史引证",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/01-设计/设计-虫茧独立仓.md",
+      "target": "src/docs_app.rs:138",
+      "reason": "历史引证·2026-09-18·父代批准口径：引的是**另一个仓**（原文自述「① <container-repo>（`src/docs_app.rs` …）」——<container-repo>非本仓，本仓树内无 src/docs_app.rs）⇒ 记历史引证",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/01-设计/设计-资源管理器.md",
+      "target": "core/internal/localback/backend.go:429",
+      "reason": "历史引证·2026-09-18·父代批准口径：目标**已退役**：core/internal/localback/ 已不在树（退役记录见 docs/01-设计/设计-茧壁-批5破段-localback-退役与路由迁移.md）⇒ 无法重映射",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/02-调研/调研-Hermes-与虫族记忆体系对比.md",
+      "target": "agent/system_prompt.py:459-484,588-668",
+      "reason": "历史引证·2026-09-18·父代批准口径：引的是**本仓之外**的源码（Hermes system prompt 三档机制逐字摘录；本仓 agent/ 为 Go module，无 .py）⇒ 记历史引证",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/02-调研/调研-Hermes-与虫族记忆体系对比.md",
+      "target": "agent/turn_context.py:947-1000",
+      "reason": "历史引证·2026-09-18·父代批准口径：引的是**本仓之外**的源码（Hermes 当轮 user 消息注入逐字摘录；本仓 agent/ 无 .py）⇒ 记历史引证",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/02-调研/调研-Hermes-与虫族记忆体系对比.md",
+      "target": "memory_manager.py:332",
+      "reason": "历史引证·2026-09-18·父代批准口径：引的是**本仓之外**的源码（Hermes memory_manager.py builtin provider 分支，原文自述「全仓无对应子类」；本仓树内无此文件）⇒ 记历史引证",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/02-调研/调研-Hermes-与虫族记忆体系对比.md",
+      "target": "tools/memory_tool_store.py:25-54,71-109,225-231,320-330,345-355,394-417",
+      "reason": "历史引证·2026-09-18·父代批准口径：引的是**本仓之外**的源码（本课题即 Hermes 记忆体系对比，逐字摘录 Hermes 的 tools/memory_tool*.py；本仓树内无此文件）⇒ 记历史引证",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/调研/调研-文档分块落地-门禁与迁移.md",
+      "target": "ui/src/app.rs:3136-3164",
+      "reason": "历史引证·2026-09-18·父代批准口径：本稿自证的 D2 实测记录（原文自述「全是同一条故意引的反例 `ui/src/app.rs:3136-3164`，被引 3 次」/「44 条引用里 41 过 / 红 3」）⇒ 记的是终稿复跑那次的命中，不改数字",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/调研/调研报告-多智能体协作源码精读-v1.0.md",
+      "target": "tools/delegate_tool.py:446",
+      "reason": "历史引证·2026-09-18·父代批准口径：引的是**本仓之外**的源码（多智能体协作源码精读课题的被读对象；本仓树内无 tools/delegate_tool.py）⇒ 记历史引证",
+      "date": "2026-09-18"
+    },
+    {
+      "gate": "d2",
+      "file_glob": "docs/调研/调研报告-多智能体协作源码精读-v1.0.md",
+      "target": "tools/delegate_tool.py:61-62,179,187-191",
+      "reason": "历史引证·2026-09-18·父代批准口径：引的是**本仓之外**的源码（同上，被读对象的逐字摘录）⇒ 记历史引证",
+      "date": "2026-09-18"
     }
   ],
-  "_allowlist_note": "豁免条目**必须带 reason + date**（缺一条 ⇒ 脚本 rc=2 不给结论）；只给路径的 allowlist = 无记录的洗白。上面两条是 2026-09-18 首跑里**唯一**两条登记的豁免，逐条可复核；删掉它们会重新变红（可用来验证豁免机制真的只豁免这两条）。",
+  "_allowlist_note": "豁免条目**必须带 reason + date**（缺一条 ⇒ 脚本 rc=2 不给结论）；只给路径的 allowlist = 无记录的洗白。上面两条是 2026-09-18 首跑里**唯一**两条登记的豁免，逐条可复核；删掉它们会重新变红（可用来验证豁免机制真的只豁免这两条）。2026-09-18 追加 **D2 存量修复批次 18 条**（父代批准口径，reason 前缀统一为「历史引证·2026-09-18·父代批准口径」）——来源：D2 存量红逐条分类后**无法重映射**的活样本，细分 本稿自证实测记录（故意反例）=1、目标在本仓之外（外部仓/另一个仓）=11、目标已退役/已删=3、行内容已变·原行号处已非该内容=3；同批次**可重映射**的 61 处（路径改名/换目录 + 行号重算 + 镜像副本→主树）已直接改文档、未走豁免；每条的 target 是**精确原样 token**（不用通配）⇒ 文档里的数字一变，豁免即失效、重新变红（不构成洗白）。",
   "refuse_domain": [
     "外链（http/https）：不判 —— 上游明写外链 can time-out a lot，Prometheus 显式忽略；要判定走 P6 的定时任务",
     "wiki 链接 [[…]]：默认不判，只单列计数（实测全是语法示例）",
