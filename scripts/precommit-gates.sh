@@ -24,6 +24,7 @@
 #     bash scripts/precommit-gates.sh --outdir /tmp/gates-14   # 指定日志目录
 #     bash scripts/precommit-gates.sh --list           # 只看步骤清单，不跑
 #     bash scripts/precommit-gates.sh --self-test      # 只跑自检（合成步骤，不碰真目标）
+#     bash scripts/precommit-gates.sh --emit-cmd 无后缀  # 只打印匹配步骤的命令串（负控/复核用；不跑）
 #
 # 退出码：0 全绿 · 1 有失败项 · 2 用法错/前置缺件/自检不过（**不给结论**）
 #
@@ -191,12 +192,88 @@ self_test() {
   run_suite "${t}/f" "${t}/f.tsv" >/dev/null 2>&1
   assert_eq "⑥ 工作目录不存在 ⇒ 硬红（不静默跳过）" "$(count_fail "${t}/f.tsv")" "1"
 
+  # ⑦ 新步骤（无后缀脚本语法，pub scope）的负控：**同一串命令**（nosuffix_syntax_cmd）对着合成件跑。
+  #    三格都走真命令行 + 真退出码：坏件必红 · 好件必绿 · 空转（0 个被检查到）必红。
+  #    **不碰仓内脚本**（新增一步的负控不许为了证明而改真目标）。
+  mkdir -p "${t}/negctl/scripts" "${t}/negctl-ok/scripts" "${t}/negctl-empty/scripts"
+  printf '#!/usr/bin/env python3\ndef broken(:\n'        > "${t}/negctl/scripts/broken-py"
+  printf '#!/bin/bash\nif [ 1 -eq 1 ; then echo x\n'        > "${t}/negctl/scripts/broken-sh"
+  clear_steps
+  add_step self "自检-无后缀语法-坏件" rc "${t}/negctl" "$(nosuffix_syntax_cmd scripts)"
+  run_suite "${t}/g" "${t}/g.tsv" >/dev/null 2>&1
+  assert_eq "⑦ 无后缀语法（同一条命令串）：坏 python/sh 件 ⇒ 必红" "$(count_fail "${t}/g.tsv")" "1"
+  printf '#!/usr/bin/env python3\ndef ok():\n    return 1\n' > "${t}/negctl-ok/scripts/ok-py"
+  printf '#!/bin/bash\necho ok\n'                          > "${t}/negctl-ok/scripts/ok-sh"
+  clear_steps
+  add_step self "自检-无后缀语法-好件" rc "${t}/negctl-ok" "$(nosuffix_syntax_cmd scripts)"
+  run_suite "${t}/h" "${t}/h.tsv" >/dev/null 2>&1
+  assert_eq "⑦ 无后缀语法（同一条命令串）：好件 ⇒ 绿（与坏件有区分度）" "$(count_fail "${t}/h.tsv")" "0"
+  clear_steps
+  add_step self "自检-无后缀语法-空转" rc "${t}/negctl-empty" "$(nosuffix_syntax_cmd scripts)"
+  run_suite "${t}/i" "${t}/i.tsv" >/dev/null 2>&1
+  assert_eq "⑦ 无后缀语法：0 个被检查到 ⇒ 必红（空转 = 假覆盖）" "$(count_fail "${t}/i.tsv")" "1"
+
   printf '自检结论: %s（断言失败 %d 条）\n' "$([ "${SELF_BAD}" -eq 0 ] && echo 全过 || echo 不过)" "${SELF_BAD}"
   rm -rf "${t}"
   if [ "${SELF_BAD}" -eq 0 ]; then
     return 0
   fi
   return 2
+}
+
+# ── 无后缀脚本的语法检查命令（**唯一来源**：pub 真步骤与自检负控共用同一串文本）─────────────
+# 为什么需要（2026-09-18 补牙 ①，实测）：pub scope 原来只收 `scripts/*.sh`（bash -n）与
+# `scripts/*.py`（ast.parse）⇒ **无后缀**的门脚本（scripts/edit-assert · scripts/mutate-scan）
+# **不在任何一步里** ⇒ 上千行的门脚本一个字节都没被语法检查过（假覆盖）。
+# 判法：无扩展名 + 首行是 `#!` ⇒ 按 shebang 分派：python ⇒ ast.parse；sh/bash/dash/ksh/zsh ⇒ bash -n。
+# 硬规矩：**一个都没检查到 ⇒ 红**（空转就是假覆盖，不许给绿）。
+NOSUFFIX_CHECK_PY='
+import ast, os, subprocess, sys
+root = sys.argv[1] if len(sys.argv) > 1 else "scripts"
+picked, bad, skipped = [], [], []
+for name in sorted(os.listdir(root)):
+    path = os.path.join(root, name)
+    if not os.path.isfile(path) or "." in name:
+        continue
+    fh = open(path, "rb")
+    head = fh.readline(200)
+    fh.close()
+    if not head.startswith(b"#!"):
+        continue
+    toks = head.decode("utf-8", "replace").strip().split()
+    interp = os.path.basename(toks[0]) if toks else ""
+    if interp == "env":
+        # `#!/usr/bin/env python3` 这种：往后找第一个不以 - 开头的 token（跳过 -S / -u 之类别名）
+        for t in toks[1:]:
+            if not t.startswith("-"):
+                interp = os.path.basename(t)
+                break
+    if "python" in interp:
+        code = "import ast,sys;ast.parse(open(sys.argv[1],encoding=\"utf-8\").read(),filename=sys.argv[1])"
+        argv = [sys.executable, "-c", code, path]
+    elif interp in ("sh", "bash", "dash", "ksh", "zsh"):
+        argv = ["bash", "-n", path]
+    else:
+        skipped.append("%s（%s）" % (path, interp))
+        continue
+    rc = subprocess.call(argv)
+    if rc == 0:
+        picked.append("%s（%s）" % (path, interp))
+    else:
+        bad.append("%s（%s，rc=%d）" % (path, interp, rc))
+for s in skipped:
+    print("⚠ 未覆盖的解释器（本步只查 bash/python）：%s" % s)
+for b in bad:
+    print("✗ 语法不过：%s" % b)
+if not picked:
+    print("✗ 这一类里 0 个被检查到 ⇒ 本步空转 = 假覆盖 ⇒ 红（若本树确实没有无后缀脚本，请改本步选择条件）")
+    sys.exit(1)
+print("✓ 无后缀脚本语法：%d 个（%s）%s" % (len(picked), " · ".join(picked),
+                                        "· 未覆盖 %d 个" % len(skipped) if skipped else ""))
+sys.exit(1 if bad else 0)
+'
+nosuffix_syntax_cmd() {  # nosuffix_syntax_cmd <相对目录> ⇒ 打印检查命令串（真步骤与自检负控共用）
+  printf 'python3 - %s <<PYEOF\n%s\nPYEOF' "$1" "${NOSUFFIX_CHECK_PY}"
 }
 
 # ── 真目标的步骤表 ────────────────────────────────────────────────
@@ -241,6 +318,12 @@ for f in sorted(glob.glob('scripts/*.py')):
         bad += 1
 sys.exit(1 if bad else 0)
 PYEOF"
+        # ★ 2026-09-18（补牙 ①）：无后缀脚本（scripts/edit-assert · scripts/mutate-scan）**原先不在任何
+        #   一步里** —— pub scope 只收 *.sh / *.py ⇒ 这两个上千行的门脚本没被任何一步查过（假覆盖）。
+        #   本步按 shebang 分派（python ⇒ ast.parse；sh ⇒ bash -n）；**空转即红**（0 个被检查到 ⇒ 不给绿）。
+        #   负控在自检第 ⑦ 条：用**同一串命令**（nosuffix_syntax_cmd）对着 /tmp 的坏件/好件跑 ⇒ 必红/必绿。
+        #   位置：在 run_suite 的步骤表里（**不是**脚本尾部那个 `MAIN_RC=$?` 之后的软检查位置）。
+        add_step pub "scripts/*（无后缀 + 首行 #!）按 shebang 语法"  rc "${REPO_ROOT}" "$(nosuffix_syntax_cmd scripts)"
         add_step pub "check-shell-unicode-vars.py --check"         rc "${REPO_ROOT}" "python3 scripts/check-shell-unicode-vars.py --check scripts/*.sh"
         ;;
       tags)
@@ -276,20 +359,56 @@ precheck() {
 }
 
 main() {
-  local scopes=() outdir="" list_only=0 self_only=0 t
+  local scopes=() outdir="" list_only=0 self_only=0 emit_cmd="" t
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --scope) scopes+=("$2"); shift 2 ;;
       --outdir) outdir="$2"; shift 2 ;;
       --list) list_only=1; shift ;;
       --self-test) self_only=1; shift ;;
-      -h|--help) sed -n '19,36p' "${BASH_SOURCE[0]}"; return 0 ;;
+      --emit-cmd) emit_cmd="$2"; shift 2 ;;
+      -h|--help) sed -n '19,37p' "${BASH_SOURCE[0]}"; return 0 ;;
       *) printf '✗ 未知参数: %s\n' "$1" >&2; return 2 ;;
     esac
   done
 
   if [ "${#scopes[@]}" -eq 0 ]; then
     scopes=(go rust pub tags)
+  fi
+
+  # ── 探针（--emit-cmd <子串>）：只打印匹配步骤的**命令串**，不跑步骤、不给结论 ────────────────
+  # 为什么在这里（自检**之前**）：它不跑任何真目标、也不产生任何判定 ⇒ 不需要先自证；
+  #   输出**只有命令串本身**（供 `bash -c "$(…)"` 直接取用），所以必须躲开自检的输出。
+  # 口径：命令串**只有一个来源**（nosuffix_syntax_cmd），探针不复制、不重写任何一步。
+  # 用途（2026-09-18 补牙 ①：证明新增的无后缀语法那一步不是摆设）——
+  #   D=/tmp/gate-neg && mkdir -p $D/scripts && cp scripts/edit-assert $D/scripts/ &&
+  #   printf 'def broken(:\n' >> $D/scripts/edit-assert &&
+  #   cd $D && bash -c "$( cd <仓根> && bash scripts/precommit-gates.sh --scope pub --emit-cmd 无后缀 )"
+  #   ⇒ 必红（同一串命令、真退出码）
+  if [ -n "${emit_cmd}" ]; then
+    local es ei ehit
+    ehit=0
+    for es in "${scopes[@]}"; do
+      clear_steps
+      build_steps "${es}" || return 2
+      ei=0
+      while [ "${ei}" -lt "${#STEP_NAME[@]}" ]; do
+        case "${STEP_NAME[${ei}]}" in
+          *"${emit_cmd}"*)
+            printf '%s\n' "${STEP_CMD[${ei}]}"
+            ehit=$((ehit + 1))
+            ;;
+        esac
+        ei=$((ei + 1))
+      done
+    done
+    if [ "${ehit}" -eq 0 ]; then
+      printf '✗ 步骤名里没有匹配 %s 的（scope %s）\n' "${emit_cmd}" "${scopes[*]}" >&2
+      exit 2
+    fi
+    # **立刻出口**：本探针的 stdout 必须是**纯粹的命令串**（调用方要 `bash -c "$(…)"` 直接取用）
+    # ⇒ 不能让它被「尾部软门禁」的输出（check-zh-en.py 那一段）污染。
+    exit 0
   fi
 
   # 自检先跑（--self-test 时只跑自检）
