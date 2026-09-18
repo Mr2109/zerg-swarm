@@ -21,18 +21,28 @@
 #     bash scripts/precommit-gates.sh                  # 默认跑全部（go + rust + pub + tags）
 #     bash scripts/precommit-gates.sh --scope go       # 只跑 Go 侧（可重复：--scope go --scope rust）
 #     bash scripts/precommit-gates.sh --scope tags     # 只跑双构建工程门禁（T6.3）
+#     bash scripts/precommit-gates.sh --scope docs     # 只跑文档面门禁（meta/name/freshness D1–D3）
 #     bash scripts/precommit-gates.sh --outdir /tmp/gates-14   # 指定日志目录
 #     bash scripts/precommit-gates.sh --list           # 只看步骤清单，不跑
 #     bash scripts/precommit-gates.sh --self-test      # 只跑自检（合成步骤，不碰真目标）
 #     bash scripts/precommit-gates.sh --emit-cmd 无后缀  # 只打印匹配步骤的命令串（负控/复核用；不跑）
 #
-# 退出码：0 全绿 · 1 有失败项 · 2 用法错/前置缺件/自检不过（**不给结论**）
+# 退出码：0 全绿 · 1 有失败项 · 2 **不给结论**（用法错/前置缺件/自检不过/**有步骤报 BLOCKED**）
 #
-# scope 说明（2026-09-17 加 tags）：
+# 三档（步骤级）：0=PASS · 1=FAIL（失败项）· 2=BLOCKED（**不给结论**）。
+#   ★ BLOCKED **不计入失败项数** —— 「没结论」不是「错」，两者各有各的计数与打印位；
+#     但 BLOCKED 也不许当绿（有 BLOCKED 且无 FAIL ⇒ 整脚本 rc=2，不是 rc=0）。
+#   用三档判定的步骤，模式写 `tri`（现有 rc / empty 两模式的语义**一字未改**）。
+#
+# scope 说明（2026-09-17 加 tags · 2026-09-18 加 docs）：
 #   go   = gofmt/build/vet/test（**单侧**：默认 tag 配置）
 #   rust = wall 的 fmt/clippy/test
 #   pub  = 公开面两侧都有的脚本静态检查
 #   tags = 双构建工程门禁（脚本自带正反用例自检；它自己会在两种 tag 配置下成对跑 build/vet）
+#   docs = 文档面只读门禁：check-doc-meta(--scope formal --missing=fail) · check-doc-name(--scope repo)
+#          · check-doc-freshness 的 D1/D2/D3（D4 生成式 drift 归发布面，不在此）。
+#          它们是**步骤表里的一等步骤**（不是本脚本尾部那种软检查位），rc 一律取真退出码、不接管道。
+#          docs **不在默认 scope 集**里（默认仍是 go+rust+pub+tags）：是否纳入默认 / 各门是否阻断另行拍板。
 #
 # 自检不通过 ⇒ 拒绝跑真目标（项目口径：门禁自己先能被证明「会红」）。
 
@@ -43,8 +53,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ── 步骤表（indexed arrays，bash 3.2 可用）──────────────────────────
 STEP_SCOPE=()
 STEP_NAME=()
-STEP_MODE=()   # rc    = 退出码为 0 即通过
+STEP_MODE=()   # rc    = 退出码为 0 即通过（**非 0 一律算失败**，含 2 —— 现有 20 步语义不变）
                # empty = 退出码为 0 且输出为空才通过
+               # tri   = 三档：0=PASS · 1=FAIL · 2=BLOCKED（不给结论，**不计入失败项数**）
+               #         非 0/1/2 的**异常码**（3/127/…）一律按 FAIL —— 不许把「跑不起来」当「没结论」
+               #         ★ 只有自己申报 tri 的步骤才走三档；rc/empty 两模式未被这一档改动（2026-09-18）
+               #         ★ 模式名不在 {rc,empty,tri} 内 ⇒ 该步硬红（拼错模式名不许静默按 rc 处理）
 STEP_DIR=()
 STEP_CMD=()
 
@@ -70,12 +84,41 @@ run_step() {  # run_step <序号> <名> <模式> <目录> <命令> <outdir> <结
   ( cd "${dir}" && bash -c "${cmd}" ) >"${log}" 2>&1
   rc=$?
   t1="$(date +%s)"
-  status="PASS"
-  [ "${rc}" -eq 0 ] || status="FAIL"
-  if [ "${mode}" = "empty" ] && [ "${rc}" -eq 0 ] && [ -s "${log}" ]; then
-    status="FAIL"   # 判据是「输出必须为空」，非空 ⇒ 红
-  fi
+  status="$(_judge "${mode}" "${rc}" "${log}")"
   printf '%s\t%s\t%s\t%s\t%s\n' "${status}" "${name}" "${rc}" "$((t1 - t0))s" "${log}" >>"${results}"
+  return 0
+}
+
+# ── 三档判定：**唯一的判据出口**（只看真退出码；rc 模式的语义与以前一字不差）──────
+#   返回 PASS / FAIL / BLOCKED 三值之一。判据独立成函数，是为了让自检能直接钉住三格。
+_judge() {  # _judge <模式> <rc> <日志文件>
+  local mode="$1" rc="$2" log="$3"
+  case "${mode}" in
+    rc)
+      # 老语义：rc=0 ⇒ PASS，其余（含 2）一律 FAIL —— 现有 20 步靠的就是这一句，**不许动**
+      [ "${rc}" -eq 0 ] && { printf 'PASS'; return 0; }
+      printf 'FAIL'
+      ;;
+    empty)
+      # 判据是「输出必须为空」，非空 ⇒ 红
+      if [ "${rc}" -ne 0 ]; then printf 'FAIL'; return 0; fi
+      if [ -s "${log}" ]; then printf 'FAIL'; return 0; fi
+      printf 'PASS'
+      ;;
+    tri)
+      # 三档：0=PASS · 1=FAIL · 2=BLOCKED；**异常码（3/127/…）= FAIL**（跑不起来不是「没结论」）
+      case "${rc}" in
+        0) printf 'PASS' ;;
+        1) printf 'FAIL' ;;
+        2) printf 'BLOCKED' ;;
+        *) printf 'FAIL' ;;
+      esac
+      ;;
+    *)
+      # 模式名不在表内（拼错 / 漏写）⇒ 硬红：静默按 rc 处理会造出「没人判过的绿」
+      printf 'FAIL'
+      ;;
+  esac
   return 0
 }
 
@@ -91,9 +134,18 @@ run_suite() {  # run_suite <outdir> <结果表>  —— 遍历当前步骤表
   return 0
 }
 
-# ── 失败项数：**只从结果表数出来**（纯读文件，不在任何地方累加）──────
+# ── 失败项数 / 不给结论数：**只从结果表数出来**（纯读文件，不在任何地方累加）──────
+#    ★ 两个数是**分开的**：BLOCKED（没结论）不许计进失败项数，也不许被失败项数吞掉。
 count_fail() {  # count_fail <结果表>
   grep -c '^FAIL' "$1" 2>/dev/null || true
+}
+
+count_blocked() {  # count_blocked <结果表> —— 第三档：rc=2「不给结论」的步数
+  grep -c '^BLOCKED' "$1" 2>/dev/null || true
+}
+
+count_pass() {  # count_pass <结果表>
+  grep -c '^PASS' "$1" 2>/dev/null || true
 }
 
 # ── 旧写法（第十三轮那个假绿脚本的形态）—— 只用于自检里的区分度证明 ──
@@ -118,15 +170,21 @@ print_steps() {
 
 report() {  # report <结果表>
   local results="$1" status name rc secs log
-  printf '%-5s %-50s %-5s %s\n' "状态" "步骤" "rc" "耗时"
+  printf '%-7s %-50s %-5s %s\n' "状态" "步骤" "rc" "耗时"
   while IFS=$'\t' read -r status name rc secs log; do
     [ -n "${status}" ] || continue
-    printf '%-5s %-50s %-5s %s\n' "${status}" "${name}" "${rc}" "${secs}"
+    printf '%-7s %-50s %-5s %s\n' "${status}" "${name}" "${rc}" "${secs}"
     if [ "${status}" = "FAIL" ]; then
       printf '      ↳ 日志: %s\n' "${log}"
       tail -12 "${log}" | sed 's/^/      | /'
+    elif [ "${status}" = "BLOCKED" ]; then
+      # 第三档：**不是失败**，但也**不算绿** —— 照样要求人看原文（它就是「没结论」的取证）
+      printf '      ↳ 不给结论（rc=2 · 不计入失败项数）· 日志: %s\n' "${log}"
+      tail -6 "${log}" | sed 's/^/      ~ /'
     fi
   done <"${results}"
+  printf '── 状态计数：PASS %s · FAIL %s · BLOCKED(不给结论) %s ──\n' \
+    "$(count_pass "${results}")" "$(count_fail "${results}")" "$(count_blocked "${results}")"
 }
 
 # ── 自检：证明这台镜子「会红」，且与旧写法有区分度 ──────────────────
@@ -212,6 +270,53 @@ self_test() {
   add_step self "自检-无后缀语法-空转" rc "${t}/negctl-empty" "$(nosuffix_syntax_cmd scripts)"
   run_suite "${t}/i" "${t}/i.tsv" >/dev/null 2>&1
   assert_eq "⑦ 无后缀语法：0 个被检查到 ⇒ 必红（空转 = 假覆盖）" "$(count_fail "${t}/i.tsv")" "1"
+
+  # ⑧ **三档（tri）**：0/1/2 三格各就各位 —— 2 = BLOCKED（不给结论）
+  #    这是本路新增的那一档的镜子：**rc=2 不许计进失败项数**（「没结论」≠「错」），
+  #    但也不许当绿；而**异常码（3/127/…）必须按红算**（跑不起来不许冒充「没结论」）。
+  clear_steps
+  add_step self "自检-三档-绿"       tri "${t}" "exit 0; echo 三档绿件原文"
+  add_step self "自检-三档-红"       tri "${t}" "echo 三档红件原文; exit 1"
+  add_step self "自检-三档-不给结论" tri "${t}" "echo 三档BLOCKED件原文; exit 2"
+  run_suite "${t}/j" "${t}/j.tsv" >/dev/null 2>&1
+  assert_eq "⑧ 三档：0/1/2 各就各位（三行状态依次 PASS/FAIL/BLOCKED）" \
+    "$(cut -f1 "${t}/j.tsv" | tr '\n' ' ')" "PASS FAIL BLOCKED "
+  assert_eq "⑧ 三档：PASS 数" "$(count_pass "${t}/j.tsv")" "1"
+  assert_eq "⑧ 三档：**失败项数只数 rc=1**（rc=2 不许计进去）" "$(count_fail "${t}/j.tsv")" "1"
+  assert_eq "⑧ 三档：BLOCKED 数 = 1" "$(count_blocked "${t}/j.tsv")" "1"
+  assert_eq "⑧ 三档：BLOCKED 点名到那一步" "$(grep '^BLOCKED' "${t}/j.tsv" | cut -f2)" "自检-三档-不给结论"
+  assert_eq "⑧ 三档：BLOCKED 那步的 rc 真是 2" "$(grep '^BLOCKED' "${t}/j.tsv" | cut -f3)" "2"
+  assert_eq "⑧ 三档：BLOCKED 的原文仍留在它自己的日志里" \
+    "$(grep -c '三档BLOCKED件原文' "$(grep '^BLOCKED' "${t}/j.tsv" | cut -f5)")" "1"
+
+  # ⑧b **异常码不是「没结论」**：exit 3 / exit 127 ⇒ 红的红灯亮，BLOCKED 数必须是 0
+  clear_steps
+  add_step self "自检-三档-异常码3"   tri "${t}" "exit 3"
+  add_step self "自检-三档-异常码127" tri "${t}" "exit 127"
+  run_suite "${t}/k" "${t}/k.tsv" >/dev/null 2>&1
+  assert_eq "⑧b 三档：非 0/1/2 的异常码 ⇒ 计失败项（不许被吞成「不给结论」）" "$(count_fail "${t}/k.tsv")" "2"
+  assert_eq "⑧b 三档：异常码下 BLOCKED 数 = 0" "$(count_blocked "${t}/k.tsv")" "0"
+
+  # ⑧c 反向：**只有 BLOCKED、没有 FAIL** ⇒ 失败项数为 0（这就是拍板口径「没结论不算错」的落点），
+  #     但它也不许被当成绿 —— 整脚本的出口在 main 里按「无 FAIL 而有 BLOCKED ⇒ rc=2」处理。
+  clear_steps
+  add_step self "自检-三档-全是不给结论" tri "${t}" "exit 2"
+  run_suite "${t}/l" "${t}/l.tsv" >/dev/null 2>&1
+  assert_eq "⑧c 只有 BLOCKED：失败项数 = 0" "$(count_fail "${t}/l.tsv")" "0"
+  assert_eq "⑧c 只有 BLOCKED：BLOCKED 数 = 1（没结论 ≠ 绿）" "$(count_blocked "${t}/l.tsv")" "1"
+
+  # ⑧d **老语义未被三档改动**：同一串 rc=2，用 `rc` 模式 ⇒ 仍旧算失败项（现有 20 步靠这一句）
+  clear_steps
+  add_step self "自检-老rc模式遇rc2" rc "${t}" "exit 2"
+  run_suite "${t}/m" "${t}/m.tsv" >/dev/null 2>&1
+  assert_eq "⑧d rc 模式遇 rc=2 仍是失败项（老语义一字未改）" "$(count_fail "${t}/m.tsv")" "1"
+  assert_eq "⑧d rc 模式下 BLOCKED 数 = 0" "$(count_blocked "${t}/m.tsv")" "0"
+
+  # ⑧e 模式名打错 ⇒ 硬红（不静默按 rc 处理，也就不会造出没人判过的绿）
+  clear_steps
+  add_step self "自检-模式名打错" tri2 "${t}" "exit 0"
+  run_suite "${t}/n" "${t}/n.tsv" >/dev/null 2>&1
+  assert_eq "⑧e 未知模式名 ⇒ 硬红" "$(count_fail "${t}/n.tsv")" "1"
 
   printf '自检结论: %s（断言失败 %d 条）\n' "$([ "${SELF_BAD}" -eq 0 ] && echo 全过 || echo 不过)" "${SELF_BAD}"
   rm -rf "${t}"
@@ -333,8 +438,24 @@ PYEOF"
         # --scope go 跳不到它，要单跑：bash scripts/precommit-gates.sh --scope tags
         add_step tags "双构建工程门禁（tag/构建/vet/导出面/GOFLAGS）" rc "${REPO_ROOT}" "python3 scripts/check-build-tags.py"
         ;;
+      docs)
+        # 文档面只读门禁（2026-09-18 路 D 挂接 · 模式一律 `tri` 三档 0/1/2）──────────────
+        # 位置：**在 run_suite 的步骤表里**（一等步骤），不是脚本尾部那个软检查位 ——
+        #   尾部软门禁的 rc 会被最后一句 `exit "${MAIN_RC}"` 之外的东西吃掉（本脚本 2026-09-17
+        #   实测过「报红却退 0」），所以新门禁一律走步骤表，rc 由 _judge 按真退出码判。
+        # 判定：**不接管道**（不写 `| tee` / `| tail`），rc 直接取进程退出码。
+        # 三档落点：这三只门脚本的退码口径本身就是 0/1/2（2 = 不给结论/空转），
+        #   所以用 `tri` ⇒ rc=2 记 BLOCKED、**不计入失败项数**；rc>=3（跑不起来）仍按红算。
+        # D4（生成式参考 drift）**不挂**：它是发布面的事（重建 + 逐字节比对），不是提交闸。
+        # 每只门脚本自带 --self-test，本 scope **不传 --no-self-test**：先自证「会红」再扫真目标。
+        add_step docs "docs: meta --scope formal --missing=fail" tri "${REPO_ROOT}" "python3 scripts/check-doc-meta.py --scope formal --missing=fail"
+        add_step docs "docs: name --scope repo"                  tri "${REPO_ROOT}" "python3 scripts/check-doc-name.py --scope repo"
+        add_step docs "docs: freshness D1 引用路径存在"           tri "${REPO_ROOT}" "python3 scripts/check-doc-freshness.py d1"
+        add_step docs "docs: freshness D2 引用 文件:行 有效"       tri "${REPO_ROOT}" "python3 scripts/check-doc-freshness.py d2"
+        add_step docs "docs: freshness D3 断链断锚"               tri "${REPO_ROOT}" "python3 scripts/check-doc-freshness.py d3"
+        ;;
       *)
-        printf '✗ 未知 scope: %s（可用: go / rust / pub / tags）\n' "${s}" >&2
+        printf '✗ 未知 scope: %s（可用: go / rust / pub / tags / docs）\n' "${s}" >&2
         return 2
         ;;
     esac
@@ -367,12 +488,16 @@ main() {
       --list) list_only=1; shift ;;
       --self-test) self_only=1; shift ;;
       --emit-cmd) emit_cmd="$2"; shift 2 ;;
-      -h|--help) sed -n '19,37p' "${BASH_SOURCE[0]}"; return 0 ;;
+      -h|--help) sed -n '19,48p' "${BASH_SOURCE[0]}"; return 0 ;;
       *) printf '✗ 未知参数: %s\n' "$1" >&2; return 2 ;;
     esac
   done
 
   if [ "${#scopes[@]}" -eq 0 ]; then
+    # 默认 scope 集**保持原样**（go rust pub tags）—— 现有 20 步的名字与语义、默认覆盖面一字未改。
+    # ★ docs **暂不进默认集**（2026-09-18 待拍）：它今天 D1/D2 有红、D3 报 BLOCKED，直接并进默认
+    #   会让每一次提交都变红/变「没结论」。要不要进默认、各门谁阻断 —— 见 scripts/precommit-gates.md
+    #   §docs scope 的「待拍」一句。进默认 = 这一行改成 (go rust pub tags docs)。
     scopes=(go rust pub tags)
   fi
 
@@ -448,12 +573,19 @@ main() {
   run_suite "${outdir}" "${results}"
   report "${results}" | tee "${outdir}/report.txt"
 
-  local nfail
+  local nfail nblock npass
   nfail="$(count_fail "${results}")"
-  printf '\n步骤总数: %d · 失败项数: %s\n' "${#STEP_NAME[@]}" "${nfail}"
+  nblock="$(count_blocked "${results}")"
+  npass="$(count_pass "${results}")"
+  printf '\n步骤总数: %d · 通过: %s · 失败项数: %s · 不给结论(BLOCKED): %s\n' \
+    "${#STEP_NAME[@]}" "${npass}" "${nfail}" "${nblock}"
   if [ "${nfail}" -ne 0 ]; then
     printf '⇒ 门禁红灯（rc=1）：逐条看上面的日志路径重跑\n'
     return 1
+  fi
+  if [ "${nblock}" -ne 0 ]; then
+    printf '⇒ 无失败项，但有 %s 步「不给结论」（BLOCKED · rc=2）：**不许当绿**、也不按「错」计\n' "${nblock}"
+    return 2
   fi
   printf '⇒ 门禁全绿（rc=0）\n'
   return 0
