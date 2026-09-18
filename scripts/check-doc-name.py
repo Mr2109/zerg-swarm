@@ -29,8 +29,9 @@
      《清单》§5 ④ 明写「只登记不改」⇒ 目录名命中一律 **WARN**；文件名命中才算 FAIL。
   ② **冻结区不计入退码**：`docs/项目文档/`（17 套快照 §8.1）与 `docs/issues/`（引擎数据 §1.3）
      按《清单》§2「高（冻结·不改）」**只登记不改** ⇒ 命中数照报，但不进 rc（`--count-frozen` 可改）。
-  ③ **例外必须可数**：例外分三档、逐条给理由与出处，`--list-exempt` 全列出并**自证条数**
-     （A 档 = 《清单》已登记的 **22 条**；B 档 = 规则级规范豁免；C 档 = 本轮新增登记）。
+  ③ **例外必须可数**：例外分四档、逐条给理由与出处，`--list-exempt` 全列出并**自证条数**
+     （A 档 = 《清单》已登记的 **22 条**；B 档 = 规则级规范豁免；C 档 = 本轮新增登记；
+     D 档 = 本轮 A 路拍板「登记不改」的 **2 条**）。
      豁免不是隐藏 —— 报告里每一档都有命中计数。
 
 用法
@@ -224,10 +225,41 @@ EXEMPT_C = [
     {"id": "C03", "kind": "pair", "rules": ["N6"], "paths": [("scripts", "check-doc-freshness")],
      "reason": "文档体系 P1 同批交付的第三条门脚本 + 说明书（`check-doc-freshness.{py,md}`）——"
                "与 C01/C02、A06/A07、A12/A13 同一形态 · **待父代理批准**"},
+    {"id": "C04", "kind": "pair", "rules": ["N6"], "paths": [("scripts", "precommit-gates")],
+     "reason": "**非本路（A 路）文件**：`scripts/precommit-gates.md` 由**路 D**（门禁挂接 Q14）"
+               "本轮 2026-09-18 20:43 新增，形态 = 「门脚本 + 说明书」（同 C01–C03 / A06/A07 / A12/A13）。"
+               "A 路本轮跑 `--scope repo` 时它刚落地 ⇒ 由本表登记（A 路持有本脚本文件集）· **归属路 D、"
+               "待父代理确认**；不认就把这一行删掉并把 `EXEMPT_C_EXPECTED` 4→3（判红照实回来）"},
 ]
 EXEMPT_A_EXPECTED = 22
 EXEMPT_B_EXPECTED = 3
-EXEMPT_C_EXPECTED = 3
+EXEMPT_C_EXPECTED = 4
+
+# ── D 档：本轮 A 路拍板登记（「允许对 / 登记不改」· 父代理 2026-09-18 拍）─────────────
+# 这 2 条登记覆盖**收尾后仅剩的 6 条可改面命中**（此前逐条挂在说明书 §差异 6/7 上）：
+#   D01 ×5 = `docs/` 内的 5 个 `README.md`（N1 · 词干 README 全大写）
+#   D02 ×1 = `bin/_history/zerg-core.prev-20260912.bak`（N3 · 日期后缀）
+# 「可数」自证：D01 命中 5 + D02 命中 1 = 6 = 登记前 `--scope repo` 的 live FAIL 全量。
+EXEMPT_D = [
+    {"id": "D01", "kind": "prefix_name", "rules": ["N1"],
+     "paths": ["docs/"], "name": "README.md",
+     "reason": "`docs/` 内的 `README.md` = **语言层入口件 / 重定向存根**（`docs/README.md` 是并入 "
+               "`docs/index-nav.md` 后按零删除保留的旧路径；`docs/{zh,en,en/_drafts,site}/README.md` "
+               "是目录律入口）。README.md 属**行业约定保留名**（与 B01 同源）⇒ 只在文档面之内开这一个"
+               "口子（AGENTS.md / SKILL.md / VERSION 在 docs/ 内照判，K8 要的那条没被放松）",
+     "src": "父代理 2026-09-18 拍板 · 本说明书 §差异 6/§例外表 D 档（(b) 路：加规则级豁免登记，不改文件名）"},
+    {"id": "D02", "kind": "path", "rules": ["N3"],
+     "paths": ["bin/_history/zerg-core.prev-20260912.bak"],
+     "reason": "备件残片：`bin/` 被 `.gitignore` 忽略、**未纳入版本控制** ⇒ `git mv` 不可用"
+               "（本路硬规矩：禁 `mv`/`rm`）；日期是它**作为备件的身份**（哪个二进制的前身）",
+     "src": "父代理 2026-09-18 拍板 · 本说明书 §差异 7（处置形态同《清单》A19/A21「移出仓」= 父代理动作）"},
+]
+EXEMPT_D_EXPECTED = 2
+
+# ★ 注意：EXEMPT_ALL 的**唯一**赋值点在本文件下方（A 档 rules 归并之后）—— 那里必须带上 D 档，
+#   否则登记「看到了」（--list-exempt 会打印）但**判据不吃**（豁免静默失效）。
+EXEMPT_EXPECTED = {"A": EXEMPT_A_EXPECTED, "B": EXEMPT_B_EXPECTED,
+                   "C": EXEMPT_C_EXPECTED, "D": EXEMPT_D_EXPECTED}
 
 
 def _rule_ids(type_code):
@@ -243,7 +275,7 @@ for _row in EXEMPT_A:
     _from_type = _rule_ids(_row["type"])
     _row["rules"] = sorted(set(_from_type) | set(_row["rules"]))
 
-EXEMPT_ALL = EXEMPT_A + EXEMPT_B + EXEMPT_C
+EXEMPT_ALL = EXEMPT_A + EXEMPT_B + EXEMPT_C + EXEMPT_D
 
 
 def exempt_row_for(rel, rule, kind, pair_key=None, stem=None, base=None):
@@ -519,7 +551,7 @@ def _flat(p):
 
 
 def list_exempt():
-    print("例外表（三档 · 逐条给理由与出处）")
+    print("例外表（四档 · 逐条给理由与出处）")
     print("A 档 · 《清单-命名规范化》已登记的「不改」条目：%d 条（期望 %d）"
           % (len(EXEMPT_A), EXEMPT_A_EXPECTED))
     for row in EXEMPT_A:
@@ -538,6 +570,14 @@ def list_exempt():
         print("  %s [%s] 形态 %s\n      对象：%s\n      理由：%s"
               % (row["id"], "+".join(row["rules"]), row["kind"],
                  " , ".join(_flat(p) for p in row["paths"]), row["reason"]))
+    print("D 档 · 本轮 A 路拍板登记（登记不改）：%d 条（期望 %d）"
+          % (len(EXEMPT_D), EXEMPT_D_EXPECTED))
+    for row in EXEMPT_D:
+        obj = " , ".join(_flat(p) for p in row["paths"])
+        if row["kind"] == "prefix_name":
+            obj += " + 基名 " + row["name"]
+        print("  %s [%s] 形态 %s\n      对象：%s\n      理由：%s\n      出处：%s"
+              % (row["id"], "+".join(row["rules"]), row["kind"], obj, row["reason"], row["src"]))
     return 0
 
 
@@ -659,12 +699,13 @@ def self_test(script_path, meta=True):
     ok &= case("缺件 · 目标路径不存在", 2, ["--target", os.path.join(tmp, "no-such")],
                must_contain=["不给结论"])
     ok &= case("缺件 · 扫描域为空", 2, ["--target", empty], must_contain=["不给结论"])
-    # ⑦ 例外表条数自证（A 档 22 条 · B 档 3 条 · C 档 2 条）
+    # ⑦ 例外表条数自证（A 档 22 条 · B 档 3 条 · C 档 4 条 · D 档 2 条）
     rc, out = _sub(script_path, "--list-exempt")
     cnt_ok = (rc == 0 and ("A 档 · 《清单-命名规范化》已登记的「不改」条目：22 条（期望 22）" in out)
               and ("B 档 · 规则级规范豁免：3 条（期望 3）" in out)
-              and ("C 档 · 本轮新增登记（待父代理批准）：3 条（期望 3）" in out))
-    lines.append("%s 例外表条数自证（A22 / B3 / C3）" % ("✓" if cnt_ok else "✗"))
+              and ("C 档 · 本轮新增登记（待父代理批准）：4 条（期望 4）" in out)
+              and ("D 档 · 本轮 A 路拍板登记（登记不改）：2 条（期望 2）" in out))
+    lines.append("%s 例外表条数自证（A22 / B3 / C4 / D2）" % ("✓" if cnt_ok else "✗"))
     ok &= cnt_ok
     # ⑧ 只报告不改
     import hashlib
@@ -757,8 +798,8 @@ def main(argv):
     ap.add_argument("--no-self-test", action="store_true")
     args = ap.parse_args(argv)
 
-    for n, exp in (("A", EXEMPT_A_EXPECTED), ("B", EXEMPT_B_EXPECTED), ("C", EXEMPT_C_EXPECTED)):
-        got = {"A": len(EXEMPT_A), "B": len(EXEMPT_B), "C": len(EXEMPT_C)}[n]
+    for n, exp in sorted(EXEMPT_EXPECTED.items()):
+        got = len({"A": EXEMPT_A, "B": EXEMPT_B, "C": EXEMPT_C, "D": EXEMPT_D}[n])
         if got != exp:
             print("BLOCKED：例外表 %s 档条数不符（期望 %d，实得 %d）⇒ 不给结论" % (n, exp, got))
             return 2
