@@ -45,6 +45,10 @@ func isolateHome(t *testing.T) string {
 func TestLogTail_UI_DerivesFromRuntimeLogDir(t *testing.T) {
 	dir := t.TempDir() // 注意：不是 /tmp —— 只有真派生的实现才可能命中
 	t.Setenv("ZERG_LOG_DIR", dir)
+	// 清宿主环境：ZERG_UI_LOG 是「显式 > 派生」里的高阶候选，
+	// 宿主若已设（scripts/start-zerg-ui.sh 就会设），不清就是用例被环境决定 ⇒ 假红。
+	// 本行只清环境、不放宽断言（下面的断言仍锁死「派生目录」这一条）。
+	t.Setenv("ZERG_UI_LOG", "")
 	const marker = "UI-LOG-MARKER-b2-77f1"
 
 	var sb strings.Builder
@@ -73,6 +77,7 @@ func TestLogTail_UI_DerivesFromRuntimeLogDir(t *testing.T) {
 func TestLogTail_UI_MissingFileReportsDerivedPath(t *testing.T) {
 	dir := t.TempDir() // 空目录——没有 zerg-ui.log
 	t.Setenv("ZERG_LOG_DIR", dir)
+	t.Setenv("ZERG_UI_LOG", "") // 同上：清宿主环境，锁死「报派生路径」而非宿主显式路径
 	want := filepath.Join(dir, "zerg-ui.log")
 
 	out, err := logTail(map[string]any{"target": "ui"})
@@ -84,6 +89,40 @@ func TestLogTail_UI_MissingFileReportsDerivedPath(t *testing.T) {
 	}
 	if strings.Contains(out, "/tmp/zerg-ui.log") {
 		t.Fatalf("仍在读写死的 /tmp/zerg-ui.log 字面量: %q", out)
+	}
+}
+
+// TestLogTail_UI_ExplicitEnvWinsOverDerivedPath — ZERG_UI_LOG 优先分支（显式 > 派生）。
+// 两个候选**同时存在且内容不同**：只有真的读了 ZERG_UI_LOG 那份，标记才对。
+// 老实现（无优先序、只认 ZERG_LOG_DIR 派生）会读到派生那份 ⇒ 本用例红。
+// 与 scripts/start-zerg-ui.sh 同一条优先序（两侧一致，不许各读各的）。
+func TestLogTail_UI_ExplicitEnvWinsOverDerivedPath(t *testing.T) {
+	const explicitMarker = "UI-LOG-EXPLICIT-b2-c40e"
+	const derivedMarker = "UI-LOG-DERIVED-b2-c40e"
+
+	explicitDir := t.TempDir()
+	explicit := filepath.Join(explicitDir, "ui-log-explicit.log") // 名字也故意不叫 zerg-ui.log
+	derivedDir := t.TempDir()
+	derived := filepath.Join(derivedDir, "zerg-ui.log")
+
+	writeFileT(t, explicit, []byte(explicitMarker+"\n"))
+	writeFileT(t, derived, []byte(derivedMarker+"\n"))
+
+	t.Setenv("ZERG_LOG_DIR", derivedDir) // 派生候选（低优先）
+	t.Setenv("ZERG_UI_LOG", explicit)    // 显式候选（高优先）
+
+	out, err := logTail(map[string]any{"target": "ui", "lines": float64(30)})
+	if err != nil {
+		t.Fatalf("logTail(ui) 报错: %v", err)
+	}
+	if !strings.Contains(out, explicitMarker) {
+		t.Fatalf("ZERG_UI_LOG 显式路径未生效（期望含 %q；实得 %q）", explicitMarker, out)
+	}
+	if strings.Contains(out, derivedMarker) {
+		t.Fatalf("读到了派生路径那份（%s）——优先序反了或两条候选被混用: %q", derived, out)
+	}
+	if strings.Contains(out, "日志不存在") {
+		t.Fatalf("显式文件存在却被报「日志不存在」: %q", out)
 	}
 }
 
