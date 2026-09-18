@@ -65,7 +65,11 @@ type Task struct {
 	DependsOn  []string  `json:"depends_on,omitempty"` // 该片依赖的其它片 id（有环 / 悬空 ⇒ 拒绝入队）
 	Owner      string    `json:"owner,omitempty"`      // 片归属者（本轮不参与判定——只随片记录）
 	Acceptance *[]string `json:"acceptance,omitempty"` // 验收判据（**必须显式声明**: nil=没写（拒）；&[]=显式空（允许））
-	cmd        *exec.Cmd // 运行中的 CA 进程（打断发信号用——非导出）
+	// ---- B 项 B5（2026-09-18）: 黑板三字段 —— Lead / 分工方案 / 等确认闸（出处与命名口径见 slice_schema.go 头部）----
+	Lead         *string       `json:"lead,omitempty"`          // Lead（负责的模型）: 声明了就必须非空白（空白 ⇒ 拒）
+	Members      []SliceMember `json:"members,omitempty"`       // 分工方案: 每个成员干什么（非空 ⇒ 必须过「等确认闸」）
+	PlanApproved *bool         `json:"plan_approved,omitempty"` // 等确认闸: nil=没写（=未确认 ⇒ 拒）；&false 显式未确认 ⇒ 拒；&true ⇒ 放
+	cmd          *exec.Cmd     // 运行中的 CA 进程（打断发信号用——非导出）
 }
 
 // TaskQueue 优先级队列（container/heap）
@@ -253,7 +257,7 @@ func (s *MasterScheduler) Submit(task *Task) {
 	if serr := validateSliceMountLocked(task, s.sliceBoardLocked()); serr != nil {
 		s.mu.Unlock()
 		emitSliceMount(task, serr)
-		return // 拒绝入队: 缺 slice_id / 缺 acceptance 声明 / depends_on 环 / 悬空依赖
+		return // 拒绝入队: 缺 slice_id / 缺 acceptance 声明 / lead 空白 / 分工方案缺项 / 等确认闸未过 / depends_on 环 / 悬空依赖
 	}
 	// 是不是片（过了闸 ⇒ 声明了且 slice_id 非空）——决定发不发那条放行观测事件
 	isSlice := task != nil && task.SliceID != ""

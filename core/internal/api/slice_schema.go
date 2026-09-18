@@ -26,6 +26,35 @@ package api
 // append-only JSONL，同 tasks_persist.go / CA 侧 events.jsonl），**不新造框架**，也不借用
 // toolobs（那是「工具调用判定」的专用形状: Tool/ArgsDigest/allow-deny，语义不对口）。
 //
+// ── B 项 B5（2026-09-18）: 黑板三字段 —— Lead / 分工方案 / 等确认闸 ──
+//
+// 出处（逐字，只引用、**不改稿面**）:
+//
+//	设计-协作骨架-v2.1-20260918.md:190  「| **Lead（负责的模型）** | 由 Mr2109 指定（或按任务特征从池中选） | **拥有会话**；…**提出分工**并**等确认**；**汇总**；据验证结果**重规划** | 团体 |」
+//	同稿:211                            「- `/api/tasks`：扩为**黑板**（含：单子/片 + 状态 + 依赖 + 归属 Lead/Member + 验收标准）；」
+//	同稿:203                            「接任务 ⇒ **组队**…⇒ 提分工方案 ⇒ **等 Mr2109 确认**（可配置为自动）⇒ 挂板 + 发单子…」（**确认在挂板之前**）
+//	同稿:69（s13）                      「**Lead 拥有用户会话** ✓ 提出分工 ✓ **等确认** ✓；…`shutdown` 与 `plan approval` 做成**可追踪、可强制的协议**」
+//	同稿:239（nano_agent_team）          「…`confirmation_callback`…」（确认闸属**环境层强制**）
+//	设计-任务模块骨架-v1.0-20260918.md:59「须由 Lead/人声明」（与 v2.1 §4.3「等确认」一致）
+//
+// 命名口径（**稿面只给了中文名/术语，没给字段键** ⇒ 下列键名是本轮命名，逐条登记待 Mr2109 定）:
+//
+//	lead          ← 「Lead（负责的模型）」（稿面逐字就用 `Lead` 这个英文词；键名照现有 slice_id/depends_on 风格小写）
+//	members       ← 「成员（专家）」/「Member Agents」（稿面逐字用 `Member`）；本键 = **分工方案**：「每个成员干什么」
+//	plan_approved ← 「等确认」闸（稿面逐字 `plan approval`）；用 `*bool` ⇒「没写」与「显式 false」可分（同 acceptance 之规）
+//	成员条目 id   ← §4.6-2「**成员是带 id 的实例**」（逐字）
+//	成员条目 duty ← 稿面只有中文「分工」/「干什么」⇒ **键名是本轮命名**（待定，见回报⑥）
+//
+// 「等确认闸」的接法与不变量:
+//
+//	① 判定点**不新建**——落进本文件同一个 ValidateSliceMount（挂板闸的唯一实现点，
+//	   Submit / SubmitSlice / HTTP 三处共用），Error 形状沿用同一 *SliceValidationError；
+//	② 触发面**只对「声明了分工方案」的片**（members 非空，或显式写了 plan_approved ⇒ fail closed）；
+//	③ 未确认 ⇒ **拒**（不入队），可行动错误给「怎么改」；已确认 ⇒ 放（与既有四拒同一形状）。
+//
+// ✗ 本轮**不**实现（登记，不自造）: 「可配置为自动」（v2.1 §4.3）的自动确认档 / 团规模上限 4 /
+// Lead 选举与「池中哪枚卵」合法性（池清单未给，v2.1 §8-U9 ⇒ 只判「有没有给」，不判「在不在池里」）。
+//
 // ── B 项⑤（2026-09-18）: 事件名扩成设计稿 §6.1 闭集，**机制仍只有这一套** ──
 //
 //	出口下沉到 `core/internal/sliceobs`（唯一写入函数 Emit、唯一落点 slice-mount-events.jsonl、
@@ -50,6 +79,10 @@ const (
 	SliceErrMissingAcceptance = "SLICE_MISSING_ACCEPTANCE" // ② 缺 acceptance **声明**（缺失 ≠ 显式空）
 	SliceErrDependsDangling   = "SLICE_DEPENDS_DANGLING"   // ③ depends_on 指向板上不存在的片
 	SliceErrDependsCycle      = "SLICE_DEPENDS_CYCLE"      // ④ depends_on 成环（不可拓扑排序）
+	// ---- B 项 B5（2026-09-18）: 黑板三字段的两条声明类拒 + 等确认闸 ----
+	SliceErrLeadInvalid     = "SLICE_LEAD_INVALID"     // ⑤ 声明了 lead 但给的是空白（= 没指定谁负责）
+	SliceErrMemberInvalid   = "SLICE_MEMBER_INVALID"   // ⑥ 分工方案里有成员缺 id（或无「干什么」）
+	SliceErrPlanUnconfirmed = "SLICE_PLAN_UNCONFIRMED" // ⑦ 等确认闸：分工方案未经确认 ⇒ 挂板前拒
 )
 
 // 观测事件名（B 项⑤: 设计稿 §6.1 闭集四名；常量本身以 sliceobs 为唯一真源 —— 不在此处抄一份）。
@@ -77,12 +110,45 @@ type SliceInput struct {
 	DependsOn  []string  `json:"depends_on"` // 依赖的片 id 列表（有环 / 悬空 ⇒ 拒）
 	Owner      string    `json:"owner"`      // 片归属者（可选，本轮不参与判定）
 	Acceptance *[]string `json:"acceptance"` // 验收判据（**必须显式声明**）
+	// ---- B 项 B5（2026-09-18）: 黑板三字段（全可选、全指针/切片 ⇒ 未声明的片逐字节零回归）----
+	Lead         *string       `json:"lead,omitempty"`          // Lead（负责的模型）: 声明了就必须非空白（空白 ⇒ 拒）
+	Members      []SliceMember `json:"members,omitempty"`       // 分工方案: 每个成员干什么（非空 ⇒ 必须过「等确认闸」）
+	PlanApproved *bool         `json:"plan_approved,omitempty"` // 等确认闸: 分工方案是否已确认（nil=没写；显式 false ⇒ 拒）
+}
+
+// SliceMember 分工方案里的一条 —— **每个成员干什么**（v2.1 §4.3「提分工方案」）。
+//
+// 键名口径（稿面只给中文/术语，没给键名 ⇒ 本轮命名，待 Mr2109 定）:
+//
+//	id   ← §4.6-2 逐字「成员是带 id 的实例」
+//	Duty ← 稿面只有中文「分工」/「每个成员干什么」⇒ 键名 `duty` 为本轮命名
+type SliceMember struct {
+	ID   string `json:"id"`   // 成员（专家）id —— 空/空白 ⇒ 拒（成员是带 id 的实例）
+	Duty string `json:"duty"` // 该成员在这片里干什么 —— 空/空白 ⇒ 拒（没写分工就不算分工方案）
 }
 
 // Declared 是否声明了**任何**片字段 —— 挂板校验的总开关。
 // 返回 false ⇒ 该任务不是片 ⇒ 完全跳过校验（这是「不改现有任务提交行为」的机制本身）。
 func (in SliceInput) Declared() bool {
-	return in.SliceID != "" || in.Owner != "" || in.DependsOn != nil || in.Acceptance != nil
+	return in.SliceID != "" || in.Owner != "" || in.DependsOn != nil || in.Acceptance != nil ||
+		in.Lead != nil || in.Members != nil || in.PlanApproved != nil
+}
+
+// planApproved 等确认闸的判定取值 —— **只有显式 true 才算已确认**（fail closed）:
+//
+//	nil          ⇒ 没写        ⇒ 未确认
+//	&false       ⇒ 显式未确认   ⇒ 未确认
+//	&true        ⇒ 已确认       ⇒ 过闸
+func (in SliceInput) planApproved() bool {
+	return in.PlanApproved != nil && *in.PlanApproved
+}
+
+// declaresDivisionOfLabor 是否**声明了分工方案**（= members 非空）—— 决定「等确认闸」开不开。
+//
+// 口径: 稿面 §4.3 的顺序是「提分工方案 ⇒ 等 Mr2109 确认 ⇒ 挂板」；没提分工方案 ⇒ 没有要确认的东西
+// ⇒ 闸不适用（与既有的「只对声明了片字段的任务生效」同一精神，保证未声明新字段的片零回归）。
+func (in SliceInput) declaresDivisionOfLabor() bool {
+	return len(in.Members) > 0
 }
 
 // ApplyTo 把片字段写进 Task（**校验通过后**才调用）。
@@ -94,6 +160,9 @@ func (in SliceInput) ApplyTo(t *Task) {
 	t.DependsOn = in.DependsOn
 	t.Owner = in.Owner
 	t.Acceptance = in.Acceptance // 指针原样带走 ⇒「缺失/显式空」的区分在任务记录里不失真
+	t.Lead = in.Lead             // 同上: 指针原样带走（「没写 lead」与「写了空 lead」不失真）
+	t.Members = in.Members
+	t.PlanApproved = in.PlanApproved
 }
 
 // SliceInputFromTask 从已建 Task 反推挂板入参（入队闸与 SubmitSlice 的校验都走它——单一形状）。
@@ -102,10 +171,13 @@ func SliceInputFromTask(t *Task) SliceInput {
 		return SliceInput{}
 	}
 	return SliceInput{
-		SliceID:    t.SliceID,
-		DependsOn:  t.DependsOn,
-		Owner:      t.Owner,
-		Acceptance: t.Acceptance,
+		SliceID:      t.SliceID,
+		DependsOn:    t.DependsOn,
+		Owner:        t.Owner,
+		Acceptance:   t.Acceptance,
+		Lead:         t.Lead,
+		Members:      t.Members,
+		PlanApproved: t.PlanApproved,
 	}
 }
 
@@ -204,12 +276,15 @@ func sliceIDOf(t *Task) string {
 
 // ValidateSliceMount 挂板校验（**仅对声明了片字段的任务生效**）。
 //
-//	in    = 待挂板片的片字段（含「有没有写过 acceptance」这一区分）
+//	in    = 待挂板片的片字段（含「有没有写过 acceptance」「有没有写过 plan_approved」这两处区分）
 //	board = 板上**已有**片的视图（调用方给，**不含本片**；本片由本函数自己加进图里）
 //
 // 返回 nil ⇒ 可入队；返回 *SliceValidationError ⇒ **拒绝入队**。
 // 判定顺序固定（先「有没有 id」再「声明齐不齐」再「引用真不真」再「图有没有环」）——
 // 报错只报第一条命中的，且每条都点明「缺什么 + 怎么写对」。
+//
+// B 项 B5 起「声明齐不齐」这一段含三条新判定（lead 非空白 / 分工方案每条成员齐全 / 等确认闸），
+// 它们与既有四拒**同属这一个函数、同一个判定点**（不另建第二套校验）。
 func ValidateSliceMount(in SliceInput, board SliceBoard) *SliceValidationError {
 	if !in.Declared() {
 		return nil // ✗ 没声明任何片字段 ⇒ 不是片 ⇒ 不校验（现有任务零回归的机制所在）
@@ -233,6 +308,59 @@ func ValidateSliceMount(in SliceInput, board SliceBoard) *SliceValidationError {
 			Message: fmt.Sprintf("片 %s 缺 acceptance 声明：验收判据必须显式给出（设计要求「缺失」与「显式空」区分开 —— 没写 ≠ 写了空）。"+
 				"怎么改：加 \"acceptance\":[\"go test ./internal/api/ -count=1\"]（每条 = 可复制命令 + 期望输出）；"+
 				"确实还没有判据就显式写 \"acceptance\":[]（= 已声明暂无判据，不算缺声明）。", in.SliceID),
+		}
+	}
+	// ②b lead（B 项 B5）: 声明了就必须**非空白** —— 空白 = 没指定谁负责（v2.1 §4.1「Lead（负责的模型）」）
+	// 口径: 没写 lead（nil）本轮**不拒**（Lead 由 Mr2109 指定，不在片里也算片）；写了空白值才拒。
+	if in.Lead != nil && strings.TrimSpace(*in.Lead) == "" {
+		return &SliceValidationError{
+			Code:    SliceErrLeadInvalid,
+			Field:   "lead",
+			SliceID: in.SliceID,
+			Message: fmt.Sprintf("片 %s 声明了 lead 但给的是空白：Lead = **负责的模型**（v2.1 §4.1「Lead（负责的模型）」），"+
+				"空白等于没指定谁负责这片。怎么改：填该模型在池里的真源名（形如 \"lead\":\"qwen3-coder\"）；"+
+				"确实还没指定就不要写这个键（没写 = 未指定，不拒；写了空 = 声明了却没给值 ⇒ 拒）。", in.SliceID),
+		}
+	}
+	// ②c 分工方案（B 项 B5）: **每个成员干什么** —— 每条都要有 id（「成员是带 id 的实例」）与非空的分工
+	if len(in.Members) > 0 {
+		for i, m := range in.Members {
+			if strings.TrimSpace(m.ID) == "" {
+				return &SliceValidationError{
+					Code:    SliceErrMemberInvalid,
+					Field:   "members",
+					SliceID: in.SliceID,
+					Message: fmt.Sprintf("片 %s 的分工方案第 %d 条缺成员 id：成员是**带 id 的实例**（v2.1 §4.6-2），没 id 的条目无法认领/无法对齐进度。"+
+						"怎么改：给该条补 \"id\"（成员在池里的真源名），形如 \"members\":[{\"id\":\"egg-alpha\",\"duty\":\"…\"}]。"+
+						"（稿面的池清单未给 —— 只判「有没有 id」，不判「在不在池里」。）", in.SliceID, i+1),
+				}
+			}
+			if strings.TrimSpace(m.Duty) == "" {
+				return &SliceValidationError{
+					Code:    SliceErrMemberInvalid,
+					Field:   "members",
+					SliceID: in.SliceID,
+					Message: fmt.Sprintf("片 %s 的分工方案第 %d 条（成员 %s）没写「干什么」：分工方案 = 每个成员干什么（v2.1 §4.3「提分工方案」），"+
+						"只有 id 没有分工就不是分工方案。怎么改：给该条补 \"duty\"，形如 \"duty\":\"写用例并跑 -count=1\"；"+
+						"确实还没有分工就把该成员从 members 里去掉（去掉 = 未提名，不算缺声明）。", in.SliceID, i+1, m.ID),
+				}
+			}
+		}
+	}
+	// ②d 等确认闸（B 项 B5）: **声明了分工方案的片，未确认 ⇒ 拒**
+	//
+	//	出处: v2.1 §4.3「提分工方案 ⇒ **等 Mr2109 确认**（可配置为自动）⇒ **挂板 + 发单子**」
+	//	      ⇒ 门在**挂板之前**；本闸就落在挂板闸里（同一个判定点）。
+	//	fail closed（v2.1 §4.7「超时一律 fail closed（禁静默通过、禁无限等待）」）:
+	//	      plan_approved 没写 / 显式 false ⇒ 都算**未确认** ⇒ 拒。
+	if !in.planApproved() && (in.declaresDivisionOfLabor() || in.PlanApproved != nil) {
+		return &SliceValidationError{
+			Code:    SliceErrPlanUnconfirmed,
+			Field:   "plan_approved",
+			SliceID: in.SliceID,
+			Message: fmt.Sprintf("片 %s 的等确认闸没过：提了分工方案就必须**先等 Mr2109 确认**再挂板（v2.1 §4.3：提分工方案 ⇒ 等 Mr2109 确认（可配置为自动）⇒ 挂板 + 发单子）。"+
+				"怎么改：确认后显式写 \"plan_approved\":true（= 该分工方案已确认）；未确认前**不要挂板**——挂板会在这一步被拒且不入队。"+
+				"（显式写 false 与不写同判为「未确认」——fail closed，禁静默通过。）", in.SliceID),
 		}
 	}
 	// ③ 悬空依赖: depends_on 指向板上不存在的片（本片自己算「存在」——自依赖留给 ④ 判成环）
