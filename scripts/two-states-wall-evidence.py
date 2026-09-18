@@ -9,7 +9,7 @@
 
 退出码：`0` 全绿 · `1` 断言红 · `2` 硬失败（环境/探针/二进制问题，**不静默跳过**）。
 
-回执落仓 `scripts/sandbox-probes/evidence-two-states-wall-20260916.txt`。
+回执落仓 `scripts/sandbox-probes/evidence-two-states-wall.txt`。
 **回执里一律用仓内相对路径 + `/private/tmp/…` 靶子路径**（`scripts/` 与 `wall/` 都在发布白名单里
 ⇒ 回执会进公开面，私有绝对路径不许出现 —— 门禁自身也用 `display_path()` 做了这件事）。
 
@@ -33,7 +33,7 @@ P = os.path.join("scripts", "sandbox-probes")
 GATE = os.path.join(P, "verify-two-states.py")
 WALL_BIN_REL = os.path.join("wall", "target", "debug", "zerg-wall")
 WALL_BIN = os.path.join(ROOT, WALL_BIN_REL)
-RECEIPT = os.path.join(P, "evidence-two-states-wall-20260916.txt")
+RECEIPT = os.path.join(P, "evidence-two-states-wall.txt")
 
 EXIT_OK, EXIT_RED, EXIT_HARD = 0, 1, 2
 

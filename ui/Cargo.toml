@@ -1,6 +1,6 @@
 [package]
 name = "zerg-ui"
-version = "2.5.9"
+version = "2.5.10"
 edition = "2021"
 description = "虫族 UI——任务/集群/Git/日志/文档/资源库一体化界面"
 
