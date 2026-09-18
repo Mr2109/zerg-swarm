@@ -31,6 +31,10 @@
 // ── 硬规则（写死在代码里，由用例逐条钉住）────────────────────────────────
 //
 //	① 事件名闭集：认不出的 `event` 名一律**不落**（不猜、不产生垃圾基数）。
+//	   **B9（2026-09-18）扩名**：闭集 = §6.1 切片侧四名 ∪ **§6.2 派活/小队侧三名**
+//	   （`squad` / `work_order` / `handoff`，见 team_events.go 的逐字取证）；
+//	   **机制不动** —— 形状仍是本文件的 `Event`、落点仍是同一个 JSONL、出口仍是 `Emit`。
+//	   `EventNames()` **仍是 §6.1 四名**（那一节的逐字清单，不动、不撑）；全部合法名见 `AllEventNames()`。
 //	② 判据版本无来源 ⇒ **显式「未标定」**（常量 CriteriaVersionUncalibrated），绝不编造。
 //	③ best-effort：任何写失败只记日志 —— **绝不改变判定、绝不 panic、绝不阻断调用方**
 //	   （`Emit` 刻意**没有返回值**：判定侧无从依赖它，也就无从被它改变）。
@@ -92,7 +96,11 @@ const (
 	OutcomeSkipped  = "skipped"  // 越片动作
 )
 
-// EventNames — 事件名闭集的枚举形态（统计脚本与用例按它遍历；顺序固定 = 设计稿 §6.1 的行文顺序）。
+// EventNames — **切片侧**（设计稿 §6.1）事件名闭集的枚举形态（统计脚本与用例按它遍历；
+// 顺序固定 = 设计稿 §6.1 的行文顺序）。
+//
+// **本节只列 §6.1 的四名**（B9 未改动本节：§6.1 的逐字清单就这四条）。
+// `Emit` 认的**全部**合法名 = 本节 ∪ `TeamEventNames()`（§6.2 三名）⇒ 见 `AllEventNames()`。
 func EventNames() []string {
 	return []string{
 		EventSliceCreated,
@@ -102,9 +110,18 @@ func EventNames() []string {
 	}
 }
 
-// knownEvent — 事件名是否在闭集内（① 的判据）。
+// AllEventNames — `Emit` 认的**全部**合法 `event` 值 = §6.1 切片侧四名 + §6.2 派活/小队侧三名。
+//
+// 两节各自是设计稿里**逐字**列出的清单（§6.1 第 371 行 / §6.2 第 376 行），本函数只是把两节
+// 合并成一个**闭集**给 `knownEvent` 用（闭集只有一个，不建第二套名字空间）。
+func AllEventNames() []string {
+	names := EventNames()
+	return append(names, TeamEventNames()...)
+}
+
+// knownEvent — 事件名是否在闭集内（① 的判据；闭集 = §6.1 ∪ §6.2，见 AllEventNames）。
 func knownEvent(name string) bool {
-	for _, n := range EventNames() {
+	for _, n := range AllEventNames() {
 		if name == n {
 			return true
 		}
@@ -131,6 +148,18 @@ type Event struct {
 	// TaskID / SliceID — 归因用。（缺 slice_id 的挂板拒绝里 slice_id 为空 —— 那时确实没有 id 可用。）
 	TaskID  string `json:"task_id,omitempty"`
 	SliceID string `json:"slice_id,omitempty"`
+	// AgentName — 成员名（`agent_name` **逐字**取自设计稿 v2.1 §4.6-8 第 239 行：
+	// `workspace_root / blackboard_dir / allowed_write_paths / confirmation_callback / non_interactive / agent_name`）。
+	//
+	// 为什么派活/小队侧必须有这一位：§2.3-14 逐字「**对每个 agent 操作与交接都埋点**」⇒ 记录要**按 agent 归因**
+	// 才算埋到点（否则 §6.2 的「可统计」只剩全局计数）。片侧事件不带它（omitempty ⇒ 字段整个不出现）。
+	AgentName string `json:"agent_name,omitempty"`
+	// Target — 交接对象（**只有 `handoff` 记录带它**）。
+	//
+	// 取值口径：**只认有出处的取值**（`HandoffTargetUser` = `user`，§4.6-7 逐字「「升级给人」统一为 handoff(user)」）；
+	// 不在出处闭集内 ⇒ `EmitHandoff` **不落行**（成员名形态稿面未给 ⇒ 不发明）。字段名 `target` 属**本仓命名**
+	// （稿面逐字给了取值 `handoffs=["user"]`，没给事件里的字段名）—— 登记为待定口径项。
+	Target string `json:"target,omitempty"`
 	// Code — 低基数原因码（挂板 `SLICE_*` / 打回 `PRE_`/`POST_`/`INV_`_R<n>）。
 	Code string `json:"code,omitempty"`
 	// R — R 编号（设计稿 §3.4 的机器判据闭集 R0–R13）。**指针**：nil ⇒ 该事件没有 R 编号
@@ -187,8 +216,17 @@ func Emit(ev Event) {
 		ev.CriteriaVersion = CriteriaVersionUncalibrated
 	}
 	if !knownOutcome(ev.Outcome) {
-		// 结局认不出 ⇒ 不猜：退回该事件名的固定结局（低基数、可聚合）。
-		ev.Outcome = defaultOutcome(ev.Event)
+		// 结局认不出 ⇒ 不猜。
+		//  · 片侧四名**有**稿面来源的固定结局 ⇒ 退回该事件的固定结局（低基数、可聚合）——行为一字不变；
+		//  · 派活/小队侧三名（§6.2）**没有**稿面来源的固定结局 ⇒ **不落这一行**：
+		//    低基数结局这一位必须有值，而「猜一个结局」正是硬规则 ✗ ⇒ 与①「认不出的不落」同规。
+		if d := defaultOutcome(ev.Event); d != "" {
+			ev.Outcome = d
+		} else {
+			log.Printf("⚠️ sliceobs: 事件 %q 没有稿面来源的固定结局，且调用方给的结局认不出（%q）⇒ 不落这一行"+
+				"（低基数结局这一位必须有值；不猜一个结局出来）", ev.Event, ev.Outcome)
+			return
+		}
 	}
 	line, err := json.Marshal(ev)
 	if err != nil { // 理论上到不了（结构体全可序列化）——留着是为了「绝不 panic」
@@ -221,7 +259,11 @@ func knownOutcome(o string) bool {
 	return false
 }
 
-// defaultOutcome — 事件名 → 固定结局（结局漏填时的兜底，保证「低基数结局」这一位always 有值）。
+// defaultOutcome — 事件名 → 固定结局（结局漏填时的兜底，保证「低基数结局」这一位 always 有值）。
+//
+// **只覆盖 §6.1 的片侧四名**：这四名的固定结局有稿面来源（片诞生/被拒/升级/越片）。
+// §6.2 的派活/小队侧三名（`squad` / `work_order` / `handoff`）**不在**这里 —— 稿面没给它们的
+// 固定结局 ⇒ 返回空串，由 `Emit` 判成「不落行」（**不猜一个结局出来**；见 Emit 的兜底分支）。
 func defaultOutcome(event string) string {
 	switch event {
 	case EventSliceCreated:
