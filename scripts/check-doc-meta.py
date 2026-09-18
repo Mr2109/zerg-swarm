@@ -85,10 +85,26 @@ EXCL_PREFIX = (".git/", "vendor/", "tools/ocr/venv/")
 #   ★ 2026-09-19 分家：`docs/issues/`（1086 篇引擎数据）整目录已迁至 `Zerg-内部文档/issues/` ⇒ 删第二项，
 #     只留仍在仓内的 `docs/项目文档/`（17 套快照）。反向探针：删条目前后 `--scope repo`
 #     扫描域 = 1770 篇 **逐位一致**（`docs/issues` 今天在盘上不存在）。
+#   ★ 2026-09-19 「项目文档」二次分家**批2**（**只加注、条目值一字不动**）：`docs/项目文档/` 整目录将于
+#     **批3** 移入同级仓外目录 `Zerg-内部文档/项目文档/` ⇒ **批3 后本条仓内零命中** ⇒ 届时按「零命中即删」
+#     删除（死条目留着 = 假覆盖）。本批不删：对象今天仍在仓内、仍有命中在咬（`--scope formal` 现跑
+#     冻结区 = 36 篇告警）—— 现在删 = 拿掉一道真在咬的判据。
 FROZEN_PREFIX = ("docs/项目文档/",)
 
 # 正式面候选第一波（设计稿 §8.4③ / §16.1⑤ = 39 篇 + 双语正式面 docs/zh/ · docs/en/，§5.6②）
-FORMAL_PREFIX = ("docs/项目文档/v2.5.10/", "docs/常青/", "docs/skills/", "docs/zh/", "docs/en/")
+#   ★ 2026-09-19 「项目文档」二次分家**批2**（双认 · **先仓内、缺则仓外取源根**）：每项 = (仓内前缀, 仓外候选)；
+#     首项 `docs/项目文档/v2.5.10/` 的**源**随**批3** 移出工作树 ⇒ 给出仓外候选
+#     `../Zerg-内部文档/项目文档/v2.5.10/`（与 `docs/site/export-and-build.sh` 的 `ZERG_DOCS_ALT` 同一根、
+#     同一默认值 = 同级 `Zerg-内部文档/`）。解析语义与站点脚本**逐条一致**：先仓内、缺则仓外；
+#     两棵都在时**只取仓内那棵**（不双计）。五处仓外候选都没有、仓内也没有 ⇒ 照原口径
+#     **rc=2 不给结论**（逐条打印缺件路径 + 仓外候选）—— 不假绿、也不空转成绿。
+FORMAL_PREFIX = (
+    ("docs/项目文档/v2.5.10/", "../Zerg-内部文档/项目文档/v2.5.10/"),
+    ("docs/常青/", None),
+    ("docs/skills/", None),
+    ("docs/zh/", None),
+    ("docs/en/", None),
+)
 
 CORE_SIX = ("title", "type", "status", "source_of_truth", "owner", "updated_at")
 
@@ -496,14 +512,19 @@ def default_type_for(rel):
     for pre, t in TYPE_DEFAULT_EXACT.items():
         if rel.startswith(pre):
             return t
-    if rel.startswith("docs/项目文档/"):
+    #   ★ 2026-09-19 二次分家批2（双认）：`docs/项目文档/`（仓内）与 `../Zerg-内部文档/项目文档/`（**批3** 后的
+    #     仓外取源根）**共用同一套目录默认值**——判据一个字没改，只是两处都认（否则批3 后本表对仓外那批
+    #     文件一律返回 None ⇒ M16 告警静默消失 = 假绿）。
+    for pref in ("docs/项目文档/", "../Zerg-内部文档/项目文档/"):
+        if not rel.startswith(pref):
+            continue
         base = os.path.basename(rel)
         if re.match(r"^\d{2}-", base) and ("模块" in base or "架构" in base or "设计" in base or "体系" in base):
             return "reference"
-        for pre, t in (("使用-", "how-to"), ("变更-", "record"), ("承接项-", "record"),
-                       ("文档-代码对照台账", "record"), ("任务表-", "record"),
-                       ("进度记录-", "record"), ("靶子表", "record")):
-            if base.startswith(pre):
+        for p2, t in (("使用-", "how-to"), ("变更-", "record"), ("承接项-", "record"),
+                      ("文档-代码对照台账", "record"), ("任务表-", "record"),
+                      ("进度记录-", "record"), ("靶子表", "record")):
+            if base.startswith(p2):
                 return t
         return None
     if rel.startswith("docs/常青/"):
@@ -551,7 +572,8 @@ def print_report(rep, args):
     if rep["frozen"] and any(rep["frozen"].values()):
         f = rep["frozen"]
         print("  冻结区（docs/项目文档/ · 只登记不改 ⇒ 不计入退码；原第二项 `docs/issues/` 已于"
-              " 2026-09-19 分家至 `Zerg-内部文档/`、条目已删）："
+              " 2026-09-19 分家至 `Zerg-内部文档/`、条目已删。★ 二次分家批2：本条目随**批3** 零命中 ⇒ 届时删，"
+              "见 FROZEN_PREFIX 注）："
               " 合规 %d · 不合规 %d · 告警 %d · 不可判定 %d · 剔除 %d"
               % (f["ok"], f["violation"], f["warn"], f["blocked"], f["skipped"]))
     if rep["skipped_cls"]:
@@ -822,17 +844,23 @@ def main(argv):
             print("BLOCKED：目标不存在 ⇒ 不给结论：%s" % t)
             return 2
     if args.scope == "formal":
+        #   ★ 2026-09-19 二次分家批2：每项 = (仓内前缀, 仓外候选) ⇒ **先仓内、缺则仓外取源根**
+        #     （语义与 docs/site/export-and-build.sh 的 ZERG_DOCS_ALT 逐条一致；两棵都在只取仓内那棵）。
         keep = []
-        for t in targets:
-            for pre in FORMAL_PREFIX:
-                p = os.path.join(root, pre)
+        for pre, alt in FORMAL_PREFIX:
+            for cand in (pre, alt):
+                if cand is None:
+                    continue
+                p = os.path.join(root, cand)
                 if os.path.isdir(p):
                     keep.append(p)
+                    break
         targets = sorted(set(keep))
         if not targets:
-            print("BLOCKED：正式面候选目录一个都不存在 ⇒ 不给结论")
-            for pre in FORMAL_PREFIX:
-                print("  缺件路径：%s（仓根下解析 = %s）" % (pre, os.path.join(root, pre)))
+            print("BLOCKED：正式面候选目录一个都不存在（仓内 + 仓外取源根两处都没有）⇒ 不给结论")
+            for pre, alt in FORMAL_PREFIX:
+                extra = ("｜仓外候选：%s（解析 = %s）" % (alt, os.path.join(root, alt))) if alt else ""
+                print("  缺件路径：%s（仓根下解析 = %s）%s" % (pre, os.path.join(root, pre), extra))
             print("  口径：公开树侧（无 docs/）本 scope 为 BLOCKED、不适用；私有树正常判（判据一字未改）。")
             return 2
     if not os.path.isdir(root):
