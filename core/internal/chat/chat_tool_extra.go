@@ -651,7 +651,13 @@ func logTail(args map[string]any) (string, error) {
 		// ⇒ 与 "core" 分支同口径走 statepath 运行期日志目录派生（ZERG_LOG_DIR → ZERG_TMP_DIR → /tmp）。
 		// 生产默认不变（仍是 /tmp/zerg-ui.log——UI 侧落点见 scripts/start-zerg-ui.sh 的 ZERG_UI_LOG），
 		// 第二个实例/ZERG_LOG_DIR 改道后才读得到自己那份 UI 日志。
-		path = filepath.Join(statepath.RuntimeLogDir(), "zerg-ui.log")
+		// 与 scripts/start-zerg-ui.sh 同一条优先序（两侧一致，谁都不许各读各的）：
+		//   ZERG_UI_LOG（显式/旧变量）> <运行期日志目录>/zerg-ui.log（ZERG_LOG_DIR → ZERG_TMP_DIR → /tmp）
+		if p := strings.TrimSpace(os.Getenv("ZERG_UI_LOG")); p != "" {
+			path = p
+		} else {
+			path = filepath.Join(statepath.RuntimeLogDir(), "zerg-ui.log")
+		}
 	case "", "default":
 		path = filepath.Join(statepath.RuntimeLogDir(), "zerg-core.log")
 	default:
