@@ -68,10 +68,12 @@ MAX_FILE_BYTES = 2 * 1024 * 1024  # 超过 2 MB 的文档不读（登记为跳�
 
 # 排除域（**冻结/镜像/证据/历史报告**）：这些域里的旧版本号是设计，不是债
 DOC_EXCLUDES_FIXED = [
-    ("docs/虫族文档/", "镜像副本（公开面镜像，冻结）"),
     ("docs/02-调研/raw/", "原始调研证据（一手日志，冻结）"),
     ("docs/issues/", "历史报告/事故记录（记录型，冻结）"),
 ]
+# ★ 2026-09-19：原第一项 `docs/虫族文档/`（镜像副本，公开面镜像 · 冻结）**已退役**（备份见
+#   ~/zerg-backup/…）⇒ 死条目删除（它今天匹配 0 个文件 ⇒ 删它不改任何计数：语料/清单逐位一致）。
+#   镜像若日后重建，请把 ("docs/虫族文档/", "镜像副本（已退役后重建）") 加回本列。
 DOC_EXCLUDES_RULE = [
     ("docs/项目文档/v<X>/（X ≠ 当前版）", "他版快照目录（17 套历史快照，冻结归档，勿改）"),
     ("docs/项目文档/v<X>/（X = 当前版）", "**不排除** —— 它是活文档，命中要进清单"),
@@ -485,7 +487,7 @@ serde = { version = "%s", features = ["derive"] }
 
 def _mk_fixture(base, go_v, ui_v, wall_v, version_text):
     for d in ("core/internal/version", "ui", "wall", "docs/zh", "docs/项目文档/v9.9.8",
-              "docs/虫族文档", "docs/02-调研/raw", "docs/issues"):
+              "docs/02-调研/raw", "docs/issues"):
         if not os.path.isdir(os.path.join(base, d)):
             os.makedirs(os.path.join(base, d))
     w = lambda rel, txt: io.open(os.path.join(base, rel), "w", encoding="utf-8").write(txt)
@@ -497,7 +499,6 @@ def _mk_fixture(base, go_v, ui_v, wall_v, version_text):
     w("docs/zh/活文档.md", u"# 活文档\n当前版本 9.9.8 已发布。\n见 `docs/项目文档/v9.9.8/变更-v9.9.8.md`。\n")
     # 冻结节（他版快照 + 固定排除域 ⇒ 不入清单）
     w("docs/项目文档/v9.9.8/变更-v9.9.8.md", u"旧账：9.9.8 于昨日发布。\n")
-    w("docs/虫族文档/镜像.md", u"镜像副本：9.9.8。\n")
     w("docs/02-调研/raw/调研-旧.md", u"原始证据：9.9.8。\n")
     w("docs/issues/报告-旧.md", u"历史报告：9.9.8。\n")
 
@@ -628,7 +629,10 @@ def self_test():
                 detail += u" · 清单含活文档=%s" % (u"docs/zh/活文档.md" in paths)
             elif ok and needle == u"__EXCLUDE_ONLY__":
                 paths = [h["path"] for h in (res["docs"]["hits"] if res["docs"] else [])]
-                bad = [p for p in paths if p.startswith("docs/项目文档/") or p.startswith("docs/虫族文档/")
+                # ★ 2026-09-19：原 `docs/虫族文档/`（镜像副本）一条随镜像退役已从 DOC_EXCLUDES_FIXED
+                #   删除，夹具里也不再造该件 ⇒ 本格改由其余**三个**排除域（他版快照 / docs/02-调研/raw /
+                #   docs/issues）把牙咬住（去镜像不等于放宽排除域）。
+                bad = [p for p in paths if p.startswith("docs/项目文档/")
                        or p.startswith("docs/02-调研/raw/") or p.startswith("docs/issues/")]
                 ok = not bad and u"docs/zh/活文档.md" in paths
                 detail += u" · 排除域零命中=%s" % (not bad)

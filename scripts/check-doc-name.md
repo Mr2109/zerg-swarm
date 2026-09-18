@@ -281,8 +281,13 @@ python3 scripts/check-doc-name.py --self-test    # → rc 0 · 自检 21/21 ✓�
 - **N3 的日期形态**：`-YYYYMMDD` 与 `-YYYYMM`（6 位，§5 ⑦「位数不全」）；只认 `-` 前缀的整段（`20260918foo` 不算）。
 - **N4 只认 `-vX.Y` 段**（`-v2.5.10-` 命中、`-v102-` 也命中）；尾位形态 `…-v1.2` 与 `…-v1.2.md` 均**不判**。
 - **N7 按「同一分隔段」**（`- _ . 空格` 切段）判**相邻**字符；命中即告警，**不给改名建议**（需人审：专有名词 / 产品名）。
-- **扫描域与《清单》§0 同一排除名单**：`.git` `node_modules` `vendor` `tools/ocr/venv` `docs/虫族文档/`（镜像副本）
+- **扫描域与《清单》§0 同一排除名单**：`.git` `node_modules` `vendor` `tools/ocr/venv`
   `docs/调研/multi-agent-源码/`（第三方）`**/target` `**/__pycache__` `dist` `docs/.history` `docs/.obsidian` `.zerg` `zerg-wt`。
+- **`docs/虫族文档/`（镜像副本）条目已于 2026-09-19 退役** ⇒ 该条从扫描域排除名单**删除**
+  （备份 = `~/zerg-backup/docs-虫族文档-mirror-20260919.tar.gz` · sha256 `2a829937…8ced2ca` +
+  解包副本 `~/zerg-backup/retired-docs-虫族文档-20260919/`，逐文件 sha256 与原目录全量一致）。
+  它今天匹配 **0 条路径** ⇒ 删它不改任何计数（反向探针：`--scope repo` 扫描域 **2937** 个文件/目录前后一致）；
+  镜像若日后重建，请把该条加回 `EXCL_PREFIX`，否则镜像内文件会被当主树判。
 - **`--scope`**：`repo`（默认）= 仓根扫描域；`docs` = `<仓根>/docs`。显式给了 `--target`/位置参数时**以 `--target` 为准**（`--scope` 只提供默认目标，不叠加）。
 - **自检开关**：`--no-self-test`（内部子进程防递归）· 环境变量 `CHECK_DOC_NAME_META_OFF=1`（**只给元自检的注入副本用**，别在真仓里设）。
 - **未挂进 `scripts/precommit-gates.sh`**（三档退码与那套 `rc`/`empty` 两模式不相容，Q14 未选型）；语法已被 `pub` scope 的 `scripts/*.py` 步骤覆盖。

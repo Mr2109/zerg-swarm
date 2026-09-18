@@ -81,7 +81,7 @@ python3 scripts/check-doc-meta.py --no-self-test ...     # 内部子进程用（
 | 类别 | 判据 | 为什么不是错 |
 |---|---|---|
 | **技能契约件** | 基名 `SKILL.md`，或 frontmatter 键集 ⊆ {`name`,`description`} | 那是**另一套** frontmatter 契约（Hermes/技能格式），不带文档 6 件套 |
-| 主树镜像副本 | `docs/虫族文档/` | §2.7：主树镜像，**同一篇两份地址** |
+| ~~主树镜像副本~~ **已退役** | `docs/虫族文档/` —— **已于 2026-09-19 退役**（源目录已从 `docs/` 移除；备份见 `~/zerg-backup/…`） | §2.7 的理由（主树镜像，**同一篇两份地址**）随镜像消失 ⇒ 该条从 `EXCL_PREFIX` **删除**（零命中条目留着 = 假覆盖）；镜像重建则需加回，否则镜像内 frontmatter 会按主树判 |
 | 第三方源码摘录 | `docs/调研/multi-agent-源码/` | 外仓 README（`name`/`description`），不属本仓文档面 |
 | 冻结区 | `docs/项目文档/` · `docs/issues/` | §8.1/§1.3：**只登记不改** ⇒ 命中数照报，不进退码 |
 

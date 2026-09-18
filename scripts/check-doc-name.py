@@ -66,9 +66,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT_DEFAULT = os.path.dirname(HERE)
 
 # 扫描域排除名单：逐字照抄《清单-命名规范化》§0（EXCL / PRE / 隐藏项口径）
+# ★ 唯一偏离：`docs/虫族文档/`（主树镜像副本）**已于 2026-09-19 退役**（用户拍板「退」；
+#   备份 = ~/zerg-backup/docs-虫族文档-mirror-20260919.tar.gz + 解包副本 retired-docs-虫族文档-20260919/，
+#   逐文件 sha256 与原目录全量一致）⇒ 死条目删除：它今天匹配 0 条路径，留在名单里只剩「看上去在管」。
+#   镜像若日后重建（从备份解包回 docs/），请把 "docs/虫族文档/" 加回本列表，否则镜像内文件会被当主树判。
+#   ★ 反向探针（2026-09-19 实测）：删条目前后 --scope repo 扫描域 = 2937 个文件/目录（一致）、
+#     --scope docs 不变 ⇒ 删除只去掉一个零命中条目，没有别的路径被误纳/误排。
 EXCL_DIRS = ("node_modules", "target", "__pycache__", ".history", ".obsidian", "dist",
              ".zerg", "zerg-wt", "venv", ".cargo", ".git")
-EXCL_PREFIX = (".git/", "vendor/", "docs/虫族文档/", "docs/调研/multi-agent-源码/",
+EXCL_PREFIX = (".git/", "vendor/", "docs/调研/multi-agent-源码/",
                "tools/ocr/venv/")
 FROZEN_PREFIX = ("docs/项目文档/", "docs/issues/")
 

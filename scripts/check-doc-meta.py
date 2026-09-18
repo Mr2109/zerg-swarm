@@ -21,9 +21,11 @@
      制表符缩进）一律 **rc=2「不给结论」**，绝不猜 —— 猜出来的判定与假绿同价。
   ② **schema 与判定同源**：schema 里出现本脚本未实现的关键字 ⇒ **rc=2**（否则 schema 加了规则、
      门还是绿的 ⇒ 假覆盖）。
-  ③ **不算不合规的类别要显式剔出并计数**：`docs/虫族文档/`（主树镜像副本 §2.7）·
-     `docs/调研/multi-agent-源码/`（第三方源码摘录）· `SKILL.md`（Hermes/技能格式是**另一套**
-     frontmatter 契约：只有 name/description，不带文档 6 件套）⇒ 剔除不是隐藏，报告里逐类给数。
+  ③ **不算不合规的类别要显式剔出并计数**：`docs/调研/multi-agent-源码/`（第三方源码摘录）·
+     `SKILL.md`（Hermes/技能格式是**另一套** frontmatter 契约：只有 name/description，不带文档
+     6 件套）⇒ 剔除不是隐藏，报告里逐类给数。
+     ★ 原第三类「`docs/虫族文档/`（主树镜像副本 §2.7）」**已于 2026-09-19 退役** ⇒ 条目删除
+     （它今天匹配 0 篇 ⇒ 删它不改任何计数；备份见 ~/zerg-backup/…）。
 
 用法
     python3 scripts/check-doc-meta.py                       # 全仓文档面（默认 --missing=warn）
@@ -58,9 +60,12 @@ SCHEMA_DEFAULT = os.path.join("docs", "site", "frontmatter-schema.json")
 DOC_EXT = (".md", ".markdown", ".mdx")
 
 # 扫描排除名单（逐字照抄《清单-命名规范化》§0 的 EXCL/PRE 口径，便于两份报告对账）
+# ★ 唯一偏离：`docs/虫族文档/`（主树镜像副本）**已于 2026-09-19 退役**（备份见 ~/zerg-backup/…）
+#   ⇒ 死条目删除（零命中条目留着 = 假覆盖）。镜像若重建，请把该条加回本列表。
+#   ★ 反向探针（2026-09-19 实测）：删条目前后 --scope repo 扫描域 = 1770 篇、--scope docs = 1580 篇（一致）。
 EXCL_DIRS = ("node_modules", "target", "__pycache__", ".history", ".obsidian", "dist",
              ".zerg", "zerg-wt", "venv", ".cargo", ".git")
-EXCL_PREFIX = (".git/", "vendor/", "docs/虫族文档/", "docs/调研/multi-agent-源码/",
+EXCL_PREFIX = (".git/", "vendor/", "docs/调研/multi-agent-源码/",
                "tools/ocr/venv/")
 
 # 冻结区（只登记不改：《清单-命名规范化》§2 + 设计稿 §8.1/§1.3）

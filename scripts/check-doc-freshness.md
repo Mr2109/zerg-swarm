@@ -45,9 +45,9 @@ python3 scripts/check-doc-freshness.py d1 --scope wide --no-whitelist
 
 | 开关 | 语义 |
 |---|---|
-| `--scope main`（默认） | `docs/` 去**镜像**去**引擎数据**去**16 套冻结归档**去**第三方源码摘录** ⇒ 今天 **288 篇** |
-| `--scope wide` | main + 冻结归档 + 第三方源码 ⇒ 今天 **574 篇**（≈ 调研稿的「主树 557」口径） |
-| `--scope mirror` | wide + 镜像副本 ⇒ 今天 **2205 篇**（≈ 调研稿的「全树 2188」口径） |
+| `--scope main`（默认） | `docs/` 去**镜像副本**去**引擎数据**去**16 套冻结归档**去**第三方源码摘录** ⇒ **305 篇**（2026-09-19 现跑） |
+| `--scope wide` | main + 冻结归档 + 第三方源码 ⇒ **591 篇**（≈ 调研稿的「主树 557」口径） |
+| `--scope mirror` | wide + 镜像副本 ⇒ **591 篇 = wide**（★ 镜像 `docs/虫族文档` 已于 2026-09-19 退役且条目已删 ⇒ 镜像域今天**零命中**，本档与 wide **逐位相同**；退役前是 2205 篇） |
 | `--strict-all` | 非本地域（外部引用域/冻结归档/镜像）**也判红**（默认只单列计数） |
 | `--no-whitelist` | D1 关掉软白名单（语法示例/省略号目标/代码块内链接），用于量假红 |
 | `--slug-profile` | `github`（默认）或 `docv1.2` —— 实测 §5.6③④ 的 U+3000 分歧（见 §6） |
@@ -105,6 +105,7 @@ python3 scripts/check-doc-freshness.py d1 --scope wide --no-whitelist
 | `mirror` | 2205 篇 | 3935 文件 | 37ms | rc=1 **断链 28**（本地 7）· 264ms | rc=1 **红 68** · 903ms | **rc=0 42/42 过** · 199ms | rc=1 **drift 1** · 53ms | **1.46s** |
 
 > **判红口径与 scope 无关**：加镜像/冻结归档后**本地红数不变**（D1 7 · D2 69 · D4 1），只有**单列计数**变大 —— 这就是「分母写死」的可验证形态（§9.1 M12 的核心病是同一仓两次跑给出不同数字）。
+> ★ **2026-09-19 复测（镜像退役后 · 现跑）**：`docs/虫族文档` 退役且 `mirror_paths` 条目已删 ⇒ 本表 `mirror` 行**不再可复现**，现跑 **`mirror` ≡ `wide` = 语料 591 篇 / 解析域 2037 文件**（`main` = 305 篇 / 2027 文件），**报告逐字节一致（只有耗时不同）**。本表其余数字保留 **2026-09-18 首跑**的历史值。
 
 ### 3.1 D1（main）：本地红 **7** 条，逐条
 | 文件:行 | 目标 | 性质 |
@@ -176,12 +177,13 @@ python3 scripts/check-doc-freshness.py d1 --scope wide --no-whitelist
 | `mirror` | 28（本地 7） | **48** | **20 条（42%）** |
 
 ⇒ 要「研究稿那个 65/1337 口径」就把 `--no-whitelist` 打开；**默认口径是白名单版**（写死在这里，避免同一仓两个断链率）。
+★ **2026-09-19**：镜像退役后 `mirror` 档 ≡ `wide` 档（见 §4.3）⇒ 上表 `mirror` 行是**退役前**的历史值。
 
 ### 4.3 排除名单
 | 类 | 内容 | 处置 |
 |---|---|---|
 | 硬排除（永不扫） | `.git` `node_modules` `target` `__pycache__` `.history` `.obsidian` `dist` `bin` `data` `zerg-wt` `.zerg` `vendor` `tools/ocr/venv` | 任何 scope 都不进语料/解析域（名字型排除按**任意深度**生效 ⇒ `ui/target` 27G 不走） |
-| 镜像副本 | `docs/虫族文档`（1651 篇） | 只在 `--scope mirror` 扫，且命中记**单列** |
+| ~~镜像副本~~ **已退役** | `docs/虫族文档`（1651 篇）—— **已于 2026-09-19 退役**（源目录已从 `docs/` 移除；备份 = `~/zerg-backup/docs-虫族文档-mirror-20260919.tar.gz` + 解包副本 `retired-docs-虫族文档-20260919/`，逐文件 sha256 与原目录一致） | 条目已从 `scripts/doc-freshness.config.json` 的 `mirror_paths` **删除**（零命中条目留着 = 假覆盖）⇒ 今天 `--scope mirror` ≡ `--scope wide`（591 篇 / 2037 文件，删条目前后报告**逐字节一致**）。★ 镜像若从备份重建，请把 `docs/虫族文档` 加回 `mirror_paths`，否则镜像内的引用会被当本地判红 |
 | 冻结归档 | `docs/项目文档/v2.0.0 · v2.1 · v2.2 · v2.3 · v2.4 · v2.5.0–v2.5.9 · v2.6`（16 套，含 `v2.6` —— 它只有 2 篇却在 AGENTS 的「取最大版本号」口径里抢位，M14 未拍 ⇒ 不拿它当判据） | `wide/mirror` 扫、记**单列**；`--strict-all` 才判红 |
 | 第三方源码摘录 | `docs/调研/multi-agent-源码` | 同上 |
 | 引擎数据 | `docs/issues`（1086 篇） | **任何 scope 都不扫**（它不是文档，是 issue 流水） |
@@ -189,7 +191,8 @@ python3 scripts/check-doc-freshness.py d1 --scope wide --no-whitelist
 | 在用版 | `docs/项目文档/v2.5.10` | **默认判红**（它是唯一未冻结的版本目录） |
 
 ### 4.4 引用域（`--strict-all` 才判红）
-`docs/02-调研/raw`（本机 main **170** 条命中）· `docs/调研/multi-agent-源码` · `docs/虫族文档`。
+`docs/02-调研/raw`（本机 main **170** 条命中）· `docs/调研/multi-agent-源码`。
+（★ 原第三项 `docs/虫族文档` 随镜像退役已于 2026-09-19 从 `external_domain_paths` 删除；镜像重建请加回。）
 
 ### 4.5 豁免机制（allowlist · **必须带理由 + 日期**）
 - 形制：`{gate, file_glob, target, reason, date}`；缺 `reason` 或 `date` ⇒ **脚本直接 rc=2**（「只给路径的 allowlist 就是无记录的洗白」）。
