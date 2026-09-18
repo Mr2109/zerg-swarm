@@ -12,7 +12,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG="${ZERG_UI_LOG:-/tmp/zerg-ui.log}"
+LOG="${ZERG_UI_LOG:-${ZERG_LOG_DIR:-/tmp}/zerg-ui.log}"
 BIN="$REPO_ROOT/bin/zerg-ui"
 
 cd "$REPO_ROOT"
