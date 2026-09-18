@@ -48,6 +48,39 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 			FinalAnswer: res.ExitKind == "natural" && strings.TrimSpace(res.Content) != "",
 		})
 	}()
+	// ── B 项⑥（B6）成员产出口接线：引用命中校验（receipt.go 的 `VerifyClaims`）──
+	// 接线前实测：`VerifyClaims` 在非测试代码里**零调用点**（口径与证据见 output_claims.go 文件头）。
+	// 收口纪律与上面 T1.3 观测 defer 同一套：本函数有多个产出出口（自然收尾 `return res` ×2 /
+	// 轮数用尽 / 墙钟 / 坏格式 / 守卫升级），逐出口改必漏 ⇒ 用 defer 在**全部**返回路径上过同一道校验。
+	// 命中失败（假回执/无据）⇒ 该产出**不得当自然完成交付** ⇒ 交**既有四终局**（`ChooseTerminal`
+	// 一行不改；事实位写法见 ApplyOutputClaimFacts）——**不**新建裁决机制、**不**新造状态名。
+	// 一次判定、两处出口共用（记忆化）：免得日后「拆掉这一步」只拆到一半。
+	var claimCheck OutputClaimCheck
+	claimChecked := false
+	outputClaims := func() OutputClaimCheck {
+		if !claimChecked {
+			claimCheck = VerifyOutputClaims(d.OutputClaims, res.Traces)
+			claimChecked = true
+		}
+		return claimCheck
+	}
+	claimTerminalWritten := false
+	defer func() {
+		if claimTerminalWritten {
+			return // 非自然出口那段已带上这次命中失败（同一次退出只出一条终局说明）
+		}
+		cc := outputClaims()
+		if !cc.HasFailure() {
+			return // 无引用载体 / 引用全中 / 仅缺引用 ⇒ 产出口一行不改（零回归）
+		}
+		in, _ := ApplyOutputClaimFacts(cc, TerminalInput{
+			CompletedSteps: len(res.Traces),
+			Checkpointable: len(res.Traces) > 0,
+		})
+		st, reason := ChooseTerminal(in)
+		res.Content = AppendTerminalNote(res.Content,
+			TerminalNote(st, reason+"（"+ClaimFailureDetail(cc)+"；退出原因："+res.ExitKind+"）"))
+	}()
 	maxRounds := cfg.MaxRounds
 	if maxRounds <= 0 {
 		maxRounds = 10
@@ -432,17 +465,23 @@ func Run(ctx context.Context, cfg Config, model, sysPrompt string, msgs []map[st
 			// HasIrreversible：本层看不到"是否已改文件"（在工具层）⇒ 保守留 false，**不猜**；
 			// 待 v2.5.11 由工具轨迹带"写类"标记后启用（承接项 S3）。
 		}
+		// B6：这一出口的产出一并过引用命中校验（只写既有事实位；落哪一终局仍由 ChooseTerminal 定）
+		cc := outputClaims()
+		var claimFailed bool
+		in, claimFailed = ApplyOutputClaimFacts(cc, in)
+		detail := "退出原因：" + res.ExitKind
+		if claimFailed {
+			// 命中失败 ⇒ 说明里点明「凭什么改道」（低基数：条数 + 四态名，不回显产出原文）
+			detail = ClaimFailureDetail(cc) + "；" + detail
+			claimTerminalWritten = true // 本次退出已带上 ⇒ 顶部那个 defer 不再重复出一条终局说明
+		}
 		st, reason := ChooseTerminal(in)
-		note := TerminalNote(st, reason+"（退出原因："+res.ExitKind+"）")
+		note := TerminalNote(st, reason+"（"+detail+"）")
 		// 实验开关（默认关）：ZERG_SENDBACK=1 ⇒ 改为"打回重做"（供 A/B 实测"打回是帮助还是伤害"）
 		if SendBackEnabled() && res.ExitKind == "max_rounds" {
-			note = SendBackNote(reason + "（退出原因：" + res.ExitKind + "）")
+			note = SendBackNote(reason + "（" + detail + "）")
 		}
-		if res.Content == "" {
-			res.Content = note
-		} else {
-			res.Content = res.Content + "\n\n" + note
-		}
+		res.Content = AppendTerminalNote(res.Content, note)
 	}
 	return res
 }
