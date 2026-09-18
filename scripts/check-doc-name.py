@@ -30,7 +30,10 @@
   ② **冻结区不计入退码**：`docs/项目文档/`（17 套快照 §8.1）与 `docs/issues/`（引擎数据 §1.3）
      按《清单》§2「高（冻结·不改）」**只登记不改** ⇒ 命中数照报，但不进 rc（`--count-frozen` 可改）。
   ③ **例外必须可数**：例外分四档、逐条给理由与出处，`--list-exempt` 全列出并**自证条数**
-     （A 档 = 《清单》已登记的 **22 条**；B 档 = 规则级规范豁免；C 档 = 本轮新增登记；
+     （A 档 = 《清单》已登记的 **22 条**；B 档 = 规则级规范豁免；
+     C 档 = 新增登记 **7 条** = C01–C03 **待批准** + C04 **已拍 2026-09-18（Mr2109）**
+           + C05–C07 **第二波任务书点名登记（2026-09-18）** = 门①②③（覆盖/版本源/接线）的
+           「门脚本 + 说明书」对；
      D 档 = 本轮 A 路拍板「登记不改」的 **2 条**）。
      豁免不是隐藏 —— 报告里每一档都有命中计数。
 
@@ -226,14 +229,33 @@ EXEMPT_C = [
      "reason": "文档体系 P1 同批交付的第三条门脚本 + 说明书（`check-doc-freshness.{py,md}`）——"
                "与 C01/C02、A06/A07、A12/A13 同一形态 · **待父代理批准**"},
     {"id": "C04", "kind": "pair", "rules": ["N6"], "paths": [("scripts", "precommit-gates")],
-     "reason": "**非本路（A 路）文件**：`scripts/precommit-gates.md` 由**路 D**（门禁挂接 Q14）"
-               "本轮 2026-09-18 20:43 新增，形态 = 「门脚本 + 说明书」（同 C01–C03 / A06/A07 / A12/A13）。"
-               "A 路本轮跑 `--scope repo` 时它刚落地 ⇒ 由本表登记（A 路持有本脚本文件集）· **归属路 D、"
-               "待父代理确认**；不认就把这一行删掉并把 `EXEMPT_C_EXPECTED` 4→3（判红照实回来）"},
+     "reason": "`scripts/precommit-gates.md` 由**路 D**（门禁挂接 Q14）2026-09-18 20:43 新增，"
+               "形态 = 「门脚本 + 说明书」（同 C01–C03 / A06/A07 / A12/A13）⇒ 登记为**允许对**。"
+               "**已拍 2026-09-18（Mr2109）**：认下 C04（拍板来源 = 文档体系 P1 第三批 拍板单 §⑥）。"
+               "撤法：删本行并把 `EXEMPT_C_EXPECTED` 4→3 ⇒ 该对判红照实回来"},
+    # ── C05–C07：2026-09-18 **第二波**（把债务台账 §7 的三条建议门挂进提交闸）新增的三对 ────────────
+    # 形态与前四对**完全相同**（门脚本 `scripts/<名>.py` + 说明书 `scripts/<名>.md`），
+    # 也就是同一条 N6 判据（同目录同基名、扩展名不同）在同一种约定下的第三批实例 ——
+    # **不是**「为了凑绿」放宽判据：删掉任一行，该对立刻按 N6 判红（撤法写在各行里）。
+    # 父代理 2026-09-18 第二波任务书 §3 点名登记这三对，并同步 `EXEMPT_C_EXPECTED` 4→7
+    # 与 `--list-exempt` 抬头；登记后 `--scope repo` 回 rc=0（此前 3 个不合规命中正是这三对）。
+    {"id": "C05", "kind": "pair", "rules": ["N6"], "paths": [("scripts", "check-gate-coverage")],
+     "reason": "**门①（门覆盖自检）**的「门脚本 + 说明书」对（`check-gate-coverage.{py,md}`）——"
+               "由第二波（2026-09-18）新建并挂进 `scripts/precommit-gates.sh` 的 `gates` scope（模式 `tri`）。"
+               "形态同 C01–C04 / A06/A07 / A12/A13 ⇒ 登记为**允许对**。"
+               "撤法：删本行并把 `EXEMPT_C_EXPECTED` 7→6 ⇒ 该对判红照实回来"},
+    {"id": "C06", "kind": "pair", "rules": ["N6"], "paths": [("scripts", "check-version-sources")],
+     "reason": "**门②（版本单一真源）**的「门脚本 + 说明书」对（`check-version-sources.{py,md}`）——"
+               "同 C05（第二波新建 · 挂 `gates` scope · 模式 `tri`）。"
+               "撤法：删本行并把 `EXEMPT_C_EXPECTED` 7→6 ⇒ 该对判红照实回来"},
+    {"id": "C07", "kind": "pair", "rules": ["N6"], "paths": [("scripts", "check-wired-scripts")],
+     "reason": "**门③（脚本接线自检）**的「门脚本 + 说明书」对（`check-wired-scripts.{py,md}`）——"
+               "同 C05（第二波新建 · 挂 `gates` scope · 模式 `tri-report` 只报告）。"
+               "撤法：删本行并把 `EXEMPT_C_EXPECTED` 7→6 ⇒ 该对判红照实回来"},
 ]
 EXEMPT_A_EXPECTED = 22
 EXEMPT_B_EXPECTED = 3
-EXEMPT_C_EXPECTED = 4
+EXEMPT_C_EXPECTED = 7
 
 # ── D 档：本轮 A 路拍板登记（「允许对 / 登记不改」· 父代理 2026-09-18 拍）─────────────
 # 这 2 条登记覆盖**收尾后仅剩的 6 条可改面命中**（此前逐条挂在说明书 §差异 6/7 上）：
@@ -565,7 +587,8 @@ def list_exempt():
         print("  %s [%s] 形态 %s\n      对象：%s\n      理由：%s"
               % (row["id"], "+".join(row["rules"]), row["kind"],
                  " , ".join(_flat(p) for p in row["paths"]), row["reason"]))
-    print("C 档 · 本轮新增登记（待父代理批准）：%d 条（期望 %d）" % (len(EXEMPT_C), EXEMPT_C_EXPECTED))
+    print("C 档 · 新增登记（C01–C03 待批准 · C04 已拍 2026-09-18 · C05–C07 第二波任务书登记 2026-09-18）："
+          "%d 条（期望 %d）" % (len(EXEMPT_C), EXEMPT_C_EXPECTED))
     for row in EXEMPT_C:
         print("  %s [%s] 形态 %s\n      对象：%s\n      理由：%s"
               % (row["id"], "+".join(row["rules"]), row["kind"],
@@ -699,13 +722,14 @@ def self_test(script_path, meta=True):
     ok &= case("缺件 · 目标路径不存在", 2, ["--target", os.path.join(tmp, "no-such")],
                must_contain=["不给结论"])
     ok &= case("缺件 · 扫描域为空", 2, ["--target", empty], must_contain=["不给结论"])
-    # ⑦ 例外表条数自证（A 档 22 条 · B 档 3 条 · C 档 4 条 · D 档 2 条）
+    # ⑦ 例外表条数自证（A 档 22 条 · B 档 3 条 · C 档 7 条 · D 档 2 条）
     rc, out = _sub(script_path, "--list-exempt")
     cnt_ok = (rc == 0 and ("A 档 · 《清单-命名规范化》已登记的「不改」条目：22 条（期望 22）" in out)
               and ("B 档 · 规则级规范豁免：3 条（期望 3）" in out)
-              and ("C 档 · 本轮新增登记（待父代理批准）：4 条（期望 4）" in out)
+              and ("C 档 · 新增登记（C01–C03 待批准 · C04 已拍 2026-09-18 · "
+                   "C05–C07 第二波任务书登记 2026-09-18）：7 条（期望 7）" in out)
               and ("D 档 · 本轮 A 路拍板登记（登记不改）：2 条（期望 2）" in out))
-    lines.append("%s 例外表条数自证（A22 / B3 / C4 / D2）" % ("✓" if cnt_ok else "✗"))
+    lines.append("%s 例外表条数自证（A22 / B3 / C7 / D2）" % ("✓" if cnt_ok else "✗"))
     ok &= cnt_ok
     # ⑧ 只报告不改
     import hashlib

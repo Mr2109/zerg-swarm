@@ -18,37 +18,78 @@
 #
 # 用法
 # ----
-#     bash scripts/precommit-gates.sh                  # 默认跑全部（go + rust + pub + tags）
+#     bash scripts/precommit-gates.sh                  # 默认跑全部（go + rust + pub + tags + docs + gates ⇒ 37 步）
 #     bash scripts/precommit-gates.sh --scope go       # 只跑 Go 侧（可重复：--scope go --scope rust）
 #     bash scripts/precommit-gates.sh --scope tags     # 只跑双构建工程门禁（T6.3）
-#     bash scripts/precommit-gates.sh --scope docs     # 只跑文档面门禁（meta/name/freshness D1–D3）
+#     bash scripts/precommit-gates.sh --scope docs     # 只跑文档面门禁（meta/name/freshness D1–D3 ⇒ 5 步）
+#     bash scripts/precommit-gates.sh --scope gates    # 只跑「门自己的门」（覆盖/版本源/接线 ⇒ 3 步）
 #     bash scripts/precommit-gates.sh --outdir /tmp/gates-14   # 指定日志目录
 #     bash scripts/precommit-gates.sh --list           # 只看步骤清单，不跑
 #     bash scripts/precommit-gates.sh --self-test      # 只跑自检（合成步骤，不碰真目标）
 #     bash scripts/precommit-gates.sh --emit-cmd 无后缀  # 只打印匹配步骤的命令串（负控/复核用；不跑）
 #
 # 退出码：0 全绿 · 1 有失败项 · 2 **不给结论**（用法错/前置缺件/自检不过/**有步骤报 BLOCKED**）
+#   ★ 第四档 `REPORT`（只报告）**不参与**这个三值出口 —— 它既不是「错」也不是「没结论」。
 #
-# 三档（步骤级）：0=PASS · 1=FAIL（失败项）· 2=BLOCKED（**不给结论**）。
+# 四档（步骤级）：PASS · FAIL（失败项）· BLOCKED（**不给结论**）· **REPORT（只报告）**。
 #   ★ BLOCKED **不计入失败项数** —— 「没结论」不是「错」，两者各有各的计数与打印位；
 #     但 BLOCKED 也不许当绿（有 BLOCKED 且无 FAIL ⇒ 整脚本 rc=2，不是 rc=0）。
-#   用三档判定的步骤，模式写 `tri`（现有 rc / empty 两模式的语义**一字未改**）。
+#   ★ REPORT 是**第四档「只报告」**（2026-09-18 拍板①，现用于 docs 的 D2）：命中**只入清单** ——
+#     **不计失败项数、不计 BLOCKED、不影响退出码**（它只出现在计数与打印里）。
+#   模式名的对应：`tri` ⇒ 三档（rc=0 PASS · rc=1 FAIL · rc=2 BLOCKED · 异常码 FAIL）；
+#                 `tri-report` ⇒ 四档里的「rc=1 落 REPORT」那一格（其余三格与 `tri` 一字不差）。
+#   rc / empty 两模式的语义**一字未改**（现有 20 步靠它们，自检 ⑧d 钉住）。
 #
-# scope 说明（2026-09-17 加 tags · 2026-09-18 加 docs）：
-#   go   = gofmt/build/vet/test（**单侧**：默认 tag 配置）
-#   rust = wall 的 fmt/clippy/test
-#   pub  = 公开面两侧都有的脚本静态检查
+# scope 说明（2026-09-17 加 tags · 2026-09-18 加 docs · 2026-09-18 第二波加 gates，三者**都进默认集**）
+#   go   = gofmt/build/vet/test（**单侧**：默认 tag 配置）—— 2026-09-18 第二波由**两棵**扩到**四棵** Go module：
+#          core · agent（原有 12 步）+ **shared**（build/vet/test 3 步）· **scripts/exportnames**（build/vet 2 步）。
+#          为什么原来没有：`--scope go` 只 add_step core/agent 两棵（债务台账 §0 第 2 行）⇒ 两个 module
+#          编译失败而闸全绿。★ exportnames 实测**无 `_test.go`** ⇒ 按「有测试就加」不加 test 步（不缝空转步）。
+#          ★ 它是 main 包：`go build ./...` 会把二进制**写进当前目录**（实测冒出 7 MB `zerg-exportnames`）
+#          ⇒ 该步用 `go build -buildvcs=false -o /dev/null ./...`（`-o` 在包模式**之前**，实测 rc=0 且无产物）。
+#   rust = Rust 构建树 fmt/clippy/test —— 2026-09-18 第二波由**一棵**扩到**两棵**：wall（原有 3 步）+ **ui**（新增 3 步）。
+#          为什么原来没有：`--scope rust` 只 add_step wall（债务台账 §0 第 1 行），而 precheck 只验
+#          `ui/Cargo.toml` **在不在**、不验它**过不过** ⇒ ui 可以编译失败而闸全绿。
+#          ★ ui 三步按 wall 的口径逐行对齐（同命令串、同工作目录形态、同 `rc` 模式）⇒ 如实反映现状：
+#            实测 `cargo test` 绿（97 passed / 0 failed），而 `cargo fmt --check` 与
+#            `cargo clippy -- -D warnings` **真红**（存量债：全树未 rustfmt 过 · 43 条告警）——
+#            **不放宽、不填白名单**，红照实进清单（要不要按 D2 先例降档，见说明书 §待拍）。
+#   pub  = 公开面两侧都有的脚本静态检查 —— 2026-09-18 第二波由 `scripts/` 扩到**四棵外围目录 + 顶层入口**：
+#          新增一步「mcp/ · gateway/ · publish/ · tools/ 的 .py/.sh + 顶层 start-zerg-core.sh ·
+#          start-zerg-ui.sh」语法（.py ⇒ ast.parse · .sh ⇒ bash -n）⇒ 债务台账 §0 第 3 行点名的那批脚本
+#          第一次有门。口径：一条步里**遍历**（单来源函数 `ext_syntax_cmd`，与自检负控共用同一串命令）；
+#          **零命中必红**（空转 = 假覆盖，同无后缀语法步）；排除 vendor/venv/构建产物。
 #   tags = 双构建工程门禁（脚本自带正反用例自检；它自己会在两种 tag 配置下成对跑 build/vet）
 #   docs = 文档面只读门禁：check-doc-meta(--scope formal --missing=fail) · check-doc-name(--scope repo)
 #          · check-doc-freshness 的 D1/D2/D3（D4 生成式 drift 归发布面，不在此）。
-#          它们是**步骤表里的一等步骤**（不是本脚本尾部那种软检查位），rc 一律取真退出码、不接管道。
-#          docs **不在默认 scope 集**里（默认仍是 go+rust+pub+tags）：是否纳入默认 / 各门是否阻断另行拍板。
+#   gates = **门自己的门**（2026-09-18 第二波挂接；来源 = 债务台账 §7 的三条建议门）——
+#          · 门① `check-gate-coverage.py`（模式 `tri` ⇒ **阻断**）：断言「含 go.mod/Cargo.toml 的目录都被某步收进」
+#            ＋「scripts 脚本要么在步骤表、要么在白名单」的基线棘轮；
+#          · 门② `check-version-sources.py`（模式 `tri` ⇒ **阻断**）：版本单一真源四处同版；
+#          · 门③ `check-wired-scripts.py`（模式 `tri-report` ⇒ **只报告**）：scripts 门脚本有没有被某个闸调用。
+#          三条都**自带 `--self-test`**（成对负控），本 scope **不传 `--no-self-test`**：先自证「会红」再扫真目标。
+#          为什么门③只报告：它今天如实报「A 命中 8 · B 未登记 0」（8 只门脚本不在任何闸里）= 存量债，
+#          起步按 D2 先例**不锁死提交闸**（升阻断路径 = 基线棘轮，见 `scripts/check-wired-scripts.md` §五）。
+#          ★ 它们都是**步骤表里的一等步骤**（不是本脚本尾部那种软检查位），rc 一律取真退出码、**不接管道**。
+#          默认 scope 集 = go+rust+pub+tags+docs+**gates**（2026-09-18 第二波 ⇒ 默认全量 37 步）。
+#   docs 的**阻断面**（拍板①；落地形态 = 每步的判定模式）：
+#     阻断（rc=1 计失败项 · rc=2 计 BLOCKED）= `meta` · `name` · `D1` · `D3`（模式 `tri`）；
+#     **只报告 = `D2`**（模式 `tri-report` ⇒ 红只入清单，不计失败项、不计 BLOCKED、不影响退出码）。
+#     理由：D2 今天红 ≈235 条，几乎全是历史稿件里的陈旧 `文件:行` 引用（存量债），
+#     直接阻断等于把提交闸锁死 ⇒ 先只报告，待存量债清到可接受再谈加严。
+#     ★ 这是**改判定档位**，不是放宽 D2 的判据 —— check-doc-freshness.py 的判据一字未改。
 #
 # 自检不通过 ⇒ 拒绝跑真目标（项目口径：门禁自己先能被证明「会红」）。
 
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# ── 默认 scope 集与「门自己的门」scope 名（**单来源**：main() 与自检 ⑩ 共用，不许各写一份）──────
+#   ★ 2026-09-18 第二波：默认集追加 `gates`（门①②③），并把这一串提成常量 —— 自检 ⑩ 要能断言
+#     「新 scope 真的在默认集里」，写两份字符串就会漂。
+DEFAULT_SCOPES=(go rust pub tags docs gates)
+GATE_SCOPE="gates"
 
 # ── 步骤表（indexed arrays，bash 3.2 可用）──────────────────────────
 STEP_SCOPE=()
@@ -58,7 +99,11 @@ STEP_MODE=()   # rc    = 退出码为 0 即通过（**非 0 一律算失败**，
                # tri   = 三档：0=PASS · 1=FAIL · 2=BLOCKED（不给结论，**不计入失败项数**）
                #         非 0/1/2 的**异常码**（3/127/…）一律按 FAIL —— 不许把「跑不起来」当「没结论」
                #         ★ 只有自己申报 tri 的步骤才走三档；rc/empty 两模式未被这一档改动（2026-09-18）
-               #         ★ 模式名不在 {rc,empty,tri} 内 ⇒ 该步硬红（拼错模式名不许静默按 rc 处理）
+               # tri-report = **第四档「只报告」**（2026-09-18 拍板①，现用于 docs 的 D2）：
+               #         与 tri **只差 rc=1 那一格** —— 那一格落 REPORT（红只入清单，**不计失败项数、
+               #         不计 BLOCKED、不影响退出码**）；0 ⇒ PASS · 2 ⇒ BLOCKED · 异常码 ⇒ FAIL（三格与 tri 一致）。
+               #         ★ 只报告 ≠ 放宽判据：门脚本自己的判据与 rc 一字未改，改的只是**本档位如何计账**。
+               #         ★ 模式名不在 {rc,empty,tri,tri-report} 内 ⇒ 该步硬红（拼错模式名不许静默按 rc 处理）
 STEP_DIR=()
 STEP_CMD=()
 
@@ -89,8 +134,9 @@ run_step() {  # run_step <序号> <名> <模式> <目录> <命令> <outdir> <结
   return 0
 }
 
-# ── 三档判定：**唯一的判据出口**（只看真退出码；rc 模式的语义与以前一字不差）──────
-#   返回 PASS / FAIL / BLOCKED 三值之一。判据独立成函数，是为了让自检能直接钉住三格。
+# ── 四档判定：**唯一的判据出口**（只看真退出码；rc 模式的语义与以前一字不差）──────
+#   返回 PASS / FAIL / BLOCKED / REPORT 四值之一。判据独立成函数，是为了让自检能直接钉住每一格。
+#   ★ 第四档 REPORT（只报告）只在 `tri-report` 模式下出现，且**只有 rc=1 那一格**与 `tri` 不同。
 _judge() {  # _judge <模式> <rc> <日志文件>
   local mode="$1" rc="$2" log="$3"
   case "${mode}" in
@@ -110,6 +156,18 @@ _judge() {  # _judge <模式> <rc> <日志文件>
       case "${rc}" in
         0) printf 'PASS' ;;
         1) printf 'FAIL' ;;
+        2) printf 'BLOCKED' ;;
+        *) printf 'FAIL' ;;
+      esac
+      ;;
+    tri-report)
+      # 四档之「只报告」：与 tri **只差 rc=1 那一格** ——
+      #   rc=1 ⇒ REPORT（红只入清单：不计失败项数、不计 BLOCKED、不影响退出码）
+      #   rc=0 ⇒ PASS · rc=2 ⇒ BLOCKED（判据不可判/空转 —— 不许当绿，与 tri 同口径）
+      #   异常码 ⇒ FAIL（跑不起来不许借这一档洗成「只是报告一下」）
+      case "${rc}" in
+        0) printf 'PASS' ;;
+        1) printf 'REPORT' ;;
         2) printf 'BLOCKED' ;;
         *) printf 'FAIL' ;;
       esac
@@ -134,8 +192,9 @@ run_suite() {  # run_suite <outdir> <结果表>  —— 遍历当前步骤表
   return 0
 }
 
-# ── 失败项数 / 不给结论数：**只从结果表数出来**（纯读文件，不在任何地方累加）──────
-#    ★ 两个数是**分开的**：BLOCKED（没结论）不许计进失败项数，也不许被失败项数吞掉。
+# ── 失败项数 / 不给结论数 / 只报告数：**只从结果表数出来**（纯读文件，不在任何地方累加）──────
+#    ★ 三个数是**分开的**：BLOCKED（没结论）不许计进失败项数，也不许被失败项数吞掉；
+#      REPORT（只报告）两者都不进 —— 它只出现在计数与打印里，**不影响退出码**。
 count_fail() {  # count_fail <结果表>
   grep -c '^FAIL' "$1" 2>/dev/null || true
 }
@@ -144,8 +203,22 @@ count_blocked() {  # count_blocked <结果表> —— 第三档：rc=2「不给�
   grep -c '^BLOCKED' "$1" 2>/dev/null || true
 }
 
+count_report() {  # count_report <结果表> —— 第四档「只报告」的步数（**不参与退出码**）
+  grep -c '^REPORT' "$1" 2>/dev/null || true
+}
+
 count_pass() {  # count_pass <结果表>
   grep -c '^PASS' "$1" 2>/dev/null || true
+}
+
+# ── 退出码判定：**唯一的出口**（自检直接钉在它上面，才能断言「哪一种状态影响退出码」）──
+#   0 全绿 · 1 有失败项 · 2 无失败项但有「不给结论」（BLOCKED 不许当绿）
+#   ★ REPORT（只报告）**不进这三档**：它既不是「错」也不是「没结论」⇒ 不影响退出码。
+#   ★ 判据只看结果表的状态列（与 count_* 同一口径、同一个文件）。
+_exit_rc() {  # _exit_rc <结果表>  ⇒ 打印 0 / 1 / 2
+  if [ "$(count_fail "$1")" -ne 0 ]; then printf '1'; return 0; fi
+  if [ "$(count_blocked "$1")" -ne 0 ]; then printf '2'; return 0; fi
+  printf '0'
 }
 
 # ── 旧写法（第十三轮那个假绿脚本的形态）—— 只用于自检里的区分度证明 ──
@@ -181,10 +254,16 @@ report() {  # report <结果表>
       # 第三档：**不是失败**，但也**不算绿** —— 照样要求人看原文（它就是「没结论」的取证）
       printf '      ↳ 不给结论（rc=2 · 不计入失败项数）· 日志: %s\n' "${log}"
       tail -6 "${log}" | sed 's/^/      ~ /'
+    elif [ "${status}" = "REPORT" ]; then
+      # 第四档「只报告」：**不计失败项数 · 不计 BLOCKED · 不影响退出码** —— 但清单必须可取证，
+      # 所以照 FAIL/BLOCKED 一样打出日志路径与原文（前缀 `·`，措辞写明「只报告」）。
+      printf '      ↳ 只报告（不计失败项数 · 不计 BLOCKED · 不影响退出码）· 日志: %s\n' "${log}"
+      tail -12 "${log}" | sed 's/^/      · /'
     fi
   done <"${results}"
-  printf '── 状态计数：PASS %s · FAIL %s · BLOCKED(不给结论) %s ──\n' \
-    "$(count_pass "${results}")" "$(count_fail "${results}")" "$(count_blocked "${results}")"
+  printf '── 状态计数：PASS %s · FAIL %s · BLOCKED(不给结论) %s · REPORT(只报告) %s ──\n' \
+    "$(count_pass "${results}")" "$(count_fail "${results}")" \
+    "$(count_blocked "${results}")" "$(count_report "${results}")"
 }
 
 # ── 自检：证明这台镜子「会红」，且与旧写法有区分度 ──────────────────
@@ -271,6 +350,47 @@ self_test() {
   run_suite "${t}/i" "${t}/i.tsv" >/dev/null 2>&1
   assert_eq "⑦ 无后缀语法：0 个被检查到 ⇒ 必红（空转 = 假覆盖）" "$(count_fail "${t}/i.tsv")" "1"
 
+  # ⑦′ 第二波新步骤（四棵外围目录 + 顶层入口 脚本语法）的负控：**同一串命令**（ext_syntax_cmd）。
+  #     三格都走真命令行 + 真退出码：坏件必红 · 好件必绿 · 空转（0 个被检查到）必红；
+  #     外加第四格：**排除面要有牙** —— venv 里的坏件**不许**把好件树判红（否则排除名单是装饰）。
+  #     **不碰仓内脚本**（负控不许为了证明而改真目标）。
+  mkdir -p "${t}/ext/negctl/mcp" "${t}/ext/negctl-ok/mcp" "${t}/ext/negctl-ok/gateway" \
+           "${t}/ext/negctl-ok/tools/ocr/venv" "${t}/ext/negctl-empty/mcp"
+  printf '#!/usr/bin/env python3\ndef ok():\n    return 1\n'   > "${t}/ext/negctl/mcp/ok.py"
+  printf '#!/usr/bin/env python3\ndef broken(:\n'                > "${t}/ext/negctl/mcp/broken.py"
+  printf '#!/bin/bash\nif [ 1 -eq 1 ; then echo x\n'             > "${t}/ext/negctl/mcp/broken.sh"
+  printf '#!/bin/bash\necho core\n'                              > "${t}/ext/negctl/start-zerg-core.sh"
+  printf '#!/bin/bash\necho ui\n'                                > "${t}/ext/negctl/start-zerg-ui.sh"
+  clear_steps
+  add_step self "自检-外围语法-坏件" rc "${t}/ext/negctl" "$(ext_syntax_cmd .)"
+  run_suite "${t}/ext/g1" "${t}/ext/g1.tsv" >/dev/null 2>&1
+  assert_eq "⑦′ 外围脚本语法（同一条命令串）：坏 .py/.sh 件 ⇒ 必红" "$(count_fail "${t}/ext/g1.tsv")" "1"
+  printf '#!/usr/bin/env python3\ndef ok():\n    return 1\n'     > "${t}/ext/negctl-ok/mcp/ok.py"
+  printf '#!/bin/bash\necho ok\n'                                > "${t}/ext/negctl-ok/gateway/ok.sh"
+  printf '#!/usr/bin/env python3\ndef broken_in_venv(:\n'        > "${t}/ext/negctl-ok/tools/ocr/venv/broken.py"
+  printf '#!/bin/bash\necho core\n'                              > "${t}/ext/negctl-ok/start-zerg-core.sh"
+  printf '#!/bin/bash\necho ui\n'                                > "${t}/ext/negctl-ok/start-zerg-ui.sh"
+  clear_steps
+  add_step self "自检-外围语法-好件" rc "${t}/ext/negctl-ok" "$(ext_syntax_cmd .)"
+  run_suite "${t}/ext/g2" "${t}/ext/g2.tsv" >/dev/null 2>&1
+  assert_eq "⑦′ 外围脚本语法：好件 ⇒ 绿（与坏件有区分度）" "$(count_fail "${t}/ext/g2.tsv")" "0"
+  # 成对第四格：**排除面有牙** —— 上面那棵好件树里**故意塞了一个坏件**在 `tools/ocr/venv/`
+  # （被排除）⇒ 它仍然绿；把同一个坏件挪到 `mcp/`（不被排除）⇒ 立刻红。
+  # 没有这一对，「绿」就可能只是「压根没扫到 venv」蒙过去的（排除名单当装饰）。
+  mkdir -p "${t}/ext/negctl-venv-moved"
+  cp -R "${t}/ext/negctl-ok/." "${t}/ext/negctl-venv-moved/"
+  mv "${t}/ext/negctl-venv-moved/tools/ocr/venv/broken.py" \
+     "${t}/ext/negctl-venv-moved/mcp/broken-venv-moved.py"
+  clear_steps
+  add_step self "自检-外围语法-排除面" rc "${t}/ext/negctl-venv-moved" "$(ext_syntax_cmd .)"
+  run_suite "${t}/ext/g2b" "${t}/ext/g2b.tsv" >/dev/null 2>&1
+  assert_eq "⑦′ 排除面有牙（成对）：同一坏件在 venv 里 ⇒ 绿" "$(count_fail "${t}/ext/g2.tsv")" "0"
+  assert_eq "⑦′ 排除面有牙（成对）：同一坏件挪到 mcp/ ⇒ 必红" "$(count_fail "${t}/ext/g2b.tsv")" "1"
+  clear_steps
+  add_step self "自检-外围语法-空转" rc "${t}/ext/negctl-empty" "$(ext_syntax_cmd .)"
+  run_suite "${t}/ext/g3" "${t}/ext/g3.tsv" >/dev/null 2>&1
+  assert_eq "⑦′ 外围脚本语法：0 个被检查到 ⇒ 必红（空转 = 假覆盖）" "$(count_fail "${t}/ext/g3.tsv")" "1"
+
   # ⑧ **三档（tri）**：0/1/2 三格各就各位 —— 2 = BLOCKED（不给结论）
   #    这是本路新增的那一档的镜子：**rc=2 不许计进失败项数**（「没结论」≠「错」），
   #    但也不许当绿；而**异常码（3/127/…）必须按红算**（跑不起来不许冒充「没结论」）。
@@ -317,6 +437,96 @@ self_test() {
   add_step self "自检-模式名打错" tri2 "${t}" "exit 0"
   run_suite "${t}/n" "${t}/n.tsv" >/dev/null 2>&1
   assert_eq "⑧e 未知模式名 ⇒ 硬红" "$(count_fail "${t}/n.tsv")" "1"
+
+  # ⑨ **第四档「只报告」（tri-report）**：本批拍板①的落地格 —— 现用于 docs 的 D2。
+  #    镜子要钉住的是「同一串 rc=1，走 `tri` 计失败项、走 `tri-report` 只入清单」这一对
+  #    （= 「D1 影响退出码 / D2 不影响退出码」的机制本体），而不只是某个计数好看。
+  clear_steps
+  add_step self "自检-只报告-rc1" tri-report "${t}" "echo 只报告件原文; exit 1"
+  add_step self "自检-阻断-rc1"   tri        "${t}" "echo 阻断件原文; exit 1"
+  run_suite "${t}/o" "${t}/o.tsv" >/dev/null 2>&1
+  assert_eq "⑨ 只报告档遇 rc=1 ⇒ 状态 REPORT（不是 FAIL）" "$(cut -f1 "${t}/o.tsv" | tr '\n' ' ')" "REPORT FAIL "
+  assert_eq "⑨ 两步的 rc 都真是 1（区分度来自模式，不是 rc）" "$(cut -f3 "${t}/o.tsv" | tr '\n' ' ')" "1 1 "
+  assert_eq "⑨ 只报告档：失败项数只数阻断那一步" "$(count_fail "${t}/o.tsv")" "1"
+  assert_eq "⑨ 只报告档：REPORT 数 = 1" "$(count_report "${t}/o.tsv")" "1"
+  assert_eq "⑨ 只报告档**不计入 BLOCKED**（「只报告」≠「没结论」）" "$(count_blocked "${t}/o.tsv")" "0"
+  assert_eq "⑨ REPORT 那步的原文仍留在它自己的日志里" \
+    "$(grep -c '只报告件原文' "$(grep '^REPORT' "${t}/o.tsv" | cut -f5)")" "1"
+
+  # ⑨b **成对断言（本批的硬要求 · 有区分度）**：同样只有「一步 rc=1 的红」，
+  #     走只报告档 ⇒ `_exit_rc` = 0（**不影响退出码**）；走阻断档 ⇒ `_exit_rc` = 1（**影响退出码**）。
+  #     两格用的是 main() 同一条出口（`_exit_rc`），所以断言的就是整脚本退出码本身。
+  clear_steps
+  add_step self "自检-只报告-单独" tri-report "${t}" "exit 1"
+  run_suite "${t}/p" "${t}/p.tsv" >/dev/null 2>&1
+  assert_eq "⑨b 只有「只报告」红（= D2 型）⇒ 退出码 = 0（不影响）" "$(_exit_rc "${t}/p.tsv")" "0"
+  assert_eq "⑨b 同上一格：失败项数 = 0 · REPORT = 1" \
+    "$(count_fail "${t}/p.tsv")/$(count_report "${t}/p.tsv")" "0/1"
+  clear_steps
+  add_step self "自检-阻断-单独" tri "${t}" "exit 1"
+  run_suite "${t}/q" "${t}/q.tsv" >/dev/null 2>&1
+  assert_eq "⑨b 只有「阻断」红（= D1 型）⇒ 退出码 = 1（影响）—— 与上一格成对有区分度" \
+    "$(_exit_rc "${t}/q.tsv")" "1"
+
+  # ⑨c 只报告档的**另外三格与 `tri` 一字不差**：rc=2 ⇒ BLOCKED（判据不可判/空转 ⇒ 不许当绿）、
+  #     异常码 ⇒ FAIL（跑不起来不许借这一档洗成「只是报告了一下」）。
+  clear_steps
+  add_step self "自检-只报告-不给结论" tri-report "${t}" "exit 2"
+  add_step self "自检-只报告-异常码"   tri-report "${t}" "exit 127"
+  run_suite "${t}/r" "${t}/r.tsv" >/dev/null 2>&1
+  assert_eq "⑨c 只报告档：rc=2 仍是 BLOCKED、异常码仍按红" "$(cut -f1 "${t}/r.tsv" | tr '\n' ' ')" "BLOCKED FAIL "
+  assert_eq "⑨c 只报告档：异常码计失败项" "$(count_fail "${t}/r.tsv")" "1"
+  assert_eq "⑨c 只报告档：BLOCKED 数 = 1（不许当绿）" "$(count_blocked "${t}/r.tsv")" "1"
+  assert_eq "⑨c 只报告档：这一组退出码仍是 1（失败优先于不给结论）" "$(_exit_rc "${t}/r.tsv")" "1"
+
+  # ⑩ **第二波新挂的「门自己的门」三步：档位申报 + 三档各就各位**（本波硬要求 · 成对断言）
+  #    镜子取的是**步骤表里那三步真申报的模式**（不是合成模式名）⇒ 一次钉两件事：
+  #      ① 三步申报的档位对不对：门①/门② = `tri`（**阻断**）· 门③ = `tri-report`（**只报告**）；
+  #      ② 每一档在 0/1/2 三格上的计账（0 ⇒ PASS · 1 ⇒ 阻断进失败项 / 只报告只入清单且**不动退出码** ·
+  #         2 ⇒ BLOCKED 且**不计失败项**、也不许当绿）。
+  #    ★ 谁把门③改成阻断、或把门①改成只报告，本组立刻红；谁给新步骤接管道取 rc，也立刻红。
+  clear_steps
+  build_steps "${GATE_SCOPE}" >/dev/null 2>&1
+  assert_eq "⑩ ${GATE_SCOPE} scope：步数" "${#STEP_NAME[@]}" "3"
+  assert_eq "⑩ 三步申报的档位（门①②阻断 · 门③只报告）" \
+    "$(printf '%s ' "${STEP_MODE[@]}")" "tri tri tri-report "
+  assert_eq "⑩ 三步的命令串分别点名三只新门脚本" \
+    "$(printf '%s\n' "${STEP_CMD[@]}" | grep -cE 'check-gate-coverage\.py|check-version-sources\.py|check-wired-scripts\.py')" "3"
+  assert_eq "⑩ 三步都不接管道取 rc（命令串里 0 个竖线）" \
+    "$(printf '%s\n' "${STEP_CMD[@]}" | grep -c '|')" "0"
+  assert_eq "⑩ 三步的工作目录都 = 仓根" \
+    "$(printf '%s\n' "${STEP_DIR[@]}" | grep -c "^${REPO_ROOT}$")" "3"
+  assert_eq "⑩ ${GATE_SCOPE} 已在默认集（DEFAULT_SCOPES）里" \
+    "$(printf '%s\n' "${DEFAULT_SCOPES[@]}" | grep -c "^${GATE_SCOPE}$")" "1"
+  local gm0 gm1 gm2 gmode gi
+  gm0="${STEP_MODE[0]}"; gm1="${STEP_MODE[1]}"; gm2="${STEP_MODE[2]}"
+  gi=1
+  for gmode in "${gm0}" "${gm1}" "${gm2}"; do
+    clear_steps; add_step self "自检-新门-rc0" "${gmode}" "${t}" "exit 0"
+    run_suite "${t}/z${gi}a" "${t}/z${gi}a.tsv" >/dev/null 2>&1
+    assert_eq "⑩ 门${gi}（${gmode}）rc=0 ⇒ PASS" "$(cut -f1 "${t}/z${gi}a.tsv")" "PASS"
+    clear_steps; add_step self "自检-新门-rc1" "${gmode}" "${t}" "exit 1"
+    run_suite "${t}/z${gi}b" "${t}/z${gi}b.tsv" >/dev/null 2>&1
+    if [ "${gmode}" = "tri-report" ]; then
+      assert_eq "⑩ 门${gi}（只报告）rc=1 ⇒ REPORT+1 且**不进失败项**" \
+        "$(count_report "${t}/z${gi}b.tsv")/$(count_fail "${t}/z${gi}b.tsv")" "1/0"
+      assert_eq "⑩ 门${gi}（只报告）rc=1 ⇒ **退出码不受影响**（= 0）" \
+        "$(_exit_rc "${t}/z${gi}b.tsv")" "0"
+    else
+      assert_eq "⑩ 门${gi}（阻断）rc=1 ⇒ 失败项+1（不落 REPORT）" \
+        "$(count_fail "${t}/z${gi}b.tsv")/$(count_report "${t}/z${gi}b.tsv")" "1/0"
+      assert_eq "⑩ 门${gi}（阻断）rc=1 ⇒ 退出码 = 1" "$(_exit_rc "${t}/z${gi}b.tsv")" "1"
+    fi
+    clear_steps; add_step self "自检-新门-rc2" "${gmode}" "${t}" "exit 2"
+    run_suite "${t}/z${gi}c" "${t}/z${gi}c.tsv" >/dev/null 2>&1
+    assert_eq "⑩ 门${gi}（${gmode}）rc=2 ⇒ BLOCKED+1 且**不计失败项**" \
+      "$(count_blocked "${t}/z${gi}c.tsv")/$(count_fail "${t}/z${gi}c.tsv")" "1/0"
+    assert_eq "⑩ 门${gi}（${gmode}）rc=2 ⇒ 退出码 = 2（不许当绿）" \
+      "$(_exit_rc "${t}/z${gi}c.tsv")" "2"
+    gi=$((gi + 1))
+  done
+  assert_eq "⑩ 成对：同一串 rc=1 —— 门①（阻断）⇒ 退出码 1 · 门③（只报告）⇒ REPORT 1 且退出码 0" \
+    "$(_exit_rc "${t}/z1b.tsv")/$(count_report "${t}/z3b.tsv")/$(count_fail "${t}/z3b.tsv")" "1/1/0"
 
   printf '自检结论: %s（断言失败 %d 条）\n' "$([ "${SELF_BAD}" -eq 0 ] && echo 全过 || echo 不过)" "${SELF_BAD}"
   rm -rf "${t}"
@@ -381,6 +591,82 @@ nosuffix_syntax_cmd() {  # nosuffix_syntax_cmd <相对目录> ⇒ 打印检查�
   printf 'python3 - %s <<PYEOF\n%s\nPYEOF' "$1" "${NOSUFFIX_CHECK_PY}"
 }
 
+# ── 四棵外围目录 + 顶层入口的脚本语法检查命令（**唯一来源**：pub 真步骤与自检 ⑦′ 负控共用同一串文本）──
+# 为什么需要（2026-09-18 第二波，债务台账 §0 第 3 行）：pub scope 原来只收 `scripts/*.sh|*.py` 与
+# `scripts/` 无后缀件 ⇒ `mcp/`(9) · `gateway/`(9) · `publish/`(8) · `tools/`(4) 的 .py/.sh 与顶层两个
+# 运行入口（`start-zerg-core.sh` / `start-zerg-ui.sh`）**不在任何一步里**（假覆盖）。
+# 判法：一条步里**遍历**这四棵目录的 .py（`ast.parse`）与 .sh（`bash -n`），外加两个顶层入口（`bash -n`）；
+#   排除 vendor/venv/node_modules/target/dist/__pycache__ 等构建与虚拟环境目录（同各门硬排除名单）。
+# 硬规矩：**一个都没检查到 ⇒ 红**（空转就是假覆盖，不许给绿）；两个顶层入口缺件也 ⇒ 红。
+# ★ 全篇**不用单引号**是为了能整段放进单引号 bash 字符串（与 NOSUFFIX_CHECK_PY 同法）。
+EXT_SYNTAX_PY='
+import ast, os, subprocess, sys
+ROOTS = ["mcp", "gateway", "publish", "tools"]
+EXCL_DIRS = {"vendor", "node_modules", "__pycache__", ".git", "target", ".venv", "venv",
+             "dist", "build", ".history", ".mypy_cache"}
+EXCL_PREFIX = ("tools/ocr/venv",)
+TOP_ENTRIES = ["start-zerg-core.sh", "start-zerg-ui.sh"]
+root = sys.argv[1] if len(sys.argv) > 1 else "."
+
+
+def excluded(rel):
+    parts = rel.split("/")
+    if any(p in EXCL_DIRS for p in parts):
+        return True
+    return any(rel == p or rel.startswith(p + "/") for p in EXCL_PREFIX)
+
+
+picked, bad = [], []
+for r in ROOTS:
+    for dp, dns, fns in os.walk(os.path.join(root, r)):
+        rel_dp = os.path.relpath(dp, root).replace(os.sep, "/")
+        if rel_dp == ".":
+            rel_dp = ""
+        dns[:] = sorted(d for d in dns
+                        if d not in EXCL_DIRS and not excluded(("%s/%s" % (rel_dp, d)).lstrip("/")))
+        for fn in sorted(fns):
+            rel = ("%s/%s" % (rel_dp, fn)).lstrip("/")
+            if excluded(rel):
+                continue
+            ext = os.path.splitext(fn)[1]
+            if ext not in (".py", ".sh"):
+                continue
+            path = os.path.join(root, rel)
+            if ext == ".py":
+                try:
+                    ast.parse(open(path, encoding="utf-8").read(), filename=rel)
+                    picked.append(rel)
+                except SyntaxError as e:
+                    bad.append("%s：%s" % (rel, e))
+            else:
+                rc = subprocess.call(["bash", "-n", path])
+                if rc == 0:
+                    picked.append(rel)
+                else:
+                    bad.append("%s：bash -n rc=%d" % (rel, rc))
+for rel in TOP_ENTRIES:
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path):
+        bad.append("%s：顶层入口件不存在" % rel)
+        continue
+    rc = subprocess.call(["bash", "-n", path])
+    if rc == 0:
+        picked.append(rel)
+    else:
+        bad.append("%s：bash -n rc=%d" % (rel, rc))
+for b in bad:
+    print("✗ 语法不过：%s" % b)
+if not picked:
+    print("✗ 四棵外围目录 + 顶层入口里 0 个脚本被检查到 ⇒ 本步空转 = 假覆盖 ⇒ 红"
+          "（若本树确实没有这些脚本，请改本步的选择条件）")
+    sys.exit(1)
+print("✓ 外围脚本语法：%d 个（mcp/ · gateway/ · publish/ · tools/ + 顶层两个入口）" % len(picked))
+sys.exit(1 if bad else 0)
+'
+ext_syntax_cmd() {  # ext_syntax_cmd <根> ⇒ 打印检查命令串（真步骤与自检 ⑦′ 负控共用同一串）
+  printf "python3 - %s <<'PYEOF'\n%s\nPYEOF" "$1" "${EXT_SYNTAX_PY}"
+}
+
 # ── 真目标的步骤表 ────────────────────────────────────────────────
 build_steps() {  # build_steps <scope…>
   local s
@@ -399,11 +685,39 @@ build_steps() {  # build_steps <scope…>
         add_step go "agent: go test ./... -count=1"       rc "${REPO_ROOT}/agent" "go test ./... -count=1"
         add_step go "core: go test -race ./... -count=1"  rc "${REPO_ROOT}/core"  "go test -race ./... -count=1"
         add_step go "agent: go test -race ./... -count=1" rc "${REPO_ROOT}/agent" "go test -race ./... -count=1"
+        # ── 2026-09-18 第二波（债务台账 §0 第 2 行 / §7 建议门①）：两个**原先不在任何门里**的 Go module ──
+        #   写法逐条对齐上面 core/agent 的老步骤（build/vet/test），只换工作目录 ⇒ A 段「工作目录命中」。
+        add_step go "shared: build ./..."            rc "${REPO_ROOT}/shared" "go build -buildvcs=false ./..."
+        add_step go "shared: go vet ./..."           rc "${REPO_ROOT}/shared" "go vet ./..."
+        add_step go "shared: go test ./... -count=1" rc "${REPO_ROOT}/shared" "go test ./... -count=1"
+        # ★ scripts/exportnames **实测无 `_test.go`**（现读：`find scripts/exportnames -name '*_test.go'` = 0 条）
+        #   ⇒ 按任务书「有测试就加」**不加 test 步**（加了只是 "no test files" 的空转步，不缝）。
+        # ★ 它是 **main 包**：`go build ./...` 会把二进制**写进当前目录** —— 实测当场冒出
+        #   7 MB `scripts/exportnames/zerg-exportnames`（未跟踪散件，已删）。⇒ 本步**必须**带 `-o`：
+        #   `-o /dev/null`（`-o` 与它的值要在包模式 `./...` **之前** —— 旗标解析遇到第一个非旗标参数就停）。
+        #   实测 rc=0 且仓内零新文件（同法在库模块 shared/ 上也实测 rc=0，没有 "no main packages" 报错）。
+        add_step go "scripts/exportnames: build ./..." rc "${REPO_ROOT}/scripts/exportnames" "go build -buildvcs=false -o /dev/null ./..."
+        add_step go "scripts/exportnames: go vet ./..." rc "${REPO_ROOT}/scripts/exportnames" "go vet ./..."
         ;;
       rust)
         add_step rust "cargo fmt --check"              rc "${REPO_ROOT}/wall" "cargo fmt --check"
         add_step rust "cargo clippy -- -D warnings"    rc "${REPO_ROOT}/wall" "cargo clippy -- -D warnings"
         add_step rust "cargo test"                     rc "${REPO_ROOT}/wall" "cargo test"
+        # ── 2026-09-18 第二波（债务台账 §0 第 1 行）：ui/ 三步，与上面 wall 三步**逐行对齐** ──────────
+        #   为什么必须补：`--scope rust` 原来只 add_step wall ⇒ ui（27G 构建产物 · 19 个 .rs · 16 处
+        #   `#[cfg(test)]`）**不在任何 cargo 步里**，而 precheck 只验 `ui/Cargo.toml` 在不在、不验它过不过
+        #   ⇒ **ui 可以编译失败而闸全绿**（本波要治的那个形态）。
+        #   实测（2026-09-18 22:5x 本机 · cargo/rustc 1.98.1）：
+        #     · `cargo test`  rc=0 —— 97 passed / 0 failed（121s 冷跑一次，之后 cargo 判新很快）
+        #     · `cargo fmt --check` rc=1 —— ui/ 全树**未 rustfmt 过**（483 行 diff：build.rs / src/api.rs /
+        #       src/modules/* 等），属**存量债**
+        #     · `cargo clippy -- -D warnings` rc=101 —— 43 条（dead_code / unused import / deprecated 等）
+        #   ⇒ 本波**按真退出码如实上报，不放宽、不填白名单、不缝**：三条一律 `rc` 模式（与 wall 逐行对齐），
+        #     所以 fmt 与 clippy 今天会让默认全量多两个失败项 —— 这是把闸真正上岗的代价，不是判据被动过。
+        #     （「要不要按 D2 先例降成只报告」是父代理的拍板项：本脚本说明书 §待拍 记了逐条数字与一行改法。）
+        add_step rust "ui: cargo fmt --check"              rc "${REPO_ROOT}/ui" "cargo fmt --check"
+        add_step rust "ui: cargo clippy -- -D warnings"    rc "${REPO_ROOT}/ui" "cargo clippy -- -D warnings"
+        add_step rust "ui: cargo test"                     rc "${REPO_ROOT}/ui" "cargo test"
         ;;
       pub)
         # 本 scope 只放**公开面两侧都有**的检查：发布面专属的门禁脚本（EXCLUDES 里的
@@ -430,6 +744,15 @@ PYEOF"
         #   位置：在 run_suite 的步骤表里（**不是**脚本尾部那个 `MAIN_RC=$?` 之后的软检查位置）。
         add_step pub "scripts/*（无后缀 + 首行 #!）按 shebang 语法"  rc "${REPO_ROOT}" "$(nosuffix_syntax_cmd scripts)"
         add_step pub "check-shell-unicode-vars.py --check"         rc "${REPO_ROOT}" "python3 scripts/check-shell-unicode-vars.py --check scripts/*.sh"
+        # ★ 2026-09-18 第二波（债务台账 §0 第 3 行）：**四棵外围目录 + 顶层运行入口**的脚本语法。
+        #   为什么原来没有：pub scope 只收 `scripts/*.sh|*.py` + `scripts/` 无后缀件 ⇒ `mcp/`(9) ·
+        #   `gateway/`(9) · `publish/`(8) · `tools/`(4) 的 .py/.sh 与顶层 `start-zerg-core.sh` /
+        #   `start-zerg-ui.sh`（两个真运行入口）**一个字节都没被语法检查过**（假覆盖）。
+        #   口径（与既有写法对齐）：**一条步里遍历** —— .py ⇒ `ast.parse`；.sh ⇒ `bash -n`；
+        #   命令串**只有一个来源**（`ext_syntax_cmd`），自检 ⑦′ 的坏件/好件/空转负控用的是**同一串**。
+        #   **零命中必红**（空转 = 假覆盖，同上面的无后缀语法步）；排除 vendor/venv/构建产物/隐藏缓存；
+        #   两个顶层入口**必须存在**（缺件即红 —— 它们是 start-zerg-core/ui 的真身）。
+        add_step pub "mcp/gateway/publish/tools + 顶层入口 脚本语法（ast.parse / bash -n）" rc "${REPO_ROOT}" "$(ext_syntax_cmd .)"
         ;;
       tags)
         # 双构建工程门禁（任务表 T6.3 / 设计稿 §〇 A3–A6）：tag 命名 · 两个构建都过 · vet 成对跑 ·
@@ -439,23 +762,48 @@ PYEOF"
         add_step tags "双构建工程门禁（tag/构建/vet/导出面/GOFLAGS）" rc "${REPO_ROOT}" "python3 scripts/check-build-tags.py"
         ;;
       docs)
-        # 文档面只读门禁（2026-09-18 路 D 挂接 · 模式一律 `tri` 三档 0/1/2）──────────────
+        # 文档面只读门禁（2026-09-18 路 D 挂接 · 2026-09-18 拍板① 定阻断面：D2 只报告）──────────
         # 位置：**在 run_suite 的步骤表里**（一等步骤），不是脚本尾部那个软检查位 ——
         #   尾部软门禁的 rc 会被最后一句 `exit "${MAIN_RC}"` 之外的东西吃掉（本脚本 2026-09-17
         #   实测过「报红却退 0」），所以新门禁一律走步骤表，rc 由 _judge 按真退出码判。
         # 判定：**不接管道**（不写 `| tee` / `| tail`），rc 直接取进程退出码。
-        # 三档落点：这三只门脚本的退码口径本身就是 0/1/2（2 = 不给结论/空转），
-        #   所以用 `tri` ⇒ rc=2 记 BLOCKED、**不计入失败项数**；rc>=3（跑不起来）仍按红算。
+        # 档位落点：这五只门脚本的退码口径本身就是 0/1/2（2 = 不给结论/空转），
+        #   ⇒ 阻断的四步用 `tri`（rc=2 记 BLOCKED、**不计入失败项数**；rc>=3 跑不起来仍按红算）；
+        #   ⇒ **D2 用 `tri-report`**（拍板①：它的 rc=1 落 REPORT ⇒ 红只入清单、不计失败项、
+        #      不计 BLOCKED、**不影响退出码**；rc=2 依旧是 BLOCKED，不许当绿 —
+        #      「判据不可判/空转」和「有红」是两回事，只报告的是后者）。
+        #      为什么只 D2：它今天红 ≈235 条，几乎全是历史稿件的陈旧 `文件:行` 引用（存量债），
+        #      阻断等于把提交闸锁死；**这是改档位，不是放宽 D2 的判据**（门脚本一字未改）。
         # D4（生成式参考 drift）**不挂**：它是发布面的事（重建 + 逐字节比对），不是提交闸。
         # 每只门脚本自带 --self-test，本 scope **不传 --no-self-test**：先自证「会红」再扫真目标。
         add_step docs "docs: meta --scope formal --missing=fail" tri "${REPO_ROOT}" "python3 scripts/check-doc-meta.py --scope formal --missing=fail"
         add_step docs "docs: name --scope repo"                  tri "${REPO_ROOT}" "python3 scripts/check-doc-name.py --scope repo"
         add_step docs "docs: freshness D1 引用路径存在"           tri "${REPO_ROOT}" "python3 scripts/check-doc-freshness.py d1"
-        add_step docs "docs: freshness D2 引用 文件:行 有效"       tri "${REPO_ROOT}" "python3 scripts/check-doc-freshness.py d2"
+        add_step docs "docs: freshness D2 引用 文件:行 有效（只报告）" tri-report "${REPO_ROOT}" "python3 scripts/check-doc-freshness.py d2"
         add_step docs "docs: freshness D3 断链断锚"               tri "${REPO_ROOT}" "python3 scripts/check-doc-freshness.py d3"
         ;;
+      gates)
+        # ── 「门自己的门」（2026-09-18 第二波挂接 · 来源 = 债务台账 §7 的三条建议门）───────────────
+        # 位置：**在 run_suite 的步骤表里**（一等步骤），不是脚本尾部那个软检查位 ——
+        #   尾部软门禁的 rc 会被 `exit "${MAIN_RC}"` 之外的东西吃掉（本脚本 2026-09-17 实测过
+        #   「报红却退 0」），所以新门禁一律走步骤表，rc 由 _judge 按真退出码判。
+        # 判定：**不接管道**（不写 `| tee` / `| tail`），rc 直接取进程退出码。
+        # 档位落点：三只门脚本的退码口径本身就是 0/1/2（2 = 缺件/不可判/空转）⇒
+        #   ⇒ 门①/门② 用 `tri`（**阻断**：rc=1 进失败项、rc=2 记 BLOCKED 不计失败项也不当绿、
+        #      rc>=3 跑不起来仍按红算）；
+        #   ⇒ 门③ 用 `tri-report`（**只报告**：rc=1 落 REPORT ⇒ 不计失败项、不计 BLOCKED、
+        #      **不影响退出码**；rc=2 依旧是 BLOCKED，不许当绿 —— 按 D2 先例挂存量债）。
+        #   ★ 门③今天为什么不能阻断：它如实报「A 命中 8 · B 未登记 0」（8 只门脚本不在任何闸里），
+        #     直接阻断等于把提交闸锁死 ⇒ 起步只报告；升阻断路径见 scripts/check-wired-scripts.md §五
+        #     （基线棘轮：先记基线、门立刻按阻断档上岗、只许减不许增）。
+        # 每只门脚本自带 --self-test，本 scope **不传 --no-self-test**：先自证「会红」再扫真目标。
+        # ★ 三条命令串里**没有管道** —— 自检 ⑩ 有一条断言直接钉住这一点（`grep -c '|'` = 0）。
+        add_step gates "门① 覆盖：构建清单目录 + 脚本接线（阻断）" tri        "${REPO_ROOT}" "python3 scripts/check-gate-coverage.py"
+        add_step gates "门② 版本源：四处同版（阻断）"              tri        "${REPO_ROOT}" "python3 scripts/check-version-sources.py"
+        add_step gates "门③ 接线：scripts 门脚本有没有被闸调用（只报告）" tri-report "${REPO_ROOT}" "python3 scripts/check-wired-scripts.py"
+        ;;
       *)
-        printf '✗ 未知 scope: %s（可用: go / rust / pub / tags / docs）\n' "${s}" >&2
+        printf '✗ 未知 scope: %s（可用: go / rust / pub / tags / docs / gates）\n' "${s}" >&2
         return 2
         ;;
     esac
@@ -488,17 +836,20 @@ main() {
       --list) list_only=1; shift ;;
       --self-test) self_only=1; shift ;;
       --emit-cmd) emit_cmd="$2"; shift 2 ;;
-      -h|--help) sed -n '19,48p' "${BASH_SOURCE[0]}"; return 0 ;;
+      -h|--help) sed -n '19,82p' "${BASH_SOURCE[0]}"; return 0 ;;
       *) printf '✗ 未知参数: %s\n' "$1" >&2; return 2 ;;
     esac
   done
 
   if [ "${#scopes[@]}" -eq 0 ]; then
-    # 默认 scope 集**保持原样**（go rust pub tags）—— 现有 20 步的名字与语义、默认覆盖面一字未改。
-    # ★ docs **暂不进默认集**（2026-09-18 待拍）：它今天 D1/D2 有红、D3 报 BLOCKED，直接并进默认
-    #   会让每一次提交都变红/变「没结论」。要不要进默认、各门谁阻断 —— 见 scripts/precommit-gates.md
-    #   §docs scope 的「待拍」一句。进默认 = 这一行改成 (go rust pub tags docs)。
-    scopes=(go rust pub tags)
+    # 默认 scope 集 = `DEFAULT_SCOPES` 常量 = go rust pub tags docs **gates**
+    #   （2026-09-18 第二波把 `gates` 追加进默认集 ⇒ 默认全量 37 步）。
+    # ★ 老步骤（go 12 · rust 3 · pub 4 · tags 1 · docs 5）的名字/命令串/模式/目录**一字未改**；
+    #   本波只**追加**：go +5（shared 3 · exportnames 2）· rust +3（ui）· pub +1（外围脚本语法）·
+    #   新 scope `gates` 3 步。一条都没删、一条都没改语义。
+    # ★ 默认跑法的退出码由阻断面决定（见文件头「docs 的阻断面」与 `gates` scope 段）：
+    #   阻断步骤仍能把它拉成 rc=1 / rc=2；**只报告档**（docs 的 D2 · gates 的门③）不参与退出码。
+    scopes=("${DEFAULT_SCOPES[@]}")
   fi
 
   # ── 探针（--emit-cmd <子串>）：只打印匹配步骤的**命令串**，不跑步骤、不给结论 ────────────────
@@ -573,19 +924,26 @@ main() {
   run_suite "${outdir}" "${results}"
   report "${results}" | tee "${outdir}/report.txt"
 
-  local nfail nblock npass
+  local nfail nblock npass nreport rc
   nfail="$(count_fail "${results}")"
   nblock="$(count_blocked "${results}")"
   npass="$(count_pass "${results}")"
-  printf '\n步骤总数: %d · 通过: %s · 失败项数: %s · 不给结论(BLOCKED): %s\n' \
-    "${#STEP_NAME[@]}" "${npass}" "${nfail}" "${nblock}"
-  if [ "${nfail}" -ne 0 ]; then
+  nreport="$(count_report "${results}")"
+  # ★ 退出码走**唯一的出口** `_exit_rc`：FAIL ⇒ 1 · （无 FAIL 而）BLOCKED ⇒ 2 · 其余 ⇒ 0。
+  #   REPORT（只报告）**不在这三档里** —— 它只进上面的计数与清单，不影响退出码（拍板①）。
+  rc="$(_exit_rc "${results}")"
+  printf '\n步骤总数: %d · 通过: %s · 失败项数: %s · 不给结论(BLOCKED): %s · 只报告(REPORT): %s\n' \
+    "${#STEP_NAME[@]}" "${npass}" "${nfail}" "${nblock}" "${nreport}"
+  if [ "${rc}" = "1" ]; then
     printf '⇒ 门禁红灯（rc=1）：逐条看上面的日志路径重跑\n'
     return 1
   fi
-  if [ "${nblock}" -ne 0 ]; then
+  if [ "${rc}" = "2" ]; then
     printf '⇒ 无失败项，但有 %s 步「不给结论」（BLOCKED · rc=2）：**不许当绿**、也不按「错」计\n' "${nblock}"
     return 2
+  fi
+  if [ "${nreport}" -ne 0 ]; then
+    printf '（另有 %s 步「只报告」（REPORT）：已在清单里 · 不计失败项数 · 不计 BLOCKED · 不影响退出码）\n' "${nreport}"
   fi
   printf '⇒ 门禁全绿（rc=0）\n'
   return 0
