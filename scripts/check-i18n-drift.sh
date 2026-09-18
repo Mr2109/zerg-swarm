@@ -14,6 +14,11 @@
 #              the translation is synchronized with」+「enforced by a linter」）
 #              与 K8s scripts/lsync.sh（`git log -n 1 … -- <译页>` + `git diff --exit-code --numstat`）
 #              **阻塞**（rc=2）。只读 git（rev-parse/log/diff），不写 git。
+#              ★ 2026-09-19 开发文档分家批6：源页可**迁出仓**（工作树之外的同级目录 `Zerg-内部文档/`）——
+#              那种情况下本门的 commit 级判据**不适用**（`git diff … -- <仓外路径>` 实测 rc=128
+#              `fatal: … is outside repository`，照原样跑会被读成「过期」= 假红）。处置 = 目标**存在但
+#              在仓外** ⇒ 单列「源页在仓外 · 不判过期」逐条打印 + 计数（`tr_out_of_repo()`），
+#              既不静默放绿、也不冒充过期；仓内源页照原判据判。
 #   ③ comment 源文注释：译页必须有 HTML 注释块（段落级保留源文，§2.4③）
 #              **先非阻塞**（rc=1 告警）—— 与设计稿「③ 先非阻塞」一致
 #
@@ -82,6 +87,22 @@ source_commit_of() {   # 先 frontmatter，再注释标记行
   printf '%s' "$v"
 }
 
+tr_out_of_repo() {   # tr_out_of_repo <路径> —— 目标落在 REPO_ROOT **之外** ⇒ 0（真）；仓内 / 取不到 ⇒ 1
+  # ★ 2026-09-19 开发文档分家批6：源页可以**迁出仓**（工作树之外的同级目录 `Zerg-内部文档/`）⇒ 本门的 commit 级
+  #   判据（`git diff <source_commit>..HEAD -- <源页>`）在那时**根本无法适用**（实测：仓外路径 ⇒
+  #   `fatal: … is outside repository`、rc=128 ⇒ 会被读成「过期」= 假红）。判据一律以**路径真身**为准
+  #   （dirname 的 realpath 是否落在 REPO_ROOT 之下），不看路径写法（`../Zerg-内部文档/…` 与 `Zerg-内部文档/…` 等效）。
+  local p="$1" d b
+  [ -n "$p" ] || return 1
+  d="$(cd "$(dirname "$p")" 2>/dev/null && pwd)" || return 1
+  [ -n "$d" ] || return 1
+  b="$(basename "$p")"
+  case "$d/$b" in
+    "$REPO_ROOT"/*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 list_pages() {   # list_pages <dir> <是否排除草稿与 README: 0/1>
   [ -d "$1" ] || return 0
   if [ "$2" = "1" ]; then
@@ -121,7 +142,7 @@ phase_exist() {
 
 # --- 相② 过期检测（commit 级；阻塞）-----------------------------------------
 phase_stale() {
-  local rc=0 n=0 stale=0 nodate=0
+  local rc=0 n=0 stale=0 nodate=0 outofrepo=0
   local f tr sc src_last tr_last
   for f in $(list_pages "$ROOT/$DST_LANG" 0); do
     tr="$(fm_value "$f" translation_of)"
@@ -130,6 +151,10 @@ phase_stale() {
     if [ ! -f "$tr" ]; then
       echo "   ✗ $f  translation_of 指向的文件不存在：$tr"
       stale=$((stale+1)); continue
+    fi
+    if tr_out_of_repo "$tr"; then
+      echo "   ⚠ $f  源页已在**仓外**（${tr}）—— commit 级判据不适用，不判过期、不进退码（2026-09-19 开发文档分家）"
+      outofrepo=$((outofrepo+1)); continue
     fi
     sc="$(source_commit_of "$f")"
     if [ -n "$sc" ]; then
@@ -164,7 +189,7 @@ phase_stale() {
       fi
     fi
   done
-  echo "   ② 过期检测：$n 篇译页（$nodate 篇未记 source_commit ⇒ 退 lsync 形态），过期 $stale 篇"
+  echo "   ② 过期检测：$n 篇译页（$nodate 篇未记 source_commit ⇒ 退 lsync 形态；$outofrepo 篇源页在仓外 ⇒ 不判过期），过期 $stale 篇"
   [ "$stale" -eq 0 ] || rc=2
   return $rc
 }
@@ -187,7 +212,7 @@ phase_comment() {
 }
 
 selftest() {
-  echo "── check-i18n-drift.sh 自证（4 条 · 不碰 git 写、不建临时仓）"
+  echo "── check-i18n-drift.sh 自证（5 条 · 不碰 git 写、不建临时仓）"
   local ok=0 tmp a b
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/drift-selftest.XXXXXX")"
   printf -- '---\ntranslation_of: docs/x.md\nsource_commit: abc123\n---\nbody\n' > "$tmp/a.md"
@@ -204,9 +229,19 @@ selftest() {
   printf -- 'no frontmatter here\n' > "$tmp/c.md"
   a="$(fm_value "$tmp/c.md" translation_of)"
   [ -z "$a" ] && { echo "  ✓ 无 frontmatter 不误判"; ok=$((ok+1)); } || echo "  ✗ 无 frontmatter 不误判（${a}）"
+  # ★ 2026-09-19 开发文档分家批6 补牙：源页「在仓外」必须被识别成**不判过期**
+  #   （不能读成「过期」= 假红，也不能静默放绿 —— 它单列计数、逐条打印）。
+  printf -- 'x\n' > "$tmp/out.md"
+  tr_out_of_repo "$tmp/out.md"; rc_out=$?
+  tr_out_of_repo "$REPO_ROOT/AGENTS.md"; rc_in=$?
+  if [ "$rc_out" -eq 0 ] && [ "$rc_in" -eq 1 ]; then
+    echo "  ✓ 源页在仓外可识别（仓外 ⇒ 不判过期；仓内 ⇒ 照判）"; ok=$((ok+1))
+  else
+    echo "  ✗ 源页在仓外可识别（仓外 rc=${rc_out} 期望 0 / 仓内 rc=${rc_in} 期望 1）"
+  fi
   rm -rf "$tmp"
-  if [ "$ok" -eq 4 ]; then echo "  自证：通过 ✓（4 条）"; return 0; fi
-  echo "  自证：**失败** ✗（$ok/4）"; return 1
+  if [ "$ok" -eq 5 ]; then echo "  自证：通过 ✓（5 条）"; return 0; fi
+  echo "  自证：**失败** ✗（$ok/5）"; return 1
 }
 
 [ "$SELFTEST" = "1" ] && { selftest; exit $?; }

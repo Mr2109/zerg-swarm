@@ -181,7 +181,8 @@ class Tree:
         for p in c.get("fixture_paths", []):
             self.soft.append((p.rstrip("/") + "/", DOM_FIXTURE, ("main", "wide", "mirror")))
         for p in c.get("engine_data_paths", []):
-            # 引擎数据（docs/issues/ 1086 篇）**任何 scope 都不扫** —— 它不是文档，是 issue 流水
+            # 引擎数据（原 `docs/issues/` 1086 篇，2026-09-19 已分家至 `Zerg-内部文档/issues/`）**任何 scope 都不扫**
+            # —— 它不是文档，是 issue 流水；新落点 `statepath.IssuesDir()` 本就在语料域之外
             self.soft.append((p.rstrip("/") + "/", DOM_FROZEN, ()))
         self.external_prefixes = [p.rstrip("/") + "/" for p in c.get("external_domain_paths", [])]
 

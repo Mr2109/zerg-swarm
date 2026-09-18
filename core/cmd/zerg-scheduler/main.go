@@ -1,5 +1,5 @@
 // cmd/zerg-scheduler/main.go — v2.5.2 调度器独立命令
-// 启动调度器：轮询 docs/issues/ → 按优先级派单 → SIGINT 优雅停止
+// 启动调度器：轮询任务单目录（默认 docs/issues/）→ 按优先级派单 → SIGINT 优雅停止
 // 用法: zerg-scheduler [-workdir <path>]
 
 package main
