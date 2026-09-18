@@ -125,7 +125,7 @@ func zergOverviewFull() (string, error) {
 	if verDir != "" {
 		verBase := filepath.Base(verDir)
 		b.WriteString(fmt.Sprintf("  当前版 %s: INDEX.md（%d 份文档——先读它定位）→ 或 doc_search query=\"主题\"\n", verBase, len(globMd(verDir))))
-		b.WriteString("  总索引: docs/INDEX.md（版本史/常青/skills 导航）\n")
+		b.WriteString("  总索引: docs/index-nav.md（版本史/常青/skills 导航）\n")
 		b.WriteString("  历史版: docs/项目文档/vX.Y.Z/（INDEX 标历史档案——查旧版走 doc_search scope=vX.Y.Z）\n")
 	} else {
 		b.WriteString("  （未找到版本档案目录）\n")
