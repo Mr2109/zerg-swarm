@@ -645,8 +645,89 @@ func toolNameList(tools []map[string]any) []string {
 // truncateStr — 截断（工具结果展示）
 // （复用 api 包 zerg_controlled_loop.go 的 truncateStr——此处删除防重名）
 
-// chatImageDir — 对话图片存储目录（90 天销毁同区——/tmp/zerg-chat）
-const chatImageDir = "/tmp/zerg-chat/images"
+// chatImagesDirName 对话图片目录在统一状态目录下的目录名。
+const chatImagesDirName = "zerg-chat-images"
+
+// chatImagesLegacyDefaultDir 旧硬编码落点字面量（父目录 /tmp/zerg-chat 与旧对话库同区——90 天销毁同区）。
+// 只作**迁移兼容的只读来源**：旧图仍按目录回退可读；不删、不改、**永不再写入**。
+const chatImagesLegacyDefaultDir = "/tmp/zerg-chat/images"
+
+// legacyChatImagesDir 旧图片目录（包级变量 = 上面的字面量；用例/测试进程隔离可切换）。
+var legacyChatImagesDir = chatImagesLegacyDefaultDir
+
+// chatImagesDirOverride 显式覆盖（测试隔离）：非空 ⇒ 写/读都用它，且不复旧目录。
+var chatImagesDirOverride = ""
+
+// chatImagesWriteDir 图片写落点：statepath 统一状态目录派生
+// （ZERG_STATE_DIR → ~/.zerg/state/zerg-chat-images；目录首次使用自动建）。
+//
+// 为什么不再写死 /tmp/zerg-chat/images（2026-09-18 修 /tmp 硬编码——口径同本包 tasks_persist.go）:
+// macOS 重启 /tmp 即清 + tmp_cleaner 3 天未访问即删（实测本机两者都在）⇒ 历史消息里的 image_path
+// 变死链（图上不去、模型「看不见」曾经发的图）；且对话库本身已迁出 /tmp（chat_store_migrate.go 甲批 T1）
+// ——图片与库同存亡才自洽。由常量改为函数：常量无法按 ZERG_STATE_DIR 派生，测试也需要可覆盖。
+func chatImagesWriteDir() string {
+	if p := strings.TrimSpace(chatImagesDirOverride); p != "" {
+		return p
+	}
+	return statepath.File(chatImagesDirName)
+}
+
+// chatImageReadDirs 图片读目录序列：写落点永远第一；旧 /tmp/zerg-chat/images 若存在 ⇒ 追加为**只读**入口。
+// 目录类口径（同 agent.BashOverflowDir——批 A：**只读保留不搬**）:
+//
+//	文件类的迁移兼容是「读旧内容一次」（内容会夹除，故新在则必须不看旧）；
+//	目录类没有「读内容」这一步——这里是**按文件名的回退查找目录**，不夹除任何内容。
+//	去掉旧目录 = 旧版本存下的图从此读不了（真回归）；保留它只是多一个只读查找位置，
+//	写路径永远只走新目录（永不写旧目录）。显式覆盖（测试隔离）⇒ 不追加旧目录。
+func chatImageReadDirs() []string {
+	writeDir := chatImagesWriteDir()
+	dirs := []string{writeDir}
+	if strings.TrimSpace(chatImagesDirOverride) != "" {
+		return dirs // 显式覆盖 ⇒ 不复旧（覆盖即「已指定唯一来源」）
+	}
+	legacy := strings.TrimSpace(legacyChatImagesDir)
+	if legacy == "" || legacy == writeDir {
+		return dirs
+	}
+	if st, err := os.Stat(legacy); err != nil || !st.IsDir() {
+		return dirs // 无旧目录——首次运行
+	}
+	// 每个会话/每条历史消息都会走下这里——迁移提示只喊一次，防日志刷屏
+	chatImagesLegacyNoticeOnce.Do(func() {
+		log.Printf("📜 对话图片目录迁移兼容: 旧 %s 保留只读（写入只落 %s；旧目录不删不改）\n", legacy, writeDir)
+	})
+	return append(dirs, legacy)
+}
+
+// chatImagesLegacyNoticeOnce 旧目录只读兼容提示（进程内一次）。
+var chatImagesLegacyNoticeOnce sync.Once
+
+// readChatImage 读一张对话图片（历史重建 chatMessageToReq 用）。
+//
+//	① 先按**存库路径原样**读：存量 image_path 是绝对路径（旧版本存的 /tmp/zerg-chat/images/<name>）——
+//	   只要旧目录还在就直接命中，零改动可读；
+//	② ①失败时按**文件名**在 chatImageReadDirs() 里回退查找（新目录优先，旧目录兜底）——
+//	   旧图仍可读（只读保留不搬：不搬文件，只多一个查找位置；找不到才算死链）。
+func readChatImage(p string) ([]byte, error) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return nil, os.ErrNotExist
+	}
+	b, err := os.ReadFile(p)
+	if err == nil {
+		return b, nil
+	}
+	name := filepath.Base(p)
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return nil, err
+	}
+	for _, dir := range chatImageReadDirs() {
+		if raw, rerr := os.ReadFile(filepath.Join(dir, name)); rerr == nil {
+			return raw, nil
+		}
+	}
+	return nil, err
+}
 
 // saveChatImage — 保存对话图片（data URL base64 → 文件）——返回文件路径
 func saveChatImage(dataURL string) string {
@@ -669,11 +750,13 @@ func saveChatImage(dataURL string) string {
 	if err != nil {
 		return ""
 	}
-	if err := os.MkdirAll(chatImageDir, 0o755); err != nil {
+	// 写只写新路径（统一状态目录，目录首次自动建）——旧 /tmp/zerg-chat/images 永不写（2026-09-18）
+	dir := chatImagesWriteDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return ""
 	}
 	name := fmt.Sprintf("%d%s", time.Now().UnixNano(), ext)
-	path := filepath.Join(chatImageDir, name)
+	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		return ""
 	}
@@ -722,7 +805,9 @@ func chatMessageToReq(m *chat.Message, keepImage bool) map[string]any {
 			if p == "" || seen >= 8 {
 				continue
 			}
-			if raw, err := os.ReadFile(p); err == nil {
+			// 读图（2026-09-18）: 走 readChatImage —— 存库绝对路径优先，失败按文件名回退新旧目录
+			// （旧 /tmp/zerg-chat/images 里的图仍读得到——只读保留不搬）
+			if raw, err := readChatImage(p); err == nil {
 				ext := strings.TrimPrefix(filepath.Ext(p), ".")
 				if ext == "" {
 					ext = "png"
