@@ -1,0 +1,2053 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""mutate-scan — 腿一：变异不自写（四维收窄 · 基线绿前置 · 清单归一 · 单点跑 · 六态归类 · 两行台账）
+
+规格（唯一规格来源，逐条对应）
+------------------------------
+    docs/01-设计/设计-改码与变异安全门-v1.1-20260918.md
+      §2.1   腿一表格（gremlins / avito-tech go-mutesting / cosmic-ray；备选逐字定仓）
+      §2.1.1 四维收窄（gremlins **没有单点选择器**：文件/包 + --diff + 变异类型 + 逐点）
+      §2.1.2 ★ 基线绿是**前置**：不绿 ⇒ 清单**根本不生成** ⇒ rc=2（**绝不当「没有变异点」**）
+      §2.1.3 六态：KILLED/LIVED/NOT COVERED/TIMED OUT/NOT VIABLE/SKIPPED（+干跑态 RUNNABLE）
+      §2.1.4 ★ 清单顺序不稳 ⇒ J3 改「**归一后比较**」（排序 + 剔白名单 elapsed_time）
+      §2.1.5 cosmic-ray 五条硬限（无 --config / 不施加 timeout / 本机无 timeout 命令 /
+             就地改 + SIGKILL 残留 / rc 不区分 killed-survived ⇒ 读 stdout JSON / job_id 不可当指纹）
+      §2.1.6 命令样例（副本一律 cp -a；rc 不采信 ⇒ 读产物 + 断言总数）
+      §2.1.7 角色分工（author / verifier 两行台账并存）
+      §6.1 工具可得性 · §6.3 依赖必要性 · §6.4 登记落点（仓外固定目录 + binary sha256 + 启动断言）
+      §7.1 J3 归一后一致 · J5 工具失效不得被读成结果 · J6 未收尾检测 · §7.4 审计落点
+      §8 B1 不改用户工作树 · B3 不替用户删东西 · B4 git 只读 · B7 变异必须在登记副本根 + cp -a 内跑
+    docs/01-设计/设计-改码与变异安全门-v1.1-附录A-自排遗漏-20260918.md
+      C2 就地改崩溃残留 · C3 基线红则清单不生成 · C4 清单顺序不稳 · C6 无稳定 ID（gremlins 无 id /
+      cosmic-ray job_id 是 UUID）⇒ **指纹 = 四元组多集摘要** · C7 挂死（本机无 timeout） ·
+      C8 两支 go-mutesting 命运相反（只认 avito-tech） · C9 mutmut 全 segfault 而 rc=0 ·
+      C10 工具版本登记落点 · M5 禁止静默降级 · M11 副本里跑不起来/误改真仓 · M15 防漂移 ·
+      M17 副本完整性断言（go.mod / go.sum / replace 兄弟模块）
+
+四条写死的口径（全是本机实测，不是偏好）
+----------------------------------------
+  ① **rc 一律不采信**：gremlins 的 `--dry-run` 与真跑都**不靠 rc 判结论**（基线红时 rc=1 且
+     清单**根本不生成**）；cosmic-ray 的 `mutate-and-test` 恒 rc=0（killed 与 survived 同码）⇒
+     **判据只读产物 / stdout JSON 的 `test_outcome`**（C3 / §2.1.5-③ / R-8 同形）。
+  ② **前置链写死**：`台账 → 工具登记 → 副本完整 → 基线绿 → 清单存在 → 清单可解析 → 变异点 > 0 → 收窄 → 跑`。
+     任一步不过 ⇒ **rc=2 不给结论**，且每段自带原因码（顺序错会让原因码互串，J4 的形）。
+     ★ **基线不绿的原因码必须是 `BLOCKED_BASELINE_RED`，绝不是 `BLOCKED_MANIFEST_EMPTY`**（C3）。
+  ③ **没有静默降级路径**（M5/C10）：工具不在登记目录（`~/.zerg/tools/`）/ binary sha256 与
+     `tools/cli-tools.json` 不符 ⇒ rc=2；**不许**改用 PATH 上别的二进制、**不许**改用文本匹配。
+  ④ **变异只在副本里**（B1/B7）：一律 `cp -a` 真仓的**兄弟模块同带**（`core/` + `shared/`，
+     `core/go.mod` 里有 `replace … => ../shared`，少了它 gremlins 连覆盖率都收集不了 = M11 实例），
+     跑前后 sha256 比对**逐字节复原**；只删自己建的副本根（B3）。
+
+六态（§2.1.3；**不许把 SKIPPED/TIMED OUT/NOT VIABLE 当结论**）
+-------------------------------------------------------------
+    KILLED     变异被杀        ⇒ 判据有牙齿（**这一格才是「门在工作」的证据**）· rc=0
+    LIVED      变异存活        ⇒ 覆盖缺口 / 判据太弱 ⇒ **rc=1**
+    NOT COVERED 该点没有用例跑到 ⇒ 覆盖缺口（**不是**门没牙齿）⇒ **rc=1**
+    TIMED OUT  变异体超时      ⇒ **配置/规模问题**（系数、包大小、并发）⇒ **rc=2 不给结论**
+    NOT VIABLE 变异使构建失败  ⇒ 不合法变异体，**剔除、不计分** ⇒ 单点结论 rc=2；清单里只告警
+    SKIPPED    被 --diff/过滤跳过 ⇒ **未验**，不许计入任何结论 ⇒ 单点结论 rc=2
+    （外加干跑态 `RUNNABLE`：**只存在于 gremlins 的 --dry-run 清单**，不是六态之一，不参与结论）
+
+用法
+----
+    # Go：清单（干跑）+ 四维收窄 + 归一
+    python3 scripts/mutate-scan --lang go --repo "<真仓根>" --module-dir core \\
+            --pkg ./internal/sliceobs/ --only-types invert-negatives -E 'budget_layer.go'
+    # Go：单点跑（把四维收窄到唯一变异点再真跑）
+    python3 scripts/mutate-scan --lang go --module-dir core --pkg ./internal/sliceobs/ \\
+            --only-types invert-negatives -E 'budget_layer.go' \\
+            --point 'cost_table.go:110:38:INVERT_NEGATIVES' --timeout-coeff 50
+    # Python：cosmic-ray 单点（判据读 stdout JSON 的 test_outcome，不读 rc）
+    python3 scripts/mutate-scan --lang py --target scripts/check_version.py \\
+            --operator core/ReplaceComparisonOperator_Gt_LtE --occurrence 0 --test-cmd 'bash judge.sh'
+    python3 scripts/mutate-scan --self-test        # 自证：不过 ⇒ 拒绝跑真目标
+    python3 scripts/mutate-scan --list-reasons     # 原因码全集 + 六态 + 白名单 + 台账落点
+    python3 scripts/mutate-scan --help / --version
+
+退出码（三档 0/1/2，与 scripts/edit-assert 完全相同）
+----
+    0  通过（清单归一成功 / 单点 KILLED / 清单里可跑集合全 KILLED）
+    1  失败（LIVED / NOT COVERED —— 真红：机制没被覆盖）
+    2  **不给结论**（缺件 · 未登记 · 副本不安全或不完整 · 基线不绿 · 清单缺件/空/不可解析 ·
+        超时 · 收窄不到唯一变异点 · TIMED OUT / NOT VIABLE / SKIPPED · 台账未收尾 · 用法错 ·
+        自检不过 · 工具失效）—— 2 不是红，是**没有结论**
+
+零三方依赖 · python3 ≥ 3.6（本机 3.9.6 实跑）· 门内不联网 · git 只读（B4）· 墙钟符自带
+（本机**没有** `timeout` 命令；且实测 `perl -e 'alarm shift; exec @ARGV' N -- cmd` 这种带 `--`
+的写法**什么都跑不了却退 0** ⇒ 门内一律用 python subprocess + 进程组 SIGKILL）
+"""
+
+import hashlib
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+import uuid
+
+VERSION = "1.0.0"
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(HERE, os.pardir))
+SELF = os.path.abspath(__file__)
+TOOLS_ACCOUNT = os.path.join(REPO_ROOT, "tools", "cli-tools.json")
+
+# Q2 已拍板：仓外**固定登记目录**（不是 /tmp —— statepath.go:1-3：/tmp 会被「重启即清 +
+# tmp_cleaner 3 天未访问即删」）
+TOOLS_DIR = os.environ.get("ZERG_TOOLS_DIR") or os.path.expanduser("~/.zerg/tools")
+
+LEDGER_NAME = "edit-assert-ledger.jsonl"
+GATE_ID = "mutate-scan"
+# 逐字抄 scripts/chat-harness.py:30（同默认、同 env 名）；与 edit-assert 同文件不同 role
+STATE_DIR_DEFAULT = os.environ.get("ZERG_STATE_DIR", os.path.expanduser("~/.zerg/state"))
+if not STATE_DIR_DEFAULT:
+    STATE_DIR_DEFAULT = os.path.expanduser("~/.zerg/state")
+
+TMP_PREFIXES = ("/tmp/", "/private/tmp/", "/var/tmp/", "/private/var/tmp/")
+
+EXIT_OK, EXIT_FAIL, EXIT_BLOCKED = 0, 1, 2
+
+# 六态（§2.1.3）+ 干跑态（**不是**六态之一）
+SIX_STATES = ["KILLED", "LIVED", "NOT COVERED", "TIMED OUT", "NOT VIABLE", "SKIPPED"]
+DRY_STATE = "RUNNABLE"
+STATE_MEANING = {
+    "KILLED": "变异被杀 ⇒ 判据有牙齿（门在工作）",
+    "LIVED": "变异存活 ⇒ 覆盖缺口 / 判据太弱（真红）",
+    "NOT COVERED": "该点没有用例跑到 ⇒ 覆盖缺口（不是门没牙齿）",
+    "TIMED OUT": "变异体超时 ⇒ 配置/规模问题（系数/包大小/并发）；实测撞过这一态",
+    "NOT VIABLE": "变异使构建失败 ⇒ 不合法变异体，剔除、不计分",
+    "SKIPPED": "被 --diff/过滤跳过 ⇒ **未验**，不许计入任何结论",
+}
+
+# 归一白名单：**只剔时间/派生计数**，逐字段写理由（§2.1.4 / Q10：禁止为「让 J3 绿」扩大白名单）
+NORM_WHITELIST = [
+    ("elapsed_time", "计时漂移（实测同输入两跑必不同）"),
+    ("test_efficacy", "派生自状态计数（跑的形态不同即不同）"),
+    ("mutations_coverage", "派生自状态计数"),
+    ("mutator_statistics", "派生计数（按类型统计）"),
+    ("mutants_total", "派生计数（干跑恒 0、真跑为可跑点数 —— 实测）"),
+    ("mutants_killed", "派生计数"),
+    ("mutants_lived", "派生计数"),
+    ("mutants_not_viable", "派生计数"),
+    ("mutants_not_covered", "派生计数"),
+]
+NORM_WHITELIST_KEYS = [k for k, _r in NORM_WHITELIST]
+
+# ── 原因码全集（每条自带档位；j4 要求每段自带原因码）────────────────────────────────
+REASON_CODES = [
+    # 档 2：不给结论
+    ("BLOCKED_USAGE", EXIT_BLOCKED, "用法错（未知参数 / 缺必需参数 / 形态自相矛盾）"),
+    ("BLOCKED_SELFTEST", EXIT_BLOCKED, "自检不过 ⇒ 拒绝跑真目标（precommit-gates.sh:36 的项目口径）"),
+    ("BLOCKED_MISSING_TOOL", EXIT_BLOCKED,
+     "缺件：工具不在登记目录 / 可执行件不存在 / 构建链缺件（go 不在 PATH）⇒ 不降级（M5）"),
+    ("BLOCKED_UNREGISTERED_TOOL", EXIT_BLOCKED,
+     "工具在，但与 tools/cli-tools.json 登记（绝对路径 + binary sha256）不符 ⇒ 不给结论（§6.4-3/M15/C10）"),
+    ("BLOCKED_ACCOUNT", EXIT_BLOCKED, "CLI 依赖账缺失/不可解析 ⇒ 工具身份不可证 ⇒ 不给结论"),
+    ("BLOCKED_LEDGER_UNWRITABLE", EXIT_BLOCKED, "台账目录不可写 ⇒ 不给结论（不许静默退化到 /tmp，§7.4）"),
+    ("BLOCKED_LEDGER_TMP", EXIT_BLOCKED, "默认台账落点解析到 /tmp（会被系统清理）⇒ 不给结论（§7.4 反面落点）"),
+    ("BLOCKED_LEDGER_CORRUPT", EXIT_BLOCKED, "台账里有不可解析的行 ⇒ 未收尾检测不可信 ⇒ 不给结论"),
+    ("BLOCKED_UNFINISHED", EXIT_BLOCKED,
+     "台账有 begin 无 end（上一轮变异没收尾，C2/J6）⇒ 不给结论 + 打印残留路径与当前 sha256"),
+    ("BLOCKED_SANDBOX_UNSAFE", EXIT_BLOCKED,
+     "副本根不安全（= 真仓根 / 在真仓内 / 已存在且非空）⇒ 绝不在真仓里变异（B1/B7）"),
+    ("BLOCKED_SANDBOX_INCOMPLETE", EXIT_BLOCKED,
+     "副本不完整（缺 go.mod/go.sum/replace 的兄弟模块）⇒ 跑不起来 ≠ 没有变异点（M11/M17）"),
+    ("BLOCKED_BASELINE_RED", EXIT_BLOCKED,
+     "★ 基线不绿（C3）：**这不是「没有变异点」**，是前置没满足 ⇒ 不给结论；清单不生成即此因"),
+    ("BLOCKED_MANIFEST_MISSING", EXIT_BLOCKED, "清单文件缺件（工具跑了但没出产物）⇒ 不给结论（C3/§2.1.6）"),
+    ("BLOCKED_MANIFEST_UNPARSABLE", EXIT_BLOCKED, "清单不是可解析 JSON / 结构不符 ⇒ 不给结论"),
+    ("BLOCKED_MANIFEST_EMPTY", EXIT_BLOCKED, "清单里变异点 0 条 ⇒ 不给结论（与「基线不绿」严格分开）"),
+    ("BLOCKED_TIMEOUT", EXIT_BLOCKED, "墙钟符超时（本机无 `timeout` 命令，C7）⇒ 先复原再报，不给结论"),
+    ("BLOCKED_TOOL_ERROR", EXIT_BLOCKED,
+     "工具失效（error 态 / 退非 0 且无产物 / 产物自相矛盾）⇒ 判定「工具坏」，不当变异结果（J5/C9）"),
+    ("BLOCKED_DIFF_NO_MATCH", EXIT_BLOCKED,
+     "上了 --diff 但可跑集合为 0：gremlins 的 diff 路径基（git 顶层）与覆盖率路径基（目标目录）不一致 ⇒ 不给结论"),
+    ("BLOCKED_POINT_NOT_FOUND", EXIT_BLOCKED, "目标变异点不在清单里（--point 的位置/类型给错，或收窄把它排除了）"),
+    ("BLOCKED_POINT_AMBIGUOUS", EXIT_BLOCKED, "四维收窄后仍有 >1 个可跑变异点 ⇒ 收不到唯一 ⇒ 不给结论（不猜）"),
+    ("BLOCKED_MUTANT_TIMED_OUT", EXIT_BLOCKED, "该点状态 = TIMED OUT ⇒ 配置/规模问题 ⇒ 不给结论（调 --timeout-coeff）"),
+    ("BLOCKED_MUTANT_NOT_VIABLE", EXIT_BLOCKED, "该点状态 = NOT VIABLE ⇒ 不合法变异体，剔除不计分 ⇒ 不给结论"),
+    ("BLOCKED_MUTANT_SKIPPED", EXIT_BLOCKED, "该点状态 = SKIPPED ⇒ **未验** ⇒ 不给结论（不许当结论）"),
+    ("BLOCKED_CR_INIT", EXIT_BLOCKED, "cosmic-ray init 失败（rc=78 = os.EX_CONFIG 等）⇒ 不给结论"),
+    ("BLOCKED_OUTCOME_MISSING", EXIT_BLOCKED,
+     "cosmic-ray stdout 里没有可解析 JSON / 没有 test_outcome ⇒ 判据无从读（不读 rc，§2.1.5-③）"),
+    ("BLOCKED_RESIDUAL", EXIT_BLOCKED,
+     "跑完/超时后目标 sha256 与前像不一致 ⇒ **残留变异态**（C2）⇒ 先复原再报，不给结论"),
+    # 档 1：失败（真红）
+    ("FAIL_MUTANT_LIVED", EXIT_FAIL, "该点 = LIVED ⇒ 覆盖缺口 / 判据太弱（M12 继续分诊）"),
+    ("FAIL_MUTANT_NOT_COVERED", EXIT_FAIL, "该点 = NOT COVERED ⇒ 没有任何用例跑到它（覆盖缺口，真红）"),
+    ("FAIL_MUTANTS_UNPROTECTED", EXIT_FAIL, "清单可跑集合里出现 LIVED / NOT COVERED ⇒ 机制没被覆盖（逐点点名）"),
+    # 档 0：通过 / 不阻断
+    ("OK_SELFTEST", EXIT_OK, "自检全过"),
+    ("OK_MANIFEST", EXIT_OK, "清单生成 + 归一 + 指纹（**未跑变异**；清单 = 可审计的输入）"),
+    ("OK_POINT_KILLED", EXIT_OK, "单点被 KILLED ⇒ 判据有牙齿（这一格才是「门在工作」的证据）"),
+    ("OK_MANIFEST_GREEN", EXIT_OK, "清单可跑集合全 KILLED（NOT VIABLE 已剔除不计分）"),
+    ("WARN_SKIPPED_PRESENT", EXIT_OK, "不阻断但要点名：清单里存在 SKIPPED ⇒ 这些点**未验**，不计入任何结论"),
+    ("WARN_NOT_VIABLE_DROPPED", EXIT_OK, "不阻断：NOT VIABLE 的变异体已剔除、不计分"),
+    ("WARN_LEDGER_TMP", EXIT_OK, "不阻断但显式告警：台账落点在 /tmp（显式覆盖；生产用不可）"),
+    ("WARN_TIMEOUT_COEFF", EXIT_OK, "不阻断：本次用了 --timeout-coeff（默认值在快基线上会把变异体判成 TIMED OUT，实测）"),
+]
+REASON_TIER = dict((c, t) for c, t, _d in REASON_CODES)
+REASON_DESC = dict((c, d) for c, _t, d in REASON_CODES)
+
+# ── 断言登记表（自检用例点名用；--list-reasons 打印）────────────────────────────────
+ASSERTIONS = [
+    ("A1_TOOL_REGISTERED", "工具必须在登记目录（~/.zerg/tools/）且 binary sha256 与 tools/cli-tools.json 一致",
+     "路径前缀断言 + sha256(binary)", "取反 ⇒ 未登记的工具也被放行 ⇒ rc≠0（M5/C10）"),
+    ("A2_BASELINE_GREEN", "★ 基线绿是前置：基线不绿 ⇒ rc=2 BLOCKED_BASELINE_RED（绝不当「没有变异点」）",
+     "先跑基线命令，读**真实 rc**", "取反 ⇒ 基线红被读成「无变异点」⇒ rc≠0（C3）"),
+    ("A3_MANIFEST_EXISTS", "清单先落盘再跑：文件存在 + 非空 + 可解析（rc 一律不采信）",
+     "产物存在性 + JSON 解析", "取反 ⇒ 缺件当空 ⇒ rc≠0（§2.1.6/M7）"),
+    ("A4_NORMALIZE", "归一：变异点按 (file,line,column,type) 排序 + 剔登记过的白名单字段",
+     "规范化 JSON（排序 + 白名单）", "取反 ⇒ 归一断言作废 ⇒ rc≠0（C4/Q10）"),
+    ("A5_FINGERPRINT", "指纹 = **四元组多集摘要**（gremlins 无 id、cosmic-ray job_id 是 UUID）",
+     "sha256(排序后四元组多集的规范 JSON)", "取反 ⇒ 指纹不可复核 ⇒ rc≠0（C6）"),
+    ("A6_NARROW_SINGLE", "四维收窄（路径/包 · --diff · 类型 · 逐点）后必须**唯一**，收不到就明说收不到",
+     "可跑集合 == 1 且 == --point", "取反 ⇒ 收窄失败也被当单点 ⇒ rc≠0（§2.1.1）"),
+    ("A7_SIX_STATES", "六态归类（KILLED/LIVED/NOT COVERED/TIMED OUT/NOT VIABLE/SKIPPED）",
+     "状态字符串 → 枚举 + 每态一句话证据", "取反 ⇒ 状态被错归 ⇒ rc≠0（§2.1.3）"),
+    ("A8_CLOCK", "墙钟符：一切外部命令带上界；超时 ⇒ rc=2 + 先复原再报（本机无 timeout 命令）",
+     "subprocess + 进程组 SIGKILL", "取反 ⇒ 超时不判 ⇒ 门挂死 ⇒ rc≠0（C7）"),
+    ("A9_SANDBOX_COPY", "副本一律 cp -a，且**兄弟模块同带**（core + shared；replace 目标必须在）",
+     "cp -a + go.mod 解析 replace", "取反 ⇒ 缺 ../shared ⇒ 覆盖率收集失败（M11 实例）"),
+    ("A10_SANDBOX_NO_REPO", "副本根 ≠ 真仓根、不在真仓内、不复用非空目录（B1/B7）",
+     "realpath 前缀断言", "取反 ⇒ 允许在真仓里变异 ⇒ rc≠0（B1）"),
+    ("A11_RESTORE_SHA", "跑前/跑后目标 sha256 必须逐字节一致（cosmic-ray 就地改；gremlins 也会改副本）",
+     "sha256(文件字节) 比对", "取反 ⇒ 残留变异态被放过 ⇒ rc≠0（C2）"),
+    ("A12_LEDGER_PAIR", "台账 begin/end 成对，append-only；落点 = edit-assert-ledger.jsonl（同文件不同 role）",
+     "JSONL 两行 + run_id 配对", "取反 ⇒ 台账不成对 ⇒ rc≠0（§2.1.7/§7.4）"),
+    ("A13_LEDGER_UNFINISHED", "启动做未收尾检测（有 begin 无 end ⇒ rc=2 + 打印残留路径与当前 sha256）",
+     "读 JSONL 配对 run_id", "取反 ⇒ 未收尾被放过 ⇒ rc≠0（J6/C2）"),
+    ("A14_NO_SILENT_DOWNGRADE", "缺件/未登记/基线红/清单缺件/超时一律 rc=2，没有「换工具/文本匹配」的降级路径",
+     "无降级代码路径 + 原因码分档", "取反 ⇒ 缺件被当通过 ⇒ rc≠0（M5）"),
+    ("A15_CR_STDOUT_JSON", "cosmic-ray 判据只读 stdout JSON 的 test_outcome（rc 不区分 killed/survived）",
+     "stdout JSON 解析 + 字段断言", "取反 ⇒ 读 rc ⇒ 结论反向 ⇒ rc≠0（§2.1.5-③）"),
+    ("A16_J3_STABLE", "J3：同输入连跑两次 ⇒ **归一后一致**（不要求字节一致）",
+     "两次清单归一排之后比指纹", "取反 ⇒ 归一稳定性断言作废 ⇒ rc≠0（C4）"),
+    ("A17_TOOL_BROKEN", "工具连续 error 态/全坏态 ⇒ 判「工具坏」rc=2，不许当「变异结果」",
+     "产物缺失/自相矛盾 + 原因码", "取反 ⇒ 坏工具被读成跑过 ⇒ rc≠0（J5/C9）"),
+]
+ASSERT_NAMES = [a[0] for a in ASSERTIONS]
+
+GREMLINS_TYPE_FLAGS = {
+    "arithmetic-base": "ARITHMETIC_BASE",
+    "conditionals-boundary": "CONDITIONALS_BOUNDARY",
+    "conditionals-negation": "CONDITIONALS_NEGATION",
+    "invert-assignments": "INVERT_ASSIGNMENTS",
+    "invert-bitwise": "INVERT_BITWISE",
+    "invert-bwassign": "INVERT_BWASSIGN",
+    "increment-decrement": "INCREMENT_DECREMENT",
+    "invert-logical": "INVERT_LOGICAL",
+    "invert-loopctrl": "INVERT_LOOPCTRL",
+    "invert-negatives": "INVERT_NEGATIVES",
+    "remove-self-assignments": "REMOVE_SELF_ASSIGNMENTS",
+}
+# 官方 flag 默认 true 的五个（其余默认 false）——收窄时要**显式把全部 11 个写死**
+GREMLINS_DEFAULT_TRUE = {"arithmetic-base", "conditionals-boundary", "conditionals-negation",
+                         "increment-decrement", "invert-negatives"}
+
+CR_OUTCOME_MAP = {
+    "killed": "KILLED", "survived": "LIVED", "timeout": "TIMED OUT",
+    "incompetent": "NOT VIABLE", "not_viable": "NOT VIABLE", "skipped": "SKIPPED",
+}
+
+
+def eprint(msg):
+    sys.stderr.write(msg + "\n")
+
+
+def now_iso():
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime())
+
+
+def sha256_bytes(b):
+    return hashlib.sha256(b).hexdigest()
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        while True:
+            chunk = fh.read(1 << 16)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def sha256_text(s):
+    return sha256_bytes(s.encode("utf-8"))
+
+
+def read_text(path):
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        return fh.read()
+
+
+# ══════════════════════════════════════════════════════════════════
+# 1. 墙钟符（本机**没有** `timeout` 命令 —— C7；一切外部命令都从这里走）
+# ══════════════════════════════════════════════════════════════════
+
+def run_clocked(argv, clock, cwd=None, env=None):
+    """跑一条外部命令：自带墙钟上界；超时 ⇒ 杀**整个进程组**。返回 dict。
+
+    ⚠ 两个实测：
+      ① 本机 `/bin/bash: timeout: command not found` ⇒ 上界只能自带（C7）；
+      ② `perl -e 'alarm shift; exec @ARGV' N -- cmd`（设计稿 §2.1.5 的「墙钟符 A」原样）
+         **什么都没跑，却退 0**（perl 把 `--` 当程序名，exec 失败被吞）⇒ 门内**不用**这条。
+    """
+    t0 = time.time()
+    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            stdin=subprocess.DEVNULL, preexec_fn=os.setsid)
+    try:
+        out, err = proc.communicate(timeout=clock)
+        return {"rc": proc.returncode, "out": out.decode("utf-8", "replace"),
+                "err": err.decode("utf-8", "replace"), "elapsed": time.time() - t0,
+                "timeout": False, "argv": argv}
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        try:
+            out, err = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            out, err = b"", b""
+        return {"rc": None, "out": out.decode("utf-8", "replace"),
+                "err": err.decode("utf-8", "replace"), "elapsed": time.time() - t0,
+                "timeout": True, "argv": argv}
+
+
+# ══════════════════════════════════════════════════════════════════
+# 2. 异常与判定载体
+# ══════════════════════════════════════════════════════════════════
+
+class Blocked(Exception):
+    """前置不足 ⇒ rc=2 不给结论（绝不许降级或静默放过）。"""
+
+    def __init__(self, code, msg, detail=None):
+        Exception.__init__(self, "%s: %s" % (code, msg))
+        self.code = code
+        self.msg = msg
+        self.detail = detail or []
+
+
+class Failed(Exception):
+    """判据不过 ⇒ rc=1（真红）。"""
+
+    def __init__(self, code, msg, detail=None):
+        Exception.__init__(self, "%s: %s" % (code, msg))
+        self.code = code
+        self.msg = msg
+        self.detail = detail or []
+
+
+class Ctx(object):
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.warnings = []
+        self.steps = []
+        self.states = {}          # 六态计数
+        self.points = []          # 归一后的变异点
+
+    def say(self, line=""):
+        print(line)
+        self.steps.append(line)
+
+    def warn(self, code, msg):
+        self.warnings.append({"code": code, "msg": msg})
+        print("⚠ [%s] %s" % (code, msg))
+
+
+# ══════════════════════════════════════════════════════════════════
+# 3. 台账（§7.4 落点；与 edit-assert **同文件不同 role**；begin/end 两行）
+# ══════════════════════════════════════════════════════════════════
+
+def resolve_ledger_path(cfg):
+    if cfg.get("ledger_path"):
+        return cfg["ledger_path"], "--ledger-path（显式覆盖）"
+    env = os.environ.get("ZERG_STATE_DIR")
+    if env:
+        return os.path.join(env, LEDGER_NAME), "ZERG_STATE_DIR=%s" % env
+    return (os.path.join(STATE_DIR_DEFAULT, LEDGER_NAME),
+            "默认 %s（ZERG_STATE_DIR 未设 —— 逐字抄 chat-harness.py:30）"
+            % os.path.dirname(STATE_DIR_DEFAULT))
+
+
+class Ledger(object):
+    def __init__(self, ctx):
+        self.ctx = ctx
+        self.path, self.source = resolve_ledger_path(ctx.cfg)
+        self.dir = os.path.dirname(os.path.abspath(self.path))
+        self.run_id = uuid.uuid4().hex[:12]
+        self.t0 = time.time()
+
+    @staticmethod
+    def _is_tmp(path):
+        p = os.path.abspath(path) + os.sep
+        return any(p.startswith(pre) for pre in TMP_PREFIXES)
+
+    def startup(self):
+        ctx = self.ctx
+        ctx.say("── 台账（§7.4 定案落点 · 与 edit-assert 同文件不同 role）──")
+        ctx.say("   台账路径：%s" % self.path)
+        ctx.say("   来源：%s" % self.source)
+        default_source = not (self.ctx.cfg.get("ledger_path") or os.environ.get("ZERG_STATE_DIR"))
+        if self._is_tmp(self.dir):
+            if default_source:
+                raise Blocked("BLOCKED_LEDGER_TMP",
+                              "默认落点解析到 /tmp（%s）—— /tmp 会被「重启即清 + tmp_cleaner 3 天未访问即删」"
+                              "（statepath.go:1-3）⇒ 不给结论，也**不静默换地方**" % self.dir)
+            ctx.warn("WARN_LEDGER_TMP", "台账落点在 /tmp（%s，**显式**给的值）：测试可、生产不可" % self.dir)
+        try:
+            if not os.path.isdir(self.dir):
+                os.makedirs(self.dir)
+            fh = open(self.path, "a")
+            fh.close()
+        except (IOError, OSError) as exc:
+            raise Blocked("BLOCKED_LEDGER_UNWRITABLE",
+                          "台账不可写：%s（%s）⇒ rc=2，且**不许**静默退化到 /tmp" % (self.path, exc))
+        ctx.say("   可写性：✓（%s）· 现有行数 %d" % (self.dir, self.line_count()))
+        self.unfinished_check()
+        return 0
+
+    def lines(self):
+        if not os.path.isfile(self.path):
+            return [], []
+        rows, bad = [], []
+        with open(self.path, "r", encoding="utf-8", errors="replace") as fh:
+            for i, ln in enumerate(fh, 1):
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    obj = json.loads(ln)
+                except ValueError:
+                    bad.append((i, ln[:120]))
+                    continue
+                if isinstance(obj, dict):
+                    rows.append(obj)
+                else:
+                    bad.append((i, ln[:120]))
+        return rows, bad
+
+    def line_count(self):
+        n = 0
+        with open(self.path, "r", encoding="utf-8", errors="replace") as fh:
+            for _ in fh:
+                n += 1
+        return n
+
+    def unfinished_check(self):
+        """J6 / C2：有 begin 无 end ⇒ rc=2 + 打印残留文件路径 + 当前 sha256。"""
+        rows, bad = self.lines()
+        if bad:
+            for i, raw in bad:
+                eprint("✗ 台账第 %d 行不可解析：%s" % (i, raw))
+            raise Blocked("BLOCKED_LEDGER_CORRUPT",
+                          "台账里 %d 行不可解析 ⇒ 未收尾检测不可信 ⇒ 不给结论" % len(bad))
+        begins, ends = {}, {}
+        for r in rows:
+            rid = r.get("run_id")
+            if not rid:
+                continue
+            if r.get("phase") == "begin":
+                begins[rid] = r
+            elif r.get("phase") == "end":
+                ends[rid] = r
+        open_runs = [rid for rid in begins if rid not in ends]
+        if not open_runs:
+            self.ctx.say("   未收尾检测（J6）：✓ 无「有 begin 无 end」的组（begin %d · end %d）"
+                         % (len(begins), len(ends)))
+            return 0
+        self.ctx.say("   未收尾检测（J6）：✗ 有 %d 组只有 begin 没有 end ⇒ rc=2" % len(open_runs))
+        residual = []
+        for rid in open_runs:
+            r = begins[rid]
+            tgt = r.get("target_abs")
+            if tgt and os.path.isfile(tgt):
+                cur = sha256_file(tgt)
+                verdict = "未受影响（与前像一致）" if cur == r.get("pre_sha") else "**有残留改动**（与前像不一致）"
+            else:
+                cur = None
+                verdict = "无法核验（目标不在盘上：副本可能已被清理）—— 请按 pre_sha256 人工核验"
+            self.ctx.say("       · run_id=%s · lang=%s · 目标=%s" % (rid, r.get("lang"), tgt))
+            self.ctx.say("         前像 pre_sha=%s · 当前 sha256=%s ⇒ %s"
+                         % (r.get("pre_sha"), cur, verdict))
+            residual.append("残留目标：%s · 前像 pre_sha=%s · 当前 sha256=%s（%s）"
+                            % (tgt, r.get("pre_sha"), cur, verdict))
+        raise Blocked("BLOCKED_UNFINISHED",
+                      "台账有 begin 无 end（上一轮变异没收尾，C2/J6）⇒ 不给结论。复原口径：正常结束由工具自行"
+                      "逐字节复原（实测）；进程被杀 ⇒ 按上面的 pre_sha256 与副本/真仓对比后人工复原"
+                      "（门**不替人动手**）", detail=residual)
+
+    def append(self, row):
+        with open(self.path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        return row
+
+    def begin(self, payload):
+        row = {"ts": now_iso(), "run_id": self.run_id, "phase": "begin", "gate_id": GATE_ID,
+               "actor": self.ctx.cfg["actor"], "role": self.ctx.cfg["role"],
+               "spec_fingerprint": payload.get("spec_fingerprint"),
+               "manifest_sha256": payload.get("manifest_sha256"),
+               "sandbox_root": self.ctx.cfg.get("sandbox_root"),
+               "pid": os.getpid()}
+        row.update(payload)
+        return self.append(row)
+
+    def end(self, status, reason_code, payload=None):
+        row = {"ts": now_iso(), "run_id": self.run_id, "phase": "end", "gate_id": GATE_ID,
+               "actor": self.ctx.cfg["actor"], "role": self.ctx.cfg["role"],
+               "status": status, "reason_code": reason_code, "elapsed_s": round(time.time() - self.t0, 3)}
+        row.update(payload or {})
+        return self.append(row)
+
+
+# ══════════════════════════════════════════════════════════════════
+# 4. 工具账 + **装前自证**（§6.4-3：不在登记目录 / 指纹不符 ⇒ rc=2）
+# ══════════════════════════════════════════════════════════════════
+
+def load_tools_account(path):
+    if not os.path.isfile(path):
+        return None, "登记账文件不存在：%s" % path
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (IOError, OSError, ValueError) as exc:
+        return None, "登记账读不出/不可解析：%s（%s）" % (path, exc)
+    if not isinstance(data.get("tools"), list):
+        return None, "登记账里没有 `tools` 列表：%s" % path
+    return data, None
+
+
+def resolve_tool(ctx, name, override):
+    """装前自证：登记目录 + 绝对路径 + binary sha256 三项断言（M5/C10：不许静默换个二进制）。"""
+    cfg = ctx.cfg
+    acct_path = cfg.get("tools_account") or TOOLS_ACCOUNT
+    acct, err = load_tools_account(acct_path)
+    if err:
+        raise Blocked("BLOCKED_ACCOUNT", "%s ⇒ 工具身份不可证 ⇒ 不给结论" % err)
+    entry = None
+    for t in acct["tools"]:
+        if isinstance(t, dict) and t.get("name") == name:
+            entry = t
+            break
+    if entry is None:
+        raise Blocked("BLOCKED_UNREGISTERED_TOOL",
+                      "CLI 依赖账（%s）里没有 %s 条目 ⇒ 不给结论（先按 §6.4 登记再跑）" % (acct_path, name))
+    path = override or entry.get("abs_path")
+    if not path:
+        raise Blocked("BLOCKED_MISSING_TOOL",
+                      "CLI 依赖账里 %s 的 abs_path 为空（未安装）⇒ 不给结论；安装命令见 "
+                      "scripts/mutate-scan.md（Q2：装到 %s，**不是** /tmp）" % (name, TOOLS_DIR))
+    if not os.path.isfile(path):
+        raise Blocked("BLOCKED_MISSING_TOOL", "%s 的登记路径不存在：%s ⇒ 不降级（M5）" % (name, path))
+    real = os.path.realpath(path)
+    in_tools_dir = (os.path.abspath(path).startswith(os.path.abspath(TOOLS_DIR) + os.sep)
+                    or real.startswith(os.path.abspath(TOOLS_DIR) + os.sep))
+    sha = sha256_file(path)
+    reg_sha = entry.get("binary_sha256")
+    sha_ok = bool(reg_sha) and (sha == reg_sha)
+    if not in_tools_dir:
+        raise Blocked("BLOCKED_UNREGISTERED_TOOL",
+                      "%s 在 %s —— **不在登记目录** %s ⇒ 不给结论（§6.4-3：正式依赖必须落仓外固定登记目录，"
+                      "**不是** /tmp、也不是随便哪个 PATH 上的同名件；M5 禁止静默降级）"
+                      % (name, path, TOOLS_DIR))
+    if not sha_ok:
+        raise Blocked("BLOCKED_UNREGISTERED_TOOL",
+                      "%s（%s）的 binary sha256=%s，登记账写的是 %s ⇒ **指纹不符** ⇒ 不给结论"
+                      "（确认后更新 tools/cli-tools.json 再跑；M15 防漂移）"
+                      % (name, path, sha, (reg_sha or "(无)")))
+    res = run_clocked([path, "--version"], min(cfg["clock"], 30), cwd=os.path.dirname(path) or None)
+    ver = "(不可考)"
+    if not res["timeout"]:
+        blob = ((res["out"] or "") + "\n" + (res["err"] or "")).strip().splitlines()
+        if blob:
+            ver = blob[0].strip()
+    ctx.say("── 装前自证（§6.4-3 · M5/M15/C10）──")
+    ctx.say("   %s：%s（real=%s）" % (name, path, real))
+    ctx.say("   binary sha256=%s · 登记账值=%s ⇒ ✓ 路径在登记目录内 + 指纹一致" % (sha, reg_sha))
+    ctx.say("   自报版本：%s · 账里版本：%s%s"
+            % (ver, entry.get("version"), "" if ver.startswith(str(entry.get("version"))) else "（以 binary sha256 为准）"))
+    return {"name": name, "path": path, "real": real, "sha256": sha, "version": ver,
+            "account_version": entry.get("version"), "account": acct_path}
+
+
+def require_go(ctx):
+    go = shutil.which("go")
+    if not go:
+        raise Blocked("BLOCKED_MISSING_TOOL", "`go` 不在 PATH ⇒ 基线/覆盖率跑不了 ⇒ 不给结论（M5：不降级）")
+    res = run_clocked([go, "version"], min(ctx.cfg["clock"], 30))
+    return {"path": go, "version": (res["out"] or res["err"]).strip()}
+
+
+# ══════════════════════════════════════════════════════════════════
+# 5. 副本（B1/B7：**只在副本里变异**；cp -a 且兄弟模块同带）
+# ══════════════════════════════════════════════════════════════════
+
+def make_sandbox(ctx):
+    cfg = ctx.cfg
+    repo = os.path.abspath(cfg["repo"])
+    root = cfg.get("sandbox_root")
+    if root:
+        root = os.path.abspath(root)
+    else:
+        root = os.path.join(os.environ.get("TMPDIR", "/tmp"), "mutate-scan.%s" % uuid.uuid4().hex[:8])
+        cfg["sandbox_auto"] = True
+    rp = os.path.realpath(root)
+    rrepo = os.path.realpath(repo)
+    # 先登记副本根：哪怕后面「副本不完整」报错，finally 也能把它清掉（只清自己 mktemp 出来的）
+    cfg["sandbox_root"] = root
+    if rp == rrepo or rp.startswith(rrepo + os.sep):
+        raise Blocked("BLOCKED_SANDBOX_UNSAFE",
+                      "副本根 = %s 落在真仓内（%s）⇒ **绝不在真仓里变异**（B1/B7）⇒ 不给结论" % (root, repo))
+    if os.path.isdir(root) and os.listdir(root):
+        raise Blocked("BLOCKED_SANDBOX_UNSAFE",
+                      "副本根 %s 已存在且非空 ⇒ 拒绝复用（避免从未知状态的副本里得出结论；B3）" % root)
+    if not os.path.isdir(root):
+        os.makedirs(root)
+    paths = [p for p in (cfg.get("copy_paths") or "").split(",") if p.strip()]
+    if not paths:
+        paths = ["core", "shared"] if cfg["lang"] == "go" else ["scripts"]
+    t0 = time.time()
+    copied, nbytes = [], 0
+    for rel in paths:
+        src = os.path.join(repo, rel.strip())
+        if not os.path.exists(src):
+            raise Blocked("BLOCKED_SANDBOX_INCOMPLETE",
+                          "副本要带的 %s 在真仓里不存在（%s）⇒ 副本不完整 ⇒ 不给结论（M17）" % (rel, src))
+        dst = os.path.join(root, os.path.basename(rel))
+        res = run_clocked(["/bin/cp", "-a", src, dst], max(cfg["clock"], 300))
+        if res["timeout"] or res["rc"] != 0:
+            raise Blocked("BLOCKED_SANDBOX_INCOMPLETE",
+                          "cp -a %s → %s 失败（rc=%s）：%s" % (src, dst, res["rc"], (res["err"] or "")[:200]))
+        copied.append(dst)
+        for dirpath, _dirs, files in os.walk(dst):
+            for f in files:
+                try:
+                    nbytes += os.path.getsize(os.path.join(dirpath, f))
+                except OSError:
+                    pass
+    elapsed = time.time() - t0
+    ctx.say("── 副本（B1/B7：cp -a + 兄弟模块同带；M11/M17）──")
+    ctx.say("   真仓：%s（**只读，门内不写**）" % repo)
+    ctx.say("   副本根：%s · %s" % (root, "自动 mktemp -d" if cfg.get("sandbox_auto") else "--sandbox-root 指定"))
+    ctx.say("   已拷：%s（%d 文件 / %.1f MiB / %.1fs）"
+            % (", ".join(paths), count_files(copied), nbytes / 1048576.0, elapsed))
+    assert_sandbox_complete(ctx, root, repo)
+    return root
+
+
+def count_files(roots):
+    n = 0
+    for r in roots:
+        for _dp, _dn, fs in os.walk(r):
+            n += len(fs)
+    return n
+
+
+def assert_sandbox_complete(ctx, root, repo=None):
+    """M17：副本里关键前置件必须在 —— 含 go.mod 的 replace 目标（少了它覆盖率都收不了 = M11 实例）。"""
+    cfg = ctx.cfg
+    if cfg["lang"] != "go":
+        return
+    mod = os.path.join(root, cfg["module_dir"])
+    src = os.path.join(repo or cfg["repo"], cfg["module_dir"])
+    gomod = os.path.join(mod, "go.mod")
+    need = [gomod]
+    # go.sum 只在**源模块也有**时要求（零依赖的夹具模块本就没有 go.sum）
+    if os.path.isfile(os.path.join(src, "go.sum")) or os.path.isfile(os.path.join(mod, "go.sum")):
+        need.append(os.path.join(mod, "go.sum"))
+    missing = [p for p in need if not os.path.isfile(p)]
+    repl = []
+    if os.path.isfile(gomod):
+        for ln in read_text(gomod).splitlines():
+            m = re.match(r"^\s*replace\s+\S+\s*=>\s*(\S+)\s*$", ln)
+            if m:
+                tgt = m.group(1)
+                if tgt.startswith("."):
+                    repl.append((ln.strip(), os.path.normpath(os.path.join(mod, tgt))))
+    for raw, abs_t in repl:
+        if not os.path.isdir(abs_t):
+            missing.append("%s（replace 目标 → %s 不在副本里）" % (raw, abs_t))
+    if missing:
+        raise Blocked("BLOCKED_SANDBOX_INCOMPLETE",
+                      "副本不完整（M17/M11）：%s ⇒ 跑不起来**不等于**没有变异点 ⇒ 不给结论；"
+                      "口径：`--copy-paths` 必须把 replace 的兄弟模块一起带（core + shared），"
+                      "并保持两者相对位置" % "；".join(missing))
+    ctx.say("   副本完整性断言（M17）：✓ go.mod + go.sum + replace 目标 %d 个全在"
+            % len(repl))
+
+
+def kill_sandbox(ctx):
+    root = ctx.cfg.get("sandbox_root")
+    if not root:
+        return
+    if ctx.cfg.get("keep_sandbox"):
+        print("   （--keep-sandbox：副本保留在 %s）" % root)
+        return
+    if not ctx.cfg.get("sandbox_auto"):
+        print("   （副本根由 --sandbox-root 显式给出 ⇒ 门**不删**别人的路径，B3：只删自己建的）")
+        return
+    shutil.rmtree(root, ignore_errors=True)
+    print("   副本已清理：%s（只删门自己 mktemp 出来的那个根，B3）" % root)
+
+
+# ══════════════════════════════════════════════════════════════════
+# 6. 清单：干跑 → 归一 → 指纹（§2.1.4 / C4 / C6）
+# ══════════════════════════════════════════════════════════════════
+
+def normalize_gremlins(doc):
+    """归一：files 按名排序 → mutations 按 (line,column,type) 排序 → 剔白名单字段。
+
+    返回 (归一后文档, 归一化统计)。**没有稳定 ID**（gremlins 无 id/occurrence）⇒ 只按四元组定位。
+    """
+    if not isinstance(doc, dict) or not isinstance(doc.get("files"), list):
+        return None, {"error": "清单结构不符：没有 files[]"}
+    files = []
+    dropped = 0
+    unsorted_files = []
+    for f in doc["files"]:
+        if not isinstance(f, dict) or not isinstance(f.get("mutations"), list):
+            return None, {"error": "files[] 元素结构不符"}
+        ms = []
+        for x in f["mutations"]:
+            if not isinstance(x, dict):
+                return None, {"error": "mutations[] 元素结构不符"}
+            for k in ("type", "status", "line", "column"):
+                if k not in x:
+                    return None, {"error": "变异点缺字段 %s：%r" % (k, x)}
+            ms.append({"type": x["type"], "status": x["status"],
+                       "line": int(x["line"]), "column": int(x["column"])})
+        key = lambda m: (m["line"], m["column"], m["type"])
+        if ms != sorted(ms, key=key):
+            unsorted_files.append(f.get("file_name"))
+        files.append({"file_name": f.get("file_name"), "mutations": sorted(ms, key=key)})
+    files.sort(key=lambda x: x["file_name"] or "")
+    out = {"go_module": doc.get("go_module"), "files": files}
+    stat = {"files": len(files),
+            "mutations": sum(len(f["mutations"]) for f in files),
+            "dropped_fields": list(NORM_WHITELIST_KEYS),
+            "unsorted_files": unsorted_files,
+            "dropped_in_doc": sorted([k for k in doc.keys() if k in NORM_WHITELIST_KEYS])}
+    return out, stat
+
+
+def tuples_of(normdoc):
+    """四元组多集（file,line,column,type）—— 指纹的原料（C6：不用 job_id/清单序号）。"""
+    t = []
+    for f in normdoc["files"]:
+        for m in f["mutations"]:
+            t.append([f["file_name"], m["line"], m["column"], m["type"]])
+    return sorted(t)
+
+
+def fingerprint(normdoc):
+    return sha256_text(json.dumps(tuples_of(normdoc), ensure_ascii=False, sort_keys=True))
+
+
+def state_counts(normdoc, include_dry=False):
+    c = {}
+    for f in normdoc["files"]:
+        for m in f["mutations"]:
+            st = m["status"]
+            if st == DRY_STATE and not include_dry:
+                st = "(干跑态 RUNNABLE)"
+            c[st] = c.get(st, 0) + 1
+    return c
+
+
+def print_six_states(ctx, counts):
+    ctx.say("── 六态归类（§2.1.3；**不许把 SKIPPED/TIMED OUT/NOT VIABLE 当结论**）──")
+    total = 0
+    for st in SIX_STATES:
+        n = counts.get(st, 0)
+        total += n
+        ctx.say("   %-12s %3d  %s" % (st, n, STATE_MEANING[st] if n else ""))
+    dry = counts.get("(干跑态 RUNNABLE)", 0)
+    if dry:
+        ctx.say("   %-12s %3d  %s" % ("RUNNABLE", dry, "干跑态：只说明「覆盖率到得了且未被 --diff 跳过」，**不是**被杀/存活"))
+    return total, dry
+
+
+def raw_field_diff(a, b):
+    """未归一时同一清单两跑的字段级差异（证明 C4 的「顺序不稳 + 计时漂移」确实存在）。"""
+    diffs = []
+    order_pos = 0
+    if isinstance(a, dict) and isinstance(b, dict):
+        for k in sorted(set(a) | set(b)):
+            if a.get(k) != b.get(k):
+                diffs.append(k)
+        fa = {f.get("file_name"): f.get("mutations") for f in (a.get("files") or [])}
+        fb = {f.get("file_name"): f.get("mutations") for f in (b.get("files") or [])}
+        for fn in sorted(set(fa) | set(fb)):
+            if fa.get(fn) != fb.get(fn):
+                diffs.append("files[%s].mutations" % fn)
+                ta = [(m.get("line"), m.get("column"), m.get("type")) for m in (fa.get(fn) or [])]
+                tb = [(m.get("line"), m.get("column"), m.get("type")) for m in (fb.get(fn) or [])]
+                if len(ta) == len(tb):
+                    order_pos += sum(1 for x, y in zip(ta, tb) if x != y)
+    return diffs, order_pos
+
+
+# ══════════════════════════════════════════════════════════════════
+# 7. gremlins：干跑清单 / 真跑 / 收窄
+# ══════════════════════════════════════════════════════════════════
+
+def gremlins_narrow_args(cfg):
+    """**三维齐上**：① 路径/包（目标参数 + -E）② 行（--diff）③ 类型（11 个开关全写死）。
+
+    第 4 维是 `--point`（逐点断言「可跑集合 == 这一个点」）——gremlins **没有任何
+    「选一个变异体」的 flag**（无 id / 无 occurrence / 无位置选择器），所以只能收窄（§2.1.1）。
+    """
+    args = []
+    for name, _st in sorted(GREMLINS_TYPE_FLAGS.items()):
+        on = name in cfg["only_types"]
+        args.append("--%s=%s" % (name, "true" if (cfg["only_types"] and on) else
+                                 ("true" if (not cfg["only_types"] and name in GREMLINS_DEFAULT_TRUE) else "false")))
+    for rx in cfg["exclude_files"]:
+        args += ["-E", rx]
+    if cfg.get("diff"):
+        args += ["--diff", cfg["diff"]]
+    if cfg.get("timeout_coeff") is not None:
+        args += ["--timeout-coefficient", str(cfg["timeout_coeff"])]
+    return args
+
+
+def gremlins_run(ctx, tool, sandbox, out_path, dry):
+    """跑 gremlins（dry-run = 清单；真跑 = 判态）。**rc 一律不采信**，只读产物。"""
+    cfg = ctx.cfg
+    moddir = os.path.join(sandbox, cfg["module_dir"])
+    argv = [tool["path"], "unleash"]
+    if dry:
+        argv.append("--dry-run")
+    argv += gremlins_narrow_args(cfg)
+    argv += ["-o", out_path, cfg["pkg"]]
+    res = run_clocked(argv, cfg["clock"], cwd=moddir)
+    return res
+
+
+def load_manifest(ctx, path, what):
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        raise Blocked("BLOCKED_MANIFEST_MISSING",
+                      "%s：清单文件缺件/为空（%s）⇒ 当**产物缺件**，rc=2 不给结论；"
+                      "**绝不当「没有变异点」放过**（§2.1.2/C3）" % (what, path))
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (IOError, OSError, ValueError) as exc:
+        raise Blocked("BLOCKED_MANIFEST_UNPARSABLE", "%s：清单不可解析（%s）：%s" % (what, path, exc))
+    norm, stat = normalize_gremlins(doc)
+    if norm is None:
+        raise Blocked("BLOCKED_MANIFEST_UNPARSABLE", "%s：%s" % (what, stat.get("error")))
+    if stat["mutations"] == 0:
+        raise Blocked("BLOCKED_MANIFEST_EMPTY",
+                      "%s：清单里变异点 **0 条**（可解析但空）⇒ 不给结论（与「基线不绿」严格分开："
+                      "基线红时清单**根本不生成**，见 BLOCKED_BASELINE_RED）" % what)
+    return doc, norm, stat
+
+
+# ══════════════════════════════════════════════════════════════════
+# 8. 基线绿前置（§2.1.2/C3）
+# ══════════════════════════════════════════════════════════════════
+
+def baseline_cmd(ctx):
+    cfg = ctx.cfg
+    if cfg.get("baseline_cmd"):
+        return cfg["baseline_cmd"]
+    if cfg["lang"] == "go":
+        return "go test %s -count=1 -timeout 300s" % cfg["pkg"]
+    return cfg["test_cmd"]
+
+
+def run_baseline(ctx, sandbox, env):
+    cfg = ctx.cfg
+    cmd = baseline_cmd(ctx)
+    cwd = os.path.join(sandbox, cfg["module_dir"] if cfg["lang"] == "go" else (cfg.get("work_dir") or "."))
+    ctx.say("── 基线绿前置（§2.1.2 ★ 前置：不绿 ⇒ 清单**根本不生成**）──")
+    ctx.say("   基线命令：%s（cwd=%s）" % (cmd, cwd))
+    res = run_clocked(["/bin/bash", "-lc", cmd], cfg["clock"], cwd=cwd, env=env)
+    if res["timeout"]:
+        raise Blocked("BLOCKED_TIMEOUT", "基线命令超时（>%ds）⇒ 不给结论（C7）" % cfg["clock"])
+    if res["rc"] != 0:
+        tail = "\n".join((res["out"] or "").splitlines()[-12:])
+        raise Blocked("BLOCKED_BASELINE_RED",
+                      "★ 基线**不绿**（rc=%s）⇒ rc=2 **不给结论**；因果链：基线不绿 → 清单不生成 → "
+                      "**这不是「没有变异点」**（C3/§2.1.2）。先修基线/换更窄的 --pkg，再来跑腿一。"
+                      "\n      基线输出末尾：\n      | %s" % (res["rc"], tail.replace("\n", "\n      | ")))
+    ctx.say("   基线 rc=0 ⇒ ✓ 绿（%.2fs）" % res["elapsed"])
+    return {"cmd": cmd, "rc": res["rc"], "elapsed": round(res["elapsed"], 3)}
+
+
+# ══════════════════════════════════════════════════════════════════
+# 9. 单点跑：gremlins（收窄）/ cosmic-ray（stdout JSON）
+# ══════════════════════════════════════════════════════════════════
+
+def parse_point_go(spec):
+    parts = spec.rsplit(":", 3)
+    if len(parts) != 4:
+        raise Blocked("BLOCKED_USAGE", "--point 形态应为 <file>:<line>:<column>:<TYPE>：%r" % spec)
+    file_name, line, col, typ = parts[0], parts[1], parts[2], parts[3]
+    try:
+        return {"file": os.path.basename(file_name), "line": int(line), "column": int(col), "type": typ}
+    except ValueError:
+        raise Blocked("BLOCKED_USAGE", "--point 的 line/column 必须是整数：%r" % spec)
+
+
+def runnable_points(normdoc):
+    return [t for t in tuples_of(normdoc) if t[3] and status_of(normdoc, t) == DRY_STATE]
+
+
+def status_of(normdoc, tup):
+    for f in normdoc["files"]:
+        if f["file_name"] == tup[0]:
+            for m in f["mutations"]:
+                if [m["line"], m["column"], m["type"]] == [tup[1], tup[2], tup[3]]:
+                    return m["status"]
+    return None
+
+
+def classify_state(status):
+    if status in SIX_STATES:
+        return status
+    return None
+
+
+def judge_point_state(ctx, state, point_desc, pre_sha, post_sha, orig_sha, evidence):
+    """六态 → 三档退码（每态一句话证据；不许把 SKIPPED/TIMED OUT/NOT VIABLE 当结论）。
+
+    ⚠ 抛出的异常上带 `state` / `pre_sha` / `post_sha`：这样台账的 `end` 行记的仍是**六态值**
+    （LIVED / NOT COVERED / TIMED OUT …），而不是含混的「ABORTED」——结论与台账不许对不上。
+    """
+    def boom(cls, code, msg):
+        exc = cls(code, msg)
+        exc.state = state
+        exc.pre_sha = pre_sha
+        exc.post_sha = post_sha
+        raise exc
+
+    ctx.say("── 单点结论（六态之一 + 一句话证据）──")
+    ctx.say("   点：%s" % point_desc)
+    ctx.say("   状态：%s ⇒ %s" % (state, STATE_MEANING.get(state, "(未知状态)")))
+    ctx.say("   证据：%s" % evidence)
+    ctx.say("   副本目标 sha256：前像=%s · 后像=%s ⇒ %s"
+            % ((pre_sha or "")[:16], (post_sha or "")[:16],
+               "✓ 逐字节复原" if pre_sha == post_sha else "✗ **未复原**"))
+    if orig_sha and post_sha and orig_sha != post_sha:
+        boom(Blocked, "BLOCKED_RESIDUAL",
+             "**残留变异态**（C2）：副本目标与拷入时的 sha256 不一致（%s vs %s）⇒ 先复原再报，不给结论"
+             % (orig_sha[:16], post_sha[:16]))
+    if state == "KILLED":
+        pass
+    elif state == "LIVED":
+        boom(Failed, "FAIL_MUTANT_LIVED", "变异存活 ⇒ 覆盖缺口/判据太弱（真红）")
+    elif state == "NOT COVERED":
+        boom(Failed, "FAIL_MUTANT_NOT_COVERED", "该点没有用例跑到 ⇒ 覆盖缺口（真红）")
+    elif state == "TIMED OUT":
+        boom(Blocked, "BLOCKED_MUTANT_TIMED_OUT",
+             "变异体超时 ⇒ **配置/规模问题**（不是覆盖结论）⇒ 不给结论；"
+             "解：--timeout-coeff 放大（本机实测：同一批点在默认系数下全 TIMED OUT）")
+    elif state == "NOT VIABLE":
+        boom(Blocked, "BLOCKED_MUTANT_NOT_VIABLE", "变异使构建失败 ⇒ 不合法变异体，剔除不计分 ⇒ 不给结论")
+    elif state == "SKIPPED":
+        boom(Blocked, "BLOCKED_MUTANT_SKIPPED",
+             "被 --diff/过滤跳过 ⇒ **未验** ⇒ 不给结论（不许当结论，§2.1.3 第 6 态）")
+    else:
+        boom(Blocked, "BLOCKED_MANIFEST_UNPARSABLE", "状态不在六态里：%r" % state)
+    return "OK_POINT_KILLED"
+
+
+def go_single_point(ctx, tool, sandbox, ledger, baseline, orig_shas, narrow_norm, narrow_meta):
+    cfg = ctx.cfg
+    point = cfg["point_struct"]
+    tup = [point["file"], point["line"], point["column"], point["type"]]
+    runnable = runnable_points(narrow_norm)
+    if tup not in tuples_of(narrow_norm):
+        raise Blocked("BLOCKED_POINT_NOT_FOUND",
+                      "目标点 %r 不在收窄后的清单里 ⇒ 不给结论；收窄后清单里的点：%s"
+                      % (tup, tuples_of(narrow_norm)[:8]))
+    if status_of(narrow_norm, tup) == "SKIPPED":
+        raise Blocked("BLOCKED_MUTANT_SKIPPED", "目标点被 --diff 跳过（SKIPPED）⇒ **未验** ⇒ 不给结论")
+    if len(runnable) != 1 or runnable[0] != tup:
+        raise Blocked("BLOCKED_POINT_AMBIGUOUS",
+                      "四维收窄后仍有 %d 个可跑变异点（目标 %r）⇒ **收不到唯一** ⇒ 不给结论；"
+                      "仍可跑的：%s；再加一维（-E 排除别的文件 / --only-types 换类型 / --diff）"
+                      % (len(runnable), tup, runnable[:8]))
+    ctx.say("── 四维收窄（§2.1.1：gremlins **没有单点选择器**，只能收窄）──")
+    for ln in narrow_meta:
+        ctx.say("   %s" % ln)
+    ctx.say("   ★ **已收窄到唯一变异点**：%s:%d:%d:%s（可跑集合 == 1）"
+            % (point["file"], point["line"], point["column"], point["type"]))
+
+    target_abs = os.path.join(sandbox, cfg["module_dir"], cfg["pkg"].strip("./"), point["file"])
+    if not os.path.isfile(target_abs):
+        target_abs = find_file(sandbox, point["file"])
+    if not target_abs or not os.path.isfile(target_abs):
+        raise Blocked("BLOCKED_POINT_NOT_FOUND", "副本里找不到目标文件 %s" % point["file"])
+    pre_sha = sha256_file(target_abs)
+    out = os.path.join(sandbox, "run.json")
+    ctx.say("── 单点真跑（cwd=副本模块根；前像 sha256=%s）──" % pre_sha[:16])
+    res = gremlins_run(ctx, tool, sandbox, out, dry=False)
+    ctx.say("   命令：%s" % " ".join(res["argv"]))
+    if res["timeout"]:
+        post = sha256_file(target_abs) if os.path.isfile(target_abs) else None
+        raise Blocked("BLOCKED_TIMEOUT",
+                      "单点跑超时（>%ds）⇒ 先核复原再报：前像=%s · 当前=%s ⇒ %s（C7）"
+                      % (cfg["clock"], (pre_sha or "")[:16], (post or "缺件")[:16],
+                         "已复原" if post == pre_sha else "**残留，需人工复原**"))
+    tail = "\n".join((res["out"] or "").splitlines()[-6:])
+    ctx.say("   工具 stdout 末尾：\n      | %s" % tail.replace("\n", "\n      | "))
+    post_sha = sha256_file(target_abs)
+    doc, norm, _stat = load_manifest(ctx, out, "单点真跑清单")
+    st = status_of(norm, tup)
+    if st is None:
+        raise Blocked("BLOCKED_POINT_NOT_FOUND",
+                      "真跑清单里没有目标点 %r（工具没跑到它？）⇒ 不给结论（J5：不当结果）" % tup)
+    states = state_counts(norm)
+    re_seen = states.get(st, 0)
+    if re_seen != 1:
+        raise Blocked("BLOCKED_TOOL_ERROR",
+                      "真跑清单里该点出现 %d 次 ⇒ 产物自相矛盾 ⇒ 判「工具坏」，不当变异结果（J5）" % re_seen)
+    evidence = ("真跑清单里该点状态 = %s；清单计数 %s；工具 rc=%s（**不采信**，只读产物）"
+                % (st, json.dumps(states, ensure_ascii=False), res["rc"]))
+    code = judge_point_state(ctx, st, "%s:%d:%d:%s" % tuple(tup), pre_sha, post_sha,
+                             orig_shas.get(target_abs), evidence)
+    return {"code": code, "state": st, "cmd": res["argv"], "rc": res["rc"],
+            "pre_sha": pre_sha, "post_sha": post_sha, "target_abs": target_abs,
+            "states": states, "manifest_sha256": fingerprint(norm), "elapsed": res["elapsed"]}
+
+
+def find_file(root, name):
+    for dp, _dn, fs in os.walk(root):
+        if name in fs:
+            return os.path.join(dp, name)
+    return None
+
+
+def py_single_point(ctx, tool, sandbox, ledger, baseline, orig_shas):
+    cfg = ctx.cfg
+    cwd = os.path.join(sandbox, cfg.get("work_dir") or ".")
+    tgt_rel = cfg["target"]
+    target_abs = os.path.join(sandbox, tgt_rel)
+    if not os.path.isfile(target_abs):
+        raise Blocked("BLOCKED_POINT_NOT_FOUND", "副本里没有目标 %s（--copy-paths 要带上它的目录）" % target_abs)
+    ctx.say("── 单点跑（cosmic-ray；§2.1.5 硬限：无 --config · 不施加 timeout · 就地改 ⇒ 副本是硬要求）──")
+    ctx.say("   目标：%s · operator=%s · occurrence=%d" % (tgt_rel, cfg["operator"], cfg["occurrence"]))
+    ctx.say("   判据命令：%s" % cfg["test_cmd"])
+    pre_sha = sha256_file(target_abs)
+    argv = [tool["path"], "mutate-and-test", tgt_rel, cfg["operator"], str(cfg["occurrence"]),
+            cfg["test_cmd"]]
+    res = run_clocked(argv, cfg["clock"], cwd=cwd)
+    ctx.say("   命令：%s" % " ".join(argv))
+    post_sha = sha256_file(target_abs)
+    if res["timeout"]:
+        raise Blocked("BLOCKED_TIMEOUT",
+                      "单点跑超时（>%ds）；前像=%s · 当前=%s ⇒ %s；cosmic-ray **不施加 config 里的 timeout**"
+                      "（实测 config timeout=1.0 时 test-command=`sleep 5` 真跑满 5.2s）⇒ 墙钟只能门自带（C7）"
+                      % (cfg["clock"], pre_sha[:16], post_sha[:16],
+                         "已复原" if pre_sha == post_sha else "**残留变异态，需人工复原**"))
+    if pre_sha != post_sha:
+        raise Blocked("BLOCKED_RESIDUAL",
+                      "**残留变异态**（C2）：cosmic-ray 就地改目标文件，正常结束才逐字节复原；"
+                      "本次后像 %s ≠ 前像 %s ⇒ 先复原再报，不给结论" % (post_sha[:16], pre_sha[:16]))
+    outcome = None
+    blob = (res["out"] or "").strip()
+    try:
+        outcome = json.loads(blob)
+    except ValueError:
+        for ln in reversed(blob.splitlines()):
+            ln = ln.strip()
+            if ln.startswith("{"):
+                try:
+                    outcome = json.loads(ln)
+                    break
+                except ValueError:
+                    continue
+    if not isinstance(outcome, dict) or "test_outcome" not in outcome:
+        raise Blocked("BLOCKED_OUTCOME_MISSING",
+                      "stdout 里没有可解析的 test_outcome（rc=%s —— **rc 不采信**：恒过与恒失败都退 0）"
+                      "\n      stdout 前 200 字：%s\n      stderr 前 200 字：%s"
+                      % (res["rc"], blob[:200], (res["err"] or "")[:200]))
+    oc = str(outcome["test_outcome"]).strip().lower()
+    if oc not in CR_OUTCOME_MAP:
+        raise Blocked("BLOCKED_OUTCOME_MISSING", "test_outcome 取值未知：%r（映射表：%s）"
+                      % (outcome["test_outcome"], sorted(CR_OUTCOME_MAP)))
+    st = CR_OUTCOME_MAP[oc]
+    if outcome.get("worker_outcome") not in (None, "normal"):
+        raise Blocked("BLOCKED_TOOL_ERROR",
+                      "worker_outcome=%r（非 normal）⇒ 工具失效不得被读成结果（J5）" % outcome.get("worker_outcome"))
+    ctx.say("   工具 stdout JSON（**判据读 test_outcome，不读 rc**）：")
+    ctx.say("      %s" % json.dumps({k: outcome.get(k) for k in ("worker_outcome", "test_outcome")},
+                                     ensure_ascii=False))
+    evidence = ("stdout JSON：test_outcome=%r、worker_outcome=%r（进程 rc=%s —— killed 与 survived 同码，"
+                "实测两者都退 0 ⇒ 读 rc 会结论反向）" % (outcome["test_outcome"], outcome.get("worker_outcome"), res["rc"]))
+    code = judge_point_state(ctx, st, "%s:%s#%d" % (tgt_rel, cfg["operator"], cfg["occurrence"]),
+                             pre_sha, post_sha, orig_shas.get(target_abs), evidence)
+    return {"code": code, "state": st, "cmd": argv, "rc": res["rc"], "pre_sha": pre_sha,
+            "post_sha": post_sha, "target_abs": target_abs,
+            "states": {st: 1}, "manifest_sha256": None, "elapsed": res["elapsed"],
+            "spec_fingerprint": sha256_text(json.dumps([tgt_rel, cfg["operator"], cfg["occurrence"]],
+                                                       ensure_ascii=False))}
+
+
+def py_init(ctx, tool, sandbox):
+    """cosmic-ray init：拿清单（可审计输入）。rc=78 = os.EX_CONFIG ⇒ 映射成仓内 rc=2。"""
+    cfg = ctx.cfg
+    cwd = os.path.join(sandbox, cfg.get("work_dir") or ".")
+    cfgp = os.path.join(sandbox, "cr.toml")
+    with open(cfgp, "w", encoding="utf-8") as fh:
+        fh.write("[cosmic-ray]\nmodule-path = %s\ntimeout = 10.0\nexcluded-modules = []\n"
+                 "test-command = %s\n\n[cosmic-ray.distributor]\nname = \"local\"\n"
+                 % (json.dumps(cfg["target"]), json.dumps(cfg["test_cmd"])))
+    sess = os.path.join(sandbox, "session.sqlite")
+    res = run_clocked([tool["path"], "init", cfgp, sess], cfg["clock"], cwd=cwd)
+    ctx.say("── Python 清单（cosmic-ray init，可审计输入）──")
+    ctx.say("   cr.toml：%s · 会话：%s" % (cfgp, sess))
+    if res["timeout"]:
+        raise Blocked("BLOCKED_TIMEOUT", "cosmic-ray init 超时 ⇒ 不给结论")
+    if res["rc"] == 78:
+        raise Blocked("BLOCKED_CR_INIT", "cosmic-ray init rc=78（os.EX_CONFIG）⇒ 配置错 ⇒ 映射成仓内 rc=2")
+    if res["rc"] != 0 or not os.path.isfile(sess):
+        raise Blocked("BLOCKED_CR_INIT", "cosmic-ray init rc=%s / 会话缺件（%s）：%s"
+                      % (res["rc"], sess, (res["err"] or "")[:200]))
+    dump = run_clocked([tool["path"], "dump", sess], cfg["clock"], cwd=cwd)
+    specs = []
+    for ln in (dump["out"] or "").splitlines():
+        ln = ln.strip()
+        if not ln.startswith("["):
+            continue
+        try:
+            row = json.loads(ln)
+        except ValueError:
+            continue
+        for mu in (row[0].get("mutations") or []):
+            specs.append([mu.get("module_path"), mu.get("operator_name"), mu.get("occurrence"),
+                          mu.get("start_pos")])
+    if not specs:
+        raise Blocked("BLOCKED_MANIFEST_EMPTY", "cosmic-ray init 出会话但 0 个变异点 ⇒ 不给结论（不是「没有变异点」）")
+    fp = sha256_text(json.dumps(sorted(specs), ensure_ascii=False))
+    ctx.say("   归一：%d 个变异点（按 module/operator/occurrence/start_pos 排序）"
+            " · 四元组多集指纹=%s" % (len(specs), fp[:16]))
+    ctx.say("   ★ 不用 job_id 当指纹：实测同输入两次 init 的 job_id 集合全不同（UUID；C6/§2.1.5-⑤）")
+    return {"points": len(specs), "fingerprint": fp, "session": sess, "specs": specs}
+
+
+# ══════════════════════════════════════════════════════════════════
+# 10. 主流程
+# ══════════════════════════════════════════════════════════════════
+
+def gate(ctx):
+    cfg = ctx.cfg
+    ledger = Ledger(ctx)
+    env = dict(os.environ)
+    ledger.startup()
+
+    # ① 装前自证（工具）
+    if cfg["lang"] == "go":
+        tool = resolve_tool(ctx, "gremlins", cfg.get("gremlins_path"))
+        go = require_go(ctx)
+        ctx.say("   构建链：%s" % go["version"])
+    else:
+        tool = resolve_tool(ctx, "cosmic-ray", cfg.get("cr_path"))
+
+    # ② 副本（**在 try 内**：副本不完整等报错也必须能清掉自己 mktemp 出来的那个根，B3）
+    orig_shas = {}
+    manifest_sha = None
+    try:
+        sandbox = make_sandbox(ctx)
+        cfg["sandbox_root"] = sandbox
+        payload = {"lang": cfg["lang"], "tool": tool["name"], "tool_version": tool["version"],
+                   "tool_binary_sha256": tool["sha256"], "tool_path": tool["path"],
+                   "repo": os.path.abspath(cfg["repo"]), "sandbox_root": sandbox,
+                   "pkg": cfg.get("pkg"), "target": cfg.get("target"),
+                   "diff": cfg.get("diff"), "only_types": sorted(cfg["only_types"]),
+                   "exclude_files": cfg["exclude_files"], "clock": cfg["clock"]}
+        if cfg["lang"] == "go":
+            # 目标源文件的前像（拷入时值）—— 用于「跑完是否残留变异态」
+            if cfg.get("point"):
+                pt = cfg["point_struct"]
+                ta = os.path.join(sandbox, cfg["module_dir"], cfg["pkg"].strip("./"), pt["file"])
+                if not os.path.isfile(ta):
+                    ta = find_file(sandbox, pt["file"])
+                if ta:
+                    cfg["_point_abs"] = os.path.abspath(ta)
+                    orig_shas[cfg["_point_abs"]] = sha256_file(ta)
+
+        base = run_baseline(ctx, sandbox, env)
+        payload["baseline"] = base
+
+        if cfg["lang"] == "py":
+            info = py_init(ctx, tool, sandbox)
+            payload["manifest_sha256"] = info["fingerprint"]
+            payload["spec_fingerprint"] = info["fingerprint"]
+            payload["points"] = info["points"]
+            if cfg.get("manifest_only"):
+                ledger.begin(payload)
+                ctx.say("── 结论：rc=0 OK_MANIFEST（Python 清单 + 归一；**未跑变异**，--manifest-only）──")
+                ledger.end("OK_MANIFEST", "OK_MANIFEST", {"manifest_sha256": info["fingerprint"]})
+                return EXIT_OK
+            # 真跑单点（--operator/--occurrence 本身就是「单点」；cosmic-ray 有 occurrence 选择器）
+            ta = os.path.abspath(os.path.join(sandbox, cfg["target"]))
+            if not os.path.isfile(ta):
+                raise Blocked("BLOCKED_POINT_NOT_FOUND", "副本里没有目标 %s（--copy-paths 要带上它的目录）" % ta)
+            orig_shas[ta] = sha256_file(ta)
+            payload["point"] = "%s:%s#%d" % (cfg["target"], cfg["operator"], cfg["occurrence"])
+            payload["spec_fingerprint"] = sha256_text(json.dumps(
+                [cfg["target"], cfg["operator"], cfg["occurrence"]], ensure_ascii=False))
+            payload["pre_sha"] = orig_shas[ta]
+            payload["target_abs"] = ta
+            ledger.begin(payload)
+            try:
+                r = py_single_point(ctx, tool, sandbox, ledger, base, orig_shas)
+            except (Blocked, Failed) as exc:
+                ledger.end(getattr(exc, "state", None) or "ABORTED", exc.code,
+                           dict(payload, post_sha=getattr(exc, "post_sha", None),
+                                abort=exc.msg[:300]))
+                raise
+            payload.update({"post_sha": r["post_sha"], "cmd": r["cmd"], "cmd_rc": r["rc"],
+                            "point_state": r["state"], "elapsed_s_run": round(r["elapsed"], 3)})
+            print_final(ctx, "OK" if r["code"] == "OK_POINT_KILLED" else "FAIL", r["code"])
+            ledger.end(r["state"], r["code"], payload)
+            return EXIT_OK if r["code"] == "OK_POINT_KILLED" else EXIT_FAIL
+
+        # ── Go：干跑清单 + 归一（+ 可选的 J3 双跑）──
+        m1 = os.path.join(sandbox, "manifest.json")
+        ctx.say("── 清单（干跑；rc 一律不采信，只读产物 + 断言点数）──")
+        res1 = gremlins_run(ctx, tool, sandbox, m1, dry=True)
+        ctx.say("   命令：%s" % " ".join(res1["argv"]))
+        if res1["timeout"]:
+            raise Blocked("BLOCKED_TIMEOUT", "干跑清单超时（>%ds）⇒ 不给结论（C7）" % cfg["clock"])
+        doc1, norm1, stat1 = load_manifest(ctx, m1, "干跑清单")
+        fp1 = fingerprint(norm1)
+        ctx.say("   归一：files 排序 + mutations 按 (line,column,type) 排序 + 剔白名单 %s"
+                % "、".join(NORM_WHITELIST_KEYS))
+        ctx.say("   归一前：%s" % json.dumps({k: doc1.get(k) for k in sorted(doc1) if k in NORM_WHITELIST_KEYS
+                                             or k in ("go_module", "files")}, ensure_ascii=False)[:160] + " …")
+        ctx.say("   归一后（头一段）：%s" % json.dumps(norm1["files"][:1], ensure_ascii=False)[:160])
+        ctx.say("   白名单剔除（逐字段理由）：")
+        for k, why in NORM_WHITELIST:
+            if k in doc1:
+                ctx.say("      - %s：%s" % (k, why))
+        ctx.say("   归一前 mutations 顺序**不是**排序序的文件：%s（C4 顺序不稳的现场）"
+                % (stat1["unsorted_files"] or "（本跑恰已是排序序）"))
+        ctx.say("   四元组多集指纹（C6：不用清单序号/job_id）：%s" % fp1)
+        if cfg.get("manifest_out"):
+            outp = os.path.abspath(cfg["manifest_out"])
+            try:
+                with open(outp, "w", encoding="utf-8") as fh:
+                    json.dump({"schema": "mutate-scan-manifest-1", "lang": "go",
+                               "tool": tool["name"], "tool_binary_sha256": tool["sha256"],
+                               "pkg": cfg["pkg"], "diff": cfg.get("diff"),
+                               "only_types": sorted(cfg["only_types"]),
+                               "exclude_files": cfg["exclude_files"],
+                               "raw_manifest_sha256": sha256_file(m1),
+                               "spec_fingerprint": fp1, "normalized": norm1}, fh,
+                              ensure_ascii=False, indent=2)
+            except (IOError, OSError) as exc:
+                raise Blocked("BLOCKED_MANIFEST_MISSING", "--manifest-out 写不进去：%s（%s）" % (outp, exc))
+            ctx.say("   归一后清单已落盘（可审计输入）：%s（sha256=%s）"
+                    % (outp, sha256_file(outp)[:16]))
+        print_six_states(ctx, state_counts(norm1))
+
+        payload.update({"manifest_sha256": fp1, "spec_fingerprint": fp1,
+                        "points": stat1["mutations"], "cmd": res1["argv"], "cmd_rc": res1["rc"],
+                        "pre_sha": None, "post_sha": None,
+                        "states": state_counts(norm1)})
+
+        if cfg.get("j3"):
+            m2 = os.path.join(sandbox, "manifest2.json")
+            res2 = gremlins_run(ctx, tool, sandbox, m2, dry=True)
+            doc2, norm2, stat2 = load_manifest(ctx, m2, "干跑清单（第二跑）")
+            fp2 = fingerprint(norm2)
+            raw, order_pos = raw_field_diff(doc1, doc2)
+            ctx.say("── J3：同输入连跑两次（**归一后比较**，§2.1.4）──")
+            ctx.say("   未归一时不同的字段：%s（共 %d 个）" % (raw or "无", len(raw)))
+            ctx.say("   其中 mutation **顺序整体错位**的位置数：%d 个（归一后应归零；这就是 C4 的现场）" % order_pos)
+            ctx.say("   归一后：指纹1=%s · 指纹2=%s ⇒ %s"
+                    % (fp1[:16], fp2[:16], "**一致** ✓（J3 通过）" if fp1 == fp2 else "**不一致** ✗"))
+            if fp1 != fp2:
+                raise Blocked("BLOCKED_MANIFEST_UNPARSABLE",
+                              "J3：归一后两次清单仍不一致 ⇒ 不确定的东西不许给结论（rc=2）")
+
+        # 收窄维度报告
+        if cfg["only_types"] or cfg["exclude_files"] or cfg.get("diff"):
+            ctx.say("── 四维收窄（§2.1.1）──")
+            ctx.say("   维1 路径/包：--pkg %s%s" % (cfg["pkg"], " · -E %s" % cfg["exclude_files"] if cfg["exclude_files"] else ""))
+            ctx.say("   维2 行    ：%s" % ("--diff %s" % cfg["diff"] if cfg.get("diff") else "**未上**（不给 --diff 就是全包）"))
+            ctx.say("   维3 类型  ：%s" % ("只开 %s（其余 10 个显式 =false）" % sorted(cfg["only_types"]) if cfg["only_types"] else "全默认"))
+            ctx.say("   维4 逐点  ：%s" % (cfg.get("point") or "未给 --point"))
+            runnable = runnable_points(norm1)
+            ctx.say("   收窄后可跑集合：%d 个" % len(runnable))
+            if cfg.get("diff") and not runnable:
+                raise Blocked("BLOCKED_DIFF_NO_MATCH",
+                              "上了 --diff 但**可跑集合为 0**（清单 %d 条全 SKIPPED）⇒ 不给结论。"
+                              "成因（源码 + 实测）：gremlins 的 diff 路径基 = `git diff` 的仓库顶层，"
+                              "而覆盖率路径基 = 命令行给的**目标目录**（coverage.removeModuleFromPath → "
+                              "Rel(CallingDir, path)）⇒ 包粒度跑时两者永远对不上（实测：目标 "
+                              "./internal/sliceobs/ 时清单 file_name=`cost_table.go`，而 git diff 给的是 "
+                              "`internal/sliceobs/cost_table.go`）⇒ --diff 这一维在**包粒度**上不可用；"
+                              "只有「git 顶层 == Go 模块根 + 目标参数 `.`」时才对齐，而那要求**全模块**基线绿"
+                              % stat1["mutations"])
+
+        if not cfg.get("point"):
+            print_final(ctx, "OK", "OK_MANIFEST")
+            payload["cmd"] = res1["argv"]
+            payload["cmd_rc"] = res1["rc"]
+            ledger.begin(payload)
+            ledger.end("OK_MANIFEST", "OK_MANIFEST", payload)
+            return EXIT_OK
+
+        # ── 单点（Go）──
+        narrow_meta = ["维1 路径/包：%s" % cfg["pkg"],
+                       "维2 行：%s" % (cfg.get("diff") or "未上"),
+                       "维3 类型：%s" % (sorted(cfg["only_types"]) or "全默认"),
+                       "维4 逐点：%s" % cfg["point"]]
+        payload["pre_sha"] = orig_shas.get(cfg.get("_point_abs"))
+        payload["target_abs"] = cfg.get("_point_abs")
+        ledger.begin(payload)
+        try:
+            r = go_single_point(ctx, tool, sandbox, ledger, base, orig_shas, norm1, narrow_meta)
+        except (Blocked, Failed) as exc:
+            ledger.end(getattr(exc, "state", None) or "ABORTED", exc.code,
+                       dict(payload, post_sha=getattr(exc, "post_sha", None),
+                            abort=exc.msg[:300]))
+            raise
+        payload.update({"post_sha": r["post_sha"], "cmd": r["cmd"], "cmd_rc": r["rc"],
+                        "point_state": r["state"], "elapsed_s_run": round(r["elapsed"], 3)})
+        print_final(ctx, "OK" if r["code"] == "OK_POINT_KILLED" else "FAIL", r["code"])
+        ledger.end(r["state"], r["code"], payload)
+        return EXIT_OK if r["code"] == "OK_POINT_KILLED" else EXIT_FAIL
+    finally:
+        if not cfg.get("_no_cleanup"):
+            kill_sandbox(ctx)
+
+
+def print_final(ctx, tag, code):
+    print("════════════════════════════════════════════════════════════════")
+    tier = REASON_TIER.get(code, EXIT_BLOCKED)
+    print("结论：rc=%d %s（原因码 %s）—— %s" % (tier, tag, code, REASON_DESC.get(code, "")))
+    ctx.states = ctx.states
+
+
+# ══════════════════════════════════════════════════════════════════
+# 11. 自检（--self-test）：自身先自证，不过则拒绝跑真目标
+# ══════════════════════════════════════════════════════════════════
+
+FIX_GO_P1 = '''package p1
+
+// 夹具：p1 里恰好一个 INVERT_NEGATIVES 点（-x）与一个 CONDITIONALS_NEGATION 点（a > b）
+func Neg(x int) int { return -x }
+
+func Cmp(a, b int) bool { return a > b }
+'''
+
+FIX_GO_P1_TEST = '''package p1
+
+import "testing"
+
+func TestNeg(t *testing.T) {
+	if Neg(3) != -3 {
+		t.Fatalf("Neg(3) = %d, want -3", Neg(3))
+	}
+}
+
+func TestCmp(t *testing.T) {
+	if !Cmp(2, 1) {
+		t.Fatal("Cmp(2,1) 应为 true")
+	}
+}
+'''
+
+FIX_GO_P2 = '''package p2
+
+func Neg(y int) int { return -y }
+'''
+
+FIX_GO_P2_TEST = '''package p2
+
+import "testing"
+
+func TestNeg(t *testing.T) {
+	if Neg(4) != -4 {
+		t.Fatal("Neg(4) 应为 -4")
+	}
+}
+'''
+
+FIX_GO_BAD_TEST = '''package p1
+
+import "testing"
+
+func TestAlwaysRed(t *testing.T) {
+	t.Fatal("自检夹具：故意让基线红")
+}
+'''
+
+FIX_PY_CHECK = '''def classify(n):
+    if n > 0:
+        return "pos"
+    return "neg"
+'''
+
+FIX_PY_JUDGE = '''#!/bin/bash
+# 判据（跑起来与 cwd 无关：先切到本脚本所在目录）
+cd "$(dirname "$0")" || exit 1
+python3 -c 'import check; assert check.classify(5) == "pos"'
+'''
+
+FAKE_GREMLINS_EMPTY = '''#!/bin/bash
+# 假工具：什么都不产出（清单缺件场景）
+exit 0
+'''
+
+
+def make_fixture(root):
+    """合成夹具（**不碰真目标**）：一个微 Go 模块（两包 + 测试 + 沙箱内 git 仓）+ 一个微 Python 目标。"""
+    mod = os.path.join(root, "msfix")
+    os.makedirs(os.path.join(mod, "p1"))
+    os.makedirs(os.path.join(mod, "p2"))
+    files = {
+        os.path.join(mod, "go.mod"): "module msfix\n\ngo 1.21\n",
+        os.path.join(mod, "p1", "calc.go"): FIX_GO_P1,
+        os.path.join(mod, "p1", "calc_test.go"): FIX_GO_P1_TEST,
+        os.path.join(mod, "p2", "calc.go"): FIX_GO_P2,
+        os.path.join(mod, "p2", "calc_test.go"): FIX_GO_P2_TEST,
+        os.path.join(root, "p1_red_test.go.txt"): FIX_GO_BAD_TEST,
+    }
+    for p, text in files.items():
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    py = os.path.join(root, "py")
+    os.makedirs(py)
+    with open(os.path.join(py, "check.py"), "w", encoding="utf-8") as fh:
+        fh.write(FIX_PY_CHECK)
+    with open(os.path.join(py, "judge.sh"), "w", encoding="utf-8") as fh:
+        fh.write(FIX_PY_JUDGE)
+    os.chmod(os.path.join(py, "judge.sh"), 0o755)
+    fake = os.path.join(root, "fake-gremlins")
+    with open(fake, "w", encoding="utf-8") as fh:
+        fh.write(FAKE_GREMLINS_EMPTY)
+    os.chmod(fake, 0o755)
+    # 沙箱内自建 git 仓（--diff 维度要用；真仓 .git 8.4G 不可拷）
+    run_clocked(["/usr/bin/git", "init", "-q", "-b", "main", mod], 60)
+    run_clocked(["/usr/bin/git", "-C", mod, "add", "-A"], 60)
+    run_clocked(["/usr/bin/git", "-C", mod, "-c", "user.email=st@local", "-c", "user.name=st",
+                 "commit", "-q", "-m", "fixture"], 60)
+    return mod, py, fake
+
+
+def write_account(path, entries):
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"schema": "zerg-cli-tools-1", "tools": entries}, fh, ensure_ascii=False, indent=2)
+    return path
+
+
+def sub_run(args, state_dir=None, env_extra=None, timeout=600, cwd=None):
+    env = dict(os.environ)
+    env["MUTATE_SCAN_CHILD"] = "1"
+    if state_dir:
+        env["ZERG_STATE_DIR"] = state_dir
+    if env_extra:
+        env.update(env_extra)
+    argv = [sys.executable, SELF, "--no-self-test"] + list(args)
+    try:
+        proc = subprocess.Popen(argv, env=env, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        out = proc.communicate(timeout=timeout)[0].decode("utf-8", "replace")
+        return proc.returncode, out
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        return 99, "(子进程 %ds 未结束 ⇒ 自检判死)" % timeout
+    except (IOError, OSError) as exc:
+        return 99, "子进程起不来：%s" % exc
+
+
+def reason_of(out):
+    for code, tier in sorted(REASON_TIER.items(), key=lambda kv: kv[1], reverse=True):
+        if code in (out or ""):
+            return code
+    return None
+
+
+def run_self_test():
+    root = os.path.join(os.environ.get("TMPDIR", "/tmp"), "mutate-scan-selftest-%s" % uuid.uuid4().hex[:8])
+    os.makedirs(root)
+    mod, py, fake = make_fixture(root)
+    state = os.path.join(root, "state")
+    os.makedirs(state)
+    ledger = os.path.join(state, LEDGER_NAME)
+    acct = write_account(os.path.join(root, "acct.json"), [
+        {"name": "gremlins", "abs_path": TOOLS_DIR + "/bin/gremlins",
+         "binary_sha256": sha256_file(TOOLS_DIR + "/bin/gremlins") if os.path.isfile(TOOLS_DIR + "/bin/gremlins") else "0" * 64,
+         "version": "不可考"},
+        {"name": "cosmic-ray", "abs_path": TOOLS_DIR + "/mutvenv/bin/cosmic-ray",
+         "binary_sha256": sha256_file(TOOLS_DIR + "/mutvenv/bin/cosmic-ray")
+         if os.path.isfile(TOOLS_DIR + "/mutvenv/bin/cosmic-ray") else "0" * 64,
+         "version": "8.7.0"},
+    ])
+    bad_acct = write_account(os.path.join(root, "acct-bad-sha.json"), [
+        {"name": "gremlins", "abs_path": TOOLS_DIR + "/bin/gremlins", "binary_sha256": "f" * 64},
+        {"name": "cosmic-ray", "abs_path": TOOLS_DIR + "/mutvenv/bin/cosmic-ray", "binary_sha256": "f" * 64},
+    ])
+    fake_acct = write_account(os.path.join(root, "acct-fake.json"), [
+        {"name": "gremlins", "abs_path": fake, "binary_sha256": sha256_file(fake)},
+    ])
+    checks = []
+
+    def add(name, ok, note, out=""):
+        checks.append((name, ok, note, out))
+
+    def run(args, timeout=600, tools_dir=None):
+        # cwd 钉在自检临时根：夹具里的假工具即使乱写文件也写不到真仓里
+        return sub_run(args, state_dir=state, cwd=root,
+                       env_extra={"ZERG_TOOLS_DIR": tools_dir or TOOLS_DIR}, timeout=timeout)
+
+    base_go = ["--lang", "go", "--repo", root, "--module-dir", "msfix", "--pkg", "./p1/",
+               "--copy-paths", "msfix", "--ledger-path", ledger, "--clock", "120"]
+
+    print("════════════════════════════════════════════════════════════════")
+    print("mutate-scan %s 自检（合成夹具 · **不碰真目标** · 台账钉在 %s）" % (VERSION, state))
+    print("夹具：%s（微 Go 模块 msfix/p1 msfix/p2 + 微 Python 目标）" % root)
+
+    have_gremlins = os.path.isfile(TOOLS_DIR + "/bin/gremlins")
+    have_cr = os.path.isfile(TOOLS_DIR + "/mutvenv/bin/cosmic-ray")
+
+    # T1 装前自证：真工具在登记目录 + 指纹一致 ⇒ 通过；sha 改错 ⇒ rc=2
+    if have_gremlins:
+        rc, out = run(base_go + ["--tools-account", acct, "--gremlins", TOOLS_DIR + "/bin/gremlins"])
+        ok1 = (rc == 0) and ("装前自证" in out)
+        rc2, out2 = run(base_go + ["--tools-account", bad_acct, "--gremlins", TOOLS_DIR + "/bin/gremlins"])
+        add("T1 [A1_TOOL_REGISTERED] 登记目录 + binary sha256 一致 ⇒ 放行；sha 改错 ⇒ rc=2 BLOCKED_UNREGISTERED_TOOL",
+            ok1 and rc2 == 2 and "BLOCKED_UNREGISTERED_TOOL" in out2,
+            "正常 rc=%d · sha 改错 rc=%d 原因码=%s" % (rc, rc2, reason_of(out2)), out2)
+    else:
+        add("T1 [A1_TOOL_REGISTERED] 登记目录 + binary sha256", False,
+            "缺件：%s/bin/gremlins 不在登记目录 ⇒ 夹具无法建立（这是缺件，不是判定）" % TOOLS_DIR)
+
+    # T2 不在登记目录 ⇒ rc=2（不许静默用 PATH 上别处的同名件）
+    tmpfake = os.path.join(root, "elsewhere-gremlins")
+    shutil.copyfile(fake, tmpfake)
+    os.chmod(tmpfake, 0o755)
+    acct_elsewhere = write_account(os.path.join(root, "acct-elsewhere.json"), [
+        {"name": "gremlins", "abs_path": tmpfake, "binary_sha256": sha256_file(tmpfake)}])
+    rc, out = run(base_go + ["--tools-account", acct_elsewhere, "--gremlins", tmpfake])
+    add("T2 [A1_TOOL_REGISTERED] 工具在登记目录**之外** ⇒ rc=2 BLOCKED_UNREGISTERED_TOOL（M5/C10）",
+        rc == 2 and "BLOCKED_UNREGISTERED_TOOL" in out, "rc=%d 原因码=%s" % (rc, reason_of(out)), out)
+
+    # T3 四维收窄到唯一变异点（干跑 + 单点确认）
+    if have_gremlins:
+        rcA, outA = run(base_go + ["--only-types", "invert-negatives"])
+        rcB, outB = run(base_go + ["--only-types", "invert-negatives", "--timeout-coeff", "20",
+                                   "--point", "calc.go:4:30:INVERT_NEGATIVES"])
+        add("T3 [A6_NARROW_SINGLE] 路径/包 + 类型 收窄 ⇒ 可跑集合 == 1（收不到就明说收不到）",
+            rcA == 0 and rcB == 0 and "已收窄到唯一变异点" in outB,
+            "清单模式 rc=%d · 单点模式 rc=%d（收窄打印：%s）"
+            % (rcA, rcB, "有" if "已收窄到唯一变异点" in outB else "无"), outB)
+    else:
+        add("T3 [A6_NARROW_SINGLE] 收窄到唯一变异点", False, "缺件：gremlins 不在登记目录")
+
+    # T4 收窄不到唯一 ⇒ rc=2（不猜）
+    if have_gremlins:
+        rc, out = run(base_go + ["--only-types", "invert-negatives,conditionals-negation",
+                                 "--point", "calc.go:4:30:INVERT_NEGATIVES"])
+        rc2, out2 = run(base_go + ["--only-types", "invert-negatives",
+                                   "--point", "calc.go:99:1:INVERT_NEGATIVES"])
+        add("T4 [A6_NARROW_SINGLE] 收窄后 >1 ⇒ BLOCKED_POINT_AMBIGUOUS；点不存在 ⇒ BLOCKED_POINT_NOT_FOUND（都不给结论）",
+            rc == 2 and "BLOCKED_POINT_AMBIGUOUS" in out and rc2 == 2 and "BLOCKED_POINT_NOT_FOUND" in out2,
+            "多解 rc=%d(%s) · 点不存在 rc=%d(%s)"
+            % (rc, reason_of(out), rc2, reason_of(out2)), out2)
+    else:
+        add("T4 [A6_NARROW_SINGLE] 收窄不到唯一 ⇒ rc=2", False, "缺件：gremlins 不在登记目录")
+
+    # T5 单点真跑 ⇒ KILLED（rc=0）
+    if have_gremlins:
+        rc, out = run(base_go + ["--only-types", "invert-negatives",
+                                 "--point", "calc.go:4:30:INVERT_NEGATIVES", "--timeout-coeff", "20"])
+        add("T5 [A7_SIX_STATES] 单点真跑 ⇒ KILLED（rc=0 OK_POINT_KILLED）+ 副本逐字节复原",
+            rc == 0 and "OK_POINT_KILLED" in out and "逐字节复原" in out,
+            "rc=%d 原因码=%s" % (rc, reason_of(out)), out)
+    else:
+        add("T5 [A7_SIX_STATES] 单点真跑 ⇒ KILLED", False, "缺件：gremlins 不在登记目录")
+
+    # T6 六态归类（纯函数：合成六态清单）
+    synth = {"go_module": "x", "files": [{"file_name": "a.go", "mutations": [
+        {"type": "T", "status": s, "line": i + 1, "column": 1} for i, s in enumerate(SIX_STATES)]}]}
+    norm, _st = normalize_gremlins(synth)
+    cnt = state_counts(norm)
+    add("T6 [A7_SIX_STATES] 六态纯函数归类（KILLED/LIVED/NOT COVERED/TIMED OUT/NOT VIABLE/SKIPPED 各 1）",
+        all(cnt.get(s) == 1 for s in SIX_STATES) and len(cnt) == 6,
+        "计数=%s" % json.dumps(cnt, ensure_ascii=False))
+
+    # T7 基线不绿 ⇒ rc=2 BLOCKED_BASELINE_RED（**不是** MANIFEST_EMPTY）
+    if have_gremlins:
+        redmod = os.path.join(root, "msfix-red")
+        shutil.copytree(mod, redmod)
+        shutil.copyfile(os.path.join(root, "p1_red_test.go.txt"),
+                        os.path.join(redmod, "p1", "red_test.go"))
+        rc, out = run(["--lang", "go", "--repo", root, "--module-dir", "msfix-red", "--pkg", "./p1/",
+                       "--copy-paths", "msfix-red", "--ledger-path", ledger, "--clock", "120"])
+        add("T7 [A2_BASELINE_GREEN] ★ 基线不绿 ⇒ rc=2 BLOCKED_BASELINE_RED（**绝不当「没有变异点」**，C3）",
+            rc == 2 and "BLOCKED_BASELINE_RED" in out and "BLOCKED_MANIFEST_EMPTY" not in out,
+            "rc=%d 原因码=%s" % (rc, reason_of(out)), out)
+    else:
+        add("T7 [A2_BASELINE_GREEN] 基线不绿 ⇒ rc=2", False, "缺件：gremlins 不在登记目录")
+
+    # T8 清单缺件 ⇒ rc=2 BLOCKED_MANIFEST_MISSING（假工具不出产物）
+    rc, out = run(["--lang", "go", "--repo", root, "--module-dir", "msfix", "--pkg", "./p1/",
+                   "--copy-paths", "msfix", "--ledger-path", ledger, "--clock", "60",
+                   "--tools-account", fake_acct, "--gremlins", fake], tools_dir=root)
+    add("T8 [A3_MANIFEST_EXISTS] 清单缺件（工具退 0 但无产物）⇒ rc=2 BLOCKED_MANIFEST_MISSING（缺件≠没有变异点）",
+        rc == 2 and "BLOCKED_MANIFEST_MISSING" in out, "rc=%d 原因码=%s" % (rc, reason_of(out)), out)
+
+    # T9 墙钟符：sleep 30 + --clock 3 ⇒ rc=2 BLOCKED_TIMEOUT，且**约 3s 内返回**（不挂死）
+    t0 = time.time()
+    rc, out = run(["--lang", "go", "--repo", root, "--module-dir", "msfix", "--pkg", "./p1/",
+                   "--copy-paths", "msfix", "--ledger-path", ledger, "--clock", "3",
+                   "--baseline-cmd", "sleep 30"])
+    el = time.time() - t0
+    add("T9 [A8_CLOCK] 墙钟符：基线命令 sleep 30 + --clock 3 ⇒ rc=2 BLOCKED_TIMEOUT，真实耗时 ~3s（**不挂死**）",
+        rc == 2 and "BLOCKED_TIMEOUT" in out and el < 30,
+        "rc=%d 原因码=%s · 真实墙钟 %.2fs（< 30s ⇒ 上界生效）" % (rc, reason_of(out), el), out)
+
+    # T10 未收尾 ⇒ rc=2 BLOCKED_UNFINISHED + 打印残留路径与当前 sha256
+    led2 = os.path.join(state, "unfinished.jsonl")
+    tgt = os.path.join(mod, "p1", "calc.go")
+    with open(led2, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ts": now_iso(), "run_id": "deadbeef", "phase": "begin",
+                             "gate_id": GATE_ID, "actor": "st", "role": "author",
+                             "lang": "go", "target_abs": tgt, "pre_sha": sha256_file(tgt)},
+                            ensure_ascii=False) + "\n")
+    rc, out = run(base_go + ["--ledger-path", led2])
+    add("T10 [A13_LEDGER_UNFINISHED] 有 begin 无 end ⇒ rc=2 BLOCKED_UNFINISHED + 打印残留路径与当前 sha256（J6/C2）",
+        rc == 2 and "BLOCKED_UNFINISHED" in out and "残留目标" in out,
+        "rc=%d 原因码=%s" % (rc, reason_of(out)), out)
+
+    # T11 沙箱不安全 ⇒ rc=2（副本根 = 真仓根）
+    rc, out = run(base_go + ["--sandbox-root", root])
+    add("T11 [A10_SANDBOX_NO_REPO] 副本根 = 真仓根 ⇒ rc=2 BLOCKED_SANDBOX_UNSAFE（绝不在真仓里变异，B1/B7）",
+        rc == 2 and "BLOCKED_SANDBOX_UNSAFE" in out, "rc=%d 原因码=%s" % (rc, reason_of(out)), out)
+
+    # T12 副本不完整（兄弟模块没带）⇒ rc=2 BLOCKED_SANDBOX_INCOMPLETE
+    wrapper = os.path.join(root, "wrap")
+    os.makedirs(wrapper)
+    sub = os.path.join(wrapper, "msfix")
+    shutil.copytree(mod, sub)
+    with open(os.path.join(sub, "go.mod"), "a", encoding="utf-8") as fh:
+        fh.write("\nreplace example.com/sib => ../sib\n")
+    rc, out = run(["--lang", "go", "--repo", wrapper, "--module-dir", "msfix", "--pkg", "./p1/",
+                   "--copy-paths", "msfix", "--ledger-path", ledger, "--clock", "60",
+                   "--tools-account", fake_acct, "--gremlins", fake], tools_dir=root)
+    add("T12 [A9_SANDBOX_COPY] copy 里缺 replace 的兄弟模块 ⇒ rc=2 BLOCKED_SANDBOX_INCOMPLETE（M11/M17 实例）",
+        rc == 2 and "BLOCKED_SANDBOX_INCOMPLETE" in out, "rc=%d 原因码=%s" % (rc, reason_of(out)), out)
+
+    # T13 归一 + 指纹：四元组多集摘要（同集合不同顺序 ⇒ 同指纹；改一点 ⇒ 不同指纹）
+    d1 = {"go_module": "m", "elapsed_time": 1.0, "files": [{"file_name": "b.go", "mutations": [
+        {"type": "T2", "status": "RUNNABLE", "line": 9, "column": 2},
+        {"type": "T1", "status": "RUNNABLE", "line": 3, "column": 5}]}]}
+    d2 = {"go_module": "m", "elapsed_time": 9.9, "files": [{"file_name": "b.go", "mutations": [
+        {"type": "T1", "status": "RUNNABLE", "line": 3, "column": 5},
+        {"type": "T2", "status": "RUNNABLE", "line": 9, "column": 2}]}]}
+    d3 = json.loads(json.dumps(d2))
+    d3["files"][0]["mutations"][0]["column"] = 6
+    n1, _ = normalize_gremlins(d1)
+    n2, _ = normalize_gremlins(d2)
+    n3, _ = normalize_gremlins(d3)
+    add("T13 [A4_NORMALIZE/A5_FINGERPRINT] 归一：顺序无关 + 剔 elapsed_time ⇒ 同指纹；改一列 ⇒ 不同指纹（C4/C6）",
+        fingerprint(n1) == fingerprint(n2) and fingerprint(n1) != fingerprint(n3),
+        "指纹1=%s 指纹2=%s（同）· 指纹3=%s（异）"
+        % (fingerprint(n1)[:12], fingerprint(n2)[:12], fingerprint(n3)[:12]))
+
+    # T14 Python 单点：judge 恒过 ⇒ survived ⇒ LIVED ⇒ rc=1；判据读 stdout JSON（不读 rc）
+    if have_cr:
+        rc, out = run(["--lang", "py", "--repo", root, "--target", "py/check.py", "--copy-paths", "py",
+                       "--ledger-path", ledger, "--clock", "60",
+                       "--operator", "core/ReplaceComparisonOperator_Gt_NotEq", "--occurrence", "0",
+                       "--test-cmd", "true"])
+        rc2, out2 = run(["--lang", "py", "--repo", root, "--target", "py/check.py", "--copy-paths", "py",
+                         "--ledger-path", ledger, "--clock", "60",
+                         "--operator", "core/ReplaceComparisonOperator_Gt_LtE", "--occurrence", "0",
+                         "--test-cmd", "bash py/judge.sh"])
+        add("T14 [A15_CR_STDOUT_JSON] cosmic-ray 单点：判据读 stdout JSON 的 test_outcome"
+            "（恒过 ⇒ survived ⇒ LIVED ⇒ rc=1；真判 ⇒ killed ⇒ KILLED ⇒ rc=0；两者 rc 皆 0）",
+            rc == 1 and "FAIL_MUTANT_LIVED" in out and rc2 == 0 and "OK_POINT_KILLED" in out2,
+            "survived⇒rc=%d(%s) · killed⇒rc=%d(%s)" % (rc, reason_of(out), rc2, reason_of(out2)), out2)
+    else:
+        add("T14 [A15_CR_STDOUT_JSON] cosmic-ray 单点判据", False, "缺件：%s/mutvenv/bin/cosmic-ray" % TOOLS_DIR)
+
+    # T15 用法错 ⇒ rc=2
+    rc, out = sub_run([], state_dir=state)
+    rc2, out2 = sub_run(["--lang", "go", "--nope"], state_dir=state)
+    add("T15 用法错（无参数 / 未知参数）⇒ rc=2 BLOCKED_USAGE",
+        rc == 2 and "BLOCKED_USAGE" in out and rc2 == 2, "rc=%d / rc=%d" % (rc, rc2), out2)
+
+    # T16 台账 append-only + begin/end 成对 + role=verifier 必须 --sandbox-root
+    rows = [json.loads(l) for l in read_text(ledger).splitlines() if l.strip()]
+    begins = [r for r in rows if r.get("phase") == "begin"]
+    ends = [r for r in rows if r.get("phase") == "end"]
+    rc, out = run(base_go + ["--role", "verifier"])
+    add("T16 [A12_LEDGER_PAIR] 台账 append-only / begin-end 成对 / role=verifier 必须给 --sandbox-root（§2.1.7/C13）",
+        len(begins) >= 1 and len(ends) >= 1 and all(r.get("gate_id") == GATE_ID for r in rows)
+        and rc == 2 and "BLOCKED_USAGE" in out,
+        "begin=%d end=%d · verifier 缺 --sandbox-root ⇒ rc=%d" % (len(begins), len(ends), rc), out)
+
+    # T17 台账默认落点不退化到 /tmp
+    home = os.path.join(root, "home")
+    os.makedirs(home)
+    rc, out = sub_run(["--lang", "go", "--repo", root, "--module-dir", "msfix", "--pkg", "./p1/",
+                       "--copy-paths", "msfix", "--clock", "30", "--baseline-cmd", "true",
+                       "--tools-account", fake_acct, "--gremlins", fake],
+                      env_extra={"HOME": home, "ZERG_STATE_DIR": "", "ZERG_TOOLS_DIR": root})
+    want = os.path.join(home, ".zerg", "state", LEDGER_NAME)
+    add("T17 [A12_LEDGER_PAIR] 没有 ZERG_STATE_DIR 时落 ~/.zerg/state（**不退化到 /tmp**，§7.4）",
+        os.path.isfile(want), "期望落点=%s · 存在=%s" % (want, os.path.isfile(want)), out)
+
+    # T18 --list-reasons / --help / --version 三件
+    rc, out = sub_run(["--list-reasons"], state_dir=state)
+    rc2, out2 = sub_run(["--help"], state_dir=state)
+    rc3, out3 = sub_run(["--version"], state_dir=state)
+    rc4, out4 = sub_run(["--role", "author"], state_dir=state)
+    add("T18 --list-reasons / --help / --version 三件都能跑（rc=0）且原因码全集 ≥ 30 条",
+        rc == 0 and rc2 == 0 and rc3 == 0 and ("原因码全集" in out) and len(REASON_CODES) >= 30,
+        "原因码 %d 条 · rc=%d/%d/%d" % (len(REASON_CODES), rc, rc2, rc3))
+
+    # T19 工具坏（error 态/自相矛盾）⇒ rc=2，不当结果（J5）
+    broken = os.path.join(root, "broken-gremlins")
+    with open(broken, "w", encoding="utf-8") as fh:
+        fh.write("#!/bin/bash\n"
+                 "# 假工具：只在 unleash 形态下往 `-o <路径>` 写一个不可解析的清单（其余一律不写盘）\n"
+                 "out=\"\"; prev=\"\"\n"
+                 "for a in \"$@\"; do [ \"$prev\" = \"-o\" ] && out=\"$a\"; prev=\"$a\"; done\n"
+                 "if [ \"${1:-}\" = \"unleash\" ] && [ -n \"$out\" ]; then printf 'not json\\n' > \"$out\"; fi\n"
+                 "exit 0\n")
+    os.chmod(broken, 0o755)
+    acct_broken = write_account(os.path.join(root, "acct-broken.json"), [
+        {"name": "gremlins", "abs_path": broken, "binary_sha256": sha256_file(broken)}])
+    rc, out = run(base_go + ["--tools-account", acct_broken, "--gremlins", broken], tools_dir=root)
+    add("T19 [A17_TOOL_BROKEN] 工具产出不可解析清单 ⇒ rc=2 BLOCKED_MANIFEST_UNPARSABLE（工具坏≠结果，J5/C9）",
+        rc == 2 and "BLOCKED_MANIFEST_UNPARSABLE" in out, "rc=%d 原因码=%s" % (rc, reason_of(out)), out)
+
+    # T20 默认系数下的状态必须**归类正确**：TIMED OUT ⇒ rc=2 BLOCKED_MUTANT_TIMED_OUT
+    #     （绝不许读成「这个点不存在/没有变异点」；本机实测默认系数在快基线上就会撞 TIMED OUT）
+    if have_gremlins:
+        rc, out = run(base_go + ["--only-types", "invert-negatives",
+                                 "--point", "calc.go:4:30:INVERT_NEGATIVES"])
+        ok20 = (rc == 0 and "OK_POINT_KILLED" in out) or (rc == 2 and "BLOCKED_MUTANT_TIMED_OUT" in out)
+        add("T20 [A7_SIX_STATES] 默认系数下同一单点：只能是 KILLED 或 TIMED OUT（归因正确），"
+            "**绝不许**变成 BLOCKED_POINT_NOT_FOUND /「没有变异点」",
+            ok20 and "BLOCKED_POINT_NOT_FOUND" not in out,
+            "rc=%d 原因码=%s（TIMED OUT 是**配置/规模**问题，不是覆盖结论）"
+            % (rc, reason_of(out)), out)
+    else:
+        add("T20 [A7_SIX_STATES] 默认系数下同一单点的归因", False, "缺件：gremlins 不在登记目录")
+
+    bad = [c for c in checks if not c[1]]
+    print("── 自检逐条（全部走**真实命令行 + 真实退出码**）──")
+    for name, ok, note, out in checks:
+        print("%s %s" % ("✓" if ok else "✗", name))
+        print("      · %s" % note)
+        if not ok:
+            for ln in (out or "").splitlines()[-14:]:
+                print("      | %s" % ln)
+    print("── 自检结论：%s（用例 %d 条，失败 %d 条）──"
+          % ("全过" if not bad else "不过", len(checks), len(bad)))
+    shutil.rmtree(root, ignore_errors=True)
+    if bad:
+        print("✗ 自检不过 ⇒ **拒绝跑真目标**（rc=2；precommit-gates.sh:36 的项目口径）")
+        return EXIT_BLOCKED
+    return EXIT_OK
+
+
+# ══════════════════════════════════════════════════════════════════
+# 12. 命令行
+# ══════════════════════════════════════════════════════════════════
+
+USAGE = """用法：
+  # Go：清单（干跑）+ 四维收窄 + 归一
+  python3 scripts/mutate-scan --lang go --repo <真仓根> --module-dir core --pkg ./internal/sliceobs/ \\
+          [--only-types invert-negatives] [-E <排除文件正则>] [--diff <ref>] [--j3]
+  # Go：单点跑（四维收窄到唯一变异点再真跑）
+  python3 scripts/mutate-scan --lang go --module-dir core --pkg ./internal/sliceobs/ \\
+          --only-types invert-negatives -E budget_layer.go --point 'cost_table.go:110:38:INVERT_NEGATIVES' \\
+          --timeout-coeff 50
+  # Python：cosmic-ray 单点（判据读 stdout JSON 的 test_outcome）
+  python3 scripts/mutate-scan --lang py --target scripts/check_version.py \\
+          --operator core/ReplaceComparisonOperator_Gt_LtE --occurrence 0 --test-cmd 'bash judge.sh'
+          # 只拿 Python 清单不跑：加 --manifest-only
+  python3 scripts/mutate-scan --self-test | --list-reasons | --help | --version
+
+选项：
+  --lang go|py          语言（go = gremlins；py = cosmic-ray，**只认这两条**）
+  --repo PATH           真仓根（默认 = 本脚本所在仓根）—— **门内只读，绝不写**
+  --module-dir REL      Go：含 go.mod 的模块子目录（默认 core）
+  --pkg REL             Go：包路径（如 ./internal/sliceobs/）；**收窄的第一维**
+  --target REL          Py：目标 .py（相对真仓根）
+  --operator NAME       Py：cosmic-ray operator（如 core/ReplaceComparisonOperator_Gt_LtE）
+  --occurrence N        Py：第几次出现（0 起）
+  --test-cmd CMD        Py：判据命令（cosmic-ray 的 test-command；**不施加 timeout** ⇒ 门自带墙钟）
+  --baseline-cmd CMD    覆盖基线命令（默认 go：`go test <pkg> -count=1 -timeout 300s`；py：就是 --test-cmd）
+  --copy-paths a,b      副本要带哪些相对路径（go 默认 core,shared；py 默认 scripts）
+                        ★ 必须把 replace 的**兄弟模块**一起带（core/go.mod → ../shared），否则跑不起来
+  --diff REF            维2：gremlins `--diff REF`（注意：包粒度下与覆盖率路径基对不上，见 --list-reasons）
+  --only-types a,b      维3：只开这些变异类型（gremlins 的 11 个开关**全部显式写死**）
+  -E/--exclude-files RX 维1 第二手段：按文件正则排除（可多次）
+  --timeout-coeff N     gremlins --timeout-coefficient（默认值在快基线上会把变异体判成 TIMED OUT，实测）
+  --point SPEC          维4：Go `<file>:<line>:<column>:<TYPE>`；Py `<module>:<operator>#<occurrence>`
+  --j3                  额外跑一次干跑清单，做「归一后一致」比较（J3；成本 ×2）
+  --manifest-only       只生成清单 + 归一，**不跑变异**（Go 不给 --point 即此形态；Py 需显式给）
+  --sandbox-root DIR    副本根（默认自动 mktemp -d /tmp/…；**不许**是真仓或其子目录，也不复用非空目录）
+  --keep-sandbox        跑完保留副本（默认只删门自己 mktemp 出来的那个根，B3）
+  --manifest-out PATH   归一后清单另存一份（可审计输入）
+  --clock SEC           墙钟上界（默认 900；本机**没有** `timeout` 命令 ⇒ 上界只能自带，C7）
+  --ledger-path PATH    台账路径（默认 ${ZERG_STATE_DIR:-~/.zerg/state}/edit-assert-ledger.jsonl）
+  --actor NAME          谁跑的（默认 $ZERG_ACTOR / $USER）
+  --role author|verifier 角色（verifier 必须给 --sandbox-root；两行台账并存，§2.1.7/C13）
+  --tools-account PATH  覆盖 CLI 依赖账（默认 tools/cli-tools.json；测试注入用）
+  --gremlins/--cosmic-ray PATH  覆盖工具路径（**仍须过**「登记目录 + binary sha256」断言）
+  --no-self-test        跳过「真跑前先自检」（内部子进程形态，防递归）
+  --self-test / --list-reasons / --help / --version
+
+退出码：0 通过（清单归一 / 单点 KILLED）/ 1 失败（LIVED · NOT COVERED = 覆盖缺口，真红）/
+        2 **不给结论**（缺件 · 未登记 · 副本不安全或不完整 · **基线不绿** · 清单缺件/空/不可解析 · 超时 ·
+        收窄不到唯一变异点 · TIMED OUT/NOT VIABLE/SKIPPED · 台账未收尾 · 用法错 · 自检不过 · 工具失效）
+        —— 2 不是红，是**没有结论**；且**没有**「换工具 / 文本匹配」的降级路径（M5）"""
+
+
+def print_list_reasons():
+    print("════════════════════════════════════════════════════════════════")
+    print("mutate-scan %s 原因码全集 + 六态 + 归一白名单 + 台账落点" % VERSION)
+    for code, tier, desc in REASON_CODES:
+        print("[rc=%d] %-30s %s" % (tier, code, desc))
+    print("── 六态（§2.1.3；**不许把 SKIPPED/TIMED OUT/NOT VIABLE 当结论**）──")
+    for st in SIX_STATES:
+        print("  %-12s %s" % (st, STATE_MEANING[st]))
+    print("  %-12s %s" % (DRY_STATE, "干跑态（只存在于 --dry-run 清单；**不是**六态之一，不参与结论）"))
+    print("── 归一白名单（逐字段写理由；**禁止**为让 J3 绿而扩大，Q10）──")
+    for k, why in NORM_WHITELIST:
+        print("  %-22s %s" % (k, why))
+    print("── 台账落点（§7.4；与 edit-assert **同文件不同 role**）──")
+    print("  ${ZERG_STATE_DIR:-$HOME/.zerg/state}/%s" % LEDGER_NAME)
+    print("  行字段：ts · run_id · phase(begin|end) · gate_id=%s · actor · role(author|verifier)" % GATE_ID)
+    print("          · spec_fingerprint（四元组多集摘要，C6）· manifest_sha256 · tool+version+binary sha256")
+    print("          · 变异点/包/目标 · pre_sha/post_sha（前像/后像）· cmd+rc · 状态与原因码 · 副本根")
+    print("  启动做未收尾检测（J6/C2）：有 begin 无 end ⇒ rc=2 + 打印残留路径与当前 sha256")
+    print("── 登记目录（Q2 拍板；**不是** /tmp）──")
+    print("  %s   ·   CLI 依赖账：%s" % (TOOLS_DIR, os.path.relpath(TOOLS_ACCOUNT, REPO_ROOT)))
+    print("  启动断言：工具不在该目录 / binary sha256 与账不符 ⇒ rc=2 BLOCKED_UNREGISTERED_TOOL")
+    print("── 可跑断言（自检用例点名用）──")
+    for i, (name, what, how, inv) in enumerate(ASSERTIONS, 1):
+        print("[%2d] %-24s %s" % (i, name, what))
+    return EXIT_OK
+
+
+def parse_args(argv):
+    cfg = {"lang": None, "repo": REPO_ROOT, "module_dir": "core", "pkg": None, "target": None,
+           "operator": None, "occurrence": 0, "test_cmd": None, "baseline_cmd": None,
+           "copy_paths": None, "diff": None, "only_types": set(), "exclude_files": [],
+           "timeout_coeff": None, "point": None, "point_struct": None, "j3": False,
+           "manifest_only": False,
+           "sandbox_root": None, "keep_sandbox": False, "manifest_out": None, "clock": 900,
+           "ledger_path": None, "actor": None, "role": "author", "tools_account": None,
+           "gremlins_path": None, "cr_path": None, "no_self_test": False, "mode": None,
+           "work_dir": None, "sandbox_auto": False}
+    i = 0
+    while i < len(argv):
+        v = argv[i]
+
+        def need(what, _i=i):
+            if _i + 1 >= len(argv):
+                raise Blocked("BLOCKED_USAGE", "%s 后面缺参数" % what)
+            return argv[_i + 1]
+
+        if v == "--lang":
+            cfg["lang"] = need(v); i += 2
+            if cfg["lang"] not in ("go", "py"):
+                raise Blocked("BLOCKED_USAGE", "--lang 只允许 go|py：%r" % cfg["lang"])
+        elif v == "--repo":
+            cfg["repo"] = need(v); i += 2
+        elif v == "--module-dir":
+            cfg["module_dir"] = need(v); i += 2
+        elif v == "--pkg":
+            cfg["pkg"] = need(v); i += 2
+        elif v == "--target":
+            cfg["target"] = need(v); i += 2
+        elif v == "--operator":
+            cfg["operator"] = need(v); i += 2
+        elif v == "--occurrence":
+            raw = need(v); i += 2
+            try:
+                cfg["occurrence"] = int(raw)
+            except ValueError:
+                raise Blocked("BLOCKED_USAGE", "--occurrence 必须是整数：%r" % raw)
+        elif v == "--test-cmd":
+            cfg["test_cmd"] = need(v); i += 2
+        elif v == "--baseline-cmd":
+            cfg["baseline_cmd"] = need(v); i += 2
+        elif v == "--copy-paths":
+            cfg["copy_paths"] = need(v); i += 2
+        elif v == "--work-dir":
+            cfg["work_dir"] = need(v); i += 2
+        elif v == "--diff":
+            cfg["diff"] = need(v); i += 2
+        elif v == "--only-types":
+            raw = need(v); i += 2
+            names = [x.strip() for x in raw.split(",") if x.strip()]
+            for n in names:
+                if n not in GREMLINS_TYPE_FLAGS and n.lower().replace("_", "-") not in GREMLINS_TYPE_FLAGS:
+                    raise Blocked("BLOCKED_USAGE",
+                                  "未知变异类型 %r；可用：%s" % (n, ", ".join(sorted(GREMLINS_TYPE_FLAGS))))
+                cfg["only_types"].add(n.lower().replace("_", "-"))
+        elif v in ("-E", "--exclude-files"):
+            cfg["exclude_files"].append(need(v)); i += 2
+        elif v == "--timeout-coeff":
+            raw = need(v); i += 2
+            try:
+                cfg["timeout_coeff"] = int(raw)
+            except ValueError:
+                raise Blocked("BLOCKED_USAGE", "--timeout-coeff 必须是整数：%r" % raw)
+        elif v == "--point":
+            cfg["point"] = need(v); i += 2
+        elif v == "--j3":
+            cfg["j3"] = True; i += 1
+        elif v == "--manifest-only":
+            cfg["manifest_only"] = True; i += 1
+        elif v == "--sandbox-root":
+            cfg["sandbox_root"] = need(v); i += 2
+        elif v == "--keep-sandbox":
+            cfg["keep_sandbox"] = True; i += 1
+        elif v == "--manifest-out":
+            cfg["manifest_out"] = need(v); i += 2
+        elif v == "--clock":
+            raw = need(v); i += 2
+            try:
+                cfg["clock"] = int(raw)
+            except ValueError:
+                raise Blocked("BLOCKED_USAGE", "--clock 必须是整数秒：%r" % raw)
+            if cfg["clock"] <= 0:
+                raise Blocked("BLOCKED_USAGE", "--clock 必须 > 0")
+        elif v == "--ledger-path":
+            cfg["ledger_path"] = need(v); i += 2
+        elif v == "--actor":
+            cfg["actor"] = need(v); i += 2
+        elif v == "--role":
+            cfg["role"] = need(v); i += 2
+            if cfg["role"] not in ("author", "verifier"):
+                raise Blocked("BLOCKED_USAGE", "--role 只允许 author|verifier：%r" % cfg["role"])
+        elif v == "--tools-account":
+            cfg["tools_account"] = need(v); i += 2
+        elif v == "--gremlins":
+            cfg["gremlins_path"] = need(v); i += 2
+        elif v == "--cosmic-ray":
+            cfg["cr_path"] = need(v); i += 2
+        elif v == "--no-self-test":
+            cfg["no_self_test"] = True; i += 1
+        elif v == "--self-test":
+            cfg["mode"] = "self-test"; i += 1
+        elif v == "--list-reasons":
+            cfg["mode"] = "list"; i += 1
+        elif v in ("-h", "--help"):
+            cfg["mode"] = "help"; i += 1
+        elif v in ("-V", "--version"):
+            cfg["mode"] = "version"; i += 1
+        else:
+            raise Blocked("BLOCKED_USAGE", "未知参数：%s（--help 看用法）" % v)
+    if cfg["actor"] is None:
+        cfg["actor"] = os.environ.get("ZERG_ACTOR") or os.environ.get("USER") or "unknown"
+    return cfg
+
+
+def validate(cfg):
+    if cfg["mode"]:
+        return
+    if not cfg["lang"]:
+        raise Blocked("BLOCKED_USAGE", "必须给 `--lang go|py`（或 --self-test/--list-reasons/--help）")
+    if cfg["role"] == "verifier" and not cfg["sandbox_root"]:
+        raise Blocked("BLOCKED_USAGE", "role=verifier 必须给 `--sandbox-root`（verifier 行必须带副本路径，§2.1.7/C13）")
+    if cfg["lang"] == "go":
+        if not cfg["pkg"]:
+            raise Blocked("BLOCKED_USAGE", "Go 侧必须给 `--pkg`（如 ./internal/sliceobs/）；**绝不用 `.`**"
+                          "（本仓实测 12,686 个 .py、全模块基线在副本里不绿 ⇒ 全模块变异不可行）")
+        if cfg["pkg"] in (".", "./", "./..."):
+            raise Blocked("BLOCKED_USAGE", "--pkg 不许是 `.`/`./...`（全模块）：基线绿前置在副本里做不到，"
+                          "且 gremlins 的变异范围会失控 ⇒ 收窄到具体包")
+        if cfg["point"]:
+            cfg["point_struct"] = parse_point_go(cfg["point"])
+    else:
+        if not cfg["target"]:
+            raise Blocked("BLOCKED_USAGE", "Python 侧必须给 `--target`（如 scripts/check_version.py）")
+        if not cfg["operator"]:
+            raise Blocked("BLOCKED_USAGE", "Python 侧必须给 `--operator`（如 core/ReplaceComparisonOperator_Gt_LtE）")
+        if not cfg["test_cmd"]:
+            raise Blocked("BLOCKED_USAGE", "Python 侧必须给 `--test-cmd`（判据命令；cosmic-ray **不施加 timeout**）")
+        if cfg["target"] in (".", "./"):
+            raise Blocked("BLOCKED_USAGE", "--target 不许是 `.`（全仓 12,686 个 .py）⇒ 收窄到具体文件")
+        if not cfg.get("copy_paths"):
+            cfg["copy_paths"] = os.path.dirname(cfg["target"]) or "."
+        if cfg.get("work_dir") is None:
+            cfg["work_dir"] = "."
+
+
+def main(argv):
+    try:
+        cfg = parse_args(argv)
+    except Blocked as exc:
+        eprint("✗ [%s] %s" % (exc.code, exc.msg))
+        eprint("✗ 结论：rc=2 **不给结论**（%s）" % REASON_DESC.get(exc.code, ""))
+        print(USAGE)
+        return EXIT_BLOCKED
+    if cfg["mode"] == "help":
+        print(USAGE)
+        return EXIT_OK
+    if cfg["mode"] == "version":
+        print("mutate-scan %s（腿一：四维收窄 · 基线绿前置 · 清单归一 · 单点跑 · 六态 · 三档退码 0/1/2）" % VERSION)
+        return EXIT_OK
+    if cfg["mode"] == "list":
+        return print_list_reasons()
+    if cfg["mode"] == "self-test":
+        return run_self_test()
+    if not argv:
+        print(USAGE)
+        eprint("✗ [BLOCKED_USAGE] 没有给任何模式/参数 ⇒ rc=2（不给结论）")
+        return EXIT_BLOCKED
+    if not cfg["no_self_test"]:
+        if run_self_test() != EXIT_OK:
+            eprint("✗ 自检不过 ⇒ 拒绝跑真目标（rc=2；precommit-gates.sh:36 的项目口径）")
+            return EXIT_BLOCKED
+    ctx = Ctx(cfg)
+    try:
+        validate(cfg)
+    except Blocked as exc:
+        eprint("✗ [%s] %s" % (exc.code, exc.msg))
+        print(USAGE)
+        return EXIT_BLOCKED
+    try:
+        return gate(ctx)
+    except Blocked as exc:
+        eprint("✗ [%s] %s" % (exc.code, exc.msg))
+        for d in exc.detail:
+            eprint("   · %s" % d)
+        print("结论：rc=2 **不给结论**（rc=2 不是红：%s）" % REASON_DESC.get(exc.code, ""))
+        return EXIT_BLOCKED
+    except Failed as exc:
+        eprint("✗ [%s] %s" % (exc.code, exc.msg))
+        print("结论：rc=1 失败（%s）" % REASON_DESC.get(exc.code, ""))
+        return EXIT_FAIL
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        eprint("✗ 被中断 ⇒ rc=2 **不给结论**（副本内的残留由 --keep-sandbox 保留供人工核验；门不写真仓）")
+        sys.exit(EXIT_BLOCKED)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        eprint("✗ 未预期异常 ⇒ rc=2 **不给结论**：%r" % (exc,))
+        sys.exit(EXIT_BLOCKED)

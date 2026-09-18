@@ -4,7 +4,9 @@
     "CLI 依赖账 —— **不是** agent 工具台账（后者 = tools/versions.json，141 键：bash/calc/apply_patch…，不含任何 CLI 二进制）。",
     "依据：docs/01-设计/设计-改码与变异安全门-v1.1-20260918.md §6.4（Q9 落点定案）+ 附录A C10/M15（工具自身会漂移）。",
     "字段：工具名 · 版本（或「不可考」）· 绝对路径 · binary sha256 · 安装方式 · 联网前提 · 登记日期。",
-    "门（scripts/edit-assert）启动做断言：ast-grep 的路径与 binary sha256 必须与本账一致，否则 rc=2 BLOCKED_UNREGISTERED_TOOL（不许静默用另一个二进制）。"
+    "门（scripts/edit-assert，腿二）启动做断言：ast-grep 的路径与 binary sha256 必须与本账一致，否则 rc=2 BLOCKED_UNREGISTERED_TOOL（不许静默用另一个二进制）。",
+    "门（scripts/mutate-scan，腿一）启动做断言：gremlins / cosmic-ray 必须**在登记目录 ~/.zerg/tools/ 内**且 binary sha256 与本账一致，否则 rc=2 BLOCKED_UNREGISTERED_TOOL / BLOCKED_MISSING_TOOL（M5/C10：不许降级、不许改用 PATH 上的同名件）。",
+    "腿一登记日期 2026-09-18（本轮装入 ~/.zerg/tools/，Q2 拍板：仓外固定登记目录，**不是** /tmp）；实跑证据：scripts/mutate-scan --self-test（20 条子用例）+ docs/调研/探针-变异成本-20260918.md。"
   ],
   "登记日期": "2026-09-18",
   "tools": [
@@ -40,41 +42,47 @@
       "install": "（不装）GNU coreutils 未安装",
       "network": "—",
       "registered_at": "2026-09-18",
-      "status": "**本机不存在**（`command -v timeout` 零命中，rc=1）⇒ 墙钟符只能门自带（edit-assert 的 run_clocked：subprocess + 进程组 SIGKILL）",
-      "evidence": "本次现读 `command -v timeout` ⇒ 零命中"
+      "status": "**本机不存在**（`command -v timeout` 零命中，rc=1）⇒ 墙钟符只能门自带（edit-assert/mutate-scan 都是 python subprocess + 进程组 SIGKILL）",
+      "evidence": "本次现读 `command -v timeout` ⇒ 零命中；另**实测**：设计稿 §2.1.5 的「墙钟符 A」原样 `perl -e 'alarm shift; exec @ARGV' 10 -- /bin/sh -c 'touch marker'` ⇒ **marker 未生成而 rc=0**（perl 把 `--` 当程序名，exec 失败被吞）⇒ 该写法不得使用，去掉 `--` 才有效"
     },
     {
       "name": "gremlins",
-      "version": "不可考",
-      "abs_path": null,
-      "binary_sha256": null,
-      "install": "未安装（腿一开工时登）—— 装到**仓外固定登记目录**，不落 /tmp",
-      "network": "安装需联网（实测离线 `GOPROXY=off go install …@v0.6.0` ⇒ module lookup disabled，失败）",
-      "registered_at": null,
-      "status": "未安装（腿一开工时登）",
-      "evidence": "现读：/tmp/mutgate2/bin/gremlins **存在**、`--version` 自报 `dev`（版本不可考）—— 但落点 /tmp 会被「重启即清 + tmp_cleaner 3 天未访问即删」（core/internal/statepath/statepath.go:1-3）⇒ **不构成登记依赖**；按任务书口径记「未安装（腿一开工时登）」，装好并定路径后再登版本 + binary sha256"
+      "version": "不可考（自报 `dev darwin/arm64`；模块版本 v0.6.0 可考）",
+      "abs_path": "~/.zerg/tools/bin/gremlins",
+      "real_path": "~/.zerg/tools/bin/gremlins",
+      "binary_sha256": "9c1067d838650be018c37a4f3450dd3975286a50a1ca8d8e4905aca6c937faf6",
+      "install": "GOBIN=~/.zerg/tools/bin GOPATH=~/.zerg/tools/gopath go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0（**锁版本**，不用 @latest；2026-09-18 实跑 9.8s）",
+      "network": "安装**需联网**（实测 `GOPROXY=off go install …@v0.6.0` ⇒ `module lookup disabled by GOPROXY=off`，rc=1，失败）；运行不需要联网（除非测试要拉模块）",
+      "registered_at": "2026-09-18",
+      "status": "已登记依赖 · **腿一 Go 侧唯一变异器**（清单 = `unleash --dry-run -o manifest.json <pkg>`；单点 = 四维收窄后 `unleash`；**没有任何单点选择器**：无 id/occurrence/位置选择器）",
+      "evidence": "本轮实跑：`gremlins --version` ⇒ `gremlins version dev darwin/arm64`；`shasum -a 256` ⇒ 上列值；`unleash --help` 的 11 个类型开关 + `-d/-S/-t/--coverpkg/-D/-o/-i/-E/--threshold-*/--workers/--test-cpu/--timeout-coefficient` 全部现读；沙箱实跑（core/internal/sliceobs）：干跑 146 个变异点 / 4.24s；`--diff HEAD` 在包粒度**整包 SKIPPED**（路径基不匹配，见探针稿）"
     },
     {
       "name": "cosmic-ray",
-      "version": "不可考",
-      "abs_path": null,
-      "binary_sha256": null,
-      "install": "未安装（腿一开工时登）—— 装到**仓外固定登记目录**（本机现存的是 /tmp/mutvenv，非登记落点）",
-      "network": "安装需联网",
-      "registered_at": null,
-      "status": "未安装（腿一开工时登）",
-      "evidence": "现读：/tmp/mutvenv/bin/cosmic-ray 存在（深挖 D2/D6 实测 8.7.0 可用）—— 落点 /tmp ⇒ 同上，不作为登记依赖"
+      "version": "8.7.0",
+      "abs_path": "~/.zerg/tools/mutvenv/bin/cosmic-ray",
+      "real_path": "~/.zerg/tools/mutvenv/bin/cosmic-ray",
+      "binary_sha256": "07352e9cfb44b5b66ebee0adcb73aeccc865a3e401bf19b3c9e58c349c1729a5",
+      "python": "~/.zerg/tools/mutvenv/bin/python3（Python 3.9.6）",
+      "package_sha256": "2337aee28e61cbdb4400b9f3412243f06d16678d4784f3214da7c1d37aa97962",
+      "package_sha256_note": "= mutvenv/lib/python3.9/site-packages/cosmic_ray/cli.py 的 sha256（入口脚本只有 240 字节，单靠它不足以当「实现指纹」；两者一起记）",
+      "install": "/usr/bin/python3 -m venv ~/.zerg/tools/mutvenv && ~/.zerg/tools/mutvenv/bin/pip install cosmic-ray==8.7.0（**锁版本**；2026-09-18 实跑，直连 pypi 成功，未用代理）",
+      "network": "安装**需联网**（pypi）；也可走代理 http://127.0.0.1:7895；运行不需要联网",
+      "registered_at": "2026-09-18",
+      "status": "已登记依赖 · **腿一 Python 侧唯一变异器**（`init` 拿清单；单点 = `mutate-and-test <module> <operator> <occurrence> <cmd>`；**就地改目标文件** ⇒ 必须在副本里跑）",
+      "evidence": "本轮实跑：`cosmic-ray --version` ⇒ 8.7.0；单点 0.22–0.30s（`test_outcome=survived` 与 `killed` **都退 rc=0** ⇒ 判据只读 stdout JSON）；正常结束逐字节复原（前像=后像）；config `timeout=1.0` 时 `test-command=\"sleep 5\"` **真跑满 5.24s** ⇒ 不施加 config 里的 timeout；`init` 配错 rc=78（os.EX_CONFIG）"
     },
     {
       "name": "go-mutesting",
-      "version": "不可考",
-      "abs_path": null,
-      "binary_sha256": null,
-      "install": "未安装（腿一开工时登）；**必须逐字定仓 `github.com/avito-tech/go-mutesting`**",
-      "network": "安装需联网",
-      "registered_at": null,
-      "status": "未安装（腿一开工时登）",
-      "evidence": "现读：/tmp/mutgate2/bin/go-mutesting 存在（avito-tech 支，实测可用）；zimmski 支 `go-mutesting ./...` 必崩（panic/SIGSEGV、退出码 2）⇒ **不得作为备选出现**（附录A C8）"
+      "version": "不可考（`--version` 未知 flag；模块版本 v0.0.0-20251226130216-48d0401f00fb 可考）",
+      "abs_path": "~/.zerg/tools/bin/go-mutesting",
+      "real_path": "~/.zerg/tools/bin/go-mutesting",
+      "binary_sha256": "57dddb8268abf606ccdac654364d1b0a8a28366be22681db28968e18f651cfb8",
+      "install": "GOBIN=~/.zerg/tools/bin GOPATH=~/.zerg/tools/gopath go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@latest（解析到 v0.0.0-20251226130216-48d0401f00fb；2026-09-18 实跑 9.3s）",
+      "network": "安装**需联网**（实测 GOPROXY=off 装不上）；运行不需要联网",
+      "registered_at": "2026-09-18",
+      "status": "已登记 **备选**（腿一 Go 侧第二支；一次性全量器的角色，与 gremlins 的单点不同工具 ⇒ 给「独立方」用，§2.1.7/C13）。**必须逐字定仓 avito-tech**；`github.com/zimmski/go-mutesting` 本机 `./...` 必崩（panic/SIGSEGV、退出码 2）⇒ **不得作为备选出现**（附录A C8）",
+      "evidence": "本轮实跑：`go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@latest` ⇒ 下载 v0.0.0-20251226130216-48d0401f00fb 成功；`go-mutesting --help` 现读（`--blacklist` MD5 去重 / `--match` 函数正则 / `--config` / `--do-not-remove-tmp-folder`）；`--version` ⇒ `unknown flag 'version'`（版本不可考）；**本轮未跑变异**（腿一单点走 gremlins；avito-tech 支留给独立方复跑时用）"
     },
     {
       "name": "mutmut",
@@ -90,6 +98,7 @@
   ],
   "not_registered": [
     "libcst（Python 侧 L-AST 备选）：**未安装**（`import libcst` ⇒ ImportError，本机 python3 = 3.9.6）",
-    "semgrep：未登记（实测命中/未命中/解析失败全退 0，除 `--error` 外无牙齿，§4.3）"
+    "semgrep：未登记（实测命中/未命中/解析失败全退 0，除 `--error` 外无牙齿，§4.3）",
+    "github.com/zimmski/go-mutesting：**禁止登记**（本机必崩，C8）"
   ]
 }
