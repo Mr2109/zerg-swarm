@@ -132,7 +132,7 @@ func (a *Claude) TransformResponse(w http.ResponseWriter, resp *http.Response, r
 			WriteSSE(w, flusher, "content_block_start", fmt.Sprintf(
 				`{"type":"content_block_start","index":%d,"content_block":{"type":"thinking","thinking":""}}`, blockIdx))
 			WriteSSE(w, flusher, "content_block_delta", fmt.Sprintf(
-				`{"type":"content_block_delta","index":%d,"delta":{"type":"thinking_delta","thinking":%q}}`, blockIdx, escapeJSON(reasoning)))
+				`{"type":"content_block_delta","index":%d,"delta":{"type":"thinking_delta","thinking":%q}}`, blockIdx, reasoning))
 			WriteSSE(w, flusher, "content_block_stop", fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, blockIdx))
 		}
 
@@ -142,7 +142,7 @@ func (a *Claude) TransformResponse(w http.ResponseWriter, resp *http.Response, r
 			WriteSSE(w, flusher, "content_block_start", fmt.Sprintf(
 				`{"type":"content_block_start","index":%d,"content_block":{"type":"text","text":""}}`, blockIdx))
 			WriteSSE(w, flusher, "content_block_delta", fmt.Sprintf(
-				`{"type":"content_block_delta","index":%d,"delta":{"type":"text_delta","text":%q}}`, blockIdx, escapeJSON(text)))
+				`{"type":"content_block_delta","index":%d,"delta":{"type":"text_delta","text":%q}}`, blockIdx, text))
 			WriteSSE(w, flusher, "content_block_stop", fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, blockIdx))
 		}
 
@@ -167,9 +167,9 @@ func (a *Claude) TransformResponse(w http.ResponseWriter, resp *http.Response, r
 				}
 				blockIdx := i + 1 // 文本块之后
 				WriteSSE(w, flusher, "content_block_start", fmt.Sprintf(
-					`{"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":%q,"name":%q,"input":{}}}`, blockIdx, callID, escapeJSON(name)))
+					`{"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":%q,"name":%q,"input":{}}}`, blockIdx, callID, name))
 				WriteSSE(w, flusher, "content_block_delta", fmt.Sprintf(
-					`{"type":"content_block_delta","index":%d,"delta":{"type":"input_json_delta","partial_json":%q}}`, blockIdx, escapeJSON(string(argsObj))))
+					`{"type":"content_block_delta","index":%d,"delta":{"type":"input_json_delta","partial_json":%q}}`, blockIdx, string(argsObj)))
 				WriteSSE(w, flusher, "content_block_stop", fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, blockIdx))
 			}
 		}
