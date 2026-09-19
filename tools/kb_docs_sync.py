@@ -5,7 +5,7 @@
 ★ 2026-09-19 「项目文档」二次分家批2：取源根 `DOCS` **双认**（仓内 `docs/项目文档` 优先、缺则同级
   仓外 `Zerg-内部文档/项目文档/`）——与 `docs/site/export-and-build.sh` 的 `ZERG_DOCS_ALT` 同根同默认；
   **两处都缺 ⇒ exit 2 不给结论**（原行为是打印「未找到当前版本目录」后 exit 0 = 假绿）。
-  ★ 版本值**未动**（本脚本行为已改 ⇒ 按铁律 4 本该升版本；但 `scripts/check-tool-version-sync.sh`
+  ★ 版本值**未动**（本脚本行为已改 ⇒ 按铁律 4 本该升版本；但 `scripts/gates/check-tool-version-sync.sh`
   明写「改抬头前先由 Mr2109 定版本值，勿自动顺延」⇒ 版本值**待拍**，见 tools/kb_docs_sync.md 履历登记）。
   ★ 批3 后 `file_path`（= relpath 到 REPO）会带 `../Zerg-内部文档/` 前缀 ⇒ KB 侧按**文件名**建索引
   （registry 键 = basename）不受影响；`file_path` 写法待拍。

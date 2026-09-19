@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// 跨实现对读：testdata/demo.egg 由 **Python 工具**（scripts/zerg-egg.py）产出，
+// 跨实现对读：testdata/demo.egg 由 **Python 工具**（scripts/x3/zerg-egg.py）产出，
 // 本包（Go）必须能读 ⇒ 两个实现共用同一份格式（§11.4「读写两端同源」的跨语言版）。
 func TestReadIndex_PythonMadeEgg(t *testing.T) {
 	egg := filepath.Join("testdata", "demo.egg")
 	if _, err := os.Stat(egg); err != nil {
-		t.Fatalf("缺 testdata/demo.egg（应由 scripts/zerg-egg.py 生成）：%v", err)
+		t.Fatalf("缺 testdata/demo.egg（应由 scripts/x3/zerg-egg.py 生成）：%v", err)
 	}
 	ix, err := ReadIndex(egg)
 	if err != nil {

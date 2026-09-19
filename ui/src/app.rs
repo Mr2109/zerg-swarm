@@ -3224,7 +3224,7 @@ impl ZergApp {
         //   · UI 侧唯一来源 = ui/Cargo.toml `version`（窗口标题 + 底栏 + 10 个虫茧箱版本全用
         //     env!("CARGO_PKG_VERSION") 编译期取值，改一处即全改）
         //   · Go 侧唯一来源 = core/internal/version.Version（启动横幅 + /api/capabilities + openapi info.version）
-        //   · 两处一致性由门禁 scripts/check_version.py 断言（CI + 发布导出）
+        //   · 两处一致性由门禁 scripts/gates/check_version.py 断言（CI + 发布导出）
         // 收版时改这两处 + 运行中二进制复核（/api/capabilities、/api/openapi.json、窗口标题）。
         // 数据：当前模块名 + running 任务数（复用现有 tasks——不新拉）
         // E16（2026-09-13）：HUD「当前模块」显示 **父 › 子** 两段。

@@ -9,7 +9,7 @@
 修法：`wall/src/platform/linux.rs` 的 `plan()` 在参数序列前补 `bwrap`（**只此一处差异**，
 两侧注释互相点名）；新增用例 `argv0_is_the_executable_not_a_flag` 钉住它。
 
---- 1) 门禁真跑：python3 scripts/compare-wall-argv.py --self-test --evidence … ---
+--- 1) 门禁真跑：python3 scripts/evals/compare-wall-argv.py --self-test --evidence … ---
 === 茧壁迁移桥（任务 2'.3）：Go hatch.BuildBwrapArgv ↔ zerg-wall plan ===
 配方目录：wall/testdata/bridge-specs（5 份：ok 3 / reject 2）
 茧壁二进制：wall/target/debug/zerg-wall
@@ -358,9 +358,9 @@ d7870b42462056febc50aded49823c8391e91cfbdf816fe4c7ee97304f2ead0f  wall/src/platf
 83b3c5ccf8ddd7670b513166068bd3b6668521b78a9a645c42b4c947300a85d0  wall/tests/plan_linux.rs
 3930e1b732714cfcd31ad90f8b27b2a8463d9fab3f389d0ca0a4c246d36399d7  agent/internal/hatch/hatch.go
 35f856ce2c427beaeafbf699895606dd9578f3790c06a14210093f4c2bf8ceae  agent/internal/hatch/wall_bridge_test.go
-3208b51b5edc4e8cdb81b9da4ef4b8633ceebdea5bc21abd4df97e79d42bb624  scripts/compare-wall-argv.py
+3208b51b5edc4e8cdb81b9da4ef4b8633ceebdea5bc21abd4df97e79d42bb624  scripts/evals/compare-wall-argv.py
 
---- 2) 变异验证（两侧各一次；红 ⇒ 还原 ⇒ sha 逐字节一致 ⇒ 复跑绿；可复跑：python3 scripts/wall-bridge-mutate.py）---
+--- 2) 变异验证（两侧各一次；红 ⇒ 还原 ⇒ sha 逐字节一致 ⇒ 复跑绿；可复跑：python3 scripts/wall/wall-bridge-mutate.py）---
 [M1 Rust 侧] 拿掉 `--die-with-parent`（wall/src/platform/linux.rs）
     变异后：红    ok-01-full.json                            长度不同：Go 60 项 / 茧壁 59 项（去掉可执行名后）
     变异后：红    ok-02-minimal.json                         长度不同：Go 36 项 / 茧壁 35 项（去掉可执行名后）

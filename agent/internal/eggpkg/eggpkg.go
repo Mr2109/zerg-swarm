@@ -1,6 +1,6 @@
 // Package eggpkg —— 卵的单文件封装（*.egg）在**子端侧**的只读解析与展开规划。
 //
-// 格式 v1 与 `scripts/zerg-egg.py` **同源**（固定 32 字节前缀 + 索引 JSON + 按 align 对齐的数据段）：
+// 格式 v1 与 `scripts/x3/zerg-egg.py` **同源**（固定 32 字节前缀 + 索引 JSON + 按 align 对齐的数据段）：
 //
 //	[0:4) magic "ZEGG" | [4:8) version(u32 LE) | [8:16) align(u64 LE) | [16:24) index_len(u64 LE) | [24:32) 保留
 //

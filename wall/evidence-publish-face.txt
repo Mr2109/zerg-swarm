@@ -3,13 +3,13 @@
 本轮**未推镜像、未发 Release、未换件、未重启、未动运行期状态目录（`~/.zerg`）与 X3 与生产服务**（对外动作属「等他拍板区」）。
 
 --- 制品与源码 sha256（本轮改动的两个件）---
-c0a4e2892862e25fc03dc46021e81ce399bc012230d699edf41506825a25c6cf  scripts/check-publish-face-sync.py   （新增门禁）
-c72ba29aa9c0164f45d1c4d55d83eae61fc593aac1c729a907a671aec44e8a5e  scripts/publish-public.sh            （改：EXCLUDES 补三件）
+c0a4e2892862e25fc03dc46021e81ce399bc012230d699edf41506825a25c6cf  scripts/gates/check-publish-face-sync.py   （新增门禁）
+c72ba29aa9c0164f45d1c4d55d83eae61fc593aac1c729a907a671aec44e8a5e  scripts/build/publish-public.sh            （改：EXCLUDES 补三件）
 （取证中曾把 publish-public.sh 临时还原到修复前跑一次「修复前」读数，跑完立即还原并复核
  sha256 逐字节等于 c72ba29a… —— 还原动作本身也按同一口径复核过。）
 
 --- 0) 新门禁自检：新增用例必须能失败 ---
-python3 scripts/check-publish-face-sync.py --self-test ⇒ rc=0（7 过 / 0 红）
+python3 scripts/gates/check-publish-face-sync.py --self-test ⇒ rc=0（7 过 / 0 红）
   ✅ ok-both-dropped        rc=0（期望 0）—— 命中黑名单、两器都处理 ⇒ 绿
   ✅ drift-mirror-only      rc=1（期望 1）—— 镜像器丢、旧器不排 ⇒ 判据① 红（**本轮的真是形态**）
   ✅ both-leak              rc=1（期望 1）—— 命中黑名单且两器都不处理 ⇒ 判据② 红
@@ -26,27 +26,27 @@ python3 scripts/check-publish-face-sync.py --self-test ⇒ rc=0（7 过 / 0 红�
     镜像器自带清单丢弃（map_path=None）：7 条
     命中私有面黑名单：8 条
     ✗ 判据① 漂移 3 条 —— 镜像器丢、旧器不排（旧器真跑会导出 ⇒ 被私有面门禁抓住而整批自中止）：
-        scripts/check-placeholder-residue.py
-        scripts/check-public-tree-hazards.py
-        scripts/publish-preflight.sh
+        scripts/gates/check-placeholder-residue.py
+        scripts/gates/check-public-tree-hazards.py
+        scripts/build/publish-preflight.sh
 1b) 旧器（压平快照器 / 应急后备通道）真跑 **rc=1**（自中止原文）：
   ✗ 命中私有面 3 处 —— 发布必须中止（一个字节都不推）：
-      scripts/publish-preflight.sh                                 ← 规则 scripts/publish-preflight.sh
-      scripts/check-public-tree-hazards.py                         ← 规则 scripts/check-public-tree-hazards.py
-      scripts/check-placeholder-residue.py                         ← 规则 scripts/check-placeholder-residue.py
+      scripts/build/publish-preflight.sh                                 ← 规则 scripts/build/publish-preflight.sh
+      scripts/gates/check-public-tree-hazards.py                         ← 规则 scripts/gates/check-public-tree-hazards.py
+      scripts/gates/check-placeholder-residue.py                         ← 规则 scripts/gates/check-placeholder-residue.py
     ❌ 公开树出现私有面路径——已中止导出（一个字节都不推）
   ⇒ 定性：**旧器当前根本发不出去**。这三个脚本早已收进 publish/private-paths.txt（私有面黑名单）
-    与镜像器自带 DROP_EXACT，只差 `scripts/publish-public.sh` 的 `EXCLUDES`（B8 声明的单一真源，
+    与镜像器自带 DROP_EXACT，只差 `scripts/build/publish-public.sh` 的 `EXCLUDES`（B8 声明的单一真源，
     镜像器解析的就是它）—— 一处滞后 ⇒ 两器口径静默漂移；而两器一致性验收要跑约 6 分钟才看得见，
     属于「闸门存在、但发现得太晚」的形态。
 
 --- 2) 修复（收在单一真源里，一处）---
-scripts/publish-public.sh 的 `EXCLUDES=( … )` 增补：
-  scripts/publish-preflight.sh · scripts/check-placeholder-residue.py · scripts/check-public-tree-hazards.py
-  · scripts/check-publish-face-sync.py（本轮新增的漂移镜子本身也是发布机制脚本：它复用
-    scripts/check-history-secrets.py 与 scripts/check-public-tree-private.py 两个私有侧门禁，
+scripts/build/publish-public.sh 的 `EXCLUDES=( … )` 增补：
+  scripts/build/publish-preflight.sh · scripts/gates/check-placeholder-residue.py · scripts/gates/check-public-tree-hazards.py
+  · scripts/gates/check-publish-face-sync.py（本轮新增的漂移镜子本身也是发布机制脚本：它复用
+    scripts/gates/check-history-secrets.py 与 scripts/gates/check-public-tree-private.py 两个私有侧门禁，
     公开树里没有它们 ⇒ 导出去只会是一个跑不起来的文件 ⇒ 与同类同规，不进公开面）
-⇒ EXCLUDES 18 → 22 条。另加「闸⓪ 发布面同步」进 scripts/publish-preflight.sh（秒级、配置级、
+⇒ EXCLUDES 18 → 22 条。另加「闸⓪ 发布面同步」进 scripts/build/publish-preflight.sh（秒级、配置级、
   不依赖产物目录），把同类问题从「跑到闸⑤才发现」提前到「推之前几秒」。
 
 --- 3) 修复后 ---
@@ -60,12 +60,12 @@ scripts/publish-public.sh 的 `EXCLUDES=( … )` 增补：
     check-public-tree-hazards.py / check-publish-face-sync.py
 3e) 私有面门禁对产出树 rc=0（黑名单 10 目录 + 22 文件 + 0 豁免）
 3f) **提交后复跑**（本笔提交之后的私有仓状态）：旧器 rc=0 · **导出文件数 857**（含本回执）·
-    快照里 `wall/` **28** 个文件（27 + 本回执）· 漂移镜子 `scripts/check-publish-face-sync.py` **已排除** ·
+    快照里 `wall/` **28** 个文件（27 + 本回执）· 漂移镜子 `scripts/gates/check-publish-face-sync.py` **已排除** ·
     私有面门禁对产出树 rc=0 ⇒ **本回执自身也是可发布形态**（回执里不写私有绝对路径 / 不写 `~/.zerg/`
     这类危险路径形态）
 
 --- 4) 两器一致性验收（既有门禁，全史真跑，修复后一次）---
-bash scripts/test-publish-parity.sh ⇒ **rc=0 · 通过 21 项 / 失败 0 项**
+bash scripts/build/test-publish-parity.sh ⇒ **rc=0 · 通过 21 项 / 失败 0 项**
   · 两器都跑绿：旧器 rc=0（含五道产物门禁）· 镜像器 rc=0（逐笔硬门禁 + 私有面门禁）
   · 树内容一致：共同路径 848 · 完全相同 848 · 差异 1（契约内 1 = .mirror-state / **契约外 0**）
   · 过滤口径对账：白名单 15 条 · **排除项 21 条**（当时值；镜像器解析同一份）·
@@ -78,7 +78,7 @@ bash scripts/test-publish-parity.sh ⇒ **rc=0 · 通过 21 项 / 失败 0 项**
   修复前那次未跑 —— 因为 1b 已经直接证明旧器 rc=1，而 parity 断言 1a 正是「旧器跑绿」。
 
 --- 5) 发布前置六道闸（真跑，闸门接线取证）---
-bash scripts/publish-preflight.sh /tmp/zerg-parity-20260916-101645/mirror ⇒ **rc=0 · ✅ 六道闸全过 ⇒ 允许推送**
+bash scripts/build/publish-preflight.sh /tmp/zerg-parity-20260916-101645/mirror ⇒ **rc=0 · ✅ 六道闸全过 ⇒ 允许推送**
   闸⓪ 发布面同步（本轮新增）：通过（**秒级**，先跑；配置级、不依赖产物目录）
   闸① 占位符截断残留（逐笔）：通过（自测全过）
   闸② 私有面：通过

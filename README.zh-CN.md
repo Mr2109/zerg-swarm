@@ -64,7 +64,7 @@
 
 ## 快速开始
 
-**从源码装，一条命令。** `scripts/setup-zerg.sh` 把一台新机器一次引导到位：
+**从源码装，一条命令。** `scripts/svc/setup-zerg.sh` 把一台新机器一次引导到位：
 取公开镜像仓 → 按 `core/go.mod` 钉住的版本核验 Go 工具链 → 按角色构建 → 原子安装
 （留 `bin/*.prev` 供回滚）→ 注册并重启服务 → 用**运行进程自报的提交号**与安装件对账。
 它只会如实拒绝、绝不猜：工具链太旧、检出是脏树、在非 macOS 上要 UI —— 都会停下来说明原因。
@@ -72,9 +72,9 @@
 ```bash
 git clone https://github.com/Mr2109/zerg-swarm.git && cd zerg-swarm
 
-bash scripts/setup-zerg.sh                 # 主控（macOS）：core + agent（+ ui）
-bash scripts/setup-zerg.sh --role node     # 机群节点（Linux）：core + agentd
-bash scripts/setup-zerg.sh --dry-run       # 只打印计划，零副作用
+bash scripts/svc/setup-zerg.sh                 # 主控（macOS）：core + agent（+ ui）
+bash scripts/svc/setup-zerg.sh --role node     # 机群节点（Linux）：core + agentd
+bash scripts/svc/setup-zerg.sh --dry-run       # 只打印计划，零副作用
 ```
 
 再配置共享令牌与模型登记表（macOS 上主控已由 launchd 托管；节点会得到一个管 `zerg-agentd`

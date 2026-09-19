@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          # G6：工具链钉住的单一真源 = core/go.mod 的 go 指令（见 scripts/check-gotoolchain.py）
+          # G6：工具链钉住的单一真源 = core/go.mod 的 go 指令（见 scripts/gates/check-gotoolchain.py）
           go-version-file: core/go.mod
           cache-dependency-path: |
             core/go.sum
@@ -23,7 +23,7 @@ jobs:
           git config --global user.email "ci@example.invalid"
           git config --global user.name "Zerg CI"
       - name: shell 静态检查（$VAR 后紧跟非 ASCII → unbound variable）
-        run: python3 scripts/check-shell-unicode-vars.py --check scripts/*.sh *.sh
+        run: python3 scripts/gates/check-shell-unicode-vars.py --check scripts/*.sh *.sh
       - name: core 构建 + 测试
         working-directory: core
         run: |
@@ -51,9 +51,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: 检查
-        run: python3 scripts/check_version.py
+        run: python3 scripts/gates/check_version.py
       - name: Go 工具链钉住一致性（G6：core/agent 两模块同值）
-        run: python3 scripts/check-gotoolchain.py
+        run: python3 scripts/gates/check-gotoolchain.py
 
   compat:
     name: 跨版本状态兼容清单门禁（B7 / G10）
@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: 清单 ↔ 代码双向一致（R1–R6）
         # 只读源码与 core/internal/compat/compat.json；**不碰真机状态目录**（CI 里跑 ~/.zerg/** 是禁忌）。
-        run: python3 scripts/check-compat-manifest.py --selftest && python3 scripts/check-compat-manifest.py
+        run: python3 scripts/gates/check-compat-manifest.py --selftest && python3 scripts/gates/check-compat-manifest.py
       - uses: actions/setup-go@v5
         with:
           go-version-file: core/go.mod
@@ -77,7 +77,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: 检查
-        run: python3 scripts/check_docs.py
+        run: python3 scripts/gates/check_docs.py
 
   i18n:
     name: i18n 门禁（键对称/引用完整/占位符/中文基线）

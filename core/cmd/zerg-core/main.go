@@ -60,7 +60,7 @@ func main() {
 			return
 		case "update":
 			// 源码式自更新（B3）：`zerg update` —— 与 hermes update 同形。
-			// 它自己不是换装者：构建后 spawn 独立进程（scripts/zerg-upgrade.sh 六阶段内核）。
+			// 它自己不是换装者：构建后 spawn 独立进程（scripts/build/zerg-upgrade.sh 六阶段内核）。
 			os.Exit(selfupdate.CLIMain(os.Args[2:]))
 		case "--help", "-h", "help":
 			fmt.Println("usage: zerg-core [config-file]")

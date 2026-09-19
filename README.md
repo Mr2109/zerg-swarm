@@ -64,7 +64,7 @@
 
 ## Quick start
 
-**Install from source, one command.** `scripts/setup-zerg.sh` bootstraps a new machine end to end:
+**Install from source, one command.** `scripts/svc/setup-zerg.sh` bootstraps a new machine end to end:
 fetch the public mirror → verify the Go toolchain against the version pinned in `core/go.mod`
 → build for the role → install atomically (`bin/*.prev` kept for rollback) → register and
 restart the service → check the **running process's self-reported commit** against the installed
@@ -74,9 +74,9 @@ requested off macOS all stop it with a plain explanation.
 ```bash
 git clone https://github.com/Mr2109/zerg-swarm.git && cd zerg-swarm
 
-bash scripts/setup-zerg.sh                 # controller (macOS): core + agent (+ ui)
-bash scripts/setup-zerg.sh --role node     # cluster node (Linux): core + agentd
-bash scripts/setup-zerg.sh --dry-run       # print the plan, touch nothing
+bash scripts/svc/setup-zerg.sh                 # controller (macOS): core + agent (+ ui)
+bash scripts/svc/setup-zerg.sh --role node     # cluster node (Linux): core + agentd
+bash scripts/svc/setup-zerg.sh --dry-run       # print the plan, touch nothing
 ```
 
 Then configure the shared token and the model registry (the controller is already supervised by

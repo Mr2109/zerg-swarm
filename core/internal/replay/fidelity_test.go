@@ -13,7 +13,7 @@
 //	⑧ TestTraceHeaderlessIsInvalidated     缺头部 ⇒ 作废；显式放行是唯一出口
 //	⑨ TestToolTableFingerprintStable       工具表指纹与 map 序无关、内容变则指纹变
 //	⑩ TestDeterministicID                  确定性 ID = sha256(traceID‖seq)（E9），非随机
-//	⑪ TestFidelityFixtureForGate           **固定夹具**：脚本 scripts/replay-fidelity.sh 的输入源
+//	⑪ TestFidelityFixtureForGate           **固定夹具**：脚本 scripts/evals/replay-fidelity.sh 的输入源
 package replay
 
 import (
@@ -602,7 +602,7 @@ func TestTraceInvalidationOnFingerprintChange(t *testing.T) {
 		t.Errorf("空 tool_fingerprint 的录制必须被拒")
 	}
 
-	// 落盘取证（脚本 scripts/replay-fidelity.sh 打印与复核这一节）
+	// 落盘取证（脚本 scripts/evals/replay-fidelity.sh 打印与复核这一节）
 	c0 := CheckTrace2Err(tracePath, fp, InvalidationOptions{})
 	ev := invalidationEvidence{Trace: filepath.Base(tracePath), Header: fp, Cases: []invalidationCase{
 		{Name: "指纹相同（对侧：不得误报）", Invalidated: c0 != nil, Error: errString(c0)},
@@ -841,7 +841,7 @@ func hexPrefix(digest string, n int) string {
 	return s[:n]
 }
 
-// ── ⑪ 门禁夹具（脚本 scripts/replay-fidelity.sh 的输入源）──────────────────
+// ── ⑪ 门禁夹具（脚本 scripts/evals/replay-fidelity.sh 的输入源）──────────────────
 
 // 夹具的**固定内容**：改这里 ⇒ 三条指标的 sha 全变，属有意变更（脚本会打印新值）。
 const (

@@ -1,7 +1,7 @@
 //! Upgrade page (L2 of the auto-upgrade module, 2026-09-11).
 //!
 //! Design: the UI only **triggers and displays** — every judgement and the actual swap lives in
-//! `scripts/zerg-upgrade.sh` (the six-stage core: plan → drain → swap → restart → verify → report).
+//! `scripts/build/zerg-upgrade.sh` (the six-stage core: plan → drain → swap → restart → verify → report).
 //! This page therefore owns no upgrade logic of its own: it runs that script and shows its output,
 //! so there is exactly one implementation of "how an upgrade happens".
 //!
@@ -46,7 +46,10 @@ fn repo_root() -> Option<std::path::PathBuf> {
 }
 
 fn script_path() -> Option<std::path::PathBuf> {
-    let p = repo_root()?.join("scripts").join("zerg-upgrade.sh");
+    let p = repo_root()?
+        .join("scripts")
+        .join("build")
+        .join("zerg-upgrade.sh");
     if p.exists() {
         Some(p)
     } else {
@@ -58,7 +61,7 @@ fn script_path() -> Option<std::path::PathBuf> {
 fn spawn(args: Vec<String>) {
     let Some(script) = script_path() else {
         push(String::from(
-            "[err] scripts/zerg-upgrade.sh not found (set ZERG_ROOT)",
+            "[err] scripts/build/zerg-upgrade.sh not found (set ZERG_ROOT)",
         ));
         return;
     };

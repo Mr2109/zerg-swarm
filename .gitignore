@@ -49,7 +49,7 @@ __pycache__/
 *.dylib
 *.class
 
-# 发布制品（scripts/build-all.sh --dist：二进制 + checksums.txt）——入库会让公开快照带编译产物
+# 发布制品（scripts/build/build-all.sh --dist：二进制 + checksums.txt）——入库会让公开快照带编译产物
 /dist/
 
 # 安装方式印记（B3 `zerg update`：代码树旁的 .install_method = git/fleet/unknown）

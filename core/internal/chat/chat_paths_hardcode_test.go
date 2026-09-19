@@ -46,7 +46,7 @@ func TestLogTail_UI_DerivesFromRuntimeLogDir(t *testing.T) {
 	dir := t.TempDir() // 注意：不是 /tmp —— 只有真派生的实现才可能命中
 	t.Setenv("ZERG_LOG_DIR", dir)
 	// 清宿主环境：ZERG_UI_LOG 是「显式 > 派生」里的高阶候选，
-	// 宿主若已设（scripts/start-zerg-ui.sh 就会设），不清就是用例被环境决定 ⇒ 假红。
+	// 宿主若已设（scripts/build/start-zerg-ui.sh 就会设），不清就是用例被环境决定 ⇒ 假红。
 	// 本行只清环境、不放宽断言（下面的断言仍锁死「派生目录」这一条）。
 	t.Setenv("ZERG_UI_LOG", "")
 	const marker = "UI-LOG-MARKER-b2-77f1"
@@ -95,7 +95,7 @@ func TestLogTail_UI_MissingFileReportsDerivedPath(t *testing.T) {
 // TestLogTail_UI_ExplicitEnvWinsOverDerivedPath — ZERG_UI_LOG 优先分支（显式 > 派生）。
 // 两个候选**同时存在且内容不同**：只有真的读了 ZERG_UI_LOG 那份，标记才对。
 // 老实现（无优先序、只认 ZERG_LOG_DIR 派生）会读到派生那份 ⇒ 本用例红。
-// 与 scripts/start-zerg-ui.sh 同一条优先序（两侧一致，不许各读各的）。
+// 与 scripts/build/start-zerg-ui.sh 同一条优先序（两侧一致，不许各读各的）。
 func TestLogTail_UI_ExplicitEnvWinsOverDerivedPath(t *testing.T) {
 	const explicitMarker = "UI-LOG-EXPLICIT-b2-c40e"
 	const derivedMarker = "UI-LOG-DERIVED-b2-c40e"

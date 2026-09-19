@@ -1,7 +1,7 @@
 // Package version —— 版本号单一来源（Go 侧）。
 //
 // 收版时改这里的 Version + ui/Cargo.toml 的 version（两处必须一致）；
-// 一致性由 scripts/check_version.py 断言，已接入 CI 与发布导出流水线。
+// 一致性由 scripts/gates/check_version.py 断言，已接入 CI 与发布导出流水线。
 //
 // 背景（APP-A23 收口 2026-09-11）：版本号曾硬编码在 5 处（UI 标题/底栏、模块箱 ×10、
 // 启动横幅、capabilities、openapi），互相漂移（模块箱长期是 0.1.0）。
@@ -16,7 +16,7 @@ const Tag = "v" + Version
 
 // Commit / BuildTime —— 构建时由 -ldflags -X 注入的代码身份（自动升级模块的验证依据）。
 // 必须是 var（-X 只能写字符串变量，不能写 const）；未注入时为 "unknown"。
-// 注入命令见 scripts/build-all.sh：
+// 注入命令见 scripts/build/build-all.sh：
 //
 //	-ldflags "-X github.com/Mr2109/zerg-swarm/core/internal/version.Commit=<sha40/短> \
 //	          -X github.com/Mr2109/zerg-swarm/core/internal/version.BuildTime=<UTC ISO8601>"

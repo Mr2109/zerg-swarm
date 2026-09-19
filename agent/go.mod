@@ -2,7 +2,7 @@ module github.com/Mr2109/zerg-swarm/agent
 
 go 1.23
 
-// G6：与 core/go.mod 同值（单一真源；scripts/check-gotoolchain.py 断言）。
+// G6：与 core/go.mod 同值（单一真源；scripts/gates/check-gotoolchain.py 断言）。
 toolchain go1.25.5
 
 require gopkg.in/yaml.v3 v3.0.1

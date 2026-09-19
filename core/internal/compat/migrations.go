@@ -1,7 +1,7 @@
 // migrations.go — 一次性迁移函数表（清单的 migrate_func 指向这里的函数）。
 //
 // 约定：清单里 migrate_func="X" ⇒ 本文件必须存在 func migrateX。
-// 门禁 scripts/check-compat-manifest.py 按同一约定 grep 本文件，缺一个就 rc=1。
+// 门禁 scripts/gates/check-compat-manifest.py 按同一约定 grep 本文件，缺一个就 rc=1。
 //
 // 迁移函数是**纯 JSON 变换**（不碰磁盘、不读环境）：读、备份、写回、回读校验由 migrate.go 的
 // 层级负责。这样迁移本身可以单测到字节，且与「谁拥有这个文件」（Go 侧 / UI 侧）无关
