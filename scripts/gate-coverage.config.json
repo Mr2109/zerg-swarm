@@ -1,5 +1,5 @@
 {
-  "_comment": "check-gate-coverage.py 的入参清单（扫描面 / 硬排除 / 白名单 / 基线棘轮）。规格：docs/项目文档/v2.5.10/债务台账-20260918.md §0（哪些域在所有门之外）与 §7 建议门①。★ 改这个文件 = 改判据 ⇒ 必须同时改 scripts/check-gate-coverage.md 的「口径」节。★ 只许改 baseline 那一个数字往下调（永不上调）。",
+  "_comment": "check-gate-coverage.py 的入参清单（扫描面 / 硬排除 / 白名单 / 基线棘轮）。规格：Zerg-内部文档/项目文档/v2.5.10/债务台账-20260918.md §0（哪些域在所有门之外）与 §7 建议门①（★ 2026-09-19 二次分家批5：该件现位置 = 同级 `Zerg-内部文档/项目文档/…`，仓内不再有）。★ 改这个文件 = 改判据 ⇒ 必须同时改 scripts/check-gate-coverage.md 的「口径」节。★ 只许改 baseline 那一个数字往下调（永不上调）。",
   "schema": "gate-coverage/1",
 
   "baseline": 69,

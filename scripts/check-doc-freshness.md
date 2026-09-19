@@ -89,7 +89,7 @@ python3 scripts/check-doc-freshness.py d1 --scope wide --no-whitelist
   - 否则 ⇒ **红**，报错**必带「跑哪条命令修」**（K8s 形态）；
   - 目标在冻结归档/镜像 ⇒ 只登记不判（除非 `--strict-all`）。
 - **退码**：`0` 全对 · `1` 有 drift · **`2` 缺生成器 / 产物不存在 / 0 个可比对（不给结论）**。
-- **登记的两个生成器**：`tools/doc_index_gen.py`（→ `docs/项目文档/*/INDEX.md`，17 个目标）· `tools/gen_tools_md.py`（→ `publish/docs/TOOLS.zh-CN.md`，源 `core/internal/chat/chat_tool_registry.go`）。
+- **登记的两个生成器**：`tools/doc_index_gen.py`（→ `docs/项目文档/*/INDEX.md`，17 个目标；★ 2026-09-19 二次分家批5：仓内 glob 今天**零命中**，按 config 的 `alt_root`=`../Zerg-内部文档` + `targets_glob_alt`=`项目文档/*/INDEX.md` 判**仓外产物**（两处都零命中 ⇒ 照原口径 rc=2，不假绿））· `tools/gen_tools_md.py`（→ `publish/docs/TOOLS.zh-CN.md`，源 `core/internal/chat/chat_tool_registry.go`）。
   ★ **2026-09-19「项目文档」二次分家批2（生成器靶双认 · 先仓内、缺则仓外取源根）**：`doc-index` 条目加
   `alt_root`（`../Zerg-内部文档`）+ `targets_glob_alt`（`项目文档/*/INDEX.md`，相对 `alt_root`）——**仓内先匹配**，
   仓内**零命中**才去 `alt_root` 下匹配，命中则以 `../Zerg-内部文档/…` 形态进判（生成 → `$TMPDIR` 重建 → 与仓外提交物逐字节比对）；

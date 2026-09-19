@@ -122,7 +122,7 @@ func parseModelResponse(raw []byte) (*ModelResponse, error) {
 	// ⚠ 铁律（2026-09-17 实测事故后立，Mr2109 定）：**思考不得顶替正文**。
 	// 旧实现（「思考模型 fallback：content 空读 reasoning」）把思考搬进 Content ⇒ reasoning 列空 ⇒
 	// 下一轮回灌时它成了「上一轮助手说的话」⇒ 模型照抄该口吻 ⇒ 正文污染 + 复读（实测链条见
-	// docs/项目文档/v2.5.10/变更-v2.5.10.md）。此处**只记录事实、不做搬运**：
+	// Zerg-内部文档/项目文档/v2.5.10/变更-v2.5.10.md）。此处**只记录事实、不做搬运**：（2026-09-19 二次分家）
 	// Content 空就是空（交付轮没有正文），思考一律留在 Reasoning。
 	if resp.Content == "" && resp.Reasoning != "" {
 		resp.ReasoningOnly = true
@@ -183,7 +183,7 @@ func parseChatModelResponse(raw []byte) (*ModelResponse, error) {
 	// ⚠ 铁律（2026-09-17 实测事故后立，Mr2109 定）：**思考不得顶替正文**。
 	// 旧实现（「思考模型 fallback：content 空读 reasoning」）把思考搬进 Content ⇒ reasoning 列空 ⇒
 	// 下一轮回灌时它成了「上一轮助手说的话」⇒ 模型照抄该口吻 ⇒ 正文污染 + 复读（实测链条见
-	// docs/项目文档/v2.5.10/变更-v2.5.10.md）。此处**只记录事实、不做搬运**：
+	// Zerg-内部文档/项目文档/v2.5.10/变更-v2.5.10.md）。此处**只记录事实、不做搬运**：（2026-09-19 二次分家）
 	// Content 空就是空（交付轮没有正文），思考一律留在 Reasoning。
 	if resp.Content == "" && resp.Reasoning != "" {
 		resp.ReasoningOnly = true
