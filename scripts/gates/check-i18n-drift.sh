@@ -31,8 +31,13 @@
 # 用法：
 #   scripts/gates/check-i18n-drift.sh [--phase all|exist|stale|comment] [--root docs] [--langs zh,en]
 #                               [--selftest]
-# 退码：0 = 三相全绿 · 1 = 仅告警相命中（comment）· 2 = 有阻塞相命中（exist/stale）
-#       3 = 环境/输入异常（不在仓根 / 无 git / 扫到 0 篇 —— 不静默空转）
+# 退码：0 = 三相全绿 · 1 = 仅告警相命中（comment）
+#       2 = **不给结论 / 阻塞**（有阻塞相命中（exist/stale）· 环境/输入异常（不在仓根 / 无 git /
+#           扫到 0 篇 / 参数错）—— 不静默空转）
+#       ★ 2026-09-20 承接项「术语表只有一份」第 4 条：本脚本原 `rc=3` 一律**统一成 `rc=2`** ——
+#         与仓内其余门脚本（check-doc-name/meta/freshness、check-glossary.py、precommit-gates.sh）
+#         的 0/1/2 三档同一口径；对外效果 = 挂在公开树（无 `docs/` 面 ⇒ 扫到 0 篇）时落
+#         **BLOCKED（不给结论）**，而不是被 precommit-gates.sh 的 `tri-report` 档读成 FAIL。
 # =============================================================================
 set -u
 
@@ -48,23 +53,23 @@ while [ $# -gt 0 ]; do
     --langs) LANGS="${2:-zh,en}"; shift 2 ;;
     --selftest) SELFTEST=1; shift ;;
     -h|--help) grep '^#' "$0" | head -40; exit 0 ;;
-    *) echo "✗ 未知参数：$1" >&2; exit 3 ;;
+    *) echo "✗ 未知参数：$1" >&2; exit 2 ;;
   esac
 done
 
 SRC_LANG="$(printf '%s' "$LANGS" | cut -d, -f1)"
 DST_LANG="$(printf '%s' "$LANGS" | cut -d, -f2)"
-[ -n "$SRC_LANG" ] && [ -n "$DST_LANG" ] || { echo "✗ --langs 需要两个语言码（如 zh,en）" >&2; exit 3; }
+[ -n "$SRC_LANG" ] && [ -n "$DST_LANG" ] || { echo "✗ --langs 需要两个语言码（如 zh,en）" >&2; exit 2; }
 
 # --- 仓根与 git（只读）-------------------------------------------------------
 if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
   echo "✗ 不在 git 仓内（⑵ 过期检测要读 commit 历史）⇒ 拒绝给结论" >&2
-  exit 3
+  exit 2
 fi
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-cd "$REPO_ROOT" || exit 3
+cd "$REPO_ROOT" || exit 2
 HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
-[ -n "$HEAD_SHA" ] || { echo "✗ 拿不到 HEAD（空仓？）⇒ 拒绝给结论" >&2; exit 3; }
+[ -n "$HEAD_SHA" ] || { echo "✗ 拿不到 HEAD（空仓？）⇒ 拒绝给结论" >&2; exit 2; }
 
 fm_value() {   # fm_value <文件> <键>  —— 只读 frontmatter 标量键（行式，不引 YAML 依赖）
   awk -v k="$2" '
@@ -135,7 +140,7 @@ phase_exist() {
     fi
   done
   echo "   ① 存在性对照：$SRC_LANG/$DST_LANG 两侧共扫描 $n 个页面名，缺一侧 $miss 个"
-  [ "$n" -gt 0 ] || { echo "   ⚠ 两侧合计 0 篇 —— 正式面还没建？"; rc=3; }
+  [ "$n" -gt 0 ] || { echo "   ⚠ 两侧合计 0 篇 —— 正式面还没建？⇒ 不给结论（rc=2，2026-09-20 由 rc=3 统一过来）"; rc=2; }
   [ "$miss" -eq 0 ] || rc=2
   return $rc
 }
@@ -246,7 +251,7 @@ selftest() {
 
 [ "$SELFTEST" = "1" ] && { selftest; exit $?; }
 
-# --- 跑相（各相独立退码；总码取最严：2 > 1 > 0；任一无结论 ⇒ 3）-------------
+# --- 跑相（各相独立退码；总码取最严：2 > 1 > 0；任一无结论 ⇒ 2（2026-09-20 由 3 统一））-----
 RC_EXIST=0; RC_STALE=0; RC_COMMENT=0
 TOTAL=0
 run_all=0
