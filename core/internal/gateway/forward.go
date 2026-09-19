@@ -201,6 +201,19 @@ func (g *Gateway) forwardToBackend(
 	// （不能在函数返回时 defer cancel——resp.Body 的 context 会立即取消导致读取截断）
 	resp.Body = &cancelOnCloseBody{ReadCloser: resp.Body, cancel: cancel}
 
+	// 缺口 ⑤（2026-09-19 Mr2109「开工」）：冷卵自动孵。
+	// 只在该机**真的**回了 5xx「model not available」之后才孵，然后**原地重发一次**——
+	// 热路径零侵入（2xx 一个字节都不多读），只重发一次（不掩盖真故障）。
+	// 第一版"转发前预探测"被既有 trace 用例证伪（每次转发多打一跳），故不用。
+	if !eggRetryDone(ctx) && peekModelNotAvailable(resp) {
+		if g.hatchEgg(modelName(reqMap), route.Host) {
+			log.Printf("🥚 cold egg hatched — retrying %s once (model=%s)", route.Host, modelName(reqMap))
+			_ = resp.Body.Close()
+			cancel()
+			return g.forwardToBackend(withEggRetry(ctx), route, originalPath, body, headers, required)
+		}
+	}
+
 	return resp, nil
 }
 
