@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 // ============ v2.5.5 T3 内部任务引擎——最小实现 ============
@@ -236,16 +238,28 @@ func (d *IdleDetector) checkAndTrigger() {
 	log.Printf("🕐 all internal tasks cooling down — none triggered")
 }
 
-// triggerTask 建 issue + 派 CA（复用调度器——写 docs/issues/ 任务单）
+// issueWriteDir — 写单目录（2026-09-19「内部任务单目录可配」）：
+// 非空 issueDir（调用方显式指定/测试隔离）优先；空 ⇒ statepath.IssuesDir()（唯一出口：
+// ZERG_ISSUES_DIR → <ZERG_STATE_DIR>/issues）。引擎**只写**这个目录——
+// 仓内旧 docs/issues/ 不搬、不删、不改（只读保留）。
+func (d *IdleDetector) issueWriteDir() string {
+	if p := strings.TrimSpace(d.issueDir); p != "" {
+		return p
+	}
+	return statepath.IssuesDir()
+}
+
+// triggerTask 建 issue + 派 CA（复用调度器——写 issueWriteDir() 任务单）
 // v2.5.5 P1-3: 返回任务单路径（onTrigger 传给总调度器——完成时更新状态）
 func (d *IdleDetector) triggerTask(def InternalTask) (string, error) {
-	// 建任务单（docs/issues/internal-<id>-<时间>.md）
+	// 建任务单（internal-<id>-<时间>.md——首次自动建目录）
 	ts := time.Now().Format("20060102-150405")
 	issueName := "internal-" + def.ID + "-" + ts + ".md"
-	if err := os.MkdirAll(d.issueDir, 0o755); err != nil {
+	dir := d.issueWriteDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	issuePath := filepath.Join(d.issueDir, issueName)
+	issuePath := filepath.Join(dir, issueName)
 	content := buildInternalIssue(def, ts)
 	if err := os.WriteFile(issuePath, []byte(content), 0o644); err != nil {
 		return "", err
