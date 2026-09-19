@@ -217,13 +217,13 @@ func copyResponseAsSSE(w http.ResponseWriter, resp *http.Response) {
 
 func writeChatDelta(w http.ResponseWriter, flusher http.Flusher, text, finish string) {
 	data := fmt.Sprintf(`{"id":"chatcmpl-local","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":%q},"finish_reason":null}]}`,
-		escapeJSON(text))
+		text)
 	WriteSSE(w, flusher, "", data)
 }
 
 func writeChatReasoning(w http.ResponseWriter, flusher http.Flusher, text string) {
 	data := fmt.Sprintf(`{"id":"chatcmpl-local","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"reasoning_content":%q},"finish_reason":null}]}`,
-		escapeJSON(text))
+		text)
 	WriteSSE(w, flusher, "", data)
 }
 
@@ -246,9 +246,12 @@ func writeChatDone(w http.ResponseWriter, flusher http.Flusher, obj map[string]i
 	WriteSSE(w, flusher, "", data)
 }
 
+// strOrEmpty 取字符串原值：调用点一律走 %q，由 %q 负责 JSON 转义。
+// 曾经这里再做一次 escapeJSON ⇒ 与 %q 叠加成**双重转义**（流式下
+// arguments 变 {"command":"date"}，客户端 json.loads 失败 —— 2026-09-19 实测）。
 func strOrEmpty(v interface{}) string {
 	if s, ok := v.(string); ok {
-		return escapeJSON(s)
+		return s
 	}
 	return ""
 }
