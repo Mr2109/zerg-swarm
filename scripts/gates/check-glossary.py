@@ -20,6 +20,13 @@
   T3 告警档 —— 恒非阻塞：
        W2 英文页只出现 `en` 列的大小写变体、未见正名 · W3 `translation_of` 指向的源页不存在
        · W4 译页没有 HTML 注释（未按「源文注释」写 —— 漂移三件套③ 先非阻塞）
+       · W5 正文私建术语表（2026-09-20 承接项「术语表只有一份」）：
+         全局术语**只有一份主表** `docs/术语表.tsv`，正文**只引用、不复制**；本文专有的一组词
+         可留在本文，但**不得叫「术语表」**。判据 = 1–4 级标题的**标题文本**含「术语表」或恰为「术语」
+         ⇒ 告警并提示（全局 ⇒ 进主表；本文专有 ⇒ 改名，如「本文概念/字段说明」）。
+         三条防假红：① 先剥 `{: #锚 }` —— 锚点里带「术语表」是**引用**不是私建
+         （本仓实证：`docs/en/_drafts/设计-文档体系-v1.0.md` 的 `# Glossary: … {: #术语表：… }`）；
+         ② 围栏代码块里的行不算正文；③ 每行可用 `<!-- glossary-allow -->` 单条豁免。
 
 扫描口径（三条，写死防假红；每条都是被咬过的地方）
   ① **剥 HTML 注释与围栏代码块**后才查 B3（源文注释是规定动作；注释里的中文不是漏译）
@@ -31,7 +38,11 @@
   python3 scripts/gates/check-glossary.py [--lang zh,en] [--paths P …] [--enforce] [--no-identifiers] [--selftest]
      --enforce        把 T2 术语档升为阻塞（收敛后的口径）
      --no-identifiers 关掉 B5/W4（大型树上想只看词表命中时用）
-退出码：0 = 干净 · 1 = 仅 T2/T3 命中（非阻塞）· 2 = T1 命中（或 --enforce 下 T2 命中）· 3 = 环境/输入异常（不静默空转）
+退出码：0 = 干净 · 1 = 仅 T2/T3 命中（非阻塞）· 2 = **不给结论 / 阻塞**
+        （T1 命中 · `--enforce` 下 T2 命中 · **环境/输入异常与空转**）
+        ★ 2026-09-20 承接项「术语表只有一份」第 4 条：本脚本原 `rc=3` 一律**统一成 `rc=2`** ——
+          与仓内其余门脚本（check-doc-name/meta/freshness、precommit-gates.sh）的 0/1/2 三档同一口径；
+          对外效果 = 挂在公开树（无 `docs/` 面）时落 **BLOCKED（不给结论）**，不会被读成 FAIL。
 """
 import os
 import re
@@ -49,6 +60,11 @@ RE_FENCE = re.compile(r"^```.*?^```", re.S | re.M)
 RE_CODE = re.compile(r"`([^`\n]+)`")
 RE_FM = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
 CJK = re.compile(r"[\u3400-\u9fff]")
+# ── W5 正文私建术语表（2026-09-20 承接项「术语表只有一份」）：判据见文件头 T3 段 ─────────────
+RE_ANCHOR = re.compile(r"\{:\s*#[^}]*\}")                        # `{: #锚 }` 先剥：锚点是引用不是私建
+RE_HEADING = re.compile(r"^\s{0,3}(#{1,4})\s*(.+?)\s*#*\s*$")   # 1–4 级标题（ATX 形态）
+RE_PRIVATE_GLOSSARY = re.compile(r"术语表")                        # 标题文本含「术语表」
+PRIVATE_GLOSSARY_EXACT = "术语"                                    # 或标题文本恰为「术语」（去尾标点后）
 
 
 def split_multi(v):
@@ -183,6 +199,21 @@ def scan_page(rel, text, gloss, lang, identifiers=True, exists=lambda p: True):
             if e and e.isascii() and e.islower() and " " not in e and e.isalpha():
                 if wb(e.capitalize()).search(body) and not wb(e).search(body):
                     warnings.append("%s  [T3 W2 只有大小写变体 %s，未见正名 %s]" % (rel, e.capitalize(), e))
+    # W5 正文私建术语表（T3 · 恒非阻塞 · 2026-09-20 承接项）：标题文本含「术语表」或恰为「术语」。
+    #   为什么扫 `body`（已剥围栏与注释）：围栏里的 `## 术语表` 是**示例**不是正文；
+    #   为什么用 `lines` 找豁免标记：剥注释后标记本身也没了（同 T2 `hits()` 的纪律）。
+    for i, l in enumerate(body.split("\n"), 1):
+        m = RE_HEADING.match(l)
+        if not m:
+            continue
+        title = RE_ANCHOR.sub("", m.group(2)).strip().strip("*_").strip().rstrip("：:。.、，,")
+        if not (RE_PRIVATE_GLOSSARY.search(title) or title == PRIVATE_GLOSSARY_EXACT):
+            continue
+        if RE_ALLOW.search(lines[i - 1] if i - 1 < len(lines) else ""):
+            continue                    # 单条豁免（标记本身计入文末「单条豁免」，与 T2 同一账）
+        warnings.append("%s:%d  [T3 W5 正文私建术语表]  %s  ← 全局术语只有一份（docs/术语表.tsv）："
+                        "全局 ⇒ 进主表；本文专有 ⇒ 改名（如「本文概念/字段说明」）"
+                        % (rel, i, RE_ANCHOR.sub("", l).strip()[:60]))
     exempted += sum(1 for l in lines if RE_ALLOW.search(l))
     return blocking, terms, warnings, exempted
 
@@ -235,11 +266,11 @@ def main():
         files = walk_files(paths, root, langs)
     except EnvironmentError as e:
         print("✗ %s" % e, file=sys.stderr)
-        return 3
+        return 2
     if not files:
         print("✗ 扫到 0 个 .md —— 拒绝静默空转（假绿）。检查 --paths 与 docs/zh|docs/en 是否存在",
               file=sys.stderr)
-        return 3
+        return 2
     blocking, terms, warnings, exempt = [], [], [], 0
     for rel, ap in files:
         if rel in WHITELIST:
@@ -248,7 +279,7 @@ def main():
             text = open(ap, encoding="utf-8", errors="replace").read()
         except Exception as e:
             print("✗ 读不了 %s：%s" % (ap, e), file=sys.stderr)
-            return 3
+            return 2
         lang = "zh" if rel.split(os.sep)[1:2] == ["zh"] else "en"
         b, t, w, x = scan_page(rel, text, gloss, lang,
                                identifiers="--no-identifiers" not in argv,
@@ -310,10 +341,28 @@ def selftest():
         ("T3 W3 translation_of 悬空", lambda: scan_page("docs/en/a.md", fm_ok + "x\n", gloss, "en",
                                                        identifiers=False, exists=lambda p: False)[2], 1),
         ("T3 W4 无源文注释", lambda: scan_page("docs/en/a.md", fm_ok + "x\n", gloss, "en")[2], 1),
+        # ── W5 正文私建术语表（2026-09-20 承接项）：命中和**不命中**两侧都有，防「把判据改宽成恒报」
+        ("T3 W5 正文私建术语表（## 术语表）",
+         lambda: scan_page("docs/zh/a.md", "## 术语表\n", gloss, "zh")[2], 1),
+        ("T3 W5 现成落点 ## 术语 {: #术语 }（改名前的形态）",
+         lambda: scan_page("docs/zh/a.md", "## 术语 {: #术语 }\n", gloss, "zh")[2], 1),
+        ("T3 W5 带前缀的术语表标题（### 中英术语表）",
+         lambda: scan_page("docs/zh/a.md", "### 中英术语表\n", gloss, "zh")[2], 1),
+        ("T3 W5 改名后不命中（## 本文概念/字段说明 {: #术语 }）",
+         lambda: scan_page("docs/zh/a.md", "## 本文概念/字段说明 {: #术语 }\n", gloss, "zh")[2], 0),
+        ("T3 W5 锚点里的「术语表」不算（引用，不是私建）",
+         lambda: scan_page("docs/en/a.md", fm_ok + "# Glossary: one master table {: #术语表：一份主表 }\n",
+                           gloss, "en", identifiers=False)[2], 0),
+        ("T3 W5 围栏代码块里的 ## 术语表 不算（示例）",
+         lambda: scan_page("docs/zh/a.md", "```\n## 术语表\n```\n", gloss, "zh")[2], 0),
+        ("T3 W5 单条豁免生效（<!-- glossary-allow -->）",
+         lambda: scan_page("docs/zh/a.md", "## 术语表 <!-- glossary-allow -->\n", gloss, "zh")[2], 0),
+        ("T3 W5 含「术语」但不恰为（## 术语与字段说明）不命中",
+         lambda: scan_page("docs/zh/a.md", "## 术语与字段说明\n", gloss, "zh")[2], 0),
     ]
-    assert len(cases) == 19, "自证用例数必须为 19，实际 %d（少跑即失效）" % len(cases)
+    assert len(cases) == 27, "自证用例数必须为 27，实际 %d（少跑即失效）" % len(cases)
     ok = True
-    print("── check-glossary.py 自证（19 条）")
+    print("── check-glossary.py 自证（27 条）")
     for name, fn, want in cases:
         try:
             got = len(fn())
