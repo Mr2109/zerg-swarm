@@ -11,7 +11,7 @@
 #
 # publish-public.sh — 私有权威仓 → 公开快照仓（Google Copybara SQUASH 模式的等价实现）
 #
-# 2026-09-11 设计：docs/项目文档/v2.5.9/设计-publish-public快照发布-20260911.md（Mr2109已拍板 8/8）
+# 2026-09-11 设计：Zerg-内部文档/项目文档/v2.5.9/设计-publish-public快照发布-20260911.md（Mr2109已拍板 8/8）（2026-09-19 二次分家）
 #
 # 做的事（全部只读私有仓，只写输出目录）：
 #   1. 按 publish/whitelist.txt 导出文件树（rsync --files-from）

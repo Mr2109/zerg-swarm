@@ -80,6 +80,18 @@ EXCL_PREFIX = (".git/", "vendor/", "tools/ocr/venv/")
 #     1 篇 / 不合规 0，条目删 3 篇 / 不合规 2 ⇒ 条目确在起作用。
 #     剔出类别从 3 类变 2 类（镜像退役 + 第三方树各减一类），「剔出要显式计数」的口径不变。
 #     源树若日后回到 `docs/调研/`，请把该条加回 EXCL_PREFIX，否则 97 篇第三方摘录会被当本仓文档判。
+#
+#   ★ 2026-09-19 「项目文档」二次分家**批5**（**双认 · 条目值一字不动**）：`docs/项目文档/` 整目录已随
+#     **批3** 移出工作树到同级仓外目录 `Zerg-内部文档/项目文档/`。冻结区的判定对象**没变**（还是这 17 套快照
+#     + 在用版），只是它换了位置 ⇒ 与 FORMAL_PREFIX 的「双认」同法，两处都认（仓内前缀 + 仓外取源根）。
+#     为什么必须双认（而不是删掉仓内条目了事）：本 scope 的正式面候选已双认（`--scope formal` 现跑扫 65 篇，
+#     其中 36 篇取自仓外根）—— 若冻结区不跟着双认，那 36 篇就从「冻结区 ⇒ 不计入退码」变成 M1 不合规
+#     ⇒ `--missing=fail` 下 meta 门由 rc=0 变 **rc=1 假红**（同一批文件、同一套判据、只是换了位置）。
+#     判据一个字没改：命中照报、计数照列，**只是不再把它们算成不合规**（与分家前逐项一致）。
+#     反向探针：临时只留仓内条目 ⇒ 现跑 rc=1（36 篇 M1）；两处都认 ⇒ rc=0。删除仓内条目属「零命中即删」
+#     的收尾动作（批6），本批不动。
+FROZEN_PREFIX = ("docs/项目文档/",)
+FROZEN_PREFIX_ALT = ("../Zerg-内部文档/项目文档/",)   # 批3 后的仓外取源根（同一批文件的现位置）
 
 # 冻结区（只登记不改：《清单-命名规范化》§2 + 设计稿 §8.1/§1.3）
 #   ★ 2026-09-19 分家：`docs/issues/`（1086 篇引擎数据）整目录已迁至 `Zerg-内部文档/issues/` ⇒ 删第二项，
@@ -550,7 +562,7 @@ def run_scan(root, targets, schema, missing_mode, count_frozen, max_examples, to
     examples = {}
     skipped_cls = {}
     for rel, ap in files:
-        is_frozen = any(rel.startswith(p) for p in FROZEN_PREFIX)
+        is_frozen = any(rel.startswith(p) for p in FROZEN_PREFIX + FROZEN_PREFIX_ALT)
         res = judge_file(rel, ap, schema, missing_mode, today)
         bucket = frozen if (is_frozen and not count_frozen) else tally
         bucket[res["status"]] += 1
@@ -571,9 +583,10 @@ def print_report(rep, args):
           % (t["ok"], t["violation"], t["warn"], t["blocked"], t["skipped"]))
     if rep["frozen"] and any(rep["frozen"].values()):
         f = rep["frozen"]
-        print("  冻结区（docs/项目文档/ · 只登记不改 ⇒ 不计入退码；原第二项 `docs/issues/` 已于"
-              " 2026-09-19 分家至 `Zerg-内部文档/`、条目已删。★ 二次分家批2：本条目随**批3** 零命中 ⇒ 届时删，"
-              "见 FROZEN_PREFIX 注）："
+        print("  冻结区（`docs/项目文档/` 仓内 + 批3 后同一批文件的现位置 `../Zerg-内部文档/项目文档/` · 只登记不改"
+              " ⇒ 不计入退码；原第二项 `docs/issues/` 已于"
+              " 2026-09-19 分家至 `Zerg-内部文档/`、条目已删。★ 二次分家批5：两处前缀**都认**（见 FROZEN_PREFIX 注）；"
+              "仓内那一条今天零命中，删它属批6 收尾）："
               " 合规 %d · 不合规 %d · 告警 %d · 不可判定 %d · 剔除 %d"
               % (f["ok"], f["violation"], f["warn"], f["blocked"], f["skipped"]))
     if rep["skipped_cls"]:

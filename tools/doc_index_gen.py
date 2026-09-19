@@ -3,6 +3,7 @@
 
 用法: python3 doc_index_gen.py <版本目录> [--out <输出路径>]
 例:   python3 doc_index_gen.py docs/项目文档/v2.5.8   (生成/覆盖该目录 INDEX.md)
+       ★ 2026-09-19「项目文档」二次分家后那棵在 Zerg-内部文档/项目文档/v2.5.8（本工具只吃命令行给的目录）
 
 功能: 扫目录内 .md(除 INDEX.md 自身) → 按文件名前缀分组 → 提取标题/首行
       → 生成 llms.txt 风格 INDEX.md（标题+分组+链接+描述）
