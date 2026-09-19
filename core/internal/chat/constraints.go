@@ -7,7 +7,7 @@
 //	  每次调用前在**实际发送的 token 序列**上做存在性检索，落 `constraint_check{total,present,missing_ids}`；
 //	  missing 非空 ⇒ 重注入或告警」。
 //
-// 任务表：docs/项目文档/v2.5.10/任务表-内建调试版实施-20260917.md T3.2
+// 任务表：Zerg-内部文档/项目文档/v2.5.10/任务表-内建调试版实施-20260917.md T3.2（2026-09-19 二次分家）
 // （落点 `core/internal/chat/constraints.go`；验收用例：压缩掉一条 must_survive ⇒ missing_ids 非空）。
 //
 // 要治的盲区（改本文件前先读）：**「模型忘了硬约束」目前只能靠人感觉**——
