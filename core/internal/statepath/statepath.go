@@ -4,6 +4,7 @@
 package statepath
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -159,6 +160,73 @@ func SkillsDir() string {
 		return d
 	}
 	return ""
+}
+
+// IssuesDir — 内部任务单（issue）目录：引擎写单与调度扫单的**唯一出口**。
+// 解析顺序：ZERG_ISSUES_DIR → <ZERG_STATE_DIR>/issues（默认 ~/.zerg/state/issues/）。
+// 显式覆盖 = 唯一来源，**不退旧**：即便该路径不存在也原样返回（不 stat、不回退仓内 docs/issues）——
+// 口径照 idle_persist.go 的 idleReadPath：覆盖即「我已指定唯一来源」；不猜、不假装有。
+// 为什么不默认放仓内：docs/issues/ 随 git 走、要评审要归档，而任务单是**运行态活数据**；
+// 放统一状态目录才随 ZERG_STATE_DIR 一起可迁、第二实例天然隔离（B1 环境无关化定案）。
+func IssuesDir() string {
+	if d := strings.TrimSpace(os.Getenv("ZERG_ISSUES_DIR")); d != "" {
+		return d
+	}
+	return File("issues")
+}
+
+// IssuesDirExplicit — ZERG_ISSUES_DIR 是否被显式设置（唯一出口的覆盖开关）。
+// 调用方（调度器扫单）靠它决定是否并入只读旧目录 <workDir>/docs/issues：
+// 覆盖态 = 只扫 IssuesDir()，旧目录完全不看（行为变化，见设计稿 §4/§10.4）。
+func IssuesDirExplicit() bool {
+	return strings.TrimSpace(os.Getenv("ZERG_ISSUES_DIR")) != ""
+}
+
+// ─────────────── 2026-09-19「开发文档分家」：<项目文档> 取源根双认 ───────────────
+// 背景：`docs/项目文档/` 整目录已移出工作树（真身 = 与仓库同级的 `Zerg-内部文档/项目文档/`）。
+// 凡「读项目文档」的取源根一律走这里 ⇒ **仓内优先、缺则仓外**（与门禁/工具同口径，
+// 见 `docs/site/export-and-build.sh:48` 的 `ZERG_DOCS_ALT` 与 `tools/kb_docs_sync.py:32-34`）。
+// ★ 关键：**缺件不许静默**。原先各处把「仓内 docs/项目文档」写死成包级常量 ⇒ 分家后
+// 目录不在盘上，`glob` 返回空、函数静默返回空串（= 假装「没有文档」而不是「没找到根」）。
+
+// DocsAltRoot — 仓外「开发文档」根（Zerg-内部文档，与仓库同级、在工作树之外）。
+// 覆盖顺序：ZERG_DOCS_ALT → <仓库根>/../Zerg-内部文档（与 export-and-build.sh 同根同默认）。
+func DocsAltRoot() string {
+	if d := strings.TrimSpace(os.Getenv("ZERG_DOCS_ALT")); d != "" {
+		return d
+	}
+	return filepath.Join(WorkspaceRoot(), "..", "Zerg-内部文档")
+}
+
+// DocsBaseCandidates — 「项目文档」取源根候选（**顺序即优先级**）：
+//   - ① 仓内 <仓库根>/docs/项目文档（未分家的机器 / 公开树 / CI 快照）
+//   - ② 仓外 <ZERG_DOCS_ALT|../Zerg-内部文档>/项目文档（2026-09-19 二次分家后的真身）
+func DocsBaseCandidates() []string {
+	return []string{
+		filepath.Join(WorkspaceRoot(), "docs", "项目文档"),
+		filepath.Join(DocsAltRoot(), "项目文档"),
+	}
+}
+
+// DocsBase — 「项目文档」取源根：**仓内优先、缺则仓外**。
+// 判定用 os.Stat（真在盘上才算），返回值已 Clean。
+// **两处都缺 ⇒ 返回空串**——不猜、不假装有、不回退别的目录；调用方必须把这个空当「缺件」报出来
+// （配 DocsBaseMissingNote），不许静默当成「目录里没有内容」。
+func DocsBase() string {
+	for _, p := range DocsBaseCandidates() {
+		if st, err := os.Stat(p); err == nil && st.IsDir() {
+			return filepath.Clean(p)
+		}
+	}
+	return ""
+}
+
+// DocsBaseMissingNote — 两处取源根都不在盘上时的**可读缺件说明**（逐个候选点名 + 绝对路径）。
+// 「缺件不静默」的落地：任何因缺件而空的返回值/日志都要带上它 ⇒ 现场能一眼看出
+// 「是仓内根没有、还是连仓外根也没找到」，而不是看到一片空白去猜。
+func DocsBaseMissingNote() string {
+	c := DocsBaseCandidates()
+	return fmt.Sprintf("项目文档取源根未找到（仓内根 %s ✗ · 仓外根 %s ✗）", c[0], c[1])
 }
 
 // tmpBase — 临时根（覆盖顺序：ZERG_TMP_DIR → /tmp）。

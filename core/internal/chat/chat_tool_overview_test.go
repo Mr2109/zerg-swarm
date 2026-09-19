@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -34,9 +35,10 @@ func TestOverviewLatestDir(t *testing.T) {
 	d := latestVersionDir()
 	t.Logf("最新版本目录: %s", d)
 	if d == "" {
-		// 公开快照里没有私有版本文档目录（docs/项目文档/vX.Y.Z）——这是快照的正常形态，
-		// 不是缺陷；跳过而不是失败（2026-09-11 CI 实测：CI 上此处 Fatal 导致整作业红）。
-		t.Skip("未找到版本目录（公开快照形态）——跳过")
+		// 取源根本批已双认（仓内 docs/项目文档 优先、缺则仓外 ../Zerg-内部文档/项目文档）⇒
+		// 一个版本目录都没找到只可能是「两处都不在盘上」（公开快照/CI 的形态），不是缺陷；
+		// 跳过而不是失败（2026-09-11 CI 实测：CI 上此处 Fatal 导致整作业红）。
+		t.Skip("未找到版本目录（两处取源根都不在盘上）——跳过")
 	}
 	if !strings.Contains(d, "v2.5.7") && !strings.Contains(d, "v2.6") {
 		t.Logf("（版本可能已升级——当前 %s）", d)
@@ -45,7 +47,11 @@ func TestOverviewLatestDir(t *testing.T) {
 
 // 模块文档名解析
 func TestOverviewModuleName(t *testing.T) {
-	name := moduleDocName("<repo>/docs/项目文档/v2.5.7/01-模块-主控core-20260829.md")
+	// 夹具路径**从取源根派生**（本批 E6）：原先写死 `<repo>/docs/项目文档/…`
+	// 私有绝对路径 —— 换机器/换安装位置就失效，且与本批 E1「取源根收口」同源。
+	// 本用例只验 basename 解析 ⇒ 只吃最后两段，取源根在不在盘上都不影响结论。
+	fixture := filepath.Join(zergDocsBase(), "v2.5.7", "01-模块-主控core-20260829.md")
+	name := moduleDocName(fixture)
 	t.Logf("模块文档名: %q", name)
 	if name == "" {
 		t.Fatal("解析失败")

@@ -7,6 +7,7 @@ package chat
 
 import (
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,8 +29,21 @@ func docSearch(args map[string]any, workDir string) (string, error) {
 	scope, _ := args["scope"].(string)
 	terms := strings.Fields(strings.ToLower(q))
 
-	// 检索根：项目文档全部版本 + 常青
-	roots := []string{ZergDocsBase, filepath.Join(ZergRepoRoot, "docs", "常青")}
+	// 检索根：项目文档全部版本（**仓内优先、缺则仓外**——2026-09-19「开发文档分家」）+ 常青
+	// ★ 缺件不许静默：两处取源根都不在盘上时**直接报缺件**（不是「无命中」）——
+	// 老实现把仓内 `docs/项目文档` 写死成包级常量，分家后 Walk 一个不存在的目录 ⇒ 静默返回「无命中」。
+	evergreen := filepath.Join(ZergRepoRoot, "docs", "常青")
+	var roots []string
+	if base := zergDocsBase(); base != "" {
+		roots = append(roots, base)
+	}
+	if st, err := os.Stat(evergreen); err == nil && st.IsDir() {
+		roots = append(roots, evergreen)
+	}
+	if len(roots) == 0 {
+		return "", fmt.Errorf("doc_search 取源根缺失，判据不可判（不给「无命中」）：%s；常青目录 %s 也不在盘上",
+			statepath.DocsBaseMissingNote(), evergreen)
+	}
 	cur := latestVersionDir() // 当前版目录（命中优先）
 
 	type hit struct {
@@ -92,7 +106,7 @@ func docSearch(args map[string]any, workDir string) (string, error) {
 			}
 			snippets = append(snippets, ln)
 		}
-		rel, _ := filepath.Rel(filepath.Join(ZergRepoRoot, "docs"), fp)
+		rel := docSearchDisplayPath(fp)
 		h := &hit{path: rel, verKey: 1, lines: snippets}
 		curBase := filepath.Base(cur)
 		if cur != "" && strings.HasPrefix(rel, "项目文档"+string(filepath.Separator)+curBase) {
@@ -108,7 +122,11 @@ func docSearch(args map[string]any, workDir string) (string, error) {
 		filepath.Walk(r, walkFn)
 	}
 	if len(order) == 0 {
-		return "doc_search: 无命中（query=\"" + q + "\"）——换关键词或 scope 限定（如 scope=v2.5.9）", nil
+		note := ""
+		if zergDocsBase() == "" {
+			note = "\n⚠ " + statepath.DocsBaseMissingNote() // 缺件不静默：说清是「根没找到」而非「确实没写」
+		}
+		return "doc_search: 无命中（query=\"" + q + "\"）——换关键词或 scope 限定（如 scope=v2.5.9）" + note, nil
 	}
 	// 排序：当前版(0) → 常青/其他(1) → 历史版(2)，同键按路径
 	sort.Slice(order, func(i, j int) bool {
@@ -149,6 +167,24 @@ func docSearch(args map[string]any, workDir string) (string, error) {
 		out = string(rs[:docSearchMaxTotal]) + "\n…（结果过长已截断——缩小 scope 或换关键词）"
 	}
 	return out, nil
+}
+
+// docSearchDisplayPath — 展示路径：**一律相对「项目文档」的父目录** ⇒ 分家前后同一形态
+// （`项目文档/vX.Y.Z/x.md`），排序键（当前版 0 / 历史版 2）与「当前版」前缀判定照旧成立——
+// 否则分家后取源根在仓外，相对 <仓库>/docs 会算成 `../../Zerg-内部文档/…`，前缀判定全失效。
+// 不在取源根下的（仓内常青等）按原口径相对 <仓库>/docs 算。
+func docSearchDisplayPath(fp string) string {
+	clean := filepath.Clean(fp)
+	for _, base := range statepath.DocsBaseCandidates() {
+		b := filepath.Clean(base)
+		if strings.HasPrefix(clean, b+string(filepath.Separator)) {
+			if rel, err := filepath.Rel(filepath.Dir(b), clean); err == nil {
+				return rel
+			}
+		}
+	}
+	rel, _ := filepath.Rel(filepath.Join(ZergRepoRoot, "docs"), clean)
+	return rel
 }
 
 func itoa(n int) string {

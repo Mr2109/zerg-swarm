@@ -374,7 +374,7 @@ func main() {
 	// 仓库内路径一律经 statepath 解析器（待修补 #44：写死的私有路径在机群上指向不存在的目录）——
 	// 本机解析结果与旧字面量逐字相同（<仓库>/docs/issues、<仓库>/core）。
 	coreDir := filepath.Join(statepath.WorkspaceRoot(), "core")
-	idleDetector := agent.NewIdleDetector(filepath.Join(statepath.WorkspaceRoot(), "docs", "issues"))
+	idleDetector := agent.NewIdleDetector(statepath.IssuesDir())
 	api.InitInternalModes()                       // v2.5.6: 内部任务运行模式开关持久化恢复（自动/手动——Mr2109 2026-08-28）
 	idleDetector.SetAutoCheck(api.IsInternalAuto) // v2.5.6: 运行模式开关——手动任务不自动触发（空闲检测跳过）
 	idleDetector.SetExternalQueue(func() int { return masterSched.RunningCount() })

@@ -8,6 +8,7 @@ package chat
 import (
 	"fmt"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,8 +18,12 @@ import (
 	"time"
 )
 
-// ZergDocsBase — 版本档案根目录
-var ZergDocsBase = filepath.Join(statepath.WorkspaceRoot(), "docs", "项目文档")
+// zergDocsBase — 版本档案（<项目文档>）取源根：**仓内 `<仓库>/docs/项目文档` 优先、
+// 缺则仓外 `<ZERG_DOCS_ALT|../Zerg-内部文档>/项目文档`**（2026-09-19「开发文档分家」）。
+// 解析全在 statepath.DocsBase() 一处（与门禁/工具同口径，不各写各的）。
+// ★ 由包级 var 改**函数**：分家后仓内目录已不在工作树，包级 var 在 init 期就把路径定死成
+// 一个不存在的目录 ⇒ 下面的 glob 恒返回空、工具静默报「未找到版本档案目录」（本批要收的静默失效）。
+func zergDocsBase() string { return statepath.DocsBase() }
 
 var ZergRepoRoot = statepath.WorkspaceRoot()
 
@@ -33,10 +38,18 @@ func zergOverview(args map[string]any, workDir string) (string, error) {
 
 // ============ ① 版本解析（多级 fallback——设计遗漏#5） ============
 
-// latestVersionDir — 最新版本档案目录（glob docs/项目文档/v* → 版本号最大）
+// latestVersionDir — 最新版本档案目录（glob <项目文档取源根>/v* → 版本号最大）
 // fallback 级: ①版本号解析 ②修改时间 ③字典序
+//
+// ★ 缺件不静默（2026-09-19）：取源根两处都不在盘上时**记一行日志点名两个候选路径**，
+// 再返回空串——调用方据此报「缺件」而不是把空当成「目录里没有文档」。
 func latestVersionDir() string {
-	dirs, _ := filepath.Glob(filepath.Join(ZergDocsBase, "v*"))
+	base := zergDocsBase()
+	if base == "" {
+		log.Printf("⚠️ zerg_overview: %s", statepath.DocsBaseMissingNote())
+		return ""
+	}
+	dirs, _ := filepath.Glob(filepath.Join(base, "v*"))
 	if len(dirs) == 0 {
 		return ""
 	}
@@ -128,7 +141,8 @@ func zergOverviewFull() (string, error) {
 		b.WriteString("  总索引: docs/index-nav.md（版本史/常青/skills 导航）\n")
 		b.WriteString("  历史版: docs/项目文档/vX.Y.Z/（INDEX 标历史档案——查旧版走 doc_search scope=vX.Y.Z）\n")
 	} else {
-		b.WriteString("  （未找到版本档案目录）\n")
+		// 缺件不许静默：不再只说「未找到」，把两个取源根候选路径一并报出来（模型/人能当场判因）
+		b.WriteString("  （未找到版本档案目录——" + statepath.DocsBaseMissingNote() + "）\n")
 	}
 
 	// 模块代码地图（动态扫 internal/*——只列关键 10 个——省略省字）
@@ -214,7 +228,11 @@ func zergOverviewSection(sec string) (string, error) {
 				return fmt.Sprintf("# 使用虫族指南（%s——全文——人模型双视角）\n%s", filepath.Base(verDir), string(b)), nil
 			}
 		}
-		return "", fmt.Errorf("使用指南文档未找到")
+		return "", fmt.Errorf("使用指南文档未找到——取源根 %s 下无 使用-虫族指南-*.md", verDir)
+	}
+	if zergDocsBase() == "" {
+		// 缺件不许静默：根没找到 ≠ 文档没写；报因不报空
+		return "", fmt.Errorf("%s", statepath.DocsBaseMissingNote())
 	}
 	// 架构 section
 	if sec == "架构" || sec == "总览" || sec == "overview" || sec == "核心" {

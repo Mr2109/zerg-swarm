@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 // 常量
@@ -163,35 +165,48 @@ func NewScheduler(workDir string) *Scheduler {
 
 // 核心：扫描
 
-// ScanIssues — 扫描 docs/issues/ 下所有 open/queued 状态的 issue
+// ScanIssues — 扫描任务单目录下所有 open/queued 状态的 issue
 // 按优先级排序返回（高优先在前）
+//
+// 扫描面（2026-09-19「内部任务单目录可配」）:
+//   - ZERG_ISSUES_DIR 显式设置 ⇒ **只扫** statepath.IssuesDir()（唯一来源，旧目录完全不看、不 stat）；
+//   - 未显式设置 ⇒ statepath.IssuesDir() ∪ 旧目录 <workDir>/docs/issues（人类手写单照旧被派 = 读旧一次；
+//     生产里 workDir 即仓库根，故旧目录就是仓内 docs/issues/）。
+//
+// 三条既有语义一字未改: **非递归**（只读顶层 .md）· 只取 open/queued · 要求粗体 `- **状态**: `。
 func (s *Scheduler) ScanIssues() ([]ParsedIssue, error) {
-	issuesDir := filepath.Join(s.workDir, "docs", "issues")
-	entries, err := os.ReadDir(issuesDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil // 目录不存在 = 无 issue
-		}
-		return nil, fmt.Errorf("failed to scan issue directory: %w", err)
+	dirs := []string{statepath.IssuesDir()}
+	if !statepath.IssuesDirExplicit() {
+		// 旧目录只读并入（引擎永不写它）；显式覆盖后不再并入
+		dirs = append(dirs, filepath.Join(s.workDir, "docs", "issues"))
 	}
 
 	var issues []ParsedIssue
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-		path := filepath.Join(issuesDir, entry.Name())
-		data, err := os.ReadFile(path)
+	for _, issuesDir := range dirs {
+		entries, err := os.ReadDir(issuesDir)
 		if err != nil {
-			continue // 跳过无法读取的文件
+			if os.IsNotExist(err) {
+				continue // 目录不存在 = 该来源无 issue
+			}
+			return nil, fmt.Errorf("failed to scan issue directory: %w", err)
 		}
-		issue := parseIssue(path, string(data))
-		if issue == nil {
-			continue
-		}
-		// 只返回 open/queued 状态的
-		if issue.Status == StatusOpen || issue.Status == StatusQueued {
-			issues = append(issues, *issue)
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			path := filepath.Join(issuesDir, entry.Name())
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue // 跳过无法读取的文件
+			}
+			issue := parseIssue(path, string(data))
+			if issue == nil {
+				continue
+			}
+			// 只返回 open/queued 状态的
+			if issue.Status == StatusOpen || issue.Status == StatusQueued {
+				issues = append(issues, *issue)
+			}
 		}
 	}
 
