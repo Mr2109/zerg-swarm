@@ -12,7 +12,10 @@ i18n 审计工具（P0-2 文案口径分拣 + P0-3 键健康度审计）
     python3 ui/scripts/i18n_audit.py keys       # P0-3：46 键健康度（未定义/未使用/一键多义）
     python3 ui/scripts/i18n_audit.py all        # 两者都跑
 
-输出目录：<repo>/docs/项目文档/v2.5.9/i18n-audit/
+输出目录：ZERG_I18N_AUDIT_OUT（显式覆盖）→ 缺则 <项目文档取源根>/v2.5.9/i18n-audit
+          ★ 2026-09-19「开发文档分家」：取源根**仓内优先、缺则仓外** `<ZERG_DOCS_ALT|../Zerg-内部文档>/项目文档`。
+            分家后仓内已无 docs/项目文档 ⇒ 输出落**仓外**真身（不再往工作树里造空目录）；
+            两处取源根都缺 ⇒ rc=2 不给结论（缺件不静默——原先是静默 makedirs 造目录 = 假绿）。
 """
 import os
 import re
@@ -123,12 +126,40 @@ def keys_audit(root):
     return defs, used, dyn
 
 
+def docs_out_root(root):
+    """「项目文档」取源根（**仓内优先、缺则仓外** —— 与 2026-09-19「开发文档分家」同口径）。
+
+    契约（与 tools/kb_docs_sync.py:32-34 · docs/site/export-and-build.sh:48 一致）：
+      ① 仓内 <repo>/docs/项目文档 在盘上 ⇒ 用它（未分家的机器 / 公开树行为一字不变）；
+      ② 缺 ⇒ 仓外 <ZERG_DOCS_ALT|../Zerg-内部文档>/项目文档（分家后本机的真身）；
+      ③ **两处都缺 ⇒ 返回 (None, 缺件说明)** —— 缺件不静默：调用方 rc=2 不给结论，
+         **绝不在仓内 makedirs 造一个空目录**（那正是本脚本原先的假绿来源：分家后一跑就把
+         <repo>/docs/项目文档/ 造回工作树，让「取源根还在仓内」这个错误结论看起来成立）。
+    """
+    r = os.path.abspath(root)
+    alt = os.environ.get("ZERG_DOCS_ALT") or os.path.join(os.path.dirname(r), "Zerg-内部文档")
+    cands = [os.path.join(r, "docs", "项目文档"), os.path.join(alt, "项目文档")]
+    for p in cands:
+        if os.path.isdir(p):
+            return p, None
+    return None, "项目文档取源根未找到（仓内根 %s ✗ · 仓外根 %s ✗）" % (cands[0], cands[1])
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "all"
     root = repo_root(os.path.dirname(os.path.abspath(__file__)))
-    outdir = os.path.join(root, "docs", "项目文档", "v2.5.9", "i18n-audit")
+    # 输出目录：ZERG_I18N_AUDIT_OUT 显式优先 → 缺则 <取源根>/v2.5.9/i18n-audit（仓内优先、缺则仓外）
+    outdir = os.environ.get("ZERG_I18N_AUDIT_OUT", "").strip()
+    if not outdir:
+        base, missing = docs_out_root(root)
+        if base is None:
+            print("i18n_audit: " + (missing or "项目文档取源根未找到"))
+            print("⇒ 输出目录不可判（不给结论）· rc=2")
+            return 2
+        outdir = os.path.join(base, "v2.5.9", "i18n-audit")
     os.makedirs(outdir, exist_ok=True)
     print("repo =", root)
+    print("outdir =", outdir)
 
     if mode in ("classify", "all"):
         rows = classify(root)
@@ -191,4 +222,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -6,9 +6,14 @@
 //
 // 默认不写盘、不改动仓库（CI 无副作用）：仅当 ZERG_DESC_AUDIT_OUT=<path> 时写出 TSV。
 //
+// 写出落点口径（2026-09-19「开发文档分家」· 本批 E5）：目录 = **「项目文档」取源根**下的
+// v2.5.9/i18n-audit/ —— 取源根 = 仓内 <仓库>/docs/项目文档 优先、缺则仓外
+// <ZERG_DOCS_ALT|../Zerg-内部文档>/项目文档（解析见 statepath.DocsBase）。分家后即仓外真身 ⇒
+// **不往工作树里写文件**；两处取源根都缺时不给「空路径」当默认（缺件不静默）。
+//
 // 用法：
 //
-//	ZERG_DESC_AUDIT_OUT=docs/项目文档/v2.5.9/i18n-audit/L3-D1-描述审计.tsv \
+//	ZERG_DESC_AUDIT_OUT=<项目文档取源根>/v2.5.9/i18n-audit/L3-D1-描述审计.tsv \
 //	  go test ./internal/chat -run TestToolDescAudit -count=1 -v
 package chat
 

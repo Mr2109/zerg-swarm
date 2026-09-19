@@ -26,6 +26,25 @@ T_STATIC = re.compile(r'(?<![A-Za-z_])t!\(\s*"([^"]+)"')
 BASELINE_FILE = os.path.join(ROOT, "ui", "scripts", "i18n-baseline.json")
 
 
+def docs_out_root():
+    """「项目文档」取源根（**仓内优先、缺则仓外** —— 与 2026-09-19「开发文档分家」同口径）。
+
+    契约（与 tools/kb_docs_sync.py:32-34 · docs/site/export-and-build.sh:48 · ui/scripts/i18n_audit.py 一致）：
+      ① 仓内 <repo>/docs/项目文档 在盘上 ⇒ 用它（未分家的机器 / 公开树行为一字不变）；
+      ② 缺 ⇒ 仓外 <ZERG_DOCS_ALT|../Zerg-内部文档>/项目文档（分家后本机的真身）；
+      ③ **两处都缺 ⇒ 返回 (None, 缺件说明)** —— 缺件不静默：调用方 rc=2 不给结论，
+         **绝不在仓内 makedirs 造目录**（原写法写死 <repo>/docs/项目文档/… ⇒ 分家后一跑
+         就把空目录造回工作树，让「取源根还在仓内」这个错误结论看起来成立）。
+    """
+    r = ROOT
+    alt = os.environ.get("ZERG_DOCS_ALT") or os.path.join(os.path.dirname(r), "Zerg-内部文档")
+    cands = [os.path.join(r, "docs", "项目文档"), os.path.join(alt, "项目文档")]
+    for p in cands:
+        if os.path.isdir(p):
+            return p, None
+    return None, "项目文档取源根未找到（仓内根 %s ✗ · 仓外根 %s ✗）" % (cands[0], cands[1])
+
+
 def read_lines(path):
     with open(path, encoding="utf-8") as f:
         return f.read().split("\n")
@@ -141,7 +160,18 @@ def main():
 
     if "--tsv" in sys.argv:
         # 现状快照（不覆盖 P0 基线——那是历史记录）
-        out = os.path.join(ROOT, "docs", "项目文档", "v2.5.9", "i18n-audit", "L2-现状-中文字面量.tsv")
+        # ★ 2026-09-19「开发文档分家」：输出目录不再写死仓内（原写法一跑就把空目录造回工作树）——
+        #   ZERG_I18N_AUDIT_OUT 显式优先 → 缺则 <项目文档取源根>/v2.5.9/i18n-audit；
+        #   取源根=仓内优先、缺则仓外；两处都缺 ⇒ rc=2 不给结论（缺件不静默）。
+        tsv_dir = os.environ.get("ZERG_I18N_AUDIT_OUT", "").strip()
+        if not tsv_dir:
+            base, missing = docs_out_root()
+            if base is None:
+                print("check-i18n: " + (missing or "项目文档取源根未找到"))
+                print("⇒ 输出目录不可判（不给结论）· rc=2")
+                return 2
+            tsv_dir = os.path.join(base, "v2.5.9", "i18n-audit")
+        out = os.path.join(tsv_dir, "L2-现状-中文字面量.tsv")
         os.makedirs(os.path.dirname(out), exist_ok=True)
         with open(out, "w", encoding="utf-8") as f:
             f.write("状态\t文件\t行号\t函数\t代码\n")
