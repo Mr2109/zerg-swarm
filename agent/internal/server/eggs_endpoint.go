@@ -10,7 +10,10 @@
 package server
 
 import (
+	"fmt"
+	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/backend"
@@ -35,8 +38,16 @@ type servicesEgg struct {
 	EngineImpl string `json:"engine_impl,omitempty"` // 实际会执行的引擎实现名
 	Model      string `json:"model,omitempty"`
 	State      string `json:"state,omitempty"`
-	Port       int    `json:"port,omitempty"`
-	Inflight   int    `json:"inflight"` // P2 在飞引用计数（唯一真源）
+	// UnitState 单元活性核验结论（2026-09-19 ②）：active/activating/reloading/deactivating/
+	// inactive/failed/missing。**只有孵化路径**（有 unit）才有这一格；裸 exec 路径如实缺席
+	// （没有单元可核，不编造一个 "active"）。
+	//
+	// 为什么要它单独一格：`state` 是 backend 状态机自报的（卵「以为」自己 ready），
+	// 而 unit_state 是**现场实读**的单元态 —— 真机上出现过 state=ready 而机器上进程为零
+	// （主控据此派活儿 ⇒ 客户端 503/0 token）。两者放在同一张卡片上，读的人一眼看得出矛盾。
+	UnitState string `json:"unit_state,omitempty"`
+	Port      int    `json:"port,omitempty"`
+	Inflight  int    `json:"inflight"` // P2 在飞引用计数（唯一真源）
 	// Watchdog 活性看门狗判词/理由/窗口/工时增量（设计-活性看门狗 §6）；缺席 = 本卵没被看过。
 	Watchdog      *backend.WatchdogObservation `json:"watchdog,omitempty"`
 	IdleArmedS    *float64                     `json:"idle_armed_remaining_s"`   // null = 不在空窗计时中
@@ -99,14 +110,120 @@ func eggEntries(obs []backend.EggObservation, attrib map[int]monitor.ProcAttrib,
 	return out
 }
 
+// ── 单元活性核验（2026-09-19 ②）──────────────────────────────────────────────
+//
+// 真机现象：`GET /eggs` 报 `state=ready · gtt_gb=78.2`，同一时刻机器上 `GTT 用 0.0 GiB ·
+// ds4 进程 0`（`watchdog.verdict=ok`）⇒ 主控按「有活儿能派」路由过去 ⇒ 客户端 503/0 token。
+// 病灶：卵表项直接来自 backend 自报的状态机字段，**没有单位活体核验**。
+// 处置（保守）：输出前核 unit 活性 ⇒ 单位不在活动就把 `state` 落 dead/missing、补 `unit_state`
+// 字段与看门狗 `dead_unit` 判词。**不删记录**（记录是证据；清理归卸载/GC 路径）。
+
+// applyUnitLiveness 卵表输出前的活性核验（纯逻辑，便于单测：liveFor 注入假核验）。
+//
+//	obs 与 eggs 必须**同序同长**（eggEntries 保证：逐条 append）；不等长 ⇒ 一条都不动（不猜对齐）。
+//	返回被判死的条数。note 可 nil。
+//
+// 语义要点：
+//   - 有 unit 才核（裸 exec 路径没有单元 ⇒ unit_state 缺席，不编造）；
+//   - 核不到（missing）也**不报 ready**（那是「不知道」，绝不当「活着」）；
+//   - 记录一律保留：本函数只改 State/UnitState/Watchdog 三格，绝不删条目。
+func applyUnitLiveness(obs []backend.EggObservation, eggs []servicesEgg, liveFor func(string) backend.UnitLiveness,
+	note func(eggID, unitState, state, reason string)) int {
+	if liveFor == nil || len(obs) != len(eggs) {
+		return 0
+	}
+	dead := 0
+	for i, o := range obs {
+		unit := strings.TrimSpace(o.Unit)
+		if unit == "" {
+			continue // 裸 exec：没有单元可核（如实缺席）
+		}
+		lv := liveFor(unit)
+		eggs[i].UnitState = lv.State
+		if lv.Alive {
+			continue
+		}
+		dead++
+		if lv.State == "missing" {
+			eggs[i].State = "missing"
+		} else {
+			eggs[i].State = "dead"
+		}
+		eggs[i].Watchdog = deadUnitObservation(eggs[i].Watchdog, lv)
+		if note != nil {
+			note(o.EggID, lv.State, eggs[i].State, lv.Detail)
+		}
+	}
+	return dead
+}
+
+// deadUnitObservation 把「单元已不在活动」落到观测面的看门狗格。
+//
+// 保留原有计数（窗口/次数/工时/上次输出间隔），只换判词与理由 —— 原来那条判词不丢（附在后面），
+// 因为「它曾经为什么卡过」也是复盘要的证据（§6.9：现场证据不可被一句结论替换掉）。
+//
+// ⚠ 必须**新建**对象：prev 指向 backend 账本里的共享观测（改它会污染下一轮采样看到的事实）。
+func deadUnitObservation(prev *backend.WatchdogObservation, lv backend.UnitLiveness) *backend.WatchdogObservation {
+	obs := backend.WatchdogObservation{}
+	if prev != nil {
+		obs = *prev
+	}
+	reason := fmt.Sprintf("单元已不在活动 ⇒ 判 dead_unit：%s；本卵记录**保留**（不静默删记录——清理归卸载/GC 路径）", lv.Detail)
+	if prev != nil && prev.Verdict != "" && prev.Verdict != backend.WatchdogDeadUnit {
+		reason = fmt.Sprintf("%s（覆盖原判词 %s：%s）", reason, prev.Verdict, prev.Reason)
+	}
+	obs.Verdict = backend.WatchdogDeadUnit
+	obs.Reason = reason
+	return &obs
+}
+
+// applyEggUnitLiveness 生产接线：核验器 = backend.Manager（只读探针），留痕 = 变更去重日志。
+func (s *Server) applyEggUnitLiveness(obs []backend.EggObservation, eggs []servicesEgg) int {
+	if s == nil || s.agent == nil || s.agent.backends == nil {
+		return 0
+	}
+	return applyUnitLiveness(obs, eggs, s.agent.backends.UnitLiveness, s.noteUnitStateChange)
+}
+
+// noteUnitStateChange 单元活性的留痕（**只在变化时**打日志）。
+//
+// 为什么要去重：/eggs 会被主控心跳定期轮询，死卵如果每次轮询都打一行，日志会被冲掉
+// （本项目对「静默失效」的硬要求是「看得见」，不是「刷屏」）。同一 (egg_id, unit_state) 只记一次；
+// 状态变回去再变死会重新记一条（那是新事实）。
+func (s *Server) noteUnitStateChange(eggID, unitState, state, reason string) {
+	cur := state + "/" + unitState
+	s.unitStateLogMu.Lock()
+	if s.unitStateLog == nil {
+		s.unitStateLog = map[string]string{}
+	}
+	prev, seen := s.unitStateLog[eggID]
+	s.unitStateLog[eggID] = cur
+	s.unitStateLogMu.Unlock()
+	if seen && prev == cur {
+		return
+	}
+	log.Printf("[server] ⚠ 卵单元已不在活动: egg=%s state=%s unit_state=%s —— %s", eggID, state, unitState, reason)
+}
+
 // eggProfileExists 判一枚卵有没有可用实测档案（§8.4：档案=每卵一份实测事实卡）。
 // 档案目录不可用/该卵无档案 → false（如实，绝不编造 has_profile=true）。
+//
+// ①（2026-09-19）：生产路径改走 `Manager.EggProfileAvailable`（读档案缓存；缓存没有才现读一次），
+// 免得主控每次心跳轮询都逐卵 os.ReadFile。本函数保留为**无 Manager 时的回落**（与既有用例的注入点）。
 func eggProfileExists(eggID string) bool {
 	if eggID == "" {
 		return false
 	}
 	_, err := monitor.LoadEggProfile(monitor.EggProfilePath(eggID))
 	return err == nil
+}
+
+// eggProfileOf 观测面的 has_profile 判据（生产：backend 的档案缓存读，见 ① 的 egg_profile_cache.go）。
+func (s *Server) eggProfileOf() func(string) bool {
+	if s != nil && s.agent != nil && s.agent.backends != nil {
+		return s.agent.backends.EggProfileAvailable
+	}
+	return eggProfileExists
 }
 
 // latestAttrib 最新一轮逐进程归因（pid → 读数）。该平台读不到归因 ⇒ 空表（不编造）。
@@ -190,7 +307,10 @@ func (s *Server) handleEggs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	obs := s.agent.backends.EggObservations()
-	eggs := eggEntries(obs, s.latestAttrib(), eggProfileExists)
+	eggs := eggEntries(obs, s.latestAttrib(), s.eggProfileOf())
+	// ②（2026-09-19）：输出前核 unit 活性 —— 单位不在活动 ⇒ state 落 dead/missing +
+	// unit_state 字段 + 看门狗 dead_unit 判词（记录保留，绝不静默删）。
+	s.applyEggUnitLiveness(obs, eggs)
 	if eggs == nil {
 		eggs = []servicesEgg{}
 	}
@@ -214,7 +334,9 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 	mgr := s.agent.backends
 
 	obs := mgr.EggObservations()
-	eggs := eggEntries(obs, s.latestAttrib(), eggProfileExists)
+	eggs := eggEntries(obs, s.latestAttrib(), s.eggProfileOf())
+	// ② 同 /eggs：/services 也是观测面，同样不许把「单元已死」的卵报成 ready。
+	s.applyEggUnitLiveness(obs, eggs)
 
 	var gtt monitor.GttSample
 	if s.agent.vitals != nil {

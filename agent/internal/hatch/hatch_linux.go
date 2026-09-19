@@ -70,11 +70,32 @@ func userScoped(ctx context.Context, name string, args ...string) (*exec.Cmd, er
 	return cmd, nil
 }
 
+// realUnitCmdRunner 生产 runner：跑一条 `systemctl --user …`（与 backend.unitCmdRunner 同形态，
+// 各自一份是为保持「backend 依赖 hatch、hatch 不依赖 backend」的方向）。
+//
+// 用户总线可达性：孵化路径全程走 userScoped 的同一套环境口径（没有 XDG_RUNTIME_DIR 就直接失败并
+// 把原文带回——③ 的清理失败必须留痕，不许静默）。
+var realUnitCmdRunner UnitCmdRunner = func(timeout time.Duration, name string, args ...string) (string, error) {
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd, err := userScoped(ctx, name, args...)
+	if err != nil {
+		return "", err
+	}
+	out, rerr := cmd.CombinedOutput()
+	return string(out), rerr
+}
+
 // Hatch 孵一枚卵：创建瞬态单元（内含 bwrap 封闭空间 + 引擎）。
 // 返回单元名（后续收卵/观测都用它）。
+//
+// 2026-09-19 ③：走 PrepareHatchUnit —— 先定点清理同名单元（stop + reset-failed，幂等）再起单元。
 func (h Hatcher) Hatch(ctx context.Context, spec Spec) (string, error) {
 	unit := UnitName(spec.EggID)
-	argv, err := BuildSystemdRunArgv(spec, unit)
+	argv, err := PrepareHatchUnit(unit, spec, realUnitCmdRunner)
 	if err != nil {
 		return unit, err
 	}

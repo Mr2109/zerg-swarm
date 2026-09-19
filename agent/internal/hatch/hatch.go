@@ -45,10 +45,12 @@ package hatch
 
 import (
 	"fmt"
+	"log"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Mr2109/zerg-swarm/agent/internal/monitor"
 	"github.com/Mr2109/zerg-swarm/agent/internal/registry"
@@ -535,6 +537,13 @@ func BuildSystemdRunArgv(s Spec, unit string) ([]string, error) {
 		"systemd-run", "--user",
 		"--unit=" + unit,
 		"--slice=" + SliceName,
+		// ── --collect（2026-09-19 ③，X3 真机实测）：单元退出/失败后**自动收走**，不留在 systemd
+		// 里占名字。没有它：卵被 OOM 杀掉后单元以 failed 常驻 ⇒ 下一次同名 /load 直接
+		// `Failed to start transient service unit: Unit zerg-<名>.service was already loaded
+		// or has a fragment file.`（HTTP 500）⇒ **这枚卵再也孵不起来**（手工 reset-failed 后
+		// 同一条 load 立刻 200，因果成立）。行内也保留孵化前的定点清理（见
+		// PrepareHatchUnit / cleanupUnitBeforeHatch）：--collect 防新的，定点清理医已有的。
+		"--collect",
 		// Type=exec：execve 失败即算启动失败（否则 systemd 认为"起来了"）
 		"--property=Type=exec",
 		// 收卵语义：停单元时连它整棵子进程一起收（KillMode 默认 control-group 正是我们要的）
@@ -545,6 +554,120 @@ func BuildSystemdRunArgv(s Spec, unit string) ([]string, error) {
 	}
 	argv = append(argv, "--", "bwrap")
 	argv = append(argv, bwrapArgv...)
+	return argv, nil
+}
+
+// ═══ 2026-09-19 ③：孵化前的同名单元定点清理（OOM 后 unit 残留把孵化堵死）══════════
+//
+// 现象（X3 真机逐字）：OOM 之后 transient unit 以 failed 常驻 systemd（`Active: failed
+// (Result: oom-kill)`）⇒ `POST /api/control/load` 直接
+//
+//	孵化单元创建失败（zerg-deepseek-v4-flash）：exit status 1：
+//	Failed to start transient service unit: Unit zerg-deepseek-v4-flash.service was already
+//	loaded or has a fragment file.
+//
+// 手工 `systemctl --user stop` + `reset-failed` 之后同一条 load 立刻 200（因果成立）。
+// 处置两半（缺一不可）：
+//
+//	① `BuildSystemdRunArgv` 加 `--collect`（退出即收，正本清源——防**新**的残留）；
+//	② 孵化前对**同名**单元做定点清理（stop + reset-failed，幂等）——医**已有**的残留。
+//
+// 为什么是「定点」而不是「再扫一遍 llm.slice」：孵化器只该为自己要占的那个名字负责。扫全量会把
+// 别的卵卷进来（运行期收别人的卵是收卵/启动 GC 路径的事，见 backend/egg_gc.go），而孵化路径一旦
+// 误停别的卵，就是在服务中把它们拆掉。backend 的启动 GC 已经在启动时清过一道；运行期（两次
+// 重启之间）新留下的失败单元只有这里能治。
+
+// UnitCmdRunner 跑一条 `systemctl --user …` 命令并回原文（错误也回）。
+//
+// 抽成参数而不是直接 exec 的理由与 backend.unitCmdRunner 同源：**开发机（macOS）上没有 systemd
+// 用户实例**，真依赖只在 X3/生产上存在 ⇒ 清理逻辑必须能用假 runner 逐条钉住（判据：argv 逐个
+// 比对 + 调用顺序）。生产实现见 hatch_linux.go 的 realUnitCmdRunner。
+type UnitCmdRunner func(timeout time.Duration, name string, args ...string) (string, error)
+
+// unitRunningStates `systemctl --user is-active` 输出里表示「单元此刻占着名字且在活动」的态。
+var unitRunningStates = map[string]bool{
+	"active":       true,
+	"activating":   true,
+	"reloading":    true,
+	"deactivating": true,
+}
+
+// benignUnitErr 幂等口径：单元本来就不存在 / 没加载 ⇒ 清理成功（不是错误）。
+// 与 hatch.collectOutcome / backend.benignStopErr 同一判据（各自一份是因为三处分属不同层，
+// 反向依赖会把分层打乱）。
+func benignUnitErr(msg string) bool {
+	low := strings.ToLower(msg)
+	for _, b := range []string{"not found", "not loaded", "no such unit", "could not be found"} {
+		if strings.Contains(low, b) {
+			return true
+		}
+	}
+	return false
+}
+
+// cleanupUnitBeforeHatch 孵化前定点清理同名单元，返回**实际发出的动作序列**（供用例逐条钉住，
+// 也供日志复盘）。幂等、可重入：单元不存在 ⇒ 只有 reset-failed 一条（它也幂等）。
+//
+// 三步（与 backend/egg_gc.go 的 gcLeftoverEggs 同序，只是范围收窄到一个名字）：
+//
+//	① 读 is-active（`is-active` 对 inactive/failed 也**非零退出** ⇒ 只看 stdout，不看退出码）；
+//	② 活动或 failed ⇒ `stop`（幂等：not found / not loaded 算成功）；
+//	③ `reset-failed`（失败态单元不 reset 会一直挂在 systemd 里占名字——这正是 500 的直接原因）。
+//
+// 错误一律按 benign 处理并**记日志**（清理是孵化前的尽力而为，不能因为清不掉就拒绝孵化：
+// 真清不掉的话 systemd-run 自己会报错，那里的原文更准）。run == nil 或单元名为空 ⇒ 什么都不做
+// （返回空序列，如实：没动过手）。
+func cleanupUnitBeforeHatch(unit string, run UnitCmdRunner) []string {
+	var actions []string
+	unit = strings.TrimSpace(unit)
+	if unit == "" || run == nil {
+		return actions
+	}
+	isActiveOut, _ := run(10*time.Second, "systemctl", "--user", "is-active", unit)
+	st := strings.ToLower(strings.TrimSpace(isActiveOut))
+	if unitRunningStates[st] || st == "failed" {
+		stopOut, stopErr := run(20*time.Second, "systemctl", "--user", "stop", unit)
+		switch {
+		case stopErr == nil || benignUnitErr(stopOut+" "+stopErr.Error()):
+			actions = append(actions, "stop")
+		default:
+			// 停不掉照样往下走（reset-failed 仍可能把名字放出来）；留痕，不静默。
+			log.Printf("[hatch] ⚠ 孵化前清理：stop %s 未成功（按 benign 继续）：%v：%s",
+				unit, stopErr, strings.TrimSpace(stopOut))
+			actions = append(actions, "stop-failed")
+		}
+	}
+	rsOut, rsErr := run(10*time.Second, "systemctl", "--user", "reset-failed", unit)
+	if rsErr != nil && !benignUnitErr(rsOut+" "+rsErr.Error()) {
+		log.Printf("[hatch] ⚠ 孵化前清理：reset-failed %s 未成功（继续孵化；真清不掉 systemd-run 会自己报）：%v：%s",
+			unit, rsErr, strings.TrimSpace(rsOut))
+	} else {
+		actions = append(actions, "reset-failed")
+	}
+	if len(actions) > 0 {
+		log.Printf("[hatch] 孵化前清理 %s（is-active=%q）：%v —— ③ 治「OOM 后 transient unit 残留 ⇒ 500 already loaded」",
+			unit, orDashStr(st), actions)
+	}
+	return actions
+}
+
+// orDashStr 空串显示成 "-"（日志里"空"与"没读到"要看得出来）。
+func orDashStr(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return s
+}
+
+// PrepareHatchUnit 孵化**前置**：构造 systemd-run 命令行 + 定点清理同名单元。
+// Hatch（Linux 真路径）与用例都走它 ⇒ 「加 --collect」与「清理被调」两条判据钉在同一处。
+// run == nil ⇒ 只构造命令行（dry-run：非 Linux 的用例、以及"只想看 argv"的调用方）。
+func PrepareHatchUnit(unit string, spec Spec, run UnitCmdRunner) ([]string, error) {
+	argv, err := BuildSystemdRunArgv(spec, unit)
+	if err != nil {
+		return nil, err
+	}
+	cleanupUnitBeforeHatch(unit, run)
 	return argv, nil
 }
 

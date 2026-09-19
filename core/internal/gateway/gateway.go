@@ -754,76 +754,13 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// v2.5.4.10 方案 B：适配器参数覆盖（有适配器——按适配器特征覆盖请求体）
 	// 无适配器 → 原样（fleet.yaml 默认——兼容旧模型）
+	//
+	// ④（2026-09-19）：这一段（温度/ctx/max_tokens/超时）抽成 (*Gateway).ApplyAdapterOverrides ——
+	// max_tokens 的语义从「无条件覆盖」改成「**上限钳位**」（调用方 ≤ 上限 ⇒ 原样；没给 ⇒ 默认；
+	// 超了 ⇒ 钳到上限 + `max_tokens clamped` 日志）。钳位逻辑必须能单独验收 ⇒ 见 tokencap.go
+	// （ApplyTokenBudget / ClampMaxTokens）与 tokencap_test.go。
 	if ada, ok := g.adapterRegistry[model]; ok {
-		out, aerr := ada.Execute(plugin.PluginInput{Data: map[string]any{"model": model}})
-		if aerr != nil {
-			// v2.5.6 错误码设计（2026-08-29）: 适配器执行失败不能静默——记日志（覆盖失败用默认参数——不阻塞请求）
-			log.Printf("⚠️ adapter %s execution failed (using defaults): %v", model, aerr)
-		}
-		if aerr == nil && out.Result != nil {
-			if res, ok := out.Result.(map[string]any); ok {
-				// 温度/采样参数覆盖
-				if t, ok := res["temperature"].(float64); ok {
-					forwardBody = adapter.JsonSetField(forwardBody, "temperature", t)
-					log.Printf("🎛️ adapter %s: temperature override %.2f", model, t)
-				}
-				// v2.5.6 修复（Mr2109 2026-08-28）: max_tokens 同时覆盖两种格式——
-				// 之前只写 max_tokens（chat 格式）——调度器用 max_output_tokens（responses 格式）
-				// 字段不匹配 → 适配器 32768 从未覆盖调度器请求 → 适配器形同虚设
-				// 适配器 = 参数唯一来源（程序调用参数由适配器决定——每步都生效）
-				// 输出预算动态分配（2026-09-17 Mr2109 拍：写死 max_tokens 不科学）——见 gateway/outbudget.go
-				// 旧行为：直接用适配器写死值（2000）⇒ 思考型模型思考一开就吃光额度 ⇒ 正文为空（实测 content='' + finish=length）。
-				if mt0, ok0 := res["max_tokens"].(int); ok0 && mt0 > 0 {
-					ctxDecl := 0
-					ctxSrc := "声明(意图)" // 来源三态：档案(事实) ⇒ 声明(意图) ⇒ 默认（卵未声明）
-					if ctxDecl == 0 {
-						ctxSrc = "默认（卵未声明）"
-					}
-					if cw, okc := res["ctx_window"].(int); okc && cw > 0 {
-						ctxDecl = cw
-					}
-					// 取值顺序：**档案（事实）⇒ 配置声明（意图）⇒ 保守默认** —— 与「闸门只读实测档案」同一条理
-					// 实测教训：X3 的 Qwen 配置声明 1M 而实跑 -c 262144 ⇒ 信声明会算错额度。
-					ctxSrcLabel := "默认（无档案、无声明）"
-					if v, ok := ProfileCtxWindow(model); ok {
-						ctxDecl = v
-						ctxSrcLabel = "档案(事实)"
-					}
-
-					if ctxDecl == 0 {
-						ctxSrc = "默认（卵未声明）"
-					}
-					dyn, ctxUsed, promptEst := DynamicMaxTokens(model, ctxDecl, EstimatePromptTokens(len(forwardBody)))
-					if dyn <= 0 {
-						log.Printf("⚠️ 输出预算：提示已超上下文（ctx=%d prompt≈%d）——拒绝并按教学式报错处理", ctxUsed, promptEst)
-					} else {
-						ctxSrc = "声明(意图)" // 已在外层声明
-						if strings.Contains(ctxSrcLabel, "档案") {
-							ctxSrc = ctxSrcLabel
-						}
-						if ctxDecl == 0 {
-							ctxSrc = "默认（卵未声明）"
-						}
-						log.Printf("🎛️ adapter %s: max_tokens 动态 = %d（写死值 %d 仅参考；ctx=%d[来源=%s] prompt≈%d）", model, dyn, mt0, ctxUsed, ctxSrc, promptEst)
-						forwardBody = adapter.JsonSetField(forwardBody, "max_tokens", dyn)
-						forwardBody = adapter.JsonSetField(forwardBody, "max_output_tokens", dyn)
-					}
-				}
-				if mt, ok := res["max_tokens"].(int); ok && mt > 0 {
-					forwardBody = adapter.JsonSetField(forwardBody, "max_tokens", mt)
-					forwardBody = adapter.JsonSetField(forwardBody, "max_output_tokens", mt)
-					log.Printf("🎛️ adapter %s: max_tokens override %d (chat+responses both)", model, mt)
-				}
-				// reasoning_effort 覆盖（思考深度——适配器声明——Mr2109 low）
-				if re, ok := res["reasoning_effort"].(string); ok && re != "" {
-					forwardBody = adapter.JsonSetField(forwardBody, "reasoning_effort", re)
-				}
-				// 超时覆盖（按模型——Qwen3.8 120s / Nemotron 60s——适配器声明）
-				if ts, ok := res["timeout_sec"].(int); ok && ts > 0 {
-					g.setRequestTimeout(model, ts)
-				}
-			}
-		}
+		forwardBody = g.ApplyAdapterOverrides(model, forwardBody, ada)
 	}
 
 	// 2.7 快路径逐字精简（渐进式压缩：50%前每次请求前轻量删噪）

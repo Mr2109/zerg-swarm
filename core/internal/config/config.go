@@ -20,8 +20,15 @@ type ModelCandidate struct {
 	File      string  `yaml:"file"`
 	MemGb     float64 `yaml:"mem_gb"`
 	SSD       bool    `yaml:"ssd"`
-	CtxWindow int     `yaml:"ctx_window"`     // 模型上下文上限（V22，GGUF 元数据实测）
-	Arch      string  `yaml:"arch,omitempty"` // 架构标识（V015 校验）
+	CtxWindow int     `yaml:"ctx_window"` // 模型上下文上限（V22，GGUF 元数据实测）
+	// MaxTokens 该候选声明的**单次输出上限**（2026-09-19 ④）。
+	//
+	// 为什么补这一格：fleet.yaml 里已经写了 `max_tokens: 262144`，但解析侧没有这个字段 ⇒ yaml 里
+	// 写了**直接被丢**（真机症状：主控日志只有 `temperature override` 与 `timeout override`，
+	// 从来没有 `max_tokens override 262144` —— 声明是死字段）。语义见 gateway/tokencap.go：
+	// 它是**上限**（cap），不是"每次都用这个值"。
+	MaxTokens int    `yaml:"max_tokens,omitempty"`
+	Arch      string `yaml:"arch,omitempty"` // 架构标识（V015 校验）
 	// ═══ 模型详情补充字段（2026-08-27 Mr2109——fleet.yaml 写了但之前被丢弃）═══
 	Architecture string `yaml:"architecture,omitempty"` // 架构家族（example-35b-v2/qwen35moe/gemma4——fleet 常用 key）
 	Thinking     *bool  `yaml:"thinking,omitempty"`     // 思考模型（默认开 <think>）
