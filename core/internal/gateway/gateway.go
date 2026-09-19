@@ -1803,6 +1803,15 @@ func (g *Gateway) applyReasoningFallback(resp *http.Response) *http.Response {
 		}
 		content, _ := msg["content"].(string)
 		reasoning, _ := msg["reasoning_content"].(string)
+		// 2026-09-19 ⑥：**工具轮不做此兜底**。
+		// 模型在工具轮的 content 本就该是空的（正文在下一轮才出），此时把 reasoning_content
+		// 搬进 content，会让调用方（尤其 Hermes 子代理）把「内心话」当正文 ⇒ 判成"回复跑偏/被截断"。
+		// 反面证据：同形状请求（tools + 12.7K prompt）实测 content 与 reasoning_content 逐字节相同 267 字符。
+		// 与 9518dad3「思考不得顶替正文」同一条道理；非工具轮的旧兜底保持不变。
+		if tc, ok := msg["tool_calls"].([]interface{}); ok && len(tc) > 0 {
+			log.Printf("🔄 reasoning fallback skipped: tool_calls present (thinking stays in reasoning_content)")
+			continue
+		}
 		if strings.TrimSpace(content) == "" && strings.TrimSpace(reasoning) != "" {
 			// content 空 + reasoning 有——用 reasoning 兜底
 			msg["content"] = reasoning
