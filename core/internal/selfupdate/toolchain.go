@@ -26,7 +26,7 @@ import (
 //  4. 本地工具链 **低于** 钉住值 ⇒ 明确报错、不构建（宁可不动，也不装一个身份可疑的件）。
 //
 // 钉住值本身也要能"被核对"：manifest 里同时写 pin 与 actual，`--fleet` 收进机群回执。
-// 单一真源的机器可读断言见 scripts/check-gotoolchain.py（CI 门禁）。
+// 单一真源的机器可读断言见 scripts/gates/check-gotoolchain.py（CI 门禁）。
 
 const goToolchainDefaultPin = "go1.25.5"
 

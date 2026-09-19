@@ -8,7 +8,7 @@
 //  1. **单一真源**：compat.json（go:embed）声明【文件 → 当前 schema → 最低可读版本 → 迁移函数 → 读写锚点】；
 //  2. **清单自检**：MustManifest() 在首次访问时解析 + 自检，清单坏了直接 panic（编译期级错误，绝不静默降级）；
 //  3. **双向一致性**：本文件只负责「清单 → 代码」这一半（迁移函数必须已在 migrations 里注册、锚点字段非空）；
-//     另一半「代码 → 清单」（新状态文件必须登记）由门禁 scripts/check-compat-manifest.py 扫源码完成。
+//     另一半「代码 → 清单」（新状态文件必须登记）由门禁 scripts/gates/check-compat-manifest.py 扫源码完成。
 //
 // 与 statepath 的关系：statepath 是**路径**的单一真源，本包是**跨版本可读性**的单一真源；
 // 路径解析统一走 statepath.Dir（清单里 dirs.state.resolver 如实标注）。
@@ -120,7 +120,7 @@ func Lookup(name string) (Entry, bool) {
 // Check —— 清单 vs 代码的自检（返回问题列表；空=通过）。CLI 与单测都走它。
 //
 // 只覆盖「清单 → 代码」这一半（迁移函数已注册、字段合法、锚点非空）；
-// 「代码 → 清单」由 scripts/check-compat-manifest.py 扫源码覆盖。
+// 「代码 → 清单」由 scripts/gates/check-compat-manifest.py 扫源码覆盖。
 func (m *Manifest) Check() []string {
 	var probs []string
 	if m.Schema < 1 {

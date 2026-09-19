@@ -98,8 +98,8 @@ macOS 没有可写进去的外部沙箱程序（一档 = 直调 Seatbelt）⇒ �
 **活体判据（脚本自己会红）**：
 
 ```bash
-python3 scripts/wall-macos-evidence.py   # 四态 + 写空间外 + 变异验证 ⇒ 回执 wall/evidence-macos-seatbelt.txt
-python3 scripts/wall-macos-mutate.py     # 四条变异：改坏实现 ⇒ 用例必须红 ⇒ 还原 sha 一致 ⇒ 复跑绿
+python3 scripts/wall/wall-macos-evidence.py   # 四态 + 写空间外 + 变异验证 ⇒ 回执 wall/evidence-macos-seatbelt.txt
+python3 scripts/wall/wall-macos-mutate.py     # 四条变异：改坏实现 ⇒ 用例必须红 ⇒ 还原 sha 一致 ⇒ 复跑绿
 ```
 
 回执里两种对照都在：**基线（无封闭）** 与 **封闭态** —— 出网基线不可达、或空间外本来就写不进去
@@ -112,8 +112,8 @@ python3 scripts/wall-macos-mutate.py     # 四条变异：改坏实现 ⇒ 用�
 能把这种漂移钉死的手段：
 
 ```bash
-python3 scripts/compare-wall-argv.py             # 门禁：0 全绿 / 1 有不一致 / 2 硬失败
-python3 scripts/compare-wall-argv.py --self-test # 先证「这面镜子能红」，再跑门禁
+python3 scripts/evals/compare-wall-argv.py             # 门禁：0 全绿 / 1 有不一致 / 2 硬失败
+python3 scripts/evals/compare-wall-argv.py --self-test # 先证「这面镜子能红」，再跑门禁
 ```
 
 - **配方**（两侧同读一批文件）：`wall/testdata/bridge-specs/*.json`，**文件名即期望值**
@@ -140,15 +140,15 @@ cargo test                 # 单元 8 + plan_linux 10 + plan_macos 10 + CLI 5 + 
 **macOS 侧的两条活体门禁**（在**仓根**跑）：
 
 ```bash
-python3 scripts/wall-macos-evidence.py   # 0 全绿 / 1 断言红 / 2 硬失败（含基线无区分度）
-python3 scripts/wall-macos-mutate.py     # 变异验证：改坏实现 ⇒ 用例必须红 ⇒ 还原 sha 一致 ⇒ 复跑绿
+python3 scripts/wall/wall-macos-evidence.py   # 0 全绿 / 1 断言红 / 2 硬失败（含基线无区分度）
+python3 scripts/wall/wall-macos-mutate.py     # 变异验证：改坏实现 ⇒ 用例必须红 ⇒ 还原 sha 一致 ⇒ 复跑绿
 ```
 
 **对拍门禁**（在**仓根**跑；需要 Go 工具链）：
 
 ```bash
-python3 scripts/compare-wall-argv.py --self-test   # 0 全绿 / 1 有不一致 / 2 硬失败
-python3 scripts/wall-bridge-mutate.py              # 变异验证：两侧各改坏一次，门禁**必须红**
+python3 scripts/evals/compare-wall-argv.py --self-test   # 0 全绿 / 1 有不一致 / 2 硬失败
+python3 scripts/wall/wall-bridge-mutate.py              # 变异验证：两侧各改坏一次，门禁**必须红**
 ```
 
 **判据 7 门禁 · 茧壁路线**（任务 2'.5；在**仓根**跑，先 `cd wall && cargo build`）：
@@ -156,8 +156,8 @@ python3 scripts/wall-bridge-mutate.py              # 变异验证：两侧各改
 ```bash
 python3 scripts/sandbox-probes/verify-two-states.py --wall wall/target/debug/zerg-wall
 python3 scripts/sandbox-probes/verify-two-states.py --self-test --wall wall/target/debug/zerg-wall
-python3 scripts/two-states-wall-evidence.py        # 生成回执 scripts/sandbox-probes/evidence-two-states-wall.txt
-python3 scripts/two-states-gate-mutate.py          # 变异验证：改坏门禁 ⇒ 自检必须红（G1/G2/G3）
+python3 scripts/wall/two-states-wall-evidence.py        # 生成回执 scripts/sandbox-probes/evidence-two-states-wall.txt
+python3 scripts/gates/two-states-gate-mutate.py          # 变异验证：改坏门禁 ⇒ 自检必须红（G1/G2/G3）
 ```
 
 - **默认路线一字未改**（`sandbox-exec` + `pF.sb` / 自组 bwrap argv）；`--wall` 在时**多一条**：封闭态改由
@@ -175,21 +175,21 @@ python3 scripts/two-states-gate-mutate.py          # 变异验证：改坏门禁
 ## 制品与构建（任务 2'.6）
 
 ```bash
-bash scripts/build-wall.sh                   # release → bin/zerg-wall（本机平台）
-bash scripts/build-wall.sh --debug           # debug   → wall/target/debug/zerg-wall（上面那些门禁读它）
-bash scripts/negctl-build-wall.sh            # 负例活体控制：C0 真树必绿 · N1/N2/N3 各自真红在 rc=2
-python3 scripts/build-wall-mutate.py         # 变异验证：改坏实现 ⇒ 负例控制**必须红在那一条**对照项上
-bash scripts/probe-build-all-wall-wiring.sh  # 证 build-all.sh 的接线（桩树里跑原文，不碰生产 bin/）
+bash scripts/build/build-wall.sh                   # release → bin/zerg-wall（本机平台）
+bash scripts/build/build-wall.sh --debug           # debug   → wall/target/debug/zerg-wall（上面那些门禁读它）
+bash scripts/build/negctl-build-wall.sh            # 负例活体控制：C0 真树必绿 · N1/N2/N3 各自真红在 rc=2
+python3 scripts/build/build-wall-mutate.py         # 变异验证：改坏实现 ⇒ 负例控制**必须红在那一条**对照项上
+bash scripts/gates/probe-build-all-wall-wiring.sh  # 证 build-all.sh 的接线（桩树里跑原文，不碰生产 bin/）
 ```
 
-- **构建入口只有一个**：`scripts/build-wall.sh`（`build-all.sh` 也调它，不复制第二份构造）。
+- **构建入口只有一个**：`scripts/build/build-wall.sh`（`build-all.sh` 也调它，不复制第二份构造）。
   它**不交叉编译** —— 茧壁要在**目标机**上编（与 zerg-agent「该机自编」同一口径）；
 - **只落 `bin/`、不进 dist 制品矩阵**：矩阵 5 件是**发布契约**，要不要加茧壁**待 Mr2109 拍板** ⚠
   （与 `cocoon-docs-service` 同一条边界）。接线已接上、也在桩树里照跑过 —— 但**跑真的 `build-all.sh`
   会覆盖 `bin/` 里正在被托管的生产制品**（= 换件，属自主作业禁区）⇒ 取证的等价做法是**桩树**：
   在 `/private/tmp` 搭一棵假 `go`、真 `cargo`、真 `wall/` 源码的树，把**未改动的 `build-all.sh` 原文**
   放进去跑（`--no-ui --no-sign`），产物落在桩树的 `bin/` ⇒ 接线验到、生产零接触。取证脚本
-  `scripts/probe-build-all-wall-wiring.sh` 跑三次：R1 正例（rc=0 且桩树 `bin/zerg-wall` **在**）·
+  `scripts/gates/probe-build-all-wall-wiring.sh` 跑三次：R1 正例（rc=0 且桩树 `bin/zerg-wall` **在**）·
   R2 守卫另一支（无 cargo ⇒ rc=0、**没有**产物、留痕说明原因）· R3 区分度（把调用行换成 `:` ⇒
   产物**不在**，证明 R1 的产物断言真的会红）；
 - **签名**：落 `bin/` 的件由 `build-all.sh` 的签名环节**统一**施加（稳定身份 + `com.zerg.wall`）——

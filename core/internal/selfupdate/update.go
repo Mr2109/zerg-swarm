@@ -16,7 +16,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/version"
 )
 
-// 退出码（与 scripts/zerg-upgrade.sh 的契约对齐：0 成功 / 1 失败 / 2 无需更新 / 3 拒绝）。
+// 退出码（与 scripts/build/zerg-upgrade.sh 的契约对齐：0 成功 / 1 失败 / 2 无需更新 / 3 拒绝）。
 const (
 	ExitOK       = 0
 	ExitFail     = 1
@@ -98,7 +98,7 @@ func DefaultOptions() Options {
 		Remote:    ResolveUpdateRemote(root), // 环境变量 > 已配置 origin > 内置公开仓 URL
 		Ref:       firstNonEmpty(os.Getenv("ZERG_UPDATE_REF"), "main"),
 		Prefix:    firstNonEmpty(os.Getenv("ZERG_PREFIX"), filepath.Join(root, "bin")),
-		Kernel:    firstNonEmpty(os.Getenv("ZERG_UPGRADE_SCRIPT"), filepath.Join(root, "scripts", "zerg-upgrade.sh")),
+		Kernel:    firstNonEmpty(os.Getenv("ZERG_UPGRADE_SCRIPT"), filepath.Join(root, "scripts", "build", "zerg-upgrade.sh")),
 		StateDir:  firstNonEmpty(os.Getenv("ZERG_STATE_DIR"), statepath.Dir()),
 		Receipts:  firstNonEmpty(os.Getenv("ZERG_RECEIPTS_DIR"), filepath.Join(home, ".zerg", "update_receipts")),
 		FleetYAML: firstNonEmpty(os.Getenv("ZERG_FLEET_YAML"), filepath.Join(root, "gateway", "fleet.yaml")),

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "跨版本状态文件兼容清单（B7 / G10：源码式升级后，旧版客户端写出的状态文件会被新版读到，反之亦然）。单一真源：Go 侧 core/internal/compat 用 go:embed 读本文件并在进程启动时注册迁移；CI 门禁 scripts/check-compat-manifest.py 读同一份做「清单↔代码」双向一致性检查。约定：migrate_func=N ⇒ Go 侧必须存在 func migrate<N>（见 core/internal/compat/migrations.go）；anchor_file + anchor 是「该文件真有读写实现」的可 grep 证据。",
+  "note": "跨版本状态文件兼容清单（B7 / G10：源码式升级后，旧版客户端写出的状态文件会被新版读到，反之亦然）。单一真源：Go 侧 core/internal/compat 用 go:embed 读本文件并在进程启动时注册迁移；CI 门禁 scripts/gates/check-compat-manifest.py 读同一份做「清单↔代码」双向一致性检查。约定：migrate_func=N ⇒ Go 侧必须存在 func migrate<N>（见 core/internal/compat/migrations.go）；anchor_file + anchor 是「该文件真有读写实现」的可 grep 证据。",
   "dirs": {
     "state": {
       "resolver": "statepath.Dir",
