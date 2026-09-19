@@ -38,6 +38,14 @@ const (
 	WatchdogStuckCPUStalled WatchdogVerdict = "stuck_cpu_stalled"
 	WatchdogStuckNoProgress WatchdogVerdict = "stuck_no_progress"
 	WatchdogDegraded        WatchdogVerdict = "degraded"
+	// WatchdogDeadUnit 单元已经**不在活动**（2026-09-19 ②，真机：`/eggs` 报 ready + watchdog ok，
+	// 而机器上进程为零 ⇒ 主控把活儿派到一个空壳上）。
+	//
+	// 与 stuck_* 的区别（两者不许混为一谈）：
+	//   - stuck_* = 单元还在、但「无输出且不推进」（活着的卡住）；
+	//   - dead_unit = 单元**本身**都没了/失败了（进程已不在，evidence 是单元的 ActiveState）。
+	// 判词是**档位**，理由里写清是哪一种（missing / inactive / failed + systemd 原文各项）。
+	WatchdogDeadUnit WatchdogVerdict = "dead_unit"
 )
 
 // WatchdogConfig 看门狗参数（环境变量可覆盖；沙箱压秒测试也用它们）。

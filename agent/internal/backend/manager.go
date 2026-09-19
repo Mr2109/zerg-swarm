@@ -123,6 +123,10 @@ type Manager struct {
 	// hatcher 孵化器实现（批 2：开关 ZERG_HATCH 开时用；nil ⇒ 默认 hatch.Hatcher{}）。
 	// 抽成小接口只为测试注入假孵化器（见 hatch_path.go）——生产恒 nil，不改变任何现有行为。
 	hatcher hatcher
+	// profileCache 卵实测档案缓存（2026-09-19 ①，见 egg_profile_cache.go）：eggID → 已校验档案。
+	// 唯一写入点是 eggProfileFreshLocked（**现读盘上**后才回写）；整体刷新走 RefreshEggProfiles
+	// （/infer/reload 调它）。孵化判据一律现读，**不许**拿这份缓存当放行依据。
+	profileCache map[string]eggProfileCacheEntry
 }
 
 // defaultReapInterval 是后台 TTL 回收循环的扫描间隔（只决定"多久查一次"，不是 TTL 本身）。
@@ -863,7 +867,9 @@ func (m *Manager) hatchPrecheckLocked(modelName string, entry *registry.ModelEnt
 	if profilePath == "" {
 		return errResponse(507, "no measured profile", "卵名拿不到，实测档案路径算不出来")
 	}
-	prof, err := monitor.LoadEggProfile(profilePath)
+	// ①（2026-09-19）：同 profileGateLocked —— **现读**盘上档案（静态预检也不许拿缓存里的旧副本
+	// 判"能不能孵"；重标定后第一次 /load 就该按新值判）。
+	prof, err := m.eggProfileFreshLocked(strings.TrimSpace(entry.EggName()))
 	if err != nil {
 		return errResponse(507, "no measured profile",
 			fmt.Sprintf("无有效实测档案，拒孵（标定铁律 §8.4：闸门与预算只读实测档案，卵声明里的估值不参与）（档案=%s：%v）", profilePath, err))
