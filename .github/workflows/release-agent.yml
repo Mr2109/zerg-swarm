@@ -3,13 +3,13 @@ name: Release（全产物）
 # 自动升级模块 P0-c：制品与发布通道。
 #
 # 触发：推 v* 标签（或手动 workflow_dispatch）。
-# 产物形状必须与本地 scripts/pack-release.sh **完全同形**（升级器只认这一套）：
+# 产物形状必须与本地 scripts/build/pack-release.sh **完全同形**（升级器只认这一套）：
 #   zerg-core-darwin-arm64 / zerg-agent-darwin-arm64 / zerg-ui-darwin-arm64
 #   zerg-core-linux-amd64  / zerg-agent-linux-amd64
 #   zerg-wall-darwin-arm64 / zerg-wall-linux-amd64
 #   + 逐件 .sha256 + checksums.txt + manifest.json
 #
-# ⚠️ 扩大制品矩阵时（例：darwin-amd64）必须**同时**改 scripts/pack-release.sh 与下面的 ui/go 矩阵，
+# ⚠️ 扩大制品矩阵时（例：darwin-amd64）必须**同时**改 scripts/build/pack-release.sh 与下面的 ui/go 矩阵，
 #    否则"本地假源演练通过、线上真源少件"——升级器会拒绝安装（宁可拒绝，不可装错）。
 #
 # 历史：本文件从前只出 zerg-agent，且从已不存在的 agent/ 目录构建（Go 1.22 硬编码）——
@@ -35,7 +35,7 @@ jobs:
         id: v
         run: |
           set -euo pipefail
-          python3 scripts/check_version.py
+          python3 scripts/gates/check_version.py
           V=$(grep -m1 '^const Version = ' core/internal/version/version.go | sed 's/.*"\(.*\)".*/\1/')
           C=$(git rev-parse --short HEAD)
           echo "version=$V" >> "$GITHUB_OUTPUT"
@@ -145,7 +145,7 @@ jobs:
     needs: [gate, go, ui]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4          # 取 scripts/make-manifest.py（与本地共用）
+      - uses: actions/checkout@v4          # 取 scripts/evals/make-manifest.py（与本地共用）
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -157,7 +157,7 @@ jobs:
           C="${{ needs.gate.outputs.commit }}"
           BT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           (cd dist && sha256sum zerg-* | grep -v '\.sha256' > checksums.txt)
-          python3 scripts/make-manifest.py dist "$V" "$C" "$BT"
+          python3 scripts/evals/make-manifest.py dist "$V" "$C" "$BT"
           ls -l dist
       - name: 发布到 Releases
         env:

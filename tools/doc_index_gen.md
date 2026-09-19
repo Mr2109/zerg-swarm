@@ -16,7 +16,7 @@ python3 tools/doc_index_gen.py docs/项目文档/v2.5.9 --out /tmp/idx.md   # �
 `python3 tools/doc_index_gen.py ../Zerg-内部文档/项目文档/v2.5.10`（本工具**只吃命令行给的目录**，代码里
 没有写死的 `docs/项目文档` 路径 ⇒ **零改动、无需升版本**；仓内路径仍在时两处都能用）。**登记未改**：本件同目录的
 `doc_index_gen.py` 头部注释里那条示例（`:5`）仍写仓内路径 ⇒ 属**说明面**（不是靶点）、批3 后随手改。
-`check-doc-freshness.py d4` 的靶点（`scripts/doc-freshness.config.json` 的 `targets_glob` / `targets_glob_alt`）
+`check-doc-freshness.py d4` 的靶点（`scripts/docs/doc-freshness.config.json` 的 `targets_glob` / `targets_glob_alt`）
 在同一批做了**双认**（先仓内、缺则仓外取源根）。
 
 ## 行为

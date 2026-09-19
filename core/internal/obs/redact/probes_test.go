@@ -26,8 +26,8 @@ const (
 	home     = "~/projects/zerg/vault.key"
 
 	// 夹具里的凭据一律**拼接构造**：仓库的发布期门禁会扫 core/ 下的
-	// `Bearer <20+>`（scripts/check-public-tree-hazards.py）与 `sk-<20+>`
-	// （scripts/check-history-secrets.py）—— 运行期取到的值与原型完全一致，源码树保持干净。
+	// `Bearer <20+>`（scripts/gates/check-public-tree-hazards.py）与 `sk-<20+>`
+	// （scripts/gates/check-history-secrets.py）—— 运行期取到的值与原型完全一致，源码树保持干净。
 	tokSk  = "sk-" + "abcdef0123456789XYZ" // sk- 后 19 字符（刻意 <20：见上面那条门禁）
 	tokHf  = "hf_" + "abcdefghijklmnopqrstuvwxyz0123"
 	tokURL = "abc12345" + "deadbeef"

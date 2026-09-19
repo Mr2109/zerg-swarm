@@ -9,7 +9,7 @@
 // `_test.go` 不进任何制品，天然只在对拍时被叫起来。
 //
 // **为什么用环境变量当入口**：`go test` 没有别的干净通路把「读哪里、写哪里」传进来；而**没设变量
-// 就跳过**是安全的 —— 本用例**不做断言**，真正的门禁是 `scripts/compare-wall-argv.py`，它读不到产物
+// 就跳过**是安全的 —— 本用例**不做断言**，真正的门禁是 `scripts/evals/compare-wall-argv.py`，它读不到产物
 // 就 rc=2 硬失败（那边不许静默通过）。
 //
 // 与茧壁那半边的**唯一差异**（已写进两侧注释）：`BuildBwrapArgv` 只给**参数序列**，可执行名
@@ -107,7 +107,7 @@ type bridgeResult struct {
 }
 
 // TestWallBridgeDumpBwrapArgv 只做「读配方 ⇒ 出 argv ⇒ 落盘」，**不做断言**（真正的判据在
-// `scripts/compare-wall-argv.py`：它同时拿到两侧产物才比得出来）。
+// `scripts/evals/compare-wall-argv.py`：它同时拿到两侧产物才比得出来）。
 //
 // 但**空集合必须红**：配方目录里没有 `*.json`、或解析不出来、或写不出产物 —— 一律 `Fatal`，
 // 不许悄悄「零条对拍、零条失败」地过去（无区分度的绿比红更危险）。
@@ -115,7 +115,7 @@ func TestWallBridgeDumpBwrapArgv(t *testing.T) {
 	dir := os.Getenv(envBridgeSpecDir)
 	out := os.Getenv(envBridgeOut)
 	if dir == "" || out == "" {
-		t.Skipf("未设置 %s / %s ⇒ 跳过（对拍脚本 scripts/compare-wall-argv.py 会设置）",
+		t.Skipf("未设置 %s / %s ⇒ 跳过（对拍脚本 scripts/evals/compare-wall-argv.py 会设置）",
 			envBridgeSpecDir, envBridgeOut)
 	}
 	entries, err := filepath.Glob(filepath.Join(dir, "*.json"))

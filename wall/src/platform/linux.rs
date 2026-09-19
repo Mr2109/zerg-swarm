@@ -36,7 +36,7 @@ pub fn plan(s: &Spec) -> Result<Plan, Error> {
     //    在 `argv[0]` 是可执行名时才说得通，`run` 正是 `Command::new(argv[0])`）。
     //
     // ⚠ **与 Go 侧 `hatch.BuildBwrapArgv` 的唯一差异就在这里**：那个函数只给**参数**序列（`bwrap`
-    //    由 `BuildSystemdRunArgv` 补在前面）。⇒ 迁移桥（`scripts/compare-wall-argv.py`，任务 2'.3）
+    //    由 `BuildSystemdRunArgv` 补在前面）。⇒ 迁移桥（`scripts/evals/compare-wall-argv.py`，任务 2'.3）
     //    的判据写成两半：① `wall.argv[0] == "bwrap"`；② `wall.argv[1..]` 与 Go 的 argv **逐条相同**。
     //    两侧都不许在自己的那半边「顺手改」—— 改了就是同一个落点两套真相。
     let mut argv: Vec<String> = vec![BWRAP.to_string()];

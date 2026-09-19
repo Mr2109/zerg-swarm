@@ -41,7 +41,7 @@ fn base_spec() -> Spec {
 
 /// ① 黄金 argv：逐字对齐 Go 侧 `hatch.BuildBwrapArgv` 的顺序与取值。
 ///
-/// **两半判据**（与 `scripts/compare-wall-argv.py` 同口径）：`argv[0]` = 可执行名 `bwrap`
+/// **两半判据**（与 `scripts/evals/compare-wall-argv.py` 同口径）：`argv[0]` = 可执行名 `bwrap`
 /// （冻结接口：`argv` 是**执行面**），`argv[1..]` 才与 Go 侧 `BuildBwrapArgv` 逐条相同。
 #[test]
 fn golden_argv_matches_go_recipe() {

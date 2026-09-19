@@ -6,8 +6,8 @@
 跑法（仓根）：
 
 ```bash
-python3 scripts/compare-wall-argv.py            # 门禁：0 绿 / 1 不一致 / 2 硬失败
-python3 scripts/compare-wall-argv.py --self-test # 先证「这面镜子能红」，再跑上面的门禁
+python3 scripts/evals/compare-wall-argv.py            # 门禁：0 绿 / 1 不一致 / 2 硬失败
+python3 scripts/evals/compare-wall-argv.py --self-test # 先证「这面镜子能红」，再跑上面的门禁
 ```
 
 **文件名就是期望值**（脚本据此判，不另开清单 —— 两份清单必然漂移）：

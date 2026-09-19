@@ -46,7 +46,7 @@
 //	· 零内部依赖：只 import 标准库，不 import chat / gateway / agent（叶包纪律，见 T5.1 同款）。
 //	· 保真度与失效（T4.4/T4.5/T4.6，2026-09-17 补齐）：见 fidelity.go（三指标 + 二分定位）、
 //	  determinism_audit.go（十类非确定性源清单化审计）、invalidation.go（schema_version /
-//	  tool_fingerprint / 引擎指纹不匹配即作废）；可执行验收：`bash scripts/replay-fidelity.sh`。
+//	  tool_fingerprint / 引擎指纹不匹配即作废）；可执行验收：`bash scripts/evals/replay-fidelity.sh`。
 //	· 未接项（后续批）：① 把 agent 的工具执行路径整体切到本包的 Dispatcher；
 //	  ② **trace 本体**的落盘层（压缩/轮转）—— 效果账本的"本地文件档"本批已补（整份快照原子落盘，
 //	     逐条认领即全量重写；效果条数很大时应换追加写 KV，属后续批）；

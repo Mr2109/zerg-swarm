@@ -10,11 +10,11 @@ macOS：26.5.1（arm64）
 源码 sha256（wall/src/main.rs）：6f98c79fc44de5fc94a81d585da9bb4893520488b30804d68216fc2c5cdaa935
 源码 sha256（wall/tests/plan_macos.rs）：48afa364913bc4c6dbb19b112c5b7b0affb1bf423e4a60835215a2696e15cd04
 源码 sha256（wall/tests/macos_seatbelt.rs）：33f9516411af7e1e74ff33b1e495d63159db1cf86dbebb72632714da3e3d659a
-源码 sha256（scripts/wall-macos-evidence.py）：8e09327d8c497620e6dbd67bbc83e862beffcbbd72e6e635fb6cdb76d09d60e9
-源码 sha256（scripts/wall-macos-mutate.py）：5c04345c6476650076ac58ecd7c44413efc20e61742fd3e8df071612b18cd42c
+源码 sha256（scripts/wall/wall-macos-evidence.py）：8e09327d8c497620e6dbd67bbc83e862beffcbbd72e6e635fb6cdb76d09d60e9
+源码 sha256（scripts/wall/wall-macos-mutate.py）：5c04345c6476650076ac58ecd7c44413efc20e61742fd3e8df071612b18cd42c
 源码 sha256（scripts/sandbox-probes/writeout-probe.py）：4cbf47a85d9542e4ac1a8af761e345cc67e1c3c7734a6db0d09d8c0194ff274b
 生成时的 HEAD（本批的父提交；回执与它证据的改动同批提交）：f53de422e6e7215a94663a2b78787fb405e2a06d
-判据（可复跑）：python3 scripts/wall-macos-evidence.py · 变异验证：python3 scripts/wall-macos-mutate.py · 纯函数用例：cd wall && cargo test
+判据（可复跑）：python3 scripts/wall/wall-macos-evidence.py · 变异验证：python3 scripts/wall/wall-macos-mutate.py · 纯函数用例：cd wall && cargo test
 
 === ① 四态（靶子 = scripts/sandbox-probes/miniprobe.py，已复制进 /private/tmp 靶子目录）===
 基线命令（无封闭，同一判别目标 1.1.1.1:443）：
@@ -44,7 +44,7 @@ macOS：26.5.1（arm64）
 茧壁命令：wall/target/debug/zerg-wall run --spec <靶子>/spec-writeout.json   ⇒ rc=0
   子进程输出（stdout）：{"write_inside": "ok", "write_outside": "BLOCKED:PermissionError", "write_outside_target": "/private/tmp/zerg-wall-evidence-writeout-1789517870/outside.txt"}
 
-=== ③ 变异验证（scripts/wall-macos-mutate.py：四条各自红在一个不同的判据上）===
+=== ③ 变异验证（scripts/wall/wall-macos-mutate.py：四条各自红在一个不同的判据上）===
   === macOS 一档变异验证（目标 wall/src/platform/macos.rs · 门禁 = cargo test 全套）===
   基线：cargo test rc=0 · 失败用例 0 个
   ✓ [M1] bind 那一档加上过滤（§10.6 实测：会把 unix socket 挡掉） ⇒ 门禁 rc=101（期望非 0）· 红了 1 个用例：test macos_four_states_match_the_measured_receipt ... FAILED
