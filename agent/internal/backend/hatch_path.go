@@ -164,10 +164,13 @@ func (m *Manager) profileGateLocked(modelName string, entry *registry.ModelEntry
 		prof       monitor.EggProfile
 		profileErr error
 	)
+	// ①（2026-09-19）：**现读盘上档案**（唯一读入口：eggProfileFreshLocked —— 读成功才回写缓存）。
+	// 为什么必须是现读而不是读缓存：档案是盘上的**事实**，而重标定/人工修正都发生在盘上；
+	// 拿一份内存里的旧副本放行，就是「闸门按旧 peak 放行」（真机现象的形态）。
 	if profilePath == "" {
 		profileErr = fmt.Errorf("卵名拿不到，实测档案路径算不出来")
 	} else {
-		prof, profileErr = monitor.LoadEggProfile(profilePath)
+		prof, profileErr = m.eggProfileFreshLocked(eggID)
 	}
 	if profileErr == nil {
 		return prof, nil

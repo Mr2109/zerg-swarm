@@ -39,6 +39,10 @@ type Server struct {
 	mux      *http.ServeMux
 	// events SSE 事件广播（P7 批 2：只读观测面；由 eventLoop 巡检驱动）。
 	events *eventHub
+	// unitStateLog 单元活性核验的**变更去重**表（2026-09-19 ②：egg_id → "state/unit_state"）。
+	// /eggs 被主控心跳定期轮询 ⇒ 死卵只在**状态变化**时留一行日志（不然刷屏，等于看不见）。
+	unitStateLogMu sync.Mutex
+	unitStateLog   map[string]string
 }
 
 // Agent 应用核心，持有所有状态。
@@ -681,6 +685,10 @@ func responseStatus(result map[string]interface{}, fallback int) int {
 }
 
 // handleReload 热加载 agent_models.yaml → 更新注册表 → 返回 {status: ok, models: N}
+//
+// ①（2026-09-19）：**顺带刷新卵实测档案缓存**。原来的 reload 只重载注册表，档案不重载 ⇒
+// 盘上档案重标定后（`peak_gtt_gb` 等已更新）子端仍可能按旧副本放行/展示。顺序写死：
+// **先重载注册表**（卵名映射是最新的）**再刷档案**（按最新的卵名集合逐枚现读）。
 func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	if !s.checkAuth(w, r) {
 		return
@@ -693,7 +701,22 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	}
 	models := s.agent.registry.Names()
 	log.Printf("[server] 注册表重载完成: %d 个模型", len(models))
-	writeJSON(w, 200, map[string]interface{}{"status": "ok", "models": len(models)})
+	// 卵档案缓存刷新（尽力而为 + 留痕：某一枚档案坏了不让整条 reload 失败，但问题必须回给调用方）
+	profiles, problems := 0, []string(nil)
+	if s.agent.backends != nil {
+		profiles, problems = s.agent.backends.RefreshEggProfiles()
+	}
+	if len(problems) > 0 {
+		log.Printf("[server] ⚠ 卵实测档案刷新：%d 枚成功，%d 枚有问题: %v", profiles, len(problems), problems)
+	} else {
+		log.Printf("[server] 卵实测档案刷新完成: %d 枚（缓存已按盘上档案重建）", profiles)
+	}
+	resp := map[string]interface{}{"status": "ok", "models": len(models), "egg_profiles": profiles}
+	if len(problems) > 0 {
+		// 如实呈现（不许把「有档案读不出来」说成刷新完成）——调用方据此决定要不要人工介入。
+		resp["egg_profile_errors"] = problems
+	}
+	writeJSON(w, 200, resp)
 }
 
 // handleUnload 处理 /unload 请求。
