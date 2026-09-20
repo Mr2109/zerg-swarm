@@ -2821,6 +2821,69 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "dev receipt#缺动作",
+   "command": "dev receipt",
+   "argv": [
+    "dev",
+    "receipt"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`dev receipt` 要给动作（new|list|show）⇒ 用法错 2"
+  },
+  {
+   "id": "dev receipt#未知动作",
+   "command": "dev receipt",
+   "argv": [
+    "dev",
+    "receipt",
+    "绝无此动作"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知动作 ⇒ 用法错 2（不新立码）"
+  },
+  {
+   "id": "dev receipt#缺 --what",
+   "command": "dev receipt",
+   "argv": [
+    "dev",
+    "receipt",
+    "new",
+    "--next",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "回执「做了什么」是必填格 ⇒ 缺 ⇒ 2（§20.3 H3 五格）"
+  },
+  {
+   "id": "dev receipt#缺 --next",
+   "command": "dev receipt",
+   "argv": [
+    "dev",
+    "receipt",
+    "new",
+    "--what",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "回执「下一步」是必填格 ⇒ 缺 ⇒ 2（§20.3 H3 末句：下一步是回执的必备格）"
+  },
+  {
+   "id": "dev receipt#show 缺轮次 id",
+   "command": "dev receipt",
+   "argv": [
+    "dev",
+    "receipt",
+    "show"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺位置参数 ⇒ 用法错 2"
   }
  ]
 }
