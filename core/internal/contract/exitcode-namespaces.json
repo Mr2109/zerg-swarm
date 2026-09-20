@@ -1,0 +1,115 @@
+{
+  "schema": "zerg/exitcodes-namespaces/v1",
+  "_purpose": "退码命名空间登记表（§二十一 已红第 4 条 · 开工单 T-26）——把「同数字两义」从口头口径变成机器可判：每个命名空间自己的码逐条登记，跨命名空间的撞号逐条落判，自留区外的号单独登记。判定器 = scripts/gates/check-exit-codes.py（门⑨）。",
+  "_authority": "命令面主表 = core/cmd/zerg/exitcodes.go（**唯一真源**；`zerg help exit-codes` 是它的自描述面）。本件是**登记表**，不是第二张表：它只登记「谁用了哪个号、怎么落判」，不另立语义。",
+  "_policy": "占号纪律（core/cmd/zerg/exitcodes.go 的 exitcodePolicy 逐字）：只在 3–63 自留区取号；每号必须写明语义与可重试性；**禁止同数字两义**。",
+  "_scan_rule": "声明面用码的取法：Go 件扫 `os.Exit(<N>)` / `exit<Name> = <N>` / `exitCode = <N>`；脚本扫 `exit <N>`（**函数里的 `return <N>` 是布尔返回，不算退码** —— 除外单独登记的那三处）。",
+  "namespaces": [
+    {
+      "id": "cli",
+      "kind": "命令面（对外唯一契约面）",
+      "owner": "core/cmd/zerg/exitcodes.go",
+      "scan": "go-table",
+      "table": [0, 1, 2, 4, 8, 10, 11, 12, 14],
+      "reserved": [130],
+      "note": "`14` = 冲突/被占（**不许**再用 `507`）；`10/11/12/14` 由批 B · T-10 从「已挂号」转启用；`130` 仍挂号未启用。"
+    },
+    {
+      "id": "zerg-compat",
+      "kind": "组件自有码空间",
+      "owner": "core/cmd/zerg-compat/main.go",
+      "scan": "go",
+      "declared": { "0": "ok", "1": "迁移/校验失败", "2": "有待迁移文件", "3": "有高于本机认知的 schema（拒回滚）", "4": "用法错误" },
+      "note": "回滚前置校验②（状态可读性）就靠 `3` 判「有更高版本 schema ⇒ 拒回滚」（已红第 7 条）。"
+    },
+    {
+      "id": "zerg-model",
+      "kind": "组件自有码空间",
+      "owner": "core/cmd/zerg-model/main.go",
+      "scan": "go",
+      "declared": { "0": "成功", "3": "参数/环境错误", "4": "引擎不可达" },
+      "note": "`3`/`4` 与命令面 `4` = 未认证 **撞号**（见 collisions）；值面对齐属 `P-013` ⑨ 的拍板项。"
+    },
+    {
+      "id": "zerg-agent",
+      "kind": "组件自有码空间",
+      "owner": "core/cmd/zerg-agent/main.go",
+      "scan": "go",
+      "declared": { "0": "成功", "1": "启动参数错", "2": "任务失败", "3": "模型错误", "4": "可重试（MaxTurns/Blocked/Budget）" },
+      "note": "`4 = 可重试` 与命令面 `4` = 未认证 **撞号**（`P-013` ⑤ 点名 · 调研-M7:377）。"
+    },
+    {
+      "id": "zerg-swap-core.sh",
+      "kind": "脚本自有码空间（换件）",
+      "owner": "scripts/build/zerg-swap-core.sh",
+      "scan": "sh",
+      "declared": { "0": "换件成功", "1": "不成功（未动生产 / **回滚成功** 两支，靠 error.kind 分辨）", "2": "用法错", "3": "回滚也失败（需人工 · error.kind=ROLLBACK_FAILED）" },
+      "note": "批 B ④ 已把「回滚成功」从 `2` 收敛到 `1` + `error.kind=ROLLED_BACK`（`P-129` 的唯一说法）。"
+    },
+    {
+      "id": "zerg-upgrade.sh",
+      "kind": "脚本自有码空间（升级器）",
+      "owner": "scripts/build/zerg-upgrade.sh",
+      "scan": "sh",
+      "declared": { "0": "成功", "1": "失败（无回滚 / 已回滚成功两支，靠 error.kind 分辨）", "2": "无需升级", "3": "拒绝（有在途任务）", "4": "校验不通过（未动文件）" },
+      "note": "回滚路径（重启 + 验签 + 写回执）的落地 = 批 C 的 **T-28**；定说法 = **T-26**（本件）。"
+    },
+    {
+      "id": "precommit-gates.sh",
+      "kind": "脚本自有码空间（门禁）",
+      "owner": "scripts/gates/precommit-gates.sh",
+      "scan": "sh",
+      "declared": { "0": "全绿", "1": "有失败项", "2": "**不给结论**（用法错/前置缺件/自检不过/有步骤报 BLOCKED）" },
+      "internal": { "3": "脚本内部异常码（自检/内部错误）—— 不对命令面承诺，出现在步骤表里一律按 FAIL 计", "127": "命令不存在（跑不起来）—— 同上，按 FAIL 计" },
+      "note": "命令面**直通不翻译**：`zerg gate run` 原样转出 0/1/2（`exitcodeGatePass` + `gateExitLine` 逐字取自本件第 35 行）。"
+    }
+  ],
+  "collisions": [
+    {
+      "number": 2,
+      "cli": "用法错 / 不给结论",
+      "here": "zerg-compat = 有待迁移文件；zerg-upgrade.sh = 无需升级",
+      "verdict": "跨命名空间撞号，**各自空间内不两义** ⇒ 判红的条件是「同一命名空间内两义」，不是「同数字出现在两处」。命令面只原样转出组件的码，不做映射（§6.1）。",
+      "trigger": "值面对齐（给组件自有语义重新取号）＝ 走 §九 M16 `V0–V7` 提案 + 人批；批 B 代拍决议③ 明写**不做**、只记欠账（待办 E7 的三条触发条件）。"
+    },
+    {
+      "number": 3,
+      "cli": "（自留区未占用；命令面主表里无 3）",
+      "here": "zerg-model = 参数/环境错误；zerg-compat = 有更高版本 schema",
+      "verdict": "**两处同义不同源**：两件各自的 `3` 语义不同（一个是用法错、一个是拒回滚），且都不在命令面上出现 ⇒ 今天不影响调用方；命令面新号只许从 3–63 取，取到 `3` 之前必须先清这一对。",
+      "trigger": "同上（`P-013` ⑨ · E7）。"
+    },
+    {
+      "number": 4,
+      "cli": "未认证（缺令牌/令牌不对；403 与之并码 · kind 分家）",
+      "here": "zerg-compat = 用法错误；zerg-model = 引擎不可达；zerg-agent = 可重试",
+      "verdict": "**硬撞号**（已红第 4 条点名最要紧的一条）：AI 看到 `4` 判不出「没令牌」还是「敲错了」。四件的 `4` 各有语义，命令面只转出、不翻译。",
+      "trigger": "同上。落判逐条在《开工记录-批A-20260920.md》T-04 ⑨ 表。"
+    },
+    {
+      "number": 1,
+      "cli": "一般失败（跑到了、没成功）",
+      "here": "zerg-agent = 启动参数错；zerg-swap-core.sh = 不成功（含回滚成功支）；zerg-upgrade.sh = 失败（含已回滚支）",
+      "verdict": "**同义**（都是「跑了但没成功」）⇒ 不构成两义；差别只在枝节（`error.kind` 行分辨）。三件都必须给 kind 行，否则调用方分不清两支（T-28 落 upgrade 那条）。",
+      "trigger": "T-28（回滚路径的 kind 行）。"
+    }
+  ],
+  "out_of_range": [
+    {
+      "owner": "scripts/build/zerg-upgrade.sh",
+      "code": 64,
+      "meaning": "未知参数（用法错）—— 唯一一处 `exit 64`",
+      "verdict": "**越界**：占号纪律写「只在 3–63 自留区取号」，`64` 在区外。**不许就地改**：本件自己的 `2` 已被「无需升级」占着，把用法错改成 `2` 会在**同一命名空间内**造出第二个两义（正是 T-26 要治的病）。",
+      "trigger": "与 `collisions` 同一批拍板（`P-013` ⑨ · E7）——重新取号要按组件自有语义整段搬，不是单点改一个数字。",
+      "registered_by": "T-26（本件）；新出现任何自留区外的号 ⇒ 门⑨ 立即红。"
+    }
+  ],
+  "sites": [
+    "core/cmd/zerg-compat/main.go",
+    "core/cmd/zerg-model/main.go",
+    "core/cmd/zerg-agent/main.go",
+    "scripts/gates/precommit-gates.sh",
+    "scripts/build/zerg-swap-core.sh",
+    "scripts/build/zerg-upgrade.sh"
+  ]
+}
