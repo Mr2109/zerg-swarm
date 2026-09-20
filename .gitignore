@@ -7,7 +7,10 @@ core/internal/agent/test_deadcode/
 bin/zerg-core
 agent/bin/
 app/dist/
-data/
+# 2026-09-20 修：data/ 整目录忽略会让新克隆缺目录（代码有 232 处引用它 ✗）
+# 改成 data/* + 白名单占位（gitignore 规则：父目录被排除时无法再包含其下文件 ⇒ 必须用 data/*）
+data/*
+!data/README.md
 core/internal/agent/设计-*.md
 core/zerg-scheduler
 cmd/zerg-scheduler/zerg-scheduler
