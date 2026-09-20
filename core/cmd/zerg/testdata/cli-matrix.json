@@ -369,6 +369,46 @@
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
   },
   {
+   "id": "gate/run#--json 不给字段（K2）",
+   "command": "gate run",
+   "argv": [
+    "gate",
+    "run",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）· 执行前判；单步档的机器面越不过这一格"
+  },
+  {
+   "id": "gate/run#--json 不在单步档",
+   "command": "gate run",
+   "argv": [
+    "gate",
+    "run",
+    "--json",
+    "step"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 298,
+   "why": "`--json` 的包封面只挂在**单步档**（`--step <步名>`）上 —— 缺 `--step` ⇒ 用法错 2 + 错误包封（items 空）；**不许**拿全档报告冒充机器面"
+  },
+  {
+   "id": "gate/run#--step 未知名（执行前判 · 一步都不跑）",
+   "command": "gate run",
+   "argv": [
+    "gate",
+    "run",
+    "--step",
+    "zzz-没有这一步-zz",
+    "--json",
+    "step"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 274,
+   "why": "单步档：步名**逐字**不命中 ⇒ 退 2（执行前判 —— 被包的脚本一次都没起）+ 「最像的合法输入」（K14 第三件 · 与 `agent` 族同一方言）"
+  },
+  {
    "id": "gate/show#不认的契约主号",
    "command": "gate show",
    "argv": [

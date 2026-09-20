@@ -355,9 +355,10 @@ func init() {
 		},
 		{
 			path:        []string{"gate", "run"},
-			summary:     "跑门禁（旗标逐字透传；退码原样转出，不翻译）",
-			usage:       "zerg gate run [--scope <s> | --fast] [--outdir <目录>] …",
+			summary:     "跑门禁（旗标逐字透传；退码原样转出，不翻译；`--step` 只跑一道门）",
+			usage:       "zerg gate run [--scope <s> | --fast] [--outdir <目录>] … | zerg gate run --step <步名> [--self-test] [--json <字段>]",
 			args:        []string{"脚本旗标（原样透传）"},
+			fields:      gateRunStepFields,
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdGate,
