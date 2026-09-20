@@ -1,0 +1,40 @@
+{
+ "schema": "zerg/ai-boundary/v1",
+ "note": "AI 的边界与授权（§九 M18 `A1`/`C3`/`C4`/`C5`/`C6` · §十二 `P-098`–`P-103` · §17.5 反面 #3/#6 · §18.2 铁律 Ⅰ/Ⅲ · 开工单 T-60）。四件事一次落成真源：① 「提 ≠ 批」两个字段 + 谁不许批；② 模型侧 argv/环境里零控制面端口与令牌；③ 「放文件即生效」两处口子的收口；④ `sudo` 的处置定案。",
+ "subject_kinds": ["human", "ai", "egg", "ci"],
+ "subject_kind_rule": "`subject_kind` 只认四值（§18.1 接缝第 18 行逐字：`human`/`ai`/`egg`/`ci`）；**精确相等**，不做大小写折叠、不认近义词。`kind=egg` 时 `egg_id` **必填**（§18.2 `MF1` 逐字）。",
+ "propose_judge_rule": "「提 ≠ 批」= **两个字段**：提出者 `subject` + `subject_kind`；批准者 `approver` + `approver_kind`。**两者相同 ⇒ 红**（退码 2，detail=same_subject_approver）；**批准者 kind 不是 `human` ⇒ 也红**（detail=approver_not_human）—— 批只能人给（§九 M18 `C4` ② 段 · §九 M16 `V0` 作者 ≠ 审批 · §17.6 `SD8` AI 自评 ≠ 人的验收）。",
+ "model_side_forbidden": {
+  "ports": ["8580", "8082", "8100"],
+  "env_prefix": "ZERG_",
+  "scan_paths": ["agent/internal/hatch"],
+  "scan_exclude_suffixes": ["_test.go"],
+  "rule": "模型侧（茧内起引擎的那条 argv / 那份环境）里**零**控制面端口与 `ZERG_*` 令牌 —— 模型进程看不到控制面凭证，也够不着控制面端口（§九 M18 `C2` 禁止面 · §18.2 铁律 Ⅰ）。",
+  "match_mode": "词边界（数字串两侧不许是其它数字/字母/下划线）—— 「58100 里含 8100」这种子串假阳性不算命中（实测 `agent/internal/hatch/hatch_test.go` 既有 `58100` 夹具）。"
+ },
+ "file_drop_doors": [
+  {
+   "what": "技能目录",
+   "path_source": "statepath.SkillsDir()（`ZERG_SKILLS_DIR` → 仓内 `core/internal/agent/skills`）",
+   "writer": "human",
+   "rule": "**写权限只给人**（AI 不写这一处 —— §十二 `P-101` ①）。",
+   "list_face": "`zerg doctor` 的「技能目录」项**逐条列出**已加载技能（默认不静默 —— `P-101` ②）。"
+  },
+  {
+   "what": "MCP 服务器声明",
+   "path_source": "子端启动时的 `--mcp` 口径（`core/cmd/zerg-agent/main.go`）· **无持久登记表**",
+   "writer": "human",
+   "rule": "**写权限只给人**（AI 不写这一处 —— §十二 `P-101` ①）。",
+   "list_face": "`zerg doctor` 的「MCP 工具清单」项逐条列出**可声明的来源**；运行期已连接的清单在**子端侧**（CLI 侧不可见）—— 本项**明说不可见**，不假装扫过。"
+  }
+ ],
+ "door_write_keywords": ["技能目录", "skills/", "MCP 配置", "mcp-servers.json", "mcp 配置"],
+ "door_write_rule": "命令树里**不许**出现「往这两处写」的命令（判据③① 的机检面）：命令的用法串 / 概要 / 位置参数里若同时出现「口子关键词」与写动词 ⇒ 红。",
+ "sudo": {
+  "verdict": "命令面**一律不接受 `sudo`**（§十二 `P-103` 定案逐字）：① 命令面不收；② AI 侧（含 bash 工具）**不敲 sudo**；③ 要提权的事**走人**。",
+  "detail": "sudo_not_accepted",
+  "matched_unless": "命令面不接受 = 任何参数位出现 `sudo` 这个词（含 `/usr/bin/sudo` 这类路径形态、含嵌在旗标值里的 `sudo …`）⇒ 一律退 2，**不区分**它是不是子命令。",
+  "rules_yaml_note": "`rules.yaml` 的 `terminal.args_deny` 已含 `\"sudo \"`（子端侧第二道）；本件落的是**命令面这一道**（人/AI 只敲命令的入口）。"
+ },
+ "boundary": "运行期「已连接的 MCP 服务器清单」要**子端侧**的面（本版没有）⇒ `zerg doctor` 那一项**照实说不可见**，不假装扫过（`U-125` 同款口径）。"
+}

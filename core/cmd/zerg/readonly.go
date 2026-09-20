@@ -455,6 +455,12 @@ func doctorItems(inv *invocation) []map[string]string {
 			"advice": ""})
 	}
 
+	// ⑤⑥ 「放文件即生效」两处口子的**收口②**（§十二 `P-101` ② · 批 E · T-60）：
+	//   **默认不静默** —— 技能目录逐条列出；MCP 清单**明说不可见**（运行期清单在子端侧）。
+	//   两段都是 REPORT/PASS 档（REPORT **不影响退码**）⇒ 加这两段不改 `doctor` 的退出码。
+	items = append(items, doctorSkillItems()...)
+	items = append(items, doctorMCPItems()...)
+
 	// ⑤ 子端（经主控）· 顺带把「混版观测」照实报出来（判决权在批 C 的 T-23，本版只报事实）
 	if inv.quick {
 		items = append(items, map[string]string{
