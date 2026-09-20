@@ -427,8 +427,11 @@ def is_gate_file(p):
 # ── 候选面的排除域 ────────────────────────────────────────────────────────────
 #   scripts/ 下**分域之前就有**的工作/实验子目录：不递归进候选面（既有口径，2026-09-20 前
 #   它们本就因「只看顶层」而不在判据里）。脚本分域第二段把 100 件搬进 9 个**域**目录后，
-#   候选面下沉一层——但只下沉到域目录，这三棵仍旧打印成「排除域」（口径见 .md「排除域」节）。
-EXCL_SUBDIRS = ("253", "exportnames", "sandbox-probes")
+#   候选面下沉一层——但只下沉到域目录，这两棵仍旧打印成「排除域」（口径见 .md「排除域」节）。
+#   ★ 2026-09-20 T-56 决议⑤：第三棵 `scripts/253/` 已退役删除（零调用方 · **删目录与摘名单同
+#     一提交**）⇒ 名单从三棵收成两棵，见下 `EXCL_SUBDIRS` 与 `check-gate-coverage.py` 的
+#     `NOSUFFIX_EXCL`（两个门同口径，只改一处会打架）。
+EXCL_SUBDIRS = ("exportnames", "sandbox-probes")
 
 def _candidate_paths(files):
     """scripts/ 顶层件 + scripts/<域>/ 一件（域 = 除 EXCL_SUBDIRS 外的子目录）。"""
@@ -449,9 +452,10 @@ def build_candidates(root, files):
     候选面 = scripts/ 下**顶层 + 域子目录一层**的所有脚本（.py / .sh / 无后缀但首行 #!）——
     2026-09-20 脚本分域第二段起，100 件脚本下沉到 `scripts/<域>/` ⇒ 候选面随之下沉一层
     （旧口径只看 `scripts/` 顶层，下沉后顶层归零 ⇒ 本门会误报「候选 0 只」拒绝出结论）。
-    **既有的三棵工作/实验子目录仍在排除域**（见 EXCL_SUBDIRS 与 .md「排除域」节）：
-    它们不是域目录，进候选面会把一条既有的零引用件（scripts/253/branch_system.sh）
-    变成新命中 —— 那是**改判据**，不在「机械搬动」的范围内。
+    **既有的两棵工作/实验子目录仍在排除域**（见 EXCL_SUBDIRS 与 .md「排除域」节）：
+    它们不是域目录，进候选面就是**改判据**，不在「机械搬动」的范围内。
+    （第三棵 `scripts/253/` **已于 2026-09-20 退役删除** —— T-56 决议⑤：引用面 6 行 / 5 个
+      门禁件、零调用方；那条既有的零引用件 `scripts/253/branch_system.sh` 随之消失。）
     **两断言共用同一份**：
       · 断言 A 只吃其中 kind 非空的门脚本（命名 check- / 说明书自称门）；
       · 断言 B 吃全部（零引用件不限门脚本 —— 今天的 4 只里三只是 v25_* 评测脚本）。
@@ -773,7 +777,7 @@ def list_rules():
         L.append("  · %-36s %s" % (p, why))
     L.append("")
     L.append("扫描面与排除域：")
-    L.append("  · 候选 = scripts/ 顶层（glob `scripts/*`，**不递归**；子目录如 scripts/253/ 打印进排除域）")
+    L.append("  · 候选 = scripts/ 顶层（glob `scripts/*`，**不递归**；子目录如 scripts/exportnames/ 打印进排除域）")
     L.append("  · 引用面 = git 索引里的已跟踪文件（`git ls-files`）；未跟踪件不在判据内")
     L.append("  · 排除 ① 本门自指 %s（否则我自己的名单会把零引用写成有引用）" % " · ".join(SELF_FILES))
     L.append("  · 排除 ② 记录面 glob：%s —— 「记录不能充作引用」" % " · ".join(RECORD_SURFACES))
