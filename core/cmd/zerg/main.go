@@ -489,6 +489,71 @@ func init() {
 			danger:  &dangerSpec{dangerD2, "任务 id", "改这条任务在队列里的次序（可能插到别人前面）", "§三 D 族 · 开工单 T-44"},
 			run:     cmdGuarded,
 		},
+		// ---- 批 D · T-45 `model` + `core` 两族（§三 E/C 族 · §7.1 `P11` · §十二 `P-029`）----
+		{
+			path:     []string{"model", "show"},
+			kind:     "Model",
+			summary:  "看一个模型（投影 /api/fleet/models 的单条；对象是**模型 id**，不是机器名）",
+			usage:    "zerg model show <模型 id> [--json <字段>]",
+			args:     []string{"模型 id"},
+			fields:   []string{"id", "host", "backend", "modality", "mem_gb", "file"},
+			endpoint: "GET /api/fleet/models",
+			run:      cmdModelShow,
+		},
+		{
+			path:     []string{"model", "opts"},
+			kind:     "ModelOpts",
+			summary:  "适配器参数（get 只读 / set 实时生效要 --yes）",
+			usage:    "zerg model opts get <模型 id> [--json <字段>] | zerg model opts set <模型 id> --set k=v… [--dry-run | --yes]",
+			args:     []string{"动作（get|set）", "模型 id"},
+			fields:   []string{"model", "schema", "note"},
+			endpoint: "GET|PUT /api/models/{name}/adapter-opts",
+			run:      cmdModelOpts,
+		},
+		{
+			path:     []string{"core", "status"},
+			kind:     "CoreStatus",
+			summary:  "主控现状（投影 /api/core/status）",
+			usage:    "zerg core status [--json <字段>]",
+			fields:   []string{"ok", "pid", "started_at", "version"},
+			endpoint: "GET /api/core/status",
+			run:      cmdCoreStatus,
+		},
+		{
+			path:     []string{"core", "logs"},
+			kind:     "CoreLogs",
+			summary:  "主控日志（`/api/logs` **路由没接** ⇒ 不给结论，退码 8）",
+			usage:    "zerg core logs [--json <字段>]",
+			fields:   []string{"available", "detail"},
+			endpoint: "GET /api/logs（处理器在 handlers.go:966 · 路由没接 ⇒ 现跑 404）",
+			run:      cmdCoreLogs,
+		},
+		{
+			path:     []string{"core", "daemon"},
+			kind:     "CoreDaemon",
+			summary:  "`daemon ls`：本机服务脚本逐件可查（scripts/svc/ 5 件）",
+			usage:    "zerg core daemon ls [--json <字段>]",
+			args:     []string{"动作（ls）"},
+			fields:   []string{"name", "script", "declared", "note"},
+			endpoint: "",
+			run:      cmdCoreDaemonLs,
+		},
+		{
+			path:    []string{"core", "start"},
+			summary: "起主控（危险 D3 · 本版未开放）",
+			usage:   "zerg core start --confirm=<主机名> --yes [--dry-run]",
+			args:    []string{"主机名"},
+			danger:  &dangerSpec{dangerD3, "主机名", "起主控进程（会绑端口 8580；已在跑时是**换件**前置）", "§三 C 族 · §7.1 P11 · 开工单 T-45"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"core", "restart"},
+			summary: "重启主控（危险 D3 · 本版未开放）",
+			usage:   "zerg core restart --confirm=<主机名> --yes [--dry-run]",
+			args:    []string{"主机名"},
+			danger:  &dangerSpec{dangerD3, "主机名", "停 + 起主控（**整个虫群的控制面会断一会儿**）", "§三 C 族 · 开工单 T-45"},
+			run:     cmdGuarded,
+		},
 		// ---- 危险动作：**只登记形状，不开放执行**（§6.2 批 1 零写操作）----
 		// 每条都过 cmdGuarded：`--dry-run` 出计划件（退码 0）；真跑一律拒执（退码 2 = 不给结论）。
 		{
@@ -817,6 +882,7 @@ type invocation struct {
 	acceptanceDeclared bool
 	moveTo             string
 	to                 string
+	setPairs           []string // `--set k=v`（可重复；`model opts set` 用）
 
 	// `--quick`：贵项跳过并记 SKIP（§十二 P-040）
 	quick bool
@@ -969,7 +1035,7 @@ func parseInvocation(args []string) (*invocation, error) {
 // valueFlagName 认「动作面旗标」的名字（**唯一真源**：解析与 `--k=v` 分派都读它）。
 func valueFlagName(a string) string {
 	switch a {
-	case "--desc", "--model", "--priority", "--slice-id", "--depends-on", "--acceptance", "--to":
+	case "--desc", "--model", "--priority", "--slice-id", "--depends-on", "--acceptance", "--to", "--set":
 		return a
 	}
 	return ""
@@ -995,6 +1061,8 @@ func (inv *invocation) setValueFlag(name, val string) {
 		}
 	case "--to":
 		inv.to = val
+	case "--set":
+		inv.setPairs = append(inv.setPairs, val)
 	}
 }
 

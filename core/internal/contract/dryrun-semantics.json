@@ -55,6 +55,12 @@
    "备注": "导出物是「命令有什么动作」的自描述面"
   },
   {
+   "file": "core/cmd/zerg/family_model_core.go",
+   "类": "命令面三态（`model opts set --dry-run` 的计划件 · 与 guard.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg model opts set <模型> --set temperature=0.8 --dry-run` ⇒ 退码 0 · stdout 只有计划件 + stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）」· **不发任何 HTTP 请求**（真跑才 PUT）· 不落盘；现跑对拍：计划件里的 `请求体` 与 `--set` 逐字一致（不猜键名）。"
+  },
+  {
    "file": "core/cmd/zerg/family_task.go",
    "类": "命令面三态（`task submit --dry-run` 的计划件 · 与 guard.go 同一套语义）",
    "语义": "dryrun.v1",
