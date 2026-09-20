@@ -42,7 +42,7 @@ type LoopResult struct {
 // newLoop — 初始化循环状态（#11 拆解——原 Loop 内联初始化）
 func newLoop(agent *Agent, tools []ToolDef, logger *Logger, state *agentstate.HarnessState, maxTurns int, budget int64, noProgressThresh int) *loopState {
 	if maxTurns <= 0 {
-		maxTurns = 100 // v2.5：30→100——安全兜底；自主停止主导（研究类任务需 100+）
+		maxTurns = DefaultMaxTurns // 唯一真源（max_turns.go）；v2.5 起 100——安全兜底、自主停止主导
 	}
 	if noProgressThresh <= 0 {
 		noProgressThresh = 3 // v2.5.5 修复（2026-08-24）: 2→3——模型思考/准备阶段无工具调用被误判无进展（1a 3轮正常被终止）——3 轮更合理

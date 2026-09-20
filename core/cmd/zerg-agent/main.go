@@ -76,7 +76,7 @@ func main() {
 	flag.StringVar(&task, "task", "", "任务描述（必填）")
 	flag.StringVar(&model, "model", "example-35b", "模型名（默认 example-35b）")
 	flag.StringVar(&workdir, "workdir", "/tmp/zerg-agent", "工作区目录（默认 /tmp/zerg-agent）")
-	flag.IntVar(&maxTurns, "max-turns", 100, "最大循环轮数（默认 100——安全兜底；自主停止主导——v2.5）")
+	flag.IntVar(&maxTurns, "max-turns", agent.DefaultMaxTurns, fmt.Sprintf("最大循环轮数（默认取唯一真源 agent.DefaultMaxTurns = %d——安全兜底；自主停止主导——v2.5）", agent.DefaultMaxTurns))
 	flag.StringVar(&toolsFlag, "tools", "", "工具子集（逗号分隔——如 bash,write）")
 	flag.StringVar(&mcpFlag, "mcp", "", "MCP 服务器（name:cmd|arg 逗号分隔——如 codegraph:codegraph|serve|--mcp；HTTP 型 name:http|url|token）")
 	flag.BoolVar(&autoIssue, "auto-issue", false, "失败自动挂单（错误自愈 P0——重试耗尽写 docs/issues/）")
