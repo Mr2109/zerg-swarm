@@ -73,6 +73,9 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	cmd := exec.Command("bash", append([]string{script}, args...)...)
+	// 登记在跑的这一步：人打断时 `--cancel-on-interrupt` 才有东西可取消（§九 M8 · `P-033`）。
+	runningChild = cmd
+	defer func() { runningChild = nil }()
 	cmd.Dir = root
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
