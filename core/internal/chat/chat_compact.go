@@ -163,6 +163,41 @@ const compactSystemPrompt = `你是对话摘要器——把对话压缩为结构
 
 如果提供了【旧摘要】——基于旧摘要更新（把已完成的事移入 Done——补充新进展——不要重写全部）`
 
+// compactResponseFormat — 摘要的受约束解码形状（六段 = 提示词里那六个 `## ` 段）。
+//
+// 为什么用它（§九 M6「结构性输出不许靠提示词约定」· §二十一 第 11 条「全仓 `response_format` = 0 文件」）：
+// 摘要的段名是**契约**（下游按段名取值），而段名今天只写在 `compactSystemPrompt` 的文本里 ⇒
+// 模型少写一段、改名一段，下游只会「取不到值」，且看不出来是模型的问题。
+// 这里把同一组段名**同时**放进 `response_format`（结构面）与提示词（文本面）⇒ 两边同源。
+//
+// 兼容口径（诚实说明）：`response_format` 是 OpenAI 兼容面的**可选**成员 ——
+// 支持 `json_schema` 的服务端会强约束；不支持的服务端按未知成员忽略（本函数**不**改请求的其余部分，
+// 也不在客户端做「服务端不支持就报错」的判 —— 那是 §十二 待拍项，本版只保证**请求面**有落点）。
+func compactResponseFormat() map[string]any {
+	return map[string]any{
+		"type": "json_schema",
+		"json_schema": map[string]any{
+			"name":   "zerg_compaction_summary",
+			"strict": true,
+			"schema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"goal":           map[string]any{"type": "string"},
+					"progress":       map[string]any{"type": "string"},
+					"key_decisions":  map[string]any{"type": "string"},
+					"relevant_files": map[string]any{"type": "string"},
+					"next_steps":     map[string]any{"type": "string"},
+					"critical_context": map[string]any{
+						"type": "string",
+					},
+				},
+				"required":             []string{"goal", "progress", "key_decisions", "relevant_files", "next_steps", "critical_context"},
+				"additionalProperties": false,
+			},
+		},
+	}
+}
+
 // CompactRequest — P4-39 T3: 本地调摘要模型（/v1/chat/completions + 结构化模板——不走网关 compact 端点——模板可控）
 // T4: 存在旧摘要（【历史摘要】消息）→ 输入带旧摘要——指示更新而非重写
 func CompactRequest(ctx context.Context, gatewayURL, authToken, sessionID, model string, msgs []Message) (string, error) {
@@ -188,6 +223,11 @@ func CompactRequest(ctx context.Context, gatewayURL, authToken, sessionID, model
 		"messages":    chatMsgs,
 		"max_tokens":  3000,
 		"temperature": 0.3,
+		// 受约束解码（§九 M6 · §二十一 第 11 条）：摘要的形状是**固定六段**，
+		// 靠提示词约定等于把结构性输出押在模型心情上 ⇒ 在**实现面**用
+		// `response_format` 把六段锁成必填字段。服务端支持则强约束，不支持则忽略
+		// （`response_format` 是 OpenAI 兼容面的**可选**成员，不是必需成员）。
+		"response_format": compactResponseFormat(),
 	})
 
 	req, err := http.NewRequestWithContext(ctx, "POST", gatewayURL+"/v1/chat/completions", bytes.NewReader(payload))
