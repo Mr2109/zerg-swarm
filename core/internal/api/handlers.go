@@ -360,7 +360,7 @@ func (h *Handlers) TaskDetailHandler(w http.ResponseWriter, r *http.Request) {
 // 查 task-<ID> 分支/或 main 历史里的报告文件——内容验证（防共享旧报告误显示）
 func gitShowReport(taskID, reportName string) string {
 	repoDir := statepath.WorkspaceRoot()
-	branch := "task-" + sanitizeID(taskID)
+	branch := worktreeBranchFor(taskID)
 	// 尝试分支（task-<ID>——merge 前）
 	cmd := exec.Command("git", "-C", repoDir, "show", branch+":"+reportName)
 	if out, err := cmd.CombinedOutput(); err == nil && len(out) > 0 {
