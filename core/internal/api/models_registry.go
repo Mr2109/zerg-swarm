@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Mr2109/zerg-swarm/core/internal/contract"
 	"github.com/Mr2109/zerg-swarm/core/internal/modelreg"
 )
 
@@ -113,6 +114,14 @@ type ModelRegistryRecord struct {
 	Warns           int                       `json:"warns"`
 	DefaultEligible bool                      `json:"default_eligible"`
 	Error           string                    `json:"error,omitempty"`
+
+	// FleetID 是本记录到**路由表**（`/api/fleet/models`）的 id 规范化结果（T-41 · `R2-P1`）。
+	// 快照 id 形如 `example-35b-v2-1-5-35b-q4-k-m`，路由表 id 形如 `example-35b-v2` —— 两套命名
+	// 今天接不上（§二十一 第 19 条）。本字段给出**精确**映射（真源 = `contract.ModelIDMap()`，
+	// 只认显式条目）。**候选多于一**（同一份权重在路由表里挂了多个名字，如 gemma-4-26B 与
+	// example-26b-review）⇒ 逗号连接、按真源顺序。**未知 id ⇒ 整键不出现**（omitempty），
+	// 绝不猜、绝不模糊匹配兜（设计稿 `R2-P1` 逐字）。
+	FleetID string `json:"fleet_id,omitempty"`
 
 	// ── 能力快照的出处（待修补 #26）────────────────────────────────────────
 	// 能力现在分层：记录正文（标准 §四，人工/声明）为底，实测能力放在记录旁的
@@ -269,6 +278,9 @@ func (h *Handlers) ModelRegistryHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	records := make([]ModelRegistryRecord, 0, len(rows))
 	bad := 0
+	// id 规范化真源（T-41 · `R2-P1`）：快照 id ⇒ 路由表 id。解不动 = 不解（缺就缺），
+	// 绝不因它让整个只读接口挂掉；但不猜——没有真源就没有 fleet_id 这个键。
+	idmap, _ := contract.ModelIDMap()
 	for _, row := range rows {
 		item := ModelRegistryRecord{
 			ID:              row.ID,
@@ -283,6 +295,11 @@ func (h *Handlers) ModelRegistryHandler(w http.ResponseWriter, r *http.Request) 
 			Capabilities:    []ModelRegistryCapability{},
 			Files:           []ModelRegistryFile{},
 			EngineRecipes:   []string{},
+		}
+		if idmap != nil {
+			if fleets, ok := idmap.FleetIDForRegistry(row.ID); ok {
+				item.FleetID = strings.Join(fleets, ",")
+			}
 		}
 		// 坏记录：List 已如实记 Err——计入 errors 并在 records 里保留这一条，
 		// 整个请求仍是 200（反例优先：目录里混进坏文件不能让整个模型库页挂掉）。

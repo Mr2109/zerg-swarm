@@ -6,6 +6,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 	"github.com/Mr2109/zerg-swarm/core/internal/chat"
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/contract"
 	"github.com/Mr2109/zerg-swarm/core/internal/gateway"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"github.com/Mr2109/zerg-swarm/core/internal/store"
@@ -1154,17 +1155,26 @@ func (h *Handlers) ModelsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 从配置路由表返回全部模型（多候选展开为多条）
+	// registry_id（T-41 · `R2-P1`）：路由表 id ⇒ 能力快照（`/api/models/registry`）的 id，
+	// 走显式真源 `contract.ModelIDMap()` 精确映射。未知 ⇒ 整键不出现（缺就缺，不猜）。
+	idmap, _ := contract.ModelIDMap()
 	var list []map[string]interface{}
 	for name, candidates := range h.Config.Models {
 		for _, c := range candidates {
-			list = append(list, map[string]interface{}{
+			row := map[string]interface{}{
 				"id":       name,
 				"host":     c.Host,
 				"backend":  c.Backend,
 				"file":     c.File,
 				"mem_gb":   c.MemGb,
 				"modality": "text",
-			})
+			}
+			if idmap != nil {
+				if rid, ok := idmap.RegistryIDForFleet(name); ok {
+					row["registry_id"] = rid
+				}
+			}
+			list = append(list, row)
 		}
 	}
 

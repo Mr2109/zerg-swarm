@@ -25,6 +25,70 @@ var unresolvedRaw []byte
 //go:embed decision-records.json
 var decisionRecordsRaw []byte
 
+//go:embed model-id-map.json
+var modelIDMapRaw []byte
+
+// ModelIDMapEntry —— 一条 id 映射（能力快照 id ↔ 路由表 id）。
+type ModelIDMapEntry struct {
+	RegistryID   string   `json:"registry_id"`
+	RegistryName string   `json:"registry_name"`
+	FleetIDs     []string `json:"fleet_ids"`
+	Weights      string   `json:"weights"`
+	Evidence     string   `json:"evidence"`
+}
+
+// ModelIDMapSpec —— id 规范化真源（§十八.3 依赖次序第一块 · `调研-R2` `R2-P1`）。
+//
+// 一句话：能力快照（`/api/models/registry` 的 manifest id，形如 `example-35b-v2-1-5-35b-q4-k-m`）
+// 与路由表（`/api/fleet/models` 的 id，形如 `example-35b-v2`）**两套命名**今天接不上；
+// 本件把「谁等于谁」落成**一张显式表**，读侧按它做**精确**映射 —— 不许模糊匹配兜。
+type ModelIDMapSpec struct {
+	Schema       string            `json:"schema"`
+	Note         string            `json:"note"`
+	Rule         string            `json:"rule"`
+	EvidenceRule string            `json:"evidence_rule"`
+	Entries      []ModelIDMapEntry `json:"entries"`
+}
+
+// ModelIDMap —— 解出 id 规范化真源（解不动 / 空表 ⇒ 报错，不吞）。
+func ModelIDMap() (*ModelIDMapSpec, error) {
+	var m ModelIDMapSpec
+	if err := json.Unmarshal(modelIDMapRaw, &m); err != nil {
+		return nil, fmt.Errorf("contract: id 规范化真源解不动（model-id-map.json 坏了？）: %w", err)
+	}
+	if len(m.Entries) == 0 {
+		return nil, fmt.Errorf("contract: id 规范化真源是空的（entries 为空）—— 空表会让能力面永远接不到路由表")
+	}
+	for _, e := range m.Entries {
+		if e.RegistryID == "" || len(e.FleetIDs) == 0 {
+			return nil, fmt.Errorf("contract: id 规范化真源有一条不成形（registry_id 空或 fleet_ids 空）—— 每一条都必须两侧齐")
+		}
+	}
+	return &m, nil
+}
+
+// FleetIDForRegistry —— 精确查表：快照 id ⇒ 路由表 id 列表（未知 id ⇒ ok=false，缺就缺，不猜）。
+func (m *ModelIDMapSpec) FleetIDForRegistry(registryID string) ([]string, bool) {
+	for _, e := range m.Entries {
+		if e.RegistryID == registryID {
+			return e.FleetIDs, true
+		}
+	}
+	return nil, false
+}
+
+// RegistryIDForFleet —— 反向精确查表：路由表 id ⇒ 快照 id（未知 ⇒ ok=false）。
+func (m *ModelIDMapSpec) RegistryIDForFleet(fleetID string) (string, bool) {
+	for _, e := range m.Entries {
+		for _, f := range e.FleetIDs {
+			if f == fleetID {
+				return e.RegistryID, true
+			}
+		}
+	}
+	return "", false
+}
+
 // DecisionRecordSpec —— 决策记录的真源（§20.1 步 9 · §十二 `P-134`–`P-138` · 开工单 T-63）。
 //
 // 一句话：本件把定稿**已给出的取值**（落点 / 三格 / 8 必填 + 4 收口 / status 闭集 /

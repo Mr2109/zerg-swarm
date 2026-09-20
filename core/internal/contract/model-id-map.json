@@ -1,0 +1,22 @@
+{
+  "schema": "zerg/model-id-map/v1",
+  "note": "R2-P1 · 能力快照（/api/models/registry，模型目录 manifest）与路由表（/api/fleet/models，fleet.yaml models 键）之间的 id 规范化真源。设计稿 §十八.3 依赖次序第一块：不建这张表 ⇒ zerg ask --capability 无表可查。",
+  "rule": "只认本表的显式条目（registry_id ↔ fleet_ids）。**不许**用模糊匹配 / 前缀匹配 / 大小写折叠兜底（设计稿 R2-P1 逐字：不许用模糊匹配兜）。未知 id ⇒ 不映射（缺就缺），绝不编造对应关系。",
+  "evidence_rule": "每条配证据：registry 记录的 weights 建材文件名 == fleet.yaml 该模型候选的 file 字段 basename（两侧逐字相同才算一条）。",
+  "entries": [
+    {
+      "registry_id": "gemma-4-26b-a4b-it-ud-q4-k-m",
+      "registry_name": "Gemma-4-26B-A4B-It",
+      "fleet_ids": ["gemma-4-26B", "example-26b-review"],
+      "weights": "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+      "evidence": "snapshot(registry_id) 的 weights 建材名 = gemma-4-26B-A4B-it-UD-Q4_K_M.gguf；fleet.yaml 的 gemma-4-26B（x3, Mr2109）与 example-26b-review（Mr2109）两条候选的 file basename 逐字相同 ⇒ 同一份权重。"
+    },
+    {
+      "registry_id": "example-35b-v2-1-5-35b-q4-k-m",
+      "registry_name": "example-35b-v2",
+      "fleet_ids": ["example-35b-v2"],
+      "weights": "example-35b-v2-Q4_K_M.gguf",
+      "evidence": "snapshot(registry_id) 的 weights 建材名 = example-35b-v2-Q4_K_M.gguf；fleet.yaml 的 example-35b-v2（Mr2109, x3）两条候选的 file basename 逐字相同 ⇒ 同一份权重。"
+    }
+  ]
+}
