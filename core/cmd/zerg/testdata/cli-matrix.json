@@ -3561,6 +3561,116 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "没有可审查物 ⇏ 写（先 `dev proposal new`）⇒ 2"
+  },
+  {
+   "id": "repo/commit#未知旗标",
+   "command": "repo commit",
+   "argv": [
+    "repo",
+    "commit",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "repo/commit#不认的契约主号",
+   "command": "repo commit",
+   "argv": [
+    "repo",
+    "commit",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "repo/commit#缺 --yes（D2）",
+   "command": "repo commit",
+   "argv": [
+    "repo",
+    "commit",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "repo/commit#禁批量暂存（-A）",
+   "command": "repo commit",
+   "argv": [
+    "repo",
+    "commit",
+    "--message",
+    "t",
+    "--file",
+    "-A"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "按文件名逐件暂存是本命令的纪律 ⇒ `-A` 这类批量写法一律拒（2）"
+  },
+  {
+   "id": "repo/commit#禁通配暂存",
+   "command": "repo commit",
+   "argv": [
+    "repo",
+    "commit",
+    "--message",
+    "t",
+    "--file",
+    "core/*.go"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "通配/路径规格会一次带进多件（清单不可复核）⇒ 2"
+  },
+  {
+   "id": "repo/commit#缺提交信息",
+   "command": "repo commit",
+   "argv": [
+    "repo",
+    "commit",
+    "--file",
+    "a.go"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "提交信息模板的第一行是题 ⇒ 缺 `--message` 拒执（2 · 不替人编题）"
+  },
+  {
+   "id": "repo/commit#缺件清单",
+   "command": "repo commit",
+   "argv": [
+    "repo",
+    "commit",
+    "--message",
+    "t"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺 `--file` ⇒ 2（禁「什么脏提交什么」那种隐含面）"
+  },
+  {
+   "id": "repo/commit#禁 --no-verify",
+   "command": "repo commit",
+   "argv": [
+    "repo",
+    "commit",
+    "--message",
+    "t",
+    "--file",
+    "a.go",
+    "--yes",
+    "--no-verify"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "命令面**一律不接受** `--no-verify`（§17.3 铁律④③「AI 不许 --no-verify」）⇒ dispatch 里拒、退 2"
   }
  ]
 }

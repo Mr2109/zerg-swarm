@@ -131,6 +131,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 	inv.path = cmd.path
 	inv.args = append(rest, inv.args...)
 	inv.tty = ttyOf(stdout)
+	// §17.3 铁律④③（D3b 第三步）：**命令面一律不接受 `--no-verify`** —— 它是「绕过提交闸」的唯一写法，
+	// 而提交闸（`.githooks/pre-commit` 出口②）正是「AI 不许自评自批」那一层。对所有命令在 dispatch 里拒。
+	for _, u := range inv.unknown {
+		if u == "--no-verify" || u == "--no-verify=true" {
+			inv.setErr("usage", "no_verify_forbidden", "命令面一律不接受 --no-verify")
+			fmt.Fprintf(stderr, "%s: `--no-verify` **一律不接受**（§17.3 铁律④③「AI 不许 --no-verify」）\n", progName)
+			fmt.Fprintf(stderr, "要绕行只有人能**显式**做（`git commit --no-verify`，会被 git 记在命令历史里）—— 命令面不开这个口子 ⇒ 退码 2\n")
+			return exitUsage
+		}
+	}
 	if len(inv.unknown) > 0 && !cmd.passthrough {
 		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, inv.unknown[0])
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
@@ -617,10 +627,23 @@ func init() {
 			path:     []string{"repo", "status"},
 			kind:     "RepoStatus",
 			summary:  "看仓脏没脏 / HEAD 在哪 / 有没有别人在写它（手敲 git status 的替身）",
-			usage:    "zerg repo status [--json <字段>]",
+			usage:    "zerg repo status [--root <仓根>] [--json <字段>]",
 			fields:   []string{"head", "branch", "path", "status", "untracked"},
 			endpoint: "",
 			run:      cmdRepoStatus,
+		},
+		// ---- D3b 第三步（2026-09-21）：**提交面**（缺口-命令面 §九 I4）----
+		// 按文件名暂存（禁 `git add -A`）· 过快速档才放行 · 禁 `--no-verify` · 提交信息模板。
+		{
+			path:     []string{"repo", "commit"},
+			kind:     "RepoCommit",
+			summary:  "提交：**按文件名逐件暂存**（禁 `git add -A`）· **过快速档才放行** · 禁 `--no-verify`（模板化提交信息）",
+			usage:    "zerg repo commit --message <题> --file <件>… [--proposal <提案 id>] [--by <谁>] [--trace <id>] [--criterion <判据>] [--dry-run] [--yes]",
+			args:     []string{"提交主题（--message）", "逐件点名（--file · 可重复）"},
+			fields:   repoCommitFields,
+			danger:   &dangerSpec{dangerD2, "提交主题", "把点名的件提交（可逆：`git reset --soft HEAD~1`）；**先跑快速档**，rc≠0 不提交", "缺口-命令面 §九 I4 · §九 M3 C5 · D3b 第三步"},
+			endpoint: "",
+			run:      cmdRepoCommit,
 		},
 		{
 			path:     []string{"gate", "explain"},

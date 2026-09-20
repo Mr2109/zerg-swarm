@@ -31,7 +31,11 @@ type repoStatusSummary struct {
 }
 
 func cmdRepoStatus(inv *invocation, stdout, stderr io.Writer) int {
-	root := repoRoot()
+	// `--root <仓根>`（D3 缺口③）：指根 —— 不指就按 `ZERG_REPO` / 可执行件上溯 / 当前目录上溯解析。
+	root := strings.TrimSpace(inv.flagVal("--root"))
+	if root == "" {
+		root = repoRoot()
+	}
 	if root == "" {
 		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
 		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 读不到仓的状态（不给结论 · 退码 8）\n", progName)

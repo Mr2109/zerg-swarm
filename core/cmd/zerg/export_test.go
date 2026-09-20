@@ -507,3 +507,13 @@ func ReapPlanIDOfSameSetForTest(root string, minAgeDays int) (string, string, er
 	b := buildReapPlan(root, spec, minAgeDays, none, time.Now()).PlanID
 	return a, b, nil
 }
+
+// CommitMessageTemplateForTest / CompareFileSetsForTest —— 提交面（`repo commit`）的两枚**纯函数**（测试用）。
+// 桥的纪律同本文件顶部三条：只读形状、直接指真源、不另写副本。
+func CommitMessageTemplateForTest(title, proposal, by, trace, criterion string, files []string) string {
+	return commitMessageTemplate(title, proposal, by, trace, criterion, files)
+}
+
+func CompareFileSetsForTest(want, got []string) (bool, []string, []string) {
+	return compareFileSets(want, got)
+}
