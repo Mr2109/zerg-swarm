@@ -41,12 +41,30 @@ rules:
         - "git push --force"
         - "kill -9 $(pgrep"
         - "sudo "
+
+        # ★ D3b 第四步：**批准件目录够不着**（模型不可自签自批）
+        # 为什么要写在表里而不是靠自觉：`approvals/<工具名>.json` 是「人签的逃生门」——
+        # 它一旦被模型写得出来，「提者 ≠ 批者」那一层就当场作废（§17.3 铁律④③ · §17.5 反面 #6/#9）。
+        # 四条模式 = 那个目录的四种写法（含 `~` 展开与裸相对路径）；命中即拦（args_deny 优先于 action）。
+        - ".zerg/state/approvals"
+        - "state/approvals"
+        - "approvals/operator."
+        - "approvals/terminal.json"
     - name: "write_file"
       action: allow
       args_deny:
         - "fleet.yaml"
         - "rules.yaml"
         - "scoring"
+
+        # ★ D3b 第四步：**批准件目录够不着**（模型不可自签自批）
+        # 为什么要写在表里而不是靠自觉：`approvals/<工具名>.json` 是「人签的逃生门」——
+        # 它一旦被模型写得出来，「提者 ≠ 批者」那一层就当场作废（§17.3 铁律④③ · §17.5 反面 #6/#9）。
+        # 四条模式 = 那个目录的四种写法（含 `~` 展开与裸相对路径）；命中即拦（args_deny 优先于 action）。
+        - ".zerg/state/approvals"
+        - "state/approvals"
+        - "approvals/operator."
+        - "approvals/terminal.json"
     - name: "git_commit"
       action: allow
     - name: "search_files"
@@ -74,6 +92,15 @@ rules:
         - "dd if=/dev/zero"
         - "| sh"
         - "| bash"
+
+        # ★ D3b 第四步：**批准件目录够不着**（模型不可自签自批）
+        # 为什么要写在表里而不是靠自觉：`approvals/<工具名>.json` 是「人签的逃生门」——
+        # 它一旦被模型写得出来，「提者 ≠ 批者」那一层就当场作废（§17.3 铁律④③ · §17.5 反面 #6/#9）。
+        # 四条模式 = 那个目录的四种写法（含 `~` 展开与裸相对路径）；命中即拦（args_deny 优先于 action）。
+        - ".zerg/state/approvals"
+        - "state/approvals"
+        - "approvals/operator."
+        - "approvals/terminal.json"
     - name: "read"
       action: allow
     - name: "write"
@@ -82,18 +109,45 @@ rules:
         - "fleet.yaml"
         - "rules.yaml"
         - "scoring"
+
+        # ★ D3b 第四步：**批准件目录够不着**（模型不可自签自批）
+        # 为什么要写在表里而不是靠自觉：`approvals/<工具名>.json` 是「人签的逃生门」——
+        # 它一旦被模型写得出来，「提者 ≠ 批者」那一层就当场作废（§17.3 铁律④③ · §17.5 反面 #6/#9）。
+        # 四条模式 = 那个目录的四种写法（含 `~` 展开与裸相对路径）；命中即拦（args_deny 优先于 action）。
+        - ".zerg/state/approvals"
+        - "state/approvals"
+        - "approvals/operator."
+        - "approvals/terminal.json"
     - name: "edit"
       action: allow
       args_deny:
         - "fleet.yaml"
         - "rules.yaml"
         - "scoring"
+
+        # ★ D3b 第四步：**批准件目录够不着**（模型不可自签自批）
+        # 为什么要写在表里而不是靠自觉：`approvals/<工具名>.json` 是「人签的逃生门」——
+        # 它一旦被模型写得出来，「提者 ≠ 批者」那一层就当场作废（§17.3 铁律④③ · §17.5 反面 #6/#9）。
+        # 四条模式 = 那个目录的四种写法（含 `~` 展开与裸相对路径）；命中即拦（args_deny 优先于 action）。
+        - ".zerg/state/approvals"
+        - "state/approvals"
+        - "approvals/operator."
+        - "approvals/terminal.json"
     - name: "apply_patch"
       action: allow
       args_deny:
         - "fleet.yaml"
         - "rules.yaml"
         - "scoring"
+
+        # ★ D3b 第四步：**批准件目录够不着**（模型不可自签自批）
+        # 为什么要写在表里而不是靠自觉：`approvals/<工具名>.json` 是「人签的逃生门」——
+        # 它一旦被模型写得出来，「提者 ≠ 批者」那一层就当场作废（§17.3 铁律④③ · §17.5 反面 #6/#9）。
+        # 四条模式 = 那个目录的四种写法（含 `~` 展开与裸相对路径）；命中即拦（args_deny 优先于 action）。
+        - ".zerg/state/approvals"
+        - "state/approvals"
+        - "approvals/operator."
+        - "approvals/terminal.json"
     - name: "glob"
       action: allow
     - name: "grep"

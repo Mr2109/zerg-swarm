@@ -68,11 +68,20 @@ func chatToolGate() *control.AgentGate {
 }
 
 // approvalTicket —— 人签的批准件（逃生门的载体）。
+//
+// ★ D3b 第四步（2026-09-21）：件里多了**签名**三格 —— 判「是不是人签的」靠它，不靠字段齐不齐。
+// 病征：此前只判 `approver` 非空 + scope 覆盖 ⇒ **模型手写一枚 JSON 就是「人签」**（自签自批）。
+// 现在：签名由 `zerg approve new` 在**终端**上用口令解开的私钥产生（`core/internal/control/approval.go`
+// 是待签形态唯一真源），消费者只认签名 —— 手写件在这里被拦下（无签名 / 签名坏 ⇒ 不算批准）。
 type approvalTicket struct {
+	Tool       string `json:"tool"`        // 件名的工具（老件可能缺 ⇒ 用问门时那个名字顶）
 	Approver   string `json:"approver"`    // 人名（空 = 废票）
 	ApprovedAt string `json:"approved_at"` // 签的时间（只回显，不解析时钟）
 	Scope      string `json:"scope"`       // `*` 或参数串的子串
 	Note       string `json:"note"`
+	SigAlg     string `json:"sig_alg"` // 固定 `ed25519`
+	KeyID      string `json:"key_id"`  // 公钥短身份（sha256(pub)[:16]）
+	Sig        string `json:"sig"`     // base64(ed25519 签名) —— **唯一不可伪造的那一格**
 }
 
 // approvalPath —— 批准件的落点（`<状态目录>/approvals/<工具名>.json`）。
@@ -99,8 +108,33 @@ func approvalGranted(tool, args string) (bool, string) {
 	if sc != "*" && (sc == "" || !strings.Contains(args, sc)) {
 		return false, fmt.Sprintf("批准件 %s 的 scope=%q 不覆盖本次参数 ⇒ 不算批准", p, tk.Scope)
 	}
-	return true, fmt.Sprintf("人签批准件在册：approver=%s approved_at=%s scope=%s（%s）",
-		tk.Approver, tk.ApprovedAt, tk.Scope, p)
+	// ★ D3b 第四步：**签名**是「人签」的唯一凭据（字段齐 ≠ 人签 —— 字段模型也写得出来）。
+	ticketTool := strings.TrimSpace(tk.Tool)
+	if ticketTool == "" {
+		ticketTool = tool // 老件（D3b 之前）没有 tool 格 ⇒ 用问门时那个名字顶（件名本来就是 `<工具名>.json`）
+	}
+	pubB, err := os.ReadFile(filepath.Join(statepath.Dir(), "approvals", "operator.pub"))
+	if err != nil {
+		return false, fmt.Sprintf("操作员公钥读不到（%s）⇒ 不算批准（fail-closed：读不到不当过人签）", p)
+	}
+	var pf struct {
+		Alg   string `json:"alg"`
+		Pub   string `json:"pub"`
+		KeyID string `json:"key_id"`
+	}
+	if err := json.Unmarshal(pubB, &pf); err != nil {
+		return false, fmt.Sprintf("操作员公钥件解不动（%s）⇒ 不算批准", p)
+	}
+	if strings.TrimSpace(pf.KeyID) != "" && pf.KeyID != strings.TrimSpace(tk.KeyID) {
+		return false, fmt.Sprintf("批准件 %s 的 key_id=%s 与在册公钥 %s 不同 ⇒ 不算批准（换了密钥就是换了签的人）",
+			p, tk.KeyID, pf.KeyID)
+	}
+	payload := control.ApprovalPayload(ticketTool, tk.Scope, tk.Approver, tk.ApprovedAt, tk.Note)
+	if err := control.VerifyApprovalSignature(pf.Pub, tk.Sig, payload); err != nil {
+		return false, fmt.Sprintf("批准件 %s 的签名过不了 ⇒ 不算批准：%v", p, err)
+	}
+	return true, fmt.Sprintf("人签批准件在册（签名验过）：approver=%s approved_at=%s scope=%s key_id=%s（%s）",
+		tk.Approver, tk.ApprovedAt, tk.Scope, pf.KeyID, p)
 }
 
 // chatGateVerdict —— 把一个 gate 判定 (+ err) 翻成**给人的拒因原文**并判「拒不拒」。

@@ -250,6 +250,56 @@ func TestDangerousChatToolsAreGated(t *testing.T) {
 	}
 }
 
+// TestApprovalsDirIsOutOfReachForModelTools —— D3b 第四步的**物理闸**：模型手里的写工具够不着批准件目录。
+//
+// 为什么这条判据要紧：批准件是「人签的逃生门」—— 它一旦被模型写得出来，「提者 ≠ 批者」当场作废。
+// 所以判两层：① **表里有模式**（字面在）+ 问门真判 block；② **成对负控** —— 把模式从表文本里抠掉，
+// 同一条问门必须变成 allow（证明拦它的正是这条模式，不是别的东西顺手拦的）。
+func TestApprovalsDirIsOutOfReachForModelTools(t *testing.T) {
+	root := repoRoot(t)
+	path := filepath.Join(root, "core", "internal", "control", "rules.yaml")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := NewGateFromFile(path)
+	if err != nil {
+		t.Fatalf("装载真规则表：%v", err)
+	}
+	tools := []string{"write_file", "write", "edit", "apply_patch", "bash", "terminal"}
+	paths := []string{
+		`.zerg/state/approvals/terminal.json`,         // 状态目录里的批准件
+		`state/approvals/terminal.json`,               // 裸相对写法
+		`approvals/terminal.json`,                     // 以 approvals/ 开头
+		`~/.zerg/state/approvals/operator.pub`,        // 公钥件
+		`/Users/x/.zerg/state/approvals/operator.key`, // 私钥件的绝对路径
+	}
+	for _, tool := range tools {
+		for _, pth := range paths {
+			d := g.Check(tool, `path="`+pth+`"`, "zerg")
+			if d.Action == ActionAllow {
+				t.Errorf("工具 %q 带路径 %q ⇒ 判 %q（**必须拦**：批准件目录是模型够不到的地方）",
+					tool, pth, d.Action)
+			}
+		}
+	}
+	// 字面在：四条模式必须真写在表里（`state/approvals` 一族）
+	for _, pat := range []string{`".zerg/state/approvals"`, `"state/approvals"`, `"approvals/operator."`} {
+		if !strings.Contains(string(body), pat) {
+			t.Errorf("rules.yaml 里少了模式 %s（删掉它就没有这道闸了）", pat)
+		}
+	}
+	// 成对负控：把模式文本抠掉 ⇒ 同一条问门必须放行（否则说明拦它的不是这条模式）
+	stripped := strings.ReplaceAll(string(body), "approvals", "approvalsX")
+	g2, err := NewGateFromYAML([]byte(stripped))
+	if err != nil {
+		t.Fatalf("装载抠掉模式的表：%v", err)
+	}
+	if d := g2.Check("write_file", `path=".zerg/state/approvals/terminal.json"`, "zerg"); d.Action != ActionAllow {
+		t.Errorf("成对负控失败：抠掉模式后仍然判 %q —— 说明拦它的不是这条模式，本判据测错了东西", d.Action)
+	}
+}
+
 // TestGate_MissingDefaultIsBlock —— 负控：**规则文件缺 default** ⇒ 拦（不是放行）。
 func TestGate_MissingDefaultIsBlock(t *testing.T) {
 	g, err := NewGateFromYAML([]byte("version: 1\nrules:\n  tools:\n    - name: \"read\"\n      action: allow\n"))
