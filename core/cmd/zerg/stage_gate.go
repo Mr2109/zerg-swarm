@@ -38,7 +38,7 @@ type stageGateVerdict struct {
 // 与 `dev_proposal_test.go` 的 `devFamilyClosure` **同一份清单**的两处写法是**故意**的：
 // 测试那份是「闭集不许悄悄长大」，这份是「闸门要知道该长成什么样」—— 两处不一致时 `G2` 红。
 var devFamilyClosureForGate = []string{"dev proposal", "dev release", "dev rollback", "dev receipt",
-	"dev build", "dev test", "dev verify"}
+	"dev build", "dev test", "dev verify", "dev edit"}
 
 // judgeFourGates —— **唯一判定口**：四道闸逐条判，缺一道即不算过。
 //
