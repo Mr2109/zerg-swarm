@@ -124,6 +124,11 @@ func cmdDevVerify(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 解析不到候选根（可用 ZERG_CANDIDATE_ROOT 指定）⇒ 不给结论\n", progName)
 		return exitBlocked
 	}
+	// ── 升阶闸门档（§20.4 · §20.7 `OM11` · 批 E · T-62）：只加旗标、不新增命令名 ─────────
+	//    它在读证据单**之前**判：四道闸里 `G3` 读的就是候选区的全量门禁结果表。
+	if inv.stageGate {
+		return cmdDevVerifyGate(inv, stdout, stderr, id)
+	}
 	results := strings.TrimSpace(inv.flagVal("--results"))
 	if results == "" {
 		results = filepath.Join(candidateDir(root, id), "results.tsv")

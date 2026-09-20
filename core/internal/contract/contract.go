@@ -11,6 +11,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 //go:embed registry.json
@@ -39,6 +40,9 @@ var devCandidateRaw []byte
 
 //go:embed ai-boundary.json
 var aiBoundaryRaw []byte
+
+//go:embed stage-gate.json
+var stageGateRaw []byte
 
 // ReceiptSpec —— 交接回执的真源（§20.3 H3 · §20.1 步 9 · §十二 `P-119`/`P-120` · 开工单 T-61）。
 type ReceiptSpec struct {
@@ -433,6 +437,66 @@ func AIBoundary() (*AIBoundarySpec, error) {
 	if len(s.SubjectKinds) == 0 || len(s.ModelSideForbidden.Ports) == 0 ||
 		len(s.ModelSideForbidden.ScanPaths) == 0 || len(s.FileDropDoors) == 0 || s.Sudo.Detail == "" {
 		return nil, fmt.Errorf("contract: AI 边界真源缺关键格（subject_kinds / model_side_forbidden / file_drop_doors / sudo 有一个是空的）")
+	}
+	return &s, nil
+}
+
+// StageGateSpec —— 三阶推进的升阶闸门真源（§20.4 · §20.7 `OM11` · 开工单 T-62）。
+//
+// 一句话：把三阶表右列的**人判**判据落成**可机检**的闭集（`stages[].criteria[].machine`），
+// 并把「升阶」本身也落成四道闸 —— 缺一道即不算过。
+type StageGateSpec struct {
+	Schema               string              `json:"schema"`
+	Note                 string              `json:"note"`
+	Stages               []StageDef          `json:"stages"`
+	StageAdvancePreconds map[string][]string `json:"stage_advance_preconditions"`
+	FourGates            []StageGateDef      `json:"four_gates"`
+	FullSuiteSteps       int                 `json:"full_suite_steps"`
+	FullSuiteStepsNote   string              `json:"full_suite_steps_note"`
+	HumanAbsentRule      string              `json:"human_absent_rule"`
+	MissingOneRule       string              `json:"missing_one_rule"`
+	NoNewCommand         string              `json:"no_new_command"`
+}
+
+// StageDef —— 一阶（id/名/判据表）。
+type StageDef struct {
+	ID       string           `json:"id"`
+	Name     string           `json:"name"`
+	Criteria []StageCriterion `json:"criteria"`
+}
+
+// StageCriterion —— 一条判据（`machine` 是**可机检**的那一面）。
+type StageCriterion struct {
+	ID      string `json:"id"`
+	What    string `json:"what"`
+	Machine string `json:"machine"`
+}
+
+// StageGateDef —— 一道闸。
+type StageGateDef struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Machine string `json:"machine"`
+}
+
+// StageGate —— 解出升阶闸门真源（解不动 / 缺关键格 ⇒ 报错，不吞）。
+func StageGate() (*StageGateSpec, error) {
+	var s StageGateSpec
+	if err := json.Unmarshal(stageGateRaw, &s); err != nil {
+		return nil, fmt.Errorf("contract: 升阶闸门真源解不动（stage-gate.json 坏了？）: %w", err)
+	}
+	if len(s.Stages) != 3 || len(s.FourGates) != 4 || s.FullSuiteSteps <= 0 {
+		return nil, fmt.Errorf("contract: 升阶闸门真源缺关键格（三阶 / 四道闸 / 全量步数 有一个不齐）")
+	}
+	for _, st := range s.Stages {
+		if len(st.Criteria) == 0 {
+			return nil, fmt.Errorf("contract: 升阶闸门真源的 %s 一条判据都没有（空判据 = 又回到人判）", st.ID)
+		}
+		for _, c := range st.Criteria {
+			if strings.TrimSpace(c.Machine) == "" {
+				return nil, fmt.Errorf("contract: 升阶闸门真源 %s/%s 的**可机检**那一格是空的（OM11 要治的正是这个）", st.ID, c.ID)
+			}
+		}
 	}
 	return &s, nil
 }

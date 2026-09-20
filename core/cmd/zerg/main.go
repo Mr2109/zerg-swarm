@@ -943,7 +943,7 @@ func init() {
 			path:     []string{"dev", "verify"},
 			kind:     "DevEvidence",
 			summary:  "合成一份验收证据单（只收证据、**不给「通过」的结论**）· 证据为空 ⇒ 2",
-			usage:    "zerg dev verify --candidate <候选 id> [--results <结果表>] [--code-sha <sha>] [--node <名>] [--layer <档>] [--dry-run] [--json <字段>]",
+			usage:    "zerg dev verify --candidate <候选 id> [--results <结果表>] [--code-sha <sha>] [--node <名>] [--layer <档>] [--gate [--human-approval <名>]] [--dry-run] [--json <字段>]",
 			args:     []string{"候选 id"},
 			fields:   devVerifyFields,
 			endpoint: "",
@@ -1161,6 +1161,10 @@ type invocation struct {
 	// `--quick`：贵项跳过并记 SKIP（§十二 P-040）
 	quick bool
 
+	// `--gate`：`zerg dev verify` 的**升阶闸门**档（§20.4 · §20.7 OM11 · 批 E · T-62）。
+	// 与 `--quick` 同形：一枚布尔旗标，**不新增命令名**。
+	stageGate bool
+
 	// `--resume`：续做面（§十二 `P-120` 定案 ① —— 「上次做到哪」的入口 = `zerg context ls --resume`）
 	resume bool
 
@@ -1287,6 +1291,8 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.direct = true
 		case a == "--quick":
 			inv.quick = true
+		case a == "--gate":
+			inv.stageGate = true
 		case a == "--resume":
 			inv.resume = true
 		case a == "--wait":
@@ -1377,6 +1383,11 @@ func valueFlagName(a string) string {
 	// 授权面旗标（§九 M18 `C4` · 批 E · T-60）：提出者 / 批准者**成对**出现（「提 ≠ 批」两个字段）。
 	switch a {
 	case "--subject", "--subject-kind", "--egg-id", "--approver", "--approver-kind":
+		return a
+	}
+	// 升阶闸门旗标（§20.4 · 批 E · T-62）：`--human-approval` 是**人拍板**那一格的入口。
+	switch a {
+	case "--human-approval":
 		return a
 	}
 	return ""
