@@ -12,6 +12,7 @@
 #   bash scripts/build/build-all.sh --no-sign                  # 跳过 codesign（非 macOS / 调试）
 #   bash scripts/build/build-all.sh --only-cli                 # 只出命令面 bin/zerg（薄壳开发用）
 #   bash scripts/build/build-all.sh --only-core                # 只出主控 bin/zerg-core（**换件专用**）
+#   bash scripts/build/build-all.sh --only-compat              # 只出兼容层 bin/zerg-compat（回滚前置校验用）
 #   （无论哪个形态都会另编茧壁 zerg-wall → bin/，见 scripts/build/build-wall.sh；它不进 dist 制品矩阵）
 #
 # --only-cli 为什么需要单独一档（2026-09-20 · T-02）：命令面 `core/cmd/zerg` 是**独立客户端二进制**，
@@ -42,6 +43,7 @@ BUILD_UI=1
 SIGN=1
 ONLY_CLI=0
 ONLY_CORE=0
+ONLY_COMPAT=0
 for arg in "$@"; do
   case "$arg" in
     --dist) DIST=1 ;;
@@ -50,12 +52,13 @@ for arg in "$@"; do
     --no-sign) SIGN=0 ;;
     --only-cli) ONLY_CLI=1 ;;
     --only-core) ONLY_CORE=1 ;;
+    --only-compat) ONLY_COMPAT=1 ;;
     *) echo "未知参数: $arg" >&2; exit 64 ;;
   esac
 done
-# 两个「只出一件」档指向不同制品 ⇒ 同时给是用法错（不猜谁优先：猜错就编错东西）
-if [ "$ONLY_CLI" = "1" ] && [ "$ONLY_CORE" = "1" ]; then
-  echo "✗ --only-cli 与 --only-core 互斥（一个只写 bin/zerg，一个只写 bin/zerg-core）⇒ 用法错" >&2
+# 三个「只出一件」档指向不同制品 ⇒ 同时给是用法错（不猜谁优先：猜错就编错东西）
+if [ $((ONLY_CLI + ONLY_CORE + ONLY_COMPAT)) -gt 1 ]; then
+  echo "✗ --only-cli / --only-core / --only-compat 互斥（各只写一件：bin/zerg · bin/zerg-core · bin/zerg-compat）⇒ 用法错" >&2
   exit 64
 fi
 
@@ -148,11 +151,30 @@ if [ "$ONLY_CORE" = "1" ]; then
   exit 0
 fi
 
+# ── --only-compat：只出兼容层一件（回滚前置校验用；批 C · T-29 / P-132）──────────────────
+#   纪律同另两档：blast radius = 一个文件；其余制品与 build-info.json 一个字节不动。
+if [ "$ONLY_COMPAT" = "1" ]; then
+  echo "→ 兼容层 zerg-compat（--only-compat）"
+  (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg-compat" ./cmd/zerg-compat)
+  resolve_sign_identity
+  sign_one "$OUT/zerg-compat"
+  echo "✅ 构建完成（--only-compat：只写 bin/zerg-compat；其余制品与 build-info.json 一个字节未动）"
+  printf "   %-14s %s 字节\n" "zerg-compat" "$(stat -f%z "$OUT/zerg-compat" 2>/dev/null || stat -c%s "$OUT/zerg-compat")"
+  exit 0
+fi
+
 echo "→ 主控 zerg-core"
 (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg-core" ./cmd/zerg-core)
 
 echo "→ 子端 zerg-agent"
 (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg-agent" ./cmd/zerg-agent)
+
+# 兼容层 zerg-compat（批 C · T-29 落 P-132 的「要」）：回滚前置校验②（状态可读性）**只能靠它**执行
+#   （`zerg-compat check`：0 就绪 · 1 迁移/校验失败 · 2 有待迁移文件 · **3 有更高版本 schema ⇒ 拒回滚** · 4 用法错）。
+# 为什么进制品矩阵：P-132 逐字「要（否则 RB4② 无处可执行；且它已在 core/cmd/ 有源码与门禁）」
+#   —— 它跟其余 zerg-* 一样落 `bin/`（dist 档落 `$OUT`），进签名名单与收尾清单（`$OUT/zerg-*` 通配命中）。
+echo "→ 兼容层 zerg-compat"
+(cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg-compat" ./cmd/zerg-compat)
 
 # 子端守护进程（agent 模块）：**与 CLI 区分命名**——带 d = daemon/常驻（ps 里一眼看出在跑服务还是任务）
 # 注意：它暂不进 release 制品矩阵（矩阵 5 件是发布契约，要不要加是单独的决定），故始终产出到 bin/。
@@ -204,7 +226,7 @@ fi
 if [ "$SIGN" = "1" ] && command -v codesign >/dev/null 2>&1; then
   resolve_sign_identity
   # 签名路径与 `--only-core` 档**逐字同源**（同一对函数）—— 见上面 resolve_sign_identity/sign_one 的注释。
-  for b in "$OUT"/zerg "$OUT"/zerg-core "$OUT"/zerg-agent "$OUT"/zerg-ui "$REPO_ROOT"/bin/zerg-agentd "$REPO_ROOT"/bin/cocoon-docs-service "${REPO_ROOT}"/bin/zerg-wall; do
+  for b in "$OUT"/zerg "$OUT"/zerg-core "$OUT"/zerg-agent "$OUT"/zerg-compat "$OUT"/zerg-ui "$REPO_ROOT"/bin/zerg-agentd "$REPO_ROOT"/bin/cocoon-docs-service "${REPO_ROOT}"/bin/zerg-wall; do
     sign_one "$b"
   done
 fi
