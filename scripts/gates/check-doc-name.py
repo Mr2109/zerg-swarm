@@ -46,6 +46,7 @@
     python3 scripts/gates/check-doc-name.py                    # 全仓扫描域（同《清单》§0 口径）= --scope repo
     python3 scripts/gates/check-doc-name.py --scope repo        # 同上（与 check-doc-meta.py 的 --scope 同名口径）
     python3 scripts/gates/check-doc-name.py --scope docs        # 只看 <仓根>/docs
+    python3 scripts/gates/check-doc-name.py --scope devdocs     # D3①：只看**开发文档面**（Zerg-内部文档，换根）
     python3 scripts/gates/check-doc-name.py --target docs       # 更细的形态（--target 在时以 --target 为准）
     python3 scripts/gates/check-doc-name.py --json
     python3 scripts/gates/check-doc-name.py --list-rules
@@ -72,6 +73,21 @@ import tempfile
 PY = sys.executable or "python3"
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT_DEFAULT = os.path.dirname(os.path.dirname(HERE))
+
+
+def devdocs_root(repo_root=REPO_ROOT_DEFAULT):
+    """开发文档面根（D3① · 与门⑫ `check-doc-cmds.py` **同根同默认**）。
+
+    优先级：`ZERG_DEVDOCS_ROOT` > `<仓根 的上一级>/Zerg-内部文档/项目文档/v2.5.10`。
+    为什么是**仓外**路径：`Zerg-内部文档/` 与主仓并列（2026-09-19 分家）、且它不开源 ⇒ 不进公开树；
+    D3 只把它当**被管对象**读，不搬进仓。根不在 ⇒ `rc=2` 不给结论（设计稿 §五：不许静默当绿）。
+    """
+    env = os.environ.get("ZERG_DEVDOCS_ROOT")
+    if env:
+        return os.path.abspath(env)
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(repo_root)),
+                                        "Zerg-内部文档", "项目文档", "v2.5.10"))
+
 
 # 扫描域排除名单：逐字照抄《清单-命名规范化》§0（EXCL / PRE / 隐藏项口径）
 # ★ 唯一偏离：`docs/虫族文档/`（主树镜像副本）**已于 2026-09-19 退役**（用户拍板「退」；
@@ -684,9 +700,10 @@ def _write(path, text):
         fh.write(text)
 
 
-def _sub(script, *args):
+def _sub(script, *args, **kw):
+    env = kw.pop("env", None)
     p = subprocess.run([PY, script] + list(args), stdout=subprocess.PIPE,
-                       stderr=subprocess.STDOUT, universal_newlines=True)
+                       stderr=subprocess.STDOUT, universal_newlines=True, env=env)
     return p.returncode, p.stdout
 
 
@@ -722,8 +739,8 @@ def self_test(script_path, meta=True):
 
     base = ["--repo-root", tmp, "--no-self-test"]
 
-    def case(label, expect_rc, args, must_contain=(), must_not_contain=()):
-        rc, out = _sub(script_path, *(base + list(args)))
+    def case(label, expect_rc, args, must_contain=(), must_not_contain=(), env=None):
+        rc, out = _sub(script_path, *(base + list(args)), env=env)
         good_case = (rc == expect_rc)
         for s in must_contain:
             if s not in out:
@@ -818,6 +835,14 @@ def self_test(script_path, meta=True):
     # ⑪ 用法错（未知参数）必 rc=2 且**不产出结论行**
     ok &= case("用法错（未知参数）必 rc=2 不给结论", 2, ["--scope", "nonsense"],
                must_not_contain=["OK："])
+    # ⑬ **D3① 换根负控**（2026-09-21）：开发文档面根**不在**（仓外不可达）⇒ 必 rc=2 不给结论。
+    #    ★ 为什么是成对负控的一半：正格（根在）不可能在自检里跑 —— 那要碰真 Zerg-内部文档 树，
+    #      而自检的口径是「合成件、不碰真目标」（门⑦ 同款）；缺根这一格恰好是**机器无关**的那半，
+    #      它钉住的是「仓外不可达时不许静默当绿」这条判据本身（设计稿 §五）。
+    ok &= case("D3① devdocs 根不在 ⇒ BLOCKED（仓外不可达不许当绿）", 2,
+               ["--repo-root", tmp, "--scope", "devdocs"],
+               must_contain=["不给结论", "开发文档面根不在"],
+               env=dict(os.environ, ZERG_DEVDOCS_ROOT=os.path.join(tmp, "no-such-Zerg-内部文档")))
     # ⑫ **元自检**：把「好件必绿」的期望改成不可能达成 ⇒ 自检未过 ⇒ rc=2 且**拒绝扫真目标**
     if meta:
         needle = '("好件必绿（含允许对 edit-assert）", 0,'
@@ -852,6 +877,7 @@ def self_test(script_path, meta=True):
                 + 1                                 # ⑦ 例外表条数自证
                 + 1                                 # ⑧ 只报告不改
                 + 4                                 # ⑨ N6 有牙 · ⑩ --scope ×2 · ⑪ 用法错
+                + 1                                 # ⑬ D3① devdocs 根不在 ⇒ rc=2（换根负控）
                 + (1 if meta else 0))               # ⑫ 元自检（注入副本）
     got = sum(1 for ln in lines if ln[:1] in ("✓", "✗"))
     lines.append("自检用例：期望 %d 条 · 实跑 %d 条" % (expected, got))
@@ -869,8 +895,9 @@ def main(argv):
     ap.add_argument("--repo-root", default=REPO_ROOT_DEFAULT)
     ap.add_argument("--max-examples", type=int, default=5)
     ap.add_argument("--count-frozen", action="store_true", help="把冻结区计入退码")
-    ap.add_argument("--scope", choices=["repo", "docs"], default=None,
-                    help="repo = 仓根（同《清单》§0 口径，默认）· docs = <仓根>/docs"
+    ap.add_argument("--scope", choices=["repo", "docs", "devdocs"], default=None,
+                    help="repo = 仓根（同《清单》§0 口径，默认）· docs = <仓根>/docs · "
+                         "devdocs = **开发文档面**（D3① 换根：Zerg-内部文档，根见 devdocs_root()）"
                          "（显式给了 --target/位置参数时，以 --target 为准）")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--list-rules", action="store_true")
@@ -907,13 +934,21 @@ def main(argv):
             return 2
 
     root = os.path.abspath(args.repo_root)
+    if args.scope == "devdocs" and not (list(args.targets) + list(args.target)):
+        # ── D3① 换根：开发文档面带自己的默认根（与门⑫ 同根同默认），不借用主仓根。
+        #    只在**没显式点名目标**时换根 —— 显式 `--target` 的口径一字未改（点名谁就判谁）。
+        root = devdocs_root(root)
+        if not os.path.isdir(root):
+            print("BLOCKED：开发文档面根不在 ⇒ 不给结论：%s" % root)
+            print("  口径：仓外根不可达（设计稿 §五：不许静默当绿 ✗）。换根请设 ZERG_DEVDOCS_ROOT。")
+            return 2
     if not os.path.isdir(root):
         print("BLOCKED：仓根不是目录 ⇒ 不给结论：%s" % root)
         return 2
     targets = [os.path.abspath(x) for x in (list(args.targets) + list(args.target))]
     explicit = bool(targets)
-    if not targets and args.scope == "docs":
-        targets = [os.path.join(root, "docs")]
+    if not targets and args.scope in ("docs", "devdocs"):
+        targets = [os.path.join(root, "docs")] if args.scope == "docs" else [root]
     if not targets:
         targets = [root]
     # ── 前置缺件闸（2026-09-19 开发文档分家后新增）：缺 `docs/` 或 docs/ 下无可扫内容 ⇒
@@ -923,7 +958,7 @@ def main(argv):
     #   ★ 只在**默认文档面**上闸（未显式给 --target/位置参数）：显式点名目标的口径一字未改
     #     （目标缺件仍走下面的「目标不存在 ⇒ 不给结论」）。
     if not explicit:
-        doc_root = os.path.join(root, "docs")
+        doc_root = root if args.scope == "devdocs" else os.path.join(root, "docs")
         if not os.path.isdir(doc_root):
             print("BLOCKED：文档面根不存在（缺件不许静默降级）⇒ 不给结论：%s" % doc_root)
             print("  口径：公开树侧（无 docs/）本 scope 为 BLOCKED、不适用；私有树正常判（判据一字未改）。")

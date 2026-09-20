@@ -36,13 +36,31 @@
 
 用法：
   python3 scripts/gates/check-glossary.py [--lang zh,en] [--paths P …] [--enforce] [--no-identifiers] [--selftest]
+  python3 scripts/gates/check-glossary.py --scope devdocs [--root <目录>]   # D3①：扫开发文档面（Zerg-内部文档）
      --enforce        把 T2 术语档升为阻塞（收敛后的口径）
      --no-identifiers 关掉 B5/W4（大型树上想只看词表命中时用）
+     --scope devdocs  换到**开发文档面**（D3 第一步 · 默认根见 devdocs_root()`；语料一律按**中文面**判）
+     --root <目录>    换扫描根（缺省 = 本脚本的上一级 = 主仓根；**默认行为一字不变**）
 退出码：0 = 干净 · 1 = 仅 T2/T3 命中（非阻塞）· 2 = **不给结论 / 阻塞**
         （T1 命中 · `--enforce` 下 T2 命中 · **环境/输入异常与空转**）
         ★ 2026-09-20 承接项「术语表只有一份」第 4 条：本脚本原 `rc=3` 一律**统一成 `rc=2`** ——
           与仓内其余门脚本（check-doc-name/meta/freshness、precommit-gates.sh）的 0/1/2 三档同一口径；
           对外效果 = 挂在公开树（无 `docs/` 面）时落 **BLOCKED（不给结论）**，不会被读成 FAIL。
+
+D3 · 开发文档门禁（2026-09-21 第一步 · 换根与档位）
+------------------------------------------------
+  命题（《待办-20260920.md》D3 · 设计稿 `设计-开发文档门禁-v1.0.md`）：`Zerg-内部文档/`（开发文档侧）
+  同样受命名/文件头/术语/引用存在性/新鲜度约束，但**原先不受任何门禁管辖** ⇒ 全靠人记。
+  本步只做「**换根 + 加档位**」两件近零成本的事，**默认行为一字不变**：
+    ① `--root`（缺省仍是主仓根 ⇒ 不传本旗标时输出与从前逐字节相同）；
+    ② `--scope devdocs` —— 扫描根换成开发文档面（与门⑫ `check-doc-cmds.py` **同根同默认**：
+       `ZERG_DEVDOCS_ROOT` > `<仓根 的上一级>/Zerg-内部文档/项目文档/v2.5.10`）。
+  为什么开发文档面**一律按中文面判**（`lang_of()`）：Zerg-内部文档 没有 `docs/zh` + `docs/en` 的双语分家，
+  正文是中文稿；照默认口径（第二段是 `zh` 才算中文）93 篇会被全判成「英文译页」⇒ 每篇都吃
+  B4「译页三必填」= **93 处假红**。这不是放宽判据，是**把面认对**（判据本身一字未改）。
+  为什么主表仍是主仓的 `docs/术语表.tsv`（不随 `--root` 走）：承接项「**术语表只有一份**」——
+  换根换的是**被扫的语料**，不是真源；开发文档面的禁写词照样照这份主表判。
+  根不在（仓外不可达）⇒ `rc=2` **不给结论**（设计稿 §五：不静默当绿 ✗）。
 """
 import os
 import re
@@ -74,6 +92,32 @@ def split_multi(v):
         if x and x not in out:
             out.append(x)
     return out
+
+
+def devdocs_root(repo_root=ROOT):
+    """开发文档面根（D3① · 与门⑫ `check-doc-cmds.py` **同根同默认**）。
+
+    优先级：`ZERG_DEVDOCS_ROOT` > `<仓根 的上一级>/Zerg-内部文档/项目文档/v2.5.10`。
+    为什么是**仓外**路径：`Zerg-内部文档/` 与主仓并列（2026-09-19 分家）、且它不开源 ⇒ 不进公开树；
+    D3 只把它当**被管对象**读，不搬进仓。根不在 ⇒ 调用方按 `rc=2` 处理（不静默当绿）。
+    """
+    env = os.environ.get("ZERG_DEVDOCS_ROOT")
+    if env:
+        return os.path.abspath(env)
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(repo_root)),
+                                        "Zerg-内部文档", "项目文档", "v2.5.10"))
+
+
+def lang_of(rel, scope=None):
+    """一页归中文面还是英文面。
+
+    默认口径（scope != devdocs）**一字未改**：相对路径第二段是 `zh` ⇒ 中文，否则英文。
+    `devdocs`（开发文档面）⇒ **一律中文**：Zerg-内部文档 没有 `docs/zh` + `docs/en` 双语分家，
+    正文是中文稿；照默认口径会把这 93 篇全判成「英文译页」⇒ 每篇都吃 B4「译页三必填」= 假红。
+    """
+    if scope == "devdocs":
+        return "zh"
+    return "zh" if rel.split(os.sep)[1:2] == ["zh"] else "en"
 
 
 def load_glossary(path=MAIN):
@@ -218,7 +262,7 @@ def scan_page(rel, text, gloss, lang, identifiers=True, exists=lambda p: True):
     return blocking, terms, warnings, exempted
 
 
-def walk_files(paths, root, langs):
+def walk_files(paths, root, langs, scope=None):
     out = []
     for p in paths:
         ap = p if os.path.isabs(p) else os.path.join(root, p)
@@ -233,7 +277,7 @@ def walk_files(paths, root, langs):
                 if not f.endswith(".md"):
                     continue
                 rel = os.path.relpath(os.path.join(dp, f), root)
-                lang = "zh" if rel.split(os.sep)[1:2] == ["zh"] else "en"
+                lang = lang_of(rel, scope)
                 if lang in langs:
                     out.append((rel, os.path.join(dp, f)))
     return out
@@ -244,8 +288,20 @@ def main():
     if "--selftest" in argv:
         return selftest()
     root = ROOT
+    scope = None
     langs, paths, i = set(), [], 0
     while i < len(argv):
+        if argv[i] == "--root" and i + 1 < len(argv):
+            root = os.path.abspath(argv[i + 1])
+            i += 2
+            continue
+        if argv[i] == "--scope" and i + 1 < len(argv):
+            scope = argv[i + 1]
+            if scope not in ("docs", "devdocs"):
+                print("✗ 未知 --scope %r（表内只有 docs / devdocs）⇒ 不给结论" % scope, file=sys.stderr)
+                return 2
+            i += 2
+            continue
         if argv[i] == "--lang" and i + 1 < len(argv):
             langs = set(argv[i + 1].split(",")) & {"zh", "en"}
             i += 2
@@ -257,13 +313,23 @@ def main():
                 i += 1
             continue
         i += 1
+    if scope == "devdocs" and "--root" not in argv:
+        # ── D3① 换根：开发文档面带自己的默认根（与门⑫ 同根同默认），不借用主仓根
+        root = devdocs_root(ROOT)
+        if not os.path.isdir(root):
+            print("✗ 开发文档面根不在（%s）⇒ 不给结论（rc=2 · 仓外不可达不许静默当绿）" % root,
+                  file=sys.stderr)
+            return 2
+        langs = {"zh"}          # 开发文档面没有 zh/en 双语分家 ⇒ 一律中文面（见 lang_of()）
+        if not paths:
+            paths = [root]
     if not langs:
         langs = {"zh", "en"}
     if not paths:
         paths = [os.path.join("docs", l) for l in sorted(langs)]
     try:
         gloss = load_glossary()
-        files = walk_files(paths, root, langs)
+        files = walk_files(paths, root, langs, scope)
     except EnvironmentError as e:
         print("✗ %s" % e, file=sys.stderr)
         return 2
@@ -280,7 +346,7 @@ def main():
         except Exception as e:
             print("✗ 读不了 %s：%s" % (ap, e), file=sys.stderr)
             return 2
-        lang = "zh" if rel.split(os.sep)[1:2] == ["zh"] else "en"
+        lang = lang_of(rel, scope)
         b, t, w, x = scan_page(rel, text, gloss, lang,
                                identifiers="--no-identifiers" not in argv,
                                exists=lambda p: os.path.isfile(os.path.join(root, p)))
@@ -359,10 +425,18 @@ def selftest():
          lambda: scan_page("docs/zh/a.md", "## 术语表 <!-- glossary-allow -->\n", gloss, "zh")[2], 0),
         ("T3 W5 含「术语」但不恰为（## 术语与字段说明）不命中",
          lambda: scan_page("docs/zh/a.md", "## 术语与字段说明\n", gloss, "zh")[2], 0),
+        # ── D3① 换根与档位（2026-09-21）：**成对**钉住「面认对」——
+        #    左格 = 开发文档面的中文稿文件（`01-设计/x.md`，第二段不是 zh）⇒ 必须按**中文面**判；
+        #    右格 = 同一路径在**默认口径**下会被判成英文面（这正是 93 处假红的来源）。
+        #    自证框架按 `len(fn())` 计分 ⇒ 两格都回**列表**（真 = 命中 1 条，假 = 空表）。
+        ("D3① devdocs：`01-设计/x.md` 按中文面判（禁写中文写法要命中）",
+         lambda: [lang_of("01-设计/x.md", "devdocs")] if lang_of("01-设计/x.md", "devdocs") == "zh" else [], 1),
+        ("D3① 默认口径：同路径第二段不是 zh ⇒ 英文面（**这是那 93 处假红的来源**）",
+         lambda: [1] if lang_of("01-设计/x.md") == "en" else [], 1),
     ]
-    assert len(cases) == 27, "自证用例数必须为 27，实际 %d（少跑即失效）" % len(cases)
+    assert len(cases) == 29, "自证用例数必须为 29，实际 %d（少跑即失效）" % len(cases)
     ok = True
-    print("── check-glossary.py 自证（27 条）")
+    print("── check-glossary.py 自证（29 条）")
     for name, fn, want in cases:
         try:
             got = len(fn())

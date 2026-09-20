@@ -21,8 +21,17 @@
 用法：
   python3 scripts/gates/check-doc-freshness.py --list-rules            # 规则表 + 全部名单（白名单/排除/引用域/夹具/拒绝域）
   python3 scripts/gates/check-doc-freshness.py --self-test             # 好件/坏件/缺件 三格 × 四条 + T-40 计数对拍 = 28 断言
-  python3 scripts/gates/check-doc-freshness.py d1 [d2 d3 d4] [--scope main|wide|mirror] [--report /tmp/r.json]
+  python3 scripts/gates/check-doc-freshness.py d1 [d2 d3 d4] [--scope main|wide|mirror|devdocs] [--report /tmp/r.json]
   python3 scripts/gates/check-doc-freshness.py all                     # 四条都跑；退出码取最严重（1 优先于 2）
+
+D3① · `--scope devdocs`（2026-09-21 · 换根）
+------------------------------------------
+  把**语料与解析域**一起换到**开发文档面**（`Zerg-内部文档/项目文档/v2.5.10`，与门⑫ `check-doc-cmds.py`
+  **同根同默认**：`ZERG_DEVDOCS_ROOT` > `<仓根 的上一级>/Zerg-内部文档/项目文档/v2.5.10`）。
+  与 `main/wide/mirror` 三档的关系：那三档切的是**同一棵主仓树里的域**（镜像/冻结/第三方），
+  本档切的是**另一棵树**（开发文档与主仓并列、且不开源 ⇒ 不进公开树）。
+  两条口径（都由 `Tree._walk` 实现）：① `base_roots` 与 `corpus` 都取**整棵给定根**
+  （Zerg-内部文档 没有主仓那套 `docs/` 白名单）；② 根不在 ⇒ `rc=2` **不给结论**（设计稿 §五）。
 
 硬纪律（本路）：**只读**（不写仓内任何路径）· **不挂门禁**（挂接由父代理做）· 重建产物一律落 `$TMPDIR`。
 """
@@ -45,6 +54,20 @@ DEFAULT_REPO = os.path.dirname(os.path.dirname(HERE))
 #   ⇒ 取同级域的 docs/ 下的配置（原先与本文件同目录）。同一事实由本仓其它件引用时
 #   写作 `scripts/docs/doc-freshness.config.json`（tools/doc_index_gen.md 的 d4 靶点）。
 DEFAULT_CONFIG = os.path.join(os.path.dirname(HERE), "docs", "doc-freshness.config.json")
+
+
+def devdocs_root(repo_root=DEFAULT_REPO):
+    """开发文档面根（D3① · 与门⑫ `check-doc-cmds.py` **同根同默认**）。
+
+    优先级：`ZERG_DEVDOCS_ROOT` > `<仓根 的上一级>/Zerg-内部文档/项目文档/v2.5.10`。
+    为什么是**仓外**路径：`Zerg-内部文档/` 与主仓并列（2026-09-19 分家）、且它不开源 ⇒ 不进公开树；
+    D3 只把它当**被管对象**读，不搬进仓。根不在 ⇒ `rc=2` 不给结论（设计稿 §五：不许静默当绿）。
+    """
+    env = os.environ.get("ZERG_DEVDOCS_ROOT")
+    if env:
+        return os.path.abspath(env)
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(repo_root)),
+                                        "Zerg-内部文档", "项目文档", "v2.5.10"))
 
 RC_OK, RC_FAIL, RC_BLOCKED = 0, 1, 2
 RC_NAME = {0: "OK（全绿）", 1: "FAIL（有失败项）", 2: "BLOCKED（不给结论）"}
@@ -150,8 +173,12 @@ def nfc(s: str) -> str:
 class Tree:
     """一次构建：解析域（base_roots 下全部文件/目录，去硬排除）+ 语料（要扫引用的 md）+ 行列数缓存。"""
 
-    def __init__(self, repo, cfg, scope="main", strict_all=False, verbose=False):
+    def __init__(self, repo, cfg, scope="main", strict_all=False, verbose=False, main_repo=None):
         self.repo = os.path.abspath(repo)
+        # ── D3① 换根（2026-09-21）：`--scope devdocs` 把 `repo` 换到**仓外**的开发文档根，
+        #    但 config 里有些真源是**相对主仓根**写的（如 d3.spec_doc = `../Zerg-内部文档/01-设计/…`）
+        #    ⇒ 那些件仍要按**主仓根**解析。`main_repo` 缺省 = `repo`（默认行为一字不变）。
+        self.main_repo = os.path.abspath(main_repo) if main_repo else self.repo
         self.cfg = cfg
         self.scope = scope
         self.strict_all = strict_all
@@ -222,8 +249,15 @@ class Tree:
         return DOM_LOCAL
 
     def _walk(self):
-        base_roots = [r.rstrip("/") for r in self.cfg["base_roots"]]
-        corpus_roots = [r.rstrip("/") for r in self.cfg["corpus"]]
+        if self.scope == "devdocs":
+            # ── D3① 换根：语料与解析域都取**整棵给定根**（开发文档面）。
+            #    为什么不套 config 的目录白名单：那套白名单是**主仓**的语料面（`docs/…`），
+            #    换到 Zerg-内部文档 后一条都匹配不到 ⇒ 语料 = 0 篇 = 空转（rc=2 不给结论）。
+            base_roots = [""]
+            corpus_roots = [""]
+        else:
+            base_roots = [r.rstrip("/") for r in self.cfg["base_roots"]]
+            corpus_roots = [r.rstrip("/") for r in self.cfg["corpus"]]
         want_res = set()
         for b in base_roots:
             want_res.add(b)
@@ -250,8 +284,8 @@ class Tree:
                         # R2 同名池（口径写死：去镜像、去冻结归档 —— 否则镜像把每份同名都算成「歧义」）
                         self.byname_local.setdefault(nm, []).append(fr)
                     self.lower_map.setdefault(fr.lower(), fr)
-            # 语料
-            if relp and any(relp == c or rev_under(relp, c) for c in corpus_roots):
+            # 语料（devdocs 档的语料根是 `""` ⇒ **根目录自身**也算语料面，不能靠 `relp` 挡掉）
+            if any(relp == c or rev_under(relp, c) for c in corpus_roots) and (relp or self.scope == "devdocs"):
                 ok, _dom = self._soft_state(relp)
                 if not ok:
                     dns[:] = []
@@ -869,7 +903,7 @@ def gate_d3(tree, args):
     if not profile:
         r.errors.append("slug 规范未落盘（config.d3.slug_profile 空）⇒ 判据不可判")
         return r
-    if spec_doc and not os.path.exists(os.path.join(tree.repo, spec_doc)):
+    if spec_doc and not os.path.exists(os.path.join(tree.main_repo, spec_doc)):
         r.errors.append("slug 规范文件不存在（%s）⇒ 判据不可判" % spec_doc)
         return r
     if not tree.corpus:
@@ -1456,6 +1490,22 @@ def cmd_self_test(args):
     check("缺件（缺生成器）rc=2", res.rc() == 2, (res.rc(), res.errors))
     # 三档在同一个「命令串」上各就各位（Q14 附带口径的断言）
     check("三档 0/1/2 各就各位（D1 三格）", True)
+    # ── D3① 换根（`--scope devdocs`）：**成对**钉住「换根真的把语料面换掉了」
+    #    左格 = devdocs 档：整棵给定根都进语料（不套主仓的 `docs/` 白名单）；
+    #    右格 = 同一棵树在默认 main 档下语料 0 篇 ⇒ 变的是档位而不是树。
+    rd = _mkroot({"总览.md": "# 总览\n\n见 [a](01-设计/a.md)\n",
+                  "01-设计/a.md": "# a\n\n见 [b](01-设计/b.md)\n",
+                  "01-设计/b.md": "# b\n",
+                  "notes/x.txt": "x\n"}, os.path.join(tmp, "devroot"))
+    cd = base_cfg(rd)
+    td = Tree(rd, cd, scope="devdocs")
+    check("D3① devdocs 档：**根级 md 也进语料**（整棵 3 篇 · 首跑实测漏的就是这一格）",
+          len(td.corpus) == 3, td.corpus)
+    check("D3① devdocs 档：解析域覆盖整棵根（4 件）", len(td.files) == 4, td.files)
+    check("D3① 成对：同一棵树在 main 档下语料 0 篇（换根不是空转）",
+          len(Tree(rd, cd, scope="main").corpus) == 0, Tree(rd, cd, scope="main").corpus)
+    rd1 = gate_d1(td, args)
+    check("D3① devdocs 档：D1 在同表内引用可解析（无红）", not rd1.reds(), rd1.reds())
     print("\nself-test：%d 条通过 / %d 条失败" % (n_ok, len(fails)))
     if fails:
         for f in fails:
@@ -1467,7 +1517,9 @@ def cmd_self_test(args):
 # ─────────────────────────── main ───────────────────────────
 
 def build_tree(args, cfg):
-    t = Tree(args.repo, cfg, scope=args.scope, strict_all=args.strict_all, verbose=args.verbose)
+    # D3① 换根：devdocs 档下 config 里那些**相对主仓根**的真源（d3.spec_doc）仍按主仓解析
+    t = Tree(args.repo, cfg, scope=args.scope, strict_all=args.strict_all, verbose=args.verbose,
+             main_repo=DEFAULT_REPO if args.scope == "devdocs" else None)
     t.no_soft = bool(getattr(args, "no_whitelist", False))
     return t
 
@@ -1477,8 +1529,9 @@ def main():
     ap.add_argument("gates", nargs="*", help="d1 d2 d3 d4 all（可多个）")
     ap.add_argument("--repo", default=DEFAULT_REPO)
     ap.add_argument("--config", default=DEFAULT_CONFIG)
-    ap.add_argument("--scope", choices=["main", "wide", "mirror"], default="main",
-                    help="main=主树（默认，去镜像/冻结归档/第三方源码/引擎数据）；wide=+冻结归档+第三方源码；mirror=+镜像副本")
+    ap.add_argument("--scope", choices=["main", "wide", "mirror", "devdocs"], default="main",
+                    help="main=主树（默认，去镜像/冻结归档/第三方源码/引擎数据）；wide=+冻结归档+第三方源码；"
+                         "mirror=+镜像副本；devdocs=**换到开发文档面**（D3①：Zerg-内部文档 整棵，根见 devdocs_root()）")
     ap.add_argument("--strict-all", action="store_true", help="非本地域（外部引用域/冻结归档/镜像）也判红")
     ap.add_argument("--slug-profile", default=None, choices=["github", "docv1.2"],
                     help="覆盖 config.d3.slug_profile（用于实测 §5.6③④ 的 U+3000 分歧）")
@@ -1493,6 +1546,16 @@ def main():
 
     if args.self_test:
         return cmd_self_test(args)
+
+    if args.scope == "devdocs":
+        # ── D3① 换根：把**被扫的树**换到开发文档面（与门⑫ 同根同默认）。
+        #    仓外根不可达 ⇒ rc=2 不给结论（设计稿 §五：不许静默当绿 ✗）。
+        d = devdocs_root(DEFAULT_REPO)
+        if not os.path.isdir(d):
+            print("开发文档面根不在 ⇒ rc=2 不给结论：%s"
+                  "（换根请设 ZERG_DEVDOCS_ROOT；口径见设计稿 §五）" % d, file=sys.stderr)
+            return RC_BLOCKED
+        args.repo = d
 
     cfg = None
     if os.path.exists(args.config):
