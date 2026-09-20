@@ -154,6 +154,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return exitUsage
 		}
 	}
+	// 对象级作用域（§九 M13）：`Z1`/`Z3`/`P-066`/`P-067` 三条在**执行之前**判。
+	if rc, done := enforceNodeRules(inv, cmd, stderr); done {
+		emitErrIfJSON(inv, stdout, cmd)
+		return rc
+	}
 	cw := &countingWriter{w: stdout}
 	rc := cmd.run(inv, cw, stderr)
 	// `--json <字段>` 的失败路径：把**机器可读**的 `error` 块挂进包封（§九 M7）——
@@ -195,18 +200,20 @@ func emitErrIfJSON(inv *invocation, stdout io.Writer, cmd *command) {
 // ---- 命令树（真源：帮助文本、markdown 导出、别名解析都从这里出，不许旁写一份）----
 
 type command struct {
-	path        []string
-	summary     string
-	usage       string
-	fields      []string // --json 可取的全部字段（不给字段时 stderr 列的就是它）
-	args        []string // 位置参数的说明（帮助里逐条列出）
-	endpoint    string   // 它投影的远端端点（本机命令为空）；T-08 的三面同源对账用
-	kind        string   // 包封里的 kind（§九 M6 I2：与命令一一对应 · 单数 CamelCase）
-	danger      *dangerSpec
-	idem        *idemSpec // M4 幂等四字段（没显式写的在 seedIdem 里按规则派生）
-	opened      bool      // 本版是否可执行（危险动作在批 A 一律未开放 · §6.2 零写操作）
-	passthrough bool      // 原样透传型（gate 族）：旗标与位置参数逐字交给被包的脚本
-	run         func(*invocation, io.Writer, io.Writer) int
+	path     []string
+	summary  string
+	usage    string
+	fields   []string // --json 可取的全部字段（不给字段时 stderr 列的就是它）
+	args     []string // 位置参数的说明（帮助里逐条列出）
+	endpoint string   // 它投影的远端端点（本机命令为空）；T-08 的三面同源对账用
+	kind     string   // 包封里的 kind（§九 M6 I2：与命令一一对应 · 单数 CamelCase）
+	danger   *dangerSpec
+	idem     *idemSpec // M4 幂等四字段（没显式写的在 seedIdem 里按规则派生）
+	// 群级只读（§十二 P-066）：没有目标时「读全群」是允许的；**其余命令无目标 ⇒ exit 2**。
+	groupReadOnly bool
+	opened        bool // 本版是否可执行（危险动作在批 A 一律未开放 · §6.2 零写操作）
+	passthrough   bool // 原样透传型（gate 族）：旗标与位置参数逐字交给被包的脚本
+	run           func(*invocation, io.Writer, io.Writer) int
 }
 
 // commands —— 批 A（S1 起）登记的只读面；后续各票在此续行。
@@ -226,7 +233,7 @@ func init() {
 		},
 		{
 			path:    []string{"help"},
-			summary: "帮助（主题: exit-codes · config · contract · errors · idempotency · locks · long-tasks）",
+			summary: "帮助（主题: exit-codes · config · contract · errors · idempotency · locks · long-tasks · remote）",
 			usage:   "zerg help [<主题>]",
 			args:    []string{"主题（可省）"},
 			run:     cmdHelp,
@@ -541,6 +548,14 @@ func init() {
 			run: cmdGuarded,
 		},
 	}
+	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
+	for _, c := range commands {
+		switch strings.Join(c.path, " ") {
+		case "version", "help", "help export", "doctor", "context ls", "api ls", "api openapi",
+			"api help", "agent ls", "task ls", "model ls", "gate ls", "gate self-test":
+			c.groupReadOnly = true
+		}
+	}
 	// M4 四字段：命令树建完立刻补齐（每条命令都有四格 · 一条不漏）。
 	seedIdem()
 }
@@ -636,6 +651,10 @@ type invocation struct {
 	// 幂等键（§九 M4 · 调研-M5 §3.9 的 `--idempotency-key`；不给则派生）
 	idemKey string
 
+	// 远端语义（§九 M13）：连接级 --context / 对象级 --node（可重复）
+	contextWant string
+	nodes       []string
+
 	// M4 §5.3 的三档旗标（本版只解析 + 判词，语义属写面）
 	reload bool
 	force  bool
@@ -691,6 +710,20 @@ func parseInvocation(args []string) (*invocation, error) {
 		case strings.HasPrefix(a, "--schema="):
 			inv.schemaGiven = true
 			inv.schemaWant = strings.TrimPrefix(a, "--schema=")
+		case a == "--node" || a == "--node=":
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				inv.nodes = append(inv.nodes, args[i])
+			}
+		case strings.HasPrefix(a, "--node="):
+			inv.nodes = append(inv.nodes, strings.TrimPrefix(a, "--node="))
+		case a == "--context" || a == "--context=":
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				inv.contextWant = args[i]
+			}
+		case strings.HasPrefix(a, "--context="):
+			inv.contextWant = strings.TrimPrefix(a, "--context=")
 		case a == "--wait":
 			inv.wait = true
 		case a == "--no-wait":
@@ -851,6 +884,9 @@ func emitEnvelopeWith(stdout io.Writer, cmd *command, itemsJSON string, count in
 		key = idempotencyKey(inv)
 	}
 	meta := fmt.Sprintf("\"count\":%d,\"source\":%s,\"changed\":%s", count, jstr(src), changed)
+	if inv != nil && len(inv.nodes) > 0 {
+		meta += ",\"node\":" + jstr(strings.Join(dedupe(inv.nodes), ","))
+	}
 	if key != "" {
 		meta += ",\"idempotency_key\":" + jstr(key)
 	}
@@ -1061,9 +1097,12 @@ func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 		case "long-tasks":
 			fmt.Fprint(stdout, helpLongTasks())
 			return exitOK
+		case "remote":
+			fmt.Fprint(stdout, helpRemote())
+			return exitOK
 		default:
 			fmt.Fprintf(stderr, "%s: 未知帮助主题 %q\n", progName, inv.args[0])
-			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous · contract · errors · idempotency · locks · long-tasks\n")
+			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous · contract · errors · idempotency · locks · long-tasks · remote\n")
 			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 			return exitUsage
 		}
