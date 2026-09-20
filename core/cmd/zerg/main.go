@@ -769,6 +769,16 @@ func init() {
 			run:      cmdBuildLs,
 		},
 		{
+			path:     []string{"build", "show"},
+			kind:     "BuildArtifactShow",
+			summary:  "一件的**身份**（sha256/mtime/inode/type/arch/签名态 —— 换件后验「在跑的件 == 盘上件」要它）",
+			usage:    "zerg build show <件> | --all [--json <字段>]",
+			args:     []string{"件名（bin/ 下的名字，或一个路径）"},
+			fields:   []string{"name", "sha256", "bytes", "mtime", "inode", "type", "arch", "signed"},
+			endpoint: "",
+			run:      cmdBuildShow,
+		},
+		{
 			path:    []string{"build", "all"},
 			summary: "重编全部制品（换件档 · 本版未开放；计划件见 --dry-run）",
 			usage:   "zerg build all [--dry-run | --confirm=<主机名> --yes]",
@@ -1146,6 +1156,8 @@ type invocation struct {
 
 	// 危险动作三态（§4.1 K7 · §九 M3 C1/C2/C4）
 	dryRun       bool
+	all          bool // `build show --all`
+	fast         bool // `gate bench --fast`
 	confirm      string
 	confirmGiven bool
 	yes          bool
@@ -1341,6 +1353,13 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.dryRun = true
 		case a == "--yes":
 			inv.yes = true
+		// 缺口面 P0 两枚布尔旗标（2026-09-21）：`--all`（`build show` 列全部件）与
+		// `--fast`（`gate bench` 的档位）。与 `--force`/`--dry-run` 同一种形态：
+		// 全局布尔、谁用谁读 —— 不用的命令静默忽略（解析器不许给两条命令各开一个分叉）。
+		case a == "--all":
+			inv.all = true
+		case a == "--fast":
+			inv.fast = true
 		case a == "--confirm" || a == "--confirm=":
 			// 给了旗标但没给值 ⇒ confirmGiven 为真、值为空（由 guard 判成「值不匹配目标」）
 			inv.confirmGiven = true
