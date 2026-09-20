@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# zerg-hello —— 仓内**演示插件**（§6.3 S6 判据①「自造 zerg-hello 插件跑通」· 开工单 T-50）。
+#
+# 它演示三件（每件都有现跑判据）：
+#   ① 命名约定：件名 `zerg-hello` 且可执行 ⇒ `zerg hello …` 调到它（零注册表）；
+#   ② **只转发不翻译**：参数原样进来、退码原样出去（`--fail N` 这一格就是用来验这条的）；
+#   ③ 信任声明回显：插件自己也要把「以调用者权限运行 · 不验证不签名不背书」摆出来
+#      （命令面在调用前已经回显过一次；两处一致才算没跑偏）。
+#
+# 本件**什么也不改**（零副作用）：不写盘、不联网、不碰主控 —— 它是一枚可复跑的证据件。
+set -u
+
+TRUST="以调用者权限运行 · 不验证不签名不背书"
+
+case "${1:-}" in
+  -h|--help)
+    echo "zerg-hello —— 演示插件（§6.3 S6）"
+    echo "用法：zerg hello [--json] [--fail N] [任意参数…]"
+    echo "信任声明：$TRUST"
+    exit 0
+    ;;
+  --fail)
+    # 退码原样透传的验证格：插件退几，命令面就退几（薄壳不翻译）
+    exit "${2:-1}"
+    ;;
+  --json)
+    printf '{"schema":"zerg/v1","kind":"PluginHello","items":[{"name":"zerg-hello","trust":"%s"}],"meta":{"via":"plugin"},"warnings":[],"truncated":false}\n' "$TRUST"
+    exit 0
+    ;;
+esac
+
+echo "你好，虫群 —— 这是仓内演示插件 zerg-hello。"
+echo "信任声明：$TRUST"
+echo "argv 原样收到：$* （共 $# 个）"
+exit 0
