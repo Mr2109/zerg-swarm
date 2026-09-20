@@ -93,6 +93,15 @@ func executeChatToolInner(name string, args map[string]any, workDir string) Chat
 	case "move_file":
 		return res(copyMoveFile(args, workDir, true))
 	case "delete_file":
+		// M3 集中控制层**接电**（2026-09-21 · 缺口-命令面-20260921.md §十.3 第 3 条）：
+		// 这一件此前**零闸门**（全仓 gate.Check 只有 10 个名字，它不在其中）⇒ 现在按
+		// `require_approval` 走（见 core/internal/control/rules.yaml 与 chat_tool_gate.go）。
+		delArgs := "path=" + strconv.Quote(strArg(args, "path"))
+		gate := chatToolGate()
+		d, gerr := gate.Check("delete_file", delArgs, gateAgentName)
+		if why, denied := chatGateVerdict("delete_file", delArgs, d, gerr); denied {
+			return ChatToolResult{Error: why}
+		}
 		return res(deleteFile(args, workDir))
 	case "find_name":
 		return res(findName(args, workDir))
@@ -325,6 +334,15 @@ func executeChatToolInner(name string, args map[string]any, workDir string) Chat
 		return res(logAnalyze(args, workDir))
 	// ── 网络（P4-48 第四批）──
 	case "download":
+		// M3 集中控制层**接电**（2026-09-21 · 缺口-命令面-20260921.md §十.3 第 3 条）：
+		// 这一件此前同样**零闸门**（`download` 只在 tools/ 台账里，不在 10 个 gate.Check 名字里）
+		// ⇒ 现在按 `require_approval` 走（见 core/internal/control/rules.yaml 与 chat_tool_gate.go）。
+		dlArgs := "url=" + strconv.Quote(strArg(args, "url")) + " output=" + strconv.Quote(strArg(args, "output"))
+		gate := chatToolGate()
+		d, gerr := gate.Check("download", dlArgs, gateAgentName)
+		if why, denied := chatGateVerdict("download", dlArgs, d, gerr); denied {
+			return ChatToolResult{Error: why}
+		}
 		return res(downloadFile(args, workDir))
 	case "net_info":
 		return res(netInfo(args))

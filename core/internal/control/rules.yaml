@@ -114,6 +114,26 @@ rules:
       action: allow
     - name: "screenshot"
       action: allow
+    # ===== 对话层两个危险调用点**接电**（2026-09-21 · 缺口-命令面-20260921.md §十.3 第 3 条）=====
+    # 为什么必须在这里（实据）：这两件此前**零闸门** —— 全仓 `gate.Check("…")` 只有 10 个名字，
+    # 它们不在其中，而默认档 `block` 只管「来问门的没登记」，管不了「**根本不来问门**」的。
+    # 档位与 `terminal` **同档**（require_approval）：**不硬禁**（不删能力）、**保留逃生门**
+    # （人签的批准件，见 core/internal/chat/chat_tool_gate.go）；无审批 ⇒ **本轮不执行**
+    # （与 CA 的 `bash` 侧、网关侧逐字同口径 —— 绝不当放行）。
+    - name: "delete_file"
+      action: require_approval
+      args_deny:
+        - 'path="/"'
+        - 'path="~"'
+        - 'path="~/"'
+        - 'path="$HOME"'
+        - 'path=""'
+    - name: "download"
+      action: require_approval
+      args_deny:
+        - "| sh"
+        - "| bash"
+        - "sudo "
     # MCP 动态工具（`mcp_<服务>_<工具>`）：**后缀通配**一条兜住 —— 只认「尾部一个 `*`」，
     # 别的位置一律当字面量（通配不留暗权，见 gate.go 的 matchRuleName）。
     - name: "mcp_*"
