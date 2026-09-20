@@ -623,6 +623,16 @@ func init() {
 			run:      cmdRepoStatus,
 		},
 		{
+			path:     []string{"gate", "explain"},
+			kind:     "GateExplain",
+			summary:  "读懂某一步到底在判什么（scope/模式/判据/退码口径/日志路径/出处文件:行 —— **精确匹配**步名）",
+			usage:    "zerg gate explain <步名> [--json <字段>]",
+			args:     []string{"步名（与 `zerg gate ls` 逐字相同）"},
+			fields:   []string{"scope", "mode", "criterion", "verdict", "exit", "log", "source", "command", "script_say"},
+			endpoint: "",
+			run:      cmdGateExplain,
+		},
+		{
 			path:     []string{"gate", "matrix"},
 			kind:     "GateMatrix",
 			summary:  "命令面自己的 must-fail 矩阵（逐格可读可导 —— 新增命令照着它补格）",
