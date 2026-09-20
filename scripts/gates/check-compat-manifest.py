@@ -169,11 +169,22 @@ def r3_read_write_anchor(man, root):
 
 
 def declared_names(man):
+    """清单里声明过的状态件名（**两个形态都收**）。
+
+    ★ 2026-09-20 批 C · T-27 修（已红第 5 条的根因之一）：原来只收 `os.path.basename(file)`，
+      而 R4 的发现侧拿到的是**源码里的字面量原文** —— 带层级的落点（`statepath.File("loopcore/checkpoints")`）
+      发现名是 `loopcore/checkpoints`，永远匹配不上任何 basename ⇒ **这类件在清单里怎么登记都不算登记**。
+      现在收两个形态：`file` 原文 + `basename(file)`（扁平件与嵌套件都能登记；既有的扁平登记一字不改）。
+    """
     out = set()
     for e in man.get('entries', []):
-        out.add(os.path.basename(e.get('file') or ''))
+        f = (e.get('file') or '')
+        out.add(f)
+        out.add(os.path.basename(f))
     for x in man.get('excluded', []):
-        out.add(os.path.basename(x.get('file') or ''))
+        f = (x.get('file') or '')
+        out.add(f)
+        out.add(os.path.basename(f))
     return out
 
 
@@ -343,6 +354,24 @@ def cmd_selftest(root):
             return R4 in run_rules(b5, tmp)
 
     cases.append(('R4 未登记状态文件（含空树不误报的反证）', r4_pair))
+
+    # ⑥b R4 嵌套件（批 C · T-27 修）：源码里的落点是 `statepath.File("loopcore/…")` 这类**带层级**的字面量，
+    #     发现侧的原文就是 `loopcore/…` ⇒ 登记必须**写全路径**；配对断言两条：
+    #       ① 登记写成 basename（`checkpoints`）⇒ 必须**仍**报未登记（basename 兜不住嵌套件）；
+    #       ② 登记写成全路径（`loopcore/checkpoints`）⇒ 不报（这条就是修完后的正控）。
+    def r4_nested_pair():
+        planted_root = tempfile.mkdtemp()
+        planted = os.path.join(planted_root, 'core', 'internal', 'zzprobe')
+        os.makedirs(planted)
+        with open(os.path.join(planted, 'probe.go'), 'w', encoding='utf-8') as f:
+            f.write('package zzprobe\n\nfunc p() string { return statepath.File("loopcore/checkpoints") }\n')
+        bare = copy.deepcopy(b5)
+        bare['excluded'] = [{'file': 'checkpoints', 'reason': '夹具：只写 basename'}]
+        nested = copy.deepcopy(b5)
+        nested['excluded'] = [{'file': 'loopcore/checkpoints', 'reason': '夹具：写全路径'}]
+        return (R4 in run_rules(bare, planted_root)) and (R4 not in run_rules(nested, planted_root))
+
+    cases.append(('R4 嵌套落点必须登记全路径（basename 兜不住 · 全路径不报）', r4_nested_pair))
 
     # ⑦ R5：excluded 没有理由
     b6 = copy.deepcopy(man)

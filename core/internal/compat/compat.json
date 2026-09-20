@@ -189,6 +189,54 @@
       "anchor_file": "core/internal/selfupdate/receipt.go",
       "anchor": "func WriteLaunchReceipt(receiptsDir string, r LaunchReceipt) (string, error)",
       "note": "升级交接/权威回执集合（每笔一份 + latest.json / latest-fleet.json）。zerg-upgrade.sh 内核写权威回执时**已带 schema:1**（B0 起的既有形态），故 min_readable=1：无 schema 的回执不存在，出现即视为旧版遗留并按 0 处理。集合类：迁移逐文件进行（kind=glob）。"
+    },
+    {
+      "name": "tasks_persist",
+      "file": "zerg-tasks.json",
+      "dir": "state",
+      "owner": "go",
+      "kind": "file",
+      "envelope": "inband",
+      "schema_field": "schema",
+      "current_schema": 1,
+      "min_readable": 0,
+      "migrate_func": "AddSchemaField",
+      "stamps_schema": "none",
+      "anchor_file": "core/internal/api/tasks_persist.go",
+      "anchor": "const tasksStateFileName = \"zerg-tasks.json\"",
+      "note": "任务持久化（主控的任务集合）。**登记在册 · 现状不盖章**（stamps_schema=none：写入路径今天不带 schema 字段）—— 登记的意义是把「它跨版本会被读到」这件事写进清单、拿掉 R4 的盲区；盖章与迁移接线属后续批次（与 stamping 面同批做）。迁移入口 AddSchemaField 已存在（旧版无 schema ⇒ 一次性补字段语义）。路径真源：ZERG_STATE_DIR → ~/.zerg/state/zerg-tasks.json（旧 /tmp 路径只读一次、不写回）。"
+    },
+    {
+      "name": "resource_trust",
+      "file": "zerg-resources.json",
+      "dir": "state",
+      "owner": "go",
+      "kind": "file",
+      "envelope": "inband",
+      "schema_field": "schema",
+      "current_schema": 1,
+      "min_readable": 0,
+      "migrate_func": "AddSchemaField",
+      "stamps_schema": "none",
+      "anchor_file": "core/internal/api/resource_trust.go",
+      "anchor": "resTrustStateFileName",
+      "note": "资源信任计数（每台机器/模型的采样与信任标记）。**登记在册 · 现状不盖章**（同 tasks_persist 口径：先消盲区、再谈盖章）。路径真源：ZERG_STATE_DIR → ~/.zerg/state/zerg-resources.json；首次迁移兼容读旧 /tmp/zerg-resources.json 一次（不丢计数）。"
+    },
+    {
+      "name": "constraint_registry",
+      "file": "constraint_registry.json",
+      "dir": "state",
+      "owner": "go",
+      "kind": "file",
+      "envelope": "inband",
+      "schema_field": "schema",
+      "current_schema": 1,
+      "min_readable": 0,
+      "migrate_func": "AddSchemaField",
+      "stamps_schema": "none",
+      "anchor_file": "core/internal/chat/constraints.go",
+      "anchor": "func constraintRegistryFile()",
+      "note": "对话面约束登记表（进程内缓存 + 落盘）。**登记在册 · 现状不盖章**——登记把「它会跨版本被读」写进清单；盖章/迁移接线属后续批次。"
     }
   ],
   "excluded": [
@@ -203,6 +251,30 @@
     {
       "file": "llama-local.lock",
       "reason": "本地模型单槽互斥的文件锁（0 字节）——不是状态，不携带数据。"
+    },
+    {
+      "file": "chat_obs.jsonl",
+      "reason": "对话观测事件流（append-only，每行一条 JSON）。无对象信封、不该被整体重写（重写会打断追加语义）⇒ 版本化不适用；追加式本身即跨版本：旧行新版照读，新版多写行不影响旧版解析（与 compact_journal.jsonl 同一口径）。"
+    },
+    {
+      "file": "slice-mount-events.jsonl",
+      "reason": "切片挂载事件流（append-only）。唯一写入函数 Emit、唯一落点本文件 ⇒ 同 compact_journal.jsonl：只追加、不整体解析，天然跨版本。"
+    },
+    {
+      "file": "loopcore/checkpoints",
+      "reason": "**目录**（不是单个状态对象）：按轮落盘的检查点，按需清理；消费侧逐件读、不整体解析 ⇒ 目录级版本化不适用（单件内部自带格式版本，由 loopcore 自己管）。"
+    },
+    {
+      "file": "loopcore/leases",
+      "reason": "**目录**：租约件带 TTL，过期即失效、不跨版本续用 ⇒ 版本化不适用（跨版本读一份过期租约没有意义）。"
+    },
+    {
+      "file": "zerg-chat-images",
+      "reason": "**目录**：对话图片资产（二进制文件 + 索引），不是状态对象 ⇒ 版本化不适用（资产不做 schema 承诺）。"
+    },
+    {
+      "file": "issues",
+      "reason": "挂单目录（<workDir>/docs/issues）。**主仓已按分家纪律退役该目录**（AGENTS.md:42），本清单不为一个已退役的目录承诺兼容；「跑一次挂单路径会把它造回主仓」这件事属 §二十一 已红第 14 条（承载任务 T-36），不在本清单的口径内。"
     }
   ]
 }
