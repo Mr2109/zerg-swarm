@@ -19,6 +19,53 @@ var raw []byte
 //go:embed dev-targets.json
 var devTargetsRaw []byte
 
+//go:embed unresolved-entries.json
+var unresolvedRaw []byte
+
+// UnresolvedEntry —— 一个未定入口的取证一行（T-53 · §7.1 `P13` / §7.2 `U21`）。
+//
+// 本表**不拍归属**（那是人的活）：它只登记「谁在调我」的**逐行证据**，
+// 且证据带 `file` + `line` + 这一行必须含的名字 ⇒ 判据机检能逐条复核，
+// 证据不会随文件漂移而悄悄失效（挂在空气上的台账 = 第二份「规则写了没人接电」）。
+// UnresolvedCaller —— 一条「谁在调我」的证据行（**可复核**：文件 + 行号 + 该行必须含的名字）。
+type UnresolvedCaller struct {
+	File string `json:"file"`
+	Line int    `json:"line"`
+	What string `json:"what"`
+}
+
+type UnresolvedEntry struct {
+	ID       string             `json:"id"`
+	Dir      string             `json:"dir"`
+	Main     string             `json:"main"`
+	Bin      string             `json:"bin"`
+	WhoCalls string             `json:"who_calls"`
+	Verdict  string             `json:"verdict"`
+	Callers  []UnresolvedCaller `json:"callers"`
+}
+
+// UnresolvedLedger —— 七个未定入口的取证台账（原样读出，不裁剪）。
+type UnresolvedLedger struct {
+	Schema                  string            `json:"schema"`
+	SearchCommand           string            `json:"search_command"`
+	RuleKeep                string            `json:"rule_keep"`
+	RuleNoCommand           string            `json:"rule_no_command"`
+	ForbiddenCommandSegment []string          `json:"forbidden_command_segments"`
+	Entries                 []UnresolvedEntry `json:"entries"`
+}
+
+// Unresolved —— 解出取出台账（解不动 / 空表 ⇒ 报错，不吞 —— 空台账会让「一个都不许删」无处可判）。
+func Unresolved() (*UnresolvedLedger, error) {
+	var l UnresolvedLedger
+	if err := json.Unmarshal(unresolvedRaw, &l); err != nil {
+		return nil, fmt.Errorf("contract: 未定入口台账解不动（unresolved-entries.json 坏了？）: %w", err)
+	}
+	if len(l.Entries) == 0 {
+		return nil, fmt.Errorf("contract: 未定入口台账是空的（entries 为空）—— 空表 = 「拍板前一个都不许删」这条判据没有对象")
+	}
+	return &l, nil
+}
+
 // DevTargets —— 自开发面的**目标回指清单**（§17.6 `SD1` 的闭集真源）。
 //
 // 口径（照 `SD1` 逐字）：动机源必须是一份**人的清单** —— 目标只能**承接**既有编号
