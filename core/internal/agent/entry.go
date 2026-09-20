@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 // Task Type — 任务类型枚举
@@ -110,11 +112,10 @@ func SubmitTask(spec TaskSpec) (string, error) {
 		return "", fmt.Errorf("invalid task spec: %w", err)
 	}
 
-	issuesDir := filepath.Join(".", "docs", "issues")
-	// 绝对路径（不依赖 CWD——调度器/API 调用安全——先去重一致）
-	if abs, err := filepath.Abs(issuesDir); err == nil {
-		issuesDir = abs
-	}
+	// 落点真源 = statepath.IssuesDir()（同上：2026-09-19 拍板的「内部任务单目录可配」）。
+	// ★ 2026-09-20 批 C · T-36：原来是 `filepath.Abs("./docs/issues")` + MkdirAll —— 那是**按 CWD**
+	//   选址：谁在主仓根下跑一次派单，主仓的 `docs/issues` 就被造回来（已红第 14 条的同族第二处）。
+	issuesDir := statepath.IssuesDir()
 	if err := os.MkdirAll(issuesDir, 0o755); err != nil {
 		return "", fmt.Errorf("create issues dir: %w", err)
 	}
