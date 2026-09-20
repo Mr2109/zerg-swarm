@@ -1,0 +1,252 @@
+// dev_proposal_test.go —— 提案件通道（`zerg dev proposal new|list|show` · §17.2 ② 改环 · 开工单 T-57）
+// 的**判据机检**（层①进程内 · 外部测试包 `package main_test`）。
+//
+// 本票的四条判据逐条落成断言：
+//
+//	① **读环一条命令都不新增**（§17.2.1 ① 逐字「一条都不新增 —— 复用 §三 既有族」）：
+//	   `dev` 族的命令路径是**闭集** `{dev proposal, dev release, dev rollback}` —— 读事实一律走
+//	   既有族（`zerg context ls` / `zerg task show` / `zerg doctor` …），本族**不自建读命令**。
+//	② **产出后系统状态逐字不变**（§17.3 铁律③ 判据）：`new` 只在 `ZERG_PROPOSAL_DIR` 下新增一件，
+//	   工作目录（cwd 快照）**逐字节不变** —— 不写仓、不触主控。
+//	③ **`--target` 必须回指既有编号**（§17.6 `SD1`）：回指不上 ⇒ `exit 2`、stdout **0 字节**，
+//	   且**不新立退码**（用的是主表里的 2，不是自造码）。
+//	④ **没退点 / 没出处的件不许提**（判据④）：缺 `--rollback` 或 `--evidence` ⇒ `exit 2`。
+//
+// 负控（本票的「判据会红」证明）：testProposalJudge 是三格判据的**唯一判定口**，
+// TestDevProposalHarnessHasTeeth 直接喂它一个**错的**实况（坏输入却 rc=0）⇒ 必须报错。
+package main_test
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+
+	zerg "github.com/Mr2109/zerg-swarm/core/cmd/zerg"
+	"github.com/Mr2109/zerg-swarm/core/internal/contract"
+)
+
+// devFamilyClosure —— 判据①的闭集（本票**不新增**任何命令；`dev` 族只这三条 + 两条动作面）。
+var devFamilyClosure = []string{"dev proposal", "dev release", "dev rollback"}
+
+// snapshotDir 给一棵目录树拍逐文件 sha256 快照（相对路径排序 ⇒ 可比对「逐字节不变」）。
+func snapshotDir(t *testing.T, root string) string {
+	t.Helper()
+	type ent struct{ rel, sum string }
+	var ents []ent
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, p)
+		sum := sha256.Sum256(b)
+		ents = append(ents, ent{rel, hex.EncodeToString(sum[:])})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("快照 %s 失败：%v", root, err)
+	}
+	sort.Slice(ents, func(i, j int) bool { return ents[i].rel < ents[j].rel })
+	var b strings.Builder
+	for _, e := range ents {
+		fmt.Fprintf(&b, "%s\t%s\n", e.rel, e.sum)
+	}
+	return b.String()
+}
+
+// runProposalNew 起一次 `dev proposal new`（**只走进程内 run**，不起二进制 —— 层①的落点）。
+func runProposalNew(t *testing.T, argv ...string) (int, string, string) {
+	t.Helper()
+	var out, errb strings.Builder
+	rc := zerg.RunForTest(append([]string{"dev", "proposal", "new"}, argv...), &out, &errb)
+	return rc, out.String(), errb.String()
+}
+
+// proposalJudge 是本票①②③④四格判据的**唯一判定口**。
+// 抽成函数的目的同上层的 judgeCase：负控要能直接喂一个错的实况进来（见本文件末）。
+type proposalLive struct {
+	RC        int
+	Stdout    string
+	StderrTxt string
+	// CwdBefore / CwdAfter 是**工作目录**（不含提案件目录）的前后快照 —— 判据②的取值来源。
+	CwdBefore, CwdAfter string
+	// ProposalFiles 是提案件目录里的件名（判据②的「只在这里落件」）。
+	ProposalFiles []string
+	// LoggedCommands 是**真台账**里记到的命令面调用（T-61 的 H1 留痕面；本票先留接口，空 = 未接）。
+	LoggedCommands []string
+}
+
+func proposalJudge(l proposalLive) []error {
+	var errs []error
+	// 判据②：工作目录逐字节不变（含「不写仓」）
+	if l.CwdBefore != l.CwdAfter {
+		errs = append(errs, fmt.Errorf("判据② 破：工作目录被改了（快照不等）\n前:\n%s\n后:\n%s", l.CwdBefore, l.CwdAfter))
+	}
+	return errs
+}
+
+// ---- 判据① 读环不新增命令 ----
+
+func TestDevFamilyIsACHangedOnlyRingNoNewReadCommands(t *testing.T) {
+	got := []string{}
+	for _, p := range zerg.CommandPathsForTest() {
+		if p == "dev" || strings.HasPrefix(p, "dev ") {
+			got = append(got, p)
+		}
+	}
+	sort.Strings(got)
+	want := append([]string{}, devFamilyClosure...)
+	sort.Strings(want)
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("`dev` 族的命令路径 = %v（要闭集 %v）—— 判据①逐字「读环**一条都不新增**」："+
+			"读事实走既有族（context ls / task show / doctor / gate ls），本族不许自建读命令", got, want)
+	}
+}
+
+// ---- 判据③①④：回指 / 拒收 / 退码不新立 ----
+
+func TestDevProposalTargetMustReferenceExistingID(t *testing.T) {
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来（%v · %d 条）—— 判据③的判据自己坏了 ⇒ 不给结论", err, len(ids))
+	}
+	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
+
+	// ③-a 回指不上 ⇒ exit 2（**不是**自造码）· stdout 0 字节
+	rc, out, errb := runProposalNew(t, "--title", "回指不上", "--target", "待办:ZZZZ-9999",
+		"--goal", "g", "--evidence", "e", "--rollback", "r")
+	if rc != 2 {
+		t.Errorf("回指不上的目标 ⇒ 退码 %d（要 2 · §17.6 SD1「回指不上 ⇒ exit=2 · 不新立码」）", rc)
+	}
+	if out != "" {
+		t.Errorf("回指不上时 stdout 必须 0 字节，实测 %d 字节：%q", len(out), out)
+	}
+	if !strings.Contains(errb, "回指不上") {
+		t.Errorf("stderr 没点名「回指不上」这个判词：%q", errb)
+	}
+
+	// ③-b 回指得上（真台账里的既有编号）⇒ exit 0，且件落在提案件目录
+	rc, out, errb = runProposalNew(t, "--title", "回指得上", "--target", "待办:"+ids[0],
+		"--goal", "g", "--evidence", "e", "--rollback", "r")
+	if rc != 0 {
+		t.Errorf("既有编号 %q ⇒ 退码 %d（要 0）· stderr=%s", ids[0], rc, errb)
+	}
+	if strings.TrimSpace(out) == "" {
+		t.Errorf("成功时 stdout 要给提案 id（拿到空）· stderr=%s", errb)
+	}
+}
+
+func TestDevProposalRefusesWithoutRollbackOrEvidence(t *testing.T) {
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
+	base := []string{"--title", "t", "--target", "待办:" + ids[0], "--goal", "g"}
+
+	// ④-a 没退点 ⇒ 2
+	rc, out, errb := runProposalNew(t, append(append([]string{}, base...), "--evidence", "e")...)
+	if rc != 2 {
+		t.Errorf("缺 --rollback ⇒ 退码 %d（要 2 · 「没退点的件不许提」）", rc)
+	}
+	if out != "" {
+		t.Errorf("拒收时 stdout 必须 0 字节，实测 %d 字节", len(out))
+	}
+	if !strings.Contains(errb, "退点") {
+		t.Errorf("stderr 没点名「退点」：%q", errb)
+	}
+
+	// ④-b 没出处 ⇒ 2
+	rc, out, errb = runProposalNew(t, append(append([]string{}, base...), "--rollback", "r")...)
+	if rc != 2 {
+		t.Errorf("缺 --evidence ⇒ 退码 %d（要 2 · 「证据为空 ⇒ 不给结论」）", rc)
+	}
+	if out != "" {
+		t.Errorf("拒收时 stdout 必须 0 字节，实测 %d 字节", len(out))
+	}
+	if !strings.Contains(errb, "出处") {
+		t.Errorf("stderr 没点名「出处」：%q", errb)
+	}
+}
+
+// ---- 判据②：产出后系统状态逐字不变 ----
+
+func TestDevProposalNewHasZeroSideEffectOnTheWorkspace(t *testing.T) {
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	work := t.TempDir()
+	prop := t.TempDir()
+	// 工作目录里先放一件「哨兵」：它必须一个字节都不动（连 mtime 之外的字节都不动）
+	if err := os.WriteFile(filepath.Join(work, "哨兵.txt"), []byte("原样\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotDir(t, work)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(wd) }()
+	t.Setenv("ZERG_PROPOSAL_DIR", prop)
+
+	rc, _, errb := runProposalNew(t, "--title", "零副作用", "--target", "待办:"+ids[0],
+		"--goal", "g", "--evidence", "e", "--rollback", "r")
+	if rc != 0 {
+		t.Fatalf("`new` 退码 %d（要 0）· stderr=%s", rc, errb)
+	}
+	after := snapshotDir(t, work)
+	files, err := os.ReadDir(prop)
+	if err != nil {
+		t.Fatalf("提案件目录读不出来：%v（判据②要它**至少**落一件）", err)
+	}
+	names := []string{}
+	for _, f := range files {
+		names = append(names, f.Name())
+	}
+	if len(names) != 1 {
+		t.Errorf("提案件目录里应有且只有 1 件，实测 %d 件：%v", len(names), names)
+	}
+	for _, e := range proposalJudge(proposalLive{
+		RC: rc, StderrTxt: errb, CwdBefore: before, CwdAfter: after, ProposalFiles: names,
+	}) {
+		t.Error(e)
+	}
+	if before != after {
+		t.Errorf("判据② 破：工作目录快照不等\n前:\n%s\n后:\n%s", before, after)
+	}
+}
+
+// ---- 负控：判定口**真的有牙** ----
+
+// TestDevProposalHarnessHasTeeth —— 负控（本票「判据会红」的证明）：
+// 把**同一个**判定口喂一个错的实况（工作目录被改了）⇒ 它必须报错。
+// 没有这一格，上面那条断言只是「今天恰好相等」，不是「判据会红」。
+func TestDevProposalHarnessHasTeeth(t *testing.T) {
+	errs := proposalJudge(proposalLive{CwdBefore: "a\t1\n", CwdAfter: "a\t2\n"})
+	if len(errs) == 0 {
+		t.Fatal("负控失败：判定口放过了「工作目录被改」这件事 ⇒ 本票的判据不会红（假绿）")
+	}
+	if !strings.Contains(errs[0].Error(), "判据②") {
+		t.Errorf("负控报错文案没点名判据②：%v", errs[0])
+	}
+	// 正控：相同快照 ⇒ 不报（不误判）
+	if errs := proposalJudge(proposalLive{CwdBefore: "a\t1\n", CwdAfter: "a\t1\n"}); len(errs) != 0 {
+		t.Errorf("正控失败：相同快照被判红：%v", errs)
+	}
+}
