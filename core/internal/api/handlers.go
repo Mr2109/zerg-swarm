@@ -68,7 +68,9 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 // 多语言 L4（2026-09-11）: api 包 88 处调用点已全部迁到 writeErrorCode（type=UPPER_SNAKE_CASE），
 // 本函数仅保留给外部插件/未来接口兜底（客户端两种形态都能解析——ui parse_api_error）。
 func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+	// §九 M2 `R` 面：**先脱敏、再编码**（`obs_bridge.go` 是这条规矩的接电点——已红第 10 条
+	// 的病灶就是「规则写了、没人接电」）。
+	writeJSON(w, status, map[string]string{"error": redactedMessage(message)})
 }
 
 // writeErrorCode 带分类码的错误响应（错误码体系——对齐网关 {"error":{"type":code,"message":msg}}）
@@ -83,7 +85,7 @@ func writeErrorCode(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]interface{}{
 		"error": map[string]string{
 			"type":    code,
-			"message": message,
+			"message": redactedMessage(message), // 同上：先脱敏、再编码
 		},
 	})
 }
@@ -1474,6 +1476,13 @@ func (h *Handlers) ReloadConfigHandler(w http.ResponseWriter, r *http.Request) {
 		"models":      len(newCfg.Models),
 		"added":       len(newCfg.Models) - oldModelCount,
 		"fleet_nodes": len(newCfg.Fleet),
+		// 效果指纹（§九 M7 `E4` / §九 M19 `RC10`）：让「日志那一行」与「这次响应」
+		// 靠**稳定摘要**对上，不靠人眼比对时间戳。算法取 `audit.ArgsFingerprint`（一处算法）。
+		"fingerprint": controlFingerprint("config_reload", map[string]any{
+			"config_path": h.ConfigPath,
+			"models":      len(newCfg.Models),
+			"fleet_nodes": len(newCfg.Fleet),
+		}),
 	})
 }
 

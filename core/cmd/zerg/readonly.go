@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -121,7 +122,7 @@ func listCmd(inv *invocation, stdout, stderr io.Writer, display []string, rows [
 		if !requireFields(inv, stderr) {
 			return exitFail // K2：给了 --json 但不给字段 ⇒ 1 + stdout 0 字节
 		}
-		return selectJSONList(stdout, stderr, inv.path, inv.fields, rows)
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
 	}
 	table := make([][]string, 0, len(rows))
 	for _, r := range rows {
@@ -350,37 +351,50 @@ func splitScalar(line string) (string, string, bool) {
 	return k, v, true
 }
 
-// ---- doctor（裸动词 · 环境自检）----
+// ---- doctor（裸动词 · 环境自检 · 声明树 ↔ 现值树 的差集）----
 //
 // 形状照 §九 M9：**逐项名 + 判定词 + 建议动作**，有任何问题就非零退出。
-// 判定词取 M9 五值表的四个（本版不用 SKIP）：PASS / WARN / FAIL / BLOCKED。
-//   口径（本版写死并打印，防误读）：FAIL ⇒ 退码 1；BLOCKED ⇒ 退码 8（「读不到」不许当健康）；
-//   WARN ⇒ 只报告、不影响退码。
-
+// 判定词是**五值闭集**（§九 M9 · 批 B · T-16）：`PASS` / `FAIL` / `BLOCKED` / `SKIP` / `REPORT`
+// —— **不许加第六个**。退码口径（本版写死并打印，防误读）：
+//
+//	FAIL ⇒ 退码 1；**BLOCKED 与 SKIP 都 ⇒ 退码 8**（「读不到」「跳过没判」都不许当健康 · `RC9`）；
+//	REPORT ⇒ 只报告、不影响退码。
+//
+// ★ 口径差（照实记，不许粉饰）：`调研-M9` §4 的五值表原文是 `PASS/WARN/FAIL/SKIP/BLOCKED`，
+// 而开工单 T-16 判据① 要的是 `PASS/FAIL/BLOCKED/SKIP/REPORT`（把四档出口用的 `REPORT` 算进来、
+// 不要 `WARN`）。本件按**开工单**落（它是本次的判据面），并把这条差登记进「所见非本批」⇒ 待拍。
+//
+// `--quick`：贵项（要打网/逐进程归因的那几项）**跳过并一律记 SKIP**（§十二 `P-040`）。
 func cmdDoctor(inv *invocation, stdout, stderr io.Writer) int {
 	items := doctorItems(inv)
 	if inv.jsonGiven {
 		if !requireFields(inv, stderr) {
 			return exitFail
 		}
-		return selectJSONList(stdout, stderr, inv.path, inv.fields, items)
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, items)
 	}
 	table := make([][]string, 0, len(items))
 	worst := exitOK
+	raise := func(code int) {
+		// 严重度：FAIL(1) > BLOCKED/SKIP(8) —— 红优先于「没结论」（门禁同款口径）。
+		if worst == exitOK || (code == exitFail && worst != exitFail) {
+			worst = code
+		}
+	}
 	for _, it := range items {
 		table = append(table, []string{it["name"], it["verdict"], it["detail"], it["advice"]})
 		switch it["verdict"] {
 		case "FAIL":
-			worst = exitFail
-		case "BLOCKED":
-			if worst == exitOK {
+			raise(exitFail)
+		case "BLOCKED", "SKIP":
+			if worst != exitFail {
 				worst = exitBlocked
 			}
 		}
 	}
 	renderRows(stdout, stderr, inv.tty && !inv.plain,
 		[]string{"name", "verdict", "detail", "advice"}, table)
-	fmt.Fprintln(stderr, "口径：FAIL ⇒ 退码 1 · BLOCKED ⇒ 退码 8（「读不到」不许当健康）· WARN ⇒ 只报告")
+	fmt.Fprintln(stderr, "口径（五值闭集 · §九 M9）：FAIL ⇒ 退码 1 · BLOCKED ⇒ 8 · **SKIP ⇒ 8**（跳过没判 ≠ 健康）· REPORT ⇒ 只报告")
 	return worst
 }
 
@@ -439,7 +453,15 @@ func doctorItems(inv *invocation) []map[string]string {
 			"advice": ""})
 	}
 
-	// ⑤ 子端（经主控）· 顺带把「混版观测」当 WARN 报出来（判决权在批 C 的 T-23，本版只报事实）
+	// ⑤ 子端（经主控）· 顺带把「混版观测」照实报出来（判决权在批 C 的 T-23，本版只报事实）
+	if inv.quick {
+		items = append(items, map[string]string{
+			"name": "子端名册", "verdict": "SKIP",
+			"detail": "`--quick`：贵项（要打主控的那一项）本轮**跳过**",
+			"advice": "SKIP 也会把整单退码拉到 `8`（「跳过没判」不许当健康 · §九 M9 `RC9` / §十二 P-040）"})
+		items = append(items, ghostReapItem())
+		return items
+	}
 	var fleet jsonObj
 	if err := c.getJSON("/api/fleet/status", &fleet); err != nil {
 		inv.setErr("blocked", "fleet_unreadable", err.Error())
@@ -465,7 +487,9 @@ func doctorItems(inv *invocation) []map[string]string {
 		verdict := "PASS"
 		advice := ""
 		if len(keys) > 1 {
-			verdict = "WARN"
+			// 只报告（`REPORT`）：混版的**判决**属批 C 的 T-23，本版只报事实、不改判
+			// （五值闭集里没有 `WARN` —— 见 cmdDoctor 顶上的口径差登记）。
+			verdict = "REPORT"
 			parts := make([]string, 0, len(keys))
 			for _, k := range keys {
 				parts = append(parts, k+"="+strings.Join(vers[k], ","))
@@ -488,5 +512,43 @@ func doctorItems(inv *invocation) []map[string]string {
 		"name": "命令面", "verdict": "PASS",
 		"detail": version.Line(progName), "advice": ""})
 
+	// ⑧ 回收候选（§十五.3 对象清册 · §九 M9：**幽灵服务不进自动候选**）
+	items = append(items, ghostReapItem())
+
 	return items
+}
+
+// ghostReapItem —— 「现值有 · 声明无」的幽灵服务（§二十一 第 3 条 / §十五.3）。
+//
+// 口径（照 §九 M9 · `P-042`）：**只报 + 干跑单列「不属管辖」，不进自动候选**（自动回收只收
+// 「能证明是自己且已到期」的件）。所以这里给的是 `REPORT` + 建议动作，不是 `FAIL`。
+// 只读：跑一次 `ps`（不碰任何进程、不杀不重启）。
+func ghostReapItem() map[string]string {
+	out, err := exec.Command("ps", "-eo", "pid,command").Output()
+	if err != nil {
+		return map[string]string{
+			"name": "回收候选（幽灵服务）", "verdict": "SKIP",
+			"detail": "`ps` 读不到（" + err.Error() + "）",
+			"advice": "读不到就不给结论（SKIP ⇒ 退码 8）"}
+	}
+	ghosts := []string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, "cocoon-docs-service") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 3 {
+			ghosts = append(ghosts, "pid="+fields[0]+" "+strings.Join(fields[1:], " "))
+		}
+	}
+	if len(ghosts) == 0 {
+		return map[string]string{
+			"name": "回收候选（幽灵服务）", "verdict": "PASS",
+			"detail": "现值面没看到「声明外」的服务进程（本项只查 `cocoon-docs-service` 一类点名件）",
+			"advice": ""}
+	}
+	return map[string]string{
+		"name": "回收候选（幽灵服务）", "verdict": "REPORT",
+		"detail": fmt.Sprintf("%d 条：%s", len(ghosts), strings.Join(ghosts, " | ")),
+		"advice": "现值有 · 声明无 ⇒ 进 `reap` 干跑单并**列「不属管辖」**；幽灵服务**不进自动候选**（§九 M9）"}
 }

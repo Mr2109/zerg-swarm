@@ -659,6 +659,9 @@ type invocation struct {
 	reload bool
 	force  bool
 
+	// `--quick`：贵项跳过并记 SKIP（§十二 P-040）
+	quick bool
+
 	// M8 长任务三档（§十二 P-020/P-033–P-037）
 	wait              bool
 	noWait            bool
@@ -724,6 +727,8 @@ func parseInvocation(args []string) (*invocation, error) {
 			}
 		case strings.HasPrefix(a, "--context="):
 			inv.contextWant = strings.TrimPrefix(a, "--context=")
+		case a == "--quick":
+			inv.quick = true
 		case a == "--wait":
 			inv.wait = true
 		case a == "--no-wait":
