@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/contract"
+	"github.com/Mr2109/zerg-swarm/core/internal/selfupdate"
 )
 
 // RunForTest 驱动一次命令（与 `main()` 调的是同一个 `run`）。
@@ -357,3 +358,59 @@ func JudgeFourGatesForTest(results, human string) ([]StageGateVerdictForTest, bo
 	}
 	return out, gatesPassed(vs, spec), nil
 }
+
+// ---- T-52：`update`/`upgrade` 不分指两事（`core/internal/contract/selfupdate.json`）的**只读桥** ----
+
+// SelfUpdateSpecForTest 自更新真源的一格。
+type SelfUpdateSpecForTest struct {
+	Kernel        string
+	Stages        []string
+	ExitCodes     map[string]int // name → code
+	ExitMeanings  map[int]string // code → meaning
+	Callers       []string
+	NearSynonym   []string
+	CollisionNote string
+}
+
+// SelfUpdateSpecOfForTest 取自更新真源。
+func SelfUpdateSpecOfForTest() (SelfUpdateSpecForTest, error) {
+	s, err := contract.SelfUpdate()
+	if err != nil {
+		return SelfUpdateSpecForTest{}, err
+	}
+	out := SelfUpdateSpecForTest{Kernel: s.TruthSource["kernel"], Stages: s.Stages,
+		ExitCodes: map[string]int{}, ExitMeanings: map[int]string{},
+		NearSynonym: s.NearSynonymForbidden, CollisionNote: s.CollisionFixed}
+	for _, e := range s.ExitCodes {
+		out.ExitCodes[e.Name] = e.Code
+		out.ExitMeanings[e.Code] = e.Meaning
+	}
+	for _, c := range s.Callers {
+		if f, ok := c["file"].(string); ok {
+			out.Callers = append(out.Callers, f)
+		}
+	}
+	return out, nil
+}
+
+// UpdateSplitViolationsForTest 真命令树上的「近义动词分指两事」命中（判据②③ 的机检面）。
+func UpdateSplitViolationsForTest() ([]string, error) {
+	spec, err := contract.SelfUpdate()
+	if err != nil {
+		return nil, err
+	}
+	return updateSplitViolations(spec), nil
+}
+
+// UpdateSplitViolationsRawForTest 在**真命令树**上只改坏一条（负控：证明这一格能红，
+// 且判词干净 —— 不掺「命令树里找不到命令」这类无关命中）。
+func UpdateSplitViolationsRawForTest(path, summary, usage, dangerSource string) ([]string, error) {
+	spec, err := contract.SelfUpdate()
+	if err != nil {
+		return nil, err
+	}
+	return updateSplitViolationsWith(spec, []updateCmdShape{{Path: path, Summary: summary, Usage: usage, DangerSource: dangerSource}}), nil
+}
+
+// SelfUpdateExitCodesMatchForTest 逐格对拍判定口的**投影**（真源 ⟷ 本包常量在 selfupdate 包内已自测）。
+func SelfUpdateExitCodesMatchForTest() error { return selfupdate.ExitCodesMatchTruthSource() }

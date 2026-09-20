@@ -12,18 +12,62 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Mr2109/zerg-swarm/core/internal/contract"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"github.com/Mr2109/zerg-swarm/core/internal/version"
 )
 
-// 退出码（与 scripts/build/zerg-upgrade.sh 的契约对齐：0 成功 / 1 失败 / 2 无需更新 / 3 拒绝）。
+// 退出码 —— **唯一真源在 `core/internal/contract/selfupdate.json`**（§7.1 `P12` · §十七 `SD12` ·
+// 开工单 T-52）。本包的常量是它的**投影**，由 `ExitCodesMatchTruthSource()` 逐格现跑对拍；
+// 不相等 ⇒ 报错（**不许**两处各写一份然后漂 —— 漂过的那一格就是「同数字两义」）。
+//
+// ★ 本票修的一处真病（照实记）：收敛前这里把**用法错**写成 `4`，而内核脚本
+//
+//	`scripts/build/zerg-upgrade.sh` 的 `4` 是**校验不通过（未动文件）** —— 一个数字两个意思。
+//	收敛后 `4` 只有一个意思（校验不通过），用法错照 sysexits 回到 `64`（脚本 :125 逐字 `exit 64`）。
 const (
-	ExitOK       = 0
-	ExitFail     = 1
-	ExitNoUpdate = 2 // 已是最新 / 开发态领先——无需更新
-	ExitRefused  = 3 // 安装方式拒绝（fleet/unknown；非 git 检出）
-	ExitUsage    = 4
+	ExitOK             = 0
+	ExitFail           = 1
+	ExitNoUpdate       = 2 // 已是最新 / 开发态领先——无需更新
+	ExitRefused        = 3 // 安装方式拒绝（fleet/unknown；非 git 检出）· 有在途任务
+	ExitVerifyFailed   = 4 // 校验不通过（**未动文件**）
+	ExitRollbackFailed = 5 // **回滚也失败**（需人工介入 · error.kind=ROLLBACK_FAILED）
+	ExitUsage          = 64
 )
+
+// ExitCodesMatchTruthSource —— 逐格对拍真源（数字 + 语义名），不一致 ⇒ 报错。
+//
+// 为什么要它而不是「顺手核一眼」：两处各写一份时，漂是**默认结果**、不漂是巧合。
+// 判据落成函数 ⇒ `go test ./...` 每次都会问一遍。
+func ExitCodesMatchTruthSource() error {
+	return exitCodesMatchTruthSource(map[string]int{
+		"ok": ExitOK, "fail": ExitFail, "no_update": ExitNoUpdate, "refused": ExitRefused,
+		"verify_failed": ExitVerifyFailed, "rollback_failed": ExitRollbackFailed, "usage": ExitUsage,
+	})
+}
+
+// exitCodesMatchTruthSource —— 判定口本体（**抽出来是为了让负控能喂错的表进来**；
+// 直接读包常量的判定口没法做负控，那样它只能是「恒绿装置」）。
+func exitCodesMatchTruthSource(mine map[string]int) error {
+	spec, err := contract.SelfUpdate()
+	if err != nil {
+		return err
+	}
+	if len(spec.ExitCodes) != len(mine) {
+		return fmt.Errorf("selfupdate: 真源 %d 格 ≠ 本包 %d 格（两处又开始各写一份了）",
+			len(spec.ExitCodes), len(mine))
+	}
+	for _, e := range spec.ExitCodes {
+		v, ok := mine[e.Name]
+		if !ok {
+			return fmt.Errorf("selfupdate: 真源里的 %q 在本包没有对应常量 —— 缺格也是漂", e.Name)
+		}
+		if v != e.Code {
+			return fmt.Errorf("selfupdate: %s 真源 %d ≠ 本包 %d（同数字两义的病根）", e.Name, e.Code, v)
+		}
+	}
+	return nil
+}
 
 // Options —— `zerg update` 的全部入参（含测试用的可注入接缝）。
 type Options struct {
@@ -152,7 +196,7 @@ const Usage = `用法：
   --json       机器可读输出
   --no-cache   本次不走 6 小时缓存（强制 live 检查）
 
-退出码：0 已交接 / 1 失败 / 2 无需更新 / 3 拒绝（安装方式/开发态） / 4 用法错误。
+退出码（唯一真源 = core/internal/contract/selfupdate.json）：0 成功 / 1 失败（无回滚·已回滚成功两支） / 2 无需更新 / 3 拒绝（安装方式·有在途任务） / 4 校验不通过（未动文件） / 5 回滚也失败（需人工） / 64 用法错。
 `
 
 // CLIMain —— `zerg update` 的入口（core CLI 的子命令）。
