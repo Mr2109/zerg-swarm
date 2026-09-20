@@ -115,6 +115,57 @@ func helpContract() string {
 	return b.String()
 }
 
+// ---- 兼容窗口（§九 M15 · §十二 `P-079`：三类分开给，major 不同一律拒）----
+
+// compatWindowRow —— 窗口表一行。**三类各给一格**，不许合成「±N」一句话。
+type compatWindowRow struct {
+	Pair     string // 哪两件之间
+	Window   string // 窗口（逐对给）
+	Refuse   string // 越窗怎么办
+	Evidence string
+}
+
+var compatWindow = []compatWindowRow{
+	{"命令面 ↔ 主控", "minor ±1", "写明不兼容并**拒**（不许静默降级）", "§十二 P-079 · 调研-M15 §4.4"},
+	{"子端 ↔ 主控", "minor [−3, 0]（且**不得比主控新**）", "同上", "§十二 P-079"},
+	{"UI / 茧壁 ↔ 主控", "0（完全同版）", "同上", "§十二 P-079"},
+	{"任意两件 major 不同", "—（无窗口）", "**一律拒**", "§十二 P-079 收口"},
+}
+
+// windowSummary 一行摘要（进 `zerg version --json` 的 `window` 字段与帮助头部）。
+func windowSummary() string {
+	parts := make([]string, 0, len(compatWindow))
+	for _, r := range compatWindow {
+		parts = append(parts, r.Pair+" "+r.Window)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// helpVersionTopic —— `zerg help version`：三层版本 + 兼容窗口 + 不静默降级。
+func helpVersionTopic() string {
+	var b strings.Builder
+	b.WriteString("版本协商（§九 M15 · 调研-M15 §4.1–§4.4）\n\n")
+	b.WriteString(contractVersionText())
+	b.WriteString("\n兼容窗口（**三类分开给** · §十二 `P-079`；窗口本身是**机器可读资产** · `T5`）：\n")
+	w := 0
+	for _, r := range compatWindow {
+		if len(r.Pair) > w {
+			w = len(r.Pair)
+		}
+	}
+	for _, r := range compatWindow {
+		fmt.Fprintf(&b, "  %s  窗口 %-32s %s\n", pad(r.Pair, w), r.Window, r.Refuse)
+	}
+	b.WriteString("\n「不静默降级」的可执行定义（调研-M15 §4.3）：\n")
+	b.WriteString("  · 不兼容时**必须**明确报错（`exit 2` / `kind=unsupported_on_node` 一类），**不许**\n")
+	b.WriteString("    自动挑一个「差不多能用」的版本接着跑；\n")
+	b.WriteString("  · 版本真源**只从 `/api/capabilities` 三键取**（`T1`）—— `/api/core/status` 的 `version`\n")
+	b.WriteString("    过去是一枚硬编码的第二版本号（已红第 2 条），现在与 capabilities **同源同值**；\n")
+	b.WriteString("  · 命令面自身版本 = **编译期注入**、源码零版本字面量（`T3`）；\n")
+	b.WriteString("  · 同一进程只有一个版本号（`T4`）：`zerg version` 与 `zerg --version` 同一次构建同值。\n")
+	return b.String()
+}
+
 // fieldStabilityNote 给导出物与帮助共用的一句承诺（防两处写法漂）。
 func fieldStabilityNote() string {
 	return "字段只增不改 · 破坏性变更走大版本（" + contractID + " → 下一个主号）"
