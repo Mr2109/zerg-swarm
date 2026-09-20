@@ -943,6 +943,38 @@ func init() {
 			endpoint: "",
 			run:      cmdPluginLs,
 		},
+		// ---- §十八.3 融合四件（批 E · T-59）----
+		// 依赖次序（**不许倒**）：能力路由（T-41 的 id 规范化真源）→ `ask` → 意图 schema → `plan`/`apply`。
+		{
+			path:     []string{"ask"},
+			kind:     "Ask",
+			summary:  "问一次推理、**不落任务队列**（`task submit` 的对偶）· 能力筛是硬筛",
+			usage:    "zerg ask <提示> [--capability 名]… [--prefer 名]… [--model 名] [--node 名]… [--min-ctx n] [--min-mem-gb n] [--no-fallback] [--dry-run] [--timeout 时长] [--json <字段>]",
+			args:     []string{"提示（一句话）"},
+			fields:   askFields,
+			endpoint: "GET /api/fleet/models · GET /api/models/registry",
+			run:      cmdAsk,
+		},
+		{
+			path:     []string{"plan"},
+			kind:     "Plan",
+			summary:  "**算**：产出一份意图件（M6 包封 · F1–F7 + 四附加件）· **零副作用**",
+			usage:    "zerg plan <族> <动作> <对象…> [--node 名]… [--expect 旧值] [--out <件>] [--json <字段>]",
+			args:     []string{"族（= target.kind）", "动作", "对象名"},
+			fields:   planFields,
+			endpoint: "",
+			run:      cmdPlan,
+		},
+		{
+			path:     []string{"apply"},
+			kind:     "Apply",
+			summary:  "**做**：只吃那一份意图件（L1 schema → L2 引用 → L3 干跑 → L4 人在环）· 本版未开放执行",
+			usage:    "zerg apply <件> [--confirm=<目标>] [--json <字段>]",
+			args:     []string{"意图件路径"},
+			fields:   applyFields,
+			endpoint: "",
+			run:      cmdApply,
+		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
 	for _, c := range commands {
@@ -1270,6 +1302,14 @@ func valueFlagName(a string) string {
 	case "--title", "--target", "--goal", "--evidence", "--rollback", "--by",
 		"--criterion", "--criteria", "--candidate", "--state", "--round",
 		"--dir", "--producer", "--expect":
+		return a
+	}
+	// 融合面旗标（§十八.3 四件 · 批 E · T-59）：`ask` 的能力路由与 `plan`/`apply` 的落点。
+	// ★ 加这一排的直接理由：`--out` 此前**只写在用法串里、解析器不认** ⇒ 真给就退 2
+	//   （见表二「所见非本批」）—— 用法串里写着的旗标必须真能被解析，否则命令等于不可用。
+	switch a {
+	case "--capability", "--prefer", "--min-ctx", "--min-mem-gb", "--no-fallback",
+		"--timeout", "--out", "--target-ref":
 		return a
 	}
 	return ""
