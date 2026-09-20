@@ -110,6 +110,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	cmd, rest := resolve(inv.path)
 	if cmd == nil {
+		// 插件（§6.3 S6 的 `zerg-<名>` 约定）：命令树里没有这条 ⇒ 先问插件，再报未知命令。
+		if rc, done := tryPlugin(inv, stdout, stderr); done {
+			return rc
+		}
 		// §4.1 K14 四件套：自报是谁 · 下一步 · 最像的合法输入 · 上下文定位。
 		fmt.Fprintf(stderr, "%s: 未知命令 %q\n", progName, strings.Join(inv.path, " "))
 		if s := nearest(inv.path[0]); s != "" {
@@ -929,6 +933,15 @@ func init() {
 				"按调用者权限执行脚本（**退码原样透传**；核心名硬占位）",
 				"§6.3 S6 · §九 M18 C5 · 开工单 T-50"},
 			run: cmdGuarded,
+		},
+		{
+			path:     []string{"plugin", "ls"},
+			kind:     "Plugin",
+			summary:  "插件清单（`zerg-<名>` 约定 · 零注册表 · 影子告警 + 信任声明）",
+			usage:    "zerg plugin ls [--json <字段>]",
+			fields:   pluginFields,
+			endpoint: "",
+			run:      cmdPluginLs,
 		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。

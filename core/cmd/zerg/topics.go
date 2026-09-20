@@ -38,6 +38,7 @@ func helpTopics() []helpTopic {
 		{"human-machine", "人机双模：三态 + 两层承诺 + 分页/颜色/format 四条", helpHumanMachine},
 		{"registry", "契约登记表：真源口径 + 六处先例 + 变更流程 V0–V7", helpRegistry},
 		{"offline", "离线/降级：单端点 + 四条「不偷偷」+ 例外清单 F-1–F-4", helpOffline},
+		{"plugins", "插件机制：`zerg-<名>` 约定 + 零注册表 + 信任声明（P14）", helpPlugins},
 	}
 }
 
