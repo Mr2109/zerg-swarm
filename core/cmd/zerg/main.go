@@ -554,6 +554,68 @@ func init() {
 			danger:  &dangerSpec{dangerD3, "主机名", "停 + 起主控（**整个虫群的控制面会断一会儿**）", "§三 C 族 · 开工单 T-45"},
 			run:     cmdGuarded,
 		},
+		// ---- 批 D · T-46 H 族四条（§三 H 族 · §7.1 `P10`/`P7`）----
+		{
+			path:     []string{"resource", "ls"},
+			kind:     "Resource",
+			summary:  "资源面（投影 /api/resources/ledger 或 /api/resources/{类型}）",
+			usage:    "zerg resource ls [<类型>] [--json <字段>]",
+			args:     []string{"类型（可省）"},
+			fields:   []string{"machine", "mem_known", "mem_total_gb", "mem_available_gb", "vram_known", "gpu_pct", "backend_state", "fit"},
+			endpoint: "GET /api/resources/ledger | /api/resources/{type}",
+			run:      cmdResourceLs,
+		},
+		{
+			path:     []string{"resource", "ledger"},
+			kind:     "Resource",
+			summary:  "资源账本（投影 /api/resources/ledger）",
+			usage:    "zerg resource ledger [--json <字段>]",
+			fields:   []string{"machine", "mem_known", "mem_total_gb", "mem_available_gb", "vram_known", "gpu_pct", "backend_state", "fit"},
+			endpoint: "GET /api/resources/ledger",
+			run:      cmdResourceLedger,
+		},
+		{
+			path:     []string{"gateway", "models"},
+			kind:     "Model",
+			summary:  "网关侧模型面（与 `model ls` **同源** —— 网关没有第二份模型表）",
+			usage:    "zerg gateway models [--json <字段>]",
+			fields:   []string{"id", "host", "backend", "modality", "mem_gb", "file"},
+			endpoint: "GET /api/fleet/models",
+			run:      cmdGatewayModels,
+		},
+		{
+			path:     []string{"script", "ls"},
+			kind:     "Script",
+			summary:  "本机脚本清单（scripts/ 逐件 + 公开标记表）",
+			usage:    "zerg script ls [--json <字段>]",
+			fields:   []string{"path", "public"},
+			endpoint: "",
+			run:      cmdScriptLs,
+		},
+		// 写面两枚：**同一个执行门**（三态：--dry-run 计划件 / 缺 --yes ⇒ 2 / 齐了才发）
+		{
+			path:    []string{"resource", "pin"},
+			kind:    "ResourcePin",
+			summary: "钉住资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2）",
+			usage:   "zerg resource pin <资源 id> [--dry-run | --yes]",
+			args:    []string{"资源 id"},
+			run:     cmdHazardWrite,
+		},
+		{
+			path:    []string{"resource", "unpin"},
+			kind:    "ResourceUnpin",
+			summary: "解钉资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2）",
+			usage:   "zerg resource unpin <资源 id> [--dry-run | --yes]",
+			args:    []string{"资源 id"},
+			run:     cmdHazardWrite,
+		},
+		{
+			path:    []string{"gateway", "breakers"},
+			kind:    "GatewayBreakers",
+			summary: "网关断路开关（D2 写面 · `--reset` 要 `--yes`）",
+			usage:   "zerg gateway breakers [--reset] [--dry-run | --yes]",
+			run:     cmdHazardWrite,
+		},
 		// ---- 危险动作：**只登记形状，不开放执行**（§6.2 批 1 零写操作）----
 		// 每条都过 cmdGuarded：`--dry-run` 出计划件（退码 0）；真跑一律拒执（退码 2 = 不给结论）。
 		{
@@ -716,29 +778,6 @@ func init() {
 			run:     cmdGuarded,
 		},
 		{
-			path:    []string{"resource", "pin"},
-			summary: "钉住资源（危险 D2 · 本版未开放）",
-			usage:   "zerg resource pin <资源> --yes [--dry-run]",
-			args:    []string{"资源 id"},
-			danger:  &dangerSpec{dangerD2, "资源 id", "把资源标成不可回收（回收候选里会被排除）", "§7.1 P10 · §6.3 S5 · 开工单 T-46"},
-			run:     cmdGuarded,
-		},
-		{
-			path:    []string{"resource", "unpin"},
-			summary: "解钉资源（危险 D2 · 本版未开放）",
-			usage:   "zerg resource unpin <资源> --yes [--dry-run]",
-			args:    []string{"资源 id"},
-			danger:  &dangerSpec{dangerD2, "资源 id", "取消不可回收标记（它会重新进入回收候选）", "§7.1 P10 · §6.3 S5 · 开工单 T-46"},
-			run:     cmdGuarded,
-		},
-		{
-			path:    []string{"gateway", "breakers"},
-			summary: "网关断路开关（危险 D2 · 本版未开放）",
-			usage:   "zerg gateway breakers [--reset] --yes [--confirm=<网关主机名>] [--dry-run]",
-			danger:  &dangerSpec{dangerD2, "网关主机名", "重置网关熔断器（会立刻重新放流量进去）", "§7.1 P10 · §6.3 S5 · 开工单 T-46"},
-			run:     cmdGuarded,
-		},
-		{
 			path:    []string{"script", "run"},
 			summary: "跑一件脚本（危险 D3 · 本版未开放）",
 			usage:   "zerg script run <脚本> --confirm=<脚本> --yes [--dry-run]",
@@ -883,6 +922,7 @@ type invocation struct {
 	moveTo             string
 	to                 string
 	setPairs           []string // `--set k=v`（可重复；`model opts set` 用）
+	reset              bool     // `--reset`（`gateway breakers` 的重置开关）
 
 	// `--quick`：贵项跳过并记 SKIP（§十二 P-040）
 	quick bool
@@ -954,6 +994,8 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.contextWant = strings.TrimPrefix(a, "--context=")
 		case a == "--token-stdin":
 			inv.tokenStdin = true
+		case a == "--reset":
+			inv.reset = true
 		case valueFlagName(a) != "":
 			// 动作面旗标（批 D · S5）：`--desc` / `--model` / `--priority` / `--slice-id` /
 			// `--depends-on` / `--acceptance` / `--to`。值**原样**收下（语义校验在各自命令里）。
