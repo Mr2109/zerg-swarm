@@ -37,6 +37,7 @@
     python3 scripts/gates/check-doc-meta.py                       # 全仓文档面（默认 --missing=warn）
     python3 scripts/gates/check-doc-meta.py --scope formal        # 正式面候选 39 篇（§8.4③）
     python3 scripts/gates/check-doc-meta.py --scope formal --missing=fail   # 第一波回填的验收口径
+    python3 scripts/gates/check-doc-meta.py --scope devdocs      # D3①：开发文档面（Zerg-内部文档，换根；schema 仍取主仓）
     python3 scripts/gates/check-doc-meta.py --target docs/常青 --json
     python3 scripts/gates/check-doc-meta.py --list-rules
     python3 scripts/gates/check-doc-meta.py --self-test           # 成对负控（好件必绿 / 坏件必红 / 缺件必 rc=2）
@@ -64,6 +65,22 @@ PY = sys.executable or "python3"
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT_DEFAULT = os.path.dirname(os.path.dirname(HERE))
 SCHEMA_DEFAULT = os.path.join("docs", "site", "frontmatter-schema.json")
+
+
+def devdocs_root(repo_root=REPO_ROOT_DEFAULT):
+    """开发文档面根（D3① · 与门⑫ `check-doc-cmds.py` **同根同默认**）。
+
+    优先级：`ZERG_DEVDOCS_ROOT` > `<仓根 的上一级>/Zerg-内部文档/项目文档/v2.5.10`。
+    为什么是**仓外**路径：`Zerg-内部文档/` 与主仓并列（2026-09-19 分家）、且它不开源 ⇒ 不进公开树；
+    D3 只把它当**被管对象**读，不搬进仓。根不在 ⇒ `rc=2` 不给结论（设计稿 §五：不许静默当绿）。
+    ★ 换根换的只是**被扫的语料**：frontmatter schema 仍取主仓的 `<仓根>/docs/site/…`
+      （它是「开发文档该长什么样」的**规范真源**，同一份规范管两个面）。
+    """
+    env = os.environ.get("ZERG_DEVDOCS_ROOT")
+    if env:
+        return os.path.abspath(env)
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(repo_root)),
+                                        "Zerg-内部文档", "项目文档", "v2.5.10"))
 
 DOC_EXT = (".md", ".markdown", ".mdx")
 
@@ -676,9 +693,10 @@ def _write(path, text):
         fh.write(text)
 
 
-def _sub(script, *args):
+def _sub(script, *args, **kw):
+    env = kw.pop("env", None)
     p = subprocess.run([PY, script] + list(args), stdout=subprocess.PIPE,
-                       stderr=subprocess.STDOUT, universal_newlines=True)
+                       stderr=subprocess.STDOUT, universal_newlines=True, env=env)
     return p.returncode, p.stdout
 
 
@@ -717,9 +735,9 @@ def self_test(script_path):
 
     base = ["--schema", schema_dst, "--repo-root", tmp, "--no-self-test"]
 
-    def case(label, expect_rc, args, must_contain=(), must_not_contain=()):
+    def case(label, expect_rc, args, must_contain=(), must_not_contain=(), env=None):
         # argparse 的重复选项以**最后一次**为准 ⇒ 想换 --repo-root 的用例把新值写在 args 尾部
-        rc, out = _sub(script_path, *(base + list(args)))
+        rc, out = _sub(script_path, *(base + list(args)), env=env)
         good_case = (rc == expect_rc)
         for s in must_contain:
             if s not in out:
@@ -792,8 +810,15 @@ def self_test(script_path):
     lines.append("%s 只报告不改（夹具树逐字节不变：%s）"
                  % ("✓" if same else "✗", "一致" if same else "被改动"))
     ok &= same
+    # ⑩ **D3① 换根负控**（2026-09-21）：开发文档面根**不在**（仓外不可达）⇒ 必 rc=2 不给结论。
+    #    ★ 成对负控的那一半：正格（根在）要碰真 Zerg-内部文档 树，与自检「合成件、不碰真目标」的口径
+    #      相冲；缺根这格机器无关，钉的是「仓外不可达不许静默当绿」（设计稿 §五）这条判据本身。
+    ok &= case("D3① devdocs 根不在 ⇒ BLOCKED（仓外不可达不许当绿）", 2,
+               ["--repo-root", tmp, "--scope", "devdocs"],
+               must_contain=["不给结论", "开发文档面根不在"],
+               env=dict(os.environ, ZERG_DEVDOCS_ROOT=os.path.join(tmp, "no-such-Zerg-内部文档")))
 
-    expected_cases = 1 + len(BAD_DOCS) + 3 + len(BLOCKED_DOCS) + 2 + 1 + 1 + 1 + 1
+    expected_cases = 1 + len(BAD_DOCS) + 3 + len(BLOCKED_DOCS) + 2 + 1 + 1 + 1 + 1 + 1
     got = sum(1 for ln in lines if ln[:1] in ("✓", "✗"))
     lines.append("自检用例：期望 %d 条 · 实跑 %d 条" % (expected_cases, got))
     if got != expected_cases:
@@ -817,8 +842,9 @@ def main(argv):
     ap.add_argument("--target", action="append", default=[], help="同上（可多次）")
     ap.add_argument("--repo-root", default=REPO_ROOT_DEFAULT, help="仓根（默认 = 本脚本的上一级）")
     ap.add_argument("--schema", default=None, help="schema 路径（默认 <仓根>/docs/site/frontmatter-schema.json）")
-    ap.add_argument("--scope", choices=["repo", "docs", "formal"], default="docs",
-                    help="repo=全仓文档面 · docs=仅 docs/ · formal=正式面候选第一波（§8.4③）")
+    ap.add_argument("--scope", choices=["repo", "docs", "formal", "devdocs"], default="docs",
+                    help="repo=全仓文档面 · docs=仅 docs/ · formal=正式面候选第一波（§8.4③）· "
+                         "devdocs=**开发文档面**（D3① 换根：Zerg-内部文档，根见 devdocs_root()；schema 仍取主仓）")
     ap.add_argument("--missing", choices=["warn", "fail"], default="warn",
                     help="无 frontmatter 块的档位（默认 warn；正式面第一波用 fail）")
     ap.add_argument("--count-frozen", action="store_true", help="把冻结区（项目文档/）计入退码；"
@@ -847,11 +873,24 @@ def main(argv):
                 print("  " + ln)
             return 2
 
-    root = os.path.abspath(args.repo_root)
-    schema_path = os.path.abspath(args.schema) if args.schema else os.path.join(root, SCHEMA_DEFAULT)
-    targets = [os.path.abspath(x) for x in (list(args.targets) + list(args.target))]
-    if not targets:
-        targets = [root if args.scope == "repo" else os.path.join(root, "docs")]
+    repo = os.path.abspath(args.repo_root)
+    given = list(args.targets) + list(args.target)
+    if args.scope == "devdocs" and not given:
+        # ── D3① 换根：开发文档面带自己的默认根（与门⑫ 同根同默认），不借用主仓根。
+        #    只在**没显式点名目标**时换根 —— 显式 `--target` 的口径一字未改（点名谁就判谁）。
+        root = devdocs_root(repo)
+        if not os.path.isdir(root):
+            print("BLOCKED：开发文档面根不在 ⇒ 不给结论：%s" % root)
+            print("  口径：仓外根不可达（设计稿 §五：不许静默当绿 ✗）。换根请设 ZERG_DEVDOCS_ROOT。")
+            return 2
+        targets = [root]
+    else:
+        root = repo
+        targets = [os.path.abspath(x) for x in given]
+        if not targets:
+            targets = [root if args.scope == "repo" else os.path.join(root, "docs")]
+    # schema 真源**始终取主仓**（同一份规范管两个面；换根换的是语料，不是规范）
+    schema_path = os.path.abspath(args.schema) if args.schema else os.path.join(repo, SCHEMA_DEFAULT)
     for t in targets:
         if not os.path.exists(t):
             print("BLOCKED：目标不存在 ⇒ 不给结论：%s" % t)
