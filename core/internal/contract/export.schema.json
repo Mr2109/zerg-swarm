@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "zerg/help-export.schema.json",
+  "title": "帮助导出物的机器可读形态（`zerg help export --json` 的 items 元素）",
+  "description": "§二十一 已红第 17 条（开工单 T-39）· §九 M16 · §十二 `P-084`/`P-085`/`P-095`。**契约真源 = 代码内 schema**：本件是「帮助导出物」这一面的机器可读契约，导出物（`Zerg-内部文档` 里的 markdown 与 `--json`）只是它的**导出物** —— 改真源必须同批改导出物，差集非空即红。对拍判据落 `core/cmd/zerg/export_schema_test.go`（每次 `go test` 都跑）：键面 / 取值面 / 计数面 / 层级面 + 一条负控（键差集非空必红）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "path",
+    "commands",
+    "dangerous",
+    "schema",
+    "layers"
+  ],
+  "properties": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "导出物落点（markdown 文件的完整路径）。默认档 = <仓根>/../Zerg-内部文档/项目文档/v2.5.10/导出-命令面帮助-<YYYYMMDD>.md（走相对推导，**不写死私有绝对路径**）；`--out <目录>` 可改。"
+    },
+    "commands": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "**已开放**命令条数 = 命令树里 danger == nil 的那批。必须等于导出物「一、命令清单」的表行数（现算，不是各算各的）。"
+    },
+    "dangerous": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "**危险动作**条数 = 命令树里 danger != nil 的那批（本版登记但不开放）。必须等于导出物「二、危险动作」的表行数。"
+    },
+    "schema": {
+      "const": "zerg/v1",
+      "description": "M6 包封第一名（§十五.7 定案：只写 `zerg/v1`，**不写** `schema_version`）。唯一取值 ⇒ 第二套写法即红。"
+    },
+    "layers": {
+      "type": "string",
+      "pattern": "^host=[0-9]+(,node=[0-9]+)?(,space=[0-9]+)?$",
+      "description": "茧壁三档计数（§九 M10 `X1`）· 形如 `host=34,node=7`（键按字典序、无空格）。算术和必须 = 命令树条数；`space` 若出现必须 = 0 —— 空间内零命令面是**铁律**，不是当下恰好为 0。"
+    }
+  }
+}
