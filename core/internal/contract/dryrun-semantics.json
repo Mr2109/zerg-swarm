@@ -1,0 +1,177 @@
+{
+  "schema": "zerg/dryrun-semantics/v1",
+  "id": "dryrun.v1",
+  "_出处": "§二十一 已红第 16 条（T-38）· §4.1 K7（`--dry-run` + `--confirm=<目标>`）· §九 M3 C4（`--dry-run` 三态 + 计划件）",
+  "_一句话": "`--dry-run`（干跑）= 只出计划 / 只算不执行 —— **系统状态逐字不变**；退码与真跑**同一张表**（预演不新增码）；计划必须**可读**（打印到 stdout/stderr，或写一张**显式命名的计划件**）。",
+  "_零副作用定义": "不落盘 · 不删 · 不推 · 不发消息 · 不造目录 · 不调 launchctl/systemctl/ssh · 不改 git 状态；只允许：打印，或写计划件。",
+  "_归并前的四套语义": [
+    "迁移预演（zerg-compat migrate --dry-run：只报告将要迁移的文件，不落盘）",
+    "采样判词与执行分离（sampling/ring/ledger：判词照记、**不真裁**）",
+    "收卵前静态判据模拟（backend/hatch：把将被收的卵算作可用 / run==nil 只构造 argv）",
+    "脚本侧各写各的（发布·服务·沙箱·评测：各自解释 --dry-run）"
+  ],
+  "_扫描命令": "grep -r -E \"dry.?run|DryRun\" --include=*.go --include=*.sh --include=*.py --include=*.rs --exclude-dir=venv --exclude-dir=.venv core agent scripts wall gateway ui",
+  "件": [
+    {
+      "file": "core/cmd/zerg/guard.go",
+      "类": "命令面三态（唯一载体）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`bin/zerg task rm <id> --dry-run` ⇒ rc=0 且只有计划件文本；前后 `git status --porcelain` 逐字不变、任务目录 mtime 不变",
+      "备注": "§九 M3 C4 的落点：三态 `--dry-run` / `--confirm=<目标>` / `--yes`；`--dry-run` 是**唯一**会返回 0 的那一态"
+    },
+    {
+      "file": "core/cmd/zerg/main.go",
+      "类": "命令面注册表",
+      "语义": "dryrun.v1",
+      "零副作用判据": "危险动作逐条 usage 带 `[--dry-run]`；`zerg export --json` 的 danger 列逐条可见（改一条注册即现跑可见）",
+      "备注": "注册表只是**字面**；行为在 guard.go（单源）"
+    },
+    {
+      "file": "core/cmd/zerg/helptext.go",
+      "类": "命令面帮助文本",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`zerg help` 里三态一行可见；帮助文本不驱动任何写入",
+      "备注": "帮助面，零行为"
+    },
+    {
+      "file": "core/cmd/zerg/export.go",
+      "类": "命令面导出物",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`zerg export` 只读仓内元数据并打印；不写文件（`--out` 由人显式给路径时才算计划件之外的人类动作）",
+      "备注": "导出物是「命令有什么动作」的自描述面"
+    },
+    {
+      "file": "core/cmd/zerg-compat/main.go",
+      "类": "迁移预演",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`bin/zerg-compat migrate --dry-run` ⇒ 只打印将迁移的文件清单；跑前跑后逐件 md5 不变（现跑：迁移面 0 件，rc=0）",
+      "备注": "归并前的第 1 套：语义与 dryrun.v1 一致（只报告不落盘）"
+    },
+    {
+      "file": "core/internal/obs/sampling/sampling.go",
+      "类": "采样判词与执行分离",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`ZERG_DEBUG_SAMPLING_DRYRUN=1`（首版默认 = 开）⇒ 落盘条数 = 全量（无非空 tombstone）；台账里 `sampling.decision` 照记",
+      "备注": "归并前的第 2 套：这里的「dry-run」= 判词照记、**不真裁** —— 与 dryrun.v1「状态逐字不变」同义"
+    },
+    {
+      "file": "core/internal/obs/sampling/ledger.go",
+      "类": "采样判词与执行分离",
+      "语义": "dryrun.v1",
+      "零副作用判据": "台账里 `sampling.decision`（keep|drop）照记、`tombstone=false` 恒成立（没真裁）",
+      "备注": "台账是**判词**的落点，不是「真裁」的落点"
+    },
+    {
+      "file": "core/internal/obs/sampling/ring.go",
+      "类": "采样判词与执行分离",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`d.DryRun` 时判词（含 drop）照记、数据一件不删（ring 内容前后逐条同）",
+      "备注": "同一套语义在环形缓冲上的实例"
+    },
+    {
+      "file": "core/internal/obs/sampling/sampling_test.go",
+      "类": "采样判词与执行分离（对拍）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "对拍：干跑落盘 = 全量 vs 真裁后 < 全量（成对，有区分度）",
+      "备注": "测试件：把「零副作用」变成可复跑的断言"
+    },
+    {
+      "file": "core/internal/obs/sampling/ring_test.go",
+      "类": "采样判词与执行分离（对拍）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "对拍 ring 干跑前后内容逐条同",
+      "备注": "同上"
+    },
+    {
+      "file": "agent/internal/backend/manager.go",
+      "类": "收卵前静态判据模拟",
+      "语义": "dryrun.v1",
+      "零副作用判据": "静态判据不过 ⇒ **原样退回**（零动作）；dry-run 只算「将被收掉的卵的占用」的可用量，不做任何释放",
+      "备注": "归并前的第 3 套：「模拟收掉之后」= 纯计算"
+    },
+    {
+      "file": "agent/internal/hatch/hatch.go",
+      "类": "收卵前静态判据模拟",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`run == nil` ⇒ 只构造 argv（不 exec）；返回的 argv 可打印",
+      "备注": "「只想看 argv」的调用方 = 同一条路"
+    },
+    {
+      "file": "agent/internal/hatch/hatch_other.go",
+      "类": "收卵前静态判据模拟",
+      "语义": "dryrun.v1",
+      "零副作用判据": "非 Linux：`ErrUnsupportedPlatform`，声明校验与 argv 构造仍可用（真孵化一律不做）",
+      "备注": "平台分支：更严格（连真跑都没有）"
+    },
+    {
+      "file": "agent/internal/hatch/hatch_unit_cleanup_test.go",
+      "类": "收卵前静态判据模拟（对拍）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "对拍：只构造 argv 的一路不产生 sidecar/目录",
+      "备注": "测试件"
+    },
+    {
+      "file": "core/internal/chat/chat_lifecycle.go",
+      "类": "引擎干跑（清理）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`ZERG_CHAT_CLEANUP_DRY_RUN=1` ⇒ 只统计并打日志，**不删任何会话**（目录树前后逐条同）",
+      "备注": "环境变量形态（同 sampling 的形态）"
+    },
+    {
+      "file": "scripts/build/publish-public.sh",
+      "类": "脚本侧（发布）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`--dry-run` ⇒ 只导出+变换+扫描，**不做 `git init`**、不建仓、不推送",
+      "备注": "脚本侧：与命令面同义（计划 + 不落盘）"
+    },
+    {
+      "file": "scripts/build/test-publish-parity.sh",
+      "类": "脚本侧（发布，对拍）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "对拍两器在 dry-run 下打印的都是计划（`已推送` 之类**不许**出现在 dry-run 输出里）",
+      "备注": "对拍件"
+    },
+    {
+      "file": "scripts/svc/setup-zerg.sh",
+      "类": "脚本侧（服务）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`--dry-run` ⇒ 只打印计划：不 clone、不写 plist/unit、不调 launchctl",
+      "备注": "与 sandbox 夹具同一口径"
+    },
+    {
+      "file": "scripts/svc/fleet-relay.sh",
+      "类": "脚本侧（服务）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`--dry-run` ⇒ 只打印计划：不 ssh、不建仓、不推送",
+      "备注": "同上"
+    },
+    {
+      "file": "scripts/sandbox/test-setup-sandbox.sh",
+      "类": "脚本侧（沙箱夹具）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "断言 ① `--dry-run` 零副作用：不 clone、不动 bin/、不写 plist/unit、不调 launchctl、不写印记",
+      "备注": "**这条本身就是判据的机器化**（夹具里断言的正是 dryrun.v1）"
+    },
+    {
+      "file": "scripts/sandbox/test-relay-sandbox.sh",
+      "类": "脚本侧（沙箱夹具）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "断言 ③ `--dry-run` 零副作用：不 ssh、不建仓、不推送",
+      "备注": "同上"
+    },
+    {
+      "file": "scripts/evals/chat-harness.py",
+      "类": "脚本侧（评测）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`--dry-run` ⇒ 只建会话与读观测，**不发消息**（模型侧零调用）",
+      "备注": "评测件：干跑用来量「观测面通不通」"
+    },
+    {
+      "file": "scripts/gates/precommit-gates.sh",
+      "类": "判据面接线（门⑩ 的挂点 · **不是**干跑语义站点）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "本件只**命名**门⑩ 那一步（`--dry-run` 字样在本件的唯一出现处 = 步骤名与其注释），自身一行干跑逻辑都没有 —— 判据本体在 scripts/gates/check-dryrun-semantics.py；挂一步本身零副作用（步骤表 → 退出码）",
+      "备注": "★ 为什么要登进来（而不是把它排除掉）：本门 R1 的口径是「扫到的件逐件必须有落点」，按文件名排除会开一个**静默的洞**；登记 + `类` 写清「不是语义站点」，既不丢覆盖也不混淆。★ 若本件将来不再出现该字样 ⇒ 本行变幽灵，门⑩ 会红（台账不许挂在空气上）"
+    }
+  ]
+}
