@@ -17,6 +17,18 @@ M12 判到的深度（§九 M12：**判到 L2（对象 + 动作）起步**）
   L2  前 2 段（对象 + 动作）：`zerg dev proposal` → `dev proposal`（**起步深度**，本门判到这里）
   L3+ 第 3 段只放 id/名（§3.1 深度上限）—— 不判（`zerg task show <id>` 的 `<id>` 不是命令名）。
 
+★ 命名词与旗标、旗标取值分开（2026-09-21 修 · 实测的假红）
+--------------------------------------------------------
+  `CMD_WORD.findall` 会把**旗标名与旗标取值**也当成命令词 —— 实测 `` `zerg version --json name` ``
+  抽出 `['version','json','name']` ⇒ L2 = `('version','json')` **不在命令树里** ⇒ **真命令被判红**
+  （真仓复跑：`zerg version --json name` / `zerg doctor --quick --json name,verdict` /
+  `zerg update <主机名> --confirm=<主机名>` 三条真示例全红）。这不是「文档写错」，是**判据把数据当命令**：
+  判据要的是「命令名能不能解析」，旗标（`-` 开头）与紧跟旗标的取值不是命令名 ⇒
+  `command_words()` 先剥掉它们再判。
+  另一处同族：`zerg help <主题>` —— 第二段是**主题数据**（`core/cmd/zerg/topics.go`，
+  不在命令树里）⇒ 只判族名 `help` 在树里（族名不在 ⇒ 照旧红）。
+  两处都带成对负控（见 `--self-test` ⑦⑧⑨：好例带旗标 ⇒ 绿；坏命令名照旧 ⇒ 红）。
+
 两棵语料（§二 2.3 文档体系 + §6.4 D3 的接缝）
 ---------------------------------------------
   formal  = 正式面 `docs/**`（**手写命令示例在这里应当是阻断**；今天仓内 0 命中 ⇒ 一上来就能挂阻断档）
@@ -38,7 +50,7 @@ tri-report 语义（§6.3 S6 的「起步 tri-report + baseline 棘轮」）
   python3 scripts/gates/check-doc-cmds.py                      # 两棵都判（默认档）
   python3 scripts/gates/check-doc-cmds.py --scope formal       # 只判正式面
   python3 scripts/gates/check-doc-cmds.py --scope devdocs      # 只判开发文档面（语料不在主仓 —— 走 ZERG_DEVDOCS_ROOT 或默认 ../Zerg-内部文档/项目文档/v2.5.10）
-  python3 scripts/gates/check-doc-cmds.py --self-test          # 成对负控（好件/坏件/空转 6 组）
+  python3 scripts/gates/check-doc-cmds.py --self-test          # 成对负控（好件/坏件/空转 + 旗标/主题三组 = 9 组）
 """
 import argparse
 import json
@@ -64,6 +76,29 @@ EXCL = {"target", "node_modules", "dist", "bin", "vendor", "data", ".git",
 ZERG_INLINE = re.compile(r'`zerg(\s+[^\s`][^`]*)?`')
 FENCE = re.compile(r'^(```|~~~)')
 CMD_WORD = re.compile(r'[A-Za-z][A-Za-z0-9_-]*')
+# 旗标词：`-h` / `--json` / `--confirm=<目标>`（`[` … 这种行文包裹不算 —— 靠 CMD_WORD 自己判不过）
+FLAGWORD = re.compile(r'^-{1,2}[A-Za-z]')
+
+
+def command_words(seg):
+    """一段 `zerg …` 之后的行文 → **命令词**（剥掉旗标与**紧跟旗标的取值**）。
+
+    为什么必须剥（实测的假红，2026-09-21）：`CMD_WORD.findall` 会把旗标名与旗标取值也算成命令词 ——
+    `` `zerg version --json name` `` ⇒ `['version','json','name']` ⇒ L2 = `('version','json')`
+    不在命令树里 ⇒ **真命令被判红**。判据要的是「命令名能不能解析到」，旗标与其取值不是命令名。
+    """
+    out, skip = [], False
+    for tok in seg.split():
+        if FLAGWORD.match(tok):
+            skip = True          # 旗标词本身不进（它的取值在下一个词里）
+            continue
+        if skip:
+            skip = False
+            continue             # 紧随旗标的那个词 = 取值，不是命令名
+        m = CMD_WORD.match(tok)
+        if m:
+            out.append(m.group(0))
+    return out
 
 
 def read(path):
@@ -105,10 +140,10 @@ def extract_zerg_segments(text):
             for seg in re.split(r'(?<!\S)(?:\$|PS\s*[A-Za-z]>|>)\s*', stripped):
                 m = re.match(r'zerg(\s+\S.*)?$', seg.strip())
                 if m:
-                    hits.append((lineno, CMD_WORD.findall(m.group(1) or "")))
+                    hits.append((lineno, command_words(m.group(1) or "")))
         else:
             for m in ZERG_INLINE.finditer(line):
-                hits.append((lineno, CMD_WORD.findall(m.group(1) or "")))
+                hits.append((lineno, command_words(m.group(1) or "")))
     return hits
 
 
@@ -164,8 +199,12 @@ def judge(files, tree, blocking):
                 continue
             # L2 优先（§九 M12 起步深度：对象 + 动作）。L1 只救**单段**命令（裸动词如 `zerg doctor`）——
             # 两段里第一段族名对、第二段动作错 ⇒ 必须红（否则 `dev propozal` 这类坏动作被族名放行）。
+            # ★ 2026-09-21：`help <主题>` 的第二段是**主题数据**（在 `topics.go`，不在命令树里）
+            #   ⇒ 只判族名 `help` 在树里（族名不在 ⇒ 照旧红，不是无脑放行）。
             l2 = tuple(words[:2]) if len(words) >= 2 else None
             l1set = {t[0] for t in tree if len(t) == 1}
+            if words[0] == 'help' and words[0] in l1set:
+                continue
             if (l2 and l2 in tree) or (len(words) == 1 and words[0] in l1set):
                 continue
             n += 1
@@ -250,6 +289,12 @@ def self_test():
         "func init() {\n\tcommands = []*command{\n"
         '\t\t{path: []string{"version"}, run: cmdVersion},\n'
         '\t\t{path: []string{"dev", "proposal"}, run: cmdDevProposal},\n'
+        # ★ 2026-09-21：⑦/⑨ 两组控要用带旗标/带主题的**真命令名** ⇒ 夹具树补这几条
+        '\t\t{path: []string{"help"}, run: cmdHelp},\n'
+        '\t\t{path: []string{"doctor"}, run: cmdDoctor},\n'
+        '\t\t{path: []string{"update"}, run: cmdUpdate},\n'
+        '\t\t{path: []string{"agent", "logs"}, run: cmdAgentLogs},\n'
+        '\t\t{path: []string{"task", "ls"}, run: cmdTaskLs},\n'
         "\t}\n}\n"
     )
     open(os.path.join(tmp, MAIN_REL), "w", encoding="utf-8").write(tree_src)
@@ -308,12 +353,41 @@ def self_test():
     del os.environ["ZERG_DEVDOCS_ROOT"]
     case("⑥ devdocs 命中 ≤ baseline ⇒ 0（棘轮回绿）", 0, rc)
 
+    # ⑦ 正控（修前的**假红** · 2026-09-21）：真命令带旗标与旗标取值 ⇒ 必须绿
+    #    （修前 `zerg version --json name` 抽成 ['version','json','name'] ⇒ L2=('version','json') ⇒ 假红）
+    os.remove(os.path.join(docs, "bad.md"))
+    open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
+        "```sh\nzerg version --json name\n$ zerg doctor --quick --json name,verdict\n"
+        "zerg update <主机名> --confirm=<主机名>\nzerg agent logs <机器名> --json machine\n```\n"
+        "行内 `zerg task ls --json id,status` 也过。\n")
+    rc, lines = check(tmp, ["formal"])
+    case("⑦ 正控（真命令带旗标/旗标取值 ⇒ 0；修前是假红）", 0, rc)
+    if rc:
+        bad.append("⑦ 正控：旗标与旗标取值仍被当成命令词 —— 判词 %s" % (" | ".join(lines[:4]),))
+
+    # ⑧ 负控：**剥旗标不许把区分度剥没了** —— 坏命令名带旗标照旧红
+    open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
+        "```sh\nzerg dev propozal --json name\n```\n")
+    rc, lines = check(tmp, ["formal"])
+    case("⑧ 负控（坏命令名 + 旗标 ⇒ 1）", 1, rc)
+    if not any("propozal" in l for l in lines):
+        bad.append("⑧ 负控：判词里没有坏命令名")
+
+    # ⑨ 正控：`help <主题>`（主题表在 `topics.go`，**不在**命令树里）⇒ 0（修前是假红）；
+    #    族名错 ⇒ 仍红（族名判据一字未改 —— 见 ⑧ 的同一分支）
+    open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
+        "退码表见 `zerg help exit-codes`，输出契约见 `zerg help contract`。\n")
+    rc, lines = check(tmp, ["formal"])
+    case("⑨ 正控（`help <主题>` ⇒ 0；修前是假红）", 0, rc)
+    if rc:
+        bad.append("⑨ 正控：`help <主题>` 仍被判红 —— 判词 %s" % (" | ".join(lines[:4]),))
+
     if bad:
         print("自检失败：")
         for b in bad:
             print("  ✗ " + b)
         return 2
-    print("门⑫ 自检全过（6 组成对/空转负控）")
+    print("门⑫ 自检全过（9 组成对/正控/空转负控）")
     return 0
 
 
