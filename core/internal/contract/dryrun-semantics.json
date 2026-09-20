@@ -55,6 +55,12 @@
    "备注": "导出物是「命令有什么动作」的自描述面"
   },
   {
+   "file": "core/cmd/zerg/family_eggs_cocoons.go",
+   "类": "命令面三态（`cocoon open --dry-run` 的计划件 · 与 guard.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg cocoon open <茧名> --dry-run` ⇒ 退码 0 · stdout 只有计划件 + stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）」· **不起任何服务**（现跑对拍：跑前后 `lsof -nP -iTCP:8610` 逐条相同）· 不落盘；真跑（不带 --dry-run）是明确的「未开放」档（退码 2），不是偷偷执行。"
+  },
+  {
    "file": "core/cmd/zerg/family_h.go",
    "类": "命令面三态（`resource pin|unpin` / `gateway breakers --reset` 的计划件 · 与 guard.go 同一套语义）",
    "语义": "dryrun.v1",

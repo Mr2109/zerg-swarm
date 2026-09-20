@@ -1210,6 +1210,157 @@
    "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
   },
   {
+   "id": "egg/ls#未知旗标",
+   "command": "egg ls",
+   "argv": [
+    "egg",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "egg/ls#不认的契约主号",
+   "command": "egg ls",
+   "argv": [
+    "egg",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "egg/show#未知旗标",
+   "command": "egg show",
+   "argv": [
+    "egg",
+    "show",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "egg/show#不认的契约主号",
+   "command": "egg show",
+   "argv": [
+    "egg",
+    "show",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "cocoon/ls#未知旗标",
+   "command": "cocoon ls",
+   "argv": [
+    "cocoon",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "cocoon/ls#不认的契约主号",
+   "command": "cocoon ls",
+   "argv": [
+    "cocoon",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "cocoon/open#未知旗标",
+   "command": "cocoon open",
+   "argv": [
+    "cocoon",
+    "open",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "cocoon/open#不认的契约主号",
+   "command": "cocoon open",
+   "argv": [
+    "cocoon",
+    "open",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "cocoon/open#说明面不认 --json",
+   "command": "cocoon open",
+   "argv": [
+    "cocoon",
+    "open",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+  },
+  {
+   "id": "egg/run#未知旗标",
+   "command": "egg run",
+   "argv": [
+    "egg",
+    "run",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "egg/run#不认的契约主号",
+   "command": "egg run",
+   "argv": [
+    "egg",
+    "run",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "egg/run#说明面不认 --json",
+   "command": "egg run",
+   "argv": [
+    "egg",
+    "run",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+  },
+  {
    "id": "task/terminate#未知旗标",
    "command": "task terminate",
    "argv": [
