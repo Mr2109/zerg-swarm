@@ -118,7 +118,9 @@ DEFAULT_SCRIPT_GLOBS = ("scripts/*.sh", "scripts/*.py")
 DEFAULT_NOSUFFIX_DIR = "scripts"
 # 无后缀面不下沉的子目录（= check-wired-scripts.py 的 EXCL_SUBDIRS，同口径）：
 # 分域前就有的工作/实验子目录，不进候选面。
-NOSUFFIX_EXCL = ("253", "exportnames", "sandbox-probes")
+# ★ 2026-09-20 T-56 决议⑤：第三棵 `253` 已退役删除 ⇒ 两处名单同批收成两棵
+#   （只改一处 = 两个门打架，见 check-wired-scripts.py 头注释）。
+NOSUFFIX_EXCL = ("exportnames", "sandbox-probes")
 # ── 硬排除（第一档）：结构级，不是「放过」——它们压根不进候选集 ──────────────
 DEFAULT_EXCLUDE_COMPONENTS = (
     ".git", "vendor", "node_modules", "target", "__pycache__", ".history", ".obsidian",

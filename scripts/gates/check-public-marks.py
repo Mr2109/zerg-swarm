@@ -52,8 +52,9 @@ TABLE_REL = "scripts/公开标记.tsv"
 COLS = ["文件", "public", "理由"]
 
 # 扫描面 = 分域第二段的 9 个域（地图 `清单-脚本分域-20260920.tsv` 的同一批）；其它顶层目录
-# （253 · exportnames · sandbox-probes）是分域前就有的工作/实验目录 ⇒ **不在**本门的面里
-# （口径同 `check-wired-scripts.py` / `check-doc-name.py` 的「排除域」）。
+# （exportnames · sandbox-probes）是分域前就有的工作/实验目录 ⇒ **不在**本门的面里
+# （口径同 `check-wired-scripts.py` / `check-doc-name.py` 的「排除域」；`253` 已于
+#  2026-09-20 退役删除 —— T-56 决议⑤）。
 DOMAINS = ("build", "calib", "docs", "evals", "gates", "sandbox", "svc", "wall", "edge-node")
 SKIP_DIRS = {"__pycache__", ".git", ".history", ".mypy_cache", ".pytest_cache",
              "node_modules", "target", "dist", "venv", ".venv", "build"}
