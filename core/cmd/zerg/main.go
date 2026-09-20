@@ -816,13 +816,13 @@ func init() {
 		},
 		{
 			path:    []string{"agent", "reap"},
-			summary: "回收残留（危险 D3 · 本版未开放）",
-			usage:   "zerg agent reap --confirm=<机器名> --yes [--dry-run]",
+			summary: "回收残留干跑单（真回收危险 D3 · 本版未开放；**入库件永不进候选 = 红线**）",
+			usage:   "zerg agent reap --dry-run --min-age-days <n>   # 干跑单（带 plan_id + 逐件证据）\n       zerg agent reap --confirm=<机器名> --yes [--dry-run]   # 真回收（本版未开放）",
 			args:    []string{"机器名"},
 			danger: &dangerSpec{dangerD3, "机器名",
 				"按「声明树 ↔ 现值树」差集回收闲置资源（**默认干跑**；入库件永不进候选 = 红线）",
-				"§九 M9 · §十五.2 三档回收权 · 开工单 T-54"},
-			run: cmdGuarded,
+				"§九 M9 · §十五.2 三档回收权 · RC11 红线 · 开工单 T-54"},
+			run: cmdAgentReap,
 		},
 		{
 			path:    []string{"model", "stop"},
@@ -1388,6 +1388,11 @@ func valueFlagName(a string) string {
 	// 升阶闸门旗标（§20.4 · 批 E · T-62）：`--human-approval` 是**人拍板**那一格的入口。
 	switch a {
 	case "--human-approval":
+		return a
+	}
+	// 回收面旗标（§十五.2 · 批 D · T-54）：`--min-age-days` 是 `RC6` 的**显式**龄阈值（不许魔数）。
+	switch a {
+	case "--min-age-days", "--only":
 		return a
 	}
 	return ""

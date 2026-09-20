@@ -47,6 +47,9 @@ var stageGateRaw []byte
 //go:embed selfupdate.json
 var selfUpdateRaw []byte
 
+//go:embed reap.json
+var reapRaw []byte
+
 // ReceiptSpec —— 交接回执的真源（§20.3 H3 · §20.1 步 9 · §十二 `P-119`/`P-120` · 开工单 T-61）。
 type ReceiptSpec struct {
 	Schema           string   `json:"schema"`
@@ -551,4 +554,96 @@ func (s *SelfUpdateSpec) ExitCodeNamed(name string) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// ReapSpec —— 回收与残留的真源（§十五.2/§十五.3 · `RC1`–`RC14` · 开工单 T-54）。
+//
+// 一句话：三档回收权 × 五类差集**逐条有判词**；`RC11` 红线（入库件永不进候选）单独一栏；
+// 干跑集指纹 `plan_id`（`RC12`）与退役标记落点（`P-111`）都在这里 —— 消费侧不另写一份。
+type ReapSpec struct {
+	Schema           string            `json:"schema"`
+	Note             string            `json:"note"`
+	Tiers            []ReapTier        `json:"tiers"`
+	Differences      []ReapDifference  `json:"differences"`
+	Tier3Prefixes    []string          `json:"tier3_prefixes"`
+	ObjectClasses    []ReapObjectClass `json:"object_classes"`
+	LegendNote       string            `json:"legend_note"`
+	AgeThresholdRule string            `json:"age_threshold_rule"`
+	PlanIDRule       string            `json:"plan_id_rule"`
+	RedLine          ReapRedLine       `json:"red_line"`
+	RetiredMarker    map[string]string `json:"retired_marker"`
+	RCRules          []ReapRCRule      `json:"rc_rules"`
+	NotOpened        string            `json:"not_opened"`
+	Boundary         string            `json:"boundary"`
+}
+
+// ReapTier —— 一档回收权。
+type ReapTier struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Rule string `json:"rule"`
+}
+
+// ReapDifference —— 一类差集（M9 的 `D-A…D-E`）。
+type ReapDifference struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	What  string `json:"what"`
+	Tier  string `json:"tier"`
+	Judge string `json:"judge"`
+}
+
+// ReapObjectClass —— 清册里的一类对象（§十五.3 的 15 类里本件落的那几类）。
+type ReapObjectClass struct {
+	ID    string   `json:"id"`
+	Class string   `json:"class"`
+	Globs []string `json:"globs"`
+	Tier  string   `json:"tier"`
+	Judge string   `json:"judge"`
+}
+
+// ReapRedLine —— `RC11` 红线。
+type ReapRedLine struct {
+	Rule        string `json:"rule"`
+	Enforcement string `json:"enforcement"`
+	Known       string `json:"known"`
+}
+
+// ReapRCRule —— `RC*` 一条。
+type ReapRCRule struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+// Reap —— 解出回收真源（解不动 / 缺关键格 ⇒ 报错，不吞）。
+func Reap() (*ReapSpec, error) {
+	var s ReapSpec
+	if err := json.Unmarshal(reapRaw, &s); err != nil {
+		return nil, fmt.Errorf("contract: 回收真源解不动（reap.json 坏了？）: %w", err)
+	}
+	if len(s.Tiers) != 3 || len(s.Differences) != 5 || len(s.RCRules) != 14 ||
+		strings.TrimSpace(s.RedLine.Rule) == "" || strings.TrimSpace(s.PlanIDRule) == "" {
+		return nil, fmt.Errorf("contract: 回收真源缺关键格（三档 / 五类差集 / RC1–RC14 / 红线 / plan_id 有一处不齐）")
+	}
+	for _, d := range s.Differences {
+		if strings.TrimSpace(d.Judge) == "" {
+			return nil, fmt.Errorf("contract: 回收真源里 %s 没有判词 —— 判据④要的是「逐条有判词」", d.ID)
+		}
+	}
+	for _, c := range s.ObjectClasses {
+		if strings.TrimSpace(c.Judge) == "" || len(c.Globs) == 0 {
+			return nil, fmt.Errorf("contract: 回收真源里清册类 %s 没有判词或没有 glob —— 判据④要的是「逐条有判词」", c.ID)
+		}
+	}
+	return &s, nil
+}
+
+// JudgeOf 按差集 id 取判词（不在真源里 ⇒ ok=false —— 缺就缺，不猜）。
+func (s *ReapSpec) JudgeOf(id string) (string, bool) {
+	for _, d := range s.Differences {
+		if d.ID == id {
+			return d.Judge, true
+		}
+	}
+	return "", false
 }

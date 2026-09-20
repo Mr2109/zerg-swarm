@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/contract"
 	"github.com/Mr2109/zerg-swarm/core/internal/selfupdate"
@@ -414,3 +415,95 @@ func UpdateSplitViolationsRawForTest(path, summary, usage, dangerSource string) 
 
 // SelfUpdateExitCodesMatchForTest 逐格对拍判定口的**投影**（真源 ⟷ 本包常量在 selfupdate 包内已自测）。
 func SelfUpdateExitCodesMatchForTest() error { return selfupdate.ExitCodesMatchTruthSource() }
+
+// ---- T-54：回收与残留（`core/internal/contract/reap.json`）的**只读桥** ----
+
+// ReapSpecForTest 回收真源的一格。
+type ReapSpecForTest struct {
+	Tiers       []string
+	DiffJudges  map[string]string
+	TierOfDiff  map[string]string
+	RCRules     []string
+	RedLine     string
+	PlanIDRule  string
+	ObjectClass []string
+	RetiredPath string
+}
+
+// ReapSpecOfForTest 取回收真源。
+func ReapSpecOfForTest() (ReapSpecForTest, error) {
+	s, err := contract.Reap()
+	if err != nil {
+		return ReapSpecForTest{}, err
+	}
+	out := ReapSpecForTest{DiffJudges: map[string]string{}, TierOfDiff: map[string]string{},
+		RedLine: s.RedLine.Rule, PlanIDRule: s.PlanIDRule}
+	for _, t := range s.Tiers {
+		out.Tiers = append(out.Tiers, t.Name)
+	}
+	for _, d := range s.Differences {
+		out.DiffJudges[d.ID] = d.Judge
+		out.TierOfDiff[d.ID] = d.Tier
+	}
+	for _, r := range s.RCRules {
+		out.RCRules = append(out.RCRules, r.ID)
+	}
+	for _, c := range s.ObjectClasses {
+		out.ObjectClass = append(out.ObjectClass, c.ID+" "+c.Class+" tier="+c.Tier)
+	}
+	out.RetiredPath = s.RetiredMarker["verdict"]
+	return out, nil
+}
+
+// ReapItemForTest 干跑单里的一件。
+type ReapItemForTest struct {
+	Rel, Tier, Class, Diff, Judge string
+	Bytes                         int64
+	Evidence                      map[string]string
+}
+
+// ReapPlanForTest 一份干跑单的形状。
+type ReapPlanForTest struct {
+	PlanID  string
+	Items   []ReapItemForTest
+	Skipped []ReapItemForTest
+	Tracked []string
+	Bytes   int64
+}
+
+// BuildReapPlanForTest 造干跑单（注入「算不算入库件」的集合 —— 让 `RC11` 红线**能负控**）。
+func BuildReapPlanForTest(root string, minAgeDays int, tracked []string) (ReapPlanForTest, error) {
+	spec, err := contract.Reap()
+	if err != nil {
+		return ReapPlanForTest{}, err
+	}
+	set := map[string]bool{}
+	for _, t := range tracked {
+		set[t] = true
+	}
+	p := buildReapPlan(root, spec, minAgeDays, func(rel string) bool { return set[rel] }, time.Now())
+	out := ReapPlanForTest{PlanID: p.PlanID, Tracked: p.Tracked, Bytes: p.TotalBytes}
+	conv := func(in []reapItem) []ReapItemForTest {
+		res := []ReapItemForTest{}
+		for _, it := range in {
+			res = append(res, ReapItemForTest{Rel: it.Rel, Tier: it.Tier, Class: it.Class,
+				Diff: it.Diff, Judge: it.Judge, Bytes: it.Bytes, Evidence: it.Evidence})
+		}
+		return res
+	}
+	out.Items = conv(p.Items)
+	out.Skipped = conv(p.Skipped)
+	return out, nil
+}
+
+// ReapPlanIDOfSameSetForTest 同一集两次取指纹（证明它稳定）；再喂一个改过的集（证明它能变）。
+func ReapPlanIDOfSameSetForTest(root string, minAgeDays int) (string, string, error) {
+	spec, err := contract.Reap()
+	if err != nil {
+		return "", "", err
+	}
+	none := func(string) bool { return false }
+	a := buildReapPlan(root, spec, minAgeDays, none, time.Now()).PlanID
+	b := buildReapPlan(root, spec, minAgeDays, none, time.Now()).PlanID
+	return a, b, nil
+}
