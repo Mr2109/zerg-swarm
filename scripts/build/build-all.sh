@@ -11,12 +11,23 @@
 #   bash scripts/build/build-all.sh --public          # UI 用 --no-default-features（对齐公开快照形态）
 #   bash scripts/build/build-all.sh --no-sign                  # 跳过 codesign（非 macOS / 调试）
 #   bash scripts/build/build-all.sh --only-cli                 # 只出命令面 bin/zerg（薄壳开发用）
+#   bash scripts/build/build-all.sh --only-core                # 只出主控 bin/zerg-core（**换件专用**）
 #   （无论哪个形态都会另编茧壁 zerg-wall → bin/，见 scripts/build/build-wall.sh；它不进 dist 制品矩阵）
 #
 # --only-cli 为什么需要单独一档（2026-09-20 · T-02）：命令面 `core/cmd/zerg` 是**独立客户端二进制**，
 #   它的开发/自测不该顺手重编 `bin/zerg-core` —— 主控**正在跑**，就地覆盖它的制品文件等于埋一次
 #   「换件」（改 cdhash ⇒ TCC 授权失效；重启即换实现）。本档只写 `bin/zerg` 一个文件，
 #   其余制品与本脚本写的 `build-info.json`（升级器的身份依据）**一个字节都不动** ✓。
+#
+# --only-core 为什么也需要单独一档（2026-09-20 · 批 B ①·换主控）：反过来同样成立 —— **换主控**时
+#   不该顺手重编另外四件。三条实据：
+#   ① `bin/zerg-agentd` = **本机子端正在跑的那件**（`ps` 实测 PPID=1 由 launchd 托管、监听 8100）⇒
+#      就地覆盖在跑的制品文件等于顺手埋一次「子端换件」，而本批的纪律是「只重启主控这一个进程、
+#      子端/UI 不动」；
+#   ② 在 macOS 上就地覆盖**正在运行**的可执行文件可能把那个进程直接打崩（不是换实现，是掉服务）；
+#   ③ 另外三件（`zerg-agent`/`zerg-ui`/`zerg-wall`）与本次换件无关，重编只增加变量。
+#   ⇒ 本档只写 `bin/zerg-core` 一个文件；`build-info.json` **也不动** —— 它是**整批制品**的聚合描述，
+#     只重编一件却改写它，等于让描述与现实不符；主控自己的身份来自 `-ldflags`（进程自报 code_sha）。
 #
 # 身份注入：
 #   Go  → -ldflags -X .../internal/version.{Commit,BuildTime}（version.go 里是 var，可注入）
@@ -30,6 +41,7 @@ DIST=0
 BUILD_UI=1
 SIGN=1
 ONLY_CLI=0
+ONLY_CORE=0
 for arg in "$@"; do
   case "$arg" in
     --dist) DIST=1 ;;
@@ -37,9 +49,15 @@ for arg in "$@"; do
     --public) PUBLIC=1 ;;   # 本地形态对齐公开快照（关私有默认 feature：示例虫茧等）
     --no-sign) SIGN=0 ;;
     --only-cli) ONLY_CLI=1 ;;
+    --only-core) ONLY_CORE=1 ;;
     *) echo "未知参数: $arg" >&2; exit 64 ;;
   esac
 done
+# 两个「只出一件」档指向不同制品 ⇒ 同时给是用法错（不猜谁优先：猜错就编错东西）
+if [ "$ONLY_CLI" = "1" ] && [ "$ONLY_CORE" = "1" ]; then
+  echo "✗ --only-cli 与 --only-core 互斥（一个只写 bin/zerg，一个只写 bin/zerg-core）⇒ 用法错" >&2
+  exit 64
+fi
 
 VERSION="$(grep -m1 '^const Version = ' core/internal/version/version.go | sed 's/.*"\(.*\)".*/\1/')"
 if [ -z "$VERSION" ]; then
@@ -65,6 +83,46 @@ LDFLAGS="-s -w -X github.com/Mr2109/zerg-swarm/core/internal/version.Commit=${SH
 echo "🏷  版本 $VERSION · 代码 $SHA · 构建 $BUILD_TIME"
 echo "📁 输出 $OUT"
 
+# ── 重签（稳定身份 + 固定 identifier）───────────────────────────────────────────
+# 为什么用**稳定签名身份**（2026-09-14）：ad-hoc 重签每次都会改变 cdhash ⇒ macOS 的 TCC「本地网络」
+#   把每个新 cdhash 当新应用 ⇒ 授权列表越堆越多、且旧授权失效（现象：主控拨号报 no route to host）。
+#   用稳定身份后，同一条授权终身有效。无证书的机器回退 ad-hoc（不阻断构建）。
+# 为什么提成函数：`--only-core` 与末尾的批量重签必须走**同一条**签名路径 —— 两份实现就会漂
+#   （漂的形态正是本仓最怕的：一件用稳定身份、另一件回落 ad-hoc，TCC 授权当场失效）。
+resolve_sign_identity() {   # 只解析身份，不改文件；结果落 ZERG_SIGN_ID / SIGN_MODE
+  [ "${SIGN:-1}" = "1" ] || return 0
+  command -v codesign >/dev/null 2>&1 || return 0
+  ZERG_SIGN_ID="${ZERG_SIGN_ID:-Zerg Local Signing}"
+  if security find-identity -p codesigning 2>/dev/null | grep -q "$ZERG_SIGN_ID" \
+     || codesign -s "$ZERG_SIGN_ID" --force /tmp/.zerg-sign-probe 2>/dev/null; then
+    SIGN_MODE="stable:$ZERG_SIGN_ID"
+  else
+    ZERG_SIGN_ID="-"; SIGN_MODE="adhoc"
+  fi
+  if [ "$SIGN_MODE" = "adhoc" ]; then
+    echo "   ⚠️  未找到签名身份「${ZERG_SIGN_ID}」，回退 ad-hoc（本机 TCC 授权会随重编失效）"
+  fi
+  return 0
+}
+
+sign_one() {  # sign_one <文件> —— 单件重签；identifier 按既有固定表
+  local b="$1" ZID
+  [ -f "$b" ] || return 0
+  [ "${SIGN:-1}" = "1" ] || return 0
+  command -v codesign >/dev/null 2>&1 || return 0
+  case "$(basename "$b")" in
+    zerg-core)   ZID=com.zerg.core ;;
+    zerg-agent)  ZID=com.zerg.agent ;;
+    zerg-agentd) ZID=com.zerg.agentd ;;
+    zerg-ui)     ZID=com.zerg.ui ;;
+    zerg-wall)   ZID=com.zerg.wall ;;
+    *)           ZID="com.zerg.$(basename "$b")" ;;
+  esac
+  codesign -s "$ZERG_SIGN_ID" --identifier "$ZID" --force "$b" >/dev/null 2>&1 \
+    && echo "   🔏 已重签名 $(basename "$b")（${ZID}，${SIGN_MODE}）"
+  return 0
+}
+
 # 命令面 zerg（薄壳 · 独立客户端二进制）：与 9 个既有入口同 module、复用 core/internal/*（§6.1）。
 # 放在最前，因为 --only-cli 只编它一件就收工。
 echo "→ 命令面 zerg（薄壳 · core/cmd/zerg）"
@@ -73,6 +131,20 @@ echo "→ 命令面 zerg（薄壳 · core/cmd/zerg）"
 if [ "$ONLY_CLI" = "1" ]; then
   echo "✅ 构建完成（--only-cli：只写 bin/zerg；其余制品与 build-info.json 一个字节未动）"
   printf "   %-14s %s 字节\n" "zerg" "$(stat -f%z "$OUT/zerg" 2>/dev/null || stat -c%s "$OUT/zerg")"
+  exit 0
+fi
+
+# ── --only-core：换件专用档（只写 bin/zerg-core 一个文件）───────────────────────
+#   纪律：换主控时**不许**顺手重编子端/UI（`bin/zerg-agentd` 是**正在跑**的子端件，覆盖它等于
+#   埋一次子端换件，且 macOS 上就地覆盖在跑的可执行文件可能把那个进程打崩）。
+#   构建身份（-ldflags）与重签（稳定身份 + `com.zerg.core`）两件事与本脚本其余档**逐字同源**。
+if [ "$ONLY_CORE" = "1" ]; then
+  echo "→ 主控 zerg-core（--only-core）"
+  (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg-core" ./cmd/zerg-core)
+  resolve_sign_identity
+  sign_one "$OUT/zerg-core"
+  echo "✅ 构建完成（--only-core：只写 bin/zerg-core；其余制品与 build-info.json 一个字节未动）"
+  printf "   %-14s %s 字节\n" "zerg-core" "$(stat -f%z "$OUT/zerg-core" 2>/dev/null || stat -c%s "$OUT/zerg-core")"
   exit 0
 fi
 
@@ -130,30 +202,10 @@ if [ "$BUILD_UI" = "1" ]; then
 fi
 
 if [ "$SIGN" = "1" ] && command -v codesign >/dev/null 2>&1; then
-  # 2026-09-14：用**稳定签名身份**（自签证书 "Zerg Local Signing"）+ 固定 identifier。
-  # 背景：ad-hoc 重签每次都会改变 cdhash ⇒ macOS 的 TCC「本地网络」把每个新 cdhash 当新应用
-  #      ⇒ 授权列表越堆越多，且旧授权失效（现象：主控拨号报 no route to host）。
-  # 用稳定身份后，同一条授权终身有效。无证书的机器回退 ad-hoc（不阻断构建）。
-  ZERG_SIGN_ID="${ZERG_SIGN_ID:-Zerg Local Signing}"
-  if security find-identity -p codesigning 2>/dev/null | grep -q "$ZERG_SIGN_ID" \
-     || codesign -s "$ZERG_SIGN_ID" --force /tmp/.zerg-sign-probe 2>/dev/null; then
-    SIGN_MODE="stable:$ZERG_SIGN_ID"
-  else
-    ZERG_SIGN_ID="-"; SIGN_MODE="adhoc"
-  fi
-  [ "$SIGN_MODE" = "adhoc" ] && echo "   ⚠️  未找到签名身份「${ZERG_SIGN_ID}」，回退 ad-hoc（本机 TCC 授权会随重编失效）"
+  resolve_sign_identity
+  # 签名路径与 `--only-core` 档**逐字同源**（同一对函数）—— 见上面 resolve_sign_identity/sign_one 的注释。
   for b in "$OUT"/zerg "$OUT"/zerg-core "$OUT"/zerg-agent "$OUT"/zerg-ui "$REPO_ROOT"/bin/zerg-agentd "$REPO_ROOT"/bin/cocoon-docs-service "${REPO_ROOT}"/bin/zerg-wall; do
-    [ -f "$b" ] || continue
-    case "$(basename "$b")" in
-      zerg-core)   ZID=com.zerg.core ;;
-      zerg-agent)  ZID=com.zerg.agent ;;
-      zerg-agentd) ZID=com.zerg.agentd ;;
-      zerg-ui)     ZID=com.zerg.ui ;;
-      zerg-wall)   ZID=com.zerg.wall ;;
-      *)           ZID="com.zerg.$(basename "$b")" ;;
-    esac
-    codesign -s "$ZERG_SIGN_ID" --identifier "$ZID" --force "$b" >/dev/null 2>&1 \
-      && echo "   🔏 已重签名 $(basename "$b")（${ZID}，${SIGN_MODE}）"
+    sign_one "$b"
   done
 fi
 
