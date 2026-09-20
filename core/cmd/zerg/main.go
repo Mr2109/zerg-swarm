@@ -613,6 +613,15 @@ func init() {
 			endpoint: "",
 			run:      cmdCodeFind,
 		},
+		{
+			path:     []string{"repo", "status"},
+			kind:     "RepoStatus",
+			summary:  "看仓脏没脏 / HEAD 在哪 / 有没有别人在写它（手敲 git status 的替身）",
+			usage:    "zerg repo status [--json <字段>]",
+			fields:   []string{"head", "branch", "path", "status", "untracked"},
+			endpoint: "",
+			run:      cmdRepoStatus,
+		},
 		// 写面两枚：**同一个执行门**（三态：--dry-run 计划件 / 缺 --yes ⇒ 2 / 齐了才发）
 		{
 			path:    []string{"resource", "pin"},
