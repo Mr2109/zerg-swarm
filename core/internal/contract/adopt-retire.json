@@ -1,0 +1,396 @@
+{
+  "schema": "zerg-adopt-retire/1",
+  "note": "T-56 收编与退役的**归属真源**（§6.3 S7 · §5.6 汇总 · §7.1 P9 · 决策表-收编与退役-20260920 的 10 处拍板）。本表登记：四类逐面分布 / 10 条决议的落点 / ③ 退役台账 / ④ 剩余待定的**逐条承接**（不许长期停在待定）/ 两族判据的落点与缺口。真源本体仍在各件里，本表**指向**它们。机检：core/cmd/zerg/adopt_retire_test.go。",
+  "source": [
+    "Zerg-内部文档/项目文档/v2.5.10/设计-命令面与契约-v0.7.md §5.0（行 210–215 四类定义与判据）· §5.1–§5.5 逐条 · §5.6（行 380–392 汇总与七组）",
+    "Zerg-内部文档/项目文档/v2.5.10/决策表-收编与退役-20260920.md（10 处拍板 · Mr2109 全部「按建议」）",
+    "Zerg-内部文档/项目文档/v2.5.10/取证-七入口调用面-20260920.md（决议④ 的取证复核）"
+  ],
+  "was": {
+    "tally": {
+      "adopt": 41,
+      "internal": 145,
+      "retire": 4,
+      "pending": 83,
+      "total": 273
+    },
+    "source_line": "设计-命令面与契约-v0.7.md §5.6 行 383–388（逐格；行 388 合计 = 273 = 41 + 145 + 4 + 83）",
+    "faces": {
+      "HTTP 路径": 76,
+      "入口（cmd/Makefile/bin/顶层）": 13,
+      "门禁步骤": 46,
+      "脚本": 125,
+      "UI 模块": 13
+    }
+  },
+  "faces": [
+    {
+      "face": "HTTP 路径",
+      "objects": 76,
+      "adopt": 48,
+      "internal": 28,
+      "retire": 0,
+      "pending": 0,
+      "why": "① 36 原样 + 9（决议② 内部任务 9 条端点）+ 3（决议⑩ 三件杂项就近归并） = 48；② 8 原样 + 17（决议① 对话面）+ 3（决议③ 文件根 ⇒ 迁往虫茧） = 28"
+    },
+    {
+      "face": "入口（cmd/Makefile/bin/顶层）",
+      "objects": 13,
+      "adopt": 0,
+      "internal": 5,
+      "retire": 1,
+      "pending": 7,
+      "why": "② 5 不动（zerg-core · zerg-agentd · Makefile · bin/ · 顶层两件启动脚本）；③ 1 = compressor_demo；④ 7 = P13 的七个老入口（**本枚只取证，生死待拍**）"
+    },
+    {
+      "face": "门禁步骤",
+      "objects": 46,
+      "adopt": 0,
+      "internal": 44,
+      "retire": 0,
+      "pending": 2,
+      "why": "零 ① 零 ③（「脚本不动，加一层薄壳」）；④ 2 = 步 39/40（术语表 ROOT 写死 + 假红未清 · i18n `rc=2` 语义未拍）"
+    },
+    {
+      "face": "脚本",
+      "objects": 125,
+      "adopt": 2,
+      "internal": 93,
+      "retire": 3,
+      "pending": 27,
+      "why": "② 81 原样 + 12（决议⑦ 服务 5 并入 core + 决议⑧ 构建 7 归 `zerg build`） = 93；③ 3 = `scripts/253/` 三件（**本枚已删**）；④ 27 = 评测 22 + 标定 3 + 两只文档门 2"
+    },
+    {
+      "face": "UI 模块",
+      "objects": 13,
+      "adopt": 3,
+      "internal": 9,
+      "retire": 0,
+      "pending": 1,
+      "why": "② 7 原样 + 1（决议① 对话视图）+ 1（决议③ 文件浏览面板 ⇒ 迁往虫茧） = 9；④ 1 = 编辑器内核 ferrite（三条硬骨头里唯一没被 10 条决议覆盖）"
+    }
+  ],
+  "tally": {
+    "objects": 273,
+    "adopt": 53,
+    "internal": 179,
+    "retire": 4,
+    "pending": 37,
+    "movement": {
+      "adopt": "41 + 9（决议②）+ 3（决议⑩） = 53",
+      "internal": "145 + 17（决议① HTTP）+ 1（决议① 界面）+ 3（决议③ HTTP）+ 1（决议③ 界面）+ 12（决议⑦⑧） = 179",
+      "retire": "4（不变：253 三件 + compressor_demo）",
+      "pending": "83 − 46（落回量） = 37"
+    },
+    "seven_groups": {
+      "对话面": 19,
+      "内部任务": 9,
+      "文件浏览器": 4,
+      "入口": 7,
+      "门禁": 2,
+      "脚本四条线": 39,
+      "其余杂项": 3,
+      "sum": 83
+    },
+    "pending_row_vs_slot": {
+      "by_rows": 37,
+      "by_seven_group_slots": 36,
+      "diff": 1,
+      "note": "口径差**照实登记**：§5.5 逐行读界面 ④ = 3 行（chat · ferrite · filebrowse），而 §5.6 的七组只给界面 3 个槽（对话面 2 + 文件浏览器 1）；若那 2 个槽是 chat 的 2 件，则 ferrite 行没有槽 ⇒ 逐行读 37 · 槽读 36。本表取**逐行读 37**，并把 ferrite 单列在 pending_items 里，让这一条差**可见、可复核**（与 `验真-§五-UI与杂项` 记的 `?` 同源，留下一版定稿）。"
+    },
+    "seven_groups_source": "设计-命令面与契约-v0.7.md §5.6 行 391（七组）"
+  },
+  "decisions": [
+    {
+      "id": 1,
+      "决议": "对话面 19 条 ⇒ **不开命令面**",
+      "verdict": "保留为内部实现（②）",
+      "landing": "只登记归属 · 不建命令（决策表 §三① 选 A）",
+      "status": "已落",
+      "evidence": "./bin/zerg --help | grep -cE '^  zerg chat' ⇒ 0（命令树 118 条里零 chat 族）"
+    },
+    {
+      "id": 2,
+      "决议": "内部任务引擎 9 条 ⇒ 收编 `zerg itask`",
+      "verdict": "收编为命令（①）",
+      "landing": "T-49 已开（`5a050a7d`：四条只读面 + 五条写面登记 · 归属定案独立成族）；**本枚只补判据**",
+      "status": "已落",
+      "evidence": "./bin/zerg itask ls ⇒ rc=0（16 类任务现读）；7 条命令路径与 9 条端点逐条对齐见 itask_criteria"
+    },
+    {
+      "id": 3,
+      "决议": "宿主文件浏览器 4 条 ⇒ 随文件浏览器虫茧迁走",
+      "verdict": "归属写「迁往虫茧」（②的迁移态）",
+      "landing": "**只写归属** · 实际搬迁另立项（本枚不搬）",
+      "status": "已落",
+      "evidence": "core/internal/api/fileroots.go 24570 B 仍在场；./bin/zerg --help | grep -cE '^  zerg file' ⇒ 0"
+    },
+    {
+      "id": 4,
+      "决议": "7 个老入口 ⇒ 先补「谁在调我」取证，再定生死",
+      "verdict": "维持待定（④）· 本枚**只取证**",
+      "landing": "取证复核落 Zerg-内部文档/项目文档/v2.5.10/取证-七入口调用面-20260920.md；真源 = core/internal/contract/unresolved-entries.json",
+      "status": "已落",
+      "evidence": "go test ./cmd/zerg/ -run TestUnresolved -count=1 ⇒ 两测 PASS；7 件**一个未删**"
+    },
+    {
+      "id": 5,
+      "决议": "`scripts/253/` 三件 ⇒ 清完引用面即删",
+      "verdict": "退役删除（③）",
+      "landing": "主仓 `d52a9c7d`（删目录 + 摘两处排除域名单 **同一提交**）· Zerg-内部文档 `7895d45`（清单 108→107）",
+      "status": "已落",
+      "evidence": "ls scripts/253 ⇒ No such file or directory；EXCL_SUBDIRS / NOSUFFIX_EXCL 里零 `253`"
+    },
+    {
+      "id": 6,
+      "决议": "虫卵/虫茧两族 ⇒ 立项补判据",
+      "verdict": "立项（判据缺口清单，**不代造判据**）",
+      "landing": "任务单新增 T-63 + 本表 egg_cocoon_criteria（逐条缺口带出处）",
+      "status": "已落",
+      "evidence": "./bin/zerg --help 里 egg 3 条 + cocoon 2 条（另 egg pin/unpin/retire 只登记形状 · 不进 --help）"
+    },
+    {
+      "id": 7,
+      "决议": "构建族/服务族 ⇒ 服务并入 `core`，不新立 `svc`",
+      "verdict": "保留为内部实现（②）",
+      "landing": "只落归属（`scripts/svc/` 5 件 + `scripts/build/` 7 件 ⇒ ②）",
+      "status": "已落",
+      "evidence": "./bin/zerg --help | grep -cE '^  zerg svc' ⇒ 0；core daemon ls 已在（2 行）"
+    },
+    {
+      "id": 8,
+      "决议": "`zerg update` 真源 ⇒ `core/internal/selfupdate`",
+      "verdict": "归属登记（② · 另两处变调用方）",
+      "landing": "T-52 已做（`dda204bf`：一处真源 + 两处对拍）；本枚只文档化归属与对拍面",
+      "status": "已落",
+      "evidence": "core/internal/contract/selfupdate.json 在场（4357 B · 该票的真源）"
+    },
+    {
+      "id": 9,
+      "决议": "`api call` 写口 ⇒ 维持不开",
+      "verdict": "归属登记（**不动**）",
+      "landing": "只把这一条写进归属表（§7.1 P10 定案：逃生门等命令面稳了再放）",
+      "status": "已落",
+      "evidence": "./bin/zerg --help | grep -cE 'zerg api call' ⇒ 0"
+    },
+    {
+      "id": 10,
+      "决议": "三件杂项 ⇒ 就近归并",
+      "verdict": "收编为命令（① · 归入既有族）",
+      "landing": "归档检索 ⇒ `doc` · git 状态 ⇒ `task` · 本机排除开关 ⇒ `context`（**不新立族**）",
+      "status": "已落",
+      "evidence": "./bin/zerg --help | grep -cE '^  zerg (doc|task|context) ' ⇒ 14（三族均在 · 无新族）"
+    }
+  ],
+  "itask_criteria": {
+    "归属定案": "独立成族 `itask`，不并进 `core`（T-49 ③ 逐字：`core` 管主控进程自身，引擎是主控里的一个子系统）",
+    "endpoints_9": [
+      "GET /api/internal-tasks",
+      "GET /api/internal-tasks/state",
+      "GET /api/internal-tasks/modes",
+      "GET /api/internal-tasks/intervals",
+      "POST /api/internal-tasks/{id}/mode",
+      "POST /api/internal-tasks/{id}/interval",
+      "POST /api/internal-tasks/{id}/run",
+      "POST /api/internal-tasks/start",
+      "POST /api/internal-tasks/stop"
+    ],
+    "commands_7": [
+      "ls",
+      "state",
+      "mode",
+      "interval",
+      "start",
+      "stop",
+      "run"
+    ],
+    "read_4": [
+      "ls",
+      "state",
+      "mode",
+      "interval"
+    ],
+    "write_guarded_3": [
+      "start",
+      "stop",
+      "run"
+    ],
+    "接缝": "常驻 `health-check` / `proc-cleanup`（6h）是 `itask ls` 里的**两条具体任务**（`cooldown` 字段即周期）⇒ 周期与模式一律走 `itask interval` / `itask mode`（一处接口，16 类共用 · `P-046` 落点）",
+    "判据（本枚补）": "9 条端点字面 + 7 条命令路径逐条**现跑命中**（main.go 命令树 / family_itask.go），3 条写面命令必须走 `cmdGuarded`（危险 D2）；由 adopt_retire_test.go 机检，带负控。",
+    "mapping": [
+      {
+        "endpoint": "GET /api/internal-tasks",
+        "command": "ls",
+        "state": "只读 · 已开放"
+      },
+      {
+        "endpoint": "GET /api/internal-tasks/state",
+        "command": "state",
+        "state": "只读 · 已开放"
+      },
+      {
+        "endpoint": "GET /api/internal-tasks/modes",
+        "command": "mode",
+        "state": "只读 · 已开放（写面 POST /api/internal-tasks/{id}/mode 未开放）"
+      },
+      {
+        "endpoint": "GET /api/internal-tasks/intervals",
+        "command": "interval",
+        "state": "只读 · 已开放（写面 POST /api/internal-tasks/{id}/interval 未开放）"
+      },
+      {
+        "endpoint": "POST /api/internal-tasks/{id}/mode",
+        "command": "mode",
+        "state": "**未开放**（本版拒执 ⇒ 2 · 命令树里没有 `itask mode set` 这个子命令）"
+      },
+      {
+        "endpoint": "POST /api/internal-tasks/{id}/interval",
+        "command": "interval",
+        "state": "**未开放**（同上）"
+      },
+      {
+        "endpoint": "POST /api/internal-tasks/start",
+        "command": "start",
+        "state": "危险 D2 · 只登记形状（本版未开放）"
+      },
+      {
+        "endpoint": "POST /api/internal-tasks/stop",
+        "command": "stop",
+        "state": "危险 D2 · 只登记形状（本版未开放）"
+      },
+      {
+        "endpoint": "POST /api/internal-tasks/{id}/run",
+        "command": "run",
+        "state": "危险 D2 · 只登记形状（本版未开放）"
+      }
+    ],
+    "write_registered_not_open": [
+      "mode",
+      "interval"
+    ],
+    "对齐面（照实记）": "4 条只读端点在实现件（family_itask.go）里逐条有字面；3 条写面（start/stop/run）走 `cmdGuarded` 且危险档点名了自己的 POST 端点；2 条写面（mode/interval 的 POST）**只登记、未实现** ⇒ 命令树里不许出现 `itask mode set` / `itask interval set`（机检按这条负向断言）。"
+  },
+  "egg_cocoon_criteria": {
+    "立项": "任务单 `任务-命令面落地-20260920.md` 新增 **T-63**（本枚只立项 + 点名缺口，**不自己造判据**）",
+    "existing_commands": {
+      "在 --help 里": [
+        "zerg egg ls",
+        "zerg egg show",
+        "zerg egg run",
+        "zerg cocoon ls",
+        "zerg cocoon open"
+      ],
+      "只登记形状（不进 --help）": [
+        "zerg egg pin",
+        "zerg egg unpin",
+        "zerg egg retire"
+      ],
+      "现跑出处": "./bin/zerg --help（行 19/20/29/30/31）＋ core/cmd/zerg/main.go:631/640/650/659/666/867/875/883"
+    },
+    "missing_criteria": [
+      {
+        "缺口": "「出茧」的产物是什么（茧做成什么算完成）",
+        "出处": "§5.5:368 代价列逐字「要定『出茧』的产物与判据」",
+        "状态": "未定（本件不代造）"
+      },
+      {
+        "缺口": "`zerg egg ls --json` 与子端 `/eggs` 的字段逐条对齐（卵 × 设备矩阵）",
+        "出处": "T-47 判据①",
+        "状态": "**缺一半**：主控面没有卵/茧投影端点（family_eggs_cocoons.go 自述现跑 404）⇒ 无可对拍面"
+      },
+      {
+        "缺口": "「同一时刻至多一枚在孵卵」的判定口",
+        "出处": "T-47 判据② · main.go `egg pin` 的 dangerSpec 逐字",
+        "状态": "约束写在命令说明里，**判据未立**"
+      },
+      {
+        "缺口": "两族的族名进 `N4` 硬占位表",
+        "出处": "T-47 判据④ · family_eggs_cocoons.go 头注释逐字（定稿是冻结件 ⇒ 待拍）",
+        "状态": "待拍"
+      },
+      {
+        "缺口": "`cocoon open` 真起 8610 服务的验收口径（起进程档）",
+        "出处": "T-47 判据③ · §九 M20 `F-3`",
+        "状态": "本版未开放（拒执 ⇒ 2）"
+      }
+    ]
+  },
+  "retire_ledger": [
+    {
+      "object": "scripts/253/branch_system.sh",
+      "state": "已删（2026-09-20）",
+      "evidence": "主仓 d52a9c7d"
+    },
+    {
+      "object": "scripts/253/docker_worker.go",
+      "state": "已删（2026-09-20）",
+      "evidence": "主仓 d52a9c7d（旧副本；真身在 core/internal/agent/docker_worker.go）"
+    },
+    {
+      "object": "scripts/253/docker_worker_test.go",
+      "state": "已删（2026-09-20）",
+      "evidence": "主仓 d52a9c7d"
+    },
+    {
+      "object": "core/cmd/compressor_demo/main.go",
+      "state": "**待删（本枚未授权）**",
+      "evidence": "38 行 · 引用面 2 行（README.md:35 · docs/skills/zerg-overview.md:63）· 删除动作不在本枚授权范围（本枚授权仅限决议⑤）⇒ 停 † 待拍"
+    }
+  ],
+  "pending_items": [
+    {
+      "object": "入口 7 件（agent · api · compat · model · review · scheduler · trace）",
+      "count": 7,
+      "why": "归属未定（§7.1 P13 只到取证；没有调用面统计前一个都不许删）",
+      "next": "取证已齐（取证-七入口调用面-20260920.md）⇒ 逐件拍生死；其中 4 件有调用方、3 件只到「未见」",
+      "承接": "待 Mr2109 拍（P13）"
+    },
+    {
+      "object": "门禁步骤 2 步（docs: glossary 术语表 · docs: i18n-drift 双语漂移）",
+      "count": 2,
+      "why": "术语表 ROOT 写死 + 6 处假红未清；i18n 的 `rc=2` 语义未拍",
+      "next": "与既有待办同批清（E4/D3 第一步 · E6）",
+      "承接": "待办 E4 / E6"
+    },
+    {
+      "object": "脚本·评测线 22 件（scripts/evals/）",
+      "count": 22,
+      "why": "调研 §9.2 八族未立评测族（§5.4 读法②）",
+      "next": "待拍「立不立评测族」",
+      "承接": "待 Mr2109 拍（T-56 表 §三⑦ 同域）"
+    },
+    {
+      "object": "脚本·标定线 3 件（scripts/calib/）",
+      "count": 3,
+      "why": "调研未立族；任务单已登记「是否开 `zerg calib` 待拍」",
+      "next": "拍后才立任务（任务单 §五 第 20 行）",
+      "承接": "待 Mr2109 拍"
+    },
+    {
+      "object": "脚本·两只文档门 2 件（check-glossary.py · check-i18n-drift.sh）",
+      "count": 2,
+      "why": "与上面的门禁 2 步同因同果（件与步是两个对象）",
+      "next": "同批清",
+      "承接": "待办 E4 / E6"
+    },
+    {
+      "object": "界面·编辑器内核 ferrite（ui/src/modules/ferrite/ 4 件）",
+      "count": 1,
+      "why": "三条硬骨头里唯一没被 10 条决议覆盖（前置决定：编辑器算不算独立子项目 · §5.5:369）",
+      "next": "随该前置决定一起拍",
+      "承接": "待 Mr2109 拍"
+    }
+  ],
+  "seams": {
+    "E2": "术语表导出器真接表（scripts/docs/gen-glossary-exports.py 与 scripts/公开标记.tsv）—— 本表只登记归属（②），**不重复立项**",
+    "D3": "开发文档门禁把 `Zerg-内部文档` 纳入管辖（T-51 的一部分）—— 与门禁 2 步的换根同源，**不重复立项**",
+    "E4": "术语表 ROOT 写死 + 假红未清 —— 门禁步 39 的落点，与本表 ④ 那 2 步同一条，**不重复立项**",
+    "E6": "i18n `rc=2` 语义错位 —— 门禁步 40 的落点，同上"
+  },
+  "boundaries": [
+    "本表只登记**归属与判据指针**，不复制设计稿正文；四类定义仍在 §5.0（行 210–215）。",
+    "④ 的 37 条**不是 37 个新任务**：它们收敛成 6 组承接项（见 pending_items），逐条带 why + next。",
+    "未授权的不做：`compressor_demo` 的删除**不在本枚授权范围**（本枚授权仅限决议⑤ 的删除）。",
+    "本表不含 273 条的**逐对象枚举**：逐对象落回写在 `Zerg-内部文档/项目文档/v2.5.10/归属-收编与退役-20260920.md`（导出物），两边的四个总数与五个面分布**逐格相同**（机检断言）。"
+  ]
+}
