@@ -623,6 +623,15 @@ func init() {
 			run:      cmdRepoStatus,
 		},
 		{
+			path:     []string{"gate", "matrix"},
+			kind:     "GateMatrix",
+			summary:  "命令面自己的 must-fail 矩阵（逐格可读可导 —— 新增命令照着它补格）",
+			usage:    "zerg gate matrix [--out <件>] [--json <字段>]",
+			fields:   []string{"command", "case", "want_rc", "why"},
+			endpoint: "",
+			run:      cmdGateMatrix,
+		},
+		{
 			path:     []string{"port", "ls"},
 			kind:     "PortLs",
 			summary:  "看某个端口被谁占着（含 pid/ppid/inode/在跑件路径 · 手敲 lsof 的替身）",
