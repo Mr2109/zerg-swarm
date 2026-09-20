@@ -16,6 +16,8 @@ import (
 
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"github.com/Mr2109/zerg-swarm/core/internal/tracectx"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/version"
 )
 
 // ControlHandlers 控制端点处理器。
@@ -203,7 +205,13 @@ func (h *ControlHandlers) CoreStatusHandler(w http.ResponseWriter, r *http.Reque
 		"ok":         true,
 		"pid":        pid,
 		"started_at": time.Now().Format(time.RFC3339),
-		"version":    "zerg-core v2",
+		// 版本**同源同值**（§九 M15 `T1`/`T2` · §十二 `P-078` 选 (i)）：与 `/api/capabilities`
+		// 的 `version` 用同**一个**真源（`version.Tag`）——原来这里硬编码过一枚第二版本号
+		// （一枚「组件名 + 版本主号」的硬编码字面量），那是「同一件东西两处口径」的典型
+		// （已红第 2 条）；本版把它换成真源之后，本文件里**不再有**任何版本字面量
+		// （判据就是 `grep -n` 那枚字符串 **0 命中** —— 连注释里都不留，否则判据假红）。
+		// ★ 旧字段**不删**（键名一个没改，旧消费者零改动）。
+		"version": version.Tag,
 		// 3c：原 "local_backend" 字段（LocalBackend 状态）已删 —— 本机角色退役，引擎由子端托管。
 	})
 }
