@@ -19,11 +19,14 @@
 #      豁免**没有 reason** ⇒ **rc=2**（「写不清理由的豁免就是洗白」`T5` 逐字）；baseline 缺/不可解析 ⇒ 2。
 #   T6 **引用 M6 `R7`**：本门头部引用它 + 契约登记表 `registry.json` 的命令面条目 `gate` 字段
 #      **点名本脚本**（引用面非 0 = 它真的被用，不是挂在空气上）。
+#   R7 **族名闭合**（§十二 `P-038` 的落判 · 开工单 T-43 ①）：族名只有一个 `agent`；
+#      命令树里不许有 `node` 族，**全仓**（按排除表）不许再出现 `zerg node <动作>` 这类写法。
 #
 # 用法：
 #   python3 scripts/gates/check-cli-contract.py [仓库根]
-#   python3 scripts/gates/check-cli-contract.py --self-test          # 成对负控（1 正控 + 8 负控 + 1 空转）
+#   python3 scripts/gates/check-cli-contract.py --self-test          # 成对负控（2 正控 + 10 负控 + 1 空转）
 #   python3 scripts/gates/check-cli-contract.py --no-runtime         # **只给夹具用**：跳过 T4 的 go test
+#   python3 scripts/gates/check-cli-contract.py --emit-matrix [路径] # **重生成**矩阵（先用 build-all.sh --only-cli 出新制品）
 #
 # ★ 判据出处（`T6` 的引用面）：§九 M6 `R7`（字段只增不改 / 破坏性变更走大版本）· §九 M17 `T1`–`T6`。
 import argparse
@@ -40,6 +43,15 @@ BASELINE_REL = os.path.join("scripts", "gates", "cli-contract-baseline.json")
 EXITCODES_REL = os.path.join("core", "cmd", "zerg", "exitcodes.go")
 MAIN_REL = os.path.join("core", "cmd", "zerg", "main.go")
 REGISTRY_REL = os.path.join("core", "internal", "contract", "registry.json")
+
+# R7（族名闭合 · §十二 `P-038` 的落判）：全仓不许再出现 `zerg node <动作>` 这类写法 ——
+# 族名只有一个 `agent`；`--node` 是**对象级旗标**，不是族名。
+NODE_FAMILY_RE = re.compile(r'\bzerg\s+node\s+[A-Za-z]')
+# 扫描面：与 §十七/§二十一 各处复跑命令同一口径的排除表（+ 本判据脚本自己：它的规则描述里
+# 必然出现那个写法）。按**文件名**窄排除，不留静默的洞（负控证明别处一出现即红）。
+SCAN_EXCLUDE_DIRS = {'target', 'node_modules', 'dist', 'bin', 'vendor', 'data', '.git',
+                     '.venv', 'venv', '.build'}
+SCAN_EXTS = ('.go', '.sh', '.py', '.rs', '.md', '.json', '.yaml', '.yml', '.ts', '.tsx', '.js', '.toml')
 
 CMD_RE = re.compile(r'path:\s*\[\]string\{([^}]*)\}')
 PATH_SEG_RE = re.compile(r'"([^"]+)"')
@@ -167,6 +179,113 @@ def registry_gate_names(root):
     return [e.get('gate', '') for e in d.get('entries', [])]
 
 
+def node_family_hits(root, self_path=None):
+    """全仓（按排除表）扫 `zerg node <动作>` 写法 → ['rel:line: 原文', …]。"""
+    me = os.path.abspath(self_path or __file__)
+    hits = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in SCAN_EXCLUDE_DIRS)
+        for fn in sorted(filenames):
+            if not fn.endswith(SCAN_EXTS):
+                continue
+            full = os.path.join(dirpath, fn)
+            if os.path.abspath(full) == me:
+                continue  # 本判据脚本自己（规则描述里必然出现那个写法）
+            try:
+                txt = read(full)
+            except (OSError, UnicodeDecodeError):
+                continue
+            for i, line in enumerate(txt.splitlines(), 1):
+                if NODE_FAMILY_RE.search(line):
+                    rel = os.path.relpath(full, root)
+                    hits.append('%s:%d: %s' % (rel, i, line.strip()[:140]))
+    return hits
+
+
+# ── 矩阵重生成（`--emit-matrix`）：矩阵是**冻结的现行为**，只有真跑才冻得住 ────────────────────
+# ★ 必须用**刚从源码构建的**制品（`bash scripts/build/build-all.sh --only-cli`）：拿旧制品冻结，
+#   新加的命令会被当成「未知命令」而静默漏掉一格。
+MATRIX_NOTE = ('命令面自身的 must-fail 矩阵（§九 M17 `T2` · 开工单 T-42 判据①）。\n'
+               '口径：这不是「猜的期望值」，是**冻结的现行为（棘轮）** —— 每条口令逐条现跑两遍、'
+               '退码一致、且与判据语义相符才入矩阵；改行为就必须改这一格（改不动就是回归）。\n'
+               '候选口令按命令形状给（危险档 / 字段面 / 说明面 / 透传型），执行前判的那两条（未知旗标 · '
+               '不认的主号）**每条命令都有**；透传型只留执行前判那条 —— 别的会把被包的脚本真跑一遍。\n'
+               '重生成：`python3 scripts/gates/check-cli-contract.py --emit-matrix`'
+               '（先用 `bash scripts/build/build-all.sh --only-cli` 出**新**制品）。\n'
+               '覆盖与空白由 T1/T5 判（空白受 baseline 棘轮约束）。')
+
+
+def candidate_cases(path, shape):
+    """按命令形状给候选 must-fail 口令 → [(名, argv, 判据要的退码, why)]。"""
+    out = []
+    pre = lambda tail: path.split() + tail
+    out.append(('未知旗标', pre(['--nosuchflag-zz']), 2,
+                '未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标'))
+    out.append(('不认的契约主号', pre(['--schema', 'zerg/v9']), 2,
+                '消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判'))
+    if shape['passthrough']:
+        # 透传型：只留执行前判那一条。未知旗标对透传型**不**在执行前判 —— 它被原样交给被包的
+        # 脚本 ⇒ 排它就等于在测试里真跑一遍全量门禁（成本与副作用都不该进单元测试）。
+        return [c for c in out if c[0] == '不认的契约主号']
+    if shape['danger'] == 'dangerD3':
+        out.append(('缺 --confirm（D3）', pre(['x']), 2,
+                    'D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）'))
+        out.append(('--confirm 值不匹配', pre(['x', '--confirm=不匹配-zz', '--yes']), 2,
+                    '确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）'))
+    if shape['danger'] == 'dangerD2':
+        out.append(('缺 --yes（D2）', pre(['x']), 2,
+                    'D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）'))
+    if not shape['danger'] and shape['fields'] and not shape['net'] and path != 'help export':
+        out.append(('--json 不给字段', pre(['--json']), 1,
+                    '给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）'))
+    if not shape['danger'] and not shape['fields'] and not shape['net']:
+        out.append(('说明面不认 --json', pre(['--json', 'name']), 2,
+                    '没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）'))
+    return out
+
+
+def emit_matrix(root, out_path=None):
+    """按命令树 + 现跑制品重生成矩阵（两遍取真退码；两次不等 / rc=0 / 幽灵命令都不入矩阵）。"""
+    binz = os.path.join(root, 'bin', 'zerg')
+    if not os.path.isfile(binz):
+        return 2, ['⛔ 不给结论：找不到 bin/zerg —— 先用 bash scripts/build/build-all.sh --only-cli 出新制品']
+    tree = parse_tree(root)
+    if not tree:
+        return 2, ['⛔ 不给结论：命令树读不出来（空转）']
+    cases, dropped = [], []
+    for path, shape in tree:
+        for name, argv, want, why in candidate_cases(path, shape):
+            rcs, outs = [], []
+            for _ in range(2):
+                p = subprocess.run([binz] + argv, capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL)
+                rcs.append(p.returncode)
+                outs.append(p.stdout)
+            if '未知命令' in outs[1] or '未知命令' in outs[0]:
+                dropped.append((path, name, '幽灵命令（制品里没有它 ⇒ 制品不是新的）'))
+                continue
+            if rcs[0] != rcs[1]:
+                dropped.append((path, name, '两次退码不等 %s' % rcs))
+                continue
+            if rcs[0] != want:
+                dropped.append((path, name, '退码 %d ≠ 判据语义要的 %d' % (rcs[0], want)))
+                continue
+            cases.append({'id': path.replace(' ', '/') + '#' + name, 'command': path, 'argv': argv,
+                          'want_rc': rcs[0], 'want_stdout_bytes': len(outs[0]), 'why': why})
+    doc = {'id': 'cli-contract.v1', 'note': MATRIX_NOTE, 'exemptions': [], 'cases': cases}
+    dst = out_path or os.path.join(root, MATRIX_REL)
+    with open(dst, 'w', encoding='utf-8') as f:
+        json.dump(doc, f, ensure_ascii=False, indent=1)
+        f.write('\n')
+    have = set(c['command'] for c in cases)
+    lines = ['矩阵已重生成：%s' % dst,
+             '命令树 %d 条 · case %d 条 · 有 case 的命令 %d 条 · 空白 %d 条'
+             % (len(tree), len(cases), len(have), len([p for p, _ in tree if p not in have]))]
+    for d in dropped:
+        lines.append('丢弃：%s' % (d,))
+    return 0, lines
+
+
 def check(root, no_runtime=False):
     """返回 (rc, 行列表)。rc：0 全过 · 1 有红 · 2 不给结论。"""
     lines = []
@@ -260,6 +379,16 @@ def check(root, no_runtime=False):
     if 'M6 R7' not in read(__file__):
         errs.append('T6 引用：本门头部没有引用 §九 M6 R7（本门不重写判据，只引用它）')
 
+    # ---- R7 族名闭合（§十二 P-038 的落判 · 开工单 T-43 ①）----
+    fam = [p.split()[0] for p, _ in tree]
+    for bad in sorted(set(f for f in fam if f == 'node')):
+        errs.append('R7 族名：命令树里出现 `node` 族 —— 族名只有一个 `agent`（§十二 P-038）')
+    hits = node_family_hits(root)
+    for h in hits[:20]:
+        errs.append('R7 族名：全仓还有 `zerg node <动作>` 的写法 ⇒ %s' % h)
+    if len(hits) > 20:
+        errs.append('R7 族名：另有 %d 处（上面只列前 20）' % (len(hits) - 20))
+
     # ---- T4 `--json` 形状守卫（运行时只读） ----
     t4 = '（--no-runtime：夹具模式跳过）'
     if not no_runtime:
@@ -289,6 +418,7 @@ def check(root, no_runtime=False):
     lines.append('T4 ' + t4)
     lines.append('T6 契约登记表 gate 字段点名本脚本：%s'
                  % ('是' if any('check-cli-contract.py' in g for g in gates) else '否'))
+    lines.append('R7 族名闭合（`agent` 唯一 · 全仓 `zerg node <动作>` 命中）：%d 处' % len(hits))
     for e in errs:
         lines.append('✗ ' + e)
     return (1 if errs else 0), lines
@@ -480,6 +610,23 @@ def self_test():
         rc, lines = check(fixture(os.path.join(tmp, 'empty'), matrix=m), no_runtime=True)
         case('⑪ 空转负控（矩阵空 ⇒ 2）', 2, rc)
 
+        # ⑫ R7 负控：全仓另有 `zerg node <动作>` 的写法 ⇒ 1（族名闭合有牙）
+        #    ★ 夹具里那处写法**用拼接**写出来（不落成字面量）：本门自己的负控痕迹不该变成
+        #      「全仓 grep」的噪声 —— 判据要把「真有人在文档/代码里这么写」和「测试自己造的反例」
+        #      分开，否则任何一次复核都要先解释那 3 行。
+        r = fixture(os.path.join(tmp, 'r7'))
+        with open(os.path.join(r, 'docs-命令说明.md'), 'w', encoding='utf-8') as f:
+            f.write('跑 `zerg ' + 'node reap` 收残留\n')
+        rc, lines = check(r, no_runtime=True)
+        case('⑫ R7 负控（另有 `zerg node <动作>` 写法 ⇒ 1）', 1, rc)
+        if not any('R7 族名' in l for l in lines):
+            bad.append('⑫ R7 负控：判词里没有 R7 族名')
+
+        # ⑬ R7 正控：同一棵树上把那个写法去掉 ⇒ 回绿（证明红是红在那一处，不是红在夹具）
+        os.remove(os.path.join(r, 'docs-命令说明.md'))
+        rc, lines = check(r, no_runtime=True)
+        case('⑬ R7 正控（去掉那处写法 ⇒ 0）', 0, rc)
+
         print('自检结论: %s（失败 %d 条）' % ('全过' if not bad else '不过', len(bad)))
         for b in bad:
             print('✗ ' + b)
@@ -494,6 +641,9 @@ def main():
     ap.add_argument('--self-test', action='store_true')
     ap.add_argument('--no-runtime', action='store_true',
                     help='**只给夹具用**：跳过 T4 的 go test（真目标不许带这个开关）')
+    ap.add_argument('--emit-matrix', metavar='PATH', nargs='?', const='',
+                    help='按命令树 + 现跑 bin/zerg **重生成** must-fail 矩阵（先用 '
+                         '`bash scripts/build/build-all.sh --only-cli` 出新制品）')
     a = ap.parse_args()
     if a.self_test:
         return self_test()
@@ -501,6 +651,11 @@ def main():
     if root is None:
         print('⛔ 不给结论：找不到仓根（从 %s 上溯找不到 %s）' % (a.root, MAIN_REL))
         return 2
+    if a.emit_matrix is not None:
+        rc, lines = emit_matrix(root, a.emit_matrix or None)
+        for l in lines:
+            print('  ' + l)
+        return rc
     rc, lines = check(root, no_runtime=a.no_runtime)
     print('门⑪ 命令面契约（§九 M17 T1–T6）· 仓根 %s' % root)
     for l in lines:
