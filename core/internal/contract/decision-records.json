@@ -1,0 +1,64 @@
+{
+  "schema": "zerg-decision-records/1",
+  "note": "决策记录与经验落库的**真源**（§20.1 步 9 · §十七 SD5 · §十二 P-134–P-138 · 开工单 T-63）。本件只把定稿**已给出的取值**落成可机检的形状，不新造字段、不新立落点。",
+  "source": "Zerg-内部文档/项目文档/v2.5.10/设计-命令面与契约-v0.7.md §二十.1 步 9 · §十二 P-134–P-138 · 调研-S8-知识沉淀与决策记录-20260920.md §4.2（字段表 8 必填 + 4 收口）· §4.4（经验落点闭集 4 类）",
+  "landing_dir": "Zerg-内部文档/01-设计/决策记录/NNNN-<标题>.md",
+  "min_fields": [
+    "本记录号 DR-NNNN",
+    "who_decided（谁拍的）",
+    "when_decided（何时拍的）"
+  ],
+  "required_fields": [
+    "id",
+    "title",
+    "who_proposed",
+    "who_decided",
+    "when_decided",
+    "why",
+    "impact",
+    "status"
+  ],
+  "conditional_fields": [
+    "criteria",
+    "related",
+    "supersedes",
+    "evidence"
+  ],
+  "conditional_rules": {
+    "criteria": "status: accepted 时必填（照 §17.4 #5 dev verify 的证据单形状：criterion/verdict/evidence{}）",
+    "related": "提案件存在时必填（找不到「它从哪来」的决定悬空）",
+    "supersedes": "发生取代时必填（旧记录一字不改，只动 status 与 superseded_by）",
+    "evidence": "与 criteria 同时（证据为空 ⇒ 不许给结论）"
+  },
+  "status_set": [
+    "proposed",
+    "rejected",
+    "accepted",
+    "superseded"
+  ],
+  "who_decided_rule": "**只人**（Mr2109）—— AI 身份写入 ⇒ 红（本件把它落成机检：who_decided 命中 ai_denied_markers 即红）",
+  "ai_denied_markers": [
+    "AI",
+    "Hermes",
+    "hermes",
+    "代拍",
+    "会话",
+    "agent",
+    "模型"
+  ],
+  "why_must_have_segments": [
+    "context=",
+    "decision="
+  ],
+  "proposer_neq_decider": "who_proposed ≠ who_decided（照 §4.3 H3「提 ≠ 批」；AI 提的不得由 AI 批）",
+  "experience_dirs": [
+    "Zerg-内部文档",
+    "AGENTS.md",
+    "tools/",
+    "状态目录（ZERG_STATE_DIR）"
+  ],
+  "experience_dirs_source": "P-138 逐字：`Zerg-内部文档` / `AGENTS.md` / `tools/` / 状态目录 —— 照 SD5 的既有落点，**不新造**；`dev retro --to` 只认这四类的具体路径",
+  "one_thing_two_states": "**一物两态**（P-136 逐字）：提案件就是 `status: proposed` 的决策记录 ⇒ **只保留一个目录**。★ 本件落判：今天的提案件写在**状态目录**（`~/.zerg/proposals/` · family_dev.go 的明写边界），而决策记录的落点是 `Zerg-内部文档/01-设计/决策记录/` —— 两者不是同一个目录 ⇒ 与 P-136「只保留一个目录」**尚有差**，本件照实登记为**未收口项**（收口要拍：搬提案件，还是把决策记录落到状态目录），不假装已合。",
+  "batch_rule": "成批的决定**逐条号、不合并**（P-135 逐字）—— 一份决定一个 DR 号",
+  "index": "同目录 INDEX.md（换会话 / 换 AI 读得到的索引；与本目录的 DR 件集**必须一致**，漂了即红）"
+}
