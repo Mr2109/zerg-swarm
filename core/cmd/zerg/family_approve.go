@@ -125,6 +125,20 @@ func cmdApprove(inv *invocation, stdout, stderr io.Writer) int {
 // ---- ls / show（只读面）----
 
 func cmdApproveLs(inv *invocation, stdout, stderr io.Writer) int {
+	// ★ 字段面**先判**（`--json <未知字段>` ⇒ 2）：不能等渲染到行才判 —— 件为 0 件时那条路
+	// 会直接出「共 0 条」并退 0，于是「未知字段」在空结果集下**悄悄变成合法**（本批实测抓到：
+	// 门⑪ 的矩阵 case `approve ls --json name` 在空状态目录下退 0、在有件的目录下退 2 —— 判据飘）。
+	if inv.jsonGiven && len(inv.fields) > 0 {
+		known := map[string]bool{}
+		for _, f := range fieldListOf(inv.path) {
+			known[f] = true
+		}
+		for _, f := range inv.fields {
+			if !known[f] {
+				return reportBadField(stderr, inv.path, f)
+			}
+		}
+	}
 	dir := approveDir()
 	ents, err := os.ReadDir(dir)
 	if err != nil && !os.IsNotExist(err) {
