@@ -484,16 +484,27 @@ func doctorItems(inv *invocation) []map[string]string {
 			len(ms), cell(fleet["healthy_count"]), cell(fleet["unhealthy_count"]))
 		verdict := "PASS"
 		advice := ""
-		if len(keys) > 1 {
-			// 只报告（`REPORT`）：混版的**判决**属批 C 的 T-23，本版只报事实、不改判
-			// （五值闭集里没有 `WARN` —— 见 cmdDoctor 顶上的口径差登记）。
+		// ★ 混版判决（§二十一 已红第 1 条 · T-23 已落）：**主控侧**是唯一判决处
+		// （`core/internal/api/fleet_health.go`），响应里带 `mixed_version` 就直接引用它。
+		// 三格分开，不许混：
+		//   `mixed_version` = true  ⇒ FAIL（设计稿逐字「混版必须被判为不健康」）
+		//   `mixed_version` = false ⇒ PASS（这一格只有新主控给得出）
+		//   字段不在（旧主控的响应）⇒ REPORT（只报事实）+ 写明判决已落源码、运行期要等换件重启
+		if mv, ok := fleet["mixed_version"].(bool); ok {
+			if mv {
+				verdict = "FAIL"
+				advice = "主控判定混版：mixed_machines=" + cell(fleet["mixed_machines"]) +
+					" · 主控版本 " + cell(fleet["master_code_version"]) + "（混版不许当健康 ⇒ 先对齐机群版本）"
+			}
+		} else if len(keys) > 1 {
 			verdict = "REPORT"
 			parts := make([]string, 0, len(keys))
 			for _, k := range keys {
 				parts = append(parts, k+"="+strings.Join(vers[k], ","))
 			}
 			detail += " · 观测到多版本：" + strings.Join(parts, " · ")
-			advice = "混版判决（healthy_count 该不该算健康）属批 C 的 T-23，本版只报事实、不改判"
+			advice = "本主控的响应里**没有** mixed_version 字段（旧件）⇒ 判决跑不到运行期；" +
+				"判决实现已在源码（T-23 · core/internal/api/fleet_health.go），生效要换件重启主控 ⇒ 待 Mr2109 拍"
 		}
 		items = append(items, map[string]string{"name": "子端名册", "verdict": verdict, "detail": detail, "advice": advice})
 	}

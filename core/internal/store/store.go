@@ -74,10 +74,16 @@ type FleetSnapshot struct {
 	CpuPct float64 `json:"cpu_pct"`
 	GpuPct float64 `json:"gpu_pct"`
 	// 代码身份（自动升级 L3）：机群版本矩阵——混版机群必须看得见
-	CodeVersion string    `json:"code_version,omitempty"`
-	CodeSHA     string    `json:"code_sha,omitempty"`
-	Error       *string   `json:"error,omitempty"`
-	LastSeen    time.Time `json:"last_seen"` // 最后心跳时间
+	CodeVersion string `json:"code_version,omitempty"`
+	CodeSHA     string `json:"code_sha,omitempty"`
+	// VersionMismatch —— 混版裁决（§二十一 已红第 1 条 · T-23）：本机版本号与主控不同 ⇒ true。
+	// 口径与算法在 `core/internal/api/fleet_health.go`（**唯一实现处**）；本字段由
+	// StatusHandler 在**响应副本**上写，不改仓里存的那份（共享指针就地改 = 数据竞争）。
+	// 不带 omitempty：false 是**有意义的值**（同 vram_known 那条既有口径——被吞掉就分不清
+	// 「同版」与「没判」）。
+	VersionMismatch bool      `json:"version_mismatch"`
+	Error           *string   `json:"error,omitempty"`
+	LastSeen        time.Time `json:"last_seen"` // 最后心跳时间
 
 	// ── 资源账本新增（《设计-资源管理器》§3.1/§3.4）──
 	// ⚠ 两个布尔**绝不能带 omitempty**（2026-09-16 修，实测踩过）：false 是**有意义的值** ——
