@@ -354,6 +354,9 @@ func main() {
 	// 输出结果（JSON 模式——AI 解析验收——7 原则信封）
 	if jsonOut {
 		// 语义退出码（Agentic CLI 标准）: 0=成功 2=任务失败 3=模型错误 4=可重试
+		// 退码唯一真源 = zerg help exit-codes（契约 §三）——**本件是组件自有码空间**（任务运行器，
+		// §6.1 两条进程语义）：本件 `4 = 可重试` 与命令面 `4 = 未认证` 撞号，逐条登记在
+		// 《开工记录-批A-20260920.md》T-04 节；值面对齐属 `P-013` ⑤ 的拍板（命令面只把它**原样转出**）。
 		exitCode := 0
 		ok := result.Reason == agent.ReasonComplete
 		if !ok {
