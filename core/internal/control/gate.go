@@ -69,18 +69,73 @@ func NewGateFromYAML(data []byte) (*Gate, error) {
 		return nil, fmt.Errorf("解析规则文件失败: %w", err)
 	}
 	if cfg.Rules.Default == "" {
-		cfg.Rules.Default = ActionAllow // 默认放行（现有行为不变）
+		// ★ 2026-09-20 批 C · T-31（§二十一 已红第 9 条）：**未配置默认 ⇒ 拦**（fail-closed）。
+		// 老写法是 `= ActionAllow // 默认放行（现有行为不变）` —— 那就是 fail-open 的一种：
+		// 规则文件缺一行（或拼错 `default:`）就静默变成「全放行」，而现象上**什么都不会报**。
+		// 现在的口径：缺配置 = 最保守的那一档（block），要放行就显式写 `default: allow`。
+		cfg.Rules.Default = ActionBlock
+	}
+	if cfg.Rules.Default != ActionAllow && cfg.Rules.Default != ActionBlock && cfg.Rules.Default != ActionRequireApproval {
+		// 拼错的三态（如 `defualt` / `Allow`）**不许**静默按某种语义跑 —— 一律落到最保守档。
+		cfg.Rules.Default = ActionBlock
+	}
+	for i := range cfg.Rules.Tools {
+		switch cfg.Rules.Tools[i].Action {
+		case ActionAllow, ActionBlock, ActionRequireApproval:
+		default:
+			// 规则里的 action 拼错 ⇒ 这条规则按 block 算（fail-closed；不许把拼错的规则当放行）。
+			cfg.Rules.Tools[i].Action = ActionBlock
+		}
 	}
 	return &Gate{rules: cfg.Rules}, nil
+}
+
+// matchRuleName —— 规则名匹配（精确 + **尾部单个 `*` 的通配**）。
+//
+// 为什么要通配：MCP 工具名是动态的（`mcp_<服务>_<工具>`），「显式列全」在这类名字上做不到；
+// 不给一条兜底，默认 block 就会把 MCP 全掐掉（那是把闸废掉的另一种形态）。
+// 口径（防暗权）：**只认尾部一个 `*`** —— `mcp_*` 算通配；`*db*` / `mcp_*_x` 一律当**字面量**
+// （多一个通配位就多一处猜不到的放行面，本仓宁可不给）。
+func matchRuleName(pattern, toolName string) bool {
+	if pattern == toolName {
+		return true
+	}
+	if strings.HasSuffix(pattern, "*") && strings.Count(pattern, "*") == 1 {
+		return strings.HasPrefix(toolName, strings.TrimSuffix(pattern, "*"))
+	}
+	return false
 }
 
 // Check 三态决策：工具名 + 参数 + agent
 // 返回决策——allow 放行 / block 拦截 / require_approval 需审批
 func (g *Gate) Check(toolName, args, agent string) GateDecision {
-	// 1. 精确匹配规则
+	// 1. 精确匹配规则（**优先**：精确条目永远压过通配条目）
+	if d, ok := g.checkAgainst(toolName, args, agent, true); ok {
+		return d
+	}
+	// 1′. 尾部通配规则（`mcp_*` 一类；精确没命中才轮到它）
+	if d, ok := g.checkAgainst(toolName, args, agent, false); ok {
+		return d
+	}
+	// 2. 未匹配 → 默认策略
+	return GateDecision{
+		Action:  g.rules.Default,
+		Message: fmt.Sprintf("工具 %s 未匹配规则——默认 %s", toolName, g.rules.Default),
+	}
+}
+
+// checkAgainst 走一遍规则表：`exact=true` 只看逐字相同的名字，`exact=false` 只看通配名。
+// 分两遍是为了让「精确条目压过通配条目」这件事有确定答案（不依赖 rules.yaml 里的书写次序）。
+func (g *Gate) checkAgainst(toolName, args, agent string, exact bool) (GateDecision, bool) {
 	for _, r := range g.rules.Tools {
-		if r.Name != toolName {
-			continue
+		if exact {
+			if r.Name != toolName {
+				continue
+			}
+		} else {
+			if r.Name == toolName || !matchRuleName(r.Name, toolName) {
+				continue
+			}
 		}
 		// scope 过滤：规则指定了 agent 且当前 agent 不在内 → 跳过
 		if len(r.Scope) > 0 && !contains(r.Scope, agent) {
@@ -93,7 +148,7 @@ func (g *Gate) Check(toolName, args, agent string) GateDecision {
 					Action:  ActionBlock,
 					Rule:    r.Name,
 					Message: fmt.Sprintf("工具 %s 参数含禁止模式 %q（控制层拦截）", toolName, deny),
-				}
+				}, true
 			}
 		}
 		// 按规则 action 返回
@@ -101,13 +156,9 @@ func (g *Gate) Check(toolName, args, agent string) GateDecision {
 			Action:  r.Action,
 			Rule:    r.Name,
 			Message: fmt.Sprintf("工具 %s 命中规则（action=%s）", toolName, r.Action),
-		}
+		}, true
 	}
-	// 2. 未匹配 → 默认策略
-	return GateDecision{
-		Action:  g.rules.Default,
-		Message: fmt.Sprintf("工具 %s 未匹配规则——默认 %s", toolName, g.rules.Default),
-	}
+	return GateDecision{}, false
 }
 
 // contains 判断 slice 是否含元素
