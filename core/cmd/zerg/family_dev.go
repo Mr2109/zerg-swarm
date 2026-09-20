@@ -35,25 +35,35 @@ import (
 
 // proposalFields —— 提案件在 `--json` 面上可取的全部字段（K1：机器面先定）。
 var proposalFields = []string{"id", "title", "target", "goal", "evidence", "rollback_ref",
-	"by", "state", "criterion", "created_at", "path"}
+	"by", "state", "criterion", "created_at", "path",
+	// §九 M18 `C4` · 批 E · T-60：授权面两对字段（**只增不改** —— `by` 保留为 `subject` 的兼容别名）。
+	"subject", "subject_kind", "egg_id", "approver", "approver_kind"}
 
 // proposalStates —— 三态闭集（§17.4 #1 的 `--state 未决|已批准|已否决`，逐字）。
 var proposalStates = []string{"未决", "已批准", "已否决"}
 
 // proposalRecord —— 一份提案件（可审查物）。字段名一律用**契约里的词**，不自造近义词。
 type proposalRecord struct {
-	ID         string   `json:"id"`
-	Title      string   `json:"title"`
-	Target     string   `json:"target"`         // 回指既有编号（SD1）
-	Goal       string   `json:"goal"`           // 要达成什么
-	Evidence   []string `json:"evidence"`       // 出处（≥1；空 ⇒ 拒）
-	Rollback   string   `json:"rollback_ref"`   // 退点（没有它不许提）
-	Criterion  string   `json:"criterion"`      // 判据条（哪条命令/哪个数字能证明成了）
-	By         string   `json:"by"`             // 提出者（T-60 收成 subject + subject_kind）
-	State      string   `json:"state"`          // 未决 / 已批准 / 已否决
-	CreatedAt  string   `json:"created_at"`     // RFC3339
-	ContractNo string   `json:"contract"`       // 产出时的契约号（SD9：证据单不许混比）
-	Path       string   `json:"path,omitempty"` // 落点（读回时补）
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	Target    string   `json:"target"`       // 回指既有编号（SD1）
+	Goal      string   `json:"goal"`         // 要达成什么
+	Evidence  []string `json:"evidence"`     // 出处（≥1；空 ⇒ 拒）
+	Rollback  string   `json:"rollback_ref"` // 退点（没有它不许提）
+	Criterion string   `json:"criterion"`    // 判据条（哪条命令/哪个数字能证明成了）
+	By        string   `json:"by"`           // 提出者（兼容别名 = Subject；字段只增不改）
+	// ---- §九 M18 `C4`「提 ≠ 批」的两对字段（批 E · T-60）----
+	// 提者/批者**分家**：`subject`+`subject_kind` 是提出者，`approver`+`approver_kind` 是批准者。
+	// `subject_kind` 四值闭集 `human`/`ai`/`egg`/`ci`（§18.1 接缝第 18 行）；`kind=egg` ⇒ `egg_id` 必填。
+	Subject      string `json:"subject"`        // 提出者（谁提的）
+	SubjectKind  string `json:"subject_kind"`   // human / ai / egg / ci（四值闭集）
+	EggID        string `json:"egg_id"`         // `subject_kind=egg` 时必填
+	Approver     string `json:"approver"`       // 批准者（谁批的）
+	ApproverKind string `json:"approver_kind"`  // 只许 human（批准只能人给）
+	State        string `json:"state"`          // 未决 / 已批准 / 已否决
+	CreatedAt    string `json:"created_at"`     // RFC3339
+	ContractNo   string `json:"contract"`       // 产出时的契约号（SD9：证据单不许混比）
+	Path         string `json:"path,omitempty"` // 落点（读回时补）
 }
 
 // cmdDevProposal —— `zerg dev proposal <动作>`（动作 = new / list / show）。
@@ -104,6 +114,21 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 		By:        strings.TrimSpace(inv.flagVal("--by")),
 		Evidence:  trimAll(inv.flagVals("--evidence")),
 		State:     "未决",
+		// §九 M18 `C4`（T-60）：提者 / 批者两对字段；`--subject` 为主、`--by` 为兼容别名。
+		Subject:      strings.TrimSpace(inv.flagVal("--subject")),
+		SubjectKind:  strings.TrimSpace(inv.flagVal("--subject-kind")),
+		EggID:        strings.TrimSpace(inv.flagVal("--egg-id")),
+		Approver:     strings.TrimSpace(inv.flagVal("--approver")),
+		ApproverKind: strings.TrimSpace(inv.flagVal("--approver-kind")),
+	}
+	if rec.Subject == "" {
+		rec.Subject = rec.By
+	}
+	if rec.By == "" {
+		rec.By = rec.Subject
+	}
+	if rec.SubjectKind == "" {
+		rec.SubjectKind = subjectKindDefault
 	}
 	// ① 缺件逐条点名（§九 M7：错误要给下一步，不给一句「参数错误」）
 	missing := []string{}
@@ -122,6 +147,11 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "提案件的**最小字段集**照 §九 M18 C3；本件的判据要求四格齐：--title / --target / --goal / --rollback\n")
 		return exitUsage
+	}
+	// ①b 授权面四条规则（§九 M18 `C4` · 批 E · T-60）：**提 ≠ 批** + 谁不许批。
+	//    位置：与「缺件逐条点名」同段（都在**任何盘面动作之前**判）—— 授权面不过就不该落件。
+	if rc, done := judgeAuthz(rec, inv, stderr); done {
+		return rc
 	}
 	// ② 目标回指（§17.6 SD1：回指不上 ⇒ 2）
 	canon, why := canonTarget(rec.Target)
@@ -278,8 +308,9 @@ func cmdDevProposalShow(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  出处   : %s\n", strings.Join(r.Evidence, " · "))
 		fmt.Fprintf(stdout, "  退点   : %s\n", r.Rollback)
 		fmt.Fprintf(stdout, "  判据   : %s\n", orDash(r.Criterion))
-		fmt.Fprintf(stdout, "  提出者 : %s\n", r.By)
-		fmt.Fprintf(stdout, "  批准者 : %s（「提 ≠ 批」两个字段 · §九 M18 C4）\n", "（空 = 未批）")
+		fmt.Fprintf(stdout, "  提出者 : %s（kind=%s%s）\n", r.Subject, r.SubjectKind, eggSuffix(r.EggID))
+		fmt.Fprintf(stdout, "  批准者 : %s（kind=%s）—— 「提 ≠ 批」两个字段 · 批只人给（§九 M18 C4）\n",
+			orDash(r.Approver), orDash(r.ApproverKind))
 		fmt.Fprintf(stdout, "  状态   : %s\n", r.State)
 		fmt.Fprintf(stdout, "  契约号 : %s\n", r.ContractNo)
 		fmt.Fprintf(stdout, "  落点   : %s\n", r.Path)
@@ -359,17 +390,22 @@ func nextProposalID(dir string) string {
 // proposalRow —— 一件提案件 → 机器面的一行（字段值一律字符串，**转义走 jstr** 那条路）。
 func proposalRow(r proposalRecord) map[string]string {
 	return map[string]string{
-		"id":           r.ID,
-		"title":        r.Title,
-		"target":       r.Target,
-		"goal":         r.Goal,
-		"evidence":     strings.Join(r.Evidence, ","),
-		"rollback_ref": r.Rollback,
-		"by":           r.By,
-		"state":        r.State,
-		"criterion":    r.Criterion,
-		"created_at":   r.CreatedAt,
-		"path":         r.Path,
+		"id":            r.ID,
+		"title":         r.Title,
+		"target":        r.Target,
+		"goal":          r.Goal,
+		"evidence":      strings.Join(r.Evidence, ","),
+		"rollback_ref":  r.Rollback,
+		"by":            r.By,
+		"subject":       r.Subject,
+		"subject_kind":  r.SubjectKind,
+		"egg_id":        r.EggID,
+		"approver":      r.Approver,
+		"approver_kind": r.ApproverKind,
+		"state":         r.State,
+		"criterion":     r.Criterion,
+		"created_at":    r.CreatedAt,
+		"path":          r.Path,
 	}
 }
 
@@ -429,4 +465,61 @@ func trimAll(in []string) []string {
 		}
 	}
 	return out
+}
+
+// ---- 授权面（§九 M18 `C4` · 批 E · T-60）----
+
+// subjectKindDefault —— 不给 `--subject-kind` 时的默认档（提出者是**人**= 最保守的默认：
+// 只有显式声明 `ai`/`egg`/`ci` 才落到别的档，不许「不写就当人」以外的猜测）。
+const subjectKindDefault = "human"
+
+// judgeAuthz 判授权面四条（`提 ≠ 批` 与「谁不许批」）—— 通过 ⇒ done=false。
+//
+//	R1 `subject_kind` 必须在四值闭集里（`human`/`ai`/`egg`/`ci`）：精确相等，不做大小写折叠。
+//	R2 `subject_kind == egg` ⇒ `--egg-id` **必填**（§18.2 `MF1` 逐字）。
+//	R3 给了 `--approver` 且它与 `--subject` **逐字相同** ⇒ 红（**自审自批** —— §九 M16 `V0` 作者 ≠ 审批）。
+//	R4 给了 `--approver` 且 `approver_kind != human` ⇒ 红（**批只能人给** —— §九 M18 `C4` ② 段 · §17.6 `SD8`）。
+func judgeAuthz(rec proposalRecord, inv *invocation, stderr io.Writer) (int, bool) {
+	spec, err := contract.AIBoundary()
+	if err != nil {
+		inv.setErr("blocked", "contract_unreadable", err.Error())
+		fmt.Fprintf(stderr, "%s: AI 边界真源读不出来：%v ⇒ 不给结论\n", progName, err)
+		return exitBlocked, true
+	}
+	if !contract.Has(spec.SubjectKinds, rec.SubjectKind) {
+		inv.setErr("usage", "bad_subject_kind", "提出者 kind 不在四值闭集里")
+		fmt.Fprintf(stderr, "%s: `--subject-kind` %q 不在闭集里（只认 %s）—— 精确相等，不认近义词、不做大小写折叠\n",
+			progName, rec.SubjectKind, strings.Join(spec.SubjectKinds, "/"))
+		return exitUsage, true
+	}
+	if rec.SubjectKind == "egg" && rec.EggID == "" {
+		inv.setErr("usage", "missing_egg_id", "kind=egg 缺卵 id")
+		fmt.Fprintf(stderr, "%s: `--subject-kind egg` 必须带 `--egg-id <卵 id>`（§18.2 `MF1` 逐字：kind=egg 时 egg_id 必填）\n", progName)
+		return exitUsage, true
+	}
+	if rec.Approver != "" && rec.Approver == rec.Subject {
+		inv.setErr("usage", "same_subject_approver", "提出者与批准者相同")
+		fmt.Fprintf(stderr, "%s: 提出者与批准者**逐字相同**（%q）⇒ 拒（退码 2）—— 「提 ≠ 批」：自审自批的记录退化成自我确认（§九 M16 `V0` 作者 ≠ 审批）\n", progName, rec.Subject)
+		return exitUsage, true
+	}
+	if rec.Approver != "" {
+		kind := rec.ApproverKind
+		if kind == "" {
+			kind = subjectKindDefault
+		}
+		if kind != "human" {
+			inv.setErr("usage", "approver_not_human", "批准者不是人")
+			fmt.Fprintf(stderr, "%s: 批准者 kind = %q ⇒ 拒（退码 2）—— **批只能人给**（§九 M18 `C4` ② 段 · §17.6 `SD8`：AI 自评 ≠ 人的验收）\n", progName, kind)
+			return exitUsage, true
+		}
+	}
+	return exitOK, false
+}
+
+// eggSuffix 只在有卵 id 时补一段（人面上不写空括号）。
+func eggSuffix(egg string) string {
+	if strings.TrimSpace(egg) == "" {
+		return ""
+	}
+	return " · egg_id=" + egg
 }
