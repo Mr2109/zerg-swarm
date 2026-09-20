@@ -915,6 +915,34 @@ func init() {
 			endpoint: "",
 			run:      cmdDevProposal,
 		},
+		// ---- §17.4 第 2/3/5 条：候选区（批 E · T-58 · 真源 core/internal/contract/dev-candidate.json）----
+		// 次序（§17.7 逐字「先有判据、再有自动化」）落成机检：build / test 找不到该候选的验收证据单 ⇒ 退码 2。
+		{
+			path:    []string{"dev", "build"},
+			summary: "在**候选区**构建全套件（危险 D2 · 本版未开放；**判据先于自动化**）",
+			usage:   "zerg dev build --candidate <候选 id> [--scope go|rust|ui|all] [--dist] [--yes] [--dry-run]",
+			args:    []string{"候选 id"},
+			danger:  &dangerSpec{dangerD2, "候选 id", "在候选区编出成套制品（底层就是 scripts/build/build-all.sh —— 不新造第二条构建路）", "§17.4 第 2 条 · §17.6 SD10-b · 开工单 T-58"},
+			run:     cmdDevBuild,
+		},
+		{
+			path:    []string{"dev", "test"},
+			summary: "跑候选件的测试集（危险 D2 · 本版未开放；**判据先于自动化**）",
+			usage:   "zerg dev test --candidate <候选 id> [--scope go|rust|ui|all] [--outdir D] [--yes] [--dry-run]",
+			args:    []string{"候选 id"},
+			danger:  &dangerSpec{dangerD2, "候选 id", "在候选区跑测试集（底层 = make test + 门禁既有步，不新立判据）", "§17.4 第 3 条 · §17.7 次序 · 开工单 T-58"},
+			run:     cmdDevTest,
+		},
+		{
+			path:     []string{"dev", "verify"},
+			kind:     "DevEvidence",
+			summary:  "合成一份验收证据单（只收证据、**不给「通过」的结论**）· 证据为空 ⇒ 2",
+			usage:    "zerg dev verify --candidate <候选 id> [--results <结果表>] [--code-sha <sha>] [--node <名>] [--layer <档>] [--dry-run] [--json <字段>]",
+			args:     []string{"候选 id"},
+			fields:   devVerifyFields,
+			endpoint: "",
+			run:      cmdDevVerify,
+		},
 		{
 			path:     []string{"propose", "ls"},
 			kind:     "Proposal",
@@ -1332,6 +1360,12 @@ func valueFlagName(a string) string {
 	// 回执面旗标（§20.3 `H3` · 批 E · T-61）：一轮一页回执的五格 + 证据/提交。
 	switch a {
 	case "--what", "--next", "--blockers", "--trace", "--commit":
+		return a
+	}
+	// 候选区旗标（§17.4 第 2/3/5 条 · 批 E · T-58）：作用域 / 结果表 / 证据单的三格可选键。
+	// ★ 同上面 `--out` 的教训：用法串里写着的旗标必须真能被解析，否则命令等于不可用。
+	switch a {
+	case "--scope", "--results", "--code-sha", "--layer", "--outdir":
 		return a
 	}
 	return ""
