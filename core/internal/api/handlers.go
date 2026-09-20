@@ -1105,19 +1105,19 @@ func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
 	models := h.Store.GetAllModels()
 
 	// 构建状态响应
-	// 统计健康/不健康节点
-	healthyCount := 0
-	unhealthyCount := 0
+	// 健康/不健康计数：**唯一实现处** = CountFleetHealth（fleet_health.go，§二十一 已红第 1 条 T-23）——
+	// 混版（本机 code_version ≠ 主控版本号）一律计不健康：设计稿「混版必须被判为不健康」+
+	// 「混版不许当健康」。旧字段 `healthy`（子端自报）一个字不动，旧消费者零改动。
+	fh := CountFleetHealth(MasterCodeVersion(), snapshots)
+
 	totalMemAvailable := 0.0
 	totalMemTotal := 0.0
 	totalGPUUsed := 0.0
 	totalActive := 0
 
 	for _, snap := range snapshots {
-		if snap.Healthy {
-			healthyCount++
-		} else {
-			unhealthyCount++
+		if snap == nil {
+			continue
 		}
 		totalMemAvailable += snap.MemAvailableGb
 		totalMemTotal += snap.MemTotalGb
@@ -1127,15 +1127,19 @@ func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]interface{}{
 		"total_machines":         len(snapshots),
-		"healthy_count":          healthyCount,
-		"unhealthy_count":        unhealthyCount,
+		"healthy_count":          fh.Healthy,
+		"unhealthy_count":        fh.Unhealthy,
+		"version_unknown_count":  fh.VersionUnknown,
+		"mixed_version":          fh.Mixed(),
+		"mixed_machines":         fh.MixedMachines,
+		"master_code_version":    fh.MasterCodeVersion,
 		"total_models":           len(models),
 		"available_models":       models,
 		"total_mem_available_gb": totalMemAvailable,
 		"total_mem_total_gb":     totalMemTotal,
 		"total_gpu_used_gb":      totalGPUUsed,
 		"total_active_requests":  totalActive,
-		"machines":               snapshots,
+		"machines":               AnnotateVersionMismatch(fh.MasterCodeVersion, snapshots),
 	}
 
 	writeJSON(w, http.StatusOK, response)
