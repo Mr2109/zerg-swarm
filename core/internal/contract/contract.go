@@ -31,6 +31,36 @@ var modelIDMapRaw []byte
 //go:embed intent-plan.json
 var intentPlanRaw []byte
 
+//go:embed receipt.json
+var receiptRaw []byte
+
+// ReceiptSpec —— 交接回执的真源（§20.3 H3 · §20.1 步 9 · §十二 `P-119`/`P-120` · 开工单 T-61）。
+type ReceiptSpec struct {
+	Schema           string   `json:"schema"`
+	Note             string   `json:"note"`
+	Fields           []string `json:"fields"`
+	RequiredFields   []string `json:"required_fields"`
+	Landing          string   `json:"landing"`
+	LandingDeviation string   `json:"landing_deviation"`
+	TraceIDRule      string   `json:"trace_id_rule"`
+	ResumeEntry      string   `json:"resume_entry"`
+	ResumeEntryNote  string   `json:"resume_entry_note"`
+	H1Rule           string   `json:"h1_rule"`
+	VerdictWords     []string `json:"verdict_words"`
+}
+
+// Receipt —— 解出回执真源（解不动 / 缺关键格 ⇒ 报错，不吞）。
+func Receipt() (*ReceiptSpec, error) {
+	var s ReceiptSpec
+	if err := json.Unmarshal(receiptRaw, &s); err != nil {
+		return nil, fmt.Errorf("contract: 回执真源解不动（receipt.json 坏了？）: %w", err)
+	}
+	if len(s.RequiredFields) == 0 || s.ResumeEntry == "" || len(s.Fields) == 0 {
+		return nil, fmt.Errorf("contract: 回执真源缺关键格（required_fields / resume_entry / fields 有一个是空的）")
+	}
+	return &s, nil
+}
+
 // IntentPlanSpec —— 意图件（`Plan` 对象）的四闭集与必备字段真源（§十八.3-3 · 开工单 T-59）。
 //
 // 一句话：把「想做什么」变成**可校验 · 可干跑 · 可审计**的数据 —— 七语义件 `F1`–`F7`

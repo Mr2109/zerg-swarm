@@ -266,6 +266,10 @@ func cmdModelLs(inv *invocation, stdout, stderr io.Writer) int {
 // ---- context 族（只读：ls）· 离线也出表（§九 M13 Z6）----
 
 func cmdContextLs(inv *invocation, stdout, stderr io.Writer) int {
+	// 续做面（§十二 `P-120` 定案 ①）：「上次做到哪」的入口就是这里，**不新立族**。
+	if inv.resume {
+		return cmdContextResume(inv, stdout, stderr)
+	}
 	rows := contextRows()
 	return listCmd(inv, stdout, stderr, []string{"name", "core", "gateway", "default_node", "token_source"}, rows)
 }
