@@ -674,6 +674,21 @@ func init() {
 			endpoint: "",
 			run:      cmdGateBench,
 		},
+		// ── 缺口面 P0 之外 · `zerg doc meta fill`（批量回填文件头 · 2026-09-21）──────────────
+		//   病灶原样（开工记录 D3 §三）：③ 那 63 篇的抬头是**一次性 `/tmp` 脚本**回填的 ——
+		//   命令面**没有「批量改字段」这条路**。本条目就是那次脚本的命令面等价物。
+		{
+			path:    []string{"doc", "meta"},
+			kind:    "DocMeta",
+			summary: "文档元数据面（动作 `fill` = 批量回填文件头：只填机械可判的日期 + 不开源标注 · 默认干跑 · 写审计）",
+			usage:   "zerg doc meta fill [--scope devdocs | <目录>] [--dry-run] [--by <谁>] [--json <字段>] [--yes]",
+			args:    []string{"动作（本版只有 fill）"},
+			fields:  docMetaFillFields,
+			danger: &dangerSpec{dangerD2, "（被扫根）",
+				"回填文件头（日期 + 不开源标注）—— 只加机械可判的抬头行、不碰正文语义；可回滚 = git",
+				"缺口-命令面-20260921 §八 H2 · 开工记录 D3 §三 新增 1 条 · D3③-a 的等价命令"},
+			run: cmdDocMeta,
+		},
 		{
 			path:     []string{"port", "ls"},
 			kind:     "PortLs",

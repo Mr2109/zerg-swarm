@@ -280,6 +280,20 @@
    "语义": "dryrun.v1",
    "零副作用判据": "测试件本身只在 `t.TempDir()` 的合成仓里驱动命令（`ZERG_REPO=<合成仓根>`），不碰真目标；它直接断言零副作用：`--dry-run` 前后 HEAD 与 `git diff --cached` 逐字不变。",
    "备注": "2026-09-21 D3b 登记（门⑩ 扫描面命中的测试件）"
+  },
+  {
+   "file": "core/cmd/zerg/family_doc.go",
+   "类": "命令面三态（`doc meta fill` 的计划面 · 与 guard.go 同一套语义；**默认干跑**：不带 `--dry-run` 也不带 `--yes` ⇒ 计划面 + rc=2）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`zerg doc meta fill --scope devdocs --dry-run` 现跑：只打印计划面（逐件前/后 sha256 + 日期来源），被扫件 sha256 逐字不变、审计件不出现（Go 判据 `TestDocMetaFill_DryRunThenWrite` 现跑同判）",
+   "备注": "缺口-命令面-20260921 §八 · D3③-a 那次一次性脚本的命令面等价物；只打计划面（stdout 的行），**不落任何计划件**"
+  },
+  {
+   "file": "core/cmd/zerg/cli_doc_meta_fill_test.go",
+   "类": "命令面测试件（批量回填文件头的机检：干跑零副作用 / 真写字节 / 幂等 / 不给结论）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "合成文档树：`--dry-run` 之后件字节逐字不变、审计件不出现（本件判据①现跑）",
+   "备注": "缺口面 P0 之外（2026-09-21）"
   }
  ]
 }
