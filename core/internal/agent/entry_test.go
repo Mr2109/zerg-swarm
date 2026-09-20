@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 // --- 1. SubmitTask 正常生成 issue ---
 
 func TestSubmitTask_ValidCodeTask(t *testing.T) {
+	isolateIssuesState(t) // T-36：真写单子的测试必须先把落点钉到自己的临时状态目录
 	tmpDir := t.TempDir()
 	// 临时切换工作目录
 	origDir, _ := os.Getwd()
@@ -66,6 +68,7 @@ func TestSubmitTask_ValidCodeTask(t *testing.T) {
 // --- 2. 优先级写入验证 ---
 
 func TestSubmitTask_PrioritiesWritten(t *testing.T) {
+	isolateIssuesState(t) // T-36：真写单子的测试必须先把落点钉到自己的临时状态目录
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
 	os.Chdir(tmpDir)
@@ -95,6 +98,7 @@ func TestSubmitTask_PrioritiesWritten(t *testing.T) {
 // --- 3. 去重测试 ---
 
 func TestSubmitTask_Dedup(t *testing.T) {
+	isolateIssuesState(t) // T-36：真写单子的测试必须先把落点钉到自己的临时状态目录
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
 	os.Chdir(tmpDir)
@@ -125,6 +129,7 @@ func TestSubmitTask_Dedup(t *testing.T) {
 // --- 4. 非法 type ---
 
 func TestSubmitTask_InvalidType(t *testing.T) {
+	isolateIssuesState(t) // T-36：真写单子的测试必须先把落点钉到自己的临时状态目录
 	spec := TaskSpec{
 		Task:     "some task",
 		Type:     "invalid_type",
@@ -143,6 +148,7 @@ func TestSubmitTask_InvalidType(t *testing.T) {
 // --- 5. 非法 priority ---
 
 func TestSubmitTask_InvalidPriority(t *testing.T) {
+	isolateIssuesState(t) // T-36：真写单子的测试必须先把落点钉到自己的临时状态目录
 	spec := TaskSpec{
 		Task:     "some task",
 		Type:     TaskTypeCode,
@@ -161,6 +167,7 @@ func TestSubmitTask_InvalidPriority(t *testing.T) {
 // --- 6. 非法 source ---
 
 func TestSubmitTask_InvalidSource(t *testing.T) {
+	isolateIssuesState(t) // T-36：真写单子的测试必须先把落点钉到自己的临时状态目录
 	spec := TaskSpec{
 		Task:     "some task",
 		Type:     TaskTypeCode,
@@ -179,6 +186,7 @@ func TestSubmitTask_InvalidSource(t *testing.T) {
 // --- 7. 空任务描述 ---
 
 func TestSubmitTask_EmptyTask(t *testing.T) {
+	isolateIssuesState(t) // T-36：真写单子的测试必须先把落点钉到自己的临时状态目录
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
 	os.Chdir(tmpDir)
@@ -199,6 +207,7 @@ func TestSubmitTask_EmptyTask(t *testing.T) {
 // --- 8. 不同任务不去重 ---
 
 func TestSubmitTask_DifferentTasksNotDedup(t *testing.T) {
+	isolateIssuesState(t) // T-36：真写单子的测试必须先把落点钉到自己的临时状态目录
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
 	os.Chdir(tmpDir)
@@ -242,6 +251,7 @@ func TestSubmitTask_DifferentTasksNotDedup(t *testing.T) {
 // --- 9. 状态机校验：新 issue 状态为 queued ---
 
 func TestSubmitTask_StatusQueued(t *testing.T) {
+	isolateIssuesState(t) // T-36：真写单子的测试必须先把落点钉到自己的临时状态目录
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
 	os.Chdir(tmpDir)
@@ -271,6 +281,7 @@ func TestSubmitTask_StatusQueued(t *testing.T) {
 // --- 10. 四种来源都合法 ---
 
 func TestSubmitTask_AllSources(t *testing.T) {
+	isolateIssuesState(t) // T-36：真写单子的测试必须先把落点钉到自己的临时状态目录
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
 	os.Chdir(tmpDir)
@@ -346,10 +357,21 @@ func TestTransitionIssue_IllegalTransition(t *testing.T) {
 	}
 }
 
-// --- 14. 文件在 docs/issues/ 目录下 ---
+// --- 14. 落点 = 内部任务单目录（**不是**仓内 docs/issues）---
 
-func TestSubmitTask_WriteToIssuesDir(t *testing.T) {
+// TestSubmitTask_WritesToConfiguredIssuesDirNotRepo —— §二十一 已红第 14 条（批 C · T-36）后的契约：
+// 派单落在 `statepath.IssuesDir()`（状态目录下），**不再**按 CWD 写仓内 `docs/issues`。
+//
+// 这条测试原来叫 `TestSubmitTask_WriteToIssuesDir`，断言的是「路径里含 docs/issues」——那正是已红的形态
+// （按 CWD 选址 ⇒ 谁在主仓根下派一单，主仓的 docs/issues 就被造回来）。T-36 把它改成**成对**两格：
+//
+//	① 单子在配置的落点里（正控）；
+//	② CWD 下**没有** docs/issues（负控 = 已红的形态不得复现）。
+func TestSubmitTask_WritesToConfiguredIssuesDirNotRepo(t *testing.T) {
+	isolateIssuesState(t) // T-36：真写单子的测试必须先把落点钉到自己的临时状态目录
+	isolateIssuesState(t)
 	tmpDir := t.TempDir()
+
 	origDir, _ := os.Getwd()
 	os.Chdir(tmpDir)
 	defer os.Chdir(origDir)
@@ -365,9 +387,15 @@ func TestSubmitTask_WriteToIssuesDir(t *testing.T) {
 		t.Fatalf("SubmitTask error: %v", err)
 	}
 
-	// 检查路径包含 docs/issues/
-	relPath, _ := filepath.Rel(tmpDir, path)
-	if !strings.Contains(relPath, "docs"+string(filepath.Separator)+"issues") {
-		t.Errorf("file not in docs/issues/: got relative path %s", relPath)
+	// ① 正控：落在真源 = statepath.IssuesDir() 下
+	if rel, rerr := filepath.Rel(statepath.IssuesDir(), path); rerr != nil || rel[:1] == "." {
+		t.Errorf("单子应落在 statepath.IssuesDir()=%s 下，实得 %s", statepath.IssuesDir(), path)
+	}
+	if _, serr := os.Stat(path); serr != nil {
+		t.Errorf("单子没真写出来：%v", serr)
+	}
+	// ② 负控：CWD（= 假主仓）下不得出现 docs/issues
+	if _, serr := os.Stat(filepath.Join(tmpDir, "docs", "issues")); serr == nil {
+		t.Errorf("CWD 下又被造出 docs/issues —— 已红第 14 条的形态复现了：%s", filepath.Join(tmpDir, "docs", "issues"))
 	}
 }

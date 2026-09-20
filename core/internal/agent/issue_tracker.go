@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 // IssueRecord — 失败问题单（SWE-bench 8 字段——本地任务区 issue 目录）
@@ -176,8 +178,16 @@ func ClassifyFailure(reason TerminateReason) string {
 // CreateIssue — 挂单（失败 → 任务区 <issuesDir>/instance_id.md——git 提交由调用方）
 // 返回 issue 文件路径
 func CreateIssue(workDir string, task string, reason TerminateReason, retryCount int, toolTrace []string) (string, error) {
-	// 去重检查（缺漏4——一级：任务 hash 相似已存在则复用——简单版：同任务同原因不重复）
-	issuesDir := filepath.Join(workDir, "docs", "issues")
+	// 落点真源 = **内部任务单目录**（2026-09-19 Mr2109 已拍的「内部任务单目录可配」）：
+	// `statepath.IssuesDir()`（= `ZERG_ISSUES_DIR` → `<状态目录>/issues`）。
+	//
+	// ★ 2026-09-20 批 C · T-36 改（§二十一 已红第 14 条）：原来是
+	//   `filepath.Join(workDir, "docs", "issues")` + **无条件** `MkdirAll` —— 主仓已按分家纪律
+	//   退役 `docs/issues`（`AGENTS.md:42`），而只要**跑一次挂单路径**就会把它造回主仓。
+	//   现在：① 落点不在仓内（在状态目录下）；② 在这个目录上 `MkdirAll` 是安全的（它不是工作树）。
+	//   `workDir` 参数**保留但不再用于选址**（调用方签名不变；留它是为了不惊动调用方与历史日志）。
+	_ = workDir // 选址不再看它（见上）；签名保留 = 调用方零改动
+	issuesDir := statepath.IssuesDir()
 	if err := os.MkdirAll(issuesDir, 0o755); err != nil {
 		return "", err
 	}
