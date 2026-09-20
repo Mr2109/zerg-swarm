@@ -552,6 +552,57 @@ func cloneAR(t *testing.T, d arDoc) arDoc {
 	return out
 }
 
+// judgeARExport —— 判据⑦：导出物（Zerg-内部文档 的归属清单）与真源的四个总数/五个面数**逐格相同**。
+// 导出物缺失时 Skip（两仓分家 · 本层不自己造它）—— 在时则必须逐字符串对上。
+func judgeARExport(exportText string, d arDoc) []error {
+	var errs []error
+	if strings.TrimSpace(exportText) == "" {
+		return []error{errors.New("判据⑦ 破：导出物是空的")}
+	}
+	want := []string{
+		fmt.Sprintf("**273 = %d（①）+ %d（②）+ %d（③）+ %d（④）**", d.Was.Tally["adopt"], d.Was.Tally["internal"], d.Was.Tally["retire"], d.Was.Tally["pending"]),
+		fmt.Sprintf("**273 = %d（①）+ %d（②）+ %d（③）+ %d（④）**", d.Tally.Adopt, d.Tally.Internal, d.Tally.Retire, d.Tally.Pending),
+		fmt.Sprintf("| **合计** | **%d** | **%d** | **%d** | **%d** | **%d** | **41 / 145 / 4 / 83** |",
+			d.Tally.Objects, d.Tally.Adopt, d.Tally.Internal, d.Tally.Retire, d.Tally.Pending),
+	}
+	for _, h := range []string{
+		fmt.Sprintf("## ① 收编为命令（%d 条）", d.Tally.Adopt),
+		fmt.Sprintf("## ② 保留为内部实现（%d 条）", d.Tally.Internal),
+		fmt.Sprintf("## ③ 退役（%d 条）", d.Tally.Retire),
+		fmt.Sprintf("## ④ 待定（%d 条）", d.Tally.Pending),
+	} {
+		want = append(want, h)
+	}
+	for _, w := range want {
+		if !strings.Contains(exportText, w) {
+			errs = append(errs, fmt.Errorf("判据⑦ 破：导出物里找不到 `%s`（真源与导出物不同源）", w))
+		}
+	}
+	for _, f := range d.Faces {
+		row := fmt.Sprintf("| %s | %d | %d | %d | %d | %d |", f.Face, f.Objects, f.Adopt, f.Internal, f.Retire, f.Pending)
+		if !strings.Contains(exportText, row) {
+			errs = append(errs, fmt.Errorf("判据⑦ 破：导出物的计数表里没有面行 `%s`", row))
+		}
+	}
+	return errs
+}
+
+func TestAdoptRetireExportMatchesTruth(t *testing.T) {
+	_, d, _ := loadAR(t)
+	docs := zergDocsRoot(t) // 同级没有 Zerg-内部文档 时自动 Skip
+	p := filepath.Join(docs, "项目文档", "v2.5.10", "归属-收编与退役-20260920.md")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Skipf("导出物不在（%v）—— 两仓分家时本层不自己造它", err)
+	}
+	if errs := judgeARExport(string(b), d); len(errs) > 0 {
+		t.Errorf("判据⑦ 破（%d 处）：\n  %s", len(errs), joinErrs(errs))
+	} else {
+		t.Logf("判据⑦ ✓ 导出物与原真源逐格相同（稿 41/145/4/83 · 落回后 %d/%d/%d/%d · 五行分面逐行）",
+			d.Tally.Adopt, d.Tally.Internal, d.Tally.Retire, d.Tally.Pending)
+	}
+}
+
 func joinErrs(errs []error) string {
 	parts := make([]string, 0, len(errs))
 	for _, e := range errs {
