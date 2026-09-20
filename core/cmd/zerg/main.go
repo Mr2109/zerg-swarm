@@ -233,7 +233,7 @@ func init() {
 		},
 		{
 			path:    []string{"help"},
-			summary: "帮助（主题: exit-codes · config · contract · errors · idempotency · locks · long-tasks · remote · version）",
+			summary: "帮助（主题见 `zerg help <主题>`；表在 topics.go）",
 			usage:   "zerg help [<主题>]",
 			args:    []string{"主题（可省）"},
 			run:     cmdHelp,
@@ -352,6 +352,26 @@ func init() {
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdGate,
+		},
+		// ---- 批 B · T-17 事件面（§九 M1）：**唯一名字** `zerg watch` ----
+		{
+			path:          []string{"watch"},
+			kind:          "Watch",
+			summary:       "订阅事件流（单端点 + Accept 协商 · 唯一名字）",
+			usage:         "zerg watch [<id>] [--accept <媒体类型>] [--exit-on <kind>] [--follow]",
+			args:          []string{"对象 id（可省：跟全群）"},
+			endpoint:      "GET /api/events（**主控面今天没有** ⇒ 本版不给结论）",
+			groupReadOnly: true,
+			run:           cmdWatch,
+		},
+		{
+			path:     []string{"task", "show"},
+			kind:     "TaskShow",
+			summary:  "看单个任务（`--follow` 转发到 `zerg watch`，不另起一条流）",
+			usage:    "zerg task show <任务 id> [--follow] [--json <字段>]",
+			args:     []string{"任务 id"},
+			endpoint: "GET /api/tasks",
+			run:      cmdTaskShow,
 		},
 		// ---- 危险动作：**只登记形状，不开放执行**（§6.2 批 1 零写操作）----
 		// 每条都过 cmdGuarded：`--dry-run` 出计划件（退码 0）；真跑一律拒执（退码 2 = 不给结论）。
@@ -659,6 +679,9 @@ type invocation struct {
 	reload bool
 	force  bool
 
+	// 内容协商（§九 M1 W12）：`--accept <媒体类型>`
+	acceptWant string
+
 	// `--quick`：贵项跳过并记 SKIP（§十二 P-040）
 	quick bool
 
@@ -727,6 +750,13 @@ func parseInvocation(args []string) (*invocation, error) {
 			}
 		case strings.HasPrefix(a, "--context="):
 			inv.contextWant = strings.TrimPrefix(a, "--context=")
+		case a == "--accept" || a == "--accept=":
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				inv.acceptWant = args[i]
+			}
+		case strings.HasPrefix(a, "--accept="):
+			inv.acceptWant = strings.TrimPrefix(a, "--accept=")
 		case a == "--quick":
 			inv.quick = true
 		case a == "--wait":
@@ -1078,43 +1108,8 @@ func cmdVersion(inv *invocation, stdout, stderr io.Writer) int {
 
 func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) > 0 {
-		switch inv.args[0] {
-		case "exit-codes":
-			fmt.Fprint(stdout, helpExitCodes())
-			return exitOK
-		case "config":
-			fmt.Fprint(stdout, helpConfig())
-			return exitOK
-		case "dangerous":
-			fmt.Fprint(stdout, helpDangerous())
-			return exitOK
-		case "contract":
-			fmt.Fprint(stdout, helpContract())
-			return exitOK
-		case "errors":
-			fmt.Fprint(stdout, helpErrors())
-			return exitOK
-		case "idempotency":
-			fmt.Fprint(stdout, helpIdempotency())
-			return exitOK
-		case "locks":
-			fmt.Fprint(stdout, helpLocks())
-			return exitOK
-		case "long-tasks":
-			fmt.Fprint(stdout, helpLongTasks())
-			return exitOK
-		case "remote":
-			fmt.Fprint(stdout, helpRemote())
-			return exitOK
-		case "version":
-			fmt.Fprint(stdout, helpVersionTopic())
-			return exitOK
-		default:
-			fmt.Fprintf(stderr, "%s: 未知帮助主题 %q\n", progName, inv.args[0])
-			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous · contract · errors · idempotency · locks · long-tasks · remote · version\n")
-			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
-			return exitUsage
-		}
+		// 主题表在 `topics.go`（**唯一真源**：分派与「可用主题」列清单同一处）。
+		return renderHelpTopic(inv.args[0], stdout, stderr)
 	}
 	fmt.Fprint(stdout, helpText())
 	return exitOK
