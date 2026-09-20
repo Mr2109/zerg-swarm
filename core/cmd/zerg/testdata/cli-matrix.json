@@ -745,6 +745,245 @@
    "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
   },
   {
+   "id": "model/show#未知旗标",
+   "command": "model show",
+   "argv": [
+    "model",
+    "show",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "model/show#不认的契约主号",
+   "command": "model show",
+   "argv": [
+    "model",
+    "show",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "model/opts#未知旗标",
+   "command": "model opts",
+   "argv": [
+    "model",
+    "opts",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "model/opts#不认的契约主号",
+   "command": "model opts",
+   "argv": [
+    "model",
+    "opts",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "core/status#未知旗标",
+   "command": "core status",
+   "argv": [
+    "core",
+    "status",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "core/status#不认的契约主号",
+   "command": "core status",
+   "argv": [
+    "core",
+    "status",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "core/logs#未知旗标",
+   "command": "core logs",
+   "argv": [
+    "core",
+    "logs",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "core/logs#不认的契约主号",
+   "command": "core logs",
+   "argv": [
+    "core",
+    "logs",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "core/daemon#未知旗标",
+   "command": "core daemon",
+   "argv": [
+    "core",
+    "daemon",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "core/daemon#不认的契约主号",
+   "command": "core daemon",
+   "argv": [
+    "core",
+    "daemon",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "core/daemon#--json 不给字段",
+   "command": "core daemon",
+   "argv": [
+    "core",
+    "daemon",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+  },
+  {
+   "id": "core/start#未知旗标",
+   "command": "core start",
+   "argv": [
+    "core",
+    "start",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "core/start#不认的契约主号",
+   "command": "core start",
+   "argv": [
+    "core",
+    "start",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "core/start#缺 --confirm（D3）",
+   "command": "core start",
+   "argv": [
+    "core",
+    "start",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "core/start#--confirm 值不匹配",
+   "command": "core start",
+   "argv": [
+    "core",
+    "start",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "core/restart#未知旗标",
+   "command": "core restart",
+   "argv": [
+    "core",
+    "restart",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "core/restart#不认的契约主号",
+   "command": "core restart",
+   "argv": [
+    "core",
+    "restart",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "core/restart#缺 --confirm（D3）",
+   "command": "core restart",
+   "argv": [
+    "core",
+    "restart",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "core/restart#--confirm 值不匹配",
+   "command": "core restart",
+   "argv": [
+    "core",
+    "restart",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
    "id": "task/terminate#未知旗标",
    "command": "task terminate",
    "argv": [
