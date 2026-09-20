@@ -3005,6 +3005,44 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "缺位置参数 ⇒ 用法错 2"
+  },
+  {
+   "id": "code/find#未知旗标",
+   "command": "code find",
+   "argv": [
+    "code",
+    "find",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "code/find#不认的契约主号",
+   "command": "code find",
+   "argv": [
+    "code",
+    "find",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "code/find#--json 不给字段",
+   "command": "code find",
+   "argv": [
+    "code",
+    "find",
+    "needle",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）；本命令**先判位置参数**（缺正则 ⇒ 2）再判字段，故这一格必须带正则才判得到"
   }
  ]
 }
