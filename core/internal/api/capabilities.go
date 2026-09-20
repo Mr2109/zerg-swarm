@@ -22,32 +22,12 @@ func (h *Handlers) CapabilitiesHandler(w http.ResponseWriter, r *http.Request) {
 		"description": "去中心化 AI 任务网络——主控调度 + CA 执行 + 复查验证",
 		"auth":        "X-Auth-Token 请求头（网关/主控配置的 token）",
 		"base_url":    "http://<主控地址>:8580",
-		"capabilities": []map[string]interface{}{
-			{"name": "submit_task", "desc": "提交任务（CA 执行——模型干活）", "endpoint": "POST /api/tasks", "example": `curl -X POST http://127.0.0.1:8580/api/tasks -H "X-Auth-Token: <token>" -H "Content-Type: application/json" -d '{"description":"任务描述","model":"example-35b-v2","priority":3}'`},
-			{"name": "list_tasks", "desc": "查看任务队列（所有状态）", "endpoint": "GET /api/tasks"},
-			{"name": "task_detail", "desc": "任务详情（状态/报告/轮次）", "endpoint": "GET /api/tasks/{id}"},
-			{"name": "task_retry", "desc": "重跑任务（failed→queued）", "endpoint": "POST /api/tasks/{id}/retry"},
-			{"name": "task_pause", "desc": "暂停/继续排队任务", "endpoint": "POST /api/tasks/{id}/pause?pause=true"},
-			{"name": "task_move", "desc": "重排任务（置顶/上移/下移）", "endpoint": "POST /api/tasks/{id}/move?action=top"},
-			{"name": "task_delete", "desc": "删除排队任务", "endpoint": "DELETE /api/tasks/{id}"},
-			{"name": "list_models", "desc": "可用模型清单（含候选机器）", "endpoint": "GET /api/fleet/models"},
-			{"name": "fleet_status", "desc": "集群机器状态（健康/负载）", "endpoint": "GET /api/fleet/status"},
-			{"name": "list_resources", "desc": "资源库（模型/工具/skill/mcp——信任度）", "endpoint": "GET /api/resources/{type}"},
-			{"name": "list_docs", "desc": "项目文档（设计/计划）", "endpoint": "GET /api/docs"},
-			{"name": "git_status", "desc": "任务 git 状态（分支/diff）", "endpoint": "GET /api/git/status"},
-			// 2026-09-13 文件/目录浏览器 阶段 1（《设计-文件浏览器虫茧-20260913》§4.2）：
-			// 三条端点已在 main.go 注册，能力清单也必须能发现它们——别的 agent 只 curl 这一份清单。
-			{"name": "list_fileroots", "desc": "文件浏览器：五根白名单（docs/repo/models/tasks/weights）+ 可配置项；每根含 exists（根不存在也返回该项，exists=false）", "endpoint": "GET /api/fileroots"},
-			{"name": "open_file", "desc": "用默认应用打开根内目录 / text_exts 内文本文件（白名单校验 + 审计留痕）", "endpoint": "POST /api/fileroots/open"},
-			{"name": "reveal_file", "desc": "在访达中显示根内任意类型文件或目录（白名单校验 + 审计留痕；不执行不解析）", "endpoint": "POST /api/fileroots/reveal"},
-			// 2026-09-13（Mr2109「按建议」）：设计稿曾承诺 /api/resources/fit 与 /api/resources/residency，
-			// 代码未实现（请求返回 400）。按"代码为准、回填文档"的规矩不另设端点——数据统一在 ledger，
-			// 这里如实给出映射，免得外部 agent 按设计稿去找两个不存在的地址。
-			{"name": "resource_fit", "desc": "资源是否装得下（原设计承诺 /api/resources/fit 未实现——数据见 ledger；设计稿已回填）", "endpoint": "GET /api/resources/ledger"},
-			{"name": "resource_residency", "desc": "驻留与未托管模型（原设计承诺 /api/resources/residency 未实现——数据见 ledger；设计稿已回填）", "endpoint": "GET /api/resources/ledger"},
-		},
-		"workflow": "提交任务 → CA 执行（worktree git）→ 确定性验证（机器检查）→ 复查模型（跨家族）→ 通过 merge/打回重做",
-		"notes":    "单槽铁律: 单设备串行——排队慢正常（等更多 X3 并行）",
+		// 2026-09-20 批 B ②：能力清单由**真源表**派生（routes.go 的 routeTable）——
+		// 与 /api/openapi.json 的 paths **同一张表**，逐条对齐（含**本清单自己**）。
+		"capabilities":     capabilityItems(),
+		"capability_count": len(routeTable),
+		"workflow":         "提交任务 → CA 执行（worktree git）→ 确定性验证（机器检查）→ 复查模型（跨家族）→ 通过 merge/打回重做",
+		"notes":            "单槽铁律: 单设备串行——排队慢正常（等更多 X3 并行）",
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -62,40 +42,8 @@ func (h *Handlers) OpenAPIHandler(w http.ResponseWriter, r *http.Request) {
 			"version":     version.Version,
 			"description": "去中心化 AI 任务网络主控 API——提交/查询/管理任务",
 		},
-		"paths": map[string]interface{}{
-			"/api/tasks": map[string]interface{}{
-				"post": map[string]interface{}{"summary": "提交任务", "description": "提交任务——CA 执行", "requestBody": map[string]interface{}{"content": map[string]interface{}{"application/json": map[string]interface{}{"schema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{
-					"description": map[string]interface{}{"type": "string", "description": "任务描述（自包含）"},
-					"model":       map[string]interface{}{"type": "string", "description": "模型名（不传=默认调度）"},
-					"priority":    map[string]interface{}{"type": "integer", "description": "优先级（默认 3——高优先小）"},
-					// B 项③ 片（单子）最小 schema（2026-09-18）: 声明了其中任一字段 ⇒ 该任务按「片」过挂板校验
-					// （缺 slice_id / 缺 acceptance 声明 / depends_on 环 / 悬空依赖 ⇒ 400，拒绝入队）。
-					// 未声明片字段的任务不受影响（现有调用方行为不变）。
-					"slice_id":   map[string]interface{}{"type": "string", "description": "片（单子）真源 id；声明了任一 slice 字段就必须给出，否则 400 SLICE_MISSING_ID"},
-					"depends_on": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "依赖的其它片 id 列表；成环 ⇒ 400 SLICE_DEPENDS_CYCLE；指向板上不存在的片 ⇒ 400 SLICE_DEPENDS_DANGLING"},
-					"owner":      map[string]interface{}{"type": "string", "description": "片归属者（可选——本轮不参与判定，只随片记录）"},
-					"acceptance": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "验收判据；**必须显式声明**（缺失 ⇒ 400 SLICE_MISSING_ACCEPTANCE；显式空数组 [] 允许——「没写」与「写了空」是两件事）"},
-				}}}}}},
-				"get": map[string]interface{}{"summary": "任务列表", "description": "所有任务（running/queued/done/failed）"},
-			},
-			"/api/tasks/{id}": map[string]interface{}{
-				"get": map[string]interface{}{"summary": "任务详情", "description": "状态/执行报告/复查报告/轮次"},
-			},
-			"/api/fleet/models":     map[string]interface{}{"get": map[string]interface{}{"summary": "模型清单"}},
-			"/api/fleet/status":     map[string]interface{}{"get": map[string]interface{}{"summary": "集群状态"}},
-			"/api/resources/{type}": map[string]interface{}{"get": map[string]interface{}{"summary": "资源库（models/tools/skills/mcp）"}},
-			// 2026-09-13 文件/目录浏览器 阶段 1：三端点如实补录（字段/错误码按 fileroots.go 实现，不编造）
-			"/api/fileroots": map[string]interface{}{"get": map[string]interface{}{"summary": "文件根白名单", "description": "五项白名单根（docs/repo/models/tasks/weights）+ config（display_max/allow_all_types/text_exts）；每根含 id/label/path/default/writable/exists——根不存在也照常返回该项，exists=false"}},
-			"/api/fileroots/open": map[string]interface{}{"post": map[string]interface{}{"summary": "用默认应用打开", "description": "目录一律放行；文件须在 text_exts 内（ZERG_FILEBROWSER_ALLOW_ALL_TYPES=1 放开任意类型）。成功返回 {\"ok\":true,\"abs\":\"<后端解析出的绝对路径>\"}；错误码 INVALID_BODY/INVALID_ROOT/INVALID_PATH/NOT_ALLOWED（400）、NOT_FOUND（404）、OPEN_FAILED（500）", "requestBody": map[string]interface{}{"content": map[string]interface{}{"application/json": map[string]interface{}{"schema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{
-				"root": map[string]interface{}{"type": "string", "description": "白名单根 id（docs/repo/models/tasks/weights）"},
-				"path": map[string]interface{}{"type": "string", "description": "根内相对路径（空=根本身；不接受绝对路径与 .. 段）"},
-				"mode": map[string]interface{}{"type": "string", "description": "file|dir（契约字段；后端以实际 stat 为准，不信前端声明）"},
-			}}}}}}},
-			"/api/fileroots/reveal": map[string]interface{}{"post": map[string]interface{}{"summary": "在访达中显示", "description": "对任意类型放行（只打开文件管理器并高亮，不执行不解析）。成功与错误码同 /api/fileroots/open（无类型闸门，故不会出现 NOT_ALLOWED）", "requestBody": map[string]interface{}{"content": map[string]interface{}{"application/json": map[string]interface{}{"schema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{
-				"root": map[string]interface{}{"type": "string", "description": "白名单根 id"},
-				"path": map[string]interface{}{"type": "string", "description": "根内相对路径（空=根本身）"},
-			}}}}}}},
-		},
+		// 2026-09-20 批 B ②：paths 由**真源表**派生（routes.go）——键集与 capabilities 的端点集逐条相等。
+		"paths": openapiPaths(),
 		"security": []map[string]interface{}{
 			{"X-Auth-Token": []string{}},
 		},
