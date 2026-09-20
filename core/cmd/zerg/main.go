@@ -982,9 +982,9 @@ func init() {
 		{
 			path:     []string{"dev", "proposal"},
 			kind:     "Proposal",
-			summary:  "提案件通道：只产可审查物（new|list|show）· 目标必须回指既有编号 · 「提 ≠ 批」两对字段（subject/approver）",
-			usage:    "zerg dev proposal new --title <题> --target <待办编号> --goal <目标> --evidence <出处> --rollback <退点> [--criterion <判据>] [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human]",
-			args:     []string{"动作：new | list | show", "提案 id（只 show 要）"},
+			summary:  "提案件通道：只产可审查物（new|list|show|check）· 目标必须回指既有编号 · **判据必须可机检** · 「提 ≠ 批」两对字段（subject/approver）",
+			usage:    "zerg dev proposal new --title <题> --target <待办编号> --goal <目标> --evidence <出处> --rollback <退点> --criterion <可跑的判据> [--file <要改的件>]… [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human]",
+			args:     []string{"动作：new | list | show | check", "提案 id（show/check 才要）"},
 			fields:   proposalFields,
 			endpoint: "",
 			run:      cmdDevProposal,
@@ -1436,6 +1436,12 @@ func valueFlagName(a string) string {
 	case "--title", "--target", "--goal", "--evidence", "--rollback", "--by",
 		"--criterion", "--criteria", "--candidate", "--state", "--round",
 		"--dir", "--producer", "--expect":
+		return a
+	}
+	// 受控写面与提交面旗标（D3b 第二/三步 · 2026-09-21）：受控写入的件名、提交信息、
+	// 审批的件名与理由 —— 与上面同一张名字表的口径（值照收，语义在各自命令里判）。
+	switch a {
+	case "--file", "--message", "--proposal", "--tool", "--note", "--from", "--replace", "--root":
 		return a
 	}
 	// 融合面旗标（§十八.3 四件 · 批 E · T-59）：`ask` 的能力路由与 `plan`/`apply` 的落点。
