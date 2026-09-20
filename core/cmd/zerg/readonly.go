@@ -77,18 +77,41 @@ func project(o jsonObj, fields []string) map[string]string {
 	return row
 }
 
-// fetch 取一个端点；失败按 M20 的形状报一次并给码（未认证 ⇒ 4，其余 ⇒ 1）。
+// fetch 取一个端点；失败按 §九 M7 分类成 kind 并给对应退码（不打第二枪 · O2/O6）。
 func fetch(c *client, path string, out any, stderr io.Writer) int {
+	return fetchInv(nil, c, path, out, stderr)
+}
+
+// fetchInv 同上，但把 kind 记进 invocation（`--json` 失败时它会进 `error` 块）。
+func fetchInv(inv *invocation, c *client, path string, out any, stderr io.Writer) int {
 	err := c.getJSON(path, out)
 	if err == nil {
 		return exitOK
 	}
-	fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+	kind, detail := "failed", ""
 	var ae *authError
-	if errors.As(err, &ae) {
-		return exitAuth
+	var ne *netError
+	var he *httpError
+	switch {
+	case errors.As(err, &ae):
+		kind = "unauthenticated"
+		if ae.status == 403 {
+			kind = "forbidden"
+		}
+		detail = fmt.Sprintf("http_%d", ae.status)
+	case errors.As(err, &ne):
+		kind, detail = "unreachable", "dial_failed"
+	case errors.As(err, &he):
+		kind = "upstream_error"
+		detail = fmt.Sprintf("http_%d", he.status)
 	}
-	return exitFail
+	if inv != nil {
+		inv.setErr(kind, detail, err.Error())
+	}
+	fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+	fmt.Fprintf(stderr, "error.kind=%s · retryable=%t · remedy=%s（§九 M7：重试判定只读 kind）\n",
+		kind, retryableOf(kind), remedyOf(kind))
+	return codeOfKind(kind)
 }
 
 // listCmd 是四条「清单型」只读命令的公共骨架（api ls · agent ls · task ls · model ls）。
@@ -117,7 +140,7 @@ func listCmd(inv *invocation, stdout, stderr io.Writer, display []string, rows [
 func cmdAPILs(inv *invocation, stdout, stderr io.Writer) int {
 	c := newClient()
 	var resp jsonObj
-	if rc := fetch(c, "/api/capabilities", &resp, stderr); rc != exitOK {
+	if rc := fetchInv(inv, c, "/api/capabilities", &resp, stderr); rc != exitOK {
 		return rc
 	}
 	rows := []map[string]string{}
@@ -132,7 +155,7 @@ func cmdAPILs(inv *invocation, stdout, stderr io.Writer) int {
 func cmdAPIOpenAPI(inv *invocation, stdout, stderr io.Writer) int {
 	c := newClient()
 	var resp jsonObj
-	if rc := fetch(c, "/api/openapi.json", &resp, stderr); rc != exitOK {
+	if rc := fetchInv(inv, c, "/api/openapi.json", &resp, stderr); rc != exitOK {
 		return rc
 	}
 	paths := asObj(resp["paths"])
@@ -180,7 +203,7 @@ func cmdAPIHelp(inv *invocation, stdout, stderr io.Writer) int {
 func cmdAgentLs(inv *invocation, stdout, stderr io.Writer) int {
 	c := newClient()
 	var resp jsonObj
-	if rc := fetch(c, "/api/fleet/status", &resp, stderr); rc != exitOK {
+	if rc := fetchInv(inv, c, "/api/fleet/status", &resp, stderr); rc != exitOK {
 		return rc
 	}
 	ms := asObj(resp["machines"])
@@ -208,7 +231,7 @@ func cmdAgentLs(inv *invocation, stdout, stderr io.Writer) int {
 func cmdTaskLs(inv *invocation, stdout, stderr io.Writer) int {
 	c := newClient()
 	var resp jsonObj
-	if rc := fetch(c, "/api/tasks", &resp, stderr); rc != exitOK {
+	if rc := fetchInv(inv, c, "/api/tasks", &resp, stderr); rc != exitOK {
 		return rc
 	}
 	fields := []string{"id", "status", "model", "machine", "priority", "created_at", "description"}
@@ -226,7 +249,7 @@ func cmdTaskLs(inv *invocation, stdout, stderr io.Writer) int {
 func cmdModelLs(inv *invocation, stdout, stderr io.Writer) int {
 	c := newClient()
 	var resp jsonObj
-	if rc := fetch(c, "/api/fleet/models", &resp, stderr); rc != exitOK {
+	if rc := fetchInv(inv, c, "/api/fleet/models", &resp, stderr); rc != exitOK {
 		return rc
 	}
 	fields := []string{"id", "host", "backend", "modality", "mem_gb", "file"}
@@ -335,7 +358,7 @@ func splitScalar(line string) (string, string, bool) {
 //   WARN ⇒ 只报告、不影响退码。
 
 func cmdDoctor(inv *invocation, stdout, stderr io.Writer) int {
-	items := doctorItems()
+	items := doctorItems(inv)
 	if inv.jsonGiven {
 		if !requireFields(inv, stderr) {
 			return exitFail
@@ -361,7 +384,7 @@ func cmdDoctor(inv *invocation, stdout, stderr io.Writer) int {
 	return worst
 }
 
-func doctorItems() []map[string]string {
+func doctorItems(inv *invocation) []map[string]string {
 	items := []map[string]string{}
 
 	// ① 仓根
@@ -405,6 +428,7 @@ func doctorItems() []map[string]string {
 	c := newClient()
 	var caps jsonObj
 	if err := c.getJSON("/api/capabilities", &caps); err != nil {
+		inv.setErr("blocked", "core_unreadable", err.Error())
 		items = append(items, map[string]string{
 			"name": "主控可达", "verdict": "BLOCKED", "detail": err.Error(),
 			"advice": "端点来源 " + baseFromBuiltin + "；命令面不偷偷直连子端（§九 M20 O1/O3）"})
@@ -418,6 +442,7 @@ func doctorItems() []map[string]string {
 	// ⑤ 子端（经主控）· 顺带把「混版观测」当 WARN 报出来（判决权在批 C 的 T-23，本版只报事实）
 	var fleet jsonObj
 	if err := c.getJSON("/api/fleet/status", &fleet); err != nil {
+		inv.setErr("blocked", "fleet_unreadable", err.Error())
 		items = append(items, map[string]string{
 			"name": "子端名册", "verdict": "BLOCKED", "detail": err.Error(), "advice": "先看主控可达那一项"})
 	} else {
