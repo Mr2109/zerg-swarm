@@ -20,7 +20,7 @@
 
 用法：
   python3 scripts/gates/check-doc-freshness.py --list-rules            # 规则表 + 全部名单（白名单/排除/引用域/夹具/拒绝域）
-  python3 scripts/gates/check-doc-freshness.py --self-test             # 好件/坏件/缺件 三格 × 四条 = 12 断言
+  python3 scripts/gates/check-doc-freshness.py --self-test             # 好件/坏件/缺件 三格 × 四条 + T-40 计数对拍 = 28 断言
   python3 scripts/gates/check-doc-freshness.py d1 [d2 d3 d4] [--scope main|wide|mirror] [--report /tmp/r.json]
   python3 scripts/gates/check-doc-freshness.py all                     # 四条都跑；退出码取最严重（1 优先于 2）
 
@@ -68,11 +68,16 @@ GATES = {
         "name": "D2 · 引用 `文件:行` 有效",
         "inputs": "① 归一化白名单（不算引用的噪声类别，必须计数）② 解析基准集 ③ 行号语义（`-` 区间 / `,` 多段 / 单行）④ 裸文件名策略",
         "judge": "R1（含 / 的路径）：存在且最大行号 ≤ 文件总行数；R2（裸文件名）：全解析域同名恰好 1 个 ⇒ 过、0 个 ⇒ 红、>1 ⇒ 黄（歧义）；"
-                 "噪声类别（IP:端口 / 省略号 / 占位符 / 命令行样式 / 绝对路径 / URL）不判但必须计数",
+                 "噪声类别（IP:端口 / 省略号 / 占位符 / 命令行样式 / 绝对路径 / URL）不判但必须计数；"
+                 "★ 2026-09-20 批 C · T-40（§二十一 已红第 18 条）追加「**计数对拍**」：一行里同时出现现跑命令 "
+                 "`grep -c '<BRE>' <path>` 与计数声明 `<N> 条` ⇒ **argv 直调**跑那条 grep -c（不经 shell · 不给文档执行权），"
+                 "实测值必须 == 声明值，不等 ⇒ 红（判词点名「改代码或改文档后必须现跑」）；"
+                 "判不了的（文件不在盘上 / grep 跑不动 / 输出不是整数）只单列计数 + 打印「判不了」，**不当结论**；"
+                 "空转 = 引用条目与计数条目**都**为 0",
         "rc0": "无红（黄=歧义只入清单）",
-        "rc1": "有红（文件不存在 / 行号越界）",
+        "rc1": "有红（文件不存在 / 行号越界 / 计数与现跑不符）",
         "rc2": "解析基准集配置缺失（判据不可判）",
-        "fix": "行号越界 ⇒ 改行号或改「文件:行」；文件没了 ⇒ 改指向新落点",
+        "fix": "行号越界 ⇒ 改行号或改「文件:行」；文件没了 ⇒ 改指向新落点；计数不符 ⇒ **现跑那条命令**，改代码或改文档 ",
     },
     "d3": {
         "name": "D3 · 断链断锚",
@@ -687,6 +692,55 @@ def classify_d2(pfx, linenums, trailing=False, cmdline=False, placeholder=False)
     return "引用", True
 
 
+# ─────────────────────────── D2 · 追加判据：计数对拍（T-40） ───────────────────────────
+# §二十一 已红第 18 条（开工单 T-40）：「文档里的**条数**是手抄的」—— v0.2 写 14 ⇒ 实测 17。
+# 手抄的数没有判据 ⇒ 改代码、改文档**都不会红**，于是回潮。本判据把「命令/路径计数」纳入机检：
+#
+#   一行里同时出现 ① 现跑命令 `` `grep -c '<BRE>' <path>` `` ② 计数声明 `<N> 条`
+#   ⇒ **argv 直调**跑那条 `grep -c`（cwd = 仓根），实测值必须 == 声明值；
+#     不等 ⇒ **红**（判词点名「改代码或改文档后必须现跑」）。
+#
+# ★ 为什么是 argv 直调（`subprocess` 列表参数）而不是 `shell=True`：文档是**任何人可改的文本**，
+#   把它里面的字符串喂给 shell 等于给文档执行权。只认 `grep -c '<BRE>' <path>` 这一种形态，
+#   这个形态用 argv 就能**逐字复现**（BRE 原样传参，不经 shell 二次解释）。
+# ★ 判不了的（文件不存在 / grep 跑不动 / 输出不是整数）⇒ **单列计数 + 进 notes**，
+#   **不当结论**（红要红在「数对不上」，不是红在「判据自己坏了」）；没有计数声明的行不抽。
+RE_COUNT_CMD = re.compile(r"`\s*(grep\s+-c\s+'([^']*)'\s+([^\s'`]+))\s*`")
+RE_COUNT_DECL = re.compile(r"(\d+)\s*条")
+
+
+def count_claims(text):
+    """→ [(行号, 命令串, BRE, 路径, 声明值)]：只抽 `grep -c '<BRE>' <path>` + **同一行**的 `<N> 条`。"""
+    out = []
+    for i, line in enumerate(text.split("\n"), 1):
+        m = RE_COUNT_CMD.search(line)
+        if not m:
+            continue
+        d = RE_COUNT_DECL.search(line)
+        if not d:
+            continue
+        out.append((i, m.group(1), m.group(2), m.group(3), int(d.group(1))))
+    return out
+
+
+def run_grep_c(tree, rel, bre):
+    """argv 直调 `grep -c <BRE> <rel>`（cwd = 仓根）→ (计数 | None, 判不了的原因 | None)。**不经 shell**。"""
+    full = os.path.join(tree.repo, rel)
+    if not os.path.isfile(full):
+        return None, "目标文件不在盘上：%s" % rel
+    try:
+        cp = subprocess.run(["grep", "-c", bre, rel], cwd=tree.repo,
+                            capture_output=True, text=True)
+    except OSError as exc:
+        return None, "grep 跑不动：%s" % exc
+    if cp.returncode not in (0, 1):     # grep：0=有命中 · 1=无命中 · 其余=出错
+        return None, "grep 退出码 %d（%s）" % (cp.returncode, cp.stderr.strip()[:80])
+    try:
+        return int((cp.stdout or "0").strip() or "0"), None
+    except ValueError:
+        return None, "grep 输出不是整数：%r" % cp.stdout
+
+
 def gate_d2(tree, args):
     r = Result("d2", tree)
     if not tree.cfg.get("base_roots"):
@@ -771,11 +825,27 @@ def gate_d2(tree, args):
                     r.counted("黄·歧义·同名%d份" % min(len(cand), 9))
                     r.add(rel, line, raw, "黄·歧义", "R2：同名 %d 份（%s…），指哪份不可知"
                            % (len(cand), ", ".join(cand[:3])), dom)
+        # ── 追加判据（T-40）：同一行里既有现跑 `grep -c` 又有 `<N> 条` ⇒ 数必须对得上 ─────────
+        for cl_line, cl_cmd, cl_bre, cl_path, cl_decl in count_claims(text):
+            r.counted("计数条目")
+            got, why = run_grep_c(tree, cl_path, cl_bre)
+            if why:
+                r.counted("计数条目·判不了")
+                r.notes.append("%s:%d 计数条目判不了（%s）· 原样：%s" % (rel, cl_line, why, cl_cmd))
+                continue
+            if got == cl_decl:
+                r.counted("计数条目·对得上")
+                continue
+            r.counted("红·计数与现跑不符")
+            r.add(rel, cl_line, cl_cmd, "红·计数与现跑不符",
+                  "文档声明 `%d 条`，argv 直调现跑 `%s` ⇒ **%d**（改代码或改文档后**必须现跑**）"
+                  % (cl_decl, cl_cmd, got), dom)
     for f in r.findings:
         if f["domain"] != DOM_LOCAL:
             r.counted("非本地域命中（单列·不进退码）·%s" % f["domain"])
-    if r.counts.get("引用条目·R1", 0) + r.counts.get("引用条目·R2", 0) == 0:
-        r.errors.append("该 scope 的语料里 0 条 `文件:行` 引用（空转 ⇒ 不给结论）")
+    if r.counts.get("引用条目·R1", 0) + r.counts.get("引用条目·R2", 0) == 0 \
+            and r.counts.get("计数条目", 0) == 0:
+        r.errors.append("该 scope 的语料里 0 条 `文件:行` 引用 且 0 条计数条目（空转 ⇒ 不给结论）")
     return r
 
 
@@ -1067,6 +1137,9 @@ def print_result(r, args, elapsed):
     if r.errors:
         for e in r.errors:
             print("  ⛔ 不给结论：%s" % e)
+    if r.notes:
+        for n in r.notes:
+            print("  · 判不了（单列计数，不当结论）：%s" % n)
     keys = sorted(r.counts.items(), key=lambda kv: (-kv[1], kv[0]))
     if keys:
         print("  计数：" + " · ".join("%s=%d" % (k, v) for k, v in keys))
@@ -1271,6 +1344,31 @@ def cmd_self_test(args):
     check("噪声只计数不判红（三类各 1）", res.counts.get("噪声·IP:端口") == 1 and
           res.counts.get("噪声·省略号路径") == 1 and res.counts.get("噪声·占位符") == 1, res.counts)
     check("全是噪声 ⇒ 空转 rc=2（噪声洗白不了）", res.rc() == 2, (res.rc(), res.errors))
+    # ── 追加判据（T-40）：同一行里「现跑 grep -c」+「<N> 条」⇒ 数必须对得上 ──────────────
+    r2c = os.path.join(tmp, "d2countgood")
+    _mkroot({"docs/a.md": "见 `core/x.py:2`。**条数**: 2 条 `/api/x/*`（现跑 `grep -c 'def ' core/x.py`）\n",
+             "core/x.py": "def a\nb\ndef c\n"}, r2c)
+    t = Tree(r2c, base_cfg(r2c))
+    res = gate_d2(t, args)
+    check("计数对拍·好件（声明 2 == 现跑 2）rc=0", res.rc() == 0, (res.rc(), res.counts, [f["kind"] for f in res.reds()]))
+    check("计数对拍·好件：计数条目 1 条且判「对得上」",
+          res.counts.get("计数条目") == 1 and res.counts.get("计数条目·对得上") == 1, res.counts)
+    r2d = os.path.join(tmp, "d2countbad")
+    _mkroot({"docs/a.md": "见 `core/x.py:2`。**条数**: 3 条 `/api/x/*`（现跑 `grep -c 'def ' core/x.py`）\n",
+             "core/x.py": "def a\nb\ndef c\n"}, r2d)
+    t = Tree(r2d, base_cfg(r2d))
+    res = gate_d2(t, args)
+    check("计数对拍·坏件（声明 3 ≠ 现跑 2）rc=1", res.rc() == 1, (res.rc(), res.counts))
+    check("计数对拍·坏件：红条目点名「计数与现跑不符」",
+          any(f["kind"] == "红·计数与现跑不符" for f in res.reds()), [f["kind"] for f in res.reds()])
+    r2e = os.path.join(tmp, "d2countmiss")
+    _mkroot({"docs/a.md": "见 `core/x.py:1`。**条数**: 1 条（现跑 `grep -c 'def ' core/nope.py`）\n",
+             "core/x.py": "def a\n"}, r2e)
+    t = Tree(r2e, base_cfg(r2e))
+    res = gate_d2(t, args)
+    check("计数对拍·判不了（目标不在盘上）⇒ 单列计数、rc=0、**不红**",
+          res.rc() == 0 and res.counts.get("计数条目·判不了") == 1 and
+          not [f for f in res.reds() if "计数" in f["kind"]], (res.rc(), res.counts, res.notes))
     r3 = os.path.join(tmp, "d2miss")
     c = base_cfg(r3)
     c["base_roots"] = []
