@@ -1012,6 +1012,47 @@ func init() {
 			endpoint: "",
 			run:      cmdDevProposal,
 		},
+		// ---- D3b 第四步（2026-09-21）：**人批通道**（`zerg approve` 一族 · §九 M18 `C4`②）----
+		// 人签批准件 = `require_approval` 的逃生门；模型写得出件的字节，**写不出那枚签名**（口令只在人手里）。
+		{
+			path:     []string{"approve", "ls"},
+			kind:     "Approval",
+			summary:  "列人签批准件（逐件带上**验签判决**：验过 / 无签名 / 签名坏 —— 后两者不算批准）",
+			usage:    "zerg approve ls [--json <字段>]",
+			fields:   approveFields,
+			endpoint: "",
+			run:      cmdApprove,
+		},
+		{
+			path:     []string{"approve", "show"},
+			kind:     "ApprovalShow",
+			summary:  "看一枚批准件的全貌 + 验签判决（消费者只认「验过」那一档）",
+			usage:    "zerg approve show <工具名> [--json <字段>]",
+			args:     []string{"工具名"},
+			fields:   approveFields,
+			endpoint: "",
+			run:      cmdApprove,
+		},
+		{
+			path:     []string{"approve", "new"},
+			kind:     "ApprovalSign",
+			summary:  "**人签**一枚批准件（要人在终端上敲口令；非交互会话一律拒）· 写不进即拒 · 同名不覆盖",
+			usage:    "zerg approve new --tool <工具名> --by <人名> --note <理由> [--scope <范围>] [--self-test]",
+			args:     []string{"工具名（--tool）", "人名（--by）"},
+			fields:   approveNewFields,
+			danger:   &dangerSpec{dangerD3, "工具名", "签一枚批准件（逃生门）—— 只作 require_approval 的放行凭据；人不在场时等于没签", "§九 M18 C4② · §17.6 SD7 · D3b 第四步"},
+			endpoint: "",
+			run:      cmdApproveNew,
+		},
+		{
+			path:     []string{"approve", "keygen"},
+			kind:     "ApprovalKeygen",
+			summary:  "生成**操作员密钥**（人在终端上设口令；私钥口令加密落盘，公钥给消费者验签）",
+			usage:    "zerg approve keygen --by <人名>",
+			args:     []string{"人名（--by）"},
+			endpoint: "",
+			run:      cmdApproveKeygen,
+		},
 		// ---- D3b 第二步（2026-09-21）：**受控写面**（`zerg dev edit` · §17.3 铁律③）----
 		// 默认干跑 · 只改提案声明过的件（越界写 ⇒ 2）· 逐条审计（写不进审计就不改件）· D3 档确认。
 		{
@@ -1267,6 +1308,9 @@ type invocation struct {
 	// `--quick`：贵项跳过并记 SKIP（§十二 P-040）
 	quick bool
 
+	// `--self-test`：走**合成夹具**的成对负控（正控 + 负控），不碰真目标（D3b 第四步起）。
+	selfTest bool
+
 	// `--gate`：`zerg dev verify` 的**升阶闸门**档（§20.4 · §20.7 OM11 · 批 E · T-62）。
 	// 与 `--quick` 同形：一枚布尔旗标，**不新增命令名**。
 	stageGate bool
@@ -1413,6 +1457,9 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.reload = true
 		case a == "--force":
 			inv.force = true
+		case a == "--self-test":
+			// `--self-test`（D3b 第四步）：新门/新命令的**成对负控**入口（合成夹具 · 不碰真目标）。
+			inv.selfTest = true
 		case a == "--dry-run":
 			inv.dryRun = true
 		case a == "--yes":

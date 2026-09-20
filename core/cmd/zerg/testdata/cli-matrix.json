@@ -3671,6 +3671,257 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "命令面**一律不接受** `--no-verify`（§17.3 铁律④③「AI 不许 --no-verify」）⇒ dispatch 里拒、退 2"
+  },
+  {
+   "id": "approve/ls#未知旗标",
+   "command": "approve ls",
+   "argv": [
+    "approve",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "approve/ls#不认的契约主号",
+   "command": "approve ls",
+   "argv": [
+    "approve",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "approve/ls#说明面不认 --json",
+   "command": "approve ls",
+   "argv": [
+    "approve",
+    "ls",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 282,
+   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+  },
+  {
+   "id": "approve/show#未知旗标",
+   "command": "approve show",
+   "argv": [
+    "approve",
+    "show",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "approve/show#不认的契约主号",
+   "command": "approve show",
+   "argv": [
+    "approve",
+    "show",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "approve/show#说明面不认 --json",
+   "command": "approve show",
+   "argv": [
+    "approve",
+    "show",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 279,
+   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+  },
+  {
+   "id": "approve/new#未知旗标",
+   "command": "approve new",
+   "argv": [
+    "approve",
+    "new",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "approve/new#不认的契约主号",
+   "command": "approve new",
+   "argv": [
+    "approve",
+    "new",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "approve/new#缺 --confirm（D3）",
+   "command": "approve new",
+   "argv": [
+    "approve",
+    "new",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "approve/new#--confirm 值不匹配",
+   "command": "approve new",
+   "argv": [
+    "approve",
+    "new",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "approve/keygen#未知旗标",
+   "command": "approve keygen",
+   "argv": [
+    "approve",
+    "keygen",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "approve/keygen#不认的契约主号",
+   "command": "approve keygen",
+   "argv": [
+    "approve",
+    "keygen",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "approve/keygen#说明面不认 --json",
+   "command": "approve keygen",
+   "argv": [
+    "approve",
+    "keygen",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+  },
+  {
+   "id": "approve/new#非终端不给签（模型路径）",
+   "command": "approve new",
+   "argv": [
+    "approve",
+    "new",
+    "--tool",
+    "terminal",
+    "--by",
+    "张三",
+    "--note",
+    "理由"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3b 第四步的核心：**批准只能人在终端上敲** —— 非交互会话（管道/模型）一律不给签（§17.3 铁律④③「不出现自批」）"
+  },
+  {
+   "id": "approve/new#缺 --tool",
+   "command": "approve new",
+   "argv": [
+    "approve",
+    "new",
+    "--by",
+    "张三",
+    "--note",
+    "理由"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "件要指名放行哪个工具（缺 ⇒ 2 · 缺件逐条点名）"
+  },
+  {
+   "id": "approve/new#缺 --by（无签名的件不算批准）",
+   "command": "approve new",
+   "argv": [
+    "approve",
+    "new",
+    "--tool",
+    "terminal",
+    "--note",
+    "理由"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "批准件要留「谁签的」（缺 ⇒ 2）"
+  },
+  {
+   "id": "approve/new#缺 --note（要留为什么）",
+   "command": "approve new",
+   "argv": [
+    "approve",
+    "new",
+    "--tool",
+    "terminal",
+    "--by",
+    "张三"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "批准件要留理由（缺 ⇒ 2）"
+  },
+  {
+   "id": "approve/keygen#非终端不给生成密钥",
+   "command": "approve keygen",
+   "argv": [
+    "approve",
+    "keygen",
+    "--by",
+    "张三"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "密钥要人在终端上设口令（私钥口令加密落盘）⇒ 非交互会话一律拒"
+  },
+  {
+   "id": "approve/show#缺工具名",
+   "command": "approve show",
+   "argv": [
+    "approve",
+    "show"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`approve show` 要给工具名（缺 ⇒ 2 · 不猜）"
   }
  ]
 }

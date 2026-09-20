@@ -10,12 +10,66 @@
 package chat
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/control"
 )
+
+// ★ D3b 第四步（2026-09-21）：_人签批准件_ 从此要带**签名** —— 夹具也必须**真签**（否则「正控」
+// 测的是一枚手写件，而手写件早就该被拦）。这两枚 helper 模拟 `zerg approve keygen` / `approve new`
+// 的产物：`operatorForTest` 落公钥件，`writeSignedApproval` 用私钥签一枚真件。
+var testOperatorPriv ed25519.PrivateKey
+
+// 同一状态目录只建一把密钥（第二次调用要**复用** —— 否则后一枚公钥会覆盖前一枚，
+// 先前签的件当场变成「换了密钥就是换了签的人」；本件的第一个实现就踩了这个坑，实测抓到的）。
+var testOperatorByDir = map[string]ed25519.PrivateKey{}
+
+func operatorForTest(t *testing.T) {
+	t.Helper()
+	if dir := filepath.Dir(approvalPath("x")); true {
+		if priv, ok := testOperatorByDir[dir]; ok {
+			testOperatorPriv = priv
+			return
+		}
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testOperatorPriv = priv
+	pubB64 := base64.StdEncoding.EncodeToString(pub)
+	pf, _ := json.Marshal(map[string]any{
+		"alg": "ed25519", "pub": pubB64, "key_id": control.KeyID(pubB64),
+	})
+	dst := filepath.Join(filepath.Dir(approvalPath("x")), "operator.pub")
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, pf, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testOperatorByDir[filepath.Dir(dst)] = priv
+}
+
+// writeSignedApproval 落一枚**真签**的批准件（人签链路的正控夹具）。
+func writeSignedApproval(t *testing.T, tool, approver, at, note, scope string) {
+	t.Helper()
+	operatorForTest(t)
+	payload := control.ApprovalPayload(tool, scope, approver, at, note)
+	sig := base64.StdEncoding.EncodeToString(ed25519.Sign(testOperatorPriv, payload))
+	body, _ := json.Marshal(map[string]any{
+		"tool": tool, "approver": approver, "approved_at": at, "scope": scope, "note": note,
+		"sig_alg": "ed25519", "key_id": control.KeyID(base64.StdEncoding.EncodeToString(testOperatorPriv.Public().(ed25519.PublicKey))),
+		"sig": sig,
+	})
+	writeApproval(t, tool, string(body))
+}
 
 // writeApproval 落一枚人签批准件到当前 ZERG_STATE_DIR。
 func writeApproval(t *testing.T, tool, body string) {
@@ -61,8 +115,8 @@ func TestDangerousToolsRefusedWithoutApproval(t *testing.T) {
 func TestDangerousToolsUsableWithHumanApproval(t *testing.T) {
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 	dir := t.TempDir()
-	writeApproval(t, "delete_file", `{"approver":"Mr2109","approved_at":"2026-09-21T00:00:00Z","scope":"*","note":"判据正控"}`)
-	writeApproval(t, "download", `{"approver":"Mr2109","approved_at":"2026-09-21T00:00:00Z","scope":"*","note":"判据正控"}`)
+	writeSignedApproval(t, "delete_file", "Mr2109", "2026-09-21T00:00:00Z", "判据正控", "*")
+	writeSignedApproval(t, "download", "Mr2109", "2026-09-21T00:00:00Z", "判据正控", "*")
 
 	victim := filepath.Join(dir, "victim.txt")
 	if err := os.WriteFile(victim, []byte("payload"), 0o644); err != nil {
@@ -137,8 +191,8 @@ func TestApprovalTicketNegativeControls(t *testing.T) {
 	if ok, why := approvalGranted("delete_file", args); ok {
 		t.Fatalf("scope 不覆盖时不算批准，得到 ok=true（%s）", why)
 	}
-	// ④ scope 恰好覆盖 ⇒ 算批准（同一份件的正控，证明判据不是恒假）
-	writeApproval(t, "delete_file", `{"approver":"Mr2109","scope":"/tmp/x"}`)
+	// ④ scope 恰好覆盖 + **真签名** ⇒ 算批准（同一份件的正控，证明判据不是恒假）
+	writeSignedApproval(t, "delete_file", "Mr2109", "2026-09-21T00:00:00Z", "scope 正控", "/tmp/x")
 	if ok, why := approvalGranted("delete_file", args); !ok {
 		t.Fatalf("scope 覆盖时应当算批准：%s", why)
 	}
