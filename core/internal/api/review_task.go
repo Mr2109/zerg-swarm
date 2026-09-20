@@ -182,7 +182,7 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 			log.Printf("✅ scheduler: task %s passed review — officially done", execTask.ID)
 		}
 		if execTask.RefWorktree != "" {
-			if err := mergeWorktree(execTask.RefWorktree, "task-"+sanitizeID(execTask.ID)); err != nil {
+			if err := mergeWorktree(execTask.RefWorktree); err != nil {
 				log.Printf("⚠️ scheduler: task %s worktree merge failed: %v", execTask.ID, err)
 			} else {
 				log.Printf("✅ scheduler: task %s worktree merged back to main — task git archived", execTask.ID)
