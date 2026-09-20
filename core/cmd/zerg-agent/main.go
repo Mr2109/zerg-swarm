@@ -22,6 +22,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/agent"
 	"github.com/Mr2109/zerg-swarm/core/internal/agentstate"
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
+	"github.com/Mr2109/zerg-swarm/core/internal/control"
 )
 
 func filterTools(all []agent.ToolDef, names string) []agent.ToolDef {
@@ -137,6 +138,17 @@ func main() {
 	})
 	if !jsonOut {
 		fmt.Printf("✅ Agent created (model: %s)\n", model)
+	}
+	// M3 集中控制层**接电**（§二十一 已红第 9 条 · 批 C 的 T-31）：把 control 的规则表
+	// （rules.yaml，默认档已升 `block`）接到 CA 的工具门上 —— 在 `Agent.SetGate` 之前，
+	// 全仓**一个调用方都没有**（规则写了、电没接）。
+	// ★ 装载失败**不静默**：打一条显式告警，并且照旧接上一个「恒拦」的门（fail-closed，
+	//   绝不因为读不到规则表就变成全放行 —— 那正是这条已红的形态）。
+	if gate, gerr := control.NewAgentGateFromRepo(statepath.WorkspaceRoot()); gerr == nil {
+		a.SetGate(gate)
+	} else {
+		fmt.Fprintf(os.Stderr, "⚠️ M3 gate 规则表装载失败（工具门按**恒拦**处理，不做任何自动化）：%v\n", gerr)
+		a.SetGate(control.NewAgentGate(nil))
 	}
 
 	// 建日志
@@ -314,6 +326,11 @@ func main() {
 				MaxTurns:   maxTurns,
 				WorkDir:    workdir,
 			})
+			if gate, gerr := control.NewAgentGateFromRepo(statepath.WorkspaceRoot()); gerr == nil {
+				a.SetGate(gate)
+			} else {
+				a.SetGate(control.NewAgentGate(nil))
+			}
 			a.AppendMessage(agent.Message{Role: "user", Content: task})
 			state = agentstate.NewState(task, "zerg-agent", nil)
 			a.SetState(state)

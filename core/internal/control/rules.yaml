@@ -1,12 +1,25 @@
-# rules.yaml — 虫族 v2.4 M3 集中控制层规则（2026-08-13）
+# rules.yaml — 虫族 M3 集中控制层规则（2026-08-13 立 · 2026-09-20 批 C · T-31 升强制档）
 # 控制层独立于 agent——模型看不到/改不了这个文件（git 版本化 + 权限保护）
 # 三态: allow(放行) / block(拦截) / require_approval(需Mr2109批准)
 version: 1
 rules:
-  # 默认策略: allow=放行(现有行为不变) / block=保守拒绝
-  default: allow
+  # 默认策略: block(保守拒绝)—— 已红第 9 条 · 批 C T-31 按 P-099 升档; 本行是判据① 锚点(sed -n '7p')
+  default: block
   tools:
-    # ===== M3 铁律: 模型不能改核心配置 =====
+    # ★ 为什么默认档从 allow 升成 block（T-31 的理由，刻意放在第 7 行**之后**）：
+    #   `P-099` 逐字「**升强制**：`default` 建议 **block（显式列全）**」。老值 allow 的形态就是
+    #   fail-open（规则写了、电没接）：一个新工具只要没被逐条拦，就自动放行，而且**什么都不会报**。
+    # ======================= 显式列全（默认 block 之下的放行面）=========================
+    # 默认 block 之后，凡是**要放行**的工具都必须逐条写出来，按两套命名空间分列：
+    #   · **CA 工具名**（`core/internal/agent` 里 `gate.Check("…")` 用的真名）—— 逐条列；
+    #   · **客户端工具名**（网关转发请求里模型要调的名字，历史条目）—— 原样保留。
+    # ⇒ 这套「列全」由 `core/internal/control/failclosed_test.go` **机检**：它扫
+    #   `core/internal/agent/*.go` 里所有 `gate.Check("X"` 的 X，逐个要求在下面有显式 allow
+    #   （新增一个 CA 工具忘了登记 ⇒ 那个测试当场红 ⇒ 门禁红）。**不许靠记性。**
+    #   同一条测试还钉着：默认档 = block · 缺 default ⇒ block · action 拼错 ⇒ block ·
+    #   `mcp_*` 通配兜住动态名 · `bash`/`write` 的危险 args_deny 仍拦得住。
+
+    # ===== M3 铁律: 模型不能改核心配置（客户端命名空间 · 历史条目原样保留）=====
     - name: "patch_fleet_yaml"
       action: block
       message: "模型禁改 fleet.yaml（M3 铁律——配置模块只归Mr2109/主控）"
@@ -17,7 +30,10 @@ rules:
       action: block
       message: "模型禁改控制层规则（规则在模型够不到的地方）"
 
-    # ===== 危险命令: 拦截 =====
+    # ===== 客户端命名空间（网关转发请求里的工具名 · 历史条目）============================
+    # 「terminal」：危险参数命中即拦（args_deny 优先级高于 action）；其余情况 require_approval
+    #   —— **没有审批通道时按拒处理**（网关与 CA 的 bash 侧逐字同口径：「需要审批且无审批通道 ⇒
+    #   本轮不执行」），绝不当放行。
     - name: "terminal"
       action: require_approval
       args_deny:
@@ -31,8 +47,6 @@ rules:
         - "fleet.yaml"
         - "rules.yaml"
         - "scoring"
-
-    # ===== 日常工具: 放行 =====
     - name: "git_commit"
       action: allow
     - name: "search_files"
@@ -40,4 +54,67 @@ rules:
     - name: "read_file"
       action: allow
     - name: "curl"
+      action: allow
+
+    # ===== CA 命名空间（`core/internal/agent` 里 gate.Check("X") 的真名 · T-31 立）==========
+    # 为什么这些名字必须逐条在：CA 的工具门问的就是这些名字 —— 不列 = 默认 block = CA 干不了活。
+    # 这张表 = 「哪些工具模型可以用」这件事第一次有了真源（此前它散在 10 处 gate.Check 调用里）。
+    - name: "bash"
+      action: allow
+      args_deny:
+        - "rm -rf /"
+        - "rm -fr /"
+        - "git push --force"
+        - "git push -f "
+        - "sudo "
+        - "mkfs"
+        - "shutdown"
+        - "reboot"
+        - "poweroff"
+        - "dd if=/dev/zero"
+        - "| sh"
+        - "| bash"
+    - name: "read"
+      action: allow
+    - name: "write"
+      action: allow
+      args_deny:
+        - "fleet.yaml"
+        - "rules.yaml"
+        - "scoring"
+    - name: "edit"
+      action: allow
+      args_deny:
+        - "fleet.yaml"
+        - "rules.yaml"
+        - "scoring"
+    - name: "apply_patch"
+      action: allow
+      args_deny:
+        - "fleet.yaml"
+        - "rules.yaml"
+        - "scoring"
+    - name: "glob"
+      action: allow
+    - name: "grep"
+      action: allow
+    - name: "ls"
+      action: allow
+    - name: "todo"
+      action: allow
+    - name: "spawn_agent"
+      action: allow
+    - name: "web_search"
+      action: allow
+    - name: "web_fetch"
+      action: allow
+    - name: "skill_load"
+      action: allow
+    - name: "tool_search"
+      action: allow
+    - name: "screenshot"
+      action: allow
+    # MCP 动态工具（`mcp_<服务>_<工具>`）：**后缀通配**一条兜住 —— 只认「尾部一个 `*`」，
+    # 别的位置一律当字面量（通配不留暗权，见 gate.go 的 matchRuleName）。
+    - name: "mcp_*"
       action: allow
