@@ -2650,6 +2650,23 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "plugin/ls#--json 不给字段",
+   "command": "plugin ls",
+   "argv": ["plugin", "ls", "--json"],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 却没给字段表（§九 M6 K2：--json 必须给字段 ⇒ 退码 1 + stdout 0 字节；与「字段不给」的 2 分开）"
+  },
+  {
+   "id": "plugin/ls#未知旗标",
+   "command": "plugin ls",
+   "argv": ["plugin", "ls", "--nosuchflag-zz"],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
   }
+
  ]
 }
