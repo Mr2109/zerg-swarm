@@ -622,6 +622,16 @@ func init() {
 			endpoint: "",
 			run:      cmdRepoStatus,
 		},
+		{
+			path:     []string{"port", "ls"},
+			kind:     "PortLs",
+			summary:  "看某个端口被谁占着（含 pid/ppid/inode/在跑件路径 · 手敲 lsof 的替身）",
+			usage:    "zerg port ls [<端口>] [--json <字段>]",
+			args:     []string{"端口（可省：缺省列声明面三个端口）"},
+			fields:   []string{"port", "pid", "ppid", "process", "sock", "path"},
+			endpoint: "",
+			run:      cmdPortLs,
+		},
 		// 写面两枚：**同一个执行门**（三态：--dry-run 计划件 / 缺 --yes ⇒ 2 / 齐了才发）
 		{
 			path:    []string{"resource", "pin"},
