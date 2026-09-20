@@ -34,6 +34,7 @@ func helpTopics() []helpTopic {
 		{"version", "版本协商：三层版本 + 兼容窗口（三类分开）", helpVersionTopic},
 		{"watch", "事件 / 订阅通道：单端点 + Accept 协商 + 保留窗口", helpWatch},
 		{"credentials", "凭据：优先级链一条 + 令牌五不进 + 401/403 归一", helpCredentials},
+		{"wall", "茧壁边界：layer 三档 + 分区表 + argv 硬判据", helpWall},
 	}
 }
 
