@@ -197,11 +197,11 @@
    "备注": "同上"
   },
   {
-  "file": "scripts/svc/setup-zerg.sh",
-  "类": "脚本侧（服务）",
-  "语义": "dryrun.v1",
-  "零副作用判据": "`--dry-run` ⇒ 只打印计划：不 clone、不写 plist/unit、不调 launchctl",
-  "备注": "与 sandbox 夹具同一口径"
+   "file": "scripts/svc/setup-zerg.sh",
+   "类": "脚本侧（服务）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`--dry-run` ⇒ 只打印计划：不 clone、不写 plist/unit、不调 launchctl",
+   "备注": "与 sandbox 夹具同一口径"
   },
   {
    "file": "core/cmd/zerg/family_dev.go",
@@ -209,6 +209,20 @@
    "语义": "dryrun.v1",
    "零副作用判据": "`dev proposal new --dry-run` ⇒ 只打印件的形状（不写盘 · 不触主控 · 不建目录）；真写只写 `~/.zerg/proposals/`（或 `ZERG_PROPOSAL_DIR`）一件 JSON",
    "备注": "2026-09-20 批 E 登记（门⑩ 扫描面新增 → 29 件）"
+  },
+  {
+   "file": "core/cmd/zerg/family_fusion.go",
+   "类": "命令面（T-59 融合四件：`ask` / `plan` / `apply`）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "① `bin/zerg ask <提示> --capability text --dry-run` ⇒ 退码 0 · 只打印算出来的路线 + 一行「零副作用 —— 未推理、未占槽、未发请求」· **网关的推理端点调用计数为 0**（机检：TestAskPicksCandidateViaRegistryIDJoin 里合成主控的 `/v1/chat/completions` 计数器必须为 0）；② `bin/zerg plan … --dry-run` **本来就是**「算而不做」（§十八.3-2：算与做分开）—— 只写**那一件**意图件（`--out` 或 `$ZERG_PLAN_DIR`），不触任何写面、不改任何目标状态（机检：TestPlanIsZeroSideEffect 对拍工作目录逐字节不变）；③ `bin/zerg apply` 是**消费侧**，本版对任何件都不写（四层全过也退 2 `not_opened` ⇒ 不可能有副作用）。",
+   "备注": "2026-09-20 批 E 登记（门⑩ 扫描面新增）。三态映射照 §十八.4：`--dry-run` = `plan` 的退化形态（算·打印·不落件）；`--yes` 与 `apply` 同给 ⇒ 2（本版直接不开放）。"
+  },
+  {
+   "file": "core/cmd/zerg/fusion_test.go",
+   "类": "命令面测试件（T-59 的四层判据机检）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "测试件本身不驱动写入（`t.TempDir()` + 进程内 `run`）；它**断言的**就是零副作用：`--dry-run` 时合成主控的推理端点调用数为 0、`plan` 前后工作目录快照逐字节相同。",
+   "备注": "2026-09-20 批 E 登记（门⑩ 扫描面命中的测试件；不登记会被判成「又一套语义」——是扫描面口径，不是真语义分歧）"
   }
-  ]
+ ]
 }
