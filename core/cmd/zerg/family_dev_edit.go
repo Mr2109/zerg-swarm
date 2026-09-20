@@ -12,6 +12,13 @@
 //	   落不下就不改件（「写不进日志就不许执行」）。审计记：谁 / 何时 / 改哪件 / 前后 sha256 / 字节数。
 //	④ **可回滚**（§17.3 铁律③③）：件在 git 工作树里 ⇒ 回滚路径 = 提案的 `rollback_ref`（件级回滚见 `dev rollback`）。
 //
+// ③-a（2026-09-21 本枚）**真写要一枚人签批准件**（§17.3 铁律④③ · §九 M18 `C4`② 的落点）：
+//
+//	`dev edit` 能把工作树改掉这件事，等价于「AI 手里那几件写工具」的能力 —— 所以它**不再靠纪律**，
+//	而是与 `approve` 族**同一套验签**（同包的 `verifyTicketState` = `control.VerifyApprovalSignature` 那一个判定口）：
+//	**无件 ⇒ 拒**（退码 2）· **手写件（字段齐、没签名）⇒ 拒** · 件批的工具/范围不符 ⇒ 拒。
+//	干跑（`--dry-run`）**不需要**批准件 —— 它零副作用；计划面照旧把批准件的判决打出来，好让人先看后签。
+//
 // 与既有条文的接缝（**不重复立项** ✗）：写面**不新立锁**（§九 M5：真源在持锁者）、**不新立退码**
 // （照 §4.1 K3 那张表）、**不改契约**；本件只是「改」这一环的**唯一入口**。
 package main
@@ -30,7 +37,7 @@ import (
 
 // devEditFields —— `--json` 面的全部字段（K1：机器面先定）。
 var devEditFields = []string{"proposal", "file", "mode", "result", "before_sha256", "after_sha256",
-	"before_bytes", "after_bytes", "audit_path", "out_path"}
+	"before_bytes", "after_bytes", "audit_path", "out_path", "approval", "approver"}
 
 // replacePair —— `--replace <件>` 里的一枚替换（JSON 数组的一格）。
 // 形态：`[{"old":"…","new":"…"}, …]` —— **精确、唯一命中**才许改（模糊替换会静默改错地方）。
@@ -54,6 +61,9 @@ type editAuditLine struct {
 	Confirm      string `json:"confirm"`
 	AuditPath    string `json:"audit_path"`
 	Note         string `json:"note,omitempty"`
+	// ③-a（2026-09-21）：**批准件**（谁签的、签的哪一件）——「谁让它改的」也要能回读。
+	Approval string `json:"approval,omitempty"`
+	Approver string `json:"approver,omitempty"`
 }
 
 // cmdDevEdit —— `zerg dev edit`：受控写入的唯一入口（默认干跑）。
@@ -172,6 +182,11 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		"audit_path": auditPath, "out_path": outPath,
 	}
 
+	// ③-a 人签批准件（**只读**判定）：干跑也要能看见「有没有、验没验过」——
+	// 这一格是**本命令的真写前置**，不是提示语（无件/手写件/范围不符 ⇒ 下面直接拒执）。
+	appr := devEditLoadApproval(inv, fileRel)
+	row["approval"], row["approval_path"] = appr.Judg, appr.Path
+
 	// ⑤ 干跑（默认那一态）：计划件 + 零副作用
 	if inv.dryRun || !(inv.confirmGiven && inv.yes) {
 		if !inv.dryRun {
@@ -191,7 +206,13 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	// ⑥ 真写：**审计先落盘**（写不进日志就不许执行 · §九 M3 C5）⇒ 再写件 ⇒ 再自检回读 sha256
+	// ⑥ 真写的第一道闸 = **人签批准件**（无件 / 手写件 / 批的范围不含本次改件 ⇒ 退码 2）：
+	//   与 `approve` 族同一条验签路（`verifyTicketState` = 消费者那一个判定口），**不另写第二套**。
+	if rc := devEditRequireApproval(inv, appr, fileRel, stderr); rc != exitOK {
+		return rc
+	}
+
+	// ⑦ 真写：**审计先落盘**（写不进日志就不许执行 · §九 M3 C5）⇒ 再写件 ⇒ 再自检回读 sha256
 	by := strings.TrimSpace(inv.flagVal("--by"))
 	if by == "" {
 		by = prop.Subject
@@ -204,6 +225,7 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		Mode: mode, BeforeSHA256: beforeSHA, AfterSHA256: afterSHA,
 		BeforeBytes: int64(len(before)), AfterBytes: len(after), By: by,
 		Confirm: inv.confirm, AuditPath: auditPath,
+		Approval: appr.Path, Approver: appr.Appr,
 	}
 	if beforeMissing {
 		line.Note = "新建件（写前不存在）"
@@ -253,6 +275,7 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 	fmt.Fprintf(stdout, "  前后 sha : %s → %s\n", row["before_sha256"], row["after_sha256"])
 	fmt.Fprintf(stdout, "  前后字节 : %s → %s\n", row["before_bytes"], row["after_bytes"])
 	fmt.Fprintf(stdout, "  审计落点 : %s（一行一事件 · 追加只写 · **写不进审计就不改件**）\n", row["audit_path"])
+	fmt.Fprintf(stdout, "  批准件   : %s —— %s\n", row["approval_path"], row["approval"])
 	fmt.Fprintf(stdout, "  回滚路径 : %s（提案的退点 + git）\n", orDash(prop.Rollback))
 	if blocked {
 		fmt.Fprintf(stdout, "  未执行   : D3 档确认不齐 —— 要 `--confirm=%s --yes` 同时到（fail-closed：从不提问）\n", planHost())
@@ -265,6 +288,95 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 		return
 	}
 	fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未写任何文件）")
+}
+
+// ---- ③-a 人签批准件（与 `approve` 族同一套验签 · 不另立第二套）----
+
+// devEditApproval —— 一枚批准件的**判定结果**（人面一句话 + 机器面两个字段）。
+type devEditApproval struct {
+	Path string
+	OK   bool
+	Judg string // 判决（拒因逐字给出 —— 错误文案要给下一步 · K14）
+	Appr string // 批准人（验过时才有）
+}
+
+// devEditApprovalTool —— 本命令向人要的那枚批准件的工具名（件名 = `<状态目录>/approvals/<工具名>.json`）。
+const devEditApprovalTool = "dev_edit"
+
+// devEditLoadApproval —— **只读**判定：读批准件 ⇒ 验签 ⇒ 核对工具名与范围。
+// fail-closed 的四格（都对「不算批准」这一侧收）：件不在 / 件读不动 / 签名验不过（含**手写件**）/
+// 工具名或范围不符。**读不到不许当通过**（与 `approve show` 的判决同源）。
+func devEditLoadApproval(inv *invocation, fileRel string) devEditApproval {
+	wantTool := strings.TrimSpace(inv.flagVal("--approval-tool"))
+	if wantTool == "" {
+		wantTool = devEditApprovalTool
+	}
+	path := strings.TrimSpace(inv.flagVal("--approval"))
+	if path == "" {
+		path = filepath.Join(approveDir(), wantTool+".json")
+	}
+	a := devEditApproval{Path: path}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		a.Judg = "无件（真写要一枚人签批准件）"
+		return a
+	}
+	var tk approvalTicketFile
+	if err := json.Unmarshal(b, &tk); err != nil {
+		a.Judg = "件读不动（不算批准）：" + err.Error()
+		return a
+	}
+	if st := verifyTicketState(tk); st != "验过" {
+		a.Judg = st // 「无签名（不算批准）」= 手写件那一格，逐字转出，不润色
+		return a
+	}
+	if tk.Tool != wantTool {
+		a.Judg = fmt.Sprintf("件批的是 %q，不是 %q（不算批准）", tk.Tool, wantTool)
+		return a
+	}
+	if !approvalScopeCovers(tk.Scope, fileRel) {
+		a.Judg = fmt.Sprintf("件批的范围 %q 不含本次改的件 %s（不算批准）", tk.Scope, fileRel)
+		return a
+	}
+	a.OK, a.Appr = true, tk.Approver
+	a.Judg = fmt.Sprintf("验过（%s · %s · key_id=%s）", tk.Approver, tk.ApprovedAt, tk.KeyID)
+	return a
+}
+
+// approvalScopeCovers —— 批准件的 `scope` 覆盖不覆盖这一件：`*`（全部）· 逐字同路径 ·
+// 以 `/` 结尾的目录前缀（如 `core/cmd/zerg/`）。分隔符认 逗号/分号/空白 —— 逗号分隔的清单逐条比。
+// 口径**只认这三种**：不做模糊匹配（模糊范围 = 等于没范围）。
+func approvalScopeCovers(scope, fileRel string) bool {
+	for _, s := range strings.FieldsFunc(scope, func(r rune) bool {
+		return r == ',' || r == ';' || r == '；' || r == ' ' || r == '\t'
+	}) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if s == "*" || s == fileRel {
+			return true
+		}
+		if strings.HasSuffix(s, "/") && strings.HasPrefix(fileRel, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// devEditRequireApproval —— 真写的那道闸：不齐 ⇒ 退 2（并把「下一步」给人 —— 怎么签那枚件）。
+func devEditRequireApproval(inv *invocation, a devEditApproval, fileRel string, stderr io.Writer) int {
+	if a.OK {
+		fmt.Fprintf(stderr, "%s: 批准件 %s ⇒ %s\n", progName, a.Path, a.Judg)
+		return exitOK
+	}
+	inv.setErr("usage", "approval_required", "真写要一枚人签批准件（无件/手写件/范围不含 ⇒ 拒）")
+	fmt.Fprintf(stderr, "%s: **真写要一枚人签批准件** —— 与 `approve` 族同一套验签（§17.3 铁律④③ · §九 M18 C4②）\n", progName)
+	fmt.Fprintf(stderr, "  批准件落点：%s\n", a.Path)
+	fmt.Fprintf(stderr, "  判决      ：%s\n", a.Judg)
+	fmt.Fprintf(stderr, "  下一步（**批准要人亲自在终端上敲**，模型够不着）：%s approve new --tool %s --scope %s --by <人名> --note <理由>\n",
+		progName, devEditApprovalTool, fileRel)
+	return exitUsage
 }
 
 // applyReplacements —— 逐格精确替换（每一格的 `old` 必须**恰好命中一次**；否则拒执 —— 不猜、不模糊）。
