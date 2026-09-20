@@ -69,18 +69,27 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	inv.path = cmd.path
 	inv.args = append(rest, inv.args...)
+	inv.tty = ttyOf(stdout)
+	// 没有人面/机器面的机器面表 ⇒ 不认 --json（用法错 2，不是 1）：1 是「给了 --json 但没给字段」
+	// 那一档的码（§4.1 K2），两者不许混。
+	if inv.jsonGiven && len(cmd.fields) == 0 {
+		fmt.Fprintf(stderr, "%s: `%s %s` 没有 `--json` 字段表（它是说明面）\n", progName, progName, strings.Join(cmd.path, " "))
+		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+		return exitUsage
+	}
 	return cmd.run(inv, stdout, stderr)
 }
 
 // ---- 命令树（真源：帮助文本、markdown 导出、别名解析都从这里出，不许旁写一份）----
 
 type command struct {
-	path    []string
-	summary string
-	usage   string
-	fields  []string // --json 可取的全部字段（不给字段时 stderr 列的就是它）
-	args    []string // 位置参数的说明（帮助里逐条列出）
-	run     func(*invocation, io.Writer, io.Writer) int
+	path     []string
+	summary  string
+	usage    string
+	fields   []string // --json 可取的全部字段（不给字段时 stderr 列的就是它）
+	args     []string // 位置参数的说明（帮助里逐条列出）
+	endpoint string   // 它投影的远端端点（本机命令为空）；T-08 的三面同源对账用
+	run      func(*invocation, io.Writer, io.Writer) int
 }
 
 // commands —— 批 A（S1 起）登记的只读面；后续各票在此续行。
@@ -103,6 +112,70 @@ func init() {
 			usage:   "zerg help [<主题>]",
 			args:    []string{"主题（可省）"},
 			run:     cmdHelp,
+		},
+		// ---- 批 A · S2 只读面（§6.2 最小可验证集）：全程零写操作 ----
+		{
+			path:     []string{"doctor"},
+			summary:  "环境自检（本机项 + 主控可达）· 逐项判定词",
+			usage:    "zerg doctor [--json <字段>]",
+			fields:   []string{"name", "verdict", "detail", "advice"},
+			endpoint: "",
+			run:      cmdDoctor,
+		},
+		{
+			path:     []string{"context", "ls"},
+			summary:  "档位名册（离线也出表）",
+			usage:    "zerg context ls [--json <字段>]",
+			fields:   []string{"name", "core", "gateway", "default_node", "token_source"},
+			endpoint: "",
+			run:      cmdContextLs,
+		},
+		{
+			path:     []string{"api", "ls"},
+			summary:  "HTTP 能力面（投影 /api/capabilities）",
+			usage:    "zerg api ls [--json <字段>]",
+			fields:   []string{"name", "endpoint", "desc", "example"},
+			endpoint: "GET /api/capabilities",
+			run:      cmdAPILs,
+		},
+		{
+			path:     []string{"api", "openapi"},
+			summary:  "HTTP 路径表（投影 /api/openapi.json 的 paths）",
+			usage:    "zerg api openapi [--json <字段>]",
+			fields:   []string{"path", "method", "summary"},
+			endpoint: "GET /api/openapi.json",
+			run:      cmdAPIOpenAPI,
+		},
+		{
+			path:     []string{"api", "help"},
+			summary:  "api 族说明（只读面 · 逃生门 `api call` 暂不开）",
+			usage:    "zerg api help",
+			endpoint: "",
+			run:      cmdAPIHelp,
+		},
+		{
+			path:     []string{"agent", "ls"},
+			summary:  "子端（机器）清单（投影 /api/fleet/status）",
+			usage:    "zerg agent ls [--json <字段>]",
+			fields:   []string{"machine", "healthy", "code_version", "code_sha", "cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "last_seen"},
+			endpoint: "GET /api/fleet/status",
+			run:      cmdAgentLs,
+		},
+		{
+			path:     []string{"task", "ls"},
+			summary:  "任务队列（投影 /api/tasks）",
+			usage:    "zerg task ls [--json <字段>]",
+			fields:   []string{"id", "status", "model", "machine", "priority", "created_at", "description"},
+			endpoint: "GET /api/tasks",
+			run:      cmdTaskLs,
+		},
+		{
+			path:     []string{"model", "ls"},
+			summary:  "可用模型（投影 /api/fleet/models）",
+			usage:    "zerg model ls [--json <字段>]",
+			fields:   []string{"id", "host", "backend", "modality", "mem_gb", "file"},
+			endpoint: "GET /api/fleet/models",
+			run:      cmdModelLs,
 		},
 	}
 }
@@ -179,6 +252,7 @@ type invocation struct {
 	plain       bool
 	wantHelp    bool
 	wantVersion bool
+	tty         bool // stdout 是不是终端（行式面/人面的分档依据 · §九 M14）
 }
 
 func parseInvocation(args []string) (*invocation, error) {
@@ -252,20 +326,14 @@ func fieldListOf(path []string) []string {
 	return nil
 }
 
-// selectJSON 出用户点名的那几个字段（值一律当字符串，形状约定由各命令自己保证）。
-// 点到不存在的字段 ⇒ 退码 2 + 列全部合法字段（§九 M6 I5）。已登记字段里**没有值**的，
-// 用空串占位，由调用方决定是否 `null`（本版不出现 null）。
-func selectJSON(stdout, stderr io.Writer, path []string, fields []string, row map[string]string) int {
-	legal := fieldListOf(path)
+// marshalObject 按「用户给的字段序」拼一个 JSON 对象；点到不存在的字段 ⇒ bad = 那个字段名。
+func marshalObject(fields []string, row map[string]string) (obj string, bad string) {
 	var b strings.Builder
 	b.WriteString("{")
 	for i, f := range fields {
 		v, ok := row[f]
 		if !ok {
-			fmt.Fprintf(stderr, "%s: 未知字段 %q\n", progName, f)
-			fmt.Fprintf(stderr, "合法字段: %s\n", strings.Join(legal, ","))
-			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
-			return exitUsage
+			return "", f
 		}
 		if i > 0 {
 			b.WriteString(",")
@@ -276,8 +344,38 @@ func selectJSON(stdout, stderr io.Writer, path []string, fields []string, row ma
 		b.WriteString(":")
 		b.Write(val)
 	}
-	b.WriteString("}\n")
-	io.WriteString(stdout, b.String())
+	b.WriteString("}")
+	return b.String(), ""
+}
+
+func reportBadField(stderr io.Writer, path []string, bad string) int {
+	fmt.Fprintf(stderr, "%s: 未知字段 %q\n", progName, bad)
+	fmt.Fprintf(stderr, "合法字段: %s\n", strings.Join(fieldListOf(path), ","))
+	fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+	return exitUsage
+}
+
+// selectJSON 出单个对象（单件命令用）。字段点错 ⇒ 退码 2 + 列全部合法字段（§九 M6 I5）。
+func selectJSON(stdout, stderr io.Writer, path []string, fields []string, row map[string]string) int {
+	obj, bad := marshalObject(fields, row)
+	if bad != "" {
+		return reportBadField(stderr, path, bad)
+	}
+	fmt.Fprintln(stdout, obj)
+	return exitOK
+}
+
+// selectJSONList 出对象数组（清单命令用）。字段点错 ⇒ 退码 2（逐条都在同一张字段表上判）。
+func selectJSONList(stdout, stderr io.Writer, path []string, fields []string, rows []map[string]string) int {
+	objs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		obj, bad := marshalObject(fields, row)
+		if bad != "" {
+			return reportBadField(stderr, path, bad)
+		}
+		objs = append(objs, obj)
+	}
+	fmt.Fprintf(stdout, "[%s]\n", strings.Join(objs, ","))
 	return exitOK
 }
 
