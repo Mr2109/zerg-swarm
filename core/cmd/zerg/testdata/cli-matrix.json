@@ -1572,6 +1572,119 @@
    "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
   },
   {
+   "id": "build/ls#未知旗标",
+   "command": "build ls",
+   "argv": [
+    "build",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "build/ls#不认的契约主号",
+   "command": "build ls",
+   "argv": [
+    "build",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "build/ls#--json 不给字段",
+   "command": "build ls",
+   "argv": [
+    "build",
+    "ls",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+  },
+  {
+   "id": "build/all#未知旗标",
+   "command": "build all",
+   "argv": [
+    "build",
+    "all",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "build/all#不认的契约主号",
+   "command": "build all",
+   "argv": [
+    "build",
+    "all",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "build/all#说明面不认 --json",
+   "command": "build all",
+   "argv": [
+    "build",
+    "all",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+  },
+  {
+   "id": "build/release#未知旗标",
+   "command": "build release",
+   "argv": [
+    "build",
+    "release",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "build/release#不认的契约主号",
+   "command": "build release",
+   "argv": [
+    "build",
+    "release",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "build/release#说明面不认 --json",
+   "command": "build release",
+   "argv": [
+    "build",
+    "release",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+  },
+  {
    "id": "task/terminate#未知旗标",
    "command": "task terminate",
    "argv": [

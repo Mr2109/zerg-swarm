@@ -718,6 +718,28 @@ func init() {
 			danger:  &dangerSpec{dangerD2, "任务 id", "立刻跑一次该内部任务（绕过它的冷却 · 会占机器）", "§7.1 P8 · §5.1 POST /api/internal-tasks/{id}/run · 开工单 T-49"},
 			run:     cmdGuarded,
 		},
+		// ---- 批 D · T-48 构建族（K 族 · §3.5 · §7.1 P11 · §17.2 ③ 建环）----
+		{
+			path:     []string{"build", "ls"},
+			kind:     "BuildArtifact",
+			summary:  "制品现状（现读 bin/ 逐件 sha256 + 身份件）—— 清单真源仍是构建脚本",
+			usage:    "zerg build ls [--json <字段>]",
+			fields:   []string{"name", "sha256", "bytes", "mtime", "version", "code", "built"},
+			endpoint: "",
+			run:      cmdBuildLs,
+		},
+		{
+			path:    []string{"build", "all"},
+			summary: "重编全部制品（换件档 · 本版未开放；计划件见 --dry-run）",
+			usage:   "zerg build all [--dry-run | --confirm=<主机名> --yes]",
+			run:     cmdBuildPassthrough,
+		},
+		{
+			path:    []string{"build", "release"},
+			summary: "打包发布件（换件档 · 本版未开放；计划件见 --dry-run）",
+			usage:   "zerg build release [--dry-run | --confirm=<主机名> --yes]",
+			run:     cmdBuildPassthrough,
+		},
 		// ---- 危险动作：**只登记形状，不开放执行**（§6.2 批 1 零写操作）----
 		// 每条都过 cmdGuarded：`--dry-run` 出计划件（退码 0）；真跑一律拒执（退码 2 = 不给结论）。
 		{
