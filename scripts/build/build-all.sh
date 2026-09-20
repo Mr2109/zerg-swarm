@@ -9,8 +9,14 @@
 #   bash scripts/build/build-all.sh --dist             # 产出到 dist/<版本>/（打包发布用，含 sha256）
 #   bash scripts/build/build-all.sh --no-ui            # 只建 Go 两件（快）
 #   bash scripts/build/build-all.sh --public          # UI 用 --no-default-features（对齐公开快照形态）
-#   bash scripts/build/build-all.sh --no-sign          # 跳过 codesign（非 macOS / 调试）
+#   bash scripts/build/build-all.sh --no-sign                  # 跳过 codesign（非 macOS / 调试）
+#   bash scripts/build/build-all.sh --only-cli                 # 只出命令面 bin/zerg（薄壳开发用）
 #   （无论哪个形态都会另编茧壁 zerg-wall → bin/，见 scripts/build/build-wall.sh；它不进 dist 制品矩阵）
+#
+# --only-cli 为什么需要单独一档（2026-09-20 · T-02）：命令面 `core/cmd/zerg` 是**独立客户端二进制**，
+#   它的开发/自测不该顺手重编 `bin/zerg-core` —— 主控**正在跑**，就地覆盖它的制品文件等于埋一次
+#   「换件」（改 cdhash ⇒ TCC 授权失效；重启即换实现）。本档只写 `bin/zerg` 一个文件，
+#   其余制品与本脚本写的 `build-info.json`（升级器的身份依据）**一个字节都不动** ✓。
 #
 # 身份注入：
 #   Go  → -ldflags -X .../internal/version.{Commit,BuildTime}（version.go 里是 var，可注入）
@@ -23,12 +29,14 @@ cd "$REPO_ROOT"
 DIST=0
 BUILD_UI=1
 SIGN=1
+ONLY_CLI=0
 for arg in "$@"; do
   case "$arg" in
     --dist) DIST=1 ;;
     --no-ui) BUILD_UI=0 ;;
     --public) PUBLIC=1 ;;   # 本地形态对齐公开快照（关私有默认 feature：示例虫茧等）
     --no-sign) SIGN=0 ;;
+    --only-cli) ONLY_CLI=1 ;;
     *) echo "未知参数: $arg" >&2; exit 64 ;;
   esac
 done
@@ -56,6 +64,17 @@ LDFLAGS="-s -w -X github.com/Mr2109/zerg-swarm/core/internal/version.Commit=${SH
 
 echo "🏷  版本 $VERSION · 代码 $SHA · 构建 $BUILD_TIME"
 echo "📁 输出 $OUT"
+
+# 命令面 zerg（薄壳 · 独立客户端二进制）：与 9 个既有入口同 module、复用 core/internal/*（§6.1）。
+# 放在最前，因为 --only-cli 只编它一件就收工。
+echo "→ 命令面 zerg（薄壳 · core/cmd/zerg）"
+(cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg" ./cmd/zerg)
+
+if [ "$ONLY_CLI" = "1" ]; then
+  echo "✅ 构建完成（--only-cli：只写 bin/zerg；其余制品与 build-info.json 一个字节未动）"
+  printf "   %-14s %s 字节\n" "zerg" "$(stat -f%z "$OUT/zerg" 2>/dev/null || stat -c%s "$OUT/zerg")"
+  exit 0
+fi
 
 echo "→ 主控 zerg-core"
 (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg-core" ./cmd/zerg-core)
@@ -123,7 +142,7 @@ if [ "$SIGN" = "1" ] && command -v codesign >/dev/null 2>&1; then
     ZERG_SIGN_ID="-"; SIGN_MODE="adhoc"
   fi
   [ "$SIGN_MODE" = "adhoc" ] && echo "   ⚠️  未找到签名身份「${ZERG_SIGN_ID}」，回退 ad-hoc（本机 TCC 授权会随重编失效）"
-  for b in "$OUT"/zerg-core "$OUT"/zerg-agent "$OUT"/zerg-ui "$REPO_ROOT"/bin/zerg-agentd "$REPO_ROOT"/bin/cocoon-docs-service "${REPO_ROOT}"/bin/zerg-wall; do
+  for b in "$OUT"/zerg "$OUT"/zerg-core "$OUT"/zerg-agent "$OUT"/zerg-ui "$REPO_ROOT"/bin/zerg-agentd "$REPO_ROOT"/bin/cocoon-docs-service "${REPO_ROOT}"/bin/zerg-wall; do
     [ -f "$b" ] || continue
     case "$(basename "$b")" in
       zerg-core)   ZID=com.zerg.core ;;
