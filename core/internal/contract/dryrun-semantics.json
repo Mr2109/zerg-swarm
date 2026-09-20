@@ -266,6 +266,20 @@
    "语义": "dryrun.v1",
    "零副作用判据": "`bin/zerg dev edit --proposal <id> --file <件> --from <件> --dry-run` ⇒ 退码 0 · stdout 只有计划件（目标件/内容来源/前后 sha256/前后字节/审计落点）+ stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未写任何文件）」· **不写件、不写审计**（现跑对拍：跑 dry-run 前后目标件 sha256 与 `<state>/edit_audit.jsonl` 行数逐字不变）· **不带 --dry-run 且确认档不齐**时也出计划件并退 2（fail-closed：从不提问、也从不偷偷写）。",
    "备注": "2026-09-21 D3b 第二步登记（门⑩ 扫描面新增 ⇒ 同批登记；不登记会被判成「又一套语义」）"
+  },
+  {
+   "file": "core/cmd/zerg/family_repo_commit.go",
+   "类": "命令面三态（`repo commit --dry-run` 的计划件 · 与 guard.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg repo commit --message t --file a.go --dry-run` ⇒ 退码 0 · stdout 只有计划件（件清单/暂存方式/门禁命令/提交信息模板）+ stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未跑门禁、未暂存、未提交）」· **不跑门禁、不暂存、不提交**（现跑对拍：跑 dry-run 前后 `git rev-parse HEAD` 与 `git diff --cached --name-only` 逐字不变；计划件里的日志落点写**模式**不写实值 ⇒ 同一条跑两遍 stdout 逐字一致）。",
+   "备注": "2026-09-21 D3b 第三步登记（门⑩ 扫描面新增 ⇒ 同批登记）"
+  },
+  {
+   "file": "core/cmd/zerg/repo_commit_test.go",
+   "类": "命令面测试件（D3b 第三步：提交面的机检 + 合成仓 e2e）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "测试件本身只在 `t.TempDir()` 的合成仓里驱动命令（`ZERG_REPO=<合成仓根>`），不碰真目标；它直接断言零副作用：`--dry-run` 前后 HEAD 与 `git diff --cached` 逐字不变。",
+   "备注": "2026-09-21 D3b 登记（门⑩ 扫描面命中的测试件）"
   }
  ]
 }
