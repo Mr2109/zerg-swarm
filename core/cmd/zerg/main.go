@@ -15,8 +15,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/version"
 )
@@ -41,7 +44,42 @@ const (
 )
 
 func main() {
+	// 人打断（§九 M8 · §十二 `P-033`）：**默认只退订、不取消** —— Ctrl-C 退 `130`，
+	// 被跟的任务/被包的脚本**继续跑**；要真取消得给显式旗标 `--cancel-on-interrupt`。
+	// 为什么不在这里做别的清理：命令面**无常驻状态**（§6.1），「退订」= 本进程退出。
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT)
+	go func() {
+		<-sigs
+		if wantsCancelOnInterrupt(os.Args[1:]) {
+			cancelRunningChild()
+			fmt.Fprintf(os.Stderr, "%s: 人打断（Ctrl-C）—— 已按 `--cancel-on-interrupt` **取消**在跑的步骤\n", progName)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s: 人打断（Ctrl-C）—— **只退订、不取消**（在跑的任务/脚本不受影响；要取消给 --cancel-on-interrupt）\n", progName)
+		}
+		os.Exit(exitInterrupted)
+	}()
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// wantsCancelOnInterrupt 只看命令行里有没有那枚显式旗标（不看配置：它是**本次**的意图）。
+func wantsCancelOnInterrupt(args []string) bool {
+	for _, a := range args {
+		if a == "--cancel-on-interrupt" || a == "--cancel-on-interrupt=true" {
+			return true
+		}
+	}
+	return false
+}
+
+// runningChild —— 当前在跑的子进程（透传型命令登记在这里，供「取消」用；nil = 没有）。
+var runningChild *exec.Cmd
+
+// cancelRunningChild 只杀我们**亲手起的那个子进程**（不杀进程组、不碰别人）。
+func cancelRunningChild() {
+	if runningChild != nil && runningChild.Process != nil {
+		_ = runningChild.Process.Kill()
+	}
 }
 
 // run 是唯一入口的实现面：解析旗标 → 查命令树 → 执行 → 把码原样返回。
@@ -188,7 +226,7 @@ func init() {
 		},
 		{
 			path:    []string{"help"},
-			summary: "帮助（主题: exit-codes · config · contract · errors · idempotency）",
+			summary: "帮助（主题: exit-codes · config · contract · errors · idempotency · locks · long-tasks）",
 			usage:   "zerg help [<主题>]",
 			args:    []string{"主题（可省）"},
 			run:     cmdHelp,
@@ -602,6 +640,12 @@ type invocation struct {
 	reload bool
 	force  bool
 
+	// M8 长任务三档（§十二 P-020/P-033–P-037）
+	wait              bool
+	noWait            bool
+	follow            bool
+	cancelOnInterrupt bool
+
 	// 本次调用被报出来的那个错（§九 M7：`--json` 失败时挂进包封的 `error` 块）。
 	err *cliError
 
@@ -647,6 +691,14 @@ func parseInvocation(args []string) (*invocation, error) {
 		case strings.HasPrefix(a, "--schema="):
 			inv.schemaGiven = true
 			inv.schemaWant = strings.TrimPrefix(a, "--schema=")
+		case a == "--wait":
+			inv.wait = true
+		case a == "--no-wait":
+			inv.noWait = true
+		case a == "--follow":
+			inv.follow = true
+		case a == "--cancel-on-interrupt":
+			inv.cancelOnInterrupt = true
 		case a == "--reload":
 			inv.reload = true
 		case a == "--force":
@@ -683,7 +735,22 @@ func parseInvocation(args []string) (*invocation, error) {
 	if inv.plain && inv.jsonGiven {
 		return nil, fmt.Errorf("--plain 与 --json 互斥（--json 是机器面 · --plain 是行式面）")
 	}
+	// 长任务三档**互斥**（§九 M8 行 262–267：三档不许同时给，也不许自造第四档）。
+	if n := boolCount(inv.wait, inv.noWait, inv.follow); n > 1 {
+		return nil, fmt.Errorf("--wait / --no-wait / --follow 三档互斥（给了 %d 个；§九 M8 行 262–267）", n)
+	}
 	return inv, nil
+}
+
+// boolCount 数一数有几个 true（三档互斥判据用）。
+func boolCount(bs ...bool) int {
+	n := 0
+	for _, b := range bs {
+		if b {
+			n++
+		}
+	}
+	return n
 }
 
 func splitFields(s string) []string {
@@ -988,9 +1055,15 @@ func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 		case "idempotency":
 			fmt.Fprint(stdout, helpIdempotency())
 			return exitOK
+		case "locks":
+			fmt.Fprint(stdout, helpLocks())
+			return exitOK
+		case "long-tasks":
+			fmt.Fprint(stdout, helpLongTasks())
+			return exitOK
 		default:
 			fmt.Fprintf(stderr, "%s: 未知帮助主题 %q\n", progName, inv.args[0])
-			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous · contract · errors · idempotency\n")
+			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous · contract · errors · idempotency · locks · long-tasks\n")
 			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 			return exitUsage
 		}
