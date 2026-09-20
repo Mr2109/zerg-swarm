@@ -616,6 +616,49 @@ func init() {
 			usage:   "zerg gateway breakers [--reset] [--dry-run | --yes]",
 			run:     cmdHazardWrite,
 		},
+		// ---- 批 D · T-47 虫卵 / 虫茧两族（I / J 族 · §3.4 · §7.1 P6 · N4 硬占位表）----
+		{
+			path:     []string{"egg", "ls"},
+			kind:     "Egg",
+			summary:  "卵 × 设备矩阵（主控面无投影端点 ⇒ 现跑 404 ⇒ 不给结论）",
+			usage:    "zerg egg ls [--json <字段>]",
+			fields:   []string{"egg_id", "machine", "state", "engine_impl", "schema_version"},
+			endpoint: "GET /api/eggs（主控面没有 ⇒ 现跑 404；子端才有 /eggs）",
+			run:      cmdEggLs,
+		},
+		{
+			path:     []string{"egg", "show"},
+			kind:     "Egg",
+			summary:  "单枚卵的现状（同上：主控面无投影 ⇒ 不给结论）",
+			usage:    "zerg egg show <卵 id> [--json <字段>]",
+			args:     []string{"卵 id"},
+			fields:   []string{"egg_id", "machine", "state", "engine_impl", "schema_version"},
+			endpoint: "GET /api/eggs/{id}（主控面没有 ⇒ 现跑 404）",
+			run:      cmdEggShow,
+		},
+		{
+			path:     []string{"cocoon", "ls"},
+			kind:     "Cocoon",
+			summary:  "虫茧清单（主控面无投影端点 ⇒ 不给结论）",
+			usage:    "zerg cocoon ls [--json <字段>]",
+			fields:   []string{"name", "state", "port", "path"},
+			endpoint: "GET /api/cocoons（主控面没有 ⇒ 现跑 404）",
+			run:      cmdCocoonLs,
+		},
+		{
+			path:    []string{"cocoon", "open"},
+			summary: "起虫茧的文档服务（8610 · D3 起服务档 · 本版未开放）",
+			usage:   "zerg cocoon open <茧名> [--confirm=<茧名> --yes | --dry-run]",
+			args:    []string{"茧名"},
+			run:     cmdCocoonOpen,
+		},
+		{
+			path:    []string{"egg", "run"},
+			summary: "把卵跑起来（写面 · 本版未开放）",
+			usage:   "zerg egg run <卵 id> [--yes | --dry-run]",
+			args:    []string{"卵 id"},
+			run:     cmdEggRun,
+		},
 		// ---- 危险动作：**只登记形状，不开放执行**（§6.2 批 1 零写操作）----
 		// 每条都过 cmdGuarded：`--dry-run` 出计划件（退码 0）；真跑一律拒执（退码 2 = 不给结论）。
 		{
