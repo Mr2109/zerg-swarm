@@ -197,11 +197,18 @@
    "备注": "同上"
   },
   {
-   "file": "scripts/svc/setup-zerg.sh",
-   "类": "脚本侧（服务）",
+  "file": "scripts/svc/setup-zerg.sh",
+  "类": "脚本侧（服务）",
+  "语义": "dryrun.v1",
+  "零副作用判据": "`--dry-run` ⇒ 只打印计划：不 clone、不写 plist/unit、不调 launchctl",
+  "备注": "与 sandbox 夹具同一口径"
+  },
+  {
+   "file": "core/cmd/zerg/family_dev.go",
+   "类": "命令面（T-57 提案通道）",
    "语义": "dryrun.v1",
-   "零副作用判据": "`--dry-run` ⇒ 只打印计划：不 clone、不写 plist/unit、不调 launchctl",
-   "备注": "与 sandbox 夹具同一口径"
+   "零副作用判据": "`dev proposal new --dry-run` ⇒ 只打印件的形状（不写盘 · 不触主控 · 不建目录）；真写只写 `~/.zerg/proposals/`（或 `ZERG_PROPOSAL_DIR`）一件 JSON",
+   "备注": "2026-09-20 批 E 登记（门⑩ 扫描面新增 → 29 件）"
   }
- ]
+  ]
 }
