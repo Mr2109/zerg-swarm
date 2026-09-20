@@ -21,24 +21,37 @@ const gateExitLine = "退出码：0 全绿 · 1 有失败项 · 2 **不给结论
 const configPriorityLine = "旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg/config.yaml > 内置默认"
 
 // helpText 渲染整篇帮助。命令段由命令树现算 ⇒ 加一条命令只改一处。
+// **只列本版已开放的**（`danger == nil`）；危险动作只给计数与入口 —— 逐条清单是 `zerg help dangerous`。
 func helpText() string {
 	var b strings.Builder
 	b.WriteString(progName + " —— 虫族命令面（唯一入口）· 形态 zerg <对象> <动作> [参数] [旗标] · 深度 ≤ 3 层\n\n")
 	b.WriteString("用法:\n")
 	b.WriteString("  zerg <对象> <动作> [参数] [旗标]\n")
 	for _, c := range catalog() {
-		fmt.Fprintf(&b, "  %s\n", c.usage)
+		if c.danger == nil {
+			fmt.Fprintf(&b, "  %s\n", c.usage)
+		}
 	}
-	b.WriteString("\n命令（本版已登记 · 名字逐字来自命令树）:\n")
+	b.WriteString("\n命令（本版已开放 · 名字逐字来自命令树）:\n")
 	w := 0
 	for _, c := range catalog() {
-		if n := len(c.usage); n > w {
-			w = n
+		if c.danger == nil && len(c.usage) > w {
+			w = len(c.usage)
 		}
 	}
 	for _, c := range catalog() {
-		fmt.Fprintf(&b, "  %-*s  %s\n", w, c.usage, c.summary)
+		if c.danger == nil {
+			fmt.Fprintf(&b, "  %-*s  %s\n", w, c.usage, c.summary)
+		}
 	}
+	nDanger := 0
+	for _, c := range catalog() {
+		if c.danger != nil {
+			nDanger++
+		}
+	}
+	fmt.Fprintf(&b, "\n危险动作（已登记 %d 条 · **本版未开放** · 逐条三态见 'zerg help dangerous'）:\n", nDanger)
+	b.WriteString("  zerg <危险动作> [参数] [--dry-run | --confirm=<目标> --yes]\n")
 	b.WriteString("\n机器面:\n")
 	b.WriteString("  --json <字段>   必给逗号分隔字段；不给 ⇒ exit 1 + 字段清单走 stderr + stdout 0 字节\n")
 	b.WriteString("  --plain         非 TTY 默认档（行式）\n")
@@ -48,6 +61,6 @@ func helpText() string {
 	b.WriteString("\n配置优先级:\n  " + configPriorityLine + "\n")
 	b.WriteString("\n危险动作（三态）:\n")
 	b.WriteString("  --dry-run（零副作用）· --confirm=<目标>（值必须匹配目标）· --yes（只对第二危险档）\n")
-	b.WriteString("\n见 'zerg help exit-codes' / 'zerg help config'。\n")
+	b.WriteString("\n见 'zerg help exit-codes' / 'zerg help config' / 'zerg help dangerous'。\n")
 	return b.String()
 }

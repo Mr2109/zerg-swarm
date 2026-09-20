@@ -89,6 +89,8 @@ type command struct {
 	fields   []string // --json 可取的全部字段（不给字段时 stderr 列的就是它）
 	args     []string // 位置参数的说明（帮助里逐条列出）
 	endpoint string   // 它投影的远端端点（本机命令为空）；T-08 的三面同源对账用
+	danger   *dangerSpec
+	opened   bool // 本版是否可执行（危险动作在批 A 一律未开放 · §6.2 零写操作）
 	run      func(*invocation, io.Writer, io.Writer) int
 }
 
@@ -177,6 +179,200 @@ func init() {
 			endpoint: "GET /api/fleet/models",
 			run:      cmdModelLs,
 		},
+		// ---- 危险动作：**只登记形状，不开放执行**（§6.2 批 1 零写操作）----
+		// 每条都过 cmdGuarded：`--dry-run` 出计划件（退码 0）；真跑一律拒执（退码 2 = 不给结论）。
+		{
+			path:    []string{"task", "terminate"},
+			summary: "终止任务（危险 D3 · 本版未开放）",
+			usage:   "zerg task terminate <任务 id> --confirm=<任务 id> --yes [--expect=<旧值>] [--dry-run]",
+			args:    []string{"任务 id"},
+			danger: &dangerSpec{dangerD3, "任务 id",
+				"终止该任务的执行（CA 侧停 + 任务状态置 terminated）· 已产出的工作树不自动回收",
+				"§三 D 族 · §4.1 K7 · §九 M3 C1/C4 · 开工单 T-44"},
+			run: cmdGuarded,
+		},
+		{
+			path:    []string{"task", "rm"},
+			summary: "删除任务（危险 D3 · 本版未开放）",
+			usage:   "zerg task rm <任务 id> --confirm=<任务 id> --yes [--dry-run]",
+			args:    []string{"任务 id"},
+			danger: &dangerSpec{dangerD3, "任务 id",
+				"删除该任务的记录与它指派的工作树/分支（**不可逆**）",
+				"§三 D 族 · §4.1 K7 · 开工单 T-44"},
+			run: cmdGuarded,
+		},
+		{
+			path:    []string{"task", "pause"},
+			summary: "暂停任务（危险 D2 · 本版未开放）",
+			usage:   "zerg task pause <任务 id> --yes [--dry-run]",
+			args:    []string{"任务 id"},
+			danger:  &dangerSpec{dangerD2, "任务 id", "把排队中的任务置为暂停态（可 resume 回来）", "§三 D 族 · §6.3 S5"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"task", "resume"},
+			summary: "继续任务（危险 D2 · 本版未开放）",
+			usage:   "zerg task resume <任务 id> --yes [--dry-run]",
+			args:    []string{"任务 id"},
+			danger:  &dangerSpec{dangerD2, "任务 id", "把暂停的任务放回排队（可能立刻占机器）", "§三 D 族 · §6.3 S5"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"task", "retry"},
+			summary: "重跑任务（危险 D2 · 本版未开放）",
+			usage:   "zerg task retry <任务 id> --yes [--dry-run]",
+			args:    []string{"任务 id"},
+			danger:  &dangerSpec{dangerD2, "任务 id", "把 failed 任务置回 queued（会再占一次机器与模型槽）", "§三 D 族 · §6.3 S5"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"agent", "unload"},
+			summary: "卸载子端上的模型（危险 D3 · 本版未开放）",
+			usage:   "zerg agent unload <机器名> <模型> --confirm=<机器名> --yes [--dry-run]",
+			args:    []string{"机器名", "模型"},
+			danger: &dangerSpec{dangerD3, "机器名",
+				"卸掉该子端上的模型（**在跑的任务会被打断**）· 幂等：已在未装载态按「已在该状态」报",
+				"§三 B 族 · §九 M4 · 开工单 T-43"},
+			run: cmdGuarded,
+		},
+		{
+			path:    []string{"agent", "load"},
+			summary: "加载模型到子端（危险 D2 · 本版未开放）",
+			usage:   "zerg agent load <机器名> <模型> --yes [--dry-run]",
+			args:    []string{"机器名", "模型"},
+			danger:  &dangerSpec{dangerD2, "机器名", "把模型装进该子端（占内存/显存槽 · 单槽机是串行的）", "§三 B 族 · §九 M5 · 开工单 T-43"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"agent", "reap"},
+			summary: "回收残留（危险 D3 · 本版未开放）",
+			usage:   "zerg agent reap --confirm=<机器名> --yes [--dry-run]",
+			args:    []string{"机器名"},
+			danger: &dangerSpec{dangerD3, "机器名",
+				"按「声明树 ↔ 现值树」差集回收闲置资源（**默认干跑**；入库件永不进候选 = 红线）",
+				"§九 M9 · §十五.2 三档回收权 · 开工单 T-54"},
+			run: cmdGuarded,
+		},
+		{
+			path:    []string{"model", "stop"},
+			summary: "停模型（危险 D3 · 本版未开放）",
+			usage:   "zerg model stop <模型 id> --confirm=<模型 id> --yes [--dry-run]",
+			args:    []string{"模型 id"},
+			danger:  &dangerSpec{dangerD3, "模型 id", "停掉该模型的驻留（**在跑任务受影响**）· 幂等优先：已停不报 500", "§三 E 族 · §九 M4 · 开工单 T-45"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"model", "start"},
+			summary: "起模型（危险 D2 · 本版未开放）",
+			usage:   "zerg model start <模型 id> --yes [--dry-run]",
+			args:    []string{"模型 id"},
+			danger:  &dangerSpec{dangerD2, "模型 id", "把模型装载起来（占槽位 · 单槽机要排队）", "§三 E 族 · §九 M5 · 开工单 T-45"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"core", "stop"},
+			summary: "停主控（危险 D3 · 本版未开放）",
+			usage:   "zerg core stop --confirm=<主机名> --yes [--dry-run]",
+			args:    []string{"主机名"},
+			danger:  &dangerSpec{dangerD3, "主机名", "停掉主控进程（**整个虫群的控制面会断**）", "§三 C 族 · §7.1 P11 · 开工单 T-45"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"core", "reload"},
+			summary: "重载主控配置（危险 D2 · 本版未开放）",
+			usage:   "zerg core reload --yes [--confirm=<主机名>] [--dry-run]",
+			danger:  &dangerSpec{dangerD2, "主机名", "让主控重读配置（规则表/名册）—— 生效面即时", "§三 C 族 · §6.3 S5"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"core", "update"},
+			summary: "主控自身换件（危险 D3 · 本版未开放）",
+			usage:   "zerg core update --confirm=<主机名> --yes [--dry-run]",
+			args:    []string{"主机名"},
+			danger:  &dangerSpec{dangerD3, "主机名", "换掉在跑的主控制品（**不可逆**；走 F-3 例外清单 + 验签 + 回执）", "§九 M20 F-3 · §7.1 P12 · 开工单 T-52"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"egg", "pin"},
+			summary: "钉住一枚卵（危险 D2 · 本版未开放）",
+			usage:   "zerg egg pin <卵 id> --yes [--dry-run]",
+			args:    []string{"卵 id"},
+			danger:  &dangerSpec{dangerD2, "卵 id", "把该卵标成在孵（**同一时刻至多一枚**，会挤掉别的）", "§3.4 I 族 · 开工单 T-47"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"egg", "unpin"},
+			summary: "解钉一枚卵（危险 D2 · 本版未开放）",
+			usage:   "zerg egg unpin <卵 id> --yes [--dry-run]",
+			args:    []string{"卵 id"},
+			danger:  &dangerSpec{dangerD2, "卵 id", "取消在孵标记（原本占有单槽的卵会被换下）", "§3.4 I 族 · 开工单 T-47"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"egg", "retire"},
+			summary: "退役一枚卵（危险 D3 · 本版未开放）",
+			usage:   "zerg egg retire <卵 id> --confirm=<卵 id> --yes [--dry-run]",
+			args:    []string{"卵 id"},
+			danger:  &dangerSpec{dangerD3, "卵 id", "把该卵从名册与盘上退掉（**不可逆**；档 ③ 件永不自动）", "§十五.2 档③ · 开工单 T-54"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"dev", "release"},
+			summary: "发布候选件（危险 D3 · 本版未开放）",
+			usage:   "zerg dev release --candidate <候选 id> --confirm=<候选 id> --yes [--dry-run]",
+			args:    []string{"候选 id"},
+			danger:  &dangerSpec{dangerD3, "候选 id", "把候选件推上生产面（**只能由人拍板开**；AI 不许自升）", "§17.4 · §九 M18 C4 · 开工单 T-58"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"dev", "rollback"},
+			summary: "回滚（危险 D3 · 本版未开放）",
+			usage:   "zerg dev rollback [--to <目标>] --confirm=<候选 id> --yes [--dry-run]",
+			args:    []string{"候选 id"},
+			danger:  &dangerSpec{dangerD3, "候选 id", "把生产面退回某个已知状态（回滚件到期前**永不自动**）", "§17.2 ⑦ · §十五.2 档③ · 开工单 T-58"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"update"},
+			summary: "源码式自更新（危险 D3 · 本版未开放）",
+			usage:   "zerg update --confirm=<主机名> --yes [--dry-run]",
+			args:    []string{"主机名"},
+			danger:  &dangerSpec{dangerD3, "主机名", "按真源走一次自更新（校验 + 换件 + 回执；走 F-3 例外清单）", "§7.1 P12 · §九 M20 F-3 · 开工单 T-52"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"resource", "pin"},
+			summary: "钉住资源（危险 D2 · 本版未开放）",
+			usage:   "zerg resource pin <资源> --yes [--dry-run]",
+			args:    []string{"资源 id"},
+			danger:  &dangerSpec{dangerD2, "资源 id", "把资源标成不可回收（回收候选里会被排除）", "§7.1 P10 · §6.3 S5 · 开工单 T-46"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"resource", "unpin"},
+			summary: "解钉资源（危险 D2 · 本版未开放）",
+			usage:   "zerg resource unpin <资源> --yes [--dry-run]",
+			args:    []string{"资源 id"},
+			danger:  &dangerSpec{dangerD2, "资源 id", "取消不可回收标记（它会重新进入回收候选）", "§7.1 P10 · §6.3 S5 · 开工单 T-46"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"gateway", "breakers"},
+			summary: "网关断路开关（危险 D2 · 本版未开放）",
+			usage:   "zerg gateway breakers [--reset] --yes [--confirm=<网关主机名>] [--dry-run]",
+			danger:  &dangerSpec{dangerD2, "网关主机名", "重置网关熔断器（会立刻重新放流量进去）", "§7.1 P10 · §6.3 S5 · 开工单 T-46"},
+			run:     cmdGuarded,
+		},
+		{
+			path:    []string{"script", "run"},
+			summary: "跑一件脚本（危险 D3 · 本版未开放）",
+			usage:   "zerg script run <脚本> --confirm=<脚本> --yes [--dry-run]",
+			args:    []string{"脚本"},
+			danger: &dangerSpec{dangerD3, "脚本",
+				"按调用者权限执行脚本（**退码原样透传**；核心名硬占位）",
+				"§6.3 S6 · §九 M18 C5 · 开工单 T-50"},
+			run: cmdGuarded,
+		},
 	}
 }
 
@@ -253,6 +449,12 @@ type invocation struct {
 	wantHelp    bool
 	wantVersion bool
 	tty         bool // stdout 是不是终端（行式面/人面的分档依据 · §九 M14）
+
+	// 危险动作三态（§4.1 K7 · §九 M3 C1/C2/C4）
+	dryRun       bool
+	confirm      string
+	confirmGiven bool
+	yes          bool
 }
 
 func parseInvocation(args []string) (*invocation, error) {
@@ -277,6 +479,20 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.fields = splitFields(strings.TrimPrefix(a, "--json="))
 		case a == "--plain":
 			inv.plain = true
+		case a == "--dry-run":
+			inv.dryRun = true
+		case a == "--yes":
+			inv.yes = true
+		case a == "--confirm" || a == "--confirm=":
+			// 给了旗标但没给值 ⇒ confirmGiven 为真、值为空（由 guard 判成「值不匹配目标」）
+			inv.confirmGiven = true
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				inv.confirm = args[i]
+			}
+		case strings.HasPrefix(a, "--confirm="):
+			inv.confirmGiven = true
+			inv.confirm = strings.TrimPrefix(a, "--confirm=")
 		case a == "--help" || a == "-h":
 			inv.wantHelp = true
 		case a == "--version":
@@ -408,9 +624,12 @@ func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 		case "config":
 			fmt.Fprint(stdout, helpConfig())
 			return exitOK
+		case "dangerous":
+			fmt.Fprint(stdout, helpDangerous())
+			return exitOK
 		default:
 			fmt.Fprintf(stderr, "%s: 未知帮助主题 %q\n", progName, inv.args[0])
-			fmt.Fprintf(stderr, "可用主题: exit-codes · config\n")
+			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous\n")
 			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 			return exitUsage
 		}
