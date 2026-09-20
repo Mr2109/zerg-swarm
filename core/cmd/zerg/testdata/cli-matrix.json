@@ -608,6 +608,143 @@
    "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
   },
   {
+   "id": "task/submit#未知旗标",
+   "command": "task submit",
+   "argv": [
+    "task",
+    "submit",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "task/submit#不认的契约主号",
+   "command": "task submit",
+   "argv": [
+    "task",
+    "submit",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "task/diff#未知旗标",
+   "command": "task diff",
+   "argv": [
+    "task",
+    "diff",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "task/diff#不认的契约主号",
+   "command": "task diff",
+   "argv": [
+    "task",
+    "diff",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "task/git#未知旗标",
+   "command": "task git",
+   "argv": [
+    "task",
+    "git",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "task/git#不认的契约主号",
+   "command": "task git",
+   "argv": [
+    "task",
+    "git",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "task/logs#未知旗标",
+   "command": "task logs",
+   "argv": [
+    "task",
+    "logs",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "task/logs#不认的契约主号",
+   "command": "task logs",
+   "argv": [
+    "task",
+    "logs",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "task/move#未知旗标",
+   "command": "task move",
+   "argv": [
+    "task",
+    "move",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "task/move#不认的契约主号",
+   "command": "task move",
+   "argv": [
+    "task",
+    "move",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "task/move#缺 --yes（D2）",
+   "command": "task move",
+   "argv": [
+    "task",
+    "move",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
    "id": "task/terminate#未知旗标",
    "command": "task terminate",
    "argv": [

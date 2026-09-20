@@ -19,9 +19,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -221,6 +226,76 @@ func sortedKeys(m map[string]int) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// runCapture 跑一条口令并把两路输出都带回来（本文件里给「要判输出文本」的测试用）。
+func runCapture(argv ...string) (int, string, string) {
+	var out, errb bytes.Buffer
+	rc := zerg.RunForTest(argv, &out, &errb)
+	return rc, out.String(), errb.String()
+}
+
+// TestCLIContractSubmitSliceCodesPassthrough —— 判据 T-44 ②：片的 400 语义**透传不翻译**。
+//
+// 合成主控（`net/http` 起在本机随机端口 · **不碰生产 8580** · 用完即关）：按 API 声明
+// （`core/internal/api/routes.go` 的 `/api/tasks` POST）回 400 + **片语义码**，命令面必须
+// **逐字**把它打出来、**不替换**、**不吞**，退码从契约表取（400 = 用法错 `2`）。
+// 顺带钉住旗标 ↔ 请求体的映射（缺映射就会在这里露出来）。
+func TestCLIContractSubmitSliceCodesPassthrough(t *testing.T) {
+	seen := []string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks" {
+			http.NotFound(w, r)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		seen = append(seen, string(body))
+		var m map[string]any
+		_ = json.Unmarshal(body, &m)
+		switch {
+		case m["slice_id"] == nil && m["depends_on"] == nil && m["acceptance"] == nil:
+			w.WriteHeader(400)
+			fmt.Fprint(w, `{"code":"SLICE_MISSING_ID","error":"声明了 slice 字段但缺 slice_id"}`)
+		case m["slice_id"] != nil && m["acceptance"] == nil:
+			w.WriteHeader(400)
+			fmt.Fprint(w, `{"code":"SLICE_MISSING_ACCEPTANCE","error":"slice 字段已声明但没给 acceptance 声明"}`)
+		default:
+			w.WriteHeader(201)
+			fmt.Fprint(w, `{"id":"synthetic-task-1","status":"queued"}`)
+		}
+	}))
+	defer srv.Close()
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+	t.Setenv("ZERG_PORT", strconv.Itoa(port))
+
+	cases := []struct {
+		argv   []string
+		wantRC int
+		want   string
+	}{
+		{[]string{"task", "submit", "--desc", "合成", "--yes"}, 2, "SLICE_MISSING_ID"},
+		{[]string{"task", "submit", "--desc", "合成", "--slice-id", "S-1", "--yes"}, 2, "SLICE_MISSING_ACCEPTANCE"},
+		{[]string{"task", "submit", "--desc", "合成", "--acceptance", "判据甲", "--yes"}, 0, "synthetic-task-1"},
+	}
+	for _, c := range cases {
+		rc, out, errb := runCapture(c.argv...)
+		if rc != c.wantRC {
+			t.Errorf("%v 退码 = %d（要 %d）· stderr=%s", c.argv, rc, c.wantRC, errb)
+		}
+		if !strings.Contains(out+errb, c.want) {
+			t.Errorf("%v 的输出里没有逐字的 %q（透传不翻译）：stdout=%s stderr=%s", c.argv, c.want, out, errb)
+		}
+	}
+	if len(seen) != 3 {
+		t.Fatalf("合成主控收到 %d 次请求（要 3 次）", len(seen))
+	}
+	// 映射面：`--slice-id` → `slice_id`、`--acceptance` → `acceptance`（可重复）
+	if !strings.Contains(seen[1], `"slice_id":"S-1"`) {
+		t.Errorf("第二次请求体没有把 --slice-id 映射成 slice_id：%s", seen[1])
+	}
+	if !strings.Contains(seen[2], `"acceptance":["判据甲"]`) {
+		t.Errorf("第三次请求体没有把 --acceptance 映射成数组：%s", seen[2])
+	}
 }
 
 // TestCLIContractJSONShape —— 判据⑥/`T4`「`--json` 形状守卫（运行时只读）」（§九 M6）：

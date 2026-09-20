@@ -441,6 +441,54 @@ func init() {
 				"§十五.4 F-1 · §九 M20 · 开工单 T-43"},
 			run: cmdGuarded,
 		},
+		// ---- 批 D · T-44 `task` 族全动作面（§三 D 族 · 12 个动作名一个不差）----
+		{
+			path:     []string{"task", "submit"},
+			kind:     "TaskSubmit",
+			summary:  "提交任务（D2 写面 · 全旗标 ⇒ API 请求体逐条对上）",
+			usage:    "zerg task submit --desc <描述> [--model <模型>] [--priority <n>] [--slice-id <片>] [--depends-on <片>]… [--acceptance <判据>]… [--dry-run | --yes]",
+			args:     []string{"（旗标：--desc/--model/--priority/--slice-id/--depends-on/--acceptance）"},
+			endpoint: "POST /api/tasks",
+			run:      cmdTaskSubmit,
+		},
+		{
+			path:     []string{"task", "diff"},
+			kind:     "TaskDiff",
+			summary:  "该任务工作树的**只读** `git diff --stat`",
+			usage:    "zerg task diff <任务 id> [--json <字段>]",
+			args:     []string{"任务 id"},
+			fields:   []string{"id", "workdir", "diff_stat"},
+			endpoint: "GET /api/tasks/{id}（取 workdir）+ 本机只读 git",
+			run:      cmdTaskDiff,
+		},
+		{
+			path:     []string{"task", "git"},
+			kind:     "TaskGit",
+			summary:  "该任务工作树的 git 面（分支 / HEAD / 未提交 / 与 main 的距离）",
+			usage:    "zerg task git <任务 id> [--json <字段>]",
+			args:     []string{"任务 id"},
+			fields:   []string{"id", "workdir", "branch", "head", "dirty", "ahead_of_main"},
+			endpoint: "GET /api/tasks/{id}（取 workdir）+ 本机只读 git",
+			run:      cmdTaskGit,
+		},
+		{
+			path:     []string{"task", "logs"},
+			kind:     "TaskLogs",
+			summary:  "该任务的日志（`/api/logs/task/{id}` **路由没接** ⇒ 不给结论，退码 8）",
+			usage:    "zerg task logs <任务 id> [--json <字段>]",
+			args:     []string{"任务 id"},
+			fields:   []string{"id", "available", "detail"},
+			endpoint: "GET /api/logs/task/{id}（处理器在 handlers.go:966 · 路由没接 ⇒ 现跑 404）",
+			run:      cmdTaskLogs,
+		},
+		{
+			path:    []string{"task", "move"},
+			summary: "挪动任务在队列里的位置（危险 D2 · 本版未开放）",
+			usage:   "zerg task move <任务 id> --to <位置> --yes [--dry-run]",
+			args:    []string{"任务 id"},
+			danger:  &dangerSpec{dangerD2, "任务 id", "改这条任务在队列里的次序（可能插到别人前面）", "§三 D 族 · 开工单 T-44"},
+			run:     cmdGuarded,
+		},
 		// ---- 危险动作：**只登记形状，不开放执行**（§6.2 批 1 零写操作）----
 		// 每条都过 cmdGuarded：`--dry-run` 出计划件（退码 0）；真跑一律拒执（退码 2 = 不给结论）。
 		{
@@ -758,6 +806,18 @@ type invocation struct {
 	// 茧壁直连（§十五.4 例外清单 F-2 / 丙案：默认经主控，直连要显式）
 	direct bool
 
+	// 动作面旗标（批 D · S5：值原样收下，语义校验在各自命令里 —— 这里只做「收下来」）
+	// 映射写在 family_task.go 一处（`--desc` → 请求体的 `description` 一类）。
+	desc               string
+	modelWant          string
+	priority           string
+	sliceID            string
+	dependsOn          []string
+	acceptance         []string
+	acceptanceDeclared bool
+	moveTo             string
+	to                 string
+
 	// `--quick`：贵项跳过并记 SKIP（§十二 P-040）
 	quick bool
 
@@ -828,6 +888,20 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.contextWant = strings.TrimPrefix(a, "--context=")
 		case a == "--token-stdin":
 			inv.tokenStdin = true
+		case valueFlagName(a) != "":
+			// 动作面旗标（批 D · S5）：`--desc` / `--model` / `--priority` / `--slice-id` /
+			// `--depends-on` / `--acceptance` / `--to`。值**原样**收下（语义校验在各自命令里）。
+			// `--acceptance` 单独给（后面没跟值）也算「**声明了**」—— 「没写」与「写了空」
+			// 在 API 那边是两件事（`nil` vs `[]`），不许在这里合并。
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				inv.setValueFlag(a, args[i])
+			} else if a == "--acceptance" {
+				inv.setValueFlag(a, "")
+			}
+		case strings.HasPrefix(a, "--") && strings.Contains(a, "=") && valueFlagName(strings.SplitN(a, "=", 2)[0]) != "":
+			k, v, _ := strings.Cut(a, "=")
+			inv.setValueFlag(k, v)
 		case a == "--accept" || a == "--accept=":
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				i++
@@ -888,6 +962,40 @@ func parseInvocation(args []string) (*invocation, error) {
 		return nil, fmt.Errorf("--wait / --no-wait / --follow 三档互斥（给了 %d 个；§九 M8 行 262–267）", n)
 	}
 	return inv, nil
+}
+
+// ---- 动作面旗标（批 D · S5）：一张名字表 + 一个收值口 ----------------------------------------
+
+// valueFlagName 认「动作面旗标」的名字（**唯一真源**：解析与 `--k=v` 分派都读它）。
+func valueFlagName(a string) string {
+	switch a {
+	case "--desc", "--model", "--priority", "--slice-id", "--depends-on", "--acceptance", "--to":
+		return a
+	}
+	return ""
+}
+
+// setValueFlag 把一枚动作面旗标的值收进 invocation（可重复的两枚用 append）。
+func (inv *invocation) setValueFlag(name, val string) {
+	switch name {
+	case "--desc":
+		inv.desc = val
+	case "--model":
+		inv.modelWant = val
+	case "--priority":
+		inv.priority = val
+	case "--slice-id":
+		inv.sliceID = val
+	case "--depends-on":
+		inv.dependsOn = append(inv.dependsOn, val)
+	case "--acceptance":
+		inv.acceptanceDeclared = true
+		if val != "" {
+			inv.acceptance = append(inv.acceptance, val)
+		}
+	case "--to":
+		inv.to = val
+	}
 }
 
 // boolCount 数一数有几个 true（三档互斥判据用）。
