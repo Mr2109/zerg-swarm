@@ -228,12 +228,12 @@ func init() {
 			kind:    "Version",
 			summary: "单行身份（组件 版本 代码 sha 构建时间）· --json 报三层版本",
 			usage:   "zerg version [--json <字段>]",
-			fields:  []string{"name", "version", "commit", "build_time", "contract", "object_schema", "core_version", "core_code_sha"},
+			fields:  []string{"name", "version", "commit", "build_time", "contract", "object_schema", "core_version", "core_code_sha", "window"},
 			run:     cmdVersion,
 		},
 		{
 			path:    []string{"help"},
-			summary: "帮助（主题: exit-codes · config · contract · errors · idempotency · locks · long-tasks · remote）",
+			summary: "帮助（主题: exit-codes · config · contract · errors · idempotency · locks · long-tasks · remote · version）",
 			usage:   "zerg help [<主题>]",
 			args:    []string{"主题（可省）"},
 			run:     cmdHelp,
@@ -1043,6 +1043,7 @@ func cmdVersion(inv *invocation, stdout, stderr io.Writer) int {
 			"build_time":    version.BuildTime,
 			"contract":      contractID,
 			"object_schema": fmt.Sprintf("%d", objectSchemaID),
+			"window":        windowSummary(),
 		}
 		// 主控版本与它的 code_sha 只从 `/api/capabilities` 三键取（§九 M15 T1）——
 		// **只在被点名时**才去打主控：`zerg version` 在离线白名单里（§九 M20 O8），
@@ -1100,9 +1101,12 @@ func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 		case "remote":
 			fmt.Fprint(stdout, helpRemote())
 			return exitOK
+		case "version":
+			fmt.Fprint(stdout, helpVersionTopic())
+			return exitOK
 		default:
 			fmt.Fprintf(stderr, "%s: 未知帮助主题 %q\n", progName, inv.args[0])
-			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous · contract · errors · idempotency · locks · long-tasks · remote\n")
+			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous · contract · errors · idempotency · locks · long-tasks · remote · version\n")
 			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 			return exitUsage
 		}
