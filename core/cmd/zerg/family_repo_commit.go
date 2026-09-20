@@ -128,7 +128,10 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	// ③ 暂存前：索引面必须是空的（不许把「别人已暂存的」顺手提交）
-	pre, err := gitRun(root, "diff", "--cached", "--name-only")
+	// ★ `-c core.quotepath=false`：件名含非 ASCII（本项目大量中文件名）时，git 默认会把路径**转义成**
+	// `\345\217\202…` 形态 ⇒ 与「人给的件名」逐字对不上，「复核暂存清单」这条判据会当场假红。
+	// 这不是放宽判据，是把两处读的**同一个东西**（件名）读成同一种形态。
+	pre, err := gitRun(root, "-c", "core.quotepath=false", "diff", "--cached", "--name-only")
 	if err != nil {
 		inv.setErr("blocked", "git_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 读不了暂存面：%v ⇒ 不给结论（退码 8）\n", progName, err)
@@ -174,7 +177,7 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `git add` 失败（逐件暂存）：%v\n", progName, err)
 		return exitFail
 	}
-	post, err := gitRun(root, "diff", "--cached", "--name-only")
+	post, err := gitRun(root, "-c", "core.quotepath=false", "diff", "--cached", "--name-only")
 	if err != nil {
 		inv.setErr("blocked", "git_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 读不了暂存面：%v ⇒ 不给结论（退码 8）\n", progName, err)
