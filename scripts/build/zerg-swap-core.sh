@@ -106,28 +106,58 @@ if not m:
 print(" ".join(x.strip() for x in m.group(1).split("\n") if x.strip()))
 '
 }
+# 作业在 launchd 里吗
+job_loaded() { launchctl print "${DOMAIN}/${PLIST_LABEL}" >/dev/null 2>&1; }
+# 等作业**真的**注销（bootout 是异步的 —— 不等就 bootstrap，实测报 `Bootstrap failed: 5: Input/output error`）
+wait_job_gone() {  # $1 = 最长等秒
+  local i
+  for i in $(seq 1 "$1"); do
+    job_loaded || return 0
+    sleep 1
+  done
+  return 1
+}
+# bootstrap + 复核 + 重试（同上：EIO 是「上一个作业还没注销完」的典型形态，等一会儿就过）
+bootstrap_job() {
+  local i
+  for i in 1 2 3 4 5; do
+    launchctl bootstrap "${DOMAIN}" "$PLIST" 2>&1 | tee -a "$LOG" || true
+    if job_loaded; then return 0; fi
+    say "  [重启] bootstrap 第 ${i} 次后作业仍未装载 ⇒ 等 2s 重试（bootout 异步；立刻 bootstrap 会 EIO）"
+    sleep 2
+  done
+  job_loaded
+}
 
 # ── 唯一的重启入口 ─────────────────────────────────────────────────────────────
 # 为什么不能一律 `kickstart -k`：launchd **缓存的是加载时的作业定义**。盘上 plist 被改过
 # （例如脚本被 git mv、`start-zerg-core.sh` 按新仓根重写了它）而作业没重新加载时，kickstart 仍按
 # **缓存定义**拉 —— 缓存里的程序路径若已悬空，行为是「先把在跑的主控 kill 掉，再用不存在的程序
 # 起，起不来，KeepAlive 每 10s 重试仍失败」。判据落在**运行时**：定义不一致就 bootout+bootstrap。
+# 为什么 bootout 后要 `wait_job_gone`：bootout **是异步的** —— 不等它注销完就 bootstrap，
+# 实测报 `Bootstrap failed: 5: Input/output error`（2026-09-20 第一次真跑的形态），
+# 而那一刻主控已经被 kill 掉了 ⇒ 正好落在「新件起不来」的分支上（那一跑真走了回滚）。
 restart_master() {
   local lp dp
   lp="$(loaded_program)"
   dp="$(plist_program)"
   if [ -z "$lp" ]; then
     say "  [重启] launchd 里没有 ${PLIST_LABEL} ⇒ bootstrap（首次装载）"
-    launchctl bootstrap "${DOMAIN}" "$PLIST" || launchctl load -w "$PLIST"
-    return $?
+    bootstrap_job || { say "!! bootstrap 五次都没装载成功"; return 1; }
+    return 0
   fi
   if [ "$lp" != "$dp" ]; then
     say "  [重启] 已加载定义 ≠ 盘上 plist ⇒ bootout + bootstrap（刷新定义；kickstart 用缓存定义会起不来）"
     say "         已加载: $lp"
     say "         盘上  : $dp"
     launchctl bootout "${DOMAIN}/${PLIST_LABEL}" 2>/dev/null || true
-    launchctl bootstrap "${DOMAIN}" "$PLIST" || launchctl load -w "$PLIST"
-    return $?
+    if ! wait_job_gone 10; then
+      say "!! bootout 后 10s 作业仍在 launchd 里 ⇒ 不 bootstrap（先查为什么注销不掉）"
+      return 1
+    fi
+    say "  [重启] 作业已注销（异步完成）⇒ bootstrap 新定义"
+    bootstrap_job || { say "!! bootstrap 五次都没装载成功"; return 1; }
+    return 0
   fi
   say "  [重启] 已加载定义 == 盘上 plist ⇒ kickstart -k"
   launchctl kickstart -k "${DOMAIN}/${PLIST_LABEL}"
