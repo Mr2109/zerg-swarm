@@ -23,21 +23,24 @@ type exitcodeRow struct {
 	Retryable string
 }
 
-// exitcodeTable —— **主表**（五档 · 命令面自己的码）。
+// exitcodeTable —— **主表**（批 B · T-10 起九档 · 命令面自己的码）。
+// 批 B 落判（§十二 `P-013` ②③④ 与 §九 M7 的落地）：`10` 资源不足 · `11` 超时 ·
+// `12` 不可达 · `14` 冲突/被占（**不许**再用 `507` 表达）从「已挂号」转**启用** ——
+// 它们的 kind 见 `zerg help errors`（kind → 码是**唯一真源**，本表是它的投影）。
 var exitcodeTable = []exitcodeRow{
 	{0, "ok", "成功", "—"},
 	{1, "failed", "一般失败（跑到了、没成功）", "看 error.kind；默认不可重试"},
 	{2, "usage", "用法错 / **不给结论**", "改用法后可重试；「不给结论」不许当失败计"},
-	{4, "unauthenticated", "未认证（缺令牌 / 令牌不对）", "换凭据后可重试"},
+	{4, "unauthenticated", "未认证（缺令牌 / 令牌不对；`403` 与它并码 · kind 分家）", "换凭据后可重试"},
 	{8, "blocked", "有 BLOCKED（「读不到」不许当健康）", "补齐前置后可重试"},
+	{10, "insufficient_resource", "资源不足（`507` 的对面：卸掉占用者后可重试）", "等待 / 卸占用者后可重试"},
+	{11, "timeout", "超时（「等到了坏结果」与「等不起」分开）", "可重试"},
+	{12, "unreachable", "不可达（打不到主控）—— **fail-closed**，不偷偷换端点", "链路恢复后可重试"},
+	{14, "conflict", "冲突 / 被占（**不许**再用 `507` 表达 · 幂等优先）", "显式 `--wait` 才排队；已在该状态按状态报"},
 }
 
 // exitcodeReserved —— **已挂号、尚未启用**（登记在此，不启用；启用是后续版本的拍板项）。
 var exitcodeReserved = []exitcodeRow{
-	{10, "resource_exhausted", "资源不足", "等待后可重试"},
-	{11, "timeout", "超时", "可重试"},
-	{12, "unreachable", "不可达（打不到主控 / 主控以外的目标）", "链路恢复后可重试"},
-	{14, "conflict", "冲突 / 被占（**不许**再用 `507` 表达）", "可重试（显式 `--wait` 才排队）"},
 	{130, "interrupted", "人打断（Ctrl-C · 默认只退订、不取消）", "—"},
 }
 

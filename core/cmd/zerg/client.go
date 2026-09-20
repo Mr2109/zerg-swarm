@@ -82,20 +82,45 @@ func (c *client) getJSON(path string, out any) error {
 	req.Header.Set("X-Auth-Token", c.token) // 唯一真源 header（§九 M2 C10：不发明第四种）
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("打不到主控 %s%s（endpoint 来源: %s）: %w", c.base, path, baseFromBuiltin, err)
+		// §九 M7：网络层失败 = `unreachable`（**不是** `failed`）——
+		// AI 自愈靠这个区分「去查链路」还是「去查代码」（§十二 P-013 ③）。
+		return &netError{msg: fmt.Sprintf("打不到主控 %s%s（endpoint 来源: %s）", c.base, path, baseFromBuiltin), cause: err}
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return &authError{status: resp.StatusCode, token: c.tokenOrigin()}
 	}
+	if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusTooManyRequests {
+		return &httpError{path: path, status: resp.StatusCode, body: string(body)}
+	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("主控 %s 返回 %d（endpoint 来源: %s）", path, resp.StatusCode, baseFromBuiltin)
+		return &httpError{path: path, status: resp.StatusCode, body: string(body)}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("主控 %s 的响应不是合法 JSON: %w", path, err)
 	}
 	return nil
+}
+
+// netError —— 链路层失败（kind=unreachable · 退码 12）。
+type netError struct {
+	msg   string
+	cause error
+}
+
+func (e *netError) Error() string { return e.msg }
+func (e *netError) Unwrap() error { return e.cause }
+
+// httpError —— 主控回了非 2xx（不认证/冲突之外的那些）。
+type httpError struct {
+	path   string
+	status int
+	body   string
+}
+
+func (e *httpError) Error() string {
+	return fmt.Sprintf("主控 %s 返回 %d（endpoint 来源: %s）", e.path, e.status, baseFromBuiltin)
 }
 
 type authError struct {
