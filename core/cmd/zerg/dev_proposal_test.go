@@ -19,6 +19,7 @@ package main_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -75,6 +76,119 @@ func snapshotDir(t *testing.T, root string) string {
 		fmt.Fprintf(&b, "%s\t%s\n", e.rel, e.sum)
 	}
 	return b.String()
+}
+
+// testCriterion —— 测试用的**合法判据**（一条本版跑得动、零副作用的命令面命令）。
+// 为什么用 `--dry-run` 那一态：它永远跑得动且零副作用（D3b 第一步的判据口径）。
+const testCriterion = "zerg build all --only cli --dry-run"
+
+// ---- D3b 第一步：提案接校验（判据**可机检** · 缺判据 / 判据跑不动 ⇒ rc 2）----
+
+func TestDevProposalCriterionMustBeMachineCheckable(t *testing.T) {
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
+	base := []string{"--title", "判据", "--target", "待办:" + ids[0], "--goal", "g",
+		"--evidence", "e", "--rollback", "r"}
+
+	// 负控①：**缺判据** ⇒ 2 · stdout 0 字节 · 点名「判据」
+	rc, out, errb := runProposalNew(t, base...)
+	if rc != 2 {
+		t.Errorf("缺 --criterion ⇒ 退码 %d（要 2 · D3b「提案缺判据 ⇒ 退码 2」）", rc)
+	}
+	if out != "" {
+		t.Errorf("拒收时 stdout 必须 0 字节，实测 %d 字节", len(out))
+	}
+	if !strings.Contains(errb, "判据") {
+		t.Errorf("stderr 没点名「判据」：%q", errb)
+	}
+
+	// 负控②：判据**不是命令面**（人话 / 别的工具）⇒ 2
+	rc2, _, errb2 := runProposalNew(t, append(append([]string{}, base...), "--criterion", "看门禁全绿就行")...)
+	if rc2 != 2 || !strings.Contains(errb2, "首词") {
+		t.Errorf("人话判据 ⇒ rc=%d（要 2）、stderr 要点名首词：%q", rc2, errb2)
+	}
+
+	// 负控③：判据的命令**不在命令树里**（幽灵命令）⇒ 2（与门⑫ 同一条口径）
+	rc3, _, errb3 := runProposalNew(t, append(append([]string{}, base...), "--criterion", "zerg nosuchfamily nosuchaction")...)
+	if rc3 != 2 || !strings.Contains(errb3, "不在命令树里") {
+		t.Errorf("幽灵命令判据 ⇒ rc=%d（要 2）、stderr 要点名「不在命令树里」：%q", rc3, errb3)
+	}
+
+	// 负控④：判据落在**本版未开放的危险档**上（真跑跑不到一个绿）⇒ 2
+	rc4, _, errb4 := runProposalNew(t, append(append([]string{}, base...),
+		"--criterion", "zerg dev release --candidate DEV-0001")...)
+	if rc4 != 2 || !strings.Contains(errb4, "危险档") {
+		t.Errorf("未开放危险档当判据 ⇒ rc=%d（要 2）、stderr 要点名「危险档」：%q", rc4, errb4)
+	}
+
+	// 正控：可机检的判据 ⇒ 0，且件里记着它（判据字段只增不改）
+	rc5, out5, errb5 := runProposalNew(t, append(append([]string{}, base...), "--criterion", testCriterion)...)
+	if rc5 != 0 {
+		t.Fatalf("可机检判据 ⇒ rc=%d（要 0）· stderr=%s", rc5, errb5)
+	}
+	if strings.TrimSpace(out5) == "" {
+		t.Errorf("成功时 stdout 要给提案 id")
+	}
+	// `--file` 声明（`dev edit` 的作用域真源）
+	rc6, _, errb6 := runProposalNew(t, append(append([]string{}, base...),
+		"--criterion", testCriterion, "--file", "core/cmd/zerg/main.go")...)
+	if rc6 != 0 {
+		t.Errorf("带 --file ⇒ rc=%d（要 0）· stderr=%s", rc6, errb6)
+	}
+	// 负控⑤：`--file` 绝对路径 ⇒ 2（作用域只认仓内相对路径）
+	rc7, _, errb7 := runProposalNew(t, append(append([]string{}, base...),
+		"--criterion", testCriterion, "--file", "/etc/passwd")...)
+	if rc7 != 2 || !strings.Contains(errb7, "绝对路径") {
+		t.Errorf("绝对路径的 --file ⇒ rc=%d（要 2）、stderr 要点名「绝对路径」：%q", rc7, errb7)
+	}
+}
+
+func TestDevProposalCheckFailsClosed(t *testing.T) {
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	dir := t.TempDir()
+	t.Setenv("ZERG_PROPOSAL_DIR", dir)
+	var out, errb strings.Builder
+
+	// 空转（一件都没有）⇒ 2（不给结论 · 不静默放绿）
+	rc := zerg.RunForTest([]string{"dev", "proposal", "check"}, &out, &errb)
+	if rc != 2 {
+		t.Errorf("空目录 check ⇒ rc=%d（要 2 · 空转不给结论）", rc)
+	}
+
+	// 有件（判据可跑）⇒ 0
+	out.Reset()
+	errb.Reset()
+	if rc, _, e6 := runProposalNew(t, "--title", "正控", "--target", "待办:"+ids[0], "--goal", "g",
+		"--evidence", "e", "--rollback", "r", "--criterion", testCriterion); rc != 0 {
+		t.Fatalf("正控件提不出来：rc=%d · stderr=%s", rc, e6)
+	}
+	if rc := zerg.RunForTest([]string{"dev", "proposal", "check"}, &out, &errb); rc != 0 {
+		t.Errorf("判据可跑的件 check ⇒ rc=%d（要 0）· stderr=%s", rc, errb.String())
+	}
+
+	// 塞一件**手写的坏件**（判据是空串 —— 绕过 new 的校验才可能的形态）⇒ 2，且逐件点名
+	bad, _ := json.Marshal(map[string]any{
+		"id": "DEV-9001", "title": "手写坏件", "target": ids[0], "goal": "g",
+		"evidence": []string{"e"}, "rollback_ref": "r", "criterion": "", "state": "未决",
+	})
+	if err := os.WriteFile(filepath.Join(dir, "DEV-9001.json"), bad, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errb.Reset()
+	rc = zerg.RunForTest([]string{"dev", "proposal", "check", "DEV-9001"}, &out, &errb)
+	if rc != 2 {
+		t.Errorf("判据为空的件 check ⇒ rc=%d（要 2 · fail-closed）· stderr=%s", rc, errb.String())
+	}
+	if !strings.Contains(out.String(), "缺") {
+		t.Errorf("check 的行里要给判据态（缺/跑不动/可跑）：%q", out.String())
+	}
 }
 
 // runProposalNew 起一次 `dev proposal new`（**只走进程内 run**，不起二进制 —— 层①的落点）。
@@ -137,7 +251,7 @@ func TestDevProposalTargetMustReferenceExistingID(t *testing.T) {
 
 	// ③-a 回指不上 ⇒ exit 2（**不是**自造码）· stdout 0 字节
 	rc, out, errb := runProposalNew(t, "--title", "回指不上", "--target", "待办:ZZZZ-9999",
-		"--goal", "g", "--evidence", "e", "--rollback", "r")
+		"--goal", "g", "--evidence", "e", "--rollback", "r", "--criterion", testCriterion)
 	if rc != 2 {
 		t.Errorf("回指不上的目标 ⇒ 退码 %d（要 2 · §17.6 SD1「回指不上 ⇒ exit=2 · 不新立码」）", rc)
 	}
@@ -150,7 +264,7 @@ func TestDevProposalTargetMustReferenceExistingID(t *testing.T) {
 
 	// ③-b 回指得上（真台账里的既有编号）⇒ exit 0，且件落在提案件目录
 	rc, out, errb = runProposalNew(t, "--title", "回指得上", "--target", "待办:"+ids[0],
-		"--goal", "g", "--evidence", "e", "--rollback", "r")
+		"--goal", "g", "--evidence", "e", "--rollback", "r", "--criterion", testCriterion)
 	if rc != 0 {
 		t.Errorf("既有编号 %q ⇒ 退码 %d（要 0）· stderr=%s", ids[0], rc, errb)
 	}
@@ -165,7 +279,7 @@ func TestDevProposalRefusesWithoutRollbackOrEvidence(t *testing.T) {
 		t.Fatalf("回指清单读不出来：%v", err)
 	}
 	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
-	base := []string{"--title", "t", "--target", "待办:" + ids[0], "--goal", "g"}
+	base := []string{"--title", "t", "--target", "待办:" + ids[0], "--goal", "g", "--criterion", testCriterion}
 
 	// ④-a 没退点 ⇒ 2
 	rc, out, errb := runProposalNew(t, append(append([]string{}, base...), "--evidence", "e")...)
@@ -217,7 +331,7 @@ func TestDevProposalNewHasZeroSideEffectOnTheWorkspace(t *testing.T) {
 	t.Setenv("ZERG_PROPOSAL_DIR", prop)
 
 	rc, _, errb := runProposalNew(t, "--title", "零副作用", "--target", "待办:"+ids[0],
-		"--goal", "g", "--evidence", "e", "--rollback", "r")
+		"--goal", "g", "--evidence", "e", "--rollback", "r", "--criterion", testCriterion)
 	if rc != 0 {
 		t.Fatalf("`new` 退码 %d（要 0）· stderr=%s", rc, errb)
 	}

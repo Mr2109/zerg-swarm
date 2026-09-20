@@ -56,9 +56,10 @@
   },
   {
    "file": "core/cmd/zerg/family_build.go",
-   "类": "命令面三态（`build all|release --dry-run` 的计划件 · 与 guard.go 同一套语义）",
+   "类": "命令面三态（`build all|release --dry-run` 的计划件 · 与 guard.go 同一套语义；D3b 起**自举档开放执行**）",
    "语义": "dryrun.v1",
-   "零副作用判据": "`bin/zerg build all --dry-run` ⇒ 退码 0 · stdout 只有计划件 + stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）」· **不调构建脚本**（现跑对拍：跑 dry-run 前后 `stat -f '%N %m %z' bin/*` 逐件 mtime/大小不变）· 真跑是明确的「未开放」档（退码 2）。"
+   "零副作用判据": "`bin/zerg build all [--only cli] --dry-run` ⇒ 退码 0 · stdout 只有计划件 + stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）」· **不调构建脚本**（现跑对拍：跑 dry-run 前后 `stat -f '%N %m %z' bin/*` 逐件 mtime/大小不变）。★ 真跑：只有 `--only cli`（自举档 · 只写 bin/zerg 一件）在 D3 确认齐了才执行；其余档（默认全套 / `--only core|compat` / `release`）仍是明确的「未开放」档（退码 2）。",
+   "备注": "D3b 第一步解死锁：`--only cli` 是**命令面自举**档（不常驻、不绑端口、不在跑 ⇒ 不是换件）"
   },
   {
    "file": "core/cmd/zerg/family_eggs_cocoons.go",
@@ -251,6 +252,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "本件不执行任何命令面动作：只**读** `zerg help` / `zerg help export` 的输出与命令树源码（`main.go`），只**写**两篇文档产物（`docs/zh|en/参考-命令行.md`）；`--emit` 与 `--check` 都不碰服务、不占端口、不改状态、不落盘到产物以外。",
    "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：它不是第五套语义，也不声明语义 —— 是文档面把命令面的旗标名当**数据**引用。复核：`python3 scripts/gates/check-dryrun-semantics.py` ⇒ rc=0。"
+  },
+  {
+   "file": "core/cmd/zerg/dev_proposal_test.go",
+   "类": "命令面测试件（D3b 第一步：判据可机检的机检）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "测试件本身不驱动写入（`t.TempDir()` + 进程内 `run`）；它断言的判据里用到的 `--dry-run` 那一态属 dryrun.v1（`zerg build all --only cli --dry-run` = 计划件 · 零副作用），正控只用它**当判据的文本**（`criterionRunnable` 解析），不执行它。",
+   "备注": "2026-09-21 D3b 登记（门⑩ 扫描面命中的测试件；不登记会被判成「又一套语义」——是扫描面口径，不是真语义分歧）"
   }
  ]
 }

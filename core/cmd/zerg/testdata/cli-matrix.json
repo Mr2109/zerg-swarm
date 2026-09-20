@@ -3355,6 +3355,78 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "默认全套会覆盖**正在跑**的主控件（换件档）⇒ 本版仍**未开放**（只有 `--only cli` 自举档开着）· 不给结论"
+  },
+  {
+   "id": "dev/proposal#缺判据（判据必须可机检）",
+   "command": "dev proposal",
+   "argv": [
+    "dev",
+    "proposal",
+    "new",
+    "--title",
+    "t",
+    "--target",
+    "待办:D3b",
+    "--goal",
+    "g",
+    "--evidence",
+    "e",
+    "--rollback",
+    "r"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3b 第一步：判据为空 ⇒ 2（与「证据为空」同一条口径 · §17.3 铁律②）"
+  },
+  {
+   "id": "dev/proposal#判据不可跑（命令不在命令树里）",
+   "command": "dev proposal",
+   "argv": [
+    "dev",
+    "proposal",
+    "new",
+    "--title",
+    "t",
+    "--target",
+    "待办:D3b",
+    "--goal",
+    "g",
+    "--evidence",
+    "e",
+    "--rollback",
+    "r",
+    "--criterion",
+    "zerg nosuch a"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "判据要**可机检**：命令词解析不到命令树 ⇒ 2（与门⑫ 同一条口径）"
+  },
+  {
+   "id": "dev/proposal#--file 绝对路径（越界声明）",
+   "command": "dev proposal",
+   "argv": [
+    "dev",
+    "proposal",
+    "new",
+    "--title",
+    "t",
+    "--target",
+    "待办:D3b",
+    "--goal",
+    "g",
+    "--evidence",
+    "e",
+    "--rollback",
+    "r",
+    "--criterion",
+    "zerg gate run --fast",
+    "--file",
+    "/etc/passwd"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--file` 只认仓内相对路径（`dev edit` 的作用域真源）⇒ 绝对路径 = 2"
   }
  ]
 }

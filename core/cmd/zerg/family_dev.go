@@ -36,6 +36,8 @@ import (
 // proposalFields —— 提案件在 `--json` 面上可取的全部字段（K1：机器面先定）。
 var proposalFields = []string{"id", "title", "target", "goal", "evidence", "rollback_ref",
 	"by", "state", "criterion", "created_at", "path",
+	// D3b 第一步（提案接校验 · 判据可机检）：声明改哪些件 + 判据的可跑态两格。
+	"files", "criterion_state",
 	// §九 M18 `C4` · 批 E · T-60：授权面两对字段（**只增不改** —— `by` 保留为 `subject` 的兼容别名）。
 	"subject", "subject_kind", "egg_id", "approver", "approver_kind"}
 
@@ -51,7 +53,10 @@ type proposalRecord struct {
 	Evidence  []string `json:"evidence"`     // 出处（≥1；空 ⇒ 拒）
 	Rollback  string   `json:"rollback_ref"` // 退点（没有它不许提）
 	Criterion string   `json:"criterion"`    // 判据条（哪条命令/哪个数字能证明成了）
-	By        string   `json:"by"`           // 提出者（兼容别名 = Subject；字段只增不改）
+	// Files —— 这件提案**声明要改**的件（仓内相对路径 · D3b 第一步）。
+	// 它是 `zerg dev edit` 的唯一作用域真源：**没声明过的件写不进去**（越界写 ⇒ rc 2）。
+	Files []string `json:"files"`
+	By    string   `json:"by"` // 提出者（兼容别名 = Subject；字段只增不改）
 	// ---- §九 M18 `C4`「提 ≠ 批」的两对字段（批 E · T-60）----
 	// 提者/批者**分家**：`subject`+`subject_kind` 是提出者，`approver`+`approver_kind` 是批准者。
 	// `subject_kind` 四值闭集 `human`/`ai`/`egg`/`ci`（§18.1 接缝第 18 行）；`kind=egg` ⇒ `egg_id` 必填。
@@ -79,17 +84,20 @@ func cmdDevProposal(inv *invocation, stdout, stderr io.Writer) int {
 		return cmdDevProposalList(inv, stdout, stderr)
 	case "show":
 		return cmdDevProposalShow(inv, stdout, stderr)
+	case "check":
+		return cmdDevProposalCheck(inv, stdout, stderr)
 	case "":
-		fmt.Fprintf(stderr, "%s: `dev proposal` 要给动作：new | list | show\n", progName)
+		fmt.Fprintf(stderr, "%s: `dev proposal` 要给动作：new | list | show | check\n", progName)
 		fmt.Fprintf(stderr, "用法：zerg dev proposal new --title <题> --target <既有编号> --goal <目标> "+
-			"--evidence <出处> --rollback <退点> [--criterion <判据>] [--by <提出者>]\n")
+			"--evidence <出处> --rollback <退点> --criterion <可跑的判据> [--file <要改的件>]… [--by <提出者>]\n")
 		fmt.Fprintf(stderr, "       zerg dev proposal list [--state 未决|已批准|已否决]\n")
 		fmt.Fprintf(stderr, "       zerg dev proposal show <提案 id>\n")
+		fmt.Fprintf(stderr, "       zerg dev proposal check [<提案 id>]   # 判据**可机检**复核（缺判据/判据跑不动 ⇒ 退码 2）\n")
 		inv.setErr("usage", "missing_action", "缺动作")
 		return exitUsage
 	default:
 		fmt.Fprintf(stderr, "%s: 未知 `dev proposal` 动作 %q\n", progName, action)
-		fmt.Fprintf(stderr, "可用：new · list · show（§17.4 #1 逐字三条）\n")
+		fmt.Fprintf(stderr, "可用：new · list · show · check\n")
 		inv.setErr("usage", "unknown_action", "未知动作")
 		return exitUsage
 	}
@@ -113,6 +121,7 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 		Criterion: strings.TrimSpace(inv.flagVal("--criterion")),
 		By:        strings.TrimSpace(inv.flagVal("--by")),
 		Evidence:  trimAll(inv.flagVals("--evidence")),
+		Files:     trimAll(inv.flagVals("--file")),
 		State:     "未决",
 		// §九 M18 `C4`（T-60）：提者 / 批者两对字段；`--subject` 为主、`--by` 为兼容别名。
 		Subject:      strings.TrimSpace(inv.flagVal("--subject")),
@@ -178,6 +187,22 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if rec.By == "" {
 		rec.By = "（未声明）"
+	}
+	// ⑤ **判据可机检**（D3b 第一步 · 判据缺 / 判据跑不动 ⇒ rc 2 · 不新立码）：
+	//    判据的裁决权在地基（§17.3 铁律②「退出码 + kind + 证据字段」三件齐才算判据），
+	//    所以一件提案的判据必须是**一条命令面自己跑得动的 `zerg …`** —— 一句人话不算判据。
+	if _, why := criterionRunnable(rec.Criterion); why != "" {
+		inv.setErr("usage", "criterion_not_machine_checkable", why)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, why)
+		fmt.Fprintf(stderr, "口径（§17.3 铁律② · 缺口-命令面 §九 I5）：判据要**可机检** —— 给一条本版跑得动的 `zerg …`，"+
+			"例：%s gate run --fast\n", progName)
+		return exitUsage
+	}
+	if why := declaredFilesWhy(rec.Files); why != "" {
+		inv.setErr("usage", "bad_declared_file", why)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, why)
+		fmt.Fprintf(stderr, "`--file` 收的是**仓内相对路径**（`zerg dev edit` 的唯一作用域真源 · 不许绝对路径、不许 `..`）\n")
+		return exitUsage
 	}
 	rec.ContractNo = contractVersionText()
 	rec.CreatedAt = time.Now().Format(time.RFC3339)
@@ -390,23 +415,175 @@ func nextProposalID(dir string) string {
 // proposalRow —— 一件提案件 → 机器面的一行（字段值一律字符串，**转义走 jstr** 那条路）。
 func proposalRow(r proposalRecord) map[string]string {
 	return map[string]string{
-		"id":            r.ID,
-		"title":         r.Title,
-		"target":        r.Target,
-		"goal":          r.Goal,
-		"evidence":      strings.Join(r.Evidence, ","),
-		"rollback_ref":  r.Rollback,
-		"by":            r.By,
-		"subject":       r.Subject,
-		"subject_kind":  r.SubjectKind,
-		"egg_id":        r.EggID,
-		"approver":      r.Approver,
-		"approver_kind": r.ApproverKind,
-		"state":         r.State,
-		"criterion":     r.Criterion,
-		"created_at":    r.CreatedAt,
-		"path":          r.Path,
+		"id":              r.ID,
+		"title":           r.Title,
+		"target":          r.Target,
+		"goal":            r.Goal,
+		"evidence":        strings.Join(r.Evidence, ","),
+		"rollback_ref":    r.Rollback,
+		"by":              r.By,
+		"subject":         r.Subject,
+		"subject_kind":    r.SubjectKind,
+		"egg_id":          r.EggID,
+		"approver":        r.Approver,
+		"approver_kind":   r.ApproverKind,
+		"state":           r.State,
+		"criterion":       r.Criterion,
+		"files":           strings.Join(r.Files, ","),
+		"criterion_state": criterionState(r.Criterion),
+		"created_at":      r.CreatedAt,
+		"path":            r.Path,
 	}
+}
+
+// ---- 判据可机检（D3b 第一步 · 「提案接校验」）----
+//
+// 病征（D3b 逐字）：提案面已有（T-58），但「判据」这一格**没人判** —— `--criterion` 此前是**可选**的，
+// 填一句人话也照样落件。而 §17.3 铁律② 的三件里，「判据」本身就是判据：**判不出真假的判据 = 没有判据**。
+// 本件的落法：把「可机检」写成**一条命令面自己跑得动**的命令行（唯一判定口 = criterionRunnable）。
+//
+// 三条拒收（一律 rc=2 · 不新立码）：
+//
+//	① 空 —— 判据为空 ⇒ 不给结论（与「证据为空」同一条口径）；
+//	② 首词不是 `zerg` —— 判据的裁决权在地基，别的工具/人话都不算；
+//	③ 命令词解析不到命令树里，或落在**本版未开放的危险档**上（跑不到一个绿 ⇒ 不算可机检；
+//	   要拿危险档当判据就写它的 `--dry-run` 那一态 —— 那一态永远跑得动、且零副作用）。
+func criterionRunnable(spec string) (string, string) {
+	s := strings.TrimSpace(spec)
+	if s == "" {
+		return "", "缺判据（--criterion）—— 判据为空 ⇒ 提案**不给结论**（§17.3 铁律②：判据/证据为空不算判据）"
+	}
+	fields := strings.Fields(s)
+	prog := fields[0]
+	if prog != progName && prog != "./bin/"+progName && !strings.HasSuffix(prog, "/"+progName) {
+		return "", fmt.Sprintf("判据的首词是 %q —— 判据要**一条命令面跑得动的** `%s …`（人话 / 别的工具都不算判据）", prog, progName)
+	}
+	words := []string{}
+	for _, f := range fields[1:] {
+		if strings.HasPrefix(f, "-") {
+			break
+		}
+		words = append(words, f)
+	}
+	if len(words) == 0 {
+		return "", "判据里没有命令词（形态：`zerg <对象> <动作> [参数]`）"
+	}
+	for n := len(words); n >= 1; n-- {
+		c := find(words[:n])
+		if c == nil {
+			continue
+		}
+		if c.danger != nil && !hasDryRunFlag(fields) {
+			return "", fmt.Sprintf("判据里的 `%s` 在本版是**危险档、真跑未开放**（跑不到一个绿）——"+
+				" 要拿它当判据，写成它的 `--dry-run` 那一态", strings.Join(c.path, " "))
+		}
+		return strings.Join(c.path, " "), ""
+	}
+	return "", fmt.Sprintf("判据里的命令 %q 不在命令树里（与门⑫ 同一条口径：命令示例必须能在命令清单里解析到）",
+		strings.Join(words, " "))
+}
+
+// hasDryRunFlag 判一条命令串里有没有 `--dry-run`（那一态永远跑得动 · 零副作用）。
+func hasDryRunFlag(fields []string) bool {
+	for _, f := range fields {
+		if f == "--dry-run" || f == "--dry-run=true" {
+			return true
+		}
+	}
+	return false
+}
+
+// criterionState —— 判据的可跑态（三值 · 给 `--json` 与 check 表用）：可跑 / 缺 / 跑不动。
+func criterionState(spec string) string {
+	if strings.TrimSpace(spec) == "" {
+		return "缺"
+	}
+	if _, why := criterionRunnable(spec); why != "" {
+		return "跑不动"
+	}
+	return "可跑"
+}
+
+// declaredFilesWhy —— 提案声明的件（`--file`）的形状校验：**仓内相对路径**，不许绝对路径 / `..`。
+// 它是 `zerg dev edit` 的作用域真源（越界写 ⇒ 2），所以形状必须在**提出时**就判死。
+func declaredFilesWhy(files []string) string {
+	for _, f := range files {
+		switch {
+		case f == "":
+			return "`--file` 里有空值（声明的件名不许为空）"
+		case strings.HasPrefix(f, "/"), filepath.IsAbs(f):
+			return fmt.Sprintf("`--file %s` 是绝对路径 —— 作用域只认**仓内相对路径**", f)
+		case strings.Contains(f, ".."):
+			return fmt.Sprintf("`--file %s` 里有 `..` —— 不许越出仓根（越界写 ⇒ 退码 2）", f)
+		}
+	}
+	return ""
+}
+
+// cmdDevProposalCheck —— `zerg dev proposal check [<提案 id>]`：判据**可机检**的复核面。
+//
+// 退码（fail-closed，与 §九 M9「读不到不当没有」同口径）：
+//
+//	0 全部件的判据都「可跑」（且至少核到 1 件）
+//	2 有件缺判据 / 判据跑不动，或**一件都没核到**（空转 ⇒ 不给结论 · 不静默放绿）
+//	8 提案目录读不到（读不到 ⇒ 不给结论）
+func cmdDevProposalCheck(inv *invocation, stdout, stderr io.Writer) int {
+	only := ""
+	if len(inv.args) > 1 {
+		only = inv.args[1]
+	}
+	dir := proposalDir()
+	recs, err := loadProposals(dir)
+	if err != nil {
+		inv.setErr("blocked", "state_dir_unreadable", err.Error())
+		fmt.Fprintf(stderr, "%s: 读不了提案目录 %s：%v ⇒ 不给结论（退码 8）\n", progName, dir, err)
+		return exitBlocked
+	}
+	rows := []map[string]string{}
+	bad := 0
+	seen := 0
+	for _, r := range recs {
+		if only != "" && r.ID != only {
+			continue
+		}
+		seen++
+		st := criterionState(r.Criterion)
+		_, why := criterionRunnable(r.Criterion)
+		if st != "可跑" {
+			bad++
+		}
+		rows = append(rows, map[string]string{
+			"id": r.ID, "target": r.Target, "state": r.State,
+			"criterion": r.Criterion, "criterion_state": st, "why": why,
+			"files": strings.Join(r.Files, ","),
+		})
+	}
+	if seen == 0 {
+		msg := "一件都没核到（提案目录里没有件"
+		if only != "" {
+			msg += fmt.Sprintf(" · 也没有 id 为 %q 的件", only)
+		}
+		msg += "）⇒ **空转不给结论**（退码 2）"
+		inv.setErr("usage", "nothing_checked", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "先提一件：%s dev proposal new --title … --target <既有编号> --goal … --evidence <出处> "+
+			"--rollback <退点> --criterion '%s gate run --fast'\n", progName, progName)
+		return exitUsage
+	}
+	rc := listCmd(inv, stdout, stderr,
+		[]string{"id", "target", "state", "criterion_state", "criterion", "files", "why"}, rows)
+	if rc != exitOK {
+		return rc
+	}
+	if bad > 0 {
+		inv.setErr("usage", "criterion_not_machine_checkable",
+			fmt.Sprintf("%d 件提案的判据缺 / 跑不动", bad))
+		fmt.Fprintf(stderr, "%s: %d/%d 件提案的判据**不可机检** ⇒ 不给结论（退码 2）：判据必须是一条本版跑得动的 `%s …`\n",
+			progName, bad, seen, progName)
+		return exitUsage
+	}
+	fmt.Fprintf(stderr, "%s: %d 件提案的判据全部**可机检**（每条都能敲一次拿到退码）\n", progName, seen)
+	return exitOK
 }
 
 // ---- 目标回指（§17.6 SD1）----
