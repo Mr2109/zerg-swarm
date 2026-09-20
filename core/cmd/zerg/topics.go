@@ -36,6 +36,7 @@ func helpTopics() []helpTopic {
 		{"credentials", "凭据：优先级链一条 + 令牌五不进 + 401/403 归一", helpCredentials},
 		{"wall", "茧壁边界：layer 三档 + 分区表 + argv 硬判据", helpWall},
 		{"human-machine", "人机双模：三态 + 两层承诺 + 分页/颜色/format 四条", helpHumanMachine},
+		{"registry", "契约登记表：真源口径 + 六处先例 + 变更流程 V0–V7", helpRegistry},
 	}
 }
 

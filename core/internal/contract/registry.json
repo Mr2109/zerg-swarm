@@ -1,0 +1,96 @@
+{
+  "schema": "zerg-contract-registry/1",
+  "note": "契约登记表（§九 M16 · §十二 P-084/P-085）。**单一真源**：本文件是「仓内各处契约真源」的登记处；真源本体仍在各件里（本表**指向**它们，不复制它们的内容）。门禁 scripts/gates/check-contract-registry.py 读同一份做「表 ↔ 件」一致性检查；`zerg help registry` 也读同一份（引用面非 0 = 它真的被用）。",
+  "authority": {
+    "truth": "代码内 schema（本表 + 各件里的常量/结构）",
+    "exported": "文档只是导出物（Zerg-内部文档 的成文、zerg help export 的 md、/api/capabilities）",
+    "rule": "改真源 ⇒ 必须同批改导出物；导出物与真源差集非空 ⇒ 门禁红"
+  },
+  "entries": [
+    {
+      "id": "S-a",
+      "name": "跨版本状态文件兼容清单",
+      "truth": "core/internal/compat/compat.json",
+      "truth_shape": "go:embed 读入 + 启动时注册迁移",
+      "version_field": "current_schema / min_readable",
+      "gate": "scripts/gates/check-compat-manifest.py",
+      "change_class": "B",
+      "change_note": "加状态文件要同时登记 entries/excluded；升号要同时加迁移函数"
+    },
+    {
+      "id": "S-b",
+      "name": "茧壁引擎能力契约",
+      "truth": "agent/internal/enclosure/contract.go",
+      "truth_shape": "const ContractSchemaVersion = 1",
+      "version_field": "ContractSchemaVersion",
+      "gate": "（由 agent: go test 覆盖）",
+      "change_class": "B",
+      "change_note": "改字段语义必须 +1（旧档案可读是硬要求）"
+    },
+    {
+      "id": "S-c",
+      "name": "实测档案 v1→v2（卵档案）",
+      "truth": "agent/internal/monitor/egg_profile.go",
+      "truth_shape": "EggProfileSchemaVersionV1 = 1 · EggProfileSchemaVersion = 2",
+      "version_field": "schema_version",
+      "gate": "（由 agent: go test 覆盖）",
+      "change_class": "B",
+      "change_note": "加字段 + 旧版仍可读；新版字段缺即拒"
+    },
+    {
+      "id": "S-d",
+      "name": "子端 /eggs 观测面",
+      "truth": "agent/internal/server/eggs_endpoint.go",
+      "truth_shape": "字段名已被设计定案（eggs[] / egg_id / engine_impl / schema_version）",
+      "version_field": "schema_version（0 = 未声明，不编造）",
+      "gate": "（由 agent: go test 覆盖）",
+      "change_class": "B",
+      "change_note": "0 = 未声明的缺席纪律不许改"
+    },
+    {
+      "id": "S-e",
+      "name": "版本号单一真源",
+      "truth": "core/internal/version/version.go",
+      "truth_shape": "编译期注入（源码零版本字面量）+ 仓根 VERSION 只许是指针",
+      "version_field": "Version / Commit / BuildTime / Tag",
+      "gate": "scripts/gates/check-version-sources.py",
+      "change_class": "B",
+      "change_note": "四处同版；版本号曾硬编码在 5 处并漂移过（血案）"
+    },
+    {
+      "id": "S-f",
+      "name": "门禁覆盖清单",
+      "truth": "scripts/gates/gate-coverage.config.json",
+      "truth_shape": "字符串 id（gate-coverage/1）+ baseline 棘轮",
+      "version_field": "schema",
+      "gate": "scripts/gates/check-gate-coverage.py",
+      "change_class": "B",
+      "change_note": "改这个文件 = 改判据 ⇒ 必须同时改 check-gate-coverage.md 的「口径」节；baseline 只许下调"
+    },
+    {
+      "id": "S-g",
+      "name": "命令面契约（本件）",
+      "truth": "core/cmd/zerg/（contract.go 三层版本 + exitcodes.go 退码表 + errors.go kind 闭集 + main.go 命令树）",
+      "truth_shape": "代码内 schema；帮助导出与 /api/capabilities 都是导出物",
+      "version_field": "client_contract（zerg/v1）",
+      "gate": "scripts/gates/check-error-kinds.py · scripts/gates/check-wall-layer.py",
+      "change_class": "B",
+      "change_note": "§六 的七步流程（V0–V7）：提案成文 ⇒ 判档 ⇒ 只改一处真源 ⇒ 升号 ⇒ 改全部导出物 ⇒ 过门禁 ⇒ 通知+留档"
+    }
+  ],
+  "change_flow": {
+    "carrier": "Zerg-内部文档/01-设计/契约变更/NNNN-<标题>.md（KEP 式元数据；作者 ≠ 审批）",
+    "steps": [
+      "V0 提案成文（作者 ≠ 审批人）",
+      "V1 判档：① 自改（AI 可直接做，自动进报告）/ ② 需批（必须人批）/ ③ 禁改",
+      "V2 只改一处真源（不许顺手第二处）",
+      "V3 升号（若判 ②）",
+      "V4 改全部导出物（真源 ↔ 导出差集必须为空）",
+      "V5 过门禁（rc=1 拦住、rc=2 也拦住）",
+      "V6 通知（机器可读 warnings[] + 变更-vX.Y.Z.md）",
+      "V7 收尾留档（状态机不许长期停在 provisional）"
+    ],
+    "author_not_approver": true,
+    "breaking_change_deprecation": "破坏性变更**留期**（废弃四步）：① 标注 deprecated 并进 warnings[]　② 文档删示例　③ 导出处删字段　④ 下一个大版本删字段；契约号主号 +1 之后旧主号继续可读"
+  }
+}
