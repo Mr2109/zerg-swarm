@@ -602,6 +602,17 @@ func init() {
 			endpoint: "",
 			run:      cmdScriptLs,
 		},
+		// ---- 缺口面 P0（缺口-命令面-20260921 §十一 · 2026-09-21）：今天手搓最多的一类先补上 ----
+		{
+			path:     []string{"code", "find"},
+			kind:     "CodeFind",
+			summary:  "在码里找一处东西在哪（只读取证 · 手搓 grep/git grep 的替身）",
+			usage:    "zerg code find <正则> [--path <子目录>] [--glob <模式>] [--json <字段>]",
+			args:     []string{"正则（POSIX 语法）"},
+			fields:   []string{"path", "line", "text"},
+			endpoint: "",
+			run:      cmdCodeFind,
+		},
 		// 写面两枚：**同一个执行门**（三态：--dry-run 计划件 / 缺 --yes ⇒ 2 / 齐了才发）
 		{
 			path:    []string{"resource", "pin"},
@@ -1393,6 +1404,12 @@ func valueFlagName(a string) string {
 	// 回收面旗标（§十五.2 · 批 D · T-54）：`--min-age-days` 是 `RC6` 的**显式**龄阈值（不许魔数）。
 	switch a {
 	case "--min-age-days", "--only":
+		return a
+	}
+	// 码面只读旗标（缺口面 P0-1 · 2026-09-21）：`code find` 的两枚收窄旗标。
+	// ★ 与上面 `--out` 同一条教训：用法串里写着的旗标必须真能被解析，否则命令等于不可用。
+	switch a {
+	case "--path", "--glob":
 		return a
 	}
 	return ""
