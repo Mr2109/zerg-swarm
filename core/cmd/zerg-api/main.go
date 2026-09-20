@@ -29,6 +29,18 @@ func main() {
 	flag.Parse()
 
 	token := os.Getenv("ZERG_API_TOKEN")
+	// §十二 `P-007` 的处置：默认放行**必须治**。两档（照推荐）：
+	//   ① 缺令牌 ⇒ **拒启**（除非下面那枚显式旗标给了）；
+	//   ② 显式 `--insecure` ⇒ 允许无令牌，但**必须**打横幅告警（不许静默裸奔）。
+	insecure := flag.Bool("insecure", false, "允许无令牌运行（**会打横幅**；只在可信本机网络用）")
+	flag.Parse()
+	if token == "" {
+		if !*insecure {
+			log.Fatalf("✗ ZERG_API_TOKEN 未设置 ⇒ 拒绝启动（§十二 P-007：无令牌即放行必须治）。\n" +
+				"   要用无鉴权模式：显式给 --insecure（会打横幅告警）；要鉴权：export ZERG_API_TOKEN=<令牌>")
+		}
+		log.Printf("⚠️  横幅：zerg-api 以 --insecure 启动 —— **无鉴权**，任何能连到 %d 的进程都能提交任务", *port)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /task", func(w http.ResponseWriter, r *http.Request) {

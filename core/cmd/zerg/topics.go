@@ -33,6 +33,7 @@ func helpTopics() []helpTopic {
 		{"remote", "远端语义：--context 与 --node 两轴 + 名册真源", helpRemote},
 		{"version", "版本协商：三层版本 + 兼容窗口（三类分开）", helpVersionTopic},
 		{"watch", "事件 / 订阅通道：单端点 + Accept 协商 + 保留窗口", helpWatch},
+		{"credentials", "凭据：优先级链一条 + 令牌五不进 + 401/403 归一", helpCredentials},
 	}
 }
 

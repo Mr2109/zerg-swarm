@@ -273,12 +273,10 @@ func cmdContextLs(inv *invocation, stdout, stderr io.Writer) int {
 // contextRows 出档位名册：内置默认档恒在第一位；`~/.zerg/contexts/*.yaml` 有几个出几个。
 // 名册真源 = `~/.zerg/contexts/<档>.yaml`（§九 M13 Z2）；令牌一律**掩码**（§九 M2 C6）。
 func contextRows() []map[string]string {
+	// 令牌来源**经唯一入口**取（`C1`：这条命令不许自己读环境变量/文件）。
 	tok := tokenFromNone
-	if resolveToken() != "" {
-		tok = tokenFromFile
-	}
-	if strings.TrimSpace(os.Getenv("ZERG_TOKEN")) != "" {
-		tok = tokenFromEnv
+	if v, src := resolveCredentials(); v != "" {
+		tok = src
 	}
 	rows := []map[string]string{{
 		"name":         "builtin",
