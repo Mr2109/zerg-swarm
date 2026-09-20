@@ -47,7 +47,7 @@ func cmdGuarded(inv *invocation, stdout, stderr io.Writer) int {
 
 	// ② `--dry-run`：只出**计划件**，零副作用（§九 M3 C4）—— 这是本批**唯一**会返回 0 的那一态。
 	if inv.dryRun {
-		fmt.Fprint(stdout, planFor(cmd, spec, target))
+		fmt.Fprint(stdout, planFor(cmd, spec, target, inv))
 		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
 		return exitOK
 	}
@@ -159,7 +159,7 @@ func reloadWord(inv *invocation) string {
 }
 
 // planFor 生成计划件（零副作用）：要动什么 · 目标是谁 · 缺什么前置 · 怎么留痕 · 本版状态。
-func planFor(cmd *command, spec *dangerSpec, target string) string {
+func planFor(cmd *command, spec *dangerSpec, target string, inv *invocation) string {
 	path := strings.Join(cmd.path, " ")
 	need := "--yes"
 	if spec.Level == dangerD3 {
@@ -176,7 +176,30 @@ func planFor(cmd *command, spec *dangerSpec, target string) string {
 	fmt.Fprintf(&b, "  留痕     : 一行一事件 · 追加只写 · **写失败即拒**（§九 M3 C5）\n")
 	fmt.Fprintf(&b, "  本版状态 : **未开放** —— 批 A 全程零写操作（§6.2）；排期见 §6.3 S5\n")
 	fmt.Fprintf(&b, "  来源     : %s\n", spec.Source)
+	// ---- 长任务形态（§九 M8）：默认档由「读的人是谁」决定 + 句柄 ----
+	mode := resolveWaitMode(inv)
+	ttyStar := ""
+	if !inv.wait && !inv.noWait && !inv.follow {
+		ttyStar = "  ← **默认档**（" + ttyNote(inv) + "）"
+	}
+	fmt.Fprintf(&b, "  默认档   : %s%s\n", waitModeWord(mode, ttyStar), "")
+	for _, l := range handleLines(newHandle(inv)) {
+		b.WriteString(l + "\n")
+	}
+	// ---- 并发与锁（§九 M5 C4/P-022）：slot 块带版本号 / epoch ----
+	for _, l := range slotBlockLines(target) {
+		b.WriteString(l + "\n")
+	}
+	b.WriteString("  " + lockLine() + "\n")
 	return b.String()
+}
+
+// ttyNote 说明默认档是按哪一侧判出来的（`P-020`：TTY ⇒ wait · 非 TTY ⇒ no-wait）。
+func ttyNote(inv *invocation) string {
+	if inv.tty {
+		return "stdout 是 TTY ⇒ 默认 --wait"
+	}
+	return "stdout 不是 TTY ⇒ 默认 --no-wait"
 }
 
 func dangerLevelWord(l string) string {
