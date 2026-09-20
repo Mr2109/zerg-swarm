@@ -28,6 +28,61 @@ var decisionRecordsRaw []byte
 //go:embed model-id-map.json
 var modelIDMapRaw []byte
 
+//go:embed intent-plan.json
+var intentPlanRaw []byte
+
+// IntentPlanSpec —— 意图件（`Plan` 对象）的四闭集与必备字段真源（§十八.3-3 · 开工单 T-59）。
+//
+// 一句话：把「想做什么」变成**可校验 · 可干跑 · 可审计**的数据 —— 七语义件 `F1`–`F7`
+// 加四附加件，四闭集（包封 `kind` / `target.kind` / `action` / `error.kind`）都在这里，
+// **读侧不再另写一份**（另写一份就是第二份真源）。
+type IntentPlanSpec struct {
+	Schema              string            `json:"schema"`
+	Note                string            `json:"note"`
+	EnvelopeSchema      string            `json:"envelope_schema"`
+	EnvelopeKinds       []string          `json:"envelope_kinds"`
+	Fields              []string          `json:"fields"`
+	FieldIDs            map[string]string `json:"field_ids"`
+	ExtraFields         []string          `json:"extra_fields"`
+	TargetKinds         []string          `json:"target_kinds"`
+	Actions             []string          `json:"actions"`
+	Statuses            []string          `json:"statuses"`
+	ErrorKinds          []string          `json:"error_kinds"`
+	Layers              []string          `json:"layers"`
+	LayerRule           string            `json:"layer_rule"`
+	CapabilityVocabSrc  string            `json:"capability_vocab_source"`
+	CapabilityDecidable []string          `json:"capability_decidable"`
+	CapabilityCounter   string            `json:"capability_counter_rule"`
+}
+
+// IntentPlan —— 解出意图件真源（解不动 / 任一把闭集为空 ⇒ 报错，不吞 —— 空闭集 = 消费侧无从判）。
+func IntentPlan() (*IntentPlanSpec, error) {
+	var s IntentPlanSpec
+	if err := json.Unmarshal(intentPlanRaw, &s); err != nil {
+		return nil, fmt.Errorf("contract: 意图件真源解不动（intent-plan.json 坏了？）: %w", err)
+	}
+	for name, set := range map[string][]string{
+		"envelope_kinds": s.EnvelopeKinds, "target_kinds": s.TargetKinds,
+		"actions": s.Actions, "statuses": s.Statuses, "error_kinds": s.ErrorKinds,
+		"fields": s.Fields, "layers": s.Layers,
+	} {
+		if len(set) == 0 {
+			return nil, fmt.Errorf("contract: 意图件真源的闭集 %s 是空的 —— 空闭集 = 消费侧无从判", name)
+		}
+	}
+	return &s, nil
+}
+
+// Has 判一个值在不在闭集里（**精确相等**，不做大小写折叠、不做前缀匹配）。
+func Has(set []string, v string) bool {
+	for _, s := range set {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
 // ModelIDMapEntry —— 一条 id 映射（能力快照 id ↔ 路由表 id）。
 type ModelIDMapEntry struct {
 	RegistryID   string   `json:"registry_id"`

@@ -1,0 +1,26 @@
+{
+  "schema": "zerg/intent-plan/v1",
+  "note": "§十八.3-3 意图 schema（Plan 对象）的四闭集与必备字段真源；消费侧（apply）按它判，生产侧（plan）按它产。不许在别处再抄一份。",
+  "envelope_schema": "zerg/v1",
+  "envelope_kinds": ["Plan"],
+  "fields": ["action", "target", "scope", "preconditions", "expected", "rollback", "evidence"],
+  "field_ids": {
+    "action": "F1",
+    "target": "F2",
+    "scope": "F3",
+    "preconditions": "F4",
+    "expected": "F5",
+    "rollback": "F6",
+    "evidence": "F7"
+  },
+  "extra_fields": ["plan_id", "plan_digest", "approval", "status"],
+  "target_kinds": ["model", "agent", "core", "task"],
+  "actions": ["model.start", "model.stop", "agent.load", "agent.unload", "core.reload"],
+  "statuses": ["proposed", "approved", "superseded", "applied"],
+  "error_kinds": ["usage", "failed", "conflict", "not_found", "unsupported", "unreachable", "timeout", "insufficient_resource", "blocked", "unauthenticated"],
+  "layers": ["L1_schema", "L2_reference", "L3_dry_run", "L4_human"],
+  "layer_rule": "四层按序判（L1→L2→L3→L4）；任一层不过 ⇒ 后续层**不跑**（§十八.3-3 判据③）。",
+  "capability_vocab_source": "core/internal/modelreg/schema.go CapabilityNames（18 值闭集 · §十八.3-4 词表真源）",
+  "capability_decidable": ["text", "vision", "tools", "embedding", "rerank"],
+  "capability_counter_rule": "词表外 ⇒ 2（usage）；在词表但无候选 ⇒ 1（failed）—— 一律**不新增码**（§十八.3-4 · 调研-R2:466）。"
+}

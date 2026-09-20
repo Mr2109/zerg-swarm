@@ -2654,7 +2654,11 @@
   {
    "id": "plugin/ls#--json 不给字段",
    "command": "plugin ls",
-   "argv": ["plugin", "ls", "--json"],
+   "argv": [
+    "plugin",
+    "ls",
+    "--json"
+   ],
    "want_rc": 1,
    "want_stdout_bytes": 0,
    "why": "给了 --json 却没给字段表（§九 M6 K2：--json 必须给字段 ⇒ 退码 1 + stdout 0 字节；与「字段不给」的 2 分开）"
@@ -2662,11 +2666,161 @@
   {
    "id": "plugin/ls#未知旗标",
    "command": "plugin ls",
-   "argv": ["plugin", "ls", "--nosuchflag-zz"],
+   "argv": [
+    "plugin",
+    "ls",
+    "--nosuchflag-zz"
+   ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "ask#未知旗标",
+   "command": "ask",
+   "argv": [
+    "ask",
+    "你好",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（执行前判，不碰主控）"
+  },
+  {
+   "id": "ask#缺提示",
+   "command": "ask",
+   "argv": [
+    "ask"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺提示 ⇒ 用法错 2（§十八.3-1 `ask <提示>`）"
+  },
+  {
+   "id": "ask#能力不在词表",
+   "command": "ask",
+   "argv": [
+    "ask",
+    "你好",
+    "--capability",
+    "绝无此能力"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "能力名不在词表 ⇒ 2（§十八.3-4「词表外 ⇒ 2」· **不新增码**；且这一闸在**任何 HTTP 之前**判）"
+  },
+  {
+   "id": "ask#--prefer 不在词表",
+   "command": "ask",
+   "argv": [
+    "ask",
+    "你好",
+    "--prefer",
+    "绝无此能力"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--prefer` 是软筛，但同样过词表（软 ≠ 免检）"
+  },
+  {
+   "id": "plan#未知旗标",
+   "command": "plan",
+   "argv": [
+    "plan",
+    "model",
+    "start",
+    "x",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错"
+  },
+  {
+   "id": "plan#缺族动作",
+   "command": "plan",
+   "argv": [
+    "plan"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺「族 动作」⇒ 2（§十八.3-2 用法串）"
+  },
+  {
+   "id": "plan#动作不在闭集",
+   "command": "plan",
+   "argv": [
+    "plan",
+    "model",
+    "绝无此动作",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "动作不在四闭集之一 ⇒ 2（§十八.3-3「不在闭集 ⇒ 2」）"
+  },
+  {
+   "id": "plan#--json 不给字段",
+   "command": "plan",
+   "argv": [
+    "plan",
+    "model",
+    "start",
+    "x",
+    "--out",
+    "/tmp/zerg-matrix-plan.json",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2；落点显式给 /tmp，不写状态目录）"
+  },
+  {
+   "id": "apply#未知旗标",
+   "command": "apply",
+   "argv": [
+    "apply",
+    "x",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错"
+  },
+  {
+   "id": "apply#缺件路径",
+   "command": "apply",
+   "argv": [
+    "apply"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺意图件路径 ⇒ 2（判据没有对象 ⇒ 不给结论）"
+  },
+  {
+   "id": "apply#件读不到",
+   "command": "apply",
+   "argv": [
+    "apply",
+    "/nonexistent/绝无此件.json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "件读不到 ⇒ 2 + detail=plan_unreadable（**不是** 1 —— 「判据没有对象」与「判成不合法」是两件事）"
+  },
+  {
+   "id": "apply#不认的契约主号",
+   "command": "apply",
+   "argv": [
+    "apply",
+    "x",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
   }
-
  ]
 }
