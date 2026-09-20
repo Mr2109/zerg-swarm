@@ -54,6 +54,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdHelp(inv, stdout, stderr)
 	}
 	if len(inv.path) == 0 {
+		if len(inv.unknown) > 0 {
+			fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, inv.unknown[0])
+			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+			return exitUsage
+		}
 		return cmdHelp(inv, stdout, stderr)
 	}
 
@@ -70,6 +75,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	inv.path = cmd.path
 	inv.args = append(rest, inv.args...)
 	inv.tty = ttyOf(stdout)
+	if len(inv.unknown) > 0 && !cmd.passthrough {
+		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, inv.unknown[0])
+		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+		return exitUsage
+	}
 	// 没有人面/机器面的机器面表 ⇒ 不认 --json（用法错 2，不是 1）：1 是「给了 --json 但没给字段」
 	// 那一档的码（§4.1 K2），两者不许混。
 	if inv.jsonGiven && len(cmd.fields) == 0 {
@@ -83,16 +93,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 // ---- 命令树（真源：帮助文本、markdown 导出、别名解析都从这里出，不许旁写一份）----
 
 type command struct {
-	path     []string
-	summary  string
-	usage    string
-	fields   []string // --json 可取的全部字段（不给字段时 stderr 列的就是它）
-	args     []string // 位置参数的说明（帮助里逐条列出）
-	endpoint string   // 它投影的远端端点（本机命令为空）；T-08 的三面同源对账用
-	kind     string   // 包封里的 kind（§九 M6 I2：与命令一一对应 · 单数 CamelCase）
-	danger   *dangerSpec
-	opened   bool // 本版是否可执行（危险动作在批 A 一律未开放 · §6.2 零写操作）
-	run      func(*invocation, io.Writer, io.Writer) int
+	path        []string
+	summary     string
+	usage       string
+	fields      []string // --json 可取的全部字段（不给字段时 stderr 列的就是它）
+	args        []string // 位置参数的说明（帮助里逐条列出）
+	endpoint    string   // 它投影的远端端点（本机命令为空）；T-08 的三面同源对账用
+	kind        string   // 包封里的 kind（§九 M6 I2：与命令一一对应 · 单数 CamelCase）
+	danger      *dangerSpec
+	opened      bool // 本版是否可执行（危险动作在批 A 一律未开放 · §6.2 零写操作）
+	passthrough bool // 原样透传型（gate 族）：旗标与位置参数逐字交给被包的脚本
+	run         func(*invocation, io.Writer, io.Writer) int
 }
 
 // commands —— 批 A（S1 起）登记的只读面；后续各票在此续行。
@@ -187,6 +198,41 @@ func init() {
 			fields:   []string{"id", "host", "backend", "modality", "mem_gb", "file"},
 			endpoint: "GET /api/fleet/models",
 			run:      cmdModelLs,
+		},
+		// ---- 批 A · S3 门禁直通四条（**只转发、不翻译** · §6.3 S3 判据③）----
+		{
+			path:        []string{"gate", "ls"},
+			summary:     "门禁步骤表（逐行等于脚本 --list；薄壳不另写一份）",
+			usage:       "zerg gate ls",
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdGate,
+		},
+		{
+			path:        []string{"gate", "run"},
+			summary:     "跑门禁（旗标逐字透传；退码原样转出，不翻译）",
+			usage:       "zerg gate run [--scope <s> | --fast] [--outdir <目录>] …",
+			args:        []string{"脚本旗标（原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdGate,
+		},
+		{
+			path:        []string{"gate", "show"},
+			summary:     "看某一步要跑的命令串（脚本 --emit-cmd）",
+			usage:       "zerg gate show <步名>",
+			args:        []string{"步名（与 --list 里逐字相同）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdGate,
+		},
+		{
+			path:        []string{"gate", "self-test"},
+			summary:     "门禁自检（合成步骤 · 不碰真目标）",
+			usage:       "zerg gate self-test",
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdGate,
 		},
 		// ---- 危险动作：**只登记形状，不开放执行**（§6.2 批 1 零写操作）----
 		// 每条都过 cmdGuarded：`--dry-run` 出计划件（退码 0）；真跑一律拒执（退码 2 = 不给结论）。
@@ -459,6 +505,10 @@ type invocation struct {
 	wantVersion bool
 	tty         bool // stdout 是不是终端（行式面/人面的分档依据 · §九 M14）
 
+	// 原样透传用：命令行原样（含未知旗标）+ 这一轮见过的未知旗标（非透传命令要据此报错）
+	orig    []string
+	unknown []string
+
 	// 危险动作三态（§4.1 K7 · §九 M3 C1/C2/C4）
 	dryRun       bool
 	confirm      string
@@ -467,7 +517,7 @@ type invocation struct {
 }
 
 func parseInvocation(args []string) (*invocation, error) {
-	inv := &invocation{}
+	inv := &invocation{orig: append([]string{}, args...)}
 	var pos []string
 	i := 0
 	for ; i < len(args); i++ {
@@ -507,7 +557,8 @@ func parseInvocation(args []string) (*invocation, error) {
 		case a == "--version":
 			inv.wantVersion = true
 		case strings.HasPrefix(a, "-") && a != "-":
-			return nil, fmt.Errorf("未知旗标 %q", a)
+			// 未知旗标：**先记下**（透传型命令要把它逐字交给脚本）；非透传命令在 dispatch 里硬判。
+			inv.unknown = append(inv.unknown, a)
 		default:
 			pos = append(pos, a)
 		}
