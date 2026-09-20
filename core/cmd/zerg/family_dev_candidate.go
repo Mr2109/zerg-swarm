@@ -283,8 +283,23 @@ func cmdDevBuild(inv *invocation, stdout, stderr io.Writer) int {
 	return devOrderedAction(inv, stdout, stderr, "build")
 }
 
-// cmdDevTest —— 候选区测试（§17.4 第 3 条）。同一把尺子：判据（证据单）在前。
+// cmdDevTest —— 两种问法**一个入口**（缺口面 P0-3 · 2026-09-21）：
+//
+//	· `--pkg <包> [--run <正则>]` ⇒ **作用域档**：只跑跟这次改动有关的那几个测（见 family_dev_test.go）；
+//	· 其余（`--candidate <id>`）⇒ 候选区档：同一把尺子 —— 判据（证据单）在前（§17.4 第 3 条）。
+//
+// 为什么是同一个入口而不是两条命令：§十一 P0-3 逐字「**不开新命令** —— 给已有的 `dev test`
+// 加两枚旗标」；且两种问法**互斥**（作用域档还带候选 = 说不清在测谁 ⇒ 退 2，不替人挑一个）。
 func cmdDevTest(inv *invocation, stdout, stderr io.Writer) int {
+	scoped := strings.TrimSpace(inv.flagVal("--pkg")) != "" || strings.TrimSpace(inv.flagVal("--run")) != ""
+	if scoped {
+		if strings.TrimSpace(inv.flagVal("--candidate")) != "" {
+			inv.setErr("usage", "candidate_and_pkg", "--candidate 与 --pkg/--run 互斥")
+			fmt.Fprintf(stderr, "%s: `--candidate` 与 `--pkg`/`--run` 互斥（作用域档 vs 候选区档 · 退码 2）\n", progName)
+			return exitUsage
+		}
+		return cmdDevTestScoped(inv, stdout, stderr)
+	}
 	return devOrderedAction(inv, stdout, stderr, "test")
 }
 

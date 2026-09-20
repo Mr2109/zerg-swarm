@@ -3241,6 +3241,64 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "dev/test#作用域档：缺 --pkg",
+   "command": "dev test",
+   "argv": [
+    "dev",
+    "test",
+    "--run",
+    "TestOK"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "只给 --run 不给 --pkg ⇒ 2（**包名不猜**：不知道跑哪个模块就是不确定在测谁）"
+  },
+  {
+   "id": "dev/test#作用域档：包前缀不在闭集",
+   "command": "dev test",
+   "argv": [
+    "dev",
+    "test",
+    "--pkg",
+    "nope/whatever",
+    "--run",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "--pkg 的模块前缀不在闭集（core/agent/shared/scripts-exportnames）⇒ 2 —— **不替人猜一个模块**"
+  },
+  {
+   "id": "dev/test#作用域档：--run 正则坏",
+   "command": "dev test",
+   "argv": [
+    "dev",
+    "test",
+    "--pkg",
+    "core/pkg",
+    "--run",
+    "a("
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--run` 正则编译不过 ⇒ 2（先判坏正则，别让 go 报一句听不懂的）"
+  },
+  {
+   "id": "dev/test#作用域档与候选区档互斥",
+   "command": "dev test",
+   "argv": [
+    "dev",
+    "test",
+    "--pkg",
+    "core/pkg",
+    "--candidate",
+    "DEV-0001"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "作用域档（--pkg/--run）与候选区档（--candidate）**互斥** ⇒ 2（说不清在测谁 ⇒ 不替人挑一个）"
   }
  ]
 }
