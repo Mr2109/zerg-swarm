@@ -632,6 +632,15 @@ func init() {
 			run:      cmdGateMatrix,
 		},
 		{
+			path:     []string{"gate", "bench"},
+			kind:     "GateBench",
+			summary:  "量门禁耗时（逐趟 real/user/sys + 中位/最差 + 门禁身份 sha256）",
+			usage:    "zerg gate bench [--fast | --scope <s>…] [--repeat n] [--json <字段>]",
+			fields:   []string{"run", "real_ms", "user_ms", "sys_ms", "rc", "log"},
+			endpoint: "",
+			run:      cmdGateBench,
+		},
+		{
 			path:     []string{"port", "ls"},
 			kind:     "PortLs",
 			summary:  "看某个端口被谁占着（含 pid/ppid/inode/在跑件路径 · 手敲 lsof 的替身）",
@@ -1451,6 +1460,11 @@ func valueFlagName(a string) string {
 	// 回收面旗标（§十五.2 · 批 D · T-54）：`--min-age-days` 是 `RC6` 的**显式**龄阈值（不许魔数）。
 	switch a {
 	case "--min-age-days", "--only":
+		return a
+	}
+	// 门禁解释/标定旗标（缺口面 P0-5/P0-8 · 2026-09-21）：矩阵导出落点与重复趟数。
+	switch a {
+	case "--repeat", "--step":
 		return a
 	}
 	// 码面只读旗标（缺口面 P0-1 · 2026-09-21）：`code find` 的两枚收窄旗标。
