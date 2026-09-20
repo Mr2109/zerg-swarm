@@ -975,6 +975,18 @@ func init() {
 			endpoint: "",
 			run:      cmdApply,
 		},
+		// ---- §20.3 H3 交接回执（批 E · T-61）----
+		// 轮级续做件（`P-119` 的取舍：变更账是版本级史书、回执是轮级续做件，不许混）。
+		{
+			path:     []string{"dev", "receipt"},
+			kind:     "Receipt",
+			summary:  "交接回执（一轮一页 · 带 trace_id）：new | ls | show；读法 = `zerg context ls --resume`",
+			usage:    "zerg dev receipt new --what <做了什么> --next <下一步> [--evidence <证据>]… [--blockers <阻碍>]… [--commit <sha>]… [--trace <trace_id>]",
+			args:     []string{"动作：new | ls | show", "轮次 id（只 show 要）"},
+			fields:   receiptFields,
+			endpoint: "",
+			run:      cmdDevReceipt,
+		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
 	for _, c := range commands {
@@ -1115,6 +1127,9 @@ type invocation struct {
 	// `--quick`：贵项跳过并记 SKIP（§十二 P-040）
 	quick bool
 
+	// `--resume`：续做面（§十二 `P-120` 定案 ① —— 「上次做到哪」的入口 = `zerg context ls --resume`）
+	resume bool
+
 	// M8 长任务三档（§十二 P-020/P-033–P-037）
 	wait              bool
 	noWait            bool
@@ -1238,6 +1253,8 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.direct = true
 		case a == "--quick":
 			inv.quick = true
+		case a == "--resume":
+			inv.resume = true
 		case a == "--wait":
 			inv.wait = true
 		case a == "--no-wait":
@@ -1310,6 +1327,11 @@ func valueFlagName(a string) string {
 	switch a {
 	case "--capability", "--prefer", "--min-ctx", "--min-mem-gb", "--no-fallback",
 		"--timeout", "--out", "--target-ref":
+		return a
+	}
+	// 回执面旗标（§20.3 `H3` · 批 E · T-61）：一轮一页回执的五格 + 证据/提交。
+	switch a {
+	case "--what", "--next", "--blockers", "--trace", "--commit":
 		return a
 	}
 	return ""

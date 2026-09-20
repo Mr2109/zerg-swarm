@@ -1,0 +1,13 @@
+{
+  "schema": "zerg/receipt/v1",
+  "note": "§20.3 H3（回执带 trace_id）· §20.1 步 9 · §十二 P-119（落点）/ P-120（「上次做到哪」的入口名）。三处都在这里收成一处真源，读侧不另抄。",
+  "fields": ["round_id", "trace_id", "what", "evidence", "next", "blockers", "commits", "created_at"],
+  "required_fields": ["round_id", "trace_id", "what", "next"],
+  "landing": "state 目录按轮一页（append-only 语义：同一轮只写一件，**不覆盖别人**）—— 缺省 `~/.zerg/state/receipts/<round_id>.json`，可用 `ZERG_RECEIPT_DIR` 改写。",
+  "landing_deviation": "P-119 定案是「独立一页《回执》按轮追加」；本版把**形状**（一轮一页、只加不改）落进状态目录，`Zerg-内部文档` 侧的那一页作为**投影**待拍（写文档面 = 另一档动作）。**照实登记，不假装已经落在 Zerg-内部文档。**",
+  "trace_id_rule": "每轮一个 `trace_id`（`TR-` + 12 位十六进制）；同一轮的**所有**动作共用它，回执里必带。它**不与** `idempotency_key` 混用（§18.4 接缝第 9 行逐字）。生成侧的真源 = `zerg dev receipt new`（OM4 的「谁生成」这一格由此收口）。",
+  "resume_entry": "zerg context ls --resume",
+  "resume_entry_note": "§十二 P-120 定案 ①：挂 A 族 `zerg context ls`（不新立族）。`--resume` 是它的续做面：没有回执 ⇒ 报「无回执」并退码 2。",
+  "h1_rule": "§20.3 H1：AI 侧**零直改** —— 一轮里改过仓内文件、而回执的 `evidence` 里**没有任何一条命令面调用**（`zerg …`）⇒ 门红（`scripts/gates/check-ai-direct-edits.py`）。",
+  "verdict_words": ["PASS", "FAIL", "BLOCKED", "SKIP", "REPORT"]
+}
