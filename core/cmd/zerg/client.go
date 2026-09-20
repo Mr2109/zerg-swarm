@@ -16,61 +16,70 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 )
 
 type client struct {
-	base  string
-	token string
-	hc    *http.Client
+	base       string
+	token      string
+	stdinToken bool
+	hc         *http.Client
 }
 
-// tokenSource —— 令牌取自哪一级（用于错误里点名「端点/凭据来自哪一级」，§九 M20 `O5`）。
-type tokenSource string
+// tokenSource —— 令牌取自哪一级（别名的目的：错误信息里回显同一处真源）。
+// ★ 取值域的唯一真源在 `credentials.go`（`tokenSourceName` + `resolveCredentials`）——
+// 本文件**不再自己读环境变量/文件**（`C1`：全命令面只有一个取令牌函数）。
+type tokenSource = tokenSourceName
 
 const (
-	tokenFromEnv    tokenSource = "env:ZERG_TOKEN"
-	tokenFromFile   tokenSource = "file:~/.zerg/token"
-	tokenFromNone   tokenSource = "缺（未认证）"
-	baseFromBuiltin             = "builtin-local（statepath.CoreBaseURL）"
+	tokenFromEnv    = tokenSourceEnv
+	tokenFromFile   = tokenSourceFile
+	tokenFromNone   = tokenSourceNone
+	baseFromBuiltin = "builtin-local（statepath.CoreBaseURL）"
 )
 
+// stdinTokenWanted / stdinTokenRead —— `--token-stdin` 的两个状态位（进程级；命令面无常驻状态，
+// 一次调用里最多读一次 stdin —— 读两次会把管道里后面那点内容吃掉）。
+var (
+	stdinTokenWanted bool
+	stdinTokenRead   bool
+)
+
+// newClient 造客户端：令牌一律经**唯一入口**（`C1`）取；给了 `--token-stdin` 则从 stdin 读
+// （**不进 argv** · `C2`）——stdin 为空/读失败时**不静默退回文件**，而是按「缺令牌」报 4。
 func newClient() *client {
-	return &client{
-		base:  statepath.CoreBaseURL(),
-		token: resolveToken(),
-		hc:    &http.Client{Timeout: 10 * time.Second},
+	tok, _ := resolveCredentials()
+	c := &client{base: statepath.CoreBaseURL(), token: tok, hc: &http.Client{Timeout: 10 * time.Second}}
+	if stdinTokenWanted && !stdinTokenRead {
+		stdinTokenRead = true
+		c.stdinToken = true
+		c.token = readTokenFromStdin(os.Stdin)
+		if c.token == "" {
+			c.token = ""
+		}
 	}
+	return c
 }
 
+// resolveToken 保留这个小包装只为少改调用点：它**只**转发到唯一入口。
 func resolveToken() string {
-	if v := strings.TrimSpace(os.Getenv("ZERG_TOKEN")); v != "" {
-		return v
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	b, err := os.ReadFile(filepath.Join(home, ".zerg", "token"))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
+	v, _ := resolveCredentials()
+	return v
 }
 
 func (c *client) tokenOrigin() tokenSource {
-	switch {
-	case strings.TrimSpace(os.Getenv("ZERG_TOKEN")) != "":
-		return tokenFromEnv
-	case c.token != "":
-		return tokenFromFile
-	default:
+	if c.stdinToken {
+		return tokenSourceStdin
+	}
+	if c.token == "" {
 		return tokenFromNone
 	}
+	if _, src := resolveCredentials(); src != tokenSourceNone {
+		return src
+	}
+	return tokenFromFile
 }
 
 // getJSON 取一个端点并解成 out。错误按 M20 的形状打印：谁打不到 · 端点 · 来源级 · 只报一次。

@@ -159,6 +159,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		emitErrIfJSON(inv, stdout, cmd)
 		return rc
 	}
+	// 非交互凭据（`C2`）：本轮的 `--token-stdin` 交给**唯一入口**去读（只读一次）。
+	if inv.tokenStdin {
+		stdinTokenWanted = true
+	}
 	cw := &countingWriter{w: stdout}
 	rc := cmd.run(inv, cw, stderr)
 	// `--json <字段>` 的失败路径：把**机器可读**的 `error` 块挂进包封（§九 M7）——
@@ -679,6 +683,9 @@ type invocation struct {
 	reload bool
 	force  bool
 
+	// 非交互凭据（§九 M2 C2）：令牌从 stdin 读，**不进 argv**
+	tokenStdin bool
+
 	// 内容协商（§九 M1 W12）：`--accept <媒体类型>`
 	acceptWant string
 
@@ -750,6 +757,8 @@ func parseInvocation(args []string) (*invocation, error) {
 			}
 		case strings.HasPrefix(a, "--context="):
 			inv.contextWant = strings.TrimPrefix(a, "--context=")
+		case a == "--token-stdin":
+			inv.tokenStdin = true
 		case a == "--accept" || a == "--accept=":
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				i++
