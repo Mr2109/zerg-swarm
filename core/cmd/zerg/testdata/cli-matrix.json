@@ -2576,6 +2576,116 @@
    "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
   },
   {
+   "id": "dev/build#未知旗标",
+   "command": "dev build",
+   "argv": [
+    "dev",
+    "build",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "dev/build#不认的契约主号",
+   "command": "dev build",
+   "argv": [
+    "dev",
+    "build",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "dev/build#缺 --yes（D2）",
+   "command": "dev build",
+   "argv": [
+    "dev",
+    "build",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）· 本票还额外钉住「缺 --candidate / 缺验收证据单一律 2」（§17.7 次序 · T-58 判据②）"
+  },
+  {
+   "id": "dev/test#未知旗标",
+   "command": "dev test",
+   "argv": [
+    "dev",
+    "test",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "dev/test#不认的契约主号",
+   "command": "dev test",
+   "argv": [
+    "dev",
+    "test",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "dev/test#缺 --yes（D2）",
+   "command": "dev test",
+   "argv": [
+    "dev",
+    "test",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）· 本票还额外钉住「缺 --candidate / 缺验收证据单一律 2」（§17.7 次序 · T-58 判据②）"
+  },
+  {
+   "id": "dev/verify#未知旗标",
+   "command": "dev verify",
+   "argv": [
+    "dev",
+    "verify",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "dev/verify#不认的契约主号",
+   "command": "dev verify",
+   "argv": [
+    "dev",
+    "verify",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "dev/verify#缺 --candidate",
+   "command": "dev verify",
+   "argv": [
+    "dev",
+    "verify"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺 --candidate ⇒ 用法错 2（候选 id 是这一条的**作用域**；没有它 = 不知道在说哪一枚候选）"
+  },
+  {
    "id": "propose/ls#未知旗标",
    "command": "propose ls",
    "argv": [

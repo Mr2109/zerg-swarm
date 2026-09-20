@@ -15,6 +15,13 @@
 //	   （另写一份 = 测试测的是那份副本，不是真东西）。
 package main
 
+import (
+	"encoding/json"
+	"os"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/contract"
+)
+
 // RunForTest 驱动一次命令（与 `main()` 调的是同一个 `run`）。
 var RunForTest = run
 
@@ -86,4 +93,106 @@ func joinPath(p []string) string {
 		s += seg
 	}
 	return s
+}
+
+// ---- T-58：候选区（`core/internal/contract/dev-candidate.json`）的**只读桥** ----
+// 口径同本文件头部第 ③ 条：桥上的每个符号都**直接指真源**，不在桥里另写副本。
+
+// DevCandidateSpecForTest 候选区真源的一格（测试用的**具名类型** —— 匿名结构体在两包里各写一遍就会漂）。
+type DevCandidateSpecForTest struct {
+	CandidateRoot        string
+	CandidateIDPattern   string
+	ProductionRoots      []string
+	ProductionExcludes   []string
+	EvidenceVerdicts     []string
+	EvidenceKeysRequired []string
+	EvidenceKeysOptional []string
+	RollbackExitCodes    []int
+	StepOrder            []string
+	CanonicalEntry       map[string]string
+}
+
+// DevCandidateSpecOfForTest 取候选区真源（读的就是 `contract.DevCandidate()` 那一份）。
+func DevCandidateSpecOfForTest() (DevCandidateSpecForTest, error) {
+	s, err := contract.DevCandidate()
+	if err != nil {
+		return DevCandidateSpecForTest{}, err
+	}
+	return DevCandidateSpecForTest{
+		CandidateRoot:        s.CandidateRoot,
+		CandidateIDPattern:   s.CandidateIDPattern,
+		ProductionRoots:      s.ProductionRoots,
+		ProductionExcludes:   s.ProductionExcludes,
+		EvidenceVerdicts:     s.EvidenceVerdicts,
+		EvidenceKeysRequired: s.EvidenceKeysRequired,
+		EvidenceKeysOptional: s.EvidenceKeysOptional,
+		RollbackExitCodes:    s.RollbackExitCodes,
+		StepOrder:            s.StepOrder,
+		CanonicalEntry:       s.CanonicalEntry,
+	}, nil
+}
+
+// CandidateIDValidForTest 候选 id 闭集判定口（真源里的 pattern）。
+func CandidateIDValidForTest(id string) bool {
+	spec, err := contract.DevCandidate()
+	if err != nil {
+		return false
+	}
+	return candidateIDValid(spec, id)
+}
+
+// ProductionCandidateNameViolationsForTest 生产目录里「名字带候选 id」的件（判据⑤ 的唯一判定口）。
+func ProductionCandidateNameViolationsForTest(repoRoot string) ([]string, error) {
+	spec, err := contract.DevCandidate()
+	if err != nil {
+		return nil, err
+	}
+	return productionCandidateNameViolations(repoRoot, spec)
+}
+
+// EvidenceSheetPathForTest 证据单落点（`dev verify` 写、`dev build`/`dev test` 读）。
+func EvidenceSheetPathForTest(root, id string) string { return evidenceSheetPath(root, id) }
+
+// SheetExitCodeForTest 证据单的四档判决口（`0` 全绿 · `1` 有 FAIL · `8` 有 BLOCKED）。
+func SheetExitCodeForTest(totals map[string]int) (int, error) {
+	spec, err := contract.DevCandidate()
+	if err != nil {
+		return 0, err
+	}
+	return sheetExitCode(spec, totals), nil
+}
+
+// EvidenceEntryForTest 证据单的一条。
+type EvidenceEntryForTest struct {
+	Criterion string
+	Verdict   string
+	Evidence  map[string]string
+}
+
+// EvidenceSheetForTest 证据单的形状（读回时用）。
+type EvidenceSheetForTest struct {
+	Schema    string
+	Candidate string
+	Contract  string
+	Results   string
+	Entries   []EvidenceEntryForTest
+	Totals    map[string]int
+}
+
+// ReadEvidenceSheetForTest 读回一份证据单（解不动 ⇒ 报错，不吞）。
+func ReadEvidenceSheetForTest(path string) (*EvidenceSheetForTest, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var s evidenceSheet
+	if err := json.Unmarshal(body, &s); err != nil {
+		return nil, err
+	}
+	out := &EvidenceSheetForTest{Schema: s.Schema, Candidate: s.Candidate, Contract: s.Contract,
+		Results: s.Results, Totals: s.Totals}
+	for _, e := range s.Entries {
+		out.Entries = append(out.Entries, EvidenceEntryForTest{Criterion: e.Criterion, Verdict: e.Verdict, Evidence: e.Evidence})
+	}
+	return out, nil
 }

@@ -34,6 +34,9 @@ var intentPlanRaw []byte
 //go:embed receipt.json
 var receiptRaw []byte
 
+//go:embed dev-candidate.json
+var devCandidateRaw []byte
+
 // ReceiptSpec —— 交接回执的真源（§20.3 H3 · §20.1 步 9 · §十二 `P-119`/`P-120` · 开工单 T-61）。
 type ReceiptSpec struct {
 	Schema           string   `json:"schema"`
@@ -311,3 +314,64 @@ func Load() (*Registry, error) {
 
 // Raw 原样返回嵌入的字节（导出物/对拍用）。
 func Raw() []byte { return raw }
+
+// DevCandidateSpec —— 候选区闭集 + 验收证据单形状 + 回滚既有四值 + SD10-b 规范入口（§17.4 · 开工单 T-58）。
+//
+// 一句话：`zerg dev` 这一族**能写到哪**（闭集）、**判据长什么样**（证据单）、**回滚用哪几个数**
+// （沿用既有四值、不新增码）、以及 `build`/`release` 撞名时**谁是规范入口**（SD10-b）——
+// 四件事一次落成真源，生产侧与消费侧**读同一份**（另写一份就是第二份真源）。
+type DevCandidateSpec struct {
+	Schema               string            `json:"schema"`
+	Note                 string            `json:"note"`
+	CandidateRoot        string            `json:"candidate_root"`
+	CandidateIDPattern   string            `json:"candidate_id_pattern"`
+	CandidateIDRule      string            `json:"candidate_id_rule"`
+	ProductionRoots      []string          `json:"production_roots"`
+	ProductionExcludes   []string          `json:"production_excludes"`
+	ProductionNameRule   string            `json:"production_name_rule"`
+	EvidenceVerdicts     []string          `json:"evidence_verdicts"`
+	EvidenceEntryFields  []string          `json:"evidence_entry_fields"`
+	EvidenceKeysRequired []string          `json:"evidence_keys_required"`
+	EvidenceKeysOptional []string          `json:"evidence_keys_optional"`
+	EvidenceEmptyRule    string            `json:"evidence_empty_rule"`
+	RollbackExitCodes    []int             `json:"rollback_exit_codes"`
+	RollbackNote         string            `json:"rollback_note"`
+	StepOrder            []string          `json:"step_order"`
+	StepOrderRule        string            `json:"step_order_rule"`
+	CanonicalEntry       map[string]string `json:"canonical_entry"`
+	NotOpened            string            `json:"not_opened"`
+	Boundary             string            `json:"boundary"`
+}
+
+// DevCandidate —— 解出候选区真源（解不动 / 任一闭集为空 ⇒ 报错，不吞 —— 空闭集 = 消费侧无从判）。
+func DevCandidate() (*DevCandidateSpec, error) {
+	var s DevCandidateSpec
+	if err := json.Unmarshal(devCandidateRaw, &s); err != nil {
+		return nil, fmt.Errorf("contract: 候选区真源解不动（dev-candidate.json 坏了？）: %w", err)
+	}
+	for name, set := range map[string][]string{
+		"evidence_verdicts":      s.EvidenceVerdicts,
+		"evidence_entry_fields":  s.EvidenceEntryFields,
+		"evidence_keys_required": s.EvidenceKeysRequired,
+		"production_roots":       s.ProductionRoots,
+		"step_order":             s.StepOrder,
+	} {
+		if len(set) == 0 {
+			return nil, fmt.Errorf("contract: 候选区真源的闭集 %s 是空的 —— 空闭集 = 消费侧无从判", name)
+		}
+	}
+	if s.CandidateRoot == "" || s.CandidateIDPattern == "" || len(s.RollbackExitCodes) == 0 {
+		return nil, fmt.Errorf("contract: 候选区真源缺关键格（candidate_root / candidate_id_pattern / rollback_exit_codes 有一个是空的）")
+	}
+	return &s, nil
+}
+
+// StepIndex 求一个动作在 $17.7 次序里的下标（未知动作 ⇒ -1）。
+func (s *DevCandidateSpec) StepIndex(action string) int {
+	for i, a := range s.StepOrder {
+		if a == action {
+			return i
+		}
+	}
+	return -1
+}

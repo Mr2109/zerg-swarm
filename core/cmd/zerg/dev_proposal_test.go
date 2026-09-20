@@ -31,11 +31,19 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/contract"
 )
 
-// devFamilyClosure —— 判据①的闭集（本票**不新增**任何**读**命令；`dev` 族 = 这三条 + 两条动作面）。
+// devFamilyClosure —— 判据①的闭集（**一条读命令都不新增**；`dev` 族 = §17.4 全表那七条）。
 // ★ 2026-09-20 批 E · T-61 补入 `dev receipt`：它是**交接回执**（一轮一页 · 落状态目录），
 //
 //	不是「读事实」的命令（读事实一律走既有族）⇒ 判据①逐字「读环**一条都不新增**」仍然成立。
-var devFamilyClosure = []string{"dev proposal", "dev release", "dev rollback", "dev receipt"}
+//
+// ★ 2026-09-20 批 E · T-58 补入 `dev build` / `dev test` / `dev verify`（§17.4 第 2/3/5 条）：
+//
+//	三条都不是「读事实」的新读命令 —— 它们是**候选区**的建 / 测 / 收证据：
+//	· `build` / `test` 本版只到**干跑档**出计划件（真跑拒执 ⇒ 2），且**判据（证据单）在前**（§17.7）；
+//	· `verify` 收的是**门禁结果表**（一步一日志的既有产物）—— 判据真源仍是门禁步骤表，它**不新立判据**（§17.4 接缝第 5 行逐字）。
+//	⇒ 「读事实走既有族」这条没收；闭集本身随 §17.4 的条目**同批**刷新（棘轮，不许悄悄长大）。
+var devFamilyClosure = []string{"dev proposal", "dev release", "dev rollback", "dev receipt",
+	"dev build", "dev test", "dev verify"}
 
 // snapshotDir 给一棵目录树拍逐文件 sha256 快照（相对路径排序 ⇒ 可比对「逐字节不变」）。
 func snapshotDir(t *testing.T, root string) string {
