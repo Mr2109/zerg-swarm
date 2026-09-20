@@ -44,6 +44,9 @@ var aiBoundaryRaw []byte
 //go:embed stage-gate.json
 var stageGateRaw []byte
 
+//go:embed selfupdate.json
+var selfUpdateRaw []byte
+
 // ReceiptSpec —— 交接回执的真源（§20.3 H3 · §20.1 步 9 · §十二 `P-119`/`P-120` · 开工单 T-61）。
 type ReceiptSpec struct {
 	Schema           string   `json:"schema"`
@@ -499,4 +502,53 @@ func StageGate() (*StageGateSpec, error) {
 		}
 	}
 	return &s, nil
+}
+
+// SelfUpdateSpec —— 自更新/换件的**唯一真源**（§7.1 `P12` · §3.3 `N2` · §十七 `SD12` · 开工单 T-52）。
+//
+// 一句话：六阶段内核是**一支脚本**（`scripts/build/zerg-upgrade.sh`），Go 与 Rust 两处都是**调用方**；
+// 退码表也只有这一份 —— 两边各写一遍正是「同数字两义」的病根（实测：`4` 在两边一个意思都没有对上）。
+type SelfUpdateSpec struct {
+	Schema               string            `json:"schema"`
+	Note                 string            `json:"note"`
+	TruthSource          map[string]string `json:"truth_source"`
+	Stages               []string          `json:"stages"`
+	ExitCodes            []SelfUpdateCode  `json:"exit_codes"`
+	Callers              []map[string]any  `json:"callers"`
+	GoConstsRule         string            `json:"go_consts_rule"`
+	SemanticsSplit       map[string]any    `json:"semantics_split"`
+	NearSynonymForbidden []string          `json:"near_synonym_forbidden"`
+	NearSynonymRule      string            `json:"near_synonym_rule"`
+	OneWordRule          string            `json:"one_word_rule"`
+	CollisionFixed       string            `json:"collision_fixed"`
+	Boundary             string            `json:"boundary"`
+}
+
+// SelfUpdateCode —— 真源里的一格退码。
+type SelfUpdateCode struct {
+	Code    int    `json:"code"`
+	Name    string `json:"name"`
+	Meaning string `json:"meaning"`
+}
+
+// SelfUpdate —— 解出自更新真源（解不动 / 缺关键格 ⇒ 报错，不吞）。
+func SelfUpdate() (*SelfUpdateSpec, error) {
+	var s SelfUpdateSpec
+	if err := json.Unmarshal(selfUpdateRaw, &s); err != nil {
+		return nil, fmt.Errorf("contract: 自更新真源解不动（selfupdate.json 坏了？）: %w", err)
+	}
+	if len(s.ExitCodes) == 0 || len(s.Stages) != 6 || strings.TrimSpace(s.TruthSource["kernel"]) == "" {
+		return nil, fmt.Errorf("contract: 自更新真源缺关键格（exit_codes / 六阶段 / truth_source.kernel 有一个不齐）")
+	}
+	return &s, nil
+}
+
+// ExitCodeNamed 按**名**取一格（名字不在真源里 ⇒ ok=false —— 缺就缺，不猜）。
+func (s *SelfUpdateSpec) ExitCodeNamed(name string) (int, bool) {
+	for _, e := range s.ExitCodes {
+		if e.Name == name {
+			return e.Code, true
+		}
+	}
+	return 0, false
 }

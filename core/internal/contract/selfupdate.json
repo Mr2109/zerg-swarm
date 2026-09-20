@@ -1,0 +1,92 @@
+{
+ "schema": "zerg/selfupdate/v1",
+ "note": "自更新/换件的**唯一真源**（§7.1 `P12` · §3.3 `N2` · §十七 `SD12` · 开工单 T-52）。要治的病：同一件事在三处各写一遍（Go `core/internal/selfupdate` · `scripts/build/zerg-upgrade.sh` · `ui/src/modules/upgrade.rs`），且**退码各写一份**（Go 那份是仓里第 7 处声明）。",
+ "truth_source": {
+  "kernel": "scripts/build/zerg-upgrade.sh",
+  "why": "§17.6 `SD12` 逐字：`update` 只指源码式自更新 · `dev` 只指候选件的读→改→建→测→验→发→回；两者**共用同一个换件内核**（`zerg-upgrade.sh` · 六阶段），**不新造第二条换件路** ✗。"
+ },
+ "stages": [
+  "plan",
+  "drain",
+  "swap",
+  "restart",
+  "verify",
+  "report"
+ ],
+ "exit_codes": [
+  {
+   "code": 0,
+   "name": "ok",
+   "meaning": "成功"
+  },
+  {
+   "code": 1,
+   "name": "fail",
+   "meaning": "失败（**无回滚** 与 **已回滚成功** 两支，靠 `error.kind` 分辨）"
+  },
+  {
+   "code": 2,
+   "name": "no_update",
+   "meaning": "无需更新（已是最新 / 开发态领先）"
+  },
+  {
+   "code": 3,
+   "name": "refused",
+   "meaning": "拒绝（有在途任务）"
+  },
+  {
+   "code": 4,
+   "name": "verify_failed",
+   "meaning": "校验不通过（**未动文件**）"
+  },
+  {
+   "code": 5,
+   "name": "rollback_failed",
+   "meaning": "**回滚也失败**（需人工介入 · `error.kind=ROLLBACK_FAILED`）"
+  },
+  {
+   "code": 64,
+   "name": "usage",
+   "meaning": "用法错（未知参数 —— 照 sysexits `EX_USAGE`；**不是** `4`）"
+  }
+ ],
+ "callers": [
+  {
+   "file": "core/internal/selfupdate",
+   "role": "调用方",
+   "how": "把六阶段内核当**外部内核**来 exec（`Options.Kernel`）；本包**不再自己声明**退码表，改为**逐格对拍**本真源（见 `go_consts_rule`）。"
+  },
+  {
+   "file": "ui/src/modules/upgrade.rs",
+   "role": "调用方",
+   "has_own_stages": false,
+   "how": "`Command::new(\"bash\")` spawn 同一支脚本、只做 stdout 泵送与按钮态（文件头逐字写着「the six-stage core」）。"
+  }
+ ],
+ "go_consts_rule": "`core/internal/selfupdate` 的导出退码常量**必须**与本真源的 `exit_codes` 逐格相等（数字 + 语义），由 `selfupdate.ExitCodesMatchTruthSource()` 现跑对拍；不相等 ⇒ 报错（**不许**两处各写一份然后漂）。",
+ "semantics_split": {
+  "zerg update": {
+   "means": "**源码式自更新**（git 检出 → 构建 → 换件 → 回执）",
+   "danger_source_must_contain": "F-3",
+   "command": "update",
+   "summary_must_contain": "源码式自更新"
+  },
+  "zerg core update": {
+   "means": "**主控自身换件**（只换在跑的那一个制品）",
+   "danger_source_must_contain": "P12",
+   "command": "core update",
+   "summary_must_contain": "主控自身换件"
+  },
+  "rule": "§3.3 `N2`：**禁用近义动词分指两事** —— `update` 只指源码式自更新；`core update` 是「主控自身换件」且走 `F-3` 例外清单。两条都**不是**「第二条换件路」（内核还是那一支脚本）。"
+ },
+ "one_word_rule": "全仓**不再**用 `update` / `upgrade` 分指两事：判据 = 两条命令的「语义来源」逐条对上（`update` ⇔ F-3 / 源码式；`core update` ⇔ `P12` / 自身换件），且命令族里**没有**第三个近义动词承接其中任一件事。",
+ "boundary": "本件只收敛**真源与对拍**：`update` / `core update` 两条命令在**危险档仍未开放**（§6.2 批 A 零写操作）⇒ 本票**不换件、不重启**（不可逆动作停下待拍）。",
+ "collision_fixed": "★ 本件**修的一处真病**：Go 那份声明把**用法错**写成 `4`（zerg-upgrade.sh:155 附近），而内核脚本的 `4` 是**校验不通过（未动文件）** —— 同一仓内同数字两义（§二十一 已红第 4 条的病根）。收敛后：`4` 只有一个意思（校验不通过），用法错回到 `64`（脚本 :125 逐字 `exit 64`）。",
+ "near_synonym_forbidden": [
+  "自更新",
+  "升级",
+  "upgrade",
+  "self-update"
+ ],
+ "near_synonym_rule": "判据③：除上面两条命令外，**任何**命令的路径段 / 概要 / 用法串里都不许再出现「自更新 / 升级 / upgrade」这类**近义动词** —— 出现了就是「用近义动词分指两事」的病（§3.3 `N2`）。"
+}
