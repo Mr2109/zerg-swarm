@@ -119,7 +119,9 @@ func (a *Agent) SetSkillManager(sm *SkillManager) {
 // NewAgent - 创建 Agent，填充默认值
 func NewAgent(cfg Config) *Agent {
 	if cfg.MaxTurns == 0 {
-		cfg.MaxTurns = 30
+		// 唯一真源见 max_turns.go（§二十一 已红第 12 条 · 批 C 的 T-34）——这里原来是字面量 30，
+		// 与命令行默认（100）和子任务配额（20）各写一个数 ⇒ 同一条上限三个真源。
+		cfg.MaxTurns = DefaultMaxTurns
 	}
 	// v2.5.4.9 滚动窗口压缩——保留最近 N 轮完整（默认 5——Mr2109——业界 5-8 轮）
 	if cfg.ContextWindow == 0 {

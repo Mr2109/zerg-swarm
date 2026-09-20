@@ -24,7 +24,7 @@ const (
 type SubagentConfig struct {
 	Type     SubagentType // 子 agent 类型
 	Model    string       // 模型名称（explore 用轻量模型——nanbeige）
-	MaxTurns int          // 每层配额——默认 20
+	MaxTurns int          // 每层配额——默认 SubAgentMaxTurns（见 max_turns.go）
 	Tools    []string     // 工具白名单（allowlist）
 }
 
@@ -68,7 +68,9 @@ func SpawnSubagent(parent *Agent, task TaskInput) (SubagentResult, error) {
 		cfg.Model = defaultModelFor(task.Type)
 	}
 	if cfg.MaxTurns == 0 {
-		cfg.MaxTurns = 20
+		// 子任务配额：**从主上限派生**（max_turns.go）——「子任务不许比主任务宽」是构造上的关系，
+		// 不是两个碰巧一大一小的数字（T-34 之前这里是字面量 20）。
+		cfg.MaxTurns = SubAgentMaxTurns
 	}
 
 	// 2. 创建子 Agent（独立 history——不继承父）
