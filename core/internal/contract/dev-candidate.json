@@ -1,0 +1,28 @@
+{
+ "schema": "zerg/dev-candidate/v1",
+ "note": "候选区（§17.4 第 2/3/5/6/7 条）的闭集真源 + 证据单形状 + 回滚既有四值 + SD10-b 规范入口说明。⚠ 唯一编号：本「候选 id」是**自开发候选的号**，不是 review id、不是任务 id、不是卵 id —— 四者各自独立、不互指。",
+ "candidate_root": "dist/candidates",
+ "candidate_id_pattern": "^DEV-[0-9]{4}$",
+ "candidate_id_rule": "候选 id 只认 `DEV-` + 四位十进制；越界/近名（`dev-0001` / `DEV-1` / `DEV-00001` / `DEV-0001-x`）一律拒 —— 拒的理由是「名字不同 = 另一个东西」，不是「拼写错」。",
+ "production_roots": ["bin", "dist"],
+ "production_excludes": ["dist/candidates"],
+ "production_name_rule": "生产目录（bin/ 与 dist/ 下、排除候选根）里**永不**出现名字带候选 id 的件 —— 这一格能红（判据⑤）。候选区的件只能待在候选根里。",
+ "evidence_verdicts": ["PASS", "FAIL", "BLOCKED", "SKIP", "REPORT"],
+ "evidence_entry_fields": ["criterion", "verdict", "evidence"],
+ "evidence_keys_required": ["rc", "log_path"],
+ "evidence_keys_optional": ["code_sha", "node", "layer"],
+ "evidence_empty_rule": "「证据为空」= ① 一条判决条目都没有（结果表缺件 / 0 行）② 或任一条目的必备证据键（rc · log_path）不全 —— 两种都 ⇒ 退码 2（不给结论）。**不许**把「没跑到」写成「通过」。",
+ "rollback_exit_codes": [0, 1, 2, 3],
+ "rollback_note": "沿用既有四值（§17.4 第 7 条 · 判据④「不新增码」）：0 成功 · 1 未动生产 / 已回滚成功（两支靠 error.kind 分辨）· 2 用法错 / 不给结论 · 3 回滚也失败（需人工）。★ 照实登记一处口径差：设计稿 §17.4 原文把「已回滚成功」写在 `2`，而批 B · T-26（门⑨ R4）已把它收敛成 `1` + `error.kind=ROLLED_BACK` ⇒ 本件取**现定说法**，不沿用已被否决的那一个数。",
+ "step_order": ["verify", "build", "test", "gate", "release", "rollback"],
+ "step_order_rule": "§17.7 逐字：**先有判据、再有自动化** ⇒ 次序里 `verify` 必须先于 `build`（也先于 `test`）。落成机检：`zerg dev build` / `zerg dev test` 找不到该候选的验收证据单 ⇒ 退码 2（detail=build_without_verify / test_without_verify），**不许**「先建了再补判据」。",
+ "canonical_entry": {
+  "build": "zerg build all —— K 族构建的**规范入口**（通用面，不带候选作用域）",
+  "dev_build": "zerg dev build —— 候选区作用域（比 K 族只多「候选」这一层）",
+  "release": "zerg build release —— K 族放行件打包的**规范入口**",
+  "dev_release": "zerg dev release —— 候选登记 + 打包 + **停**（等人批）",
+  "rule": "SD10-b（撞名说明 · 判据⑥）：`build` / `release` 两处撞名时 **K 族是规范入口**，`dev` 族只多一个作用域；两族**共用同一条底层脚本**（`scripts/build/build-all.sh` / `scripts/build/pack-release.sh`），**不新造第二条构建路** ✗。"
+ },
+ "not_opened": "本版 `dev build` / `dev test` 只到 `--dry-run` 出计划件（真跑一律拒执 ⇒ 2 不给结论）；`dev verify` 是真跑的**只读**面。",
+ "boundary": "候选区的**总量上限 / 门禁趟数上限**（§17.6 SD4）本件**不臆造数值**（照 RC6「阈值显式、不许魔数」）⇒ 只登记、数值待 §十二 下一版拍板。"
+}

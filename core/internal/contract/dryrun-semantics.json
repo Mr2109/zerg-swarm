@@ -223,6 +223,20 @@
    "语义": "dryrun.v1",
    "零副作用判据": "测试件本身不驱动写入（`t.TempDir()` + 进程内 `run`）；它**断言的**就是零副作用：`--dry-run` 时合成主控的推理端点调用数为 0、`plan` 前后工作目录快照逐字节相同。",
    "备注": "2026-09-20 批 E 登记（门⑩ 扫描面命中的测试件；不登记会被判成「又一套语义」——是扫描面口径，不是真语义分歧）"
+  },
+  {
+   "file": "core/cmd/zerg/family_dev_candidate.go",
+   "类": "命令面三态（`dev build|test --dry-run` 的计划件 · 与 guard.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg dev build --candidate DEV-0001 --dry-run` ⇒ 退码 0 · stdout 只有计划件 + stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）」· **不调 build-all.sh / make test**（拒执档退 2）· 同一条里 `dev verify --dry-run` 只算不写：**不落 `dist/candidates/<id>/evidence.json`**（判据⑤ 的候选区闭集面）。",
+   "备注": "候选区（§17.4 第 2/3/5 条 · T-58）：本件自己不做计划件渲染（复用 guard.go 的同一套），登记在此只为 R1/R2（新增 dry-run 站点必须同批登记）。"
+  },
+  {
+   "file": "core/cmd/zerg/dev_candidate_test.go",
+   "类": "命令面三态（对拍 · T-58 判据①/②）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "对拍：`dev build --candidate X --dry-run` 走计划件那一态（退码 0）而真跑（`--yes`）一律拒执（退码 2 = 本版未开放）；`dev verify` 的「证据为空 ⇒ 2」在带不带 `--dry-run` 时一致。",
+   "备注": "测试件（外部测试包 `package main_test`）—— 与生产侧读同一份真源 `core/internal/contract/dev-candidate.json`。"
   }
  ]
 }
