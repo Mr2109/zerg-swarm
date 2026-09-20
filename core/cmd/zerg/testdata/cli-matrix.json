@@ -984,6 +984,232 @@
    "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
   },
   {
+   "id": "resource/ls#未知旗标",
+   "command": "resource ls",
+   "argv": [
+    "resource",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "resource/ls#不认的契约主号",
+   "command": "resource ls",
+   "argv": [
+    "resource",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "resource/ledger#未知旗标",
+   "command": "resource ledger",
+   "argv": [
+    "resource",
+    "ledger",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "resource/ledger#不认的契约主号",
+   "command": "resource ledger",
+   "argv": [
+    "resource",
+    "ledger",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gateway/models#未知旗标",
+   "command": "gateway models",
+   "argv": [
+    "gateway",
+    "models",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gateway/models#不认的契约主号",
+   "command": "gateway models",
+   "argv": [
+    "gateway",
+    "models",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "script/ls#未知旗标",
+   "command": "script ls",
+   "argv": [
+    "script",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "script/ls#不认的契约主号",
+   "command": "script ls",
+   "argv": [
+    "script",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "script/ls#--json 不给字段",
+   "command": "script ls",
+   "argv": [
+    "script",
+    "ls",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+  },
+  {
+   "id": "resource/pin#未知旗标",
+   "command": "resource pin",
+   "argv": [
+    "resource",
+    "pin",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "resource/pin#不认的契约主号",
+   "command": "resource pin",
+   "argv": [
+    "resource",
+    "pin",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "resource/pin#说明面不认 --json",
+   "command": "resource pin",
+   "argv": [
+    "resource",
+    "pin",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+  },
+  {
+   "id": "resource/unpin#未知旗标",
+   "command": "resource unpin",
+   "argv": [
+    "resource",
+    "unpin",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "resource/unpin#不认的契约主号",
+   "command": "resource unpin",
+   "argv": [
+    "resource",
+    "unpin",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "resource/unpin#说明面不认 --json",
+   "command": "resource unpin",
+   "argv": [
+    "resource",
+    "unpin",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+  },
+  {
+   "id": "gateway/breakers#未知旗标",
+   "command": "gateway breakers",
+   "argv": [
+    "gateway",
+    "breakers",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gateway/breakers#不认的契约主号",
+   "command": "gateway breakers",
+   "argv": [
+    "gateway",
+    "breakers",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gateway/breakers#说明面不认 --json",
+   "command": "gateway breakers",
+   "argv": [
+    "gateway",
+    "breakers",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+  },
+  {
    "id": "task/terminate#未知旗标",
    "command": "task terminate",
    "argv": [
@@ -1835,117 +2061,6 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
-  },
-  {
-   "id": "resource/pin#未知旗标",
-   "command": "resource pin",
-   "argv": [
-    "resource",
-    "pin",
-    "--nosuchflag-zz"
-   ],
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
-  },
-  {
-   "id": "resource/pin#不认的契约主号",
-   "command": "resource pin",
-   "argv": [
-    "resource",
-    "pin",
-    "--schema",
-    "zerg/v9"
-   ],
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
-  },
-  {
-   "id": "resource/pin#缺 --yes（D2）",
-   "command": "resource pin",
-   "argv": [
-    "resource",
-    "pin",
-    "x"
-   ],
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
-  },
-  {
-   "id": "resource/unpin#未知旗标",
-   "command": "resource unpin",
-   "argv": [
-    "resource",
-    "unpin",
-    "--nosuchflag-zz"
-   ],
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
-  },
-  {
-   "id": "resource/unpin#不认的契约主号",
-   "command": "resource unpin",
-   "argv": [
-    "resource",
-    "unpin",
-    "--schema",
-    "zerg/v9"
-   ],
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
-  },
-  {
-   "id": "resource/unpin#缺 --yes（D2）",
-   "command": "resource unpin",
-   "argv": [
-    "resource",
-    "unpin",
-    "x"
-   ],
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
-  },
-  {
-   "id": "gateway/breakers#未知旗标",
-   "command": "gateway breakers",
-   "argv": [
-    "gateway",
-    "breakers",
-    "--nosuchflag-zz"
-   ],
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
-  },
-  {
-   "id": "gateway/breakers#不认的契约主号",
-   "command": "gateway breakers",
-   "argv": [
-    "gateway",
-    "breakers",
-    "--schema",
-    "zerg/v9"
-   ],
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
-  },
-  {
-   "id": "gateway/breakers#缺 --yes（D2）",
-   "command": "gateway breakers",
-   "argv": [
-    "gateway",
-    "breakers",
-    "x"
-   ],
-   "want_rc": 2,
-   "want_stdout_bytes": 0,
-   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
   },
   {
    "id": "script/run#未知旗标",
