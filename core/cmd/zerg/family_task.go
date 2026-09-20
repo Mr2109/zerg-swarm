@@ -243,6 +243,11 @@ func cmdTaskSubmit(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	status, respBody, err := postJSON(newClient(), "/api/tasks", body)
+	var he *httpError
+	if err != nil && asHTTP(err, &he) {
+		// 主控**回话了**（非 2xx）⇒ 不是「打不到」：走下面的「逐字透传」分支。
+		status, respBody, err = he.status, he.body, nil
+	}
 	if err != nil {
 		inv.setErr("unreachable", "dial_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 提交失败（打不到主控）：%v\n", progName, err)
@@ -269,13 +274,25 @@ func cmdTaskSubmit(inv *invocation, stdout, stderr io.Writer) int {
 	return listCmd(inv, stdout, stderr, []string{"id", "status", "request"}, []map[string]string{row})
 }
 
-// postJSON —— 一处 POST（写面唯一出口；失败面把 http 状态与**原样响应体**一起带回来）。
+// postJSON —— 写面出口（POST）；失败面把 http 状态与**原样响应体**一起带回来。
 func postJSON(c *client, path, body string) (int, string, error) {
-	req, err := http.NewRequest(http.MethodPost, c.base+path, bytes.NewReader([]byte(body)))
+	return sendJSON(c, http.MethodPost, path, body)
+}
+
+// sendJSON —— **两处写面出口共用的一处**（POST / PUT；body 为空则不带体）。
+// 失败面一律把 http 状态与**原样响应体**带回来（「逐字透传」要能拿到原文）。
+func sendJSON(c *client, method, path, body string) (int, string, error) {
+	var rdr io.Reader
+	if body != "" {
+		rdr = bytes.NewReader([]byte(body))
+	}
+	req, err := http.NewRequest(method, c.base+path, rdr)
 	if err != nil {
 		return 0, "", err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if c.token != "" {
 		req.Header.Set("X-Auth-Token", c.token)
 	}
@@ -285,10 +302,20 @@ func postJSON(c *client, path, body string) (int, string, error) {
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		// 让调用方能按 http 状态分档（404 与 400 的处置不同）
+		return resp.StatusCode, string(b), &httpError{path: path, status: resp.StatusCode, body: string(b)}
+	}
 	return resp.StatusCode, string(b), nil
 }
 
-// errorCodeOf 从主控的错误响应里取它的码（`code` / `error` 两种写法都认；取不到 ⇒ 空）。
+// errorCodeOf 从主控的错误响应里取它的码 —— **两种真实现都认**（取不到 ⇒ 空串，不猜）：
+//
+//	① 顶层：`{"code":"SLICE_MISSING_ID"}`（`/api/tasks` POST 那一族）
+//	② 嵌套：`{"error":{"message":"…","type":"MODEL_NO_ADAPTER"}}`（`writeErrorCode` 那一族）
+//
+// ★ 为什么两处都要认：命令面要的是「**逐字透传**主控的码」（§4.1 K7），只认一种写法
+// 就会把另一种写成空 —— 那样的「透传」是假的。
 func errorCodeOf(body string) string {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(body), &m); err != nil {
@@ -297,6 +324,13 @@ func errorCodeOf(body string) string {
 	for _, k := range []string{"code", "error", "kind"} {
 		if v, ok := m[k].(string); ok && v != "" {
 			return v
+		}
+	}
+	if e, ok := m["error"].(map[string]any); ok {
+		for _, k := range []string{"type", "code"} {
+			if v, ok := e[k].(string); ok && v != "" {
+				return v
+			}
 		}
 	}
 	return ""
