@@ -22,6 +22,43 @@ var devTargetsRaw []byte
 //go:embed unresolved-entries.json
 var unresolvedRaw []byte
 
+//go:embed decision-records.json
+var decisionRecordsRaw []byte
+
+// DecisionRecordSpec —— 决策记录的真源（§20.1 步 9 · §十二 `P-134`–`P-138` · 开工单 T-63）。
+//
+// 一句话：本件把定稿**已给出的取值**（落点 / 三格 / 8 必填 + 4 收口 / status 闭集 /
+// `who_decided` 只人 / 经验落点 4 类 / 一物两态）落成**可机检的形状**，不新造字段、不新立落点。
+type DecisionRecordSpec struct {
+	Schema             string            `json:"schema"`
+	LandingDir         string            `json:"landing_dir"`
+	MinFields          []string          `json:"min_fields"`
+	RequiredFields     []string          `json:"required_fields"`
+	ConditionalFields  []string          `json:"conditional_fields"`
+	ConditionalRules   map[string]string `json:"conditional_rules"`
+	StatusSet          []string          `json:"status_set"`
+	WhoDecidedRule     string            `json:"who_decided_rule"`
+	AIDeniedMarkers    []string          `json:"ai_denied_markers"`
+	WhySegments        []string          `json:"why_must_have_segments"`
+	ProposerNotDecider string            `json:"proposer_neq_decider"`
+	ExperienceDirs     []string          `json:"experience_dirs"`
+	OneThingTwoStates  string            `json:"one_thing_two_states"`
+	BatchRule          string            `json:"batch_rule"`
+	Index              string            `json:"index"`
+}
+
+// DecisionRecords —— 解出决策记录真源（解不动 / 缺关键格 ⇒ 报错，不吞）。
+func DecisionRecords() (*DecisionRecordSpec, error) {
+	var s DecisionRecordSpec
+	if err := json.Unmarshal(decisionRecordsRaw, &s); err != nil {
+		return nil, fmt.Errorf("contract: 决策记录真源解不动（decision-records.json 坏了？）: %w", err)
+	}
+	if len(s.RequiredFields) == 0 || len(s.StatusSet) == 0 || s.LandingDir == "" {
+		return nil, fmt.Errorf("contract: 决策记录真源缺关键格（required_fields/status_set/landing_dir 有一个是空的）—— 空真源 = 判据没有对象")
+	}
+	return &s, nil
+}
+
 // UnresolvedEntry —— 一个未定入口的取证一行（T-53 · §7.1 `P13` / §7.2 `U21`）。
 //
 // 本表**不拍归属**（那是人的活）：它只登记「谁在调我」的**逐行证据**，
