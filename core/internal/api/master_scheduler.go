@@ -406,7 +406,7 @@ func (s *MasterScheduler) runTask(task *Task) {
 	worktreeDir := ""
 	if task.Type == "internal" && task.Workdir != "" {
 		// v2.5.5 修复（2026-08-24）: 分支名去重——任务 ID 已含 task- 前缀——不再加
-		branch := sanitizeID(task.ID)
+		branch := worktreeBranchFor(task.ID)
 		wt, err := createWorktree(task.Workdir, branch)
 		if err != nil {
 			// v2.5.5 修复（2026-08-21 发现——重跑任务分支残留冲突）: 强删旧分支重试一次
@@ -661,6 +661,106 @@ func sanitizeID(id string) string {
 	return re.ReplaceAllString(id, "-")
 }
 
+// worktreeBranchFor —— worktree 分支名的**唯一算法**（§二十一 已红第 8 条 · 批 C 的 T-30）。
+//
+// 病灶（照已红第 8 条）：建树那一侧用 `sanitizeID(task.ID)`（得到 `internal-health-check-1787…`），
+// 而合并那一侧用 `"task-"+sanitizeID(task.ID)`（得到 `task-internal-health-check-1787…`）——
+// **两个算法** ⇒ `git merge <branch>` 找不到分支 ⇒ 合并失败，而任务产物**留在孤儿分支上**
+// （`git log --all --grep='任务产物（worktree 自动提交）'` 一堆条、`main` 一条都没有）。
+//
+// 口径：分支名只从这一处出。建树（`runTask` 与它的重试）、合并（`mergeWorktree`）、
+// 就地读报告（`gitShowReport`）、残留清理（`cleanupOneStaleWorktree`）**全走它**。
+// 另：`mergeWorktree` 现在连这个名字都不再收 —— 它从 worktree 目录名取（目录名就是分支名，
+// 见 `createWorktree` 的 `zerg-wt/<branch>` 布局），调用方**再也**传不进第二个名字。
+func worktreeBranchFor(taskID string) string {
+	return "task-" + sanitizeID(taskID)
+}
+
+// mergeRequest —— 合并请求（§二十一 已红第 8 条判据③「合并请求带 `base_sha`」的落点）。
+//
+//   - `BaseSHA` = **发起合并时 `main` 的 commit sha**（乐观锁：`main` 在合并前后不一致 ⇒ 拒合，
+//     免得把别人的改动顺手卷进来 —— 同 §九 M3 `C3` 的 `--expect=<旧值>` 语义）；
+//   - `HeadSHA` = 分支尖端的 sha（真正要并进来的那一条）；
+//   - `REQID`   = `MR-<base8>-<head8>`（日志与回执里带它，事后能对上「哪一次合并、基于哪一版」）。
+type mergeRequest struct {
+	Branch  string
+	BaseSHA string
+	HeadSHA string
+	REQID   string
+}
+
+// newMergeRequest 组一条合并请求（分支名从 worktree 目录名取 —— 唯一算法，见 worktreeBranchFor）。
+func newMergeRequest(repoDir, wtDir string) (mergeRequest, error) {
+	mr := mergeRequest{Branch: filepath.Base(wtDir)}
+	var err error
+	if mr.BaseSHA, err = gitOut(repoDir, "rev-parse", "main"); err != nil {
+		return mr, fmt.Errorf("merge request: 取 main 的 base_sha 失败：%w", err)
+	}
+	if mr.HeadSHA, err = gitOut(repoDir, "rev-parse", mr.Branch); err != nil {
+		return mr, fmt.Errorf("merge request: 分支 %q 不存在（建树侧与合并侧的分支名必须同一个算法）：%w", mr.Branch, err)
+	}
+	b, h := mr.BaseSHA, mr.HeadSHA
+	if len(b) > 8 {
+		b = b[:8]
+	}
+	if len(h) > 8 {
+		h = h[:8]
+	}
+	mr.REQID = "MR-" + b + "-" + h
+	return mr, nil
+}
+
+// guardBaseSHA —— 乐观锁：合并前再核一次 `main` 还是不是发起时那一版。
+// 不是 ⇒ 拒合（**不 merge、不删分支**）：产物仍在分支上，人可以重发起。
+func guardBaseSHA(repoDir, want string) error {
+	cur, err := gitOut(repoDir, "rev-parse", "main")
+	if err != nil {
+		return fmt.Errorf("guard base_sha: 读 main 失败：%w", err)
+	}
+	if cur != want {
+		return fmt.Errorf("guard base_sha: main 已被并发改动（base_sha=%s · now=%s）⇒ 拒合（重发起一次）", want, cur)
+	}
+	return nil
+}
+
+// gitOut 跑一条 git 命令并返回**去空白**的 stdout（失败带原文）。
+func gitOut(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %v\n%s", strings.Join(args, " "), err, tail(string(out), 300))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// repoRootForWorktree —— 从一个 worktree 目录**反推主仓根**（§二十一 已红第 8 条的第二个成因 · T-30）。
+//
+// ★ 为什么必须有它：老代码算的是 `filepath.Dir(filepath.Dir(wtDir))`，注释写「zerg-wt/<branch> → repo」——
+// 但 `createWorktree` 把树建在 `Dir(repo)/zerg-wt/<branch>`，于是 `Dir(Dir(wtDir))` 得到的是 **repo 的父目录**，
+// 不是 repo。`git -C <repo 的父目录> checkout main` 当场失败 ⇒ **合并从来没成功过**，产物全留在分支上
+// （判据②实测：全仓 28 条「任务产物（worktree 自动提交）」· 进 `main` 0 条 —— 分支名那半 + 这一半，两个病叠在一起）。
+//
+// 口径：不问路径长什么样，**问 git 自己** —— `rev-parse --git-common-dir` 在 worktree 里返回主仓的 `.git`，
+// 它的父目录就是主仓根；再用 `--show-toplevel` 复核一次（不一致 ⇒ 报错，fail-closed 不猜）。
+func repoRootForWorktree(wtDir string) (string, error) {
+	common, err := gitOut(wtDir, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", fmt.Errorf("repoRootForWorktree: 取 git-common-dir 失败（%s 是 worktree 吗）：%w", wtDir, err)
+	}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(wtDir, common)
+	}
+	repo := filepath.Clean(filepath.Dir(filepath.Clean(common)))
+	top, err := gitOut(repo, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", fmt.Errorf("repoRootForWorktree: 反推出的主仓根 %q 不是 git 顶层：%w", repo, err)
+	}
+	if filepath.Clean(top) != repo {
+		return "", fmt.Errorf("repoRootForWorktree: 反推不一致（--show-toplevel=%q · 反推=%q）⇒ 不猜、不合", top, repo)
+	}
+	return repo, nil
+}
+
 // createWorktree 建 git worktree（repo 同级——独立目录 + 分支）
 // v2.5.5 T2——任务 git 底座——内部任务隔离开发
 func createWorktree(repoDir, branch string) (string, error) {
@@ -675,8 +775,26 @@ func createWorktree(repoDir, branch string) (string, error) {
 // mergeWorktree 合并 worktree 分支回 main + 清理
 // v2.5.5 T2——任务完成 merge 回 main——删 worktree + 分支
 // v2.5.5 P1-1: merge 前检查报告文件（内部任务——没报告=假完成——不 merge）
-func mergeWorktree(wtDir, branch string) error {
-	repoDir := filepath.Dir(filepath.Dir(wtDir)) // zerg-wt/<branch> → repo
+// mergeWorktree 合并 worktree 分支回 main + 清理
+// v2.5.5 T2——任务完成 merge 回 main——删 worktree + 分支
+// v2.5.5 P1-1: merge 前检查报告文件（内部任务——没报告=假完成——不 merge）
+//
+// ★ 2026-09-20 批 C · T-30 改（§二十一 已红第 8 条「两套分支名算法 ⇒ 产物落孤儿分支」）——
+// 三条纪律，每条都对着这条已红的一个成因：
+//
+//	① **不收分支名**（签名由 `(wtDir, branch)` 变成 `(wtDir)`）：分支名从 `filepath.Base(wtDir)` 取。
+//	   `createWorktree` 把树建在 `zerg-wt/<branch>` ⇒ **目录名就是分支名**，这是构造上的单一真源；
+//	   调用方**再也**传不进第二个名字（建树用 `sanitizeID(id)`、合并用 `"task-"+sanitizeID(id)`
+//	   那一对就是这样漂起来的 —— 漂的代价是一批产物落在没人看的孤儿分支上）。
+//	② **合并请求带 `base_sha`**：进 main 之前核一次「main 还是不是发起时那一版」，不是 ⇒ **拒合**
+//	   （不 merge、不删分支；产物留在分支上可重发起，比悄悄并进去干净）。
+//	③ **先证明产物真进了 main，再删分支**：`git merge-base --is-ancestor <branch> main` 不过 ⇒
+//	   返回错误并**不删分支**（孤儿分支的成因从来不是「合并不上」，是「合并不上还照删」）。
+func mergeWorktree(wtDir string) error {
+	repoDir, err := repoRootForWorktree(wtDir)
+	if err != nil {
+		return err
+	}
 	// P1-1 验证: 报告文件存在（内部任务——防假完成）
 	// v2.5.5 P1-6 修复: 只认任务报告名（internal-task-report.md 等）——不认 README.md（worktree 自带项目文件——误判）
 	reportExists := false
@@ -708,24 +826,39 @@ func mergeWorktree(wtDir, branch string) error {
 		// 没有改动（commit 失败——nothing to commit）不算错——继续
 		log.Printf("   (worktree has no new changes — skipping commit — %s)\n", tail(string(out), 80))
 	}
+	// 0′. 合并请求（判据③）：分支名从目录名取 + base_sha = 现在的 main
+	mr, err := newMergeRequest(repoDir, wtDir)
+	if err != nil {
+		return err
+	}
+	log.Printf("📨 merge request %s: branch=%s base_sha=%s head_sha=%s\n", mr.REQID, mr.Branch, mr.BaseSHA, mr.HeadSHA)
 	// 1. 切回 main + merge 分支
 	cmd := exec.Command("git", "-C", repoDir, "checkout", "main")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("checkout main failed: %v\n%s", err, tail(string(out), 300))
 	}
-	cmd = exec.Command("git", "-C", repoDir, "merge", "--no-edit", branch)
+	// 1′. 乐观锁：切回 main 之后**再核一次** base_sha（切之前可能已被并发写）
+	if err := guardBaseSHA(repoDir, mr.BaseSHA); err != nil {
+		return err
+	}
+	cmd = exec.Command("git", "-C", repoDir, "merge", "--no-edit", mr.Branch)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("merge %s failed: %v\n%s", branch, err, tail(string(out), 300))
+		return fmt.Errorf("merge %s failed (base_sha=%s): %v\n%s", mr.Branch, mr.BaseSHA, err, tail(string(out), 300))
+	}
+	// 1″. 先证明真进了 main（product 上了 main 才允许删分支）
+	if _, err := gitOut(repoDir, "merge-base", "--is-ancestor", mr.Branch, "main"); err != nil {
+		return fmt.Errorf("merge %s 报成功但 %s 不是 main 的祖先 ⇒ **不删分支**（孤儿分支就是这么来的）：%v", mr.REQID, mr.Branch, err)
 	}
 	// 2. 删 worktree + 分支
 	cmd = exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", wtDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("worktree remove failed: %v\n%s", err, tail(string(out), 300))
 	}
-	cmd = exec.Command("git", "-C", repoDir, "branch", "-d", branch)
+	cmd = exec.Command("git", "-C", repoDir, "branch", "-d", mr.Branch)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("branch -d failed: %v\n%s", err, tail(string(out), 300))
 	}
+	log.Printf("✅ merge %s 完成：%s → main（产物已确证在 main 上，分支已删）\n", mr.REQID, mr.Branch)
 	return nil
 }
 
@@ -1011,7 +1144,7 @@ func cleanupOneStaleWorktree(repoDir, wtDir, branch string) bool {
 		}
 	}
 	if reportExists {
-		if err := mergeWorktree(wtDir, branch); err != nil {
+		if err := mergeWorktree(wtDir); err != nil {
 			log.Printf("  stale %s merge failed — forcing cleanup: %v\n", branch, err)
 			exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", wtDir).Run()
 			exec.Command("git", "-C", repoDir, "branch", "-D", branch).Run()
