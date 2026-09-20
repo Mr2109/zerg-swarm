@@ -17,6 +17,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/contract"
@@ -196,3 +197,105 @@ func ReadEvidenceSheetForTest(path string) (*EvidenceSheetForTest, error) {
 	}
 	return out, nil
 }
+
+// ---- T-60：AI 边界（`core/internal/contract/ai-boundary.json`）的**只读桥** ----
+// 口径同本文件头部 ③：桥上的符号直接指真源，不另写副本。
+
+// AIBoundarySpecForTest AI 边界真源的一格。
+type AIBoundarySpecForTest struct {
+	SubjectKinds      []string
+	Ports             []string
+	EnvPrefix         string
+	ScanPaths         []string
+	ScanExcludeSuffix []string
+	DoorWriteKeywords []string
+	FileDropDoors     []string
+	SudoDetail        string
+}
+
+// AIBoundarySpecOfForTest 取 AI 边界真源。
+func AIBoundarySpecOfForTest() (AIBoundarySpecForTest, error) {
+	s, err := contract.AIBoundary()
+	if err != nil {
+		return AIBoundarySpecForTest{}, err
+	}
+	doors := []string{}
+	for _, d := range s.FileDropDoors {
+		doors = append(doors, d.What+"|"+d.Writer)
+	}
+	return AIBoundarySpecForTest{
+		SubjectKinds: s.SubjectKinds, Ports: s.ModelSideForbidden.Ports,
+		EnvPrefix: s.ModelSideForbidden.EnvPrefix, ScanPaths: s.ModelSideForbidden.ScanPaths,
+		ScanExcludeSuffix: s.ModelSideForbidden.ScanExcludeSuffixes,
+		DoorWriteKeywords: s.DoorWriteKeywords, FileDropDoors: doors, SudoDetail: s.Sudo.Detail,
+	}, nil
+}
+
+// SudoRefusalForTest 命令面的 `sudo` 拒收口（真源判据、调度前判）。
+func SudoRefusalForTest(args []string) (string, bool) { return sudoRefusal(args) }
+
+// ModelSideScanForTest 扫真源声明的模型侧面 ⇒ (命中行, 扫到的文件数)。
+func ModelSideScanForTest(repoRoot string) ([]string, int, error) {
+	spec, err := contract.AIBoundary()
+	if err != nil {
+		return nil, 0, err
+	}
+	vs, scanned, err := modelSideViolations(repoRoot, &spec.ModelSideForbidden)
+	if err != nil {
+		return nil, scanned, err
+	}
+	out := []string{}
+	for _, v := range vs {
+		out = append(out, fmt.Sprintf("%s:%d %s", v.File, v.Line, v.Text))
+	}
+	return out, scanned, nil
+}
+
+// ModelSideScanRawForTest 对**给定**目录与令牌扫一遍（负控用合成夹具）。
+func ModelSideScanRawForTest(root string, paths []string, ports []string, prefix string,
+	exclude []string) ([]string, int, error) {
+	spec := contract.ModelSideScan{Ports: ports, EnvPrefix: prefix, ScanPaths: paths,
+		ScanExcludeSuffixes: exclude}
+	vs, scanned, err := modelSideViolations(root, &spec)
+	if err != nil {
+		return nil, scanned, err
+	}
+	out := []string{}
+	for _, v := range vs {
+		out = append(out, fmt.Sprintf("%s:%d %s", v.File, v.Line, v.Text))
+	}
+	return out, scanned, nil
+}
+
+// DoorWriteViolationsForTest 真命令树上的口子写面命中（判据③① 的机检面）。
+func DoorWriteViolationsForTest() ([]string, error) {
+	spec, err := contract.AIBoundary()
+	if err != nil {
+		return nil, err
+	}
+	return doorWriteViolations(spec), nil
+}
+
+// DoorWriteViolationsRawForTest 喂合成的命令进来（负控：证明这一格能红）。
+func DoorWriteViolationsRawForTest(path, summary, usage string, args []string) ([]string, error) {
+	spec, err := contract.AIBoundary()
+	if err != nil {
+		return nil, err
+	}
+	return doorWriteViolationsFor(spec, []doorCmd{{Path: path, Summary: summary, Usage: usage, Args: args}}), nil
+}
+
+// DoctorDoorItemNamesForTest doctor 的两段口子清单的名字（`P-101` ②：默认不静默）。
+func DoctorDoorItemNamesForTest() []string {
+	out := []string{}
+	for _, it := range doctorSkillItems() {
+		out = append(out, it["name"])
+	}
+	for _, it := range doctorMCPItems() {
+		out = append(out, it["name"])
+	}
+	return out
+}
+
+// RepoRootForTest 仓根解析口（模型面扫描要用同一份推导，不另写一份）。
+func RepoRootForTest() string { return repoRoot() }

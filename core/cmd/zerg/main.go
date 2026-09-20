@@ -85,6 +85,12 @@ func cancelRunningChild() {
 // run 是唯一入口的实现面：解析旗标 → 查命令树 → 执行 → 把码原样返回。
 // 拆出 run 是为了让契约测试能用 `package main_test`（黑盒）驱动，不必起进程。
 func run(args []string, stdout, stderr io.Writer) int {
+	// ── §十二 `P-103` 定案（批 E · T-60）：命令面**一律不接受 `sudo`** ───────────────────
+	// 位置：**调度之前**（也在命令树解析之前）—— 命令面是「人与 AI 只敲命令」的唯一入口，
+	// 入口都不收，才谈得上「一律」。子端侧的第二道在 `rules.yaml` 的 `terminal.args_deny`。
+	if hit, ok := sudoRefusal(args); ok {
+		return writeSudoRefusal(&invocation{orig: append([]string{}, args...)}, hit, stdout, stderr)
+	}
 	inv, err := parseInvocation(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
@@ -908,8 +914,8 @@ func init() {
 		{
 			path:     []string{"dev", "proposal"},
 			kind:     "Proposal",
-			summary:  "提案件通道：只产可审查物（new|list|show）· 目标必须回指既有编号",
-			usage:    "zerg dev proposal new --title <题> --target <待办编号> --goal <目标> --evidence <出处> --rollback <退点> [--criterion <判据>] [--by <提出者>]",
+			summary:  "提案件通道：只产可审查物（new|list|show）· 目标必须回指既有编号 · 「提 ≠ 批」两对字段（subject/approver）",
+			usage:    "zerg dev proposal new --title <题> --target <待办编号> --goal <目标> --evidence <出处> --rollback <退点> [--criterion <判据>] [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human]",
 			args:     []string{"动作：new | list | show", "提案 id（只 show 要）"},
 			fields:   proposalFields,
 			endpoint: "",
@@ -1366,6 +1372,11 @@ func valueFlagName(a string) string {
 	// ★ 同上面 `--out` 的教训：用法串里写着的旗标必须真能被解析，否则命令等于不可用。
 	switch a {
 	case "--scope", "--results", "--code-sha", "--layer", "--outdir":
+		return a
+	}
+	// 授权面旗标（§九 M18 `C4` · 批 E · T-60）：提出者 / 批准者**成对**出现（「提 ≠ 批」两个字段）。
+	switch a {
+	case "--subject", "--subject-kind", "--egg-id", "--approver", "--approver-kind":
 		return a
 	}
 	return ""

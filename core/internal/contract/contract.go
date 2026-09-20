@@ -37,6 +37,9 @@ var receiptRaw []byte
 //go:embed dev-candidate.json
 var devCandidateRaw []byte
 
+//go:embed ai-boundary.json
+var aiBoundaryRaw []byte
+
 // ReceiptSpec —— 交接回执的真源（§20.3 H3 · §20.1 步 9 · §十二 `P-119`/`P-120` · 开工单 T-61）。
 type ReceiptSpec struct {
 	Schema           string   `json:"schema"`
@@ -374,4 +377,62 @@ func (s *DevCandidateSpec) StepIndex(action string) int {
 		}
 	}
 	return -1
+}
+
+// AIBoundarySpec —— AI 的边界与授权真源（§九 M18 · §十二 `P-098`–`P-103` · 开工单 T-60）。
+//
+// 一句话：把四件事落成**可机检的闭集** —— ① 「提 ≠ 批」两个字段 + 谁不许批；
+// ② 模型侧 argv/环境里零控制面端口与令牌；③ 「放文件即生效」两处口子的收口；④ `sudo` 的处置。
+type AIBoundarySpec struct {
+	Schema             string         `json:"schema"`
+	Note               string         `json:"note"`
+	SubjectKinds       []string       `json:"subject_kinds"`
+	SubjectKindRule    string         `json:"subject_kind_rule"`
+	ProposeJudgeRule   string         `json:"propose_judge_rule"`
+	ModelSideForbidden ModelSideScan  `json:"model_side_forbidden"`
+	FileDropDoors      []FileDropDoor `json:"file_drop_doors"`
+	DoorWriteKeywords  []string       `json:"door_write_keywords"`
+	DoorWriteRule      string         `json:"door_write_rule"`
+	Sudo               SudoVerdict    `json:"sudo"`
+	Boundary           string         `json:"boundary"`
+}
+
+// ModelSideScan —— 模型侧禁令牌的扫描面（paths 是**相对仓根**的目录）。
+type ModelSideScan struct {
+	Ports               []string `json:"ports"`
+	EnvPrefix           string   `json:"env_prefix"`
+	ScanPaths           []string `json:"scan_paths"`
+	ScanExcludeSuffixes []string `json:"scan_exclude_suffixes"`
+	Rule                string   `json:"rule"`
+	MatchMode           string   `json:"match_mode"`
+}
+
+// FileDropDoor —— 一处「放文件即生效」的口子与它的收口。
+type FileDropDoor struct {
+	What       string `json:"what"`
+	PathSource string `json:"path_source"`
+	Writer     string `json:"writer"`
+	Rule       string `json:"rule"`
+	ListFace   string `json:"list_face"`
+}
+
+// SudoVerdict —— `sudo` 的处置定案（`P-103`）。
+type SudoVerdict struct {
+	Verdict       string `json:"verdict"`
+	Detail        string `json:"detail"`
+	MatchedRule   string `json:"matched_unless"`
+	RulesYAMLNote string `json:"rules_yaml_note"`
+}
+
+// AIBoundary —— 解出 AI 边界真源（解不动 / 任一关键格空 ⇒ 报错，不吞）。
+func AIBoundary() (*AIBoundarySpec, error) {
+	var s AIBoundarySpec
+	if err := json.Unmarshal(aiBoundaryRaw, &s); err != nil {
+		return nil, fmt.Errorf("contract: AI 边界真源解不动（ai-boundary.json 坏了？）: %w", err)
+	}
+	if len(s.SubjectKinds) == 0 || len(s.ModelSideForbidden.Ports) == 0 ||
+		len(s.ModelSideForbidden.ScanPaths) == 0 || len(s.FileDropDoors) == 0 || s.Sudo.Detail == "" {
+		return nil, fmt.Errorf("contract: AI 边界真源缺关键格（subject_kinds / model_side_forbidden / file_drop_doors / sudo 有一个是空的）")
+	}
+	return &s, nil
 }

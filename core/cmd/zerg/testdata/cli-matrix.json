@@ -38,6 +38,17 @@
    "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
   },
   {
+   "id": "version#sudo 一律不接受",
+   "command": "version",
+   "argv": [
+    "version",
+    "sudo"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "命令面**一律不接受 `sudo`**（§十二 P-103 定案 · 开工单 T-60 判据④）：调度**之前**判，退 2 · stdout 0 字节"
+  },
+  {
    "id": "help#未知旗标",
    "command": "help",
    "argv": [
