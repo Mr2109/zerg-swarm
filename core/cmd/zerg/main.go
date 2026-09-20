@@ -199,6 +199,15 @@ func init() {
 			endpoint: "GET /api/fleet/models",
 			run:      cmdModelLs,
 		},
+		{
+			path:     []string{"help", "export"},
+			kind:     "HelpExport",
+			summary:  "把命令树导出 markdown 进 Zerg-内部文档（产物 · 勿手改）",
+			usage:    "zerg help export [--out <目录>] [--json <字段>]",
+			fields:   []string{"path", "commands", "dangerous", "schema"},
+			endpoint: "",
+			run:      cmdHelpExport,
+		},
 		// ---- 批 A · S3 门禁直通四条（**只转发、不翻译** · §6.3 S3 判据③）----
 		{
 			path:        []string{"gate", "ls"},
