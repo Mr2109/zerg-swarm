@@ -1002,7 +1002,7 @@ func init() {
 		{
 			path:    []string{"dev", "test"},
 			summary: "跑候选件的测试集（危险 D2 · 本版未开放；**判据先于自动化**）",
-			usage:   "zerg dev test --candidate <候选 id> [--scope go|rust|ui|all] [--outdir D] [--yes] [--dry-run]",
+			usage:   "zerg dev test [--candidate <候选 id> | --pkg <包> [--run <正则>]] [--scope go|rust|ui|all] [--outdir D] [--yes] [--dry-run]",
 			args:    []string{"候选 id"},
 			danger:  &dangerSpec{dangerD2, "候选 id", "在候选区跑测试集（底层 = make test + 门禁既有步，不新立判据）", "§17.4 第 3 条 · §17.7 次序 · 开工单 T-58"},
 			run:     cmdDevTest,
@@ -1470,6 +1470,11 @@ func valueFlagName(a string) string {
 	// 回收面旗标（§十五.2 · 批 D · T-54）：`--min-age-days` 是 `RC6` 的**显式**龄阈值（不许魔数）。
 	switch a {
 	case "--min-age-days", "--only":
+		return a
+	}
+	// 测试作用域旗标（缺口面 P0-3 · 2026-09-21）：`dev test` 只跑相关那几个测的两枚旗标。
+	switch a {
+	case "--pkg", "--run":
 		return a
 	}
 	// 门禁解释/标定旗标（缺口面 P0-5/P0-8 · 2026-09-21）：矩阵导出落点与重复趟数。
