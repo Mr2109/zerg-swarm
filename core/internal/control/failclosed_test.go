@@ -7,6 +7,7 @@
 package control
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -107,6 +108,146 @@ func caToolNames(t *testing.T, dir string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// gateCheckCallSite —— 全仓一个 `gate.Check("<名>"` 调用点的落点（人读用：file:line + 那一行的原文）。
+type gateCheckCallSite struct {
+	Name string
+	At   string
+	Line string
+}
+
+// scanGateCheckCallSites —— **全仓**扫 `gate.Check("<名>"(` 的调用点（**不只** CA 包）。
+//
+// 为什么必须扩到全仓：§二十一 已红第 9 条的漏法在 2026-09-21 又出了一遍 —— 对话层的
+// `delete_file` / `download` **一个闸门都没有**（它们连问都没来问门），而当时那条棘轮
+// 只看 `core/internal/agent/*.go` 一处 ⇒ **它在别的地方漏，这条测试看不见**。
+// 口径：排除表与 §十七/§二十一 各处的复跑命令同一套（按目录名窄排除），只看非测试 .go。
+func scanGateCheckCallSites(t *testing.T, root string) []gateCheckCallSite {
+	t.Helper()
+	re := regexp.MustCompile(`gate\.Check\("([A-Za-z0-9_]+)"`)
+	skip := map[string]bool{"target": true, "node_modules": true, "dist": true, "bin": true,
+		"vendor": true, "data": true, ".git": true, ".venv": true, "venv": true, ".build": true}
+	var out []gateCheckCallSite
+	err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if skip[info.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		for i, ln := range strings.Split(string(b), "\n") {
+			for _, m := range re.FindAllStringSubmatch(ln, -1) {
+				rel, _ := filepath.Rel(root, p)
+				out = append(out, gateCheckCallSite{
+					Name: m[1],
+					At:   fmt.Sprintf("%s:%d", filepath.ToSlash(rel), i+1),
+					Line: strings.TrimSpace(ln),
+				})
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("扫全仓 gate.Check 调用点：%v", err)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].At < out[j].At
+	})
+	return out
+}
+
+// TestEveryGateCheckCallSiteIsRegistered —— **判据：凡有 `gate.Check("<名>"` 调用点的名字，
+// 必须在 rules.yaml 在册**（在册 = 判定命中某条规则，不是落到默认档）。
+//
+// 这条钉的正是 2026-09-21 那种漏法：**新增一个调用点、忘了登记** ⇒ 默认档 `block` 会把它
+// 静默拦掉（工具当场不可用，且不报错）；或者更糟 —— 反过来「名字登记了、调用点没写」
+// 时，谁也说不清这个闸门到底有没有接电。两个方向都得有真源上的答案。
+func TestEveryGateCheckCallSiteIsRegistered(t *testing.T) {
+	root := repoRoot(t)
+	path := filepath.Join(root, "core", "internal", "control", "rules.yaml")
+	g, err := NewGateFromFile(path)
+	if err != nil {
+		t.Fatalf("装载真规则表：%v", err)
+	}
+	sites := scanGateCheckCallSites(t, root)
+	if len(sites) == 0 {
+		t.Fatalf("空转：全仓扫不到任何 `gate.Check(\"…\"` 调用点（判据不可判）")
+	}
+	names := map[string][]gateCheckCallSite{}
+	for _, s := range sites {
+		names[s.Name] = append(names[s.Name], s)
+	}
+	var sorted []string
+	for n := range names {
+		sorted = append(sorted, n)
+	}
+	sort.Strings(sorted)
+	for _, n := range sorted {
+		d := g.Check(n, "", "zerg")
+		if d.Rule == "" {
+			where := make([]string, 0, len(names[n]))
+			for _, s := range names[n] {
+				where = append(where, s.At)
+			}
+			t.Errorf("调用点 %s 用的工具名 %q **不在 rules.yaml 在册**（落到了默认档 %s）⇒ "+
+				"按默认档 block 它会被静默拦掉 —— 要么补登记、要么摘掉调用点。落点：%v",
+				n, n, d.Action, where)
+		}
+	}
+	t.Logf("全仓 gate.Check 调用点 %d 处 · 工具名 %d 个全在册：%v", len(sites), len(sorted), sorted)
+}
+
+// TestDangerousChatToolsAreGated —— **成对判据**：对话层两个危险工具
+// （`delete_file` / `download`）**必须**（a）在对话层有 `gate.Check` 调用点、
+// （b）在 rules.yaml 在册且**不是 `allow`**（档位 = 与 `terminal` 同档的 `require_approval`）。
+//
+// 为什么单独钉一遍：这条正是 2026-09-21 补的那个窟窿 —— 全仓 10 个 `gate.Check` 名字里
+// 没有这两件，它们在调用点**直接执行**。上面那条判据只保证「有调用点 ⇒ 在册」，
+// 管不住「调用点被删掉」这个方向；本条的 (a) 补上这个方向。
+func TestDangerousChatToolsAreGated(t *testing.T) {
+	root := repoRoot(t)
+	g, err := NewGateFromFile(filepath.Join(root, "core", "internal", "control", "rules.yaml"))
+	if err != nil {
+		t.Fatalf("装载真规则表：%v", err)
+	}
+	sites := scanGateCheckCallSites(t, root)
+	for _, tool := range []string{"delete_file", "download"} {
+		var at []string
+		for _, s := range sites {
+			if s.Name == tool && strings.HasPrefix(s.At, "core/internal/chat/") {
+				at = append(at, s.At)
+			}
+		}
+		if len(at) == 0 {
+			t.Errorf("对话层危险工具 %q **一个 gate.Check 调用点都没有**（就是零闸门那条老形态）；"+
+				"它必须在调用点问门：core/internal/chat/chat_tool_extra.go", tool)
+		}
+		d := g.Check(tool, "", "zerg")
+		if d.Rule == "" {
+			t.Errorf("%q 不在 rules.yaml 在册（默认档 %s）", tool, d.Action)
+			continue
+		}
+		if d.Action == ActionAllow {
+			t.Errorf("%q 在 rules.yaml 是 %q —— 危险工具不许默许放行（应与 `terminal` 同档 %q）；"+
+				"要放行走**人签的批准件**（core/internal/chat/chat_tool_gate.go），不是改表成 allow",
+				tool, d.Action, ActionRequireApproval)
+		}
+		t.Logf("%q：调用点 %v · 档位 %s（rule=%s）", tool, at, d.Action, d.Rule)
+	}
 }
 
 // TestGate_MissingDefaultIsBlock —— 负控：**规则文件缺 default** ⇒ 拦（不是放行）。
