@@ -50,11 +50,12 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 		if !requireFields(inv, stderr) {
 			return exitFail
 		}
-		return selectJSON(stdout, stderr, inv.path, inv.fields, map[string]string{
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
 			"path":      path,
 			"commands":  fmt.Sprintf("%d", nCmd),
 			"dangerous": fmt.Sprintf("%d", nDanger),
 			"schema":    contractSchema,
+			"layers":    layerCounts(), // §九 M10 X1：三档层级的机器可读计数（space 恒为 0）
 		})
 	}
 	fmt.Fprintln(stdout, path) // stdout 只出结果：写哪儿了
@@ -96,7 +97,8 @@ func renderHelpMarkdown() string {
 	fmt.Fprintf(&b, "> 契约：`zerg help` / `zerg help exit-codes` / `zerg help config` / `zerg help dangerous`\n")
 	fmt.Fprintf(&b, "> 本版：已开放 **%d** 条 · 危险动作 **%d** 条（未开放）\n\n", open, danger)
 	fmt.Fprintf(&b, "## 一、命令清单（已开放 · 名字逐字来自命令树）\n\n")
-	b.WriteString("| 命令 | 说明 | `--json` 字段 | 投影的远端端点 |\n|---|---|---|---|\n")
+	fmt.Fprintf(&b, "> 茧壁层级（§九 M10 `X1` · 闭集三值）：%s（`space` 恒为 0 —— 空间内零命令面）\n\n", layerCounts())
+	b.WriteString("| 命令 | 说明 | `--json` 字段 | 投影的远端端点 | 茧壁层级 |\n|---|---|---|---|---|\n")
 	for _, c := range catalog() {
 		if c.danger != nil {
 			continue
@@ -109,16 +111,16 @@ func renderHelpMarkdown() string {
 		if f == "" {
 			f = "（无机器面）"
 		}
-		fmt.Fprintf(&b, "| `%s` | %s | %s | %s |\n", "zerg "+strings.Join(c.path, " "), c.summary, f, ep)
+		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | `%s` |\n", "zerg "+strings.Join(c.path, " "), c.summary, f, ep, c.layer)
 	}
 	fmt.Fprintf(&b, "\n## 二、危险动作（已登记 · **本版未开放**）\n\n")
-	b.WriteString("| 命令 | 档 | 三态 | `--confirm` 的目标 | 它会动什么 | 出处 |\n|---|---|---|---|---|---|\n")
+	b.WriteString("| 命令 | 档 | 三态 | `--confirm` 的目标 | 它会动什么 | 出处 | 茧壁层级 |\n|---|---|---|---|---|---|---|\n")
 	for _, c := range catalog() {
 		if c.danger == nil {
 			continue
 		}
-		fmt.Fprintf(&b, "| `%s` | %s | --dry-run · --confirm · --yes | %s | %s | %s |\n",
-			"zerg "+strings.Join(c.path, " "), c.danger.Level, c.danger.Target, c.danger.Effect, c.danger.Source)
+		fmt.Fprintf(&b, "| `%s` | %s | --dry-run · --confirm · --yes | %s | %s | %s | `%s` |\n",
+			"zerg "+strings.Join(c.path, " "), c.danger.Level, c.danger.Target, c.danger.Effect, c.danger.Source, c.layer)
 	}
 	b.WriteString("\n## 三、退码表（唯一真源）\n\n")
 	b.WriteString("| 码 | 名 | 语义 | 可重试性 |\n|---|---|---|---|\n")

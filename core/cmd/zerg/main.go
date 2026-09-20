@@ -215,9 +215,11 @@ type command struct {
 	idem     *idemSpec // M4 幂等四字段（没显式写的在 seedIdem 里按规则派生）
 	// 群级只读（§十二 P-066）：没有目标时「读全群」是允许的；**其余命令无目标 ⇒ exit 2**。
 	groupReadOnly bool
-	opened        bool // 本版是否可执行（危险动作在批 A 一律未开放 · §6.2 零写操作）
-	passthrough   bool // 原样透传型（gate 族）：旗标与位置参数逐字交给被包的脚本
-	run           func(*invocation, io.Writer, io.Writer) int
+	// 茧壁层级标记（§九 M10 `X1`：闭集 host/node/space；没显式写的按族派生）
+	layer       string
+	opened      bool // 本版是否可执行（危险动作在批 A 一律未开放 · §6.2 零写操作）
+	passthrough bool // 原样透传型（gate 族）：旗标与位置参数逐字交给被包的脚本
+	run         func(*invocation, io.Writer, io.Writer) int
 }
 
 // commands —— 批 A（S1 起）登记的只读面；后续各票在此续行。
@@ -356,6 +358,17 @@ func init() {
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdGate,
+		},
+		// ---- 批 B · T-19 茧壁：`agent ping` 默认经主控、`--direct` 才直连（§十五.4 丙案）----
+		{
+			path:     []string{"agent", "ping"},
+			kind:     "AgentPing",
+			summary:  "探活一台机（默认经主控；`--direct` 直连且回显 via）",
+			usage:    "zerg agent ping <机器名> [--direct <host:port>] [--json <字段>]",
+			args:     []string{"机器名"},
+			fields:   []string{"machine", "healthy", "code_version", "code_sha", "last_seen", "via"},
+			endpoint: "GET /api/fleet/status（默认档）",
+			run:      cmdAgentPing,
 		},
 		// ---- 批 B · T-17 事件面（§九 M1）：**唯一名字** `zerg watch` ----
 		{
@@ -580,6 +593,8 @@ func init() {
 			c.groupReadOnly = true
 		}
 	}
+	// 茧壁层级标记（§九 M10 `X1`）：与四字段同一处补齐。
+	seedLayer()
 	// M4 四字段：命令树建完立刻补齐（每条命令都有四格 · 一条不漏）。
 	seedIdem()
 }
@@ -689,6 +704,9 @@ type invocation struct {
 	// 内容协商（§九 M1 W12）：`--accept <媒体类型>`
 	acceptWant string
 
+	// 茧壁直连（§十五.4 例外清单 F-2 / 丙案：默认经主控，直连要显式）
+	direct bool
+
 	// `--quick`：贵项跳过并记 SKIP（§十二 P-040）
 	quick bool
 
@@ -766,6 +784,8 @@ func parseInvocation(args []string) (*invocation, error) {
 			}
 		case strings.HasPrefix(a, "--accept="):
 			inv.acceptWant = strings.TrimPrefix(a, "--accept=")
+		case a == "--direct":
+			inv.direct = true
 		case a == "--quick":
 			inv.quick = true
 		case a == "--wait":
