@@ -24,12 +24,19 @@ import (
 const progName = "zerg"
 
 // 退出码（契约 §三 主表；完整表与占号纪律由 `zerg help exit-codes` 自描述）。
+// 批 B 启用三档（原「已挂号未启用」· §十二 P-013 ②③ 与 §九 M7/M8 的落地）：
+// `10` 资源不足 · `11` 超时 · `12` 不可达 · `14` 冲突/被占（**不许**再用 `507` 表达）。
 const (
-	exitOK      = 0
-	exitFail    = 1 // 一般失败
-	exitUsage   = 2 // 用法错 / 不给结论
-	exitAuth    = 4 // 未认证
-	exitBlocked = 8 // 有 BLOCKED
+	exitOK          = 0
+	exitFail        = 1   // 一般失败
+	exitUsage       = 2   // 用法错 / 不给结论
+	exitAuth        = 4   // 未认证（403 与它并码、kind 分家）
+	exitBlocked     = 8   // 有 BLOCKED
+	exitResource    = 10  // 资源不足
+	exitTimeout     = 11  // 超时
+	exitUnreachable = 12  // 不可达（打不到主控）
+	exitConflict    = 14  // 冲突 / 被占
+	exitInterrupted = 130 // 人打断（Ctrl-C）
 )
 
 func main() {
@@ -80,9 +87,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 		return exitUsage
 	}
-	// 没有人面/机器面的机器面表 ⇒ 不认 --json（用法错 2，不是 1）：1 是「给了 --json 但没给字段」
+	// 没有机器面字段表的**说明面** ⇒ 不认 --json（用法错 2，不是 1）：1 是「给了 --json 但没给字段」
 	// 那一档的码（§4.1 K2），两者不许混。
-	if inv.jsonGiven && len(cmd.fields) == 0 {
+	// 例外：危险动作**没有结果面**（只有 `--dry-run` 的计划件），但它们的**错误面**必须机器可读
+	// （§九 M7：AI 自愈靠 kind）⇒ 危险动作收 `--json`，只当错误面用。
+	if inv.jsonGiven && len(cmd.fields) == 0 && cmd.danger == nil {
 		fmt.Fprintf(stderr, "%s: `%s %s` 没有 `--json` 字段表（它是说明面）\n", progName, progName, strings.Join(cmd.path, " "))
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 		return exitUsage
@@ -97,14 +106,51 @@ func run(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		if !known {
-			fmt.Fprintf(stderr, "%s: 认不得的契约主号 %q —— 本版只认 %s（§九 M6 · §十二 P-026）\n",
-				progName, inv.schemaWant, schemaMajorSet())
+			msg := fmt.Sprintf("认不得的契约主号 %q —— 本版只认 %s（§九 M6 · §十二 P-026）", inv.schemaWant, schemaMajorSet())
+			inv.setErr("usage", "bad_schema_major", msg)
+			fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 			fmt.Fprintf(stderr, "不认的主号**不许静默降级**成 v%d（§九 M15「不兼容即明确报错」）\n", contractMajor)
 			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+			emitErrIfJSON(inv, stdout, cmd)
 			return exitUsage
 		}
 	}
-	return cmd.run(inv, stdout, stderr)
+	cw := &countingWriter{w: stdout}
+	rc := cmd.run(inv, cw, stderr)
+	// `--json <字段>` 的失败路径：把**机器可读**的 `error` 块挂进包封（§九 M7）——
+	// 只在命令自己没往 stdout 写结果时补（写了结果就不改它，避免两个面打架）。
+	if rc != exitOK && inv.jsonGiven && cw.n == 0 && (len(inv.fields) > 0 || cmd.danger != nil) {
+		emitErrIfJSON(inv, stdout, cmd)
+	}
+	return rc
+}
+
+// countingWriter 记下命令往 stdout 写了多少字节（失败时决定能不能补错误包封）。
+type countingWriter struct {
+	w io.Writer
+	n int
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += n
+	return n, err
+}
+
+// emitErrIfJSON 在 `--json <字段>` 的失败路径上补错误包封（没 fields 且不是危险动作就不补 ——
+// 那是 K2 的 0 字节档；危险动作没有结果面，`--json` 在它上面只作错误面）。
+func emitErrIfJSON(inv *invocation, stdout io.Writer, cmd *command) {
+	if !inv.jsonGiven {
+		return
+	}
+	if len(inv.fields) == 0 && (cmd == nil || cmd.danger == nil) {
+		return
+	}
+	e := inv.err
+	if e == nil {
+		e = &cliError{Kind: kindForExitCode(exitFail), Message: "（命令未报出 kind，按退码兜底）"}
+	}
+	emitErrEnvelope(stdout, cmd, e)
 }
 
 // ---- 命令树（真源：帮助文本、markdown 导出、别名解析都从这里出，不许旁写一份）----
@@ -544,6 +590,9 @@ type invocation struct {
 	// 契约主号（§十二 P-026：消费侧拒绝不认的 schema 主号 —— `--schema zerg/v2` ⇒ 2）
 	schemaWant  string
 	schemaGiven bool
+
+	// 本次调用被报出来的那个错（§九 M7：`--json` 失败时挂进包封的 `error` 块）。
+	err *cliError
 }
 
 func parseInvocation(args []string) (*invocation, error) {
@@ -782,9 +831,12 @@ func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 		case "contract":
 			fmt.Fprint(stdout, helpContract())
 			return exitOK
+		case "errors":
+			fmt.Fprint(stdout, helpErrors())
+			return exitOK
 		default:
 			fmt.Fprintf(stderr, "%s: 未知帮助主题 %q\n", progName, inv.args[0])
-			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous · contract\n")
+			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous · contract · errors\n")
 			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 			return exitUsage
 		}

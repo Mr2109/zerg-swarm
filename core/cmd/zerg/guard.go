@@ -35,42 +35,97 @@ func cmdGuarded(inv *invocation, stdout, stderr io.Writer) int {
 	spec := cmd.danger
 	path := strings.Join(cmd.path, " ")
 	target := ""
-	if len(inv.args) > 0 {
+	if len(target) == 0 && len(inv.args) > 0 {
 		target = inv.args[0]
 	}
 
-	// ① `--dry-run`：只出**计划件**，零副作用（§九 M3 C4）—— 这是本批**唯一**会返回 0 的那一态。
+	// ① 状态面先判（§九 M5 `C4` 判据顺序「先锁 → 再判闸门 → 再收卵」· §十二 `P-031` 幂等优先）——
+	//    只在**能只读判出来**的那几条动作上做（本版：`agent load` 的「已装载」）。
+	if rc, done := probeStateConflict(inv, cmd, stdout, stderr); done {
+		return rc
+	}
+
+	// ② `--dry-run`：只出**计划件**，零副作用（§九 M3 C4）—— 这是本批**唯一**会返回 0 的那一态。
 	if inv.dryRun {
 		fmt.Fprint(stdout, planFor(cmd, spec, target))
 		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
 		return exitOK
 	}
 
-	// ② 确认档（fail-closed：缺就拒，**从不提问** —— 无 TTY 也一样）
+	// ③ 确认档（fail-closed：缺就拒，**从不提问** —— 无 TTY 也一样）
 	//    D3：`--confirm` **必须给**（§十二 P-014「D3 必须两者都到」）；
 	//    D2：`--confirm` 给不给都行，**给了就校验**（值必须与目标逐字相同 —— §4.1 K7 一个口径）。
 	if spec.Level == dangerD3 && !inv.confirmGiven {
-		fmt.Fprintf(stderr, "%s: `%s` 是 %s 档（不可逆）——**缺确认 ⇒ 不执行**\n", progName, path, spec.Level)
+		msg := fmt.Sprintf("`%s` 是 %s 档（不可逆）——**缺确认 ⇒ 不执行**", path, spec.Level)
+		inv.setErr("usage", "confirm_required", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "要执行得给：--confirm=<%s> --yes\n", spec.Target)
 		fmt.Fprintf(stderr, "先看计划件：%s %s --dry-run\n", progName, path)
+		fmt.Fprintf(stderr, "error.kind=usage · detail=confirm_required · retryable=false · remedy=fix_usage\n")
 		return exitUsage
 	}
 	if inv.confirmGiven && (target == "" || inv.confirm != target) {
-		fmt.Fprintf(stderr, "%s: 确认值不匹配目标（--confirm 给的是 %q，目标是 %q）⇒ 不执行\n", progName, inv.confirm, target)
+		msg := fmt.Sprintf("确认值不匹配目标（--confirm 给的是 %q，目标是 %q）⇒ 不执行", inv.confirm, target)
+		inv.setErr("usage", "confirm_mismatch", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "`--confirm` 的值必须与目标**逐字相同**（§4.1 K7）—— 给错值一律拒绝，不许「当没给」\n")
 		return exitUsage
 	}
 	if !inv.yes {
-		fmt.Fprintf(stderr, "%s: `%s` 是 %s 档 —— **缺 --yes ⇒ 不执行**\n", progName, path, spec.Level)
+		msg := fmt.Sprintf("`%s` 是 %s 档 —— **缺 --yes ⇒ 不执行**", path, spec.Level)
+		inv.setErr("usage", "yes_required", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "先看计划件：%s %s --dry-run\n", progName, path)
 		return exitUsage
 	}
 
-	// ③ 确认档齐了 —— 但**本批写面未开放**（§6.2）：不给结论，退码 2。
-	fmt.Fprintf(stderr, "%s: 确认档已到 ✓（%s）；但 `%s` 在**本版未开放** —— 批 A 全程零写操作（§6.2），不给结论\n",
-		progName, spec.Level, path)
+	// ④ 确认档齐了 —— 但**本批写面未开放**（§6.2）：不给结论，退码 2。
+	msg := fmt.Sprintf("确认档已到 ✓（%s）；但 `%s` 在**本版未开放** —— 批 A 全程零写操作（§6.2），不给结论", spec.Level, path)
+	inv.setErr("usage", "not_opened", msg)
+	fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 	fmt.Fprintf(stderr, "排期见 §6.3 S5 与它的承载任务（开工单 §3.1 的命令映射表）\n")
 	return exitUsage
+}
+
+// probeStateConflict —— 「已在该状态」的只读探测（§九 M4 幂等语义 · §十二 `P-031` 幂等优先）。
+//
+// 为什么在这一层：M4 要的是**先算差再动手**；`agent load <机> <模型>` 的目标机上该模型已在
+// 装载态时，动手是无意义的（同参必败）⇒ 按契约**明确报「已在此状态」**（`kind=conflict` ·
+// 退码 `14` · `retryable=false`），不报 500、也不假装要去装第二遍。
+//
+// 只读保证：只 GET `/api/fleet/status`，不写任何状态（§6.2）。
+// 探测不到（主控不可达）⇒ **不吞**：返回 `false` 让主流程照旧走（fail-closed 由后面的确认档与
+// 未开放档兜住），同时把 unreachable 记进 invocation。
+func probeStateConflict(inv *invocation, cmd *command, stdout, stderr io.Writer) (int, bool) {
+	if strings.Join(cmd.path, " ") != "agent load" || len(inv.args) < 2 {
+		return 0, false
+	}
+	machine, model := inv.args[0], inv.args[1]
+	c := newClient()
+	var fleet jsonObj
+	if err := c.getJSON("/api/fleet/status", &fleet); err != nil {
+		inv.setErr("unreachable", "state_probe_failed", err.Error())
+		return 0, false
+	}
+	o := asObj(asObj(fleet["machines"])[machine])
+	if o == nil {
+		msg := fmt.Sprintf("名册里没有这台机 %q（先 `zerg agent ls` 看名册 · §九 M13 Z3）", machine)
+		inv.setErr("unsupported_on_node", "unknown_machine", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		return exitUsage, true
+	}
+	for _, m := range asList(o["models"]) {
+		if cell(m) == model {
+			msg := fmt.Sprintf("%q 上 %q **已在装载态**（幂等：按「已在此状态」报，不重装 · §九 M4 / §十二 P-031）",
+				machine, model)
+			inv.setErr("conflict", "already_loaded", msg)
+			inv.err.Where = "node:" + machine
+			fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+			fmt.Fprintf(stderr, "error.kind=conflict · retryable=false · remedy=wait_or_reload（要重装得显式 `--reload`，属批 D）\n")
+			return exitConflict, true
+		}
+	}
+	return 0, false
 }
 
 // planFor 生成计划件（零副作用）：要动什么 · 目标是谁 · 缺什么前置 · 怎么留痕 · 本版状态。
