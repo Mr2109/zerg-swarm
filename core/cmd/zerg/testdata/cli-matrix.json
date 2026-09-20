@@ -1,0 +1,1475 @@
+{
+ "id": "cli-contract.v1",
+ "note": "命令面自身的 must-fail 矩阵（§九 M17 `T2` · 开工单 T-42 判据①）。\n口径：这不是「猜的期望值」，是**冻结的现行为（棘轮）** —— 每条口令逐条现跑两遍、退码一致、且与判据语义相符才入矩阵；改行为就必须改这一格（改不动就是回归）。\n候选口令按命令形状给（危险档 / 字段面 / 说明面 / 透传型），执行前判的那两条（未知旗标 · 不认的主号）**每条命令都有**；透传型只留这两条 —— 别的会把被包的脚本真跑一遍。\n覆盖与空白由 scripts/gates/check-cli-contract.py 的 T1/T5 判（空白受 baseline 棘轮约束）。",
+ "exemptions": [],
+ "cases": [
+  {
+   "id": "agent/load#未知旗标",
+   "command": "agent load",
+   "argv": [
+    "agent",
+    "load",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "agent/load#不认的契约主号",
+   "command": "agent load",
+   "argv": [
+    "agent",
+    "load",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "agent/load#缺 --yes（D2）",
+   "command": "agent load",
+   "argv": [
+    "agent",
+    "load",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "agent/ls#未知旗标",
+   "command": "agent ls",
+   "argv": [
+    "agent",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "agent/ls#不认的契约主号",
+   "command": "agent ls",
+   "argv": [
+    "agent",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "agent/ping#未知旗标",
+   "command": "agent ping",
+   "argv": [
+    "agent",
+    "ping",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "agent/ping#不认的契约主号",
+   "command": "agent ping",
+   "argv": [
+    "agent",
+    "ping",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "agent/reap#未知旗标",
+   "command": "agent reap",
+   "argv": [
+    "agent",
+    "reap",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "agent/reap#不认的契约主号",
+   "command": "agent reap",
+   "argv": [
+    "agent",
+    "reap",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "agent/reap#缺 --confirm（D3）",
+   "command": "agent reap",
+   "argv": [
+    "agent",
+    "reap",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "agent/reap#--confirm 值不匹配",
+   "command": "agent reap",
+   "argv": [
+    "agent",
+    "reap",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "agent/unload#未知旗标",
+   "command": "agent unload",
+   "argv": [
+    "agent",
+    "unload",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "agent/unload#不认的契约主号",
+   "command": "agent unload",
+   "argv": [
+    "agent",
+    "unload",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "agent/unload#缺 --confirm（D3）",
+   "command": "agent unload",
+   "argv": [
+    "agent",
+    "unload",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "agent/unload#--confirm 值不匹配",
+   "command": "agent unload",
+   "argv": [
+    "agent",
+    "unload",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "api/help#未知旗标",
+   "command": "api help",
+   "argv": [
+    "api",
+    "help",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "api/help#不认的契约主号",
+   "command": "api help",
+   "argv": [
+    "api",
+    "help",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "api/help#说明面不认 --json",
+   "command": "api help",
+   "argv": [
+    "api",
+    "help",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+  },
+  {
+   "id": "api/ls#未知旗标",
+   "command": "api ls",
+   "argv": [
+    "api",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "api/ls#不认的契约主号",
+   "command": "api ls",
+   "argv": [
+    "api",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "api/openapi#未知旗标",
+   "command": "api openapi",
+   "argv": [
+    "api",
+    "openapi",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "api/openapi#不认的契约主号",
+   "command": "api openapi",
+   "argv": [
+    "api",
+    "openapi",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "context/ls#未知旗标",
+   "command": "context ls",
+   "argv": [
+    "context",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "context/ls#不认的契约主号",
+   "command": "context ls",
+   "argv": [
+    "context",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "context/ls#--json 不给字段",
+   "command": "context ls",
+   "argv": [
+    "context",
+    "ls",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+  },
+  {
+   "id": "core/reload#未知旗标",
+   "command": "core reload",
+   "argv": [
+    "core",
+    "reload",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "core/reload#不认的契约主号",
+   "command": "core reload",
+   "argv": [
+    "core",
+    "reload",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "core/reload#缺 --yes（D2）",
+   "command": "core reload",
+   "argv": [
+    "core",
+    "reload",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "core/stop#未知旗标",
+   "command": "core stop",
+   "argv": [
+    "core",
+    "stop",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "core/stop#不认的契约主号",
+   "command": "core stop",
+   "argv": [
+    "core",
+    "stop",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "core/stop#缺 --confirm（D3）",
+   "command": "core stop",
+   "argv": [
+    "core",
+    "stop",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "core/stop#--confirm 值不匹配",
+   "command": "core stop",
+   "argv": [
+    "core",
+    "stop",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "core/update#未知旗标",
+   "command": "core update",
+   "argv": [
+    "core",
+    "update",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "core/update#不认的契约主号",
+   "command": "core update",
+   "argv": [
+    "core",
+    "update",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "core/update#缺 --confirm（D3）",
+   "command": "core update",
+   "argv": [
+    "core",
+    "update",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "core/update#--confirm 值不匹配",
+   "command": "core update",
+   "argv": [
+    "core",
+    "update",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "dev/release#未知旗标",
+   "command": "dev release",
+   "argv": [
+    "dev",
+    "release",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "dev/release#不认的契约主号",
+   "command": "dev release",
+   "argv": [
+    "dev",
+    "release",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "dev/release#缺 --confirm（D3）",
+   "command": "dev release",
+   "argv": [
+    "dev",
+    "release",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "dev/release#--confirm 值不匹配",
+   "command": "dev release",
+   "argv": [
+    "dev",
+    "release",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "dev/rollback#未知旗标",
+   "command": "dev rollback",
+   "argv": [
+    "dev",
+    "rollback",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "dev/rollback#不认的契约主号",
+   "command": "dev rollback",
+   "argv": [
+    "dev",
+    "rollback",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "dev/rollback#缺 --confirm（D3）",
+   "command": "dev rollback",
+   "argv": [
+    "dev",
+    "rollback",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "dev/rollback#--confirm 值不匹配",
+   "command": "dev rollback",
+   "argv": [
+    "dev",
+    "rollback",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "doctor#未知旗标",
+   "command": "doctor",
+   "argv": [
+    "doctor",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "doctor#不认的契约主号",
+   "command": "doctor",
+   "argv": [
+    "doctor",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "doctor#--json 不给字段",
+   "command": "doctor",
+   "argv": [
+    "doctor",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+  },
+  {
+   "id": "egg/pin#未知旗标",
+   "command": "egg pin",
+   "argv": [
+    "egg",
+    "pin",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "egg/pin#不认的契约主号",
+   "command": "egg pin",
+   "argv": [
+    "egg",
+    "pin",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "egg/pin#缺 --yes（D2）",
+   "command": "egg pin",
+   "argv": [
+    "egg",
+    "pin",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "egg/retire#未知旗标",
+   "command": "egg retire",
+   "argv": [
+    "egg",
+    "retire",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "egg/retire#不认的契约主号",
+   "command": "egg retire",
+   "argv": [
+    "egg",
+    "retire",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "egg/retire#缺 --confirm（D3）",
+   "command": "egg retire",
+   "argv": [
+    "egg",
+    "retire",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "egg/retire#--confirm 值不匹配",
+   "command": "egg retire",
+   "argv": [
+    "egg",
+    "retire",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "egg/unpin#未知旗标",
+   "command": "egg unpin",
+   "argv": [
+    "egg",
+    "unpin",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "egg/unpin#不认的契约主号",
+   "command": "egg unpin",
+   "argv": [
+    "egg",
+    "unpin",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "egg/unpin#缺 --yes（D2）",
+   "command": "egg unpin",
+   "argv": [
+    "egg",
+    "unpin",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "gate/ls#不认的契约主号",
+   "command": "gate ls",
+   "argv": [
+    "gate",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gate/run#不认的契约主号",
+   "command": "gate run",
+   "argv": [
+    "gate",
+    "run",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gate/self-test#不认的契约主号",
+   "command": "gate self-test",
+   "argv": [
+    "gate",
+    "self-test",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gate/show#不认的契约主号",
+   "command": "gate show",
+   "argv": [
+    "gate",
+    "show",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gateway/breakers#未知旗标",
+   "command": "gateway breakers",
+   "argv": [
+    "gateway",
+    "breakers",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gateway/breakers#不认的契约主号",
+   "command": "gateway breakers",
+   "argv": [
+    "gateway",
+    "breakers",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gateway/breakers#缺 --yes（D2）",
+   "command": "gateway breakers",
+   "argv": [
+    "gateway",
+    "breakers",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "help#未知旗标",
+   "command": "help",
+   "argv": [
+    "help",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "help#不认的契约主号",
+   "command": "help",
+   "argv": [
+    "help",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "help#说明面不认 --json",
+   "command": "help",
+   "argv": [
+    "help",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+  },
+  {
+   "id": "help/export#未知旗标",
+   "command": "help export",
+   "argv": [
+    "help",
+    "export",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "help/export#不认的契约主号",
+   "command": "help export",
+   "argv": [
+    "help",
+    "export",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "model/ls#未知旗标",
+   "command": "model ls",
+   "argv": [
+    "model",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "model/ls#不认的契约主号",
+   "command": "model ls",
+   "argv": [
+    "model",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "model/start#未知旗标",
+   "command": "model start",
+   "argv": [
+    "model",
+    "start",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "model/start#不认的契约主号",
+   "command": "model start",
+   "argv": [
+    "model",
+    "start",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "model/start#缺 --yes（D2）",
+   "command": "model start",
+   "argv": [
+    "model",
+    "start",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "model/stop#未知旗标",
+   "command": "model stop",
+   "argv": [
+    "model",
+    "stop",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "model/stop#不认的契约主号",
+   "command": "model stop",
+   "argv": [
+    "model",
+    "stop",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "model/stop#缺 --confirm（D3）",
+   "command": "model stop",
+   "argv": [
+    "model",
+    "stop",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "model/stop#--confirm 值不匹配",
+   "command": "model stop",
+   "argv": [
+    "model",
+    "stop",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "resource/pin#未知旗标",
+   "command": "resource pin",
+   "argv": [
+    "resource",
+    "pin",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "resource/pin#不认的契约主号",
+   "command": "resource pin",
+   "argv": [
+    "resource",
+    "pin",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "resource/pin#缺 --yes（D2）",
+   "command": "resource pin",
+   "argv": [
+    "resource",
+    "pin",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "resource/unpin#未知旗标",
+   "command": "resource unpin",
+   "argv": [
+    "resource",
+    "unpin",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "resource/unpin#不认的契约主号",
+   "command": "resource unpin",
+   "argv": [
+    "resource",
+    "unpin",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "resource/unpin#缺 --yes（D2）",
+   "command": "resource unpin",
+   "argv": [
+    "resource",
+    "unpin",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "script/run#未知旗标",
+   "command": "script run",
+   "argv": [
+    "script",
+    "run",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "script/run#不认的契约主号",
+   "command": "script run",
+   "argv": [
+    "script",
+    "run",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "script/run#缺 --confirm（D3）",
+   "command": "script run",
+   "argv": [
+    "script",
+    "run",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "script/run#--confirm 值不匹配",
+   "command": "script run",
+   "argv": [
+    "script",
+    "run",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "task/ls#未知旗标",
+   "command": "task ls",
+   "argv": [
+    "task",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "task/ls#不认的契约主号",
+   "command": "task ls",
+   "argv": [
+    "task",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "task/pause#未知旗标",
+   "command": "task pause",
+   "argv": [
+    "task",
+    "pause",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "task/pause#不认的契约主号",
+   "command": "task pause",
+   "argv": [
+    "task",
+    "pause",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "task/pause#缺 --yes（D2）",
+   "command": "task pause",
+   "argv": [
+    "task",
+    "pause",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "task/resume#未知旗标",
+   "command": "task resume",
+   "argv": [
+    "task",
+    "resume",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "task/resume#不认的契约主号",
+   "command": "task resume",
+   "argv": [
+    "task",
+    "resume",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "task/resume#缺 --yes（D2）",
+   "command": "task resume",
+   "argv": [
+    "task",
+    "resume",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "task/retry#未知旗标",
+   "command": "task retry",
+   "argv": [
+    "task",
+    "retry",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "task/retry#不认的契约主号",
+   "command": "task retry",
+   "argv": [
+    "task",
+    "retry",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "task/retry#缺 --yes（D2）",
+   "command": "task retry",
+   "argv": [
+    "task",
+    "retry",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "task/rm#未知旗标",
+   "command": "task rm",
+   "argv": [
+    "task",
+    "rm",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "task/rm#不认的契约主号",
+   "command": "task rm",
+   "argv": [
+    "task",
+    "rm",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "task/rm#缺 --confirm（D3）",
+   "command": "task rm",
+   "argv": [
+    "task",
+    "rm",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "task/rm#--confirm 值不匹配",
+   "command": "task rm",
+   "argv": [
+    "task",
+    "rm",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "task/show#未知旗标",
+   "command": "task show",
+   "argv": [
+    "task",
+    "show",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "task/show#不认的契约主号",
+   "command": "task show",
+   "argv": [
+    "task",
+    "show",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "task/terminate#未知旗标",
+   "command": "task terminate",
+   "argv": [
+    "task",
+    "terminate",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "task/terminate#不认的契约主号",
+   "command": "task terminate",
+   "argv": [
+    "task",
+    "terminate",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "task/terminate#缺 --confirm（D3）",
+   "command": "task terminate",
+   "argv": [
+    "task",
+    "terminate",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "task/terminate#--confirm 值不匹配",
+   "command": "task terminate",
+   "argv": [
+    "task",
+    "terminate",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "update#未知旗标",
+   "command": "update",
+   "argv": [
+    "update",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "update#不认的契约主号",
+   "command": "update",
+   "argv": [
+    "update",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "update#缺 --confirm（D3）",
+   "command": "update",
+   "argv": [
+    "update",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "update#--confirm 值不匹配",
+   "command": "update",
+   "argv": [
+    "update",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "version#未知旗标",
+   "command": "version",
+   "argv": [
+    "version",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "version#不认的契约主号",
+   "command": "version",
+   "argv": [
+    "version",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "version#--json 不给字段",
+   "command": "version",
+   "argv": [
+    "version",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+  },
+  {
+   "id": "watch#未知旗标",
+   "command": "watch",
+   "argv": [
+    "watch",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "watch#不认的契约主号",
+   "command": "watch",
+   "argv": [
+    "watch",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  }
+ ]
+}

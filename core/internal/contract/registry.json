@@ -73,7 +73,7 @@
       "truth": "core/cmd/zerg/（contract.go 三层版本 + exitcodes.go 退码表 + errors.go kind 闭集 + main.go 命令树）",
       "truth_shape": "代码内 schema；帮助导出与 /api/capabilities 都是导出物",
       "version_field": "client_contract（zerg/v1）",
-      "gate": "scripts/gates/check-error-kinds.py · scripts/gates/check-wall-layer.py",
+      "gate": "scripts/gates/check-error-kinds.py · scripts/gates/check-wall-layer.py · scripts/gates/check-cli-contract.py",
       "change_class": "B",
       "change_note": "§六 的七步流程（V0–V7）：提案成文 ⇒ 判档 ⇒ 只改一处真源 ⇒ 升号 ⇒ 改全部导出物 ⇒ 过门禁 ⇒ 通知+留档"
     }
