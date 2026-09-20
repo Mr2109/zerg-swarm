@@ -259,6 +259,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "测试件本身不驱动写入（`t.TempDir()` + 进程内 `run`）；它断言的判据里用到的 `--dry-run` 那一态属 dryrun.v1（`zerg build all --only cli --dry-run` = 计划件 · 零副作用），正控只用它**当判据的文本**（`criterionRunnable` 解析），不执行它。",
    "备注": "2026-09-21 D3b 登记（门⑩ 扫描面命中的测试件；不登记会被判成「又一套语义」——是扫描面口径，不是真语义分歧）"
+  },
+  {
+   "file": "core/cmd/zerg/family_dev_edit.go",
+   "类": "命令面三态（`dev edit --dry-run` 的计划件 · 与 guard.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg dev edit --proposal <id> --file <件> --from <件> --dry-run` ⇒ 退码 0 · stdout 只有计划件（目标件/内容来源/前后 sha256/前后字节/审计落点）+ stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未写任何文件）」· **不写件、不写审计**（现跑对拍：跑 dry-run 前后目标件 sha256 与 `<state>/edit_audit.jsonl` 行数逐字不变）· **不带 --dry-run 且确认档不齐**时也出计划件并退 2（fail-closed：从不提问、也从不偷偷写）。",
+   "备注": "2026-09-21 D3b 第二步登记（门⑩ 扫描面新增 ⇒ 同批登记；不登记会被判成「又一套语义」）"
   }
  ]
 }

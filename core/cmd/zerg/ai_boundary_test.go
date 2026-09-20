@@ -27,7 +27,7 @@ func proposalNewAuthz(t *testing.T, extra ...string) (int, string, string) {
 	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
 	argv := append([]string{"dev", "proposal", "new",
 		"--title", "授权面", "--target", "待办:D1", "--goal", "g",
-		"--evidence", "e", "--rollback", "r"}, extra...)
+		"--evidence", "e", "--rollback", "r", "--criterion", "zerg gate run --fast"}, extra...)
 	return runCapture(argv...)
 }
 
@@ -105,7 +105,8 @@ func TestProposalAuthzRules(t *testing.T) {
 	// 读回一件：subject/subject_kind 必须在；`by` 是兼容别名（两者同值）。
 	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
 	rc, out, errb := runCapture("dev", "proposal", "new", "--title", "读回", "--target", "待办:D1",
-		"--goal", "g", "--evidence", "e", "--rollback", "r", "--by", "老王", "--subject-kind", "ai")
+		"--goal", "g", "--evidence", "e", "--rollback", "r", "--by", "老王", "--subject-kind", "ai",
+		"--criterion", "zerg gate run --fast")
 	if rc != 0 {
 		t.Fatalf("落件退码 = %d（要 0）· stderr=%s", rc, errb)
 	}

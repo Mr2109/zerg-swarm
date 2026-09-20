@@ -989,6 +989,19 @@ func init() {
 			endpoint: "",
 			run:      cmdDevProposal,
 		},
+		// ---- D3b 第二步（2026-09-21）：**受控写面**（`zerg dev edit` · §17.3 铁律③）----
+		// 默认干跑 · 只改提案声明过的件（越界写 ⇒ 2）· 逐条审计（写不进审计就不改件）· D3 档确认。
+		{
+			path:     []string{"dev", "edit"},
+			kind:     "DevEdit",
+			summary:  "受控写入：只改**提案声明过**的件（越界写 ⇒ 2）· 默认干跑 · 一行一事件的审计（写不进审计就不改件）",
+			usage:    "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件>) [--by <谁>] [--dry-run | --confirm=<主机名> --yes]",
+			args:     []string{"提案 id（--proposal）", "要改的件（--file · 必须在提案的 files[] 里）"},
+			fields:   devEditFields,
+			danger:   &dangerSpec{dangerD3, "提案 id", "改仓内件（写工作树）—— 作用域 = 提案声明的件；审计一行一事件；回滚 = 提案退点 + git", "§17.3 铁律③ · §九 M3 C4/C5 · §4.1 K7 · D3b 第二步"},
+			endpoint: "",
+			run:      cmdDevEdit,
+		},
 		// ---- §17.4 第 2/3/5 条：候选区（批 E · T-58 · 真源 core/internal/contract/dev-candidate.json）----
 		// 次序（§17.7 逐字「先有判据、再有自动化」）落成机检：build / test 找不到该候选的验收证据单 ⇒ 退码 2。
 		{
