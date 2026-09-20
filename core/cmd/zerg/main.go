@@ -10,6 +10,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -164,8 +165,9 @@ type command struct {
 	endpoint    string   // 它投影的远端端点（本机命令为空）；T-08 的三面同源对账用
 	kind        string   // 包封里的 kind（§九 M6 I2：与命令一一对应 · 单数 CamelCase）
 	danger      *dangerSpec
-	opened      bool // 本版是否可执行（危险动作在批 A 一律未开放 · §6.2 零写操作）
-	passthrough bool // 原样透传型（gate 族）：旗标与位置参数逐字交给被包的脚本
+	idem        *idemSpec // M4 幂等四字段（没显式写的在 seedIdem 里按规则派生）
+	opened      bool      // 本版是否可执行（危险动作在批 A 一律未开放 · §6.2 零写操作）
+	passthrough bool      // 原样透传型（gate 族）：旗标与位置参数逐字交给被包的脚本
 	run         func(*invocation, io.Writer, io.Writer) int
 }
 
@@ -186,7 +188,7 @@ func init() {
 		},
 		{
 			path:    []string{"help"},
-			summary: "帮助（主题: exit-codes · config · contract）",
+			summary: "帮助（主题: exit-codes · config · contract · errors · idempotency）",
 			usage:   "zerg help [<主题>]",
 			args:    []string{"主题（可省）"},
 			run:     cmdHelp,
@@ -501,6 +503,8 @@ func init() {
 			run: cmdGuarded,
 		},
 	}
+	// M4 四字段：命令树建完立刻补齐（每条命令都有四格 · 一条不漏）。
+	seedIdem()
 }
 
 // resolve 按「最多 2 段」贪心匹配：先试 [p0,p1]，再试 [p0]；剩下的是位置参数。
@@ -591,8 +595,18 @@ type invocation struct {
 	schemaWant  string
 	schemaGiven bool
 
+	// 幂等键（§九 M4 · 调研-M5 §3.9 的 `--idempotency-key`；不给则派生）
+	idemKey string
+
+	// M4 §5.3 的三档旗标（本版只解析 + 判词，语义属写面）
+	reload bool
+	force  bool
+
 	// 本次调用被报出来的那个错（§九 M7：`--json` 失败时挂进包封的 `error` 块）。
 	err *cliError
+
+	// 本次调用是否改变了状态（§九 M4 的 `changed`；nil ⇒ 按命令的幂等档派生）。
+	changed *bool
 }
 
 func parseInvocation(args []string) (*invocation, error) {
@@ -617,6 +631,13 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.fields = splitFields(strings.TrimPrefix(a, "--json="))
 		case a == "--plain":
 			inv.plain = true
+		case a == "--idempotency-key" || a == "--idempotency-key=":
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				inv.idemKey = args[i]
+			}
+		case strings.HasPrefix(a, "--idempotency-key="):
+			inv.idemKey = strings.TrimPrefix(a, "--idempotency-key=")
 		case a == "--schema" || a == "--schema=":
 			inv.schemaGiven = true
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
@@ -626,6 +647,10 @@ func parseInvocation(args []string) (*invocation, error) {
 		case strings.HasPrefix(a, "--schema="):
 			inv.schemaGiven = true
 			inv.schemaWant = strings.TrimPrefix(a, "--schema=")
+		case a == "--reload":
+			inv.reload = true
+		case a == "--force":
+			inv.force = true
 		case a == "--dry-run":
 			inv.dryRun = true
 		case a == "--yes":
@@ -738,17 +763,41 @@ func jstr(s string) string {
 //	· `kind` 与命令一一对应、单数 CamelCase（I2）
 //	· `meta.source` 写清这份数据从哪来（远端端点 / 本机）；将来 `meta.node` 装多机目标（M13）
 func emitEnvelope(stdout io.Writer, cmd *command, itemsJSON string, count int) {
+	emitEnvelopeWith(stdout, cmd, itemsJSON, count, nil)
+}
+
+// emitEnvelopeWith 是 emitEnvelope 的完整形态：多一块 `meta.changed` 与 `meta.idempotency_key`
+// （§九 M4：`--json` 必须给 `changed`；幂等键落在 meta —— **不**动外层六键，守住 T-06 的包封面）。
+func emitEnvelopeWith(stdout io.Writer, cmd *command, itemsJSON string, count int, inv *invocation) {
 	src := cmd.endpoint
 	if src == "" {
 		src = "local（本机）"
 	}
-	fmt.Fprintf(stdout, "{\"schema\":%s,\"kind\":%s,\"items\":%s,\"meta\":{\"count\":%d,\"source\":%s},\"warnings\":[],\"truncated\":false}\n",
-		jstr(contractSchema), jstr(cmd.kind), itemsJSON, count, jstr(src))
+	changed := "false"
+	key := ""
+	if inv != nil && inv.changed != nil {
+		changed = fmt.Sprintf("%t", *inv.changed)
+	} else if cmd.idem != nil {
+		changed = fmt.Sprintf("%t", cmd.idem.Changed && cmd.danger != nil)
+	}
+	if inv != nil {
+		key = idempotencyKey(inv)
+	}
+	meta := fmt.Sprintf("\"count\":%d,\"source\":%s,\"changed\":%s", count, jstr(src), changed)
+	if key != "" {
+		meta += ",\"idempotency_key\":" + jstr(key)
+	}
+	extra := ""
+	if inv != nil && inv.err != nil {
+		extra = ",\"error\":" + inv.err.errJSON()
+	}
+	fmt.Fprintf(stdout, "{\"schema\":%s,\"kind\":%s,\"items\":%s,\"meta\":{%s},\"warnings\":[],\"truncated\":false%s}\n",
+		jstr(contractSchema), jstr(cmd.kind), itemsJSON, meta, extra)
 }
 
 // emitSelected 是**全部** `--json` 出口的唯一实现：先按用户点名的字段（序即用户给的序）拼对象，
 // 再套包封。字段点错 ⇒ 退码 2 + 列全部合法字段（§九 M6 I5）。
-func emitSelected(stdout, stderr io.Writer, path []string, fields []string, rows []map[string]string) int {
+func emitSelected(stdout, stderr io.Writer, inv *invocation, path []string, fields []string, rows []map[string]string) int {
 	cmd := find(path)
 	if cmd == nil {
 		return exitUsage
@@ -761,18 +810,120 @@ func emitSelected(stdout, stderr io.Writer, path []string, fields []string, rows
 		}
 		objs = append(objs, obj)
 	}
-	emitEnvelope(stdout, cmd, "["+strings.Join(objs, ",")+"]", len(rows))
+	emitEnvelopeWith(stdout, cmd, "["+strings.Join(objs, ",")+"]", len(rows), inv)
 	return exitOK
 }
 
 // selectJSON 单件命令用（仍然出数组：`items` 里一条 —— I3 恒数组）。
-func selectJSON(stdout, stderr io.Writer, path []string, fields []string, row map[string]string) int {
-	return emitSelected(stdout, stderr, path, fields, []map[string]string{row})
+func selectJSON(stdout, stderr io.Writer, inv *invocation, path []string, fields []string, row map[string]string) int {
+	return emitSelected(stdout, stderr, inv, path, fields, []map[string]string{row})
 }
 
 // selectJSONList 清单命令用。
-func selectJSONList(stdout, stderr io.Writer, path []string, fields []string, rows []map[string]string) int {
-	return emitSelected(stdout, stderr, path, fields, rows)
+func selectJSONList(stdout, stderr io.Writer, inv *invocation, path []string, fields []string, rows []map[string]string) int {
+	return emitSelected(stdout, stderr, inv, path, fields, rows)
+}
+
+// ---- M4 幂等四字段（§九 M4 · 调研-M4 §5.1：每条命令各自带四格）----
+
+// idemSpec —— 四字段（取值域照 调研-M4 §5.1，不许自造第五档）。
+type idemSpec struct {
+	Band    string // 幂等档：只读 / 状态幂等 / 覆盖式 / 追加式
+	Rerun   string // 重跑语义：200 复用（changed:false）· 200 重设（changed:true）· 409 … · 400 …
+	Effect  string // 生效语义：即时 / 重读声明（--reload）/ 重建（卸+装 / 新代次）
+	Danger  string // 危险档：安全 / --dry-run 预演 / --confirm=<目标> / --yes
+	Changed bool   // 本次调用是否改变了状态（进 `meta.changed`）
+}
+
+// defaultIdem 按「危险档 + 是否只读」派生四字段（显式覆盖见 commands 里各自的 idem 字段）。
+func defaultIdem(c *command) *idemSpec {
+	if c.danger == nil {
+		return &idemSpec{
+			Band:    "只读",
+			Rerun:   "200 复用（changed:false）",
+			Effect:  "即时（无副作用）",
+			Danger:  "安全",
+			Changed: false,
+		}
+	}
+	d := "安全"
+	if c.danger.Level == dangerD3 {
+		d = "--confirm=<" + c.danger.Target + "> · --yes"
+	} else {
+		d = "--yes"
+	}
+	return &idemSpec{
+		Band:    "状态幂等",
+		Rerun:   "200 复用（changed:false）· 已在该状态按状态报（**不许**静默什么都不做）",
+		Effect:  "重建（卸 + 装 / 新代次）",
+		Danger:  d,
+		Changed: true,
+	}
+}
+
+// seedIdem 给命令树补齐四字段（没显式写的按规则派生 ⇒ 四字段**一条不漏**）。
+func seedIdem() {
+	for _, c := range commands {
+		if c.idem == nil {
+			c.idem = defaultIdem(c)
+		}
+		// 危险动作原来没有 kind（批 A 只做形状）⇒ 这里按路径**派生**一个（I2：与命令一一对应
+		// 的单数 CamelCase；派生而非手写 23 份，避免两处写法漂）。
+		if c.kind == "" {
+			c.kind = pascalKind(c.path)
+		}
+	}
+}
+
+// pascalKind `task terminate` → `TaskTerminate`（I2 的字面口径）。
+func pascalKind(path []string) string {
+	var b strings.Builder
+	for _, seg := range path {
+		if seg == "" {
+			continue
+		}
+		b.WriteString(strings.ToUpper(seg[:1]))
+		b.WriteString(seg[1:])
+	}
+	return b.String()
+}
+
+// idempotencyKey —— 本次调用的幂等键：给了 `--idempotency-key` 就用它（同键 ⇒ 同结果），
+// 没给则按「命令 + 位置参数」**派生**（派生键稳定：同参连跑两次同值）。出处：调研-M5 §3.9
+// （`Idempotency-Key` 草案 · 本稿标注「推荐，非实证」）· `audit.go` 已有的 `idempotency_key` 效果键。
+func idempotencyKey(inv *invocation) string {
+	if inv.idemKey != "" {
+		return inv.idemKey
+	}
+	h := sha256.Sum256([]byte(progName + " " + strings.Join(inv.path, " ") + "\x00" + strings.Join(inv.args, "\x00")))
+	return fmt.Sprintf("zerg-%x", h[:8])
+}
+
+// helpIdempotency —— `zerg help idempotency`：逐命令四字段（§九 M4 · 调研-M4 §5.1）。
+func helpIdempotency() string {
+	var b strings.Builder
+	b.WriteString("幂等语义（§九 M4 · 调研-M4 §5.1 的四字段 · 每条命令各自一格）\n\n")
+	b.WriteString("先分清两件事（M4 的坑就在这里）：**幂等**保证「同参重跑，**状态**不变」；\n")
+	b.WriteString("**生效**保证「声明改了，运行态跟上」。两者都不许含糊成「重复不报错」。\n\n")
+	b.WriteString("硬规矩（调研-M4 §5.2）：\n")
+	b.WriteString("  · 幂等重跑**必须退 0**；「已在该状态」**不许**退 1/2（退码 0 + `meta.changed=false`）。\n")
+	b.WriteString("  · `--json` 必须给 `changed`（`true`=真改变了状态 / `false`=无变化，明说无变化）。\n")
+	b.WriteString("  · 声明已改而运行态未同步 ⇒ `kind=declaration_stale`、退码 `1`、提示 `--reload`/`--force`。\n")
+	b.WriteString("  · 任何命令都**不许**在「目标已存在」时静默什么都不做（要么 changed:false 说明，要么按档执行）。\n\n")
+	b.WriteString("旗标分档（调研-M4 §5.3）：`--reload` 重读声明 · `--force` 重建承载者（换代次）· `--dry-run` 只算差。\n\n")
+	b.WriteString("逐命令四字段（幂等档 / 重跑语义 / 生效语义 / 危险档）：\n")
+	for _, c := range catalog() {
+		name := "zerg " + strings.Join(c.path, " ")
+		fmt.Fprintf(&b, "  %s\n", name)
+		fmt.Fprintf(&b, "      幂等档   %s\n", c.idem.Band)
+		fmt.Fprintf(&b, "      重跑语义 %s\n", c.idem.Rerun)
+		fmt.Fprintf(&b, "      生效语义 %s\n", c.idem.Effect)
+		fmt.Fprintf(&b, "      危险档   %s\n", c.idem.Danger)
+	}
+	b.WriteString("\n幂等键：`--idempotency-key <键>`（同键 ⇒ 同结果）；没给时按「命令 + 位置参数」派生，\n")
+	b.WriteString("落在 `meta.idempotency_key`（出处：调研-M5 §3.9 的 `Idempotency-Key` 草案 —— 本稿标注\n")
+	b.WriteString("「推荐，非实证」；效果侧已有的同名键在 `core/internal/audit` 的 Record 里）。\n")
+	return b.String()
 }
 
 // ---- version ----
@@ -808,7 +959,7 @@ func cmdVersion(inv *invocation, stdout, stderr io.Writer) int {
 				row["core_code_sha"] = cell(caps["code_sha"])
 			}
 		}
-		return selectJSON(stdout, stderr, inv.path, inv.fields, row)
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, row)
 	}
 	fmt.Fprintln(stdout, version.Line(progName))
 	return exitOK
@@ -834,9 +985,12 @@ func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 		case "errors":
 			fmt.Fprint(stdout, helpErrors())
 			return exitOK
+		case "idempotency":
+			fmt.Fprint(stdout, helpIdempotency())
+			return exitOK
 		default:
 			fmt.Fprintf(stderr, "%s: 未知帮助主题 %q\n", progName, inv.args[0])
-			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous · contract · errors\n")
+			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous · contract · errors · idempotency\n")
 			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 			return exitUsage
 		}

@@ -36,8 +36,10 @@ type errorKindRow struct {
 // 真冲突才非零；`P-013` ③：`unreachable` = `12`；`P-013` ②：`conflict` = `14`（**不是** `507`）；
 // §十二 `P-129`：回滚成功 = `1` + `kind=ROLLED_BACK` 那一族）。
 var errorKinds = []errorKindRow{
+	{"already_in_state", 0, false, "none", "已在该状态（**成功码内的语义**，不是错误码 —— §九 M4 / 调研-M4 §5.2）", "调研-M4 §5.2"},
 	{"failed", 1, false, "read_logs", "一般失败（跑到了、没成功）", "§九 M7 · §4.1 K3"},
 	{"declaration_rejected", 1, false, "fix_declaration", "声明认不得（跑到了、被拒了 ⇒ 不是用法错）", "§十二 P-030（= 1）"},
+	{"declaration_stale", 1, true, "reload_or_force", "声明已改、运行态未同步（该重读声明或重建）", "调研-M4 §5.2"},
 	{"conflict", 14, false, "wait_or_reload", "冲突 / 被占（幂等优先：已在该状态按状态报）", "§十二 P-031 · P-013 ②"},
 	{"insufficient_resource", 10, false, "unload_occupant", "资源不足（同参必败；卸掉占用者后可重试）", "§十二 P-013 · 调研-M7 §4.2"},
 	{"timeout", 11, true, "retry_later", "超时（等到了坏结果与「等不起」分开）", "§十二 P-013 · §九 M8"},
