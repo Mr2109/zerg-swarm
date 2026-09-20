@@ -87,6 +87,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 		return exitUsage
 	}
+	// 契约主号校验（§十二 P-026：消费侧拒绝**不认的 schema 主号**，不许静默降级）。
+	if inv.schemaGiven {
+		major, _, ok := parseContractID(inv.schemaWant)
+		known := false
+		for _, m := range recognizedMajors() {
+			if ok && m == major {
+				known = true
+			}
+		}
+		if !known {
+			fmt.Fprintf(stderr, "%s: 认不得的契约主号 %q —— 本版只认 %s（§九 M6 · §十二 P-026）\n",
+				progName, inv.schemaWant, schemaMajorSet())
+			fmt.Fprintf(stderr, "不认的主号**不许静默降级**成 v%d（§九 M15「不兼容即明确报错」）\n", contractMajor)
+			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+			return exitUsage
+		}
+	}
 	return cmd.run(inv, stdout, stderr)
 }
 
@@ -116,14 +133,14 @@ func init() {
 		{
 			path:    []string{"version"},
 			kind:    "Version",
-			summary: "单行身份（组件 版本 代码 sha 构建时间）",
+			summary: "单行身份（组件 版本 代码 sha 构建时间）· --json 报三层版本",
 			usage:   "zerg version [--json <字段>]",
-			fields:  []string{"name", "version", "commit", "build_time"},
+			fields:  []string{"name", "version", "commit", "build_time", "contract", "object_schema", "core_version", "core_code_sha"},
 			run:     cmdVersion,
 		},
 		{
 			path:    []string{"help"},
-			summary: "帮助（主题: exit-codes · config）",
+			summary: "帮助（主题: exit-codes · config · contract）",
 			usage:   "zerg help [<主题>]",
 			args:    []string{"主题（可省）"},
 			run:     cmdHelp,
@@ -523,6 +540,10 @@ type invocation struct {
 	confirm      string
 	confirmGiven bool
 	yes          bool
+
+	// 契约主号（§十二 P-026：消费侧拒绝不认的 schema 主号 —— `--schema zerg/v2` ⇒ 2）
+	schemaWant  string
+	schemaGiven bool
 }
 
 func parseInvocation(args []string) (*invocation, error) {
@@ -547,6 +568,15 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.fields = splitFields(strings.TrimPrefix(a, "--json="))
 		case a == "--plain":
 			inv.plain = true
+		case a == "--schema" || a == "--schema=":
+			inv.schemaGiven = true
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				inv.schemaWant = args[i]
+			}
+		case strings.HasPrefix(a, "--schema="):
+			inv.schemaGiven = true
+			inv.schemaWant = strings.TrimPrefix(a, "--schema=")
 		case a == "--dry-run":
 			inv.dryRun = true
 		case a == "--yes":
@@ -703,12 +733,33 @@ func cmdVersion(inv *invocation, stdout, stderr io.Writer) int {
 		if !requireFields(inv, stderr) {
 			return exitFail // K2：给了 --json 但不给字段 ⇒ 1（不是用法错）
 		}
-		return selectJSON(stdout, stderr, inv.path, inv.fields, map[string]string{
-			"name":       progName,
-			"version":    version.Version,
-			"commit":     version.Commit,
-			"build_time": version.BuildTime,
-		})
+		row := map[string]string{
+			"name":          progName,
+			"version":       version.Version,
+			"commit":        version.Commit,
+			"build_time":    version.BuildTime,
+			"contract":      contractID,
+			"object_schema": fmt.Sprintf("%d", objectSchemaID),
+		}
+		// 主控版本与它的 code_sha 只从 `/api/capabilities` 三键取（§九 M15 T1）——
+		// **只在被点名时**才去打主控：`zerg version` 在离线白名单里（§九 M20 O8），
+		// 无脑取一次会让它变成一条要网络的命令。
+		want := map[string]bool{}
+		for _, f := range inv.fields {
+			want[f] = true
+		}
+		if want["core_version"] || want["core_code_sha"] {
+			var caps jsonObj
+			if err := newClient().getJSON("/api/capabilities", &caps); err != nil {
+				row["core_version"] = ""
+				row["core_code_sha"] = ""
+				fmt.Fprintf(stderr, "%s: 主控不可达 ⇒ core_version / core_code_sha 留空（不打第二枪 · §九 M20 O2）\n", progName)
+			} else {
+				row["core_version"] = cell(caps["version"])
+				row["core_code_sha"] = cell(caps["code_sha"])
+			}
+		}
+		return selectJSON(stdout, stderr, inv.path, inv.fields, row)
 	}
 	fmt.Fprintln(stdout, version.Line(progName))
 	return exitOK
@@ -728,9 +779,12 @@ func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 		case "dangerous":
 			fmt.Fprint(stdout, helpDangerous())
 			return exitOK
+		case "contract":
+			fmt.Fprint(stdout, helpContract())
+			return exitOK
 		default:
 			fmt.Fprintf(stderr, "%s: 未知帮助主题 %q\n", progName, inv.args[0])
-			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous\n")
+			fmt.Fprintf(stderr, "可用主题: exit-codes · config · dangerous · contract\n")
 			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 			return exitUsage
 		}
