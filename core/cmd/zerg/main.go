@@ -808,8 +808,8 @@ func init() {
 		},
 		{
 			path:    []string{"build", "all"},
-			summary: "重编全部制品（换件档 · 本版未开放；计划件见 --dry-run）",
-			usage:   "zerg build all [--dry-run | --confirm=<主机名> --yes]",
+			summary: "重编制品（**自举档已开放**：`--only cli` 只写 bin/zerg 一件；换件档/发布档仍未开放）",
+			usage:   "zerg build all [--only cli] [--dry-run | --confirm=<主机名> --yes]",
 			run:     cmdBuildPassthrough,
 		},
 		{

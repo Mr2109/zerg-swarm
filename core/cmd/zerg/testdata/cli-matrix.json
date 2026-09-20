@@ -3299,6 +3299,62 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "作用域档（--pkg/--run）与候选区档（--candidate）**互斥** ⇒ 2（说不清在测谁 ⇒ 不替人挑一个）"
+  },
+  {
+   "id": "build/all#--only 非法档（闭集外）",
+   "command": "build all",
+   "argv": [
+    "build",
+    "all",
+    "--only",
+    "ui"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--only` 的档是闭集（cli|core|compat），档名逐字对齐构建脚本 ⇒ 闭集外一律 2（不给结论）"
+  },
+  {
+   "id": "build/all#--only cli 缺确认（D3 fail-closed）",
+   "command": "build all",
+   "argv": [
+    "build",
+    "all",
+    "--only",
+    "cli"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "自举档会写 bin/zerg ⇒ D3 三态：缺 `--confirm` = **不执行**（E2 fail-closed，从不提问）"
+  },
+  {
+   "id": "build/all#--only cli 确认值不匹配主机名",
+   "command": "build all",
+   "argv": [
+    "build",
+    "all",
+    "--only",
+    "cli",
+    "--confirm",
+    "nope",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "§4.1 K7：`--confirm` 的值必须与目标（主机名）逐字相同 —— 给错值一律拒绝，不许「当没给」"
+  },
+  {
+   "id": "build/all#换件档真跑仍未开放",
+   "command": "build all",
+   "argv": [
+    "build",
+    "all",
+    "--confirm",
+    "x",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "默认全套会覆盖**正在跑**的主控件（换件档）⇒ 本版仍**未开放**（只有 `--only cli` 自举档开着）· 不给结论"
   }
  ]
 }
