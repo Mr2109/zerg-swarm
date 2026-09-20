@@ -57,6 +57,13 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	case "ls":
 		args = []string{"--list"}
 	case "run":
+		// 单步档的**机器面**（`--json <字段>`）走命令面（`family_gate_run_step.go`）：
+		// 执行照样交给脚本（步骤表的唯一真源），命令面只做「执行前判 + 契约形状的包封」。
+		// 其余一律原样透传 —— 本条分支是 `gate.go` 开头那句「只转发、不翻译」的**唯一例外**，
+		// 且它**不改任何脚本退码**（包封读的是脚本自己落的结果表）。
+		if inv.jsonGiven {
+			return gateRunStepJSON(inv, stdout, stderr, root, script, tail)
+		}
 		args = append(args, tail...)
 	case "show":
 		if len(tail) == 0 {
