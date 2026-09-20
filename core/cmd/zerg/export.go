@@ -50,17 +50,27 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 		if !requireFields(inv, stderr) {
 			return exitFail
 		}
-		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
-			"path":      path,
-			"commands":  fmt.Sprintf("%d", nCmd),
-			"dangerous": fmt.Sprintf("%d", nDanger),
-			"schema":    contractSchema,
-			"layers":    layerCounts(), // §九 M10 X1：三档层级的机器可读计数（space 恒为 0）
-		})
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, helpExportRow(path))
 	}
 	fmt.Fprintln(stdout, path) // stdout 只出结果：写哪儿了
 	fmt.Fprintf(stderr, "导出 %d 条命令（其中危险动作 %d 条）→ %s\n", nCmd, nDanger, path)
 	return exitOK
+}
+
+// helpExportRow —— `zerg help export --json` 的**机器面**（单一来源：命令树 + 层级计数 + 契约 schema）。
+//
+// 为什么抽成函数（§二十一 已红第 17 条 · 开工单 T-39）：`*.schema.json` 要与导出物**对拍得上**，
+// 对拍就必须喂**同一份**真值 —— 若测试自己另拼一份 map，那份 map 与真跑的输出可以悄悄漂。
+// 本函数于是成为唯一来源：命令面（cmdHelpExport）与对拍测试（export_schema_test.go）都调它。
+func helpExportRow(path string) map[string]string {
+	nCmd, nDanger := countCommands()
+	return map[string]string{
+		"path":      path,
+		"commands":  fmt.Sprintf("%d", nCmd),
+		"dangerous": fmt.Sprintf("%d", nDanger),
+		"schema":    contractSchema,
+		"layers":    layerCounts(), // §九 M10 X1：三档层级的机器可读计数（space 恒为 0）
+	}
 }
 
 func countCommands() (open, danger int) {
