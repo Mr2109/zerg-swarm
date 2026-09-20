@@ -273,13 +273,17 @@ func NewGateway(authToken string, cfg *config.FleetConfig, st *store.Store, adap
 	orch := orchestrator.NewOrchestrator(orchestrator.DefaultOrchestratorConfig(),
 		newGatewayExecutor(authToken))
 
-	// M3 集中控制层（v2.4）：加载规则——nil 不启用；观察模式（记录不拦截——Mr2109确认策略后改拦截）
+	// M3 集中控制层（v2.4）：加载规则——**强制档**（§二十一 已红第 9 条 · 批 C 的 T-31：
+	//   `P-099` 定案「网关三态生效 · 升强制」；判定非 allow 即拦，见 handleRequest 里那段注释）。
+	//   注意口径：装载失败 ⇒ `ctrlGate` 为 nil ⇒ **本层整段不生效**（不拦）。这是一处**已知的边界**
+	//   （登记在批 C 记录「所见非本批」里）：读不到规则表时，网关这条链要么拒启、要么显式进入
+	//   「无控制层」状态并打横幅 —— 现状是后者（`⚠️` 一行）。改成 fail-closed 要动网关启动契约，不属本批。
 	var ctrlGate *control.Gate
 	if gate, err := control.NewGateFromFile(filepath.Join(statepath.WorkspaceRoot(), "core", "internal", "control", "rules.yaml")); err == nil {
 		ctrlGate = gate
-		log.Printf("🔒 M3 central control layer loaded (observe mode — record only, no blocking)")
+		log.Printf("🔒 M3 central control layer loaded (ENFORCE mode — non-allow decisions are blocked)")
 	} else {
-		log.Printf("⚠️ M3 control layer load failed (disabled): %v", err)
+		log.Printf("⚠️ M3 control layer load failed (layer DISABLED — 本层不拦；见批C记录「所见非本批」): %v", err)
 	}
 
 	g := &Gateway{
@@ -288,7 +292,7 @@ func NewGateway(authToken string, cfg *config.FleetConfig, st *store.Store, adap
 		actionRouter:    actionRouter,
 		roundRobin:      make(map[string]int), // B13: 轮询计数器初始化
 		orchestrator:    orch,
-		gate:            ctrlGate, // M3 集中控制层（观察模式）
+		gate:            ctrlGate, // M3 集中控制层（**强制档** · T-31 升档）
 		adapterRegistry: adapters, // v2.5.4.10 模型适配器注册表
 		client: &http.Client{
 			// v2.5.6 故障自愈（Mr2109 2026-08-28）: 5min→45min——长生成（思考模型 13万token）
@@ -801,15 +805,26 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 	hasTools := adapter.ContainsTools(forwardBody)
 	log.Printf("🔍 request check: tools=%v stream=%v bodyLen=%d", hasTools, adapter.IsStreamRequest(forwardBody), len(forwardBody))
 
-	// M3 集中控制层（v2.4）：工具调用拦截检查——观察模式（记录不拦截——等Mr2109确认策略后启用）
-	// gate 检查请求里的工具调用——block 记录告警；require_approval 记录待审（暂不拦截——默认放行保持现有行为）
+	// M3 集中控制层：工具调用拦截检查——**强制档**（§二十一 已红第 9 条 · 批 C 的 T-31 升档；
+	//   `P-099` 逐字「网关三态生效」「**升强制**」）。
+	//   改之前这里是「观察模式」：判定非 allow 只打一行日志、然后**照样放行** —— 那正是 fail-open
+	//   （规则写了、电没接）。现在：判定非 allow（block / require_approval / 任何认不出的值）⇒
+	//   **拦下这次请求**（403 + 明确点名是哪个工具、命中哪条规则）。
+	//   ★ 口径：`require_approval` 在没有审批通道时**按拒处理**（与 CA 的 bash 侧逐字同口径：
+	//     「需要审批且无审批通道 ⇒ 本轮不执行」）—— 绝不当放行。
 	if hasTools && g.gate != nil {
 		for _, toolName := range adapter.ExtractToolNames(forwardBody) {
 			decision := g.gate.Check(toolName, "", "agent")
-			if decision.Action != control.ActionAllow {
-				log.Printf("🔒 M3 control[observe]: tool %s → %s (%s) — not blocking (observe mode)",
-					toolName, decision.Action, decision.Message)
+			if decision.Action == control.ActionAllow {
+				continue
 			}
+			log.Printf("🔒 M3 control[enforce]: tool %s → %s (%s) — **blocked**（强制档 · 不是观察档）",
+				toolName, decision.Action, decision.Message)
+			adp.TransformError(w, http.StatusForbidden, "control_blocked",
+				fmt.Sprintf("工具 %s 被控制层拦下（action=%s · rule=%s）：%s —— 放行要改 %s 的 rules.yaml（默认档已是 block，必须显式列全）",
+					toolName, decision.Action, decision.Rule, decision.Message,
+					"core/internal/control"))
+			return
 		}
 	}
 
