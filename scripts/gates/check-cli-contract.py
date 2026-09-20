@@ -24,9 +24,13 @@
 #
 # 用法：
 #   python3 scripts/gates/check-cli-contract.py [仓库根]
-#   python3 scripts/gates/check-cli-contract.py --self-test          # 成对负控（2 正控 + 10 负控 + 1 空转）
+#   python3 scripts/gates/check-cli-contract.py --self-test          # 成对负控（2 正控 + 11 负控 + 1 空转
+#                                                                   # + 3 条 emit-matrix 合并/字节/幂等控）
 #   python3 scripts/gates/check-cli-contract.py --no-runtime         # **只给夹具用**：跳过 T4 的 go test
-#   python3 scripts/gates/check-cli-contract.py --emit-matrix [路径] # **重生成**矩阵（先用 build-all.sh --only-cli 出新制品）
+#   python3 scripts/gates/check-cli-contract.py --emit-matrix [路径] # **增量合并**矩阵 —— 只刷新机器可派生
+#                                                                   # 列（want_rc / want_stdout_bytes=**字节**数），
+#                                                                   # 既有格的 id/command/argv/why 逐字保留
+#                                                                   # （先用 build-all.sh --only-cli 出新制品）
 #
 # ★ 判据出处（`T6` 的引用面）：§九 M6 `R7`（字段只增不改 / 破坏性变更走大版本）· §九 M17 `T1`–`T6`。
 import argparse
@@ -205,6 +209,19 @@ def node_family_hits(root, self_path=None):
 # ── 矩阵重生成（`--emit-matrix`）：矩阵是**冻结的现行为**，只有真跑才冻得住 ────────────────────
 # ★ 必须用**刚从源码构建的**制品（`bash scripts/build/build-all.sh --only-cli`）：拿旧制品冻结，
 #   新加的命令会被当成「未知命令」而静默漏掉一格。
+# ★ 2026-09-21（收掉《开工记录》表三 #3）修掉**两个真 bug**：
+#   ① **字节数**：`want_stdout_bytes` 是**字节**判据（判定口 `cli_matrix_test.go` 的 `judgeCase`
+#      比的是 `out.Len()` = 字节），旧实现写的是 `len(outs[0])` = **字符数** ⇒ 含中文的输出被记小。
+#      实测（现跑）：`dev proposal --json name` stdout **258 字符 / 272 字节**，矩阵里正确的值是 272
+#      ⇒ 旧实现一跑就把 272 **篡改成 258**，判定口从此按错值对拍（放宽而非报红）。
+#      ⇒ 现在一律取 `len(stdout.encode('utf-8'))`。
+#   ② **增量合并**：旧实现把 `cases` 整表重写 ⇒ 手写格整批丢掉（实测丢 **16 格** = 14 格手写口令
+#      + 2 格手改过 argv 的自动格；另有 5 格的 argv 被候选面覆盖）。现在**以既有矩阵为底**：
+#      · 既有格的 `id`/`command`/`argv`/`why`（含顺序）与 `exemptions` **逐字保留** —— 一个都不删；
+#      · **只刷新机器可派生列**（`want_rc` / `want_stdout_bytes` —— 它们由现跑两遍派生）；
+#      · 既有格若现跑不成立（幽灵 / 两次不等 / 退码 0）⇒ **保留原值**并在输出里逐条点名（不静默改）；
+#      · 只有**命令树里一格都没有的命令**才按候选面**追加**新格（追加面仍要求退码 == 判据语义要的那个）
+#        —— 这是 T1 覆盖的缺口填充，不是「顺手加格」。
 MATRIX_NOTE = ('命令面自身的 must-fail 矩阵（§九 M17 `T2` · 开工单 T-42 判据①）。\n'
                '口径：这不是「猜的期望值」，是**冻结的现行为（棘轮）** —— 每条口令逐条现跑两遍、'
                '退码一致、且与判据语义相符才入矩阵；改行为就必须改这一格（改不动就是回归）。\n'
@@ -212,6 +229,10 @@ MATRIX_NOTE = ('命令面自身的 must-fail 矩阵（§九 M17 `T2` · 开工�
                '不认的主号）**每条命令都有**；透传型只留执行前判那条 —— 别的会把被包的脚本真跑一遍。\n'
                '重生成：`python3 scripts/gates/check-cli-contract.py --emit-matrix`'
                '（先用 `bash scripts/build/build-all.sh --only-cli` 出**新**制品）。\n'
+               '★ 生成是**增量合并**（不是整表重写）：只刷新机器可派生列'
+               '（`want_rc` / `want_stdout_bytes` = **现跑字节数** `len(stdout.encode())` —— 不是字符数），'
+               '既有格的 id/command/argv/why 与顺序逐字保留（手写格不会被重写吃掉），'
+               '只有「一格都没有的新命令」才追加候选格。\n'
                '覆盖与空白由 T1/T5 判（空白受 baseline 棘轮约束）。')
 
 
@@ -244,45 +265,101 @@ def candidate_cases(path, shape):
     return out
 
 
+def derive_columns(binz, argv):
+    """派生列的唯一来源：口令现跑两遍 → ({'want_rc','want_stdout_bytes'}, '') 或 (None, 不成立的原因)。
+
+    ★ `want_stdout_bytes` 取 **字节数** `len(stdout.encode('utf-8'))` —— 判定口（`cli_matrix_test.go`
+      的 `judgeCase`）比的就是字节数；旧实现取 `len(stdout)` = 字符数（本文件头部 bug ① 的来历）。
+    """
+    rcs, outs = [], []
+    for _ in range(2):
+        p = subprocess.run([binz] + argv, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL)
+        rcs.append(p.returncode)
+        outs.append(p.stdout)
+    if '未知命令' in outs[0] or '未知命令' in outs[1]:
+        return None, '幽灵命令（制品里没有它 ⇒ 制品不是新的）'
+    if rcs[0] != rcs[1]:
+        return None, '两次退码不等 %s' % rcs
+    if rcs[0] == 0:
+        return None, '退码 0 —— must-fail 矩阵不许有「该绿」的格'
+    return {'want_rc': rcs[0], 'want_stdout_bytes': len(outs[0].encode('utf-8'))}, ''
+
+
 def emit_matrix(root, out_path=None):
-    """按命令树 + 现跑制品重生成矩阵（两遍取真退码；两次不等 / rc=0 / 幽灵命令都不入矩阵）。"""
+    """按命令树 + 现跑制品**增量合并**矩阵。
+
+    既有格：只刷新机器可派生列（`want_rc` / `want_stdout_bytes`），其余列逐字保留、一个不删；
+    新命令（命令树里有、矩阵里一格都没有）：按候选面追加候选格。
+    """
     binz = os.path.join(root, 'bin', 'zerg')
     if not os.path.isfile(binz):
         return 2, ['⛔ 不给结论：找不到 bin/zerg —— 先用 bash scripts/build/build-all.sh --only-cli 出新制品']
     tree = parse_tree(root)
     if not tree:
         return 2, ['⛔ 不给结论：命令树读不出来（空转）']
-    cases, dropped = [], []
+    old = load_matrix(root) or {}
+    old_cases = list(old.get('cases') or [])
+    tree_paths = [p for p, _ in tree]
+
+    cases, refreshed, kept, warned = [], 0, 0, []
+    for c in old_cases:
+        hit = dict(c)
+        argv = c.get('argv') or []
+        if not argv:
+            warned.append('保留原值（口令为空 ⇒ 跑不了）：%s' % (c.get('id', '?'),))
+        else:
+            d, why = derive_columns(binz, argv)
+            if d is None:
+                warned.append('保留原值（现跑不成立）：%s —— %s' % (c.get('id', '?'), why))
+            else:
+                if (c.get('want_rc'), c.get('want_stdout_bytes')) != (d['want_rc'], d['want_stdout_bytes']):
+                    refreshed += 1
+                hit.update(d)          # ← 只动这两列；id/command/argv/why 一字不改
+        cases.append(hit)
+        kept += 1
+
+    # 追加面：命令树里有、**矩阵里一格都没有**的命令 ⇒ 按候选面给格（缺口填充；已有格的命令不重复加）
+    covered = set(c.get('command', '') for c in old_cases)
+    added, dropped = 0, []
     for path, shape in tree:
+        if path in covered:
+            continue
         for name, argv, want, why in candidate_cases(path, shape):
-            rcs, outs = [], []
-            for _ in range(2):
-                p = subprocess.run([binz] + argv, capture_output=True, text=True,
-                                   stdin=subprocess.DEVNULL)
-                rcs.append(p.returncode)
-                outs.append(p.stdout)
-            if '未知命令' in outs[1] or '未知命令' in outs[0]:
-                dropped.append((path, name, '幽灵命令（制品里没有它 ⇒ 制品不是新的）'))
+            d, w = derive_columns(binz, argv)
+            if d is None:
+                dropped.append((path, name, w))
                 continue
-            if rcs[0] != rcs[1]:
-                dropped.append((path, name, '两次退码不等 %s' % rcs))
-                continue
-            if rcs[0] != want:
-                dropped.append((path, name, '退码 %d ≠ 判据语义要的 %d' % (rcs[0], want)))
+            if d['want_rc'] != want:
+                dropped.append((path, name, '退码 %d ≠ 判据语义要的 %d' % (d['want_rc'], want)))
                 continue
             cases.append({'id': path.replace(' ', '/') + '#' + name, 'command': path, 'argv': argv,
-                          'want_rc': rcs[0], 'want_stdout_bytes': len(outs[0]), 'why': why})
-    doc = {'id': 'cli-contract.v1', 'note': MATRIX_NOTE, 'exemptions': [], 'cases': cases}
+                          'want_rc': d['want_rc'], 'want_stdout_bytes': d['want_stdout_bytes'],
+                          'why': why})
+            added += 1
+
+    doc = {'id': old.get('id') or 'cli-contract.v1', 'note': MATRIX_NOTE,
+           'exemptions': old.get('exemptions') or [], 'cases': cases}
     dst = out_path or os.path.join(root, MATRIX_REL)
     with open(dst, 'w', encoding='utf-8') as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)
         f.write('\n')
-    have = set(c['command'] for c in cases)
-    lines = ['矩阵已重生成：%s' % dst,
-             '命令树 %d 条 · case %d 条 · 有 case 的命令 %d 条 · 空白 %d 条'
-             % (len(tree), len(cases), len(have), len([p for p, _ in tree if p not in have]))]
+    have = set(c.get('command', '') for c in cases)
+    ghosts = sorted(set(c.get('command', '') for c in cases) - set(tree_paths))
+    lines = ['矩阵已**增量合并**（不是整表重写）：%s' % dst,
+             '命令树 %d 条 · 格 %d → %d（既有 %d 格逐字保留 · 其中派生列刷新 %d 格 · 新命令追加 %d 格）'
+             % (len(tree_paths), len(old_cases), len(cases), kept, refreshed, added),
+             '有格的命令 %d 条 · 空白 %d 条 · 豁免 %d 条'
+             % (len(have), len([p for p in tree_paths if p not in have]), len(doc['exemptions']))]
+    for g in ghosts:
+        lines.append('⚠ 矩阵里的 %r 指向命令树里没有的命令（T1 会判幽灵）—— 增量合并不静默删格，需人工定夺' % g)
     for d in dropped:
-        lines.append('丢弃：%s' % (d,))
+        lines.append('丢弃（新命令的候选格·退码不符/幽灵）：%s' % (d,))
+    for w in warned:
+        lines.append('⚠ ' + w)
+    if not old_cases:
+        lines.append('⚠ 既有矩阵为空 ⇒ 本次是按候选面**新建**（不是合并）：手写格无处可保，'
+                     '且命令树里没有 must-fail 新面的命令会成空白（T1/T5 会判）')
     return 0, lines
 
 
@@ -626,6 +703,70 @@ def self_test():
         os.remove(os.path.join(r, 'docs-命令说明.md'))
         rc, lines = check(r, no_runtime=True)
         case('⑬ R7 正控（去掉那处写法 ⇒ 0）', 0, rc)
+
+        # ⑭ `--emit-matrix` 空转负控：夹具里没有 `bin/zerg` ⇒ **2 不给结论**（不假绿、不空转当绿）
+        rc, lines = emit_matrix(os.path.join(tmp, 'good'))
+        case('⑭ emit-matrix 负控（没有 bin/zerg ⇒ 2）', 2, rc)
+        if not any('找不到 bin/zerg' in l for l in lines):
+            bad.append('⑭ emit-matrix 负控：判词里没点名缺制品')
+
+        # ⑮ `--emit-matrix` **字节数 + 增量合并**（合成 `bin/zerg` 夹具：输出含中文 ⇒ 字节数 ≠ 字符数）。
+        #   四条判据：① 手写格逐字保留（旧实现整表重写 ⇒ 这里必红）· ② 既有格只刷派生列（argv/why 不动）·
+        #   ③ 派生列是**字节数**不是字符数（bug ① 的成对负控）· ④ 新命令追加格 + 既有 exemptions 保留。
+        r = os.path.join(tmp, 'emit')
+        seed = json.loads(json.dumps(GOOD_MATRIX))
+        seed['cases'] = [
+            {"id": "version#手写格", "command": "version", "argv": ["version"],
+             "want_rc": 2, "want_stdout_bytes": 0, "why": "手写：版本号后面跟东西 ⇒ 2"},
+            {"id": "version#未知旗标", "command": "version", "argv": ["version", "--x"],
+             "want_rc": 9, "want_stdout_bytes": 0, "why": "旧 why（候选面不许覆盖它）"},
+        ]
+        seed['exemptions'] = [{"command": "core stop", "reason": "夹具豁免（合并不许丢）"}]
+        fixture(r, matrix=seed)
+        FAKE_OUT = '用法错：中文输出（字节数 ≠ 字符数）\n'
+        os.makedirs(os.path.join(r, 'bin'), exist_ok=True)
+        with open(os.path.join(r, 'bin', 'zerg'), 'w', encoding='utf-8') as f:
+            f.write("#!/bin/sh\nprintf '%s\\n' '用法错：中文输出（字节数 ≠ 字符数）'\nexit 2\n")
+        os.chmod(os.path.join(r, 'bin', 'zerg'), 0o755)
+        dst = os.path.join(tmp, 'emit-out.json')
+        rc, lines = emit_matrix(r, dst)
+        case('⑮ emit-matrix（增量合并 ⇒ 0）', 0, rc)
+        try:
+            m = json.loads(open(dst, encoding='utf-8').read())
+        except (OSError, json.JSONDecodeError) as e:
+            m = {}
+            bad.append('⑮ emit-matrix：产物读不回来（%s）' % e)
+        cases_out = m.get('cases') or []
+        by = dict((c.get('id'), c) for c in cases_out)
+        want_bytes, want_chars = len(FAKE_OUT.encode('utf-8')), len(FAKE_OUT)
+        if want_bytes == want_chars:
+            bad.append('⑮ 夹具不具区分度：中文输出的字节数与字符数相等')
+        #   ① 手写格：**身份列**逐字保留、**派生列**刷新（「只更新机器可派生列」的逐字落点）
+        first = cases_out[0] if cases_out else {}
+        for k in ('id', 'command', 'argv', 'why'):
+            if first.get(k) != seed['cases'][0].get(k):
+                bad.append('⑮ 手写格的 %s 没逐字保留（第 1 格 = %r）—— 整表重写的老病' % (k, first,))
+        if (first.get('want_rc'), first.get('want_stdout_bytes')) != (2, want_bytes):
+            bad.append('⑮ 手写格的派生列没刷对：%r（要 rc=2 / %d 字节）' % (first, want_bytes))
+        old_auto = by.get('version#未知旗标') or {}
+        if old_auto.get('argv') != ["version", "--x"] or old_auto.get('why') != '旧 why（候选面不许覆盖它）':
+            bad.append('⑮ 既有格的 argv/why 被候选面覆盖了：%r' % (old_auto,))
+        got = old_auto.get('want_stdout_bytes')
+        if (old_auto.get('want_rc'), got) != (2, want_bytes):
+            bad.append('⑮ 既有格派生列没刷对：want_rc=%r want_stdout_bytes=%r（要 2 / %d 字节；'
+                       '记成 %d 就是**字符数** —— bug ①）'
+                       % (old_auto.get('want_rc'), got, want_bytes, want_chars))
+        if not by.get('core/stop#缺 --confirm（D3）'):
+            bad.append('⑮ 命令树里有、矩阵里一格都没有的命令**没有**追加候选格（新命令会成空白）')
+        if (m.get('exemptions') or []) != seed['exemptions']:
+            bad.append('⑮ 既有 exemptions 被丢了：%r' % (m.get('exemptions'),))
+        # ⑯ `--emit-matrix` 幂等正控：同一棵树连跑两遍 ⇒ 产物**逐字节**相同
+        dst2 = os.path.join(tmp, 'emit-out2.json')
+        rc2, _ = emit_matrix(r, dst2)
+        same = os.path.isfile(dst2) and open(dst, 'rb').read() == open(dst2, 'rb').read()
+        case('⑯ emit-matrix 幂等（连跑两遍逐字节相同 ⇒ 0）', 0, rc2)
+        if not same:
+            bad.append('⑯ emit-matrix 不是幂等的：同一棵树上连跑两遍的产物不同')
 
         print('自检结论: %s（失败 %d 条）' % ('全过' if not bad else '不过', len(bad)))
         for b in bad:
