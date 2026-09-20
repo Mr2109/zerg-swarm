@@ -2538,6 +2538,69 @@
    "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
   },
   {
+   "id": "dev/proposal#未知旗标",
+   "command": "dev proposal",
+   "argv": [
+    "dev",
+    "proposal",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "dev/proposal#不认的契约主号",
+   "command": "dev proposal",
+   "argv": [
+    "dev",
+    "proposal",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "dev/proposal#说明面不认 --json",
+   "command": "dev proposal",
+   "argv": [
+    "dev",
+    "proposal",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 272,
+   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+  },
+  {
+   "id": "propose/ls#未知旗标",
+   "command": "propose ls",
+   "argv": [
+    "propose",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "propose/ls#不认的契约主号",
+   "command": "propose ls",
+   "argv": [
+    "propose",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
    "id": "script/run#未知旗标",
    "command": "script run",
    "argv": [

@@ -1,0 +1,432 @@
+// family_dev.go —— 自开发面 · **提案件通道**（`zerg dev proposal new|list|show` · §17.2 ② · §17.4 #1）。
+//
+// 本件落的是七环闭环里**唯一「缺」的那一环**（「② 改」）：§17.2.1 逐字「现状 = 缺 · 零落点 ——
+// 现状的\"改\"只有「人/AI 直接编辑文件 + git」」。本件把它变成**一条命令**，且严守三条：
+//
+//	① **只产可审查物，不落系统**（§17.4 #1 的语义一格）：`new` 写的是**文档面**，
+//	   不写进仓（`Zerg-内部文档` / 主仓都不写）、**不触主控**（零 HTTP）⇒ 产出后系统状态逐字不变
+//	   （判据出处：§17.3 铁律③ 判据 · 调研-M18 J5）。
+//	② **目标必须回指既有编号**（§17.6 `SD1`：动机源 = 一份**人的清单**）—— 回指不上 ⇒ `exit 2`，
+//	   **不新立退码**；闭集真源 = `core/internal/contract/dev-targets.json`（go:embed 读入，不另抄）。
+//	③ **没退点的件不许提**（同节判据④）：`--rollback` 与 `--evidence` 缺一即拒 ——
+//	   提案件的价值在于「能回得去、能证得明」，缺这两格的件提出来只会变成噪声。
+//
+// 与既有条文的接缝（**不重复立项** ✗ · §17.4 接缝表第 1 行）：
+// 提案件的最小字段集与「提 ≠ 批」照 §九 M18 `C3` + `P-M18-1`，本件只把**形状**落成命令；
+// `proposal` 的族名在 §3.2 里另有 `propose`（`zerg propose ls`）一条 ⇒ 本件把它落成**同一份清单的
+// 第二个入口**（不新写逻辑：两个入口共用一个渲染函数）。
+//
+// 本版边界（照实说）：提案件落**本地状态目录**（`~/.zerg/proposals/` · 可用 `ZERG_PROPOSAL_DIR` 改写）；
+// §17.4 #1 说的「主控 :8580（索引）」**未通**（那需要主控侧加索引面 = 换件档）⇒ 登记待拍，不假装有。
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/contract"
+)
+
+// proposalFields —— 提案件在 `--json` 面上可取的全部字段（K1：机器面先定）。
+var proposalFields = []string{"id", "title", "target", "goal", "evidence", "rollback_ref",
+	"by", "state", "criterion", "created_at", "path"}
+
+// proposalStates —— 三态闭集（§17.4 #1 的 `--state 未决|已批准|已否决`，逐字）。
+var proposalStates = []string{"未决", "已批准", "已否决"}
+
+// proposalRecord —— 一份提案件（可审查物）。字段名一律用**契约里的词**，不自造近义词。
+type proposalRecord struct {
+	ID         string   `json:"id"`
+	Title      string   `json:"title"`
+	Target     string   `json:"target"`         // 回指既有编号（SD1）
+	Goal       string   `json:"goal"`           // 要达成什么
+	Evidence   []string `json:"evidence"`       // 出处（≥1；空 ⇒ 拒）
+	Rollback   string   `json:"rollback_ref"`   // 退点（没有它不许提）
+	Criterion  string   `json:"criterion"`      // 判据条（哪条命令/哪个数字能证明成了）
+	By         string   `json:"by"`             // 提出者（T-60 收成 subject + subject_kind）
+	State      string   `json:"state"`          // 未决 / 已批准 / 已否决
+	CreatedAt  string   `json:"created_at"`     // RFC3339
+	ContractNo string   `json:"contract"`       // 产出时的契约号（SD9：证据单不许混比）
+	Path       string   `json:"path,omitempty"` // 落点（读回时补）
+}
+
+// cmdDevProposal —— `zerg dev proposal <动作>`（动作 = new / list / show）。
+func cmdDevProposal(inv *invocation, stdout, stderr io.Writer) int {
+	action := ""
+	if len(inv.args) > 0 {
+		action = inv.args[0]
+	}
+	switch action {
+	case "new":
+		return cmdDevProposalNew(inv, stdout, stderr)
+	case "list":
+		return cmdDevProposalList(inv, stdout, stderr)
+	case "show":
+		return cmdDevProposalShow(inv, stdout, stderr)
+	case "":
+		fmt.Fprintf(stderr, "%s: `dev proposal` 要给动作：new | list | show\n", progName)
+		fmt.Fprintf(stderr, "用法：zerg dev proposal new --title <题> --target <既有编号> --goal <目标> "+
+			"--evidence <出处> --rollback <退点> [--criterion <判据>] [--by <提出者>]\n")
+		fmt.Fprintf(stderr, "       zerg dev proposal list [--state 未决|已批准|已否决]\n")
+		fmt.Fprintf(stderr, "       zerg dev proposal show <提案 id>\n")
+		inv.setErr("usage", "missing_action", "缺动作")
+		return exitUsage
+	default:
+		fmt.Fprintf(stderr, "%s: 未知 `dev proposal` 动作 %q\n", progName, action)
+		fmt.Fprintf(stderr, "可用：new · list · show（§17.4 #1 逐字三条）\n")
+		inv.setErr("usage", "unknown_action", "未知动作")
+		return exitUsage
+	}
+}
+
+// cmdProposeLs —— `zerg propose ls`：§3.2 的 `propose` 那一条（**同一份清单的第二个入口**）。
+//
+// 为什么不另写一份渲染：两个入口看的是同一批件 —— 另写一份就是「同一件事两套说法」（§1.2 G6 的病根）。
+func cmdProposeLs(inv *invocation, stdout, stderr io.Writer) int {
+	return proposalList(inv, stdout, stderr)
+}
+
+// ---- new ----
+
+func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
+	rec := proposalRecord{
+		Title:     strings.TrimSpace(inv.flagVal("--title")),
+		Target:    strings.TrimSpace(inv.flagVal("--target")),
+		Goal:      strings.TrimSpace(inv.flagVal("--goal")),
+		Rollback:  strings.TrimSpace(inv.flagVal("--rollback")),
+		Criterion: strings.TrimSpace(inv.flagVal("--criterion")),
+		By:        strings.TrimSpace(inv.flagVal("--by")),
+		Evidence:  trimAll(inv.flagVals("--evidence")),
+		State:     "未决",
+	}
+	// ① 缺件逐条点名（§九 M7：错误要给下一步，不给一句「参数错误」）
+	missing := []string{}
+	if rec.Title == "" {
+		missing = append(missing, "--title")
+	}
+	if rec.Target == "" {
+		missing = append(missing, "--target")
+	}
+	if rec.Goal == "" {
+		missing = append(missing, "--goal")
+	}
+	if len(missing) > 0 {
+		msg := fmt.Sprintf("缺必需旗标：%s", strings.Join(missing, " · "))
+		inv.setErr("usage", "missing_required_flag", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "提案件的**最小字段集**照 §九 M18 C3；本件的判据要求四格齐：--title / --target / --goal / --rollback\n")
+		return exitUsage
+	}
+	// ② 目标回指（§17.6 SD1：回指不上 ⇒ 2）
+	canon, why := canonTarget(rec.Target)
+	if why != "" {
+		inv.setErr("usage", "target_not_in_backlog", why)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, why)
+		fmt.Fprintf(stderr, "口径（§17.6 `SD1` 逐字）：动机源是一份**人的清单** —— 目标只能承接《待办-20260920.md》的 D/E/F/G 族编号 ⇒ AI **不选目标、只承接目标**\n")
+		if s := nearestTarget(rec.Target); s != "" {
+			fmt.Fprintf(stderr, "最像的既有编号: %s\n", s)
+		}
+		return exitUsage
+	}
+	rec.Target = canon
+	// ③ 退点与出处（判据④：没退点的件不许提；出处为空 ⇒ 不是判据）
+	if rec.Rollback == "" {
+		inv.setErr("usage", "rollback_required", "缺退点（--rollback）")
+		fmt.Fprintf(stderr, "%s: 缺退点（`--rollback <方式>`）—— **没退点的件不许提**（§17.3 铁律③③：每个写动作必须能指回一条回滚路径）\n", progName)
+		return exitUsage
+	}
+	if len(rec.Evidence) == 0 {
+		inv.setErr("usage", "evidence_required", "缺出处（--evidence）")
+		fmt.Fprintf(stderr, "%s: 缺出处（`--evidence <出处>` 至少一条）—— 证据为空的件**不给结论**（§17.3 铁律②③：证据为空 ⇒ 不给结论）\n", progName)
+		return exitUsage
+	}
+	if rec.By == "" {
+		rec.By = "（未声明）"
+	}
+	rec.ContractNo = contractVersionText()
+	rec.CreatedAt = time.Now().Format(time.RFC3339)
+
+	dir := proposalDir()
+	if dir == "" {
+		inv.setErr("blocked", "no_state_dir", "解析不到状态目录（HOME 取不到）")
+		fmt.Fprintf(stderr, "%s: 解析不到状态目录（HOME 取不到 · 可用 ZERG_PROPOSAL_DIR 指定）⇒ 不给结论\n", progName)
+		return exitBlocked
+	}
+	// `--dry-run`：只出件、**零副作用**（三态里的第一态，照 §九 M3 C4；不写任何文件）
+	if inv.dryRun {
+		if inv.jsonGiven {
+			if !requireFields(inv, stderr) {
+				return exitFail
+			}
+			return selectJSON(stdout, stderr, inv, inv.path, proposalFields, proposalRow(rec))
+		}
+		fmt.Fprintf(stdout, "提案 id  : %s（--dry-run 未分配落点）\n", "（未写盘）")
+		fmt.Fprintf(stdout, "  目标   : %s\n", rec.Target)
+		fmt.Fprintf(stdout, "  标题   : %s\n", rec.Title)
+		fmt.Fprintf(stdout, "  退点   : %s\n", rec.Rollback)
+		fmt.Fprintf(stdout, "  状态   : %s\n", rec.State)
+		fmt.Fprintf(stderr, "（--dry-run：只出件 · 零副作用 —— 未写任何文件、未触主控）\n")
+		return exitOK
+	}
+	rec.ID = nextProposalID(dir)
+	rec.Path = filepath.Join(dir, rec.ID+".json")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		inv.setErr("failed", "state_dir_unwritable", err.Error())
+		fmt.Fprintf(stderr, "%s: 建不了状态目录 %s：%v\n", progName, dir, err)
+		return exitFail
+	}
+	body, err := json.MarshalIndent(rec, "", " ")
+	if err != nil {
+		inv.setErr("failed", "marshal_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 件序列化失败：%v\n", progName, err)
+		return exitFail
+	}
+	// 追加只写（§九 M3 C5）：**新建**，绝不覆盖已有件（同名即拒 —— 不吞不盖）。
+	f, err := os.OpenFile(rec.Path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		inv.setErr("failed", "proposal_write_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 写不进提案件 %s：%v（§九 M3 C5：写失败即拒，不吞）\n", progName, rec.Path, err)
+		return exitFail
+	}
+	if _, err := f.Write(append(body, '\n')); err != nil {
+		f.Close()
+		inv.setErr("failed", "proposal_write_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 写提案件失败：%v\n", progName, err)
+		return exitFail
+	}
+	f.Close()
+
+	if inv.jsonGiven {
+		if !requireFields(inv, stderr) {
+			return exitFail
+		}
+		return selectJSON(stdout, stderr, inv, inv.path, proposalFields, proposalRow(rec))
+	}
+	fmt.Fprintln(stdout, rec.ID)
+	fmt.Fprintf(stderr, "提案件落点: %s\n", rec.Path)
+	fmt.Fprintf(stderr, "状态: %s（「提 ≠ 批」：批准要人给 · §九 M18 C4）\n", rec.State)
+	fmt.Fprintf(stderr, "零副作用口径：本命令**不触主控**（零 HTTP）· **不写入仓** —— 产出后系统状态逐字不变（§17.3 铁律③ 判据）\n")
+	return exitOK
+}
+
+// ---- list / show ----
+
+func cmdDevProposalList(inv *invocation, stdout, stderr io.Writer) int {
+	return proposalList(inv, stdout, stderr)
+}
+
+func proposalList(inv *invocation, stdout, stderr io.Writer) int {
+	want := strings.TrimSpace(inv.flagVal("--state"))
+	if want != "" && !containsStr(proposalStates, want) {
+		inv.setErr("usage", "bad_state", "状态不在闭集里")
+		fmt.Fprintf(stderr, "%s: `--state` 只认三值：%s（给了 %q）\n", progName, strings.Join(proposalStates, "|"), want)
+		return exitUsage
+	}
+	dir := proposalDir()
+	recs, nerr := loadProposals(dir)
+	if nerr != nil {
+		inv.setErr("blocked", "state_dir_unreadable", nerr.Error())
+		fmt.Fprintf(stderr, "%s: 读不了提案目录 %s：%v ⇒ 不给结论（「读不到」不当「没有」· §九 M9 RC9）\n", progName, dir, nerr)
+		return exitBlocked
+	}
+	rows := []map[string]string{}
+	for _, r := range recs {
+		if want != "" && r.State != want {
+			continue
+		}
+		r.Path = filepath.Join(dir, r.ID+".json")
+		rows = append(rows, proposalRow(r))
+	}
+	return listCmd(inv, stdout, stderr, []string{"id", "title", "target", "state", "by", "created_at"}, rows)
+}
+
+func cmdDevProposalShow(inv *invocation, stdout, stderr io.Writer) int {
+	if len(inv.args) < 2 {
+		inv.setErr("usage", "missing_target", "缺提案 id")
+		fmt.Fprintf(stderr, "%s: `dev proposal show` 要一个提案 id（先 `zerg dev proposal list`）\n", progName)
+		return exitUsage
+	}
+	id := inv.args[1]
+	dir := proposalDir()
+	recs, err := loadProposals(dir)
+	if err != nil {
+		inv.setErr("blocked", "state_dir_unreadable", err.Error())
+		fmt.Fprintf(stderr, "%s: 读不了提案目录 %s：%v ⇒ 不给结论\n", progName, dir, err)
+		return exitBlocked
+	}
+	for _, r := range recs {
+		if r.ID != id {
+			continue
+		}
+		r.Path = filepath.Join(dir, r.ID+".json")
+		if inv.jsonGiven {
+			if !requireFields(inv, stderr) {
+				return exitFail
+			}
+			return selectJSON(stdout, stderr, inv, inv.path, proposalFields, proposalRow(r))
+		}
+		fmt.Fprintf(stdout, "提案 id  : %s\n", r.ID)
+		fmt.Fprintf(stdout, "  标题   : %s\n", r.Title)
+		fmt.Fprintf(stdout, "  目标   : %s（回指既有编号 · §17.6 SD1）\n", r.Target)
+		fmt.Fprintf(stdout, "  要点   : %s\n", r.Goal)
+		fmt.Fprintf(stdout, "  出处   : %s\n", strings.Join(r.Evidence, " · "))
+		fmt.Fprintf(stdout, "  退点   : %s\n", r.Rollback)
+		fmt.Fprintf(stdout, "  判据   : %s\n", orDash(r.Criterion))
+		fmt.Fprintf(stdout, "  提出者 : %s\n", r.By)
+		fmt.Fprintf(stdout, "  批准者 : %s（「提 ≠ 批」两个字段 · §九 M18 C4）\n", "（空 = 未批）")
+		fmt.Fprintf(stdout, "  状态   : %s\n", r.State)
+		fmt.Fprintf(stdout, "  契约号 : %s\n", r.ContractNo)
+		fmt.Fprintf(stdout, "  落点   : %s\n", r.Path)
+		return exitOK
+	}
+	// 闭集外 kind 不许用（§九 M7 · 门⑤ R3）：`proposal_not_found` 按 watch.go 同款判 `failed`。
+	inv.setErr("failed", "proposal_not_found", "没有这个提案 id")
+	fmt.Fprintf(stderr, "%s: 提案目录里没有 %q（先 `zerg dev proposal list` 看现有件）\n", progName, id)
+	return exitFail
+}
+
+// ---- 落点与读盘 ----
+
+// proposalDir —— 提案件落点：`ZERG_PROPOSAL_DIR` > `~/.zerg/proposals`（**不写死绝对路径**）。
+func proposalDir() string {
+	if v := strings.TrimSpace(os.Getenv("ZERG_PROPOSAL_DIR")); v != "" {
+		return v
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".zerg", "proposals")
+}
+
+// loadProposals 读目录里的全部提案件（目录不存在 ⇒ 空清单，不是错 —— 「没有」与「读不到」要分开）。#
+func loadProposals(dir string) ([]proposalRecord, error) {
+	if dir == "" {
+		return nil, fmt.Errorf("状态目录解析不出来")
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		// 目录不存在 = 「还没有提案」（真没有）⇒ 空清单；**其它**读盘错误（权限等）=「读不到」
+		// ⇒ 原样上抛，由调用方判 BLOCKED（§九 M9 RC9：读不到不当没有）。
+		if os.IsNotExist(err) {
+			return []proposalRecord{}, nil
+		}
+		return nil, err
+	}
+	out := []proposalRecord{}
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		var r proposalRecord
+		if err := json.Unmarshal(body, &r); err != nil {
+			return nil, fmt.Errorf("%s 解不动：%w", e.Name(), err)
+		}
+		if r.ID == "" {
+			r.ID = strings.TrimSuffix(e.Name(), ".json")
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// nextProposalID —— 下一个提案号（`DEV-NNNN` · **不抢** `P-*` / `U-*` / `SD*` / `MF*` 号空间 ✗）。
+func nextProposalID(dir string) string {
+	recs, err := loadProposals(dir)
+	max := 0
+	if err == nil {
+		for _, r := range recs {
+			var n int
+			if _, err := fmt.Sscanf(r.ID, "DEV-%d", &n); err == nil && n > max {
+				max = n
+			}
+		}
+	}
+	return fmt.Sprintf("DEV-%04d", max+1)
+}
+
+// proposalRow —— 一件提案件 → 机器面的一行（字段值一律字符串，**转义走 jstr** 那条路）。
+func proposalRow(r proposalRecord) map[string]string {
+	return map[string]string{
+		"id":           r.ID,
+		"title":        r.Title,
+		"target":       r.Target,
+		"goal":         r.Goal,
+		"evidence":     strings.Join(r.Evidence, ","),
+		"rollback_ref": r.Rollback,
+		"by":           r.By,
+		"state":        r.State,
+		"criterion":    r.Criterion,
+		"created_at":   r.CreatedAt,
+		"path":         r.Path,
+	}
+}
+
+// ---- 目标回指（§17.6 SD1）----
+
+// canonTarget 判一个目标是不是「既有编号」：认 `<id>` 与 `待办:<id>` 两种写法（§六 跨表互指口径）。
+// 命中 ⇒ 返回规范形（`<id>`）与空 reason；否则 reason 写清为什么不认。
+func canonTarget(s string) (string, string) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", "目标是空的"
+	}
+	// 跨表引用形态：`<台账名>:<本地号>` —— 本件只认「待办」这一本台账（动机源 = 人的清单）
+	ledger := ""
+	if i := strings.Index(s, ":"); i >= 0 {
+		ledger, s = s[:i], s[i+1:]
+		if ledger != "待办" {
+			return "", fmt.Sprintf("跨表引用只认 `待办:<编号>`（给的是台账 %q）—— 动机源必须是人给的清单（§17.6 SD1）", ledger)
+		}
+	}
+	ids, err := contract.DevTargets()
+	if err != nil {
+		return "", fmt.Sprintf("回指清单读不出来：%v（**不**退化成「放行」）", err)
+	}
+	up := strings.ToUpper(s)
+	for _, id := range ids {
+		if strings.ToUpper(id) == up {
+			return id, ""
+		}
+	}
+	return "", fmt.Sprintf("目标 %q 回指不上既有编号（待办 D/E/F/G 族 %d 条）", s, len(ids))
+}
+
+// nearestTarget 给一个「最像的既有编号」（K14 四件套：错误文案要给下一步）。
+func nearestTarget(s string) string {
+	ids, err := contract.DevTargets()
+	if err != nil {
+		return ""
+	}
+	up := strings.ToUpper(strings.TrimSpace(s))
+	for _, id := range ids {
+		u := strings.ToUpper(id)
+		if strings.HasPrefix(u, up) || strings.HasPrefix(up, u) {
+			return id
+		}
+	}
+	return ""
+}
+
+// ---- 小工具 ----
+
+func trimAll(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if t := strings.TrimSpace(s); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}

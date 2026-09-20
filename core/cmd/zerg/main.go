@@ -902,6 +902,25 @@ func init() {
 			run:     cmdGuarded,
 		},
 		{
+			path:     []string{"dev", "proposal"},
+			kind:     "Proposal",
+			summary:  "提案件通道：只产可审查物（new|list|show）· 目标必须回指既有编号",
+			usage:    "zerg dev proposal new --title <题> --target <待办编号> --goal <目标> --evidence <出处> --rollback <退点> [--criterion <判据>] [--by <提出者>]",
+			args:     []string{"动作：new | list | show", "提案 id（只 show 要）"},
+			fields:   proposalFields,
+			endpoint: "",
+			run:      cmdDevProposal,
+		},
+		{
+			path:     []string{"propose", "ls"},
+			kind:     "Proposal",
+			summary:  "提案清单（§3.2 propose 那条 · 与 dev proposal list 同一份清单的第二个入口）",
+			usage:    "zerg propose ls [--state 未决|已批准|已否决] [--json <字段>]",
+			fields:   proposalFields,
+			endpoint: "",
+			run:      cmdProposeLs,
+		},
+		{
 			path:    []string{"script", "run"},
 			summary: "跑一件脚本（危险 D3 · 本版未开放）",
 			usage:   "zerg script run <脚本> --confirm=<脚本> --yes [--dry-run]",
@@ -1062,6 +1081,35 @@ type invocation struct {
 
 	// 本次调用是否改变了状态（§九 M4 的 `changed`；nil ⇒ 按命令的幂等档派生）。
 	changed *bool
+
+	// 自开发面旗标（批 E · T-57 起）：**原样收下**、语义校验在各自命令里。
+	// 与上面那排具名旗标的分工：具名的是「一条命令一件」（`--desc` 只给 `task submit` 用）；
+	// 这里是「一族共用一张名字表」——`--title`/`--target`/`--evidence`/`--candidate` 一类。
+	// ★ 为什么仍要走 valueFlagName：不认的旗标在 dispatch 里一律 2 ⇒ 不收下来就等于命令不可用
+	//   （`--out` 今天的教训：用法串里写着、解析器不认 ⇒ 真给就退 2 · 见表二「所见非本批」）。
+	kv map[string][]string
+}
+
+// kvSet 收一枚自开发面旗标的值（可重复的名字就逐次 append —— 先给先留）。
+func (inv *invocation) kvSet(name, val string) {
+	if inv.kv == nil {
+		inv.kv = map[string][]string{}
+	}
+	inv.kv[name] = append(inv.kv[name], val)
+}
+
+// flagVal 取一枚旗标的**最后一个值**（不给/只给旗标不给值 ⇒ 空串）。
+func (inv *invocation) flagVal(name string) string {
+	vs := inv.kv[name]
+	if len(vs) == 0 {
+		return ""
+	}
+	return vs[len(vs)-1]
+}
+
+// flagVals 取一枚（可重复）旗标的**全部值**（按给值次序）。
+func (inv *invocation) flagVals(name string) []string {
+	return inv.kv[name]
 }
 
 func parseInvocation(args []string) (*invocation, error) {
@@ -1204,6 +1252,13 @@ func valueFlagName(a string) string {
 	case "--desc", "--model", "--priority", "--slice-id", "--depends-on", "--acceptance", "--to", "--set":
 		return a
 	}
+	// 自开发面旗标（批 E · T-57 起）：一族共用一张名字表 —— 值照收，语义在各自命令里判。
+	switch a {
+	case "--title", "--target", "--goal", "--evidence", "--rollback", "--by",
+		"--criterion", "--criteria", "--candidate", "--state", "--round",
+		"--dir", "--producer", "--expect":
+		return a
+	}
 	return ""
 }
 
@@ -1229,6 +1284,9 @@ func (inv *invocation) setValueFlag(name, val string) {
 		inv.to = val
 	case "--set":
 		inv.setPairs = append(inv.setPairs, val)
+	default:
+		// 自开发面旗标：进 kv（`flagVal`/`flagVals` 是唯一读法）。
+		inv.kvSet(name, val)
 	}
 }
 
