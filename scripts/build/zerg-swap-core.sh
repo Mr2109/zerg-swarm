@@ -26,28 +26,70 @@
 # 构建档：本脚本走 `build-all.sh --only-core`（只写 `bin/zerg-core` 一个文件）——
 #   换主控**不许**顺手重编子端/UI（`bin/zerg-agentd` 是正在跑的子端件；见 build-all.sh 该档注释）。
 #
-# 用法：bash scripts/build/zerg-swap-core.sh
-# 退出码：0 换件成功 · 1 构建/验签失败（未动生产）· 2 换件后起不来但已回滚成功 · 3 回滚也失败（需人工）
+# 用法：bash scripts/build/zerg-swap-core.sh            # 真换件
+#       bash scripts/build/zerg-swap-core.sh --help     # 用法与退码表（原样打印，见 usage()）
+#       bash scripts/build/zerg-swap-core.sh --self-test-rollback   # 只跑回滚路径（**抛靶**，不碰生产）
 #
-# 退码唯一真源 = zerg help exit-codes（契约 §三）——**本件是换件脚本自有码空间**（它不是命令面，§6.1）。
-# 撞号处逐条登记在《开工记录-批A-20260920.md》T-04 节：本件把「**回滚成功**」表达成 `2`，
-# 而 §十二 `P-129` 的定案是「回滚成功 = `1` + error.kind=ROLLED_BACK」⇒ 两义**未闭合**，
-# 处置 = 批 C 的 T-26（定说法）与 T-28（改回滚路径：重启 + 验签 + 回执），**本批只登记不改**。
+# 退出码（**2026-09-20 批 B ④ 定** · 唯一说法见 usage() 与下方注释）：
+#   0 换件成功 · 1 **不成功**（未动生产 / 回滚成功两支）· 2 用法错 · 3 回滚也失败（需人工）
+#   ★ 「回滚成功」= **`1` + `error.kind=ROLLED_BACK`**（契约 §十二 `P-129` 定的唯一说法）——
+#     本件先前把它表达成 `2`，与命令面主表「`2` = 用法错/不给结论」**硬撞号**（批 A · T-04 登记），
+#     本批按拍板改成 `1` + 独立 kind 行；`1` 的两支靠 **kind 行**分辨（构建/验签/前置闸那支没有
+#     ROLLED_BACK 行）。改这一行的同时**必须**把说法写进 `--help`（否则下一个人又不知道）。
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
-BIN="bin/zerg-core"
-PLIST_LABEL="com.zerg.core"
+# 四个可覆盖点：默认即生产路径；**只有 `--self-test-rollback` 会传它们**（抛靶自测，见 self_test_rollback()）
+BIN="${ZERG_SWAP_BIN:-bin/zerg-core}"
+PLIST_LABEL="${ZERG_SWAP_LABEL:-com.zerg.core}"
 DOMAIN="gui/$UID"
 PLIST="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
-ENDPOINT="http://127.0.0.1:8580/api/capabilities"
+ENDPOINT="${ZERG_SWAP_ENDPOINT:-http://127.0.0.1:8580/api/capabilities}"
 TS="$(date +%Y%m%dT%H%M%S)"
-LOG="/tmp/zerg-swap-$TS.log"
-BACKUP="/tmp/zerg-core.swap-backup-$TS"
+LOG="${ZERG_SWAP_LOG:-/tmp/zerg-swap-$TS.log}"
+BACKUP="${ZERG_SWAP_BACKUP:-/tmp/zerg-core.swap-backup-$TS}"
 
 say()  { echo "$@" | tee -a "$LOG"; }
 hr()   { say "──────────────────────────────────────────────"; }
+
+# ── 用法（--help 原文即下面这段；**退码与 ROLLED_BACK 的唯一定义处**）──────────────
+usage() {
+  cat <<'EOF'
+zerg-swap-core.sh —— 主控换件的受控流程（换件只走本件；构建只走 build-all.sh --only-core）
+
+用法：
+  bash scripts/build/zerg-swap-core.sh                        真换件（前置闸 → 构建 → 验签 → 重启 → 自证）
+  bash scripts/build/zerg-swap-core.sh --help                 本页
+  bash scripts/build/zerg-swap-core.sh --self-test-rollback    只跑**回滚路径**（抛靶 /tmp 目标，不碰生产）
+
+前置闸（任一不过 ⇒ 退出码 1 且**未动生产**）：
+  闸 A 工作树半成品：`git status --porcelain core/ agent/` 的非未跟踪项计数必须为 0（换件是从工作树编译的）
+  闸 B launchd 定义可用：盘上 plist 引用的程序必须真存在（脚本搬家会让那句路径悬空；launchd 用的是**缓存定义**）
+
+退出码（唯一说法）：
+  0  换件成功（新件已上线并自证：端点 200 + 进程自报新 code_sha）
+  1  不成功。**两支，靠 error.kind 行分辨**：
+       · 未动生产：闸 A/闸 B 不过，或构建失败，或验签失败（那三处都不碰生产件与进程）
+       · 回滚成功：**error.kind=ROLLED_BACK** —— 新件起不来，已回滚到换件前状态并重新起来
+         （契约 §十二 P-129 定的唯一说法：回滚成功 = `1` + error.kind=ROLLED_BACK；**不是 0，也不是 2**）
+  2  用法错（未知旗标；不跑任何步骤）
+  3  回滚也失败（error.kind=ROLLBACK_FAILED）⇒ **需人工介入**
+
+为什么回滚成功是 1 而不是 0/2（照 P-129，不另立理由）：
+  · 不是 0：换件**没成功**（用户要的那件事没做成），0 会让调用方以为上线了；
+  · 不是 2：命令面主表里 `2` = 用法错/不给结论 —— 拿它表达「回滚成功」就是同数字两义（AI 看数字判不出该做什么），
+    这正是批 A · T-04 登记的撞号处；本件按拍板把它收敛到 `1` + 独立 kind。
+EOF
+}
+
+SELF_TEST_ROLLBACK=0
+case "${1:-}" in
+  ""|--swap) : ;;
+  --help|-h) usage; exit 0 ;;
+  --self-test-rollback) SELF_TEST_ROLLBACK=1 ;;
+  *) echo "✗ 未知参数: $1（用法见：bash scripts/build/zerg-swap-core.sh --help）" >&2; exit 2 ;;
+esac
 
 say "== 主控换件 $TS =="; say "日志：$LOG"
 TOKEN="$(cat "$HOME/.zerg/token" 2>/dev/null || true)"
@@ -139,6 +181,12 @@ bootstrap_job() {
 # 而那一刻主控已经被 kill 掉了 ⇒ 正好落在「新件起不来」的分支上（那一跑真走了回滚）。
 restart_master() {
   local lp dp
+  # 自测桩（只有 --self-test-rollback 会设它）：抛靶里没有第二个能真启动的目标
+  if [ -n "${ZERG_SWAP_RESTART_STUB:-}" ]; then
+    say "  [重启] 自测桩：${ZERG_SWAP_RESTART_STUB}"
+    eval "$ZERG_SWAP_RESTART_STUB"
+    return $?
+  fi
   lp="$(loaded_program)"
   dp="$(plist_program)"
   if [ -z "$lp" ]; then
@@ -163,7 +211,91 @@ restart_master() {
   launchctl kickstart -k "${DOMAIN}/${PLIST_LABEL}"
 }
 
-# ── 前置闸（两道；任一不过 ⇒ exit 1 且**未动生产**）────────────────────────────
+# ── 回滚路径（**同一个函数**被两条入口用：真失败支 + `--self-test-rollback`）──────────
+# 返回码就是本件的退码语义：1 = 回滚成功（ROLLED_BACK）· 3 = 回滚也失败（需人工）。
+rollback_to_backup() {
+  hr; say "[4] 新件起不来 ⇒ 回滚（含验签）"
+  say "  失败现场（$LOG 尾）："; tail -25 "$LOG"
+  if ! cp -p "$BACKUP" "$BIN"; then
+    say "!! 复制回滚件失败 ⇒ 人工介入（error.kind=ROLLBACK_FAILED）"; return 3
+  fi
+  say "  回滚件已就位：$(stat -f%z "$BIN") 字节"
+  codesign -s - --force --identifier "$PLIST_LABEL" "$BIN" 2>&1 | sed 's/^/  sign: /' | tee -a "$LOG"
+  if ! codesign --verify --verbose=2 "$BIN" 2>&1 | sed 's/^/  verify: /' | tee -a "$LOG"; then
+    say "!! 回滚件验签失败 ⇒ 人工介入（这正是 2026-09-16 二次事故的形态 · error.kind=ROLLBACK_FAILED）"; return 3
+  fi
+  restart_master || say "!! 回滚后的重启动作失败（见上行）"
+  RB_CODE="$(wait_ready 60)"
+  say "  回滚后 /api/capabilities=$RB_CODE"; identity | sed 's/^/  rolled /' | tee -a "$LOG"
+  if [ "$RB_CODE" = "200" ]; then
+    say "✓ 已回滚到换件前状态"
+    say "error.kind=ROLLED_BACK   ← 回滚成功（契约 §十二 P-129 的唯一说法：退码 1 + ROLLED_BACK；不是 0、也不是 2）"
+    return 1
+  fi
+  say "!! 回滚也没起来 ⇒ 人工介入（error.kind=ROLLBACK_FAILED）"; return 3
+}
+
+# ── 回滚路径自测（抛靶：目标全在 /tmp，**不碰生产件、不碰 launchd 的 com.zerg.core**）─────
+# 跑的是**上面那个一模一样的函数**；只有两处外部依赖换成桩，各自说明白：
+#   ① 启动动作：`ZERG_SWAP_RESTART_STUB=/bin/true`（真跑里的启动 = launchd，见 ① 的实绩；这里没有第二个
+#      可以真启动的目标，硬编一个临时 launchd 作业反而把「只准重启主控」的纪律搅浑）；
+#   ② 就绪探测：**真探针**（同一个 `probe()` / curl），只是打到一个自测用的一次性 HTTP 服务上。
+# 判据（函数返回后立刻核）：回滚件已就位后，`$BIN` 与 `$BACKUP` 的 **sha256 逐字相同**（真被还原了）。
+self_test_rollback() {
+  local T PORT SRV rc
+  T="/tmp/zerg-swap-selftest-$TS"
+  mkdir -p "$T"
+  PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
+  cp -p "$BIN" "$T/backup-good"            # 回滚件 = 当前生产件的副本（真签名件）
+  printf '不是可执行件——模拟「新件起不来」\n' > "$T/zerg-core"   # 被换上去的坏件
+  cat > "$T/stub-server.py" <<'PY'
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        b = b'{"code_sha":"selftest-stub","version":"selftest"}'
+        self.send_response(200); self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    def log_message(self, *a): pass
+HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+PY
+  python3 "$T/stub-server.py" "$PORT" >"$T/server.log" 2>&1 &
+  SRV=$!
+  BIN="$T/zerg-core"; BACKUP="$T/backup-good"
+  ENDPOINT="http://127.0.0.1:$PORT/api/capabilities"
+  LOG="$T/selftest.log"; : >"$LOG"
+  export ZERG_SWAP_RESTART_STUB=':'     # 内建空命令（macOS 没有 /bin/true；用 `:` 才不会踩文件名的坑）
+  say "== 回滚路径自测（抛靶 · 不碰生产）· 靶目录 $T =="
+  say "   被换上去的坏件 = ${BIN}（$(stat -f%z "$BIN") 字节）"
+  say "   回滚件          = ${BACKUP}（$(stat -f%z "$BACKUP") 字节）"
+  say "   启动动作        = 桩 \`:\`（内建空命令）· 探针 = 真探针（一次性服务 127.0.0.1:${PORT}）"
+  say "   回滚前 坏件 sha = $(shasum -a 256 "$BIN" | awk '{print $1}')"
+  rollback_to_backup; rc=$?
+  # 判据：把「回滚件」按回滚路径**同一条重签命令**处理成期望形态，与回滚后的目标件逐字节对拍。
+  #   ★ 为什么要这样比：回滚路径里有 `codesign -s -`（重签），**整文件 sha 与回滚件必然不同**
+  #     （ad-hoc 重签会改文件字节）——那是已登记的 T-28 债，不是本次回归。ad-hoc 重签实测
+  #     **确定性**（同输入同输出，两份同源件重签后 sha 相同），所以「备份 + 同一条重签」得到的
+  #     形态可以与回滚后的目标件逐字节对拍。
+  cp -p "$BACKUP" "$T/expected-after-rollback"
+  codesign -s - --force --identifier "$PLIST_LABEL" "$T/expected-after-rollback" >/dev/null 2>&1
+  say "   回滚后 件  sha  = $(shasum -a 256 "$BIN" | awk '{print $1}')"
+  say "   回滚件     sha  = $(shasum -a 256 "$BACKUP" | awk '{print $1}')   （整件 sha 不同 = 预期：重签改字节）"
+  say "   期望形态   sha  = $(shasum -a 256 "$T/expected-after-rollback" | awk '{print $1}')   （回滚件 + 同一条重签）"
+  if cmp -s "$BIN" "$T/expected-after-rollback"; then
+    say "   判据：回滚后目标件 == 「回滚件 + 同一条重签」（逐字节相同 ⇒ 回滚真的把件还原了）✓"
+  else
+    say "   判据：回滚后目标件与期望形态不同 ✗"
+  fi
+  if codesign --verify --verbose=1 "$BIN" >/dev/null 2>&1; then say "   判据：回滚后目标件验签通过 ✓"; else say "   判据：回滚后目标件验签不过 ✗"; fi
+  say "   自测退出码 = ${rc}（1 = ROLLED_BACK 语义符合预期）"
+  kill "$SRV" 2>/dev/null || true
+  return "$rc"
+}
+
+if [ "$SELF_TEST_ROLLBACK" = "1" ]; then
+  self_test_rollback; exit $?
+fi
+
 hr; say "[闸] 换件前置闸（未过 ⇒ 不换件、不动生产）"
 DIRTY="$(git status --porcelain core/ agent/ | grep -v '^?? ' | wc -l | tr -d ' ')"
 say "  闸A 工作树半成品：core/ agent/ 未提交改动数 = ${DIRTY}（须为 0——换件是从工作树编译的）"
@@ -211,20 +343,10 @@ AFTER_CODE="$(wait_ready 60)"
 say "  换件后 /api/capabilities=$AFTER_CODE"; identity | sed 's/^/  after  /' | tee -a "$LOG"
 
 if [ "$AFTER_CODE" = "200" ]; then
-  say "✓ 换件成功"; exit 0
+  say "✓ 换件成功（退码 0）"; exit 0
 fi
 
 # ── 4. 起不来 ⇒ 回滚（回滚件**同样验签**）+ 保留现场 ─────────────
-hr; say "[4] 新件起不来 ⇒ 回滚（含验签）"
-say "  失败现场（$LOG 尾）："; tail -25 "$LOG"
-cp -p "$BACKUP" "$BIN" || { say "!! 复制回滚件失败 ⇒ 人工介入"; exit 3; }
-say "  回滚件已就位：$(stat -f%z "$BIN") 字节"
-codesign -s - --force --identifier "$PLIST_LABEL" "$BIN" 2>&1 | sed 's/^/  sign: /' | tee -a "$LOG"
-if ! codesign --verify --verbose=2 "$BIN" 2>&1 | sed 's/^/  verify: /' | tee -a "$LOG"; then
-  say "!! 回滚件验签失败 ⇒ 人工介入（这正是 2026-09-16 二次事故的形态）"; exit 3
-fi
-restart_master || { say "!! 回滚后的重启动作失败"; }
-RB_CODE="$(wait_ready 60)"
-say "  回滚后 /api/capabilities=$RB_CODE"; identity | sed 's/^/  rolled /' | tee -a "$LOG"
-if [ "$RB_CODE" = "200" ]; then say "✓ 已回滚到换件前状态"; exit 2; fi
-say "!! 回滚也没起来 ⇒ 人工介入"; exit 3
+# 退码：1 = 回滚成功（ROLLED_BACK）· 3 = 回滚也失败（需人工）——见 usage() 与 rollback_to_backup()。
+rollback_to_backup
+exit $?
