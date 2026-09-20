@@ -1284,7 +1284,19 @@ func (h *Handlers) firstCandidateNode(cands []config.ModelCandidate) (config.Fle
 }
 
 // ModelStopHandler 手动停止模型（Mr2109 2026-08-27——UI 开关）
-// POST /api/models/{name}/stop——本机已加载该模型才停止
+// POST /api/models/{name}/stop——停该模型（**幂等优先** · §九 M4 · §十二 P-031/P-013 ②）。
+//
+// 批 B · T-11 的两处修正（都是「幂等语义」的面，出处逐条写在下面）：
+//
+//	① **体形状**：原来发 `{"model": 名}`，而子端 `/unload` 只认 `{"models":[…]}` ⇒ 反序列化后
+//	   `Models` 为空 → 走「全卸」分支（**卸掉该子端全部卵**）。这是调研-M4 §4.4 的**代码级发现**，
+//	   本版改成 `{"models": [名]}`（定向卸载）。
+//	② **已停目标不报错**：子端对未驻留项返回 `skipped + reasons[name]=not_resident`（不是错误）；
+//	   主控**必须**把它报成成功（`changed:false` + 「已在此状态」），**不许**报 5xx/409。
+//	   「已在该状态」不是错 —— 幂等重跑必须退 0（调研-M4 §5.2）。
+//
+// ★ 生效面：本改动是**源码级**；要真在跑的**主控**上生效须换件 + 重启主控（不可逆档）⇒
+// 本批**只改源码 + 留判据**，重启待 Mr2109 拍（开工记录「待拍」清单）。
 func (h *Handlers) ModelStopHandler(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	if h.Config == nil {
@@ -1301,17 +1313,48 @@ func (h *Handlers) ModelStopHandler(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusServiceUnavailable, "NO_CANDIDATE_NODE", "该模型没有可用候选机")
 		return
 	}
-	body, _ := json.Marshal(map[string]string{"model": name})
+	// ① 定向卸载：`models` 是数组（子端只认这个名字 —— 发 `model` 会让它退化成「全卸」）。
+	body, _ := json.Marshal(map[string]any{"models": []string{name}})
 	status, respBody, err := forwardToNode(h.Config.Auth.Token, node, "/unload", body)
 	if err != nil {
 		writeErrorCode(w, http.StatusBadGateway, "FORWARD_FAILED", "转发到 "+host+" 失败: "+err.Error())
 		return
 	}
+	// ② 幂等优先：未驻留（not_resident）⇒ 成功 + changed:false，**不**把「已在该状态」报成错。
 	if status != http.StatusOK {
+		if strings.Contains(string(respBody), "not_resident") || strings.Contains(string(respBody), "not loaded") {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"success": true, "changed": false, "name": name, "host": host,
+				"status": "已在此状态（未装载）—— 幂等重跑不报错（§九 M4）",
+			})
+			return
+		}
 		writeJSON(w, status, json.RawMessage(respBody))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "name": name, "host": host, "status": "已提交卸载（子端接管）"})
+	changed := true
+	var result struct {
+		Stopped []string          `json:"stopped"`
+		Skipped []string          `json:"skipped"`
+		Reasons map[string]string `json:"reasons"`
+	}
+	if jerr := json.Unmarshal(respBody, &result); jerr == nil {
+		if result.Reasons != nil && result.Reasons[name] == "not_resident" {
+			changed = false
+		}
+		for _, s := range result.Skipped {
+			if s == name {
+				changed = false
+			}
+		}
+	}
+	state := "已提交卸载（子端接管）"
+	if !changed {
+		state = "已在此状态（未装载）—— 幂等重跑不改变状态（§九 M4 / §十二 P-031）"
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true, "changed": changed, "name": name, "host": host, "status": state,
+	})
 }
 
 // AdapterOptions 模型适配器配置项（Mr2109 2026-08-27——UI 显示适配器所有选项）

@@ -115,17 +115,47 @@ func probeStateConflict(inv *invocation, cmd *command, stdout, stderr io.Writer)
 		return exitUsage, true
 	}
 	for _, m := range asList(o["models"]) {
-		if cell(m) == model {
-			msg := fmt.Sprintf("%q 上 %q **已在装载态**（幂等：按「已在此状态」报，不重装 · §九 M4 / §十二 P-031）",
-				machine, model)
-			inv.setErr("conflict", "already_loaded", msg)
-			inv.err.Where = "node:" + machine
-			fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
-			fmt.Fprintf(stderr, "error.kind=conflict · retryable=false · remedy=wait_or_reload（要重装得显式 `--reload`，属批 D）\n")
-			return exitConflict, true
+		if cell(m) != model {
+			continue
 		}
+		// 已经在装载态 —— 分两档（§九 M4 §5.2 的硬规矩 + §十二 `P-031` 幂等优先）：
+		//   ① **幂等重跑**（没给任何「重建」旗标）：退 **0**、`changed=false`、明说「已在该状态」
+		//      —— **不许**退 1/2（「已存在」不是错）。
+		//   ② **真冲突**（给了 `--reload`/`--force`：声明与运行态要求重建，而在飞/占位挡着）：
+		//      `kind=conflict` + 退码 `14`（**`P-013` ②** 定稿：冲突 = `14`，不是 `507`）。
+		if !inv.reload && !inv.force {
+			// 「已在该状态」是**成功码内的语义**（调研-M4 §5.2）⇒ 不挂 `error` 块、
+			// 只把 `state_kind` 与 `changed:false` 写进结果面（`meta.changed` 是硬要求）。
+			no := false
+			inv.changed = &no
+			msg := fmt.Sprintf("%q 上 %q **已在该状态**（幂等重跑：changed=false，不重装 · §九 M4）", machine, model)
+			fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+			fmt.Fprintf(stderr, "退码 0（幂等重跑**必须退 0**：已存在不是错 · 调研-M4 §5.2）· meta.changed=false · 幂等键 %s\n",
+				idempotencyKey(inv))
+			if inv.jsonGiven {
+				items := "[{\"state\":\"already_loaded\",\"state_kind\":\"already_in_state\",\"changed\":\"false\",\"machine\":" +
+					jstr(machine) + ",\"model\":" + jstr(model) + "}]"
+				emitEnvelopeWith(stdout, cmd, items, 1, inv)
+			}
+			return exitOK, true
+		}
+		msg := fmt.Sprintf("%q 上 %q 已在装载态，而本轮要求按 %s 重建 —— 这是**真冲突**（换成 `wait_or_reload` 档处理 · §十二 P-031/P-013 ②）",
+			machine, model, reloadWord(inv))
+		inv.setErr("conflict", "rebuild_blocked", msg)
+		inv.err.Where = "node:" + machine
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "error.kind=conflict · retryable=false · remedy=wait_or_reload · 退码 14（`P-013` ②：冲突/被占走 14）\n")
+		return exitConflict, true
 	}
 	return 0, false
+}
+
+// reloadWord 给判词里回显「是哪一枚旗标要求重建」（S6：回显解析后的真实目标/档）。
+func reloadWord(inv *invocation) string {
+	if inv.force {
+		return "--force（重建承载者：卸 + 装 / 新代次）"
+	}
+	return "--reload（重读声明）"
 }
 
 // planFor 生成计划件（零副作用）：要动什么 · 目标是谁 · 缺什么前置 · 怎么留痕 · 本版状态。
