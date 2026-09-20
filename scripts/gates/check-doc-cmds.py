@@ -20,9 +20,11 @@ M12 判到的深度（§九 M12：**判到 L2（对象 + 动作）起步**）
 ★ 命名词与旗标、旗标取值分开（2026-09-21 修 · 实测的假红）
 --------------------------------------------------------
   `CMD_WORD.findall` 会把**旗标名与旗标取值**也当成命令词 —— 实测 `` `zerg version --json name` ``
-  抽出 `['version','json','name']` ⇒ L2 = `('version','json')` **不在命令树里** ⇒ **真命令被判红**
-  （真仓复跑：`zerg version --json name` / `zerg doctor --quick --json name,verdict` /
-  `zerg update <主机名> --confirm=<主机名>` 三条真示例全红）。这不是「文档写错」，是**判据把数据当命令**：
+ 抽出 `['version','json','name']` ⇒ L2 = `('version','json')` **不在命令树里** ⇒ **真命令被判红**
+ （真仓复跑：`zerg version --json name` / `zerg doctor --quick --json name,verdict` /
+ `zerg update <主机名> --confirm=<主机名>` / `zerg ask <提示> [--min-ctx n]` 四条真示例全红 ——
+ 最后那条漏的是**方括号里的旗标取值** `n]`，故旗标词正则也认 `[`/`(` 前缀）。
+ 这不是「文档写错」，是**判据把数据当命令**：
   判据要的是「命令名能不能解析」，旗标（`-` 开头）与紧跟旗标的取值不是命令名 ⇒
   `command_words()` 先剥掉它们再判。
   另一处同族：`zerg help <主题>` —— 第二段是**主题数据**（`core/cmd/zerg/topics.go`，
@@ -76,8 +78,10 @@ EXCL = {"target", "node_modules", "dist", "bin", "vendor", "data", ".git",
 ZERG_INLINE = re.compile(r'`zerg(\s+[^\s`][^`]*)?`')
 FENCE = re.compile(r'^(```|~~~)')
 CMD_WORD = re.compile(r'[A-Za-z][A-Za-z0-9_-]*')
-# 旗标词：`-h` / `--json` / `--confirm=<目标>`（`[` … 这种行文包裹不算 —— 靠 CMD_WORD 自己判不过）
-FLAGWORD = re.compile(r'^-{1,2}[A-Za-z]')
+# 旗标词：`-h` / `--json` / `--confirm=<目标>`；**方括号里也算**（用法串把可选旗标写成 `[--json <字段>]`，
+# 那种写法后面跟的取值同样是取值 ⇒ 认它才能把值剥掉。实测：`zerg ask <提示> [--min-ctx n]` 的 `n]`
+# 曾是唯一漏网的那个取值（抽成 `('ask','n')` ⇒ 假红）。
+FLAGWORD = re.compile(r'^[\[\(]*-{1,2}[A-Za-z]')
 
 
 def command_words(seg):
@@ -358,7 +362,8 @@ def self_test():
     os.remove(os.path.join(docs, "bad.md"))
     open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
         "```sh\nzerg version --json name\n$ zerg doctor --quick --json name,verdict\n"
-        "zerg update <主机名> --confirm=<主机名>\nzerg agent logs <机器名> --json machine\n```\n"
+        "zerg update <主机名> --confirm=<主机名>\nzerg agent logs <机器名> --json machine\n"
+        "zerg doctor [--min-ctx n]\n```\n"
         "行内 `zerg task ls --json id,status` 也过。\n")
     rc, lines = check(tmp, ["formal"])
     case("⑦ 正控（真命令带旗标/旗标取值 ⇒ 0；修前是假红）", 0, rc)
