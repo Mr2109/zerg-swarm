@@ -244,6 +244,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "对拍：干跑单的 `plan_id` 同集两次一致、加一件即变（有区分度）；`--dry-run` 前后合成树逐件不变；真跑（不带 `--dry-run`）仍走同一套防呆形状 ⇒ 拒执 2。",
    "备注": "测试件（外部测试包 `package main_test`）—— 与生产侧读同一份真源 `core/internal/contract/reap.json`。"
+  },
+  {
+   "file": "scripts/docs/gen-cli-reference.py",
+   "类": "文档面：**字样引用**（不是干跑语义站点 —— 本件里的 `--dry-run` 只出现在它渲染的正式面散文模板里，说的是「危险动作未开放、只有计划面可看」这件事本身）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件不执行任何命令面动作：只**读** `zerg help` / `zerg help export` 的输出与命令树源码（`main.go`），只**写**两篇文档产物（`docs/zh|en/参考-命令行.md`）；`--emit` 与 `--check` 都不碰服务、不占端口、不改状态、不落盘到产物以外。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：它不是第五套语义，也不声明语义 —— 是文档面把命令面的旗标名当**数据**引用。复核：`python3 scripts/gates/check-dryrun-semantics.py` ⇒ rc=0。"
   }
  ]
 }
