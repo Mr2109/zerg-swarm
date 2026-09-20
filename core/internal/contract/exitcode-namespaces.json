@@ -51,8 +51,8 @@
       "kind": "脚本自有码空间（升级器）",
       "owner": "scripts/build/zerg-upgrade.sh",
       "scan": "sh",
-      "declared": { "0": "成功", "1": "失败（无回滚 / 已回滚成功两支，靠 error.kind 分辨）", "2": "无需升级", "3": "拒绝（有在途任务）", "4": "校验不通过（未动文件）" },
-      "note": "回滚路径（重启 + 验签 + 写回执）的落地 = 批 C 的 **T-28**；定说法 = **T-26**（本件）。"
+      "declared": { "0": "成功", "1": "失败（无回滚 / 已回滚成功两支，靠 error.kind 分辨）", "2": "无需升级", "3": "拒绝（有在途任务）", "4": "校验不通过（未动文件）", "5": "**回滚也失败**（error.kind=ROLLBACK_FAILED · 需人工介入）" },
+      "note": "回滚路径（重启 + 验签 + 写回执）由批 C 的 **T-28** 落地（`--rollback` 段：验签 codesign --verify · 重启 launchctl/$STARTCORE/systemctl · 回执 $RECEIPTS/rollback-<ts>.json；成功 ⇒ 退码 1 + kind 行）；说法由 **T-26** 定。`5` 是本件 T-28 新取的自有号（自留区 3–63 内）。"
     },
     {
       "id": "precommit-gates.sh",
