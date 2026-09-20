@@ -401,9 +401,19 @@ func cmdVersion(inv *invocation, stdout, stderr io.Writer) int {
 
 func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) > 0 {
-		fmt.Fprintf(stderr, "%s: 未知帮助主题 %q\n", progName, inv.args[0])
-		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
-		return exitUsage
+		switch inv.args[0] {
+		case "exit-codes":
+			fmt.Fprint(stdout, helpExitCodes())
+			return exitOK
+		case "config":
+			fmt.Fprint(stdout, helpConfig())
+			return exitOK
+		default:
+			fmt.Fprintf(stderr, "%s: 未知帮助主题 %q\n", progName, inv.args[0])
+			fmt.Fprintf(stderr, "可用主题: exit-codes · config\n")
+			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+			return exitUsage
+		}
 	}
 	fmt.Fprint(stdout, helpText())
 	return exitOK
