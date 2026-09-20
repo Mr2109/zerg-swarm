@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/contract"
 )
@@ -299,3 +300,60 @@ func DoctorDoorItemNamesForTest() []string {
 
 // RepoRootForTest 仓根解析口（模型面扫描要用同一份推导，不另写一份）。
 func RepoRootForTest() string { return repoRoot() }
+
+// ---- T-62：升阶闸门（`core/internal/contract/stage-gate.json`）的**只读桥** ----
+
+// StageGateSpecForTest 升阶闸门真源的一格。
+type StageGateSpecForTest struct {
+	Stages          int
+	Criteria        int
+	MachineCells    int // 可机检那一格**非空**的判据条数
+	GateIDs         []string
+	FullSuiteSteps  int
+	HumanAbsentRule string
+	MissingOneRule  string
+}
+
+// StageGateSpecOfForTest 取升阶闸门真源。
+func StageGateSpecOfForTest() (StageGateSpecForTest, error) {
+	s, err := contract.StageGate()
+	if err != nil {
+		return StageGateSpecForTest{}, err
+	}
+	out := StageGateSpecForTest{Stages: len(s.Stages), FullSuiteSteps: s.FullSuiteSteps,
+		HumanAbsentRule: s.HumanAbsentRule, MissingOneRule: s.MissingOneRule}
+	for _, st := range s.Stages {
+		out.Criteria += len(st.Criteria)
+		for _, c := range st.Criteria {
+			if strings.TrimSpace(c.Machine) != "" {
+				out.MachineCells++
+			}
+		}
+	}
+	for _, g := range s.FourGates {
+		out.GateIDs = append(out.GateIDs, g.ID+"="+g.Name)
+	}
+	return out, nil
+}
+
+// StageGateVerdictForTest 一道闸的判决。
+type StageGateVerdictForTest struct {
+	ID      string
+	Name    string
+	Verdict string
+	Detail  string
+}
+
+// JudgeFourGatesForTest 跑四道闸（判据的**唯一判定口**）。
+func JudgeFourGatesForTest(results, human string) ([]StageGateVerdictForTest, bool, error) {
+	spec, err := contract.StageGate()
+	if err != nil {
+		return nil, false, err
+	}
+	vs := judgeFourGates(spec, "", results, human)
+	out := []StageGateVerdictForTest{}
+	for _, v := range vs {
+		out = append(out, StageGateVerdictForTest{v.ID, v.Name, v.Verdict, v.Detail})
+	}
+	return out, gatesPassed(vs, spec), nil
+}

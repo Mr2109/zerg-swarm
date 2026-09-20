@@ -1,0 +1,53 @@
+{
+ "schema": "zerg/stage-gate/v1",
+ "note": "三阶推进的**升阶闸门**（§20.4 三阶表 · §20.7 `OM11` · §十二 `P-S6-1` · §20.2 原则①④ · 开工单 T-62）。`OM11` 登记的病是「本节右列判据**全是人判**」⇒ 本件把它落成**可机检**的闭集：每一条判据要么指一条现跑命令，要么指一个成形真源。",
+ "stages": [
+  {
+   "id": "stage1",
+   "name": "阶 1 · 只读（今天就能做）",
+   "criteria": [
+    {"id": "S1-1", "what": "八份 S 稿本身就是阶 1 的产物", "machine": "Zerg-内部文档/项目文档/v2.5.10/ 下调研-S*.md 在（条数随稿）"},
+    {"id": "S1-2", "what": "只读面可跑（零写操作）", "machine": "`zerg gate run --fast` rc=0 且候选区/生产目录逐字节不变"}
+   ]
+  },
+  {
+   "id": "stage2",
+   "name": "阶 2 · 候选区里的建 / 测 / 验（写只写候选区）",
+   "criteria": [
+    {"id": "S2-1", "what": "退码表已定", "machine": "门⑨ `check-exit-codes.py` rc=0（`P-013`）"},
+    {"id": "S2-2", "what": "候选区闭集有形状", "machine": "`core/internal/contract/dev-candidate.json` 成形（`contract.DevCandidate()` 解得出来）"},
+    {"id": "S2-3", "what": "判据先于自动化", "machine": "`zerg dev build|test` 无验收证据单即拒（§17.7）"},
+    {"id": "S2-4", "what": "证据单可回读", "machine": "`zerg dev verify` 出证据单且证据为空 ⇒ 2"}
+   ]
+  },
+  {
+   "id": "stage3",
+   "name": "阶 3 · 放行到生产面（**只能人开**）",
+   "criteria": [
+    {"id": "S3-1", "what": "四道闸全过", "machine": "`zerg dev verify --gate` 四道闸逐条 PASS，缺一道即不算过"},
+    {"id": "S3-2", "what": "AI 不自升", "machine": "`dev release` / `dev rollback` 仍在危险档未开放（真跑拒执 ⇒ 2）"},
+    {"id": "S3-3", "what": "人拍板有痕", "machine": "`--human-approval <名>` 非空（缺 ⇒ 不给结论）"}
+   ]
+  }
+ ],
+ "stage_advance_preconditions": {
+  "stage2": [
+   "退码表已定（§十二 `P-013`）：`P-013` 必须排在阶 2 之前 —— 否则 must-fail 断言会把错的东西固化进测试（§20.4 逐字）",
+   "候选区闭集有形状（`core/internal/contract/dev-candidate.json`）"
+  ],
+  "stage3": [
+   "阶 2 的判据全过 + **四道闸**全过 + 人拍板"
+  ]
+ },
+ "four_gates": [
+  {"id": "G1", "name": "契约核验", "machine": "四个真源都解得出来：`dev-candidate.json` / `ai-boundary.json` / `intent-plan.json` / `receipt.json`"},
+  {"id": "G2", "name": "跨家族复查", "machine": "`dev` 族闭集 == §17.4 七条；`build`/`release` 的**规范入口**说明（`SD10-b`）在真源里"},
+  {"id": "G3", "name": "门禁全量", "machine": "候选区的全量门禁结果表：步数 == `full_suite_steps` 且 FAIL 0（缺表 ⇒ **不给结论**，不算过）"},
+  {"id": "G4", "name": "人拍板", "machine": "`--human-approval <名>` 非空（人不在场 ⇒ **不给结论**，不算过）"}
+ ],
+ "full_suite_steps": 56,
+ "full_suite_steps_note": "★ 照实登记一处口径差：定稿 §20.4 逐字写「门禁全量 **46 步**」，而本机现跑全量档是 **56 步**（批 A–E 逐批加门：门⑤⑥⑩⑪⑫⑬ 等）。本件取**现读数 56**（`bash scripts/gates/precommit-gates.sh --list | tail -1`），并把差记在这里 —— 不假装 46 仍然成立。",
+ "human_absent_rule": "**人不在场**时流程只走到「候选件 + 证据单」为止：`G4` 拿不到人拍板 ⇒ 整条判成「不算过」（退码 2），`release` 之后默认不开。",
+ "missing_one_rule": "**四道闸缺一道即不算过**（退码 2 = 不给结论）—— 「过了三道」不是「过了」，也不按失败计（没结论 ≠ 错）。",
+ "no_new_command": "本件**不新增命令名**：闸门挂在 `zerg dev verify --gate`（同一族、同一判据面）—— 照 §17.4 第 4 条 `--candidate` 的同款口径（只加旗标）。"
+}
