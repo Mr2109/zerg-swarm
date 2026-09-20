@@ -3427,6 +3427,140 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "`--file` 只认仓内相对路径（`dev edit` 的作用域真源）⇒ 绝对路径 = 2"
+  },
+  {
+   "id": "dev/edit#未知旗标",
+   "command": "dev edit",
+   "argv": [
+    "dev",
+    "edit",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "dev/edit#不认的契约主号",
+   "command": "dev edit",
+   "argv": [
+    "dev",
+    "edit",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "dev/edit#缺 --confirm（D3）",
+   "command": "dev edit",
+   "argv": [
+    "dev",
+    "edit",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "id": "dev/edit#--confirm 值不匹配",
+   "command": "dev edit",
+   "argv": [
+    "dev",
+    "edit",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
+  },
+  {
+   "id": "dev/edit#缺 --proposal（写必须有可审查物）",
+   "command": "dev edit",
+   "argv": [
+    "dev",
+    "edit",
+    "--file",
+    "core/cmd/zerg/main.go",
+    "--from",
+    "/tmp/f1"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "§17.3 铁律③①：写只允许改**提案声明过**的件 ⇒ 没提案 = 拒执（2）· stdout 0 字节"
+  },
+  {
+   "id": "dev/edit#缺 --file",
+   "command": "dev edit",
+   "argv": [
+    "dev",
+    "edit",
+    "--proposal",
+    "DEV-9999",
+    "--from",
+    "/tmp/f1"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "一次改一个件（逐件对账）：缺 `--file` ⇒ 2"
+  },
+  {
+   "id": "dev/edit#内容来源既不给也给",
+   "command": "dev edit",
+   "argv": [
+    "dev",
+    "edit",
+    "--proposal",
+    "DEV-9999",
+    "--file",
+    "core/cmd/zerg/main.go",
+    "--from",
+    "/tmp/f1",
+    "--replace",
+    "/tmp/f2"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "内容来源**恰给一种**（`--from` 整件 / `--replace` 逐格）⇒ 两种同给 = 用法错 2"
+  },
+  {
+   "id": "dev/edit#--file 绝对路径（越界写）",
+   "command": "dev edit",
+   "argv": [
+    "dev",
+    "edit",
+    "--proposal",
+    "DEV-9999",
+    "--file",
+    "/etc/passwd",
+    "--from",
+    "/tmp/f1"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "作用域只认**仓内相对路径**：绝对路径 ⇒ 越界写 ⇒ 2（不新立码）"
+  },
+  {
+   "id": "dev/edit#提案不存在",
+   "command": "dev edit",
+   "argv": [
+    "dev",
+    "edit",
+    "--proposal",
+    "DEV-9999",
+    "--file",
+    "core/cmd/zerg/main.go",
+    "--from",
+    "/tmp/zz-nosuch"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "没有可审查物 ⇏ 写（先 `dev proposal new`）⇒ 2"
   }
  ]
 }

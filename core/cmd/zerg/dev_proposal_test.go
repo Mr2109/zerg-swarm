@@ -44,7 +44,7 @@ import (
 //	· `verify` 收的是**门禁结果表**（一步一日志的既有产物）—— 判据真源仍是门禁步骤表，它**不新立判据**（§17.4 接缝第 5 行逐字）。
 //	⇒ 「读事实走既有族」这条没收；闭集本身随 §17.4 的条目**同批**刷新（棘轮，不许悄悄长大）。
 var devFamilyClosure = []string{"dev proposal", "dev release", "dev rollback", "dev receipt",
-	"dev build", "dev test", "dev verify"}
+	"dev build", "dev test", "dev verify", "dev edit"}
 
 // snapshotDir 给一棵目录树拍逐文件 sha256 快照（相对路径排序 ⇒ 可比对「逐字节不变」）。
 func snapshotDir(t *testing.T, root string) string {
