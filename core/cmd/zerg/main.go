@@ -89,6 +89,7 @@ type command struct {
 	fields   []string // --json 可取的全部字段（不给字段时 stderr 列的就是它）
 	args     []string // 位置参数的说明（帮助里逐条列出）
 	endpoint string   // 它投影的远端端点（本机命令为空）；T-08 的三面同源对账用
+	kind     string   // 包封里的 kind（§九 M6 I2：与命令一一对应 · 单数 CamelCase）
 	danger   *dangerSpec
 	opened   bool // 本版是否可执行（危险动作在批 A 一律未开放 · §6.2 零写操作）
 	run      func(*invocation, io.Writer, io.Writer) int
@@ -103,6 +104,7 @@ func init() {
 	commands = []*command{
 		{
 			path:    []string{"version"},
+			kind:    "Version",
 			summary: "单行身份（组件 版本 代码 sha 构建时间）",
 			usage:   "zerg version [--json <字段>]",
 			fields:  []string{"name", "version", "commit", "build_time"},
@@ -118,6 +120,7 @@ func init() {
 		// ---- 批 A · S2 只读面（§6.2 最小可验证集）：全程零写操作 ----
 		{
 			path:     []string{"doctor"},
+			kind:     "DoctorCheck",
 			summary:  "环境自检（本机项 + 主控可达）· 逐项判定词",
 			usage:    "zerg doctor [--json <字段>]",
 			fields:   []string{"name", "verdict", "detail", "advice"},
@@ -126,6 +129,7 @@ func init() {
 		},
 		{
 			path:     []string{"context", "ls"},
+			kind:     "Context",
 			summary:  "档位名册（离线也出表）",
 			usage:    "zerg context ls [--json <字段>]",
 			fields:   []string{"name", "core", "gateway", "default_node", "token_source"},
@@ -134,6 +138,7 @@ func init() {
 		},
 		{
 			path:     []string{"api", "ls"},
+			kind:     "Capability",
 			summary:  "HTTP 能力面（投影 /api/capabilities）",
 			usage:    "zerg api ls [--json <字段>]",
 			fields:   []string{"name", "endpoint", "desc", "example"},
@@ -142,6 +147,7 @@ func init() {
 		},
 		{
 			path:     []string{"api", "openapi"},
+			kind:     "ApiPath",
 			summary:  "HTTP 路径表（投影 /api/openapi.json 的 paths）",
 			usage:    "zerg api openapi [--json <字段>]",
 			fields:   []string{"path", "method", "summary"},
@@ -157,6 +163,7 @@ func init() {
 		},
 		{
 			path:     []string{"agent", "ls"},
+			kind:     "Machine",
 			summary:  "子端（机器）清单（投影 /api/fleet/status）",
 			usage:    "zerg agent ls [--json <字段>]",
 			fields:   []string{"machine", "healthy", "code_version", "code_sha", "cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "last_seen"},
@@ -165,6 +172,7 @@ func init() {
 		},
 		{
 			path:     []string{"task", "ls"},
+			kind:     "Task",
 			summary:  "任务队列（投影 /api/tasks）",
 			usage:    "zerg task ls [--json <字段>]",
 			fields:   []string{"id", "status", "model", "machine", "priority", "created_at", "description"},
@@ -173,6 +181,7 @@ func init() {
 		},
 		{
 			path:     []string{"model", "ls"},
+			kind:     "Model",
 			summary:  "可用模型（投影 /api/fleet/models）",
 			usage:    "zerg model ls [--json <字段>]",
 			fields:   []string{"id", "host", "backend", "modality", "mem_gb", "file"},
@@ -565,24 +574,46 @@ func marshalObject(fields []string, row map[string]string) (obj string, bad stri
 }
 
 func reportBadField(stderr io.Writer, path []string, bad string) int {
-	fmt.Fprintf(stderr, "%s: 未知字段 %q\n", progName, bad)
+	if bad == "*" {
+		// §4.1 K1：必须给**逗号分隔的字段名**；通配不在契约里（这是「点名字段」的机器面）。
+		fmt.Fprintf(stderr, "%s: `--json *` **不存在** —— 本契约要的是**逗号分隔的字段名**（§4.1 K1）\n", progName)
+	} else {
+		fmt.Fprintf(stderr, "%s: 未知字段 %q\n", progName, bad)
+	}
 	fmt.Fprintf(stderr, "合法字段: %s\n", strings.Join(fieldListOf(path), ","))
 	fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 	return exitUsage
 }
 
-// selectJSON 出单个对象（单件命令用）。字段点错 ⇒ 退码 2 + 列全部合法字段（§九 M6 I5）。
-func selectJSON(stdout, stderr io.Writer, path []string, fields []string, row map[string]string) int {
-	obj, bad := marshalObject(fields, row)
-	if bad != "" {
-		return reportBadField(stderr, path, bad)
-	}
-	fmt.Fprintln(stdout, obj)
-	return exitOK
+// contractSchema —— 包封第一键的取值（§九 M6 / §十五.7 定案：只写 `zerg/v1`，**不写** `schema_version`）。
+const contractSchema = "zerg/v1"
+
+func jstr(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
-// selectJSONList 出对象数组（清单命令用）。字段点错 ⇒ 退码 2（逐条都在同一张字段表上判）。
-func selectJSONList(stdout, stderr io.Writer, path []string, fields []string, rows []map[string]string) int {
+// emitEnvelope 出**统一外层包封**（§九 M6：六键 `schema`/`kind`/`items`/`meta`/`warnings`/`truncated`）。
+//
+//	· `items` **恒数组**、空为 `[]`、**永不为 `null`**（I3）
+//	· `kind` 与命令一一对应、单数 CamelCase（I2）
+//	· `meta.source` 写清这份数据从哪来（远端端点 / 本机）；将来 `meta.node` 装多机目标（M13）
+func emitEnvelope(stdout io.Writer, cmd *command, itemsJSON string, count int) {
+	src := cmd.endpoint
+	if src == "" {
+		src = "local（本机）"
+	}
+	fmt.Fprintf(stdout, "{\"schema\":%s,\"kind\":%s,\"items\":%s,\"meta\":{\"count\":%d,\"source\":%s},\"warnings\":[],\"truncated\":false}\n",
+		jstr(contractSchema), jstr(cmd.kind), itemsJSON, count, jstr(src))
+}
+
+// emitSelected 是**全部** `--json` 出口的唯一实现：先按用户点名的字段（序即用户给的序）拼对象，
+// 再套包封。字段点错 ⇒ 退码 2 + 列全部合法字段（§九 M6 I5）。
+func emitSelected(stdout, stderr io.Writer, path []string, fields []string, rows []map[string]string) int {
+	cmd := find(path)
+	if cmd == nil {
+		return exitUsage
+	}
 	objs := make([]string, 0, len(rows))
 	for _, row := range rows {
 		obj, bad := marshalObject(fields, row)
@@ -591,8 +622,18 @@ func selectJSONList(stdout, stderr io.Writer, path []string, fields []string, ro
 		}
 		objs = append(objs, obj)
 	}
-	fmt.Fprintf(stdout, "[%s]\n", strings.Join(objs, ","))
+	emitEnvelope(stdout, cmd, "["+strings.Join(objs, ",")+"]", len(rows))
 	return exitOK
+}
+
+// selectJSON 单件命令用（仍然出数组：`items` 里一条 —— I3 恒数组）。
+func selectJSON(stdout, stderr io.Writer, path []string, fields []string, row map[string]string) int {
+	return emitSelected(stdout, stderr, path, fields, []map[string]string{row})
+}
+
+// selectJSONList 清单命令用。
+func selectJSONList(stdout, stderr io.Writer, path []string, fields []string, rows []map[string]string) int {
+	return emitSelected(stdout, stderr, path, fields, rows)
 }
 
 // ---- version ----
