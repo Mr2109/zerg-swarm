@@ -31,8 +31,11 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/contract"
 )
 
-// devFamilyClosure —— 判据①的闭集（本票**不新增**任何命令；`dev` 族只这三条 + 两条动作面）。
-var devFamilyClosure = []string{"dev proposal", "dev release", "dev rollback"}
+// devFamilyClosure —— 判据①的闭集（本票**不新增**任何**读**命令；`dev` 族 = 这三条 + 两条动作面）。
+// ★ 2026-09-20 批 E · T-61 补入 `dev receipt`：它是**交接回执**（一轮一页 · 落状态目录），
+//
+//	不是「读事实」的命令（读事实一律走既有族）⇒ 判据①逐字「读环**一条都不新增**」仍然成立。
+var devFamilyClosure = []string{"dev proposal", "dev release", "dev rollback", "dev receipt"}
 
 // snapshotDir 给一棵目录树拍逐文件 sha256 快照（相对路径排序 ⇒ 可比对「逐字节不变」）。
 func snapshotDir(t *testing.T, root string) string {
