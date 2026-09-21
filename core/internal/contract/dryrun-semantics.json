@@ -261,11 +261,18 @@
    "备注": "2026-09-21 D3b 登记（门⑩ 扫描面命中的测试件；不登记会被判成「又一套语义」——是扫描面口径，不是真语义分歧）"
   },
   {
-   "file": "core/cmd/zerg/family_dev_edit.go",
-   "类": "命令面三态（`dev edit --dry-run` 的计划件 · 与 guard.go 同一套语义）",
+   "file": "core/cmd/zerg/family_impact_hook.go",
+   "类": "命令面（`dev edit` 干跑那一段**影响面摘要 + 钩子判决**的判据与取数 —— `A4`）",
    "语义": "dryrun.v1",
-   "零副作用判据": "`bin/zerg dev edit --proposal <id> --file <件> --from <件> --dry-run` ⇒ 退码 0 · stdout 只有计划件（目标件/内容来源/前后 sha256/前后字节/审计落点）+ stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未写任何文件）」· **不写件、不写审计**（现跑对拍：跑 dry-run 前后目标件 sha256 与 `<state>/edit_audit.jsonl` 行数逐字不变）· **不带 --dry-run 且确认档不齐**时也出计划件并退 2（fail-closed：从不提问、也从不偷偷写）。",
-   "备注": "2026-09-21 D3b 第二步登记（门⑩ 扫描面新增 ⇒ 同批登记；不登记会被判成「又一套语义」）"
+   "零副作用判据": "本件只读：取数是 `git ls-files` / `git log` / `go build` / `go list` / `git grep` / `ast-grep` 一类**只读**命令 + 纯函数判档；不写件、不落审计、不写缓存、不碰归档区（写面在 `family_dev_edit.go` 里，且只在真写那一支）。现跑对拍：`dev edit … --dry-run` 前后目标件 sha256 与 `<state>/edit_audit.jsonl` 行数逐字不变",
+   "备注": "2026-09-22 `A4` 登记（门⑩ 扫描面命中：类型名含 `DryRun` ⇒ 同批登记；不登记会被判成「又一套语义」）"
+  },
+  {
+   "file": "core/cmd/zerg/family_dev_edit.go",
+   "类": "命令面三态（`dev edit --dry-run` 的计划件 · 与 guard.go 同一套语义；`A4` 起干跑另有**影响面摘要 + 钩子判决**，判决「必拦」那一档退 2）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg dev edit --proposal <id> --file <件> (--from <件>|--replace <件>) --dry-run` ⇒ 退码 0（★ `A4` 起例外：**钩子判决「必拦」**那一档退 2 —— 与既有的「缺确认档 ⇒ 2」同一档，不新立码）· stdout = 计划件（目标件/内容来源/前后 sha256/前后字节/审计落点/批准件/**影响面钩子**）· stderr = 影响面摘要（人面三行**只在受影响项 ≥1 时**打 —— 零影响时打三行 = 灌噪声） + **钩子判决块**（`A4` · §4.3 分档）· **不写件、不写审计、不写缓存**（现跑对拍：跑前后目标件 sha256 与 `<state>/edit_audit.jsonl` 行数逐字不变）；**不带 `--dry-run` 且确认档不齐**时也出计划件并退 2（fail-closed：从不提问、也从不偷偷写）。",
+   "备注": "2026-09-21 D3b 第二步登记（门⑩ 扫描面新增 ⇒ 同批登记；不登记会被判成「又一套语义」）→ 2026-09-22 `A4` 挂干跑：多一段影响面摘要 + 一枚**钩子判决**（改=只记 · 符号级删=必拦 · 件级（整件）·可找回=只报+两件可找回证据 / 不可找回三条任一命中⇒升为必拦）—— 判据与取数在 `core/cmd/zerg/family_impact_hook.go`（只读）；真写前置一字未动。"
   },
   {
    "file": "core/cmd/zerg/family_repo_commit.go",
@@ -301,6 +308,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "干跑那一格（判据⑤现跑）：`--dry-run` 不需要批准件、件字节逐字不变，计划面照实打出批准件判决",
    "备注": "主体③-a（2026-09-21）"
+  },
+  {
+   "file": "core/cmd/zerg/cli_dev_edit_hook_test.go",
+   "类": "命令面测试件（`dev edit` 干跑的**影响面摘要 + 钩子分档**：`A4`）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "合成仓根 + 合成状态目录（`t.TempDir()`）里真跑干跑：每一档跑完目标件 sha256 逐字不变、`<state>/edit_audit.jsonl` **不产生**（本件判据⑤）；窗口外的真仓只读（`ZERG_STATE_DIR` 指临时目录）",
+   "备注": "2026-09-22 `A4` 登记（门⑩ 扫描面命中的测试件：本件用 `--dry-run` 当夹具输入 ⇒ 同批登记）"
   },
   {
    "file": "core/cmd/zerg/family_calib.go",
