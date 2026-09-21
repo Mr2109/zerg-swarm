@@ -24,6 +24,16 @@
      （句子没写完 · 括号不配平 · 没有结尾换行）或**条目格式不合格**（少一列 / 带空白 / 绝对路径
      ⇒ 解析器**静默跳过**那一条）⇒ **rc=2 拒绝给结论**（真源读不全 ⇒ 绿就是假绿）。逐条口径见
      下面 `list_syntax_problems` 的注释。
+  ⑥ **标记表 × 两器**（2026-09-21 公开线⑤ · 设计稿 §2.2 **方案 b** 的第四张清单 · §4.5）——
+     `scripts/公开标记.tsv` 里 `public=no` 的行，链上**仍会发它**（不在 `EXCLUDES` —— 两器共用那把闸，
+     旧器会把它导进快照；镜像器另叠的 `map_path` 也没丢 ⇒ 这一件还会**进产出树**）⇒ **红**，逐条点名。
+     为什么单立这一格：方案 b 让**两套真源并存**（表的意图 vs 链的清单），本判据把「表 ↔ 两器」的
+     漂移从「要跑约 6 分钟的两器一致性验收才看得见」压成**秒级**。★ 判据① 只管「镜像器丢、旧器不排」
+     那一向，② 只管私有面黑名单那一维 ⇒ 「表说 no、链照发」这一维此前没人在管，由本判据补上。
+     **fail-closed**：表读不到 / 表不合规（`load_table` 抛 `TableError`）/ 表里一条 `public=no` 都没有
+     ⇒ **rc=2 不给结论**（「表全放行」在视觉上与正常表同形 —— 那是最难发现的一类假绿）。
+     ★ 处置只有两条（照设计稿 §3.3 纪律 3）：收进 `EXCLUDES` + `DROP_EXACT`，或**改表**；
+       **不许**放宽本判据来凑绿 ✗。
 
 **单一真源（一律复用，绝不另抄一份解析器）**：
   · 白名单解析 / EXCLUDES 解析 —— `scripts/gates/check-history-secrets.py`
@@ -74,6 +84,10 @@ def load_module(name, path):
 
 HSEC = load_module("face_sync_hsec", os.path.join(REPO, "scripts", "gates", "check-history-secrets.py"))
 PRIV = load_module("face_sync_priv", os.path.join(REPO, "scripts", "gates", "check-public-tree-private.py"))
+# 判据⑥（表 × 两器）复用**表自己的加载器**（`check-public-marks.py` 的 `load_table` / `TableError`）——
+# 单一真源，绝不另抄第二份表解析器（那张表的合规口径由提交闸上的 B15 管，本门只读它的判定结果）。
+MARKS = load_module("face_sync_marks", os.path.join(REPO, "scripts", "gates", "check-public-marks.py"))
+MARKS_TABLE_REL = "scripts/公开标记.tsv"
 
 
 def tracked_files(repo):
@@ -90,11 +104,16 @@ def require_paths(paths):
 
 
 def classify(repo, paths):
-    """→ (candidates, mirror_dropped, private_hits, entries, excludes, n_wall)"""
+    """→ (candidates, mirror_dropped, private_hits, wall, entries, excludes, marks, mirror)
+
+    `marks` = 表的逐行读回（`[(行号, 仓相对路径, public, 理由)]`）；表不合规 ⇒ 抛 `MARKS.TableError`，
+    由调用方按 **rc=2 不给结论** 处理（照 `check-public-marks.py` 的 A 档口径）。
+    """
     entries = HSEC.load_whitelist(paths["whitelist"])
     excludes = HSEC.load_excludes(paths["publish_sh"])
     pdirs, pfiles, pallowed = PRIV.load_rules(paths["private_paths"])
     mirror = load_module("face_sync_mirror", paths["mirror_lib"])
+    marks = MARKS.load_table(paths["marks_table"])
 
     def private_hit(rel):
         if PRIV.is_allowed(rel, pallowed):
@@ -120,7 +139,7 @@ def classify(repo, paths):
             hits.append((rel, m))
         if mirror.map_path(rel) is None:    # 镜像器自带清单丢弃
             dropped.append(rel)
-    return candidates, dropped, hits, wall, entries, excludes
+    return candidates, dropped, hits, wall, entries, excludes, marks, mirror
 
 
 # ── 判据⑤：清单自身语法（末行未闭合 / 条目格式不合格 ⇒ 不给结论）────────────────────────────
@@ -216,11 +235,17 @@ def evaluate(repo, paths):
     missing = require_paths(paths)
     if missing:
         return 2, ["  ✗ 缺件（%s）⇒ 拒绝给结论（rc=2）" % "、".join(sorted(missing))]
-    cand, dropped, hits, wall, entries, excludes = classify(repo, paths)
+    try:
+        cand, dropped, hits, wall, entries, excludes, marks, mirror = classify(repo, paths)
+    except MARKS.TableError as e:
+        return 2, ["  ✗ 标记表不合规（%s）⇒ 拒绝给结论（rc=2）—— 用坏表判出的绿没有意义（A 档口径）" % e]
     pdirs, pfiles, pallowed = PRIV.load_rules(paths["private_paths"])
+    no_marks = [rel for _i, rel, pub, _why in marks if pub == "no"]
     lines = []
-    lines.append("发布面同步门禁 —— 候选 %d 条（白名单 %d 条 · 黑名单 %d 目录+%d 文件 · EXCLUDES %d 条）"
-                 % (len(cand), len(entries), len(pdirs), len(pfiles), len(excludes)))
+    lines.append("发布面同步门禁 —— 候选 %d 条（白名单 %d 条 · 黑名单 %d 目录+%d 文件 · EXCLUDES %d 条 · "
+                 "标记表 %d 行/`no` %d 条）"
+                 % (len(cand), len(entries), len(pdirs), len(pfiles), len(excludes),
+                    len(marks), len(no_marks)))
     lines.append("  候选里的 wall/ 路径：%d 条" % len(wall))
     lines.append("  镜像器自带清单丢弃（map_path=None）：%d 条" % len(dropped))
     lines.append("  命中私有面黑名单：%d 条" % len(hits))
@@ -238,6 +263,9 @@ def evaluate(repo, paths):
         return 2, lines + ["  ✗ 守卫：白名单里没有 %s ⇒ 拒绝给结论（rc=2）" % WALL_ENTRY]
     if not wall:
         return 2, lines + ["  ✗ 守卫：候选集里没有一条 %s 路径 ⇒ 拒绝给结论（rc=2）" % WALL_ENTRY]
+    if not no_marks:
+        return 2, lines + ["  ✗ 守卫：标记表里一条 `public=no` 都没有 ⇒ 判据⑥ 无区分度（空转 = 假覆盖）"
+                           "⇒ 拒绝给结论（rc=2）"]
 
     # ⑤ 清单自身语法（末行未闭合 / 条目格式不合格 ⇒ **不给结论**；见本函数上面那一段注释）
     syn = list_syntax_problems(paths)
@@ -269,6 +297,29 @@ def evaluate(repo, paths):
     else:
         lines.append("  ✅ 判据② 两边都漏：0 条（命中黑名单的路径两器都已处理）")
 
+    # ⑥ 标记表 × 两器（设计稿 §2.2 方案 b 的第四张清单 · §4.5「表说 no、而两器都发 ⇒ 红」）
+    # 「两器会发」取的是**有效判定**，不是单看某一层清单：两器共用的那把闸是 EXCLUDES
+    # （镜像器的 `Assets.excluded` 解析的也是它 —— 故 EXCLUDES 收了的件，两器都不会发）；
+    # 镜像器另叠一层 `map_path`（映射失败 / 自带丢弃清单）⇒ **旧器会发 ⊇ 镜像器会发**。
+    # 判红那一格取「旧器会发」：它一发，应急快照通道就有它；镜像器会发则**一定会进产出树** ⇒ 逐条打印。
+    # 判据① 只管「镜像器丢、旧器不排」那一向 ⇒ 本判据补的是「表 ↔ 链」这一维（表说 no 而链照发）。
+    no_set = set(no_marks)
+    marks_cand = [p for p in cand if p in no_set]
+    unhandled = [p for p in marks_cand if not HSEC.excluded(p, excludes)]
+    if unhandled:
+        bad = 1
+        n_mirror = sum(1 for p in unhandled if mirror.map_path(p) is not None)
+        lines.append("  ✗ 判据⑥ 表说 no、链上却仍会发 %d 条（其中镜像器仍发 %d 条 ⇒ 会进产出树）："
+                     % (len(unhandled), n_mirror))
+        for p in unhandled[:40]:
+            lines.append("      %s（%s）"
+                         % (p, "镜像器仍发 ⇒ 会进产出树" if mirror.map_path(p) is not None
+                            else "旧器映射层丢，但 EXCLUDES 没收 ⇒ 快照通道会带上"))
+        lines.append("      ⇒ 处置只有两条（照设计稿 §3.3 纪律 3）：收进 EXCLUDES + DROP_EXACT，或**改表**；"
+                     "**不许**放宽本判据来凑绿 ✗")
+    else:
+        lines.append("  ✅ 判据⑥ 表说 no 的件两器都已排除：%d 条（表 `no` %d 行 · 候选集内 %d 条）"
+                     % (len(marks_cand), len(no_marks), len(marks_cand)))
     return bad, lines
 
 
@@ -308,9 +359,30 @@ FIXTURES = [
     ("list-allow-no-reason", ["scripts/", "wall/"], ["scripts/mech.py"],
      ["scripts/mech.py"], ["scripts/mech.py"], 2,
      {"allow_text": "# 夹具豁免清单\nscripts/mech.py 夹具理由（没有 TAB）\n"}),
+    # 判据⑥（表 × 两器 · 2026-09-21 公开线⑤）四格：正控 / 层边界（EXCLUDES 覆盖）/ 两器都发 / 表缺件 / 无 no 行
+    ("marks-no-both-handled", ["scripts/", "wall/"], ["scripts/mech.py"],
+     ["scripts/mech.py"], ["scripts/mech.py"], 0),
+    # 层边界那一格：EXCLUDES 收了、镜像器的 map_path 那层没收 ⇒ 两器**都不发**（EXCLUDES 是两器共用那把闸）
+    # ⇒ 绿 —— 钉住「判据⑥ 判的是**有效判定**，不是单看某一层清单」
+    ("marks-no-excludes-covers-mirror-layer", ["scripts/", "wall/"], ["gateway/fleet.yaml"],
+     ["scripts/mech.py"], [], 0),
+    # 「两器都发」那一格：EXCLUDES 不收 + 镜像器 map_path 也不丢 ⇒ 判据① 与判据② 都沉默
+    # （dropped/hits 都空），**只有判据⑥ 会红** ⇒ 这一格专钉 ⑥ 的牙齿（不是靠邻判据顺手红的）
+    ("marks-no-both-send", ["scripts/", "wall/"], ["gateway/fleet.yaml"],
+     ["scripts/unrelated-but-real.py"], [], 1),
+    ("marks-table-missing", ["scripts/", "wall/"], ["scripts/mech.py"],
+     ["scripts/mech.py"], ["scripts/mech.py"], 2, {"delete_marks": True}),
+    ("marks-no-rows-empty", ["scripts/", "wall/"], ["scripts/mech.py"],
+     ["scripts/mech.py"], ["scripts/mech.py"], 2,
+     {"marks_text": "文件\tpublic\t理由\nscripts/keep.py\tyes\t夹具：只有 yes 行\n"}),
 ]
 
 FIXTURE_TRACKED = ["scripts/mech.py", "scripts/keep.py", "wall/src/lib.rs", "wall/Cargo.toml"]
+
+# 判据⑥ 的夹具表（默认值）：`scripts/mech.py` 判 `no` —— 各格的正控要求「两器都不发它」
+DEFAULT_MARKS = ("文件\tpublic\t理由\n"
+                 "scripts/mech.py\tno\t夹具：B 类（合成 · 判据⑥ 的被判对象）\n"
+                 "scripts/keep.py\tyes\t夹具：A 类（合成）\n")
 
 
 def make_fixture(root, wl, priv, excl, drop, opts):
@@ -331,6 +403,10 @@ def make_fixture(root, wl, priv, excl, drop, opts):
         fh.write("# 夹具替换规则表\nfoo\tbar\t夹具\n")
     with open(os.path.join(root, "publish", "mirror-allow.txt"), "w", encoding="utf-8") as fh:
         fh.write(opts.get("allow_text", "# 夹具豁免清单\nscripts/mech.py\t夹具理由\n"))
+    # 判据⑥ 要读的表（`marks_text` 换内容；`delete_marks` 造「表缺件」那一格）
+    marks_path = os.path.join(root, MARKS_TABLE_REL)
+    with open(marks_path, "w", encoding="utf-8") as fh:
+        fh.write(opts.get("marks_text", DEFAULT_MARKS))
     tracked = list(FIXTURE_TRACKED)
     if opts.get("no_wall_files"):
         tracked = [t for t in tracked if not t.startswith("wall/")]
@@ -344,6 +420,8 @@ def make_fixture(root, wl, priv, excl, drop, opts):
                             GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e"))
     if opts.get("delete_whitelist"):
         os.unlink(os.path.join(root, "publish", "whitelist.txt"))
+    if opts.get("delete_marks"):
+        os.unlink(marks_path)
 
 
 def paths_for(repo):
@@ -352,6 +430,7 @@ def paths_for(repo):
         "private_paths": os.path.join(repo, "publish", "private-paths.txt"),
         "publish_sh": os.path.join(repo, "scripts", "build", "publish-public.sh"),
         "mirror_lib": os.path.join(repo, "publish", "mirror-public-lib.py"),
+        "marks_table": os.path.join(repo, MARKS_TABLE_REL),      # 判据⑥ 的表（缺件 ⇒ rc=2，见 require_paths）
     }
 
 
