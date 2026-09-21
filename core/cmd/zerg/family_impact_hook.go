@@ -362,7 +362,9 @@ func impactDryRunSummaryOf(root, rel string) impactDryRunSummary {
 		s.HeadSHA = l.HeadSHA
 	}
 	rev := impactReversibilityOf(root, tgt)
-	l1, l2, l3 := impactHumanLines(tgt, layers, rows, rev, true)
+	// `B1`：干跑那一档**不拉步名真源**（`--list` 现跑会先跑整套门禁自检 · 本机 8.3–9.5s ⇒
+	// §4.4 的档位纪律：干跑是人每次敲都走的那条路）⇒ 那一格照实写「**未机检**」并给出怎么拉。
+	l1, l2, l3 := impactHumanLines(tgt, layers, rows, rev, true, impactStepProjectionNotRun())
 	if total == 0 {
 		s.Reason = "**面内未见**（六层全量 **0** 条）"
 		s.Text = fmt.Sprintf("影响面：%s —— 按 §八 第 2 件**不打三行**（零影响时打三行 = 灌噪声）；「没报 ≠ 没事」（`F6`）· head_sha=%s",
