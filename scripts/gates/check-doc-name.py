@@ -312,10 +312,18 @@ EXEMPT_C = [
      "reason": "**门③（脚本接线自检）**的「门脚本 + 说明书」对（`check-wired-scripts.{py,md}`）——"
                "同 C05（第二波新建 · 挂 `gates` scope · 模式 `tri-report` 只报告）。"
                "撤法：删本行并把 `EXEMPT_C_EXPECTED` 7→6 ⇒ 该对判红照实回来"},
+    # ── C08：2026-09-22（2.5.11 第 3 项 · 门禁⑮「主仓悬空引用」）新增的一对 ─────────────────────
+    # 形态与 C01–C07 **完全相同**（门脚本 `scripts/gates/<名>.py` + 说明书 `scripts/gates/<名>.md`）；
+    # 也就是同一条 N6 判据在同一种约定下的第四批实例 —— **不是**为了凑绿放宽判据：
+    # 删掉本行，该对立刻按 N6 判红（撤法见行内）。
+    {"id": "C08", "kind": "pair", "rules": ["N6"], "paths": [("scripts/gates", "check-dangling-refs")],
+     "reason": "**门⑮（主仓悬空引用 `docs/…` 指向不存在）**的「门脚本 + 说明书」对"
+               "（`check-dangling-refs.{py,md}`）—— 同 C05（2026-09-22 新建 · 挂 `docs` scope · 模式 `tri-report` 只报告 · 同时进快速档）。"
+               "撤法：删本行并把 `EXEMPT_C_EXPECTED` 8→7 ⇒ 该对判红照实回来"},
 ]
 EXEMPT_A_EXPECTED = 20     # 2026-09-19 分家：原 22 条里 A17/A18 的对象已迁出仓（零命中）⇒ 删
 EXEMPT_B_EXPECTED = 3
-EXEMPT_C_EXPECTED = 7
+EXEMPT_C_EXPECTED = 8
 
 # ── D 档：本轮 A 路拍板登记（「允许对 / 登记不改」· 父代理 2026-09-18 拍）─────────────
 # 这 2 条登记覆盖**收尾后仅剩的 6 条可改面命中**（此前逐条挂在说明书 §差异 6/7 上）：
@@ -649,7 +657,8 @@ def list_exempt():
         print("  %s [%s] 形态 %s\n      对象：%s\n      理由：%s"
               % (row["id"], "+".join(row["rules"]), row["kind"],
                  " , ".join(_flat(p) for p in row["paths"]), row["reason"]))
-    print("C 档 · 新增登记（C01–C03 待批准 · C04 已拍 2026-09-18 · C05–C07 第二波任务书登记 2026-09-18）："
+    print("C 档 · 新增登记（C01–C03 待批准 · C04 已拍 2026-09-18 · C05–C07 第二波任务书登记 2026-09-18 · "
+          "C08 2026-09-22（门⑮ 主仓悬空引用）登记）："
           "%d 条（期望 %d）" % (len(EXEMPT_C), EXEMPT_C_EXPECTED))
     for row in EXEMPT_C:
         print("  %s [%s] 形态 %s\n      对象：%s\n      理由：%s"
@@ -803,9 +812,9 @@ def self_test(script_path, meta=True):
     cnt_ok = (rc == 0 and ("A 档 · 《清单-命名规范化》已登记的「不改」条目：20 条（期望 20）" in out)
               and ("B 档 · 规则级规范豁免：3 条（期望 3）" in out)
               and ("C 档 · 新增登记（C01–C03 待批准 · C04 已拍 2026-09-18 · "
-                   "C05–C07 第二波任务书登记 2026-09-18）：7 条（期望 7）" in out)
+                   "C05–C07 第二波任务书登记 2026-09-18 · C08 2026-09-22（门⑮ 主仓悬空引用）登记）：8 条（期望 8）" in out)
               and ("D 档 · 本轮 A 路拍板登记（登记不改）：2 条（期望 2）" in out))
-    lines.append("%s 例外表条数自证（A20 / B3 / C7 / D2）" % ("✓" if cnt_ok else "✗"))
+    lines.append("%s 例外表条数自证（A20 / B3 / C8 / D2）" % ("✓" if cnt_ok else "✗"))
     ok &= cnt_ok
     # ⑧ 只报告不改
     import hashlib
