@@ -3999,6 +3999,335 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "calib/ls#未知旗标",
+   "command": "calib ls",
+   "argv": [
+    "calib",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "calib/ls#不认的契约主号",
+   "command": "calib ls",
+   "argv": [
+    "calib",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "calib/ls#--json 不给字段（K2）",
+   "command": "calib ls",
+   "argv": [
+    "calib",
+    "ls",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）· 执行前判"
+  },
+  {
+   "id": "calib/show#未知旗标",
+   "command": "calib show",
+   "argv": [
+    "calib",
+    "show",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "calib/show#不认的契约主号",
+   "command": "calib show",
+   "argv": [
+    "calib",
+    "show",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "calib/show#缺件名（不给推断）",
+   "command": "calib show",
+   "argv": [
+    "calib",
+    "show"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺件名 ⇒ 退 2 + 列候选（**不猜**是哪一个 —— 名字要逐字）"
+  },
+  {
+   "id": "calib/show#未知名（给最像的）",
+   "command": "calib show",
+   "argv": [
+    "calib",
+    "show",
+    "calib-local"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知名 ⇒ 退 2 + 「最像的合法输入」（§4.1 K14 第三件）· 名字**逐字**匹配"
+  },
+  {
+   "id": "calib/show#--json 不给字段（K2）",
+   "command": "calib show",
+   "argv": [
+    "calib",
+    "show",
+    "calib-local-model",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）· 执行前判"
+  },
+  {
+   "id": "calib/run#未知旗标",
+   "command": "calib run",
+   "argv": [
+    "calib",
+    "run",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "calib/run#不认的契约主号",
+   "command": "calib run",
+   "argv": [
+    "calib",
+    "run",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "calib/run#缺件名（不给推断）",
+   "command": "calib run",
+   "argv": [
+    "calib",
+    "run"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺件名 ⇒ 退 2 + 列候选（执行前判 —— 一个脚本都没起）"
+  },
+  {
+   "id": "calib/run#未知名（给最像的）",
+   "command": "calib run",
+   "argv": [
+    "calib",
+    "run",
+    "calib-x3"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知名 ⇒ 退 2 + 「最像的合法输入」（§4.1 K14 第三件）· 执行前判，一个脚本都没起"
+  },
+  {
+   "id": "calib/run#缺 --yes（D2 · 脚本一次都没跑）",
+   "command": "calib run",
+   "argv": [
+    "calib",
+    "run",
+    "calib-x3-model"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 `--yes` ⇒ fail-closed 2（§九 M3 C2）· 计划件走 stderr、**不 exec 任何脚本**"
+  },
+  {
+   "id": "eval/ls#未知旗标",
+   "command": "eval ls",
+   "argv": [
+    "eval",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "eval/ls#不认的契约主号",
+   "command": "eval ls",
+   "argv": [
+    "eval",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "eval/ls#--json 不给字段（K2）",
+   "command": "eval ls",
+   "argv": [
+    "eval",
+    "ls",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）· 执行前判"
+  },
+  {
+   "id": "eval/show#未知旗标",
+   "command": "eval show",
+   "argv": [
+    "eval",
+    "show",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "eval/show#不认的契约主号",
+   "command": "eval show",
+   "argv": [
+    "eval",
+    "show",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "eval/show#未知名（给最像的）",
+   "command": "eval show",
+   "argv": [
+    "eval",
+    "show",
+    "stability"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知名 ⇒ 退 2 + 「最像的合法输入」（§4.1 K14 第三件）· 名字**逐字**匹配"
+  },
+  {
+   "id": "eval/show#--json 不给字段（K2）",
+   "command": "eval show",
+   "argv": [
+    "eval",
+    "show",
+    "compare",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）· 执行前判"
+  },
+  {
+   "id": "eval/run#未知旗标",
+   "command": "eval run",
+   "argv": [
+    "eval",
+    "run",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "eval/run#不认的契约主号",
+   "command": "eval run",
+   "argv": [
+    "eval",
+    "run",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "eval/run#缺件名（不给推断）",
+   "command": "eval run",
+   "argv": [
+    "eval",
+    "run"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺件名 ⇒ 退 2 + 列候选（执行前判 —— 一个脚本都没起）"
+  },
+  {
+   "id": "eval/run#未知名（给最像的）",
+   "command": "eval run",
+   "argv": [
+    "eval",
+    "run",
+    "stability"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知名 ⇒ 退 2 + 「最像的合法输入」（§4.1 K14 第三件）· 执行前判，一个脚本都没起"
+  },
+  {
+   "id": "eval/run#缺 --yes（D2 · 脚本一次都没跑）",
+   "command": "eval run",
+   "argv": [
+    "eval",
+    "run",
+    "compare"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 `--yes` ⇒ fail-closed 2（§九 M3 C2）· 计划件走 stderr、**不 exec 任何脚本**"
+  },
+  {
+   "id": "eval/run#② 保留内部：不开 run 面",
+   "command": "eval run",
+   "argv": [
+    "eval",
+    "run",
+    "make-manifest"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "归属是闸：② 保留为内部实现的件 ⇒ 退 2 并**逐字给出归属与理由**（收编即两份真相 · 所以只做投影）"
+  },
+  {
+   "id": "eval/run#④ 维持待拍：不开 run 面",
+   "command": "eval run",
+   "argv": [
+    "eval",
+    "run",
+    "v25_real10"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "归属是闸：④ 待定的件 ⇒ 退 2（**归属不能由稿单方面决定**、AI 也不许判退役 · 不替它拍）"
   }
  ]
 }
