@@ -221,8 +221,8 @@ func judgeARPending(d arDoc) []error {
 // judgeARRetireLedger —— 判据④：③ 台账与盘上现状一致（台账不腐）。
 func judgeARRetireLedger(root string, d arDoc) []error {
 	var errs []error
-	if len(d.RetireLedger) != 4 {
-		errs = append(errs, fmt.Errorf("判据④ 破：③ 应 4 件（3 件 253 + compressor_demo），台账有 %d 件", len(d.RetireLedger)))
+	if len(d.RetireLedger) != 3 {
+		errs = append(errs, fmt.Errorf("判据④ 破：③ 应 3 件（`scripts/253/` 三件 —— 2026-09-21 改判后 compressor_demo 归 ② 保留为内部），台账有 %d 件", len(d.RetireLedger)))
 	}
 	for _, e := range d.RetireLedger {
 		if strings.TrimSpace(e.Evidence) == "" {
@@ -437,7 +437,7 @@ func TestAdoptRetireLedgerMatchesDisk(t *testing.T) {
 	if errs := judgeARRetireLedger(root, d); len(errs) > 0 {
 		t.Errorf("判据④ 破（%d 处）：\n  %s", len(errs), joinErrs(errs))
 	} else {
-		t.Logf("判据④ ✓ ③ 台账 4 件与盘上一致（3 件已删不在盘 · 1 件待删仍在盘）")
+		t.Logf("判据④ ✓ ③ 台账 3 件与盘上一致（`scripts/253/` 三件均已删、不在盘；compressor_demo 已改判 ② ⇒ 不在退役台账）")
 	}
 }
 
