@@ -263,9 +263,12 @@ EXEMPT_A = [
 
 # ── B 档：规则级规范豁免（不在《清单》22 条里；逐条给理由，报告里照报命中数）──
 EXEMPT_B = [
+    # 2026-09-21 发布闸 P9：B01 增 `CHANGELOG.md` —— 它是 Keep a Changelog 1.1.0 的**约定文件名**（字面就带全大写词干），与 README/AGENTS 同族：**改名就不是那个东西了**。
+    #   登记的是**规则级保留名**，不是给某一件开后门：仓根与工具面的约定件不判，`docs/` 内的同名件照判（B01 既有口径一字未改）。
+    #   撤法：把这一项从 paths 删掉并把 reason 尾句一并删掉 ⇒ N1 照实回来。
     {"id": "B01", "kind": "reserved", "rules": ["N1"],
-     "paths": ["README.md", "AGENTS.md", "SKILL.md", "VERSION"],
-     "reason": "行业/工具约定保留名 —— **只在文档面之外生效**（docs/ 内的同名件照判）"},
+     "paths": ["README.md", "AGENTS.md", "SKILL.md", "VERSION", "CHANGELOG.md"],
+     "reason": "行业/工具约定保留名 —— **只在文档面之外生效**（docs/ 内的同名件照判）。2026-09-21 发布闸 + `CHANGELOG.md`（Keep a Changelog 1.1.0 约定名 · P9 拍板「`CHANGELOG.md` 给机检」）"},
     {"id": "B02", "kind": "pair_ext", "rules": ["N6"],
      "paths": [("go", (".mod", ".sum")), ("Cargo", (".toml", ".lock"))],
      "reason": "构建工具链约定（Go module / Cargo），不属文档命名面。"
