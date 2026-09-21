@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -666,4 +667,115 @@ func ImpactTierNamesForTest() []string {
 // ImpactClassNamesForTest 三类动作的取值（同上）。
 func ImpactClassNamesForTest() []string {
 	return []string{impactHookClassEdit, impactHookClassSymbol, impactHookClassFile, impactHookClassUnknown}
+}
+
+// ---- `A5` 落盘缓存与毫秒档（`family_impact_cache.go`）的**只读桥** ---------------------------------
+// 桥的纪律同本文件顶部三条：只读形状、**直接指真源**、不另写副本。
+
+// ImpactStateLayoutForTest 落点契约件的一格（具名类型）。
+type ImpactStateLayoutForTest struct {
+	Schema   string
+	IndexDir string
+	CacheDir string
+	Key      []string
+	NoAuto   []string
+}
+
+// ImpactStateLayoutOfForTest 读仓内落点契约件（与实现同一份 `impactStateLayoutOf`）。
+func ImpactStateLayoutOfForTest(root string) (ImpactStateLayoutForTest, error) {
+	l, err := impactStateLayoutOf(root)
+	if err != nil {
+		return ImpactStateLayoutForTest{}, err
+	}
+	return ImpactStateLayoutForTest{l.Schema, l.IndexDir, l.CacheDir, l.Key, l.NoAuto}, nil
+}
+
+// ImpactStateLayoutParseForTest 解一份**给定的**契约正文（负控：半份契约必须报错）。
+func ImpactStateLayoutParseForTest(body []byte) (ImpactStateLayoutForTest, error) {
+	l, err := impactStateLayoutParse(body)
+	if err != nil {
+		return ImpactStateLayoutForTest{}, err
+	}
+	return ImpactStateLayoutForTest{l.Schema, l.IndexDir, l.CacheDir, l.Key, l.NoAuto}, nil
+}
+
+// ImpactStateKeysEqualForTest 键三件的逐字对拍口（负控：换掉任一件必须判 false）。
+func ImpactStateKeysEqualForTest(key []string) bool { return impactStateKeysEqual(key) }
+
+// ImpactCacheFingerprintForTest 源指纹现算（`R42` 口径 · 本批加严形态）。
+func ImpactCacheFingerprintForTest(root, scope string) (string, int, error) {
+	return impactCacheFingerprint(root, scope)
+}
+
+// ImpactCachePathForTest 落盘件路径（目录名来自契约件 · 状态目录来自 `stateDirOf()`）。
+func ImpactCachePathForTest(root, head, seq, caliber, scopeKey string) (string, error) {
+	lay, err := impactStateLayoutOf(root)
+	if err != nil {
+		return "", err
+	}
+	return impactCacheFileFor(lay, head, seq, caliber, scopeKey), nil
+}
+
+// ImpactCacheIndexDirForTest 索引落点（同一份契约件）。
+func ImpactCacheIndexDirForTest(root string) (string, error) {
+	lay, err := impactStateLayoutOf(root)
+	if err != nil {
+		return "", err
+	}
+	return impactCacheIndexDir(lay), nil
+}
+
+// ImpactCacheLoadForTest 读一件落盘件并逐条判失效条件（**与命令同一份判定口**）。
+func ImpactCacheLoadForTest(path, head, seq, caliber, fp string) (bool, string, float64) {
+	_, hit, why, cost := impactCacheLoad(path, impactLayer{Seq: seq, HeadSHA: head, Caliber: caliber}, fp)
+	return hit, why, float64(cost.Microseconds()) / 1000.0
+}
+
+// ImpactCacheProbeMSForTest 毫秒档现跑标定口（读落盘产物 n 次取最慢一次）。
+func ImpactCacheProbeMSForTest(path string, n int) (float64, int, error) {
+	return impactCacheProbeMS(path, n)
+}
+
+// ImpactCacheFilesUnderForTest 列出某目录下的落盘件（判「只增不删」用）。
+func ImpactCacheFilesUnderForTest(dir string) ([]string, error) { return impactCacheFilesUnder(dir) }
+
+// ImpactCacheableLayersForTest 进缓存的层（与实现同一份集合 · 测试不另抄一份）。
+func ImpactCacheableLayersForTest() []string {
+	out := []string{}
+	for k := range impactCacheableLayers {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ImpactMillisecondTierMSForTest 毫秒档判据值（§4.4：命中一次 ≤ 4 ms）。
+func ImpactMillisecondTierMSForTest() float64 { return impactMillisecondTierMS }
+
+// ImpactCacheSchemaForTest 落盘件的形状号（读到不认的形状号不许命中）。
+func ImpactCacheSchemaForTest() string { return impactCacheSchema }
+
+// ImpactCacheSourceForTest 读实现件源码（自检「没有删除动作 / 没有自动动作入口」用）。
+func ImpactCacheSourceForTest() (string, error) {
+	b, err := os.ReadFile("family_impact_cache.go")
+	return string(b), err
+}
+
+// ImpactHookSourceForTest 读干跑钩子件源码（钉「干跑那一档传的是 `impactCacheOff`」）。
+func ImpactHookSourceForTest() (string, error) {
+	b, err := os.ReadFile("family_impact_hook.go")
+	return string(b), err
+}
+
+// ImpactPullLayersModeOffForTest **给定的目标**在**缓存挡位=关**下跑六层（判「干跑那一档不碰缓存」）。
+func ImpactPullLayersModeOffForTest(root, rel string) ([]string, error) {
+	tgt, why := impactResolve(root, rel)
+	if tgt == nil {
+		return nil, fmt.Errorf("目标解析不到：%s", why)
+	}
+	notes := []string{}
+	for _, l := range impactPullLayers(root, tgt, true, impactCacheOff) {
+		notes = append(notes, l.Seq+"="+l.CacheNote)
+	}
+	return notes, nil
 }

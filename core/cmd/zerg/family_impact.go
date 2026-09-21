@@ -9,7 +9,9 @@
 //	  ⑤ 语义（按需）→ ⑥ 公开面）—— 实现件在 `family_impact_layers.go`，本件只**接线 + 出数**：
 //	  人面三行给**真数**（不再是骨架期的三个 0）· 第 ⑥ 层命中时**多一行**条件行（§3.1/§3.7）·
 //	  stderr 恒出一张**层表**（每层带 `head_sha` + `layer` + 该层口径值 + 粒度 + 时刻 + 耗时）。
-//	· 仍**不在**本件：卡片与四级排序裁序（`A3`）· 挂进 `dev edit` 干跑（`A4`）· 落盘缓存与毫秒档（`A5`）。
+//	· 仍**不在**本件：卡片与四级排序裁序的**实现**在 `family_impact_card.go`（`A3`）· 挂进
+//	  `dev edit` 干跑（`A4`）· **落盘缓存与毫秒档**在 `family_impact_cache.go`（`A5`：本件只把
+//	  缓存挂到链上（`impactCacheOn`）并把落点/毫秒档打进 stderr 那一块）。
 //
 // 档位（§4.4 · `A2` 风险那一条）：**默认档只吃毫秒层 + 编译器层**；贵层（② 符号 `callgraph`
 // 现跑 3.9–5.8s）走**按需档**。开关用**既有全局布尔** `--all`（与 `build show --all` 同形：
@@ -123,8 +125,9 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 		}
 	}
 	// 档位（§4.4）：默认档 = 毫秒层 + 编译器层；贵层（② 符号层）走按需档 `--all`。
+	// `A5`：链上挂**落盘缓存**（`impactCacheOn` —— 读 + 写；落点与键从契约件读）。
 	cheap := !inv.all || inv.quick
-	layers := impactPullLayers(root, tgt, cheap)
+	layers := impactPullLayers(root, tgt, cheap, impactCacheOn)
 	rows, totalRows := impactCollectRows(layers)
 	// `A3` 波纹卡片：先把骨架三行（+ 条件行）与退法算出来 —— 卡片预算要把**常量部分**也算进去
 	// （§4.1 的账：上限是死的，裁的是条目，不是骨架）。
@@ -143,6 +146,7 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	// ② stderr：层表（每层带 head_sha + layer + 该层口径值 + 粒度 + 时刻 + 耗时）+ 卡片块 + 时效声明。
 	emitImpactLayerTable(stderr, tgt, layers, card.Items, totalRows, card, cheap)
+	emitImpactCacheBlock(stderr, root, layers)
 	emitImpactCardBlock(stderr, tgt, card, rev, layers, inv.forHuman)
 	if inv.forModel && !inv.forHuman {
 		fmt.Fprintf(stderr, "%s: `--for-model` 与默认档**同效**（§4.1：模型档就是默认档）—— 给了也照实明说，不另开一条分叉\n", progName)
@@ -415,6 +419,9 @@ func emitImpactLayerTable(stderr io.Writer, tgt *impactTarget, layers []impactLa
 		fmt.Fprintf(stderr, "  层%s layer=%s%s 粒度=%s 口径=%s 状态=%s 耗时=%s head_sha=%s 时刻=%s\n",
 			l.Seq, l.Seq, l.Name, l.Grane, l.Caliber, l.Status, cost, dashIfEmpty(l.HeadSHA), l.At)
 		fmt.Fprintf(stderr, "    读数：%s\n", l.Detail)
+		// `A5`：这一层这一跑是**命中落盘件**还是**现算**（独立一行 ⇒ `A2` 判据① 钉住的层表六行
+		// 格式一个字不动；两条行的字头不同，判据正则只认 `  层…layer=` 那一种）。
+		fmt.Fprintf(stderr, "    缓存：%s\n", dashIfEmpty(l.CacheNote))
 	}
 	// 数字纪律：`head_sha` 取不到 ⇒ 该结果**只许当参考**（§7.4 判据：时效三件缺任一 ⇒ 只许当参考）。
 	if head == "" {
@@ -435,6 +442,54 @@ func emitImpactLayerTable(stderr io.Writer, tgt *impactTarget, layers []impactLa
 
 // timeMillis 只为人面好看（耗时的显示精度）。
 const timeMillis = 1e6
+
+// emitImpactCacheBlock —— `A5` 的**落点与毫秒档**那一块（stderr · 人读；`A2` 的层表一个字不动）。
+//
+// 打三件（判据的可读面）：
+//
+//	① **落点**：缓存与索引的绝对路径（目录名从契约件读）+ 契约件路径 + 不在仓内/不进公开面那条纪律；
+//	② **本跑账**：三层里命中几层、现算几层、不适用几层；本跑最长一次「读落盘产物」= 多少 ms
+//	   （§4.4 的毫秒档判据 = ≤ 4 ms，值现跑到小数点后两位，不四舍五入成整数）；
+//	③ **纪律**（照实打，不靠自觉）：只增不改不删 · 不接自动收窄/自动删/自动回滚 · 缓存不许改答案
+//	   （命中与未命中逐字同输出）。
+func emitImpactCacheBlock(w io.Writer, root string, layers []impactLayer) {
+	fmt.Fprintf(w, "%s: `A5` 落盘缓存与毫秒档（§4.4：键 = head_sha + 层 + 该层口径值；毫秒档 = 命中一次 ≤ %.2f ms）\n",
+		progName, impactMillisecondTierMS)
+	if lay, err := impactStateLayoutOf(root); err != nil {
+		fmt.Fprintf(w, "  落点：契约件 `%s` **读不到**（%v）⇒ 本跑不读不写缓存（不给结论、不猜目录名）\n",
+			impactStateContractRel, err)
+	} else {
+		fmt.Fprintf(w, "  落点（契约件 `%s` · schema=%s）：缓存 %s · 索引 %s\n",
+			impactStateContractRel, lay.Schema, filepath.Join(stateDirOf(), lay.CacheDir), impactCacheIndexDir(lay))
+		fmt.Fprintf(w, "  ★ 两个落点都在**状态目录**下（`ZERG_STATE_DIR` > `~/.zerg/state`）⇒ **不在仓内** ⇒ 不进公开面、不进 git 跟踪\n")
+	}
+	hit, built, na := 0, 0, 0
+	worst, worstLayer := 0.0, ""
+	for _, l := range layers {
+		switch {
+		case l.CacheHit:
+			hit++
+			ms := float64(l.CacheCost.Microseconds()) / 1000.0
+			if ms > worst {
+				worst, worstLayer = ms, l.Seq
+			}
+		case l.CacheNote == "不适用（本层不进缓存 —— 见契约件 `cache.not_cacheable`）":
+			na++
+		default:
+			built++
+		}
+	}
+	if hit > 0 {
+		fmt.Fprintf(w, "  本跑账：命中 %d 层 · 现算 %d 层 · 不适用 %d 层；**最长一次「读落盘产物」= %.2f ms**（层%s · 判据上限 %.2f ms ⇒ %s）\n",
+			hit, built, na, worst, worstLayer, impactMillisecondTierMS, yesno(worst <= impactMillisecondTierMS))
+	} else {
+		fmt.Fprintf(w, "  本跑账：命中 0 层 · 现算 %d 层 · 不适用 %d 层（本跑没有可比的「读落盘产物」读数 ⇒ 毫秒档**本跑未测**，不当 0 看）\n",
+			built, na)
+	}
+	fmt.Fprintf(w, "  纪律（照实打）：缓存**只增不改不删**（本件里没有删除动作）· **不接**自动收窄 / 自动删 / 自动回滚 · "+
+		"**不许在内存里缓存跨命令复用** · 命中与未命中**逐字同输出**（`M8`）· 缓存**不抬任何上限**（条数 ≤ %d / token ≤ %d 一个字没动）\n",
+		impactItemMax, impactTokenMax)
+}
 
 func dashIfEmpty(s string) string {
 	if strings.TrimSpace(s) == "" {

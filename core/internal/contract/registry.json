@@ -76,6 +76,16 @@
       "gate": "scripts/gates/check-error-kinds.py · scripts/gates/check-wall-layer.py · scripts/gates/check-cli-contract.py · scripts/gates/check-doc-cmds.py",
       "change_class": "B",
       "change_note": "§六 的七步流程（V0–V7）：提案成文 ⇒ 判档 ⇒ 只改一处真源 ⇒ 升号 ⇒ 改全部导出物 ⇒ 过门禁 ⇒ 通知+留档"
+    },
+    {
+      "id": "S-h",
+      "name": "变更影响面状态落点（语义索引 / 按层缓存）",
+      "truth": "core/internal/contract/impact-state.json",
+      "truth_shape": "json：`dirs.index` / `dirs.cache`（目录名写死）+ `cache.key` / `cache.invalid_when` / `cache.source_fingerprint` / `cache.not_auto_actions`；消费方 = `core/cmd/zerg/family_impact_cache.go`（读这一份，源码里不另写第二份目录名）",
+      "version_field": "schema（zerg/impact-state/1）",
+      "gate": "（由 core: go test 覆盖 —— 判据面在 core/cmd/zerg/cli_impact_cache_test.go：键三件 + 四条失效条件 + 毫秒档 + 落点不在仓内 + 只增不删）",
+      "change_class": "A",
+      "change_note": "改目录名 / 改缓存键 = 一次全量失效（旧缓存件留着不用，**不许自动删**）；加失效条件**只许多加**，不许放宽（§4.4 缓存口径 · §十 R42 源指纹）"
     }
   ],
   "change_flow": {

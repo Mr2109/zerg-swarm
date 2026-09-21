@@ -1,0 +1,54 @@
+{
+  "schema": "zerg/impact-state/1",
+  "id": "impact-state.v1",
+  "_出处": "设计-变更影响面-v1.6 §4.4（缓存口径：缓存是**落盘产物**，键 = `head_sha` + 层 + 该层口径值 三者一起 · 「毫秒档 = 命中一次 ≤ 4 ms」）· §九 批3B（语义索引落点）· §7.6 判据5 + §十 `R42`（源指纹）· 任务单-影响面实施-20260922 §二 `A5`（产物 = `<状态目录>/impact-cache/` + 失效判据的自检件）",
+  "_一句话": "变更影响面的两处**落点**（语义索引 / 按层缓存）连同**缓存键 · 失效条件 · 不许接的动作**写死在本件 —— 代码读这一份，源码里不另写第二份目录名。",
+  "_路径纪律": [
+    "两处落点都在**状态目录**下（`ZERG_STATE_DIR` > `~/.zerg/state`）⇒ 两处都**不在仓内** ⇒ 不进公开面、不进 git 跟踪（不是靠 .gitignore 挡，是本来就不在仓的路径里）。",
+    "状态目录名不写死在源码里：与 `core/internal/statepath/statepath.go`（`Dir`）· `core/cmd/zerg/family_approve.go`（`stateDirOf`）同一口径。",
+    "索引与缓存都是**派生件**：删掉只损失一次现算 —— 但**不许任何命令自动删 / 自动回滚 / 自动收窄预测**（见本件 `cache.not_auto_actions`）。"
+  ],
+  "state_dir": {
+    "chain": "ZERG_STATE_DIR > ~/.zerg/state",
+    "truth": "core/internal/statepath/statepath.go（Dir）· core/cmd/zerg/family_approve.go（stateDirOf）"
+  },
+  "dirs": {
+    "index": "impact-index",
+    "cache": "impact-cache"
+  },
+  "index": {
+    "layout": "<状态目录>/impact-index/",
+    "built_by": "子端侧一次 embedding 批处理（§九 批3B「卵帮卵」）—— 本批（`A5`）**只定名字与落点，不建索引** ✗；`A5` 起第 ⑤ 层的「未建索引」不再写「目录名待拍板」，直接读本件的 `dirs.index`。",
+    "must_carry": ["head_sha", "model_id", "dim", "built_at", "chunk_policy"],
+    "chunk_policy": "每 40 行一块 · 批量 32 块/请求（口径写死：同一份仓换了分块就换一套向量 ⇒ 不写死则索引不可比）",
+    "bytes_per_block": "dim × 4（现测 1,536 B/块 · dim 384 —— 口径 = 块数 × dim × 4 ⇒ **不许写「约 8 MB」**）",
+    "gate": "在位判据（可测三子句）：`/api/tags` 非空 + `capabilities` 含 `embedding` + `embedding_length` 有值"
+  },
+  "cache": {
+    "layout": "<状态目录>/impact-cache/<head_sha>/<层序>-<口径值 sha256 前 16>.json",
+    "key": ["head_sha", "layer", "caliber"],
+    "invalid_when": [
+      "落盘件的 `head_sha` 与现算逐字不同（§4.4：`head_sha` 一变即失效）",
+      "层序不同",
+      "该层口径值逐字不同",
+      "源指纹不同（`R42`：**`head_sha` 相同 ≠ 源件相同** —— 同一 `head_sha` 下工作树被改时 `head_sha` 不变 ⇒ 光看 `head_sha` 会把旧答案装成新答案）"
+    ],
+    "source_fingerprint": "件集合 = 该 module 的全部 `.go` 件（tracked + untracked）∪ 工作树里所有与 `HEAD` 不一致的件（任意后缀 · 含未跟踪）；逐件内容 `sha256` 与 `git status --porcelain -z` 原文一起汇总，取 `sha256` 前 16 位。**比 §7.6 判据5 的口径严**（那一版只汇总 module 的 `.go`）：本层的输入里还有非 `.go` 件（③ 读 `registry.json` · ④ 扫 tracked 的任意后缀 · ① 读 `go.mod`/`go.sum`）⇒ 加严只**多失效**、不少失效。",
+    "millisecond_tier": "命中一次 ≤ 4 ms（口径 = 读落盘产物 + 切分去重成集合 · §4.4 三档现测：meta json 0.02–0.03 ms · 小件 0.03–0.08 ms · 全量 39,361,052 B 2.03–3.52 ms）",
+    "cap_rule": "缓存**不抬任何上限**：卡片条数 ≤ 12 / token ≤ 1.2k / 单条 ≤ 3 行 ≤ 60 token / 层内分页 40 一个字不动（§3.1/§3.3 – §二 `A5` 红线）",
+    "answer_rule": "缓存**不许改答案**：命中缓存的一跑与未命中的一跑，人面与机器面**逐字同输出**（§九 批1 判据⑧ `M8` + §4.4 同一条纪律）",
+    "no_memory_cache": "**不许在内存里缓存跨命令复用**（§二 `A5` 红线）—— 每次跑都读落盘产物，进程内不留全局缓存",
+    "not_auto_actions": ["自动收窄预测", "自动删", "自动回滚"],
+    "cacheable_layers": ["①", "③", "④"],
+    "not_cacheable": {
+      "②": "产物取决于档位（默认档未跑 / 按需档现算），而档位不在键的三件里 ⇒ 要缓存它就得往键里加第四件（越线）⇒ 本批不缓存",
+      "⑤": "在位判据与索引目录随环境变（模型 / 索引在不在盘上不由 `head_sha` 决定）⇒ 本批不缓存",
+      "⑥": "输入含**仓外**产出树（不在源指纹面内）⇒ 本批不缓存（宁少报不猜报）"
+    },
+    "write_disabled_where": ["`dev edit` 干跑路径（`A4` 零副作用「不写缓存」的加强形态：**不读也不写** ⇒ 干跑与缓存完全无关）"]
+  },
+  "not_in_public_face": [
+    "<状态目录>/impact-index/",
+    "<状态目录>/impact-cache/"
+  ]
+}

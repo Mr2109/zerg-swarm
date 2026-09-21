@@ -103,6 +103,9 @@ var impactHeads = [3]string{"会牵动：", "会红：", "建议："}
 // ⇒ `--json` 出**六键**、`items` 逐字 `[]`、退码 **1**（零命中 · 不是 0、不是失败）。
 func TestImpact_MachineFaceSixKeysAndEmptyItems(t *testing.T) {
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
+	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
+	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
+	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 	tgt := impactZeroHitTarget()
 
 	rc, out, errb := runCapture("impact", tgt, "--json", "what,why,how,red")
@@ -162,6 +165,9 @@ func TestImpact_MachineFaceSixKeysAndEmptyItems(t *testing.T) {
 //	④ K2：给了 `--json` 不给字段 ⇒ 退 1 + stdout **0 字节**。
 func TestImpact_NegativeControls(t *testing.T) {
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
+	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
+	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
+	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 
 	// ① 判定口的负控：三枚坏期望，逐枚**必须**报错。
 	rc, out, _ := runCapture("impact", impactZeroHitTarget(), "--json", "what")

@@ -345,7 +345,8 @@ type impactDryRunSummary struct {
 }
 
 // impactDryRunSummaryOf 取数（**默认档**：§4.4 只吃毫秒层 + 编译器层；贵层按需 —— 干跑不背贵层）。
-// 只读 · 零副作用：不写缓存、不落审计、不改件（缓存与毫秒档属 `A5`）。
+// 只读 · 零副作用：**不读也不写缓存**（`A5` 把 `A4` 那条「不写缓存」加强成「连读也不做」——
+// 干跑与缓存完全无关 ⇒ 这一档的判据面一个字不动）· 不落审计 · 不改件。
 func impactDryRunSummaryOf(root, rel string) impactDryRunSummary {
 	s := impactDryRunSummary{}
 	tgt, why := impactResolve(root, rel)
@@ -354,7 +355,7 @@ func impactDryRunSummaryOf(root, rel string) impactDryRunSummary {
 		s.Text = "影响面：" + s.Reason + " —— 这是**没取到数**，不是「没影响」（`F6`：把『没报』读成『没影响』）"
 		return s
 	}
-	layers := impactPullLayers(root, tgt, true)
+	layers := impactPullLayers(root, tgt, true, impactCacheOff)
 	rows, total := impactCollectRows(layers)
 	s.Layers, s.Rows, s.Taken = layers, total, true
 	if l, ok := impactLayerBySeq(layers, "①"); ok {

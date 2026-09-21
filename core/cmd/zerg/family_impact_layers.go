@@ -35,7 +35,8 @@
 // 红线（任务单 §二 `A2` 逐条）：不引 `gopls` / `rust-analyzer` ✗ · 不加 `go.work` ✗ ·
 // 不动 `publish/` 那七件生效面里的任何一行 ✗（第 ⑥ 层**只消费** `check-publish-face-sync.py`
 // 的输出）· 不拿私有树件数冒充产出树件数 ✗ · **不为凑绿放宽任何既有判据** ✗ ·
-// 本件只读：不写缓存、不落审计、不改件（缓存与毫秒档属 `A5` · 挂干跑属 `A4`）。
+// 本件只读：不落审计、不改件；**落盘缓存**（`A5`）在 `family_impact_cache.go`，且只落
+// `<状态目录>/impact-cache/`（不在仓内 · 不进公开面 · 不进 git 跟踪）。
 package main
 
 import (
@@ -79,6 +80,12 @@ type impactLayer struct {
 	PublicDelta string
 	PublicTree  string
 	PublicAt    string
+
+	// `A5` 落盘缓存：这一层这一跑是**命中**还是**现算**（`CacheNote` 是人面那一行，
+	// `CacheCost` 是**本跑**在这一层上花掉的时间 —— 命中就是「读落盘产物」的耗时，口径 = §4.4）。
+	CacheHit  bool
+	CacheNote string
+	CacheCost time.Duration
 }
 
 // impactRow —— 条目四字段（§3.1 · `A1` 的字段表一字不改）。
@@ -236,30 +243,176 @@ func impactCallgraphBin() string {
 
 // ---- 六层取数一条链（§二 顺序即命令里的顺序）------------------------------------------------
 
-// impactPullLayers 跑六层（`cheap` = §4.4 的默认档：贵层**跳过并点名**：贵层**跳过并点名**，不静默少给）。
-func impactPullLayers(root string, tgt *impactTarget, cheap bool) []impactLayer {
-	layers := []impactLayer{
-		impactLayerCompiler(root, tgt),
-		impactLayerSymbol(root, tgt, cheap),
-		impactLayerContract(root, tgt),
-		impactLayerLexical(root, tgt),
-		impactLayerSemantic(root, tgt),
-		impactLayerPublic(root, tgt, cheap),
-	}
+// impactPullLayers —— 六层取数（`A2` 接链 · `A5` 在链上挂**落盘缓存**）。
+//
+// `A5` 的三条改动（其余一字不动）：
+//
+//	① 落点与键从**契约件**读（`core/internal/contract/impact-state.json`）：目录名 + 键三件 +
+//	   不许接的动作；契约件读不到 / 键不成形 ⇒ **明写「未用」并照常现算**（不猜目录名、不静默降级）；
+//	② 源指纹每跑取一次（`R42`）：进键的失效条件之一，`head_sha` 相同 ≠ 源件相同；
+//	③ 只有 ①③④ 三层进缓存（`impactCacheableLayers`），且**只缓存「取值」的层**
+//	   —— 未跑 / 未适用 / 读不到 / 未建索引 一律不落盘（那是状态，不是产物）。
+//
+// ★ 命中就**不调用现算**（这是缓存的全部意义）；命中与未命中的人面/机器面必须逐字同输出
+// （`M8`：缓存不许改答案）⇒ 缓存件里存的就是那一层的完整产物（层名 / 粒度 / 口径值 / 状态 /
+// 读数 / 条目），命中时**原样**装回，不重拼、不改写。
+func impactPullLayers(root string, tgt *impactTarget, cheap bool, mode impactCacheMode) []impactLayer {
 	head, at := impactHeadSHA(root), impactEffectiveAt()
+	// 落点（契约件）—— 读不到就不落盘、不命中，并把人话原因带到层行上。
+	layout := impactStateLayout{FromRelPath: impactStateContractRel}
+	layoutNote, fp, scope := "", "", "."
+	if mode == impactCacheOff {
+		layoutNote = "未用（缓存挡位=关：`dev edit` 干跑那一档不读也不写 —— `A4` 零副作用的加强形态）"
+	} else if l, err := impactStateLayoutOf(root); err != nil {
+		layoutNote = "未用（落点契约件读不到：" + err.Error() + " ⇒ 不给结论、不猜目录名）"
+	} else if !impactStateKeysEqual(l.Key) {
+		layoutNote = fmt.Sprintf("未用（契约件 `cache.key` = %v ≠ head_sha+layer+caliber ⇒ 键不成形，不敢落盘）", l.Key)
+	} else {
+		layout = l
+		scope = impactFingerprintScope(root, tgt)
+		v, _, err := impactCacheFingerprint(root, scope)
+		if err != nil {
+			layoutNote = "未用（源指纹取不到：" + err.Error() + "）"
+		} else {
+			fp = v
+		}
+	}
+	scopeKey := impactCacheScopeKey(tgt)
+	// pull：先按**键三件 + 目标面**找落盘件（命中即不现算）；没命中才现算，并把「取值」的层落盘。
+	pull := func(seq string, compute func() impactLayer) impactLayer {
+		if layoutNote == "" && impactCacheableLayers[seq] {
+			cal := impactCaliberFor(seq, root, tgt)
+			path := impactCacheFileFor(layout, head, seq, cal, scopeKey)
+			shell := impactLayer{Seq: seq, HeadSHA: head, At: at, Caliber: cal}
+			if e, hit, why, cost := impactCacheLoad(path, shell, fp); hit {
+				return impactLayer{
+					Seq: seq, Name: e.LayerName, Grane: e.Grane, Caliber: e.Caliber,
+					Status: e.Status, Detail: e.Detail, Rows: e.Rows,
+					HeadSHA: head, At: at, Cost: cost, CacheHit: true, CacheCost: cost,
+					CacheNote: fmt.Sprintf("命中（读 %.2f ms · 落盘件 built_at=%s · 落盘时现算耗时 %d ms）",
+						float64(cost.Microseconds())/1000.0, e.BuiltAt, e.BuiltCostMS),
+				}
+			} else if lay := compute(); true {
+				lay.HeadSHA, lay.At = head, at
+				if lay.Status == "取值" {
+					if serr := impactCacheStore(path, lay, fp, lay.Cost); serr == nil {
+						lay.CacheNote = "未命中（" + why + "）⇒ 现算 + 落盘"
+					} else {
+						lay.CacheNote = "未命中（" + why + "）⇒ 现算（落盘失败：" + serr.Error() + "）"
+					}
+				} else {
+					lay.CacheNote = "未命中（" + why + "）⇒ 现算、**不落盘**（状态=" + lay.Status + "：只缓存「取值」的层）"
+				}
+				return lay
+			}
+		}
+		lay := compute()
+		lay.HeadSHA, lay.At = head, at
+		if layoutNote != "" {
+			lay.CacheNote = layoutNote
+		} else {
+			lay.CacheNote = "不适用（本层不进缓存 —— 见契约件 `cache.not_cacheable`）"
+		}
+		return lay
+	}
+	layers := []impactLayer{
+		pull("①", func() impactLayer { return impactLayerCompiler(root, tgt) }),
+		pull("②", func() impactLayer { return impactLayerSymbol(root, tgt, cheap) }),
+		pull("③", func() impactLayer { return impactLayerContract(root, tgt) }),
+		pull("④", func() impactLayer { return impactLayerLexical(root, tgt) }),
+		pull("⑤", func() impactLayer { return impactLayerSemantic(root, tgt, layout, layoutNote == "") }),
+		pull("⑥", func() impactLayer { return impactLayerPublic(root, tgt, cheap) }),
+	}
 	for i := range layers {
-		layers[i].HeadSHA = head
-		layers[i].At = at
+		// 缓存那一行的人面补充：源指纹与本跑的读耗时（口径三件之外的信息，落在注释行上，
+		// 不动 A2 判据① 钉住的层表六行格式）。
+		if layers[i].CacheHit {
+			layers[i].CacheNote += " · 源指纹=" + shortHex(fp)
+		}
 	}
 	return layers
 }
 
+// impactCacheScopeKey —— 「目标面」（进缓存文件名的那一格）。
+//
+// 为什么键的三件之外还要带目标：§4.4 的三件里，① 与 ③ 的**口径值不含目标**（① 的口径是
+// 「go build ./... + module=core」、③ 是「读 registry.json · 96 行 · 8 条」）—— 而同一层在不同
+// 目标上的产物**不同**（① 的反向包按目标包算、③ 的命中条目按目标算）⇒ 文件名不带目标就会互相
+// 覆盖成**假命中**。⇒ 这是把三件落到文件名上时的**必要一格**（不是第四件失效条件）。
+func impactCacheScopeKey(tgt *impactTarget) string {
+	if tgt == nil {
+		return "nil"
+	}
+	if tgt.Kind == impactKindContract {
+		return "cid:" + tgt.ID
+	}
+	return "file:" + tgt.Rel
+}
+
 // -------- ① 编译器层（包级）----------------------------------------------------------------
+
+// impactCaliberFor —— **该层口径值**（缓存键的第三件）在**现算之前**就能拼出来的那一份。
+//
+// 为什么要有它：键的三件里 `head_sha` / 层序都现成，而「该层口径值」原本是各层**算完之后**才
+// 拼出来的（`lay.Caliber += …`）⇒ 缓存要「命中就不现算」，就必须**先**把口径值拼出来。
+// ⇒ 三条进缓存的层**共用这一个函数**拼口径值（层函数与缓存查找口同一份，不另写第二份 ⇒
+// 两份不会漂）。拼出来的那一份贵不贵：① 只读 `go.mod` 往上找 module · ③ 读一次
+// `registry.json`（本来就是该层的输入）· ④ 起一次 `ast-grep --version` ⇒ 都是毫秒级。
+//
+// 不进缓存的层（②⑤⑥）返回空串（这一格用不上）。
+func impactCaliberFor(seq, root string, tgt *impactTarget) string {
+	switch seq {
+	case "①":
+		cal := "go build ./...（目标件所属 module）+ go list -f '{{.ImportPath}} {{join .Imports \" \"}}' ./... 逐包筛反向（Go 没反向开关 ⇒ 两段式拼 · 设计 §二 免费层）"
+		if tgt.Kind != impactKindFile {
+			return cal // 未适用那一档：口径值不加东西（层函数里也这么走）
+		}
+		modDir, modPath := impactModuleDir(root, tgt.Rel)
+		if modDir == "" {
+			return cal // 读不到那一档：同上
+		}
+		return cal + fmt.Sprintf(" · module=%s（%s）", modDir, modPath) +
+			" · 缓存态=未测（go build cache 命中命令面不可见 ⇒ 本层耗时只作参考，不进预算裁决）"
+	case "③":
+		cal := "`core/internal/contract/registry.json` 现读（**取数与跑它的门必须分开报** · `R35`）"
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(impactRegistryRel)))
+		if err != nil {
+			return cal
+		}
+		var doc struct {
+			Entries []struct {
+				ID string `json:"id"`
+			} `json:"entries"`
+		}
+		if json.Unmarshal(b, &doc) != nil {
+			return cal
+		}
+		// 与层函数同一口径：行数按 `strings.TrimRight` 后数、条数按 `entries` 长度。
+		nLines := len(strings.Split(strings.TrimRight(string(b), "\n"), "\n"))
+		return cal + fmt.Sprintf(" · registry.json %d 行 · %d 条 entries", nLines, len(doc.Entries))
+	case "④":
+		word := tgt.ID
+		if tgt.Kind == impactKindFile {
+			word = path.Base(tgt.Rel)
+		}
+		cal := "④a `git grep -w`（**词边界** · **只搜 tracked**）+ `git grep -E`（正则面 · 同一件的另一档）· ④b `ast-grep`（结构同形）" +
+			" · 词=" + word + " · 口径标记：词边界=只搜 tracked（未跟踪件不在面内 ⇒ 与 `zerg code find` 的全盘口径**不同源**）"
+		if sg := impactAstGrepBin(); sg != "" && tgt.Kind == impactKindFile && strings.HasSuffix(tgt.Rel, ".go") {
+			verOut := ""
+			if v, _, _, verr := impactRunIn(root, sg, "--version"); verr == nil {
+				verOut = strings.TrimSpace(v)
+			}
+			cal += fmt.Sprintf(" · ④b 版本=%s · 符号上限 8（字典序前 8）", verOut)
+		}
+		return cal
+	}
+	return ""
+}
 
 func impactLayerCompiler(root string, tgt *impactTarget) impactLayer {
 	lay := impactLayer{
 		Seq: "①", Name: "编译器层", Grane: "包级",
-		Caliber: "go build ./...（目标件所属 module）+ go list -f '{{.ImportPath}} {{join .Imports \" \"}}' ./... 逐包筛反向（Go 没反向开关 ⇒ 两段式拼 · 设计 §二 免费层）",
+		Caliber: impactCaliberFor("①", root, tgt),
 	}
 	if tgt.Kind != impactKindFile {
 		lay.Status = "未适用"
@@ -272,7 +425,6 @@ func impactLayerCompiler(root string, tgt *impactTarget) impactLayer {
 		lay.Detail = "目标件往上找不到 go.mod ⇒ 解析不到 module ⇒ 编译面**不给结论**"
 		return lay
 	}
-	lay.Caliber += fmt.Sprintf(" · module=%s（%s）", modDir, modPath)
 	modAbs := filepath.Join(root, filepath.FromSlash(modDir))
 
 	start := time.Now()
@@ -283,10 +435,9 @@ func impactLayerCompiler(root string, tgt *impactTarget) impactLayer {
 		lay.Detail = fmt.Sprintf("`go build` 起不来：%v ⇒ 编译面不给结论", err)
 		return lay
 	}
-	// 缓存态（`R35` 口径三件套之一）：Go build cache 的命中情况**命令面看不见**
-	// ⇒ 照实标「未测」（缺档位的耗时**不许进预算裁决**）。
+	// 缓存态（`R35` 口径三件套之一）：Go build cache 的命中情况**命令面看不见** ⇒ 照实标「未测」
+	// （缺档位的耗时**不许进预算裁决**）。这一句在 `impactCaliberFor("①", …)` 里拼进口径值。
 	compileLines := impactCountNonEmpty(out + "\n" + errOut)
-	lay.Caliber += " · 缓存态=未测（go build cache 命中命令面不可见 ⇒ 本层耗时只作参考，不进预算裁决）"
 
 	// 反向包（两段式）：目标包的 import path。
 	pkgSuffix := path.Dir(filepath.ToSlash(tgt.Rel))
@@ -474,7 +625,7 @@ func impactCalleeIsTarget(callee, modPath, pkgPath string, syms map[string]int) 
 func impactLayerContract(root string, tgt *impactTarget) impactLayer {
 	lay := impactLayer{
 		Seq: "③", Name: "契约层", Grane: "契约级",
-		Caliber: "`core/internal/contract/registry.json` 现读（**取数与跑它的门必须分开报** · `R35`）",
+		Caliber: impactCaliberFor("③", root, tgt),
 	}
 	abs := filepath.Join(root, filepath.FromSlash(impactRegistryRel))
 	b, err := os.ReadFile(abs)
@@ -501,7 +652,6 @@ func impactLayerContract(root string, tgt *impactTarget) impactLayer {
 		return lay
 	}
 	nLines := len(strings.Split(strings.TrimRight(string(b), "\n"), "\n"))
-	lay.Caliber += fmt.Sprintf(" · registry.json %d 行 · %d 条 entries", nLines, len(doc.Entries))
 	if len(doc.Entries) == 0 {
 		lay.Status = "读不到"
 		lay.Detail = "`entries[]` 一条都没有（**空表不许当「都不在册」**）"
@@ -544,7 +694,7 @@ func impactLayerContract(root string, tgt *impactTarget) impactLayer {
 func impactLayerLexical(root string, tgt *impactTarget) impactLayer {
 	lay := impactLayer{
 		Seq: "④", Name: "词法 + 形近层", Grane: "文件级 + 名字级",
-		Caliber: "④a `git grep -w`（**词边界** · **只搜 tracked**）+ `git grep -E`（正则面 · 同一件的另一档）· ④b `ast-grep`（结构同形）",
+		Caliber: impactCaliberFor("④", root, tgt),
 	}
 	word := tgt.ID
 	if tgt.Kind == impactKindFile {
@@ -559,7 +709,7 @@ func impactLayerLexical(root string, tgt *impactTarget) impactLayer {
 		lay.Detail = fmt.Sprintf("`git grep` 起不来或报错（词边界 rc=%d / 正则 rc=%d）⇒ 词法面不给结论", c1, c2)
 		return lay
 	}
-	lay.Caliber += " · 词=" + word + " · 口径标记：词边界=只搜 tracked（未跟踪件不在面内 ⇒ 与 `zerg code find` 的全盘口径**不同源**）"
+	// 词= 与 ④b 版本= 两句在 `impactCaliberFor("④", …)` 里拼进口径值（层函数与缓存查找口同一份）。
 	rows := []map[string]string{}
 	add := func(out, why, how string, cap int) int {
 		n := 0
@@ -597,10 +747,8 @@ func impactLayerLexical(root string, tgt *impactTarget) impactLayer {
 		if len(names) > 8 {
 			names = names[:8] // 逐符号起进程：明说上限（前 8 个符号，字典序）
 		}
-		var verOut string
-		if v, _, _, verr := impactRunIn(root, sg, "--version"); verr == nil {
-			verOut = strings.TrimSpace(v)
-		}
+		// `ast-grep --version` 那一句（口径值的一部分）在 `impactCaliberFor("④", …)` 里取，
+		// 本函数不再取第二遍（层函数与缓存查找口共用一份口径值）。
 		modDir, _ := impactModuleDir(root, tgt.Rel)
 		scanDir := root
 		if modDir != "" {
@@ -637,7 +785,6 @@ func impactLayerLexical(root string, tgt *impactTarget) impactLayer {
 					"结构同形（`ast-grep` 调用形状 "+n+"($$$A)）："+impactTruncText(m.Text, 80), ""))
 			}
 		}
-		lay.Caliber += fmt.Sprintf(" · ④b 版本=%s · 符号上限 8（字典序前 8）", verOut)
 		sgNote = fmt.Sprintf("④b 结构面命中 %d 处", sgRows)
 	}
 	lay.Rows = rows
@@ -764,7 +911,7 @@ func impactOllamaTags() ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 }
 
-func impactLayerSemantic(root string, tgt *impactTarget) impactLayer {
+func impactLayerSemantic(root string, tgt *impactTarget, layout impactStateLayout, layoutOK bool) impactLayer {
 	lay := impactLayer{
 		Seq: "⑤", Name: "语义层（按需）", Grane: "件级",
 		Caliber: "在位判据（可测三条子句）：/api/tags 非空 + capabilities 含 embedding + embedding_length 有值",
@@ -780,16 +927,25 @@ func impactLayerSemantic(root string, tgt *impactTarget) impactLayer {
 			lay.Status = "未在位"
 		} else {
 			lay.Caliber += " · model_id=" + model
-			// 索引面（`R13`：`<状态目录>/impact-index/` 名**待 `A5` 拍板**）—— 建索引是低频批处理，
-			// **不在查询路径上现建** ⇒ 索引不在就明说「未建索引」，**不拿模型在位冒充有召回**。
-			idx := filepath.Join(stateDirOf(), "impact-index")
-			if st, serr := os.Stat(idx); serr == nil && st.IsDir() {
-				lay.Status = "取值"
-				lay.Detail += " · 索引目录在盘上（" + idx + "）—— **取数实现属 `A5`**（本批不读索引、不落缓存）"
-			} else {
+			// 索引面（`R13`）：**目录名自 `A5` 起写在契约件里**（`dirs.index`），本层读契约件、不再写
+			// 「目录名待拍板」；建索引是低频批处理（§九 批3B 子端侧 embedding），**不在查询路径上现建**
+			// ⇒ 索引不在就明说「未建索引」，**不拿模型在位冒充有召回**。
+			if !layoutOK {
 				lay.Status = "未建索引"
-				lay.Detail += " · 索引目录不在盘上（" + idx + "，目录名待 `A5` 拍板）⇒ **未建索引 ⇒ 不取数**" +
-					"（v1.5 纠错⑦：中英同义对余弦 −0.0338 ⇒「有模型」≠「有召回」）"
+				lay.Detail += " · 索引目录名取不到（落点契约件 `" + impactStateContractRel + "` 读不到 ⇒ 不许猜目录名）" +
+					" ⇒ **未建索引 ⇒ 不取数**"
+			} else {
+				idx := impactCacheIndexDir(layout)
+				if st, serr := os.Stat(idx); serr == nil && st.IsDir() {
+					lay.Status = "取值"
+					lay.Detail += " · 索引目录在盘上（" + idx + "）—— ★ 本批（`A5`）**只定名字与落点、不读索引内容**" +
+						"（取数实现属 §九 批3B）⇒ 这一层本跑条目仍为 0（**不是「没影响」，是「没取数」**）"
+				} else {
+					lay.Status = "未建索引"
+					lay.Detail += " · 索引目录不在盘上（" + idx + " —— 目录名写死在契约件 `" + impactStateContractRel +
+						"` 的 `dirs.index`）⇒ **未建索引 ⇒ 不取数**" +
+						"（v1.5 纠错⑦：中英同义对余弦 −0.0338 ⇒「有模型」≠「有召回」）"
+				}
 			}
 		}
 	}
