@@ -11,6 +11,7 @@ name: Release（全产物）
 #   zerg-core-darwin-arm64 / zerg-agent-darwin-arm64 / zerg-ui-darwin-arm64
 #   zerg-core-linux-amd64  / zerg-agent-linux-amd64
 #   zerg-wall-darwin-arm64 / zerg-wall-linux-amd64
+#   zerg-cli-darwin-arm64  / zerg-cli-linux-amd64        ← 命令面 CLI（组件名 cli）
 #   + 逐件 .sha256 + checksums.txt + manifest.json
 #
 # ⚠️ 扩大制品矩阵时（例：darwin-amd64）必须**同时**改 scripts/build/pack-release.sh 与下面的 ui/go 矩阵，
@@ -94,6 +95,9 @@ jobs:
           mkdir -p ../dist
           go build -trimpath -buildvcs=false -ldflags "$LDF" -o "../dist/zerg-core-$GOOS-$GOARCH"  ./cmd/zerg-core
           go build -trimpath -buildvcs=false -ldflags "$LDF" -o "../dist/zerg-agent-$GOOS-$GOARCH" ./cmd/zerg-agent
+          # 命令面 CLI（组件名 `cli`）：与 core/agent 同一 ldflags 身份、同一平台矩阵
+          #   （纯 Go ⇒ linux 侧 CGO_ENABLED=0 编得出来，见 make-manifest.py 的 EXPECTED 口径）。
+          go build -trimpath -buildvcs=false -ldflags "$LDF" -o "../dist/zerg-cli-$GOOS-$GOARCH"   ./cmd/zerg
           # 茧壁（Rust）：在 Linux runner 上原生构建（不做跨编）
           # 茧壁 crate 在**仓库根**的 wall/（本步 working-directory=core ⇒ 要用 ../wall）
           ( cd ../wall && cargo build --release )
