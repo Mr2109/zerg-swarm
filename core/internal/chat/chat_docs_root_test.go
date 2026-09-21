@@ -41,10 +41,12 @@ func isolateDocsRoots(t *testing.T) (repo, alt string) {
 	return repo, alt
 }
 
-// writeDocsFixture — 在 **base/项目文档/<ver>/** 下造 n 篇 md（内容含 marker，供命中检索），
+// writeDocsFixture — 在 **base/项目文档/<ver>/** 下造 n 篇 md（内容含 marker，供命中检索）+ **一件发布件**，
 // 返回该版本目录。★ 注意 base = **「项目文档」的父目录**：仓库侧是 `<仓库根>/docs`，
 // 仓外侧是 Zerg-内部文档 根 `<ZERG_DOCS_ALT>`（取源根两侧都叫 `<base>/项目文档`）。
-// n>=3 是为了过 latestVersionDir() 的「<3 篇 = 空壳」守卫。
+// n>=3 是为了过 latestVersionDir() 的「<3 篇 = 空壳」守卫；**发布件**（`使用-虫族指南-*.md`）是
+// 2026-09-21 修的**第二条判据**：只认已发布版 ⇒ 只有设计稿的版本目录不被选中
+// （用例与牙见 chat_tool_overview_test.go 的 TestOverviewLatestVersionSkipsDesignDraft）。
 func writeDocsFixture(t *testing.T, base, ver, marker string, n int) string {
 	t.Helper()
 	dir := filepath.Join(base, "项目文档", ver)
@@ -56,6 +58,12 @@ func writeDocsFixture(t *testing.T, base, ver, marker string, n int) string {
 		if err := os.WriteFile(p, []byte("# "+ver+" 架构\n"+marker+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// 发布件（判据：目录里有它才算「已发布版」——少了它，本文件三条用例一起退回
+	// 「没有已发布版」那一档，D1/D2 直接红）
+	if err := os.WriteFile(filepath.Join(dir, "使用-虫族指南-20260902.md"),
+		[]byte("# 使用虫族指南\n分流：①即时问答 ②系统查 ③经验 ④长任务\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	return dir
 }
