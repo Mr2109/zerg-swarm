@@ -34,6 +34,9 @@
      ⇒ **rc=2 不给结论**（「表全放行」在视觉上与正常表同形 —— 那是最难发现的一类假绿）。
      ★ 处置只有两条（照设计稿 §3.3 纪律 3）：收进 `EXCLUDES` + `DROP_EXACT`，或**改表**；
        **不许**放宽本判据来凑绿 ✗。
+     ★ 2026-09-21 补（前一批的已知缺口 ①）：候选集必须**看得见非 ASCII 名件** —— `tracked_files` 给
+       `git ls-files` 加 `-c core.quotepath=false`。不加时这类件被转义成 `"scripts/\345…"` ⇒ 白名单
+       失配 ⇒ 它们在候选集里缺席 ⇒ 判据⑥ 对它们**静默无牙**（表说 no、链上照发，而门禁全绿）。
 
 **单一真源（一律复用，绝不另抄一份解析器）**：
   · 白名单解析 / EXCLUDES 解析 —— `scripts/gates/check-history-secrets.py`
@@ -91,7 +94,13 @@ MARKS_TABLE_REL = "scripts/公开标记.tsv"
 
 
 def tracked_files(repo):
-    r = subprocess.run(["git", "-C", repo, "ls-files"], capture_output=True, text=True)
+    # ★ 2026-09-21（公开线⑥ · 补前一批的已知缺口 ①）：`-c core.quotepath=false` **必须给** ——
+    #   `git ls-files` 默认（`core.quotepath=true`）把非 ASCII 文件名输出成 `"scripts/\345\205\254…"`
+    #   这种**带引号的转义形态** ⇒ 白名单前缀匹配当场失配 ⇒ 这**一整类件在候选集里根本不存在**：
+    #   表把它标 `no`、链上照发，判据⑥ 也一声不响（**假绿** —— 最难发现的那一类）。
+    #   牙齿：`--self-test` 的 `marks-no-nonascii-file-sent` 那一格（修前 rc=0 · 修后必须 rc=1）。
+    r = subprocess.run(["git", "-C", repo, "-c", "core.quotepath=false", "ls-files"],
+                       capture_output=True, text=True)
     if r.returncode != 0:
         print("✗ git ls-files 失败：%s（rc=%d）" % (repo, r.returncode), file=sys.stderr)
         raise SystemExit(2)
@@ -375,8 +384,20 @@ FIXTURES = [
     ("marks-no-rows-empty", ["scripts/", "wall/"], ["scripts/mech.py"],
      ["scripts/mech.py"], ["scripts/mech.py"], 2,
      {"marks_text": "文件\tpublic\t理由\nscripts/keep.py\tyes\t夹具：只有 yes 行\n"}),
+    # 缺口 ① 那一格（2026-09-21 公开线⑥ 补）：**非 ASCII 名件**被表标 `no`、两器却都发 ⇒ **必须 rc=1**。
+    # 修 `tracked_files` 之前这一格是 **rc=0（假绿）**：`git ls-files` 默认把非 ASCII 名转义成
+    # `"scripts/\345…"` ⇒ 白名单前缀失配 ⇒ 该件在候选集里不存在 ⇒ 判据⑥ 根本看不见它。
+    # （夹具里 `scripts/公开标记.tsv` 就是表自身那个非 ASCII 名 —— 它另证「这类名现在确实进候选集」。）
+    ("marks-no-nonascii-file-sent", ["scripts/", "wall/"], ["scripts/mech.py"],
+     ["scripts/mech.py"], ["scripts/mech.py"], 1,
+     {"tracked_extra": ["scripts/公开核对.tsv"],
+      "marks_text": "文件\tpublic\t理由\n"
+                    "scripts/mech.py\tno\t夹具：B 类（合成 · 判据⑥ 的被判对象）\n"
+                    "scripts/公开核对.tsv\tno\t夹具：非 ASCII 名 + 表说 no + 两器都发（缺口 ① 的那一格）\n"
+                    "scripts/keep.py\tyes\t夹具：A 类（合成）\n"}),
 ]
 
+# 夹具里被跟踪的件（另可逐格用 opts["tracked_extra"] 加 —— 缺口 ① 那一格要一枚**非 ASCII 名**件）。
 FIXTURE_TRACKED = ["scripts/mech.py", "scripts/keep.py", "wall/src/lib.rs", "wall/Cargo.toml"]
 
 # 判据⑥ 的夹具表（默认值）：`scripts/mech.py` 判 `no` —— 各格的正控要求「两器都不发它」
@@ -407,7 +428,7 @@ def make_fixture(root, wl, priv, excl, drop, opts):
     marks_path = os.path.join(root, MARKS_TABLE_REL)
     with open(marks_path, "w", encoding="utf-8") as fh:
         fh.write(opts.get("marks_text", DEFAULT_MARKS))
-    tracked = list(FIXTURE_TRACKED)
+    tracked = list(FIXTURE_TRACKED) + list(opts.get("tracked_extra", []))
     if opts.get("no_wall_files"):
         tracked = [t for t in tracked if not t.startswith("wall/")]
     for rel in tracked:
