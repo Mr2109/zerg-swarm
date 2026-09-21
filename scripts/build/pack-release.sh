@@ -82,9 +82,13 @@ if [ "$MODE" != "verify" ]; then
   done
   (cd "$REL" && shasum -a 256 zerg-* | grep -v '\.sha256' > checksums.txt)
 
-  # 清单生成走共享脚本（CI 同一份——排除"两处逻辑长歪"）
+  # 清单生成走共享脚本（CI 同一份——排除"两处逻辑长歪"）。
+  # ★ 本机档（2026-09-21 修 G1）：本脚本是**本地打包路径** —— 上面茧壁那一段只编得出 darwin 一件
+  #   （Rust 不本地交叉编 ⇒ 矩阵里天然没有 CI-only 的 `zerg-wall-linux-amd64`）⇒ 这里显式导出本机档。
+  #   契约没被放宽：EXPECTED 7 件原样（CI 侧仍走严格档），本机档 = EXPECTED − CI_ONLY 这个**显式差集**，
+  #   多一件少一件照样拒出清单（口径见 scripts/evals/make-manifest.py 顶部「两档口径」）。
   BI="$DIST/build-info.json"
-  python3 "$REPO_ROOT/scripts/evals/make-manifest.py" "$REL" \
+  ZERG_MANIFEST_LOCAL=1 python3 "$REPO_ROOT/scripts/evals/make-manifest.py" "$REL" \
     "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$BI")" \
     "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["commit"])' "$BI")" \
     "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["build_time"])' "$BI")"

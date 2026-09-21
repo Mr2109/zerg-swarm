@@ -11,8 +11,12 @@
 行为：
     · 扫描目录里的 zerg-<组件>-<os>-<arch>（跳过 .sha256 / manifest.json / checksums.txt）
     · 逐件算 sha256 与体积，写 <目录>/manifest.json
-    · 断言：组件×平台矩阵必须与 EXPECTED 完全一致——多一件少一件都**拒绝出清单**
+    · 断言：组件×平台矩阵必须与**该档的期望集**完全一致——多一件少一件都**拒绝出清单**
       （宁可让发布失败，也不能发出升级器读不懂的清单）
+    · 两档（2026-09-21 修 G1）：
+        严格档（默认 · CI/发布）  期望集 = EXPECTED（7 件 · 发布契约）
+        本机档（ZERG_MANIFEST_LOCAL=1）期望集 = EXPECTED − CI_ONLY（6 件 · 差集**显式声明**，不是现推）
+      详见文件下方 EXPECTED / CI_ONLY 处的口径注释。
 """
 import datetime
 import subprocess
@@ -22,8 +26,17 @@ import os
 import sys
 
 # 制品矩阵的权威定义：改这里 = 改发布契约（同时要改 scripts/build/pack-release.sh 与 CI 的 matrix）
-# 本机模式：只按「本机平台实际构建出的件」出清单（B5 后本地不再交叉编译 linux）
-# 开法：环境变量 ZERG_MANIFEST_LOCAL=1（默认严格 5 件契约，CI/发布用）
+#
+# ── 两档口径（2026-09-21 修 G1：本机路线两档都拒 ⇒ 发布件不成套）────────────────────
+# 严格档（默认 · CI/发布用）：矩阵必须与 EXPECTED **逐件相合**（多一件少一件都拒出清单）。
+# 本机档（环境变量 `ZERG_MANIFEST_LOCAL=1` · 由 `scripts/build/pack-release.sh` 自己导出）：
+#   期望集**不是另写一份**，而是 `EXPECTED − CI_ONLY` —— 把两档的差异**显式声明成一个集合**。
+#   修前用的是「现推」口径（`n for n in EXPECTED if "-darwin-" in n`）：本机路线照样会交叉编出
+#   Go 的 linux 两件（pack-release.sh 无条件编），于是它们被现推口径判成「多余」—— 两档都拒 = 死结。
+#   本机档**仍然逐件校验**：少一件、或多一件（含本机不该出现的 CI-only 件）一律拒出清单。
+# 为什么差集只有一件：`zerg-wall-linux-amd64` 是 **CI-only** —— 茧壁是 Rust，本地不做交叉编
+#   （设计稿 L4：Rust 交叉到 linux 要额外链接器/工具链，本版不做）；core/agent 两件是纯 Go 交叉编
+#   （CGO_ENABLED=0），本机就出得来 ⇒ 本机档合法矩阵 = darwin 四件 + linux 两件 = 6 件。
 import os as _os
 LOCAL_MODE = _os.environ.get("ZERG_MANIFEST_LOCAL") == "1"
 
@@ -38,6 +51,10 @@ EXPECTED = {
     "zerg-wall-darwin-arm64",
     "zerg-wall-linux-amd64",
 }
+
+# CI-only：本机路线出不了、且**不许出现**在产物里 —— 本机档从 EXPECTED 里减掉它。
+# 改 EXPECTED / CI_ONLY 必须同批（脚本会自检 CI_ONLY ⊆ EXPECTED，漂了就拒出清单 rc=2）。
+CI_ONLY = {"zerg-wall-linux-amd64"}
 
 
 def _git(args: list) -> str:
@@ -70,10 +87,15 @@ def main() -> int:
     found = [n for n in sorted(os.listdir(d))
              if n.startswith("zerg-") and not n.endswith(".sha256") and os.path.isfile(os.path.join(d, n))]
 
+    # 两档口径的**自检**：CI_ONLY 必须是 EXPECTED 的子集（漂了 ⇒ 拒出清单，不猜哪边对）
+    drift = sorted(CI_ONLY - set(EXPECTED))
+    if drift:
+        print("❌ CI_ONLY 里有一件不在 EXPECTED 里：%s ⇒ 两档口径漂了（不给结论）" % " · ".join(drift))
+        return 2
     exp = set(EXPECTED)
     if LOCAL_MODE:
-        # 只保留本机平台（darwin-arm64）的件，其余不作为契约
-        exp = {n for n in exp if "-darwin-" in n}
+        # 本机档 = EXPECTED − CI_ONLY（差集显式声明，见 EXPECTED 处的口径注释）
+        exp = exp - CI_ONLY
     missing, extra = sorted(exp - set(found)), sorted(set(found) - exp)
     if missing or extra:
         print("❌ 制品矩阵与契约不符——拒绝生成清单")
@@ -123,7 +145,8 @@ def main() -> int:
     out = os.path.join(d, "manifest.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
-    print("   📝 manifest.json: %d 件（版本 %s · 代码 %s）" % (len(arts), version, commit))
+    print("   📝 manifest.json: %d 件（版本 %s · 代码 %s · 档=%s）"
+          % (len(arts), version, commit, "本机（EXPECTED−CI_ONLY）" if LOCAL_MODE else "严格（EXPECTED）"))
     return 0
 
 
