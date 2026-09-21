@@ -33,12 +33,23 @@
   3. 本门挂在提交闸（`scripts/gates/precommit-gates.sh` 的 scope `public` · 模式 `tri`）⇒ 表与件一旦不一致
      （悬空/漏登记/public=yes 面有私有面）**在提交前就被拦下**，不再靠「记得导出前跑一遍」。
 
+另有 **D 档（`--tree <产出树根>` · 只报告 · 2026-09-21 公开线④）**：判「**产出树 ⨯ 标记表**」——
+  D1 表说 `no` 的件**却进了产出树**（逐件点名：表行号 + 表内路径 + 理由原样）；
+  D2 表说 `yes` 的件**却不在产出树**（反向冲突：表说该发、链没发）；
+  D3 **表自身**在产出树里（判据的真源跟着一起出公开面 ⇒ 判据与输入同时被发出去）。
+  为什么单立这一档：B9/B12/B15 全在判**私有树**（白名单两器口径 / 私有面黑名单 / 表自身合规），
+  **没有一只闸把「产出树 × 标记表」对起来判** ✗ ⇒ 表说 `no` 的件照旧躺在公开产物树里，却谁都看不见。
+  口径见 `Zerg-内部文档/项目文档/v2.5.11/设计-公开标记接过滤链-v1.0.md` §2.2 方案 b + §5 步 1（**先只报告**）。
+
 用法：
     python3 scripts/gates/check-public-marks.py                    # 判真目标（仓根 + scripts/公开标记.tsv）
     python3 scripts/gates/check-public-marks.py --root <树> --table <表>   # 判别的树（自检夹具用同一入口）
+    python3 scripts/gates/check-public-marks.py --tree <产出树根>   # D 档：产出树 ⨯ 标记表（只报告）
     python3 scripts/gates/check-public-marks.py --max-examples 40
     python3 scripts/gates/check-public-marks.py --selftest         # 成对负控自检（含 must-fail，合成夹具、不碰真目标）
-退出码：0 全绿 · 1 有违规（B1/B2/B3）· 2 表不合规或空转（**不给结论** —— 不静默放绿）
+退出码：0 全绿 · 1 有违规（B1/B2/B3，或 D 档命中）· 2 表不合规/空转/产出树缺件（**不给结论** —— 不静默放绿）
+        ★ D 档是**只报告档**：它自己的 rc 判据一字未改（0/1/2 三档分明）；「只报告」是**挂它的那一步**
+          在步骤表里申报的档位（`tri-report` ⇒ rc=1 落 REPORT，不计失败项、不改退出码）。
 """
 import argparse
 import os
@@ -203,6 +214,135 @@ def run(root=ROOT, table=None, max_examples=20, out=None):
     return 0
 
 
+# ── D 档：产出树 ⨯ 标记表（**只报告** · 2026-09-21 公开线④）──────────────────────────────
+# 三问（写死在这里，不另抄一份规则）：
+#   ① 表说 `no` 的件，**却出现在产出树里** ⇒ 逐件点名（表行号 · 表内路径 → 树内路径 · 理由原样）；
+#   ② 表说 `yes` 的件，**却不在产出树里** ⇒ 逐件点名（反向冲突：表说该发、链没发）；
+#   ③ **表自身**在产出树里 ⇒ 单独一条（判据的真源跟着出公开面 ⇒ 判据与输入同时被发出去）。
+# 边界（**必须写明，否则这条判据会被读歪** —— 设计稿 §4.1「边界写法」）：
+#   · 本档逐行问「表登记过的这一件在不在产出树里」；**不**新增「表没登记的就不许发」这一条 ✗
+#     （那是把面外全判红，与「表不是全仓真源」自相矛盾）⇒ 未登记件只**报数**（D4 段 · 不进命中），
+#     漏登记仍由提交闸上的 B2 管 ✓。
+#   · **面外件**（不在 9 域内：`scripts/plugins/**` · `core/**` 等）照判并**标出「面外件」**，
+#     好让读的人把这一格与面内件分开 —— 现跑基线 99 里含 `core/cmd/compressor_demo/main.go` 1 件
+#     （设计稿 §六 P6 待拍：收进排除清单；本批**只报** ✗ 不动它）。
+# 档位（只报告）：命中 ⇒ rc=1（挂它的那一步在步骤表里申报 `tri-report` ⇒ 落 REPORT，**不改退出码**）；
+#   读不到 / 判不了（产出树缺件 · 表不合规 · 树里 `scripts/` 面 0 件空转）⇒ rc=2（**不给结论 ≠ 绿**）。
+#   ★ 三条纪律照设计稿 §3.3 写进本档：**不许**放宽判据来凑绿 ✗ · 收敛到 0 之后再**单独一笔**升阻断 ✗ ·
+#     `rc=2` 在发布档一律按「拦」处理（不给结论 = 不发）。
+TREE_JUDGE_ON = True   # **只给自检的反向控制用**（同 ⑯ 关私有面模式表那一手）：真跑路径不写它
+
+# 产出树扫描的排除面（见 `scan_tree_scripts` 的为什么）：**只排 VCS / 缓存目录** ——
+# 别把 `SKIP_DIRS` 里的 `build` / `dist` / `target` 借过来（那会吃掉产出树的 `scripts/build/`）。
+TREE_SKIP_DIRS = {".git", ".history", "__pycache__", ".mypy_cache", ".pytest_cache", "node_modules"}
+
+
+def scan_tree(tree):
+    """产出树里的件 ⇒ `(全部件, scripts/ 面件)`（树根相对路径 · 字典序）。
+
+    ★ 为什么两者都要：表里的行**不都在 `scripts/` 下**（现读 2 件面外：`scripts/plugins/zerg-hello` ·
+      `core/cmd/compressor_demo/main.go`）⇒ 判「这一件在不在树里」必须看**整棵产出树**；
+      而「未登记」只数 `scripts/` 面（口径 = 基线 21 件：`scripts/` 面 129 件 − 已登记 108 件）。
+    ★ 排除面**不借** `SKIP_DIRS`：那一份是为仓内 `scripts/<域>/` 面定的，里面有 `build`/`dist`/`target`
+      —— 拿来扫产出树会把 `scripts/build/` **整段吃掉**（现跑实测：8 件凭空消失 ⇒ 表里 yes 件被误判成
+      「缺产出树」= 假红，同时 no 件被误判成「不在树里」= **假绿**）。产出树只排 VCS / 缓存目录。
+    """
+    allf, scripts = [], []
+    for dp, dns, fns in os.walk(tree):
+        dns[:] = sorted(x for x in dns if x not in TREE_SKIP_DIRS and not x.startswith("."))
+        for fn in sorted(fns):
+            if fn.startswith(".") or fn.endswith(SKIP_SUFFIX):
+                continue
+            rel = os.path.relpath(os.path.join(dp, fn), tree).replace(os.sep, "/")
+            allf.append(rel)
+            if rel.startswith("scripts/"):
+                scripts.append(rel)
+    return sorted(allf), sorted(scripts)
+
+
+def in_domains(rel):
+    """这一件在**面内**（`scripts/<域>/…` 且域 ∈ 9 个域）吗？面外件在输出里会被标出来。"""
+    p = rel.split("/")
+    return len(p) >= 3 and p[0] == "scripts" and p[1] in DOMAINS
+
+
+def run_tree(tree=None, table=None, max_examples=20, out=None):
+    """D 档：判一遍「产出树 ⨯ 标记表」⇒ 退出码（0 全绿 · 1 命中 · 2 判不了）。**先打基线再列件**。"""
+    out = out or sys.stdout
+    if table is None:
+        table = os.path.join(ROOT, TABLE_REL)
+    if not tree or not os.path.isdir(tree):
+        out.write("✗ 产出树不存在或不是目录：%s（缺件 ≠ 绿）\n" % (tree if tree else "（没给 --tree）"))
+        out.write("⇒ 不给结论（rc=2）：判不了产出树时**不判** —— 这类判据在发布档一律按「拦」处理\n")
+        return 2
+    try:
+        rows = load_table(table)
+    except TableError as e:
+        out.write("✗ %s\n" % e)
+        out.write("⇒ 不给结论（rc=2）：表不合规时**不判**产出树 —— 用坏表判出的绿没有意义\n")
+        return 2
+    tree_files_all, tree_files = scan_tree(tree)
+    if not tree_files:
+        out.write("✗ 产出树 %s 的 scripts/ 面里 0 件 ⇒ 空转，拒绝给结论（rc=2）\n" % tree)
+        out.write("   （这类树判不了「表 ⨯ scripts/」：整树 %d 件，但一件脚本都没在里面 —— 不要拿它当绿）\n"
+                  % len(tree_files_all))
+        return 2
+    tree_all = set(tree_files_all)
+
+    no_in, no_absent, yes_in, yes_absent = [], [], [], []
+    for i, rel, pub, why in rows:
+        inside = rel in tree_all
+        if pub == "no":
+            (no_in if inside else no_absent).append((i, rel, why))
+        else:
+            (yes_in if inside else yes_absent).append((i, rel, why))
+    self_in = TABLE_REL in tree_files
+    registered = set(r[1] for r in rows)
+    unregistered = sorted(p for p in tree_files if p not in registered)
+    if not TREE_JUDGE_ON:          # 自检的反向控制：关掉命中判定 ⇒ **同一棵树必须退回绿**
+        no_in, yes_absent, self_in = [], [], False
+
+    out.write("产出树：%s · 表：%s（%d 行 · public=yes %d · public=no %d）\n"
+              % (tree, table, len(rows), len(yes_in) + len(yes_absent), len(no_in) + len(no_absent)))
+    # ★ 基线数字**打在最前**（这一档的规矩：先给三个数，再列件 —— 读的人不必翻到末尾才知道规模）
+    out.write("基线（现跑 · 产出树 ⨯ 标记表）：表 no 件进产出树 = %d · 表 no 件缺产出树 = %d · 树内未登记件 = %d\n"
+              % (len(no_in), len(no_absent), len(unregistered)))
+    out.write("反向（现跑）：表 yes 件在产出树 = %d · 表 yes 件缺产出树 = %d\n"
+              % (len(yes_in), len(yes_absent)))
+
+    def dump(title, items):
+        out.write("\n── %s：%d 处\n" % (title, len(items)))
+        for x in items[:max_examples]:
+            out.write("   %s\n" % x)
+        if len(items) > max_examples:
+            out.write("   …另 %d 处\n" % (len(items) - max_examples))
+
+    dump("D1 表说 no、却进了产出树（只报告：本档不改退出码）",
+         ["%s（表第 %d 行）→ 产出树 %s%s\n       ← 表判 public=no：%s"
+          % (rel, i, rel, "" if in_domains(rel) else "  ★面外件（不在 9 域内 · 设计稿 §六 P6 待拍）", why)
+          for i, rel, why in no_in])
+    dump("D2 表说 yes、却不在产出树（反向冲突）",
+         ["%s（表第 %d 行）← 表判 public=yes：%s" % (rel, i, why) for i, rel, why in yes_absent])
+    dump("D3 表自身在产出树里（判据的真源跟着出公开面）",
+         ["%s → 产出树 %s（表自己不在表内 ⇒ 也是下面 D4 未登记件之一）" % (TABLE_REL, TABLE_REL)]
+         if self_in else [])
+    # D4 只报数、不进命中（设计稿 §4.1：**不新增**「表没登记的就不许发」这一条 ✗）
+    dump("D4 树内未登记件（只报数 · **不进命中** —— 处置建议见设计稿 §六 P9：先不扩，只登记为缺口，由人拍）",
+         unregistered)
+
+    hits = len(no_in) + len(yes_absent) + (1 if self_in else 0)
+    out.write("\n合计：D1 %d 处 · D2 %d 处 · D3 %d 处 · D4 未登记 %d 件（只报数）\n"
+              % (len(no_in), len(yes_absent), 1 if self_in else 0, len(unregistered)))
+    if hits:
+        out.write("⇒ 命中 %d 处（rc=1 · **本档只报告**：挂它的那一步申报 `tri-report` ⇒ 落 REPORT，\n"
+                  "   不计失败项、不改退出码；逐域收敛到 0 之后再**单独一笔**升 `tri`）\n"
+                  "   命中之后只有两条路：① 改表（承认它该发）② 改处置（收进排除清单 / EXCLUDES）\n"
+                  "   —— **不许**放宽本判据来凑绿 ✗（照设计稿 §3.3 纪律 3）\n" % hits)
+        return 1
+    out.write("⇒ 全绿（rc=0）：表说 no 的件一件都不在产出树里 · 表说 yes 的件全在 · 表自身不在产出树里\n")
+    return 0
+
+
 # ── 自检：成对负控（含 **must-fail**：故意喂错 ⇒ 必红；以及「不判 no 面」「关掉扫描必退回绿」两个反向控制）──
 def _fixture(tmp, table_text, files):
     """搭一棵最小树：scripts/公开标记.tsv + files{相对路径: 内容} ⇒ 返回 (root, table 路径)。"""
@@ -226,8 +366,34 @@ def _run_quiet(root, table):
     return rc, buf.getvalue()
 
 
+def _fixture_tree(tmp, table_text, tree_files):
+    """搭「一个仓根（放表）+ 一棵产出树」⇒ (仓根, 表路径, 产出树根)。
+
+    ★ 表与产出树**分开搭**：本档要判的正是「表（私有树里的真源）对产出树有没有约束力」，
+    合成时把两者放在一棵树里会让那件事看不出来。
+    """
+    root, tpath = _fixture(tmp, table_text, {})
+    tree = tempfile.mkdtemp(dir=tmp)
+    for rel, txt in tree_files.items():
+        p = os.path.join(tree, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(txt)
+    return root, tpath, tree
+
+
+def _run_tree_quiet(tree, table):
+    import io
+    buf = io.StringIO()
+    rc = run_tree(tree=tree, table=table, out=buf)
+    return rc, buf.getvalue()
+
+
 def selftest():
-    """成对负控 16 条：每条都要「该红的红、该绿的绿」，且断言用例条数（少跑即失效）。"""
+    """成对负控 23 条：每条都要「该红的红、该绿的绿」，且断言用例条数（少跑即失效）。
+
+    ①–⑯ = A/B/C 三判（表自身 · 私有面）；⑰–㉓ = **D 档**（产出树 ⨯ 标记表 · 2026-09-21 公开线④）。
+    """
     ok = 0
     total = 0
 
@@ -338,9 +504,59 @@ def selftest():
     print("  %s ⑯ 反向控制：关掉私有面模式表 ⇒ ② 那棵树退回绿（rc=%s）—— 证明 ② 不是恒红也不是恒绿"
           % ("✓" if good else "✗", rc16))
 
+    # ── ⑰–㉓：**D 档**（产出树 ⨯ 标记表 · 只报告档 · 公开线④）────────────────────────────
+    # 正控 / 三条 must-fail（no 件进树 · yes 件缺树 · 表自身在树）/ 两格「不给结论」/ 一条反向控制。
+    # 表与产出树**分开搭**（合成仓根放表 + 合成产出树放货）—— 这正是本档要判的那件事。
+    GOOD_TREE = {"scripts/build/good.sh": "#!/bin/sh\necho ok\n"}                       # yes 件（表第 2 行）
+    DIRTY_TREE = dict(GOOD_TREE, **{"scripts/gates/gate.sh": "#!/bin/sh\ntrue\n"})     # 多一件 no（表第 3 行）
+
+    # ⑰ 正控：产出树里只有 yes 件 ⇒ 绿（同时钉「未登记件不进命中」：树里放一件没登记的）
+    r17, t17, tr17 = _fixture_tree(table_tmp[0], GOOD, dict(GOOD_TREE, **{"scripts/sandbox-probes/x.sb": "x\n"}))
+    case("⑰ 正控 D：产出树里只有 yes 件（另有一件未登记）⇒ 绿（未登记只报数、不进命中）", 0,
+         ["全绿", "表 no 件进产出树 = 0", "树内未登记件 = 1"], lambda: _run_tree_quiet(tr17, t17))
+
+    # ⑱ must-fail：表说 no 的件进了产出树 ⇒ 必红且点名（表行号 + 理由原样）
+    r18, t18, tr18 = _fixture_tree(table_tmp[0], GOOD, DIRTY_TREE)
+    case("⑱ must-fail D1：表说 no 的件进了产出树 ⇒ 红且点名（件:行 + 理由原样）", 1,
+         ["表 no 件进产出树 = 1", "scripts/gates/gate.sh（表第 3 行）", "B 类：门禁（合成夹具）"],
+         lambda: _run_tree_quiet(tr18, t18))
+
+    # ⑲ must-fail：表说 yes 的件**不在**产出树 ⇒ 反向冲突，必红
+    r19, t19, tr19 = _fixture_tree(table_tmp[0], GOOD, {"scripts/gates/gate.sh": "#!/bin/sh\ntrue\n"})
+    case("⑲ must-fail D2：表说 yes 的件不在产出树 ⇒ 红且点名（反向冲突）", 1,
+         ["表 yes 件缺产出树 = 1", "scripts/build/good.sh（表第 2 行）"], lambda: _run_tree_quiet(tr19, t19))
+
+    # ⑳ must-fail：**表自身**在产出树里 ⇒ 单独一条 + 红
+    r20, t20, tr20 = _fixture_tree(table_tmp[0], GOOD,
+                                   dict(GOOD_TREE, **{"scripts/公开标记.tsv": "文件\tpublic\t理由\n"}))
+    case("⑳ must-fail D3：表自身在产出树里 ⇒ 单独一条（判据的真源跟着出公开面）", 1,
+         ["D3 表自身在产出树里", "scripts/公开标记.tsv → 产出树"], lambda: _run_tree_quiet(tr20, t20))
+
+    # ㉑ must-fail：产出树缺件 ⇒ rc=2（缺件 ≠ 绿，不许被「只报告」洗掉）
+    r21, t21, _ = _fixture_tree(table_tmp[0], GOOD, GOOD_TREE)
+    case("㉑ must-fail D：产出树不存在 ⇒ rc=2（缺件 ≠ 绿 · 判不了 ≠ 绿）", 2,
+         ["缺件 ≠ 绿", "不给结论"], lambda: _run_tree_quiet(os.path.join(r21, "没有这棵树"), t21))
+
+    # ㉒ must-fail：产出树里 scripts/ 面 0 件 ⇒ rc=2（空转 = 假覆盖）
+    r22, t22, tr22 = _fixture_tree(table_tmp[0], GOOD, {"docs/a.md": "x\n"})
+    case("㉒ must-fail D：产出树 scripts/ 面 0 件 ⇒ rc=2（空转 = 假覆盖，拒绝给结论）", 2,
+         ["空转"], lambda: _run_tree_quiet(tr22, t22))
+
+    # ㉓ 反向控制：**关掉命中判定** ⇒ ⑱ 那棵必红的树必须**退回绿**（证明 ⑱ 不是恒红）
+    global TREE_JUDGE_ON
+    saved_tree = TREE_JUDGE_ON
+    TREE_JUDGE_ON = False
+    rc23, text23 = _run_tree_quiet(tr18, t18)
+    TREE_JUDGE_ON = saved_tree
+    total += 1
+    good = (rc23 == 0 and "全绿" in text23)
+    ok += 1 if good else 0
+    print("  %s ㉓ 反向控制：关掉 D 档命中判定 ⇒ ⑱ 那棵树退回绿（rc=%s）—— 证明 ⑱ 不是恒红也不是恒绿"
+          % ("✓" if good else "✗", rc23))
+
     print("  自证用例：%d 条 · 通过 %d 条（断言用例条数 %d，少跑即失效）"
-          % (total, ok, 16))
-    assert total == 16, "自证用例数必须为 16，实际 %d" % total
+          % (total, ok, 23))
+    assert total == 23, "自证用例数必须为 23，实际 %d" % total
     return 0 if ok == total else 1
 
 
@@ -348,12 +564,17 @@ def main():
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("--root", default=ROOT, help="树根（默认 = 仓根）")
     ap.add_argument("--table", default=None, help="标记表路径（默认 = <root>/scripts/公开标记.tsv）")
+    ap.add_argument("--tree", default=None,
+                    help="**D 档**：产出树根 ⇒ 判「产出树 ⨯ 标记表」（只报告 · 命中 rc=1）")
     ap.add_argument("--max-examples", type=int, default=20)
     ap.add_argument("--selftest", action="store_true", help="只跑成对负控自检（合成夹具，不碰真目标）")
     args = ap.parse_args()
     if args.selftest:
         print("── check-public-marks.py 自证（含 must-fail 负控 · 合成夹具）")
         return selftest()
+    if args.tree:
+        print("── check-public-marks.py D 档（产出树 ⨯ 标记表 · **只报告**：命中 rc=1 不改退出码）")
+        return run_tree(tree=args.tree, table=args.table, max_examples=args.max_examples)
     return run(root=args.root, table=args.table, max_examples=args.max_examples)
 
 
