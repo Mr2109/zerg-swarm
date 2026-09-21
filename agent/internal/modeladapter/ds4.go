@@ -52,7 +52,7 @@ func (a *DS4) BuildArgs(entry *registry.ModelEntry, port int) []string {
 		}
 	}
 	// ctx 透传（2026-09-14）：ds4-server 的上下文窗口由 --ctx 决定；
-	// 实测依据：docs/01-设计/设计-ds4适配器接视觉.md
+	// 实测依据：已归档至 Zerg-归档/v2.5.10/01-设计/设计-ds4适配器接视觉.md
 	if ctx := customInt(entry, "ctx"); ctx > 0 {
 		args = append(args, "--ctx", fmt.Sprintf("%d", ctx))
 	}
