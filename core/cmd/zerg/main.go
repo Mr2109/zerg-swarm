@@ -1258,13 +1258,15 @@ func init() {
 			opened: true,
 			run:    cmdEvalRun,
 		},
-		// ---- 变更影响面（设计-变更影响面-v1.6 §7.1/§7.3/§7.4 · 任务单-影响面实施-20260922 §二 `A1` · 2026-09-22）----
-		// `A1` = **骨架**：人面三行 + 六键包封；六层取数/卡片/挂干跑/缓存分别属 `A2`–`A5`（本件不做）。
-		// 只读 ⇒ 不写 `danger`（走默认「只读」幂等档）、不改 `emitEnvelope`、不写缓存、不落审计。
+		// ---- 变更影响面（设计-变更影响面-v1.6 §7.1/§7.3/§7.4 · 任务单-影响面实施-20260922 §二 `A1`–`A3` · 2026-09-22）----
+		// `A1` = 骨架（人面三行 + 六键包封）；`A2` = 六层取数；`A3` = 波纹卡片（四字段 · why 闭集六选一 ·
+		// 四级排序 · 按档裁 · §3.7 公开面行 · §3.8 可逆性行 · 两档 `--for-model`/`--for-human`）。
+		// 挂干跑与缓存分别属 `A4`/`A5`。只读 ⇒ 不写 `danger`（走默认「只读」幂等档）、不改 `emitEnvelope`、
+		// 不写缓存、不落审计。
 		{
 			path:     []string{"impact"},
 			kind:     "Impact",
-			summary:  "改一处会牵动谁（只读**骨架**：人面三行 + 六键包封；六层取数属 `A2`）",
+			summary:  "改一处会牵动谁（只读：人面三行 + 波纹卡片 ≤12 条/≤1.2k token + 六键包封；挂干跑属 `A4`）",
 			usage:    impactUsageLine,
 			args:     []string{"目标（仓内件路径 · 或在册契约 id，如 S-g）"},
 			fields:   impactFields,
@@ -1365,9 +1367,13 @@ type invocation struct {
 	unknown []string
 
 	// 危险动作三态（§4.1 K7 · §九 M3 C1/C2/C4）
-	dryRun       bool
-	all          bool // `build show --all`
-	fast         bool // `gate bench --fast`
+	dryRun bool
+	all    bool // `build show --all`
+	fast   bool // `gate bench --fast`
+	// `A3` 波纹卡片的两档（§4.1 · `R9` 已拍「分两档」；`R38` 拍定：与 `--json` **不是同一条** ——
+	// 前者只决定**内容与裁剪**（条数 / 全文），后者只做**字段投影**；两者可叠加，都不改六键包封）。
+	forModel     bool
+	forHuman     bool
 	confirm      string
 	confirmGiven bool
 	yes          bool
@@ -1576,6 +1582,12 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.all = true
 		case a == "--fast":
 			inv.fast = true
+		// `A3` 两档（§4.1）：模型档 / 人面档。可叠加（§4.1 的模型档是人面档的子集 ⇒
+		// 同时给以**人面档**为准，由命令自己明说；R38：「可叠加」指的是与 `--json`）。
+		case a == "--for-model":
+			inv.forModel = true
+		case a == "--for-human":
+			inv.forHuman = true
 		case a == "--confirm" || a == "--confirm=":
 			// 给了旗标但没给值 ⇒ confirmGiven 为真、值为空（由 guard 判成「值不匹配目标」）
 			inv.confirmGiven = true
