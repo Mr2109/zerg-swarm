@@ -4431,6 +4431,32 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "按需档 `--all`（§4.4 贵层按需）给了但**缺目标** ⇒ 仍退 2（档位不改变「缺目标 = 用法错 · 不给结论」）。`--all` 是**既有全局布尔**（`build show --all` 同形）⇒ A2 借它当档位开关、**不新造旗标名**（§7.1 的 `--depth` 一类待 `R32`/B4 拍板）"
+  },
+  {
+   "id": "impact#两档面·--for-human 与 --json 叠加（K2）",
+   "command": "impact",
+   "argv": [
+    "impact",
+    "core/cmd/zerg/main.go",
+    "--for-human",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "`A3` 两档（§4.1）与 `--json` **不是同一条**（`R38` 拍定：两档只决定**内容与裁剪**、`--json` 只做**字段投影**，两者**可叠加**）⇒ 叠加时 `--json` 不给字段仍是 K2：退 1 + stdout 0 字节。★ 本格带**成对负控**（现跑逐字）：**老制品**（换件前的回滚件）跑同一口令退 **2**「未知旗标 \"--for-human\"」⇒ 这一格真能分辨「新旗标在不在」，不是一条恒返回的格"
+  },
+  {
+   "id": "impact#两档面·--for-model 与 --json 叠加（K2）",
+   "command": "impact",
+   "argv": [
+    "impact",
+    "core/cmd/zerg/main.go",
+    "--for-model",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "`--for-model` 与 `--for-human` 是**同一族的两档**（§4.1：模型档 ≤ 1.2k token / 条目 ≤ 12；人档全文不限长），两档与 `--json` 都可叠加、都不改六键包封（`R38`）⇒ 叠加时 `--json` 不给字段仍退 1 + stdout 0 字节。★ 成对负控（现跑逐字）：**老制品**跑同一口令退 **2**「未知旗标 \"--for-model\"」—— 两格合起来把「两档旗标真进了命令树」钉住"
   }
  ]
 }

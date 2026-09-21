@@ -77,7 +77,8 @@ type impactTarget struct {
 	ID   string // 契约目标：契约 id
 }
 
-// cmdImpact —— `zerg impact <目标>`：`A1` 骨架 + `A2` 六层取数（只读 · 零副作用 · 不写缓存 · 不落审计）。
+// cmdImpact —— `zerg impact <目标>`：`A1` 骨架 + `A2` 六层取数 + `A3` 波纹卡片
+// （只读 · 零副作用 · 不写缓存 · 不落审计）。
 func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	raw := ""
 	if len(inv.args) > 0 {
@@ -124,40 +125,54 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	// 档位（§4.4）：默认档 = 毫秒层 + 编译器层；贵层（② 符号层）走按需档 `--all`。
 	cheap := !inv.all || inv.quick
 	layers := impactPullLayers(root, tgt, cheap)
-	items, totalRows := impactCollectRows(layers)
-	// ① 人面：**恒三行**（判据③）+ 命中生効面时的条件行（§3.1/§3.7）。`--json` 时不打人面。
+	rows, totalRows := impactCollectRows(layers)
+	// `A3` 波纹卡片：先把骨架三行（+ 条件行）与退法算出来 —— 卡片预算要把**常量部分**也算进去
+	// （§4.1 的账：上限是死的，裁的是条目，不是骨架）。
+	rev := impactReversibilityOf(root, tgt)
+	pubLine := impactPublicLine(layers)
+	l1, l2, l3 := impactHumanLines(tgt, layers, rows, rev, cheap)
+	card := impactCardOf(rows, l1+"\n"+l2+"\n"+l3+"\n"+pubLine, tgt.Raw)
+	// ① 人面：**恒三行**（判据③）+ 命中生效面时的条件行（§3.1/§3.7）。`--json` 时不打人面。
 	if !inv.jsonGiven {
-		emitImpactHuman(stdout, stderr, tgt, layers, items, totalRows, cheap)
+		fmt.Fprintln(stdout, l1)
+		fmt.Fprintln(stdout, l2)
+		fmt.Fprintln(stdout, l3)
+		if pubLine != "" {
+			fmt.Fprintln(stdout, pubLine)
+		}
 	}
-	// ② stderr：层表（每层带 head_sha + layer + 该层口径值 + 粒度 + 时刻 + 耗时）+ 时效声明。
-	emitImpactLayerTable(stderr, tgt, layers, items, totalRows, cheap)
-	// ③ 机器面：六键包封（`items` 恒数组；本件只换里面装的东西，不改包封）。
+	// ② stderr：层表（每层带 head_sha + layer + 该层口径值 + 粒度 + 时刻 + 耗时）+ 卡片块 + 时效声明。
+	emitImpactLayerTable(stderr, tgt, layers, card.Items, totalRows, card, cheap)
+	emitImpactCardBlock(stderr, tgt, card, rev, layers, inv.forHuman)
+	if inv.forModel && !inv.forHuman {
+		fmt.Fprintf(stderr, "%s: `--for-model` 与默认档**同效**（§4.1：模型档就是默认档）—— 给了也照实明说，不另开一条分叉\n", progName)
+	}
+	if inv.forModel && inv.forHuman {
+		fmt.Fprintf(stderr, "%s: `--for-model` 与 `--for-human` 同时给了 ⇒ 以**人面档**为准（模型档是人面档的子集 · §4.1；照实明说，不静默挑一个）\n", progName)
+	}
+	// ③ 机器面：六键包封（`items` 恒数组；本件只换里面装的东西 —— 换成**被预算裁过的卡片条目**，不改包封）。
 	if inv.jsonGiven {
-		if rc := emitSelected(stdout, stderr, inv, inv.path, inv.fields, items); rc != exitOK {
+		if rc := emitSelected(stdout, stderr, inv, inv.path, inv.fields, card.Items); rc != exitOK {
 			return rc
 		}
 	}
-	// ④ 退码：有影响面 ⇒ 0；凡目标有效而六层都没给出条目 ⇒ **零命中**（§7.5 的「无影响面」= 1）。
-	if len(items) == 0 {
+	// ④ 退码：六层取到东西 ⇒ 0；六层都没给出条目 ⇒ **零命中**（§7.5 的「无影响面」= 1）。
+	// 口径（`A3` 写死）：看的是**六层全量条数**（裁前的那个数），不是裁后的卡片条数 ——
+	// 卡片被裁空不等于「没影响面」（§3.3：裁了必须显式声明，退码不许被裁序改写）。
+	if totalRows == 0 {
 		return exitFail
 	}
 	return exitOK
 }
 
-// impactCollectRows 收六层的条目（一页上限 `impactRowPage`；`truncated` 那一格今天在
-// `emitEnvelopeWith` 里是死的 ⇒ 上限走 stderr 明说，**不静默截**）。
+// impactCollectRows 收六层的条目（**全量** · 不在这里截页）：条数上限归卡片（§3.1 ≤ 12 条），
+// 层内的每层上限仍归各层自己（`impactRowPage`）。
 func impactCollectRows(layers []impactLayer) ([]map[string]string, int) {
 	rows := []map[string]string{}
-	total := 0
 	for _, l := range layers {
-		for _, r := range l.Rows {
-			total++
-			if len(rows) < impactRowPage {
-				rows = append(rows, r)
-			}
-		}
+		rows = append(rows, l.Rows...)
 	}
-	return rows, total
+	return rows, len(rows)
 }
 
 // impactLayerBySeq 取某一层（浅拷贝遍历；层序 = §二 的表序）。
@@ -263,21 +278,26 @@ func impactRegistryIDs(root string) ([]string, error) {
 }
 
 // impactUsageLine —— 形态串（与命令树的 `usage` 逐字同源，门⑫ 的口径；本件不旁写第二份）。
-// ★ `--all`（按需档）是**既有全局布尔**，故不写进形态串（形态串只写本命令独有的东西：
-// 目标两态 + `--json`）—— 档位那一格待 `R32`/B4 把旗标名拍死后再进形态串。
-const impactUsageLine = "zerg impact <文件｜契约 id> [--json <字段>]"
+// `A3` 起把 §4.1 的**两档**写进形态串（`--for-model` / `--for-human` · `R9` 已拍「分两档」·
+// `R38` 拍定它们与 `--json` **不是同一条**、可叠加、都不改六键包封）。
+// ★ `--all`（按需档 · §4.4）仍是**既有全局布尔**，故不写进形态串（形态串只写本命令独有的东西）。
+const impactUsageLine = "zerg impact <文件｜契约 id> [--for-model｜--for-human] [--json <字段>]"
 
-// emitImpactHuman —— 人面**恒三行**（判据③：字头固定 · 顺序固定）+ 命中生效面时的条件行。
+// impactHumanLines —— 人面**恒三行**（判据③：字头固定 · 顺序固定）+ `A3` 把 §3.8 的可逆性
+// **内联在第③行同一行**（§4.1：可逆性行内联在第③行内 · **不新增行数**，所以人面仍恒三行）。
 //
-// 三个数的口径**写在这里**（免得被当成同一个分母）：受影响包 = ① 反向包数 · 文件 = 各层条目里
+// 三个数的口径**写在这里**（免得被当成同一个分母）：受影响包 = ① 反向包数 · 文件 = 六层条目里
 // 带件路径的条目**去重后的件数**（② 符号级条目不含件路径 ⇒ 不计入，层表里明写）· 契约 = ③ 命中条数。
-func emitImpactHuman(stdout, stderr io.Writer, tgt *impactTarget, layers []impactLayer,
-	items []map[string]string, totalRows int, cheap bool) {
+//
+// ★ `A3` 改了一处口径：**文件数取「六层全量」**（裁前），不是卡片里那 12 条 —— 卡片被裁是
+// **预算**的结果，拿它当「受影响文件数」会把一个大面报成小面（数字纪律：口径不同不同源）。
+func impactHumanLines(tgt *impactTarget, layers []impactLayer, rows []map[string]string,
+	rev impactReversibility, cheap bool) (string, string, string) {
 	pkgs := 0
 	if l, ok := impactLayerBySeq(layers, "①"); ok {
 		pkgs = len(l.Rows)
 	}
-	files := impactDistinctFiles(items)
+	files := impactDistinctFiles(rows)
 	contracts := 0
 	if l, ok := impactLayerBySeq(layers, "③"); ok {
 		contracts = len(l.Rows)
@@ -286,15 +306,12 @@ func emitImpactHuman(stdout, stderr io.Writer, tgt *impactTarget, layers []impac
 	if tgt.Kind != impactKindFile {
 		pkgStr = "未适用（契约目标无编译面）"
 	}
-	fmt.Fprintf(stdout, "%s受影响包 %s · 文件 %d 个 · 契约 %d 条\n",
+	l1 := fmt.Sprintf("%s受影响包 %s · 文件 %d 个 · 契约 %d 条（文件数=六层全量去重 · 卡片裁序不改这个数）",
 		impactLineHead[0], pkgStr, files, contracts)
-	fmt.Fprintf(stdout, "%s%s\n", impactLineHead[1], impactRedLine(layers, cheap))
-	fmt.Fprintf(stdout, "%s%s\n", impactLineHead[2], strings.Join(impactSuggestions(tgt, layers, cheap), " · "))
-	// 条件行（§3.1「三行是常量，这三条是条件行：没命中就不打」· §3.7 公开面行）。
-	if l, ok := impactLayerBySeq(layers, "⑥"); ok && l.PublicDelta != "" {
-		fmt.Fprintf(stdout, "公开面：此改动会改变公开产出树 %s 件（口径：产出树 %s · 扫的时刻 %s · head_sha %s）\n",
-			l.PublicDelta, l.PublicTree, l.PublicAt, dashIfEmpty(l.HeadSHA))
-	}
+	l2 := impactLineHead[1] + impactRedLine(layers, cheap)
+	// §3.8：**建议**行内、给出下一步命令的**同一行**必带可逆性（能退吗 / 退法是哪条命令）。
+	l3 := impactLineHead[2] + strings.Join(impactSuggestions(tgt, layers, cheap), " · ") + " · " + rev.Line
+	return l1, l2, l3
 }
 
 // impactDistinctFiles 条目里的**件数**（去重）；② 符号级条目不含件路径 ⇒ 不计入（层表里写明）。
@@ -319,12 +336,18 @@ func impactDistinctFiles(items []map[string]string) int {
 }
 
 // impactRedLine 「会红」那一行（闭集：契约 id + 门步名；门步名映射属 `B1` ⇒ **本件不真跑门禁** §7.8）。
+//
+// ★ §3.5 铁律（`A3` 落成可判的形态）：**语义级条目只进「建议」行、永不进「会红」行** ——
+// 义近（概率）条目即使带着 `red` 也不许进这一行；`why` 归一到六选一后按 `义近` 逐条挡掉。
 func impactRedLine(layers []impactLayer, cheap bool) string {
 	reds := []string{}
 	seen := map[string]bool{}
 	for _, l := range layers {
 		for _, r := range l.Rows {
-			if r["red"] != "" && !seen[r["red"]] {
+			if strings.TrimSpace(r["red"]) == "" || impactWhyNormalize(r["why"]) == "义近" {
+				continue
+			}
+			if !seen[r["red"]] {
 				seen[r["red"]] = true
 				reds = append(reds, r["red"])
 			}
@@ -378,7 +401,7 @@ func impactSuggestions(tgt *impactTarget, layers []impactLayer, cheap bool) []st
 // 另附粒度四档之一（`R40`：四档不可相加）、状态（取值 / 未跑 / 未适用 / 未装 / 未建索引 / 读不到）、
 // 该层现跑读数与耗时；末尾恒带时效声明（§3.1「结果随仓变而变」）。
 func emitImpactLayerTable(stderr io.Writer, tgt *impactTarget, layers []impactLayer,
-	items []map[string]string, totalRows int, cheap bool) {
+	items []map[string]string, totalRows int, card impactCard, cheap bool) {
 	fmt.Fprintf(stderr, "%s: `A2` 六层取数（层规三件 = head_sha + layer + 该层口径值；② 层必带 algo）\n", progName)
 	head, at := "", ""
 	for _, l := range layers {
@@ -399,8 +422,11 @@ func emitImpactLayerTable(stderr io.Writer, tgt *impactTarget, layers []impactLa
 	} else {
 		fmt.Fprintf(stderr, "%s: 结果随仓变而变：本结果算的是 head_sha=%s 那一刻的仓（取数时刻 %s）\n", progName, head, at)
 	}
-	fmt.Fprintf(stderr, "%s: 条目：机器面 `items` 本页 %d 条（六层全量 %d 条 —— 上限 %d/页；`truncated`/`warnings` 两格今天在 `emitEnvelopeWith` 里是死的，故上限在这里明说，不静默截）\n",
-		progName, len(items), totalRows, impactRowPage)
+	// 条数口径（`A3` 改写）：上限归**卡片**（≤ 12 条 · §3.1），层内每层上限仍是 `impactRowPage`；
+	// 裁的结果在卡片块里显式声明（三件），**不静默截**。
+	fmt.Fprintf(stderr, "%s: 条目：卡片 `items` %d 条（六层全量 %d 条 · 卡片上限 %d 条 · 层内上限 %d/层 · token 上限 %d —— §3.1 两个上限都是死的；本跑 truncated=%t）\n",
+		progName, len(items), totalRows, impactItemMax, impactRowPage, impactTokenMax, card.Truncated)
+	fmt.Fprintf(stderr, "%s: ★ CLI 缺口（照实标）：§3.3 的三件（`truncated=true` / `warnings[]` / `meta.how_to_restore`）在**六键包封里没有落点** —— `emitEnvelopeWith` 把 `warnings` 恒写 `[]`、`truncated` 恒写 `false`、`meta` 只写 `count/source/changed`；`A1`/`A2` 红线「不改 `emitEnvelope*`」本批未解禁 ⇒ 三件落在**卡片块**（同一份取值，逐字同形），包封那一格照实记缺口（不偷偷改包封）\n", progName)
 	if cheap {
 		fmt.Fprintf(stderr, "%s: 档位 = **默认档**（§4.4「只吃毫秒层 + 编译器层」）—— 没跑的层已在上面逐条点名（宁少报不猜报）；要看 ② 符号层给 `--all`\n", progName)
 	}
