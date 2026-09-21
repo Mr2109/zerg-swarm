@@ -1,30 +1,38 @@
-// family_impact.go —— 变更影响面（`zerg impact <目标>`）· **`A1` 骨架**
-// （设计-变更影响面-v1.6 §7.1/§7.3/§7.4 · 任务单-影响面实施-20260922 §二 `A1`）。
+// family_impact.go —— 变更影响面（`zerg impact <目标>`）· `A1` 骨架 + **`A2` 六层取数**。
+// （设计-变更影响面-v1.6 §7.1/§7.3/§7.4 · §二 六层与层规 · 任务单-影响面实施-20260922 §二 `A2`）。
 //
-// `A1` 的范围（**逐字照任务单**）：「把 `建议 zerg impact <目标>` 的**只读**骨架立起来 ——
-// 人面三行 + 六键包封（`items` 恒数组 · **不新增第七键**）」。⇒ 本件**只出命令与包封**：
-// 六层取数（① 编译器 → ② 符号 → ③ 契约 → ④ 词法/形近 → ⑤ 语义 → ⑥ 公开面）属 `A2`、
-// 卡片与四级排序属 `A3`、挂进改码干跑属 `A4`、落盘缓存与毫秒档属 `A5` —— **一个都不在本件里做** ✗。
+// 本件的范围（逐字照任务单）：
 //
-// 三条判据的落点（任务单 §二 `A1` 判据 ①–③）：
+//	· `A1` 已交：**只读**骨架 —— 人面三行 + 六键包封（`items` 恒数组 · `[]` 永不为 `null`）·
+//	  零命中退 `1`（不是 `0`、不是失败）· 目标解析不到退 `2` · 契约登记表读不到退 `8`。
+//	· `A2` 本件：把 §二 的**六层接成一条链**（① 编译器 → ② 符号 → ③ 契约 → ④ 词法 + 形近 →
+//	  ⑤ 语义（按需）→ ⑥ 公开面）—— 实现件在 `family_impact_layers.go`，本件只**接线 + 出数**：
+//	  人面三行给**真数**（不再是骨架期的三个 0）· 第 ⑥ 层命中时**多一行**条件行（§3.1/§3.7）·
+//	  stderr 恒出一张**层表**（每层带 `head_sha` + `layer` + 该层口径值 + 粒度 + 时刻 + 耗时）。
+//	· 仍**不在**本件：卡片与四级排序裁序（`A3`）· 挂进 `dev edit` 干跑（`A4`）· 落盘缓存与毫秒档（`A5`）。
+//
+// 档位（§4.4 · `A2` 风险那一条）：**默认档只吃毫秒层 + 编译器层**；贵层（② 符号 `callgraph`
+// 现跑 3.9–5.8s）走**按需档**。开关用**既有全局布尔** `--all`（与 `build show --all` 同形：
+// 「全都要」）—— §7.1 的 `--depth` 一类**旗标名待 `R32`/B4 拍板**，故本批**不新造名字**，
+// 只把两档机制落下来；`--quick`（`P-040` 贵项跳过）与默认档同效，给了也照实明说。
+// 跳过的层在层表里写「未跑」⇒ **不悄悄少给几层**（§4.4）。
+//
+// 三条判据的落点（任务单 §二 `A1` 判据 ①–③ · 一字不改）：
 //
 //	① `--json` 里**六键恒在**（`schema`/`kind`/`items`/`meta`/`warnings`/`truncated`）——
 //	   出口是唯一的既有实现 `emitSelected`；本件**不改 `emitEnvelope` 的注释与语义** ✗。
-//	② `items` 空时为 `[]`、**永不为 `null`**（`emitSelected` 的 `[]` 分支）；
-//	   退码成对：**零命中 ⇒ `1`**（§7.5「无影响面」· 不是 `0`、不是失败）·
-//	   **目标解析不到 / 出仓 / 缺目标 ⇒ `2`**（用法错 ⇒ **不给结论**）·
-//	   **契约登记表读不到 ⇒ `8`**（「读不到」不许当「没有」）。
-//	③ 人面**恒三行**、字头与顺序固定：`会牵动：` / `会红：` / `建议：`（§7.3）。
+//	② `items` 空时为 `[]`、**永不为 `null`**；退码成对：**零命中 ⇒ `1`** ·
+//	   **目标解析不到 / 出仓 / 缺目标 ⇒ `2`** · **契约登记表读不到 ⇒ `8`**（「读不到」不许当「没有」）。
+//	③ 人面**恒三行**、字头与顺序固定：`会牵动：` / `会红：` / `建议：`（§7.3）；
+//	   **命中生效面时多带一行** `公开面：`（§3.1「三行是常量，这三条是条件行：没命中就不打」）。
 //
-// 诚实边界（§十一 · 失败模式 `F6`「把『没报』读成『没影响』」）：本件**没接任何取数层** ⇒
-// 三行里的三个 0 是**未取数**，不是「面内未见」—— 这句必须**每次跑都打出来**（stderr），
-// 否则一个恒返回空集的命令会被读成「这一改没事」（那正是「零引用被当结论用」的同族病）。
-// ★ 已知缺口（照实记）：骨架期机器面**自述不了**「未取数」——`meta.layers_not_run[]` 属 `A2`/`A5`，
-// 而本件不许改 `emitEnvelope*` ⇒ 机器侧只有 `rc=1` 一枚码 + `items` 空数组；
-// 要在机器面分辨「未取数」与「面内未见」，等 `A2` 把层规接上。
+// 诚实边界（§十一 · 失败模式 `F6`「把『没报』读成『没影响』」）：层表**逐层点名**状态
+// （取值 / 未跑 / 未适用 / 未装 / 未建索引 / 读不到）—— 一个 0 若是**没跑**来的，层表里会写明。
 //
-// 红线（任务单 §二 `A1` 红线 · 逐条）：不新增第七键 ✗ · 不改 `emitEnvelope` 注释与语义 ✗ ·
-// 不动 `zerg code find` 的扫码口径与排除表 ✗ · **不写缓存 / 不落审计** ✗（本任务只出命令与包封）。
+// 红线（任务单 §二 `A2` · 逐条）：不引 `gopls` / `rust-analyzer` ✗ · 不加 `go.work` ✗ ·
+// 不动 `publish/` 那七件生效面里的任何一行 ✗ · 不拿私有树件数冒充产出树件数 ✗ ·
+// 不为凑绿放宽任何既有判据 ✗ · 不写缓存 / 不落审计（属 `A5`/`A4`）· 不改 `emitEnvelope*` ✗
+// （`A1` 红线继续守）· 不动 `zerg code find` 的扫码口径与排除表 ✗。
 package main
 
 import (
@@ -35,10 +43,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // impactFields —— `zerg impact --json <字段>` 的字段表（= §3.1 的条目四字段；K1：机器面先定）。
+// `A2` **不动这张表**（§九 M6 `R7` 字段只增不改 —— 本批不需要增：层规三件落在人面条件行与
+// stderr 层表上，`items` 仍是四字段条目；`why` 取值扩到六选一由层名承载）。
 var impactFields = []string{"what", "why", "how", "red"}
 
 // impactLineHead —— 人面三行的**固定字头 · 固定顺序**（判据③；与 §3.1 的三行骨架同一份，不另立）。
@@ -65,7 +77,7 @@ type impactTarget struct {
 	ID   string // 契约目标：契约 id
 }
 
-// cmdImpact —— `zerg impact <目标>`：`A1` 骨架（只读 · 零副作用 · 不写缓存 · 不落审计）。
+// cmdImpact —— `zerg impact <目标>`：`A1` 骨架 + `A2` 六层取数（只读 · 零副作用 · 不写缓存 · 不落审计）。
 func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	raw := ""
 	if len(inv.args) > 0 {
@@ -89,23 +101,73 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	if tgt == nil {
 		return impactReject(inv, stderr, root, raw, why)
 	}
-	// ① 人面：**恒三行**（判据③）。`--json` 时不打人面（机器面只留包封）。
-	if !inv.jsonGiven {
-		emitImpactSkeleton(stdout, stderr, tgt)
-	} else {
-		emitImpactDisclaimer(stderr)
-	}
-	// ② 机器面：六键包封（`items` 恒数组 · 骨架期恒 `[]`）。K2：给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节。
+	// K2 先判（`--json` 不给字段 ⇒ 1 + stdout 0 字节）：**取数之前**判 —— 否则白跑六层。
 	if inv.jsonGiven {
 		if !requireFields(inv, stderr) {
 			return exitFail
 		}
-		if rc := emitSelected(stdout, stderr, inv, inv.path, inv.fields, []map[string]string{}); rc != exitOK {
+		// 字段名也**先判**（未知字段 ⇒ 2 + 列合法字段）：判据一字不改（仍是 §九 M6 I5 的
+		// 「点名字段」面），只把它挪到取数之前 —— 六层现跑读秒级，别为一条打错字的字段白跑一遍。
+		for _, f := range inv.fields {
+			ok := false
+			for _, l := range fieldListOf(inv.path) {
+				if l == f {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				return reportBadField(stderr, inv.path, f)
+			}
+		}
+	}
+	// 档位（§4.4）：默认档 = 毫秒层 + 编译器层；贵层（② 符号层）走按需档 `--all`。
+	cheap := !inv.all || inv.quick
+	layers := impactPullLayers(root, tgt, cheap)
+	items, totalRows := impactCollectRows(layers)
+	// ① 人面：**恒三行**（判据③）+ 命中生効面时的条件行（§3.1/§3.7）。`--json` 时不打人面。
+	if !inv.jsonGiven {
+		emitImpactHuman(stdout, stderr, tgt, layers, items, totalRows, cheap)
+	}
+	// ② stderr：层表（每层带 head_sha + layer + 该层口径值 + 粒度 + 时刻 + 耗时）+ 时效声明。
+	emitImpactLayerTable(stderr, tgt, layers, items, totalRows, cheap)
+	// ③ 机器面：六键包封（`items` 恒数组；本件只换里面装的东西，不改包封）。
+	if inv.jsonGiven {
+		if rc := emitSelected(stdout, stderr, inv, inv.path, inv.fields, items); rc != exitOK {
 			return rc
 		}
 	}
-	// ③ 退码：骨架期凡目标有效 ⇒ **零命中**（§7.5 的「无影响面」= `1`，不是 `0`、不是失败）。
-	return exitFail
+	// ④ 退码：有影响面 ⇒ 0；凡目标有效而六层都没给出条目 ⇒ **零命中**（§7.5 的「无影响面」= 1）。
+	if len(items) == 0 {
+		return exitFail
+	}
+	return exitOK
+}
+
+// impactCollectRows 收六层的条目（一页上限 `impactRowPage`；`truncated` 那一格今天在
+// `emitEnvelopeWith` 里是死的 ⇒ 上限走 stderr 明说，**不静默截**）。
+func impactCollectRows(layers []impactLayer) ([]map[string]string, int) {
+	rows := []map[string]string{}
+	total := 0
+	for _, l := range layers {
+		for _, r := range l.Rows {
+			total++
+			if len(rows) < impactRowPage {
+				rows = append(rows, r)
+			}
+		}
+	}
+	return rows, total
+}
+
+// impactLayerBySeq 取某一层（浅拷贝遍历；层序 = §二 的表序）。
+func impactLayerBySeq(layers []impactLayer, seq string) (impactLayer, bool) {
+	for _, l := range layers {
+		if l.Seq == seq {
+			return l, true
+		}
+	}
+	return impactLayer{}, false
 }
 
 // impactReject —— 目标被拒（**两档分开** · §7.5：「读不到」不许混成「没有」）。
@@ -201,31 +263,92 @@ func impactRegistryIDs(root string) ([]string, error) {
 }
 
 // impactUsageLine —— 形态串（与命令树的 `usage` 逐字同源，门⑫ 的口径；本件不旁写第二份）。
+// ★ `--all`（按需档）是**既有全局布尔**，故不写进形态串（形态串只写本命令独有的东西：
+// 目标两态 + `--json`）—— 档位那一格待 `R32`/B4 把旗标名拍死后再进形态串。
 const impactUsageLine = "zerg impact <文件｜契约 id> [--json <字段>]"
 
-// emitImpactSkeleton —— 人面**恒三行**（判据③：字头固定 · 顺序固定）+ stderr 一条诚实声明。
-func emitImpactSkeleton(stdout, stderr io.Writer, tgt *impactTarget) {
-	fmt.Fprintf(stdout, "%s受影响包 0 个 · 文件 0 个 · 契约 0 条（`A1` 骨架：六层未取数 —— 这三个 0 是**未取数**，不是「面内未见」）\n",
-		impactLineHead[0])
-	fmt.Fprintf(stdout, "%s（未取数：门禁步名映射属 `B1` · 反向包与契约指向属 `A2`；本行**不真跑**门禁 · §7.8）\n",
-		impactLineHead[1])
-	fmt.Fprintf(stdout, "%s%s\n", impactLineHead[2], strings.Join(impactSuggestions(tgt), " · "))
-	emitImpactDisclaimer(stderr)
-}
-
-// emitImpactDisclaimer —— 诚实声明（§十一 · `F6`）：**每次跑都要说清「未取数」**。
-func emitImpactDisclaimer(stderr io.Writer) {
-	fmt.Fprintf(stderr, "%s: `A1` 骨架 —— 六层取数**一个都没接**（属 `A2`）⇒ 三行里的 0 是**未取数**，不是「面内未见」；"+
-		"「没报」不许读成「没事」（§十一 诚实边界）\n", progName)
-	fmt.Fprintf(stderr, "%s: 退码口径（§7.5）：1 = 无影响面（零命中 · **不是错**）· 2 = 用法错/目标解析不到 · 8 = 读不到（不给结论）\n",
-		progName)
-}
-
-// impactSuggestions —— 「建议」行的候选命令（§7.3：**最多 3 条**；只给**今天真能敲**的那两条）。
+// emitImpactHuman —— 人面**恒三行**（判据③：字头固定 · 顺序固定）+ 命中生效面时的条件行。
 //
-// 为什么不给「反向包 / 符号边 / 步名」这三条：它们正是 `A2`/`B1` 要接的面 —— 现在写出来就是
-// 给了跑不通的命令（`P-0xx` 那条纪律：不发件不留跑不通的命令 · 与 `setup-zerg.sh` 的教训同族）。
-func impactSuggestions(tgt *impactTarget) []string {
+// 三个数的口径**写在这里**（免得被当成同一个分母）：受影响包 = ① 反向包数 · 文件 = 各层条目里
+// 带件路径的条目**去重后的件数**（② 符号级条目不含件路径 ⇒ 不计入，层表里明写）· 契约 = ③ 命中条数。
+func emitImpactHuman(stdout, stderr io.Writer, tgt *impactTarget, layers []impactLayer,
+	items []map[string]string, totalRows int, cheap bool) {
+	pkgs := 0
+	if l, ok := impactLayerBySeq(layers, "①"); ok {
+		pkgs = len(l.Rows)
+	}
+	files := impactDistinctFiles(items)
+	contracts := 0
+	if l, ok := impactLayerBySeq(layers, "③"); ok {
+		contracts = len(l.Rows)
+	}
+	pkgStr := fmt.Sprintf("%d 个", pkgs)
+	if tgt.Kind != impactKindFile {
+		pkgStr = "未适用（契约目标无编译面）"
+	}
+	fmt.Fprintf(stdout, "%s受影响包 %s · 文件 %d 个 · 契约 %d 条\n",
+		impactLineHead[0], pkgStr, files, contracts)
+	fmt.Fprintf(stdout, "%s%s\n", impactLineHead[1], impactRedLine(layers, cheap))
+	fmt.Fprintf(stdout, "%s%s\n", impactLineHead[2], strings.Join(impactSuggestions(tgt, layers, cheap), " · "))
+	// 条件行（§3.1「三行是常量，这三条是条件行：没命中就不打」· §3.7 公开面行）。
+	if l, ok := impactLayerBySeq(layers, "⑥"); ok && l.PublicDelta != "" {
+		fmt.Fprintf(stdout, "公开面：此改动会改变公开产出树 %s 件（口径：产出树 %s · 扫的时刻 %s · head_sha %s）\n",
+			l.PublicDelta, l.PublicTree, l.PublicAt, dashIfEmpty(l.HeadSHA))
+	}
+}
+
+// impactDistinctFiles 条目里的**件数**（去重）；② 符号级条目不含件路径 ⇒ 不计入（层表里写明）。
+func impactDistinctFiles(items []map[string]string) int {
+	set := map[string]bool{}
+	for _, r := range items {
+		w := r["what"]
+		if i := strings.Index(w, ":"); i > 0 {
+			prefix, rest := w[:i], w[i+1:]
+			if prefix == "文件级" || prefix == "件级" || prefix == "名字级" {
+				p := rest
+				if j := strings.LastIndex(rest, ":"); j > 0 {
+					if _, err := strconv.Atoi(rest[j+1:]); err == nil {
+						p = rest[:j]
+					}
+				}
+				set[p] = true
+			}
+		}
+	}
+	return len(set)
+}
+
+// impactRedLine 「会红」那一行（闭集：契约 id + 门步名；门步名映射属 `B1` ⇒ **本件不真跑门禁** §7.8）。
+func impactRedLine(layers []impactLayer, cheap bool) string {
+	reds := []string{}
+	seen := map[string]bool{}
+	for _, l := range layers {
+		for _, r := range l.Rows {
+			if r["red"] != "" && !seen[r["red"]] {
+				seen[r["red"]] = true
+				reds = append(reds, r["red"])
+			}
+		}
+	}
+	parts := []string{}
+	if len(reds) > 0 {
+		sort.Strings(reds)
+		parts = append(parts, "契约 "+strings.Join(reds, ",")+"（`change_class=B` —— 改它会破承诺）")
+	} else {
+		parts = append(parts, "没命中契约条目（③ 层现读 `registry.json`）")
+	}
+	parts = append(parts, "门步名映射属 `B1`（未接 ⇒ 本行**不真跑门禁** · §7.8 只预测不真跑）")
+	if l, ok := impactLayerBySeq(layers, "①"); ok && strings.Contains(l.Detail, "编译面已红") {
+		parts = append(parts, "★ 编译面现跑已红（看层表 ① 的读数）")
+	}
+	if cheap {
+		parts = append(parts, "② 符号层在默认档**未跑**（要看调用者：`--all`）")
+	}
+	return strings.Join(parts, " · ")
+}
+
+// impactSuggestions —— 「建议」行的候选命令（§7.3：**最多 3 条**；只给**今天真能敲**的）。
+func impactSuggestions(tgt *impactTarget, layers []impactLayer, cheap bool) []string {
 	pat, dir := "", "core"
 	if tgt.Kind == impactKindContract {
 		pat = regexp.QuoteMeta(tgt.ID)
@@ -235,8 +358,61 @@ func impactSuggestions(tgt *impactTarget) []string {
 			dir = d
 		}
 	}
-	return []string{
-		fmt.Sprintf("zerg code find '%s' --path %s（词法面 · 属 `A2`）", pat, dir),
-		"zerg gate run --fast（门面 · 属 `B1`）",
+	out := []string{
+		fmt.Sprintf("zerg code find '%s' --path %s（词法面复算 · 全盘口径）", pat, dir),
+		"zerg gate run --fast（门面 · 真跑属 `B1`）",
 	}
+	if cheap {
+		out = append(out, fmt.Sprintf("zerg impact %s --all（按需档 · 补 ② 符号层）", tgt.Raw))
+	} else {
+		out = append(out, "zerg gate run --fast（同上 · 复核）")
+	}
+	if len(out) > 3 {
+		out = out[:3]
+	}
+	return out
+}
+
+// emitImpactLayerTable —— stderr 的**层表**（`A2` 判据①的落点）：
+// 每层一行，**必带 `layer=` + `口径=` + `head_sha=`** 三件（② 层的 `口径` 里带 `algo=`），
+// 另附粒度四档之一（`R40`：四档不可相加）、状态（取值 / 未跑 / 未适用 / 未装 / 未建索引 / 读不到）、
+// 该层现跑读数与耗时；末尾恒带时效声明（§3.1「结果随仓变而变」）。
+func emitImpactLayerTable(stderr io.Writer, tgt *impactTarget, layers []impactLayer,
+	items []map[string]string, totalRows int, cheap bool) {
+	fmt.Fprintf(stderr, "%s: `A2` 六层取数（层规三件 = head_sha + layer + 该层口径值；② 层必带 algo）\n", progName)
+	head, at := "", ""
+	for _, l := range layers {
+		if head == "" {
+			head, at = l.HeadSHA, l.At
+		}
+		cost := "—"
+		if l.Cost > 0 {
+			cost = l.Cost.Round(time.Millisecond).String()
+		}
+		fmt.Fprintf(stderr, "  层%s layer=%s%s 粒度=%s 口径=%s 状态=%s 耗时=%s head_sha=%s 时刻=%s\n",
+			l.Seq, l.Seq, l.Name, l.Grane, l.Caliber, l.Status, cost, dashIfEmpty(l.HeadSHA), l.At)
+		fmt.Fprintf(stderr, "    读数：%s\n", l.Detail)
+	}
+	// 数字纪律：`head_sha` 取不到 ⇒ 该结果**只许当参考**（§7.4 判据：时效三件缺任一 ⇒ 只许当参考）。
+	if head == "" {
+		fmt.Fprintf(stderr, "%s: ★ 层规缺 `head_sha`（取不到）⇒ 本结果**只许当「参考」，不许当判据**（§7.4）\n", progName)
+	} else {
+		fmt.Fprintf(stderr, "%s: 结果随仓变而变：本结果算的是 head_sha=%s 那一刻的仓（取数时刻 %s）\n", progName, head, at)
+	}
+	fmt.Fprintf(stderr, "%s: 条目：机器面 `items` 本页 %d 条（六层全量 %d 条 —— 上限 %d/页；`truncated`/`warnings` 两格今天在 `emitEnvelopeWith` 里是死的，故上限在这里明说，不静默截）\n",
+		progName, len(items), totalRows, impactRowPage)
+	if cheap {
+		fmt.Fprintf(stderr, "%s: 档位 = **默认档**（§4.4「只吃毫秒层 + 编译器层」）—— 没跑的层已在上面逐条点名（宁少报不猜报）；要看 ② 符号层给 `--all`\n", progName)
+	}
+	fmt.Fprintf(stderr, "%s: 退码口径（§7.5）：0 = 有影响面 · 1 = 无影响面（零命中 · **不是错**）· 2 = 用法错/目标解析不到 · 8 = 读不到（不给结论）\n", progName)
+}
+
+// timeMillis 只为人面好看（耗时的显示精度）。
+const timeMillis = 1e6
+
+func dashIfEmpty(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "（取不到）"
+	}
+	return s
 }

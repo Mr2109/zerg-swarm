@@ -98,10 +98,12 @@ func judgeImpactHuman(stdout string, heads [3]string) error {
 var impactHeads = [3]string{"会牵动：", "会红：", "建议："}
 
 // TestImpact_MachineFaceSixKeysAndEmptyItems —— 判据① + 判据②（正控）：
-// 有效件目标 ⇒ `--json` 出**六键**、`items` 逐字 `[]`、退码 **1**（零命中 · 不是 0、不是失败）。
+// `A2` 取数接上之后，**零命中**要挑一件三层都空的件（① 反向包 0 · ③ 契约 0 · ④ 词法/形近 0）——
+// 那一件见 `impactZeroHitTarget()`（**件名不许逐字写出**：写出来它就命中词法面）：
+// ⇒ `--json` 出**六键**、`items` 逐字 `[]`、退码 **1**（零命中 · 不是 0、不是失败）。
 func TestImpact_MachineFaceSixKeysAndEmptyItems(t *testing.T) {
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
-	tgt := "core/cmd/zerg/family_impact.go"
+	tgt := impactZeroHitTarget()
 
 	rc, out, errb := runCapture("impact", tgt, "--json", "what,why,how,red")
 	if rc != 1 {
@@ -133,10 +135,19 @@ func TestImpact_MachineFaceSixKeysAndEmptyItems(t *testing.T) {
 		t.Errorf("判据③ 破：%v · stdout=%q", err, out)
 	}
 
+	// 反面对照（`A2` 的正控）：有影响面的件 ⇒ 退码 **0**（不是 1）· 人面仍恒三行。
+	rc, out, errb = runCapture("impact", "core/cmd/zerg/main.go")
+	if rc != 0 {
+		t.Errorf("有影响面的件 ⇒ 退码 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if err := judgeImpactHuman(out, impactHeads); err != nil {
+		t.Errorf("有影响面时人面也应恒三行：%v · stdout=%q", err, out)
+	}
+
 	// 契约 id 目标（第二态）也走同一条路（在册 id 现读自 registry.json）。
 	rc, out, errb = runCapture("impact", "S-g", "--json", "what")
-	if rc != 1 {
-		t.Errorf("在册契约 id 目标 ⇒ 退码 1，得到 %d · stderr=%s", rc, errb)
+	if rc != 0 {
+		t.Errorf("在册契约 id 目标（`S-g` 指向命令面目录）⇒ 退码 0，得到 %d · stderr=%s", rc, errb)
 	}
 	if !strings.HasPrefix(strings.TrimSpace(out), "{") {
 		t.Errorf("契约目标的机器面不是包封：%q", out)
@@ -153,9 +164,9 @@ func TestImpact_NegativeControls(t *testing.T) {
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
 
 	// ① 判定口的负控：三枚坏期望，逐枚**必须**报错。
-	rc, out, _ := runCapture("impact", "core/cmd/zerg/main.go", "--json", "what")
+	rc, out, _ := runCapture("impact", impactZeroHitTarget(), "--json", "what")
 	if rc != 1 {
-		t.Fatalf("准备态不对：正控退码 = %d（要 1）", rc)
+		t.Fatalf("准备态不对：正控退码 = %d（要 1 —— 零命中件见 impactZeroHitTarget）", rc)
 	}
 	var good map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(out), &good); err != nil {
