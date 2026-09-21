@@ -513,7 +513,7 @@ say "⑦ 收尾：已写 ${TREE}/.install_method = git"
 say ''
 say "✅ bootstrap 完成：${ROLE}（组件 ${COMP_LIST}）→ ${PREFIX}"
 if [ "$ROLE" = node ]; then
-  say "   下一步：回到主控跑 \`bash scripts/build/zerg-upgrade.sh --fleet\`（该机已可自更新）"
+  say "   下一步：回到主控跑 \`zerg update\`（该机已可自更新）"
 else
   say '   下一步：有新版时跑 `zerg update`（或主控机 `zerg-core update`）即可源码式自更新'
 fi
