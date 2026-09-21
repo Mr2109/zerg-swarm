@@ -1258,6 +1258,19 @@ func init() {
 			opened: true,
 			run:    cmdEvalRun,
 		},
+		// ---- 变更影响面（设计-变更影响面-v1.6 §7.1/§7.3/§7.4 · 任务单-影响面实施-20260922 §二 `A1` · 2026-09-22）----
+		// `A1` = **骨架**：人面三行 + 六键包封；六层取数/卡片/挂干跑/缓存分别属 `A2`–`A5`（本件不做）。
+		// 只读 ⇒ 不写 `danger`（走默认「只读」幂等档）、不改 `emitEnvelope`、不写缓存、不落审计。
+		{
+			path:     []string{"impact"},
+			kind:     "Impact",
+			summary:  "改一处会牵动谁（只读**骨架**：人面三行 + 六键包封；六层取数属 `A2`）",
+			usage:    impactUsageLine,
+			args:     []string{"目标（仓内件路径 · 或在册契约 id，如 S-g）"},
+			fields:   impactFields,
+			endpoint: "",
+			run:      cmdImpact,
+		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
 	for _, c := range commands {
