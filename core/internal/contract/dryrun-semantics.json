@@ -301,6 +301,27 @@
    "语义": "dryrun.v1",
    "零副作用判据": "干跑那一格（判据⑤现跑）：`--dry-run` 不需要批准件、件字节逐字不变，计划面照实打出批准件判决",
    "备注": "主体③-a（2026-09-21）"
+  },
+  {
+   "file": "core/cmd/zerg/family_calib.go",
+   "类": "命令面三态（`calib run` 的计划件 · 与 guard.go 同一套语义；`--dry-run` ⇒ rc=0 只出计划件，缺 `--yes` ⇒ fail-closed rc=2、计划件走 stderr）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`zerg calib run <件> --dry-run` 现跑：rc=0 且只打计划面（要跑的那一行 = `bash|python3 scripts/calib/<件>`），**一个脚本都没 exec**；缺 `--yes` 那一档同判（退 2 · stdout 0 字节）。Go 判据 `TestCalibEval_ThreeStatesAndExitForwarding` 用**哨兵件**现判「脚本跑没跑」",
+   "备注": "T-56 余项 · 标定族（DEV-0010 · 2026-09-21）；命令面**不搬实现** —— 执行面永远是那支旧脚本"
+  },
+  {
+   "file": "core/cmd/zerg/family_eval.go",
+   "类": "命令面三态（`eval run` 的计划件 · 同一套语义；只有 ① 收编的件有 run 面，②/④ 的件在执行前判就退 2）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`zerg eval run <件> --dry-run` 现跑：rc=0 且只打计划面，**一个脚本都没 exec**；② 保留内部 / ④ 维持待拍的件连计划件都不打（退 2 + 归属与理由，`归属是闸`）。Go 判据 `TestEvalRun_OnlyAdoptedIsOpen` 用哨兵件现判",
+   "备注": "T-56 余项 · 评测族（DEV-0010 · 2026-09-21）；22 件的逐件归属照抄上一枚的四类归属表（①5/②4/④13）"
+  },
+  {
+   "file": "core/cmd/zerg/cli_calib_eval_test.go",
+   "类": "命令面测试件（两族三态的机检：缺 --yes / --dry-run / 真跑退码原样转出）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "合成仓根：`--dry-run` 之后夹具脚本的**哨兵件不出现**（= 一次都没 exec）、件字节逐字不变（本件判据④⑤现跑）",
+   "备注": "T-56 余项 · DEV-0011（2026-09-21）"
   }
  ]
 }
