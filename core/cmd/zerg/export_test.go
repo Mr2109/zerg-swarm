@@ -864,3 +864,90 @@ func ImpactStepProjectionForTest(root string, pull bool, ids ...string) ImpactSt
 
 // ImpactStepNotRunLineForTest 干跑那一档那一格的渲染文本（**未机检** —— 与 `dev edit` 干跑同一份取值）。
 func ImpactStepNotRunLineForTest() string { return impactStepLineText(impactStepProjectionNotRun()) }
+
+// ---- `B2` 时间面 · 预测侧（`family_impact_timeface.go`）---------------------------------------
+//
+// 桥只开**只读**面：算一次预测面（真命令同一条路）· 拉一次「尺的标定」（起不起子进程随档位）·
+// 读在册旧值那份清单。每个符号都**直接指真源**（不另写副本 —— 另写一份 = 测试测的是那份副本）。
+
+// ImpactTimefaceViewForTest 预测面的只读视图（含**机读那一行原文** ⇒ 判「定序 · 无时钟」不用另拼）。
+type ImpactTimefaceViewForTest struct {
+	Target   string
+	Tier     string
+	HeadSHA  string
+	Items    []string // `[why] red ← how` 形态（实现里那一行的原样）
+	NotRun   []string
+	EstCalib []string
+	JSONLine string
+	Calib    ImpactCalibViewForTest
+}
+
+// ImpactCalibViewForTest 「尺的标定」那一格的只读视图（现跑读数 + 成对闸 + 在册旧值）。
+type ImpactCalibViewForTest struct {
+	Status   string
+	Reason   string
+	ScriptK  bool
+	Live     []string // `label=value` 形态（现跑）
+	Old      []string // `label=value｜出处=…｜标定时刻=…` 形态（在册）
+	Paired   []string // `--selftest` 里那两条 `(e)/(f)` 行
+	Runs     []string // `flag rc=… 行数=… 耗时=…ms`
+	CostMS   float64
+	ProbeRan bool // 起过子进程没有（默认档必须 false）
+}
+
+// ImpactTimefaceOfForTest 算一次预测面 + 尺的标定（与 `zerg impact` **同一条路**）。
+// `all=false` = 默认档（**不拉真源 · 不起子进程**）· `all=true` = 按需档 `--all`。
+// 缓存挡位取`关`（`impactCacheOff`）⇒ 判据件不落缓存、两跑可比。
+func ImpactTimefaceOfForTest(root, raw string, all bool) (ImpactTimefaceViewForTest, error) {
+	out := ImpactTimefaceViewForTest{}
+	tgt, why := impactResolve(root, raw)
+	if tgt == nil {
+		return out, fmt.Errorf("目标解析不到：%s", why)
+	}
+	cheap := !all
+	layers := impactPullLayers(root, tgt, cheap, impactCacheOff)
+	proj := impactStepProjectionOf(root, impactStepIDsToJoin(tgt, layers), all)
+	f := impactPredictFaceOf(tgt, layers, proj, cheap)
+	out.Target, out.Tier, out.HeadSHA = f.Target, f.Tier, f.HeadSHA
+	for _, it := range f.Items {
+		out.Items = append(out.Items, fmt.Sprintf("[%s] %s ← %s", it.Why, it.Red, it.How))
+	}
+	out.NotRun, out.EstCalib = f.NotRun, f.EstCalib
+	out.JSONLine = impactPredictJSON(f)
+	out.Calib = impactCalibViewForTest(impactCalibrationOf(root, all))
+	return out, nil
+}
+
+// ImpactCalibrationOfForTest 只拉「尺的标定」那一格（合成尺夹具上判「不齐 ⇒ 取不到」用）。
+func ImpactCalibrationOfForTest(root string, pull bool) ImpactCalibViewForTest {
+	return impactCalibViewForTest(impactCalibrationOf(root, pull))
+}
+
+func impactCalibViewForTest(c impactCalib) ImpactCalibViewForTest {
+	v := ImpactCalibViewForTest{
+		Status: c.Status, Reason: c.Reason, ScriptK: c.ScriptK,
+		CostMS:   float64(c.Cost.Microseconds()) / 1000.0,
+		ProbeRan: len(c.Runs) > 0,
+	}
+	for _, rd := range c.Live {
+		v.Live = append(v.Live, rd.Label+"="+rd.Value)
+	}
+	for _, o := range c.Old {
+		v.Old = append(v.Old, o.Label+"="+o.Value+"｜出处="+o.Source+"｜标定时刻="+o.At)
+	}
+	for _, r := range c.Runs {
+		v.Runs = append(v.Runs, fmt.Sprintf("%s rc=%d 行数=%d 耗时=%.1fms", r.Name, r.RC, r.Lines,
+			float64(r.Cost.Microseconds())/1000.0))
+		v.Paired = append(v.Paired, r.Paired...)
+	}
+	return v
+}
+
+// ImpactCalibScriptRelForTest 尺的件路径（与实现**同一份**常量 —— 不另抄一个）。
+func ImpactCalibScriptRelForTest() string { return impactCalibScriptRel }
+
+// ImpactTimefaceSourceForTest 读实现件源码（自检「不落盘 / 不设阈值 / 不抢 `B3`」用）。
+func ImpactTimefaceSourceForTest() (string, error) {
+	b, err := os.ReadFile("family_impact_timeface.go")
+	return string(b), err
+}

@@ -15,6 +15,11 @@
 //	· `B1` 本件：「会红」那一行的**门步名**那一格接到**真实可判的面**上（真源 = 门禁
 //	  `--list` 现跑 + 逐名 `--emit-cmd` 探针）—— 实现件在 `family_impact_steps.go`，
 //	  本件只**传参 + 打块**（人面那一格 + stderr 的步名真源块）。
+//	· `B2` 本件：**时间面的预测侧** —— 把「会红」那一行背后的**预测集**逐条连**估法口径**
+//	  摘出来（现算 / 投影 / 没跑 三态），并把**尺的标定现跑重测**（`scripts/gates/check-slice.py`
+//	  的混淆矩阵 + `--selftest` 成对自证；在册旧值并留）—— 实现件在 `family_impact_timeface.go`，
+//	  本件只**传参 + 打块**（stderr 的时间面块；六键包封一个字不动 ⇒ 缺口照实点名）。
+//	  **实测侧（命中/漏报/虚报 · `impact_actual` · 回填件）属 `B3`** ✗（本件不抢那一面）。
 //
 // 档位（§4.4 · `A2` 风险那一条）：**默认档只吃毫秒层 + 编译器层**；贵层（② 符号 `callgraph`
 // 现跑 3.9–5.8s）走**按需档**。开关用**既有全局布尔** `--all`（与 `build show --all` 同形：
@@ -137,6 +142,12 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	// 也不编「本跑 N 步」）；② 真源探针是**贵项**（`--list` 现跑 8.3–9.5s ⇒ 比最贵的层还贵）
 	// ⇒ 按 §4.4 走**按需档** `--all`，默认档照实写「未机检」并给出怎么拉（宁少报不猜报）。
 	proj := impactStepProjectionOf(root, impactStepIDsToJoin(tgt, layers), !cheap)
+	// `B2` 时间面（**预测侧**）：把「会红」那一行背后的**预测集**逐条连**估法口径**摘出来，并把
+	// 尺（`scripts/gates/check-slice.py` 的混淆矩阵）的标定**现跑重测** —— 探针与 `B1` 的真源
+	// 探针同一条预算纪律（§4.4）：默认档一次子进程都不起，按需档 `--all` 现跑。
+	// **实测侧（命中/漏报/虚报 · `impact_actual` · 回填件）属 `B3`，本批不做** ✗。
+	timeface := impactPredictFaceOf(tgt, layers, proj, cheap)
+	calib := impactCalibrationOf(root, !cheap)
 	// `A3` 波纹卡片：先把骨架三行（+ 条件行）与退法算出来 —— 卡片预算要把**常量部分**也算进去
 	// （§4.1 的账：上限是死的，裁的是条目，不是骨架）。
 	rev := impactReversibilityOf(root, tgt)
@@ -156,6 +167,9 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	emitImpactLayerTable(stderr, tgt, layers, card.Items, totalRows, card, cheap)
 	emitImpactCacheBlock(stderr, root, layers)
 	emitImpactStepBlock(stderr, proj)
+	// `B2` 时间面（预测侧）：块在 `B1` 的步名真源块之后 —— 那一块给的是「门步那一格接到什么」，
+	// 本块给的是「整个预测集是怎么估的 + 尺上一次/此刻分别是多少」。
+	emitImpactTimefaceBlock(stderr, tgt, timeface, calib, cheap)
 	emitImpactCardBlock(stderr, tgt, card, rev, layers, inv.forHuman)
 	if inv.forModel && !inv.forHuman {
 		fmt.Fprintf(stderr, "%s: `--for-model` 与默认档**同效**（§4.1：模型档就是默认档）—— 给了也照实明说，不另开一条分叉\n", progName)
