@@ -27,6 +27,20 @@
 //	为什么：一次 `--replace` 漏闭括号它**照写** ⇒ 写上盘的是一件当场 SyntaxError 的件（改前只有
 //	「回读 sha256 对拍」，那对得上恰恰证明**写坏了也照过**）。
 //
+// ③-c（2026-09-22 本枚 · **A4 挂干跑**）**干跑多一段影响面摘要 + 一枚钩子判决**：
+//
+//	干跑分支里多出：① 影响面摘要（§八 第 1–3 件）—— 人面三行**只在受影响项 ≥1 时**打
+//	（零影响时打三行 = 灌噪声）；② 一枚**钩子判决**（§四.3 分档 · `R28` 裁决：「能找回的只报，
+//	找不回的必拦」）—— **改 = 只记 · 符号级删 = 必拦 · 件级（整件）= 只报 + 可找回证据 /
+//	不可找回三条任一命中 ⇒ 升为必拦**。判决与取数在 `family_impact_hook.go`（**只读**）。
+//
+//	真写路径上审计行多**两枚字段**（`impact_digest` + `impact_actual`）：前者 = 波纹摘要的 `sha256`
+//	（**只留指纹，不留正文** —— §四.2 第 3 件）；后者属 `B3`（真红对拍），本批**只立字段、不填值** ✗。
+//
+//	**真写前置一字未动** ✗：人签批准件验签（③-a）· 审计先落盘（③）· 语法自检闸（③-b）三条判据
+//	逐字不变；**钩子判决不是放行条件** ✗（卡片铁律 §3.5「提 ≠ 批」）—— 干跑里「必拦」那一档
+//	**只让干跑退 2**，`R28` 的「删前波纹门」是**另开一门**（属 `C1`），本批不许塞进真写前置。
+//
 // 与既有条文的接缝（**不重复立项** ✗）：写面**不新立锁**（§九 M5：真源在持锁者）、**不新立退码**
 // （照 §4.1 K3 那张表）、**不改契约**；本件只是「改」这一环的**唯一入口**。
 package main
@@ -76,6 +90,12 @@ type editAuditLine struct {
 	Approver string `json:"approver,omitempty"`
 	// ③-b（2026-09-22）：写入前的**语法自检判决**（过 / 不适用）—— 拒的那一格不落审计（没写就不记账）。
 	Syntax string `json:"syntax,omitempty"`
+	// ③-c（2026-09-22 · `A4`）：**波纹指纹两枚**（§四.2 —— 与 `impact_digest` 配对的第二枚属 `B3`）。
+	//   `impact_digest`  = 波纹摘要的 `sha256`（**只留指纹，不留正文** ✗）
+	//   `impact_actual`  = 真红对拍的结果（`B3` 落它 —— 本批**只立字段、不填值** ✗）
+	// `omitempty`：取不到波纹（例如仓根解析不到）⇒ 这一格不写，**不写空串冒充「有了」**（「读不到」不当「没有」）。
+	ImpactDigest string `json:"impact_digest,omitempty"`
+	ImpactActual string `json:"impact_actual,omitempty"`
 }
 
 // cmdDevEdit —— `zerg dev edit`：受控写入的唯一入口（默认干跑）。
@@ -203,16 +223,51 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	appr := devEditLoadApproval(inv, fileRel)
 	row["approval"], row["approval_path"] = appr.Judg, appr.Path
 
-	// ⑤ 干跑（默认那一态）：计划件 + 零副作用
+	// ⑤ 干跑（默认那一态）：计划件 + 零副作用 + **`A4` 影响面摘要与钩子判决**
+	//    判据（任务单 §二 `A4`）：① 干跑零副作用（前后件字节不变 · 无审计件产生）；
+	//    ② 三行**只在受影响项 ≥1 时**打；④ 批准件判据逐字未变（下面那条闸与 ③-a 一字未动）。
 	if inv.dryRun || !(inv.confirmGiven && inv.yes) {
+		// `A4`：钩子分档（纯判据 + 只读取数 —— 不写任何东西）。判据与取数在 `family_impact_hook.go`。
+		hook := impactHookOf(root, fileRel, before, after)
+		summary := impactDryRunSummaryOf(root, fileRel)
+		if summary.Taken {
+			row["impact_digest"] = impactDigestOf(summary.Text)
+		} else {
+			row["impact_digest"] = "（未取数 —— 不是「没有」）"
+		}
+		// 影响面摘要打 stderr（人面三行**只在受影响项 ≥1 时**打 —— 零影响时打三行 = 灌噪声）。
+		emitImpactDryRunSummary(stderr, summary)
+		emitImpactHookBlock(stderr, hook)
+		// 指纹（**摘要正文逐字进哈希** ⇒ 第三者可复算；正文本身打到上面那段，不进审计）。
+		if summary.Taken {
+			fmt.Fprintf(stderr, "%s: 波纹指纹 impact_digest=%s（sha256 of 上面那段摘要正文 · 第三者可复算 · §四.2 只留指纹）\n",
+				progName, row["impact_digest"])
+		} else {
+			fmt.Fprintf(stderr, "%s: 波纹指纹 **未取数** ⇒ 干跑不写指纹（真写那一侧的审计行照「缺摘要」处置并点名）\n", progName)
+		}
+		// ★ 缺口再点一次名（`A1`/`A2`/`A3` 一贯）：机器可读信号落 stderr 而**不进六键包封** ——
+		// `emitEnvelopeWith` 把 `warnings` 恒写 `[]`、`truncated` 恒写 `false`、`meta` 只给
+		// `count/source/changed` ⇒ **不改共享包封** ✗（红线）⇒ 上面那两行 `impact_hook` / `impact_criteria`
+		// 就是机器面；要进包封得先解禁 `emitEnvelope*`。
 		if !inv.dryRun {
-			// 三态：**没带 --dry-run 但确认档不齐** ⇒ 出计划件（fail-closed：从不提问、也从不偷偷写）
+			// 三态：**没带干跑旗标但确认档不齐** ⇒ 出计划件（fail-closed：从不提问、也从不偷偷写）
 			row["result"] = "planned"
-			emitDevEditPlan(stdout, stderr, row, prop, beforeMissing, inv, true)
+			emitDevEditPlan(stdout, stderr, row, prop, beforeMissing, inv, true, hook)
 			return exitUsage
 		}
 		row["result"] = "planned"
-		emitDevEditPlan(stdout, stderr, row, prop, beforeMissing, inv, false)
+		emitDevEditPlan(stdout, stderr, row, prop, beforeMissing, inv, false, hook)
+		// 钩子判决「必拦」⇒ **这一步没通过钩子**：干跑不给放行判决（退码 2 · 与既有的
+		//「缺确认档 ⇒ 2」同一档，不新立码）。**真写前置一字未动** ⇒ 这一条**只落在干跑上**
+		//（`R28` 的「删前波纹门」是另开一门，属 `C1`）—— 差口在上面那一块里照实点名。
+		if hook.Tier == impactHookTierBlock {
+			inv.setErr("usage", "impact_hook_block", "钩子判决为必拦（"+hook.Class+"）")
+			fmt.Fprintf(stderr, "%s: **钩子判决「必拦」⇒ 干跑退 2**（类=%s）：%s\n", progName, hook.Class, hook.Why)
+			fmt.Fprintf(stderr, "%s: 目标件一个字节未动：%s（审计也未落 —— 没写就不记账）\n", progName, outPath)
+			fmt.Fprintf(stderr, "%s: 判断口径见上面那两块（`impact_hook` / `impact_criteria` 两行可脚本切分）\n", progName)
+			fmt.Fprintf(stderr, "error.kind=usage · detail=impact_hook_block · retryable=false · remedy=fix_usage\n")
+			return exitUsage
+		}
 		return exitOK
 	}
 	if inv.confirm != planHost() {
@@ -255,12 +310,21 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	if by == "" {
 		by = "（未声明）"
 	}
+	// ⑥-b（`A4`）**波纹指纹**：取一次影响面摘要（**只读** · 默认档），把它的 `sha256` 记进审计行 ——
+	// **只留指纹、不留正文** ✗（§四.2 第 3 件）。**未取到数** ⇒ 那一格不写（`omitempty`）+ stderr 点名
+	//（「读不到」不当「没有」）；**一律不拦写**（`impact_digest` **不是放行条件** ✗ —— `R14` 只拍「先只记」那一步）。
+	impactSum := impactDryRunSummaryOf(root, fileRel)
+	digest := ""
+	if impactSum.Taken {
+		digest = impactDigestOf(impactSum.Text)
+	}
 	line := editAuditLine{
 		At: time.Now().Format(time.RFC3339), Event: "edit", Proposal: proposalID, File: fileRel,
 		Mode: mode, BeforeSHA256: beforeSHA, AfterSHA256: afterSHA,
 		BeforeBytes: int64(len(before)), AfterBytes: len(after), By: by,
 		Confirm: inv.confirm, AuditPath: auditPath,
 		Approval: appr.Path, Approver: appr.Appr, Syntax: syntaxJudg,
+		ImpactDigest: digest,
 	}
 	if beforeMissing {
 		line.Note = "新建件（写前不存在）"
@@ -269,6 +333,14 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("failed", "audit_unwritable", err.Error())
 		fmt.Fprintf(stderr, "%s: **审计落不下盘 ⇒ 拒执**（§九 M3 C5「写不进日志就不许执行」）：%v\n", progName, err)
 		return exitFail
+	}
+	if digest == "" {
+		fmt.Fprintf(stderr, "%s: ★ 波纹指纹**取不到**（`impact_digest` 那一格没写 —— 「读不到」不当「没有」）：%s\n",
+			progName, impactSum.Text)
+		fmt.Fprintf(stderr, "%s: 包封的 `warnings[]` 今天恒 `[]` ⇒ 「缺摘要要点名」这一格没有落点（CLI 缺口，`A4` 再点一次名）\n", progName)
+	} else {
+		fmt.Fprintf(stderr, "%s: 波纹指纹 impact_digest=%s（摘要正文**不进审计** · §四.2 第 3 件；%s）\n",
+			progName, digest, impactSum.Reason)
 	}
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		inv.setErr("failed", "mkdir_failed", err.Error())
@@ -340,7 +412,10 @@ func editSyntaxCheck(fileRel string, content []byte) (judg, why string) {
 
 // emitDevEditPlan —— 计划件（干跑与「确认档不齐」两条路共用；零副作用）。
 // blocked=true 时，最后一行点明为什么没执行（三态里 fail-closed 的那一格）。
-func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *proposalRecord, beforeMissing bool, inv *invocation, blocked bool) {
+// `A4` 起多一行**钩子判决**（`hook`）：它是**计划的一部分**（这一步的钩子是哪一档），
+// 但**不是放行条件** ✗（§3.5 卡片铁律「提 ≠ 批」）。
+func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *proposalRecord,
+	beforeMissing bool, inv *invocation, blocked bool, hook impactHook) {
 	fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未写任何文件、未改任何状态）")
 	fmt.Fprintf(stdout, "  动作     : %s dev edit（受控写 · 只改提案声明过的件）\n", progName)
 	fmt.Fprintf(stdout, "  提案     : %s（状态 %s · 声明改件 %s）\n", prop.ID, prop.State, orDashList(prop.Files))
@@ -351,9 +426,12 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 	fmt.Fprintf(stdout, "  审计落点 : %s（一行一事件 · 追加只写 · **写不进审计就不改件**）\n", row["audit_path"])
 	fmt.Fprintf(stdout, "  批准件   : %s —— %s\n", row["approval_path"], row["approval"])
 	fmt.Fprintf(stdout, "  语法自检 : %s%s\n", row["syntax"], ifStr(row["syntax"] == "不过", " —— **真写会被拒**（`.py`=ast.parse / `.sh`=bash -n；先改内容）", ""))
+	fmt.Fprintf(stdout, "  影响面钩子: %s（类=%s · §4.3 分档 —— 判据见 stderr 的 `impact_hook` 那两行）\n", hook.Tier, hook.Class)
 	fmt.Fprintf(stdout, "  回滚路径 : %s（提案的退点 + git）\n", orDash(prop.Rollback))
 	if blocked {
 		fmt.Fprintf(stdout, "  未执行   : D3 档确认不齐 —— 要 `--confirm=%s --yes` 同时到（fail-closed：从不提问）\n", planHost())
+	} else if hook.Tier == impactHookTierBlock {
+		fmt.Fprintf(stdout, "  未执行   : 钩子判决「必拦」（类=%s）⇒ 干跑退 2 · **真写前置一字未动**（差口见 stderr 那一块）\n", hook.Class)
 	}
 	if inv.jsonGiven {
 		_ = selectJSON(stdout, stderr, inv, inv.path, devEditFields, row)
