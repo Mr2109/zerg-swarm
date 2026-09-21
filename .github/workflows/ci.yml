@@ -1,3 +1,7 @@
+# ⚠️ 供应链：本文件里每一条 `uses:` **必须钉到全长 commit SHA**（禁浮动 tag —— `@v4`/`@stable` 级
+#    可被上游改写，公开树一被人动过就不可逆）。SHA 来源 = GitHub 官方 API `git/ref`（annotated tag
+#    再解一层 `git/tags`）取到的 **commit sha**；行尾注释保留原 tag 名，便于人读与升级。
+#    改这条规矩前先读 `Zerg-内部文档/项目文档/v2.5.10/设计-发布闸-v1.0.md` §四。
 name: CI
 
 on:
@@ -10,8 +14,8 @@ jobs:
     name: 主控 + 子端（Go）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
         with:
           # G6：工具链钉住的单一真源 = core/go.mod 的 go 指令（见 scripts/gates/check-gotoolchain.py）
           go-version-file: core/go.mod
@@ -39,8 +43,12 @@ jobs:
     name: 桌面 UI（Rust）
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87  # stable
+        # ★ 钉成 SHA 后**必须显式给 toolchain**：该 action 的 `toolchain` 输入默认就是 `stable`
+        #   （`@stable` 这个 ref 并不参与取值，见其 action.yml），所以显式写出才不依赖「默认值恰好没变」。
+        with:
+          toolchain: stable
       - name: cargo test
         working-directory: ui
         run: cargo test -p zerg-ui
@@ -49,7 +57,7 @@ jobs:
     name: 版本号一致性（UI ↔ Go 单一来源）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: 检查
         run: python3 scripts/gates/check_version.py
       - name: Go 工具链钉住一致性（G6：core/agent 两模块同值）
@@ -59,11 +67,11 @@ jobs:
     name: 跨版本状态兼容清单门禁（B7 / G10）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: 清单 ↔ 代码双向一致（R1–R6）
         # 只读源码与 core/internal/compat/compat.json；**不碰真机状态目录**（CI 里跑 ~/.zerg/** 是禁忌）。
         run: python3 scripts/gates/check-compat-manifest.py --selftest && python3 scripts/gates/check-compat-manifest.py
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
         with:
           go-version-file: core/go.mod
           cache-dependency-path: core/go.sum
@@ -75,7 +83,7 @@ jobs:
     name: 文档双语门禁（配对/标题/链接）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: 检查
         run: python3 scripts/gates/check_docs.py
 
@@ -83,7 +91,7 @@ jobs:
     name: i18n 门禁（键对称/引用完整/占位符/中文基线）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: 检查
         run: python3 ui/scripts/check-i18n.py
 
@@ -91,10 +99,10 @@ jobs:
     name: 密钥扫描
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2
         # 版本必须与本地/仓库工具一致：8.24.3 会对 memory_test.go 的**合成夹具**误报
         # generic-api-key（同配置 8.30.1 = 0 命中）。版本漂移 = 门禁结论不可复现。
         env:
