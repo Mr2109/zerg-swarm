@@ -1,3 +1,7 @@
+# ⚠️ 供应链：本文件里每一条 `uses:` **必须钉到全长 commit SHA**（禁浮动 tag —— `@v4`/`@stable` 级
+#    可被上游改写，公开树一被人动过就不可逆）。SHA 来源 = GitHub 官方 API `git/ref`（annotated tag
+#    再解一层 `git/tags`）取到的 **commit sha**；行尾注释保留原 tag 名，便于人读与升级。
+#    改这条规矩前先读 `Zerg-内部文档/项目文档/v2.5.10/设计-发布闸-v1.0.md` §四。
 name: Release（全产物）
 
 # 自动升级模块 P0-c：制品与发布通道。
@@ -19,18 +23,24 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# 权限：**最小权限起步**（S35 官方口径：`GITHUB_TOKEN` 默认只读，再在单个 job 内按需提权）——
+#   顶层只给 `contents: read`；**真需要写权限的 job 单独提**（本文件只有 `release` 那一个 job 要 `contents: write`，
+#   因为要建 Release；`gate`/`go`/`ui` 三个 job 只读源码 + 上传 artifact，artifact 走 `ACTIONS_RUNTIME_TOKEN`，
+#   与 `GITHUB_TOKEN` 权限无关）。★ 别把 `contents: write` 放回顶层（那是「一次给足」形态）。
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   gate:
     name: 版本门禁
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.v.outputs.version }}
       commit: ${{ steps.v.outputs.commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: 版本真源一致 + 标签匹配
         id: v
         run: |
@@ -52,6 +62,8 @@ jobs:
     # runner 必须按平台给：darwin 制品的 cgo 需要 darwin 工具链——
     # 在 ubuntu 上交叉编译会 `clang: error: unsupported option '-arch'`（2026-09-11 CI 实测）。
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -63,8 +75,8 @@ jobs:
           - { goos: darwin, goarch: arm64, cgo: '1', runner: macos-14 }
           - { goos: linux,  goarch: amd64, cgo: '0', runner: ubuntu-latest }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
         with:
           go-version-file: core/go.mod
           cache-dependency-path: core/go.sum
@@ -91,7 +103,7 @@ jobs:
           if command -v sha256sum >/dev/null 2>&1; then SH="sha256sum"; else SH="shasum -a 256"; fi
           for f in zerg-*; do $SH "$f" > "$f.sha256"; done
           ls -l
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: go-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/
@@ -101,8 +113,10 @@ jobs:
     name: UI darwin-arm64
     needs: gate
     runs-on: macos-14          # arm64 runner（与本地 Mr2109 同为 Apple Silicon）
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: Rust 工具链
         run: |
           set -euo pipefail
@@ -110,7 +124,7 @@ jobs:
           rustup default stable
           rustc -V
       - name: cargo 缓存
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
         with:
           path: |
             ~/.cargo/registry
@@ -134,7 +148,7 @@ jobs:
         run: |
           set -euo pipefail
           cd dist && shasum -a 256 zerg-ui-darwin-arm64 > zerg-ui-darwin-arm64.sha256 && cat zerg-ui-darwin-arm64.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: ui-darwin-arm64
           path: dist/
@@ -144,9 +158,14 @@ jobs:
     name: 汇总 + 发布
     needs: [gate, go, ui]
     runs-on: ubuntu-latest
+    # 本 job 是**唯一**真需要写权限的：`gh release create` 要建 Release。
+    # 只此一处提权（顶层仍是 `contents: read`）—— 将来若要出 attestation，也在本 job 内单独加
+    # `id-token: write` + `attestations: write`，不加到别的 job 上。
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4          # 取 scripts/evals/make-manifest.py（与本地共用）
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4（取 scripts/evals/make-manifest.py · 与本地共用）
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           path: dist
           merge-multiple: true
