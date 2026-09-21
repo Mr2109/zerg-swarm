@@ -242,11 +242,26 @@ func helpDangerous() string {
 		name := "zerg " + strings.Join(c.path, " ")
 		line := "  " + pad(name, w) + "  " + c.danger.Level + "  --dry-run · --confirm=<" + c.danger.Target + "> · --yes"
 		line += "  " + c.danger.Effect + "  [" + c.danger.Source + "]"
-		if !c.opened {
+		if c.opened {
+			line += "  ← **已开放**（确认档齐就真执行）"
+		} else {
 			line += "  ← 本版未开放"
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("\n本批（S2 · 批 A）**零写操作**（§6.2）：上表全部**拒执**（退码 2 = 不给结论），只有 `--dry-run` 出计划件（退码 0）。\n")
+	// 收口那句**按命令树现算**（不再一律写「全部拒执」：有真实现的已开放 ⇒ 逐条标）。
+	open, closed := 0, 0
+	for _, c := range catalog() {
+		if c.danger == nil {
+			continue
+		}
+		if c.opened {
+			open++
+		} else {
+			closed++
+		}
+	}
+	fmt.Fprintf(&b, "\n上表 %d 条：**已开放 %d 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 %d 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。\n",
+		open+closed, open, closed)
 	return b.String()
 }
