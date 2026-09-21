@@ -32,6 +32,12 @@
   2. 路径映射照旧（`map_path()`）：公开树里脚本仍落 `scripts/<域>/<名>`，表里的路径**直接可用**。
   3. 本门挂在提交闸（`scripts/gates/precommit-gates.sh` 的 scope `public` · 模式 `tri`）⇒ 表与件一旦不一致
      （悬空/漏登记/public=yes 面有私有面）**在提交前就被拦下**，不再靠「记得导出前跑一遍」。
+  ★ 2026-09-21（公开线⑤ · 攒批修）：上面那条**已落地**（此前只有说明、链上一行没接）——
+    `public=no` 的 100 件 + 表自身（共 **101** 条）逐条收进 `scripts/build/publish-public.sh` 的 `EXCLUDES`
+    与 `publish/mirror-public-lib.py` 的 `DROP_EXACT`（走「**不进树**」那一套；**不是** `publish/private-paths.txt`
+    的整批中止语义）；表↔两器的漂移由 `scripts/gates/check-publish-face-sync.py` 的**判据⑥**
+    （表说 no、链上仍会发 ⇒ 红）**秒级**兜住。表自身也立了一行（`public=no`：判据的真源不许跟着出公开面）。
+    下游可核对的读数 = 本脚本 D 档：`--tree <产出树>` 的 `表 no 件进产出树`（本批开工基线 99）。
 
 另有 **D 档（`--tree <产出树根>` · 只报告 · 2026-09-21 公开线④）**：判「**产出树 ⨯ 标记表**」——
   D1 表说 `no` 的件**却进了产出树**（逐件点名：表行号 + 表内路径 + 理由原样）；
