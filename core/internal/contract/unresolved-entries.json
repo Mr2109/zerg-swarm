@@ -17,7 +17,7 @@
       "callers": [
         {"file": "core/internal/agent/scheduler.go", "line": 419, "what": "生产默认：`exec zerg-agent`（唯一的仓内运行时调用）"},
         {"file": "scripts/build/pack-release.sh", "line": 70, "what": "打包：落进发布目录（darwin）"},
-        {"file": "publish/ci/release-agent.yml", "line": 84, "what": "CI：交叉编译出该件"},
+        {"file": "publish/ci/release-agent.yml", "line": 96, "what": "CI：交叉编译出该件（行号 2026-09-21 重取：供应链两处改动在文件头加了 4 行 + 三个 job 各加 permissions ⇒ `go build … -o ../dist/zerg-agent-$GOOS-$GOARCH` 由 84 移到 96）"},
         {"file": "scripts/build/zerg-upgrade.sh", "line": 693, "what": "升级器：读它的版本号（四件清单之一）"},
         {"file": "README.md", "line": 82, "what": "文档：常驻面（Linux systemd / macOS LaunchDaemon · :8100）"}
       ],
