@@ -4328,6 +4328,96 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "归属是闸：④ 待定的件 ⇒ 退 2（**归属不能由稿单方面决定**、AI 也不许判退役 · 不替它拍）"
+  },
+  {
+   "id": "impact#未知旗标",
+   "command": "impact",
+   "argv": [
+    "impact",
+    "core/cmd/zerg/main.go",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "impact#不认的契约主号",
+   "command": "impact",
+   "argv": [
+    "impact",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "impact#缺目标",
+   "command": "impact",
+   "argv": [
+    "impact"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺目标 ⇒ 用法错 2（§7.2 的目标两态都不成立 · **不给结论**）· 不猜、不默认全仓"
+  },
+  {
+   "id": "impact#目标解析不到",
+   "command": "impact",
+   "argv": [
+    "impact",
+    "zzz/never/there.go"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "既不是仓内件、也不是在册契约 id ⇒ 退 2（**不许混成「零命中 1」** —— §7.5 两档分开）"
+  },
+  {
+   "id": "impact#契约 id 不在册",
+   "command": "impact",
+   "argv": [
+    "impact",
+    "S-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "形状像契约 id 但不在 `registry.json` 里 ⇒ 退 2 + 列在册 id（读得到才列；读不到 ⇒ 8）"
+  },
+  {
+   "id": "impact#目标出仓",
+   "command": "impact",
+   "argv": [
+    "impact",
+    "../Zerg-内部文档/项目文档"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "出仓判据按**路径段**（不按字符串前缀 —— ⑦ CLI 缺口一栗：`Zerg-内部文档` 以 `Zerg` 开头就穿出去了）⇒ 退 2"
+  },
+  {
+   "id": "impact#--json 不给字段",
+   "command": "impact",
+   "argv": [
+    "impact",
+    "core/cmd/zerg/main.go",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2；与各命令同一条纪律）"
+  },
+  {
+   "id": "impact#件目标·零命中（人面三行）",
+   "command": "impact",
+   "argv": [
+    "impact",
+    "core/cmd/zerg/main.go"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 419,
+   "why": "A1 `判据②③`：零命中 ⇒ 退 **1**（§7.5「无影响面」· 不是 0、不是失败）+ 人面**恒三行**（`会牵动：`/`会红：`/`建议：` · 字头与顺序固定）；419 字节 = 三行现跑逐字节数，★ 取数层接上（A2）或三行文案一改 ⇒ **这一格必须同批刷新**（棘轮口径）"
   }
  ]
 }
