@@ -20,6 +20,10 @@
      （「配置没了所以全绿」是最难发现的假绿）。
   ④ `--self-test` 必须先过（本门禁**自检不过就拒绝扫真目标**，与
      `scripts/scan-replacement-residue.py` 同一纪律）。
+  ⑤ 清单自身语法 —— 白名单 / 私有面黑名单 / 豁免清单 / 替换规则表 四件里，**末行未闭合**
+     （句子没写完 · 括号不配平 · 没有结尾换行）或**条目格式不合格**（少一列 / 带空白 / 绝对路径
+     ⇒ 解析器**静默跳过**那一条）⇒ **rc=2 拒绝给结论**（真源读不全 ⇒ 绿就是假绿）。逐条口径见
+     下面 `list_syntax_problems` 的注释。
 
 **单一真源（一律复用，绝不另抄一份解析器）**：
   · 白名单解析 / EXCLUDES 解析 —— `scripts/gates/check-history-secrets.py`
@@ -119,6 +123,94 @@ def classify(repo, paths):
     return candidates, dropped, hits, wall, entries, excludes
 
 
+# ── 判据⑤：清单自身语法（末行未闭合 / 条目格式不合格 ⇒ 不给结论）────────────────────────────
+# 为什么单立一格：本门禁读的四件（白名单 · 私有面黑名单 · 豁免清单 · 替换规则表）都是**纯文本清单**，
+# 而解析器对不合格行一律**静默跳过**（`check-history-secrets.py` 的 `load_whitelist` 只收非空非注释行、
+# `load_rules` 少于 2 个 TAB 字段即 `continue`）⇒ 一句写了一半的注释、少一列的行**不会报错，只会悄悄少
+# 一条**，门禁照绿。现成的形态（2026-09-21）：`publish/whitelist.txt` 最后一句以「；」结尾、全角括号
+# 11 开 / 10 闭 —— 那句话没写完，而整条发布链一声不响地照跑。
+#
+# 口径（**清单类** .txt 三件）：
+#   R1 必须以换行结尾（末行被截断 ⇒ 报错）
+#   R2 末条内容行不得以「句子未完」的收尾字符结尾（；;、，,：:），且该行全角括号必须配平
+#   R3 整件全角括号「（）」计数必须配平（注释可跨行 ⇒ 按**整件**配平，不逐行）
+#   R4 条目格式：白名单/黑名单条目必须是**仓相对路径**（不以 / 或 ~ 开头 · 不含空白 · 无 `..` 段）；
+#      黑名单允许 `!` 前缀（显式豁免，见它自己的语法说明）；豁免清单每行必须 `镜像路径<TAB>理由`
+# 口径（**规则表** .tsv 一件）：只判 R1 + R5（≥2 个 TAB 字段 —— 少一列会被 `load_rules` 静默跳过），
+#   **不判**括号与收尾标点：它的值列本来就允许任意字符（含正则里的 `（`）。
+# 不合格 ⇒ **rc=2 不给结论**（「真源读不全」；与「两器漂移」的 rc=1 分开）。
+UNCLOSED_TAIL = "；;、，,：:"
+LIST_FILES = (("白名单", "whitelist.txt"), ("私有面黑名单", "private-paths.txt"),
+              ("豁免清单", "mirror-allow.txt"))
+TSV_FILES = (("替换规则表", "replace-rules.tsv"),)
+
+
+def is_repo_rel(rel):
+    """条目的机械形状：非空 · 不以 / 或 ~ 开头 · 不含空白 · 没有 `..` 段。"""
+    if not rel or rel.startswith("/") or rel.startswith("~"):
+        return False
+    if any(ch.isspace() for ch in rel):
+        return False
+    return ".." not in rel.split("/")
+
+
+def list_syntax_problems(paths):
+    """清单类文件的语法问题 → [(文件名, 行号(0=整件), 说明)]。只读，不落盘。"""
+    pubdir = os.path.dirname(paths["whitelist"])
+    problems = []
+
+    def read_bytes(p):
+        try:
+            with open(p, "rb") as fh:
+                return fh.read()
+        except OSError:
+            return None
+
+    for label, name in LIST_FILES + TSV_FILES:
+        raw = read_bytes(os.path.join(pubdir, name))
+        if raw is None:
+            problems.append((name, 0, "%s 读不到（缺件 ≠ 绿）" % label))
+            continue
+        text = raw.decode("utf-8", "replace")
+        if not text.strip():
+            problems.append((name, 0, "%s 是空的（空清单 = 什么都没配 ⇒ 不给结论）" % label))
+            continue
+        if not raw.endswith(b"\n"):
+            problems.append((name, text.count("\n") + 1, "末行没有结尾换行 ⇒ 末行可能被截断（未闭合）"))
+        rows = [(i, ln) for i, ln in enumerate(text.split("\n"), 1) if ln.strip()]
+        last_i, last = rows[-1]
+        if name in ("whitelist.txt", "private-paths.txt", "mirror-allow.txt"):
+            tail = last.rstrip()[-1]
+            if tail in tuple(UNCLOSED_TAIL):
+                problems.append((name, last_i, "末条内容行以 %s 结尾（句子没写完 ⇒ 未闭合）" % tail))
+            if last.count("（") != last.count("）"):
+                problems.append((name, last_i, "末条内容行全角括号不配平（%d 开 / %d 闭 ⇒ 未闭合）"
+                                 % (last.count("（"), last.count("）"))))
+            if text.count("（") != text.count("）"):
+                problems.append((name, 0, "整件全角括号不配平（%d 开 / %d 闭 ⇒ 有注释没写完）"
+                                 % (text.count("（"), text.count("）"))))
+        for i, ln in rows:
+            ln = ln.strip()
+            if ln.startswith("#"):
+                continue
+            if name == "mirror-allow.txt":
+                key, _, why = ln.partition("\t")
+                if not why.strip():
+                    problems.append((name, i, "豁免条目不是『镜像路径<TAB>理由』（理由空 = 命中了也不说为什么）：%r" % ln[:60]))
+                elif not is_repo_rel(key.strip()):
+                    problems.append((name, i, "豁免条目的键不是仓相对路径：%r" % key.strip()[:60]))
+            elif name == "replace-rules.tsv":
+                if len(ln.split("\t")) < 2:
+                    problems.append((name, i, "规则行少于 2 个 TAB 字段（解析器会**静默跳过**这一条）：%r" % ln[:60]))
+            else:
+                body = ln[1:].strip() if ln.startswith("!") else ln
+                if not body:
+                    problems.append((name, i, "`!` 后面没有路径（空豁免）"))
+                elif not is_repo_rel(body):
+                    problems.append((name, i, "条目不是仓相对路径（解析器只当它不存在）：%r" % ln[:60]))
+    return problems
+
+
 def evaluate(repo, paths):
     """→ (rc, lines)。本函数只做判定，不落盘、不 exec。"""
     missing = require_paths(paths)
@@ -146,6 +238,15 @@ def evaluate(repo, paths):
         return 2, lines + ["  ✗ 守卫：白名单里没有 %s ⇒ 拒绝给结论（rc=2）" % WALL_ENTRY]
     if not wall:
         return 2, lines + ["  ✗ 守卫：候选集里没有一条 %s 路径 ⇒ 拒绝给结论（rc=2）" % WALL_ENTRY]
+
+    # ⑤ 清单自身语法（末行未闭合 / 条目格式不合格 ⇒ **不给结论**；见本函数上面那一段注释）
+    syn = list_syntax_problems(paths)
+    lines.append("  清单语法（白名单/私有面黑名单/豁免清单/替换规则表 四件）：%d 处不合格" % len(syn))
+    if syn:
+        for name, ln, why in syn[:40]:
+            lines.append("  ✗ 判据⑤ %s:%s —— %s" % (name, str(ln) if ln else "整件", why))
+        lines.append("  ⇒ 真源读不全（不合格行会被解析器**静默跳过** ⇒ 门禁假绿）⇒ 不给结论（rc=2）")
+        return 2, lines
 
     bad = 0
     # ① 漂移：镜像器丢、旧器不排 ⇒ 旧器真跑会导出它（自中止）
@@ -199,6 +300,14 @@ FIXTURES = [
      ["scripts/mech.py"], ["scripts/mech.py"], 2, {"no_wall_files": True}),
     ("missing-whitelist", ["scripts/", "wall/"], ["scripts/mech.py"],
      ["scripts/mech.py"], ["scripts/mech.py"], 2, {"delete_whitelist": True}),
+    # 判据⑤ 清单语法（三格都必须 rc=2：末行未闭合 / 条目不是仓相对路径 / 豁免条目没有 TAB+理由）
+    ("list-lastline-unclosed", ["scripts/", "wall/", "# v2.5.9 残件：某共享模块（裁决逻辑；"],
+     ["scripts/mech.py"], ["scripts/mech.py"], ["scripts/mech.py"], 2),
+    ("list-bad-entry", ["scripts/", "wall/", "/abs/path"],
+     ["scripts/mech.py"], ["scripts/mech.py"], ["scripts/mech.py"], 2),
+    ("list-allow-no-reason", ["scripts/", "wall/"], ["scripts/mech.py"],
+     ["scripts/mech.py"], ["scripts/mech.py"], 2,
+     {"allow_text": "# 夹具豁免清单\nscripts/mech.py 夹具理由（没有 TAB）\n"}),
 ]
 
 FIXTURE_TRACKED = ["scripts/mech.py", "scripts/keep.py", "wall/src/lib.rs", "wall/Cargo.toml"]
@@ -217,6 +326,11 @@ def make_fixture(root, wl, priv, excl, drop, opts):
         fh.write("#!/usr/bin/env bash\nEXCLUDES=(\n%s\n)\n" % ex_lines)
     with open(os.path.join(root, "publish", "mirror-public-lib.py"), "w", encoding="utf-8") as fh:
         fh.write(FIXTURE_LIB % ", ".join('"%s"' % d for d in drop))
+    # 判据⑤ 要读的四件：另两件（规则表 / 豁免清单）也给夹具默认值（合法值 ⇒ 不干扰原有各格）
+    with open(os.path.join(root, "publish", "replace-rules.tsv"), "w", encoding="utf-8") as fh:
+        fh.write("# 夹具替换规则表\nfoo\tbar\t夹具\n")
+    with open(os.path.join(root, "publish", "mirror-allow.txt"), "w", encoding="utf-8") as fh:
+        fh.write(opts.get("allow_text", "# 夹具豁免清单\nscripts/mech.py\t夹具理由\n"))
     tracked = list(FIXTURE_TRACKED)
     if opts.get("no_wall_files"):
         tracked = [t for t in tracked if not t.startswith("wall/")]
