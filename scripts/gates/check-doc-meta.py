@@ -3,14 +3,14 @@
 """check-doc-meta.py —— 文档 frontmatter 元数据门（6 件套必填 + 值域封闭 + 额外字段禁入）
 
 规格（唯一真源 = 仓内文件，不复制其判定）
-  设计稿 `docs/01-设计/设计-文档体系-v1.0.md`（v1.2 稿）
+  设计稿 `Zerg-内部文档/01-设计/设计-文档体系-v1.0.md`（v1.2 稿）
     §3.4 ①  type 值域封闭（6 值）与三条可机器判的判据（枚举 / 目录默认值 / adr 缺 status）
     §3.4 ②  frontmatter 6 件套必填集 + 三条硬规矩（未申报字段 = 错 · schema 用 JSON Schema · type/status 正交）
     §3.4 ④  title ≤ 60 字（本仓标题 p99 = 59）
     §5.6 ②  双语字段（translation_of / source_lang / translation_status / translation_reviewer / ai_assisted）
     附录B ⑲  status 信任层级 = authoritative|draft|historical|speculation（**四值**）
     附录B ⑮  行式键值优先 · ⑲/㉔ ai_assisted = human|ai|mixed
-  调研稿 `docs/调研/调研-文档分块落地-分面与规范.md`
+  调研稿 `Zerg-内部文档/调研/调研-文档分块落地-分面与规范.md`
     §B1.3 推荐字段集（含 reviewed_at：authoritative 时必填）· §B2 type 值域与目录 → type 映射
     §A1.3 ③ **回填期口径：字段「不合法即红」，「缺失只告警」** ⇒ 本脚本默认 `--missing=warn`
   字段与值域的判定一律从 `docs/site/frontmatter-schema.json` 读出（脚本内不长第二份值域）。
