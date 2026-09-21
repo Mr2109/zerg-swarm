@@ -237,7 +237,7 @@ type command struct {
 	groupReadOnly bool
 	// 茧壁层级标记（§九 M10 `X1`：闭集 host/node/space；没显式写的按族派生）
 	layer       string
-	opened      bool // 本版是否可执行（危险动作在批 A 一律未开放 · §6.2 零写操作）
+	opened      bool // 本版是否可执行（危险动作**逐条标**：有真实现的为 true ⇒ 帮助面不许一律写「未开放」）
 	passthrough bool // 原样透传型（gate 族）：旗标与位置参数逐字交给被包的脚本
 	run         func(*invocation, io.Writer, io.Writer) int
 }
@@ -636,13 +636,15 @@ func init() {
 		// ---- D3b 第三步（2026-09-21）：**提交面**（缺口-命令面 §九 I4）----
 		// 按文件名暂存（禁 `git add -A`）· 过快速档才放行 · 禁 `--no-verify` · 提交信息模板。
 		{
-			path:     []string{"repo", "commit"},
-			kind:     "RepoCommit",
-			summary:  "提交：**按文件名逐件暂存**（禁 `git add -A`）· **过快速档才放行** · 禁 `--no-verify`（模板化提交信息）",
-			usage:    "zerg repo commit --message <题> --file <件>… [--proposal <提案 id>] [--by <谁>] [--trace <id>] [--criterion <判据>] [--dry-run] [--yes]",
-			args:     []string{"提交主题（--message）", "逐件点名（--file · 可重复）"},
-			fields:   repoCommitFields,
-			danger:   &dangerSpec{dangerD2, "提交主题", "把点名的件提交（可逆：`git reset --soft HEAD~1`）；**先跑快速档**，rc≠0 不提交", "缺口-命令面 §九 I4 · §九 M3 C5 · D3b 第三步"},
+			path:    []string{"repo", "commit"},
+			kind:    "RepoCommit",
+			summary: "提交：**按文件名逐件暂存**（禁 `git add -A`）· **过快速档才放行** · 禁 `--no-verify`（模板化提交信息）",
+			usage:   "zerg repo commit --message <题> --file <件>… [--proposal <提案 id>] [--by <谁>] [--trace <id>] [--criterion <判据>] [--dry-run] [--yes]",
+			args:    []string{"提交主题（--message）", "逐件点名（--file · 可重复）"},
+			fields:  repoCommitFields,
+			danger:  &dangerSpec{dangerD2, "提交主题", "把点名的件提交（可逆：`git reset --soft HEAD~1`）；**先跑快速档**，rc≠0 不提交", "缺口-命令面 §九 I4 · §九 M3 C5 · D3b 第三步"},
+			// `opened`: 真跑已开放（`--yes` 就执行 —— 按文件名逐件暂存 + 先过快速档；D2 可逆）。
+			opened:   true,
 			endpoint: "",
 			run:      cmdRepoCommit,
 		},
@@ -687,7 +689,9 @@ func init() {
 			danger: &dangerSpec{dangerD2, "（被扫根）",
 				"回填文件头（日期 + 不开源标注）—— 只加机械可判的抬头行、不碰正文语义；可回滚 = git",
 				"缺口-命令面-20260921 §八 H2 · 开工记录 D3 §三 新增 1 条 · D3③-a 的等价命令"},
-			run: cmdDocMeta,
+			// `opened`: 真跑已开放（`--yes` 就回填文件头；审计先落盘 + 回读对拍 sha256）。
+			opened: true,
+			run:    cmdDocMeta,
 		},
 		{
 			path:     []string{"port", "ls"},
@@ -1050,13 +1054,15 @@ func init() {
 			run:      cmdApprove,
 		},
 		{
-			path:     []string{"approve", "new"},
-			kind:     "ApprovalSign",
-			summary:  "**人签**一枚批准件（要人在终端上敲口令；非交互会话一律拒）· 写不进即拒 · 同名不覆盖",
-			usage:    "zerg approve new --tool <工具名> --by <人名> --note <理由> [--scope <范围>] [--self-test]",
-			args:     []string{"工具名（--tool）", "人名（--by）"},
-			fields:   approveNewFields,
-			danger:   &dangerSpec{dangerD3, "工具名", "签一枚批准件（逃生门）—— 只作 require_approval 的放行凭据；人不在场时等于没签", "§九 M18 C4② · §17.6 SD7 · D3b 第四步"},
+			path:    []string{"approve", "new"},
+			kind:    "ApprovalSign",
+			summary: "**人签**一枚批准件（要人在终端上敲口令；非交互会话一律拒）· 写不进即拒 · 同名不覆盖",
+			usage:   "zerg approve new --tool <工具名> --by <人名> --note <理由> [--scope <范围>] [--self-test]",
+			args:    []string{"工具名（--tool）", "人名（--by）"},
+			fields:  approveNewFields,
+			danger:  &dangerSpec{dangerD3, "工具名", "签一枚批准件（逃生门）—— 只作 require_approval 的放行凭据；人不在场时等于没签", "§九 M18 C4② · §17.6 SD7 · D3b 第四步"},
+			// `opened`: 真跑已开放（**人在终端上** + 操作员口令 ⇒ 签出批准件；非交互一律拒）。
+			opened:   true,
 			endpoint: "",
 			run:      cmdApproveNew,
 		},
@@ -1072,13 +1078,15 @@ func init() {
 		// ---- D3b 第二步（2026-09-21）：**受控写面**（`zerg dev edit` · §17.3 铁律③）----
 		// 默认干跑 · 只改提案声明过的件（越界写 ⇒ 2）· 逐条审计（写不进审计就不改件）· D3 档确认。
 		{
-			path:     []string{"dev", "edit"},
-			kind:     "DevEdit",
-			summary:  "受控写入：只改**提案声明过**的件（越界写 ⇒ 2）· 默认干跑 · 一行一事件的审计（写不进审计就不改件）",
-			usage:    "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件>) [--by <谁>] [--dry-run | --confirm=<主机名> --yes]",
-			args:     []string{"提案 id（--proposal）", "要改的件（--file · 必须在提案的 files[] 里）"},
-			fields:   devEditFields,
-			danger:   &dangerSpec{dangerD3, "提案 id", "改仓内件（写工作树）—— 作用域 = 提案声明的件；审计一行一事件；回滚 = 提案退点 + git", "§17.3 铁律③ · §九 M3 C4/C5 · §4.1 K7 · D3b 第二步"},
+			path:    []string{"dev", "edit"},
+			kind:    "DevEdit",
+			summary: "受控写入：只改**提案声明过**的件（越界写 ⇒ 2）· 默认干跑 · 一行一事件的审计（写不进审计就不改件）",
+			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件>) [--by <谁>] [--dry-run | --confirm=<主机名> --yes]",
+			args:    []string{"提案 id（--proposal）", "要改的件（--file · 必须在提案的 files[] 里）"},
+			fields:  devEditFields,
+			danger:  &dangerSpec{dangerD3, "提案 id", "改仓内件（写工作树）—— 作用域 = 提案声明的件；审计一行一事件；回滚 = 提案退点 + git", "§17.3 铁律③ · §九 M3 C4/C5 · §4.1 K7 · D3b 第二步"},
+			// `opened`: 真跑已开放（`--confirm=<主机名> --yes` 齐 + 人签批准件 ⇒ 写工作树）。
+			opened:   true,
 			endpoint: "",
 			run:      cmdDevEdit,
 		},
@@ -1212,7 +1220,9 @@ func init() {
 			danger: &dangerSpec{dangerD2, "件名",
 				"真跑一件标定脚本（会占机器/模型槽 · 出的是实测档案）—— 命令面只转发退码，脚本本体一个字不改",
 				"T-56 余项 · DEV-0010 · 归属-收编与退役-20260920 §④ 标定线 3 件"},
-			run: cmdCalibRun,
+			// `opened`: 真跑已开放（`--yes` 就真跑脚本；退码原样透传）。
+			opened: true,
+			run:    cmdCalibRun,
 		},
 		// ---- T-56 余项 · 评测族 `eval`（`scripts/evals/` 22 件 ⇒ ①5 收编 / ②4 内部 / ④13 待拍 · DEV-0010）----
 		{
@@ -1244,7 +1254,9 @@ func init() {
 			danger: &dangerSpec{dangerD2, "件名",
 				"真跑一件评测脚本（可能要跑着的生产面 · 占机器与模型槽）—— 命令面只转发退码，脚本本体一个字不改",
 				"T-56 余项 · DEV-0010 · 归属-收编与退役-20260920 §④ 评测线 22 件"},
-			run: cmdEvalRun,
+			// `opened`: 真跑已开放（`--yes` 就真跑脚本；退码原样透传）。
+			opened: true,
+			run:    cmdEvalRun,
 		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。

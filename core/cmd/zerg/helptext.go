@@ -44,13 +44,17 @@ func helpText() string {
 			fmt.Fprintf(&b, "  %-*s  %s\n", w, c.usage, c.summary)
 		}
 	}
-	nDanger := 0
+	nDanger, nOpen := 0, 0
 	for _, c := range catalog() {
 		if c.danger != nil {
 			nDanger++
+			if c.opened {
+				nOpen++
+			}
 		}
 	}
-	fmt.Fprintf(&b, "\n危险动作（已登记 %d 条 · **本版未开放** · 逐条三态见 'zerg help dangerous'）:\n", nDanger)
+	// **不许一律写「本版未开放」**：危险档里有真实现的（`opened`）—— 逐数报，别让主帮助与 `help dangerous` 两处自相矛盾。
+	fmt.Fprintf(&b, "\n危险动作（已登记 %d 条 · 已开放 %d 条 · 未开放 %d 条 · 逐条三态见 'zerg help dangerous'）:\n", nDanger, nOpen, nDanger-nOpen)
 	b.WriteString("  zerg <危险动作> [参数] [--dry-run | --confirm=<目标> --yes]\n")
 	b.WriteString("\n机器面:\n")
 	b.WriteString("  --json <字段>   必给逗号分隔字段；不给 ⇒ exit 1 + 字段清单走 stderr + stdout 0 字节\n")
