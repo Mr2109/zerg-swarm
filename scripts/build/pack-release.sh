@@ -10,10 +10,16 @@
 #   zerg-agent-darwin-arm64       + .sha256
 #   zerg-ui-darwin-arm64          + .sha256
 #   zerg-wall-darwin-arm64        + .sha256      ← 茧壁（Rust；linux 件由 CI 出）
+#   zerg-cli-darwin-arm64         + .sha256      ← 命令面 CLI（Go；本机件 dist/<版本>/zerg）
 #   zerg-core-linux-amd64         + .sha256      ← 纯 Go 交叉编译（modernc sqlite，CGO_ENABLED=0）
 #   zerg-agent-linux-amd64        + .sha256
+#   zerg-cli-linux-amd64          + .sha256      ← 同上（实测可编 ⇒ 本机也出，不是 CI-only）
 #   checksums.txt                  ← 全部 sha256（sha256sum -c 兼容格式）
 #   manifest.json                  ← 版本/代码身份/逐件 size+sha256（升级器读它，不靠文件名猜）
+#
+# 组件名为什么是 `cli`（2026-09-21 补件）：制品名契约是 `zerg-<组件>-<os>-<arch>` 四段（见
+#   `core/internal/selfupdate/build.go:97` · `scripts/build/zerg-upgrade.sh:735` · `publish/install.sh:123`），
+#   `scripts/evals/make-manifest.py` 也按四段切 ⇒ 三段的 `zerg-darwin-arm64` 会让清单生成直接报错。
 #
 # 用法：
 #   bash scripts/build/pack-release.sh              # 构建 + 打包（含 UI，约 4 分钟）
@@ -51,16 +57,20 @@ fi
 
 if [ "$MODE" != "verify" ]; then
   [ -f "$DIST/build-info.json" ] || { echo "❌ 缺 $DIST/build-info.json——先跑 build-all.sh --dist" >&2; exit 1; }
-  for b in zerg-core zerg-agent zerg-ui; do
+  for b in zerg zerg-core zerg-agent zerg-ui; do
     [ -f "$DIST/$b" ] || { echo "❌ 缺 $DIST/$b" >&2; exit 1; }
   done
 
-  echo "=== 交叉编译 Go 两件（linux/amd64，CGO_ENABLED=0）==="
+  echo "=== 交叉编译 Go 三件（linux/amd64，CGO_ENABLED=0）==="
   LDFLAGS="-s -w -X github.com/Mr2109/zerg-swarm/core/internal/version.Commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) -X github.com/Mr2109/zerg-swarm/core/internal/version.BuildTime=$(python3 -c 'import json;print(json.load(open("'"$DIST"'/build-info.json"))["build_time"])')"
   (cd core && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-mod=mod GOSUMDB=off \
      go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o "$DIST/zerg-core-linux-amd64" ./cmd/zerg-core)
   (cd core && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-mod=mod GOSUMDB=off \
      go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o "$DIST/zerg-agent-linux-amd64" ./cmd/zerg-agent)
+  # 命令面 CLI：纯 Go，与上面两件走**同一条**交叉编路径（实测 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 可编，
+  #   故它不是 CI-only 件 —— 本机档矩阵里有它，见 make-manifest.py 的 EXPECTED/CI_ONLY 口径）。
+  (cd core && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-mod=mod GOSUMDB=off \
+     go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o "$DIST/zerg-cli-linux-amd64" ./cmd/zerg)
 
   echo "=== 组装 release 目录 ==="
   rm -rf "$REL"
@@ -69,12 +79,15 @@ if [ "$MODE" != "verify" ]; then
   cp -p "$DIST/zerg-core"  "$REL/zerg-core-darwin-$HOST_ARCH"
   cp -p "$DIST/zerg-agent" "$REL/zerg-agent-darwin-$HOST_ARCH"
   cp -p "$DIST/zerg-ui"    "$REL/zerg-ui-darwin-$HOST_ARCH"
+  # 命令面 CLI（本机件）：名字按 `zerg-<组件>-<平台>` 契约加平台后缀（组件名 cli，理由见文件头）。
+  cp -p "$DIST/zerg"       "$REL/zerg-cli-darwin-$HOST_ARCH"
   # 茧壁（Rust）：本机只出 darwin；linux 件由 CI 的 ubuntu runner 产出（Rust 不做本地交叉编）。
   ( cd "$REPO_ROOT/wall" && cargo build --release >/dev/null 2>&1 ) || { echo "!! 茧壁构建失败（wall/）"; exit 1; }
   cp -p "$REPO_ROOT/wall/target/release/zerg-wall" "$REL/zerg-wall-darwin-$HOST_ARCH" 2>/dev/null || \
     cp -p "$REPO_ROOT/wall/target/release/wall" "$REL/zerg-wall-darwin-$HOST_ARCH" || { echo "!! 茧壁产物名不符（找 zerg-wall/wall）"; exit 1; }
   cp -p "$DIST/zerg-core-linux-amd64"  "$REL/zerg-core-linux-amd64"
   cp -p "$DIST/zerg-agent-linux-amd64" "$REL/zerg-agent-linux-amd64"
+  cp -p "$DIST/zerg-cli-linux-amd64"   "$REL/zerg-cli-linux-amd64"
 
   for f in "$REL"/zerg-*; do
     case "$f" in *.sha256) continue ;; esac
