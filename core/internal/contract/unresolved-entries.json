@@ -43,8 +43,8 @@
       "bin": "zerg-compat",
       "who_calls": "**回滚前置校验②**（状态可读性）只能靠它 —— 构建总入口有独立档（`--only-compat`）+ 它进制品矩阵；退码表把它的 4 档登记成独立命名空间；茧壁 argv 静默门把它列进禁用清单",
       "callers": [
-        {"file": "scripts/build/build-all.sh", "line": 158, "what": "构建：独立档 `--only-compat` 编它一件"},
-        {"file": "scripts/build/build-all.sh", "line": 173, "what": "文档在脚本里：`zerg-compat check` 的五档语义（0/1/2/3/4）"},
+        {"file": "scripts/build/build-all.sh", "line": 168, "what": "构建：独立档 `--only-compat` 编它一件（行号 2026-09-21 重取：发布链⑤ 在本脚本文件头加了 10 行 ⇒ 158→168）"},
+        {"file": "scripts/build/build-all.sh", "line": 183, "what": "文档在脚本里：`zerg-compat check` 的五档语义（0/1/2/3/4）（行号 2026-09-21 重取：同上 173→183）"},
         {"file": "core/internal/compat/migrate.go", "line": 575, "what": "兼容层自己把 `ManagedBy` 写成它（归属证据）"},
         {"file": "scripts/gates/check-wall-layer.py", "line": 29, "what": "茧壁门：它进 argv 禁用清单（不许从茧壁里起）"}
       ],
