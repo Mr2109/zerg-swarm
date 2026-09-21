@@ -14,8 +14,8 @@
     · 断言：组件×平台矩阵必须与**该档的期望集**完全一致——多一件少一件都**拒绝出清单**
       （宁可让发布失败，也不能发出升级器读不懂的清单）
     · 两档（2026-09-21 修 G1）：
-        严格档（默认 · CI/发布）  期望集 = EXPECTED（7 件 · 发布契约）
-        本机档（ZERG_MANIFEST_LOCAL=1）期望集 = EXPECTED − CI_ONLY（6 件 · 差集**显式声明**，不是现推）
+        严格档（默认 · CI/发布）  期望集 = EXPECTED（9 件 · 发布契约）
+        本机档（ZERG_MANIFEST_LOCAL=1）期望集 = EXPECTED − CI_ONLY（8 件 · 差集**显式声明**，不是现推）
       详见文件下方 EXPECTED / CI_ONLY 处的口径注释。
 """
 import datetime
@@ -36,7 +36,7 @@ import sys
 #   本机档**仍然逐件校验**：少一件、或多一件（含本机不该出现的 CI-only 件）一律拒出清单。
 # 为什么差集只有一件：`zerg-wall-linux-amd64` 是 **CI-only** —— 茧壁是 Rust，本地不做交叉编
 #   （设计稿 L4：Rust 交叉到 linux 要额外链接器/工具链，本版不做）；core/agent 两件是纯 Go 交叉编
-#   （CGO_ENABLED=0），本机就出得来 ⇒ 本机档合法矩阵 = darwin 四件 + linux 两件 = 6 件。
+#   （CGO_ENABLED=0），本机就出得来 ⇒ 本机档合法矩阵 = darwin 五件 + linux 三件 = 8 件。
 import os as _os
 LOCAL_MODE = _os.environ.get("ZERG_MANIFEST_LOCAL") == "1"
 
@@ -50,6 +50,17 @@ EXPECTED = {
     # linux 件由 CI 的 ubuntu runner 构建（与 core/agent 的纯 Go 交叉编不同，Rust 本地不跨编）。
     "zerg-wall-darwin-arm64",
     "zerg-wall-linux-amd64",
+    # 命令面 CLI（独立二进制，源码 core/cmd/zerg；机器上装的那一份 = bin/zerg）：
+    # **为什么名字里带 `-cli-` 而不是叫 `zerg-darwin-arm64`**（2026-09-21 补件）：
+    #   本文件的解析按 `zerg-<组件>-<os>-<arch>` **四段**切（第 111 行 `parts = name.split("-")`），
+    #   三段的 `zerg-darwin-arm64` 会让 `parts[3]` 直接 IndexError ⇒ 清单出不来；
+    #   而 `zerg-<组件>-<平台>` 正是仓里既有的制品命名契约
+    #   （`core/internal/selfupdate/build.go:97 ArtifactName` · `scripts/build/zerg-upgrade.sh:735` ·
+    #    `publish/install.sh:123` 都按 `zerg-<组件>-<plat>` 拼名并 `sed "s/-$PLAT$//"` 反推组件名）
+    #   ⇒ 组件名取 `cli`，与其余件同形、不改共享解析器。
+    #   纯 Go（CGO_ENABLED=0 下 GOOS=linux GOARCH=amd64 实测可编 ⇒ **不是 CI-only**，本机档也出它）。
+    "zerg-cli-darwin-arm64",
+    "zerg-cli-linux-amd64",
 }
 
 # CI-only：本机路线出不了、且**不许出现**在产物里 —— 本机档从 EXPECTED 里减掉它。
