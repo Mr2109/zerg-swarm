@@ -19,17 +19,27 @@
 //	**无件 ⇒ 拒**（退码 2）· **手写件（字段齐、没签名）⇒ 拒** · 件批的工具/范围不符 ⇒ 拒。
 //	干跑（`--dry-run`）**不需要**批准件 —— 它零副作用；计划面照旧把批准件的判决打出来，好让人先看后签。
 //
+// ③-b（2026-09-22 本枚 · **真事故级**）**写入前语法自检**：改后的内容先过一遍机检 ——
+//
+//	`.py` ⇒ `python3 -c "import ast; ast.parse(...)"`（内容走 stdin，永不进 argv）；`.sh`/`.bash` ⇒ `bash -n`。
+//	**不过 ⇒ 拒写**（退码 2 · 不落盘、不记审计、目标件一个字节不动）；**判不了**（解释器起不来）⇒
+//	退码 8 **不给结论**（不假装检过）。别的扩展名**不适用**（本仓可机检的两类之外，不自造检查器）。
+//	为什么：一次 `--replace` 漏闭括号它**照写** ⇒ 写上盘的是一件当场 SyntaxError 的件（改前只有
+//	「回读 sha256 对拍」，那对得上恰恰证明**写坏了也照过**）。
+//
 // 与既有条文的接缝（**不重复立项** ✗）：写面**不新立锁**（§九 M5：真源在持锁者）、**不新立退码**
 // （照 §4.1 K3 那张表）、**不改契约**；本件只是「改」这一环的**唯一入口**。
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -64,6 +74,8 @@ type editAuditLine struct {
 	// ③-a（2026-09-21）：**批准件**（谁签的、签的哪一件）——「谁让它改的」也要能回读。
 	Approval string `json:"approval,omitempty"`
 	Approver string `json:"approver,omitempty"`
+	// ③-b（2026-09-22）：写入前的**语法自检判决**（过 / 不适用）—— 拒的那一格不落审计（没写就不记账）。
+	Syntax string `json:"syntax,omitempty"`
 }
 
 // cmdDevEdit —— `zerg dev edit`：受控写入的唯一入口（默认干跑）。
@@ -172,6 +184,10 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 			return exitUsage
 		}
 	}
+	// ④-b **写入前语法自检**（③-b）：判的是「改完之后长什么样」，不是原件 —— 干跑也照样判，
+	// 好让人先看见（计划面与真写面**同一份判决**，不是一个说绿一个说红）。
+	syntaxJudg, syntaxWhy := editSyntaxCheck(fileRel, after)
+
 	beforeSHA := sha256Of(before)
 	afterSHA := sha256Of(after)
 	auditPath := editAuditPath()
@@ -179,7 +195,7 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		"proposal": proposalID, "file": fileRel, "mode": mode,
 		"before_sha256": shortSHA(beforeSHA), "after_sha256": shortSHA(afterSHA),
 		"before_bytes": fmt.Sprintf("%d", len(before)), "after_bytes": fmt.Sprintf("%d", len(after)),
-		"audit_path": auditPath, "out_path": outPath,
+		"audit_path": auditPath, "out_path": outPath, "syntax": syntaxJudg,
 	}
 
 	// ③-a 人签批准件（**只读**判定）：干跑也要能看见「有没有、验没验过」——
@@ -206,6 +222,25 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	// ⑤-b 真写的**语法闸**（③-b）：不过 ⇒ 拒写（退码 2）；判不了 ⇒ 不给结论（退码 8）。
+	//     位置在批准件闸**之前**：先看「改成了什么」再看「谁批的」—— 内容本身就是废件时，
+	//     让人先改内容，别先去签一枚批废件的批准件。
+	if syntaxJudg == "不过" {
+		inv.setErr("usage", "syntax_check_failed", "改后的内容语法不过")
+		fmt.Fprintf(stderr, "%s: **语法自检不过 ⇒ 拒写**（改后的 %s 解析不了）：\n    %s\n", progName, fileRel, syntaxWhy)
+		fmt.Fprintf(stderr, "口径（③-b）：写盘前先自检 —— `.py` 走 `ast.parse`、`.sh` 走 `bash -n`；**不过的件一个字节都不写**\n")
+		fmt.Fprintf(stderr, "  目标件未动：%s（审计也未落 —— 没写就不记账）\n", outPath)
+		fmt.Fprintf(stderr, "先看计划件：%s dev edit --proposal %s --file %s … --dry-run（计划面会打出同一份判决）\n", progName, proposalID, fileRel)
+		fmt.Fprintf(stderr, "error.kind=usage · detail=syntax_check_failed · retryable=false · remedy=fix_usage\n")
+		return exitUsage
+	}
+	if syntaxJudg == "不判" {
+		inv.setErr("blocked", "syntax_check_unavailable", "语法自检跑不起来")
+		fmt.Fprintf(stderr, "%s: **语法自检跑不起来 ⇒ 不给结论**（不假装检过）：%s\n", progName, syntaxWhy)
+		fmt.Fprintf(stderr, "口径（③-b）：判不了就不写 —— 要么把解释器装上，要么改一个不适用自检的件\n")
+		return exitBlocked
+	}
+
 	// ⑥ 真写的第一道闸 = **人签批准件**（无件 / 手写件 / 批的范围不含本次改件 ⇒ 退码 2）：
 	//   与 `approve` 族同一条验签路（`verifyTicketState` = 消费者那一个判定口），**不另写第二套**。
 	if rc := devEditRequireApproval(inv, appr, fileRel, stderr); rc != exitOK {
@@ -225,7 +260,7 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		Mode: mode, BeforeSHA256: beforeSHA, AfterSHA256: afterSHA,
 		BeforeBytes: int64(len(before)), AfterBytes: len(after), By: by,
 		Confirm: inv.confirm, AuditPath: auditPath,
-		Approval: appr.Path, Approver: appr.Appr,
+		Approval: appr.Path, Approver: appr.Appr, Syntax: syntaxJudg,
 	}
 	if beforeMissing {
 		line.Note = "新建件（写前不存在）"
@@ -264,6 +299,45 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
+// editSyntaxProbe —— 语法自检的**唯一口径**（扩展名 → 检查器 argv；内容一律走 **stdin**，永不进 argv）。
+// 为什么不按「脚本里有没有 shebang」猜：判据要**机械可判** —— 只看扩展名这一件事。
+var editSyntaxProbe = map[string][]string{
+	".py":   {"python3", "-c", "import ast, sys; ast.parse(sys.stdin.read())"},
+	".sh":   {"bash", "-n"},
+	".bash": {"bash", "-n"},
+}
+
+// editSyntaxCheck —— 写入前的**语法自检**（③-b）。返回三态判决：
+//
+//	"过"     —— 检查器跑完且没报（`.py` 解析得动 / `.sh` 语法对）
+//	"不适用" —— 扩展名不在口径里（本仓可机检的两类之外 ⇒ 不自造检查器，也不假装检过）
+//	"不过"   —— 检查器报了（why = 原文，逐字转出，不润色）
+//	"不判"   —— 解释器起不来（why = 为什么）⇒ 调用方按**不给结论**处理（不写）
+//
+// 内容走 stdin：`.py` 的源码里有引号/反斜杠是常态，拼进 `-c` 的字符串就是**二次转义**的坑；
+// stdin 是逐字节的，内容一个字都不改。
+func editSyntaxCheck(fileRel string, content []byte) (judg, why string) {
+	probe, ok := editSyntaxProbe[strings.ToLower(filepath.Ext(fileRel))]
+	if !ok {
+		return "不适用", ""
+	}
+	cmd := exec.Command(probe[0], probe[1:]...)
+	cmd.Stdin = bytes.NewReader(content)
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		if _, isExit := err.(*exec.ExitError); isExit {
+			msg := strings.TrimSpace(errb.String())
+			if msg == "" {
+				msg = err.Error()
+			}
+			return "不过", msg
+		}
+		return "不判", err.Error()
+	}
+	return "过", ""
+}
+
 // emitDevEditPlan —— 计划件（干跑与「确认档不齐」两条路共用；零副作用）。
 // blocked=true 时，最后一行点明为什么没执行（三态里 fail-closed 的那一格）。
 func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *proposalRecord, beforeMissing bool, inv *invocation, blocked bool) {
@@ -276,6 +350,7 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 	fmt.Fprintf(stdout, "  前后字节 : %s → %s\n", row["before_bytes"], row["after_bytes"])
 	fmt.Fprintf(stdout, "  审计落点 : %s（一行一事件 · 追加只写 · **写不进审计就不改件**）\n", row["audit_path"])
 	fmt.Fprintf(stdout, "  批准件   : %s —— %s\n", row["approval_path"], row["approval"])
+	fmt.Fprintf(stdout, "  语法自检 : %s%s\n", row["syntax"], ifStr(row["syntax"] == "不过", " —— **真写会被拒**（`.py`=ast.parse / `.sh`=bash -n；先改内容）", ""))
 	fmt.Fprintf(stdout, "  回滚路径 : %s（提案的退点 + git）\n", orDash(prop.Rollback))
 	if blocked {
 		fmt.Fprintf(stdout, "  未执行   : D3 档确认不齐 —— 要 `--confirm=%s --yes` 同时到（fail-closed：从不提问）\n", planHost())

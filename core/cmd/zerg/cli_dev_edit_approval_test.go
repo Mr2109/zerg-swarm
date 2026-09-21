@@ -9,6 +9,9 @@
 //
 // 判据的四枚钥匙都由本件自己造（Ed25519 + `control.ApprovalPayload`/`KeyID`/`VerifyApprovalSignature`
 // 是**消费者同一条路**）：私钥不留盘、公钥落 `operator.pub` —— 与 `approve keygen` 的产物同格式。
+//
+// 判据⑤（2026-09-22 本枚 · **真事故级**）：**写入前语法自检** —— `.py` 改完解析不了 ⇒ 拒写
+// （退 2 · 件一个字节不动 · 连审计都不落）；同一件改合法 ⇒ 退 0 且写上盘（成对 = 有区分度）。
 package main_test
 
 import (
@@ -18,6 +21,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -161,6 +165,88 @@ func TestDevEdit_RealWriteNeedsHumanApproval(t *testing.T) {
 	}
 	if line["approver"] != "张三" || !strings.HasSuffix(line["approval"].(string), "approvals/dev_edit.json") {
 		t.Errorf("审计要能回读「谁让它改的」：%+v", line)
+	}
+}
+
+// synthRepoForEditPy —— 同上，但目标件是 **.py**（语法自检那一格的夹具）。
+func synthRepoForEditPy(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "core", "internal", "version", "version.go"), "package version\n")
+	target := filepath.Join("core", "tools", "target.py")
+	mustWrite(t, filepath.Join(root, target), "def f():\n    return 1\n")
+	return root, target
+}
+
+// TestDevEdit_SyntaxGateRefusesUnparsablePy —— 判据⑤：写盘前语法自检（`.py` ⇒ `ast.parse`）。
+//
+// 病征（真事故）：一次 `--replace` 漏闭括号，命令面**照写** —— 写上盘的是一件当场 SyntaxError 的件
+// （改前只有「回读 sha256 对拍」，那对得上恰恰证明**写坏了也照过**）。本用例逐格钉住三态：
+//
+//	① 确认档齐 + 人签批准件齐、内容漏闭括号 ⇒ 退 2，目标件一个字节不动、连审计都不落；
+//	② 同一件同一提案、内容合法 ⇒ 退 0 且真写上盘（成对：证明 ① 不是「一律拒」）；
+//	③ 干跑 ⇒ 退 0 且计划面**先打出同一份判决**（「真写会被拒」），零副作用。
+func TestDevEdit_SyntaxGateRefusesUnparsablePy(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("本机没有 python3 ⇒ 自检落在「不判」那一格（按不给结论处理），本用例不跑")
+	}
+	repo, target := synthRepoForEditPy(t)
+	prop, state := t.TempDir(), t.TempDir()
+	writeEditProposal(t, prop, "DEV-9003", target)
+	sign := writeOperatorKey(t, state)
+	bad := filepath.Join(t.TempDir(), "bad.py")
+	mustWrite(t, bad, "def f(:\n    return 1\n") // 漏闭括号 —— 真事故那一枚
+	good := filepath.Join(t.TempDir(), "good.py")
+	mustWrite(t, good, "def f():\n    return 2\n")
+
+	// ① 语法不过 ⇒ 拒写
+	mustWrite(t, filepath.Join(state, "approvals", "dev_edit.json"),
+		string(sign("dev_edit", target, "张三", "2026-09-22T00:00:00+08:00", "放行这一件"))+"\n")
+	rc, _, errb := runDevEdit(t, repo, prop, state, "--proposal", "DEV-9003", "--file", target,
+		"--from", bad, "--confirm="+hostnameOf(t), "--yes")
+	if rc != 2 {
+		t.Fatalf("语法不过 ⇒ 退 2（fail-closed），得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(errb, "语法自检不过") {
+		t.Errorf("拒因要点名「语法自检不过」：%q", errb)
+	}
+	if !strings.Contains(errb, "SyntaxError") {
+		t.Errorf("拒因要带上检查器原文（`SyntaxError`）：%q", errb)
+	}
+	got, _ := os.ReadFile(filepath.Join(repo, target))
+	if !strings.Contains(string(got), "return 1") || strings.Contains(string(got), "def f(:") {
+		t.Errorf("被拒的那一格里件**一个字节都不许动**：%q", got)
+	}
+	if _, err := os.Stat(filepath.Join(state, "edit_audit.jsonl")); err == nil {
+		t.Errorf("被拒 ⇒ 连审计都不该落（没写就不记账）")
+	}
+
+	// ② 内容合法 ⇒ 真写上盘（成对）
+	rc, _, errb = runDevEdit(t, repo, prop, state, "--proposal", "DEV-9003", "--file", target,
+		"--from", good, "--confirm="+hostnameOf(t), "--yes")
+	if rc != 0 {
+		t.Fatalf("内容合法 ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	got, _ = os.ReadFile(filepath.Join(repo, target))
+	if !strings.Contains(string(got), "return 2") {
+		t.Errorf("合法内容要真写上盘：%q", got)
+	}
+	ab, err := os.ReadFile(filepath.Join(state, "edit_audit.jsonl"))
+	if err != nil {
+		t.Fatalf("真写要落审计：%v", err)
+	}
+	if !strings.Contains(string(ab), "\"syntax\":\"过\"") {
+		t.Errorf("审计要能回读语法判决：%q", ab)
+	}
+
+	// ③ 干跑：计划面先给判决（零副作用）
+	rc, out, _ := runDevEdit(t, repo, prop, state, "--proposal", "DEV-9003", "--file", target,
+		"--from", bad, "--dry-run")
+	if rc != 0 {
+		t.Fatalf("干跑 ⇒ 退 0（零副作用），得到 %d", rc)
+	}
+	if !strings.Contains(out, "语法自检") || !strings.Contains(out, "真写会被拒") {
+		t.Errorf("计划面要打出语法判决并点明「真写会被拒」：%q", out)
 	}
 }
 
