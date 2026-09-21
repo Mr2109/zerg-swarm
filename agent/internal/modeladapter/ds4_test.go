@@ -8,7 +8,7 @@ import (
 )
 
 // 2026-09-14 新增：ds4 适配器的 --ctx / --vision 透传
-// 设计依据：docs/01-设计/设计-ds4适配器接视觉.md
+// 设计依据：已归档至 Zerg-归档/v2.5.10/01-设计/设计-ds4适配器接视觉.md
 
 func mkDS4(file string, custom map[string]interface{}) *registry.ModelEntry {
 	return &registry.ModelEntry{File: file, Custom: custom}
