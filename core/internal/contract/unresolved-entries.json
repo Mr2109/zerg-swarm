@@ -16,8 +16,8 @@
       "who_calls": "主控侧的**子端调度器**在生产默认路径上 exec 它 · 构建/打包/升级三条脚本出它 · CI 工作流出它 · 文档把它写成常驻子端（systemd `x3-agent.service` / LaunchDaemon `com.zerg.agent`）",
       "callers": [
         {"file": "core/internal/agent/scheduler.go", "line": 419, "what": "生产默认：`exec zerg-agent`（唯一的仓内运行时调用）"},
-        {"file": "scripts/build/pack-release.sh", "line": 70, "what": "打包：落进发布目录（darwin）"},
-        {"file": "publish/ci/release-agent.yml", "line": 96, "what": "CI：交叉编译出该件（行号 2026-09-21 重取：供应链两处改动在文件头加了 4 行 + 三个 job 各加 permissions ⇒ `go build … -o ../dist/zerg-agent-$GOOS-$GOARCH` 由 84 移到 96）"},
+        {"file": "scripts/build/pack-release.sh", "line": 80, "what": "打包：落进发布目录（darwin）（行号 2026-09-21 重取：契约件② 在本脚本插入命令面 CLI 三处 ⇒ 该行由 70 漂到 80）"},
+        {"file": "publish/ci/release-agent.yml", "line": 97, "what": "CI：交叉编译出该件（行号 2026-09-21 重取：契约件③ 在 go build 段插了 2 行注释 + 1 行 `go build … zerg-cli-…` ⇒ 该行由 96 漂到 97）"},
         {"file": "scripts/build/zerg-upgrade.sh", "line": 693, "what": "升级器：读它的版本号（四件清单之一）"},
         {"file": "README.md", "line": 82, "what": "文档：常驻面（Linux systemd / macOS LaunchDaemon · :8100）"}
       ],
