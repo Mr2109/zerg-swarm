@@ -311,6 +311,98 @@ func ImpactSemanticGateForTest(tagsJSON []byte) (bool, string, string) {
 	return impactSemanticGate(tagsJSON)
 }
 
+// ---- `A3` 波纹卡片的**只读桥** ---------------------------------------------------------------
+
+// ImpactCardForTest 一张卡片的只读快照（具名类型 —— 匿名结构体在两个包里各写一遍就会漂）。
+type ImpactCardForTest struct {
+	Items      []map[string]string
+	Raws       int
+	NoWhy      int
+	UnknownWhy int
+	Oversize   int
+	SemRed     int
+	CutTier    [5]int
+	Truncated  bool
+	Warnings   []string
+	HowRestore string
+
+	FixedTokens, BodyTokens, TotalTokens, BytesTokens int
+	RedN, Dist1N, LexMax, SimN, PubN                  int
+}
+
+func (c ImpactCardForTest) toCard() impactCard {
+	return impactCard{
+		Items: c.Items, Raws: c.Raws, NoWhy: c.NoWhy, UnknownWhy: c.UnknownWhy, Oversize: c.Oversize,
+		SemRed: c.SemRed, CutTier: c.CutTier, Truncated: c.Truncated, Warnings: c.Warnings,
+		HowRestore: c.HowRestore, FixedTokens: c.FixedTokens, BodyTokens: c.BodyTokens,
+		TotalTokens: c.TotalTokens, BytesTokens: c.BytesTokens,
+		RedN: c.RedN, Dist1N: c.Dist1N, LexMax: c.LexMax, SimN: c.SimN, PubN: c.PubN,
+	}
+}
+
+// ImpactCardOfForTest 造卡片（纯函数 · 负控能直接喂坏条目）。
+func ImpactCardOfForTest(rows []map[string]string, fixed, tgt string) ImpactCardForTest {
+	c := impactCardOf(rows, fixed, tgt)
+	return ImpactCardForTest{
+		Items: c.Items, Raws: c.Raws, NoWhy: c.NoWhy, UnknownWhy: c.UnknownWhy, Oversize: c.Oversize,
+		SemRed: c.SemRed, CutTier: c.CutTier, Truncated: c.Truncated, Warnings: c.Warnings,
+		HowRestore: c.HowRestore, FixedTokens: c.FixedTokens, BodyTokens: c.BodyTokens,
+		TotalTokens: c.TotalTokens, BytesTokens: c.BytesTokens,
+		RedN: c.RedN, Dist1N: c.Dist1N, LexMax: c.LexMax, SimN: c.SimN, PubN: c.PubN,
+	}
+}
+
+// ImpactCardJudgeForTest 判据①②③的唯一判定口（喂坏卡片 ⇒ 必须报错）。
+func ImpactCardJudgeForTest(c ImpactCardForTest) error { return impactJudgeCard(c.toCard()) }
+
+// ImpactCardWhyJudgeForTest 判据②的判定口（`why` 闭集六选一 · 硬门槛）。
+func ImpactCardWhyJudgeForTest(items []map[string]string) error { return impactJudgeCardWhy(items) }
+
+// ImpactCardRedLineJudgeForTest 判据「语义级永不进会红行」（§3.5 铁律）的判定口。
+func ImpactCardRedLineJudgeForTest(items []map[string]string) error {
+	return impactJudgeCardRedLine(items)
+}
+
+// ImpactWhySixForTest `why` 闭集（六选一）真源 —— 测试不另抄一份。
+func ImpactWhySixForTest() []string { return append([]string{}, impactWhySix...) }
+
+// ImpactCardCapsForTest 卡片四条硬上限（条数 / 总量 token / 单条行数 / 单条 token）。
+func ImpactCardCapsForTest() (items, tokens, lines, itemTokens int) {
+	return impactItemMax, impactTokenMax, impactItemLineMax, impactItemTokenMax
+}
+
+// ImpactTokenEstimateForTest token 估算（返回 保守口径, 设计现读口径=字节÷4）。
+func ImpactTokenEstimateForTest(s string) (int, int) { return impactTokenEstimate(s) }
+
+// ImpactCardItemTokensForTest 单条卡片的保守 token（判据①「单条 ≤ 60」的同一口径）。
+func ImpactCardItemTokensForTest(it map[string]string) int { return impactCardItemTokens(it) }
+
+// ImpactReversibilityForTest 退法的一格（具名类型）。
+type ImpactReversibilityForTest struct {
+	Tier    int
+	Cmd     string
+	Resolve []string
+	SHA     string
+	Line    string
+}
+
+// ImpactReversibilityDecideForTest 判档（纯函数）：三档逐档可喂。
+func ImpactReversibilityDecideForTest(isBinProduct bool, rollback, gitSHA, rel string) ImpactReversibilityForTest {
+	r := impactReversibilityDecide(isBinProduct, rollback, gitSHA, rel)
+	return ImpactReversibilityForTest{r.Tier, r.Cmd, r.Resolve, r.SHA, r.Line}
+}
+
+// ImpactReversibilityOfForTest 现算退法档（只读 · 盘上找现成回滚件 + `git log -1`）。
+func ImpactReversibilityOfForTest(root, rel string) ImpactReversibilityForTest {
+	r := impactReversibilityOf(root, &impactTarget{Kind: impactKindFile, Raw: rel, Rel: rel})
+	return ImpactReversibilityForTest{r.Tier, r.Cmd, r.Resolve, r.SHA, r.Line}
+}
+
+// ImpactJudgeReversibilityForTest 判据④（§九 判据⑨ 退法可执行性）的判定口。
+func ImpactJudgeReversibilityForTest(root string, rev ImpactReversibilityForTest) error {
+	return impactJudgeReversibility(root, impactReversibility{rev.Tier, rev.Cmd, rev.Resolve, rev.SHA, rev.Line})
+}
+
 // ---- T-62：升阶闸门（`core/internal/contract/stage-gate.json`）的**只读桥** ----
 
 // StageGateSpecForTest 升阶闸门真源的一格。
