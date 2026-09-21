@@ -37,10 +37,10 @@
       "face": "入口（cmd/Makefile/bin/顶层）",
       "objects": 13,
       "adopt": 0,
-      "internal": 5,
-      "retire": 1,
+      "internal": 6,
+      "retire": 0,
       "pending": 7,
-      "why": "② 5 不动（zerg-core · zerg-agentd · Makefile · bin/ · 顶层两件启动脚本）；③ 1 = compressor_demo；④ 7 = P13 的七个老入口（**本枚只取证，生死待拍**）"
+      "why": "② 5 不动（zerg-core · zerg-agentd · Makefile · bin/ · 顶层两件启动脚本）+ 1（2026-09-21 改判：compressor_demo 由 ③ 改判 ② 保留为内部 · 登记 `scripts/公开标记.tsv` public=no）= 6；③ 0（改判后入口面 ③ 清零）；④ 7 = P13 的七个老入口（**本枚只取证，生死待拍**）"
     },
     {
       "face": "门禁步骤",
@@ -73,13 +73,13 @@
   "tally": {
     "objects": 273,
     "adopt": 61,
-    "internal": 183,
-    "retire": 4,
+    "internal": 184,
+    "retire": 3,
     "pending": 25,
     "movement": {
       "adopt": "41 + 9（决议②）+ 3（决议⑩）+ 8（T-56 余项：标定 3 + 评测 5）= 61",
-      "internal": "145 + 17（决议① HTTP）+ 1（决议① 界面）+ 3（决议③ HTTP）+ 1（决议③ 界面）+ 12（决议⑦⑧）+ 4（T-56 余项：评测线接线在跑）= 183",
-      "retire": "4（不变：253 三件 + compressor_demo）",
+      "internal": "145 + 17（决议① HTTP）+ 1（决议① 界面）+ 3（决议③ HTTP）+ 1（决议③ 界面）+ 12（决议⑦⑧）+ 4（T-56 余项：评测线接线在跑）+ 1（2026-09-21 改判：compressor_demo ③⇒②）= 184",
+      "retire": "3（2026-09-21 改判后 = `scripts/253/` 三件；compressor_demo 由 ③ 改判 ② ⇒ 已移出退役台账）",
       "pending": "83 − 58（落回量：决议 46 + T-56 余项 12） = 25"
     },
     "seven_groups": {
@@ -330,11 +330,6 @@
       "object": "scripts/253/docker_worker_test.go",
       "state": "已删（2026-09-20）",
       "evidence": "主仓 d52a9c7d"
-    },
-    {
-      "object": "core/cmd/compressor_demo/main.go",
-      "state": "**待删（本枚未授权）**",
-      "evidence": "38 行 · 引用面 2 行（README.md:35 · docs/skills/zerg-overview.md:63）· 删除动作不在本枚授权范围（本枚授权仅限决议⑤）⇒ 停 † 待拍"
     }
   ],
   "pending_items": [
@@ -380,10 +375,18 @@
     "E4": "术语表 ROOT 写死 + 假红未清 —— 门禁步 39 的落点，与本表 ④ 那 2 步同一条，**不重复立项**",
     "E6": "i18n `rc=2` 语义错位 —— 门禁步 40 的落点，同上"
   },
+  "改判（2026-09-21 · 收尾清单 R9 · Mr2109 14:46 批准件覆盖本件）": {
+    "object": "core/cmd/compressor_demo/main.go",
+    "from": "③ 退役（决策表-收编与退役-20260920.md §二 第 4 行 · 原判「建议退役删除」）",
+    "to": "② 保留为内部实现（不发布 + 登记 `scripts/公开标记.tsv` public=no）",
+    "why": "唯一压缩器最小示例（38 行 · 零业务 · 删了下次复现要重写）；现跑确认不进任何构建/发布面：`scripts/build/build-all.sh` 0 命中 · `publish/whitelist.txt` 0 命中 · `bin/` 无它的制品",
+    "effects": "真源逐格：入口面 internal 5→6 · retire 1→0；tally internal/retire 183/4 → 184/3；退役台账 4 件 → 3 件（`scripts/253/` 三件）。机检「③ 应 4 件」同笔改为「③ 应 3 件」；Zerg-内部文档 导出物（归属-收编与退役-20260920.md）与决策表同批标注",
+    "registration": "主仓 `c54fdbd8`（`scripts/公开标记.tsv` 118 → 119 行 · public=no）"
+  },
   "boundaries": [
     "本表只登记**归属与判据指针**，不复制设计稿正文；四类定义仍在 §5.0（行 210–215）。",
     "④ 的 25 条**不是 25 个新任务**：它们收敛成 5 组承接项（见 pending_items），逐条带 why + next。",
-    "未授权的不做：`compressor_demo` 的删除**不在本枚授权范围**（本枚授权仅限决议⑤ 的删除）。",
+    "2026-09-21 改判已生效：`compressor_demo` 由 ③ 退役改判 ② 保留为内部 + 登记 `public=no` —— 原判「退役删除」作废（决策表 §二 第 4 行已同批标注）。",
     "本表不含 273 条的**逐对象枚举**：逐对象落回写在 `Zerg-内部文档/项目文档/v2.5.10/归属-收编与退役-20260920.md`（导出物），两边的四个总数与五个面分布**逐格相同**（机检断言）。"
   ]
 }
