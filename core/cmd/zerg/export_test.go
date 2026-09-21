@@ -617,3 +617,53 @@ func CommitMessageTemplateForTest(title, proposal, by, trace, criterion string, 
 func CompareFileSetsForTest(want, got []string) (bool, []string, []string) {
 	return compareFileSets(want, got)
 }
+
+// ---- A4：影响面钩子分档（`family_impact_hook.go`）的**只读桥** ----
+// 桥的纪律同本文件顶部三条：只读形状、**直接指真源**（`= impactHookDecide` 那一份）、不另写副本。
+
+// ImpactHookFactsForTest 判档要的**全部事实**（纯数据 ⇒ 成对负控能直接喂「可找回 / 不可找回」）。
+type ImpactHookFactsForTest struct {
+	Class     string
+	Rel       string
+	BeforeSHA string
+	Tracked   bool
+	GitSHA    string
+	Archive   string
+	Outside   bool
+}
+
+// ImpactHookVerdictForTest 判档结果（三档 + 依据 + 三条判据现读 + 可找回证据两件）。
+type ImpactHookVerdictForTest struct {
+	Class    string
+	Tier     string
+	Why      string
+	Recall   [3]string
+	Evidence []string
+}
+
+// ImpactHookDecideForTest 判档的**唯一判定口**（与实现同一份纯函数）。
+func ImpactHookDecideForTest(f ImpactHookFactsForTest) ImpactHookVerdictForTest {
+	h := impactHookDecide(impactHookFacts{
+		Class: f.Class, Rel: f.Rel, BeforeSHA: f.BeforeSHA,
+		Tracked: f.Tracked, GitSHA: f.GitSHA, Archive: f.Archive, Outside: f.Outside,
+	})
+	return ImpactHookVerdictForTest{Class: h.Class, Tier: h.Tier, Why: h.Why, Recall: h.Recall, Evidence: h.Evidence}
+}
+
+// ImpactHookClassForTest 分类器（与实现同一份 `impactHookClassOf` —— 判「改 / 符号级删 / 件级 / 判不了」）。
+func ImpactHookClassForTest(rel, before, after string) (string, string) {
+	return impactHookClassOf(rel, []byte(before), []byte(after))
+}
+
+// ImpactDigestForTest 摘要指纹（与实现同一份 `impactDigestOf` —— 第三者可复算：同一段正文 ⇒ 同一枚）。
+var ImpactDigestForTest = impactDigestOf
+
+// ImpactTierNamesForTest 三档取值（**与实现同一份常量** —— 测试不另造第二套名字）。
+func ImpactTierNamesForTest() []string {
+	return []string{impactHookTierRecord, impactHookTierReport, impactHookTierBlock}
+}
+
+// ImpactClassNamesForTest 三类动作的取值（同上）。
+func ImpactClassNamesForTest() []string {
+	return []string{impactHookClassEdit, impactHookClassSymbol, impactHookClassFile, impactHookClassUnknown}
+}
