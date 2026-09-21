@@ -33,7 +33,7 @@ permissions:
 jobs:
   gate:
     name: 版本门禁
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -73,7 +73,7 @@ jobs:
           # `build constraints exclude all Go files` 直接构建失败（2026-09-11 CI 实测）。
           # darwin 用 1（与本机验证过的构建一致）；linux 用 0（实测可编，静态、免工具链）。
           - { goos: darwin, goarch: arm64, cgo: '1', runner: macos-14 }
-          - { goos: linux,  goarch: amd64, cgo: '0', runner: ubuntu-latest }
+          - { goos: linux,  goarch: amd64, cgo: '0', runner: ubuntu-24.04 }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
@@ -157,7 +157,7 @@ jobs:
   release:
     name: 汇总 + 发布
     needs: [gate, go, ui]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 本 job 是**唯一**真需要写权限的：`gh release create` 要建 Release。
     # 只此一处提权（顶层仍是 `contents: read`）—— 将来若要出 attestation，也在本 job 内单独加
     # `id-token: write` + `attestations: write`，不加到别的 job 上。
