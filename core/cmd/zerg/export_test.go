@@ -779,3 +779,88 @@ func ImpactPullLayersModeOffForTest(root, rel string) ([]string, error) {
 	}
 	return notes, nil
 }
+
+// ---- `B1` 步名真源与探针（`family_impact_steps.go`）-------------------------------------------
+//
+// 桥只开**只读**面：拉真源（`--list` 现跑）· 跑一条探针（`--emit-cmd`）· 把契约 id 投影到步名。
+// 每个符号都**直接指真源**（不另写一份副本 —— 另写一份 = 测试测的是那份副本）。
+
+// ImpactStepTableForTest 步名真源的一张**现跑快照**（含逐名探针：本跑步数 / 解析条数 / 名字不唯一
+// 条数 / 负控退码）。测试据此判「步数不写常量」与「判据① 恰好 1 条」。
+type ImpactStepTableForTest struct {
+	Total      int
+	Listed     int
+	Status     string
+	Detail     string
+	Names      []string
+	AmbigNames []string // 名字不唯一的步名（判据① 不成立 ⇒ 不可机检）
+	Resolved   int
+	Ambiguous  int
+	Unresolv   int
+	HeadSHA    string
+	Dirty      string
+	NegRC      int
+	ListMs     float64
+	ProbeMs    float64
+}
+
+// ImpactStepTableOfForTest 拉一张现跑快照（`withProbe=false` 就只跑 `--list`，不跑逐名探针）。
+func ImpactStepTableOfForTest(root string, withProbe bool) ImpactStepTableForTest {
+	t := impactStepTablePull(root)
+	if withProbe {
+		impactStepTableProbe(root, &t)
+	}
+	out := ImpactStepTableForTest{
+		Total: t.Total, Listed: t.Listed, Status: t.Status, Detail: t.Detail,
+		Resolved: t.Resolved, Ambiguous: t.Ambiguous, Unresolv: t.Unresolved,
+		HeadSHA: t.HeadSHA, Dirty: t.Dirty, NegRC: t.NegRC,
+		ListMs:  float64(t.ListCost.Microseconds()) / 1000.0,
+		ProbeMs: float64(t.ProbeCost.Microseconds()) / 1000.0,
+	}
+	for _, r := range t.Rows {
+		out.Names = append(out.Names, r.Name)
+		if r.Hits != 1 {
+			out.AmbigNames = append(out.AmbigNames, r.Name)
+		}
+	}
+	return out
+}
+
+// ImpactStepProbeForTest 跑一条探针（`--emit-cmd '<原样传进来的那一个>'`）⇒ (输出, 退码)。
+// 判据①②都靠它：真步名 ⇒ 1 条；子串 ⇒ 4 条；不存在的名字 ⇒ rc=2。
+func ImpactStepProbeForTest(root, arg string) (string, int) {
+	out, rc, _ := impactStepProbeCmd(root, arg)
+	return out, rc
+}
+
+// ImpactStepNegativeProbeForTest 判据② 用的那个负控名字（与实现**同一份**常量 —— 不另抄一个）。
+func ImpactStepNegativeProbeForTest() string { return impactStepNegativeProbe }
+
+// ImpactStepViewForTest 投影的只读视图（含**人面那一格的渲染文本** ⇒ 测试判措辞不用另拼一份）。
+type ImpactStepViewForTest struct {
+	Status   string
+	Reason   string
+	Line     string // 「会红」行里**门步**那一格（`impactStepLineText` 的原样输出）
+	Total    int
+	Steps    []string
+	ByID     map[string][]string
+	Unjoined map[string]string
+	Uncheck  []string
+	Cands    int
+	Probes   int
+	NegRC    int
+}
+
+// ImpactStepProjectionForTest 把给定的契约 id 投影到步名（与 `zerg impact` 走的是同一个口）；
+// `pull=false` = 默认档（**不拉真源** ⇒ 未机检）· `pull=true` = 按需档 `--all`（真拉 + 逐名探针）。
+func ImpactStepProjectionForTest(root string, pull bool, ids ...string) ImpactStepViewForTest {
+	p := impactStepProjectionOf(root, ids, pull)
+	return ImpactStepViewForTest{
+		Status: p.Status, Reason: p.Reason, Line: impactStepLineText(p),
+		Total: p.Total, Steps: p.Steps, ByID: p.ByID, Unjoined: p.Unjoined,
+		Uncheck: p.Uncheck, Cands: p.Cands, Probes: p.Probes, NegRC: p.NegRC,
+	}
+}
+
+// ImpactStepNotRunLineForTest 干跑那一档那一格的渲染文本（**未机检** —— 与 `dev edit` 干跑同一份取值）。
+func ImpactStepNotRunLineForTest() string { return impactStepLineText(impactStepProjectionNotRun()) }

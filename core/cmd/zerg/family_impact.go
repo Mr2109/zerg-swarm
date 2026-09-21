@@ -12,6 +12,9 @@
 //	· 仍**不在**本件：卡片与四级排序裁序的**实现**在 `family_impact_card.go`（`A3`）· 挂进
 //	  `dev edit` 干跑（`A4`）· **落盘缓存与毫秒档**在 `family_impact_cache.go`（`A5`：本件只把
 //	  缓存挂到链上（`impactCacheOn`）并把落点/毫秒档打进 stderr 那一块）。
+//	· `B1` 本件：「会红」那一行的**门步名**那一格接到**真实可判的面**上（真源 = 门禁
+//	  `--list` 现跑 + 逐名 `--emit-cmd` 探针）—— 实现件在 `family_impact_steps.go`，
+//	  本件只**传参 + 打块**（人面那一格 + stderr 的步名真源块）。
 //
 // 档位（§4.4 · `A2` 风险那一条）：**默认档只吃毫秒层 + 编译器层**；贵层（② 符号 `callgraph`
 // 现跑 3.9–5.8s）走**按需档**。开关用**既有全局布尔** `--all`（与 `build show --all` 同形：
@@ -129,11 +132,16 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	cheap := !inv.all || inv.quick
 	layers := impactPullLayers(root, tgt, cheap, impactCacheOn)
 	rows, totalRows := impactCollectRows(layers)
+	// `B1`：「会红」那一行的**门步名**那一格 —— 真源 = 门禁 `--list` 现跑 + 逐名 `--emit-cmd`
+	// 探针（只读 · 零副作用）。两条闸：① 只在**有可 join 的脚本路径**时才拉（没有候选就不跑，
+	// 也不编「本跑 N 步」）；② 真源探针是**贵项**（`--list` 现跑 8.3–9.5s ⇒ 比最贵的层还贵）
+	// ⇒ 按 §4.4 走**按需档** `--all`，默认档照实写「未机检」并给出怎么拉（宁少报不猜报）。
+	proj := impactStepProjectionOf(root, impactStepIDsToJoin(tgt, layers), !cheap)
 	// `A3` 波纹卡片：先把骨架三行（+ 条件行）与退法算出来 —— 卡片预算要把**常量部分**也算进去
 	// （§4.1 的账：上限是死的，裁的是条目，不是骨架）。
 	rev := impactReversibilityOf(root, tgt)
 	pubLine := impactPublicLine(layers)
-	l1, l2, l3 := impactHumanLines(tgt, layers, rows, rev, cheap)
+	l1, l2, l3 := impactHumanLines(tgt, layers, rows, rev, cheap, proj)
 	card := impactCardOf(rows, l1+"\n"+l2+"\n"+l3+"\n"+pubLine, tgt.Raw)
 	// ① 人面：**恒三行**（判据③）+ 命中生效面时的条件行（§3.1/§3.7）。`--json` 时不打人面。
 	if !inv.jsonGiven {
@@ -147,6 +155,7 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	// ② stderr：层表（每层带 head_sha + layer + 该层口径值 + 粒度 + 时刻 + 耗时）+ 卡片块 + 时效声明。
 	emitImpactLayerTable(stderr, tgt, layers, card.Items, totalRows, card, cheap)
 	emitImpactCacheBlock(stderr, root, layers)
+	emitImpactStepBlock(stderr, proj)
 	emitImpactCardBlock(stderr, tgt, card, rev, layers, inv.forHuman)
 	if inv.forModel && !inv.forHuman {
 		fmt.Fprintf(stderr, "%s: `--for-model` 与默认档**同效**（§4.1：模型档就是默认档）—— 给了也照实明说，不另开一条分叉\n", progName)
@@ -296,7 +305,7 @@ const impactUsageLine = "zerg impact <文件｜契约 id> [--for-model｜--for-h
 // ★ `A3` 改了一处口径：**文件数取「六层全量」**（裁前），不是卡片里那 12 条 —— 卡片被裁是
 // **预算**的结果，拿它当「受影响文件数」会把一个大面报成小面（数字纪律：口径不同不同源）。
 func impactHumanLines(tgt *impactTarget, layers []impactLayer, rows []map[string]string,
-	rev impactReversibility, cheap bool) (string, string, string) {
+	rev impactReversibility, cheap bool, proj impactStepProjection) (string, string, string) {
 	pkgs := 0
 	if l, ok := impactLayerBySeq(layers, "①"); ok {
 		pkgs = len(l.Rows)
@@ -312,7 +321,7 @@ func impactHumanLines(tgt *impactTarget, layers []impactLayer, rows []map[string
 	}
 	l1 := fmt.Sprintf("%s受影响包 %s · 文件 %d 个 · 契约 %d 条（文件数=六层全量去重 · 卡片裁序不改这个数）",
 		impactLineHead[0], pkgStr, files, contracts)
-	l2 := impactLineHead[1] + impactRedLine(layers, cheap)
+	l2 := impactLineHead[1] + impactRedLine(layers, cheap, proj)
 	// §3.8：**建议**行内、给出下一步命令的**同一行**必带可逆性（能退吗 / 退法是哪条命令）。
 	l3 := impactLineHead[2] + strings.Join(impactSuggestions(tgt, layers, cheap), " · ") + " · " + rev.Line
 	return l1, l2, l3
@@ -339,11 +348,13 @@ func impactDistinctFiles(items []map[string]string) int {
 	return len(set)
 }
 
-// impactRedLine 「会红」那一行（闭集：契约 id + 门步名；门步名映射属 `B1` ⇒ **本件不真跑门禁** §7.8）。
+// impactRedLine 「会红」那一行（闭集：契约 id + 门步名；门步名那一格自 `B1` 起**接真源** ——
+// 真源 = 门禁 `--list` 现跑 + 逐名 `--emit-cmd` 探针，见 `family_impact_steps.go`；
+// 本行仍**只预测不真跑** §7.8，措辞里明写「预测」，**不许写成「必红」** ✗）。
 //
 // ★ §3.5 铁律（`A3` 落成可判的形态）：**语义级条目只进「建议」行、永不进「会红」行** ——
 // 义近（概率）条目即使带着 `red` 也不许进这一行；`why` 归一到六选一后按 `义近` 逐条挡掉。
-func impactRedLine(layers []impactLayer, cheap bool) string {
+func impactRedLine(layers []impactLayer, cheap bool, proj impactStepProjection) string {
 	reds := []string{}
 	seen := map[string]bool{}
 	for _, l := range layers {
@@ -364,7 +375,8 @@ func impactRedLine(layers []impactLayer, cheap bool) string {
 	} else {
 		parts = append(parts, "没命中契约条目（③ 层现读 `registry.json`）")
 	}
-	parts = append(parts, "门步名映射属 `B1`（未接 ⇒ 本行**不真跑门禁** · §7.8 只预测不真跑）")
+	// `B1`：门步名那一格（三态：取值 / 未接步 / 不可机检 —— 不许把估计写成必红）。
+	parts = append(parts, impactStepLineText(proj))
 	if l, ok := impactLayerBySeq(layers, "①"); ok && strings.Contains(l.Detail, "编译面已红") {
 		parts = append(parts, "★ 编译面现跑已红（看层表 ① 的读数）")
 	}
