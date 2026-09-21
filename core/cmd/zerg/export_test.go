@@ -303,6 +303,14 @@ func DoctorDoorItemNamesForTest() []string {
 // RepoRootForTest 仓根解析口（模型面扫描要用同一份推导，不另写一份）。
 func RepoRootForTest() string { return repoRoot() }
 
+// ---- `A2` 六层取数（变更影响面）的**只读桥** ------------------------------------------------
+
+// ImpactSemanticGateForTest 第 ⑤ 层的**在位判据**判定口（三条子句 · 纯函数）。
+// 桥它而不在测试里另写一份：另写一份 = 测的是那份副本，不是真东西（本文件第 ③ 条纪律）。
+func ImpactSemanticGateForTest(tagsJSON []byte) (bool, string, string) {
+	return impactSemanticGate(tagsJSON)
+}
+
 // ---- T-62：升阶闸门（`core/internal/contract/stage-gate.json`）的**只读桥** ----
 
 // StageGateSpecForTest 升阶闸门真源的一格。
