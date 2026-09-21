@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -107,4 +108,42 @@ func truncateStr(s string, n int) string {
 		return s
 	}
 	return string(r[:n])
+}
+
+// ★ must-fail（2026-09-21 修 latestVersionDir 判据的牙）：**在途设计稿目录不算已发布版**。
+// 病（收尾清单 R13）：旧判据只按「版本号最大 + 非递归 md 数 ≥3」取 ⇒ 并发子代理在写的
+// `Zerg-内部文档/项目文档/v2.5.11/`（设计稿 5 篇 · 零发布件）被当成「最新发布版」，
+// `section=使用` 当场报「使用指南文档未找到」（全量档两条 core go test 双红）。
+// 本用例造两枚目录（高版本的只有设计稿 / 低版本的是发布版）⇒ 断言选中的**必须是发布版**；
+// 再把发布版拿走（只剩设计稿）⇒ 断言返回空（宁缺勿滥：不拿设计稿冒充发布版）。
+// 变异（判据缺牙）：去掉「必须含发布件」这一条 ⇒ 本用例必红（本批已实测真红一次）。
+func TestOverviewLatestVersionSkipsDesignDraft(t *testing.T) {
+	repo, _ := isolateDocsRoots(t)
+	base := filepath.Join(repo, "docs")
+	// ① 设计稿目录：版本号最大，但零发布件（照 v2.5.11 现跑形状：设计-…／承接-…／欠账… 共 5 篇）
+	draft := filepath.Join(base, "项目文档", "v9.9.9")
+	if err := os.MkdirAll(draft, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"设计-变更影响面-v1.0.md", "设计-变更影响面-v1.1.md", "设计-变更影响面-v1.2.md",
+		"承接-度量与排序面-20260921.md", "欠账台账-v2.5.11.md",
+	} {
+		if err := os.WriteFile(filepath.Join(draft, name), []byte("# 设计稿（未发布）\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// ② 已发布版目录：版本号更低，但有发布件（writeDocsFixture 会一并造出发布件）
+	pub := writeDocsFixture(t, base, "v9.9.8", "PUB-MARKER", 3)
+
+	if got := latestVersionDir(); got != pub {
+		t.Errorf("must-fail：应选中已发布版 %s，实得 %q —— 选到设计稿目录 = 判据缺牙", pub, got)
+	}
+	// ③ 只剩设计稿 ⇒ 宁缺勿滥（空串 = 「没有已发布版」，不是「版本目录里没有文档」）
+	if err := os.RemoveAll(pub); err != nil {
+		t.Fatal(err)
+	}
+	if got := latestVersionDir(); got != "" {
+		t.Errorf("must-fail：仓内只剩设计稿目录时应返回空（不拿设计稿冒充发布版），实得 %q", got)
+	}
 }

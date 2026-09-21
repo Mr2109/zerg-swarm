@@ -38,11 +38,16 @@ func zergOverview(args map[string]any, workDir string) (string, error) {
 
 // ============ ① 版本解析（多级 fallback——设计遗漏#5） ============
 
-// latestVersionDir — 最新版本档案目录（glob <项目文档取源根>/v* → 版本号最大）
+// latestVersionDir — 最新**已发布版**档案目录（glob <项目文档取源根>/v* ⇒ 版本号最大的**已发布版**）
 // fallback 级: ①版本号解析 ②修改时间 ③字典序
 //
 // ★ 缺件不静默（2026-09-19）：取源根两处都不在盘上时**记一行日志点名两个候选路径**，
 // 再返回空串——调用方据此报「缺件」而不是把空当成「目录里没有文档」。
+// ★ 判据修（2026-09-21 · 收尾清单 R13 根因）：**在途设计稿目录不算已发布版**。旧判据只按
+// 「版本号最大 + 非递归 md ≥3」取 ⇒ 并发子代理在写的 `Zerg-内部文档/项目文档/v2.5.11/`（设计稿 5 篇 ·
+// 零发布件）被当成「最新发布版」，`zergOverviewSection("使用")` 当场报「使用指南文档未找到」
+// ⇒ 全量档两条 core go test 双红。新判据**只认含发布件的版本目录**（选法：已发布版里取版本号最大者，
+// 即下面降序排序后的第一个合格目录）—— 发布件就是消费方真要读的那一件（`section=使用` 直接读它）。
 func latestVersionDir() string {
 	base := zergDocsBase()
 	if base == "" {
@@ -58,14 +63,36 @@ func latestVersionDir() string {
 		vi, vj := parseVersion(filepath.Base(dirs[i])), parseVersion(filepath.Base(dirs[j]))
 		return compareVersion(vi, vj) > 0
 	})
-	// 守卫: 版本目录文档数 <3 = 空壳（新版本刚建档未填充——2026-09-05 实测 v2.6 两文件导致
-	// 使用指南/INDEX 断链）——回退到第一个文档齐全的版本
+	// ★ 发布版判据（2026-09-21 修）：**在途设计稿目录一律跳过** —— 只认目录里有**发布件**的
+	// 那几个（`hasReleaseArtifact`：使用指南 `使用-虫族指南-*.md`）。
+	// 空壳守卫（版本目录文档数 <3 = 空壳——2026-09-05 实测 v2.6 两文件导致 使用指南/INDEX 断链）
+	// 并入同一轮：已发布版里取版本号最大且文档齐全的那个；合格的一个都不齐全 ⇒ 退回**最新那个
+	// 已发布版**（仍优于「什么都取不到」），但**绝不**退回只有设计稿的目录。
+	fallback := ""
 	for _, d := range dirs {
+		if !hasReleaseArtifact(d) {
+			continue
+		}
+		if fallback == "" {
+			fallback = d
+		}
 		if len(globMd(d)) >= 3 {
 			return d
 		}
 	}
-	return dirs[0]
+	return fallback
+}
+
+// releaseArtifactGlob — 「已发布版」的**最低证据**：目录里有发布件 = 使用指南。
+// 为什么不拿 `INDEX.md` 当判据：`v2.6` 那种两文件壳里也有 INDEX.md ⇒ 区分不出「在途设计稿」；
+// 而使用指南正是 `section=使用` 要读的件 ⇒ 判据与消费方同源（读得到的才算已发布版）。
+// 文件名带日期 ⇒ 用 glob，不写死某一版的名字。
+const releaseArtifactGlob = "使用-虫族指南-*.md"
+
+// hasReleaseArtifact — 版本目录里有发布件？
+func hasReleaseArtifact(dir string) bool {
+	files, _ := filepath.Glob(filepath.Join(dir, releaseArtifactGlob))
+	return len(files) > 0
 }
 
 // parseVersion — "v2.5.7" → [2,5,7]（容忍 v2.5.7-xxx / 2.5.7）
@@ -222,13 +249,13 @@ func zergOverviewSection(sec string) (string, error) {
 	// 特殊 section: 使用/指南 → 使用指南文档
 	if sec == "使用" || sec == "指南" || sec == "usage" || sec == "使用虫族" {
 		if verDir != "" {
-			guide := filepath.Join(verDir, "使用-虫族指南-20260902.md")
-			if _, err := os.Stat(guide); err == nil {
-				b, _ := os.ReadFile(guide)
+			guides, _ := filepath.Glob(filepath.Join(verDir, releaseArtifactGlob))
+			if len(guides) > 0 {
+				b, _ := os.ReadFile(guides[0])
 				return fmt.Sprintf("# 使用虫族指南（%s——全文——人模型双视角）\n%s", filepath.Base(verDir), string(b)), nil
 			}
 		}
-		return "", fmt.Errorf("使用指南文档未找到——取源根 %s 下无 使用-虫族指南-*.md", verDir)
+		return "", fmt.Errorf("使用指南文档未找到——取源根 %s 下无**已发布版**目录（缺发布件 %s）", zergDocsBase(), releaseArtifactGlob)
 	}
 	if zergDocsBase() == "" {
 		// 缺件不许静默：根没找到 ≠ 文档没写；报因不报空
