@@ -12,7 +12,7 @@ on:
 jobs:
   core:
     name: 主控 + 子端（Go）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
@@ -55,7 +55,7 @@ jobs:
 
   version:
     name: 版本号一致性（UI ↔ Go 单一来源）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: 检查
@@ -65,7 +65,7 @@ jobs:
 
   compat:
     name: 跨版本状态兼容清单门禁（B7 / G10）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: 清单 ↔ 代码双向一致（R1–R6）
@@ -81,7 +81,7 @@ jobs:
 
   docs:
     name: 文档双语门禁（配对/标题/链接）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: 检查
@@ -89,7 +89,7 @@ jobs:
 
   i18n:
     name: i18n 门禁（键对称/引用完整/占位符/中文基线）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: 检查
@@ -97,7 +97,7 @@ jobs:
 
   secrets:
     name: 密钥扫描
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
