@@ -71,6 +71,9 @@ func TestImpactCard_CapsAreHard(t *testing.T) {
 func TestImpactCard_RealRunFitsCapsAndFourFields(t *testing.T) {
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
+	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
+	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
+	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 	itemsMax, _, _, _ := zerg.ImpactCardCapsForTest()
 
 	rc, out, errb := runCapture("impact", "core/cmd/zerg/main.go", "--json", "what,why,how,red")
@@ -367,6 +370,9 @@ func TestImpactReversibility_ThreeTiersAndExecutability(t *testing.T) {
 func TestImpactCard_HumanFaceStaysThreeLinesAndCarriesReversibility(t *testing.T) {
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
+	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
+	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
+	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 	tgt := "core/cmd/zerg/main.go"
 
 	rc, out, errb := runCapture("impact", tgt)

@@ -99,6 +99,9 @@ func itoaSafe(n int) string {
 //	负控：三枚坏行（摘 `口径=` / 摘 `head_sha=` / ② 层摘 `algo=`）喂进判定口 ⇒ **必须报错**。
 func TestImpactLayers_LayerTableAndTier(t *testing.T) {
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
+	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
+	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
+	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 	tgt := "core/cmd/zerg/main.go"
 
 	rc, out, errb := runCapture("impact", tgt)
@@ -153,6 +156,8 @@ func TestImpactLayers_LayerTableAndTier(t *testing.T) {
 // 三条子句（`/api/tags` 非空 · `capabilities` 含 `embedding` · `embedding_length` 有值）
 // 由纯函数判 —— 正控一 + 负控三（各摘一条子句 ⇒ 必须判「不在位」）。
 func TestImpactLayers_SemanticGateThreeClauses(t *testing.T) {
+	// `A5`：本用例也要**现跑**一次 `impact`（判据③的现读面）⇒ 状态目录同样改到合成目录。
+	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 	ok := []byte(`{"models":[{"name":"all-minilm:latest","capabilities":["embedding"],"details":{"embedding_length":384}}]}`)
 	if pass, model, detail := zerg.ImpactSemanticGateForTest(ok); !pass || model != "all-minilm:latest" {
 		t.Errorf("正控破：在位判据竟判「不在位」（model=%q · %s）", model, detail)
@@ -190,6 +195,9 @@ func TestImpactLayers_SemanticGateThreeClauses(t *testing.T) {
 //	负控：不在生效面上的件 ⇒ **必须不打**（在另一件里已判，这里再判一次「打没打」的成对）。
 func TestImpactLayers_PublicFacePositiveAndNegative(t *testing.T) {
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
+	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
+	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
+	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 	rc, out, errb := runCapture("impact", "scripts/公开标记.tsv")
 	if rc != 0 {
 		t.Fatalf("生效面上的件 ⇒ 期望 rc=0，得到 %d · stderr=%s", rc, errb)
@@ -221,6 +229,9 @@ func TestImpactLayers_PublicFacePositiveAndNegative(t *testing.T) {
 // `--json` 的 `items[]` 每条都要有 `why`，且取值落在**层名闭集**里（来路不明的东西进不来）。
 func TestImpactLayers_MachineFaceItemsCarryLayerWhy(t *testing.T) {
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
+	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
+	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
+	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 	rc, out, errb := runCapture("impact", "core/cmd/zerg/main.go", "--json", "what,why,how,red")
 	if rc != 0 {
 		t.Fatalf("期望 rc=0，得到 %d · stderr=%s", rc, errb)
