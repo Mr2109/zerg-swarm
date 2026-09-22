@@ -632,8 +632,8 @@ func emitImpactStepBlock(w io.Writer, p impactStepProjection) {
 	}
 	fmt.Fprintf(w, "  退路（§九 批2）：投影取不到 ⇒ **只报数量不报步名**（宁少报不猜报）· join 不到的契约条目**明写「未接步」**"+
 		"（不许拿 `go test` 一类粗步冒充）\n")
-	fmt.Fprintf(w, "  ★ 为什么这条走 stderr：退路要求的原因本该进 `warnings[]`，而 `emitEnvelopeWith` 里 `warnings` 恒 `[]`、"+
-		"`truncated` 恒 `false`（`A1`–`A5` 红线「不改 `emitEnvelope*`」本批未解禁）⇒ 同一份取值落 stderr（缺口照实登记，不偷偷改包封）\n")
+	fmt.Fprintf(w, "  ★ 这一份取值现在**两处同形**（`G-08` 已解 · 顶层键一个没加）：退路要求的原因自本批起也进包封 `warnings[]`"+
+		"（`emitEnvelopeWith` 的 `warnings` 不再写死；`truncated` 同理，只有**真裁条**才 true）⇒ 本块与包封**同一份取值**（不各算一遍）\n")
 	fmt.Fprintf(w, "  零副作用：两个入口都只读（`--list` 只列不跑 · `--emit-cmd` 在自检**之前** `exit 0`）⇒ "+
 		"不写缓存 / 不落审计 / 不改件 · 不改门禁脚本\n")
 }

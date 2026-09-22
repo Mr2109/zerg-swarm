@@ -20,14 +20,14 @@
 // 诚实边界（§十一 · `F6`「把『没报』读成『没影响』」）：
 //   - 每一层的「未跑 / 未适用 / 未装 / 未建索引 / 读不到」都**逐层点名**（`--quick` 跳过的层
 //     写「未跑」，**不冒充「没影响」**）；层表恒在 stderr，人面三行里不塞这些。
-//   - **`meta.layers_not_run[]` / `meta.head_sha` / `meta.effective_at` 今天没有落点** ——
-//     `emitEnvelopeWith`（`main.go`）把六键里的 `warnings` 恒写 `[]`、`meta` 只写
-//     `count/source/changed`（+`node`/`idempotency_key`）⇒ 层规三件只能落在**既有位置**：
-//     人面条件行 + stderr 层表 + `items[]` 的四字段；本件**不改 `emitEnvelope*`**（`A1` 红线）
-//     ⇒ **这一格照实记为 CLI 缺口**（回执里的「CLI 缺口一栗」）。
+//   - **`meta.layers_not_run[]` 自本批起有落点了**（`G-08` 解禁：`emitEnvelopeWith` 不再把 `warnings`
+//     写死 —— 按需子键与 `warnings[]` 的真值由命令传）⇒ `zerg impact` 的没跑的层**同形**落
+//     包封（`meta.layers_not_run[]` + `warnings[]`）与 stderr 层表/预算块两处；
+//     `meta.head_sha` / `meta.effective_at` 这两格**还没接**（它们今天只在层表与 `items[]` 里）
+//     ⇒ **照实记为未接**，不许假装已接 ✗。
 //   - 运行期面（反射 / 配置串 / HTTP 路由 / 序列化）标 **「未查」**（§十一：静态图天生看不见）；
-//     `R34` 的「`zerg doctor` 名册四项 verdict 摘要进 `warnings[]` 一条」**本批未接**（同一处缺口：
-//     `warnings[]` 是死的）—— **照实标未做**，不许假装全覆盖。
+//     `R34` 的「`zerg doctor` 名册四项 verdict 摘要进 `warnings[]` 一条」**仍未接**（落点有了，
+//     接它属 `R34` 那一批）—— **照实标未做**，不许假装全覆盖。
 //   - ④a 只用 `git grep`（**只搜 tracked**）并在口径里写死；仓里另有一条正则面命令
 //     `zerg code find`（**全盘口径**：含未跟踪件）—— 两层口径不同、数不同源，本件**不另抄它的口径**
 //     （`A1` 红线：不动 `code find` 的扫码口径与排除表）。
@@ -992,7 +992,7 @@ func impactLayerSemantic(root string, tgt *impactTarget, layout impactStateLayou
 	}
 	// 运行期面（§十一 + `R34`）：**未查**，逐条点名四类盲区 —— 静态图天生看不见。
 	lay.Detail += " · 运行期面（反射 / 配置串 / HTTP 路由 / 序列化）：**未查**" +
-		"（`R34` 的「`zerg doctor` 名册四项 verdict 摘要进 `warnings[]` 一条」**本批未接**：六键包封的 `warnings` 今天恒 `[]` ⇒ 无落点）"
+		"（`R34` 的「`zerg doctor` 名册四项 verdict 摘要进 `warnings[]` 一条」**仍未接** —— `warnings[]` 自本批（`G-08`）起有落点了，但这一条**还没接上**：接它属 `R34` 那一批，不许假装已接 ✗）"
 	return lay
 }
 

@@ -242,6 +242,47 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `--for-model` 与 `--for-human` 同时给了 ⇒ 以**人面档**为准（模型档是人面档的子集 · §4.1；照实明说，不静默挑一个）\n", progName)
 	}
 	// ③ 机器面：六键包封（`items` 恒数组；本件只换里面装的东西 —— 换成**被预算裁过的卡片条目**，不改包封）。
+	//
+	// ★ 本批（`G-08` 解禁）：**六键一个不多一个不少**，但 `warnings[]` / `truncated` 两格自本批起
+	// 给它俩的**真值**，`meta` 按需追加子键 —— 三处取值**全部取现成的那一份**（不与 stderr 块
+	// 各算一遍 ⇒ 两处不会漂）：
+	//   · `truncated`         ← `card.Truncated`（**真裁了条目**才有；卡片块同一格）
+	//   · `warnings[]`        ← `card.Warnings`（「已裁 N 条」/ 单条超限未进卡）**加**
+	//     `impactBudgetNotRunOf` 的逐层点名（预算块 `warnings[]` 那一段的**同一个函数**）
+	//   · `meta.layers_not_run[]` ← 同上一份（`runtime` 恒在 + 没跑的层逐条）
+	//   · `meta.how_to_restore`   ← `card.HowRestore`（§3.3 三件之三 · 只许真裁时非空）
+	// 拿不到的（例如某一份还没算出来）**不写**：留白比填一个「我以为」的值值钱 ✗。
+	{
+		notRun := impactBudgetNotRunOf(layers, budget.Plan)
+		inv.metaAddStrings("layers_not_run", append([]string{impactBudgetRuntimeEntry}, notRun...))
+		if card.Truncated {
+			inv.markTruncated()
+		}
+		for _, wmsg := range card.Warnings {
+			inv.warnf("%s", wmsg)
+		}
+		for _, ln := range notRun {
+			inv.warnf("%s", ln)
+		}
+		inv.metaAddStr("how_to_restore", card.HowRestore)
+		// `B4`：预算契约件读不到 ⇒ 本跑**不裁**（那是「不给结论」，不是「没超」）—— 真事，进 warnings。
+		if !budget.Plan.OK && strings.TrimSpace(budget.Plan.Why) != "" {
+			inv.warnf("分层预算契约件读不到 ⇒ 本跑**不裁**（不是「没超预算」）：%s", budget.Plan.Why)
+		}
+		// `B1`：门步名真源的那一格（`Status` 三态不许混：取值 / 未机检 / 未接步）。
+		// **没拉**与**接不上**都是真事 —— 按契约「不静默」写进 `warnings[]`（不许写成「没有」）✗。
+		if strings.TrimSpace(proj.Status) != "" && proj.Status != "取值" {
+			inv.warnf("门步名真源**%s**（不是「没有」）：%s", proj.Status, proj.Reason)
+		}
+		ids := make([]string, 0, len(proj.Unjoined))
+		for id := range proj.Unjoined {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids) // 定序：包封字节不许被 map 遍历序带跑
+		for _, id := range ids {
+			inv.warnf("契约 %s 的门步名**未接步**：%s", id, proj.Unjoined[id])
+		}
+	}
 	if inv.jsonGiven {
 		if rc := emitSelected(stdout, stderr, inv, inv.path, inv.fields, card.Items); rc != exitOK {
 			return rc
@@ -545,7 +586,7 @@ func emitImpactLayerTable(stderr io.Writer, tgt *impactTarget, layers []impactLa
 	// 裁的结果在卡片块里显式声明（三件），**不静默截**。
 	fmt.Fprintf(stderr, "%s: 条目：卡片 `items` %d 条（六层全量 %d 条 · 卡片上限 %d 条 · 层内上限 %d/层 · token 上限 %d —— §3.1 两个上限都是死的；本跑 truncated=%t）\n",
 		progName, len(items), totalRows, impactItemMax, impactRowPage, impactTokenMax, card.Truncated)
-	fmt.Fprintf(stderr, "%s: ★ CLI 缺口（照实标）：§3.3 的三件（`truncated=true` / `warnings[]` / `meta.how_to_restore`）在**六键包封里没有落点** —— `emitEnvelopeWith` 把 `warnings` 恒写 `[]`、`truncated` 恒写 `false`、`meta` 只写 `count/source/changed`；`A1`/`A2` 红线「不改 `emitEnvelope*`」本批未解禁 ⇒ 三件落在**卡片块**（同一份取值，逐字同形），包封那一格照实记缺口（不偷偷改包封）\n", progName)
+	fmt.Fprintf(stderr, "%s: §3.3 三件**两处同形**（`G-08` 已解 · 六键一个不多一个不少，动的是**值**）：包封 `warnings[]` / `truncated` / `meta.how_to_restore` 与本块**同一份取值**（不与本块各算一遍 ⇒ 两处不会漂）；`meta.layers_not_run[]` 与预算块那份同源（`impactBudgetNotRunOf`）\n", progName)
 	if cheap {
 		fmt.Fprintf(stderr, "%s: 档位 = **默认档**（§4.4「只吃毫秒层 + 编译器层」）—— 没跑的层已在上面逐条点名（宁少报不猜报）；要看 ② 符号层给 `--all`\n", progName)
 	}
