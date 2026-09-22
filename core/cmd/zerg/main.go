@@ -1307,6 +1307,31 @@ func init() {
 			endpoint: "",
 			run:      cmdArchiveVerify,
 		},
+		// ---- 波① · T1a `Q-099`/`Q-100`：加模型 + 热加载（**纯 CLI 活 · 主控零改动** · 2026-09-23）----
+		// 为什么是它们（§自排补遗 `S1` 逐字）：`Q-099` 是 P0、`Q-100` 是 P1，调研结论「主控零改动」——
+		// 热加载路由**已经在跑的主控上**（`core/cmd/zerg-core/main.go`：`r.Post("/api/config/reload", …)`），
+		// 且处理器**自己先解析**（解析不过即回 `CONFIG_LOAD_FAILED`）⇒ 命令面这边只补「先校验后写 /
+		// 先校验再请求」两道。今天这两件事只能手改 YAML（手搓插坏名册两次）或重启主控 ✗。
+		{
+			path:     []string{"model", "add"},
+			kind:     "ModelAdd",
+			summary:  "往名册件（`gateway/fleet.yaml`）**先校验后写**加一条模型（`--dry-run` 先行 · 真写要 `--yes` · 写完读回再校 · 任一步不过 ⇒ 回滚 · 不覆盖别人的条）",
+			usage:    "zerg model add --host <主机> --model <名> --file <GGUF 路径> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run | --yes] [--json <字段>]",
+			args:     []string{"主机（--host）", "模型名（--model）", "GGUF 路径（--file）"},
+			fields:   []string{"model", "host", "file", "fleet", "line", "added"},
+			endpoint: "",
+			run:      cmdModelAdd,
+		},
+		{
+			path:     []string{"config", "reload"},
+			kind:     "ConfigReload",
+			summary:  "热加载主控配置（照 `nginx -s reload`：**先校验、失败回滚**）—— 名册件本地解析不过 ⇒ **不发请求**（旧配置继续跑）",
+			usage:    "zerg config reload [--dry-run] --yes [--json <字段>]",
+			args:     []string{"（无名册件参数：走 `--root` / `--path` 或仓根）"},
+			fields:   []string{"status", "models", "added", "fleet_nodes", "fingerprint"},
+			endpoint: "POST /api/config/reload（路由已在跑的主控上 ⇒ 主控零改动）",
+			run:      cmdConfigReload,
+		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
 	for _, c := range commands {
@@ -1413,6 +1438,11 @@ type invocation struct {
 	deep         bool // `C3`/`C4`/`C1`：**贵面现跑**（重复面报数 + 六档标定曲线 · 删面两器）
 	confirm      string
 	confirmGiven bool
+	// `模型面` 两枚布尔（波① `T2`/`T1a`）：`--declared`（`core daemon ls` 并给声明面两列 +
+	// 幽灵计数）与 `--verified`（`model add` 写 `verified: true`）。与 `--all`/`--fast` 同一形态：
+	// 全局布尔、谁用谁读 —— 不用的命令静默忽略。
+	declared bool
+	verified bool
 	// `--ttl <时长>`（`E4` · 人签批准件的**有效期**面）：与 `--confirm` 同一种形态 —— 「给了旗标」与
 	// 「给了值」是两件事（`--ttl` 裸给 ⇒ `ttlGiven` 真、值为空 ⇒ 由 `approve new` 判成用法错 2，
 	// **不许**静默当「没给」）。缺省（不给这一枚）⇒ 不过期，件与今天逐字节同形态。
@@ -1650,6 +1680,10 @@ func parseInvocation(args []string) (*invocation, error) {
 		// 要真跑就显式 `--deep` —— 跑一次约 40s，不给日常路径与门禁套件加这份账。
 		case a == "--deep":
 			inv.deep = true
+		case a == "--declared":
+			inv.declared = true
+		case a == "--verified":
+			inv.verified = true
 		case a == "--confirm" || a == "--confirm=":
 			// 给了旗标但没给值 ⇒ confirmGiven 为真、值为空（由 guard 判成「值不匹配目标」）
 			inv.confirmGiven = true
@@ -1715,6 +1749,12 @@ func valueFlagName(a string) string {
 	// 审批的件名与理由 —— 与上面同一张名字表的口径（值照收，语义在各自命令里判）。
 	switch a {
 	case "--file", "--message", "--proposal", "--tool", "--note", "--from", "--replace", "--root":
+		return a
+	}
+	// 名册面旗标（波① `T1a` · `Q-099`：`model add` 往 `gateway/fleet.yaml` 写一条）。
+	// 与上面几排同一口径：值照收，语义在各自命令里判（`model add` 逐个校验）。
+	switch a {
+	case "--host", "--backend", "--ctx", "--mem-gb", "--arch", "--mmproj", "--added":
 		return a
 	}
 	// 融合面旗标（§十八.3 四件 · 批 E · T-59）：`ask` 的能力路由与 `plan`/`apply` 的落点。

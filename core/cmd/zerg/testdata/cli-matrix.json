@@ -4740,6 +4740,68 @@
    "want_rc": 1,
    "want_stdout_bytes": 0,
    "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+  },
+  {
+   "id": "model/add#未知旗标",
+   "command": "model add",
+   "argv": [
+    "model",
+    "add",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "model/add#不认的契约主号",
+   "command": "model add",
+   "argv": [
+    "model",
+    "add",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "model/add#--json 不给字段",
+   "command": "model add",
+   "argv": [
+    "model",
+    "add",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+  },
+  {
+   "id": "config/reload#未知旗标",
+   "command": "config reload",
+   "argv": [
+    "config",
+    "reload",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "config/reload#不认的契约主号",
+   "command": "config reload",
+   "argv": [
+    "config",
+    "reload",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
   }
  ]
 }
