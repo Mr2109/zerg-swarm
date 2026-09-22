@@ -470,11 +470,13 @@ func TestImpactCache_OnlyGrowsAndHasNoAutoActions(t *testing.T) {
 		}
 	}
 	// 干跑那一档（`dev edit` 干跑）传的是 `impactCacheOff`，且**不读也不写**缓存。
+	// ★ 计数随动（`C3`）：这一格的调用串自 `C3` 起多了两枚参数（文档面档位 —— 干跑**不现建**索引、
+	// 只用默认档 B），缓存挡位那半**逐字未变**（判据一个字没动，只跟实现签名走）。
 	hookSrc, err := zerg.ImpactHookSourceForTest()
 	if err != nil {
 		t.Fatalf("读钩子件失败：%v", err)
 	}
-	if !strings.Contains(hookSrc, "impactPullLayers(root, tgt, true, impactCacheOff)") {
+	if !strings.Contains(hookSrc, `impactPullLayers(root, tgt, true, impactCacheOff, false, "B")`) {
 		t.Error("干跑那一档没传 `impactCacheOff`（A4「不写缓存」的加强形态就没落地）")
 	}
 	before, _ := zerg.ImpactCacheFilesUnderForTest(filepath.Join(state, "impact-cache"))
