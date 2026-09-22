@@ -1,9 +1,14 @@
 {
-  "schema": "zerg-unresolved-entries/1",
-  "note": "七个未定入口的**归属取证**（§7.1 `P13` · §7.2 `U21` · §5.2 入口面 · 开工单 T-53）。本文件是那一格的**单一真源**：它只登记「谁在调我」的**逐行证据**（file + line + 该行原文必须含的名字），不替任何人拍归属。判据机检读它（core/cmd/zerg/unresolved_entries_test.go）：每条证据的文件在、行在、原文含名字 —— 证据不许挂在空气上（rotting ledger 就是第二份『规则写了没人接电』）。",
+  "schema": "zerg-unresolved-entries/2",
+  "note": "七个未定入口的**归属取证**（§7.1 `P13` · §7.2 `U21` · §5.2 入口面 · 开工单 T-53）。本文件是那一格的**单一真源**：它只登记「谁在调我」的**内容锚证据**（file + anchor + 行号提示），不替任何人拍归属。判据机检读它（core/cmd/zerg/unresolved_entries_test.go）：锚必须在证据件里**逐字命中且唯一** —— 0 处 ⇒ 「锚不存在」· >1 处 ⇒ 「锚不唯一」（不许静默取第一处）· 锚可跨行（`\\n`）= 上下文窗。证据不许挂在空气上，也不许按字面行号钉（rotting ledger 就是第二份『规则写了没人接电』）。★ **口径 v2（2026-09-22）**：v1 按字面行号取证（`file` + `line`），该口径已**四次漂移**（70→80 · 96→97 · 158→168 · 173→183），而本轮 compat 两条的真身再漂 **+74**（168→242 · 183→257 —— 元凶 `b7c1d471`(G-05 · +6) 与 `e71d07a5`(G-06 · +60) 在 `build-all.sh` **前面插行**）⇒ 这是**第二次同类回归**（第一次是 70→80 · 96→97），故判据换成内容锚：`line_hint` 只是**提示**（锚起行），漂了**只警告不判红**。",
   "source": "Zerg-内部文档/项目文档/v2.5.10/设计-命令面与契约-v0.7.md §7.1 P13 · §7.2 U21 · §5.2（现读：7 件 = 除 `zerg-core` / `zerg-agentd` 之外的 7 个入口）",
   "search_command": "rg -c -w '<入口名>' . -g '!{bin,data,.git,target,node_modules,dist,vendor,.venv,venv,.build,zerg-wt,_history}/**'",
   "search_caveat": "口径照 `U21` 逐字（`grep -r` 必须带排除面）。★ 一处诚实边界：本轮的检索面是**仓内**（主仓 + Zerg-内部文档）——launchd / systemd / 宿主机 crontab 里的**仓外**调用面不在检索范围内（那要登机取证，属换环境批量补测）。",
+  "evidence_rule": "① 每条证据必须带 `anchor`（内容锚）：它是证据件里的**逐字子串**，必须在件内**恰好命中 1 处**（`strings.Count` 口径）。② 命中 **0 处** ⇒ 判据① 红，错因逐字写「锚不存在」。③ 命中 **>1 处** ⇒ 判据① 红，错因逐字写「锚不唯一（命中 N 处：行 …）」—— **不许静默取第一处**；要修就收紧锚串，或让锚跨行写成**上下文窗**（锚串里带 `\\n`，例：compat 那条 = 241 行宣告 + 242 行构建）。④ `line_hint` **不是判据** —— 它是「锚命中处的起始行」的**提示**，漂了只记一行警告（含漂移量）。",
+  "hint_drift_policy": "`line_hint` 与现跑锚起行不一致 ⇒ 判据**仍绿**，只在测试输出里记一行警告「行号提示漂了」。这一条就是本项要的那个性质：**在证据件头部插一行，判据不许红**（v1 的行号口径在同情况下必红 —— 对照见 `verify_command_drift`）。重取提示：跑 `verify_command_hints` 会按现跑逐条打印 file / anchor / 现锚起行。",
+  "verify_command": "cd core && go test ./cmd/zerg/ -run 'TestUnresolved' -count=1 -v",
+  "verify_command_hints": "cd core && ZERG_REFRESH_HINTS=1 go test ./cmd/zerg/ -run TestUnresolvedEvidenceHintRefresh -count=1 -v",
+  "verify_command_drift": "cd core && go test ./cmd/zerg/ -run TestUnresolvedEvidenceAnchorsAreDriftImmune -count=1 -v",
   "rule_keep": "**拍板前 7 件一个都不许删**（`P13` 逐字）。本机检把这条落成断言：7 个入口目录 + 各自的 main.go 必须在盘上。",
   "rule_no_command": "归属未定者**不许立命令名**（判据③ 逐字「`zerg trace` 这类名字**先不立命令**」）⇒ 命令树里不许出现以这些段开头的命令路径。",
   "forbidden_command_segments": ["compat", "review", "scheduler", "trace"],
@@ -15,11 +20,11 @@
       "bin": "zerg-agent",
       "who_calls": "主控侧的**子端调度器**在生产默认路径上 exec 它 · 构建/打包/升级三条脚本出它 · CI 工作流出它 · 文档把它写成常驻子端（systemd `x3-agent.service` / LaunchDaemon `com.zerg.agent`）",
       "callers": [
-        {"file": "core/internal/agent/scheduler.go", "line": 419, "what": "生产默认：`exec zerg-agent`（唯一的仓内运行时调用）"},
-        {"file": "scripts/build/pack-release.sh", "line": 80, "what": "打包：落进发布目录（darwin）（行号 2026-09-21 重取：契约件② 在本脚本插入命令面 CLI 三处 ⇒ 该行由 70 漂到 80）"},
-        {"file": "publish/ci/release-agent.yml", "line": 97, "what": "CI：交叉编译出该件（行号 2026-09-21 重取：契约件③ 在 go build 段插了 2 行注释 + 1 行 `go build … zerg-cli-…` ⇒ 该行由 96 漂到 97）"},
-        {"file": "scripts/build/zerg-upgrade.sh", "line": 693, "what": "升级器：读它的版本号（四件清单之一）"},
-        {"file": "README.md", "line": 82, "what": "文档：常驻面（Linux systemd / macOS LaunchDaemon · :8100）"}
+        {"file": "core/internal/agent/scheduler.go", "anchor": "exec.CommandContext(ctx, \"zerg-agent\"", "line_hint": 419, "what": "生产默认：`exec zerg-agent`（唯一的仓内运行时调用）"},
+        {"file": "scripts/build/pack-release.sh", "anchor": "cp -p \"$DIST/zerg-agent\"", "line_hint": 80, "what": "打包：落进发布目录（darwin）"},
+        {"file": "publish/ci/release-agent.yml", "anchor": "zerg-agent-$GOOS-$GOARCH\" ./cmd/zerg-agent", "line_hint": 97, "what": "CI：交叉编译出该件"},
+        {"file": "scripts/build/zerg-upgrade.sh", "anchor": "子端 : $(ver_of \"$PREFIX/zerg-agent\")", "line_hint": 693, "what": "升级器：读它的版本号（四件清单之一）"},
+        {"file": "README.md", "anchor": "`/usr/local/bin/zerg-agent`，LaunchDaemon `com.zerg.agent`", "line_hint": 82, "what": "文档：常驻面（Linux systemd / macOS LaunchDaemon · :8100）"}
       ],
       "verdict": "待拍（P13 第一条：件是任务运行器还是子端常驻，与 agent/cmd/zerg-agentd 的分工要人定）"
     },
@@ -30,9 +35,9 @@
       "bin": "zerg-api",
       "who_calls": "**无第三方调用者**（仓内零脚本起它）；只有文档登记 + 令牌纪律的说明面引它（`credentials.go` 点名它的 8083 面「无令牌即放行」必须治）+ 打包公开面的排除说明",
       "callers": [
-        {"file": "core/cmd/zerg/credentials.go", "line": 81, "what": "命令面自描述：点名它的 8083 面曾无令牌放行（T-18 已治）"},
-        {"file": "README.md", "line": 31, "what": "文档：把它登记成「API 服务（:8083）」"},
-        {"file": "scripts/build/publish-public.sh", "line": 84, "what": "发布面：把它当**编译产物**排除（不是调用者）"}
+        {"file": "core/cmd/zerg/credentials.go", "anchor": "`zerg-api`（8083 外部接入面）", "line_hint": 81, "what": "命令面自描述：点名它的 8083 面曾无令牌放行（T-18 已治）"},
+        {"file": "README.md", "anchor": "| zerg-api | API 服务（:8083） |", "line_hint": 31, "what": "文档：把它登记成「API 服务（:8083）」"},
+        {"file": "scripts/build/publish-public.sh", "anchor": "（zerg-agent/zerg-api/… 60MB+）", "line_hint": 84, "what": "发布面：把它当**编译产物**排除（不是调用者）"}
       ],
       "verdict": "待拍（P13：与主控 76 条真路径是否重复 —— `验真-§五-入口组:96` 记「调用面 0 命中」）"
     },
@@ -43,10 +48,10 @@
       "bin": "zerg-compat",
       "who_calls": "**回滚前置校验②**（状态可读性）只能靠它 —— 构建总入口有独立档（`--only-compat`）+ 它进制品矩阵；退码表把它的 4 档登记成独立命名空间；茧壁 argv 静默门把它列进禁用清单",
       "callers": [
-        {"file": "scripts/build/build-all.sh", "line": 168, "what": "构建：独立档 `--only-compat` 编它一件（行号 2026-09-21 重取：发布链⑤ 在本脚本文件头加了 10 行 ⇒ 158→168）"},
-        {"file": "scripts/build/build-all.sh", "line": 183, "what": "文档在脚本里：`zerg-compat check` 的五档语义（0/1/2/3/4）（行号 2026-09-21 重取：同上 173→183）"},
-        {"file": "core/internal/compat/migrate.go", "line": 575, "what": "兼容层自己把 `ManagedBy` 写成它（归属证据）"},
-        {"file": "scripts/gates/check-wall-layer.py", "line": 29, "what": "茧壁门：它进 argv 禁用清单（不许从茧壁里起）"}
+        {"file": "scripts/build/build-all.sh", "anchor": "--only-compat）\"\n  (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags \"$LDFLAGS\" -o \"$OUT/zerg-compat\" ./cmd/zerg-compat)", "line_hint": 241, "what": "构建：独立档 `--only-compat` 编它一件（锚 = 241 行宣告 + 242 行构建 的**两行上下文窗**：那条构建命令的字面与 261 行**逐字相同** ⇒ 单行锚不唯一，故带上下文窗）"},
+        {"file": "scripts/build/build-all.sh", "anchor": "（`zerg-compat check`：0 就绪", "line_hint": 257, "what": "文档在脚本里：`zerg-compat check` 的五档语义（0/1/2/3/4）"},
+        {"file": "core/internal/compat/migrate.go", "anchor": "ManagedBy: \"zerg-compat\",", "line_hint": 575, "what": "兼容层自己把 `ManagedBy` 写成它（归属证据）"},
+        {"file": "scripts/gates/check-wall-layer.py", "anchor": "'zerg-wall', 'zerg-compat',", "line_hint": 29, "what": "茧壁门：它进 argv 禁用清单（不许从茧壁里起）"}
       ],
       "verdict": "待拍（P13：它是不是对外面 —— 已进制品矩阵与 T-29 的判据面）"
     },
@@ -57,11 +62,11 @@
       "bin": "zerg-model",
       "who_calls": "**UI 在引导用户去跑它**（模型登记空态的两条本地化文案 + 模型注册模块注释）· 模型登记库（`core/internal/modelreg`）自己引它（probe/lineage/inplace 三件）· 茧壁 argv 静默门把它列进禁用清单",
       "callers": [
-        {"file": "ui/src/modules/model_registry.rs", "line": 840, "what": "UI 空态：引导到 `zerg-model probe --store`"},
-        {"file": "ui/locales/zh-CN.yml", "line": 468, "what": "UI 本地化：同一句引导（zh 面）"},
-        {"file": "ui/locales/en.yml", "line": 468, "what": "UI 本地化：同一句引导（en 面）"},
-        {"file": "core/internal/modelreg/probe.go", "line": 966, "what": "登记库自述：记录由 `zerg-model probe` 生成"},
-        {"file": "core/internal/modelreg/lineage.go", "line": 21, "what": "登记库：血缘取值由 `zerg-model probe` 的旗标显式传入"}
+        {"file": "ui/src/modules/model_registry.rs", "anchor": "引导到 zerg-model probe --store", "line_hint": 840, "what": "UI 空态：引导到 `zerg-model probe --store`"},
+        {"file": "ui/locales/zh-CN.yml", "anchor": "mreg.empty_hint: \"在终端运行 zerg-model probe", "line_hint": 468, "what": "UI 本地化：同一句引导（zh 面）"},
+        {"file": "ui/locales/en.yml", "anchor": "mreg.empty_hint: \"Run zerg-model probe", "line_hint": 468, "what": "UI 本地化：同一句引导（en 面）"},
+        {"file": "core/internal/modelreg/probe.go", "anchor": "本记录由 zerg-model probe 自动生成", "line_hint": 966, "what": "登记库自述：记录由 `zerg-model probe` 生成"},
+        {"file": "core/internal/modelreg/lineage.go", "anchor": "--parent <version> --base <id>", "line_hint": 21, "what": "登记库：血缘取值由 `zerg-model probe` 的旗标显式传入"}
       ],
       "verdict": "待拍（P13：与命令面的 `zerg model ls|opts|show` 是否有重叠面）"
     },
@@ -72,8 +77,8 @@
       "bin": "zerg-review",
       "who_calls": "**只到「未见」**：仓内检索只命中两处文档登记行（README + skills 总览），**零脚本、零守护件、零代码**起它",
       "callers": [
-        {"file": "README.md", "line": 32, "what": "文档：登记成「复查工具（C4 流程——zerg-review approve）」"},
-        {"file": "docs/skills/zerg-overview.md", "line": 60, "what": "文档：同一行（skills 总览）"}
+        {"file": "README.md", "anchor": "| zerg-review | 复查工具（C4 流程——zerg-review approve） |", "line_hint": 32, "what": "文档：登记成「复查工具（C4 流程——zerg-review approve）」"},
+        {"file": "docs/skills/zerg-overview.md", "anchor": "| zerg-review | 复查工具（C4 流程——zerg-review approve） |", "line_hint": 60, "what": "文档：同一行（skills 总览）"}
       ],
       "verdict": "待拍（P13：`U21` 的取证上限 —— 「未见调用面」≠「没有调用面」；仓外面未取证）"
     },
@@ -84,8 +89,8 @@
       "bin": "zerg-scheduler",
       "who_calls": "**只到「未见」**：仓内检索只命中两处文档登记行，**零脚本、零守护件、零代码**起它",
       "callers": [
-        {"file": "README.md", "line": 33, "what": "文档：登记成「调度器」"},
-        {"file": "docs/skills/zerg-overview.md", "line": 61, "what": "文档：同一行（skills 总览）"}
+        {"file": "README.md", "anchor": "| zerg-scheduler | 调度器 |", "line_hint": 33, "what": "文档：登记成「调度器」"},
+        {"file": "docs/skills/zerg-overview.md", "anchor": "| zerg-scheduler | 调度器 |", "line_hint": 61, "what": "文档：同一行（skills 总览）"}
       ],
       "verdict": "待拍（P13；注意与 §7.1 `P8` 的 `zerg-scheduler` 归属有接缝 —— 那条落在 T-49）"
     },
@@ -96,9 +101,9 @@
       "bin": "zerg-trace",
       "who_calls": "**只到「未见」**：仓内检索命中两处文档登记行 + 一处**代码注释**（子端系统指标的记录说明面说它与时间线视图联动分析瓶颈）—— 注释不是调用者",
       "callers": [
-        {"file": "README.md", "line": 34, "what": "文档：登记成「追踪工具（events.jsonl 时间线——冷启动标记）」"},
-        {"file": "docs/skills/zerg-overview.md", "line": 62, "what": "文档：同一行（skills 总览）"},
-        {"file": "core/internal/agent/sysmetrics.go", "line": 5, "what": "**注释**（不是调用）：说它与时间线视图联动"}
+        {"file": "README.md", "anchor": "| zerg-trace | 追踪工具（events.jsonl 时间线——冷启动❄标记） |", "line_hint": 34, "what": "文档：登记成「追踪工具（events.jsonl 时间线——冷启动标记）」"},
+        {"file": "docs/skills/zerg-overview.md", "anchor": "| zerg-trace | 追踪工具（events.jsonl 时间线——冷启动❄标记） |", "line_hint": 62, "what": "文档：同一行（skills 总览）"},
+        {"file": "core/internal/agent/sysmetrics.go", "anchor": "时间线视图联动分析瓶颈", "line_hint": 5, "what": "**注释**（不是调用）：说它与时间线视图联动"}
       ],
       "verdict": "待拍（P13 逐字：`zerg trace` 这类名字**先不立命令** —— 归属未定）"
     }
