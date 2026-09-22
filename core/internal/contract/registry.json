@@ -136,6 +136,16 @@
       "gate": "（由 core: go test 覆盖 —— 判据面在 core/cmd/zerg/cli_impact_del_test.go：五类盲区恒带五格（负控：抹掉一格 ⇒ 判定口报错）· 两件可找回证据缺一不出（负控：无提交且无归档副本 ⇒ 报「缺」）· 整件搬出/符号级删分行报（正控 + 负控）· 零自动删（静态自检：实现里没有删除动作 / 没有第二条路径）· 文档联动行恒带（口径 B · N=0 ⇒ 面内未见）",
       "change_class": "A",
       "change_note": "`五类盲区` 的五格**只许加不许减**（减一格 = 缺一却出结论 ✗）；`分类器.两档` 与 `两件可找回证据` 的「缺一不出」**只许加严**；`零自动删` 与 `红线` 只许加宽、不许收窄（收窄即越线：第二条删路径 / 自动删 / 写标记）"
+    },
+    {
+      "id": "S-n",
+      "name": "模型面适配器参数（`Q-102` · 唯一模型面写口）",
+      "truth": "core/cmd/zerg-core/main.go",
+      "truth_shape": "HTTP 端点两行（`r.Get` / `r.Put(\"/api/models/{name}/adapter-opts\", …)`）+ 命令面 `model opts get|set`（core/cmd/zerg/family_model_core.go）",
+      "version_field": "（无独立版本字段：键集由**主控适配器侧**定；命令面**不替主控编键名**，认不认由主控判、错误码逐字透传）",
+      "gate": "（由 core: go test 覆盖 —— 判据面在 core/cmd/zerg/cli_model_adapter_test.go：读面恰好一条 GET 且状态目录一件不多 · 写面恰好一条 PUT 且请求体标量认型 · 干跑零请求 · 缺 `--yes` 不打主控 · 空体不打主控 · 404 `MODEL_NO_ADAPTER` 码逐字透传）",
+      "change_class": "B",
+      "change_note": "加/改适配器动作 ⇒ 同批改本表 + 命令面（读面只读、写面 D2 要 `--yes`）+ 矩阵格；今天它是**唯一**模型面写口（借道只能 `curl` 绕命令面 —— 本表把它收进契约）"
     }
   ],
   "change_flow": {
