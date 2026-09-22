@@ -17,7 +17,7 @@ func TestProjectionsCoverFiveClasses(t *testing.T) {
 		"fullwidth":      foldWidthEvery(home),
 		"percent-encode": strings.ReplaceAll(home, "/", "%2F"),
 		"base64":         base64.StdEncoding.EncodeToString([]byte(home)),
-		"zero-width":     strings.ReplaceAll(home, "Mr2109", "ms\u200b01"),
+		"zero-width":     strings.ReplaceAll(home, foldUser, "ms\u200b01"),
 	}
 	for name, form := range forms {
 		views := Projections(form)
@@ -131,7 +131,7 @@ func TestGateCaseFoldOnlyForCaseInsensitiveRules(t *testing.T) {
 		}
 	}
 	// 反向控制：用户折叠（(?i)）的 needle 必须做折叠比较 —— 大写重发能落盘就说明脱敏漏了。
-	if leaks := VerifyNoResidueString(map[string]any{"err": "~/x"}, `{"err":"HOME OF MS01"}`); len(leaks) == 0 {
+	if leaks := VerifyNoResidueString(map[string]any{"err": homeRoot + "/x"}, `{"err":"HOME OF MS01"}`); len(leaks) == 0 {
 		t.Error("用户折叠 needle 未做折叠比较（大写重发漏检）")
 	}
 }

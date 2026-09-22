@@ -9,7 +9,7 @@ import (
 
 // ── 基准测试（任务表 T2.7 / D6：性能与限额）──────────────────────────────────
 //
-// 夹具与**原型同口径**：`sampleEvent(50)` 逐字段照抄 `~/zerg-redaction-probe`
+// 夹具与**原型同口径**：`sampleEvent(50)` 逐字段照抄本机 `zerg-redaction-probe`
 // 的 `sampleEvent`（设计附件 §三「实测数据（macOS arm64 / Go 1.26.4 / 合成事件 50 行 row）」就是
 // 在这个夹具上量的：仅 Marshal 15,008 ns · 正则包+预过滤 118,543 · 全量正则 338,624 · 本方案 327,442）。
 // 口径一致才谈得上「同机同口径对照」——换一个夹具，数字就没法比。
@@ -211,7 +211,7 @@ func BenchmarkRedactEvent_KeepFieldsThroughPipeline(b *testing.B) {
 // 路径 6.1µs · 代码行 4.4µs · base64 3.1µs · 1.8KB 长文本 53.4µs）。
 var benchValues = map[string]string{
 	"short_word":    "tool_call",
-	"path":          "~/projects/zerg/internal/controller/pipeline.go",
+	"path":          homeRoot + "/projects/zerg/internal/controller/pipeline.go",
 	"code_line":     "for i := 0; i < n; i++ { x += i }",
 	"email":         "contact ops@zerg.local for help",
 	"b64_blob":      "cfg=L1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4=",

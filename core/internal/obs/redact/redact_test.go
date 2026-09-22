@@ -67,10 +67,10 @@ func TestKeepFieldsSurvive(t *testing.T) {
 // TestDropAndMaskClasses：C 直接丢弃 + B 键级遮蔽（不看值也必须遮）。
 func TestDropAndMaskClasses(t *testing.T) {
 	out := emit(t, map[string]any{
-		"prompt": "read ~/.zshrc", "tool_args": map[string]any{"path": "/etc/passwd"},
+		"prompt": "read " + homeRoot + "/.zshrc", "tool_args": map[string]any{"path": "/etc/passwd"},
 		"api_key": tokSk, "messages": []any{"hi"},
 	})
-	mustNotContain(t, out, "~", "/etc/passwd", tokSk, `"hi"`)
+	mustNotContain(t, out, homeRoot, "/etc/passwd", tokSk, `"hi"`)
 	if strings.Count(out, PlaceholderRedacted) < 4 {
 		t.Errorf("B/C 类字段都应写成占位符（不删键）：%s", out)
 	}
@@ -91,7 +91,7 @@ func TestReplaceLiteralDoesNotExpand(t *testing.T) {
 // TestEncodedChannelIsNotPrefiltered：D13 —— 编码通道在预过滤之前（Tier-0）。
 // 纯 base64 blob 没有 `/ @ . = :` 任何分隔符 ⇒ 任何启发式预过滤都会整段跳过它。
 func TestEncodedChannelIsNotPrefiltered(t *testing.T) {
-	bare := base64.StdEncoding.EncodeToString([]byte("~/.config/zerg/token"))
+	bare := base64.StdEncoding.EncodeToString([]byte(homeRoot + "/.config/zerg/token"))
 	if i := strings.IndexAny(bare, `/@=:.-_+?&%`); i >= 0 {
 		t.Fatalf("夹具失效：裸 blob 不该含分隔符，实测含 %q", bare[i])
 	}
@@ -173,9 +173,9 @@ func TestValuePipelineReachesFixpoint(t *testing.T) {
 	for _, in := range []string{
 		"&token= 00000000!0",
 		"AuthoriZAtion:000I00 000I00",
-		"~/x",
+		homeRoot + "/x",
 		escapeSlash(home),
-		"%2FUsers%2FMr2109%2F.zshrc",
+		"%2FUsers%2F" + foldUser + "%2F.zshrc",
 		"／Users／ｆｕｚｚ０１／.ssh／id_ed25519",
 		"open /Users/fuzz\u200b01/.aws/credentials",
 		"hf-" + "abcdefghijklmnop",

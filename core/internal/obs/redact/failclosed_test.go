@@ -28,7 +28,7 @@ func TestFailClosed_InjectPanic(t *testing.T) {
 	if got := RedactionFailures(); got != before+1 {
 		t.Fatalf("单调计数器未 +1：%d → %d", before, got)
 	}
-	if strings.Contains(line, "Mr2109") || strings.Contains(line, "qwen3") || strings.Contains(line, "permission") {
+	if strings.Contains(line, foldUser) || strings.Contains(line, "qwen3") || strings.Contains(line, "permission") {
 		t.Fatalf("fallback 写回了原文片段：%s", line)
 	}
 
@@ -58,7 +58,7 @@ func TestFailClosed_OverBudget(t *testing.T) {
 	if got := RedactionFailures(); got != before+1 {
 		t.Fatalf("单调计数器未 +1：%d → %d", before, got)
 	}
-	if strings.Contains(line, "Mr2109") || strings.Contains(line, "xxxx") {
+	if strings.Contains(line, foldUser) || strings.Contains(line, "xxxx") {
 		t.Fatalf("超预算回退写回了原文：%s", line)
 	}
 

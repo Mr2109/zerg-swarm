@@ -55,7 +55,14 @@ var (
 	reBearer   = regexp.MustCompile(`(?i)\b(bearer|token|api[_-]?key|authorization|passwd|password)\b["']?\s*[:=]\s*["']?([A-Za-z0-9._\-]{6,})`)
 	reIPv4     = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
 	reURLQuery = regexp.MustCompile(`(?i)([?&](?:token|key|sig|signature|access_token|api_key|secret)=)([^\s"'&#]+)`)
-	reHomeDir  = regexp.MustCompile(`/(?:Users|home)/[A-Za-z0-9._-]+`)
+	// reHomeDir 认两种家目录形态：绝对路径（`/Users/<user>` / `/home/<user>`）与
+	// **波浪号形态**（`~/…`）。
+	// 为什么必须认 `~/`：用户面上 `~/…` 就是家目录 —— 日志、报错、shell 回显里
+	// 写出来的常常是 `~/…` 而不是绝对路径，而这条路径快路的**必要条件门**（hasHomePath）
+	// 过去只认两个绝对字面量 ⇒ `~/…` 整段跳过脱敏 = **真缺口**（设计-CI适配-v1.1 §八 待拍 3）。
+	// 波浪号这一支只吃 `~/` 两个字节：`${HOME}` 就是家目录本身，`~/` 后的尾巴照旧保留
+	// （与绝对形态把 `/Users/<user>` 换成 `${HOME}` 的口径一致）。
+	reHomeDir = regexp.MustCompile(`~/|/(?:Users|home)/[A-Za-z0-9._-]+`)
 	// reHomeEscape：与 reHomeDir 只差一件事 —— 分隔符既可以是 `/` 也可以是 `\`。
 	// 覆盖「写者把斜杠写成 `\/`（或 Windows 风格 `C:\Users\me`）」的逃逸形态：读者还原后看到的
 	// 是一条真路径 ⇒ 只按原始字节跑 reHomeDir 会漏（fuzz 实测语料 462d9f1cd05fbb5e：
@@ -362,10 +369,32 @@ func replaceLiteral(re *regexp.Regexp, s, repl string) string {
 	return re.ReplaceAllLiteralString(s, repl)
 }
 
-// hasHomePath 是 reHomeDir 的**必要条件**门：正则不可能命中，当且仅当这两个字面量都不在串里。
+// replaceHomePath 把家目录的**两种形态**换成同一个占位符（一份策略 · 两个消费者：这里的替换与
+// 门禁侧的 needle 提取都读同一个 reHomeDir）。
+//
+//	绝对形态  `/Users/<user>`（含前导 `/`）⇒ `${HOME}`          —— 尾巴照旧（`/Users/me/a/b` ⇒ `${HOME}/a/b`）
+//	波浪号形态 `~/`（两个字节）           ⇒ `${HOME}/`          —— 分隔符留在原位（`~/a/b` ⇒ `${HOME}/a/b`）
+//
+// 为什么两支的替换串不同：绝对形态的匹配**吃掉了** `/Users/<user>` 且 `/Users/<user>` 之后紧接的就是
+// `/`，故补 `${HOME}` 即可；波浪号形态的匹配是 `~/` 两个字节，若补 `${HOME}` 会让分隔符消失
+// （实测 `~/projects/x` ⇒ `${HOME}projects/x`，尾部路径被粘死）。用 ReplaceAllStringFunc 按命中文本
+// 分流，是为了**不留第二份 reHomeDir 的副本**（两份规则 = 下一次漂移的种子）；它不做 `$` 展开，
+// 与 replaceLiteral 同一条 D14 口径。
+func replaceHomePath(s string) string {
+	return reHomeDir.ReplaceAllStringFunc(s, func(m string) string {
+		if m == "~/" {
+			return PlaceholderPath + "/"
+		}
+		return PlaceholderPath
+	})
+}
+
+// hasHomePath 是 reHomeDir 的**必要条件**门：正则不可能命中，当且仅当这三个字面量都不在串里。
+// 第三个字面量 `~/` 是 v2.5.11 加的（设计-CI适配-v1.1 §八 待拍 3）：`~/…` 在用户面上就是家目录，
+// 只认 `/Users/`、`/home/` 两个绝对字面量会让整条波浪号形态**静默跳过**脱敏。
 // 用必要条件门换掉正则，是「安全的快路径」与「会静默丢覆盖的启发式」的分界线。
 func hasHomePath(s string) bool {
-	return strings.Contains(s, "/Users/") || strings.Contains(s, "/home/")
+	return strings.Contains(s, "/Users/") || strings.Contains(s, "/home/") || strings.Contains(s, "~/")
 }
 
 // hasEscapedPath 是 reHomeEscape 的**必要条件**门：任何 `\/` / `\Users` 形态都必然含反斜杠，
@@ -414,7 +443,7 @@ func redactPass(s string) string {
 	s = maskTokenShapes(s)     // 首字节索引，无正则
 	s = maskEncodedPayloads(s) // 需要 '%' 或 ≥24 字符的 b64 候选
 	if hasHomePath(s) {
-		s = replaceLiteral(reHomeDir, s, PlaceholderPath)
+		s = replaceHomePath(s)
 	}
 	// 逃逸形态（`\/` / `\Users`）：读者还原后是一条真路径 ⇒ 与上面同一条口径（D19 的 `\/` 通道）。
 	if hasEscapedPath(s) {
@@ -472,7 +501,7 @@ func redactPass(s string) string {
 	}
 	// 折叠可能刚刚「露出」Tier-0 的形态 ⇒ 重跑一遍 Tier-0（全角/零宽探针就靠这一步）
 	if hasHomePath(s) {
-		s = replaceLiteral(reHomeDir, s, PlaceholderPath)
+		s = replaceHomePath(s)
 	}
 	if hasUser(s) {
 		st := userFold.Load()

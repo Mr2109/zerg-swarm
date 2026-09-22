@@ -254,8 +254,8 @@ func TestPreFilterStillMissesNothingBase64(t *testing.T) {
 	// 载荷都得够长：编码后的候选要 ≥24 字节才进 Tier-0 的 base64 候选集（reB64Run 的最小长度是
 	// **必要条件**，不是启发式；短于它的 blob 与普通 8~10 字节单词无法区分，见文末「短载荷边界」）。
 	payloads := map[string]string{
-		"path":     home,                                  // ~/projects/zerg/vault.key
-		"homepath": "~/.config/zerg/token",      // 路径 + 用户名折叠的双载荷
+		"path":     home,                                  // 本机家目录绝对路径（= home）
+		"homepath": homeRoot + "/.config/zerg/token",      // 路径 + 用户名折叠的双载荷
 		"token":    tokHf,                                 // hf_ 形态令牌
 		"email":    "contact.ops.team@zerg.internal",      // 邮箱
 		"ip":       "peer 172.16.5.9 refused, retry=0 ok", // 内网 IP + 普通文本
@@ -282,7 +282,7 @@ func TestPreFilterStillMissesNothingBase64(t *testing.T) {
 	}
 
 	// 已知边界（如实登记，不是回归）：候选下限 24 字节 ⇒ 更短的 blob 不解码。
-	// 代价是一条 6 字节 blob（"bXMwMQ" = "Mr2109"）能藏下 4 个字符的秘密；收益是避免把
+	// 代价是一条 6 字节 blob（"bXMwMQ" = 夹具用户名的 base64）能藏下 4 个字符的秘密；收益是避免把
 	// 普通短标识（"deadbeef"、"aaaaaaaa"）整段遮掉（D12：过度遮蔽与漏脱敏是同一种伤害）。
 	// 这条断言存在的意义：谁将来改了这个下限，用例会红，改的人必须回来看这段注释与设计附件 §六 第 3 步。
 	if got := RedactValue("bXMwMQ"); got != "bXMwMQ" {
@@ -335,7 +335,7 @@ func TestGatesAreNecessaryConditions(t *testing.T) {
 		inputs = append(inputs, v)
 	}
 	inputs = append(inputs, "AKIA"+strings.Repeat("0", 16), "AuthoriZAtion:*** 000I00",
-		"&access_token=abc12345deadbeef", "Bearer "+tokSk, "~/x", "a@b.com", "<controller-ip>",
+		"&access_token=abc12345deadbeef", "Bearer "+tokSk, homeRoot+"/x", "a@b.com", "172.16.5.9",
 		"／Users／ｆｕｚｚ０１", "/Users/fuzz\u200b01", "", "x", "..")
 	for i := 0; i < 4000; i++ {
 		n := randSrc.Intn(80)
@@ -458,7 +458,7 @@ func TestGateNotFooledByShortEscapeArtifact(t *testing.T) {
 func TestGateReverseControlOnEscapeArtifact(t *testing.T) {
 	// 载荷长度取 3 的倍数 ⇒ base64 不带 '=' 填充（带填充的串不进 reB64Run 的候选集，
 	// 那样反向控制会变成一个「夹具失效」而不是真的抓到漏检）。
-	secret := "peer Mr2109 run here ok" // 21 字节 → base64 28 字节无填充；解码后含用户名
+	secret := "peer " + foldUser + " run here ok" // 21 字节 → base64 28 字节无填充；解码后含用户名
 	blob := base64.StdEncoding.EncodeToString([]byte(secret))
 	if len(blob) < 24 || strings.ContainsAny(blob, "=") {
 		t.Fatalf("夹具失效：blob=%q（len=%d）", blob, len(blob))
