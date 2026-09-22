@@ -15,15 +15,22 @@ import (
 // 漏掉 14/15 与 10/15，本方案必须是 0/15。数字是实测出来的，不是宣称出来的。
 
 func TestMain(m *testing.M) {
-	// 用户折叠固定成夹具里的用户名：本机 init() 取的是真实用户名（CI 上不是 Mr2109），
+	// 用户折叠固定成夹具里的用户名：本机 init() 取的是真实用户名（CI 上不是它），
 	// 用例必须与夹具一致才有意义。
 	SetUser(foldUser)
 	os.Exit(m.Run())
 }
 
 const (
-	foldUser = "Mr2109"
-	home     = "~/projects/zerg/vault.key"
+	// 夹具面隔离（设计-CI适配-v1.1 §五 第三批「夹具隔离」）：家目录与用户名**拼接构造** ——
+	// 与下面 tokSk/tokHf 同一条口径（"运行期取到的值与原型完全一致，源码树保持干净"）。
+	// 为什么这里也必须这样：本包的判据**拿路径/用户名的字节形态当尺**（base64 长度、解码后是否
+	// 折叠命中、基线泄漏条数），发布面替换规则按字节改写就会把尺改坏（本批公开面实测：
+	// `LEAK: 秘密 "~/…" 以投影 "~/…" 残留` 与 `夹具失效：blob=…（len=32）`）⇒ 夹具自己保持形态，
+	// 规则不碰它（口径同批登记在 publish/replace-rules.tsv 的「夹具隔离」段）。
+	foldUser = "ms" + "01"
+	home     = "/Users/" + foldUser + "/projects/zerg/vault.key"
+	homeRoot = "/Users/" + foldUser
 
 	// 夹具里的凭据一律**拼接构造**：仓库的发布期门禁会扫 core/ 下的
 	// `Bearer <20+>`（scripts/gates/check-public-tree-hazards.py）与 `sk-<20+>`
@@ -52,17 +59,17 @@ func corpus() []probeCase {
 	return []probeCase{
 		{"plain-path", home,
 			map[string]any{"err": "open " + home + ": permission denied"}},
-		{"json-escaped-slash", escapeSlash("~/.ssh/id_rsa"),
-			map[string]any{"err": "open " + escapeSlash("~/.ssh/id_rsa")}},
-		{"unicode-escape-slash", "Mr2109",
-			map[string]any{"err": "open " + escapeU002F("~/.netrc")}},
-		{"fullwidth-homoglyph", "Mr2109",
+		{"json-escaped-slash", escapeSlash(homeRoot + "/.ssh/id_rsa"),
+			map[string]any{"err": "open " + escapeSlash(homeRoot+"/.ssh/id_rsa")}},
+		{"unicode-escape-slash", foldUser,
+			map[string]any{"err": "open " + escapeU002F(homeRoot+"/.netrc")}},
+		{"fullwidth-homoglyph", foldUser,
 			map[string]any{"err": "open ／Users／ｆｕｚｚ０１／.ssh／id_ed25519"}},
-		{"zero-width-injection", "Mr2109",
+		{"zero-width-injection", foldUser,
 			map[string]any{"err": "open /Users/fuzz\u200b01/.aws/credentials"}},
-		{"percent-encoded", "Mr2109",
-			map[string]any{"u": "path=%2FUsers%2FMr2109%2F.zshrc"}},
-		{"percent-encoded-user", "Mr2109",
+		{"percent-encoded", foldUser,
+			map[string]any{"u": "path=%2FUsers%2F" + foldUser + "%2F.zshrc"}},
+		{"percent-encoded-user", foldUser,
 			map[string]any{"err": "open /Users/%6ds01/.ssh/id_rsa"}},
 		{"base64-wrapped", b64,
 			map[string]any{"blob": "cfg=" + b64}},
@@ -145,7 +152,7 @@ func TestProbes_TargetedAssertions(t *testing.T) {
 	if !strings.Contains(out, PlaceholderPath) {
 		t.Errorf("路径应被替换成 %s 而不是删掉：%s", PlaceholderPath, out)
 	}
-	mustNotContain(t, out, "~")
+	mustNotContain(t, out, homeRoot)
 
 	out = emit(t, corpus()[0].Event) // 同一条：D14 的「$ 展开静默删数据」
 	if strings.Contains(out, `"/projects`) {
@@ -158,13 +165,13 @@ func TestProbes_TargetedAssertions(t *testing.T) {
 	}
 
 	out = emit(t, corpus()[8].Event) // 多行堆栈
-	mustNotContain(t, out, "~")
+	mustNotContain(t, out, homeRoot)
 
 	out = emit(t, corpus()[4].Event) // 零宽注入
-	mustNotContain(t, out, "Mr2109", "\u200b")
+	mustNotContain(t, out, foldUser, "\u200b")
 
 	out = emit(t, corpus()[3].Event) // 全角同形字
-	mustNotContain(t, out, "／Users／", "ｍｓ０１", "Mr2109")
+	mustNotContain(t, out, "／Users／", "ｍｓ０１", foldUser)
 	if !strings.Contains(out, PlaceholderPath) {
 		t.Errorf("折叠后应能认出路径并打码：%s", out)
 	}

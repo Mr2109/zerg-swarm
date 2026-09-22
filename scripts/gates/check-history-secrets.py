@@ -13,6 +13,7 @@
     python3 scripts/gates/check-history-secrets.py --json /tmp/audit.json
 """
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -22,6 +23,17 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RULES_FILE = os.path.join(REPO, "publish", "replace-rules.tsv")
 WHITELIST = os.path.join(REPO, "publish", "whitelist.txt")
+
+# 夹具隔离（设计-CI适配-v1.1 §五 第三批）：`!夹具<TAB><路径 glob>` —— 命中 glob 的件**整段跳过**
+# 替换规则（不逐条判）。夹具是「拿字面量与长度当判据」的那种东西：按字节改写就是改尺
+# （本批公开面实测：`LEAK: 秘密 "~/…"` / `夹具失效：blob=…（len=32）`）。三处消费者同口径：
+# 本件（全历史审计）· publish/mirror-public-lib.py（正式镜像器）· scripts/build/publish-public.sh（后备压平器）。
+ISO_PREFIX = "!夹具"
+
+
+def is_isolated(rel, isolated):
+    """rel 是否命中夹具隔离 glob（fnmatch，`*` 跨 `/` —— 与规则表里的写法同口径）。"""
+    return bool(rel) and any(fnmatch.fnmatch(rel, pat) for pat in isolated)
 
 # 阻断级（命中即不应公开）—— 逐条给"为什么"
 BLOCK = [
@@ -101,11 +113,11 @@ def excluded(rel, ex):
 
 
 def load_rules(path=RULES_FILE):
-    """发布替换规则：默认字面量，`regex:` 前缀为正则。必须先套规则再扫描——
-    否则会把"本来就会被改写成占位符"的内容误报成泄露（第一版审计的硬伤）。"""
-    literals, regexes = [], []
+    """发布替换规则：默认字面量，`regex:` 前缀为正则，`!夹具` 前缀为**夹具隔离 glob**。
+    必须先套规则再扫描——否则会把"本来就会被改写成占位符"的内容误报成泄露（第一版审计的硬伤）。"""
+    literals, regexes, isolated = [], [], []
     if not os.path.exists(path):
-        return literals, regexes
+        return literals, regexes, isolated
     with open(path, encoding="utf-8") as fh:
         for raw in fh:
             line = raw.rstrip("\n")
@@ -115,17 +127,23 @@ def load_rules(path=RULES_FILE):
             if len(parts) < 2:
                 continue
             pat, rep = parts[0], parts[1]
-            if pat.startswith("regex:"):
+            if pat == ISO_PREFIX:
+                isolated.append(rep.strip())
+            elif pat.startswith("regex:"):
                 try:
                     regexes.append((re.compile(pat[6:]), rep))
                 except re.error:
                     pass
             else:
                 literals.append((pat, rep))
-    return literals, regexes
+    return literals, regexes, isolated
 
 
-def apply_rules(text, literals, regexes):
+def apply_rules(text, literals, regexes, isolated=(), rel=None):
+    """套替换规则；`rel` 命中夹具隔离 ⇒ **原样返回**（规则不碰夹具的字节形态）。
+    没有路径的文本（如提交信息，rel=None）不适用隔离。"""
+    if rel is not None and is_isolated(rel, isolated):
+        return text
     for pat, rep in literals:
         if pat in text:
             text = text.replace(pat, rep)
@@ -162,10 +180,12 @@ def main():
         print("✗ 不是 git 仓库：%s" % repo)
         return 2
 
-    literals, regexes = load_rules()
+    literals, regexes, isolated = load_rules()
     ex_list = load_excludes()
     print("排除项: %d 条（从 publish-public.sh 的 EXCLUDES 解析）+ 噪声后缀 %s" % (len(ex_list), "/".join(NOISE_SUFFIX)))
     print("替换规则: %d 条字面 + %d 条正则（扫描前先套用——审计的是『真会公开的形状』）" % (len(literals), len(regexes)))
+    print("夹具隔离: %d 条 glob（命中件整段跳过替换 · §五 第三批）%s"
+          % (len(isolated), "：%s" % " · ".join(isolated) if isolated else ""))
     entries = load_whitelist(os.path.join(repo, "publish", "whitelist.txt") if os.path.exists(
         os.path.join(repo, "publish", "whitelist.txt")) else WHITELIST)
     if args.rng:
@@ -206,20 +226,21 @@ def main():
                 continue
             if rel.lower().endswith(BINARY_SUFFIX):
                 continue
-            verdict = blob_cache.get(osha)
+            iso = is_isolated(rel, isolated)
+            verdict = blob_cache.get((osha, iso))
             if verdict is None:
                 blob = sh(["git", "cat-file", "blob", osha], cwd=repo, binary=True)
                 if blob is None or len(blob) > MAX_BLOB or b"\x00" in blob[:8192]:
-                    blob_cache[osha] = ("skip", None, None)
+                    blob_cache[(osha, iso)] = ("skip", None, None)
                     continue
                 scanned_files += 1
                 scanned_bytes += len(blob)
                 try:
                     text = blob.decode("utf-8")
                 except Exception:
-                    blob_cache[osha] = ("skip", None, None)
+                    blob_cache[(osha, iso)] = ("skip", None, None)
                     continue
-                text = apply_rules(text, literals, regexes)  # 关键：先变换，再扫描
+                text = apply_rules(text, literals, regexes, isolated, rel)  # 关键：先变换，再扫描（夹具隔离件原样通过）
                 verdict = ("clean", None, None)
                 for rx, why in blk:
                     m = rx.search(text)
@@ -231,7 +252,7 @@ def main():
                         if rx.search(text):
                             verdict = ("info", why, None)
                             break
-                blob_cache[osha] = verdict
+                blob_cache[(osha, iso)] = verdict
             kind, why, sample = verdict
             if kind == "block":
                 hits.append({"commit": sha[:10], "path": rel, "why": why, "match": sample})

@@ -63,6 +63,7 @@
   的动作按**单写入者纪律**留给收口者（本波只产件 · 不碰那件 ✗）。
 """
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -76,6 +77,17 @@ REPO_ROOT = os.path.dirname(os.path.dirname(HERE))          # scripts/gates → 
 RULES_REL = os.path.join("publish", "replace-rules.tsv")
 WHITELIST_REL = os.path.join("publish", "whitelist.txt")
 
+# 夹具隔离（§五 第三批）：`!夹具<TAB><路径 glob>` —— 命中 glob 的件**整段跳过替换规则**，
+# 因此它们**不进本件的件面**（规则不碰它们 ⇒ 拿规则去判它们就是自造红）。
+# 这不是豁免表：豁免表是「把红写进白名单、红还在」；隔离是「规则不再作用于该件」，
+# 有票可查（规则表里逐条登记）+ 三处消费者同口径（镜像器 / 后备压平器 / 本件）。
+ISO_PREFIX = "!夹具"
+
+
+def is_isolated(rel, isolated):
+    """rel 是否命中夹具隔离 glob（fnmatch，`*` 跨 `/`）。"""
+    return bool(rel) and any(fnmatch.fnmatch(rel, pat) for pat in isolated)
+
 # 通用排除表（与 §十七/§二十一 各处复跑命令同一口径）
 EXCLUDE_DIRS = {"target", "node_modules", "dist", "bin", "vendor", "data", ".git",
                 ".venv", "venv", ".build", "_history"}
@@ -86,29 +98,36 @@ FIXTURE_SUFFIX = "_test.go"
 
 # ── 规则表 ────────────────────────────────────────────────────────────────
 def parse_rules(path, extra=()):
-    """读 `pattern<TAB>replacement<TAB>说明` → [(原样行, 是否正则, pattern, replacement, 说明)]。
+    """读 `pattern<TAB>replacement<TAB>说明` → [(原样行, 是否正则, pattern, replacement, 说明)]，
+    外加 `!夹具<TAB><路径 glob>` 收成的**夹具隔离表**。
 
-    解析口径与两器一致：`#` 注释与空行跳过；`regex:` 前缀 = 正则（`sed -E` / `re` 语义）。
-    返回 (rules, error)：error 非空 ⇒ 调用方按「不给结论」处理。
+    解析口径与两器一致：`#` 注释与空行跳过；`regex:` 前缀 = 正则（`sed -E` / `re` 语义）；
+    `!夹具` = 夹具隔离（**不是规则**：它不进判据，进的是件面排除表）。
+    返回 (rules, isolated, error)：error 非空 ⇒ 调用方按「不给结论」处理。
     """
     if not os.path.isfile(path):
-        return [], "规则表缺件：%s（替换规则的单一真源不在场 ⇒ 判据不可判）" % RULES_REL
-    rules = []
+        return [], [], "规则表缺件：%s（替换规则的单一真源不在场 ⇒ 判据不可判）" % RULES_REL
+    rules, isolated = [], []
     with open(path, encoding="utf-8") as f:
         for i, line in enumerate(f.read().split("\n"), 1):
             if not line.strip() or line.lstrip().startswith("#"):
                 continue
             parts = line.split("\t")
             if len(parts) < 2:
-                return [], "规则表第 %d 行不是 `pattern<TAB>replacement...` 形态：%r" % (i, line[:80])
+                return [], [], "规则表第 %d 行不是 `pattern<TAB>replacement...` 形态：%r" % (i, line[:80])
             pat, rep = parts[0], parts[1]
+            if pat == ISO_PREFIX:
+                if not rep.strip():
+                    return [], [], "规则表第 %d 行是空的夹具隔离（`!夹具` 后面没有 glob ⇒ 判据不可判）：%r" % (i, line[:80])
+                isolated.append(rep.strip())
+                continue
             note = parts[2] if len(parts) > 2 else ""
             is_re = pat.startswith("regex:")
             rules.append((line, is_re, pat[len("regex:"):] if is_re else pat, rep, note))
     for p in extra:                                          # 合成规则（负控用）：只给 pattern，replacement 无关紧要
         is_re = p.startswith("regex:")
         rules.append(("（合成规则 · 负控用）" + p, is_re, p[len("regex:"):] if is_re else p, "<合成>", "命令行注入"))
-    return rules, ""
+    return rules, isolated, ""
 
 
 def rule_matches(rule, line):
@@ -136,9 +155,13 @@ def whitelist_prefixes(path):
     return out
 
 
-def collect_fixtures(root, prefixes):
-    """扫「会进公开面的测试夹具」→ [(相对路径, 行号, 行文本)]。"""
-    hits = []
+def collect_fixtures(root, prefixes, isolated=()):
+    """扫「会进公开面的测试夹具」→ ([(相对路径, 行号, 行文本)], [被夹具隔离排除的件])。
+
+    `isolated` 里的 glob 命中的件**不进件面**（它们被规则表显式隔离 ⇒ 规则不碰它们 ⇒ 不判），
+    但**逐件登记**在第二个返回值里 —— 隔离只许看得见，不许静默少判。
+    """
+    hits, iso_files = [], []
     for pre in prefixes:
         base = os.path.join(root, pre.rstrip("/"))
         if not os.path.isdir(base):
@@ -150,13 +173,16 @@ def collect_fixtures(root, prefixes):
                     continue
                 full = os.path.join(dirpath, fn)
                 rel = os.path.relpath(full, root)
+                if is_isolated(rel, isolated):
+                    iso_files.append(rel)
+                    continue
                 try:
                     with open(full, encoding="utf-8", errors="replace") as f:
                         for i, line in enumerate(f, 1):
                             hits.append((rel, i, line.rstrip("\n")))
                 except OSError:
                     continue
-    return hits
+    return hits, sorted(iso_files)
 
 
 # ── 判决（唯一出口 · 自检直接钉它）────────────────────────────────────────
@@ -240,6 +266,28 @@ def self_test():
         bad.append("区分度")
         print("   ✗ 区分度：夹具里 %d 处命中、非夹具里 %d 处命中（判据没牙）"
               % (len(in_fix), len(off_fix)))
+    # 夹具隔离（§五 第三批）：成对负控 —— 同一件、同一条规则：不隔离 ⇒ 必红；隔离 ⇒ 必绿。
+    tmpd = tempfile.mkdtemp(prefix="a4-iso-")
+    try:
+        rp = os.path.join(tmpd, "rules.tsv")
+        with open(rp, "w", encoding="utf-8") as f:
+            f.write("regex:/srv/demo\t<home>\t合成规则\n")
+            f.write("!夹具\tcore/internal/demo/*_test.go\t合成隔离\n")
+        rules2, iso2, err2 = parse_rules(rp)
+        fx = [("core/internal/demo/fixture_test.go", 1, 'home := "/srv/demo/x.key"')]
+        kept = [(r, ln, t) for r, ln, t in fx if not is_isolated(r, iso2)]
+        hits_on, _ = judge(rules2, fx)          # 不隔离 ⇒ 规则命中夹具（必红）
+        hits_off, _ = judge(rules2, kept)       # 隔离 ⇒ 件面里没有它（必绿）
+        if not err2 and iso2 and hits_on and not hits_off:
+            ok += 1
+            print("   ✓ 夹具隔离：同一件同一规则 —— 不隔离 ⇒ 命中 %d 条、隔离 ⇒ 0 条（隔离只许少判、且不许静默）"
+                  % len(hits_on))
+        else:
+            bad.append("夹具隔离")
+            print("   ✗ 夹具隔离：err=%r iso=%r 不隔离命中 %d / 隔离命中 %d"
+                  % (err2, iso2, len(hits_on), len(hits_off)))
+    finally:
+        shutil.rmtree(tmpd, ignore_errors=True)
     print("自检结论: %s（断言 %d 条 · 失败 %d 条）"
           % ("全过" if not bad else "**不过**", ok + len(bad), len(bad)))
     return 0 if not bad else 2
@@ -262,6 +310,7 @@ def main():
         print("⑮ 替换规则级机检：命中件不许是测试夹具（§十三 M8 · §八 待拍 3 的落点）")
         print("真源：Zerg-内部文档/项目文档/v2.5.11/设计-CI适配-v1.1.md §七 + §十三 M8")
         print("  规则面：%s（`pattern<TAB>replacement<TAB>说明` · `regex:` 走正则）" % RULES_REL)
+        print("  夹具隔离：同一件里的 `!夹具<TAB><路径 glob>` ⇒ 该件整段不入件面（§五 第三批；它不是豁免，是规则不再作用于该件）")
         print("  件面  ：%s 里**会进公开面**的路径前缀下的 `*_test.go`" % WHITELIST_REL)
         print("  判据  ：任一条规则命中 `*_test.go` ⇒ 红（逐条点名规则/件/行号/片段 · **不给豁免表**）")
         print("退码：0 全绿 · 1 有命中 · 2 不给结论（规则表/白名单缺件 · 空转 · 自检不过）")
@@ -275,7 +324,7 @@ def main():
     rules_path = args.rules or os.path.join(root, RULES_REL)
     wl_path = args.whitelist or os.path.join(root, WHITELIST_REL)
 
-    rules, err = parse_rules(rules_path, args.extra_rule)
+    rules, isolated, err = parse_rules(rules_path, args.extra_rule)
     if err:
         print("⛔ %s" % err)
         print("⇒ 不给结论（rc=2）：缺件/不可解析 ≠ 绿")
@@ -295,13 +344,18 @@ def main():
         print("⇒ 不给结论（rc=2）")
         return 2
 
-    fixtures = collect_fixtures(root, prefixes)
+    fixtures, iso_files = collect_fixtures(root, prefixes, isolated)
     print("── 替换规则级机检：命中件不许是测试夹具（§十三 M8）──")
     print("   树：%s" % root)
     print("   规则面：%s ⇒ **%d 条**规则（%d 条正则 · %d 条字面量%s）"
           % (os.path.relpath(rules_path, root) if rules_path.startswith(root) else rules_path,
              len(rules), sum(1 for r in rules if r[1]), sum(1 for r in rules if not r[1]),
              " · 含命令行合成规则 %d 条" % len(args.extra_rule) if args.extra_rule else ""))
+    if isolated:
+        print("   夹具隔离：%d 条 glob（%s）⇒ 排除 **%d 个** `*_test.go` 出件面"
+              % (len(isolated), " · ".join(isolated), len(iso_files)))
+        for rel in iso_files:
+            print("      ── %s" % rel)
     print("   件面：白名单 %d 条前缀下的测试夹具 ⇒ **%d 个** `*_test.go`（%d 行）"
           % (len(prefixes), len(set(r for r, _ in [(f[0], 0) for f in fixtures])), len(fixtures)))
     if not fixtures:
