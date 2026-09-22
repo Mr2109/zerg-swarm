@@ -160,8 +160,15 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	// 档位（§4.4）：默认档 = 毫秒层 + 编译器层；贵层（② 符号层）走按需档 `--all`。
 	// `A5`：链上挂**落盘缓存**（`impactCacheOn` —— 读 + 写；落点与键从契约件读）。
+	// `C3`：带上**文档面口径档**（`R23` 已拍：B 默认 / A 随 `--wide` / C 随 `--strict`）与
+	// 「索引不在就现建」的档位（按需档才现建 —— 默认档不起这次扫描）。
 	cheap := !inv.all || inv.quick
-	layers, budget := impactPullLayers(root, tgt, cheap, impactCacheOn)
+	docTier := impactDocTierOf(inv)
+	if inv.wide && inv.strict {
+		fmt.Fprintf(stderr, "%s: `--wide` 与 `--strict` 同时给了 ⇒ 文档面口径以**最严档 C**（`--strict`）为准"+
+			"（照实明说，不静默挑一个 · `R23`）\n", progName)
+	}
+	layers, budget := impactPullLayers(root, tgt, cheap, impactCacheOn, !cheap, docTier)
 	rows, totalRows := impactCollectRows(layers)
 	// `B1`：「会红」那一行的**门步名**那一格 —— 真源 = 门禁 `--list` 现跑 + 逐名 `--emit-cmd`
 	// 探针（只读 · 零副作用）。两条闸：① 只在**有可 join 的脚本路径**时才拉（没有候选就不跑，
@@ -198,6 +205,22 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	// `B4` 分层预算与降级（§4.4 + §7.4）：紧跟在缓存块之后 —— 那一块给的是「落点与毫秒档」，
 	// 本块给的是「未命中 · 现算那一档的上限怎么算出来的 + 到点了降到哪一档 + 哪几层没跑」。
 	emitImpactBudgetBlock(stderr, budget, layers)
+	// `C4` 重复面与归位（**只报数不判红** · 只读）：贵面（一次 `jscpd` + 六档标定曲线）⇒ 只在
+	// **按需档** `--all` 走（默认档一个字不打 —— 也不打「未跑」，因为本面根本不是默认面的一部分，
+	// 口径写在设计 §6.5 与契约件 `S-l` 里）。
+	if !cheap {
+		emitImpactDupBlock(stderr, root, true)
+	}
+	// `C1` 删面（**只出候选** · 零自动删 · 不写标记）：**默认档也打**（五类盲区恒带 · 缺一不出结论），
+	// 但**两器只在按需档跑**（贵面）—— 默认档照实写「未跑」，并明说「未跑 ≠ 没有候选」。
+	{
+		lay := impactStateLayout{FromRelPath: impactStateContractRel}
+		layOK := false
+		if l, err := impactStateLayoutOf(root); err == nil {
+			lay, layOK = l, true
+		}
+		emitImpactDelBlock(stderr, root, tgt, lay, layOK, !cheap)
+	}
 	emitImpactStepBlock(stderr, proj)
 	// `B2` 时间面（预测侧）：块在 `B1` 的步名真源块之后 —— 那一块给的是「门步那一格接到什么」，
 	// 本块给的是「整个预测集是怎么估的 + 尺上一次/此刻分别是多少」。
@@ -352,8 +375,25 @@ func impactRegistryIDs(root string) ([]string, error) {
 // impactUsageLine —— 形态串（与命令树的 `usage` 逐字同源，门⑫ 的口径；本件不旁写第二份）。
 // `A3` 起把 §4.1 的**两档**写进形态串（`--for-model` / `--for-human` · `R9` 已拍「分两档」·
 // `R38` 拍定它们与 `--json` **不是同一条**、可叠加、都不改六键包封）。
+// `C3` 起把文档面**三档口径**写进形态串（`R23` 已拍：A 裸词随 `--wide` · **B 反引号包住的符号名
+// （默认）** · C 与「件:行」同行随 `--strict`）—— 形态串里写着的旗标必须真能被解析（否则命令等于不可用）。
 // ★ `--all`（按需档 · §4.4）仍是**既有全局布尔**，故不写进形态串（形态串只写本命令独有的东西）。
-const impactUsageLine = "zerg impact <文件｜契约 id> [--for-model｜--for-human] [--json <字段>] [--gate-results <那次门禁的结果表｜它的日志目录>]"
+const impactUsageLine = "zerg impact <文件｜契约 id> [--wide｜--strict] [--for-model｜--for-human] [--json <字段>] [--gate-results <那次门禁的结果表｜它的日志目录>]"
+
+// impactDocTierOf 文档面口径档（`R23` 已拍的三档 · 不许自造第四档）：
+//
+//	`--strict` ⇒ **C 档**（与「件:行」同行）· `--wide` ⇒ **A 档**（裸词）· 都不给 ⇒ **B 档**（默认）。
+//
+// 两枚都给了 ⇒ **以最严档 C 为准**（调用方另在 stderr 明说，不静默挑一个）。
+func impactDocTierOf(inv *invocation) string {
+	switch {
+	case inv.strict:
+		return "C"
+	case inv.wide:
+		return "A"
+	}
+	return "B"
+}
 
 // impactHumanLines —— 人面**恒三行**（判据③：字头固定 · 顺序固定）+ `A3` 把 §3.8 的可逆性
 // **内联在第③行同一行**（§4.1：可逆性行内联在第③行内 · **不新增行数**，所以人面仍恒三行）。
