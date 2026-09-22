@@ -4802,6 +4802,35 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "model/opts#set 缺 --yes（D2）",
+   "command": "model opts",
+   "argv": [
+    "model",
+    "opts",
+    "set",
+    "m1",
+    "--set",
+    "temperature=0.8"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`Q-102` 唯一模型面写口是 D2 档 —— 缺 `--yes` ⇒ 不执行（且**不打主控**：fail-closed）"
+  },
+  {
+   "id": "model/opts#set 一个 --set 都没给",
+   "command": "model opts",
+   "argv": [
+    "model",
+    "opts",
+    "set",
+    "m1",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "空体本地拦（主控对空体回 NO_PARAMS）—— 不打主控（`Q-102` 写面的 fail-closed 半）"
   }
  ]
 }
