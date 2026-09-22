@@ -107,11 +107,11 @@ func cmdDocMetaFill(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	// ① 落点（用法面先判：**在任何盘面动作之前**）
-	root, why := docFillRoot(scope)
+	root, why := docFillRoot(scope, strings.TrimSpace(inv.flagVal("--docs-ver")))
 	if why != "" {
 		inv.setErr("usage", "bad_root", why)
 		fmt.Fprintf(stderr, "%s: %s ⇒ 退码 2\n", progName, why)
-		fmt.Fprintf(stderr, "可用：`--scope devdocs`（ZERG_DEVDOCS_ROOT > <仓根上一级>/Zerg-内部文档/项目文档/v2.5.10）或给一个目录\n")
+		fmt.Fprintf(stderr, "可用：`--scope devdocs`（ZERG_DEVDOCS_ROOT > 版本档案取源根下「版本号最大且 ≥3 篇」的版本目录，可用 `--docs-ver <X.Y.Z>` 钉版）或给一个目录\n")
 		return exitUsage
 	}
 	fi, err := os.Stat(root)
@@ -218,19 +218,17 @@ func cmdDocMetaFill(inv *invocation, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
-// docFillRoot —— 被扫根：`--scope devdocs`（或缺省）⇒ 开发文档面根；否则把它当**路径**。
-// 开发文档面根的口径与门禁四道门的 `devdocs_root()` **同一份**（`ZERG_DEVDOCS_ROOT` >
-// `<仓根 的上一级>/Zerg-内部文档/项目文档/v2.5.10`）—— 不另立第二套换根规则。
-func docFillRoot(scope string) (root, why string) {
+// docFillRoot —— 被扫根：`--scope devdocs`（或缺省）⇒ 开发文档面**当前版**根；否则把它当**路径**。
+//
+// ★ 版本无关（缺口 `G-19`）：开发文档面根**不再钉在某一版**（旧代码逐字写着 `v2.5.10` ⇒ 本版新件全在扫描面外，
+// 「第四次成文重出」）。现在取源**只有一处** `devDocsCurrentVersionDir()`（与 `help export` 同源）：
+// `ZERG_DEVDOCS_ROOT` > `<版本档案取源根>/v<--docs-ver 钉的那版>` > `<版本档案取源根>` 下「版本号最大且 ≥3 篇」的那个。
+func docFillRoot(scope, pinVersion string) (root, why string) {
 	if scope == "" || scope == "devdocs" {
 		if v := strings.TrimSpace(os.Getenv("ZERG_DEVDOCS_ROOT")); v != "" {
 			return v, ""
 		}
-		r := repoRoot()
-		if r == "" {
-			return "", "解析不到仓根 ⇒ 推不出开发文档面根（可用 ZERG_DEVDOCS_ROOT 指）"
-		}
-		return filepath.Join(filepath.Dir(r), "Zerg-内部文档", "项目文档", "v2.5.10"), ""
+		return devDocsCurrentVersionDir(pinVersion)
 	}
 	if strings.HasPrefix(scope, "-") {
 		return "", fmt.Sprintf("`--scope` 要一个面（`devdocs`）或一个目录，拿到的是旗标 %q", scope)
