@@ -275,7 +275,7 @@ func impactDelClassify(root, fileRel string, cand map[string]bool) (tier string,
 
 // emitImpactDelBlock 打删面那一段（**只报候选** · 零**自动化删除** · 不写标记）。
 //
-// `runTools=false`（默认档）时**一个字都不许少**：五类盲区**恒带**、两器状态照实写「未跑（按需档 --all）」、
+// `runTools=false`（默认档）时**一个字都不许少**：五类盲区**恒带**、两器状态照实写「未跑（贵面现跑 --deep）」、
 // 并明说「未跑 ≠ 没有候选」。
 func emitImpactDelBlock(w io.Writer, root string, tgt *impactTarget, layout impactStateLayout,
 	layoutOK bool, runTools bool) {
@@ -318,7 +318,7 @@ func emitImpactDelBlock(w io.Writer, root string, tgt *impactTarget, layout impa
 		fmt.Fprintf(w, "  文档面：**本行未适用**（目标不是件）\n")
 	}
 	if !runTools {
-		fmt.Fprintf(w, "  两器：**本跑未跑**（贵面 ⇒ 归按需档 `--all`）：`%s`（必带 `-test`）· `%s`（`U1000`）\n",
+		fmt.Fprintf(w, "  两器：**本跑未跑**（贵面 ⇒ 归**贵面现跑** `--deep`）：`%s`（必带 `-test`）· `%s`（`U1000`）\n",
 			c.Tools.Main.Bin, c.Tools.Second.Bin)
 		fmt.Fprintf(w, "  ★ 候选清单：**本跑没跑 ⇒ 不给候选** —— **未跑 ≠ 没有候选**（宁少报不猜报）\n")
 	} else {
