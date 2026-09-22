@@ -22,8 +22,9 @@
      `after_bytes` / `approval` / `approver` · `I-6`）。
   B3 **判定口有区分度**：正控（明标 `true` ⇒ 「补签」· `false` ⇒ 「在场」）；**负控**（抹掉这一格
      ⇒ **判红** —— 「没这一格」**不是**「在场」，否则两件在审计里长得一模一样）。
-  B4 **现网取数（只读）**：真审计件现跑行数 + `approve_signed` 事件**今天**是 0 条（补签那一路
-     本版**不实现**）⇒ 如实写「本版尚无补签件」（**不许**把「读不到」当绿：读不到 ⇒ rc=2 未取数）。
+  B4 **现网取数（只读）**：真审计件现跑行数 + `approve_signed` 事件条数 + 其中**补签**条数
+     （判 `signed_not_in_person=true`；换件判据：在场签名也追加 `approve_signed` ⇒ 按字面数会误伤 ·
+     2026-09-23 改宽）；补签那一路本版**不实现** ⇒ 补签该是 0 条（**不许**把「读不到」当绿：读不到 ⇒ rc=2 未取数）。
   B5 **在册件零改**：`dev_edit.json` 既不是补签件、也不带明标 ⇒ 它的 `sha256` 与登记值一致
      （明标没进件 = 这一枚件一个字节没动）。
 
@@ -143,18 +144,27 @@ def judge_mark_lines(lines):
 
 
 def judge_event_count(rows):
-    """B4：现网审计行数 + `approve_signed` 事件条数（现算，不许写常量）。"""
+    """B4：现网审计行数 + `approve_signed` 事件条数 + 其中**补签**条数（现算，不许写常量）。
+
+    2026-09-23 改宽（Mr2109「按建议」）：补签与否看**明标那一格** `signed_not_in_person`，
+    不按事件名字面数（正常签名也追加 `approve_signed` ⇒ 旧判据会把在场签名误判成补签）。
+    区分度更强、不误伤：`true` ⇒ 补签（本版不实现 ⇒ 该是 0）· `false`/缺 ⇒ 在场。
+    """
     n = len([r for r in rows if str(r).strip()])
     ev = 0
+    bf = 0
     for r in rows:
         if not str(r).strip():
             continue
         try:
-            if json.loads(r).get("event") == EVENT:
+            d = json.loads(r)
+            if d.get("event") == EVENT:
                 ev += 1
+                if d.get(MARK_FIELD) is True:
+                    bf += 1
         except Exception:  # noqa: BLE001
             pass
-    return n, ev
+    return n, ev, bf
 
 
 # ── 取数 ─────────────────────────────────────────────────────────────────────────
@@ -212,12 +222,12 @@ def judge_all(r):
                                   json.dumps({"event": EVENT, MARK_FIELD: True})])[0]
     if not judge_mark_lines([json.dumps({"event": EVENT})])[0]:
         problems.append("B3 破：抹掉明标的那一行**没判红**（判定口没有区分度）")
-    n, ev = judge_event_count(r["rows"])
-    if ev > 0:
-        problems.append("B4 注意：现网审计里已有 %d 条 `%s`（本版补签那一路**不实现** ⇒ 该是 0 条）" % (ev, EVENT))
+    n, ev, bf = judge_event_count(r["rows"])
+    if bf > 0:
+        problems.append("B4 破：现网审计里有 %d 条**补签**事件（`%s=true`）—— 本版补签那一路**不实现** ⇒ 该是 0 条（在场签名含 `%s` 事件属正常，不判）" % (bf, MARK_FIELD, EVENT))
     if r["dev_sha"] != DEV_EDIT_SHA256:
         problems.append("B5 破：在册 `dev_edit.json` 的 sha256 = %s ≠ 登记值（明标没进件 = 它一个字节不该动）" % r["dev_sha"])
-    return problems, (n, ev)
+    return problems, (n, ev, bf)
 
 
 # ── 自检（先自证会红，再扫真目标）────────────────────────────────────────────────
@@ -264,12 +274,12 @@ def scan(repo, state):
     if r is None:
         print("⛔ 未取数：%s ⇒ **不出结论**（rc=2）" % why)
         return 2
-    problems, (n, ev) = judge_all(r)
+    problems, (n, ev, bf) = judge_all(r)
     print("── 读数（每处带口径）")
     print("   ① 件字段面（%s · `approvalTicketFile`）= %s" % (APPROVE_GO_REL, ",".join(r["ticket_tags"])))
     print("   ② 审计行字段名（同件 · `approvalAuditLine`）= %s" % ",".join(r["audit_tags"]))
     print("   ②-补 本事件**自己的**字段名（%s · `approveAuditOwnFields`）= %s" % (APPROVE_GO_REL, ",".join(r["own_fields"])))
-    print("   ③ 审计件（%s）现跑 %d 行 · `%s` 事件 %d 条" % (r["audit_path"], n, EVENT, ev))
+    print("   ③ 审计件（%s）现跑 %d 行 · `%s` 事件 %d 条（其中**补签** %d 条）" % (r["audit_path"], n, EVENT, ev, bf))
     print("   ④ 在册件（%s）sha256 = %s" % (r["ticket"], r["dev_sha"]))
     if ev == 0:
         print("   ·  口径：本版**尚无补签件**（补签那一路本版不实现）—— 明标只在**审计侧**记「不是当场签的」")
