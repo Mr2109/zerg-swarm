@@ -4831,6 +4831,43 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "空体本地拦（主控对空体回 NO_PARAMS）—— 不打主控（`Q-102` 写面的 fail-closed 半）"
+  },
+  {
+   "id": "core/ps#未知旗标",
+   "command": "core ps",
+   "argv": [
+    "core",
+    "ps",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "core/ps#不认的契约主号",
+   "command": "core ps",
+   "argv": [
+    "core",
+    "ps",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "core/ps#--json 不给字段",
+   "command": "core ps",
+   "argv": [
+    "core",
+    "ps",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
   }
  ]
 }
