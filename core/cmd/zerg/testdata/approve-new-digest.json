@@ -1,0 +1,15 @@
+{
+  "_what": "D2 复算夹具 —— 「签前摘要」第二行那枚 sha256 的**第三方复算**口径。五格 + 待签字节形态 + 现算值，任何一方拿这五格现算都能复算（不许改成「件文件的 sha256」）。",
+  "payload_ver": "zerg-approval/v1",
+  "cells_order": ["tool", "scope", "approver", "approved_at", "note"],
+  "cells": {
+    "tool": "dev_edit",
+    "scope": "*",
+    "approver": "Mr2109",
+    "approved_at": "2026-09-22T10:00:00+08:00",
+    "note": "D2 复算夹具：待签字节的 sha256"
+  },
+  "payload_bytes": 101,
+  "sha256": "dec6aa2b8621efc01da68f4e2c8d84da3d18da91350963da71531c20dce1708f",
+  "_how": "sha256(\"zerg-approval/v1\\n\" + tool + \"\\n\" + scope + \"\\n\" + approver + \"\\n\" + approved_at + \"\\n\" + note) · 待签字节的唯一形态定义在 core/internal/control/approval.go 的 ApprovalPayload()"
+}
