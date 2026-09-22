@@ -75,11 +75,16 @@ type impactLayer struct {
 	HeadSHA string
 	At      string
 
-	// 第 ⑥ 层的条件行三件（§3.7 口径：N / M · 产出树路径 + 扫的时刻 · head_sha）——
-	// 只有命中生效面时才有值。
-	PublicDelta string
-	PublicTree  string
-	PublicAt    string
+	// 第 ⑥ 层的条件行四件（§3.7 口径：N / M · 产出树路径 + 扫的时刻 · head_sha）——
+	// 只有命中生效面时才有值。`C5` 起加两格：**命中但三件不齐** ⇒ 只许写「公开面：未取数」。
+	PublicHit      bool // 本层命中生效面（**负控面**：不在生效面上 ⇒ 这一行一行都不许打）
+	PublicDelta    string
+	PublicTree     string // 描述串（含现读件数 · `-type f` · 排 .git/vendor）
+	PublicTreePath string // 产出树**原始路径**（第三方复算命令里要用它）
+	PublicCount    int    // 现读件数（同一口径）
+	PublicAt       string
+	PublicNoData   bool   // 命中但口径三件不齐 ⇒ 只许写「未取数」
+	PublicNoWhy    string // 缺的是哪一件（逐条点名）
 
 	// `A5` 落盘缓存：这一层这一跑是**命中**还是**现算**（`CacheNote` 是人面那一行，
 	// `CacheCost` 是**本跑**在这一层上花掉的时间 —— 命中就是「读落盘产物」的耗时，口径 = §4.4）。
@@ -1022,9 +1027,24 @@ func impactLayerPublic(root string, tgt *impactTarget, cheap bool) impactLayer {
 	}
 	cnt, walkErr := impactCountTreeFiles(tree)
 	at := impactEffectiveAt()
+	head := impactHeadSHA(root)
+	// `C5` 判据②：**口径三件齐**（件不是行 ⇒ `-type f` 计数 · 排 `.git`/`vendor` ·
+	// 产出树路径 + 扫的时刻 · `head_sha`）——**缺任一 ⇒ 只许写「公开面：未取数」** ✗
+	// （不许用「上次的数」或 0 顶上；三件逐条点名缺的是哪一件）。
+	missing := []string{}
 	if walkErr != nil {
-		lay.Status = "命中（产出树读不到）"
-		lay.Detail += fmt.Sprintf(" · 产出树路径 %s 读不到（%v）⇒ **公开面：未取数**（缺「产出树路径 + 扫的时刻 + head_sha」三件之一就不许出数）", tree, walkErr)
+		missing = append(missing, fmt.Sprintf("产出树路径读不到（%s：%v）", tree, walkErr))
+	}
+	if strings.TrimSpace(head) == "" {
+		missing = append(missing, "`head_sha` 取不到（层规三件之一 ⇒ 这一行不许出数字）")
+	}
+	if strings.TrimSpace(at) == "" {
+		missing = append(missing, "扫的时刻取不到")
+	}
+	if len(missing) > 0 {
+		lay.Status = "命中（三件不齐）"
+		lay.PublicHit, lay.PublicNoData, lay.PublicNoWhy = true, true, strings.Join(missing, " · ")
+		lay.Detail += " · **公开面：未取数**（缺 " + lay.PublicNoWhy + "）—— 判据②：缺任一 ⇒ 只许写未取数"
 		return lay
 	}
 	// ±N / −M：**件级**口径 —— 这一改的**件**进出各算 1 件；方向由「今天在不在那棵树里」定
@@ -1034,8 +1054,10 @@ func impactLayerPublic(root string, tgt *impactTarget, cheap bool) impactLayer {
 		n, m = 1, 0
 	}
 	lay.Status = "命中"
-	lay.Detail += fmt.Sprintf(" · 产出树 %s 现读 %d 件（`-type f` · 排 .git/vendor）· 扫的时刻 %s",
-		tree, cnt, at)
+	lay.PublicHit = true
+	lay.PublicTreePath, lay.PublicCount = tree, cnt
+	lay.Detail += fmt.Sprintf(" · 产出树 %s 现读 %d 件（`-type f` · 排 .git/vendor）· 扫的时刻 %s · head_sha %s",
+		tree, cnt, at, head)
 	lay.Rows = append(lay.Rows, impactRow(
 		"件级:"+tgt.Rel, "公开面",
 		fmt.Sprintf("公开产出树 +%d / −%d 件（件级口径：这一件的进出各 1 件；整棵树的位移要重跑链，本层不拿单值冒充）", n, m),
@@ -1043,6 +1065,7 @@ func impactLayerPublic(root string, tgt *impactTarget, cheap bool) impactLayer {
 	lay.PublicDelta = fmt.Sprintf("+%d / −%d", n, m)
 	lay.PublicTree = fmt.Sprintf("%s（现读 %d 件 · -type f · 排 .git/vendor）", tree, cnt)
 	lay.PublicAt = at
+	lay.HeadSHA = head
 	return lay
 }
 

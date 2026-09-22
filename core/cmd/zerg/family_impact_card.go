@@ -671,10 +671,12 @@ func emitImpactCardBlock(stderr io.Writer, tgt *impactTarget, card impactCard,
 	}
 	fmt.Fprintf(w, "%s: 卡片铁律（§3.5）：**只做参考 · 永不构成批准**（提 ≠ 批：批准者 kind 必须 `human` · `ai-boundary.json`）· 语义级（义近）**永不进「会红」行** · 不自动执行退法命令 · 本卡片只读零副作用（不改件 / 不落审计 / 不写缓存）\n", progName)
 	fmt.Fprintf(w, "%s: 卡片退法（§3.8 · 第③行内联同一行 · 不新增行数）：%s\n", progName, rev.Line)
-	// §3.7 公开面行：只在命中第 ⑥ 层生效面时才打（条件行 · 与「会先被哪道门拦」分开写）。
-	if l, ok := impactLayerBySeq(layers, "⑥"); ok && l.PublicDelta != "" {
-		fmt.Fprintf(w, "%s: 公开面：此改动会改变公开产出树 %s 件（口径：件不是行 · `-type f` · 排 .git/vendor · 产出树 %s · 扫的时刻 %s · head_sha %s）—— 这一行说**产出**（变几件），「会红」那一行说**门**（哪一步会红），两行**不合并**\n",
-			progName, l.PublicDelta, l.PublicTree, l.PublicAt, dashIfEmpty(l.HeadSHA))
+	// §3.7 公开面行（`C5`）：只在命中第 ⑥ 层生效面时才打 —— 与「会先被哪道门拦」分开写；
+	// 渲染口与人面 stdout 的**同一份**（`impactPublicLineText`）⇒ 两处不会漂。
+	if l, ok := impactLayerBySeq(layers, "⑥"); ok {
+		if line := impactPublicLineText(impactPublicLineArgsFromLayer(l)); line != "" {
+			fmt.Fprintf(w, "%s: %s\n", progName, line)
+		}
 	}
 	if human {
 		// 人档（L2）：全文 = 六层全量逐条 + 被裁条目名次 + 找回路径。
@@ -703,12 +705,61 @@ func impactTierName(human bool) string {
 	return "模型档（默认 · ≤ 1.2k token · 条目 ≤ 12）"
 }
 
-// impactPublicLine §3.7 那一行（人面 stdout 的条件行；没命中 ⇒ 空串 ⇒ **不打**）。
-func impactPublicLine(layers []impactLayer) string {
-	l, ok := impactLayerBySeq(layers, "⑥")
-	if !ok || l.PublicDelta == "" {
+// impactPublicLineArgs —— §3.7 那一行的**全部输入**（`C5` 起唯一的渲染口吃这一份）。
+type impactPublicLineArgs struct {
+	Hit       bool   // 命中生效面？（负控面：不在生效面上 ⇒ 一行都不许打）
+	Delta     string // `+N / −M`
+	Tree      string // 描述串（含现读件数 · `-type f` · 排 .git/vendor）
+	TreePath  string // 产出树原始路径（复算命令用）
+	Count     int    // 现读件数（同一口径）
+	At        string // 扫的时刻
+	Head      string // `head_sha`
+	NoDataWhy string // 缺的是哪一件（逐条点名）
+}
+
+// impactPublicLineText §3.7 那一行（人面 stdout 的条件行 + 卡片块里的同一行 · **同一份取值**）。
+//
+// 三条判据落在这里（`C5` · 任务单 §四 `C5` 判据①②③）：
+//
+//	① **负控**：不在生效面上 ⇒ 返回空串（**必须不出**，这一行不是恒返回一行）；
+//	② **口径三件齐**：件不是行 ⇒ `-type f` 计数 · 排 `.git`/`vendor` · 产出树路径 + 扫的时刻 +
+//	   `head_sha` —— **缺任一 ⇒ 只许写「公开面：未取数」** ✗（不许拿旧数或 0 顶上）；
+//	③ **第三方可复算**：行里给同一条 `find` 命令与同相对路径的 `test -e`（同一口径）。
+//
+// **纯函数** ⇒ 成对负控能直接喂坏输入（不在生效面 / 缺 `head_sha` / 缺产出树）。
+func impactPublicLineText(a impactPublicLineArgs) string {
+	if !a.Hit {
 		return ""
 	}
-	return fmt.Sprintf("公开面：此改动会改变公开产出树 %s 件（口径：产出树 %s · 扫的时刻 %s · head_sha %s）",
-		l.PublicDelta, l.PublicTree, l.PublicAt, dashIfEmpty(l.HeadSHA))
+	why := strings.TrimSpace(a.NoDataWhy)
+	if why == "" && (strings.TrimSpace(a.Delta) == "" || strings.TrimSpace(a.Tree) == "" ||
+		strings.TrimSpace(a.TreePath) == "" || strings.TrimSpace(a.At) == "" || strings.TrimSpace(a.Head) == "") {
+		why = "口径三件不齐（产出树路径 / 扫的时刻 / `head_sha` 有一格是空的）"
+	}
+	if why != "" {
+		return "公开面：未取数（缺 " + why + " —— 口径三件 = 产出树路径 + 扫的时刻 + `head_sha`；" +
+			"缺任一 ⇒ 只许写「未取数」，不许编数字）"
+	}
+	recompute := fmt.Sprintf("复算（第三方 · 同一口径）：`find %s -type f -not -path '*/.git/*' -not -path '*/vendor/*' | wc -l`（现读 %d 件）"+
+		" · 这一件在不在树里 = 同相对路径 `test -e %s/<件相对路径>`", a.TreePath, a.Count, a.TreePath)
+	return fmt.Sprintf("公开面：此改动会改变公开产出树 %s 件（口径：件不是行 · `-type f` · 排 .git/vendor · 产出树 %s · 扫的时刻 %s · head_sha %s · %s）"+
+		" —— 这一行说**产出**（变几件），「会红」那一行说**门**（哪一步会红），两行**不合并**",
+		a.Delta, a.Tree, a.At, a.Head, recompute)
+}
+
+// impactPublicLineArgsFromLayer 从第 ⑥ 层取这一行的输入（层表那一份取值 ⇒ 两处不会漂）。
+func impactPublicLineArgsFromLayer(l impactLayer) impactPublicLineArgs {
+	return impactPublicLineArgs{
+		Hit: l.PublicHit, Delta: l.PublicDelta, Tree: l.PublicTree, TreePath: l.PublicTreePath,
+		Count: l.PublicCount, At: l.PublicAt, Head: l.HeadSHA, NoDataWhy: l.PublicNoWhy,
+	}
+}
+
+// impactPublicLine §3.7 那一行（人面 stdout 的条件行；没命中 或 不在生效面 ⇒ 空串 ⇒ **不打**）。
+func impactPublicLine(layers []impactLayer) string {
+	l, ok := impactLayerBySeq(layers, "⑥")
+	if !ok {
+		return ""
+	}
+	return impactPublicLineText(impactPublicLineArgsFromLayer(l))
 }
