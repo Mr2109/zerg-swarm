@@ -34,6 +34,9 @@
 #     cdhash 静默失效**（漏一次就难查）。现补上重签，且**走与 `--only-core` / `--only-compat` 同一对
 #     函数**（`resolve_sign_identity` + `sign_one`）—— 脚本下面那条注释逐字要求「同一条签名路径，
 #     两份实现就会漂」，所以这里**不另写一份**签名代码。
+#   ★ 2026-09-22 · **G-06**：覆盖 `bin/zerg` 之前**自动留档**旧件到 `bin/_history/`
+#     （`archive_prev_piece`）—— 此前这一段要靠人每次手敲 `cp bin/zerg bin/zerg.bak-<stamp>`，
+#     漏一次就等于把上一枚**覆盖掉、不可找回**（真丢过一枚 `62bd48c4…`）。
 #
 # --only-core 为什么也需要单独一档（2026-09-20 · 批 B ①·换主控）：反过来同样成立 —— **换主控**时
 #   不该顺手重编另外四件。三条实据：
@@ -141,8 +144,68 @@ sign_one() {  # sign_one <文件> —— 单件重签；identifier 按既有固�
   return 0
 }
 
+# ── 换件留档（2026-09-22 · G-06：「换件不留档」）──────────────────────────────────
+# 为什么需要：`bin/zerg`（命令面）此前是**人手** `cp bin/zerg bin/zerg.bak-<stamp>` 才留档 ——
+#   漏一次就等于把上一枚**覆盖掉、不可找回**（B3 那轮真丢过一枚 `62bd48c4…`）。留档必须由换件序自带。
+# 为什么落 `bin/_history/` 而不是 `bin/` 根：`bin/` 根是**产出面**（打包 / 清单 / 守卫读它）——
+#   留档混进去会被当成「本次产物」（与 `cocoon-docs-service` 那条守卫同一条理由）。
+# 命名形状：沿用本机手搓那一支 `<件>.bak-<YYYYMMDD-HHMMSS>`（**本地**时刻，`zerg.bak-20260922-141050` 同形）。
+# 去重策略（**只留不删**）：覆盖前先算旧件 sha256，再与 `_history/` 里**同名族** `<件>.bak-*` 逐个比 ——
+#   已有一枚逐字节相同 ⇒ **不再复制、不覆盖那一枚**（内容是旧的 ⇒ 重跑不该刷出一堆同物）。
+# 备份失败 ⇒ **拒换件**（回 1，调用方 `exit 1`）：绝不带着「旧的没了、新的没上」往下走
+#   —— 同族铁律照抄 `zerg-swap-core.sh:324` 逐字「备份失败 ⇒ 不换件」。
+# ★ 本函数**从不删任何留档**：函数体里没有 rm / mv / truncate 口，只有 mkdir + cp。
+archive_prev_piece() {  # archive_prev_piece <将要被就地覆盖的件>
+  local b="$1" base hist stamp src new sha hit
+  [ -f "$b" ] || return 0                 # 目标还没有件（首建）⇒ 无可留档
+  base="$(basename "$b")"
+  hist="${REPO_ROOT}/bin/_history"
+  if ! mkdir -p "$hist"; then
+    echo "   ✗ 留档目录建不起来：$hist ⇒ 拒换件" >&2
+    return 1
+  fi
+  src="$(shasum -a 256 "$b" | awk '{print $1}')"
+  for hit in "$hist/$base".bak-*; do
+    [ -f "$hit" ] || continue
+    if [ "$(shasum -a 256 "$hit" | awk '{print $1}')" = "$src" ]; then
+      echo "   🗄  留档跳过：$base 与已有留档 $(basename "$hit") 逐字节相同（sha256 ${src}）—— 不重复留、不覆盖"
+      return 0
+    fi
+  done
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  new="$hist/$base.bak-$stamp"
+  if [ -e "$new" ]; then                  # 同一秒内二次调用（或人手已造过同名）：追加 pid，**绝不覆盖已有留档**
+    new="$new.$$"
+  fi
+  if ! cp -p "$b" "$new"; then
+    echo "   ✗ 留档失败（cp -p $b → ${new}）⇒ 拒换件" >&2
+    return 1
+  fi
+  # 复制后**回读** sha256：与旧件逐字节相同才算留档成功（不拿 cp 的退出码当唯一判据）
+  sha="$(shasum -a 256 "$new" | awk '{print $1}')"
+  if [ "$sha" != "$src" ]; then
+    echo "   ✗ 留档回读 sha 与旧件不同（${sha} ≠ ${src}）：$(basename "$new") ⇒ 拒换件" >&2
+    return 1
+  fi
+  echo "   🗄  已留档旧件：bin/_history/$(basename "$new")（$(stat -f%z "$new" 2>/dev/null || stat -c%s "$new") 字节 · sha256 ${src}）"
+  return 0
+}
+
 # 命令面 zerg（薄壳 · 独立客户端二进制）：与 9 个既有入口同 module、复用 core/internal/*（§6.1）。
 # 放在最前，因为 --only-cli 只编它一件就收工。
+#
+# ── 换件前留档（2026-09-22 · G-06）─────────────────────────────────────────────
+# 就地覆盖 bin/zerg 的入口有四个（--only-cli / --only-core / --only-compat / 不带 --only 的全量档），
+#   而它们编 `bin/zerg` 用的是**同一行**（下面那一行 `go build … -o "$OUT/zerg"`）⇒ 留档也只挂这一处，
+#   四条入口共用同一条留档路径（同 `sign_one` 那条理由：挂两份实现就会漂）。
+# --dist 档不挂：它写 `dist/<版本>/`，不是换生产件（见文件头「--dist 的边界」）。
+# 留档失败 ⇒ **拒换件**（这里 `exit 1`，绝不往下走：旧件还没被覆盖，bin/ 一个字节未动）。
+if [ "$DIST" != "1" ]; then
+  archive_prev_piece "${OUT}/zerg" || {
+    echo "!! 留档失败 ⇒ 拒换件（${OUT}/zerg 尚未被覆盖，一个字节未动）" >&2
+    exit 1
+  }
+fi
 echo "→ 命令面 zerg（薄壳 · core/cmd/zerg）"
 (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg" ./cmd/zerg)
 
