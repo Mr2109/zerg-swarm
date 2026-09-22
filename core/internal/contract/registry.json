@@ -96,6 +96,16 @@
       "gate": "（由 core: go test 覆盖 —— 判据面在 core/cmd/zerg/cli_impact_backfill_test.go：十键齐 + 缺任一不写 + 追加式（历史行逐字节不变）+ 三数可复算（同一次门禁结果 + 同 head_sha ⇒ 逐字相同）+ BLOCKED 不进漏报 + 干跑不写 + 写失败不改退码 + **回填件只被读**（静态 0 处 + 运行期改值不变））",
       "change_class": "A",
       "change_note": "改 `file` = 换落点（旧件留着不用，**不许自动删** · 也不许自动迁移）；`required_keys` **只许多加**（缺任一 ⇒ 该行不许写 · §5.5 判据④）；`slot` 的阈值**照抄现成槽**，本件**不许自设**（§十 R30：口径可定、阈值不可编）；`not_input_to` 是**冲突⑧ 的拍死句** ⇒ 只许加宽，**不许收窄**（收窄 = 把回填接成反馈回路 = 越线 ✗）"
+    },
+    {
+      "id": "S-j",
+      "name": "变更影响面 · 分层预算与降级",
+      "truth": "core/internal/contract/impact-budget.json",
+      "truth_shape": "json：`档位`（默认 / 按需 / 降级三档 · 降级档层名单 = ①④）+ `cap.两式`（乘数 + 输入名 + 算出值秒）+ `cap.实测输入`（每项带 口径 + `head_sha` + 缓存态 三件）+ `cap.生效式` + `cap.耗时准入`（三件齐且缓存态 ≠ 未测 · 不含 ①）+ `degrade`（触发 / 降级后 / 留痕形状 / 没跑的层口径 / warnings / 形状不变 / 不改答案 / 不改退码 / 不许接的动作）；消费方 = `core/cmd/zerg/family_impact_budget.go`（读这一份 —— 源码里 0 个阈值数）",
+      "version_field": "schema（zerg/impact-budget/1）",
+      "gate": "（由 core: go test 覆盖 —— 判据面在 core/cmd/zerg/cli_impact_budget_test.go：`meta.layers_not_run[]` 含 runtime 恒在 + 超时即降到编译器层 + 词法层（逐层点名）+ `warnings[]` 写明哪几层没跑 + 缺档位的耗时不进裁决 + 降级前后形状不变（层表恒六行）+ 缓存与降级不改答案 + 实现里 0 个阈值数）",
+      "change_class": "A",
+      "change_note": "改 `两式` 的乘数或 `实测输入` 的取值 = 换上限（`R32` 拍定后**只改本件这两格**）；`降级档.层名单` 只许**加严**（多降一层 ⇒ 多一次留痕），**不许放宽成「不降级」** ✗；`degrade.不许接的动作` 只许加宽、不许收窄（收窄即越线：自动收窄 / 自动删 / 自动回滚 / 接成模型输入）"
     }
   ],
   "change_flow": {
