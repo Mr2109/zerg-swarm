@@ -40,6 +40,33 @@ type matrixCase struct {
 	WantRC          int      `json:"want_rc"`
 	WantStdoutBytes int      `json:"want_stdout_bytes"`
 	Why             string   `json:"why"`
+	// ── 公开面档（两档矩阵 · 设计-CI适配-v1.1 §十三 `M2`）─────────────────────────────
+	// 为什么需要分档：**同一格被两棵树要求不同值**。公开树缺三样本机有的东西 ——
+	//   · `bin/`（`publish/whitelist.txt` 不含它）⇒ `build ls` 先撞缺件退 8；
+	//   · `scripts/gates/precommit-gates.sh`（`publish-public.sh` 的 EXCLUDES 里的发布机制自举件）
+	//     ⇒ `gate run` 先撞「门禁最小入口不在」退 2；
+	//   · `scripts/calib/*` 与 `scripts/evals/compare.py`（公开面只进 `make-manifest.py`）
+	//     ⇒ `calib run` / `eval run` 先撞「件不在盘上」退 8。
+	// 三样都让 CLI **走不到**本机那套参数校验 ⇒ 把单一真源整体改成公开面的值会让**本机立刻变红**
+	// （那是挪红，不是修红）；反过来只保本机值则公开面永远红。
+	// ⇒ 分两档：本机档 = 上面既有两列（`want_rc` / `want_stdout_bytes`，**一字不动**）；
+	//   公开面档 = 下面两个**可选覆盖列**。
+	// **公开面档存哪（写死）**：就存本件（`core/cmd/zerg/testdata/cli-matrix.json`）的 `cases[]` 里，
+	// 不另开第二份矩阵 —— 单一真源仍是本件。`check-cli-contract.py --emit-matrix` 的增量合并
+	// 只刷新 `want_rc`/`want_stdout_bytes` 两列（`hit.update(d)`），`id/command/argv/why` 与本组
+	// 公开面列**同等逐字保留**（所以「在公开树上跑一次 emit」不会把本机档改掉 —— 何况公开树
+	// 没有 `bin/zerg`，emit 在那儿本来就给不出结论，退 2）。
+	// 用指针是为了分清「显式给 0」与「这一格没分档」。
+	WantRCPublic          *int   `json:"want_rc_public"`
+	WantStdoutBytesPublic *int   `json:"want_stdout_bytes_public"`
+	WhyPublic             string `json:"why_public"`
+}
+
+// matrixTierDecl —— 档位声明（`tiers` 段一格）：**公开面档存哪要写死**，不写在聊天里。
+type matrixTierDecl struct {
+	Where string `json:"where"`
+	Judge string `json:"judge"`
+	Why   string `json:"why"`
 }
 
 type matrixFile struct {
@@ -48,7 +75,100 @@ type matrixFile struct {
 		Command string `json:"command"`
 		Reason  string `json:"reason"`
 	} `json:"exemptions"`
+	Tiers struct {
+		Local  matrixTierDecl `json:"local"`
+		Public matrixTierDecl `json:"public"`
+	} `json:"tiers"`
 	Cases []matrixCase `json:"cases"`
+}
+
+// ── 两档矩阵的档位（设计 §十三 `M2`）──────────────────────────────────────────────
+const (
+	tierLocal  = "local"
+	tierPublic = "public"
+)
+
+// matrixTier —— **唯一一处**档位判据：仓根有没有 `bin/`。
+// 为什么拿 `bin/` 当判据：它正是两档不同的**同一个成因**（公开面白名单不含 `bin/`；缺它
+// ⇒ `build ls` 先撞缺件退 8）。用「本次红因本身」当档位判据，不另立一个「我在哪棵树」的开关。
+// `ZERG_MATRIX_TIER=local|public` 是**取证用**的显式覆盖（同机两跑对照）：写错即 Fatal（假读数）。
+func matrixTier(t *testing.T) string {
+	t.Helper()
+	if v := strings.TrimSpace(os.Getenv("ZERG_MATRIX_TIER")); v != "" {
+		if v != tierLocal && v != tierPublic {
+			t.Fatalf("ZERG_MATRIX_TIER=%q 不是 local/public —— 取证档位写错就是假读数", v)
+		}
+		return v
+	}
+	root := matrixRepoRoot()
+	if root == "" {
+		t.Fatal("解析不到仓根（沿途 8 级都没有 core/go.mod）⇒ **判不出档位**：不给结论，不许默认成某一档")
+	}
+	if st, err := os.Stat(filepath.Join(root, "bin")); err == nil && st.IsDir() {
+		return tierLocal
+	}
+	return tierPublic
+}
+
+// tierJudgeLine —— 档位判据的可读面（打印用；与 matrixTier **同一判据**，不另立说法）。
+// ★ 显式覆盖时必须**照实**打出来（否则日志会把「被迫的档位」说成「判据判出来的档位」——
+// 取证时最容易被自己骗过去的就是这一句）。
+func tierJudgeLine(t *testing.T, tier string) string {
+	obs, auto := "仓根（解析不到）", "（判不出）"
+	if root := matrixRepoRoot(); root != "" {
+		obs = "仓根 " + root
+		if st, err := os.Stat(filepath.Join(root, "bin")); err == nil && st.IsDir() {
+			obs += " 有 bin/"
+			auto = tierLocal
+		} else {
+			obs += " **没有 bin/**"
+			auto = tierPublic
+		}
+	}
+	tierWhy := map[string]string{
+		tierLocal:  "本机档（= 既有两列 want_rc/want_stdout_bytes）",
+		tierPublic: "公开面档（= 可选覆盖列 want_rc_public/want_stdout_bytes_public）",
+	}
+	if v := strings.TrimSpace(os.Getenv("ZERG_MATRIX_TIER")); v != "" {
+		return fmt.Sprintf("%s ⇒ 自动判据本该是 %s 档，但被**显式覆盖 ZERG_MATRIX_TIER=%s** 越过（本跑档位 = %s）",
+			obs, auto, v, tier)
+	}
+	return fmt.Sprintf("%s ⇒ %s 档｜%s", obs, auto, tierWhy[auto])
+}
+
+// matrixRepoRoot —— 从测试进程的 cwd 往上找带 `core/go.mod` 的那一级（最多 8 级）。
+func matrixRepoRoot() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	d := wd
+	for i := 0; i < 8; i++ {
+		if st, err := os.Stat(filepath.Join(d, "core", "go.mod")); err == nil && !st.IsDir() {
+			return d
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	return ""
+}
+
+// wantFor —— 按档位取「这一格的期望值」：本机档 = 既有两列；公开面档 = 可选覆盖列
+// （没给覆盖列 ⇒ 回落到本机列 —— **两档同值就是常态**，只有缺件面那几格才真不同）。
+func wantFor(c matrixCase, tier string) matrixCase {
+	if tier != tierPublic {
+		return c
+	}
+	if c.WantRCPublic != nil {
+		c.WantRC = *c.WantRCPublic
+	}
+	if c.WantStdoutBytesPublic != nil {
+		c.WantStdoutBytes = *c.WantStdoutBytesPublic
+	}
+	return c
 }
 
 func loadMatrix(t *testing.T) matrixFile {
@@ -66,6 +186,11 @@ func loadMatrix(t *testing.T) matrixFile {
 	}
 	if len(m.Cases) == 0 {
 		t.Fatal("矩阵一个 case 都没有（空转 = 假覆盖）")
+	}
+	// 两档矩阵（§十三 `M2`）：**公开面档存哪要写死**，写不清就是「档位存在聊天里」⇒ 不给结论。
+	if strings.TrimSpace(m.Tiers.Public.Where) == "" {
+		t.Fatal("矩阵没写「公开面档存哪」（`tiers.public.where` 是空的）—— §十三 M2 要求写死；" +
+			"写不清的档位等于没有档位（不给结论，不许默认成某一档）")
 	}
 	return m
 }
@@ -90,8 +215,19 @@ func runCase(c matrixCase) (int, int) {
 }
 
 // TestCLIContractMustFailMatrix —— 判据①：每条口令**真的红**（退码 + stdout 字节数逐条对）。
+// 两档矩阵（§十三 `M2`）：判据取 `wantFor(c, 档位)` —— 本机档 = 既有两列；公开面档 = 可选覆盖列。
 func TestCLIContractMustFailMatrix(t *testing.T) {
 	m := loadMatrix(t)
+	tier := matrixTier(t)
+	two := twoTierCases(m)
+	t.Logf("档位 = %s ｜ 判据：%s", tier, tierJudgeLine(t, tier))
+	t.Logf("公开面档存哪（写死）：%s ｜ 档位判据声明：%s", m.Tiers.Public.Where, m.Tiers.Public.Judge)
+	for _, c := range two {
+		w := wantFor(c, tier)
+		t.Logf("  两档格 %s：本档(%s) 期望 rc=%d/stdout=%d 字节 ｜ 本机档 %d/%d ｜ 公开面档 %d/%d ｜ 公开面为什么不同：%s",
+			c.ID, tier, w.WantRC, w.WantStdoutBytes, c.WantRC, c.WantStdoutBytes,
+			effRC(c, tierPublic), effBytes(c, tierPublic), c.WhyPublic)
+	}
 	bad, n := 0, 0
 	for _, c := range m.Cases {
 		if c.WantRC == 0 {
@@ -100,14 +236,29 @@ func TestCLIContractMustFailMatrix(t *testing.T) {
 			continue
 		}
 		rc, outBytes := runCase(c)
-		if err := judgeCase(c, rc, outBytes); err != nil {
-			t.Errorf("case %s（%v · %s）不红/形状变了：%v", c.ID, c.Argv, c.Why, err)
+		if err := judgeCase(wantFor(c, tier), rc, outBytes); err != nil {
+			t.Errorf("case %s（档 %s · %v · %s）不红/形状变了：%v", c.ID, tier, c.Argv, c.Why, err)
 			bad++
 		}
 		n++
 	}
-	t.Logf("矩阵：%d 条 case 跑完 · 不符 %d 条 · 命令覆盖 %d 条", n, bad, len(commandsInMatrix(m)))
+	t.Logf("矩阵：%d 条 case 跑完 · 不符 %d 条 · 命令覆盖 %d 条 · 两档格 %d 条",
+		n, bad, len(commandsInMatrix(m)), len(two))
 }
+
+// twoTierCases —— 分了档的格（有任一公开面覆盖列）。空 = 分档没落地（见负控）。
+func twoTierCases(m matrixFile) []matrixCase {
+	out := []matrixCase{}
+	for _, c := range m.Cases {
+		if c.WantRCPublic != nil || c.WantStdoutBytesPublic != nil {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func effRC(c matrixCase, tier string) int    { return wantFor(c, tier).WantRC }
+func effBytes(c matrixCase, tier string) int { return wantFor(c, tier).WantStdoutBytes }
 
 func commandsInMatrix(m matrixFile) map[string]bool {
 	set := map[string]bool{}
@@ -182,6 +333,47 @@ func TestCLIContractHarnessNegativeControl(t *testing.T) {
 	if err := judgeCase(wrong2, rc, outBytes); err == nil {
 		t.Error("负控失败：stdout 字节数改错后**没有**报错")
 	}
+}
+
+// TestCLIContractMatrixTierNegativeControl —— 两档机制（设计 §十三 `M2`）的**成对负控**：
+//
+//	① 两档格**确实存在**（一条都没有 ⇒ 「分档」是空转）；
+//	② 每条两档格的**两档值必须不同**（同值 ⇒ 那格本不该分档 —— 分档是给缺件面用的，不是洗白用的）；
+//	③ 拿**另一档**的期望值去判**本档现跑** ⇒ **必红**（证明档位真的进了判决，不是只被打印出来）。
+//
+// ③ 是本件最要紧的一条：本机档跑 ⇒ 用公开面档的期望必红；公开面档跑 ⇒ 用本机档的期望必红。
+// 少一条（比如只比「本档判得过」）就分不清「分档生效」与「两档都恰好同值」。
+func TestCLIContractMatrixTierNegativeControl(t *testing.T) {
+	m := loadMatrix(t)
+	tier := matrixTier(t)
+	other := tierLocal
+	if tier == tierLocal {
+		other = tierPublic
+	}
+	two := twoTierCases(m)
+	if len(two) == 0 {
+		t.Fatal("矩阵里一条两档格都没有 ⇒ 「分档」没落地（空转 ⇒ 不给结论）")
+	}
+	bad := 0
+	for _, c := range two {
+		if effRC(c, tierLocal) == effRC(c, tierPublic) && effBytes(c, tierLocal) == effBytes(c, tierPublic) {
+			t.Errorf("两档格 %s 的两档值**完全相同**（本机 %d/%d = 公开面 %d/%d）—— 同值就不该分档（分档只给缺件面用）",
+				c.ID, effRC(c, tierLocal), effBytes(c, tierLocal), effRC(c, tierPublic), effBytes(c, tierPublic))
+			bad++
+		}
+		rc, outBytes := runCase(c)
+		if err := judgeCase(wantFor(c, tier), rc, outBytes); err != nil {
+			t.Errorf("负控第 0 步不成立：两档格 %s 在**本档**（%s）都判不过（%v）", c.ID, tier, err)
+			bad++
+			continue
+		}
+		if err := judgeCase(wantFor(c, other), rc, outBytes); err == nil {
+			t.Errorf("负控失败：两档格 %s 拿**另一档**（%s）的期望值也判过了 —— 档位没进判决（分档是摆设）", c.ID, other)
+			bad++
+		}
+	}
+	t.Logf("两档格 %d 条 · 本档 = %s（另一档 = %s）⇒ 每格：本档判过 · 另一档必红（失败 %d 条）",
+		len(two), tier, other, bad)
 }
 
 // TestCLIContractExitCodeTableUnique —— 判据③「退码表唯一」的**进程内**一半：

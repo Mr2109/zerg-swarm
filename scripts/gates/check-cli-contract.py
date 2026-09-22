@@ -340,6 +340,12 @@ def emit_matrix(root, out_path=None):
 
     doc = {'id': old.get('id') or 'cli-contract.v1', 'note': MATRIX_NOTE,
            'exemptions': old.get('exemptions') or [], 'cases': cases}
+    # ★ 2026-09-23（波A `A1` · 设计 §十三 `M2`）：`tiers`（两档矩阵的**档位声明**：本机档 / 公开面档，
+    #   「公开面档存哪」写死在这一段里）必须**原样带上** —— 它不是派生列，而**整表重写**会把它丢掉；
+    #   丢掉之后 `core/cmd/zerg/cli_matrix_test.go` 的 `loadMatrix` 会当场 Fatal
+    #   （「写不清的档位等于没有档位」）。⇒ 旧件里有就逐字带上，没有就一个字节都不加（不造空壳）。
+    if old.get('tiers'):
+        doc['tiers'] = old['tiers']
     dst = out_path or os.path.join(root, MATRIX_REL)
     with open(dst, 'w', encoding='utf-8') as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)

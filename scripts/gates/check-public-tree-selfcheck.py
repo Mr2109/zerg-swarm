@@ -58,6 +58,20 @@
 档位口径（与仓内其它「只报告」步一字不差）：门脚本自己的 rc 判据 0/1/2 **三档分明、一字未改**；
 「只报告」是**挂它的那一步**在步骤表里申报的档位 —— rc=1 落 REPORT（不计失败项、不计 BLOCKED、不改退出码），
 rc=2 仍是 BLOCKED（**不给结论 ≠ 绿**）。
+
+双方 HEAD sha（设计-CI适配-v1.1 §十三 `M4` · 波A `A3`）
+----------------------------------------------------
+**缺漏**（`M4` 逐字）：「§十 的闸 `git clone --depth 1 …/zerg-swarm.git` —— clone 的是**当前公开树**，
+不是**本次要比的快照** ⇒ 公开树落后/领先本机时，跑的根本不是同一份 ⇒ 读数不对应任何一次发布」。
+处置（`M4` 逐字）：「闸必须打印并记录**双方 HEAD sha**；**不相等 ⇒ 明确输出「不对应」** ✗（不许沉默地跑 ✓）」。
+
+⇒ 本闸**每次跑**都先打一块「双方 HEAD sha + 对应判据」，并把两枚 sha 记进 `--json` 面（可再落 `--sha-file`）：
+    · 本机 HEAD = `git -C <仓根> rev-parse HEAD`（`--local-head` 可显式覆盖 —— 供**成对负控**用）；
+    · 公开树 HEAD = 物料化后的那棵树的 `rev-parse HEAD`（clone 或 `--tree` 复用）；
+    · 两枚**都有值**且相等 ⇒ 「**对应**」；都有值但不等 ⇒ 「**不对应**」（**明确打出来**，且**绝不当绿**：
+      `rc` 至少 1 —— 哪怕两个探针全绿）；任一读不到 ⇒ 「**未证**」（不给结论 · rc=2）。
+      口径：**不对应时探针的读数不作数**（它测的不是本次要比的那棵树）—— 所以打印块里逐条写明。
+    · `--shas-only`：**只**核双方 HEAD sha（不跑探针）—— 正控/负控与日常对账的最短路径。
 """
 
 import argparse
@@ -160,6 +174,46 @@ def judge(text, rc, probe):
 
 
 
+# ── 双方 HEAD sha（§十三 `M4`）：判据写在一处，自检直接钉它 ──────────────────────────
+CORRESPOND = "对应"
+UNRESPOND = "不对应"
+UNPROVEN = "未证"
+
+
+def read_head(tree, full=True):
+    """读一棵树的 HEAD sha（读不到 ⇒ 空串 —— **缺件 ≠ 绿**，由 judge_heads 判「未证」）。"""
+    if not tree or shutil.which("git") is None:
+        return ""
+    argv = ["git", "-C", tree, "rev-parse"]
+    if not full:
+        argv.append("--short")
+    argv.append("HEAD")
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=60, errors="replace")
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if p.returncode != 0:
+        return ""
+    return (p.stdout or "").strip()
+
+
+def judge_heads(local, public):
+    """双方 HEAD sha 的对应判据 —— 唯一出口（自检直接钉它）。
+
+    返回 (verdict, why)：`对应` / `不对应` / `未证`。
+    ★ 为什么「不对应」不能只是打印：clone 的是**当前公开树**，不是本次要比的快照 ⇒ 不对应时
+      探针读数**不作数**（测的不是同一份东西）。所以它必须进判决，不许沉默地跑。
+    """
+    local, public = (local or "").strip(), (public or "").strip()
+    if not local or not public:
+        lack = "本机 HEAD 读不到" if not local else "公开树 HEAD 读不到"
+        return UNPROVEN, "%s ⇒ 两枚 sha 不齐，**给不出「对应/不对应」**（缺件 ≠ 绿）" % lack
+    if local == public:
+        return CORRESPOND, "双方 HEAD sha 逐字相同"
+    return UNRESPOND, "本机 HEAD %s ≠ 公开树 HEAD %s —— clone 的是**当前公开树**，不是本次要比的快照" % (
+        local[:12], public[:12])
+
+
 def dedupe(lines, cap):
     """按「file:line」去重（同一处红会重复几十行）⇒ [(重复数, 原样行)]，取前 cap 组。"""
     order, seen = [], {}
@@ -207,7 +261,8 @@ def materialize(repo, dest, timeout):
         return None, "clone 失败（rc=%d）：%s" % (p.returncode, (p.stderr or "").strip()[:300])
     head = ""
     try:
-        h = subprocess.run(["git", "-C", dest, "rev-parse", "--short", "HEAD"],
+        # §十三 M4：读**全 sha**（短 sha 比不出「对应」的确定性 —— 要逐字比 40 位）。
+        h = subprocess.run(["git", "-C", dest, "rev-parse", "HEAD"],
                            capture_output=True, text=True, timeout=60)
         head = (h.stdout or "").strip()
     except Exception:
@@ -251,6 +306,28 @@ def self_test():
         print("   ✓ must-fail 两类分列：替换打穿夹具 / 夹具长度漂 各自被点名（都不是靠 rc 蹭红）")
     else:
         bad.append("两类 must-fail 分列")
+    # ── 双方 HEAD sha 判据（§十三 `M4` · 波A `A3`）：正控（同 sha）· **负控（喂一个假 HEAD ⇒ 必报不对应）**
+    #    · 缺一侧 ⇒ 未证（不给结论）三条成对给区分度 —— 判据没牙的话这三条里至少有两条过不去。
+    v_pos = judge_heads("a" * 40, "a" * 40)
+    v_neg = judge_heads("a" * 40, "b" * 40)
+    v_lack = judge_heads("", "b" * 40)
+    if v_pos[0] == CORRESPOND:
+        ok += 1
+        print("   ✓ 正控：双方同 sha ⇒ **对应**（本机 aaaa… = 公开树 aaaa…）")
+    else:
+        bad.append("双方 HEAD sha 正控（同 sha）")
+        print("   ✗ 正控：同 sha 却判成 %s" % v_pos[0])
+    if v_neg[0] == UNRESPOND:
+        ok += 1
+        print("   ✓ 负控：**喂一个假 HEAD**（公开树 bbbb… ≠ 本机 aaaa…）⇒ **不对应**（%s）" % v_neg[1])
+    else:
+        bad.append("双方 HEAD sha 负控（假 HEAD）")
+        print("   ✗ 负控：假 HEAD 却判成 %s —— 「不对应」没进判决（判据没牙）" % v_neg[0])
+    if v_lack[0] == UNPROVEN:
+        ok += 1
+        print("   ✓ 缺一侧 sha（本机读不到）⇒ **未证**（不给结论，不许当绿）：%s" % v_lack[1])
+    else:
+        bad.append("双方 HEAD sha 缺一侧 ⇒ 未证")
     print("自检结论: %s（断言 %d 条 · 失败 %d 条）"
           % ("全过" if not bad else "**不过**", ok + len(bad), len(bad)))
     return 0 if not bad else 2
@@ -268,6 +345,12 @@ def main():
     ap.add_argument("--max-fail-lines", type=int, default=8, help="FAIL 行最多列几组（去重后 · 默认 8）")
     ap.add_argument("--json", default="", help="机器面字段（逗号分隔）")
     ap.add_argument("--self-test", action="store_true", help="只跑自检（合成夹具 · 不碰真目标 · 不走网）")
+    # §十三 M4（波A A3）：双方 HEAD sha 的取证面 —— 两个覆盖开关给**离线/合成骨架**用（写法同仓内
+    # 其余「显式覆盖」：写错即不给结论，不许默认成某一侧）；`--shas-only` 只核 sha（不跑探针）。
+    ap.add_argument("--local-head", default="", help="显式给本机 HEAD sha（缺省现读 `git -C <仓根> rev-parse HEAD`）")
+    ap.add_argument("--public-head", default="", help="显式给公开树 HEAD sha（缺省现读物料化那棵树的 HEAD）")
+    ap.add_argument("--shas-only", action="store_true", help="**只**核双方 HEAD sha（不跑探针）")
+    ap.add_argument("--sha-file", default="", help="把双方 sha + 对应判据落成一份 JSON（记录用 · 缺省只打印）")
     ap.add_argument("--list-rules", action="store_true", help="打判据 / 探针 / 档位")
     args = ap.parse_args()
 
@@ -279,6 +362,8 @@ def main():
             print("     具名红因：%s" % " · ".join(p["marks"]))
             print("     为什么：%s" % p["why"])
         print("退码：0 全绿 · 1 有命中 · 2 不给结论（clone 失败/缺件/空转/自检不过）")
+        print("双方 HEAD sha（§十三 M4 · A3）：打印 + 记录两枚 sha；**不相等 ⇒ 明确输出「不对应」**；"
+              "探针全绿也**不当绿**（rc≥1）；任一读不到 ⇒ 「未证」· rc=2；`--shas-only` 只核 sha")
         return 0
 
     if args.self_test:
@@ -304,6 +389,43 @@ def main():
             return 2
         tree = dest
         note = "git clone --depth 1 %s" % args.repo
+
+    # ── 双方 HEAD sha（设计-CI适配-v1.1 §十三 `M4` · 波A `A3`）────────────────────────
+    # 为什么必须先打这一块：clone 的是**当前公开树**，不是本次要比的快照 ⇒ 公开树落后/领先本机时
+    # 跑的根本不是同一份 ⇒ 读数不对应任何一次发布。⇒ 两枚 sha 都打印 + 记录，不等就**明确说不对应**，
+    # 并且**不许沉默地当绿**（探针全绿 + 不对应 ⇒ rc≥1）。
+    local_head = (args.local_head or "").strip() or read_head(REPO_ROOT, full=True)
+    if (args.public_head or "").strip():
+        public_head, pub_src = (args.public_head or "").strip(), "显式 --public-head"
+    elif args.tree:
+        public_head, pub_src = read_head(tree, full=True), "现读 git -C %s rev-parse HEAD" % tree
+    else:
+        public_head, pub_src = head, "现读 clone 落地树的 HEAD"
+    corr, corr_why = judge_heads(local_head, public_head)
+    print("── 双方 HEAD sha（§十三 M4 · 波A A3）──")
+    print("   本机 HEAD  ：%s   ← %s" % (local_head or "（读不到）",
+          "显式 --local-head" if args.local_head else "现读 git -C %s rev-parse HEAD" % REPO_ROOT))
+    print("   公开树 HEAD：%s   ← %s" % (public_head or "（读不到）", pub_src))
+    print("   对应判据   ：%s —— %s" % (corr, corr_why))
+    if corr == UNRESPOND:
+        print("   ⚠ **不对应** ⇒ 本次物料化的**不是「要和本机比的那一份」**：下面探针的读数**不作数**（只当旁证）。")
+    elif corr == UNPROVEN:
+        print("   ⚠ **未证** ⇒ 两枚 sha 不齐 ⇒ 给不出「对应/不对应」（缺件 ≠ 绿）。")
+    if args.sha_file:
+        try:
+            with open(args.sha_file, "w", encoding="utf-8") as f:
+                json.dump({"schema": "zerg-public-tree-selfcheck-shas/1", "local_head": local_head,
+                           "public_head": public_head, "correspondence": corr, "why": corr_why,
+                           "tree": tree, "note": note, "when": time.strftime("%Y-%m-%dT%H:%M:%S%z")},
+                          f, ensure_ascii=False, indent=1)
+            print("   已记录双方 sha → %s" % args.sha_file)
+        except OSError as e:
+            print("   记录写不进去（%s）⇒ 不给结论 · rc=2" % e)
+            return 2
+    if args.shas_only:
+        rc = {CORRESPOND: 0, UNRESPOND: 1, UNPROVEN: 2}[corr]
+        print("⇒ --shas-only：**只核双方 HEAD sha**（不跑探针）⇒ %s · rc=%d" % (corr, rc))
+        return rc
 
     rows, verdicts = [], []
     try:
@@ -343,14 +465,16 @@ def main():
             shutil.rmtree(cleanup, ignore_errors=True)
 
     if args.json:
-        print(json.dumps({"schema": "zerg-public-tree-selfcheck/1", "tree": tree, "head": head,
+        print(json.dumps({"schema": "zerg-public-tree-selfcheck/1", "tree": tree, "head": public_head,
+                          "local_head": local_head, "correspondence": corr, "correspondence_why": corr_why,
                           "note": note, "rows": rows}, ensure_ascii=False))
 
     green = verdicts.count("green")
     hit = verdicts.count("hit")
     vac = verdicts.count("vacuous")
     print("── 公开树自洽检查 · 小结 ──")
-    print("   树：%s（%s%s%s）" % (tree, note, " · HEAD " if head else "", head))
+    print("   树：%s（%s）" % (tree, note))
+    print("   双方 HEAD：本机 %s ｜ 公开树 %s ｜ %s" % (local_head or "（读不到）", public_head or "（读不到）", corr))
     print("   探针 %d 个：绿 %d · 命中 %d · 不给结论 %d · 全程 %.1fs"
           % (len(verdicts), green, hit, vac, time.time() - t_start))
     if green == 0 and hit == 0:
@@ -362,7 +486,12 @@ def main():
     if hit:
         print("⇒ 有命中（只报告档：挂闸那一步按 tri-report 落 REPORT）· rc=1")
         return 1
-    print("⇒ 全绿 · rc=0")
+    if corr != CORRESPOND:
+        rc = 2 if corr == UNPROVEN else 1
+        print("⇒ 探针%s，但双方 HEAD **%s** ⇒ 本轮**不当绿**（读数不对应任何一次发布）· rc=%d"
+              % ("全绿" if not hit else "有命中", corr, rc))
+        return rc
+    print("⇒ 全绿 · rc=0（双方 HEAD %s ⇒ 读数对应）" % CORRESPOND)
     return 0
 
 

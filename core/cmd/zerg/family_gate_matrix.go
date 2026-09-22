@@ -35,6 +35,12 @@ type cliMatrixCase struct {
 	Why             string   `json:"why"`
 }
 
+// ★ 2026-09-23（设计-CI适配-v1.1 §十三 `M2` · 波A `A1`）：矩阵**加了两条可选列**
+// `want_rc_public` / `want_stdout_bytes_public`（公开面档 · 见 `cli_matrix_test.go` 的 `matrixTier`）。
+// 本命令**有意不读它们**：`gate matrix` 导的是**本机档**那张表（它本来就跑在本机树上；
+// 公开面档只在公开树里被 `cli_matrix_test.go` 选中）。「不许改形状」仍指既有六列
+// （id/command/argv/want_rc/want_stdout_bytes/why）的名字与语义一字不动 —— 新增可选列
+// 不改既有列的读法（`encoding/json` 对未声明键是忽略的）。
 type cliMatrixFile struct {
 	ID         string            `json:"id"`
 	Note       string            `json:"note"`
