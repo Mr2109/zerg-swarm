@@ -62,7 +62,7 @@ DEVDOCS_TAIL = os.path.join("项目文档", "v2.5.11")
 SYNC_GATE_REL = os.path.join("scripts", "gates", "check-publish-face-sync.py")
 
 TOP_KEYS = ["schema", "note", "authority", "entries", "change_flow"]     # 批前现读（5 键 · 按序）
-ENTRIES_N = 14                                                          # 批前现读（2026-09-23 波① `T1b`：13 → 14 · 新增 `S-n` 模型面适配器登记）
+ENTRIES_N = 15                                                          # 批前现读（2026-09-23 波① `T1b`：13 → 14 · 新增 `S-n` 模型面适配器登记；`T3`：14 → 15 · 新增 `S-o` 授权三态映射表）
 SIG_ALG_N = 0                                                           # ★ 必须保持 0
 APPROVE_N = 1                                                           # 批前现读
 # `v1.3 §⑥ I4` 逐字（登记表必须带这一句 —— 一个标点都不许改）
