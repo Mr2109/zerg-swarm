@@ -226,14 +226,18 @@ func DecisionRecords() (*DecisionRecordSpec, error) {
 
 // UnresolvedEntry —— 一个未定入口的取证一行（T-53 · §7.1 `P13` / §7.2 `U21`）。
 //
-// 本表**不拍归属**（那是人的活）：它只登记「谁在调我」的**逐行证据**，
-// 且证据带 `file` + `line` + 这一行必须含的名字 ⇒ 判据机检能逐条复核，
-// 证据不会随文件漂移而悄悄失效（挂在空气上的台账 = 第二份「规则写了没人接电」）。
-// UnresolvedCaller —— 一条「谁在调我」的证据行（**可复核**：文件 + 行号 + 该行必须含的名字）。
+// 本表**不拍归属**（那是人的活）：它只登记「谁在调我」的**内容锚证据**。
+// ★ 口径 v2（2026-09-22）：证据**不再按字面行号钉** —— v1 的「文件 + 行号 + 该行含名字」已**第二次**漂红
+// （在证据件**前面插行**就把行号打移：一个注释块 +6 行就能把整条证据打成假红）。现口径：
+// 证据带 `file` + `anchor`，锚必须在件内**逐字命中且唯一**（0 处 ⇒ 锚不存在 · >1 处 ⇒ 锚不唯一，不许静默取第一处）；
+// `line_hint` 只是**提示**（锚起行），漂了只警告不判红 ⇒ 证据不会随文件漂移而悄悄失效，
+// 也不会因别人在件头插一行而误报（挂在空气上的台账 = 第二份「规则写了没人接电」）。
+// UnresolvedCaller —— 一条「谁在调我」的证据（**可复核**：文件 + 内容锚 + 行号提示）。
 type UnresolvedCaller struct {
-	File string `json:"file"`
-	Line int    `json:"line"`
-	What string `json:"what"`
+	File     string `json:"file"`
+	Anchor   string `json:"anchor"`              // 内容锚：件内逐字命中且唯一（可含 \n = 上下文窗）
+	LineHint int    `json:"line_hint,omitempty"` // 提示 only：锚命中处的起始行（漂了不判红）
+	What     string `json:"what"`
 }
 
 type UnresolvedEntry struct {
@@ -249,6 +253,12 @@ type UnresolvedEntry struct {
 // UnresolvedLedger —— 七个未定入口的取证台账（原样读出，不裁剪）。
 type UnresolvedLedger struct {
 	Schema                  string            `json:"schema"`
+	Note                    string            `json:"note"`
+	EvidenceRule            string            `json:"evidence_rule"`
+	HintDriftPolicy         string            `json:"hint_drift_policy"`
+	VerifyCommand           string            `json:"verify_command"`
+	VerifyCommandHints      string            `json:"verify_command_hints"`
+	VerifyCommandDrift      string            `json:"verify_command_drift"`
 	SearchCommand           string            `json:"search_command"`
 	RuleKeep                string            `json:"rule_keep"`
 	RuleNoCommand           string            `json:"rule_no_command"`
@@ -256,7 +266,11 @@ type UnresolvedLedger struct {
 	Entries                 []UnresolvedEntry `json:"entries"`
 }
 
-// Unresolved —— 解出取出台账（解不动 / 空表 ⇒ 报错，不吞 —— 空台账会让「一个都不许删」无处可判）。
+// UnresolvedSchema —— 现口径（v2 · 内容锚）的台账 schema 字面。
+// v1（按字面行号钉）已废：判别只在 Unresolved() 里一处，源码别处不写第二份版本字面量。
+const UnresolvedSchema = "zerg-unresolved-entries/2"
+
+// Unresolved —— 解出取出台账（解不动 / 空表 / 还是 v1 的口径 ⇒ 报错，不吞）。
 func Unresolved() (*UnresolvedLedger, error) {
 	var l UnresolvedLedger
 	if err := json.Unmarshal(unresolvedRaw, &l); err != nil {
@@ -264,6 +278,10 @@ func Unresolved() (*UnresolvedLedger, error) {
 	}
 	if len(l.Entries) == 0 {
 		return nil, fmt.Errorf("contract: 未定入口台账是空的（entries 为空）—— 空表 = 「拍板前一个都不许删」这条判据没有对象")
+	}
+	if l.Schema != UnresolvedSchema {
+		return nil, fmt.Errorf("contract: 未定入口台账的 schema 是 %q（要 %q）—— v1 的「按字面行号钉」已废："+
+			"证据必须带内容锚（`anchor`），行号只能是提示（`line_hint`）", l.Schema, UnresolvedSchema)
 	}
 	return &l, nil
 }
