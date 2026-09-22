@@ -4629,6 +4629,117 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "`§五 ⑩`/`P27`：不许占 `--rekey` 这个名字（未知旗标 = 用法错 ⇒ 2 · 执行前判）"
+  },
+  {
+   "id": "archive/hash#未知旗标",
+   "command": "archive hash",
+   "argv": [
+    "archive",
+    "hash",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "archive/hash#不认的契约主号",
+   "command": "archive hash",
+   "argv": [
+    "archive",
+    "hash",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "archive/hash#--json 不给字段",
+   "command": "archive hash",
+   "argv": [
+    "archive",
+    "hash",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+  },
+  {
+   "id": "archive/manifest#未知旗标",
+   "command": "archive manifest",
+   "argv": [
+    "archive",
+    "manifest",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "archive/manifest#不认的契约主号",
+   "command": "archive manifest",
+   "argv": [
+    "archive",
+    "manifest",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "archive/manifest#--json 不给字段",
+   "command": "archive manifest",
+   "argv": [
+    "archive",
+    "manifest",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+  },
+  {
+   "id": "archive/verify#未知旗标",
+   "command": "archive verify",
+   "argv": [
+    "archive",
+    "verify",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "archive/verify#不认的契约主号",
+   "command": "archive verify",
+   "argv": [
+    "archive",
+    "verify",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "archive/verify#--json 不给字段",
+   "command": "archive verify",
+   "argv": [
+    "archive",
+    "verify",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
   }
  ]
 }

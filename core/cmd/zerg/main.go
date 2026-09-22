@@ -1273,6 +1273,40 @@ func init() {
 			endpoint: "",
 			run:      cmdImpact,
 		},
+		// ---- 波① · T1 `G-07`：归档 / 仓外仓命令面（**全账唯一 P0** · 2026-09-23）----
+		// 为什么是它：归档六步全靠手写 shell（源件实测 1072 次 `shasum` + 1072 条临时索引）；
+		// 形状照业界现成接口（`apt-ftparchive` 的逐件摘要清单 · coreutils 的一进程吃 N 件 ·
+		// RFC 8493 BagIt 的「载荷 + 逐件清单 + 标签清单」）。三条都是只读或**只写指定落点**。
+		{
+			path:     []string{"archive", "hash"},
+			kind:     "ArchiveHash",
+			summary:  "一批件算 sha256（**一进程吃 N 件**）—— 逐行 `sha256␣␣路径`，与 `shasum -a 256` 逐字相同（手搓 1072 次 shasum 的替身）",
+			usage:    "zerg archive hash <件|目录>… [--json <字段>]",
+			args:     []string{"件或目录（目录 ⇒ 顶层逐件 · 可给多个）"},
+			fields:   []string{"path", "sha256", "bytes"},
+			endpoint: "",
+			run:      cmdArchiveHash,
+		},
+		{
+			path:     []string{"archive", "manifest"},
+			kind:     "ArchiveManifest",
+			summary:  "出归档**三件套**（RFC 8493 BagIt：载荷 `data/` + `manifest-sha256.txt` + `tagmanifest-sha256.txt`）· `--dry-run` 先出逐件清单 · 真写要 `--yes` · 失败回滚",
+			usage:    "zerg archive manifest <载荷目录> --out <袋目录> [--dry-run | --yes] [--json <字段>]",
+			args:     []string{"载荷目录", "袋落点（--out）"},
+			fields:   []string{"bag", "entry", "sha256"},
+			endpoint: "",
+			run:      cmdArchiveManifest,
+		},
+		{
+			path:     []string{"archive", "verify"},
+			kind:     "ArchiveVerify",
+			summary:  "校验一只袋（**重算载荷** ↔ 清单逐件对拍：清单被抹一条 / 载荷改一字节 / 多出未登记件 ⇒ 判红）",
+			usage:    "zerg archive verify <袋目录> [--json <字段>]",
+			args:     []string{"袋目录"},
+			fields:   []string{"entry", "want", "got", "verdict"},
+			endpoint: "",
+			run:      cmdArchiveVerify,
+		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
 	for _, c := range commands {
