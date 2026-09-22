@@ -4517,6 +4517,62 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "回填真要写件时要 D3 档确认（`--confirm=<主机名>` 值逐字同 + `--yes`）—— 确认值不符 ⇒ 拒执（退 2 · stdout 0 字节 · 与 `dev edit` 同一口径）；这一格也在取数之前判掉"
+  },
+  {
+   "id": "approve/new#--ttl 认不出的时长（执行前判）",
+   "command": "approve new",
+   "argv": [
+    "approve",
+    "new",
+    "--tool",
+    "terminal",
+    "--by",
+    "张三",
+    "--note",
+    "理由",
+    "--ttl",
+    "等下"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`E4`：`--ttl <时长>` 值认不出来 ⇒ 用法错 2（**执行前判** —— 不碰任何件、不读口令）；时长口径 = Go 的 `30m`/`72h`/`1h30m` 另加 `7d` 一档，认不出就拒，**不许猜**"
+  },
+  {
+   "id": "approve/new#--ttl 0 不是不过期",
+   "command": "approve new",
+   "argv": [
+    "approve",
+    "new",
+    "--tool",
+    "terminal",
+    "--by",
+    "张三",
+    "--note",
+    "理由",
+    "--ttl",
+    "0"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`E4`：`--ttl` ≤ 0 ⇒ 2 —— **不过期 = 不给这个旗标**（不许把 `0` 读成「永不过期」）；同 `E5` 的 `ttl<=0 ⇒ 报错` 口径"
+  },
+  {
+   "id": "approve/new#--ttl 给了旗标没给时长",
+   "command": "approve new",
+   "argv": [
+    "approve",
+    "new",
+    "--tool",
+    "terminal",
+    "--by",
+    "张三",
+    "--note",
+    "理由",
+    "--ttl"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`E4`：`--ttl` 裸给（后面没跟值）⇒ 2 —— 与 `--confirm` 同一种形态（给了旗标 ≠ 给了值 · 不静默当「没给」）"
   }
  ]
 }
