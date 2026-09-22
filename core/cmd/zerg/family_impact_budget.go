@@ -493,9 +493,8 @@ func emitImpactBudgetBlock(w io.Writer, run impactBudgetRun, layers []impactLaye
 		ternary(p.Shape != "", "形状只改内容与标注", "形状不变口径见契约件"), ternary(p.Exit != "", "§7.5 一字不动", "见契约件"),
 		ternary(p.Answer != "", "都跑到的层逐字相同 · `M8`", "见契约件"))
 	fmt.Fprintf(w, "  **不接**的动作（契约件 `degrade.不许接的动作` 原样）：%s\n", strings.Join(p.NoAction, " · "))
-	fmt.Fprintf(w, "  ★ CLI 缺口（照实标 · 与 `A5`/`B3` 同一处）：§7.4 的 `meta.layers_not_run[]` 与 `warnings[]` 在**六键包封里没有落点**"+
-		"（`emitEnvelopeWith` 把 `warnings` 恒写 `[]`、`meta` 只写 `count/source/changed`）⇒ 两份留痕落在**本块**（同一份取值，逐字同形）；"+
-		"九批一贯红线「不改 `emitEnvelope*`」本批未解禁 ⇒ 包封那一格照实记缺口（不偷偷改包封）\n")
+	fmt.Fprintf(w, "  ★ 同一份取值现在**两处同形**（`G-08` 已解 · 顶层键一个没加）：§7.4 的 `meta.layers_not_run[]` 与 `warnings[]` 自本批起"+
+		"也进**六键包封**（`emitEnvelopeWith` 的 `warnings` 不再写死 ⇒ 按需子键与真值由命令传）⇒ 本块与包封**同一份取值**（不各算一遍）\n")
 }
 
 // sameSeconds 两枚秒值是不是同一枚（对拍用 · 容差只为浮点表示，不为凑绿）。

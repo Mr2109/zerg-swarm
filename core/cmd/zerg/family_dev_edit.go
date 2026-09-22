@@ -245,10 +245,20 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		} else {
 			fmt.Fprintf(stderr, "%s: 波纹指纹 **未取数** ⇒ 干跑不写指纹（真写那一侧的审计行照「缺摘要」处置并点名）\n", progName)
 		}
-		// ★ 缺口再点一次名（`A1`/`A2`/`A3` 一贯）：机器可读信号落 stderr 而**不进六键包封** ——
-		// `emitEnvelopeWith` 把 `warnings` 恒写 `[]`、`truncated` 恒写 `false`、`meta` 只给
-		// `count/source/changed` ⇒ **不改共享包封** ✗（红线）⇒ 上面那两行 `impact_hook` / `impact_criteria`
-		// 就是机器面；要进包封得先解禁 `emitEnvelope*`。
+		// ★ 包封真值（`G-08` 已解 · **同一份取值**，不与上面两行各算一遍）：干跑摘要 + 钩子判决自本批
+		// 起进 `meta` 的按需子键（`dry_run` / `impact_digest` / `impact_rows` / `impact_hook`），
+		// 拿不到 / 必拦 这两类**真事**进 `warnings[]` —— 顶层仍是那六键（一个键都没加）。
+		inv.metaAddJSON("dry_run", "true")
+		if summary.Taken {
+			inv.metaAddStr("impact_digest", row["impact_digest"])
+			inv.metaAddJSON("impact_rows", fmt.Sprintf("%d", summary.Rows))
+		} else {
+			inv.warnf("影响面摘要**未取数**（不是「没有」）：%s —— 真写那一侧照「缺摘要」处置并点名", summary.Reason)
+		}
+		inv.metaAddStr("impact_hook", fmt.Sprintf("%s（类=%s）", hook.Tier, hook.Class))
+		if hook.Tier == impactHookTierBlock {
+			inv.warnf("钩子判决**必拦**（类=%s）：%s", hook.Class, hook.Why)
+		}
 		if !inv.dryRun {
 			// 三态：**没带干跑旗标但确认档不齐** ⇒ 出计划件（fail-closed：从不提问、也从不偷偷写）
 			row["result"] = "planned"
