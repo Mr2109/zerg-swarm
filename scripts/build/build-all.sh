@@ -29,6 +29,11 @@
 #   它的开发/自测不该顺手重编 `bin/zerg-core` —— 主控**正在跑**，就地覆盖它的制品文件等于埋一次
 #   「换件」（改 cdhash ⇒ TCC 授权失效；重启即换实现）。本档只写 `bin/zerg` 一个文件，
 #   其余制品与本脚本写的 `build-info.json`（升级器的身份依据）**一个字节都不动** ✓。
+#   ★ 2026-09-22 · **G-05**：本档此前在**签名段之前**就 `exit 0` ⇒ 产出件只剩 Go linker 的 ad-hoc 签名
+#     （`codesign -dv` 实读 `Identifier=a.out`）。那不是「报红」，是 macOS TCC 的**本地网络授权随
+#     cdhash 静默失效**（漏一次就难查）。现补上重签，且**走与 `--only-core` / `--only-compat` 同一对
+#     函数**（`resolve_sign_identity` + `sign_one`）—— 脚本下面那条注释逐字要求「同一条签名路径，
+#     两份实现就会漂」，所以这里**不另写一份**签名代码。
 #
 # --only-core 为什么也需要单独一档（2026-09-20 · 批 B ①·换主控）：反过来同样成立 —— **换主控**时
 #   不该顺手重编另外四件。三条实据：
@@ -142,6 +147,12 @@ echo "→ 命令面 zerg（薄壳 · core/cmd/zerg）"
 (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg" ./cmd/zerg)
 
 if [ "$ONLY_CLI" = "1" ]; then
+  # 重签（2026-09-22 · G-05）：本档此前在签名段之前收工 ⇒ 产出件只剩 Go linker 的 ad-hoc 签名
+  #   （`Identifier=a.out`）。这里**复用** `--only-core` / `--only-compat` 那同一对函数
+  #   （`resolve_sign_identity` + `sign_one`，identifier 走既有固定表 ⇒ `zerg` → `com.zerg.zerg`），
+  #   **不新增证书、不另写一份签名代码** —— 形态与那两档逐字同源。
+  resolve_sign_identity
+  sign_one "$OUT/zerg"
   echo "✅ 构建完成（--only-cli：只写 bin/zerg；其余制品与 build-info.json 一个字节未动）"
   printf "   %-14s %s 字节\n" "zerg" "$(stat -f%z "$OUT/zerg" 2>/dev/null || stat -c%s "$OUT/zerg")"
   exit 0
