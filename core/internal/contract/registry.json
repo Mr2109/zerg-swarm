@@ -106,6 +106,16 @@
       "gate": "（由 core: go test 覆盖 —— 判据面在 core/cmd/zerg/cli_impact_budget_test.go：`meta.layers_not_run[]` 含 runtime 恒在 + 超时即降到编译器层 + 词法层（逐层点名）+ `warnings[]` 写明哪几层没跑 + 缺档位的耗时不进裁决 + 降级前后形状不变（层表恒六行）+ 缓存与降级不改答案 + 实现里 0 个阈值数）",
       "change_class": "A",
       "change_note": "改 `两式` 的乘数或 `实测输入` 的取值 = 换上限（`R32` 拍定后**只改本件这两格**）；`降级档.层名单` 只许**加严**（多降一层 ⇒ 多一次留痕），**不许放宽成「不降级」** ✗；`degrade.不许接的动作` 只许加宽、不许收窄（收窄即越线：自动收窄 / 自动删 / 自动回滚 / 接成模型输入）"
+    },
+    {
+      "id": "S-k",
+      "name": "变更影响面 · 文档面反向索引（词 → 篇）",
+      "truth": "core/internal/contract/impact-docindex.json",
+      "truth_shape": "json：`面`（根_环境变量 / 根_默认 / **面内定义** / 后缀 / 排除目录）+ `口径三档`（A 裸词随 `--wide` / **B 反引号包住的符号名（默认）** / C 与「件:行」同行随 `--strict`）+ `通用词假阳排除` + `分块口径`（40 行/块 · 与 `S-h` 的 `index.chunk_policy` 同源）+ `产物`（落点读 `S-h` 的 `dirs.index` · 文件名键 = 文档仓 `head_sha` + 口径 + 分块）+ `零命中`（N = 0 ⇒ 「面内未见」+ 面内定义）+ `默认档与按需档` + `不许接的动作`；消费方 = `core/cmd/zerg/family_impact_docindex.go`（读这一份，源码里不另写第二份目录名与三档取法）",
+      "version_field": "schema（zerg/impact-docindex/1）",
+      "gate": "（由 core: go test 覆盖 —— 判据面在 core/cmd/zerg/cli_impact_docindex_test.go：倒排可跑（件/行/块/词/对 + 耗时）· 键含文档仓 `head_sha`（改一字符 ⇒ 不许命中，重扫）· 三档口径可切（A ⊇ B ⊇ C · 逐档计数现读）· `N = 0` 必写「面内未见」+ 面内定义（负控：写成「无文档受影响」⇒ 判定口报错）· 通用词假阳排除（四个词逐条 · 负控：不排除就报错）· 落点在状态目录、不在仓内）",
+      "change_class": "A",
+      "change_note": "改 `面.根_默认` / `面内定义` = 换**面**（命中数全部不同源 ⇒ 必须同批写清口径与 `head_sha`）；`口径三档` 只许**加严**（B 是默认档 · C 更严），**不许**把默认档放宽成 A ✗；`通用词假阳排除` **只许加不许减**；`分块口径` 与 `S-h` 的 `index.chunk_policy` **必须逐字同**（两处漂 ⇒ 块数不可比）"
     }
   ],
   "change_flow": {
