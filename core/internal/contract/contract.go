@@ -237,8 +237,21 @@ type UnresolvedCaller struct {
 	File     string `json:"file"`
 	Anchor   string `json:"anchor"`              // 内容锚：件内逐字命中且唯一（可含 \n = 上下文窗）
 	LineHint int    `json:"line_hint,omitempty"` // 提示 only：锚命中处的起始行（漂了不判红）
-	What     string `json:"what"`
+	// 公开面对应件（列名写死 · §五 第四批）：该证据在**公开面**的对应件。
+	//   · 件在公开面同路径同在          ⇒ 写同一个路径
+	//   · 件不进公开面（或缺件）        ⇒ 写 `UnresolvedPublicOnly` 那句（缺件不许留空）
+	//   · 确有对应件（换路径了）        ⇒ 写那个路径（例：publish/ci/*.yml ⇒ .github/workflows/*.yml）
+	// 判据按**所判的那棵树**分列判：对应件在场就判它，否则判 File；
+	// 声明为 UnresolvedPublicOnly 的证据在公开树里按声明不判（不静默：判据要逐条留痕）。
+	PublicCounterpart string `json:"公开面对应件"`
+	What              string `json:"what"`
 }
+
+// UnresolvedPublicOnly —— 「该证据只在私有面成立」的**写死**声明（§五 第四批：缺件不许留空）。
+//
+// 它是台账里的**一句话值**，不是注释：判据按它决定「这件在公开树里不判」，
+// 所以两边（台账 json 与判据）必须引同一个字面量 —— 各写一份就是下一次漂移的种子。
+const UnresolvedPublicOnly = "不进公开面 ⇒ 该证据只在私有面成立"
 
 type UnresolvedEntry struct {
 	ID       string             `json:"id"`
