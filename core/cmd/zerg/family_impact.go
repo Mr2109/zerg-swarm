@@ -19,7 +19,14 @@
 //	  摘出来（现算 / 投影 / 没跑 三态），并把**尺的标定现跑重测**（`scripts/gates/check-slice.py`
 //	  的混淆矩阵 + `--selftest` 成对自证；在册旧值并留）—— 实现件在 `family_impact_timeface.go`，
 //	  本件只**传参 + 打块**（stderr 的时间面块；六键包封一个字不动 ⇒ 缺口照实点名）。
-//	  **实测侧（命中/漏报/虚报 · `impact_actual` · 回填件）属 `B3`** ✗（本件不抢那一面）。
+//	  **实测侧（命中/漏报/虚报 · `impact_actual` · 回填件）属 `B3`** ✗（本件不抢那一面，只把那一面要的两样
+//	  传下去：`predict_red[]` 的闭集与步名真源的现跑读数）。
+//	· `B3` 本件：**实测回填闭环**（`B2` 让出的那一面）—— §5.2 的两步对拍（改之前的「会红」预测 ↔ 改之后
+//	  门禁的真红）出**三个整数** + 一枚 `impact_actual`（§5.3 形状）+ **机读回填件**（追加式）。实现件在
+//	  `family_impact_backfill.go`，本件只**传参 + 打块**（stderr 的收口块 · **只在给了 `--gate-results` 时走**）。
+//	  触发点 = `R57` 三候选一里的**① 门禁跑完的收口**（理由逐条写在那一件的头注里）。
+//	  ★ 冲突⑧ 裁定「**回填件只被读，不作任何算法的输入**」⇒ 本件里它**不参与**任何一格
+//	  （不退码、不排序、不裁条、不进预测）—— 收口块的返回值**只有**「取不到 8」与「0」两档。
 //
 // 档位（§4.4 · `A2` 风险那一条）：**默认档只吃毫秒层 + 编译器层**；贵层（② 符号 `callgraph`
 // 现跑 3.9–5.8s）走**按需档**。开关用**既有全局布尔** `--all`（与 `build show --all` 同形：
@@ -112,6 +119,25 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	if tgt == nil {
 		return impactReject(inv, stderr, root, raw, why)
 	}
+	// `B3` 用法面（**在任何取数动作之前**判 —— 错旗标别白跑六层 · 与 K2 同款）：
+	//   ① `--gate-results` 给了但没给值 ⇒ 退 2；② 确认档给了但值与主机名不符 ⇒ 退 2（与 `dev edit` 同一口径）。
+	//   ★ 这两条都**不改**既有的退码档，只是「回填」这一面自己的用法错。
+	backfillWanted := false
+	if impactBackfillFlagGiven(inv.orig) {
+		backfillWanted = true
+		if strings.TrimSpace(inv.flagVal("--gate-results")) == "" {
+			inv.setErr("usage", "missing_gate_results", "`--gate-results` 没给值")
+			fmt.Fprintf(stderr, "%s: `--gate-results <那次门禁的结果表 | 它的日志目录>` 要给值 —— "+
+				"`B3` 回填的输入**必须**是那次门禁自己的账（否则三数复算不上）\n", progName)
+			return exitUsage
+		}
+		if inv.confirmGiven && inv.confirm != planHost() {
+			inv.setErr("usage", "confirm_mismatch", "确认值不匹配主机名")
+			fmt.Fprintf(stderr, "%s: 确认值不匹配目标（--confirm 给的是 %q，本机主机名是 %q）⇒ 不写回填件（退码 2）\n",
+				progName, inv.confirm, planHost())
+			return exitUsage
+		}
+	}
 	// K2 先判（`--json` 不给字段 ⇒ 1 + stdout 0 字节）：**取数之前**判 —— 否则白跑六层。
 	if inv.jsonGiven {
 		if !requireFields(inv, stderr) {
@@ -176,6 +202,12 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	// `B2` 契约面块（判据①–③）：紧跟在时间面块之后 —— 那一块给的是「预测集怎么估的」，
 	// 本块给的是「契约面这一族在册条目长什么样 + 兼容级别只报 + 对拍口径与两枚指纹」。
 	emitImpactContractBlock(stderr, root, cat, caudit, chead, crev, cparent, cfpWhy)
+	// `B3` 实测回填（**只在给了 `--gate-results` 时走**）：§5.2 两步对拍出三个整数 + 一枚机读回填行。
+	// 退码口径：取不到 ⇒ 8（不给结论）；写失败 ⇒ **不改退码**（回填是附加动作）。★ 它不参与任何一格算法。
+	backfillRC := exitOK
+	if backfillWanted {
+		backfillRC = emitImpactBackfillBlock(stderr, inv, root, tgt)
+	}
 	emitImpactCardBlock(stderr, tgt, card, rev, layers, inv.forHuman)
 	if inv.forModel && !inv.forHuman {
 		fmt.Fprintf(stderr, "%s: `--for-model` 与默认档**同效**（§4.1：模型档就是默认档）—— 给了也照实明说，不另开一条分叉\n", progName)
@@ -192,6 +224,10 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	// ④ 退码：六层取到东西 ⇒ 0；六层都没给出条目 ⇒ **零命中**（§7.5 的「无影响面」= 1）。
 	// 口径（`A3` 写死）：看的是**六层全量条数**（裁前的那个数），不是裁后的卡片条数 ——
 	// 卡片被裁空不等于「没影响面」（§3.3：裁了必须显式声明，退码不许被裁序改写）。
+	// ★ `B3` 只加一格：回填**取不到** ⇒ 8（不给结论）—— 「读不到」优先于「零命中」；**写失败仍走 0**。
+	if backfillWanted && backfillRC != exitOK {
+		return backfillRC
+	}
 	if totalRows == 0 {
 		return exitFail
 	}
@@ -314,7 +350,7 @@ func impactRegistryIDs(root string) ([]string, error) {
 // `A3` 起把 §4.1 的**两档**写进形态串（`--for-model` / `--for-human` · `R9` 已拍「分两档」·
 // `R38` 拍定它们与 `--json` **不是同一条**、可叠加、都不改六键包封）。
 // ★ `--all`（按需档 · §4.4）仍是**既有全局布尔**，故不写进形态串（形态串只写本命令独有的东西）。
-const impactUsageLine = "zerg impact <文件｜契约 id> [--for-model｜--for-human] [--json <字段>]"
+const impactUsageLine = "zerg impact <文件｜契约 id> [--for-model｜--for-human] [--json <字段>] [--gate-results <那次门禁的结果表｜它的日志目录>]"
 
 // impactHumanLines —— 人面**恒三行**（判据③：字头固定 · 顺序固定）+ `A3` 把 §3.8 的可逆性
 // **内联在第③行同一行**（§4.1：可逆性行内联在第③行内 · **不新增行数**，所以人面仍恒三行）。

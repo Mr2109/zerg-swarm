@@ -1678,6 +1678,13 @@ func valueFlagName(a string) string {
 	case "--min-age-days", "--only":
 		return a
 	}
+	// 影响面实测回填（`B3` · 2026-09-22）：`--gate-results` 是**那次门禁的结果表**（或它的日志目录）——
+	// ★ 回填的输入**必须**是那次门禁自己的账（三数要能按同一份表复算 ⇒ 输入得能指名到件）。
+	// 与上面各排同一口径：值照收，语义在 `zerg impact` 里判；不用的命令静默忽略。
+	switch a {
+	case "--gate-results":
+		return a
+	}
 	// 测试作用域旗标（缺口面 P0-3 · 2026-09-21）：`dev test` 只跑相关那几个测的两枚旗标。
 	switch a {
 	case "--pkg", "--run":
