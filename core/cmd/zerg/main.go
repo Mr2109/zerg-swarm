@@ -552,12 +552,25 @@ func init() {
 		{
 			path:     []string{"core", "daemon"},
 			kind:     "CoreDaemon",
-			summary:  "`daemon ls`：本机服务脚本逐件可查（scripts/svc/ 5 件）",
-			usage:    "zerg core daemon ls [--json <字段>]",
+			summary:  "`daemon ls`：本机服务脚本逐件可查（scripts/svc/ 5 件）+ `--declared` 并给声明面两列与幽灵段（与 `doctor` 同源同值）",
+			usage:    "zerg core daemon ls [--declared] [--json <字段>]",
 			args:     []string{"动作（ls）"},
 			fields:   []string{"name", "script", "declared", "note"},
 			endpoint: "",
 			run:      cmdCoreDaemonLs,
+		},
+		// ---- 波① · T2 `Q-056`：现值面给人读三格（pid / 起时 / 命令行 · 2026-09-23）----
+		// 今天**没有**这条命令（现跑「未知命令 "core ps"」）—— 幽灵/声明差要靠人肉 `ps | grep`
+		// 加 `plutil -p` 才看得出（`Q-057` 的病根）。
+		{
+			path:     []string{"core", "ps"},
+			kind:     "CorePs",
+			summary:  "现值面逐条读（**三格**：pid / 起时 / 命令行）—— 行面 = 声明件点名的进程特征命中的进程（launchd 声明的 + ghost 幽灵都列）· 只读",
+			usage:    "zerg core ps [--root <仓根> | --path <声明件>] [--json <字段>]",
+			args:     []string{"（无：现值面是「读全机」不是「要目标」）"},
+			fields:   []string{"pid", "start", "command", "kind", "name", "owner"},
+			endpoint: "",
+			run:      cmdCorePs,
 		},
 		{
 			path:    []string{"core", "start"},

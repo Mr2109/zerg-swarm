@@ -247,10 +247,18 @@ func coreDaemonScripts(root string) []string {
 	return out
 }
 
-// cmdCoreDaemonLs —— `zerg core daemon ls`（只读 · 本机面）：`scripts/svc/` 逐件 + 声明面。
+// cmdCoreDaemonLs —— `zerg core daemon ls [--declared]`（只读 · 本机面）：`scripts/svc/` 逐件 + 声明面。
 //
 // 为什么并进 `core` 而不新立 `svc` 族（§7.1 `P11` 的推荐口径）：服务族与构建族共用
 // 「制品/入口」这一套概念，再立一族就是把同一件事说两遍。
+//
+// ★ `T2`（波① `Q-057`）两处改造：
+//
+//	① `declared` 列**不再全「否」**：匹配口径修好 —— 拿脚本的**仓根相对路径**去比声明件的
+//	   **`程序` 列**（`/bin/bash scripts/svc/zerg-core-daemon.sh` 里带它），而不是拿脚本名去比
+//	   **服务名**列（今天五条全「否」的病根）。
+//	② `--declared` 并给**幽灵段**：条数与 `zerg doctor` 的「回收候选（幽灵服务）」**同源同值**
+//	   （同一个 `ghostProcesses()`）—— 「看得出幽灵」不必先跑 `doctor`。
 func cmdCoreDaemonLs(inv *invocation, stdout, stderr io.Writer) int {
 	root := repoRoot()
 	if root == "" {
@@ -264,36 +272,56 @@ func cmdCoreDaemonLs(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `scripts/svc/` 读不到（或空）⇒ 不给结论（退码 8）\n", progName)
 		return exitBlocked
 	}
-	// 声明面（deploy/服务声明.tsv 的第 1 列）——有就读，没有就如实写「未见声明面」
-	declared := map[string]string{}
-	declPath := filepath.Join(root, "deploy", "服务声明.tsv")
-	if b, err := os.ReadFile(declPath); err == nil {
-		for i, line := range strings.Split(string(b), "\n") {
-			if i == 0 || strings.TrimSpace(line) == "" {
-				continue
-			}
-			f := strings.Split(line, "\t")
-			if len(f) >= 2 {
-				declared[strings.TrimSpace(f[1])] = strings.TrimSpace(f[0])
-			}
-		}
+	// 声明面（deploy/服务声明.tsv）—— 用**唯一一处**解析器（与 `core ps` / `doctor` 同源）。
+	declPath, derr := svcDeclPath(nil)
+	decl := []svcDeclRow{}
+	declNote := ""
+	if derr != "" {
+		declNote = derr
+	} else if rows, rerr := loadSvcDecl(declPath); rerr != "" {
+		declNote = rerr
+	} else {
+		decl = rows
 	}
 	rows := []map[string]string{}
 	for _, s := range scripts {
 		rel := filepath.Join("scripts", "svc", s)
 		row := map[string]string{"name": strings.TrimSuffix(s, ".sh"), "script": rel,
 			"declared": "否", "note": ""}
-		for path, id := range declared {
-			if strings.HasSuffix(path, s) || strings.Contains(path, strings.TrimSuffix(s, ".sh")) {
-				row["declared"] = "是"
-				row["note"] = "声明件 id=" + id
-				break
+		if r, ok := declaredForScript(decl, rel); ok {
+			row["declared"] = "是"
+			row["note"] = "声明件 " + r.DeclFile + "（服务名 " + r.Name + " · 归属 " + r.Owner + "）"
+		} else {
+			switch {
+			case declNote != "":
+				row["note"] = "声明面读不到（" + declNote + "）⇒ **不给结论**，不是「没声明」"
+			default:
+				row["note"] = "声明面没点名它 ⇒ 它是**手动脚本**（按 §十五.3 口径只报、不进自动候选）"
 			}
 		}
-		if row["declared"] == "否" {
-			row["note"] = "声明面没点名它 ⇒ 它是**手动脚本**（按 §十五.3 口径只报、不进自动候选）"
-		}
 		rows = append(rows, row)
+	}
+	// ── `--declared`：并给**幽灵段**（与 `doctor` 的「回收候选（幽灵服务）」同源同值）──
+	ghostCount := 0
+	if inv.declared {
+		ghostRows, gerr := ghostProcesses()
+		if gerr != "" {
+			inv.setErr("blocked", "ghost_unreadable", gerr)
+			fmt.Fprintf(stderr, "%s: 幽灵读数拿不到（%s）⇒ 不给结论（退码 8）—— 不硬造一份现值\n", progName, gerr)
+			return exitBlocked
+		}
+		ghostCount = len(ghostRows)
+		for _, g := range ghostRows {
+			rows = append(rows, map[string]string{
+				"name":     g.Name,
+				"script":   "-",
+				"declared": "否（幽灵）",
+				"note":     fmt.Sprintf("pid=%s 起时 %s · %s（与 `zerg doctor` 的「回收候选（幽灵服务）」同源同值）", g.Pid, g.Start, g.Command),
+			})
+		}
+	}
+	if inv.declared {
+		fmt.Fprintf(stderr, "%s: 幽灵条数 %d（与 doctor 的「回收候选（幽灵服务）」同源同值）· 只读：没杀、没停、没改任何进程\n", progName, ghostCount)
 	}
 	return listCmd(inv, stdout, stderr, []string{"name", "script", "declared", "note"}, rows)
 }

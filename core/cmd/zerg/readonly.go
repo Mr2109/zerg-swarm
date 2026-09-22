@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -541,25 +540,21 @@ func doctorItems(inv *invocation) []map[string]string {
 //
 // 口径（照 §九 M9 · `P-042`）：**只报 + 干跑单列「不属管辖」，不进自动候选**（自动回收只收
 // 「能证明是自己且已到期」的件）。所以这里给的是 `REPORT` + 建议动作，不是 `FAIL`。
-// 只读：跑一次 `ps`（不碰任何进程、不杀不重启）。
+// 只读：读声明件 + 跑一次 `ps`（不碰任何进程、不杀不重启）。
+//
+// ★ `T2`（波①）**同源改造**：本项与 `zerg core daemon ls --declared` 的幽灵段**都调
+// `ghostProcesses()`**（唯一一处读数）⇒ 两处条数**逐字同值**（`Q-057` 判据③）。
+// 声明侧真源 = `deploy/服务声明.tsv`（`kind=ghost` 行的进程特征）；声明面读不到/没登记 ghost ⇒
+// 退回内置特征，不发假绿。
 func ghostReapItem() map[string]string {
-	out, err := exec.Command("ps", "-eo", "pid,command").Output()
-	if err != nil {
+	rows, perr := ghostProcesses()
+	if perr != "" {
 		return map[string]string{
 			"name": "回收候选（幽灵服务）", "verdict": "SKIP",
-			"detail": "`ps` 读不到（" + err.Error() + "）",
+			"detail": "`ps`/声明面读不到（" + perr + "）",
 			"advice": "读不到就不给结论（SKIP ⇒ 退码 8）"}
 	}
-	ghosts := []string{}
-	for _, line := range strings.Split(string(out), "\n") {
-		if !strings.Contains(line, "cocoon-docs-service") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) >= 3 {
-			ghosts = append(ghosts, "pid="+fields[0]+" "+strings.Join(fields[1:], " "))
-		}
-	}
+	ghosts := ghostBrief(rows)
 	if len(ghosts) == 0 {
 		return map[string]string{
 			"name": "回收候选（幽灵服务）", "verdict": "PASS",
