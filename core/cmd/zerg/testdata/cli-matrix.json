@@ -4573,6 +4573,62 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "`E4`：`--ttl` 裸给（后面没跟值）⇒ 2 —— 与 `--confirm` 同一种形态（给了旗标 ≠ 给了值 · 不静默当「没给」）"
+  },
+  {
+   "id": "approve/keygen#换钥缺确认对（--confirm 与 --yes 都要到）",
+   "command": "approve keygen",
+   "argv": [
+    "approve",
+    "keygen",
+    "--by",
+    "张三"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`E5`：在册已有钥 ⇒ 换钥要 `--confirm=<旧 key_id>` 与 `--yes` **同时到**（缺任一 ⇒ 2 · **执行前判**：不读口令、不碰任何件）"
+  },
+  {
+   "id": "approve/keygen#换钥缺 --yes（只给 --confirm）",
+   "command": "approve keygen",
+   "argv": [
+    "approve",
+    "keygen",
+    "--by",
+    "张三",
+    "--confirm=0000000000000000"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`E5`：不可逆档两枚都要到（缺 `--yes` ⇒ 2 · 执行前判）"
+  },
+  {
+   "id": "approve/keygen#换钥 --confirm 值不逐字相同",
+   "command": "approve keygen",
+   "argv": [
+    "approve",
+    "keygen",
+    "--by",
+    "张三",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`E5`：确认值必须与**在册** `key_id` 逐字相同（不是「随便给个值就行」⇒ 不逐字相同即 2、不动作）"
+  },
+  {
+   "id": "approve/keygen#--rekey 是升级接口的预留名（不许占）",
+   "command": "approve keygen",
+   "argv": [
+    "approve",
+    "keygen",
+    "--rekey",
+    "--by",
+    "张三"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`§五 ⑩`/`P27`：不许占 `--rekey` 这个名字（未知旗标 = 用法错 ⇒ 2 · 执行前判）"
   }
  ]
 }
