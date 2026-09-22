@@ -15,6 +15,14 @@
       "note": "`14` = 冲突/被占（**不许**再用 `507`）；`10/11/12/14` 由批 B · T-10 从「已挂号」转启用；`130` 仍挂号未启用。"
     },
     {
+      "id": "cli.blocked-priority",
+      "kind": "命令面 · **前置缺件**命名空间（**缺件优先于参数校验**）",
+      "owner": "core/cmd/zerg/family_build.go · family_build_show.go · family_gate_run.go（只读面：`bin/` 与 `scripts/gates/precommit-gates.sh` 的缺件分支）",
+      "scan": "go-table",
+      "table": [8],
+      "note": "落点 = 设计-CI适配-v1.1 §五 第五批（v1.1 第⑥条裁定「在退码表里把『缺件优先于参数校验』登记成独立命名空间」）+ §十三 M2（契约矩阵分档）。**同一个号、同一个语义**（就是命令面主表的 `8` = 不给结论），这里把它**单独立一枚**是因为它是一类**跨命令的先后次序规矩**：公开树缺 `bin/`（publish/whitelist.txt 不含）、缺 `scripts/gates/precommit-gates.sh`（publish-public.sh 的 EXCLUDES）、缺 `scripts/calib/*` 与 `scripts/evals/compare.py` ⇒ CLI **先撞缺件**（退 8）或「门禁最小入口不在」（退 2），**走不到**参数校验 ⇒ 同一格在两棵树里读数真的不同（本机档 1/2 · 公开面档 8）。⇒ 契约矩阵按档记两个读数（core/cmd/zerg/testdata/cli-matrix.json 的 `tiers` 段 + `cases[].want_rc_public`），**不许互相覆盖**。『缺件 ⇒ 8』语义保：宁可拒绝，不可猜；**不许**为了一道门禁往公开面塞空 `bin/`。"
+    },
+    {
       "id": "zerg-compat",
       "kind": "组件自有码空间",
       "owner": "core/cmd/zerg-compat/main.go",

@@ -28,16 +28,73 @@ jobs:
           git config --global user.name "Zerg CI"
       - name: shell 静态检查（$VAR 后紧跟非 ASCII → unbound variable）
         run: python3 scripts/gates/check-shell-unicode-vars.py --check scripts/*.sh *.sh
-      - name: core 构建 + 测试
+      - name: core 构建 + 测试（公开面测试面名单 · 逐包点名）
         working-directory: core
         run: |
           go build ./...
-          go test ./... -count=1
-      - name: agent 构建 + 测试
+          # ── 公开面测试面白/黑名单（设计-CI适配-v1.1 §十三 M1 · 波A `A2`）────────────────
+          # 名单件：`scripts/gates/ci-public-test-surface.tsv`（**私有面**：名单外 5 个包逐条写了
+          # 「为什么在公开树里无意义」+ 账 + 回名单条件；不随公开面发布）。
+          # 口径：§二「依赖本机状态的一律不搬」× §四「Go 全量当宽网」自相矛盾 ⇒ 逐包定名单：
+          #   · 名单内 32 个包 —— 公开面里成立的纯源码判据，公开面快照现跑 rc=0；
+          #   · 名单外 5 个包（`cmd/zerg` · `internal/compressor` · `internal/gateway` ·
+          #     `internal/obs/redact` · `internal/selfupdate`）—— 要私有面件 / 本机模型制品 /
+          #     被替换规则打穿夹具 ⇒ **不进 CI**（留在 CI 只会一直红，红了没人知道该看哪一条）；
+          #   · 没有测试件的包不进列表（`go test` 无事可做），编译面由上面的 `go build ./...` 接住。
+          # **不许退回 `go test ./...`**：全量 = 把「只在本机成立的判据」当成公开面的尺。
+          # 增删包 ⇒ 同批改这个名字列（名单件与本列表**逐字一致**，现核命令见名单件头部）。
+          go test \
+            ./cmd/zerg-model/ \
+            ./internal/agent/ \
+            ./internal/agentstate/ \
+            ./internal/api/ \
+            ./internal/audit/ \
+            ./internal/behaviorobs/ \
+            ./internal/chat/ \
+            ./internal/compat/ \
+            ./internal/config/ \
+            ./internal/control/ \
+            ./internal/ffp/ \
+            ./internal/gateway/adapter/ \
+            ./internal/gateway/orchestrator/ \
+            ./internal/hermes/ \
+            ./internal/infergeom/ \
+            ./internal/loopcore/ \
+            ./internal/loopguard/ \
+            ./internal/memory/ \
+            ./internal/modelreg/ \
+            ./internal/obs/sampling/ \
+            ./internal/plugin/ \
+            ./internal/plugin/adapters/ \
+            ./internal/plugin/runtime/ \
+            ./internal/policy/ \
+            ./internal/replay/ \
+            ./internal/resources/ \
+            ./internal/sliceobs/ \
+            ./internal/statepath/ \
+            ./internal/store/ \
+            ./internal/subtask/ \
+            ./internal/testutil/ \
+            ./internal/tracectx/ \
+            -count=1
+      - name: agent 构建 + 测试（公开面测试面名单 · 逐包点名）
         working-directory: agent
         run: |
           go build ./...
-          go test ./... -count=1
+          # ── 同上（名单件：`scripts/gates/ci-public-test-surface.tsv`）─────────────────────
+          # agent 侧**名单外 0 个包**：公开面快照现跑 13 包 = ok 10 · FAIL 0 · 无测试件 3（整模块 rc=0 ✓）。
+          go test \
+            ./internal/backend/ \
+            ./internal/eggpkg/ \
+            ./internal/enclosure/ \
+            ./internal/hatch/ \
+            ./internal/heartbeat/ \
+            ./internal/modeladapter/ \
+            ./internal/monitor/ \
+            ./internal/registry/ \
+            ./internal/server/ \
+            ./internal/startup/ \
+            -count=1
 
   ui:
     name: 桌面 UI（Rust）
