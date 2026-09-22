@@ -2,21 +2,34 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "zerg/help-export.schema.json",
   "title": "帮助导出物的机器可读形态（`zerg help export --json` 的 items 元素）",
-  "description": "§二十一 已红第 17 条（开工单 T-39）· §九 M16 · §十二 `P-084`/`P-085`/`P-095`。**契约真源 = 代码内 schema**：本件是「帮助导出物」这一面的机器可读契约，导出物（`Zerg-内部文档` 里的 markdown 与 `--json`）只是它的**导出物** —— 改真源必须同批改导出物，差集非空即红。对拍判据落 `core/cmd/zerg/export_schema_test.go`（每次 `go test` 都跑）：键面 / 取值面 / 计数面 / 层级面 + 一条负控（键差集非空必红）。",
+  "description": "§二十一 已红第 17 条（开工单 T-39）· §九 M16 · §十二 `P-084`/`P-085`/`P-095` · 缺口-命令面-20260922-续 `G-17` ②③。**契约真源 = 代码内 schema**：本件是「帮助导出物」这一面的机器可读契约，导出物（版本档案目录里的 markdown 与 `--json`）只是它的**导出物** —— 改真源必须同批改导出物，差集非空即红。对拍判据落 `core/cmd/zerg/export_schema_test.go`（每次 `go test` 都跑）：键面 / 取值面 / 计数面 / 层级面 / **逐条清单面 + 两式同源面** + 负控（键差集非空必红）。★ `G-17` 起：items = **一行一条命令**（逐条清单），摘要格在每行上重复 —— 字段只增不改，旧五格一格里都在。",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "path",
+    "root",
+    "docs_version",
     "commands",
     "dangerous",
     "schema",
-    "layers"
+    "layers",
+    "generated_at",
+    "written",
+    "dry_run"
   ],
   "properties": {
     "path": {
       "type": "string",
       "minLength": 1,
-      "description": "导出物落点（markdown 文件的完整路径）。默认档 = <仓根>/../Zerg-内部文档/项目文档/v2.5.10/导出-命令面帮助-<YYYYMMDD>.md（走相对推导，**不写死私有绝对路径**）；`--out <目录>` 可改。"
+      "description": "导出物落点（markdown 文件的完整路径）。默认档 = <版本档案取源根>/<当前版目录>/导出-命令面帮助-<YYYYMMDD>.md —— 取源即 `statepath.DocsBase()`，当前版目录 = 「版本号最大且非递归 md ≥3 篇」那个（**版本无关**：源码零版本号字面量 · 缺口 `G-17` ③）；`--out <目录>` 或 `--docs-ver <X.Y.Z>` 可改。"
+    },
+    "root": {
+      "type": "string",
+      "description": "版本档案**取源根**（`statepath.DocsBase()`：仓内 `<仓库根>/docs/项目文档` 优先、缺则 `<ZERG_DOCS_ALT|同级 Zerg-内部文档>/项目文档`）。两处都不在盘上 ⇒ 本格为空串，且命令面**不给落点**（退码 2 · 缺件不静默）。"
+    },
+    "docs_version": {
+      "type": "string",
+      "description": "本档落了哪个**版本档案目录**（目录名，如 `v2.5.11`）—— `--json` 给出「它落了哪一版」这句机器读数（缺口 `G-17` ③）。取法：版本号最大且非递归 md ≥3 篇（`AGENTS.md:52`）；`--docs-ver <X.Y.Z>` 显式钉版时即那一版。"
     },
     "commands": {
       "type": "integer",
@@ -26,7 +39,7 @@
     "dangerous": {
       "type": "integer",
       "minimum": 0,
-      "description": "**危险动作**条数 = 命令树里 danger != nil 的那批（本版登记但不开放）。必须等于导出物「二、危险动作」的表行数。"
+      "description": "**危险动作**条数 = 命令树里 danger != nil 的那批（逐条带档位 `D2`/`D3` 与本版开没开）。必须等于导出物「二、危险动作」的表行数。"
     },
     "schema": {
       "const": "zerg/v1",
@@ -36,6 +49,60 @@
       "type": "string",
       "pattern": "^host=[0-9]+(,node=[0-9]+)?(,space=[0-9]+)?$",
       "description": "茧壁三档计数（§九 M10 `X1`）· 形如 `host=34,node=7`（键按字典序、无空格）。算术和必须 = 命令树条数；`space` 若出现必须 = 0 —— 空间内零命令面是**铁律**，不是当下恰好为 0。"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1,
+      "description": "本档生成时刻（RFC3339 · 逐条清单每一行都带同一值）—— 写入件与机器面**同源**的一个时刻（缺口 `G-17` ④：导出物要含版本 / 时刻）。"
+    },
+    "written": {
+      "type": "string",
+      "enum": ["true", "false"],
+      "description": "本档**真写没写真**：默认裸跑 = `true`；只读档 `--dry-run` = `false`（一个字节都不写 —— 缺口 `G-17` ①）。"
+    },
+    "dry_run": {
+      "type": "string",
+      "enum": ["true", "false"],
+      "description": "只读档开着没（`--dry-run`）。与 `written` 互为反面 —— 两条都进机器面，消费方不必靠猜哪一档在跑。"
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1,
+      "description": "**逐条格**①：本行的命令名（`zerg …` · 名字逐字来自命令树 `path`，一个名字都不是手写的）。"
+    },
+    "is_dangerous": {
+      "type": "string",
+      "enum": ["true", "false"],
+      "description": "**逐条格**②：这条是不是**危险档**（`true` = 命令树里带 `danger`）。这就是旧机器面判不了的那一格（缺口 `G-17` ②）。"
+    },
+    "danger_level": {
+      "type": "string",
+      "description": "**逐条格**③：危险档**档位**（`D2` = `--yes` · `D3` = `--confirm=<目标>` + `--yes`）；非危险档恒为 `—`（唯一取值，不是空串 —— 空串会让消费方分不清「没有」与「取不到」）。"
+    },
+    "opened": {
+      "type": "string",
+      "enum": ["true", "false"],
+      "description": "**逐条格**④：本版**开没开**（与 `zerg help dangerous` 的逐条标记同源：命令树 `opened`）。非危险档恒 `true`（已开放面本来就都能跑）。"
+    },
+    "confirm_target": {
+      "type": "string",
+      "description": "**逐条格**⑤：`--confirm=<目标>` 里的「目标」是什么（任务 id / 机器名 / 主机名…）；非危险档为空串。"
+    },
+    "summary": {
+      "type": "string",
+      "description": "**逐条格**⑥：这条命令的一句话说明（导出物与 `--json` 同源，逐字取自命令树 `summary`）。"
+    },
+    "layer": {
+      "type": "string",
+      "description": "**逐条格**⑦：茧壁层级（闭集 `host`/`node`/`space` 三值 —— 与 `layers` 的算术和同源）。"
+    },
+    "endpoint": {
+      "type": "string",
+      "description": "**逐条格**⑧：投影的远端端点（空串 = 本机，无远端对应）。"
+    },
+    "fields": {
+      "type": "string",
+      "description": "**逐条格**⑨：这条命令自己 `--json` 的字段名（逗号分隔，序即合法字段序；空串 = 无机器面）。"
     }
   }
 }

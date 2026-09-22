@@ -338,9 +338,9 @@ func init() {
 		{
 			path:     []string{"help", "export"},
 			kind:     "HelpExport",
-			summary:  "把命令树导出 markdown 进 Zerg-内部文档（产物 · 勿手改）",
-			usage:    "zerg help export [--out <目录>] [--json <字段>]",
-			fields:   []string{"path", "commands", "dangerous", "schema"},
+			summary:  "把命令树导出 markdown 进版本档案目录（产物 · 勿手改）；只读档 `--dry-run` 出逐条清单、一个字节不写",
+			usage:    "zerg help export [--out <目录> | --docs-ver <X.Y.Z>] [--dry-run] [--json <字段>]",
+			fields:   helpExportFields,
 			endpoint: "",
 			run:      cmdHelpExport,
 		},
@@ -683,7 +683,7 @@ func init() {
 			path:    []string{"doc", "meta"},
 			kind:    "DocMeta",
 			summary: "文档元数据面（动作 `fill` = 批量回填文件头：只填机械可判的日期 + 不开源标注 · 默认干跑 · 写审计）",
-			usage:   "zerg doc meta fill [--scope devdocs | <目录>] [--dry-run] [--by <谁>] [--json <字段>] [--yes]",
+			usage:   "zerg doc meta fill [--scope devdocs | <目录>] [--docs-ver <X.Y.Z>] [--dry-run] [--by <谁>] [--json <字段>] [--yes]",
 			args:    []string{"动作（本版只有 fill）"},
 			fields:  docMetaFillFields,
 			danger: &dangerSpec{dangerD2, "（被扫根）",
@@ -1673,6 +1673,12 @@ func valueFlagName(a string) string {
 	switch a {
 	case "--capability", "--prefer", "--min-ctx", "--min-mem-gb", "--no-fallback",
 		"--timeout", "--out", "--target-ref":
+		return a
+	}
+	// 文档面旗标（缺口 `G-19` 同根：`--docs-ver <X.Y.Z>` 显式钉一版 = 兼容「钉死在某一版」的旧行为；
+	// 默认档才是版本无关。`help export` 与 `doc meta fill` 共用同一枚 —— 取源只有一处 `devdocs.go`）。
+	switch a {
+	case "--docs-ver":
 		return a
 	}
 	// 回执面旗标（§20.3 `H3` · 批 E · T-61）：一轮一页回执的五格 + 证据/提交。
