@@ -775,7 +775,7 @@ func ImpactPullLayersModeOffForTest(root, rel string) ([]string, error) {
 		return nil, fmt.Errorf("目标解析不到：%s", why)
 	}
 	notes := []string{}
-	layers, _ := impactPullLayers(root, tgt, true, impactCacheOff)
+	layers, _ := impactPullLayers(root, tgt, true, impactCacheOff, false, "B")
 	for _, l := range layers {
 		notes = append(notes, l.Seq+"="+l.CacheNote)
 	}
@@ -907,7 +907,7 @@ func ImpactTimefaceOfForTest(root, raw string, all bool) (ImpactTimefaceViewForT
 		return out, fmt.Errorf("目标解析不到：%s", why)
 	}
 	cheap := !all
-	layers, _ := impactPullLayers(root, tgt, cheap, impactCacheOff)
+	layers, _ := impactPullLayers(root, tgt, cheap, impactCacheOff, false, "B")
 	proj := impactStepProjectionOf(root, impactStepIDsToJoin(tgt, layers), all)
 	f := impactPredictFaceOf(tgt, layers, proj, cheap)
 	out.Target, out.Tier, out.HeadSHA = f.Target, f.Tier, f.HeadSHA
@@ -1027,7 +1027,7 @@ func ImpactRedLineForTest(root, raw string) (string, error) {
 	if tgt == nil {
 		return "", fmt.Errorf("目标解析不到：%s", why)
 	}
-	layers, _ := impactPullLayers(root, tgt, true, impactCacheOff)
+	layers, _ := impactPullLayers(root, tgt, true, impactCacheOff, false, "B")
 	proj := impactStepProjectionOf(root, impactStepIDsToJoin(tgt, layers), false)
 	return impactRedLine(layers, true, proj), nil
 }
@@ -1143,7 +1143,7 @@ func ImpactLayersForTest(root, rel string, all bool) (ImpactLayersViewForTest, e
 	if tgt == nil {
 		return out, fmt.Errorf("目标解析不到：%s", why)
 	}
-	layers, run := impactPullLayers(root, tgt, !all, impactCacheOff)
+	layers, run := impactPullLayers(root, tgt, !all, impactCacheOff, false, "B")
 	for _, l := range layers {
 		b, _ := json.Marshal(l.Rows)
 		out.Layers = append(out.Layers, ImpactLayerViewForTest{
@@ -1173,6 +1173,249 @@ func ImpactPublicLineTextForTest(hit bool, delta, tree, treePath, at, head, why 
 	return impactPublicLineText(impactPublicLineArgs{
 		Hit: hit, Delta: delta, Tree: tree, TreePath: treePath, Count: 1, At: at, Head: head, NoDataWhy: why,
 	})
+}
+
+// ImpactDocFaceViewForTest —— `C3` 文档倒排面的一跑读数（判据①②③④⑤ 的机检口）。
+type ImpactDocFaceViewForTest struct {
+	Status string
+	Detail string
+	Docs   int    // **N**：命中的篇数
+	Tier   string // 本跑用的档号
+	Rows   string // 条目的 `what|why` 逐行（空行分隔）
+	Head   string // 文档仓 `head_sha`（现读）
+	Index  string // 索引落点目录
+	Files  int    // 件
+	Lines  int    // 行
+	Blocks int    // 块
+	Words  int    // 词
+	Pairs  int    // 对
+	MS     int64  // 本跑现建耗时（毫秒；没现建 ⇒ 0）
+	StopA  int    // 通用词排除计数（A / B / C 三档）
+	StopB  int
+	StopC  int
+}
+
+// ImpactDocFaceForTest 在给定根上查一次文档倒排面（`build=true` ⇒ 索引不在就现建）。
+func ImpactDocFaceForTest(root, rel string, build bool, tier string) ImpactDocFaceViewForTest {
+	out := ImpactDocFaceViewForTest{Tier: tier}
+	tgt, why := impactResolve(root, rel)
+	if tgt == nil {
+		out.Status = "目标解析不到"
+		out.Detail = why
+		return out
+	}
+	layout, lerr := impactStateLayoutOf(root)
+	v := impactDocFaceLookup(root, tgt, layout, lerr == nil, build, tier)
+	out.Status, out.Detail, out.Docs = v.Status, v.Detail, v.Docs
+	rowLines := []string{}
+	for _, r := range v.Rows {
+		rowLines = append(rowLines, r["what"]+"|"+r["why"])
+	}
+	out.Rows = strings.Join(rowLines, "\n")
+	c, cwhy := impactDocIndexContractOf(root)
+	if cwhy == "" {
+		docRoot := impactDocFaceRoot(root, c)
+		out.Head = impactDocHeadSHA(docRoot)
+		out.Index = impactDocIndexDirName(layout)
+		tsv, man := impactDocIndexNames(impactCacheIndexDir(layout), out.Head, impactDocIndexCaliber(c))
+		if idx, err := impactDocIndexLoad(tsv, man, out.Head); err == nil {
+			out.Files, out.Lines, out.Blocks = idx.Files, idx.Lines, idx.Blocks
+			out.Words, out.Pairs, out.MS = idx.Words, idx.Pairs, idx.BuiltMS
+			out.StopA, out.StopB, out.StopC = idx.StopCount["A"], idx.StopCount["B"], idx.StopCount["C"]
+		}
+	}
+	return out
+}
+
+// ImpactDocIndexFilesForTest 列出某个状态目录下 `impact-index/` 里的件名（**只读**：判「落点不在仓内」）。
+func ImpactDocIndexFilesForTest(root string) []string {
+	layout, err := impactStateLayoutOf(root)
+	if err != nil {
+		return nil
+	}
+	ents, err := os.ReadDir(impactCacheIndexDir(layout))
+	if err != nil {
+		return nil
+	}
+	out := []string{}
+	for _, e := range ents {
+		out = append(out, e.Name())
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ImpactDocIndexSourceForTest 读 `C3` 实现件源码（红线静态自检口）。
+func ImpactDocIndexSourceForTest() (string, error) {
+	b, err := os.ReadFile("family_impact_docindex.go")
+	return string(b), err
+}
+
+// ---- `C4` 重复面与归位（判据①②③④ 的机检口）----------------------------------------------
+
+// ImpactDupContractBytesForTest 现读重复面契约件的字节（负控拿它改一份副本）。
+func ImpactDupContractBytesForTest() ([]byte, error) {
+	if root := repoRoot(); root != "" {
+		return os.ReadFile(filepath.Join(root, filepath.FromSlash(impactDupContractRel)))
+	}
+	return os.ReadFile(impactDupContractRel)
+}
+
+// ImpactDupPairForTest 从给定契约件字节里取成对参数（缺一格 ⇒ ok=false）。
+func ImpactDupPairForTest(raw []byte) (int, int, bool) {
+	var c impactDupContract
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return 0, 0, false
+	}
+	mt, ml, ok := impactDupPair(c)
+	return mt, ml, ok
+}
+
+// ImpactDupPairModForTest 改一份契约件副本的成对参数（负控：只留一格）。
+func ImpactDupPairModForTest(pair []string) []byte {
+	raw, err := ImpactDupContractBytesForTest()
+	if err != nil {
+		return nil
+	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		return nil
+	}
+	report := m["两器"].(map[string]any)["报数档"].(map[string]any)
+	report["成对参数写死"] = pair
+	out, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	return out
+}
+
+// ImpactDupBlockWithContractForTest 用**给定契约件字节**打一遍重复面块（负控：缺一格参数 ⇒ 不许给数）。
+func ImpactDupBlockWithContractForTest(root string, raw []byte, curve bool) string {
+	// 落一份临时契约件到镜像根的同名路径上（调用方给的是临时根）。
+	if raw != nil {
+		dst := filepath.Join(root, filepath.FromSlash(impactDupContractRel))
+		_ = os.MkdirAll(filepath.Dir(dst), 0o755)
+		if err := os.WriteFile(dst, raw, 0o644); err != nil {
+			return "写临时契约件失败：" + err.Error()
+		}
+	}
+	var b strings.Builder
+	emitImpactDupBlock(&b, root, curve)
+	return b.String()
+}
+
+// ImpactDupReportViewForTest 一次 jscpd 现跑的报数快照。
+type ImpactDupReportViewForTest struct {
+	OK      bool
+	Why     string
+	Clones  int
+	Lines   int
+	Pct     float64
+	Tokens  int
+	TokPct  float64
+	Files   int
+	MS      int64
+	RC      int
+	PairTok int
+	PairLin int
+}
+
+// ImpactDupReportForTest 现跑一次报数档（**真起 jscpd**：只在装了它的机器上跑得动）。
+func ImpactDupReportForTest(root string) ImpactDupReportViewForTest {
+	c, why := impactDupContractOf(root)
+	if why != "" {
+		return ImpactDupReportViewForTest{Why: why}
+	}
+	mt, ml, ok := impactDupPair(c)
+	if !ok {
+		return ImpactDupReportViewForTest{Why: "成对参数不成形"}
+	}
+	bin, _ := impactDupBin()
+	if bin == "" {
+		return ImpactDupReportViewForTest{Why: "jscpd 未装"}
+	}
+	r := impactDupRunOnce(root, bin, c.Domain.Path, mt, ml)
+	return ImpactDupReportViewForTest{OK: r.OK, Why: r.Why, Clones: r.Clones, Lines: r.Lines, Pct: r.LinePct,
+		Tokens: r.Tokens, TokPct: r.TokenPct, Files: r.Files, MS: r.DurMS, RC: r.RC, PairTok: mt, PairLin: ml}
+}
+
+// ImpactDupSourceForTest 读重复面实现件源码（红线静态自检口）。
+func ImpactDupSourceForTest() (string, error) {
+	b, err := os.ReadFile("family_impact_dup.go")
+	return string(b), err
+}
+
+// ImpactImportClassifyForTest 三档分类（纯函数 · 负控能直接喂圈外的路径）。
+func ImpactImportClassifyForTest(path string) string { return impactImportClassify(path) }
+
+// ImpactImportWhitelistDirForTest 扫一个目录的 import 分类（判「只许白名单 import」的正面判据）。
+func ImpactImportWhitelistDirForTest(root, rel string) (rows [][3]string, err error) {
+	got, e := impactImportWhitelistDir(root, rel)
+	if e != nil {
+		return nil, e
+	}
+	for _, r := range got {
+		rows = append(rows, [3]string{r.File, r.Path, r.Kind})
+	}
+	return rows, nil
+}
+
+// ---- `C1` 删面（判据①–⑥ 的机检口）--------------------------------------------------------
+
+// ImpactDelContractBytesForTest 现读删面契约件的字节。
+func ImpactDelContractBytesForTest() ([]byte, error) {
+	if root := repoRoot(); root != "" {
+		return os.ReadFile(filepath.Join(root, filepath.FromSlash(impactDelContractRel)))
+	}
+	return os.ReadFile(impactDelContractRel)
+}
+
+// ImpactDelBlockForTest 打一遍删面块（**默认不跑两器** —— 跑它们要分钟级；判据面用 `runTools` 选）。
+func ImpactDelBlockForTest(root, rel string, runTools bool) string {
+	tgt, _ := impactResolve(root, rel)
+	layout := impactStateLayout{FromRelPath: impactStateContractRel}
+	layOK := false
+	if l, err := impactStateLayoutOf(root); err == nil {
+		layout, layOK = l, true
+	}
+	var b strings.Builder
+	emitImpactDelBlock(&b, root, tgt, layout, layOK, runTools)
+	return b.String()
+}
+
+// ImpactDelBlindKeysForTest 五类盲区的固定五格（顺序即报告顺序）。
+func ImpactDelBlindKeysForTest() []string { return append([]string{}, impactDelBlindKeys...) }
+
+// ImpactGoFileSymbolsForTest 一个 `.go` 件的**顶层符号名**（分类器判据要拿它当全集）。
+func ImpactGoFileSymbolsForTest(root, rel string) []string {
+	syms := impactGoFileSymbols(filepath.Join(root, filepath.FromSlash(rel)))
+	out := []string{}
+	for n := range syms {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ImpactDelEvidenceForTest 两件可找回证据（缺一 ⇒ missing 非空）。
+func ImpactDelEvidenceForTest(root, rel string) (string, string, string) {
+	return impactDelEvidence(root, rel)
+}
+
+// ImpactDelClassifyForTest 分类器（整件搬出 / 符号级删；`syms` 是要算作「在候选里」的符号名）。
+func ImpactDelClassifyForTest(root, rel string, syms []string) (string, int, int) {
+	set := map[string]bool{}
+	for _, s := range syms {
+		set[rel+"\x00"+s] = true
+	}
+	return impactDelClassify(root, rel, set)
+}
+
+// ImpactDelSourceForTest 读删面实现件源码（红线静态自检口）。
+func ImpactDelSourceForTest() (string, error) {
+	b, err := os.ReadFile("family_impact_del.go")
+	return string(b), err
 }
 
 // ImpactBudgetSourceForTest 读预算实现件源码（判据④ 与红线的静态自检口）。
