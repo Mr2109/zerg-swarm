@@ -672,7 +672,7 @@ func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
 	case "models":
 		// 模型清单（从 fleet/models API 聚合）
 		models := h.aggregateModels()
-		// v2.5.5 资源信任度（2026-08-21 Mr2109）: 模型状态（🆕新/正式）
+		// v2.5.5 资源信任度（2026-08-21 Mr2109）: 模型状态（new/official 机器码 · 波F）
 		for _, m := range models {
 			if name, ok := m["name"].(string); ok {
 				m["trust"] = resourceTrust.GetResourceStatus("models", name)
@@ -684,15 +684,16 @@ func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
 		items := []map[string]interface{}{}
 		seen := map[string]bool{}
 		// P4-49 统一计数（agent.ToolUses——对话+CA 同一计数器）
+		// 2026-09-23 波F（§九）：这里发的也是 **ASCII 机器码**（new/official），中文只在 UI 显示层。
 		trustOf := func(name string) string {
 			u := agent.ToolUses(name)
 			if u >= 100 {
-				return "正式"
+				return TrustOfficial
 			}
 			if u > 0 {
-				return "新"
+				return TrustNew
 			}
-			return "新"
+			return TrustNew
 		}
 		// 2026-09-06 事件流: 当日事件按工具聚合(账本雏形——时间维度)
 		evAgg := map[string]int{}

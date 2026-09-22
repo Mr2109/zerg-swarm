@@ -3,6 +3,10 @@ package api
 // resource_trust.go — 资源信任度标记（2026-08-21 Mr2109）
 // 所有资源（模型/工具/skill/mcp）——新入库 🆕 → 实际任务用 100 次无故障 → ✅ 正式（标记消除）
 //
+// 状态串 = **ASCII 机器码**（new/official/unknown · 2026-09-23 波F · 设计-CI适配-v1.1 §九）：
+// 数据面（API JSON + 状态文件）一律 ASCII；中文只住在 UI 显示层（`ui/locales/*.yml` i18n 键）。
+// 旧文件里的中文状态在读入时翻译一次（见 statusCode）；写侧只写机器码。
+//
 // 存储（2026-09-18 修 /tmp 硬编码——口径同本包 tasks_persist.go）:
 //
 //	原写死 const resTrustFile = "/tmp/zerg-resources.json" —— macOS 重启 /tmp 即清 +
@@ -28,6 +32,22 @@ import (
 
 const (
 	resTrustMax = 100 // 100 次无故障转正式（Mr2109）
+
+	// ── 信任级别机器码（2026-09-23 波F · 设计-CI适配-v1.1 §九）────────────────────────────
+	// 铁律「**面向机器的一律 ASCII**」：`Status` 是**数据面**字符串（API JSON + 状态文件），
+	// 中文只住在 UI 的显示层（`ui/locales/*.yml` 的 i18n 键）——代码里**绝不**与中文字面量比较。
+	// 闭集三个：new（新入库/未用满 100 次）· official（正式）· unknown（未注册/缺值）。
+	// ⚠ 改这三个字面量 = **破坏性接口变更**（服务端与 UI 两侧同批）⇒ 走提案（本波 = DEV-0053）。
+	TrustNew      = "new"
+	TrustOfficial = "official"
+	TrustUnknown  = "unknown"
+
+	// ── 旧件兼容面（**只读不写** —— 同上面旧 /tmp 路径的口径）─────────────────────────────
+	// 2026-09-23 波F 之前落盘的状态文件里 Status 存的是**中文**；开工时翻译一次，写侧只写机器码。
+	// 旧文件**不删、不改**（与 resTrustLegacyDefaultPath 同一纪律）。
+	legacyStatusNew      = "新"
+	legacyStatusOfficial = "正式"
+	legacyStatusUnknown  = "未知"
 
 	// resTrustStateFileName 信任表在统一状态目录下的文件名。
 	resTrustStateFileName = "zerg-resources.json"
@@ -77,7 +97,7 @@ func resTrustReadPath() string {
 
 // ResTrustEntry 资源信任状态
 type ResTrustEntry struct {
-	Status string `json:"status"` // 新/正式
+	Status string `json:"status"` // ASCII 机器码：new / official / unknown（2026-09-23 波F · §九）
 	Uses   int    `json:"uses"`   // 使用次数（任务用到）
 	Faults int    `json:"faults"` // 故障次数（调用失败）
 	Since  string `json:"since"`  // 入库时间
@@ -99,8 +119,27 @@ var resourceTrust = &ResourceTrust{
 	Mcps:   map[string]ResTrustEntry{},
 }
 
+// statusCode 旧状态字面量 → ASCII 机器码（**读入时的一次翻译** · 幂等 · 2026-09-23 波F）。
+//
+// 为什么要有它：本波之前落盘的状态文件里 Status 存的是中文（「新」/「正式」/「未知」），
+// 直接回给 UI 就是「数据面里夹中文」⇒ 与铁律冲突。翻译只发生在**读入**这一处，写侧只写机器码。
+// 空串也落到 unknown：**空串不是码**（闭集里没有空串）⇒ 不过界发空。
+// 认不出的值**原样返回**（缺就缺 —— 不猜、不硬塞成 unknown）。
+func statusCode(s string) string {
+	switch s {
+	case legacyStatusNew:
+		return TrustNew
+	case legacyStatusOfficial:
+		return TrustOfficial
+	case legacyStatusUnknown, "":
+		return TrustUnknown
+	}
+	return s
+}
+
 // LoadResourceTrust 加载信任表（启动时调用——存量资源默认正式）
 // 读路径（2026-09-18）: 新（统一状态目录）优先；新缺失 + 旧 /tmp 在 ⇒ 读旧一次（迁移兼容）。
+// 读入后翻译一次旧中文状态（statusCode · 2026-09-23 波F）。
 func LoadResourceTrust() {
 	if b, err := os.ReadFile(resTrustReadPath()); err == nil {
 		var t ResourceTrust
@@ -115,13 +154,24 @@ func LoadResourceTrust() {
 	}
 	// 存量资源默认正式（一直在用的——不是新入库——Mr2109 2026-08-21）
 	// 新资源（未来入库）才 🆕——存量工具/模型直接正式
+	// ⚠ 这条「空串/未知 ⇒ 正式」是**存量模型**的历史语义，本波只把字面量换成机器码，语义不动。
 	resourceTrust.mu.Lock()
 	now := nowStr()
 	for k, m := range resourceTrust.Models {
-		if m.Status == "" || m.Status == "未知" {
-			m.Status = "正式"
+		if m.Status == "" || m.Status == legacyStatusUnknown {
+			m.Status = TrustOfficial
 			m.Since = now
 			resourceTrust.Models[k] = m
+			continue
+		}
+		m.Status = statusCode(m.Status)
+		resourceTrust.Models[k] = m
+	}
+	// 其余三类没有「存量默认正式」这一条历史语义 ⇒ 只做旧中文 → 机器码的翻译。
+	for _, mm := range []map[string]ResTrustEntry{resourceTrust.Tools, resourceTrust.Skills, resourceTrust.Mcps} {
+		for k, m := range mm {
+			m.Status = statusCode(m.Status)
+			mm[k] = m
 		}
 	}
 	resourceTrust.mu.Unlock()
@@ -145,7 +195,7 @@ func saveResourceTrust() {
 func (t *ResourceTrust) ensureEntry(m map[string]ResTrustEntry, name string) ResTrustEntry {
 	e, ok := m[name]
 	if !ok {
-		e = ResTrustEntry{Status: "新", Since: nowStr()}
+		e = ResTrustEntry{Status: TrustNew, Since: nowStr()}
 		m[name] = e
 	}
 	return e
@@ -160,7 +210,7 @@ func (t *ResourceTrust) RegisterResource(kind, name string) {
 		return
 	}
 	if _, ok := m[name]; !ok {
-		m[name] = ResTrustEntry{Status: "新", Since: nowStr()}
+		m[name] = ResTrustEntry{Status: TrustNew, Since: nowStr()}
 		saveResourceTrust()
 	}
 }
@@ -173,7 +223,7 @@ func RegisterExistingTools() {
 	for _, td := range agent.AllTools() {
 		name := td.Function.Name
 		if _, ok := resourceTrust.Tools[name]; !ok {
-			resourceTrust.Tools[name] = ResTrustEntry{Status: "正式", Uses: 100, Since: now} // 存量信任
+			resourceTrust.Tools[name] = ResTrustEntry{Status: TrustOfficial, Uses: 100, Since: now} // 存量信任
 		}
 	}
 	saveResourceTrust()
@@ -187,7 +237,7 @@ func RegisterExistingModels(cfg *config.FleetConfig) {
 	if cfg != nil {
 		for name := range cfg.Models {
 			if _, ok := resourceTrust.Models[name]; !ok {
-				resourceTrust.Models[name] = ResTrustEntry{Status: "正式", Uses: 100, Since: now} // 存量信任
+				resourceTrust.Models[name] = ResTrustEntry{Status: TrustOfficial, Uses: 100, Since: now} // 存量信任
 			}
 		}
 	}
@@ -204,8 +254,8 @@ func (t *ResourceTrust) UseResource(kind, name string) {
 	}
 	e := t.ensureEntry(m, name)
 	e.Uses++
-	if e.Status == "新" && e.Uses >= resTrustMax && e.Faults == 0 {
-		e.Status = "正式" // 100 次无故障——标记消除
+	if e.Status == TrustNew && e.Uses >= resTrustMax && e.Faults == 0 {
+		e.Status = TrustOfficial // 100 次无故障——标记消除
 	}
 	m[name] = e
 	saveResourceTrust()
@@ -225,18 +275,19 @@ func (t *ResourceTrust) FaultResource(kind, name string) {
 	saveResourceTrust()
 }
 
-// GetResourceStatus 资源状态（UI 显示——🆕/正式/未知）
+// GetResourceStatus 资源状态（UI 显示——new/official/unknown 机器码 · 中文只在显示层）
+// 返回值过一遍 statusCode：**发射边界**上保证是 ASCII 码（旧件里可能还留着中文）。
 func (t *ResourceTrust) GetResourceStatus(kind, name string) string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	m := t.kindMap(kind)
 	if m == nil {
-		return "未知"
+		return TrustUnknown
 	}
 	if e, ok := m[name]; ok {
-		return e.Status
+		return statusCode(e.Status)
 	}
-	return "未知" // 未注册（存量资源——未知状态——不标记）
+	return TrustUnknown // 未注册（存量资源——未知状态——不标记）
 }
 
 // GetResourceUses 资源使用次数（UI 显示——调用 N 次）

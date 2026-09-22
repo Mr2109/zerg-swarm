@@ -294,9 +294,12 @@ func TestResourceTrust_MigrationReadThenWrite_CountsNotLost(t *testing.T) {
 	if e.Uses != 100 {
 		t.Fatalf("旧 99 次 + 本次 1 次 = 100（后续 Status 转正式也靠这个数），实得 uses=%d status=%s", e.Uses, e.Status)
 	}
-	if e.Status != "正式" {
+	if e.Status != TrustOfficial {
 		t.Fatalf("99+1=100 次零故障 ⇒ 应转正式（计数没丢才可能转正），实得 %s", e.Status)
 	}
+	// ★ 2026-09-23 波F：上一条的期望值由中文「正式」改成 **ASCII 机器码** official（设计-CI适配-v1.1 §九）——
+	//   本用例的夹具故意仍写**旧中文**进文件（模拟 2026-09-23 之前落盘的状态文件）：
+	//   读入时翻译一次（statusCode）⇒ 这里拿到 official **同时**证明「旧中文件兼容面没断」。
 	if sumAfter := fileSHA256(t, legacy); sumAfter != sumBefore {
 		t.Fatalf("旧文件被改写：%s → %s", sumBefore, sumAfter)
 	}
