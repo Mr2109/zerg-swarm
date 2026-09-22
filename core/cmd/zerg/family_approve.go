@@ -29,6 +29,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -201,9 +202,48 @@ func cmdApproveShow(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "范围     : %s\n", tk.Scope)
 	fmt.Fprintf(stdout, "理由     : %s\n", tk.Note)
 	fmt.Fprintf(stdout, "签名     : alg=%s key_id=%s\n", tk.SigAlg, tk.KeyID)
+	fmt.Fprintf(stdout, "钥匙身份 : %s\n", keyIdentityLine(tk.KeyID))
 	fmt.Fprintf(stdout, "判决     : %s\n", state)
 	fmt.Fprintf(stdout, "落点     : %s\n", p)
 	return exitOK
+}
+
+// keyIdentityLine —— `show` 的「钥匙身份」那一行（`D3` · `v1.3 §9.2 N2′`）。
+//
+// 口径（**只显示、不拦** ✗）：强度判定的真源是**在册公钥**，不是件里那一格 —— 所以这一行的取值口 =
+// **在册** `operator.pub` 的 `key_id`（现成的 `control.KeyID()` 口径 · `approval.go:42`），**不新增判定口**，
+// 也**不动**判决列那四档（`验过` / `无签名` / `签名坏` / `alg 不认` 的扩法见 `v1.3 §4.4`，
+// 本任务**只加这一行**）。打「不在册」**不改**判决、**不改**放行 —— 「消费者是否**要求**一致」
+// 是策略收紧（不可逆档 `I3`）⇒ 那一半**仍待亲选**（`P3`），本行照实只报告读数。
+func keyIdentityLine(ticketKeyID string) string {
+	inUse, ok := operatorKeyIDInUse()
+	if !ok {
+		return fmt.Sprintf("key_id=%s · 在册公钥件读不到（%s）—— **只是读数** · 不改判决",
+			ticketKeyID, operatorPubPath())
+	}
+	if strings.TrimSpace(ticketKeyID) == inUse {
+		return fmt.Sprintf("key_id=%s · **在册**（与在册公钥 %s 逐字一致）", ticketKeyID, inUse)
+	}
+	return fmt.Sprintf("key_id=%s · **不在册**（在册公钥是 %s）—— 只显示、不拦；判定口只在控制层",
+		ticketKeyID, inUse)
+}
+
+// operatorKeyIDInUse —— **在册**公钥的 `key_id`（「件里那格是不是当前在册」的唯一取值口 · 只读）。
+// 读不到 / 解不动 / 该格空 ⇒ `("", false)`：调用方照实打「读不到」，**不许**把它当「不在册」以外的结论用。
+func operatorKeyIDInUse() (string, bool) {
+	b, err := os.ReadFile(operatorPubPath())
+	if err != nil {
+		return "", false
+	}
+	var pf operatorPubFile
+	if json.Unmarshal(b, &pf) != nil {
+		return "", false
+	}
+	kid := strings.TrimSpace(pf.KeyID)
+	if kid == "" {
+		return "", false
+	}
+	return kid, true
 }
 
 // verifyTicketState —— 三值判决：`验过` / `无签名` / `签名坏`（消费者只认第一种）。
@@ -262,12 +302,45 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 	if scope == "" {
 		scope = "*"
 	}
+	// ★ D2（`P16` / `M-12` 的落点）：**签前摘要两行** —— ① 人话摘要（五格都在行里 ⇒ 第三方拿同一组五格
+	//   现算就能复算）② **待签字节**的 `sha256`。两行都在**真签之前**打出，`--dry-run` 也打。
+	//   口径只有一处：下面这枚 `sha256` = `control.ApprovalPayload(tk 的五格)` 的 `sha256`
+	//   （待签字节形态见 `core/internal/control/approval.go:25`：一句版本行 `zerg-approval/v1` + 五格）。
+	//   ★ 它**不是**件文件的 `sha256`、也**不是**被改文件的前后 `sha256`（那两格记的是另一件事 · `[P13]`）。
+	//   ★ 将来 `E1`（审计那一半）**必须复用这一口径**，不许各算各的（`v1.3 §8.4 P16`）。
+	approvedAt := time.Now().Format(time.RFC3339)
+	tk := approvalTicketFile{
+		Tool: control.SanitizeApprovalField(tool), Approver: control.SanitizeApprovalField(by),
+		ApprovedAt: approvedAt, Scope: control.SanitizeApprovalField(scope), Note: control.SanitizeApprovalField(note),
+	}
+	payload := control.ApprovalPayload(tk.Tool, tk.Scope, tk.Approver, tk.ApprovedAt, tk.Note)
+	digest := sha256.Sum256(payload)
+	printSummary := func() {
+		if inv.jsonGiven {
+			return
+		}
+		fmt.Fprintf(stdout, "摘要     : 工具 %s · 范围 %s · 批准者 %s · 签的时间 %s · 理由 %s\n",
+			tk.Tool, tk.Scope, tk.Approver, tk.ApprovedAt, tk.Note)
+		fmt.Fprintf(stdout, "待签 sha256: %s（%d 字节 · 待签字节 = `zerg-approval/v1` + 五格；**不是**件文件 / 被改文件的 sha256）\n",
+			hex.EncodeToString(digest[:]), len(payload))
+	}
+	if inv.dryRun {
+		// 干跑那一态：只出**计划面** —— 一个字节都不写（不落件 · 不落审计 · 不动在册件 · 不读口令）。
+		// 这一态**不受终端判据约束**（它本来就不签）—— 两行照打，便于「AI 可提」那一半自证要签什么。
+		printSummary()
+		fmt.Fprintf(stderr, "（--dry-run：只出计划面 · **零副作用** —— 未签 · 未落件 · 未动在册件）\n")
+		return exitOK
+	}
 	if !isTTYFile(os.Stdin) {
+		// 这一态**一个字节都不往 stdout 写**（矩阵 `approve/new#非终端不给签（模型路径）` 判据 = stdout 0 字节 ·
+		// 本仓铁律：拒绝那一态不产出任何「看起来像结果」的东西）。
 		inv.setErr("usage", "not_a_human", "人签要人在终端上敲")
 		fmt.Fprintf(stderr, "%s: **批准只能人在终端上敲** —— 非交互会话（管道 / 模型）一律不给签（退码 2）\n", progName)
 		fmt.Fprintf(stderr, "口径（§17.3 铁律④③）：AI 可提、可建、可测、可验，**不可自批**；这一步的判据不是「谁敲的命令」而是「**谁的口令**」\n")
 		return exitUsage
 	}
+	// 人在终端上：**先**把要签的东西打全（两行）—— 人看清了再敲口令，**然后**才签。
+	printSummary()
 	if _, err := os.Stat(operatorKeyPath()); err != nil {
 		inv.setErr("usage", "operator_key_absent", "还没有操作员密钥")
 		fmt.Fprintf(stderr, "%s: 还没有操作员密钥（%s）⇒ 不给签\n", progName, operatorKeyPath())
@@ -286,13 +359,10 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %v ⇒ **不给签**（口令不对就是不能签，不重试、不猜）\n", progName, err)
 		return exitUsage
 	}
-	approvedAt := time.Now().Format(time.RFC3339)
-	tk := approvalTicketFile{
-		Tool: control.SanitizeApprovalField(tool), Approver: control.SanitizeApprovalField(by),
-		ApprovedAt: approvedAt, Scope: control.SanitizeApprovalField(scope), Note: control.SanitizeApprovalField(note),
-		SigAlg: "ed25519", KeyID: control.KeyID(base64.StdEncoding.EncodeToString(priv.Public().(ed25519.PublicKey))),
-	}
-	sig := ed25519.Sign(priv, control.ApprovalPayload(tk.Tool, tk.Scope, tk.Approver, tk.ApprovedAt, tk.Note))
+	// 签（在册私钥）—— 上面打出的两行讲的**就是**这串字节（同一枚 `payload`，口径不漂）。
+	tk.SigAlg = "ed25519"
+	tk.KeyID = control.KeyID(base64.StdEncoding.EncodeToString(priv.Public().(ed25519.PublicKey)))
+	sig := ed25519.Sign(priv, payload)
 	tk.Sig = base64.StdEncoding.EncodeToString(sig)
 
 	// 写：**追加只写**那一族的口径（同名件不许悄悄覆盖 —— 要换先删，删是人的动作）
