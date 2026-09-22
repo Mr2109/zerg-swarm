@@ -356,7 +356,7 @@ func impactDupWallGate(root string) (int, string, string) {
 
 // emitImpactDupBlock 打重复面那一段（**只报数** · 不判红绿 · 不进退码）。
 //
-// `curve=true` 时另跑标定曲线的六档（贵：每档一次 jscpd ⇒ 只在按需档走）。
+// `curve=true` 时另跑标定曲线的六档（贵：每档一次 jscpd ⇒ 只在**贵面现跑** `--deep` 走）。
 func emitImpactDupBlock(w io.Writer, root string, curve bool) {
 	c, why := impactDupContractOf(root)
 	fmt.Fprintf(w, "%s: `C4` 重复面与归位（§6.5：**只报数不判红** · 不设门禁阈值）\n", progName)
@@ -396,7 +396,7 @@ func emitImpactDupBlock(w io.Writer, root string, curve bool) {
 	if bin == "" {
 		fmt.Fprintf(w, "  标定曲线：**未跑**（报数档未装）⇒ 在册值并留：%s\n", c.Curve.Known)
 	} else if !curve {
-		fmt.Fprintf(w, "  标定曲线：**本跑未跑**（六档 = 六次 jscpd ⇒ 归按需档 `--all`）· 在册值并留：%s\n", c.Curve.Known)
+		fmt.Fprintf(w, "  标定曲线：**本跑未跑**（六档 = 六次 jscpd ⇒ 归**贵面现跑** `--deep`）· 在册值并留：%s\n", c.Curve.Known)
 	} else {
 		parts := []string{}
 		for _, t := range c.Curve.Tiers {

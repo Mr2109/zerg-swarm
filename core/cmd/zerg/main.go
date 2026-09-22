@@ -1376,6 +1376,7 @@ type invocation struct {
 	forHuman     bool
 	wide         bool // `C3`：文档面口径 A 档（裸词 · `R23`）
 	strict       bool // `C3`：文档面口径 C 档（与「件:行」同行 · 最严档）
+	deep         bool // `C3`/`C4`/`C1`：**贵面现跑**（重复面报数 + 六档标定曲线 · 删面两器）
 	confirm      string
 	confirmGiven bool
 	yes          bool
@@ -1596,6 +1597,11 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.wide = true
 		case a == "--strict":
 			inv.strict = true
+		// `C` 批新加的两个**贵面**（重复面 = 一次 `jscpd` + 六档曲线；删面 = `deadcode -test` +
+		// `staticcheck U1000`）：默认档与 `--all` 都**不跑**（只打口径与照实状态），
+		// 要真跑就显式 `--deep` —— 跑一次约 40s，不给日常路径与门禁套件加这份账。
+		case a == "--deep":
+			inv.deep = true
 		case a == "--confirm" || a == "--confirm=":
 			// 给了旗标但没给值 ⇒ confirmGiven 为真、值为空（由 guard 判成「值不匹配目标」）
 			inv.confirmGiven = true

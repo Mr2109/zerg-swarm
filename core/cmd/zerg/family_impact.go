@@ -208,7 +208,7 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	// `C4` 重复面与归位（**只报数不判红** · 只读）：贵面（一次 `jscpd` + 六档标定曲线）⇒ 只在
 	// **按需档** `--all` 走（默认档一个字不打 —— 也不打「未跑」，因为本面根本不是默认面的一部分，
 	// 口径写在设计 §6.5 与契约件 `S-l` 里）。
-	if !cheap {
+	if inv.deep {
 		emitImpactDupBlock(stderr, root, true)
 	}
 	// `C1` 删面（**只出候选** · 零自动删 · 不写标记）：**默认档也打**（五类盲区恒带 · 缺一不出结论），
@@ -219,7 +219,7 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 		if l, err := impactStateLayoutOf(root); err == nil {
 			lay, layOK = l, true
 		}
-		emitImpactDelBlock(stderr, root, tgt, lay, layOK, !cheap)
+		emitImpactDelBlock(stderr, root, tgt, lay, layOK, inv.deep)
 	}
 	emitImpactStepBlock(stderr, proj)
 	// `B2` 时间面（预测侧）：块在 `B1` 的步名真源块之后 —— 那一块给的是「门步那一格接到什么」，
@@ -373,12 +373,13 @@ func impactRegistryIDs(root string) ([]string, error) {
 }
 
 // impactUsageLine —— 形态串（与命令树的 `usage` 逐字同源，门⑫ 的口径；本件不旁写第二份）。
+// `C` 批起形态串里多一枚 `--deep`（**贵面现跑**：重复面报数 + 六档曲线 · 删面两器）。
 // `A3` 起把 §4.1 的**两档**写进形态串（`--for-model` / `--for-human` · `R9` 已拍「分两档」·
 // `R38` 拍定它们与 `--json` **不是同一条**、可叠加、都不改六键包封）。
 // `C3` 起把文档面**三档口径**写进形态串（`R23` 已拍：A 裸词随 `--wide` · **B 反引号包住的符号名
 // （默认）** · C 与「件:行」同行随 `--strict`）—— 形态串里写着的旗标必须真能被解析（否则命令等于不可用）。
 // ★ `--all`（按需档 · §4.4）仍是**既有全局布尔**，故不写进形态串（形态串只写本命令独有的东西）。
-const impactUsageLine = "zerg impact <文件｜契约 id> [--wide｜--strict] [--for-model｜--for-human] [--json <字段>] [--gate-results <那次门禁的结果表｜它的日志目录>]"
+const impactUsageLine = "zerg impact <文件｜契约 id> [--wide｜--strict] [--deep] [--for-model｜--for-human] [--json <字段>] [--gate-results <那次门禁的结果表｜它的日志目录>]"
 
 // impactDocTierOf 文档面口径档（`R23` 已拍的三档 · 不许自造第四档）：
 //
