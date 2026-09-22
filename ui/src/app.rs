@@ -15,6 +15,30 @@ use crate::modules::zerg_module; // 模块注册表（平台页 id 常量——C
 
 use std::sync::{Arc, Mutex};
 
+// ── 信任级别机器码（2026-09-23 波F · 设计-CI适配-v1.1 §九 · 提案 DEV-0053）──────────────
+// 铁律「**面向机器的一律 ASCII**」：`trust` 是**服务端发的数据面字符串**（API JSON 的 trust 字段），
+// 不是给人看的文案 ⇒ 代码里**绝不**与中文字面量比较；中文只住在 ui/locales/*.yml（显示层）。
+// 闭集三个（与服务端 core/internal/api/resource_trust.go 的常量逐字一致）：
+//   new = 新入库 / 未用满 100 次 · official = 正式 · unknown = 未注册 / 缺值
+// ⚠ 改这三个字面量 = 破坏性接口变更（服务端与 UI 两侧同批）⇒ 走提案。
+pub(crate) const TRUST_CODE_NEW: &str = "new";
+pub(crate) const TRUST_CODE_OFFICIAL: &str = "official";
+pub(crate) const TRUST_CODE_UNKNOWN: &str = "unknown";
+
+/// trust_display —— 信任级别机器码 → 当前语言的显示文案（本文件的**唯一**显示口径）。
+///
+/// 空串那一支（`""`）：服务端有值就发码（闭集里**没有空串**）⇒ 这里只是「缺字段 / 旧件」的兜底，
+/// 与 unknown 同一支显示（人看到的仍是中文「未知」，英文 "unknown"）。
+/// 认不出的码**原样显示**（缺就缺 —— 不猜、不假装成未知）。
+pub(crate) fn trust_display(code: &str) -> String {
+    match code {
+        TRUST_CODE_NEW => t!("resources.trust_new").to_string(),
+        TRUST_CODE_OFFICIAL => t!("resources.trust_official").to_string(),
+        TRUST_CODE_UNKNOWN | "" => t!("resources.trust_unknown").to_string(),
+        other => other.to_string(),
+    }
+}
+
 pub struct ZergApp {
     // 连接状态
     online: bool,
@@ -1744,7 +1768,7 @@ impl ZergApp {
                                                 let trust = item
                                                     .get("trust")
                                                     .and_then(|t| t.as_str())
-                                                    .unwrap_or("未知")
+                                                    .unwrap_or(TRUST_CODE_UNKNOWN)
                                                     .to_string();
                                                 let uses = item
                                                     .get("uses")
@@ -1824,15 +1848,9 @@ impl ZergApp {
                                                 // P4-49 工具名后不加图标（Mr2109 UI 偏好——与模型名一致）
                                                 ui.label(name.clone());
                                                 ui.label(version.clone());
-                                                ui.label(if trust == "新" {
-                                                    t!("resources.trust_new").to_string()
-                                                } else if trust == "正式" {
-                                                    t!("resources.trust_official").to_string()
-                                                } else if trust == "未知" || trust.is_empty() {
-                                                    t!("common.unknown").to_string()
-                                                } else {
-                                                    trust.clone()
-                                                });
+                                                // 2026-09-23 波F：比 **ASCII 机器码**（不再比中文字面量）；
+                                                // 显示走 trust_display（i18n 键）——人看到的仍是中文。
+                                                ui.label(trust_display(trust.as_str()));
                                                 ui.label(t!("resources.uses_count", n = uses));
                                                 let fault_color = if *faults > 0 {
                                                     egui::Color32::from_rgb(255, 80, 80)
@@ -3608,6 +3626,100 @@ mod cocoon_platform_tests {
                 "平台页「安装」接线被删了（去空白后找不到 {}）",
                 needle
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod trust_code_tests {
+    //! 2026-09-23 波F（设计-CI适配-v1.1 §九 · 提案 DEV-0053）：信任级别 ASCII 化 —— 能失败的检查。
+    //!
+    //! 三条判据：① 生产段里**不许**再出现中文字面量的信任级别（数据面一律 ASCII 机器码）；
+    //! ② 机器码 → 显示走 i18n 键（人看到的仍是中文）；③ zh/en 两侧 `resources.trust_*` 三键齐。
+
+    use super::nav_trim_tests::{EN_YML, ZH_YML}; // 键表源串复用同一份（不另造解析）
+    use super::{trust_display, TRUST_CODE_NEW, TRUST_CODE_OFFICIAL, TRUST_CODE_UNKNOWN};
+
+    const APP: &str = include_str!("app.rs");
+
+    /// **生产侧源码**：第一个 `#[cfg(test)]` 之前的部分（同 `cocoon_platform_tests::prod_src` 口径）。
+    /// 不切的话，本用例的 needle 会被**自己**喂饱 —— 那是自证，不是守线。
+    fn prod_src(src: &str) -> &str {
+        src.split("#[cfg(test)]").next().unwrap_or(src)
+    }
+
+    /// ① 数据面字面量：三个中文信任级别在生产段**一个都不许**在。
+    /// ★ 本用例的牙（负控）：把 `trust_display` 或调用点改回比中文（例如 `trust == "正式"`）⇒ 必红。
+    #[test]
+    fn no_chinese_trust_literal_in_production_code() {
+        let prod = prod_src(APP);
+        for zh in ["\"正式\"", "\"未知\"", "\"新\""] {
+            assert!(
+                !prod.contains(zh),
+                "生产段仍有中文字面量 {} —— 信任级别是**数据面**（服务端发的状态串）⇒ 只许 ASCII 机器码，中文只许住 ui/locales（§九）",
+                zh
+            );
+        }
+        // 闭集三码必须在（与服务端 core/internal/api/resource_trust.go 的常量逐字一致）
+        for code in [TRUST_CODE_NEW, TRUST_CODE_OFFICIAL, TRUST_CODE_UNKNOWN] {
+            let lit = format!("\"{}\"", code);
+            assert!(
+                prod.contains(&lit),
+                "生产段缺机器码 {}（服务端发码 / UI 比码 —— 缺了就是两侧脱钩）",
+                lit
+            );
+        }
+        // 调用点接线：显示一律过 trust_display（改回就地 if/else 比中文会在这里断）
+        assert!(
+            prod.contains("ui.label(trust_display(trust.as_str()))"),
+            "资源表格的状态列没走 trust_display（就地比字面量 = 回到 ASCII 化之前）"
+        );
+    }
+
+    /// ② 机器码 → 显示（**语言双跑**，同 `main.rs::locale_switch_resolves_english_and_chinese`
+    /// 的口径：两语言在**同一个用例内串行**断言，避免与全局 locale 竞争）。
+    #[test]
+    fn machine_code_maps_to_localized_text() {
+        rust_i18n::set_locale("zh-CN");
+        assert_eq!(trust_display(TRUST_CODE_NEW), "新");
+        assert_eq!(trust_display(TRUST_CODE_OFFICIAL), "正式");
+        assert_eq!(trust_display(TRUST_CODE_UNKNOWN), "未知");
+        assert_eq!(trust_display(""), "未知", "空串兜底与 unknown 同一支显示");
+        assert_eq!(
+            trust_display("experimental"),
+            "experimental",
+            "认不出的码原样显示（不猜、不假装是未知）"
+        );
+
+        rust_i18n::set_locale("en");
+        assert_eq!(trust_display(TRUST_CODE_NEW), "new");
+        assert_eq!(trust_display(TRUST_CODE_OFFICIAL), "official");
+        assert_eq!(trust_display(TRUST_CODE_UNKNOWN), "unknown");
+        // ★ 负控（本判据的牙 · 英文档下可区分）：中文字面量**不是码** ⇒ 原样过，绝不解析成 official。
+        //   若有人把比较改回中文（`trust == "正式"` ⇒ 键 resources.trust_official），这一条必红。
+        assert_eq!(trust_display("正式"), "正式");
+        assert_ne!(trust_display("正式"), "official");
+        rust_i18n::set_locale("zh-CN");
+    }
+
+    /// ③ zh/en 两侧三个显示键齐（缺一条某语言就把键名露给用户 —— G1 键对称同口径）。
+    #[test]
+    fn trust_display_keys_exist_in_both_locales() {
+        let zh_rows = [
+            ("resources.trust_new", "新"),
+            ("resources.trust_official", "正式"),
+            ("resources.trust_unknown", "未知"),
+        ];
+        let en_rows = [
+            ("resources.trust_new", "new"),
+            ("resources.trust_official", "official"),
+            ("resources.trust_unknown", "unknown"),
+        ];
+        for (name, yml, rows) in [("zh-CN.yml", ZH_YML, zh_rows), ("en.yml", EN_YML, en_rows)] {
+            for (key, want) in rows {
+                let lit = format!("{}: \"{}\"", key, want);
+                assert!(yml.contains(&lit), "{} 缺显示键/值不对：{}", name, lit);
+            }
         }
     }
 }
