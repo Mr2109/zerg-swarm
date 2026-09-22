@@ -817,9 +817,8 @@ func emitImpactBackfillBlock(w io.Writer, inv *invocation, root string, tgt *imp
 		"`BLOCKED`/`REPORT` 逐条单列、**不进三数**（判据②：`BLOCKED` 不计入漏报 ✓）\n")
 	fmt.Fprintf(w, "  ④ 齐不齐：结果表 %d 行 ⇔ 真源现跑「%s」**逐字相等** ⇒ 齐（**不许拿子集当全量**；"+
 		"对不上就退 8 不给结论）\n", len(run.Rows), tier)
-	fmt.Fprintf(w, "  ⑤ 参照（**现成槽 · 本件不自设阈值** ✗）：%s —— 漏报同格是**绝对数**「假绿 = 0」、"+
-		"虚报同格是**费率**「假红 ≤ 10%%」（分母 = 判绿那一侧）；**本件只并排报，不判红绿**"+
-		"（`R30`：口径可定、阈值不可编）\n", rec.RateSlot)
+	fmt.Fprintf(w, "  ⑤ 参照（**现成槽 · 本件不自设阈值** ✗）：%s —— 漏报同格是**绝对数**（现成槽那一条的左半）、"+
+		"虚报同格是**费率**（右半 · 分母 = 判绿那一侧）；**本件只并排报，不判红绿**（`R30`：口径可定、阈值不可编）\n", rec.RateSlot)
 	fmt.Fprintf(w, "     本件自攒（**只报**）：漏报 %d 条（真红 %d 条为分母）· 虚报 %d 条（判绿 %d 条为分母）\n",
 		counts.Miss, counts.Hit+counts.Miss, counts.FalseAlarm, len(run.Pass))
 	switch hist.Status {
