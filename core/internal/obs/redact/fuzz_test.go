@@ -17,14 +17,14 @@ import (
 // **落盘行**，不属于值。
 func FuzzRedactValue(f *testing.F) {
 	seeds := []string{
-		"~/x", "／Users／ｆｕｚｚ０１", "/Users/fuzz\u200b01", "%2FUsers%2FMr2109",
+		homeRoot + "/x", "／Users／ｆｕｚｚ０１", "/Users/fuzz\u200b01", "%2FUsers%2F" + foldUser,
 		"cfg=L1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4=",
 		"Authorization: " + "Bearer " + tokSk, tokHf,
-		"a@b.com", "<controller-ip>", "open /home/alice/.netrc", "plain text",
+		"a@b.com", "172.16.5.9", "open /home/alice/.netrc", "plain text",
 		"%25%32%46", "\xff\xfe", strings.Repeat("/", 64), "",
 		"eyJhbG" + "ciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln", "hf-abcdefghijklmnop",
 		"glpat_abcdefghijklmnop", "xoxb-" + "1234567890123", "AKIA" + "IOSFODNN7EXAMPLE",
-		"Mr2109", "path ////// ok", "https://x/y?token=aaaaaaaaaaaa",
+		foldUser, "path ////// ok", "https://x/y?token=aaaaaaaaaaaa",
 		// 下面是本轮 fuzz 命中的 8 例（正在此处留种，防止回归）：
 		"AuthoriZAtion:0000000 " + strings.Repeat("0", 28), // 低熵 needle 误报
 		"AuthoriZAtion:000I00 000I00",                      // 值的第二份拷贝
