@@ -97,6 +97,22 @@ func hitLines(txt, anchor string) string {
 	return strings.Join(at, ", ")
 }
 
+// isPublicFaceTree —— 判的是不是**公开树**（§五 第四批的「按所判的那棵树分列判」）：
+//
+//	· 私有树：`publish/replace-rules.tsv` 在场（发布机制自身**不进公开面** —— publish/private-paths.txt 逐条登记）；
+//	· 公开树：`publish/` 整棵不在，而 `publish/ci/release-agent.yml` 被 publish-public.sh 的 MAPPINGS
+//	  铺成公开树的 `.github/workflows/release-agent.yml`。
+//
+// 两条都要求 ⇒ 判据夹具的**合成小树**（既无 publish/ 也无那个 workflow）被当**私有面**判 ——
+// 宁可多判、不许少判：声明式不判只发生在**认得出的**公开树里。
+func isPublicFaceTree(root string) bool {
+	if _, err := os.Stat(filepath.Join(root, "publish", "replace-rules.tsv")); err == nil {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(root, ".github", "workflows", "release-agent.yml"))
+	return err == nil
+}
+
 // judgeUnresolved 是本票三格判据的**唯一判定口**。
 // 参数一律显式传入（仓根 / 台账 / 命令树）—— 为的是让负控能喂合成件与 /tmp 副本进来，不碰真仓。
 func judgeUnresolved(root string, led contract.UnresolvedLedger, cmdPaths []string) unresolvedVerdict {
@@ -127,27 +143,49 @@ func judgeUnresolved(root string, led contract.UnresolvedLedger, cmdPaths []stri
 			v.Errs = append(v.Errs, fmt.Errorf("判据① 破：入口 %s 一条证据都没有（取证 = 至少一条 `file` + `anchor`）", e.ID))
 		}
 		for _, c := range e.Callers {
+			// ④ 公开面对应件：**缺件不许留空**（§五 第四批 —— 公开面-only / 私有面-only 必须显式二选一）
+			if strings.TrimSpace(c.PublicCounterpart) == "" {
+				v.Errs = append(v.Errs, fmt.Errorf("判据④ 破：入口 %s 的证据 %s 没写「公开面对应件」—— "+
+					"缺件不许留空（件在公开面同路径同在 ⇒ 写那个路径；不进公开面 ⇒ 写 %q）",
+					e.ID, c.File, contract.UnresolvedPublicOnly))
+				continue
+			}
 			if strings.TrimSpace(c.Anchor) == "" {
 				v.Errs = append(v.Errs, fmt.Errorf("判据① 破：入口 %s 的证据 %s 没有内容锚（`anchor` 空）—— "+
 					"v2 起行号只是提示（`line_hint`），锚才是判据", e.ID, c.File))
 				continue
 			}
-			b, err := os.ReadFile(filepath.Join(root, c.File))
+			// 判哪一件：按**所判的那棵树**分列判（§五 第四批）——
+			//   · 声明私有面-only 且判的是公开树 ⇒ 按声明**不判**（要留痕，不许静默少判）
+			//   · 公开面对应件在场 ⇒ 判它；否则判 `file`（私有树就是这一支）
+			if c.PublicCounterpart == contract.UnresolvedPublicOnly && isPublicFaceTree(root) {
+				v.Warns = append(v.Warns, fmt.Errorf("判据④（声明式不判 · 不判红）：入口 %s 的证据 %s 声明「%s」"+
+					"⇒ 公开树里按台账声明不判（私有面照判；这一条留痕是为了「少判」看得见）",
+					e.ID, c.File, contract.UnresolvedPublicOnly))
+				continue
+			}
+			target := c.File
+			if c.PublicCounterpart != contract.UnresolvedPublicOnly && c.PublicCounterpart != c.File {
+				if _, err := os.Stat(filepath.Join(root, c.PublicCounterpart)); err == nil {
+					target = c.PublicCounterpart
+				}
+			}
+			b, err := os.ReadFile(filepath.Join(root, target))
 			if err != nil {
-				v.Errs = append(v.Errs, fmt.Errorf("判据① 破：入口 %s 的证据件读不到 %s（%v）", e.ID, c.File, err))
+				v.Errs = append(v.Errs, fmt.Errorf("判据① 破：入口 %s 的证据件读不到 %s（%v）", e.ID, target, err))
 				continue
 			}
 			txt := string(b)
 			n := strings.Count(txt, c.Anchor)
-			h := anchorHit{EntryID: e.ID, File: c.File, Anchor: c.Anchor, Count: n,
+			h := anchorHit{EntryID: e.ID, File: target, Anchor: c.Anchor, Count: n,
 				SpanLines: strings.Count(c.Anchor, "\n") + 1, LineHint: c.LineHint}
 			switch {
 			case n == 0:
 				v.Errs = append(v.Errs, fmt.Errorf("判据① 破：入口 %s 的锚不存在 —— %s 里一处都没有 %q（证据挂在空气上了）",
-					e.ID, c.File, clip(c.Anchor)))
+					e.ID, target, clip(c.Anchor)))
 			case n > 1:
 				v.Errs = append(v.Errs, fmt.Errorf("判据① 破：入口 %s 的锚不唯一 —— %s 里 %q 命中 %d 处（行 %s）⇒ "+
-					"判据不许静默取第一处：收紧锚串，或让锚跨行写成上下文窗", e.ID, c.File, clip(c.Anchor), n,
+					"判据不许静默取第一处：收紧锚串，或让锚跨行写成上下文窗", e.ID, target, clip(c.Anchor), n,
 					hitLines(txt, c.Anchor)))
 			default:
 				h.StartLine = strings.Count(txt[:strings.Index(txt, c.Anchor)], "\n") + 1
@@ -155,7 +193,7 @@ func judgeUnresolved(root string, led contract.UnresolvedLedger, cmdPaths []stri
 					h.HintDrift = h.StartLine - c.LineHint
 					v.Warns = append(v.Warns, fmt.Errorf("提示漂（不判红）：入口 %s 的证据 %s 的行号提示 %d 已不是现跑锚起行 %d"+
 						"（差 %+d）—— `line_hint` 只是提示，判据看锚；重取提示的命令见契约件的 `verify_command_hints`",
-						e.ID, c.File, c.LineHint, h.StartLine, h.HintDrift))
+						e.ID, target, c.LineHint, h.StartLine, h.HintDrift))
 				}
 			}
 			v.Hits = append(v.Hits, h)
@@ -280,6 +318,7 @@ func checkLedgerShape(raw string) []error {
 	nFile := strings.Count(raw, `"file":`)
 	nAnchor := strings.Count(raw, `"anchor":`)
 	nHint := strings.Count(raw, `"line_hint":`)
+	nPub := strings.Count(raw, `"公开面对应件":`)
 	if nFile == 0 {
 		errs = append(errs, fmt.Errorf("台账里一条 `\"file\":` 都没有（空转 = 假覆盖）"))
 	}
@@ -288,6 +327,12 @@ func checkLedgerShape(raw string) []error {
 	}
 	if nHint != nFile {
 		errs = append(errs, fmt.Errorf("`\"line_hint\":` %d 条 ≠ `\"file\":` %d 条 —— 有证据没给行号提示（提示是给人看的，缺了不影响判绿但台账不完整）", nHint, nFile))
+	}
+	if nPub != nFile {
+		errs = append(errs, fmt.Errorf("`\"公开面对应件\":` %d 条 ≠ `\"file\":` %d 条 —— 有证据没写好「公开面对应件」（§五 第四批：缺件不许留空）", nPub, nFile))
+	}
+	if nEmpty := strings.Count(raw, `"公开面对应件": ""`); nEmpty != 0 {
+		errs = append(errs, fmt.Errorf("有 %d 条「公开面对应件」是**空值** —— 缺件不许留空：件不进公开面就写字死的「%s」", nEmpty, contract.UnresolvedPublicOnly))
 	}
 	if n := strings.Count(raw, `"line":`); n != 0 {
 		errs = append(errs, fmt.Errorf("台账里还有 %d 条旧字段 `\"line\":` —— v1 的按行号钉已废（会再漂一次）；行号只能写 `line_hint`", n))
@@ -329,7 +374,7 @@ func TestUnresolvedJudgeHasTeeth(t *testing.T) {
 		Entries: []contract.UnresolvedEntry{{
 			ID: "trace", Dir: "core/cmd/zerg-trace", Main: "core/cmd/zerg-trace/main.go",
 			Bin: "zerg-trace", WhoCalls: "文档一行", Verdict: "待拍",
-			Callers: []contract.UnresolvedCaller{{File: "README.md", Anchor: "| zerg-trace | 追踪工具 |", LineHint: 2, What: "文档登记行"}},
+			Callers: []contract.UnresolvedCaller{{File: "README.md", Anchor: "| zerg-trace | 追踪工具 |", LineHint: 2, PublicCounterpart: "README.md", What: "文档登记行"}},
 		}},
 	}
 	if v := judgeUnresolved(root, good, []string{"task ls"}); !v.ok() {
@@ -346,7 +391,7 @@ func TestUnresolvedJudgeHasTeeth(t *testing.T) {
 
 	// ①-a 锚不存在（把锚串改成件里没有的东西 —— 正是「证据件被改掉/搬走」那一格）
 	{
-		v := judgeUnresolved(root, clone(contract.UnresolvedCaller{File: "README.md", Anchor: "zerg-trace 的这一句不在件里"}, good.Entries[0].Dir), nil)
+		v := judgeUnresolved(root, clone(contract.UnresolvedCaller{File: "README.md", Anchor: "zerg-trace 的这一句不在件里", PublicCounterpart: "README.md"}, good.Entries[0].Dir), nil)
 		if v.ok() {
 			t.Error("负控①-a 失败：锚不存在没有被抓到")
 		} else if !strings.Contains(fmt.Sprint(v.Errs), "锚不存在") {
@@ -357,7 +402,7 @@ func TestUnresolvedJudgeHasTeeth(t *testing.T) {
 	// ①-b 锚不唯一（同一串在件里出现两次 ⇒ 不许静默取第一处）
 	{
 		mustWrite(t, filepath.Join(root, "DUP.md"), "| zerg-trace | 追踪工具 |\n别的\n| zerg-trace | 追踪工具 |\n")
-		v := judgeUnresolved(root, clone(contract.UnresolvedCaller{File: "DUP.md", Anchor: "| zerg-trace | 追踪工具 |"}, good.Entries[0].Dir), nil)
+		v := judgeUnresolved(root, clone(contract.UnresolvedCaller{File: "DUP.md", Anchor: "| zerg-trace | 追踪工具 |", PublicCounterpart: "DUP.md"}, good.Entries[0].Dir), nil)
 		if v.ok() {
 			t.Error("负控①-b 失败：锚不唯一没有被抓到（静默取了第一处）")
 		} else if !strings.Contains(fmt.Sprint(v.Errs), "锚不唯一") || !strings.Contains(fmt.Sprint(v.Errs), "1, 3") {
@@ -367,7 +412,7 @@ func TestUnresolvedJudgeHasTeeth(t *testing.T) {
 
 	// ①-c 锚是空的（还想按行号判 ⇒ 直接红：行号不是判据）
 	{
-		v := judgeUnresolved(root, clone(contract.UnresolvedCaller{File: "README.md", LineHint: 2}, good.Entries[0].Dir), nil)
+		v := judgeUnresolved(root, clone(contract.UnresolvedCaller{File: "README.md", LineHint: 2, PublicCounterpart: "README.md"}, good.Entries[0].Dir), nil)
 		if v.ok() || !strings.Contains(fmt.Sprint(v.Errs), "没有内容锚") {
 			t.Errorf("负控①-c 失败：空锚没有被抓到（或错因不清）：%v", v.Errs)
 		}
@@ -375,7 +420,7 @@ func TestUnresolvedJudgeHasTeeth(t *testing.T) {
 
 	// ①-d 证据件读不到
 	{
-		v := judgeUnresolved(root, clone(contract.UnresolvedCaller{File: "没有这件.md", Anchor: "x"}, good.Entries[0].Dir), nil)
+		v := judgeUnresolved(root, clone(contract.UnresolvedCaller{File: "没有这件.md", Anchor: "x", PublicCounterpart: "没有这件.md"}, good.Entries[0].Dir), nil)
 		if v.ok() {
 			t.Error("负控①-d 失败：证据件读不到没有被抓到")
 		}
@@ -383,7 +428,7 @@ func TestUnresolvedJudgeHasTeeth(t *testing.T) {
 
 	// ①-e 对偶正控：**锚对、行号提示写错** ⇒ 不判红，但必须留警告（「行号不是判据」的机检）
 	{
-		v := judgeUnresolved(root, clone(contract.UnresolvedCaller{File: "README.md", Anchor: "| zerg-trace | 追踪工具 |", LineHint: 99}, good.Entries[0].Dir), nil)
+		v := judgeUnresolved(root, clone(contract.UnresolvedCaller{File: "README.md", Anchor: "| zerg-trace | 追踪工具 |", LineHint: 99, PublicCounterpart: "README.md"}, good.Entries[0].Dir), nil)
 		if !v.ok() {
 			t.Errorf("对偶正控失败：行号提示写错（锚是对的）被判红了 —— 行号不许当判据：%v", v.Errs)
 		}
@@ -400,6 +445,72 @@ func TestUnresolvedJudgeHasTeeth(t *testing.T) {
 	// ③ 命令树里冒出未定名的命令
 	if v := judgeUnresolved(root, good, []string{"trace", "task ls"}); v.ok() {
 		t.Error("负控③ 失败：命令树里 `zerg trace` 没有被抓到")
+	}
+
+	// ④ 公开面对应件（§五 第四批）：缺件不许留空 · 分列判 · 声明式不判 —— 三格都要有牙
+	{
+		// ④-a 列是空的 ⇒ 必红（「缺件不许留空」那条判据）
+		v := judgeUnresolved(root, clone(contract.UnresolvedCaller{File: "README.md",
+			Anchor: "| zerg-trace | 追踪工具 |"}, good.Entries[0].Dir), nil)
+		if v.ok() || !strings.Contains(fmt.Sprint(v.Errs), "公开面对应件") ||
+			!strings.Contains(fmt.Sprint(v.Errs), "缺件不许留空") {
+			t.Errorf("负控④-a 失败：空「公开面对应件」没有被抓到（或错因不清）：%v", v.Errs)
+		}
+	}
+	{
+		// ④-b 声明「只在私有面成立」**不是豁免**：在（认得出的）私有面树里照样判锚 ⇒ 锚错必红
+		v := judgeUnresolved(root, clone(contract.UnresolvedCaller{File: "README.md",
+			Anchor: "这一句不在件里", PublicCounterpart: contract.UnresolvedPublicOnly}, good.Entries[0].Dir), nil)
+		if v.ok() || !strings.Contains(fmt.Sprint(v.Errs), "锚不存在") {
+			t.Errorf("负控④-b 失败：声明「只在私有面成立」在私有面树里被当成了豁免：%v", v.Errs)
+		}
+	}
+	// ④-c/④-d 公开树：合成一棵**认得出是公开树**的小树（`publish/` 不在 · 但有 MAPPINGS 铺出来的 workflow）
+	{
+		pubRoot := t.TempDir()
+		mustWrite(t, filepath.Join(pubRoot, "core/cmd/zerg-trace/main.go"), "package main\n")
+		mustWrite(t, filepath.Join(pubRoot, ".github/workflows/release-agent.yml"),
+			"jobs:\n  go:\n    steps:\n      - run: GOOS=linux GOARCH=amd64 go build -o zerg-agent-$GOOS-$GOARCH ./cmd/zerg-agent\n")
+		led2 := contract.UnresolvedLedger{
+			ForbiddenCommandSegment: []string{"trace"},
+			Entries: []contract.UnresolvedEntry{{
+				ID: "trace", Dir: "core/cmd/zerg-trace", Main: "core/cmd/zerg-trace/main.go",
+				Bin: "zerg-trace", WhoCalls: "CI 工作流出它 + 文档登记", Verdict: "待拍",
+				Callers: []contract.UnresolvedCaller{
+					{File: "publish/ci/release-agent.yml", Anchor: "zerg-agent-$GOOS-$GOARCH", LineHint: 1,
+						PublicCounterpart: ".github/workflows/release-agent.yml",
+						What:              "CI 交叉编译（公开面对应件在场 ⇒ 判它）"},
+					{File: "docs/skills/zerg-overview.md", Anchor: "| zerg-trace | 追踪工具 |", LineHint: 1,
+						PublicCounterpart: contract.UnresolvedPublicOnly, What: "只在私有面成立的文档行"},
+				},
+			}},
+		}
+		v := judgeUnresolved(pubRoot, led2, nil)
+		if !v.ok() {
+			t.Errorf("正控④-c 失败：公开树里「对应件在场 ⇒ 判它」本该绿，实测红：%v", v.Errs)
+		}
+		hitPub := false
+		for _, h := range v.Hits {
+			if h.File == ".github/workflows/release-agent.yml" && h.Count == 1 {
+				hitPub = true
+			}
+		}
+		if !hitPub {
+			t.Errorf("正控④-c 失败：判的不是公开面对应件（Hits=%v）", v.Hits)
+		}
+		// ④-d 声明私有面-only 的证据在公开树里**不判**，但必须留痕（少判要看得见，不许静默）
+		noted := false
+		for _, w := range v.Warns {
+			if strings.Contains(fmt.Sprint(w), contract.UnresolvedPublicOnly) {
+				noted = true
+			}
+		}
+		if !noted {
+			t.Errorf("正控④-d 失败：公开树里声明私有面-only 的证据既没判也没留痕（静默少判）：warns=%v", v.Warns)
+		}
+		if len(v.Hits) != 1 {
+			t.Errorf("正控④-d 失败：公开树该只判 1 条（对应件那条），实测 %d 条", len(v.Hits))
+		}
 	}
 
 	// 空转：空台账 ⇒ 不给结论（不许当绿）
