@@ -951,3 +951,87 @@ func ImpactTimefaceSourceForTest() (string, error) {
 	b, err := os.ReadFile("family_impact_timeface.go")
 	return string(b), err
 }
+
+// ---- `B2` 契约面（判据①–③）的只读桥 ----------------------------------------------------------
+
+// ImpactContractEntryForTest 一条**目录项**（判据① 的四字段）。
+type ImpactContractEntryForTest struct{ ID, ChangeClass, Gate, ChangeNote string }
+
+// ImpactContractViewForTest 契约面现读视图（判据① 的两半判定 + 判据③ 的两枚指纹 + 两份文本）。
+//
+// `Block` = stderr 块原样文本（判措辞不用另拼一份）· `JSONLine` = 机读行（同一份取值）。
+type ImpactContractViewForTest struct {
+	Status    string
+	Reason    string
+	Lines     int
+	Rows      []ImpactContractEntryForTest
+	Missing   []string
+	FourOK    bool
+	IDEqual   bool
+	SelfN     int
+	CatN      int
+	OnlyInReg []string
+	OnlyInCat []string
+	Head      string
+	Rev       string
+	Parent    string
+	FpReason  string
+	Block     string
+	JSONLine  string
+}
+
+// ImpactContractFaceForTest 现读契约面（走的全是实现里那几个口 —— 测试不另算一遍）。
+func ImpactContractFaceForTest(root string) ImpactContractViewForTest {
+	cat, audit, head, rev, parent, why := impactContractFace(root)
+	v := ImpactContractViewForTest{
+		Status: cat.Status, Reason: cat.Reason, Lines: cat.Lines,
+		Missing:   append([]string{}, audit.Missing...),
+		FourOK:    audit.FourOK,
+		IDEqual:   audit.IDEqual,
+		SelfN:     audit.SelfN,
+		CatN:      audit.CatN,
+		OnlyInReg: append([]string{}, audit.OnlyInReg...),
+		OnlyInCat: append([]string{}, audit.OnlyInCat...),
+		Head:      head, Rev: rev, Parent: parent, FpReason: why,
+	}
+	for _, r := range cat.Rows {
+		v.Rows = append(v.Rows, ImpactContractEntryForTest{ID: r.ID, ChangeClass: r.ChangeClass, Gate: r.Gate, ChangeNote: r.ChangeNote})
+	}
+	var b strings.Builder
+	emitImpactContractBlock(&b, root, cat, audit, head, rev, parent, why)
+	v.Block = b.String()
+	v.JSONLine = impactContractSignal(cat, audit, head, rev, parent)
+	return v
+}
+
+// ImpactContractFourFieldsForTest 判据① 的四字段（与实现**同一份**常量 —— 不另抄一份）。
+func ImpactContractFourFieldsForTest() []string {
+	return append([]string{}, impactContractFourFields...)
+}
+
+// ImpactContractSixFieldsForTest 判据③「比什么」的每条 6 字段。
+func ImpactContractSixFieldsForTest() []string { return append([]string{}, impactContractSixFields...) }
+
+// ImpactContractCompatLevelForTest 兼容级别那一格的唯一取值（判据②）。
+func ImpactContractCompatLevelForTest() string { return impactContractCompatLevel }
+
+// ImpactContractRegistryGateRelForTest `registry.json` 自陈的门件路径（`R43` 的那一格）。
+func ImpactContractRegistryGateRelForTest() string { return impactContractRegistryGateRel }
+
+// ImpactRedLineForTest 「会红」那一行的渲染文本（判据② 的成对负控要按**同一份口径**判红绿：
+// 用的就是 `cmdImpact` 里那一个 `impactRedLine` 口 · 缓存挡位取关 ⇒ 两跑可比）。
+func ImpactRedLineForTest(root, raw string) (string, error) {
+	tgt, why := impactResolve(root, raw)
+	if tgt == nil {
+		return "", fmt.Errorf("目标解析不到：%s", why)
+	}
+	layers := impactPullLayers(root, tgt, true, impactCacheOff)
+	proj := impactStepProjectionOf(root, impactStepIDsToJoin(tgt, layers), false)
+	return impactRedLine(layers, true, proj), nil
+}
+
+// ImpactContractSourceForTest 读实现件源码（源件自检：不落实现 / 不落新快照件 / 只读）。
+func ImpactContractSourceForTest() (string, error) {
+	b, err := os.ReadFile("family_impact_contract.go")
+	return string(b), err
+}
