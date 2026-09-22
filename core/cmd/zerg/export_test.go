@@ -1167,6 +1167,14 @@ func ImpactLayersForTest(root, rel string, all bool) (ImpactLayersViewForTest, e
 // ImpactBudgetDegradedStatusForTest 降级掉的层在层表里的状态（判据① 的判据值 · 同一份常量）。
 func ImpactBudgetDegradedStatusForTest() string { return impactBudgetDegradedStatus }
 
+// ImpactPublicLineTextForTest —— §3.7 那一行的**唯一渲染口**（`C5` 判据①②③ 的成对负控走这个口：
+// 不在生效面 / 三件缺一 / 三件齐，三种输入直接喂 —— 不连真仓也能判红）。
+func ImpactPublicLineTextForTest(hit bool, delta, tree, treePath, at, head, why string) string {
+	return impactPublicLineText(impactPublicLineArgs{
+		Hit: hit, Delta: delta, Tree: tree, TreePath: treePath, Count: 1, At: at, Head: head, NoDataWhy: why,
+	})
+}
+
 // ImpactBudgetSourceForTest 读预算实现件源码（判据④ 与红线的静态自检口）。
 func ImpactBudgetSourceForTest() (string, error) {
 	b, err := os.ReadFile("family_impact_budget.go")
