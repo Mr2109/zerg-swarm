@@ -161,7 +161,7 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	// 档位（§4.4）：默认档 = 毫秒层 + 编译器层；贵层（② 符号层）走按需档 `--all`。
 	// `A5`：链上挂**落盘缓存**（`impactCacheOn` —— 读 + 写；落点与键从契约件读）。
 	cheap := !inv.all || inv.quick
-	layers := impactPullLayers(root, tgt, cheap, impactCacheOn)
+	layers, budget := impactPullLayers(root, tgt, cheap, impactCacheOn)
 	rows, totalRows := impactCollectRows(layers)
 	// `B1`：「会红」那一行的**门步名**那一格 —— 真源 = 门禁 `--list` 现跑 + 逐名 `--emit-cmd`
 	// 探针（只读 · 零副作用）。两条闸：① 只在**有可 join 的脚本路径**时才拉（没有候选就不跑，
@@ -195,6 +195,9 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	// ② stderr：层表（每层带 head_sha + layer + 该层口径值 + 粒度 + 时刻 + 耗时）+ 卡片块 + 时效声明。
 	emitImpactLayerTable(stderr, tgt, layers, card.Items, totalRows, card, cheap)
 	emitImpactCacheBlock(stderr, root, layers)
+	// `B4` 分层预算与降级（§4.4 + §7.4）：紧跟在缓存块之后 —— 那一块给的是「落点与毫秒档」，
+	// 本块给的是「未命中 · 现算那一档的上限怎么算出来的 + 到点了降到哪一档 + 哪几层没跑」。
+	emitImpactBudgetBlock(stderr, budget, layers)
 	emitImpactStepBlock(stderr, proj)
 	// `B2` 时间面（预测侧）：块在 `B1` 的步名真源块之后 —— 那一块给的是「门步那一格接到什么」，
 	// 本块给的是「整个预测集是怎么估的 + 尺上一次/此刻分别是多少」。
