@@ -25,7 +25,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 )
@@ -263,9 +262,9 @@ func TestIdleStatePath_DefaultDerivedFromStateDir_NotTmp(t *testing.T) {
 	if got := idleReadPath(); got != want {
 		t.Fatalf("无新无旧时读路径应为派生路径：want %s, got %s", want, got)
 	}
-	if got := idleWritePath(); strings.HasPrefix(got, "/tmp/") {
-		t.Fatalf("默认落点不该再是 /tmp：%s", got)
-	}
+	// ★ 2026-09-23 波B（设计-CI适配-v1.1 §五 第二批 #7 · §八 待拍 2 裁定）：删掉旧断言
+	//   「不以 /tmp/ 开头」—— 它在 TMPDIR=/tmp（Linux runner）下恒假，是自伤而非判据；
+	//   真命题已由上两条 `got != want`（写/读路径 = 状态目录派生值）判过 ⇒ 不留第三条。
 }
 
 // ───────── ② 搜索缓存（net_tools.go）─────────
@@ -473,9 +472,9 @@ func TestSearchCachePath_DefaultDerivedFromStateDir_NotTmp(t *testing.T) {
 	if got := searchCacheReadPath(); got != want {
 		t.Fatalf("无新无旧时读路径应为派生路径：want %s, got %s", want, got)
 	}
-	if got := searchCacheWritePath(); strings.HasPrefix(got, "/tmp/") {
-		t.Fatalf("默认落点不该再是 /tmp：%s", got)
-	}
+	// ★ 2026-09-23 波B（设计-CI适配-v1.1 §五 第二批 #8 · §八 待拍 2 裁定）：删掉旧断言
+	//   「不以 /tmp/ 开头」—— 它在 TMPDIR=/tmp（Linux runner）下恒假，是自伤而非判据；
+	//   真命题已由上两条 `got != want`（写/读路径 = 状态目录派生值）判过 ⇒ 不留第三条。
 }
 
 // ───────── ③ bash 溢出目录（bash_v101.go，目录类）─────────
@@ -640,9 +639,9 @@ func TestBashOverflowDir_DefaultDerivedFromStateDir_NotTmp(t *testing.T) {
 	if got := BashOverflowDir(); got != want {
 		t.Fatalf("目录应由状态目录派生：want %s, got %s", want, got)
 	}
-	if got := BashOverflowDir(); strings.HasPrefix(got, "/tmp/") {
-		t.Fatalf("默认落点不该再是 /tmp：%s", got)
-	}
+	// ★ 2026-09-23 波B（设计-CI适配-v1.1 §五 第二批 #9 · §八 待拍 2 裁定）：删掉旧断言
+	//   「不以 /tmp/ 开头」—— 它在 TMPDIR=/tmp（Linux runner）下恒假，是自伤而非判据；
+	//   真命题已由上一条 `got != want`（= 状态目录派生值）判过 ⇒ 不留第二条。
 	// exec.go 白名单接线（NewExecContext 每次都拿派生目录）
 	ec := NewExecContext(t.TempDir())
 	if len(ec.ExtraAllowDirs) == 0 || ec.ExtraAllowDirs[len(ec.ExtraAllowDirs)-1] != want {

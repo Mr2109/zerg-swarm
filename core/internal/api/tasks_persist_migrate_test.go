@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -226,9 +225,9 @@ func TestTasksPersist_DefaultPathDerivedFromStateDir(t *testing.T) {
 	if got := tasksWritePath(); got != want {
 		t.Fatalf("写路径应由状态目录派生：want %s, got %s", want, got)
 	}
-	if got := tasksWritePath(); strings.HasPrefix(got, "/tmp/") {
-		t.Fatalf("默认落点不该再是 /tmp：%s", got)
-	}
+	// ★ 2026-09-23 波B（设计-CI适配-v1.1 §五 第二批 #6 · §八 待拍 2 裁定）：删掉旧断言
+	//   「不以 /tmp/ 开头」—— 它在 TMPDIR=/tmp（Linux runner）下恒假，是自伤而非判据；
+	//   真命题已由上一条 `got != want`（= 状态目录派生值）判过 ⇒ 不留第二条。
 	if name := filepath.Base(tasksWritePath()); name != tasksStateFileName {
 		t.Fatalf("状态目录下文件名应为 %s，实得 %s", tasksStateFileName, name)
 	}

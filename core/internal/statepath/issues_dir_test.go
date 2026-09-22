@@ -5,11 +5,14 @@ package statepath
 // 契约（逐条钉死）:
 //   ① ZERG_ISSUES_DIR 显式设置 ⇒ 原样返回（唯一来源 = 覆盖即已指定，不 stat、不回退旧目录）；
 //   ② 未设 ⇒ <ZERG_STATE_DIR>/issues（默认 ~/.zerg/state/issues/）；
-//   ③ 不猜、不假装有：默认值既不落仓内 <仓库>/docs/issues，也不是 /tmp。
+//   ③ 不猜、不假装有：默认值既不落仓内 <仓库>/docs/issues，也不写成任何 /tmp 字面量 ——
+//      判据形态 = **等于** <ZERG_STATE_DIR>/issues（2026-09-23 波B 改判：旧形态「不以 /tmp/ 开头」
+//      在 TMPDIR=/tmp 下恒假；见本件 TestIssuesDir_NoGuess 内注 · 设计-CI适配-v1.1 §五 第二批 #1）。
 //
 // 变异自证: 把默认值改回 <仓库>/docs/issues ⇒ ② 必红（TestIssuesDir_DefaultDerivedFromStateDir）。
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -60,8 +63,13 @@ func TestIssuesDir_NoGuess(t *testing.T) {
 	if strings.HasSuffix(def, "/docs/issues") {
 		t.Fatalf("默认值不得落在仓内旧目录 docs/issues: %s", def)
 	}
-	if strings.HasPrefix(def, "/tmp/") {
-		t.Fatalf("默认值不得落 /tmp（macOS 重启即清 + tmp_cleaner 3 天未访问即删）: %s", def)
+	// ★ 2026-09-23 波B（设计-CI适配-v1.1 §五 第二批 #1 · §八 待拍 2 裁定）：
+	//   旧形态「不以 /tmp/ 开头」在 Linux runner（TMPDIR 未设 ⇒ t.TempDir() 自身就落在 /tmp 下）**恒假**
+	//   —— 它不是判据，是自伤（本机 `TMPDIR=/tmp` 复现，9 条家族同机制）。
+	//   真命题 = **等于**由 ZERG_STATE_DIR 派生出的值：派生值本身**可以合法落在临时根下**（临时根本身就是
+	//   合法状态目录），要判的是「走没走统一状态目录派生」（落仓内旧目录由上面那条判）。
+	if want := filepath.ToSlash(filepath.Join(os.Getenv("ZERG_STATE_DIR"), "issues")); def != want {
+		t.Fatalf("默认值应等于 <ZERG_STATE_DIR>/issues（派生值）: want %s, got %s", want, def)
 	}
 	if !strings.HasSuffix(def, "/state/issues") {
 		t.Fatalf("默认值应是 <状态目录>/issues，实得 %s", def)
