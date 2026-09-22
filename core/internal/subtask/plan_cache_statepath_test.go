@@ -27,7 +27,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 )
@@ -180,9 +179,9 @@ func TestPlanTemplateDir_DefaultDerivedFromStateDir_NotTmp(t *testing.T) {
 	if got := planTemplateWriteDir(); got != want {
 		t.Fatalf("写目录应由状态目录派生：want %s, got %s", want, got)
 	}
-	if got := planTemplateWriteDir(); strings.HasPrefix(got, "/tmp/") {
-		t.Fatalf("默认落点不该再是 /tmp：%s", got)
-	}
+	// ★ 2026-09-23 波B（设计-CI适配-v1.1 §五 第二批 #2 · §八 待拍 2 裁定）：删掉旧断言
+	//   「不以 /tmp/ 开头」—— 它在 TMPDIR=/tmp（Linux runner）下恒假，是自伤而非判据；
+	//   真命题已由上面那条 `got != want`（= 状态目录派生值）判过 ⇒ 不留第二条。
 	if dirs := planTemplateReadDirs(); len(dirs) != 1 || dirs[0] != want {
 		t.Fatalf("无旧目录时读入口只应有派生路径 %s，实得 %v", want, dirs)
 	}

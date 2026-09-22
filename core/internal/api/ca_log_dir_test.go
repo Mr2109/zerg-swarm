@@ -152,9 +152,9 @@ func TestMasterScheduler_CALogDir_DefaultNotHardcodedTmp(t *testing.T) {
 	if got != want {
 		t.Fatalf("CA 日志根未随 statepath 派生: 期望 %q，实得 %q（写死 /tmp 即此断言红）", want, got)
 	}
-	if strings.HasPrefix(got, "/tmp/") || got == "/tmp" {
-		t.Fatalf("CA 日志根仍在 /tmp 下（ZERG_TMP_DIR=%s 应生效）: %q", base, got)
-	}
+	// ★ 2026-09-23 波B（设计-CI适配-v1.1 §五 第二批 #3 · §八 待拍 2 裁定）：删掉旧断言
+	//   「不以 /tmp/ 开头」—— 它在 TMPDIR=/tmp（Linux runner）下恒假，是自伤而非判据；
+	//   真命题已由上一条 `got != want`（= ZERG_TMP_DIR 派生值）判过 ⇒ 不留第二条。
 	if sp := statepath.CAEventLogRoot(); got != sp {
 		t.Fatalf("写侧 env 与读侧 statepath.CAEventLogRoot() 不同源: 写 %q / 读 %q", got, sp)
 	}

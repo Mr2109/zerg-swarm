@@ -216,9 +216,9 @@ func TestChatImages_DefaultDirDerivedFromStateDir(t *testing.T) {
 	if got := chatImagesWriteDir(); got != want {
 		t.Fatalf("写目录应由状态目录派生：want %s, got %s", want, got)
 	}
-	if got := chatImagesWriteDir(); strings.HasPrefix(got, "/tmp/") {
-		t.Fatalf("默认落点不该再是 /tmp：%s", got)
-	}
+	// ★ 2026-09-23 波B（设计-CI适配-v1.1 §五 第二批 #4 · §八 待拍 2 裁定）：删掉旧断言
+	//   「不以 /tmp/ 开头」—— 它在 TMPDIR=/tmp（Linux runner）下恒假，是自伤而非判据；
+	//   真命题已由上一条 `got != want`（= 状态目录派生值）判过 ⇒ 不留第二条。
 	if name := filepath.Base(chatImagesWriteDir()); name != chatImagesDirName {
 		t.Fatalf("状态目录下目录名应为 %s，实得 %s", chatImagesDirName, name)
 	}
