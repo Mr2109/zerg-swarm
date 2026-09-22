@@ -14,63 +14,166 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/version"
 )
 
+// 档位（本命令的两档行为，逐条写在用法与 `zerg help export` 的输出里）：
+//
+//	默认档（**裸跑**）  —— 真写一件（`导出-命令面帮助-<YYYYMMDD>.md`），stdout 出落点路径（**旧行为一字不变**）；
+//	只读档（`--dry-run`）—— **一个字节都不写**：把「逐条清单 + 它若真写会落哪件」打到 stdout（缺口 `G-17` ①）。
 func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
-	md := renderHelpMarkdown()
-	root := repoRoot()
+	at := time.Now()
 
-	// 默认落点：<仓根>/../Zerg-内部文档/项目文档/v2.5.10（**不写死私有绝对路径** —— 走相对推导）
+	// ① 落点（**版本无关**：不写任何版本号字面量）——
+	//    优先级：`--out <目录>` > `--docs-ver <X.Y.Z>`（显式钉版 = 兼容旧行为）> 版本档案目录里「版本号最大且 ≥3 篇」的那个。
 	outDir := ""
 	if v, ok := flagValue(inv.orig, "--out"); ok {
 		outDir = v
-	} else if root != "" {
-		outDir = filepath.Join(root, "..", "Zerg-内部文档", "项目文档", "v2.5.10")
-	}
-	if outDir == "" {
-		fmt.Fprintf(stderr, "%s: 解析不到落点 —— 给 --out <目录>，或在仓内跑\n", progName)
-		return exitUsage
+	} else {
+		d, why := devDocsCurrentVersionDir(strings.TrimSpace(inv.flagVal("--docs-ver")))
+		if why != "" {
+			fmt.Fprintf(stderr, "%s: 解析不到落点 —— %s\n", progName, why)
+			fmt.Fprintf(stderr, "（给 `--out <目录>` 或 `--docs-ver <X.Y.Z>` 钉一版；两种都不给时按「版本号最大且 ≥3 篇」现算）\n")
+			return exitUsage
+		}
+		outDir = d
 	}
 	if st, err := os.Stat(outDir); err != nil || !st.IsDir() {
 		fmt.Fprintf(stderr, "%s: 落点不是目录：%s（给 --out <已存在的目录>）\n", progName, outDir)
 		return exitUsage
 	}
-	name := fmt.Sprintf("导出-命令面帮助-%s.md", time.Now().Format("20060102"))
+	name := fmt.Sprintf("导出-命令面帮助-%s.md", at.Format("20060102"))
 	path := filepath.Join(outDir, name)
-	if err := os.WriteFile(path, []byte(md), 0o644); err != nil {
-		fmt.Fprintf(stderr, "%s: 写不进导出物：%v\n", progName, err)
-		return exitFail
+	facts := helpExportFacts{
+		Path:        path,
+		Root:        devDocsBase(),
+		DocsVersion: filepath.Base(outDir),
+		GeneratedAt: at.Format(time.RFC3339),
+		Written:     !inv.dryRun,
+		DryRun:      inv.dryRun,
+	}
+	md := renderHelpMarkdown(outDir)
+
+	// ② 默认档：真写（**旧行为一字不变**）；只读档：`--dry-run` ⇒ 这一步整个跳过。
+	if !inv.dryRun {
+		if err := os.WriteFile(path, []byte(md), 0o644); err != nil {
+			fmt.Fprintf(stderr, "%s: 写不进导出物：%v\n", progName, err)
+			return exitFail
+		}
 	}
 	nCmd, nDanger := countCommands()
 	if inv.jsonGiven {
 		if !requireFields(inv, stderr) {
 			return exitFail
 		}
-		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, helpExportRow(path))
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, helpExportRows(facts))
+	}
+	if inv.dryRun {
+		// 只读档：stdout = 落点预告 + 逐条清单（与人面/导出物**同源**：都现算自命令树）。
+		fmt.Fprintf(stdout, "（干跑 · 只读档：**一个字节都不写** · 由 `--dry-run` 打开）\n")
+		fmt.Fprintf(stdout, "它若真写会落：%s（版本档案目录 `%s` · 生成时刻 %s）\n", path, facts.DocsVersion, facts.GeneratedAt)
+		helpExportList(stdout)
+		fmt.Fprintf(stderr, "干跑（零副作用）：命令 %d 条 · 危险动作 %d 条（已开放 %d · 未开放 %d）· **未写任何件** · 若真写落 %s\n",
+			nCmd, nDanger, dangerOpen(), nDanger-dangerOpen(), path)
+		return exitOK
 	}
 	fmt.Fprintln(stdout, path) // stdout 只出结果：写哪儿了
-	fmt.Fprintf(stderr, "导出 %d 条命令（其中危险动作 %d 条）→ %s\n", nCmd, nDanger, path)
+	fmt.Fprintf(stderr, "导出 %d 条命令（其中危险动作 %d 条 · 已开放 %d · 未开放 %d）→ %s（版本档案目录 %s · 生成时刻 %s）\n",
+		nCmd, nDanger, dangerOpen(), nDanger-dangerOpen(), path, facts.DocsVersion, facts.GeneratedAt)
 	return exitOK
 }
 
-// helpExportRow —— `zerg help export --json` 的**机器面**（单一来源：命令树 + 层级计数 + 契约 schema）。
-//
-// 为什么抽成函数（§二十一 已红第 17 条 · 开工单 T-39）：`*.schema.json` 要与导出物**对拍得上**，
-// 对拍就必须喂**同一份**真值 —— 若测试自己另拼一份 map，那份 map 与真跑的输出可以悄悄漂。
-// 本函数于是成为唯一来源：命令面（cmdHelpExport）与对拍测试（export_schema_test.go）都调它。
-func helpExportRow(path string) map[string]string {
-	nCmd, nDanger := countCommands()
-	return map[string]string{
-		"path":      path,
-		"commands":  fmt.Sprintf("%d", nCmd),
-		"dangerous": fmt.Sprintf("%d", nDanger),
-		"schema":    contractSchema,
-		"layers":    layerCounts(), // §九 M10 X1：三档层级的机器可读计数（space 恒为 0）
+// helpExportList —— **逐条清单**（人面只读档用）：与人面/导出物**同源** —— 全部现算自 `catalog()`。
+// 危险动作逐条带**档位**（`D2`/`D3`）与**本版开没开**（`opened`）—— 这正是 `G-17` 说「只在人面」的那两格。
+func helpExportList(w io.Writer) {
+	nOpen, nDanger := countCommands()
+	fmt.Fprintf(w, "命令清单（%d 条 · 已开放 · 名字逐字来自命令树）：\n", nOpen)
+	for _, c := range catalog() {
+		if c.danger != nil {
+			continue
+		}
+		fmt.Fprintf(w, "  zerg %s ｜ 茧壁:%s ｜ %s\n", strings.Join(c.path, " "), c.layer, c.summary)
 	}
+	fmt.Fprintf(w, "危险动作（%d 条 · 已开放 %d · 未开放 %d · 档位逐条）：\n", nDanger, dangerOpen(), nDanger-dangerOpen())
+	for _, c := range catalog() {
+		if c.danger == nil {
+			continue
+		}
+		opened := "未开放"
+		if c.opened {
+			opened = "已开放"
+		}
+		fmt.Fprintf(w, "  zerg %s ｜ %s ｜ %s ｜ --confirm=<%s> ｜ %s\n",
+			strings.Join(c.path, " "), c.danger.Level, opened, c.danger.Target, c.danger.Effect)
+	}
+}
+
+// helpExportFields —— `zerg help export --json` 的**合法字段**（机器面 = 逐条清单：一行一条命令）。
+// 前 10 格是**摘要格**（每行都带，旧五格一格里都在 —— 字段只增不改）；后 9 格是**逐条格**（缺口 `G-17` ②）。
+var helpExportFields = []string{
+	"path", "root", "docs_version", "commands", "dangerous", "schema", "layers", "generated_at", "written", "dry_run",
+	"command", "is_dangerous", "danger_level", "opened", "confirm_target", "summary", "layer", "endpoint", "fields",
+}
+
+// helpExportFacts —— 导出物的**四个事实**（全部现算，不是各算各的）：落点 · 取源根 · 版本档案目录 · 生成时刻 · 写没写。
+type helpExportFacts struct {
+	Path        string // 导出物完整路径（`--json` 的 `path`）
+	Root        string // 版本档案取源根（`statepath.DocsBase()` · 缺件时为空串）
+	DocsVersion string // 版本档案目录的**目录名**（如 `v2.5.11` · **现算**，不是写死的字面量）
+	GeneratedAt string // 生成时刻（RFC3339）
+	Written     bool   // 本档真写没写真（只读档 ⇒ false）
+	DryRun      bool   // 只读档（`--dry-run`）开着没
+}
+
+// helpExportRows —— `zerg help export --json` 的**唯一真值行来源**（命令面与对拍测试 export_schema_test.go 都调它）。
+//
+// 为什么是**一行一条命令**（缺口 `G-17` ②）：旧机器面 `items[0]` 只给两个计数串
+// （`{"commands":"73","dangerous":"35"}`）⇒ 消费方**判不了「这条命令是不是危险档、档位是几」**。
+// 现在：逐条清单进机器面（`command` / `is_dangerous` / `danger_level` / `opened` / `confirm_target` / `layer` …），
+// 与人工面（`helpExportList` / 导出物 markdown 的两张表）**同源** —— 三者都现算自同一个 `catalog()`。
+//
+// **字段只增不改**（§九 M6）：旧五格 `path`/`commands`/`dangerous`/`schema`/`layers` 一格里都在（每行都带），
+// 旧消费方按 `items[0].commands` 读数照旧可用；`meta.count` 从 1 变成清单行数（= 命令树条数）。
+func helpExportRows(f helpExportFacts) []map[string]string {
+	nCmd, nDanger := countCommands()
+	summary := map[string]string{
+		"path":         f.Path,
+		"root":         f.Root,
+		"docs_version": f.DocsVersion,
+		"commands":     fmt.Sprintf("%d", nCmd),
+		"dangerous":    fmt.Sprintf("%d", nDanger),
+		"schema":       contractSchema,
+		"layers":       layerCounts(), // §九 M10 X1：三档层级的机器可读计数（space 恒为 0）
+		"generated_at": f.GeneratedAt,
+		"written":      strconv.FormatBool(f.Written),
+		"dry_run":      strconv.FormatBool(f.DryRun),
+	}
+	rows := make([]map[string]string, 0, len(catalog()))
+	for _, c := range catalog() {
+		row := make(map[string]string, len(summary)+8)
+		for k, v := range summary {
+			row[k] = v
+		}
+		isDanger, level, opened, target := "false", "—", "true", ""
+		if c.danger != nil {
+			isDanger, level, opened, target = "true", c.danger.Level, strconv.FormatBool(c.opened), c.danger.Target
+		}
+		row["command"] = "zerg " + strings.Join(c.path, " ")
+		row["is_dangerous"] = isDanger
+		row["danger_level"] = level
+		row["opened"] = opened
+		row["confirm_target"] = target
+		row["summary"] = c.summary
+		row["layer"] = c.layer
+		row["endpoint"] = c.endpoint
+		row["fields"] = strings.Join(c.fields, ",")
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func countCommands() (open, danger int) {
@@ -110,14 +213,24 @@ func flagValue(orig []string, key string) (string, bool) {
 }
 
 // renderHelpMarkdown —— 导出物的全部内容都由命令树现算（名字、用法、字段、端点、档位）。
-func renderHelpMarkdown() string {
+// `landing`（可选）= 落点目录：给了才写「版本档案目录」那一行（缺省调用点 = 对拍测试，判的是两张表的行数）。
+func renderHelpMarkdown(landing ...string) string {
 	var b strings.Builder
 	open, danger := countCommands()
 	fmt.Fprintf(&b, "# 导出：命令面帮助（自动生成 · 勿手改）\n\n")
 	fmt.Fprintf(&b, "> 生成命令：`zerg help export`（`core/cmd/zerg/` 的命令树**逐字**渲染，一个名字都不是手写的）\n")
 	fmt.Fprintf(&b, "> 命令面身份：`%s`\n", version.Line(progName))
 	fmt.Fprintf(&b, "> 契约：`zerg help` / `zerg help exit-codes` / `zerg help config` / `zerg help dangerous`\n")
-	fmt.Fprintf(&b, "> 本版：命令清单 **%d** 条 · 危险动作 **%d** 条（其中**已开放** %d 条 · 未开放 %d 条）\n\n", open, danger, dangerOpen(), danger-dangerOpen())
+	fmt.Fprintf(&b, "> 本版：命令清单 **%d** 条 · 危险动作 **%d** 条（其中**已开放** %d 条 · 未开放 %d 条）\n", open, danger, dangerOpen(), danger-dangerOpen())
+	// ★ 档位与身份两行（缺口 `G-17` ④：写入件要含**版本 / 时刻**）——
+	//   「本版」那一行**一字不动**（scripts/docs/gen-cli-reference.py 逐字读它、且要求恰有两个 `**N**`），
+	//   新信息一律**另起行**追加（新行都不带 `**N**` 粗体计数，免得被那条正则多抓）。
+	if len(landing) > 0 && landing[0] != "" {
+		fmt.Fprintf(&b, "> 版本档案目录：`%s`（**版本无关**：取「版本号最大且非递归 md ≥3 篇」的版本目录 —— 本文件不含任何版本号字面量）\n",
+			filepath.Base(landing[0]))
+	}
+	fmt.Fprintf(&b, "> 生成时刻：`%s` · 组件版本：`%s`\n", time.Now().Format(time.RFC3339), version.Tag)
+	fmt.Fprintf(&b, "> 危险档档位口径：`D3` = `--confirm=<目标>` + `--yes` 同时到 · `D2` = `--yes`（逐条档位见 §二 的「档」列）\n\n")
 	fmt.Fprintf(&b, "## 一、命令清单（已开放 · 名字逐字来自命令树）\n\n")
 	fmt.Fprintf(&b, "> 茧壁层级（§九 M10 `X1` · 闭集三值）：%s（`space` 恒为 0 —— 空间内零命令面）\n\n", layerCounts())
 	b.WriteString("| 命令 | 说明 | `--json` 字段 | 投影的远端端点 | 茧壁层级 |\n|---|---|---|---|---|\n")

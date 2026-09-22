@@ -17,6 +17,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"regexp"
 	"sort"
@@ -112,8 +113,21 @@ func TestExportSchemaAgreesWithHelpExport(t *testing.T) {
 	}
 
 	// 真值行：**同一份来源**（命令面也调它），不给测试自己拼 map 的机会。
+	// ★ `G-17` ② 起：机器面 = **一行一条命令**（逐条清单）；抽第一行做键面/取值面，整份做逐条清单面。
 	const fakePath = "/tmp/导出-命令面帮助-20260920.md"
-	row := helpExportRow(fakePath)
+	facts := helpExportFacts{
+		Path:        fakePath,
+		Root:        "/tmp/Zerg-内部文档/项目文档",
+		DocsVersion: "v9.9.9",
+		GeneratedAt: "2026-09-22T00:00:00+08:00",
+		Written:     false,
+		DryRun:      true,
+	}
+	rows := helpExportRows(facts)
+	if len(rows) != len(catalog()) {
+		t.Fatalf("逐条清单行数 %d ≠ 命令树条数 %d（清单与命令树不同源）", len(rows), len(catalog()))
+	}
+	row := rows[0]
 
 	// ⓐ 键面。
 	if probs := keyProblems(s, row); len(probs) > 0 {
@@ -182,20 +196,111 @@ func TestExportSchemaAgreesWithHelpExport(t *testing.T) {
 	if sum != len(catalog()) {
 		t.Fatalf("ⓓ layers 三档之和 %d ≠ 命令树条数 %d", sum, len(catalog()))
 	}
+
+	// ⓕ 逐条清单面 + ⓖ 两式同源面（缺口 `G-17` ②：机器面要给**逐条清单 + 危险档档位**，且与人面同源）。
+	if probs := catalogProblems(md, rows); len(probs) > 0 {
+		t.Fatalf("ⓕ/ⓖ 逐条清单面或两式同源面破：%v", probs)
+	}
+}
+
+// catalogProblems —— 逐条清单面（ⓕ）+ 两式同源面（ⓖ）的**判定口**（正控与负控都调它 ⇒ 判据不是恒绿）。
+//
+//	ⓕ 每行：`command` 逐字属于命令树；`is_dangerous`/`opened`/`danger_level`/`confirm_target` 与命令树一致；
+//	   `dangerous` 那一格 = 危险行数（逐条数出来的，不是另算一遍）；
+//	ⓖ 两式同源：机器面的每一条命令名都能在导出物 markdown 里找到同名表行，**且反方向也成立**
+//	   （markdown 的每一行都在机器面里）—— 一个方向的差集非空即报。
+func catalogProblems(md string, rows []map[string]string) []string {
+	var probs []string
+	dangerSeen := 0
+	machine := map[string]bool{}
+	for _, r := range rows {
+		name := r["command"]
+		if name == "" {
+			probs = append(probs, "有行的 command 是空串")
+			continue
+		}
+		if machine[name] {
+			probs = append(probs, "机器面里命令重复："+name)
+		}
+		machine[name] = true
+		c := find(strings.Fields(strings.TrimPrefix(name, "zerg ")))
+		if c == nil {
+			probs = append(probs, "机器面里有命令树里没有的命令："+name)
+			continue
+		}
+		if c.danger == nil {
+			if r["is_dangerous"] != "false" || r["danger_level"] != "—" || r["opened"] != "true" {
+				probs = append(probs, fmt.Sprintf("非危险档 %s 的逐条格不对：is_dangerous=%q danger_level=%q opened=%q",
+					name, r["is_dangerous"], r["danger_level"], r["opened"]))
+			}
+			continue
+		}
+		dangerSeen++
+		if r["is_dangerous"] != "true" || r["danger_level"] != c.danger.Level {
+			probs = append(probs, fmt.Sprintf("危险档 %s 档位不对：is_dangerous=%q danger_level=%q（命令树 %q）",
+				name, r["is_dangerous"], r["danger_level"], c.danger.Level))
+		}
+		if r["confirm_target"] != c.danger.Target {
+			probs = append(probs, fmt.Sprintf("危险档 %s 的 confirm_target=%q ≠ 命令树 %q",
+				name, r["confirm_target"], c.danger.Target))
+		}
+		if want := strconv.FormatBool(c.opened); r["opened"] != want {
+			probs = append(probs, fmt.Sprintf("危险档 %s 的 opened=%q ≠ 命令树 %q", name, r["opened"], want))
+		}
+	}
+	if len(rows) > 0 {
+		if want := strconv.Itoa(dangerSeen); rows[0]["dangerous"] != want {
+			probs = append(probs, fmt.Sprintf("逐条数出来的危险档 %d 条 ≠ 摘要格 dangerous=%q", dangerSeen, rows[0]["dangerous"]))
+		}
+	}
+	// ⓖ 两式同源（两个方向的差集都要空）。
+	mdRows := append(sectionRows(md, "## 一、命令清单", "## 二、危险动作"),
+		sectionRows(md, "## 二、危险动作", "## 三、退码表")...)
+	mdSet := map[string]bool{}
+	for _, ln := range mdRows {
+		if i := strings.Index(ln, "`zerg "); i >= 0 {
+			rest := ln[i+1:]
+			if j := strings.Index(rest[1:], "`"); j >= 0 {
+				mdSet[rest[:j+1]] = true
+			}
+		}
+	}
+	for name := range machine {
+		if !mdSet[name] {
+			probs = append(probs, "机器面有、导出物 markdown 没有的命令："+name)
+		}
+	}
+	for name := range mdSet {
+		if !machine[name] {
+			probs = append(probs, "导出物 markdown 有、机器面没有的命令："+name)
+		}
+	}
+	sort.Strings(probs)
+	return probs
 }
 
 // TestExportSchemaKeyJudgeHasTeeth —— ⓔ 负控：判据不是恒绿。
 func TestExportSchemaKeyJudgeHasTeeth(t *testing.T) {
 	s := loadExportSchema(t)
-	good := helpExportRow("/tmp/x.md")
+	good := helpExportRows(helpExportFacts{
+		Path: "/tmp/x.md", Root: "/tmp/Zerg-内部文档/项目文档", DocsVersion: "v9.9.9",
+		GeneratedAt: "2026-09-22T00:00:00+08:00", Written: true,
+	})
+	if len(good) == 0 {
+		t.Fatal("真值行一份都没有（命令树空？）")
+	}
 
-	if probs := keyProblems(s, good); len(probs) != 0 {
+	// 正控：好行 + 好清单 ⇒ 两个判定口都无问题。
+	if probs := keyProblems(s, good[0]); len(probs) != 0 {
 		t.Fatalf("正控都不绿（好行应无问题）：%v", probs)
+	}
+	if probs := catalogProblems(renderHelpMarkdown(), good); len(probs) != 0 {
+		t.Fatalf("正控都不绿（逐条清单面/同源面应无问题）：%v", probs)
 	}
 
 	// 负控①：真值行**多一个** schema 没声明的键 ⇒ 必报。
 	extra := map[string]string{}
-	for k, v := range good {
+	for k, v := range good[0] {
 		extra[k] = v
 	}
 	extra["surprise"] = "1"
@@ -206,7 +311,7 @@ func TestExportSchemaKeyJudgeHasTeeth(t *testing.T) {
 	// 负控②：抽掉一个 required 键 ⇒ 必报。
 	for _, k := range s.Required {
 		short := map[string]string{}
-		for kk, vv := range good {
+		for kk, vv := range good[0] {
 			if kk != k {
 				short[kk] = vv
 			}
@@ -214,5 +319,29 @@ func TestExportSchemaKeyJudgeHasTeeth(t *testing.T) {
 		if probs := keyProblems(s, short); len(probs) == 0 {
 			t.Fatalf("负控② 未报：抽掉 required 键 %q 竟然通过了", k)
 		}
+	}
+
+	// 负控③：清单**少一行**（抽掉末条）⇒ 逐条清单面必报（`G-17` ② 的那条判据不是恒绿）。
+	if probs := catalogProblems(renderHelpMarkdown(), good[:len(good)-1]); len(probs) == 0 {
+		t.Fatal("负控③ 未报：清单少一行竟然通过了")
+	}
+
+	// 负控④：把末条的档位改一个字 ⇒ 逐条档位面必报。
+	bad := make([]map[string]string, len(good))
+	for i, r := range good {
+		cp := map[string]string{}
+		for k, v := range r {
+			cp[k] = v
+		}
+		bad[i] = cp
+	}
+	last := bad[len(bad)-1]
+	if last["is_dangerous"] == "true" {
+		last["danger_level"] = "D9"
+	} else {
+		last["danger_level"] = "D3"
+	}
+	if probs := catalogProblems(renderHelpMarkdown(), bad); len(probs) == 0 {
+		t.Fatal("负控④ 未报：档位改错竟然通过了")
 	}
 }
