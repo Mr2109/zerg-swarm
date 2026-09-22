@@ -1038,6 +1038,137 @@ func ImpactContractSourceForTest() (string, error) {
 	return string(b), err
 }
 
+// ---- B4：分层预算与降级（`family_impact_budget.go`）的**只读桥** ------------------------------
+//
+// 桥只开**只读**面：读契约件字节（负控改副本）· 折出裁决计划 · 跑一遍链看层表与本跑账 · 读实现件源码。
+// 每个符号都**直接指真源**（不另写一份副本 —— 另写一份 = 测试测的是那份副本）。
+
+// ImpactPlanFormulaForTest —— 一式的裁决视图（判据③④ 的机检口）。
+type ImpactPlanFormulaForTest struct {
+	ID           string
+	Text         string
+	Input        string
+	Value        float64
+	Fixed        float64
+	Admit        bool
+	Why          string
+	MatchesFixed bool // 算出值 vs 契约件记的 `算出值秒` 对拍（两边都由实现算）
+}
+
+// ImpactBudgetPlanForTest —— 裁决计划视图（**纯函数**的产物：喂合成契约件不碰真仓）。
+type ImpactBudgetPlanForTest struct {
+	OK        bool
+	Armed     bool
+	Why       string
+	Pick      string
+	PickedID  string
+	CapSec    float64
+	Allow     []string
+	Formulas  []ImpactPlanFormulaForTest
+	NotRunSet []string
+	NoAction  []string
+}
+
+// ImpactBudgetContractBytesForTest 现读真契约件的字节（负控拿它改一份副本）。
+// 路径按**仓根**拼（`go test` 的工作目录是包目录 ⇒ 相对路径在这里解析不到）。
+func ImpactBudgetContractBytesForTest() ([]byte, error) {
+	if root := repoRoot(); root != "" {
+		return os.ReadFile(filepath.Join(root, filepath.FromSlash(impactBudgetContractRel)))
+	}
+	return os.ReadFile(impactBudgetContractRel)
+}
+
+// ImpactBudgetPlanBytesForTest —— **给定的契约件字节**折出裁决计划（判据③ 的成对负控全走这个口）。
+func ImpactBudgetPlanBytesForTest(raw []byte) ImpactBudgetPlanForTest {
+	var c impactBudgetContract
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return ImpactBudgetPlanForTest{Why: "契约件解不开（" + err.Error() + "）"}
+	}
+	if c.Schema != impactBudgetSchema {
+		return ImpactBudgetPlanForTest{Why: fmt.Sprintf("形状号不认（`schema`=%q ≠ %q ⇒ 不裁、不猜）", c.Schema, impactBudgetSchema)}
+	}
+	p := impactBudgetPlanOf(c)
+	out := ImpactBudgetPlanForTest{
+		OK: p.OK, Armed: p.Armed, Why: p.Why, Pick: p.Pick, PickedID: p.PickedID,
+		CapSec: p.CapSec, Allow: append([]string{}, p.Allow...), NotRunSet: append([]string{}, c.Degrade.NotRunSet...),
+		NoAction: append([]string{}, p.NoAction...),
+	}
+	for _, f := range p.Formulas {
+		out.Formulas = append(out.Formulas, ImpactPlanFormulaForTest{
+			ID: f.ID, Text: f.Text, Input: f.Input, Value: f.Value, Fixed: f.Fixed, Admit: f.Admit, Why: f.Why,
+			MatchesFixed: f.Admit && sameSeconds(f.Value, f.Fixed),
+		})
+	}
+	return out
+}
+
+// ImpactLayerViewForTest —— 一层的视图（层序 / 名 / 粒度 / 状态 / 读数 / 条目 / 缓存行 / 本层计时）。
+type ImpactLayerViewForTest struct {
+	Seq        string
+	Name       string
+	Grane      string
+	Status     string
+	Detail     string
+	CacheNote  string
+	RowsJSON   string
+	BudgetWall time.Duration
+}
+
+// ImpactBudgetRunViewForTest —— 本跑账视图。
+type ImpactBudgetRunViewForTest struct {
+	Armed         bool
+	CapSec        float64
+	Charged       float64
+	Degraded      bool
+	Trigger       string
+	ChargedLayers []string
+	NotRunNow     []string
+}
+
+// ImpactLayersViewForTest —— 「跑一遍链」的全部可判面（层表 + 本跑账 + stderr 的预算块）。
+type ImpactLayersViewForTest struct {
+	Layers []ImpactLayerViewForTest
+	Run    ImpactBudgetRunViewForTest
+	Block  string
+}
+
+// ImpactLayersForTest —— 在给定根上跑一遍六层链（**走的全是实现里那几个口** —— 测试不另算一遍）。
+func ImpactLayersForTest(root, rel string, all bool) (ImpactLayersViewForTest, error) {
+	out := ImpactLayersViewForTest{}
+	tgt, why := impactResolve(root, rel)
+	if tgt == nil {
+		return out, fmt.Errorf("目标解析不到：%s", why)
+	}
+	layers, run := impactPullLayers(root, tgt, !all, impactCacheOff)
+	for _, l := range layers {
+		b, _ := json.Marshal(l.Rows)
+		out.Layers = append(out.Layers, ImpactLayerViewForTest{
+			Seq: l.Seq, Name: l.Name, Grane: l.Grane, Status: l.Status, Detail: l.Detail,
+			CacheNote: l.CacheNote, RowsJSON: string(b), BudgetWall: l.BudgetWall,
+		})
+	}
+	out.Run = ImpactBudgetRunViewForTest{
+		Armed: run.Plan.Armed, CapSec: run.Plan.CapSec, Charged: run.Charged, Degraded: run.Degraded,
+		Trigger: run.Trigger, ChargedLayers: append([]string{}, run.ChargedLayers...),
+		NotRunNow: append([]string{}, run.NotRunNow...),
+	}
+	var b strings.Builder
+	// 层表与预算块**一起**渲染（形状判据要看层表那六行；两块是同一跑的两处落点）。
+	emitImpactLayerTable(&b, tgt, layers, nil, 0, impactCard{}, !all)
+	emitImpactBudgetBlock(&b, run, layers)
+	out.Block = b.String()
+	return out, nil
+}
+
+// ImpactBudgetDegradedStatusForTest 降级掉的层在层表里的状态（判据① 的判据值 · 同一份常量）。
+func ImpactBudgetDegradedStatusForTest() string { return impactBudgetDegradedStatus }
+
+// ImpactBudgetSourceForTest 读预算实现件源码（判据④ 与红线的静态自检口）。
+func ImpactBudgetSourceForTest() (string, error) {
+	b, err := os.ReadFile("family_impact_budget.go")
+	return string(b), err
+}
+
 // ---- B3：实测回填闭环（`family_impact_backfill.go`）的**只读桥** ------------------------------
 //
 // 桥的纪律同本文件顶部三条：只读形状、**直接指真源**（每个符号都指那一份实现）、不另写副本。
