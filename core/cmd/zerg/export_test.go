@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -1034,4 +1035,117 @@ func ImpactRedLineForTest(root, raw string) (string, error) {
 func ImpactContractSourceForTest() (string, error) {
 	b, err := os.ReadFile("family_impact_contract.go")
 	return string(b), err
+}
+
+// ---- B3：实测回填闭环（`family_impact_backfill.go`）的**只读桥** ------------------------------
+//
+// 桥的纪律同本文件顶部三条：只读形状、**直接指真源**（每个符号都指那一份实现）、不另写副本。
+// 这里唯一「写」的一格是 `ImpactBackfillAppendForTest` —— 它指的**就是**实现里那个写口（判据④ 的唯一出口），
+// 为的是让「缺任一 ⇒ 不许写」能在**外部测试包**里被判（测试只往 `t.TempDir()` 里写）。
+
+// ImpactBackfillCountsOfForTest 三个数的**唯一判定口**（与实现同一份 `impactBackfillCountsOf`）。
+func ImpactBackfillCountsOfForTest(predict, fail, blocked, report []string) (hit, miss, fa int, exclB, exclR []string) {
+	c, ex := impactBackfillCountsOf(predict, fail, blocked, report)
+	return c.Hit, c.Miss, c.FalseAlarm, ex.Blocked, ex.Report
+}
+
+// ImpactBackfillKeysForTest 十键（**从契约件现读** —— 不另抄一份键表）。
+func ImpactBackfillKeysForTest(root string) ([]string, error) {
+	c, why := impactBackfillContractOf(root)
+	if why != "" {
+		return nil, fmt.Errorf("%s", why)
+	}
+	return append([]string{}, c.RequiredKeys...), nil
+}
+
+// ImpactBackfillContractTextForTest 契约件的**逐字原文**（判据⑤ 的「不可机检」与「不自设阈值」要落在原文上判）。
+func ImpactBackfillContractTextForTest(root string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(impactBackfillContractRel)))
+	return string(b), err
+}
+
+// ImpactBackfillRecordJSONForTest 拼一枚回填件的行（JSON）；`predict`/`fail`/`blocked` 传 `nil` ⇒ 该格是 `null`
+// （判据④ 的「不许缺」判的就是这个 —— `[]` 与「缺」是两件事）。
+func ImpactBackfillRecordJSONForTest(head, target string, predict, fail, blocked, report []string,
+	gateRunID, at string) (string, error) {
+	rec := impactBackfillRecord{
+		HeadSHA: head, Target: target, PredictRed: predict, ActualFail: fail, ActualBlocked: blocked,
+		GateRunID: gateRunID, At: at, ActualReport: report,
+	}
+	b, err := json.Marshal(rec)
+	return string(b), err
+}
+
+// ImpactBackfillAppendForTest 判据④ 的**唯一写口**（与实现同一份）：缺任一 ⇒ 只回缺失清单、**不写**。
+func ImpactBackfillAppendForTest(path, recJSON string) ([]string, error) {
+	var rec impactBackfillRecord
+	if err := json.Unmarshal([]byte(recJSON), &rec); err != nil {
+		return nil, err
+	}
+	return impactBackfillAppendIfComplete(path, rec)
+}
+
+// ImpactBackfillGateReadForTest 读一次结果表（只读）：返回四档步名与 `gate_run_id` + 取不到的原因。
+func ImpactBackfillGateReadForTest(root, arg string) (status, reason, runID, tableSHA string,
+	fail, blocked, report, pass []string) {
+	r := impactGateResultsRead(root, arg)
+	return r.Status, r.Reason, r.RunID, r.TableSHA, r.Fail, r.Blocked, r.Report, r.Pass
+}
+
+// ImpactBackfillTruthForTest 真源现跑（两档）：步数 + 步名（不写常量 ⇒ 测试也读真源）。
+func ImpactBackfillTruthForTest(root string) (fullTotal, fastTotal int, fullSteps, fastSteps []string, status, reason string) {
+	t := impactBackfillTruthPull(root)
+	return t.FullTotal, t.FastTotal, t.FullSteps, t.FastSteps, t.Status, t.Reason
+}
+
+// ImpactBackfillAlignForTest 齐不齐判定口（结果表 ⇔ 真源两档）。
+func ImpactBackfillAlignForTest(root, arg string) (tier, why string) {
+	r := impactGateResultsRead(root, arg)
+	if r.Status != "取值" {
+		return "", r.Reason
+	}
+	return impactBackfillAlign(r, impactBackfillTruthPull(root))
+}
+
+// ImpactBackfillHistoryForTest 回填件的**只读**汇总（累积那一格）。
+func ImpactBackfillHistoryForTest(path string) (status, reason string, lines, broken, hit, miss, fa int) {
+	h := impactBackfillHistoryOf(path)
+	return h.Status, h.Reason, h.Lines, h.Broken, h.Hit, h.Miss, h.FalseAlarm
+}
+
+// ImpactBackfillScanForTest 静态自证那一半（回填件不作算法输入）。
+func ImpactBackfillScanForTest(root, file string) (files int, hits, unread []string) {
+	s := impactBackfillReadersScan(root, file)
+	return s.Files, s.Hits, s.Unread
+}
+
+// ImpactBackfillFlagGivenForTest 「`--gate-results` 给没给」那一格（收尾那一格的用法错靠它判）。
+func ImpactBackfillFlagGivenForTest(orig []string) bool { return impactBackfillFlagGiven(orig) }
+
+// ImpactBackfillPathForTest 回填件的落点（读契约件里的 `file`）。
+func ImpactBackfillPathForTest(root string) (string, error) {
+	c, why := impactBackfillContractOf(root)
+	if why != "" {
+		return "", fmt.Errorf("%s", why)
+	}
+	return impactBackfillPath(c), nil
+}
+
+// ImpactBackfillSourceForTest 读实现件源码（源件自检用）。
+func ImpactBackfillSourceForTest() (string, error) {
+	b, err := os.ReadFile("family_impact_backfill.go")
+	return string(b), err
+}
+
+// ImpactSlotLineForTest 现成混淆矩阵槽那一行（**逐字**）—— 判据⑤ 与「不自设阈值」两格都引它。
+func ImpactSlotLineForTest(root string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(root, "scripts", "gates", "check-slice.py"))
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(string(b), "\n")
+	if len(lines) < 7 {
+		return "", fmt.Errorf("check-slice.py 不足 7 行")
+	}
+	return lines[6], nil
 }
