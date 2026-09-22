@@ -146,6 +146,16 @@
       "gate": "（由 core: go test 覆盖 —— 判据面在 core/cmd/zerg/cli_model_adapter_test.go：读面恰好一条 GET 且状态目录一件不多 · 写面恰好一条 PUT 且请求体标量认型 · 干跑零请求 · 缺 `--yes` 不打主控 · 空体不打主控 · 404 `MODEL_NO_ADAPTER` 码逐字透传）",
       "change_class": "B",
       "change_note": "加/改适配器动作 ⇒ 同批改本表 + 命令面（读面只读、写面 D2 要 `--yes`）+ 矩阵格；今天它是**唯一**模型面写口（借道只能 `curl` 绕命令面 —— 本表把它收进契约）"
+    },
+    {
+      "id": "S-o",
+      "name": "授权三态映射表（`Q-021` · 命令面三态 ↔ 控制层三态）",
+      "truth": "core/internal/contract/authority-map.json",
+      "truth_shape": "json：`命令面闭集`（三枚：`--dry-run` 干跑 / `--confirm=<目标>` 确认 / `--yes` 写旗标）+ `控制层闭集`（三枚：`allow` / `block` / `require_approval`）+ `映射`（6 行 · **两侧都只许用闭集里的值** · 三枚控制层值必须都有人用）+ `_两档不变量` + `同判据例`（干跑/真跑逐条现跑）",
+      "version_field": "`schema` = `zerg/authority-map/v1`（加一枚枚举值 ⇒ 主号动 + 同批改本表与命令面）",
+      "gate": "（由 core: go test 覆盖 —— core/cmd/zerg/cli_authority_map_test.go：两侧闭集非空且各三枚 · 映射只用闭集值 · 三枚控制层值都有人用 · **干跑与真跑逐条点名同一个词** · **成对负控**三份改坏的表必须判红）",
+      "change_class": "B",
+      "change_note": "加/改命令面三态或控制层三态 ⇒ 同批改本表的两个闭集 + 映射 + `同判据例`；**干跑不放宽任何一格**（干跑只决定「本次不执行」，真跑判据照报）"
     }
   ],
   "change_flow": {
