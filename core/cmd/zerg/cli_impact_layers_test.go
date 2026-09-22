@@ -16,6 +16,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -222,6 +223,74 @@ func TestImpactLayers_PublicFacePositiveAndNegative(t *testing.T) {
 	_, out2, _ := runCapture("impact", "core/cmd/zerg/main.go")
 	if strings.Contains(out2, "公开面：") {
 		t.Errorf("负控破：普通件也打了公开面行：%s", out2)
+	}
+}
+
+// TestImpactLayers_PublicLineThreePieces —— `C5` 判据①②③（公开面产出树行）：
+//
+//	① 正控（真仓现跑）：在生效面上的件 ⇒ **必出**这一行，且**三件齐** + 第三方可复算的
+//	   同一条命令在行里（`find … | wc -l` + 同相对路径 `test -e`）；
+//	② 负控甲（纯函数喂坏输入）：三件**缺一**（`head_sha` / 产出树路径 / 扫的时刻）⇒ 只许写
+//	   「公开面：未取数」，且**不许出现数字那一句**；
+//	③ 负控乙（纯函数）：不在生效面 ⇒ **空串**（一行都不许打）；
+//	④ 负控丙（真跑 · 端到端）：产出树读不到（`ZERG_PUB_TREE` 指一个不存在的目录）⇒ 人面那一行
+//	   必须是「未取数」，**不是**去打一个 0 或拿旧数顶上。
+func TestImpactLayers_PublicLineThreePieces(t *testing.T) {
+	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
+	t.Setenv("ZERG_STATE_DIR", t.TempDir())
+	rc, out, errb := runCapture("impact", "scripts/公开标记.tsv")
+	if rc != 0 {
+		t.Fatalf("生效面上的件 ⇒ 期望 rc=0，得到 %d · stderr=%s", rc, tail(errb, 300))
+	}
+	line := lineOf(out, "公开面：")
+	if line == "" {
+		t.Fatalf("正控破：命中生效面却没打公开面行 · out=%s", out)
+	}
+	for _, want := range []string{"此改动会改变公开产出树", "-type f", "排 .git/vendor", "扫的时刻", "head_sha",
+		"复算（第三方 · 同一口径）", "find ", "-not -path '*/.git/*'", "test -e ", "不合并"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("`C5` 正控破：公开面行缺 %q：%s", want, line)
+		}
+	}
+
+	// ② 三件缺一 ⇒ 未取数（三种缺法各喂一次 —— **纯函数**，不连真仓）。
+	for _, tc := range []struct{ name, tree, path, at, head string }{
+		{"缺 head_sha", "树（1 件）", "/tmp/t", "2026-09-22T00:00:00+08:00", ""},
+		{"缺产出树路径", "树（1 件）", "", "2026-09-22T00:00:00+08:00", "abc123"},
+		{"缺扫的时刻", "树（1 件）", "/tmp/t", "", "abc123"},
+	} {
+		got := zerg.ImpactPublicLineTextForTest(true, "+1 / −0", tc.tree, tc.path, tc.at, tc.head, "")
+		if !strings.HasPrefix(got, "公开面：未取数") {
+			t.Errorf("负控甲（%s）：该写「未取数」，实得 %q", tc.name, got)
+		}
+		if strings.Contains(got, "此改动会改变公开产出树") {
+			t.Errorf("负控甲（%s）：三件不齐却打出了数字那一句：%q", tc.name, got)
+		}
+	}
+	// 命中但带缺件原因（层里那一路）⇒ 未取数 + 原因逐字带上。
+	if got := zerg.ImpactPublicLineTextForTest(true, "", "", "", "", "", "产出树路径读不到（/tmp/没这一棵）"); !strings.Contains(got, "未取数") || !strings.Contains(got, "读不到") {
+		t.Errorf("负控甲（层给的原因）：该写未取数并把原因逐字带上，实得 %q", got)
+	}
+	// ③ 不在生效面 ⇒ 空串。
+	if got := zerg.ImpactPublicLineTextForTest(false, "+1 / −0", "树（1 件）", "/tmp/t", "2026-09-22T00:00:00+08:00", "abc123", ""); got != "" {
+		t.Errorf("负控乙：不在生效面竟打了一行（这一行不是恒返回一行）：%q", got)
+	}
+	// ④ 端到端：产出树读不到 ⇒ 未取数（不是 0，也不是不打）。
+	t.Setenv("ZERG_PUB_TREE", filepath.Join(t.TempDir(), "没这一棵产出树"))
+	rc2, out2, errb2 := runCapture("impact", "scripts/公开标记.tsv")
+	if rc2 != 0 {
+		t.Fatalf("负控丙：退码该仍是 0（这一行不是闸），得到 %d · stderr=%s", rc2, tail(errb2, 300))
+	}
+	line2 := lineOf(out2, "公开面：")
+	if line2 == "" {
+		t.Error("负控丙：命中生效面时这一行**必须在**（三件不齐 ⇒ 写未取数，而不是不打）")
+	} else {
+		if !strings.Contains(line2, "未取数") {
+			t.Errorf("负控丙：产出树读不到 ⇒ 该写未取数，实得 %s", line2)
+		}
+		if strings.Contains(line2, "此改动会改变公开产出树") {
+			t.Errorf("负控丙：三件不齐却打出了数字那一句：%s", line2)
+		}
 	}
 }
 
