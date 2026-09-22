@@ -86,6 +86,11 @@ type impactLayer struct {
 	CacheHit  bool
 	CacheNote string
 	CacheCost time.Duration
+
+	// `B4` 分层预算：这一层这一跑在**取数闭包里自计时**的耗时（`B4`：缓存态与耗时**同源** ——
+	// 命中 = 读落盘件的耗时 · 未命中 = 该层取数耗时）；`= 0` 表示本层没自计时（③④⑤⑥ 今天不自计
+	// ⇒ 照实记 0，**不进预算裁决**、也不补零）。
+	BudgetWall time.Duration
 }
 
 // impactRow —— 条目四字段（§3.1 · `A1` 的字段表一字不改）。
@@ -256,7 +261,10 @@ func impactCallgraphBin() string {
 // ★ 命中就**不调用现算**（这是缓存的全部意义）；命中与未命中的人面/机器面必须逐字同输出
 // （`M8`：缓存不许改答案）⇒ 缓存件里存的就是那一层的完整产物（层名 / 粒度 / 口径值 / 状态 /
 // 读数 / 条目），命中时**原样**装回，不重拼、不改写。
-func impactPullLayers(root string, tgt *impactTarget, cheap bool, mode impactCacheMode) []impactLayer {
+func impactPullLayers(root string, tgt *impactTarget, cheap bool, mode impactCacheMode) ([]impactLayer, impactBudgetRun) {
+	chainStart := time.Now()
+	// `B4`：本跑账从**契约件**起（读不到 ⇒ `Plan.OK=false` ⇒ **不裁**，照实明写）。
+	run := impactBudgetRun{Plan: impactBudgetPlanFor(root)}
 	head, at := impactHeadSHA(root), impactEffectiveAt()
 	// 落点（契约件）—— 读不到就不落盘、不命中，并把人话原因带到层行上。
 	layout := impactStateLayout{FromRelPath: impactStateContractRel}
@@ -278,8 +286,8 @@ func impactPullLayers(root string, tgt *impactTarget, cheap bool, mode impactCac
 		}
 	}
 	scopeKey := impactCacheScopeKey(tgt)
-	// pull：先按**键三件 + 目标面**找落盘件（命中即不现算）；没命中才现算，并把「取值」的层落盘。
-	pull := func(seq string, compute func() impactLayer) impactLayer {
+	// pullOne：一层取数（**`A2`/`A5` 的原文一字不动** —— 缓存的语义全在这一支里）。
+	pullOne := func(seq string, compute func() impactLayer) impactLayer {
 		if layoutNote == "" && impactCacheableLayers[seq] {
 			cal := impactCaliberFor(seq, root, tgt)
 			path := impactCacheFileFor(layout, head, seq, cal, scopeKey)
@@ -315,6 +323,26 @@ func impactPullLayers(root string, tgt *impactTarget, cheap bool, mode impactCac
 		}
 		return lay
 	}
+	// pull：`B4` 的**到点即停**判点（判点 = 层边界）+ **自计时**（缓存态与本层耗时同源）。
+	//
+	// 判序（§4.4 逐字）：起这一层**之前**看 `已计时 ≥ 上限` ⇒ 降级；降级之后**只有降级档名单
+	// （契约件 `档位.降级档.层名单`）里的层照跑**，其余不跑并逐条留痕（**不许悄悄少给**）。
+	pull := func(seq string, compute func() impactLayer) impactLayer {
+		if skip, why := run.beforeLayer(seq); skip {
+			name, grane := impactBudgetSkeletonOf(seq)
+			return impactLayer{
+				Seq: seq, Name: name, Grane: grane, HeadSHA: head, At: at,
+				Caliber: "（本跑**没取数** ⇒ 该层口径值未拼 —— 降级掉的层不报价）",
+				Status:  impactBudgetDegradedStatus, Detail: why,
+				CacheNote: "不适用（本层没跑 —— 超预算降级：本跑没读也没写它的缓存）",
+			}
+		}
+		t0 := time.Now()
+		lay := pullOne(seq, compute)
+		lay.BudgetWall = time.Since(t0)
+		run.charge(lay)
+		return lay
+	}
 	layers := []impactLayer{
 		pull("①", func() impactLayer { return impactLayerCompiler(root, tgt) }),
 		pull("②", func() impactLayer { return impactLayerSymbol(root, tgt, cheap) }),
@@ -330,7 +358,8 @@ func impactPullLayers(root string, tgt *impactTarget, cheap bool, mode impactCac
 			layers[i].CacheNote += " · 源指纹=" + shortHex(fp)
 		}
 	}
-	return layers
+	run.Wall = time.Since(chainStart)
+	return layers, run
 }
 
 // impactCacheScopeKey —— 「目标面」（进缓存文件名的那一格）。

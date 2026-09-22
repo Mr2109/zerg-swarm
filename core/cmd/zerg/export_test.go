@@ -775,7 +775,8 @@ func ImpactPullLayersModeOffForTest(root, rel string) ([]string, error) {
 		return nil, fmt.Errorf("目标解析不到：%s", why)
 	}
 	notes := []string{}
-	for _, l := range impactPullLayers(root, tgt, true, impactCacheOff) {
+	layers, _ := impactPullLayers(root, tgt, true, impactCacheOff)
+	for _, l := range layers {
 		notes = append(notes, l.Seq+"="+l.CacheNote)
 	}
 	return notes, nil
@@ -906,7 +907,7 @@ func ImpactTimefaceOfForTest(root, raw string, all bool) (ImpactTimefaceViewForT
 		return out, fmt.Errorf("目标解析不到：%s", why)
 	}
 	cheap := !all
-	layers := impactPullLayers(root, tgt, cheap, impactCacheOff)
+	layers, _ := impactPullLayers(root, tgt, cheap, impactCacheOff)
 	proj := impactStepProjectionOf(root, impactStepIDsToJoin(tgt, layers), all)
 	f := impactPredictFaceOf(tgt, layers, proj, cheap)
 	out.Target, out.Tier, out.HeadSHA = f.Target, f.Tier, f.HeadSHA
@@ -1026,7 +1027,7 @@ func ImpactRedLineForTest(root, raw string) (string, error) {
 	if tgt == nil {
 		return "", fmt.Errorf("目标解析不到：%s", why)
 	}
-	layers := impactPullLayers(root, tgt, true, impactCacheOff)
+	layers, _ := impactPullLayers(root, tgt, true, impactCacheOff)
 	proj := impactStepProjectionOf(root, impactStepIDsToJoin(tgt, layers), false)
 	return impactRedLine(layers, true, proj), nil
 }
