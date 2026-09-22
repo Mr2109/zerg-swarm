@@ -1063,6 +1063,9 @@ type ImpactBudgetPlanForTest struct {
 	Pick      string
 	PickedID  string
 	CapSec    float64
+	Fixed     bool   // 上限来自 `cap.上限定值`（已定值 · `R32` 已拍）
+	FixedWhy  string // 定值没被采用的原因（回落 / 不裁）
+	FixedOrig string // `上限定值.出处` 原样
 	Allow     []string
 	Formulas  []ImpactPlanFormulaForTest
 	NotRunSet []string
@@ -1090,7 +1093,8 @@ func ImpactBudgetPlanBytesForTest(raw []byte) ImpactBudgetPlanForTest {
 	p := impactBudgetPlanOf(c)
 	out := ImpactBudgetPlanForTest{
 		OK: p.OK, Armed: p.Armed, Why: p.Why, Pick: p.Pick, PickedID: p.PickedID,
-		CapSec: p.CapSec, Allow: append([]string{}, p.Allow...), NotRunSet: append([]string{}, c.Degrade.NotRunSet...),
+		CapSec: p.CapSec, Fixed: p.Fixed, FixedWhy: p.FixedWhy, FixedOrig: p.FixedOrig,
+		Allow: append([]string{}, p.Allow...), NotRunSet: append([]string{}, c.Degrade.NotRunSet...),
 		NoAction: append([]string{}, p.NoAction...),
 	}
 	for _, f := range p.Formulas {
