@@ -29,9 +29,12 @@
 //	③ `E2` 的**明标**（`L3-b` = **B 案**）与 `E3` 的**归档机制**（`I-8`）：明标落**审计侧**（件字段面
 //	   一字不动 ✗）；归档 = 先复制 + `sha256` 逐字核对 + 才删原件。
 //
-// ★ `E4`（`--ttl`）/ `E5`（换钥确认对）**未开工**，两条都卡在「先停下问」的那一格（缘由见回执）：
-// 前者要往批准件里加一格（撞 §4.2「八字段一字不加 / 不减」），后者要占 `--rekey` 这个名（`P27`
-// 是**升级接口**的预留旗标名 · §五 ⑩ 不许占名）。**没开工的事不许说成做了** ✗。
+// ★ `E4`（`--ttl`）：本件落的是**有效期面** —— 「缺省 = 不过期」（不给这一枚旗标 ⇒ 件与今天**逐字节
+// 同形态** · `state` 列那四档一个不动）；`--ttl <时长>` 的**记录面 = 审计那一行**（`E1` 的事件 +
+// 自己的字段名 `ttl_seconds` / `expires_at`），判定面 = `show` 的「有效期」那一行（消费者侧 · `§4.5 ③`）。
+// ★ `E5`（换钥确认对）：`keygen` 的换钥那一格要 `--confirm=<旧 key_id>` 与 `--yes` **同时到**（缺任一 ⇒
+// 执行前判 rc=2）· 顺序 = **先自检 → 备份先行 → 才写**（照 `zerg-upgrade.sh:901` 与
+// `zerg-swap-core.sh:324` 两条既有纪律长）。
 package main
 
 import (
@@ -52,6 +55,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,7 +81,10 @@ var approveNewFields = []string{"tool", "approver", "approved_at", "scope", "not
 //	· `strength` 取值**只增不改**（闭集：`passphrase`（今天这档）/ `token`（将来那档））——
 //	  在册公钥件里**有**这一格（`I-1` 的预留位）就照它，**没有** ⇒ 按 `passphrase` 判；
 //	· ★ 本版**不写**这一格（`I-1` = 只写接口、不落实现 · 在册公钥件**一个字节不动** ✗）。
-var approveOptionalFields = []string{"strength", "key_id_in_use"}
+//
+// ★ `E4` 又追加三枚可选字段（同样**只增**、同样**不进**九键）：`ttl_seconds` / `expires_at` / `expired`
+// —— 它们讲的是**有效期**（消费者侧口径 · `§4.4` 明令「过期」**不进** `state` 列 ⇒ 只能走这一层）。
+var approveOptionalFields = []string{"strength", "key_id_in_use", "ttl_seconds", "expires_at", "expired"}
 
 // approveStrengthPassphrase —— 生效档的强度标记（本版唯一取值 · `v1.3 §9.1` 的生效档）。
 const approveStrengthPassphrase = "passphrase"
@@ -274,6 +281,8 @@ func cmdApproveShow(inv *invocation, stdout, stderr io.Writer) int {
 	// `approveStrengthMark()`（两处不漂）；这一行是**新增行**，上面八行一字不动。
 	fmt.Fprintf(stdout, "档       : %s\n", approveStrengthMark())
 	fmt.Fprintf(stdout, "钥匙身份 : %s\n", keyIdentityLine(tk.KeyID))
+	// ★ `E4`：有效期那一行（**新增行** · 缺省「不过期」也照实打 —— 判定口与 `--json` 那三格同一处）。
+	fmt.Fprintf(stdout, "有效期   : %s\n", approveExpiryLine(p, time.Now()))
 	fmt.Fprintf(stdout, "判决     : %s\n", state)
 	fmt.Fprintf(stdout, "落点     : %s\n", p)
 	return exitOK
@@ -341,7 +350,7 @@ func approveRow(tk approvalTicketFile, path, state string) map[string]string {
 	// ★ `strength` / `key_id_in_use` 是**可选**字段（`D1` · `v1.3 §4.1`）——它们放在行里供
 	// `--json` 点名取用，但**不进** `approveFields` 九键（九键是冻结面）；不点名就不出现在输出里。
 	inUse, _ := operatorKeyIDInUse()
-	return map[string]string{
+	row := map[string]string{
 		"tool": tk.Tool, "approver": tk.Approver, "approved_at": tk.ApprovedAt,
 		"scope": tk.Scope, "note": tk.Note, "sig_alg": tk.SigAlg, "key_id": tk.KeyID,
 		"state": state, "path": path,
@@ -350,6 +359,12 @@ func approveRow(tk approvalTicketFile, path, state string) map[string]string {
 		// `approveStrengthMark()`（两处不漂）。
 		"档": approveStrengthMark(),
 	}
+	// ★ `E4` 三枚有效期可选字段（`ttl_seconds` / `expires_at` / `expired`）——与 `show` 那一行
+	// **同一枚**判定口（`approveExpiryVerdict`）⇒ 人面与机器面不漂。
+	for k, v := range approveExpiryCells(path, time.Now()) {
+		row[k] = v
+	}
+	return row
 }
 
 // approveBadField —— 字段面**先判**（九键 + 可选字段）：返回点错的那一格（没点错 ⇒ 空串）。
@@ -397,6 +412,15 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 缺 %s —— 批准件要**谁签的 + 为什么**（无签名的件不算批准）\n", progName, strings.Join(missing, " · "))
 		return exitUsage
 	}
+	// ★ `E4`：`--ttl` **执行前判**（用法错 ⇒ 2 —— 「裸给旗标」「认不出的时长」「≤ 0」三种都拒；
+	// 缺省（不给这一枚）⇒ 不过期，**件与今天逐字节同形态**）。判在干跑 / 终端判据**之前**：
+	// 这一格是**用法**面的事，与「谁在敲」无关（同 `--confirm` 的既有口径）。
+	ttl, ttlGiven, ttlErr := approveTTLOf(inv)
+	if ttlErr != nil {
+		inv.setErr("usage", "bad_ttl", ttlErr.Error())
+		fmt.Fprintf(stderr, "%s: %v ⇒ 不给签（退码 2）\n", progName, ttlErr)
+		return exitUsage
+	}
 	if scope == "" {
 		scope = "*"
 	}
@@ -413,6 +437,17 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	payload := control.ApprovalPayload(tk.Tool, tk.Scope, tk.Approver, tk.ApprovedAt, tk.Note)
 	digest := sha256.Sum256(payload)
+	// ★ `E4`：有效期（缺省 ⇒ 这一行**不打** —— 件与输出都与今天逐字节同形态）。
+	var expiresAt time.Time
+	if ttlGiven {
+		e, err := approveExpiryAt(tk.ApprovedAt, ttl)
+		if err != nil {
+			inv.setErr("usage", "bad_ttl", err.Error())
+			fmt.Fprintf(stderr, "%s: %v ⇒ 不给签（退码 2）\n", progName, err)
+			return exitUsage
+		}
+		expiresAt = e
+	}
 	printSummary := func() {
 		if inv.jsonGiven {
 			return
@@ -421,6 +456,11 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 			tk.Tool, tk.Scope, tk.Approver, tk.ApprovedAt, tk.Note)
 		fmt.Fprintf(stdout, "待签 sha256: %s（%d 字节 · 待签字节 = `zerg-approval/v1` + 五格；**不是**件文件 / 被改文件的 sha256）\n",
 			hex.EncodeToString(digest[:]), len(payload))
+		if ttlGiven {
+			// 「签前摘要」的一部分：人看清「这一枚到什么时候为止」再敲口令（消费者侧判 · 靠本地钟）。
+			fmt.Fprintf(stdout, "有效期   : 到 %s（%s · 消费者侧判 · **靠本地钟** —— 记录面 = 审计 · 不是防篡改闸）\n",
+				expiresAt.Format(time.RFC3339), ttl)
+		}
 	}
 	if inv.dryRun {
 		// 干跑那一态：只出**计划面** —— 一个字节都不写（不落件 · 不落审计 · 不动在册件 · 不读口令）。
@@ -488,11 +528,16 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 	// ★ E1（`I-6`）：把这一次签名落成审计**一行**（自己的字段名 · 只追加）。
 	// **审计不是放行条件**：写不进审计 ⇒ 签名照旧有效，只在 stderr 如实报（把它接成放行条件
 	// = 改真写前置 = 破坏性变更 ⇒ 越线 ✗）。
-	if ap, aerr := recordApprovalAudit(tk, payload, p); aerr != nil {
+	if ap, aerr := recordApprovalAuditWithTTL(tk, payload, p, ttl); aerr != nil {
 		fmt.Fprintf(stderr, "%s: ⚠ 审计那一行没落成（%v）—— **本次签名照旧有效**（审计是记录面，不是放行条件；落点 %s）\n",
 			progName, aerr, ap)
 	} else {
 		fmt.Fprintf(stderr, "  审计  ：%s（追加一行 `%s` · 只写不改）\n", ap, approveAuditEvent)
+	}
+	if ttlGiven {
+		// 记录面（审计那一行）与判定面（`show` 的有效期行）**同一枚** `expires_at` 口径（不各算各的）。
+		fmt.Fprintf(stderr, "  有效期：到 %s（%s · 消费者侧判 · **靠本地钟** · 记录面 = 审计那一行 `expires_at`）\n",
+			expiresAt.Format(time.RFC3339), ttl)
 	}
 	row := approveRow(tk, p, "验过")
 	row["result"] = "signed"
@@ -517,14 +562,21 @@ func cmdApproveKeygen(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `approve keygen` 要 `--by <人名>`（件里要留「谁生成的操作员密钥」）\n", progName)
 		return exitUsage
 	}
+	// ★ `E5`（`I1` · `P28`）**确认对**：在册已有钥 ⇒ 换钥那一格要 `--confirm=<旧 key_id>` **与**
+	// `--yes` **同时到**；第一次生成（在册没钥）⇒ 这两枚**都不许**出现。判在**终端判据 / 读口令之前**
+	// = **执行前判**（授权面的事与「谁在敲」无关；这几格一律不读口令、不碰任何件）。
+	oldKeyID, hasKey := operatorKeyIDInUse()
+	if err := operatorRekeyConfirmPair(inv, oldKeyID, hasKey); err != nil {
+		inv.setErr("usage", "rekey_confirm_required", err.Error())
+		fmt.Fprintf(stderr, "%s: %v ⇒ 不给换钥（退码 2）\n", progName, err)
+		if hasKey {
+			fmt.Fprintf(stderr, "  要真换：「%s approve keygen --by <人名> --confirm=%s --yes」（旧件全废 · 旧钥进归档）\n", progName, oldKeyID)
+		}
+		return exitUsage
+	}
 	if !isTTYFile(os.Stdin) {
 		inv.setErr("usage", "not_a_human", "密钥要人在终端上生成")
 		fmt.Fprintf(stderr, "%s: 生成操作员密钥要**人在终端上**敲（口令要人手输）—— 非交互会话一律拒（退码 2）\n", progName)
-		return exitUsage
-	}
-	if _, err := os.Stat(operatorKeyPath()); err == nil {
-		inv.setErr("usage", "operator_key_exists", "密钥已在")
-		fmt.Fprintf(stderr, "%s: 操作员密钥已在（%s）⇒ 不覆盖（覆盖会让在册的旧件全部失效）\n", progName, operatorKeyPath())
 		return exitUsage
 	}
 	pass, err := readPassphrase("设一个操作员口令（不会回显）：")
@@ -544,32 +596,36 @@ func cmdApproveKeygen(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 两次口令不一致 ⇒ 不生成（退码 2）\n", progName)
 		return exitUsage
 	}
-	kf, pf, err := newOperatorKey(pass, by)
+	kf, pf, privNew, err := newOperatorKeyFull(pass, by)
 	if err != nil {
 		inv.setErr("failed", "keygen_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 生成密钥失败：%v\n", progName, err)
 		return exitFail
 	}
-	if err := os.MkdirAll(approveDir(), 0o700); err != nil {
-		inv.setErr("failed", "approvals_dir_failed", err.Error())
-		fmt.Fprintf(stderr, "%s: 建不了目录 %s：%v\n", progName, approveDir(), err)
+	if !hasKey {
+		// 第一次生成：与今天**逐字**同一路（两枚件 · 无归档）。
+		if err := writeOperatorKeys(kf, pf); err != nil {
+			inv.setErr("failed", "key_write_failed", err.Error())
+			fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+			return exitFail
+		}
+		fmt.Fprintf(stdout, "%s	%s\n", pf.KeyID, operatorPubPath())
+		fmt.Fprintf(stderr, "%s: 密钥已生成（key_id=%s）\n", progName, pf.KeyID)
+		fmt.Fprintf(stderr, "  私钥：%s（**口令加密** · 权限 600 —— 口令只在人脑子里）\n", operatorKeyPath())
+		fmt.Fprintf(stderr, "  公钥：%s（消费者读它验签）\n", operatorPubPath())
+		return exitOK
+	}
+	// ★ **换钥路**：先自检 → 备份先行 → 才写（顺序口 = `rekeyOperatorKey` · 任一步不过就不往下走）。
+	kArch, pArch, err := rekeyOperatorKey(kf, pf, privNew, oldKeyID, nil)
+	if err != nil {
+		inv.setErr("failed", "rekey_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
 		return exitFail
 	}
-	kb, _ := json.MarshalIndent(kf, "", " ")
-	pb, _ := json.MarshalIndent(pf, "", " ")
-	if err := os.WriteFile(operatorKeyPath(), append(kb, '\n'), 0o600); err != nil {
-		inv.setErr("failed", "key_write_failed", err.Error())
-		fmt.Fprintf(stderr, "%s: 写不了私钥件 %s：%v\n", progName, operatorKeyPath(), err)
-		return exitFail
-	}
-	if err := os.WriteFile(operatorPubPath(), append(pb, '\n'), 0o644); err != nil {
-		inv.setErr("failed", "pub_write_failed", err.Error())
-		fmt.Fprintf(stderr, "%s: 写不了公钥件 %s：%v\n", progName, operatorPubPath(), err)
-		return exitFail
-	}
-	fmt.Fprintf(stdout, "%s\t%s\n", pf.KeyID, operatorPubPath())
-	fmt.Fprintf(stderr, "%s: 密钥已生成（key_id=%s）\n", progName, pf.KeyID)
-	fmt.Fprintf(stderr, "  私钥：%s（**口令加密** · 权限 600 —— 口令只在人脑子里）\n", operatorKeyPath())
+	fmt.Fprintf(stdout, "%s	%s\n", pf.KeyID, operatorPubPath())
+	fmt.Fprintf(stderr, "%s: 换钥完成（旧 key_id=%s ⇒ 新 key_id=%s）\n", progName, oldKeyID, pf.KeyID)
+	fmt.Fprintf(stderr, "  旧钥归档：%s / %s（**旧件一枚没删** —— 字节留在归档）\n", kArch, pArch)
+	fmt.Fprintf(stderr, "  ⚠ 旧件全废：在册那些件签的是旧钥 ⇒ `approve ls` 会从「验过」掉档（件本身不删）\n")
 	fmt.Fprintf(stderr, "  公钥：%s（消费者读它验签）\n", operatorPubPath())
 	return exitOK
 }
@@ -604,6 +660,10 @@ type approvalAuditLine struct {
 	SignedNotInPerson   bool   `json:"signed_not_in_person"`
 	Strength            string `json:"strength"`
 	KeyID               string `json:"key_id"`
+	// ★ `E4`：有效期两格（**自己的**字段名 · 同样不蹭现网那两族）。**可选**：不给 `--ttl` ⇒ 这两格
+	// 一个都不写（`omitempty`）⇒ 那一行与 `E1` 落地的形态**逐字节相同**（判据①「缺省与今天同形态」）。
+	TTLSeconds int64  `json:"ttl_seconds,omitempty"`
+	ExpiresAt  string `json:"expires_at,omitempty"`
 }
 
 // approveAuditEvent —— 事件名（本事件唯一 · 与现网那个 `edit` 事件不同名）。
@@ -613,7 +673,7 @@ const approveAuditEvent = "approve_signed"
 var approveAuditRequired = []string{"at", "event", "tool", "approver", "approval_path", "signed_payload_sha256"}
 
 // approveAuditOwnFields —— 本事件**自己的**字段名（新概念一律不复用现网那六格的名字 · 判据②）。
-var approveAuditOwnFields = []string{"signed_payload_sha256", "signed_payload_bytes", "approval_path", "signed_not_in_person"}
+var approveAuditOwnFields = []string{"signed_payload_sha256", "signed_payload_bytes", "approval_path", "signed_not_in_person", "ttl_seconds", "expires_at"}
 
 // approveAuditLegacyFields —— 现网 `edit_audit.jsonl` 尾条那六格：新字段名**不许**与它们撞（判据②）。
 var approveAuditLegacyFields = []string{"before_sha256", "after_sha256", "before_bytes", "after_bytes", "approval", "approver"}
@@ -675,6 +735,16 @@ func appendApprovalAudit(path string, line approvalAuditLine) error {
 // ★ `payload` **必须**是**待签字节**本身（与打出那两行、与签名用的是**同一枚** · `D2` 的口径）——
 // `sha256` 口径**只有一处**，`E1` **不许**各算各的（`v1.3 §8.4 P16`）。
 func recordApprovalAudit(tk approvalTicketFile, payload []byte, ticketPath string) (string, error) {
+	return recordApprovalAuditWithTTL(tk, payload, ticketPath, 0)
+}
+
+// recordApprovalAuditWithTTL —— **带有效期**的那一口（`E4`）。
+//
+// ★ `ttl == 0`（缺省不过期）⇒ 与上面那一枚**完全同路**：`ttl_seconds` / `expires_at` 两格
+// （`omitempty`）一个都不写 ⇒ 这一行与 `E1` 落地的形态**逐字节相同**（判据①）。
+// ★ `ttl` 给了但太小（< 1s，含负数）⇒ **这一行不写**（记录面按秒记 · 算不出来就不写 —— 同 E1 的
+// 「缺必需格 ⇒ 这一行不写」那一条纪律），调用方照旧只报（审计不是放行条件）。
+func recordApprovalAuditWithTTL(tk approvalTicketFile, payload []byte, ticketPath string, ttl time.Duration) (string, error) {
 	line := approvalAuditLine{
 		At:                  time.Now().Format(time.RFC3339),
 		Event:               approveAuditEvent,
@@ -688,6 +758,17 @@ func recordApprovalAudit(tk approvalTicketFile, payload []byte, ticketPath strin
 		SignedNotInPerson: false,
 		Strength:          approveStrengthInUse(),
 		KeyID:             tk.KeyID,
+	}
+	if ttl != 0 {
+		if ttl < time.Second {
+			return editAuditPath(), fmt.Errorf("`--ttl` %s 太小（记录面按秒记 ⇒ 要 ≥ 1s）⇒ **这一行不写**", ttl)
+		}
+		e, err := approveExpiryAt(tk.ApprovedAt, ttl)
+		if err != nil {
+			return editAuditPath(), err
+		}
+		line.TTLSeconds = int64(ttl / time.Second)
+		line.ExpiresAt = e.Format(time.RFC3339)
 	}
 	p := editAuditPath()
 	if err := appendApprovalAudit(p, line); err != nil {
@@ -721,6 +802,150 @@ func approveAuditMarkOf(raw []byte) (string, error) {
 		return "补签", nil
 	}
 	return "在场", nil
+}
+
+// ---- 有效期面（`E4` · `--ttl`）----
+//
+// 口径（逐条照 `v1.3 §4.5` 的 `T1` / 落法三条 ＋ 任务单 §三 `E4` 的四条判据）：
+//
+//	· **缺省 = 不过期**（不给 `--ttl` ⇒ 件与今天**逐字节同形态**、判定面一行都不多打）；
+//	· `--ttl` 放不进**签名封装**（`T1`：SSHSIG 臂章里 `time`/`expir`/`ttl` 全 False）⇒ 本版**不往件里
+//	  加一格**（`v1.3 §4.2`「八字段一字不加 / 不减」· 任务单 §三 整批红线 ⇒ 要动件字段面**先停下问**）：
+//	  记录面落**审计那一行**（`E1` 的事件 + 自己的字段名 `ttl_seconds` / `expires_at`）；
+//	· 「过期即不算批准」在**消费者侧**生效（`§4.5 ③`）：`show` 多打一行「有效期」，超期打
+//	  「**不算批准（已过期）**」；`state` 列那四档**一个不动**（`§4.4` 逐字：**不加**「过期」到这一列）。
+//	· ★ 残留照实说（不许含糊 ✗）：记录面（审计）**是可写的** ⇒ 本版**不把 `--ttl` 当防篡改闸**、
+//	  也不当新鲜度保证（`§五 ④`）；「过期 ⇒ 不算批准」今天落在**读数**上（放行面未接线）。
+const approveTTLDay = 24 * time.Hour
+
+// approveTTLOf —— 读 `--ttl`（**缺省 = 不过期**）：返回 (时长, 给没给, 错)。
+//
+// 「给了旗标没给值」「认不出的时长」「≤ 0」三种都算**用法错**（调用方退 2 · **执行前判**）。
+func approveTTLOf(inv *invocation) (time.Duration, bool, error) {
+	if inv == nil || !inv.ttlGiven {
+		return 0, false, nil
+	}
+	raw := strings.TrimSpace(inv.ttl)
+	if raw == "" {
+		return 0, true, errors.New("`--ttl` 给了旗标没给时长（**不过期 = 不给这个旗标**）")
+	}
+	d, err := parseApproveTTL(raw)
+	if err != nil {
+		return 0, true, err
+	}
+	return d, true, nil
+}
+
+// parseApproveTTL —— 时长口径：Go 的 `30m` / `72h` / `1h30m`，另加**一档** `7d`（天）。
+//
+// ★ 只加这一档，**不改** Go 自己的语义；认不出 / ≤ 0 一律报错（**不许猜** —— 「过期的时长」猜错
+// 比不给更坏：`[P5]` 那条「看得见但看错」同源）。
+func parseApproveTTL(raw string) (time.Duration, error) {
+	s := strings.TrimSpace(raw)
+	d, err := time.ParseDuration(s)
+	if err != nil && strings.HasSuffix(s, "d") {
+		if n, e := strconv.Atoi(strings.TrimSuffix(s, "d")); e == nil {
+			d, err = time.Duration(n)*approveTTLDay, nil
+		}
+	}
+	if err != nil {
+		return 0, fmt.Errorf("`--ttl` 的时长 %q 认不出来（口径：`30m` / `72h` / `1h30m`，另加 `7d` 这一档）", raw)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("`--ttl` 的时长 %q ≤ 0 —— **0 不是「不过期」**（不过期 = **不给**这个旗标）", raw)
+	}
+	if d < time.Second {
+		// 记录面（审计那一行）按**秒**记 ⇒ 比 1s 还短的时长记不下来 ⇒ 执行前判就拒（不许「签了却记不上」）。
+		return 0, fmt.Errorf("`--ttl` 的时长 %q 太短（记录面按秒记 ⇒ 要 ≥ 1s）", raw)
+	}
+	return d, nil
+}
+
+// approveExpiryAt —— 有效期落点 = 件里 `approved_at`（**待签字节里就有** ⇒ 改它签名就坏）+ 时长。
+func approveExpiryAt(approvedAt string, ttl time.Duration) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(approvedAt))
+	if err != nil {
+		return time.Time{}, fmt.Errorf("`approved_at` %q 不是 RFC3339：%v", approvedAt, err)
+	}
+	return t.Add(ttl), nil
+}
+
+// approveTTLRecord —— 读**记录面**（审计里指向这枚件的那一行）的有效期：(到期时刻, 秒, 有没有)。
+//
+// 只读 · 取**最后一条**带 `expires_at` 的（审计是追加只写 ⇒ 最后一条是最新口径）。读不到 / 没有 ⇒
+// `(零, 0, false)` ⇒ 调用方照实打「不过期（缺省）」，**不许**把它当别的结论用。
+func approveTTLRecord(ticketPath string) (time.Time, int64, bool) {
+	p := editAuditPath()
+	if p == "" || strings.TrimSpace(ticketPath) == "" {
+		return time.Time{}, 0, false
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return time.Time{}, 0, false
+	}
+	hit := time.Time{}
+	var secs int64
+	found := false
+	for _, ln := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		var probe struct {
+			ApprovalPath string `json:"approval_path"`
+			ExpiresAt    string `json:"expires_at"`
+			TTLSeconds   int64  `json:"ttl_seconds"`
+		}
+		if json.Unmarshal([]byte(ln), &probe) != nil {
+			continue
+		}
+		if probe.ApprovalPath != ticketPath || strings.TrimSpace(probe.ExpiresAt) == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, strings.TrimSpace(probe.ExpiresAt))
+		if err != nil {
+			continue
+		}
+		hit, secs, found = t, probe.TTLSeconds, true
+	}
+	return hit, secs, found
+}
+
+// approveExpiryVerdict —— 有效期的**消费者侧**读数：(到期时刻, 秒, 给没给, 过没过期)。
+func approveExpiryVerdict(ticketPath string, now time.Time) (time.Time, int64, bool, bool) {
+	exp, secs, ok := approveTTLRecord(ticketPath)
+	if !ok {
+		return time.Time{}, 0, false, false
+	}
+	return exp, secs, true, !now.Before(exp)
+}
+
+// approveExpiryLine —— `show` 的「有效期」那一行（**新增行** · 人面与机器面同一枚判定口）。
+func approveExpiryLine(ticketPath string, now time.Time) string {
+	exp, _, given, expired := approveExpiryVerdict(ticketPath, now)
+	if !given {
+		return "不过期（缺省 —— 没给过 `--ttl`）· 记录面 = 审计 · **靠本地钟**"
+	}
+	if !expired {
+		return fmt.Sprintf("到 %s（剩 %s）· 记录面 = 审计 · **靠本地钟**（消费者侧判）",
+			exp.Format(time.RFC3339), exp.Sub(now).Truncate(time.Second))
+	}
+	return fmt.Sprintf("**不算批准（已过期）** —— 到期 %s · 超了 %s · 消费者侧策略（§4.4：不进 `state` 列 · 本版只报告）",
+		exp.Format(time.RFC3339), now.Sub(exp).Truncate(time.Second))
+}
+
+// approveExpiryCells —— 三枚**可选**字段（`--json` 点名取用 · 不进九键）。
+func approveExpiryCells(ticketPath string, now time.Time) map[string]string {
+	exp, secs, given, expired := approveExpiryVerdict(ticketPath, now)
+	cells := map[string]string{"ttl_seconds": "", "expires_at": "", "expired": "false"}
+	if !given {
+		return cells
+	}
+	cells["expires_at"] = exp.Format(time.RFC3339)
+	cells["ttl_seconds"] = strconv.FormatInt(secs, 10)
+	if expired {
+		cells["expired"] = "true"
+	}
+	return cells
 }
 
 // ---- 换钥归档（`E3` · `§4.2` 的归档路径 + `I-8`）----
@@ -792,30 +1017,121 @@ func archiveOperatorKeys(oldKeyID string) (string, string, error) {
 	return done[0], done[1], nil
 }
 
+// ---- 换钥确认对（`E5` · `v1.3 §⑥ I1` + `§9.4 P28`）----
+//
+// 为什么单列一节：`approve keygen` 今天**只**在「私钥件已在」那一格拒（`operator_key_exists`），
+// 没有任何「换钥」的正路 —— 要换只能由人**手工删两枚件**再生成（`§4.2` 把这条写成「人的动作」）。
+// `E5` 落的就是那格正路，铁律四条：
+//
+//   - **确认对必填**：在册已有钥 ⇒ 换钥要 `--confirm=<旧 key_id>` **与** `--yes` **同时到**
+//     （缺任一 / `--confirm` 的值与在册 `key_id` 不逐字相同 ⇒ `rc=2` · **执行前判**：不读口令、
+//     不碰任何件）；**第一次生成**（在册没钥）⇒ 这两枚**都不许**出现（出现即 `rc=2`，不许绕）。
+//   - **备份先行**：`E3` 的归档（先复制 + 逐字核对 `sha256` + 才移走原件）**必须**在新钥落盘**之前**；
+//     归档那一步不过 ⇒ 在册两枚件的字节**一个不动**。
+//   - **先自检后不可逆**：新钥**落盘前**先自己签一个字节串再验一遍（自检口可注入 —— 判据件用它证
+//     「自检没过 ⇒ 不写 `operator.pub`」）；自检没过 ⇒ 连归档都不做。
+//   - **不占新名**（`§五 ⑩`）：只用**既有**两枚旗标（`--confirm` / `--yes`），不新造旗标名、不占 `--rekey`。
+
+// rekeySelfCheckFn —— 自检口（默认 = `operatorRekeySelfCheck`；判据件注入一个必失败的口，
+// 用来证「自检没过 ⇒ 不可逆那一步不执行」——**可注入才有负控**）。
+type rekeySelfCheckFn func(pubB64 string, priv ed25519.PrivateKey) error
+
+// operatorRekeyConfirmPair —— 换钥确认对的口径**只有这一处**（判据① 的落点）。
+//
+// `hasKey` = 在册公钥件在不在；`inUse` = 它的 `key_id`。返回 nil 才允许往下走。
+func operatorRekeyConfirmPair(inv *invocation, inUse string, hasKey bool) error {
+	if !hasKey {
+		// 在册没钥却带了确认对 ⇒ 「换钥」这个动作**没有对象** ⇒ 拒（不许拿它当「跳过一次生成」的后门）。
+		if inv.confirmGiven || inv.yes {
+			return fmt.Errorf("在册没有公钥件（%s 读不到 `key_id`）⇒ `--confirm` / `--yes` 无处可用（换钥要有旧钥）", operatorPubPath())
+		}
+		return nil // 第一次生成：与今天逐字同一路
+	}
+	if !inv.confirmGiven {
+		return fmt.Errorf("换钥缺 `--confirm=<旧 key_id>`（旧件全废的不可逆档 ⇒ 要人**点名**在册的 %s）", inUse)
+	}
+	if !inv.yes {
+		return fmt.Errorf("换钥缺 `--yes`（不可逆档 ⇒ 两枚都要到）")
+	}
+	if strings.TrimSpace(inv.confirm) != inUse {
+		return fmt.Errorf("`--confirm` 的值 %q 与在册 `key_id` %q **不逐字相同** ⇒ 不动作", strings.TrimSpace(inv.confirm), inUse)
+	}
+	return nil
+}
+
+// operatorRekeySelfCheck —— 「先自检后不可逆」的自检本体：**新钥**签得出来、且**验得过**
+// （与 `zerg-upgrade.sh` 那条「sha 必须在签名前校验」同向：落件前先自己证明这枚钥能用）。
+// 只吃内存里的私钥 ⇒ **零磁盘副作用**。
+func operatorRekeySelfCheck(pubB64 string, priv ed25519.PrivateKey) error {
+	if len(priv) != ed25519.PrivateKeySize {
+		return fmt.Errorf("新私钥长度不对（%d ⇒ 要 %d）", len(priv), ed25519.PrivateKeySize)
+	}
+	payload := control.ApprovalPayload("self_check", "*", "rekey", time.Now().Format(time.RFC3339), "换钥自检")
+	sig := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, payload))
+	if err := control.VerifyApprovalSignature(pubB64, sig, payload); err != nil {
+		return fmt.Errorf("自检没过（新钥签出来的验不过）：%v", err)
+	}
+	if control.KeyID(pubB64) == "" {
+		return fmt.Errorf("自检没过（新钥的 `key_id` 算不出来）")
+	}
+	return nil
+}
+
+// rekeyOperatorKey —— 换钥那一路的**顺序口**（判据③/④ 的落点），三步不许换序：
+//
+//	① **自检**（`selfCheck` · 纯内存 · 零副作用）—— 不过 ⇒ 不写 `operator.pub`、也不归档；
+//	② **备份先行**（`E3` 的 `archiveOperatorKeys`：先复制 + 逐字核对 `sha256` + 才移走原件）——
+//	   不过 ⇒ **不动作**（在册两枚件的字节一个不动）；
+//	③ 才写新的一对（`writeOperatorKeys`）。
+//
+// 返回值 = 两枚归档件的路径（给回执用）；出错时把「现在到哪一步」照实带出去（不吞）。
+func rekeyOperatorKey(kf operatorKeyFile, pf operatorPubFile, priv ed25519.PrivateKey, oldKeyID string, selfCheck rekeySelfCheckFn) (string, string, error) {
+	if selfCheck == nil {
+		selfCheck = operatorRekeySelfCheck
+	}
+	if err := selfCheck(pf.Pub, priv); err != nil {
+		return "", "", fmt.Errorf("自检没过 ⇒ **不写** `operator.pub`（先自检后不可逆）：%v", err)
+	}
+	kArch, pArch, err := archiveOperatorKeys(oldKeyID) // 备份先行（内部已逐字核对）
+	if err != nil {
+		return "", "", fmt.Errorf("备份先行那一格没过 ⇒ 不动作（在册两枚件的字节一个不动）：%v", err)
+	}
+	if err := writeOperatorKeys(kf, pf); err != nil {
+		return kArch, pArch, fmt.Errorf("写新钥失败：%v（**归档件已在** ⇒ 旧钥字节没丢：%s / %s）", err, kArch, pArch)
+	}
+	return kArch, pArch, nil
+}
+
 // ---- 密钥与口令 ----
 
-// newOperatorKey 生成密钥对：私钥用**口令派生的密钥**加密（PBKDF2-HMAC-SHA256 + AES-256-GCM）落盘。
 func newOperatorKey(pass, by string) (operatorKeyFile, operatorPubFile, error) {
+	kf, pf, _, err := newOperatorKeyFull(pass, by)
+	return kf, pf, err
+}
+
+// newOperatorKeyFull —— **同一枚**生成口（`E5` 的「先自检」要用到内存里的私钥 —— 私钥不落盘、
+// 自检完就丢）。`newOperatorKey` 是本函数的薄壳 ⇒ 生成路径全仓**只有一份**（不各写各的）。
+func newOperatorKeyFull(pass, by string) (operatorKeyFile, operatorPubFile, ed25519.PrivateKey, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return operatorKeyFile{}, operatorPubFile{}, err
+		return operatorKeyFile{}, operatorPubFile{}, nil, err
 	}
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
-		return operatorKeyFile{}, operatorPubFile{}, err
+		return operatorKeyFile{}, operatorPubFile{}, nil, err
 	}
 	key := pbkdf2SHA256([]byte(pass), salt, keyIterations, 32)
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return operatorKeyFile{}, operatorPubFile{}, err
+		return operatorKeyFile{}, operatorPubFile{}, nil, err
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return operatorKeyFile{}, operatorPubFile{}, err
+		return operatorKeyFile{}, operatorPubFile{}, nil, err
 	}
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
-		return operatorKeyFile{}, operatorPubFile{}, err
+		return operatorKeyFile{}, operatorPubFile{}, nil, err
 	}
 	ct := gcm.Seal(nil, nonce, priv, nil)
 	b64 := base64.StdEncoding.EncodeToString
@@ -826,7 +1142,23 @@ func newOperatorKey(pass, by string) (operatorKeyFile, operatorPubFile, error) {
 			Nonce: b64(nonce), CT: b64(ct), Pub: pubB64, CreatedAt: now, By: by,
 		}, operatorPubFile{
 			Alg: "ed25519", Pub: pubB64, KeyID: control.KeyID(pubB64), At: now,
-		}, nil
+		}, priv, nil
+}
+
+// writeOperatorKeys —— 落两枚件（**只有这一处**写：第一次生成与换钥都走它 ⇒ 权限/换行/形态同源）。
+func writeOperatorKeys(kf operatorKeyFile, pf operatorPubFile) error {
+	if err := os.MkdirAll(approveDir(), 0o700); err != nil {
+		return fmt.Errorf("建不了目录 %s：%v", approveDir(), err)
+	}
+	kb, _ := json.MarshalIndent(kf, "", " ")
+	pb, _ := json.MarshalIndent(pf, "", " ")
+	if err := os.WriteFile(operatorKeyPath(), append(kb, '\n'), 0o600); err != nil {
+		return fmt.Errorf("写不了私钥件 %s：%v", operatorKeyPath(), err)
+	}
+	if err := os.WriteFile(operatorPubPath(), append(pb, '\n'), 0o644); err != nil {
+		return fmt.Errorf("写不了公钥件 %s：%v", operatorPubPath(), err)
+	}
+	return nil
 }
 
 // unlockOperatorKey 用口令解开私钥（口令错 ⇒ 报错，**不重试不猜**）。

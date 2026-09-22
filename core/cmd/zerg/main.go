@@ -1379,7 +1379,12 @@ type invocation struct {
 	deep         bool // `C3`/`C4`/`C1`：**贵面现跑**（重复面报数 + 六档标定曲线 · 删面两器）
 	confirm      string
 	confirmGiven bool
-	yes          bool
+	// `--ttl <时长>`（`E4` · 人签批准件的**有效期**面）：与 `--confirm` 同一种形态 —— 「给了旗标」与
+	// 「给了值」是两件事（`--ttl` 裸给 ⇒ `ttlGiven` 真、值为空 ⇒ 由 `approve new` 判成用法错 2，
+	// **不许**静默当「没给」）。缺省（不给这一枚）⇒ 不过期，件与今天逐字节同形态。
+	ttl      string
+	ttlGiven bool
+	yes      bool
 
 	// 契约主号（§十二 P-026：消费侧拒绝不认的 schema 主号 —— `--schema zerg/v2` ⇒ 2）
 	schemaWant  string
@@ -1621,6 +1626,17 @@ func parseInvocation(args []string) (*invocation, error) {
 		case strings.HasPrefix(a, "--confirm="):
 			inv.confirmGiven = true
 			inv.confirm = strings.TrimPrefix(a, "--confirm=")
+		// `--ttl <时长>`（`E4`）：与 `--confirm` 逐字同一种形态（**给了旗标 ≠ 给了值**）——
+		// 裸给 ⇒ `ttlGiven` 真、值为空 ⇒ `approve new` 判「没给时长」用法错 2（不静默当没给）。
+		case a == "--ttl" || a == "--ttl=":
+			inv.ttlGiven = true
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				inv.ttl = args[i]
+			}
+		case strings.HasPrefix(a, "--ttl="):
+			inv.ttlGiven = true
+			inv.ttl = strings.TrimPrefix(a, "--ttl=")
 		case a == "--help" || a == "-h":
 			inv.wantHelp = true
 		case a == "--version":
