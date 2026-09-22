@@ -86,6 +86,16 @@
       "gate": "（由 core: go test 覆盖 —— 判据面在 core/cmd/zerg/cli_impact_cache_test.go：键三件 + 四条失效条件 + 毫秒档 + 落点不在仓内 + 只增不删）",
       "change_class": "A",
       "change_note": "改目录名 / 改缓存键 = 一次全量失效（旧缓存件留着不用，**不许自动删**）；加失效条件**只许多加**，不许放宽（§4.4 缓存口径 · §十 R42 源指纹）"
+    },
+    {
+      "id": "S-i",
+      "name": "变更影响面 · 实测回填闭环（预测 vs 实际）",
+      "truth": "core/internal/contract/impact-backfill.json",
+      "truth_shape": "json：`file`（回填件落点文件名，落在**状态目录**下）+ `append_only` + `required_keys`（§5.5 点名的**十键**）+ `counts`（命中/漏报/虚报的口径与 `BLOCKED` 规则）+ `closed_set`（步名闭集两条）+ `slot`（**现成混淆矩阵槽**：`scripts/gates/check-slice.py` 第 7 行「假绿 = 0 · 假红 ≤ 10%」）+ `write_gate`（干跑 / 真写 / 写失败三档）+ `not_input_to`（**不作任何算法的输入**：预测 / 排序 / 裁条 / 退码 / 门禁判据）；消费方 = `core/cmd/zerg/family_impact_backfill.go`（读这一份，源码里不另写第二份文件名与键表）",
+      "version_field": "schema（zerg/impact-backfill/1）",
+      "gate": "（由 core: go test 覆盖 —— 判据面在 core/cmd/zerg/cli_impact_backfill_test.go：十键齐 + 缺任一不写 + 追加式（历史行逐字节不变）+ 三数可复算（同一次门禁结果 + 同 head_sha ⇒ 逐字相同）+ BLOCKED 不进漏报 + 干跑不写 + 写失败不改退码 + **回填件只被读**（静态 0 处 + 运行期改值不变））",
+      "change_class": "A",
+      "change_note": "改 `file` = 换落点（旧件留着不用，**不许自动删** · 也不许自动迁移）；`required_keys` **只许多加**（缺任一 ⇒ 该行不许写 · §5.5 判据④）；`slot` 的阈值**照抄现成槽**，本件**不许自设**（§十 R30：口径可定、阈值不可编）；`not_input_to` 是**冲突⑧ 的拍死句** ⇒ 只许加宽，**不许收窄**（收窄 = 把回填接成反馈回路 = 越线 ✗）"
     }
   ],
   "change_flow": {
