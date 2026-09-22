@@ -1374,6 +1374,8 @@ type invocation struct {
 	// 前者只决定**内容与裁剪**（条数 / 全文），后者只做**字段投影**；两者可叠加，都不改六键包封）。
 	forModel     bool
 	forHuman     bool
+	wide         bool // `C3`：文档面口径 A 档（裸词 · `R23`）
+	strict       bool // `C3`：文档面口径 C 档（与「件:行」同行 · 最严档）
 	confirm      string
 	confirmGiven bool
 	yes          bool
@@ -1588,6 +1590,12 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.forModel = true
 		case a == "--for-human":
 			inv.forHuman = true
+		// `C3` 文档面口径三档（`R23` 已拍）：`--wide` = A 档（裸词）· `--strict` = C 档（与「件:行」同行）。
+		// 与 `--for-model`/`--for-human` 同一种形态：全局布尔、谁用谁读 —— 不用的命令静默忽略。
+		case a == "--wide":
+			inv.wide = true
+		case a == "--strict":
+			inv.strict = true
 		case a == "--confirm" || a == "--confirm=":
 			// 给了旗标但没给值 ⇒ confirmGiven 为真、值为空（由 guard 判成「值不匹配目标」）
 			inv.confirmGiven = true

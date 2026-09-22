@@ -266,7 +266,8 @@ func impactCallgraphBin() string {
 // ★ 命中就**不调用现算**（这是缓存的全部意义）；命中与未命中的人面/机器面必须逐字同输出
 // （`M8`：缓存不许改答案）⇒ 缓存件里存的就是那一层的完整产物（层名 / 粒度 / 口径值 / 状态 /
 // 读数 / 条目），命中时**原样**装回，不重拼、不改写。
-func impactPullLayers(root string, tgt *impactTarget, cheap bool, mode impactCacheMode) ([]impactLayer, impactBudgetRun) {
+func impactPullLayers(root string, tgt *impactTarget, cheap bool, mode impactCacheMode,
+	docBuild bool, docTier string) ([]impactLayer, impactBudgetRun) {
 	chainStart := time.Now()
 	// `B4`：本跑账从**契约件**起（读不到 ⇒ `Plan.OK=false` ⇒ **不裁**，照实明写）。
 	run := impactBudgetRun{Plan: impactBudgetPlanFor(root)}
@@ -353,7 +354,7 @@ func impactPullLayers(root string, tgt *impactTarget, cheap bool, mode impactCac
 		pull("②", func() impactLayer { return impactLayerSymbol(root, tgt, cheap) }),
 		pull("③", func() impactLayer { return impactLayerContract(root, tgt) }),
 		pull("④", func() impactLayer { return impactLayerLexical(root, tgt) }),
-		pull("⑤", func() impactLayer { return impactLayerSemantic(root, tgt, layout, layoutNote == "") }),
+		pull("⑤", func() impactLayer { return impactLayerSemantic(root, tgt, layout, layoutNote == "", docBuild, docTier) }),
 		pull("⑥", func() impactLayer { return impactLayerPublic(root, tgt, cheap) }),
 	}
 	for i := range layers {
@@ -945,49 +946,58 @@ func impactOllamaTags() ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 }
 
-func impactLayerSemantic(root string, tgt *impactTarget, layout impactStateLayout, layoutOK bool) impactLayer {
+func impactLayerSemantic(root string, tgt *impactTarget, layout impactStateLayout, layoutOK bool,
+	docBuild bool, docTier string) impactLayer {
 	lay := impactLayer{
 		Seq: "⑤", Name: "语义层（按需）", Grane: "件级",
 		Caliber: "在位判据（可测三条子句）：/api/tags 非空 + capabilities 含 embedding + embedding_length 有值",
 	}
+	// ⑤a **文档倒排面**（`C3`：码 ⇒ 文档 · 「词 → 篇」倒排 —— 这一面**不需要模型在位**）。
+	// 为什么把它们放同一行：层表**恒六行**是 `A2` 判据①（形状不变），`C3` 不许加第七行 ⇒
+	// 文档面与语义面两条读数落在**同一行**的读数里（各带各的口径），状态取「本跑真取到数」的那一档。
+	doc := impactDocFaceLookup(root, tgt, layout, layoutOK, docBuild, docTier)
+	lay.Rows = doc.Rows
+	lay.Detail = doc.Detail
+	// ⑤b **语义面**（在位判据 · 三条子句）：`C3` 一个字不改（照旧现读本机 ollama）。
 	tags, err := impactOllamaTags()
 	if err != nil {
-		lay.Status = "未在位"
-		lay.Detail = fmt.Sprintf("在位判据三子句**一条都没过**：连不上本机 ollama（%v）—— 照实报「未在位」，不猜", err)
+		lay.Status = doc.Status
+		if doc.Status != "取值" {
+			lay.Status = "未在位"
+		}
+		lay.Detail += fmt.Sprintf(" · 语义面在位判据三子句**一条都没过**：连不上本机 ollama（%v）—— 照实报「未在位」，不猜", err)
 	} else {
 		ok, model, detail := impactSemanticGate(tags)
-		lay.Detail = "在位判据现读：" + detail
+		lay.Detail += " · 语义面在位判据现读：" + detail
 		if !ok {
-			lay.Status = "未在位"
+			if doc.Status != "取值" {
+				lay.Status = "未在位"
+			}
 		} else {
 			lay.Caliber += " · model_id=" + model
-			// 索引面（`R13`）：**目录名自 `A5` 起写在契约件里**（`dirs.index`），本层读契约件、不再写
-			// 「目录名待拍板」；建索引是低频批处理（§九 批3B 子端侧 embedding），**不在查询路径上现建**
-			// ⇒ 索引不在就明说「未建索引」，**不拿模型在位冒充有召回**。
-			if !layoutOK {
-				lay.Status = "未建索引"
-				lay.Detail += " · 索引目录名取不到（落点契约件 `" + impactStateContractRel + "` 读不到 ⇒ 不许猜目录名）" +
-					" ⇒ **未建索引 ⇒ 不取数**"
-			} else {
-				idx := impactCacheIndexDir(layout)
-				if st, serr := os.Stat(idx); serr == nil && st.IsDir() {
-					lay.Status = "取值"
-					lay.Detail += " · 索引目录在盘上（" + idx + "）—— ★ 本批（`A5`）**只定名字与落点、不读索引内容**" +
-						"（取数实现属 §九 批3B）⇒ 这一层本跑条目仍为 0（**不是「没影响」，是「没取数」**）"
-				} else {
-					lay.Status = "未建索引"
-					lay.Detail += " · 索引目录不在盘上（" + idx + " —— 目录名写死在契约件 `" + impactStateContractRel +
-						"` 的 `dirs.index`）⇒ **未建索引 ⇒ 不取数**" +
-						"（v1.5 纠错⑦：中英同义对余弦 −0.0338 ⇒「有模型」≠「有召回」）"
-				}
+			// 索引面（`R13`）：目录名读契约件（`dirs.index`）。`C3` 起**真建**了 ——
+			// 「词 → 篇」倒排落在同一个目录下（文件名带文档仓 `head_sha`），故这一档不再写
+			// 「只定名字不读内容」：索引在 ⇒ 取值（上面 ⑤a 已查过），不在 ⇒ 未建索引。
+			if doc.Status != "取值" {
+				lay.Detail += " · 索引目录（" + impactDocIndexDirName(layout) + "）里没有与当前文档仓 `head_sha` 匹配的倒排件" +
+					" ⇒ **未建索引 ⇒ 语义面不取数**（v1.5 纠错⑦：中英同义对余弦 −0.0338 ⇒「有模型」≠「有召回」）"
 			}
 		}
+	}
+	if doc.Status != "取值" && lay.Status == "" {
+		lay.Status = doc.Status
+	}
+	if doc.Status == "取值" {
+		lay.Status = "取值"
 	}
 	// 运行期面（§十一 + `R34`）：**未查**，逐条点名四类盲区 —— 静态图天生看不见。
 	lay.Detail += " · 运行期面（反射 / 配置串 / HTTP 路由 / 序列化）：**未查**" +
 		"（`R34` 的「`zerg doctor` 名册四项 verdict 摘要进 `warnings[]` 一条」**本批未接**：六键包封的 `warnings` 今天恒 `[]` ⇒ 无落点）"
 	return lay
 }
+
+// impactDocIndexDirName 索引落点目录（只为人面那一句；目录名读契约件 `dirs.index`）。
+func impactDocIndexDirName(layout impactStateLayout) string { return impactCacheIndexDir(layout) }
 
 // -------- ⑥ 公开面（件级 · 唯一产物不在本仓的一层）------------------------------------------
 

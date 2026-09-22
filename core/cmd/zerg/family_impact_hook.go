@@ -355,7 +355,7 @@ func impactDryRunSummaryOf(root, rel string) impactDryRunSummary {
 		s.Text = "影响面：" + s.Reason + " —— 这是**没取到数**，不是「没影响」（`F6`：把『没报』读成『没影响』）"
 		return s
 	}
-	layers, _ := impactPullLayers(root, tgt, true, impactCacheOff)
+	layers, _ := impactPullLayers(root, tgt, true, impactCacheOff, false, "B")
 	rows, total := impactCollectRows(layers)
 	s.Layers, s.Rows, s.Taken = layers, total, true
 	if l, ok := impactLayerBySeq(layers, "①"); ok {
