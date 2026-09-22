@@ -148,11 +148,18 @@ func budgetMirror(t *testing.T, fix func(m map[string]any)) string {
 	return root
 }
 
-// budgetPushCap 把两式的实测输入都压成一个小额度（**人为压上限** = 判据② 的负控）。
+// budgetPushCap 把上限压成一个小额度（**人为压上限** = 判据② 的负控）。
+//
+// ★ 计数随动（2026-09-22 · `R32` 已定）：本跑上限的第一来路是 `cap.上限定值`（已定值）⇒
+// 要真压住上限，**定值那一格也必须一起压**（只压实测输入 = 压不动 ⇒ 那一格会变成假负控）。
+// 两式一并压，是为了让「回落路径」上的那一份也仍然压得住（定值缺时走它）。
 func budgetPushCap(sec float64) func(m map[string]any) {
 	return func(m map[string]any) {
 		for _, k := range []string{"全层现算实测", "最贵单层现跑值"} {
 			m["cap"].(map[string]any)["实测输入"].(map[string]any)[k].(map[string]any)["取值秒"] = sec
+		}
+		if fx, ok := m["cap"].(map[string]any)["上限定值"].(map[string]any); ok {
+			fx["值秒"] = sec
 		}
 	}
 }
@@ -383,6 +390,31 @@ func TestImpactBudget_CapAdmissionAndFiledMath(t *testing.T) {
 	if len(p.Allow) == 0 {
 		t.Error("降级档层名单该从契约件读（实得空）")
 	}
+	// 正控（`R32` 已拍 · Mr2109 2026-09-22 定「取大」）：上限来自契约件 `cap.上限定值`，
+	// 值逐字等于契约件那一格，出处逐字回引。
+	var fx struct {
+		Cap struct {
+			Fixed struct {
+				Value  float64 `json:"值秒"`
+				Origin string  `json:"出处"`
+			} `json:"上限定值"`
+		} `json:"cap"`
+	}
+	if err := json.Unmarshal(real, &fx); err != nil {
+		t.Fatalf("真契约件解不开（定值那一格）：%v", err)
+	}
+	if !(fx.Cap.Fixed.Value > 0) {
+		t.Fatalf("真契约件没写 `cap.上限定值.值秒`（`R32` 已定 ⇒ 这一格必须是有值的定值）")
+	}
+	if !p.Fixed {
+		t.Errorf("正控失败：真契约件有定值 %.6f s 却没被采用（%s）", fx.Cap.Fixed.Value, p.FixedWhy)
+	}
+	if d := p.CapSec - fx.Cap.Fixed.Value; d > 1e-9 || d < -1e-9 {
+		t.Errorf("正控失败：生效上限 %.6f s ≠ 契约件定值 %.6f s", p.CapSec, fx.Cap.Fixed.Value)
+	}
+	if p.FixedOrig != fx.Cap.Fixed.Origin {
+		t.Errorf("正控失败：定值出处没逐字回引契约件（要 %q，实得 %q）", fx.Cap.Fixed.Origin, p.FixedOrig)
+	}
 	// ④ 对拍：契约件里记的 `算出值秒` 必须等于 乘数 × 实测输入取值（两边都由实现算，不心算）。
 	for _, f := range p.Formulas {
 		if !f.MatchesFixed {
@@ -421,7 +453,10 @@ func TestImpactBudget_CapAdmissionAndFiledMath(t *testing.T) {
 		t.Errorf("负控B：只有另一式该进裁决，实得 %d 式", admB)
 	}
 	// 负控 C：两式都不进裁决 ⇒ **不裁**（不许拿 0 当上限 ⇒ 一次都不该降级）。
+	// ★ 计数随动（2026-09-22）：本格自 `R32` 拍定起带**已定值** ⇒ 这一格测的是**回落路径**
+	// （定值缺 + 两式都不进裁决 ⇒ 不裁），故先把 `cap.上限定值` 拿掉再跑。
 	mC := budgetContractFix(t, func(m map[string]any) {
+		delete(m["cap"].(map[string]any), "上限定值")
 		budgetMeasured(m, "全层现算实测")["head_sha"] = ""
 		budgetMeasured(m, "最贵单层现跑值")["缓存态"] = "未测"
 	})
@@ -432,14 +467,62 @@ func TestImpactBudget_CapAdmissionAndFiledMath(t *testing.T) {
 	if !strings.Contains(pC.Why, "不裁") {
 		t.Errorf("负控C：不裁要写明原因，实得 %q", pC.Why)
 	}
-	// 负控 D：取法不在闭集 ⇒ 不裁（不许自选一个默认取法）。
-	mD := budgetContractFix(t, func(m map[string]any) { m["cap"].(map[string]any)["生效式取法"] = "mean" })
+	// 负控 D：取法不在闭集 ⇒ 不裁（不许自选一个默认取法）。★ 同样走回落路径（先拿掉定值）。
+	mD := budgetContractFix(t, func(m map[string]any) {
+		delete(m["cap"].(map[string]any), "上限定值")
+		m["cap"].(map[string]any)["生效式取法"] = "mean"
+	})
 	pD := zerg.ImpactBudgetPlanBytesForTest(mD)
 	if pD.Armed {
 		t.Error("负控D：取法不在闭集竟还裁了（自选默认取法 = 越线）")
 	}
 	if !strings.Contains(pD.Why, "闭集") {
 		t.Errorf("负控D：不裁要写明原因，实得 %q", pD.Why)
+	}
+	// 负控 D2（新格 · `R32` 已定后）：**定值自己**的取法不在闭集 ⇒ 不裁（不许自选、也不许悄悄回落）。
+	mD2 := budgetContractFix(t, func(m map[string]any) {
+		m["cap"].(map[string]any)["上限定值"].(map[string]any)["取法"] = "mean"
+	})
+	pD2 := zerg.ImpactBudgetPlanBytesForTest(mD2)
+	if pD2.Armed {
+		t.Error("负控D2：定值的取法不在闭集竟还裁了（判不了就该不裁）")
+	}
+	if !strings.Contains(pD2.Why, "上限定值.取法") || !strings.Contains(pD2.Why, "闭集") {
+		t.Errorf("负控D2：不裁要写明是哪一格的取法漂了，实得 %q", pD2.Why)
+	}
+	// 负控 F（新格）：定值 `值秒` ≤ 0 ⇒ **回落**到两式取（且写明换档，不静默），上限 = 两式取大。
+	mF := budgetContractFix(t, func(m map[string]any) {
+		m["cap"].(map[string]any)["上限定值"].(map[string]any)["值秒"] = 0
+	})
+	pF := zerg.ImpactBudgetPlanBytesForTest(mF)
+	if pF.Fixed {
+		t.Error("负控F：定值非正竟还被采用")
+	}
+	if !pF.OK || !pF.Armed {
+		t.Errorf("负控F：定值非正 ⇒ 该回落到两式取（armed），实得 ok=%v armed=%v why=%s", pF.OK, pF.Armed, pF.Why)
+	}
+	if !strings.Contains(pF.FixedWhy, "没被采用") || !strings.Contains(pF.FixedWhy, "回落") {
+		t.Errorf("负控F：换档要写明（不静默），实得 %q", pF.FixedWhy)
+	}
+	fmax := 0.0
+	for _, f := range pF.Formulas {
+		if f.Admit && f.Value > fmax {
+			fmax = f.Value
+		}
+	}
+	if d := pF.CapSec - fmax; d > 1e-9 || d < -1e-9 {
+		t.Errorf("负控F：回落后的上限该 = 两式取大 %.6f，实得 %.6f", fmax, pF.CapSec)
+	}
+	// 负控 G（新格）：定值 `出处` 为空 ⇒ 回落（出处是「谁定的」那一格，缺了就不许当已定值用）。
+	mG := budgetContractFix(t, func(m map[string]any) {
+		m["cap"].(map[string]any)["上限定值"].(map[string]any)["出处"] = ""
+	})
+	pG := zerg.ImpactBudgetPlanBytesForTest(mG)
+	if pG.Fixed {
+		t.Error("负控G：定值出处为空竟还被采用")
+	}
+	if !strings.Contains(pG.FixedWhy, "没被采用") {
+		t.Errorf("负控G：换档要写明，实得 %q", pG.FixedWhy)
 	}
 	// 负控 E：契约件读不到（形状号不认）⇒ 不裁。
 	mE := budgetContractFix(t, func(m map[string]any) { m["schema"] = "zerg/impact-budget/9" })
@@ -693,7 +776,11 @@ func TestImpactBudget_BlockEchoesContractNumbers(t *testing.T) {
 				ID    string  `json:"id"`
 				Fixed float64 `json:"算出值秒"`
 			} `json:"两式"`
-			Pick string `json:"生效式取法"`
+			Pick  string `json:"生效式取法"`
+			Fixed struct {
+				Value  float64 `json:"值秒"`
+				Origin string  `json:"出处"`
+			} `json:"上限定值"`
 		} `json:"cap"`
 	}
 	if err := json.Unmarshal(raw, &c); err != nil {
@@ -703,8 +790,22 @@ func TestImpactBudget_BlockEchoesContractNumbers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("跑链失败：%v", err)
 	}
-	if !strings.Contains(v.Block, "`R32` **仍待拍**") {
-		t.Error("预算块里该明写「`N` 的绝对值 `R32` 仍待拍」")
+	// `R32` 自 2026-09-22 起**已定**（Mr2109 定：取大）⇒ 块里要把「已定 + 出处 + 旧值并留」
+	// 三件都打出来；旧文的「暂定」措辞仍以**旧值并留**那一行的形式逐字在块里（改前原文可找回）。
+	if !strings.Contains(v.Block, "`R32` **已定**") {
+		t.Error("预算块里该明写「`N` 的绝对值 `R32` 已定」（2026-09-22 Mr2109 定：取大）")
+	}
+	if !strings.Contains(v.Block, "已定值（契约件 `cap.上限定值`") {
+		t.Errorf("预算块里该有「已定值」那一行：\n%s", tail(v.Block, 900))
+	}
+	if !strings.Contains(v.Block, c.Cap.Fixed.Origin) {
+		t.Errorf("已定值那一行该逐字回引出处的原文 %q：\n%s", c.Cap.Fixed.Origin, tail(v.Block, 900))
+	}
+	if want := strconv.FormatFloat(c.Cap.Fixed.Value, 'f', 3, 64); !strings.Contains(v.Block, want) {
+		t.Errorf("已定值 %s s（契约件记的）没在预算块里逐字出现：\n%s", want, tail(v.Block, 900))
+	}
+	if !strings.Contains(v.Block, "旧值并留（改前原文") {
+		t.Error("预算块里该有「旧值并留」那一行（改前原文逐字找回）")
 	}
 	for _, f := range c.Cap.Formulas {
 		want := strconv.FormatFloat(f.Fixed, 'f', 3, 64)
