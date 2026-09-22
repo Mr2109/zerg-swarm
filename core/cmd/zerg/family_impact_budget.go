@@ -88,6 +88,20 @@ type impactBudgetFormula struct {
 	Fixed float64 `json:"算出值秒"`
 }
 
+// impactBudgetFixed —— `cap.上限定值` 那一格（**`R32` 已拍**：Mr2109 2026-09-22 定「取大」）。
+//
+// 为什么另立一格而不是改 `cap.生效式`：那一格是**旧值的原文**（「★ 本格是暂定取法」）——
+// 拍定之后**只许并留、不许改写**（数字纪律：改前原文要能逐字找回）⇒ 定值住本格，
+// 旧文仍住 `cap.生效式` 与 `上限定值.旧值并留`（两处逐字同）。
+type impactBudgetFixed struct {
+	Value   float64 `json:"值秒"`
+	Pick    string  `json:"取法"`
+	Origin  string  `json:"出处"`
+	Caliber string  `json:"口径"`
+	OldText string  `json:"旧值并留"`
+	Read    string  `json:"读法"`
+}
+
 // impactBudgetMeasured —— 一条**实测输入**（判据③ 的三件：口径 + `head_sha` + 缓存态）。
 type impactBudgetMeasured struct {
 	Value   float64 `json:"取值秒"`
@@ -110,6 +124,7 @@ type impactBudgetContract struct {
 	Cap struct {
 		Formulas []impactBudgetFormula           `json:"两式"`
 		Measured map[string]impactBudgetMeasured `json:"实测输入"`
+		Fixed    impactBudgetFixed               `json:"上限定值"`
 		Pick     string                          `json:"生效式取法"`
 		PickSet  []string                        `json:"生效式取法闭集"`
 		PickRule string                          `json:"生效式"`
@@ -173,16 +188,23 @@ type impactBudgetFormulaPlan struct {
 	Why   string
 }
 
-// impactBudgetPlan —— 本跑的上限裁决（**全部从契约件读**：两式 / 乘数 / 实测输入 / 取法 / 降级档名单）。
+// impactBudgetPlan —— 本跑的上限裁决（**全部从契约件读**：定值 / 两式 / 乘数 / 实测输入 / 取法 / 降级档名单）。
 type impactBudgetPlan struct {
 	OK         bool   // 契约件读得到且形状认（**与 `Armed` 分开**：读到了也可能「不裁」）
 	Armed      bool   // 本跑有没有在效的
-	Why        string // 不裁的原因（读不到 / 取法不在闭集 / 两式都不进裁决）
+	Why        string // 不裁的原因（读不到 / 定值非法且取法不在闭集 / 两式都不进裁决）
 	Formulas   []impactBudgetFormulaPlan
-	Pick       string  // 生效式取法（契约件原样：`min` / `max`）
-	PickedID   string  // 生效的那一式
+	Pick       string  // 回落路径的取法（契约件原样：`min` / `max`）
+	PickedID   string  // 生效的那一式 / 定值
 	CapSec     float64 // 本跑上限（秒）
-	Rule       string  // `cap.生效式` 那一格原样（人面照引）
+	Rule       string  // `cap.生效式` 那一格原样（人面照引 · **旧值并留**）
+	Fixed      bool    // 本跑上限来自 `cap.上限定值`（**已定值** · `R32` 已拍）
+	FixedPick  string  // `上限定值.取法` 原样
+	FixedWhy   string  // 定值没被采用时的原因（回落 / 不裁 —— 照实写明，不静默换档）
+	FixedOrig  string  // `上限定值.出处` 原样（逐字回引）
+	FixedCal   string  // `上限定值.口径` 原样
+	FixedOld   string  // `上限定值.旧值并留` 原样（改前原文逐字找回）
+	FixedRead  string  // `上限定值.读法` 原样
 	Allow      []string
 	AllowWhy   string
 	NoAdmit    map[string]string // 层 ⇒ 不进裁决的理由（契约件 `耗时准入.不进裁决的层`）
@@ -202,6 +224,11 @@ func impactBudgetPlanOf(c impactBudgetContract) impactBudgetPlan {
 	p := impactBudgetPlan{
 		Pick:       c.Cap.Pick,
 		Rule:       c.Cap.PickRule,
+		FixedPick:  c.Cap.Fixed.Pick,
+		FixedOrig:  c.Cap.Fixed.Origin,
+		FixedCal:   c.Cap.Fixed.Caliber,
+		FixedOld:   c.Cap.Fixed.OldText,
+		FixedRead:  c.Cap.Fixed.Read,
 		Allow:      append([]string{}, c.Tiers.DegradeTier.SeqList...),
 		AllowWhy:   c.Tiers.DegradeTier.Caliber,
 		NoAdmit:    map[string]string{},
@@ -248,22 +275,45 @@ func impactBudgetPlanOf(c impactBudgetContract) impactBudgetPlan {
 			admitted = append(admitted, fp)
 		}
 	}
+	// **定值优先**（`R32` 已拍：Mr2109 2026-09-22 定「取大」）—— 读法由契约件
+	// `上限定值.读法` 写死：`值秒` 是正数**且** `出处` 非空 ⇒ 生效上限 = 定值；定值里的
+	// `取法` 若给了，必须落在 `生效式取法闭集` 里（不在 ⇒ 不裁：定值的取法漂了就是判不了，
+	// 不许自选、也不许悄悄回落）。定值缺 / 值非正 / 出处空 ⇒ **回落**到 `cap.生效式取法` 逐式取。
+	fx := c.Cap.Fixed
+	fxPick := strings.TrimSpace(fx.Pick)
+	fxBad := fxPick != "" && !containsStr(c.Cap.PickSet, fxPick)
 	switch {
-	case len(admitted) == 0:
+	case fx.Value > 0 && strings.TrimSpace(fx.Origin) != "" && !fxBad:
+		p.OK, p.Armed, p.Fixed = true, true, true
+		p.PickedID, p.CapSec = "定值", fx.Value
+	case fx.Value > 0 && strings.TrimSpace(fx.Origin) != "" && fxBad:
 		p.OK, p.Armed = true, false
-		p.Why = "两式都不进裁决（判据③：缺档位的耗时不许进预算裁决）⇒ 本跑**不裁**（照实明写，不当 0 看）"
-	case c.Cap.Pick != "min" && c.Cap.Pick != "max":
-		p.OK, p.Armed = true, false
-		p.Why = fmt.Sprintf("`cap.生效式取法` = %q 不在闭集 %v 里 ⇒ **不裁**（不许自选一个默认取法）", c.Cap.Pick, c.Cap.PickSet)
+		p.FixedWhy = fmt.Sprintf("`cap.上限定值.取法` = %q 不在闭集 %v 里 ⇒ **不裁**（不许自选一个默认取法，也不许悄悄回落）", fx.Pick, c.Cap.PickSet)
+		p.Why = p.FixedWhy
 	default:
-		p.OK, p.Armed = true, true
-		best := admitted[0]
-		for _, fp := range admitted[1:] {
-			if (c.Cap.Pick == "max" && fp.Value > best.Value) || (c.Cap.Pick == "min" && fp.Value < best.Value) {
-				best = fp
-			}
+		switch {
+		case fx.Value != 0 || strings.TrimSpace(fx.Origin) != "":
+			p.FixedWhy = "定值这一格**没被采用**（值不是正数 / 出处为空）⇒ 回落到 `cap.生效式取法` 逐式取（照实写明换档，不静默）"
+		default:
+			p.FixedWhy = "定值这一格**本跑缺失** ⇒ 回落到 `cap.生效式取法` 逐式取（照实写明换档，不静默）"
 		}
-		p.PickedID, p.CapSec = best.ID, best.Value
+		switch {
+		case len(admitted) == 0:
+			p.OK, p.Armed = true, false
+			p.Why = "两式都不进裁决（判据③：缺档位的耗时不许进预算裁决）⇒ 本跑**不裁**（照实明写，不当 0 看）"
+		case c.Cap.Pick != "min" && c.Cap.Pick != "max":
+			p.OK, p.Armed = true, false
+			p.Why = fmt.Sprintf("`cap.生效式取法` = %q 不在闭集 %v 里 ⇒ **不裁**（不许自选一个默认取法）", c.Cap.Pick, c.Cap.PickSet)
+		default:
+			p.OK, p.Armed = true, true
+			best := admitted[0]
+			for _, fp := range admitted[1:] {
+				if (c.Cap.Pick == "max" && fp.Value > best.Value) || (c.Cap.Pick == "min" && fp.Value < best.Value) {
+					best = fp
+				}
+			}
+			p.PickedID, p.CapSec = best.ID, best.Value
+		}
 	}
 	return p
 }
@@ -370,7 +420,8 @@ func emitImpactBudgetBlock(w io.Writer, run impactBudgetRun, layers []impactLaye
 		fmt.Fprintf(w, "  契约件 `%s`：%s ⇒ 本跑**不裁**（照实明写「不裁」，不当 0 看；也不自选一个默认取法）\n",
 			impactBudgetContractRel, p.Why)
 	} else {
-		fmt.Fprintf(w, "  上限两式（契约件 `%s` 原样读 · `N` 的绝对值 `R32` **仍待拍** ⇒ 本件不编定值，实现里 0 个阈值数）：\n",
+		fmt.Fprintf(w, "  上限两式（契约件 `%s` 原样读 · `N` 的绝对值 `R32` **已定**（Mr2109 2026-09-22 定：取大）"+
+			" ⇒ 两式**只作来路与回落**，生效上限看下一条「已定值」；实现里 0 个阈值数）：\n",
 			impactBudgetContractRel)
 		for _, f := range p.Formulas {
 			if f.Admit {
@@ -381,8 +432,23 @@ func emitImpactBudgetBlock(w io.Writer, run impactBudgetRun, layers []impactLaye
 			}
 		}
 	}
+	// ① 已定值（`R32` 已拍 · Mr2109 2026-09-22 定「取大」）：生效上限的第一来路。
+	//   照引三件：出处（谁定的）· 口径（怎么来的）· **旧值并留**（改前原文一字未改）。
+	if p.Fixed {
+		fmt.Fprintf(w, "  已定值（契约件 `cap.上限定值` · 出处 **%s**）：**%.3f s** —— %s\n",
+			p.FixedOrig, p.CapSec, p.FixedCal)
+		fmt.Fprintf(w, "    读法（契约件原样）：%s\n", p.FixedRead)
+		fmt.Fprintf(w, "    旧值并留（改前原文**一字未改** · 逐字回引）：%s\n", p.FixedOld)
+	} else if p.OK {
+		fmt.Fprintf(w, "  已定值：本跑**没采用**（%s）\n", p.FixedWhy)
+	}
 	if p.OK && p.Armed {
-		fmt.Fprintf(w, "  生效式：`%s`（契约件 `cap.生效式取法`）⇒ 本跑上限 = 式%s 的 **%.3f s**\n", p.Pick, p.PickedID, p.CapSec)
+		if p.Fixed {
+			fmt.Fprintf(w, "  生效式（回落路径 · 旧值并留）：`%s`（契约件 `cap.生效式取法`）—— 本跑上限由**已定值**给出（%.3f s）；定值缺 / 值非正 / 出处空时按本格逐式取\n",
+				p.Pick, p.CapSec)
+		} else {
+			fmt.Fprintf(w, "  生效式：`%s`（契约件 `cap.生效式取法`）⇒ 本跑上限 = 式%s 的 **%.3f s**\n", p.Pick, p.PickedID, p.CapSec)
+		}
 	} else {
 		fmt.Fprintf(w, "  生效式：**本跑不裁**（%s）\n", p.Why)
 	}
