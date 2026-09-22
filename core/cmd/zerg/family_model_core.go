@@ -128,6 +128,9 @@ func cmdModelOpts(inv *invocation, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "  请求     : PUT %s/api/models/%s/adapter-opts\n", newClient().base, name)
 			fmt.Fprintf(stdout, "  请求体   : %s\n", payload)
 			fmt.Fprintf(stdout, "  它会动   : 该模型的适配器参数（**编辑后实时生效、不重启**；持久化重启恢复）\n")
+			// `Q-021`（波① `T3`）**两档同一张授权表**：干跑不只出计划，还要把**真跑要什么**写明
+			// （缺这一行 = 两档判据分叉：人按干跑准备，真跑却要 `--yes`）。
+			fmt.Fprintf(stdout, "  授权判据 : 真跑要 `--yes`（D2 档）—— 干跑与真跑**同一张表**：缺它 ⇒ 退码 2（不执行）\n")
 			fmt.Fprintf(stdout, "  错误码   : NO_PARAMS · INVALID_PARAMS · ADAPTER_OPTIONS_FAILED · MODEL_NO_ADAPTER（**逐字透传**）\n")
 			fmt.Fprintf(stdout, "  来源     : §三 E 族 · §7.1 P11 · 开工单 T-45\n")
 			fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")

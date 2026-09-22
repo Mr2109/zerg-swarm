@@ -320,6 +320,8 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  新增行   : %s\n", newLine)
 		fmt.Fprintf(stdout, "  校验     : ✔ 现档解析过（%s 下 %d 条）· ✔ 改后解析过（%d 条）· ✔ 无同名/同 file\n", s.Host, before, after)
 		fmt.Fprintf(stdout, "  它会动   : 只此一件（%s）—— 写 = 同目录临时件 + rename（原子）；写完读回再校，任一步不过 ⇒ 回滚\n", path)
+		// `Q-021`（波① `T3`）**两档同一张授权表**：干跑要把**真跑要什么**写明（否则两档判据分叉）。
+		fmt.Fprintf(stdout, "  授权判据 : 真写要 `--yes`（D2 档）—— 干跑与真跑**同一张表**：缺它 ⇒ 退码 2（**一个字节都不写**）\n")
 		fmt.Fprintf(stdout, "  生效     : 要主控读它 ⇒ `%s config reload --yes`（本命令**不碰主控**）\n", progName)
 		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
 		return exitOK
@@ -417,6 +419,8 @@ func cmdConfigReload(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  名册件   : %s（先校验：✔ 解析过）\n", path)
 		fmt.Fprintf(stdout, "  在册     : %d 个 host（%s）· %d 个 fleet 节点\n", len(fc.Models), strings.Join(hosts, " / "), len(fc.Fleet))
 		fmt.Fprintf(stdout, "  将请求   : POST %s/api/config/reload（路由**已在跑的主控上** ⇒ 主控零改动）\n", newClient().base)
+		// `Q-021`（波① `T3`）**两档同一张授权表**：干跑要把真跑要什么写明。
+		fmt.Fprintf(stdout, "  授权判据 : 真跑要 `--yes`（D2 档）—— 干跑与真跑**同一张表**：缺它 ⇒ 退码 2（不请求）\n")
 		fmt.Fprintf(stdout, "  它会动   : 主控重读该件、更新路由表；**已加载的模型不受影响**、不重启、不停任何进程\n")
 		fmt.Fprintf(stdout, "  失败面   : 主控回 400 CONFIG_PATH_MISSING / 500 CONFIG_LOAD_FAILED ⇒ 旧配置继续跑（回滚档）\n")
 		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
