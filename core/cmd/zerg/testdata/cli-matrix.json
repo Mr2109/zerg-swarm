@@ -4457,6 +4457,33 @@
    "want_rc": 1,
    "want_stdout_bytes": 0,
    "why": "`--for-model` 与 `--for-human` 是**同一族的两档**（§4.1：模型档 ≤ 1.2k token / 条目 ≤ 12；人档全文不限长），两档与 `--json` 都可叠加、都不改六键包封（`R38`）⇒ 叠加时 `--json` 不给字段仍退 1 + stdout 0 字节。★ 成对负控（现跑逐字）：**老制品**跑同一口令退 **2**「未知旗标 \"--for-model\"」—— 两格合起来把「两档旗标真进了命令树」钉住"
+  },
+  {
+   "id": "impact#--gate-results 收尾不给值（B3 回填的输入缺格）",
+   "command": "impact",
+   "argv": [
+    "impact",
+    "core/cmd/zerg/main.go",
+    "--gate-results"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--gate-results` 是 `B3` 实测回填的输入（**那次门禁自己的结果表**）—— 给了旗标不给值 ⇒ 用法错（退 2 · stdout 0 字节 · `flagValue` 看不见收尾那一格 ⇒ 实现里另有一只判口）；**执行前判**（不白跑六层）"
+  },
+  {
+   "id": "impact#确认值不匹配主机名（B3 回填写档）",
+   "command": "impact",
+   "argv": [
+    "impact",
+    "core/cmd/zerg/main.go",
+    "--gate-results",
+    "zzz-没有这一件",
+    "--confirm=zzz-不是本机",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "回填真要写件时要 D3 档确认（`--confirm=<主机名>` 值逐字同 + `--yes`）—— 确认值不符 ⇒ 拒执（退 2 · stdout 0 字节 · 与 `dev edit` 同一口径）；这一格也在取数之前判掉"
   }
  ]
 }
