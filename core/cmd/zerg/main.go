@@ -1399,6 +1399,15 @@ type invocation struct {
 	// 非交互凭据（§九 M2 C2）：令牌从 stdin 读，**不进 argv**
 	tokenStdin bool
 
+	// 包封三真值（**只在有真事时**才写；它们**不是** JSON 键 —— 顶层仍是那六键）：
+	//   · envWarn → `warnings[]` 逐条（空 ⇒ 逐字 `[]`；**拿不到真值就不许写**）
+	//   · envCut  → `truncated`（只有**真裁了条目**才置 true；没判定过 ⇒ false）
+	//   · envMeta → `meta` 的**按需子键**（序即给定序；`count`/`source`/`changed`/`node`/
+	//     `idempotency_key` 五个旧子键不许从这里写 —— 旧子键语义不变 ✗）
+	envWarn []string
+	envCut  bool
+	envMeta []envMetaKV
+
 	// 内容协商（§九 M1 W12）：`--accept <媒体类型>`
 	acceptWant string
 
@@ -1823,6 +1832,111 @@ func reportBadField(stderr io.Writer, path []string, bad string) int {
 // contractSchema —— 包封第一键的取值（§九 M6 / §十五.7 定案：只写 `zerg/v1`，**不写** `schema_version`）。
 const contractSchema = "zerg/v1"
 
+// envelopeKeys —— 包封**顶层六键**的唯一真源（§九 M6）。
+//
+// 为什么要抽出来：形状守卫（`TestCLIContractJSONShape`）与只读桥（`EnvelopeKeysForTest`）今天
+// 各写一遍键名 —— 两份清单就会漂（一处加了第七键、另一处照旧绿）。本表是**唯一**一份。
+var envelopeKeys = []string{"schema", "kind", "items", "meta", "warnings", "truncated"}
+
+// envMetaKV —— `meta` 的**按需子键**一格：`Val` 是**已序列化的 JSON 值**（字符串/布尔/数组都行）。
+//
+// 口径（本批新立 · 三条）：
+//  1. **旧子键语义不变**：`count`/`source`/`changed`/`node`/`idempotency_key` 的名字、类型、取法
+//     一个字不动 ⇒ 同名子键**不许从这个口子写**（`envMetaReserved` 拒收，见 `emitEnvelopeWith`）。
+//  2. **只让已有键有值**：本结构只装 `meta` 里的东西，**不新增第七个顶层键** ✗。
+//  3. **不编造**：没有真值就**不写这一格**（缺席 ≠ 空数组/假值；旧子键照旧恒在）。
+type envMetaKV struct {
+	Key string
+	Val string // 已序列化的 JSON 值（调用方负责用 jstr / json.Marshal 出合法 JSON）
+}
+
+// envMetaReserved —— `meta` 里的**旧子键**（不许从 `envMeta` 覆盖写；语义铁律的机械落点）。
+var envMetaReserved = []string{"count", "source", "changed", "node", "idempotency_key"}
+
+// warnf —— 记一条 `warnings[]` 真值（**只在真有事时调**；拿不到真值就不许调 —— 缺口留白，不装）。
+func (inv *invocation) warnf(format string, a ...any) {
+	if inv == nil {
+		return
+	}
+	msg := strings.TrimSpace(fmt.Sprintf(format, a...))
+	if msg == "" {
+		return // 空串不是信号（不编造）
+	}
+	inv.envWarn = append(inv.envWarn, msg)
+}
+
+// markTruncated —— `truncated=true` 的**唯一**置位口（只在**真裁了条目**时调；没裁一律 `false`）。
+func (inv *invocation) markTruncated() {
+	if inv == nil {
+		return
+	}
+	inv.envCut = true
+}
+
+// metaAddJSON —— 写一格 `meta` 的按需子键（值自带 JSON 形态）；旧子键名一律拒收（不静默覆盖）。
+func (inv *invocation) metaAddJSON(key, valJSON string) {
+	if inv == nil {
+		return
+	}
+	key = strings.TrimSpace(key)
+	valJSON = strings.TrimSpace(valJSON)
+	if key == "" || valJSON == "" {
+		return
+	}
+	for _, r := range envMetaReserved {
+		if key == r {
+			return
+		}
+	}
+	inv.envMeta = append(inv.envMeta, envMetaKV{Key: key, Val: valJSON})
+}
+
+// metaAddStr / metaAddStrings —— 字符串与字符串数组两枚便捷口（值一律走 `jstr` 转义）。
+func (inv *invocation) metaAddStr(key, val string) {
+	if strings.TrimSpace(val) == "" {
+		return
+	}
+	inv.metaAddJSON(key, jstr(val))
+}
+
+func (inv *invocation) metaAddStrings(key string, vals []string) {
+	if len(vals) == 0 {
+		return
+	}
+	parts := make([]string, 0, len(vals))
+	for _, v := range vals {
+		if strings.TrimSpace(v) == "" {
+			continue
+		}
+		parts = append(parts, jstr(v))
+	}
+	if len(parts) == 0 {
+		return
+	}
+	inv.metaAddJSON(key, "["+strings.Join(parts, ",")+"]")
+}
+
+// envelopeWarningsJSON —— `warnings[]` 的**真值渲染**（纯函数 · 判定口正/负控都调它）。
+// 空（含只有空串/空白的那些）⇒ 逐字 `[]`：**无事就是空**，不许填充 ✗。
+func envelopeWarningsJSON(warns []string) string {
+	out := []string{}
+	for _, w := range warns {
+		if strings.TrimSpace(w) == "" {
+			continue
+		}
+		out = append(out, jstr(w))
+	}
+	return "[" + strings.Join(out, ",") + "]"
+}
+
+// envelopeTruncatedJSON —— `truncated` 的**真值渲染**：只有**真裁了条目**才是 `true`。
+func envelopeTruncatedJSON(cut bool) string {
+	if cut {
+		return "true"
+	}
+	return "false"
+}
+
 func jstr(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
@@ -1839,6 +1953,18 @@ func emitEnvelope(stdout io.Writer, cmd *command, itemsJSON string, count int) {
 
 // emitEnvelopeWith 是 emitEnvelope 的完整形态：多一块 `meta.changed` 与 `meta.idempotency_key`
 // （§九 M4：`--json` 必须给 `changed`；幂等键落在 meta —— **不**动外层六键，守住 T-06 的包封面）。
+//
+// ★ 本批（`G-08` · 解禁「不改 `emitEnvelope*`」）：**只让已有键有值** ✗ —— 顶层**仍是那六键**
+// （一个不多一个不少 · 真源 = `envelopeKeys`），变的只是 `warnings[]` / `truncated` 两个既有键
+// 的**真值** 与 `meta` 的**按需子键**：
+//
+//	· `warnings[]`   ← `inv.envWarn`（命令**自己判定出**的真事逐条）；空 ⇒ 逐字 `[]`
+//	· `truncated`    ← `inv.envCut`（**真裁了条目**才 true；没判定过 ⇒ `false`）
+//	· `meta`         ← 先写五个**旧子键**（取法一个字未动），再按需追加 `inv.envMeta`
+//	                   （`metaAddJSON` 已拒收旧子键名 ⇒ 同名子键**不许**被覆盖）
+//
+// **不编造**（本批第二条铁律）：没有真值就**保持 `[]`/`false`/缺席** —— 不许用 `warnings[]` 装
+// 「我以为」，也不许把「没跑 / 没取数」写成「没有」（那两件事分别由上一条命令自己点名）。
 func emitEnvelopeWith(stdout io.Writer, cmd *command, itemsJSON string, count int, inv *invocation) {
 	src := cmd.endpoint
 	if src == "" {
@@ -1861,12 +1987,33 @@ func emitEnvelopeWith(stdout io.Writer, cmd *command, itemsJSON string, count in
 	if key != "" {
 		meta += ",\"idempotency_key\":" + jstr(key)
 	}
+	// 按需子键：只追加**非旧子键名**（`metaAddJSON` 已在入口拒收；这里再挡一道 —— 双保险）。
+	if inv != nil {
+		for _, kv := range inv.envMeta {
+			reserved := false
+			for _, r := range envMetaReserved {
+				if kv.Key == r {
+					reserved = true
+					break
+				}
+			}
+			if kv.Key == "" || kv.Val == "" || reserved {
+				continue
+			}
+			meta += "," + jstr(kv.Key) + ":" + kv.Val
+		}
+	}
 	extra := ""
 	if inv != nil && inv.err != nil {
 		extra = ",\"error\":" + inv.err.errJSON()
 	}
-	fmt.Fprintf(stdout, "{\"schema\":%s,\"kind\":%s,\"items\":%s,\"meta\":{%s},\"warnings\":[],\"truncated\":false%s}\n",
-		jstr(contractSchema), jstr(cmd.kind), itemsJSON, meta, extra)
+	warns, trunc := "[]", "false"
+	if inv != nil {
+		warns = envelopeWarningsJSON(inv.envWarn)
+		trunc = envelopeTruncatedJSON(inv.envCut)
+	}
+	fmt.Fprintf(stdout, "{\"schema\":%s,\"kind\":%s,\"items\":%s,\"meta\":{%s},\"warnings\":%s,\"truncated\":%s%s}\n",
+		jstr(contractSchema), jstr(cmd.kind), itemsJSON, meta, warns, trunc, extra)
 }
 
 // emitSelected 是**全部** `--json` 出口的唯一实现：先按用户点名的字段（序即用户给的序）拼对象，

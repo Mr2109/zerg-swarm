@@ -343,6 +343,20 @@
    "语义": "dryrun.v1",
    "零副作用判据": "不给确认档（或给 `--dry-run`）⇒ **回填件一个字节都不落**（写口 `impactBackfillAppendIfComplete` 根本不被调用；「还没攒过」与「读不到」分开）；运行期判据在 `core/cmd/zerg/cli_impact_backfill_test.go`（干跑之后回填件不在盘上 / 件字节逐字不变）",
    "备注": "2.5.11 `B3` · DEV-0049（2026-09-22）—— 与 `dev edit` 同一档：干跑不写、真写要 `--confirm=<主机名>` + `--yes`；键表与落点读 `core/internal/contract/impact-backfill.json`（登记表 `S-i`）"
+  }  ,
+  {
+   "file": "core/cmd/zerg/contract.go",
+   "类": "命令面契约文本（`zerg help contract` 的《输出契约》六键口径节）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "契约文本只描述语义、不驱动任何写入（帮助面：`zerg help contract` 只打印）；本件里出现的 `dry_run` 是 `meta` **按需子键的名字**（`zerg dev edit --dry-run` 落的机器面那一格），不是第二套干跑语义",
+   "备注": "2.5.11 包封可选扩展（`G-08`）：六键的真值口径写死在本件；登记表条目 `S-g`（命令面契约）"
+  },
+  {
+   "file": "core/cmd/zerg/cli_envelope_truth_test.go",
+   "类": "命令面测试件（包封六键真值判据 · 正控 + 成对负控）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "两条真跑判据都把状态目录指到 `t.TempDir()`（`ZERG_STATE_DIR`）并把仓根显式给 `ZERG_REPO` ⇒ 不碰真状态目录、不在仓内落件；`--dry-run` 字样只出现在 `dev edit` 干跑那一档的判据与契约列举里（本件自己不执行任何写面）",
+   "备注": "2.5.11 包封可选扩展（`G-08`）：判据①–⑦ 各配正控与成对负控（含「不编造信号」的静态自检）"
   }
  ]
 }

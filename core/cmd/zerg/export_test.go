@@ -81,10 +81,45 @@ func ExitCodeTableForTest() []ExitCodeRowForTest {
 	return out
 }
 
-// EnvelopeKeysForTest 包封六键（T4 的形状守卫用它，不另抄一份键名）。
+// EnvelopeKeysForTest 包封六键（T4 的形状守卫用它，**不另抄一份键名** —— 直指真源 `envelopeKeys`）。
 func EnvelopeKeysForTest() []string {
-	return []string{"schema", "kind", "items", "meta", "warnings", "truncated"}
+	return append([]string{}, envelopeKeys...)
 }
+
+// EnvelopeRenderForTest 用**合成输入**跑一次包封渲染（只写进 `io.Writer`，零副作用）。
+//
+// 为什么需要它：`warnings[]` / `truncated` / `meta` 按需子键这三格的**正控与成对负控**要能直接
+// 喂「有事」与「无事」两份夹具（真跑命令只能覆盖到「本机今天恰好有的那些事」）；判定口与真跑
+// 两路都读**同一个** `emitEnvelopeWith`，不另造第二套渲染。
+func EnvelopeRenderForTest(itemsJSON string, count int, warns []string, cut bool, metaKV [][2]string) string {
+	inv := &invocation{envWarn: append([]string{}, warns...), envCut: cut}
+	for _, kv := range metaKV {
+		inv.metaAddJSON(kv[0], kv[1])
+	}
+	var b strings.Builder
+	emitEnvelopeWith(&b, &command{kind: "Probe"}, itemsJSON, count, inv)
+	return b.String()
+}
+
+// EnvelopeTruthJSONForTest 两枚真值渲染器的**直接**判定口（正/负控都调它，不另抄一遍逻辑）。
+func EnvelopeTruthJSONForTest(warns []string, cut bool) (string, string) {
+	return envelopeWarningsJSON(warns), envelopeTruncatedJSON(cut)
+}
+
+// EnvelopeMetaReservedForTest `meta` 的旧子键名单（负控用它证明「同名子键不被覆盖」）。
+func EnvelopeMetaReservedForTest() []string {
+	return append([]string{}, envMetaReserved...)
+}
+
+// MainSourceForTest 读包封实现件源码（`main.go`）—— 「不编造信号」的静态自检口。
+func MainSourceForTest() (string, error) {
+	b, err := os.ReadFile("main.go")
+	return string(b), err
+}
+
+// ContractHelpForTest 出**真源**那份 `zerg help contract` 正文（判「契约里逐条列举了事件」用，
+// 测试不另抄一遍正文）。
+func ContractHelpForTest() string { return helpContract() }
 
 // ContractSchemaForTest 契约号（`zerg/v1`）。
 func ContractSchemaForTest() string { return contractSchema }
