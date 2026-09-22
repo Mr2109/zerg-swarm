@@ -399,6 +399,20 @@
    "语义": "dryrun.v1",
    "零副作用判据": "测试件本身不驱动仓内写入（夹具全在 `t.TempDir()` 里 · 落点也在临时目录）：它断言的正是干跑那一档 —— `archive manifest … --dry-run` ⇒ rc=0、**落点不建**（`os.Stat` 判 `IsNotExist`）、载荷逐件 `sha256` 不变；成对负控 = 缺 `--yes` 时既 rc=2 又不建落点，且「载荷改一字节 / 抹掉清单一条 / 多出未登记件」三格逐条判红。",
    "备注": "缺口 `G-07`：登记依据 = 门⑩ `R1 未登记件`（本件出现 `dry-run` 字样即进扫描面；它是**同一套语义**的测试侧，不另立语义 —— 与 `export_schema_test.go` / `cli_approve_e4_ttl_test.go` 同一条先例）"
+  },
+  {
+   "file": "core/cmd/zerg/family_config.go",
+   "类": "命令面三态（`model add` / `config reload` 的干跑档 · 与 guard.go / family_h.go 同一套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`bin/zerg model add … --dry-run` ⇒ 退码 0 · stdout 只有计划件（落点行号 + 新增行 + 三项校验 + 它会动什么）+ stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）」· **名册件逐字节不变**（现跑对拍 `sha256` 跑前 == 跑后 · 见 cli_model_add_test.go 的 TestModelAddDryRunZeroSideEffect）；`bin/zerg config reload --dry-run` ⇒ 退码 0 且**一个请求都不发**（连主控都不用起 ⇒ 见 TestConfigReloadDryRunSendsNoRequest）。真写/真请求要 `--yes`，缺 ⇒ 2。",
+   "备注": "波① `T1a`（`Q-099`/`Q-100`）：两枚命令的干跑与写面**同一张退码表**；干跑只多一行计划件。真写的「失败回滚」另在 writeFleetAtomic（临时件 + rename + 读回再校 + 回滚）里判，不在干跑面"
+  },
+  {
+   "file": "core/cmd/zerg/cli_model_add_test.go",
+   "类": "命令面测试件（干跑零字节改动 + 先校验后写 + 失败回滚的成对负控）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "夹具全在 `t.TempDir()` 里合成（**绝不碰真 `gateway/fleet.yaml`** —— 它身上有在途改动）：干跑那一档现场断言「名册件 `sha256` 跑前后逐字相同」；真写那一档断言「只有一行新增、其余逐字节相同」；失败回滚那一档断言「坏 YAML / 重复 file / 主机不在册 / 缺 `--yes` / `--json` 不给字段 ⇒ 文件逐字节没动」。",
+   "备注": "波① `T1a`：登记依据 = 门⑩ `R1 未登记件`（本件出现 `--dry-run` 字样即进扫描面；它是**同一套语义**的测试侧，不另立语义 —— 与 export_schema_test.go 同一条先例）"
   }
  ]
 }
