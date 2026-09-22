@@ -148,6 +148,9 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	// **实测侧（命中/漏报/虚报 · `impact_actual` · 回填件）属 `B3`，本批不做** ✗。
 	timeface := impactPredictFaceOf(tgt, layers, proj, cheap)
 	calib := impactCalibrationOf(root, !cheap)
+	// `B2` 契约面（判据①–③）：目录项四字段 + id 集合**另取一遍**对拍 + 兼容级别**只报** +
+	// 对拍口径与**两枚指纹**（基线 = git 引用 ⇒ **不落新快照件**）。只读 · 零副作用。
+	cat, caudit, chead, crev, cparent, cfpWhy := impactContractFace(root)
 	// `A3` 波纹卡片：先把骨架三行（+ 条件行）与退法算出来 —— 卡片预算要把**常量部分**也算进去
 	// （§4.1 的账：上限是死的，裁的是条目，不是骨架）。
 	rev := impactReversibilityOf(root, tgt)
@@ -170,6 +173,9 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	// `B2` 时间面（预测侧）：块在 `B1` 的步名真源块之后 —— 那一块给的是「门步那一格接到什么」，
 	// 本块给的是「整个预测集是怎么估的 + 尺上一次/此刻分别是多少」。
 	emitImpactTimefaceBlock(stderr, tgt, timeface, calib, cheap)
+	// `B2` 契约面块（判据①–③）：紧跟在时间面块之后 —— 那一块给的是「预测集怎么估的」，
+	// 本块给的是「契约面这一族在册条目长什么样 + 兼容级别只报 + 对拍口径与两枚指纹」。
+	emitImpactContractBlock(stderr, root, cat, caudit, chead, crev, cparent, cfpWhy)
 	emitImpactCardBlock(stderr, tgt, card, rev, layers, inv.forHuman)
 	if inv.forModel && !inv.forHuman {
 		fmt.Fprintf(stderr, "%s: `--for-model` 与默认档**同效**（§4.1：模型档就是默认档）—— 给了也照实明说，不另开一条分叉\n", progName)
