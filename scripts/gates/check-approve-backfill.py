@@ -53,7 +53,7 @@ TICKET_EIGHT = ["tool", "approver", "approved_at", "scope", "note", "sig_alg", "
 MARK_FIELD = "signed_not_in_person"
 EVENT = "approve_signed"
 LEGACY_SIX = ["before_sha256", "after_sha256", "before_bytes", "after_bytes", "approval", "approver"]
-DEV_EDIT_SHA256 = "8263ef2f8985f92b1d66c34e57c81ba162700c51c19499d059c306ef98b99c04"
+DEV_EDIT_SHA256 = "bccec4748c1d54206b751ecaeb6f617497accb7c21b0052a448e87a980ac3f18"
 
 
 # ── 判定口（纯函数：自检与真目标**共用同一套**）──────────────────────────────────────
