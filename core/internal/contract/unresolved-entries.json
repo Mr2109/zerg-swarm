@@ -63,8 +63,8 @@
       "who_calls": "**UI 在引导用户去跑它**（模型登记空态的两条本地化文案 + 模型注册模块注释）· 模型登记库（`core/internal/modelreg`）自己引它（probe/lineage/inplace 三件）· 茧壁 argv 静默门把它列进禁用清单",
       "callers": [
         {"file": "ui/src/modules/model_registry.rs", "anchor": "引导到 zerg-model probe --store", "line_hint": 840, "公开面对应件": "ui/src/modules/model_registry.rs", "what": "UI 空态：引导到 `zerg-model probe --store`"},
-        {"file": "ui/locales/zh-CN.yml", "anchor": "mreg.empty_hint: \"在终端运行 zerg-model probe", "line_hint": 468, "公开面对应件": "ui/locales/zh-CN.yml", "what": "UI 本地化：同一句引导（zh 面）"},
-        {"file": "ui/locales/en.yml", "anchor": "mreg.empty_hint: \"Run zerg-model probe", "line_hint": 468, "公开面对应件": "ui/locales/en.yml", "what": "UI 本地化：同一句引导（en 面）"},
+        {"file": "ui/locales/zh-CN.yml", "anchor": "mreg.empty_hint: \"在终端运行 zerg-model probe", "line_hint": 469, "公开面对应件": "ui/locales/zh-CN.yml", "what": "UI 本地化：同一句引导（zh 面）"},
+        {"file": "ui/locales/en.yml", "anchor": "mreg.empty_hint: \"Run zerg-model probe", "line_hint": 469, "公开面对应件": "ui/locales/en.yml", "what": "UI 本地化：同一句引导（en 面）"},
         {"file": "core/internal/modelreg/probe.go", "anchor": "本记录由 zerg-model probe 自动生成", "line_hint": 966, "公开面对应件": "core/internal/modelreg/probe.go", "what": "登记库自述：记录由 `zerg-model probe` 生成"},
         {"file": "core/internal/modelreg/lineage.go", "anchor": "--parent <version> --base <id>", "line_hint": 21, "公开面对应件": "core/internal/modelreg/lineage.go", "what": "登记库：血缘取值由 `zerg-model probe` 的旗标显式传入"}
       ],

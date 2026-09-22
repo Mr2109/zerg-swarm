@@ -1,6 +1,7 @@
 {
   "_doc": "非测试、非注释的含中文 UI 字面量白名单（多语言决策④⑥ 2026-09-11）。新增条目须在评审里说明理由；门禁 G4 只允许此清单内的行。",
   "_expiry_policy": "【有期限的例外 · 2026-09-23 波B】本件两条 trust 目（`trust == \"正式\"` / `trust == \"未知\"`）是**登记止血**，不是终局：设计-CI适配-v1.1 §九 第④步写明 —— ASCII 化落地那一步必须**同批收回**（删掉本件对应两条）⇒「收紧基线 · 只许收不许放」。判据：两条目在本件里消失 且 `python3 ui/scripts/check-i18n.py` rc=0（G4 的「基线里有 N 条已不存在」提示里看不到它们）。到期判据不落地 ⇒ 本条不合格，不许拿这次当再放一条的先例。",
+  "_expiry_executed_20260923": "【到期已落地 · 收回记录 · 2026-09-23 波F】上面 `_expiry_policy` 点名的两条 trust 目已**同批收回**（本件已无这两条 ⇒ 基线条数 11 → 9）。同批落地：① 服务端改发 ASCII 机器码（闭集 new/official/unknown · 发码件 core/internal/api/resource_trust.go 的 TrustNew/TrustOfficial/TrustUnknown 常量 + 旧中文件读入时翻译一次 statusCode）；② UI 改比机器码（ui/src/app.rs 的 TRUST_CODE_* 三常量 + trust_display（i18n 键）· 生产段里三个中文字面量一个不在）；③ 显示层 zh/en 对称键（resources.trust_unknown 新增「未知」/「unknown」· trust_new 与 trust_official 原已两语言齐）。提案 DEV-0053。到期判据现跑：`python3 ui/scripts/check-i18n.py` rc=0（G4 的「已不存在」提示里**不再**出现这两条）。★ 同一波暴露、但**不在 §九 授权面**的两条（本波**未收**，如实记账）：`ui/src/app.rs|unwrap_or(\"未知\")` 与 `ui/src/app.rs|trust == \"新\"` —— 它们因同一次 ASCII 化**失去对象**（生产段已无中文字面量），G4 仍会照报「可收紧基线」；收回要**另一次授权**（删法 = 本件删掉对应两个对象，与本波两条同一处）。",
   "allowed": [
     {
       "file": "ui/src/app.rs",
@@ -21,26 +22,6 @@
       "file": "ui/src/app.rs",
       "contains": "trust == \"新\"",
       "why": "后端资源数据值比较，展示走 resources.trust_* 键"
-    },
-    {
-      "file": "ui/src/app.rs",
-      "contains": "trust == \"正式\"",
-      "why": "2026-09-23 波B（设计-CI适配-v1.1 §五 第一批① · §八 待拍 1 裁定）：trust 是服务端给的状态串（数据面），不是 UI 文案 ⇒ 登记进基线，**不抽 i18n 键**（抽键会把服务端契约与展示文案耦死），**不改代码语义**。",
-      "expires": "ascii-migration",
-      "expires_when": "ASCII 化落地同批收回",
-      "expires_condition": "服务端改发 ASCII 机器码 + UI 改比 ASCII 码 + 显示层补 zh/en 对称 i18n 键的那一步，**必须同批删掉本条目**（收紧基线 · 只许收不许放）。",
-      "expires_tracked_in": "Zerg-内部文档/项目文档/v2.5.11/设计-CI适配-v1.1.md §九（本版新增待办 · 四步）第 ④ 步",
-      "expires_check": "删本条后：`python3 ui/scripts/check-i18n.py` rc=0 且 G4 的「基线里有 N 条已不存在（可收紧基线）」提示里看不到本条（本件基线条数 9 → 11 → 再回 9）。"
-    },
-    {
-      "file": "ui/src/app.rs",
-      "contains": "trust == \"未知\"",
-      "why": "2026-09-23 波B（设计-CI适配-v1.1 §五 第一批① · §八 待拍 1 裁定）：同上一条 —— 服务端状态串的数据面比较，非展示文案。",
-      "expires": "ascii-migration",
-      "expires_when": "ASCII 化落地同批收回",
-      "expires_condition": "与 `trust == \"正式\"` 同一条：ASCII 机器码落地那一步**同批删掉**（两目必须一起走，只留一条即视为越线）。",
-      "expires_tracked_in": "Zerg-内部文档/项目文档/v2.5.11/设计-CI适配-v1.1.md §九（本版新增待办 · 四步）第 ④ 步",
-      "expires_check": "删本条后：`python3 ui/scripts/check-i18n.py` rc=0 且 G4 的「基线里有 N 条已不存在（可收紧基线）」提示里看不到本条。"
     },
     {
       "file": "ui/src/modules/mod.rs",
