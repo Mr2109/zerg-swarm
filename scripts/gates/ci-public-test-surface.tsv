@@ -1,0 +1,116 @@
+# 公开面测试面 白/黑名单（设计-CI适配-v1.1 §十三 M1 · 波A `A2`）
+#
+# 为什么有这一件：§二 说「依赖本机状态的一律不搬」，§四 却把 `go test ./...`（Go 全量）当宽网留着
+#   ⇒ 公开面一红就是「换个包还红」（本次那一红正是 `cmd/zerg` 的契约矩阵要 `bin/`）。全量 = 把
+#   「只在本机成立的判据」也当成公开面的尺 ⇒ 要么造假绿，要么浇漏。⇒ 逐包定名单。
+#
+# 列：module<TAB>pkg<TAB>tier<TAB>why<TAB>account
+#   tier = `in-ci`     进 CI（`publish/ci/ci.yml` 的 go test 逐包点名，**不用** `./...`）
+#        = `out-ci`    不进 CI（逐包写「为什么在公开树里无意义」+ 账 + 回名单条件）
+#        = `no-test`   没有测试件（`go test` 无事可做；编译面由 `go build ./...` 接住）
+#   account = 账 / 回名单条件（`in-ci` 行为 `—`）
+#
+# 判据（任务清单-CI适配-20260923 `A2`）：① **名单内包 `go test` rc=0** ② **名单外包不在 CI**（ci.yml 逐行核）
+#
+# ★ 本波现跑读数（2026-09-23 · 公开面快照 = `scripts/build/publish-public.sh --dry-run` 的产出树 ·
+#   白名单 ∪ 替换规则跑完之后 · macOS 本机 · `go test ./... -count=1`）：
+#     core ：48 包 = **ok 32 · FAIL 5 · no test files 11**（整模块 rc=1）
+#     agent：13 包 = **ok 10 · FAIL 0 · no test files 3**（整模块 rc=0 ✓）
+#   ⇒ 名单内 = 32（core）+ 10（agent）= **42** 个包；名单外 = 5 个包（逐条理由见下）。
+#   ★ 这份读数是**可复跑**的：把发布器产出树当本机一份 checkout 跑一遍（§十 的 ⑭ 闸同源做法）。
+#   ★ 为什么不用真 clone 跑这一遍：公开仓当前 HEAD（`b337c4c9`）落后本机（`ec48f1ea`）⇒ 它里面
+#     还没有本波要判的件（含本波 A1 的两档矩阵）⇒ 在落后树上跑出来的读数**不对应**本波源码。
+#     本件读的是「本次发布将产出的那棵树」（发布器产出树），两处缺件面已逐条对照现读一致
+#     （`scripts/gates/precommit-gates.sh` · `scripts/calib/*` · `scripts/evals/compare.py` ·
+#      `scripts/build/zerg-upgrade.sh` · `compress_models` 在「公开仓 clone」与「发布器产出树」里**都缺**）。
+#
+# 生成/维护：本件是**手写名单**（理由要人写），但 `publish/ci/ci.yml` 的包列表必须与本件的
+#   `in-ci` 行**逐字一致**。下面这三条是**真能跑**的现核命令（本波逐字跑过，读数见回执）：
+#
+#     # ① 本件说「进 CI」的包（逐行）
+#     awk -F'\t' '$3=="in-ci"{print "./"$2"/"}' scripts/gates/ci-public-test-surface.tsv | sort
+#     # ② ci.yml 里 go test 点名的包（逐行）
+#     sed -n 's/^ *\(\.\/[^ ]*\/\) *\\$/\1/p' publish/ci/ci.yml | sort
+#     # ③ 两边逐字比（无输出 = 一致；有输出 = 名单与 CI 漂了）
+#     diff <(awk -F'\t' '$3=="in-ci"{print "./"$2"/"}' scripts/gates/ci-public-test-surface.tsv | sort) \
+#          <(sed -n 's/^ *\(\.\/[^ ]*\/\) *\\$/\1/p' publish/ci/ci.yml | sort)
+#
+#   另一条独立现核（判「名单外包真的不在 CI」）：
+#     for p in cmd/zerg internal/compressor internal/gateway internal/obs/redact internal/selfupdate; do
+#       grep -c -- "./$p/" publish/ci/ci.yml; done      # 5 个 0 = 名单外包一个都没进 CI
+#
+# ★ 名单内包现跑（本波读数 · 在公开面快照的 core/ 与 agent/ 各跑一遍，与 ci.yml 的两条命令逐字同）：
+#     core ：go test <32 个包> -count=1  ⇒ rc=0
+#     agent：go test <10 个包> -count=1  ⇒ rc=0
+# 生成/维护：本件是**手写名单**（理由要人写），但 ci.yml 的包列表必须与本件的 `in-ci` 行**逐字一致** ——
+#   一致性现核命令（放在 CI 改动的同一笔里交付）：
+#     python3 - <<'PY'
+#     import re
+#     tsv=[l.split('\t') for l in open('scripts/gates/ci-public-test-surface.tsv',encoding='utf-8') if l.strip() and not l.startswith('#')]
+#     want=sorted((m,p) for m,p,t,*_ in tsv if t=='in-ci')
+#     yml=open('publish/ci/ci.yml',encoding='utf-8').read()
+#     got=sorted((m, p) for m, blk in (('core','core:'),('agent','agent:')) for p in re.findall(r'^\s+\./(\S+?)/ \\?$', blk and ''))
+#     print('（示意：实际现核脚本见本波回执）')
+#     PY
+#
+core	github.com/Mr2109/zerg-swarm/core	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—
+core	cmd/zerg	out-ci	该包多个判据要**私有面件**与**本机 git 状态**：`scripts/gates/cli-contract-baseline.json`（空白棘轮基线）· `scripts/gates/check-wired-scripts.py` · `scripts/gates/check-gate-coverage.py` · `publish/ci/release-agent.yml`（公开面只以 `.github/workflows/` 形态存在）· `docs/skills/zerg-overview.md`（公开面无 `docs/skills/`）—— 这些件**结构性地不在公开树**（白名单不含 / EXCLUDES 排除）⇒ 该包在公开树里**不可能全绿**（不是「今天偶然红」）。逐条现跑红因见本波读数块。	账：§五 **第四批**「台账改公开面真件 + 加『公开面对应件』列 + 内容锚」。**本波 A1 已把其中「契约矩阵」那一半修成两档**（公开面档 rc=0 ✓ · `testdata/cli-matrix.json` 的 `tiers` 段）。回名单条件：第四批落地（判据改读公开面对应件）⇒ 该包在公开树绿即可回名单。
+core	cmd/zerg-agent	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—
+core	cmd/zerg-api	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—
+core	cmd/zerg-compat	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—
+core	cmd/zerg-core	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—
+core	cmd/zerg-model	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	cmd/zerg-review	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—
+core	cmd/zerg-scheduler	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—
+core	cmd/zerg-trace	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—
+core	internal/agent	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）；★ Linux runner 侧**已知红**：第二批那 9 条「不以 /tmp/ 开头」断言（波B B2 · 待签）—— **不因此移出名单**（移出 = 把红藏起来；§五 原则：不接受为了让 CI 变绿把断言删掉/挪走）	—
+core	internal/agentstate	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/api	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）；★ Linux runner 侧**已知红**：第二批那 9 条「不以 /tmp/ 开头」断言（波B B2 · 待签）—— **不因此移出名单**（移出 = 把红藏起来；§五 原则：不接受为了让 CI 变绿把断言删掉/挪走）	—
+core	internal/audit	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/behaviorobs	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/chat	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/compat	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/compressor	out-ci	判据要**本机模型制品** `compress_models/llmlingua2-onnx/model.onnx`（ONNX 会话 + 模型驻留）—— §二 明列「本机已装的模型 / ONNX 动态库」不该进 CI；公开树里**这条判据不成立**（不是红，是**无意义**：它判的是本机装没装那个模型）。	不设回名单条件（除非将来 ONNX 模型进公开制品通道 —— 那是产品口径变更，不是 CI 口径变更）；公开面的编译面由同一 job 的 `go build ./...` 那一步接住。
+core	internal/config	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/contract	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—
+core	internal/control	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/ffp	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/gateway	out-ci	`TestObsQueuedWritesRecord` 的**测试夹具**被内网地址规则命中（内网地址样例值 → `<worker-ip>`）⇒ 期望串与 `encoding/json` 的 `\u003c` 转义撞车 ⇒ 公开面必红。**这一类正是「替换规则打穿夹具」**。	账：§五 **第三批**「redact 必要条件门 + 夹具隔离」。**本波 A4** 的新闸 `scripts/gates/check-replace-rule-fixtures.py` 就是抓这一类的机检（现跑它 ⇒ 本条命中被逐条点名）。回名单条件：第三批夹具隔离落地（夹具不再被替换规则改形）。
+core	internal/gateway/adapter	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/gateway/orchestrator	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/hermes	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/infergeom	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/loopcore	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/loopguard	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/memory	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/modelreg	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/obs/redact	out-ci	替换规则打穿脱敏夹具：家目录规则（→ `~`）让脱敏**必要条件门**整段跳过（`LEAK: 秘密 "~/…" 以投影 "~/…" 残留`）；用户名规则（→ `Mr2109`，**多 2 字节**）⇒ 打穿夹具自带的 `len(blob) < 24` 长度守卫（`夹具失效：blob=…（len=32）`）⇒ 公开面必红。	账：§五 **第三批**（同批）。**另有尺在盯它**：§十 的 ⑭ 闸 `scripts/gates/check-public-tree-selfcheck.py` 的 **P1 探针**跑的就是这个包（本波 A3 给该闸加了「双方 HEAD sha + 不等即报不对应」）⇒ 移出 CI 名单**不丢覆盖**。回名单条件：第三批落地。
+core	internal/obs/sampling	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/plugin	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/plugin/adapters	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/plugin/runtime	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/policy	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/replay	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/resources	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/selfupdate	out-ci	判据要内核脚本 `scripts/build/zerg-upgrade.sh` —— 它是**发布机制脚本**，两器都排除（EXCLUDES / DROP_EXACT）⇒ 公开树**结构性缺件**（现读公开仓 `scripts/build/` 只有 6 件，无此件）。	结构性缺件：要么把该判据改成读公开面对应件（同第四批那一族），要么给该判据**分档**。回名单条件：判据分档落地。
+core	internal/sliceobs	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/statepath	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）；★ Linux runner 侧**已知红**：第二批那 9 条「不以 /tmp/ 开头」断言（波B B2 · 待签）—— **不因此移出名单**（移出 = 把红藏起来；§五 原则：不接受为了让 CI 变绿把断言删掉/挪走）	—
+core	internal/store	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/subtask	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）；★ Linux runner 侧**已知红**：第二批那 9 条「不以 /tmp/ 开头」断言（波B B2 · 待签）—— **不因此移出名单**（移出 = 把红藏起来；§五 原则：不接受为了让 CI 变绿把断言删掉/挪走）	—
+core	internal/testutil	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/toolobs	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—
+core	internal/tracectx	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+core	internal/version	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—
+agent	cmd/zerg-agentd	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—
+agent	internal/backend	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+agent	internal/eggpkg	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+agent	internal/enclosure	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+agent	internal/hatch	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+agent	internal/heartbeat	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+agent	internal/logx	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—
+agent	internal/modeladapter	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+agent	internal/monitor	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+agent	internal/registry	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+agent	internal/server	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+agent	internal/startup	in-ci	公开面里成立的**纯源码判据**（不碰本机状态目录 / 端口 / 守护 / 制品 / 私有件）；公开面快照现跑 `go test` **rc=0**（本波现读 · 见本件头部读数块）	—
+agent	internal/version	no-test	包内**没有测试件**（`go test` 输出 `no test files`）⇒ 放进 CI 名单无事可做；它编不编得过由同 job 的 `go build ./...` 那一步接住（**不是**「无意义」，只是没测试）。	—

@@ -2,6 +2,19 @@
  "id": "cli-contract.v1",
  "note": "命令面自身的 must-fail 矩阵（§九 M17 `T2` · 开工单 T-42 判据①）。\n口径：这不是「猜的期望值」，是**冻结的现行为（棘轮）** —— 每条口令逐条现跑两遍、退码一致、且与判据语义相符才入矩阵；改行为就必须改这一格（改不动就是回归）。\n候选口令按命令形状给（危险档 / 字段面 / 说明面 / 透传型），执行前判的那两条（未知旗标 · 不认的主号）**每条命令都有**；透传型只留执行前判那条 —— 别的会把被包的脚本真跑一遍。\n重生成：`python3 scripts/gates/check-cli-contract.py --emit-matrix`（先用 `bash scripts/build/build-all.sh --only-cli` 出**新**制品）。\n★ 生成是**增量合并**（不是整表重写）：只刷新机器可派生列（`want_rc` / `want_stdout_bytes` = **现跑字节数** `len(stdout.encode())` —— 不是字符数），既有格的 id/command/argv/why 与顺序逐字保留（手写格不会被重写吃掉），只有「一格都没有的新命令」才追加候选格。\n覆盖与空白由 T1/T5 判（空白受 baseline 棘轮约束）。",
  "exemptions": [],
+ "tiers": {
+  "local": {
+   "where": "本件 `cases[].want_rc` / `cases[].want_stdout_bytes`（既有两列，语义与取值**一字未动**）",
+   "judge": "仓根有 `bin/` ⇒ 本机档（判据唯一一处：`core/cmd/zerg/cli_matrix_test.go` 的 `matrixTier()`）",
+   "why": "本机档 = 矩阵的原有形态；分档只**加列**，不动既有两列（新增式：删除行 0）"
+  },
+  "public": {
+   "where": "本件 `cases[].want_rc_public` / `cases[].want_stdout_bytes_public`（两条**可选**覆盖列，就存这一件里 —— **不另开第二份矩阵**，单一真源仍是 core/cmd/zerg/testdata/cli-matrix.json）",
+   "judge": "仓根**没有** `bin/` ⇒ 公开面档；取证可显式 `ZERG_MATRIX_TIER=local|public` 覆盖（写错即 Fatal，不许默认成某一档）",
+   "why": "公开树缺三样本机有的东西：`bin/`（白名单不含）· `scripts/gates/precommit-gates.sh`（EXCLUDES 里的发布机制自举件）· `scripts/calib/*` 与 `scripts/evals/compare.py`（公开面只进 make-manifest.py）⇒ CLI 先撞缺件、走不到本机的参数校验 ⇒ **同一格被两棵树要求不同值**。**不许**把单一真源整体改成公开面的值（那会让本机立刻变红 = 挪红，不是修红）；**也不许**为了一道门禁往公开面塞空 `bin/`（『缺件 ⇒ 8』语义保：宁可拒绝，不可猜）",
+   "ratchet": "`check-cli-contract.py --emit-matrix` 的增量合并只刷新 `want_rc`/`want_stdout_bytes`（hit.update(d)）⇒ 本组两列与 id/command/argv/why 同等逐字保留；且 emit 先要有 `bin/zerg`，公开树里本来就给不出结论（退 2）"
+  }
+ },
  "cases": [
   {
    "id": "version#未知旗标",
@@ -378,7 +391,10 @@
    ],
    "want_rc": 1,
    "want_stdout_bytes": 0,
-   "why": "给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）· 执行前判；单步档的机器面越不过这一格"
+   "why": "给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）· 执行前判；单步档的机器面越不过这一格",
+   "want_rc_public": 2,
+   "want_stdout_bytes_public": 0,
+   "why_public": "公开面缺 `scripts/gates/precommit-gates.sh`（现读公开仓 scripts/gates/ 只有 5 件：5 个 CI 尺）⇒ `gate run` 先撞「门禁最小入口不在」**硬错 2**，走不到本机「--json 不给字段 ⇒ 1」那一格 —— 这就是『缺件优先于参数校验』（退码 8/2 的缺件档独立命名空间）"
   },
   {
    "id": "gate/run#--json 不在单步档",
@@ -391,7 +407,9 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 298,
-   "why": "`--json` 的包封面只挂在**单步档**（`--step <步名>`）上 —— 缺 `--step` ⇒ 用法错 2 + 错误包封（items 空）；**不许**拿全档报告冒充机器面"
+   "why": "`--json` 的包封面只挂在**单步档**（`--step <步名>`）上 —— 缺 `--step` ⇒ 用法错 2 + 错误包封（items 空）；**不许**拿全档报告冒充机器面",
+   "want_stdout_bytes_public": 281,
+   "why_public": "退码同为 2，但**包封字节数不同**：公开面先撞「门禁最小入口不在」，错误包封里少了本机那份用法错面的字（298 → 281）。281 字节的包封是**不含路径**的通用错误包封（逐字现读：{\"schema\":\"zerg/v1\",\"kind\":\"GateRun\",\"items\":[]…\"error\"…}）⇒ 与具体那棵树的位置无关，公开树 clone 到哪都一样"
   },
   {
    "id": "gate/run#--step 未知名（执行前判 · 一步都不跑）",
@@ -406,7 +424,9 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 274,
-   "why": "单步档：步名**逐字**不命中 ⇒ 退 2（执行前判 —— 被包的脚本一次都没起）+ 「最像的合法输入」（K14 第三件 · 与 `agent` 族同一方言）"
+   "why": "单步档：步名**逐字**不命中 ⇒ 退 2（执行前判 —— 被包的脚本一次都没起）+ 「最像的合法输入」（K14 第三件 · 与 `agent` 族同一方言）",
+   "want_stdout_bytes_public": 281,
+   "why_public": "同上一格的机理：公开面缺 `scripts/gates/precommit-gates.sh` ⇒ 先撞「门禁最小入口不在」，连「逐字找步名 + 最像的合法输入」都走不到 ⇒ 包封 281 字节（与本机 274 不同）。三格 `gate/run` 是**同一个缺件**的三个面向"
   },
   {
    "id": "gate/show#不认的契约主号",
@@ -1657,7 +1677,9 @@
    ],
    "want_rc": 1,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）",
+   "want_rc_public": 8,
+   "why_public": "公开面白名单（publish/whitelist.txt）**不含 `bin/`**（逐字现读：白名单 15 项里没有它）⇒ `build ls` 先撞缺件退 **8**，走不到「--json 不给字段 ⇒ 1」那一格。**不许**为了一道门禁往公开面塞空 `bin/`（『缺件 ⇒ 8』语义保：宁可拒绝，不可猜）"
   },
   {
    "id": "build/all#未知旗标",
@@ -4156,7 +4178,9 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "D2 缺 `--yes` ⇒ fail-closed 2（§九 M3 C2）· 计划件走 stderr、**不 exec 任何脚本**"
+   "why": "D2 缺 `--yes` ⇒ fail-closed 2（§九 M3 C2）· 计划件走 stderr、**不 exec 任何脚本**",
+   "want_rc_public": 8,
+   "why_public": "公开面 `scripts/calib/` 目录在、件一件不在（两处现读：公开仓 clone 里没有 scripts/calib；发布器产出树里 scripts/calib 是空目录）⇒ `calib run calib-x3-model` 先撞「件不在盘上」退 **8**，走不到「缺 --yes ⇒ 2」那一格"
   },
   {
    "id": "eval/ls#未知旗标",
@@ -4303,7 +4327,9 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "D2 缺 `--yes` ⇒ fail-closed 2（§九 M3 C2）· 计划件走 stderr、**不 exec 任何脚本**"
+   "why": "D2 缺 `--yes` ⇒ fail-closed 2（§九 M3 C2）· 计划件走 stderr、**不 exec 任何脚本**",
+   "want_rc_public": 8,
+   "why_public": "公开面 `scripts/evals/` 只有 `make-manifest.py` 一件（公开仓 clone 与发布器产出树两处现读一致）⇒ `eval run compare` 先撞「件不在盘上」退 **8**，走不到「缺 --yes ⇒ 2」那一格"
   },
   {
    "id": "eval/run#② 保留内部：不开 run 面",
