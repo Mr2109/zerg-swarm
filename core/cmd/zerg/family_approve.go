@@ -18,6 +18,20 @@
 //
 // 本版照实说的残留（不许含糊 ✗）：**有 TTY + 知道口令**的一方仍然签得出件 —— 这条线靠「口令不在模型手里」
 // 成立，不靠「模型不会敲命令」。它是**人不在场时默认保守档**（`SD7`）的前提，不是它的替代品。
+//
+// ★ E 批（`2.5.11` · 任务单-人签实施-20260922 §三 + §附十 两拍）：本件是 D / E 两批的**共同落点**，
+// 本次落的是三件：
+//
+//	① `D1` **档列落地**（`P26` = 甲）：`ls` 加一列「档」· `show` 加一行「档」· `--json` 加**可选**字段
+//	   `strength` / `key_id_in_use` —— 人面**显式打** `strength=passphrase`（不靠 `sig_alg` 反推）；
+//	② `E1` **审计新事件**（`I-6`）：人签那一次落一行**自己的字段名**的审计（不蹭 `before_sha256` /
+//	   `after_sha256` —— 那两格记的是**被改文件的前后 hash**，与「签名前内容 `sha256`」不是同一件事）；
+//	③ `E2` 的**明标**（`L3-b` = **B 案**）与 `E3` 的**归档机制**（`I-8`）：明标落**审计侧**（件字段面
+//	   一字不动 ✗）；归档 = 先复制 + `sha256` 逐字核对 + 才删原件。
+//
+// ★ `E4`（`--ttl`）/ `E5`（换钥确认对）**未开工**，两条都卡在「先停下问」的那一格（缘由见回执）：
+// 前者要往批准件里加一格（撞 §4.2「八字段一字不加 / 不减」），后者要占 `--rekey` 这个名（`P27`
+// 是**升级接口**的预留旗标名 · §五 ⑩ 不许占名）。**没开工的事不许说成做了** ✗。
 package main
 
 import (
@@ -49,6 +63,55 @@ var approveFields = []string{"tool", "approver", "approved_at", "scope", "note",
 
 // approveNewFields —— `new` 的机器面字段（结果面）。
 var approveNewFields = []string{"tool", "approver", "approved_at", "scope", "note", "sig_alg", "key_id", "result", "path"}
+
+// ---- 档位面（`D1` 落地 · `P26` = **甲 = 显式打** `strength=passphrase`）----
+//
+// 口径（`v1.3 §4.1` / `§4.4` / `I-1`，逐条）：
+//
+//	· `ls` 人类面**加一列「档」**、`show` 人类面**加一行「档」** —— 两处**同一取值口**
+//	  （下面那枚 `approveStrengthMark()`）⇒ 两处不漂；
+//	· `--json` 加**可选**字段 `strength`（`ls` / `show`）+ `key_id_in_use`（`show`）；
+//	· ★ **可选** = 它**不进** `approveFields` 那九键 —— 九键是**冻结面**（帮助导出面 ↔ 件 ↔ 矩阵
+//	  三面**逐字**对拍，见门⑮），往里加一格 = 把冻结面改了；可选字段是**只增**的第二层
+//	  ⇒ 旧消费者点九键照旧、新消费者多一个可点项（`D1` 红线：**不许**塞进必填集）；
+//	· `strength` 取值**只增不改**（闭集：`passphrase`（今天这档）/ `token`（将来那档））——
+//	  在册公钥件里**有**这一格（`I-1` 的预留位）就照它，**没有** ⇒ 按 `passphrase` 判；
+//	· ★ 本版**不写**这一格（`I-1` = 只写接口、不落实现 · 在册公钥件**一个字节不动** ✗）。
+var approveOptionalFields = []string{"strength", "key_id_in_use"}
+
+// approveStrengthPassphrase —— 生效档的强度标记（本版唯一取值 · `v1.3 §9.1` 的生效档）。
+const approveStrengthPassphrase = "passphrase"
+
+// approveStrengthInUse —— 档位强度的**唯一取值口**（人面与机器面都从它取 · `D1`「两处不漂」）。
+//
+// 读法照 `I-1`：在册公钥件的**可选**字段 `strength`（读得动且非空 ⇒ 就是它）⇒ 否则 `passphrase`。
+// ★ **只读**：这一枚函数**不写**任何件（`I-1` 是预留接口；在册三枚件的字节不许动 ✗）。
+func approveStrengthInUse() string {
+	if b, err := os.ReadFile(operatorPubPath()); err == nil {
+		var opt struct {
+			Strength string `json:"strength"`
+		}
+		if json.Unmarshal(b, &opt) == nil {
+			if s := strings.TrimSpace(opt.Strength); s != "" {
+				return s
+			}
+		}
+	}
+	return approveStrengthPassphrase
+}
+
+// approveStrengthMark —— 人面那一格：**显式打** `strength=<档>`（`P26` = 甲：不靠 `sig_alg` 反推）。
+func approveStrengthMark() string { return "strength=" + approveStrengthInUse() }
+
+// approveFieldOptional —— 这一格是不是「可选字段」（`--json` 的字段面判定用它）。
+func approveFieldOptional(f string) bool {
+	for _, o := range approveOptionalFields {
+		if f == o {
+			return true
+		}
+	}
+	return false
+}
 
 // keyIterations —— PBKDF2 的轮数（显式常数 · `RC6`「阈值显式、不许魔数」）。
 const keyIterations = 200000
@@ -130,14 +193,10 @@ func cmdApproveLs(inv *invocation, stdout, stderr io.Writer) int {
 	// 会直接出「共 0 条」并退 0，于是「未知字段」在空结果集下**悄悄变成合法**（本批实测抓到：
 	// 门⑪ 的矩阵 case `approve ls --json name` 在空状态目录下退 0、在有件的目录下退 2 —— 判据飘）。
 	if inv.jsonGiven && len(inv.fields) > 0 {
-		known := map[string]bool{}
-		for _, f := range fieldListOf(inv.path) {
-			known[f] = true
-		}
-		for _, f := range inv.fields {
-			if !known[f] {
-				return reportBadField(stderr, inv.path, f)
-			}
+		// ★ D1 落地：字段面判定抽成一枚共用口（九键 + **可选**字段）；九键那一份是冻结面，
+		// **不许**并进 `approveFields`（见上方档位面那段口径）。
+		if bad := approveBadField(inv.path, inv.fields); bad != "" {
+			return reportBadField(stderr, inv.path, bad)
 		}
 	}
 	dir := approveDir()
@@ -164,7 +223,9 @@ func cmdApproveLs(inv *invocation, stdout, stderr io.Writer) int {
 		rows = append(rows, approveRow(tk, p, verifyTicketState(tk)))
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i]["tool"] < rows[j]["tool"] })
-	return listCmd(inv, stdout, stderr, []string{"tool", "approver", "approved_at", "scope", "state", "path"}, rows)
+	// ★ D1 落地（`P26` = 甲）：**只加列、不删列、不换序** —— 现跑那六列（`tool/approver/
+	// approved_at/scope/state/path`）一个不动，新列「档」**追加在末尾**（`v1.3 §4.1` 的落法）。
+	return listCmd(inv, stdout, stderr, []string{"tool", "approver", "approved_at", "scope", "state", "path", "档"}, rows)
 }
 
 func cmdApproveShow(inv *invocation, stdout, stderr io.Writer) int {
@@ -194,7 +255,14 @@ func cmdApproveShow(inv *invocation, stdout, stderr io.Writer) int {
 		if !requireFields(inv, stderr) {
 			return exitFail
 		}
-		return selectJSON(stdout, stderr, inv, inv.path, approveFields, row)
+		// ★ D1 落地：字段面**先判**（与 `ls` 同一枚判定口）——今天这一路**不看**字段表
+		// （点 `--json name` 也 rc=0、还把九格全打出来）⇒ 可选字段（`strength` /
+		// `key_id_in_use`）**根本取不出来**。落 D1 就得把这一格补上：**点哪几格给哪几格**（§4.1 K1）。
+		// 九键**语义与顺序**一字不动（`approveFields` 那一份没改）；变的是「以前忽略你的点单」。
+		if bad := approveBadField(inv.path, inv.fields); bad != "" {
+			return reportBadField(stderr, inv.path, bad)
+		}
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, row)
 	}
 	fmt.Fprintf(stdout, "工具     : %s\n", tk.Tool)
 	fmt.Fprintf(stdout, "批准者   : %s\n", tk.Approver)
@@ -202,6 +270,9 @@ func cmdApproveShow(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "范围     : %s\n", tk.Scope)
 	fmt.Fprintf(stdout, "理由     : %s\n", tk.Note)
 	fmt.Fprintf(stdout, "签名     : alg=%s key_id=%s\n", tk.SigAlg, tk.KeyID)
+	// ★ D1 落地（`P26` = 甲）：**生效档显式打** —— 取值口与 `ls` 那一列是**同一枚**
+	// `approveStrengthMark()`（两处不漂）；这一行是**新增行**，上面八行一字不动。
+	fmt.Fprintf(stdout, "档       : %s\n", approveStrengthMark())
 	fmt.Fprintf(stdout, "钥匙身份 : %s\n", keyIdentityLine(tk.KeyID))
 	fmt.Fprintf(stdout, "判决     : %s\n", state)
 	fmt.Fprintf(stdout, "落点     : %s\n", p)
@@ -267,11 +338,38 @@ func verifyTicketState(tk approvalTicketFile) string {
 }
 
 func approveRow(tk approvalTicketFile, path, state string) map[string]string {
+	// ★ `strength` / `key_id_in_use` 是**可选**字段（`D1` · `v1.3 §4.1`）——它们放在行里供
+	// `--json` 点名取用，但**不进** `approveFields` 九键（九键是冻结面）；不点名就不出现在输出里。
+	inUse, _ := operatorKeyIDInUse()
 	return map[string]string{
 		"tool": tk.Tool, "approver": tk.Approver, "approved_at": tk.ApprovedAt,
 		"scope": tk.Scope, "note": tk.Note, "sig_alg": tk.SigAlg, "key_id": tk.KeyID,
 		"state": state, "path": path,
+		"strength": approveStrengthInUse(), "key_id_in_use": inUse,
+		// 「档」那一列的人面取值（`ls` 的表头就是这四个字 · `D1`）——与 `show` 那行**同一枚**
+		// `approveStrengthMark()`（两处不漂）。
+		"档": approveStrengthMark(),
 	}
+}
+
+// approveBadField —— 字段面**先判**（九键 + 可选字段）：返回点错的那一格（没点错 ⇒ 空串）。
+//
+// 两处（`ls` / `show`）共用这一枚 ⇒ 口径只有一份：**九键**是冻结面（点九键之外**非可选**的名
+// ⇒ 报错并逐字列出九键）、**可选字段**（`strength` / `key_id_in_use`）点得出来但**不在**九键里。
+func approveBadField(path []string, fields []string) string {
+	known := map[string]bool{}
+	for _, f := range fieldListOf(path) {
+		known[f] = true
+	}
+	for _, f := range approveOptionalFields {
+		known[f] = true
+	}
+	for _, f := range fields {
+		if !known[f] {
+			return f
+		}
+	}
+	return ""
 }
 
 // ---- new（人签）----
@@ -387,6 +485,15 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 		return exitFail
 	}
 	f.Close()
+	// ★ E1（`I-6`）：把这一次签名落成审计**一行**（自己的字段名 · 只追加）。
+	// **审计不是放行条件**：写不进审计 ⇒ 签名照旧有效，只在 stderr 如实报（把它接成放行条件
+	// = 改真写前置 = 破坏性变更 ⇒ 越线 ✗）。
+	if ap, aerr := recordApprovalAudit(tk, payload, p); aerr != nil {
+		fmt.Fprintf(stderr, "%s: ⚠ 审计那一行没落成（%v）—— **本次签名照旧有效**（审计是记录面，不是放行条件；落点 %s）\n",
+			progName, aerr, ap)
+	} else {
+		fmt.Fprintf(stderr, "  审计  ：%s（追加一行 `%s` · 只写不改）\n", ap, approveAuditEvent)
+	}
 	row := approveRow(tk, p, "验过")
 	row["result"] = "signed"
 	if inv.jsonGiven {
@@ -465,6 +572,224 @@ func cmdApproveKeygen(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "  私钥：%s（**口令加密** · 权限 600 —— 口令只在人脑子里）\n", operatorKeyPath())
 	fmt.Fprintf(stderr, "  公钥：%s（消费者读它验签）\n", operatorPubPath())
 	return exitOK
+}
+
+// ---- 审计面（`E1` · `I-6`：新增事件类型 + **自己的字段名**）----
+//
+// 为什么单列一节：现网 `edit_audit.jsonl` 那 179 行讲的是**改件**（`before_sha256` / `after_sha256`
+// 记的是**被改文件的前后 hash**），本事件讲的是**签名前的内容**（待签字节 = `zerg-approval/v1` + 五格）。
+// 两件事**不是同一件事**（`[P13]` 那条陷阱 = 事后把两格读成一格）⇒ 本事件的每一格都**用自己的名字**：
+//
+//	· 事件名      `event`                  = `approve_signed`
+//	· 该 `sha256`  `signed_payload_sha256`（**不蹭** `before_sha256` / `after_sha256`）
+//	· 字节数      `signed_payload_bytes` （**不蹭** `before_bytes` / `after_bytes`）
+//	· 件名        `tool`
+//	· 谁签的      `approver`
+//	· 时刻        `at`
+//	· 件落点      `approval_path`          （**不蹭** `approval` —— 那是别处的字段名）
+//	· 明标        `signed_not_in_person`   （`E2` · `L3-b` = **B 案**：明标落**审计侧**，件字段面一字不动）
+//	· 档位        `strength`               （`D1` / `P26` = 甲）
+//	· 在册钥      `key_id`
+//
+// 三条纪律：① **追加只写**（`O_APPEND` · 历史行逐字节不变）；② **缺任一必需格 ⇒ 这一行不许写**（判据①）；
+// ③ **不许接成放行条件**（写不进审计 ⇒ 照旧签，只报）。
+type approvalAuditLine struct {
+	At                  string `json:"at"`
+	Event               string `json:"event"`
+	Tool                string `json:"tool"`
+	Approver            string `json:"approver"`
+	ApprovalPath        string `json:"approval_path"`
+	SignedPayloadSHA256 string `json:"signed_payload_sha256"`
+	SignedPayloadBytes  int    `json:"signed_payload_bytes"`
+	SignedNotInPerson   bool   `json:"signed_not_in_person"`
+	Strength            string `json:"strength"`
+	KeyID               string `json:"key_id"`
+}
+
+// approveAuditEvent —— 事件名（本事件唯一 · 与现网那个 `edit` 事件不同名）。
+const approveAuditEvent = "approve_signed"
+
+// approveAuditRequired —— **必需格**（缺任一 ⇒ 这一行不写 · 判据①）。
+var approveAuditRequired = []string{"at", "event", "tool", "approver", "approval_path", "signed_payload_sha256"}
+
+// approveAuditOwnFields —— 本事件**自己的**字段名（新概念一律不复用现网那六格的名字 · 判据②）。
+var approveAuditOwnFields = []string{"signed_payload_sha256", "signed_payload_bytes", "approval_path", "signed_not_in_person"}
+
+// approveAuditLegacyFields —— 现网 `edit_audit.jsonl` 尾条那六格：新字段名**不许**与它们撞（判据②）。
+var approveAuditLegacyFields = []string{"before_sha256", "after_sha256", "before_bytes", "after_bytes", "approval", "approver"}
+
+// auditCells —— 必需格那一族（判 `complete()` 用 · 只列必需的那几格）。
+func (l approvalAuditLine) auditCells() map[string]string {
+	return map[string]string{
+		"at": l.At, "event": l.Event, "tool": l.Tool, "approver": l.Approver,
+		"approval_path": l.ApprovalPath, "signed_payload_sha256": l.SignedPayloadSHA256,
+	}
+}
+
+// complete —— 判「必需格齐不齐」：缺任一 ⇒ 报错（调用方**不许**写这一行 · 判据①）。
+func (l approvalAuditLine) complete() error {
+	cells := l.auditCells()
+	missing := []string{}
+	for _, f := range approveAuditRequired {
+		if strings.TrimSpace(cells[f]) == "" {
+			missing = append(missing, f)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("审计行缺必需格 %s ⇒ **这一行不写**", strings.Join(missing, " · "))
+	}
+	if len(l.SignedPayloadSHA256) != 64 {
+		return fmt.Errorf("`signed_payload_sha256` 不是 64 位十六进制（%q）⇒ 这一行不写", l.SignedPayloadSHA256)
+	}
+	return nil
+}
+
+// appendApprovalAudit —— 追加一行（`O_APPEND` · 一行一事件）。**只写不改**：历史行逐字节不变（判据③）。
+func appendApprovalAudit(path string, line approvalAuditLine) error {
+	if path == "" {
+		return fmt.Errorf("审计落点解析不出来（HOME / ZERG_STATE_DIR 都取不到）")
+	}
+	if err := line.complete(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	body, err := json.Marshal(line)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(body, '\n')); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
+// recordApprovalAudit —— `new` 签完之后那一步（`E1`）：把这一次签名落成审计一行，返回落点。
+//
+// ★ `payload` **必须**是**待签字节**本身（与打出那两行、与签名用的是**同一枚** · `D2` 的口径）——
+// `sha256` 口径**只有一处**，`E1` **不许**各算各的（`v1.3 §8.4 P16`）。
+func recordApprovalAudit(tk approvalTicketFile, payload []byte, ticketPath string) (string, error) {
+	line := approvalAuditLine{
+		At:                  time.Now().Format(time.RFC3339),
+		Event:               approveAuditEvent,
+		Tool:                tk.Tool,
+		Approver:            tk.Approver,
+		ApprovalPath:        ticketPath,
+		SignedPayloadSHA256: sha256Of(payload),
+		SignedPayloadBytes:  len(payload),
+		// `E2` · `L3-b` = **B 案**：这一格是**明标**（`signed_not_in_person`）。
+		// 今天这一路 = **人在终端上当场签** ⇒ 恒 `false`；补签那一路（本版**不实现**）才写 `true`。
+		SignedNotInPerson: false,
+		Strength:          approveStrengthInUse(),
+		KeyID:             tk.KeyID,
+	}
+	p := editAuditPath()
+	if err := appendApprovalAudit(p, line); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
+// approveAuditMarkOf —— `E2`（`L3-b` = B 案）的**判定口**：从审计一行的原始 JSON 里读**明标**。
+//
+//	("在场", nil) —— 有 `signed_not_in_person` 这一格，值为 false；
+//	("补签", nil) —— 有这一格，值为 true；
+//	("", err)     —— **这一格不在** ⇒ **不可分** ⇒ 判红（负控：抹掉明标不许蒙过去）。
+//
+// 口径与判据件（`scripts/gates/check-approve-backfill.py`）**同一套**：两处都只认**显式**的这一格，
+// 「没这一格」**不是**「在场」（硬件稿 §2.3 逐字：否则两件在审计里长得一模一样）。
+func approveAuditMarkOf(raw []byte) (string, error) {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return "", fmt.Errorf("审计行解不动：%v", err)
+	}
+	v, ok := probe["signed_not_in_person"]
+	if !ok {
+		return "", errors.New("这一行**没有明标**（`signed_not_in_person` 不在）⇒ 不可分：当场判红")
+	}
+	var in bool
+	if err := json.Unmarshal(v, &in); err != nil {
+		return "", fmt.Errorf("明标解不动（%s）：%v", string(v), err)
+	}
+	if in {
+		return "补签", nil
+	}
+	return "在场", nil
+}
+
+// ---- 换钥归档（`E3` · `§4.2` 的归档路径 + `I-8`）----
+//
+// 口径（逐字）：旧 `operator.key` / `operator.pub` **不删**，**移到** `<状态目录>/approvals/archive/
+// <旧 key_id>.{key,pub}`（**状态目录内 · 不入仓 · 不进公开面 · 不进归档区** ✗）。
+//
+// 顺序照本仓两条既有纪律长（`v1.3 §⑥`）：
+//
+//	① **备份先行**（`scripts/build/zerg-swap-core.sh:324` 逐字「备份失败 ⇒ 不换件」）—— 先把两枚件
+//	   复制进 archive 并**逐字核对 `sha256`**；核对不过 ⇒ **组件原样**（一步 `os.Remove` 都不走）；
+//	② **先自检后不可逆**（`scripts/build/zerg-upgrade.sh:901` 逐字「sha 必须在签名前校验」）——
+//	   确认值必须与**在册**那一枚 `key_id` **逐字相同**（差一字符 ⇒ 拒）：否则等于把 A 钥的件
+//	   归档到 B 钥名下（那正是 `E5` 判据② 要挡的形态）。
+//
+// ★ 本版**入口未开**：换钥入口（`--rekey` + 确认对）属 `E5`，而 `--rekey` 是 `P27` 的**预留旗标名**
+// ⇒ §五 ⑩「不许占用预留旗标名」⇒ 本函数今天**只被自检与测试调用**。**机制在、入口不在** ——
+// 如实登记，**不许**把「机制已落」说成「换钥已可用」✗。
+func archiveDirOf() string { return filepath.Join(approveDir(), "archive") }
+
+// archiveOperatorKeys 把在册那一对旧钥归档（返回两枚归档件的路径）。任一步不过 ⇒ 原件一枚不删。
+func archiveOperatorKeys(oldKeyID string) (string, string, error) {
+	oldKeyID = strings.TrimSpace(oldKeyID)
+	inUse, ok := operatorKeyIDInUse()
+	if !ok {
+		return "", "", fmt.Errorf("在册公钥件读不到 ⇒ 不归档（%s）", operatorPubPath())
+	}
+	if oldKeyID == "" || oldKeyID != inUse {
+		return "", "", fmt.Errorf("确认值 %q 与在册 `key_id` %q **不逐字相同** ⇒ 不动作", oldKeyID, inUse)
+	}
+	type pair struct {
+		src, dst string
+		mode     os.FileMode
+	}
+	pairs := []pair{
+		{operatorKeyPath(), filepath.Join(archiveDirOf(), oldKeyID+".key"), 0o600},
+		{operatorPubPath(), filepath.Join(archiveDirOf(), oldKeyID+".pub"), 0o644},
+	}
+	for _, p := range pairs {
+		if _, err := os.Stat(p.src); err != nil {
+			return "", "", fmt.Errorf("旧钥件不在（%s）：%v ⇒ 不归档、不删", p.src, err)
+		}
+	}
+	if err := os.MkdirAll(archiveDirOf(), 0o700); err != nil {
+		return "", "", fmt.Errorf("建不了归档位 %s：%v ⇒ 不动作（备份先行）", archiveDirOf(), err)
+	}
+	done := []string{}
+	for _, p := range pairs {
+		b, err := os.ReadFile(p.src)
+		if err != nil {
+			return "", "", fmt.Errorf("读不了 %s：%v ⇒ 不动作（原件一枚没删）", p.src, err)
+		}
+		want := sha256Of(b)
+		if err := os.WriteFile(p.dst, b, p.mode); err != nil {
+			return "", "", fmt.Errorf("写不进归档件 %s：%v ⇒ 不动作（原件一枚没删）", p.dst, err)
+		}
+		got, err := os.ReadFile(p.dst)
+		if err != nil || sha256Of(got) != want {
+			return "", "", fmt.Errorf("归档件与原件 `sha256` 不一致（%s）⇒ 不动作、原件不删", p.dst)
+		}
+		done = append(done, p.dst)
+	}
+	// 两枚都进了归档（且逐字核对过）才删原件 —— 「先复制后删」。
+	for _, p := range pairs {
+		if err := os.Remove(p.src); err != nil {
+			return done[0], done[1], fmt.Errorf("原件 %s 删不掉：%v（归档件已在 · 字节没丢）", p.src, err)
+		}
+	}
+	return done[0], done[1], nil
 }
 
 // ---- 密钥与口令 ----
