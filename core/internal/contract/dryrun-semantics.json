@@ -350,7 +350,7 @@
    "语义": "dryrun.v1",
    "零副作用判据": "不给确认档（或给 `--dry-run`）⇒ **回填件一个字节都不落**（写口 `impactBackfillAppendIfComplete` 根本不被调用；「还没攒过」与「读不到」分开）；运行期判据在 `core/cmd/zerg/cli_impact_backfill_test.go`（干跑之后回填件不在盘上 / 件字节逐字不变）",
    "备注": "2.5.11 `B3` · DEV-0049（2026-09-22）—— 与 `dev edit` 同一档：干跑不写、真写要 `--confirm=<主机名>` + `--yes`；键表与落点读 `core/internal/contract/impact-backfill.json`（登记表 `S-i`）"
-  }  ,
+  },
   {
    "file": "core/cmd/zerg/contract.go",
    "类": "命令面契约文本（`zerg help contract` 的《输出契约》六键口径节）",
@@ -378,6 +378,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "两条判据都跑在 `t.TempDir()` 的合成状态目录里（`ZERG_STATE_DIR`）；干跑那一档现场断言「不落批准件 · 不落审计 · 被批准文件的 sha256 不变」——本件自己不执行任何写面",
    "备注": "2.5.11 人签 D 批（D2/D3）：`--dry-run` 字样只出现在被断言的那一档里"
+  },
+  {
+   "file": "core/cmd/zerg/cli_approve_e4_ttl_test.go",
+   "类": "`E4` 有效期面的判据件（带 `--ttl` 的干跑正控 + 缺省不打「有效期」那一行的负控）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "全部判据跑在 `t.TempDir()` 的合成状态目录里（`ZERG_STATE_DIR`）：带 `--ttl` 的干跑现场断言**退码 0** 且摘要外只多一行「有效期」（到点可复算）；不给 `--ttl` 的干跑断言**没有**那一行（缺省与今天逐字节同形态）；被拒的那一批 `--ttl` 断言 stdout 0 字节 + 沙箱 approvals 仍空 —— 本件自己不执行任何写面",
+   "备注": "2.5.11 人签 E 批（`E4`）：`--dry-run` 字样只出现在被断言的那两档里"
   }
  ]
 }
