@@ -176,6 +176,7 @@ func TestImpactSteps_SyntheticFixtureJudgesAllFour(t *testing.T) {
 //	③ `scripts/gates/check-compat-manifest.py`（③ 命中 `S-a`：脚本在盘上但**没有一步调用它**）
 //	   ⇒ 必须写「未接步」，且理由是**有牙的那种**（本跑命令串里真没有它）。
 func TestImpactSteps_LiveTruthSourceAndRedLine(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
 	state := t.TempDir()
@@ -277,6 +278,7 @@ func TestImpactSteps_LiveTruthSourceAndRedLine(t *testing.T) {
 // TestImpactSteps_SameOutputAndNoSideEffects —— `M8`：同一目标两跑 ⇒ 人面与 `items` **逐字节相同**；
 // 且两跑都不许落任何件（干跑那一条 discipline 的四条在 `B1` 这一档同样成立）。
 func TestImpactSteps_SameOutputAndNoSideEffects(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
 	state := t.TempDir()

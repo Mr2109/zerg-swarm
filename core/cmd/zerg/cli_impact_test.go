@@ -102,6 +102,7 @@ var impactHeads = [3]string{"会牵动：", "会红：", "建议："}
 // 那一件见 `impactZeroHitTarget()`（**件名不许逐字写出**：写出来它就命中词法面）：
 // ⇒ `--json` 出**六键**、`items` 逐字 `[]`、退码 **1**（零命中 · 不是 0、不是失败）。
 func TestImpact_MachineFaceSixKeysAndEmptyItems(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
 	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
 	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
@@ -164,6 +165,7 @@ func TestImpact_MachineFaceSixKeysAndEmptyItems(t *testing.T) {
 //	③ 人面三行**顺序**被打乱 ⇒ 判定口必红；
 //	④ K2：给了 `--json` 不给字段 ⇒ 退 1 + stdout **0 字节**。
 func TestImpact_NegativeControls(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
 	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
 	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
