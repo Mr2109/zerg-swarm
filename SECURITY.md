@@ -27,7 +27,7 @@
 | 项 | 值 |
 |---|---|
 | 支持线（release line） | **一条**：`2.x`（单产品线 · 私有主体 · 无 nightly/beta/stable 多通道） |
-| 当前支持版本 | **最新发布的 patch 版**。版本真源 = `core/internal/version/version.go` 的 `const Version`（现读 `2.5.10`）；「四处同版」由门② 机检（`scripts/gates/check-version-sources.py`） |
+| 当前支持版本 | **最新发布的 patch 版**。版本真源 = `core/internal/version/version.go` 的 `const Version`（**本件不复写具体版本 —— 以该件现读为准**）；「四处同版」由门② 机检（`scripts/gates/check-version-sources.py`） |
 | patch 窗口长度 | **到下一个 patch 版发布为止** —— 照 Go 口径〔S6〕「1.x 的小版本修到 1.x+2 发布为止」的**最小形式**：只支持最新一版。★ 这个长度是**虫族自定的声明**，不是业界统一值（业界有 9 个月 / 1 年 / 2 年多种取法）—— 别把它读成行业合规值 |
 | 旧版怎么办 | **不回移**：安全与阻断级修复只对当前支持版本出；旧版不再维护（留在旧版 = 自行承担，不承诺二进制兼容） |
 | 安全修复的判定入口 | 私有漏洞报告（见上「报告漏洞」）；7 天内确认收到 |
