@@ -756,7 +756,7 @@ func init() {
 		{
 			path:     []string{"repo", "status"},
 			kind:     "RepoStatus",
-			summary:  "看仓脏没脏 / HEAD 在哪 / 有没有别人在写它（手敲 git status 的替身）",
+			summary:  "看仓脏没脏 / HEAD 在哪 / 有没有别人在写它（手敲 git status 的替身）· `--root` 给 ≥2 次 ⇒ **多仓汇总**（一条只读命令出两仓 HEAD + 脏件数；写旗标一律拒 2）",
 			usage:    "zerg repo status [--root <仓根>] [--json <字段>]",
 			fields:   []string{"head", "branch", "path", "status", "untracked"},
 			endpoint: "",
