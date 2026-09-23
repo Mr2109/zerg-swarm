@@ -391,7 +391,7 @@ func rmTargetDangerous(target, home string) bool {
 // 规则: rm 每个目标(展开 ~/$HOME 后, 相对路径以执行 cwd 为基) Clean 解析后,
 // 必须落在允许根集合 { 工作区, /tmp, ExtraAllowDirs(任务/白名单) } 内;
 // 任一目标出域 → 整条拒绝+引导。与路径拼写无关(~/、$HOME、绝对路径一律按解析结果判定);
-// /etc、AHZ 卷上工作区之外等一切域外路径从此不可 rm。
+// /etc、外部归档卷上工作区之外等一切域外路径从此不可 rm。
 func bashRmScopeGate(command, execCwd string, allowRoots []string) error {
 	expanded := bashExpandHomeOnly(command)
 	roots := make([]string, 0, len(allowRoots)+1)
