@@ -120,12 +120,18 @@ func kindForExitCode(rc int) string {
 }
 
 // cliError —— 一次调用里被报出来的那个错（给机器面用 · 人面照旧走 stderr）。
+//
+// `Meta` 是**失败侧**的 `meta` 按需子键口（与成功侧 `emitEnvelopeWith` 的口子同一条口径：
+// **顶层仍六键** ✗ · 子键按需 · 空 ⇒ 一个键都不加）。它为什么要有：判据行的 `error` 块与包封
+// `meta` 是**两层**（`§3.3 丙档`：`rc` 管「进程怎么结束」· `detail`/`reason` 管「哪一类因」），
+// 有的因要落在包封面上（`Q-138` 的 `meta.reason` / `meta.ledger_path` · 设计稿 §4.2 行 19）。
 type cliError struct {
 	Kind    string
 	Detail  string
 	Message string
 	Where   string // local / core / agent / node:<名>
 	Extra   map[string]string
+	Meta    map[string]string // 包封 `meta` 的按需子键（键名逐字取既有词表；空 ⇒ 不加）
 }
 
 // setErr 记下本次调用的错（谁先报谁为准 —— 与「不打第二枪」同一条纪律）。
@@ -220,11 +226,30 @@ func errEnvelope(cmd *command, e *cliError) string {
 		src = cmd.endpoint
 	}
 	out := "{\"schema\":" + jstr(contractID) + ",\"kind\":" + jstr(kind) + ",\"items\":[]," +
-		"\"meta\":{\"count\":0,\"source\":" + jstr(src) + "},\"warnings\":[],\"truncated\":false"
+		"\"meta\":{\"count\":0,\"source\":" + jstr(src) + metaSubkeysJSON(e) + "},\"warnings\":[],\"truncated\":false"
 	if ej := e.errJSON(); ej != "" {
 		out += ",\"error\":" + ej
 	}
 	return out + "}\n"
+}
+
+// metaSubkeysJSON —— `cliError.Meta` 的按需子键（**键名排序** ⇒ 同一跑形状稳定 · 空 ⇒ 逐字空串）。
+// 落点说明：设计稿 §2.2 定「顶层**仍六键**、要加东西一律走 `meta` 的按需子键」⇒ 失败侧照同一条口径，
+// 不新增顶层键、也不把因塞进自由文本的 `message` 里（那正是 `Q-138` / `Q-144` 治的那个病）。
+func metaSubkeysJSON(e *cliError) string {
+	if e == nil || len(e.Meta) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(e.Meta))
+	for k := range e.Meta {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString("," + jstr(k) + ":" + jstr(e.Meta[k]))
+	}
+	return b.String()
 }
 
 // emitErrEnvelope 把错误块写进 stdout（**只有** `--json <字段>` 的失败路径会走到这里）。
