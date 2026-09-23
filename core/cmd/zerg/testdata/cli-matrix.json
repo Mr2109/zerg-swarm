@@ -3735,6 +3735,86 @@
    "why": "命令面**一律不接受** `--no-verify`（§17.3 铁律④③「AI 不许 --no-verify」）⇒ dispatch 里拒、退 2"
   },
   {
+   "id": "repo/commit#--only 禁批量暂存（.）",
+   "command": "repo commit",
+   "argv": [
+    "repo",
+    "commit",
+    "--message",
+    "t",
+    "--only",
+    "."
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--only` **不是**批量暂存禁令的后门（`Q-104`）：`.`/`-A`/`:/`/通配一律拒（2）—— 后面仍只许逐件点名"
+  },
+  {
+   "id": "repo/commit#--file 与 --only 同给",
+   "command": "repo commit",
+   "argv": [
+    "repo",
+    "commit",
+    "--message",
+    "t",
+    "--file",
+    "a.go",
+    "--only",
+    "b.go"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "两种模式（逐件暂存 vs 点名单路径）语义不相容 ⇒ 同时给退 2（`Q-104` 甲案：就长在 `repo commit` 这一条上）"
+  },
+  {
+   "id": "repo/commit#--only 点名的件一件都没匹配",
+   "command": "repo commit",
+   "argv": [
+    "repo",
+    "commit",
+    "--message",
+    "t",
+    "--only",
+    "no-such-file-zz.go"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "点名的 N 件一件都没命中 = 我敲错了 ⇒ 拒执 2（不学 `jj` 的 warning 口径 · 设计稿 §2.3）"
+  },
+  {
+   "id": "repo/commit#--waive 缺 --reason",
+   "command": "repo commit",
+   "argv": [
+    "repo",
+    "commit",
+    "--message",
+    "t",
+    "--only",
+    "a.go",
+    "--waive",
+    "门⑱"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "例外旗标**必须带理由**（`Q-104` 已拍「带审计的显式例外」）⇒ 缺 `--reason` 拒执 2；且判在真跑之前（无 `--yes` 也不许放行）"
+  },
+  {
+   "id": "repo/commit#--only 多余位置参数",
+   "command": "repo commit",
+   "argv": [
+    "repo",
+    "commit",
+    "--message",
+    "t",
+    "--only",
+    "a.go",
+    "b.go"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--only` 一次只吃一枚值（值旗标逐枚消费 argv）⇒ 第二件会掉进位置参数**被静默丢掉**（点两件交一件还挺绿）= 最危险的形态 ⇒ fail-closed 退 2；多件要逐件 `--only`"
+  },
+  {
    "id": "approve/ls#未知旗标",
    "command": "approve ls",
    "argv": [
