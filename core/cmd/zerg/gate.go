@@ -13,8 +13,14 @@
 //	zerg gate show <步名>  → bash scripts/gates/precommit-gates.sh --emit-cmd <步名>
 //	zerg gate self-test    → bash scripts/gates/precommit-gates.sh --self-test
 //
-// 为什么不做 `--json`：这一族的输出**就是**脚本的输出（逐行相同）；再包一层 JSON 等于在命令面里
-// 另写一份步骤表 —— `G1-a` 明令禁止。要机器面就读脚本自己的 `--list` / `--emit-cmd`。
+// 两条**例外**（都只在命令面自己的旗标上生效，且都**不改脚本退码**）：
+//
+//	· `gate run --step <步名> --json <字段>` —— 单步档的机器面（`family_gate_run_step.go`）；
+//	· `gate show <步名> --json [<字段>]`   —— 四格机器面（`family_gate_show.go` · 缺口 `Q-061`/
+//	  `B-3`：默认面**一个字节不动**，`--emit-cmd` 仍是命令串直取口 ⇒ `bash -c "$(…)"` 的既有用法不破）。
+//
+// 为什么**除这两处**不做 `--json`：其余三条的输出**就是**脚本的输出（逐行相同）；再包一层 JSON
+// 等于在命令面里另写一份步骤表 —— `G1-a` 明令禁止。
 package main
 
 import (
@@ -69,6 +75,12 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		if len(tail) == 0 {
 			fmt.Fprintf(stderr, "%s: `gate show` 要给步名（例：zerg gate show 'gofmt -l core'）\n", progName)
 			return exitUsage
+		}
+		// `--json` 是**命令面**的旗标（缺口 `Q-061`/`B-3` 的四格机器面 · `family_gate_show.go`）：
+		// 给了它 ⇒ 出四格；**不给 ⇒ 这一路一个字节都没动**（仍是 `--emit-cmd` 的直取口，
+		// `bash -c "$(…)"` 的既有用法不破 —— `Q-061` 可核条件 ② 的负控）。
+		if inv.jsonGiven {
+			return gateShowJSON(inv, stdout, stderr, root, script)
 		}
 		args = append([]string{"--emit-cmd"}, tail...)
 	case "self-test":

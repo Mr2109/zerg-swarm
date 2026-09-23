@@ -84,12 +84,7 @@ func cmdGateExplain(inv *invocation, stdout, stderr io.Writer) int {
 	d := hits[0]
 	// 步骤序号（日志文件名里的 NN）**以脚本 --list 为准**（那是运行期真序；自己按源码行数
 	// 数会把 self-test 分支与别的 scope 全算进去 ⇒ 数出来的 NN 与真日志名对不上）。
-	idx, inList := gateStepIndex(root, want)
-	logNote := fmt.Sprintf("<outdir>/%02d-<步名>.log（NN = 该步在 `zerg gate ls` 默认集里的序号 %d；名里的分隔符由脚本替换成下划线）", idx, idx)
-	if !inList {
-		logNote = fmt.Sprintf("<outdir>/NN-<步名>.log（NN = 步骤序号）—— **脚本 --list 里没有这一行**（%s）："+
-			"它只在某个 scope 里被声明，或名字是运行期拼的 ⇒ NN 以那次运行的清单为准，别猜", want)
-	}
+	logNote, _ := gateStepLogNote(root, want)
 	row := map[string]string{
 		"scope":      d.Scope,
 		"mode":       d.Mode,
@@ -174,6 +169,18 @@ func gateScriptSelfSay(root, cmd string) string {
 		return fmt.Sprintf("%s 自述：%s", f, strings.Join(lines, " / "))
 	}
 	return ""
+}
+
+// gateStepLogNote —— 「日志路径」那一格（`gate explain` 的 `log` 与 `gate show --json` 的 `log`
+// **共用这一处**：两处各写一份必然漂）。
+func gateStepLogNote(root, name string) (string, bool) {
+	idx, inList := gateStepIndex(root, name)
+	note := fmt.Sprintf("<outdir>/%02d-<步名>.log（NN = 该步在 `zerg gate ls` 默认集里的序号 %d；名里的分隔符由脚本替换成下划线）", idx, idx)
+	if !inList {
+		note = fmt.Sprintf("<outdir>/NN-<步名>.log（NN = 步骤序号）—— **脚本 --list 里没有这一行**（%s）："+
+			"它只在某个 scope 里被声明，或名字是运行期拼的 ⇒ NN 以那次运行的清单为准，别猜", name)
+	}
+	return note, inList
 }
 
 // gateStepIndex —— 该步在脚本 `--list`（默认集）里的序号（1 起）与「在不在清单里」。
