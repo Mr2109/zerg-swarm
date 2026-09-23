@@ -204,7 +204,7 @@ func globMd(dir string) []string {
 	return files
 }
 
-// recentChanges — git log 最近 N 条（缓存 30s——AHZ 卷 git 慢）
+// recentChanges — git log 最近 N 条（缓存 30s——外部归档卷 git 慢）
 var overviewGitCache struct {
 	ts   time.Time
 	data string
