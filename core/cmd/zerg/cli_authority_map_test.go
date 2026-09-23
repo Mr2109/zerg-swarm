@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -216,4 +217,123 @@ func substCase(argv []any, fleet string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// ── 判据 ④ 全格齐 + 「无对应」一格**显式写出**（§一 序96 · 组4 `W-11` · 波5 补强）──────────────
+//
+// 为什么单独一条判据：`checkAuthorityMap` 判的是「表里用到的值都在闭集里」；本条判的是**反过来的
+// 那一面** —— 命令面旗标的**每一个子集**都得有格：要么在 `映射` 里给出对应，要么在 `无对应` 里
+// **逐字写「无对应」**。少了任何一条 = 表上留了一个**空格**（没写死 ⇒ 下一个人自己发明）。
+//
+// 八子集（3 枚旗标）= ∅ · `--dry-run` · `--confirm` · `--yes` · `--dry-run+--yes` ·
+// `--dry-run+--confirm` · `--confirm+--yes` · `--dry-run+--confirm+--yes`。
+func authorityFlagSubsets(flags []string) map[string]bool {
+	out := map[string]bool{}
+	n := len(flags)
+	for mask := 0; mask < (1 << n); mask++ {
+		key := []string{}
+		for i := 0; i < n; i++ {
+			if mask&(1<<i) != 0 {
+				key = append(key, flags[i])
+			}
+		}
+		sort.Strings(key)
+		out[strings.Join(key, "+")] = true
+	}
+	return out
+}
+
+// authorityRowKey —— 一行 `命令面` 归一成子集键（旗标名去 `=<值>`、排序、`+` 连接；空集 ⇒ ""）。
+func authorityRowKey(vals []any) string {
+	key := []string{}
+	for _, v := range vals {
+		s, _ := v.(string)
+		key = append(key, bareFlag(s))
+	}
+	sort.Strings(key)
+	return strings.Join(key, "+")
+}
+
+// authorityGridProblems —— 全格齐判定口（**唯一一处**：正控跑真表、三份负控跑被改坏的表）。
+func authorityGridProblems(m map[string]any) []string {
+	problems := []string{}
+	flags := []string{}
+	for _, r := range m["命令面闭集"].([]any) {
+		if v, _ := r.(map[string]any)["值"].(string); v != "" {
+			flags = append(flags, bareFlag(v))
+		}
+	}
+	sort.Strings(flags)
+	want := authorityFlagSubsets(flags)
+	got := map[string]bool{}
+	for _, r := range m["映射"].([]any) {
+		got[authorityRowKey(r.(map[string]any)["命令面"].([]any))] = true
+	}
+	noMap, ok := m["无对应"].([]any)
+	if !ok {
+		problems = append(problems, "`无对应` 一格**没写出来**（缺这一键 ⇒ 有空还是有对应无从判别）")
+	}
+	for i, r := range noMap {
+		tag := "`无对应`[第 " + itoa(i+1) + " 行]"
+		row, ok := r.(map[string]any)
+		if !ok {
+			problems = append(problems, tag+" 不是对象")
+			continue
+		}
+		if vals, ok := row["命令面"].([]any); ok {
+			got[authorityRowKey(vals)] = true
+		} else {
+			problems = append(problems, tag+" 缺 `命令面`（子集没点名 ⇒ 判不出它填的是哪一格）")
+		}
+		if reason, _ := row["理由"].(string); !strings.Contains(reason, "无对应") {
+			problems = append(problems, tag+" 的 `理由` 没逐字写「无对应」（序96 判据：无对应的格子必须**显式**写）")
+		}
+		if ctl, _ := row["控制层"].(string); ctl == "" {
+			problems = append(problems, tag+" 缺 `控制层`")
+		}
+	}
+	for k := range want {
+		if !got[k] {
+			name := k
+			if name == "" {
+				name = "∅（一个旗标都不给）"
+			}
+			problems = append(problems, "命令面子集 "+name+" **一个格都没有**（既不在 `映射`、也不在 `无对应` ⇒ 表上是个空格）")
+		}
+	}
+	return problems
+}
+
+func TestAuthorityMapGridCompleteness(t *testing.T) {
+	real := loadAuthorityMap(t)
+	if p := authorityGridProblems(real); len(p) != 0 {
+		t.Fatalf("真表被判红（要 0 问题）：%v", p)
+	}
+	// 负控一：抹掉一条**有对应**的子集行（`--dry-run` + `--yes`）⇒ 那一格成空格 ⇒ 必须红
+	b1 := loadAuthorityMap(t)
+	kept := []any{}
+	for _, r := range b1["映射"].([]any) {
+		if authorityRowKey(r.(map[string]any)["命令面"].([]any)) == "--dry-run+--yes" {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	b1["映射"] = kept
+	if len(authorityGridProblems(b1)) == 0 {
+		t.Fatalf("负控一没牙：抹掉一条映射行（`--dry-run` + `--yes`）还判绿")
+	}
+	// 负控二：`无对应` 行不写「无对应」⇒ 必须红
+	b2 := loadAuthorityMap(t)
+	b2["无对应"] = []any{map[string]any{
+		"命令面": []any{"--dry-run"}, "控制层": "require_approval", "理由": "干跑不执行 ⇒ 没有这一态",
+	}}
+	if len(authorityGridProblems(b2)) == 0 {
+		t.Fatalf("负控二没牙：`无对应` 行不逐字写「无对应」还判绿")
+	}
+	// 负控三：把 `无对应` 整键抹掉 ⇒ 必须红（缺这一键 = 有没有空格无从判别）
+	b3 := loadAuthorityMap(t)
+	delete(b3, "无对应")
+	if len(authorityGridProblems(b3)) == 0 {
+		t.Fatalf("负控三没牙：把 `无对应` 整键抹掉还判绿")
+	}
 }
