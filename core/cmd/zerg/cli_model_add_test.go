@@ -365,6 +365,44 @@ func TestModelAddNewBlockRealWriteTwoLinesAdded(t *testing.T) {
 	}
 }
 
+// 判据面 · ⑥ 名册件**末行无换行**时：写回也不给它添一个（「其余逐字节不变」含末换行这一字节）。
+//
+// 为什么要立：真名册件 `gateway/fleet.yaml` 的末行就是无换行的（`git diff` 里 `\ No newline at end of file`）
+// —— 夹具若一律以换行结尾，这条就会漏（真写多出第二处改动，人得自己发现）。
+func TestModelAddPreservesMissingTrailingNewline(t *testing.T) {
+	text := strings.TrimRight(fleetFixture, "\n")
+	p := writeFixture(t, text)
+	rc, _, errb := runCapture("model", "add", "--path", p, "--model", "probe-list", "--host", "x3",
+		"--file", "/models/tail.gguf", "--yes")
+	if rc != 0 {
+		t.Fatalf("真写 rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("读回不过：%v", err)
+	}
+	if strings.HasSuffix(string(got), "\n") {
+		t.Fatalf("写回给名册件添了末换行（原档没有）⇒ 「其余逐字节不变」破功")
+	}
+	oldLines, newLines := linesOf(text), linesOf(string(got))
+	if len(newLines) != len(oldLines)+1 {
+		t.Fatalf("行数 %d → %d（要 +1）", len(oldLines), len(newLines))
+	}
+	at := -1
+	for i, l := range newLines {
+		if strings.Contains(l, "/models/tail.gguf") {
+			at = i
+		}
+	}
+	if at < 0 {
+		t.Fatalf("找不到新行的位置")
+	}
+	restored := append(append([]string{}, newLines[:at]...), newLines[at+1:]...)
+	if strings.Join(restored, "\n") != strings.Join(oldLines, "\n") {
+		t.Fatalf("除新增那一行外，其余**不是**逐字节相同")
+	}
+}
+
 // 反例探针〇 · 空 `--model` ⇒ 2 且**文件逐字节没动**（安全网：块名是必给的那一枚）。
 func TestModelAddNegativeEmptyModel(t *testing.T) {
 	_, path := fleetFixtureAt(t)

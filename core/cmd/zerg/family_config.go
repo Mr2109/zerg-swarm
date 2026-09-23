@@ -429,7 +429,13 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 		newLines = append(newLines, "  "+name+":", newLine)
 		newLines = append(newLines, lines[pl.At:]...)
 	}
-	newText := strings.Join(newLines, "\n") + "\n"
+	// 末尾换行：**原档有没有就照原档**（真名册件 `gateway/fleet.yaml` 末行无换行 ⇒ 写回也不给它添一个 ——
+	// 「其余逐字节不变」含末换行这一字节，否则一次真写会多出第二处改动）。
+	nl := "\n"
+	if !strings.HasSuffix(raw, "\n") {
+		nl = ""
+	}
+	newText := strings.Join(newLines, "\n") + nl
 	// 双解析校验的**改后**那一半：同样走**主控同一入口**（`config.ParseFleetConfig`
 	// 就是 `LoadFleetConfig` 里面那一步 · 病根同类第三处：此前这里是裸 `yaml.Unmarshal`
 	// ⇒ 现名册件的四条裸映射**改后文本**也会被自己的严格档误判（真跑：`line 64 … !!map into
