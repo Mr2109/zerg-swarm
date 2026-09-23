@@ -462,6 +462,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "本件是消费者：只读那份单（--plan / ZERG_R28_PLAN / <状态目录>/r28-plan.txt），不重跑删面（不自己跑 dev edit --dry-run）、不写任何件；--self-test 里用 ast 扫本件源码真调用（open(w/a/+) · os.remove · shutil.move …）必须 0 —— 现跑 0 格不过",
    "备注": "R28 分档版（门㉜）· 与 zerg dev edit 干跑那一档同批口径"
+  },
+  {
+   "file": "scripts/gates/check-public-face-commands.py",
+   "类": "门：公开面命令名抽取器 + 反向探针（T-14 · 判据 V10 · 漏点 E-4）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件是**消费者 / 引文命中**：全件唯一命中是一处件头**引文**（解释「危险块那一行只声明三态」时引那三个旗标名），本件既不解析、也不产生干跑档。它自己的动作面 = 只跑 `bin/zerg help` / `bin/zerg help dangerous` / `zerg <命令> --help`（只读面）与只读 `publish/docs/**`，**不写任何件**（不落盘 / 不删 / 不推 / 不造目录 / 不改 git 状态）；`--self-test` 全跑在 `tempfile.mkdtemp()` 的夹具树里、且 `--root` 换根时真源二进制只回落到本仓现制品（回落逐条打印）",
+   "备注": "T-14 落地（2026-09-24 · 三处公开面登记同批）· 本件**无自己的干跑档** ⇒ 借本条声明「引文命中」，防它被当第五套语义"
   }
  ]
 }
