@@ -50,7 +50,7 @@ The help face is itself made of commands — ask it first:
 
 **This block is a generated artifact (do not hand-edit)**: injected by `scripts/docs/gen-cli-reference.py`, computed live from the command tree — re-run `python3 scripts/docs/gen-cli-reference.py --emit --target publish/docs/CLI.en.md`; judge drift with `--check --target publish/docs/CLI.en.md`. Command names, usage strings (flags), summaries, `--json` fields, projected endpoints and wall layer are quoted **verbatim from the command tree; not one of them is hand-written**.
 
-### Open (81)
+### Open (82)
 
 | command | usage (flags) | summary | `--json` fields | projected endpoint | wall layer |
 |---|---|---|---|---|---|
@@ -113,6 +113,7 @@ The help face is itself made of commands — ask it first:
 | `zerg itask ls` | `zerg itask ls [--json <字段>]` | 内部任务清单（16 类 · 含冷却与最近执行 · 投影 /api/internal-tasks） | id,description,cooldown,default_hours,auto_run,last_run,state | GET /api/internal-tasks | `host` |
 | `zerg itask mode` | `zerg itask mode [--json <字段>]` | 自动运行开关现值（只读面；写面 `itask mode set` 未开放） | modes,note,state | GET /api/internal-tasks/modes | `host` |
 | `zerg itask state` | `zerg itask state [--json <字段>]` | 引擎状态（投影 /api/internal-tasks/state） | note,state | GET /api/internal-tasks/state | `host` |
+| `zerg metrics` | `zerg metrics [--input <读数档>] [--json <字段>]` | 「该改哪」那把尺：把四类读数（重复 / 未用符号 / 覆盖率 / 门禁）**归一成一个可比排序**（只读 · 空输入 ⇒ 不给结论） | rank,grade,category,target,value,budget,unit,score,source | 本机（无远端对应） | `host` |
 | `zerg model add` | `zerg model add --model <模型名> --host <主机> --file <GGUF 路径> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run \| --yes] [--json <字段>]` | 往名册件（`gateway/fleet.yaml`）**先校验后写**加一条模型（`--dry-run` 先行 · 真写要 `--yes` · 写完读回再校 · 任一步不过 ⇒ 回滚 · 不覆盖别人的条）——**块按 `--model`（模型名）定位/新建**（列表形与裸映射形都认）· `--host` 只作该条的 `host:` 字段值 | model,host,file,fleet,line,added | 本机（无远端对应） | `host` |
 | `zerg model ls` | `zerg model ls [--json <字段>]` | 可用模型（投影 /api/fleet/models） | id,host,backend,modality,mem_gb,file | GET /api/fleet/models | `host` |
 | `zerg model opts` | `zerg model opts get <模型 id> [--json <字段>] \| zerg model opts set <模型 id> --set k=v… [--dry-run \| --yes]` | 适配器参数（get 只读 / set 实时生效要 --yes） | model,schema,note | GET \| PUT /api/models/{name}/adapter-opts | `host` |
@@ -138,7 +139,7 @@ The help face is itself made of commands — ask it first:
 
 ### Dangerous actions (38 · registered)
 
-> The export's header, verbatim: `命令清单 **81** 条 · 危险动作 **38** 条（其中**已开放** 10 条 · 未开放 28 条）` — for which actions are open, `zerg help dangerous` is the per-command authority; this table's four columns (tier / three states / `--confirm` target / what it touches) are quoted verbatim from `zerg help export`; the ones not open yet refuse to run for real (exit 2 = no verdict) and only their `--dry-run` plan face is available.
+> The export's header, verbatim: `命令清单 **82** 条 · 危险动作 **38** 条（其中**已开放** 10 条 · 未开放 28 条）` — for which actions are open, `zerg help dangerous` is the per-command authority; this table's four columns (tier / three states / `--confirm` target / what it touches) are quoted verbatim from `zerg help export`; the ones not open yet refuse to run for real (exit 2 = no verdict) and only their `--dry-run` plan face is available.
 
 | command | tier | three states | `--confirm` target | what it touches | wall layer |
 |---|---|---|---|---|---|

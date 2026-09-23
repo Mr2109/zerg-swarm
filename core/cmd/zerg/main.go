@@ -1488,6 +1488,20 @@ func init() {
 			endpoint: "",
 			run:      cmdGapVerify,
 		},
+		// ---- 度量与排序面（组1 序12 · `承接自-v2.5.11/承接-度量与排序面-20260921.md:40-42` · 2026-09-24）----
+		// 与 `impact`（变更影响面）**配对用、不合并成一条**：前者回答「改这一处会牵动谁」（别改坏），
+		// 本命令回答「**该改哪**」（把四类读数归一成一个可比排序）。只读 ⇒ 不写 `danger`
+		// （走默认「只读」幂等档）、不改 `emitEnvelope`、不落审计、不写缓存。
+		{
+			path:     []string{"metrics"},
+			kind:     "Metrics",
+			summary:  "「该改哪」那把尺：把四类读数（重复 / 未用符号 / 覆盖率 / 门禁）**归一成一个可比排序**（只读 · 空输入 ⇒ 不给结论）",
+			usage:    "zerg metrics [--input <读数档>] [--json <字段>]",
+			args:     []string{"（无位置参数：读数档走 `--input`）"},
+			fields:   metricsFields,
+			endpoint: "",
+			run:      cmdMetrics,
+		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
 	for _, c := range commands {
@@ -1946,6 +1960,12 @@ func valueFlagName(a string) string {
 	switch a {
 	case "--capability", "--prefer", "--min-ctx", "--min-mem-gb", "--no-fallback",
 		"--timeout", "--out", "--target-ref":
+		return a
+	}
+	// 度量与排序面旗标（组1 序12 · `zerg metrics`）：读数档的落点。
+	// 与上面几排同一口径：值照收，语义在命令里判（本命令只把它当一个**只读**的件路径）。
+	switch a {
+	case "--input":
 		return a
 	}
 	// 文档面旗标（缺口 `G-19` 同根：`--docs-ver <X.Y.Z>` 显式钉一版 = 兼容「钉死在某一版」的旧行为；
