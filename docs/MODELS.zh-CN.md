@@ -34,6 +34,19 @@ example-custom:
   cmd: "run-k2.sh -m {file} --port {port} -c 32768"
 ```
 
+### 把模型登记进名册（命令行）
+
+名册在命令行上也可读可写 —— 主控侧的那份名册（`gateway/fleet.yaml` 的 `models:` 段）就是模型面的真源：
+
+```bash
+zerg model ls        # 现有模型：id / host / backend / 模态 / 显存
+zerg model show <模型名>   # 单枚模型的全貌
+# 登记一条（先干跑：出计划件 · 零副作用）
+zerg model add --host <机器名> --model <模型名> --file <GGUF 路径> --backend llama-server --mem-gb 18 --ctx 131072 --dry-run
+```
+
+`model add` 是写面：先校验后写、写完读回再校，任一步不过就回滚，且不覆盖已有的条；干跑换成真写要把 `--dry-run` 换成 `--yes`。
+
 ---
 
 ## 2. 适配器机制（模型"脾气"的处理层）
