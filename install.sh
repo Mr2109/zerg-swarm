@@ -14,7 +14,7 @@
 #   bash install.sh                                  # 从最新 Release 安装/升级到默认前缀
 #   bash install.sh --prefix ~/zerg-swarm            # 指定安装前缀
 #   ZERG_UPGRADE_SOURCE=file:///path/to/release bash install.sh   # 用本地假源（演练/测试）
-#   ZERG_UPGRADE_SOURCE=https://github.com/Mr2109/zerg-swarm bash install.sh --tag v2.5.9
+#   ZERG_UPGRADE_SOURCE=https://github.com/Mr2109/zerg-swarm bash install.sh --tag vX.Y.Z
 #
 # 源的两形态（读到的 manifest.json 必须同形）：
 #   file://<dir>            —— 目录里有 manifest.json + 制品（本地演练）
