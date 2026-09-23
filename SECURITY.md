@@ -19,16 +19,16 @@
 
 ## 支持矩阵（含 patch 窗口）
 
-> 出处与口径：Node.js Release 的支持矩阵（`Status` + 六个日期列）〔S30〕· k8s 的「1 年 patch 支持」〔S2〕·
-> Go 的「1.x 的小版本修到 1.x+2 发布为止」〔S6〕。虫族照 **P10（2026-09-21 Mr2109 拍板「按你意见」）** 取
+> 出处与口径：Node.js Release 的支持矩阵（`Status` + 六个日期列）· k8s 的「1 年 patch 支持」·
+> Go 的「1.x 的小版本修到 1.x+2 发布为止」。虫族照这几条业界口径取
 > **最简形态**：只申报「**支持到哪一版** + **patch 窗口长度**」，**不做 release line 表** ——
 > 单产品线，一张多行表没有第二个消费者。
 
 | 项 | 值 |
 |---|---|
 | 支持线（release line） | **一条**：`2.x`（单产品线 · 私有主体 · 无 nightly/beta/stable 多通道） |
-| 当前支持版本 | **最新发布的 patch 版**。版本真源 = `core/internal/version/version.go` 的 `const Version`（**本件不复写具体版本 —— 以该件现读为准**）；「四处同版」由门② 机检（`scripts/gates/check-version-sources.py`） |
-| patch 窗口长度 | **到下一个 patch 版发布为止** —— 照 Go 口径〔S6〕「1.x 的小版本修到 1.x+2 发布为止」的**最小形式**：只支持最新一版。★ 这个长度是**虫族自定的声明**，不是业界统一值（业界有 9 个月 / 1 年 / 2 年多种取法）—— 别把它读成行业合规值 |
+| 当前支持版本 | **最新发布的 patch 版**。版本真源 = `core/internal/version/version.go` 的 `const Version`（**本件不复写具体版本 —— 以该件现读为准**）；「四处同版」由机检脚本（`scripts/gates/check-version-sources.py`） |
+| patch 窗口长度 | **到下一个 patch 版发布为止** —— 照 Go 口径「1.x 的小版本修到 1.x+2 发布为止」的**最小形式**：只支持最新一版。★ 这个长度是**虫族自定的声明**，不是业界统一值（业界有 9 个月 / 1 年 / 2 年多种取法）—— 别把它读成行业合规值 |
 | 旧版怎么办 | **不回移**：安全与阻断级修复只对当前支持版本出；旧版不再维护（留在旧版 = 自行承担，不承诺二进制兼容） |
 | 安全修复的判定入口 | 私有漏洞报告（见上「报告漏洞」）；7 天内确认收到 |
 
@@ -36,8 +36,8 @@
 
 - macOS 制品用**自签 / ad-hoc 签名**（`scripts/build/build-all.sh` 的 `ZERG_SIGN_ID`；找不到即回退 `-`）。
 - **未做 Apple Developer ID 签名，也未做 notarytool 公证** —— 因此**没有**可对外声称的「Apple 已验证」身份，
-  首次运行可能出现 Gatekeeper 拦截。P5（2026-09-21 拍板）决定**暂不上**开发者账号 + notarytool 改造；
+  首次运行可能出现 Gatekeeper 拦截。本项目**暂不上**开发者账号 + notarytool 改造；
   发布闸里这一项**先入报告档**（标「未公证」），**不假装它是绿的**。
 - **跨架构三件今天无签名**（`zerg-agent-amd64` · `zerg-agent-linux` · `zerg-agentd-linux-amd64`）——
-  已知缺口。发布闸按 P4 分档：**arm64 四件即刻拦**（`zerg-core` · `zerg-agent` · `zerg-ui` · `zerg-wall`），
+  已知缺口。发布闸按「即刻拦 / 先报告」两档分：**arm64 四件即刻拦**（`zerg-core` · `zerg-agent` · `zerg-ui` · `zerg-wall`），
   这三件**先报告**（跨架构签名需要额外工具链）。
