@@ -128,6 +128,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 		return exitUsage
 	}
+	// ★ 2026-09-24（缺口 `Q-137` / `Q-141` · 组A）：`--help` **分两态**的第一态 —— 走到这里说明
+	//   命令**在册** ⇒ 出该条**用法串**（不再打全局树）· **不起命令**（零副作用）· 退 `0`。
+	//   第二态（命令不在册）在上面那条「未知命令」分支：stderr 首行逐字 `未知命令 …` · 退 `2`。
+	//   两态**同族同码**：`zerg frobnicate --help` 与 `zerg frobnicate` 都退 `2`、首行同为 `未知命令`。
+	if inv.wantHelp {
+		return cmdUsageHelp(cmd, stdout)
+	}
 	inv.path = cmd.path
 	inv.args = append(rest, inv.args...)
 	inv.tty = ttyOf(stdout)
@@ -1821,9 +1828,17 @@ func parseInvocation(args []string) (*invocation, error) {
 			pos = append(pos, a)
 		}
 	}
-	if inv.wantHelp && len(pos) > 0 {
-		pos = nil // `zerg task ls --help`：先只回帮助，不起命令
-	}
+	// ★ 2026-09-24（缺口 `Q-137` / `Q-141` · 组A）：`--help` 在这里**不再抹掉 `pos`**。
+	//
+	// 原写法 `if inv.wantHelp && len(pos) > 0 { pos = nil }` 把「问某条命令的用法」与
+	// 「压根没给命令」并成**同一个形状**，于是 `zerg frobnicate --help`（命令**不存在**）
+	// 和 `zerg frobnicate` 走了**两条互不相干的路**：前者落进 `run` 的「无 `path` ⇒ 打全局树」
+	// 那一支 ⇒ `rc=0` + 全局头行 = **假绿**（探针把「命令不存在」读成「命令存在」）。
+	//
+	// 现在 `pos` **原样**交给 `run`：由它 `resolve` 之后**分两态** ——
+	//   · 命令**在册** ⇒ 该条**用法串**（`run` 在派发之前返回）· 退 `0`；
+	//   · 命令**不在册** ⇒ 走 `run` 的「未知命令」分支（stderr 首行逐字 `未知命令 …`）· 退 `2`。
+	// 纪律不变：`--help` 仍然**不起命令**（两态都在 `cmd.run` 之前返回）⇒ 零副作用。
 	inv.path = pos
 	if inv.plain && inv.jsonGiven {
 		return nil, fmt.Errorf("--plain 与 --json 互斥（--json 是机器面 · --plain 是行式面）")
@@ -2406,6 +2421,38 @@ func cmdVersion(inv *invocation, stdout, stderr io.Writer) int {
 }
 
 // ---- help ----
+
+// cmdUsageHelp 回应 `zerg <在册命令> --help`：只出**该条**命令的用法串（缺口 `Q-137` / `Q-141` · 组A）。
+//
+// 两态口径（一行写死，别在第二处再判一次）：
+//
+//	① 命令**在册** ⇒ 本函数：只打该条用法（用法串 + 摘要 + 位置参数 + `--json` 字段表），
+//	   **不起命令**，退 `0`；
+//	② 命令**不在册** ⇒ 不走到这里 —— `run` 在 `resolve` 那一步就落到「未知命令」分支：
+//	   stderr 首行逐字 `zerg: 未知命令 "<路径>"`，退 `2`。
+//
+// 为什么按**命令树真身**渲染、不复用 `zerg help <主题>`：主题表（`topics.go`）是人写的一小撮
+// 专题，命令树里绝大多数命令不在其中；本函数读的就是 `command` 那几格（加一条命令只改一处），
+// 且 `stdout` **不含**全局头行（`helpText()` 第 1 行）—— 这正是「`--help` 能不能当存在性判据」
+// 的分水岭（设计稿 `设计-CLI机器读面-v1.0` §1.3 坑 1/2）。
+func cmdUsageHelp(cmd *command, stdout io.Writer) int {
+	usage := strings.TrimSpace(cmd.usage)
+	if usage == "" {
+		usage = progName + " " + strings.Join(cmd.path, " ")
+	}
+	fmt.Fprintln(stdout, usage)
+	if s := strings.TrimSpace(cmd.summary); s != "" {
+		fmt.Fprintf(stdout, "  %s\n", s)
+	}
+	for _, a := range cmd.args {
+		fmt.Fprintf(stdout, "  参数: %s\n", a)
+	}
+	if len(cmd.fields) > 0 {
+		fmt.Fprintf(stdout, "  --json <字段>: %s\n", strings.Join(cmd.fields, ","))
+	}
+	fmt.Fprintf(stdout, "见 '%s help' 看命令树。\n", progName)
+	return exitOK
+}
 
 func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) > 0 {
