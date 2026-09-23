@@ -3391,7 +3391,10 @@
    ],
    "want_rc": 8,
    "want_stdout_bytes": 0,
-   "why": "读不到结果表 ⇒ **不给结论 8**（「没回执」不是绿 · 与门⑬ 同一条）· 人面失败档 stdout 一个字节不出"
+   "why": "读不到结果表 ⇒ **不给结论 8**（「没回执」不是绿 · 与门⑬ 同一条）· 人面失败档 stdout 一个字节不出",
+   "want_rc_public": 2,
+   "want_stdout_bytes_public": 0,
+   "why_public": "公开面缺 `scripts/gates/precommit-gates.sh`（EXCLUDES 里的发布机制自举件）⇒ `gate results` 先撞「门禁最小入口不在」**硬错 2**，走不到本机「读不到那一趟 ⇒ 8」那一格 —— 「缺件优先于参数/前置校验」同 `gate run` 三格"
   },
   {
    "id": "gate/results#--json 字段表外",
@@ -3406,7 +3409,10 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 301,
-   "why": "字段面**执行前判**（先于点名目录的读）⇒ 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（301 字节（含末尾换行） · 现跑派生）"
+   "why": "字段面**执行前判**（先于点名目录的读）⇒ 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（301 字节（含末尾换行） · 现跑派生）",
+   "want_rc_public": 2,
+   "want_stdout_bytes_public": 285,
+   "why_public": "同上一格的机理：公开面先撞「门禁最小入口不在」⇒ 退码同为 2，但**包封字节数不同**（本机 301 → 公开 285）。285 字节是**不含路径**的通用错误包封（逐字现读：{\"schema\":\"zerg/v1\",\"kind\":\"GateResults\",\"items\":[]…\"error\"…}）⇒ 与那棵树 clone 到哪无关；与本机那份的差 = 少了字段表那几行字（`GateResults` 比 `GateRun` 长 4 字节，同族 281 字节那格 +4 = 285 ✓ 现读核对）"
   },
   {
    "id": "dev/test#作用域档：缺 --pkg",
