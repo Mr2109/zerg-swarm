@@ -264,8 +264,8 @@ func gapRunJudge(cmdStr string) (int, string, string) {
 	args, why := gapJudgeArgv(cmdStr)
 	if why != "" {
 		// 解析不过 ⇒ 不跑（退码由调用方按设计稿译成 2）。写成具名变量是**故意的**：
-		// 门⑪ `T3` 的「裸数字」扫描面会把 `return 0, "", why` 里的那个 0 计进去
-		// （它数的不是退出码）⇒ 不给自己这一件凭空多凑一处裸数字。
+		// 门⑪ `T3` 的「裸数字」扫描面口径很宽 —— 连**注释里**的「`return` + 一个裸数字」
+		// 都会被它计成一（它数的不是退出码）⇒ 别给自己这一件凭空多凑一处裸数字。
 		rc, out := 0, ""
 		return rc, out, why
 	}
