@@ -27,13 +27,24 @@
 ----------------------------------------
 本件一个数字都不记：每个条件的**现值**从件里读、**现测值**「现跑」该条件的门脚本再解析它的现印行
 （`--conditions` 可机器读地打印整张表；`--diff --print-measure` 打印每条测量命令）。
-今天三个条件（逐条对到它自己的门与件）：
+今天四个条件（逐条对到它自己的门与件）：
 
   | 条件名                        | 门   | 件                                        | 键                     |
   |-------------------------------|------|-------------------------------------------|------------------------|
   | `gate-coverage.baseline`      | 门① | `scripts/gates/gate-coverage.config.json` | `baseline`             |
   | `cli-contract.blanks`         | 门⑪ | `scripts/gates/cli-contract-baseline.json`| `blanks`               |
   | `doc-cmds.devdocs_report_hits`| 门⑫ | `scripts/gates/doc-cmds-baseline.json`    | `devdocs_report_hits`  |
+  | `i18n.allowed_count`          | i18n 门禁（**无门号** —— 它今天还不在步骤表里，缺口 `C-10`） | `ui/scripts/i18n-baseline.json` | `allowed_count` |
+
+★ 第四条（缺口 `C-02` · 2026-09-24）为什么这样接：i18n 门的中文白名单（`allowed`）**是**一条棘轮 ——
+「只许收不许放」本来就是它的口径，可它的数今天全靠手改、没有任何留痕。本条把那一格接进本表：件里多出
+一格**声明数** `allowed_count`（= 白名单的声明条数），现测面**现跑** `ui/scripts/check-i18n.py --json`
+读它自己印的 `baseline_allowed`。于是「放开」在两个地方各有一次判红，缺一条就是「放开了没人拦」：
+  · **就地**（i18n 门自己的 G4）：白名单实条数 > 声明数 ⇒ 该门当场 **ERROR**（rc=1）；
+  · **事后**（本件 `--check`）：声明数与台账最后一条对不上 ⇒ **红**（有一条没记录的手改）。
+收紧（收）那一侧不挡：声明数 > 实条数只落**提示**，随后走本件写入口把数同降即可。
+★ 它的门号一格照实写：这门**在步骤表里没有编号**（`precommit-gates.sh` 里 7 处点名、无一处是步骤 ——
+缺口 `C-10` 未落）⇒ 本表不替它编一个号。
 
 ★ 测量是**现跑**、不是常量：跑不通 / 解析不出判据行 ⇒ **rc=2 不给结论**（不许猜、不许拿记忆充数）。
 ★ 门脚本自己 rc=1（= 现值已超 baseline）**仍是一次有效测量**（正是「将升」那一格要看的）；
@@ -131,6 +142,21 @@ CONDITIONS = (
         "unit": "开发文档面里手写命令示例的命中数",
         "measure": ["python3", os.path.join("scripts", "gates", "check-doc-cmds.py"), "--scope", "devdocs"],
         "measure_re": r"命中\s*(\d+)\s*处",
+    },
+    {
+        # 缺口 `C-02`（2026-09-24）：i18n 中文门禁基线（白名单）进棘轮 · 方向 = 只许收不许放。
+        #   现值 = 基线件里的**声明数**那一格；现测 = 现跑该门 `--json` 读它自己印的 `baseline_allowed`
+        #   （= 白名单实条数）。两者不等时：门自己先红（G4「放开被拦」），本件再判「将升/将降」。
+        #   `gate` 一格**不编号**：这门今天不在步骤表里（缺口 `C-10` 未落）⇒ 照实写它的名字，
+        #   不给它编一个门号。
+        "name": "i18n.allowed_count",
+        "gate": "i18n 门禁",
+        "file": os.path.join("ui", "scripts", "i18n-baseline.json"),
+        "key": "allowed_count",
+        "policy": "down",
+        "unit": "i18n 中文门禁基线白名单的**声明条数**（只许收不许放：白名单多一条 ⇒ 门 G4 当场红）",
+        "measure": ["python3", os.path.join("ui", "scripts", "check-i18n.py"), "--json"],
+        "measure_re": r'"baseline_allowed"\s*:\s*(\d+)',
     },
 )
 
