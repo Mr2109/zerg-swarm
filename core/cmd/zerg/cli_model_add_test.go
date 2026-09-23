@@ -219,10 +219,14 @@ func TestConfigReloadDryRunSendsNoRequest(t *testing.T) {
 }
 
 // `config reload` · ② 先校验、失败回滚：坏档 ⇒ 1 且不发请求。
+//
+// 2026-09-23（乙案）换夹具：原夹具 `models: [这 不是 映射]` 在**主控同一入口**下是「解析过 ·
+// 0 个 host」（见本文件末尾那条已核事实）——它只对**旧 CLI 的严格档**是坏档。判据意思不变
+// （坏档 ⇒ 1 且不发请求），夹具换成主控也认的**真类型错**。
 func TestConfigReloadBadConfigRefusesBeforeRequest(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fleet.yaml")
-	if err := os.WriteFile(path, []byte("models: [这 不是 映射]\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("models:\n  x3:\n    - { host: x3, ctx_window: 大 }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rc, out, errb := runCapture("config", "reload", "--path", path, "--yes")
@@ -243,5 +247,83 @@ func TestConfigReloadRequiresYes(t *testing.T) {
 	rc, out, errb := runCapture("config", "reload", "--path", path)
 	if rc != 2 || out != "" {
 		t.Fatalf("缺 --yes：rc=%d stdout=%q（要 2 + 空）· stderr=%s", rc, out, errb)
+	}
+}
+
+// 乙案（同件同判 · 2026-09-23）· 解析器口径：CLI 与主控**同一函数**
+// `config.LoadFleetConfig`（主控启动 `zerg-core/main.go:99` · 热加载 `handlers.go:1482`）。
+//
+// 为什么立这条：主控认**两种正规形态**（`internal/config/config.go:140` 逐字「兼容单 dict 和
+// 多候选数组两种格式」· 实现 `parseCandidates`）——**裸映射**（`models:` 下 `名: { … }`，
+// 真名册件第 64/67/68/70 行与 `gateway/design.md:80/81` 教的四条形即此形）与**列表**（`- { … }`）。
+// 此前 CLI 是裸 `yaml.Unmarshal`（严格档）⇒ 同一件两套解析器 ⇒ 裸映射形态被**误判不过**。
+//
+// 判据两半（成对，缺一半即假绿）：
+//
+//	正控：**同一份内容**的两种形态，`config reload --dry-run` 都必须 rc=0，且「在册」那行**逐字相同**（同判）；
+//	反控：**类型真的错**（`models:` 给标量 · `ctx_window` 给非数）⇒ 仍必须退非 0（不许把判据放宽成「什么都过」）。
+func TestFleetParserSameEntryBothShapes(t *testing.T) {
+	listShape := `models:
+  probe-x3:
+    - { host: x3, backend: llama-server, file: "/data/models/probe.gguf", mem_gb: 18, ctx_window: 131072 }
+`
+	bareShape := `models:
+  probe-x3: { host: x3, backend: llama-server, file: "/data/models/probe.gguf", mem_gb: 18, ctx_window: 131072 }
+`
+	writeAt := func(t *testing.T, text string) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "fleet.yaml")
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatalf("写夹具不过：%v", err)
+		}
+		return p
+	}
+	rosterLine := func(t *testing.T, out string) string {
+		t.Helper()
+		for _, l := range strings.Split(out, "\n") {
+			if strings.Contains(l, "在册") {
+				return l
+			}
+		}
+		return ""
+	}
+	// ── 正控：两形态同判（都 rc=0 · 「在册」行逐字相同）──
+	var lines []string
+	for _, c := range []struct{ name, text string }{
+		{"列表形态", listShape}, {"裸映射形态", bareShape},
+	} {
+		rc, out, errb := runCapture("config", "reload", "--path", writeAt(t, c.text), "--dry-run")
+		if rc != 0 {
+			t.Fatalf("%s：`config reload --dry-run` rc=%d（要 0 · 主控认的形态 CLI 也必须认）· stderr=%s", c.name, rc, errb)
+		}
+		l := rosterLine(t, out)
+		if l == "" || !strings.Contains(l, "probe-x3") {
+			t.Fatalf("%s：计划件里没有在册 host 那行：%s", c.name, out)
+		}
+		lines = append(lines, l)
+	}
+	if lines[0] != lines[1] {
+		t.Fatalf("两形态**判据不同**（同件同判破功）：列表=%q ⇔ 裸映射=%q", lines[0], lines[1])
+	}
+	// ── 反控：**类型真的错** ⇒ 仍必须退非 0（两形态各一格 + 语法错一格；判据不许放宽）──
+	//
+	// 已核事实（2026-09-23 · 真读数 · **记账不判**）：主控同一入口对「`models:` 的值不是映射」
+	// 是**静默当空**——`models: 这不是映射` / `models:`（空）/ `models: [ … ]` 三种都 ⇒ 解析过、0 个 host、
+	// **不报错**（`ParseFleetConfig` 只对 MappingNode 的值走 `parseCandidates`，其余形态的 Content 对不上
+	// key-value 步长就整段跳过）。⇒ 改后 CLI 与主控**同判**（都 rc=0）——这是**主控侧既有口径的洞**，
+	// 不是本笔引入的放宽；改前 CLI 那声 rc=1 来自**分叉的严格档**，不是安全网。收紧它属**改主控侧**，
+	// 本笔不做 ✗（已在回执里记成缺口）。
+	for _, c := range []struct{ name, text string }{
+		{"`ctx_window` 给非数（裸映射）", "models:\n  probe-x3: { host: x3, ctx_window: 大 }\n"},
+		{"`ctx_window` 给非数（列表）", "models:\n  probe-x3:\n    - { host: x3, ctx_window: 大 }\n"},
+		{"流式映射少一个 `}`（语法错）", "models:\n  probe-x3:\n    - { host: x3, ctx_window: 131072\n"},
+	} {
+		rc, out, errb := runCapture("config", "reload", "--path", writeAt(t, c.text), "--dry-run")
+		if rc == 0 {
+			t.Fatalf("反控「%s」：rc=0（要非 0 —— 类型真错必须判红，判据不许放宽）· stdout=%q", c.name, out)
+		}
+		if !strings.Contains(errb, "解析不过") {
+			t.Fatalf("反控「%s」：判词里没有「解析不过」：%s", c.name, errb)
+		}
 	}
 }

@@ -36,7 +36,6 @@ import (
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
-	"gopkg.in/yaml.v3"
 )
 
 // fleetYAMLPath 解析名册件路径（`--path` 优先 → `--root` → 仓根）。
@@ -56,16 +55,32 @@ func fleetYAMLPath(inv *invocation) (string, string) {
 }
 
 // loadFleet 读 + 解析名册件（唯一一处解析入口：`model add` 与 `config reload` 同用）。
+//
+// 乙案（2026-09-23 · 名册件口径 · Mr2109 拍板）：走**主控同一函数** `config.LoadFleetConfig`
+// —— 主控启动（`core/cmd/zerg-core/main.go:99`）与热加载（`core/internal/api/handlers.go:1482`）
+// 调的就是它，**同一件、同一函数**才有「同件同判」。
+//
+// 病根（本件改前）：这里原是裸 `yaml.Unmarshal(raw, &fc)`（**严格档**），而主控的解析器认得
+// 两种正规形态（`core/internal/config/config.go:140` 逐字「兼容单 dict 和多候选数组两种格式」·
+// 实现见 `:217 parseCandidates`；`gateway/design.md:80/81` 教的四条形就是**裸映射**形态，
+// 真名册件第 64/67/68/70 行即此形）⇒ 同一件、两套解析器 ⇒ `model add` / `config reload`
+// 对现名册件**恒退 1**（真跑记录：`yaml: unmarshal errors: line 64: cannot unmarshal !!map
+// into []config.ModelCandidate`）——**不是名册坏，是解析器分叉**。
+//
+// 路径语义不变：`--path` 优先 → `--root` → 仓根（由 `fleetYAMLPath` 定，本入口**不绑固定路径**）。
+// 一处主控侧既有行为如实记下：该入口会按 `ZERG_AUTH_TOKEN` / `~/.zerg/token` 覆写 `Auth.Token`
+// （`config.go:90`）——对本包无影响（这里只读 `models` / `fleet` 两面）。
 func loadFleet(path string) (*config.FleetConfig, error) {
-	raw, err := os.ReadFile(path)
+	fc, err := config.LoadFleetConfig(path)
 	if err != nil {
-		return nil, err
-	}
-	var fc config.FleetConfig
-	if err := yaml.Unmarshal(raw, &fc); err != nil {
+		// 文案分两路报，不混：读不到照主控原样（「读取配置文件失败: …」），
+		// 解析不过沿用本包旧风格（调用方前面已各自 stat/ReadFile 挡过读失败面）。
+		if _, serr := os.Stat(path); serr != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("YAML 解析不过：%v", err)
 	}
-	return &fc, nil
+	return fc, nil
 }
 
 // ---- `model add`（Q-099 · P0）---------------------------------------------------------------
@@ -299,8 +314,12 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 	newLines = append(newLines, newLine)
 	newLines = append(newLines, lines[at:]...)
 	newText := strings.Join(newLines, "\n") + "\n"
-	var recheck config.FleetConfig
-	if err := yaml.Unmarshal([]byte(newText), &recheck); err != nil {
+	// 双解析校验的**改后**那一半：同样走**主控同一入口**（`config.ParseFleetConfig`
+	// 就是 `LoadFleetConfig` 里面那一步 · 病根同类第三处：此前这里是裸 `yaml.Unmarshal`
+	// ⇒ 现名册件的四条裸映射**改后文本**也会被自己的严格档误判（真跑：`line 64 … !!map into
+	// []config.ModelCandidate`）⇒ `model add` 对现册恒退 1）。
+	recheck, err := config.ParseFleetConfig([]byte(newText))
+	if err != nil {
 		inv.setErr("failed", "post_write_invalid", "改后文本解析不过（回滚档 · 不写）")
 		fmt.Fprintf(stderr, "%s: 改后文本解析不过（%v）⇒ 判红（退码 1 · **不写** · 这就是先校验后写的用处）\n", progName, err)
 		return exitFail
@@ -370,8 +389,9 @@ func writeFleetAtomic(path, oldText, newText string, stderr io.Writer) int {
 		}
 		return exitFail
 	}
-	var fc config.FleetConfig
-	if err := yaml.Unmarshal(back, &fc); err != nil {
+	// 读回再校：**主控同一入口**（病根同类第四处 · 此前裸 `yaml.Unmarshal` ⇒ 现册裸映射形
+	// 写完读回也会被自己的严格档误判 ⇒ 明明写成了却回滚）。
+	if _, err := config.ParseFleetConfig(back); err != nil {
 		fmt.Fprintf(stderr, "%s: 读回解析不过（%v）⇒ **回滚**\n", progName, err)
 		_ = os.WriteFile(path, []byte(oldText), fi.Mode().Perm())
 		return exitFail
@@ -399,7 +419,8 @@ func cmdConfigReload(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 名册件读不到（%s）：%v ⇒ 不给结论（退码 8）\n", progName, path, err)
 		return exitBlocked
 	}
-	// ① 先校验（本地 · 与主控同一份解析器 `config.LoadFleetConfig` 的同一件）
+	// ① 先校验（本地 · 与主控**同一函数** `config.LoadFleetConfig` · 同一件：`gateway/fleet.yaml`
+	// —— 主控热加载侧逐字调的就是它（`core/internal/api/handlers.go:1482`））
 	fc, err := loadFleet(path)
 	if err != nil {
 		inv.setErr("failed", "config_invalid", "名册件解析不过 ⇒ 不请求热加载")
