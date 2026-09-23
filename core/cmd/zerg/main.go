@@ -2120,6 +2120,13 @@ func requireFields(inv *invocation, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stderr, "%s: --json 需要逗号分隔的字段列表\n", progName)
 	fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(fieldListOf(inv.path), ","))
+	// ★ 2026-09-24（缺口 `Q-070` · 组3 §一 序52 · 波10 序83）：§4.1 K14 四件套的「下一步」那一件。
+	//   光列字段表 = 指出**哪里错**；补一句**可照抄**的例（取该条字段表第一格）⇒ 推到「知道怎么改」。
+	//   为什么取第一格而不写死某个字段名：字段表是命令树的真源，写死会漂（`Q-155` 同族那条教训）。
+	if fs := fieldListOf(inv.path); len(fs) > 0 {
+		fmt.Fprintf(stderr, "下一步：从上面「可选字段」里挑逗号分隔的名字，例：`%s %s --json %s`\n",
+			progName, strings.Join(inv.path, " "), fs[0])
+	}
 	return exitCodeOf("usage")
 }
 

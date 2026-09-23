@@ -38,12 +38,19 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 		if why != "" {
 			fmt.Fprintf(stderr, "%s: 解析不到落点 —— %s\n", progName, why)
 			fmt.Fprintf(stderr, "（给 `--out <目录>` 或 `--docs-ver <X.Y.Z>` 钉一版；两种都不给时按「版本号最大且 ≥3 篇」现算）\n")
+			// ★ 2026-09-24（缺口 `Q-070` · 组3 §一 序52 · 波10 序83）：§4.1 K14 四件套的「下一步」那一件。
+			//   上面那句是**判据说明**（说缺什么），不是**可照抄的下一步**（说怎么改）—— 补一句能直接敲的。
+			fmt.Fprintf(stderr, "下一步：`%s help export --dry-run --out <已存在的目录>` 先核一遍（不给 --out 时本命令按「版本号最大且 ≥3 篇」现算落点，那条路今天走不通）\n", progName)
 			return exitUsage
 		}
 		outDir = d
 	}
 	if st, err := os.Stat(outDir); err != nil || !st.IsDir() {
 		fmt.Fprintf(stderr, "%s: 落点不是目录：%s（给 --out <已存在的目录>）\n", progName, outDir)
+		// ★ 2026-09-24（缺口 `Q-070` · 组3 §一 序52 · 波10 序83）：§4.1 K14 四件套的「下一步」那一件。
+		//   原文案只报「给 --out <已存在的目录>」= 指出**哪里错**；源件（`缺口-命令面-20260921.md:227`）
+		//   要的正是这一句 —— 补上「怎么改」（含可照抄的 `mkdir -p`）。
+		fmt.Fprintf(stderr, "下一步：`mkdir -p %s` 再跑，或换一个已存在的目录（例：`--out ../Zerg-内部文档/项目文档/v2.5.12`）\n", outDir)
 		return exitUsage
 	}
 	name := fmt.Sprintf("导出-命令面帮助-%s.md", at.Format("20060102"))
