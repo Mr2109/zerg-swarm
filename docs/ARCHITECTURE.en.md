@@ -137,3 +137,10 @@ Safety design (`core/internal/agent`):
 - **HTTP + token rather than a message queue**: simple to deploy and debuggable with curl; the price is that you must secure the token yourself
 - **Purely local**: no data is sent back to the author. The price is that every deployer must manage their own token and port exposure (see [SECURITY.md](../SECURITY.md))
 - **No model fine-tuning**: Zerg takes the "**orchestration + system engineering**" route — get existing models to do the job well rather than train our own
+
+---
+
+## 9. Supervision and Mounting
+
+- **The desktop UI is hosted as a system service**: `zerg-ui` runs under the launchd agent `com.zerg.ui` (service file `~/Library/LaunchAgents/com.zerg.ui.plist`, `KeepAlive` + `RunAtLoad`) — the system restarts it if it dies, so it is never launched bare by hand; read the current state with `launchctl print gui/$(id -u)/com.zerg.ui` (`state = running`)
+- **The archive area is a read-only mounted image**: archive content is mounted as a **read-only volume** (the mount point is outside the repository), and the **original path beside the repository is a same-named symbolic link** pointing at it — so reading the original path reads files inside the read-only image, and writing there is always refused (this is not a permission bit set wrong; `chmod` cannot change a read-only volume either). There is a single entry point for attach/detach: `bash scripts/svc/archive-mount.sh on|off|status` (**on demand · never resident · never installed as a launchd job**); while unmounted the original path is a **dangling symbolic link**, reading it fails outright, and `status` reports "not mounted" and exits 1

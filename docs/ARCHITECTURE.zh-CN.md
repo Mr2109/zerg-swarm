@@ -137,3 +137,10 @@ POST /api/tasks
 - **HTTP + 令牌而非消息队列**：部署简单、可 curl 调试；代价是需要自己保证令牌安全
 - **纯本地**：不向作者回传任何数据。代价是每个部署者要自己管好令牌与端口暴露（见 [SECURITY.md](../SECURITY.md)）
 - **不做模型微调**：虫族是"**编排 + 系统改造**"路线——把现成模型用好，而不是自己训模型
+
+---
+
+## 9. 托管与装载
+
+- **桌面 UI 由系统服务托管**：`zerg-ui` 跑在 launchd 常驻服务 `com.zerg.ui` 上（服务件 `~/Library/LaunchAgents/com.zerg.ui.plist`，`KeepAlive` + `RunAtLoad`）——掉线由系统拉起，不靠手工裸启；现状现读 `launchctl print gui/$(id -u)/com.zerg.ui`（`state = running`）
+- **归档区是只读镜像挂载**：归档内容挂成一个**只读卷**（挂载点在仓外），仓边的**原路径是同名符号链接**指向它——所以读原路径 = 读只读镜像里的件，往它写必然被拒（这不是权限位没设对，`chmod` 也改不动只读卷）。装与卸只有一个入口：`bash scripts/svc/archive-mount.sh on|off|status`（**按需 · 不常驻 · 不装 launchd**）；未挂那一态原路径是**悬空符号链接**，读它会明确失败，`status` 会报"未挂"并退码 1
