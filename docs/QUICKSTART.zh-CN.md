@@ -135,6 +135,17 @@ curl -s -X POST -H "X-Auth-Token: $ZERG_AUTH_TOKEN" -H 'Content-Type: applicatio
 
 主控会：选模型 → 找一台有显存的机器（必要时加载模型）→ 派发子端执行 Agent 循环（工具调用 + 防呆反馈）→ 状态与日志在 UI 的"任务"面板可见。
 
+## 改了配置 / 换了机器之后
+
+`gateway/fleet.yaml`、端口或机器名改过之后，**别让旧进程带着旧配置继续跑**。两条都建议**先干跑**：
+
+- **热加载配置**：建议先 `zerg config reload --dry-run` 看计划件（零副作用 · 一个字节不写），确认影响面无误再 `zerg config reload --yes`（需令牌 · 与 `POST /api/config/reload` 同效）。名册件本地解析不过 ⇒ **不发请求**，旧配置继续跑（照 `nginx -s reload`：先校验、失败回滚）。
+- **换了机器之后重启主控**：机器名 / 端口 / 服务声明变了，热加载不够 —— `zerg core restart` 会**停 + 起主控**（**整个虫群的控制面会断一会儿**）。**建议**先 `zerg core restart --dry-run` 看计划件（将重启哪个 pid、影响哪些端口与服务），确认档齐了才真跑：建议**整串照抄** `zerg core restart --confirm=<主机名> --yes`。
+
+两条都是**三态**：`--dry-run`（零副作用）· `--confirm=<目标>`（值必须与目标逐字相同）· `--yes`（确认档）；`core restart` 要 `--confirm` 与 `--yes` **同时到**，缺一个 ⇒ 只出计划件、**不执行**。
+
+**就绪判据绑自己那份 pid**：重启前用 `zerg core ps` 记下 pid 与起时，重启后必须**换上新 pid**（监听端口的属主也跟着换）才算真起来了 —— pid 与起时都没变 ⇒ 还是旧进程，不许当绿。**失败回滚**：配置面不过 ⇒ 旧配置继续跑，改回文件再加载一次即可；进程面没起来 / 没就绪 ⇒ 进程面可再跑一次本命令，件的回滚归换件入口（`scripts/build/zerg-swap-core.sh`）。
+
 ## 常见坑
 
 | 现象 | 原因 / 处理 |
