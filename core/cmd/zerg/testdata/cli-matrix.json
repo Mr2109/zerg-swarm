@@ -1204,6 +1204,103 @@
    "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
   },
   {
+   "id": "script/inventory/sync#未知旗标",
+   "command": "script inventory sync",
+   "argv": [
+    "script",
+    "inventory",
+    "sync",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "script/inventory/sync#不认的契约主号",
+   "command": "script inventory sync",
+   "argv": [
+    "script",
+    "inventory",
+    "sync",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "script/inventory/sync#--json 不给字段",
+   "command": "script inventory sync",
+   "argv": [
+    "script",
+    "inventory",
+    "sync",
+    "--dry-run",
+    "--json"
+   ],
+   "want_rc": 1,
+   "want_stdout_bytes": 293,
+   "why": "给了 --json 不给字段 ⇒ **1**（§4.1 K2）。★ 这一格的 stdout 不是 0 字节：本命令是**危险档**（D2 写面）⇒ 框架把错误面打成机器可读包封走 stdout（同 `repo commit` 那条先例）· 逐字现读 `{\"schema\":\"zerg/v1\",\"kind\":\"ScriptInventorySync\",\"items\":[],…\"error\"…}` = **293 字节**（两跑逐字节一致 · 不含时刻）"
+  },
+  {
+   "id": "script/inventory/sync#--set 逐条改（第二条写路径）",
+   "command": "script inventory sync",
+   "argv": [
+    "script",
+    "inventory",
+    "sync",
+    "--set",
+    "x=y"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`A3` 写面「一条命令写」的机械含义：不接受逐条改旗标（设计稿 §二「形状五条不许」第 1 条）· 执行前判"
+  },
+  {
+   "id": "script/inventory/sync#--out 逐条改（第二条写路径）",
+   "command": "script inventory sync",
+   "argv": [
+    "script",
+    "inventory",
+    "sync",
+    "--out",
+    "/tmp/x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "同上（另一枚逐条改旗标：`--out` 换落点 = 第二条写路径）· 执行前判"
+  },
+  {
+   "id": "script/inventory/sync#落点白名单外",
+   "command": "script inventory sync",
+   "argv": [
+    "script",
+    "inventory",
+    "sync",
+    "--docs-root",
+    "/nonexistent-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "落点白名单只有一件 + 读不到不给结论（设计稿 §五 判据 8：**不许**顺手新建第二份台账）· 执行前判"
+  },
+  {
+   "id": "script/inventory/sync#位置参数不收",
+   "command": "script inventory sync",
+   "argv": [
+    "script",
+    "inventory",
+    "sync",
+    "多余参数"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "本命令不吃位置参数（三段已用满 —— 现读 `zerg help` 第 1 行「深度 ≤ 3 层」）"
+  },
+  {
    "id": "resource/pin#未知旗标",
    "command": "resource pin",
    "argv": [
