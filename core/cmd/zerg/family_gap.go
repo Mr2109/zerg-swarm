@@ -135,6 +135,66 @@ func readGapLedger() (gapLedger, error) {
 	return led, nil
 }
 
+// ── 真源面：两种「读不到」的**机器可辨分档**（缺口 `Q-138` · 设计 `设计-CLI机器读面-v1.0-20260924.md`）──
+//
+// **病**（设计稿 §1.3 坑 3 逐字）：`zerg gap ls` 本机恒退 `8`，而「真源**不在盘上**」与「真源
+// **在盘上但读不出来**」两种因在机器面**分不开** —— 同一个 `rc`、只有一句人面文案不同 ⇒ 调用方
+// 只能人眼读文案（与 `Q-144`「两态同码」**同形**；设计稿 §1.2 把它归**乙类 · 恒红/无替代**）。
+//
+// **治**（照设计稿 **§3.3 丙档** · **不动退码表** ✗ —— `8` 与 fail-closed 一个字节不变）：把「哪一类缺」
+// 落成**一枚两值闭集**，**三处同源**：① `error.detail`（`error` 块里的**二级细分**格 —— `errors.go:12`
+// 逐字「`detail` 二级细分」）② 包封 `meta.reason`（设计稿 §4.2 行 19 **逐字取词**）③ stderr **首行**的
+// 固定前缀短语。`error.kind` 仍是闭集里那一个 `blocked`（它的语义逐字就是「不给结论（缺前置 /
+// 不可判）——「读不到」不许当健康」· 退码 `8`）。
+//
+// ★ **为什么不**在 `error.kind` 层再拆两个新 kind（设计稿 §3.2 那半句的字面读法 · 照实 ✗）：
+//
+//	`kind` 闭集的**真源**是 `errors.go` 的 `errorKinds`（`zerg help errors` 与门⑤ 都读它），
+//	而 `§3.3 丙档` 自己写着「只增不改；改名 = 破坏性变更，走大版本」；**扩它会动门⑤ 现跑的
+//	「闭集 18 个 kind」** —— 本批口径是「**不动数字**」。⇒ 两值落在 `detail` / `reason` 这一层，
+//	与设计稿 §4.2 行 19 的字段名**逐字一致**（那一行要的就是 `meta.reason`，不是新 kind）。
+const (
+	// gapReasonLedgerAbsent —— 真源**不在盘上**（件还没产出来 · 「没有」不许当健康）。
+	gapReasonLedgerAbsent = "ledger_absent"
+	// gapReasonPrecondition —— 真源**在盘上但读不出来**（读不动 / 某行不是 JSON ⇒ 前置不满足）。
+	gapReasonPrecondition = "precondition_missing"
+)
+
+// gapLedgerErr —— 两个「读不到」出口的**唯一落点**（`kind` / `detail` / `meta.reason` / `meta.ledger_path`
+// 一处写死，别处不各判 —— 照 `errors.go` §九 M7 `E1`「退出码是 kind 的单值投影」的同一条纪律）。
+func gapLedgerErr(inv *invocation, reason, msg, path string) {
+	inv.setErr("blocked", reason, msg)
+	if inv.err != nil {
+		inv.err.Meta = map[string]string{"reason": reason, "ledger_path": path}
+	}
+}
+
+// gapLedgerErrFirstLine —— stderr 的**首行固定前缀短语**（机器可 grep）。
+// 词表照**同族件**现读的写法：`family_core_restart.go` / `family_eggs_cocoons.go` 的
+// `error.kind=… · detail=… · retryable=… · remedy=…`；值一律**现算**（`retryableOf` / `remedyOf`），
+// 不许在这里另抄一份 kind→可重试性的映射。
+func gapLedgerErrFirstLine(w io.Writer, reason string) {
+	fmt.Fprintf(w, "%s: error.kind=blocked · detail=%s · reason=%s · retryable=%t · remedy=%s\n",
+		progName, reason, reason, retryableOf("blocked"), remedyOf("blocked"))
+}
+
+// gapLedgerAbsentHint —— 真源**缺**时「去哪找 / 怎么补」（人面同一件事 = 包封里的 `meta.ledger_path`）。
+// ★ 只印**命令**、**不教手搓该件**（防呆③「真源只由命令写」）—— `gap add` 是本族的写面，**首跑即建件**。
+func gapLedgerAbsentHint(w io.Writer, path string) {
+	fmt.Fprintf(w, "  去哪找 : 真源 = %s（`ZERG_STATE_DIR` → 默认 `~/.zerg/state` · **不在任何仓里**）\n", path)
+	fmt.Fprintf(w, "  最小补法 : `%s gap add --symptom '<一句>' --handmade '<原样命令>' --impact 命令面 "+
+		"--want-family gap --want-action ls --repro-cmd 'zerg gap ls' --verify-cmd 'zerg gap ls' --yes`"+
+		"（本族写面**首跑即建件**；真源只由命令写 ⇒ 不手搓 ✗）\n", progName)
+	fmt.Fprintf(w, "  ⇒ fail-closed：真源缺 ⇒ 退码仍 `8`（「没有」不许当健康）\n")
+}
+
+// gapLedgerUnreadableHint —— 真源**在盘上、读不出来**：给「怎么补」的**可操作两条**（不猜、不代改）。
+func gapLedgerUnreadableHint(w io.Writer, path string) {
+	fmt.Fprintf(w, "  在哪找 : 真源 = %s（**在盘上、但读不出来** —— 与「不在盘上」是两个 reason）\n", path)
+	fmt.Fprintf(w, "  最小补法 : 权限 ⇒ `chmod +r %s`；报「第 N 行不是 JSON」⇒ 订正该行（真源只由命令写）\n", path)
+	fmt.Fprintf(w, "  ⇒ fail-closed：读不到 ⇒ 退码仍 `8`（「读不到」不许当绿）\n")
+}
+
 // gapFingerprint —— 缺口身份指纹（64 hex）。**只对身份面取**：手搓记录 + 想要的命令形状。
 // 为什么不是整行：判据 5 要「同 fp 而内容不同 ⇒ 14」可达（整行取指纹会让它永远不可达）。
 func gapFingerprint(r gapRecord) string {
@@ -455,17 +515,21 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	// ② 读真源（读不到 ⇒ 8 · **不许当绿**）
+	// ② 读真源（读不到 ⇒ 8 · **不许当绿**）· 两种因**机器可辨**（`Q-138`：`ledger_absent` ⇄ `precondition_missing`）
 	led, err := readGapLedger()
 	if err != nil {
-		inv.setErr("blocked", "ledger_unreadable", err.Error())
+		gapLedgerErr(inv, gapReasonPrecondition, err.Error(), gapLedgerPath())
+		gapLedgerErrFirstLine(stderr, gapReasonPrecondition)
 		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
 		fmt.Fprintf(stderr, "真源 = %s；「读不到」不许当「没有」（退码 8）\n", gapLedgerPath())
+		gapLedgerUnreadableHint(stderr, gapLedgerPath())
 		return exitBlocked
 	}
 	if !led.Exists {
-		inv.setErr("blocked", "ledger_absent", "真源不在盘上")
+		gapLedgerErr(inv, gapReasonLedgerAbsent, "真源不在盘上", led.Path)
+		gapLedgerErrFirstLine(stderr, gapReasonLedgerAbsent)
 		fmt.Fprintf(stderr, "%s: 真源不在盘上：%s（退码 8 —— 「读不到」不许当绿）\n", progName, led.Path)
+		gapLedgerAbsentHint(stderr, led.Path)
 		return exitBlocked
 	}
 
@@ -663,12 +727,14 @@ func cmdGapAdd(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	// ③ 读真源（`add` 侧：件不在 = 首次创建，**不算 8**；读不到 / 解读不了 ⇒ 8）
+	// ③ 读真源（`add` 侧：件不在 = 首次创建，**不算 8**；读不到 / 解读不了 ⇒ 8 · `Q-138` 两因分档）
 	led, err := readGapLedger()
 	if err != nil {
-		inv.setErr("blocked", "ledger_unreadable", err.Error())
+		gapLedgerErr(inv, gapReasonPrecondition, err.Error(), gapLedgerPath())
+		gapLedgerErrFirstLine(stderr, gapReasonPrecondition)
 		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
 		fmt.Fprintf(stderr, "真源 = %s；写不进就不写（退码 8）\n", planPath)
+		gapLedgerUnreadableHint(stderr, gapLedgerPath())
 		return exitBlocked
 	}
 
@@ -913,17 +979,21 @@ func cmdGapVerify(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	// ③ 读真源（`--dry-run` 与 `--yes` 都要它：读不到 ⇒ 8 · 不许当绿）
+	// ③ 读真源（`--dry-run` 与 `--yes` 都要它：读不到 ⇒ 8 · 不许当绿）· 两种因**机器可辨**（`Q-138`）
 	led, err := readGapLedger()
 	if err != nil {
-		inv.setErr("blocked", "ledger_unreadable", err.Error())
+		gapLedgerErr(inv, gapReasonPrecondition, err.Error(), gapLedgerPath())
+		gapLedgerErrFirstLine(stderr, gapReasonPrecondition)
 		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
 		fmt.Fprintf(stderr, "真源 = %s；「读不到」不许当绿（退码 8）\n", gapLedgerPath())
+		gapLedgerUnreadableHint(stderr, gapLedgerPath())
 		return exitBlocked
 	}
 	if !led.Exists {
-		inv.setErr("blocked", "ledger_absent", "真源不在盘上")
+		gapLedgerErr(inv, gapReasonLedgerAbsent, "真源不在盘上", led.Path)
+		gapLedgerErrFirstLine(stderr, gapReasonLedgerAbsent)
 		fmt.Fprintf(stderr, "%s: 真源不在盘上：%s（退码 8 —— 「读不到」不许当绿）\n", progName, led.Path)
+		gapLedgerAbsentHint(stderr, led.Path)
 		return exitBlocked
 	}
 	idxs, rc, why := gapTargets(led, ids, inv.all)
