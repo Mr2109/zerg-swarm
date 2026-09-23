@@ -83,9 +83,9 @@
     "version",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 `--json` 不给字段 ⇒ **用法错 2**（`Q-146` 归位：退码表 `core/cmd/zerg/exitcodes.go:33` = `usage` 2 · `errors.go` 的 `kind=usage` = 2；改前退 1 与自家退码表不同向）+ stdout 0 字节（字段清单走 stderr · §4.1 K2 的提示面不变）"
   },
   {
    "id": "version#sudo 一律不接受",
