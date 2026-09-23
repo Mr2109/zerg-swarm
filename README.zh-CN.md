@@ -90,8 +90,8 @@ cp gateway/fleet.example.yaml gateway/fleet.yaml   # 按自己的机器/权重�
 升级同样走源码 —— 客户端自己拉仓库、在本机构建，再把制品交给六阶段换装内核：
 
 ```bash
-zerg update            # 已是最新则打印「无需更新」并以 2 退出
-zerg update --check    # 先问一句（6 小时缓存，无副作用）
+zerg-core update           # 已是最新则打印「无需更新」并以 2 退出
+zerg-core update --check   # 先问一句（6 小时缓存，无副作用）
 ```
 
 ## 本仓库如何发布
