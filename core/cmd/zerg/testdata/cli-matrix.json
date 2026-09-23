@@ -3342,6 +3342,73 @@
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
   },
   {
+   "id": "gate/results#未知旗标",
+   "command": "gate results",
+   "argv": [
+    "gate",
+    "results",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "非透传命令：未知旗标是命令面的用法错（不回落到脚本 —— `results` 根本不走脚本）· 执行前判"
+  },
+  {
+   "id": "gate/results#不认的契约主号",
+   "command": "gate results",
+   "argv": [
+    "gate",
+    "results",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gate/results#--last 与 --dir 同给",
+   "command": "gate results",
+   "argv": [
+    "gate",
+    "results",
+    "--last",
+    "--dir",
+    "/nonexistent-zerg-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「最近一趟」与「点名那一趟」是两个来源 ⇒ 同给 = 用法错 2（不猜谁优先）"
+  },
+  {
+   "id": "gate/results#读不到那一趟（不给结论 8）",
+   "command": "gate results",
+   "argv": [
+    "gate",
+    "results",
+    "--dir",
+    "/nonexistent-zerg-zz"
+   ],
+   "want_rc": 8,
+   "want_stdout_bytes": 0,
+   "why": "读不到结果表 ⇒ **不给结论 8**（「没回执」不是绿 · 与门⑬ 同一条）· 人面失败档 stdout 一个字节不出"
+  },
+  {
+   "id": "gate/results#--json 字段表外",
+   "command": "gate results",
+   "argv": [
+    "gate",
+    "results",
+    "--dir",
+    "/nonexistent-zerg-zz",
+    "--json",
+    "nosuchfield-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 301,
+   "why": "字段面**执行前判**（先于点名目录的读）⇒ 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（301 字节（含末尾换行） · 现跑派生）"
+  },
+  {
    "id": "dev/test#作用域档：缺 --pkg",
    "command": "dev test",
    "argv": [
