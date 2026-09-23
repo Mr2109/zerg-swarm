@@ -25,6 +25,23 @@
 用法：
   python3 scripts/docs/gen-cli-reference.py --emit     # 生成/重生成两份页（先 build-all.sh --only-cli）
   python3 scripts/docs/gen-cli-reference.py --check    # 判 drift + 命令名对拍（不改仓）
+  # 公开面那两件（**手写正文** + 生成区标记）：注入与复判都走 `--target`（可重复 · 语种按件名现判）
+  python3 scripts/docs/gen-cli-reference.py --emit  --target publish/docs/CLI.zh-CN.md \
+                                                   --target publish/docs/CLI.en.md
+  python3 scripts/docs/gen-cli-reference.py --check --target publish/docs/CLI.zh-CN.md \
+                                                   --target publish/docs/CLI.en.md
+
+★ `--target` 写哪一块：只写 `<!-- ===== 生成区 BEGIN … -->` 与 `<!-- ===== 生成区 END … -->`
+  之间；区间里「区首连续 `>` 起的注记行」是**人写的口径说明**（计数/纪律）⇒ 不动它，其余
+  （生成物声明行 + 两张命令表：命令名·用法串·说明·`--json` 字段·投影端点·茧壁层级）整块重写
+  —— 不整块重写就判不出 drift。
+
+两处解析口径（历次漂移的收口 · 一律「不认识就不给结论」）
+  · 列锚**按表头名**取列（**不是**按列数）：`help export` 加列或调列序都不会把公开面看错列
+    （现读多出来的 `本版` · 逐条开放状态 / `出处` · 追溯面 —— 两列都不进公开面）；表头里认不出
+    的形状仍 ⇒ rc=2（**不放宽解析**）。
+  · `usage` 允许写成**包内常量**（现读 1 条：`impactUsageLine`，与命令树 usage 同源）⇒ 回源件查
+    它的字面量；查不到 ⇒ 当作空串（上层 rc=2）。
 """
 import argparse
 import glob
@@ -40,6 +57,13 @@ EN_REL = os.path.join("docs", "en", "参考-命令行.md")
 MAIN_REL = os.path.join("core", "cmd", "zerg", "main.go")
 GEN_REL = os.path.join("scripts", "docs", "gen-cli-reference.py")
 RC_OK, RC_FAIL, RC_BLOCKED = 0, 1, 2
+
+# 注入目标（`T-10` · `D-4`）：手写正文 + 标记区的两件（落 `publish/docs/` 顶层）。
+# 语种**按件名现判**（不猜内容）：`.zh-CN.md` = 中文真源 · `.en.md` = 英文派生 —— 与公开面现成
+# 命名法一致（`docs/zh` + `docs/en` 那一对是**同构双版**，本器对两版用同一份数据、同一节序）。
+MARK_BEGIN = "<!-- ===== 生成区 BEGIN"
+MARK_END = "<!-- ===== 生成区 END"
+TARGET_SUFFIX = ((".zh-CN.md", "zh"), (".en.md", "en"))
 
 # ── locale 模板（两版**同构**：同一份数据、同一节序，只有本页自己的散文分语种）──────────────────
 L = {
@@ -97,6 +121,15 @@ L = {
         ],
         "h_config": "配置优先级",
         "config_note": "逐字来自 `zerg help export`（旗标最优先，内置默认兜底）。",
+        # ── 注入块（`T-10` · `D-4`）：手写正文那两件的标记区里，由本器整块重写的那一块 ──
+        "blk_decl": "**本块为生成物（勿手改）**：由 `scripts/docs/gen-cli-reference.py` 照命令树**现算**后注入 —— "
+                    "重跑 `python3 scripts/docs/gen-cli-reference.py --emit --target {rel}`；判 drift 用同名 "
+                    "`--check --target {rel}`。本块里的命令名、用法串（旗标）、说明、`--json` 字段、投影端点与"
+                    "茧壁层级**逐字来自命令树，一个都不是手写的**。",
+        "blk_danger_head": "危险动作（{n} 条 · 已登记）",
+        "blk_danger_note": "导出物抬头逐字：`{counts}` —— 「哪些已开放」逐条以 `zerg help dangerous` 为准；"
+                           "本表四列（档 / 三态 / `--confirm` 的目标 / 它会动什么）逐字来自 `zerg help export`；"
+                           "未开放的那部分真跑一律**拒执**（退出码 2 = 不给结论），只有 `--dry-run` 的计划面可用。",
         "footer": "本页是**导出物**：真源永远是命令树源码（`{main}`）与代码内 schema；"
                   "改命令面请重跑 `python3 {gen} --emit`，并用 `--check` 复判。",
     },
@@ -176,6 +209,19 @@ L = {
         ],
         "h_config": "配置优先级",
         "config_note": "Quoted verbatim from `zerg help export` (flags first, built-in defaults last).",
+        # ── 注入块（`T-10` · `D-4`）：手写正文那两件的标记区里，由本器整块重写的那一块 ──
+        "blk_decl": "**This block is a generated artifact (do not hand-edit)**: injected by "
+                    "`scripts/docs/gen-cli-reference.py`, computed live from the command tree — re-run "
+                    "`python3 scripts/docs/gen-cli-reference.py --emit --target {rel}`; judge drift with "
+                    "`--check --target {rel}`. Command names, usage strings (flags), summaries, `--json` "
+                    "fields, projected endpoints and wall layer are quoted **verbatim from the command tree; "
+                    "not one of them is hand-written**.",
+        "blk_danger_head": "Dangerous actions ({n} · registered)",
+        "blk_danger_note": "The export's header, verbatim: `{counts}` — for which actions are open, "
+                           "`zerg help dangerous` is the per-command authority; this table's four columns "
+                           "(tier / three states / `--confirm` target / what it touches) are quoted verbatim "
+                           "from `zerg help export`; the ones not open yet refuse to run for real (exit 2 = "
+                           "no verdict) and only their `--dry-run` plan face is available.",
         "footer": "This page is an **export product**: the source of truth is always the command tree "
                   "source (`{main}`) plus the schema in code. After changing the command surface, re-run "
                   "`python3 {gen} --emit` and re-judge with `--check`.",
@@ -631,6 +677,104 @@ def body_of(page):
     return page[end + 5:]
 
 
+# ── 注入：把手写正文那两件的**标记区**交给本器（`T-10` · `D-4`）────────────────────────────────
+#   形态（设计 `D-4` 逐字）：「顶层 + 手写正文 + 生成清单注入标记区」⇒ 正文人写、清单现算。
+#   本器只写 `<!-- ===== 生成区 BEGIN … -->` 与 `<!-- ===== 生成区 END … -->` **之间**；
+#   区间里「区首连续 `>` 起的注记行」是上一手写的口径说明（计数/纪律）⇒ 注入器**不动**它，
+#   其余（生成块：声明行 + 两张命令表）整块重写 —— 不整块重写就判不出 drift。
+def locale_of(path):
+    """目标件的语种**按件名现判**；判不出 ⇒ `None`（上层 rc=2，不猜）。"""
+    for suffix, loc in TARGET_SUFFIX:
+        if path.endswith(suffix):
+            return loc
+    return None
+
+
+def region_span(page):
+    """标记区 → (BEGIN 行号, END 行号)；缺标记或次序反 ⇒ `None`（rc=2，不猜）。"""
+    bi = ei = None
+    for i, l in enumerate(page.split("\n")):
+        s = l.strip()
+        if bi is None and s.startswith(MARK_BEGIN):
+            bi = i
+        elif bi is not None and s.startswith(MARK_END):
+            ei = i
+            break
+    return (bi, ei) if bi is not None and ei is not None and bi < ei else None
+
+
+def region_notes(body):
+    """标记区正文里**人写的那几行注记**（区首跳空行后、连续 `>` 起头的那些）。"""
+    out = []
+    for l in body.split("\n"):
+        s = l.strip()
+        if not out and not s:
+            continue                      # 区首空行
+        if s.startswith(">"):
+            out.append(l)
+            continue
+        break
+    return out
+
+
+def render_list(loc, data, rel):
+    """生成块 = 一行生成物声明 + 两张命令表（**逐字来自命令树**）—— 注入进标记区的那一块。"""
+    t = L[loc]
+    b = [t["blk_decl"].format(rel=rel), "",
+         "### " + t["h_open"].format(n=data["n_open"]), "",
+         "| " + " | ".join(t["th_open"]) + " |", "|" + "---|" * len(t["th_open"])]
+    for cells in data["open"]:
+        cmd = cells[0].strip("`").replace("zerg ", "")
+        b.append("| `%s` | `%s` | %s | %s | %s | %s |"
+                 % (cells[0].strip("`"), esc(data["usage"][cmd]), esc(cells[1]),
+                    esc(cells[2]), esc(cells[3]), esc(cells[4])))
+    b += ["", "### " + t["blk_danger_head"].format(n=data["n_danger"]), "",
+          "> " + t["blk_danger_note"].format(counts=data["counts"]), "",
+          "| " + " | ".join(t["th_danger"]) + " |", "|" + "---|" * len(t["th_danger"])]
+    for cells in data["danger"]:
+        b.append("| `%s` | %s | %s | %s | %s | %s |"
+                 % (cells[0].strip("`"), esc(cells[1]), esc(cells[2]), esc(cells[3]),
+                    esc(cells[4]), esc(cells[5])))
+    return "\n".join(b)
+
+
+def inject_targets(root, data, targets, write):
+    """把生成块写进各目标件的标记区 → [errs…]（`write=False` 时只判 drift）。"""
+    errs = []
+    for rel in targets:
+        p = os.path.join(root, rel)
+        loc = locale_of(rel)
+        if loc is None:
+            errs.append("目标件名判不出语种（只认 `*.zh-CN.md` / `*.en.md`）：%s" % rel)
+            continue
+        if not os.path.isfile(p):
+            errs.append("缺目标件：%s" % rel)
+            continue
+        page = read(p)
+        span = region_span(page)
+        if span is None:
+            errs.append("目标件里找不到成对的生成区标记：%s" % rel)
+            continue
+        bi, ei = span
+        lines = page.split("\n")
+        body = "\n".join(lines[bi + 1:ei])
+        want = "\n".join(region_notes(body) + ["", render_list(loc, data, rel)])
+        if not write:
+            if body != want:
+                errs.append("drift：%s 的生成区与现跑不一致（改了命令面没重跑注入？"
+                            "重跑 `--emit --target %s`）" % (rel, rel))
+            continue
+        if body == want:
+            print("  已是最新（生成区逐字节无差）：%s" % rel)
+            continue
+        out = "\n".join(lines[:bi + 1] + want.split("\n") + lines[ei:])
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(out)
+        print("  已注入 %s 的生成区（%d → %d 字节）"
+              % (rel, len(page.encode("utf-8")), len(out.encode("utf-8"))))
+    return errs
+
+
 def build(root):
     data, err = live_data(root)
     if err:
@@ -649,8 +793,9 @@ def code_spans(text):
     return set(CODE_RE.findall(COMMENT_RE.sub("", text)))
 
 
-def check(root, pages):
-    """drift（产物 vs 现跑逐字节）+ 命令名对拍（页 ⟷ 源码树，0 差）+ 双语标识符零改动。"""
+def check(root, pages, targets=()):
+    """drift（产物 vs 现跑逐字节）+ 命令名对拍（页 ⟷ 源码树，0 差）+ 双语标识符零改动
+    + 各 `--target` 件的生成区（`T-10` · `D-4`）。"""
     errs = []
     for loc, rel in (("zh", ZH_REL), ("en", EN_REL)):
         p = os.path.join(root, rel)
@@ -678,6 +823,8 @@ def check(root, pages):
     if sz != se:
         errs.append("双语标识符集合不一致：zh 独有 %s · en 独有 %s"
                     % (sorted(sz - se)[:5] or "无", sorted(se - sz)[:5] or "无"))
+    if targets:
+        errs += inject_targets(root, pages["data"], targets, write=False)
     return errs
 
 
@@ -686,6 +833,9 @@ def main():
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--emit", action="store_true", help="生成/重生成两份页")
     g.add_argument("--check", action="store_true", help="判 drift + 命令名对拍（不改仓）")
+    ap.add_argument("--target", action="append", default=[], metavar="REL",
+                    help="额外目标：把手写正文那两件的**生成区**（BEGIN/END 标记之间）也生成/复判"
+                         "（可重复；件名须以 `*.zh-CN.md` / `*.en.md` 结尾 —— 语种按件名现判）")
     a = ap.parse_args()
     root = find_root(os.getcwd())
     if root is None:
@@ -707,7 +857,8 @@ def main():
               "（其中 %d 条与 `zerg help` 的用法块逐字一致）"
               % (len(d["names_tree"]), d["n_open"], d["n_danger"], len(d["exit"]), len(d["usage"]),
                  d["n_help_agree"]))
-        errs = check(root, pages)
+        errs = inject_targets(root, pages["data"], a.target, write=True)
+        errs += check(root, pages, targets=a.target)
         if errs:
             print("⇒ 生成后立刻复判就有问题（rc=1）：")
             for e in errs:
@@ -715,7 +866,7 @@ def main():
             return RC_FAIL
         print("⇒ 已生成并复判通过（drift 0 · 命令名对拍 0 差）rc=0")
         return RC_OK
-    errs = check(root, pages)
+    errs = check(root, pages, targets=a.target)
     d = pages["data"]
     print("参考-命令行 · 仓根 %s" % root)
     print("  现跑：命令树 %d 条（页 %d 条）· 退码 %d 格 · 用法串 %d 条（%d 条与 `zerg help` 逐字一致）"
@@ -726,6 +877,8 @@ def main():
     for loc, rel in (("zh", ZH_REL), ("en", EN_REL)):
         same = os.path.isfile(os.path.join(root, rel)) and read(os.path.join(root, rel)) == pages[loc]
         print("  %-28s drift=%s" % (rel, "无" if same else "**有**"))
+    for rel in a.target:
+        print("  %-28s drift=%s" % (rel, "**有**" if any(rel in e for e in errs) else "无"))
     if errs:
         print("⇒ 判红（rc=1）：逐条看上面")
         for e in errs:
