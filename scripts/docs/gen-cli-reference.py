@@ -184,9 +184,33 @@ L = {
 
 CITATION_RE = re.compile(r"[（(][^（）()]*§[^（）()]*[）)]")
 PATH_RE = re.compile(r'path:\s*\[\]string\{([^}]*)\}')
-FIELDS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(,[A-Za-z_][A-Za-z0-9_]*)*$")
+CONST_RE = re.compile(r'^\s*(?:const\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:?=\s*"([^"]*)"\s*$', re.M)
 NOFIELDS = "（无机器面）"
 LAYERS = ("host", "node", "space")
+
+# ── 列锚：**按表头名**取列（不是按列数）──────────────────────────────────────────────────────
+# 为什么（`M-5` 的落地）：`zerg help export` 的危险动作表在 2.5.11 里**多了一列**「本版」
+# （7 → 8 列，`core/cmd/zerg/export.go` 的表头行），而本器原来把列数与「出处」列的位次
+# 都写死（`7` / `drop_col=5`）⇒ 当场 rc=2（列数 8 ≠ 7）。按**表头名**取列之后：导出物再长列
+# 或者调列序都不会把公开面看错列；但表头里认不出的形状仍然 fail-closed（rc=2，不猜、不假绿）。
+PUBLIC_COLS = {
+    "命令清单": ("命令", "说明", "`--json` 字段", "投影的远端端点", "茧壁层级"),
+    "危险动作": ("命令", "档", "三态", "`--confirm` 的目标", "它会动什么", "茧壁层级"),
+    "退码表": ("码", "名", "语义", "可重试性"),
+}
+# 锚列 = 「形态是闭集、尺寸恒 1」的列（用表头名钉住）；其余是自由列，吸收被 `|` 切开的格子。
+COL_ANCHORS = {
+    "命令": re.compile(r"^`zerg(?: [^`]+)?`$"),
+    "档": re.compile(r"^D[123]$"),
+    "本版": re.compile(r"^\*{0,2}(?:已开放|未开放)\*{0,2}$"),
+    "三态": re.compile(r"^--dry-run(?: |·|$)"),
+    # 字段列只有两种形态：逗号列表 或 `（无机器面）`（现读 62 / 15 · **没有**单标识符形态）
+    # ⇒ 逗号是必需的，否则 `zerg model opts` 那行的端点列 `GET` 会被当成字段列锚点。
+    "`--json` 字段": re.compile(r"^(?:%s|%s)$"
+                                % (re.escape(NOFIELDS),
+                                   r"[A-Za-z_][A-Za-z0-9_]*(?:,[A-Za-z_][A-Za-z0-9_]*)+")),
+    "茧壁层级": re.compile(r"^`?(?:host|node|space)`?$"),
+}
 
 
 # ── 取数：现跑的命令面 ──────────────────────────────────────────────────────────────────────
@@ -217,11 +241,27 @@ def strip_citations(text):
     return out.strip()
 
 
+def const_usages(root):
+    """包内「`名字 = "字面量"`」表 —— `usage: <标识符>` 那种写法要回源件里查它的字面量。
+
+    为什么（**第二处阻塞** · 与列锚同一天撞上）：命令树里现读有 **1 条**命令的 `usage` 不是字面量
+    而是包内常量（`impactUsageLine`，定义在 `core/cmd/zerg/family_impact.go`，件内注释逐字写着
+    「与命令树的 `usage` 逐字同源 · 本件不旁写第二份」）。只认字面量的老解析器对这条读出空串
+    ⇒ 与 `zerg help` 的用法行对不上 ⇒ rc=2。查不到标识符的字面量 ⇒ 上层仍按空串处理（rc=2，不猜）。
+    """
+    out = {}
+    pkg = os.path.dirname(os.path.join(root, MAIN_REL))
+    for name in sorted(glob.glob(os.path.join(pkg, "*.go"))):
+        for m in CONST_RE.finditer(read(name)):
+            out.setdefault(m.group(1), m.group(2))
+    return out
+
+
 def tree_from_source(root):
     """命令树源码（`main.go`）→ [(命令名, 用法串)]（**独立于导出物**的第二份真源）。
 
     为什么要按块切：`usage` 是每条命令自己的字段（旗标就在那一串里），而 `zerg help` 的用法块
-    **只列已开放的命令**（29 条危险动作不在里面）⇒ 旗标列的真源只能是命令树源码。
+    **只列已开放的命令**（危险动作不在里面）⇒ 旗标列的真源只能是命令树源码。
     """
     src = read(os.path.join(root, MAIN_REL))
     try:
@@ -230,6 +270,7 @@ def tree_from_source(root):
     except ValueError:
         return None
     seg = src[start:end]
+    consts = const_usages(root)
     out, matches = [], list(PATH_RE.finditer(seg))
     for i, m in enumerate(matches):
         parts = re.findall(r'"([^"]+)"', m.group(1))
@@ -238,7 +279,12 @@ def tree_from_source(root):
         nxt = matches[i + 1].start() if i + 1 < len(matches) else len(seg)
         block = seg[m.end():nxt]
         u = re.search(r'usage:\s*"([^"]*)"', block)
-        out.append((" ".join(parts), u.group(1) if u else ""))
+        if u:
+            usage = u.group(1)
+        else:
+            ident = re.search(r"usage:\s*([A-Za-z_][A-Za-z0-9_]*)", block)
+            usage = consts.get(ident.group(1), "") if ident else ""
+        out.append((" ".join(parts), usage))
     return out or None
 
 
@@ -286,8 +332,12 @@ def map_usage(paths, lines):
     return out
 
 
-def parse_export_table(lines, heading, ncols, layer_col=True):
-    """解析导出物的 markdown 表 → [cells…]（列数不符按 `--json` 字段列定位后合并「被 `|` 切开的」单元格）。"""
+def parse_export_table(lines, heading):
+    """导出物某个小节的那一张 markdown 表 → (表头名列, [行单元格…])。
+
+    表头名列 = **列锚的真源**（`M-5`）：导出物加了列之后，「按列数写死」的锚当场失配 ⇒ 一律
+    改从表头名出发。表头行读不出 / 小节里没有表 ⇒ 抛 `ValueError`（⇒ rc=2 不给结论）。
+    """
     start = None
     for i, l in enumerate(lines):
         if l.startswith("## ") and heading in l:
@@ -295,7 +345,7 @@ def parse_export_table(lines, heading, ncols, layer_col=True):
             break
     if start is None:
         raise ValueError("导出物里找不到小节：%s" % heading)
-    rows, seen_header = [], False
+    header, rows = None, []
     for l in lines[start + 1:]:
         if l.startswith("## "):
             break
@@ -303,44 +353,87 @@ def parse_export_table(lines, heading, ncols, layer_col=True):
             continue
         if set(l) <= set("|- "):
             continue          # 分隔行
-        if not seen_header:
-            seen_header = True
-            continue          # 表头行（本节只有一张表 ⇒ 第一行恒是表头）
         cells = [c.strip() for c in l.strip().strip("|").split("|")]
+        if header is None:
+            header = cells     # 表头行（本节只有一张表 ⇒ 第一行恒是表头）
+            continue
         rows.append(cells)
-    return rows
+    if not header:
+        raise ValueError("导出物小节里没有表：%s" % heading)
+    return header, rows
 
 
-def reshape(cells, ncols):
-    """把「被单元格内的 `|` 切开」的行拼回去（用 `--json` 字段列当锚 —— 它只有逗号与下划线）。"""
-    if len(cells) == ncols:
+def anchor_of(name):
+    """表头名 → 锚谓词（没登记 ⇒ `None` = 自由列，可以吸收被 `|` 切开的格子）。"""
+    return COL_ANCHORS.get(name)
+
+
+def _distributions(surplus, k):
+    """把 `surplus` 个多出来的格子分给 k 个自由列的全部方案（靠前的列先分）。"""
+    if k == 1:
+        yield (surplus,)
+        return
+    for first in range(surplus, -1, -1):
+        for rest in _distributions(surplus - first, k - 1):
+            yield (first,) + rest
+
+
+def align_row(cells, header):
+    """把「被单元格内的 `|` 切开」的行拼回表头列的尺寸（**靠锚列对齐** · 多出的格子进自由列）。
+
+    所有锚列都必须对上才算拼成；拼不回去 ⇒ `ValueError`（rc=2，不猜 —— 这正是「按列数写死」
+    的老写法失配时的下场，本器不把它降级成假绿）。
+    """
+    n = len(header)
+    if len(cells) == n:
         return cells
-    fidx = None
-    for i in range(1, len(cells) - 1):
-        # 字段列的形态只有两种：`a,b,c` 逗号列表 或 `（无机器面）`（现读 38 / 16，**没有**单标识符形态）
-        # ⇒ 逗号是必需的，否则 `zerg dev proposal` 的说明里那个裸词 `list` 会被当成字段列锚点。
-        if cells[i] == NOFIELDS or (FIELDS_RE.match(cells[i]) and "," in cells[i]):
-            fidx = i
-            break
-    if fidx is None:
-        raise ValueError("列数 %d ≠ %d 且找不到字段列锚点：%s" % (len(cells), ncols, " | ".join(cells)))
-    head, tail = cells[:fidx], cells[fidx + 1:]
-    return [cells[0], " | ".join(head[1:]), cells[fidx], " | ".join(tail[:-1]), tail[-1]]
+    if len(cells) < n:
+        raise ValueError("列数 %d < 表头 %d 列：%s" % (len(cells), n, " | ".join(cells)))
+    free = [i for i, name in enumerate(header) if anchor_of(name) is None]
+    if not free:
+        raise ValueError("列数 %d ≠ 表头 %d 列，且表头里没有自由列可吸收多出的格子：%s"
+                         % (len(cells), n, " | ".join(header)))
+    for combo in _distributions(len(cells) - n, len(free)):
+        take = [1] * n
+        for k, i in enumerate(free):
+            take[i] += combo[k]
+        out, p, ok = [], 0, True
+        for j, name in enumerate(header):
+            seg = cells[p:p + take[j]]
+            p += take[j]
+            rx = anchor_of(name)
+            if rx is not None and not rx.match(seg[0]):
+                ok = False
+                break
+            out.append(" | ".join(seg))
+        if ok:
+            return out
+    raise ValueError("列数 %d ≠ 表头 %d 列且按表头名拼不回去（锚列对不上）：%s"
+                     % (len(cells), n, " | ".join(cells)))
 
 
-def cells_for_table(lines, heading, ncols, drop_col=None, layer_col=True):
-    """→ [(cells…)]：单元格先剥引用、再（可选）整列丢弃（导出物的「出处」列不进公开面）。"""
+def cells_for_table(lines, heading, cols, layer_col="茧壁层级"):
+    """→ [(cells…)]：**按表头名**取公开列（导出物多出来的列不进这一页）· 每格先剥设计稿引用。
+
+    现读多出来、**不进公开面**的两列：`本版`（逐条开放状态 —— 属 `zerg help dangerous` 的人面）
+    与 `出处`（把命令对回设计稿的追溯面）。列名在表头里找不到 ⇒ `ValueError`（rc=2）；
+    `layer_col=""` = 本表没有茧壁层级列（退码表）。
+    """
+    header, raw_rows = parse_export_table(lines, heading)
+    idx = []
+    for name in cols:
+        if name not in header:
+            raise ValueError("导出物表头里找不到列名 %r（现读表头：%s）"
+                             % (name, " | ".join(header)))
+        idx.append(header.index(name))
     out = []
-    for raw in parse_export_table(lines, heading, ncols):
-        cells = raw if len(raw) == ncols else reshape(raw, ncols)
+    for raw in raw_rows:
+        cells = align_row(raw, header)
         if layer_col:
-            layer = cells[-1].strip("`")
+            layer = cells[header.index(layer_col)].strip("`")
             if layer not in LAYERS:
                 raise ValueError("茧壁层级列不是闭集三值（%r）：%s" % (layer, " | ".join(cells)))
-        if drop_col is not None:
-            cells = [c for i, c in enumerate(cells) if i != drop_col]
-        cells = [strip_citations(c) for c in cells]
-        out.append(cells)
+        out.append([strip_citations(cells[i]) for i in idx])
     return out
 
 
@@ -380,9 +473,9 @@ def live_data(root):
     n_open, n_danger = int(nums[0]), int(nums[1])
 
     try:
-        open_rows = cells_for_table(exp, "命令清单", 5)
-        danger_rows = cells_for_table(exp, "危险动作", 7, drop_col=5)   # 第 6 列 = 出处 ⇒ 整列不进公开面
-        exit_rows = cells_for_table(exp, "退码表", 4, layer_col=False)
+        open_rows = cells_for_table(exp, "命令清单", PUBLIC_COLS["命令清单"])
+        danger_rows = cells_for_table(exp, "危险动作", PUBLIC_COLS["危险动作"])
+        exit_rows = cells_for_table(exp, "退码表", PUBLIC_COLS["退码表"], layer_col="")
     except ValueError as e:
         return None, "导出物表格解析不上（%s）—— 不猜，拒绝出页" % e
     if len(open_rows) != n_open or len(danger_rows) != n_danger or len(exit_rows) < 2:
