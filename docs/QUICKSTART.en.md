@@ -136,6 +136,17 @@ curl -s -X POST -H "X-Auth-Token: $ZERG_AUTH_TOKEN" -H 'Content-Type: applicatio
 
 The controller will: pick a model → find a machine with free VRAM (loading the model if necessary) → dispatch the task to an agent, which runs the Agent loop (tool calls + guardrail feedback) → status and logs are visible in the UI's "Tasks" panel.
 
+## After you change the config or move machines
+
+Once you have changed `gateway/fleet.yaml`, a port or a machine name, **do not keep running the old process on the old config**. Both commands below are best **dry-run first**:
+
+- **Hot-reload the config**: run `zerg config reload --dry-run` first to read the plan (zero side effects — not a single byte is written), and once the impact looks right, `zerg config reload --yes` (needs the token · same effect as `POST /api/config/reload`). If the registry file does not parse locally, **no request is sent** and the old config keeps running (like `nginx -s reload`: validate first, roll back on failure).
+- **Restart the controller after moving machines**: machine name / ports / service declaration changed — hot reload is not enough — `zerg core restart` **stops and starts the controller** (**the whole swarm's control plane goes down for a moment**). **Recommended**: `zerg core restart --dry-run` first to read the plan (which pid will be restarted, which ports and services are affected), and only run for real once the confirmation flags are complete: recommended, copy the **whole string**: `zerg core restart --confirm=<hostname> --yes`.
+
+Both are **three-state**: `--dry-run` (zero side effects) · `--confirm=<target>` (the value must match the target verbatim) · `--yes` (the confirmation flag); `core restart` needs `--confirm` and `--yes` **together** — with either one missing it prints the plan only and **does not execute**.
+
+**The readiness check is bound to the pid it started itself**: before restarting, note the pid and start time from `zerg core ps`; after the restart the pid **must be a new one** (the listening ports must change owner too) to count as really up — same pid and same start time means the old process is still there; never call that green. **Rollback**: if the config side fails, the old config keeps running — fix the file and reload once more; if the process side does not come up / does not become ready, simply run this command again, and rolling back a *binary* is a different path (`scripts/build/zerg-swap-core.sh`).
+
 ## Common pitfalls
 
 | Symptom | Cause / fix |
