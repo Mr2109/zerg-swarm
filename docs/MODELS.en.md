@@ -3,6 +3,7 @@
 > **English** | [中文](MODELS.zh-CN.md)
 >
 > *Source of truth: the Chinese original ([MODELS.zh-CN.md](MODELS.zh-CN.md)). If the two disagree, the Chinese text prevails.*
+> *Derived translation — 派生自 zh-CN（真源在 zh 侧）。*
 
 Zerg **does not bind to any inference engine**, nor does it require a specific model — any model that can be brought up through an OpenAI-compatible interface or a command line can be integrated.
 

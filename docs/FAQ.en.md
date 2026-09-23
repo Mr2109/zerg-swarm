@@ -3,6 +3,7 @@
 > **English** | [中文](FAQ.zh-CN.md)
 >
 > *Source of truth: the Chinese original ([FAQ.zh-CN.md](FAQ.zh-CN.md)). If the two disagree, the Chinese text prevails.*
+> *Derived translation — 派生自 zh-CN（真源在 zh 侧）。*
 
 ## Deployment and startup
 

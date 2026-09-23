@@ -121,19 +121,30 @@ EN_SUFFIX = ".en.md"                   # 派生侧（= 正文）
 WALK_PRUNE = {".git", "node_modules", "target"}
 REFUSE_FLAGS = ("--waive", "--allow-unregistered", "--ignore-missing", "--skip-pairs")
 
-# ── 单一语例外登记表（**本件占位 · 归属 `T-11b`**）──────────────────────────────
-# 每条 = 一件「公开面里没有对应派生件/真源件」的件 + **一条理由**。
-# ★ 登记必须**逐条带理由**（照 `Q-128` ②③ 与设计 `:410`「两件单语的例外要显式登记」）；
-#   本表是**本件的登记面**，`T-11b` 落地后应由它接手 / 复核（本件不越界替它写台账 ✗）。
+# ── 单一语例外登记表（**正式登记** · `T-11b` 接手落地 · 2026-09-24）──────────────────
+# 每条 = 一件「公开面里没有对应派生件/真源件」的件 + **一条理由**（逐条带理由 = 硬要求）。
+# ★ **登记面 = 本表**（单一真源）：`T-13` 落地时这里是**占位**（逐条写「登记归 `T-11b`」）；
+#   `T-11b` 已**接手 / 复核**并逐条补全「映射号 + 行数 + 出处」。`T-15` 闸⑧ 的成对性那一格
+#   （`scripts/build/publish-preflight.sh` 内联 `SINGLE_LANG`）是**现读位置**，口径以本表为准。
+# 真源（**逐字** · 三处）：
+#   `Zerg-内部文档/项目文档/v2.5.12/任务清单-公开文档面收口-20260923.md:44`（`T-11b`）——
+#     「把 `design/格式反馈协议-FFP.md`（263 行）与 `design/记忆体系.md`（346 行）的**单语例外显式登记**
+#      （映射 `A13`/`A14` **各只有 zh 一条**）」；
+#   缺口 `Q-128` ③ ——「`design/` 两件的**单语例外显式登记**（逐件一条理由）⇒ **上闸前**先登记，
+#     否则成对闸假红 ✗」；设计稿 `:410` ——「两件单语的例外要显式登记」。
+# ★ 映射出处（**现读**）：`publish/mirror-public-lib.py:310–311` —— `A13`/`A14` 两行**各只有 zh 一条**。
+# ★ **登记 ≠ 决定**：`Q-128` ④ 的开放问题（这两件**要不要补 en 对应件**）**本表不定**（须一句拍）。
 # ★ 悬空条目（登记了、件却不在扫面里）⇒ **只打印、不判红**（同族口径：
 #   `check-public-face-wording.py` 的白名单「悬空登记只打印、不判红」——判红会让「把件删掉」变假红）。
 SINGLE_LANG_EXCEPTIONS = [
-    {"file": "design/格式反馈协议-FFP.md",
-     "reason": "中文单语「理念件」（`Q-128` ②③）· 公开面映射 `A13` 只有 zh 一条 ⇒ 无派生件可比；"
-               "登记归 `T-11b`"},
-    {"file": "design/记忆体系.md",
-     "reason": "中文单语「理念件」（同 `Q-128`）· 映射 `A14` 只有 zh 一条 ⇒ 无派生件可比；"
-               "登记归 `T-11b`"},
+    {"file": "design/格式反馈协议-FFP.md", "mapping": "A13", "lines": 263,
+     "reason": "中文单语「理念件」（`Q-128` ②③ · `T-11b` **正式登记**）：公开面映射 `A13` **只有 zh 一条**"
+               "（`publish/mirror-public-lib.py:310–311`）⇒ 无派生件可比 ⇒ 本件不判成对；"
+               "★ 「要不要补 en」= `Q-128` ④ 开放问题 · **本表不定**"},
+    {"file": "design/记忆体系.md", "mapping": "A14", "lines": 346,
+     "reason": "中文单语「理念件」（同 `Q-128` · `T-11b` **正式登记**）：公开面映射 `A14` **只有 zh 一条**"
+               "（`publish/mirror-public-lib.py:310–311`）⇒ 无派生件可比 ⇒ 本件不判成对；"
+               "★ 「要不要补 en」= 同上开放问题 · **本表不定**"},
 ]
 
 
@@ -252,7 +263,7 @@ def judge(root, face_rel, rev, exceptions):
             why = dict(unpaired).get(r, "单一语件（无 `%s` 对应件）" % EN_SUFFIX)
             lines.append("   · %s —— %s" % (r, why))
         lines.append("   ⇒ 例外必须先**显式登记**（本件 `SINGLE_LANG_EXCEPTIONS` · 逐条带理由）；")
-        lines.append("      登记面归属 = 收口清单 `T-11b`（「`T-12`/`T-13` 前置 = `T-11b`」的机器落点）。")
+        lines.append("      登记面 = 本表（`T-11b` **已正式登记** · 2026-09-24 落地 · 两件 `design/` 中文单语例外）。")
         lines.append("   ✗ 不许用 `%s` 一类开关绕过（本件一律拒 rc=2）。" % " / ".join(REFUSE_FLAGS[:3]))
         data["rc"] = 2
         data["verdict"] = "unregistered"
@@ -535,14 +546,14 @@ def list_rules():
     print("真源：任务清单-公开文档面收口-20260923.md:46（`T-13`）· 设计-公开文档面随版收口-v1.1-20260923.md:21/:385/:410")
     print("参照件：google/comprehensive-rust `.github/workflows/check-msgid-changes.py`（`E-2` · 已复核）")
     print("口径：**锚 = 真源侧**（`*.zh-CN.md` / `README.zh-CN.md`）· **正文 = 派生侧**（`*.en.md` / `README.md`）")
-    print("`J0` 成对性 + 例外登记（前置 · 既不成对又未登记 ⇒ rc=2 · 逐条带理由 · 归属 `T-11b`）")
+    print("`J0` 成对性 + 例外登记（前置 · 既不成对又未登记 ⇒ rc=2 · 逐条带理由 · 登记面 = `SINGLE_LANG_EXCEPTIONS`（`T-11b` 已正式登记））")
     print("`J1` 负控：**锚未变而正文变 = 红**（rc=1 · 逐对点名）")
     print("`J2` 正控：锚与正文**同批** ⇒ 绿")
     print("`J3` 附报（**不改退码**）：锚变而正文未变 ⇒ 「派生过期（stale）」（`T-11a` ② 面 · 只报不判）")
     print("`J4` 只在 tracked 的 diff 面里判（untracked 逐条打印「不在 diff 面 ⇒ 不判」）")
     print("退码：0 全绿 · 1 有漂移（锚未变而正文变）· 2 不给结论（缺件/空转/未登记/读不到/自检不过/拒收的开关）")
     print("拒收的逃生开关：%s（一律 rc=2）" % " / ".join(REFUSE_FLAGS))
-    print("例外登记表（本件占位 · 归属 `T-11b`）：")
+    print("例外登记表（**正式登记** · `T-11b` 2026-09-24 接手落地 · 单一真源）：")
     for e in SINGLE_LANG_EXCEPTIONS:
         print("   · %s —— %s" % (e["file"], e["reason"]))
     print("扫面：%s（仓根相对 · `--face` 可换）· 只判 `*.md`" % FACE_DEFAULT)
