@@ -22,7 +22,15 @@ const configPriorityLine = "旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg
 
 // helpText 渲染整篇帮助。命令段由命令树现算 ⇒ 加一条命令只改一处。
 // **只列本版已开放的**（`danger == nil`）；危险动作只给计数与入口 —— 逐条清单是 `zerg help dangerous`。
-func helpText() string {
+//
+// `all` = `zerg help --all`（2026-09-24 · 波11 序93 · 缺口 `Q-071` · 同面 `W-08`）：
+// 危险动作那一段**逐条列全** —— 命令树里 `danger != nil` 的每条各出一行（用法行逐字来自
+// `command.usage`，不旁写第二份清单）。口径（判据的**唯一**读法，不写死数字）：
+//
+//	`help --all` 里以「  zerg 」开头的行数 = `help` 里同形状的行数 + 危险档条数（两者都由命令树现算）。
+//
+// 不带 `--all` 时**一个字节的旧行都不动**（只多一行指路，且那行不以「  zerg 」开头 ⇒ 不动上面那条等式）。
+func helpText(all bool) string {
 	var b strings.Builder
 	b.WriteString(progName + " —— 虫族命令面（唯一入口）· 形态 zerg <对象> <动作> [参数] [旗标] · 深度 ≤ 3 层\n\n")
 	b.WriteString("用法:\n")
@@ -56,6 +64,22 @@ func helpText() string {
 	// **不许一律写「本版未开放」**：危险档里有真实现的（`opened`）—— 逐数报，别让主帮助与 `help dangerous` 两处自相矛盾。
 	fmt.Fprintf(&b, "\n危险动作（已登记 %d 条 · 已开放 %d 条 · 未开放 %d 条 · 逐条三态见 'zerg help dangerous'）:\n", nDanger, nOpen, nDanger-nOpen)
 	b.WriteString("  zerg <危险动作> [参数] [--dry-run | --confirm=<目标> --yes]\n")
+	// 指路行**不以「  zerg 」开头**：`help --all` 的条数等式（= `help` 条数 + 危险档条数）靠这一条守住。
+	fmt.Fprintf(&b, "  （列全这 %d 条的逐条清单 ⇒ `zerg help --all`）\n", nDanger)
+	if all {
+		// `--all`：把危险档**逐条**列全（用法行逐字来自命令树；行数与危险档条数**恒等** —— 少一行由判据件抓）。
+		dw := 0
+		for _, c := range catalog() {
+			if c.danger != nil && len(c.usage) > dw {
+				dw = len(c.usage)
+			}
+		}
+		for _, c := range catalog() {
+			if c.danger != nil {
+				fmt.Fprintf(&b, "  %-*s  %s\n", dw, c.usage, c.summary)
+			}
+		}
+	}
 	b.WriteString("\n机器面:\n")
 	b.WriteString(fmt.Sprintf("  --json <字段>   必给逗号分隔字段；不给 ⇒ exit %d + 字段清单走 stderr + stdout 0 字节\n",
 		exitCodeOf("usage")))

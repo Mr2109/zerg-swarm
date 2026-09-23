@@ -2667,6 +2667,8 @@ func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		return renderHelpTopic(inv.args[0], stdout, stderr)
 	}
-	fmt.Fprint(stdout, helpText())
+	// `inv.all`（`--all`）在这一条命令上**只加出口**（缺口 `Q-071` · 波11 序93）：危险动作那一段
+	// 逐条列全。命令树**一条都不新增**（`--all` 是既有全局布尔，`parseInvocation` 那一格认它）。
+	fmt.Fprint(stdout, helpText(inv.all))
 	return exitOK
 }
