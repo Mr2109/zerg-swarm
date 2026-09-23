@@ -51,7 +51,7 @@ zerg <对象> <动作> [参数] [旗标]
 | `zerg api help` | `zerg api help` | api 族说明（只读面 · 逃生门 `api call` 暂不开） | （无机器面） | 本机（无远端对应） | `host` |
 | `zerg api ls` | `zerg api ls [--json <字段>]` | HTTP 能力面（投影 /api/capabilities） | name,endpoint,desc,example | GET /api/capabilities | `host` |
 | `zerg api openapi` | `zerg api openapi [--json <字段>]` | HTTP 路径表（投影 /api/openapi.json 的 paths） | path,method,summary | GET /api/openapi.json | `host` |
-| `zerg apply` | `zerg apply <件> [--confirm=<目标>] [--json <字段>]` | **做**：只吃那一份意图件（L1 schema → L2 引用 → L3 干跑 → L4 人在环）· 本版未开放执行 | plan_id,action,target_name,layers_passed,failed_layer,detail | 本机（无远端对应） | `host` |
+| `zerg apply` | `zerg apply <件> [--confirm=<目标>] [--json <字段>]` | **做**：只吃那一份意图件（L1 schema → L2 引用 → L3 干跑 → L4 人在环）· **校验四层已开放**；写面（真做）本版未开放 · 拒执退码 2 | plan_id,action,target_name,layers_passed,failed_layer,detail | 本机（无远端对应） | `host` |
 | `zerg approve keygen` | `zerg approve keygen --by <人名>` | 生成**操作员密钥**（人在终端上设口令；私钥口令加密落盘，公钥给消费者验签） | （无机器面） | 本机（无远端对应） | `host` |
 | `zerg approve ls` | `zerg approve ls [--json <字段>]` | 列人签批准件（逐件带上**验签判决**：验过 / 无签名 / 签名坏 —— 后两者不算批准） | tool,approver,approved_at,scope,note,sig_alg,key_id,state,path | 本机（无远端对应） | `host` |
 | `zerg approve show` | `zerg approve show <工具名> [--json <字段>]` | 看一枚批准件的全貌 + 验签判决（消费者只认「验过」那一档） | tool,approver,approved_at,scope,note,sig_alg,key_id,state,path | 本机（无远端对应） | `host` |
@@ -61,12 +61,12 @@ zerg <对象> <动作> [参数] [旗标]
 | `zerg ask` | `zerg ask <提示> [--capability 名]… [--prefer 名]… [--model 名] [--node 名]… [--min-ctx n] [--min-mem-gb n] [--no-fallback] [--dry-run] [--timeout 时长] [--json <字段>]` | 问一次推理、**不落任务队列**（`task submit` 的对偶）· 能力筛是硬筛 | model,host,backend,matched,capabilities,registry_id,reply,dry_run | GET /api/fleet/models · GET /api/models/registry | `host` |
 | `zerg build all` | `zerg build all [--only cli] [--dry-run \| --confirm=<主机名> --yes]` | 重编制品（**自举档已开放**：`--only cli` 只写 bin/zerg 一件；换件档/发布档仍未开放） | （无机器面） | 本机（无远端对应） | `host` |
 | `zerg build ls` | `zerg build ls [--json <字段>]` | 制品现状（现读 bin/ 逐件 sha256 + 身份件）—— 清单真源仍是构建脚本 | name,sha256,bytes,mtime,version,code,built | 本机（无远端对应） | `host` |
-| `zerg build release` | `zerg build release [--dry-run \| --confirm=<主机名> --yes]` | 打包发布件（换件档 · 本版未开放；计划件见 --dry-run） | （无机器面） | 本机（无远端对应） | `host` |
+| `zerg build release` | `zerg build release [--dry-run \| --confirm=<主机名> --yes]` | 打包发布件（**计划面已开放**：`--dry-run` 出计划件；换件档真跑本版未开放 · 拒执退码 2） | （无机器面） | 本机（无远端对应） | `host` |
 | `zerg build show` | `zerg build show <件> \| --all [--json <字段>]` | 一件的**身份**（sha256/mtime/inode/type/arch/签名态 —— 换件后验「在跑的件 == 盘上件」要它） | name,sha256,bytes,mtime,inode,type,arch,signed | 本机（无远端对应） | `host` |
 | `zerg calib ls` | `zerg calib ls [--json <字段>]` | 标定线 3 件的声明面（名字 · 件 · 角色 · 归属 —— 逐件现读，不另抄一份） | name,script,role,state | 本机（无远端对应） | `host` |
 | `zerg calib show` | `zerg calib show <名> [--json <字段>]` | 单件标定脚本的现状（归属 · 角色 · 执行面 · 退码口径） | name,script,role,state,runner,exit | 本机（无远端对应） | `host` |
 | `zerg cocoon ls` | `zerg cocoon ls [--json <字段>]` | 虫茧清单（主控面无投影端点 ⇒ 不给结论） | name,state,port,path | GET /api/cocoons（主控面没有 ⇒ 现跑 404） | `host` |
-| `zerg cocoon open` | `zerg cocoon open <茧名> [--confirm=<茧名> --yes \| --dry-run]` | 起虫茧的文档服务（8610 · D3 起服务档 · 本版未开放） | （无机器面） | 本机（无远端对应） | `host` |
+| `zerg cocoon open` | `zerg cocoon open <茧名> [--confirm=<茧名> --yes \| --dry-run]` | 起虫茧的文档服务（8610 · D3 起服务档 · **计划面已开放**：`--dry-run` 出计划件；真跑本版未开放 · 拒执退码 2） | （无机器面） | 本机（无远端对应） | `host` |
 | `zerg code find` | `zerg code find <正则> [--path <子目录>] [--glob <模式>] [--json <字段>]` | 在码里找一处东西在哪（只读取证 · 手搓 grep/git grep 的替身） | path,line,text | 本机（无远端对应） | `host` |
 | `zerg config reload` | `zerg config reload [--dry-run] --yes [--json <字段>]` | 热加载主控配置（照 `nginx -s reload`：**先校验、失败回滚**）—— 名册件本地解析不过 ⇒ **不发请求**（旧配置继续跑） | status,models,added,fleet_nodes,fingerprint | POST /api/config/reload（路由已在跑的主控上 ⇒ 主控零改动） | `host` |
 | `zerg context ls` | `zerg context ls [--resume] [--json <字段>]` | 档位名册（离线也出表） | name,core,gateway,default_node,token_source | 本机（无远端对应） | `host` |
@@ -79,7 +79,7 @@ zerg <对象> <动作> [参数] [旗标]
 | `zerg dev verify` | `zerg dev verify --candidate <候选 id> [--results <结果表>] [--code-sha <sha>] [--node <名>] [--layer <档>] [--gate [--human-approval <名>]] [--dry-run] [--json <字段>]` | 合成一份验收证据单（只收证据、**不给「通过」的结论**）· 证据为空 ⇒ 2 | candidate,criterion,verdict,rc,log_path,code_sha,node,layer,contract | 本机（无远端对应） | `host` |
 | `zerg doctor` | `zerg doctor [--json <字段>]` | 环境自检（本机项 + 主控可达）· 逐项判定词 | name,verdict,detail,advice | 本机（无远端对应） | `host` |
 | `zerg egg ls` | `zerg egg ls [--json <字段>]` | 卵 × 设备矩阵（只读投影：host / model / state 三格 · 照现成端点包装） | egg_id,host,model,state,backend,mem_gb | GET /api/fleet/models + GET /api/fleet/status + GET /api/models/{name}（现成端点包装 · 不新开一条路） | `node` |
-| `zerg egg run` | `zerg egg run <卵 id> [--yes \| --dry-run]` | 把卵跑起来（写面 · 本版未开放） | （无机器面） | 本机（无远端对应） | `node` |
+| `zerg egg run` | `zerg egg run <卵 id> [--yes \| --dry-run]` | 把卵跑起来（**写面本版未开放**：连干跑一道押后、真跑退码 8；只读投影见 `egg ls` / `egg show`） | （无机器面） | 本机（无远端对应） | `node` |
 | `zerg egg show` | `zerg egg show <卵 id> [--json <字段>]` | 单枚卵的现状（只读投影：host / model / state 三格 · 同一份真源） | egg_id,host,model,state,backend,mem_gb | GET /api/fleet/models + GET /api/fleet/status + GET /api/models/{name}（现成端点包装 · 不新开一条路） | `node` |
 | `zerg eval ls` | `zerg eval ls [--json <字段>]` | 评测线 22 件的逐件归属（① 收编 5 · ② 保留内部 4 · ④ 维持待拍 13 —— 现算不手写） | name,script,class,state | 本机（无远端对应） | `host` |
 | `zerg eval show` | `zerg eval show <名> [--json <字段>]` | 单件评测脚本的现状（归属 · 一句理由 · 执行面） | name,script,class,state,why,runner | 本机（无远端对应） | `host` |
