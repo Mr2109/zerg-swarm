@@ -93,8 +93,8 @@ Updates are source-based too — the client fetches the repository, builds on th
 hands the artifacts to the six-phase swap kernel:
 
 ```bash
-zerg update            # no-op prints "already up to date" and exits 2
-zerg update --check    # ask first (6-hour cache, no side effects)
+zerg-core update           # no-op if current: prints "no update needed" and exits 2
+zerg-core update --check   # ask first (6-hour cache, no side effects)
 ```
 
 ## How this repository is published
