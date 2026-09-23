@@ -25,7 +25,9 @@
 用法：
   python3 scripts/docs/gen-cli-reference.py --emit     # 生成/重生成两份页（先 build-all.sh --only-cli）
   python3 scripts/docs/gen-cli-reference.py --check    # 判 drift + 命令名对拍（不改仓）
-  # 公开面那两件（**手写正文** + 生成区标记）：注入与复判都走 `--target`（可重复 · 语种按件名现判）
+  # 公开面那几件（**手写正文** + 生成区标记）：**默认档就一并注入 / 复判**（目标**现读派生** ✓ ——
+  # `publish/docs/` 顶层凡带成对生成区标记的 `*.zh-CN.md` / `*.en.md` 全进默认集，**不写死件名** ✗）；
+  # `--target` 仍可用来**追加**（可重复 · 语种按件名现判）：
   python3 scripts/docs/gen-cli-reference.py --emit  --target publish/docs/CLI.zh-CN.md \
                                                    --target publish/docs/CLI.en.md
   python3 scripts/docs/gen-cli-reference.py --check --target publish/docs/CLI.zh-CN.md \
@@ -64,6 +66,12 @@ RC_OK, RC_FAIL, RC_BLOCKED = 0, 1, 2
 MARK_BEGIN = "<!-- ===== 生成区 BEGIN"
 MARK_END = "<!-- ===== 生成区 END"
 TARGET_SUFFIX = ((".zh-CN.md", "zh"), (".en.md", "en"))
+# ★ 缺口 `Q-151`（**公开面生成区没有门看着** ✗）：默认档原来只判 `docs/zh` + `docs/en` 两枚 ⇒
+#   公开面那几件的**生成区会静默落后**（命令面一动、无参 `--check` 照样 rc=0 ✗；只有**显式
+#   `--target`** 才看得见 rc=1）—— 病灶是「目标靠人记得写」。现读派生（不写死件名 ✓）：
+#   `publish/docs/` 顶层**现读**，凡以 `*.zh-CN.md` / `*.en.md` 结尾**且带成对生成区标记**的件
+#   一律进**默认目标集**（新加件 / 新加语种自动纳入）。`--target` 语义不变 = **追加**（去重）。
+PUBLISH_DOCS_REL = os.path.join("publish", "docs")
 
 # ── locale 模板（两版**同构**：同一份数据、同一节序，只有本页自己的散文分语种）──────────────────
 L = {
@@ -750,6 +758,33 @@ def render_list(loc, data, rel):
     return "\n".join(b)
 
 
+def discover_targets(root):
+    """默认生成区目标 = **现读派生**（缺口 `Q-151`）→ (targets, errs)。
+
+    `publish/docs/` 顶层现读：件名以 `*.zh-CN.md` / `*.en.md` 结尾 ⇒ 候选；
+    候选里**带成对生成区标记**的才进目标集（手写正文里本就没有生成区的件不算目标 ✗）。
+    ★ 候选里**只带半对标记**（BEGIN/END 缺一）⇒ err（上层 rc=2，**不猜**）—— 不许让它
+      **静默从目标集里掉出去**（「静默掉队」正是 `Q-151` 那类病），与本器一贯的
+      「不认识就不给结论」同口径。
+    """
+    d = os.path.join(root, PUBLISH_DOCS_REL)
+    if not os.path.isdir(d):
+        return [], []
+    targets, errs = [], []
+    for name in sorted(os.listdir(d)):
+        p = os.path.join(d, name)
+        if not os.path.isfile(p) or locale_of(name) is None:
+            continue
+        rel = os.path.join(PUBLISH_DOCS_REL, name)
+        page = read(p)
+        if region_span(page):
+            targets.append(rel)
+        elif MARK_BEGIN in page or MARK_END in page:
+            errs.append("%s 只有**半对**生成区标记（`%s` / `%s` 缺一）⇒ 判不了（不猜）"
+                        % (rel, MARK_BEGIN, MARK_END))
+    return targets, errs
+
+
 def inject_targets(root, data, targets, write):
     """把生成块写进各目标件的标记区 → [errs…]（`write=False` 时只判 drift）。"""
     errs = []
@@ -846,13 +881,27 @@ def main():
     g.add_argument("--emit", action="store_true", help="生成/重生成两份页")
     g.add_argument("--check", action="store_true", help="判 drift + 命令名对拍（不改仓）")
     ap.add_argument("--target", action="append", default=[], metavar="REL",
-                    help="额外目标：把手写正文那两件的**生成区**（BEGIN/END 标记之间）也生成/复判"
-                         "（可重复；件名须以 `*.zh-CN.md` / `*.en.md` 结尾 —— 语种按件名现判）")
+                    help="**追加**生成区目标：把手写正文那件的**生成区**（BEGIN/END 标记之间）也生成/复判"
+                         "（可重复；件名须以 `*.zh-CN.md` / `*.en.md` 结尾 —— 语种按件名现判）。"
+                         "★ 默认档已把 `publish/docs/` 下带成对标记的那几件**现读派生**进来（缺口 `Q-151`）"
+                         "⇒ 本旗标只在要**额外**指定时用")
     a = ap.parse_args()
     root = find_root(os.getcwd())
     if root is None:
         print("⛔ 不给结论：找不到仓根（上溯找不到 %s）" % MAIN_REL)
         return RC_BLOCKED
+    derived, derrs = discover_targets(root)
+    if derrs:
+        print("⛔ 不给结论（rc=2）：生成区目标**现读派生**时撞到认不出的形状：")
+        for e in derrs:
+            print("  ✗ " + e)
+        return RC_BLOCKED
+    extra = [t for t in a.target if t not in derived]
+    targets = derived + extra
+    print("  生成区目标（现读派生 `%s` 下带成对标记的 `*.zh-CN.md` / `*.en.md` **%d** 件%s）：%s"
+          % (PUBLISH_DOCS_REL, len(derived),
+             " · `--target` 追加 %d 件" % len(extra) if extra else "",
+             " · ".join(targets) if targets else "（现读派生 0 件 · 也没传 --target）"))
     pages, err = build(root)
     if err:
         print("⛔ 不给结论（rc=2）：%s" % err)
@@ -869,8 +918,8 @@ def main():
               "（其中 %d 条与 `zerg help` 的用法块逐字一致）"
               % (len(d["names_tree"]), d["n_open"], d["n_danger"], len(d["exit"]), len(d["usage"]),
                  d["n_help_agree"]))
-        errs = inject_targets(root, pages["data"], a.target, write=True)
-        errs += check(root, pages, targets=a.target)
+        errs = inject_targets(root, pages["data"], targets, write=True)
+        errs += check(root, pages, targets=targets)
         if errs:
             print("⇒ 生成后立刻复判就有问题（rc=1）：")
             for e in errs:
@@ -878,7 +927,7 @@ def main():
             return RC_FAIL
         print("⇒ 已生成并复判通过（drift 0 · 命令名对拍 0 差）rc=0")
         return RC_OK
-    errs = check(root, pages, targets=a.target)
+    errs = check(root, pages, targets=targets)
     d = pages["data"]
     print("参考-命令行 · 仓根 %s" % root)
     print("  现跑：命令树 %d 条（页 %d 条）· 退码 %d 格 · 用法串 %d 条（%d 条与 `zerg help` 逐字一致）"
@@ -889,7 +938,7 @@ def main():
     for loc, rel in (("zh", ZH_REL), ("en", EN_REL)):
         same = os.path.isfile(os.path.join(root, rel)) and read(os.path.join(root, rel)) == pages[loc]
         print("  %-28s drift=%s" % (rel, "无" if same else "**有**"))
-    for rel in a.target:
+    for rel in targets:
         print("  %-28s drift=%s" % (rel, "**有**" if any(rel in e for e in errs) else "无"))
     if errs:
         print("⇒ 判红（rc=1）：逐条看上面")
