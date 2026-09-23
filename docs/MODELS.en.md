@@ -34,6 +34,19 @@ example-custom:
   cmd: "run-k2.sh -m {file} --port {port} -c 32768"
 ```
 
+### Registering a model in the roster (CLI)
+
+The roster can also be read and written from the command line — the controller-side roster (the `models:` section of `gateway/fleet.yaml`) is the source of truth for the model face:
+
+```bash
+zerg model ls        # current models: id / host / backend / modality / VRAM
+zerg model show <model id>   # the full record of one model
+# register one (dry run first: prints a plan · zero side effects)
+zerg model add --host <machine> --model <name> --file <GGUF path> --backend llama-server --mem-gb 18 --ctx 131072 --dry-run
+```
+
+`model add` is a write face: it validates before writing, reads back and validates again after writing, rolls back if any step fails, and never overwrites an existing entry; for a real write, replace `--dry-run` with `--yes`.
+
 ---
 
 ## 2. Adapter mechanism (the layer that handles a model's "temperament")
