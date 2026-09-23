@@ -124,6 +124,7 @@ fleet:                      # machine list
 ```
 
 No restart of core is needed after a change: `POST /api/config/reload` (token required).
+The same action from the CLI: `zerg config reload [--dry-run] --yes` (takes effect immediately, no core restart — it validates the registry file locally first, and when that check fails it sends no request and the old configuration keeps running; same effect as `POST /api/config/reload` · token required).
 
 ---
 

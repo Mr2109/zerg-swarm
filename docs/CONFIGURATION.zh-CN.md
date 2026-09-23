@@ -124,6 +124,7 @@ fleet:                      # 机器清单
 ```
 
 改动后无需重启主控：`POST /api/config/reload`（需令牌）。
+命令行同一动作：`zerg config reload [--dry-run] --yes`（改完即刻生效、不重启主控 —— 先本地校验名册件，校验不过就不发请求、旧配置继续跑；与 `POST /api/config/reload` 同效 · 需令牌）。
 
 ---
 
