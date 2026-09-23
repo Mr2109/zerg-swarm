@@ -296,11 +296,25 @@
    "备注": "2026-09-21 D3b 登记（门⑩ 扫描面命中的测试件）"
   },
   {
+   "file": "core/cmd/zerg/family_gap.go",
+   "类": "命令面三态（`gap add|verify` 的计划件 · 与 guard.go 同一套语义；`--dry-run` ⇒ 计划件走 stdout + rc=0，缺 `--yes` ⇒ 计划件走 stderr + rc=2，与 `family_calib.go` 同一档）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`--dry-run` 前后真源 `<状态目录>/zerg-cli-gaps.jsonl` 的 sha256 与 `edit_audit.jsonl` 行数**逐字不变**（未追加真源、未写审计）；`gap ls` 是只读面，跑前后审计行数同样不变（Go 判据 `TestGapFamily_DryRunZeroSideEffect` / `TestGapFamily_LsWritesNoAudit` 现跑同判）",
+   "备注": "缺口族（设计稿 `设计-命令面-gap族-v1.0-20260923.md` §三 三态纪律 · §六 判据 2/7/8）"
+  },
+  {
    "file": "core/cmd/zerg/family_doc.go",
    "类": "命令面三态（`doc meta fill` 的计划面 · 与 guard.go 同一套语义；**默认干跑**：不带 `--dry-run` 也不带 `--yes` ⇒ 计划面 + rc=2）",
    "语义": "dryrun.v1",
    "零副作用判据": "`zerg doc meta fill --scope devdocs --dry-run` 现跑：只打印计划面（逐件前/后 sha256 + 日期来源），被扫件 sha256 逐字不变、审计件不出现（Go 判据 `TestDocMetaFill_DryRunThenWrite` 现跑同判）",
    "备注": "缺口-命令面-20260921 §八 · D3③-a 那次一次性脚本的命令面等价物；只打计划面（stdout 的行），**不落任何计划件**"
+  },
+  {
+   "file": "core/cmd/zerg/cli_gap_test.go",
+   "类": "命令面测试件（缺口族三态的机检：干跑零副作用 / 真写读回 / 只读面不写审计）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "合成状态目录（`t.TempDir()`）：`gap add --dry-run` 前后真源 sha256 逐字不变、审计件行数不变；`gap ls`（只读面）跑前后审计行数也不变（本件判据②⑦⑧现跑）",
+   "备注": "缺口族（设计稿 `设计-命令面-gap族-v1.0-20260923.md` §七 负控⑦⑧）；**不碰真 `~/.zerg/state`**、判据只用只读命令"
   },
   {
    "file": "core/cmd/zerg/cli_doc_meta_fill_test.go",
