@@ -1349,6 +1349,43 @@ func init() {
 			endpoint: "POST /api/config/reload（路由已在跑的主控上 ⇒ 主控零改动）",
 			run:      cmdConfigReload,
 		},
+		// ── `gap` 族（缺口 · 设计稿 `设计-命令面-gap族-v1.0-20260923.md` §二/§五）────────────
+		//   三条：`ls` 只读 · `add` 写（留证据）· `verify` 写（改状态）。**不新增顶层命令**；
+		//   真源 = `<状态目录>/zerg-cli-gaps.jsonl`（不在任何仓里）；审计进 `dev edit` 同一件。
+		//   ★ 矩阵 13 格与基线计数**同批**（`H-2`：分批 ⇒ 门⑬ `R4` 判幽灵调用）。
+		{
+			path:     []string{"gap", "ls"},
+			kind:     "GapList",
+			summary:  "缺口账（只读面：不写真源、不写审计）· 可按状态/优先级/影响面收窄 · 账内闭集外的值 ⇒ 判红并**点名到行**",
+			usage:    "zerg gap ls [--state <仍缺|已派|已立项|已解|回归|不做>…] [--prio P0|P1|P2] [--impact <命令面|门禁面|文档面|公开面|换件面|归档面>] [--json <字段>]",
+			fields:   gapListFields,
+			endpoint: "",
+			run:      cmdGapLs,
+		},
+		{
+			path:     []string{"gap", "add"},
+			kind:     "GapAdd",
+			summary:  "记一条缺口（写面 · 留证据）：**手搓记录 + 验证命令是两件必填**（防呆⑤）· 同 fp 同内容 ⇒ 幂等命中 0 · 同 fp 内容不同 ⇒ `14` · 审计进 `edit_audit.jsonl`（写不进就不写真源）",
+			usage:    "zerg gap add --symptom <一句> --handmade <命令原样> --impact <六值之一> --want-family <族> --want-action <动作> [--want-argv <段>…] [--prio P0|P1|P2] --repro-cmd <命令> --verify-cmd <命令> [--depends-on <fp>…] [--by <谁>] [--dry-run] [--yes] [--json <字段>]",
+			args:     []string{"（无位置参数：全部走旗标）"},
+			fields:   gapAddFields,
+			danger:   &dangerSpec{dangerD2, "缺口 fp", "往真源（`<状态目录>/zerg-cli-gaps.jsonl`）追加一行 + 审计一行（可逆：删那一行 / 审计历史行不删）；审计写不进 ⇒ 真源一行不写", "设计-命令面-gap族-v1.0-20260923.md §二.2 · §四 · `H-10`（不要人签：`--yes` 是命令行确认档，不是批准件）"},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapAdd,
+		},
+		{
+			path:     []string{"gap", "verify"},
+			kind:     "GapVerify",
+			summary:  "跑判据（`verify_cmd`）改缺口状态（写面）：过 ⇒ `已解` + `solved_evidence`·**已解现缺** ⇒ 记 `回归` 并退 1 · `--dry-run` 只跑只印（恒 0）",
+			usage:    "zerg gap verify [<GAP id>…] [--all] [--by <谁>] [--dry-run] [--yes] [--json <字段>]",
+			args:     []string{"缺口 id（可重复；与 `--all` 不许同给）"},
+			fields:   gapVerifyFields,
+			danger:   &dangerSpec{dangerD2, "缺口 id", "改真源里的 `state` / `solved_evidence` / `last_verified_at` + 审计一行（可逆：照审计那一格回写）；判红（`回归`）只在真跑那一态可达", "设计-命令面-gap族-v1.0-20260923.md §二.3 · §三 · `H-10`（判据是机器给的：跑命令看 rc）"},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapVerify,
+		},
 	}
 	// 群级只读（§十二 `P-066`）：这些命令「无目标 = 读全群」是**定义**，不是遗漏。
 	for _, c := range commands {
@@ -1842,6 +1879,14 @@ func valueFlagName(a string) string {
 	// ★ 与上面 `--out` 同一条教训：用法串里写着的旗标必须真能被解析，否则命令等于不可用。
 	switch a {
 	case "--path", "--glob":
+		return a
+	}
+	// 缺口族旗标（`gap` 族 · 设计稿 `设计-命令面-gap族-v1.0-20260923.md` §二）：形状面 7 枚 + 判据面 1 枚。
+	//   `--want-argv` 可重复（append）；`--state` / `--depends-on` / `--by` / `--dry-run` / `--yes` / `--json`
+	//   已在上面各排（本族**不重开**同名旗标 —— 一族共用一张名字表）。
+	switch a {
+	case "--symptom", "--handmade", "--impact", "--want-family", "--want-action", "--want-argv",
+		"--prio", "--repro-cmd", "--verify-cmd":
 		return a
 	}
 	return ""
