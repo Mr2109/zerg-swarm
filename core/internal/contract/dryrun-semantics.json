@@ -455,6 +455,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "`--dry-run` 只打计划件（落点 / 差异逐件点名 / 声明行 / 写前后 sha），不写件也不落审计 ⇒ 目标件 `sha256` 与审计件行数两处都不变（本批现跑：真实 `Zerg-内部文档` 落点 dry-run 前后 sha 逐字相同 · 审计 1 → 1 行）",
    "备注": "`A3` 取「b」案的新写面（`设计-仓外台账写面-A3-b案-v1.0-20260923.md` §二 三态表 —— 与 `repo commit` 同一张表）"
+  },
+  {
+   "file": "scripts/gates/check-symbol-delete-ripple.py",
+   "类": "门：只读删面（C1）的干跑单（dev edit --dry-run 的两行机器可读）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件是消费者：只读那份单（--plan / ZERG_R28_PLAN / <状态目录>/r28-plan.txt），不重跑删面（不自己跑 dev edit --dry-run）、不写任何件；--self-test 里用 ast 扫本件源码真调用（open(w/a/+) · os.remove · shutil.move …）必须 0 —— 现跑 0 格不过",
+   "备注": "R28 分档版（门㉜）· 与 zerg dev edit 干跑那一档同批口径"
   }
  ]
 }
