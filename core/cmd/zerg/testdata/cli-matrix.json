@@ -4974,6 +4974,217 @@
    "want_rc": 1,
    "want_stdout_bytes": 0,
    "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+  },
+  {
+   "id": "gap/ls#未知旗标",
+   "command": "gap ls",
+   "argv": [
+    "gap",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gap/ls#不认的契约主号",
+   "command": "gap ls",
+   "argv": [
+    "gap",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gap/ls#--state 值在六值闭集外",
+   "command": "gap ls",
+   "argv": [
+    "gap",
+    "ls",
+    "--state",
+    "已归档"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "六值闭集是状态面真源 ⇒ 不给闭集外的值（防呆③ 同源）；本族这一档退 2（不是 1）"
+  },
+  {
+   "id": "gap/add#未知旗标",
+   "command": "gap add",
+   "argv": [
+    "gap",
+    "add",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gap/add#不认的契约主号",
+   "command": "gap add",
+   "argv": [
+    "gap",
+    "add",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gap/add#缺 --handmade",
+   "command": "gap add",
+   "argv": [
+    "gap",
+    "add",
+    "--symptom",
+    "手搓 ls 缺口",
+    "--impact",
+    "命令面",
+    "--want-family",
+    "gap",
+    "--want-action",
+    "ls",
+    "--repro-cmd",
+    "zerg gap ls",
+    "--verify-cmd",
+    "zerg version --json name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "防呆⑤：无手搓记录 ⇒ 拒收 2（不是「先收下回头补」）· 真源行数不变"
+  },
+  {
+   "id": "gap/add#缺 --verify-cmd",
+   "command": "gap add",
+   "argv": [
+    "gap",
+    "add",
+    "--symptom",
+    "手搓 ls 缺口",
+    "--handmade",
+    "ls -la | grep gap",
+    "--impact",
+    "命令面",
+    "--want-family",
+    "gap",
+    "--want-action",
+    "ls",
+    "--repro-cmd",
+    "zerg gap ls"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "防呆⑤：无验证命令 ⇒ 拒收 2 · 真源行数不变"
+  },
+  {
+   "id": "gap/add#缺 --yes（D2）",
+   "command": "gap add",
+   "argv": [
+    "gap",
+    "add",
+    "--symptom",
+    "手搓 ls 缺口",
+    "--handmade",
+    "ls -la | grep gap",
+    "--impact",
+    "命令面",
+    "--want-family",
+    "gap",
+    "--want-action",
+    "ls",
+    "--repro-cmd",
+    "zerg gap ls",
+    "--verify-cmd",
+    "zerg version --json name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 可逆：缺 --yes ⇒ fail-closed 2（§九 M3 C2）· 计划件走 stderr ⇒ stdout 0 字节（H-5）"
+  },
+  {
+   "id": "gap/add#--verify-cmd 不在命令树",
+   "command": "gap add",
+   "argv": [
+    "gap",
+    "add",
+    "--symptom",
+    "手搓 ls 缺口",
+    "--handmade",
+    "ls -la | grep gap",
+    "--impact",
+    "命令面",
+    "--want-family",
+    "gap",
+    "--want-action",
+    "ls",
+    "--repro-cmd",
+    "zerg gap ls",
+    "--verify-cmd",
+    "zerg 无此命令-zz",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "v1.3 §七 规矩 2：判据必须能在命令树里解析到（同尺 = 命令树 `commands` 表 ⇒ 本矩阵 `command` 列）"
+  },
+  {
+   "id": "gap/verify#未知旗标",
+   "command": "gap verify",
+   "argv": [
+    "gap",
+    "verify",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gap/verify#不认的契约主号",
+   "command": "gap verify",
+   "argv": [
+    "gap",
+    "verify",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的契约主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gap/verify#缺 --yes（D2）",
+   "command": "gap verify",
+   "argv": [
+    "gap",
+    "verify",
+    "--all"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "同 `add`（判红只在真跑那一态可达）：缺 --yes ⇒ fail-closed 2 · 计划与判决走 stderr ⇒ stdout 0 字节"
+  },
+  {
+   "id": "gap/verify#--all 与点名 id 同给",
+   "command": "gap verify",
+   "argv": [
+    "gap",
+    "verify",
+    "--all",
+    "GAP-20260923-01",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「给范围」与「点名」是两种意图 ⇒ 同给 = 用法错 2"
   }
  ]
 }
