@@ -422,10 +422,11 @@ func TestImpactCard_HumanFaceStaysThreeLinesAndCarriesReversibility(t *testing.T
 	if err := judgeImpactEnvelopeAny(doc); err != nil {
 		t.Errorf("叠加时六键形状破：%v", err)
 	}
-	// K2 仍在两档上生效：`--for-human --json` 不给字段 ⇒ 退 1 + stdout 0 字节。
+	// K2 仍在两档上生效：`--for-human --json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）+ stdout 0 字节。
+	wantK2 := usageCodeFromTable(t)
 	rc4, out4, _ := runCapture("impact", tgt, "--for-human", "--json")
-	if rc4 != 1 || len(out4) != 0 {
-		t.Errorf("K2 在两档上仍生效（§4.1：两档与 --json 是两条）：rc=%d · %d 字节", rc4, len(out4))
+	if rc4 != wantK2 || len(out4) != 0 {
+		t.Errorf("K2 在两档上仍生效（§4.1：两档与 --json 是两条）：rc=%d（要 %d）· %d 字节", rc4, wantK2, len(out4))
 	}
 }
 

@@ -178,8 +178,8 @@ func cmdDevVerify(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	rc := sheetExitCode(spec, sheet.Totals)
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		rows := make([]map[string]string, 0, len(entries))
 		for _, e := range entries {

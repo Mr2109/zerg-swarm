@@ -32,11 +32,11 @@ import (
 )
 
 func cmdGateBench(inv *invocation, stdout, stderr io.Writer) int {
-	// ★ 用法错**先判**：`--json` 不给字段 ⇒ 当场 1 + stdout 0 字节（§4.1 K2）——
+	// ★ 用法错**先判**：`--json` 不给字段 ⇒ 当场 2 + stdout 0 字节（§4.1 K2 · `K2` 归一后取自退码表）——
 	// 不许先把门禁真跑一趟（那是分钟级开销）再拿「字段没给」把人打回去。
 	if inv.jsonGiven && len(inv.fields) == 0 {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 	}
 	root := repoRoot()

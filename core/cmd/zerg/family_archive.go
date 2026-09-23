@@ -104,9 +104,11 @@ func archiveExpandTargets(args []string) ([]string, error) {
 //
 // 退码：`0` 全算出来 · `2` 用法错（没给目标 / 路径不存在）· `8` 读不到（**不拿「读不到」当「没有」**）。
 func cmdArchiveHash(inv *invocation, stdout, stderr io.Writer) int {
-	// `--json` 字段面先判（§4.1 K2：给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节）。
-	if inv.jsonGiven && !requireFields(inv, stderr) {
-		return exitFail
+	// `--json` 字段面先判（§4.1 K2：给了 `--json` 不给字段 ⇒ 退码由 `requireFields` 取自退码表 · 归一后 = 2 + stdout 0 字节）。
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
 	}
 	if len(inv.args) == 0 {
 		inv.setErr("usage", "missing_target", "`archive hash` 要给至少一件/一个目录")
@@ -199,8 +201,10 @@ func archiveManifestLines(payload string, files []string) ([]string, error) {
 // 三态（与 `family_h.go` 的写面同一套语义）：`--dry-run` 出计划件（退码 0 · 零副作用）·
 // 缺 `--yes` ⇒ `2`（fail-closed）· 齐了才真写。真写**任一步失败 ⇒ 回滚**（删掉本次建的袋目录）。
 func cmdArchiveManifest(inv *invocation, stdout, stderr io.Writer) int {
-	if inv.jsonGiven && !requireFields(inv, stderr) {
-		return exitFail
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
 	}
 	if len(inv.args) == 0 {
 		inv.setErr("usage", "missing_target", "`archive manifest` 要给载荷目录")
@@ -418,8 +422,10 @@ func archiveSplitManifestLine(line string) (digest, entry string, ok bool) {
 //
 // 退码：`0` 全对 · `1` 判红（逐条报）· `8` **判不了**（不是袋 / 清单读不到 —— 不把「判不了」当「过了」）。
 func cmdArchiveVerify(inv *invocation, stdout, stderr io.Writer) int {
-	if inv.jsonGiven && !requireFields(inv, stderr) {
-		return exitFail
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
 	}
 	if len(inv.args) == 0 {
 		inv.setErr("usage", "missing_target", "`archive verify` 要给袋目录")

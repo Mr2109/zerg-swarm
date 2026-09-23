@@ -38,12 +38,13 @@ var gateRunStepFields = []string{"step", "scope", "mode", "verdict", "rc", "secs
 // gateRunStepJSON —— 单步档的机器面（人面仍由脚本原样给出，走 stderr）。
 //
 // 退码口径：**脚本的码原样转出**（0 全绿 / 1 有失败项 / 2 不给结论）；命令面自己只在
-// 「执行前判」与「K2 的 `--json` 不给字段」两处退 2 / 1。
+// 「执行前判」与「K2 的 `--json` 不给字段」两处退码：前者 2、后者**取自退码表**（`usage` · 归一后同为 2）。
 func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script string, tail []string) int {
-	// K2（§4.1）：给了 `--json` 但不给字段 ⇒ 退 1 且 stdout 0 字节（与 `requireFields` 同一口径）。
+	// K2（§4.1）：给了 `--json` 但不给字段 ⇒ 退码由 `requireFields` **取自退码表**回（`K2` 归一后 = 用法错 2），
+	// stdout 0 字节（与 `requireFields` 同一口径）。
 	if len(inv.fields) == 0 {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 	}
 	name, outdir, hasOutdir := "", "", false

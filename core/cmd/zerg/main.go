@@ -1733,7 +1733,7 @@ func parseInvocation(args []string) (*invocation, error) {
 			pos = append(pos, args[i+1:]...)
 			i = len(args)
 		case a == "--json" || a == "--json=":
-			// 给了旗标但没给字段：留给命令去判（契约 §4.1 K2：exit 1 + stderr 列字段）。
+			// 给了旗标但没给字段：留给命令去判（契约 §4.1 K2：退码**取自退码表** `usage` = 2 + stderr 列字段）。
 			inv.jsonGiven = true
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				i++
@@ -2075,17 +2075,22 @@ func splitFields(s string) []string {
 
 // requireFields 统一处理「--json 不给字段」的**提示面**（契约 §4.1 K2）：stdout 0 字节、字段清单走 stderr。
 //
-// **退码由调用方给**（本函数只回 bool）—— 它必须与退码表 `exitcodes.go:33` 同向：
-// 「用法错 ⇒ 2」那一格。★ `Q-146`（v2.5.12）：`version` 这一处此前退 `1`（`exitFail`）⇒
-// 与自家退码表打架，已就地归位为 `exitUsage`（2）。**同族其余调用点仍退 `1`** ✗ ——
-// 那一条（K2 甲档全族归一）没动，逐条登记在 `Q-146` 的「同族扫描」里，别当已治。
-func requireFields(inv *invocation, stderr io.Writer) bool {
+// ★ `K2` 甲档归一（2026-09-24 · 批四 §二 #7 · 块B `R-1`/`R-2` · 一笔成片）：**码由本函数回**
+// （原先是 `bool`，码散在 36 个调用点各自 `return exitFail` ⇒ 表说「用法错 = 2」、实现写 1，
+// 同一错误全族不同码也没人会报）。现在：
+//
+//	满足   ⇒ `exitOK`
+//	不满足 ⇒ `exitUsage`（**只此一处**决定 —— 调用点写不出第二种码，编译期就能看见）
+//
+// 调用点一律 `if rc := requireFields(inv, stderr); rc != exitOK { return rc }`。
+// 归一方向**写死**：退码表（`exitcodes.go`）**不动**、本函数与自描述面**取自表**（不是表跟实现走）。
+func requireFields(inv *invocation, stderr io.Writer) int {
 	if len(inv.fields) > 0 {
-		return true
+		return exitOK
 	}
 	fmt.Fprintf(stderr, "%s: --json 需要逗号分隔的字段列表\n", progName)
 	fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(fieldListOf(inv.path), ","))
-	return false
+	return exitCodeOf("usage")
 }
 
 // fieldListOf 取某条命令的可选字段（供 K2 / I5 的自描述面用）。
@@ -2452,11 +2457,11 @@ func helpIdempotency() string {
 
 func cmdVersion(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			// 退码 **2**（用法错 · 退码表 `exitcodes.go:33` / `errors.go` 的 `kind=usage=2`）。
-			// ★ `Q-146`（v2.5.12）：这里原写 `exitFail`（1）⇒ 与自家退码表不同向（表说用法错 = 2）。
-			// K2 的「不是用法错」那个旧判语**已按表归位**；同族其余调用点未动（逐条见 `Q-146`）。
-			return exitUsage
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			// 退码 **2**（用法错 · 退码表 `exitcodes.go` 的 `usage` / `errors.go` 的 `kind=usage`）。
+			// ★ `Q-146`（v2.5.12）先归位这一处；★ `K2` 甲档归一（2026-09-24）把**全族 36 个调用点**
+			// 搬回漏斗 —— 码由 `requireFields`（**取自退码表**）回，调用点不再自己决定。
+			return rc
 		}
 		row := map[string]string{
 			"name":          progName,

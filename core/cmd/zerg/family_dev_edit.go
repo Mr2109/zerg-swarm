@@ -370,8 +370,8 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	row["result"] = "written"
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		return selectJSON(stdout, stderr, inv, inv.path, devEditFields, row)
 	}

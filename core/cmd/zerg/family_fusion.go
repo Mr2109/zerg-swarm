@@ -290,8 +290,8 @@ func cmdAsk(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  候选条数 : %d（能力筛后）\n", len(routes))
 		if inv.jsonGiven {
 			row["reply"] = ""
-			if !requireFields(inv, stderr) {
-				return exitFail
+			if rc := requireFields(inv, stderr); rc != exitOK {
+				return rc
 			}
 			return selectJSON(stdout, stderr, inv, inv.path, askFields, row)
 		}
@@ -307,8 +307,8 @@ func cmdAsk(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	row["reply"] = reply
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		return selectJSON(stdout, stderr, inv, inv.path, askFields, row)
 	}
@@ -596,8 +596,8 @@ func cmdPlan(inv *invocation, stdout, stderr io.Writer) int {
 		"path": out, "layers_passed": "L1_schema,L2_reference,L3_dry_run",
 	}
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		return selectJSON(stdout, stderr, inv, inv.path, planFields, row)
 	}
@@ -639,7 +639,10 @@ func cmdApply(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "error.kind=%s · detail=%s · retryable=false\n", kind, detail)
 		if inv.jsonGiven {
 			row := map[string]string{"layers_passed": strings.Join(passed, ","), "failed_layer": layer, "detail": detail}
-			if requireFields(inv, stderr) {
+			// K2 归一后仍是**正向**用法（与 `requireFields` 同一口径）：给了字段才出 JSON 面；
+			// 没给 ⇒ 本函数已把字段清单写到 stderr，落到下面 `return exitUsage`（**码取自表**）。
+			// ★ 别把它当「!requireFields」那 36 个负向调用点之一 —— 误替换会把「给了字段」当成「没给」。
+			if rc := requireFields(inv, stderr); rc == exitOK {
 				return selectJSON(stdout, stderr, inv, inv.path, applyFields, row)
 			}
 		}
@@ -765,7 +768,9 @@ func cmdApply(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.jsonGiven {
 		row := map[string]string{"plan_id": d.PlanID, "action": d.Action, "target_name": d.Target.Name,
 			"layers_passed": strings.Join(passed, ","), "failed_layer": "", "detail": "not_opened"}
-		if requireFields(inv, stderr) {
+		// K2 归一后仍是**正向**用法（同上 `apply` 那一处）：给了字段才出 JSON 面；没给 ⇒ 落到
+		// 下面 `return exitUsage`（**码取自表**）。
+		if rc := requireFields(inv, stderr); rc == exitOK {
 			return selectJSON(stdout, stderr, inv, inv.path, applyFields, row)
 		}
 	}

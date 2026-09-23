@@ -146,8 +146,8 @@ func cmdReceiptNew(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	row := receiptRow(rec)
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		return selectJSON(stdout, stderr, inv, inv.path, receiptFields, row)
 	}
@@ -189,8 +189,8 @@ func cmdReceiptShow(inv *invocation, stdout, stderr io.Writer) int {
 		if r.RoundID == want {
 			row := receiptRow(r)
 			if inv.jsonGiven {
-				if !requireFields(inv, stderr) {
-					return exitFail
+				if rc := requireFields(inv, stderr); rc != exitOK {
+					return rc
 				}
 				return selectJSON(stdout, stderr, inv, inv.path, receiptFields, row)
 			}
@@ -236,8 +236,8 @@ func cmdContextResume(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	last := recs[len(recs)-1] // loadReceipts 已按轮次 id 升序
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		return selectJSON(stdout, stderr, inv, inv.path, receiptFields, receiptRow(last))
 	}

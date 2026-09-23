@@ -67,8 +67,8 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	nCmd, nDanger := countCommands()
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, helpExportRows(facts))
 	}

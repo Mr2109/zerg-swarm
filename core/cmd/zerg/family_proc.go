@@ -241,8 +241,10 @@ func ghostBrief(rows []procRow) []string {
 // 行面 = 声明件点名的进程特征命中的现值进程（`launchd` 声明的 + `ghost` 幽灵的**都列**，
 // 用 `kind` 分档）—— 这样「看得见幽灵」不必先跑 `doctor`。
 func cmdCorePs(inv *invocation, stdout, stderr io.Writer) int {
-	if inv.jsonGiven && !requireFields(inv, stderr) {
-		return exitFail
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
 	}
 	path, perr := svcDeclPath(inv)
 	if perr != "" {

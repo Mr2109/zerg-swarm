@@ -50,6 +50,25 @@ const exitcodePolicy = "占号纪律：只在 3–63 自留区取号；每号必
 // 门禁侧（脚本）自己的码只有 0/1/2 + 四档；命令面**直通不翻译**，两表在 0/1/2 上逐字一致。
 const exitcodeGatePass = "门禁侧 0/1/2 与命令面同码同义（`zerg gate run` 原样转出，不做映射）"
 
+// exitCodeOf —— 按**机器名**从退码表取码（自描述面「**取自表**」的落点）。
+//
+// 为什么要有它（`K2` 甲档归一 · 2026-09-24）：归一的**方向写死** —— 退码表是唯一真源、
+// 一个字不动；凡要在文案里写码（帮助面 / 契约面 / 漏斗），一律**回表里取**，不许把
+// 数字抄进字符串。抄进去的那一份没人看着 ⇒ 表改了它悄悄跟丢（`Q-146` 的病根形态：
+// 表说 `usage`(2)、实现与文案写 `1`，「同一错误不同码」）。
+//
+// 表里查不到 ⇒ 兜底 `exitFail`（构造上到不了：门⑨ 逐格对拍 `main.go` 的常量 ⟷ 本表）。
+func exitCodeOf(name string) int {
+	for _, rows := range [][]exitcodeRow{exitcodeTable, exitcodeReserved} {
+		for _, r := range rows {
+			if r.Name == name {
+				return r.Code
+			}
+		}
+	}
+	return exitFail
+}
+
 func helpExitCodes() string {
 	out := "退码表（**唯一真源** · 契约 §三 · `zerg help exit-codes` 就是它的自描述面）\n\n"
 	emit := func(title string, rows []exitcodeRow) {

@@ -163,7 +163,7 @@ func TestImpact_MachineFaceSixKeysAndEmptyItems(t *testing.T) {
 //	① 判定口能把红判出来（少一键 / 多一键 / `items` 为 `null` 三枚错期望）；
 //	② 目标解析不到 / 出仓 / 缺目标 ⇒ **退 2**（不是 1 —— 这条命令不是「恒返回零命中」）；
 //	③ 人面三行**顺序**被打乱 ⇒ 判定口必红；
-//	④ K2：给了 `--json` 不给字段 ⇒ 退 1 + stdout **0 字节**。
+//	④ K2：给了 `--json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）+ stdout **0 字节**。
 func TestImpact_NegativeControls(t *testing.T) {
 	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
@@ -225,11 +225,12 @@ func TestImpact_NegativeControls(t *testing.T) {
 		t.Error("负控③失败：人面三行顺序被对调竟判过 —— 判据③「顺序固定」这一格没牙")
 	}
 
-	// ④ K2：给了 `--json` 不给字段 ⇒ 退 1 + stdout 0 字节（与既有各命令同一条纪律）。
+	// ④ K2：给了 `--json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）+ stdout 0 字节。
+	wantK2 := usageCodeFromTable(t)
 	rc, out, errb := runCapture("impact", "core/cmd/zerg/main.go", "--json")
-	if rc != 1 || len(out) != 0 {
-		t.Errorf("K2：`--json` 不给字段 ⇒ 退 1 + stdout 0 字节，实得 rc=%d · %d 字节 · stderr=%s",
-			rc, len(out), errb)
+	if rc != wantK2 || len(out) != 0 {
+		t.Errorf("K2：`--json` 不给字段 ⇒ 退 %d + stdout 0 字节，实得 rc=%d · %d 字节 · stderr=%s",
+			wantK2, rc, len(out), errb)
 	}
 	if !strings.Contains(errb, "可选字段") {
 		t.Errorf("K2：字段清单没走 stderr：%q", errb)

@@ -457,14 +457,16 @@ func scriptInvPrintPlan(stdout, stderr io.Writer, p *scriptInvPlan, docsRoot, do
 
 // scriptInvEmitJSON —— 机器面（六键包封由 `emitEnvelopeWith` 出；`items` = 一行十格）。
 func scriptInvEmitJSON(inv *invocation, stdout, stderr io.Writer, p *scriptInvPlan, result string) int {
-	if !requireFields(inv, stderr) {
-		// K2：给了 --json 不给字段 ⇒ 1 + stdout 0 字节。
-		// ★ 照实登记一条**框架级不一致**（本批现读撞到 · 不擅自抹平）：危险档命令的退码由框架兜底成
-		//   机器可读包封（走 stdout），而包封的 `error.exit_code` 是从 `kind` **映射**出来的 ——
-		//   K2 这一格的真退码是 **1**，若把 kind 报成 `usage` 则包封会写 `exit_code: 2`（与 rc 打架）。
-		//   ⇒ 本命令**不**在这一格报 kind，让框架打它自己的兜底包封（`exit_code: 1` 与 rc 一致 ·
-		//   包封里 `kind` 一句「命令未报出 kind，按退码兜底」照实可见）。缺口登记见回执「未做/未核」。
-		return exitFail
+	if rc := requireFields(inv, stderr); rc != exitOK {
+		// K2（§4.1）：给了 --json 不给字段 ⇒ 退码由 `requireFields` **取自退码表**回 ——
+		// ★ `K2` 甲档归一（2026-09-24）起这一格 = **用法错 2**（原为 1）。
+		// ★ 原先登记的**框架级不一致当场闭合**：本命令是**危险档**（D2 写面）⇒ 框架把错误面打成
+		//   机器可读包封走 stdout（同 `repo commit` 那条先例），包封的 `error.exit_code` 是
+		//   **从 kind 映射**出来的（`main.go` 的兜底 kind = `kindForExitCode(rc)`）——
+		//   归位前 rc=1 / 兜底 kind=`failed` ⇒ 包封 `exit_code:1`（与 rc 自洽）；若当时把 kind
+		//   报成 `usage` 则包封会写 2（与 rc 打架）。归位后 rc 与兜底 kind **同源同向**（2/usage）⇒
+		//   本条回到「让框架打它自己的兜底包封」这条**一字未动**的口径。
+		return rc
 	}
 	row := map[string]string{
 		"result":                  result,

@@ -530,14 +530,15 @@ func TestModelAddNegativeBadYAMLStaysUntouched(t *testing.T) {
 	}
 }
 
-// 反例探针七 · `--json` 不给字段 ⇒ 1 且 stdout 0 字节（K2 四件套）。
+// 反例探针七 · `--json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）且 stdout 0 字节（K2 四件套）。
 func TestModelAddJSONNoFields(t *testing.T) {
 	_, path := fleetFixtureAt(t)
 	before := fileSHA(t, path)
+	wantK2 := usageCodeFromTable(t)
 	rc, out, _ := runCapture("model", "add", "--path", path, "--model", "probe-list", "--host", "Mr2109",
 		"--file", "/models/m.gguf", "--json")
-	if rc != 1 || out != "" {
-		t.Fatalf("`--json` 不给字段：rc=%d stdout=%q（要 1 + 空）", rc, out)
+	if rc != wantK2 || out != "" {
+		t.Fatalf("`--json` 不给字段：rc=%d stdout=%q（要 %d + 空）", rc, out, wantK2)
 	}
 	if after := fileSHA(t, path); after != before {
 		t.Fatalf("只读用法面却改了文件")

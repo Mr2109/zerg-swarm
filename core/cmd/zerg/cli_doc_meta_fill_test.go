@@ -6,7 +6,7 @@
 //	② `--yes` 真写出来的**字节**与 D3③-a 那 62 篇的形态**逐字相同**（H1 + 两行插入）；
 //	③ 幂等：写过之后再跑 ⇒ 待回填 0 件；
 //	④ 没有 H1 / 日期两个来源都取不到 ⇒ 那一件**不给结论**（跳过 · 退码 8 · 一个字节没写）；
-//	⑤ 缺 `--yes` ⇒ 退 2 且零副作用（D2 档 fail-closed）；`--json` 不给字段 ⇒ 退 1、stdout 0 字节。
+//	⑤ 缺 `--yes` ⇒ 退 2 且零副作用（D2 档 fail-closed）；`--json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）、stdout 0 字节。
 package main_test
 
 import (
@@ -184,12 +184,13 @@ func TestDocMetaFill_YesAndJSONDiscipline(t *testing.T) {
 		t.Errorf("缺 --yes 时一个字节都不许写：%q", got)
 	}
 
-	// ★ 口径照实（与 `dev edit` 同款 · 本命令是**危险档**）：K2 退 1，且危险档的 stdout 走
-	//   **错误包封**（`dev build --json` 现跑 = 285 字节 / rc=2 同一形状）——「0 字节」那条只适用于
-	//   非危险档的结果面（`run()` 里 danger == nil 那一支）。字段清单在 stderr。
+	// ★ 口径照实（与 `dev edit` 同款 · 本命令是**危险档**）：K2 的码**取自退码表**（`usage` · 归一后 = 2），
+	//   且危险档的 stdout 走**错误包封**（`dev build --json` 现跑 = 285 字节 / rc=2 同一形状）——「0 字节」
+	//   那条只适用于非危险档的结果面（`run()` 里 danger == nil 那一支）。字段清单在 stderr。
+	wantK2 := usageCodeFromTable(t)
 	rc, out, errb := execWithEnv(t, bin, repo, env, "doc", "meta", "fill", "--scope", root, "--dry-run", "--json")
-	if rc != 1 {
-		t.Errorf("--json 不给字段 ⇒ 退 1（K2），得到 rc=%d", rc)
+	if rc != wantK2 {
+		t.Errorf("--json 不给字段 ⇒ 退 %d（K2 · 取自退码表 `usage`），得到 rc=%d", wantK2, rc)
 	}
 	if !strings.Contains(errb, "可选字段") {
 		t.Errorf("K2 要在 stderr 列可用字段：%q", errb)

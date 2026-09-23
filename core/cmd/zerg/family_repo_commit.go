@@ -138,8 +138,8 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
 		}
 		if inv.jsonGiven {
-			if !requireFields(inv, stderr) {
-				return exitFail
+			if rc := requireFields(inv, stderr); rc != exitOK {
+				return rc
 			}
 			_ = selectJSON(stdout, stderr, inv, inv.path, repoCommitFields, map[string]string{
 				"head": "", "files": strings.Join(files, ","), "staged": "", "gate_rc": "",
@@ -249,8 +249,8 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 		"gate_rc": "0", "commit": head, "message_path": msgPath, "log_dir": logDir,
 	}
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		return selectJSON(stdout, stderr, inv, inv.path, repoCommitFields, row)
 	}
@@ -567,8 +567,8 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 			fmt.Fprintf(stdout, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
 		}
 		if inv.jsonGiven {
-			if !requireFields(inv, stderr) {
-				return exitFail
+			if rc := requireFields(inv, stderr); rc != exitOK {
+				return rc
 			}
 			_ = selectJSON(stdout, stderr, inv, inv.path, repoCommitFields, onlyRow)
 		}
@@ -734,8 +734,8 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 		fmt.Fprintln(stdout, f)
 	}
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		onlyRow["head"], onlyRow["staged"] = head, strings.Join(postStaged, ",")
 		onlyRow["gate_rc"], onlyRow["commit"] = fmt.Sprintf("%d", gtRC), head

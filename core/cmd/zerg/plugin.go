@@ -141,8 +141,8 @@ func pluginRow(p pluginEntry) map[string]string {
 func cmdPluginLs(inv *invocation, stdout, stderr io.Writer) int {
 	plugins := discoverPlugins()
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		rows := []map[string]string{}
 		for _, p := range plugins {

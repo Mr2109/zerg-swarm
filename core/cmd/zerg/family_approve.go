@@ -259,8 +259,8 @@ func cmdApproveShow(inv *invocation, stdout, stderr io.Writer) int {
 	state := verifyTicketState(tk)
 	row := approveRow(tk, p, state)
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		// ★ D1 落地：字段面**先判**（与 `ls` 同一枚判定口）——今天这一路**不看**字段表
 		// （点 `--json name` 也 rc=0、还把九格全打出来）⇒ 可选字段（`strength` /
@@ -542,8 +542,8 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 	row := approveRow(tk, p, "验过")
 	row["result"] = "signed"
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		return selectJSON(stdout, stderr, inv, inv.path, approveNewFields, row)
 	}
