@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""check-trustroot-witness.py v1.0.0 —— 信任根可追溯：**只读一致性对拍件**（2.5.11 人签 F 批 · `F1`）
+"""check-trustroot-witness.py v1.1.0 —— 信任根可追溯：**只读一致性对拍件**（2.5.11 人签 F 批 · `F1`）
 
 为什么存在（`F1` 的任务原文 + 已拍的落点）
 --------------------------------------------------
@@ -37,6 +37,12 @@
      副本**未落地** ⇒ 这一格只交代（无该件可排；**落地那一步必须同批补两器 + 现跑负控**）。
   W5 **任何运行路径不许读副本**（`P17` 红线 1）：已跟踪的源码面（`core/**/*.go` · `agent/**/*.go` ·
      `scripts/**` · `publish/**`）里出现副本路径的字面串 ⇒ **红**（副本只作审计 ⇒ 不许被读）。
+     ★ **唯一豁免面**（`Q-114` = 甲 · 2026-09-23 波F 拍）：两器**排除声明**里的字面串**不算**「当运行源读」——
+     即「命中行落在 `EXCLUDES=(…)` / `DROP_EXACT = {…}` 的表区间**内** **且** 该行本身是**表元素行**
+     （纯引号字面量 + 可选尾逗号 + 可选尾注释）」⇒ 那是「**声明它不进公开面**」（正是 `W4` 要的两处），
+     不是「读副本」。**豁免要窄** ✗：同一文件**表外**任何真读副本路径的写法（`cat "$副本"` / 赋值 /
+     拼串）仍**必红** ✓；表区间与「元素行」形状都**现读文件真身**判定（读不到 / 定不出区间 ⇒
+     **该件一条都不豁免** ✗）。自检 ⑱ 就是这条豁免的合成用例（「⑮∧⑯ 同时成立」）。
 
 退码
 --------------------------------------------------
@@ -59,7 +65,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ROOT = os.path.dirname(os.path.dirname(HERE))
-VERSION = "check-trustroot-witness.py v1.0.0"
+VERSION = "check-trustroot-witness.py v1.1.0"
 
 RUNNING_REL = os.path.join("approvals", "operator.pub")     # 运行真源（相对状态目录）
 # ★ 「审计副本」的**落点占位**（声明式 · `P17` = 甲）：主仓里那一枚**已人签的审计副本**。
@@ -77,6 +83,12 @@ BASE_KEY_ID = "8b69ad95939df5cf"
 PUBLISH_EXCLUDES_SH = os.path.join("scripts", "build", "publish-public.sh")
 PUBLISH_DROP_PY = os.path.join("publish", "mirror-public-lib.py")
 SOURCE_GLOBS = ("core", "agent", "scripts", "publish")      # 「运行路径」的扫描面（已跟踪件）
+# ★ W5 的**唯一豁免锚**（`Q-114` = 甲）：两器排除声明的**表区间**。
+#   开/闭串都**现读文件真身**去比对（不许猜 ✗）；文件缺 / 定不出区间 ⇒ 该件**一条都不豁免**。
+TABLE_ANCHORS = {
+    PUBLISH_EXCLUDES_SH: ("EXCLUDES=(", ")"),              # bash 数组：起行 `EXCLUDES=(` · 止行独占 `)`
+    PUBLISH_DROP_PY: ("DROP_EXACT = {", "}"),              # python 集合：起行 `DROP_EXACT = {` · 止行独占 `}`
+}
 
 
 # ── 判定口（纯函数：自检与真目标**共用同一套**）──────────────────────────────────────
@@ -163,9 +175,99 @@ def judge_public_face(copy_landed, excludes_text, drop_text, copy_rel=None):
     return problems, "已落地 ⇒ 两器都已显式排除"
 
 
-def judge_readers(hits):
-    """W5：任何运行路径不许读副本。"""
-    return ["W5 破：运行路径里出现副本路径的字面串（%s）⇒ 副本被当运行源读了" % h for h in hits]
+ENTRY_SUFFIXES = (".go", ".py", ".sh", ".md", ".tsv", ".json", ".txt", ".yml", ".yaml")   # W5 扫描面
+
+
+def _strip_trailing_comment(s):
+    """去掉**引号外**的 `#` 起那一段（引号内的 `#` 是字面量的一部分，不动）。"""
+    out, in_str, i = [], False, 0
+    while i < len(s):
+        ch = s[i]
+        if in_str and ch == "\\" and i + 1 < len(s):
+            out.append(ch)
+            out.append(s[i + 1])
+            i += 2
+            continue
+        if ch == '"':
+            in_str = not in_str
+        elif ch == "#" and not in_str:
+            break
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def is_exclusion_element_line(line):
+    """该行是否为**排除表的元素行**：`"字面串"` + 可选尾逗号 + 可选尾注释（其余一律**不是**）。
+    `# 注释` 行 / `cat "…"` / `x="…"` / `rm -rf "…"` / 一行两个串并列 ⇒ **不是元素行** ✗（豁免要窄）。"""
+    core = _strip_trailing_comment(line.strip()).strip()
+    if not core or core.startswith("#"):
+        return False
+    if core.endswith(","):
+        core = core[:-1].rstrip()
+    if len(core) < 2 or not (core.startswith('"') and core.endswith('"')):
+        return False
+    inner = core[1:-1]           # 引号内**再出现未转义 `"`** ⇒ 不是单个字面量（如 `"a" "b"`）
+    i = 0
+    while i < len(inner):
+        if inner[i] == "\\":
+            i += 2
+            continue
+        if inner[i] == '"':
+            return False
+        i += 1
+    return True
+
+
+def find_table_span(text, opener, closer):
+    """在**现读**的文件文本里定「排除表」的行区间 ⇒ (起行, 止行)（1 基 · 含端点）；定不出 ⇒ None。"""
+    lines = text.splitlines()
+    start = None
+    for i, ln in enumerate(lines):
+        if ln.strip() == opener:
+            start = i
+            break
+    if start is None:
+        return None
+    for j in range(start + 1, len(lines)):
+        if lines[j].strip() == closer:
+            return (start + 1, j + 1)
+    return None
+
+
+def read_table_anchors(repo):
+    """现读两器文件真身 ⇒ {相对路径: (起行, 止行)}。
+    任一件读不到 / 定不出区间 ⇒ **该件不进锚表**（= 它里面出现字面串**一条都不豁免** ⇒ 照旧判红 ✗
+    —— 豁免宁可窄）。"""
+    anchors = {}
+    for rel, (opener, closer) in TABLE_ANCHORS.items():
+        try:
+            with open(os.path.join(repo, rel), encoding="utf-8") as f:
+                span = find_table_span(f.read(), opener, closer)
+        except Exception:  # noqa: BLE001 —— 读不到 ≠ 可以豁免
+            span = None
+        if span:
+            anchors[rel.replace(os.sep, "/")] = span
+    return anchors
+
+
+def judge_readers(hits, anchors=None):
+    """W5：任何运行路径不许读副本。hits = [(相对路径, 行号, 该行原文)]；
+    anchors = {相对路径: (表起行, 表止行)}（**现读**得来 · 见 `read_table_anchors`）。
+    ⇒ **只有**「命中行落在排除表区间**内** **且** 该行本身是**表元素行**」才豁免（`Q-114` = 甲：那是
+       「声明它不进公开面」，不是「读副本」）；表外 / 表内注释行 / 表内非元素行 / 未定出锚的件 ⇒ **红** ✓。
+    返回 (判红 list, 豁免 list)。"""
+    anchors = anchors or {}
+    reds, excused = [], []
+    for h in hits:
+        path, lineno, text = (h if isinstance(h, (tuple, list)) else (h, 0, ""))
+        span = anchors.get(path)
+        if span and span[0] <= lineno <= span[1] and is_exclusion_element_line(text):
+            excused.append((path, lineno))
+            continue
+        reds.append("W5 破：运行路径里出现副本路径的字面串（%s:%s）⇒ 副本被当运行源读了：%s"
+                    % (path, lineno, text.strip()))
+    return reds, excused
 
 
 # ── 取数（只读）───────────────────────────────────────────────────────────────────
@@ -239,7 +341,8 @@ def read_all(repo, state, copy_rel=None):
 
 
 def scan_readers(repo, tracked, copy_rel):
-    """W5：已跟踪的源码面里，副本路径的字面串命中（本件自身排除）。"""
+    """W5：已跟踪的源码面里，副本路径的字面串命中**逐行**取（豁免判定要用行本身）。
+    ⇒ [(相对路径, 行号, 该行原文)]（本件自身排除）。"""
     rel = copy_rel.replace(os.sep, "/")
     d = os.path.dirname(rel)
     hits = []
@@ -249,7 +352,7 @@ def scan_readers(repo, tracked, copy_rel):
             continue
         if not p.startswith(tuple(g + "/" for g in SOURCE_GLOBS)):
             continue
-        if not p.endswith((".go", ".py", ".sh", ".md", ".tsv", ".json", ".txt", ".yml", ".yaml")):
+        if not p.endswith(ENTRY_SUFFIXES):
             continue
         full = os.path.join(repo, p)
         try:
@@ -257,8 +360,11 @@ def scan_readers(repo, tracked, copy_rel):
                 txt = f.read()
         except Exception:  # noqa: BLE001
             continue
-        if rel in txt or (d and d in txt):
-            hits.append(p)
+        if rel not in txt and not (d and d in txt):
+            continue
+        for i, ln in enumerate(txt.splitlines(), 1):
+            if rel in ln or (d and d in ln):
+                hits.append((p, i, ln))
     return hits
 
 
@@ -290,9 +396,11 @@ def judge_all(r):
     p4, why4 = judge_public_face(r["copy_raw"] is not None,
                                  ex_txt, drop_txt, r.get("copy_rel"))
     reds += p4
-    reds += judge_readers(r["readers"])
+    p5, exc5 = judge_readers(r["readers"], r.get("anchors"))
+    reds += p5
     return reds, nocalls, {"run_kid": run_kid, "state2": state2, "why4": why4,
-                           "pub_hits": pub_hits, "others": others, "d": d}
+                           "pub_hits": pub_hits, "others": others, "d": d,
+                           "exc5": exc5, "anchors": r.get("anchors") or {}}
 
 
 # ── 自检（先自证会红，再扫真目标）────────────────────────────────────────────────
@@ -372,10 +480,42 @@ def self_test():
     check(not p10, "⑮ 正控：副本已落地且**两器都显式排除** ⇒ 不判红（`P17` 红线 2）",
           "⑮ 正控失败：两器都排了还判红")
 
-    check(not judge_readers([]), "⑯ 正控：运行路径里没有副本路径 ⇒ 不判红（W5）",
+    r16, e16 = judge_readers([])
+    check(not r16 and not e16, "⑯ 正控：运行路径里没有副本路径 ⇒ 不判红（W5）",
           "⑯ 正控失败：干净还判红")
-    check(bool(judge_readers(["core/cmd/zerg/x.go"])),
-          "⑰ 负控：运行路径里读了副本 ⇒ 判红（`P17` 红线 1）", "⑰ 负控失败：读了还判绿")
+    r17, e17 = judge_readers([("core/cmd/zerg/x.go", 42,
+                               'x := "core/internal/contract/trustroot-audit-copy/operator.pub"')])
+    check(bool(r17) and not e17,
+          "⑰ 负控：运行路径里读了副本（**没定出排除表锚** ⇒ 一条都不豁免）⇒ 判红（`P17` 红线 1）",
+          "⑰ 负控失败：读了还判绿 / 没锚也豁免")
+
+    # ⑱（`Q-114` = 甲 · 2026-09-23 波F 拍）：**「⑮ ∧ ⑯ 同时成立」的合成用例** ——
+    #   「两器都显式排除（W4 绿 = ⑮）」**且**「字面串只出现在排除表**元素行**内（W5 豁免 = ⑯）」
+    #   两个条件**同时**为真时不许红；同一字面串挪到**表外**（真读）⇒ 必红。
+    #   锚 = 现读夹具文本真身（`find_table_span` 与真目标同一套口径）。
+    lit = AUDIT_COPY_REL.replace(os.sep, "/")
+    syn_sh = ('EXCLUDES=(\n  "tools/ocr/venv"\n  "%s"\n  "gateway/tasks.md"\n)\n'
+              'cat "%s"\n' % (lit, lit))
+    syn_py = ('DROP_EXACT = {\n    "out_t4.txt",\n    "%s",\n}\n'
+              'open("%s", encoding="utf-8").read()\n' % (lit, lit))
+    syn_anchors = {
+        PUBLISH_EXCLUDES_SH.replace(os.sep, "/"): find_table_span(
+            syn_sh, *TABLE_ANCHORS[PUBLISH_EXCLUDES_SH]),
+        PUBLISH_DROP_PY.replace(os.sep, "/"): find_table_span(
+            syn_py, *TABLE_ANCHORS[PUBLISH_DROP_PY]),
+    }
+    in_hits = [(PUBLISH_EXCLUDES_SH.replace(os.sep, "/"), 3, syn_sh.splitlines()[2]),
+               (PUBLISH_DROP_PY.replace(os.sep, "/"), 3, syn_py.splitlines()[2])]
+    out_hits = [(PUBLISH_EXCLUDES_SH.replace(os.sep, "/"), 6, syn_sh.splitlines()[5]),
+                (PUBLISH_DROP_PY.replace(os.sep, "/"), 5, syn_py.splitlines()[4])]
+    r_in, e_in = judge_readers(in_hits, syn_anchors)
+    r_out, e_out = judge_readers(out_hits, syn_anchors)
+    p15, w15 = judge_public_face(True, lit + "\n", lit + "\n")
+    check(not p15 and not r_in and len(e_in) == 2 and bool(r_out) and len(r_out) == 2 and not e_out,
+          "⑱ 合成用例（`Q-114`=甲 · **⑮∧⑯ 同时成立**）：两器都显式排除（W4 绿 · ⑮）**且**字面串只出现在"
+          "排除表**元素行**内 ⇒ **不红**（豁免 2 处）；同一字面串挪到**表外**（`cat \"…\"` / `open(\"…\")`）"
+          "⇒ **判红 2 处** —— 豁免窄到「表元素行」",
+          "⑱ 失败：⑮∧⑯ 同时成立时仍判红（豁免没生效）/ 表外真读被豁免（放太宽）")
 
     print("   自检：%d 格过 · %d 格不过（真目标只读 · 未改任何字节）" % (ok, bad))
     return bad == 0
@@ -389,6 +529,7 @@ def scan(repo, state, copy_rel):
         print("⛔ 未取数：%s ⇒ **不出结论**（rc=2）" % why)
         return 2
     r["readers"] = scan_readers(repo, r["tracked"], r["copy_rel"])
+    r["anchors"] = read_table_anchors(repo)
     reds, nocalls, info = judge_all(r)
     rel = copy_rel.replace(os.sep, "/")
     print("── 读数（只读 · 每处带口径）")
@@ -411,8 +552,17 @@ def scan(repo, state, copy_rel):
     if info["others"]:
         print("   ·  交代：与运行真源不一致的在册件 = %s（`E3`：换钥后旧件作废 + 归档位 ⇒ 不当红）"
               % ", ".join(o[0] for o in info["others"]))
-    print("   ⑤ 运行路径里副本路径的字面串命中 = %d（W5 要求 0）%s"
-          % (len(r["readers"]), ("：%s" % ", ".join(r["readers"])) if r["readers"] else ""))
+    print("   ⑤ 运行路径里副本路径的字面串命中 = %d（W5 要求 0）· 其中**排除声明豁免** = %d"
+          "（表元素行 · `Q-114`=甲）%s"
+          % (len(r["readers"]), len(info["exc5"]),
+             ("：%s" % ", ".join("%s:%d" % (a, b) for a, b, _ in r["readers"])) if r["readers"] else ""))
+    for rel, span in sorted((info["anchors"] or {}).items()):
+        print("   ·  豁免锚（**现读**文件真身定的表区间）：%s 第 %d–%d 行（%s）"
+              % (rel, span[0], span[1],
+                 TABLE_ANCHORS.get(rel.replace("/", os.sep), ("?", "?"))[0]))
+    for p5, n5 in info["exc5"]:
+        print("   ·  豁免（`Q-114`=甲）：%s:%d 是排除表的**元素行** ⇒ 那是「声明不进公开面」（W4 要的），"
+              "不算「读副本」" % (p5, n5))
     print("   ⑥ 不可机检（如实标 · 不许写成命令判据）：**副本该放哪个仓面谁签它**是人定的（`P17`）；"
           "**两份 `key_id` 一致 ≠ 信任根历史可信**（历史面靠副本逐次人签）")
     if reds or nocalls:
@@ -425,7 +575,7 @@ def scan(repo, state, copy_rel):
             print("   ⛔ %s" % p)
         return rc
     print("⇒ 全绿（rc=0）：运行真源形状对 · 在册件认它 · 副本逐字一致 · `L-7` 仍成立 · "
-          "副本未进公开面 · 无运行路径读副本")
+          "副本未进公开面 · 无运行路径读副本（两器排除声明的**表元素行**已按 `Q-114`=甲 判明豁免）")
     return 0
 
 
