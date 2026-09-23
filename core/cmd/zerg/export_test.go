@@ -46,6 +46,11 @@ type CommandInfoForTest struct {
 	DangerLevel string   // D2 / D3（空 = 不是危险动作）
 	Passthrough bool
 	OpenForRun  bool // 本版是否已开放执行
+	// Usage —— 该条的**用法串**（`command.usage` 逐字）。
+	// 为什么要放出来：`Q-156` 的判据是「用法串里写的旗标 = 解析器认的旗标」，而用法串的
+	// **唯一真源**就这一格（`helptext.go:6–7` 的纪律：命令名与用法逐字来自命令树，测试件里
+	// 不许旁写第二份）⇒ 判据值从真源现读，不在 *_test.go 里抄一遍字符串。
+	Usage string
 }
 
 // CommandInfoOfForTest 按路径取形状；找不到 ⇒ ok=false（测试据此判「矩阵里有幽灵条目」）。
@@ -54,7 +59,7 @@ func CommandInfoOfForTest(path string) (CommandInfoForTest, bool) {
 		if joinPath(c.path) != path {
 			continue
 		}
-		info := CommandInfoForTest{Fields: append([]string{}, c.fields...), Passthrough: c.passthrough, OpenForRun: c.opened}
+		info := CommandInfoForTest{Fields: append([]string{}, c.fields...), Passthrough: c.passthrough, OpenForRun: c.opened, Usage: c.usage}
 		if c.danger != nil {
 			info.DangerLevel = c.danger.Level
 		}
