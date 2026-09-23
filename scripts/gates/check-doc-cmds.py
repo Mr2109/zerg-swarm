@@ -31,6 +31,26 @@ M12 判到的深度（§九 M12：**判到 L2（对象 + 动作）起步**）
   不在命令树里）⇒ 只判族名 `help` 在树里（族名不在 ⇒ 照旧红）。
   两处都带成对负控（见 `--self-test` ⑦⑧⑨：好例带旗标 ⇒ 绿；坏命令名照旧 ⇒ 红）。
 
+★ 身份行 / 非命令噪声：抽出前先认 + 抽出后按命令词合法性过滤（2026-09-24 治本 · 缺口 `Q-152`）
+--------------------------------------------------------------------------------------
+  正式面那行抬头是**元数据**，不是命令示例：
+      > 身份 / identity：zerg 2.5.11 ab1ac075+dirty 2026-09-23T17:53:17Z
+  它只要被**行内反引号**包住，`ZERG_INLINE` 就会把 `zerg 2.5.11 ab1ac075+dirty …` 整串当命令示例抽出，
+  于是**同一形态两种命**（都不是「认出来了」）：
+    · sha 首位是**字母** ⇒ 抽出 `['ab1ac075']` ⇒ 前两段/首段都不在命令树 ⇒ **假红** ✗；
+    · sha 首位是**数字** ⇒ 一个命令词都抽不出 ⇒ 落进 `if not words` ⇒ **静默放过** ⇒ 长期潜伏 ✗。
+  治法两件并用，各自独立成立：
+    ① **抽出前先认**（`IDENTITY_SEG`）：把 `zerg [<版本号>] <sha>[+dirty] <时刻>` 这一段**连同它外面的
+       反引号**整段摘掉 —— 只摘**这一段**、**不整行跳过** ⇒ 同一条行上别的反引号代码照旧判
+       （禁「认了身份行就把整行放过」✗：那会把同一行上的真命令一起放过）。
+    ② **抽出后按命令词合法性过滤**（`segment_words`）：`zerg` 紧跟的**第一段**既不是命令词、也不是旗标
+       ⇒ 整串不是命令示例（版本号 / sha / 时刻 / 占位符 / 路径都属这一类）—— 这一条把「抽不出词 ⇒ 静默」
+       的口也堵上：丢的一定是**认出来的非命令**，而不是空串。
+  其余判据**一字未改**（L2 起步深度 · `help <主题>` 只判族名 · 旗标与旗标取值剥离）；
+  被跳过的两类**逐类计数并打印**（`识别跳过：…`）。
+  照实登记的**未覆盖形态**：`zerg <sha>+dirty`（带 sha 但**无时刻**、且 sha 首位是字母）仍按命令判 ——
+  今天正式面用的是`版本号 + sha + 时刻`形态，这一形态本件**不覆盖**、不假装全覆盖 ✗。
+
 两棵语料（§二 2.3 文档体系 + §6.4 D3 的接缝）
 ---------------------------------------------
   formal  = 正式面 `docs/**`（**手写命令示例在这里应当是阻断**；今天仓内 0 命中 ⇒ 一上来就能挂阻断档）
@@ -52,7 +72,7 @@ tri-report 语义（§6.3 S6 的「起步 tri-report + baseline 棘轮」）
   python3 scripts/gates/check-doc-cmds.py                      # 两棵都判（默认档）
   python3 scripts/gates/check-doc-cmds.py --scope formal       # 只判正式面
   python3 scripts/gates/check-doc-cmds.py --scope devdocs      # 只判开发文档面（语料不在主仓 —— 走 ZERG_DEVDOCS_ROOT 或默认 ../Zerg-内部文档/项目文档/v2.5.10）
-  python3 scripts/gates/check-doc-cmds.py --self-test          # 成对负控（好件/坏件/空转 + 旗标/主题三组 = 9 组）
+  python3 scripts/gates/check-doc-cmds.py --self-test          # 成对负控（好件/坏件/空转 + 旗标/主题 + 身份行/噪声 = 14 组）
 """
 import argparse
 import json
@@ -82,6 +102,39 @@ CMD_WORD = re.compile(r'[A-Za-z][A-Za-z0-9_-]*')
 # 那种写法后面跟的取值同样是取值 ⇒ 认它才能把值剥掉。实测：`zerg ask <提示> [--min-ctx n]` 的 `n]`
 # 曾是唯一漏网的那个取值（抽成 `('ask','n')` ⇒ 假红）。
 FLAGWORD = re.compile(r'^[\[\(]*-{1,2}[A-Za-z]')
+# 身份行那一段（含可选版本号 · sha（可带 `+dirty`）· ISO 时刻）—— 见文件头「身份行 / 非命令噪声」①。
+#   把这一段连同它外面的反引号整段摘掉；**不整行跳过**（同行其余代码照旧判）。
+IDENTITY_SEG = re.compile(
+    r'`?zerg\s+'
+    r'(?:[0-9]+\.[0-9]+[0-9A-Za-z.+\-]*\s+)?'            # 可选：版本号（`2.5.11`）
+    r'[0-9a-fA-F]{7,64}(?:\+dirty)?\s+'                   # sha（可带 `+dirty`）
+    r'[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:]{5,8}Z?'       # 时刻（ISO8601）
+    r'[^`]*`?')
+# 版本号形态：`2.5.11` / `2.5.11-rc1`（治法② 用它把「版本串」与「其它噪声」分开计数）。
+VERSION_TOKEN = re.compile(r'^[0-9]+(?:\.[0-9]+)+[0-9A-Za-z.+\-]*$')
+
+
+def segment_words(seg):
+    """一段 `zerg …` 之后的行文 → (类别, 命令词)；类别 ∈ {'cmd','identity','noise'}（治法②）。
+
+    判据（2026-09-24 · 治本）：`zerg` 紧跟的**第一段**既不是命令词、也不是旗标
+      ⇒ 整串**不是命令示例**（版本号 / sha / 时刻 / 占位符 / 路径都属这一类）。
+    这一类**一律丢**（返回 `[]`），但**按类别计数** —— 丢的是「认出来的非命令」，不是「抽不出来的空串」；
+    修前那种「sha 首位是数字 ⇒ 抽不出词 ⇒ 落进 `if not words` 静默放过」的口就是这么堵上的。
+    第一段是**旗标**（`zerg --json …`）的串**照旧走既有旗标剥离那套**（不在这里改判、不放宽）。
+    """
+    toks = seg.split()
+    first = toks[0] if toks else ""
+    if first and not CMD_WORD.match(first) and not FLAGWORD.match(first):
+        return ("identity" if VERSION_TOKEN.match(first) else "noise"), []
+    return "cmd", command_words(seg)
+
+
+def count_skip(stats, kind):
+    """两类「认出来才丢」的段数分别计数（`stats` 为 None 时只当没传）。"""
+    if stats is None or kind == "cmd":
+        return
+    stats[kind] = stats.get(kind, 0) + 1
 
 
 def command_words(seg):
@@ -130,10 +183,18 @@ def parse_tree(root):
     return out
 
 
-def extract_zerg_segments(text):
-    """一段 markdown → [(行号, ['dev','proposal','new',…])]（围栏内 + 行内都抽；只抽 zerg 开头）。"""
+def extract_zerg_segments(text, stats=None):
+    """一段 markdown → [(行号, ['dev','proposal','new',…])]（围栏内 + 行内都抽；只抽 zerg 开头）。
+
+    `stats`（可选 · dict）传进来时另计三类**认出来才丢**的数（见文件头「身份行 / 非命令噪声」）：
+      `identity_lines` 行级摘掉的身份行段数 · `identity` 段级判为版本串形态的段数 · `noise` 其余非命令噪声。
+    """
     hits, in_fence = [], False
     for lineno, line in enumerate(text.splitlines(), 1):
+        # 治法①（抽出前先认）：身份行那一段整段摘掉 —— **不整行跳过**，同行其余反引号代码照旧判。
+        line, n_id = IDENTITY_SEG.subn("", line)
+        if stats is not None and n_id:
+            stats["identity_lines"] = stats.get("identity_lines", 0) + n_id
         stripped = line.strip()
         if FENCE.match(stripped):
             in_fence = not in_fence
@@ -144,10 +205,14 @@ def extract_zerg_segments(text):
             for seg in re.split(r'(?<!\S)(?:\$|PS\s*[A-Za-z]>|>)\s*', stripped):
                 m = re.match(r'zerg(\s+\S.*)?$', seg.strip())
                 if m:
-                    hits.append((lineno, command_words(m.group(1) or "")))
+                    kind, words = segment_words(m.group(1) or "")   # 治法②
+                    count_skip(stats, kind)
+                    hits.append((lineno, words))
         else:
             for m in ZERG_INLINE.finditer(line):
-                hits.append((lineno, command_words(m.group(1) or "")))
+                kind, words = segment_words(m.group(1) or "")       # 治法②
+                count_skip(stats, kind)
+                hits.append((lineno, words))
     return hits
 
 
@@ -166,7 +231,7 @@ def collect_md(root, rel_dir):
     return out
 
 
-def judge_md(files, tree):
+def judge_md(files, tree, stats=None):
     """→ (阻断命中数, 报告命中数, 明细行)。formal 的命中 = 阻断；devdocs 的命中 = 只报告。"""
     n_block, n_report, details = 0, 0, []
     for rel, ap in files:
@@ -175,7 +240,8 @@ def judge_md(files, tree):
         except OSError as e:
             details.append("读不了 %s：%s" % (rel, e))
             continue
-        for lineno, words in extract_zerg_segments(text):
+        for lineno, words in extract_zerg_segments(text, stats):
+            # 空串 = **已认出**的非命令（身份行/版本串/噪声），不是修前那种「抽不出来 ⇒ 静默」（见文件头 ★）。
             if not words:
                 continue
             # L2 优先：前两段能解析 ⇒ 过；否则退化查 L1（裸动词）
@@ -189,7 +255,7 @@ def judge_md(files, tree):
     return n_block, n_report, details
 
 
-def judge(files, tree, blocking):
+def judge(files, tree, blocking, stats=None):
     n = 0
     details = []
     for rel, ap in files:
@@ -198,7 +264,8 @@ def judge(files, tree, blocking):
         except OSError as e:
             details.append("读不了 %s：%s" % (rel, e))
             continue
-        for lineno, words in extract_zerg_segments(text):
+        for lineno, words in extract_zerg_segments(text, stats):
+            # 空串 = **已认出**的非命令（身份行/版本串/噪声），不是修前那种「抽不出来 ⇒ 静默」（见文件头 ★）。
             if not words:
                 continue
             # L2 优先（§九 M12 起步深度：对象 + 动作）。L1 只救**单段**命令（裸动词如 `zerg doctor`）——
@@ -241,6 +308,7 @@ def check(root, scopes):
     errs, lines = [], []
     devdocs_hits, formal_hits = 0, 0
     detail_all = []
+    stats = {}                       # 认出来才丢的两类计数（身份行 / 版本串形态 · 非命令噪声）
     for scope in scopes:
         if scope == "formal":
             files = collect_md(root, "docs")
@@ -250,7 +318,7 @@ def check(root, scopes):
             if not files:
                 errs.append("formal：扫到 0 篇 —— 拒绝静默空转（假绿）")
                 continue
-            n, _, details = judge(files, tree, blocking=True)
+            n, _, details = judge(files, tree, blocking=True, stats=stats)
             formal_hits += n
             if n:
                 errs.append("formal（正式面 · **阻断**）：%d 处手写 `zerg …` 示例拼不到命令树（§九 M12）" % n)
@@ -264,7 +332,7 @@ def check(root, scopes):
             if not files:
                 errs.append("devdocs：扫到 0 篇 —— 拒绝静默空转（假绿）")
                 continue
-            _, r, details = judge(files, tree, blocking=False)
+            _, r, details = judge(files, tree, blocking=False, stats=stats)
             devdocs_hits += r
             lines.append("devdocs（只报告档 · §6.3 S6 起步）：命中 %d 处（baseline %d）"
                          % (r, int(baseline["devdocs_report_hits"])))
@@ -275,6 +343,9 @@ def check(root, scopes):
                     % (devdocs_hits, int(baseline["devdocs_report_hits"])))
     lines.append("命令树 %d 条（L1+L2）· formal 命中 %d（阻断档）· devdocs 命中 %d（只报告档）"
                  % (len(tree), formal_hits, devdocs_hits))
+    lines.append("识别跳过（**不计入**上面两个数）：身份行 / 版本串形态 %d 段 · 非命令噪声 %d 段"
+                 " —— ★ 此二类是**认出来了**才丢（≠ 修前那种「抽不出词 ⇒ 静默」）"
+                 % (stats.get("identity_lines", 0) + stats.get("identity", 0), stats.get("noise", 0)))
     lines.extend("  " + d for d in detail_all)
     for e in errs:
         lines.append("✗ " + e)
@@ -309,6 +380,14 @@ def self_test():
         if want != got:
             bad.append("%s：want rc=%s got rc=%s" % (name, want, got))
         print("  %s ⇒ rc=%s" % (name, got))
+
+    def id_skips(lines_):
+        """读现跑输出里那行「身份行 / 版本串形态 N 段」—— 认出来了才丢的**证据**（≥1 才算认过）。"""
+        for l in lines_:
+            m = re.search(r'身份行 / 版本串形态\s*(\d+)\s*段', l)
+            if m:
+                return int(m.group(1))
+        return -1
 
     # ① 正控：好件（示例拼得到命令树）⇒ 0
     docs = os.path.join(tmp, "docs")
@@ -387,12 +466,60 @@ def self_test():
     if rc:
         bad.append("⑨ 正控：`help <主题>` 仍被判红 —— 判词 %s" % (" | ".join(lines[:4]),))
 
+    # ── 身份行 / 非命令噪声（2026-09-24 · 治本 · 缺口 `Q-152`）──────────────────
+    # ⑩ 正控：身份行包在**行内反引号**里 · sha 首字符是**字母** ⇒ 改前抽出 ['ab1ac075'] ⇒ **假红**
+    open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
+        "> 身份 / identity：`zerg 2.5.11 ab1ac075+dirty 2026-09-23T17:53:17Z`\n")
+    rc, lines = check(tmp, ["formal"])
+    case("⑩ 正控（身份行 · 行内反引号 · sha 首字母 ⇒ 0；修前是假红）", 0, rc)
+    if id_skips(lines) < 1:
+        bad.append("⑩ 正控：身份行没被**认出来**（识别计数 = 0）—— 换个 sha 值就会两态摇摆")
+
+    # ⑪ 正控：同一形态 · sha 首字符是**数字** ⇒ 改前 rc 也是 0，但那是落进 `if not words` 的**静默放过**。
+    #    本格断言的不只是 rc=0，还有「**认出来了**」（识别计数 ≥ 1）—— 潜伏口靠这一格才堵上。
+    open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
+        "> 身份 / identity：`zerg 2.5.11 54a3dc51+dirty 2026-09-23T17:53:17Z`\n")
+    rc, lines = check(tmp, ["formal"])
+    case("⑪ 正控（身份行 · sha 首数字 ⇒ 0）", 0, rc)
+    if id_skips(lines) < 1:
+        bad.append("⑪ 正控：sha 首数字那一格仍是**静默**的（识别计数 = 0）⇒ 潜伏口没堵上")
+
+    # ⑫ 正控：**无时刻**的「版本号 + sha」形态 —— `IDENTITY_SEG`（治法①）不匹配它
+    #    ⇒ 管这一格的只有治法②（命令词合法性）⇒ 这一格证明**治法② 独立成立**（两条治法互为备份）
+    open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
+        "> 版本 / version：`zerg 2.5.11 ab1ac075+dirty`\n")
+    rc, lines = check(tmp, ["formal"])
+    case("⑫ 正控（版本号 + sha · 无时刻 ⇒ 0 · 治法② 独立成立）", 0, rc)
+    if id_skips(lines) < 1:
+        bad.append("⑫ 正控：治法② 那一格没认出来（识别计数 = 0）")
+
+    # ⑬ 负控：身份行 + **同一行上**另一处真错误 ⇒ 必须红且点名 ——
+    #    证明治法① **只摘那一段、不整行跳过**（整行跳过会把同一行上的真命令一起放过）
+    open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
+        "> 身份 / identity：`zerg 2.5.11 ab1ac075+dirty 2026-09-23T17:53:17Z`"
+        " · 另见 `zerg dev propozal list`\n")
+    rc, lines = check(tmp, ["formal"])
+    case("⑬ 负控（身份行同一行上的真错误 ⇒ 1 · 治法① 不整行跳过）", 1, rc)
+    if not any("propozal" in l for l in lines):
+        bad.append("⑬ 负控：判词里没有坏命令名")
+
+    # ⑭ 负控：身份行与真错误**同篇**（围栏里的坏命令）⇒ 照旧红 —— 认噪声不许把真命令一起放过
+    open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
+        "> 身份 / identity：`zerg 2.5.11 ab1ac075+dirty 2026-09-23T17:53:17Z`\n\n"
+        "```sh\nzerg dev propozal list\n```\n")
+    rc, lines = check(tmp, ["formal"])
+    case("⑭ 负控（身份行 + 同篇真错误 ⇒ 1）", 1, rc)
+    if id_skips(lines) < 1:
+        bad.append("⑭ 负控：身份行没被认出来")
+    if not any("propozal" in l for l in lines):
+        bad.append("⑭ 负控：判词里没有坏命令名")
+
     if bad:
         print("自检失败：")
         for b in bad:
             print("  ✗ " + b)
         return 2
-    print("门⑫ 自检全过（9 组成对/正控/空转负控）")
+    print("门⑫ 自检全过（14 组成对/正控/空转/身份行噪声负控）")
     return 0
 
 
