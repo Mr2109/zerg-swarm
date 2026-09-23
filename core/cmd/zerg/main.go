@@ -645,6 +645,23 @@ func init() {
 			endpoint: "",
 			run:      cmdScriptLs,
 		},
+		// ---- `A3`（`G-13`/`Q-002`）取「b」案：仓外台账（脚本现状清单）的**唯一写命令** + 写面进审计 ----
+		// 已拍口径逐字（`设计-仓外台账写面-A3-b案-v1.0-20260923.md` §二）：台账**留仓外** + 一条唯一写命令
+		// （三态照 `repo commit`：`--dry-run` 是**唯一**会返回 0 的那一态 · 缺 `--yes` ⇒ fail-closed 2）+ 审计。
+		// ★ 与只读面**分家**：上面那条 `script ls`（`family_h.go cmdScriptLs`）**一字不动** ——
+		//   只读面加一枚写旗标就变成第二条写路径（设计稿 §三）。
+		{
+			path:    []string{"script", "inventory", "sync"},
+			kind:    "ScriptInventorySync",
+			summary: "把**仓外**台账（脚本现状清单）按现跑重算（D2 写面 · `--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面进审计）",
+			usage:   "zerg script inventory sync [--docs-root <Zerg-内部文档 根>] [--dry-run | --yes] [--by <谁>] [--json <字段>]",
+			fields: []string{"result", "target", "rows_live", "rows_added", "rows_removed", "rows_unchanged",
+				"declared_line", "inventory_before_sha256", "inventory_after_sha256", "audit_path"},
+			danger:   &dangerSpec{dangerD2, "台账件", "把仓外台账的行面与两个 yes/no 列按现跑重算（可逆：写前备份 + 写后读回，复查不过逐字节写回）；**一条命令写**、**不许第二条写路径**", "设计-仓外台账写面-A3-b案-v1.0-20260923.md §二 · `A3` = `G-13`/`Q-002`"},
+			opened:   true,
+			endpoint: "",
+			run:      cmdScriptInventorySync,
+		},
 		// ---- 缺口面 P0（缺口-命令面-20260921 §十一 · 2026-09-21）：今天手搓最多的一类先补上 ----
 		{
 			path:     []string{"code", "find"},
@@ -1416,8 +1433,19 @@ func init() {
 	seedIdem()
 }
 
-// resolve 按「最多 2 段」贪心匹配：先试 [p0,p1]，再试 [p0]；剩下的是位置参数。
+// resolve 按「最多 3 段」贪心匹配（`zerg help` 第 1 行的「深度 ≤ 3 层」）：先试 [p0,p1,p2]，
+// 再试 [p0,p1]，最后试 [p0]；剩下的是位置参数。
 func resolve(pos []string) (*command, []string) {
+	// ★ 2026-09-23 `A3` 落 `script inventory sync`（3 段）时现读到的**命令面缺口**：
+	//   本函数原来只试 `pos[:2]` 与 `pos[:1]` —— 而 `zerg help` 第 1 行**逐字承诺**
+	//   「形态 `zerg <对象> <动作> [参数] [旗标]` · **深度 ≤ 3 层**」⇒ 3 段命令**根本派发不到**
+	//   （现读全树 0 条 3 段命令 ⇒ 这条缺口此前没人撞到）。本处**只加一段更长的前缀试探**：
+	//   既有 1/2 段命令的解析结果**一字未动**（3 段没命中时照旧落到下面两支）。
+	if len(pos) >= 3 {
+		if c := find(pos[:3]); c != nil {
+			return c, pos[3:]
+		}
+	}
 	if len(pos) >= 2 {
 		if c := find(pos[:2]); c != nil {
 			return c, pos[2:]
@@ -1844,8 +1872,10 @@ func valueFlagName(a string) string {
 	}
 	// 文档面旗标（缺口 `G-19` 同根：`--docs-ver <X.Y.Z>` 显式钉一版 = 兼容「钉死在某一版」的旧行为；
 	// 默认档才是版本无关。`help export` 与 `doc meta fill` 共用同一枚 —— 取源只有一处 `devdocs.go`）。
+	// ★ `A3` 的 `b` 案在这里续一枚 `--docs-root <Zerg-内部文档 根>`（设计稿 §二「落点白名单」第 2 条：
+	//   `--docs-root` **只换仓根**、不许换件名 —— 形状先例 = 门㉑ 与 `zerg repo status --root <仓根>`）。
 	switch a {
-	case "--docs-ver":
+	case "--docs-ver", "--docs-root":
 		return a
 	}
 	// 回执面旗标（§20.3 `H3` · 批 E · T-61）：一轮一页回执的五格 + 证据/提交。
