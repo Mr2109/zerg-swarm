@@ -169,6 +169,7 @@ func budgetPushCap(sec float64) func(m map[string]any) {
 // TestImpactBudget_TraceAlwaysNamesRuntime —— 判据① 的**正控**：真仓两档各跑一次，
 // `meta.layers_not_run[]` 恒在 `runtime`，层表恒六行，没跑的层逐条点名；两档都**不降级**。
 func TestImpactBudget_TraceAlwaysNamesRuntime(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
@@ -248,6 +249,7 @@ func TestImpactBudget_TraceAlwaysNamesRuntime(t *testing.T) {
 // 期望：③⑤⑥ 标 `未跑（超预算降级）`、④ **照跑**（降级档 = ①④）、① 不降级、层表恒六行、
 // `warnings[]` 逐条写明哪几层没跑；退码与「不降级那一跑」**同码**（降级不改退码）。
 func TestImpactBudget_DegradeUnderPressedCap(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	real := repoRootFromCLI(t)
 	tgt := "core/cmd/zerg/main.go"
 	// 比对照跑：镜像根 + **不压**上限（同一棵树，只差契约件那一格）。
@@ -679,6 +681,7 @@ func isLetterOrDigit(r rune) bool {
 // TestImpactBudget_LayerRowsKeepShape —— 「降级前后输出形状不变」：把两档 + 压上限那一跑的层表
 // 逐行按同一个正则拆字段 ⇒ 字段序与个数必须一致（只有值不同）。
 func TestImpactBudget_LayerRowsKeepShape(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	rel := "core/cmd/zerg/main.go"
 	rowRe := regexp.MustCompile(`^  层([①②③④⑤⑥]) layer=(.+?) 粒度=(.+?) 口径=(.+?) 状态=(\S+) 耗时=(\S+) head_sha=(\S+) 时刻=(\S+)$`)
@@ -763,6 +766,7 @@ func TestImpactBudget_LayerRowsKeepShape(t *testing.T) {
 // TestImpactBudget_BlockEchoesContractNumbers —— 预算块里打出来的两式值，必须与契约件里记的
 // `算出值秒` 逐字（到小数点后三位）相同；且块里必须明写「`R32` 绝对值仍待拍」。
 func TestImpactBudget_BlockEchoesContractNumbers(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())

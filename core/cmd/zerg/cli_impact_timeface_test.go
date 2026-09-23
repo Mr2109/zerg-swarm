@@ -147,6 +147,7 @@ func TestImpactTimeface_CalibrationFixturePairedControls(t *testing.T) {
 //	  尺那一格出**现跑读数**（探针条数由脚本自报）+ 自证成对两半；
 //	③ 同一口令两跑：**机读那一行逐字相同**（`M8`：定序 · 无时钟无耗时）+ 状态目录不多件。
 func TestImpactTimeface_LiveCalibrationAndPrediction(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
 	state := t.TempDir()
@@ -226,6 +227,7 @@ func predictJSONLine(errb string) string {
 //	· **零命中那一跑**（已知无关件）⇒ 预测集空，但 `not_run[]` 必须**逐条点名**（不许只留一个空）——
 //	  这一对正是判据① 的反面：**「预测为空」与「没跑」是两件事**。
 func TestImpactTimeface_PredictionCaliberPairedControls(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
 

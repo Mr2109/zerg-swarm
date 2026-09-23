@@ -69,6 +69,7 @@ func TestImpactCard_CapsAreHard(t *testing.T) {
 // TestImpactCard_RealRunFitsCapsAndFourFields —— 判据① 正控（**现跑**）：真目标的卡片条数 / 单条 /
 // 总量都在尺子内，且每条四字段齐、`why` 落在闭集里。
 func TestImpactCard_RealRunFitsCapsAndFourFields(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
 	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
@@ -368,6 +369,7 @@ func TestImpactReversibility_ThreeTiersAndExecutability(t *testing.T) {
 // （`A1` 判据③ · `A3` 把 §3.8 的可逆性**内联在第③行同一行**，不新增行数）+ 卡片块落 stderr
 // （`--for-human` 出人档全文 · `--for-model` 明说同效 · `--json` 可叠加）。
 func TestImpactCard_HumanFaceStaysThreeLinesAndCarriesReversibility(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
 	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，

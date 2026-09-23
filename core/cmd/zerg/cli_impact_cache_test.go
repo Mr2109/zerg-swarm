@@ -72,6 +72,7 @@ func impactCacheRun(t *testing.T, argv ...string) (int, string, string) {
 // 冷跑（合成状态目录里没有落盘件）⇒ 热跑（同一目录，键三件 + 源指纹都相同）⇒
 // 人面逐字节比 + 现读毫秒档；再换一个合成状态目录做**冷/热各一次**的机器面（`--json`）对拍。
 func TestImpactCache_ColdWarmSameOutputAndMillisecondTier(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
 	state := impactCacheStateDir(t)
@@ -171,6 +172,7 @@ func countSortedEqual(x, y string) bool {
 // （`ImpactCacheLoadForTest` = 命令内部用的那一份）⇒ **必须未命中**，且原因要指名道姓；
 // 最后一条**正控**（原样件）⇒ 必须命中（证明这一格不是恒假）。
 func TestImpactCache_InvalidationNegativeControls(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
 	state := impactCacheStateDir(t)
@@ -336,6 +338,7 @@ func TestImpactCache_FingerprintMovesWithSource(t *testing.T) {
 // TestImpactCache_LayoutFromContractAndOutsideRepo —— 判据④①：落点由**契约件**写死、
 // 落在**状态目录**下、**不在仓内**；半份契约 ⇒ 必须报错（不许猜目录名）。
 func TestImpactCache_LayoutFromContractAndOutsideRepo(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
 	state := impactCacheStateDir(t)
@@ -421,6 +424,7 @@ func TestImpactCache_LayoutFromContractAndOutsideRepo(t *testing.T) {
 // TestImpactCache_OnlyGrowsAndHasNoAutoActions —— 判据④③④⑤⑥：只增不删 / 没有自动动作入口 /
 // 干跑那一档不碰缓存 / 缓存不抬上限。
 func TestImpactCache_OnlyGrowsAndHasNoAutoActions(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	t.Setenv("ZERG_REPO", root)
 	state := impactCacheStateDir(t)
