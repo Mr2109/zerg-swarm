@@ -22,6 +22,7 @@ package main_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -219,6 +220,10 @@ func TestModelAddListShapeWriteOneLineAdded(t *testing.T) {
 	if strings.Join(restored, "\n") != strings.Join(oldLines, "\n") {
 		t.Fatalf("除了新增那一行，其余**不是**逐字节相同 ⇒ 不是新增式")
 	}
+	// 写面报的行号必须是**真行号**（报错行 = 写面说谎）
+	if !strings.Contains(errb, fmt.Sprintf("新条第 %d 行", at+1)) {
+		t.Fatalf("报的落点行号不对（真行号 = %d）：%s", at+1, errb)
+	}
 	// 读回再校：对**改后**的档再干跑一次，`probe-list` 下要能看到 3 条（解析器认了）
 	rc2, out2, errb2 := runCapture("model", "add", "--path", path, "--model", "probe-list",
 		"--host", "Mr2109", "--file", "/models/again.gguf", "--dry-run")
@@ -278,11 +283,85 @@ func TestModelAddBareShapeExpandsToList(t *testing.T) {
 	if strings.Join(restored, "\n") != strings.Join(oldLines, "\n") {
 		t.Fatalf("除展开那一处外，其余**不是**逐字节相同：\n%s", strings.Join(restored, "\n"))
 	}
+	// 写面报的行号必须是**真行号**
+	at := -1
+	for i, l := range newLines {
+		if strings.Contains(l, "/models/new-bare-Mr2109.gguf") {
+			at = i
+		}
+	}
+	if at < 0 {
+		t.Fatalf("找不到新行的位置")
+	}
+	if !strings.Contains(errb, fmt.Sprintf("新条第 %d 行", at+1)) {
+		t.Fatalf("报的落点行号不对（真行号 = %d）：%s", at+1, errb)
+	}
 	// 读回再校：该块现在 2 条
 	rc2, out2, errb2 := runCapture("model", "add", "--path", path, "--model", "probe-bare",
 		"--host", "x3", "--file", "/models/again.gguf", "--dry-run")
 	if rc2 != 0 || !strings.Contains(out2, "`probe-bare` 下 2 条") {
 		t.Fatalf("改后档 `probe-bare` 没解析成 2 条：rc=%d out=%s stderr=%s", rc2, out2, errb2)
+	}
+}
+
+// 判据面 · ⑤ 真写（**新建块**）：块首 + 新条两行（其余逐字节不变）· 落在 `models:` 段末 · 报的行号是真的。
+func TestModelAddNewBlockRealWriteTwoLinesAdded(t *testing.T) {
+	_, path := fleetFixtureAt(t)
+	rc, out, errb := runCapture("model", "add", "--path", path, "--model", "probe-fresh",
+		"--host", "x3", "--file", "/models/fresh.gguf", "--mem-gb", "17", "--ctx", "131072", "--yes")
+	if rc != 0 {
+		t.Fatalf("真写（新建块）rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "probe-fresh") {
+		t.Fatalf("行式面里没有模型名：%s", out)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读回不过：%v", err)
+	}
+	oldLines, newLines := linesOf(fleetFixture), linesOf(string(got))
+	if len(newLines) != len(oldLines)+2 {
+		t.Fatalf("行数 %d → %d（要 +2：块首 + 条目）", len(oldLines), len(newLines))
+	}
+	// 新增的两行：块首 + 列表形条目，且**落在 `models:` 段末**（`probe-bare` 之后、`aliases:` 之前）
+	hdr, at := -1, -1
+	for i, l := range newLines {
+		if l == "  probe-fresh:" {
+			hdr = i
+		}
+		if strings.Contains(l, "/models/fresh.gguf") {
+			at = i
+		}
+	}
+	if hdr < 0 || at != hdr+1 {
+		t.Fatalf("新建块的两行没接在一起：块首下标=%d 条目下标=%d", hdr, at)
+	}
+	if !strings.HasPrefix(newLines[at], "    - { host: x3,") {
+		t.Fatalf("新条不是列表形条目：%q", newLines[at])
+	}
+	lastModels := -1
+	for i, l := range newLines {
+		if strings.Contains(l, `  probe-bare: { host: x3`) {
+			lastModels = i
+		}
+	}
+	if lastModels < 0 || hdr != lastModels+1 {
+		t.Fatalf("新块没落在 `models:` 段末（前一条下标=%d · 块首下标=%d）", lastModels, hdr)
+	}
+	// 逐字节：删掉新增那两行，其余必须与原档逐字相同
+	restored := append(append([]string{}, newLines[:hdr]...), newLines[at+1:]...)
+	if strings.Join(restored, "\n") != strings.Join(oldLines, "\n") {
+		t.Fatalf("除新增那两行外，其余**不是**逐字节相同")
+	}
+	// 写面报的行号必须是**真行号**
+	if !strings.Contains(errb, fmt.Sprintf("新条第 %d 行", at+1)) {
+		t.Fatalf("报的落点行号不对（真行号 = %d）：%s", at+1, errb)
+	}
+	// 读回再校：新块 1 条
+	rc2, out2, errb2 := runCapture("model", "add", "--path", path, "--model", "probe-fresh",
+		"--host", "Mr2109", "--file", "/models/again.gguf", "--dry-run")
+	if rc2 != 0 || !strings.Contains(out2, "`probe-fresh` 下 1 条") {
+		t.Fatalf("新建块没解析成 1 条：rc=%d out=%s stderr=%s", rc2, out2, errb2)
 	}
 }
 

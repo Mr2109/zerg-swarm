@@ -264,7 +264,8 @@ func modelAddLocate(lines []string, name string) (modelAddPlacement, string) {
 			last = i
 		}
 	}
-	p.At, p.Header, p.Entry = last+1, last+2, last+2
+	p.At, p.Header = last+1, last+2
+	p.Entry = p.At + 2 // 新建块两行：块首 + 新条 ⇒ 新条落在插入点之后一行（1-based）
 	return p, ""
 }
 
@@ -457,7 +458,7 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 		where := map[string]string{
 			"list": fmt.Sprintf("`models:` 的 `%s:` 块末（块首第 %d 行）", name, pl.Header),
 			"bare": fmt.Sprintf("`models:` 的 `%s:` 那一行原位展开（原条 = 第 %d 行 ⇒ 改列表形，正文逐字保留）", name, pl.Header),
-			"new":  fmt.Sprintf("`models:` 段末新建 `%s:` 块（拟块首第 %d 行）", name, pl.Header),
+			"new":  fmt.Sprintf("`models:` 段末新建块（块首第 %d 行）", pl.Header),
 		}[pl.Form]
 		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
 		fmt.Fprintf(stdout, "  动作     : model add（%s）\n", progName)
