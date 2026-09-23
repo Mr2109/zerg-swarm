@@ -1,6 +1,6 @@
 [package]
 name = "zerg-wall"
-version = "2.5.10"   # 锚到版本真源（ui/Cargo.toml + core/internal/version），否则升级比较会错（§五之三）
+version = "2.5.11"   # 锚到版本真源（ui/Cargo.toml + core/internal/version），否则升级比较会错（§五之三）
 edition = "2021"
 description = "茧壁（锁壳 + 门禁）：卵配方 → 平台命令 + 放行清单（一档：Linux 调 bwrap / macOS 直调 Seatbelt）"
 # 依赖政策（批 2'.1 冻结）：**零第三方依赖优先**。一档只需要 std（进程创建）+ extern "C"（Seatbelt FFI）；
