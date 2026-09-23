@@ -150,6 +150,13 @@ func cmdGatewayModels(inv *invocation, stdout, stderr io.Writer) int {
 // ---- 只读：脚本面（最小面；125 件的「现状标注」在 T-50 落）---------------------------------
 
 // cmdScriptLs —— `zerg script ls`（只读本机面）：`scripts/` 下的脚本逐件列出。
+//
+// ★ 2026-09-24（缺口 `Q-160` · 口径与判据件不同源）：收件面换成 `scriptInvScan`
+// （见 `family_script_inventory.go:103`）**同一处**，本命令不再自带第二套扫描。
+// 旧写法（`scanRoots`）只收 `.sh` / `.py` 且只下钻一层 ⇒ 报 136，而判据件
+// `TestScriptInventoryMatchesLiveScan` 与仓外台账同口径现读 139 ⇒ **三者同数不同集**
+// （本命令漏 3 件无后缀可执行件）⇒ 拿本命令的数去核台账会得假绿 ✗。
+// 只换**收件口径**：字段面（`path` / `public`）与行序**都不动** ✓。
 func cmdScriptLs(inv *invocation, stdout, stderr io.Writer) int {
 	root := repoRoot()
 	if root == "" {
@@ -170,8 +177,15 @@ func cmdScriptLs(inv *invocation, stdout, stderr io.Writer) int {
 		}
 	}
 	rows := []map[string]string{}
-	for _, sub := range scanRoots(filepath.Join(root, "scripts")) {
-		rows = append(rows, sub...)
+	// 收件口径 = 判据件那一条（`scriptInvScan`）：`.sh` / `.py` / 无后缀且可执行且首行 `#!`，
+	// 排除面同 `scriptInvExcludeDirs`（扫不动 ⇒ 走下面那条「没扫到东西」的 BLOCKED，不猜）。
+	if scanned, err := scriptInvScan(root); err == nil {
+		sort.Slice(scanned, func(i, j int) bool {
+			return scriptLsOrderKey(scanned[i].Path) < scriptLsOrderKey(scanned[j].Path)
+		})
+		for _, r := range scanned {
+			rows = append(rows, map[string]string{"path": r.Path, "public": ""})
+		}
 	}
 	if len(rows) == 0 {
 		inv.setErr("blocked", "scripts_absent", "scripts/ 下没扫到可列的东西")
@@ -188,52 +202,21 @@ func cmdScriptLs(inv *invocation, stdout, stderr io.Writer) int {
 	return listCmd(inv, stdout, stderr, []string{"path", "public"}, rows)
 }
 
-// scanRoots 递归列 `scripts/` 下的可执行件（顶层 + 一层子目录，与门禁脚本的扫描面同口径）。
-func scanRoots(root string) [][]map[string]string {
-	out := [][]map[string]string{}
-	ents, err := os.ReadDir(root)
-	if err != nil {
-		return out
+// scriptLsOrderKey —— `script ls` 的**行序**（与旧输出逐字同序，换口径时不许顺手挪行）：
+// 顶层件排在最前，之后按**一层子目录名**成组、组内按整路径排（更深层不另开组，只跟着它
+// 那一层的一级目录走）。口径与行序是两件事：`Q-160` 只换口径 ✓。
+func scriptLsOrderKey(rel string) string {
+	sep := string(filepath.Separator)
+	i := strings.Index(rel, sep)
+	if i < 0 {
+		return "\x00" + rel
 	}
-	one := []map[string]string{}
-	for _, e := range ents {
-		if e.IsDir() {
-			continue
-		}
-		if !strings.HasSuffix(e.Name(), ".sh") && !strings.HasSuffix(e.Name(), ".py") {
-			continue
-		}
-		one = append(one, map[string]string{"path": filepath.Join("scripts", e.Name()), "public": ""})
+	rest := rel[i+len(sep):]
+	j := strings.Index(rest, sep)
+	if j < 0 {
+		return "\x00" + rel // 顶层件（`scripts/<件名>`）
 	}
-	sort.Slice(one, func(i, j int) bool { return one[i]["path"] < one[j]["path"] })
-	out = append(out, one)
-	subs := []string{}
-	for _, e := range ents {
-		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-			subs = append(subs, e.Name())
-		}
-	}
-	sort.Strings(subs)
-	for _, s := range subs {
-		dir := filepath.Join(root, s)
-		files, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		rows := []map[string]string{}
-		for _, f := range files {
-			if f.IsDir() {
-				continue
-			}
-			if !strings.HasSuffix(f.Name(), ".sh") && !strings.HasSuffix(f.Name(), ".py") {
-				continue
-			}
-			rows = append(rows, map[string]string{"path": filepath.Join("scripts", s, f.Name()), "public": ""})
-		}
-		sort.Slice(rows, func(i, j int) bool { return rows[i]["path"] < rows[j]["path"] })
-		out = append(out, rows)
-	}
-	return out
+	return rel[:i+len(sep)+j] + "\x00" + rel // 组名 = `scripts/<一级子目录>`
 }
 
 // ---- 写面两枚（同一个执行门）--------------------------------------------------------------
