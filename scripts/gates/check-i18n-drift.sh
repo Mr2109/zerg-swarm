@@ -30,7 +30,7 @@
 #
 # 用法：
 #   scripts/gates/check-i18n-drift.sh [--phase all|exist|stale|comment] [--root docs] [--langs zh,en]
-#                               [--selftest]
+#                               [--selftest] [--json]
 # 退码：0 = 三相全绿 · 1 = 仅告警相命中（comment）
 #       2 = **不给结论 / 阻塞**（有阻塞相命中（exist/stale）· 环境/输入异常（不在仓根 / 无 git /
 #           扫到 0 篇 / 参数错）—— 不静默空转）
@@ -41,10 +41,14 @@
 # =============================================================================
 set -u
 
+# 本脚本的**绝对路径**（自证要在自建临时仓里复跑自己 ⇒ 相对路径 `cd` 之后就失效了）
+SELF_ABS="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
 PHASE="all"
 ROOT="docs"
 LANGS="zh,en"
 SELFTEST=0
+JSON=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -52,6 +56,7 @@ while [ $# -gt 0 ]; do
     --root)  ROOT="${2:-docs}";  shift 2 ;;
     --langs) LANGS="${2:-zh,en}"; shift 2 ;;
     --selftest) SELFTEST=1; shift ;;
+    --json) JSON=1; shift ;;
     -h|--help) grep '^#' "$0" | head -40; exit 0 ;;
     *) echo "✗ 未知参数：$1" >&2; exit 2 ;;
   esac
@@ -60,6 +65,23 @@ done
 SRC_LANG="$(printf '%s' "$LANGS" | cut -d, -f1)"
 DST_LANG="$(printf '%s' "$LANGS" | cut -d, -f2)"
 [ -n "$SRC_LANG" ] && [ -n "$DST_LANG" ] || { echo "✗ --langs 需要两个语言码（如 zh,en）" >&2; exit 2; }
+
+# --- 计数（跨相加总用 · 三个计数**分开**：exist / stale / comment）------------------------------
+# ★ 2026-09-24 波10 序105（组4 §二.2 `W-22`）：原来三个计数只活在各相函数体里、相一结束就丢，
+#   外面拿不到 ⇒ 无「漂移条数」可报、也无「判定档」可分（今天恒 `rc=2` 一个形状）。
+#   现在三个计数各归各的全局，**不许合并**（「过期 ≠ 未译」这条判据就钉在这里）。
+EXIST_SCAN=0;   EXIST_MISS=0
+STALE_PAGES=0;  STALE_HITS=0
+COMMENT_PAGES=0; COMMENT_MISS=0
+
+# tier_of <扫描数> <命中数> <空转是否算 BLOCKED: 0|1> —— 判定档（PASS / FAIL / BLOCKED）
+#   空转（扫到 0 篇）⇒ BLOCKED（不给结论）—— 本仓「空转不许给绿」那条；但只对**该相**适用，
+#   所以第三个参数让它按相开关（相② 无译页 ≠ 判不了）。
+tier_of() {
+  if [ "$3" = "1" ] && [ "$1" -eq 0 ]; then printf 'BLOCKED'; return; fi
+  if [ "$2" -gt 0 ]; then printf 'FAIL'; return; fi
+  printf 'PASS'
+}
 
 # --- 仓根与 git（只读）-------------------------------------------------------
 if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
@@ -140,6 +162,7 @@ phase_exist() {
     fi
   done
   echo "   ① 存在性对照：$SRC_LANG/$DST_LANG 两侧共扫描 $n 个页面名，缺一侧 $miss 个"
+  EXIST_SCAN=$n; EXIST_MISS=$miss
   [ "$n" -gt 0 ] || { echo "   ⚠ 两侧合计 0 篇 —— 正式面还没建？⇒ 不给结论（rc=2，2026-09-20 由 rc=3 统一过来）"; rc=2; }
   [ "$miss" -eq 0 ] || rc=2
   return $rc
@@ -195,6 +218,7 @@ phase_stale() {
     fi
   done
   echo "   ② 过期检测：$n 篇译页（$nodate 篇未记 source_commit ⇒ 退 lsync 形态；$outofrepo 篇源页在仓外 ⇒ 不判过期），过期 $stale 篇"
+  STALE_PAGES=$n; STALE_HITS=$stale
   [ "$stale" -eq 0 ] || rc=2
   return $rc
 }
@@ -212,12 +236,50 @@ phase_comment() {
     fi
   done
   echo "   ③ 源文注释：$n 篇译页，缺注释 $nocomment 篇（先非阻塞）"
+  COMMENT_PAGES=$n; COMMENT_MISS=$nocomment
   [ "$nocomment" -eq 0 ] || rc=1
   return $rc
 }
 
+# selftest_drift —— 第 ⑥ 格：**负控「过期 ≠ 未译」**（波10 序105 · 组4 §二.2 `W-22`）。
+#   为什么必须造**真 git 历史**才钉得住：相② 的判据是 **commit 级**的
+#   （`git diff <source_commit>...HEAD -- <源页>`）—— 不建临时仓就造不出「源页在 source_commit
+#   之后动过」这个状态，那样只能靠注释里的君子协定（本仓那条「空转不许给绿」）。
+#   夹具（全落在自建 `mktemp -d` 里，**不碰本仓**）：`docs/zh/s.md` 提交 → 造一枚**两侧都在**的译页
+#   `docs/en/s.md`（`translation_of` + `source_commit=<那次提交>`）提交 → 再动一次 `docs/zh/s.md`。
+#   ⇒ 现跑本脚本：该件**必须**落 `stale 过期 1`，而 `exist 未译` **必须**仍是 `0`。
+selftest_drift() {
+  local d out rcv em st
+  d="$(mktemp -d "${TMPDIR:-/tmp}/drift-negctl.XXXXXX")" || return 1
+  (
+    cd "$d" || exit 1
+    git init -q . || exit 1
+    git config user.email negctl@local && git config user.name negctl
+    mkdir -p docs/zh docs/en || exit 1
+    printf -- '---\ntitle: s\n---\nsrc v1\n' > docs/zh/s.md
+    git add -A && git commit -qm 'src v1'
+    sc="$(git rev-parse HEAD)"
+    printf -- '---\ntranslation_of: docs/zh/s.md\nsource_commit: %s\n---\n<!-- 源文保留 -->\ntr\n' "$sc" > docs/en/s.md
+    git add -A && git commit -qm 'tr'
+    printf -- '---\ntitle: s\n---\nsrc v2\n' > docs/zh/s.md
+    git add -A && git commit -qm 'src v2'
+  ) >/dev/null 2>&1 || { rm -rf "$d"; return 1; }
+  # 走 `--json`（机器面 · 键名全 ASCII）取数 —— 本机 `sed` 在 C 面 locale 下拿中文正则
+  # 会报 `illegal byte sequence`（空白跑实测）⇒ 判据**不许**建在「中文正则跑不跑得动」上。
+  out="$(cd "$d" && bash "$SELF_ABS" --json 2>/dev/null)"; rcv=$?
+  em="$(printf '%s' "$out" | sed -n 's/.*"exist":\([0-9][0-9]*\).*/\1/p' | head -1)"
+  st="$(printf '%s' "$out" | sed -n 's/.*"stale":\([0-9][0-9]*\).*/\1/p' | head -1)"
+  rm -rf "$d"
+  if [ "${em:-x}" = "0" ] && [ "${st:-x}" = "1" ] && [ "${rcv}" = "2" ]; then
+    echo "  ✓ 负控：过期件只落「stale 过期」（exist 未译 0 · stale 过期 1 · rc=2）"
+    return 0
+  fi
+  echo "  ✗ 负控：过期件的落格不对（exist 未译=${em:-取不到} · stale 过期=${st:-取不到} · rc=${rcv}）"
+  return 1
+}
+
 selftest() {
-  echo "── check-i18n-drift.sh 自证（5 条 · 不碰 git 写、不建临时仓）"
+  echo '── check-i18n-drift.sh 自证（6 条 · 第 ⑥ 格建**自建** 临时仓造夹具；不碰本仓 git 写）'
   local ok=0 tmp a b
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/drift-selftest.XXXXXX")"
   printf -- '---\ntranslation_of: docs/x.md\nsource_commit: abc123\n---\nbody\n' > "$tmp/a.md"
@@ -245,11 +307,16 @@ selftest() {
     echo "  ✗ 源页在仓外可识别（仓外 rc=${rc_out} 期望 0 / 仓内 rc=${rc_in} 期望 1）"
   fi
   rm -rf "$tmp"
-  if [ "$ok" -eq 5 ]; then echo "  自证：通过 ✓（5 条）"; return 0; fi
-  echo "  自证：**失败** ✗（$ok/5）"; return 1
+  # ★ 第 ⑥ 格（波10 序105 · `W-22` 负控）：**过期 ≠ 未译** —— 过期件不许落「未译」格。
+  if selftest_drift; then ok=$((ok+1)); fi
+  if [ "$ok" -eq 6 ]; then echo "  自证：通过 ✓（6 条）"; return 0; fi
+  echo "  自证：**失败** ✗（$ok/6）"; return 1
 }
 
 [ "$SELFTEST" = "1" ] && { selftest; exit $?; }
+
+# --json：人面全部转 stderr，stdout 只留一行 JSON（`3` = 原始 stdout）
+if [ "$JSON" = "1" ]; then exec 3>&1 1>&2; fi
 
 # --- 跑相（各相独立退码；总码取最严：2 > 1 > 0；任一无结论 ⇒ 2（2026-09-20 由 3 统一））-----
 RC_EXIST=0; RC_STALE=0; RC_COMMENT=0
@@ -273,6 +340,35 @@ fi
 for r in "$RC_EXIST" "$RC_STALE" "$RC_COMMENT"; do
   [ "$r" -gt "$TOTAL" ] && TOTAL=$r
 done
+
+# --- 汇总：漂移条数 + 判定档两格 + 三计数分开 -------------------------------------------------
+# ★ 2026-09-24 波10 序105（组4 §二.2 `W-22` · 研-影:134）：本门今天「恒 BLOCKED」的机理是
+#   `rc=2` 把**两种不同的真值**（有漂移 `FAIL` vs 判不了 `BLOCKED`）并成同一个形状 ⇒ 机器面
+#   既拿不到「漂几条」、也分不出是哪种 ⇒ 那叫**空转**，不叫**能判**。
+#   本段**只加机器读面**：判定档（`exist` / `stale` 两格）＋ 漂移条数 ＋ 三计数（**分开**）。
+#   `rc` 语义**一字不改**（`2` 仍含两义）—— 那条语义错位已在 `precommit-gates.sh:1736` 登记待拍，
+#   本波**不代拍**（`W-22` 自己写的是「先……再谈竞次」）。
+EXIST_TIER="$(tier_of "$EXIST_SCAN" "$EXIST_MISS" 1)"
+STALE_TIER="$(tier_of "$STALE_PAGES" "$STALE_HITS" 0)"
+COMMENT_TIER="$(tier_of "$COMMENT_PAGES" "$COMMENT_MISS" 0)"
+[ "$COMMENT_TIER" = "FAIL" ] && COMMENT_TIER="WARN"   # 相③ 先非阻塞（rc=1 ⇒ 告警，不是失败）
+DRIFT=$((EXIST_MISS + STALE_HITS))
+OVERALL=PASS
+case "$EXIST_TIER/$STALE_TIER" in
+  *BLOCKED*) OVERALL=BLOCKED ;;
+  *FAIL*)    OVERALL=FAIL ;;
+esac
+if [ "$JSON" = "1" ]; then
+  # 机器面：stdout **只**这一行（人面已在上面被 `exec 3>&1 1>&2` 转到 stderr）。
+  printf '{"schema":"zerg/i18n-drift/v1","drift":%d,"verdict":"%s","tiers":{"exist":"%s","stale":"%s","comment":"%s"},"counts":{"exist":%d,"stale":%d,"comment":%d},"rc":%d}\n' \
+    "$DRIFT" "$OVERALL" "$EXIST_TIER" "$STALE_TIER" "$COMMENT_TIER" \
+    "$EXIST_MISS" "$STALE_HITS" "$COMMENT_MISS" "$TOTAL" >&3
+fi
+echo
+echo '── 汇总（机器读面 · 波10 序105 `W-22`）'
+echo "漂移条数：${DRIFT}（= exist 未译 ${EXIST_MISS} + stale 过期 ${STALE_HITS}）"
+echo "判定档：${OVERALL}（两格 = exist=${EXIST_TIER} · stale=${STALE_TIER}）"
+echo "计数（三格分开）：exist 未译 ${EXIST_MISS} · stale 过期 ${STALE_HITS} · comment 缺注释 ${COMMENT_MISS}（${COMMENT_TIER}）"
 echo
 echo "退码：exist=$RC_EXIST stale=$RC_STALE comment=$RC_COMMENT ⇒ 总码=$TOTAL"
 exit "$TOTAL"
