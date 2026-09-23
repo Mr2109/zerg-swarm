@@ -6,9 +6,12 @@
 ------------------------------------------------------------------
   · 组4 §一 **`W-04`**（`拍-C:48` · `拍-清:146` 的 `R24` 照做条）逐字：**文档孤儿 / 断链拆两格**
     （**孤儿 = 主仓导出树** · **本地断链 = 两棵树**）· **先只报不拦** · **外链明确不进**。
-  · `W-06`（后续条 · 本件**不落**）逐字：两词分开写、不许互称 —— **入链 = 0**（域 = 另一棵树整棵）
-    vs **不在 nav 白名单**（域 = 有 `mkdocs.yml` 的树）；本件只落 `W-04` 那两格。
-  · 本件**不替** `W-05`（换 `lychee --offline`）**也不替** `W-06`（两词分列）—— 那两条**同件面 ⇒ 串行**。
+  · `W-06`（后续条 · 2026-09-24 **波6 序91 已落** —— 见下面 ③④ 两格）逐字：两词分开写、不许互称 ——
+    **入链 = 0**（域 = 另一棵树整棵）vs **不在 nav 白名单**（域 = 有 `mkdocs.yml` 的树）。
+  · ★ **序91 落点（本件）**：③ `inbound_zero`（**入链 = 0** · 域 = **第二棵树整棵**）·
+    ④ `not_in_nav`（**不在 nav 白名单** · 域 = **有 `mkdocs.yml` 的树**）· 术语守卫 `term_guard`
+    （两词**不许互称** · 自检 ⑤ 是它的负控）+ 一行「**本仓无 `mkdocs.yml`**」登记。
+  · 本件**不替** `W-05`（换 `lychee --offline`）—— 那条**同件面 ⇒ 串行**。
 
 两格是什么（写死）
 ------------------
@@ -18,6 +21,12 @@
   ② `orphans`（**孤儿** · 域 = **主仓导出树**）：导出树里**入链 = 0** 的 `.md` 件。
      「入链」的判据 = 树内**别的**件有一条**仓内相对**链接解析后落在它身上（**同名同路径**才算）。
      ★ **不是**「有没有被人读过」、**不是** mtime/体积/占用 ⇒ 只数**链接**（照 `W-06` 的「入链 = 0」同一枚度量）。
+  ③ `inbound_zero`（**入链 = 0** · 域 = **第二棵树整棵** · `W-06` 序91）：**与 ② 同名度量、不同域** ——
+     ② 的域是**主仓导出树**、③ 的域是**另一棵树整棵**；两格的件**不许互称**（`term_guard`）。
+     ★ 与 ② 不是一件事：导出树是**产物**（没链进产物 = 发布面漏了）、另一棵树是**源**（没链进源 = 源里悬着）。
+  ④ `not_in_nav`（**不在 nav 白名单** · 域 = **有 `mkdocs.yml` 的树** · `W-06` 序91）：**另一枚词、另一个域**
+     —— 只在有 `mkdocs.yml` 的树里判（抽白名单 = `mkdocs.yml` 的 `nav:`）。**本仓无 `mkdocs.yml`**
+     ⇒ 这一格**无适用域**（照实打印「无适用域」并登记那一行），**不是**「0 件」✗。
 
 外链**明确不进**（★ 这一条是负控钉住的，不是注释里的君子协定）
 ------------------------------------------------------------
@@ -183,6 +192,72 @@ def orphans(tree: str):
     return len(orphan), [{"file": p, "inbound": 0} for p in orphan], ""
 
 
+# ── `W-06`（2026-09-24 · 波6 序91）：两词**分开写、不许互称** ──────────────────────────
+#   「入链 = 0」与「不在 nav 白名单」是**两枚词、两个域**：前者数**链接**（域 = 另一棵树整棵），
+#   后者数**白名单**（域 = 有 `mkdocs.yml` 的树）。互称一次就是把两个域混成一个 ⇒ 判词没法追。
+TERM_OF = {
+    "inbound_zero": "入链 = 0",
+    "not_in_nav": "不在 nav 白名单",
+}
+
+
+def term_guard(kind: str, word: str) -> str:
+    """两词**不许互称**：只认自己那一枚 ⇒ '' 或判词（自检 ⑤ 是它的负控）。"""
+    want = TERM_OF.get(kind)
+    if want is None:
+        return "未知格 kind=%r（只认 %s）" % (kind, " / ".join(sorted(TERM_OF)))
+    if word != want:
+        return "格 `%s` 的用词是「%s」，不是「%s」—— 两词不许互称" % (kind, want, word)
+    return ""
+
+
+def has_mkdocs(root: str) -> bool:
+    """这一棵树有没有 `mkdocs.yml`（`not_in_nav` 格的**域判据**）。"""
+    return os.path.isfile(os.path.join(root, "mkdocs.yml"))
+
+
+def nav_whitelist(root: str):
+    """抽 `mkdocs.yml` 的 `nav:` 白名单 ⇒ `(set(相对路径), '')`；无 `mkdocs.yml` ⇒ `(None, 理由)`。
+
+    ★ **本仓无 `mkdocs.yml`** ⇒ 这一格**无适用域**（照实打印、登记一行），**不是**「0 件」✗。
+    """
+    p = os.path.join(root, "mkdocs.yml")
+    if not os.path.isfile(p):
+        return None, "本仓无 `mkdocs.yml`"
+    try:
+        with open(p, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        return None, "`mkdocs.yml` 读不了（%s）" % e
+    out, seen = set(), False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if re.match(r"^nav\s*:", stripped):
+            seen = True
+            continue
+        if not seen:
+            continue
+        if stripped and not line.startswith((" ", "\t")):
+            break                      # 顶格新键 ⇒ `nav:` 块到此为止
+        for m in re.finditer(r"[\w./\-]+\.md", line):
+            out.add(m.group(0))
+    return out, ""
+
+
+def not_in_nav(root: str):
+    """④ 不在 nav 白名单（域 = **有 `mkdocs.yml` 的树**）⇒ `(件数 | None, 明细, 判不了理由)`。"""
+    wl, why = nav_whitelist(root)
+    if wl is None:
+        return None, [], why
+    files, note = scan_tree(root)
+    if files is None:
+        return None, [], note
+    if not files:
+        return None, [], "扫面 0 件（无 `.md`）"
+    hits = [{"file": p} for p in sorted(files) if p not in wl]
+    return len(hits), hits, ""
+
+
 LIST_RULES = """判据（两格 · 只报不拦）
 ------------------------
   ① local_broken 本地断链 · 域 = 两棵树（--repo-root + --docs-root）
@@ -191,6 +266,10 @@ LIST_RULES = """判据（两格 · 只报不拦）
   ② orphans 孤儿 · 域 = 导出树（--tree）
      判据 = 树内 `.md` 件的**入链数 = 0**（树内别的件有一条仓内相对链接解析后落在它身上 = 有入链）
      计数单位 = **件**；明细 = 件（入链 0）
+  ③ inbound_zero **入链 = 0** · 域 = **第二棵树整棵**（--docs-root · `W-06` 序91）
+     判据 = 同一枚度量（链接数），**另一个域**（源树整棵）；与 ② **不许互称**
+  ④ not_in_nav **不在 nav 白名单** · 域 = **有 `mkdocs.yml` 的树**（`W-06` 序91）
+     判据 = `mkdocs.yml` 的 `nav:` 白名单外的 `.md` 件；**本仓无 `mkdocs.yml`** ⇒ **无适用域**（不是 0 件 ✗）
 
 外链明确不进（负控钉住）
 ------------------------
@@ -202,7 +281,8 @@ LIST_RULES = """判据（两格 · 只报不拦）
   · 目录型链接（指向目录而非件）只判「目录在不在」，不追目录内默认件
   · 非 `.md` 件里的链接（.html/.txt/.py）**不扫**（本题面只管文档）
   · 另一棵树里的**导出树**（跨仓的产出树）不判
-  · nav 白名单 / `mkdocs.yml` 那一半 = `W-06`（**本件不落** ✗）
+  · nav 白名单 / `mkdocs.yml` 那一半 = `W-06`（2026-09-24 **波6 序91 已落** ⇒ 落成上面 ③④ 两格；
+    **本仓无 `mkdocs.yml`** 那一行**照实登记**、不假装覆盖）
 
 退码
 ----
@@ -267,6 +347,35 @@ def self_test(out) -> bool:
     case("④ 判不了：导出树不在盘 ⇒ orphans 返回 判不了", True,
          orphans(os.path.join(tmp, "nope"))[0] is None)
 
+    # 夹具⑤-⑦ `W-06`（2026-09-24 · 波6 序91）：两词**分开写、不许互称** + 两格各有独立域
+    case("⑤ W-06 术语守卫：本词 ⇒ 放行", "", term_guard("inbound_zero", "入链 = 0"))
+    case("⑤ W-06 术语守卫（负控：把「入链 0」说成「不在 nav」⇒ 判词非空）", True,
+         bool(term_guard("inbound_zero", "不在 nav 白名单")))
+    case("⑤ W-06 术语守卫（负控：反向互称也判）", True,
+         bool(term_guard("not_in_nav", "入链 = 0")))
+    t6a = os.path.join(tmp, "t6a")
+    os.makedirs(t6a, exist_ok=True)
+    with open(os.path.join(t6a, "a.md"), "w", encoding="utf-8") as f:
+        f.write("# a\n")
+    case("⑥ W-06 nav：无 `mkdocs.yml` ⇒ **无适用域**（判不了 · 不是 0 件）", True,
+         not_in_nav(t6a)[0] is None)
+    case("⑥ W-06 nav：无 `mkdocs.yml` ⇒ 理由点名本仓无", True, "无 `mkdocs.yml`" in not_in_nav(t6a)[2])
+    t6b = os.path.join(tmp, "t6b")
+    os.makedirs(t6b, exist_ok=True)
+    with open(os.path.join(t6b, "mkdocs.yml"), "w", encoding="utf-8") as f:
+        f.write("site_name: x\nnav:\n  - 首页: index.md\n")
+    with open(os.path.join(t6b, "index.md"), "w", encoding="utf-8") as f:
+        f.write("# i\n")
+    with open(os.path.join(t6b, "loose.md"), "w", encoding="utf-8") as f:
+        f.write("# l\n")
+    n6, hits6, _w6 = not_in_nav(t6b)
+    case("⑥ W-06 nav：白名单外的 `.md` 被数（1 件）", 1, n6)
+    case("⑥ W-06 nav：点名到件（白名单里的 index.md 不算）", ["loose.md"], [h["file"] for h in hits6])
+    n7, hits7, _w7 = orphans(t3)
+    case("⑦ W-06 ③ 域 = 第二棵树整棵：与 ② 同度量、换域照数（1 件）", 1, n7)
+    case("⑦ W-06 ③ 与 ② 的点名件同一枚（度量同源 · 域不同）", [h["file"] for h in orphans(t3)[1]],
+         [h["file"] for h in hits7])
+
     out.write("  自检 %d 格 · 失败 %d 格\n" % (total, failed))
     return failed == 0
 
@@ -330,10 +439,38 @@ def main() -> int:
         for h in ohits[: a.max_examples]:
             sys.stdout.write("      %s（入链 0）\n" % h["file"])
 
+    # ③④ `W-06`（2026-09-24 · 波6 序91）：**另一枚词、另一个域** —— 与 ① ② 分开写、**不许互称**
+    inz_word, nav_word = TERM_OF["inbound_zero"], TERM_OF["not_in_nav"]
+    for kind, word in (("inbound_zero", inz_word), ("not_in_nav", nav_word)):
+        guard = term_guard(kind, word)
+        if guard:
+            sys.stdout.write("  ⛔ 术语守卫（W-06）：%s ⇒ 不给结论（rc=2）\n" % guard)
+            return 2
+    inz, inz_hits, inz_why = orphans(docs_root)          # 同一枚度量（链接数）· **换域** = 第二棵树整棵
+    if inz is None:
+        sys.stdout.write("  ⛔ %s · 第二棵树整棵：判不了（%s）—— 这一格判不了 ≠ 整门判不了\n"
+                         % (inz_word, inz_why))
+    else:
+        sys.stdout.write("  ✓ %s · 第二棵树整棵：%d 件（与 ② 同度量 · 不同域）\n" % (inz_word, inz))
+        for h in inz_hits[: a.max_examples]:
+            sys.stdout.write("      %s（%s）\n" % (h["file"], inz_word))
+    nav_n, nav_hits, nav_why = not_in_nav(a.repo_root)
+    sys.stdout.write("  域④ 有 `mkdocs.yml` 的树 = %s ⇒ %s\n"
+                     % (a.repo_root if has_mkdocs(a.repo_root) else "（本仓无 `mkdocs.yml`）",
+                        "判" if has_mkdocs(a.repo_root) else "**无适用域**（照实登记 · 不假装覆盖）"))
+    if nav_n is None:
+        sys.stdout.write("  ⛔ %s · 本仓：无适用域（%s）—— 「无适用域」≠「0 件」✗\n" % (nav_word, nav_why))
+    else:
+        sys.stdout.write("  ✓ %s · 本仓：%d 件\n" % (nav_word, nav_n))
+        for h in nav_hits[: a.max_examples]:
+            sys.stdout.write("      %s（%s）\n" % (h["file"], nav_word))
+
     if br_counts.get("主仓", 0) is None:
         return 2
-    sys.stdout.write("\n结论（只报不拦）：本地断链 主仓 %s 件 / 第二棵树 %s 件 · 孤儿 %s 件 ⇒ rc=0（命中不改码 ✗）\n"
-                     % (br_counts.get("主仓"), br_counts.get("第二棵树"), on))
+    sys.stdout.write("\n结论（只报不拦）：本地断链 主仓 %s 件 / 第二棵树 %s 件 · 孤儿 %s 件 · "
+                     "%s 第二棵树整棵 %s 件 · %s 本仓 %s ⇒ rc=0（命中不改码 ✗）\n"
+                     % (br_counts.get("主仓"), br_counts.get("第二棵树"), on,
+                        inz_word, inz, nav_word, nav_n))
     if a.json:
         sys.stdout.write(json.dumps({
             "schema": "zerg-gate/v1",
@@ -342,6 +479,9 @@ def main() -> int:
             "local_broken": {"count": sum(x for x in br_counts.values() if isinstance(x, int)),
                              "by_tree": br_counts},
             "orphans": {"count": on, "domain": tree},
+            "inbound_zero": {"count": inz, "domain": docs_root, "word": inz_word},
+            "not_in_nav": {"count": nav_n, "domain": a.repo_root if has_mkdocs(a.repo_root) else None,
+                           "word": nav_word, "why": nav_why or None},
             "mode": "report-only",
         }, ensure_ascii=False) + "\n")
     return 0 if bad == 0 else 2
