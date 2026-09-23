@@ -442,6 +442,43 @@
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
   },
   {
+   "id": "gate/show#--json 缺步名",
+   "command": "gate show",
+   "argv": [
+    "gate",
+    "show",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--json` 面也要步名（四格是「某一步」的四格 · 缺口 `Q-061`）· 执行前判 · stdout 0 字节"
+  },
+  {
+   "id": "gate/show#--json 未知名（精确匹配 · 不许静默放过）",
+   "command": "gate show",
+   "argv": [
+    "gate",
+    "show",
+    "zzz-没有这一步-zz",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "步名**逐字**不命中 ⇒ 2 + stderr 报「最像的合法输入」（不许静默放过、不许子串匹配给一坨）—— `Q-061` 可核条件 ③ 的负控"
+  },
+  {
+   "id": "gate/show#未知旗标（透传给脚本 · 脚本拒）",
+   "command": "gate show",
+   "argv": [
+    "gate",
+    "show",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "默认面仍是 `--emit-cmd` 直取口 ⇒ 旗标逐字透传给脚本，由脚本自己的参数守卫退 2（命令面不翻译、不加戏）"
+  },
+  {
    "id": "gate/self-test#不认的契约主号",
    "command": "gate self-test",
    "argv": [
