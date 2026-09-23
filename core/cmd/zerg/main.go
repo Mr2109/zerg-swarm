@@ -153,6 +153,21 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 		return exitUsage
 	}
+	// ★ 2026-09-24（缺口 `Q-154` · 组A 同族）：**多余位置参数 ⇒ 用法错 2**。
+	//   病灶（修前现读实据）：`zerg version extraarg` 退 `0` —— 多余的那一枚被**静默吞**掉，
+	//   「给错了」被读成「给对了」。与 `Q-141`（`--help` 两态）同族：命令面不许把两种不同的
+	//   真值并成同一个形状（§4.1 K14 四件套 · `exitcodes.go` 的用法错 = 2）。
+	//   判据面（三条边界写死，逐条可核 —— 不是「所有命令一把抓」）：
+	//     · `cmd.passthrough`（`gate` 族透传型）**不判**：位置参数逐字交给被包的脚本（§6.3 S3）；
+	//     · `cmd.danger != nil`（危险档）**不判**：它们的目标语义在 `guard.go` 一处
+	//       （`inv.args[0]` 可当目标用），且确认档缺失时本就 fail-closed 退 `2` ⇒ 本批不动（照实登记）；
+	//     · 其余：`declaresNoPositional` 为真（`args` 为空 / 逐格都是**注记**：全角括号开头）⇒ 该条声明不收位置参数。
+	if !cmd.passthrough && cmd.danger == nil && len(inv.args) > 0 && declaresNoPositional(cmd) {
+		fmt.Fprintf(stderr, "%s: 多余位置参数 %q（`%s %s` 不收位置参数）\n",
+			progName, inv.args[0], progName, strings.Join(cmd.path, " "))
+		fmt.Fprintf(stderr, "See '%s %s --help'。\n", progName, strings.Join(cmd.path, " "))
+		return exitUsage
+	}
 	// 没有机器面字段表的**说明面** ⇒ 不认 --json（用法错 2，不是 1）：1 是「给了 --json 但没给字段」
 	// 那一档的码（§4.1 K2），两者不许混。
 	// 例外：危险动作**没有结果面**（只有 `--dry-run` 的计划件），但它们的**错误面**必须机器可读
@@ -177,13 +192,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 			fmt.Fprintf(stderr, "不认的主号**不许静默降级**成 v%d（§九 M15「不兼容即明确报错」）\n", contractMajor)
 			fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
-			emitErrIfJSON(inv, stdout, cmd)
+			emitErrIfJSON(inv, stdout, cmd, exitUsage)
 			return exitUsage
 		}
 	}
 	// 对象级作用域（§九 M13）：`Z1`/`Z3`/`P-066`/`P-067` 三条在**执行之前**判。
 	if rc, done := enforceNodeRules(inv, cmd, stderr); done {
-		emitErrIfJSON(inv, stdout, cmd)
+		emitErrIfJSON(inv, stdout, cmd, rc)
 		return rc
 	}
 	// 非交互凭据（`C2`）：本轮的 `--token-stdin` 交给**唯一入口**去读（只读一次）。
@@ -195,7 +210,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// `--json <字段>` 的失败路径：把**机器可读**的 `error` 块挂进包封（§九 M7）——
 	// 只在命令自己没往 stdout 写结果时补（写了结果就不改它，避免两个面打架）。
 	if rc != exitOK && inv.jsonGiven && cw.n == 0 && (len(inv.fields) > 0 || cmd.danger != nil) {
-		emitErrIfJSON(inv, stdout, cmd)
+		emitErrIfJSON(inv, stdout, cmd, rc)
 	}
 	return rc
 }
@@ -214,7 +229,11 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 
 // emitErrIfJSON 在 `--json <字段>` 的失败路径上补错误包封（没 fields 且不是危险动作就不补 ——
 // 那是 K2 的 0 字节档；危险动作没有结果面，`--json` 在它上面只作错误面）。
-func emitErrIfJSON(inv *invocation, stdout io.Writer, cmd *command) {
+//
+// `rc` = **本次进程真退码**（`run` 的一条路径各自把它传进来）。它只用在「没人报过 kind」那一格：
+// 包封里的 `error.exit_code` 是 `kind` 的投影（`errors.go` 的 `codeOfKind` = 唯一真源，`E1`），
+// 而兜底的 kind 必须**从本次真退码派生** —— 见下面 `Q-155` 那一段。
+func emitErrIfJSON(inv *invocation, stdout io.Writer, cmd *command, rc int) {
 	if !inv.jsonGiven {
 		return
 	}
@@ -223,9 +242,47 @@ func emitErrIfJSON(inv *invocation, stdout io.Writer, cmd *command) {
 	}
 	e := inv.err
 	if e == nil {
-		e = &cliError{Kind: kindForExitCode(exitFail), Message: "（命令未报出 kind，按退码兜底）"}
+		// ★ 2026-09-24（缺口 `Q-155`）：兜底 kind **不许写死 `exitFail`**。
+		//   病灶（修前现读实据）：`./bin/zerg version --json bogusfield` 退 `2`（用法错），
+		//   而包封内 `error.exit_code` 写 `1` —— **两个码面打架**（调用方按包封读会以为是一般失败）。
+		//   治法：兜底 kind 由**本次真退码**派生（`kindForExitCode(rc)`）⇒ `codeOfKind` 反出来
+		//   与 `rc` 同源（现读覆盖 `1/2/4/8/10/11/12/14/130` 全部单值码）。
+		//   **不新造机制**：不新增顶层键、不新增 kind、不改 `codeOfKind` 的「kind → 退码」单向口径；
+		//   报出过 kind 的那条路一字不动（谁先报谁为准 —— 与「不打第二枪」同一条纪律）。
+		//   同族先例：`family_script_inventory.go:452–461` 那一格的注释说的就是这个病（它靠**不报 kind**
+		//   绕开 ⇒ 兜底路那一格的退码是 `1`，与本改法同值、行为不变）。
+		e = &cliError{Kind: kindForExitCode(rc), Message: "（命令未报出 kind，按退码兜底）"}
 	}
 	emitErrEnvelope(stdout, cmd, e)
+}
+
+// declaresNoPositional 判「该条命令**声明不收位置参数**」（`Q-154` 那条纪律的判据口）。
+//
+// 两条：① `args` 为空 —— 现读 40 条（`version` / `doctor` / `context ls` … 一类纯旗标命令）；
+// ② `args` 逐格都是**注记**（全角括号 `（` 开头 —— 如 `（无位置参数：全部走旗标）` /
+// `（不收位置参数：…）`）—— 现读 5 条（`gate results` / `task submit` / `core ps` /
+// `config reload` / `gap add`）。
+//
+// 为什么用「全角括号开头」而不**新加一格字段**：`args` 那几格的语义本来就是「位置参数说明」，
+// 而注记形态在现读命令树里**只有这一种写法** ⇒ 在既有字段上判即可，不动 `command` 的字段面
+// （§九 M6 `R7`「字段只增不改」的口径也不动）。判错的代价是**单向**的：只有真声明了位置参数
+// 的命令被误判成「不收」才会误退 2 ⇒ 反查过全部 119 条「读 `inv.args` 的 handler ↔ 是否声明
+// 位置参数」，现读只剩 6 条不一致，其中 5 条**自己就拒**（`api help` / `script inventory sync` /
+// `itask start` / `itask stop` / `core reload`），第 6 条（`gateway breakers` 的 target）在危险档
+// ⇒ 本函数**不覆盖它们**（`cmd.danger != nil` 一律不判 · 见 `run` 里那三条边界）。
+func declaresNoPositional(cmd *command) bool {
+	if cmd == nil {
+		return false
+	}
+	if len(cmd.args) == 0 {
+		return true
+	}
+	for _, a := range cmd.args {
+		if !strings.HasPrefix(strings.TrimSpace(a), "（") {
+			return false
+		}
+	}
+	return true
 }
 
 // ---- 命令树（真源：帮助文本、markdown 导出、别名解析都从这里出，不许旁写一份）----
@@ -282,10 +339,16 @@ func init() {
 			run:      cmdDoctor,
 		},
 		{
-			path:     []string{"context", "ls"},
-			kind:     "Context",
-			summary:  "档位名册（离线也出表）",
-			usage:    "zerg context ls [--json <字段>]",
+			path:    []string{"context", "ls"},
+			kind:    "Context",
+			summary: "档位名册（离线也出表）",
+			// ★ 2026-09-24（缺口 `Q-156`）：用法串补上**真旗标** `--resume`。
+			//   病灶（修前现读实据）：`--resume` 解析器认（`parseInvocation` 的 `--resume` 那一格）
+			//   且该命令**真读**（`readonly.go` 的 `cmdContextLs` → `cmdContextResume`），
+			//   用法串却只写 `[--json <字段>]` ⇒ 公开文档面照用法串引 `zerg context ls --resume`
+			//   时被判「旗标不在用法串里」（闸⑧ 的 `nonexistent-parameter-documented` 两处逐条在案）。
+			//   同一枚旗标的先例写法：`readonly.go` 的续做面登记（§十二 `P-120` 定案 ①）。flag 名逐字不改。
+			usage:    "zerg context ls [--resume] [--json <字段>]",
 			fields:   []string{"name", "core", "gateway", "default_node", "token_source"},
 			endpoint: "",
 			run:      cmdContextLs,
@@ -2462,9 +2525,92 @@ func cmdUsageHelp(cmd *command, stdout io.Writer) int {
 	return exitOK
 }
 
+// isHelpTopic 判名字在不在主题表（`topics.go` 是**唯一真源** —— 这里只问它，不旁写第二份名单）。
+func isHelpTopic(name string) bool {
+	for _, t := range helpTopics() {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// renderFamilyHelp —— `zerg help <族>`：列该族下**全部动作** + 逐条用法行（缺口 `Q-149`）。
+//
+// 为什么要有这一格（修前现读实据）：**族级 `--help` 没有出口** ——
+// `zerg model --help` 退 `2`（族名不是一条在册命令 ⇒ 落「未知命令」）、`zerg help model` 也退 `2`
+// （族名不是主题 ⇒ 落「未知帮助主题」）；对照 `zerg model show --help` 退 `0`。于是「这条族里
+// 有哪些动作」只能靠 `zerg help` 那棵大树里翻，机器读面（`--help`）在**族这一层是断的**。
+//
+// 三条边界（写死在这里，别在第二处再判一次）：
+//
+//	① 只**加出口**：命令树计数（119）不动 —— 这不是一条新命令，是 `help` 这条既有命令在
+//	   「主题名」之外多认一种输入（族名）；`zerg <族> --help` 的两态**一字不改**（族名仍不在册 ⇒ 退 2）。
+//	② **主题表先判**（`cmdHelp` 里那一步）：`version` / `watch` / `config` 既是族名又是主题名 ⇒
+//	   主题面赢（既有面一字不动），族面只兜主题表没有的名字（`model` / `egg` / `impact` …）。
+//	③ 族名**认不出** ⇒ 返回 `done=false`，交回主题面报「未知帮助主题」+ 列可用主题（K14 第三件），
+//	   退码照旧 `2` —— 不新增第三种错误形状。
+//
+// 内容真源 = 命令树（`catalog()`，名字序稳定）：逐条**用法行逐字**来自 `command.usage`，
+// 危险档成员照实带档位标记（不隐藏、也不与 `help dangerous` 打架 —— 那一条判的是三态，这里只标档）。
+func renderFamilyHelp(family string, stdout io.Writer) (int, bool) {
+	var members []*command
+	for _, c := range catalog() {
+		if len(c.path) > 0 && c.path[0] == family {
+			members = append(members, c)
+		}
+	}
+	if len(members) == 0 {
+		return exitOK, false
+	}
+	open, danger := 0, 0
+	for _, c := range members {
+		if c.danger == nil {
+			open++
+		} else {
+			danger++
+		}
+	}
+	fmt.Fprintf(stdout, "%s %s —— 族级用法（动作 %d 条 · 已开放 %d · 危险档 %d）\n",
+		progName, family, len(members), open, danger)
+	fmt.Fprintf(stdout, "（本页只从这个族名出帮助；逐条 `%s %s <动作> --help` 出该条用法串。名字与用法逐字来自命令树。）\n\n",
+		progName, family)
+	for _, c := range members {
+		usage := strings.TrimSpace(c.usage)
+		if usage == "" {
+			usage = progName + " " + strings.Join(c.path, " ")
+		}
+		// `agent reap` 一类用法串内含换行（两条形态并列）⇒ 续行照缩进，不把第二行拍到行首。
+		for i, line := range strings.Split(usage, "\n") {
+			if i == 0 {
+				fmt.Fprintf(stdout, "  %s", line)
+			} else {
+				fmt.Fprintf(stdout, "\n  %s", strings.TrimSpace(line))
+			}
+		}
+		if c.danger != nil {
+			fmt.Fprintf(stdout, "  [危险档 %s]", strings.TrimSpace(c.danger.Level))
+		}
+		if s := strings.TrimSpace(c.summary); s != "" {
+			fmt.Fprintf(stdout, "  %s", s)
+		}
+		fmt.Fprintln(stdout)
+	}
+	fmt.Fprintf(stdout, "\n见 '%s help' 看命令树 · '%s help dangerous' 看危险档三态 · '%s help <主题>' 看专题。\n",
+		progName, progName, progName)
+	return exitOK, true
+}
+
 func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) > 0 {
 		// 主题表在 `topics.go`（**唯一真源**：分派与「可用主题」列清单同一处）。
+		// ★ 2026-09-24（缺口 `Q-149`）：主题表**先判**（表里有的名字一字不动）；表里没有 ⇒ 再看
+		//   「**族名**」（命令树里某条命令路径的第一段）—— 族级帮助此前没有出口，见 `renderFamilyHelp`。
+		if !isHelpTopic(inv.args[0]) {
+			if rc, done := renderFamilyHelp(inv.args[0], stdout); done {
+				return rc
+			}
+		}
 		return renderHelpTopic(inv.args[0], stdout, stderr)
 	}
 	fmt.Fprint(stdout, helpText())

@@ -124,3 +124,64 @@ func TestCLIVersionJSONGap_LegalFormsStayZero(t *testing.T) {
 		t.Errorf("`zerg version` 首行应含版本身份（机器面报的 %q），得到 %q", ver, first)
 	}
 }
+
+// ---- `Q-155`（本批 · 2026-09-24）：包封内 `error.exit_code` 与**进程退码同源** ------------------
+//
+// 病灶（修前现读实据）：`./bin/zerg version --json bogusfield` 退 **rc=2**（用法错），而包封内
+// `error.exit_code` 写 **1** —— 「命令未报出 kind」那一格把兜底 kind 写死成 `exitFail`
+// （`Q-155` 逐字：**两个码面打架**）。治法：兜底 kind 由**本次真退码**派生 ⇒ `exit_code`
+// （= `codeOfKind(kind)` · `E1` 的唯一真源）与 `rc` 同源。**不新造机制**：不新增 kind、
+// 不新增顶层键、不改「kind → 退码」的单向口径。
+//
+// 判据值**不写死**：期望的那一档从退码表真源（`usageCodeFromTable`）现读 —— 表变了这条当场说话。
+
+// TestCLIQ155_EnvelopeExitCodeSameSourceAsRC —— 正控：包封内 `exit_code` == 进程退码 `rc`，
+// 且用法错那一档的兜底 kind 归位 `usage`（`E1` 单向口径仍成立）。
+func TestCLIQ155_EnvelopeExitCodeSameSourceAsRC(t *testing.T) {
+	want := usageCodeFromTable(t)
+
+	for _, argv := range [][]string{
+		{"version", "--json", "bogusfield"},
+		{"context", "ls", "--json", "bogusfield"},
+		{"approve", "ls", "--json", "name"},
+	} {
+		var out, errb bytes.Buffer
+		rc := zerg.RunForTest(argv, &out, &errb)
+		var env struct {
+			Error *struct {
+				Kind     string `json:"kind"`
+				ExitCode int    `json:"exit_code"`
+				Message  string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &env); err != nil {
+			t.Fatalf("`zerg %s` 的 stdout 不是合法 JSON（失败面包封坏了）：%v · %q",
+				strings.Join(argv, " "), err, out.String())
+		}
+		if env.Error == nil {
+			t.Fatalf("`zerg %s` 的失败面要带 `error` 块（§九 M7），得到 %q · stderr=%q",
+				strings.Join(argv, " "), out.String(), errb.String())
+		}
+		if env.Error.ExitCode != rc {
+			t.Errorf("`zerg %s`：包封内 exit_code=%d 与进程退码 rc=%d **不同源**（`Q-155` 的病灶）：%q",
+				strings.Join(argv, " "), env.Error.ExitCode, rc, out.String())
+		}
+		if rc == want && env.Error.Kind != "usage" {
+			t.Errorf("`zerg %s`：用法错的兜底 kind 要 `usage`（`E1` 单向口径），得到 %q",
+				strings.Join(argv, " "), env.Error.Kind)
+		}
+	}
+}
+
+// TestCLIQ155_NegativeControl_SuccessHasNoErrorBlock —— 成对负控：**成功面不许挂 `error` 块**
+// （同源那条纪律只管失败面；成功面挂了就是「编造信号」—— 与 `G-08`「不编造」同口径）。
+func TestCLIQ155_NegativeControl_SuccessHasNoErrorBlock(t *testing.T) {
+	var out, errb bytes.Buffer
+	rc := zerg.RunForTest([]string{"version", "--json", "name,version"}, &out, &errb)
+	if rc != 0 {
+		t.Fatalf("`zerg version --json name,version` 要退 0，得到 %d · stderr=%q", rc, errb.String())
+	}
+	if strings.Contains(out.String(), "\"error\":") {
+		t.Errorf("成功面不许带 `error` 块：%q", out.String())
+	}
+}
