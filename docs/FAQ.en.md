@@ -86,3 +86,33 @@ Note that the directory holds two "manifests" (always-on L0 and lazily loaded); 
 **Q: How can I tell whether a mechanism is really running?**
 Don't just read the code. This project leans heavily on "process + data, dual proof": for example, checking whether a counter actually lands on disk, whether an endpoint is really registered,
 whether a flag is really read. This is also a hard requirement in the contribution guide.
+
+---
+
+## Command line
+
+**Q: The trust level in the resource API is a machine code now — what about my scripts?**
+On the data plane it is an **ASCII machine code** from a closed set of three: `new` (newly added / before its 100th use), `official` (promoted), `unknown` (unregistered / missing).
+Both the API responses (the face `zerg resource ls` projects) and the state file (`~/.zerg/state/zerg-resources.json`) carry machine codes;
+Chinese lives only in the display layer (the keys in the UI locale files), so the interface still shows Chinese.
+**Callers that hard-code the old Chinese literals must be updated**: the old values were `新` / `正式` / `未知`, and any script, client or adapter that compares against them has to compare against the machine codes instead.
+The Chinese written by older versions is translated once on validation/read (`新` → `new` · `正式` → `official` · `未知` / empty → `unknown`); the write side only ever writes machine codes, and old files are neither deleted nor rewritten.
+The values are part of a **breaking interface change** (server and UI artifact change in the same batch) — update one side only and the two stop agreeing.
+
+**Q: Writing a file into the archive area is refused, saying read-only?**
+The archive is not an ordinary directory: it is the **read-only image mounted on demand**. A refused write is its normal state — not a permission bit set wrong (`chmod` cannot change a read-only volume either).
+There is a single mount surface: one script with three idempotent actions (nothing resident · nothing auto-mounted at boot):
+`bash scripts/svc/archive-mount.sh status` (report the mount state) · `bash scripts/svc/archive-mount.sh off` (detach) · `bash scripts/svc/archive-mount.sh on` (attach).
+To change archive content: run `off` first to detach the read-only image, make the change, then `on` to attach it back.
+★ The "not mounted" state is **not** "normal": when `status` reports "not mounted" it exits **1**, and at that moment the original path is a **dangling symlink** — reading it **fails outright** (it does not "read empty"); don't treat the original path as an ordinary directory while it is unmounted.
+Exit codes: `0` success · `1` failure (including `status` reporting "not mounted") · `2` no conclusion (a precondition cannot be judged: the image file is missing / the original path is not a symlink / the two readings disagree) · `64` usage error.
+If it will not detach (some process is holding files inside the image), find out who holds it first; do **not** force it with `-force`.
+
+**Q: I only want to commit the paths I name — and what if the gate is red but I need an audited exception?**
+Name the path: `zerg repo commit --only <path> --message <subject>` — it does **not** `git add` (the named paths go straight to `git commit --only`), and the index **may be non-empty** (other people's staged work is not touched at all).
+Several files take **one `--only` per file** (each takes a single value); `.` / `-A` / globs / `:` are all refused (they are the bulk-staging back door).
+Three states: `--dry-run` prints the plan (zero side effects — nothing staged, nothing committed, no gate run) · without `--yes` it does **not execute** (exit 2, it never asks) · with both it really runs.
+A real run goes **through the fast gate first** (`bash scripts/gates/precommit-gates.sh --fast --outdir <dir>`): if its exit code is not 0, **nothing is committed** and the index and work tree are byte-for-byte untouched.
+When a human-signed exception is genuinely needed, use the audited flag approved for it: `--waive <step> --reason <one line>` — without `--reason` it is refused outright (exit 2: an exception with no reason is not granted);
+the step name must **really appear in that run's report**, or the exception does not take effect; and every exception is written to the audit log (who · when · which step · why), so the red can be read back afterwards.
+The command surface offers **no** `--no-verify` (bypassing is for a human to do explicitly).
