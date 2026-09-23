@@ -75,7 +75,7 @@ DEFAULT_ROOT = os.path.dirname(os.path.dirname(HERE))
 SIBLING_BASE = os.path.dirname(DEFAULT_ROOT)                          # …/模型类
 DEFAULT_ARCHIVE = os.path.join(SIBLING_BASE, "Zerg-归档")
 DEFAULT_SEALED = ("deploy/服务声明.tsv", "scripts/公开标记.tsv")
-VERSION = "check-zero-side-effect.py v1.0.0"
+VERSION = "check-zero-side-effect.py v1.1.0"
 SELF_NAME = os.path.basename(__file__)
 
 RC_OK, RC_RED, RC_NOCONC, RC_NOBASE = 0, 1, 2, 8
@@ -276,6 +276,20 @@ def classify_and_prove(path, archive_root, table, assume=None):
     return row
 
 
+# 归档区**自述元文件** —— 显式**不属**"被证明对象"（对象集 = 归档记录里登记的正文件）。
+# 理由：它们是镜像自述件（README / 版次索引 / 归档记录），随镜像只读、不进归档件表
+#       ⇒ manifest / head-blob / readonly-bit 三条基准来源都取不到 ✗。
+# 处置：在此**登记并逐条打印**，**不静默过滤** ✗（`Q-117` · Mr2109 2026-09-23 拍「甲」）。
+ARCHIVE_META_EXACT = ("README.md", "版次索引.md")
+ARCHIVE_META_PREFIX = ("归档记录-",)
+
+
+def is_archive_meta(path):
+    """按件名判：归档区自述元文件（README.md / 版次索引.md / 归档记录-*.md）。"""
+    name = os.path.basename(path)
+    return name in ARCHIVE_META_EXACT or any(name.startswith(p) for p in ARCHIVE_META_PREFIX)
+
+
 def collect_default(archive_root, sealed_in, workspace, root):
     """默认真目标集：归档区只读件（现读）+ 点名的仓内已封件；`--workspace` 换成现读工作树可变件。"""
     paths, why = [], []
@@ -295,10 +309,18 @@ def collect_default(archive_root, sealed_in, workspace, root):
     if sealed_in:
         return [os.path.abspath(p) if not os.path.isabs(p) else p for p in sealed_in], ["调用方点名（--sealed）"]
     if os.path.isdir(archive_root):
+        metas = []
         for dp, _dn, fn in os.walk(archive_root):
             for f in sorted(fn):
-                paths.append(os.path.join(dp, f))
+                p = os.path.join(dp, f)
+                if is_archive_meta(p):
+                    metas.append(os.path.relpath(p, archive_root))
+                    continue
+                paths.append(p)
         why.append("归档区（现读 %s）" % archive_root)
+        if metas:
+            why.append("元文件 %d 枚**不属对象集**（%s）—— 它们是归档区自述件（随镜像只读 · 不进件表 ⇒ 无自带基准）"
+                       % (len(metas), " · ".join(sorted(metas))))
     if not paths:
         return [], ["归档区不存在（%s）⇒ 不给结论（不把「读不到」当「没问题」）" % archive_root]
     for rel in DEFAULT_SEALED:
