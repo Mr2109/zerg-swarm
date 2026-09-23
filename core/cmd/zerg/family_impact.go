@@ -420,7 +420,10 @@ func impactRegistryIDs(root string) ([]string, error) {
 // `C3` 起把文档面**三档口径**写进形态串（`R23` 已拍：A 裸词随 `--wide` · **B 反引号包住的符号名
 // （默认）** · C 与「件:行」同行随 `--strict`）—— 形态串里写着的旗标必须真能被解析（否则命令等于不可用）。
 // ★ `--all`（按需档 · §4.4）仍是**既有全局布尔**，故不写进形态串（形态串只写本命令独有的东西）。
-const impactUsageLine = "zerg impact <文件｜契约 id> [--wide｜--strict] [--deep] [--for-model｜--for-human] [--json <字段>] [--gate-results <那次门禁的结果表｜它的日志目录>]"
+// ★ 占位符**不许含空格**（2026-09-24 现跑坐实）：门⑫ 的 `command_words()` 会把含空格的占位符
+// 拆成两个命令词（`('impact','id')`）⇒ 判「命令不在树里」✗ —— 复现：`check-doc-cmds.py --scope formal`
+// 改前命中 3 处，去空格后 rc=0。（占位符写成单个不含空格的词，判据才只看族名 `impact`。）
+const impactUsageLine = "zerg impact <文件或契约id> [--wide｜--strict] [--deep] [--for-model｜--for-human] [--json <字段>] [--gate-results <那次门禁的结果表｜它的日志目录>]"
 
 // impactDocTierOf 文档面口径档（`R23` 已拍的三档 · 不许自造第四档）：
 //
