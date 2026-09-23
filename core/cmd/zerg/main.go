@@ -582,11 +582,15 @@ func init() {
 		},
 		{
 			path:    []string{"core", "restart"},
-			summary: "重启主控（危险 D3 · 本版未开放）",
+			summary: "重启主控（危险 D3 · 已开放：确认档齐就真执行 `launchctl kickstart -k`）· 审计留痕 + 就绪判据绑自己的 pid",
 			usage:   "zerg core restart --confirm=<主机名> --yes [--dry-run]",
 			args:    []string{"主机名"},
-			danger:  &dangerSpec{dangerD3, "主机名", "停 + 起主控（**整个虫群的控制面会断一会儿**）", "§三 C 族 · 开工单 T-45"},
-			run:     cmdGuarded,
+			danger:  &dangerSpec{dangerD3, "主机名", "停 + 起主控（**整个虫群的控制面会断一会儿**）", "§三 C 族 · 开工单 T-45 · 缺口 Q-103"},
+			// `opened`: 真跑已开放（`--confirm=<主机名>` 与 `--yes` **同时到**才执行；`--dry-run` ⇒ 计划件 rc=0 ·
+			// 缺确认档 ⇒ fail-closed rc=2）。动作只有一条：`launchctl kickstart -k gui/<uid>/com.zerg.core`
+			// （定义不一致 / 未装载那两支不走 —— 归换件入口 `scripts/build/zerg-swap-core.sh`）。
+			opened: true,
+			run:    cmdCoreRestart,
 		},
 		// ---- 批 D · T-46 H 族四条（§三 H 族 · §7.1 `P10`/`P7`）----
 		{
@@ -651,12 +655,12 @@ func init() {
 		{
 			path:    []string{"repo", "commit"},
 			kind:    "RepoCommit",
-			summary: "提交：**按文件名逐件暂存**（禁 `git add -A`）· **过快速档才放行** · 禁 `--no-verify`（模板化提交信息）",
-			usage:   "zerg repo commit --message <题> --file <件>… [--proposal <提案 id>] [--by <谁>] [--trace <id>] [--criterion <判据>] [--dry-run] [--yes]",
-			args:    []string{"提交主题（--message）", "逐件点名（--file · 可重复）"},
+			summary: "提交：**按文件名逐件暂存**（禁 `git add -A`）· 或**点名单路径**（`--only <路径…>`：索引面允许非空、别人的暂存只许多不许少）· **过快速档才放行** · 禁 `--no-verify`（例外走 `--waive <步名> --reason <…>` 并进审计）",
+			usage:   "zerg repo commit --message <题> (--file <件>… | --only <路径>[ --only <路径>]…) [--proposal <提案 id>] [--by <谁>] [--trace <id>] [--criterion <判据>] [--waive <步名> --reason <理由>] [--dry-run] [--yes]",
+			args:    []string{"提交主题（--message）", "逐件点名（--file · 可重复）或点名单路径（--only · 可重复 · 可 `--only=<路径>`）"},
 			fields:  repoCommitFields,
-			danger:  &dangerSpec{dangerD2, "提交主题", "把点名的件提交（可逆：`git reset --soft HEAD~1`）；**先跑快速档**，rc≠0 不提交", "缺口-命令面 §九 I4 · §九 M3 C5 · D3b 第三步"},
-			// `opened`: 真跑已开放（`--yes` 就执行 —— 按文件名逐件暂存 + 先过快速档；D2 可逆）。
+			danger:  &dangerSpec{dangerD2, "提交主题", "把点名的件提交（可逆：`git reset --soft HEAD~1`）；**先跑快速档**，rc≠0 不提交（要带账放行得 `--waive <步名> --reason <…>`）", "缺口-命令面 §九 I4 · §九 M3 C5 · D3b 第三步 · 缺口 Q-104"},
+			// `opened`: 真跑已开放（`--yes` 就执行 —— 默认模式逐件暂存 / `--only` 模式点名单路径；D2 可逆）。
 			opened:   true,
 			endpoint: "",
 			run:      cmdRepoCommit,
@@ -1808,6 +1812,13 @@ func valueFlagName(a string) string {
 	// 回收面旗标（§十五.2 · 批 D · T-54）：`--min-age-days` 是 `RC6` 的**显式**龄阈值（不许魔数）。
 	switch a {
 	case "--min-age-days", "--only":
+		return a
+	}
+	// 提交面例外旗标（`Q-104` · 2026-09-23 已拍：开「带审计的显式例外旗标」）：
+	//   `--waive <步名>`（可重复 —— 一次可点多个要豁免的步名）与 `--reason <理由>`（缺它 ⇒ 拒执 2）。
+	// ★ 它与 `--no-verify` 是**两件事**：命令面**不提供**绕行；这个旗标只把「红」变成**可回读**的记账。
+	switch a {
+	case "--waive", "--reason":
 		return a
 	}
 	// 影响面实测回填（`B3` · 2026-09-22）：`--gate-results` 是**那次门禁的结果表**（或它的日志目录）——
