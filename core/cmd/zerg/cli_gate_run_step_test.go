@@ -6,7 +6,7 @@
 //	① 单步档的 `--json` 出**契约形状**的包封，且判决**逐格来自脚本自己落的结果表**（不是命令面自己判的）；
 //	② `--json` **不透传给被包的脚本**（脚本见到它必红 —— 这正是「命令面旗标」与「脚本旗标」的分界）；
 //	③ 步名未知名 ⇒ 退 2（**执行前判**：脚本一次都没被调用）+ 给出「最像的合法输入」（K14 第三件）；
-//	④ `--json` 不给字段 ⇒ 退 1 且 stdout 0 字节（K2）；`--json` 不在单步档 ⇒ 退 2；
+//	④ `--json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）且 stdout 0 字节（K2）；`--json` 不在单步档 ⇒ 退 2；
 //	⑤ **脚本的退码原样转出**（合成脚本退 2 ⇒ 命令面退 2，不是「非 0 一律 1」）。
 package main_test
 
@@ -149,13 +149,14 @@ func TestGateRunStep_UnknownStepIsUsageError(t *testing.T) {
 	}
 }
 
-// ④ K2：给了 `--json` 不给字段 ⇒ 退 1 且 stdout **0 字节**；`--json` 不在单步档 ⇒ 退 2。
+// ④ K2：给了 `--json` 不给字段 ⇒ 退码**取自退码表**（`usage` · 归一后 = 2）且 stdout **0 字节**；`--json` 不在单步档 ⇒ 退 2。
 func TestGateRunStep_JSONFieldDiscipline(t *testing.T) {
 	bin := zergBinary(t)
 	root := stepRepo(t, stepGateScript)
+	want := usageCodeFromTable(t)
 	rc, out, _ := execCase(t, bin, root, "gate", "run", "--step", "合成步", "--json")
-	if rc != 1 {
-		t.Errorf("--json 不给字段 ⇒ 退 1（K2 那一档），得到 %d", rc)
+	if rc != want {
+		t.Errorf("--json 不给字段 ⇒ 退 %d（K2 那一档 · 取自退码表 `usage`），得到 %d", want, rc)
 	}
 	if out != "" {
 		t.Errorf("--json 不给字段 ⇒ stdout 必须 0 字节：%q", out)

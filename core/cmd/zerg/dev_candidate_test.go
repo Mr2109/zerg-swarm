@@ -390,11 +390,12 @@ func TestDevVerifyJSONList(t *testing.T) {
 	if !strings.Contains(out, `"schema":"zerg/v1"`) {
 		t.Errorf("--json 包封第一键不是 schema=zerg/v1：%s", out)
 	}
-	// `--json` 不给字段 ⇒ 1（K2），且 stdout 0 字节。
+	// `--json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）（K2），且 stdout 0 字节。
 	var outB, errB bytes.Buffer
+	wantK2 := usageCodeFromTable(t)
 	if rc := zerg.RunForTest([]string{"dev", "verify", "--candidate", "DEV-0004", "--results", p, "--json"},
-		&outB, &errB); rc != 1 || outB.Len() != 0 {
-		t.Errorf("`--json` 不给字段：rc=%d（要 1）· stdout %d 字节（要 0）", rc, outB.Len())
+		&outB, &errB); rc != wantK2 || outB.Len() != 0 {
+		t.Errorf("`--json` 不给字段：rc=%d（要 %d）· stdout %d 字节（要 0）", rc, wantK2, outB.Len())
 	}
 	// 负控（成对）：同一 `--json` 面在「证据为空」时必须也是 2 ——
 	// 证明「不给结论」不是只在人面生效（机器面偷偷给绿是最坏的一种）。

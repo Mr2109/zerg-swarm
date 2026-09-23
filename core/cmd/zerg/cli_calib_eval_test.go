@@ -9,7 +9,7 @@
 //	⑤ `--dry-run` ⇒ 退 0 且脚本一次都没跑（零副作用 · 门⑩ `dryrun.v1`）；
 //	⑥ 真跑 ⇒ **退码原样转出**（夹具退 7 / 9，命令面就返 7 / 9 · 不翻译、不映射）；
 //	⑦ 归属是闸：②/④ 的件 `run` ⇒ 退 2 并逐字给出归属与理由（且脚本没跑）；
-//	⑧ 机器面：`--json` 不给字段 ⇒ 退 1 + stdout 0 字节；点错字段 ⇒ 退 2 + 列合法字段。
+//	⑧ 机器面：`--json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）+ stdout 0 字节；点错字段 ⇒ 退 2 + 列合法字段。
 //
 // ★ **成对负控**（最后一格）：判定口喂**改错的期望值**必须报错 —— 否则本件就是恒绿装置。
 package main_test
@@ -300,10 +300,11 @@ func TestEvalRun_OnlyAdoptedIsOpen(t *testing.T) {
 func TestCalibEval_JSONFieldFace(t *testing.T) {
 	repo, _, _ := synthCalibEvalRepo(t)
 	for _, fam := range []string{"calib", "eval"} {
-		// 给了 --json 不给字段 ⇒ 退 1 且 stdout 0 字节（§4.1 K2）
+		// 给了 --json 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）且 stdout 0 字节（§4.1 K2）
+		wantK2 := usageCodeFromTable(t)
 		rc, out, errb := runZergRepo(t, repo, fam, "ls", "--json")
-		if rc != 1 || out != "" {
-			t.Errorf("`%s ls --json` ⇒ 退 1 + 0 字节，得到 rc=%d out=%q", fam, rc, out)
+		if rc != wantK2 || out != "" {
+			t.Errorf("`%s ls --json` ⇒ 退 %d + 0 字节，得到 rc=%d out=%q", fam, wantK2, rc, out)
 		}
 		if !strings.Contains(errb, "可选字段") {
 			t.Errorf("`%s ls --json` ⇒ 要列可选字段：%q", fam, errb)

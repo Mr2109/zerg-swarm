@@ -57,7 +57,8 @@ func helpText() string {
 	fmt.Fprintf(&b, "\n危险动作（已登记 %d 条 · 已开放 %d 条 · 未开放 %d 条 · 逐条三态见 'zerg help dangerous'）:\n", nDanger, nOpen, nDanger-nOpen)
 	b.WriteString("  zerg <危险动作> [参数] [--dry-run | --confirm=<目标> --yes]\n")
 	b.WriteString("\n机器面:\n")
-	b.WriteString("  --json <字段>   必给逗号分隔字段；不给 ⇒ exit 1 + 字段清单走 stderr + stdout 0 字节\n")
+	b.WriteString(fmt.Sprintf("  --json <字段>   必给逗号分隔字段；不给 ⇒ exit %d + 字段清单走 stderr + stdout 0 字节\n",
+		exitCodeOf("usage")))
 	b.WriteString("  --plain         非 TTY 默认档（行式）\n")
 	b.WriteString("\n退码（单一真源）:\n")
 	b.WriteString("  0 成功 · 1 一般失败 · 2 用法错/不给结论 · 4 未认证 · 8 有 BLOCKED\n")

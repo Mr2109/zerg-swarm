@@ -236,8 +236,13 @@ MATRIX_NOTE = ('命令面自身的 must-fail 矩阵（§九 M17 `T2` · 开工�
                '覆盖与空白由 T1/T5 判（空白受 baseline 棘轮约束）。')
 
 
-def candidate_cases(path, shape):
-    """按命令形状给候选 must-fail 口令 → [(名, argv, 判据要的退码, why)]。"""
+def candidate_cases(path, shape, usage_code=2):
+    """按命令形状给候选 must-fail 口令 → [(名, argv, 判据要的退码, why)]。
+
+    ★ `usage_code` = 退码表里 `usage` 那一格的码，**由 `exitcode_table(root)` 现读**后传进来
+      （`K2` 甲档归一 2026-09-24 的纪律：判据值的真源是 `exitcodes.go` 的表，本文件**不许**把
+      码写死在候选面里 —— 写死的话表一改，这里就悄悄跟丢，「指向真源」变成「各自一份」）。
+    """
     out = []
     pre = lambda tail: path.split() + tail
     out.append(('未知旗标', pre(['--nosuchflag-zz']), 2,
@@ -257,11 +262,13 @@ def candidate_cases(path, shape):
         out.append(('缺 --yes（D2）', pre(['x']), 2,
                     'D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）'))
     if not shape['danger'] and shape['fields'] and not shape['net'] and path != 'help export':
-        out.append(('--json 不给字段', pre(['--json']), 1,
-                    '给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）'))
+        out.append(('--json 不给字段', pre(['--json']), usage_code,
+                    '给了 --json 不给字段 ⇒ %d + stdout 0 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）'
+                    % usage_code))
     if not shape['danger'] and not shape['fields'] and not shape['net']:
         out.append(('说明面不认 --json', pre(['--json', 'name']), 2,
-                    '没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）'))
+                    '没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 %d 同码、**错因不同**：这里根本没有字段表）'
+                    % usage_code))
     return out
 
 
@@ -298,6 +305,8 @@ def emit_matrix(root, out_path=None):
     tree = parse_tree(root)
     if not tree:
         return 2, ['⛔ 不给结论：命令树读不出来（空转）']
+    # `K2` 甲档归一（2026-09-24）：候选面要的「用法错」码**现读退码表**（不写死 —— 表是真源）。
+    usage_code = dict((n, c) for c, n, _ in exitcode_table(root)).get('usage', 2)
     old = load_matrix(root) or {}
     old_cases = list(old.get('cases') or [])
     tree_paths = [p for p, _ in tree]
@@ -325,7 +334,7 @@ def emit_matrix(root, out_path=None):
     for path, shape in tree:
         if path in covered:
             continue
-        for name, argv, want, why in candidate_cases(path, shape):
+        for name, argv, want, why in candidate_cases(path, shape, usage_code):
             d, w = derive_columns(binz, argv)
             if d is None:
                 dropped.append((path, name, w))

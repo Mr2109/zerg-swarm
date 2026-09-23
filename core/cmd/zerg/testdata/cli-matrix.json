@@ -2,56 +2,6 @@
  "id": "cli-contract.v1",
  "note": "命令面自身的 must-fail 矩阵（§九 M17 `T2` · 开工单 T-42 判据①）。\n口径：这不是「猜的期望值」，是**冻结的现行为（棘轮）** —— 每条口令逐条现跑两遍、退码一致、且与判据语义相符才入矩阵；改行为就必须改这一格（改不动就是回归）。\n候选口令按命令形状给（危险档 / 字段面 / 说明面 / 透传型），执行前判的那两条（未知旗标 · 不认的主号）**每条命令都有**；透传型只留执行前判那条 —— 别的会把被包的脚本真跑一遍。\n重生成：`python3 scripts/gates/check-cli-contract.py --emit-matrix`（先用 `bash scripts/build/build-all.sh --only-cli` 出**新**制品）。\n★ 生成是**增量合并**（不是整表重写）：只刷新机器可派生列（`want_rc` / `want_stdout_bytes` = **现跑字节数** `len(stdout.encode())` —— 不是字符数），既有格的 id/command/argv/why 与顺序逐字保留（手写格不会被重写吃掉），只有「一格都没有的新命令」才追加候选格。\n覆盖与空白由 T1/T5 判（空白受 baseline 棘轮约束）。",
  "exemptions": [],
- "tiers": {
-  "local": {
-   "where": "本件 `cases[].want_rc` / `cases[].want_stdout_bytes`（既有两列，语义与取值**一字未动**）",
-   "judge": "仓根有 `bin/` ⇒ 本机档（判据唯一一处：`core/cmd/zerg/cli_matrix_test.go` 的 `matrixTier()`）",
-   "why": "本机档 = 矩阵的原有形态；分档只**加列**，不动既有两列（新增式：删除行 0）"
-  },
-  "public": {
-   "where": "本件 `cases[].want_rc_public` / `cases[].want_stdout_bytes_public`（两条**可选**覆盖列，就存这一件里 —— **不另开第二份矩阵**，单一真源仍是 core/cmd/zerg/testdata/cli-matrix.json）",
-   "judge": "仓根**没有** `bin/` ⇒ 公开面档；取证可显式 `ZERG_MATRIX_TIER=local|public` 覆盖（写错即 Fatal，不许默认成某一档）",
-   "why": "公开树缺三样本机有的东西：`bin/`（白名单不含）· `scripts/gates/precommit-gates.sh`（EXCLUDES 里的发布机制自举件）· `scripts/calib/*` 与 `scripts/evals/compare.py`（公开面只进 make-manifest.py）⇒ CLI 先撞缺件、走不到本机的参数校验 ⇒ **同一格被两棵树要求不同值**。**不许**把单一真源整体改成公开面的值（那会让本机立刻变红 = 挪红，不是修红）；**也不许**为了一道门禁往公开面塞空 `bin/`（『缺件 ⇒ 8』语义保：宁可拒绝，不可猜）",
-   "ratchet": "`check-cli-contract.py --emit-matrix` 的增量合并只刷新 `want_rc`/`want_stdout_bytes`（hit.update(d)）⇒ 本组两列与 id/command/argv/why 同等逐字保留；且 emit 先要有 `bin/zerg`，公开树里本来就给不出结论（退 2）"
-  },
-  "field_surface": {
-   "契约": "§4.1 `K2` 两档（甲 · 开放字段面 / 乙 · 闭集字段面）—— 缺口 `Q-119` / 任务 `C-09`（2026-09-24 收编 · 只加声明，不动实现）",
-   "为什么不进 cases": "`cases[]` 是**must-fail 矩阵**：门⑪ `T2`（`scripts/gates/check-cli-contract.py`）与 `core/cmd/zerg/cli_matrix_test.go` 都把 `want_rc == 0` 的格判红 ⇒ 乙档两格**只登记在本块**（该绿格）。本块挂在 `tiers` 里（不是顶层新键）：`--emit-matrix` 的增量合并逐字带上整个 `tiers` 对象（`check-cli-contract.py` 的 `if old.get('tiers')`）⇒ 不会被重生成吃掉；Go 侧 `matrixFile.Tiers` 只认 `local`/`public` 两格 ⇒ 本块对判定口不可见（T1/T2 也不读它）。",
-   "甲 · 开放字段面": {
-    "口径": "字段面**开放**（不点名就不知道该给哪些）⇒ 给了 `--json` 不给字段 = `1` + stderr 列全部可选字段（＝schema 自描述）",
-    "判据落在": "本件 `cases[]` 里各命令的 `--json 不给字段` 格（`want_rc` 1 · 例：`gate/run#--json 不给字段（K2）`）—— 本批一字未动"
-   },
-   "乙 · 闭集字段面": {
-    "口径": "字段面**闭集且恒有值** ⇒ **不给字段 = 取闭集全量 · 退 0**；给了 = 投影到子集；闭集外 ⇒ `2` + stderr 列闭集",
-    "判据落在": "`core/cmd/zerg/cli_gate_show_test.go` · `core/cmd/zerg/cli_gate_results_test.go`（进程内现跑：`rc=0` + 全量逐格对拍 —— 本块只是**档位声明**，判定口在那两件里）",
-    "cells": [
-     {
-      "id": "gate/show#--json 不给字段（K2 · 乙档 闭集字段面）",
-      "command": "gate show",
-      "argv": [
-       "gate",
-       "show",
-       "<步名>",
-       "--json"
-      ],
-      "want_rc": 0,
-      "why": "字段面 = 闭集四格 `scope`/`mode`/`criterion`/`log`（`core/cmd/zerg/family_gate_show.go:43`）⇒ 不给字段 = 闭集全量 · 退 0（**与 K2 甲档的 1 相反**；`<步名>` = 脚本 `--list` 里任一步名 —— 本档只登记 `want_rc`，**不冻结** stdout 字节数（随步名变），故本格不是可跑的 must-fail 格）"
-     },
-     {
-      "id": "gate/results#--json 不给字段（K2 · 乙档 闭集字段面）",
-      "command": "gate results",
-      "argv": [
-       "gate",
-       "results",
-       "--json"
-      ],
-      "want_rc": 0,
-      "why": "字段面 = 闭集五格 `step`/`status`/`rc`/`secs`/`log`（`core/cmd/zerg/family_gate_results.go:54`）⇒ 不给字段 = 闭集全量 · 退 0（同上一格：只登记 `want_rc`；stdout 字节数随那一趟结果表变，不冻结）"
-     }
-    ]
-   }
-  }
- },
  "cases": [
   {
    "id": "version#未知旗标",
@@ -131,7 +81,7 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
    "id": "doctor#未知旗标",
@@ -163,9 +113,9 @@
     "doctor",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
    "id": "context/ls#未知旗标",
@@ -200,9 +150,9 @@
     "ls",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
    "id": "api/ls#未知旗标",
@@ -290,7 +240,7 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
    "id": "agent/ls#未知旗标",
@@ -426,12 +376,9 @@
     "run",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）· 执行前判；单步档的机器面越不过这一格",
-   "want_rc_public": 2,
-   "want_stdout_bytes_public": 0,
-   "why_public": "公开面缺 `scripts/gates/precommit-gates.sh`（现读公开仓 scripts/gates/ 只有 5 件：5 个 CI 尺）⇒ `gate run` 先撞「门禁最小入口不在」**硬错 2**，走不到本机「--json 不给字段 ⇒ 1」那一格 —— 这就是『缺件优先于参数校验』（退码 8/2 的缺件档独立命名空间）"
+   "why": "给了 `--json` 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）· 执行前判；单步档的机器面越不过这一格 ★ **两档订正（删）**（`K2` 甲档归一 · 2026-09-24 同批）：本格原带两个公开面覆盖列（旧值 本机 `1/0` · 公开面 `2/0` —— 靠「本机退 1」与「公开面先撞硬错 2」**值不同**而分档）。归一后本机也是 `2/0` ⇒ 两档值**完全相同**，按本件两档负控「同值就不该分档（分档只给缺件面用）」**删去 `want_rc_public` / `want_stdout_bytes_public` / `why_public` 三列**（两档格 8 → 7 条）。公开面那一趟的机理照留在此、不丢：公开树缺 `scripts/gates/precommit-gates.sh` ⇒ `gate run` 先撞「门禁最小入口不在」**硬错 2**，走不到本机「`--json` 不给字段 ⇒ 2」这一格 —— 「缺件优先于参数校验」的同一面（同 `gate/run` 另两格）。"
   },
   {
    "id": "gate/run#--json 不在单步档",
@@ -1022,9 +969,9 @@
     "daemon",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
    "id": "core/start#未知旗标",
@@ -1236,9 +1183,9 @@
     "ls",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
    "id": "script/inventory/sync#未知旗标",
@@ -1277,9 +1224,9 @@
     "--dry-run",
     "--json"
    ],
-   "want_rc": 1,
-   "want_stdout_bytes": 293,
-   "why": "给了 --json 不给字段 ⇒ **1**（§4.1 K2）。★ 这一格的 stdout 不是 0 字节：本命令是**危险档**（D2 写面）⇒ 框架把错误面打成机器可读包封走 stdout（同 `repo commit` 那条先例）· 逐字现读 `{\"schema\":\"zerg/v1\",\"kind\":\"ScriptInventorySync\",\"items\":[],…\"error\"…}` = **293 字节**（两跑逐字节一致 · 不含时刻）"
+   "want_rc": 2,
+   "want_stdout_bytes": 292,
+   "why": "给了 --json 不给字段 ⇒ **2**（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）。★ 这一格的 stdout 不是 0 字节：本命令是**危险档**（D2 写面）⇒ 框架把错误面打成机器可读包封走 stdout（同 `repo commit` 那条先例）· 逐字现读 `{\"schema\":\"zerg/v1\",\"kind\":\"ScriptInventorySync\",\"items\":[],…\"error\"…}` = **293 字节**（两跑逐字节一致 · 不含时刻）"
   },
   {
    "id": "script/inventory/sync#--set 逐条改（第二条写路径）",
@@ -1373,7 +1320,7 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
    "id": "resource/unpin#未知旗标",
@@ -1411,7 +1358,7 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
    "id": "gateway/breakers#未知旗标",
@@ -1449,7 +1396,7 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
    "id": "egg/ls#未知旗标",
@@ -1562,7 +1509,7 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
    "id": "egg/run#未知旗标",
@@ -1600,7 +1547,7 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
    "id": "itask/ls#未知旗标",
@@ -1846,9 +1793,9 @@
     "ls",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）",
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）",
    "want_rc_public": 8,
    "why_public": "公开面白名单（publish/whitelist.txt）**不含 `bin/`**（逐字现读：白名单 15 项里没有它）⇒ `build ls` 先撞缺件退 **8**，走不到「--json 不给字段 ⇒ 1」那一格。**不许**为了一道门禁往公开面塞空 `bin/`（『缺件 ⇒ 8』语义保：宁可拒绝，不可猜）"
   },
@@ -1888,7 +1835,7 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
    "id": "build/release#未知旗标",
@@ -1926,7 +1873,7 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
    "id": "task/terminate#未知旗标",
@@ -2817,7 +2764,7 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 272,
-   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
    "id": "dev/build#未知旗标",
@@ -3013,9 +2960,9 @@
     "ls",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 却没给字段表（§九 M6 K2：--json 必须给字段 ⇒ 退码 1 + stdout 0 字节；与「字段不给」的 2 分开）"
+   "why": "给了 --json 却没给字段表（§九 M6 K2：--json 必须给字段 ⇒ 退码**取自退码表** `usage` = 2 + stdout 0 字节（`K2` 归一后与「字段不给」同码，靠错因/文案分开））"
   },
   {
    "id": "plugin/ls#未知旗标",
@@ -3126,9 +3073,9 @@
     "/tmp/zerg-matrix-plan.json",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2；落点显式给 /tmp，不写状态目录）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1；落点显式给 /tmp，不写状态目录）"
   },
   {
    "id": "apply#未知旗标",
@@ -3273,9 +3220,9 @@
     "needle",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）；本命令**先判位置参数**（缺正则 ⇒ 2）再判字段，故这一格必须带正则才判得到"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）；本命令**先判位置参数**（缺正则 ⇒ 2）再判字段，故这一格必须带正则才判得到"
   },
   {
    "id": "repo/status#未知旗标",
@@ -3310,9 +3257,9 @@
     "status",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
    "id": "port/ls#未知旗标",
@@ -3347,9 +3294,9 @@
     "ls",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
    "id": "build/show#未知旗标",
@@ -3409,9 +3356,9 @@
     "matrix",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
    "id": "gate/bench#未知旗标",
@@ -3446,9 +3393,9 @@
     "bench",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
    "id": "gate/explain#未知旗标",
@@ -4094,7 +4041,7 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 281,
-   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）· ★ 2026-09-24 重冻 282 → 281（缺口 `Q-155`：失败面包封的兜底 kind 由**真退码**派生 ⇒ 包封里 `\"kind\":\"failed\"` → `\"kind\":\"usage\"`，逐字节少 1 ⇒ 这就是本格字节数变的**全部**原因；`want_rc` 不动 · 格数/命令数/空白/豁免四个计数一字未动）"
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）· ★ 2026-09-24 重冻 282 → 281（缺口 `Q-155`：失败面包封的兜底 kind 由**真退码**派生 ⇒ 包封里 `\"kind\":\"failed\"` → `\"kind\":\"usage\"`，逐字节少 1 ⇒ 这就是本格字节数变的**全部**原因；`want_rc` 不动 · 格数/命令数/空白/豁免四个计数一字未动）"
   },
   {
    "id": "approve/show#未知旗标",
@@ -4132,7 +4079,7 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 279,
-   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
    "id": "approve/new#未知旗标",
@@ -4221,7 +4168,7 @@
    ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "没有字段表的说明面 ⇒ 2（K2 的 1 那一档不许混）"
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
   },
   {
    "id": "approve/new#非终端不给签（模型路径）",
@@ -4379,9 +4326,9 @@
     "ls",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）· 执行前判"
+   "why": "给了 `--json` 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）· 执行前判"
   },
   {
    "id": "calib/show#未知旗标",
@@ -4440,9 +4387,9 @@
     "calib-local-model",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）· 执行前判"
+   "why": "给了 `--json` 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）· 执行前判"
   },
   {
    "id": "calib/run#未知旗标",
@@ -4539,9 +4486,9 @@
     "ls",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）· 执行前判"
+   "why": "给了 `--json` 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）· 执行前判"
   },
   {
    "id": "eval/show#未知旗标",
@@ -4589,9 +4536,9 @@
     "compare",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 `--json` 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）· 执行前判"
+   "why": "给了 `--json` 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）· 执行前判"
   },
   {
    "id": "eval/run#未知旗标",
@@ -4754,9 +4701,9 @@
     "core/cmd/zerg/main.go",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2；与各命令同一条纪律）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1；与各命令同一条纪律）"
   },
   {
    "id": "impact#字段面·未知字段",
@@ -4824,9 +4771,9 @@
     "--for-human",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "`A3` 两档（§4.1）与 `--json` **不是同一条**（`R38` 拍定：两档只决定**内容与裁剪**、`--json` 只做**字段投影**，两者**可叠加**）⇒ 叠加时 `--json` 不给字段仍是 K2：退 1 + stdout 0 字节。★ 本格带**成对负控**（现跑逐字）：**老制品**（换件前的回滚件）跑同一口令退 **2**「未知旗标 \"--for-human\"」⇒ 这一格真能分辨「新旗标在不在」，不是一条恒返回的格"
+   "why": "`A3` 两档（§4.1）与 `--json` **不是同一条**（`R38` 拍定：两档只决定**内容与裁剪**、`--json` 只做**字段投影**，两者**可叠加**）⇒ 叠加时 `--json` 不给字段仍是 K2：退 2 + stdout 0 字节（`K2` 归一后码取自退码表 `usage`）。★ 本格带**成对负控**（现跑逐字）：**老制品**（换件前的回滚件）跑同一口令退 **2**「未知旗标 \"--for-human\"」⇒ 这一格真能分辨「新旗标在不在」，不是一条恒返回的格"
   },
   {
    "id": "impact#两档面·--for-model 与 --json 叠加（K2）",
@@ -4837,7 +4784,7 @@
     "--for-model",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "`--for-model` 与 `--for-human` 是**同一族的两档**（§4.1：模型档 ≤ 1.2k token / 条目 ≤ 12；人档全文不限长），两档与 `--json` 都可叠加、都不改六键包封（`R38`）⇒ 叠加时 `--json` 不给字段仍退 1 + stdout 0 字节。★ 成对负控（现跑逐字）：**老制品**跑同一口令退 **2**「未知旗标 \"--for-model\"」—— 两格合起来把「两档旗标真进了命令树」钉住"
   },
@@ -5013,9 +4960,9 @@
     "hash",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
    "id": "archive/manifest#未知旗标",
@@ -5050,9 +4997,9 @@
     "manifest",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
    "id": "archive/verify#未知旗标",
@@ -5087,9 +5034,9 @@
     "verify",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
    "id": "model/add#未知旗标",
@@ -5124,9 +5071,9 @@
     "add",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
    "id": "config/reload#未知旗标",
@@ -5215,9 +5162,9 @@
     "ps",
     "--json"
    ],
-   "want_rc": 1,
+   "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "给了 --json 不给字段 ⇒ 1 + stdout 0 字节（§4.1 K2）"
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
    "id": "gap/ls#未知旗标",
@@ -5430,5 +5377,55 @@
    "want_stdout_bytes": 0,
    "why": "「给范围」与「点名」是两种意图 ⇒ 同给 = 用法错 2"
   }
- ]
+ ],
+ "tiers": {
+  "local": {
+   "where": "本件 `cases[].want_rc` / `cases[].want_stdout_bytes`（既有两列，语义与取值**一字未动**）",
+   "judge": "仓根有 `bin/` ⇒ 本机档（判据唯一一处：`core/cmd/zerg/cli_matrix_test.go` 的 `matrixTier()`）",
+   "why": "本机档 = 矩阵的原有形态；分档只**加列**，不动既有两列（新增式：删除行 0）"
+  },
+  "public": {
+   "where": "本件 `cases[].want_rc_public` / `cases[].want_stdout_bytes_public`（两条**可选**覆盖列，就存这一件里 —— **不另开第二份矩阵**，单一真源仍是 core/cmd/zerg/testdata/cli-matrix.json）",
+   "judge": "仓根**没有** `bin/` ⇒ 公开面档；取证可显式 `ZERG_MATRIX_TIER=local|public` 覆盖（写错即 Fatal，不许默认成某一档）",
+   "why": "公开树缺三样本机有的东西：`bin/`（白名单不含）· `scripts/gates/precommit-gates.sh`（EXCLUDES 里的发布机制自举件）· `scripts/calib/*` 与 `scripts/evals/compare.py`（公开面只进 make-manifest.py）⇒ CLI 先撞缺件、走不到本机的参数校验 ⇒ **同一格被两棵树要求不同值**。**不许**把单一真源整体改成公开面的值（那会让本机立刻变红 = 挪红，不是修红）；**也不许**为了一道门禁往公开面塞空 `bin/`（『缺件 ⇒ 8』语义保：宁可拒绝，不可猜）",
+   "ratchet": "`check-cli-contract.py --emit-matrix` 的增量合并只刷新 `want_rc`/`want_stdout_bytes`（hit.update(d)）⇒ 本组两列与 id/command/argv/why 同等逐字保留；且 emit 先要有 `bin/zerg`，公开树里本来就给不出结论（退 2）"
+  },
+  "field_surface": {
+   "契约": "§4.1 `K2` 两档（甲 · 开放字段面 / 乙 · 闭集字段面）—— 缺口 `Q-119` / 任务 `C-09`（2026-09-24 收编 · 只加声明，不动实现）",
+   "为什么不进 cases": "`cases[]` 是**must-fail 矩阵**：门⑪ `T2`（`scripts/gates/check-cli-contract.py`）与 `core/cmd/zerg/cli_matrix_test.go` 都把 `want_rc == 0` 的格判红 ⇒ 乙档两格**只登记在本块**（该绿格）。本块挂在 `tiers` 里（不是顶层新键）：`--emit-matrix` 的增量合并逐字带上整个 `tiers` 对象（`check-cli-contract.py` 的 `if old.get('tiers')`）⇒ 不会被重生成吃掉；Go 侧 `matrixFile.Tiers` 只认 `local`/`public` 两格 ⇒ 本块对判定口不可见（T1/T2 也不读它）。",
+   "甲 · 开放字段面": {
+    "口径": "字段面**开放**（不点名就不知道该给哪些）⇒ 给了 `--json` 不给字段 = `2`（`K2` 甲档归一 2026-09-24：码**取自退码表** `usage`）+ stderr 列全部可选字段（＝schema 自描述）",
+    "判据落在": "本件 `cases[]` 里各命令的 `--json 不给字段` 格（`want_rc` 2 · 例：`gate/run#--json 不给字段（K2）`）—— `K2` 甲档归一（2026-09-24）**同批重冻**：26 格 `want_rc` `1 → 2`（格集合与四个计数一字未动，逐格清单见提交信息）"
+   },
+   "乙 · 闭集字段面": {
+    "口径": "字段面**闭集且恒有值** ⇒ **不给字段 = 取闭集全量 · 退 0**；给了 = 投影到子集；闭集外 ⇒ `2` + stderr 列闭集",
+    "判据落在": "`core/cmd/zerg/cli_gate_show_test.go` · `core/cmd/zerg/cli_gate_results_test.go`（进程内现跑：`rc=0` + 全量逐格对拍 —— 本块只是**档位声明**，判定口在那两件里）",
+    "cells": [
+     {
+      "id": "gate/show#--json 不给字段（K2 · 乙档 闭集字段面）",
+      "command": "gate show",
+      "argv": [
+       "gate",
+       "show",
+       "<步名>",
+       "--json"
+      ],
+      "want_rc": 0,
+      "why": "字段面 = 闭集四格 `scope`/`mode`/`criterion`/`log`（`core/cmd/zerg/family_gate_show.go:43`）⇒ 不给字段 = 闭集全量 · 退 0（**与 K2 甲档相反**：甲档不给字段 = 退码表 `usage` 2，本档 = 退 0；`<步名>` = 脚本 `--list` 里任一步名 —— 本档只登记 `want_rc`，**不冻结** stdout 字节数（随步名变），故本格不是可跑的 must-fail 格）"
+     },
+     {
+      "id": "gate/results#--json 不给字段（K2 · 乙档 闭集字段面）",
+      "command": "gate results",
+      "argv": [
+       "gate",
+       "results",
+       "--json"
+      ],
+      "want_rc": 0,
+      "why": "字段面 = 闭集五格 `step`/`status`/`rc`/`secs`/`log`（`core/cmd/zerg/family_gate_results.go:54`）⇒ 不给字段 = 闭集全量 · 退 0（同上一格：只登记 `want_rc`；stdout 字节数随那一趟结果表变，不冻结）"
+     }
+    ]
+   }
+  }
+ }
 }

@@ -118,8 +118,8 @@ func fetchInv(inv *invocation, c *client, path string, out any, stderr io.Writer
 // render 负责把载荷摊成「字段名 → 值文本」的若干行；本函数只管三态渲染与退码。
 func listCmd(inv *invocation, stdout, stderr io.Writer, display []string, rows []map[string]string) int {
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail // K2：给了 --json 但不给字段 ⇒ 1 + stdout 0 字节
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc // K2：给了 --json 但不给字段 ⇒ 退码取自退码表（归一后 = 用法错 2）+ stdout 0 字节
 		}
 		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
 	}
@@ -369,8 +369,8 @@ func splitScalar(line string) (string, string, bool) {
 func cmdDoctor(inv *invocation, stdout, stderr io.Writer) int {
 	items := doctorItems(inv)
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, items)
 	}

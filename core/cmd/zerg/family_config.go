@@ -271,8 +271,10 @@ func modelAddLocate(lines []string, name string) (modelAddPlacement, string) {
 
 // cmdModelAdd —— `zerg model add`：先校验后写（`--dry-run` 先行 · 真写要 `--yes` · 失败回滚）。
 func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
-	if inv.jsonGiven && !requireFields(inv, stderr) {
-		return exitFail
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
 	}
 	s := modelAddSpec{
 		Host:    strings.TrimSpace(inv.flagVal("--host")),
@@ -544,8 +546,10 @@ func writeFleetAtomic(path, oldText, newText string, stderr io.Writer) int {
 // **先校验、失败回滚**（照 `nginx -s reload`）—— 名册件本地解析不过 ⇒ **不发请求**（旧配置继续跑）。
 // 过了才打**已在路由上**的 `POST /api/config/reload`（主控零改动 ✓）。
 func cmdConfigReload(inv *invocation, stdout, stderr io.Writer) int {
-	if inv.jsonGiven && !requireFields(inv, stderr) {
-		return exitFail
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
 	}
 	path, perr := fleetYAMLPath(inv)
 	if perr != "" {

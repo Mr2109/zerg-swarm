@@ -116,7 +116,8 @@ func helpContract() string {
 	b.WriteString("  ⑤ **契约覆盖机器面、不覆盖人类面**：人面（表格/装饰）**不在**承诺面内（§九 M14 `T1` 另有对齐要求）。\n")
 	b.WriteString("\n拒绝规则：\n")
 	b.WriteString("  · 请求未知字段 ⇒ `exit 2` + 列全部合法字段（I5 · `P-025`）\n")
-	b.WriteString("  · `--json` 不给字段 ⇒ `exit 1` + stderr 列全部字段（K2 · 「schema 自描述」）\n")
+	b.WriteString(fmt.Sprintf("  · `--json` 不给字段 ⇒ `exit %d` + stderr 列全部字段（K2 · 「schema 自描述」）\n",
+		exitCodeOf("usage")))
 	b.WriteString("  · `--schema <id>` 的主号不认 ⇒ `exit 2`（`P-026` · 本版只认 ")
 	fmt.Fprintf(&b, "%v", recognizedMajors())
 	b.WriteString("）\n")

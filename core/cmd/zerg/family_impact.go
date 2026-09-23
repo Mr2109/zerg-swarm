@@ -138,10 +138,11 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 			return exitUsage
 		}
 	}
-	// K2 先判（`--json` 不给字段 ⇒ 1 + stdout 0 字节）：**取数之前**判 —— 否则白跑六层。
+	// K2 先判（`--json` 不给字段 ⇒ 退码由 `requireFields` 取自退码表 · 归一后 = 2 + stdout 0 字节）：
+	// **取数之前**判 —— 否则白跑六层。
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		// 字段名也**先判**（未知字段 ⇒ 2 + 列合法字段）：判据一字不改（仍是 §九 M6 I5 的
 		// 「点名字段」面），只把它挪到取数之前 —— 六层现跑读秒级，别为一条打错字的字段白跑一遍。

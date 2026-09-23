@@ -292,8 +292,8 @@ func cmdEvalRun(inv *invocation, stdout, stderr io.Writer) int {
 		row["mode"], row["result"], row["rc"] = "dry-run", "planned", "0"
 		row["note"] = "（--dry-run：零副作用 · 未 exec 任何脚本）"
 		if inv.jsonGiven {
-			if !requireFields(inv, stderr) {
-				return exitFail
+			if rc := requireFields(inv, stderr); rc != exitOK {
+				return rc
 			}
 			return selectJSON(stdout, stderr, inv, inv.path, evalRunFields, row)
 		}
@@ -330,8 +330,8 @@ func cmdEvalRun(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %s 退码 %d —— **原样转出**（命令面不改写任何码）\n", progName, e.File, rc)
 	}
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		if jrc := selectJSON(stdout, stderr, inv, inv.path, evalRunFields, row); jrc != exitOK {
 			return jrc
