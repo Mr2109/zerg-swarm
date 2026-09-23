@@ -216,8 +216,8 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 	// `--dry-run`：只出件、**零副作用**（三态里的第一态，照 §九 M3 C4；不写任何文件）
 	if inv.dryRun {
 		if inv.jsonGiven {
-			if !requireFields(inv, stderr) {
-				return exitFail
+			if rc := requireFields(inv, stderr); rc != exitOK {
+				return rc
 			}
 			return selectJSON(stdout, stderr, inv, inv.path, proposalFields, proposalRow(rec))
 		}
@@ -258,8 +258,8 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 	f.Close()
 
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		return selectJSON(stdout, stderr, inv, inv.path, proposalFields, proposalRow(rec))
 	}
@@ -321,8 +321,8 @@ func cmdDevProposalShow(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		r.Path = filepath.Join(dir, r.ID+".json")
 		if inv.jsonGiven {
-			if !requireFields(inv, stderr) {
-				return exitFail
+			if rc := requireFields(inv, stderr); rc != exitOK {
+				return rc
 			}
 			return selectJSON(stdout, stderr, inv, inv.path, proposalFields, proposalRow(r))
 		}

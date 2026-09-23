@@ -124,7 +124,7 @@ L = {
             "**字段稳定性承诺**：① 既有字段的名字/类型/语义**只增不改**（消费侧必须忽略未识别键）；"
             "② **不承诺字段序**——对象序只由显式排序旗标决定；③ 破坏性变更**走大版本**（旧主号继续可读）；"
             "④ 废弃四步：标注 deprecated（进 `warnings`）⇒ 文档删示例 ⇒ 导出处删字段 ⇒ 下一个大版本删字段。",
-            "**拒绝规则**：请求未知字段 ⇒ 退码 `2` + 列全部合法字段；`--json` 不给字段 ⇒ 退码 `1` + "
+            "**拒绝规则**：请求未知字段 ⇒ 退码 `2` + 列全部合法字段；`--json` 不给字段 ⇒ 退码 `2` + "
             "stderr 列全部字段（schema 自描述）；`--schema` 主号不认 ⇒ 退码 `2`；`--json '*'` **不存在** —— "
             "要的是逗号分隔的字段名。",
             "**三态输出**：人面（TTY 下的表格，只是渲染）· 行式面（非 TTY 或 `--plain`：制表符分隔，字段集"
@@ -213,7 +213,7 @@ L = {
             "deprecated (into `warnings`) ⇒ drop examples from docs ⇒ drop the field from the export ⇒ "
             "drop it in the next major.",
             "**Rejection rules**: an unknown field ⇒ exit `2` + list every legal field; `--json` with no "
-            "fields ⇒ exit `1` + list every field on stderr (the schema describing itself); an "
+            "fields ⇒ exit `2` + list every field on stderr (the schema describing itself); an "
             "unrecognised `--schema` major ⇒ exit `2`; `--json '*'` **does not exist** — what it wants is "
             "a comma-separated field list.",
             "**Three output modes**: human face (aligned table on a TTY, rendering only) · line face "

@@ -15,7 +15,7 @@
 //	① **不搬实现**：执行面永远是 `bash|python3 scripts/calib/<件>` —— 命令面只做「名字逐字校验 +
 //	   契约形状的包封 + 退码转发」；那 3 个脚本**一个字节不改**（仍在盘上、仍可直接跑）。
 //	② **退码原样转出**：脚本退多少就返多少（含异常码）；命令面自己只在「执行前判」退 2、
-//	   「`--json` 不给字段」退 1、「件不在盘上」退 8。
+//	   「`--json` 不给字段」退码**取自退码表**（`usage` · 归一后 = 2）、「件不在盘上」退 8。
 //	③ **名字逐字匹配**：未知名 ⇒ 退 2 + 「最像的合法输入」（§4.1 K14 第三件 · 与 `gate run --step` 同一方言）。
 //
 // 干跑语义（门⑩ `dryrun.v1` · 登记在 `core/internal/contract/dryrun-semantics.json`）：
@@ -229,8 +229,8 @@ func cmdCalibRun(inv *invocation, stdout, stderr io.Writer) int {
 		row["mode"], row["result"], row["rc"] = "dry-run", "planned", "0"
 		row["note"] = "（--dry-run：零副作用 · 未 exec 任何脚本）"
 		if inv.jsonGiven {
-			if !requireFields(inv, stderr) {
-				return exitFail
+			if rc := requireFields(inv, stderr); rc != exitOK {
+				return rc
 			}
 			return selectJSON(stdout, stderr, inv, inv.path, calibRunFields, row)
 		}
@@ -267,8 +267,8 @@ func cmdCalibRun(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %s 退码 %d —— **原样转出**（命令面不改写任何码）\n", progName, e.File, rc)
 	}
 	if inv.jsonGiven {
-		if !requireFields(inv, stderr) {
-			return exitFail
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
 		}
 		if jrc := selectJSON(stdout, stderr, inv, inv.path, calibRunFields, row); jrc != exitOK {
 			return jrc

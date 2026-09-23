@@ -15,6 +15,17 @@ Objects and actions go at most three levels deep. There is one rule of usage: **
 
 ---
 
+## 0. Note for this build · one behaviour change **external scripts can observe**
+
+For `--json` **with the flag but without fields** (e.g. `zerg gate run --json`), the exit code moves from `1` to **`2`** (usage error).
+
+* **Why**: the exit-code table (`zerg help exit-codes`, the single source of truth) says "usage error = `2`". The old implementation returned `1` here, out of step with its own table — a case of "the spec itself was wrong", so **the table wins** (one of the exceptions to the compatibility promise: security / unspecified behaviour / spec error).
+* **What changes**: only the **exit code** of this one cell. stdout is still **0 bytes** (the dangerous-action tier emits a machine-readable error envelope), and the field list still goes to stderr — the prompt face is unchanged to the byte.
+* **Who is hit**: scripts/CI that test `rc == 1` to mean "arguments incomplete". Test `rc == 2` instead (or use the semantic names from `zerg help exit-codes`; do not copy numbers into your predicates).
+* **No silent change**: this is also recorded in `CHANGELOG.md`; the matrix (`core/cmd/zerg/testdata/cli-matrix.json`) was **re-frozen in the same commit**, 26 cells `want_rc` `1 → 2`.
+
+---
+
 ## 1. Where to find the command you need
 
 The help face is itself made of commands — ask it first:
