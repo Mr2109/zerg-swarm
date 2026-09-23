@@ -6,20 +6,22 @@
 //	· 不动脚本退码（脚本退多少，命令面就返多少：`return cmd.ProcessState.ExitCode()`；
 //	  全文件**零分支**改写退码 —— 这就是「不翻译」的证明面）。
 //
-// 四条动作与脚本旗标的对应（一一对应，不加戏）：
+// 五条动作与脚本旗标的对应（一一对应，不加戏）：
 //
 //	zerg gate ls          → bash scripts/gates/precommit-gates.sh --list
 //	zerg gate run  <原样>  → bash scripts/gates/precommit-gates.sh <原样>      （--scope/--fast/--outdir/… 逐字透传）
 //	zerg gate show <步名>  → bash scripts/gates/precommit-gates.sh --emit-cmd <步名>
 //	zerg gate self-test    → bash scripts/gates/precommit-gates.sh --self-test
+//	zerg gate results      → **不走脚本**：读现成一趟的 results.tsv（缺口 `Q-111`/`B-8` · 只读）
 //
-// 两条**例外**（都只在命令面自己的旗标上生效，且都**不改脚本退码**）：
+// 三条**例外**（都只在命令面自己的旗标上生效，且都**不改脚本退码**）：
 //
 //	· `gate run --step <步名> --json <字段>` —— 单步档的机器面（`family_gate_run_step.go`）；
 //	· `gate show <步名> --json [<字段>]`   —— 四格机器面（`family_gate_show.go` · 缺口 `Q-061`/
-//	  `B-3`：默认面**一个字节不动**，`--emit-cmd` 仍是命令串直取口 ⇒ `bash -c "$(…)"` 的既有用法不破）。
+//	  `B-3`：默认面**一个字节不动**，`--emit-cmd` 仍是命令串直取口 ⇒ `bash -c "$(…)"` 的既有用法不破）；
+//	· `gate results [--last|--dir <目录>] [--json <字段>]` —— 上一趟的四数（`family_gate_results.go`）。
 //
-// 为什么**除这两处**不做 `--json`：其余三条的输出**就是**脚本的输出（逐行相同）；再包一层 JSON
+// 为什么**除这三处**不做 `--json`：其余三条的输出**就是**脚本的输出（逐行相同）；再包一层 JSON
 // 等于在命令面里另写一份步骤表 —— `G1-a` 明令禁止。
 package main
 
@@ -85,9 +87,14 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		args = append([]string{"--emit-cmd"}, tail...)
 	case "self-test":
 		args = []string{"--self-test"}
+	case "results":
+		// 缺口 `Q-111`/`B-8`：读**现成的**一趟门禁产物出四数（**只读** —— 不跑任何步骤、
+		// 不写不删任何日志）。本动作**不走脚本**（脚本没有这个动作）⇒ 是第四条命令面分支，
+		// 与 `run --step --json` / `show --json` 同规：只在命令面自己的旗标上生效。
+		return gateResults(inv, stdout, stderr, root)
 	default:
 		fmt.Fprintf(stderr, "%s: 未知 `gate` 动作 %q\n", progName, action)
-		fmt.Fprintf(stderr, "可用：ls · run · show · self-test\n")
+		fmt.Fprintf(stderr, "可用：ls · run · show · self-test · results\n")
 		return exitUsage
 	}
 

@@ -377,6 +377,17 @@ func init() {
 			run:         cmdGate,
 		},
 		{
+			path:    []string{"gate", "results"},
+			kind:    "GateResults",
+			summary: "读**现成**一趟门禁产物的四数（通过/失败/不给结论/只报告 + 步数与总退码）· 只读",
+			usage:   "zerg gate results [--last] [--dir <目录>] [--json <字段>]",
+			args:    []string{"（不收位置参数：那一趟由 `--last`（缺省即最近一趟）或 `--dir <目录>` 指）"},
+			// 逐条五格 = 步名/状态/退码/耗时/日志路径（缺口 `Q-111`/`B-8` 的机器面）。
+			fields:   gateResultsFields,
+			endpoint: "",
+			run:      cmdGate,
+		},
+		{
 			path:        []string{"gate", "self-test"},
 			summary:     "门禁自检（合成步骤 · 不碰真目标）",
 			usage:       "zerg gate self-test",
@@ -1501,6 +1512,9 @@ type invocation struct {
 	// 全局布尔、谁用谁读 —— 不用的命令静默忽略。
 	declared bool
 	verified bool
+	// `--last`（缺口 `Q-111` · `gate results`）：读**最近一趟**现成的门禁产物（与 `--dir` 互斥 ——
+	// 两个来源不许混）。与 `--all`/`--fast` 同一形态：全局布尔、谁用谁读。
+	last bool
 	// `--ttl <时长>`（`E4` · 人签批准件的**有效期**面）：与 `--confirm` 同一种形态 —— 「给了旗标」与
 	// 「给了值」是两件事（`--ttl` 裸给 ⇒ `ttlGiven` 真、值为空 ⇒ 由 `approve new` 判成用法错 2，
 	// **不许**静默当「没给」）。缺省（不给这一枚）⇒ 不过期，件与今天逐字节同形态。
@@ -1721,6 +1735,11 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.all = true
 		case a == "--fast":
 			inv.fast = true
+		// `--last`（2026-09-23 · 缺口 `Q-111`/`B-8`）：`gate results` 读**最近一趟**现成的门禁产物。
+		// 与上面两枚同一种形态：全局布尔、谁用谁读 —— 不用的命令静默忽略。
+		// 为什么不做成取值旗标：它指的是**目录来源**（最近一趟），不是一条路径 —— 路径由 `--dir` 给。
+		case a == "--last":
+			inv.last = true
 		// `A3` 两档（§4.1）：模型档 / 人面档。可叠加（§4.1 的模型档是人面档的子集 ⇒
 		// 同时给以**人面档**为准，由命令自己明说；R38：「可叠加」指的是与 `--json`）。
 		case a == "--for-model":
