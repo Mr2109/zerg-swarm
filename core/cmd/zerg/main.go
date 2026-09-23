@@ -877,14 +877,14 @@ func init() {
 		},
 		{
 			path:    []string{"cocoon", "open"},
-			summary: "起虫茧的文档服务（8610 · D3 起服务档 · 本版未开放）",
+			summary: "起虫茧的文档服务（8610 · D3 起服务档 · **计划面已开放**：`--dry-run` 出计划件；真跑本版未开放 · 拒执退码 2）",
 			usage:   "zerg cocoon open <茧名> [--confirm=<茧名> --yes | --dry-run]",
 			args:    []string{"茧名"},
 			run:     cmdCocoonOpen,
 		},
 		{
 			path:    []string{"egg", "run"},
-			summary: "把卵跑起来（写面 · 本版未开放）",
+			summary: "把卵跑起来（**写面本版未开放**：连干跑一道押后、真跑退码 8；只读投影见 `egg ls` / `egg show`）",
 			usage:   "zerg egg run <卵 id> [--yes | --dry-run]",
 			args:    []string{"卵 id"},
 			run:     cmdEggRun,
@@ -976,7 +976,7 @@ func init() {
 		},
 		{
 			path:    []string{"build", "release"},
-			summary: "打包发布件（换件档 · 本版未开放；计划件见 --dry-run）",
+			summary: "打包发布件（**计划面已开放**：`--dry-run` 出计划件；换件档真跑本版未开放 · 拒执退码 2）",
 			usage:   "zerg build release [--dry-run | --confirm=<主机名> --yes]",
 			run:     cmdBuildPassthrough,
 		},
@@ -1290,7 +1290,7 @@ func init() {
 		{
 			path:     []string{"apply"},
 			kind:     "Apply",
-			summary:  "**做**：只吃那一份意图件（L1 schema → L2 引用 → L3 干跑 → L4 人在环）· 本版未开放执行",
+			summary:  "**做**：只吃那一份意图件（L1 schema → L2 引用 → L3 干跑 → L4 人在环）· **校验四层已开放**；写面（真做）本版未开放 · 拒执退码 2",
 			usage:    "zerg apply <件> [--confirm=<目标>] [--json <字段>]",
 			args:     []string{"意图件路径"},
 			fields:   applyFields,
