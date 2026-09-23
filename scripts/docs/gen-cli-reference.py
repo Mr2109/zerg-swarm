@@ -510,7 +510,12 @@ def live_data(root):
     ident, counts = "", ""
     for l in exp[:10]:
         if l.startswith("> 命令面身份："):
-            ident = l.split("：", 1)[1].strip()
+            # ★ 2026-09-24 现跑坐实：导出物把身份串**自己**用一对反引号包着（`zerg 2.5.11 …`），
+            #   本器原来的 `` `%s` `` 会套成``双反引号``；而门⑫ 的 `ZERG_INLINE` 认「反引号后紧跟
+            #   `zerg `」的形态 ⇒ 把身份串当**命令示例**抽出来（`zerg ab1ac075` ⇒ 判「不在命令树」假红 ——
+            #   **sha 首位是数字时**恰好被 `if not words: continue` 放过，是字母时才暴露，故改前一直没红）。
+            #   ⇒ 身份行按**引文**呈现：值逐字不改，只是不再包在行内反引号里（正文里没有 `zerg <非命令>` 型示例）。
+            ident = l.split("：", 1)[1].strip().strip("`")
         if l.startswith("> 本版："):
             counts = l.split("：", 1)[1].strip()
     nums = re.findall(r"\*\*(\d+)\*\*", counts)
@@ -601,7 +606,7 @@ def render(loc, data, zh_body=""):
     for line in t["lead"]:
         b.append("> " + line.format(total=data["n_open"] + data["n_danger"],
                                     open=data["n_open"], danger=data["n_danger"]))
-    b.append("> 身份 / identity：`%s`" % data["ident"])
+    b.append("> 身份 / identity：%s" % data["ident"])
     b.append("")
 
     b.append("## %s {: #%s }" % (t["h_cmds"], t["h_cmds"]))
