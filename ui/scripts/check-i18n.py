@@ -11,6 +11,22 @@
 用法：
   python3 ui/scripts/check-i18n.py            # 门禁（退出码 0 通过 / 1 失败）
   python3 ui/scripts/check-i18n.py --list     # 只列出当前剩余的中文字面量（不改基线）
+  python3 ui/scripts/check-i18n.py --json     # 机器面：四段计数 + 基线条数/声明数 + 逐条红因（默认面一字不动）
+
+G4 的**方向判据**（「只许收不许放」· 缺口 `C-02` · 2026-09-24）
+------------------------------------------------------------
+基线件 `ui/scripts/i18n-baseline.json` 里除了白名单 `allowed`，还带一格**声明数**
+（`allowed_count`）—— 它同时是 `scripts/gates/baseline-ratchet.py` 条件
+`i18n.allowed_count` 的**现值那一格**。两条判据同批生效（缺一条就是「放开了没人拦」）：
+
+  · 本门这一条（**就地**判）：白名单实条数 **>** 声明数 ⇒ **ERROR**（放开被拦）；
+    声明数 **>** 实条数 ⇒ **warn**（收的方向不拦，但声明数虚高 = 棘轮现值虚高，要同降）；
+    声明数缺失 / 不是非负整数 ⇒ **ERROR**（方向判据无锚 ⇒ fail-closed）。
+  · 棘轮那一条（**事后**判 · `baseline-ratchet.py --check`）：声明数与台账最后一条对不上
+    ⇒ 判红（有一条没记录的手改）—— 件在盘上、谁都能拿编辑器改，能拦的是「改完对不上台账」。
+
+⇒ 改白名单（无论收还是放）的**唯一通道** = 棘轮写入口：
+    `python3 scripts/gates/baseline-ratchet.py --write --reason '…'`（上调还要 `--allow-raise`）。
 """
 import json
 import os
@@ -97,6 +113,18 @@ def load_baseline():
         with open(BASELINE_FILE, encoding="utf-8") as f:
             return json.load(f)
     return {"allowed": []}
+
+
+def declared_count(baseline):
+    """基线件里的**声明数**（= `baseline-ratchet.py` 条件 `i18n.allowed_count` 的现值那一格）。
+
+    ⇒ 非负整数 | `None`（缺 / 坏了都给 `None`，由调用方按 fail-closed 判红 —— 这一处**不许给默认值**：
+    给 `0` 等于默认「白名单一条都不许有」（假红），给 `len(allowed)` 等于默认「现在这样就对」（假绿））。
+    """
+    v = baseline.get("allowed_count")
+    if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+        return None
+    return int(v)
 
 
 def main():
@@ -191,6 +219,26 @@ def main():
             % (len(stale), ", ".join("%s|%s" % (a.get("file"), a.get("contains", "")[:24]) for a in stale[:5]))
         )
 
+    # G4 方向判据（「只许收不许放」· 缺口 `C-02`）：白名单实条数 与 声明数（棘轮现值）必须一致。
+    #   · 实条数 > 声明数 ⇒ **ERROR**（**放开被拦** —— 有人往白名单里放了一条，声明数没动）；
+    #   · 声明数 > 实条数 ⇒ **warn**（收的方向不拦：白名单收了、声明数还没走写入口同降，
+    #     这一格只提示，因为拦它等于把「收」也堵住；棘轮现值虚高不构成放宽）；
+    #   · 声明数缺失 / 不是非负整数 ⇒ **ERROR**（方向判据**无锚** ⇒ fail-closed，不给默许）。
+    declared = declared_count(baseline)
+    if os.path.exists(BASELINE_FILE):
+        if declared is None:
+            errors.append("G4 基线件缺 `allowed_count` 声明数（现 %r）：`baseline-ratchet.py` 的条件 "
+                          "`i18n.allowed_count` 读的就是这一格 ⇒ 只许收不许放的方向判据无锚 ⇒ fail-closed 判红"
+                          % (baseline.get("allowed_count"),))
+        elif declared < len(allowed):
+            errors.append("G4 **放开被拦**：白名单实条数 %d > 声明数 %d ⇒ 基线只许收不许放；"
+                          "唯一通道 = `python3 scripts/gates/baseline-ratchet.py --write --reason '…' --allow-raise`"
+                          "（改数并留台账）" % (len(allowed), declared))
+        elif declared > len(allowed):
+            warns.append("G4 声明数 %d > 白名单实条数 %d（收的方向不拦，只提示）：请走唯一写入口把声明数同降 —— "
+                         "`python3 scripts/gates/baseline-ratchet.py --write --reason '…'`"
+                         % (declared, len(allowed)))
+
     # G5 错误码 ↔ UI 键（多语言 L4——服务端 46 个 code 应有对应 apierr.* 键）
     # 强度：warn（未收录的 code 会回退服务端 message——客户端不改即可运行，故不阻断）
     api_dir = os.path.join(ROOT, "core", "internal", "api")
@@ -214,6 +262,27 @@ def main():
     if unused:
         warns.append("未引用键 %d 个（可能被动态引用 t!(变量)，据此删键前先确认）：%s"
                      % (len(unused), ", ".join(unused[:8])))
+
+    if "--json" in sys.argv:
+        # 机器面（照 K1/K2 同规：**默认面一字不动**，机器面只多一条路）—— 四段计数 + 基线条数/声明数
+        # + 逐条红因。缺口 `C-10`（命令面入口）**另行接线**；本档先给「一条命令 ⇒ rc + 四段计数」的
+        # 可机读面，接线的下一手不必解析散文（`baseline-ratchet.py` 的现测面读的也是这一档）。
+        print(json.dumps({
+            "id": "i18n-gate.v1",
+            "counts": {
+                "keys_zh": len(zh),
+                "keys_en": len(en),
+                "static_refs": len(used),
+                "chinese_literals": len(rows),
+                "baseline_allowed": len(allowed),
+                "baseline_declared": declared,
+            },
+            "errors": errors,
+            "warns": warns,
+            "extra": ["%s:%d | %s" % (r[0], r[1], r[3]) for r in extra],
+            "stale": ["%s|%s" % (a.get("file"), a.get("contains", "")) for a in stale],
+        }, ensure_ascii=False, indent=2, sort_keys=False))
+        return 1 if errors else 0
 
     print("=== i18n 门禁 ===")
     print("  键数 zh=%d en=%d ｜ 静态引用 %d ｜ 剩余中文字面量 %d 行（基线 %d）"
