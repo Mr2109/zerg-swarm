@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""check-trustroot-witness.py v1.1.0 —— 信任根可追溯：**只读一致性对拍件**（2.5.11 人签 F 批 · `F1`）
+"""check-trustroot-witness.py v1.2.0 —— 信任根可追溯：**只读一致性对拍件**（2.5.11 人签 F 批 · `F1`；v1.2.0 加 `--json`）
 
 为什么存在（`F1` 的任务原文 + 已拍的落点）
 --------------------------------------------------
@@ -53,7 +53,7 @@
 --------------------------------------------------
   python3 scripts/gates/check-trustroot-witness.py                # 先自检，再扫真目标
   python3 scripts/gates/check-trustroot-witness.py --self-test    # 只跑自检（合成夹具 · 不碰真目标）
-  python3 scripts/gates/check-trustroot-witness.py --root <仓根> --state <状态目录> --copy <副本路径>
+  python3 scripts/gates/check-trustroot-witness.py --root <仓根> --state <状态目录> --copy <副本路径> [--json]   # `--json`（v1.2.0 · 缺口 `B-8`）：stdout **只出**六键包封（`items` 逐处命中/豁免 · `meta` 带 **命中 N（`hits`）· 豁免 M（`excused`）· 锚区间（`anchors`）** + 判红逐条原话；版本/自检走 stderr）—— 不给它 ⇒ 人面与退码与 v1.1.0 **逐字节相同**（同一批变量两个出口，不另算一份）
 """
 
 import argparse
@@ -65,7 +65,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ROOT = os.path.dirname(os.path.dirname(HERE))
-VERSION = "check-trustroot-witness.py v1.1.0"
+VERSION = "check-trustroot-witness.py v1.2.0"
 
 RUNNING_REL = os.path.join("approvals", "operator.pub")     # 运行真源（相对状态目录）
 # ★ 「审计副本」的**落点占位**（声明式 · `P17` = 甲）：主仓里那一枚**已人签的审计副本**。
@@ -405,16 +405,16 @@ def judge_all(r):
 
 # ── 自检（先自证会红，再扫真目标）────────────────────────────────────────────────
 
-def self_test():
+def self_test(stream=sys.stdout):
     ok = bad = 0
 
     def check(cond, msg_ok, msg_bad):
         nonlocal ok, bad
         if cond:
-            print("   ✓ %s" % msg_ok)
+            print("   ✓ %s" % msg_ok, file=stream)
             ok += 1
         else:
-            print("   ✗ %s" % msg_bad)
+            print("   ✗ %s" % msg_bad, file=stream)
             bad += 1
 
     good = json.dumps({"alg": "ed25519", "pub": "AAAA", "key_id": "8b69ad95939df5cf",
@@ -517,66 +517,172 @@ def self_test():
           "⇒ **判红 2 处** —— 豁免窄到「表元素行」",
           "⑱ 失败：⑮∧⑯ 同时成立时仍判红（豁免没生效）/ 表外真读被豁免（放太宽）")
 
-    print("   自检：%d 格过 · %d 格不过（真目标只读 · 未改任何字节）" % (ok, bad))
+    # ⑲（`Q-111`/`B-8` · 2026-09-23）：`--json` 机器面 —— 六键齐 + `items` 逐条带 path/line/verdict +
+    #   「命中 N · 豁免 M · 锚区间」与**同一批读数**同值（机器面与人面同源：同一批变量、不另算一份）。
+    j_rel = PUBLISH_EXCLUDES_SH.replace(os.sep, "/")
+    j_doc = json.loads(build_json(
+        rc=0, reds=[], nocalls=[],
+        readers=[(j_rel, 3, syn_sh.splitlines()[2])], excused=[],
+        anchors={j_rel: (1, 5)}, meta={"version": VERSION, "run_bytes": len(good)}, warnings=[]))
+    keys_ok = sorted(j_doc.keys()) == sorted(["schema", "kind", "items", "meta", "warnings", "truncated"])
+    item_ok = (len(j_doc["items"]) == 1 and j_doc["items"][0]["path"] == j_rel
+               and j_doc["items"][0]["line"] == 3 and j_doc["items"][0]["verdict"] == "hit"
+               and bool(j_doc["items"][0]["why"]) and j_doc["items"][0]["text"] == syn_sh.splitlines()[2].strip())
+    value_ok = (j_doc["meta"]["hits"] == 1 and j_doc["meta"]["excused"] == 0
+                and j_doc["meta"]["count"] == len(j_doc["items"])
+                and j_doc["meta"]["anchors"][0]["start"] == 1 and j_doc["meta"]["anchors"][0]["end"] == 5
+                and j_doc["meta"]["rc"] == 0 and j_doc["truncated"] is False)
+    check(keys_ok and item_ok and value_ok,
+          "⑲ `--json` 机器面：六键齐 · `items` 逐条带 path/line/verdict · 「命中 N · 豁免 M · 锚区间」"
+          "与**同一批读数**同值（机器面与人面同源）",
+          "⑲ 失败：六键不齐 / items 缺格 / 计数与读数不同值（六键 %s · 条目 %s · 同值 %s）"
+          % (keys_ok, item_ok, value_ok))
+
+    print("   自检：%d 格过 · %d 格不过（真目标只读 · 未改任何字节）" % (ok, bad), file=stream)
     return bad == 0
+
+
+# ── 机器面（`--json` · 缺口 `Q-111`/`B-8`）────────────────────────────────────────
+#   病灶：今天「命中 N · 豁免 M · 锚区间」只有**人面**（下面 `scan()` 逐行印的那几句）—— 机器读不出来，
+#   谁想知道「这一趟到底几处命中、豁免了哪几处、锚定出的表区间是第几行到第几行」都得自己再解析人话。
+#   补法：**同一批变量**再出一个出口（`build_json`）—— 人面与机器面同源，不另算一份。
+
+JSON_ITEM_CAP = 200   # `items` 上限（超了 ⇒ truncated=true + 一条 warning；两个计数仍按**全量**数）
+
+
+def build_json(rc, reds, nocalls, readers, excused, anchors, meta, warnings):
+    """机器面六键包封（`schema`/`kind`/`items`/`meta`/`warnings`/`truncated` · 本仓现成口径）。
+
+    · `items`   逐**处**命中：`path/line/verdict`（`hit`=运行路径真读副本 / `excused`=排除声明的元素行）/
+                `why`（口径一句话）/ `text`（那一行原文）—— 键恒有值、逐条不同（不是「一坨同一个值」）。
+    · `meta`    **命中 N（`hits`）· 豁免 M（`excused`）· 锚区间（`anchors`）** + 其余读数（版本 ·
+                运行真源 sha/字节 · `key_id` · 副本落点态 · 在册件三数 · git 面命中 · `rc`）+
+                **判红 / 不给结论逐条原话**（`reds`/`nocalls` —— 机器面要能自愈，就得带原文）。
+                ★ `hits`/`excused` 是**全量**数（不受 `items` 截断影响）；`count` = `items` 实际条数。
+    · `warnings` 逐条**真事**（副本未落地 · 旧钥件交代 · items 截断）· 空 ⇒ 逐字 `[]`。
+    · `truncated` 只在 `items` 被截断时 true（不许拿它当「没结论」—— 那是 `rc`/`meta.rc` 的事）。
+    """
+    excused_pairs = {(p, n) for p, n in excused}
+    items = []
+    for path, line, text in readers:
+        is_exc = (path, line) in excused_pairs
+        items.append({
+            "path": path,
+            "line": line,
+            "verdict": "excused" if is_exc else "hit",
+            "why": ("排除声明的**元素行**（`Q-114`=甲）：那是「声明它不进公开面」，不算「读副本」"
+                    if is_exc else "运行路径读副本（`P17` 红线 1）⇒ 判红"),
+            "text": (text or "").strip(),
+        })
+    truncated = len(items) > JSON_ITEM_CAP
+    if truncated:
+        items = items[:JSON_ITEM_CAP]
+    warns = list(warnings)
+    if truncated:
+        warns.append("items 只出前 %d 处（命中共 %d 处）⇒ truncated=true；`hits`/`excused` 仍按**全量**数"
+                     % (JSON_ITEM_CAP, len(readers)))
+    m = dict(meta)
+    m.update({
+        "count": len(items),
+        "hits": len(readers),
+        "excused": len(excused),
+        "anchors": [{"path": rel, "start": span[0], "end": span[1],
+                     "opener": TABLE_ANCHORS.get(rel.replace("/", os.sep), ("?", "?"))[0]}
+                    for rel, span in sorted((anchors or {}).items())],
+        "rc": rc,
+        "reds": list(reds),
+        "nocalls": list(nocalls),
+    })
+    return json.dumps({"schema": "zerg/v1", "kind": "TrustrootWitness", "items": items,
+                       "meta": m, "warnings": warns, "truncated": truncated},
+                      ensure_ascii=False, indent=1)
 
 
 # ── 主 ───────────────────────────────────────────────────────────────────────────
 
-def scan(repo, state, copy_rel):
+def scan(repo, state, copy_rel, as_json=False):
+    # 人面 / 机器面**同一批变量**两个出口：`--json` 时人面不印（机器面要能直接喂解析器），
+    # 退码、判据、读数一字不改 —— 变的是**怎么印**，不是**判什么**。
+    say = (lambda *a, **k: None) if as_json else print
     r, why = read_all(repo, state, copy_rel)
     if r is None:
+        if as_json:
+            print(build_json(rc=2, reds=[], nocalls=["未取数：%s" % why], readers=[], excused=[],
+                             anchors={}, meta={"version": VERSION},
+                             warnings=["未取数（读不到运行真源）⇒ 不出结论（rc=2）"]))
+            return 2
         print("⛔ 未取数：%s ⇒ **不出结论**（rc=2）" % why)
         return 2
     r["readers"] = scan_readers(repo, r["tracked"], r["copy_rel"])
     r["anchors"] = read_table_anchors(repo)
     reds, nocalls, info = judge_all(r)
     rel = copy_rel.replace(os.sep, "/")
-    print("── 读数（只读 · 每处带口径）")
-    print("   ① 运行真源（%s）= **%d B** · sha256 = %s" % (
-        r["run_path"], len(r["run_raw"]), __import__("hashlib").sha256(r["run_raw"]).hexdigest()))
-    print("   ①-补 批前登记读数：**%d B** · `key_id=%s`（**只印不判** —— `P17` 明写换钥会发生）"
-          % (BASE_BYTES, BASE_KEY_ID))
+    run_sha = __import__("hashlib").sha256(r["run_raw"]).hexdigest()
+    say("── 读数（只读 · 每处带口径）")
+    say("   ① 运行真源（%s）= **%d B** · sha256 = %s" % (r["run_path"], len(r["run_raw"]), run_sha))
+    say("   ①-补 批前登记读数：**%d B** · `key_id=%s`（**只印不判** —— `P17` 明写换钥会发生）"
+        % (BASE_BYTES, BASE_KEY_ID))
     d = info["d"] or {}
-    print("   ①-形 `alg=%s` · `key_id=%s` · `at=%s`（四字段闭集 %s）"
-          % (d.get("alg"), d.get("key_id"), d.get("at"), ",".join(FIELD_CLOSED)))
-    print("   ② 审计副本落点（%s）：%s" % (rel, "**未落地**" if r["copy_raw"] is None
-                                       else "%d B · %s" % (len(r["copy_raw"]), info["state2"])))
-    print("   ②-补 两器排除口径（W4）：%s" % info["why4"])
-    print("   ③ `git ls-files` 里 `approvals/operator.pub` 命中 = %d（`L-7` 要求 0）；"
-          "`operator.pub` 总命中 = %d（**只印不判**：副本落地后为 1）"
-          % (len([p for p in r["tracked"] if p.endswith(RUNNING_REL.replace(os.sep, "/"))]),
-             info["pub_hits"]))
-    print("   ④ 在册件 %d 枚；其中认运行真源的 %d 枚 · 不认的（旧钥件 · 只交代）%d 枚"
-          % (len(r["tickets"]), len(r["tickets"]) - len(info["others"]), len(info["others"])))
+    say("   ①-形 `alg=%s` · `key_id=%s` · `at=%s`（四字段闭集 %s）"
+        % (d.get("alg"), d.get("key_id"), d.get("at"), ",".join(FIELD_CLOSED)))
+    say("   ② 审计副本落点（%s）：%s" % (rel, "**未落地**" if r["copy_raw"] is None
+                                     else "%d B · %s" % (len(r["copy_raw"]), info["state2"])))
+    say("   ②-补 两器排除口径（W4）：%s" % info["why4"])
+    say("   ③ `git ls-files` 里 `approvals/operator.pub` 命中 = %d（`L-7` 要求 0）；"
+        "`operator.pub` 总命中 = %d（**只印不判**：副本落地后为 1）"
+        % (len([p for p in r["tracked"] if p.endswith(RUNNING_REL.replace(os.sep, "/"))]),
+           info["pub_hits"]))
+    say("   ④ 在册件 %d 枚；其中认运行真源的 %d 枚 · 不认的（旧钥件 · 只交代）%d 枚"
+        % (len(r["tickets"]), len(r["tickets"]) - len(info["others"]), len(info["others"])))
     if info["others"]:
-        print("   ·  交代：与运行真源不一致的在册件 = %s（`E3`：换钥后旧件作废 + 归档位 ⇒ 不当红）"
-              % ", ".join(o[0] for o in info["others"]))
-    print("   ⑤ 运行路径里副本路径的字面串命中 = %d（W5 要求 0）· 其中**排除声明豁免** = %d"
-          "（表元素行 · `Q-114`=甲）%s"
-          % (len(r["readers"]), len(info["exc5"]),
-             ("：%s" % ", ".join("%s:%d" % (a, b) for a, b, _ in r["readers"])) if r["readers"] else ""))
-    for rel, span in sorted((info["anchors"] or {}).items()):
-        print("   ·  豁免锚（**现读**文件真身定的表区间）：%s 第 %d–%d 行（%s）"
-              % (rel, span[0], span[1],
-                 TABLE_ANCHORS.get(rel.replace("/", os.sep), ("?", "?"))[0]))
+        say("   ·  交代：与运行真源不一致的在册件 = %s（`E3`：换钥后旧件作废 + 归档位 ⇒ 不当红）"
+            % ", ".join(o[0] for o in info["others"]))
+    say("   ⑤ 运行路径里副本路径的字面串命中 = %d（W5 要求 0）· 其中**排除声明豁免** = %d"
+        "（表元素行 · `Q-114`=甲）%s"
+        % (len(r["readers"]), len(info["exc5"]),
+           ("：%s" % ", ".join("%s:%d" % (a, b) for a, b, _ in r["readers"])) if r["readers"] else ""))
+    for rel2, span in sorted((info["anchors"] or {}).items()):
+        say("   ·  豁免锚（**现读**文件真身定的表区间）：%s 第 %d–%d 行（%s）"
+            % (rel2, span[0], span[1],
+               TABLE_ANCHORS.get(rel2.replace("/", os.sep), ("?", "?"))[0]))
     for p5, n5 in info["exc5"]:
-        print("   ·  豁免（`Q-114`=甲）：%s:%d 是排除表的**元素行** ⇒ 那是「声明不进公开面」（W4 要的），"
-              "不算「读副本」" % (p5, n5))
-    print("   ⑥ 不可机检（如实标 · 不许写成命令判据）：**副本该放哪个仓面谁签它**是人定的（`P17`）；"
-          "**两份 `key_id` 一致 ≠ 信任根历史可信**（历史面靠副本逐次人签）")
+        say("   ·  豁免（`Q-114`=甲）：%s:%d 是排除表的**元素行** ⇒ 那是「声明不进公开面」（W4 要的），"
+            "不算「读副本」" % (p5, n5))
+    say("   ⑥ 不可机检（如实标 · 不许写成命令判据）：**副本该放哪个仓面谁签它**是人定的（`P17`）；"
+        "**两份 `key_id` 一致 ≠ 信任根历史可信**（历史面靠副本逐次人签）")
+    warns = []
+    if r["copy_raw"] is None:
+        warns.append("审计副本**未落地**（W2：明写「未落地」且 rc≠0 —— 不许拿「文件不存在」当「没问题」）")
+    if info["others"]:
+        warns.append("与运行真源不一致的在册件（旧钥件 · `E3` 换钥后作废 + 归档位 ⇒ 只交代、不当红）= %s"
+                     % ", ".join(o[0] for o in info["others"]))
     if reds or nocalls:
         rc = 1 if reds else 2
-        print("⇒ 门禁%s（rc=%d）：红 %d 条 · 不给结论 %d 条"
-              % ("红" if rc == 1 else "不给结论", rc, len(reds), len(nocalls)))
+        say("⇒ 门禁%s（rc=%d）：红 %d 条 · 不给结论 %d 条"
+            % ("红" if rc == 1 else "不给结论", rc, len(reds), len(nocalls)))
         for p in reds:
-            print("   ✗ %s" % p)
+            say("   ✗ %s" % p)
         for p in nocalls:
-            print("   ⛔ %s" % p)
-        return rc
-    print("⇒ 全绿（rc=0）：运行真源形状对 · 在册件认它 · 副本逐字一致 · `L-7` 仍成立 · "
-          "副本未进公开面 · 无运行路径读副本（两器排除声明的**表元素行**已按 `Q-114`=甲 判明豁免）")
-    return 0
+            say("   ⛔ %s" % p)
+    else:
+        rc = 0
+        say("⇒ 全绿（rc=0）：运行真源形状对 · 在册件认它 · 副本逐字一致 · `L-7` 仍成立 · "
+            "副本未进公开面 · 无运行路径读副本（两器排除声明的**表元素行**已按 `Q-114`=甲 判明豁免）")
+    if as_json:
+        print(build_json(
+            rc=rc, reds=reds, nocalls=nocalls, readers=r["readers"], excused=info["exc5"],
+            anchors=info["anchors"],
+            meta={"version": VERSION,
+                  "run_path": r["run_path"], "run_bytes": len(r["run_raw"]), "run_sha256": run_sha,
+                  "key_id": info["run_kid"], "copy_state": info["state2"],
+                  "copy_landed": r["copy_raw"] is not None,
+                  "tickets": len(r["tickets"]), "tickets_foreign": len(info["others"]),
+                  "git_running_hits": len([p for p in r["tracked"]
+                                           if p.endswith(RUNNING_REL.replace(os.sep, "/"))]),
+                  "git_pub_hits": info["pub_hits"],
+                  "hits_judged_red": len(r["readers"]) - len(info["exc5"])},
+            warnings=warns))
+    return rc
 
 
 def main():
@@ -584,22 +690,28 @@ def main():
     ap.add_argument("--root", default=DEFAULT_ROOT, help="仓根（默认 = 本脚本的上两级）")
     ap.add_argument("--state", default=None, help="状态目录（默认 = `ZERG_STATE_DIR` > `~/.zerg/state`）")
     ap.add_argument("--copy", default=None, help="审计副本路径（默认 = `P17` 甲 声明的落点占位）")
+    ap.add_argument("--json", action="store_true",
+                    help="机器面：stdout **只出**六键包封（命中 N · 豁免 M · 锚区间 + 读数 + 判红逐条原话）；"
+                         "版本与自检面走 stderr（∅ 人面与退码一字不改）")
     ap.add_argument("--self-test", action="store_true", help="只跑自检（不碰真目标）")
     ap.add_argument("--no-self-test", action="store_true", help="跳过自检（只有已自证过的调用方才该用）")
     args = ap.parse_args()
     repo = os.path.abspath(args.root)
     state = state_dir_of(args.state)
-    print(VERSION)
-    if not args.no_self_test and not self_test():
+    # `--json` ⇒ stdout **只有**那份包封（喂解析器不用先剥人话）；版本/自检/真目标那几行诊断走 stderr。
+    # 不给 `--json` ⇒ 这两条流合成一条 stdout，与 v1.1.0 逐字节相同（见 `ctw` 的 before/after 对拍）。
+    diag = sys.stderr if args.json else sys.stdout
+    print(VERSION, file=diag)
+    if not args.no_self_test and not self_test(diag):
         return 1
     if args.self_test:
         return 0
-    print("── 真目标：%s（状态目录 %s）" % (repo, state))
+    print("── 真目标：%s（状态目录 %s）" % (repo, state), file=diag)
     if args.state is None and os.environ.get("ZERG_STATE_DIR"):
         print("★★ 状态目录是**环境变量 `ZERG_STATE_DIR` 给的**（%s）⇒ 本读数是**沙箱**读数，"
               "**不是**真状态目录 `~/.zerg/state`（闸里不设这个变量；要读真源请显式 `--state`）"
-              % os.environ["ZERG_STATE_DIR"])
-    return scan(repo, state, args.copy if args.copy is not None else AUDIT_COPY_REL)
+              % os.environ["ZERG_STATE_DIR"], file=diag)
+    return scan(repo, state, args.copy if args.copy is not None else AUDIT_COPY_REL, as_json=args.json)
 
 
 if __name__ == "__main__":
