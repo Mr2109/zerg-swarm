@@ -35,11 +35,17 @@ FORBID = {
     "Mr2109": "私有称谓：署名只用 GitHub 用户名 Mr2109",
 }
 WHITELIST = {
+    # ③（本件自己的口径逐字）：**防泄漏词表（发布拦截脚本）与规则文本本身必须能写出禁用词**。
     "scripts/build/publish-preflight.sh",
     "scripts/build/publish-public.sh",
     "scripts/build/test-publish-parity.sh",
     "docs/skills/code-quality.md",
     "scripts/gates/check-zh-en.py",
+    # 2026-09-23（`T-03` 门㉝ · 公开面写作红线自检件）：它的**内置甲档词表**逐条写着哪些词属私有面
+    #   （`AHZ`/`Zerg-内部文档`/缺口号/私有编写角色称谓/私有称谓 …）⇒ 正落在上面那一条口径里（**规则文本本身**）。
+    #   加之前：本件在禁用词面 6 处命中（词表行 1 + 理由引用 3 + 合成夹具 2）⇒ 尾巴软检查由 6 涨到 12；
+    #   加之后：回到 6（**不是**放宽判据：本件仍受「全角标点(代码区)」那一半管辖，仍是 0 命中）。
+    "scripts/gates/check-public-face-wording.py",
 }
 ROLE_PAT = re.compile(r"""(host\s*:\s*['"]?local\b|Machine\s*:\s*['"]local['"]|MachineSnapshot\(['"]local['"]\))""")
 ROLE_EXEMPT_HINT = ("_test.go", "selfupdate", "toolchain")
