@@ -147,6 +147,136 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	return listCmd(inv, stdout, stderr, []string{"path", "line", "text"}, rows)
 }
 
+// cmdCodeShow —— `zerg code show <件:行>`：读出源码里**某一行的邻域**（只读 · 与 `code find` 同族）。
+//
+// 为什么与 `find` 同族却单列一条：`find` 答「**在哪**」，`show` 答「**那处长什么样**」——
+// 每一次自开发都是「先找、再看」两问；两问都靠手搓 `sed -n` / `awk` 顶着，就没有命令面可言
+// （设计稿 §二 2.3 逐字「AI agent 不许绕过命令面直拼 curl/shell」）。
+//
+// 口径（**照 `code find` 的形态与退码族，不自造**）：
+//
+//	形态 `zerg code show <件:行> [--ctx <N>] [--json <字段>]`
+//	输出 `path/line/text/target` 逐条（`target=yes` 标出被点的那一行 · 机器面六键包封）
+//	退码 `0` 出邻域 · `1` 件不在（**不是错**，是「没有」）· `2` 用法错
+//	     （缺参 / 没冒号 / 行号非正整数 / 行号越界 / 件出仓 / 点的是目录 / `--ctx` 坏）
+//	     · `8` 仓根解析不到 · 件读不动或不是文本（**不给结论**）
+//
+// ★ 行号越界判 `2`（不是 `1`）：`1` 在本族里的语义是「**真没有**」，而越界是**你点的位置不对**
+//
+//	—— 用法错（任务单 `波7` 序71 的判据逐字：「负控：行号越界 ⇒ rc=2」）。
+func cmdCodeShow(inv *invocation, stdout, stderr io.Writer) int {
+	if len(inv.args) == 0 || strings.TrimSpace(inv.args[0]) == "" {
+		inv.setErr("usage", "missing_target", "缺 <件:行>")
+		fmt.Fprintf(stderr, "%s: `code show` 要给 <件:行>（例：zerg code show core/cmd/zerg/main.go:100）\n", progName)
+		fmt.Fprintf(stderr, "用法：zerg code show <件:行> [--ctx <N>] [--json <字段>]\n")
+		return exitUsage
+	}
+	target := strings.TrimSpace(inv.args[0])
+	colon := strings.LastIndex(target, ":")
+	if colon <= 0 || colon == len(target)-1 {
+		inv.setErr("usage", "bad_target", "目标不是 <件:行>")
+		fmt.Fprintf(stderr, "%s: 目标要写成 <件:行>（没冒号或没给行号）：%s ⇒ 退码 2\n", progName, target)
+		fmt.Fprintf(stderr, "例：zerg code show core/go.mod:12\n")
+		return exitUsage
+	}
+	rel, lineStr := target[:colon], target[colon+1:]
+	lineNo, aerr := strconv.Atoi(lineStr)
+	if aerr != nil || lineNo < 1 {
+		inv.setErr("usage", "bad_line", "行号不是正整数")
+		fmt.Fprintf(stderr, "%s: 行号要是正整数：%q ⇒ 退码 2\n", progName, lineStr)
+		return exitUsage
+	}
+	ctx := codeShowDefaultCtx
+	if s := strings.TrimSpace(inv.flagVal("--ctx")); s != "" {
+		n, cerr := strconv.Atoi(s)
+		if cerr != nil || n < 0 {
+			inv.setErr("usage", "bad_ctx", "--ctx 不是非负整数")
+			fmt.Fprintf(stderr, "%s: --ctx 要是非负整数（0 = 只看那一行）：%q ⇒ 退码 2\n", progName, s)
+			return exitUsage
+		}
+		ctx = n
+	}
+	root := repoRoot()
+	if root == "" {
+		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
+		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 读不了码（不给结论 · 退码 8）\n", progName)
+		fmt.Fprintf(stderr, "在仓内跑，或设 ZERG_REPO=<仓根>\n")
+		return exitBlocked
+	}
+	clean := filepath.Clean(filepath.FromSlash(rel))
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		inv.setErr("usage", "path_outside_repo", "件出仓")
+		fmt.Fprintf(stderr, "%s: 件出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, rel, root)
+		return exitUsage
+	}
+	abs := filepath.Join(root, clean)
+	if !strings.HasPrefix(abs, root) {
+		inv.setErr("usage", "path_outside_repo", "件出仓")
+		fmt.Fprintf(stderr, "%s: 件出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, rel, root)
+		return exitUsage
+	}
+	st, serr := os.Stat(abs)
+	if serr != nil {
+		inv.setErr("failed", "file_absent", "件不在")
+		fmt.Fprintf(stderr, "%s: 件不在：%s —— **这不是错，是「没有」**（退码 1）\n", progName, rel)
+		return exitFail
+	}
+	if st.IsDir() {
+		inv.setErr("usage", "target_is_dir", "点的是目录")
+		fmt.Fprintf(stderr, "%s: 点的是目录、不是件：%s（先 `code find` 定位到件 · 退码 2）\n", progName, rel)
+		return exitUsage
+	}
+	b, rerr := os.ReadFile(abs)
+	if rerr != nil {
+		inv.setErr("blocked", "file_unreadable", "件读不动")
+		fmt.Fprintf(stderr, "%s: 件读不动（%v）⇒ 不给结论（退码 8）\n", progName, rerr)
+		return exitBlocked
+	}
+	if !utf8.Valid(b) {
+		inv.setErr("blocked", "not_text", "件不是文本")
+		fmt.Fprintf(stderr, "%s: 件不是文本（非 UTF-8 ⇒ 不猜它的行号）⇒ 不给结论（退码 8）\n", progName)
+		return exitBlocked
+	}
+	// 行面口径与 `code find` 同一套（`strings.Split(…, "\n")` · 行号从 1 起）；
+	// 另把**结尾那个空段**削掉（"a\nb\n" ⇒ 两行，不是三行）—— 只为人面「共 N 行」说得准。
+	lines := strings.Split(string(b), "\n")
+	if len(lines) > 1 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if lineNo > len(lines) {
+		inv.setErr("usage", "line_out_of_range", "行号越界")
+		fmt.Fprintf(stderr, "%s: 行号越界：%s 共 %d 行，点了第 %d 行 ⇒ 退码 2\n", progName, rel, len(lines), lineNo)
+		fmt.Fprintf(stderr, "下一步：先 `zerg code find <正则>` 拿到真行号\n")
+		return exitUsage
+	}
+	lo, hi := lineNo-ctx, lineNo+ctx
+	if lo < 1 {
+		lo = 1
+	}
+	if hi > len(lines) {
+		hi = len(lines)
+	}
+	nrel := filepath.ToSlash(clean)
+	rows := make([]map[string]string, 0, hi-lo+1)
+	for i := lo; i <= hi; i++ {
+		mark := "no"
+		if i == lineNo {
+			mark = "yes"
+		}
+		rows = append(rows, map[string]string{
+			"path":   nrel,
+			"line":   strconv.Itoa(i),
+			"text":   truncateDisplay(strings.TrimRight(lines[i-1], "\r"), 200),
+			"target": mark,
+		})
+	}
+	fmt.Fprintf(stderr, "%s: %s 第 %d 行（共 %d 行 · 窗口 ±%d）\n", progName, nrel, lineNo, len(lines), ctx)
+	return listCmd(inv, stdout, stderr, []string{"line", "text"}, rows)
+}
+
+// codeShowDefaultCtx —— `code show` 默认窗口半径（±3 行 = 「一眼看得到上下文」的最小面）。
+const codeShowDefaultCtx = 3
+
 // truncateDisplay 只为人面好看：超长行截断（**不改机器面已列出的原文之外的东西**）。
 func truncateDisplay(s string, n int) string {
 	if len([]rune(s)) <= n {
