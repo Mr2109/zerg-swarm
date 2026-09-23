@@ -54,14 +54,30 @@ warn() { printf '%s\n' "$*" >&2; }
 # ── 两处读数（判挂载态**只看这两处**；不许拿「目录存在」当已挂 —— 挂载点是空目录时它与未挂同形）──
 # ★ 路径归一：macOS 上 `/tmp` 是 `/private/tmp` 的符号链接 ⇒ 同一处挂载在挂载表里可能写成另一串。
 #   两侧都认（原始形态 + `pwd -P` 形态）：fixture 指到 /tmp 下时判据才不会假红。
-MOUNT_REAL="$(cd "${MOUNT}" 2>/dev/null && pwd -P || printf '%s' "${MOUNT}")"
+#   ★ **现读现算**（不是启动时取一次）：挂载点在首次 `on` 之前**还不存在**，
+#     启动时一次性取值会把 `/tmp/x` 定死成未归一形态（macOS 上是 `/private/tmp/x`）⇒
+#     `on` 挂完的回读就会「读作不在」而**假红**（2026-09-23 夹具现跑抓到：首跑 rc=1、次跑才 0）。
+mount_real() { ( cd "${MOUNT}" 2>/dev/null && pwd -P ) || printf '%s' "${MOUNT}"; }
 mount_row() {        # ① 挂载表里那一行（无则空）
   "${MOUNTLIST}" 2>/dev/null | grep -F " on ${MOUNT} (" \
-    || "${MOUNTLIST}" 2>/dev/null | grep -F " on ${MOUNT_REAL} (" || true
+    || "${MOUNTLIST}" 2>/dev/null | grep -F " on $(mount_real) (" || true
 }
 hdiutil_row() {      # ② hdiutil 认的挂载点（无则空）
   "${HDIUTIL}" info 2>/dev/null | grep -F "${MOUNT}" \
-    || "${HDIUTIL}" info 2>/dev/null | grep -F "${MOUNT_REAL}" || true
+    || "${HDIUTIL}" info 2>/dev/null | grep -F "$(mount_real)" || true
+}
+# ★ 有界等待读数落地（磁盘仲裁/挂载表更新会滞后 ⇒ 立刻回读会**假红**）：
+#   只在那一次动作之后、最多 ~3s；**不是**轮询常驻 —— 本脚本仍是「跑一次 · 成一次 · 退一次」。
+settle() {  # $1=想要的状态 mounted|unmounted
+  local i=0
+  while [ "${i}" -lt 10 ]; do
+    case "$1" in
+      mounted)   is_mounted && return 0 ;;
+      unmounted) is_mounted || return 0 ;;
+    esac
+    sleep 0.3; i=$((i + 1))
+  done
+  return 1
 }
 is_mounted() { [ -n "$(mount_row)" ]; }
 
@@ -142,8 +158,8 @@ cmd_on() {
     warn "  常见原因：挂载点被别的卷占着 · 或挂载点落在**只读卷内的路径**上（现读实测：那会被拒）"
     return 1
   fi
-  # 回读验证（挂完必须再读一遍；读了不等 ⇒ 1）
-  if ! is_mounted; then
+  # 回读验证（挂完必须再读一遍；读了不等 ⇒ 1）—— 有界等读数落地（≤3s，判定口径不变）
+  if ! settle mounted; then
     warn "❌ 挂载命令返回成功，但挂载表里 ${MOUNT} **不在**（回读不等）⇒ 判失败"
     return 1
   fi
@@ -164,7 +180,7 @@ cmd_off() {
     warn "  先看谁占着：\`lsof +D ${MOUNT}\`（**不要**换 \`-force\` 硬摘 —— 那是不可逆动作）"
     return 1
   fi
-  if is_mounted; then
+  if ! settle unmounted; then
     warn "❌ 摘除命令返回成功，但挂载表里 ${MOUNT} **还在**（回读不等）⇒ 判失败"
     return 1
   fi
