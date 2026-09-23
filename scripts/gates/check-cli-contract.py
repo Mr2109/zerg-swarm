@@ -24,13 +24,19 @@
 #
 # 用法：
 #   python3 scripts/gates/check-cli-contract.py [仓库根]
-#   python3 scripts/gates/check-cli-contract.py --self-test          # 成对负控（2 正控 + 11 负控 + 1 空转
-#                                                                   # + 3 条 emit-matrix 合并/字节/幂等控）
+#   python3 scripts/gates/check-cli-contract.py --self-test          # 成对负控（4 正控 + 13 负控 + 1 空转
+#                                                                   # + 3 条 emit-matrix 合并/字节/幂等控 ·
+#                                                                   # 其中 `R-6` 逐格回放 4 条）
 #   python3 scripts/gates/check-cli-contract.py --no-runtime         # **只给夹具用**：跳过 T4 的 go test
 #   python3 scripts/gates/check-cli-contract.py --emit-matrix [路径] # **增量合并**矩阵 —— 只刷新机器可派生
 #                                                                   # 列（want_rc / want_stdout_bytes=**字节**数），
 #                                                                   # 既有格的 id/command/argv/why 逐字保留
-#                                                                   # （先用 build-all.sh --only-cli 出新制品）
+#                                                                   # （先用 build-all.sh --only-cli 出新制品）；
+#                                                                   # 写盘后再对**新账**逐格现跑一遍（只报不判）
+#   python3 scripts/gates/check-cli-contract.py --verify-live        # §六 `R-6`：拿**冻结的矩阵**逐格现跑同一
+#                                                                   # `argv`（每格两遍），核 `rc` 与 stdout **字节数**
+#                                                                   # —— 抓「多余格 / 幽灵格」；0 全合 / 1 有 mismatch
+#                                                                   # / 2 不给结论（缺件、零格）
 #
 # ★ 判据出处（`T6` 的引用面）：§九 M6 `R7`（字段只增不改 / 破坏性变更走大版本）· §九 M17 `T1`–`T6`。
 import argparse
@@ -293,6 +299,57 @@ def derive_columns(binz, argv):
     return {'want_rc': rcs[0], 'want_stdout_bytes': len(outs[0].encode('utf-8'))}, ''
 
 
+def run_once(binz, argv):
+    """口令现跑**一遍** ⇒ (退码, stdout **字节数**)。"""
+    p = subprocess.run([binz] + argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    return p.returncode, len(p.stdout.encode('utf-8'))
+
+
+def live_verify(root, matrix_path=None):
+    """§六 `R-6` 的**新负控档**：拿**冻结的**矩阵逐格现跑同一 `argv`（每格跑两遍）、核 `rc` 与 stdout **字节数**。
+
+    为什么要它：`T1` 只判「命令树里的命令**有没有格**」、`T5` 只判「`blanks`」——
+    两件都看**账**不看**盘**。旧格若在盘上已经不成立了（制品换过、命令改了、argv 不认了），
+    账仍全绿 ⇒ 这就是「**多余格 / 幽灵格**」。本档**逐格回放**，把账与盘对上。
+
+    判据：0 = 逐格全合 · 1 = 有 mismatch（判词点名到格）· 2 = **不给结论**（矩阵不在盘 / 零格 / 找不到制品）。
+    """
+    binz = os.path.join(root, 'bin', 'zerg')
+    if not os.path.isfile(binz):
+        return 2, ['⛔ 不给结论：找不到 bin/zerg —— 先用 `bash scripts/build/build-all.sh --only-cli` 出新制品']
+    mpath = matrix_path or os.path.join(root, MATRIX_REL)
+    if not os.path.isfile(mpath):
+        return 2, ['⛔ 不给结论：矩阵不在盘（%s）' % mpath]
+    try:
+        m = json.loads(read(mpath))
+    except (OSError, ValueError) as e:
+        return 2, ['⛔ 不给结论：矩阵读不回来（%s）' % e]
+    cases = [c for c in (m.get('cases') or []) if (c.get('argv') or [])]
+    if not cases:
+        return 2, ['⛔ 不给结论：矩阵里没有带 argv 的格（零格 ⇒ 不许当绿）']
+    matched, bad_lines = 0, []
+    for c in cases:
+        argvv = c['argv']
+        rc1, b1 = run_once(binz, argvv)
+        rc2, b2 = run_once(binz, argvv)
+        want_rc, want_bytes = c.get('want_rc'), c.get('want_stdout_bytes')
+        if (rc1, b1) == (rc2, b2) and rc1 == want_rc and b1 == want_bytes:
+            matched += 1
+            continue
+        how = []
+        if (rc1, b1) != (rc2, b2):
+            how.append('两次现跑不等（%r/%r 字节 vs %r/%r 字节）' % (rc1, b1, rc2, b2))
+        if rc1 != want_rc:
+            how.append('退码 %r ≠ 账上 %r' % (rc1, want_rc))
+        if b1 != want_bytes:
+            how.append('stdout %r 字节 ≠ 账上 %r 字节' % (b1, want_bytes))
+        bad_lines.append('R-6 幽灵格/多余格：%s ⇒ argv=%r · %s' % (c.get('id'), argvv, ' · '.join(how)))
+    rc = 0 if not bad_lines else 1
+    lines = ['R-6 逐格现跑（每格两遍 · 核退码与 stdout 字节数）：合 %d / %d 格 · mismatch %d 格'
+             % (matched, len(cases), len(bad_lines))]
+    return rc, lines + bad_lines
+
+
 def emit_matrix(root, out_path=None):
     """按命令树 + 现跑制品**增量合并**矩阵。
 
@@ -375,6 +432,15 @@ def emit_matrix(root, out_path=None):
     if not old_cases:
         lines.append('⚠ 既有矩阵为空 ⇒ 本次是按候选面**新建**（不是合并）：手写格无处可保，'
                      '且命令树里没有 must-fail 新面的命令会成空白（T1/T5 会判）')
+    if out_path is None:
+        # ★ §六 `R-6`（2026-09-24 · 波6 序6 · 缺口 `G-72`）：重冻**写盘之后**拿**新账**逐格现跑一遍
+        #   （每格两遍 · 核退码与 stdout 字节数）—— **只报不判**（重冻的 rc 语义不因它改）；
+        #   要一个「判」的 rc 就走 `--verify-live`（同一条 `live_verify`）。
+        vrc, vlines = live_verify(root)
+        lines.extend(vlines)
+        if vrc != 0:
+            lines.append('⚠ 重冻后的**新账**与现跑对不上（见上）—— 账与盘不一致就是「幽灵格」；'
+                         '要判红请单跑 `--verify-live`（本次 rc=%d）' % vrc)
     return 0, lines
 
 
@@ -783,6 +849,43 @@ def self_test():
         if not same:
             bad.append('⑯ emit-matrix 不是幂等的：同一棵树上连跑两遍的产物不同')
 
+        # ⑰-⑳ §六 `R-6`（2026-09-24 · 波6 序6 · 缺口 G-72）：**新负控档**（逐格回放，抓「多余格 / 幽灵格」）
+        #   正控：账与盘对得上 ⇒ 0；负控三态：幽灵格 ⇒ 1 · 删一格 ⇒ 该器 rc≠0 · 缺制品 ⇒ 2（不假绿）。
+        r6 = fixture(os.path.join(tmp, 'r6'))
+        os.makedirs(os.path.join(r6, 'bin'), exist_ok=True)
+        with open(os.path.join(r6, 'bin', 'zerg'), 'w', encoding='utf-8') as f:
+            f.write('#!/bin/sh\nexit 2\n')          # 两格都是 rc=2 / stdout 0 字节 ⇒ 与 GOOD_MATRIX 逐格对得上
+        os.chmod(os.path.join(r6, 'bin', 'zerg'), 0o755)
+        rc, lines = live_verify(r6)
+        case('⑰ R-6 正控（账与盘逐格对得上 ⇒ 0）', 0, rc, '\n'.join(lines))
+        if not any('合 2 / 2 格' in l and 'mismatch 0 格' in l for l in lines):
+            bad.append('⑰ R-6 正控：判词没有「合 2 / 2 格 · mismatch 0 格」—— %r' % (lines,))
+        rc_chk, lines_chk = check(r6, no_runtime=True)
+        case('⑰ R-6 正控（不动 ⇒ 该器仍 0 且四数不变）', 0, rc_chk, '\n'.join(lines_chk))
+        m4 = json.loads(json.dumps(GOOD_MATRIX))
+        m4['cases'][1]['want_rc'] = 0               # 账上写 0、盘上仍是 2 ⇒ 幽灵格
+        r6b = fixture(os.path.join(tmp, 'r6b'), matrix=m4)
+        os.makedirs(os.path.join(r6b, 'bin'), exist_ok=True)
+        with open(os.path.join(r6b, 'bin', 'zerg'), 'w', encoding='utf-8') as f:
+            f.write('#!/bin/sh\nexit 2\n')
+        os.chmod(os.path.join(r6b, 'bin', 'zerg'), 0o755)
+        rc, lines = live_verify(r6b)
+        case('⑱ R-6 负控（幽灵格：账 rc=0 盘 rc=2 ⇒ 1）', 1, rc)
+        if not any('幽灵格' in l and 'core/stop' in l for l in lines):
+            bad.append('⑱ R-6 负控：判词没有点名那一格 —— %r' % (lines,))
+        m4c = json.loads(json.dumps(GOOD_MATRIX))
+        m4c['cases'] = [c for c in m4c['cases'] if c.get('command') != 'core stop']   # 删一格
+        rc, lines = check(fixture(os.path.join(tmp, 'r6c'), matrix=m4c), no_runtime=True)
+        if rc == 0:
+            bad.append('⑲ R-6 负控：**删一格**之后该器仍 rc=0（命令没格也不红 ⇒ 账可以漏格）')
+        if not any('T1 覆盖' in l and 'core stop' in l for l in lines):
+            bad.append('⑲ R-6 负控：删一格后判词没有点名 `core stop` —— %r' % (lines,))
+        r6d = fixture(os.path.join(tmp, 'r6d'))       # 无 bin/zerg
+        rc, lines = live_verify(r6d)
+        case('⑳ R-6 负控（没有制品 ⇒ 2 不给结论）', 2, rc)
+        if not any('找不到 bin/zerg' in l for l in lines):
+            bad.append('⑳ R-6 负控：判词没有点名缺制品')
+
         print('自检结论: %s（失败 %d 条）' % ('全过' if not bad else '不过', len(bad)))
         for b in bad:
             print('✗ ' + b)
@@ -800,6 +903,9 @@ def main():
     ap.add_argument('--emit-matrix', metavar='PATH', nargs='?', const='',
                     help='按命令树 + 现跑 bin/zerg **重生成** must-fail 矩阵（先用 '
                          '`bash scripts/build/build-all.sh --only-cli` 出新制品）')
+    ap.add_argument('--verify-live', action='store_true',
+                    help='§六 R-6：拿冻结的矩阵逐格现跑同一 argv（每格两遍）、核 rc 与 stdout 字节数 '
+                         '—— 抓「多余格 / 幽灵格」（0 全合 / 1 mismatch / 2 不给结论）')
     a = ap.parse_args()
     if a.self_test:
         return self_test()
@@ -807,6 +913,15 @@ def main():
     if root is None:
         print('⛔ 不给结论：找不到仓根（从 %s 上溯找不到 %s）' % (a.root, MAIN_REL))
         return 2
+    if a.verify_live:
+        rc, lines = live_verify(root)
+        print('门⑪ · §六 `R-6` 逐格回放（仓根 %s）' % root)
+        for l in lines:
+            print('  ' + l)
+        print('⇒ R-6 ' + ('全合（rc=0）' if rc == 0 else
+                          ('判红（rc=1）：账与盘对不上 —— 逐格看上面的判词' if rc == 1 else
+                           '不给结论（rc=2）：缺件/零格 —— 不许当绿')))
+        return rc
     if a.emit_matrix is not None:
         rc, lines = emit_matrix(root, a.emit_matrix or None)
         for l in lines:
