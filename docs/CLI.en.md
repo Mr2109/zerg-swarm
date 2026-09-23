@@ -50,7 +50,7 @@ The help face is itself made of commands — ask it first:
 
 **This block is a generated artifact (do not hand-edit)**: injected by `scripts/docs/gen-cli-reference.py`, computed live from the command tree — re-run `python3 scripts/docs/gen-cli-reference.py --emit --target publish/docs/CLI.en.md`; judge drift with `--check --target publish/docs/CLI.en.md`. Command names, usage strings (flags), summaries, `--json` fields, projected endpoints and wall layer are quoted **verbatim from the command tree; not one of them is hand-written**.
 
-### Open (82)
+### Open (83)
 
 | command | usage (flags) | summary | `--json` fields | projected endpoint | wall layer |
 |---|---|---|---|---|---|
@@ -80,6 +80,7 @@ The help face is itself made of commands — ask it first:
 | `zerg cocoon ls` | `zerg cocoon ls [--json <字段>]` | 虫茧清单（主控面无投影端点 ⇒ 不给结论） | name,state,port,path | GET /api/cocoons（主控面没有 ⇒ 现跑 404） | `host` |
 | `zerg cocoon open` | `zerg cocoon open <茧名> [--confirm=<茧名> --yes \| --dry-run]` | 起虫茧的文档服务（8610 · D3 起服务档 · **计划面已开放**：`--dry-run` 出计划件；真跑本版未开放 · 拒执退码 2） | （无机器面） | 本机（无远端对应） | `host` |
 | `zerg code find` | `zerg code find <正则> [--path <子目录>] [--glob <模式>] [--json <字段>]` | 在码里找一处东西在哪（只读取证 · 手搓 grep/git grep 的替身） | path,line,text | 本机（无远端对应） | `host` |
+| `zerg code show` | `zerg code show <件:行> [--ctx <N>] [--json <字段>]` | 看源码里**某一行**长什么样（带 `件:行` · 只读取证 · 手搓 `sed -n` / `awk` 的替身） | path,line,text,target | 本机（无远端对应） | `host` |
 | `zerg config reload` | `zerg config reload [--dry-run] --yes [--json <字段>]` | 热加载主控配置（照 `nginx -s reload`：**先校验、失败回滚**）—— 名册件本地解析不过 ⇒ **不发请求**（旧配置继续跑） | status,models,added,fleet_nodes,fingerprint | POST /api/config/reload（路由已在跑的主控上 ⇒ 主控零改动） | `host` |
 | `zerg context ls` | `zerg context ls [--resume] [--json <字段>]` | 档位名册（离线也出表） | name,core,gateway,default_node,token_source | 本机（无远端对应） | `host` |
 | `zerg core daemon` | `zerg core daemon ls [--declared] [--json <字段>]` | `daemon ls`：本机服务脚本逐件可查（scripts/svc/ 5 件）+ `--declared` 并给声明面两列与幽灵段（与 `doctor` 同源同值） | name,script,declared,note | 本机（无远端对应） | `host` |
@@ -139,7 +140,7 @@ The help face is itself made of commands — ask it first:
 
 ### Dangerous actions (38 · registered)
 
-> The export's header, verbatim: `命令清单 **82** 条 · 危险动作 **38** 条（其中**已开放** 10 条 · 未开放 28 条）` — for which actions are open, `zerg help dangerous` is the per-command authority; this table's four columns (tier / three states / `--confirm` target / what it touches) are quoted verbatim from `zerg help export`; the ones not open yet refuse to run for real (exit 2 = no verdict) and only their `--dry-run` plan face is available.
+> The export's header, verbatim: `命令清单 **83** 条 · 危险动作 **38** 条（其中**已开放** 10 条 · 未开放 28 条）` — for which actions are open, `zerg help dangerous` is the per-command authority; this table's four columns (tier / three states / `--confirm` target / what it touches) are quoted verbatim from `zerg help export`; the ones not open yet refuse to run for real (exit 2 = no verdict) and only their `--dry-run` plan face is available.
 
 | command | tier | three states | `--confirm` target | what it touches | wall layer |
 |---|---|---|---|---|---|

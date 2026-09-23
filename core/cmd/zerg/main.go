@@ -744,6 +744,16 @@ func init() {
 			run:      cmdCodeFind,
 		},
 		{
+			path:     []string{"code", "show"},
+			kind:     "CodeShow",
+			summary:  "看源码里**某一行**长什么样（带 `件:行` · 只读取证 · 手搓 `sed -n` / `awk` 的替身）",
+			usage:    "zerg code show <件:行> [--ctx <N>] [--json <字段>]",
+			args:     []string{"件:行（件 = 仓相对路径 · 行 = 正整数）"},
+			fields:   []string{"path", "line", "text", "target"},
+			endpoint: "",
+			run:      cmdCodeShow,
+		},
+		{
 			path:     []string{"repo", "status"},
 			kind:     "RepoStatus",
 			summary:  "看仓脏没脏 / HEAD 在哪 / 有没有别人在写它（手敲 git status 的替身）",
