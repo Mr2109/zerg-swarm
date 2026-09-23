@@ -77,7 +77,8 @@ L = {
             "改命令面 ⇒ 重跑生成器（`--check` 会判 drift：产物与现跑不一致就红）；"
             "本页的命令名与命令树源码**现算对拍 = 0 差**。",
             "本版现跑：命令面 **{total}** 条 = 已开放 **{open}** 条 + 危险动作 **{danger}** 条"
-            "（危险动作本版一律**未开放**，只有 `--dry-run` 计划面可看）。",
+            "（危险动作里**一部分已开放**、其余未开放 —— 「哪些已开放」逐条以 `zerg help dangerous` 为准，"
+            "未开放的那部分真跑一律拒执）。",
             "本页只讲**本版**：不写设计稿/调研稿/待办里的未来形状；导出物里指向过程档案的「出处」列"
             "**不进公开面**（公开面只讲虫族是什么）。",
         ],
@@ -90,12 +91,14 @@ L = {
         ],
         "h_open": "已开放（{n} 条）",
         "a_open": "已开放",
-        "h_danger": "危险动作（{n} 条 · 已登记 · 本版未开放）",
+        "h_danger": "危险动作（{n} 条 · 已登记）",
         "a_danger": "危险动作",
         "th_open": ["命令", "用法（旗标）", "说明", "`--json` 字段", "投影的远端端点", "茧壁层级"],
         "th_danger": ["命令", "档", "三态", "`--confirm` 的目标", "它会动什么", "茧壁层级"],
         "danger_note": "危险动作的「档 / 三态 / `--confirm` 的目标 / 它会动什么」逐字来自 `zerg help export`"
-                       "（导出物里还有一列「出处」= 把命令对回设计稿的追溯面，**本页不承载**）。",
+                       "（导出物里还有一列「出处」= 把命令对回设计稿的追溯面，**本页不承载**）；"
+                       "导出物抬头逐字：`{counts}` —— 「哪些已开放」逐条以 `zerg help dangerous` 为准，"
+                       "未开放的那部分真跑一律**拒执**（退出码 2 = 不给结论），只有 `--dry-run` 的计划面可用。",
         "h_exit": "退出码表",
         "exit_note": "逐字来自 `zerg help export` 的退码表（唯一真源在 `core/cmd/zerg/exitcodes.go`；"
                      "`zerg help exit-codes` 是它的自描述面）。",
@@ -145,8 +148,8 @@ L = {
             "Change the command surface ⇒ re-run the generator (`--check` fails on drift); the command "
             "names on this page are cross-checked against the command tree source with **0 diff**.",
             "This build (live run): **{total}** commands = **{open}** open + **{danger}** dangerous "
-            "(dangerous actions are **not opened in this version**; only their `--dry-run` plan face is "
-            "readable).",
+            "(**a part of them is already open** and the rest is not — for which ones are open, "
+            "`zerg help dangerous` is the per-command authority, and the rest refuse to run for real).",
             "This page documents **this build only**: it carries no future shapes from design notes, "
             "research notes or to-do lists, and the export's provenance column (design-doc references) "
             "**is left out of the published face**.",
@@ -166,7 +169,7 @@ L = {
         ],
         "h_open": "Open ({n})",
         "a_open": "已开放",
-        "h_danger": "Dangerous actions ({n} · registered · not opened in this build)",
+        "h_danger": "Dangerous actions ({n} · registered)",
         "a_danger": "危险动作",
         "th_open": ["command", "usage (flags)", "summary", "`--json` fields", "projected endpoint",
                     "wall layer"],
@@ -174,7 +177,10 @@ L = {
                       "wall layer"],
         "danger_note": "“tier / three states / `--confirm` target / what it touches” are quoted verbatim "
                        "from `zerg help export` (the export also carries a provenance column mapping a "
-                       "command back to the design doc — **this page does not carry it**).",
+                       "command back to the design doc — **this page does not carry it**); the export's "
+                       "header, verbatim: `{counts}` — for which ones are open, `zerg help dangerous` is the "
+                       "per-command authority; the ones not open yet refuse to run for real (exit 2 = no "
+                       "verdict) and only their `--dry-run` plan face is available.",
         "h_exit": "退出码表",
         "exit_note": "Quoted verbatim from `zerg help export` (single source of truth: "
                      "`core/cmd/zerg/exitcodes.go`; `zerg help exit-codes` is its self-describing face).",
@@ -605,7 +611,8 @@ def render(loc, data, zh_body=""):
     b.append("")
     for line in t["lead"]:
         b.append("> " + line.format(total=data["n_open"] + data["n_danger"],
-                                    open=data["n_open"], danger=data["n_danger"]))
+                                    open=data["n_open"], danger=data["n_danger"],
+                                    counts=data["counts"]))
     b.append("> 身份 / identity：%s" % data["ident"])
     b.append("")
 
@@ -627,7 +634,7 @@ def render(loc, data, zh_body=""):
     b.append("")
     b.append("### %s {: #%s }" % (t["h_danger"].format(n=data["n_danger"]), t["a_danger"]))
     b.append("")
-    b.append("> " + t["danger_note"])
+    b.append("> " + t["danger_note"].format(counts=data["counts"]))
     b.append("")
     b.append("| " + " | ".join(t["th_danger"]) + " |")
     b.append("|" + "---|" * len(t["th_danger"]))
