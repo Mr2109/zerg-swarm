@@ -364,10 +364,14 @@ func init() {
 			run:         cmdGate,
 		},
 		{
-			path:        []string{"gate", "show"},
-			summary:     "看某一步要跑的命令串（脚本 --emit-cmd）",
-			usage:       "zerg gate show <步名>",
-			args:        []string{"步名（与 --list 里逐字相同）"},
+			path:    []string{"gate", "show"},
+			kind:    "GateShow",
+			summary: "看某一步要跑的命令串（脚本 --emit-cmd）；`--json` 另给四格（scope/mode/判据/日志路径）",
+			usage:   "zerg gate show <步名> [--json <字段>]",
+			args:    []string{"步名（与 --list 里逐字相同；`--json` 面是**精确匹配**，子串不给结论）"},
+			// 四格 = `Q-061`/`B-3` 的可核条件逐字（`scope` / `mode` / 判据 / 日志路径）。
+			// 默认面（不给 `--json`）仍是 `--emit-cmd` 直取口 —— 见 `family_gate_show.go` 的文件头。
+			fields:      gateShowFields,
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdGate,
