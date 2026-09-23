@@ -2010,7 +2010,12 @@ func splitFields(s string) []string {
 	return out
 }
 
-// requireFields 统一处理「--json 不给字段」（契约 §4.1 K2）：stdout 0 字节、字段清单走 stderr、退码 1。
+// requireFields 统一处理「--json 不给字段」的**提示面**（契约 §4.1 K2）：stdout 0 字节、字段清单走 stderr。
+//
+// **退码由调用方给**（本函数只回 bool）—— 它必须与退码表 `exitcodes.go:33` 同向：
+// 「用法错 ⇒ 2」那一格。★ `Q-146`（v2.5.12）：`version` 这一处此前退 `1`（`exitFail`）⇒
+// 与自家退码表打架，已就地归位为 `exitUsage`（2）。**同族其余调用点仍退 `1`** ✗ ——
+// 那一条（K2 甲档全族归一）没动，逐条登记在 `Q-146` 的「同族扫描」里，别当已治。
 func requireFields(inv *invocation, stderr io.Writer) bool {
 	if len(inv.fields) > 0 {
 		return true
@@ -2385,7 +2390,10 @@ func helpIdempotency() string {
 func cmdVersion(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.jsonGiven {
 		if !requireFields(inv, stderr) {
-			return exitFail // K2：给了 --json 但不给字段 ⇒ 1（不是用法错）
+			// 退码 **2**（用法错 · 退码表 `exitcodes.go:33` / `errors.go` 的 `kind=usage=2`）。
+			// ★ `Q-146`（v2.5.12）：这里原写 `exitFail`（1）⇒ 与自家退码表不同向（表说用法错 = 2）。
+			// K2 的「不是用法错」那个旧判语**已按表归位**；同族其余调用点未动（逐条见 `Q-146`）。
+			return exitUsage
 		}
 		row := map[string]string{
 			"name":          progName,
