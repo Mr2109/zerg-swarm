@@ -1364,9 +1364,9 @@ func init() {
 		{
 			path:     []string{"model", "add"},
 			kind:     "ModelAdd",
-			summary:  "往名册件（`gateway/fleet.yaml`）**先校验后写**加一条模型（`--dry-run` 先行 · 真写要 `--yes` · 写完读回再校 · 任一步不过 ⇒ 回滚 · 不覆盖别人的条）",
-			usage:    "zerg model add --host <主机> --model <名> --file <GGUF 路径> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run | --yes] [--json <字段>]",
-			args:     []string{"主机（--host）", "模型名（--model）", "GGUF 路径（--file）"},
+			summary:  "往名册件（`gateway/fleet.yaml`）**先校验后写**加一条模型（`--dry-run` 先行 · 真写要 `--yes` · 写完读回再校 · 任一步不过 ⇒ 回滚 · 不覆盖别人的条）——**块按 `--model`（模型名）定位/新建**（列表形与裸映射形都认）· `--host` 只作该条的 `host:` 字段值",
+			usage:    "zerg model add --model <模型名> --host <主机> --file <GGUF 路径> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run | --yes] [--json <字段>]",
+			args:     []string{"模型名（--model：`models:` 段的键 / 块名 ⇒ 按它定位或新建那一块）", "主机（--host：该条 `host:` 的字段值 ＝ 这台模型跑在哪台机器）", "GGUF 路径（--file）"},
 			fields:   []string{"model", "host", "file", "fleet", "line", "added"},
 			endpoint: "",
 			run:      cmdModelAdd,
