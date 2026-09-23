@@ -96,7 +96,7 @@ zerg <对象> <动作> [参数] [旗标]
 | `zerg gateway models` | `zerg gateway models [--json <字段>]` | 网关侧模型面（与 `model ls` **同源** —— 网关没有第二份模型表） | id,host,backend,modality,mem_gb,file | GET /api/fleet/models | `host` |
 | `zerg help` | `zerg help [<主题>]` | 帮助（主题见 `zerg help <主题>`；表在 topics.go） | （无机器面） | 本机（无远端对应） | `host` |
 | `zerg help export` | `zerg help export [--out <目录> \| --docs-ver <X.Y.Z>] [--dry-run] [--json <字段>]` | 把命令树导出 markdown 进版本档案目录（产物 · 勿手改）；只读档 `--dry-run` 出逐条清单、一个字节不写 | path,root,docs_version,commands,dangerous,schema,layers,generated_at,written,dry_run,command,is_dangerous,danger_level,opened,confirm_target,summary,layer,endpoint,fields | 本机（无远端对应） | `host` |
-| `zerg impact` | `zerg impact <文件｜契约 id> [--wide｜--strict] [--deep] [--for-model｜--for-human] [--json <字段>] [--gate-results <那次门禁的结果表｜它的日志目录>]` | 改一处会牵动谁（只读：人面三行 + 波纹卡片 ≤12 条/≤1.2k token + 六键包封；挂干跑属 `A4`） | what,why,how,red | 本机（无远端对应） | `host` |
+| `zerg impact` | `zerg impact <文件或契约id> [--wide｜--strict] [--deep] [--for-model｜--for-human] [--json <字段>] [--gate-results <那次门禁的结果表｜它的日志目录>]` | 改一处会牵动谁（只读：人面三行 + 波纹卡片 ≤12 条/≤1.2k token + 六键包封；挂干跑属 `A4`） | what,why,how,red | 本机（无远端对应） | `host` |
 | `zerg itask interval` | `zerg itask interval [--json <字段>]` | 周期现值（只读面；写面 `itask interval set` 未开放） | intervals,note,state | GET /api/internal-tasks/intervals | `host` |
 | `zerg itask ls` | `zerg itask ls [--json <字段>]` | 内部任务清单（16 类 · 含冷却与最近执行 · 投影 /api/internal-tasks） | id,description,cooldown,default_hours,auto_run,last_run,state | GET /api/internal-tasks | `host` |
 | `zerg itask mode` | `zerg itask mode [--json <字段>]` | 自动运行开关现值（只读面；写面 `itask mode set` 未开放） | modes,note,state | GET /api/internal-tasks/modes | `host` |
