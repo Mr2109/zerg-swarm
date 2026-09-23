@@ -3,6 +3,7 @@
 > **English** | [中文](ARCHITECTURE.zh-CN.md)
 >
 > *Source of truth: the Chinese original ([ARCHITECTURE.zh-CN.md](ARCHITECTURE.zh-CN.md)). If the two disagree, the Chinese text prevails.*
+> *Derived translation — 派生自 zh-CN（真源在 zh 侧）。*
 
 Four processes plus a scheduling layer driven by a single "registry" file. Every component communicates over HTTP only; tokens are unified; there is no centralized database.
 

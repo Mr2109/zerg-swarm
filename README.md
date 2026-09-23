@@ -5,6 +5,7 @@
 > **English** | [中文](README.zh-CN.md)
 >
 > *Source of truth: the Chinese original ([README.zh-CN.md](README.zh-CN.md)). If the two disagree, the Chinese text prevails.*
+> *Derived translation — 派生自 zh-CN（真源在 zh 侧）。*
 
 > Design principle: **there are no weak models, only incomplete systems.**
 > When a model fails a task, drifts off format, or breaks a tool call, we blame the **system** first

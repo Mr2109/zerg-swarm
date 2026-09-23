@@ -3,6 +3,7 @@
 > **English** | [中文](TOOLS.zh-CN.md)
 >
 > *Source of truth: the Chinese original ([TOOLS.zh-CN.md](TOOLS.zh-CN.md)). If the two disagree, the Chinese text prevails.*
+> *Derived translation — 派生自 zh-CN（真源在 zh 侧）。*
 > *Note: the tool **descriptions** below are the exact text sent to the model and are currently Chinese — descriptions are deliberately NOT translated in this release (see the tool-description decision in the project design doc). Tool names, parameters and categories are stable identifiers.*
 
 > This file is **auto-generated** from the tool registry (`core/internal/chat/chat_tool_registry.go`) —

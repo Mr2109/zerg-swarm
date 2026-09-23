@@ -3,6 +3,7 @@
 > **English** | [中文](QUICKSTART.zh-CN.md)
 >
 > *Source of truth: the Chinese original ([QUICKSTART.zh-CN.md](QUICKSTART.zh-CN.md)). If the two disagree, the Chinese text prevails.*
+> *Derived translation — 派生自 zh-CN（真源在 zh 侧）。*
 
 From zero to a working swarm, in four steps. The only part you need running with a single command is the **controller**; agents and the UI are optional but recommended.
 

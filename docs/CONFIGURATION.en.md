@@ -3,6 +3,7 @@
 > **English** | [中文](CONFIGURATION.zh-CN.md)
 >
 > *Source of truth: the Chinese original ([CONFIGURATION.zh-CN.md](CONFIGURATION.zh-CN.md)). If the two disagree, the Chinese text prevails.*
+> *Derived translation — 派生自 zh-CN（真源在 zh 侧）。*
 
 Zerg has no central configuration file: **token + registries + environment variables** are the whole configuration.
 Everything hardcoded collapses into "sensible default + environment-variable override", so the same code also runs on your machine.
