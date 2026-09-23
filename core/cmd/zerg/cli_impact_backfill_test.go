@@ -455,6 +455,7 @@ func TestImpactBackfill_SourceSelfCheck(t *testing.T) {
 //	E 不齐表（3 行）⇒ **退 8 不给结论**，且**不许写件**；
 //	F 写失败不改退码（把落点造成目录）⇒ rc 仍 0。
 func TestImpactBackfill_EndToEnd(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	state := backfillState(t)
 	_ = state
@@ -633,6 +634,7 @@ func TestImpactBackfill_EndToEnd(t *testing.T) {
 //	② 回填块自己那三个数也**不受历史影响**（同一份结果表两跑，毒行前后逐字相同）——
 //	   「累积率」只是报表，**不是输入**。
 func TestImpactBackfill_NotAnInput(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	_ = backfillState(t)
 	bf := backfillFilePath(t, root)
@@ -713,6 +715,7 @@ func normalizeJSON(v any) any {
 //	② 确认档值与主机名不符 ⇒ 退 2（与 `dev edit` 同一口径）；
 //	③ 负控：值给了 ⇒ 这两条**不许**误伤（`impact <目标> --json what` 仍照常）。
 func TestImpactBackfill_UsageFaces(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	_ = backfillState(t)
 	rc, out, errb := runCapture("impact", backfillTarget, "--gate-results")
 	if rc != 2 || len(out) != 0 {

@@ -99,6 +99,7 @@ func itoaSafe(n int) string {
 //	判据（b）**前层不依赖后层**：② 在默认档**未跑**，而 ③④⑤⑥ 仍然**取值**（一层没跑不拖累别层）；
 //	负控：三枚坏行（摘 `口径=` / 摘 `head_sha=` / ② 层摘 `algo=`）喂进判定口 ⇒ **必须报错**。
 func TestImpactLayers_LayerTableAndTier(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
 	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
 	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
@@ -157,6 +158,7 @@ func TestImpactLayers_LayerTableAndTier(t *testing.T) {
 // 三条子句（`/api/tags` 非空 · `capabilities` 含 `embedding` · `embedding_length` 有值）
 // 由纯函数判 —— 正控一 + 负控三（各摘一条子句 ⇒ 必须判「不在位」）。
 func TestImpactLayers_SemanticGateThreeClauses(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	// `A5`：本用例也要**现跑**一次 `impact`（判据③的现读面）⇒ 状态目录同样改到合成目录。
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 	ok := []byte(`{"models":[{"name":"all-minilm:latest","capabilities":["embedding"],"details":{"embedding_length":384}}]}`)
@@ -195,6 +197,7 @@ func TestImpactLayers_SemanticGateThreeClauses(t *testing.T) {
 //	      产出树路径 + 扫的时刻 · `head_sha`）；
 //	负控：不在生效面上的件 ⇒ **必须不打**（在另一件里已判，这里再判一次「打没打」的成对）。
 func TestImpactLayers_PublicFacePositiveAndNegative(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
 	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
 	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。
@@ -297,6 +300,7 @@ func TestImpactLayers_PublicLineThreePieces(t *testing.T) {
 // TestImpactLayers_MachineFaceItemsCarryLayerWhy —— 判据①在**机器面**上的那一半：
 // `--json` 的 `items[]` 每条都要有 `why`，且取值落在**层名闭集**里（来路不明的东西进不来）。
 func TestImpactLayers_MachineFaceItemsCarryLayerWhy(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
 	// `A5`：`zerg impact` 自本批起**会落盘缓存**（落点在状态目录）⇒ 测试一律把状态目录改到合成目录，
 	// **不碰真状态目录**（本件判据一个字不动；不这么做就是「测试有副作用」）。

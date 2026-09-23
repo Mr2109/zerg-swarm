@@ -99,6 +99,7 @@ func TestImpactDup_PairParamsAndNoThreshold(t *testing.T) {
 
 // TestImpactDup_ReportAndCurve —— 判据①②：现跑值可复现 + 标定曲线同报。
 func TestImpactDup_ReportAndCurve(t *testing.T) {
+	requireDeep(t) // 贵档闸 · 现读见本件头：ZERG_DEEP=1 才跑
 	root := repoRootFromCLI(t)
 	raw, rerr := zerg.ImpactDupContractBytesForTest()
 	if rerr != nil {
