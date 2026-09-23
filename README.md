@@ -61,6 +61,7 @@
 - **Tool system**: file read/write/edit, shell (with a deletion-scope gate), search, screenshot OCR, media processing, knowledge base, subtask decomposition … 135 registered tools.
 - **Memory**: two scopes (global + per agent) with budgets, compression, and recall pointers (see [记忆体系](docs/design/记忆体系.md), in Chinese).
 - **Desktop workbench**: streaming chat, Markdown rendering, task panel, cluster/model status, logs, document browsing.
+- **Command line**: the routine actions each have a single command — hot-reload the config (`zerg config reload`, effective immediately, no controller restart); register a model in the registry (`zerg model add`); a read-only projection of the egg face (`zerg egg ls` / `zerg egg show`, the egg × device matrix with host / model / state).
 
 ## Quick start
 
