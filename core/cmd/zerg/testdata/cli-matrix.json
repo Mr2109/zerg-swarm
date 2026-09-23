@@ -13,6 +13,43 @@
    "judge": "仓根**没有** `bin/` ⇒ 公开面档；取证可显式 `ZERG_MATRIX_TIER=local|public` 覆盖（写错即 Fatal，不许默认成某一档）",
    "why": "公开树缺三样本机有的东西：`bin/`（白名单不含）· `scripts/gates/precommit-gates.sh`（EXCLUDES 里的发布机制自举件）· `scripts/calib/*` 与 `scripts/evals/compare.py`（公开面只进 make-manifest.py）⇒ CLI 先撞缺件、走不到本机的参数校验 ⇒ **同一格被两棵树要求不同值**。**不许**把单一真源整体改成公开面的值（那会让本机立刻变红 = 挪红，不是修红）；**也不许**为了一道门禁往公开面塞空 `bin/`（『缺件 ⇒ 8』语义保：宁可拒绝，不可猜）",
    "ratchet": "`check-cli-contract.py --emit-matrix` 的增量合并只刷新 `want_rc`/`want_stdout_bytes`（hit.update(d)）⇒ 本组两列与 id/command/argv/why 同等逐字保留；且 emit 先要有 `bin/zerg`，公开树里本来就给不出结论（退 2）"
+  },
+  "field_surface": {
+   "契约": "§4.1 `K2` 两档（甲 · 开放字段面 / 乙 · 闭集字段面）—— 缺口 `Q-119` / 任务 `C-09`（2026-09-24 收编 · 只加声明，不动实现）",
+   "为什么不进 cases": "`cases[]` 是**must-fail 矩阵**：门⑪ `T2`（`scripts/gates/check-cli-contract.py`）与 `core/cmd/zerg/cli_matrix_test.go` 都把 `want_rc == 0` 的格判红 ⇒ 乙档两格**只登记在本块**（该绿格）。本块挂在 `tiers` 里（不是顶层新键）：`--emit-matrix` 的增量合并逐字带上整个 `tiers` 对象（`check-cli-contract.py` 的 `if old.get('tiers')`）⇒ 不会被重生成吃掉；Go 侧 `matrixFile.Tiers` 只认 `local`/`public` 两格 ⇒ 本块对判定口不可见（T1/T2 也不读它）。",
+   "甲 · 开放字段面": {
+    "口径": "字段面**开放**（不点名就不知道该给哪些）⇒ 给了 `--json` 不给字段 = `1` + stderr 列全部可选字段（＝schema 自描述）",
+    "判据落在": "本件 `cases[]` 里各命令的 `--json 不给字段` 格（`want_rc` 1 · 例：`gate/run#--json 不给字段（K2）`）—— 本批一字未动"
+   },
+   "乙 · 闭集字段面": {
+    "口径": "字段面**闭集且恒有值** ⇒ **不给字段 = 取闭集全量 · 退 0**；给了 = 投影到子集；闭集外 ⇒ `2` + stderr 列闭集",
+    "判据落在": "`core/cmd/zerg/cli_gate_show_test.go` · `core/cmd/zerg/cli_gate_results_test.go`（进程内现跑：`rc=0` + 全量逐格对拍 —— 本块只是**档位声明**，判定口在那两件里）",
+    "cells": [
+     {
+      "id": "gate/show#--json 不给字段（K2 · 乙档 闭集字段面）",
+      "command": "gate show",
+      "argv": [
+       "gate",
+       "show",
+       "<步名>",
+       "--json"
+      ],
+      "want_rc": 0,
+      "why": "字段面 = 闭集四格 `scope`/`mode`/`criterion`/`log`（`core/cmd/zerg/family_gate_show.go:43`）⇒ 不给字段 = 闭集全量 · 退 0（**与 K2 甲档的 1 相反**；`<步名>` = 脚本 `--list` 里任一步名 —— 本档只登记 `want_rc`，**不冻结** stdout 字节数（随步名变），故本格不是可跑的 must-fail 格）"
+     },
+     {
+      "id": "gate/results#--json 不给字段（K2 · 乙档 闭集字段面）",
+      "command": "gate results",
+      "argv": [
+       "gate",
+       "results",
+       "--json"
+      ],
+      "want_rc": 0,
+      "why": "字段面 = 闭集五格 `step`/`status`/`rc`/`secs`/`log`（`core/cmd/zerg/family_gate_results.go:54`）⇒ 不给字段 = 闭集全量 · 退 0（同上一格：只登记 `want_rc`；stdout 字节数随那一趟结果表变，不冻结）"
+     }
+    ]
+   }
   }
  },
  "cases": [
