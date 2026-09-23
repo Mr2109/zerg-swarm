@@ -3,6 +3,7 @@
 > **English** | [中文](CLI.zh-CN.md)
 >
 > *Source of truth: the Chinese original ([CLI.zh-CN.md](CLI.zh-CN.md)). If the two disagree, the Chinese text prevails.*
+> *Derived translation — 派生自 zh-CN（真源在 zh 侧）。*
 
 Zerg has exactly one face to the outside: the **command line**. Every capability lives in the command tree, shaped as
 
