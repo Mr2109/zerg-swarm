@@ -17,6 +17,9 @@ package main_test
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -229,10 +232,24 @@ func TestCLIQ149_NegativeControl_TwoStatesAndPrecedenceUntouched(t *testing.T) {
 }
 
 // TestCLIQ149_NegativeControl_TreeCountUnchanged —— `Q-149` 只**加出口**、不**加命令**：
-// 命令树计数仍是 **119**（本批不动那一格 · 与门⑪ `T1` 的同一份投影）。
+// 命令树计数与**基线登记的那一格**（`scripts/gates/cli-contract-baseline.json` 的 `commands`）逐字一致
+// —— 「随动计数」的口径同 `cli_approve_e4_ttl_test.go` 的 E4 ④（★ 2026-09-24：原写死常量 `119`，
+// 组1 序12 落 `zerg metrics` 时**真加了一条命令** ⇒ 断言改成读基线那一格：任何一次「加了命令却忘了
+// 登记」都会被这条拦住，而**故意新增**只需把基线那一格随动 +1）。
 func TestCLIQ149_NegativeControl_TreeCountUnchanged(t *testing.T) {
-	if n := len(zerg.CommandPathsForTest()); n != 119 {
-		t.Errorf("命令树计数要仍是 119（`zerg help <族>` 不是一条新命令），得到 %d", n)
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "gates", "cli-contract-baseline.json"))
+	if err != nil {
+		t.Fatalf("基线读不到（判据不可判）：%v", err)
+	}
+	var b struct {
+		Commands int `json:"commands"`
+	}
+	if err := json.Unmarshal(raw, &b); err != nil {
+		t.Fatalf("基线解不动（判据不可判）：%v", err)
+	}
+	if n := len(zerg.CommandPathsForTest()); n != b.Commands {
+		t.Errorf("命令树计数要等于基线登记的 %d（`zerg help <族>` 不是一条新命令；真加命令要同批把基线那一格随动），得到 %d",
+			b.Commands, n)
 	}
 }
 

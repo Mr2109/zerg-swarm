@@ -49,7 +49,7 @@ zerg <对象> <动作> [参数] [旗标]
 
 **本块为生成物（勿手改）**：由 `scripts/docs/gen-cli-reference.py` 照命令树**现算**后注入 —— 重跑 `python3 scripts/docs/gen-cli-reference.py --emit --target publish/docs/CLI.zh-CN.md`；判 drift 用同名 `--check --target publish/docs/CLI.zh-CN.md`。本块里的命令名、用法串（旗标）、说明、`--json` 字段、投影端点与茧壁层级**逐字来自命令树，一个都不是手写的**。
 
-### 已开放（81 条）
+### 已开放（82 条）
 
 | 命令 | 用法（旗标） | 说明 | `--json` 字段 | 投影的远端端点 | 茧壁层级 |
 |---|---|---|---|---|---|
@@ -112,6 +112,7 @@ zerg <对象> <动作> [参数] [旗标]
 | `zerg itask ls` | `zerg itask ls [--json <字段>]` | 内部任务清单（16 类 · 含冷却与最近执行 · 投影 /api/internal-tasks） | id,description,cooldown,default_hours,auto_run,last_run,state | GET /api/internal-tasks | `host` |
 | `zerg itask mode` | `zerg itask mode [--json <字段>]` | 自动运行开关现值（只读面；写面 `itask mode set` 未开放） | modes,note,state | GET /api/internal-tasks/modes | `host` |
 | `zerg itask state` | `zerg itask state [--json <字段>]` | 引擎状态（投影 /api/internal-tasks/state） | note,state | GET /api/internal-tasks/state | `host` |
+| `zerg metrics` | `zerg metrics [--input <读数档>] [--json <字段>]` | 「该改哪」那把尺：把四类读数（重复 / 未用符号 / 覆盖率 / 门禁）**归一成一个可比排序**（只读 · 空输入 ⇒ 不给结论） | rank,grade,category,target,value,budget,unit,score,source | 本机（无远端对应） | `host` |
 | `zerg model add` | `zerg model add --model <模型名> --host <主机> --file <GGUF 路径> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run \| --yes] [--json <字段>]` | 往名册件（`gateway/fleet.yaml`）**先校验后写**加一条模型（`--dry-run` 先行 · 真写要 `--yes` · 写完读回再校 · 任一步不过 ⇒ 回滚 · 不覆盖别人的条）——**块按 `--model`（模型名）定位/新建**（列表形与裸映射形都认）· `--host` 只作该条的 `host:` 字段值 | model,host,file,fleet,line,added | 本机（无远端对应） | `host` |
 | `zerg model ls` | `zerg model ls [--json <字段>]` | 可用模型（投影 /api/fleet/models） | id,host,backend,modality,mem_gb,file | GET /api/fleet/models | `host` |
 | `zerg model opts` | `zerg model opts get <模型 id> [--json <字段>] \| zerg model opts set <模型 id> --set k=v… [--dry-run \| --yes]` | 适配器参数（get 只读 / set 实时生效要 --yes） | model,schema,note | GET \| PUT /api/models/{name}/adapter-opts | `host` |
@@ -137,7 +138,7 @@ zerg <对象> <动作> [参数] [旗标]
 
 ### 危险动作（38 条 · 已登记）
 
-> 导出物抬头逐字：`命令清单 **81** 条 · 危险动作 **38** 条（其中**已开放** 10 条 · 未开放 28 条）` —— 「哪些已开放」逐条以 `zerg help dangerous` 为准；本表四列（档 / 三态 / `--confirm` 的目标 / 它会动什么）逐字来自 `zerg help export`；未开放的那部分真跑一律**拒执**（退出码 2 = 不给结论），只有 `--dry-run` 的计划面可用。
+> 导出物抬头逐字：`命令清单 **82** 条 · 危险动作 **38** 条（其中**已开放** 10 条 · 未开放 28 条）` —— 「哪些已开放」逐条以 `zerg help dangerous` 为准；本表四列（档 / 三态 / `--confirm` 的目标 / 它会动什么）逐字来自 `zerg help export`；未开放的那部分真跑一律**拒执**（退出码 2 = 不给结论），只有 `--dry-run` 的计划面可用。
 
 | 命令 | 档 | 三态 | `--confirm` 的目标 | 它会动什么 | 茧壁层级 |
 |---|---|---|---|---|---|
