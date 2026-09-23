@@ -690,6 +690,12 @@ func cmdGapAdd(inv *invocation, stdout, stderr io.Writer) int {
 		msg := fmt.Sprintf("同 fp（%s）已有 %s，而内容不同 ⇒ 拒收该行", shortSHA(rec.FP), r.ID)
 		if inv.dryRun {
 			// 三态纪律①：`--dry-run` 恒 0（唯一会返回 0 的那一态）
+			// `--json` ⇒ 机器面取代人面（同 `verify` 的干跑档 · 同本仓列表命令的老规矩）
+			if inv.jsonGiven {
+				inv.changed = boolPtr(false)
+				return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
+					map[string]string{"id": r.ID, "fp": rec.FP, "state": r.State})
+			}
 			gapPlanBlock(stdout, "--dry-run（冲突不落账）", planPath, len(led.Lines), rec, true)
 			fmt.Fprintf(stdout, "  同名 fp  : %s（内容不同）⇒ 真跑会退 `14 conflict`（防呆②「幂等优先」）\n", r.ID)
 			fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未追加真源、未写审计）\n")
@@ -708,6 +714,13 @@ func cmdGapAdd(inv *invocation, stdout, stderr io.Writer) int {
 
 	// ⑥ `--dry-run`：只出计划件（stdout · rc=0 · 零副作用）
 	if inv.dryRun {
+		// `--json` ⇒ 机器面取代人面（与 `verify` 的干跑档同一条口径；设计稿 §二.2「`--json` ⇒ 六键包封，
+		// `kind` = `GapAdd`，`items` 里带 `id` / `fp` / `state`」在这一态同样成立）
+		if inv.jsonGiven {
+			inv.changed = boolPtr(false)
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
+				map[string]string{"id": rec.ID, "fp": rec.FP, "state": rec.State})
+		}
 		gapPlanBlock(stdout, "--dry-run", planPath, len(led.Lines), rec, true)
 		fmt.Fprintln(stdout, "  审计     : 计划写一行 `event=gap_ledger_written`（这一态**不写**）")
 		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未追加真源、未写审计）\n")
