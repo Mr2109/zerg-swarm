@@ -7,8 +7,11 @@
 //	· 命令形状 = `zerg script inventory sync [--docs-root <Zerg-内部文档 根>] [--dry-run | --yes] [--json <字段>]`
 //	  （**3 段** · 现读 `zerg help` 第 1 行「深度 ≤ 3 层」⇒ 合法 ✓）；退码三态照 `repo commit` 的同一张表。
 //
-// 本件与本族只读面的**分家**（设计稿 §三）：`family_h.go:153 cmdScriptLs`（`zerg script ls`）**一字不动**
-// —— 只读面加一枚写旗标就变成第二条写路径。本命令**只**写那一份台账，**不碰**任何别的件。
+// 本件与本族只读面的**分家**（设计稿 §三 · ★ 2026-09-24 缺口 `Q-160` 后仍成立，但**分家的东西变了**）：
+// 只读面（`family_h.go cmdScriptLs` = `zerg script ls`）**仍不加任何写旗标** —— 只读面加一枚写旗标
+// 就变成第二条写路径（这条规矩照旧 ✓）。但**收件口径不再分家**：`cmdScriptLs` 现调本件的
+// `scriptInvScan` 取件（`Q-160` 前它自带 `scanRoots`：只收 `.sh`/`.py`、只下钻一层 ⇒ 报 136 而
+// 判据件/台账同口径是 139 ⇒ **同数不同集**）。本命令**只**写那一份台账，**不碰**任何别的件。
 //
 // 判据面（设计稿 §五 9 条 · 全部可机检）**逐条落在本件里**：
 //
@@ -50,6 +53,8 @@ const scriptInvDeclPrefix = "现跑合计"
 // scriptInvExcludeDirs —— 排除面（**与消费者测试 `scriptInvExclude` 同口径** · 13 项）。
 // ★ 设计稿 §三 末点名的「三处各写一套 = 下一个 `Q-036`」：本件把口径**照抄一份**并在 §八 登记为欠账
 // （提成共享函数要动**消费者测试件**，那是另一批的落点 ⇒ 本批不许顺手改它 ✗）。
+// ★ 2026-09-24（`Q-160`）：`family_h.go` 那份（`scanRoots`）**已退位** ⇒ 扫描器**只剩本件这一份**
+// （旁证面仍有一份在消费者测试件里，那份的合并照旧留给上面那条欠账 ✗ 本批不动）。
 var scriptInvExcludeDirs = map[string]bool{
 	"target": true, "node_modules": true, "dist": true, "bin": true, "vendor": true, "data": true,
 	".git": true, ".venv": true, "venv": true, ".build": true, "zerg-wt": true, "_history": true,
