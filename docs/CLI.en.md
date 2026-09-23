@@ -70,7 +70,7 @@ The help face is itself made of commands — ask it first:
 | `zerg cocoon open` | `zerg cocoon open <茧名> [--confirm=<茧名> --yes \| --dry-run]` | 起虫茧的文档服务（8610 · D3 起服务档 · 本版未开放） | （无机器面） | 本机（无远端对应） | `host` |
 | `zerg code find` | `zerg code find <正则> [--path <子目录>] [--glob <模式>] [--json <字段>]` | 在码里找一处东西在哪（只读取证 · 手搓 grep/git grep 的替身） | path,line,text | 本机（无远端对应） | `host` |
 | `zerg config reload` | `zerg config reload [--dry-run] --yes [--json <字段>]` | 热加载主控配置（照 `nginx -s reload`：**先校验、失败回滚**）—— 名册件本地解析不过 ⇒ **不发请求**（旧配置继续跑） | status,models,added,fleet_nodes,fingerprint | POST /api/config/reload（路由已在跑的主控上 ⇒ 主控零改动） | `host` |
-| `zerg context ls` | `zerg context ls [--json <字段>]` | 档位名册（离线也出表） | name,core,gateway,default_node,token_source | 本机（无远端对应） | `host` |
+| `zerg context ls` | `zerg context ls [--resume] [--json <字段>]` | 档位名册（离线也出表） | name,core,gateway,default_node,token_source | 本机（无远端对应） | `host` |
 | `zerg core daemon` | `zerg core daemon ls [--declared] [--json <字段>]` | `daemon ls`：本机服务脚本逐件可查（scripts/svc/ 5 件）+ `--declared` 并给声明面两列与幽灵段（与 `doctor` 同源同值） | name,script,declared,note | 本机（无远端对应） | `host` |
 | `zerg core logs` | `zerg core logs [--json <字段>]` | 主控日志（`/api/logs` **路由没接** ⇒ 不给结论，退码 8） | available,detail | GET /api/logs（处理器在 handlers.go:966 · 路由没接 ⇒ 现跑 404） | `host` |
 | `zerg core ps` | `zerg core ps [--root <仓根> \| --path <声明件>] [--json <字段>]` | 现值面逐条读（**三格**：pid / 起时 / 命令行）—— 行面 = 声明件点名的进程特征命中的进程（launchd 声明的 + ghost 幽灵都列）· 只读 | pid,start,command,kind,name,owner | 本机（无远端对应） | `host` |
