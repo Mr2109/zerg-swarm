@@ -70,7 +70,7 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 		if rc := requireFields(inv, stderr); rc != exitOK {
 			return rc
 		}
-		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, helpExportRows(facts))
+		return selectJSONList(stdout, stderr, inv, inv.path, helpExportFieldList(inv.fields), helpExportRows(facts))
 	}
 	if inv.dryRun {
 		// 只读档：stdout = 落点预告 + 逐条清单（与人面/导出物**同源**：都现算自命令树）。
@@ -110,6 +110,21 @@ func helpExportList(w io.Writer) {
 		fmt.Fprintf(w, "  zerg %s ｜ %s ｜ %s ｜ --confirm=<%s> ｜ %s\n",
 			strings.Join(c.path, " "), c.danger.Level, opened, c.danger.Target, c.danger.Effect)
 	}
+}
+
+// helpExportFieldList —— `help export --json <字段>` 的**投影字段**（§一 序70 · `Q-012` · 组3 §一 序12）。
+//
+// 为什么要它：清单面的每一条都得**能被指认**。旧行为里 `--json commands` 把**摘要格**逐个投影，
+// `items` 就变成同一个数重复（`{"commands":"82"}` × 120 ⇒ 逐条无命令名，消费方指不到是哪条）。
+// ⇒ 只要请求里**没点名**行身份 `command`，就**补上**它：**请求的字段一个不少**（§九 M6 字段只增不改）、
+// 而 `items` **逐条含命令名** ✓；旧消费方按 `items[0].commands` 读那个数**照旧可用** ✓。
+func helpExportFieldList(fields []string) []string {
+	for _, f := range fields {
+		if f == "command" {
+			return fields
+		}
+	}
+	return append(append([]string{}, fields...), "command")
 }
 
 // helpExportFields —— `zerg help export --json` 的**合法字段**（机器面 = 逐条清单：一行一条命令）。
