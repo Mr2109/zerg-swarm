@@ -2271,6 +2271,18 @@ func emitEnvelope(stdout io.Writer, cmd *command, itemsJSON string, count int) {
 //
 // **不编造**（本批第二条铁律）：没有真值就**保持 `[]`/`false`/缺席** —— 不许用 `warnings[]` 装
 // 「我以为」，也不许把「没跑 / 没取数」写成「没有」（那两件事分别由上一条命令自己点名）。
+//
+// ★ **包封可选扩展的裁定句**（2026-09-24 · 组1 序25 · 缺口 `G-110` · 照 `O-10` + `O-1`）：
+//
+//	**顶层六键冻结** —— 真源 `envelopeKeys`（`schema`/`kind`/`items`/`meta`/`warnings`/`truncated`）
+//	**一个不多一个不少**（`O-1`（批一）逐字：**冻结顶层 / 放开子键**）。
+//	本面**不加第七键** ✗ —— `O-10`（批二）逐字：`truncated` 的计数**走 `meta.truncated_detail`**。
+//	截断细节（`cut_from` / `kept_items` / `dropped_items` / `total_items`）**只从 `meta` 子键出**；
+//	子键名由 `envMetaReserved` 挡住「覆盖旧子键」，真值由命令自己判定后经 `inv.envMeta` 追加。
+//	⇒ 所以「**第七键前置**」这一条**不需要落**：它要解决的问题（`truncated = true` 之后看不见
+//	「砍了多少」）已由 `meta.truncated_detail` 同一处承接（同向于块D `K-6`：**「升格」不是新造**）。
+//	★ 本笔**只增注释、零行为变更** ✓（六键、子键拒收表、`emitEnvelope` / `emitEnvelopeWith` 的
+//	取法**一个字未动** ✗）。
 func emitEnvelopeWith(stdout io.Writer, cmd *command, itemsJSON string, count int, inv *invocation) {
 	src := cmd.endpoint
 	if src == "" {
