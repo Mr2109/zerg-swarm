@@ -71,12 +71,20 @@ audit 台账（append-only · `scripts/gates/baseline-audit.jsonl`）
     被一次无关的批改**永久锁死**；「值有没有被偷偷改过」这件事由下面那条红判（那才有牙）：
   · **红（rc=1）**：现值 ≠ 台账最后一条 `new` ⇒ **有一条没记录的手改**；或该条件**一条记录都没有**。
 
+★ **红里的两态要能分开**（缺口 `Q-144` · 设计 `设计-CLI机器读面-v1.0-20260924.md` §3.3 丙档 + §4.2 第 23 行）：
+「**台账件不在盘上**」与「**件在盘上但 0 条记录**」今天**同 rc=1** ⇒ 机器面分不出是哪一种。
+本件**只加字段、不动退码** ✗：`rc` 照旧（两态都 `1`），另给一枚**错因码**
+`reason ∈ {ledger_absent, no_record}`（`--json` 档进包封；人面档在判红那句下面补一行固定前缀短语）。
+★ 两态的判因**只看台账件本身**：件不在 ⇒ `ledger_absent`；件在而**一条可用记录都没有** ⇒ `no_record`；
+  有记录（或台账解不动/形状坏了 ⇒ 那两态各有自己的 `rc=2` 判词）⇒ `reason` 为 `null`，**不硬塞**。
+
 用法
 ----
     python3 scripts/gates/baseline-ratchet.py                       # = --view（只读视图 + 判）
     python3 scripts/gates/baseline-ratchet.py --diff                # 只报差（将升/将降几条 + 逐条件名）
     python3 scripts/gates/baseline-ratchet.py --diff --only gate-coverage.baseline
     python3 scripts/gates/baseline-ratchet.py --check               # 无记录 ⇒ 判红（rc=1）
+    python3 scripts/gates/baseline-ratchet.py --check --json        # 同上 + 包封里多一枚 `reason`（`Q-144`）
     python3 scripts/gates/baseline-ratchet.py --conditions          # 条件表（机器可读 JSON）
     python3 scripts/gates/baseline-ratchet.py --diff --readings r.tsv   # 注入现测读数（`名=值` 逐行）
     python3 scripts/gates/baseline-ratchet.py --write --reason '…'       # **唯一写入口**（改数 + 留痕）
@@ -295,6 +303,36 @@ def load_ledger(root):
     if errs:
         return entries, "；".join(errs)
     return entries, None
+
+
+# ── 台账两态的**错因码**（缺口 `Q-144` · 只加判因，**不动数字与退码** ✗）────────────
+LEDGER_ABSENT = "ledger_absent"      # 台账件**不在盘上**（`load_ledger` 走的是 isfile 失败那条 ⇒ 空表）
+LEDGER_NO_RECORD = "no_record"       # 件在盘上，但**一条可用记录都没有**（空件 / 全是空行 / 全是坏行）
+LEDGER_REASON_TEXT = {
+    LEDGER_ABSENT: "台账件**不在盘上**：%s —— 真源缺件（「读不到」不许当绿）" % LEDGER_REL,
+    LEDGER_NO_RECORD: "台账件**在盘上、却一条记录都没有**：%s —— 手改/新建都无处对账" % LEDGER_REL,
+}
+
+
+def ledger_reason(root):
+    """⇒ `ledger_absent` / `no_record` / None。
+
+    这条只管「**红（rc=1）里那两态**」——今天它们**同 rc=1**，机器面分不出是哪种（缺口 `Q-144`）：
+      · 件不在盘上 ⇒ `ledger_absent`；件在而 0 条记录 ⇒ `no_record`；
+      · 有记录 ⇒ None；台账**解不动**（`lerr`）或 `seq` 断号 ⇒ None —— 那两态本身走 `rc=2`，
+        各有自己的判词，**不往这两个码里塞**（两义同码正是本件要治的病 ✗）。
+    ★ 只读一件（`os.path.isfile` + `load_ledger`），**不写任何件**、**不改任何数**。
+    """
+    if not os.path.isfile(ledger_path(root)):
+        return LEDGER_ABSENT
+    entries, lerr = load_ledger(root)
+    if lerr:
+        return None
+    if not entries:
+        return LEDGER_NO_RECORD
+    if ledger_shape_errors(entries)[0]:     # 有记录但连号被破 ⇒ 走 rc=2，不归这两态
+        return None
+    return None
 
 
 def ledger_shape_errors(entries):
@@ -543,8 +581,9 @@ def do_status(root, args, conds, mode):
         print("⛔ 一个条件都没选中 ⇒ 不给结论（rc=2）")
         return 2
     reds = [r for r in rows if r["verdict"] == "red"]
+    reason = ledger_reason(root)                  # `Q-144`：红里的两态判因（只加字段，不动 rc ✗）
     if args.json:
-        write_json({"mode": "view", "ledger": LEDGER_REL,
+        write_json({"mode": "view", "ledger": LEDGER_REL, "reason": reason,
                     "rows": [{"name": r["cond"]["name"], "gate": r["cond"]["gate"], "file": r["cond"]["file"],
                               "value": r["cur"], "sha256": r["sha"], "err": r["err"],
                               "verdict": r["verdict"], "verdict_text": r["verdict_text"]} for r in rows],
@@ -557,6 +596,8 @@ def do_status(root, args, conds, mode):
     rc = verdict_rc(rows, hard)
     if rc == 1:
         print("⇒ **判红（rc=1）**：%d 个条件无记录或与台账不符（逐条见上）" % len(reds))
+        if reason:
+            print("   ⛔ 错因（机器可判 · `Q-144`）：reason=%s —— %s" % (reason, LEDGER_REASON_TEXT[reason]))
         print("   闭洞的唯一通道：`--write --reason '…'`（改数 + 留痕）或 `--anchor --reason '…'`（补现状锚，不改件）")
         return 1
     print("⇒ 绿（rc=0）：每个棘轮数字都能在台账里找到它自己那条记录，且现值对得上")
@@ -860,6 +901,38 @@ def self_test():
         with open(p, encoding="utf-8") as f:
             after = f.read()
         case("⑮ 只改了那一个数字", after, '{\n  "id": "fx-alpha.v1",\n  "baseline": 3,\n  "note": "合成件"\n}\n')
+
+        # ⑯ 台账两态**可判**（`Q-144`：今天两态同 rc=1 ⇒ 只加一枚判因，**不动退码** ✗）
+        #    甲态 = 件不在盘上 · 乙态 = 件在盘上但 0 条记录 —— 两态 rc 必须仍同为 1，
+        #    而 `reason` 必须分得开（机器面 `--json` 档一个键就读出来）。
+        import contextlib
+        import io as _io
+
+        def _view_payload():
+            buf = _io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = do_status(root, argparse.Namespace(only=None, readings=None, json=True),
+                               FX_CONDS, "view")
+            return rc, json.loads(buf.getvalue().split("\n⇒")[0])
+
+        os.remove(lp)                                            # 甲态：台账件不在盘上
+        rows_a, hard_a, _sa = collect(root, FX_CONDS, with_measure=False)
+        reason_a = ledger_reason(root)
+        rc_a, pay_a = _view_payload()
+        case("⑯ 件不在盘上 ⇒ reason=ledger_absent", reason_a, "ledger_absent")
+        case("⑯ 件不在盘上 ⇒ 仍 rc=1（同码不动）", (verdict_rc(rows_a, hard_a), rc_a), (1, 1))
+        case("⑯ 包封 `--json` 档带同一枚判因", pay_a.get("reason"), "ledger_absent")
+        case_true("⑯ 包封只多这一枚键（旧键一字不改）",
+                  set(pay_a) - {"mode", "ledger", "rows", "ledger_hard_errors", "ledger_soft_notes"} == {"reason"})
+        with open(lp, "w", encoding="utf-8"):                    # 乙态：件在盘上、一条记录都没有
+            pass
+        rows_b, hard_b, _sb = collect(root, FX_CONDS, with_measure=False)
+        reason_b = ledger_reason(root)
+        rc_b, pay_b = _view_payload()
+        case("⑯ 件在但 0 条记录 ⇒ reason=no_record", reason_b, "no_record")
+        case("⑯ 件在但 0 条记录 ⇒ 仍 rc=1（同码不动）", (verdict_rc(rows_b, hard_b), rc_b), (1, 1))
+        case_true("⑯ 两态同 rc=1、判因却分得开（机器面从此能问是哪一种）",
+                  reason_a != reason_b and pay_a.get("reason") != pay_b.get("reason"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -48,6 +48,18 @@
   2 = **不给结论**：规则表缺件或不可解析 / 表里**一条真规则都没有**（空转）/ 白名单缺件 /
       扫描面**一件 `*_test.go` 都没扫到**（空转）/ `--self-test` 不过 —— **缺件与空转一律不当绿**
 
+机器面字段（`--json <字段,逗号分隔>` · 缺口 `Q-143`）
+----------------------------------------------------
+**只加字段、不动判据与退码** ✗（设计 `设计-CLI机器读面-v1.0-20260924.md` §3.2 坑 8 + §4.2 第 22 行）：
+老四格语义**一字不改** —— `rules` / `fixtures` / `hits` / `files`（`files` **仍是去重集**，命中件去重后排序）。
+新增三格**按名请求才出现**（老调用方一个字节不受影响）：
+
+  · `files_dedup` —— `files` 的**同值别名**（把「去重集 ↔ 去重和」这一对摆到同一命名面上）；
+  · `files_sum`   —— **未去重和** = 逐条命中规则各自命中件数**相加**（「`64 + 7 = 71`」这类
+                     **逐条相加**读法的机器面落点 —— 今天只能人眼抄再手算 ✗）；
+  · `per_rule`    —— 逐规则一条 `{rule, files, hits, lines}`：`files` = 该规则命中的件（排序去重）、
+                     `hits` = 该规则的命中**行数**、`lines` = 命中处**逐条 `{file, line, text}`**（`{件,行}` 真源）。
+
 用法
 ----
     python3 scripts/gates/check-replace-rule-fixtures.py                       # 判真目标（仓根）
@@ -55,6 +67,7 @@
     python3 scripts/gates/check-replace-rule-fixtures.py --extra-rule '<pat>'   # 合成一条规则（负控用）
     python3 scripts/gates/check-replace-rule-fixtures.py --max-examples 5       # 每条规则最多列几处
     python3 scripts/gates/check-replace-rule-fixtures.py --json rules,hits,files
+    python3 scripts/gates/check-replace-rule-fixtures.py --json files_sum,per_rule  # 去重和 + 逐规则 {件,行}
     python3 scripts/gates/check-replace-rule-fixtures.py --list-rules
     python3 scripts/gates/check-replace-rule-fixtures.py --self-test            # 成对负控（合成夹具 · 不碰真目标）
 
@@ -187,10 +200,12 @@ def collect_fixtures(root, prefixes, isolated=()):
 
 # ── 判决（唯一出口 · 自检直接钉它）────────────────────────────────────────
 def judge(rules, fixtures, max_examples=5):
-    """返回 (命中表, 报错)：命中表 = [(规则原文, 件, [(行号, 片段)], 命中总数)]。
+    """返回 (命中表, 报错)：命中表 = [(规则原文, 命中件, 例子, 命中行数, 逐件明细)]。
 
     ★ 判据只有一句：**规则的命中件里出现 `*_test.go` ⇒ 红**。没有豁免、没有例外
       （豁免表 = 把红写进白名单，正是本件要防的病）。
+    ★ 判据一字未改（缺口 `Q-143` 只加字段 ✗）：这里多带出去的第 5 格是**同一遍扫描的原始明细**
+      （`{件: [(行号, 片段), …]}`），只给人读/机器面用 —— 它不参与判，也不改任何一格的语义。
     """
     hits, err = [], ""
     for rule in rules:
@@ -210,8 +225,38 @@ def judge(rules, fixtures, max_examples=5):
             ex = []
             for rel in sorted(per_file)[:max_examples]:
                 ex.extend((rel, ln, txt) for ln, txt in per_file[rel][:2])
-            hits.append((rule[0], sorted(per_file), ex, total))
+            hits.append((rule[0], sorted(per_file), ex, total, per_file))
     return hits, err
+
+
+def json_payload(want, n_rules, n_fixtures, hits):
+    """按 `--json` 请求的字段名装机器面 ⇒ dict（缺口 `Q-143`：**只加字段、不动判据与退码** ✗）。
+
+    老四格（`rules` / `fixtures` / `hits` / `files`）逐格语义**一字不改** —— 尤其 `files`
+    仍是**去重集**（命中件去重后排序），不改名、不改值。
+    新三格按名请求才出现（`files_dedup` = `files` 同值别名 · `files_sum` = **未去重和** ·
+    `per_rule[]` = 逐规则 `{rule, files, hits, lines}`，`lines` = 逐条 `{file, line, text}`）。
+    """
+    dedup = sorted(set(f for _r, fl, _e, _t, _d in hits for f in fl))
+    obj = {}
+    if "rules" in want:
+        obj["rules"] = n_rules
+    if "fixtures" in want:
+        obj["fixtures"] = n_fixtures
+    if "hits" in want:
+        obj["hits"] = len(hits)
+    if "files" in want:
+        obj["files"] = dedup
+    if "files_dedup" in want:
+        obj["files_dedup"] = dedup
+    if "files_sum" in want:
+        obj["files_sum"] = sum(len(fl) for _r, fl, _e, _t, _d in hits)
+    if "per_rule" in want:
+        obj["per_rule"] = [{"rule": raw.strip(), "files": fl, "hits": tot,
+                            "lines": [{"file": rel, "line": ln, "text": txt}
+                                      for rel in sorted(detail) for ln, txt in detail[rel]]}
+                           for raw, fl, _ex, tot, detail in hits]
+    return obj
 
 
 # ── 自检（成对负控 · 合成夹具 · 不碰真目标）─────────────────────────────────
@@ -288,6 +333,48 @@ def self_test():
                   % (err2, iso2, len(hits_on), len(hits_off)))
     finally:
         shutil.rmtree(tmpd, ignore_errors=True)
+    # 机器面「**只加字段**」成对负控（`Q-143`）：老四格一字不改 · 新三格按名请求才出现。
+    #   造两条规则**共命中同一批件**（去重集 2 ≠ 未去重和 3）⇒ 两个数必须分得开。
+    import json as _json
+    rules_m = [("regex:userdemo", True, "userdemo", "<合成>", "自检"),
+               ("regex:/srv/demo", True, "/srv/demo", "<合成>", "自检")]
+    fx_m = [("core/x/a_test.go", 3, 's := "userdemo"'),
+            ("core/x/b_test.go", 1, 'u := "userdemo"'),
+            ("core/x/a_test.go", 9, 'h := "/srv/demo"')]
+    hits_m, err_m = judge(rules_m, fx_m)
+    old = json_payload(["rules", "fixtures", "hits", "files"], len(rules_m), len(fx_m), hits_m)
+    if not err_m and sorted(old) == ["files", "fixtures", "hits", "rules"]:
+        ok += 1
+        print("   ✓ 只加字段：老四格请求出来的键集恰 = {files, fixtures, hits, rules}（一字未改）")
+    else:
+        bad.append("老四格键集")
+        print("   ✗ 老四格键集：err=%r keys=%r" % (err_m, sorted(old)))
+    if old.get("files") == ["core/x/a_test.go", "core/x/b_test.go"] and len(old.get("files") or []) == 2:
+        ok += 1
+        print("   ✓ `files` 仍是**去重集**（2 个件 · 排序）—— 语义一字不改")
+    else:
+        bad.append("files 去重集")
+        print("   ✗ `files` 去重集：%r" % (old.get("files"),))
+    new = json_payload(["files_dedup", "files_sum", "per_rule"], len(rules_m), len(fx_m), hits_m)
+    if sorted(new) == ["files_dedup", "files_sum", "per_rule"] and new["files_sum"] == 3 \
+            and new["files_dedup"] == old["files"]:
+        ok += 1
+        print("   ✓ 新增三格按名请求才出现：`files_dedup` = 去重集（2）· `files_sum` = **未去重和 3**"
+              "（2 + 1 · 「逐条相加」从此机器面读）")
+    else:
+        bad.append("files_sum")
+        print("   ✗ 新三格：keys=%r files_sum=%r dedup=%r" % (sorted(new), new.get("files_sum"),
+                                                             new.get("files_dedup")))
+    pr = new.get("per_rule") or []
+    if len(pr) == 2 and pr[0].get("hits") == 2 and pr[1].get("hits") == 1 \
+            and pr[0].get("lines") == [{"file": "core/x/a_test.go", "line": 3, "text": 's := "userdemo"'},
+                                       {"file": "core/x/b_test.go", "line": 1, "text": 'u := "userdemo"'}]:
+        ok += 1
+        print("   ✓ `per_rule[]` 逐规则给出 `{rule, files, hits, lines}` · `lines` = 逐条 `{件,行,原文}`"
+              "（末例 `core/x/b_test.go:1`）")
+    else:
+        bad.append("per_rule")
+        print("   ✗ per_rule：%s" % _json.dumps(pr, ensure_ascii=False)[:200])
     print("自检结论: %s（断言 %d 条 · 失败 %d 条）"
           % ("全过" if not bad else "**不过**", ok + len(bad), len(bad)))
     return 0 if not bad else 2
@@ -301,7 +388,7 @@ def main():
     ap.add_argument("--whitelist", default="", help="白名单路径（默认 <root>/publish/whitelist.txt）")
     ap.add_argument("--extra-rule", action="append", default=[], help="合成一条规则（可重复 · **负控**用）")
     ap.add_argument("--max-examples", type=int, default=5, help="每条规则最多列几件（默认 5）")
-    ap.add_argument("--json", default="", help="机器面字段（逗号分隔：rules,hits,files,fixtures）")
+    ap.add_argument("--json", default="", help="机器面字段（逗号分隔：rules,hits,files,fixtures,files_dedup,files_sum,per_rule）")
     ap.add_argument("--list-rules", action="store_true", help="打判据 / 扫描面 / 档位")
     ap.add_argument("--self-test", action="store_true", help="成对负控（合成夹具 · 不碰真目标）")
     args = ap.parse_args()
@@ -314,6 +401,9 @@ def main():
         print("  件面  ：%s 里**会进公开面**的路径前缀下的 `*_test.go`" % WHITELIST_REL)
         print("  判据  ：任一条规则命中 `*_test.go` ⇒ 红（逐条点名规则/件/行号/片段 · **不给豁免表**）")
         print("退码：0 全绿 · 1 有命中 · 2 不给结论（规则表/白名单缺件 · 空转 · 自检不过）")
+        print("机器面：`--json <字段,逗号分隔>` —— 老四格 `rules,fixtures,hits,files`（`files` = **去重集**）"
+              "+ 新三格 `files_dedup`（同值别名）/ `files_sum`（**未去重和**）/ `per_rule[]`（逐规则"
+              "`{rule, files, hits, lines}` · `lines` = 逐条 `{件,行,原文}`）—— 只加字段，判据与退码不动")
         return 0
 
     if args.self_test:
@@ -371,24 +461,15 @@ def main():
 
     if args.json:
         want = [f.strip() for f in args.json.split(",") if f.strip()]
-        obj = {}
-        if "rules" in want:
-            obj["rules"] = len(rules)
-        if "fixtures" in want:
-            obj["fixtures"] = len(fixtures)
-        if "hits" in want:
-            obj["hits"] = len(hits)
-        if "files" in want:
-            obj["files"] = sorted(set(f for _r, fl, _e, _t in hits for f in fl))
-        print(json.dumps(obj, ensure_ascii=False))
+        print(json.dumps(json_payload(want, len(rules), len(fixtures), hits), ensure_ascii=False))
 
     if not hits:
         print("⇒ 全绿（rc=0）：%d 条规则一条都没命中测试夹具" % len(rules))
         return 0
 
     print("   ✗ 命中：**%d 条**规则打到了测试夹具（共 %d 个件）"
-          % (len(hits), len(set(f for _r, fl, _e, _t in hits for f in fl))))
-    for raw, files, ex, total in hits:
+          % (len(hits), len(set(f for _r, fl, _e, _t, _d in hits for f in fl))))
+    for raw, files, ex, total, _detail in hits:
         print("   ── 规则：%s" % raw.strip()[:140])
         print("      命中件 %d 个 · 命中行 %d 处（列前 %d 件）" % (len(files), total, len(set(e[0] for e in ex))))
         for rel, ln, txt in ex:
