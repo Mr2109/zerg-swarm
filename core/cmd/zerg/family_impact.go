@@ -258,6 +258,12 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 		inv.metaAddStrings("layers_not_run", append([]string{impactBudgetRuntimeEntry}, notRun...))
 		if card.Truncated {
 			inv.markTruncated()
+			// 块D `K-1`（`O-10` · 缺口 `G-81`）：`truncated=true` **同时**给计数 —— 走 `meta` 的按需
+			// 子键 `meta.truncated_detail`（单位一律「条目」· **不加第七键** ✗ · 不报 token 估算 ✗）。
+			// 三数与「已裁 N 条」那份取值**同源**（同一处 `impactCardBudget`）⇒ 包封与卡片块不漂。
+			if dj, ok := impactCardBudget(card).TruncatedDetailJSON(); ok {
+				inv.metaAddJSON("truncated_detail", dj)
+			}
 		}
 		for _, wmsg := range card.Warnings {
 			inv.warnf("%s", wmsg)

@@ -116,6 +116,19 @@ func EnvelopeMetaReservedForTest() []string {
 	return append([]string{}, envMetaReserved...)
 }
 
+// TruncatedDetailJudgeForTest `meta.truncated_detail` 的**唯一判定口**（喂合成包封 ⇒ 只给布尔必红）。
+func TruncatedDetailJudgeForTest(envJSON string) error { return truncatedDetailJudge(envJSON) }
+
+// TruncatedDetailKeysForTest 四键真源 ＋ `cut_from` 三值闭集（测试不另抄一份）。
+func TruncatedDetailKeysForTest() ([]string, []string) {
+	return append([]string{}, truncatedDetailKeys...), append([]string{}, truncatedDetailCutFromSet...)
+}
+
+// ImpactCardBudgetDetailForTest 超预算三件 ＋ 块D `K-1` 三数（**同一处取值** ⇒ 与包封不漂）。
+func ImpactCardBudgetDetailForTest(c ImpactCardForTest) (string, bool) {
+	return impactCardBudget(c.toCard()).TruncatedDetailJSON()
+}
+
 // MainSourceForTest 读包封实现件源码（`main.go`）—— 「不编造信号」的静态自检口。
 func MainSourceForTest() (string, error) {
 	b, err := os.ReadFile("main.go")
