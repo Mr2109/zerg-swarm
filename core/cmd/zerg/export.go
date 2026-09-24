@@ -180,9 +180,12 @@ func helpExportRows(f helpExportFacts) []map[string]string {
 		for k, v := range summary {
 			row[k] = v
 		}
-		isDanger, level, opened, target := "false", "—", "true", ""
+		// `opened` = **真跑开没开**（缺口 序33 · 2026-09-24 已拍）—— 口径 = 单一真源 `openedForRun`：
+		// 危险档看逐条 `opened` 标记；非危险档默认开放，但**声明了拒执**的（`refuses`）不算。
+		// 修前这一格对非危险档**恒写 `"true"`** ⇒ 一条真跑拒执的命令在机器面上也报「已开放」（假绿）。
+		isDanger, level, opened, target := "false", "—", strconv.FormatBool(openedForRun(c)), ""
 		if c.danger != nil {
-			isDanger, level, opened, target = "true", c.danger.Level, strconv.FormatBool(c.opened), c.danger.Target
+			isDanger, level, opened, target = "true", c.danger.Level, strconv.FormatBool(openedForRun(c)), c.danger.Target
 		}
 		row["command"] = "zerg " + strings.Join(c.path, " ")
 		row["is_dangerous"] = isDanger

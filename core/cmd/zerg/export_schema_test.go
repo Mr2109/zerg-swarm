@@ -229,9 +229,11 @@ func catalogProblems(md string, rows []map[string]string) []string {
 			continue
 		}
 		if c.danger == nil {
-			if r["is_dangerous"] != "false" || r["danger_level"] != "—" || r["opened"] != "true" {
-				probs = append(probs, fmt.Sprintf("非危险档 %s 的逐条格不对：is_dangerous=%q danger_level=%q opened=%q",
-					name, r["is_dangerous"], r["danger_level"], r["opened"]))
+			// 非危险档的 `opened` **不再恒写 `"true"`**（缺口 序33 · 2026-09-24 已拍）：
+			// 口径 = `openedForRun` —— 声明了拒执的（`refuses`）在这一格必须是 `"false"`。
+			if r["is_dangerous"] != "false" || r["danger_level"] != "—" || r["opened"] != strconv.FormatBool(openedForRun(c)) {
+				probs = append(probs, fmt.Sprintf("非危险档 %s 的逐条格不对：is_dangerous=%q danger_level=%q opened=%q（命令树口径 %q）",
+					name, r["is_dangerous"], r["danger_level"], r["opened"], strconv.FormatBool(openedForRun(c))))
 			}
 			continue
 		}
