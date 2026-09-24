@@ -143,8 +143,12 @@ func fileSHA256(p string) string {
 const buildOnlyOpen = "cli"
 
 // buildOnlyLevels —— `--only` 的档闭集（**唯一真源**：用法串、错误文案、执行面都读它）。
-// 档名逐字对齐 `scripts/build/build-all.sh` 的三枚旗标（`--only-cli`/`--only-core`/`--only-compat`）。
-var buildOnlyLevels = []string{"cli", "core", "compat"}
+// 档名逐字对齐 `scripts/build/build-all.sh` 的**四枚**旗标（`--only-cli` / `--only-core` / `--only-compat` / `--only-agentd`）。
+// ★ 2026-09-24（待拍清单终版 条 8 · `Q-206`）：`agentd` **收进闭集** —— 依据 = 脚本已正式有 `--only-agentd`
+//
+//	（批六① · 主仓 `e6d9830f`，逐字「子端换件专用档」），而命令面闭集只有三档 ⇒ **两侧名单不同源**
+//	正是本条病根。档数（下面文案里的「四」）与闭集**同处一处**改，别只改一半。
+var buildOnlyLevels = []string{"cli", "core", "compat", "agentd"}
 
 // cmdBuildPassthrough —— `zerg build all` / `zerg build release`：登记形状 + **窄执行面**。
 //
@@ -163,8 +167,8 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 	only := strings.TrimSpace(inv.flagVal("--only"))
 	if only != "" && !containsStr(buildOnlyLevels, only) {
 		inv.setErr("usage", "bad_only_level", "`--only` 的档不在闭集里")
-		fmt.Fprintf(stderr, "%s: `--only` 只认三档：%s（给了 %q）\n", progName, strings.Join(buildOnlyLevels, "|"), only)
-		fmt.Fprintf(stderr, "档名逐字对齐构建脚本：--only-cli / --only-core / --only-compat\n")
+		fmt.Fprintf(stderr, "%s: `--only` 只认四档：%s（给了 %q）\n", progName, strings.Join(buildOnlyLevels, "|"), only)
+		fmt.Fprintf(stderr, "档名逐字对齐构建脚本：--only-cli / --only-core / --only-compat / --only-agentd\n")
 		return exitUsage
 	}
 	script, effect := "scripts/build/build-all.sh", "重编**全部制品**（含正在跑的 zerg-core / zerg-agentd）并重签"
@@ -177,6 +181,14 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		scriptArgs = []string{"--only-" + buildOnlyOpen}
 		openForExec = true
 		effect = "只写 `bin/zerg` 一件（命令面自举档）—— 其余制品与 `build-info.json` 一个字节不动"
+	}
+	// ★ 2026-09-24（待拍清单终版 条 8）：`agentd` 收进闭集后，**执行面同批随动** —— 计划件给**逐字脚本档**
+	//   `--only-agentd`（子端换件专用档 · 批六①），档说明也按该档写；但**真跑仍未开放**（见下 `openForExec`）：
+	//   `agentd` 覆盖的是**在跑**的子端制品 ⇒ 与 `core` / `compat` 同一档口径（换件档 ⇒ 要真跑请 Mr2109 拍）。
+	//   本单只落到「**命令面读得到 + 计划件两态正确**」为止，不自行开放一条新的不可逆执行路径。
+	if action == "all" && only == "agentd" {
+		scriptArgs = []string{"--only-agentd"}
+		effect = "只写 `bin/zerg-agentd` 一件（**子端换件专用档** · 批六①）—— 其余制品与 `build-info.json` 一个字节不动"
 	}
 	if inv.dryRun {
 		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
