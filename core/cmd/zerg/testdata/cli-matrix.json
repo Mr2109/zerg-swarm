@@ -5587,6 +5587,219 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
+  },
+  {
+   "id": "route/pin#未知旗标",
+   "command": "route pin",
+   "argv": [
+    "route",
+    "pin",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "route/pin#不认的契约主号",
+   "command": "route pin",
+   "argv": [
+    "route",
+    "pin",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "route/pin#缺 --yes（D2）",
+   "command": "route pin",
+   "argv": [
+    "route",
+    "pin",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "route/ls#未知旗标",
+   "command": "route ls",
+   "argv": [
+    "route",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "route/ls#不认的契约主号",
+   "command": "route ls",
+   "argv": [
+    "route",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "route/ls#--json 不给字段",
+   "command": "route ls",
+   "argv": [
+    "route",
+    "ls",
+    "--json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · 码**取自退码表** `usage`）"
+  },
+  {
+   "id": "route/unpin#未知旗标",
+   "command": "route unpin",
+   "argv": [
+    "route",
+    "unpin",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "route/unpin#不认的契约主号",
+   "command": "route unpin",
+   "argv": [
+    "route",
+    "unpin",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "route/unpin#缺 --yes（D2）",
+   "command": "route unpin",
+   "argv": [
+    "route",
+    "unpin",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "route/pin#缺时效（不给 --ttl）",
+   "command": "route pin",
+   "argv": [
+    "route",
+    "pin",
+    "--model",
+    "m",
+    "--machine",
+    "x3",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「偶尔的要求」不许变成**永久**改变默认 ⇒ `--ttl` 是必需品：不给 ⇒ 执行前判 2（设计-指定机器路由 §3 约束② 的第一道闸）"
+  },
+  {
+   "id": "route/pin#--ttl 0",
+   "command": "route pin",
+   "argv": [
+    "route",
+    "pin",
+    "--model",
+    "m",
+    "--machine",
+    "x3",
+    "--ttl",
+    "0",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--ttl 0` **不是**「不过期」⇒ 执行前判 2（与 `approve` 族 `E4` 的三格同一条口径 · 同一枚 `--ttl`）"
+  },
+  {
+   "id": "route/pin#--ttl 裸给",
+   "command": "route pin",
+   "argv": [
+    "route",
+    "pin",
+    "--model",
+    "m",
+    "--machine",
+    "x3",
+    "--ttl",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--ttl` 后面没跟值 ⇒ 「给了但没值」也判 2（不许拿空串当永不过期）"
+  },
+  {
+   "id": "route/pin#--ttl 时长认不出",
+   "command": "route pin",
+   "argv": [
+    "route",
+    "pin",
+    "--model",
+    "m",
+    "--machine",
+    "x3",
+    "--ttl",
+    "好久",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "时长认不出 ⇒ 执行前判 2（口径复用 `approveTTLOf` 那一套 —— 同一件事不许两份真源）"
+  },
+  {
+   "id": "route/pin#缺 --machine",
+   "command": "route pin",
+   "argv": [
+    "route",
+    "pin",
+    "--model",
+    "m",
+    "--ttl",
+    "2h",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "钉的是「模型 → 机器」这一对：缺 `--machine` ⇒ 2（不许拿默认择优当「机器」）"
+  },
+  {
+   "id": "route/pin#--machine 裸给",
+   "command": "route pin",
+   "argv": [
+    "route",
+    "pin",
+    "--model",
+    "m",
+    "--machine",
+    "--ttl",
+    "2h",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--machine` 后面没跟值 ⇒ 判 2（`--machine` 是**值旗标**且 `route pin` 判「给没给」，空串不算给了）"
   }
  ],
  "tiers": {

@@ -476,6 +476,20 @@
    "语义": "dryrun.v1",
    "零副作用判据": "本件是**消费者**：现跑只用 `bin/zerg help export --dry-run` 与 `--json commands --dry-run` 两处（都是零副作用档 ⇒ **一个字节都不写**），快照只**读**；本件自己不写任何件（不落盘 / 不删 / 不推 / 不造目录 / 不改 git 状态），`--self-test` 全跑在 `tempfile.mkdtemp()` 夹具树里",
    "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：它不是第五套 dry-run 语义、也不声明语义 —— 是把命令面 `--dry-run` 当**数据**调用的**对拍件**（同 `check-public-face-commands.py` 那条「消费者 / 引文命中」的处置）。复核：`python3 scripts/gates/check-dryrun-semantics.py` ⇒ 现跑 495 行 / 67 件 · 登记 66 件（登记后 == 现跑）· rc=0。"
+  },
+  {
+   "file": "core/cmd/zerg/family_route.go",
+   "类": "实现站点：`route` 族（`pin`/`unpin`）的 D2 三态写门（`--dry-run` / 缺 `--yes` / `--yes`）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`--dry-run` 那一态**只把计划件写进 stdout**（`routeWriteGate` 的第一条分支）：调用 `routeLoadTable` 只**读**覆盖表、`routeCheckFields` 只判字段面，**不调** `t.Save` / `routepin.Save`（写盘只出现在 `routeWriteGate` 返回「放行」之后）⇒ 覆盖表 sha256+尺寸+mtime 逐字不变（判据件 `core/cmd/zerg/cli_route_test.go` 的 `TestRoutePin_DryRunZeroSideEffect` 现跑钉住）；缺 `--yes` 那一态同为零副作用（计划件走 stderr、退 2）；`--yes` 才写，且写后**读回对拍**。本件不删件 / 不推 / 不造目录 / 不改 git 状态。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）。它是**第 3 类写门**的**实现站点**（口径照 `repo commit` / `doc meta fill` / `gap add` 那三条先例：`--dry-run` ⇒ 计划件 stdout · 缺 `--yes` ⇒ 2 · `--yes` 才写），不是第五套语义。复核：`python3 scripts/gates/check-dryrun-semantics.py` ⇒ 现跑 == 登记 · rc=0。"
+  },
+  {
+   "file": "core/cmd/zerg/cli_route_test.go",
+   "类": "判据件：`route` 族三态的成对判据（消费者 —— 把 `--dry-run` 当数据调用）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件是**消费者 / 对拍件**：现跑把 `route` 族命令当**数据**调用，判「干跑那一档零副作用」（跑前跑后覆盖表 sha256 逐字比）。它自己不写任何真件：`ZERG_ROUTE_PINS` 一律指到 `t.TempDir()`、用例全跑在临时目录的夹具树上；不落盘 / 不删 / 不推 / 不造目录 / 不改 git 状态。",
+   "备注": "登记依据同上（门⑩ `R1`）。同 `check-help-snapshot.py` / `check-public-face-commands.py` 的「消费者 / 引文命中」处置 —— 它不声明语义，只是**判**那一档。"
   }
  ]
 }
