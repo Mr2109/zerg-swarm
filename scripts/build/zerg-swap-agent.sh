@@ -6,7 +6,8 @@
 #
 # 三道门禁（与主控件逐条对应）：
 #   ① 构建只走 `scripts/build/build-all.sh`（身份注入 + ad-hoc 重签都在里面）——**绝不手搓 go build**；
-#   ② 换件前必须**验签**（`codesign --verify`，输出原样打印）——签名不过就不换；
+#   ② 换件前必须**验签**（取数档 `codesign -dvvv` ⇒ `Signature=` / `flags=` / `cdhash` 三格齐**且非 adhoc**；
+#      输出原样打印）——`--verify` 不过是签名失效；**adhoc 档判红**（`--verify` rc=0 也不再算过）；
 #   ③ 起不来 ⇒ 回滚 + **回滚件同样验签** + 打印失败现场（**任何命令的输出都不许被吞**）。
 # 两道前置闸（换件前跑，不过 ⇒ 不换件且**未动生产**）：
 #   闸 A **工作树里没有并行的半成品**：换件是**从工作树编译**的 ⇒ core/agent/ui/wall 下有未提交改动就把半成品编进生产件。
@@ -64,7 +65,7 @@ zerg-swap-agent.sh —— 子端（zerg-agentd）换件的受控流程 · **只�
   闸 A 工作树半成品：`git status --porcelain core/ agent/ ui/ wall/` 的非未跟踪项计数必须 0（换件是从工作树编译的）
   闸 B 服务定义可用：盘上 launchd plist 引用的程序必须真存在（脚本/产物搬家会让那句路径悬空）
   闸① 构建口径：件必须由 scripts/build/build-all.sh 产出（身份注入 + 重签）；读 bin/build-info.json 判
-  闸② 验签：目标件必须 `codesign --verify` 通过（输出原样打印，不吞）
+  闸② 验签：取数档 `codesign -dvvv` ⇒ `Signature=` / `flags=` / `cdhash` **三格齐且非 adhoc**（adhoc ⇒ **判红**；输出原样打印，不吞）
   闸③ 回滚位：回滚件（bin/_history/<件>.prev）必须**在位且验签通过** —— 「退得回去」得先证明
   闸④ 换件后自证判据可跑：探针打到子端自身 `/ready` + `/status`（只读 GET），证明判据活着
 
@@ -171,13 +172,56 @@ else
   judge "① 构建口径" PASS "构件身份齐：${IDENT}（造件入口 = scripts/build/build-all.sh）"
 fi
 
-hr; say "[闸②] 验签（codesign --verify —— 输出原样打印，不吞）"
+# ── 两枚换件器共用的**只读判据**（条 10 · `序 121` ／ 条 17 · `Q-207`）──────────────────
+# `sign_three_cells`：换前验签的**取数档** —— `codesign -dvvv` 同档出 `Signature=` / `flags=` /
+#   `cdhash` 三格（`-dv` / `-dvv` **均无** `CDHash` ⇒ 三格不在同一档就核不出一件是谁签的）。
+#   退码：0 三格齐且**非 adhoc**（放行）· 1 **判红**（adhoc / 三格缺）· 2 **不给结论**（件不在 / codesign 起不来）。
+#   为什么判红不再看 `codesign --verify`：adhoc 件 `--verify` **rc=0**（实测 `cp /bin/echo` + `codesign -s -`
+#   ⇒ 通过）⇒ 只认 `--verify` 就等于「负控永不红」；adhoc 件换上会被秒杀 EXIT137。
+sign_three_cells() {  # $1 = 件
+  local bin="$1" out sig sigsize flags cdhash
+  [ -e "$bin" ] || { echo "件不存在：${bin}"; return 2; }
+  out="$(codesign -dvvv "$bin" 2>&1)" || { echo "codesign -dvvv 起不来：${bin}"; return 2; }
+  sig="$(printf '%s\n' "$out" | sed -n 's/^Signature=\(.*\)$/\1/p' | head -1)"            # 只有 adhoc 是等号形
+  sigsize="$(printf '%s\n' "$out" | sed -n 's/^Signature size=\(.*\)$/\1/p' | head -1)"   # 真签是 `Signature size=`
+  flags="$(printf '%s\n' "$out" | grep -E '^CodeDirectory ' | sed -n 's/.*flags=\([^ ]*\).*/\1/p' | head -1)"
+  cdhash="$(printf '%s\n' "$out" | grep -E '^(Candidate)?CDHash=' | head -1 | cut -d= -f2-)"
+  echo "Signature=${sig:-真签（size=${sigsize:-缺格}）} · flags=${flags:-（缺格）} · cdhash=${cdhash:-（缺格）}"
+  case "${sig}" in
+    adhoc) echo "判红：Signature=adhoc —— 验签 rc=0 不算过（adhoc 件换上会被秒杀 EXIT137）"; return 1 ;;
+  esac
+  case "${flags}" in
+    *adhoc*) echo "判红：flags=${flags}（ad-hoc 档）"; return 1 ;;
+  esac
+  if [ -z "${flags}" ] || [ -z "${cdhash}" ] || { [ -z "${sig}" ] && [ -z "${sigsize}" ]; }; then
+    echo "判红：三格不齐（Signature / flags / cdhash）"; return 1
+  fi
+  return 0
+}
+
+# `history_drop_ok`：留档落点**一律** `<仓根>/bin/_history/…` —— 落在 `bin/` 根（产出面根）里
+#   平铺一份 `*.bak-*` **判红**（本机现读仍有 14 枚**人手造的历史平铺件** ⇒ **不搬家** ✗，只管新落点）。
+history_drop_ok() {  # $1 = 将要写的**留档落点**（仓内相对路径）；0 = 合规 · 1 = 判红
+  case "$1" in
+    bin/_history/*) return 0 ;;
+  esac
+  echo "留档落点 ${1} 不在 bin/_history/ 之下（产出面根里平铺 *.bak-* ⇒ 判红）"
+  return 1
+}
+
+hr; say "[闸②] 验签（取数档 = codesign -dvvv ⇒ Signature= / flags= / cdhash 三格同档；输出原样打印，不吞）"
 if [ ! -e "$BIN_REL" ]; then
   judge "② 验签" BLOCKED "件不存在（${BIN_REL}）—— 判不了"
 else
-  say "      $(codesign -dv --verbose=2 "$BIN_REL" 2>&1 | grep -E 'Identifier|Signature|Format' | tr '\n' ' ')"
-  if codesign --verify --verbose=2 "$BIN_REL" 2>&1 | sed 's/^/      verify: /' | tee -a "$LOG"; then
-    judge "② 验签" PASS "${BIN_REL} 验签通过"
+  say "      $(codesign -dvvv "$BIN_REL" 2>&1 | grep -E '^Identifier=|^CodeDirectory |^CandidateCDHash |^CDHash=' | tr '\n' ' ')"
+  CELLS="$(sign_three_cells "$BIN_REL")"; CELLS_RC=$?
+  say "      三格：${CELLS}"
+  if [ "$CELLS_RC" = "1" ]; then
+    judge "② 验签" FAIL "${BIN_REL} **判红**（条 10 · 取数档 -dvvv）：${CELLS}"
+  elif [ "$CELLS_RC" != "0" ]; then
+    judge "② 验签" BLOCKED "${BIN_REL} 三格取不到 ⇒ 判不了（不许当绿）：${CELLS}"
+  elif codesign --verify --verbose=2 "$BIN_REL" 2>&1 | sed 's/^/      verify: /' | tee -a "$LOG"; then
+    judge "② 验签" PASS "${BIN_REL} 验签通过（Signature / flags / cdhash 三格齐 · 非 adhoc）"
   else
     judge "② 验签" FAIL "${BIN_REL} 验签不过（签名失效的件换上会被秒杀 EXIT137）"
   fi

@@ -7,7 +7,8 @@
 #
 # 三道门禁（缺一不可）：
 #   ① 构建只走 scripts/build/build-all.sh（身份注入 + ad-hoc 重签都在里面）——**绝不手搓 go build**；
-#   ② 换件前必须**验签**（codesign --verify，输出原样打印）——签名不过就不换；
+#   ② 换件前必须**验签**（取数档 `codesign -dvvv` ⇒ `Signature=` / `flags=` / `cdhash` 三格齐**且非 adhoc**；
+#      输出原样打印）——`--verify` 不过是签名失效；**adhoc 档判红**（`--verify` rc=0 也不再算过）；
 #   ③ 起不来 ⇒ 回滚 + **回滚件同样验签** + 再启 + 打印失败现场（日志 tail）——
 #      **任何命令的输出都不许被吞**（不用 >/dev/null 2>&1 掩盖）。
 #
@@ -51,10 +52,51 @@ PLIST="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
 ENDPOINT="${ZERG_SWAP_ENDPOINT:-http://127.0.0.1:8580/api/capabilities}"
 TS="$(date +%Y%m%dT%H%M%S)"
 LOG="${ZERG_SWAP_LOG:-/tmp/zerg-swap-$TS.log}"
-BACKUP="${ZERG_SWAP_BACKUP:-/tmp/zerg-core.swap-backup-$TS}"
+# ★ 2026-09-24（`待拍清单终版-20260924.md` 条 17 · `Q-207`）：备份落点**统一进 `bin/_history/`**
+# —— 旧值 `/tmp/zerg-core.swap-backup-$TS` 是**第二套落点**（与 `zerg-swap-agent.sh` /
+# `zerg-swap-ui.sh` 的 `bin/_history/<件>.prev` 并存）⇒ 回滚位「哪一枚才算」要人现读。
+# 本脚本与另两件换件器**同落点**；`--self-test-rollback` 照旧用 `ZERG_SWAP_BACKUP` 覆盖（抛靶自测）。
+BACKUP="${ZERG_SWAP_BACKUP:-bin/_history/zerg-core.bak-$TS}"
 
 say()  { echo "$@" | tee -a "$LOG"; }
 hr()   { say "──────────────────────────────────────────────"; }
+
+# ── 两枚换件器共用的**只读判据**（条 10 · `序 121` ／ 条 17 · `Q-207`）──────────────────
+# `sign_three_cells`：换前验签的**取数档** —— `codesign -dvvv` 同档出 `Signature=` / `flags=` /
+#   `cdhash` 三格（`-dv` / `-dvv` **均无** `CDHash` ⇒ 三格不在同一档就核不出一件是谁签的）。
+#   退码：0 三格齐且**非 adhoc**（放行）· 1 **判红**（adhoc / 三格缺）· 2 **不给结论**（件不在 / codesign 起不来）。
+#   为什么判红不再看 `codesign --verify`：adhoc 件 `--verify` **rc=0**（实测 `cp /bin/echo` + `codesign -s -`
+#   ⇒ 通过）⇒ 只认 `--verify` 就等于「负控永不红」；adhoc 件换上会被秒杀 EXIT137。
+sign_three_cells() {  # $1 = 件
+  local bin="$1" out sig sigsize flags cdhash
+  [ -e "$bin" ] || { echo "件不存在：${bin}"; return 2; }
+  out="$(codesign -dvvv "$bin" 2>&1)" || { echo "codesign -dvvv 起不来：${bin}"; return 2; }
+  sig="$(printf '%s\n' "$out" | sed -n 's/^Signature=\(.*\)$/\1/p' | head -1)"            # 只有 adhoc 是等号形
+  sigsize="$(printf '%s\n' "$out" | sed -n 's/^Signature size=\(.*\)$/\1/p' | head -1)"   # 真签是 `Signature size=`
+  flags="$(printf '%s\n' "$out" | grep -E '^CodeDirectory ' | sed -n 's/.*flags=\([^ ]*\).*/\1/p' | head -1)"
+  cdhash="$(printf '%s\n' "$out" | grep -E '^(Candidate)?CDHash=' | head -1 | cut -d= -f2-)"
+  echo "Signature=${sig:-真签（size=${sigsize:-缺格}）} · flags=${flags:-（缺格）} · cdhash=${cdhash:-（缺格）}"
+  case "${sig}" in
+    adhoc) echo "判红：Signature=adhoc —— 验签 rc=0 不算过（adhoc 件换上会被秒杀 EXIT137）"; return 1 ;;
+  esac
+  case "${flags}" in
+    *adhoc*) echo "判红：flags=${flags}（ad-hoc 档）"; return 1 ;;
+  esac
+  if [ -z "${flags}" ] || [ -z "${cdhash}" ] || { [ -z "${sig}" ] && [ -z "${sigsize}" ]; }; then
+    echo "判红：三格不齐（Signature / flags / cdhash）"; return 1
+  fi
+  return 0
+}
+
+# `history_drop_ok`：留档落点**一律** `<仓根>/bin/_history/…` —— 落在 `bin/` 根（产出面根）里
+#   平铺一份 `*.bak-*` **判红**（本机现读仍有 14 枚**人手造的历史平铺件** ⇒ **不搬家** ✗，只管新落点）。
+history_drop_ok() {  # $1 = 将要写的**留档落点**（仓内相对路径）；0 = 合规 · 1 = 判红
+  case "$1" in
+    bin/_history/*) return 0 ;;
+  esac
+  echo "留档落点 ${1} 不在 bin/_history/ 之下（产出面根里平铺 *.bak-* ⇒ 判红）"
+  return 1
+}
 
 # ── 用法（--help 原文即下面这段；**退码与 ROLLED_BACK 的唯一定义处**）──────────────
 usage() {
@@ -332,11 +374,19 @@ fi
 say "  构建完成：$(stat -f%z "$BIN") 字节"
 
 # ── 2. 验签（门禁②：不过就不换）───────────────────────────────
-hr; say "[2] 验签（codesign --verify —— 输出原样打印，不吞）"
-codesign -dv --verbose=2 "$BIN" 2>&1 | grep -E "Identifier|Signature|Format" | sed 's/^/  /' | tee -a "$LOG"
+hr; say "[2] 验签（取数档 = codesign -dvvv ⇒ Signature= / flags= / cdhash 三格同档；输出原样打印，不吞）"
+codesign -dvvv "$BIN" 2>&1 | grep -E "^Executable=|^Identifier=|^Format=|^CodeDirectory |^CandidateCDHash |^CDHash=" | sed 's/^/  /' | tee -a "$LOG"
 if ! codesign --verify --verbose=2 "$BIN" 2>&1 | tee -a "$LOG"; then
   say "!! 验签失败 ⇒ 不换件"; exit 1
 fi
+# ★ 条 10 · `序 121`：**三格齐 且 非 adhoc** 才放行 —— adhoc 件 `--verify` rc=0（实测），只认它就等于
+#   负控永不红（负控 = 按 `Signature=adhoc` / `flags=0x2(adhoc)` 判红）。
+SIGN_CELLS="$(sign_three_cells "$BIN")"; SIGN_RC=$?
+case "$SIGN_RC" in
+  0) say "  ${SIGN_CELLS}" ;;
+  1) say "  ${SIGN_CELLS}"; say "!! 换前验签**判红**（条 10 · 取数档 -dvvv：adhoc / 三格缺）⇒ 不换件"; exit 1 ;;
+  *) say "  ${SIGN_CELLS}"; say "!! 换前验签**判不了** ⇒ 不给结论（不换件 · 退码 2）"; exit 2 ;;
+esac
 say "  验签通过 ✓"
 
 # ── 3. 换件 + 起 + 验端点 + 自证 ────────────────────────────────
