@@ -50,7 +50,7 @@ The help face is itself made of commands — ask it first:
 
 **This block is a generated artifact (do not hand-edit)**: injected by `scripts/docs/gen-cli-reference.py`, computed live from the command tree — re-run `python3 scripts/docs/gen-cli-reference.py --emit --target publish/docs/CLI.en.md`; judge drift with `--check --target publish/docs/CLI.en.md`. Command names, usage strings (flags), summaries, `--json` fields, projected endpoints and wall layer are quoted **verbatim from the command tree; not one of them is hand-written**.
 
-### Open (86)
+### Open (87)
 
 | command | usage (flags) | summary | `--json` fields | projected endpoint | wall layer |
 |---|---|---|---|---|---|
@@ -131,6 +131,7 @@ The help face is itself made of commands — ask it first:
 | `zerg resource ls` | `zerg resource ls [<类型>] [--json <字段>]` | 资源面（投影 /api/resources/ledger 或 /api/resources/{类型}） | machine,mem_known,mem_total_gb,mem_available_gb,vram_known,gpu_pct,backend_state,fit | GET /api/resources/ledger \| /api/resources/{type} | `host` |
 | `zerg resource pin` | `zerg resource pin <资源 id> [--dry-run \| --yes]` | 钉住资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2） | （无机器面） | 本机（无远端对应） | `host` |
 | `zerg resource unpin` | `zerg resource unpin <资源 id> [--dry-run \| --yes]` | 解钉资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2） | （无机器面） | 本机（无远端对应） | `host` |
+| `zerg route ls` | `zerg route ls [--model <模型>] [--json <字段>]` | 看覆盖表现在钉着什么（**只读**：不碰盘、不探主控、零网络 · 过期行也显出来） | model,machine,expires_at,remaining_s,state | 本机（无远端对应） | `host` |
 | `zerg script ls` | `zerg script ls [--json <字段>]` | 本机脚本清单（scripts/ 逐件 + 公开标记表） | path,public | 本机（无远端对应） | `host` |
 | `zerg task diff` | `zerg task diff <任务 id> [--json <字段>]` | 该任务工作树的**只读** `git diff --stat` | id,workdir,diff_stat | GET /api/tasks/{id}（取 workdir）+ 本机只读 git | `host` |
 | `zerg task git` | `zerg task git <任务 id> [--json <字段>]` | 该任务工作树的 git 面（分支 / HEAD / 未提交 / 与 main 的距离） | id,workdir,branch,head,dirty,ahead_of_main | GET /api/tasks/{id}（取 workdir）+ 本机只读 git | `host` |
@@ -141,9 +142,9 @@ The help face is itself made of commands — ask it first:
 | `zerg version` | `zerg version [--json <字段>]` | 单行身份（组件 版本 代码 sha 构建时间）· --json 报三层版本 | name,version,commit,build_time,contract,object_schema,core_version,core_code_sha,window | 本机（无远端对应） | `host` |
 | `zerg watch` | `zerg watch [<id>] [--accept <媒体类型>] [--exit-on <kind>] [--follow]` | 订阅事件流（单端点 + Accept 协商 · 唯一名字） | （无机器面） | GET /api/events（**主控面今天没有** ⇒ 本版不给结论） | `host` |
 
-### Dangerous actions (38 · registered)
+### Dangerous actions (40 · registered)
 
-> The export's header, verbatim: `命令清单 **86** 条 · 危险动作 **38** 条（其中**已开放** 10 条 · 未开放 28 条）` — for which actions are open, `zerg help dangerous` is the per-command authority; this table's four columns (tier / three states / `--confirm` target / what it touches) are quoted verbatim from `zerg help export`; the ones not open yet refuse to run for real (exit 2 = no verdict) and only their `--dry-run` plan face is available.
+> The export's header, verbatim: `命令清单 **87** 条 · 危险动作 **40** 条（其中**已开放** 12 条 · 未开放 28 条）` — for which actions are open, `zerg help dangerous` is the per-command authority; this table's four columns (tier / three states / `--confirm` target / what it touches) are quoted verbatim from `zerg help export`; the ones not open yet refuse to run for real (exit 2 = no verdict) and only their `--dry-run` plan face is available.
 
 | command | tier | three states | `--confirm` target | what it touches | wall layer |
 |---|---|---|---|---|---|
@@ -176,6 +177,8 @@ The help face is itself made of commands — ask it first:
 | `zerg model start` | D2 | --dry-run · --confirm · --yes | 模型 id | 把模型装载起来（占槽位 · 单槽机要排队） | `host` |
 | `zerg model stop` | D3 | --dry-run · --confirm · --yes | 模型 id | 停掉该模型的驻留（**在跑任务受影响**）· 幂等优先：已停不报 500 | `host` |
 | `zerg repo commit` | D2 | --dry-run · --confirm · --yes | 提交主题 | 把点名的件提交（可逆：`git reset --soft HEAD~1`）；**先跑快速档**，rc≠0 不提交（要带账放行得 `--waive <步名> --reason <…>`） | `host` |
+| `zerg route pin` | D2 | --dry-run · --confirm · --yes | 模型 | 把这一条写进覆盖表（该模型的选机**命中即用**该机器）—— 可逆：`route unpin` 或等它自己到期 | `host` |
+| `zerg route unpin` | D2 | --dry-run · --confirm · --yes | 模型 | 把点名的行从覆盖表里去掉（该模型的选机**立刻回默认择优**）—— 可逆：再 `route pin` 一次 | `host` |
 | `zerg script inventory sync` | D2 | --dry-run · --confirm · --yes | 台账件 | 把仓外台账的行面与两个 yes/no 列按现跑重算（可逆：写前备份 + 写后读回，复查不过逐字节写回）；**一条命令写**、**不许第二条写路径** | `host` |
 | `zerg script run` | D3 | --dry-run · --confirm · --yes | 脚本 | 按调用者权限执行脚本（**退码原样透传**；核心名硬占位） | `host` |
 | `zerg task move` | D2 | --dry-run · --confirm · --yes | 任务 id | 改这条任务在队列里的次序（可能插到别人前面） | `host` |
