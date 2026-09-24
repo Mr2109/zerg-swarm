@@ -270,13 +270,59 @@ if [ "$ONLY_AGENTD" = "1" ]; then
   exit 0
 fi
 
+# ── --only-core：换件专用档（只写 bin/zerg-core 一个文件）───────────────────────
+#   纪律：换主控时**不许**顺手重编子端/UI（`bin/zerg-agentd` 是**正在跑**的子端件，覆盖它等于
+#   埋一次子端换件，且 macOS 上就地覆盖在跑的可执行文件可能把那个进程打崩）。
+#   构建身份（-ldflags）与重签（稳定身份 + `com.zerg.core`）两件事与本脚本其余档**逐字同源**。
+#   ★ 2026-09-24 · 缺口 `Q-210`：本支（与下面的 `--only-compat` 支）**已上移到「命令面 zerg」段之前**
+#     —— 此前它们排在那一段**之后** ⇒ `--only-core` / `--only-compat` 会顺手重编 `bin/zerg`
+#     **却不重签**（产出件只剩 Go linker 的 ad-hoc 签名 ⇒ macOS TCC 本地网络授权随 cdhash 静默失效），
+#     与「只写一个文件」正面矛盾。位置本身就是判据：本支从头到尾**不许**出现面向 `$OUT/zerg` 的
+#     构建行（`-o "$OUT/zerg"`）—— 一旦出现 ⇒ 回到 `Q-210` 的旧形态（守卫见上面那段的位置注释）。
+if [ "$ONLY_CORE" = "1" ]; then
+  echo "→ 主控 zerg-core（--only-core）"
+  (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -tags "$GOTAGS" -ldflags "$LDFLAGS" -o "$OUT/zerg-core" ./cmd/zerg-core)
+  resolve_sign_identity
+  sign_one "$OUT/zerg-core"
+  echo "✅ 构建完成（--only-core：只写 bin/zerg-core；其余制品与 build-info.json 一个字节未动）"
+  printf "   %-14s %s 字节\n" "zerg-core" "$(stat -f%z "$OUT/zerg-core" 2>/dev/null || stat -c%s "$OUT/zerg-core")"
+  exit 0
+fi
+
+# ── --only-compat：只出兼容层一件（回滚前置校验用；批 C · T-29 / P-132）──────────────────
+#   纪律同另两档：blast radius = 一个文件；其余制品与 build-info.json 一个字节不动。
+if [ "$ONLY_COMPAT" = "1" ]; then
+  echo "→ 兼容层 zerg-compat（--only-compat）"
+  (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -tags "$GOTAGS" -ldflags "$LDFLAGS" -o "$OUT/zerg-compat" ./cmd/zerg-compat)
+  resolve_sign_identity
+  sign_one "$OUT/zerg-compat"
+  echo "✅ 构建完成（--only-compat：只写 bin/zerg-compat；其余制品与 build-info.json 一个字节未动）"
+  printf "   %-14s %s 字节\n" "zerg-compat" "$(stat -f%z "$OUT/zerg-compat" 2>/dev/null || stat -c%s "$OUT/zerg-compat")"
+  exit 0
+fi
+
 # 命令面 zerg（薄壳 · 独立客户端二进制）：与 9 个既有入口同 module、复用 core/internal/*（§6.1）。
-# 放在最前，因为 --only-cli 只编它一件就收工。
+# 位置（2026-09-24 · 缺口 `Q-210`）：本段**只属于两条入口** —— `--only-cli` 支与不带 `--only` 的全量档。
+#   ★ 为什么**不能**再放在最前（原形态的病）：本段此前位于 `if [ "$ONLY_CORE" = "1" ]` **之前** ⇒
+#     `--only-core`（换主控档）与 `--only-compat` 会**顺手重编 `bin/zerg` 却不重签** ⇒ 换主控后
+#     命令面剩下的只有 Go linker 的 ad-hoc 签名（实读 `Identifier=a.out` ·
+#     `flags=0x20002(adhoc,linker-signed)` · `Signature=adhoc`）= **`G-05` 那一档**
+#     （macOS TCC 的本地网络授权随 cdhash **静默失效**），且与那两档写在注释里的
+#     「只写一个文件 / blast radius = 一个文件」**正面矛盾**。
+#   ⇒ 落法（二选一取 ①：**命令面段只留在 `--only-cli` 支与全量支里**）：
+#     把两条「只出一件」的收工支**上移**到本段之前（它们各自 `exit 0` ⇒ 走到本段前就结束），
+#     而**不是**给那两档补一次 `sign_one "$OUT/zerg"` —— 补签会让 `bin/zerg` 仍然被重编
+#     （换件档的 blast radius 仍是两个文件），而本档的纪律逐字是「只写一件」。
+#     守卫 = `scripts/gates/check-signature-identity.py`（读签名档三格：`Identifier` ≠ `a.out` ·
+#     `flags` 不含 `adhoc` · `Signature` ≠ `adhoc` · 同批挂门）＋ 换件档自己的判据
+#     （`--only-core` / `--only-compat` 跑前跑后 `bin/zerg` 的 sha256 必须逐字节相同）。
 #
 # ── 换件前留档（2026-09-22 · G-06）─────────────────────────────────────────────
-# 就地覆盖 bin/zerg 的入口有四个（--only-cli / --only-core / --only-compat / 不带 --only 的全量档），
-#   而它们编 `bin/zerg` 用的是**同一行**（下面那一行 `go build … -o "$OUT/zerg"`）⇒ 留档也只挂这一处，
-#   四条入口共用同一条留档路径（同 `sign_one` 那条理由：挂两份实现就会漂）。
+# 就地覆盖 bin/zerg 的入口有**两个**（`--only-cli` / 不带 `--only` 的全量档 —— 2026-09-24 缺口
+#   `Q-210` 之前是四个：`--only-core` 与 `--only-compat` 也会编它、却不重签 ⇒ 已把它俩上移到本段
+#   之前收工，见本段上面那条「位置」注释），而它们编 `bin/zerg` 用的是**同一行**
+#   （下面那一行 `go build … -o "$OUT/zerg"`）⇒ 留档也只挂这一处，
+#   两条入口共用同一条留档路径（同 `sign_one` 那条理由：挂两份实现就会漂）。
 # --dist 档不挂：它写 `dist/<版本>/`，不是换生产件（见文件头「--dist 的边界」）。
 # 留档失败 ⇒ **拒换件**（这里 `exit 1`，绝不往下走：旧件还没被覆盖，bin/ 一个字节未动）。
 if [ "$DIST" != "1" ]; then
@@ -297,32 +343,6 @@ if [ "$ONLY_CLI" = "1" ]; then
   sign_one "$OUT/zerg"
   echo "✅ 构建完成（--only-cli：只写 bin/zerg；其余制品与 build-info.json 一个字节未动）"
   printf "   %-14s %s 字节\n" "zerg" "$(stat -f%z "$OUT/zerg" 2>/dev/null || stat -c%s "$OUT/zerg")"
-  exit 0
-fi
-
-# ── --only-core：换件专用档（只写 bin/zerg-core 一个文件）───────────────────────
-#   纪律：换主控时**不许**顺手重编子端/UI（`bin/zerg-agentd` 是**正在跑**的子端件，覆盖它等于
-#   埋一次子端换件，且 macOS 上就地覆盖在跑的可执行文件可能把那个进程打崩）。
-#   构建身份（-ldflags）与重签（稳定身份 + `com.zerg.core`）两件事与本脚本其余档**逐字同源**。
-if [ "$ONLY_CORE" = "1" ]; then
-  echo "→ 主控 zerg-core（--only-core）"
-  (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -tags "$GOTAGS" -ldflags "$LDFLAGS" -o "$OUT/zerg-core" ./cmd/zerg-core)
-  resolve_sign_identity
-  sign_one "$OUT/zerg-core"
-  echo "✅ 构建完成（--only-core：只写 bin/zerg-core；其余制品与 build-info.json 一个字节未动）"
-  printf "   %-14s %s 字节\n" "zerg-core" "$(stat -f%z "$OUT/zerg-core" 2>/dev/null || stat -c%s "$OUT/zerg-core")"
-  exit 0
-fi
-
-# ── --only-compat：只出兼容层一件（回滚前置校验用；批 C · T-29 / P-132）──────────────────
-#   纪律同另两档：blast radius = 一个文件；其余制品与 build-info.json 一个字节不动。
-if [ "$ONLY_COMPAT" = "1" ]; then
-  echo "→ 兼容层 zerg-compat（--only-compat）"
-  (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -tags "$GOTAGS" -ldflags "$LDFLAGS" -o "$OUT/zerg-compat" ./cmd/zerg-compat)
-  resolve_sign_identity
-  sign_one "$OUT/zerg-compat"
-  echo "✅ 构建完成（--only-compat：只写 bin/zerg-compat；其余制品与 build-info.json 一个字节未动）"
-  printf "   %-14s %s 字节\n" "zerg-compat" "$(stat -f%z "$OUT/zerg-compat" 2>/dev/null || stat -c%s "$OUT/zerg-compat")"
   exit 0
 fi
 
