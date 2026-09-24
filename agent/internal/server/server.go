@@ -432,7 +432,9 @@ func (s *Server) handleInferRequest(req inferReq) {
 			log.Printf("[server] ⚠️ 读后端响应失败 (model=%s): %v (已读 %d 字节)", req.model, readErr, len(respBody))
 		}
 
-		// 重提示机制（unsloth PR #4769）：模型"该调不调"时注入 reminder 重试一次
+		// 重提示机制（unsloth PR #4769）：模型"该调不调"时注入 reminder 重试一次。
+		// v2.5.12 批三 H1：**默认关**（见 maybeRemind 闸①）——默认路径不改写请求体、不重跑、
+		// 不把第二次的回答回给客户端。
 		if remindedBody, should := s.maybeRemind(req.model, req.body, respBody); should {
 			log.Printf("[server] ⚠️ 检测到模型未调工具（短响应+意图），注入重提示重试")
 			resp2, err2 := s.agent.backends.InferForward(req.ctx, req.model, req.forwardPath, remindedBody)
@@ -469,14 +471,31 @@ func (s *Server) handleInferRequest(req inferReq) {
 }
 
 // maybeRemind 检测模型"该调不调"并返回注入 reminder 的请求体。
-// 触发条件（unsloth PR #4769）：
-//  1. 该模型配置了需要重提示（NeedsToolReminder）
-//  2. 响应 < 500 字符
-//  3. 响应含前瞻意图（"我将/我用/首先/第一步/let me/i'll 等）
-//  4. 响应没有工具调用（无 tool_calls / finish_reason != tool_calls）
+//
+// v2.5.12 批三（H1 修法）：本机制**默认关**，且**只在客户端确实声明了工具时**才可能触发。
+// 依据 `Zerg-内部文档/项目文档/v2.5.12/排查-卵子代理回声与会话串话-v2.5.12-20260924.md` §③H1 / §④F1。
+// 旧行为的代价（本单实测）：追加一句英文 reminder 进请求体并对同一请求**再跑一次推理**、
+// 把**第二次**的回答回给客户端 ⇒ ① 客户端拿不到自己那一问的答案 ② 引擎侧 `prompt_tokens`
+// 比干净直连多 ≈24（45 vs 21）③ 正文与 think 两个通道被同一段注入污染。
+//
+// 触发条件（两道闸都过 + unsloth PR #4769 原四条）：
+//  0. 闸①（默认关）该模型被 `ZERG_TOOL_REMINDER` 显式点名（见 toolReminderEnabled）
+//  1. 闸② 请求体里客户端**声明了工具**（无工具可调时注入只会改写请求体，见 bodyDefinesTools）
+//  2. 该模型配置了需要重提示（NeedsToolReminder）
+//  3. 响应 < 500 字符
+//  4. 响应含前瞻意图（"我将/我用/首先/第一步/let me/i'll 等）
+//  5. 响应没有工具调用（无 tool_calls / finish_reason != tool_calls）
 //
 // 满足则往请求体追加 reminder 用户消息，返回 true。
 func (s *Server) maybeRemind(model string, body, respBody []byte) ([]byte, bool) {
+	// 闸①（默认关）：未显式开启 ⇒ 不改写发给模型的请求体、不重跑、不把第二次回答回给客户端。
+	if !toolReminderEnabled(model) {
+		return nil, false
+	}
+	// 闸②：客户端没定义任何工具 ⇒ 一律不注入（没有工具可调，注入只会污染请求体）。
+	if !bodyDefinesTools(body) {
+		return nil, false
+	}
 	adp := modeladapter.Dispatch(model)
 	if !adp.NeedsToolReminder() {
 		return nil, false
@@ -548,6 +567,55 @@ func appendReminder(body []byte, reminder string) ([]byte, error) {
 		obj["input"] = input
 	}
 	return json.Marshal(obj)
+}
+
+// toolReminderEnabled 判断「该模型的『该调不调』重提示」是否被**显式**开启（v2.5.12 批三 · H1 修法）。
+//
+// 默认**关**——旧行为会改写发给模型的请求体、重跑一次、并把第二次的回答回给客户端，
+// 还会让引擎侧的 `prompt_tokens` 偏离干净直连基准（实测 45 vs 21）。要恢复旧行为必须显式开：
+//
+//	ZERG_TOOL_REMINDER 未设 / 空串        ⇒ 全关（**默认**）
+//	ZERG_TOOL_REMINDER=1 / true / all / * ⇒ 全开（逐字恢复旧行为）
+//	ZERG_TOOL_REMINDER=example-35b-v2,qwen3.6     ⇒ 仅「模型名前缀」命中时开（与 modeladapter.Dispatch 同口径）
+//
+// 逐枚开（而不是一个全局布尔）的理由：今天有 4 枚适配器声明 NeedsToolReminder()==true
+// （example-35b-v2 / qwen36 / k2horizon / qwen38flash），产线里究竟哪几枚真需要这层兜底还未按模型拆清
+// （见任务清单序 35）⇒ 只允许点名开，不允许默默全开。
+func toolReminderEnabled(model string) bool {
+	raw := strings.TrimSpace(os.Getenv("ZERG_TOOL_REMINDER"))
+	if raw == "" {
+		return false
+	}
+	lower := strings.ToLower(raw)
+	switch lower {
+	case "1", "true", "all", "*":
+		return true
+	}
+	m := strings.ToLower(model)
+	for _, p := range strings.Split(lower, ",") {
+		if p = strings.TrimSpace(p); p != "" && strings.HasPrefix(m, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// bodyDefinesTools 判断请求体里客户端**确实**声明了工具（chat 的 tools / functions）。
+//
+// 一个工具都没有的场景注入 reminder 毫无意义（没有工具可调），注入只会改写请求体并让客户端
+// 拿到第二次的回答（v2.5.12 批三 · F1 甲案；本单实测：无工具探针被注入 4/6 发）。
+// 读不出请求体 ⇒ 保守判「没有工具」⇒ 不注入（fail-closed，宁可少兜底也不改体）。
+func bodyDefinesTools(body []byte) bool {
+	var obj map[string]interface{}
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return false
+	}
+	for _, key := range []string{"tools", "functions"} {
+		if arr, ok := obj[key].([]interface{}); ok && len(arr) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // ActiveRequests 返回当前在飞（正被推理 worker 处理）的请求数。
