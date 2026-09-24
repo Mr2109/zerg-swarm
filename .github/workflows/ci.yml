@@ -165,3 +165,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_VERSION: "8.30.1"
+
+  manifest-freshness:
+    name: 公开制品面 · 清单新鲜度（两判据分列 + 分档行为）
+    # ★ 2026-09-24（v2.5.12 · 波14 序135 · 组4 §二.4 `W-53`（`研-禁:136` `R-23`/`R-24`））：
+    #   本 job **只跑判据面**（两条判据各自成句 + 分档行为的两态），**不带制品** ⇒ 公开制品档那一档
+    #   由发布链把关（`publish/ci/release-agent.yml` 的「公开制品档（阻断）」步：`source_sha` 不等于
+    #   发布提交 ⇒ rc=1 ⇒ **不发布**）。这里不写「无制品也算绿」的旁路 —— 判据面本身就是有牙的
+    #   （两条判据分列 · 合并成一句即红）。
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: 两条判据各自成句（R-24 · 合并成一句即红）
+        run: python3 scripts/gates/check-manifest-freshness-two-criteria.py
+      - name: 公开制品档分档行为（R-23 · 公开档有命中必须 rc=1；合成样张，不碰真制品）
+        run: python3 scripts/gates/check-public-ci-green.py
