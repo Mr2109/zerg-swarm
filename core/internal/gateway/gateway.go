@@ -1297,6 +1297,9 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 		var best *config.ModelCandidate
 		var bestScore int = -1
 		var bestMemGB int
+		// 🏷 机器种类档序（v2.5.12 · 设计 v1.7 §二 · Mr2109 定 2026-09-25）：
+		// 当前已参与比较的最佳档序值；99 = 尚未有人入选（任何档都更好）。
+		bestTier := 99
 		// blocked 记录被能力硬门槛拦下的候选（host(engine):reason），用于全被拦下时给出明确原因。
 		var blocked []string
 		var firstBlocked *modelreg.CapabilityDecision
@@ -1350,6 +1353,33 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 					continue
 				}
 			}
+			// 🏷 机器种类档序（v2.5.12 · 设计 v1.7 §二 · Mr2109 定 2026-09-25）：
+			// 溢出序 = ai → mini → work（未标 kind 按最保守的 work）。位置刻意选在
+			// **熔断 / 活性 / 能力硬门都过完之后** —— 档序只决定「同等可用时谁优先」，
+			// 绝不让档序绕过能力硬门或心跳（那两关在前面已判）。
+			//   · 遇到比当前已选更差的档 ⇒ 跳过（不参与打分）
+			//   · 遇到更好的档 ⇒ 推翻已选、重新比（好档必须赢）
+			tier := g.kindTier(candidate.Host)
+			// 「忙」= 在跑的请求已达该机并行度（槽满）。按设计 v1.7 §一「全不可用四类」之「忙」处理：
+			// 给它 **+10 档序惩罚** ⇒ 忙碌的 `ai` 机让位给空闲的 `mini`/`work`（Mr2109 定：
+			// 「X3 忙的时候，才会选本机」✓）；若大家都忙 ⇒ 惩罚同加、相对序不变 ⇒
+			// 退回按种类 + 原有打分择优（**不会出现「谁也不选」的死路** ✓）。
+			if snap := g.snapshotFor(candidate.Host); snap != nil && snap.ActiveRequests >= g.parallelSlots(candidate.Host) {
+				log.Printf("🏷 kind tier: %s (kind=%s) 槽满(active=%d/%d) ⇒ 按「忙不可用」降档",
+					candidate.Host, g.kindName(candidate.Host), snap.ActiveRequests, g.parallelSlots(candidate.Host))
+				tier += 10
+			}
+			if best != nil && tier > bestTier {
+				log.Printf("🏷 kind tier: skip %s (kind=%s) — 更优档已有候选", candidate.Host, g.kindName(candidate.Host))
+				continue
+			}
+			if best != nil && tier < bestTier {
+				log.Printf("🏷 kind tier: %s (kind=%s) 优于当前已选 ⇒ 改选它", candidate.Host, g.kindName(candidate.Host))
+				best = nil
+				bestScore = -1
+			}
+			bestTier = tier
+
 			score := 0
 			// B13 轮询倾向：同分时轻微倾向另一台（压力均分——不强制，只打破平局）
 			// 真实打分（健康/已加载/空闲/负载）优先，轮询只在小分时起作用
