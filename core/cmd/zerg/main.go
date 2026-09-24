@@ -772,7 +772,7 @@ func init() {
 			summary:  "本机脚本清单（scripts/ 逐件 + 公开标记表）",
 			usage:    "zerg script ls [--json <字段>]",
 			arity:    "none",
-			fields:   []string{"path", "public", "kind"},
+			fields:   []string{"path", "public", "kind", "count_basis"},
 			endpoint: "",
 			run:      cmdScriptLs,
 		},

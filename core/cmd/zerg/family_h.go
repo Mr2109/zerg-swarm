@@ -184,7 +184,12 @@ func cmdScriptLs(inv *invocation, stdout, stderr io.Writer) int {
 			return scriptLsOrderKey(scanned[i].Path) < scriptLsOrderKey(scanned[j].Path)
 		})
 		for _, r := range scanned {
-			rows = append(rows, map[string]string{"path": r.Path, "public": "", "kind": scriptLsKind(r.Kind)})
+			rows = append(rows, map[string]string{
+				"path":        r.Path,
+				"public":      "",
+				"kind":        scriptLsKind(r.Kind),
+				"count_basis": scriptLsCountBasis(),
+			})
 		}
 	}
 	if len(rows) == 0 {
@@ -199,7 +204,7 @@ func cmdScriptLs(inv *invocation, stdout, stderr io.Writer) int {
 			r["public"] = "（未登记）"
 		}
 	}
-	return listCmd(inv, stdout, stderr, []string{"path", "public", "kind"}, rows)
+	return listCmd(inv, stdout, stderr, []string{"path", "public", "kind", "count_basis"}, rows)
 }
 
 // scriptLsKind —— 命令面那一格**量词面** `kind` 的取值（`O-16` · 缺口 `Q-162`）。
@@ -220,6 +225,22 @@ func scriptLsKind(k string) string {
 		return "none"
 	}
 	return k
+}
+
+// scriptLsCountBasis —— `script ls` 的**量词面**（2026-09-24 · `待拍清单终版-20260924.md` 条 11 ·
+// `序 147` · 设计 `v1.2` §5 `O-16` · 缺口 `Q-162`）：「**本跑按哪个口径数 / 扫的哪些根 / 含不含无后缀
+// 可执行件**」三格同出一串。
+//
+// 为什么要有这一格：`Q-160` 的**收件口径**已修（同一处 `scriptInvScan`）、`kind` 那一格也已补，但
+// 「**件数**是哪一个件数」仍只有**数**没有**口径** ⇒ 下一位仍会拿它去核台账（「同数不同集」的病根形态）。
+// 三格取值：① 口径 = 收件函数名（唯一那一处）；② 根 = `<仓根>/scripts/`（排除面 13 项）；③ 含无后缀 =
+// **读 `scriptInvTakesSuffixless` 那一枚常量**（与收件同源 ⇒ 改口径这一格随动，不再静默）。
+func scriptLsCountBasis() string {
+	suffixless := "否"
+	if scriptInvTakesSuffixless {
+		suffixless = "是（可执行 + 首行 #!）"
+	}
+	return fmt.Sprintf("收件口径=scriptInvScan（.sh / .py / 无后缀且可执行且首行 #!）· 扫的根=scripts/（排除面 13 项）· 含无后缀=%s", suffixless)
 }
 
 // scriptLsOrderKey —— `script ls` 的**行序**（与旧输出逐字同序，换口径时不许顺手挪行）：

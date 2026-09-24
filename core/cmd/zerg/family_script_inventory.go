@@ -89,6 +89,15 @@ type scriptInvRow struct {
 // scriptInvKindOK —— 第 2 列的类型闭集（消费者逐字同：`sh` / `py` / `无后缀`）。
 func scriptInvKindOK(k string) bool { return k == "sh" || k == "py" || k == "无后缀" }
 
+// scriptInvTakesSuffixless —— **收件口径的一格真源**：本口径收不收「无后缀 + 可执行 + 首行 `#!`」件。
+//
+// ★ 2026-09-24（`待拍清单终版-20260924.md` 条 11 · `序 147` · 设计 `v1.2` §5 `O-16` · 缺口 `Q-162`）：
+// 为什么要有这一枚常量 —— `script ls` 的**量词面**（`family_h.go scriptLsCountBasis`）要把「含不含无后缀
+// 可执行件」这一格**读出去**，而**收件**在 `scriptInvScan`。两处各写一份 `true` 就是下一个「同数不同集」的
+// 病根 ⇒ 收件与报口径**读同一枚常量**：改口径 ⇒ 那一格**随动**（不再静默）。
+// 取值 `false` 时 `scriptInvScan` 不再收无后缀档（量词面同时改口）—— 改这一枚即两处同动。
+const scriptInvTakesSuffixless = true
+
 func scriptInvYN(b bool) string {
 	if b {
 		return "yes"
@@ -130,7 +139,11 @@ func scriptInvScan(root string) ([]scriptInvRow, error) {
 		}
 		body, rerr := os.ReadFile(p)
 		if kind == "" {
-			// 无后缀：只有「可执行 + 首行 #!」才算脚本（与门禁的语法步同口径）
+			// 无后缀：只有「可执行 + 首行 #!」才算脚本（与门禁的语法步同口径）。
+			// 收不收这一档由 `scriptInvTakesSuffixless` **一枚常量**定（量词面读同一枚 ⇒ 改口径即两处随动）。
+			if !scriptInvTakesSuffixless {
+				return nil
+			}
 			st, serr := d.Info()
 			if serr != nil || st.Mode()&0o111 == 0 {
 				return nil
