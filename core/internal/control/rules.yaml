@@ -35,7 +35,9 @@ rules:
     #   —— **没有审批通道时按拒处理**（网关与 CA 的 bash 侧逐字同口径：「需要审批且无审批通道 ⇒
     #   本轮不执行」），绝不当放行。
     - name: "terminal"
-      action: require_approval
+      # ★ 2026-09-24 Mr2109 点头：由 `require_approval` 降为 `allow` —— 子代理要用它干开发活
+      #   （跑测试/编译/git 现读）；「无审批通道按拒」这条对本场景等于禁死。牙不减：args_deny 四条原样保留。
+      action: allow
       args_deny:
         - "rm -rf /"
         - "git push --force"
@@ -72,6 +74,121 @@ rules:
     - name: "read_file"
       action: allow
     - name: "curl"
+      action: allow
+
+    # ===== 2026-09-24 Mr2109 点头补登：Hermes 子代理的工具面（原本落默认档 block ⇒ 403）=====
+    # 背景（实测）：子代理指向 `example-35b-v2` 后，一发真链验收被 `HTTP 403 工具 browser_exec
+    # 被控制层拦下（未匹配规则 ⇒ 默认 block）` 打回；`terminal` 那条也因「无审批通道按拒」而禁死。
+    # 这五条按客户端命名空间补齐；`patch`/`execute_code` 的 args_deny 照抄 `write_file` 的四条护栏
+    # （批准件目录不可触 + 核心配置不可改），**牙一条不减**。
+    - name: "patch"
+      action: allow
+      args_deny:
+        - "fleet.yaml"
+        - "rules.yaml"
+        - "scoring"
+        - ".zerg/state/approvals"
+        - "state/approvals"
+        - "approvals/operator."
+        - "approvals/terminal.json"
+    - name: "execute_code"
+      action: allow
+      args_deny:
+        - ".zerg/state/approvals"
+        - "state/approvals"
+        - "approvals/operator."
+        - "approvals/terminal.json"
+    - name: "browser_exec"
+      action: allow
+    - name: "web_search"
+      action: allow
+    - name: "web_extract"
+      action: allow
+    - name: "vision_analyze"
+      action: allow
+    - name: "tool_search"
+      action: allow
+    - name: "tool_describe"
+      action: allow
+    - name: "tool_call"
+      action: allow
+
+    # ===== 2026-09-24 第二刀：把 Hermes 客户端工具名**一次列齐**（默认拒之下，漏一个 = 整发请求 403）=====
+    # 物证：一发真链验收先被 `browser_exec` 挡、补完 6 条后再被 `browser_vault_enter_code` 挡 ✗
+    #   ⇒ 控制层是扫**整张工具表**（不是逐个调用才拦）⇒ 只能显式列全。
+    # 名字来源：`~/.hermes/hermes-agent/tools/*.py` 的注册名（现读 `grep -rhoE 'name="[a-z_]{3,30}"' tools/*.py | sort -u`）。
+    # ⚠ 登记为缺口：Hermes 侧**新增工具**后这里也会漏 ⇒ 症状就是「子代理一发 403」；须同步补。
+    - name: "annotate_preview"
+      action: allow
+    - name: "apply_layout"
+      action: allow
+    - name: "browser_cdp"
+      action: allow
+    - name: "browser_dialog"
+      action: allow
+    - name: "browser_vault_enter_code"
+      action: allow
+    - name: "browser_vault_fill"
+      action: allow
+    - name: "browser_vault_list"
+      action: allow
+    - name: "browser_vault_save_login"
+      action: allow
+    - name: "browser_vault_unlock"
+      action: allow
+    - name: "clarify"
+      action: allow
+    - name: "close_terminal"
+      action: allow
+    - name: "computer_use"
+      action: block
+      message: "子代理不许驱动桌面（需人看着的活由主代理做）"
+    - name: "cronjob_manage"
+      action: block
+      message: "子代理不许动定时任务（属主控/人签面）"
+    - name: "delegate_task"
+      action: block
+      message: "子代理不许再派子代理（禁止无限递归）"
+    - name: "desktop_preview"
+      action: allow
+    - name: "desktop_project"
+      action: allow
+    - name: "drive_preview"
+      action: allow
+    - name: "feishu_doc_read"
+      action: allow
+    - name: "focus_pane"
+      action: allow
+    - name: "gui_tour"
+      action: allow
+    - name: "image_generate"
+      action: allow
+    - name: "memory"
+      action: block
+      message: "子代理不许写长期记忆（记忆只归主代理）"
+    - name: "process_manage"
+      action: allow
+    - name: "react_to_message"
+      action: allow
+    - name: "read_terminal"
+      action: allow
+    - name: "read_window_below"
+      action: allow
+    - name: "session_search"
+      action: allow
+    - name: "show_tip"
+      action: allow
+    - name: "skill_manage"
+      action: allow
+    - name: "skill_view"
+      action: allow
+    - name: "skills_list"
+      action: allow
+    - name: "text_to_speech"
+      action: allow
+    - name: "todo_list"
+      action: allow
+    - name: "video_analyze"
       action: allow
 
     # ===== CA 命名空间（`core/internal/agent` 里 gate.Check("X") 的真名 · T-31 立）==========
