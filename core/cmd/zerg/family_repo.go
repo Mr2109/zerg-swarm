@@ -18,15 +18,32 @@
 //	② **写旗标一律拒**（`rc=2`）：见 `repoWriteWords`（形态无关 · 不看位置）——
 //	   因为这条命令跑在**仓外仓**上（`Zerg-内部文档/` 是并排仓），且写词里有些是**真旗标名**
 //	   （`--commit`），解析器会静默收下 ⇒ 必须自己判一道。
+//
+// `W-56` 加的两半（2026-09-24 · 波19 序137 · 组4 §二.4 · `研-禁:211` §六 栗②）：
+//
+//	① **逐件身份两格** `mtime` + `sha256`（单仓面 · `--json` 字段表同批 +2）：
+//	   porcelain 点出来的每一件都出这两格（读不到 ⇒ 逐字 `（读不到）`，不编造、不拿 0 顶替）。
+//	   ★ 判「哪些件脏」的真源**仍是 git porcelain**（一个字未改）—— 这两格只描述**那一件是什么**
+//	     （身份，不参与判脏）⇒ 与下面那句「不自己比 mtime/sha」**不相抵**。
+//	② **共享件提示**（「多枚会话共享的件」）：**会话面** = 本仓 + 本仓 `git worktree list` 里的
+//	   **其余工作树**（一枚会话 = 一棵工作树）；同一**相对路径**在 **≥2 个会话面**里同时脏/未跟踪
+//	   ⇒ 逐件一行（名字 + 各面 + 各面的 `sha256`）。别的会话的树只走 `--no-optional-locks` 只读探针；
+//	   读不到 ⇒ 照实点名并明写「提示行可能漏」（**不当绿**）。
+//	   ★ 照实一处：本命令给的是**现状 + 身份**，**给不出「谁在写」**（归属要看别的面）——
+//	     栗② 要的那一格，本版落的是**可机检的那一半**。
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
 
 // repoStatusRow —— 一行（`--json` 的字段就是这些键；**head/branch 逐行重复**是刻意的：
@@ -182,6 +199,10 @@ func repoStatusMulti(roots []string, inv *invocation, stdout, stderr io.Writer) 
 		}
 		items = append(items, map[string]string{
 			"head": it.head, "branch": it.branch, "path": it.root, "status": st, "untracked": un,
+			// 波19 序137：字段表是**命令级**的 ⇒ 多仓面也必须让这两格**通得了**
+			// （否则 `--json mtime` 在两个仓上退 2「未知字段」= 字段面时通时不通）。
+			// 本面**不是逐件的面**（一行一仓）⇒ 身份两格给 `—`；逐件的身份在**单仓面**。
+			"mtime": "—", "sha256": "—",
 		})
 	}
 	fmt.Fprintf(stderr, "%s: 多仓汇总（`--root` 给了 %d 次 · **只读** · 口径与单仓同源）\n", progName, len(rows))
@@ -233,6 +254,7 @@ func repoStatusOne(root string, inv *invocation, stdout, stderr io.Writer) int {
 		sum.held = "是（.git/index.lock 在 —— 另一个 git 进程正在写这个仓）"
 	}
 	rows := []map[string]string{}
+	unreadable := 0
 	for _, ln := range strings.Split(porcelain, "\n") {
 		if ln == "" {
 			continue
@@ -252,12 +274,21 @@ func repoStatusOne(root string, inv *invocation, stdout, stderr io.Writer) int {
 		} else {
 			sum.dirty++
 		}
+		// 波19 序137（`W-56`）：**逐件身份两格** `mtime` + `sha256`（只读 · 只加列）。
+		// ★ 与上面那句「不自己比 mtime/sha」**不相抵**：判「哪些件脏」的真源**仍是 git porcelain**
+		//   （一个字未改）；这两格只描述**porcelain 已经点出来的那一件是什么**（身份，不参与判脏）。
+		mt, sh := repoFileIdentity(root, path)
+		if mt == repoIdentityAbsent {
+			unreadable++
+		}
 		rows = append(rows, map[string]string{
 			"head":      sum.head,
 			"branch":    sum.branch,
 			"path":      path,
 			"status":    code,
 			"untracked": untracked,
+			"mtime":     mt,
+			"sha256":    sh,
 		})
 	}
 	if sum.branch == "" {
@@ -266,11 +297,42 @@ func repoStatusOne(root string, inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "%s: 仓 %s\n", progName, root)
 	fmt.Fprintf(stderr, "%s: HEAD %s · 分支 %s · 脏件 %d · 未跟踪 %d · 被占 %s\n",
 		progName, sum.head, sum.branch, sum.dirty, sum.untracked, sum.held)
+	// ---- 波19 序137（`W-56` · `研-禁:211` §六 栗②）：身份两格照实 + **共享件提示** ----
+	// 栗② 逐字：「没有一条命令能告诉你『这件正被别的会话改』」。别的会话若在写同一件，
+	// **它自己那棵树里这一件也是脏的**（工作树各有一份）—— 这是本机能取到的**唯一**机械形态。
+	//
+	// 口径（写死）：**会话面** = 本仓 + 本仓 `git worktree list` 里的**其余工作树**（一枚会话 = 一棵工作树）；
+	// **「多枚会话共享的件」** = 同一**相对路径**在 **≥2 个会话面**里同时处于「脏 / 未跟踪」态。
+	// 照实两条：① 本命令只给**现状 + 它现在的 `mtime`/`sha256`**，**给不出「谁在写」**（归属要看别的面）；
+	// ② 其余工作树只走**只读**探针（`git --no-optional-locks` ⇒ 连索引刷新都不做），读不到 ⇒ 照实印、
+	//    **不当绿**（提示行**可能漏**）。
+	if unreadable > 0 {
+		fmt.Fprintf(stderr, "%s: 身份列有 %d 件读不到（逐字 `%s` —— 不编造、不拿 0 顶替 · 也不当绿）\n",
+			progName, unreadable, repoIdentityAbsent)
+	}
+	faces := []repoFace{{root: root, paths: repoPorcelainPaths(porcelain)}}
+	if wts, err := repoWorktrees(root); err != nil {
+		faces = append(faces, repoFace{root: "（`git worktree list` 读不到 ⇒ 其余会话面未知）", unread: err.Error()})
+	} else {
+		for _, wt := range wts {
+			if repoFaceKey(wt) == repoFaceKey(root) {
+				continue
+			}
+			ps, err := repoFacePaths(wt)
+			if err != nil {
+				faces = append(faces, repoFace{root: wt, unread: err.Error()})
+				continue
+			}
+			faces = append(faces, repoFace{root: wt, paths: ps})
+		}
+	}
+	repoPrintShared(stderr, faces)
 	if len(rows) == 0 {
 		// 干净仓：**仍然出一行**（否则 `--json` 里 item 为空 ⇒ head/branch 就带不出去了）。
+		// 身份两格给 `—`（本行不是件）：否则 `--json mtime` 在这条命令上会**时通时不通**。
 		rows = append(rows, map[string]string{
 			"head": sum.head, "branch": sum.branch, "path": "（无脏件）",
-			"status": "clean", "untracked": "否",
+			"status": "clean", "untracked": "否", "mtime": "—", "sha256": "—",
 		})
 		fmt.Fprintf(stderr, "%s: 干净（退码 0）—— 逐字对拍请用 `zerg repo status --json` 两跑 diff\n", progName)
 		if rc := listCmd(inv, stdout, stderr, []string{"head", "branch", "path", "status"}, rows); rc != exitOK {
@@ -280,10 +342,158 @@ func repoStatusOne(root string, inv *invocation, stdout, stderr io.Writer) int {
 	}
 	// 有脏件：退 1（**不是错** —— 「没提交」是状态；要看它是不是错由调用方判）。
 	fmt.Fprintf(stderr, "%s: 有 %d 处未提交（退码 1 · 不是错，是状态）\n", progName, len(rows))
-	if rc := listCmd(inv, stdout, stderr, []string{"head", "branch", "path", "status", "untracked"}, rows); rc != exitOK {
+	if rc := listCmd(inv, stdout, stderr,
+		[]string{"head", "branch", "path", "status", "untracked", "mtime", "sha256"}, rows); rc != exitOK {
 		return rc
 	}
 	return exitFail
+}
+
+// ---- 波19 序137 的身份两格 + 共享件提示（`W-56` · `研-禁:211` §六 栗②）------------------------------
+
+// repoIdentityAbsent —— 身份格读不到时的**逐字**占位（不编造、不拿 0 顶替）。
+const repoIdentityAbsent = "（读不到）"
+
+// repoFace —— 一个**会话面**（一枚会话 = 一棵工作树）在本次查询里的现读。
+type repoFace struct {
+	root   string
+	paths  []string // 该面里「脏 / 未跟踪」的相对路径（式子与单仓面同源）
+	unread string   // 非空 = 这一面读不到（照实印 · 不当绿）
+}
+
+// repoFileIdentity 算一件的**身份两格**：`mtime`（RFC3339）+ `sha256`（64 位 hex）。
+// 只读；读不到（已删 / 不是普通件 / 没权限）⇒ 逐字 `（读不到）`。
+func repoFileIdentity(root, rel string) (string, string) {
+	full := filepath.Join(root, filepath.FromSlash(rel))
+	st, err := os.Stat(full)
+	if err != nil || st.IsDir() {
+		return repoIdentityAbsent, repoIdentityAbsent
+	}
+	b, err := os.ReadFile(full)
+	if err != nil {
+		return st.ModTime().Format(time.RFC3339), repoIdentityAbsent
+	}
+	sum := sha256.Sum256(b)
+	return st.ModTime().Format(time.RFC3339), hex.EncodeToString(sum[:])
+}
+
+// repoPorcelainPaths —— 从 `git status --porcelain=v1` 现读取「脏 / 未跟踪」的相对路径。
+// ★ 与单仓面那一段**同一个式子**（`strings.TrimSpace(ln[3:])`）⇒ 不另立第二份取路径口径。
+func repoPorcelainPaths(out string) []string {
+	ps := []string{}
+	for _, ln := range strings.Split(out, "\n") {
+		if ln == "" || strings.HasPrefix(ln, "## ") || len(ln) < 4 {
+			continue
+		}
+		ps = append(ps, strings.TrimSpace(ln[3:]))
+	}
+	return ps
+}
+
+// repoFaceKey 把面路径归一（解软链 ⇒ 同一棵树的两种写法不会被当成两个面）。
+func repoFaceKey(dir string) string {
+	if p, err := filepath.EvalSymlinks(dir); err == nil {
+		return p
+	}
+	return filepath.Clean(dir)
+}
+
+// repoWorktrees 现读本仓的会话面名单（`git worktree list --porcelain` 的每一棵）。
+func repoWorktrees(root string) ([]string, error) {
+	out, err := gitRun(root, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	var wt []string
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.HasPrefix(ln, "worktree ") {
+			wt = append(wt, strings.TrimPrefix(ln, "worktree "))
+		}
+	}
+	return wt, nil
+}
+
+// repoFacePaths 读一棵**别的**会话面的脏 / 未跟踪路径集。
+// ★ 只读：`--no-optional-locks` ⇒ 连 `git status` 的**索引刷新**都不做（别的会话的树也能安全读）。
+func repoFacePaths(dir string) ([]string, error) {
+	out, err := gitRunNoLock(dir, "status", "--porcelain=v1", "--untracked-files=normal")
+	if err != nil {
+		return nil, err
+	}
+	return repoPorcelainPaths(out), nil
+}
+
+// gitRunNoLock 与 `gitRun` 同形，但走 `--no-optional-locks`（**一个可选锁都不取**）。
+func gitRunNoLock(root string, args ...string) (string, error) {
+	cmd := exec.Command("git", append([]string{"--no-optional-locks", "-C", root}, args...)...)
+	var out, errb strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git --no-optional-locks %s：%v（%s）",
+			strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+	}
+	return out.String(), nil
+}
+
+// repoPrintShared 出「会话面 N 个」+「共享件提示」（逐件一行 · 带**两个面各自的** `mtime`/`sha256`）。
+// 判据三格（**每一格都有成对负控**，见 `cli_repo_status_shared_test.go`）：
+//
+//	① 同一相对路径在 **≥2 个可读会话面**里同时脏/未跟踪 ⇒ **逐件一行**（名字 + 各面 + 各面的 sha256）；
+//	② 只有 1 个可读面 / 两棵树的**不同**路径脏 ⇒ 逐字「**无**」（不许恒出）；
+//	③ 有面**读不到** ⇒ 照实点名 + **明写「提示行可能漏」**（不许当绿、也不许拿读不到当「无」）。
+func repoPrintShared(stderr io.Writer, faces []repoFace) {
+	ok, bad := 0, 0
+	for _, f := range faces {
+		if f.unread == "" {
+			ok++
+		} else {
+			bad++
+		}
+	}
+	fmt.Fprintf(stderr, "%s: 会话面 %d 个（本仓 + `git worktree list` 的其余工作树 · **只读** · 其余树走 `--no-optional-locks`）\n",
+		progName, ok)
+	for _, f := range faces {
+		if f.unread != "" {
+			fmt.Fprintf(stderr, "%s: 会话面读不到：%s（照实 · **不当绿**）：%s\n", progName, f.root, f.unread)
+		}
+	}
+	owner := map[string][]string{}
+	for _, f := range faces {
+		if f.unread != "" {
+			continue
+		}
+		for _, p := range f.paths {
+			owner[p] = append(owner[p], f.root)
+		}
+	}
+	shared := []string{}
+	for p, ws := range owner {
+		if len(ws) >= 2 {
+			shared = append(shared, p)
+		}
+	}
+	sort.Strings(shared)
+	if len(shared) == 0 {
+		fmt.Fprintf(stderr, "%s: 共享件提示：无（%d 个可读会话面里没有同一相对路径在两处同时脏）\n", progName, ok)
+	} else {
+		for _, p := range shared {
+			ws := owner[p]
+			ids := make([]string, 0, len(ws))
+			for _, w := range ws {
+				_, sh := repoFileIdentity(w, p)
+				ids = append(ids, sh)
+			}
+			fmt.Fprintf(stderr, "%s: ★ 共享件提示：%s —— 在本仓 + %d 棵其余工作树（共 %d 个会话面）里同时脏（%s）\n",
+				progName, p, len(ws)-1, len(ws), strings.Join(ws, " · "))
+			fmt.Fprintf(stderr, "%s:   各面 sha256：%s ⇒ **多枚会话共享的件**：动笔前记 sha256 · 提交前复检（变了明说一行）\n",
+				progName, strings.Join(ids, " ⟷ "))
+		}
+	}
+	if bad > 0 {
+		fmt.Fprintf(stderr, "%s: 共享件提示：有 %d 个会话面**读不到** ⇒ 上面那几行**可能漏**（照实 · 不当绿）\n",
+			progName, bad)
+	}
 }
 
 // parsePorcelainBranch —— 解析 `--branch` 的第一行：`main...origin/main [ahead 1]` ⇒ `main`。
