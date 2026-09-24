@@ -281,31 +281,36 @@ func emitErrIfJSON(inv *invocation, stdout io.Writer, cmd *command, rc int) {
 
 // declaresNoPositional 判「该条命令**声明不收位置参数**」（`Q-154` 那条纪律的判据口）。
 //
-// 两条：① `args` 为空 —— 现读 40 条（`version` / `doctor` / `context ls` … 一类纯旗标命令）；
-// ② `args` 逐格都是**注记**（全角括号 `（` 开头 —— 如 `（无位置参数：全部走旗标）` /
-// `（不收位置参数：…）`）—— 现读 5 条（`gate results` / `task submit` / `core ps` /
-// `config reload` / `gap add`）。
+// ★ 2026-09-24（块B `R-7`）：判据口从**散文启发式**改成读**声明式**的一格 `arity`
+// —— 原来是「`args` 逐格以**全角括号** `（` 开头」。两格的关系一行写死：
 //
-// 为什么用「全角括号开头」而不**新加一格字段**：`args` 那几格的语义本来就是「位置参数说明」，
-// 而注记形态在现读命令树里**只有这一种写法** ⇒ 在既有字段上判即可，不动 `command` 的字段面
-// （§九 M6 `R7`「字段只增不改」的口径也不动）。判错的代价是**单向**的：只有真声明了位置参数
-// 的命令被误判成「不收」才会误退 2 ⇒ 反查过全部 119 条「读 `inv.args` 的 handler ↔ 是否声明
-// 位置参数」，现读只剩 6 条不一致，其中 5 条**自己就拒**（`api help` / `script inventory sync` /
-// `itask start` / `itask stop` / `core reload`），第 6 条（`gateway breakers` 的 target）在危险档
-// ⇒ 本函数**不覆盖它们**（`cmd.danger != nil` 一律不判 · 见 `run` 里那三条边界）。
+//	`arity == "any"` ⇒ 该条声明**收**位置参数；其余（`"none"` / 空串）⇒ 声明**不收**。
+//
+// 为什么换（三条，逐条可核）：
+//
+//	① 启发式是**猜**：`args` 那几格语义是「位置参数的说明」（人读的散文），今天凑巧
+//	   「不收」的写法恰好全是全角括号开头；换个人写半角 `(无位置参数)` 就当场判反。
+//	② 交叉核对（`cobra` `Args PositionalArgs` / `NoArgs` / `ExactArgs` / `MinimumNArgs` /
+//	   `MaximumNArgs`）：arity 是**声明式验证器**，不从帮助文本反推。
+//	③ **订正一句**（原注释引 §九 M6 `R7`「字段只增不改」当「不动 `command` 字段面」的理由，
+//	   **是过度解读** ✗）：`R7` 逐字是「只增不改」⇒ **增是允许的**；且 `R7` 管的是 `zerg/v1`
+//	   JSON 面，`command` 是**内部结构体** ⇒ 两个面不同。
+//
+// 档位闭集 = `none` / `exact(n)` / `min(n)` / `max(n)` / `any`（照 `cobra` 那五档）。
+// **本版只用 `none` / `any` 两档**（逐条声明在命令树字面量里）；`exact(n)` / `min(n)` /
+// `max(n)` 要**逐个命令数真实基数**，而现读 `args` 那几格是散文、数不出来 ⇒ **照实登记为
+// 未做**，不拿散文猜一个 n 填进去 ✗。
+//
+// 判错的代价仍是**单向**的（只有真声明了位置参数的命令被误判成「不收」才会误退 2）：
+// 现读反查过全部命令的「读 `inv.args` 的 handler ↔ 是否声明位置参数」，只剩 6 条不一致，
+// 其中 5 条**自己就拒**（`api help` / `script inventory sync` / `itask start` / `itask stop` /
+// `core reload`），第 6 条（`gateway breakers` 的 target）在危险档 ⇒ 本函数**不覆盖它们**
+// （`cmd.danger != nil` 一律不判 · 见 `run` 里那三条边界）。
 func declaresNoPositional(cmd *command) bool {
 	if cmd == nil {
 		return false
 	}
-	if len(cmd.args) == 0 {
-		return true
-	}
-	for _, a := range cmd.args {
-		if !strings.HasPrefix(strings.TrimSpace(a), "（") {
-			return false
-		}
-	}
-	return true
+	return cmd.arity != arityAny
 }
 
 // ---- 命令树（真源：帮助文本、markdown 导出、别名解析都从这里出，不许旁写一份）----
@@ -315,7 +320,8 @@ type command struct {
 	summary  string
 	usage    string
 	fields   []string // --json 可取的全部字段（不给字段时 stderr 列的就是它）
-	args     []string // 位置参数的说明（帮助里逐条列出）
+	args     []string // 位置参数的说明（帮助里逐条列出 · **只给人读** · 不再当判据口）
+	arity    string   // 位置参数元数（声明式 · `R-7`）：闭集 none/exact(n)/min(n)/max(n)/any；本版只用 none/any（空串视作 none）
 	endpoint string   // 它投影的远端端点（本机命令为空）；T-08 的三面同源对账用
 	kind     string   // 包封里的 kind（§九 M6 I2：与命令一一对应 · 单数 CamelCase）
 	danger   *dangerSpec
@@ -328,6 +334,13 @@ type command struct {
 	passthrough bool // 原样透传型（gate 族）：旗标与位置参数逐字交给被包的脚本
 	run         func(*invocation, io.Writer, io.Writer) int
 }
+
+// `arity` 的闭集（照 `cobra` `Args` 验证器的五档）：本版只用下面**两档**。
+// `exact(n)` / `min(n)` / `max(n)` 三档要逐个命令数真实基数 ⇒ 照实登记为未做（见 `declaresNoPositional`）。
+const (
+	arityNone = "none" // 声明**不收**位置参数（多余位置参数 ⇒ 用法错 2）
+	arityAny  = "any"  // 声明**收**位置参数（本版不数基数，照旧放行）
+)
 
 // commands —— 批 A（S1 起）登记的只读面；后续各票在此续行。
 // 用 init() 而不是包级字面量：命令树的 handler 又回头读 `commands`（帮助渲染），
@@ -348,6 +361,7 @@ func init() {
 			path:    []string{"help"},
 			summary: "帮助（主题见 `zerg help <主题>`；表在 topics.go）",
 			usage:   "zerg help [<主题>]",
+			arity:   "any",
 			args:    []string{"主题（可省）"},
 			run:     cmdHelp,
 		},
@@ -450,6 +464,7 @@ func init() {
 			path:        []string{"gate", "run"},
 			summary:     "跑门禁（旗标逐字透传；退码原样转出，不翻译；`--step` 只跑一道门）",
 			usage:       "zerg gate run [--scope <s> | --fast] [--outdir <目录>] … | zerg gate run --step <步名> [--self-test] [--json <字段>]",
+			arity:       "any",
 			args:        []string{"脚本旗标（原样透传）"},
 			fields:      gateRunStepFields,
 			endpoint:    "",
@@ -461,6 +476,7 @@ func init() {
 			kind:    "GateShow",
 			summary: "看某一步要跑的命令串（脚本 --emit-cmd）；`--json` 另给四格（scope/mode/判据/日志路径）",
 			usage:   "zerg gate show <步名> [--json <字段>]",
+			arity:   "any",
 			args:    []string{"步名（与 --list 里逐字相同；`--json` 面是**精确匹配**，子串不给结论）"},
 			// 四格 = `Q-061`/`B-3` 的可核条件逐字（`scope` / `mode` / 判据 / 日志路径）。
 			// 默认面（不给 `--json`）仍是 `--emit-cmd` 直取口 —— 见 `family_gate_show.go` 的文件头。
@@ -474,6 +490,7 @@ func init() {
 			kind:    "GateResults",
 			summary: "读**现成**一趟门禁产物的四数（通过/失败/不给结论/只报告 + 步数与总退码）· 只读",
 			usage:   "zerg gate results [--last] [--dir <目录>] [--json <字段>]",
+			arity:   "none",
 			args:    []string{"（不收位置参数：那一趟由 `--last`（缺省即最近一趟）或 `--dir <目录>` 指）"},
 			// 逐条五格 = 步名/状态/退码/耗时/日志路径（缺口 `Q-111`/`B-8` 的机器面）。
 			fields:   gateResultsFields,
@@ -494,6 +511,7 @@ func init() {
 			kind:     "AgentPing",
 			summary:  "探活一台机（默认经主控；`--direct` 直连且回显 via）",
 			usage:    "zerg agent ping <机器名> [--direct <host:port>] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"机器名"},
 			fields:   []string{"machine", "healthy", "code_version", "code_sha", "last_seen", "via"},
 			endpoint: "GET /api/fleet/status（默认档）",
@@ -505,6 +523,7 @@ func init() {
 			kind:          "Watch",
 			summary:       "订阅事件流（单端点 + Accept 协商 · 唯一名字）",
 			usage:         "zerg watch [<id>] [--accept <媒体类型>] [--exit-on <kind>] [--follow]",
+			arity:         "any",
 			args:          []string{"对象 id（可省：跟全群）"},
 			endpoint:      "GET /api/events（**主控面今天没有** ⇒ 本版不给结论）",
 			groupReadOnly: true,
@@ -515,6 +534,7 @@ func init() {
 			kind:     "TaskShow",
 			summary:  "看单个任务（`--follow` 转发到 `zerg watch`，不另起一条流）",
 			usage:    "zerg task show <任务 id> [--follow] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"任务 id"},
 			endpoint: "GET /api/tasks",
 			run:      cmdTaskShow,
@@ -525,6 +545,7 @@ func init() {
 			kind:     "Machine",
 			summary:  "看一台子端（投影 /api/fleet/status 的单机条目 —— 与 `agent ls` 同一份载荷）",
 			usage:    "zerg agent show <机器名> [--json <字段>]",
+			arity:    "any",
 			args:     []string{"机器名"},
 			fields:   []string{"machine", "healthy", "code_version", "code_sha", "cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "last_seen"},
 			endpoint: "GET /api/fleet/status",
@@ -535,6 +556,7 @@ func init() {
 			kind:     "Model",
 			summary:  "该机上可用的模型（投影 /api/fleet/models 里 host 命中的那些）",
 			usage:    "zerg agent models <机器名> [--json <字段>]",
+			arity:    "any",
 			args:     []string{"机器名"},
 			fields:   []string{"id", "host", "backend", "modality", "mem_gb", "file"},
 			endpoint: "GET /api/fleet/models",
@@ -545,6 +567,7 @@ func init() {
 			kind:     "AgentLogs",
 			summary:  "该机的日志（**主控面今天没有日志端点 ⇒ 不给结论**，退码 8）",
 			usage:    "zerg agent logs <机器名> [--json <字段>]",
+			arity:    "any",
 			args:     []string{"机器名"},
 			fields:   []string{"machine", "available", "detail"},
 			endpoint: "（/api/logs/* 今天不在路由表里 ⇒ 本命令声明面 + kind=blocked）",
@@ -555,6 +578,7 @@ func init() {
 			kind:     "AgentProbe",
 			summary:  "探活诊断（默认经主控；直达属 F-2 例外、要显式 `--direct`）",
 			usage:    "zerg agent probe <机器名> [--direct] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"机器名"},
 			fields:   []string{"machine", "healthy", "code_version", "code_sha", "last_seen", "via", "direct_gate"},
 			endpoint: "GET /api/fleet/status（默认档）",
@@ -564,6 +588,7 @@ func init() {
 			path:    []string{"agent", "bootstrap"},
 			summary: "子端引导（危险 D3 · 本版未开放）",
 			usage:   "zerg agent bootstrap <机器名> --confirm=<机器名> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"机器名"},
 			danger: &dangerSpec{dangerD3, "机器名",
 				"在目标机上装/起子端（**F-1 子端引导例外**：不经主控的显式命令；会改目标机状态）",
@@ -576,6 +601,7 @@ func init() {
 			kind:     "TaskSubmit",
 			summary:  "提交任务（D2 写面 · 全旗标 ⇒ API 请求体逐条对上）",
 			usage:    "zerg task submit --desc <描述> [--model <模型>] [--priority <n>] [--slice-id <片>] [--depends-on <片>]… [--acceptance <判据>]… [--dry-run | --yes]",
+			arity:    "none",
 			args:     []string{"（旗标：--desc/--model/--priority/--slice-id/--depends-on/--acceptance）"},
 			endpoint: "POST /api/tasks",
 			run:      cmdTaskSubmit,
@@ -585,6 +611,7 @@ func init() {
 			kind:     "TaskDiff",
 			summary:  "该任务工作树的**只读** `git diff --stat`",
 			usage:    "zerg task diff <任务 id> [--json <字段>]",
+			arity:    "any",
 			args:     []string{"任务 id"},
 			fields:   []string{"id", "workdir", "diff_stat"},
 			endpoint: "GET /api/tasks/{id}（取 workdir）+ 本机只读 git",
@@ -595,6 +622,7 @@ func init() {
 			kind:     "TaskGit",
 			summary:  "该任务工作树的 git 面（分支 / HEAD / 未提交 / 与 main 的距离）",
 			usage:    "zerg task git <任务 id> [--json <字段>]",
+			arity:    "any",
 			args:     []string{"任务 id"},
 			fields:   []string{"id", "workdir", "branch", "head", "dirty", "ahead_of_main"},
 			endpoint: "GET /api/tasks/{id}（取 workdir）+ 本机只读 git",
@@ -605,6 +633,7 @@ func init() {
 			kind:     "TaskLogs",
 			summary:  "该任务的日志（`/api/logs/task/{id}` **路由没接** ⇒ 不给结论，退码 8）",
 			usage:    "zerg task logs <任务 id> [--json <字段>]",
+			arity:    "any",
 			args:     []string{"任务 id"},
 			fields:   []string{"id", "available", "detail"},
 			endpoint: "GET /api/logs/task/{id}（处理器在 handlers.go:966 · 路由没接 ⇒ 现跑 404）",
@@ -614,6 +643,7 @@ func init() {
 			path:    []string{"task", "move"},
 			summary: "挪动任务在队列里的位置（危险 D2 · 本版未开放）",
 			usage:   "zerg task move <任务 id> --to <位置> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"任务 id"},
 			danger:  &dangerSpec{dangerD2, "任务 id", "改这条任务在队列里的次序（可能插到别人前面）", "§三 D 族 · 开工单 T-44"},
 			run:     cmdGuarded,
@@ -624,6 +654,7 @@ func init() {
 			kind:     "Model",
 			summary:  "看一个模型（投影 /api/fleet/models 的单条；对象是**模型 id**，不是机器名）",
 			usage:    "zerg model show <模型 id> [--json <字段>]",
+			arity:    "any",
 			args:     []string{"模型 id"},
 			fields:   []string{"id", "host", "backend", "modality", "mem_gb", "file"},
 			endpoint: "GET /api/fleet/models",
@@ -634,6 +665,7 @@ func init() {
 			kind:     "ModelOpts",
 			summary:  "适配器参数（get 只读 / set 实时生效要 --yes）",
 			usage:    "zerg model opts get <模型 id> [--json <字段>] | zerg model opts set <模型 id> --set k=v… [--dry-run | --yes]",
+			arity:    "any",
 			args:     []string{"动作（get|set）", "模型 id"},
 			fields:   []string{"model", "schema", "note"},
 			endpoint: "GET|PUT /api/models/{name}/adapter-opts",
@@ -662,6 +694,7 @@ func init() {
 			kind:     "CoreDaemon",
 			summary:  "`daemon ls`：本机服务脚本逐件可查（scripts/svc/ 5 件）+ `--declared` 并给声明面两列与幽灵段（与 `doctor` 同源同值）",
 			usage:    "zerg core daemon ls [--declared] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"动作（ls）"},
 			fields:   []string{"name", "script", "declared", "note"},
 			endpoint: "",
@@ -675,6 +708,7 @@ func init() {
 			kind:     "CorePs",
 			summary:  "现值面逐条读（**三格**：pid / 起时 / 命令行）—— 行面 = 声明件点名的进程特征命中的进程（launchd 声明的 + ghost 幽灵都列）· 只读",
 			usage:    "zerg core ps [--root <仓根> | --path <声明件>] [--json <字段>]",
+			arity:    "none",
 			args:     []string{"（无：现值面是「读全机」不是「要目标」）"},
 			fields:   []string{"pid", "start", "command", "kind", "name", "owner"},
 			endpoint: "",
@@ -684,6 +718,7 @@ func init() {
 			path:    []string{"core", "start"},
 			summary: "起主控（危险 D3 · 本版未开放）",
 			usage:   "zerg core start --confirm=<主机名> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"主机名"},
 			danger:  &dangerSpec{dangerD3, "主机名", "起主控进程（会绑端口 8580；已在跑时是**换件**前置）", "§三 C 族 · §7.1 P11 · 开工单 T-45"},
 			run:     cmdGuarded,
@@ -692,6 +727,7 @@ func init() {
 			path:    []string{"core", "restart"},
 			summary: "重启主控（危险 D3 · 已开放：确认档齐就真执行 `launchctl kickstart -k`）· 审计留痕 + 就绪判据绑自己的 pid",
 			usage:   "zerg core restart --confirm=<主机名> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"主机名"},
 			danger:  &dangerSpec{dangerD3, "主机名", "停 + 起主控（**整个虫群的控制面会断一会儿**）", "§三 C 族 · 开工单 T-45 · 缺口 Q-103"},
 			// `opened`: 真跑已开放（`--confirm=<主机名>` 与 `--yes` **同时到**才执行；`--dry-run` ⇒ 计划件 rc=0 ·
@@ -706,6 +742,7 @@ func init() {
 			kind:     "Resource",
 			summary:  "资源面（投影 /api/resources/ledger 或 /api/resources/{类型}）",
 			usage:    "zerg resource ls [<类型>] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"类型（可省）"},
 			fields:   []string{"machine", "mem_known", "mem_total_gb", "mem_available_gb", "vram_known", "gpu_pct", "backend_state", "fit"},
 			endpoint: "GET /api/resources/ledger | /api/resources/{type}",
@@ -761,6 +798,7 @@ func init() {
 			kind:     "CodeFind",
 			summary:  "在码里找一处东西在哪（只读取证 · 手搓 grep/git grep 的替身）",
 			usage:    "zerg code find <正则> [--path <子目录>] [--glob <模式>] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"正则（POSIX 语法）"},
 			fields:   []string{"path", "line", "text"},
 			endpoint: "",
@@ -771,6 +809,7 @@ func init() {
 			kind:     "CodeShow",
 			summary:  "看源码里**某一行**长什么样（带 `件:行` · 只读取证 · 手搓 `sed -n` / `awk` 的替身）",
 			usage:    "zerg code show <件:行> [--ctx <N>] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"件:行（件 = 仓相对路径 · 行 = 正整数）"},
 			fields:   []string{"path", "line", "text", "target"},
 			endpoint: "",
@@ -792,6 +831,7 @@ func init() {
 			kind:    "RepoCommit",
 			summary: "提交：**按文件名逐件暂存**（禁 `git add -A`）· 或**点名单路径**（`--only <路径…>`：索引面允许非空、别人的暂存只许多不许少）· **过快速档才放行** · 禁 `--no-verify`（例外走 `--waive <步名> --reason <…>` 并进审计）",
 			usage:   "zerg repo commit --message <题> (--file <件>… | --only <路径>[ --only <路径>]…) [--proposal <提案 id>] [--by <谁>] [--trace <id>] [--criterion <判据>] [--waive <步名> --reason <理由>] [--dry-run] [--yes]",
+			arity:   "any",
 			args:    []string{"提交主题（--message）", "逐件点名（--file · 可重复）或点名单路径（--only · 可重复 · 可 `--only=<路径>`）"},
 			fields:  repoCommitFields,
 			danger:  &dangerSpec{dangerD2, "提交主题", "把点名的件提交（可逆：`git reset --soft HEAD~1`）；**先跑快速档**，rc≠0 不提交（要带账放行得 `--waive <步名> --reason <…>`）", "缺口-命令面 §九 I4 · §九 M3 C5 · D3b 第三步 · 缺口 Q-104"},
@@ -805,6 +845,7 @@ func init() {
 			kind:     "GateExplain",
 			summary:  "读懂某一步到底在判什么（scope/模式/判据/退码口径/日志路径/出处文件:行 —— **精确匹配**步名）",
 			usage:    "zerg gate explain <步名> [--json <字段>]",
+			arity:    "any",
 			args:     []string{"步名（与 `zerg gate ls` 逐字相同）"},
 			fields:   []string{"scope", "mode", "criterion", "verdict", "exit", "log", "source", "command", "script_say"},
 			endpoint: "",
@@ -836,6 +877,7 @@ func init() {
 			kind:    "DocMeta",
 			summary: "文档元数据面（动作 `fill` = 批量回填文件头：只填机械可判的日期 + 不开源标注 · 默认干跑 · 写审计）",
 			usage:   "zerg doc meta fill [--scope devdocs | <目录>] [--docs-ver <X.Y.Z>] [--dry-run] [--by <谁>] [--json <字段>] [--yes]",
+			arity:   "any",
 			args:    []string{"动作（本版只有 fill）"},
 			fields:  docMetaFillFields,
 			danger: &dangerSpec{dangerD2, "（被扫根）",
@@ -850,6 +892,7 @@ func init() {
 			kind:     "PortLs",
 			summary:  "看某个端口被谁占着（含 pid/ppid/inode/在跑件路径 · 手敲 lsof 的替身）",
 			usage:    "zerg port ls [<端口>] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"端口（可省：缺省列声明面三个端口）"},
 			fields:   []string{"port", "pid", "ppid", "process", "sock", "path"},
 			endpoint: "",
@@ -879,6 +922,7 @@ func init() {
 			//   （契约脚本的 `FIELDS_RE` 只认字面量；抽成变量 = 那一条被读成「没有字段表」）。
 			summary:  "产出树「在 / 不在」**只读**读数（一树一行 · 每行带**口径 + 树 `head_sha`** · 树身份取不成 ⇒ 8 · **不给结论**）",
 			usage:    "zerg publish tree has <件> --tree <树>… [--json <字段>]",
+			arity:    "any",
 			args:     []string{"件名（相对树根的相对路径 —— 形状不合口径 ⇒ 2）"},
 			fields:   []string{"tree", "caliber", "head_sha", "present"},
 			endpoint: "",
@@ -917,6 +961,7 @@ func init() {
 			//   / `ci green` 三条**同一条纪律**（契约脚本的 `FIELDS_RE` 只认字面量）。
 			summary: "把**某个模型**钉到**某台机器**上（带 TTL 的覆盖表 · 命中即用 · 撤回一行 `route unpin`）",
 			usage:   "zerg route pin --model <模型> --machine <机器> --ttl <时长> [--by <谁>] [--note <…>] [--dry-run | --yes] [--json <字段>]",
+			arity:   "none",
 			args:    []string{"（无位置参数：模型走 `--model`、机器走 `--machine`）"},
 			fields:  []string{"model", "machine", "expires_at", "remaining_s", "state"},
 			danger: &dangerSpec{dangerD2, "模型",
@@ -932,6 +977,7 @@ func init() {
 			kind:    "RouteLs",
 			summary: "看覆盖表现在钉着什么（**只读**：不碰盘、不探主控、零网络 · 过期行也显出来）",
 			usage:   "zerg route ls [--model <模型>] [--json <字段>]",
+			arity:   "none",
 			args:    []string{"（无位置参数：过滤走 `--model`）"},
 			// 与上面 `route pin` 那一条**同一份五格**（同一个写法只有一个来源）。
 			fields: []string{"model", "machine", "expires_at", "remaining_s", "state"},
@@ -946,6 +992,7 @@ func init() {
 			// ★ 字段表同样必须是字面量（同上）。
 			summary: "撒掉一条钉（不给 `--model` ⇒ **撒全部** · 一行撤回 · 幂等：没撒到 ⇒ 0 + `changed=false`）",
 			usage:   "zerg route unpin [--model <模型>] [--dry-run | --yes] [--json <字段>]",
+			arity:   "none",
 			args:    []string{"（无位置参数：点名走 `--model`）"},
 			fields:  []string{"model", "machine", "expires_at", "remaining_s", "state"},
 			danger: &dangerSpec{dangerD2, "模型",
@@ -961,6 +1008,7 @@ func init() {
 			kind:    "ResourcePin",
 			summary: "钉住资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2）",
 			usage:   "zerg resource pin <资源 id> [--dry-run | --yes]",
+			arity:   "any",
 			args:    []string{"资源 id"},
 			run:     cmdHazardWrite,
 		},
@@ -969,6 +1017,7 @@ func init() {
 			kind:    "ResourceUnpin",
 			summary: "解钉资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2）",
 			usage:   "zerg resource unpin <资源 id> [--dry-run | --yes]",
+			arity:   "any",
 			args:    []string{"资源 id"},
 			run:     cmdHazardWrite,
 		},
@@ -994,6 +1043,7 @@ func init() {
 			kind:     "Egg",
 			summary:  "单枚卵的现状（只读投影：host / model / state 三格 · 同一份真源）",
 			usage:    "zerg egg show <卵 id> [--json <字段>]",
+			arity:    "any",
 			args:     []string{"卵 id（<模型 id>@<主机>，照 `egg ls` 的 egg_id 那一格）"},
 			fields:   eggFields,
 			endpoint: "GET /api/fleet/models + GET /api/fleet/status + GET /api/models/{name}（现成端点包装 · 不新开一条路）",
@@ -1012,6 +1062,7 @@ func init() {
 			path:    []string{"cocoon", "open"},
 			summary: "起虫茧的文档服务（8610 · D3 起服务档 · **计划面已开放**：`--dry-run` 出计划件；真跑本版未开放 · 拒执退码 2）",
 			usage:   "zerg cocoon open <茧名> [--confirm=<茧名> --yes | --dry-run]",
+			arity:   "any",
 			args:    []string{"茧名"},
 			run:     cmdCocoonOpen,
 		},
@@ -1019,6 +1070,7 @@ func init() {
 			path:    []string{"egg", "run"},
 			summary: "把卵跑起来（**写面本版未开放**：连干跑一道押后、真跑退码 8；只读投影见 `egg ls` / `egg show`）",
 			usage:   "zerg egg run <卵 id> [--yes | --dry-run]",
+			arity:   "any",
 			args:    []string{"卵 id"},
 			run:     cmdEggRun,
 		},
@@ -1077,6 +1129,7 @@ func init() {
 			path:    []string{"itask", "run"},
 			summary: "手动跑一条内部任务（危险 D2 · 本版未开放）",
 			usage:   "zerg itask run <任务 id> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"任务 id"},
 			danger:  &dangerSpec{dangerD2, "任务 id", "立刻跑一次该内部任务（绕过它的冷却 · 会占机器）", "§7.1 P8 · §5.1 POST /api/internal-tasks/{id}/run · 开工单 T-49"},
 			run:     cmdGuarded,
@@ -1096,6 +1149,7 @@ func init() {
 			kind:     "BuildArtifactShow",
 			summary:  "一件的**身份**（sha256/mtime/inode/type/arch/签名态 —— 换件后验「在跑的件 == 盘上件」要它）",
 			usage:    "zerg build show <件> | --all [--json <字段>]",
+			arity:    "any",
 			args:     []string{"件名（bin/ 下的名字，或一个路径）"},
 			fields:   []string{"name", "sha256", "bytes", "mtime", "inode", "type", "arch", "signed"},
 			endpoint: "",
@@ -1119,6 +1173,7 @@ func init() {
 			path:    []string{"task", "terminate"},
 			summary: "终止任务（危险 D3 · 本版未开放）",
 			usage:   "zerg task terminate <任务 id> --confirm=<任务 id> --yes [--expect=<旧值>] [--dry-run]",
+			arity:   "any",
 			args:    []string{"任务 id"},
 			danger: &dangerSpec{dangerD3, "任务 id",
 				"终止该任务的执行（CA 侧停 + 任务状态置 terminated）· 已产出的工作树不自动回收",
@@ -1129,6 +1184,7 @@ func init() {
 			path:    []string{"task", "rm"},
 			summary: "删除任务（危险 D3 · 本版未开放）",
 			usage:   "zerg task rm <任务 id> --confirm=<任务 id> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"任务 id"},
 			danger: &dangerSpec{dangerD3, "任务 id",
 				"删除该任务的记录与它指派的工作树/分支（**不可逆**）",
@@ -1139,6 +1195,7 @@ func init() {
 			path:    []string{"task", "pause"},
 			summary: "暂停任务（危险 D2 · 本版未开放）",
 			usage:   "zerg task pause <任务 id> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"任务 id"},
 			danger:  &dangerSpec{dangerD2, "任务 id", "把排队中的任务置为暂停态（可 resume 回来）", "§三 D 族 · §6.3 S5"},
 			run:     cmdGuarded,
@@ -1147,6 +1204,7 @@ func init() {
 			path:    []string{"task", "resume"},
 			summary: "继续任务（危险 D2 · 本版未开放）",
 			usage:   "zerg task resume <任务 id> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"任务 id"},
 			danger:  &dangerSpec{dangerD2, "任务 id", "把暂停的任务放回排队（可能立刻占机器）", "§三 D 族 · §6.3 S5"},
 			run:     cmdGuarded,
@@ -1155,6 +1213,7 @@ func init() {
 			path:    []string{"task", "retry"},
 			summary: "重跑任务（危险 D2 · 本版未开放）",
 			usage:   "zerg task retry <任务 id> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"任务 id"},
 			danger:  &dangerSpec{dangerD2, "任务 id", "把 failed 任务置回 queued（会再占一次机器与模型槽）", "§三 D 族 · §6.3 S5"},
 			run:     cmdGuarded,
@@ -1163,6 +1222,7 @@ func init() {
 			path:    []string{"agent", "unload"},
 			summary: "卸载子端上的模型（危险 D3 · 本版未开放）",
 			usage:   "zerg agent unload <机器名> <模型> --confirm=<机器名> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"机器名", "模型"},
 			danger: &dangerSpec{dangerD3, "机器名",
 				"卸掉该子端上的模型（**在跑的任务会被打断**）· 幂等：已在未装载态按「已在该状态」报",
@@ -1173,6 +1233,7 @@ func init() {
 			path:    []string{"agent", "load"},
 			summary: "加载模型到子端（危险 D2 · 本版未开放）",
 			usage:   "zerg agent load <机器名> <模型> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"机器名", "模型"},
 			danger:  &dangerSpec{dangerD2, "机器名", "把模型装进该子端（占内存/显存槽 · 单槽机是串行的）", "§三 B 族 · §九 M5 · 开工单 T-43"},
 			run:     cmdGuarded,
@@ -1181,6 +1242,7 @@ func init() {
 			path:    []string{"agent", "reap"},
 			summary: "回收残留干跑单（真回收危险 D3 · 本版未开放；**入库件永不进候选 = 红线**）",
 			usage:   "zerg agent reap --dry-run --min-age-days <n>   # 干跑单（带 plan_id + 逐件证据）\n       zerg agent reap --confirm=<机器名> --yes [--dry-run]   # 真回收（本版未开放）",
+			arity:   "any",
 			args:    []string{"机器名"},
 			danger: &dangerSpec{dangerD3, "机器名",
 				"按「声明树 ↔ 现值树」差集回收闲置资源（**默认干跑**；入库件永不进候选 = 红线）",
@@ -1191,6 +1253,7 @@ func init() {
 			path:    []string{"model", "stop"},
 			summary: "停模型（危险 D3 · 本版未开放）",
 			usage:   "zerg model stop <模型 id> --confirm=<模型 id> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"模型 id"},
 			danger:  &dangerSpec{dangerD3, "模型 id", "停掉该模型的驻留（**在跑任务受影响**）· 幂等优先：已停不报 500", "§三 E 族 · §九 M4 · 开工单 T-45"},
 			run:     cmdGuarded,
@@ -1199,6 +1262,7 @@ func init() {
 			path:    []string{"model", "start"},
 			summary: "起模型（危险 D2 · 本版未开放）",
 			usage:   "zerg model start <模型 id> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"模型 id"},
 			danger:  &dangerSpec{dangerD2, "模型 id", "把模型装载起来（占槽位 · 单槽机要排队）", "§三 E 族 · §九 M5 · 开工单 T-45"},
 			run:     cmdGuarded,
@@ -1207,6 +1271,7 @@ func init() {
 			path:    []string{"core", "stop"},
 			summary: "停主控（危险 D3 · 本版未开放）",
 			usage:   "zerg core stop --confirm=<主机名> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"主机名"},
 			danger:  &dangerSpec{dangerD3, "主机名", "停掉主控进程（**整个虫群的控制面会断**）", "§三 C 族 · §7.1 P11 · 开工单 T-45"},
 			run:     cmdGuarded,
@@ -1222,6 +1287,7 @@ func init() {
 			path:    []string{"core", "update"},
 			summary: "主控自身换件（危险 D3 · 本版未开放）",
 			usage:   "zerg core update --confirm=<主机名> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"主机名"},
 			danger:  &dangerSpec{dangerD3, "主机名", "换掉在跑的主控制品（**不可逆**；走 F-3 例外清单 + 验签 + 回执）", "§九 M20 F-3 · §7.1 P12 · 开工单 T-52"},
 			run:     cmdGuarded,
@@ -1230,6 +1296,7 @@ func init() {
 			path:    []string{"egg", "pin"},
 			summary: "钉住一枚卵（危险 D2 · 本版未开放）",
 			usage:   "zerg egg pin <卵 id> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"卵 id"},
 			danger:  &dangerSpec{dangerD2, "卵 id", "把该卵标成在孵（**同一时刻至多一枚**，会挤掉别的）", "§3.4 I 族 · 开工单 T-47"},
 			run:     cmdGuarded,
@@ -1238,6 +1305,7 @@ func init() {
 			path:    []string{"egg", "unpin"},
 			summary: "解钉一枚卵（危险 D2 · 本版未开放）",
 			usage:   "zerg egg unpin <卵 id> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"卵 id"},
 			danger:  &dangerSpec{dangerD2, "卵 id", "取消在孵标记（原本占有单槽的卵会被换下）", "§3.4 I 族 · 开工单 T-47"},
 			run:     cmdGuarded,
@@ -1246,6 +1314,7 @@ func init() {
 			path:    []string{"egg", "retire"},
 			summary: "退役一枚卵（危险 D3 · 本版未开放）",
 			usage:   "zerg egg retire <卵 id> --confirm=<卵 id> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"卵 id"},
 			danger:  &dangerSpec{dangerD3, "卵 id", "把该卵从名册与盘上退掉（**不可逆**；档 ③ 件永不自动）", "§十五.2 档③ · 开工单 T-54"},
 			run:     cmdGuarded,
@@ -1254,6 +1323,7 @@ func init() {
 			path:    []string{"dev", "release"},
 			summary: "发布候选件（危险 D3 · 本版未开放）",
 			usage:   "zerg dev release --candidate <候选 id> --confirm=<候选 id> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"候选 id"},
 			danger:  &dangerSpec{dangerD3, "候选 id", "把候选件推上生产面（**只能由人拍板开**；AI 不许自升）", "§17.4 · §九 M18 C4 · 开工单 T-58"},
 			run:     cmdGuarded,
@@ -1262,6 +1332,7 @@ func init() {
 			path:    []string{"dev", "rollback"},
 			summary: "回滚（危险 D3 · 本版未开放）",
 			usage:   "zerg dev rollback [--to <目标>] --confirm=<候选 id> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"候选 id"},
 			danger:  &dangerSpec{dangerD3, "候选 id", "把生产面退回某个已知状态（回滚件到期前**永不自动**）", "§17.2 ⑦ · §十五.2 档③ · 开工单 T-58"},
 			run:     cmdGuarded,
@@ -1270,6 +1341,7 @@ func init() {
 			path:    []string{"update"},
 			summary: "源码式自更新（危险 D3 · 本版未开放）",
 			usage:   "zerg update --confirm=<主机名> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"主机名"},
 			danger:  &dangerSpec{dangerD3, "主机名", "按真源走一次自更新（校验 + 换件 + 回执；走 F-3 例外清单）", "§7.1 P12 · §九 M20 F-3 · 开工单 T-52"},
 			run:     cmdGuarded,
@@ -1279,6 +1351,7 @@ func init() {
 			kind:     "Proposal",
 			summary:  "提案件通道：只产可审查物（new|list|show|check）· 目标必须回指既有编号 · **判据必须可机检** · 「提 ≠ 批」两对字段（subject/approver）",
 			usage:    "zerg dev proposal new --title <题> --target <待办编号> --goal <目标> --evidence <出处> --rollback <退点> --criterion <可跑的判据> [--file <要改的件>]… [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human]",
+			arity:    "any",
 			args:     []string{"动作：new | list | show | check", "提案 id（show/check 才要）"},
 			fields:   proposalFields,
 			endpoint: "",
@@ -1300,6 +1373,7 @@ func init() {
 			kind:     "ApprovalShow",
 			summary:  "看一枚批准件的全貌 + 验签判决（消费者只认「验过」那一档）",
 			usage:    "zerg approve show <工具名> [--json <字段>]",
+			arity:    "any",
 			args:     []string{"工具名"},
 			fields:   approveFields,
 			endpoint: "",
@@ -1310,6 +1384,7 @@ func init() {
 			kind:    "ApprovalSign",
 			summary: "**人签**一枚批准件（要人在终端上敲口令；非交互会话一律拒）· 写不进即拒 · 同名不覆盖",
 			usage:   "zerg approve new --tool <工具名> --by <人名> --note <理由> [--scope <范围>] [--self-test]",
+			arity:   "any",
 			args:    []string{"工具名（--tool）", "人名（--by）"},
 			fields:  approveNewFields,
 			danger:  &dangerSpec{dangerD3, "工具名", "签一枚批准件（逃生门）—— 只作 require_approval 的放行凭据；人不在场时等于没签", "§九 M18 C4② · §17.6 SD7 · D3b 第四步"},
@@ -1323,6 +1398,7 @@ func init() {
 			kind:     "ApprovalKeygen",
 			summary:  "生成**操作员密钥**（人在终端上设口令；私钥口令加密落盘，公钥给消费者验签）",
 			usage:    "zerg approve keygen --by <人名>",
+			arity:    "any",
 			args:     []string{"人名（--by）"},
 			endpoint: "",
 			run:      cmdApproveKeygen,
@@ -1334,6 +1410,7 @@ func init() {
 			kind:    "DevEdit",
 			summary: "受控写入：只改**提案声明过**的件（越界写 ⇒ 2）· 默认干跑 · 一行一事件的审计（写不进审计就不改件）",
 			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件>) [--by <谁>] [--dry-run | --confirm=<主机名> --yes]",
+			arity:   "any",
 			args:    []string{"提案 id（--proposal）", "要改的件（--file · 必须在提案的 files[] 里）"},
 			fields:  devEditFields,
 			danger:  &dangerSpec{dangerD3, "提案 id", "改仓内件（写工作树）—— 作用域 = 提案声明的件；审计一行一事件；回滚 = 提案退点 + git", "§17.3 铁律③ · §九 M3 C4/C5 · §4.1 K7 · D3b 第二步"},
@@ -1348,6 +1425,7 @@ func init() {
 			path:    []string{"dev", "build"},
 			summary: "在**候选区**构建全套件（危险 D2 · 本版未开放；**判据先于自动化**）",
 			usage:   "zerg dev build --candidate <候选 id> [--scope go|rust|ui|all] [--dist] [--yes] [--dry-run]",
+			arity:   "any",
 			args:    []string{"候选 id"},
 			danger:  &dangerSpec{dangerD2, "候选 id", "在候选区编出成套制品（底层就是 scripts/build/build-all.sh —— 不新造第二条构建路）", "§17.4 第 2 条 · §17.6 SD10-b · 开工单 T-58"},
 			run:     cmdDevBuild,
@@ -1356,6 +1434,7 @@ func init() {
 			path:    []string{"dev", "test"},
 			summary: "跑候选件的测试集（危险 D2 · 本版未开放；**判据先于自动化**）",
 			usage:   "zerg dev test [--candidate <候选 id> | --pkg <包> [--run <正则>]] [--scope go|rust|ui|all] [--outdir D] [--yes] [--dry-run]",
+			arity:   "any",
 			args:    []string{"候选 id"},
 			danger:  &dangerSpec{dangerD2, "候选 id", "在候选区跑测试集（底层 = make test + 门禁既有步，不新立判据）", "§17.4 第 3 条 · §17.7 次序 · 开工单 T-58"},
 			run:     cmdDevTest,
@@ -1365,6 +1444,7 @@ func init() {
 			kind:     "DevEvidence",
 			summary:  "合成一份验收证据单（只收证据、**不给「通过」的结论**）· 证据为空 ⇒ 2",
 			usage:    "zerg dev verify --candidate <候选 id> [--results <结果表>] [--code-sha <sha>] [--node <名>] [--layer <档>] [--gate [--human-approval <名>]] [--dry-run] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"候选 id"},
 			fields:   devVerifyFields,
 			endpoint: "",
@@ -1383,6 +1463,7 @@ func init() {
 			path:    []string{"script", "run"},
 			summary: "跑一件脚本（危险 D3 · 本版未开放）",
 			usage:   "zerg script run <脚本> --confirm=<脚本> --yes [--dry-run]",
+			arity:   "any",
 			args:    []string{"脚本"},
 			danger: &dangerSpec{dangerD3, "脚本",
 				"按调用者权限执行脚本（**退码原样透传**；核心名硬占位）",
@@ -1405,6 +1486,7 @@ func init() {
 			kind:     "Ask",
 			summary:  "问一次推理、**不落任务队列**（`task submit` 的对偶）· 能力筛是硬筛",
 			usage:    "zerg ask <提示> [--capability 名]… [--prefer 名]… [--model 名] [--node 名]… [--min-ctx n] [--min-mem-gb n] [--no-fallback] [--dry-run] [--timeout 时长] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"提示（一句话）"},
 			fields:   askFields,
 			endpoint: "GET /api/fleet/models · GET /api/models/registry",
@@ -1415,6 +1497,7 @@ func init() {
 			kind:     "Plan",
 			summary:  "**算**：产出一份意图件（M6 包封 · F1–F7 + 四附加件）· **零副作用**",
 			usage:    "zerg plan <族> <动作> <对象…> [--node 名]… [--expect 旧值] [--out <件>] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"族（= target.kind）", "动作", "对象名"},
 			fields:   planFields,
 			endpoint: "",
@@ -1425,6 +1508,7 @@ func init() {
 			kind:     "Apply",
 			summary:  "**做**：只吃那一份意图件（L1 schema → L2 引用 → L3 干跑 → L4 人在环）· **校验四层已开放**；写面（真做）本版未开放 · 拒执退码 2",
 			usage:    "zerg apply <件> [--confirm=<目标>] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"意图件路径"},
 			fields:   applyFields,
 			endpoint: "",
@@ -1437,6 +1521,7 @@ func init() {
 			kind:     "Receipt",
 			summary:  "交接回执（一轮一页 · 带 trace_id）：new | ls | show；读法 = `zerg context ls --resume`",
 			usage:    "zerg dev receipt new --what <做了什么> --next <下一步> [--evidence <证据>]… [--blockers <阻碍>]… [--commit <sha>]… [--trace <trace_id>]",
+			arity:    "any",
 			args:     []string{"动作：new | ls | show", "轮次 id（只 show 要）"},
 			fields:   receiptFields,
 			endpoint: "",
@@ -1457,6 +1542,7 @@ func init() {
 			kind:     "Calib",
 			summary:  "单件标定脚本的现状（归属 · 角色 · 执行面 · 退码口径）",
 			usage:    "zerg calib show <名> [--json <字段>]",
+			arity:    "any",
 			args:     []string{"件名（与 `zerg calib ls` 逐字相同）"},
 			fields:   calibShowFields,
 			endpoint: "",
@@ -1467,6 +1553,7 @@ func init() {
 			kind:    "Calib",
 			summary: "跑一支标定脚本（D2 三态 · --dry-run 零副作用 · 缺 --yes ⇒ 2 · 真调旧脚本、退码原样转出）",
 			usage:   "zerg calib run <名> [位置参数…] [--dry-run | --yes]",
+			arity:   "any",
 			args:    []string{"件名（与 `zerg calib ls` 逐字相同）", "位置参数（原样交给脚本）"},
 			fields:  calibRunFields,
 			danger: &dangerSpec{dangerD2, "件名",
@@ -1491,6 +1578,7 @@ func init() {
 			kind:     "Eval",
 			summary:  "单件评测脚本的现状（归属 · 一句理由 · 执行面）",
 			usage:    "zerg eval show <名> [--json <字段>]",
+			arity:    "any",
 			args:     []string{"件名（与 `zerg eval ls` 逐字相同）"},
 			fields:   evalShowFields,
 			endpoint: "",
@@ -1501,6 +1589,7 @@ func init() {
 			kind:    "Eval",
 			summary: "跑一支评测脚本（D2 三态 · **只对 ① 收编的件开放** · 缺 --yes ⇒ 2 · 真调旧脚本、退码原样转出）",
 			usage:   "zerg eval run <名> [位置参数…] [--dry-run | --yes]",
+			arity:   "any",
 			args:    []string{"件名（与 `zerg eval ls` 逐字相同）", "位置参数（原样交给脚本）"},
 			fields:  evalRunFields,
 			danger: &dangerSpec{dangerD2, "件名",
@@ -1520,6 +1609,7 @@ func init() {
 			kind:     "Impact",
 			summary:  "改一处会牵动谁（只读：人面三行 + 波纹卡片 ≤12 条/≤1.2k token + 六键包封；挂干跑属 `A4`）",
 			usage:    impactUsageLine,
+			arity:    "any",
 			args:     []string{"目标（仓内件路径 · 或在册契约 id，如 S-g）"},
 			fields:   impactFields,
 			endpoint: "",
@@ -1534,6 +1624,7 @@ func init() {
 			kind:     "ArchiveHash",
 			summary:  "一批件算 sha256（**一进程吃 N 件**）—— 逐行 `sha256␣␣路径`，与 `shasum -a 256` 逐字相同（手搓 1072 次 shasum 的替身）",
 			usage:    "zerg archive hash <件|目录>… [--json <字段>]",
+			arity:    "any",
 			args:     []string{"件或目录（目录 ⇒ 顶层逐件 · 可给多个）"},
 			fields:   []string{"path", "sha256", "bytes"},
 			endpoint: "",
@@ -1544,6 +1635,7 @@ func init() {
 			kind:     "ArchiveManifest",
 			summary:  "出归档**三件套**（RFC 8493 BagIt：载荷 `data/` + `manifest-sha256.txt` + `tagmanifest-sha256.txt`）· `--dry-run` 先出逐件清单 · 真写要 `--yes` · 失败回滚",
 			usage:    "zerg archive manifest <载荷目录> --out <袋目录> [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"载荷目录", "袋落点（--out）"},
 			fields:   []string{"bag", "entry", "sha256"},
 			endpoint: "",
@@ -1554,6 +1646,7 @@ func init() {
 			kind:     "ArchiveVerify",
 			summary:  "校验一只袋（**重算载荷** ↔ 清单逐件对拍：清单被抹一条 / 载荷改一字节 / 多出未登记件 ⇒ 判红）",
 			usage:    "zerg archive verify <袋目录> [--json <字段>]",
+			arity:    "any",
 			args:     []string{"袋目录"},
 			fields:   []string{"entry", "want", "got", "verdict"},
 			endpoint: "",
@@ -1569,6 +1662,7 @@ func init() {
 			kind:     "ModelAdd",
 			summary:  "往名册件（`gateway/fleet.yaml`）**先校验后写**加一条模型（`--dry-run` 先行 · 真写要 `--yes` · 写完读回再校 · 任一步不过 ⇒ 回滚 · 不覆盖别人的条）——**块按 `--model`（模型名）定位/新建**（列表形与裸映射形都认）· `--host` 只作该条的 `host:` 字段值",
 			usage:    "zerg model add --model <模型名> --host <主机> --file <GGUF 路径> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"模型名（--model：`models:` 段的键 / 块名 ⇒ 按它定位或新建那一块）", "主机（--host：该条 `host:` 的字段值 ＝ 这台模型跑在哪台机器）", "GGUF 路径（--file）"},
 			fields:   []string{"model", "host", "file", "fleet", "line", "added"},
 			endpoint: "",
@@ -1579,6 +1673,7 @@ func init() {
 			kind:     "ConfigReload",
 			summary:  "热加载主控配置（照 `nginx -s reload`：**先校验、失败回滚**）—— 名册件本地解析不过 ⇒ **不发请求**（旧配置继续跑）",
 			usage:    "zerg config reload [--dry-run] --yes [--json <字段>]",
+			arity:    "none",
 			args:     []string{"（无名册件参数：走 `--root` / `--path` 或仓根）"},
 			fields:   []string{"status", "models", "added", "fleet_nodes", "fingerprint"},
 			endpoint: "POST /api/config/reload（路由已在跑的主控上 ⇒ 主控零改动）",
@@ -1602,6 +1697,7 @@ func init() {
 			kind:     "GapAdd",
 			summary:  "记一条缺口（写面 · 留证据）：**手搓记录 + 验证命令是两件必填**（防呆⑤）· 同 fp 同内容 ⇒ 幂等命中 0 · 同 fp 内容不同 ⇒ `14` · 审计进 `edit_audit.jsonl`（写不进就不写真源）",
 			usage:    "zerg gap add --symptom <一句> --handmade <命令原样> --impact <六值之一> --want-family <族> --want-action <动作> [--want-argv <段>…] [--prio P0|P1|P2] --repro-cmd <命令> --verify-cmd <命令> [--depends-on <fp>…] [--by <谁>] [--dry-run] [--yes] [--json <字段>]",
+			arity:    "none",
 			args:     []string{"（无位置参数：全部走旗标）"},
 			fields:   gapAddFields,
 			danger:   &dangerSpec{dangerD2, "缺口 fp", "往真源（`<状态目录>/zerg-cli-gaps.jsonl`）追加一行 + 审计一行（可逆：删那一行 / 审计历史行不删）；审计写不进 ⇒ 真源一行不写", "设计-命令面-gap族-v1.0-20260923.md §二.2 · §四 · `H-10`（不要人签：`--yes` 是命令行确认档，不是批准件）"},
@@ -1614,6 +1710,7 @@ func init() {
 			kind:     "GapVerify",
 			summary:  "跑判据（`verify_cmd`）改缺口状态（写面）：过 ⇒ `已解` + `solved_evidence`·**已解现缺** ⇒ 记 `回归` 并退 1 · `--dry-run` 只跑只印（恒 0）",
 			usage:    "zerg gap verify [<GAP id>…] [--all] [--by <谁>] [--dry-run] [--yes] [--json <字段>]",
+			arity:    "any",
 			args:     []string{"缺口 id（可重复；与 `--all` 不许同给）"},
 			fields:   gapVerifyFields,
 			danger:   &dangerSpec{dangerD2, "缺口 id", "改真源里的 `state` / `solved_evidence` / `last_verified_at` + 审计一行（可逆：照审计那一格回写）；判红（`回归`）只在真跑那一态可达", "设计-命令面-gap族-v1.0-20260923.md §二.3 · §三 · `H-10`（判据是机器给的：跑命令看 rc）"},
@@ -1630,6 +1727,7 @@ func init() {
 			kind:     "Metrics",
 			summary:  "「该改哪」那把尺：把四类读数（重复 / 未用符号 / 覆盖率 / 门禁）**归一成一个可比排序**（只读 · 空输入 ⇒ 不给结论）",
 			usage:    "zerg metrics [--input <读数档>] [--json <字段>]",
+			arity:    "none",
 			args:     []string{"（无位置参数：读数档走 `--input`）"},
 			fields:   metricsFields,
 			endpoint: "",
