@@ -38,6 +38,19 @@
   （生成物声明行 + 两张命令表：命令名·用法串·说明·`--json` 字段·投影端点·茧壁层级）整块重写
   —— 不整块重写就判不出 drift。
 
+身份行对拍（缺口 `Q-211` · `--check` 的**新一格** · 只加判据、不动生成面）
+--------------------------------------------------------------------
+原来的比较面是「页 ⟷ **现跑的 `bin/zerg`**」—— 而页正是拿现跑件导出的（两边**同源**）⇒ `bin/` 旧了
+它照样绿（批十三实测：页内身份行还写着上一枚的 `…+dirty` · 字段列缺 `count_basis`，旧件下
+`--check` rc=0；重编后才翻红）= 「生成物自比较」那一类盲区。⇒ `--check` 现加一格**三腿**断言：
+  ① 页内身份行 ⟷ 现跑件身份（`commit` + `build_time`）**逐字**相等 —— 页那侧**现读盘上的件**、
+     现跑那侧跑 `bin/zerg version`（两读**独立**，不走导出物那一条路）；
+  ② 现跑件那个提交**之后**，**源码面**（`core/cmd/zerg` + `core/internal/version`）上不许有提交改动
+     ⇒ 「页与现跑件都旧」这种**同源过期**也能判红（这一腿才是根因的牙）；
+  ③ 现跑件身份第三格带 `+dirty` ⇒ 判红：脏树产物**不对应任何提交**，正式面（`status: authoritative`）
+     的身份行不承载它。
+  ★ 判不了（跑不起 `bin/zerg` / 本机无 `git` / 那个提交取不到）⇒ **rc=2 不给结论**，不许当绿。
+
 两处解析口径（历次漂移的收口 · 一律「不认识就不给结论」）
   · 列锚**按表头名**取列（**不是**按列数）：`help export` 加列或调列序都不会把公开面看错列
     （现读多出来的 `本版` · 逐条开放状态 / `出处` · 追溯面 —— 两列都不进公开面）；表头里认不出
@@ -59,6 +72,16 @@ EN_REL = os.path.join("docs", "en", "参考-命令行.md")
 MAIN_REL = os.path.join("core", "cmd", "zerg", "main.go")
 GEN_REL = os.path.join("scripts", "docs", "gen-cli-reference.py")
 RC_OK, RC_FAIL, RC_BLOCKED = 0, 1, 2
+
+# ── 身份行对拍（缺口 `Q-211`）────────────────────────────────────────────────────
+#   页内身份行的**逐字前缀**（渲染器写的就是这一串）；身份串本身 = `version.Line("zerg")` =
+#   `<件> <版本> <commit> <build_time>` 四段（`core/internal/version/version.go:31`）。
+IDENT_PREFIX = "> 身份 / identity："
+#   **源码面** = 这一页的真源所在（`Q-211` 的实测症状就是这一面动过、而 `bin/` 没跟）：
+#   `core/cmd/zerg` = 命令树 / 用法串 / `--json` 字段列（`count_basis` 那三处就在这一面）；
+#   `core/internal/version` = 版本号单一来源（它一动，身份行里的版本格也该动）。
+#   ★ 只判**这两个面**：别扩到全仓 —— 那会把「改了别处、重编还没做」也拦下（过宽 = 每次提交都红）。
+SOURCE_FACE_RELS = (os.path.join("core", "cmd", "zerg"), os.path.join("core", "internal", "version"))
 
 # 注入目标（`T-10` · `D-4`）：手写正文 + 标记区的两件（落 `publish/docs/` 顶层）。
 # 语种**按件名现判**（不猜内容）：`.zh-CN.md` = 中文真源 · `.en.md` = 英文派生 —— 与公开面现成
@@ -584,6 +607,73 @@ def live_data(root):
     }, ""
 
 
+# ── 身份行对拍：三腿（缺口 `Q-211` · `--check` 的新一格）────────────────────────────
+#   这一格读的东西**必须**独立于 `live_data` 那条导出链：页那侧**现读盘上的件**、现跑那侧跑
+#   `bin/zerg version`、源码那侧走 `git` —— 三条路各读各的，才判得出「两边同源、一起过期」。
+def page_identity_lines(text):
+    """页文里**所有**身份行的值（现读盘上那件 · 允许 0 处 ⇒ 上层判红 · 同值去重）。"""
+    out = []
+    for l in text.split("\n"):
+        s = l.strip()
+        if s.startswith(IDENT_PREFIX):
+            v = s[len(IDENT_PREFIX):].strip().strip("`").strip()
+            if v and v not in out:
+                out.append(v)
+    return out
+
+
+def ident_fields(ident):
+    """身份串 → `{component, version, commit, build_time}`；四段形状不成 ⇒ `None`（**不猜**）。"""
+    t = (ident or "").strip().strip("`").split()
+    if len(t) != 4 or not t[2] or not t[3]:
+        return None
+    return {"component": t[0], "version": t[1], "commit": t[2], "build_time": t[3]}
+
+
+def live_piece_identity(root):
+    """**现跑件**身份：直接跑 `bin/zerg version`（与导出物那条路**分开**走）→ (dict, err)。"""
+    binz = os.path.join(root, "bin", "zerg")
+    if not os.path.isfile(binz):
+        return None, "找不到 bin/zerg（身份行对拍缺「现跑」那一读 ⇒ 判不了）"
+    rc, out, err = run(binz, ["version"])
+    if rc != 0:
+        return None, "`bin/zerg version` 退码 %d（%s）⇒ 判不了" % (rc, (err or out).strip()[:200])
+    lines = [l.strip() for l in (out or "").split("\n") if l.strip()]
+    if not lines:
+        return None, "`bin/zerg version` 没有输出 ⇒ 判不了"
+    f = ident_fields(lines[0])
+    if f is None:
+        return None, ("现跑件身份串形状不认（`bin/zerg version` 首行 = %r ⇒ 期望"
+                      " `<件> <版本> <commit> <build_time>` 四段）" % lines[0])
+    f["line"] = lines[0]
+    return f, ""
+
+
+def source_face_state(root, commit):
+    """**源码面**（`SOURCE_FACE_RELS`）相对现跑件那个提交的状态 → (dict, err)；判不了 ⇒ err（rc=2）。
+
+    `commit` 取现跑件身份第三格；带 `+dirty` 后缀时取 `+` 之前的 sha 做 diff 基准（后缀本身
+    另成一腿：脏树产物不对应任何提交）。**不给结论**（而不是判红）的情形：无 `git` / 不是仓 /
+    那个 sha 取不到 —— 「判不了」不许当绿，也不许冒充红。
+    """
+    sha = (commit or "").split("+")[0]
+    fact = {"sha": sha, "dirty_suffix": (commit or "").endswith("+dirty"), "head": "", "moved": []}
+    if not shutil.which("git"):
+        return None, "本机无 `git` ⇒ 源码面身份取不到（判不了，不给结论）"
+    rc, out, err = run("git", ["-C", root, "rev-parse", "--short", "HEAD"])
+    if rc != 0:
+        return None, "`git rev-parse --short HEAD` 退码 %d（%s）⇒ 源码面判不了（不是仓 / 无提交）" % (
+            rc, (err or out).strip()[:200])
+    fact["head"] = out.strip()
+    rc, out, err = run("git", ["-C", root, "diff", "--name-only", "%s..HEAD" % sha, "--"]
+                       + list(SOURCE_FACE_RELS))
+    if rc != 0:
+        return None, "`git diff %s..HEAD` 退码 %d（%s）⇒ 那个提交取不到，判不了" % (
+            sha, rc, (err or out).strip()[:200])
+    fact["moved"] = [l.strip() for l in out.split("\n") if l.strip()]
+    return fact, ""
+
+
 # ── 渲染：两份**同构**页（同一数据、同一节序；只有本页散文分语种）────────────────────────────────
 def esc(cell):
     return cell.replace("|", "\\|")
@@ -830,6 +920,16 @@ def build(root):
     data, err = live_data(root)
     if err:
         return None, err
+    # ★ 缺口 `Q-211`：现跑件身份与源码面状态**在出页之前**就先取齐 —— 判不了（跑不起 `bin/zerg` /
+    #   无 `git` / 那个提交取不到）⇒ 与 `live_data` 同一条路 **rc=2 不给结论**，绝不带着半份判据出页。
+    live, err = live_piece_identity(root)
+    if err:
+        return None, err
+    face, err = source_face_state(root, live["commit"])
+    if err:
+        return None, err
+    data["live_ident"] = live
+    data["source_face"] = face
     zh = render("zh", data)
     en = render("en", data, zh_body=body_of(zh))
     return {"zh": zh, "en": en, "data": data}, ""
@@ -846,7 +946,8 @@ def code_spans(text):
 
 def check(root, pages, targets=()):
     """drift（产物 vs 现跑逐字节）+ 命令名对拍（页 ⟷ 源码树，0 差）+ 双语标识符零改动
-    + 各 `--target` 件的生成区（`T-10` · `D-4`）。"""
+    + 各 `--target` 件的生成区（`T-10` · `D-4`）+ **身份行对拍**（页 ⟷ 现跑件 ⟷ 源码面 ·
+    缺口 `Q-211`：钉住「两边同源、一起过期」那一档盲区）。"""
     errs = []
     for loc, rel in (("zh", ZH_REL), ("en", EN_REL)):
         p = os.path.join(root, rel)
@@ -856,6 +957,43 @@ def check(root, pages, targets=()):
         if read(p) != pages[loc]:
             errs.append("drift：%s 与现跑不一致（改了命令面没重生成？重跑 --emit）" % rel)
     data = pages["data"]
+    # ★ 一格断言（缺口 `Q-211`）：**身份行对拍** —— 页内身份行 ⟷ 现跑件身份（`commit` + `build_time`）
+    #   ⟷ 源码面。为什么这一格才是牙：上面那两格 drift 比的是「页 ⟷ **现跑件派生物**」（`build()` 现跑
+    #   `bin/zerg help export`）—— 两边**同源** ⇒ `bin/` 旧了它照样绿（批十三实测那一档：页内身份行
+    #   还写着上一枚的 `…+dirty`、字段列缺 `count_basis`，旧件下 rc=0，重编后才翻红）。
+    #   这一格把「现跑件」与**源码面**也钉在一起 ⇒ 「页与现跑件一起过期」才当场红。
+    live = data["live_ident"]
+    for loc, rel in (("zh", ZH_REL), ("en", EN_REL)):
+        p = os.path.join(root, rel)
+        if not os.path.isfile(p):
+            continue                       # 缺产物那一格上面已判过（不重复报）
+        found = page_identity_lines(read(p))
+        if not found:
+            errs.append("身份行对拍（`Q-211`）：%s 里一行身份行都没有（`%s` 那一行）—— 正式面页必须带"
+                        "现跑件身份" % (rel, IDENT_PREFIX))
+            continue
+        for v in found:
+            f = ident_fields(v)
+            if f is None:
+                errs.append("身份行对拍（`Q-211`）：%s 的身份行形状不认（%r ⇒ 期望"
+                            " `<件> <版本> <commit> <build_time>` 四段）" % (rel, v))
+                continue
+            if (f["commit"], f["build_time"]) != (live["commit"], live["build_time"]):
+                errs.append("身份行对拍（`Q-211`）：%s 的身份行与**现跑件**不是同一枚 —— 页内 %r ·"
+                            " 现跑 %r（`commit` + `build_time` 必须逐字相等）" % (rel, v, live["line"]))
+    exp = ident_fields(data["ident"])
+    if exp and (exp["commit"], exp["build_time"]) != (live["commit"], live["build_time"]):
+        errs.append("身份行对拍（`Q-211`）：导出物抬头与 `bin/zerg version` **两读不一致**（导出 %r ·"
+                    " 现跑 %r）—— 判据面的两条读法自己打架，不猜" % (data["ident"], live["line"]))
+    face = data["source_face"]
+    if face["dirty_suffix"]:
+        errs.append("身份行对拍（`Q-211`）：现跑件身份第三格带 `+dirty`（%r）⇒ 该件是**脏树产物**、"
+                    "不对应任何提交 —— 正式面不承载它（先提交，再 `--only-cli` 重编 + 重生成）"
+                    % live["commit"])
+    if face["moved"]:
+        errs.append("身份行对拍（`Q-211`）：现跑件那个提交（`%s`）之后**源码面**又动过 %d 件（%s）"
+                    "⇒ `bin/` 旧了（页与现跑件**同源过期** —— 这一格就是它的牙：重编 + 重生成）"
+                    % (face["sha"], len(face["moved"]), " / ".join(face["moved"][:3])))
     page_set = set(data["names_page"])
     tree_set = set(data["names_tree"])
     if page_set != tree_set:
@@ -939,6 +1077,12 @@ def main():
              d["n_help_agree"]))
     print("  命令名对拍（页 ⟷ %s）：%s" % (MAIN_REL,
                                         "0 差" if set(d["names_page"]) == set(d["names_tree"]) else "有差"))
+    print("  身份行对拍（`Q-211`）：现跑件 %s · 源码面自 `%s` 起 %s · 脏树后缀 %s"
+          % (d["live_ident"]["line"], d["source_face"]["sha"],
+             "无改动" if not d["source_face"]["moved"] else
+             "%d 件改动（%s…）" % (len(d["source_face"]["moved"]),
+                                  " / ".join(d["source_face"]["moved"][:3])),
+             "有" if d["source_face"]["dirty_suffix"] else "无"))
     for loc, rel in (("zh", ZH_REL), ("en", EN_REL)):
         same = os.path.isfile(os.path.join(root, rel)) and read(os.path.join(root, rel)) == pages[loc]
         print("  %-28s drift=%s" % (rel, "无" if same else "**有**"))
