@@ -145,3 +145,17 @@ Safety design (`core/internal/agent`):
 
 - **The desktop UI is hosted as a system service**: `zerg-ui` runs under the launchd agent `com.zerg.ui` (service file `~/Library/LaunchAgents/com.zerg.ui.plist`, `KeepAlive` + `RunAtLoad`) — the system restarts it if it dies, so it is never launched bare by hand; read the current state with `launchctl print gui/$(id -u)/com.zerg.ui` (`state = running`)
 - **The archive area is a read-only mounted image**: archive content is mounted as a **read-only volume** (the mount point is outside the repository), and the **original path beside the repository is a same-named symbolic link** pointing at it — so reading the original path reads files inside the read-only image, and writing there is always refused (this is not a permission bit set wrong; `chmod` cannot change a read-only volume either). There is a single entry point for attach/detach: `bash scripts/svc/archive-mount.sh on|off|status` (**on demand · never resident · never installed as a launchd job**); while unmounted the original path is a **dangling symbolic link**, reading it fails outright, and `status` reports "not mounted" and exits 1
+
+---
+
+## Session affinity and kind-tier scheduling
+
+**Session affinity** (keys completed): on a multi-machine deployment, re-picking a machine every turn splits one session across boxes — half the context here, half there. The rule now is:
+
+1. **Explicit request header** (`X-Zerg-Session`) — the strongest key, supplied by the caller;
+2. **Session id in the request body** — the natural key on the OpenAI-compatible surface;
+3. **Implicit key** — derived from the model id plus the normalized system prompt, so a caller that supplies nothing still lands on the same box.
+
+Selection composes with the **machine-kind tiers** (`ai` → `mini` → `work`): while a better-tier candidate is present, it is not downgraded; a full tier counts as busy, and the workstation takes the request only last.
+
+**Failures stay visible**: the affinity binding is written back only on the path where forwarding **succeeded**. Failures, circuit breaks and diagnostics go through the existing loop (circuit-broken marker + diagnostic line) and are never disguised as "retrying elsewhere".

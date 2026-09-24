@@ -224,3 +224,18 @@ and should stay consistent with the registry and the tool blurb — a hard conve
 python3 tools/gen_tools_md.py > docs/TOOLS.zh-CN.md   # keep docs/TOOLS.en.md in sync in the same PR
 ```
 
+
+---
+
+## The publish toolchain
+
+Exporting and preflighting the public face now have CLI entry points:
+
+| Entry point | What it does | Nature |
+|---|---|---|
+| `zerg publish run` | Builds the public mirror tree in the local artifact dir (allowlist + excludes + redaction, squashed into a single snapshot commit) | Dangerous action (three-state confirmation) |
+| `zerg publish preflight <artifact-dir>` | Read-only preflight: gates + staleness + command-name parity + generated-region consistency | **Read-only** (touches no state) |
+| `zerg publish tree has` | Checks whether a file exists in a produced tree | Read-only |
+| `zerg script ls` | Lists the script surface (including the three publish scripts) | Read-only |
+
+The preflight **requires the artifact-dir argument**; if it does not pass, nothing may be pushed.

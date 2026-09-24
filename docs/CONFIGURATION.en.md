@@ -160,3 +160,19 @@ if any of them is configured explicitly but the file does not exist → log a WA
 Runtime directory: `<tmp>/zerg-ui/` (module manifest and such); can be overridden with `ZERG_UI_DIR`.
 
 | `ZERG_AI_MODEL` | — | Model id used by the UI document AI actions (summarize / continue / translate / polish); can also be set as `ai_model` in `~/.zerg-ui-prefs.json` |
+
+---
+
+## Machine kinds (`ai` / `mini` / `work`)
+
+Beyond the token and the roster, a multi-machine deployment has one more piece of **deployment truth**: which kind each machine is.
+
+| Kind | Meaning | Scheduling behavior |
+|---|---|---|
+| `ai` | AI-dedicated box (e.g. a large unified-memory machine) | Picked by default; highest priority |
+| `mini` | Small box (only takes what fits) | Takes a request only if the **capability hard gate** passes |
+| `work` | Workstation (also runs its owner's work) | Used last, and **can be preempted** |
+
+- **Overflow order**: `ai` → `mini` → `work`. While a better-kind candidate is present, a lower kind does not take the request.
+- The **source of truth** is a deployment-side context file (`kind` in `~/.zerg/contexts/default.yaml`); the master's fleet projection is generated from it. **An unset kind counts as `work`** (better to under-use than to squat on the AI box).
+- Machine kind is **deployment truth** and is not written into the control-layer rules file — control layer and scheduling policy are two different things.

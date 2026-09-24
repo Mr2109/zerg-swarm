@@ -160,3 +160,17 @@ Both are **three-state**: `--dry-run` (zero side effects) · `--confirm=<target>
 | `web_search` is unavailable | Requires a self-hosted searxng, see `scripts/install-searxng.sh` (AGPL component, not distributed with the repo) |
 
 See [FAQ.en.md](FAQ.en.md) for more.
+
+---
+
+## 5. Building the public mirror (maintainers)
+
+Exporting the repo as a public snapshot takes two subcommands — first the plan (zero side effects), then the real run:
+
+```bash
+zerg publish run --dry-run                      # plan only: nothing is executed, no state is touched
+zerg publish run --confirm=<hostname> --yes     # build the mirror locally: allowlist + excludes + redaction
+zerg publish preflight <artifact-dir>           # read-only preflight: gates + staleness + command-name parity
+```
+
+The mirror only lands in the **local artifact dir** (`dist/<version>/release`) — **no network, no push**. Pushing to a remote is a separate, explicit action.

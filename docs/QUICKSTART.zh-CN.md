@@ -158,3 +158,17 @@ curl -s -X POST -H "X-Auth-Token: $ZERG_AUTH_TOKEN" -H 'Content-Type: applicatio
 | `web_search` 不可用 | 需要自建 searxng，见 `scripts/install-searxng.sh`（AGPL 组件，不随仓库分发） |
 
 更多见 [FAQ.zh-CN.md](FAQ.zh-CN.md)。
+
+---
+
+## 5. 生成公开镜像（维护者）
+
+把仓库导出成公开快照，两条子命令就够——先看计划件（零副作用），再真跑：
+
+```bash
+zerg publish run --dry-run                      # 只出计划件，不执行、不改任何状态
+zerg publish run --confirm=<主机名> --yes        # 本地出镜像：白名单 + 排除项 + 脱敏替换
+zerg publish preflight <产物目录>                # 只读预检：门禁 + 现值面 + 命令名对拍
+```
+
+镜像只落在**本地产物目录**（`dist/<版本>/release`）——**不出网、不推送**；推送远端是另一条显式动作。
