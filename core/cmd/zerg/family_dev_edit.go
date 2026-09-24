@@ -357,6 +357,12 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 建不了目录 %s：%v（审计已留痕：%s）\n", progName, filepath.Dir(outPath), err, auditPath)
 		return exitFail
 	}
+	// 序138 的「先复原再报」：**动手写之前**把这一件的现盘样子登记进本趟的墙钟前像本
+	// （到点 ⇒ `wallclockRestoreAll` 逐件还原；写前不在盘 ⇒ 到点删残留）。
+	// 登记失败不当失败（它只是「到点时多做一件事」的那一格 —— 与 `impact_digest` 取不到同口径：照实不拦）。
+	if werr := wallclockRecordPreImage(outPath); werr != nil {
+		fmt.Fprintf(stderr, "%s: 写面前像登记不上（%v）⇒ 本件到点时复原不了，照实记一行\n", progName, werr)
+	}
 	if err := os.WriteFile(outPath, after, 0o644); err != nil {
 		inv.setErr("failed", "write_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 写不进 %s：%v（审计已留痕：%s）\n", progName, outPath, err, auditPath)
