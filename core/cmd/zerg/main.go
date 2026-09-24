@@ -861,6 +861,25 @@ func init() {
 			endpoint: "",
 			run:      cmdPublishTreeHas,
 		},
+		{
+			// 组4 §二.4 `W-51`（`研-禁:134` `R-21` 归绿核心）· 任务单序133 · 与组3 `Q-025` 同条：
+			// 归绿判据逐字「指定 commit 的必需检查集合全部 `success`、且没有一个 `skipped`」，
+			// 读数带 `head_sha` —— 「**人贴屏不算判据**」⇒ 本命令是那张图的**只读**机器面
+			// （读本机盘上两件：check-run 记录件 + 必需集合声明件 · 无网络面、无凭据面）。
+			// ★ 「必需集合」的来处是**声明件**（`source` 闭集 `github_settings`/`unverified`）；
+			//   `unverified` ⇒ 读数照出，但**口径行**明写「与 GitHub 侧 settings 的对齐未核」
+			//   （源件逐字「未核（要 GitHub 侧 settings 才看得到）」）—— 两件事不许并成一个词。
+			path: []string{"ci", "green"},
+			kind: "CiGreen",
+			// ★ 字段表必须写成 `[]string{…}` **字面量** —— 与上面 `net probe` / `publish tree has`
+			//   两条**同一条纪律**（契约脚本的 `FIELDS_RE` 只认字面量；抽成变量 = 该条被读成
+			//   「没有字段表」）。
+			summary:  "公开面 CI「归绿」**只读**读数（必需集合逐名 `success` 且集合内 `skipped`=0 · 带 `head_sha` · 声明集合的「必需」那格未核 ⇒ 口径行里印 · 有一条判不出 ⇒ 8 · **不给结论**）",
+			usage:    "zerg ci green --run <记录件> [--decl <声明件>] [--json <字段>]",
+			fields:   []string{"head_sha", "caliber", "decl_source", "required", "skipped", "verdict"},
+			endpoint: "",
+			run:      cmdCiGreen,
+		},
 		// 写面两枚：**同一个执行门**（三态：--dry-run 计划件 / 缺 --yes ⇒ 2 / 齐了才发）
 		{
 			path:    []string{"resource", "pin"},
@@ -1992,6 +2011,15 @@ func valueFlagName(a string) string {
 	// （`publish tree has` 判「点没点名」「树在不在盘」「树身份读得到吗」）。
 	switch a {
 	case "--tree":
+		return a
+	}
+	// 公开面 CI 归绿面旗标（`W-51` · 任务单序133 · 2026-09-24 波18）：`--run <记录件>`（check-run
+	// 记录件 = **人贴屏那张图**的机器替身）与 `--decl <声明件>`（必需集合的声明面 · 可省 ⇒ 走默认落点
+	// `publish/ci/required-checks.json`）。与上面各排同一口径：值照收，语义在各自命令里判。
+	// ★ `--run` 已在下面「测试作用域旗标」那一排（`dev test --run` 的包名过滤）—— **一行两用、
+	//   不重开同名旗标**（一族共用一张名字表）；本排只续 `--decl` 这一枚新名字。
+	switch a {
+	case "--decl":
 		return a
 	}
 	// 名册面旗标（波① `T1a` · `Q-099`：`model add` 往 `gateway/fleet.yaml` 写一条）。

@@ -1,0 +1,16 @@
+{
+ "id": "zerg.ci.required-checks.v1",
+ "source": "unverified",
+ "source_note": "本件 = 「必需检查集合」的**声明件**（消费者侧 · 落点栏逐字 `publish/ci/**`）。`source=unverified` 是**照实**写的：GitHub 侧 branch protection 的「哪些检查是 required」**未核**（`Zerg-内部文档/项目文档/v2.5.11/调研-缺口-门禁证据-20260923.md:209` 逐字「未核（要 GitHub 侧 settings 才看得到）」；同件的门 `check-public-ci-green.py` 亦逐字写着「不声称「必需检查集合 = N 个 job」」）。⇒ 本件**不声称**它等于 GitHub 侧 required；它声明的是「本仓公开面 CI 件 `publish/ci/ci.yml` 逐 job 点名出来的检查名」这一格。`checks` 与 `ci.yml` 的 job 名**同集合**这条，由判据件 `core/cmd/zerg/cli_ci_green_test.go` 的 `TestCiGreen_DeclarationMatchesCIFile` 每次 `go test` 现读对拍（两套真源并存就会漂 ⇒ 立判据 —— 与门 `check-ci-package-parity.py` 同一条理由）。",
+ "note": "检查名 = `publish/ci/ci.yml` 里 `jobs.<id>.name` 逐字（`release-agent.yml` 是 tag 触发/手动触发的发布面，不在 `on: push[main]` / `pull_request` 的检查面上 ⇒ 不进本件）。改 `ci.yml` 的 job 名 ⇒ **同批**改本件（否则 `TestCiGreen_DeclarationMatchesCIFile` 当场红）。读面 = `zerg ci green --run <记录件> [--decl <本件>]`（只读 · 不发网络请求）。",
+ "checks": [
+  "主控 + 子端（Go）",
+  "桌面 UI（Rust）",
+  "版本号一致性（UI ↔ Go 单一来源）",
+  "跨版本状态兼容清单门禁（B7 / G10）",
+  "文档双语门禁（配对/标题/链接）",
+  "i18n 门禁（键对称/引用完整/占位符/中文基线）",
+  "密钥扫描",
+  "公开制品面 · 清单新鲜度（两判据分列 + 分档行为）"
+ ]
+}
