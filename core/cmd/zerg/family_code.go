@@ -36,6 +36,17 @@ const codeFindRowCap = 200
 // codeFindMaxFileBytes —— 单件超过这么大的不进扫描面（件不是码/会拖慢），并如实报出跳过数。
 const codeFindMaxFileBytes = 2 << 20
 
+// pathWithinDir —— 出仓判据按**路径段**判（不用 `strings.HasPrefix`：字符串前缀会把
+// `…/模型类/Zerg-内部文档` 当成 `…/模型类/Zerg` 的「仓内」—— 那正是 `W-03` 现读的病根）。
+// 判据逐字：`filepath.Rel(dir,p)` 落在 `dir` 里 ⇔ 相对路径为 `.` 或**不以 `..` 段开头**。
+func pathWithinDir(dir, p string) bool {
+	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(p))
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
 func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) == 0 || strings.TrimSpace(inv.args[0]) == "" {
 		inv.setErr("usage", "missing_pattern", "缺正则")
@@ -60,11 +71,23 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	base := root
 	if sub := strings.TrimSpace(inv.flagVal("--path")); sub != "" {
-		base = filepath.Join(root, filepath.FromSlash(sub))
-		if !strings.HasPrefix(base, root) {
-			inv.setErr("usage", "path_outside_repo", "--path 出仓")
-			fmt.Fprintf(stderr, "%s: --path 出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, sub, root)
-			return exitUsage
+		if filepath.IsAbs(sub) {
+			// 绝对路径 = **显式**指向另一根（例：文档仓）—— 不再与仓根拼接。
+			// 旧写法一律 `filepath.Join(root, sub)`：`Join` 把绝对段当**相对段**拼到仓根后面
+			// ⇒ 拼出来的路径当然不存在 ⇒ 报「--path 指的不是目录」这条**假阴**
+			// （`W-03` 现读：路径确是目录，判据要 rc=0）。
+			base = filepath.Clean(filepath.FromSlash(sub))
+		} else {
+			base = filepath.Join(root, filepath.FromSlash(sub))
+			// 出仓判据 = **路径段**（不是字符串前缀）：`…/模型类/Zerg` 正是
+			// `…/模型类/Zerg-内部文档/…` 的**字符串**前缀 ⇒ 旧写法把**仓外**目录当仓内放行。
+			// 仓外的根一律用绝对路径显式指（上面那一支）—— 不靠相对路径蒙混。
+			if !pathWithinDir(root, base) {
+				inv.setErr("usage", "path_outside_repo", "--path 出仓")
+				fmt.Fprintf(stderr, "%s: --path 出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, sub, root)
+				fmt.Fprintf(stderr, "下一步：仓外的根用**绝对路径**显式指（例：--path /abs/到/那个根）\n")
+				return exitUsage
+			}
 		}
 		if st, err := os.Stat(base); err != nil || !st.IsDir() {
 			inv.setErr("usage", "path_not_dir", "--path 不是目录")
