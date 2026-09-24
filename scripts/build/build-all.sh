@@ -124,6 +124,18 @@ mkdir -p "$OUT"
 GOFLAGS_="-trimpath -buildvcs=false"
 LDFLAGS="-s -w -X github.com/Mr2109/zerg-swarm/core/internal/version.Commit=${SHA} -X github.com/Mr2109/zerg-swarm/core/internal/version.BuildTime=${BUILD_TIME}"
 
+# 身份**第二份：写进嵌入段**（2026-09-24 · 待拍清单终版 条 4/5 · 设计 §5 `O-12` 取（乙） · 与 `序 22`/`序 143` 同条）：
+#   为什么**不能**靠 `-ldflags` 进嵌入段：go1.26.4 的 cmd/go **只在没有 `-trimpath` 时**才把 `-ldflags`
+#   记进 buildinfo —— 源件逐字 `$GOROOT/src/cmd/go/internal/load/pkg.go:2424-2436`
+#   （「`go.dev/issue/52372`: only include ldflags if `-trimpath` is not set」），而本脚本 `GOFLAGS_` 带
+#   `-trimpath`（路径不落进制品 · 既有纪律）⇒ 两条**互斥**；`-tags` 则两种情形**都记**（同件 `:2447-2449`）。
+#   ⇒ 身份以 `-tags commit=<sha>,build_time=<ts>` 形态进嵌入段：**不执行该件**也能 `go version -m <件>` 读到
+#     （这就免掉了（甲）档那条「跑一次 = 覆盖在跑的制品（换件档）」）。读它是**只读**动作（负控：制品 `sha256` 不变）。
+#   标签名取 `键=值` 形态、逐字含 `commit` / `build_time` 两个键 ⇒ 与 `go version -m` 的
+#   `build\t<键>=<值>` 语法同形；本仓 `//go:build` 约束里**没有**任何 `commit*` / `build_time*` 标签
+#   （`grep -rn 'go:build' core/ agent/` 现读无此二名）⇒ 加了不改变任何一处的编译条件。
+GOTAGS="commit=${SHA},build_time=${BUILD_TIME}"
+
 echo "🏷  版本 $VERSION · 代码 $SHA · 构建 $BUILD_TIME"
 echo "📁 输出 $OUT"
 
@@ -231,7 +243,7 @@ if [ "$ONLY_AGENTD" = "1" ]; then
     echo "!! 留档失败 ⇒ 拒换件（bin/zerg-agentd 尚未被覆盖，一个字节未动）" >&2
     exit 1
   }
-  (cd agent && GOFLAGS=-mod=mod GOSUMDB=off go build -trimpath -buildvcs=false \
+  (cd agent && GOFLAGS=-mod=mod GOSUMDB=off go build -trimpath -buildvcs=false -tags "$GOTAGS" \
      -ldflags "-s -w -X github.com/Mr2109/zerg-swarm/agent/internal/version.Version=${VERSION} -X github.com/Mr2109/zerg-swarm/agent/internal/version.Commit=${SHA} -X github.com/Mr2109/zerg-swarm/agent/internal/version.BuildTime=${BUILD_TIME}" \
      -o "${REPO_ROOT}/bin/zerg-agentd" ./cmd/zerg-agentd)
   resolve_sign_identity
@@ -257,7 +269,7 @@ if [ "$DIST" != "1" ]; then
   }
 fi
 echo "→ 命令面 zerg（薄壳 · core/cmd/zerg）"
-(cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg" ./cmd/zerg)
+(cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -tags "$GOTAGS" -ldflags "$LDFLAGS" -o "$OUT/zerg" ./cmd/zerg)
 
 if [ "$ONLY_CLI" = "1" ]; then
   # 重签（2026-09-22 · G-05）：本档此前在签名段之前收工 ⇒ 产出件只剩 Go linker 的 ad-hoc 签名
@@ -277,7 +289,7 @@ fi
 #   构建身份（-ldflags）与重签（稳定身份 + `com.zerg.core`）两件事与本脚本其余档**逐字同源**。
 if [ "$ONLY_CORE" = "1" ]; then
   echo "→ 主控 zerg-core（--only-core）"
-  (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg-core" ./cmd/zerg-core)
+  (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -tags "$GOTAGS" -ldflags "$LDFLAGS" -o "$OUT/zerg-core" ./cmd/zerg-core)
   resolve_sign_identity
   sign_one "$OUT/zerg-core"
   echo "✅ 构建完成（--only-core：只写 bin/zerg-core；其余制品与 build-info.json 一个字节未动）"
@@ -289,7 +301,7 @@ fi
 #   纪律同另两档：blast radius = 一个文件；其余制品与 build-info.json 一个字节不动。
 if [ "$ONLY_COMPAT" = "1" ]; then
   echo "→ 兼容层 zerg-compat（--only-compat）"
-  (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg-compat" ./cmd/zerg-compat)
+  (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -tags "$GOTAGS" -ldflags "$LDFLAGS" -o "$OUT/zerg-compat" ./cmd/zerg-compat)
   resolve_sign_identity
   sign_one "$OUT/zerg-compat"
   echo "✅ 构建完成（--only-compat：只写 bin/zerg-compat；其余制品与 build-info.json 一个字节未动）"
@@ -298,17 +310,17 @@ if [ "$ONLY_COMPAT" = "1" ]; then
 fi
 
 echo "→ 主控 zerg-core"
-(cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg-core" ./cmd/zerg-core)
+(cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -tags "$GOTAGS" -ldflags "$LDFLAGS" -o "$OUT/zerg-core" ./cmd/zerg-core)
 
 echo "→ 子端 zerg-agent"
-(cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg-agent" ./cmd/zerg-agent)
+(cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -tags "$GOTAGS" -ldflags "$LDFLAGS" -o "$OUT/zerg-agent" ./cmd/zerg-agent)
 
 # 兼容层 zerg-compat（批 C · T-29 落 P-132 的「要」）：回滚前置校验②（状态可读性）**只能靠它**执行
 #   （`zerg-compat check`：0 就绪 · 1 迁移/校验失败 · 2 有待迁移文件 · **3 有更高版本 schema ⇒ 拒回滚** · 4 用法错）。
 # 为什么进制品矩阵：P-132 逐字「要（否则 RB4② 无处可执行；且它已在 core/cmd/ 有源码与门禁）」
 #   —— 它跟其余 zerg-* 一样落 `bin/`（dist 档落 `$OUT`），进签名名单与收尾清单（`$OUT/zerg-*` 通配命中）。
 echo "→ 兼容层 zerg-compat"
-(cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags "$LDFLAGS" -o "$OUT/zerg-compat" ./cmd/zerg-compat)
+(cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -tags "$GOTAGS" -ldflags "$LDFLAGS" -o "$OUT/zerg-compat" ./cmd/zerg-compat)
 
 # ── 只落 bin/ 的三件（zerg-agentd · cocoon-docs-service · zerg-wall）：--dist 一档**整块不跑** ─────
 # 为什么：--dist 是**打包档**，产物只落 dist/<版本>/；这三件既不在 dist 制品矩阵、也不被发布路径
@@ -320,7 +332,7 @@ else
 # 子端守护进程（agent 模块）：**与 CLI 区分命名**——带 d = daemon/常驻（ps 里一眼看出在跑服务还是任务）
 # 注意：它暂不进 release 制品矩阵（矩阵 5 件是发布契约，要不要加是单独的决定），故产出到 bin/（--dist 档不产它 —— 见文件头「--dist 的边界」）。
 echo "→ 守护进程 zerg-agentd（agent 模块，注入 agent 自己的 version 包）"
-(cd agent && GOFLAGS=-mod=mod GOSUMDB=off go build -trimpath -buildvcs=false \
+(cd agent && GOFLAGS=-mod=mod GOSUMDB=off go build -trimpath -buildvcs=false -tags "$GOTAGS" \
    -ldflags "-s -w -X github.com/Mr2109/zerg-swarm/agent/internal/version.Version=${VERSION} -X github.com/Mr2109/zerg-swarm/agent/internal/version.Commit=${SHA} -X github.com/Mr2109/zerg-swarm/agent/internal/version.BuildTime=${BUILD_TIME}" \
    -o "${REPO_ROOT}/bin/zerg-agentd" ./cmd/zerg-agentd)
 

@@ -85,7 +85,7 @@ func cmdBuildLs(inv *invocation, stdout, stderr io.Writer) int {
 		return exitBlocked
 	}
 	fmt.Fprintf(stderr, "%s: 制品矩阵的**真源是脚本** `scripts/build/build-all.sh`（本命令只现读 `bin/`，不复制清单）\n", progName)
-	fmt.Fprintf(stderr, "%s: 「逐件同 sha」判据要**跑一次**才成立 ⇒ 跑一次 = 覆盖在跑的制品（换件档）⇒ 待 Mr2109 拍\n", progName)
+	fmt.Fprintf(stderr, "%s: 身份**读制品自身**（设计 §5 `O-12` 取（乙） · 2026-09-24 待拍清单终版 条 4/5）：嵌入段带 `commit=<sha>` / `build_time=<ts>`（`go version -m <件>` 可读 ⇒ **不执行该件**也读得到）⇒ 「逐件同 sha」判据不再需要（甲）档那条「跑一次 = 覆盖在跑的制品（换件档）」；读它**只读**（负控：制品 `sha256` 跑前跑后不变）\n", progName)
 	return listCmd(inv, stdout, stderr, []string{"name", "sha256", "bytes", "version", "code", "built"}, rows)
 }
 
