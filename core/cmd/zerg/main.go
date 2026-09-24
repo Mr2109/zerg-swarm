@@ -953,6 +953,24 @@ func init() {
 			run:      cmdPublishTreeHas,
 		},
 		{
+			path:    []string{"publish", "preflight"},
+			kind:    "PublishPreflight",
+			summary: "公开面预检（**只读** · 跑 scripts/build/publish-preflight.sh <产物目录> · 不改任何状态）",
+			usage:   "zerg publish preflight <产物目录>",
+			arity:   "any",
+			args:    []string{"产物目录（`publish run` 出的镜像树）"},
+			run:     cmdPublishPreflight,
+		},
+		{
+			path:    []string{"publish", "run"},
+			kind:    "PublishRun",
+			summary: "出公开镜像树（**本地** dist/<版本>/release · 白名单+排除项+脱敏 · 不出网、不推送）",
+			usage:   "zerg publish run [--dry-run | --confirm=<主机名> --yes]",
+			// 本版已开放（Mr2109 2026-09-25「脱敏推」授权）：真跑只写**本地**产物目录。
+			// 「推远端」不在命令面 —— 不可逆动作按规矩等 Mr2109 发话后单独执行（不另开执行路径）。
+			run: cmdPublishRun,
+		},
+		{
 			// 组4 §二.4 `W-51`（`研-禁:134` `R-21` 归绿核心）· 任务单序133 · 与组3 `Q-025` 同条：
 			// 归绿判据逐字「指定 commit 的必需检查集合全部 `success`、且没有一个 `skipped`」，
 			// 读数带 `head_sha` —— 「**人贴屏不算判据**」⇒ 本命令是那张图的**只读**机器面
