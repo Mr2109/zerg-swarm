@@ -129,6 +129,13 @@ type Gateway struct {
 	// （测试用 t.TempDir），为空时用 modelreg.DefaultModelsDir()。
 	capSource      CapabilitySnapshotSource
 	modelsRootPath string
+
+	// 「显式指定机器」那道门（2026-09-24 · 单独定制 > 路由默认规则）：
+	// 覆盖表（`<状态目录>/route_pins.json`）的**只读**缓存 —— 按 (mtime,size) 热读，
+	// 于是 `zerg route pin|unpin` 写完即时生效（不必为每一次钉/撒重启主控）。
+	// 懒建（零值可用）⇒ 既有测试里 `&Gateway{…}` 那种构造面一字未动。实现见 route_pin.go。
+	pinMu    sync.Mutex
+	pinCache *routePinStore
 }
 
 // setRequestTimeout — 模型级超时覆盖（适配器声明——Qwen3.8 120s/Nemotron 60s）
@@ -775,7 +782,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// 2.8 必需能力 required 已在 2.7 求解（待修补 #38 ①：前移到复合模型分支之前，
 	// 否则复合分支在求解前就 return，带图请求整条绕过门槛）。此处直接用于按**目标引擎**的路由硬门槛。
-	route, err := g.pickRoute(model, sessionID, prompt, required...)
+	route, err := g.pickRouteForRequest(model, machineHeaderOf(r), sessionID, prompt, required...)
 	if err != nil {
 		log.Printf("route selection failed: %v", err)
 		// v2.5.6 故障自愈（Mr2109 2026-08-28）: 错误码语义化——调度器按 code 分类处理
@@ -836,7 +843,9 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if attempt > 0 {
 			// 重试：重新路由（熔断机器已被跳过）
 			log.Printf("🔄 retry %d: re-routing (%s)", attempt, model)
-			route, err = g.pickRoute(model, sessionID, prompt, required...)
+			// 重试点同样带上「显式指定机器」（同一请求 = 同一意图 ⇒ 不因失败悄悄漂到别的机器；
+			// 要改主意就撒掉那条钉 / 去掉那枚头）。头不给 ⇒ 与今天逐字同路。
+			route, err = g.pickRouteForRequest(model, machineHeaderOf(r), sessionID, prompt, required...)
 			if err != nil {
 				break
 			}
@@ -1198,6 +1207,14 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 			log.Printf("🎭 model alias: %s → %s", model, canonical)
 			model = canonical
 		}
+	}
+
+	// ★ 显式指定机器的门（「单独定制 > 路由默认规则」· 2026-09-24 · `route_pin.go`）：
+	//   **命中即用**（先于 DS4 让位与一切择优 —— 人点名的机器就是那台）；**未命中 ⇒ 本函数余下
+	//   部分逐字照旧**（评审铁律：不钉时行为必须与今天逐字一致 —— 这一条也是「默认规则不变」的
+	//   可验证形式）。位置刻意选在**别名解析之后**：覆盖表按标准模型名记，请求可以用别名。
+	if pinHost, pinSource := g.pinnedHostFor(model); pinHost != "" {
+		return g.routeToPinned(model, pinHost, pinSource, required)
 	}
 
 	// v2.5.6 DS4 让位机制（2026-08-23 Mr2109——Hermes 调 DS4 熔断——81G 超大）
