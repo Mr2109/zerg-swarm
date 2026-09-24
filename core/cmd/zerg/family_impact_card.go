@@ -412,25 +412,57 @@ func impactJudgeCardRedLine(items []map[string]string) error {
 	return nil
 }
 
+// impactTruncatedCutFrom —— `meta.truncated_detail.cut_from` 的取值：本命令的裁法只有一种 ——
+// `impactCardCutOne` 每轮拿掉的是**名次最低**的那一条（档 ① → ④ 依序、同档里最后一名）
+// ⇒ 「从**尾部**砍」。三值闭集（`head` / `middle` / `tail`）的真源是 `main.go` 的
+// `truncatedDetailCutFromSet`（判定口读它 ⇒ 取值与判据不两份）。
+const impactTruncatedCutFrom = "tail"
+
 // impactCardBudgetFacts 超预算三件（§3.3）—— 判定口与渲染口共用同一份取值（不许两处各拼一套）。
+//
+// ★ 本批（块D `K-1` · `O-10` · 缺口 `G-81`）**加三格**：`truncated_detail` 三数（单位一律
+// 「条目」）与 `cut_from` 的取值**同一处**出 ⇒ 包封那一格与「已裁 N 条」那条**同源同值**，
+// 两处不会各算一遍。`Dropped` 不另立字段：它就是 `Cut`（按档裁掉的 + 单条超限整条不进的）。
 type impactCardBudgetFacts struct {
 	Truncated bool
 	Cut       int
 	Warning   string
 	Restore   string
+
+	Kept    int    // 留下来的**条目**数（= `len(c.Items)` · 与包封 `items[]` 同一条数）
+	Total   int    // 预算口径的**裁前**条目数（= `Kept + Cut` ⇒ 三数自校 `kept + dropped == total`）
+	CutFrom string // 「从哪砍」的三值枚举之一（本命令恒 `tail`）
 }
 
 // impactCardBudget 从卡片取出三件（逐字：`truncated=true` · `warnings[]` 一条「已裁 N 条」·
-// `meta.how_to_restore`）。
+// `meta.how_to_restore`）＋ 块D `K-1` 的三数与 `cut_from`（同一处取值 ⇒ 不给第二份）。
 func impactCardBudget(c impactCard) impactCardBudgetFacts {
-	f := impactCardBudgetFacts{Truncated: c.Truncated, Restore: c.HowRestore}
+	f := impactCardBudgetFacts{Truncated: c.Truncated, Restore: c.HowRestore, CutFrom: impactTruncatedCutFrom}
+	f.Kept = len(c.Items)
 	f.Cut = c.CutTier[1] + c.CutTier[2] + c.CutTier[3] + c.CutTier[4] + c.Oversize
+	f.Total = f.Kept + f.Cut
 	for _, w := range c.Warnings {
 		if strings.HasPrefix(w, "已裁 ") {
 			f.Warning = w
 		}
 	}
 	return f
+}
+
+// TruncatedDetailJSON —— `meta.truncated_detail` 的取值（块D `K-1` 形状 · **单位一律「条目」** ·
+// 不报 token 估算 ✗ · **不给下标 / 偏移** ✗ · **不含续读入口** ✗ ——「怎么取回」是
+// `meta.how_to_restore` 那一格的事，两格分工写死）：
+//
+//	{"cut_from":"head|middle|tail","kept_items":<int>,"dropped_items":<int>,"total_items":<int>}
+//
+// 三数自校（`kept + dropped == total`）；**只在真裁时**给（没裁 ⇒ `ok=false` ⇒ 缺席 ——
+// 缺席 ≠ 空值/假值，`truncated=false` 时本格**不许**出现）。
+func (f impactCardBudgetFacts) TruncatedDetailJSON() (string, bool) {
+	if !f.Truncated {
+		return "", false
+	}
+	return fmt.Sprintf(`{"cut_from":%s,"kept_items":%d,"dropped_items":%d,"total_items":%d}`,
+		jstr(f.CutFrom), f.Kept, f.Cut, f.Total), true
 }
 
 // impactJudgeCard 判据①（尺寸三条）+ 判据②（硬门槛）+ 判据③（超预算三件）的**唯一判定口**。

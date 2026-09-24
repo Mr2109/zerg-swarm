@@ -2534,6 +2534,95 @@ func envelopeTruncatedJSON(cut bool) string {
 	return "false"
 }
 
+// truncatedDetailCutFromSet —— `meta.truncated_detail.cut_from` 的**三值闭集**（块D `K-1` ·
+// `O-10` 逐字「只给『从哪砍』的三值枚举、**不给下标**」—— 与「`items[]` 顺序不保证」相容）。
+var truncatedDetailCutFromSet = []string{"head", "middle", "tail"}
+
+// truncatedDetailKeys —— `meta.truncated_detail` 的**四键真源**（判定口与自检都读这一份，不另抄）。
+var truncatedDetailKeys = []string{"cut_from", "kept_items", "dropped_items", "total_items"}
+
+// truncatedDetailJudge —— `meta.truncated_detail` 的**唯一判定口**（喂整个包封文本 · 只判不写）：
+//
+//	① **与 `truncated` 成对**：`true` ⇒ 本格必须在（**只给布尔 ⇒ 红**）；`false` ⇒ 本格必须缺席
+//	   （没裁却给计数 = 「余量不是裁了」那一类的假值 ✗）；
+//	② **四键齐、一个不多一个不少**，`kept_items` / `dropped_items` / `total_items` 都是**整数**；
+//	③ **三数自校**：`kept_items + dropped_items == total_items`，且真裁时 `dropped_items ≥ 1`；
+//	④ `cut_from` 在**三值闭集**内（闭集外的值 ⇒ 红）。
+//
+// 抽出来为什么：负控要能直接喂「只给布尔」的**合成**包封（真跑只覆盖到「本机今天恰好会裁的件」）
+// ⇒ 判定口与真跑两路读同一份判据（照 `impactJudgeCard` / `cli_envelope_truth_test.go` 的先例）。
+func truncatedDetailJudge(envJSON string) error {
+	var env map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(envJSON), &env); err != nil {
+		return fmt.Errorf("包封不是 JSON：%v", err)
+	}
+	cut := false
+	if raw, ok := env["truncated"]; ok {
+		if err := json.Unmarshal(raw, &cut); err != nil {
+			return fmt.Errorf("`truncated` 不是布尔：%v", err)
+		}
+	}
+	var meta map[string]json.RawMessage
+	if raw, ok := env["meta"]; ok {
+		if err := json.Unmarshal(raw, &meta); err != nil {
+			return fmt.Errorf("`meta` 不是对象：%v", err)
+		}
+	}
+	raw, has := meta["truncated_detail"]
+	if !cut {
+		if has {
+			return fmt.Errorf("没裁却写了 `meta.truncated_detail`（`truncated=false` 时本格必须缺席 —— 缺席 ≠ 假值）")
+		}
+		return nil
+	}
+	if !has {
+		return fmt.Errorf("`truncated=true` 却只给布尔、没有 `meta.truncated_detail`（块D `K-1`：只给布尔 ⇒ 判红）")
+	}
+	var d map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &d); err != nil {
+		return fmt.Errorf("`meta.truncated_detail` 不是对象：%v", err)
+	}
+	if len(d) != len(truncatedDetailKeys) {
+		return fmt.Errorf("`meta.truncated_detail` 键数 = %d（要 %d · 四键一个不多一个不少）：%s",
+			len(d), len(truncatedDetailKeys), string(raw))
+	}
+	for _, k := range truncatedDetailKeys {
+		if _, ok := d[k]; !ok {
+			return fmt.Errorf("`meta.truncated_detail` 缺键 `%s`", k)
+		}
+	}
+	var cutFrom string
+	if err := json.Unmarshal(d["cut_from"], &cutFrom); err != nil {
+		return fmt.Errorf("`cut_from` 不是字符串：%v", err)
+	}
+	inSet := false
+	for _, v := range truncatedDetailCutFromSet {
+		if cutFrom == v {
+			inSet = true
+		}
+	}
+	if !inSet {
+		return fmt.Errorf("`cut_from` = %q 不在三值闭集 %v 内", cutFrom, truncatedDetailCutFromSet)
+	}
+	nums := map[string]int{}
+	for _, k := range []string{"kept_items", "dropped_items", "total_items"} {
+		var n int
+		if err := json.Unmarshal(d[k], &n); err != nil {
+			return fmt.Errorf("`%s` 不是整数：%v（%s）", k, err, string(d[k]))
+		}
+		nums[k] = n
+	}
+	if nums["kept_items"]+nums["dropped_items"] != nums["total_items"] {
+		return fmt.Errorf("三数不自校：kept_items %d + dropped_items %d ≠ total_items %d",
+			nums["kept_items"], nums["dropped_items"], nums["total_items"])
+	}
+	if nums["dropped_items"] < 1 || nums["total_items"] <= 0 {
+		return fmt.Errorf("`truncated=true` 却 dropped_items = %d / total_items = %d（裁了就得说裁了几条）",
+			nums["dropped_items"], nums["total_items"])
+	}
+	return nil
+}
+
 func jstr(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
