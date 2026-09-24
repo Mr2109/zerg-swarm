@@ -760,7 +760,7 @@ func (g *Gateway) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. 路由选择：pickRoute（会话粘性 → 已加载→空闲→负载低 → cache-aware）
-	sessionID := extractSessionID(body)
+	sessionID := deriveSessionKey(r.Header, body)
 	prompt := extractPrompt(body)
 
 	// v2.5.4.10 方案 B：适配器参数覆盖（有适配器——按适配器特征覆盖请求体）
