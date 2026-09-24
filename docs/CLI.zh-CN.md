@@ -49,7 +49,7 @@ zerg <对象> <动作> [参数] [旗标]
 
 **本块为生成物（勿手改）**：由 `scripts/docs/gen-cli-reference.py` 照命令树**现算**后注入 —— 重跑 `python3 scripts/docs/gen-cli-reference.py --emit --target publish/docs/CLI.zh-CN.md`；判 drift 用同名 `--check --target publish/docs/CLI.zh-CN.md`。本块里的命令名、用法串（旗标）、说明、`--json` 字段、投影端点与茧壁层级**逐字来自命令树，一个都不是手写的**。
 
-### 已开放（84 条）
+### 已开放（85 条）
 
 | 命令 | 用法（旗标） | 说明 | `--json` 字段 | 投影的远端端点 | 茧壁层级 |
 |---|---|---|---|---|---|
@@ -123,6 +123,7 @@ zerg <对象> <动作> [参数] [旗标]
 | `zerg plugin ls` | `zerg plugin ls [--json <字段>]` | 插件清单（`zerg-<名>` 约定 · 零注册表 · 影子告警 + 信任声明） | name,command,path,shadowed,shadow_of,trust | 本机（无远端对应） | `host` |
 | `zerg port ls` | `zerg port ls [<端口>] [--json <字段>]` | 看某个端口被谁占着（含 pid/ppid/inode/在跑件路径 · 手敲 lsof 的替身） | port,pid,ppid,process,sock,path | 本机（无远端对应） | `host` |
 | `zerg propose ls` | `zerg propose ls [--state 未决\|已批准\|已否决] [--json <字段>]` | 提案清单 | id,title,target,goal,evidence,rollback_ref,by,state,criterion,created_at,path,files,criterion_state,subject,subject_kind,egg_id,approver,approver_kind | 本机（无远端对应） | `host` |
+| `zerg publish tree has` | `zerg publish tree has <件> --tree <树>… [--json <字段>]` | 产出树「在 / 不在」**只读**读数（一树一行 · 每行带**口径 + 树 `head_sha`** · 树身份取不成 ⇒ 8 · **不给结论**） | tree,caliber,head_sha,present | 本机（无远端对应） | `host` |
 | `zerg repo status` | `zerg repo status [--root <仓根>] [--json <字段>]` | 看仓脏没脏 / HEAD 在哪 / 有没有别人在写它（手敲 git status 的替身）· `--root` 给 ≥2 次 ⇒ **多仓汇总**（一条只读命令出两仓 HEAD + 脏件数；写旗标一律拒 2） | head,branch,path,status,untracked | 本机（无远端对应） | `host` |
 | `zerg resource ledger` | `zerg resource ledger [--json <字段>]` | 资源账本（投影 /api/resources/ledger） | machine,mem_known,mem_total_gb,mem_available_gb,vram_known,gpu_pct,backend_state,fit | GET /api/resources/ledger | `host` |
 | `zerg resource ls` | `zerg resource ls [<类型>] [--json <字段>]` | 资源面（投影 /api/resources/ledger 或 /api/resources/{类型}） | machine,mem_known,mem_total_gb,mem_available_gb,vram_known,gpu_pct,backend_state,fit | GET /api/resources/ledger \| /api/resources/{type} | `host` |
@@ -140,7 +141,7 @@ zerg <对象> <动作> [参数] [旗标]
 
 ### 危险动作（38 条 · 已登记）
 
-> 导出物抬头逐字：`命令清单 **84** 条 · 危险动作 **38** 条（其中**已开放** 10 条 · 未开放 28 条）` —— 「哪些已开放」逐条以 `zerg help dangerous` 为准；本表四列（档 / 三态 / `--confirm` 的目标 / 它会动什么）逐字来自 `zerg help export`；未开放的那部分真跑一律**拒执**（退出码 2 = 不给结论），只有 `--dry-run` 的计划面可用。
+> 导出物抬头逐字：`命令清单 **85** 条 · 危险动作 **38** 条（其中**已开放** 10 条 · 未开放 28 条）` —— 「哪些已开放」逐条以 `zerg help dangerous` 为准；本表四列（档 / 三态 / `--confirm` 的目标 / 它会动什么）逐字来自 `zerg help export`；未开放的那部分真跑一律**拒执**（退出码 2 = 不给结论），只有 `--dry-run` 的计划面可用。
 
 | 命令 | 档 | 三态 | `--confirm` 的目标 | 它会动什么 | 茧壁层级 |
 |---|---|---|---|---|---|
