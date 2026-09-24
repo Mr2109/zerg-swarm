@@ -5800,6 +5800,30 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "`--machine` 后面没跟值 ⇒ 判 2（`--machine` 是**值旗标**且 `route pin` 判「给没给」，空串不算给了）"
+  },
+  {
+   "id": "publish/preflight#未知旗标",
+   "command": "publish preflight",
+   "argv": [
+    "publish",
+    "preflight",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "publish/run#未知旗标",
+   "command": "publish run",
+   "argv": [
+    "publish",
+    "run",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
   }
  ],
  "tiers": {
