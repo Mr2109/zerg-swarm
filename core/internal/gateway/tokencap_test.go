@@ -17,6 +17,7 @@ package gateway
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
+	"github.com/Mr2109/zerg-swarm/core/internal/plugin/adapters"
 )
 
 // fleetWithDecl 造一份只带一条声明的 fleet 配置（单 dict 形态，与 fleet.yaml 里的写法同构）。
@@ -268,4 +270,108 @@ func (b *bareAdapter) Close() error                  { return nil }
 func (b *bareAdapter) GetDescriptions() string       { return "bare" }
 func (b *bareAdapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, error) {
 	return plugin.PluginOutput{Result: map[string]any{"temperature": 0.6}}, nil
+}
+
+// ── ⑧ v2.5.12（2026-09-24 · 排查稿 `排查-卵子代理回声与会话串话-v2.5.12-20260924.md` §③ H4）─────────
+//
+// 病象（逐字）：真机**每一发** example-35b-v2 请求都打
+//
+//	`⚠️ adapter example-35b-v2 execution failed (using defaults): example-35b-v2: not started`
+//
+// ⇒ `ApplyAdapterOverrides` 走 `aerr != nil` 那条路**原样返回 forwardBody** ⇒ 温度/max_tokens 一个都不下发
+// （`gateway/fleet.yaml` 里那句「适配器 max_tokens/thinking 已控」是死声明）。
+//
+// 两处修正（都在本批）：① 装配链补 `Start()`（`core/cmd/zerg-core/main.go`，判据在 adapters 包的
+// `TestAdapterAssembly_InitsAndStarts`）② 声明袋调用要带 `prompt`（本函数上方那一段）。
+// 本用例是它们在**网关这一侧**的离线判据 —— 真端到端（主控日志里那行告警归零）需重启主控，本单禁重启。
+func TestApplyAdapterOverrides_OrnithStartedDeclarationReachesBody(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ZERG_EGG_PROFILE_DIR", dir) // 无档案 ⇒ 上限只用声明，不受本机档案干扰
+	ada := adapters.NewOrnithAdapter()    // 与 main.go 注册表同一个构造器
+	if err := ada.Init(nil); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	g := &Gateway{
+		adapterRegistry: map[string]plugin.Plugin{"example-35b-v2": ada},
+		config:          fleetWithDecl(t, "example-35b-v2", 262144, 0),
+	}
+	body := []byte(`{"model":"example-35b-v2","messages":[{"role":"user","content":"只回一行：甲-在线"}],"stream":false}`)
+
+	// 反例（**修复前的真机形态**：注册表只 Init 没 Start）⇒ 一个字段都不许进体。
+	out0 := g.ApplyAdapterOverrides("example-35b-v2", body, ada)
+	var obj0 map[string]any
+	if err := json.Unmarshal(out0, &obj0); err != nil {
+		t.Fatalf("反例输出不是合法 JSON：%v", err)
+	}
+	if _, has := obj0["temperature"]; has {
+		t.Fatalf("没 Start 时适配器必须报 not started、原样返回 body —— 现在温度却进体了：%s", out0)
+	}
+	if _, has := obj0["max_tokens"]; has {
+		t.Fatalf("没 Start 时不许写 max_tokens（真机那行 'using defaults' 就是这个分支）：%s", out0)
+	}
+
+	// 正例（装配链补上 Start 之后的口径）⇒ 温度 0.8 与 max_tokens 预算必须真进体。
+	if err := ada.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	out1 := g.ApplyAdapterOverrides("example-35b-v2", body, ada)
+	var obj1 map[string]any
+	if err := json.Unmarshal(out1, &obj1); err != nil {
+		t.Fatalf("正例输出不是合法 JSON：%v", err)
+	}
+	if v, _ := obj1["temperature"].(float64); v != 0.8 {
+		t.Errorf("声明袋里的温度没落进请求体（want 0.8）：实得 %v —— body=%s", obj1["temperature"], out1)
+	}
+	if v, _ := obj1["max_tokens"].(float64); v <= 0 {
+		t.Errorf("max_tokens 预算没进体（want > 0）：实得 %v —— body=%s", obj1["max_tokens"], out1)
+	}
+	// 调用方没给 max_tokens ⇒ 取动态额度；给 32768 是适配器声明、不是写死 —— 不许原样留空
+	if _, has := obj1["max_tokens"]; !has {
+		t.Errorf("max_tokens 这一格必须出现（预算分支的产出）：%s", out1)
+	}
+}
+
+// promptStrictAdapter 精确模拟 example-35b-v2 的**形态门**：`Context` 里没 prompt 就报错。
+// 用途：钉住「声明袋调用（ApplyAdapterOverrides）必须把 prompt 给进去」——把上游那行 Context 去掉 ⇒ 本用例红。
+type promptStrictAdapter struct{}
+
+func (p *promptStrictAdapter) Name() string                  { return "prompt-strict" }
+func (p *promptStrictAdapter) Type() plugin.PluginType       { return plugin.PluginTypeModelAdapter }
+func (p *promptStrictAdapter) Version() string               { return "1.0" }
+func (p *promptStrictAdapter) Capabilities() []string        { return []string{"model"} }
+func (p *promptStrictAdapter) Init(cfg map[string]any) error { return nil }
+func (p *promptStrictAdapter) Start() error                  { return nil }
+func (p *promptStrictAdapter) Stop() error                   { return nil }
+func (p *promptStrictAdapter) Close() error                  { return nil }
+func (p *promptStrictAdapter) GetDescriptions() string       { return "prompt-strict" }
+func (p *promptStrictAdapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, error) {
+	if s, _ := input.Context["prompt"].(string); s == "" {
+		return plugin.PluginOutput{}, errPromptStrict
+	}
+	return plugin.PluginOutput{Result: map[string]any{"temperature": 0.8, "max_tokens": 32768}}, nil
+}
+
+var errPromptStrict = errors.New("prompt-strict: prompt is empty")
+
+func TestApplyAdapterOverrides_BagCallCarriesPrompt(t *testing.T) {
+	t.Setenv("ZERG_EGG_PROFILE_DIR", t.TempDir())
+	ada := &promptStrictAdapter{}
+	g := &Gateway{
+		adapterRegistry: map[string]plugin.Plugin{"prompt-strict": ada},
+		config:          fleetWithDecl(t, "prompt-strict", 262144, 0),
+	}
+	body := []byte(`{"model":"prompt-strict","messages":[{"role":"user","content":"只回一行：甲-在线"}]}`)
+	out := g.ApplyAdapterOverrides("prompt-strict", body, ada)
+	var obj map[string]any
+	if err := json.Unmarshal(out, &obj); err != nil {
+		t.Fatalf("输出不是合法 JSON：%v", err)
+	}
+	if v, _ := obj["temperature"].(float64); v != 0.8 {
+		t.Fatalf("声明袋调用没带 prompt ⇒ 适配器报错 ⇒ 声明一个都不下发（学 example-35b-v2 的形态门）：实得 %v", obj["temperature"])
+	}
+	// 空 messages 的 body：tokenize 不出 prompt ⇒ 适配器照旧失败、body 原样 —— 与修复前同形（不静默改行为）
+	out2 := g.ApplyAdapterOverrides("prompt-strict", []byte(`{"model":"prompt-strict","messages":[]}`), ada)
+	if strings.Contains(string(out2), `"temperature"`) {
+		t.Fatalf("取不到 prompt 时不许凭空造一个（应原样返回 body）：%s", out2)
+	}
 }

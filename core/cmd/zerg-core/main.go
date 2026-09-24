@@ -220,9 +220,24 @@ func main() {
 		"example-30b":           adapters.NewMuseGlimmerAdapter(), // 2026-08-28 补全——Meta 30B 多模态
 	}
 	// 初始化适配器配置（Init——默认值——后续 config.yaml 覆盖）
+	//
+	// v2.5.12 治本（2026-09-24 · 依据 `Zerg-内部文档/项目文档/v2.5.12/排查-卵子代理回声与会话串话-v2.5.12-20260924.md`
+	// §1.5 与 §③ H4）：本循环原来**只 Init、不 Start** —— 而 example-35b-v2 适配器的 `Execute` 第一句就是
+	// `if !o.started { return …, fmt.Errorf("example-35b-v2: not started") }`（adapters/example-35b-v2.go:241）
+	// ⇒ 真机里**每一发** example-35b-v2 请求都打 `⚠️ adapter example-35b-v2 execution failed (using defaults): example-35b-v2: not started`，
+	// 而 `ApplyAdapterOverrides` 在 `aerr != nil` 时**原样返回 forwardBody** ⇒ 温度 / max_tokens / thinking
+	// 这些**声明一个都不下发**（fleet.yaml 里那句「适配器 max_tokens/thinking 已控」是**死声明**）。
+	//
+	// 修法 = 装配链上补 `Start()`（适配器的生命周期契约本来就是 Init → Start 两步，见
+	// adapters/example-35b-v2_test.go 的 TestOrnithAdapter_Lifecycle / TestOrnithAdapter_ExecuteBeforeStart；
+	// 判据钉在 adapters/adapter_start_wiring_test.go：本文件里 Init 与 Start 必须**同现**）。
+	// 与上一行同一口径：**坏一枚适配器不打死整条启动**（记日志、继续）。
 	for name, adp := range adapterRegistry {
 		if err := adp.Init(nil); err != nil {
 			log.Printf("⚠️ adapter %s init failed: %v", name, err)
+		}
+		if err := adp.Start(); err != nil {
+			log.Printf("⚠️ adapter %s start failed: %v", name, err)
 		}
 	}
 	log.Printf("🧩 Model adapter registry: %d adapters (full adapter routing)", len(adapterRegistry))
