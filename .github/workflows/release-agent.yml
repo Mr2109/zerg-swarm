@@ -182,6 +182,17 @@ jobs:
           (cd dist && sha256sum zerg-* | grep -v '\.sha256' > checksums.txt)
           python3 scripts/evals/make-manifest.py dist "$V" "$C" "$BT"
           ls -l dist
+      # ★ 2026-09-24（v2.5.12 · 波14 序135 · 组4 §二.4 `W-53`（`研-禁:136` `R-23`/`R-24`））：
+      #   **公开面 `source_sha` 升成阻断** —— 开发机档维持「只告警」（门㉔ `--profile dev`），
+      #   但**发布链上这一步必须红**：公开面「用 A 打包、声称是 B」是**不可逆**的（源件逐字）。
+      #   两条判据**各自成句**（`source_sha` 不等 ／ `commit ≠ source_sha`），**合并成一句即红** ⇒
+      #   现调门㉕（真源同一份代码），再走公开制品档 `--profile public`（rc=1 ⇒ 本 job 失败 ⇒ **不发布**）。
+      - name: 公开制品档（阻断）：source_sha 必须等于发布提交 · 两条判据各自成句（R-23 / R-24）
+        run: |
+          set -euo pipefail
+          python3 scripts/gates/check-manifest-freshness-two-criteria.py
+          python3 scripts/gates/check-manifest-freshness-profile.py \
+            --profile public --manifest dist/manifest.json --release-head "$GITHUB_SHA"
       - name: 发布到 Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

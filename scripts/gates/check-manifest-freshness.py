@@ -12,6 +12,20 @@
 另注：manifest.commit（声明的构建身份）与 source_sha（生成时的真实 HEAD）**不是同一件事** ——
 两者不一致本身就是线索（用 A 打包却声称是 B），单独报一条。
 
+分档口径（2026-09-24 加固 · v2.5.12 波14 序135 · 组4 §二.4 `W-53`（`研-禁:136` `R-23`/`R-24`））
+--------------------------------------------------------------------------------------
+本件**只管判**（三条 stale 判据 + 上面那条身份线索），**分档只决定「拦不拦」**：
+  · **开发机档**（缺省）：命中只写告警，退出码恒 0（`--strict` 才拦）—— 依据仍是 Debian `apt.conf(5)`
+    那一条：分发通道可能落后于分支 ⇒ **放宽窗口而非关掉检查**。
+  · **公开制品档**：命中 ⇒ **阻断**（rc=1）。本件**不自己**再写一遍那份公开档判据 ——
+    由 `scripts/gates/check-manifest-freshness-profile.py --profile public` **现调本件 `diagnose()`**
+    判（单一口径：同一份代码、同一份输出形状，只是把「告警」写成「阻断」）。
+    发布链上的把关位置 = `publish/ci/release-agent.yml` 的「公开制品档（阻断）」步（生成 manifest 之后、
+    `gh release create` 之前）⇒ `source_sha` 不等于发布提交 ⇒ **不发布**（公开面「用 A 打包声称 B」不可逆）。
+  · ★ **两条判据各自成句**：判据①（`source_sha` 与当前分支头）与判据②（声明的构建身份与真实来源）
+    **必须各占一行**，**合并成一句即红** —— 由 `check-manifest-freshness-two-criteria.py`（门㉕）判
+    （它同时核**输出行**与**源码级的两个分列 statement**）。
+
 用法：
   python3 scripts/gates/check-manifest-freshness.py <manifest.json> [--repo <仓>] [--max-age-hours N] [--strict]
   python3 scripts/gates/check-manifest-freshness.py --self-test     # 正/负用例自测；不通过即拒绝服务
