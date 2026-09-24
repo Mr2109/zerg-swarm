@@ -59,6 +59,11 @@ type FleetNode struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
 	OS   string `yaml:"os"`
+	// Kind 机器种类（2026-09-25 Mr2109 定）：`ai`（AI 专用机）/ `mini`（小型机：类似 Mac mini
+	// 这种「内容小」的机器 ⇒ 只接装得下的模型）/ `work`（工作机：Mr2109 的工作机 ⇒ 最后才用）。
+	// 溢出序 = ai → mini → work。**空值一律按最保守的 `work` 处理**（未声明种类的机器不得被当专用机
+	// 优先使用 —— 宁可少用，不可误用他的工作机）。
+	Kind string `yaml:"kind"`
 }
 
 // AuthConfig 认证配置。
