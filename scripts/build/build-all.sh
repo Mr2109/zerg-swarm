@@ -14,7 +14,6 @@
 #   bash scripts/build/build-all.sh --only-cli                 # 只出命令面 bin/zerg（薄壳开发用）
 #   bash scripts/build/build-all.sh --only-core                # 只出主控 bin/zerg-core（**换件专用**）
 #   bash scripts/build/build-all.sh --only-compat              # 只出兼容层 bin/zerg-compat（回滚前置校验用）
-#   bash scripts/build/build-all.sh --only-agentd              # 只出子端守护进程 bin/zerg-agentd（**子端换件专用**）
 #   （--dist 以外的形态会另编茧壁 zerg-wall → bin/，见 scripts/build/build-wall.sh；它不进 dist 制品矩阵）
 #    ★ **--dist 的边界**（2026-09-21 · G4「打包不得换件」）：本档只写 `$OUT`（= dist/<版本>），
 #      bin/ 里那三件只落 bin/ 的件（`zerg-agentd` · `cocoon-docs-service` · `zerg-wall`）**一个都不产**，
@@ -63,7 +62,6 @@ SIGN=1
 ONLY_CLI=0
 ONLY_CORE=0
 ONLY_COMPAT=0
-ONLY_AGENTD=0
 for arg in "$@"; do
   case "$arg" in
     --dist) DIST=1 ;;
@@ -73,13 +71,12 @@ for arg in "$@"; do
     --only-cli) ONLY_CLI=1 ;;
     --only-core) ONLY_CORE=1 ;;
     --only-compat) ONLY_COMPAT=1 ;;
-    --only-agentd) ONLY_AGENTD=1 ;;
     *) echo "未知参数: $arg" >&2; exit 64 ;;
   esac
 done
-# 四个「只出一件」档指向不同制品 ⇒ 同时给是用法错（不猜谁优先：猜错就编错东西）
-if [ $((ONLY_CLI + ONLY_CORE + ONLY_COMPAT + ONLY_AGENTD)) -gt 1 ]; then
-  echo "✗ --only-cli / --only-core / --only-compat / --only-agentd 互斥（各只写一件：bin/zerg · bin/zerg-core · bin/zerg-compat · bin/zerg-agentd）⇒ 用法错" >&2
+# 三个「只出一件」档指向不同制品 ⇒ 同时给是用法错（不猜谁优先：猜错就编错东西）
+if [ $((ONLY_CLI + ONLY_CORE + ONLY_COMPAT)) -gt 1 ]; then
+  echo "✗ --only-cli / --only-core / --only-compat 互斥（各只写一件：bin/zerg · bin/zerg-core · bin/zerg-compat）⇒ 用法错" >&2
   exit 64
 fi
 
@@ -193,31 +190,6 @@ archive_prev_piece() {  # archive_prev_piece <将要被就地覆盖的件>
   echo "   🗄  已留档旧件：bin/_history/$(basename "$new")（$(stat -f%z "$new" 2>/dev/null || stat -c%s "$new") 字节 · sha256 ${src}）"
   return 0
 }
-
-# ── --only-agentd：子端换件专用档（只写 bin/zerg-agentd 一个文件）──────────────────
-#   为什么需要这一档（2026-09-24 · v2.5.12 批三 H1 落地）：改在 `agent/` 的修正要上线，只能走
-#   「重编 + 重签子端」；而**全量档会顺手重编 bin/zerg-core**（本机正在跑的主控件）—— macOS 上
-#   就地覆盖正在运行的可执行文件可能把那个进程打崩，且等于顺手埋一次**主控换件**（本批纪律：
-#   只重启子端、主控一个字节都不动）。⇒ 子端换件必须有自己的最小爆炸半径入口，形态与
-#   `--only-cli` / `--only-core` / `--only-compat` 逐条同源：同样先 `archive_prev_piece` 留档，
-#   再走**同一对**签名函数（`resolve_sign_identity` + `sign_one`，identifier 走既有固定表 ⇒
-#   `zerg-agentd` → `com.zerg.agentd`），**不另写一份构建/签名代码**。
-#   位置放在「命令面 zerg」那一段**之前**：这样本档连 bin/zerg 的留档与重编都不做（真正的只写一件）。
-if [ "$ONLY_AGENTD" = "1" ]; then
-  archive_prev_piece "${REPO_ROOT}/bin/zerg-agentd" || {
-    echo "!! 留档失败 ⇒ 拒换件（bin/zerg-agentd 尚未被覆盖，一个字节未动）" >&2
-    exit 1
-  }
-  echo "→ 守护进程 zerg-agentd（--only-agentd：agent 模块，注入 agent 自己的 version 包）"
-  (cd agent && GOFLAGS=-mod=mod GOSUMDB=off go build -trimpath -buildvcs=false \
-     -ldflags "-s -w -X github.com/Mr2109/zerg-swarm/agent/internal/version.Version=${VERSION} -X github.com/Mr2109/zerg-swarm/agent/internal/version.Commit=${SHA} -X github.com/Mr2109/zerg-swarm/agent/internal/version.BuildTime=${BUILD_TIME}" \
-     -o "${REPO_ROOT}/bin/zerg-agentd" ./cmd/zerg-agentd)
-  resolve_sign_identity
-  sign_one "${REPO_ROOT}/bin/zerg-agentd"
-  echo "✅ 构建完成（--only-agentd：只写 bin/zerg-agentd；其余制品与 build-info.json 一个字节未动）"
-  printf "   %-14s %s 字节\n" "zerg-agentd" "$(stat -f%z "${REPO_ROOT}/bin/zerg-agentd" 2>/dev/null || stat -c%s "${REPO_ROOT}/bin/zerg-agentd")"
-  exit 0
-fi
 
 # 命令面 zerg（薄壳 · 独立客户端二进制）：与 9 个既有入口同 module、复用 core/internal/*（§6.1）。
 # 放在最前，因为 --only-cli 只编它一件就收工。
