@@ -59,7 +59,7 @@ func CommandInfoOfForTest(path string) (CommandInfoForTest, bool) {
 		if joinPath(c.path) != path {
 			continue
 		}
-		info := CommandInfoForTest{Fields: append([]string{}, c.fields...), Passthrough: c.passthrough, OpenForRun: c.opened, Usage: c.usage}
+		info := CommandInfoForTest{Fields: append([]string{}, c.fields...), Passthrough: c.passthrough, OpenForRun: openedForRun(c), Usage: c.usage}
 		if c.danger != nil {
 			info.DangerLevel = c.danger.Level
 		}

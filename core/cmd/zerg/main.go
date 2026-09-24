@@ -329,10 +329,33 @@ type command struct {
 	// 群级只读（§十二 P-066）：没有目标时「读全群」是允许的；**其余命令无目标 ⇒ exit 2**。
 	groupReadOnly bool
 	// 茧壁层级标记（§九 M10 `X1`：闭集 host/node/space；没显式写的按族派生）
-	layer       string
-	opened      bool // 本版是否可执行（危险动作**逐条标**：有真实现的为 true ⇒ 帮助面不许一律写「未开放」）
+	layer  string
+	opened bool // 本版是否可执行（危险动作**逐条标**：有真实现的为 true ⇒ 帮助面不许一律写「未开放」）
+	// refuses —— **真跑一律拒执**（非危险档专用，缺口 序33）：`danger == nil` 的命令默认开放，
+	// 但少数几条**今天真跑就是不给结论**（`egg run` 退 8 · `cocoon open` / `build release` / `apply` 退 2）
+	// ⇒ 它们在帮助面/导出面**不算「已开放」**（口径 = `openedForRun`，见该函数）。
+	refuses     bool
 	passthrough bool // 原样透传型（gate 族）：旗标与位置参数逐字交给被包的脚本
 	run         func(*invocation, io.Writer, io.Writer) int
+}
+
+// openedForRun —— 这条命令**今天真跑能不能执行**（帮助面 / 导出面「已开放」计数的**唯一**口径）。
+//
+// 口径（2026-09-24 · 缺口 序33 · Mr2109 拍）：`opened && !拒执` —— 逐条分两支：
+//
+//	① 危险档（`danger != nil`）：看**逐条**的 `opened` 标记（有真实现的为 true；没实现的真跑拒执）；
+//	② 非危险档（`danger == nil`）：默认开放，**但声明了拒执**的（`refuses`）不算。
+//
+// 修前病根（照实现读出来的）：计数只写 `danger == nil` ⇒ 把「非危险档」当成「已开放」的**代理**，
+// 于是一条真跑拒执的命令**两头占**：既进了「已开放」的条数、又不进任何危险档 ⇒ **双计**。
+// 现读实据（修前）：`zerg help egg` 报「动作 6 条 · 已开放 3 · 危险档 3」—— 6 = 3 + 3 看着自洽，
+// 而 `egg run` 真跑退 8（`cmdEggRun`：卵写面本波不做）⇒ 它本不该算「已开放」。
+// ⇒ 计数必须**三档各归各的**：已开放 / 拒执 / 危险档，三者之和 = 动作数（`renderFamilyHelp` 逐数报）。
+func openedForRun(c *command) bool {
+	if c.danger != nil {
+		return c.opened
+	}
+	return !c.refuses
 }
 
 // `arity` 的闭集（照 `cobra` `Args` 验证器的五档）：本版只用下面**两档**。
@@ -1065,6 +1088,7 @@ func init() {
 			usage:   "zerg cocoon open <茧名> [--confirm=<茧名> --yes | --dry-run]",
 			arity:   "any",
 			args:    []string{"茧名"},
+			refuses: true, // 真跑拒执（`cmdCocoonOpen` 非 dry-run 一律 `not_opened` 退 2 —— 起常驻服务本版未开放）
 			run:     cmdCocoonOpen,
 		},
 		{
@@ -1073,6 +1097,7 @@ func init() {
 			usage:   "zerg egg run <卵 id> [--yes | --dry-run]",
 			arity:   "any",
 			args:    []string{"卵 id"},
+			refuses: true, // 真跑拒执（`cmdEggRun` 无条件退 8 · kind=blocked —— 连干跑一道押后）
 			run:     cmdEggRun,
 		},
 		// ---- 批 D · T-49 内部任务引擎族 `itask`（§7.1 P8 · §5.1 九条端点）----
@@ -1166,6 +1191,7 @@ func init() {
 			path:    []string{"build", "release"},
 			summary: "打包发布件（**计划面已开放**：`--dry-run` 出计划件；换件档真跑本版未开放 · 拒执退码 2）",
 			usage:   "zerg build release [--dry-run | --confirm=<主机名> --yes]",
+			refuses: true, // 真跑拒执（`cmdBuildPassthrough` 的 `openForExec` 只对 `build all --only cli` 为真 ⇒ 发布档非 dry-run 一律 `not_opened` 退 2）
 			run:     cmdBuildPassthrough,
 		},
 		// ---- 危险动作：**只登记形状，不开放执行**（§6.2 批 1 零写操作）----
@@ -1513,6 +1539,7 @@ func init() {
 			args:     []string{"意图件路径"},
 			fields:   applyFields,
 			endpoint: "",
+			refuses:  true, // 真跑拒执（`cmdApply` 校验四层已开放、**写面（真做）本版未开放** ⇒ 真做退 2）
 			run:      cmdApply,
 		},
 		// ---- §20.3 H3 交接回执（批 E · T-61）----
@@ -2960,16 +2987,23 @@ func renderFamilyHelp(family string, stdout io.Writer) (int, bool) {
 	if len(members) == 0 {
 		return exitOK, false
 	}
-	open, danger := 0, 0
+	open, danger, refused := 0, 0, 0
 	for _, c := range members {
-		if c.danger == nil {
+		switch {
+		case c.danger != nil:
+			danger++ // 危险档**逐条各算一条**（与「已开放」两码事）
+		case openedForRun(c):
 			open++
-		} else {
-			danger++
+		default:
+			refused++
 		}
 	}
-	fmt.Fprintf(stdout, "%s %s —— 族级用法（动作 %d 条 · 已开放 %d · 危险档 %d）\n",
-		progName, family, len(members), open, danger)
+	// 计数口径（缺口 序33 · 2026-09-24 已拍）：**三档各归各的** —— 已开放 / 拒执 / 危险档，
+	// 三者之和恒等于 `len(members)`（修前拿 `danger == nil` 当「已开放」的代理 ⇒ 真跑拒执的那条
+	// 既算「已开放」、又不进危险档 ⇒ **双计**，而 6 = 3 + 3 看着还是自洽的 ⇒ 肉眼看不出病）。
+	// 「已开放」那一档的逐条真源 = `openedForRun`（本函数**不再自己判一次**）。
+	fmt.Fprintf(stdout, "%s %s —— 族级用法（动作 %d 条 · 已开放 %d · 拒执 %d · 危险档 %d）\n",
+		progName, family, len(members), open, refused, danger)
 	fmt.Fprintf(stdout, "（本页只从这个族名出帮助；逐条 `%s %s <动作> --help` 出该条用法串。名字与用法逐字来自命令树。）\n\n",
 		progName, family)
 	for _, c := range members {

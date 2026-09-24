@@ -21,7 +21,12 @@ const gateExitLine = "退出码：0 全绿 · 1 有失败项 · 2 **不给结论
 const configPriorityLine = "旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg/config.yaml > 内置默认"
 
 // helpText 渲染整篇帮助。命令段由命令树现算 ⇒ 加一条命令只改一处。
-// **只列本版已开放的**（`danger == nil`）；危险动作只给计数与入口 —— 逐条清单是 `zerg help dangerous`。
+// **「命令」块按 `danger == nil` 列**（含真跑拒执的那几条：它们是**非危险档**，命令名必须留在块里
+// —— `scripts/gates/check-public-face-commands.py` 现读这一块当「命令面树」用 ⇒ 不许在这里按
+// 「已开放」过滤 ✗）。★ 但 **`danger == nil` ≠ 「已开放」**（缺口 序33 · 2026-09-24 已拍）：
+// 声明了 `refuses` 的那几条**真跑拒执**（退 2/8）⇒ 凡**报数**处一律走唯一真源 `openedForRun`
+// （`renderFamilyHelp` 的族级计数 · 导出面机器面的 `opened` 列）；本函数的标题行**不报数** ⇒ 不参与那条口径。
+// 危险动作只给计数与入口 —— 逐条清单是 `zerg help dangerous`。
 //
 // `all` = `zerg help --all`（2026-09-24 · 波11 序93 · 缺口 `Q-071` · 同面 `W-08`）：
 // 危险动作那一段**逐条列全** —— 命令树里 `danger != nil` 的每条各出一行（用法行逐字来自
