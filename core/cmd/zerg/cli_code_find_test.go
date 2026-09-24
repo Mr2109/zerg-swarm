@@ -90,3 +90,38 @@ func TestCodeFind_GlobAndPathNarrowing(t *testing.T) {
 		t.Errorf("未知旗标 ⇒ 退 2，得到 %d", rc)
 	}
 }
+
+// TestCodeFind_AbsolutePathIsExplicitRoot —— `W-03` 成对判据（2026-09-24 批七 · 序88）：
+// ① **正控**：`--path` 给**绝对路径**的目录 ⇒ rc=0（旧写法一律与仓根 `Join` ⇒ 拼出来的路径
+// 不存在 ⇒ 报「指的不是目录」的**假阴**）；
+// ② **负控**：`--path` 给非目录 ⇒ rc=2（且报的必须是「不是目录」，不是别的理由）。
+func TestCodeFind_AbsolutePathIsExplicitRoot(t *testing.T) {
+	bin := zergBinary(t)
+	root := syntheticRepo(t, "exit 0\n")
+	mustWrite(t, filepath.Join(root, "aaa", "one.go"), "package aaa\n// needle\n")
+
+	// ① 正控：绝对路径的目录（仓外也一样 —— 「显式给一根」）。
+	abs := filepath.Join(root, "aaa")
+	rc, out, errb := execCase(t, bin, root, "code", "find", "needle", "--path", abs, "--json", "path")
+	if rc != 0 {
+		t.Fatalf("--path <绝对路径目录> ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "aaa/one.go") {
+		t.Errorf("绝对根那一跑没扫到 aaa/one.go：%q", out)
+	}
+
+	// ② 负控：非目录（仓内相对路径指向一件文件）⇒ 2 且理由逐字是「不是目录」。
+	rc, _, errb = execCase(t, bin, root, "code", "find", "needle", "--path", "aaa/one.go")
+	if rc != 2 {
+		t.Fatalf("--path 指文件 ⇒ 退 2，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(errb, "不是目录") {
+		t.Errorf("负控理由不对（要逐字「不是目录」）：%q", errb)
+	}
+
+	// ③ 负控：绝对路径指向不存在的目录 ⇒ 也是 2（不许静默扫成零命中）。
+	rc, _, _ = execCase(t, bin, root, "code", "find", "needle", "--path", filepath.Join(root, "zz-nope"))
+	if rc != 2 {
+		t.Errorf("--path 指不存在的目录 ⇒ 退 2，得到 %d", rc)
+	}
+}
