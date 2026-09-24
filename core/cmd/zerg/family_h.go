@@ -184,7 +184,7 @@ func cmdScriptLs(inv *invocation, stdout, stderr io.Writer) int {
 			return scriptLsOrderKey(scanned[i].Path) < scriptLsOrderKey(scanned[j].Path)
 		})
 		for _, r := range scanned {
-			rows = append(rows, map[string]string{"path": r.Path, "public": ""})
+			rows = append(rows, map[string]string{"path": r.Path, "public": "", "kind": scriptLsKind(r.Kind)})
 		}
 	}
 	if len(rows) == 0 {
@@ -199,7 +199,27 @@ func cmdScriptLs(inv *invocation, stdout, stderr io.Writer) int {
 			r["public"] = "（未登记）"
 		}
 	}
-	return listCmd(inv, stdout, stderr, []string{"path", "public"}, rows)
+	return listCmd(inv, stdout, stderr, []string{"path", "public", "kind"}, rows)
+}
+
+// scriptLsKind —— 命令面那一格**量词面** `kind` 的取值（`O-16` · 缺口 `Q-162`）。
+//
+// 为什么要有这一格：`Q-160` 的**收件口径**已修（现读 139 件 ✓），但「139 是**哪一个** 139」
+// （含不含无后缀可执行件）**机器面无一格可读** ⇒ 下一位仍会拿它去核台账（「同数不同集」的病根
+// 形态）。补这一格 = 把**这一次的判据**变成**长期判据**。
+//
+// 取值 = 台账第 2 列那一个闭集（`scriptInvKindOK`：`sh` / `py` / `无后缀`）的**命令面短名**
+// （与 `public` 列在命令面写 `yes`/`no` 同一惯例）；照实三档，**认不出 ⇒ 原串照给（不猜）**：
+//
+//	`sh` → `sh` · `py` → `py` · `无后缀`（无后缀 + 可执行 + 首行 `#!`）→ `none`
+func scriptLsKind(k string) string {
+	switch k {
+	case "sh", "py":
+		return k
+	case "无后缀":
+		return "none"
+	}
+	return k
 }
 
 // scriptLsOrderKey —— `script ls` 的**行序**（与旧输出逐字同序，换口径时不许顺手挪行）：
