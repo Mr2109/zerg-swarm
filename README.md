@@ -144,3 +144,12 @@ Every document also exists in Chinese (`docs/*.zh-CN.md`), and the Chinese versi
 - Security policy and "notes for deployers" are in [SECURITY.md](SECURITY.md).
 
 > Copyright line: `Copyright 2026 The Zerg Swarm Authors`. Apache-2.0 grants **no trademark rights** — the names "虫族 / Zerg Swarm" are not covered by the license.
+
+---
+
+## Highlights
+
+- **The publish pipeline is now in the CLI**: `zerg publish preflight <artifact-dir>` (read-only preflight) and `zerg publish run` (builds the public mirror tree under the local artifact dir; three-state confirmation, **no network, no push**).
+- **Three machine kinds**: `ai` (AI-dedicated box) → `mini` (small box) → `work` (workstation). Selection follows a capability hard gate and an overflow order; the workstation is used last and can be preempted.
+- **Session affinity now has keys**: a session prefers to land back on the same machine (explicit request header → session id in the body → an implicit key derived from the model and the normalized system prompt), so one session no longer gets split across two machines.
+- The command surface is now **129 commands**: 89 open + 40 dangerous ones (explicit confirmation required).
