@@ -49,7 +49,7 @@ zerg <对象> <动作> [参数] [旗标]
 
 **本块为生成物（勿手改）**：由 `scripts/docs/gen-cli-reference.py` 照命令树**现算**后注入 —— 重跑 `python3 scripts/docs/gen-cli-reference.py --emit --target publish/docs/CLI.zh-CN.md`；判 drift 用同名 `--check --target publish/docs/CLI.zh-CN.md`。本块里的命令名、用法串（旗标）、说明、`--json` 字段、投影端点与茧壁层级**逐字来自命令树，一个都不是手写的**。
 
-### 已开放（85 条）
+### 已开放（86 条）
 
 | 命令 | 用法（旗标） | 说明 | `--json` 字段 | 投影的远端端点 | 茧壁层级 |
 |---|---|---|---|---|---|
@@ -76,6 +76,7 @@ zerg <对象> <动作> [参数] [旗标]
 | `zerg build show` | `zerg build show <件> \| --all [--json <字段>]` | 一件的**身份**（sha256/mtime/inode/type/arch/签名态 —— 换件后验「在跑的件 == 盘上件」要它） | name,sha256,bytes,mtime,inode,type,arch,signed | 本机（无远端对应） | `host` |
 | `zerg calib ls` | `zerg calib ls [--json <字段>]` | 标定线 3 件的声明面（名字 · 件 · 角色 · 归属 —— 逐件现读，不另抄一份） | name,script,role,state | 本机（无远端对应） | `host` |
 | `zerg calib show` | `zerg calib show <名> [--json <字段>]` | 单件标定脚本的现状（归属 · 角色 · 执行面 · 退码口径） | name,script,role,state,runner,exit | 本机（无远端对应） | `host` |
+| `zerg ci green` | `zerg ci green --run <记录件> [--decl <声明件>] [--json <字段>]` | 公开面 CI「归绿」**只读**读数（必需集合逐名 `success` 且集合内 `skipped`=0 · 带 `head_sha` · 声明集合的「必需」那格未核 ⇒ 口径行里印 · 有一条判不出 ⇒ 8 · **不给结论**） | head_sha,caliber,decl_source,required,skipped,verdict | 本机（无远端对应） | `host` |
 | `zerg cocoon ls` | `zerg cocoon ls [--json <字段>]` | 虫茧清单（主控面无投影端点 ⇒ 不给结论） | name,state,port,path | GET /api/cocoons（主控面没有 ⇒ 现跑 404） | `host` |
 | `zerg cocoon open` | `zerg cocoon open <茧名> [--confirm=<茧名> --yes \| --dry-run]` | 起虫茧的文档服务（8610 · D3 起服务档 · **计划面已开放**：`--dry-run` 出计划件；真跑本版未开放 · 拒执退码 2） | （无机器面） | 本机（无远端对应） | `host` |
 | `zerg code find` | `zerg code find <正则> [--path <子目录>] [--glob <模式>] [--json <字段>]` | 在码里找一处东西在哪（只读取证 · 手搓 grep/git grep 的替身） | path,line,text | 本机（无远端对应） | `host` |
@@ -141,7 +142,7 @@ zerg <对象> <动作> [参数] [旗标]
 
 ### 危险动作（38 条 · 已登记）
 
-> 导出物抬头逐字：`命令清单 **85** 条 · 危险动作 **38** 条（其中**已开放** 10 条 · 未开放 28 条）` —— 「哪些已开放」逐条以 `zerg help dangerous` 为准；本表四列（档 / 三态 / `--confirm` 的目标 / 它会动什么）逐字来自 `zerg help export`；未开放的那部分真跑一律**拒执**（退出码 2 = 不给结论），只有 `--dry-run` 的计划面可用。
+> 导出物抬头逐字：`命令清单 **86** 条 · 危险动作 **38** 条（其中**已开放** 10 条 · 未开放 28 条）` —— 「哪些已开放」逐条以 `zerg help dangerous` 为准；本表四列（档 / 三态 / `--confirm` 的目标 / 它会动什么）逐字来自 `zerg help export`；未开放的那部分真跑一律**拒执**（退出码 2 = 不给结论），只有 `--dry-run` 的计划面可用。
 
 | 命令 | 档 | 三态 | `--confirm` 的目标 | 它会动什么 | 茧壁层级 |
 |---|---|---|---|---|---|
