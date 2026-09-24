@@ -136,7 +136,22 @@ func (g *Gateway) pickRouteForRequest(model, headerMachine, sessionID, prompt st
 	if m := strings.TrimSpace(headerMachine); m != "" {
 		return g.routeToPinned(model, m, "请求头 "+machineHeaderName, required)
 	}
-	return g.pickRoute(model, sessionID, prompt, required...)
+	// 默认规则那一档：**补一行落点日志**（2026-09-25）。
+	//
+	// 为什么要有：既有 `📍 routed to: host:port` 只记「落哪台」，不记「凭什么落的」——
+	// 于是「同一会话在两台间间隔着跑」（缓存每次全丢 ⇒ 单次 10 分钟级延迟）这一类
+	// 现象，事后只能靠缓存命中率反推，判不清是换机还是机器忙。这一行同时打出
+	// **来源（默认规则）** 与 **会话号**，让「同一会话是否在跳机」一眼可证。
+	// 只加日志、不动判决：本行之后的返回与改动前逐字一致。
+	r, err := g.pickRoute(model, sessionID, prompt, required...)
+	if err == nil && r != nil {
+		sid := strings.TrimSpace(sessionID)
+		if len(sid) > 8 {
+			sid = sid[:8]
+		}
+		log.Printf("🎯 默认分配（来源 默认规则 · 无显式指定）：model=%s → %s（会话 %s）", model, r.Host, sid)
+	}
+	return r, err
 }
 
 // routeToPinned —— **命中即用**那一段（两条入口共用：请求头 / 覆盖表）。
