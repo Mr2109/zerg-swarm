@@ -190,6 +190,19 @@ sign_one() {  # sign_one <文件> —— 单件重签；identifier 按既有固�
 # 备份失败 ⇒ **拒换件**（回 1，调用方 `exit 1`）：绝不带着「旧的没了、新的没上」往下走
 #   —— 同族铁律照抄 `zerg-swap-core.sh:324` 逐字「备份失败 ⇒ 不换件」。
 # ★ 本函数**从不删任何留档**：函数体里没有 rm / mv / truncate 口，只有 mkdir + cp。
+#
+# ★ 2026-09-24（`待拍清单终版-20260924.md` 条 17 · `Q-207` · 落点**统一**）：新留档件**一律**落
+#   `<仓根>/bin/_history/<件>.bak-<YYYYMMDD-HHMMSS>` —— 落在 `bin/` 根（**产出面根**）里平铺一份
+#   ⇒ 过不了下面那格 `history_drop_ok`（**判红 · 拒换件**）。本机现读仍有 **14 枚人手造的历史平铺件**
+#   （`zerg-ui.bak-*` 等）⇒ **只统一落点、不搬家** ✗（搬 `bin/` 根的件 = 动产出面 + 不可逆）。
+history_drop_ok() {  # $1 = 将要写的**留档落点**（仓内相对路径）；0 = 合规 · 1 = 判红
+  case "$1" in
+    bin/_history/*) return 0 ;;
+  esac
+  echo "   ✗ 留档落点 ${1} 不在 bin/_history/ 之下（产出面根里平铺 *.bak-* ⇒ 判红）" >&2
+  return 1
+}
+
 archive_prev_piece() {  # archive_prev_piece <将要被就地覆盖的件>
   local b="$1" base hist stamp src new sha hit
   [ -f "$b" ] || return 0                 # 目标还没有件（首建）⇒ 无可留档
@@ -211,6 +224,10 @@ archive_prev_piece() {  # archive_prev_piece <将要被就地覆盖的件>
   new="$hist/$base.bak-$stamp"
   if [ -e "$new" ]; then                  # 同一秒内二次调用（或人手已造过同名）：追加 pid，**绝不覆盖已有留档**
     new="$new.$$"
+  fi
+  # 条 17 · `Q-207`：**新落点**必须过 `history_drop_ok`（落 `bin/_history/` 之外 ⇒ 拒换件、一个字节不动）
+  if ! history_drop_ok "${new#"${REPO_ROOT}/"}"; then
+    return 1
   fi
   if ! cp -p "$b" "$new"; then
     echo "   ✗ 留档失败（cp -p $b → ${new}）⇒ 拒换件" >&2
