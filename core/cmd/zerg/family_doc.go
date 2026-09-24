@@ -176,6 +176,8 @@ func cmdDocMetaFill(inv *invocation, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "%s: **审计落不下盘 ⇒ 拒执**（§九 M3 C5）：%v\n", progName, err)
 			return exitFail
 		}
+		// 序138 的「先复原再报」：写前登记本件的现盘样子（同 `dev edit` 那一处，逐条给理由）。
+		_ = wallclockRecordPreImage(c.Abs)
 		if err := os.WriteFile(c.Abs, c.After, 0o644); err != nil {
 			inv.setErr("failed", "write_failed", err.Error())
 			fmt.Fprintf(stderr, "%s: 写不进 %s：%v（审计已留痕：%s）\n", progName, c.Abs, err, auditPath)

@@ -206,7 +206,30 @@ func run(args []string, stdout, stderr io.Writer) int {
 		stdinTokenWanted = true
 	}
 	cw := &countingWriter{w: stdout}
-	rc := cmd.run(inv, cw, stderr)
+	// ★ 2026-09-24（序138 · 组4 §二.4 `W-57`（`研-禁:216` §六 栗④）· 上级裁定 **B**）：
+	//   `--timeout <时长>` 从「收得下、不生效」接上**消费者**（`wallclock.go`）。
+	//   两条判据栏要点落在这里：① **非法时长 ⇒ 先于任何动作退 `2`**（在 `cmd.run` 之前判 ——
+	//   「先于任何动作」就是这一行的位置）；② 合法 ⇒ 该命令**整趟**带上墙钟上界，
+	//   到点 ⇒ **先复原再报** ⇒ 退 `11`（「等不起」与「等到了坏结果」异码）。
+	//   旗标是**全局**的（谁用谁读 · 不用的命令不给就不生效）—— 与 `--all` / `--fast` 同一形态。
+	var rc int
+	if inv.hasFlag(wallclockFlag) {
+		d, werr := parseWallclock(inv.flagVal(wallclockFlag))
+		if werr != nil {
+			inv.setErr("usage", "bad_wallclock", werr.Error())
+			fmt.Fprintf(stderr, "%s: %v\n", progName, werr)
+			fmt.Fprintf(stderr, "See '%s %s --help'。\n", progName, strings.Join(cmd.path, " "))
+			emitErrIfJSON(inv, stdout, cmd, exitUsage)
+			return exitUsage
+		}
+		wallclockJournalReset()
+		rc = wallclockGuard(d, func() int { return cmd.run(inv, cw, stderr) }, stderr)
+		if rc == exitTimeout && inv.err == nil {
+			inv.err = wallclockTimeoutError(d)
+		}
+	} else {
+		rc = cmd.run(inv, cw, stderr)
+	}
 	// `--json <字段>` 的失败路径：把**机器可读**的 `error` 块挂进包封（§九 M7）——
 	// 只在命令自己没往 stdout 写结果时补（写了结果就不改它，避免两个面打架）。
 	if rc != exitOK && inv.jsonGiven && cw.n == 0 && (len(inv.fields) > 0 || cmd.danger != nil) {
@@ -1792,6 +1815,13 @@ func (inv *invocation) flagVal(name string) string {
 // flagVals 取一枚（可重复）旗标的**全部值**（按给值次序）。
 func (inv *invocation) flagVals(name string) []string {
 	return inv.kv[name]
+}
+
+// hasFlag 判「这枚旗标**给过没有**」（与「值非空」是两件事 —— 与 `ttlGiven` 同一条口径）。
+// 序138 的墙钟上界就靠它决定要不要给这一趟挂守卫（不给 ⇒ 一个字都不加）。
+func (inv *invocation) hasFlag(name string) bool {
+	_, ok := inv.kv[name]
+	return ok
 }
 
 func parseInvocation(args []string) (*invocation, error) {
