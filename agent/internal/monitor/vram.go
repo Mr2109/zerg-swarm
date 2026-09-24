@@ -11,7 +11,9 @@
 package monitor
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -76,8 +78,48 @@ func readRocmVram() (float64, float64, bool) {
 	if totalB <= 0 {
 		return 0, 0, false
 	}
+	// 统一内存（核显/APU）补正：BIOS 给「专用显存」的切块可能很小（实测 X3/Strix Halo
+	// 只有 1 GiB），模型其实驻留在 GTT（统一内存可寻址池）里跑。只看 VRAM 会把「装得下」
+	// 误判成 no_fit ⇒ 这里把 GTT 一并计入，口径 = **该 GPU 可寻址的内存**（VRAM + GTT）。
+	// 拿不到 GTT（独显机器）时行为与原来完全一致。
+	if gttUsed, gttTotal, ok := readGttVram("/sys/class/drm"); ok {
+		usedB += gttUsed
+		totalB += gttTotal
+	}
 	const gib = 1 << 30
 	return float64(usedB) / gib, float64(totalB) / gib, true
+}
+
+// readGttVram 汇总 AMD 统一内存（GTT）池：遍历 root 下的 card*/device/mem_info_gtt_{total,used}。
+// 返回 (usedBytes, totalBytes, ok)；一个都读不到 ⇒ ok=false（独显/非 AMD ⇒ 调用方按原样处理）。
+// root 做成参数只为可测（生产传 "/sys/class/drm"）。
+func readGttVram(root string) (uint64, uint64, bool) {
+	cards, err := filepath.Glob(filepath.Join(root, "card*", "device"))
+	if err != nil {
+		return 0, 0, false
+	}
+	var used, total uint64
+	for _, dev := range cards {
+		total += readUintFile(filepath.Join(dev, "mem_info_gtt_total"))
+		used += readUintFile(filepath.Join(dev, "mem_info_gtt_used"))
+	}
+	if total == 0 {
+		return 0, 0, false
+	}
+	return used, total, true
+}
+
+// readUintFile 读一个十进制无符号整数字段（读不到/不是数字 ⇒ 0）。
+func readUintFile(path string) uint64 {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	v, err := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return v
 }
 
 // parseRocmVram 解析 rocm-smi 显存输出，返回 (usedBytes, totalBytes)。
