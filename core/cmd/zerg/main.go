@@ -846,6 +846,21 @@ func init() {
 			endpoint: "",
 			run:      cmdNetProbe,
 		},
+		{
+			// 组4 §二.4 `W-50`（`研-禁:129` `R-16`）· 任务单序132 · 与组3 `Q-026` 同条：
+			// 凡「在 / 不在」的答案都要带「口径 + 树 `head_sha`」；两代产出树答案不同 ⇒
+			// 判「口径不同」· **不许并成一个数**（一树一行 ⇒ 两行）。
+			path: []string{"publish", "tree", "has"},
+			kind: "PublishTreeHas",
+			// ★ 字段表必须写成 `[]string{…}` **字面量** —— 与上面 `net probe` 那条**同一条纪律**
+			//   （契约脚本的 `FIELDS_RE` 只认字面量；抽成变量 = 那一条被读成「没有字段表」）。
+			summary:  "产出树「在 / 不在」**只读**读数（一树一行 · 每行带**口径 + 树 `head_sha`** · 树身份取不成 ⇒ 8 · **不给结论**）",
+			usage:    "zerg publish tree has <件> --tree <树>… [--json <字段>]",
+			args:     []string{"件名（相对树根的相对路径 —— 形状不合口径 ⇒ 2）"},
+			fields:   []string{"tree", "caliber", "head_sha", "present"},
+			endpoint: "",
+			run:      cmdPublishTreeHas,
+		},
 		// 写面两枚：**同一个执行门**（三态：--dry-run 计划件 / 缺 --yes ⇒ 2 / 齐了才发）
 		{
 			path:    []string{"resource", "pin"},
@@ -1970,6 +1985,13 @@ func valueFlagName(a string) string {
 	// 审批的件名与理由 —— 与上面同一张名字表的口径（值照收，语义在各自命令里判）。
 	switch a {
 	case "--file", "--message", "--proposal", "--tool", "--note", "--from", "--replace", "--root":
+		return a
+	}
+	// 产出树面旗标（`W-50` · 任务单序132 · 2026-09-24 波17）：`--tree <树>`（**可重复** ——
+	// 一树一行、两代树两行）。与上面几排同一口径：值照收，语义在各自命令里判
+	// （`publish tree has` 判「点没点名」「树在不在盘」「树身份读得到吗」）。
+	switch a {
+	case "--tree":
 		return a
 	}
 	// 名册面旗标（波① `T1a` · `Q-099`：`model add` 往 `gateway/fleet.yaml` 写一条）。
