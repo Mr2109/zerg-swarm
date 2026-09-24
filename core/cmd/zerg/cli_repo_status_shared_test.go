@@ -24,6 +24,7 @@ package main_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,6 +153,17 @@ func TestRepoStatusIdentity_Sha256ChangesWhenFileIsChanged(t *testing.T) {
 	}
 }
 
+// rsStat3 取一只件的 **stat 三件套**（mtime 纳秒 · size · 内容 sha256）——
+// 判「这只件动没动过」用它，**不许只比 sha**：实测 git 改写 index 后内容可以逐字节相同。
+func rsStat3(t *testing.T, path string) string {
+	t.Helper()
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s：%v", path, err)
+	}
+	return fmt.Sprintf("%d|%d|%s", st.ModTime().UnixNano(), st.Size(), rsSha(t, path))
+}
+
 // rsShaOf 跑一次 `repo status` 并取某件的 sha256（找不到即 Fatal —— 夹具坏了不许静默）。
 func rsShaOf(t *testing.T, root, rel string) string {
 	t.Helper()
@@ -170,16 +182,21 @@ func rsShaOf(t *testing.T, root, rel string) string {
 func TestRepoStatusShared_OneLineWhenSamePathDirtyInTwoTrees(t *testing.T) {
 	root, wt := rsWithWorktree(t)
 
-	// 只读自证（判据⑦）要用的两样：另**一棵**树的 index 与那一件的内容。
+	// 只读自证（判据⑦）要用的两样：另**一棵**树的 index **stat 三件套**（mtime/size/sha）与那一件的内容。
+	// ★ 为什么不是只比 sha256：实测本机 git **改写 index 后内容可以逐字节相同**（同一跑里 sha 不变、
+	//   只有 mtime 变）⇒ 只比 sha 就**看不出**改写（**突变 M6 第一版就是绿的** —— 那一格没牙）。
 	wtGitDir := strings.TrimSpace(mustGit(t, wt, "rev-parse", "--absolute-git-dir"))
 	idx := filepath.Join(wtGitDir, "index")
-	idxBefore, err := os.ReadFile(idx)
-	if err != nil {
-		t.Fatalf("读另一棵树的 index：%v", err)
-	}
+	idxBefore := rsStat3(t, idx)
 
 	mustWrite(t, filepath.Join(root, "README.md"), "changed-by-session-a\n")
 	mustWrite(t, filepath.Join(wt, "README.md"), "changed-by-session-b\n")
+	// 再**回拨 mtime**：让 index 里缓存的 stat 明确过期 —— 不带 `--no-optional-locks` 的探针
+	// 到这一步就会去刷新并**写回** index（这一族判据的既有配方，见 `check-multirepo-summary.py` 件头）。
+	old := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(filepath.Join(wt, "README.md"), old, old); err != nil {
+		t.Fatalf("回拨另一棵树那一件的 mtime：%v", err)
+	}
 
 	rc, _, errb := rsItems(t, "repo", "status", "--root", root, "--json", rsAllFields)
 	if rc != 1 {
@@ -214,13 +231,10 @@ func TestRepoStatusShared_OneLineWhenSamePathDirtyInTwoTrees(t *testing.T) {
 	if rowsha := rsShaOf(t, root, "README.md"); rowsha != a {
 		t.Errorf("单仓面那一行的 sha256 与本仓现算不同：%q ⟷ %q", rowsha, a)
 	}
-	// 只读自证：另一棵树的 index 与工作树一个字节未动（其余会话面走 `--no-optional-locks`）。
-	idxAfter, err := os.ReadFile(idx)
-	if err != nil {
-		t.Fatalf("复读另一棵树的 index：%v", err)
-	}
-	if string(idxBefore) != string(idxAfter) {
-		t.Errorf("另一棵树的 `.git/index` 被改了（其余会话面**必须**零副作用 ⇒ `--no-optional-locks` 没生效）")
+	// 只读自证：另一棵树的 index **stat 三件套**与工作树那一件都同值（其余会话面走 `--no-optional-locks`）。
+	idxAfter := rsStat3(t, idx)
+	if idxAfter != idxBefore {
+		t.Errorf("另一棵树的 `.git/index` 被改了（其余会话面**必须**零副作用 ⇒ `--no-optional-locks` 没生效）：%s ⟷ %s", idxBefore, idxAfter)
 	}
 	if got := rsSha(t, filepath.Join(wt, "README.md")); got != b {
 		t.Errorf("另一棵树那一件被改了：%q ⟷ %q", got, b)
