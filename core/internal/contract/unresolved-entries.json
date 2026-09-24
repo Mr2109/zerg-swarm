@@ -48,8 +48,8 @@
       "bin": "zerg-compat",
       "who_calls": "**回滚前置校验②**（状态可读性）只能靠它 —— 构建总入口有独立档（`--only-compat`）+ 它进制品矩阵；退码表把它的 4 档登记成独立命名空间；茧壁 argv 静默门把它列进禁用清单",
       "callers": [
-        {"file": "scripts/build/build-all.sh", "anchor": "--only-compat）\"\n  (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -ldflags \"$LDFLAGS\" -o \"$OUT/zerg-compat\" ./cmd/zerg-compat)", "line_hint": 291, "公开面对应件": "scripts/build/build-all.sh", "what": "构建：独立档 `--only-compat` 编它一件（锚 = 291 行宣告 + 292 行构建 的**两行上下文窗**：那条构建命令的字面与 311 行**逐字相同** ⇒ 单行锚不唯一，故带上下文窗）"},
-        {"file": "scripts/build/build-all.sh", "anchor": "（`zerg-compat check`：0 就绪", "line_hint": 307, "公开面对应件": "scripts/build/build-all.sh", "what": "文档在脚本里：`zerg-compat check` 的五档语义（0/1/2/3/4）"},
+        {"file": "scripts/build/build-all.sh", "anchor": "--only-compat）\"\n  (cd core && GOFLAGS=-mod=mod GOSUMDB=off go build $GOFLAGS_ -tags \"$GOTAGS\" -ldflags \"$LDFLAGS\" -o \"$OUT/zerg-compat\" ./cmd/zerg-compat)", "line_hint": 303, "公开面对应件": "scripts/build/build-all.sh", "what": "构建：独立档 `--only-compat` 编它一件（锚 = 303 行宣告 + 304 行构建 的**两行上下文窗**：那条构建命令的字面与 323 行**逐字相同**（只差缩进）⇒ 单行锚不唯一，故带上下文窗）"},
+        {"file": "scripts/build/build-all.sh", "anchor": "（`zerg-compat check`：0 就绪", "line_hint": 319, "公开面对应件": "scripts/build/build-all.sh", "what": "文档在脚本里：`zerg-compat check` 的五档语义（0/1/2/3/4）"},
         {"file": "core/internal/compat/migrate.go", "anchor": "ManagedBy: \"zerg-compat\",", "line_hint": 575, "公开面对应件": "core/internal/compat/migrate.go", "what": "兼容层自己把 `ManagedBy` 写成它（归属证据）"},
         {"file": "scripts/gates/check-wall-layer.py", "anchor": "'zerg-wall', 'zerg-compat',", "line_hint": 29, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "茧壁门：它进 argv 禁用清单（不许从茧壁里起）"}
       ],
