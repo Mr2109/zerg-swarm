@@ -832,6 +832,20 @@ func init() {
 			endpoint: "",
 			run:      cmdPortLs,
 		},
+		{
+			path: []string{"net", "probe"},
+			kind: "NetProbe",
+			// ★ 字段表必须写成 `[]string{…}` **字面量**（不许抽成 `xxxFields` 变量）：
+			//   `scripts/gates/check-cli-contract.py` 的 `FIELDS_RE` 只认这一种形状
+			//   （`fields:\s*\[\]string\{…\}`）—— 抽成变量会让它读成「这条没有字段表」，
+			//   于是重冻时派生的候选格变成「说明面不认 --json」，那句话与本命令**当场相反**。
+			//   先例：`port ls` 也是字面量（同一条纪律，只是此前没人写下理由）。
+			summary:  "环境面**只读**投影（代理在哪 / 走不走得通 / 直连还是代理 · 取不到 ⇒ 8）",
+			usage:    "zerg net probe [--json <字段>]",
+			fields:   []string{"proxy", "reachable", "mode"},
+			endpoint: "",
+			run:      cmdNetProbe,
+		},
 		// 写面两枚：**同一个执行门**（三态：--dry-run 计划件 / 缺 --yes ⇒ 2 / 齐了才发）
 		{
 			path:    []string{"resource", "pin"},

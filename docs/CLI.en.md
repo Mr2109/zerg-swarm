@@ -50,7 +50,7 @@ The help face is itself made of commands — ask it first:
 
 **This block is a generated artifact (do not hand-edit)**: injected by `scripts/docs/gen-cli-reference.py`, computed live from the command tree — re-run `python3 scripts/docs/gen-cli-reference.py --emit --target publish/docs/CLI.en.md`; judge drift with `--check --target publish/docs/CLI.en.md`. Command names, usage strings (flags), summaries, `--json` fields, projected endpoints and wall layer are quoted **verbatim from the command tree; not one of them is hand-written**.
 
-### Open (83)
+### Open (84)
 
 | command | usage (flags) | summary | `--json` fields | projected endpoint | wall layer |
 |---|---|---|---|---|---|
@@ -119,11 +119,12 @@ The help face is itself made of commands — ask it first:
 | `zerg model ls` | `zerg model ls [--json <字段>]` | 可用模型（投影 /api/fleet/models） | id,host,backend,modality,mem_gb,file | GET /api/fleet/models | `host` |
 | `zerg model opts` | `zerg model opts get <模型 id> [--json <字段>] \| zerg model opts set <模型 id> --set k=v… [--dry-run \| --yes]` | 适配器参数（get 只读 / set 实时生效要 --yes） | model,schema,note | GET \| PUT /api/models/{name}/adapter-opts | `host` |
 | `zerg model show` | `zerg model show <模型 id> [--json <字段>]` | 看一个模型（投影 /api/fleet/models 的单条；对象是**模型 id**，不是机器名） | id,host,backend,modality,mem_gb,file | GET /api/fleet/models | `host` |
+| `zerg net probe` | `zerg net probe [--json <字段>]` | 环境面**只读**投影（代理在哪 / 走不走得通 / 直连还是代理 · 取不到 ⇒ 8） | proxy,reachable,mode | 本机（无远端对应） | `host` |
 | `zerg plan` | `zerg plan <族> <动作> <对象…> [--node 名]… [--expect 旧值] [--out <件>] [--json <字段>]` | **算**：产出一份意图件（M6 包封 · F1–F7 + 四附加件）· **零副作用** | plan_id,plan_digest,action,target_kind,target_name,nodes,host,status,path,layers_passed | 本机（无远端对应） | `host` |
 | `zerg plugin ls` | `zerg plugin ls [--json <字段>]` | 插件清单（`zerg-<名>` 约定 · 零注册表 · 影子告警 + 信任声明） | name,command,path,shadowed,shadow_of,trust | 本机（无远端对应） | `host` |
 | `zerg port ls` | `zerg port ls [<端口>] [--json <字段>]` | 看某个端口被谁占着（含 pid/ppid/inode/在跑件路径 · 手敲 lsof 的替身） | port,pid,ppid,process,sock,path | 本机（无远端对应） | `host` |
 | `zerg propose ls` | `zerg propose ls [--state 未决\|已批准\|已否决] [--json <字段>]` | 提案清单 | id,title,target,goal,evidence,rollback_ref,by,state,criterion,created_at,path,files,criterion_state,subject,subject_kind,egg_id,approver,approver_kind | 本机（无远端对应） | `host` |
-| `zerg repo status` | `zerg repo status [--root <仓根>] [--json <字段>]` | 看仓脏没脏 / HEAD 在哪 / 有没有别人在写它（手敲 git status 的替身） | head,branch,path,status,untracked | 本机（无远端对应） | `host` |
+| `zerg repo status` | `zerg repo status [--root <仓根>] [--json <字段>]` | 看仓脏没脏 / HEAD 在哪 / 有没有别人在写它（手敲 git status 的替身）· `--root` 给 ≥2 次 ⇒ **多仓汇总**（一条只读命令出两仓 HEAD + 脏件数；写旗标一律拒 2） | head,branch,path,status,untracked | 本机（无远端对应） | `host` |
 | `zerg resource ledger` | `zerg resource ledger [--json <字段>]` | 资源账本（投影 /api/resources/ledger） | machine,mem_known,mem_total_gb,mem_available_gb,vram_known,gpu_pct,backend_state,fit | GET /api/resources/ledger | `host` |
 | `zerg resource ls` | `zerg resource ls [<类型>] [--json <字段>]` | 资源面（投影 /api/resources/ledger 或 /api/resources/{类型}） | machine,mem_known,mem_total_gb,mem_available_gb,vram_known,gpu_pct,backend_state,fit | GET /api/resources/ledger \| /api/resources/{type} | `host` |
 | `zerg resource pin` | `zerg resource pin <资源 id> [--dry-run \| --yes]` | 钉住资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2） | （无机器面） | 本机（无远端对应） | `host` |
@@ -140,7 +141,7 @@ The help face is itself made of commands — ask it first:
 
 ### Dangerous actions (38 · registered)
 
-> The export's header, verbatim: `命令清单 **83** 条 · 危险动作 **38** 条（其中**已开放** 10 条 · 未开放 28 条）` — for which actions are open, `zerg help dangerous` is the per-command authority; this table's four columns (tier / three states / `--confirm` target / what it touches) are quoted verbatim from `zerg help export`; the ones not open yet refuse to run for real (exit 2 = no verdict) and only their `--dry-run` plan face is available.
+> The export's header, verbatim: `命令清单 **84** 条 · 危险动作 **38** 条（其中**已开放** 10 条 · 未开放 28 条）` — for which actions are open, `zerg help dangerous` is the per-command authority; this table's four columns (tier / three states / `--confirm` target / what it touches) are quoted verbatim from `zerg help export`; the ones not open yet refuse to run for real (exit 2 = no verdict) and only their `--dry-run` plan face is available.
 
 | command | tier | three states | `--confirm` target | what it touches | wall layer |
 |---|---|---|---|---|---|
