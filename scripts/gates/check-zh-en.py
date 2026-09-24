@@ -46,6 +46,12 @@ WHITELIST = {
     #   加之前：本件在禁用词面 6 处命中（词表行 1 + 理由引用 3 + 合成夹具 2）⇒ 尾巴软检查由 6 涨到 12；
     #   加之后：回到 6（**不是**放宽判据：本件仍受「全角标点(代码区)」那一半管辖，仍是 0 命中）。
     "scripts/gates/check-public-face-wording.py",
+    # 2026-09-24（**波15 · 序136** · 门㊷ `check-private-path-forms.py`）：同一条口径（③「**规则文本本身**」）——
+    #   它的**形态表**必须逐字写出私有称谓（`Mr2109`）等禁用词，否则**认领正则匹配不上** `publish/replace-rules.tsv`
+    #   的规则原文，判据就退化成空转；⇒ 与上一件同规（**不是**放宽判据：本件仍受「全角标点(代码区)」那一半管辖）。
+    #   加之前：本件在禁用词面 4 处命中（认领正则 1 + 出处探针 1 + 门禁侧探针 1 + 夹具规则行 1）⇒ 尾巴软检查由 7 涨到 11；
+    #   加之后：回到 7（另 7 处为 `check-glossary.py` / `gen-glossary-exports.py` 的**存量**，未动）。
+    "scripts/gates/check-private-path-forms.py",
 }
 ROLE_PAT = re.compile(r"""(host\s*:\s*['"]?local\b|Machine\s*:\s*['"]local['"]|MachineSnapshot\(['"]local['"]\))""")
 ROLE_EXEMPT_HINT = ("_test.go", "selfupdate", "toolchain")
