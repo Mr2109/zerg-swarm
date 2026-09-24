@@ -12,7 +12,7 @@
 //	负控①（锚不存在）    ：副本里把锚串改掉（证据件那一句被改/被搬走）⇒ 必红，错因逐字含「锚不存在」
 //	负控②（锚不唯一）    ：副本里把锚复制成第二份 ⇒ 必红，错因逐字含「锚不唯一（命中 2 处：行 …）」
 //	                       · ②-a 单行锚（README 的 `zerg-scheduler` 登记行）复制成两行
-//	                       · ②-b 上下文窗锚（compat 241+242 两行）整块复制 ⇒ 窗口锚照同一条规则判，不静默取第一处
+//	                       · ②-b 上下文窗锚（compat 那条 = 宣告行 + 构建行 的两行上下文窗）整块复制 ⇒ 窗口锚照同一条规则判，不静默取第一处
 //
 // ★ 副本**只读真件、不写真仓**；跑完**不删**（中间产物留档 —— 红线「不删件」）：
 //
@@ -232,8 +232,12 @@ func TestUnresolvedEvidenceAnchorsAreDriftImmune(t *testing.T) {
 		for _, e := range old {
 			t.Logf("  对照（旧口径）红 · %v", e)
 		}
-		if !strings.Contains(errsText(old), "build-all.sh:241") {
-			t.Errorf("对照失败：旧口径该点名 compat 那条（build-all.sh:241），实测错因：%s", errsText(old))
+		// 行的位置**按台账现读**取，不写死 —— 写死就等于把派生值钉进判据：台账随代码随动时这里会变成**假红**
+		// （2026-09-24 撞过一次：`build-all.sh` 头部插了 50 行、台账 `line_hint` 随动到 291/307，
+		//  而这里仍写着 `build-all.sh:241` ⇒ 「旧口径对照」自己先红，把正控 B 判成了失败）。
+		wantLine := fmt.Sprintf("build-all.sh:%d", hintOf(led, "compat", bb))
+		if !strings.Contains(errsText(old), wantLine) {
+			t.Errorf("对照失败：旧口径该点名 compat 那条（%s），实测错因：%s", wantLine, errsText(old))
 		}
 	}
 
@@ -306,6 +310,22 @@ func anchorOf(led *contract.UnresolvedLedger, entryID, file string) (string, boo
 		}
 	}
 	return "", false
+}
+
+// hintOf —— 取台账里某入口某件的**行号提示**（判据要按台账现读取值，不另写第二份字面量：
+// 写死派生数字的地方会在台账随代码随动时变成假红）。
+func hintOf(led *contract.UnresolvedLedger, entryID, file string) int {
+	for _, e := range led.Entries {
+		if e.ID != entryID {
+			continue
+		}
+		for _, c := range e.Callers {
+			if c.File == file {
+				return c.LineHint
+			}
+		}
+	}
+	return 0
 }
 
 // mustRead —— 读件（读不到直接 Fatal：副本前置动作没生效就别往下判）。
