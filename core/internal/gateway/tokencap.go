@@ -203,7 +203,20 @@ func ApplyTokenBudget(in TokenBudgetInput) TokenBudgetResult {
 // 兼容口径（写死）：**没有任何 max_tokens 声明**的模型（适配器不声明、fleet 不声明、档案也没有）
 // 行为与改动前**逐字一致**（不进预算分支）——本次不动它们的额度口径。
 func (g *Gateway) ApplyAdapterOverrides(model string, forwardBody []byte, ada plugin.Plugin) []byte {
-	out, aerr := ada.Execute(plugin.PluginInput{Data: map[string]any{"model": model}})
+	// v2.5.12 治本之二（2026-09-24 · 依据 `排查-卵子代理回声与会话串话-v2.5.12-20260924.md` §③ H4）：
+	// 声明袋调用要把 **prompt** 一起给进去。
+	//
+	// 为什么：适配器的 `Execute` 有**两个调用形态** —— ① 声明袋调用（本函数：取参数声明）
+	// ② 执行调用（带 prompt 干活）。example-35b-v2 的 `Execute` 第一句查 `started`、紧接着查 **prompt 非空**
+	// （adapters/example-35b-v2.go:241/246），在形态 ① 下必然报 `example-35b-v2: prompt is empty` ⇒ 就算装配链上把
+	// `Start()` 补齐了，下一发仍会打 `⚠️ adapter … execution failed (using defaults)`，声明**还是**不下发。
+	// 这里复用网关既有的 `extractPrompt`（同包已有，不新造解析器）；空 body/坏 body 得 "" 与今天同形
+	// （那时适配器照旧报错 → 原样返回 forwardBody，与修复前一致）。
+	// 代价：每发多一次 body 反序列化 —— 本函数本来就在做同量级的多次 body 改写（JsonSetField/setBodyInt）。
+	out, aerr := ada.Execute(plugin.PluginInput{
+		Data:    map[string]any{"model": model},
+		Context: map[string]any{"prompt": extractPrompt(forwardBody)},
+	})
 	if aerr != nil {
 		// v2.5.6 错误码设计（2026-08-29）: 适配器执行失败不能静默——记日志（覆盖失败用默认参数——不阻塞请求）
 		log.Printf("⚠️ adapter %s execution failed (using defaults): %v", model, aerr)
