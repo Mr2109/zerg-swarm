@@ -29,7 +29,9 @@ func (a *Ornith) BuildArgs(entry *registry.ModelEntry, port int) []string {
 		"-ctv", "q8_0",
 		"-fa", "on",
 		"--cache-prompt",
-		"-np", "1", // v2.5.5 单槽铁律（设计决策——执行层面单槽——GPU全负荷）
+		// 注意：并行槽数（-np）**不在此处声明** —— 真源 = 各机卵清单的 `cmd:` 字段 ✓
+		// （`hatch_spec.go:768 buildEngineArgv`：卵清单有 `cmd:` 时**整段覆盖**适配器参数 ⇒ 这里写了也不生效 ✗）
+		// 实测事实：两机引擎都是 4 槽 × 262144（LLaMA 默认值），与本项目 2026-08-15 认知一致 ✓（缺口 Q-218）
 		"-cb",
 		"--host", "127.0.0.1",
 		"--port", fmt.Sprintf("%d", port),
