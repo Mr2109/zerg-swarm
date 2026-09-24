@@ -67,12 +67,12 @@ func cmdAgentShow(inv *invocation, stdout, stderr io.Writer) int {
 		return rc
 	}
 	fields := []string{"machine", "healthy", "code_version", "code_sha", "cpu_pct", "gpu_pct",
-		"mem_available_gb", "mem_total_gb", "models", "last_seen"}
+		"mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"}
 	row := project(o, fields)
 	row["machine"] = machine
 	// 「命令有什么能力」不另造词汇：字段名逐字取自载荷（§4.3 U2）。
 	return listCmd(inv, stdout, stderr, []string{"machine", "healthy", "code_version", "code_sha",
-		"cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "last_seen"},
+		"cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"},
 		[]map[string]string{row})
 }
 
