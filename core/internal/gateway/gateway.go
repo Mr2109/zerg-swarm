@@ -261,6 +261,11 @@ type sessionBinding struct {
 // sessionTTL 会话绑定过期时间（超过后允许重新路由）。
 const sessionTTL = 30 * time.Minute
 
+// maxSessionBindings 绑定表硬上限（O-7）：超过即按 LRU 淘汰最久未用者（TTL 仍是第一道清理）。
+// 为何需要：隐式键 = hash(model + 规范化 system) ⇒ 每个不同的 system 各占一条，
+// 仅靠 TTL 清理 ⇒ 30 分钟窗口内可无界增长（子代理/工具变体各是一套 system）。
+const maxSessionBindings = 512
+
 // maxSessionTokens 会话 token 预算上限（超过触发 compaction 提示，V22-1）。
 // 128K 覆盖典型 agent 会话；超预算由客户端或编排层 compaction。
 const maxSessionTokens = 131072
@@ -1927,8 +1932,10 @@ func extractSessionID(body []byte) string {
 
 // boundSession 查询会话绑定的机器（未过期且模型匹配时返回，否则 ""）。
 func (g *Gateway) boundSession(sessionID, model string) string {
-	g.sessionMu.RLock()
-	defer g.sessionMu.RUnlock()
+	// 写锁（Q-222）：本函数会 delete 过期项、并回写 lastUsed 做 LRU 刷新；先前用 RLock
+	// 却在锁内写 map（并发写 map 有崩溃风险），且 b 是 map 值副本 ⇒「命中即续命」被丢弃。
+	g.sessionMu.Lock()
+	defer g.sessionMu.Unlock()
 	b, ok := g.sessions[sessionID]
 	if !ok {
 		return ""
@@ -1941,7 +1948,7 @@ func (g *Gateway) boundSession(sessionID, model string) string {
 		return "" // 换了模型，重新路由
 	}
 	b.lastUsed = time.Now()
-	g.sessions[sessionID] = b
+	g.sessions[sessionID] = b // 回写：LRU 命中即续命
 	return b.host
 }
 
@@ -1972,13 +1979,25 @@ func (g *Gateway) bindSession(sessionID, host, model string) {
 		model:    model,
 		lastUsed: time.Now(),
 	}
-	// 简单清理：超过 64 个绑定且数量过多时删过期
-	if len(g.sessions) > 64 {
+	// 两级清理（O-7）：① 过期全扫 ② 仍超硬上限 ⇒ 按 LRU 淘汰最久未用者
+	if len(g.sessions) <= maxSessionBindings {
+		return
+	}
+	now := time.Now()
+	for k, v := range g.sessions {
+		if now.Sub(v.lastUsed) > sessionTTL {
+			delete(g.sessions, k)
+		}
+	}
+	for len(g.sessions) > maxSessionBindings {
+		var oldestKey string
+		var oldest time.Time
 		for k, v := range g.sessions {
-			if time.Since(v.lastUsed) > sessionTTL {
-				delete(g.sessions, k)
+			if oldestKey == "" || v.lastUsed.Before(oldest) {
+				oldestKey, oldest = k, v.lastUsed
 			}
 		}
+		delete(g.sessions, oldestKey)
 	}
 }
 
