@@ -23,7 +23,10 @@
 //
 //	`.py` ⇒ `python3 -c "import ast; ast.parse(...)"`（内容走 stdin，永不进 argv）；`.sh`/`.bash` ⇒ `bash -n`。
 //	**不过 ⇒ 拒写**（退码 2 · 不落盘、不记审计、目标件一个字节不动）；**判不了**（解释器起不来）⇒
-//	退码 8 **不给结论**（不假装检过）。别的扩展名**不适用**（本仓可机检的两类之外，不自造检查器）。
+//	退码 8 **不给结论**（不假装检过）。别的扩展名**不适用**（不在口径里 ⇒ 不自造检查器，也不假装检过）。
+//	★ 2026-09-24（`待拍清单终版-20260924.md` 条 9 · `序 130`）**扩面到 `.json` / `.yaml` / `.yml`**：
+//	走**进程内**支（Go 侧 `encoding/json` ＋ `gopkg.in/yaml.v3 v3.0.1` 已在 `core/go.mod` ⇒
+//	**零新依赖**、**零新命令节点**）；四类之外仍**不适用** ✗。
 //	为什么：一次 `--replace` 漏闭括号它**照写** ⇒ 写上盘的是一件当场 SyntaxError 的件（改前只有
 //	「回读 sha256 对拍」，那对得上恰恰证明**写坏了也照过**）。
 //
@@ -57,6 +60,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // devEditFields —— `--json` 面的全部字段（K1：机器面先定）。
@@ -293,7 +298,7 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	if syntaxJudg == "不过" {
 		inv.setErr("usage", "syntax_check_failed", "改后的内容语法不过")
 		fmt.Fprintf(stderr, "%s: **语法自检不过 ⇒ 拒写**（改后的 %s 解析不了）：\n    %s\n", progName, fileRel, syntaxWhy)
-		fmt.Fprintf(stderr, "口径（③-b）：写盘前先自检 —— `.py` 走 `ast.parse`、`.sh` 走 `bash -n`；**不过的件一个字节都不写**\n")
+		fmt.Fprintf(stderr, "口径（③-b）：写盘前先自检 —— `.py` 走 `ast.parse`、`.sh` 走 `bash -n`、`.json`/`.yaml` 走 Go 侧解析；**不过的件一个字节都不写**\n")
 		fmt.Fprintf(stderr, "  目标件未动：%s（审计也未落 —— 没写就不记账）\n", outPath)
 		fmt.Fprintf(stderr, "先看计划件：%s dev edit --proposal %s --file %s … --dry-run（计划面会打出同一份判决）\n", progName, proposalID, fileRel)
 		fmt.Fprintf(stderr, "error.kind=usage · detail=syntax_check_failed · retryable=false · remedy=fix_usage\n")
@@ -387,25 +392,74 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
-// editSyntaxProbe —— 语法自检的**唯一口径**（扩展名 → 检查器 argv；内容一律走 **stdin**，永不进 argv）。
-// 为什么不按「脚本里有没有 shebang」猜：判据要**机械可判** —— 只看扩展名这一件事。
+// editSyntaxProbe（**外部检查器支**）—— 语法自检的口径之一（扩展名 → 检查器 argv；内容一律走
+// **stdin**，永不进 argv）。为什么不按「脚本里有没有 shebang」猜：判据要**机械可判** —— 只看扩展名这一件事。
 var editSyntaxProbe = map[string][]string{
 	".py":   {"python3", "-c", "import ast, sys; ast.parse(sys.stdin.read())"},
 	".sh":   {"bash", "-n"},
 	".bash": {"bash", "-n"},
 }
 
+// ★ 2026-09-24（`待拍清单终版-20260924.md` 条 9 · `序 130` · 设计 `v1.2` §5 `O-16` 邻位）：语法自检
+// **扩面到 `.json` / `.yaml`**。
+//
+// 为什么走这一支（**进程内**）而不是再往上面那张表加行：`.json` / `.yaml` 的检查器在 Go 侧**已是现成
+// 依赖**（`encoding/json` 标准库 · `gopkg.in/yaml.v3 v3.0.1` 已在 `core/go.mod` 的 `require` 块 ⇒
+// **零新依赖**）；而走 argv 表就得先造一枚**子命令入口**，那是**新命令节点** ⇒ 命令树 127→128 ＋
+// 矩阵随动 ＋ 契约重冻 —— 给一件小检查器换来一整轮契约动作 ✗。⇒ 照 `O-16` 代价栏那个括号里的两支，
+// 取**「那张表加一支非命令串」**这一支。
+//
+// 返回 `nil` = 解析得动（判决「过」）；非 `nil` = `Error()` 原文照转（判决「不过」，逐字不润色）。
+var editSyntaxInProc = map[string]func([]byte) error{
+	".json": func(b []byte) error {
+		var v any
+		return json.Unmarshal(b, &v)
+	},
+	".yaml": yamlParse,
+	".yml":  yamlParse,
+}
+
+// yamlParse —— `.yaml` / `.yml` 的进程内检查器（`gopkg.in/yaml.v3`）。
+//
+// 为什么逐文档走 `Decoder` 而不是 `yaml.Unmarshal(..., &any)`：`.yaml` 顶层可以是**多文档**（`---`
+// 分段）⇒ 单文档解码会**漏掉第二份起的坏语法**（判成「过」＝假绿）；逐文档解到 `io.EOF` 才与
+// 「这一件能不能整件解析」同义。
+func yamlParse(b []byte) error {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	for {
+		var n yaml.Node
+		err := dec.Decode(&n)
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
 // editSyntaxCheck —— 写入前的**语法自检**（③-b）。返回三态判决：
 //
-//	"过"     —— 检查器跑完且没报（`.py` 解析得动 / `.sh` 语法对）
-//	"不适用" —— 扩展名不在口径里（本仓可机检的两类之外 ⇒ 不自造检查器，也不假装检过）
+//	"过"     —— 检查器跑完且没报（`.py` 解析得动 / `.sh` 语法对 / `.json`·`.yaml` 解得出）
+//	"不适用" —— 扩展名不在口径里（本仓可机检的四类之外 ⇒ 不自造检查器，也不假装检过）
 //	"不过"   —— 检查器报了（why = 原文，逐字转出，不润色）
-//	"不判"   —— 解释器起不来（why = 为什么）⇒ 调用方按**不给结论**处理（不写）
+//	"不判"   —— 检查器起不来（why = 为什么）⇒ 调用方按**不给结论**处理（不写）
+//
+// ★ 2026-09-24（条 9 · `序 130`）：**两支口径**——先查**进程内**支（`editSyntaxInProc`：`.json` /
+// `.yaml` / `.yml`）再查**外部检查器**支（`editSyntaxProbe`：`.py` / `.sh` / `.bash`）。进程内支
+// **没有「不判」这一态**（不依赖任何外部解释器 ⇒ 「起不来」这件事不存在）；其余三态语义**一字未动** ✗。
 //
 // 内容走 stdin：`.py` 的源码里有引号/反斜杠是常态，拼进 `-c` 的字符串就是**二次转义**的坑；
 // stdin 是逐字节的，内容一个字都不改。
 func editSyntaxCheck(fileRel string, content []byte) (judg, why string) {
-	probe, ok := editSyntaxProbe[strings.ToLower(filepath.Ext(fileRel))]
+	ext := strings.ToLower(filepath.Ext(fileRel))
+	if parse, ok := editSyntaxInProc[ext]; ok {
+		if err := parse(content); err != nil {
+			return "不过", strings.TrimSpace(err.Error())
+		}
+		return "过", ""
+	}
+	probe, ok := editSyntaxProbe[ext]
 	if !ok {
 		return "不适用", ""
 	}
@@ -441,7 +495,7 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 	fmt.Fprintf(stdout, "  前后字节 : %s → %s\n", row["before_bytes"], row["after_bytes"])
 	fmt.Fprintf(stdout, "  审计落点 : %s（一行一事件 · 追加只写 · **写不进审计就不改件**）\n", row["audit_path"])
 	fmt.Fprintf(stdout, "  批准件   : %s —— %s\n", row["approval_path"], row["approval"])
-	fmt.Fprintf(stdout, "  语法自检 : %s%s\n", row["syntax"], ifStr(row["syntax"] == "不过", " —— **真写会被拒**（`.py`=ast.parse / `.sh`=bash -n；先改内容）", ""))
+	fmt.Fprintf(stdout, "  语法自检 : %s%s\n", row["syntax"], ifStr(row["syntax"] == "不过", " —— **真写会被拒**（`.py`=ast.parse / `.sh`=bash -n / `.json`·`.yaml`=Go 侧解析；先改内容）", ""))
 	fmt.Fprintf(stdout, "  影响面钩子: %s（类=%s · §4.3 分档 —— 判据见 stderr 的 `impact_hook` 那两行）\n", hook.Tier, hook.Class)
 	fmt.Fprintf(stdout, "  回滚路径 : %s（提案的退点 + git）\n", orDash(prop.Rollback))
 	if blocked {
