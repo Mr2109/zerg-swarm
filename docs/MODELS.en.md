@@ -104,3 +104,21 @@ If any of these is configured explicitly but the file does not exist → log a W
 
 > Zerg's design premise is: **a model's weak spots are made up for by the system**. The same model performs noticeably better in a system with solid prompt design, protocol adaptation, and guardrail feedback than it does when you "call the API raw".
 > This is also the project's most central claim (see [design/格式反馈协议-FFP.md](design/格式反馈协议-FFP.md)).
+
+---
+
+## Which fields to read for engine state
+
+`zerg agent show <agent> --json` now surfaces **engine-side** state (previously only liveness/heartbeat fields):
+
+| Field | Meaning |
+|---|---|
+| `model` | Currently loaded model id (empty when nothing is loaded) |
+| `backend_state` | Engine process state (e.g. `ready` / not loaded) |
+| `active_requests` | Requests currently being served |
+| `gpu_used_gb` / `gpu_temp_c` | Memory in use and temperature (readable on unified-memory boxes) |
+| `backend_rss_gb` | Actual resident memory of the engine process |
+
+**Slots and context**: on both machines measured, it is **4 slots per box × `n_ctx = 262144` per slot**, with a shared unified KV cache (`kv_unified`). The source of truth for engine launch arguments is the egg roster's **`cmd:`** — that whole command line **overrides** the adapter's default arguments wholesale (a commonly misread point, hence spelled out here).
+
+**Cold-load scale**: unloading and reloading a 35B-class model measured about **2.3 seconds** on the workstation (warm page cache); the first read from disk is noticeably slower.

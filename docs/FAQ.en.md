@@ -117,3 +117,15 @@ A real run goes **through the fast gate first** (`bash scripts/gates/precommit-g
 When a human-signed exception is genuinely needed, use the audited flag approved for it: `--waive <step> --reason <one line>` — without `--reason` it is refused outright (exit 2: an exception with no reason is not granted);
 the step name must **really appear in that run's report**, or the exception does not take effect; and every exception is written to the audit log (who · when · which step · why), so the red can be read back afterwards.
 The command surface offers **no** `--no-verify` (bypassing is for a human to do explicitly).
+
+---
+
+## Multi-machine and publishing
+
+**Q: Why must one session land on the same machine?**
+
+A: Locally served models each hold their own KV cache and runtime state per box. Bouncing one session between two machines means every turn starts cold (the context must be prefilled again) — slow, and easy for the model to read as "a new conversation". So a session prefers to land back on the same box (see "Session affinity and kind-tier scheduling" in [ARCHITECTURE.en.md](ARCHITECTURE.en.md)).
+
+**Q: Does `zerg publish run` push anything to a remote?**
+
+A: No. `zerg publish run` only builds the public mirror tree in the local artifact dir (allowlist + excludes + redaction) and **never touches the network**. Pushing to a remote is a separate, explicit action with its own confirmation. To see what it would do first, use `zerg publish run --dry-run`.
