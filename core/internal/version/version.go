@@ -9,7 +9,7 @@
 package version
 
 // Version 当前发布版（不带前缀，如 "2.5.9"）——与 ui/Cargo.toml 的 version 一致。
-const Version = "2.5.11"
+const Version = "2.5.12"
 
 // Tag 展示用带前缀形式（横幅、能力清单、openapi），如 "v2.5.9"。
 const Tag = "v" + Version
