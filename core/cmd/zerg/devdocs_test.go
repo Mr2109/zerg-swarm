@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/version"
 )
 
 // devDocsFixture —— 造一棵假的「项目文档」取源根：返回它的绝对路径。
@@ -44,41 +46,38 @@ func devDocsFixture(t *testing.T, dirs map[string]int) string {
 	return base
 }
 
-// ① 正控 + ③ 显式钉版。
-func TestDevDocsCurrentVersionDir_PicksNewestNonEmptyAndHonoursPin(t *testing.T) {
-	base := devDocsFixture(t, map[string]int{"v2.5.9": 3, "v2.5.10": 5, "v2.6": 2})
+// ① 正控：未钉版 ⇒ 钉到 `v<当前发布版>`（读 version.Version，不是盘上最大的）；
+//
+//	③ 显式钉版：`pinVersion` 给了 ⇒ 就是它（兼容「钉死在某一版」的旧行为），空壳也认（人说了算）。
+func TestDevDocsCurrentVersionDir_PinsToCurrentVersionAndHonoursPin(t *testing.T) {
+	// 造一棵假的「项目文档」取源根：除当前版外再放两个「更高/更低」的版本目录 ——
+	// 它们存在但**都不许**被默认档选中（旧实现会挑盘上最大的）。
+	base := devDocsFixture(t, map[string]int{
+		"v0.0.1":              3,
+		"v9.9.9":              5, // 盘上版本号最大，但**不是**当前发布版 ⇒ 不许当选
+		"v" + version.Version: 2, // 当前版：哪怕只有 2 篇（空壳）也认（人/真源说了算）
+	})
 
 	got, why := devDocsCurrentVersionDir("")
 	if why != "" {
 		t.Fatalf("正控：不该有 why，实得 %q", why)
 	}
-	if want := filepath.Join(base, "v2.5.10"); got != want {
-		t.Fatalf("正控：版本号最大且 ≥3 篇的那个应是 %s，实得 %q（`v2.6` 是 2 篇空壳，不许当选）", want, got)
+	if want := filepath.Join(base, "v"+version.Version); got != want {
+		t.Fatalf("正控：未钉版应钉到当前发布版 %s，实得 %q（盘上最大的 v9.9.9 不许当选）", want, got)
 	}
 
-	got, why = devDocsCurrentVersionDir("2.6")
+	// 钉版：人说了算，空壳也认。
+	got, why = devDocsCurrentVersionDir(version.Version)
 	if why != "" {
 		t.Fatalf("钉版：不该有 why，实得 %q", why)
 	}
-	if want := filepath.Join(base, "v2.6"); got != want {
-		t.Fatalf("钉版：`--docs-ver 2.6` 应钉到 %s，实得 %q", want, got)
+	if want := filepath.Join(base, "v"+version.Version); got != want {
+		t.Fatalf("钉版：`--docs-ver <当前版>` 应钉到 %s，实得 %q", want, got)
 	}
 
-	if _, why = devDocsCurrentVersionDir("9.9.9"); why == "" {
+	// 钉一个不存在的版本 ⇒ 不给结论（点名缺件路径）。
+	if _, why = devDocsCurrentVersionDir("0.0.0"); why == "" {
 		t.Fatal("钉一个不存在的版本竟然通过了（不给结论才对）")
-	}
-}
-
-// ② 成对负控：版本号最大的那个变成空壳 ⇒ 退到次新（两条判据都在咬）。
-func TestDevDocsCurrentVersionDir_SkipsHollowNewest(t *testing.T) {
-	base := devDocsFixture(t, map[string]int{"v2.5.9": 3, "v2.5.10": 2, "v2.6": 2})
-
-	got, why := devDocsCurrentVersionDir("")
-	if why != "" {
-		t.Fatalf("不该有 why，实得 %q", why)
-	}
-	if want := filepath.Join(base, "v2.5.9"); got != want {
-		t.Fatalf("负控：`v2.5.10`/`v2.6` 都是空壳时该退到 %s，实得 %q", want, got)
 	}
 }
 

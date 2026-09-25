@@ -10,8 +10,8 @@
 //
 //	① 取源根 = `statepath.DocsBase()`（**唯一真源**已在那儿：仓内 `<仓库根>/docs/项目文档` 优先、
 //	   缺则 `<ZERG_DOCS_ALT|同级 Zerg-内部文档>/项目文档`）—— 本文件**不另立第二套**换根规则；
-//	② 当前版目录 = 上面那根下**版本号最大、且非递归 `*.md` ≥ 3 篇**的 `v*` 目录 ——
-//	   判据逐字取自仓内成文规矩（`AGENTS.md:52`：「**取版本号最大、且 ≥3 篇的目录**（…<3 篇 = 空壳…`v2.6` 就是这种）」）。
+//	② 当前版目录 = `v<当前发布版>`（读 `version.Version`，只读不改）—— 默认档跟着收版走；
+//	   钉版只认 `--docs-ver`（兼容旧「钉死某一版」行为）。版本真源唯一 = `version.Version`。
 //
 // 三条硬口径：
 //
@@ -25,11 +25,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/version"
 )
 
 // devDocsMinDocs —— 「不是空壳」的下限：非递归 `*.md` ≥ 本数（`AGENTS.md:52` 逐字「且 ≥3 篇」）。
@@ -45,62 +45,27 @@ func devDocsBase() string { return statepath.DocsBase() }
 //	pinVersion == ""  ⇒ 版本档案取源根下「版本号最大 + 非递归 md ≥3 篇」的那个 `v*` 目录；
 //	pinVersion != ""  ⇒ 钉到 `v<pinVersion>`（显式旗标，兼容旧行为）；不存在 ⇒ 报出来（不给结论）。
 //
+// ★ 版本真源 = `version.Version`：未钉版时**钉到 `v<当前发布版>`**（读 `core/internal/version/version.go`
+// 的 Version 常量，**只读不改**）—— 默认档跟着收版走，不再是「盘上版本号最大的那个」（旧实现会挑到
+// `v2.6` 这类空壳或已退版的目录）。钉版只认 `--docs-ver`（兼容钉死旧行为）。
+//
 // 返回 (绝对路径, ""); 判不了 ⇒ ("", 原因)。**原因里点名候选**（缺件不静默）。
 func devDocsCurrentVersionDir(pinVersion string) (dir, why string) {
 	base := devDocsBase()
 	if base == "" {
 		return "", statepath.DocsBaseMissingNote()
 	}
-	if pinVersion != "" {
-		p := filepath.Join(base, "v"+strings.TrimPrefix(strings.TrimSpace(pinVersion), "v"))
-		if st, err := os.Stat(p); err != nil || !st.IsDir() {
-			return "", fmt.Sprintf("`--docs-ver %s` 指的版本目录不在盘上：%s", pinVersion, p)
-		}
-		return p, ""
+	// 版本真源（只读 version.Version）：未钉版 ⇒ 钉到 `v<当前发布版>`；钉版 ⇒ 用 `--docs-ver` 的值。
+	pinned := strings.TrimPrefix(strings.TrimSpace(pinVersion), "v")
+	if pinned == "" {
+		pinned = version.Version
 	}
-	dirs, err := filepath.Glob(filepath.Join(base, "v*"))
-	if err != nil || len(dirs) == 0 {
-		return "", fmt.Sprintf("版本档案取源根 %s 下没有 `v*` 版本目录（现状：%d 个候选）", base, len(dirs))
+	p := filepath.Join(base, "v"+pinned)
+	if st, err := os.Stat(p); err != nil || !st.IsDir() {
+		// 缺件不静默：点名绝对路径（缺件/判不了 ⇒ 退 8 + 打印缺件路径）。
+		return "", fmt.Sprintf("版本目录不在盘上（版本真源 v%s）：%s", pinned, p)
 	}
-	// 候选：只看**目录**且名字能解成 3 段/2 段版本号（解不动的记进说明，不当候选）。
-	type cand struct {
-		dir string
-		key []int
-		md  int
-	}
-	cands := make([]cand, 0, len(dirs))
-	skipped := make([]string, 0, len(dirs))
-	for _, d := range dirs {
-		st, err := os.Stat(d)
-		if err != nil || !st.IsDir() {
-			continue
-		}
-		key := devDocsVersionKey(filepath.Base(d))
-		if key == nil {
-			skipped = append(skipped, filepath.Base(d)+"(版本号解不动)")
-			continue
-		}
-		cands = append(cands, cand{dir: d, key: key, md: devDocsCountMD(d)})
-	}
-	// 版本号降序 —— 高版在前（`AGENTS.md:52`「取版本号最大」）。
-	sort.Slice(cands, func(i, j int) bool { return devDocsCompareVersion(cands[i].key, cands[j].key) > 0 })
-	for _, c := range cands {
-		if c.md >= devDocsMinDocs {
-			return c.dir, ""
-		}
-	}
-	// 一个都不合格：逐条点名（篇数 + 空壳判语），**不猜**。
-	detail := make([]string, 0, len(cands)+len(skipped))
-	for _, c := range cands {
-		note := "合格"
-		if c.md < devDocsMinDocs {
-			note = fmt.Sprintf("空壳（非递归 md %d 篇 < %d）", c.md, devDocsMinDocs)
-		}
-		detail = append(detail, filepath.Base(c.dir)+"="+note)
-	}
-	detail = append(detail, skipped...)
-	return "", fmt.Sprintf("版本档案取源根 %s 下没有合格版本目录（%s）",
-		base, strings.Join(detail, " · "))
+	return p, ""
 }
 
 // devDocsVersionKey —— `v2.5.11` → `[2,5,11]`；`v2.6` → `[2,6]`；解不动 ⇒ nil（不当候选、也不乱比）。
