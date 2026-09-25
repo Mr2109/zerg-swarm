@@ -5824,6 +5824,44 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gap/export#未知旗标",
+   "command": "gap export",
+   "argv": [
+    "gap",
+    "export",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gap/export#不认的契约主号",
+   "command": "gap export",
+   "argv": [
+    "gap",
+    "export",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gap/export#说明面不认 --json",
+   "command": "gap export",
+   "argv": [
+    "gap",
+    "export",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 282,
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、**错因不同**：这里根本没有字段表）"
   }
  ],
  "tiers": {

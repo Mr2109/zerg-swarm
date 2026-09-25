@@ -1764,6 +1764,15 @@ func init() {
 			endpoint: "",
 			run:      cmdGapVerify,
 		},
+		{
+			path:     []string{"gap", "export"},
+			kind:     "GapExport",
+			summary:  "缺口真源 → 「结转账 markdown 片段」导出面（**只读**：不写真源、不写审计）· **只列未闭**（`已解`/`不做` 不进正文，只进件头计数）· 件头 = 仪表盘（条数/未闭/已闭/逐面计数/最老未闭天数）· 单行 ≤200 字符 · 读不到真源 ⇒ 退 8（fail-closed）",
+			usage:    "zerg gap export [--json <字段>]",
+			fields:   gapExportFields,
+			endpoint: "",
+			run:      cmdGapExport,
+		},
 		// ---- 度量与排序面（组1 序12 · `承接自-v2.5.11/承接-度量与排序面-20260921.md:40-42` · 2026-09-24）----
 		// 与 `impact`（变更影响面）**配对用、不合并成一条**：前者回答「改这一处会牵动谁」（别改坏），
 		// 本命令回答「**该改哪**」（把四类读数归一成一个可比排序）。只读 ⇒ 不写 `danger`
