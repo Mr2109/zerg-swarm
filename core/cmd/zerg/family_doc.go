@@ -106,19 +106,19 @@ func cmdDocMetaFill(inv *invocation, stdout, stderr io.Writer) int {
 		by = "（未声明）"
 	}
 
-	// ① 落点（用法面先判：**在任何盘面动作之前**）
-	root, why := docFillRoot(scope, strings.TrimSpace(inv.flagVal("--docs-ver")))
-	if why != "" {
-		inv.setErr("usage", "bad_root", why)
-		fmt.Fprintf(stderr, "%s: %s ⇒ 退码 2\n", progName, why)
-		fmt.Fprintf(stderr, "可用：`--scope devdocs`（ZERG_DEVDOCS_ROOT > 版本档案取源根下「版本号最大且 ≥3 篇」的版本目录，可用 `--docs-ver <X.Y.Z>` 钉版）或给一个目录\n")
-		return exitUsage
-	}
-	fi, err := os.Stat(root)
-	if err != nil || !fi.IsDir() {
-		inv.setErr("usage", "root_not_dir", "落点不是目录")
-		fmt.Fprintf(stderr, "%s: 落点不是目录：%s（给 `--scope devdocs` 或一个**已存在**的目录）⇒ 退码 2\n", progName, root)
-		return exitUsage
+	// ① 落点（用法面先判：**在任何盘面动作之前**）—— 判不了按 fail-closed 退 8，用法错退 2。
+	root, why, status := docFillRoot(scope, strings.TrimSpace(inv.flagVal("--docs-ver")))
+	if status != okStatus {
+		if status == usageStatus {
+			inv.setErr("usage", "bad_root", why)
+			fmt.Fprintf(stderr, "%s: %s ⇒ 退码 2\n", progName, why)
+			fmt.Fprintf(stderr, "可用：`--scope devdocs`（ZERG_DEVDOCS_ROOT > 版本档案取源根下钉到 `v<当前发布版>`，可用 `--docs-ver <X.Y.Z>` 钉版）或给一个目录\n")
+			return exitUsage
+		}
+		// missingStatus：缺件/判不了 ⇒ 退 8（fail-closed · 打印缺件路径 · 不许当绿）
+		inv.setErr("blocked", "missing_root", why)
+		fmt.Fprintf(stderr, "%s: %s ⇒ 退码 8（判不了 · 不许当绿）\n", progName, why)
+		return exitBlocked
 	}
 
 	// ② 扫件：只认 `*.md`（用例 = 那 63 篇）；点目录跳过。
@@ -220,29 +220,58 @@ func cmdDocMetaFill(inv *invocation, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
+// isDir —— `os.Stat(path).IsDir()` 的薄壳（`docFillRoot` 判 `ZERG_DEVDOCS_ROOT` 落点用）。
+func isDir(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
+}
+
+// docFillStatus —— `docFillRoot` 的落地状态（决定退码）：
+//   - okStatus：落点判出来了；
+//   - usageStatus：用法错（`--scope` 拿到旗标等）⇒ 退 2（用法面，不改代码）；
+//   - missingStatus：落点/真源目录不在盘上 ⇒ 退 8（判不了 · fail-closed · 打印缺件路径）。
+type docFillStatus int
+
+const (
+	okStatus docFillStatus = iota
+	usageStatus
+	missingStatus
+)
+
 // docFillRoot —— 被扫根：`--scope devdocs`（或缺省）⇒ 开发文档面**当前版**根；否则把它当**路径**。
 //
 // ★ 版本无关（缺口 `G-19`）：开发文档面根**不再钉在某一版**（旧代码逐字写着 `v2.5.10` ⇒ 本版新件全在扫描面外，
 // 「第四次成文重出」）。现在取源**只有一处** `devDocsCurrentVersionDir()`（与 `help export` 同源）：
-// `ZERG_DEVDOCS_ROOT` > `<版本档案取源根>/v<--docs-ver 钉的那版>` > `<版本档案取源根>` 下「版本号最大且 ≥3 篇」的那个。
-func docFillRoot(scope, pinVersion string) (root, why string) {
+// `ZERG_DEVDOCS_ROOT` > `v<--docs-ver 钉的那版 或 版本真源 version.Version>`（**版本真源**：默认档钉到
+// `v<当前发布版>`，读 `core/internal/version/version.go` 的 Version 常量，只读不改）。
+//
+// 判不了时**按 fail-closed 退 8**（缺件/判不了 ⇒ 退码 8 并打印缺件路径）：取源根不在盘上、或钉的版本目录
+// 不在盘上 ⇒ 返回 `(missingStatus, 点名缺件路径)`；用法错（`--scope` 拿到旗标等）⇒ `(usageStatus, …)`。
+func docFillRoot(scope, pinVersion string) (root, why string, status docFillStatus) {
 	if scope == "" || scope == "devdocs" {
 		if v := strings.TrimSpace(os.Getenv("ZERG_DEVDOCS_ROOT")); v != "" {
-			return v, ""
+			if _, err := os.Stat(v); err != nil || !isDir(v) {
+				return "", fmt.Sprintf("落点不是目录：%s（`ZERG_DEVDOCS_ROOT` 指向的目录不在盘上）", v), missingStatus
+			}
+			return v, "", okStatus
 		}
-		return devDocsCurrentVersionDir(pinVersion)
+		dir, why := devDocsCurrentVersionDir(pinVersion)
+		if why != "" {
+			return "", why, missingStatus
+		}
+		return dir, "", okStatus
 	}
 	if strings.HasPrefix(scope, "-") {
-		return "", fmt.Sprintf("`--scope` 要一个面（`devdocs`）或一个目录，拿到的是旗标 %q", scope)
+		return "", fmt.Sprintf("`--scope` 要一个面（`devdocs`）或一个目录，拿到的是旗标 %q", scope), usageStatus
 	}
 	if filepath.IsAbs(scope) {
-		return scope, ""
+		return scope, "", okStatus
 	}
 	wd, err := os.Getwd()
 	if err != nil {
-		return "", "取不到工作目录：" + err.Error()
+		return "", "取不到工作目录：" + err.Error(), usageStatus
 	}
-	return filepath.Join(wd, scope), ""
+	return filepath.Join(wd, scope), "", okStatus
 }
 
 // docMetaMDs —— 被扫根下的全部 `*.md`（相对路径 · 排序 · 点目录与点件跳过）。
