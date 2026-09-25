@@ -81,7 +81,7 @@ func TestModelIDMap_NoFuzzyFallback(t *testing.T) {
 		}
 	}
 	unknownFleet := []string{
-		"example-35b-v2",    // 大小写
+		"EXAMPLE-35B-V2",    // 大小写（公开字面 example-35b-v2 的大写变体）
 		"example-35b-v2.md", // 后缀
 		"example-35b-v2X",   // 多一字
 		"",
