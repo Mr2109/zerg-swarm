@@ -182,6 +182,10 @@ func cmdGapExport(inv *invocation, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
+// gapPrioRankUnknown —— 未知 prio 的排序档（**具名常量**：命令面契约门 T3 禁裸数字 ✗
+// —— 裸 `9` 会被当成「不在退码真源表里的退出码」，具名后语义自明）。
+const gapPrioRankUnknown = 9
+
 // gapPrioRank —— P0 < P1 < P2（未知值排最后；未知值本会在闭集自查里先判红）。
 func gapPrioRank(p string) int {
 	switch p {
@@ -192,7 +196,7 @@ func gapPrioRank(p string) int {
 	case "P2":
 		return 2
 	}
-	return 9
+	return gapPrioRankUnknown
 }
 
 // gapClip —— 单行超限则按 **rune** 截断并加省略号（中文一字一 rune，不用字节数）。
