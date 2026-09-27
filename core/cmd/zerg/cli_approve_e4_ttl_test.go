@@ -268,11 +268,14 @@ func TestApproveE4_TTLBadValuesBeforeAnyWrite(t *testing.T) {
 		}
 	}
 	// 正控：**合法**时长 ⇒ 不是用法错（干跑 ⇒ 0 · 零副作用）；非交互会话仍拒（但拒因是「人在终端上敲」）
+	// ★ 随动（2026-09-27 · 缺口账 `GAP-20260927-348`/`361`）：真签那一带的确认档已补上（D3 ⇒
+	// `--confirm` 与 `--yes` 同时到），本格要走到「终端判据」那一档就必须先给齐两枚 —— 拒因仍是
+	// 「人在终端上敲」这条判据（本格判的就是它），不是确认档。
 	rc, _, errb := eBatchRun("approve", "new", "--dry-run", "--tool", "dev_edit", "--by", "Mr2109", "--note", "E4 夹具", "--ttl", "7d")
 	if rc != 0 {
 		t.Errorf("E4 ③ 破：`--ttl 7d` 的干跑退码 %d（要 0）\\nstderr=\\n%s", rc, errb)
 	}
-	rc, _, errb = eBatchRun("approve", "new", "--tool", "dev_edit", "--by", "Mr2109", "--note", "E4 夹具", "--ttl", "7d")
+	rc, _, errb = eBatchRun("approve", "new", "--tool", "dev_edit", "--by", "Mr2109", "--note", "E4 夹具", "--ttl", "7d", "--confirm=dev_edit", "--yes")
 	if rc != 2 || !strings.Contains(errb, "终端") {
 		t.Errorf("E4 ③ 破：非交互会话那一格 = (rc=%d, stderr=%q)（要 2 + 拒因是「人在终端上敲」）", rc, errb)
 	}

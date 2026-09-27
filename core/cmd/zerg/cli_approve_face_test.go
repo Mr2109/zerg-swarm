@@ -236,3 +236,59 @@ func TestApproveShowKeyIdentityLine(t *testing.T) {
 		}
 	}
 }
+
+// TestApproveNewConfirmPair —— `approve new`（**D3**）的确认档判据（缺口账 `GAP-20260927-348`/`361`）。
+//
+// 病（修前逐字）：命令树登记 `D3`（不可逆）而实现在 `family_approve.go:cmdApproveNew` 只用
+// 「TTY 判 + 操作员口令」**取代**确认档 ⇒ `--confirm` 与 `--yes` **两枚都不读**；而帮助面前言
+// （`guard.go` 三态那段）仍逐字承诺「D3 必须 `--confirm` 与 `--yes` 同时到」= 表替实现许了个空承诺。
+//
+// ★ 本件**不**拿矩阵那两格当证据：`approve/new#缺 --confirm（D3）` 与 `#--confirm 值不匹配` 的口令
+// 都没给全 `--tool/--by/--note` ⇒ 它们判的是「缺必需旗标」，与确认档无关（假绿 —— 缺口 `GAP-20260927-354`
+// 的血证：判「读没读 --confirm」不许走干跑 / 不许拿别的错先撞出来的 rc=2 顶替）。
+// 本件走**不带干跑**的那一路，并靠**拒因判词**区分是哪一档拦下的 —— ④ 那一格是区分力的来源。
+func TestApproveNewConfirmPair(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("ZERG_STATE_DIR", state)
+
+	cases := []struct {
+		name    string
+		argv    []string
+		wantSub string
+	}{
+		{"① 缺 --confirm", []string{"approve", "new", "--tool", "dev_edit", "--by", "Mr2109", "--note", "D3 确认档夹具"}, "--confirm"},
+		{"② 有 --confirm 缺 --yes", []string{"approve", "new", "--tool", "dev_edit", "--by", "Mr2109", "--note", "D3 确认档夹具", "--confirm=dev_edit"}, "--yes"},
+		{"③ --confirm 值不匹配", []string{"approve", "new", "--tool", "dev_edit", "--by", "Mr2109", "--note", "D3 确认档夹具", "--confirm=别的工具", "--yes"}, "不逐字相同"},
+	}
+	for _, c := range cases {
+		rc, out, errb := runCapture(c.argv...)
+		if rc != 2 {
+			t.Errorf("确认档 破：%s 退码 %d（要 2 —— 用法错 · 执行前判）\nstderr=\n%s", c.name, rc, errb)
+		}
+		if out != "" {
+			t.Errorf("确认档 破：%s 往 stdout 写了 %q（拒执那一态必须 0 字节）", c.name, out)
+		}
+		if !strings.Contains(errb, c.wantSub) {
+			t.Errorf("确认档 破：%s 的拒因没点名 %q：\n%s", c.name, c.wantSub, errb)
+		}
+		if fileExistsAt(filepath.Join(state, "approvals", "dev_edit.json")) {
+			t.Errorf("确认档 破：%s 落了批准件（执行前判 ⇒ 一个件都不许落）", c.name)
+		}
+		if fileExistsAt(filepath.Join(state, "edit_audit.jsonl")) {
+			t.Errorf("确认档 破：%s 落了审计件", c.name)
+		}
+	}
+	// ④ 正控（区分力在这一格）：两枚给齐 ⇒ 确认档过 ⇒ 拒因落到「人在终端上敲」那一档。
+	//    没有这一格，上面三格「一律 rc=2」也可能是别的判给出的（那正是假绿）。
+	rc, out, errb := runCapture("approve", "new", "--tool", "dev_edit", "--by", "Mr2109", "--note", "D3 确认档夹具",
+		"--confirm=dev_edit", "--yes")
+	if rc != 2 || !strings.Contains(errb, "终端") {
+		t.Errorf("确认档 ④ 破：两枚给齐那一格 = (rc=%d, stderr=%q)（要 2 + 拒因是「人在终端上敲」⇒ 说明确认档已过）", rc, errb)
+	}
+	if strings.Contains(errb, "--confirm") {
+		t.Errorf("确认档 ④ 破：两枚给齐却仍被确认档拦下：\n%s", errb)
+	}
+	if out != "" {
+		t.Errorf("确认档 ④ 破：stdout 写了 %q（非交互会话不给签 ⇒ 0 字节）", out)
+	}
+}
