@@ -3082,6 +3082,15 @@ func emitSelected(stdout, stderr io.Writer, inv *invocation, path []string, fiel
 	for _, row := range rows {
 		obj, bad := marshalObject(fields, row)
 		if bad != "" {
+			// ★ 2026-09-28：`--json <未知字段>` 的失败面 `error.detail` 原**恒缺**。
+			//   病灶：`reportBadField` 只写 stderr、**不调 `setErr`** ⇒ 走到 `emitErrIfJSON` 时
+			//   `inv.err == nil`，包封退化成兜底那一格（`main.go:286`：kind 由真退码派生、
+			//   message 写「（命令未报出 kind，按退码兜底）」）—— 机器面拿不到**真因**，
+			//   AI 自愈只剩退码（与 `requireFields` 的 `GAP-20260927-360` 逐字同病）。
+			//   治法与 `main.go:2740` 那处**同一条口子、同 kind**（`errors.go:138` 的 `setErr`：
+			//   谁先报谁为准 · 不打第二枪），只补上 detail 的赋值 —— 点名那个未知字段。
+			//   人面一字不动：下面 `reportBadField` 照旧写 stderr，退码仍由它回（`exitUsage` = 2）。
+			inv.setErr("usage", "json_field_unknown:"+bad, fmt.Sprintf("未知字段 %q", bad))
 			return reportBadField(stderr, path, bad)
 		}
 		objs = append(objs, obj)
