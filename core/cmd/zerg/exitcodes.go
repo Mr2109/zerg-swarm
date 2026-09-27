@@ -105,6 +105,7 @@ func helpConfig() string {
 	out += "逐级说明（左高右低，高者覆盖低者）：\n"
 	out += "  1. **旗标**            本次调用显式给的那一个（`--node` / `--outdir` …）\n"
 	out += "  2. **`ZERG_*` 环境变量**  如 `ZERG_PORT` / `ZERG_TOKEN` / `ZERG_STATE_DIR` / `ZERG_REPO`\n"
+	out += "     · `ZERG_REPO` **换仓根**（无条件采信 · 不校验）：指到非仓根 ⇒ `gate run`/`gate ls` 硬错 rc=2 · `repo status`/`repo commit` 硬错 rc=8 · **`doctor` 会把所指位置报成「仓库根 PASS」**；同族脚本侧旋钮 `ZERG_REPO_ROOT`。写面/门禁动作请 `env -u ZERG_REPO`。\n"
 	out += "  3. **项目 `.env`**      仓内 `.env`（不入库；令牌字段一律掩码）\n"
 	out += "  4. **`~/.zerg/config.yaml`** 用户级默认（档位、主控地址、默认机器）\n"
 	out += "  5. **内置默认**         主控 `127.0.0.1:8580` / 网关 `8082` / 子端 `8100`（与 `core/internal/statepath` 同一份真源）\n\n"
