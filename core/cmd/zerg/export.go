@@ -256,6 +256,13 @@ func flagValue(orig []string, key string) (string, bool) {
 	return "", false
 }
 
+// mdCell —— 写 markdown 表格单元时的**最小转义**：单元文本里的裸 `|` 写成 `\|`。
+// 不转义的话，markdown 阅读器与文档闸（Zerg-内部文档/docs-gate/check-docs-gate.py 的
+// `_count_cells`，口径 = 「按【未转义】的 | 切」）都会把单元内的 `|` 当列分隔符 ⇒ 列数算多。
+func mdCell(s string) string {
+	return strings.ReplaceAll(s, "|", `\|`)
+}
+
 // renderHelpMarkdown —— 导出物的全部内容都由命令树现算（名字、用法、字段、端点、档位）。
 // `landing`（可选）= 落点目录：给了才写「版本档案目录」那一行（缺省调用点 = 对拍测试，判的是两张表的行数）。
 func renderHelpMarkdown(landing ...string) string {
@@ -290,7 +297,7 @@ func renderHelpMarkdown(landing ...string) string {
 		if f == "" {
 			f = "（无机器面）"
 		}
-		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | `%s` |\n", "zerg "+strings.Join(c.path, " "), c.summary, f, ep, c.layer)
+		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | `%s` |\n", "zerg "+strings.Join(c.path, " "), mdCell(c.summary), mdCell(f), mdCell(ep), c.layer)
 	}
 	fmt.Fprintf(&b, "\n## 二、危险动作（已登记 · 逐条标**本版已开放 / 未开放**）\n\n")
 	b.WriteString("| 命令 | 档 | 本版 | 三态 | `--confirm` 的目标 | 它会动什么 | 出处 | 茧壁层级 |\n|---|---|---|---|---|---|---|---|\n")
@@ -303,13 +310,13 @@ func renderHelpMarkdown(landing ...string) string {
 			opened = "**已开放**"
 		}
 		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %s | %s | %s | `%s` |\n",
-			"zerg "+strings.Join(c.path, " "), c.danger.Level, opened, dangerFlags(c, false), c.danger.Target, c.danger.Effect, c.danger.Source, c.layer)
+			"zerg "+strings.Join(c.path, " "), mdCell(c.danger.Level), opened, mdCell(dangerFlags(c, false)), mdCell(c.danger.Target), mdCell(c.danger.Effect), mdCell(c.danger.Source), c.layer)
 	}
 	b.WriteString("\n## 三、退码表（唯一真源）\n\n")
 	b.WriteString("| 码 | 名 | 语义 | 可重试性 |\n|---|---|---|---|\n")
 	for _, rows := range [][]exitcodeRow{exitcodeTable, exitcodeReserved} {
 		for _, r := range rows {
-			fmt.Fprintf(&b, "| `%d` | `%s` | %s | %s |\n", r.Code, r.Name, r.Meaning, r.Retryable)
+			fmt.Fprintf(&b, "| `%d` | `%s` | %s | %s |\n", r.Code, mdCell(r.Name), mdCell(r.Meaning), mdCell(r.Retryable))
 		}
 	}
 	b.WriteString("\n" + exitcodePolicy + "\n")
