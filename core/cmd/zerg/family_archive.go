@@ -196,7 +196,7 @@ func archiveManifestLines(payload string, files []string) ([]string, error) {
 	return lines, nil
 }
 
-// cmdArchiveManifest —— `archive manifest <载荷目录> --out <袋目录> [--dry-run] [--yes]`。
+// cmdArchiveManifest —— `archive manifest <载荷目录> --out <袋目录> [--dry-run | --yes]`。
 //
 // 三态（与 `family_h.go` 的写面同一套语义）：`--dry-run` 出计划件（退码 0 · 零副作用）·
 // 缺 `--yes` ⇒ `2`（fail-closed）· 齐了才真写。真写**任一步失败 ⇒ 回滚**（删掉本次建的袋目录）。
@@ -208,7 +208,7 @@ func cmdArchiveManifest(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if len(inv.args) == 0 {
 		inv.setErr("usage", "missing_target", "`archive manifest` 要给载荷目录")
-		fmt.Fprintf(stderr, "%s: 用法：%s archive manifest <载荷目录> --out <袋目录> [--dry-run] [--yes]\n",
+		fmt.Fprintf(stderr, "%s: 用法：%s archive manifest <载荷目录> --out <袋目录> [--dry-run | --yes]\n",
 			progName, progName)
 		return exitUsage
 	}

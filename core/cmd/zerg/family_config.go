@@ -322,7 +322,7 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 	bad := func(detail, msg string) int {
 		inv.setErr("usage", detail, msg)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
-		fmt.Fprintf(stderr, "  用法：zerg model add --model <模型名> --host <主机> --file <GGUF 路径> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run] [--yes]\n")
+		fmt.Fprintf(stderr, "  用法：zerg model add --model <模型名> --host <主机> --file <GGUF 路径> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run | --yes]\n")
 		fmt.Fprintf(stderr, "        （`--model` = `models:` 段的**键/块名** ⇒ 按它定位或新建那一块；`--host` = 该条 `host:` 的**字段值**＝这台模型跑在哪台机器）\n")
 		return exitUsage
 	}
