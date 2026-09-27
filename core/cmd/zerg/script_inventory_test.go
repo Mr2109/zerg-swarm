@@ -158,25 +158,50 @@ func TestScriptInventoryMatchesLiveScan(t *testing.T) {
 	if declared != len(live) {
 		t.Errorf("判据④ 破：清单声明件数 %d ≠ 现跑 %d", declared, len(live))
 	}
-	// 粗判两列也从**件的正文**重算（清单里的 yes/no 必须与现跑一致）
+	// ④ 两列**从盘上件的正文**重算（口径与生产侧 `scriptInvScan` **同源同形**：
+	//    `strings.Contains(件正文, "--help" / "--json")` ⇒ yes/no；台账头第 4 行与生产侧同口径），
+	//    与台账声明值**逐行**对拍，不符即红并**点件名 + 点列名**。
+	// ★ 2026-09-28 修（缺口 `GAP-20260928-04`）：此处原为「数台账自己第 3/4 列的 yes」
+	//   ⇒ 两侧同源同值恒真（无牙）；注释却自述「从件的正文重算」= 注释与代码相悖。
+	root := repoRootFromCLI(t)
+	kindOK := map[string]bool{"sh": true, "py": true, "无后缀": true}
 	help, js := 0, 0
 	for _, line := range strings.Split(string(b), "\n") {
-		f := strings.Split(strings.TrimRight(line, "\r"), "\t")
-		if len(f) != 5 {
+		f := strings.Split(strings.TrimRight(line, "\r"), "	")
+		if len(f) != 5 || !kindOK[f[1]] || f[0] == "脚本" { // 与 parseInventory 的数据行口径同（跳表头/说明行）
 			continue
 		}
-		if f[2] == "yes" {
+		body, rerr := os.ReadFile(filepath.Join(root, f[0]))
+		if rerr != nil {
+			t.Errorf("判据④ 破：台账行 %q 的件正文读不到（%v）⇒ 两列无从重算", f[0], rerr)
+			continue
+		}
+		text := string(body)
+		lh, lj := "no", "no"
+		if strings.Contains(text, "--help") {
+			lh = "yes"
+		}
+		if strings.Contains(text, "--json") {
+			lj = "yes"
+		}
+		if lh != f[2] {
+			t.Errorf("判据④ 破：%s 第 3 列「有--help」台账声明 %s，件正文重算 %s", f[0], f[2], lh)
+		}
+		if lj != f[3] {
+			t.Errorf("判据④ 破：%s 第 4 列「有--json」台账声明 %s，件正文重算 %s", f[0], f[3], lj)
+		}
+		if lh == "yes" {
 			help++
 		}
-		if f[3] == "yes" {
+		if lj == "yes" {
 			js++
 		}
 	}
 	if help != dHelp {
-		t.Errorf("判据④ 破：清单声明「有 --help %d」≠ 逐行数出来 %d", dHelp, help)
+		t.Errorf("判据④ 破：清单声明「有 --help %d」≠ 从件正文重算 %d", dHelp, help)
 	}
 	if js != dJSON {
-		t.Errorf("判据④ 破：清单声明「有 --json %d」≠ 逐行数出来 %d", dJSON, js)
+		t.Errorf("判据④ 破：清单声明「有 --json %d」≠ 从件正文重算 %d", dJSON, js)
 	}
 	t.Logf("现跑：件数 %d · 有 --help %d · 有 --json %d（清单声明 %d / %d / %d）",
 		len(live), help, js, declared, dHelp, dJSON)
