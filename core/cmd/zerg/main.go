@@ -1925,6 +1925,7 @@ func init() {
 			usage:    "zerg gap export [--out <目录>] [--json <字段>] [--dry-run | --yes]",
 			fields:   gapExportFields,
 			danger:   &dangerSpec{dangerD2, "落点目录（`--out`）", "往 `--out <目录>` 拆件落盘（索引件 1 + 页件 N：`缺口总账-<日期>.md` / `-<面>-pNN.md`）；真源 `zerg-cli-gaps.jsonl` 与审计 `edit_audit.jsonl` **一个字不动**（可逆：删掉新落的那些件即回到原状）", "缺口账（2026-09-27）· `ddf57491` 接上 `--out` 真写盘 ⇒ 旧表项无 `danger`，本族写命令一直被 `zerg help` 判成**安全档** ✗ · 同族写面先例 `设计-命令面-gap族-v1.0-20260923.md §二.2/§三/§四` · `H-10`（`--yes` 是命令行确认档，不是批准件）"},
+			opened:   true,
 			endpoint: "",
 			run:      cmdGapExport,
 		},
