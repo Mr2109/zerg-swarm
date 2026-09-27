@@ -195,6 +195,9 @@ func routeSaveAndVerify(inv *invocation, stderr io.Writer, t *routepin.Table, pa
 
 // cmdRoutePin —— `zerg route pin --model <模型> --machine <机器> --ttl <时长>`（钉 · D2 写面）。
 func cmdRoutePin(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if rc := routeCheckFields(inv, stderr); rc != exitOK {
 		return rc
 	}

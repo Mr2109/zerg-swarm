@@ -38,6 +38,9 @@ type dangerSpec struct {
 
 // cmdGuarded —— 所有登记为「危险」的动作的唯一执行门（本批只到「拒执 + 计划件」）。
 func cmdGuarded(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	cmd := find(inv.path)
 	spec := cmd.danger
 	path := strings.Join(cmd.path, " ")

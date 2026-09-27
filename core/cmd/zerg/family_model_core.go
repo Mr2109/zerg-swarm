@@ -68,6 +68,9 @@ func cmdModelShow(inv *invocation, stdout, stderr io.Writer) int {
 //	set：D2 写面（**实时生效** ⇒ 要 `--yes`）；参数用可重复的 `--set k=v` 给，
 //	     PUT 体就是这些键值 —— **不替主控编键名**（认不认由主控判，错误码逐字透传）。
 func cmdModelOpts(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if len(inv.args) < 2 {
 		fmt.Fprintf(stderr, "%s: 用法：`zerg model opts get <模型 id>` / `zerg model opts set <模型 id> --set k=v [--yes]`\n", progName)
 		inv.setErr("usage", "missing_target", "缺动作（get/set）或模型 id")

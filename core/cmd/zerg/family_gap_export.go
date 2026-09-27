@@ -45,6 +45,9 @@ const gapExportLineMax = 200
 const gapExportStaleAfterDays = 14
 
 func cmdGapExport(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	// ① 用法面（在任何盘面动作之前）
 	if inv.jsonGiven && len(inv.fields) == 0 {
 		inv.setErr("usage", "json_fields_required", "--json 不给字段")
