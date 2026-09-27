@@ -203,6 +203,7 @@ func cmdApproveLs(inv *invocation, stdout, stderr io.Writer) int {
 		// ★ D1 落地：字段面判定抽成一枚共用口（九键 + **可选**字段）；九键那一份是冻结面，
 		// **不许**并进 `approveFields`（见上方档位面那段口径）。
 		if bad := approveBadField(inv.path, inv.fields); bad != "" {
+			inv.setErr("usage", "json_field_unknown:"+bad, fmt.Sprintf("未知字段 %q", bad))
 			return reportBadField(stderr, inv.path, bad)
 		}
 	}
@@ -267,6 +268,7 @@ func cmdApproveShow(inv *invocation, stdout, stderr io.Writer) int {
 		// `key_id_in_use`）**根本取不出来**。落 D1 就得把这一格补上：**点哪几格给哪几格**（§4.1 K1）。
 		// 九键**语义与顺序**一字不动（`approveFields` 那一份没改）；变的是「以前忽略你的点单」。
 		if bad := approveBadField(inv.path, inv.fields); bad != "" {
+			inv.setErr("usage", "json_field_unknown:"+bad, fmt.Sprintf("未知字段 %q", bad))
 			return reportBadField(stderr, inv.path, bad)
 		}
 		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, row)
