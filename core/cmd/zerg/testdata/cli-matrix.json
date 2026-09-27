@@ -5072,7 +5072,7 @@
     "--json"
    ],
    "want_rc": 2,
-   "want_stdout_bytes": 0,
+   "want_stdout_bytes": 281,
    "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {

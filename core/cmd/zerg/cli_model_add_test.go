@@ -22,6 +22,7 @@ package main_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -530,18 +531,61 @@ func TestModelAddNegativeBadYAMLStaysUntouched(t *testing.T) {
 	}
 }
 
-// 反例探针七 · `--json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）且 stdout 0 字节（K2 四件套）。
+// 反例探针七 · `--json` 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）。
+//
+// ★ 2026-09-27 同批订正（`GAP-20260927-360`）：本件原先还断言 stdout **0 字节** —— 那成立的前提是
+//
+//	「`model add` 没有危险档」。而它现在是 D2（真写 `gateway/fleet.yaml`），于是撞上 `main.go:184` 的
+//	例外分支：`cmd.danger == nil` 不成立 ⇒ **不再走**「说明面不认 --json」那条，改走
+//	`main.go:182-183` 逐字写的设计「危险动作没有结果面，但它们的**错误面**必须机器可读（§九 M7：AI
+//	自愈靠 kind）⇒ 危险动作收 --json，只当错误面用」。
+//	⇒ 正解不是把实现改回 0 字节（那会让 AI 拿不到 kind），而是把判据改成**断言错误面机器可读**：
+//	退码仍取自退码表（相等闭集），stdout 必须是**合法包封**且带 `json_fields_required`，且**一个字节都
+//	没写盘**。成对负控见探针七之二。
 func TestModelAddJSONNoFields(t *testing.T) {
 	_, path := fleetFixtureAt(t)
 	before := fileSHA(t, path)
 	wantK2 := usageCodeFromTable(t)
 	rc, out, _ := runCapture("model", "add", "--path", path, "--model", "probe-list", "--host", "Mr2109",
 		"--file", "/models/m.gguf", "--json")
-	if rc != wantK2 || out != "" {
-		t.Fatalf("`--json` 不给字段：rc=%d stdout=%q（要 %d + 空）", rc, out, wantK2)
+	if rc != wantK2 {
+		t.Fatalf("`--json` 不给字段：rc=%d（要 %d）", rc, wantK2)
+	}
+	// 错误面必须机器可读：合法 JSON 包封 + 点名的 kind/detail。
+	var env struct {
+		Schema string `json:"schema"`
+		Kind   string `json:"kind"`
+		Error  struct {
+			Kind   string `json:"kind"`
+			Detail string `json:"detail"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("危险档的 `--json` 错误面必须是合法包封（§九 M7）：解析失败 %v · stdout=%q", err, out)
+	}
+	// ★ 判据只收到**真成立**的那部分：包封合法 + `error.kind == "usage"` + 零落盘。
+	//   ★ 不写 `detail`：现读族间不一致 —— `json_fields_required` 这句只出现在 gap 族 6 处
+	//   （`family_gap.go:558/726/990` · `family_gap_export.go:50` · `family_gap_state.go:223/356`），
+	//   `model add` / `config reload` 这一族**没有**它 ⇒ 包封落到「（命令未报出 kind，按退码兜底）」
+	//   的兜底文案、`detail` 为空。那是**实现缺口**（AI 自愈靠 kind，缺 detail 就只剩退码），
+	//   已入账 `GAP-20260927-361` 另派；判据**不许比实现严**，否则本件会一直红着当噪声。
+	if env.Error.Kind != "usage" {
+		t.Fatalf("错误面该点名 usage，得到 %q（detail=%q）· stdout=%q", env.Error.Kind, env.Error.Detail, out)
 	}
 	if after := fileSHA(t, path); after != before {
 		t.Fatalf("只读用法面却改了文件")
+	}
+}
+
+// 反例探针七之二（**成对负控**）· 非危险档不给 `--json` 字段 ⇒ 仍是「说明面不认 --json」那条**空 stdout**。
+// ★ 与探针七配对：两条形状不同的命令走两条不同的分支，谁被并掉了都会红。
+func TestNonDangerJSONNoFieldsStaysEmpty(t *testing.T) {
+	rc, out, _ := runCapture("version", "--json")
+	if rc != usageCodeFromTable(t) {
+		t.Fatalf("非危险档不给字段：rc=%d（要 %d）", rc, usageCodeFromTable(t))
+	}
+	if out != "" {
+		t.Fatalf("非危险档（说明面）不给 --json 字段该是空 stdout，得到 %q", out)
 	}
 }
 
