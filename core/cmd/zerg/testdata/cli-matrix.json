@@ -3845,6 +3845,19 @@
    "why": "没有可审查物 ⇏ 写（先 `dev proposal new`）⇒ 2"
   },
   {
+   "id": "dev/edit#--dry-run 与 --yes 同给",
+   "command": "dev edit",
+   "argv": [
+    "dev",
+    "edit",
+    "--dry-run",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "两道确认档自相矛盾（干跑 ⟷ 真写）⇒ 硬失败退 2 并点名 detail=dry_run_yes_conflict（复用已签共享判定 dryRunYesConflict · GAP-20260927-376）"
+  },
+  {
    "id": "repo/commit#未知旗标",
    "command": "repo commit",
    "argv": [
