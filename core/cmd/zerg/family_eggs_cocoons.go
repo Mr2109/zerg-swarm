@@ -788,6 +788,7 @@ func eggAct(inv *invocation, stdout, stderr io.Writer, action string) int {
 		}
 		for _, f := range inv.fields {
 			if !legal[f] {
+				inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
 				return reportBadField(stderr, inv.path, f)
 			}
 		}

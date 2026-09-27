@@ -393,6 +393,7 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 				}
 			}
 			if !ok {
+				inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
 				return reportBadField(stderr, inv.path, f)
 			}
 		}
@@ -414,6 +415,7 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		probe["result"] = "written"
 		if _, bad := marshalObject(inv.fields, probe); bad != "" {
 			fmt.Fprintf(stderr, "%s: 本档（真写）不产出字段 %q ⇒ **写前拒**（未落盘、未记审计）\n", progName, bad)
+			inv.setErr("usage", "json_field_unknown:"+bad, fmt.Sprintf("未知字段 %q", bad))
 			return reportBadField(stderr, inv.path, bad)
 		}
 	}
