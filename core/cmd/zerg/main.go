@@ -1068,6 +1068,25 @@ func init() {
 			run:      cmdPublishTreeHas,
 		},
 		{
+			// 病 · 已入账 `GAP-20260927-407`（缺面）：「这件**会不会**发」在命令面上**没有免树正门**
+			// （`publish tree has` 必须有现成成品树）⇒ 只能绕、只能代码坐实，拿不到一个可手敲的口。
+			// 本条目 = 发布判定链的**只读**机器面（免树）：逐层现读真源件复算 ——
+			//   ① publish/whitelist.txt ② EXCLUDES（scripts/build/publish-public.sh）
+			//   ③④ publish/mirror-public-lib.py 的 DROP_EXACT/DROP_PREFIX ⑤ 同件 map_path 映射丢弃。
+			// 链真源读不到 ⇒ 8 · **不给结论**（空表会读成比真值更宽的答案）。
+			path: []string{"publish", "set"},
+			kind: "PublishSet",
+			// ★ 字段表必须写成 `[]string{…}` **字面量** —— 与上面 `net probe` / `publish tree has`
+			//   两条**同一条纪律**（契约脚本的 `FIELDS_RE` 只认字面量；抽成变量 = 该条被读成「没有字段表」）。
+			summary:  "「这件会不会发 + 哪一层拦的」**只读**读数（**免树** · 逐层现读判定链真源件复算 · 链真源读不到 ⇒ 8 · **不给结论**）",
+			usage:    "zerg publish set <仓内路径>… [--json <字段>]",
+			arity:    "any",
+			args:     []string{"仓内路径（相对仓根 —— 形状不合口径 ⇒ 2）"},
+			fields:   []string{"path", "caliber", "will_publish", "layer", "public_path"},
+			endpoint: "",
+			run:      cmdPublishSet,
+		},
+		{
 			path:    []string{"publish", "preflight"},
 			kind:    "PublishPreflight",
 			summary: "公开面预检（**只读** · 跑 scripts/build/publish-preflight.sh <产物目录> · 不改任何状态）",
