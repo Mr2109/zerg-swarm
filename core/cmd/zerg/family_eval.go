@@ -233,6 +233,9 @@ func cmdEvalShow(inv *invocation, stdout, stderr io.Writer) int {
 
 // cmdEvalRun —— `zerg eval run <名> [位置参数…] [--dry-run | --yes]`：D2 三态（**只对 ① 开放**）。
 func cmdEvalRun(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	name := ""
 	if len(inv.args) > 0 {
 		name = strings.TrimSpace(inv.args[0])

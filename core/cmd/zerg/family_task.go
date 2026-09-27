@@ -211,6 +211,9 @@ func taskSubmitBody(inv *invocation) (string, error) {
 // 失败面：主控的 **400 码逐字透传**（`taskSubmitCodes`），命令面不替换、不吞（§4.1 K7 的口径）。
 // rc 只从契约退码表取：`400` 这类「你给的东西不合法」= 用法错 `2`。
 func cmdTaskSubmit(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	body, err := taskSubmitBody(inv)
 	if err != nil {
 		inv.setErr("usage", "bad_flag_value", err.Error())

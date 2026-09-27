@@ -175,6 +175,9 @@ func cmdCalibShow(inv *invocation, stdout, stderr io.Writer) int {
 // 执行面**一个字都没搬进来**：跑的永远是 `bash|python3 scripts/calib/<件>`（脚本本体是唯一真源）。
 // 命令面只做三件事：名字校验（执行前判）· 计划件 · **把脚本的退码原样转出**。
 func cmdCalibRun(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	name := ""
 	if len(inv.args) > 0 {
 		name = strings.TrimSpace(inv.args[0])

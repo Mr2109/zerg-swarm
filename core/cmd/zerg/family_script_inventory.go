@@ -500,6 +500,9 @@ func scriptInvEmitJSON(inv *invocation, stdout, stderr io.Writer, p *scriptInvPl
 
 // cmdScriptInventorySync —— `zerg script inventory sync`（`A3` 的「b」案唯一写面）。
 func cmdScriptInventorySync(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if denied := scriptInvDenyWriteFlags(inv); len(denied) > 0 {
 		inv.setErr("usage", "second_write_path", "本命令**不接受**逐条改旗标（一条命令写 = 没有第二条写路径）")
 		fmt.Fprintf(stderr, "%s: `script inventory sync` **不接受** %s —— 它是「逐条改」那类旗标"+
