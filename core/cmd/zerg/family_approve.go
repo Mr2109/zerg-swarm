@@ -393,6 +393,14 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.selfTest {
 		return approveSelfTest(stdout, stderr)
 	}
+	// ★ 同给判定（`GAP-20260928-01` 同批收）：`--dry-run`（只出明细、零写入）与 `--yes`（真签）
+	//   同给 = 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）。修前同给时 `inv.dryRun` 一真就进干跑支、
+	//   **退 0**（零写入）—— 人给了 `--confirm=<工具名> --yes` 以为签了，实际一个字节没落
+	//   （真签与干跑退码不可区分）。★ 判定走**共享**那一处（`guard.go` 的 `dryRunYesConflict`）⇒
+	//   不另写第二套；位置 = 命令处理器入口、在任何盘面动作之前（与 `cmdGuarded`/`cmdDevEdit` 同形）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	tool := strings.TrimSpace(inv.flagVal("--tool"))
 	scope := strings.TrimSpace(inv.flagVal("--scope"))
 	note := strings.TrimSpace(inv.flagVal("--note"))

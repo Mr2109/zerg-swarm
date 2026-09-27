@@ -1575,7 +1575,7 @@ func init() {
 			path:    []string{"approve", "new"},
 			kind:    "ApprovalSign",
 			summary: "**人签**一枚批准件（要人在终端上敲口令；非交互会话一律拒）· 写不进即拒 · 同名不覆盖",
-			usage:   "zerg approve new --tool <工具名> --by <人名> --note <理由> [--scope <范围>] [--self-test]",
+			usage:   "zerg approve new --tool <工具名> --by <人名> --note <理由> [--scope <范围>] [--self-test] [--dry-run | --confirm=<工具名> --yes]",
 			arity:   "any",
 			args:    []string{"工具名（--tool）", "人名（--by）"},
 			fields:  approveNewFields,
