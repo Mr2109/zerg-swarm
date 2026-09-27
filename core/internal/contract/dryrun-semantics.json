@@ -513,6 +513,13 @@
       "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）。口径照 `repo commit` / `doc meta fill` / `gap add` / `route` 四族先例（`--dry-run` ⇒ 计划件 stdout · 缺 `--yes` ⇒ 2 · `--yes` 才写），不是第五套语义。复核：`python3 scripts/gates/check-dryrun-semantics.py` ⇒ 现跑 == 登记 · rc=0。"
     },
     {
+      "file": "core/cmd/zerg/family_gap_export.go",
+      "类": "实现站点：`gap export --out <目录>` 的 D2 三态写门（`--dry-run` / 缺 `--yes` / `--yes`）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "`bin/zerg gap export --out <目录> --dry-run` ⇒ 退码 0 · stdout = 计划件（落点目录 + 真源路径 + 未闭/已闭计数 + **逐面页数与逐件名**（索引 1 + 页 N）—— 件名与真写**同一份算法** `gapExportOutPrefix`/`gapExportPageSize`/`gapImpactClosed`）+ stderr 一行「（--dry-run：只出计划件 · 零副作用 —— 未建目录、未落任何件；真源与审计一个字未动）」· **连落点目录都不建**（判据：跑前跑后 `test -e <目录>` 均为假、落点目录里件数不变；成对负控 = 不带 `--dry-run` 也不带 `--yes` ⇒ 计划件走 stderr + 退 2、同样零落盘 || 带 `--yes` 的默认档跑完该目录**必多出** `缺口总账-<日期>.md` 与页件）。★ 写面**只有** `--out` 那一支：裸跑（stdout 人面）与 `--json` 两面照旧零写盘，真源 `zerg-cli-gaps.jsonl` 与审计 `edit_audit.jsonl` 任何一态都一个字不动。",
+      "备注": "登记依据 = 门⑩ `R1 未登记件`：本档落盘面此前在命令表里**无 `danger`** ⇒ 写命令冒充只读档（`zerg help` 判安全档 ✗，本族 `gapWriteFaceWhy` 的只读闸也据 `danger == nil` 把它当只读）；2026-09-27 补 `danger: D2` + 干跑档，本件由此新增 `dry.?run`/`DryRun` 字样 ⇒ 必须登记。口径照同族先例 `core/cmd/zerg/family_gap.go`（`add`/`verify`/`set-state`/`note`：`--dry-run` ⇒ 计划件 stdout + rc=0 · 缺 `--yes` ⇒ 2 · `--yes` 才写），不是第五套语义。"
+    },
+    {
       "file": "core/cmd/zerg/cli_gap_state_test.go",
       "类": "命令面测试件（`gap` 族两条新写面三态的机检：干跑零副作用 / 缺 `--yes` 退 2 / 真写读回）",
       "语义": "dryrun.v1",
