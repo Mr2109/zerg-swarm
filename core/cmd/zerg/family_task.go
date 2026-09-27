@@ -222,6 +222,9 @@ func cmdTaskSubmit(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `task submit` 缺 `--desc <任务描述>`（§4.1 K7：位置参数不够，要显式旗标）\n", progName)
 		return exitUsage
 	}
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if inv.dryRun {
 		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
 		fmt.Fprintf(stdout, "  动作     : %s task submit\n", progName)

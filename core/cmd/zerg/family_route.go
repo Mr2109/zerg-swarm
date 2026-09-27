@@ -139,6 +139,9 @@ func routeLoadTable(inv *invocation, stderr io.Writer) (*routepin.Table, string,
 // 它的结果**（走 stdout）；缺 `--yes` 那一态是**没执行**（走 stderr）—— 这也是本族矩阵格
 // `want_stdout_bytes = 0` 能成立的前提。
 func routeWriteGate(inv *invocation, stdout, stderr io.Writer, act, path, effect string, plan []string) (int, bool) {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc, false
+	}
 	if inv.dryRun {
 		fmt.Fprintf(stdout, "计划件（--dry-run · 零副作用 —— 未执行、覆盖表一个字节没动）\n")
 		fmt.Fprintf(stdout, "  动作     : %s %s\n", progName, act)

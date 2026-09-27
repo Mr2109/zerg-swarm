@@ -260,6 +260,9 @@ func cmdArchiveManifest(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	// ---- 干跑：出计划件（逐件清单）· 零副作用 ----
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if inv.dryRun {
 		if inv.jsonGiven {
 			return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, archiveManifestRows(out, lines))

@@ -281,6 +281,9 @@ func gapExportWriteFiles(inv *invocation, stdout, stderr io.Writer, led gapLedge
 	//   `--dry-run` ⇒ 计划件走 stdout + rc=0（**连目录都不建**）；缺 `--yes` ⇒ 计划件走 stderr + 2
 	//   （fail-closed：从不提问）。两条都在 `os.MkdirAll` **之前** ⇒ 本档一个字节都不落。
 	//   退码与真跑**同一张表**（预演不新增码）：`--out` 空值 ⇒ 2 / 落点是单件 ⇒ 8 已在读盘面先判。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if inv.dryRun {
 		gapExportOutPlan(stdout, led, open, closedCount, noDecideCount, dir, "--dry-run")
 		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未建目录、未落任何件；真源与审计一个字未动）\n")

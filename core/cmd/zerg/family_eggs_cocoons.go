@@ -819,6 +819,9 @@ func eggAct(inv *invocation, stdout, stderr io.Writer, action string) int {
 	// ③ 授权闸（**先于任何网络** —— 缺 `--yes` 的判词不许靠「主控打得到了」才给得出）。
 	// 干跑**不走这一支**：它的计划件要等目标核对过之后才印（这样计划件里带得出候选那几行）。
 	// 这一步的计划件只印得出目标两行（名册还没读）⇒ 照实少印，不编候选。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if !inv.dryRun {
 		if rc, goOn := eggWriteGate(inv, stdout, stderr, act, eggArg, machine, endpoint, effect,
 			eggPlanLines(action, eggArg, model, machine, nil)); !goOn {

@@ -477,6 +477,9 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 		return exitFail
 	}
 	// ── 干跑（零副作用：不写一个字节）──
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if inv.dryRun {
 		formWord := map[string]string{
 			"list": "列表形（`  " + name + ":` + 条目行）",

@@ -312,6 +312,9 @@ func cmdHazardWrite(inv *invocation, stdout, stderr io.Writer) int {
 	payloadBytes, _ := json.Marshal(body)
 	payload := string(payloadBytes)
 
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if inv.dryRun {
 		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
 		fmt.Fprintf(stdout, "  动作     : %s %s\n", progName, name)
