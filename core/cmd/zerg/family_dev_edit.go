@@ -368,6 +368,36 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		return rc
 	}
 
+	// ★ 2026-09-28（`GAP-20260928-09` 同族 · 本枚）**字段面先判**（`--json <字段>` 的**名字**校验前移到写盘之前）。
+	//   修前这一判**只有一个落点** —— 真写档末尾 `selectJSON(…, devEditFields, row)`（`requireFields`
+	//   与 `reportBadField` 都在它里面）：件**已经写完了**才因字段面退 2 ⇒ 实测审计里照落一条
+	//   `before_sha256 == after_sha256` 的 `edit` 事件（「拒执」与「真写」从盘面分不开）。★ 口径**一字不新立**：
+	//   仍是 §九 M6 I5 的 `reportBadField`（同一句「未知字段 %q」+ 合法字段清单 + `See …--help`）与 `K2` 的
+	//   `requireFields`（不给字段 ⇒ 2）；形状与 `family_impact.go` / `family_approve.go` / `family_agent_ops.go` /
+	//   `family_route.go` / `family_gate_show.go` / `family_gate_results.go` / `family_eggs_cocoons.go` 那 8 处**逐字同形**
+	//   （同一枚口 · 不另写第二套）。
+	//   ★ 位置选择：落在**写盘动作之前**、而**不**提到命令入口 —— 上面那些读面分支（干跑档已自带
+	//   同一枚字段面判定：`emitDevEditPlan` 传 `inv.fields`）与确认档 / 语法闸 / 批准件闸的**优先级一字不动**：
+	//   干跑档倍数与天平都跟修前**逐字同值**，变的只有一件事 —— 真写档不再先写后报。
+	//   第一个真写动作 = 下面的 `appendEditAudit`（审计先落盘）⇒ 本块在它之前 ✓（本条下面的两道门都只读）。
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+		for _, f := range inv.fields {
+			ok := false
+			for _, l := range fieldListOf(inv.path) {
+				if l == f {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				return reportBadField(stderr, inv.path, f)
+			}
+		}
+	}
+
 	// ⑦ 真写：**审计先落盘**（写不进日志就不许执行 · §九 M3 C5）⇒ 再写件 ⇒ 再自检回读 sha256
 	by := strings.TrimSpace(inv.flagVal("--by"))
 	if by == "" {
@@ -435,7 +465,10 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		if rc := requireFields(inv, stderr); rc != exitOK {
 			return rc
 		}
-		return selectJSON(stdout, stderr, inv, inv.path, devEditFields, row)
+		// ★ 投影表 = **用户点名的那几个**（`inv.fields`）—— 与干跑档同一个口（`emitDevEditPlan` 那一处）。
+		//   原写法传整张 `devEditFields` ⇒ row 里真写档没有的几格（`approver` / `rollback_*`）把任何 `--json` 在**字段面**
+		//   上就顶倒（每一发都是「写完了再退 2」）。字段名的合法性**已在上面那一段判过**。
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, row)
 	}
 	fmt.Fprintf(stdout, "%s	%s	%s	%s\n", fileRel, shortSHA(beforeSHA), shortSHA(afterSHA), fmt.Sprintf("%d 字节", len(after)))
 	// ★ 逐行 diff（缺口 #1）：真写这一档同样给「改了哪几行」——走 **stderr**（人面），
