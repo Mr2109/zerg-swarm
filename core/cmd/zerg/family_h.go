@@ -153,9 +153,14 @@ func cmdGatewayModels(inv *invocation, stdout, stderr io.Writer) int {
 //
 // ★ 2026-09-24（缺口 `Q-160` · 口径与判据件不同源）：收件面换成 `scriptInvScan`
 // （见 `family_script_inventory.go:103`）**同一处**，本命令不再自带第二套扫描。
-// 旧写法（`scanRoots`）只收 `.sh` / `.py` 且只下钻一层 ⇒ 报 136，而判据件
-// `TestScriptInventoryMatchesLiveScan` 与仓外台账同口径现读 139 ⇒ **三者同数不同集**
-// （本命令漏 3 件无后缀可执行件）⇒ 拿本命令的数去核台账会得假绿 ✗。
+// 旧写法（`scanRoots`）只收 `.sh` / `.py` 且只下钻一层 ⇒ 比统一口径的 `scriptInvScan`
+// **少 3 件无后缀可执行件** ⇒ 拿本命令的数去核台账会得假绿 ✗（`Q-160` 后收件口径已统一）。
+// ★ **件数一律现读 · 禁手写**（写死的时点读数会烂）：本命令侧 = `zerg script ls --json path`
+//
+//	的 `items` 长度；判据件侧（`TestScriptInventoryMatchesLiveScan`）走同一处 `scriptInvScan`；
+//	**仓外台账**侧 = `<Zerg-内部文档>/项目文档/v2.5.10/清单-脚本现状-20260920.tsv` 的数据行数 ——
+//	三处现读已**同集**（旧文「三者同数不同集」的时点读数**已不成立** ✓）。
+//
 // 只换**收件口径**：字段面（`path` / `public`）与行序**都不动** ✓。
 func cmdScriptLs(inv *invocation, stdout, stderr io.Writer) int {
 	root := repoRoot()
@@ -209,7 +214,8 @@ func cmdScriptLs(inv *invocation, stdout, stderr io.Writer) int {
 
 // scriptLsKind —— 命令面那一格**量词面** `kind` 的取值（`O-16` · 缺口 `Q-162`）。
 //
-// 为什么要有这一格：`Q-160` 的**收件口径**已修（现读 139 件 ✓），但「139 是**哪一个** 139」
+// 为什么要有这一格：`Q-160` 的**收件口径**已修（件数**现读 · 禁手写**，取法 = 现跑 `zerg
+// script ls --json path` 数 `items`），但「那个数是**哪一个**数」
 // （含不含无后缀可执行件）**机器面无一格可读** ⇒ 下一位仍会拿它去核台账（「同数不同集」的病根
 // 形态）。补这一格 = 把**这一次的判据**变成**长期判据**。
 //
