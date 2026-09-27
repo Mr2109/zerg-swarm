@@ -290,13 +290,14 @@ func TestPublishTreeHas_FieldsFace(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("身份两格齐 ⇒ rc=0，得到 %d · stderr=%s", rc, errb)
 	}
-	// 裸 `--json`（K2 甲档）⇒ 2 + 0 字节 + stderr 列全部可选字段。
+	// 裸 `--json`（K2 甲档）⇒ 2 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射）
+	//   + stderr 列全部可选字段。★ 结果面仍必须空（`items` 空）。
 	rc, out, errb := publishTreeRun(t, "publish", "tree", "has", "README.md", "--tree", tree, "--json")
 	if rc != 2 {
 		t.Errorf("裸 `--json` ⇒ rc=2（K2 甲档 · 码取自退码表），得到 %d", rc)
 	}
-	if out != "" {
-		t.Errorf("裸 `--json` 时 stdout 该 0 字节，得到 %q", out)
+	if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
+		t.Errorf("裸 `--json` 时 stdout 必是 `error` 包封且 `items` 空，得到 %q", out)
 	}
 	// ⑥ 字段表**两处同值**：命令树那一份 ⟷ 裸 `--json` 时 stderr 印的那一份。
 	info, ok := zerg.CommandInfoOfForTest(publishTreePath)

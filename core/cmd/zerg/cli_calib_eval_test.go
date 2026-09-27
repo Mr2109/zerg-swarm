@@ -300,11 +300,16 @@ func TestEvalRun_OnlyAdoptedIsOpen(t *testing.T) {
 func TestCalibEval_JSONFieldFace(t *testing.T) {
 	repo, _, _ := synthCalibEvalRepo(t)
 	for _, fam := range []string{"calib", "eval"} {
-		// 给了 --json 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）且 stdout 0 字节（§4.1 K2）
+		// 给了 --json 不给字段 ⇒ 退码取自退码表（`usage` · 归一后 = 2）；★ 本批起发射闸扩到
+		//   `inv.err != nil` ⇒ **错误面**是把包封打成机器可读走 stdout（旧行为「stdout 0 字节」已过期，
+		//   旧行为下下面这条会红 ⇒ 有牙）；但**结果面**仍必须空（`items` 一条都不出）—— 两个概念别混。
 		wantK2 := usageCodeFromTable(t)
 		rc, out, errb := runZergRepo(t, repo, fam, "ls", "--json")
-		if rc != wantK2 || out != "" {
-			t.Errorf("`%s ls --json` ⇒ 退 %d + 0 字节，得到 rc=%d out=%q", fam, wantK2, rc, out)
+		if rc != wantK2 {
+			t.Errorf("`%s ls --json` ⇒ 退 %d，得到 rc=%d out=%q", fam, wantK2, rc, out)
+		}
+		if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
+			t.Errorf("`%s ls --json`（K2）⇒ stdout 必是 `error` 包封且 `items` 空，得到 %q", fam, out)
 		}
 		if !strings.Contains(errb, "可选字段") {
 			t.Errorf("`%s ls --json` ⇒ 要列可选字段：%q", fam, errb)

@@ -272,8 +272,10 @@ func TestRouteLs_UsageFace(t *testing.T) {
 	if rc != 2 {
 		t.Fatalf("裸 --json ⇒ rc=2，得到 %d", rc)
 	}
-	if out != "" {
-		t.Fatalf("裸 --json ⇒ stdout 0 字节（现读 %d）：%q", len(out), out)
+	// ★ 本批起发射闸扩到 `inv.err != nil` ⇒ 错误面必走 stdout 的机器可读包封（旧行为「stdout 0 字节」
+	//   下本断言会红 ⇒ 有牙）；**结果面**仍必须空（`items` 一条都不出）—— 与下一档同形。
+	if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
+		t.Fatalf("裸 --json ⇒ stdout 必是 `error` 包封且 `items` 空（现读 %d 字节）：%q", len(out), out)
 	}
 	for _, f := range routeFieldsWant {
 		if !strings.Contains(errb, f) {
