@@ -2712,6 +2712,11 @@ func requireFields(inv *invocation, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "下一步：从上面「可选字段」里挑逗号分隔的名字，例：`%s %s --json %s`\n",
 			progName, strings.Join(inv.path, " "), fs[0])
 	}
+	// ★ 2026-09-27（缺口 `GAP-20260927-360`）：错误面**机器可读**（§九 M7）。本函数原只写 stderr、不调
+	//   `setErr` ⇒ 危险档走到这里时包封里没有 `error.detail`，退化成「（命令未报出 kind，按退码兜底）」。
+	//   与 gap 族 6 处（`family_gap.go:558/726/990` · `family_gap_export.go:50` · `family_gap_state.go:223/356`）
+	//   逐字同 kind 同 detail。人面一字不动（stderr 文案仍是上面那几句）。
+	inv.setErr("usage", "json_fields_required", "--json 不给字段")
 	return exitCodeOf("usage")
 }
 
