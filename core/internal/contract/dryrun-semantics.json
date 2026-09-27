@@ -581,6 +581,13 @@
   "语义": "dryrun.v1",
   "零副作用判据": "测试件纯只读：判定口 dangerOpenedProblems / refusingRunnersLiveness 都只收 []*command（正控 = catalog() 现算 · 负控 = 合成夹具），不调任何 runner、不碰文件系统、不碰真源；被断言的只是命令树里 danger/opened/run 三格的形状。",
   "备注": "登记依据 = 门⑩ R1 未登记件（本件出现 dry-run 字样即进扫描面；它是同一套语义的**断言侧**，不另立语义 —— 「谁该真跑、谁只能干跑」正是本件在钉的东西）。"
+ },
+  {
+  "file": "scripts/gates/check-help-shape.py",
+  "类": "判据面：**字样引用**（不是干跑语义站点 —— 全件唯一命中 = 件头注释一行提到「挂门 + `scripts/公开标记.tsv` + `dryrun-semantics.json` 三处登记是随动口」这件事本身；本件**没有** `--dry-run` 档，四个面全是只读：现跑 `bin/zerg help --all` / 裸 `help` / `help dangerous` + 只读矩阵件 `core/cmd/zerg/testdata/cli-matrix.json`）",
+  "语义": "dryrun.v1",
+  "零副作用判据": "本件是**只读面**判据件：取数只走 `bin/zerg help …` 三个只读档（`subprocess.run(..., stdin=DEVNULL)` 直取 stdout）与只读矩阵件 ⇒ 不写任何件（不落盘 / 不删 / 不推 / 不造目录 / 不改 git 状态）；`--self-test` 是**内存合成夹具**（`fix_texts()` 现造三面文本 · 8 格：正控 1 + 负控 6 + 对界 1 · 0 失败），`--emit-baseline` 只 **print** 常量新值（刷新 = 人工照抄，本件自己不写盘）。现跑：真目标 rc=0 / 0.047s · `--self-test` rc=0。",
+  "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：本件的命中是**引文**（件头注释提到本登记表的名字），不是第五套语义。★ 同门⑩ 的另两处挂点先例照抄：`scripts/gates/precommit-gates.sh` 与 `scripts/gates/real-gates.sh` —— 两条都登记为「判据面接线 · **不是**干跑语义站点」。复核：现跑 `check-dryrun-semantics.py` ⇒ 现跑 == 登记 · rc=0。"
  }
   ]
 }
