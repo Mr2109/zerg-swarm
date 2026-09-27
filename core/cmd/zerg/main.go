@@ -1601,12 +1601,12 @@ func init() {
 			path:    []string{"dev", "edit"},
 			kind:    "DevEdit",
 			summary: "受控写入：只改**提案声明过**的件（越界写 ⇒ 2）· 默认干跑 · 一行一事件的审计（写不进审计就不改件）",
-			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件>) [--by <谁>] [--dry-run | --confirm=<主机名> --yes]",
+			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件>) [--by <谁>] [--dry-run | --confirm=<本机名> --yes]",
 			arity:   "any",
 			args:    []string{"提案 id（--proposal）", "要改的件（--file · 必须在提案的 files[] 里）"},
 			fields:  devEditFields,
-			danger:  &dangerSpec{dangerD3, "提案 id", "改仓内件（写工作树）—— 作用域 = 提案声明的件；审计一行一事件；回滚 = 提案退点 + git", "§17.3 铁律③ · §九 M3 C4/C5 · §4.1 K7 · D3b 第二步", true},
-			// `opened`: 真跑已开放（`--confirm=<主机名> --yes` 齐 + 人签批准件 ⇒ 写工作树）。
+			danger:  &dangerSpec{dangerD3, "本机名", "改仓内件（写工作树）—— 作用域 = 提案声明的件；审计一行一事件；回滚 = 提案退点 + git", "§17.3 铁律③ · §九 M3 C4/C5 · §4.1 K7 · D3b 第二步", true},
+			// `opened`: 真跑已开放（`--confirm=<本机名> --yes` 齐 + 人签批准件 ⇒ 写工作树）。
 			opened:   true,
 			endpoint: "",
 			run:      cmdDevEdit,
