@@ -586,7 +586,7 @@ def live_data(root):
     usages, why = usage_lines(binz)
     if usages is None:
         return None, why
-    # 旗标列的真源 = 命令树源码的 `usage`（87 条全有）；`zerg help` 的用法块是它的投影 ⇒ **逐字对拍**
+    # 旗标列的真源 = 命令树源码的 `usage`（141 条全有）；`zerg help` 的用法块是它的投影 ⇒ **逐字对拍**
     help_map = map_usage([p for p, _ in paths], usages)
     for path, line in sorted(help_map.items()):
         if umap_all.get(path) != line:
