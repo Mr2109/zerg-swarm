@@ -6180,6 +6180,121 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "archive/manifest#--dry-run 与 --yes 同给",
+   "command": "archive manifest",
+   "argv": [
+    "archive",
+    "manifest",
+    "docs",
+    "--out",
+    "/tmp/zz-bag",
+    "--dry-run",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go:292` · 逐命令在自己的**唯一写盘点之前**调用）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数（手写时点读数会烂）"
+  },
+  {
+   "id": "task/submit#--dry-run 与 --yes 同给",
+   "command": "task submit",
+   "argv": [
+    "task",
+    "submit",
+    "--desc",
+    "x",
+    "--dry-run",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go:292` · 逐命令在自己的**唯一写盘点之前**调用）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数（手写时点读数会烂）"
+  },
+  {
+   "id": "gap/set-state#--dry-run 与 --yes 同给",
+   "command": "gap set-state",
+   "argv": [
+    "gap",
+    "set-state",
+    "GAP-20260925-01",
+    "--state",
+    "已解",
+    "--evidence",
+    "x",
+    "--dry-run",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go:292` · 逐命令在自己的**唯一写盘点之前**调用）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数（手写时点读数会烂）"
+  },
+  {
+   "id": "gap/note#--dry-run 与 --yes 同给",
+   "command": "gap note",
+   "argv": [
+    "gap",
+    "note",
+    "GAP-20260925-01",
+    "--text",
+    "x",
+    "--dry-run",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go:292` · 逐命令在自己的**唯一写盘点之前**调用）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数（手写时点读数会烂）"
+  },
+  {
+   "id": "model/opts#--dry-run 与 --yes 同给",
+   "command": "model opts",
+   "argv": [
+    "model",
+    "opts",
+    "set",
+    "zz",
+    "--set",
+    "k=v",
+    "--dry-run",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go:292` · 逐命令在自己的**唯一写盘点之前**调用）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数（手写时点读数会烂）"
+  },
+  {
+   "id": "route/pin#--dry-run 与 --yes 同给",
+   "command": "route pin",
+   "argv": [
+    "route",
+    "pin",
+    "--model",
+    "example-35b-v2",
+    "--machine",
+    "x3",
+    "--ttl",
+    "2h",
+    "--dry-run",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go:292` · 逐命令在自己的**唯一写盘点之前**调用）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数（手写时点读数会烂）"
+  },
+  {
+   "id": "script/inventory/sync#--dry-run 与 --yes 同给",
+   "command": "script inventory sync",
+   "argv": [
+    "script",
+    "inventory",
+    "sync",
+    "--dry-run",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go:292` · 逐命令在自己的**唯一写盘点之前**调用）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数（手写时点读数会烂）"
   }
  ],
  "tiers": {
