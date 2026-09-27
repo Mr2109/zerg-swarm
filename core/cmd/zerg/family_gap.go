@@ -322,7 +322,43 @@ func gapJudgeArgv(cmdStr string) ([]string, string) {
 	if name := strings.Join(cmd.path, " "); name == "gap add" || name == "gap verify" {
 		return nil, fmt.Sprintf("判据 %q 是**本族自己的写命令** ⇒ 拒收（自递归：判据要跑得起来才有意义）", name)
 	}
+	if why := gapWriteFaceWhy(cmdStr); why != "" {
+		return nil, why
+	}
 	return fields, ""
+}
+
+// gapWriteFaceWhy —— **只读闸**：把一条判据解析到命令树，落在危险档（写面）且**没带 `--dry-run`**
+// ⇒ 返回非空 why（调用方译成「不给结论」，退码 8）；不是写面 ⇒ 空串。
+//
+// 病（`GAP-20260927-247` · P0）：`gapRunJudge` 走的是**进程内**同一条 `run` 入口（不拼 shell，
+// 但**真执行**）⇒ 一条写面的 `verify_cmd` 会**真写盘**。现读实测（仓外假账 · 零副作用）：`--dry-run`
+// 那一态自称「零副作用」，而判据 `zerg gap note … --yes` 仍把假账 SHA 改掉并落了审计
+// ⇒「跑一条写命令看 rc」既不安全、也拿不到关于缺口的任何结论 ⇒ 本闸：**不执行、不给结论**。
+// ★ 判据只复用本仓既有语义，**不新造**：「写面」= 命令树里的**危险档**（`danger != nil`，本仓写命令
+// 的登记处）；「零副作用的那一态」= 带 `--dry-run` —— 与 `dev` 族 `criterionRunnable`（family_dev.go）
+// 逐字同一条（危险档要当判据就写它的 `--dry-run` 那一态）· 旗标判定直接调现成的 `hasDryRunFlag`。
+func gapWriteFaceWhy(cmdStr string) string {
+	fields := strings.Fields(cmdStr)
+	if len(fields) == 0 {
+		return ""
+	}
+	if filepath.Base(fields[0]) == progName {
+		fields = fields[1:]
+	}
+	if len(fields) == 0 {
+		return ""
+	}
+	cmd, _ := resolve(fields)
+	if cmd == nil || cmd.danger == nil {
+		return ""
+	}
+	if hasDryRunFlag(fields) {
+		return ""
+	}
+	return fmt.Sprintf("判据 %q 落在**写面**（危险档 %s · 它会动：%s）且没带 `--dry-run` —— "+
+		"写命令在进程内真跑会**真写盘**，跑它看 rc 也拿不到关于缺口的结论 ⇒ 不执行、不给结论（退码 8）",
+		strings.Join(fields, " "), cmd.danger.Level, cmd.danger.Effect)
 }
 
 // gapCapWriter —— 判据输出**有界**收集（只留一小段当证据；不把被判命令的整段输出吃进内存）。
@@ -1038,6 +1074,18 @@ func cmdGapVerify(inv *invocation, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "  `--all` 而真源实际 0 行 = 空转 ⇒ 不给结论（闸② `L5` 同款）\n")
 		}
 		return rc
+	}
+
+	// ★ 只读闸（`GAP-20260927-247` · P0）—— 在**跑任何判据之前**先全扫一遍：判据里有**写面**
+	// （危险档且没带 `--dry-run`）⇒ **一条都不跑**、不给结论（退码 8）。放在「跑判据」之前而不是
+	// 逐条判，是为了「**要么全跑、要么一条不跑**」——半跑等于把写面执行到一半。
+	for _, i := range idxs {
+		if why := gapWriteFaceWhy(led.Recs[i].VerifyCmd); why != "" {
+			inv.setErr("blocked", "verify_cmd_write_face", why)
+			fmt.Fprintf(stderr, "%s: 判据是写面（%s）：%s\n", progName, led.Recs[i].ID, why)
+			fmt.Fprintf(stderr, "  ⇒ 一条判据都未执行、不给结论（退码 8；真源一个字节未改）\n")
+			return exitBlocked
+		}
 	}
 
 	// ④ 跑判据（先全部解析、再跑 —— 判据不可跑 ⇒ 2，一个字节都不写）

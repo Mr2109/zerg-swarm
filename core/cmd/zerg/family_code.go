@@ -89,9 +89,13 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 				return exitUsage
 			}
 		}
-		if st, err := os.Stat(base); err != nil || !st.IsDir() {
-			inv.setErr("usage", "path_not_dir", "--path 不是目录")
-			fmt.Fprintf(stderr, "%s: --path 指的不是目录：%s（先 ls 确认目录名 · 退码 2）\n", progName, sub)
+		// ★ `--path` 收**目录**与**常规件**（单件与目录在扫描面上是同一件事：
+		// `filepath.Walk` 对非目录根**恰好**调 walkFn 一次）—— 卡住的只是这一行守卫。
+		// 只放宽接受面：kind/detail/退码/用法串文本一律不动（kind 是闭集，见 check-error-kinds.py R3）。
+		st, serr := os.Stat(base)
+		if serr != nil || (!st.IsDir() && !st.Mode().IsRegular()) {
+			inv.setErr("usage", "path_not_dir", "--path 既不是件也不是目录")
+			fmt.Fprintf(stderr, "%s: --path 指的既不是件也不是目录：%s（路径不存在、或它不是件也不是目录 · 先 ls 确认路径名 · 退码 2）\n", progName, sub)
 			return exitUsage
 		}
 	}
