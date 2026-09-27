@@ -7,9 +7,11 @@
 //
 // 口径（照 §十一 P0-5 的形态，不自造）：
 //
-//	形态 `zerg gate matrix [--out <件>] [--json <字段>]`
+//	形态 `zerg gate matrix [--out <件>] [--dry-run | --yes] [--json <字段>]`
 //	输出逐格 `command/case/want_rc/why` + 合计
-//	退码 `0` 读到 / `8` 读不到（矩阵读不出）/ `2` 用法错
+//	退码 `0` 读到 / `8` 读不到（矩阵读不出）/ `2` 用法错（含 `--out` 档：缺 `--yes` · 两枚同给）
+//	三态（`--out <件>` 写面 · §九 M3 C1/C2）：`--dry-run` ⇒ 计划件走 stdout + 零落盘；
+//	缺 `--yes` ⇒ 计划件走 stderr + 2；`--dry-run` 与 `--yes` 同给 ⇒ 2（先过门、后落盘）
 //
 // ★ 真源只有一处：`core/cmd/zerg/testdata/cli-matrix.json`（本命令**只读它**，不重算、
 // 不重新生成 —— 生成/合并是 `check-cli-contract.py --emit-matrix` 的活，命令面不抢）。
@@ -90,6 +92,25 @@ func cmdGateMatrix(inv *invocation, stdout, stderr io.Writer) int {
 
 	// `--out <件>`：把**逐格**导成一份可回读的 TSV（含 argv 与 why 原文 —— 补格时要照着它写）。
 	if out := strings.TrimSpace(inv.flagVal("--out")); out != "" {
+		// ★ 三态门（D2 · §九 M3 C1/C2 —— 与同族 `gap export` / `gap add|verify` 逐字同一条）：
+		//   `--dry-run` ⇒ 计划件走 stdout + rc=0（**一个字节都不落**）；缺 `--yes` ⇒ 计划件走 stderr + 2
+		//   （fail-closed：从不提问）；两枚**同给**（自相矛盾）⇒ 2（与 `--out`/`--json` 不许同给同一形状）。
+		//   三条都判在**本函数唯一的写盘点**（下面那一行 `os.WriteFile`）**之前** ⇒ 未过门前不建件、不建目录。
+		if inv.dryRun && inv.yes {
+			inv.setErr("usage", "dry_run_yes_conflict", "--dry-run 与 --yes 不许同给")
+			fmt.Fprintf(stderr, "%s: `--dry-run`（只出计划件）与 `--yes`（真写）**不许同给** ⇒ 用法错 2（两道确认档自相矛盾 ⇒ 不给结论）\n", progName)
+			return exitUsage
+		}
+		if inv.dryRun {
+			gateMatrixOutPlan(stdout, path, out, len(rows), nonzero, len(mf.Exemptions), "--dry-run")
+			fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未落件、未建目录；矩阵真源一个字未动）\n")
+			return exitOK
+		}
+		if !inv.yes {
+			gateMatrixOutPlan(stderr, path, out, len(rows), nonzero, len(mf.Exemptions), "缺 `--yes`（D2 档）")
+			inv.setErr("usage", "yes_required", "缺 --yes")
+			return exitUsage
+		}
 		var sb strings.Builder
 		sb.WriteString("# 命令面 must-fail 矩阵（导出自 " + path + " · id=" + mf.ID + "）\n")
 		sb.WriteString("command\tcase\twant_rc\twant_stdout_bytes\targv\twhy\n")
@@ -104,4 +125,19 @@ func cmdGateMatrix(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 已导出 %d 格 → %s\n", progName, len(rows), out)
 	}
 	return listCmd(inv, stdout, stderr, []string{"command", "case", "want_rc", "why"}, rows)
+}
+
+// gateMatrixOutPlan —— `--out <件>` 落盘面的**计划件**（`--dry-run` ⇒ 走 stdout · 缺 `--yes` ⇒ 走 stderr）。
+//
+// 纯函数：只**数**格与行、只往 `io.Writer` 写 ⇒ dryrun.v1「零副作用」的落点就在这一行
+// （不建目录 · 不落件 · 不写真源 · 不写审计）。件内容与真写**同一份算法**（注释头 1 行 + 列名 1 行 +
+// 逐格 N 行 = N+2 行 · 制表符分隔 · 列序 command/case/want_rc/want_stdout_bytes/argv/why）——
+// 计划与真跑不许两套数（数不对 = 假预演 ✗）。
+func gateMatrixOutPlan(w io.Writer, src, out string, nCases, nonzero, exemptions int, why string) {
+	fmt.Fprintf(w, "计划件（%s · `zerg gate matrix --out %s`）\n", why, out)
+	fmt.Fprintf(w, "  落点件   : %s\n", out)
+	fmt.Fprintf(w, "  真源     : %s（只读：本档不写真源、不写审计）\n", src)
+	fmt.Fprintf(w, "  计数     : 格 %d 条（expect-rc≠0 的 %d 条 · 豁免 %d 条）\n", nCases, nonzero, exemptions)
+	fmt.Fprintf(w, "  件内容   : 注释头 1 行 + 列名 1 行 + 逐格 %d 行 = %d 行（制表符分隔）\n", nCases, nCases+2)
+	fmt.Fprintf(w, "  未执行   : %s —— 本档**一个字节都不落**（真写要 `--yes`）\n", why)
 }

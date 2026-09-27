@@ -967,15 +967,16 @@ func init() {
 		//   `os.WriteFile` 写一份逐格 TSV —— 只**新建/覆盖产出件**；不删件、不改矩阵真源
 		//   `testdata/cli-matrix.json`、不改任何仓内真值 ⇒ 可逆（删掉/换回落点件即回原状）
 		//   ⇒ **D2**（`--yes` 即可），不是 D3。
-		//   ⚠ 缺口（**本单不改** · 待派）：本条的三态面（`--dry-run` / 缺 `--yes` ⇒ 2）**尚未接**
-		//   （`cmdGateMatrix` 不读这两枚旗标）⇒ `usage` 串**故意不写** `[--dry-run | --yes]`
-		//   （写了就成了「人面说有、实现不认」的新假话）；补三态面要动第三件
-		//   `core/cmd/zerg/family_gate_matrix.go` ⇒ 超出本单「只改两件」，单列待派。
+		//   ★ 三态面**已接**（2026-09-27 · `family_gate_matrix.go` 的 `gateMatrixOutPlan` + 三道判，
+		//   全在 `os.WriteFile` **之前**）⇒ `usage` 串补上 `[--dry-run | --yes]`：
+		//   `--dry-run` ⇒ 计划件走 stdout + rc=0 且**一个字节都不落**（不建件、不建目录）；
+		//   缺 `--yes` ⇒ 计划件走 stderr + rc=2（fail-closed）；`--dry-run` 与 `--yes` 同给 ⇒ rc=2。
+		//   先看计划件：`zerg gate matrix --out <件> --dry-run`（同族先例 `zerg gap export`）。
 		{
 			path:    []string{"gate", "matrix"},
 			kind:    "GateMatrix",
 			summary: "命令面自己的 must-fail 矩阵（逐格可读可导 —— 新增命令照着它补格）",
-			usage:   "zerg gate matrix [--out <件>] [--json <字段>]",
+			usage:   "zerg gate matrix [--out <件>] [--dry-run | --yes] [--json <字段>]",
 			fields:  []string{"command", "case", "want_rc", "why"},
 			danger: &dangerSpec{dangerD2, "落点件（`--out`）",
 				"往 `--out <件>` 写一份逐格 TSV（command/case/want_rc/want_stdout_bytes/argv/why）；矩阵真源 `testdata/cli-matrix.json` 与仓内真值一个字不动（可逆：删掉落点件即回原状）",
