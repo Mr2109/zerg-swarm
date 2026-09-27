@@ -122,12 +122,21 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 	// ② 日志目录：`--outdir` 给了就用它，没给就命令面指定一个 —— 因为要按它**读回** results.tsv。
 	//   读不回来时**不许编数**：字段值一律写「（读不到）」并在 stderr 说明。
 	if !hasOutdir {
-		outdir = filepath.Join(os.TempDir(), "zerg-gate-step-"+time.Now().Format("20060102-150405"))
-		if err := os.MkdirAll(outdir, 0o755); err != nil {
-			inv.setErr("failed", "outdir_unwritable", err.Error())
-			fmt.Fprintf(stderr, "%s: 建不了日志目录 %s：%v ⇒ 不给结论（退码 8）\n", progName, outdir, err)
+		// ★ 2026-09-27（缺口 `GAP-20260927-432`）：原来按**秒级**时间戳自建 + `MkdirAll` 复用同名目录
+		//   ⇒ 同一秒内两次运行**共用同一处** results.tsv，后一次会把前一次的判决读成自己的
+		//   （**陈旧判决回读** ⇒ 脚本这一轮没落表时「不许当绿」被旧表绕开）。
+		//   改成 `MkdirTemp`：名字前缀带**纳秒**时间戳（给人看的时序），后缀由它加一段随机串，且
+		//   **原子新建** —— 目录必是**本次调用新建的空目录** ⇒ 这一轮没落表就一定读不回（不依赖 mtime
+		//   一类的脆判据，也不与任何旧目录重名）。给了 `--outdir` 的调用方完全不受影响（这一支不走）。
+		prefix := "zerg-gate-step-" + time.Now().Format("20060102-150405.000000000") + "-"
+		base, mkErr := os.MkdirTemp(os.TempDir(), prefix+"*")
+		if mkErr != nil {
+			inv.setErr("failed", "outdir_unwritable", mkErr.Error())
+			fmt.Fprintf(stderr, "%s: 建不了日志目录（%s*）：%v ⇒ 不给结论（退码 8）\n",
+				progName, filepath.Join(os.TempDir(), prefix), mkErr)
 			return exitBlocked
 		}
+		outdir = base
 		tail = append(tail, "--outdir", outdir)
 		scriptTail = append(scriptTail, "--outdir", outdir)
 	}
