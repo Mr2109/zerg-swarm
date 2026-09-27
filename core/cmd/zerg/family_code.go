@@ -6,7 +6,7 @@
 //
 // 口径（照 §十一 P0-1 的形态，不自造）：
 //
-//	形态 `zerg code find <正则> [--path <子目录>] [--glob <模式>] [--json <字段>]`
+//	形态 `zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--full] [--json <字段>]`
 //	输出 `path/line/text` 逐条 + 命中数（人面表格 · 机器面六键包封）
 //	退码 `0` 有命中 / `1` 零命中（**不是错**，是「没有」）/ `2` 用法错（正则坏）/ `8` 仓根/面读不到
 package main
@@ -51,7 +51,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) == 0 || strings.TrimSpace(inv.args[0]) == "" {
 		inv.setErr("usage", "missing_pattern", "缺正则")
 		fmt.Fprintf(stderr, "%s: `code find` 要给正则（例：zerg code find 'func cmdGate' --path core/cmd/zerg）\n", progName)
-		fmt.Fprintf(stderr, "用法：zerg code find <正则> [--path <子目录>] [--glob <模式>] [--json <字段>]\n")
+		fmt.Fprintf(stderr, "用法：zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--full] [--json <字段>]\n")
 		return exitUsage
 	}
 	pat := inv.args[0]
