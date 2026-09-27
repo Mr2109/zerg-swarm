@@ -766,6 +766,9 @@ func cmdEggStop(inv *invocation, stdout, stderr io.Writer) int {
 
 // eggAct —— 两档**共用**的实现（装载与卸载的差别只在端点、请求体、几个词 —— 不各写一份）。
 func eggAct(inv *invocation, stdout, stderr io.Writer, action string) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	verb := eggActVerb(action)
 	act := "egg " + verb
 	endpoint := eggActEndpoint(action)

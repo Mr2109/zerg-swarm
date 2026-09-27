@@ -291,6 +291,9 @@ func requireJSONFields(inv *invocation, stderr io.Writer) int {
 
 // cmdModelAdd —— `zerg model add`：先校验后写（`--dry-run` 先行 · 真写要 `--yes` · 失败回滚）。
 func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if inv.jsonGiven {
 		if rc := requireJSONFields(inv, stderr); rc != exitOK {
 			return rc

@@ -201,6 +201,9 @@ func archiveManifestLines(payload string, files []string) ([]string, error) {
 // 三态（与 `family_h.go` 的写面同一套语义）：`--dry-run` 出计划件（退码 0 · 零副作用）·
 // 缺 `--yes` ⇒ `2`（fail-closed）· 齐了才真写。真写**任一步失败 ⇒ 回滚**（删掉本次建的袋目录）。
 func cmdArchiveManifest(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if inv.jsonGiven {
 		if rc := requireFields(inv, stderr); rc != exitOK {
 			return rc

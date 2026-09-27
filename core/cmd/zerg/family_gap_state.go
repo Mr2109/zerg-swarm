@@ -215,6 +215,9 @@ func gapTargetOne(inv *invocation, led gapLedger, stderr io.Writer, cmdName stri
 // ── ⒜ `zerg gap set-state <GAP id> --state <仍缺|已解> --evidence <一句话>` ──────────────────────
 
 func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	stateWant := strings.TrimSpace(inv.flagVal("--state"))
 	evidence := strings.TrimSpace(inv.flagVal("--evidence"))
 
@@ -352,6 +355,9 @@ func gapSolvedAtPlan(_, want string) string {
 // ── ⒝ `zerg gap note <GAP id> --text <一句话>` ─────────────────────────────────────────────────
 
 func cmdGapNote(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	text := strings.TrimSpace(inv.flagVal("--text"))
 
 	// ① 用法面（在任何盘面动作之前）

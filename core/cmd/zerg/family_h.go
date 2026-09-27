@@ -285,6 +285,9 @@ func hazardWrites() []hazardWrite {
 
 // cmdHazardWrite —— 两枚写面的**唯一执行门**（三态：计划件 / 缺 --yes 拒 / 齐了才发）。
 func cmdHazardWrite(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	name := strings.Join(inv.path, " ")
 	var spec *hazardWrite
 	for i := range hazardWrites() {

@@ -476,6 +476,9 @@ func agentRegistryPath(machine string, a agentAddr, inv *invocation, stderr io.W
 
 // cmdAgentRegistry —— `zerg agent registry <机> [--list] [--add <模型名> --file <GGUF> --ctx <N> --mem-gb <N>] [--dry-run | --yes] [--json <字段>]`
 func cmdAgentRegistry(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if inv.jsonGiven {
 		if rc := requireFields(inv, stderr); rc != exitOK {
 			return rc
