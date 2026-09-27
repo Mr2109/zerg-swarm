@@ -21,9 +21,9 @@
 //	   审计 = 与 `dev edit` **同一件** `edit_audit.jsonl`（`editAuditPath()` · 事件名沿用
 //	   `gap_ledger_written` · 格位沿用 `gapAuditLine`）—— 不另开第二件、不另造事件名。
 //	③ **写后读回对拍**：整件重写之后现算 sha256，必须等于审计里那一格 ⇒ 对不上不给结论（`8`）。
-//	④ **闭集**：`--state` 只认 `gapStateSettable`（`仍缺` / `已解`）；闭集外 ⇒ **2 并逐字印闭集**。
-//	   机器态 `回归` 与中间态 `已派` / `已立项` / `不做` **不在本动作的闭集里** —— 它只回答
-//	   「这条**还在不在**」这一问（其余态各有各的面，本笔不替它们开口子 ✗）。
+//	④ **闭集三值**：`--state` 只认 `gapStateSettable`（`仍缺` / `已解` / `不做`）；闭集外 ⇒ **2 并逐字印闭集**。
+//	   机器态 `回归` 与排期态 `已派` / `已立项` **不在本动作的闭集里** —— 它只回答
+//	   「这条**还在不在** / **还要不要做**」这一问（`已派` / `已立项` 各有各的排期面，本笔不替它们开口子 ✗）。
 //
 // 退码（一律引现有表 `exitcodes.go` · 本族**不取新号**）：
 //
@@ -58,10 +58,11 @@ import (
 	"time"
 )
 
-// gapStateSettable —— `set-state` 的**闭集**（人的口径面：只这两值）。
-// 为什么不是 `gapStateClosed`（六值）：`已派` / `已立项` / `不做` 与机器态 `回归` 各有各的面
-// （前三个是「排期 / 拍板」面、`回归` 是 `verify` 跑判据判出来的）⇒ 本动作**不替它们开口子** ✗。
-var gapStateSettable = []string{gapStOpen, gapStSolved}
+// gapStateSettable —— `set-state` 的**闭集**（人的口径面：三值 —— 「还在不在 / 还要不要做」都能答）。
+// 为什么不是 `gapStateClosed`（六值）：`已派` / `已立项` 是「排期」面、`回归` 是 `verify` 跑判据判出来的
+// ⇒ 本动作**不替这两类开口子** ✗；而 `不做` 是**人拍板**的处置结论（与 `仍缺` / `已解` 同属人的口径面）
+// ⇒ 2026-09-27 起收进闭集（原注「`不做` 另有其面」已不成立，逐字改掉）。
+var gapStateSettable = []string{gapStOpen, gapStSolved, gapStWontDo}
 
 // gapNoteSep —— 一条注的形态：`<时刻> · <谁>：<文本>`（时刻那一格**不参与幂等比对**）。
 const gapNoteSep = "："
@@ -242,7 +243,7 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("usage", "bad_state", "state 值不在本动作闭集里")
 		fmt.Fprintf(stderr, "%s: `--state %s` 不在闭集里 —— 只认 %s\n",
 			progName, stateWant, gapClosedText(gapStateSettable))
-		fmt.Fprintf(stderr, "  闭集只有两值：本动作只回答「这条**还在不在**」（`回归` 由 `zerg gap verify` 跑判据转）\n")
+		fmt.Fprintf(stderr, "  闭集三值（`仍缺` / `已解` / `不做`）：本动作只回答「这条**还在不在**」（`回归` 由 `zerg gap verify` 跑判据转）\n")
 		return exitUsage
 	}
 	if evidence == "" {
