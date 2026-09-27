@@ -469,6 +469,22 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "（--dry-run：只出计划面 · **零副作用** —— 未签 · 未落件 · 未动在册件）\n")
 		return exitOK
 	}
+	// ★ D3 确认档（`§九 M3 C1` · `§十二 P-014` · 缺口账 `GAP-20260927-348` / `GAP-20260927-361`）：
+	// 本命令登记为 **D3（不可逆）** ⇒ `--confirm=<工具名>` 与 `--yes` **同时到**才往下走。
+	// 判在**终端判据 / 读口令之前** = **执行前判**（授权面的事与「谁在敲」无关 —— 与上面 `approve keygen`
+	// 的换钥确认对（`operatorRekeyConfirmPair`）**同一条纪律**）；干跑那一态已经在上面返回 ⇒ 本判
+	// 只落在**真签**这一路（`§4.1 K7`：`--dry-run` 只出计划面，不受确认档约束）。
+	// ★ 为什么以前没有这一判：本件先前的机制是「TTY 判 + 操作员口令**取代**确认档」（缺口 361 摘要逐字），
+	// 而 `dangerSpec.ChecksConfirm` 只是**照实**登记「实现不读它」⇒ 帮助面前言（`guard.go` 三态那段）
+	// 仍逐字承诺「D3 必须两者都到」= 表替实现许了个空承诺。本单把这一格补齐。
+	if err := approveNewConfirmPair(inv, tk.Tool); err != nil {
+		inv.setErr("usage", "confirm_required", err.Error())
+		fmt.Fprintf(stderr, "%s: %v ⇒ 不给签（退码 2）\n", progName, err)
+		fmt.Fprintf(stderr, "  要真签：「%s approve new --tool %s --by <人名> --note <理由> --confirm=%s --yes」\n",
+			progName, tk.Tool, tk.Tool)
+		fmt.Fprintf(stderr, "error.kind=usage · detail=confirm_required · retryable=false · remedy=fix_usage\n")
+		return exitUsage
+	}
 	if !isTTYFile(os.Stdin) {
 		// 这一态**一个字节都不往 stdout 写**（矩阵 `approve/new#非终端不给签（模型路径）` 判据 = stdout 0 字节 ·
 		// 本仓铁律：拒绝那一态不产出任何「看起来像结果」的东西）。
@@ -551,6 +567,36 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "%s: 已签 %s（key_id=%s · 签了 %d 字节）\n", progName, p, tk.KeyID, len(sig))
 	fmt.Fprintf(stderr, "它只作**逃生门**：控制层 action=require_approval 的工具凭它放行；签完的件能回读（`%s approve show %s`）\n", progName, tk.Tool)
 	return exitOK
+}
+
+// approveNewConfirmPair —— `approve new`（**D3**）的确认对口径**只有这一处**（缺口账
+// `GAP-20260927-348`「真读两枚旗标」/ `GAP-20260927-361`「真读 --confirm · 对齐 guard.go 的确认档」）。
+//
+// 判定式（与 `operatorRekeyConfirmPair`（换钥）**同一套**，只是目标那一格不同 —— 这里的目标 =
+// `dangerSpec.Target` 逐字写的「工具名」）：
+//
+//	① 缺 `--confirm`                       ⇒ 错（**fail-closed**：D3 的确认档缺一枚就不动作）；
+//	② 缺 `--yes`                           ⇒ 错（`§十二 P-014`：D3 必须两枚同时到）；
+//	③ `--confirm` 的值 ≠ 待签工具名（逐字） ⇒ 错（`§4.1 K7`：**给错值 = 拒绝**，不是「当没给」）。
+//
+// 三条都在**执行前判**（调用点在终端判据 / 读口令**之前**）：不读口令、不碰任何件 ⇒
+// 拒绝那一态 stdout 恒 0 字节（本仓铁律）。
+// ★ 值的比对对象是**待签件里那枚规范化后的工具名**（`control.SanitizeApprovalField` 之后）——
+// 与人将要签的那件**同一枚字符串**，不是原始 argv（否则 `--tool` 带空白时会「逐字相同」判错对象）。
+func approveNewConfirmPair(inv *invocation, tool string) error {
+	if inv == nil {
+		return errors.New("调用面缺 invocation（不给签）")
+	}
+	if !inv.confirmGiven {
+		return fmt.Errorf("`approve new` 是 D3 档（不可逆：签出的件就是放行凭据）⇒ 缺 `--confirm=<工具名>`（要点名这一枚给谁签：%q）", tool)
+	}
+	if !inv.yes {
+		return errors.New("`approve new` 是 D3 档 ⇒ 缺 `--yes`（不可逆档 ⇒ `--confirm` 与 `--yes` 两枚都要到）")
+	}
+	if got := strings.TrimSpace(inv.confirm); got != tool {
+		return fmt.Errorf("`--confirm` 的值 %q 与待签工具名 %q **不逐字相同** ⇒ 不给签（给错值 = 拒绝，不是「当没给」）", got, tool)
+	}
+	return nil
 }
 
 // ---- keygen（人签的密钥）----
