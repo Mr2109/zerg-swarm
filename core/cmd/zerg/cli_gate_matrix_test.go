@@ -1,7 +1,8 @@
 // cli_gate_matrix_test.go —— P0-5 `zerg gate matrix` 的**真二进制**判据（缺口-命令面-20260921 §十一）。
 //
 // 三面钉住：① 格数与**真源文件**里的格数**逐字一致**（不自己数、不猜）；② `--out` 导出的件
-// 行数 = 格数 + 表头（导不出/少一行就是白导）；③ 真源不在 ⇒ 退 8（**不许把读不到当空矩阵**）。
+// 行数 = 格数 + 表头（导不出/少一行就是白导）；③ 真源不在 ⇒ 退 8（**不许把读不到当空矩阵**）；
+// ④ 成对负控：缺 `--yes` ⇒ 2 且件不落 · `--dry-run` ⇒ 0 且件不落（钉住「旗标被静默忽略」的假绿）。
 package main_test
 
 import (
@@ -59,9 +60,26 @@ func TestGateMatrix_CountsAgainstSourceOfTruth(t *testing.T) {
 	}
 
 	outFile := filepath.Join(t.TempDir(), "matrix.tsv")
-	rc, _, errb = execCase(t, bin, root, "gate", "matrix", "--out", outFile)
+	rc, _, errb = execCase(t, bin, root, "gate", "matrix", "--out", outFile, "--yes")
 	if rc != 0 {
-		t.Fatalf("导出 ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+		t.Fatalf("导出（带 --yes）⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	// ★ 成对负控（2026-09-27）：D2 档缺 `--yes` ⇒ 2 且**件不落**。
+	//   钉住的是那类「旗标被静默忽略」的假绿 —— 修前 `--dry-run`/`--yes` 一次都没读，
+	//   `--out` 裸给照样 rc=0 且真写盘，判据面反而绿。本格不许再被稀释。
+	ncFile := filepath.Join(t.TempDir(), "matrix-nc.tsv")
+	if rc, _, _ = execCase(t, bin, root, "gate", "matrix", "--out", ncFile); rc != 2 {
+		t.Errorf("缺 --yes ⇒ 2（D2 档），得到 %d", rc)
+	}
+	if _, err := os.Stat(ncFile); !os.IsNotExist(err) {
+		t.Errorf("缺 --yes 却落了件（= 确认档没接进实现）：%v", err)
+	}
+	dryFile := filepath.Join(t.TempDir(), "matrix-dry.tsv")
+	if rc, _, _ = execCase(t, bin, root, "gate", "matrix", "--out", dryFile, "--dry-run"); rc != 0 {
+		t.Errorf("--dry-run ⇒ 0（计划件、零落盘），得到 %d", rc)
+	}
+	if _, err := os.Stat(dryFile); !os.IsNotExist(err) {
+		t.Errorf("--dry-run 却落了件（= 假绿）：%v", err)
 	}
 	got, err := os.ReadFile(outFile)
 	if err != nil {
