@@ -62,7 +62,11 @@ SKIP_DIR_NAMES = {".git", "__pycache__", ".venv", "venv", "node_modules", "targe
 SELF_EXEMPT_BASENAME = "check-parser-discipline.py"
 
 # ── P1：grep 的已知选项表（短选项可捆绑 · 数值选项 `-A3` 形态单列）────────────────────
-GREP_SHORT_FLAGS = set("EeFfGivclLnhHoqswxrRPaAbmzdDZU")
+# `I` = GNU grep 的「忽略二进制件」（--binary-files=without-match）—— 原表漏了它。
+# 它由本次「宿主语素归一」暴露：先前 argv 形态的真实调用（subprocess.run([... "grep",
+# "-I", ...])）里 grabber 被逗号粘连（`grep,`）⇒ 整条调用**根本没进过判据**；归一化后显形，
+# `-I` 必须被认成选项（不是「以 - 起头的模式实参」）。补表 = 认识一个真选项，**判据一字未动**。
+GREP_SHORT_FLAGS = set("EeFfGivclLnhHoqswxrRPaAbmzdDZU") | {"I"}
 GREP_LONG_OPTS = {
     "regexp", "file", "ignore-case", "invert-match", "count", "files-with-matches",
     "files-without-match", "line-number", "no-filename", "with-filename", "only-matching",
@@ -80,6 +84,23 @@ GRABBERS = {"grep", "sed", "awk"}
 
 # ── P2：剥标签（贪婪）字面 ──────────────────────────────────────────────────────────
 TAG_STRIP_LITERAL = "<[^>]*>"
+
+# ── 宿主语言标点（**同族口径** · 先例 = scripts/gates/check-git-path-outlet.py:292 的
+#    `STRIP_CHARS`、scripts/gates/check-verdict-record.py 的「夹具数据 vs 命令位」）──────
+# 为什么要有这一层（本门误报的机理）：`_tokenize` 是**字符级状态机**，而 `,` `[` `]` `{` `}`
+# `:` `=` 不是 shell 元字符 ⇒ 不切词。于是**源码里的数据字面**（宿主语言字面量列表的一个元素）
+#         ".MatchString(", "grep -", "for ", "$(",
+# 里的那一段被拼成 token `grep -,`，再被下面「再嵌一层」重切成 `grep` + `-,` ⇒ `-,` 以 `-`
+# 起头、又不在已知选项表里 ⇒ 被判成「破折号模式」。**那是数据，不是一次调用**：`grep -` 连
+# 模式、连件都没有，抓不到任何东西，不构成 getopt 吞实参那种失败模式（那种形态必有模式实参）。
+# ⇒ 判据只看**词素**：归一化时把**首尾**宿主标点剥掉（**只剥首尾**：词内的 `=` 不动，
+# 否则 `grep --exclude=dir` 会被剥成未知长选项 ⇒ 反向造假红）。
+HOST_PUNCT = "\"'`(),[]{}:=,"
+
+
+def _norm_host(tok):
+    """剥掉**首尾**宿主语言标点 ⇒ 判据只看词素本身（同族口径 · 不是放宽阈值）。"""
+    return tok.strip(HOST_PUNCT)
 
 
 def _is_known_grep_option(tok):
@@ -105,15 +126,15 @@ def _scan_tokens(tokens, lineno):
     n = len(tokens)
     while i < n:
         tok = tokens[i]
-        base = os.path.basename(tok)
+        base = os.path.basename(_norm_host(tok))
         if base not in GRABBERS:
             i += 1
             continue
-        # 收本调用的实参（到下一个「像命令」的 token 或结束）
+        # 收本调用的实参（到下一个「像命令」的 token 或结束）—— 逐 token 归一到**词素**
         args = []
         j = i + 1
         while j < n:
-            a = tokens[j]
+            a = _norm_host(tokens[j])
             if a in ("|", "||", "&&", ";", ">", ">>"):
                 break
             if a == ")" or a == "`" or a == "$(":
@@ -234,8 +255,9 @@ def _tokenize(line):
     out = []
     for t in toks:
         out.append(t)
-        if " " in t and ("grep" in t or "sed" in t or "awk" in t):
-            out.extend(_tokenize(t.replace("\\$", "$")))
+        inner = _norm_host(t)          # 引号外的宿主标点（`,` `)` `]` …）不是内层命令的一部分
+        if " " in inner and ("grep" in inner or "sed" in inner or "awk" in inner):
+            out.extend(_tokenize(inner.replace("\\$", "$")))
     return out
 
 
@@ -319,6 +341,16 @@ SELF_TESTS = [
     ("⑩ 成对回绿：普通 `sed 's/x/y/g'`（非剥标签）⇒ rc=0", "#!/bin/bash\nT=$(sed 's/x/y/g' \"$F\")\n", 0),
     ("⑪ 真话负控：把 ③ 那一行**注释掉** ⇒ 回绿（命中的确实是那一行，不是噪声）", "#!/bin/bash\n# N=$(grep -o '--strict-report' \"$F\" | wc -l)\n", 0),
     ("⑫ 一层嵌入：命令串里塞 `grep -o '--x'` ⇒ 仍判得出 ⇒ rc=1", "#!/bin/bash\nadd_step x \"n\" tri \"$R\" \"grep -o '--x' f; rc=$?; exit $rc\"\n", 1),
+    # ⑭/⑮ = 本门误报的**两态对拍**（数据字面 vs 真命令位）：⑭ 是本次修的那一处（同形），
+    # ⑮ 证**判据没被放宽** —— 同一形态只要落在真命令位上就照样红。
+    ("⑭ 正控（**数据字面** · 本门误报根因形态）：宿主语言字面量列表里的 `\"grep -\"` 元素 ⇒ 不判（rc=0）",
+     "#!/usr/bin/env python3\nCONSUMERS = (\n    \".MatchString(\", \"grep -\", \"for \", \"$(\",\n)\n", 0),
+    ("⑮ 负控（**证未放宽真判据**）：同一形态落在**真命令位**（`grep -o '--x' f`）⇒ 照旧 rc=1",
+     "#!/bin/bash\ngrep -o '--x' f\n", 1),
+    ("⑯ 正控（补表后）：`git grep -I -n PLACEHOLDER .`（`-I` 是 GNU grep 真选项）⇒ 不判（rc=0）",
+     "#!/bin/bash\ngit grep -I -n PLACEHOLDER .\n", 0),
+    ("⑰ 负控（**补表没放宽模式实参判据**）：`git grep -I -n '--strict-report' .` ⇒ 照旧 rc=1",
+     "#!/bin/bash\ngit grep -I -n '--strict-report' .\n", 1),
 ]
 
 

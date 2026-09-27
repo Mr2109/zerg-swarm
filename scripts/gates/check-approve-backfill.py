@@ -30,7 +30,7 @@
 
 退码
 --------------------------------------------------
-  0 = 全绿（B1–B5 全过，且自检 6 格全过）· 1 = 有红 · 2 = **不给结论**（取不到读数）
+  0 = 全绿（B1–B5 全过，且自检全过）· 1 = 有红 · 2 = **不给结论**（取不到读数）
 
 用法
 --------------------------------------------------
@@ -54,7 +54,10 @@ TICKET_EIGHT = ["tool", "approver", "approved_at", "scope", "note", "sig_alg", "
 MARK_FIELD = "signed_not_in_person"
 EVENT = "approve_signed"
 LEGACY_SIX = ["before_sha256", "after_sha256", "before_bytes", "after_bytes", "approval", "approver"]
-DEV_EDIT_SHA256 = "844ec81782c4d9317cc714e0c6bc2daae896abbf72803606a0be5a97614f9553"
+# ★ 本常量 = **批准件重签后**的现读值（2026-09-28 02:16:25 Mr2109 重签 `dev_edit.json`：全量 scope + 追加 deploy/，
+#   key_id `8b69ad95939df5cf`；审计行在 `<状态目录>/edit_audit.jsonl`）。**任何时候重签了该件，须同一批把本常量
+#   跟到新值** —— 否则门⑰ 会以「B5 破」恒红（今晚即如此）。
+DEV_EDIT_SHA256 = "afb8dc93d571dc6ae1abf4844ac0f54206e6556d4f5fb89f229426f77c9bccbe"
 
 
 # ── 判定口（纯函数：自检与真目标**共用同一套**）──────────────────────────────────────
@@ -263,6 +266,122 @@ def self_test(repo, state):
     v_no, e_no = mark_of(json.dumps({"event": EVENT}))
     check(v_no is None and e_no is not None, "⑥ 负控：**抹掉明标** ⇒ 判红（不可分不许蒙过去）",
           "⑥ 负控失败：没明标还判绿")
+    # ── ★ 回归自测格（缺口 `GAP-20260928-217` · 2026-09-28 补）：**真判据面**不许哑化 ──
+    #   病灶（今天已治，本格是牙齿）：本自测此前只喂**判定口零件**（`judge_ticket_fields` /
+    #   `judge_audit_side` / `mark_of` 三个纯函数 + 常量 `TICKET_EIGHT`），**真判据面
+    #   `read_all()` / `parse_*()` / `judge_event_count()` / `judge_all()` / `scan()`
+    #   一个都不进自检** ⇒ 把 `scan()` 体首行后插一行 `return []` 哑化后 `--self-test`
+    #   仍 `rc=0`「6 格过」（假安全；2026-09-28 **仓外硬拷贝**实测复现：哑化后
+    #   `py_compile` rc=0、自测 rc=0）。同族体例照拄 `check-public-tree-hazards.py`
+    #   的两格（`scan-paths-catches-hazard` / `scan-forms-catches-hazard`）。
+    #   治法：拿一份**按现读判据面形状造的合成夹具**（仓外 `tempfile.mkdtemp`：假
+    #   `family_approve.go` + 假 `edit_audit.jsonl` + 假在册件）喂给**真判据面** `scan()`，
+    #   断言它**真判红并逐字点名** —— 谁把 `scan()` / `judge_all()` / `judge_event_count()` /
+    #   `parse_*()` / `read_all()` 哑化成空结果，本格立刻变红。
+    #   夹具建不起来（临时目录不可写）⇒ **红**：缺语料不许静默绿（下列格全红）。
+    import contextlib as _ctx
+    import io as _io
+    import shutil as _shutil
+    import tempfile as _tempfile
+
+    _FIELDS_GO = "".join('\t%s string `json:"%s"`\n' % (_t, _t) for _t in TICKET_EIGHT)
+    _SIG_GO = '\tsig string `json:"sig"`\n'
+    _MARK_GO = '\tzzMARKzz bool `json:"zzMARKzz"`\n'.replace("zzMARKzz", MARK_FIELD)
+    _AUDIT_GO = ('type approvalAuditLine struct {\n'
+                 '\tat string `json:"at"`\n'
+                 '\tevent string `json:"event"`\n'
+                 '\ttool string `json:"tool"`\n'
+                 '\tapproval_path string `json:"approval_path"`\n'
+                 '\tzzMARKzz bool `json:"zzMARKzz"`\n'
+                 '}\n').replace("zzMARKzz", MARK_FIELD)
+    _OWN_GO = ('var approveAuditOwnFields = []string{"at", "event", "tool", "approval_path", "zzMARKzz"}\n'
+               ).replace("zzMARKzz", MARK_FIELD)
+    _GO_OK = ("package main\n\n"
+              "type approvalTicketFile struct {\n" + _FIELDS_GO + "}\n\n" + _AUDIT_GO + "\n" + _OWN_GO)
+    # ⓐ 正控夹具一（A 案形态）：把明标**塞进件字段面** —— B1 该判红的那一处
+    _GO_BAD = _GO_OK.replace(_SIG_GO, _SIG_GO + _MARK_GO)
+    _ROW_IN = json.dumps({"event": EVENT, MARK_FIELD: False})
+    _ROW_BACK = json.dumps({"event": EVENT, MARK_FIELD: True})
+    _fx_root = _tempfile.mkdtemp(prefix="backfill-selftest-scan-")
+    _hz_ticket = ("夹具建不起来", -99)      # ⓐ 正控①：明标进件（B1）
+    _hz_row = ("夹具建不起来", -99)         # ⓐ 正控②：台帐里一条补签（B4）
+    _clean = ("夹具建不起来", -99)          # ⓒ 反向对照：干净夹具
+    _noaudit = ("夹具建不起来", -99)        # 静默绿守卫：审计件缺失
+
+    def _mk_fixture(_name, _go_src, _rows):
+        _root = os.path.join(_fx_root, _name)
+        _repo = os.path.join(_root, "repo")
+        _state = os.path.join(_root, "state")
+        os.makedirs(os.path.join(_repo, os.path.dirname(APPROVE_GO_REL)), exist_ok=True)
+        os.makedirs(os.path.join(_state, "approvals"), exist_ok=True)
+        with open(os.path.join(_repo, APPROVE_GO_REL), "w", encoding="utf-8") as _fh:
+            _fh.write(_go_src)
+        if _rows is not None:
+            with open(os.path.join(_state, "edit_audit.jsonl"), "w", encoding="utf-8") as _fh:
+                _fh.write("".join(_r + "\n" for _r in _rows))
+        with open(os.path.join(_state, "approvals", "dev_edit.json"), "w", encoding="utf-8") as _fh:
+            _fh.write("{}\n")
+        return _repo, _state
+
+    def _run_fixture(_repo, _state):
+        _buf = _io.StringIO()
+        with _ctx.redirect_stdout(_buf):
+            _rc = scan(_repo, _state)
+        return _buf.getvalue(), _rc
+
+    try:
+        # 干净面：八格逐字 + 明标只在审计侧 + 台帐一行在场
+        _fx_clean = _mk_fixture("clean", _GO_OK, [_ROW_IN])
+        # ⓐ 正控①：件字段面被植入明标（A 案形态）
+        _fx_ticket = _mk_fixture("ticket-mark", _GO_BAD, [_ROW_IN])
+        # ⓐ 正控②：台帐里多一条**补签**行（`signed_not_in_person=true`）
+        _fx_row = _mk_fixture("audit-backfill", _GO_OK, [_ROW_IN, _ROW_BACK])
+        # 静默绿守卫：审计件不在（同一夹具只差这一枚件）
+        _fx_noaudit = _mk_fixture("no-audit", _GO_OK, None)
+        _clean = _run_fixture(*_fx_clean)
+        _hz_ticket = _run_fixture(*_fx_ticket)
+        _hz_row = _run_fixture(*_fx_row)
+        _noaudit = _run_fixture(*_fx_noaudit)
+    except OSError as _exc:
+        print("   ✗ %-32s | 夹具建不起来（%s）⇒ 不许静默绿（下列格全红）" % ("backfill-fixture", _exc))
+
+    def _cell(_label, _cond, _why):
+        check(_cond, "%s | %s" % (_label, _why), "%s | %s" % (_label, _why))
+
+    # ⓪ 先证夹具**真喂到了**真判据面（否则下列格是空转）
+    _cell("scan-fixture-reaches-judge",
+          _clean[1] == 1 and "B5 破" in _clean[0] and "件字段面" in _clean[0],
+          "真判据面 `scan()` 在合成夹具上取到数并走到判据（现读 rc=%s · 读到 B5 破=%s · 读到件字段面=%s）"
+          % (_clean[1], "B5 破" in _clean[0], "件字段面" in _clean[0]))
+    # ⓐ 正控①：明标进件 ⇒ 真判据面 rc=1 **且逐字点名** `B1 破`
+    _cell("scan-catches-mark-in-ticket",
+          _hz_ticket[1] == 1 and "B1 破" in _hz_ticket[0],
+          "`scan()` 对「明标进件」真判红并逐字点名 `B1 破`（现读 rc=%s · 点名=%s）"
+          % (_hz_ticket[1], "B1 破" in _hz_ticket[0]))
+    # ⓐ 正控②：台帐里一条补签 ⇒ rc=1 且逐字点名 `B4 破` + 条数
+    _cell("scan-catches-backfill-row",
+          _hz_row[1] == 1 and "B4 破" in _hz_row[0] and "1 条" in _hz_row[0],
+          "`scan()` 对台帐里的补签行真判红并点名条数（现读 rc=%s · 点名 `B4 破`=%s · 1 条=%s）"
+          % (_hz_row[1], "B4 破" in _hz_row[0], "1 条" in _hz_row[0]))
+    # ⓒ 反向对照：干净夹具上植入面**一处都不许命中**（⇒ 本组格不是恒红）
+    _cell("scan-clean-has-no-induced-hit",
+          _clean[1] == 1 and not any(_k in _clean[0] for _k in ("B1 破", "B3 破", "B4 破")),
+          "干净夹具上植入面零命中（唯一红 = 合成在册件 sha 无前像的 B5 · 现读 rc=%s · 命中=%s）"
+          % (_clean[1], [_k for _k in ("B1 破", "B3 破", "B4 破") if _k in _clean[0]]))
+    # ⓑ 反控（哑化模型）：判据面被换成**空结果** ⇒「有问题的」与「干净的」**两态同形** ⇒ 本格必红
+    _cell("scan-face-not-blind",
+          not (("B1 破" in _hz_ticket[0]) == ("B1 破" in _clean[0])
+               and ("B4 破" in _hz_row[0]) == ("B4 破" in _clean[0])),
+          "判据面哑化（空结果 ⇒ 两态同形）时本格判红 —— 现读两态已分开（正控命中 %s/%s · 对照命中 %s/%s）"
+          % ("B1 破" in _hz_ticket[0], "B4 破" in _hz_row[0],
+             "B1 破" in _clean[0], "B4 破" in _clean[0]))
+    # 静默绿守卫：审计件缺失 ⇒ rc=2（哑化 `scan()` / `read_all()` ⇒ 出 0/空 ⇒ 本格必红）
+    _cell("scan-refuses-without-corpus",
+          _noaudit[1] == 2 and "未取数" in _noaudit[0],
+          "审计件缺失时 rc=2 且写明「未取数」（现读 rc=%s · 未取数=%s）"
+          % (_noaudit[1], "未取数" in _noaudit[0]))
+    _shutil.rmtree(_fx_root, ignore_errors=True)
+
     print("   自检：%d 格过 · %d 格不过（真目标只读 · 未改任何字节）" % (ok, bad))
     return bad == 0
 

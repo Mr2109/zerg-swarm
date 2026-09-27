@@ -22,6 +22,13 @@
 
   ① **落点面**：判据件自己的结论**落点**不许在 `/tmp` 上（扫判据面 `scripts/gates/**` 的
      `check-*.py|sh` + `mutate-scan`，命中 ⇒ `rc=1` + 逐条点名「件:行 + 原样」）。
+     ★ **自检夹具登记**（在册 `GAP-20260928-96` · 同门㉝ `check-public-face-wording.py:236-301`
+     的 `WHITELIST` 同形）：判据件的**自检夹具**里必然把「写 /tmp」的形态写成**合成标本串**
+     （`NEG_CASES`/`POS_CASES` 用例正文 —— 跑起来一个字不写 `/tmp`）⇒ 那不是病、是**夹具数据**；
+     这类命中走 `FIXTURE_EXEMPT` **逐条登记 + 逐条打印理由**、不计入命中数（**不是静默过滤** ✗）。
+     登记只盖**夹具字面量形态**那一行；**命令位调用 / `open(…,"w")` 写盘**在**同一件里照旧红**
+     （⇒ 不放宽真目标判据）。条目命中 0 处 = **悬空登记**，照实打印、**不判红**（同门㉝ 口径）；
+     表长 > `FIXTURE_EXEMPT_MAX` ⇒ `rc=2`（防把「往登记表里加条目」当治本 ✗）。
      本门的结论落点 = **状态目录** `<state>/verdict_records.jsonl`（`--record` 显式落一条 · 非 `/tmp`）。
   ② **指纹面**：指纹由**内容**算出 —— subject 归一成「**条**」：
      `add_step` 条 = `scope|步名|档位|工作目录|命令串`（**去缩进 / 去排版**）；
@@ -41,7 +48,8 @@
   0 = 落点面 0 命中 + 指纹面两遍现算逐字相同（+ 记录位有 ⇒ 照实打印可比性读法）
   1 = **落点面命中**（判据件的结论落点在 `/tmp` 上 · 逐条点名）
   2 = **不给结论**：门表 / 基线件不在盘 · `add_step` 解析到 0 条（空转）· 两遍现算**不同** ·
-      自检不过 · `--compare` 时**不足两跑**或**指纹不同**（后者逐字打印「仓变了，结果不可比」）
+      自检不过 · 登记表超硬钳（`FIXTURE_EXEMPT` > `FIXTURE_EXEMPT_MAX`） · `--compare` 时**不足两跑**或
+      **指纹不同**（后者逐字打印「仓变了，结果不可比」）
 
 用法
 ----
@@ -60,6 +68,7 @@
 
 import argparse
 import contextlib
+import fnmatch
 import hashlib
 import io
 import json
@@ -72,7 +81,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ROOT = os.path.dirname(os.path.dirname(HERE))
-VERSION = "check-verdict-record.py v1.0.0"
+VERSION = "check-verdict-record.py v1.1.0"
 
 SUBJECT = "gate-face"                      # subject 名（记录按它分组）
 GATE_TABLE_REL = "scripts/gates/precommit-gates.sh"
@@ -92,6 +101,34 @@ ADD_STEP_RE = re.compile(
 LANDING_PATTERNS = (
     ("shell-redirect", re.compile(r"(?<![A-Za-z<=])>{1,2}\s*/tmp/")),
     ("py-open-write", re.compile(r"""open\(\s*["']/tmp/[^"']*["']\s*,\s*["'][wa]""")),
+)
+
+# ── 自检夹具登记（在册 `GAP-20260928-96` · **同族先例同形**）──────────────────────────
+#   先例（逐字）：门㉝ `scripts/gates/check-public-face-wording.py:236-301` 的 `WHITELIST`
+#   —— 条目 = (规则名, 件 glob（tuple · fnmatch · `*` 跨 `/`）, 行正则, 为什么豁免)；
+#   本件照它的**登记式白名单**做，只把第一格（规则名）换成**件 glob 单格**（本面只有一条规则族）。
+#   逐命中**逐条打印理由** · 悬空条目（命中 0 处）**照实打印、不判红**（同门㉝ 那一格口径）。
+#   ★ 为什么有它：判据件自己的**自检夹具**里必然把「写 /tmp」的形态写成**合成标本串**
+#     （`NEG_CASES`/`POS_CASES` 的用例正文 —— 跑起来一个字不写 `/tmp`）⇒ 那不是病，是**夹具数据**；
+#     不登记 ⇒ 门把「标本串」当真病（假红）。
+#   ★ 与「放宽真判据」的界线（**逐条可核**）：条目只盖**夹具字面量形态**那一行
+#     （行首缩进 + 单引号起 + `> /tmp/` + 收尾 `',` 后跟档位串）；**命令位调用**
+#     （`subprocess.run("… > /tmp/x")`）与 `open(…,"w")` 写盘在**同一件里照旧红** —— 见 `--self-test` ⑬b/⑬c。
+#   ★ `件 glob` 用**精确件名**（不是路径前缀 · 同门52 `EXEMPT_QS` 口径「精确文件名 + 形状匹配」）。
+#   ★ 表长度硬钳（同 `EXEMPT_QS` 的「多于 1 条 ⇒ rc=2」）：条目数 > `FIXTURE_EXEMPT_MAX`
+#     ⇒ rc=2 **不给结论**（防把「往登记表里加条目」当治本 ✗）。
+FIXTURE_EXEMPT_MAX = 4
+FIXTURE_EXEMPT = (
+    # `check-token-argv.py` 自检 `NEG_CASES` ③b（heredoc 在卵里生成单元件）里的落点标本串
+    (("scripts/gates/check-token-argv.py",),
+     re.compile(r"^\s*'[^']*> /tmp/[^']*',\s*\"[A-Z][A-Z0-9-]*\"\)"),
+     "自检夹具（合成标本串）：`NEG_CASES` 用例正文里的标本路径 —— 跑起来一个字不写 /tmp"
+     "⇒ 判「夹具数据」，不是「结论落点」；同一件里若改成命令位调用写 /tmp ⇒ 照旧红"),
+    # `check-wired-scripts.py` 自检 ⑮ 正控（接线面夹具）里的重定向标本串
+    (("scripts/gates/check-wired-scripts.py",),
+     re.compile(r"^\s*'[^']*check-[a-z][a-z-]*\.py[^']*> /tmp/[^']*'"),
+     "自检夹具（合成标本串）：自证用例正文里那条重定向标本串（现读为变量前缀形态）"
+     "⇒ 夹具数据不是结论落点；命令位真写 /tmp 照旧红"),
 )
 
 # 判据件面（落点面扫的件集）：`scripts/gates/**` 的 `check-*.py` / `check-*.sh` / `mutate-scan`
@@ -159,29 +196,53 @@ def fingerprint(items, subject=SUBJECT):
     return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def scan_landing(root):
-    """落点面：返 (命中清单, 扫到的件数, 自豁免清单)。
+def fixture_exempt_of(rel, line):
+    """命中行是否被「自检夹具登记」盖住 ⇒ 返 (条目序号, 为什么豁免)，否则 None。"""
+    for idx, (globs, rx, why) in enumerate(FIXTURE_EXEMPT, 1):
+        if not any(fnmatch.fnmatch(rel, g) for g in globs):
+            continue
+        if rx.search(line):
+            return idx, why
+    return None
 
-    自豁免（**结构性 · 打印理由** · 同门㉝ 口径）：本件自己的判据表里必然把「写 /tmp」的**形态**
-    写成字面量（正则与注释）⇒ 它**不在**扫面里；别的件一律照判（本件不是判据件的「后门」）。
+
+def scan_landing(root):
+    """落点面：返 (命中清单, 扫到的件数, 自豁免清单, 夹具登记豁免清单, 悬空登记清单)。
+
+    自豁免两档（**结构性 · 打印理由** · 同门㉝ 口径）：
+      ① 本件自己（判据表里必然把「写 /tmp」的形态写成字面量）⇒ 整件不在扫面里；
+      ② 别的件的**自检夹具合成标本串** ⇒ 走 `FIXTURE_EXEMPT` 逐条登记（在册 `GAP-20260928-96`）：
+         **逐条打印理由** · 不计入命中数（**不是静默过滤** ✗）；登记条目**命中 0 处**（悬空）⇒
+         照实打印、**不判红**（同门㉝ 那一格口径）。
     """
-    hits, files, exempt = [], judge_files(root), []
+    hits, files, exempt, fixture, stale = [], judge_files(root), [], [], []
     if files is None:
-        return None, None, exempt
+        return None, None, exempt, fixture, stale
     me = os.path.basename(__file__)
+    seen = [0] * len(FIXTURE_EXEMPT)
     for p in files:
+        rel = os.path.relpath(p, root)
         if os.path.basename(p) == me:
-            exempt.append({"file": os.path.relpath(p, root),
+            exempt.append({"file": rel,
                            "reason": "自豁免：本件的判据表 / 注释把「写 /tmp」的形态写成字面量（结构性）"})
             continue
         with open(p, encoding="utf-8", errors="replace") as f:
             for i, line in enumerate(f.read().splitlines(), 1):
                 for label, rx in LANDING_PATTERNS:
                     if rx.search(line):
-                        hits.append({"file": os.path.relpath(p, root), "line": i,
-                                     "form": label, "raw": line.strip()})
+                        fx = fixture_exempt_of(rel, line)
+                        if fx:
+                            seen[fx[0] - 1] += 1
+                            fixture.append({"file": rel, "line": i, "form": label,
+                                            "raw": line.strip(), "rule": fx[0], "reason": fx[1]})
+                        else:
+                            hits.append({"file": rel, "line": i,
+                                         "form": label, "raw": line.strip()})
                         break
-    return hits, files, exempt
+    for idx, (globs, _rx, why) in enumerate(FIXTURE_EXEMPT, 1):
+        if seen[idx - 1] == 0:
+            stale.append({"rule": idx, "globs": list(globs), "reason": why})
+    return hits, files, exempt, fixture, stale
 
 
 def state_dir(cli=None):
@@ -224,14 +285,21 @@ def append_record(state, rec):
 def judge(root):
     """本门的判据（**只读**）：落点面 + 指纹面两遍现算。返 (rc, report)。"""
     rep = {"root": os.path.abspath(root), "landing_hits": [], "judge_files": 0,
-           "fingerprint": "", "fingerprint2": "", "items": 0, "problems": [], "self_exempt": []}
-    hits, files, exempt = scan_landing(root)
+           "fingerprint": "", "fingerprint2": "", "items": 0, "problems": [], "self_exempt": [],
+           "fixture_exempt": [], "fixture_stale": []}
+    if len(FIXTURE_EXEMPT) > FIXTURE_EXEMPT_MAX:
+        rep["problems"].append({"what": "fixture_exempt_clamp",
+                                "msg": "自检夹具登记 %d 条 > 硬钳 %d ⇒ 不给结论（防把『往登记表里加条目』当治本）"
+                                       % (len(FIXTURE_EXEMPT), FIXTURE_EXEMPT_MAX)})
+    hits, files, exempt, fixture, stale = scan_landing(root)
     if files is None:
         rep["problems"].append({"what": "judge_dir_absent", "path": os.path.join(root, JUDGE_DIR_REL)})
     else:
         rep["judge_files"] = len(files)
         rep["landing_hits"] = hits
         rep["self_exempt"] = exempt
+        rep["fixture_exempt"] = fixture
+        rep["fixture_stale"] = stale
     # 指纹面：**两遍独立读盘**（各自重扫一遍 ⇒ 顺序/缓存都不能影响结果）
     items1, prob1 = subject_items(root)
     items2, prob2 = subject_items(root)
@@ -260,6 +328,8 @@ def machine_doc(rep, rc, state, records, extra=None):
         "landing_hits": rep.get("landing_hits", []),
         "landing_hit_count": len(rep.get("landing_hits", [])),
         "self_exempt": rep.get("self_exempt", []),
+        "fixture_exempt": rep.get("fixture_exempt", []),
+        "fixture_exempt_stale": rep.get("fixture_stale", []),
         "judge_files": rep.get("judge_files", 0),
         "record_path": os.path.join(state, RECORD_NAME),
         "records": len(records),
@@ -335,6 +405,12 @@ def run(root, state, args):
           % (rep["judge_files"], JUDGE_DIR_REL))
     for e in rep.get("self_exempt", []):
         print("              · 自豁免 %s —— %s" % (e["file"], e["reason"]))
+    for e in rep.get("fixture_exempt", []):
+        print("              · 夹具登记豁免 %s:%d [%s]（条目 %d）—— %s"
+              % (e["file"], e["line"], e["form"], e["rule"], e["reason"]))
+    for e in rep.get("fixture_stale", []):
+        print("              · 悬空登记（条目 %d · %s）命中 0 处 —— 照实打印 · **不判红**（同门㉝ 口径）"
+              % (e["rule"], " ".join(e["globs"])))
     print("  subject   : %s（门表 add_step 条 + 两件命令面基线件的规范化 JSON）" % SUBJECT)
     print("  指纹      : %s（条 %d）" % (rep["fingerprint"], rep["items"]))
     print("  两遍现算  : %s ⇒ %s" % (rep["fingerprint2"],
@@ -366,7 +442,8 @@ def run(root, state, args):
         print("  最近记录  : 无（结论件记录数 0）⇒ 本条只判到「落点面 + 本跑两遍现算」；"
               "要判可比性：先 `--record` 两跑再 `--compare`")
     print("⇒ 判据（rc=0）：落点面 0 命中（判据件的结论没有散在 `/tmp`）"
-          " + 指纹面两遍现算逐字相同（内容算出 · 非行号）")
+          " + 指纹面两遍现算逐字相同（内容算出 · 非行号）"
+          " + 自检夹具登记豁免 %d 处（逐条打印理由 · 不算命中）" % len(rep["fixture_exempt"]))
     print("   ★ 本件只**读**门表与两件基线：一个字未改（`--record` 才写，且只写状态目录）")
     return 0
 
@@ -382,6 +459,10 @@ def list_rules():
     for label, rx in LANDING_PATTERNS:
         print("    · %-14s %s" % (label, rx.pattern))
     print("  结论件  : <状态目录>/%s（JSONL · `--record` 追加 · **非 /tmp**）" % RECORD_NAME)
+    print("  夹具登记: `FIXTURE_EXEMPT` %d 条（硬钳 %d）—— 条目 = (件 glob, 行正则, 为什么豁免) ·"
+          " 逐命中打印理由 · 悬空不判红" % (len(FIXTURE_EXEMPT), FIXTURE_EXEMPT_MAX))
+    for idx, (globs, rx, _why) in enumerate(FIXTURE_EXEMPT, 1):
+        print("    · 条目%d %s  %s" % (idx, " ".join(globs), rx.pattern))
     print("  退码    : 0 两条面皆过 · 1 落点面命中 · 2 不给结论（缺件/空转/两遍不同/自检不过/"
           "不足两跑/指纹不同）")
     print("★ 已挂门：`gates` scope · `tri` 阻断 · 在默认集 · 不进 `FAST_STEPS`。")
@@ -427,7 +508,8 @@ run_suite() {
 """
 
 
-def mk_fixture(tmp, name, gate=FIXTURE_GATE, base=None, matrix=None, judge_body=None):
+def mk_fixture(tmp, name, gate=FIXTURE_GATE, base=None, matrix=None, judge_body=None,
+               judge_name="check-a.py"):
     """合成夹具：`<tmp>/<name>/` = 假仓（门表 + 两件基线 + 判据件面）。"""
     root = os.path.join(tmp, name)
     os.makedirs(os.path.join(root, "scripts", "gates"), exist_ok=True)
@@ -440,9 +522,22 @@ def mk_fixture(tmp, name, gate=FIXTURE_GATE, base=None, matrix=None, judge_body=
         json.dump(matrix or FIXTURE_MATRIX, f, ensure_ascii=False, indent=2)
     clean = judge_body if judge_body is not None else (
         '#!/usr/bin/env python3\n"""夹具判据件（落点在仓内）"""\nprint("ok")\n')
-    with open(os.path.join(root, "scripts", "gates", "check-a.py"), "w", encoding="utf-8") as f:
+    with open(os.path.join(root, "scripts", "gates", judge_name), "w", encoding="utf-8") as f:
         f.write(clean)
     return root
+
+
+# 自检夹具：**判据件自己的合成标本串**（在册 `GAP-20260928-96`）
+#   件名必须与 `FIXTURE_EXEMPT` 的 `件 glob` 逐字相同（登记按**精确件名**匹配 · 不是路径前缀）。
+SPEC_CASE = ("#!/usr/bin/env python3\n"
+             "# 合成夹具判据件（自检 NEG_CASES：标本串，跑起来一个字不写 /tmp）\n"
+             "NEG_CASES = [\n"
+             "    (\"③b\", \"单元正文在 .sh 的 heredoc 里\", \"neg3b\", \"deploy.sh\",\n"
+             "     '#!/usr/bin/env bash\\ncat > /tmp/edge-node-agent.service << UNIT_EOF\\n', \"UNIT-OPT-ARGV\"),\n"
+             "]\n")
+# **真写**（命令位调用）——登记**不许**盖住它（同件、同 /tmp，形态不同 ⇒ 照旧红）
+REAL_WRITE = ("#!/usr/bin/env python3\nimport subprocess\n"
+              "subprocess.run(\"git status > /tmp/st-before.txt\", shell=True)\n")
 
 
 def self_test():
@@ -580,6 +675,29 @@ def self_test():
          ("自豁免" in out and "落点面 0 命中" in out))
     case("⑫b 自豁免只放**本件**、不放别人（同名判据件别处仍照判）", True,
          ("scripts/gates/check-a.py" not in out))
+
+    # ⑬ 正控（在册 `GAP-20260928-96`）：判据件的**自检夹具合成标本串**（`NEG_CASES` 用例正文）
+    #    ⇒ 走 `FIXTURE_EXEMPT` 登记 ⇒ **不算落点命中**（rc=0 · 逐条打印理由）
+    r13 = mk_fixture(tmp, "case-13", judge_name="check-token-argv.py", judge_body=SPEC_CASE)
+    rc, out = cap(run, r13, os.path.join(tmp, "state-13"), argparse.Namespace(
+        record=False, json=False, compare=False))
+    case("⑬ 正控：合成标本串（夹具 NEG_CASES 正文）⇒ 登记豁免 · rc=0", 0, rc,
+         ("夹具登记豁免" in out and "落点面 0 命中" in out))
+    case("⑬b 登记豁免**逐条打印理由** + 未登记的条目**照实打印悬空 · 不判红**", True,
+         ("自检夹具（合成标本串）" in out and "悬空登记" in out))
+
+    # ⑬c 负控（**证未放宽真判据**）：**同一件**里的**真写**（命令位调用）⇒ 登记盖不住 ⇒ 照旧红
+    r13c = mk_fixture(tmp, "case-13c", judge_name="check-token-argv.py", judge_body=REAL_WRITE)
+    rc, out = cap(run, r13c, os.path.join(tmp, "state-13c"), argparse.Namespace(
+        record=False, json=False, compare=False))
+    case("⑬c 负控：同件里命令位真写 /tmp ⇒ 照旧红（rc=1）", 1, rc, "落点面命中" in out)
+
+    # ⑬d 负控：另一登记件（check-wired-scripts.py）里的 `open(…,"w")` 写盘 ⇒ 照旧红
+    r13d = mk_fixture(tmp, "case-13d", judge_name="check-wired-scripts.py",
+                      judge_body='#!/usr/bin/env python3\nf = open("/tmp/w.log", "w")\n')
+    rc, out = cap(run, r13d, os.path.join(tmp, "state-13d"), argparse.Namespace(
+        record=False, json=False, compare=False))
+    case("⑬d 负控：另一登记件里 open(...,\"w\") 写盘 ⇒ 照旧红（rc=1）", 1, rc, "落点面命中" in out)
 
     shutil.rmtree(tmp, ignore_errors=True)
     print("自检结论: " + ("全过" if ok else "**有断言失败**"))

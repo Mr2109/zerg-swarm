@@ -149,6 +149,8 @@ def _hd_quote_cols(l, st):
 
 
 MASK_UNCLOSED = []   # [(件, [未闭合起始行…])]；scan() 前清空（GAP-20260927-128/-129）
+MASK_MLQ_UNCLOSED = []  # [(件, [跨行引号未收尾起始行…])]；scan() 前清空（GAP-20260926-128 余项）
+MASK_PYQ_UNCLOSED = []  # [(件, [三引号层配不齐而被掩行…])]；scan() 前清空（GAP-20260928-74 余项）
 
 
 def mask_heredocs_chk(text):
@@ -220,14 +222,16 @@ def _open_quote(line):
     return q
 
 
-def mask_multiline_quotes(text):
-    """屏蔽 shell **跨行引号字符串**的内部（如 git commit -m "…\n…" 的多行提交信息体）。
+def mask_multiline_quotes_chk(text):
+    """同 `mask_multiline_quotes`，但**回报未收尾段**：返回 `(遮蔽后正文, 起始行号列表)`。
 
-    逐行状态机看不见跨行引号 ⇒ 把正文当代码（实测 publish-public.sh:420 假红）。
-    只有"跨行未闭合"才屏蔽中间行（空行替换保住行号）；行内成对的仍交给 strip_noncode。
+    `GAP-20260926-128` 余项：本层与 `mask_heredocs` 同病 —— 收尾条件是 `l.find(quote)`
+    （同一引号字符再次出现）。引号起于**命令头之后**而本件内无收尾时，后半件全被当字符串
+    掩掉 = 门在这些行上失明，而旧行为**静默**通过（可 rc=0 假绿）。
+    与 `mask_heredocs_chk` 同式样（零新机制）：遮蔽输出**一字不变**，只多一条自报口。
     """
-    out, quote = [], None
-    for l in text.split("\n"):
+    out, quote, starts = [], None, []
+    for lineno, l in enumerate(text.split("\n"), 1):
         if quote:
             idx = l.find(quote)
             if idx < 0:
@@ -235,12 +239,76 @@ def mask_multiline_quotes(text):
                 continue
             out.append(" " * (idx + 1) + l[idx + 1:])
             quote = None
+            starts.pop()
             continue
         out.append(l)
         # 注释行**永不**开引号：中文注释里常有撇号（如「批 2'.6」），否则会把后续注释行
         # 也当成跨行字符串吞掉，连 "#" 一起屏蔽 ⇒ 注释正文被误判为代码（实测 build-wall.sh:5）。
         quote = None if l.lstrip().startswith("#") else _open_quote(l)
-    return "\n".join(out)
+        if quote:
+            starts.append((lineno, quote))
+    return "\n".join(out), [s[0] for s in starts]
+
+
+def mask_multiline_quotes(text):
+    """屏蔽 shell **跨行引号字符串**的内部（如 git commit -m "…\n…" 的多行提交信息体）。
+
+    逐行状态机看不见跨行引号 ⇒ 把正文当代码（实测 publish-public.sh:420 假红）。
+    只有"跨行未闭合"才屏蔽中间行（空行替换保住行号）；行内成对的仍交给 strip_noncode。
+    """
+    return mask_multiline_quotes_chk(text)[0]
+
+
+MASK_PYQ_JUDGE = "python-tokenize（Python 自己的词法器）"   # 本层「判不了」的对拍源，非启发式
+
+
+def _py_quote_blind_lines(text, masked):
+    """`.py` 三引号层的**鉴别力探针**：列出「被正则掩成空行、而词法器说这行不是字符串」的行号。
+
+    判据不吃启发式 —— 对拍源是 **Python 自己的词法器**（`tokenize`）：
+      字符级真值取 `STRING` 记号的行区间；被 `RE_TRIPLE` 掩成空行、落在字符串区间**之外**、
+      且**本来就是命中**（代码区全角标点 / 禁用词）的行 ⇒ 正则把**真命中**掩掉了（门在这行失明）。
+      掩掉的段里本来无命中 ⇒ 无损失，不报（本层不靠启发式猜，不扩判据面）。
+    件本身词法读不通（未收尾多行字符串、缩进错等）⇒ 本层同样**无结论**，整片被掩行如实回报。
+    """
+    raw_l, msk_l = text.split("\n"), masked.split("\n")
+    blanked = [i for i, (a, b) in enumerate(zip(raw_l, msk_l), 1) if a.strip() and not b.strip()]
+    if not blanked:
+        return []
+    try:
+        import io
+        import tokenize
+        toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except Exception:
+        return blanked                      # 读不通 ⇒ 判不了（绝不当绿：同 accept-no-probe.sh 的口径）
+    strlines = set()
+    for tk in toks:
+        if tk.type == tokenize.STRING and tk.start and tk.end:
+            strlines.update(range(tk.start[0], tk.end[0] + 1))
+    # 只报「掩掉的这一行本来就是命中」的那些行 —— 本层判不了的**充分理由**（不是判据扩面）：
+    # 被掩的真代码里本来有命中 ⇒ 「掩掉后零命中」不能当绿。掩掉的段里本来没命中 ⇒ 无损失，不报。
+    out = []
+    for l in blanked:
+        if l in strlines:
+            continue
+        src = raw_l[l - 1]
+        code = strip_noncode(src, ".py")
+        if any(ch in code for ch in FULLW) or any(w in src for w in FORBID):
+            out.append(l)
+    return out
+
+
+def strip_blocks_chk(text):
+    """同 `strip_blocks`，但**回报 `.py` 三引号层的盲区行**：返回 `(遮蔽后正文, 判不了行号列表)`。
+
+    `GAP-20260928-74`（余项）：本层此前**没有自报口** —— `RE_TRIPLE` 是「就近配对」式正则，
+    件里出现**配不齐**的三引号（尤其 \"\"\" 落在注释或普通字符串里）时，成对的两颗定界符会把
+    **两者之间的真代码整段掩掉** ⇒ 门在这段失明，而旧行为照样 rc=0（**假绿**）。
+    与 `mask_heredocs_chk` / `mask_multiline_quotes_chk` **同式样**：遮蔽输出**一字不变**，
+    只多一条自报口（判不了 ⇒ main() 给 rc=2，不当绿）。
+    """
+    masked = strip_blocks(text)
+    return masked, _py_quote_blind_lines(text, masked)
 
 
 def strip_noncode(line, ext):
@@ -348,13 +416,19 @@ def scan():
                     print("  ⚠ 读不了 %s：%s" % (p, e), file=sys.stderr)
                     continue
                 if ext == ".py":
-                    body = strip_blocks(raw)
+                    body, _pyq = strip_blocks_chk(raw)
+                    if _pyq:
+                        # `GAP-20260928-74`（余项）：三引号层掩掉了真代码 ⇒ 本层判不了，由 main() 给 rc=2
+                        MASK_PYQ_UNCLOSED.append((p, _pyq))
                 elif ext in (".sh", ".plist", ".conf"):
                     masked, _unclosed = mask_heredocs_chk(raw)
                     if _unclosed:
                         # GAP-20260927-128/-129：遮蔽未闭合 = 门在这段失明 ⇒ 登记，由 main() 判 rc=2
                         MASK_UNCLOSED.append((p, _unclosed))
-                    body = mask_multiline_quotes(masked)
+                    body, _mlq = mask_multiline_quotes_chk(masked)
+                    if _mlq:
+                        # `GAP-20260926-128` 余项：跨行引号未收尾 ⇒ 本层失明，由 main() 判「判不了」
+                        MASK_MLQ_UNCLOSED.append((p, _mlq))
                 else:
                     body = raw
                 for i, l in enumerate(body.split("\n"), 1):
@@ -520,9 +594,21 @@ def selftest_fp():
         _m1, _u1 = mask_heredocs_chk("echo hi <<PYEOF\nnot closed\n")
         _m2, _u2 = mask_heredocs_chk("cat <<PYEOF\nbody\nPYEOF\ntail\n")
         c5 = (_u1 == [1]) and (_u2 == []) and ("not closed" not in _m1) and ("tail" in _m2)
+        # `GAP-20260926-128` 余项：**跨行引号层**同样必须可被检出（成对：未收尾 / 收尾）
+        _x1, _xu1 = mask_multiline_quotes_chk('PY_CMD="python3 - \'\'\'\nbody without closer\n')
+        _x2, _xu2 = mask_multiline_quotes_chk('git commit -q -m "第一行\n第二行"\ntail\n')
+        c6 = (_xu1 == [1]) and (_xu2 == []) and ("body without closer" not in _x1) and ("tail" in _x2)
+        # `GAP-20260928-74` 余项：**三引号层**同样必须可被检出（成对：配不齐 / 成对）——
+        # 折进同一格带过，不另开格（族体例）。
+        _q3 = '"' * 3     # 本件自己也受本层管辖：夹具串里**不得出现**字面三引号（否则自咬）
+        _y1, _yu1 = strip_blocks_chk("x = 1\n# 说明：用 " + _q3 + " 包块\ny = 2，3\n" + _q3 + "\n中文，文档\n" + _q3 + "\n")
+        _y2, _yu2 = strip_blocks_chk("x = 1\n" + _q3 + "\n中文，文档\n" + _q3 + "\ny = 2，3\n")
+        c7 = (_yu1 == [3]) and (_yu2 == [])
         print("  %s [遮蔽未闭合] 未闭合起始行=%s（期望 [1]）· 闭合件=%s（期望 []）· 闭合件尾行保留=%s"
-              % ("✓" if c5 else "✗", _u1, _u2, "tail" in _m2))
-        ok = ok and c5
+              " ｜ 跨行引号层：未收尾起始行=%s（期望 [1]）· 收尾件=%s（期望 []）· 尾行保留=%s"
+              " ｜ 三引号层：配不齐被掩行=%s（期望 [3]）· 成对件=%s（期望 []）"
+              % ("✓" if (c5 and c6 and c7) else "✗", _u1, _u2, "tail" in _m2, _xu1, _xu2, "tail" in _x2, _yu1, _yu2))
+        ok = ok and c5 and c6 and c7
     finally:
         ROOTS, WHITELIST, KNOWN_FP, cwd = saved
         os.chdir(cwd)
@@ -537,6 +623,8 @@ def main():
         print("✗ 不在仓库根目录（core/ 与 agent/ 都不存在）——拒绝静默空转", file=sys.stderr)
         return 2
     MASK_UNCLOSED.clear()
+    MASK_MLQ_UNCLOSED.clear()
+    MASK_PYQ_UNCLOSED.clear()
     files, hits = scan()
     if MASK_UNCLOSED:
         # ★ 判不了档（GAP-20260927-128/-129）：遮蔽段没闭合 ⇒ 门在那些行上**失明**，
@@ -547,6 +635,30 @@ def main():
                   % (pf, ", ".join(str(x) for x in starts[:5])), file=sys.stderr)
         print("   ★ 处置：收尾标记必须**独占一行**（现读 `l.strip()==TAG`）；"
               "起始标记出现在引号内时不算真 heredoc（根因档待办）。", file=sys.stderr)
+        return 2
+    if MASK_MLQ_UNCLOSED:
+        # ★ 判不了档（GAP-20260926-128 余项）：跨行引号层没收回尾 ⇒ 门在后半件整段失明，
+        #   此时「零命中」不能当绿 ⇒ 一律 rc=2（不给结论：不阻塞提交，但不许当绿）。
+        print("⛔ 不给结论（rc=2）：跨行引号层有未收尾的段 —— 门在这些行上整段失明，本轮**判不了**",
+              file=sys.stderr)
+        for pf, starts in MASK_MLQ_UNCLOSED[:10]:
+            print("   · %s：起始行 %s（该行起的引号在本件内无收尾 ⇒ 其后直到文件末皆被当字符串掩掉）"
+                  % (pf, ", ".join(str(x) for x in starts[:5])), file=sys.stderr)
+        print("   ★ 处置：跨行引号必须有配对收尾（现读 `l.find(quote)`）；"
+              "引号起于命令头之后而本件内无收尾时，本层判不了（不把「掩掉后零命中」当绿）。",
+              file=sys.stderr)
+        return 2
+    if MASK_PYQ_UNCLOSED:
+        # ★ 判不了档（GAP-20260928-74 余项）：`.py` 三引号层把真代码掩掉了（配不齐的三引号）⇒
+        #   门在这些行上失明，此时「零命中」不能当绿 ⇒ 一律 rc=2（不给结论：不阻塞提交，但不许当绿）。
+        print("⛔ 不给结论（rc=2）：三引号层有配不齐的段 —— 门在这些行上失明，本轮**判不了**",
+              file=sys.stderr)
+        for pf, lines in MASK_PYQ_UNCLOSED[:10]:
+            print("   · %s：被掩行 %s（对拍源 = %s；该段里正则掩掉的是真代码）"
+                  % (pf, ", ".join(str(x) for x in lines[:5]), MASK_PYQ_JUDGE), file=sys.stderr)
+        print("   ★ 处置：件里 \"\"\" / ''' 必须成对，且不得出现在注释或普通字符串里"
+              "（现读 RE_TRIPLE 就近配对）；配不齐时本层判不了（不把「掩掉后零命中」当绿）。",
+              file=sys.stderr)
         return 2
     if files == 0:
         print("✗ 扫到 0 个文件——拒绝静默空转（假绿）", file=sys.stderr)

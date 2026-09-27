@@ -110,6 +110,19 @@ type editAuditLine struct {
 	// `omitempty`：取不到波纹（例如仓根解析不到）⇒ 这一格不写，**不写空串冒充「有了」**（「读不到」不当「没有」）。
 	ImpactDigest string `json:"impact_digest,omitempty"`
 	ImpactActual string `json:"impact_actual,omitempty"`
+	// ★ GAP-20260928-79（2026-09-28）：**回指授权物**两格 —— 审计行原先只记提案号，
+	//   而作用域闸读的提案目录（proposalDir）与审计落点（editAuditPath）取自两条互相独立的
+	//   变量链，之间原无一致性判据：只覆写 ZERG_PROPOSAL_DIR 就能用沙箱提案授权真仓内件，
+	//   审计行落真审计、却携带指不回当趟授权物的沙箱提案号。这里增记**当趟真用的提案落点**
+	//   与**提案件 sha16**，使任一行审计都能回读到「谁授权了这次写」的那份件。只增键，既有键不动。
+	ProposalDir   string `json:"proposal_dir,omitempty"`
+	ProposalSHA16 string `json:"proposal_sha16,omitempty"`
+	// ★ GAP-20260928-79 **显式放行档**（2026-09-28 · 本枚）：合法分根沙箱（提案目录与审计目录
+	//   不同根是**故意的**）此前会被上面的拒写档误伤 —— 放行闸 `--allow-cross-root <理由>`。放行时
+	//   本行**明写**放行标志与理由（机器可读、可回读 ✗ 不许只在 stderr 说一句）。两格 `omitempty`：
+	//   没放行 ⇒ 两格都不写（既有行 / 历史行逐字节不变 · 只增键，既有键不动）。
+	AllowCrossRoot string `json:"allow_cross_root,omitempty"`
+	AllowReason    string `json:"allow_reason,omitempty"`
 }
 
 // cmdDevEdit —— `zerg dev edit`：受控写入的唯一入口（默认干跑）。
@@ -170,6 +183,40 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 
 	// ③ 作用域：提案必须存在，且**声明过**这一件
 	dir := proposalDir()
+	// ★ GAP-20260928-79：两个落点不同源 ⇒ 真写档**拒执** · 干跑档**只出声**。同源（默认态）零输出。
+	//   窄口径（Mr2109 拍）：拒写档**只在用户显式设了 `ZERG_PROPOSAL_DIR` 时**才进 —— 未显式给（默认态）
+	//   或干跑（`--dry-run`，含确认档不齐的计划档）一律**只出声、不拒写**，逐字与改前相同（合法分根部署不受影响）。
+	// ★ 2026-09-28（`GAP-20260928-79` · 本枚）**显式放行档**：合法分根沙箱（提案目录与审计目录不同根
+	//   是**故意的**）此前被上面那条拒写档误伤 ⇒ 加一枚**显式**放行闸 `--allow-cross-root <理由>`
+	//   （照 `--waive <步名> --reason` 先例 · **理由进审计行**）：
+	//     给了**非空理由** ⇒ 放行（理由 + 放行标志写进审计行 · 后面照常走）
+	//     **不给旗标**   ⇒ 与改前**逐字节相同**（fail-closed rc=2 · 零行为改动 ✓）
+	//     给了旗标但**理由空 / 纯空白** ⇒ 拒执 rc=2（**有理由**才叫放行 —— 空理由 = 无声覆盖）
+	//   ★ 明确**不**开 env 静默档：env 正是被同源假设坏掉的那个旋钮（静默覆盖 = 本缺口的病根）。
+	allowCrossGiven := inv.hasFlag("--allow-cross-root")
+	allowCrossReason := ""
+	allowCrossUsed := false
+	if allowCrossGiven {
+		allowCrossReason = strings.TrimSpace(inv.flagVal("--allow-cross-root"))
+		if allowCrossReason == "" {
+			inv.setErr("usage", "allow_cross_root_no_reason", "放行旗标缺理由")
+			fmt.Fprintf(stderr, "%s: ★ **拒执** —— `--allow-cross-root` 必须带**非空理由**（理由要进审计行）：空串 / 纯空白**不给放行**（退码 2 · 目标件与真审计零改动 · GAP-20260928-79）\n", progName)
+			return exitUsage
+		}
+	}
+	if m := proposalAuditMismatch(); m != "" {
+		if allowCrossGiven {
+			allowCrossUsed = true
+			fmt.Fprintf(stderr, "%s: ★ **显式放行**（`--allow-cross-root`）—— %s；理由：%s（放行标志与理由进审计行 · GAP-20260928-79）\n", progName, m, allowCrossReason)
+		} else if proposalAuditRefuse(inv) {
+			// **在任何真写动作之前**拒执（退码 2 · 用法/配置错档，不取 8）：零写入、零审计。
+			inv.setErr("usage", "proposal_audit_root_mismatch", m)
+			fmt.Fprintf(stderr, "%s: ★ **拒执** —— %s；显式设了 ZERG_PROPOSAL_DIR ⇒ 真写前拒（退码 2 · 目标件与真审计零改动 · GAP-20260928-79）\n", progName, m)
+			return exitUsage
+		} else {
+			fmt.Fprintf(stderr, "%s: ★ %s\n", progName, m)
+		}
+	}
 	recs, err := loadProposals(dir)
 	if err != nil {
 		inv.setErr("blocked", "state_dir_unreadable", err.Error())
@@ -246,6 +293,16 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	beforeSHA := sha256Of(before)
 	afterSHA := sha256Of(after)
 	auditPath := editAuditPath()
+	// ★ GAP-20260928-79：审计行**回指授权物** —— 记下当趟真用的提案落点与提案件 sha16。
+	//   提案号由 line.Proposal 给；落点 + sha16 补上「点回那份授权物」的另外两格。
+	//   提案件读不到 ⇒ 该格留空（omitempty · 不写空串冒充「有了」）。
+	propDirUsed := dir
+	propSHA16 := ""
+	if prop != nil && prop.ID != "" {
+		if pb, rerr := os.ReadFile(filepath.Join(propDirUsed, prop.ID+".json")); rerr == nil {
+			propSHA16 = shortSHA(sha256Of(pb))
+		}
+	}
 	row := map[string]string{
 		"proposal": proposalID, "file": fileRel, "mode": mode,
 		"before_sha256": shortSHA(beforeSHA), "after_sha256": shortSHA(afterSHA),
@@ -264,9 +321,14 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.dryRun || !(inv.confirmGiven && inv.yes) {
 		// `A4`：钩子分档（纯判据 + 只读取数 —— 不写任何东西）。判据与取数在 `family_impact_hook.go`。
 		hook := impactHookOf(root, fileRel, before, after)
-		summary := impactDryRunSummaryOf(root, fileRel)
+		summary := impactDryRunSummaryOf(root, fileRel, beforeMissing)
 		if summary.Taken {
 			row["impact_digest"] = impactDigestOf(summary.Text)
+		} else if summary.State == impactSummaryNewFile {
+			// ★ 本单：**新增件**与「没取到数」**不许同一种输出**（此前两态都写「未取数 —— 不是「没有」」）。
+			row["impact_digest"] = "（新增件 —— 本件改前没有前态）"
+		} else if summary.State == impactSummaryUnreadable {
+			row["impact_digest"] = "（读不到 —— 不是「没有」· 不给结论）"
 		} else {
 			row["impact_digest"] = "（未取数 —— 不是「没有」）"
 		}
@@ -294,6 +356,10 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		if summary.Taken {
 			fmt.Fprintf(stderr, "%s: 波纹指纹 impact_digest=%s（sha256 of 上面那段摘要正文 · 第三者可复算 · §四.2 只留指纹）\n",
 				progName, row["impact_digest"])
+		} else if summary.State == impactSummaryNewFile {
+			fmt.Fprintf(stderr, "%s: 波纹指纹：**新增件**（本件改前没有前态 ⇒ 没有「改前波纹」可摘要）⇒ 干跑不写指纹\n", progName)
+		} else if summary.State == impactSummaryUnreadable {
+			fmt.Fprintf(stderr, "%s: 波纹指纹：**读不到**（改前态取不到 —— 不是「没有」）⇒ 干跑不写指纹（不给结论）\n", progName)
 		} else {
 			fmt.Fprintf(stderr, "%s: 波纹指纹 **未取数** ⇒ 干跑不写指纹（真写那一侧的审计行照「缺摘要」处置并点名）\n", progName)
 		}
@@ -304,6 +370,10 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		if summary.Taken {
 			inv.metaAddStr("impact_digest", row["impact_digest"])
 			inv.metaAddJSON("impact_rows", fmt.Sprintf("%d", summary.Rows))
+		} else if summary.State == impactSummaryNewFile {
+			inv.warnf("影响面摘要：**新增件**（本件改前本来就没有前态）—— 不是「未取数」、也不是「没有」：%s", summary.Reason)
+		} else if summary.State == impactSummaryUnreadable {
+			inv.warnf("影响面摘要**读不到**（改前态取不到 —— 不是「没有」）⇒ **不给结论**：%s", summary.Reason)
 		} else {
 			inv.warnf("影响面摘要**未取数**（不是「没有」）：%s —— 真写那一侧照「缺摘要」处置并点名", summary.Reason)
 		}
@@ -336,7 +406,7 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		return exitOK
 	}
-	if inv.confirm != planHost() {
+	if !devEditHostAccept(inv.confirm) {
 		inv.setErr("usage", "confirm_mismatch", "确认值不匹配主机名")
 		fmt.Fprintf(stderr, "%s: 确认值不匹配目标（--confirm 给的是 %q，本机主机名是 %q）⇒ 不执行\n",
 			progName, inv.confirm, planHost())
@@ -431,7 +501,7 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	// ⑥-b（`A4`）**波纹指纹**：取一次影响面摘要（**只读** · 默认档），把它的 `sha256` 记进审计行 ——
 	// **只留指纹、不留正文** ✗（§四.2 第 3 件）。**未取到数** ⇒ 那一格不写（`omitempty`）+ stderr 点名
 	//（「读不到」不当「没有」）；**一律不拦写**（`impact_digest` **不是放行条件** ✗ —— `R14` 只拍「先只记」那一步）。
-	impactSum := impactDryRunSummaryOf(root, fileRel)
+	impactSum := impactDryRunSummaryOf(root, fileRel, beforeMissing)
 	digest := ""
 	if impactSum.Taken {
 		digest = impactDigestOf(impactSum.Text)
@@ -443,6 +513,15 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		Confirm: inv.confirm, AuditPath: auditPath,
 		Approval: appr.Path, Approver: appr.Appr, Syntax: syntaxJudg,
 		ImpactDigest: digest,
+		// ★ GAP-20260928-79：回指授权物 —— 当趟真用的提案落点与提案件 sha16
+		// （提案号 → 件 = <proposal_dir>/<proposal>.json，sha16 钉住它的字节）。
+		ProposalDir: propDirUsed, ProposalSHA16: propSHA16,
+	}
+	if allowCrossUsed {
+		// ★ GAP-20260928-79 显式放行档：放行**必须留痕** —— 放行标志 + 理由两格写进审计行
+		// （「凭什么允许这次异源写」要能事后回读到 · 只增键，既有键不动）。
+		line.AllowCrossRoot = "yes"
+		line.AllowReason = allowCrossReason
 	}
 	if beforeMissing {
 		line.Note = "新建件（写前不存在）"
@@ -453,8 +532,16 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		return exitFail
 	}
 	if digest == "" {
-		fmt.Fprintf(stderr, "%s: ★ 波纹指纹**取不到**（`impact_digest` 那一格没写 —— 「读不到」不当「没有」）：%s\n",
-			progName, impactSum.Text)
+		if impactSum.State == impactSummaryNewFile {
+			fmt.Fprintf(stderr, "%s: ★ 波纹指纹：**新增件**（本件改前本来就没有前态 ⇒ 没有「改前波纹」可摘要）—— 不是「取不到」，也不是「没有」：%s\n",
+				progName, impactSum.Reason)
+		} else if impactSum.State == impactSummaryUnreadable {
+			fmt.Fprintf(stderr, "%s: ★ 波纹指纹**读不到**（改前态取不到 —— 不是「没有」）⇒ 不给结论：%s\n",
+				progName, impactSum.Reason)
+		} else {
+			fmt.Fprintf(stderr, "%s: ★ 波纹指纹**取不到**（`impact_digest` 那一格没写 —— 「读不到」不当「没有」）：%s\n",
+				progName, impactSum.Text)
+		}
 		fmt.Fprintf(stderr, "%s: 包封的 `warnings[]` 今天恒 `[]` ⇒ 「缺摘要要点名」这一格没有落点（CLI 缺口，`A4` 再点一次名）\n", progName)
 	} else {
 		fmt.Fprintf(stderr, "%s: 波纹指纹 impact_digest=%s（摘要正文**不进审计** · §四.2 第 3 件；%s）\n",
@@ -747,6 +834,50 @@ func applyReplacements(before []byte, replacePath string) ([]byte, error) {
 		cur = strings.Replace(cur, p.Old, p.New, 1)
 	}
 	return []byte(cur), nil
+}
+
+// proposalAuditMismatch —— ★ GAP-20260928-79：作用域闸读的提案目录（proposalDir）与审计落点
+// （editAuditPath）取自**两条互相独立**的变量链（ZERG_PROPOSAL_DIR vs ZERG_STATE_DIR /
+// ZERG_EDIT_AUDIT）—— 之间原无一致性判据 ⇒ 只覆写 ZERG_PROPOSAL_DIR 就能用沙箱提案授权写
+// 真仓内件，而审计行落进真审计、携带的是指不回那份授权物的沙箱提案号。
+//
+// 本函数只判「两个落点解析出来的**根**是否同源」：
+//
+//	同源（默认态）⇒ 返回 ""（**零输出、零行为改动** —— 同源态 stdout/stderr/退码与改前逐字节相同）
+//	不同源 ⇒ 返回一行点名两个目录的话（调用方打 stderr）
+//
+// 触发后的行为由调用方按档决定：**干跑档只出声**（本函数自己不出声、不拒写）· **真写档拒执**
+// （判据见 `proposalAuditRefuse` —— 窄口径：只在用户显式设了 `ZERG_PROPOSAL_DIR` 时才进拒写档；GAP-20260928-79）。
+func proposalAuditMismatch() string {
+	ap := editAuditPath()
+	if ap == "" {
+		return ""
+	}
+	pd := proposalDir()
+	if pd == "" {
+		return ""
+	}
+	proot := filepath.Dir(pd)
+	aroot := filepath.Dir(filepath.Dir(ap))
+	if proot == aroot {
+		return ""
+	}
+	return fmt.Sprintf("提案落点 %s 与审计落点 %s 不同源（各自的根 %s / %s）—— 作用域闸读的授权物不在审计落点同一根下：审计行里的提案号可能回指不到当趟真用的那份件（GAP-20260928-79）",
+		pd, ap, proot, aroot)
+}
+
+// proposalAuditRefuse —— ★ GAP-20260928-79 拒写档的触发判据（**窄口径** · Mr2109 拍）：
+// **只在用户显式设了 `ZERG_PROPOSAL_DIR`**（`os.Getenv` 非空）**且**两个落点不同源时才拒写；
+// 未显式给（默认态 / 合法分根部署）⇒ 一律 false（零行为改动）· `--dry-run`（含确认档不齐的计划档）
+// ⇒ 一律 false（保持现有「只出声」）。
+func proposalAuditRefuse(inv *invocation) bool {
+	if os.Getenv("ZERG_PROPOSAL_DIR") == "" {
+		return false
+	}
+	if inv.dryRun || !(inv.confirmGiven && inv.yes) {
+		return false
+	}
+	return proposalAuditMismatch() != ""
 }
 
 // editAuditPath —— 审计落点：`ZERG_EDIT_AUDIT` > `<ZERG_STATE_DIR>/edit_audit.jsonl` > `~/.zerg/state/edit_audit.jsonl`。
@@ -1180,4 +1311,32 @@ func emitDevEditRollbackAdvice(w io.Writer, prop *proposalRecord, fileRel, befor
 	fmt.Fprintf(w, "      · ① 跑不通：`git revert` **不吃 pathspec** —— 卡片的 `git revert <sha> -- %s` 实测 `fatal: bad revision '%s'`（rc=128）\n", fileRel, fileRel)
 	fmt.Fprintf(w, "      · ② 取不到改前态：revert 回到的是**提交记录里**那一版，而**改前工作树含未提交改动** ⇒ 那一版不在任何提交里（`HEAD:本件` ≠ 改前工作树）⇒ 跑完 sha ≠ 改前 sha %s\n", shortSHA(beforeSHA))
 	fmt.Fprintf(w, "      · ③ 锚错对象：`git log -1 -- <件>` 只是「**末笔碰过本件**」，不保证它是本件的基线（那笔提交可能与本次改动无关）\n")
+}
+
+// ── 本机名两种写法（2026-09-28 补） ────────────────────────────────────────────────
+// 同族其它 `--confirm` 面取本机名一律 `planHost()`（`family_impact.go:134` / `family_build.go:273` /
+// `family_publish_run.go:139` / `family_core_restart.go:525` —— 逐字 `inv.confirm != host`）：
+// 本面照那条体例取数（仍只走 `planHost()`，不新开取源），只在**判等**那一格放宽一档 ——
+// macOS 上 `os.Hostname()` 给 FQDN（`X.local`），而 `hostname -s` 给短名（`X`）：两者指的是**同一台机器**，
+// 只收其中一种 ⇒ 最自然的取法（`hostname -s`）必然踩一次。
+// ★ 放宽只到「本机名原值 + 它第一个点之前的短名」为止 —— 他机名（既非原值、又非它的短名）照样拒（fail-closed 不松）。
+func devEditHostAliases() []string {
+	full := planHost()
+	out := []string{full}
+	if i := strings.IndexByte(full, '.'); i > 0 {
+		if short := full[:i]; short != "" && short != full {
+			out = append(out, short)
+		}
+	}
+	return out
+}
+
+// devEditHostAccept —— `--confirm` 的值是否指向**本机**（逐字命中本机名原值、或它的短名）。
+func devEditHostAccept(confirm string) bool {
+	for _, a := range devEditHostAliases() {
+		if confirm == a {
+			return true
+		}
+	}
+	return false
 }

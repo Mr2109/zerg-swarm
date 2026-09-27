@@ -399,7 +399,29 @@ func cmdDoctor(inv *invocation, stdout, stderr io.Writer) int {
 	return worst
 }
 
+// doctorItems —— 全单**逐行补齐机读面用键**（缺口 `GAP-20260928-60` 的另一半：`--json` 给两串原文）。
+//
+// 为什么在**外层**一次补、不在各分支里补：本单的项来自**两个件**（本件 + `ai_boundary.go` 的技能/MCP
+// 两段），而 `--json` 出口（`emitSelected` → `marshalObject`）是**逐行核键**的 —— 只要有一行缺键，
+// `zerg doctor --json name,artifact_commit` 就整单退 2（报「未知字段」）⇒ 只让漂移那一项有键 = **不可用**。
+// ⇒ 两键在此**一次补齐**（缺省空串），漂移那一项在自己的分支里写真值（见 `driftIDs`）。
+//
+// 人面一字不动：表渲染取的是 name/verdict/detail/advice 四格，多两个键不进表；退码路径也不碰。
 func doctorItems(inv *invocation) []map[string]string {
+	items := doctorItemsRaw(inv)
+	for _, it := range items {
+		if _, ok := it["artifact_commit"]; !ok {
+			it["artifact_commit"] = ""
+		}
+		if _, ok := it["source_head"]; !ok {
+			it["source_head"] = ""
+		}
+	}
+	return items
+}
+
+// doctorItemsRaw —— 原来的组装体（逐项 + 判定词 + 建议动作），一字未改，只在最外层被 `doctorItems` 补两键。
+func doctorItemsRaw(inv *invocation) []map[string]string {
 	items := []map[string]string{}
 
 	// ① 仓根
@@ -566,33 +588,34 @@ func doctorItems(inv *invocation) []map[string]string {
 func doctorDriftItem() map[string]string {
 	art := strings.TrimSpace(version.Commit)
 	if art == "" || art == "unknown" {
-		return map[string]string{
+		return driftIDs(map[string]string{
 			"name": "源码/制品对拍", "verdict": "REPORT",
 			"detail": "拿不到结论：本制品**没注入代码 id**（`version.Commit`=" + art + "）—— 裸 `go build` / 进程内测试的形态",
-			"advice": "要能对拍就走正门重编：`zerg build all --only cli`（`-ldflags -X` 才会写进 `version.Commit`）"}
+			"advice": "要能对拍就走正门重编：`zerg build all --only cli`（`-ldflags -X` 才会写进 `version.Commit`）"}, art, "")
 	}
 	root := repoRoot()
 	if root == "" {
-		return map[string]string{
+		return driftIDs(map[string]string{
 			"name": "源码/制品对拍", "verdict": "REPORT",
 			"detail": "拿不到结论：解析不到仓根 ⇒ 取不到源码 HEAD（不猜一个路径）",
-			"advice": "在仓内跑，或设 `ZERG_REPO=<仓根>`"}
+			"advice": "在仓内跑，或设 `ZERG_REPO=<仓根>`"}, art, "")
 	}
 	head, err := runGitRO(root, "rev-parse", "HEAD")
 	head = strings.TrimSpace(head)
 	if err != nil || head == "" {
-		return map[string]string{
+		return driftIDs(map[string]string{
 			"name": "源码/制品对拍", "verdict": "REPORT",
 			"detail": "拿不到结论：`git rev-parse HEAD` 在仓根取不到（" + errText(err) + "）",
-			"advice": "确认仓根是真的 git 工作树（`git -C <仓根> rev-parse HEAD`）"}
+			"advice": "确认仓根是真的 git 工作树（`git -C <仓根> rev-parse HEAD`）"}, art, "")
 	}
 	if head == art || strings.HasPrefix(head, art) || strings.HasPrefix(art, head) {
-		return map[string]string{
+		return driftIDs(map[string]string{
 			"name": "源码/制品对拍", "verdict": "PASS",
 			"detail": "未过期：制品 " + driftShort(art) + " == 源码 HEAD " + driftShort(head),
-			"advice": ""}
+			"advice": ""}, art, head)
 	}
-	detail := "**过期**：制品 " + driftShort(art) + " ≠ 源码 HEAD " + driftShort(head)
+	pa, ph := driftPair(art, head)
+	detail := "**过期**：制品 " + pa + " ≠ 源码 HEAD " + ph
 	if files := driftChangedFiles(root, art); len(files) == 0 {
 		detail += "（git 面没列出改动件 —— 制品那笔可能不在本仓历史里）"
 	} else {
@@ -605,9 +628,22 @@ func doctorDriftItem() map[string]string {
 		}
 		detail += "；源码之后改过 " + strconv.Itoa(len(files)) + " 件：" + strings.Join(shown, " · ") + suffix
 	}
-	return map[string]string{
+	return driftIDs(map[string]string{
 		"name": "源码/制品对拍", "verdict": "REPORT", "detail": detail,
-		"advice": "重编走正门：`zerg build all --only cli`（不重编则 `./bin/zerg` 还是旧代 · `-ldflags` 才写代码 id）"}
+		"advice": "重编走正门：`zerg build all --only cli`（不重编则 `./bin/zerg` 还是旧代 · `-ldflags` 才写代码 id）"}, art, head)
+}
+
+// driftIDs —— 两串**完整指纹原文**进机读面（缺口 `GAP-20260928-60` 的「`--json` 给两串原文」那一半）。
+//
+// 只**添**两个新键，旧键（name/verdict/detail/advice）一个不删不改名；人面**一字不动**
+// （展示层仍走 `driftShort` / `driftPair` 掐位与加长）⇒ 人面与退码不受本函数影响。
+//
+// 两键逐个落真值不截断：`artifact_commit` = 制品身份原文（`version.Commit` 全串，可能是 `+dirty` 形态）·
+// `source_head` = 源码 `git rev-parse HEAD` 全串。三态里取不到的那一侧**留空串**（不猜、不填 `unknown`）。
+func driftIDs(m map[string]string, art, head string) map[string]string {
+	m["artifact_commit"] = art
+	m["source_head"] = head
+	return m
 }
 
 // driftShort —— 代码 id 取前 8 位（制品可能是短 sha、源码 HEAD 是 40 位；对拍只比 `==`/前缀，不截断取值）。
@@ -616,6 +652,31 @@ func driftShort(s string) string {
 		return s[:8]
 	}
 	return s
+}
+
+// driftPair —— 出口展示层（缺口 `GAP-20260928-60`）：两侧**截短后看起来相同**时，把窗口按两串的
+// 公共前缀往后加长（封顶为各串全长），让显示面不再印出 `X ≠ 源码 HEAD X` 这种与判词自相矛盾的
+// 行 —— 真差异（制品身份带 `+dirty` 后缀 · 或差异落在第八位之后）在出口看得见。
+//
+// ★ 只改文案：**不参与判等**（判等仍是 `doctorDriftItem` 里那一次全串 `==`/前缀比）、不改退码。
+// 调用点只在判「不等」的分支 ⇒ 两串全串必不相同、且**互不为前缀** ⇒ 加长后必然印出两串相异的值。
+func driftPair(art, head string) (string, string) {
+	a, h := driftShort(art), driftShort(head)
+	if a != h {
+		return a, h
+	}
+	n := 0
+	for n < len(art) && n < len(head) && art[n] == head[n] {
+		n++
+	}
+	n += 8
+	if n > len(art) {
+		n = len(art)
+	}
+	if n > len(head) {
+		n = len(head)
+	}
+	return art[:n], head[:n]
 }
 
 // driftChangedFiles —— 制品那笔之后源码改过的件（**已提交**的 `art..HEAD` + **未提交**的工作树），
