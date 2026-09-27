@@ -1857,6 +1857,18 @@ func init() {
 		// 热加载路由**已经在跑的主控上**（`core/cmd/zerg-core/main.go`：`r.Post("/api/config/reload", …)`），
 		// 且处理器**自己先解析**（解析不过即回 `CONFIG_LOAD_FAILED`）⇒ 命令面这边只补「先校验后写 /
 		// 先校验再请求」两道。今天这两件事只能手改 YAML（手搓插坏名册两次）或重启主控 ✗。
+		// ★ `danger` 登记（**D2** · 2026-09-27）：本表项**真写盘**，修前无 `danger` ⇒ `zerg help` 把它当安全档 ✗。
+		//   定档理由（逐条读 `family_config.go:cmdModelAdd` 得）：唯一的写盘点是 `writeFleetAtomic`
+		//   （`family_config.go:513` 临时件 `os.WriteFile` + `:518` `os.Rename` 原子换入），只给
+		//   `gateway/fleet.yaml` 这一件的 `models:` 段**加一条**；不删件、不改别人的条、不碰主控运行态
+		//   ⇒ 可逆（删掉那一行即回原状）⇒ **D2**（`--yes` 即可），不是 D3。
+		//   ★ 三态面的两枚真判**都已接**（本单只补登记，不动实现件）：`--dry-run`（`family_config.go:460`）
+		//   ⇒ 计划件走 stdout + rc=0 且一个字节都不落；缺 `--yes`（`:489`）⇒ 计划件走 stderr + rc=2
+		//   （fail-closed）—— 两条都判在 `writeFleetAtomic`（`:495`）**之前**。
+		//   ★ 同族「`--dry-run` 与 `--yes` 同给 ⇒ 2」那条判本表项**未接**（全仓只有 `family_gate_matrix.go:99`
+		//   一处）⇒ 本单**禁改既有函数行为** ⇒ 不擅自补（入缺口账，交父代理拍板）。
+		//   ★ `opened: true` = 真跑已开放（`--yes` 就写；`--dry-run` 零副作用）—— 漏它会让三处显示面
+		//   齐声报「本版未开放」（`cli_danger_opened_test.go` 的对账闸正是钉这个）。
 		{
 			path:     []string{"model", "add"},
 			kind:     "ModelAdd",
@@ -1865,9 +1877,23 @@ func init() {
 			arity:    "any",
 			args:     []string{"模型名（--model：`models:` 段的键 / 块名 ⇒ 按它定位或新建那一块）", "主机（--host：该条 `host:` 的字段值 ＝ 这台模型跑在哪台机器）", "GGUF 路径（--file）"},
 			fields:   []string{"model", "host", "file", "fleet", "line", "added"},
+			danger:   &dangerSpec{dangerD2, "模型名（`--model`）", "往名册件 `gateway/fleet.yaml` 的 `models:` 段加一条（同目录临时件 + rename 原子写 · 写完读回再校 · 任一步不过 ⇒ 回滚；不删件、不改别人的条、不碰主控运行态）；可逆：删掉那一行即回原状", "缺口账 `GAP-20260927-342` · 同族写面先例 `zerg gap export`（真写盘）· `zerg gate matrix` · §九 M3 C1"},
+			opened:   true,
 			endpoint: "",
 			run:      cmdModelAdd,
 		},
+		// ★ `danger` 登记（**D2** · 2026-09-27）：本表项**真跑有副作用**，修前无 `danger` ⇒ `zerg help` 把它当安全档 ✗。
+		//   定档理由（逐条读 `family_config.go:cmdConfigReload` 得）：本件**零 os 落盘调用**（无 `os.WriteFile` /
+		//   `os.MkdirAll` / `os.Create` / `os.Rename` / `os.Remove`）—— 它的效果面是 **HTTP POST**
+		//   （`family_config.go:599` `POST /api/config/reload`：让在跑的主控重读名册、路由表即时更新）；
+		//   不重启、不停任何进程、已加载模型不受影响；名册件本地解析不过 ⇒ 一个请求都不发（旧配置继续跑）
+		//   ⇒ 可逆（再热加载一次即回旧档）⇒ **D2**（`--yes` 即可），不是 D3 —— 同族先例 = `zerg core reload`
+		//   表项（`{\"core\", \"reload\"}`：同为「让主控重读配置」的 D2）。
+		//   ★ 三态面的两枚真判**都已接**（本单只补登记，不动实现件）：`--dry-run`（`family_config.go:580`）
+		//   ⇒ 计划件走 stdout + rc=0 且**一个请求都不发**；缺 `--yes`（`:593`）⇒ 计划件走 stderr + rc=2
+		//   （fail-closed）—— 两条都判在 `sendJSON`（`:599`，本件唯一副作用点）**之前** —— 与
+		//   `family_gate_matrix.go:99` 那处只差「两枚同给 ⇒ 2」一条（本单不补，见缺口账）。
+		//   ★ `opened: true` = 真跑已开放（`--yes` 就发那一次请求；`--dry-run` 一个请求都不发）。
 		{
 			path:     []string{"config", "reload"},
 			kind:     "ConfigReload",
@@ -1876,6 +1902,8 @@ func init() {
 			arity:    "none",
 			args:     []string{"（无名册件参数：走 `--root` / `--path` 或仓根）"},
 			fields:   []string{"status", "models", "added", "fleet_nodes", "fingerprint"},
+			danger:   &dangerSpec{dangerD2, "（群级：不点名主机）", "让在跑的主控重读名册件（`POST /api/config/reload`）—— 生效面即时（路由表更新）；不重启、不停任何进程、已加载模型不受影响 · 名册件解析不过 ⇒ 一个请求都不发（旧配置继续跑）；可逆：再热加载一次即回旧档", "缺口账 `GAP-20260927-342` · 同族先例 `zerg core reload`（同为 D2）· §三 C 族 · §6.3 S5 · §九 M3 C1"},
+			opened:   true,
 			endpoint: "POST /api/config/reload（路由已在跑的主控上 ⇒ 主控零改动）",
 			run:      cmdConfigReload,
 		},
