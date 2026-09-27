@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/gitpaths"
 )
 
 // gitTimeout —— 单条 git 网络命令的上限（fetch/ls-remote）。被动检查不能把启动拖死。
@@ -49,7 +51,7 @@ func (g Git) run(network bool, args ...string) (string, error) {
 		ctx, cancel = context.WithTimeout(ctx, gitTimeout)
 		defer cancel()
 	}
-	full := append([]string{"-C", g.Dir}, args...)
+	full := append([]string{"-C", g.Dir, "-c", "core.quotepath=false"}, args...)
 	cmd := exec.CommandContext(ctx, "git", full...)
 	if network {
 		cmd.Env = nonInteractiveGitEnv()
@@ -79,8 +81,11 @@ func (g Git) IsShallow() bool {
 
 // IsDirty —— 工作树是否有未提交改动（判定"开发态"用）。
 func (g Git) IsDirty() bool {
-	out, err := g.run(false, "status", "--porcelain")
-	return err == nil && strings.TrimSpace(out) != ""
+	// C4（2026-09-27）：`status` 面走 A1 出口（gitpaths.List）——件名列表非空即
+	// 「有改动」；出口 argv 同面（`status --porcelain -z`）+ C-5 自检（件名真名），
+	// 与旧写法（裸拼 argv + 只判原始文本空否）口径相同。出口报错照旧判「不脏」。
+	ents, err := gitpaths.List(g.Dir, gitpaths.FaceStatus)
+	return err == nil && len(ents) > 0
 }
 
 // IsAncestor —— a 是否为 b 的祖先（同一历史的包含关系判定）。
@@ -125,7 +130,7 @@ func (g Git) CountAhead(from, to string) int {
 // 互不为祖先，直接 rev-list 会报「落后 = 整部公开史」（实测 393 笔），而真相应是「已是最新」。
 // 口径：镜像 tip 带 `GitOrigin-RevId: <私有 sha>` ⇒ 拿它映射回私有图再比祖先。读不到就返回空串。
 func (g Git) OriginRevID(ref string) string {
-	cmd := exec.Command("git", "-C", g.Dir, "log", "-1",
+	cmd := exec.Command("git", "-C", g.Dir, "-c", "core.quotepath=false", "log", "-1",
 		"--format=%(trailers:key=GitOrigin-RevId,valueonly)", ref)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.Output()
@@ -148,7 +153,7 @@ func ResolveUpdateRemote(repoDir string) string {
 	if v := strings.TrimSpace(os.Getenv("ZERG_UPDATE_REMOTE")); v != "" {
 		return v
 	}
-	cmd := exec.Command("git", "-C", repoDir, "remote", "get-url", "origin")
+	cmd := exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false", "remote", "get-url", "origin")
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if out, err := cmd.Output(); err == nil && strings.TrimSpace(string(out)) != "" {
 		return "origin"

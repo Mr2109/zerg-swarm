@@ -99,7 +99,7 @@ GATES = {
                  "空转 = 引用条目与计数条目**都**为 0",
         "rc0": "无红（黄=歧义只入清单）",
         "rc1": "有红（文件不存在 / 行号越界 / 计数与现跑不符）",
-        "rc2": "解析基准集配置缺失（判据不可判）",
+        "rc2": "解析基准集配置缺失（判据不可判）· **仓外基准集（同级开发文档仓）不在盘 ⇒ 外根形态的引用判不了**（缺语料铁律：rc=2 + 逐字打印缺件路径，绝不判红、更不许静默绿）",
         "fix": "行号越界 ⇒ 改行号或改「文件:行」；文件没了 ⇒ 改指向新落点；计数不符 ⇒ **现跑那条命令**，改代码或改文档 ",
     },
     "d3": {
@@ -409,8 +409,96 @@ RE_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
 RE_URL = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://[^\s`)\]}>,，。；;]+")
 
 
+# ── 仓外基准根（2026-09-19 开发文档分家 ⇒ **同级仓**）────────────────────────────
+#   为什么必须有仓外根：分家后主仓 `docs/` 那一面子面**整棵**迁到**同级** `Zerg-内部文档/`（主仓之外），
+#   而语料里的引用仍照分家前的字面形态写 ⇒ 只在本仓拼候选（12 根本全在仓内）= 每条探针必然 miss
+#   = **结构性假红**。2026-09-26 实测（现读）：420 条红里 **417 条**是「定位形态过时」—— 真件
+#   417/417 都在同级仓、行号 **0** 越界（假红率 100%）；剩 3 条是转述被当引用（与本根无关）。
+#   反面口径同样是铁律：同级仓**不在盘**时才轮到「缺语料 ⇒ rc=2 不给结论」，不许把可判的判成红。
+#   ★ 2026-09-26 落地：这条口径的实现 = `sibling_forms()` + `sibling_root_on_disk()` + `gate_d2`
+#     的**缺语料铁律档**（外根不在盘 + 外根形态 ⇒ BLOCKED，逐字打印缺件路径；**绝不混进红档**）。
+SIBLING_STRIP_PREFIXES = ("docs/",)   # 分家整面搬迁映射：`docs/<子面>` → `<同级仓根>/<子面>`
+
+
+def sibling_docs_root(tree):
+    """同级开发文档仓根（**仓外**基准根 · 绝对路径）。
+
+    口径**单一来源**：与 D3① `devdocs_root()` **同根** —— 它指到 `<同级仓>/项目文档/v2.5.10`，
+    取上两级即同级仓根；换根（`ZERG_DEVDOCS_ROOT`）时本函数随之走（不另写一份默认值）。
+    """
+    return os.path.dirname(os.path.dirname(devdocs_root(tree.repo)))
+
+
+def external_candidates(tree, tgt):
+    """仓外（同级仓）候选 —— 三种字面形态都指同一件（**确定映射**，不猜后缀、不模糊匹配）：
+
+      ① `<同级仓名>/…`（相对**仓父目录**，字面缺 `../`）
+      ② `项目文档/…` `01-设计/…`（相对**同级仓根**）
+      ③ `docs/…`（分家前相对**主仓根**；分家后同名子面在同级仓根下 ⇒ 剥 `docs/` 再挂同级根）
+
+    候选命中与否一律交给文件系统 ⇒ 「真的缺件」照旧红（不做兜底绿）。
+    """
+    sib = sibling_docs_root(tree)
+    parent = os.path.dirname(os.path.abspath(tree.repo))
+    out = [os.path.join(sib, tgt)]                        # ②
+    for pre in SIBLING_STRIP_PREFIXES:                    # ③
+        if tgt.startswith(pre):
+            out.append(os.path.join(sib, tgt[len(pre):]))
+    first = tgt.split("/")[0]                             # ①（首段确在仓父目录下才加，免造虚候选）
+    if first and first != os.path.basename(os.path.abspath(tree.repo)) \
+            and os.path.isdir(os.path.join(parent, first)):
+        out.append(os.path.join(parent, tgt))
+    return [c.replace(os.sep, "/") for c in out]
+
+
+# ── ★ 缺语料铁律档（2026-09-26）：仓外基准根「不在盘」时，外根形态的引用**判不了** ──────────────
+#   为什么必须有这一档：公开树/镜像树里**没有**同级仓 `../Zerg-内部文档`（它不开源、不进公开树）⇒
+#   按「miss = 红·文件不存在」的原口径，每条外根形态的引用都成了**假红**（公开树侧同类探针实测
+#   假红率 63.6%）。缺语料时正确的档位是**不给结论**：rc=2 BLOCKED + 逐字打印缺件路径 ——
+#   既不判红、也不静默绿。**外根在盘时一律走原判据**（与本次改动前逐位一致）。
+EXT_FORM_LABELS = (
+    "① 字面点名同级仓（`../Zerg-内部文档/…`）",
+    "② 首段在仓内无落点（相对同级仓根，如 `项目文档/…`）",
+    "③ `docs/` 前缀（分家前相对主仓根）",
+)
+
+
+def sibling_forms(tree, tgt):
+    """该目标是不是**字面形态上确定指向仓外同级仓** → `(形态名, 外根下落点)`；否则 `None`。
+
+    与 `external_candidates()` 的三种映射**一一对应**，只认字面形态（不猜后缀、不做模糊匹配）：
+      ① 首段 == 同级仓目录名（`Zerg-内部文档/…`；`../Zerg-内部文档/…` 剥前导 `../` 后同形）⇒ 落点 = 同级仓根
+      ③ 以 `docs/` 开头（分家前相对主仓根；分家后同名子面挂在同级仓根下）⇒ 落点 = 同级仓根 + 剥 `docs/` 的余段
+      ② 首段在**仓内**找不到任何落点（不是 `base_roots` 的一条、也不在仓根下与 `docs/` 下真实存在）⇒
+         只能相对同级仓根解（`项目文档/…` —— 分家后主仓连 `docs/项目文档/` 都没有了，这条必须靠
+         「仓内无此首段」认，不能靠枚举同级仓的子面名）⇒ 落点 = 同级仓根 + 原路径
+    本函数只定**形态**、不问「在不在盘」——「在不在」由调用方判（见 `gate_d2` 的缺语料铁律档）。
+    """
+    sib = sibling_docs_root(tree)
+    segs = tgt.replace("\\", "/").split("/")
+    while segs and segs[0] in ("", ".", ".."):
+        segs.pop(0)
+    if not segs:
+        return None
+    first = segs[0]
+    if first == os.path.basename(sib):                                        # ①
+        return EXT_FORM_LABELS[0], sib
+    if tgt.startswith("docs/"):                                               # ③
+        return EXT_FORM_LABELS[2], os.path.join(sib, tgt[len("docs/"):])
+    if first in [b.rstrip("/") for b in tree.cfg.get("base_roots", [])] \
+            or os.path.exists(os.path.join(tree.repo, first)) \
+            or os.path.exists(os.path.join(tree.repo, "docs", first)):
+        return None                                                           # 仓内首段 ⇒ 与同级仓无关
+    return EXT_FORM_LABELS[1], os.path.join(sib, tgt)                         # ②
+
+
+def sibling_root_on_disk(tree):
+    """仓外基准根（同级开发文档仓）**在不在盘** —— 不在 ⇒ 外根形态的引用判不了（缺语料铁律）。"""
+    return os.path.isdir(sibling_docs_root(tree))
+
+
 def resolve_file(tree, src_rel, target):
-    """在 {引用文件目录, 仓根, 各模块根} 里找；返回 (kind, hit, extra)。
+    """在 {引用文件目录, 仓根, 各模块根, 仓外同级仓根} 里找；返回 (kind, hit, extra)。
 
     kind ∈ exists / case / dir / miss ；extra 给候选（用于报错信息）。
     """
@@ -423,17 +511,26 @@ def resolve_file(tree, src_rel, target):
         b = b.rstrip("/")
         if b:
             cands.append(norm_join(b, tgt))
+    cands.extend(external_candidates(tree, tgt))          # ★ 仓外根：见 external_candidates 注释
     seen, cand2 = set(), []
     for c in cands:
         if c and c not in seen:
             seen.add(c)
             cand2.append(c)
     for c in cand2:
+        if os.path.isabs(c):        # 仓外候选：不在仓内 fileset 里 ⇒ 只能问文件系统
+            if os.path.isfile(c):
+                return "exists", c, cand2
+            if os.path.isdir(c):
+                return "dir", c, cand2
+            continue
         if tree.exists(c):
             return "exists", c, cand2
         if tree.exists_dir(c):
             return "dir", c, cand2
     for c in cand2:
+        if os.path.isabs(c):
+            continue
         v = tree.case_variant(c)
         if v:
             return "case", v, cand2
@@ -785,6 +882,9 @@ def gate_d2(tree, args):
         return r
     r.counted("语料篇数", len(tree.corpus))
     suffix_on = bool(tree.cfg.get("d2", {}).get("resolve_package_relative", True))
+    ext_root = sibling_docs_root(tree)                    # 仓外基准根（同级开发文档仓）
+    ext_ok = sibling_root_on_disk(tree)                   # 在盘 = True：判据一字不变（本档整体不生效）
+    blocked_ext = []                                      # 缺语料 ⇒ 不给结论的现场（逐条计数、封顶取样）
     for rel in tree.corpus:
         dom = tree.domain(rel)
         text = tree.text(rel)
@@ -809,6 +909,9 @@ def gate_d2(tree, args):
                 continue
             if has_slash:
                 kind, hit, cands = resolve_file(tree, rel, pfx)
+                if kind == "exists" and hit and os.path.isabs(hit):
+                    # 仓外根命中（同级开发文档仓）—— 单列计数，便于「本仓 0 命中也能看出仓外顶了多少」
+                    r.counted("过·仓外命中（同级仓）")
                 if kind == "case":
                     r.counted("黄·大小写不符")
                     r.add(rel, line, raw, "黄·大小写不符", "精确串没命中，命中=%s" % hit, dom)
@@ -829,6 +932,13 @@ def gate_d2(tree, args):
                         if tot and mx > tot:
                             r.counted("红·行号越界")
                             r.add(rel, line, raw, "红·行号越界", "%s 只有 %d 行，引用到 %d（后缀命中 %s）" % (hit2, tot, mx, hit2), dom)
+                        continue
+                if kind == "miss" and not ext_ok:
+                    form = sibling_forms(tree, pfx)
+                    if form:        # 缺语料铁律：外根形态 + 仓外根不在盘 ⇒ **判不了**（rc=2，不进红档）
+                        r.counted("不给结论·仓外根不在盘")
+                        r.counted("不给结论·仓外根不在盘·%s" % form[0])
+                        blocked_ext.append((form[0], rel, line, raw, pfx, form[1]))
                         continue
                 if kind == "miss":
                     r.counted("红·文件不存在")
@@ -877,6 +987,19 @@ def gate_d2(tree, args):
     for f in r.findings:
         if f["domain"] != DOM_LOCAL:
             r.counted("非本地域命中（单列·不进退码）·%s" % f["domain"])
+    # ── ★ 缺语料铁律档（2026-09-26）：外根形态 + 仓外根不在盘 ⇒ rc=2 不给结论 + 逐字打印缺件路径 ──
+    #    **不许**把这一档写进 findings 的红档（BLOCKED 不是 FAIL）；外根在盘时本档整体为空（行为一字不变）。
+    if blocked_ext:
+        r.errors.append(
+            "仓外基准根不在盘 ⇒ rc=2 不给结论：**缺件 %s**（同级开发文档仓 · 字面形态 `../Zerg-内部文档`）；"
+            "%d 条**外根形态**的引用判不了 —— 缺语料铁律：语料/前置不在盘时判不了就报 BLOCKED，"
+            "既不判红（假红）也不静默绿" % (ext_root, len(blocked_ext)))
+        for label in EXT_FORM_LABELS:
+            items = [x for x in blocked_ext if x[0] == label]
+            if not items:
+                continue
+            eg = " · ".join("例 %s:%d → `%s`" % (x[1], x[2], x[4]) for x in items[:3])
+            r.errors.append("%s %d 条 · 外根下落点 %s · %s" % (label, len(items), items[0][5], eg))
     if r.counts.get("引用条目·R1", 0) + r.counts.get("引用条目·R2", 0) == 0 \
             and r.counts.get("计数条目", 0) == 0:
         r.errors.append("该 scope 的语料里 0 条 `文件:行` 引用 且 0 条计数条目（空转 ⇒ 不给结论）")
@@ -1073,7 +1196,10 @@ def gate_d4(tree, args):
         # 缺件判定
         script = g.get("script")
         optional = bool(g.get("optional"))
-        if script and not os.path.exists(os.path.join(tree.repo, script)):
+        # GAP-20260927-12：生成器脚本与 d3.spec_doc 同源——都是**主仓根**相对路径（见 :181 自述）
+        #   devdocs 档下 tree.repo 已换到文档面 ⇒ 一律按 tree.main_repo 解析，免得把真身在盘的脚本
+        #   判成「缺脚本」（假 BLOCKED；缺件判定该判「产物」，不该判「脚本不在文档仓」）。
+        if script and not os.path.exists(os.path.join(tree.main_repo, script)):
             if optional:
                 r.counted("[%s] 可选生成器缺脚本（单列）" % gid)
                 continue
@@ -1248,6 +1374,9 @@ def cmd_list_rules(cfg, tree, args):
     print("  · 外部引用域         ：%s" % ", ".join(cfg.get("external_domain_paths", [])))
     print("\n【解析基准集（base_roots，缺一条就出假红）】")
     print("  · 仓根 + %s" % ", ".join(r for r in cfg["base_roots"] if r))
+    _sib = sibling_docs_root(tree) if tree else os.path.join(os.path.dirname(os.path.abspath(DEFAULT_REPO)), "Zerg-内部文档")
+    print("  · ★ 仓外根（同级开发文档仓 · 分家后那三类外根形态的落点，见 sibling_docs_root()）：%s（%s）"
+          % (_sib, "在盘" if os.path.isdir(_sib) else "**不在盘** ⇒ 外根形态的引用判不了 = rc=2 BLOCKED、逐字打印缺件路径"))
     print("  · D2 包内相对路径：唯一后缀匹配=%s（api/handlers.go → core/internal/api/handlers.go）"
           % cfg.get("d2", {}).get("resolve_package_relative", True))
     print("\n【slug 规范】profile=%s（§5.6① 八条：NFC · lower · 保 \\p{L}\\p{M}\\p{N}_- · 空白→'-' · 空兜底 s<n> · 重复加 -1/-2 · 引用一律 path#slug · 钉死版本+自测）"
@@ -1419,6 +1548,36 @@ def cmd_self_test(args):
     check("缺件（语料根 docs/ 不存在 ⇒ 公开树侧）rc=2 且点名缺件路径",
           res.rc() == 2 and any("缺件" in e and "docs" in e for e in res.errors),
           " · ".join(res.errors))
+    # ── ★ 缺语料铁律档（2026-09-26）：外根形态 + 仓外根**不在盘** ⇒ rc=2 BLOCKED（**不判红**）
+    #    成对格：同一个 miss 在「外根在盘」时必须照旧判红 —— 证明这一档只由**根在不在盘**开合，
+    #    不是把判据放宽（真缺件、真越界照红）。用独立 tmp2 隔离，免得仓外根影响上面各格。
+    tmp2 = tempfile.mkdtemp(prefix="docfresh-selftest-ext-")
+    sx = os.path.join(tmp2, "repo")
+    _mkroot({"docs/a.md": "见 `项目文档/v2.5.10/x.md:3` 与 `Zerg-内部文档/项目文档/v2.5.10/x.md:3`"
+                          " 与 `core/nope.py:1`。\n"}, sx)
+    t = Tree(sx, base_cfg(sx))
+    res = gate_d2(t, args)
+    check("缺语料·外根形态（② + ①）+ 仓外根不在盘 ⇒ rc=2、**那两条 0 红**",
+          res.rc() == 2 and len(res.reds()) == 1 and res.counts.get("不给结论·仓外根不在盘") == 2,
+          (res.rc(), res.counts, [f["kind"] for f in res.reds()]))
+    check("缺语料·报错逐字打印缺件路径（同级仓根 %s）" % sibling_docs_root(t),
+          any(sibling_docs_root(t) in e for e in res.errors), res.errors)
+    check("缺语料·**仓内**引用不跟着进 BLOCKED（`core/nope.py:1` 仍判红·文件不存在）",
+          [f["kind"] for f in res.reds()] == ["红·文件不存在"]
+          and all(f["target"].startswith("core/nope.py") for f in res.reds()),
+          [(f["kind"], f["target"]) for f in res.reds()])
+    _mkroot({"项目文档/v2.5.10/x.md": "l1\nl2\nl3\nl4\n"}, os.path.join(tmp2, "Zerg-内部文档"))
+    res2 = gate_d2(Tree(sx, base_cfg(sx)), args)
+    check("成对负控·外根在盘 ⇒ 同一个件（①/② 形态）照旧判过（本档整体不生效）",
+          res2.counts.get("不给结论·仓外根不在盘") is None and len(res2.reds()) == 1
+          and res2.reds()[0]["target"].startswith("core/nope.py"),
+          (res2.rc(), res2.counts, [(f["kind"], f["target"]) for f in res2.reds()]))
+    sx3 = os.path.join(tmp2, "repo3")
+    _mkroot({"docs/a.md": "见 `项目文档/v2.5.10/x.md:99` 与 `项目文档/v2.5.10/真不存在-x.md:1`。\n"}, sx3)
+    res3 = gate_d2(Tree(sx3, base_cfg(sx3)), args)
+    check("成对负控·外根在盘 ⇒ 真存在件改坏行号仍「红·行号越界」、真缺件仍「红·文件不存在」",
+          sorted(f["kind"] for f in res3.reds()) == sorted(["红·行号越界", "红·文件不存在"]) and res3.rc() == 1,
+          (res3.rc(), [(f["kind"], f["target"]) for f in res3.reds()]))
 
     # ---------- D3 ----------
     print("[D3] 三格")
@@ -1506,6 +1665,27 @@ def cmd_self_test(args):
           len(Tree(rd, cd, scope="main").corpus) == 0, Tree(rd, cd, scope="main").corpus)
     rd1 = gate_d1(td, args)
     check("D3① devdocs 档：D1 在同表内引用可解析（无红）", not rd1.reds(), rd1.reds())
+    # ---------- D4：生成器脚本的解析基准 = 主仓根（GAP-20260927-12） ----------
+    print("[D4] 生成器脚本的解析基准（主仓根 · 换根档）")
+    main = os.path.join(tmp, "d4main")
+    _mkroot({"tools/mygen.py": "print('x')\n"}, main)
+    doc = os.path.join(tmp, "d4docs")          # 模拟 --scope devdocs 换根后的被扫树
+    _mkroot({"docs/a.md": "# a\n"}, doc)
+    cfg4 = base_cfg(doc)
+    cfg4["d4"] = {"generators": [{"id": "mygen", "script": "tools/mygen.py",
+                                  "output": "docs/INDEX.md", "optional": True}]}
+    res = gate_d4(Tree(doc, cfg4, scope="devdocs", main_repo=main), args)
+    check("主仓在盘的脚本不判「缺脚本」（换根档）",
+          not any("缺脚本" in str(k) for k in res.counts), dict(res.counts))
+    check("但产物真缺 ⇒ 仍报「产物不存在」",
+          any("产物不存在" in str(k) for k in res.counts), dict(res.counts))
+    cfg4b = base_cfg(doc)
+    cfg4b["d4"] = {"generators": [{"id": "mygen2", "script": "tools/nope.py",
+                                   "output": "docs/INDEX.md", "optional": True}]}
+    res2 = gate_d4(Tree(doc, cfg4b, scope="devdocs", main_repo=main), args)
+    check("负控：两个根都找不到的脚本 ⇒ 仍报「缺脚本」",
+          any("缺脚本" in str(k) for k in res2.counts), dict(res2.counts))
+
     print("\nself-test：%d 条通过 / %d 条失败" % (n_ok, len(fails)))
     if fails:
         for f in fails:
@@ -1524,7 +1704,30 @@ def build_tree(args, cfg):
     return t
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+                     % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
 def main():
+    rc_q176 = refuse_json_without_machine_face()
+    if rc_q176 is not None:
+        return rc_q176
     ap = argparse.ArgumentParser(add_help=True, description="W3 四条新鲜度门禁 D1–D4（只读 · 只报不改）")
     ap.add_argument("gates", nargs="*", help="d1 d2 d3 d4 all（可多个）")
     ap.add_argument("--repo", default=DEFAULT_REPO)

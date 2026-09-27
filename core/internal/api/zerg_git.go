@@ -127,7 +127,8 @@ func (z *ZergGit) Status() (string, error) {
 
 // git 执行（包装——输出）
 func (z *ZergGit) git(args ...string) ([]byte, error) {
-	cmd := exec.Command("git", append([]string{"-C", z.RepoDir}, args...)...)
+	// ★ `-c core.quotepath=false` 必落**子命令之前**（放其后：status → rc=129 unknown switch；diff → rc=128 ambiguous）。
+	cmd := exec.Command("git", append([]string{"-C", z.RepoDir, "-c", "core.quotepath=false"}, args...)...)
 	// S11: 强制英文输出——输出文案判断(如 "nothing to commit")不能依赖系统 locale(中文 git 会误判)
 	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
 	return cmd.CombinedOutput()

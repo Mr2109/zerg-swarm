@@ -6,5 +6,5 @@ TASK="${1:-定时任务}"
 TYPE="${2:-code}"
 PRIORITY="${3:-normal}"
 PORT="${ZERG_API_PORT:-8083}"
-curl -s -X POST "http://localhost:${PORT}/task" -H "Content-Type: application/json" \
+curl -s -m 30 -X POST "http://localhost:${PORT}/task" -H "Content-Type: application/json" \
   -d "{\"task\":\"${TASK}\",\"type\":\"${TYPE}\",\"priority\":\"${PRIORITY}\",\"source\":\"cron\"}"

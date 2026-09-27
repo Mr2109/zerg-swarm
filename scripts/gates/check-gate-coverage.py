@@ -45,6 +45,32 @@
      ★ **一次红 71 条会把提交闸锁死** ⇒ 起步用**基线棘轮**（同 D2「只报告」的先例）：
        `命中数 > baseline ⇒ rc=1`；`≤ baseline ⇒ rc=0`，但**必须打印剩余数**（不许悄悄绿）。
 
+     ★ **③ 里哪几类本质挂不了门**（20260926 取证读数 · **只解释构成，不是豁免**）
+       未挂门 77 条（存量 66 + 新件 11）里：**可分可挂 37 条 / 不可挂 40 条**
+       （可分可挂 = 只读档 23 + 自检档 4 + 真跑档 10）。不可挂的 40 条按「为什么在提交闸里挂不上」归 **8 类**：
+         ① 需模型面（跑真 Agent / 对话 / 靶子）**20** —— `evals/v25_*.py`×14 · `evals/v24_full_test.py` ·
+            `evals/ab-campaigns.py` · `evals/chat-harness.py` · `calib/calib-local-model.sh` ·
+            `calib/calib-task-budget.py` · `build/run_all.sh`
+         ② 需真机 + 写盘（EDGE-NODE 真 GTT / 装机换装到前缀）**2** —— `calib/calib-x3-model.sh` · `svc/setup-zerg.sh`
+         ③ 起常驻进程 / 碰 launchd / cron **2** —— `svc/zerg-core-daemon.sh` ·
+            `svc/zerg-cron-submit.sh`
+         ④ 需必填参数（无默认可跑档）**5** —— `gates/accept-no-probe.sh` · `gates/check-manifest-freshness.py` ·
+            `gates/who-references.py` · `evals/make-manifest.py` · `evals/compare.py`
+         ⑤ 需网络 / ssh 同步 **1** —— `svc/fleet-relay.sh`
+         ⑥ 夹具 / 负控 / 变异（**是夹具不是工具**）**6** —— `build/negctl-build-wall.sh` ·
+            `build/build-wall-mutate.py` · `gates/two-states-gate-mutate.py` ·
+            `gates/probe-build-all-wall-wiring.sh` · `wall/wall-bridge-mutate.py` · `wall/wall-macos-mutate.py`
+         ⑦ 元门 / 人用视图（跑一遍 = 全部门之和）**1** —— `gates/gate-report.py`
+         ⑧ 需活主控（要被插件宿主加载才能跑）**1** —— `plugins/zerg-hello`
+         ⇒ 20 + 2 + 4 + 5 + 1 + 6 + 1 + 1 = **40**（+ 可分可挂 37 = 77，与逐件表恒等 ✓）
+        ★ **这 40 条照旧计入 ③ 命中数、照旧与 `baseline` 比** —— 本节只把「一堆无名债」变成「可读的八类」：
+          本门**不为它们加白名单**、**不改任何计数 / 阀值 / 基线**（整类加白名单 = 判据面洗白，
+          见 `verification-gate-engineering` §3）。
+        ★ 上面 77 / 66 / 11 / 40 是 20260926 的**封板读数**；逐件清单见仓外
+          `未挂门77条-分类表-20260926.tsv`（8 列 · 77 行），分批处方见
+          `Zerg-内部文档/项目文档/v2.5.13/处方-未挂门77条分批-20260926.md`。**现读数一律以 `--baseline` /
+          `--json` 为准**（新建件会继续落进 ③/④，命中数本来就会动）。
+
 例外表（四档 · 逐档计数可见 · `--list-rules` 全列）
   | 档 | 名 | 进不进退码 | 口径 |
   |---|---|---|---|
@@ -76,13 +102,23 @@
 
 用法
     python3 scripts/gates/check-gate-coverage.py                  # 自检 + 两条断言扫真目标
-    python3 scripts/gates/check-gate-coverage.py --json           # 机读
+    python3 scripts/gates/check-gate-coverage.py --json           # 机读：**stdout 只有 JSON**
     python3 scripts/gates/check-gate-coverage.py --list-rules     # 两条断言 + 例外表四档 + 退码口径
     python3 scripts/gates/check-gate-coverage.py --baseline       # 基线视图（命中/基线/剩余 + 下调号令）
     python3 scripts/gates/check-gate-coverage.py --self-test      # 只跑自检（合成夹具，不碰真目标）
     python3 scripts/gates/check-gate-coverage.py --no-self-test    # 内部子进程 / 迭代调试用（门禁别用）
     python3 scripts/gates/check-gate-coverage.py --root <目录> --config <文件>
     python3 scripts/gates/check-gate-coverage.py --max-examples N  # 每桶最多列几条（默认 40）
+
+  ★ **`--json` ⇒ stdout 只有 JSON**（`json.loads(stdout)` 直接可用；**不必**再配 `--no-self-test`）：
+    `--json` 时本门的**全部自检文本**（头行 + 逐格 + 结论行）**改走 stderr** —— 人读面（不传 `--json`
+    的那一档）与 rc 口径**一字不动**；结论摘要 `rc=… · …` 也照旧只进 stderr。
+  ★ `--json` 与「只产人读文本、不产 JSON」的两个开关**互斥**：`--json --self-test` · `--json --list-rules`
+    ⇒ **用法错 rc=2**（同给 = 号称机读却没有机器面，判不了就不给结论）。`--json --baseline` 允许：
+    基线三数本来就在 JSON 里（`baseline` / `b.hit`），人读的基线视图在 `--json` 下不打印。
+  ★ `--no-self-test` 不再是为了 stdout 纯净（`--json` 已自带），只留给内部子进程 / 迭代调试用。
+  ★ **唯一残余例外**：`--help`（argparse 自带）在 `--json --help` 时会先打印帮助、rc=0 ⇒ stdout 是人读
+    帮助文本 —— CLI 通例，不属「污染」；要机读就别同时传 `--help`。
 
 退出码（三档 · **优先级 2 > 1 > 0**，与 check-doc-meta/name/freshness 同口径）
     0 = 全绿（A 无未收进目录；B 命中数 ≤ 基线）
@@ -112,6 +148,12 @@ LOCAL_CONFIG = os.path.join("scripts", "gates", "gate-coverage.config.json")
 GATES_REL = os.path.join("scripts", "gates", "precommit-gates.sh")
 
 EXIT_OK, EXIT_FAIL, EXIT_BLOCKED = 0, 1, 2
+
+# ── 自检里的「stdout 纯度探针」开关（**只有 import 本文件才够得着**：无 CLI 开关、无环境变量）──
+#   探针要跑一次**真命令行**（`--json`）才看得见 stdout 纯不纯；而被探的子进程若跑满自检，
+#   它自己又会再起探针 ⇒ 无限自嵌套。故探针子进程把本开关置 False：**只剪掉探针自己**，
+#   其余断言与「自检文本的打印 + 分流」全是真代码路径（门禁命令行永远走 True）。
+_SELFTEST_DEEP = True
 
 DEFAULT_BUILD_MANIFESTS = ("go.mod", "Cargo.toml")
 DEFAULT_SCRIPT_GLOBS = ("scripts/*.sh", "scripts/*.py")
@@ -455,6 +497,27 @@ def wl_match(rel, entries):
     return None
 
 
+def tracked_files(root):
+    """`git ls-files`（相对仓根）的集合 —— **新件 / 存量债** 的判据面。
+
+    ★ 为什么用「在不在 git 索引里」当新件判据：本门开张前就在盘上的脚本 = **存量债**
+      （已提交、走 `baseline` 棘轮，只许下调）；**本门开张后新建**的脚本一旦落 ③ 档，
+      说明它**没有与代码同批挂门** —— 那条纪律（《缺口总账》`Q-175`）在面上必须是**红**，
+      而不是「只要没超基线就绿」。
+    ★ 判不了就当**判不了**：非 git 仓 / 无 git / 命令失败 ⇒ 返回 `None`
+      （调用方**不按新件论处**，只在报告里照实记一句）—— 绝不把「判不了」读成「全部是存量」。
+    """
+    try:
+        proc = subprocess.run(["git", "-C", root, "ls-files", "-z"],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except (OSError, ValueError):
+        return None
+    if proc.returncode != 0:
+        return None
+    out = proc.stdout.decode("utf-8", "replace")
+    return {p for p in out.split("\0") if p}
+
+
 # ══════════════════════════════════════════════════════════════════
 # 4. 汇总 / 报告
 # ══════════════════════════════════════════════════════════════════
@@ -478,6 +541,7 @@ def analyse(root, cfg, steps, gates_text, max_examples):
 
     # ── B ──────────────────────────────────────────────────────────
     cands, nosuffix = scan_scripts(root, cfg)
+    tracked = tracked_files(root)                       # None = 判不了（非 git 仓）
     b_items, b_red, b_wl = [], [], []
     buckets = {"in_steps": [], "mentioned": [], "unmentioned": []}
     glob_note = []
@@ -487,16 +551,28 @@ def analyse(root, cfg, steps, gates_text, max_examples):
         item = {"script": rel, "kind": kind, "tier": tier,
                 "glob": glob_hit(rel, steps),
                 "whitelist": (wl["reason"] if wl else None),
-                "whitelist_date": (wl["date"] if wl else None)}
+                "whitelist_date": (wl["date"] if wl else None),
+                "new": False, "reason": ""}
         b_items.append(item)
         buckets[tier].append(item)                      # 三档之和恒等于候选总数
         if tier == "unmentioned":
             if wl:
                 b_wl.append(item)                       # 第二档白名单（不计入棘轮）
             else:
+                # ④ 新格：**新件**（不在 git 索引 = 本门开张后新建、且未与代码同批挂门）
+                #    与 **存量债**（已提交件 · 走 baseline 棘轮）**分开** —— 存量债是「还」，
+                #    新件是「不许再欠」（《缺口总账》`Q-175` ① / ②）。
+                item["new"] = bool(tracked is not None and rel not in tracked)
+                item["reason"] = ("新件未挂门（不在 git 索引 ⇒ 新建后没与代码同批挂 add_step）"
+                                  if item["new"] else
+                                  "存量债（已提交件 · 未挂 add_step · 走基线棘轮，只许下调）")
                 b_red.append(item)                      # ③ 棘轮命中数 = 查无此名 且 不在白名单
         if item["glob"]:
             glob_note.append(item)
+
+    # ④ 新格（单列成格）：③ 档里「新件」那一条 —— 与存量债分开点名、分开判
+    new_ungated = [it for it in b_red if it["new"]]
+    legacy_ungated = [it for it in b_red if not it["new"]]
 
     # ── 例外面计数（第二档：白名单）────────────────────────────────
     stale = []
@@ -517,6 +593,8 @@ def analyse(root, cfg, steps, gates_text, max_examples):
         "b": {"cands": b_items, "counts": {k: len(v) for k, v in buckets.items()},
               "tier1": buckets["in_steps"], "tier2": buckets["mentioned"], "tier3": buckets["unmentioned"],
               "hit": len(b_red), "hit_items": b_red,
+              "new_ungated": new_ungated, "legacy_ungated": legacy_ungated,
+              "git_tracked_known": tracked is not None,
               "whitelisted": b_wl, "glob_only": glob_note, "nosuffix": nosuffix},
         "baseline": cfg["baseline"], "baseline_note": cfg["baseline_note"],
         "stale_whitelist": stale,
@@ -593,8 +671,22 @@ def print_report(rep):
     else:
         print("          （命中 %d ≤ 基线 %d ⇒ 不红，**剩余 %d 条**；"
               "每批下调基线见 --baseline）" % (b["hit"], rep["baseline"], b["hit"]))
-    for ln in _list(b["hit_items"], "script", rep["max_examples"]):
-        print(ln)
+    # ★ ③ 档**逐件点名**（总数 + 名单 + 每件一行 reason）—— 存量债 / 新件分开写，
+    #   不再只给一个数（数看不出「哪一件」⇒ 只能人开闸文件全文对，见 `Q-175`）。
+    print("        · **③ 档逐件点名（%d 条 · 每件一行 reason）**：" % len(b["hit_items"]))
+    for it in b["hit_items"]:
+        print("          - %s  ← %s" % (it["script"], it["reason"]))
+    print("     ④ **新件未挂门**（本门开张后新建、且没与代码同批挂 add_step）= **%d**"
+          % len(b["new_ungated"]))
+    if not b["git_tracked_known"]:
+        print("        （★ 判不了：仓根不是 git 仓 / git 不可用 ⇒ **不按新件论处**、"
+              "本格只作照实记录 —— 判不了的时候报绿报红都是猜）")
+    for it in b["new_ungated"]:
+        print("          ✗ %s  ← %s" % (it["script"], it["reason"]))
+    if b["new_ungated"]:
+        print("        ⇒ 处置：**真修** —— 该件与本批代码**同批挂门**"
+              "（`scripts/gates/precommit-gates.sh` 的 `add_step` 按名调用它）；"
+              "新件**不许**蹭基线棘轮（棘轮只装存量债）。")
     print("     注：另 %d 条被通用语法步的 glob 兜住（`scripts/*.sh|*.py` 语法）——"
           "**语法过 ≠ 接了门，不计入 ①②③**（第四档）" % len(b["glob_only"]))
     print()
@@ -683,6 +775,11 @@ def print_list_rules():
     print("   2 = 不给结论（用法错 / 缺件：config 或闸文件不在 / config 有未实现键 / 白名单条目")
     print("       缺 reason 或 date / 空转（候选集为 0 = 假覆盖）/ 计数自证不过 / 自检未过）")
     print()
+    print("`--json` 契约（机读面）")
+    print("   ★ `--json` ⇒ **stdout 只有 JSON**（可 json.loads）：自检文本全部改走 stderr，"
+          "**不必**再配 --no-self-test")
+    print("   ★ `--json` 与 `--self-test` / `--list-rules` 互斥（它们不产 JSON）⇒ 用法错 rc=2")
+    print()
     print("与既有门的接口（第二波挂接）：")
     print('   add_step cov "门覆盖自检（构建清单目录 A + 脚本接线 B）" tri "${REPO_ROOT}" \\')
     print('            "python3 scripts/gates/check-gate-coverage.py"')
@@ -749,7 +846,44 @@ def _run(root):
     return proc.returncode, proc.stdout.decode("utf-8", "replace") + proc.stderr.decode("utf-8", "replace")
 
 
-def self_test():
+# ── stdout 纯度探针（⑱/⑲/⑳）：真命令行 + 真退出码，只看**流的归属** ──────────────
+#   薄启动器：import 本门 → 剪掉探针自己（防自嵌套）→ 走真 main()。**不是**第二份实现：
+#   参数解析、自检文本的打印与分流、扫描与退码，全是被测文件本身那一份。
+_JSON_PROBE_LAUNCHER = r'''#!/usr/bin/env python3
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("gc_probe", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+m._SELFTEST_DEEP = False
+sys.exit(m.main([a for a in sys.argv[2:]]))
+'''
+
+
+def _probe(base, argv):
+    """跑一次**真命令行** ⇒ (rc, stdout_bytes, stderr_bytes)。"""
+    launcher = os.path.join(base, "gc-probe-%d.py" % len(_TMPDIRS))
+    _write(launcher, _JSON_PROBE_LAUNCHER)
+    proc = subprocess.run([PY, launcher, SELF_PATH] + list(argv),
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _stdout_json_purity(raw):
+    """纯度判据 ⇒ (ok, 点名)。ok=False 时**逐字点名** stdout 首行（前 60 字）作证。"""
+    try:
+        json.loads(raw.decode("utf-8"))
+        return True, ""
+    except Exception:  # noqa: BLE001 —— 解析不了就是「不是 JSON」，不猜
+        lines = [l for l in raw.decode("utf-8", "replace").splitlines() if l.strip()]
+        return False, (lines[0][:60] if lines else "（stdout 为空 ⇒ 也不是 JSON）")
+
+
+def self_test(sink=None, deep=None):
+    # ★ 参数名**不能叫 `out`**：函数体里的既有断言都用 `rc, out = _run(...)` ⇒ 会把流变量冲成 str。
+    if sink is None:
+        sink = sys.stdout
+    if deep is None:
+        deep = _SELFTEST_DEEP
     base = tempfile.mkdtemp(prefix="gc-selftest-")
     _TMPDIRS.append(base)
     cases = []
@@ -886,14 +1020,80 @@ def self_test():
     # ── 计数自证行真的在 ────────────────────────────────────────────────
     check("⑮ 报告含「计数自证」两条恒等式", "计数自证" in out2 and "① 1 + ② 1 + ③ 0 = 2（候选 2）" in out2)
 
-    print("── check-gate-coverage 自检（成对负控 · 真命令行 + 真退出码）──")
+    # ── ④ 新格：**新件未挂门**（与存量债分开）—— 成对负控 ─────────────────
+    #   判据面 = 「不在 git 索引里」⇒ 夹具必须先真 `git init` + `git add`（不提交）。
+    #   这一对证明的是 `Q-175` ② 那半：**新件落 ③ ⇒ rc≠0 且逐字点名该件**（今天 ≤ 基线即绿 ✗）。
+    ng = _fixture(base, "c-new-ungated",
+                  steps=[("core", "go build ./..."), ("", "python3 scripts/ok.py")],
+                  scripts=("scripts/ok.py",))
+    subprocess.run(["git", "init", "-q"], cwd=ng,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["git", "add", "-A"], cwd=ng,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _write(os.path.join(ng, "scripts", "newgate.py"),
+           "#!/usr/bin/env python3\nprint('new gate fixture')\n")
+    rc, out = _run(ng)
+    check("⑯ 新件未挂门 ⇒ rc=1（存量 0 条、基线 0 ⇒ 旧口径必绿）", rc == 1, "rc=%d" % rc)
+    check("⑯ 且新格单列 + 逐字点名该件",
+          "新件未挂门" in out and "④ **新件未挂门**" in out
+          and "scripts/newgate.py" in out
+          and "不在 git 索引" in out)
+    # 负控（与 ⑯ 成对）：把该新件**同批挂进 add_step** ⇒ 回绿
+    gate_fixture = os.path.join(ng, "scripts", "gates", "precommit-gates.sh")
+    _write(gate_fixture, open(gate_fixture, encoding="utf-8").read().replace(
+        '  add_step fixture "步骤 root"',
+        '  add_step fixture "步骤 newgate" rc "${REPO_ROOT}" "python3 scripts/newgate.py"\n'
+        '  add_step fixture "步骤 root"'))
+    rc, out = _run(ng)
+    check("⑰ 同批挂门（写进 add_step）⇒ 回绿（rc=0）—— 与 ⑯ 成对", rc == 0, "rc=%d" % rc)
+    check("⑰ 且新格归零", "④ **新件未挂门**（本门开张后新建、且没与代码同批挂 add_step）= **0**" in out)
+
+    # ── ⑱/⑲/⑳/㉑/㉒ `--json` 的 **stdout 纯净度**（本门刚治的病：自检文本混进 stdout ⇒ json.loads 直接失败）──
+    #   真命令行 · 真退出码 · 真流；判据只问「stdout 能不能 json.loads」⇒ 与实现无关（换实现也拦得住）。
+    #   ★ 这一组只在 `deep` 档跑：探针子进程必须剪掉探针自己（否则无限自嵌套，见 _SELFTEST_DEEP）。
+    if deep:
+        rcA, outA, errA = _probe(base, ["--json", "--root", good])
+        sA = outA.decode("utf-8", "replace")
+        okA, offA = _stdout_json_purity(outA)
+        check("⑱ `--json`（自检开着）⇒ stdout 是纯 JSON（json.loads 过 · 首字符 `{`）",
+              okA and sA.lstrip().startswith("{"), "点名=%s" % offA)
+        check("⑱ 且自检文本**改走 stderr**（stdout 里一个「自检」都不许有）",
+              "── 自检（成对负控）──" in errA.decode("utf-8", "replace") and "自检" not in sA)
+        check("⑱ 且退码与人读档同源（夹具 good ⇒ rc=0）", rcA == 0, "rc=%d" % rcA)
+
+        # 成对负控：**默认档**（自检文本 + 人读面照旧全落 stdout）⇒ 上面那条判据必须拓出来并点名
+        rcB, outB, _errB = _probe(base, ["--root", good])
+        sB = outB.decode("utf-8", "replace")
+        okB, offB = _stdout_json_purity(outB)
+        check("⑲ 负控：自检文本回写 stdout（默认档）⇒ 纯度判据必拓出来", not okB, "点名=%s" % offB)
+        check("⑲ 且**逐字点名**首行 `── 自检（成对负控）──`",
+              offB.startswith("── 自检（成对负控）──"), "点名=%s" % offB)
+        check("⑲ 且负控档 stdout 确实含自检文本（负控本身不是空转）",
+              "自检结论" in sB and "── 自检（成对负控）──" in sB)
+
+        # 与 ⑱ 成对：`--json --no-self-test`（等价档）同样纯
+        rcC, outC, _errC = _probe(base, ["--json", "--no-self-test", "--root", good])
+        okC, offC = _stdout_json_purity(outC)
+        check("⑳ 成对：`--json --no-self-test` 亦纯 JSON", rcC == 0 and okC,
+              "rc=%d 点名=%s" % (rcC, offC))
+
+        # 互斥：只产人读文本的开关 + `--json` ⇒ 用法错 rc=2（否则「`--json` ⇒ stdout 只有 JSON」有例外）
+        rcD, _outD, errD = _probe(base, ["--json", "--self-test"])
+        check("㉑ `--json --self-test` 互斥 ⇒ rc=2（不是「stdout 空着号称机读」）", rcD == 2, "rc=%d" % rcD)
+        check("㉑ 且理由点名在 stderr（含「互斥」）", "互斥" in errD.decode("utf-8", "replace"))
+        rcE, outE, _errE = _probe(base, ["--json", "--list-rules"])
+        check("㉒ `--json --list-rules` 互斥 ⇒ rc=2", rcE == 2, "rc=%d" % rcE)
+        check("㉒ 且 stdout 不落人读规则表", "规则表" not in outE.decode("utf-8", "replace"))
+
+    print("── check-gate-coverage 自检（成对负控 · 真命令行 + 真退出码）──", file=sink)
     bad = 0
     for desc, ok, extra in cases:
-        print("   %s %s%s" % ("✓" if ok else "✗", desc, ("（%s）" % extra) if extra and not ok else ""))
+        print("   %s %s%s" % ("✓" if ok else "✗", desc, ("（%s）" % extra) if extra and not ok else ""),
+              file=sink)
         if not ok:
             bad += 1
     print("自检结论: %s（断言 %d 条 · 失败 %d 条）"
-          % ("全过" if bad == 0 else "**不过**", len(cases), bad))
+          % ("全过" if bad == 0 else "**不过**", len(cases), bad), file=sink)
     return bad == 0
 
 
@@ -920,6 +1120,16 @@ def main(argv):
     ap.add_argument("--max-examples", type=int, default=40)
     args = ap.parse_args(argv)
 
+    # ── `--json` 的契约 = **stdout 只有 JSON**（机读面可直接 json.loads）──────────────────
+    #   两个「只产人读文本、不产 JSON」的开关与 `--json` 同给 ⇒ **用法错 rc=2**（不是静默忽略）：
+    #   静默忽略 = 号称机读而 stdout 空着 / 脏着 —— 那正是本门刚治的病（判不了就不给结论）。
+    if args.json and (args.self_test or args.list_rules):
+        which = "--self-test" if args.self_test else "--list-rules"
+        print("✗ 用法错（rc=2）：`--json` 与 `%s` 互斥 —— `%s` 只产人读文本、不产 JSON，"
+              "而 `--json` 的契约是「stdout 只有 JSON（可 json.loads）」⇒ 不给结论。"
+              % (which, which), file=sys.stderr)
+        return EXIT_BLOCKED
+
     if args.list_rules:
         print_list_rules()
         return EXIT_OK
@@ -930,11 +1140,13 @@ def main(argv):
         return EXIT_OK if self_test() else EXIT_BLOCKED
 
     if not args.no_self_test:
-        print("── 自检（成对负控）──")
-        if not self_test():
-            print("自检未过 ⇒ 拒绝扫真目标（rc=2 不给结论）")
+        # ★ `--json` 时**全部自检文本改走 stderr** ⇒ stdout 只剩那一份 JSON（人读面一字不动）
+        st = sys.stderr if args.json else sys.stdout
+        print("── 自检（成对负控）──", file=st)
+        if not self_test(sink=st):
+            print("自检未过 ⇒ 拒绝扫真目标（rc=2 不给结论）", file=st)
             return EXIT_BLOCKED
-        print()
+        print(file=st)
 
     root = os.path.abspath(args.root)
     cfg_path = args.config or os.path.join(root, LOCAL_CONFIG)
@@ -957,6 +1169,7 @@ def main(argv):
     a, b = rep["a"], rep["b"]
     n_red_a = len(a["red"])
     n_over_b = b["hit"] - rep["baseline"]
+    n_new_b = len(b["new_ungated"])
     if a["empty"] or b["empty"]:
         which = ("A（构建清单目录）" if a["empty"] else "") + ("B（scripts 脚本）" if b["empty"] else "")
         rep["verdict"] = {"rc": EXIT_BLOCKED, "code": "EMPTY_SCAN",
@@ -966,14 +1179,15 @@ def main(argv):
         rep["verdict"] = {"rc": EXIT_BLOCKED, "code": "CERTIFY_FAILED",
                           "reason": "计数自证不过（三档之和 ≠ 候选总数）⇒ 不给结论"}
         rep["rc"] = EXIT_BLOCKED
-    elif n_red_a or n_over_b > 0:
+    elif n_red_a or n_over_b > 0 or n_new_b > 0:
         rep["verdict"] = {"rc": EXIT_FAIL, "code": "RED",
-                          "reason": "A 未收进 %d 条；B 棘轮命中 %d > 基线 %d（超 %d）"
-                                    % (n_red_a, b["hit"], rep["baseline"], max(n_over_b, 0))}
+                          "reason": "A 未收进 %d 条；B 棘轮命中 %d > 基线 %d（超 %d）；"
+                                    "新件未挂门 %d 条"
+                                    % (n_red_a, b["hit"], rep["baseline"], max(n_over_b, 0), n_new_b)}
         rep["rc"] = EXIT_FAIL
     else:
         rep["verdict"] = {"rc": EXIT_OK, "code": "OK",
-                          "reason": "A 无未收进目录；B 命中 %d ≤ 基线 %d（剩余 %d）"
+                          "reason": "A 无未收进目录；B 命中 %d ≤ 基线 %d（剩余 %d）；新件未挂门 0"
                                     % (b["hit"], rep["baseline"], b["hit"])}
         rep["rc"] = EXIT_OK
 
@@ -985,8 +1199,8 @@ def main(argv):
         if args.baseline:
             print_baseline(rep)
         print("== 结论 ==")
-        print("   A 未收进：%d 条 · B 棘轮命中 %d / 基线 %d（超 %d）"
-              % (n_red_a, b["hit"], rep["baseline"], max(n_over_b, 0)))
+        print("   A 未收进：%d 条 · B 棘轮命中 %d / 基线 %d（超 %d）· ④ 新件未挂门 %d 条"
+              % (n_red_a, b["hit"], rep["baseline"], max(n_over_b, 0), n_new_b))
         if rep["rc"] == EXIT_BLOCKED:
             print("   ⇒ **不给结论（rc=2）**：%s" % rep["verdict"]["reason"], file=sys.stderr)
         elif rep["rc"] == EXIT_FAIL:

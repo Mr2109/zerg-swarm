@@ -68,7 +68,7 @@
   `J3` **附报 · `T-11a` ② 面（**不改退码**）**：「锚变而正文未变」（真源侧动了、派生侧没跟）
        ⇒ 逐条打印「**派生过期（stale）**」。照 `T-13` 逐字只判 ①（负控/正控两格），
        ② 「en 落后 zh 要**可读出来**」是 `T-11a` 那一行的面 ⇒ 本件**只报不判**（改了退码就等于替它判了）。
-  `J4` **只在 tracked 的 diff 面里判**：diff 面 = `git diff --name-only <rev> -- <扫面>`（`<rev>` 缺省 `HEAD`）。
+  `J4` **只在 tracked 的 diff 面里判**：diff 面 = `git -c core.quotepath=false diff --name-only <rev> -- <扫面>`（`<rev>` 缺省 `HEAD`）。
        **untracked 件不在 diff 面** ⇒ **逐条打印「不在 diff 面 ⇒ 不判」**（本仓多写手并行 ⇒
        别把兄弟写手在途的未跟踪件判成红 ✗）。
 
@@ -196,7 +196,7 @@ def classify(files_):
 
 # ── git 读面（只读 · 不写仓）────────────────────────────────────────────────────
 def git_run(root, args, env=None):
-    return subprocess.run(["git", "-C", root] + list(args), capture_output=True, text=True,
+    return subprocess.run(["git", "-c", "core.quotepath=false", "-C", root] + list(args), capture_output=True, text=True,
                           encoding="utf-8", errors="replace", env=env)
 
 
@@ -212,7 +212,7 @@ def rev_resolvable(root, rev):
 
 def git_changed(root, rev, face_rel):
     """diff 面（**tracked 改动** · 仓根相对 → 扫面相对）⇒ (set, err)。"""
-    p = git_run(root, ["diff", "--name-only", rev, "--", face_rel])
+    p = git_run(root, ["-c", "core.quotepath=false", "diff", "--name-only", rev, "--", face_rel])
     if p.returncode != 0:
         return None, (p.stderr.strip() or "git diff rc=%d" % p.returncode)
     pre = face_rel.rstrip("/") + "/"
@@ -307,7 +307,7 @@ def judge(root, face_rel, rev, exceptions):
 
     lines.append("扫面：%s —— 现读 %d 件 = 成对 **%d 对** + 单一语 **%d 件**（已登记例外 %d 条）"
                  % (face_rel, len(files_), len(pairs), len(singles), len(exc_rel)))
-    lines.append("diff 面：`git diff --name-only %s -- %s` —— tracked 改动 **%d** 件"
+    lines.append("diff 面：`git -c core.quotepath=false diff --name-only %s -- %s` —— tracked 改动 **%d** 件"
                  % (rev, face_rel, len(changed)))
     lines.append("")
     lines.append("── 逐对判定（`J1` 负控 / `J2` 正控 / `J3` 附报）──")
@@ -561,7 +561,35 @@ def list_rules():
     return 0
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：`--json <字段>` 的**字段名打错**不许静默 / 不许炸堆栈 ✗
+#    口径照 `check-replace-rule-fixtures.py`（`:94` / `:395` / `:401-410`）：**用法错 `rc=2` ＋ 印可选字段表** ——
+#    「字段名打错 ≠ 零命中」两态在机器面上必须分得开；**合法字段照旧走命中面**（业务判据与退码一字未动）。
+JSON_FIELDS = ['rc', 'verdict', 'face', 'files', 'pairs', 'singles', 'unpaired', 'exceptions', 'dangling_exceptions', 'unregistered', 'rev', 'counts', 'drift', 'stale', 'both', 'not_in_diff']          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_unknown_json_fields(argv=None):
+    """`--json <字段>` 里有**不认的名** ⇒ rc=2 ＋ 印可选字段表；没给 / 全合法 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    want = []
+    for i, x in enumerate(argv):
+        if x == "--json":
+            want += (argv[i + 1] if i + 1 < len(argv) else "").split(",")
+        elif x.startswith("--json="):
+            want += x.split("=", 1)[1].split(",")
+    want = [f.strip() for f in want if f.strip()]
+    bad = [f for f in want if f not in JSON_FIELDS]
+    if not bad:
+        return None
+    print("⛔ `--json` 不认的字段名：%s" % " · ".join("`%s`" % b for b in bad), file=sys.stderr)
+    print("   可选字段表：%s" % " · ".join("`%s`" % f for f in JSON_FIELDS), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**字段名打错 ≠ 零命中** —— 两态在机器面上必须分得开", file=sys.stderr)
+    return 2
+
+
 def main():
+    rc_q176 = refuse_unknown_json_fields()
+    if rc_q176 is not None:
+        return rc_q176
     ap = argparse.ArgumentParser(
         description="公开面漂移锚（`T-13`）：成对件「锚未变而正文变 = 红」（只报件 · 不改任何件）")
     ap.add_argument("--root", default=REPO_ROOT, help="判哪棵树（默认仓根）")

@@ -6,22 +6,26 @@
 //	· 不动脚本退码（脚本退多少，命令面就返多少：`return cmd.ProcessState.ExitCode()`；
 //	  全文件**零分支**改写退码 —— 这就是「不翻译」的证明面）。
 //
-// 五条动作与脚本旗标的对应（一一对应，不加戏）：
+// 六条动作与脚本旗标的对应（一一对应，不加戏）：
 //
 //	zerg gate ls          → bash scripts/gates/precommit-gates.sh --list
 //	zerg gate run  <原样>  → bash scripts/gates/precommit-gates.sh <原样>      （--scope/--fast/--outdir/… 逐字透传）
 //	zerg gate show <步名>  → bash scripts/gates/precommit-gates.sh --emit-cmd <步名>
+//	zerg gate find <片段>  → **不走脚本**：门件名 ⇒ 步名 的桥（缺口 `GAP-20260927-07` · 只读）
 //	zerg gate self-test    → bash scripts/gates/precommit-gates.sh --self-test
 //	zerg gate results      → **不走脚本**：读现成一趟的 results.tsv（缺口 `Q-111`/`B-8` · 只读）
 //
-// 三条**例外**（都只在命令面自己的旗标上生效，且都**不改脚本退码**）：
+// 四条**例外**（都只在命令面自己的旗标上生效，且都**不改脚本退码**）：
 //
 //	· `gate run --step <步名> --json <字段>` —— 单步档的机器面（`family_gate_run_step.go`）；
 //	· `gate show <步名> --json [<字段>]`   —— 四格机器面（`family_gate_show.go` · 缺口 `Q-061`/
 //	  `B-3`：默认面**一个字节不动**，`--emit-cmd` 仍是命令串直取口 ⇒ `bash -c "$(…)"` 的既有用法不破）；
+//	· `gate find <片段> [--json <字段>]`   —— 门件名 ⇒ 步名 的桥（`family_gate_find.go` · 缺口
+//	  `GAP-20260927-07`：门族两条既有入口的键都是**步骤名**，而手上的名字是**门件名** ⇒ 没这一格
+//	  就只能手搓 `grep add_step`；它**只读步骤声明**，不跑任何步骤、不改任何退码）；
 //	· `gate results [--last|--dir <目录>] [--json <字段>]` —— 上一趟的四数（`family_gate_results.go`）。
 //
-// 为什么**除这三处**不做 `--json`：其余三条的输出**就是**脚本的输出（逐行相同）；再包一层 JSON
+// 为什么**除这四处**不做 `--json`：其余三条的输出**就是**脚本的输出（逐行相同）；再包一层 JSON
 // 等于在命令面里另写一份步骤表 —— `G1-a` 明令禁止。
 package main
 
@@ -85,6 +89,12 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 			return gateShowJSON(inv, stdout, stderr, root, script)
 		}
 		args = append([]string{"--emit-cmd"}, tail...)
+	case "find":
+		// 缺口 `GAP-20260927-07`：**门件名 ⇒ 步骤名** 的桥（`family_gate_find.go`）。
+		// 与 `results` 同规：**只读**、不走脚本、不改任何脚本退码 —— 它是第四条命令面分支。
+		// 病根：`gate show` / `gate explain` 的键都是**步骤名**，而手上的名字是**门件名**
+		// （`scripts/gates/check-*.py`）⇒ 没有这一格就只能手搓 `grep add_step` ✗。
+		return cmdGateFind(inv, stdout, stderr, root, script)
 	case "self-test":
 		args = []string{"--self-test"}
 	case "results":
@@ -94,7 +104,7 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		return gateResults(inv, stdout, stderr, root)
 	default:
 		fmt.Fprintf(stderr, "%s: 未知 `gate` 动作 %q\n", progName, action)
-		fmt.Fprintf(stderr, "可用：ls · run · show · self-test · results\n")
+		fmt.Fprintf(stderr, "可用：ls · run · show · find · self-test · results\n")
 		return exitUsage
 	}
 

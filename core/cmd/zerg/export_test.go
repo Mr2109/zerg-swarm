@@ -18,6 +18,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"sort"
@@ -129,10 +132,104 @@ func ImpactCardBudgetDetailForTest(c ImpactCardForTest) (string, bool) {
 	return impactCardBudget(c.toCard()).TruncatedDetailJSON()
 }
 
-// MainSourceForTest 读包封实现件源码（`main.go`）—— 「不编造信号」的静态自检口。
+// envelopeImplFirstDecl / envelopeImplLastDecl —— **包封实现件**的两枚边界锚（顶层声明名）：
+// 第一件 = `contractSchema`（包封第一键的取值）· 最后一件 = `emitEnvelopeWith`（包封出口）。
+// 取「两者之间那一整段」就是包封实现件 —— 边界用两枚锚**现读**出来，不另抄一份成员清单
+// （清单会漂：新加的 helper 只要落在这段里就自动进判据）。
+const (
+	envelopeImplFirstDecl = "contractSchema"
+	envelopeImplLastDecl  = "emitEnvelopeWith"
+)
+
+// MainSourceForTest 读**包封实现件**那一段源码（`main.go` 里从 `contractSchema` 到 `emitEnvelopeWith`
+// 之间的顶层声明整段）—— 「不编造信号」的静态自检口。
+//
+// 为什么不返回**整份** `main.go`：`main.go` 里除了包封实现，还有**命令注册表**（每条命令的人面 `summary` /
+// `usage` 文案）—— 那是**数据文案**、不是包封实现，它合法地含信号词这类字（现读：`gap export` 的 summary
+// 逐字写着「读不到真源 ⇒ 退 8」，那是在说**这条命令**的失败语义，不是包封在造词）。判据要判的是「**包封自己**
+// 会不会造词」—— 它的正/负控与文档都写死了这条分界（`judgeEnvelopeWarningsNotFabricated`：真值由
+// `zerg impact` / `dev edit` 这些命令传进来 ⇒ **「词在它们那儿，不在这儿」**；同一条纪律见该判据的负控③″：
+// 注释不算实现）。拿整份 main.go 去判，判出来的红是**别的命令的文案**，不是包封的红。
+//
+// 取源落空**不静默**：两枚锚缺任一（或文件解析不了）⇒ 返回错误 ⇒ 判据 Fatal（失败要**响**，不许当干净）。
 func MainSourceForTest() (string, error) {
-	b, err := os.ReadFile("main.go")
-	return string(b), err
+	const file = "main.go"
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return "", err
+	}
+	if src, ok := envelopeImplSliceOf(file, b); ok {
+		return src, nil
+	}
+	// 兜底：包封实现件将来若整体搬出 `main.go` ⇒ 在包目录的**非测试** `.go` 件里按同一对锚再找一次
+	// （判据仍只看包封实现那一段；找不到才是真失败）。
+	others, _ := filepath.Glob("*.go")
+	for _, p := range others {
+		if p == file || strings.HasSuffix(p, "_test.go") {
+			continue
+		}
+		ob, oerr := os.ReadFile(p)
+		if oerr != nil {
+			continue
+		}
+		if src, ok := envelopeImplSliceOf(p, ob); ok {
+			return src, nil
+		}
+	}
+	return "", fmt.Errorf("包封实现件的两枚边界锚（%s … %s）在包目录的源码里找不到 —— "+
+		"静态自检口取不到源件（判据要的是**包封实现**那一段）", envelopeImplFirstDecl, envelopeImplLastDecl)
+}
+
+// envelopeImplSliceOf 在**一份**源码里切出 `envelopeImplFirstDecl` … `envelopeImplLastDecl` 之间的那段
+// （含两端声明本体与它们的文档注释）；两枚锚不在同一份里 ⇒ ok=false。
+func envelopeImplSliceOf(name string, src []byte) (string, bool) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, name, src, parser.ParseComments)
+	if err != nil {
+		return "", false
+	}
+	lo, hi := -1, -1
+	for _, d := range f.Decls {
+		switch declNameForTest(d) {
+		case envelopeImplFirstDecl:
+			lo = fset.Position(d.Pos()).Offset
+		case envelopeImplLastDecl:
+			hi = fset.Position(d.End()).Offset
+		}
+	}
+	if lo < 0 || hi < 0 || hi <= lo {
+		return "", false
+	}
+	// 取源**自检**（防「切空/切错段」⇒ 判据静默变空转）：这段里必须真躺着包封实现的五枚**定义**。
+	// 缺任一 ⇒ ok=false（调用方据此报错 —— 失败要**响**，不许交一段不对的源件给判据）。
+	sl := string(src[lo:hi])
+	for _, must := range []string{"envelopeKeys", "envMetaReserved", "envelopeWarningsJSON",
+		"envelopeTruncatedJSON", "emitEnvelopeWith"} {
+		if !strings.Contains(sl, must) {
+			return "", false
+		}
+	}
+	return sl, true
+}
+
+// declNameForTest —— 一条顶层声明的名字（函数 / 方法 / 类型 / 变量 / 常量；空名 ⇒ 空串）。
+func declNameForTest(d ast.Decl) string {
+	switch x := d.(type) {
+	case *ast.FuncDecl:
+		return x.Name.Name
+	case *ast.GenDecl:
+		for _, s := range x.Specs {
+			switch sp := s.(type) {
+			case *ast.TypeSpec:
+				return sp.Name.Name
+			case *ast.ValueSpec:
+				if len(sp.Names) > 0 {
+					return sp.Names[0].Name
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // ContractHelpForTest 出**真源**那份 `zerg help contract` 正文（判「契约里逐条列举了事件」用，
@@ -1589,3 +1686,38 @@ func ImpactSlotLineForTest(root string) (string, error) {
 	}
 	return lines[6], nil
 }
+
+// ---- `GAP-20260926-08`：卵面子端真后端对账的**只读桥** ------------------------------------------
+// 桥的纪律同本文件顶部三条：只读形状、**直接指真源**、不另写副本。
+//
+// 为什么必须有一座桥：对账要打**子端** `/eggs`，而子端的地址来自 `gateway/fleet.yaml` 的
+// `fleet:` 段（真机地址）。判据件若走真地址 ⇒ 一次 `go test` 会连真机、读真状态 ⇒ **不 hermetic**
+// （本机 Mr2109 的子端恰好活着，测出来的绿是「今天恰好是这样」的绿）。所以判据件把探测口换成
+// **合成子端回据**（纯数据），生产路径 `eggBackendProbeLive` 一个字节不动。
+
+// EggBackendFactForTest 一台机的**合成**真后端回据（具名类型 —— 匿名结构体在两包里各写一遍就会漂）。
+type EggBackendFactForTest struct {
+	Reachable bool
+	Running   map[string]int // 模型 id ⇒ 在跑的引擎端口
+}
+
+// SetEggBackendProbeForTest 把探测口换成按 `host` 查表的合成回据；返回**还原函数**。
+// `fact` 里没有那台机 ⇒ 「取不到」（`Reachable=false`）—— 与真路径的失败面同形。
+func SetEggBackendProbeForTest(byHost map[string]EggBackendFactForTest) func() {
+	prev := eggBackendProbe
+	eggBackendProbe = func(machine string, a agentAddr) eggBackendFact {
+		f, ok := byHost[machine]
+		if !ok {
+			return eggBackendFact{Why: "合成子端：没有这台机的回据"}
+		}
+		run := map[string]int{}
+		for k, v := range f.Running {
+			run[k] = v
+		}
+		return eggBackendFact{Reachable: f.Reachable, Running: run, Why: "合成子端"}
+	}
+	return func() { eggBackendProbe = prev }
+}
+
+// EggStateClosedSetForTest 卵面 `state` 的四词闭集（测试不另抄一份 —— 直接引真源）。
+func EggStateClosedSetForTest() []string { return append([]string{}, eggStateClosedSet...) }

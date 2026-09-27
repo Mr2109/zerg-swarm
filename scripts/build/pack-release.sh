@@ -33,11 +33,14 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 MODE="build"
+DRY_RUN=0
 for arg in "$@"; do
   case "$arg" in
     --no-build) MODE="pack" ;;
     --verify) MODE="verify" ;;
-    *) echo "未知参数: $arg" >&2; exit 64 ;;
+    --manifest-only) MODE="manifest" ;;
+    --dry-run) DRY_RUN=1 ;;
+    *) echo "未知参数: $arg" >&2; exit 2 ;;
   esac
 done
 
@@ -47,7 +50,46 @@ REL="$DIST/release"
 
 sha_of() { shasum -a 256 "$1" | awk '{print $1}'; }
 
+# ── `--manifest-only` 档（缺口 `Q-226` · v2.5.13）：只重生成发布清单 ──────────────────────
+# 为什么：闸⑥（清单新鲜度 · 公开制品档 = 阻断）读 `dist/<版本>/release/manifest.json` 的
+#   `source_sha` / `dirty`；清单过期 ⇒ 预检判红、发布链无路可走。而清单的唯一生成者就是本脚本，
+#   本脚本此前**没有**「只重生成清单」的档 ⇒ 只能跑整条链（重编译 + 重打包 + 重编茧壁）。
+# 本档的写入面**只有 `$REL` 一个目录**（`dist/<版本>/release/`）——**publish/ 外**：
+#   · 不编译（不调 build-all.sh）· 不交叉编 linux 三件 · 不 `rm -rf` 重打包 · 不编茧壁
+#   · 不拷贝到 `bin/`、不重签、不重启 ⇒ **碰不到正在跑的件**
+# 口径出入（须人拍）：决策单原文写「只重打包 + 重写 dist/<版本>/release/ 与清单」；
+#   设计稿 `设计-发布清单重生成档-v1.0-20260925.md §3` 写「只重算清单与 release 目录内逐件 sha256」。
+#   本实现取**设计稿那一档（更窄）** —— 二进制一个字节不动，连 `cp` 都不做 ⇒ 爆炸半径最小。
+if [ "$MODE" = "manifest" ] && [ "$DRY_RUN" = "1" ]; then
+  echo "计划件（--manifest-only --dry-run · 零副作用 —— 未执行、未改任何状态）"
+  echo "  动作     : 重生成发布清单（只重算清单与 release 目录内逐件 sha256）"
+  echo "  危险档   : D2（只写 $REL 一个目录；不编译、不重打包、不碰 bin/ 里在跑的件）"
+  echo "  会跑哪几步:"
+  echo "    ① 前置检查：$REL 存在且内有 zerg-* 制品（不在 ⇒ 退 8 · 不给结论）"
+  echo "    ② 逐件重算 $REL/<件>.sha256 与 $REL/checksums.txt"
+  echo "    ③ ZERG_MANIFEST_LOCAL=1 python3 scripts/evals/make-manifest.py $REL <版本> <commit> <build_time>"
+  echo "       （版本/commit/build_time 取**既有清单**，退而取 build-info.json —— 保「这批制品是谁产的」不变）"
+  echo "    ④ 复跑校验段：manifest 逐件 sha256 / 体积必须与文件一致"
+  echo "  会写哪些件（**全在 publish/ 外** · 只此三处）:"
+  echo "    $REL/manifest.json"
+  echo "    $REL/<逐件>.sha256"
+  echo "    $REL/checksums.txt"
+  echo "  不会动   : bin/（在跑的件）· wall/target/ · 不重编译 · 不拷贝二进制 · 不重签 · 不重启"
+  echo "  执行要   : --confirm=<主机名> 与 --yes 同时到（命令面：zerg build release --manifest-only --confirm=<主机名> --yes）"
+  echo "（--manifest-only --dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）" >&2
+  exit 0
+fi
+
 # ── 组装（二进制 → 带平台后缀的制品名）──
+if [ "$DRY_RUN" = "1" ]; then
+  echo "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）"
+  echo "  动作     : pack-release.sh（档 = ${MODE}）"
+  echo "  会跑哪几步: build 档 = build-all.sh --dist → 交叉编 linux 三件 → rm -rf 重打包 → 编茧壁 → 写清单"
+  echo "              pack 档 = 跳过构建，其余同上 · verify 档 = 只校验（只读）"
+  echo "  会写哪些件: $DIST/（交叉编三件）· $REL/（8 件 + 逐件 .sha256 + checksums.txt + manifest.json）· wall/target/（茧壁）"
+  echo "  ⇒ 想走**不重打包**的那一档用：--manifest-only --dry-run"
+  exit 0
+fi
 if [ "$MODE" = "build" ]; then
   echo "=== 构建 ==="
   bash "$REPO_ROOT/scripts/build/build-all.sh" --dist
@@ -55,7 +97,49 @@ elif [ "$MODE" = "pack" ]; then
   echo "=== 跳过构建（复用 ${DIST}）==="
 fi
 
-if [ "$MODE" != "verify" ]; then
+if [ "$MODE" = "manifest" ]; then
+  # ── 前置（不在 ⇒ 退 8 · **不给结论**，与门禁族「rc=2 不给结论」同口径）────────────────────
+  if [ ! -d "$REL" ]; then
+    echo "❌ 前置不在：$REL 不存在" >&2
+    echo "   本档**只重生成清单、不重打包** ⇒ 先出一次产物目录：bash scripts/build/pack-release.sh" >&2
+    echo "   ⇒ 不给结论（退 8）" >&2
+    exit 8
+  fi
+  ART_COUNT="$(find "$REL" -maxdepth 1 -name 'zerg-*' ! -name '*.sha256' | wc -l | tr -d ' ')"
+  if [ "$ART_COUNT" -eq 0 ]; then
+    echo "❌ 前置不在：$REL 里一件 zerg-* 制品都没有 ⇒ 不给结论（退 8）" >&2
+    exit 8
+  fi
+  # 身份三值：**优先既有清单**（保住「这批制品是谁产的」这一事实 —— 重生成清单不该改写它）；
+  #   清单不在则退 `build-info.json`；两处都没有 ⇒ commit 取当前 HEAD（并**明说**是兜底）。
+  MP="$REL/manifest.json"
+  M_VERSION="$VERSION"; M_COMMIT=""; M_BUILD_TIME=""
+  if [ -f "$MP" ]; then
+    M_VERSION="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("version","") or "")' "$MP" 2>/dev/null || true)"
+    M_COMMIT="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("commit","") or "")' "$MP" 2>/dev/null || true)"
+    M_BUILD_TIME="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("build_time","") or "")' "$MP" 2>/dev/null || true)"
+  fi
+  BI="$DIST/build-info.json"
+  if { [ -z "$M_COMMIT" ] || [ -z "$M_BUILD_TIME" ]; } && [ -f "$BI" ]; then
+    [ -n "$M_COMMIT" ] || M_COMMIT="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("commit","") or "")' "$BI" 2>/dev/null || true)"
+    [ -n "$M_BUILD_TIME" ] || M_BUILD_TIME="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("build_time","") or "")' "$BI" 2>/dev/null || true)"
+  fi
+  [ -n "$M_VERSION" ] || M_VERSION="$VERSION"
+  [ -n "$M_COMMIT" ] || M_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  [ -n "$M_BUILD_TIME" ] || M_BUILD_TIME="unknown"
+  echo "=== 只重生成清单（--manifest-only · 不编译、不重打包、不碰 bin/）==="
+  echo "    $REL · 制品 $ART_COUNT 件 · 版本 $M_VERSION · commit $M_COMMIT · build_time $M_BUILD_TIME"
+  echo "    写入面只有：$REL/manifest.json · $REL/<逐件>.sha256 · $REL/checksums.txt"
+  for f in "$REL"/zerg-*; do
+    case "$f" in *.sha256) continue ;; esac
+    echo "$(sha_of "$f")  $(basename "$f")" > "$f.sha256"
+  done
+  (cd "$REL" && shasum -a 256 zerg-* | grep -v '\.sha256' > checksums.txt)
+  ZERG_MANIFEST_LOCAL=1 python3 "$REPO_ROOT/scripts/evals/make-manifest.py" "$REL" \
+    "$M_VERSION" "$M_COMMIT" "$M_BUILD_TIME"
+fi
+
+if [ "$MODE" = "build" ] || [ "$MODE" = "pack" ]; then
   [ -f "$DIST/build-info.json" ] || { echo "❌ 缺 $DIST/build-info.json——先跑 build-all.sh --dist" >&2; exit 1; }
   for b in zerg zerg-core zerg-agent zerg-ui; do
     [ -f "$DIST/$b" ] || { echo "❌ 缺 $DIST/$b" >&2; exit 1; }

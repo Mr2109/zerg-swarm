@@ -425,7 +425,8 @@ func repoFacePaths(dir string) ([]string, error) {
 
 // gitRunNoLock 与 `gitRun` 同形，但走 `--no-optional-locks`（**一个可选锁都不取**）。
 func gitRunNoLock(root string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"--no-optional-locks", "-C", root}, args...)...)
+	// 同上：`-c core.quotepath=false` 也落在子命令**之前**（`--no-optional-locks` 在前不影响）。
+	cmd := exec.Command("git", append([]string{"--no-optional-locks", "-C", root, "-c", "core.quotepath=false"}, args...)...)
 	var out, errb strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
@@ -510,7 +511,9 @@ func parsePorcelainBranch(s string) string {
 // gitRun 在仓根跑一条只读 git 命令（**只读**：本命令不许写仓 —— 连 `git status` 的索引刷新
 // 都由 git 自己决定，命令面不加任何旗标去改这一行为）。
 func gitRun(root string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	// ★ `-c core.quotepath=false` 落在**子命令之前**：不带它时 git 把含非 ASCII 的件名转义成
+	//   `"\344\270\255.md"` ⇒ 这个名字 os.Stat 打不开、拿去两面对拍也对不上（静默失配）。
+	cmd := exec.Command("git", append([]string{"-C", root, "-c", "core.quotepath=false"}, args...)...)
 	var out, errb strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &errb

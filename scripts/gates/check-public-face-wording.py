@@ -54,9 +54,11 @@
     A9 「公开仓主名（裸账号名）」`Mr2109` —— 为什么禁：`M-3` 把它写进「禁」的清单；★ 设计 §3.7 逐字
        「**禁的是**『内部写作角色称谓』，不是作者名」⇒ 本件取 §3.7：**逐条**（`件 × 行`）豁免 + 打印理由。
     A10 「私有模型代号（`replace-rules.tsv` 全形）」`example-8b-quant` / `example-30b` /
-       `example-moe-36b` / `example-35b` / `example-35b-v2` / `example-26b-review`
+       `example-moe-36b` / `example-35b` / `example-35b-v2` / `example-35b-v2` / `example-35b` /
+       `example-26b-review`（★ `example-35b-v2-` 那两条真源 `:60`/`:61` 与小写全长 **同一代号的大小写两写** ⇒
+       本规则对 `example-35b-v2-1.[05]-35b` 收 `(?i:…)`，见「现读口径差」⑤）
        —— 为什么禁：发布链的**私有模型代号**（真源 `publish/replace-rules.tsv` 的「私有模型代号（决策 4）」段）。
-    A11 「私有模型代号（**现读到的前缀形态**）」`example-moe-36b` —— 为什么禁：同 A10；★ 2026-09-23 起替换规则
+    A11 「私有模型代号（**前缀形态**）」`example-moe-36b` / `example-35b-v2-` —— 为什么禁：同 A10；★ 2026-09-23 起替换规则
        也收**前缀形态**（`example-moe-36b → example-moe-36b` · 排在全长形态那条**之后**）⇒ 公开快照被盖住；
        本规则仍**保留**：本件判的是**私有树**（真源里的代号不遮）⇒ 命中逐条豁免（见丙档 ②）。
     A12 「文档面出处标记」`〔<字母><数字>〕`（形如 `〔S6〕`）—— 为什么禁：形态上是**开发面符号**
@@ -112,6 +114,23 @@
      `publish/docs/design/格式反馈协议-FFP.md:48–52` 的**表格行标签** `P1`–`P5`（文档内的局部编号，
      不是拍板号）⇒ 设它就是**自造假红源**。故本件只收 `〔S…〕` 这一类（形态独有 · **该族已抹于本笔**
      —— 原 4 处全在 `SECURITY.md`，现读 0 处），**不设** `P\\d+` 网兜。
+  ⑤ 私有模型代号**大小写 / 家族前缀**（2026-09-26 校正 · 本笔）：`check-private-path-forms.py` 的 F-14 现读把
+     5 条形态（`example-moe-36b` · `example-35b-v2` · `example-35b` · `example-35b-v2-` · `example-35b-v2`）登为**存量债**，
+     理由是「A10 只收小写全形 · A11 只收大写前缀 `example-moe-36b` · `re.compile(pat)` 无 `re.I`」。
+     **逐条实探（仓外硬拷贝 · 逐跑 · 见本笔回执）**后分两档 —— 事实比那句理由更细：
+       ⒜ **范围有洞（可抓 · 本笔已补）**：`example-moe-36b` / `example-35b-v2` / `example-35b` / `example-35b-v2-`
+          —— A11 判的**就是** `example-moe-36b` 家族前缀（真源 `:56` 大写 ＋ `:59` 小写），A10 判的**就是**
+          `example-35b-v2-1.[05]-35b` 全长（真源 `:57`/`:58` 小写 ＋ `:60`/`:61` 大写）⇒ 洞在**大小写**与
+          **同族前缀少一条**（真源前缀形态两条：`:56` K2 家族 · `:64` Ornith 家族）上 ——
+          逐字补这两处即真覆盖，**不是「无判据件」**（放宽 ✗ · 也不越真源 ✗）。
+       ⒝ **确无件判（本笔不动 · 按「停下报」处置）**：`example-35b-v2`（**裸家族名** · 真源 `:65`）·
+          `ExampleAdapter`（**标识符** · `:62`）· `EXAMPLE_TEMPLATE`（**环境变量名** · `:63`）——
+          这三条的**形态**在甲档 12 条里一条都不占（本件判**写作面用词** · 与 F-15 的同一论证）；
+          补它们等于**新造形态**、不是补范围 ⇒ **不许为凑绿塞进来**。★ 尤其 `EXAMPLE_TEMPLATE` 这一族
+          现读**正活在公开面 12 处**（`MODELS.zh-CN.md:87–89` · `MODELS.en.md:88–90` ·
+          `CONFIGURATION.zh-CN.md:77/142/145` · `CONFIGURATION.en.md:78/143/146` 的 `ZERG_EXAMPLE_TEMPLATE` /
+          `example-35b-v2_chat_template.jinja`）⇒ 一旦收进甲档，**当场新增 12 处未豁免红**（换绿只能靠加豁免 ——
+          铁律不许）⇒ 本笔**停在这里报拍板**，不擅自扩面。
 
 用法
 ----
@@ -195,12 +214,19 @@ RULES = (
      "`M-3` 把它写进「禁」的清单；★ 设计 §3.7 逐字「**禁的是**『内部写作角色称谓』，不是作者名」"
      "⇒ 本件逐条（件 × 行）豁免 + 打印理由"),
     ("A10", "私有模型代号（`replace-rules.tsv` 全形）",
-     r"example-8b-quant\.IQ4_XS|example-30b|example-moe-36b|example-35b-v2-1\.[05]-35b|example-26b-review",
-     "发布链的**私有模型代号**（真源 `publish/replace-rules.tsv` 的「私有模型代号（决策 4）」段）"),
-    ("A11", "私有模型代号（现读到的**前缀形态**）`example-moe-36b`",
-     r"example-moe-36b",
+     r"example-8b-quant\.IQ4_XS|example-30b|example-moe-36b|(?i:example-35b-v2-1\.[05]-35b)"
+     r"|example-26b-review",
+     "发布链的**私有模型代号**（真源 `publish/replace-rules.tsv` 的「私有模型代号（决策 4）」段）。"
+     "★ 2026-09-26 校正范围（补**大小写**洞 · 见件头「现读口径差」⑤）：`example-35b-v2-1.[05]-35b` 真源**两处都登记**"
+     "（小写全长 `:57`/`:58` ＋ 大写全长 `:60`/`:61`）⇒ **只这一条**收 `(?i:…)`；其余各条一字未动"
+     "（真源没登记它们别的写法 ⇒ 不越真源加大小写）"),
+    ("A11", "私有模型代号（**前缀形态** · `example-moe-36b` / `example-35b-v2-`）",
+     r"(?i:example-moe-36b)|example-35b-v2-",
      "同 A10；★ 2026-09-23 起替换规则也收前缀形态（见丙档 ②）。本规则**保留**：本件扫的是**私有树**"
-     "（真源里的代号不遮）⇒ 逐条豁免而不是装看不见"),
+     "（真源里的代号不遮）⇒ 逐条豁免而不是装看不见。★ 2026-09-26 校正范围（补**前缀**洞 · 见件头"
+     "「现读口径差」⑤）：① `example-moe-36b` 真源两处都登记（大写前缀 `:56` ＋ 小写字面 `:59`）⇒ 该词收 `(?i:…)`；"
+     "② 真源的前缀形态有**两条**（K2 家族 `:56` · Ornith 家族 `:64` 的 `example-35b-v2-`）⇒ 补上 `example-35b-v2-`"
+     "（**逐字**照 `:64` · 仍大小写敏感 —— 真源那条就是大写字面）"),
     ("A12", "文档面出处标记 `〔<字母><数字>〕`（形如 `〔S6〕`）",
      r"〔[A-Za-z]{1,3}\d{1,3}〕",
      "形态上是**开发面符号**（设计 §3.7 甲档第 4 行那一类）；该族 4 处残留（`SECURITY.md`）"
@@ -513,6 +539,27 @@ def self_test():
         check(rc == 0 and d["rules"].get("A6") == 1 and d["exempt"] == 1,
               "⑦d 成对：同一处 `助手` 在**已登记的件 × 行** ⇒ rc=0（豁免 1 · 与 ⑦c 成对有区分度）")
 
+        # ⑦e 负控 A10/A11：私有模型代号的**大小写变体 ＋ 家族前缀**（2026-09-26 补 · 见「现读口径差」⑤）——
+        #    A10 判 `example-35b-v2-1.[05]-35b` 的**大小写两写**、A11 判 `example-moe-36b` 家族（大小写两写）＋ `example-35b-v2-` 前缀。
+        #    补之前这 4 条**条条 0 命中**（逐跑实探：rc=0 / 未豁免 0）⇒ 本组就是那两处补丁的牙齿。
+        for _tag, _probe, _rid in (("k2-lower", "example-moe-36b", "A11"),
+                                   ("example-35b-v2-pfx", "example-35b-v2-", "A11"),
+                                   ("example-35b-v2-15", "example-35b-v2", "A10"),
+                                   ("example-35b-v2-10", "example-35b", "A10")):
+            b = make_fixture(os.path.join(t, "mod-" + _tag), {"README.md": "（合成）%s\n" % _probe})
+            rc, o, d = judge(b)
+            check(rc == 1 and d["rules"].get(_rid, 0) >= 1,
+                  "⑦e 负控 %s：私有模型代号 `%s` ⇒ rc=1（大小写变体 / 家族前缀有牙）" % (_rid, _probe))
+
+        # ⑦f 假红对照：**标识符 / 环境变量名**形态（真源 `:62`/`:63` 那一类）**不**命中本件 ——
+        #    本件判的是**写作面用词**（甲档 12 条不判标识符 / 环境变量 · 与 `check-private-path-forms.py`
+        #    的 F-15 同一论证）：补范围**不许**把这一族一并吞进来（吞了就是「凑数 + 新造形态」）。
+        b = make_fixture(os.path.join(t, "mod-env"),
+                         {"CONFIGURATION.md": "环境变量 `ZERG_EXAMPLE_TEMPLATE` 与 `example-35b-v2_chat_template.jinja`\n"})
+        rc, o, d = judge(b)
+        check(rc == 0 and d["hits"] == 0,
+              "⑦f 假红对照：`ZERG_EXAMPLE_TEMPLATE`/`example-35b-v2_chat_template.jinja`（标识符/环境变量形态）⇒ 0 命中")
+
         # ⑧ 负控 A7 + **假红对照**：`2.5.10` 必红；而 `192.0.2.10` **不许**命中（设计 §七 第 4 条）
         b = make_fixture(os.path.join(t, "a7"), {"README.md": "支持线 2.5.10\n"})
         rc, o, d = judge(b)
@@ -609,7 +656,35 @@ def self_test():
     return 0 if not bad else 2
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：`--json <字段>` 的**字段名打错**不许静默 / 不许炸堆栈 ✗
+#    口径照 `check-replace-rule-fixtures.py`（`:94` / `:395` / `:401-410`）：**用法错 `rc=2` ＋ 印可选字段表** ——
+#    「字段名打错 ≠ 零命中」两态在机器面上必须分得开；**合法字段照旧走命中面**（业务判据与退码一字未动）。
+JSON_FIELDS = ['face', 'rules', 'hits', 'exempt', 'unexempt']          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_unknown_json_fields(argv=None):
+    """`--json <字段>` 里有**不认的名** ⇒ rc=2 ＋ 印可选字段表；没给 / 全合法 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    want = []
+    for i, x in enumerate(argv):
+        if x == "--json":
+            want += (argv[i + 1] if i + 1 < len(argv) else "").split(",")
+        elif x.startswith("--json="):
+            want += x.split("=", 1)[1].split(",")
+    want = [f.strip() for f in want if f.strip()]
+    bad = [f for f in want if f not in JSON_FIELDS]
+    if not bad:
+        return None
+    print("⛔ `--json` 不认的字段名：%s" % " · ".join("`%s`" % b for b in bad), file=sys.stderr)
+    print("   可选字段表：%s" % " · ".join("`%s`" % f for f in JSON_FIELDS), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**字段名打错 ≠ 零命中** —— 两态在机器面上必须分得开", file=sys.stderr)
+    return 2
+
+
 def main():
+    rc_q176 = refuse_unknown_json_fields()
+    if rc_q176 is not None:
+        return rc_q176
     ap = argparse.ArgumentParser(description="公开面写作红线自检（publish/docs/** + 根面 8 件）")
     ap.add_argument("--root", default=REPO_ROOT, help="判哪棵树（默认仓根）")
     ap.add_argument("--self-test", action="store_true", help="只跑自检（合成夹具 · 不碰真目标）")

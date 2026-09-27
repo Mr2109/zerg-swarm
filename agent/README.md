@@ -22,12 +22,14 @@ GOOS=linux GOARCH=amd64 go build -o zerg-agent-linux-amd64 ./cmd/zerg-agent
 ## 运行
 
 ```bash
+# 令牌**不走 argv**（会进本机 `ps` 与 shell 历史 ✗）：本机跑读 600 档 `~/.zerg/token`；
+# 跨机由部署脚本入口写入 600 环境档（单元/plist 只引用它）——
+#   gateway/deploy_x3.sh --token-file <600档> / printf '%s\n' <令牌> | $0 --token-stdin …
 ./zerg-agent \
   --host 0.0.0.0 \
   --port 8100 \
   --machine <本机标识> \
   --controller http://<主控地址>:8580 \
-  --token <共享令牌> \
   --registry agent_models.yaml
 ```
 

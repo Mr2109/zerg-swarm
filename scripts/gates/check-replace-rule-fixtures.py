@@ -90,6 +90,10 @@ REPO_ROOT = os.path.dirname(os.path.dirname(HERE))          # scripts/gates → 
 RULES_REL = os.path.join("publish", "replace-rules.tsv")
 WHITELIST_REL = os.path.join("publish", "whitelist.txt")
 
+# 机器面字段表（`--json` 认的名字）—— **唯一真源**：`json_payload` 装包封与
+# 「不认的名 ⇒ 用法错 `rc=2` ＋ 印本表」两处**同读这一处**（缺口 `Q-150`）。
+JSON_FIELDS = ["rules", "hits", "files", "fixtures", "files_dedup", "files_sum", "per_rule"]
+
 # 夹具隔离（§五 第三批）：`!夹具<TAB><路径 glob>` —— 命中 glob 的件**整段跳过替换规则**，
 # 因此它们**不进本件的件面**（规则不碰它们 ⇒ 拿规则去判它们就是自造红）。
 # 这不是豁免表：豁免表是「把红写进白名单、红还在」；隔离是「规则不再作用于该件」，
@@ -100,6 +104,26 @@ ISO_PREFIX = "!夹具"
 def is_isolated(rel, isolated):
     """rel 是否命中夹具隔离 glob（fnmatch，`*` 跨 `/`）。"""
     return bool(rel) and any(fnmatch.fnmatch(rel, pat) for pat in isolated)
+
+
+def isolation_audit(isolated, iso_files, scanned):
+    """夹具隔离条目体检 —— 只加**可见性**与**防自伤**，不放宽任何判据。
+
+    返回 (逐条 [(glob, 对上的件数)], 空转 glob 列表, 是否把整个件面吃光)。
+
+    ★ **看得见**：一条 `!夹具` glob 一件都对不上 ⇒ 它登记了却没生效（原口径下**一声不响**：
+      隔离条目的存在/失效在输出里没有任何落点，只能靠人翻规则表）。
+    ★ **不许吃光**：隔离若把件面整个清空（`scanned` 件全被排除）⇒ 判据变成空转，
+      而那正是本件要防的病（「把红写进白名单」）。此支为**收紧**：原口径下它会被当成绿。
+    注：逐条记件数是**信息格**，只有「吃光」一支改判；「少吃」一律照判（隔离本来就是为了少判）。
+    """
+    per = []
+    for pat in isolated:
+        n = sum(1 for rel in iso_files if fnmatch.fnmatch(rel, pat))
+        per.append((pat, n))
+    dead = [p for p, n in per if n == 0]
+    eaten = bool(isolated) and scanned > 0 and len(iso_files) >= scanned
+    return per, dead, eaten
 
 # 通用排除表（与 §十七/§二十一 各处复跑命令同一口径）
 EXCLUDE_DIRS = {"target", "node_modules", "dist", "bin", "vendor", "data", ".git",
@@ -169,12 +193,12 @@ def whitelist_prefixes(path):
 
 
 def collect_fixtures(root, prefixes, isolated=()):
-    """扫「会进公开面的测试夹具」→ ([(相对路径, 行号, 行文本)], [被夹具隔离排除的件])。
+    """扫「会进公开面的测试夹具」→ ([(相对路径, 行号, 行文本)], [被夹具隔离排除的件], 未隔离前的夹具件数)。
 
     `isolated` 里的 glob 命中的件**不进件面**（它们被规则表显式隔离 ⇒ 规则不碰它们 ⇒ 不判），
     但**逐件登记**在第二个返回值里 —— 隔离只许看得见，不许静默少判。
     """
-    hits, iso_files = [], []
+    hits, iso_files, scanned = [], [], 0
     for pre in prefixes:
         base = os.path.join(root, pre.rstrip("/"))
         if not os.path.isdir(base):
@@ -186,6 +210,7 @@ def collect_fixtures(root, prefixes, isolated=()):
                     continue
                 full = os.path.join(dirpath, fn)
                 rel = os.path.relpath(full, root)
+                scanned += 1
                 if is_isolated(rel, isolated):
                     iso_files.append(rel)
                     continue
@@ -195,7 +220,7 @@ def collect_fixtures(root, prefixes, isolated=()):
                             hits.append((rel, i, line.rstrip("\n")))
                 except OSError:
                     continue
-    return hits, sorted(iso_files)
+    return hits, sorted(iso_files), scanned
 
 
 # ── 判决（唯一出口 · 自检直接钉它）────────────────────────────────────────
@@ -375,6 +400,25 @@ def self_test():
     else:
         bad.append("per_rule")
         print("   ✗ per_rule：%s" % _json.dumps(pr, ensure_ascii=False)[:200])
+    # 夹具隔离的**可见性 / 防自伤**成对负控（本波）：逐条 glob 记件数 + 吃光整面必须拒判。
+    per_i, dead_i, _e0 = isolation_audit(["core/internal/demo/*_test.go", "nope/*_test.go"],
+                                         ["core/internal/demo/fixture_test.go"], 3)
+    if per_i == [("core/internal/demo/*_test.go", 1), ("nope/*_test.go", 0)] \
+            and dead_i == ["nope/*_test.go"] and not _e0:
+        ok += 1
+        print("   ✓ 隔离体检：逐条 glob 记件数 · 一件都没对上的条目**点名**（登记了却没生效 ⇒ 看得见）")
+    else:
+        bad.append("隔离体检")
+        print("   ✗ 隔离体检：per=%r dead=%r eaten=%r" % (per_i, dead_i, _e0))
+    _p, _d, eaten_all = isolation_audit(["*_test.go"], ["a_test.go", "b_test.go"], 2)
+    _p2, _d2, eaten_half = isolation_audit(["*_test.go"], ["a_test.go"], 2)
+    if eaten_all and not eaten_half:
+        ok += 1
+        print("   ✓ 隔离不许吃光：件面全被隔离 ⇒ 拒判（吃光=%r）· 只隔离一半 ⇒ 照判（吃光=%r）"
+              % (eaten_all, eaten_half))
+    else:
+        bad.append("隔离吃光")
+        print("   ✗ 隔离吃光：全吃=%r 半吃=%r" % (eaten_all, eaten_half))
     print("自检结论: %s（断言 %d 条 · 失败 %d 条）"
           % ("全过" if not bad else "**不过**", ok + len(bad), len(bad)))
     return 0 if not bad else 2
@@ -388,10 +432,23 @@ def main():
     ap.add_argument("--whitelist", default="", help="白名单路径（默认 <root>/publish/whitelist.txt）")
     ap.add_argument("--extra-rule", action="append", default=[], help="合成一条规则（可重复 · **负控**用）")
     ap.add_argument("--max-examples", type=int, default=5, help="每条规则最多列几件（默认 5）")
-    ap.add_argument("--json", default="", help="机器面字段（逗号分隔：rules,hits,files,fixtures,files_dedup,files_sum,per_rule）")
+    ap.add_argument("--json", default="", help="机器面字段（逗号分隔：%s；**不认的名 ⇒ 用法错 rc=2**）" % ",".join(JSON_FIELDS))
     ap.add_argument("--list-rules", action="store_true", help="打判据 / 扫描面 / 档位")
     ap.add_argument("--self-test", action="store_true", help="成对负控（合成夹具 · 不碰真目标）")
     args = ap.parse_args()
+
+    # ★ 缺口 `Q-150`：`--json` 的**字段名打错**不许静默吐 `{}`（与「零命中」同形 ⇒ 探针
+    #   打错一个字就拿到空包封、且不报错）。口径 = **用法错 `rc=2` ＋ 逐条印可选字段表** ——
+    #   **只把「不认的名」这一支从静默改成拒绝**，不动任何业务判据与退码（合法字段照旧走命中面）。
+    want = []
+    if args.json:
+        want = [f.strip() for f in args.json.split(",") if f.strip()]
+        bad = [f for f in want if f not in JSON_FIELDS]
+        if bad:
+            print("⛔ `--json` 不认的字段名：%s" % " · ".join("`%s`" % b for b in bad))
+            print("   可选字段表：%s" % " · ".join("`%s`" % f for f in JSON_FIELDS))
+            print("⇒ 用法错（rc=2）：**字段名打错 ≠ 零命中** —— 两态在机器面上必须分得开")
+            return 2
 
     if args.list_rules:
         print("⑮ 替换规则级机检：命中件不许是测试夹具（§十三 M8 · §八 待拍 3 的落点）")
@@ -400,10 +457,11 @@ def main():
         print("  夹具隔离：同一件里的 `!夹具<TAB><路径 glob>` ⇒ 该件整段不入件面（§五 第三批；它不是豁免，是规则不再作用于该件）")
         print("  件面  ：%s 里**会进公开面**的路径前缀下的 `*_test.go`" % WHITELIST_REL)
         print("  判据  ：任一条规则命中 `*_test.go` ⇒ 红（逐条点名规则/件/行号/片段 · **不给豁免表**）")
-        print("退码：0 全绿 · 1 有命中 · 2 不给结论（规则表/白名单缺件 · 空转 · 自检不过）")
+        print("退码：0 全绿 · 1 有命中 · 2 不给结论（规则表/白名单缺件 · 空转 · 自检不过 · **`--json` 字段名不认**）")
         print("机器面：`--json <字段,逗号分隔>` —— 老四格 `rules,fixtures,hits,files`（`files` = **去重集**）"
               "+ 新三格 `files_dedup`（同值别名）/ `files_sum`（**未去重和**）/ `per_rule[]`（逐规则"
-              "`{rule, files, hits, lines}` · `lines` = 逐条 `{件,行,原文}`）—— 只加字段，判据与退码不动")
+              "`{rule, files, hits, lines}` · `lines` = 逐条 `{件,行,原文}`）—— 只加字段，判据与退码不动；"
+              "**不认的字段名 ⇒ 用法错 `rc=2` ＋ 印字段表**（缺口 `Q-150`：打错的名与零命中必须分得开）")
         return 0
 
     if args.self_test:
@@ -434,7 +492,7 @@ def main():
         print("⇒ 不给结论（rc=2）")
         return 2
 
-    fixtures, iso_files = collect_fixtures(root, prefixes, isolated)
+    fixtures, iso_files, scanned = collect_fixtures(root, prefixes, isolated)
     print("── 替换规则级机检：命中件不许是测试夹具（§十三 M8）──")
     print("   树：%s" % root)
     print("   规则面：%s ⇒ **%d 条**规则（%d 条正则 · %d 条字面量%s）"
@@ -446,6 +504,17 @@ def main():
               % (len(isolated), " · ".join(isolated), len(iso_files)))
         for rel in iso_files:
             print("      ── %s" % rel)
+    else:
+        print("   夹具隔离：**0 条** glob —— 规则表里没有生效的 `!夹具` 条目"
+              " ⇒ 隔离机制在场但**空转**，件面 %d 个夹具**全部在判据内**" % scanned)
+    per_iso, dead_iso, eaten_iso = isolation_audit(isolated, iso_files, scanned)
+    for _pat, _n in per_iso:
+        print("      · 隔离条目 `!夹具 %s` ⇒ 对上 %d 件%s"
+              % (_pat, _n, "  ⚠ 一件都没对上（登记了却没生效）" if _n == 0 else ""))
+    if eaten_iso:
+        print("⛔ 夹具隔离把整个件面吃光（%d/%d 件全被隔离）⇒ 判据空转" % (len(iso_files), scanned))
+        print("⇒ 不给结论（rc=2）：**隔离吃光 ≠ 绿** —— 那正是本件要防的「把红写进白名单」")
+        return 2
     print("   件面：白名单 %d 条前缀下的测试夹具 ⇒ **%d 个** `*_test.go`（%d 行）"
           % (len(prefixes), len(set(r for r, _ in [(f[0], 0) for f in fixtures])), len(fixtures)))
     if not fixtures:
@@ -459,8 +528,7 @@ def main():
         print("⇒ 不给结论（rc=2）")
         return 2
 
-    if args.json:
-        want = [f.strip() for f in args.json.split(",") if f.strip()]
+    if want:
         print(json.dumps(json_payload(want, len(rules), len(fixtures), hits), ensure_ascii=False))
 
     if not hits:

@@ -124,7 +124,7 @@ def git_ro(repo, args, timeout=60):
     if sub not in READONLY_SUBS:
         raise Refused("git 子命令 %r 不在只读白名单 %s 内 ⇒ 拒（本件绝不代跑任何 git 写子命令）"
                       % (sub, list(READONLY_SUBS)))
-    cmd = ["git", "--no-optional-locks", "-C", repo] + list(args)
+    cmd = ["git", "--no-optional-locks", "-C", repo, "-c", "core.quotepath=false"] + list(args)
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except Exception as e:                                       # noqa: BLE001

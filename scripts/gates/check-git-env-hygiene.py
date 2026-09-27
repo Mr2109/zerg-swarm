@@ -90,7 +90,7 @@ NOT_JUDGED = (
 def full_env_vars(root: str):
     """`git rev-parse --local-env-vars` 现跑 ⇒ (名单, 理由)。正源**只此一处**，不写死名单。"""
     try:
-        p = subprocess.run(["git", "rev-parse", "--local-env-vars"], cwd=root,
+        p = subprocess.run(["git", "-c", "core.quotepath=false", "rev-parse", "--local-env-vars"], cwd=root,
                            capture_output=True, text=True, stdin=subprocess.DEVNULL)
     except OSError as e:
         return None, "跑不动 git（%s）" % e
@@ -140,7 +140,7 @@ def scan_shell_sites(root: str):
 # ─────────────────────────── 自检（成对 · 合成仓） ───────────────────────────
 
 def _git(cwd, args, env):
-    p = subprocess.run(["git"] + list(args), cwd=cwd, env=env, capture_output=True, text=True)
+    p = subprocess.run(["git", "-c", "core.quotepath=false"] + list(args), cwd=cwd, env=env, capture_output=True, text=True)
     return p.returncode, p.stdout.strip(), p.stderr.strip()
 
 
@@ -272,7 +272,35 @@ LIST_RULES = """判据（`W-43` / `R-07` · 两条）
 """
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：`--json <字段>` 的**字段名打错**不许静默 / 不许炸堆栈 ✗
+#    口径照 `check-replace-rule-fixtures.py`（`:94` / `:395` / `:401-410`）：**用法错 `rc=2` ＋ 印可选字段表** ——
+#    「字段名打错 ≠ 零命中」两态在机器面上必须分得开；**合法字段照旧走命中面**（业务判据与退码一字未动）。
+JSON_FIELDS = ['schema', 'gate', 'version', 'full_env_vars', 'sites', 'gaps', 'gap_sites', 'not_judged', 'mode']          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_unknown_json_fields(argv=None):
+    """`--json <字段>` 里有**不认的名** ⇒ rc=2 ＋ 印可选字段表；没给 / 全合法 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    want = []
+    for i, x in enumerate(argv):
+        if x == "--json":
+            want += (argv[i + 1] if i + 1 < len(argv) else "").split(",")
+        elif x.startswith("--json="):
+            want += x.split("=", 1)[1].split(",")
+    want = [f.strip() for f in want if f.strip()]
+    bad = [f for f in want if f not in JSON_FIELDS]
+    if not bad:
+        return None
+    print("⛔ `--json` 不认的字段名：%s" % " · ".join("`%s`" % b for b in bad), file=sys.stderr)
+    print("   可选字段表：%s" % " · ".join("`%s`" % f for f in JSON_FIELDS), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**字段名打错 ≠ 零命中** —— 两态在机器面上必须分得开", file=sys.stderr)
+    return 2
+
+
 def main() -> int:
+    rc_q176 = refuse_unknown_json_fields()
+    if rc_q176 is not None:
+        return rc_q176
     here = os.path.dirname(os.path.abspath(__file__))
     repo_default = os.path.dirname(os.path.dirname(here))
     ap = argparse.ArgumentParser(description="hook / 门禁脚本对外仓·合成仓 git 调用的清环境自检（W-43 · R-07）")

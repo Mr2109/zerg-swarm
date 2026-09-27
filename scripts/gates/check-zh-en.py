@@ -56,8 +56,53 @@ WHITELIST = {
 ROLE_PAT = re.compile(r"""(host\s*:\s*['"]?local\b|Machine\s*:\s*['"]local['"]|MachineSnapshot\(['"]local['"]\))""")
 ROLE_EXEMPT_HINT = ("_test.go", "selfupdate", "toolchain")
 
-# 已判定的假红（精确到「文件:行」+ 理由）。仍会在报告中单独列出——豁免不等于隐藏。
-KNOWN_FP = {}  # 跨行引号已建模（2026-09-16）⇒ 原 publish-public.sh:420 豁免撤销
+# 已判定的假红（精确到「件 + 内容子串」+ 理由）。仍会在报告中单独列出——豁免不等于隐藏。
+#
+# ★ 2026-09-26（`Q-176` 第五批后的教训 · 行号登记的普查推荐 (B)）：本表**原来按行号登记**（键 `(件, 行号)`）。
+#   `check-glossary.py` 上方插 26 行 ⇒ 旧键 379/387/389 **整体失指**（有的指空、有的指到**别的行**）
+#   ⇒ 一次假红 7 处，而登记表**自己一声不吭** ✗。「行号锚点本身就是病」（`W-45` / `R-17`）⇒ 键改成
+#   **(件, 该行逐字片段)**：登记是否有效由**内容**决定、与行号无关（件内挪行不再失指；子串必须能在
+#   它那件里 `grep -F` **恰命 1 行**）。
+#   **不是放宽判据**：豁免范围、理由、逐条打印**一字未变**，只换「定位方式」（行号 → 子串）；
+#   子串命中 0 行 / 多于 1 行 ⇒ `registry_stale()` 判「**登记过期**」并逐字点名 ✗
+#   （旧式样里登记失效是**静默**的——这正是本改动要治的病）。
+#   式样同仓内三条生产先例（**零新机制**）：`check-dangling-refs.py` 的 `ref`（件 + 引文逐处登记）·
+#   `check-keep-marks.py` 的 `anchor`（`M5`：内容锚恰好命中 1 次）· `check-anchor-uniqueness.py`（内容锚唯一性）。
+#   条目里的 `# 导航 :NNN` 只作**导航**用（判据不吃行号 ⇒ 件挪行时它过期不影响判定）。
+#
+# ★ 覆盖范围（`Q-120` · 2026-09-26 修）：这一张表是**逐行**豁免口 —— 命中登记 ⇒ 该行的
+#   **两半判定（禁用词 / 全角标点）** 一律改记为「已登记假红(豁免)」，不计入「合计命中」，
+#   但照样逐条打印。修前只有「全角标点」那一半会读它 ⇒ 禁用词那一半的已知假红（门禁 /
+#   生成器**自己的词表字面量**）永远算命中，尾巴软检查长期挂着 6 处噪声。
+#   负控：登记表里没有这一行 ⇒ 两半照旧判红（`--selftest` 里 `[豁免口]` 那两条）。
+KNOWN_FP = {
+    # 2026-09-26（`Q-120`）：以下 4 行全是**规则文本 / 词表字面量本身**，不是被检对象 —
+    #   与 WHITELIST 同一条口径（本件文件头 ③「规则文本本身必须能写出禁用词」），只是
+    #   它们落在**别的件**里，而 WHITELIST 是**整件**级的 ⇒ 用逐行豁免口精确到行。
+    #   `check-glossary.py` 一行同时含 `虫巢` 与 `集装箱`（那 6 处里占 2）⇒ 一行一条豁免。
+    # ★ 2026-09-26（`Q-176` 第五批 · 44 件同秒批）：`check-glossary.py` 在**上面那三行之上**插了 26 行
+    #   （`--self-test` 三档自检）⇒ 三行**行号整体下移 26**（379→405 · 387→413 · 389→415）。
+    #   ★ 本笔（2026-09-26 · 普查推荐 (B)）：键已从**行号**换成**逐字片段** ⇒ 上面那次「挪行」从今往后
+    #   不再需要改登记表（内容逐字未动 ⇒ 键照样命中）；豁免集合**一字不变**。负控：把某键的子串改成
+    #   不存在的串 ⇒ 该键判「登记过期」并逐字点名（不再静默）。
+    #   同批又在文件尾部新写 3 行合成夹具 / 用例标题（511 · 519 · 532），同属「规则文本本身」⇒ 按同一式样补登。
+    ("scripts/gates/check-glossary.py", '"虫巢|集装箱", "pod"'):  # 导航 :405（判据不吃行号）
+        "术语词表字面量（`COLS` 里逐字写着 `虫巢|集装箱` 用作**被检词**，与 `docs/术语表.forbid.txt` 同源）",
+    ("scripts/gates/check-glossary.py", 'scan_page("docs/zh/a.md", "这里叫虫巢。", gloss, "zh")[1], 1)'):  # 导航 :413（判据不吃行号）
+        "自证夹具：断言「T2 中文页禁写 虫巢」的那条**用例正文**（`\"这里叫虫巢。\"`）",
+    ("scripts/gates/check-glossary.py", '旧称虫巢。<!-- glossary-allow -->'):  # 导航 :415（判据不吃行号）
+        "自证夹具：断言「T2 单条豁免生效」的**用例正文**（`\"旧称虫巢。<!-- glossary-allow -->\"`）",
+    ("scripts/gates/check-glossary.py", 'f.write("虫巢\\t\\t\\t\\t虫巢\\t\\tMr2109\\t英文待拍\\n")'):  # 导航 :511（判据不吃行号）
+        "`Q-176` 第五批合成夹具：喂 `load_glossary` 的**词表行**（`虫巢` 当 `forbid_zh` 列 ⇒ 验 T2 抓得到）",
+    ("scripts/gates/check-glossary.py", 'f.write("旧称：这里叫虫巢。\\n")'):  # 导航 :519（判据不吃行号）
+        "`Q-176` 第五批合成夹具：中文页的**用例正文**（`\"旧称：这里叫虫巢。\"` ⇒ 验 T2 负控 rc=1）",
+    ("scripts/gates/check-glossary.py", '中文页出现 `forbid_zh` 词（虫巢）⇒ T2 非阻塞 rc=1'):  # 导航 :532（判据不吃行号）
+        "`Q-176` 第五批自证**用例标题串**（`chk(\"档② 负控：…（虫巢）…\")`；与 413 同种：标题里点名被检词）",
+    ("scripts/docs/gen-glossary-exports.py", '"虫巢", "pod", "Mr2109", ""]))])[1].split("\\t")[0], "pod")'):  # 导航 :274（判据不吃行号）
+        "生成器自证夹具：喂 `gen_forbid(...)` 的合成词表行（验它把 `pod` 翻出来）",
+    ("scripts/docs/gen-glossary-exports.py", '"只有「虫茧」" in gen_forbid([dict(zip(COLS, ["虫茧", "cocoon", "", "", "虫巢", "", "Mr2109", ""]))])[0], True)'):  # 导航 :276（判据不吃行号）
+        "生成器自证夹具：喂 `gen_forbid(...)` 的合成词表行（验理由串「只有「虫茧」」在）",
+}
 
 RE_TRIPLE = re.compile(r"""(\"\"\"|''')[\s\S]*?\1""")
 RE_CMDSUB = re.compile(r"""\$\((?:[^()]|\([^()]*\))*\)""")
@@ -69,12 +114,80 @@ def strip_blocks(text):
     return RE_TRIPLE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
 
 
+def _hd_quote_cols(l, st):
+    """S 变体（GAP-20260927-17）：行内字符级状态机 —— 返回「位于引号内」的列集合，并就地推进 st。
+
+    规则：`'…'` 原样（内不认 `$(`、不认转义）；`"…"` 认 `\\` 转义、认 `$(`；
+    遇 `$(` **挂起**外层引号态（压栈、内层从「无引号」重开），遇配对 `)` 弹栈复原；
+    行内注释（`#` 在行首或前面是空白）之后整行不参与状态 —— 注释里的撇号不再开幻影引号 ✗✓。
+    """
+    q, stack, n, i, cols = st.get("q"), st.get("stack", []), len(l), 0, set()
+    while i < n:
+        c = l[i]
+        if q is None and not stack and c == "#" and (i == 0 or l[i - 1] in " \t"):
+            break
+        if q == '"' and c == "\\":
+            i += 2
+            continue
+        if q is None and c == ")" and stack:
+            q = stack.pop()
+        elif (q is None or q == '"') and c == "$" and i + 1 < n and l[i + 1] == "(":
+            stack.append(q)          # `$(` 在双引号内**也要认**（挂起外层引号态），单引号内不认
+            q = None
+            i += 2
+            continue
+        elif q is None:
+            if c in "'\"":
+                q = c
+        elif c == q:
+            q = None
+        if q is not None:
+            cols.add(i)
+        i += 1
+    st["q"], st["stack"] = q, stack
+    return cols
+
+
+MASK_UNCLOSED = []   # [(件, [未闭合起始行…])]；scan() 前清空（GAP-20260927-128/-129）
+
+
+def mask_heredocs_chk(text):
+    """同 `mask_heredocs`，但**回报未闭合段**：返回 `(遮蔽后正文, 起始行号列表)`。
+
+    GAP-20260927-129：起始标记出现在**引号内**（如 `printf '…<<PYEOF…'`）时，收尾条件
+    （只含 TAG 的那一行）永不成立 ⇒ 其后直到文件末全被遮蔽 = 门整段失明。旧行为静默通过。
+    """
+    out, tag = [], None
+    starts = []
+    hst = {"q": None, "stack": []}
+    for lineno, l in enumerate(text.split("\n"), 1):
+        qcols = _hd_quote_cols(l, hst)          # 每行都推进状态（跨行持态）
+        if tag is None:
+            out.append(l)
+            m = RE_HEREDOC_START.search(l)
+            if m and m.start() not in qcols:    # GAP-20260927-17：引号内的 <<TAG 不算起始
+                tag = m.group(1)
+                starts.append((lineno, tag))
+        else:
+            if l.strip() == tag:
+                out.append(l)
+                tag = None
+                starts.pop()
+            else:
+                out.append("")
+    return "\n".join(out), [s[0] for s in starts]
+
+
 def mask_heredocs(text):
     """屏蔽 heredoc 段：`<<[-]?['\"]?TAG['\"]?` 起始行之后、直到只含 TAG 的那一行。
 
     正文属字符串（非代码）。用空行替换以保住行号。
     行式实现 —— 正则版实测匹配不上真实文件（2026-09-16）。
     """
+    return mask_heredocs_chk(text)[0]
+
+
+def _mask_heredocs_old(text):
     out, tag = [], None
     for l in text.split("\n"):
         if tag is None:
@@ -160,6 +273,61 @@ def strip_noncode(line, ext):
     return "".join(out)
 
 
+def _body_of(path, ext):
+    """与 `scan()` **同一条遮蔽管线**：子串唯一性只在「扫描域」里判（被掩掉的段不算命中）。"""
+    raw = open(path, encoding="utf-8", errors="replace").read()
+    if ext == ".py":
+        return strip_blocks(raw)
+    if ext in (".sh", ".plist", ".conf"):
+        return mask_multiline_quotes(mask_heredocs(raw))
+    return raw
+
+
+def fp_hit(p, line):
+    """逐行豁免口：键 = `(件, 内容子串)` ⇒ 命中 ⇔ 登记的那条子串在**本行**逐字出现。返回理由（无则 None）。"""
+    for (path, sub), why in KNOWN_FP.items():
+        if path == p and sub and sub in line:
+            return why
+    return None
+
+
+def registry_stale():
+    """**登记表体检**（唯一性校验 · 本改动的牙）：每条 `(件, 子串)` 在**它那件**里必须恰好命中 1 行。
+
+    0 行 ⇒ 子串已不在件里（内容被改 / 落进被掩掉的段）；>1 行 ⇒ 子串不唯一（指不到一处）。
+    两个方向都判「**登记过期**」并逐字点名 —— 旧「行号登记」的病正在这里：行号失指时登记
+    **静默**失效（豁免悄悄掉，或悄悄指到**另一行**）。返回 (过期表, 读不到的件表)；
+    后者是**输入异常**（rc=2），不当作「登记过期」。
+    """
+    stale, missing = [], []
+    for (path, sub) in KNOWN_FP:
+        if not sub:
+            stale.append((path, "", "登记子串为空", []))
+            continue
+        full = os.path.join(os.getcwd(), path)
+        if not os.path.isfile(full):
+            missing.append(path)
+            continue
+        body = _body_of(full, os.path.splitext(path)[1].lower())
+        hit = [i for i, ln in enumerate(body.splitlines(), 1) if sub in ln]
+        if not hit:
+            stale.append((path, sub, "命中 0 行（该内容已不在件里）", hit))
+        elif len(hit) > 1:
+            stale.append((path, sub, "命中 %d 行（子串不唯一 ⇒ 指不到一处）" % len(hit), hit))
+    return stale, missing
+
+
+def _fp_row(hits, p, i, line, why):
+    """登记行 → 「已登记假红(豁免)」桶（一行只记一次）。
+
+    禁用词 / 全角标点两半**共用**同一张 `KNOWN_FP` ⇒ 同一行可能两半都命中：
+    这里按「渲染后的整条串」去重，保证报告里一行只出现一次（豁免 ≠ 隐藏，但 ≠ 重复刷屏）。
+    """
+    ent = "%s:%d  [%s]  %s" % (p, i, why, line.strip()[:60])
+    if ent not in hits["已登记假红(豁免)"]:
+        hits["已登记假红(豁免)"].append(ent)
+
+
 def scan():
     files = 0
     hits = {"禁用词": [], "全角标点(代码区)": [], "旧角色词": [], "已登记假红(豁免)": []}
@@ -182,18 +350,30 @@ def scan():
                 if ext == ".py":
                     body = strip_blocks(raw)
                 elif ext in (".sh", ".plist", ".conf"):
-                    body = mask_multiline_quotes(mask_heredocs(raw))
+                    masked, _unclosed = mask_heredocs_chk(raw)
+                    if _unclosed:
+                        # GAP-20260927-128/-129：遮蔽未闭合 = 门在这段失明 ⇒ 登记，由 main() 判 rc=2
+                        MASK_UNCLOSED.append((p, _unclosed))
+                    body = mask_multiline_quotes(masked)
                 else:
                     body = raw
                 for i, l in enumerate(body.split("\n"), 1):
+                    # 逐行豁免口（`KNOWN_FP`）：**键 = `(件, 内容子串)`**，登记的那条子串在本行逐字
+                    # 出现即命中 ⇒ 该行的**两半判定**（禁用词 / 全角标点）一律改记「已登记假红(豁免)」
+                    # ——照样逐条打印、但**不计**「合计命中」。**不吃行号**（件挪行不失指）；
+                    # 子串在件里命中 ≠1 ⇒ `registry_stale()` 判「登记过期」并点名（正/负控见 `selftest`）。
+                    fp = fp_hit(p, l)
                     if p not in WHITELIST:
                         for w, why in FORBID.items():
                             if w in l:
-                                hits["禁用词"].append("%s:%d  [%s]  %s" % (p, i, why, l.strip()[:70]))
+                                if fp:
+                                    _fp_row(hits, p, i, l, fp)
+                                else:
+                                    hits["禁用词"].append("%s:%d  [%s]  %s" % (p, i, why, l.strip()[:70]))
                     code = strip_noncode(l, ext)
                     if ext in FULLW_EXT:
-                        if (p, i) in KNOWN_FP:
-                            hits["已登记假红(豁免)"].append("%s:%d  [%s]  %s" % (p, i, KNOWN_FP[(p, i)], l.strip()[:60]))
+                        if fp:
+                            _fp_row(hits, p, i, l, fp)
                         else:
                             for ch in FULLW:
                                 if ch in code:
@@ -208,7 +388,9 @@ def scan():
 def selftest():
     """校验器先自证：样本取自真实文件形态（注释 / 字符串 / 三引号 / heredoc / $( )）。
 
-    条数必须为 13 —— 少跑一条即判失败（防"用例被静默截断还打印通过"）。
+    条数：`cases` **必须为 14**（`:410` 自断言，少跑一条即判失败，防"用例被静默截断还打印通过"）；
+    另有跨行结构 4 格（三引号 / heredoc / 跨行引号 / 注释撇号）、遮蔽起始族 6 格（`GAP-20260927-17`）、
+    豁免口 3 格（`selftest_fp`：正控 / 负控 / 去重）。
     """
     ok = True
     cases = [
@@ -244,6 +426,22 @@ def selftest():
     hc = any(ch in strip_noncode(l, ".sh") for ch in FULLW for l in hl[3:])
     ok = ok and (not hb) and hc
     print("  %s [heredoc] 正文不抓=%s（期望 False）· 段外真代码抓=%s（期望 True）" % ("✓" if (not hb and hc) else "✗", hb, hc))
+    # GAP-20260927-17：**引号内的** `<<TAG` 不算 heredoc 起始（S 变体：行内字符级状态机 +
+    # 跨行持态 + 注释行护）。修前 5/5 误判（引号内起始被当起始 ⇒ 掩到文件末 = 门整段失明）。
+    hcases = [
+        ("C1 单引号内", "printf '%s\\n' '…<<PYEOF…'\n", 0, 0),
+        ("C2 双引号内(跨行串)", "printf \"…<<'PYEOF'\\n%s\\nPYEOF\" \"$1\" \"$X\"\n", 0, 0),
+        ("C3 add_step 串内", "add_step pub \"python3 - <<'PYEOF'\"\n", 0, 0),
+        ("C4 引号内起始不得吞其后真起始（被掩 1；修前掩到末）", "printf '%s' '<<PYEOF'\nx=$(cat <<'EOF'\nbody\nEOF\n", 0, 1),
+        ("C5 双引号内 $( 里是真起始（防误杀锁·被掩 1）", "FAST_NAMES=\"$(cat <<'EOF'\nbody\nEOF\n)\"\n", 0, 1),
+        ("C6 真起始体内含括号（被掩 1）", "$(python3 - \"$PLIST\" <<'PY'\nprint(1)\nPY\n", 0, 1),
+    ]
+    for hname, hsrc, hn_want, hm_want in hcases:
+        _ht, _hst = mask_heredocs_chk(hsrc)
+        _hm = sum(1 for _a, _b in zip(hsrc.split("\n"), _ht.split("\n")) if _b == "" and _a.strip() != "")
+        _hgood = (len(_hst) == hn_want) and (_hm == hm_want)
+        ok = ok and _hgood
+        print("  %s [%s] 起始=%d（期望 %d）· 被掩=%d（期望 %d）" % ("✓" if _hgood else "✗", hname, len(_hst), hn_want, _hm, hm_want))
     mq = chr(10).join(['git commit -q -m "第一行（全角）',
                        '第二行，仍属字符串',
                        '第三行"',
@@ -260,17 +458,96 @@ def selftest():
     cc = any(ch in strip_noncode(l, ".sh") for ch in FULLW for l in cl[1:])
     ok = ok and (not cb) and cc
     print("  %s [注释撇号] 注释内不抓=%s（期望 False）· 下一行真代码抓=%s（期望 True）" % ("✓" if (not cb and cc) else "✗", cb, cc))
-    print("  自证：%s（14 条单行 + 4 条跨行结构）" % ("通过 ✓" if ok else "**失败** ✗"))
+    ok = ok and selftest_fp()
+    print("  自证：%s（14 条单行 + 4 条跨行结构 + 6 条遮蔽起始族 + 3 条豁免口）" % ("通过 ✓" if ok else "**失败** ✗"))
+    return ok
+
+
+def selftest_fp():
+    """`[豁免口]` 正/负控 —— 证明 `KNOWN_FP` 真的覆盖**禁用词**那一半（`Q-120` 的修法有牙）。
+
+    做法 = 端到端：临时树里放两行同名禁用词，只登记第 1 行 ⇒
+      正控：第 1 行改记豁免、第 2 行仍判 `禁用词`（豁免只挡登记那一行）；
+      负控：清空登记表 ⇒ 两行都判 `禁用词`（证明上面那 1 处是**豁免口**挡的，不是判据失灵）。
+    另测去重：同一行既含禁用词又含全角标点 ⇒ 豁免桶里只出现一次。
+    """
+    import tempfile
+
+    global ROOTS, WHITELIST, KNOWN_FP
+    saved = (ROOTS, WHITELIST, KNOWN_FP, os.getcwd())
+    ok = True
+    try:
+        tmp = tempfile.mkdtemp(prefix="zh-en-fp-selftest-")
+        os.makedirs(os.path.join(tmp, "core"))
+        probe = os.path.join(tmp, "core", "probe_fp.py")
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write('a = "虫巢"\n'
+                     'b = "虫巢"\n'
+                     'c = 1，2  # 虫巢 同行两种命中\n')
+        os.chdir(tmp)
+        ROOTS = ["core"]
+        WHITELIST = set()
+        # 登记第 1 行（纯禁用词）与第 3 行（禁用词 + 全角标点**同行** ⇒ 考去重）。
+        # 键 = `(件, 内容子串)`（新式样 · 不吃行号）。
+        KNOWN_FP = {("core/probe_fp.py", 'a = "虫巢"'): "自证登记行①",
+                    ("core/probe_fp.py", 'c = 1，2  # 虫巢 同行两种命中'): "自证登记行③（同行两种命中 ⇒ 只许列一次）"}
+
+        _, h = scan()
+        got_fp, got_fb, got_fw = len(h["已登记假红(豁免)"]), len(h["禁用词"]), len(h["全角标点(代码区)"])
+        c1 = (got_fp == 2 and got_fb == 1 and got_fw == 0)
+        print("  %s [豁免口·正控] 登记 2 行（第 3 行同行两种命中）⇒ 豁免=%d（期望 2·去重生效）· 禁用词=%d（期望 1，只剩未登记的第 2 行）· 全角=%d（期望 0）"
+              % ("✓" if c1 else "✗", got_fp, got_fb, got_fw))
+        ok = ok and c1
+
+        KNOWN_FP = {}
+        _, h2 = scan()
+        d_fp, d_fb, d_fw = len(h2["已登记假红(豁免)"]), len(h2["禁用词"]), len(h2["全角标点(代码区)"])
+        c2 = (d_fp == 0 and d_fb == 3 and d_fw == 1)
+        # ★ 本改动的新牙（**折进同一格**带过，不另开格）：登记过期 = 子串失配（0 命中）/ 多处命中（>1）
+        #   ⇒ 必须判「登记过期」并**点名**（旧式样里登记失效是**静默**的，那正是要治的病）。
+        KNOWN_FP = {("core/probe_fp.py", 'a = "压根不在件里的串"'): "自证登记行①"}
+        st0, ms0 = registry_stale()
+        c3 = (len(st0) == 1 and not ms0 and st0[0][0] == "core/probe_fp.py"
+              and st0[0][1] == 'a = "压根不在件里的串"' and "命中 0 行" in st0[0][2])
+        KNOWN_FP = {("core/probe_fp.py", "虫巢"): "自证登记行①"}
+        st1, _ = registry_stale()
+        c4 = (len(st1) == 1 and "命中 3 行" in st1[0][2])
+        print("  %s [豁免口·负控] 清空登记 ⇒ 豁免=%d（期望 0）· 禁用词=%d（期望 3）· 全角=%d（期望 1）—— 上面那两处是**登记表**挡的，不是判据失灵；"
+              "登记过期：子串失配 %d 条（期望 1 · 点名）· 多处命中 %d 条（期望 1 · 点名）"
+              % ("✓" if (c2 and c3 and c4) else "✗", d_fp, d_fb, d_fw, len(st0), len(st1)))
+        ok = ok and c2 and c3 and c4
+        # GAP-20260927-128/-129：遮蔽未闭合必须**可被检出**（成对：未闭合 / 闭合）
+        _m1, _u1 = mask_heredocs_chk("echo hi <<PYEOF\nnot closed\n")
+        _m2, _u2 = mask_heredocs_chk("cat <<PYEOF\nbody\nPYEOF\ntail\n")
+        c5 = (_u1 == [1]) and (_u2 == []) and ("not closed" not in _m1) and ("tail" in _m2)
+        print("  %s [遮蔽未闭合] 未闭合起始行=%s（期望 [1]）· 闭合件=%s（期望 []）· 闭合件尾行保留=%s"
+              % ("✓" if c5 else "✗", _u1, _u2, "tail" in _m2))
+        ok = ok and c5
+    finally:
+        ROOTS, WHITELIST, KNOWN_FP, cwd = saved
+        os.chdir(cwd)
     return ok
 
 
 def main():
-    if "--selftest" in sys.argv:
+    # ★ `Q-176` 第六批：准拼法 `--self-test`；旧拼法 `--selftest` 作别名（两个都认）
+    if "--self-test" in sys.argv or "--selftest" in sys.argv:
         return 0 if selftest() else 1
     if not os.path.isdir("core") and not os.path.isdir("agent"):
         print("✗ 不在仓库根目录（core/ 与 agent/ 都不存在）——拒绝静默空转", file=sys.stderr)
         return 2
+    MASK_UNCLOSED.clear()
     files, hits = scan()
+    if MASK_UNCLOSED:
+        # ★ 判不了档（GAP-20260927-128/-129）：遮蔽段没闭合 ⇒ 门在那些行上**失明**，
+        #   此时「零命中」不能当绿 ⇒ 一律 rc=2（BLOCKED：不阻塞提交，但不许当绿）。
+        print("✗ 遮蔽面有未闭合的 heredoc 段 —— 门在这些行上整段失明，本轮**不给结论**", file=sys.stderr)
+        for pf, starts in MASK_UNCLOSED[:10]:
+            print("   · %s：起始行 %s（其后直到文件末皆被遮蔽）"
+                  % (pf, ", ".join(str(x) for x in starts[:5])), file=sys.stderr)
+        print("   ★ 处置：收尾标记必须**独占一行**（现读 `l.strip()==TAG`）；"
+              "起始标记出现在引号内时不算真 heredoc（根因档待办）。", file=sys.stderr)
+        return 2
     if files == 0:
         print("✗ 扫到 0 个文件——拒绝静默空转（假绿）", file=sys.stderr)
         return 2
@@ -282,8 +559,20 @@ def main():
             print("   ", x)
         if len(v) > 15:
             print("    …另 %d 处" % (len(v) - 15))
+    # ── 登记表体检：每条 `(件, 子串)` 在它那件里必须**恰好命中 1 行** ⇒ 否则判「登记过期」──────
+    stale, missing = registry_stale()
+    if missing:
+        for m in sorted(set(missing)):
+            print("✗ 登记表指向的件不在盘：%s —— 判不了「登记过期」，拒绝静默放过" % m, file=sys.stderr)
+        return 2
+    print("\n── 登记过期（键失效 ⇒ 必报）：%d 条" % len(stale))
+    for path, sub, why, hit in stale:
+        print("   · %s  «%s» ⇒ %s%s" % (path, sub[:70], why,
+              ("（命中行 %s）" % ", ".join(str(h) for h in hit)) if hit else ""))
+    if stale:
+        print("   ★ 处置：登记过期 ⇒ **修登记**（换一段逐字片段）或**改件**——不得当作豁免成功")
     print("\n合计命中 = %d" % total)
-    return 0 if total == 0 else 1
+    return 0 if (total == 0 and not stale) else 1
 
 
 if __name__ == "__main__":

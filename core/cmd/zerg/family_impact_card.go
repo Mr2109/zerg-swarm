@@ -525,18 +525,21 @@ func impactJudgeCard(c impactCard) error {
 
 // impactReversibility 退法（§3.8 三档）。
 type impactReversibility struct {
-	Tier    int      // 1 有现成回滚件 · 2 无回滚件但有可找回证据 · 3 无退法
-	Cmd     string   // 档 1/2 的那**条命令**（不是「可以回滚」四个字）
+	Tier    int      // 1 有现成回滚件 · 2 只查到「末笔碰过本件的提交」（**不是退点** ⇒ 明说不可退）· 3 无退法
+	Cmd     string   // 档 1 的那**条命令**（不是「可以回滚」四个字）；档 2 **不给命令**（末笔提交不是退点 ⇒ 禁编一条看起来能跑的）
 	Resolve []string // 判据④要在盘上 `test -e` 解析到的路径
-	SHA     string   // 档 2：git 那笔提交 sha（可复算）
+	SHA     string   // 档 2：查到的**末笔提交** sha（线索 · 可复算 —— **不是退点**）
 	Line    string   // 第③行内联的那一段（同一行 · **不新增行数** §4.1）
 }
 
 // impactReversibilityDecide 判档（**纯函数**：成对负控能直接喂「没有回滚件、也没有证据」）。
 //
-//	档 1：`bin/` 产物（不入库）且盘上有现成回滚件 ⇒ 退法 = 那条 `cp -p <回滚件> <件>`；
-//	档 2：无回滚件、但 `git log -1 -- <件>` 有那笔提交 ⇒ 退法 = `git revert <sha> -- <件>`
-//	     （**证据路径**逐字给：sha + 件路径 —— 与 §6.1 的两件证据同一套）；
+//	档 1：`bin/` 产物（不入库）且盘上有现成回滚件 ⇒ 退法 = 那条 `cp -p <回滚件> <件>`（判据 = 写回后 sha256 对上）；
+//	档 2：无回滚件、只查到 `git log -1 -- <件>` 那笔**末笔提交** ⇒ ★ **那不是退点**（`GAP-20260927-216`
+//	     同族修正，与 `family_dev_edit.go` 的 `devEditReturnPoint` 同一口径）：① 那条 `git revert <sha> -- <件>`
+//	     **跑不通**（`git revert` 不吃 pathspec）；② 它锚的是**提交里**那一版，而「改前工作树」含**未提交**
+//	     改动 ⇒ 那一版不在任何提交里；③ 那笔提交可能**与本次改动无关**。⇒ 这一档**明说不可退**、
+//	     把 sha 当**线索**照实展示（`SHA` 那一格仍填，供人复算那笔提交在不在）；**禁编一条看起来能跑的退法**；
 //	档 3：既无回滚件、也无提交（未跟踪 / 无历史）⇒ **必须明写「无退法」** ✗（不许空着）。
 func impactReversibilityDecide(isBinProduct bool, rollback, gitSHA, rel string) impactReversibility {
 	rb := strings.TrimSpace(rollback)
@@ -554,8 +557,10 @@ func impactReversibilityDecide(isBinProduct bool, rollback, gitSHA, rel string) 
 			short = short[:12]
 		}
 		return impactReversibility{
-			Tier: 2, Cmd: fmt.Sprintf("git revert %s -- %s", short, rel), Resolve: []string{rel}, SHA: sha,
-			Line: fmt.Sprintf("这一步能退吗？能（档 2 · 无回滚件、但有可找回证据）：证据 = git 提交 `%s` + 件路径 `%s` ⇒ `git revert %s -- %s`（**不自动执行**）", short, rel, short, rel),
+			Tier: 2, Resolve: []string{rel}, SHA: sha,
+			Line: fmt.Sprintf("这一步能退吗？**不能**：**无退法**（档 2 —— 只查到「末笔碰过本件的提交」`%s`，**那不是退点**："+
+				"`git revert %s -- %s` 跑不通（`git revert` 不吃 pathspec · 实测 rc=128），且 `HEAD:%s` ≠ 改前工作树（未提交的改动不在任何提交里）；"+
+				"**本卡片拿不到 `before_sha256` / 退点件**（那两样是 `dev edit` 回执与提案的字段）⇒ 不给退法、**禁编**）", short, short, rel, rel),
 		}
 	default:
 		return impactReversibility{
@@ -566,9 +571,16 @@ func impactReversibilityDecide(isBinProduct bool, rollback, gitSHA, rel string) 
 }
 
 // impactReversibilityOf 现算退法档（只读：盘上找现成回滚件 + `git log -1 -- <件>`，两者都不写）。
+//
+// ★ 两条同族调用（`GAP-20260927-216`）：`impactLastCommit` 拿回来的是**末笔碰过本件的那笔提交**，
+// 它**不是退点**（判据只有一条：写回后件 sha256 == 改前指纹 `before_sha256`）⇒ 这里只把它当
+// 「那件在不在 git 历史里」的**线索**喂给 `impactReversibilityDecide`，退法那一档由该函数明说
+// 「不能 / 无退法」。★ 本卡片**拿不到** `before_sha256` 与退点件（它们是 `dev edit` 回执与提案的
+// 字段）⇒ **不编数字、不给假命令**。
 func impactReversibilityOf(root string, tgt *impactTarget) impactReversibility {
 	if tgt.Kind == impactKindContract {
-		// 契约目标：承诺的真源 = 登记表本身 ⇒ 退法看登记表那件的提交（件路径 = 登记表）。
+		// 契约目标：承诺的真源 = 登记表本身 ⇒ 查登记表那件的**末笔提交**作线索（**不是退点** —— 见上注；
+		// 契约目标今天没有退点件可锚 ⇒ 退法那一格只会落到「不能 / 无退法」）。
 		sha := impactLastCommit(root, impactRegistryRel)
 		return impactReversibilityDecide(false, "", sha, impactRegistryRel)
 	}
@@ -577,6 +589,7 @@ func impactReversibilityOf(root string, tgt *impactTarget) impactReversibility {
 	}
 	rb := impactRollbackArtifact(root, tgt.Rel)
 	isBin := strings.HasPrefix(tgt.Rel, "bin/")
+	// 档 1 那条真退法是 `cp -p <回滚件> <件>`（判据 = 写回后 sha256 对上）；第三个实参是**末笔提交线索**。
 	return impactReversibilityDecide(isBin, rb, impactLastCommit(root, tgt.Rel), tgt.Rel)
 }
 
@@ -605,6 +618,12 @@ func impactRollbackArtifact(root, rel string) string {
 }
 
 // impactLastCommit 那件最后一次改动它的提交（`git log -1 --format=%H -- <件>`）；无 ⇒ 空串。
+//
+// ★ **这不是退点**（`GAP-20260927-216` 同族口径，与 `family_dev_edit.go` 的 `devEditReturnPoint` 一致）：
+// ① `git revert <它> -- <件>` **跑不通**（`git revert` 不吃 pathspec · 实测 rc=128）；
+// ② 它锚的是**提交里**那一版，而「改前工作树」含**未提交**改动 ⇒ 那一版**不在任何提交里**；
+// ③ 它只是「末笔碰过本件」，**可能不是本件的基线**（那笔提交可能与本次改动无关）。
+// ⇒ 本函数只作**线索 / 元信息**用（「那件在不在 git 历史里」），退点一律锚 `before_sha256` + 退点件。
 func impactLastCommit(root, rel string) string {
 	out, _, code, err := impactRunIn(root, "git", "log", "-1", "--format=%H", "--", rel)
 	if err != nil || code != 0 {
@@ -616,8 +635,8 @@ func impactLastCommit(root, rel string) string {
 // impactJudgeReversibility 判据④（§九 判据⑨ 退法可执行性）的**唯一判定口**：
 //
 //	· 档 1：那条命令指的回滚件与目标**都必须在盘上解析到**（`test -e`）；
-//	· 档 2：证据的 sha 非空、件路径 `test -e` 在盘上（**顺手把「可找回」也判掉** —— 比判据多一格，
-//	  只加不减）；
+//	· 档 2：那笔**末笔提交**的 sha 非空（线索可复算）+ 件路径 `test -e` 在盘上，★ 且行内**必须明说
+//	  「无退法」**（末笔提交**不是退点** ⇒ 不许给出看起来能跑的命令 · `GAP-20260927-216` 同族）；
 //	· 档 3：行内**必须出现「无退法」三字**（**空着 = 红** ✗）；
 //	· 行本身为空 ⇒ 一律红（负控：把该行清空 ⇒ 本判据必须红）。
 func impactJudgeReversibility(root string, rev impactReversibility) error {
@@ -652,7 +671,11 @@ func impactJudgeReversibility(root string, rev impactReversibility) error {
 		}
 	case 2:
 		if len(strings.TrimSpace(rev.SHA)) < 8 {
-			return fmt.Errorf("档 2 的可找回证据缺 git 提交 sha（要能复算）")
+			return fmt.Errorf("档 2 缺那笔末笔提交的 sha（要能复算 —— 它只是**线索**，不是退点）")
+		}
+		if !strings.Contains(rev.Line, "无退法") {
+			return fmt.Errorf("档 2 行内**必须明说「无退法」**（末笔碰过本件的提交**不是退点** ⇒ 不许给出" +
+				"看起来能跑的退法命令 · `GAP-20260927-216` 同族）")
 		}
 		if len(rev.Resolve) == 0 {
 			return fmt.Errorf("档 2 的退法没有给出件路径")

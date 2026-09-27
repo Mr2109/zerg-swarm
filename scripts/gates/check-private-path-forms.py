@@ -36,6 +36,17 @@ v2.5.11 已经补了第三个字面量 `~/`（该件注释逐字留痕）；本�
   （`/Users/<字母开头>` 而不是 `/Users/<user>` 这种占位）⇒ 计「实例口径」1 条并**逐条打印** ——
   它今天能过不代表明天能过（这正是 `~/` 那一格的来源）。
 
+2026-09-26 补格（本笔 · 形态枚举缺口收口）
+--------------------------------------
+`publish/replace-rules.tsv` 另有 9 条形态**没有任何格认领**（门跑出来是 E2a 红 9 处）。逐处定档两条路：
+**有新规可依的 ⇒ 加认领格**（F-13「私有仓名（仓外私有文档仓名 `Zerg-内部文档`）」—— 真源判据件
+`check-public-face-wording.py` 甲档 A4 的正则**就是** `Zerg-内部文档`；★ 它**不是凭据形态**，
+不许归进令牌 / 口令类）；**无规可依的 ⇒ 照 F-02 / F-03 / F-09 / F-12 先例逐字登记为存量债**
+（F-14 模型代号大小写变体 · F-15 派生标识符 / 环境变量 · F-16 家目录 base64 编码变形）。
+★ **绝不为消红而静默、绝不放宽 E1–E4 任何判据**：债务格照样进 `debt[]` **逐跑打印**。
+（注：E1 的 F-11 那处红**不是本门能治的** —— 它要改 `publish/replace-rules.tsv`
+的注释列，而那是**禁面 + 可能进指纹** ⇒ 本笔**不碰**，如实留红。）
+
 退码：`0` 四判据全过（**未覆盖的形态已逐条登记 + 打印** = 存量债**可见**）/ `1` 有红（逐条点名
 「族号 + 件 + 行 + 原样」）/ `2` **不给结论**（真源件缺 · 空转 · 自检不过）。
 
@@ -138,6 +149,47 @@ FORMS = [
          gate_file=None,
          debt="现读（2026-09-24）：`scripts/gates/**` 面无一件枚举版权行形态"
               "（发布链自己会改写它，但**没有判据件盯「改写后对不对」**）⇒ 登记为**存量债**（逐跑打印）"),
+    # ── 2026-09-26 补格（`publish/replace-rules.tsv` 注释区 9 条未认领形态 · 逐处定档）──────────────
+    #   F-13 = **认领格**（**有新规可依**）：`check-public-face-wording.py` 甲档 A4 的正则**就是** `Zerg-内部文档`，
+    #          判「仓外私有文档仓名」⇒ 本格归**私有仓名**类。★ 它不是**凭据形态**（不是令牌 / 口令 / 密钥），
+    #          登记理由不许写成「凭据」——别把族归错。
+    #   F-14 / F-15 / F-16 = **不覆盖 + 登记**（**无规可依**：`scripts/gates/**` 面没有一件判这些形态）
+    #          ⇒ 照 F-02 / F-03 / F-09 / F-12 的现成先例逐字登记为存量债（**逐跑打印**，不静默）；
+    #          **绝不为消红而放宽 E1–E4 任何判据**，也**绝不**把它们塞进某格 claim 了事 ✗。
+    dict(id="F-13", name="私有仓名（仓外私有文档仓名 `Zerg-内部文档`）",
+         claim=r"Zerg-内部文档",
+         src_file=REPLACE_RULES, src_probe="Zerg-内部文档\tZerg-内部文档",
+         gate_file="scripts/gates/check-public-face-wording.py", gate_probe="Zerg-内部文档",
+         debt=None),
+    dict(id="F-14", name="私有模型代号·大小写变体（小写 `example-moe-36b` / `example-35b-v2` · 大写全长 `example-35b-v2` / `example-35b` · 大写家族前缀 `example-35b-v2-`）",
+         claim=r"example-moe-36b|Ornith|example-35b-v2",
+         src_file=REPLACE_RULES, src_probe="example-moe-36b\texample-moe-36b",
+         gate_file=None,
+         debt="现读（2026-09-26）：`scripts/gates/**` 面**无一件**判这些**大小写变体**形态 —— "
+              "`check-public-face-wording.py` 的 A10 词表只收全形（`example-8b-quant` / `example-30b` / "
+              "`example-moe-36b` / `example-35b` / `example-35b-v2` / `example-26b-review`）、"
+              "A11 只收**大写**前缀 `example-moe-36b`，且两条都是 `re.compile(pat)`（**大小写敏感** ⇒ 大写变体不落网）"
+              "⇒ 小写 `example-moe-36b` / `example-35b-v2` · 大写全长 `example-35b-v2` / `example-35b` · 大写家族前缀 `example-35b-v2-` "
+              "**5 条 tsv 规则没有判据件盯** ⇒ 登记为**存量债**（照 F-02 先例：私有侧规则已在、**门禁侧那一半未落** "
+              "⇒ 本格不许悄悄绿，逐跑打印）"),
+    dict(id="F-15", name="私有模型代号·派生标识符 / 环境变量（`ExampleAdapter` · `EXAMPLE_TEMPLATE`）",
+         claim=r"ExampleAdapter|EXAMPLE_TEMPLATE",
+         src_file=REPLACE_RULES, src_probe="ExampleAdapter\tExampleAdapter",
+         gate_file=None,
+         debt="现读（2026-09-26）：这两条 tsv 规则收的是**代码标识符**（`ExampleAdapter` / `NewExampleAdapter` / "
+              "`TestExampleAdapter_*` ⇒ 替换值必须是**合法 Go 标识符**）与**环境变量名**（`ZERG_EXAMPLE_TEMPLATE` ⇒ "
+              "`ZERG_EXAMPLE_TEMPLATE`，大写 + 下划线）—— `scripts/gates/**` 面**没有一件判这两种形态**："
+              "`check-public-face-wording.py` 判的是**写作面用词**（甲档 12 条，不判标识符 / 环境变量）、"
+              "`check-hardcoded-private-paths.py` 的 NEEDLES 全是**绝对路径实例** ⇒ 登记为**存量债**（本格逐跑打印）"),
+    dict(id="F-16", name="家目录·base64 编码变形（凭据路径夹具 `L1VzZXJz…`）",
+         claim=r"L1VzZXJz",
+         src_file=REPLACE_RULES, src_probe="L1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4=",
+         gate_file=None,
+         debt="现读（2026-09-26）：该条 tsv 规则是**家目录形态的 base64 编码变形**（解开 = `<家目录>/.config/zerg/token`，"
+              "即**私有机密文件的路径**）—— `scripts/gates/**` 面**没有一件**把「家目录 / 凭据路径的**编码变形**」"
+              "当枚举形态：`check-public-marks.py` 的 `PRIVATE_PATTERNS` 收的是**明文** `/Users/<user>/` · "
+              "`/home/<user>/` 与令牌**字面**（`ghp_…` / `sk-…` / `AKIA…`），**不收 base64 编码形态** ⇒ "
+              "登记为**存量债**（本格逐跑打印）"),
 ]
 
 # 门禁侧探针含「具体用户名 / 主机名」的判据（E4 只打不红）
@@ -332,6 +384,17 @@ RULES_BASE = [
     "示例虫茧\t示例虫茧",
     "example-8b-quant\texample-8b-quant",
     "Mr2109\tMr2109\t裸用户名",
+    # ── 2026-09-26 补格同步：形态表新增 4 格 ⇒ 夹具须带这 4 格的**出处逐字句**（E1 判的就是「夹具里命中恰好 1 次」），
+    #    否则 ① 正控会红在「出处 0 命中」而不是被测的那条判据（夹具与真源同形是**本件自检的前提**）。
+    "example-moe-36b\texample-moe-36b",
+    "example-35b-v2\texample-35b-v2",
+    "example-35b\texample-35b",
+    "ExampleAdapter\tExampleAdapter",
+    "EXAMPLE_TEMPLATE\tEXAMPLE_TEMPLATE",
+    "example-35b-v2-\texample-35b-v2-",
+    "example-35b-v2\texample-35b-v2",
+    "L1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4=\tL1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4=",
+    "Zerg-内部文档\tZerg-内部文档",
     "!夹具\tcore/internal/obs/redact/*_test.go",
 ]
 
@@ -351,10 +414,17 @@ def _forms_copy():
 
 
 def _run_with(td, forms, rules=None):
-    """在夹具上跑 run()，但把形态表换成传入的那一份（**不改盘上真件**）。"""
+    """在夹具上跑 run()，但把形态表换成传入的那一份（**不改盘上真件**）。
+
+    ★ `rules` 给了就**真的落到夹具盘上**（2026-09-26 修：此前形参收下却**不写**⇒ ④/④b 其实跑在
+    旧夹具上 = **空转的负控**，格名说「同夹具」而夹具没变 ⇒ 判据没被测到）。
+    """
     global FORMS
     saved = FORMS
     try:
+        if rules is not None:
+            with open(os.path.join(td, REPLACE_RULES), "w", encoding="utf-8") as fh:
+                fh.write("\n".join(rules) + "\n")
         FORMS = forms
         return run(td)
     finally:
@@ -442,6 +512,37 @@ def self_test(root):
         empty = os.path.join(td, "empty")
         os.makedirs(empty, exist_ok=True)
         check("⑩ 缺真源件（空转）⇒ rc=2（不给结论 · 不许当绿）", _run_with(empty, _forms_copy())["rc"], 2)
+
+        # ⑪ 真话负控（**成对**）：注入一条**真形态**、表里任何格都不认领 ⇒ rc=1 且**点名**该行原文
+        #    （夹具 = 真源同形；A72109 是 `check-public-marks.py` `PRIVATE_PATTERNS` 里的真私有账号形态）
+        _mk(td, RULES_BASE, REDACT_BASE)
+        rules11 = RULES_BASE + ["A72109\tMr2109\tGitee 镜像账号（真形态 · 表里无格）"]
+        r11 = _run_with(td, _forms_copy(), rules=rules11)
+        check("⑪ 真话负控：注入**真形态**未被任何格认领 ⇒ rc=1", r11["rc"], 1)
+        check("⑪b 同上 ⇒ E2a **点名**该行原文（不是笼统红）",
+              1 if any(d["rule"] == "E2a" and "A72109" in d["raw"] for d in r11["red"]) else 0, 1)
+
+        # ⑫ 真话负控：把某格**认领正则弄哑** ⇒ 它本该认领的那处必报（认领是不是**真在生效**）
+        _mk(td, RULES_BASE, REDACT_BASE)
+        f12 = _forms_copy()
+        for f in f12:
+            if f["id"] == "F-13":
+                f["claim"] = r"ZZZ-弄哑的认领正则"
+        r12 = _run_with(td, f12)
+        check("⑫ 真话负控：F-13 认领正则弄哑 ⇒ rc=1", r12["rc"], 1)
+        check("⑫b 同上 ⇒ 报出 `Zerg-内部文档` 那行（E2a 点名）",
+              1 if any(d["rule"] == "E2a" and "Zerg-内部文档" in d["raw"] for d in r12["red"]) else 0, 1)
+
+        # ⑬ 真话负控：把某**登记债务**改回**未登记**（门禁侧空 + 无理由 + 无日期）⇒ 必报
+        _mk(td, RULES_BASE, REDACT_BASE)
+        f13 = _forms_copy()
+        for f in f13:
+            if f["id"] == "F-16":
+                f["debt"] = None
+        r13 = _run_with(td, f13)
+        check("⑬ 真话负控：债务格改回**未登记**（gate 空 + 无理由）⇒ rc=1", r13["rc"], 1)
+        check("⑬b 同上 ⇒ E3 **点名**到 F-16",
+              1 if any(d["rule"] == "E3" and d["form"] == "F-16" for d in r13["red"]) else 0, 1)
 
     print("\n".join(lines))
     print(f"自检结论: {'全过' if bad == 0 else '有失败'}（断言 {ok + bad} 条 · 失败 {bad} 条）")

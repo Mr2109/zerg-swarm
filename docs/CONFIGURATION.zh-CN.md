@@ -19,11 +19,11 @@
 
 ```bash
 cp .env.example .env
-printf 'ZERG_AUTH_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
+umask 077; openssl rand -hex 32 > ~/.zerg/token   # 令牌档（600 权限 · 推荐入口，仓库外）
 set -a; . ./.env; set +a          # 让当前 shell 及子进程拿到
 ```
 
-规则：`fleet.yaml` 里的 `auth.token` **保持空**；子端用 `--token` 或环境变量接收同一个值。
+规则：`fleet.yaml` 里的 `auth.token` **保持空**；子端**不用** `--token` 传（令牌会进本机 `ps` 与 shell 历史 ✗），由部署脚本 `--token-file <600档>` / `printf '%s\n' <令牌> | $0 --token-stdin …` 写入 600 环境档，子端从环境读；环境变量 `ZERG_AUTH_TOKEN` 已弃用（仍能跑 · 会打一次性警告；文档/用法不再教）。
 主控与子端在令牌缺失时**拒绝启动**（避免"所有 API 401 但日志正常"的隐形故障）。
 
 ---

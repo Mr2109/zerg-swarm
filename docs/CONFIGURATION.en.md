@@ -20,11 +20,11 @@ Resolution priority (identical across all components):
 
 ```bash
 cp .env.example .env
-printf 'ZERG_AUTH_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
+umask 077; openssl rand -hex 32 > ~/.zerg/token   # token file (mode 600 · recommended entry point, outside the repo)
 set -a; . ./.env; set +a          # make the current shell and its children see it
 ```
 
-Rule: keep `auth.token` in `fleet.yaml` **empty**; agents receive the same value through `--token` or an environment variable.
+Rule: keep `auth.token` in `fleet.yaml` **empty**; agents are **not** handed `--token` (the token would land in the local `ps` and shell history ✗) — the deploy scripts write it to a mode-600 env file via `--token-file <600档>` / `printf '%s\n' <令牌> | $0 --token-stdin …, and the agent reads it from the environment. The `ZERG_AUTH_TOKEN` environment variable is deprecated (still works · prints a one-time warning; no longer taught in docs/usage).
 Core and agents **refuse to start** when the token is missing (this avoids the invisible failure mode of "every API call returns 401 while the logs look fine").
 
 ---

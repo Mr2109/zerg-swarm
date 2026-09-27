@@ -74,7 +74,20 @@ func readRocmVram() (float64, float64, bool) {
 	if err != nil {
 		return 0, 0, false
 	}
-	usedB, totalB := parseRocmVram(string(out))
+	return rocmVramFrom(string(out), "/sys/class/drm")
+}
+
+// rocmVramFrom —— `rocm-smi` 输出 ＋ GTT 根目录 → (usedGb, totalGb, ok)。
+//
+// ★ 单源口径（`Q-214` · 2026-09-26）：**used / total 必须由同一次折叠算出**（`used = VRAM used
+// + GTT used`、`total = VRAM total + GTT total`，同一个 `readGttVram` 结果）。心跳里
+// `vram_free_gb = total − used`（`heartbeat.go`）⇒ 三者恒同源，`used + free == total` 恒成立。
+// 拆开取样就必然出现「free 按含 GTT 的 total 算、used 只报 VRAM」这类自相矛盾的读数
+// （`Q-214` 报的那一读 0.2 / 124.8 就是这一形状）⇒ 抽出本函数只为**可测**：判据钉在
+// `vram_samesource_test.go`（正控：GTT 计入 used；负控：无 GTT 时行为一字不变）。
+// 生产调用方只有 `readRocmVram` 一处，root 参数在生产固定传 `/sys/class/drm`。
+func rocmVramFrom(rocmOut string, gttRoot string) (float64, float64, bool) {
+	usedB, totalB := parseRocmVram(rocmOut)
 	if totalB <= 0 {
 		return 0, 0, false
 	}
@@ -82,7 +95,7 @@ func readRocmVram() (float64, float64, bool) {
 	// 只有 1 GiB），模型其实驻留在 GTT（统一内存可寻址池）里跑。只看 VRAM 会把「装得下」
 	// 误判成 no_fit ⇒ 这里把 GTT 一并计入，口径 = **该 GPU 可寻址的内存**（VRAM + GTT）。
 	// 拿不到 GTT（独显机器）时行为与原来完全一致。
-	if gttUsed, gttTotal, ok := readGttVram("/sys/class/drm"); ok {
+	if gttUsed, gttTotal, ok := readGttVram(gttRoot); ok {
 		usedB += gttUsed
 		totalB += gttTotal
 	}

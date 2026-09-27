@@ -283,8 +283,8 @@ def state_dir_of(given=None):
 
 def git_tracked(repo):
     try:
-        p = subprocess.run(["git", "-C", repo, "ls-files"], stdout=subprocess.PIPE,
-                           stderr=subprocess.PIPE, timeout=120)
+        p = subprocess.run(["git", "-c", "core.quotepath=false", "-C", repo, "ls-files"],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
     except Exception as exc:  # noqa: BLE001
         return None, "跑 `git ls-files` 失败：%s" % exc
     if p.returncode != 0:

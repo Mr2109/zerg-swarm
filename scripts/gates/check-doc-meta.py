@@ -56,6 +56,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -700,11 +701,25 @@ def _sub(script, *args, **kw):
     return p.returncode, p.stdout
 
 
+def _tmp_base():
+    """夹具基目录：**尊重 `TMPDIR`**（指名且可用 ⇒ 就落在那里）；读不出 ⇒ 交回 `tempfile` 默认落点。"""
+    d = os.environ.get("TMPDIR") or ""
+    return d if os.path.isdir(d) else None
+
+
 def self_test(script_path):
+    """自检入口：夹具基目录**尊重 `TMPDIR`**，**跑完即清**（`try/finally` + `rmtree(ignore_errors=True)`）。"""
+    tmp = tempfile.mkdtemp(prefix="check-doc-meta-", dir=_tmp_base())
+    try:
+        return _self_test_body(script_path, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _self_test_body(script_path, tmp):
     """成对负控。返回 (ok, 行列表)。★ 断言用例条数 —— 条数不符也算不自检。"""
     lines = []
     ok = True
-    tmp = tempfile.mkdtemp(prefix="check-doc-meta-", dir="/tmp")
     schema_src = os.path.join(REPO_ROOT_DEFAULT, SCHEMA_DEFAULT)
     if not os.path.isfile(schema_src):
         return False, ["✗ 缺件：真 schema 不存在 %s ⇒ 自检不给结论" % schema_src]
@@ -824,7 +839,7 @@ def self_test(script_path):
     if got != expected_cases:
         lines.append("✗ 用例条数不符（有静默截断）")
         ok = False
-    lines.append("自检临时目录：%s（未删除）" % tmp)
+    lines.append("自检临时目录：%s（跑完已删）" % tmp)
     return ok, lines
 
 

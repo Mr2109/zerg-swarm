@@ -113,6 +113,93 @@ rules:
     - name: "tool_call"
       action: allow
 
+    # ===== 2026-09-26 补登：Hermes 新增的两只工具（漏一个 = 整发 403，实测机制见上 :117-120）=====
+    # 判据：`grep -rhoE 'name="[a-z_]{3,30}"' ~/.hermes/hermes-agent/tools/*.py` 的现读集合
+    # 与下面 `- name:` 清单求差 ⇒ 本日差集恰为这两条。
+    #   · `x_search`（X/Twitter 只读检索）⇒ 与 `web_search`/`web_extract` 同档 allow。
+    #   · `video_generate`（重型生成，非开发活）⇒ 照 `computer_use`/`cronjob_manage`/`delegate_task`
+    #     的保守档 **block**；显式登记的意义是**让请求过闸**（不再整发 403），需要时再翻档。
+    - name: "x_search"
+      action: allow
+    - name: "video_generate"
+      action: block
+      message: "子代理不许做重型媒体生成（非开发活，留给主代理/人）"
+
+    # ===== 2026-09-26 第三刀：把 tool 模块里 `"name": "…"` 形态的名字**一次列齐** =====
+    # 物证：只列 `name="…"`（46 条）**不够** —— 首发本地卵被 `browser_back 未匹配规则（默认 block）`
+    #   0.09 秒打死（`browser_*` 全族在 `tools/browser_tool.py` 里用 `"name": "…"' 形态注册）。
+    # 判据：`grep -rhoE '"name"\s*:\s*"[a-z][a-z0-9_]{2,40}"' ~/.hermes/hermes-agent/tools/*.py`
+    #   与下面 `- name:` 清单求差（本日差集 = 29 条）。
+    # 分档原则：**读类 allow · 外发/自动化/动用户界面类 block**（与 computer_use/cronjob_manage/delegate_task 同保守档）。
+    - name: "browser_back"
+      action: allow
+    - name: "browser_click"
+      action: allow
+    - name: "browser_console"
+      action: allow
+    - name: "browser_get_images"
+      action: allow
+    - name: "browser_navigate"
+      action: allow
+    - name: "browser_press"
+      action: allow
+    - name: "browser_scroll"
+      action: allow
+    - name: "browser_snapshot"
+      action: allow
+    - name: "browser_type"
+      action: allow
+    - name: "browser_vision"
+      action: allow
+    - name: "read_preview"
+      action: allow
+    - name: "feishu_drive_list_comments"
+      action: allow
+    - name: "feishu_drive_list_comment_replies"
+      action: allow
+    - name: "ha_get_state"
+      action: allow
+    - name: "ha_list_entities"
+      action: allow
+    - name: "ha_list_services"
+      action: allow
+    - name: "yb_query_group_info"
+      action: allow
+    - name: "yb_query_group_members"
+      action: allow
+    - name: "yb_search_sticker"
+      action: allow
+    - name: "open_preview"
+      action: block
+      message: "子代理不许驱动用户的预览窗（人看着的界面归人/主代理）"
+    - name: "close_preview"
+      action: block
+      message: "子代理不许驱动用户的预览窗"
+    - name: "manage_catalog"
+      action: block
+      message: "子代理不许改目录/注册面（配置面归人/主控）"
+    - name: "manage_connections"
+      action: block
+      message: "子代理不许改连接面（配置面归人/主控）"
+    - name: "send_message"
+      action: block
+      message: "子代理不许以用户身份外发消息"
+    - name: "feishu_drive_add_comment"
+      action: block
+      message: "子代理不许外发评论"
+    - name: "feishu_drive_reply_comment"
+      action: block
+      message: "子代理不许外发评论"
+    - name: "ha_call_service"
+      action: block
+      message: "子代理不许驱动家居自动化"
+    - name: "yb_send_dm"
+      action: block
+      message: "子代理不许以用户身份外发私信"
+    - name: "yb_send_sticker"
+      action: block
+      message: "子代理不许以用户身份外发消息"
+
     # ===== 2026-09-24 第二刀：把 Hermes 客户端工具名**一次列齐**（默认拒之下，漏一个 = 整发请求 403）=====
     # 物证：一发真链验收先被 `browser_exec` 挡、补完 6 条后再被 `browser_vault_enter_code` 挡 ✗
     #   ⇒ 控制层是扫**整张工具表**（不是逐个调用才拦）⇒ 只能显式列全。

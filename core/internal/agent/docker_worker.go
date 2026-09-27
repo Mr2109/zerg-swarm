@@ -98,7 +98,7 @@ func (dw *DockerWorker) RunDev(repoDir, workDir, task, branch string) (int, erro
 		"cd /workspace && git checkout -b %s 2>/dev/null; "+
 			"/zerg-agent -issue /tasks/docs/issues/%s.md -gateway http://host.docker.internal:8082 -workdir /workspace 2>&1; "+
 			"git add -A && git -c user.email=zerg@local -c user.name='Zerg AI' commit -m 'task: %s' 2>/dev/null; "+
-			"echo '## PR: %s' > pr-%s.md && git diff main...HEAD --stat >> pr-%s.md 2>/dev/null; echo 'PR 已生成'",
+			"echo '## PR: %s' > pr-%s.md && git -c core.quotepath=false diff main...HEAD --stat >> pr-%s.md 2>/dev/null; echo 'PR 已生成'",
 		branch, issueBase, branch, branch, branch, branch)
 
 	cmd := []string{

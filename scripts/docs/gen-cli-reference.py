@@ -665,7 +665,11 @@ def source_face_state(root, commit):
         return None, "`git rev-parse --short HEAD` 退码 %d（%s）⇒ 源码面判不了（不是仓 / 无提交）" % (
             rc, (err or out).strip()[:200])
     fact["head"] = out.strip()
-    rc, out, err = run("git", ["-C", root, "diff", "--name-only", "%s..HEAD" % sha, "--"]
+    # ★ `-c core.quotepath=false` 必须给（2026-09-27 探针仓实测）：默认 `quotePath=true` 把非 ASCII 件名输出成
+    #   `"sub/\346\261\211…"` 引号+八进制转义形态；而这里取到的**是件名清单** —— 它既进 `face["moved"]`
+    #   判定、又被 `" / ".join(...)` 逐字印进 errs 与摘要行（转义形态 = 印不出真名）。
+    rc, out, err = run("git", ["-C", root, "-c", "core.quotepath=false",
+                               "diff", "--name-only", "%s..HEAD" % sha, "--"]
                        + list(SOURCE_FACE_RELS))
     if rc != 0:
         return None, "`git diff %s..HEAD` 退码 %d（%s）⇒ 那个提交取不到，判不了" % (

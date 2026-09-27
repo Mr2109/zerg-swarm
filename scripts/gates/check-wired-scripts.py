@@ -33,10 +33,19 @@
     闸 = 提交闸（`scripts/gates/precommit-gates.sh`）+ 发布闸面（见下方 GATES，现读其真实文件名与调用方式）。
     「出现在闸里」的判据 = **按名调用形态**：名字出现在闸文件的一行上，且该行
       ① 不是纯注释行（`#` 开头）——「注释里提过」不算上岗；
-      ② 不是纯清单项（整行就是 `"scripts/<名>"` 这类数组/数据项）——「在 EXCLUDES 里被排除」不算上岗。
-    这两条排除是**有牙齿的**：`check-hardcoded-private-paths.py` 今天只被
-    `scripts/build/publish-public.sh:130`（EXCLUDES 清单项）与 `scripts/gates/precommit-gates.sh:500`（注释）提到，
-    从未被任何闸按名执行 ⇒ 它必须被报出来（子串口径会把它误判成「在闸里」）。
+      ② 不是纯清单项（整行就是 `"scripts/<…>/<名>"` 这类数组/数据项，**任意层深**）——「在 EXCLUDES / DROP_EXACT
+         这类排除表里被点名」不算上岗；
+      ③ 名字落在**命令位**上（**真接线面**）：紧接在解释器/启动器之后（`python3` / `bash` / `${PY}` / `./` …，
+         中间只允许选项旗标），可带引号与路径前缀 —— 例 `python3 scripts/gates/<名>` ·
+         `python3 "$Z/scripts/gates/<名>" "$D"`。**只被文案提到**（`echo "…按名调用 <名>"`）·
+         **只在说明/注释里出现** · **只在 grep 模式串里出现**一律不算。
+    ★ 2026-09-26 **收紧（治根）**：旧判据只做 ①②且 ② 的正则只认 `scripts/<名>` 两段 —— 而 2026-09-20 脚本
+      分域后清单项写成 `scripts/gates/<名>` ⇒ ② 当场失效；再叠加 ③ 缺失，于是「被 `publish/mirror-public-lib.py`
+      的 `DROP_EXACT`（**公开面排除表**，与「接了闸」毫无关系）点名」与「只在文案里被提到」都算成「已挂」。
+      实测假上岗 **4 只**：`check-registry-vs-disk.py`（`mirror-public-lib.py:390` 清单项）·
+      `check-help-snapshot.py`（`:377` 清单项）· `check-git-env-hygiene.py`（`:404` 清单项）·
+      `check-public-face-anchor.py`（`publish-preflight.sh:187` 文案 + `mirror-public-lib.py:346` 清单项）。
+      收紧后这 4 只**如实打红**（不为变绿加豁免 / 不登记白名单：它们是**真未挂**，处置 = 接线）。
 
   断言 B（零引用件必须登记）：`scripts/` 顶层、**零引用**的脚本必须登记白名单（带 reason + date）。
     「引用」判据 = 该脚本名在**引用面**（见下方口径）里的出现次数。见 §口径 的三条排除。
@@ -141,13 +150,6 @@ RECORD_SURFACES = [
 #   ★ 棘轮仍然有效：这 20 条一旦重新有了引用，`--list-rules` 会提示可下架。
 # ─────────────────────────────────────────────────────────────────────────────
 WHITELIST = [
-    {
-        "name": "start-watchdog.sh",
-        "reason": "手工兜底启动器（非死件）：以「脱离会话」方式拉起主控保活看门狗；"
-                  "主控已由 launchd（com.zerg.core · KeepAlive）托管 ⇒ 运行时不再需要它，"
-                  "保留给「不想用 launchd」那种情况（脚本头注释 2-5 行自述）。",
-        "date": "2026-09-18",
-    },
     {
         "name": "v25_more_classes.py",
         "reason": "一次性历史评测脚本：v2.5 补充任务类测试（example-35b-v2 · 2026-08-13），"
@@ -332,6 +334,29 @@ SUGGEST = {
     "mutate-scan": (
         "提交闸 · pub scope 增一步 `python3 scripts/gates/mutate-scan --self-test`（模式 tri）",
         "同族：只在 glob 语法检查里被覆盖；自检不过即拒绝跑真目标（scripts/gates/mutate-scan.md:27, 48）⇒ 适合当步骤。"),
+    # ── 2026-09-26 判据收紧后新露出的 4 只（**真未挂**：旧判据把它们读成「已挂」，证据只是公开面排除表
+    #    `publish/mirror-public-lib.py` 的 `DROP_EXACT` 清单项 / `publish-preflight.sh` 里的一句文案）──
+    #    ★ 本表只给「挂到哪里」的建议，不改判据、不改退码；**不把它们登记白名单**（登记 = 说它该在仓里当死件，
+    #      与事实相反：这 4 只都该挂）。
+    "check-registry-vs-disk.py": (
+        "提交闸 · gates scope 增一步 `python3 scripts/gates/check-registry-vs-disk.py --strict`（模式 tri）",
+        "纯仓内只读：登记表（`publish/whitelist.txt` / `EXCLUDES`）↔ 盘上真物对拍（空指 / 悬空 / 文案不符）；"
+        "与闸②b / 闸④ 同族，但它的目标面在仓内 ⇒ 也可放发布闸。"
+        "★ 现读 `--strict` = **rc=1（三格合计 5 处）**，而今天没有任何真闸会跑到它 ⇒ 这 5 处红是**隐形的**"
+        "（`all.sh` 逐门自检档只跑它的夹具自检 rc=0；`real-gates.sh` 是按变量名泛跑的档，不是按名接线）。"),
+    "check-git-env-hygiene.py": (
+        "提交闸 · gates scope 增一步 `python3 scripts/gates/check-git-env-hygiene.py --strict`（模式 tri）",
+        "它判「hook / 门禁脚本对外仓·合成仓调 git 前先清环境」= **门禁自身的卫生面**，与 gates scope 同族；"
+        "现档 = 报告档（件内自称与 `check-registry-vs-disk.py` 同规）⇒ 起步可 tri-report。"),
+    "check-public-face-anchor.py": (
+        "发布闸 · `scripts/build/publish-preflight.sh` ⑧ 系列新增一道（紧跟 ⑧c 命令名 / ⑧d 成对闸，模式 tri）",
+        "公开面**漂移锚**（两版窗口对拍）与 ⑧c/⑧d 同面同规（同属「公开面判据件」）；"
+        "今天它只被 `publish-preflight.sh:187` 的一句**文案**（`.py` 名字出现在那行的尾注里）与"
+        "`publish/mirror-public-lib.py:346` 的 `DROP_EXACT` 清单项提到 ⇒ 0 次真调用。"),
+    "check-help-snapshot.py": (
+        "提交闸 · docs scope 增一步 `python3 scripts/gates/check-help-snapshot.py`（模式 tri-report 起步）",
+        "判「`--help` 现跑 ↔ 最新快照」；读同干文档仓（默认同级 `Zerg-内部文档`）⇒ 落 docs 面。"
+        "与文档类门同族，存量差异未清 ⇒ 起步只报告（同 `check-glossary.py` 先例）。"),
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -517,18 +542,46 @@ def build_candidates(root, files):
 # 断言 A：出现在至少一个闸里（按名调用形态）
 # ─────────────────────────────────────────────────────────────────────────────
 def bare_item_re(name):
-    return re.compile(r'^["\']?(?:\./)?(?:scripts/)?' + re.escape(name) + r'["\']?,?$')
+    """纯清单项的整行形态：`"scripts/<…>/<名>",`（**任意层深**）。
+
+    ★ 2026-09-26 修：旧式只认 `scripts/<名>` 两段 ⇒ 2026-09-20 脚本分域（清单项写成
+      `"scripts/gates/<名>"`）之后这条排除当场失效，清单项被当成「接线」（本门的病根）。
+    """
+    return re.compile(r'^["\']?(?:\./)?(?:scripts/)?(?:[A-Za-z0-9_.\-]+/)*'
+                      + re.escape(name) + r'["\']?,?$')
+
+# ── 「真接线」= 命令位调用（判据的③，见模块头）────────────────────────────────
+#   解释器/启动器闭集；`${PY}` / `$PY` / `./` 也算（闸里常用变量形式的解释器）。
+RUNNER_RE = (r"\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*"
+             r"|python3|python|bash|sh|zsh|dash|node|env|exec|time|nice|\./")
+PATH_PREFIX = r"(?:[\w.${}/-]*/)"
+
+def call_re(name):
+    """返回「命令位调用」正则：启动器 + （选项旗标）* + 路径 + 名。
+
+    两种形态都收：带引号（`python3 "$Z/scripts/gates/<名>" "$D"`）· 不带引号
+    （`python3 scripts/gates/<名> --strict`）。名字后面必须是分隔符（空白 / 引号 / `;` / `&` / `|` / `)` / 行尾）
+    —— 防止 `check-x.py` 命中 `check-x.py.bak` 这类前缀。
+    """
+    n = re.escape(name)
+    head = r'(?:^|[\s"\'=(;|&])(?:' + RUNNER_RE + r')\s+(?:-[^\s]+\s+)*'
+    return re.compile(head + r'"' + PATH_PREFIX + r'*' + n + r'"'
+                      + r'|' + head + PATH_PREFIX + r'*' + n + r'(?=[\s"\';&|)]|$)')
 
 def wiring_hit(root, gate_path, name):
-    """在闸文件里找「按名调用形态」；返回 (行号, 行内容) 或 None。
+    """在闸文件里找「真接线形态」；返回 (行号, 行内容) 或 None。
 
-    排除两类不算上岗（见模块头）：纯注释行、纯清单项。
+    三类不算上岗（见模块头 ①②③）：
+      ① 纯注释行（`#` 开头）；
+      ② 纯清单项（整行就是 `"scripts/<…>/<名>",` —— 排除表/白名单点名叫不动它）；
+      ③ 不在命令位上（只被 `echo` 文案 / 说明文字 / grep 模式串提到）。
     """
     p = os.path.join(root, gate_path)
     t = read_text(p)
     if t is None:
         return None
     rx = bare_item_re(name)
+    rx_call = call_re(name)
     for i, line in enumerate(t.splitlines(), 1):
         if name not in line:
             continue
@@ -536,6 +589,8 @@ def wiring_hit(root, gate_path, name):
         if not s or s.startswith("#"):
             continue
         if rx.match(s):
+            continue
+        if not rx_call.search(line):
             continue
         return (i, s)
     return None
@@ -755,7 +810,10 @@ def report(root, opts, files, mode, a_cands, b_cands, hits_a, wired_a, n_gate_pr
     out.append("【口径】引用 = 脚本名在引用面文件里出现；引用面 = 已跟踪文本文件 − 自指 2 件 − 记录面"
                "（现行债务台账，glob %s）− 候选自身。" % " · ".join(RECORD_SURFACES))
     out.append("        「记录不能充作引用」：台账点名不让死件复活（否则写下这条债就把债抹掉了）。")
-    out.append("        「在闸里」= 按名调用形态（纯注释行 / 纯清单项不算）——这是有牙齿的那一条。")
+    out.append("        「在闸里」= **命令位调用**（真接线面）：名字紧跟解释器/启动器（`python3`/`bash`/`${PY}`/`./`…），"
+               "中间只允许选项旗标。")
+    out.append("        不算接线的三类：纯注释行 · 纯清单项（`\"scripts/<…>/<名>\"`，**含被排除表/白名单点名**）"
+               "· 只被文案/说明/grep 模式串提到。")
     out.append("")
     out.append("【结论】A 命中 %d · B 未登记 %d · 配置错 %d" % (len(hits_a), len(unreg), len(errs)))
     if errs:
@@ -781,7 +839,12 @@ def list_rules():
     L.append("")
     L.append("断言 A（门脚本必须上岗）：凡门脚本 —— ① 名以 `check-` 开头（scripts/ 顶层 · .py/.sh/无后缀 shebang）"
              "或 ② 说明书自称门（同干 .md 头部 %d 行内出现「门」）—— 必须出现在至少一个闸里。" % DOC_HEAD_LINES)
-    L.append("  「在闸里」判据 = 按名调用形态；排除：纯注释行（`#` 开头）· 纯清单项（整行就是 \"scripts/<名>\"）。")
+    L.append("  「在闸里」判据 = **命令位调用**（真接线面）：名字紧跟解释器/启动器"
+             "（`python3` / `bash` / `${PY}` / `./` …），中间只允许选项旗标；"
+             "可带引号与路径前缀（`python3 \"$Z/scripts/gates/<名>\" \"$D\"`）。")
+    L.append("    不算接线：① 纯注释行（`#` 开头）② 纯清单项（整行就是 `\"scripts/<…>/<名>\",` 这类数组/数据项"
+             "—— **含被 `EXCLUDES` / `DROP_EXACT` 这类排除表点名**，任意层深）③ 只被文案（`echo \"…\"`）/ "
+             "说明文字 / grep 模式串提到。")
     L.append("断言 B（零引用件必须登记）：scripts/ 顶层零引用（引用面里出现 0 次）⇒ 必须登记白名单"
              "（每项 name + reason + date；缺一即 rc=2；点名的脚本已不存在即 rc=2 悬空）。")
     L.append("")
@@ -973,6 +1036,36 @@ def selftest():
         if m not in o:
             bad.append("缺 %r" % m)
     results.append(("⑬ --list-rules 可打印判据/闸清单/升级路径", not bad, "; ".join(bad)))
+
+    # ── ⑭~⑯ 2026-09-26 判据收紧（「被排除表点名 ≠ 接线」）的成对负控 ────────────────
+    # ⑭ 负控 A3（**病根回归**）：只被一张**排除清单**点名（`scripts/gates/…` 多段路径的纯清单项）
+    #     —— 旧判据的「纯清单项」正则只认 `scripts/<名>` 两段 ⇒ 分域后当场失效、把清单项读成接线。
+    f_li = _fixture(base, "neg-a-list", dict(ok_files, **{
+        "scripts/gates/check-delta.py": "# ck\n",
+        "publish/mirror-public-lib.py":
+            'DROP_EXACT = (\n    "scripts/gates/check-delta.py",   # 公开面排除表\n)\n',
+    }))
+    run_case("⑭ 负控 A3: 只被排除表清单项点名（多段路径）⇒ 仍算未挂（判据有牙齿）",
+             f_li, wl_ok, [], 0, ["check-delta.py", "A 命中 1"], [], results)
+
+    # ⑮ 正控（真接线面）：命令位调用（带引号 + 变量前缀）⇒ 已挂；同文件里 echo 文案提到的不算
+    f_call = _fixture(base, "pos-call", dict(ok_files, **{
+        "scripts/gates/check-epsilon.py": "# ck\n",
+        "scripts/gates/precommit-gates.sh": GATE_A +
+            'python3 "$Z/scripts/gates/check-epsilon.py" "$D" > /tmp/x.log 2>&1\n'
+            'echo "   ⑧c ── 已接线（按名调用 check-epsilon.py）"\n',
+    }))
+    run_case("⑮ 正控：命令位调用（引号 + 变量前缀）⇒ 已挂（A 命中 0）",
+             f_call, wl_ok, [], 0, ["A 命中 0"], ["check-epsilon.py"], results)
+
+    # ⑯ 负控 A4：只在**文案**里被提到（0 次命令位调用）⇒ 仍算未挂
+    f_echo = _fixture(base, "neg-a-echo", dict(ok_files, **{
+        "scripts/gates/check-zeta.py": "# ck\n",
+        "scripts/gates/precommit-gates.sh": GATE_A +
+            'echo "   ⑧d 成对闸 ── 按名调用 check-zeta.py · 明细 /tmp/x.log"\n',
+    }))
+    run_case("⑯ 负控 A4: 只在文案里被提到（0 次命令位调用）⇒ 仍算未挂",
+             f_echo, wl_ok, [], 0, ["check-zeta.py", "A 命中 1"], [], results)
 
     npass = len([1 for _, ok, _ in results if ok])
     print("门③ --self-test（成对负控 · 真命令行 + 真退出码）：%d/%d 通过" % (npass, len(results)))
