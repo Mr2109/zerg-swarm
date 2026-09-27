@@ -28,7 +28,7 @@
 
 退码
 --------------------------------------------------
-  0 = 全绿（T1–T6 全过，且自检 7 格全过）
+  0 = 全绿（T1–T6 全过，且自检 10 格全过）
   1 = 有红（任一条判据破）
   2 = **不给结论**（`bin/zerg` 不在 · 夹具造不出来 · 三处读数取不到）
 
@@ -53,6 +53,19 @@ DEFAULT_ROOT = os.path.dirname(os.path.dirname(HERE))
 VERSION = "check-approve-tier.py v1.0.0"
 
 EXPECTED_LS_COLS = ["tool", "approver", "approved_at", "scope", "state", "path"]
+# ── 历史已知列名集（`GAP-20260927-29`）：**只增不减** —— 判「丢了已知列」那一格 ──────────
+# 现读全量（`approve ls` 现跑表头 · `family_approve.go:235` 的落表）：六列 + `D1` 落地的
+# 第七列「档」。`EXPECTED_LS_COLS` 管**顺序 + 必填**（新增列允许）；本集管**丢失** ——
+# 输入列名集里少掉其中任一列（改名 / 删列 / 被合并）⇒ 红。两判据**共存**：缺的那一列若
+# 不在必填集里（如「档」），有序超集判据**抓不住** ⇒ 才要本集。★ 落地新列时在此**追加**。
+KNOWN_LS_COLS = ["tool", "approver", "approved_at", "scope", "state", "path", "档"]
+# ── 历史已知行标签集（`GAP-20260927-29`）：**只增不减** —— 判「丢了已知标签」那一格 ────────
+# 现读全量（`approve show` 现跑 11 行）：必填八行 + `D1` 落地的「档」+ `D3` 落地的
+# 「钥匙身份」「有效期」。`EXPECTED_SHOW_LABELS` 管**顺序 + 必填**（新增行允许）；本集管
+# **丢失** —— 输入行标签集里少掉其中任一标签（改名 / 删行 / 被合并）⇒ 红。两判据**共存**：
+# 缺的那个标签若不在必填集里（如「有效期」），有序超集判据**抓不住** ⇒ 才要本集。
+# ★ 落地新行时在此**追加**。
+KNOWN_SHOW_LABELS = ["工具", "批准者", "签的时间", "范围", "理由", "签名", "档", "钥匙身份", "有效期", "判决", "落点"]
 EXPECTED_SHOW_LABELS = ["工具", "批准者", "签的时间", "范围", "理由", "签名", "判决", "落点"]
 EXPECTED_FIELDS = ["tool", "approver", "approved_at", "scope", "note", "sig_alg", "key_id", "state", "path"]
 MUST_NOT_BE_REQUIRED = ["strength", "key_id_in_use"]
@@ -79,8 +92,30 @@ def judge_columns(cols, expected=None):
     return judge_ordered_superset(cols, expected or EXPECTED_LS_COLS, "T1 `approve ls` 列")
 
 
+def judge_known_columns_lost(cols, known=None):
+    """**已知列名丢失**：`known`（历史全量）里任一列名不在 `cols` 里 ⇒ 问题行。
+
+    与 `judge_ordered_superset`（顺序 + 新增列允许）**互补共存**：后者管「必填列按序在不在」、
+    前者管「全量已知列有没有少」—— 少掉的那一列不在必填集里时，只有本判据会红。
+    """
+    known = known if known is not None else KNOWN_LS_COLS
+    return ["T1 破：已知列 %r 丢了（改名 / 删列 / 被合并 ⇒ 红 · 已知列名集只增不减）" % c
+            for c in known if c not in cols]
+
+
 def judge_labels(labels, expected=None):
     return judge_ordered_superset(labels, expected or EXPECTED_SHOW_LABELS, "T2 `approve show` 行")
+
+
+def judge_known_labels_lost(labels, known=None):
+    """**已知行标签丢失**：`known`（历史全量）里任一标签不在 `labels` 里 ⇒ 问题行。
+
+    与 `judge_labels`（顺序 + 新增行允许）**互补共存**：后者管「必填标签按序在不在」、
+    前者管「全量已知标签有没有少」—— 少掉的那个标签不在必填集里时，只有本判据会红。
+    """
+    known = known if known is not None else KNOWN_SHOW_LABELS
+    return ["T2 破：已知行 %r 丢了（改名 / 删行 / 被合并 ⇒ 红 · 已知行标签集只增不减）" % c
+            for c in known if c not in labels]
 
 
 def judge_fields(fields):
@@ -209,8 +244,9 @@ def collect_readings(repo, state_dir, real_state_dir, tmpdir):
 # ── 自检（先自证会红，再扫真目标）────────────────────────────────────────────────
 
 def self_test(repo):
-    """7 格：① 正控（真输出过）② 换序 ⇒ 红 ③ 删列 ⇒ 红 ④ show 删行 ⇒ 红
-    ⑤ 含 `token` ⇒ 红 ⑥ 含 `passphrase` ⇒ 不红 ⑦ 字段表塞 `strength` ⇒ 红。"""
+    """10 格：① 正控（真输出过）② 换序 ⇒ 红 ③ 删列 ⇒ 红 ④ show 删行 ⇒ 红
+    ⑤ 含 `token` ⇒ 红 ⑥ 含 `passphrase` ⇒ 不红 ⑦ 字段表塞 `strength` ⇒ 红
+    ⑧ 数据行少一格 ⇒ 红 ⑨ 丢已知列 ⇒ 红（有序超集抓不住）⑩ 丢已知标签 ⇒ 红（同族）。"""
     ok = 0
     bad = 0
     tmp = tempfile.mkdtemp(prefix="zerg-approve-tier-selftest-")
@@ -246,14 +282,46 @@ def self_test(repo):
         else:
             print("   ✗ ② 负控失败：换序了还判绿")
             bad += 1
-        if judge_columns(cols[:-1]):
-            print("   ✓ ③ 负控：**删一列** ⇒ 判红")
+        drop = list(cols)
+        if EXPECTED_LS_COLS[-1] in drop:
+            drop.remove(EXPECTED_LS_COLS[-1])
+        if judge_columns(drop):
+            print("   ✓ ③ 负控：**删一列**（必填列 `path`）⇒ 判红")
             ok += 1
         else:
             print("   ✗ ③ 负控失败：删列了还判绿")
             bad += 1
-        if judge_labels(labels[:-1]):
-            print("   ✓ ④ 负控：`show` **删一行** ⇒ 判红")
+        lost_known = list(KNOWN_LS_COLS)[:-1]      # 历史全量**去掉末列**（现读 = 第七列「档」）
+        j_sup = judge_columns(lost_known)
+        j_lost = judge_known_columns_lost(lost_known)
+        if not j_sup and j_lost:
+            print("   ✓ ⑨ 负控：**丢一列已知列**（%r）⇒ 新判据判红；同一输入**现有有序超集抓不住**"
+                  " (%d 条) —— 本单缺口 %s 的当场证据" % (KNOWN_LS_COLS[-1], len(j_sup), "GAP-20260927-29"))
+            ok += 1
+        else:
+            print("   ✗ ⑨ 负控失败：丢已知列 %r 没按预期分叉（有序超集 %d 条 · 已知列丢失 %d 条）"
+                  % (KNOWN_LS_COLS[-1], len(j_sup), len(j_lost)))
+            bad += 1
+        new_labels = [x for x in KNOWN_SHOW_LABELS if x not in EXPECTED_SHOW_LABELS]
+        lost_label = new_labels[-1]      # 历史全量里**非必填**的末一个（现读 = 「有效期」）
+        lsup = list(labels)
+        if lost_label in lsup:
+            lsup.remove(lost_label)
+        j_l_sup = judge_labels(lsup)
+        j_l_lost = judge_known_labels_lost(lsup)
+        if not j_l_sup and j_l_lost:
+            print("   ✓ ⑩ 负控：**丢一行已知行**（%r）⇒ 新判据判红；同一输入**现有有序超集抓不住**"
+                  " (%d 条) —— 本单缺口 %s 的当场证据" % (lost_label, len(j_l_sup), "GAP-20260927-29"))
+            ok += 1
+        else:
+            print("   ✗ ⑩ 负控失败：丢已知行 %r 没按预期分叉（有序超集 %d 条 · 已知行丢失 %d 条）"
+                  % (lost_label, len(j_l_sup), len(j_l_lost)))
+            bad += 1
+        ldrop = list(labels)
+        if EXPECTED_SHOW_LABELS[-1] in ldrop:
+            ldrop.remove(EXPECTED_SHOW_LABELS[-1])
+        if judge_labels(ldrop):
+            print("   ✓ ④ 负控：**删一行**（必填标签 `%s`）⇒ 判红" % EXPECTED_SHOW_LABELS[-1])
             ok += 1
         else:
             print("   ✗ ④ 负控失败：删行了还判绿")
@@ -299,9 +367,11 @@ def scan(repo):
         rc_ls, out_ls, err_ls = r["ls"]
         cols = parse_ls_columns(out_ls)
         problems += judge_columns(cols)
+        problems += judge_known_columns_lost(cols)
         problems += judge_row_widths(out_ls)
         labels = parse_show_labels(r["show"][1])
         problems += judge_labels(labels)
+        problems += judge_known_labels_lost(labels)
         problems += judge_fields(r["fields"])
         problems += judge_vocab(out_ls + "\n" + r["show"][1])
         print("── 读数（三处 · 每处带口径）")
@@ -345,7 +415,30 @@ def scan(repo):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+                     % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
 def main():
+    rc_q176 = refuse_json_without_machine_face()
+    if rc_q176 is not None:
+        return rc_q176
     ap = argparse.ArgumentParser(description=VERSION)
     ap.add_argument("--root", default=DEFAULT_ROOT, help="仓根（默认 = 本脚本的上两级）")
     ap.add_argument("--self-test", action="store_true", help="只跑自检（合成夹具 · 不碰真目标）")
@@ -354,8 +447,8 @@ def main():
     repo = os.path.abspath(args.root)
     print(VERSION)
     if not args.no_self_test:
-        if self_test(repo) is None:
-            print("⛔ 自检取不到读数 ⇒ 不给结论（rc=2）")
+        if not self_test(repo):      # GAP-20260927-26：self_test 返 bool（`:282`）⇒ 比 None 恒假 ✗
+            print("⛔ 自检不过（或取不到读数）⇒ 不给结论（rc=2）")
             return 2
     if args.self_test:
         return 0

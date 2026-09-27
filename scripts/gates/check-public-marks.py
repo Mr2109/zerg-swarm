@@ -19,12 +19,21 @@
     public 非 yes|no/理由空/同一件重复登记）
   B 违规 ⇒ **rc=1 红**：
     B1 悬空登记：表里点名的件在盘上（`scripts/<域>/` 面）不存在；
-    B2 漏登记：`scripts/<域>/` 面里有件**没进表**（域 = 分域第二段的 9 个域：build · calib · docs ·
-       evals · gates · sandbox · svc · wall · edge-node；口径同分域地图 `清单-脚本分域-20260920.tsv`）；
+    B2 漏登记：`scripts/<域>/` 面里有件**没进表**（域 = **现读派生**：表里出现过的 `scripts/<域>/…`
+       第二段 ∪ 盘上 `scripts/` 下实际存在的域目录，另加「顶层」一档 · `scripts/*.sh|*.py`；
+       **面外域** exportnames / sandbox-probes / plugins 不进面 —— 理由见下面 `OFF_FACE_DOMAINS`）。
+       ★ 2026-09-26（本批）：域面**不再写死**。此前是 9 域常量，与门侧
+         （`gate-coverage.config.json` 的 `script_globs`）静默漂移：`dev` 域在门侧却不在常量里
+         ⇒ B2 对 `scripts/dev/**` 天生瞎（由 `check-marks-coverage-parity.py` 的「覆盖缺口」格报出）；
     B3 私有面：**public=yes 的件**里出现私有 IP / 绝对路径 / 账户 / 令牌模式 ⇒ 逐条点名（模式 + 行号 + 片段）。
        ★ **只判 public=yes 的面**：public=no 的件里出现同样的文本**不是本门的判据**（那是全仓其它门的活）——
          这条「区分度」由自检用例 ⑨ 钉住（同一段坏文本放进 no 面必须放行），否则本门会退化成「全扫一遍」。
        ★ **不给注释豁免**：公开面是**整件字节**，注释里的私有路径会随件一起开源。
+    B3e 编码变形（★ 2026-09-26 本批新增 · 治真漏 F-16）：**public=yes 的件**里出现**编码形态**的私有面
+       —— 判据**只有一条**：串**能解码**（base64 / base64url / 百分号转义）**且解码出来的明文命中
+       B3 那张同一张 `PRIVATE_PATTERNS`**（**复用，不另写白名单**）⇒ 报；解不出 / 解出来不命中 ⇒ **不报**。
+       为什么必须补这一格：B3 只收**明文形态** ⇒ 一行 base64（`publish/replace-rules.tsv:21` 的
+       `L1VzZXJzL21zMDEv…`，解开 = `~/.config/zerg/token` = 真家目录路径）里躺着真路径却谁都拦不住 ✗。
 
 「导出公开面时按表过滤」的三条动作（**说明**；不搬物理文件，沿用既有「白名单 + 路径映射」机制）：
   1. 导出器（`scripts/build/publish-public.sh` + `publish/whitelist.txt` + `publish/mirror-public-lib.py`）
@@ -58,21 +67,39 @@
           在步骤表里申报的档位（`tri-report` ⇒ rc=1 落 REPORT，不计失败项、不改退出码）。
 """
 import argparse
+import base64
 import os
 import re
 import sys
 import tempfile
+import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))                    # scripts/gates/ → 仓根
 TABLE_REL = "scripts/公开标记.tsv"
 COLS = ["文件", "public", "理由"]
 
-# 扫描面 = 分域第二段的 9 个域（地图 `清单-脚本分域-20260920.tsv` 的同一批）；其它顶层目录
-# （exportnames · sandbox-probes）是分域前就有的工作/实验目录 ⇒ **不在**本门的面里
-# （口径同 `check-wired-scripts.py` / `check-doc-name.py` 的「排除域」；`253` 已于
-#  2026-09-20 退役删除 —— T-56 决议⑤）。
-DOMAINS = ("build", "calib", "docs", "evals", "gates", "sandbox", "svc", "wall", "edge-node")
+# ── 域面：**从标记表现读派生**（2026-09-26 · 不再写死域清单）──────────────────────────
+# 域 = `scripts/<域>/…` 的第二段；`scripts/<件>`（两段行）归到**「顶层」一档**（顶层的面 = 门侧
+# 同一批 glob：`scripts/*.sh` + `scripts/*.py`）。
+# 为什么改成派生：写死的 9 域常量与门侧（`gate-coverage.config.json` 的 `scan.script_globs`）会
+# **静默漂移** —— 实测（`check-marks-coverage-parity.py` 的「覆盖缺口」格）：门侧有 `dev` 域
+# （`scripts/dev/*.sh|*.py`）而本门的 9 域常量里没有它 ⇒ B2「漏登记」对 `scripts/dev/**` **天生瞎**
+# （一件都不在面上的件，怎么漏登记都不会红）。派生后两边同口径：**表里出现过的域自动进面**，
+# 门侧多域/少域由 parity 门的 R1 对拍兜住（本门不再需要人同步改常量）。
+# 两个来源（都在**跑的时候**现读，任一处出现新域都进面）：
+#   ① 表里出现过的域（`scripts/<域>/…` 第二段 ⇒ 域；两段行 ⇒ 顶层）；
+#   ② 盘上 `scripts/` 下**实际存在的域目录**（给了 `root` 时才算）—— 保证「盘上冒出一个表里
+#      一行都没有的新域」照样进面（否则面就等于「表说自己是面」= 自我循环，B2 永远追不上新域）。
+# ★ **面外域**（分域前就有的工作/实验目录）**不进面**：它们本就不在门覆盖面里（口径同
+#   `check-wired-scripts.py` 的 `EXCL_SUBDIRS` + `plugins`，也同 parity 门 `EXEMPT_DOMAINS` 登记
+#   的那三域）⇒ 拉进来就是**改判据**（会给面外件造出一批假红）。逐条理由见下。
+OFF_FACE_DOMAINS = (
+    "exportnames",     # 分域前的工作目录（Go module · 非门覆盖面）：19 件全是 public=no
+    "sandbox-probes",  # 分域前的实验目录（18 件探针）：表逐件登记 public=no
+    "plugins",         # 插件示例件（scripts/plugins/zerg-hello）：不属「过门禁的脚本」那一批
+)
+TOP = "顶层"           # 顶层一档的域名（`scripts/*.sh|*.py`，无第二段）
 SKIP_DIRS = {"__pycache__", ".git", ".history", ".mypy_cache", ".pytest_cache",
              "node_modules", "target", "dist", "venv", ".venv", "build"}
 SKIP_SUFFIX = ("~", ".bak", ".orig", ".rej", ".swp", ".pyc", ".DS_Store")
@@ -101,6 +128,52 @@ PRIVATE_PATTERNS = (
      "明文口令/密钥赋值"),
     (r"\bBearer\s+[A-Za-z0-9._\-]{20,}", "Bearer 令牌"),
 )
+
+# ── 编码变形（★ 2026-09-26 本批 · 治真漏 F-16）────────────────────────────────────────────
+# 真漏（另一枚卵实测坐实）：上面那张表**只收明文形态** ⇒ `publish/replace-rules.tsv:21` 那一行 base64
+#   （`L1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4=`，解开 = `~/.config/zerg/token` = **真家目录路径**）
+#   里躺着真私有面却谁都拦不住。本批补这一格，**判据只有一条**：
+#   ① 候选 = 文本里的长串（base64 / base64url / 百分号转义）—— 候选只是**被试解码**的串，不是命中；
+#   ② 候选必须**解码成功**（非法字母表 / 长度补不上填充 / 解出的字节不是 utf-8 ⇒ **不报** —— 防空绿也防洪水）；
+#   ③ 解码出来的**明文**必须命中上面**同一张 `PRIVATE_PATTERNS`**（**复用，不另写白名单**）⇒ 才报。
+# 阈值（`{12,}` / 至少一个 `%XX`）只是「试解码」的门槛，**不收窄也不放宽命中判据**：短串解码意义弱
+#   （多为标识符 / hex 片段）⇒ 试它只会添噪声，命中与否仍 100% 交给 `PRIVATE_PATTERNS`。
+# 已知**不覆盖**（写明，不假装没漏）：全角（`／Users／ｆｕｚｚ０１`）与零宽空格（`~`）是
+#   **归一化等价形态**、不是「解码」形态 —— 本门不收（`publish/replace-rules.tsv:22–24` 有对应规则字面量，
+#   形态枚举归 `check-private-path-forms.py` 的形态表）。
+ENCODED_MARK_ON = True            # **只给自检的反向控制用**（同 ⑯ 关私有面模式表那一手）：真跑路径不写它
+B64_CAND = re.compile(r"[A-Za-z0-9+/]{12,}={0,2}")
+B64URL_CAND = re.compile(r"[A-Za-z0-9_\-]{12,}")
+PCT_ESC = re.compile(r"%[0-9A-Fa-f]{2}")
+
+
+def _decode_b64(tok, url=False):
+    """**严格**解码 ⇒ 明文；解不出（非法/填充补不上/字节非 utf-8）一律 `None`（= 不报）。"""
+    s = tok.replace("-", "+").replace("_", "/") if url else tok
+    if len(s) % 4 == 1:               # 4k+1 ⇒ 任何填充都补不上 ⇒ 非法
+        return None
+    if len(s) % 4:
+        s += "=" * (4 - len(s) % 4)
+    try:
+        raw = base64.b64decode(s, validate=True)
+    except Exception:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _plain_match(text):
+    """这段**明文**命中 `PRIVATE_PATTERNS` 里的哪一条 ⇒ (为什么, 命中片段)；不命中 ⇒ (None, None)。
+
+    ★ 这是编码变形判据的**唯一命中真源** —— 解码后一律回这张表判，**不许另立一套编码专用白名单**。
+    """
+    for pat, why in PRIVATE_PATTERNS:
+        m = re.search(pat, text)
+        if m:
+            return why, m.group(0)[:50]
+    return None, None
 
 
 class TableError(Exception):
@@ -141,10 +214,63 @@ def load_table(path):
     return rows
 
 
-def scan_face(root):
-    """`scripts/<域>/` 面里的件（仓相对路径，字典序）。0 件 ⇒ 调用方判空转。"""
+def face_domains(rows, root=None):
+    """**现读派生**域面 ⇒ 元组（含 `TOP` 一档）；面外域（`OFF_FACE_DOMAINS`）一律不进面。
+
+    ① 表里出现过的域（`scripts/<域>/…` 的第二段；两段行 ⇒ `TOP`）；
+    ② 给了 `root` 时，另算盘上 `scripts/` 下**实际存在的域目录**与顶层件（`.sh|.py`）。
+    ⇒ 表与盘**任一处**出现新域，面就跟着走（不必改本件任何常量）。空元组 ⇒ 调用方判空转。
+    """
+    doms = set()
+    for _i, rel, _pub, _why in rows:
+        p = rel.split("/")
+        if len(p) >= 2 and p[0] == "scripts":
+            doms.add(p[1] if len(p) >= 3 else TOP)
+    if root:
+        sdir = os.path.join(root, "scripts")
+        if os.path.isdir(sdir):
+            for name in os.listdir(sdir):
+                if name.startswith(".") or name in SKIP_DIRS or name.endswith(SKIP_SUFFIX):
+                    continue
+                if os.path.isdir(os.path.join(sdir, name)):
+                    doms.add(name)
+                elif name.endswith((".sh", ".py")):
+                    doms.add(TOP)                  # 顶层件（同门侧 glob `scripts/*.sh|*.py`）
+    return tuple(sorted(doms - set(OFF_FACE_DOMAINS)))
+
+
+# `DOMAINS` = 在**本仓**（`ROOT`）上现读派生的域面 —— 只为一处外部读者而留：
+#   `check-marks-coverage-parity.py` 按 `getattr(模块, "DOMAINS")` 取「标记面域集」算**覆盖缺口**
+#   （那一格只报数、不入退码）。派生不出来（表缺件/不合规）⇒ 空元组：那一格自动跳过，
+#   而本门自己跑起来会 **rc=2**（fail-closed，缺件 ≠ 绿）⇒ 不许在这里硬兜一个常量。
+def _derive_domains():
+    try:
+        return face_domains(load_table(os.path.join(ROOT, TABLE_REL)), ROOT)
+    except Exception:                      # 表缺件/不合规/读不了 ⇒ 空元组（本门自己会 rc=2 报出来）
+        return ()
+
+
+DOMAINS = _derive_domains()
+
+
+def scan_face(root, face):
+    """`face` 里的件（仓相对路径，字典序）。0 件 ⇒ 调用方判空转。
+
+    · 域目录（`scripts/<域>/…`）**递归**取件（任意后缀；`SKIP_DIRS` / 隐藏项 / `SKIP_SUFFIX` 不取）；
+    · `TOP`（顶层）只取 `scripts/*.sh|scripts/*.py` —— **逐字同门侧 glob**（顶层不许下沉一层）。
+    """
     out = []
-    for d in DOMAINS:
+    for d in face:
+        if d == TOP:
+            sdir = os.path.join(root, "scripts")
+            if not os.path.isdir(sdir):
+                continue
+            for fn in sorted(os.listdir(sdir)):
+                if fn.startswith(".") or fn.endswith(SKIP_SUFFIX) or not fn.endswith((".sh", ".py")):
+                    continue
+                if os.path.isfile(os.path.join(sdir, fn)):
+                    out.append("scripts/" + fn)
+            continue
         base = os.path.join(root, "scripts", d)
         if not os.path.isdir(base):
             continue
@@ -171,6 +297,54 @@ def scan_private(path):
     return hits
 
 
+def scan_encoded(path):
+    """**编码变形**扫描（★ 2026-09-26 本批 · 口径同 `scan_private`：**只对 public=yes 面**调用）。
+
+    ⇒ [(为什么, 行号, 片段)]，三式（**都只报「解码成功且解出命中 `PRIVATE_PATTERNS`」的串**）：
+      · base64（标准字母表，长串）；
+      · base64url（含 `-`/`_` 的长串 —— 纯字母数字的串由标准那一遍收，**不重复报**）；
+      · 百分号转义（URL 编码）：**逐行**判 —— 该行有 `%XX` ⇒ 整行 unquote ⇒ 解出命中才报；
+        该行**明文**本来就已命中的**不重复报**（明文那一格已由 `scan_private` 点名）。
+    解不出 / 解出来不命中 ⇒ **一条都不报**（防空绿也防洪水）。
+    """
+    try:
+        txt = open(path, encoding="utf-8", errors="replace").read()
+    except OSError as e:
+        return [("读不了文件：%s" % e, 0, "")]
+    hits, url_spans = [], []
+    for m in B64URL_CAND.finditer(txt):
+        tok = m.group(0)
+        if "-" not in tok and "_" not in tok:
+            continue                          # 无 url 字母表字符 ⇒ 归标准那遍（避免同一串报两次）
+        url_spans.append(m.span())
+        dec = _decode_b64(tok, url=True)
+        why, frag = _plain_match(dec) if dec else (None, None)
+        if why:
+            hits.append(("编码变形 base64url（解开后命中「%s」）" % why,
+                         txt.count("\n", 0, m.start()) + 1, "%s… ⇒ %s" % (tok[:40], frag)))
+    for m in B64_CAND.finditer(txt):
+        if any(a <= m.start() and m.end() <= b for a, b in url_spans):
+            continue                          # 落在 url 串里 ⇒ 上面那遍已判过
+        tok = m.group(0)
+        dec = _decode_b64(tok)
+        why, frag = _plain_match(dec) if dec else (None, None)
+        if why:
+            hits.append(("编码变形 base64（解开后命中「%s」）" % why,
+                         txt.count("\n", 0, m.start()) + 1, "%s… ⇒ %s" % (tok[:40], frag)))
+    if PCT_ESC.search(txt):
+        for i, line in enumerate(txt.split("\n"), 1):
+            if not PCT_ESC.search(line):
+                continue
+            dec = urllib.parse.unquote(line)
+            if dec == line:                   # 一个转义都没真解开 ⇒ 不报
+                continue
+            why, frag = _plain_match(dec)
+            if why and not _plain_match(line)[0]:
+                hits.append(("编码变形 URL（百分号转义 · 解开后命中「%s」）" % why, i,
+                             "%s… ⇒ %s" % (line.strip()[:40], frag)))
+    return sorted(hits, key=lambda x: x[1])
+
+
 def run(root=ROOT, table=None, max_examples=20, out=None):
     """判一遍 ⇒ 退出码（0 全绿 · 1 违规 · 2 表不合规/空转）。"""
     out = out or sys.stdout
@@ -182,22 +356,33 @@ def run(root=ROOT, table=None, max_examples=20, out=None):
         out.write("✗ %s\n" % e)
         out.write("⇒ 不给结论（rc=2）：表不合规时**不判**真目标 —— 用坏表判出的绿没有意义\n")
         return 2
-    face = scan_face(root)
+    face_doms = face_domains(rows, root)
+    if not face_doms:
+        out.write("✗ 表里没有一条 `scripts/<域>/…` 行，且盘上 `scripts/` 下无域目录 ⇒ 域面派生为空，"
+                  "拒绝给结论（rc=2）\n")
+        return 2
+    face = scan_face(root, face_doms)
     if not face:
-        out.write("✗ scripts/<域>/ 面里 0 件（域 = %s）⇒ 空转，拒绝给结论（rc=2）\n" % " · ".join(DOMAINS))
+        out.write("✗ scripts/<域>/ 面里 0 件（域 = %s · **现读派生**）⇒ 空转，拒绝给结论（rc=2）\n"
+                  % " · ".join(face_doms))
         return 2
 
     registered = {rel: (i, pub, why) for i, rel, pub, why in rows}
     yes = [rel for rel in registered if registered[rel][1] == "yes"]
     dangling = [rel for rel in registered if not os.path.isfile(os.path.join(root, rel))]
     missing = [rel for rel in face if rel not in registered]
-    private = []
+    private, encoded = [], []
     for rel in sorted(yes):
-        for why, ln, sample in scan_private(os.path.join(root, rel)):
+        p = os.path.join(root, rel)
+        for why, ln, sample in scan_private(p):
             private.append((rel, ln, why, sample))
+        if ENCODED_MARK_ON:                      # ★ 编码变形（只判 public=yes 面 —— 口径同 B3）
+            for why, ln, sample in scan_encoded(p):
+                encoded.append((rel, ln, why, sample))
 
-    out.write("表：%s（%d 行 · public=yes %d · public=no %d）· 面：scripts/<域>/ %d 件（%s）\n"
-              % (table, len(rows), len(yes), len(rows) - len(yes), len(face), " · ".join(DOMAINS)))
+    out.write("表：%s（%d 行 · public=yes %d · public=no %d）· 面：scripts/<域>/ %d 件（域 %d 个 · %s）\n"
+              % (table, len(rows), len(yes), len(rows) - len(yes), len(face), len(face_doms),
+                 " · ".join(face_doms)))
 
     def dump(title, items):
         out.write("\n── %s：%d 处\n" % (title, len(items)))
@@ -209,14 +394,19 @@ def run(root=ROOT, table=None, max_examples=20, out=None):
     dump("B1 悬空登记（表里点名、盘上无此件）", ["%s（表第 %d 行）" % (r, registered[r][0]) for r in dangling])
     dump("B2 漏登记（盘上有、表里没有）", missing)
     dump("B3 public=yes 面里的私有面", ["%s:%d  [%s]  %s" % (r, ln, why, s) for r, ln, why, s in private])
+    dump("B3e public=yes 面里的**编码变形**（解码成功且解出命中上面同一张 `PRIVATE_PATTERNS`）",
+         ["%s:%d  [%s]  %s" % (r, ln, why, s) for r, ln, why, s in encoded])
 
-    bad = len(dangling) + len(missing) + len(private)
-    out.write("\n合计：悬空 %d · 漏登记 %d · 私有面 %d\n" % (len(dangling), len(missing), len(private)))
+    bad = len(dangling) + len(missing) + len(private) + len(encoded)
+    out.write("\n合计：悬空 %d · 漏登记 %d · 私有面 %d · 编码变形 %d\n"
+              % (len(dangling), len(missing), len(private), len(encoded)))
     if bad:
         out.write("⇒ 违规 %d 处（rc=1）：修表或修件 —— ① 悬空 ⇒ 改表；② 漏登记 ⇒ 补表（附理由）；"
-                  "③ 私有面 ⇒ 把该件标 public=no，或去掉私有面（**不许**放宽本门的模式表来凑绿）\n" % bad)
+                  "③ 私有面 ⇒ 把该件标 public=no，或去掉私有面（**不许**放宽本门的模式表来凑绿）；"
+                  "④ 编码变形 ⇒ 同上，**不许**给编码形态加豁免白名单来凑绿\n" % bad)
         return 1
-    out.write("⇒ 全绿（rc=0）：%d 件已登记 · public=yes 面 %d 件未发现私有面\n" % (len(rows), len(yes)))
+    out.write("⇒ 全绿（rc=0）：%d 件已登记 · public=yes 面 %d 件未发现私有面 · 编码变形 0 处\n"
+              % (len(rows), len(yes)))
     return 0
 
 
@@ -266,10 +456,14 @@ def scan_tree(tree):
     return sorted(allf), sorted(scripts)
 
 
-def in_domains(rel):
-    """这一件在**面内**（`scripts/<域>/…` 且域 ∈ 9 个域）吗？面外件在输出里会被标出来。"""
+def in_domains(rel, face):
+    """这一件在**面内**（`scripts/<域>/…` 且域 ∈ 派生出来的域面）吗？面外件在输出里会被标出来。
+
+    ★ D 档这一格的面用**表侧派生**（`face_domains(rows)`，不掺产出树自己的目录）：判的是
+      「这一件在不在**标记表的域**里」，产出树多出来的域不改变这个判断。
+    """
     p = rel.split("/")
-    return len(p) >= 3 and p[0] == "scripts" and p[1] in DOMAINS
+    return len(p) >= 3 and p[0] == "scripts" and p[1] in face
 
 
 def run_tree(tree=None, table=None, max_examples=20, out=None):
@@ -288,6 +482,7 @@ def run_tree(tree=None, table=None, max_examples=20, out=None):
         out.write("⇒ 不给结论（rc=2）：表不合规时**不判**产出树 —— 用坏表判出的绿没有意义\n")
         return 2
     tree_files_all, tree_files = scan_tree(tree)
+    face = face_domains(rows)               # 面内/面外那一格只看**表的域**（产出树自身的目录不参与）
     if not tree_files:
         out.write("✗ 产出树 %s 的 scripts/ 面里 0 件 ⇒ 空转，拒绝给结论（rc=2）\n" % tree)
         out.write("   （这类树判不了「表 ⨯ scripts/」：整树 %d 件，但一件脚本都没在里面 —— 不要拿它当绿）\n"
@@ -325,7 +520,7 @@ def run_tree(tree=None, table=None, max_examples=20, out=None):
 
     dump("D1 表说 no、却进了产出树（只报告：本档不改退出码）",
          ["%s（表第 %d 行）→ 产出树 %s%s\n       ← 表判 public=no：%s"
-          % (rel, i, rel, "" if in_domains(rel) else "  ★面外件（不在 9 域内 · 设计稿 §六 P6 待拍）", why)
+          % (rel, i, rel, "" if in_domains(rel, face) else "  ★面外件（不在派生的域面内 · 设计稿 §六 P6 待拍）", why)
           for i, rel, why in no_in])
     dump("D2 表说 yes、却不在产出树（反向冲突）",
          ["%s（表第 %d 行）← 表判 public=yes：%s" % (rel, i, why) for i, rel, why in yes_absent])
@@ -396,9 +591,12 @@ def _run_tree_quiet(tree, table):
 
 
 def selftest():
-    """成对负控 23 条：每条都要「该红的红、该绿的绿」，且断言用例条数（少跑即失效）。
+    """成对负控 33 条：每条都要「该红的红、该绿的绿」，且断言用例条数（少跑即失效）。
 
-    ①–⑯ = A/B/C 三判（表自身 · 私有面）；⑰–㉓ = **D 档**（产出树 ⨯ 标记表 · 2026-09-21 公开线④）。
+    ①–⑯ = A/B/C 三判（表自身 · 私有面）；⑰–㉓ = **D 档**（产出树 ⨯ 标记表 · 2026-09-21 公开线④）；
+    ㉔–㉘ = **域面派生档**（新域 / dev / 顶层进面 · 面外域不进面 · 2026-09-26）；
+    ㉙–㉝ = **编码变形档**（base64 真家目录 ⇒ 红 · 无害 base64 / 随机乱码 ⇒ 绿 · URL 转义 ⇒ 红 ·
+    关掉这一格 ⇒ 退回绿 · 2026-09-26 治真漏 F-16）。
     """
     ok = 0
     total = 0
@@ -560,20 +758,132 @@ def selftest():
     print("  %s ㉓ 反向控制：关掉 D 档命中判定 ⇒ ⑱ 那棵树退回绿（rc=%s）—— 证明 ⑱ 不是恒红也不是恒绿"
           % ("✓" if good else "✗", rc23))
 
+    # ── ㉔–㉘：**域面派生**（2026-09-26 · 真缺口：`dev` 域在门侧却不在旧写死的 9 域里 ⇒ B2 对
+    #    `scripts/dev/**` 天生瞎）。逐格钉四件事：新域进面 · dev 进面 · 顶层进面 · 面外域**不**进面。
+    #    改前的行为（旧件对这四格分别=瞎/瞎/无此档/同）由本批的「仓外 toy 现跑」对照给出（见回执），
+    #    这里钉的是改后必须成立的四条。
+    print("[域面派生档] 表 ∪ 盘派生域面（含「顶层」一档）· 面外域不进面")
+
+    # ㉔ must-fail：盘上冒出一个**表里一行都没有的新域** ⇒ 面必须跟着走（否则面就是「表说自己是面」）
+    r24, t24 = base(files_extra={"scripts/zzz/lone.py": "#!/bin/sh\ntrue\n"})
+    case("㉔ must-fail · 域面派生：盘上新域 `scripts/zzz/`（表里一行都没有）⇒ 进面且点名", 1,
+         ["漏登记", "scripts/zzz/lone.py"], mk(r24, t24))
+
+    # ㉕ 成对：把那件补进表 ⇒ 回绿（证明 ㉔ 不是恒红）
+    r25, t25 = base(files_extra={"scripts/zzz/lone.py": "#!/bin/sh\ntrue\n"},
+                    table_text=GOOD + "scripts/zzz/lone.py\tno\tB 类：合成夹具（新域）\n")
+    case("㉕ 成对：同一棵树把该件补进表 ⇒ 回绿（与 ㉔ 成对）", 0, ["全绿"], mk(r25, t25))
+
+    # ㉖ must-fail：**dev 域**（本批真缺口的形态）—— 表里有 dev 行 ⇒ 面含 dev；同域里另一件未登记 ⇒ 点名
+    r26, t26 = base(files_extra={"scripts/dev/isolate-ro.sh": "#!/bin/sh\ntrue\n",
+                                 "scripts/dev/lone.py": "#!/bin/sh\ntrue\n"},
+                    table_text=GOOD + "scripts/dev/isolate-ro.sh\tno\tB 类·开发工具（合成夹具 · 缺口 GAP-20260926-20）\n")
+    case("㉖ must-fail · dev 口径纳入：表里有 dev 行 ⇒ 同域未登记件被点名（旧 9 域常量对 dev 全瞎）", 1,
+         ["漏登记", "scripts/dev/lone.py"], mk(r26, t26))
+
+    # ㉘ must-fail：**顶层**一档（门侧同样的两条 glob `scripts/*.sh|*.py`）未登记 ⇒ 点名
+    r28, t28 = base(files_extra={"scripts/top.sh": "#!/bin/sh\ntrue\n"})
+    case("㉘ must-fail · 顶层一档：`scripts/top.sh` 未登记 ⇒ 点名（口径同门侧 `scripts/*.sh`）", 1,
+         ["漏登记", "scripts/top.sh"], mk(r28, t28))
+
+    # ㉗ 反向控制：**面外域**里有未登记件 ⇒ 必须**放绿**（面外域拉进面 = 改判据 ⇒ 钉住「不拉进来」）
+    r27, t27 = base(files_extra={"scripts/sandbox-probes/x.sb": "x\n"})
+    rc27, text27 = _run_quiet(r27, t27)
+    total += 1
+    good = (rc27 == 0 and "全绿" in text27 and "sandbox-probes" not in text27)
+    ok += 1 if good else 0
+    print("  %s ㉗ 反向控制：面外域（`scripts/sandbox-probes/`）有未登记件 ⇒ 放绿且不点名（rc=%s）"
+          "—— 证明派生**没有**把不可比的面拉进来" % ("✓" if good else "✗", rc27))
+
+    # ── ㉙–㉝：**编码变形**（★ 2026-09-26 本批 · 治真漏 F-16：明文形态表对 base64/URL 编码天生瞎）──
+    #    真漏形态 = `publish/replace-rules.tsv:21` 那一行（解开 = 真家目录的凭据路径）。
+    #    逐格钉五件事：真家目录 base64 ⇒ **必红并点名**（㉙）· 无害 base64（解开不是私有形态）⇒ 放绿（㉚）·
+    #    随机长串（解开不是 utf-8 = 乱码）⇒ 放绿（㉛）· URL 百分号转义家目录 ⇒ 必红（㉜）·
+    #    关掉这一格 ⇒ ㉙ 那棵树退回绿（㉝ · 证明断言有牙齿）。**明文形态仍必报**由 ②③④⑤ 继续钉着。
+    print("[编码变形档] 只收「**能解码**且**解出来命中 `PRIVATE_PATTERNS`**」的串（复用同一张表 · 不另写白名单）")
+
+    # ㉙ must-fail：public=yes 面塞**真家目录路径的 base64**（F-16 那个真漏形态）⇒ 必红并点名（件:行 + 解出片段）
+    B64_HOME = "L1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4="        # base64 解开 = ~/.config/zerg/token
+    r29, t29 = base({"scripts/build/good.sh": "#!/bin/sh\nTOKEN_FILE=$(echo %s | base64 -d)\n" % B64_HOME})
+    case("㉙ must-fail · 编码变形：public=yes 面塞 base64 的真家目录路径 ⇒ 红且点名（件:行 + 解出片段）", 1,
+         ["编码变形 1", "good.sh:2", "编码变形 base64", "用户家目录绝对路径"], mk(r29, t29))
+
+    # ㉚ 成对：同一面塞**无害 base64**（解开 = 一句普通英文，不命中任何私有形态）⇒ 必须放绿（不许洪水）
+    B64_OK = base64.b64encode(b"hello zerg swarm public fixture ok").decode()
+    r30, t30 = base({"scripts/build/good.sh": "#!/bin/sh\necho %s\n" % B64_OK})
+    rc30, text30 = _run_quiet(r30, t30)
+    total += 1
+    good = (rc30 == 0 and "全绿" in text30 and "编码变形 0" in text30)
+    ok += 1 if good else 0
+    print("  %s ㉚ 成对 · 编码变形：无害 base64（解开 = 普通英文、不命中形态表）⇒ 放绿（rc=%s）"
+          "—— 证明这一格**不是**「看到长串就报」" % ("✓" if good else "✗", rc30))
+
+    # ㉛ 成对：塞**随机长串**（解开不是 utf-8 = 乱码）⇒ 必须放绿（解不出 ⇒ 不报）
+    B64_JUNK = base64.b64encode(os.urandom(24) + b"\xff\xfe").decode()
+    r31, t31 = base({"scripts/build/good.sh": "#!/bin/sh\necho %s\n" % B64_JUNK})
+    rc31, text31 = _run_quiet(r31, t31)
+    total += 1
+    good = (rc31 == 0 and "全绿" in text31 and "编码变形 0" in text31)
+    ok += 1 if good else 0
+    print("  %s ㉛ 成对 · 编码变形：随机长串（解开不是 utf-8 = 乱码）⇒ 放绿（rc=%s）"
+          "—— 证明「解不出 ⇒ 不报」" % ("✓" if good else "✗", rc31))
+
+    # ㉜ must-fail：**URL 百分号转义**的家目录（另一式）⇒ 必红并点名
+    r32, t32 = base({"scripts/build/good.sh": "#!/bin/sh\nP=%2FUsers%2FMr2109%2F.config%2Fzerg%2Ftoken\n"})
+    case("㉜ must-fail · 编码变形：public=yes 面塞 URL 百分号转义的真家目录路径 ⇒ 红且点名", 1,
+         ["编码变形 1", "good.sh:2", "编码变形 URL", "用户家目录绝对路径"], mk(r32, t32))
+
+    # ㉝ 反向控制：**关掉编码变形这一格** ⇒ ㉙ 那棵必红的树必须**退回绿**（证明 ㉙ 不是恒红）
+    global ENCODED_MARK_ON
+    saved_enc = ENCODED_MARK_ON
+    ENCODED_MARK_ON = False
+    rc33, text33 = _run_quiet(r29, t29)
+    ENCODED_MARK_ON = saved_enc
+    total += 1
+    good = (rc33 == 0 and "全绿" in text33)
+    ok += 1 if good else 0
+    print("  %s ㉝ 反向控制：关掉编码变形格 ⇒ ㉙ 那棵树退回绿（rc=%s）—— 证明 ㉙ 不是恒红也不是恒绿"
+          % ("✓" if good else "✗", rc33))
+
     print("  自证用例：%d 条 · 通过 %d 条（断言用例条数 %d，少跑即失效）"
-          % (total, ok, 23))
-    assert total == 23, "自证用例数必须为 23，实际 %d" % total
+          % (total, ok, 33))
+    assert total == 33, "自证用例数必须为 33，实际 %d" % total
     return 0 if ok == total else 1
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+                     % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
 def main():
+    rc_q176 = refuse_json_without_machine_face()
+    if rc_q176 is not None:
+        return rc_q176
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("--root", default=ROOT, help="树根（默认 = 仓根）")
     ap.add_argument("--table", default=None, help="标记表路径（默认 = <root>/scripts/公开标记.tsv）")
     ap.add_argument("--tree", default=None,
                     help="**D 档**：产出树根 ⇒ 判「产出树 ⨯ 标记表」（只报告 · 命中 rc=1）")
     ap.add_argument("--max-examples", type=int, default=20)
-    ap.add_argument("--selftest", action="store_true", help="只跑成对负控自检（合成夹具，不碰真目标）")
+    # ★ `Q-176` 第六批：拼法统一 —— **准拼法 `--self-test`**，旧拼法 `--selftest` 作别名（两个都认；新门只写准的）
+    ap.add_argument("--self-test", "--selftest", dest="selftest", action="store_true",
+                    help="只跑成对负控自检（合成夹具，不碰真目标）")
     args = ap.parse_args()
     if args.selftest:
         print("── check-public-marks.py 自证（含 must-fail 负控 · 合成夹具）")

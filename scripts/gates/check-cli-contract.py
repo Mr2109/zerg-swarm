@@ -502,6 +502,19 @@ def check(root, no_runtime=False):
         if p in by_cmd and not [c for c in by_cmd[p] if int(c.get('want_rc', 0)) != 0]:
             errs.append('T2 must-fail：命令 %r 一条 must-fail 都没有' % p)
 
+    # ---- T5b 格级棘轮（2026-09-27 父代理补 · 缺口 GAP-20260926-13）----
+    #   T5 锚的是「命令级空白」（该命令有没有**任何**一格）⇒ 对「同命令内部掉一格」完全失明 ✗。
+    #   本档锚**格数**：must-fail 格数低于 baseline 记的数即红（格级只许上调；确需下调须显式改
+    #   baseline 并写明理由 —— 不许静默掉格）。
+    base_mf = baseline.get('mustfail_cases')
+    if not isinstance(base_mf, int):
+        return 2, ['⛔ 不给结论：baseline 棘轮缺 `mustfail_cases`（格级锚点）—— 格级掉格会静默（%s）'
+                   % BASELINE_REL]
+    if n_mustfail < base_mf:
+        errs.append('T5b 格级棘轮：must-fail 格 %d 条 < baseline %d 条（格级只许**上调**；'
+                    '确需下调须显式改 %s 并写明理由 —— 防「同命令内部掉一格」静默）'
+                    % (n_mustfail, base_mf, BASELINE_REL))
+
     # ---- T3 退码表唯一 ----
     codes = [r[0] for r in table]
     seen = {}
@@ -639,7 +652,7 @@ GOOD_MATRIX = {
          "want_rc": 2, "want_stdout_bytes": 0, "why": "D3 缺确认 ⇒ 2"},
     ],
 }
-GOOD_BASELINE = {"id": "cli-contract-baseline.v1", "blanks": 0,
+GOOD_BASELINE = {"id": "cli-contract-baseline.v1", "blanks": 0, "mustfail_cases": 2,
                  "note": "只许下调：本门落地时空白已清零 ⇒ 从此任何空白即红"}
 GOOD_REGISTRY = {"schema": "zerg-contract-registry/1", "entries": [
     {"id": "S-g", "name": "命令面契约（本件）",
@@ -894,7 +907,30 @@ def self_test():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+                     % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
 def main():
+    rc_q176 = refuse_json_without_machine_face()
+    if rc_q176 is not None:
+        return rc_q176
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument('root', nargs='?', default='.')
     ap.add_argument('--self-test', action='store_true')

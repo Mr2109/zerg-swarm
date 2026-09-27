@@ -120,7 +120,10 @@ def lang_of(rel, scope=None):
     return "zh" if rel.split(os.sep)[1:2] == ["zh"] else "en"
 
 
-def load_glossary(path=MAIN):
+def load_glossary(path=None):
+    # `Q-176` 第五批：给 `--self-test` 留的**唯一**换表口（不设此环境变量 ⇒ 一字不变，仍是 MAIN）。
+    # 为什么需要：自检**不许读写仓内件** ⇒ 合成术语表落在临时目录，由这个变量指过去。
+    path = path or os.environ.get("ZERG_GLOSSARY_TSV") or MAIN
     if not os.path.isfile(path):
         raise EnvironmentError("术语表主表不存在：%s" % path)
     rows, header = [], None
@@ -283,10 +286,33 @@ def walk_files(paths, root, langs, scope=None):
     return out
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+                     % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
 def main():
+    rc_q176 = refuse_json_without_machine_face()
+    if rc_q176 is not None:
+        return rc_q176
     argv = sys.argv[1:]
-    if "--selftest" in argv:
-        return selftest()
+    if "--self-test" in argv or "--selftest" in argv:
+        return self_test()
     root = ROOT
     scope = None
     langs, paths, i = set(), [], 0
@@ -447,6 +473,73 @@ def selftest():
         print("  %s %s（期望 %s 实际 %s）" % ("✓" if good else "✗", name, want, got))
     print("  自证：%s" % ("通过 ✓" if ok else "**失败** ✗"))
     return 0 if ok else 1
+
+
+# ── `Q-176` 第五批：`--self-test` 三档自检（正控 rc=0 · 负控 rc=1 · 用法错 rc=2）──────────
+#    两层：① 纯函数 29 例（判据本身的成对正负控）② 子进程**真跑本件**取真退出码。
+#    纪律：合成术语表 + 合成页面**全在临时目录**（`ZERG_GLOSSARY_TSV` 指到临时表）⇒ 不读不写仓内件 ·
+#          子进程夹具退出即清。`--selftest` 是本旗标的旧写法，两个拼法同一档。
+USAGE = ("用法：python3 scripts/gates/check-glossary.py [--lang zh,en] [--paths P …] [--enforce] "
+         "[--no-identifiers] [--self-test]")
+SELF_PATH = os.path.abspath(__file__)
+
+
+def self_test():
+    """三档自检：只写正名 ⇒ rc=0；中文页出现 `forbid_zh` 词 ⇒ rc=1；未知 `--scope`/`--json` ⇒ rc=2。"""
+    import shutil
+    import subprocess
+    import tempfile
+    bad = [0]
+
+    def chk(label, want, rc, out):
+        good = (rc == want)
+        if not good:
+            bad[0] += 1
+        tail = "" if good else " ｜ " + (out.strip().splitlines() or [""])[-1][:90]
+        print("  %s %s（期望 rc=%d 实际 rc=%d）%s" % ("✓" if good else "✗", label, want, rc, tail))
+
+    print("── check-glossary.py --self-test 三档（正控 0 · 负控 1 · 用法错 2）")
+    print("   ＜层① 纯函数 29 例（判据成对正负控 · 不碰任何目录）＞")
+    if selftest() != 0:        # ★ 返回值是 rc（0 = 过）⇒ 不能写 `if not selftest()`
+        bad[0] += 1
+    tmp = tempfile.mkdtemp(prefix="glossary-selftest-")
+    try:
+        tsv = os.path.join(tmp, "术语表.tsv")
+        with open(tsv, "w", encoding="utf-8") as f:
+            f.write("\t".join(COLS) + "\n")
+            f.write("虫茧\tcocoon\tcocoon\tcocoon\t\t\tMr2109\t\n")
+            f.write("虫巢\t\t\t\t虫巢\t\tMr2109\t英文待拍\n")
+        docs = os.path.join(tmp, "docs", "zh")
+        os.makedirs(docs)
+        clean = os.path.join(docs, "clean.md")
+        with open(clean, "w", encoding="utf-8") as f:
+            f.write("本文只写正名：这里叫虫茧。\n")
+        dirty = os.path.join(docs, "dirty.md")
+        with open(dirty, "w", encoding="utf-8") as f:
+            f.write("旧称：这里叫虫巢。\n")
+        env = dict(os.environ, ZERG_GLOSSARY_TSV=tsv)
+
+        def run(*a):
+            p = subprocess.run([sys.executable, SELF_PATH, "--root", tmp, "--lang", "zh"] + list(a),
+                               capture_output=True, text=True, env=env)
+            return p.returncode, p.stdout + p.stderr
+
+        print("   ＜层② 子进程真跑本件（合成根 + 合成主表 · 临时目录）＞")
+        rc, out = run("--paths", clean)
+        chk("档① 正控：中文页只写正名 ⇒ rc=0", 0, rc, out)
+
+        rc, out = run("--paths", dirty)
+        chk("档② 负控：中文页出现 `forbid_zh` 词（虫巢）⇒ T2 非阻塞 rc=1", 1, rc, out)
+
+        rc, out = run("--scope", "no-such-scope", "--paths", clean)
+        chk("档③ 用法错：未知 `--scope` ⇒ rc=2", 2, rc, out)
+
+        rc, out = run("--paths", clean, "--json")
+        chk("档③′ 用法错：`--json` 而本门无机器读面（`Q-176` 统一口）", 2, rc, out)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("── 自检：%s" % ("全过 ✓" if bad[0] == 0 else "**%d 档不过** ✗" % bad[0]))
+    return 0 if bad[0] == 0 else 1
 
 
 if __name__ == "__main__":

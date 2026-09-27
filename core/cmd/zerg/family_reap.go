@@ -209,7 +209,7 @@ func boolAbbr(b bool) string {
 // gitTracked —— `git ls-files --error-unmatch <rel>` 命中即「入库件」（`RC11` 红线的那一类）。
 // 不在 git 仓 / 取不到 ⇒ 报 false（**宁可少收**：这一格由每件证据里的 `tracked=` 写明）。
 func gitTracked(root, rel string) bool {
-	cmd := exec.Command("git", "ls-files", "--error-unmatch", "--", rel)
+	cmd := exec.Command("git", "-c", "core.quotepath=false", "ls-files", "--error-unmatch", "--", rel)
 	cmd.Dir = root
 	return cmd.Run() == nil
 }

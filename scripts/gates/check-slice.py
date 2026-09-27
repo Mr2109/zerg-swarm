@@ -2059,7 +2059,7 @@ def parse_args(argv):
         elif v == '--list-rules':
             opts['mode'] = 'list'
             i += 1
-        elif v == '--selftest':
+        elif v in ('--self-test', '--selftest'):   # ★ Q-176 第六批：准拼法 --self-test；旧拼法作别名，同档
             opts['mode'] = 'selftest'
             i += 1
         elif v == '--set-open':
@@ -2075,7 +2075,7 @@ def parse_args(argv):
             print(USAGE)
             return None
         else:
-            sys.stderr.write('✗ 未知参数: %s\n' % v)
+            print('✗ 未知参数: %s' % v, file=sys.stderr)
             print(USAGE)
             return None
     return opts
@@ -2096,7 +2096,30 @@ def load_slice_file(path):
         return None, '片文件不是合法 JSON：%s（%s）' % (path, exc)
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+                     % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
 def main(argv):
+    rc_q176 = refuse_json_without_machine_face(argv)
+    if rc_q176 is not None:
+        return rc_q176
     if not argv:
         print(USAGE)
         return 2
@@ -2123,7 +2146,7 @@ def main(argv):
         return run_selftest(opts, calib)
     # ── check ──
     if not opts['paths']:
-        sys.stderr.write('✗ --check 后面没有给片文件\n')
+        print('✗ --check 后面没有给片文件', file=sys.stderr)
         print(USAGE)
         return 2
     # 阶段①：装载 + strict（任一错误 ⇒ 不给结论）
@@ -2177,7 +2200,7 @@ if __name__ == '__main__':
     try:
         sys.exit(main(sys.argv[1:]))
     except InternalError as exc:
-        sys.stderr.write('✗ 内部错误（不给结论）：%s\n' % exc)
+        print('✗ 内部错误（不给结论）：%s' % exc, file=sys.stderr)
         sys.exit(2)
     except KeyboardInterrupt:
         sys.exit(2)

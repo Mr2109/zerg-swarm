@@ -369,13 +369,28 @@ def self_test():
     return 0 if not bad else 2
 
 
+# ── 缺口 `Q-176`（规则③ · 与 `check-replace-rule-fixtures.py` 的成熟做法同口径）：`--json` 的
+#    **字段名打错**不许静默吐 `null`（与「零命中」同形 ⇒ 探针打错一个字就拿到假包封、还不报错）
+#    ⇒ **用法错 `rc=2` ＋ 印可选字段表**。**只把「不认的名」这一支从静默改成拒绝**，不动业务判据与退码。
+JSON_FIELDS = ["surface", "ci", "only_surface", "only_ci", "out_ci_in_ci", "out_ci"]
+
+
 def main():
     ap = argparse.ArgumentParser(description="CI 逐包点名一致性（名单件 ↔ publish/ci/ci.yml）")
     ap.add_argument("--root", default=REPO_ROOT, help="判哪棵树（默认仓根）")
     ap.add_argument("--self-test", action="store_true", help="只跑自检（合成夹具 · 不碰真目标）")
     ap.add_argument("--no-self-test", action="store_true", help="跳过自检直接判真目标（留给调用方显式选择）")
-    ap.add_argument("--json", default="", help="按名输出 JSON 字段（逗号分隔）")
+    ap.add_argument("--json", default="", help="机器面字段（逗号分隔 · 闭集：%s；**不认的名 ⇒ 用法错 rc=2**）"
+                    % ",".join(JSON_FIELDS))
     args = ap.parse_args()
+
+    if args.json:
+        bad = [w.strip() for w in args.json.split(",") if w.strip() and w.strip() not in JSON_FIELDS]
+        if bad:
+            print("⛔ `--json` 不认的字段名：%s" % " · ".join("`%s`" % b for b in bad), file=sys.stderr)
+            print("   可选字段表：%s" % " · ".join("`%s`" % f for f in JSON_FIELDS), file=sys.stderr)
+            print("⇒ 用法错（rc=2）：**字段名打错 ≠ 零命中** —— 两态在机器面上必须分得开", file=sys.stderr)
+            return 2
 
     print(VERSION)
     if args.self_test:

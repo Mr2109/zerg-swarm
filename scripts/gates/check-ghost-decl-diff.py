@@ -219,7 +219,7 @@ def git_ro(repo, args, timeout=60):
     allow = ("rev-parse", "status", "ls-files", "cat-file")
     if not args or args[0] not in allow:
         raise RuntimeError("git 子命令 %r 不在只读白名单 %s 内 ⇒ 拒" % (args[0] if args else None, list(allow)))
-    p = subprocess.run(["git", "--no-optional-locks", "-C", repo] + list(args),
+    p = subprocess.run(["git", "-c", "core.quotepath=false", "--no-optional-locks", "-C", repo] + list(args),
                        capture_output=True, text=True, timeout=timeout)
     if p.returncode != 0:
         raise RuntimeError("退码 %d：%s" % (p.returncode, (p.stderr or "").strip()[:160]))

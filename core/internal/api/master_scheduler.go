@@ -411,8 +411,8 @@ func (s *MasterScheduler) runTask(task *Task) {
 		if err != nil {
 			// v2.5.5 修复（2026-08-21 发现——重跑任务分支残留冲突）: 强删旧分支重试一次
 			log.Printf("⚠️ scheduler: task %s worktree create failed (clearing stale branch, retrying): %v", task.ID, err)
-			_ = exec.Command("git", "worktree", "remove", "--force", filepath.Join(task.Workdir, "zerg-wt", branch)).Run()
-			_ = exec.Command("git", "branch", "-D", branch).Run()
+			_ = exec.Command("git", "-c", "core.quotepath=false", "worktree", "remove", "--force", filepath.Join(task.Workdir, "zerg-wt", branch)).Run()
+			_ = exec.Command("git", "-c", "core.quotepath=false", "branch", "-D", branch).Run()
 			wt2, err2 := createWorktree(task.Workdir, branch)
 			if err2 != nil {
 				log.Printf("⚠️ scheduler: task %s worktree retry failed (continuing in original dir): %v", task.ID, err2)
@@ -629,8 +629,8 @@ func (s *MasterScheduler) runTask(task *Task) {
 	// 但: 确定性验证不过/执行失败的任务——worktree 直接清理（不 merge——防脏分支堆积）
 	if worktreeDir != "" && (task.Status == "failed" || task.FailReason != "") {
 		// 失败任务——worktree 强清（无复查——不 merge）
-		_ = exec.Command("git", "worktree", "remove", "--force", worktreeDir).Run()
-		_ = exec.Command("git", "branch", "-D", "task-"+sanitizeID(task.ID)).Run()
+		_ = exec.Command("git", "-c", "core.quotepath=false", "worktree", "remove", "--force", worktreeDir).Run()
+		_ = exec.Command("git", "-c", "core.quotepath=false", "branch", "-D", "task-"+sanitizeID(task.ID)).Run()
 		log.Printf("🗑️ scheduler: task %s failed — worktree cleanup (no merge)", task.ID)
 	}
 	// 完成后继续派发（队列里还有任务）
@@ -725,7 +725,7 @@ func guardBaseSHA(repoDir, want string) error {
 
 // gitOut 跑一条 git 命令并返回**去空白**的 stdout（失败带原文）。
 func gitOut(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "core.quotepath=false"}, args...)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %v\n%s", strings.Join(args, " "), err, tail(string(out), 300))
@@ -765,7 +765,7 @@ func repoRootForWorktree(wtDir string) (string, error) {
 // v2.5.5 T2——任务 git 底座——内部任务隔离开发
 func createWorktree(repoDir, branch string) (string, error) {
 	wtDir := filepath.Join(filepath.Dir(repoDir), "zerg-wt", branch)
-	cmd := exec.Command("git", "-C", repoDir, "worktree", "add", wtDir, "-b", branch)
+	cmd := exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false", "worktree", "add", wtDir, "-b", branch)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("worktree add failed: %v\n%s", err, tail(string(out), 300))
 	}
@@ -817,11 +817,11 @@ func mergeWorktree(wtDir string) error {
 	}
 	// 0. 先提交 worktree 未跟踪/未提交改动（任务产物——CA 可能只写没 commit）
 	// v2.5.5 测试发现: CA 写文件没 commit——merge 丢产物 + remove 拒绝（未跟踪文件）
-	addCmd := exec.Command("git", "-C", wtDir, "add", "-A")
+	addCmd := exec.Command("git", "-C", wtDir, "-c", "core.quotepath=false", "add", "-A")
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("worktree add -A failed: %v\n%s", err, tail(string(out), 300))
 	}
-	commitCmd := exec.Command("git", "-C", wtDir, "-c", "user.email=zerg@local", "-c", "user.name=Zerg AI", "commit", "-m", "task: 任务产物（worktree 自动提交）")
+	commitCmd := exec.Command("git", "-C", wtDir, "-c", "core.quotepath=false", "-c", "user.email=zerg@local", "-c", "user.name=Zerg AI", "commit", "-m", "task: 任务产物（worktree 自动提交）")
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		// 没有改动（commit 失败——nothing to commit）不算错——继续
 		log.Printf("   (worktree has no new changes — skipping commit — %s)\n", tail(string(out), 80))
@@ -833,7 +833,7 @@ func mergeWorktree(wtDir string) error {
 	}
 	log.Printf("📨 merge request %s: branch=%s base_sha=%s head_sha=%s\n", mr.REQID, mr.Branch, mr.BaseSHA, mr.HeadSHA)
 	// 1. 切回 main + merge 分支
-	cmd := exec.Command("git", "-C", repoDir, "checkout", "main")
+	cmd := exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false", "checkout", "main")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("checkout main failed: %v\n%s", err, tail(string(out), 300))
 	}
@@ -841,7 +841,7 @@ func mergeWorktree(wtDir string) error {
 	if err := guardBaseSHA(repoDir, mr.BaseSHA); err != nil {
 		return err
 	}
-	cmd = exec.Command("git", "-C", repoDir, "merge", "--no-edit", mr.Branch)
+	cmd = exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false", "merge", "--no-edit", mr.Branch)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("merge %s failed (base_sha=%s): %v\n%s", mr.Branch, mr.BaseSHA, err, tail(string(out), 300))
 	}
@@ -850,11 +850,11 @@ func mergeWorktree(wtDir string) error {
 		return fmt.Errorf("merge %s 报成功但 %s 不是 main 的祖先 ⇒ **不删分支**（孤儿分支就是这么来的）：%v", mr.REQID, mr.Branch, err)
 	}
 	// 2. 删 worktree + 分支
-	cmd = exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", wtDir)
+	cmd = exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false", "worktree", "remove", "--force", wtDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("worktree remove failed: %v\n%s", err, tail(string(out), 300))
 	}
-	cmd = exec.Command("git", "-C", repoDir, "branch", "-d", mr.Branch)
+	cmd = exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false", "branch", "-d", mr.Branch)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("branch -d failed: %v\n%s", err, tail(string(out), 300))
 	}
@@ -1090,7 +1090,7 @@ func (t *Task) String() string {
 // 有报告 → merge 回 main（保留产物）；无报告 → 强制清理（任务已死）
 // 返回清理数量
 func CleanupStaleWorktrees(repoDir string) int {
-	cmd := exec.Command("git", "-C", repoDir, "worktree", "list", "--porcelain")
+	cmd := exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false", "worktree", "list", "--porcelain")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("  worktree list failed: %v\n", err)
@@ -1146,15 +1146,15 @@ func cleanupOneStaleWorktree(repoDir, wtDir, branch string) bool {
 	if reportExists {
 		if err := mergeWorktree(wtDir); err != nil {
 			log.Printf("  stale %s merge failed — forcing cleanup: %v\n", branch, err)
-			exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", wtDir).Run()
-			exec.Command("git", "-C", repoDir, "branch", "-D", branch).Run()
+			exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false", "worktree", "remove", "--force", wtDir).Run()
+			exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false", "branch", "-D", branch).Run()
 			return true
 		}
 		log.Printf("  stale %s merged back to main (task artifacts kept)\n", branch)
 		return true
 	}
-	exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", wtDir).Run()
-	exec.Command("git", "-C", repoDir, "branch", "-D", branch).Run()
+	exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false", "worktree", "remove", "--force", wtDir).Run()
+	exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false", "branch", "-D", branch).Run()
 	log.Printf("  stale %s had no report — cleaned up (task is dead)\n", branch)
 	return true
 }

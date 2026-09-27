@@ -137,8 +137,19 @@ case "${1:-}" in
 esac
 
 say "== 主控换件 $TS =="; say "日志：$LOG"
-TOKEN="$(cat "$HOME/.zerg/token" 2>/dev/null || true)"
-probe() { curl -s -o /tmp/swap-probe.json -w '%{http_code}' -m 4 "$ENDPOINT" -H "X-Auth-Token: $TOKEN"; }
+# ── 令牌**不进 argv**（`Q-207` 拍板 · Mr2109 2026-09-26 · 缺口账 §附录四十五）──────────
+# 值经 **stdin** 交给 curl（`-H @-`）⇒ 命令行上永不出现令牌的**字面值**、也不出现**变量展开**
+# （目标机 `ps`/进程表里取不到实参令牌）；读法沿用旧口径：`$TOKEN_FILE`（默认 `~/.zerg/token`，600）。
+# 缺件/读不到 ⇒ 退「不带该头」的形态（与旧行为等价：服务端回 401，判据照旧判红/判 BLOCKED）。
+TOKEN_FILE="${TOKEN_FILE:-$HOME/.zerg/token}"
+curl_tok() {  # curl_tok <curl 参数…>
+  if [ -r "$TOKEN_FILE" ]; then
+    printf 'X-Auth-Token: %s\n' "$(cat "$TOKEN_FILE" 2>/dev/null || true)" | curl -H @- "$@"
+  else
+    curl "$@"
+  fi
+}
+probe() { curl_tok -s -o /tmp/swap-probe.json -w '%{http_code}' -m 4 "$ENDPOINT"; }
 identity() { python3 -c "
 import json
 try:
@@ -345,7 +356,7 @@ hr; say "[闸] 换件前置闸（未过 ⇒ 不换件、不动生产）"
 DIRTY="$(git status --porcelain core/ agent/ | grep -v '^?? ' | wc -l | tr -d ' ')"
 say "  闸A 工作树半成品：core/ agent/ 未提交改动数 = ${DIRTY}（须为 0——换件是从工作树编译的）"
 if [ "$DIRTY" != "0" ]; then
-  git status --porcelain core/ agent/ | grep -v '^?? ' | sed 's/^/       /' | tee -a "$LOG"
+  git -c core.quotepath=false status --porcelain core/ agent/ | grep -v '^?? ' | sed 's/^/       /' | tee -a "$LOG"
   say "!! 有并行半成品 ⇒ 不换件（等它落地再换）"; exit 1
 fi
 say "  闸B 盘上 plist：${PLIST}"

@@ -163,8 +163,101 @@ def scan(root):
     return hits, exempt
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+                     % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
+# ── `Q-176` 第五批：`--self-test` 三档自检（正控 rc=0 · 负控 rc=1 · 用法错 rc=2）──────────
+#    纪律：**只在临时目录里造件**（不读不写仓内件）· 子进程**真跑本件**取真退出码 · 退出即清。
+USAGE = "用法：python3 scripts/gates/check-hardcoded-private-paths.py [仓库根] [--strict] [--self-test]"
+SELF_PATH = os.path.abspath(__file__)
+
+
+def self_test():
+    """三档自检：干净件 ⇒ rc=0；写死私有路径（且非注释/非夹具）⇒ rc=1；未知旗标 ⇒ rc=2。
+
+    夹具里的命中词**取本件自己的 `NEEDLES`**（不新写字面量，免得本件成为新的私有路径宿主）。
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="hardcoded-paths-selftest-")
+    bad = [0]
+
+    def chk(label, want, rc, out):
+        good = (rc == want)
+        if not good:
+            bad[0] += 1
+        tail = "" if good else " ｜ " + (out.strip().splitlines() or [""])[-1][:90]
+        print("  %s %s（期望 rc=%d 实际 rc=%d）%s" % ("✓" if good else "✗", label, want, rc, tail))
+
+    def run(*argv):
+        p = subprocess.run([sys.executable, SELF_PATH] + list(argv), capture_output=True, text=True)
+        return p.returncode, p.stdout + p.stderr
+
+    def fixture(name, body, rel="core/main.go"):
+        d = os.path.join(tmp, name)
+        ap = os.path.join(d, *rel.split("/"))
+        os.makedirs(os.path.dirname(ap))
+        with open(ap, "w", encoding="utf-8") as f:
+            f.write(body)
+        return d
+
+    try:
+        print("── check-hardcoded-private-paths.py --self-test 三档（正控 0 · 负控 1 · 用法错 2）")
+        n = NEEDLES[0]
+        clean = fixture("clean", "package main\n\nvar x = \"hello\"\n")
+        rc, out = run(clean)
+        chk("档① 正控：干净件（无命中词）", 0, rc, out)
+
+        dirty = fixture("dirty", "package main\n\nvar p = \"%s/x\"\n" % n)
+        rc, out = run(dirty)
+        chk("档② 负控：代码行写死私有绝对路径", 1, rc, out)
+
+        comment = fixture("comment", "package main\n\n// 历史：曾写死 %s/x（注释不算，不编译进二进制）\nvar x = 1\n" % n)
+        rc, out = run(comment)
+        chk("档①′ 成对正控：同一路径出现在注释里 ⇒ **不许红**（防假红）", 0, rc, out)
+
+        rc, out = run(clean, "--no-such-flag")
+        chk("档③ 用法错：未知旗标（输入错 ≠ 零命中）", 2, rc, out)
+
+        rc, out = run("--json")
+        chk("档③′ 用法错：`--json` 而本门无机器读面（`Q-176` 统一口）", 2, rc, out)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("── 自检：%s" % ("全过 ✓" if bad[0] == 0 else "**%d 档不过** ✗" % bad[0]))
+    return 0 if bad[0] == 0 else 1
+
+
 def main():
-    args = [a for a in sys.argv[1:] if a != "--strict"]
+    rc_q176 = refuse_json_without_machine_face()
+    if rc_q176 is not None:
+        return rc_q176
+    argv = sys.argv[1:]
+    if "--self-test" in argv:
+        return self_test()
+    unknown = [a for a in argv if a.startswith("-") and a != "--strict"]
+    if unknown:
+        print("✗ 用法错（rc=2）：未知旗标 %s" % " ".join(unknown), file=sys.stderr)
+        print("  %s" % USAGE, file=sys.stderr)
+        return 2
+    args = [a for a in argv if a != "--strict"]
     root = repo_root(args[0] if args else None)
     print("仓库根: %s" % root)
     print("扫描根: %s（跳过构建/运行态目录与二进制文件）" % "、".join(SCAN_DIRS))

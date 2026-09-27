@@ -285,7 +285,30 @@ def scan(repo, docs_root):
     return 0
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+          % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                           else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
 def main():
+    rc_q176 = refuse_json_without_machine_face()
+    if rc_q176 is not None:
+        return rc_q176
     ap = argparse.ArgumentParser(description=VERSION)
     ap.add_argument("--root", default=DEFAULT_ROOT, help="仓根（默认 = 本脚本的上两级）")
     ap.add_argument("--docs-root", default=None, help="Zerg-内部文档 根（默认 = 仓根的上一级/Zerg-内部文档/项目文档/v2.5.11）")
@@ -296,8 +319,8 @@ def main():
     docs_root = docs_root_of(repo, args.docs_root)
     print(VERSION)
     if not args.no_self_test:
-        if self_test(repo, docs_root) is None:
-            print("⛔ 自检取不到读数 ⇒ 不给结论（rc=2）")
+        if not self_test(repo, docs_root):
+            print("⛔ 自检不过（读数取不到 或 有格不过）⇒ 不给结论（rc=2）")
             return 2
     if args.self_test:
         return 0

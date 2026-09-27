@@ -339,7 +339,7 @@ def check(root, scopes):
                 errs.append("formal（正式面 · **阻断**）：%d 处手写 `zerg …` 示例拼不到命令树（§九 M12）" % n)
         else:
             docs_root = os.environ.get("ZERG_DEVDOCS_ROOT") or os.path.join(
-                os.path.dirname(root), "Zerg-内部文档", "项目文档", "v2.5.10")
+                os.path.dirname(root), "Zerg-内部文档", "项目文档", "v2.5.13")
             files = collect_md(os.path.dirname(docs_root), os.path.basename(docs_root))
             if files is None:
                 lines.append("devdocs：开发文档面不在（%s）—— 本机判不了这一棵（不红、给 REPORT 0）" % docs_root)
@@ -583,7 +583,30 @@ def self_test():
     return 0
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+                     % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
 def main():
+    rc_q176 = refuse_json_without_machine_face()
+    if rc_q176 is not None:
+        return rc_q176
     ap = argparse.ArgumentParser(add_help=True,
                                  description="门⑫ · 文档-命令一致性（M12 + D3 · T-51）")
     ap.add_argument("--scope", action="append", default=[], choices=["formal", "devdocs"],

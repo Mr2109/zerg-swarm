@@ -798,17 +798,40 @@ def parse_args(argv):
             print(__doc__)
             return None
         else:
-            sys.stderr.write('✗ 未知参数: %s\n' % v)
+            print('✗ 未知参数: %s' % v, file=sys.stderr)
             return None
     return a
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+                     % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
 def main(argv):
+    rc_q176 = refuse_json_without_machine_face()
+    if rc_q176 is not None:
+        return rc_q176
     args = parse_args(argv)
     if args is None:
         return 2
     if args['self_only'] and args['no_self']:
-        sys.stderr.write('✗ --self-test 与 --no-self-test 不能同用\n')
+        print('✗ --self-test 与 --no-self-test 不能同用', file=sys.stderr)
         return 2
 
     if args['list']:
@@ -818,14 +841,14 @@ def main(argv):
     if not args['no_self']:
         rc = self_test()
         if rc != 0:
-            sys.stderr.write('✗ 自检不过 ⇒ 拒绝扫真目标（rc=2）\n')
+            print('✗ 自检不过 ⇒ 拒绝扫真目标（rc=2）', file=sys.stderr)
             return 2
         if args['self_only']:
             return 0
 
     root = args['root']
     if not os.path.isdir(root):
-        sys.stderr.write('✗ 仓根不存在: %s\n' % root)
+        print('✗ 仓根不存在: %s' % root, file=sys.stderr)
         return 2
     print('════════════════════════════════════════════════════════════')
     print('双构建工程门禁 · 仓根 %s' % root)

@@ -121,6 +121,19 @@ func cmdDocMetaFill(inv *invocation, stdout, stderr io.Writer) int {
 		return exitBlocked
 	}
 
+	// ① 续 · 落点**真在盘上**（同属**用法面先判**：点名的目录不在盘上 / 不是目录 ⇒ 用法错退 2）。
+	//
+	// 为什么这一格必须是 2、不能落到下面「扫不动 ⇒ 8」那一支：8 判的是「**读不到**」（真源在、这次读不动
+	// ⇒ 不给结论 · fail-closed），2 判的是「**你点错了**」（`--scope` 给了一条不存在的路径 —— 判据没有对象，
+	// 不是「判不了」）。同款先例：`--root`（family_find.go「`--root` 指的不是目录 ⇒ 退码 2」）、
+	// `--path`（family_code.go 同句）；`archive` 那一族也把「路径不存在」归用法错 2（family_archive.go:105）。
+	// 判据：cli_doc_meta_fill_test.go ⑤ 最后那格（`--scope <不存在的目录>` ⇒ 2）。
+	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
+		inv.setErr("usage", "root_not_dir", "落点不是目录")
+		fmt.Fprintf(stderr, "%s: 落点不是目录：%s（给 `--scope devdocs` 或一个**已存在**的目录）⇒ 退码 2\n", progName, root)
+		return exitUsage
+	}
+
 	// ② 扫件：只认 `*.md`（用例 = 那 63 篇）；点目录跳过。
 	files, serr := docMetaMDs(root)
 	if serr != nil {

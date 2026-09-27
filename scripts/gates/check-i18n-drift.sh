@@ -30,7 +30,7 @@
 #
 # 用法：
 #   scripts/gates/check-i18n-drift.sh [--phase all|exist|stale|comment] [--root docs] [--langs zh,en]
-#                               [--selftest] [--json]
+#                               [--self-test|--selftest] [--json]
 # 退码：0 = 三相全绿 · 1 = 仅告警相命中（comment）
 #       2 = **不给结论 / 阻塞**（有阻塞相命中（exist/stale）· 环境/输入异常（不在仓根 / 无 git /
 #           扫到 0 篇 / 参数错）—— 不静默空转）
@@ -55,7 +55,9 @@ while [ $# -gt 0 ]; do
     --phase) PHASE="${2:-all}"; shift 2 ;;
     --root)  ROOT="${2:-docs}";  shift 2 ;;
     --langs) LANGS="${2:-zh,en}"; shift 2 ;;
-    --selftest) SELFTEST=1; shift ;;
+    # ★ `Q-176` 拼法统一 —— **准拼法 `--self-test`**，旧拼法 `--selftest` 作别名（两个都认；
+    #   照 `all.sh` 与仓内已统一的诸门写法，**不创式样**）。两拼法同档、同一 rc。
+    --self-test|--selftest) SELFTEST=1; shift ;;
     --json) JSON=1; shift ;;
     -h|--help) grep '^#' "$0" | head -40; exit 0 ;;
     *) echo "✗ 未知参数：$1" >&2; exit 2 ;;

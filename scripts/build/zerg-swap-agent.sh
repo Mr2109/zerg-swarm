@@ -31,6 +31,9 @@
 #   0 全部闸通过（只读判定）· 1 有闸判 FAIL · 2 用法错 / **不给结论**（有 BLOCKED）/ 真换件档未开放
 #   3 **保留号**（回滚也失败 ⇒ 需人工）—— 只报告档跑不到它，占号是为与主控件逐号对齐
 #   ★ 没有 READY 式「回滚成功 = 1 + ROLLED_BACK」那一支：本档**不执行**回滚，那一支留给开启真换件档时补。
+#
+# ★ 纪律句（**不是判据** ✗ · 启动方式口径）：一切执行体一律 `bash <绝对路径>` 启动 ⇒ **不依赖 x 位**
+#   —— 判据**不声称**「这枚执行体可直接执行」（真机上执行体可能没有 x 位，现读 edge-node 真身即 664）。
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -41,6 +44,18 @@ PLIST_LABEL="${ZERG_SWAP_LABEL:-com.zerg.agent-Mr2109}"
 DOMAIN="gui/$UID"
 PLIST="${ZERG_SWAP_PLIST:-$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist}"
 TOKEN_FILE="${ZERG_SWAP_TOKEN_FILE:-$HOME/.zerg/token}"
+# ── 令牌**不进 argv**（`Q-207` 拍板 · Mr2109 2026-09-26 · 缺口账 §附录四十五）──────────
+# 值经 **stdin** 交给 curl（`-H @-`）⇒ 命令行上永不出现令牌的**字面值**、也不出现**变量展开**
+# （目标机 `ps`/进程表里取不到实参令牌）；读法沿用旧口径：`$TOKEN_FILE`（默认 `~/.zerg/token`，600）。
+# 缺件/读不到 ⇒ 退「不带该头」的形态（与旧行为等价：服务端回 401，判据照旧判红/判 BLOCKED）。
+TOKEN_FILE="${TOKEN_FILE:-$HOME/.zerg/token}"
+curl_tok() {  # curl_tok <curl 参数…>
+  if [ -r "$TOKEN_FILE" ]; then
+    printf 'X-Auth-Token: %s\n' "$(cat "$TOKEN_FILE" 2>/dev/null || true)" | curl -H @- "$@"
+  else
+    curl "$@"
+  fi
+}
 READY_URL="${ZERG_SWAP_READY_URL:-http://127.0.0.1:8100/ready}"
 STATUS_URL="${ZERG_SWAP_STATUS_URL:-http://127.0.0.1:8100/status}"
 TS="$(date +%Y%m%dT%H%M%S)"
@@ -68,6 +83,9 @@ zerg-swap-agent.sh —— 子端（zerg-agentd）换件的受控流程 · **只�
   闸② 验签：取数档 `codesign -dvvv` ⇒ `Signature=` / `flags=` / `cdhash` **三格齐且非 adhoc**（adhoc ⇒ **判红**；输出原样打印，不吞）
   闸③ 回滚位：回滚件（bin/_history/<件>.prev）必须**在位且验签通过** —— 「退得回去」得先证明
   闸④ 换件后自证判据可跑：探针打到子端自身 `/ready` + `/status`（只读 GET），证明判据活着
+
+纪律句（**不是判据** · 启动方式口径 · ⒟甲）：
+  一切执行体一律 `bash <绝对路径>` 启动 ⇒ **不依赖 x 位**（真机上件可能没有 x 位；判据不声称「可直接执行」）
 
 退码（唯一说法）：
   0  全部闸 PASS（只读判定通过）
@@ -117,7 +135,7 @@ DIRTY="$(git status --porcelain core/ agent/ ui/ wall/ 2>/dev/null | grep -v '^?
 if [ "$DIRTY" = "0" ]; then
   judge "A 工作树半成品" PASS "未提交改动数 = 0"
 else
-  git status --porcelain core/ agent/ ui/ wall/ 2>/dev/null | grep -v '^?? ' | sed 's/^/       /' | tee -a "$LOG"
+  git -c core.quotepath=false status --porcelain core/ agent/ ui/ wall/ 2>/dev/null | grep -v '^?? ' | sed 's/^/       /' | tee -a "$LOG"
   judge "A 工作树半成品" FAIL "未提交改动数 = ${DIRTY}（换件会把半成品编进生产件）"
 fi
 
@@ -238,9 +256,8 @@ else
 fi
 
 hr; say "[闸④] 换件后自证判据可跑（只读探针 —— 判据活着才谈得上自证）"
-TOKEN="$(cat "$TOKEN_FILE" 2>/dev/null || true)"
-READY_CODE="$(curl -s -o /tmp/zerg-swap-agent-ready.json -w '%{http_code}' -m 4 "$READY_URL" -H "X-Auth-Token: ${TOKEN}" 2>/dev/null || echo 000)"
-STATUS_CODE="$(curl -s -o /tmp/zerg-swap-agent-status.json -w '%{http_code}' -m 4 "$STATUS_URL" -H "X-Auth-Token: ${TOKEN}" 2>/dev/null || echo 000)"
+READY_CODE="$(curl_tok -s -o /tmp/zerg-swap-agent-ready.json -w '%{http_code}' -m 4 "$READY_URL" 2>/dev/null || echo 000)"
+STATUS_CODE="$(curl_tok -s -o /tmp/zerg-swap-agent-status.json -w '%{http_code}' -m 4 "$STATUS_URL" 2>/dev/null || echo 000)"
 say "      /ready=$READY_CODE · /status=$STATUS_CODE"
 if [ "$READY_CODE" = "200" ] && [ "$STATUS_CODE" = "200" ]; then
   MACHINE="$(python3 -c 'import json;print(json.load(open("/tmp/zerg-swap-agent-status.json")).get("machine",""))' 2>/dev/null || echo "")"

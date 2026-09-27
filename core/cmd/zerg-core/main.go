@@ -299,7 +299,11 @@ func main() {
 	} else {
 		agentBin = filepath.Join(statepath.WorkspaceRoot(), "bin", "zerg-agent")
 	}
-	masterSched := api.NewMasterScheduler(agentBin, 1, &api.StoreSnapshotReader{Store: fleetStore}) // 单槽——串行——v2.5.6 注入 store（ping 快照优先）
+	// ★ 2026-09-27 Mr2109 拍板「停」：并发槽位 1 → 0 = **暂停派活**（不再起新的 zerg-agent）。
+	// 判据（非自造，官方语义）：master_scheduler.go:370 `for len(s.queue) > 0 && len(s.running) < s.maxConcurrent`
+	// ⇒ maxConcurrent=0 时恒假 ⇒ 只入队排队、不起进程；本语义另有测试背书（slice_schema_test.go:15/29 逐字
+	//「maxConcurrent=0 ⇒ 放行只排队、不起进程」）。恢复：把下面的 0 改回 1 并重启主控（队列一件不丢）。
+	masterSched := api.NewMasterScheduler(agentBin, 0, &api.StoreSnapshotReader{Store: fleetStore}) // ★ 0=暂停派活（原为 1）
 	handlers.Scheduler = masterSched
 	// 2026-09-13: 显式启动（派发恢复的排队任务 + 启动故障自愈扫描）——构造期不再自动执行任务
 	masterSched.Start()

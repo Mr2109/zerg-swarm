@@ -13,6 +13,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/gitpaths"
 )
 
 // TaskContract — 任务验收契约
@@ -141,26 +143,21 @@ func (c *TaskContract) Verify(worktreeDir, workdir string) *VerifyResult {
 // gitChangedFiles — worktree 内改动文件清单（未提交+已提交 vs main）
 func gitChangedFiles(dir string) []string {
 	var out []string
-	cmd := exec.Command("git", "-C", dir, "status", "--porcelain")
-	if b, err := cmd.Output(); err == nil {
-		for _, line := range strings.Split(string(b), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			// 状态码两字符 + 空格 + 路径
-			if len(line) > 3 {
-				out = append(out, strings.TrimPrefix(line[3:], "\""))
-			}
+	// C4：`status` 面走 A1 出口（gitpaths.List）——`-z` 出口 + C-5 自检，
+	// 件名一律真名（旧写法 `line[3:]` + 剥一个引号还原不了八进制转义）。
+	if ents, err := gitpaths.List(dir, gitpaths.FaceStatus); err == nil {
+		for _, e := range ents {
+			out = append(out, e.String())
 		}
 	}
 	// 已提交的（分支领先 main——重跑场景）
-	cmd2 := exec.Command("git", "-C", dir, "diff", "--name-only", "main...HEAD")
-	if b, err := cmd2.Output(); err == nil {
-		for _, line := range strings.Split(string(b), "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				out = append(out, line)
+	// ★ C3（2026-09-27）：取「改动件名」一律经 A1 出口（gitpaths.List · FaceDiff + WithRev）
+	// —— 本处原先裸拼 `git -C <dir> -c core.quotepath=false diff --name-only main...HEAD`；
+	// 出口 argv 同面（`diff --name-only -z main...HEAD`），`-z` 全免疫 + C-5 自检硬拒转义形态。
+	if ents, err := gitpaths.List(dir, gitpaths.FaceDiff, gitpaths.WithRev("main...HEAD")); err == nil {
+		for _, e := range ents {
+			if name := e.String(); name != "" {
+				out = append(out, name)
 			}
 		}
 	}

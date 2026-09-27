@@ -2,7 +2,14 @@
 # -*- coding: utf-8 -*-
 """发布期门禁：「危险路径」与「令牌形态」。任一命中 ⇒ 不得发布。
 
-退出码：0 = 干净；1 = 有命中（不得发布）；2 = 脚本自测未过（拒绝出结论）。
+退出码：0 = 干净；1 = 有命中（不得发布）；2 = 脚本自测未过**或目标不是公开产物树**（拒绝出结论）。
+
+档位（自述与退码同向 · 缺口 `Q-177`，病灶见下方「前置判据」一节）：
+  · **发布档**（默认 · 目标**必须是公开产物树**）：判「即将发布的这棵树」。
+      目标不是产物树 / 判不出是不是 ⇒ **rc=2 拒绝出结论**（缺语料铁律：判不了不给结论，
+      **既不得 FAIL、更不得静默绿**）。私有/开发树请改用审计档。
+  · **审计档**（`--all`）：扫全史对象，**供人工审计**，**预期为红**，不作发布结论
+      （rc=1 只说「审计有命中」，与档位自述同向）。
 
 原由（2026-09-13 审计报告 §8.2）：公开仓历史里曾出现 6 个 **CA 任务日志**
 `events.jsonl`（合计约 854KB，含令牌形态与 bearer 字样），而当时的发布清单只按
@@ -19,6 +26,11 @@
     也**不**纳入「超长 base64 样串」：末树 881 处命中（哈希/内嵌资源），纯噪声。
 
 用法: python3 scripts/gates/check-public-tree-hazards.py <git目录> [<commit>|--all]
+
+目标语义（缺口 `Q-177` 治「档位自述与退码不同向」）：
+  · **不给目录不再默认判 `.`** —— `.` 是私有权威仓（1332 提交 / 1473 文件），而私有树里
+    本就留着发布机制自己的脚本与运行期日志 ⇒ 默认调用**恒红**，真红与「判错了树」在机器上同形。
+  · 发布档要先过**前置判据**（`tree_class`：单提交 + 快照提交信息）；判不出 ⇒ `rc=2`。
 
 模式语义（重要）：
   · **发布闸用 HEAD**（或指定 commit）—— 判的是「即将发布的这棵树」里有没有危险物；
@@ -63,6 +75,47 @@ FORM_RES = [(re.compile(rx), why) for rx, why in TOKEN_FORM]
 T = "x3gw-"
 B = "Bearer "
 
+# ── 前置判据（缺口 `Q-177`）：传入目录是不是「公开产物树」──────────────
+#   为什么加（2026-09-26 现读坐实 · 另一枚卵）：本件默认参数是 `.` ⇒ **无参调用判的是
+#   私有权威仓 HEAD 全树**（现读 1332 提交 / 1473 文件），而私有树里本就留着发布机制
+#   自己的脚本与运行期日志 ⇒ **默认调用恒红**（现读 rc=1：`scripts/gates/baseline-audit.jsonl`
+#   路径命中 + `scripts/build/publish-public.sh` 令牌形态命中）；发布闸
+#   （`scripts/build/publish-preflight.sh:85`）传的是 `$D` = **产物目录**（现读 1208 件 ⇒ 0 命中 rc=0）。
+#   两处**自述同形、退码反色** ⇒ 机器上分不开「真有危险物」与「判错了树」。
+#   治法选**乙**：给发布档加**前置判据**；**判不出「这是产物树」⇒ rc=2 拒绝出结论**
+#   （缺语料铁律：判不了不给结论 —— 既不得 FAIL、也不得静默绿）。
+SNAPSHOT_SUBJECT = "Zerg Swarm (虫族) — 公开快照"   # 压平提交首行（scripts/build/publish-public.sh:954）
+SNAPSHOT_BODY_MARK = "GitOrigin-RevId:"            # 压平提交正文（同件 :958，第二道独立信号）
+
+
+def tree_class(commit_count, subject, body):
+    """产物树判据（**纯函数** · 无子进程 ⇒ 可自测）：单提交 + 快照提交信息。
+    返回 `(是产物树, 判据说明)`；判不出 ⇒ 由调用侧退 `rc=2`，绝不当成「命中」。"""
+    if commit_count is None:
+        return False, "读不到提交数（不是 git 仓 / 空仓？）"
+    if commit_count != 1:
+        return False, "提交数 %s ≠ 1（产物树由压平器收成单提交）" % commit_count
+    if not (subject or "").startswith(SNAPSHOT_SUBJECT):
+        return False, "提交首行不是快照首行（现读 %r）" % (subject or "")
+    if SNAPSHOT_BODY_MARK not in (body or ""):
+        return False, "提交正文缺 `%s`（第二道独立信号）" % SNAPSHOT_BODY_MARK
+    return True, "单提交 + 快照提交信息（压平产物树）"
+
+
+def probe_product_tree(gitdir):
+    """读目标仓实况交给 `tree_class`；读不到 ⇒ `(False, 说清为何判不了)`。"""
+    try:
+        log = subprocess.run(["git", "-C", gitdir, "log", "-1", "--format=%s%x00%b"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace")
+    except (OSError, subprocess.SubprocessError):
+        return False, "调不起 git（本机无 git 可执行或权限不足）"
+    if log.returncode != 0 or "\x00" not in log.stdout:
+        return False, "读不到 HEAD 提交信息（非 git 目录 / 空仓：`%s`）" % gitdir
+    subject, body = log.stdout.rstrip("\n").split("\x00", 1)
+    cnt = subprocess.run(["git", "-C", gitdir, "rev-list", "--count", "HEAD"],
+                         capture_output=True, text=True).stdout.strip()
+    return tree_class(int(cnt) if cnt.isdigit() else None, subject, body)
+
 
 def selftest():
     cases_path = [
@@ -84,6 +137,16 @@ def selftest():
         ("X-Auth-Token: " + T + "shared0123456789", True, "实际令牌形态"),
         ("curl -H 'X-Auth-Token: $TOKEN' http://x", False, "变量引用"),
     ]
+    # `Q-177` 前置判据格（**纯函数**格：输入 → 是否产物树；判不出 ⇒ 调用侧 rc=2）
+    cases_tree = [
+        (1, SNAPSHOT_SUBJECT, "源码快照，非开发历史。" + SNAPSHOT_BODY_MARK + " abc", True,
+         "压平产物树（发布档正控）"),
+        (1, "feat: 私有开发提交", SNAPSHOT_BODY_MARK + " abc", False,
+         "单提交但不是快照 ⇒ 判不了（不给结论）"),
+        (1, SNAPSHOT_SUBJECT, "正文无第二道信号", False, "缺 GitOrigin-RevId ⇒ 判不了"),
+        (1332, SNAPSHOT_SUBJECT, SNAPSHOT_BODY_MARK + " abc", False, "私有权威仓（多提交）⇒ 判不了"),
+        (None, SNAPSHOT_SUBJECT, SNAPSHOT_BODY_MARK + " abc", False, "读不到提交数 ⇒ 判不了"),
+    ]
     bad = 0
     for text, want, why in cases_path:
         got = any(rx.search(text) for rx, _ in PATH_RES)
@@ -95,13 +158,86 @@ def selftest():
         ok = (got == want)
         bad += (not ok)
         print("   %s want=%-5s got=%-5s | %s" % ("✓" if ok else "✗", want, got, why))
-    print("   自测: %s" % ("全过" if bad == 0 else "%d 条失败" % bad))
+    for cnt, subj, body, want, why in cases_tree:
+        got = tree_class(cnt, subj, body)[0]
+        ok = (got == want)
+        bad += (not ok)
+        print("   %s want=%-5s got=%-5s | %s" % ("✓" if ok else "✗", want, got, why))
+    # ── ★ 回归自测格（缺口 `GAP-20260927-216` · 2026-09-27 补）：**非 ASCII（CJK）件名**不许失明 ──
+    #   病灶（今天已修，本格是牙齿）：`git ls-tree --name-only` 默认 `core.quotePath=true`，把
+    #   非 ASCII 件名输出成 `"子目录/\344\270\255…"`（**首尾双引号 + 反斜杠八进制**）⇒ 拿它去
+    #   比对 / 拼路径 / `os.stat` 全失效（该件在清单里“查不到”，闸却照样绿）。
+    #   `all_paths()` 的治法就是那一处 `-c core.quotepath=false`；本格把它钉死 —— 谁把那处 `-c`
+    #   拿掉，这一格立刻变红（负控已在**仓外副本**上实测：去 `-c` ⇒ 本自测 rc=2）。
+    #   夹具：**仓外**临时 git 仓（`tempfile.mkdtemp`）里建一枚中文名件 `子目录/中文名件.md`
+    #   ＋一枚 ASCII 件作对照；跑的是本件真取清单那条路径 `all_paths()`。
+    import os as _os
+    import shutil as _shutil
+    import tempfile as _tempfile
+    n_extra = 0
+    _fx_root = _tempfile.mkdtemp(prefix="hazards-selftest-cjk-")
+    _fx_repo = _os.path.join(_fx_root, "repo")
+    _cjk_rel = _os.path.join("子目录", "中文名件.md")
+    _git_env = dict(_os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@e",
+                    GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e")
+    try:
+        _os.makedirs(_os.path.join(_fx_repo, "子目录"), exist_ok=True)
+        with open(_os.path.join(_fx_repo, _cjk_rel), "w", encoding="utf-8") as fh:
+            fh.write("x\n")
+        with open(_os.path.join(_fx_repo, "docs-ascii.md"), "w", encoding="utf-8") as fh:
+            fh.write("x\n")
+        subprocess.run(["git", "init", "-q", "-b", "main", _fx_repo], check=True, env=_git_env)
+        subprocess.run(["git", "-C", _fx_repo, "add", "-A"], check=True, env=_git_env)
+        subprocess.run(["git", "-C", _fx_repo, "commit", "-q", "-m", "fixture"], check=True, env=_git_env)
+        _listed = all_paths(_fx_repo, "HEAD")
+        _naive = subprocess.run(["git", "-C", _fx_repo, "-c", "core.quotepath=true",
+                                 "ls-tree", "-r", "HEAD", "--name-only"],
+                                capture_output=True, text=True, encoding="utf-8",
+                                errors="replace").stdout
+        _naive_escaped = any(('"' in p) or re.search(r"\\[0-7]{3}", p)
+                             for p in _naive.split("\n") if p.strip())
+        _stat_ok = True
+        try:
+            _os.stat(_os.path.join(_fx_repo, _cjk_rel))
+        except OSError:
+            _stat_ok = False
+        # 格①：清单里那枚中文名件**原样**在（不是被转义/加引号的形态），且按此名能 `os.stat` 到
+        _case1 = [
+            (_cjk_rel in _listed, "中文名件在清单里（原样命中）"),
+            (not any(p.startswith('"') or p.endswith('"') for p in _listed),
+             "清单条目首尾无双引号"),
+            (not any(re.search(r"\\[0-7]{3}", p) for p in _listed),
+             "清单条目无反斜杠八进制转义"),
+            (_stat_ok, "按清单里的名字能 os.stat 到该件"),
+            (all(p in ("docs-ascii.md", _cjk_rel) for p in _listed),
+             "夹具清单只含这两件（现读 %r）" % (_listed,)),
+        ]
+        for _ok, _why in _case1:
+            bad += (not _ok)
+            n_extra += 1
+            print("   %s %-32s | %s" % ("✓" if _ok else "✗", "cjk-name-clean-from-list", _why))
+        # 格②：**这一格有牙齿** —— 同仓同件，默认 `quotePath` 下 git 确实把它转义出去
+        #      （⇒ 一旦 `all_paths()` 丢了 `-c core.quotepath=false`，格① 必红，不是恒绿摆设）
+        _teeth = _naive_escaped and ("docs-ascii.md" in _naive)
+        bad += (not _teeth)
+        n_extra += 1
+        print("   %s %-32s | %s" % ("✓" if _teeth else "✗", "cjk-name-quotepath-is-real",
+                                    "默认 quotePath 下 git 确实转义该名（⇒ 丢 `-c` 必红）"))
+    except (OSError, subprocess.SubprocessError) as exc:
+        # 建不起夹具（无 git / 临时目录不可写）⇒ **红**：缺语料不许静默绿
+        bad += 1
+        n_extra += 1
+        print("   ✗ %-32s | 夹具建不起来（%s）⇒ 不许静默绿" % ("cjk-name-clean-from-list", exc))
+    finally:
+        _shutil.rmtree(_fx_root, ignore_errors=True)
+    print("   自测: %s（%d 格）" % ("全过" if bad == 0 else "%d 条失败" % bad,
+                                   len(cases_path) + len(cases_form) + len(cases_tree) + n_extra))
     return bad == 0
 
 
 def all_paths(gitdir, commit):
     """返回该提交（或全史对象）里的仓库根相对路径集合。"""
-    out = subprocess.run(["git", "-C", gitdir, "ls-tree", "-r", commit, "--name-only"],
+    out = subprocess.run(["git", "-C", gitdir, "-c", "core.quotepath=false", "ls-tree", "-r", commit, "--name-only"],
                          capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
     return [p for p in out.split("\n") if p.strip()]
 
@@ -109,7 +245,7 @@ def all_paths(gitdir, commit):
 def scan_paths(gitdir, commits_all):
     hits = []
     if commits_all:
-        out = subprocess.run(["git", "-C", gitdir, "rev-list", "--objects", "--all"],
+        out = subprocess.run(["git", "-C", gitdir, "-c", "core.quotepath=false", "rev-list", "--objects", "--all"],
                              capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
         paths = sorted({ln.split(" ", 1)[1] for ln in out.split("\n") if " " in ln})
         for rx, why in PATH_RES:
@@ -150,13 +286,61 @@ def scan_forms(gitdir, commit, commits_all):
     return hits
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+                     % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
 if __name__ == "__main__":
+    rc_q176 = refuse_json_without_machine_face()
+    if rc_q176 is not None:
+        sys.exit(rc_q176)
+
+    # ★ `Q-176` 第六批：拼法统一 —— 准拼法 `--self-test`（旧拼法 `--selftest` 作别名，两个都认）。
+    #   给旗标 ⇒ **只跑自检**（退出码即自检结论：0 = 过 · 2 = 不过）；不给 ⇒ 照旧「自检不过 ⇒ 拒绝出结论」。
+    argv = [a for a in sys.argv[1:] if a not in ("--self-test", "--selftest")]
+    if len(argv) != len(sys.argv) - 1:
+        ok = selftest()
+        print("── check-public-tree-hazards.py --self-test（旧拼法 --selftest 同档）：%s"
+              % ("全过 ✓" if ok else "**不过** ✗"))
+        sys.exit(0 if ok else 2)
+
     if not selftest():
         print("自测未过 ⇒ 脚本本身有问题，拒绝出结论", file=sys.stderr)
         sys.exit(2)
-    target = sys.argv[1] if len(sys.argv) > 1 else "."
-    mode = sys.argv[2] if len(sys.argv) > 2 else "HEAD"
+    target = argv[0] if len(argv) > 0 else "."
+    mode = argv[1] if len(argv) > 1 else "HEAD"
     commits_all = (mode == "--all")
+
+    # ── 档位（缺口 `Q-177`）：**自述与退码必须同向** ────────────────────
+    if commits_all:
+        print("档位: 审计档（`--all` 扫全史对象）—— 供人工审计，**预期为红**；"
+              "rc=1 只说「审计有命中」，不作发布结论")
+    else:
+        is_product, why = probe_product_tree(target)
+        if not is_product:
+            print("⛔ 拒绝出结论（rc=2）：目标不是「公开产物树」—— %s" % why, file=sys.stderr)
+            print("   目标: `%s` · 发布档只判**即将发布的产物树**（判不了就不给结论）" % target,
+                  file=sys.stderr)
+            print("   口径: 私有/开发树请用审计档 `--all`；「真有危险物」与「判错了树」不许同形",
+                  file=sys.stderr)
+            sys.exit(2)
+        print("档位: 发布档（`%s` mode=%s）—— %s" % (target, mode, why))
 
     ph = scan_paths(target, commits_all)
     fh = scan_forms(target, mode if not commits_all else "main", commits_all)

@@ -35,6 +35,7 @@ docs 子目录/文件它看不见。故对公开树 `docs/` 下的**每一条路
 import argparse
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -190,7 +191,8 @@ def docs_face_scan(tree, allow):
 
 # ── 成对负控自检（--self-test）────────────────────────────────────────────
 # 纪律（与 scripts/gates/check-doc-name.py / check-publish-face-sync.py 同款）：**真命令行 + 真退出码**，
-# 全部在 /tmp 合成夹具上跑，绝不碰真仓；夹具保留备查。逐条覆盖与口径见 publish/README-private.md。
+# 全部在**临时夹具**上跑（基目录尊重 `TMPDIR`，跑完 `shutil.rmtree` 清掉），绝不碰真仓；
+# 逐条覆盖与口径见 publish/README-private.md。
 CLEAN_SAMPLE = ("docs/zh/x.md", "docs/en/x.md")   # 正式面样例 ⇒ 必须绿
 SAMPLE_BASE = "自检样例.md"                        # 目录规则用的样例文件名
 
@@ -227,12 +229,25 @@ def _run(tree, rules_path, extra=()):
 NO_ALLOW = ("--no-docs-allowlist",)
 
 
+def _tmp_base():
+    """夹具基目录：**尊重 `TMPDIR`**（指名且可用 ⇒ 就落在那里）；读不出 ⇒ 交回 `tempfile` 默认落点。"""
+    d = os.environ.get("TMPDIR") or ""
+    return d if os.path.isdir(d) else None
+
+
 def self_test():
-    base = tempfile.mkdtemp(prefix="pubtree-private-selftest-",
-                            dir="/tmp" if os.path.isdir("/tmp") else None)
+    """自检入口：夹具基目录**尊重 `TMPDIR`**，**跑完即清**（`try/finally` + `rmtree(ignore_errors=True)`）。"""
+    base = tempfile.mkdtemp(prefix="pubtree-private-selftest-", dir=_tmp_base())
+    try:
+        return _self_test_body(base)
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def _self_test_body(base):
     dirs, files, allowed = load_rules(RULES)
     rules = dirs + files
-    print("自检工作区（保留备查）：%s" % base)
+    print("自检工作区（尊重 TMPDIR · 跑完即清）：%s" % base)
     print("判据面：%d 目录 + %d 文件 = %d 条规则 ← %s" % (len(dirs), len(files), len(rules),
                                                           os.path.relpath(RULES, REPO)))
     n_ok = n_bad = 0
@@ -314,7 +329,30 @@ def self_test():
     return 0 if n_bad == 0 else 1
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+                     % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
 def main():
+    rc_q176 = refuse_json_without_machine_face()
+    if rc_q176 is not None:
+        return rc_q176
     ap = argparse.ArgumentParser()
     ap.add_argument("tree", nargs="?", help="待检查的公开树目录")
     ap.add_argument("--rules", default=RULES)

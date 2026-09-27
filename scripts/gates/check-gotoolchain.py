@@ -53,8 +53,100 @@ def parse(path):
     return (tc.group(1) if tc else None), ("go" + gd.group(1) if gd else None)
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+                     % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
+# ── `Q-176` 第五批：`--self-test` 三档自检（正控 rc=0 · 负控 rc=1 · 用法错 rc=2）──────────
+#    纪律：**只在临时目录里造件**（不读不写仓内件）· 子进程**真跑本件**取真退出码 · 退出即清。
+USAGE = "用法：python3 scripts/gates/check-gotoolchain.py [仓库根] [--self-test]"
+SELF_PATH = os.path.abspath(__file__)
+
+
+def self_test():
+    """三档自检：两模块同值 ⇒ rc=0；分叉/超 pin ⇒ rc=1；未知旗标 ⇒ rc=2。"""
+    import shutil
+    import subprocess
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="gotoolchain-selftest-")
+    bad = [0]
+
+    def chk(label, want, rc, out):
+        good = (rc == want)
+        if not good:
+            bad[0] += 1
+        tail = "" if good else " ｜ " + (out.strip().splitlines() or [""])[-1][:90]
+        print("  %s %s（期望 rc=%d 实际 rc=%d）%s" % ("✓" if good else "✗", label, want, rc, tail))
+
+    def run(*argv):
+        p = subprocess.run([sys.executable, SELF_PATH] + list(argv), capture_output=True, text=True)
+        return p.returncode, p.stdout + p.stderr
+
+    def fixture(name, core, agent):
+        d = os.path.join(tmp, name)
+        os.makedirs(os.path.join(d, "core"))
+        os.makedirs(os.path.join(d, "agent"))
+        for mod, body in (("core", core), ("agent", agent)):
+            with open(os.path.join(d, mod, "go.mod"), "w", encoding="utf-8") as f:
+                f.write(body)
+        return d
+
+    try:
+        print("── check-gotoolchain.py --self-test 三档（正控 0 · 负控 1 · 用法错 2）")
+        clean = fixture("clean", "module core\n\ngo 1.22.0\n", "module agent\n\ngo 1.22.0\n")
+        rc, out = run(clean)
+        chk("档① 正控：两模块同值（core 的 go 指令为 pin）", 0, rc, out)
+
+        higher = fixture("higher", "module core\n\ngo 1.22.0\n",
+                         "module agent\n\ngo 1.22.0\n\ntoolchain go1.23.0\n")
+        rc, out = run(higher)
+        chk("档② 负控：agent 要求 go1.23.0 高于 pin go1.22.0", 1, rc, out)
+
+        diverge = fixture("diverge", "module core\n\ngo 1.22.0\n\ntoolchain go1.22.0\n",
+                          "module agent\n\ngo 1.23.0\n\ntoolchain go1.23.0\n")
+        rc, out = run(diverge)
+        chk("档②′ 成对负控：两模块 toolchain 不同值（单一真源被破坏）", 1, rc, out)
+
+        rc, out = run(clean, "--no-such-flag")
+        chk("档③ 用法错：未知旗标（机器面缺/输入错 ≠ 零命中）", 2, rc, out)
+
+        rc, out = run("--json")
+        chk("档③′ 用法错：`--json` 而本门无机器读面（`Q-176` 统一口）", 2, rc, out)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("── 自检：%s" % ("全过 ✓" if bad[0] == 0 else "**%d 档不过** ✗" % bad[0]))
+    return 0 if bad[0] == 0 else 1
+
+
 def main():
-    root = repo_root(sys.argv[1] if len(sys.argv) > 1 else None)
+    rc_q176 = refuse_json_without_machine_face()
+    if rc_q176 is not None:
+        return rc_q176
+    argv = sys.argv[1:]
+    if "--self-test" in argv:
+        return self_test()
+    unknown = [a for a in argv if a.startswith("-")]
+    if unknown:
+        print("✗ 用法错（rc=2）：未知旗标 %s" % " ".join(unknown), file=sys.stderr)
+        print("  %s" % USAGE, file=sys.stderr)
+        return 2
+    root = repo_root(argv[0] if argv else None)
     print("仓库根: %s" % root)
     mods = {}
     fails = []

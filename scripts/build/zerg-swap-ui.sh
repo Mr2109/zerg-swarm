@@ -104,7 +104,7 @@ DIRTY="$(git status --porcelain ui/ wall/ core/ agent/ 2>/dev/null | grep -v '^?
 if [ "$DIRTY" = "0" ]; then
   judge "A 工作树半成品" PASS "未提交改动数 = 0"
 else
-  git status --porcelain ui/ wall/ core/ agent/ 2>/dev/null | grep -v '^?? ' | sed 's/^/       /' | tee -a "$LOG"
+  git -c core.quotepath=false status --porcelain ui/ wall/ core/ agent/ 2>/dev/null | grep -v '^?? ' | sed 's/^/       /' | tee -a "$LOG"
   judge "A 工作树半成品" FAIL "未提交改动数 = ${DIRTY}（换件会把半成品编进生产件）"
 fi
 
