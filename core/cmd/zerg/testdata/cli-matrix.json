@@ -3390,6 +3390,21 @@
    "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封走 stdout**（**不是空** —— 本格 stdout 是错误面，字节数见 `want_stdout_bytes` 那一格 · §4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
+   "id": "gate/matrix#--dry-run 与 --yes 同给",
+   "command": "gate matrix",
+   "argv": [
+    "gate",
+    "matrix",
+    "--out",
+    "/tmp/zz-bag.tsv",
+    "--dry-run",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 硬失败退 2（不给结论）并点名 `detail=dry_run_yes_conflict`：复用已签共享判定 `dryRunYesConflict`（唯一实现落 `guard.go` · 逐命令在自己的**唯一写盘点之前**调用 · `GAP-20260927-376`）。★ 本格 argv **必须**带 `--out` —— 同给那道判在 `gate matrix` 的 `--out` 那一支里（三态门只对写面开），无 `--out` 时两枚旗标都进不去那道门；现跑两遍逐字同值（rc=2 · stdout 空面）。"
+  },
+  {
    "id": "gate/bench#未知旗标",
    "command": "gate bench",
    "argv": [
