@@ -396,6 +396,26 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 				return reportBadField(stderr, inv.path, f)
 			}
 		}
+		// ★ 2026-09-28（`GAP-20260928-09` **残留** · 本枚）**本档必不产出的字段名 ⇒ 写前拒**。
+		//   上面那一段只判「名字在不在命令的字段表里」：`approver` / `rollback_verdict` / `rollback_tier` /
+		//   `rollback_cmd` / `rollback_why` 五格**在表里**（`devEditFields` 列着），却只由**干跑档**填
+		//   （退点四格见干跑支的 `devEditReturnPoint`、`approver` 见干跑支那一行）⇒ 真写档的 row 里没有它们，
+		//   收口落在末尾 `selectJSON(…, inv.fields, row)` 里的 `marshalObject` 上 ⇒ **件已经写完了**才退 2
+		//   （与修前同病：同一发「既写了件、又退 2 报 usage」）。
+		//   口径**一字不新立**：判据就是 `--json` 出口那一枚 `marshalObject` —— 这里拿**本档 row 的原样**先试
+		//   一次投影，试出 `bad` 就用**同一枚** `reportBadField`（逐字同句）报，只把位置挪到第一个真写动作
+		//   （下面 `appendEditAudit`）之前。`result` 那一格本档**确实产出**（写成功后置 `written`）⇒
+		//   探针里照置，好字段名**不误伤**（`proposal` / `file` / `mode` / 两枚 sha / 两枚字节 / 审计与目标路径 /
+		//   `approval` / `approval_path` / `syntax` 与 `result` 全在 probe 里 ⇒ 逐字照旧）。
+		probe := make(map[string]string, len(row)+1)
+		for k, v := range row {
+			probe[k] = v
+		}
+		probe["result"] = "written"
+		if _, bad := marshalObject(inv.fields, probe); bad != "" {
+			fmt.Fprintf(stderr, "%s: 本档（真写）不产出字段 %q ⇒ **写前拒**（未落盘、未记审计）\n", progName, bad)
+			return reportBadField(stderr, inv.path, bad)
+		}
 	}
 
 	// ⑦ 真写：**审计先落盘**（写不进日志就不许执行 · §九 M3 C5）⇒ 再写件 ⇒ 再自检回读 sha256
