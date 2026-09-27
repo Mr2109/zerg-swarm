@@ -620,8 +620,14 @@ def run(root, docs_root, source, json_out, export_cmd=None):
         print("     真源    : %d 条 · 未闭 %d · 已闭 %d" % (sread["recs"], len(sread["open"]), len(sread["closed"])))
         print("     导出现跑: 件头 %d 条 · 未闭 %d · 已闭 %d（不做 %d）· 正文 %d 条 · 件尾未闭 %d"
               % (exp["total"], exp["open"], exp["closed"], exp["no_decide"], len(exp["bullets"]), exp["foot_open"]))
+        # ★ 2026-09-27：这一格（人面）与 `:503` 的判定**同一枚判据** —— 都走 `GENERATED_MARKERS`
+        #   （逐字句 + 「同一句去掉收尾反引号」两形态）。修前这里用 `led["generated"]`
+        #   （`GENERATED_MARKER` 单数 · 只认收尾反引号那一形态）⇒ 门真绿时人面反而打
+        #   「生成件=**否**✗」，人看会被引到错结论（判据与人面**分离**）。
         print("     账件    : %s（生成件=%s）· 行 %d · 字节 %d · id %d 个"
-              % (led["rel"], "是" if led["generated"] else "**否**✗", led["lines"], led["bytes"], len(led["ids"])))
+              % (led["rel"],
+                  "是" if any(_mk in led["text"] for _mk in GENERATED_MARKERS) else "**否**✗",
+                  led["lines"], led["bytes"], len(led["ids"])))
         print("     件族    : 索引 1 + 页 %d ⇒ 族内 id 并集 %d 个 · Σ页条目 %d"
               % (len(pages), len(fam_ids),
                  sum(len(_s["ids"]) for _x, _s in fam_led if _x["kind"] == "page")))
