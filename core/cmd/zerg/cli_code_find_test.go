@@ -94,7 +94,9 @@ func TestCodeFind_GlobAndPathNarrowing(t *testing.T) {
 // TestCodeFind_AbsolutePathIsExplicitRoot —— `W-03` 成对判据（2026-09-24 批七 · 序88）：
 // ① **正控**：`--path` 给**绝对路径**的目录 ⇒ rc=0（旧写法一律与仓根 `Join` ⇒ 拼出来的路径
 // 不存在 ⇒ 报「指的不是目录」的**假阴**）；
-// ② **负控**：`--path` 给非目录 ⇒ rc=2（且报的必须是「不是目录」，不是别的理由）。
+// ② **负控**：`--path` 给**既不是件也不是目录**的路径（这里用不存在的路径）⇒ rc=2
+// （★ 2026-09-27 口径变更：`--path` 指**常规件**由「退 2」改判为**能扫到** ——
+// 成对三控见 `TestCodeFind_PathAcceptsRegularFile`；★ 新文案仍含旧子串 ⇒ 分辨新老行为靠 rc，不靠文案）。
 func TestCodeFind_AbsolutePathIsExplicitRoot(t *testing.T) {
 	bin := zergBinary(t)
 	root := syntheticRepo(t, "exit 0\n")
@@ -110,18 +112,59 @@ func TestCodeFind_AbsolutePathIsExplicitRoot(t *testing.T) {
 		t.Errorf("绝对根那一跑没扫到 aaa/one.go：%q", out)
 	}
 
-	// ② 负控：非目录（仓内相对路径指向一件文件）⇒ 2 且理由逐字是「不是目录」。
-	rc, _, errb = execCase(t, bin, root, "code", "find", "needle", "--path", "aaa/one.go")
+	// ② 负控：既不是件也不是目录（绝对路径指向不存在的路径）⇒ 仍 2（不许静默扫成零命中）。
+	// ★ 口径变更（2026-09-27）：`--path` 指**常规件**已从「退 2」改判为**能扫到** ——
+	// 成对三控见 `TestCodeFind_PathAcceptsRegularFile`（目录 ⇒ 扫到 · 常规件 ⇒ 扫到 · 不存在 ⇒ 2）。
+	rc, _, errb = execCase(t, bin, root, "code", "find", "needle", "--path", filepath.Join(root, "zz-nope"))
 	if rc != 2 {
-		t.Fatalf("--path 指文件 ⇒ 退 2，得到 %d · stderr=%s", rc, errb)
+		t.Errorf("--path 指不存在的路径 ⇒ 退 2，得到 %d · stderr=%s", rc, errb)
 	}
-	if !strings.Contains(errb, "不是目录") {
-		t.Errorf("负控理由不对（要逐字「不是目录」）：%q", errb)
+	if strings.TrimSpace(errb) == "" {
+		t.Errorf("--path 指不存在的路径退了 2 却没给理由（stderr 空）")
+	}
+}
+
+// TestCodeFind_PathAcceptsRegularFile —— ★ 口径变更（2026-09-27 跨件单 · 命令面 `family_code.go:92`）：
+// `--path` 收**目录**与**常规件**（同族先例：`core ps --path <声明件>` · `config reload --path <名册件>`）——
+// 底层是 `filepath.Walk(base)`，对非目录根**恰好**调 walkFn 一次 ⇒ 单件与目录在扫描面上是同一件事。
+// 三条成对：
+// ① 指**目录** ⇒ 正常扫到（收窄到该目录）；
+// ② 指**常规件** ⇒ **能扫到**（旧口径在这一格退 2 —— 已废）；
+// ③ 指**不存在的路径** ⇒ 仍 **rc=2**（不许静默扫成零命中）。
+// ★ 新文案仍含旧子串 ⇒ 分辨新老行为**靠 rc，不靠文案**。
+func TestCodeFind_PathAcceptsRegularFile(t *testing.T) {
+	bin := zergBinary(t)
+	root := syntheticRepo(t, "exit 0\n")
+	mustWrite(t, filepath.Join(root, "aaa", "one.go"), "package aaa\n// needle\n")
+	mustWrite(t, filepath.Join(root, "bbb", "two.go"), "package bbb\n// needle\n")
+
+	// ① 指目录 ⇒ 正常扫到（收窄到 aaa/，不碰 bbb/）。
+	rc, out, errb := execCase(t, bin, root, "code", "find", "needle", "--path", "aaa", "--json", "path")
+	if rc != 0 {
+		t.Fatalf("--path <目录> ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "aaa/one.go") || strings.Contains(out, "bbb/two.go") {
+		t.Errorf("--path <目录> 没正常收窄到 aaa/：%q", out)
 	}
 
-	// ③ 负控：绝对路径指向不存在的目录 ⇒ 也是 2（不许静默扫成零命中）。
-	rc, _, _ = execCase(t, bin, root, "code", "find", "needle", "--path", filepath.Join(root, "zz-nope"))
+	// ② 指常规件 ⇒ 能扫到（rc=0 · 恰好这一件）。
+	rc, out, errb = execCase(t, bin, root, "code", "find", "needle", "--path", "aaa/one.go", "--json", "path")
+	if rc != 0 {
+		t.Fatalf("--path <常规件> ⇒ 退 0（旧口径在这里退 2），得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "aaa/one.go") {
+		t.Errorf("--path <常规件> 没扫到这一件：%q", out)
+	}
+	if strings.Contains(out, "bbb/two.go") {
+		t.Errorf("--path <常规件> 不该扫到别的件：%q", out)
+	}
+
+	// ③ 指不存在的路径 ⇒ 仍退 2（且必须说出理由，不许静默扫成零命中）。
+	rc, _, errb = execCase(t, bin, root, "code", "find", "needle", "--path", "zz-nope")
 	if rc != 2 {
-		t.Errorf("--path 指不存在的目录 ⇒ 退 2，得到 %d", rc)
+		t.Errorf("--path <不存在的路径> ⇒ 退 2，得到 %d · stderr=%s", rc, errb)
+	}
+	if strings.TrimSpace(errb) == "" {
+		t.Errorf("--path <不存在的路径> 退了 2 却没给理由（stderr 空）")
 	}
 }

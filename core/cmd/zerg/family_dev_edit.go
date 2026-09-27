@@ -222,6 +222,13 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	// 好让人先看见（计划面与真写面**同一份判决**，不是一个说绿一个说红）。
 	syntaxJudg, syntaxWhy := editSyntaxCheck(fileRel, after)
 
+	// ④-c **逐行 diff**（缺口 #1）：人签闸此前只拿到两枚 16 位短 sha + 字节数 ⇒ 看得出「变了」、
+	// 看不出「改了哪几行」。这一块把**行级区间摘要**（`@@ -a,b +c,d @@` · 只行号 + 增减标记）补上 ——
+	// ★ 与 sha256 **同一趟**算（`before`/`after` 就在手 ⇒ 不重读盘、不另算一遍）；★ 件正文一个字节
+	// 都不进回执（进 = 泄露面 + 巨量输出，两条都犯 ✗）。同一枚 `lineDiff` 给人面两块（计划卡片 / 真写收尾）
+	// 用 ⇒ 没有第二处算法。
+	lineDiff := devEditLineDiffOf(before, after)
+
 	beforeSHA := sha256Of(before)
 	afterSHA := sha256Of(after)
 	auditPath := editAuditPath()
@@ -293,13 +300,13 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		if !inv.dryRun {
 			// 三态：**没带干跑旗标但确认档不齐** ⇒ 出计划件（fail-closed：从不提问、也从不偷偷写）
 			row["result"] = "planned"
-			if rc := emitDevEditPlan(stdout, stderr, row, prop, beforeMissing, inv, true, hook); rc != exitOK {
+			if rc := emitDevEditPlan(stdout, stderr, row, prop, beforeMissing, inv, true, hook, lineDiff); rc != exitOK {
 				return rc
 			}
 			return exitUsage
 		}
 		row["result"] = "planned"
-		if rc := emitDevEditPlan(stdout, stderr, row, prop, beforeMissing, inv, false, hook); rc != exitOK {
+		if rc := emitDevEditPlan(stdout, stderr, row, prop, beforeMissing, inv, false, hook, lineDiff); rc != exitOK {
 			return rc
 		}
 		// 钩子判决「必拦」⇒ **这一步没通过钩子**：干跑不给放行判决（退码 2 · 与既有的
@@ -416,7 +423,10 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		return selectJSON(stdout, stderr, inv, inv.path, devEditFields, row)
 	}
-	fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", fileRel, shortSHA(beforeSHA), shortSHA(afterSHA), fmt.Sprintf("%d 字节", len(after)))
+	fmt.Fprintf(stdout, "%s	%s	%s	%s\n", fileRel, shortSHA(beforeSHA), shortSHA(afterSHA), fmt.Sprintf("%d 字节", len(after)))
+	// ★ 逐行 diff（缺口 #1）：真写这一档同样给「改了哪几行」——走 **stderr**（人面），
+	// stdout 那一行（逐字四格记录）**一个字节不动** ✗（脚本按位切它）。
+	emitDevEditLineDiff(stderr, "", lineDiff)
 	fmt.Fprintf(stderr, "%s: 已改 %s（提案 %s · 审计 %s）\n", progName, outPath, proposalID, auditPath)
 	fmt.Fprintf(stderr, "回滚路径：提案 %s 的退点 = %s（件级回滚见 `%s dev rollback`）\n", proposalID, orDash(prop.Rollback), progName)
 	return exitOK
@@ -514,8 +524,10 @@ func editSyntaxCheck(fileRel string, content []byte) (judg, why string) {
 // blocked=true 时，最后一行点明为什么没执行（三态里 fail-closed 的那一格）。
 // `A4` 起多一行**钩子判决**（`hook`）：它是**计划的一部分**（这一步的钩子是哪一档），
 // 但**不是放行条件** ✗（§3.5 卡片铁律「提 ≠ 批」）。
+// ★ 本枚起多一块**逐行 diff**（`lineDiff` · 缺口 #1）：人签闸要能看见「改了哪几行」——
+// 只给行号与增减标记，件正文不进这一块（与 `before`/`after` 同一趟算出，见调用点）。
 func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *proposalRecord,
-	beforeMissing bool, inv *invocation, blocked bool, hook impactHook) int {
+	beforeMissing bool, inv *invocation, blocked bool, hook impactHook, lineDiff devEditLineDiffBlock) int {
 	fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未写任何文件、未改任何状态）")
 	fmt.Fprintf(stdout, "  动作     : %s dev edit（受控写 · 只改提案声明过的件）\n", progName)
 	fmt.Fprintf(stdout, "  提案     : %s（状态 %s · 声明改件 %s）\n", prop.ID, prop.State, orDashList(prop.Files))
@@ -523,6 +535,7 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 	fmt.Fprintf(stdout, "  内容来源 : %s（mode=%s）\n", ifStr(row["mode"] == "from", "--from <件>", "--replace <件>"), row["mode"])
 	fmt.Fprintf(stdout, "  前后 sha : %s → %s\n", row["before_sha256"], row["after_sha256"])
 	fmt.Fprintf(stdout, "  前后字节 : %s → %s\n", row["before_bytes"], row["after_bytes"])
+	emitDevEditLineDiff(stdout, "  ", lineDiff)
 	fmt.Fprintf(stdout, "  审计落点 : %s（一行一事件 · 追加只写 · **写不进审计就不改件**）\n", row["audit_path"])
 	fmt.Fprintf(stdout, "  批准件   : %s —— %s\n", row["approval_path"], row["approval"])
 	fmt.Fprintf(stdout, "  语法自检 : %s%s\n", row["syntax"], ifStr(row["syntax"] == "不过", " —— **真写会被拒**（`.py`=ast.parse / `.sh`=bash -n / `.json`·`.yaml`=Go 侧解析；先改内容）", ""))
@@ -731,6 +744,280 @@ func ifStr(cond bool, yes, no string) string {
 		return yes
 	}
 	return no
+}
+
+// ---- 逐行 diff（缺口 #1：写面人签闸此前只看得到两枚短 sha + 字节数）----
+//
+// 口径（每条都硬）：
+//
+//	① **只给行号与增减标记**（`@@ -a,b +c,d @@` + `+N -M` 行数）—— **件正文一个字节都不进回执**
+//	   （正文进 = 泄露面 + 巨量输出，两条都犯 ✗）。逐行级可见 = 人拿 hunk 头 + 行号就能落到具体行。
+//	② **与 sha256 同一趟算**（`before` / `after` 就在手）—— 不重读盘、不另算一遍（禁二次算 ✗）。
+//	③ 算法 = **线性空间 LCS**（Hirschberg：前向 / 反向两排 DP 取中点切分 ⇒ 内存 O(列数)），
+//	   所以增减行数与 hunk 边界是**精确**的。件大到超预算（`devEditDiffCellBudget` 格）⇒ 退**粗档**，
+//	   并**照实标注「粗档」**（不说成精确 · 禁假装算过 ✗）。
+type devEditLineDiffBlock struct {
+	Added   int      // 逐行新增行数（粗档 = 中段整段，见 Coarse）
+	Removed int      // 逐行删除行数（同上）
+	Hunks   []string // `@@ -a,b +c,d @@`（只行号 · 正文永不进）
+	Coarse  bool     // 粗档（行×行 超预算 ⇒ 只给首尾裁剪后的中段范围）
+	More    int      // 因 `devEditDiffMaxHunks` 截掉、没列出的处数
+	Same    bool     // 逐字节相同 ⇒ 真写是空动作
+}
+
+const (
+	// devEditDiffContext —— hunk 头两侧留几行上下文（**只用于合并相邻改动** · 不输出正文）。
+	devEditDiffContext = 3
+	// devEditDiffCellBudget —— LCS 预算（老行数 × 新行数 的格数）：超了退粗档。
+	devEditDiffCellBudget = 4000000
+	// devEditDiffMaxHunks —— 回执最多列几处（多了只给处数与总数 —— 回执不灌巨量输出）。
+	devEditDiffMaxHunks = 12
+)
+
+// devEditDiffOp —— 一条对齐操作（`=` 两侧同 / `-` 只在老 / `+` 只在新）。
+type devEditDiffOp struct {
+	Kind byte
+	Old  int // 老侧 0 基行号（`+` 时 = 插在这儿的老侧位置）
+	New  int // 新侧 0 基行号（`-` 时 = 删掉后新侧的对位）
+}
+
+// devEditLineDiffOf —— 算人面那一块逐行 diff（**纯函数 · 不碰盘 · 不吐正文**）。
+func devEditLineDiffOf(before, after []byte) devEditLineDiffBlock {
+	d := devEditLineDiffBlock{}
+	if string(before) == string(after) {
+		d.Same = true
+		return d
+	}
+	oldLines := devEditSplitLines(before)
+	newLines := devEditSplitLines(after)
+	if len(oldLines)*len(newLines) > devEditDiffCellBudget {
+		// 粗档：首尾裁剪 + 中段整段替换（**照实标注** —— 这不是精确逐行计数）。
+		p := 0
+		for p < len(oldLines) && p < len(newLines) && oldLines[p] == newLines[p] {
+			p++
+		}
+		s := 0
+		for s < len(oldLines)-p && s < len(newLines)-p &&
+			oldLines[len(oldLines)-1-s] == newLines[len(newLines)-1-s] {
+			s++
+		}
+		d.Coarse = true
+		d.Removed = len(oldLines) - p - s
+		d.Added = len(newLines) - p - s
+		if d.Removed > 0 || d.Added > 0 {
+			d.Hunks = append(d.Hunks, devEditHunkHeader(p, d.Removed, p, d.Added))
+		}
+		return d
+	}
+	added, removed, hunks := devEditHunksOf(devEditDiffOps(oldLines, newLines))
+	d.Added, d.Removed = added, removed
+	if len(hunks) > devEditDiffMaxHunks {
+		d.More = len(hunks) - devEditDiffMaxHunks
+		hunks = hunks[:devEditDiffMaxHunks]
+	}
+	d.Hunks = hunks
+	return d
+}
+
+// emitDevEditLineDiff —— 打人面那一块（indent = 缩进；只给行号与标记 ✗ 正文）。
+func emitDevEditLineDiff(w io.Writer, indent string, d devEditLineDiffBlock) {
+	switch {
+	case d.Same:
+		fmt.Fprintf(w, "%s逐行 diff : **逐行无差**（件逐字节相同 ⇒ 真写是空动作，没有一行要复核）\n", indent)
+		return
+	case d.Coarse:
+		fmt.Fprintf(w, "%s逐行 diff : **粗档**（老行×新行 超预算 %d 格 ⇒ 只给首尾裁剪后的**中段范围**，逐行计数不给精确值）：老 -%d 行 / 新 +%d 行\n",
+			indent, devEditDiffCellBudget, d.Removed, d.Added)
+	case d.Added == 0 && d.Removed == 0:
+		fmt.Fprintf(w, "%s逐行 diff : **逐行无差**（行内容逐行相同 —— 差在字节面，例如末行换行 / 行尾空白）⇒ 复核落到 sha256 对拍\n", indent)
+		return
+	default:
+		fmt.Fprintf(w, "%s逐行 diff : +%d -%d 行 · %d 处（只给行号与增减标记 —— **件正文不进回执** ✗）\n",
+			indent, d.Added, d.Removed, len(d.Hunks)+d.More)
+	}
+	for _, h := range d.Hunks {
+		fmt.Fprintf(w, "%s  %s\n", indent, h)
+	}
+	if d.More > 0 {
+		fmt.Fprintf(w, "%s  …还有 %d 处未列（本块上限 %d 处 —— 要逐行细看请在本机 `git diff`；本块只给行号）\n",
+			indent, d.More, devEditDiffMaxHunks)
+	}
+}
+
+// devEditHunkHeader —— hunk 头（只行号与计数）。纯插入 / 纯删除那一侧按统一 diff 惯例写 0 基起点。
+func devEditHunkHeader(oldStart, oldCount, newStart, newCount int) string {
+	if oldCount == 0 {
+		oldStart--
+	}
+	if newCount == 0 {
+		newStart--
+	}
+	return fmt.Sprintf("@@ -%d,%d +%d,%d @@", oldStart, oldCount, newStart, newCount)
+}
+
+// devEditSplitLines —— 按 `\n` 切行（**末尾换行不算一行** —— 与「行数」的人面直觉对齐）。
+func devEditSplitLines(b []byte) []string {
+	if len(b) == 0 {
+		return nil
+	}
+	lines := strings.Split(string(b), "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+// devEditDiffOps —— 对齐摊平：Hirschberg 递归出来的 ops 顺序即行序，这里补上两侧行号。
+func devEditDiffOps(a, b []string) []devEditDiffOp {
+	var raw []devEditDiffOp
+	devEditLCSOps(a, b, &raw)
+	ops := make([]devEditDiffOp, 0, len(raw))
+	oi, ni := 0, 0
+	for _, op := range raw {
+		switch op.Kind {
+		case '=':
+			ops = append(ops, devEditDiffOp{'=', oi, ni})
+			oi++
+			ni++
+		case '-':
+			ops = append(ops, devEditDiffOp{'-', oi, ni})
+			oi++
+		default:
+			ops = append(ops, devEditDiffOp{'+', oi, ni})
+			ni++
+		}
+	}
+	return ops
+}
+
+// devEditLCSOps —— Hirschberg（线性空间 LCS）递归：把 a↔b 的对齐按行序摊平成 ops。
+func devEditLCSOps(a, b []string, out *[]devEditDiffOp) {
+	switch {
+	case len(a) == 0:
+		for j := range b {
+			*out = append(*out, devEditDiffOp{'+', 0, j})
+		}
+	case len(b) == 0:
+		for i := range a {
+			*out = append(*out, devEditDiffOp{'-', i, 0})
+		}
+	case len(a) == 1:
+		k := -1
+		for j := range b {
+			if b[j] == a[0] {
+				k = j
+				break
+			}
+		}
+		if k < 0 {
+			*out = append(*out, devEditDiffOp{'-', 0, 0})
+			for j := range b {
+				*out = append(*out, devEditDiffOp{'+', 0, j})
+			}
+			return
+		}
+		for j := 0; j < k; j++ {
+			*out = append(*out, devEditDiffOp{'+', 0, j})
+		}
+		*out = append(*out, devEditDiffOp{'=', 0, k})
+		for j := k + 1; j < len(b); j++ {
+			*out = append(*out, devEditDiffOp{'+', 0, j})
+		}
+	default:
+		mid := len(a) / 2
+		f := devEditLCSRow(a[:mid], b)
+		r := devEditLCSRow(devEditReversed(a[mid:]), devEditReversed(b))
+		best, k := -1, 0
+		for j := 0; j <= len(b); j++ {
+			if v := f[j] + r[len(b)-j]; v > best {
+				best, k = v, j
+			}
+		}
+		devEditLCSOps(a[:mid], b[:k], out)
+		devEditLCSOps(a[mid:], b[k:], out)
+	}
+}
+
+// devEditLCSRow —— 一排 LCS 长度（内存 O(len(b))）：返回「a vs b 各前缀」的结尾那一排。
+func devEditLCSRow(a, b []string) []int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for i := range a {
+		for j := range b {
+			switch {
+			case a[i] == b[j]:
+				cur[j+1] = prev[j] + 1
+			case prev[j+1] >= cur[j]:
+				cur[j+1] = prev[j+1]
+			default:
+				cur[j+1] = cur[j]
+			}
+		}
+		prev, cur = cur, prev
+		for j := range cur {
+			cur[j] = 0
+		}
+	}
+	return prev
+}
+
+func devEditReversed(s []string) []string {
+	out := make([]string, len(s))
+	for i := range s {
+		out[i] = s[len(s)-1-i]
+	}
+	return out
+}
+
+// devEditHunksOf —— ops ⇒ (增行数, 删行数, hunk 头)：老侧间隔 ≤ 2×上下文的两处改动合一个 hunk。
+func devEditHunksOf(ops []devEditDiffOp) (added, removed int, hunks []string) {
+	var changed []int
+	for i, op := range ops {
+		switch op.Kind {
+		case '+':
+			added++
+			changed = append(changed, i)
+		case '-':
+			removed++
+			changed = append(changed, i)
+		}
+	}
+	for i := 0; i < len(changed); {
+		j := i
+		for j+1 < len(changed) && devEditGapWithin(ops, changed[j], changed[j+1]) {
+			j++
+		}
+		s, e := changed[i], changed[j]
+		for n := 0; n < devEditDiffContext && s > 0 && ops[s-1].Kind == '='; n++ {
+			s--
+		}
+		for n := 0; n < devEditDiffContext && e+1 < len(ops) && ops[e+1].Kind == '='; n++ {
+			e++
+		}
+		oldCount, newCount := 0, 0
+		for k := s; k <= e; k++ {
+			if ops[k].Kind != '+' {
+				oldCount++
+			}
+			if ops[k].Kind != '-' {
+				newCount++
+			}
+		}
+		hunks = append(hunks, devEditHunkHeader(ops[s].Old+1, oldCount, ops[s].New+1, newCount))
+		i = j + 1
+	}
+	return added, removed, hunks
+}
+
+// devEditGapWithin —— 两条改动之间只隔着 ≤ 2×上下文的**未改行** ⇒ 算同一处（否则拆两处）。
+func devEditGapWithin(ops []devEditDiffOp, i, j int) bool {
+	same := 0
+	for k := i + 1; k < j; k++ {
+		if ops[k].Kind == '=' {
+			same++
+		}
+	}
+	return j-i-1 == same && same <= 2*devEditDiffContext
 }
 
 // ---- ★ 退建议（本件口径 · `GAP-20260927-216` · 2026-09-27 本枚）--------------------------------
