@@ -175,7 +175,7 @@ func TestApproveEBatch_D1TierFace(t *testing.T) {
 		t.Errorf("D1 ② 破：未知字段那一态要逐字列**九键**；stderr=\n%s", errU)
 	}
 	// ★ 注：失败路径上 `--json` 会补一个**错误包封**（§九 M7）⇒ stdout 非 0 字节是**既有**口径
-	// （矩阵里那条 `approve ls --json name` 的 `want_stdout_bytes=282` 就是它）——本判据只钉 rc=2。
+	// （见矩阵 `approve/ls#说明面不认 --json` 那一格的 `want_stdout_bytes` 现值 —— 就是它）——本判据只钉 rc=2。
 	rcU2, _, errU2 := eBatchRun("approve", "show", "合成件", "--json", "nosuchfield")
 	if rcU2 != 2 || !strings.Contains(errU2, "未知字段") {
 		t.Errorf("D1 ② 破：`show --json <未知字段>` 退码 %d（要 2 · 字段面先判这一条两处同口径）\nstderr=\n%s", rcU2, errU2)
