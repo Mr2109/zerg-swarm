@@ -109,13 +109,15 @@ func TestCodeShow_NeighborhoodAndUsage(t *testing.T) {
 		t.Errorf("非 UTF-8 ⇒ 退 8（不给结论），得到 %d · stderr=%s", rc, errb)
 	}
 
-	// ── 负控⑥：`--json` 不给字段 ⇒ 2（§4.1 `K2` 甲档 · 退码取自退码表 · stdout 0 字节）。
+	// ── 负控⑥：`--json` 不给字段 ⇒ 2（§4.1 `K2` 甲档 · 退码取自退码表）；本批起发射闸扩到
+	//   `inv.err != nil` ⇒ **错误面**必是机器可读包封走 stdout（旧行为「stdout 0 字节」已过期，
+	//   旧行为下本断言会红 ⇒ 有牙）；**结果面**仍必须空（`items` 一条都不出）。
 	rc, out, errb = execCase(t, bin, root, "code", "show", "aaa/ten.txt:5", "--json")
 	if rc != 2 {
 		t.Errorf("--json 不给字段 ⇒ 退 2，得到 %d · stderr=%s", rc, errb)
 	}
-	if out != "" {
-		t.Errorf("K2 这一格 stdout 必须是 0 字节，得到 %q", out)
+	if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
+		t.Errorf("K2 这一格 stdout 必是 `error` 包封且 `items` 空，得到 %q", out)
 	}
 }
 

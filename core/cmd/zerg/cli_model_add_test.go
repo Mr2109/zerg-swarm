@@ -579,13 +579,20 @@ func TestModelAddJSONNoFields(t *testing.T) {
 
 // 反例探针七之二（**成对负控**）· 非危险档不给 `--json` 字段 ⇒ 仍是「说明面不认 --json」那条**空 stdout**。
 // ★ 与探针七配对：两条形状不同的命令走两条不同的分支，谁被并掉了都会红。
+// ★ 本测试判的是**结果面为空**，不是「stdout 0 字节」—— 两个概念不同：
+//
+//	结果面 = `items` 里的读数条目（必须空）；错误面 = `error` 块（本批起**必须有**）。
+//
+// 本批把发射闸从「fields>0 或危险档」扩到「`inv.err != nil` 也发」⇒ 非危险档的 K2 用法错
+// 也把**错误面**打成机器可读包封走 stdout ⇒ 旧断言「stdout 必空」已过期。
+// 新断言（必出包封 + `items` 空）在旧行为下会红 ⇒ 有牙。
 func TestNonDangerJSONNoFieldsStaysEmpty(t *testing.T) {
 	rc, out, _ := runCapture("version", "--json")
 	if rc != usageCodeFromTable(t) {
 		t.Fatalf("非危险档不给字段：rc=%d（要 %d）", rc, usageCodeFromTable(t))
 	}
-	if out != "" {
-		t.Fatalf("非危险档（说明面）不给 --json 字段该是空 stdout，得到 %q", out)
+	if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
+		t.Fatalf("非危险档（说明面）不给 --json 字段：**结果面**必须空（`items` 空）+ 错误面必须是包封，得到 %q", out)
 	}
 }
 

@@ -241,7 +241,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	// `--json <字段>` 的失败路径：把**机器可读**的 `error` 块挂进包封（§九 M7）——
 	// 只在命令自己没往 stdout 写结果时补（写了结果就不改它，避免两个面打架）。
-	if rc != exitOK && inv.jsonGiven && cw.n == 0 && (len(inv.fields) > 0 || cmd.danger != nil) {
+	if rc != exitOK && inv.jsonGiven && cw.n == 0 && (inv.err != nil || len(inv.fields) > 0 || cmd.danger != nil) {
 		emitErrIfJSON(inv, stdout, cmd, rc)
 	}
 	return rc
@@ -269,7 +269,7 @@ func emitErrIfJSON(inv *invocation, stdout io.Writer, cmd *command, rc int) {
 	if !inv.jsonGiven {
 		return
 	}
-	if len(inv.fields) == 0 && (cmd == nil || cmd.danger == nil) {
+	if len(inv.fields) == 0 && inv.err == nil && (cmd == nil || cmd.danger == nil) {
 		return
 	}
 	e := inv.err

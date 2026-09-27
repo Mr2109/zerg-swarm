@@ -236,18 +236,27 @@ func TestNetProbe_SystemFaceDirectAndBroken(t *testing.T) {
 func TestNetProbe_UsageFace(t *testing.T) {
 	bin := zergBinary(t)
 	env := netProbeEnv("https_proxy=http://127.0.0.1:1")
-	for _, bad := range [][]string{
-		{"net", "probe", "--nosuchflag-zz"},
-		{"net", "probe", "--schema", "zerg/v9"},
-		{"net", "probe", "--json"},
-		{"net", "probe", "extra-positional"},
+	// ★ 两态分开钉：不带 `--json` ⇒ stdout 仍必须 0 字节；带 `--json` ⇒ 错误面（本批起发射闸扩到
+	//   `inv.err != nil`）必是机器可读包封走 stdout，而**结果面**仍必须空（`items` 空）。
+	for _, bad := range []struct {
+		argv []string
+		json bool
+	}{
+		{[]string{"net", "probe", "--nosuchflag-zz"}, false},
+		{[]string{"net", "probe", "--schema", "zerg/v9"}, false},
+		{[]string{"net", "probe", "--json"}, true},
+		{[]string{"net", "probe", "extra-positional"}, false},
 	} {
-		rc, out, errb := netProbeRun(t, bin, env, bad...)
+		rc, out, errb := netProbeRun(t, bin, env, bad.argv...)
 		if rc != 2 {
-			t.Errorf("%v ⇒ 退 2（用法错），得到 %d · stderr=%s", bad, rc, errb)
+			t.Errorf("%v ⇒ 退 2（用法错），得到 %d · stderr=%s", bad.argv, rc, errb)
 		}
-		if out != "" {
-			t.Errorf("%v ⇒ stdout 必须 0 字节（执行前判），得到 %q", bad, out)
+		if bad.json {
+			if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
+				t.Errorf("%v ⇒ stdout 必是 `error` 包封且 `items` 空，得到 %q", bad.argv, out)
+			}
+		} else if out != "" {
+			t.Errorf("%v ⇒ stdout 必须 0 字节（执行前判），得到 %q", bad.argv, out)
 		}
 	}
 	// 点错字段：也是用法错 2，但**形状与上面四条不同** —— 按 §九 M7 补一个错误包封
