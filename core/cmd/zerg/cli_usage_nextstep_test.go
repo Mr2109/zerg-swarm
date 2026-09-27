@@ -63,13 +63,16 @@ func TestCLIUsageErrorsCarryNextStep(t *testing.T) {
 	// 三条 argv **都不挂「干跑」那一枚旗标**：本条不是干跑语义站点 —— ① 落点不是目录、
 	// ② 版本目录不在盘上，都在**任何写动作之前**返回；③ 是 `version` 的纯读路径。
 	// ⇒ 它既不落进「干跑语义站点台账」（那枚判据扫的是**真有干跑语义的件**）的扫描面，也不起写动作。
+	// ★ 两态分开钉：不带 `--json` ⇒ 用法错 stdout 仍必须 0 字节；带 `--json` ⇒ 错误面（本批起发射闸
+	//   扩到 `inv.err != nil`）必是机器可读包封走 stdout，而**结果面**仍必须空（`items` 空）。
 	cases := []struct {
 		name string
 		argv []string
+		json bool
 	}{
-		{"Q-070 落点不是目录", []string{"help", "export", "--out", "/nonexistent-zz/x"}},
-		{"解析不到落点", []string{"help", "export", "--docs-ver", "9.9.9"}},
-		{"--json 缺字段（requireFields）", []string{"version", "--json"}},
+		{"Q-070 落点不是目录", []string{"help", "export", "--out", "/nonexistent-zz/x"}, false},
+		{"解析不到落点", []string{"help", "export", "--docs-ver", "9.9.9"}, false},
+		{"--json 缺字段（requireFields）", []string{"version", "--json"}, true},
 	}
 	for _, c := range cases {
 		var so, se bytes.Buffer
@@ -78,8 +81,12 @@ func TestCLIUsageErrorsCarryNextStep(t *testing.T) {
 			t.Errorf("%s：`zerg %s` ⇒ 用法错应退 2，得到 %d（判据不可判）", c.name, strings.Join(c.argv, " "), rc)
 			continue
 		}
-		if so.Len() != 0 {
-			t.Errorf("%s：用法错 stdout 必须 0 字节（提示面走 stderr），得到 %q", c.name, so.String())
+		if c.json {
+			if !strings.Contains(so.String(), `"items":[]`) || !strings.Contains(so.String(), `"error"`) {
+				t.Errorf("%s：带 --json 的用法错 ⇒ stdout 必是 `error` 包封且 `items` 空，得到 %q", c.name, so.String())
+			}
+		} else if so.Len() != 0 {
+			t.Errorf("%s：不带 --json 时用法错 stdout 必须 0 字节（提示面走 stderr），得到 %q", c.name, so.String())
 		}
 		if !hasNextStep(se.String()) {
 			t.Errorf("%s：stderr 缺「下一步」句（§4.1 K14 四件套）：%q", c.name, se.String())

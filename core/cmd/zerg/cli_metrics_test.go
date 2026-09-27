@@ -253,13 +253,14 @@ func TestMetricsUsageErrors(t *testing.T) {
 	usage := usageCodeFromTable(t)
 	p := metricsFixture(t, metricsFixtureJSON)
 
-	// `--json` 不给字段 ⇒ 码取自退码表 + stdout 0 字节 + stderr 列字段表。
+	// `--json` 不给字段 ⇒ 码取自退码表 + **错误面包封走 stdout**（本批起 `inv.err != nil` 也发射）
+	//   + stderr 列字段表。★ 结果面仍必须空（`items` 空）；旧行为「stdout 0 字节」下本断言会红。
 	rc, out, errb := metricsRun(t, "metrics", "--input", p, "--json")
 	if rc != usage {
 		t.Errorf("`--json` 不给字段 ⇒ 要 %d，得到 %d · stderr=%s", usage, rc, errb)
 	}
-	if len(out) != 0 {
-		t.Errorf("`--json` 不给字段 ⇒ stdout 要 0 字节，得到 %q", out)
+	if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
+		t.Errorf("`--json` 不给字段 ⇒ stdout 必是 `error` 包封且 `items` 空，得到 %q", out)
 	}
 	for _, f := range []string{"rank", "grade", "category", "score", "source"} {
 		if !strings.Contains(errb, f) {

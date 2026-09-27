@@ -54,8 +54,10 @@ func TestCLIVersionJSONGap_MissingFieldsIsUsageError(t *testing.T) {
 	if rc != want {
 		t.Errorf("`zerg version --json`（不给字段）⇒ 应退用法错 %d（退码表 `usage` · `Q-146`），得到 %d", want, rc)
 	}
-	if out.Len() != 0 {
-		t.Errorf("`zerg version --json`（不给字段）⇒ stdout 必须 **0 字节**（提示面走 stderr），得到 %d 字节：%q",
+	// ★ 本批起发射闸扩到 `inv.err != nil` ⇒ 非危险档的 K2 也把**错误面**打成机器可读包封走 stdout
+	//   （旧行为 stdout 空 ⇒ 本断言会红 ⇒ 有牙）；**结果面**仍必须空：`items` 一条都不出。
+	if !strings.Contains(out.String(), `"items":[]`) || !strings.Contains(out.String(), `"error"`) {
+		t.Errorf("`zerg version --json`（不给字段）⇒ stdout 必是 `error` 包封且 `items` 空，得到 %d 字节：%q",
 			out.Len(), out.String())
 	}
 

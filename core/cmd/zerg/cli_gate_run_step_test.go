@@ -158,8 +158,10 @@ func TestGateRunStep_JSONFieldDiscipline(t *testing.T) {
 	if rc != want {
 		t.Errorf("--json 不给字段 ⇒ 退 %d（K2 那一档 · 取自退码表 `usage`），得到 %d", want, rc)
 	}
-	if out != "" {
-		t.Errorf("--json 不给字段 ⇒ stdout 必须 0 字节：%q", out)
+	// ★ 旧断言「stdout 必须 0 字节」已过期：本批起发射闸扩到 `inv.err != nil` ⇒ 错误面必是机器可读
+	//   包封走 stdout（旧行为下本断言会红）；**结果面**仍必须空（`items` 一条都不出）。
+	if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
+		t.Errorf("--json 不给字段 ⇒ stdout 必是 `error` 包封且 `items` 空：%q", out)
 	}
 	rc, out, errb := execCase(t, bin, root, "gate", "run", "--json", "step")
 	if rc != 2 {

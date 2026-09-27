@@ -397,22 +397,29 @@ func TestCiGreen_IdentityCellsRequired(t *testing.T) {
 func TestCiGreen_UsageFace(t *testing.T) {
 	decl, rec := ciGreenFixture(t, "unverified", []string{"core"}, "9999cccc", [][2]string{{"core", "success"}})
 
+	// ★ 两态必须分开钉：**不带 `--json`** ⇒ stdout 仍必须 0 字节；**带 `--json`** ⇒ 错误面（本批起
+	//   发射闸扩到 `inv.err != nil`）必是可机读包封走 stdout，但**结果面**仍必须空（`items` 空）。
 	cases := []struct {
 		name string
 		argv []string
+		json bool
 	}{
-		{"缺 --run", []string{"ci", "green", "--decl", decl}},
-		{"--run 给两次", []string{"ci", "green", "--run", rec, "--run", rec, "--decl", decl}},
-		{"多余位置参数", []string{"ci", "green", rec, "--decl", decl}},
-		{"裸 --json", []string{"ci", "green", "--run", rec, "--decl", decl, "--json"}},
+		{"缺 --run", []string{"ci", "green", "--decl", decl}, false},
+		{"--run 给两次", []string{"ci", "green", "--run", rec, "--run", rec, "--decl", decl}, false},
+		{"多余位置参数", []string{"ci", "green", rec, "--decl", decl}, false},
+		{"裸 --json", []string{"ci", "green", "--run", rec, "--decl", decl, "--json"}, true},
 	}
 	for _, c := range cases {
 		rc, out, _ := ciGreenRun(t, c.argv...)
 		if rc != 2 {
 			t.Errorf("%s ⇒ rc=%d（要 2）", c.name, rc)
 		}
-		if out != "" {
-			t.Errorf("%s ⇒ stdout 要 0 字节（现读 %d 字节）", c.name, len(out))
+		if c.json {
+			if !strings.Contains(out, `"items":[]`) || !strings.Contains(out, `"error"`) {
+				t.Errorf("%s ⇒ stdout 必是 `error` 包封且 `items` 空，得到 %q", c.name, out)
+			}
+		} else if out != "" {
+			t.Errorf("%s ⇒ 不带 --json 时 stdout 要 0 字节（现读 %d 字节）：%q", c.name, len(out), out)
 		}
 	}
 
