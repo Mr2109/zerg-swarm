@@ -155,6 +155,7 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 				}
 			}
 			if !ok {
+				inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
 				return reportBadField(stderr, inv.path, f)
 			}
 		}

@@ -104,7 +104,7 @@ func gateResults(inv *invocation, stdout, stderr io.Writer, root string) int {
 	}
 	for _, f := range fields {
 		if !gateResultsFieldLegal(f) {
-			inv.setErr("usage", "unknown_field", "字段不在本命令的字段表里")
+			inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
 			return reportBadField(stderr, inv.path, f)
 		}
 	}

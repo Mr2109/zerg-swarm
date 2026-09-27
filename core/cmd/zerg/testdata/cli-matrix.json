@@ -1575,8 +1575,8 @@
     "name"
    ],
    "want_rc": 2,
-   "want_stdout_bytes": 342,
-   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）"
+   "want_stdout_bytes": 354,
+   "why": "`egg run` 的 `--json` 字段面：闭集外的字段名 ⇒ 退 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（354 字节（含末尾换行） · 现跑派生；GAP-20260928-16：reportBadField 前补同口径 inv.setErr ⇒ 包封 error.detail 点名那个未知字段）"
   },
   {
    "id": "itask/ls#未知旗标",
@@ -3533,8 +3533,8 @@
     "nosuchfield-zz"
    ],
    "want_rc": 2,
-   "want_stdout_bytes": 301,
-   "why": "字段面**执行前判**（先于点名目录的读）⇒ 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（301 字节（含末尾换行） · 现跑派生）",
+   "want_stdout_bytes": 316,
+   "why": "字段面**执行前判**（先于点名目录的读）⇒ 2 + stderr 列字段表；stdout 是 `error.kind=usage` 那一份包封（316 字节（含末尾换行） · 现跑派生；GAP-20260928-16：reportBadField 前补同口径 inv.setErr(`usage`,`json_field_unknown:`+字段,…) ⇒ 包封 error.detail 点名那个未知字段）",
    "want_rc_public": 2,
    "want_stdout_bytes_public": 285,
    "why_public": "同上一格的机理：公开面先撞「门禁最小入口不在」⇒ 退码同为 2，但**包封字节数不同**（本机 301 → 公开 285）。285 字节是**不含路径**的通用错误包封（逐字现读：{\"schema\":\"zerg/v1\",\"kind\":\"GateResults\",\"items\":[]…\"error\"…}）⇒ 与那棵树 clone 到哪无关；与本机那份的差 = 少了字段表那几行字（`GateResults` 比 `GateRun` 长 4 字节，同族 281 字节那格 +4 = 285 ✓ 现读核对）"
@@ -4097,8 +4097,8 @@
     "name"
    ],
    "want_rc": 2,
-   "want_stdout_bytes": 281,
-   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）· ★ 2026-09-24 重冻 282 → 281（缺口 `Q-155`：失败面包封的兜底 kind 由**真退码**派生 ⇒ 包封里 `\"kind\":\"failed\"` → `\"kind\":\"usage\"`，逐字节少 1 ⇒ 这就是本格字节数变的**全部**原因；`want_rc` 不动 · 格数/命令数/空白/豁免四个计数一字未动）"
+   "want_stdout_bytes": 293,
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 **同码、错因不同**：这里根本没有字段表）· ★ 2026-09-24 重冻 282 → 281（缺口 `Q-155`：失败面包封的兜底 kind 由**真退码**派生 ⇒ 包封里 `\"kind\":\"failed\"` → `\"kind\":\"usage\"`，逐字节少 1 · ★ 2026-09-28 重冻 281 → 293（缺口 GAP-20260928-16：reportBadField 前补同口径 inv.setErr(`usage`,`json_field_unknown:`+bad,…) ⇒ 包封 error.detail 点名那个未知字段）；`want_rc` 不动 · 格数/命令数/空白/豁免四个计数一字未动）"
   },
   {
    "id": "approve/show#未知旗标",
@@ -4790,8 +4790,8 @@
     "what,zzz"
    ],
    "want_rc": 2,
-   "want_stdout_bytes": 279,
-   "why": "`--json` 点名字段面：未知字段 ⇒ 退 2 + 列合法字段（§九 M6 I5）· 且**判在取数之前**（A2 六层现跑读秒级，不为一条打错的字段白跑）。★ 这一格的前身是 `impact#件目标·零命中（人面三行）`（419 字节 froze 的正面人面）：A2 把六层接上后，**零命中件没法冻进矩阵** —— 矩阵是 tracked 件，口令里逐字写出件名 ⇒ 那一件自己命中 ④ 词法面（`git grep -w <件名>`）⇒ 那一格必然红。故「零命中 ⇒ 退 1 + 人面恒三行」的棘轮移到 `go test ./cmd/zerg/ -run TestImpact`（两件测试件真跑；件名在测试件里也是拼出来的，同一原因）· ★ 2026-09-24 重冻 280 → 279（缺口 `Q-155` 同上：失败面包封的兜底 kind 由**真退码**派生 ⇒ 包封里 `\"kind\":\"failed\"` → `\"kind\":\"usage\"`，逐字节少 1；`want_rc` 与四个计数一字未动）"
+   "want_stdout_bytes": 289,
+   "why": "`--json` 点名字段面：未知字段 ⇒ 退 2 + 列合法字段（§九 M6 I5）· 且**判在取数之前**（A2 六层现跑读秒级，不为一条打错的字段白跑）。★ 这一格的前身是 `impact#件目标·零命中（人面三行）`（419 字节 froze 的正面人面）：A2 把六层接上后，**零命中件没法冻进矩阵** —— 矩阵是 tracked 件，口令里逐字写出件名 ⇒ 那一件自己命中 ④ 词法面（`git grep -w <件名>`）⇒ 那一格必然红。故「零命中 ⇒ 退 1 + 人面恒三行」的棘轮移到 `go test ./cmd/zerg/ -run TestImpact`（两件测试件真跑；件名在测试件里也是拼出来的，同一原因）· ★ 2026-09-24 重冻 280 → 279（缺口 `Q-155` 同上：失败面包封的兜底 kind 由**真退码**派生 ⇒ 包封里 `\"kind\":\"failed\"` → `\"kind\":\"usage\"`，逐字节少 1；`want_rc` 与四个计数一字未动） · ★ 2026-09-28 重冻 279 → 289（缺口 GAP-20260928-16：reportBadField 前补同口径 inv.setErr(`usage`,`json_field_unknown:`+字段,…) ⇒ 包封 error.detail 点名那个未知字段；want_rc 不动）"
   },
   {
    "id": "impact#档位面·--all 缺目标",
