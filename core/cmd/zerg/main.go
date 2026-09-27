@@ -1579,7 +1579,7 @@ func init() {
 			arity:   "any",
 			args:    []string{"工具名（--tool）", "人名（--by）"},
 			fields:  approveNewFields,
-			danger:  &dangerSpec{dangerD3, "工具名", "签一枚批准件（逃生门）—— 只作 require_approval 的放行凭据；人不在场时等于没签", "§九 M18 C4② · §17.6 SD7 · D3b 第四步", false},
+			danger:  &dangerSpec{dangerD3, "工具名", "签一枚批准件（逃生门）—— 只作 require_approval 的放行凭据；人不在场时等于没签", "§九 M18 C4② · §17.6 SD7 · D3b 第四步", true},
 			// `opened`: 真跑已开放（**人在终端上** + 操作员口令 ⇒ 签出批准件；非交互一律拒）。
 			opened:   true,
 			endpoint: "",
