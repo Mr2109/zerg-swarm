@@ -39,6 +39,15 @@
 用法：
     python3 scripts/gates/check-token-argv.py [--root <目录>] [--json]
     python3 scripts/gates/check-token-argv.py --self-test     # 正控（干净件 ⇒ rc=0）+ 逐型负控（五型逐型 rc=1）
+
+★ 环境旋钮登记（本件现读的**这一枚** · 只登记、不改行为）—— `ZERG_REPO_ROOT` = **脚本侧仓根**：
+    谁读 / 读什么：`REPO_ROOT = os.environ.get("ZERG_REPO_ROOT") or os.path.dirname(...)`（本模块
+    常量区那行）—— 设了就**无条件采信**（不校验是不是真仓根、不回落）；**不设** ⇒ 按本件位置上溯三级推得。
+    它唯一的用处是给 `--root` 定默认值（`--root` 不给 ⇒ 扫 `REPO_ROOT`）；给了 `--root` ⇒ 本旋钮被绕开。
+    ★ 与 CLI 侧**同名族** `ZERG_REPO`（`core/cmd/zerg/root.go` 件头登记的那一枚）是**两枚、互不读取**：
+    脚本面**不认识** `ZERG_REPO`、CLI 面**不认识** `ZERG_REPO_ROOT` ⇒ 要用哪一面就在**哪一面显式设**。
+    为何要设 / 正确用法：只用来把**默认扫描根**指到仓外的合成假仓根（负控用法）或另一份仓副本；
+    日常跑门**不要设**（设错 ⇒ 扫的是别处；扫到 0 个脚本/单元件 ⇒ rc=2 不给结论，不当绿 ✓）。
 """
 import argparse
 import json
