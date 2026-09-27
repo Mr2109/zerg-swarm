@@ -121,7 +121,8 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 	// 计划件里的日志落点写**模式**、不写实值：实值带时间戳 ⇒ 同一判据跑两遍不会逐字一致
 	// （§九 M11「同一判据跑两遍必须一致」）。真跑那一次才用实值（它落在 `--json` 的结果面里）。
 	logDirPattern := filepath.Join(os.TempDir(), "zerg-repo-commit-<YYYYMMDD-HHMMSS>")
-	logDir := filepath.Join(os.TempDir(), "zerg-repo-commit-"+time.Now().Format("20060102-150405"))
+	// ★ `logDir` 不在这里拼：真跑那一支（④）用 `os.MkdirTemp` **原子新建**（理由见那里）——
+	//   拼在这里建会让上面这一支（`--dry-run`：**零副作用**）也落一个临时目录。
 
 	// ② 干跑（默认按三态；`--dry-run` 或确认档不齐都只出计划件）
 	if inv.dryRun || !inv.yes {
@@ -178,9 +179,18 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	// ④ **过快速档才放行**（在暂存之前跑 ⇒ 被拦下时索引面逐字未动）
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		inv.setErr("failed", "logdir_failed", err.Error())
-		fmt.Fprintf(stderr, "%s: 建不了门禁日志目录 %s：%v\n", progName, logDir, err)
+	// ★ 2026-09-27（缺口 `GAP-20260927-434` · 与 `gate run` 那一支同形）：原来目录名按**秒级**时间戳拼 +
+	//   `MkdirAll` 复用同名目录 ⇒ 同一秒内两次提交**共用同一处**日志目录；门禁脚本按 `--outdir` 读回
+	//   `results.tsv` 数失败数（`report`）⇒ 后一次会把前一次落的表算成自己的（**陈旧判决回读**：
+	//   这一轮没落表时「不许当绿」被旧表绕开）。
+	//   改成 `MkdirTemp`：名字前缀带**纳秒**时间戳（给人看的时序）、后缀由它加一段随机串，且**原子新建**
+	//   —— 目录必是**本次调用新建的空目录** ⇒ 这一轮没落表就一定读不回（不靠 mtime 一类脆判据，
+	//   也不与任何旧目录重名）。`logDirPattern` 不动：它是计划件里的**模式**（§九 M11 同一判据跑两遍必须一致）。
+	prefix := "zerg-repo-commit-" + time.Now().Format("20060102-150405.000000000") + "-"
+	logDir, mkErr := os.MkdirTemp(os.TempDir(), prefix+"*")
+	if mkErr != nil {
+		inv.setErr("failed", "logdir_failed", mkErr.Error())
+		fmt.Fprintf(stderr, "%s: 建不了门禁日志目录 %s：%v\n", progName, filepath.Join(os.TempDir(), prefix), mkErr)
 		return exitFail
 	}
 	gtRC, err := runFastGate(root, logDir, stderr)
@@ -543,7 +553,8 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 	criterion := strings.TrimSpace(inv.flagVal("--criterion"))
 	msg := commitMessageTemplate(message, proposalID, by, trace, criterion, paths)
 	logDirPattern := filepath.Join(os.TempDir(), "zerg-repo-commit-<YYYYMMDD-HHMMSS>")
-	logDir := filepath.Join(os.TempDir(), "zerg-repo-commit-"+time.Now().Format("20060102-150405"))
+	// ★ `logDir` 不在这里拼：真跑那一支（④）用 `os.MkdirTemp` **原子新建**（理由见那里）——
+	//   拼在这里建会让上面这一支（`--dry-run`：**零副作用**）也落一个临时目录。
 	auditPath := commitAuditPath()
 	onlyRow := map[string]string{
 		"head": "", "files": strings.Join(paths, ","), "staged": strings.Join(preStaged, ","),
@@ -594,9 +605,17 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 	}
 
 	// ④ 快速档（**在提交之前跑** ⇒ 被拦下时索引面与工作树逐字未动）；红时给归因三格 + 例外旗标判定。
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		inv.setErr("failed", "logdir_failed", err.Error())
-		fmt.Fprintf(stderr, "%s: 建不了门禁日志目录 %s：%v\n", progName, logDir, err)
+	// ★ 2026-09-27（缺口 `GAP-20260927-434` · 与 `gate run` 那一支同形）：原来目录名按**秒级**时间戳拼 +
+	//   `MkdirAll` 复用同名目录 ⇒ 同一秒内两次提交**共用同一处**日志目录；门禁脚本按 `--outdir` 读回
+	//   `results.tsv` 数失败数（`report`）⇒ 后一次会把前一次落的表算成自己的（**陈旧判决回读**）。
+	//   改成 `MkdirTemp`：名字前缀带**纳秒**时间戳（给人看的时序）、后缀由它加一段随机串，且**原子新建**
+	//   —— 目录必是**本次调用新建的空目录** ⇒ 这一轮没落表就一定读不回（不靠 mtime 一类脆判据，
+	//   也不与任何旧目录重名）。`logDirPattern` 不动：它是计划件里的**模式**（§九 M11 同一判据跑两遍必须一致）。
+	prefix := "zerg-repo-commit-" + time.Now().Format("20060102-150405.000000000") + "-"
+	logDir, mkErr := os.MkdirTemp(os.TempDir(), prefix+"*")
+	if mkErr != nil {
+		inv.setErr("failed", "logdir_failed", mkErr.Error())
+		fmt.Fprintf(stderr, "%s: 建不了门禁日志目录 %s：%v\n", progName, filepath.Join(os.TempDir(), prefix), mkErr)
 		return exitFail
 	}
 	gtRC, gtOut, err := runFastGateCapture(root, logDir)
