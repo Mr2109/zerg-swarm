@@ -7,9 +7,9 @@
 //
 // 两条新动作（**不新增顶层命令**：仍旧挂 `gap` 族）：
 //
-//	⒜ `zerg gap set-state <GAP id> --state <仍缺|已解> --evidence <一句话> [--by <谁>] [--dry-run|--yes]`
+//	⒜ `zerg gap set-state <GAP id> --state <仍缺|已解> --evidence <一句话> [--by <谁>] [--dry-run] [--yes]`
 //	   —— **改态**：写 `state` / `solved_at`（只在转 `已解` 时取）/ `solved_evidence`。
-//	⒝ `zerg gap note <GAP id> --text <一句话> [--by <谁>] [--dry-run|--yes]`
+//	⒝ `zerg gap note <GAP id> --text <一句话> [--by <谁>] [--dry-run] [--yes]`
 //	   —— **口径注**：往该条的 `notes` 数组**追加**一条（**不改 `state`** ✗）。
 //
 // 四条照同族写面（`add` / `verify`）逐字沿用的纪律：
@@ -235,7 +235,7 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	if stateWant == "" {
 		inv.setErr("usage", "missing_required", "缺 --state")
 		fmt.Fprintf(stderr, "%s: `gap set-state` 缺必填旗标：--state\n", progName)
-		fmt.Fprintf(stderr, "用法：zerg gap set-state <GAP id> --state <%s> --evidence <一句话> [--by <谁>] [--dry-run|--yes]\n",
+		fmt.Fprintf(stderr, "用法：zerg gap set-state <GAP id> --state <%s> --evidence <一句话> [--by <谁>] [--dry-run] [--yes]\n",
 			strings.Join(gapStateSettable, "|"))
 		return exitUsage
 	}
@@ -362,7 +362,7 @@ func cmdGapNote(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.flagVals("--state")) > 0 {
 		v := strings.TrimSpace(inv.flagVal("--state"))
 		inv.setErr("usage", "state_not_in_shape", "--state 不在 note 的形状里")
-		fmt.Fprintf(stderr, "%s: `gap note` 不收 `--state %s`（形状 = `<GAP id> --text <一句话> [--by <谁>] [--dry-run|--yes]`）\n", progName, v)
+		fmt.Fprintf(stderr, "%s: `gap note` 不收 `--state %s`（形状 = `<GAP id> --text <一句话> [--by <谁>] [--dry-run] [--yes]`）\n", progName, v)
 		fmt.Fprintf(stderr, "  注**不改态**：改态走 `zerg gap set-state <GAP id> --state <%s> --evidence <一句话>`\n",
 			strings.Join(gapStateSettable, "|"))
 		return exitUsage
@@ -370,7 +370,7 @@ func cmdGapNote(inv *invocation, stdout, stderr io.Writer) int {
 	if text == "" {
 		inv.setErr("usage", "missing_required", "缺 --text")
 		fmt.Fprintf(stderr, "%s: `gap note` 缺必填旗标：--text\n", progName)
-		fmt.Fprintf(stderr, "用法：zerg gap note <GAP id> --text <一句话> [--by <谁>] [--dry-run|--yes]\n")
+		fmt.Fprintf(stderr, "用法：zerg gap note <GAP id> --text <一句话> [--by <谁>] [--dry-run] [--yes]\n")
 		return exitUsage
 	}
 

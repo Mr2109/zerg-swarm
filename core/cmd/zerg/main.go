@@ -647,7 +647,7 @@ func init() {
 			path:     []string{"agent", "registry"},
 			kind:     "AgentRegistry",
 			summary:  "改/看那台子端的注册表（`--list` 只读；`--add` 先校验 → `--dry-run` 先行 → `--yes` 才写 → 留 `.bak-registry-add-<日期>` → 写完读回再校，不过即回滚）",
-			usage:    "zerg agent registry <机器名> [--list] [--add <模型名> --file <GGUF> --ctx <N> --mem-gb <N>] [--dry-run | --yes] [--json <字段>]",
+			usage:    "zerg agent registry <机器名> [--list] [--add <模型名> --file <GGUF> --ctx <N> --mem-gb <N>] [--dry-run] [--yes] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"机器名", "（`--add` 的模型名 = 名册模型 id，**逐字相同**）"},
 			fields:   agentRegistryFields,
@@ -681,7 +681,7 @@ func init() {
 			path:     []string{"task", "submit"},
 			kind:     "TaskSubmit",
 			summary:  "提交任务（D2 写面 · 全旗标 ⇒ API 请求体逐条对上）",
-			usage:    "zerg task submit --desc <描述> [--model <模型>] [--priority <n>] [--slice-id <片>] [--depends-on <片>]… [--acceptance <判据>]… [--dry-run | --yes]",
+			usage:    "zerg task submit --desc <描述> [--model <模型>] [--priority <n>] [--slice-id <片>] [--depends-on <片>]… [--acceptance <判据>]… [--dry-run] [--yes]",
 			arity:    "none",
 			args:     []string{"（旗标：--desc/--model/--priority/--slice-id/--depends-on/--acceptance）"},
 			endpoint: "POST /api/tasks",
@@ -745,7 +745,7 @@ func init() {
 			path:     []string{"model", "opts"},
 			kind:     "ModelOpts",
 			summary:  "适配器参数（get 只读 / set 实时生效要 --yes）",
-			usage:    "zerg model opts get <模型 id> [--json <字段>] | zerg model opts set <模型 id> --set k=v… [--dry-run | --yes]",
+			usage:    "zerg model opts get <模型 id> [--json <字段>] | zerg model opts set <模型 id> --set k=v… [--dry-run] [--yes]",
 			arity:    "any",
 			args:     []string{"动作（get|set）", "模型 id"},
 			fields:   []string{"model", "schema", "note"},
@@ -866,7 +866,7 @@ func init() {
 			path:    []string{"script", "inventory", "sync"},
 			kind:    "ScriptInventorySync",
 			summary: "把**仓外**台账（脚本现状清单）按现跑重算（D2 写面 · `--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面进审计）",
-			usage:   "zerg script inventory sync [--docs-root <Zerg-内部文档 根>] [--dry-run | --yes] [--by <谁>] [--json <字段>]",
+			usage:   "zerg script inventory sync [--docs-root <Zerg-内部文档 根>] [--dry-run] [--yes] [--by <谁>] [--json <字段>]",
 			fields: []string{"result", "target", "rows_live", "rows_added", "rows_removed", "rows_unchanged",
 				"declared_line", "inventory_before_sha256", "inventory_after_sha256", "audit_path"},
 			danger:   &dangerSpec{dangerD2, "台账件", "把仓外台账的行面与两个 yes/no 列按现跑重算（可逆：写前备份 + 写后读回，复查不过逐字节写回）；**一条命令写**、**不许第二条写路径**", "设计-仓外台账写面-A3-b案-v1.0-20260923.md §二 · `A3` = `G-13`/`Q-002`", false},
@@ -968,7 +968,8 @@ func init() {
 		//   `testdata/cli-matrix.json`、不改任何仓内真值 ⇒ 可逆（删掉/换回落点件即回原状）
 		//   ⇒ **D2**（`--yes` 即可），不是 D3。
 		//   ★ 三态面**已接**（2026-09-27 · `family_gate_matrix.go` 的 `gateMatrixOutPlan` + 三道判，
-		//   全在 `os.WriteFile` **之前**）⇒ `usage` 串补上 `[--dry-run | --yes]`：
+		//   全在 `os.WriteFile` **之前**）⇒ `usage` 串补上 `[--dry-run | --yes]`（**全树唯一真判「两枚同给 ⇒ 2」**的一条；
+		//   这个互斥形态只许出现在真判 2 的命令上 —— 其余 18 条同给 = `--dry-run` 优先 ⇒ usage 写 `[--dry-run] [--yes]`）：
 		//   `--dry-run` ⇒ 计划件走 stdout + rc=0 且**一个字节都不落**（不建件、不建目录）；
 		//   缺 `--yes` ⇒ 计划件走 stderr + rc=2（fail-closed）；`--dry-run` 与 `--yes` 同给 ⇒ rc=2。
 		//   先看计划件：`zerg gate matrix --out <件> --dry-run`（同族先例 `zerg gap export`）。
@@ -1116,7 +1117,7 @@ func init() {
 			// ★ 字段表必须写成 `[]string{…}` **字面量** —— 与 `net probe` / `publish tree has`
 			//   / `ci green` 三条**同一条纪律**（契约脚本的 `FIELDS_RE` 只认字面量）。
 			summary: "把**某个模型**钉到**某台机器**上（带 TTL 的覆盖表 · 命中即用 · 撤回一行 `route unpin`）",
-			usage:   "zerg route pin --model <模型> --machine <机器> --ttl <时长> [--by <谁>] [--note <…>] [--dry-run | --yes] [--json <字段>]",
+			usage:   "zerg route pin --model <模型> --machine <机器> --ttl <时长> [--by <谁>] [--note <…>] [--dry-run] [--yes] [--json <字段>]",
 			arity:   "none",
 			args:    []string{"（无位置参数：模型走 `--model`、机器走 `--machine`）"},
 			fields:  []string{"model", "machine", "expires_at", "remaining_s", "state"},
@@ -1147,7 +1148,7 @@ func init() {
 			kind: "RouteUnpin",
 			// ★ 字段表同样必须是字面量（同上）。
 			summary: "撒掉一条钉（不给 `--model` ⇒ **撒全部** · 一行撤回 · 幂等：没撒到 ⇒ 0 + `changed=false`）",
-			usage:   "zerg route unpin [--model <模型>] [--dry-run | --yes] [--json <字段>]",
+			usage:   "zerg route unpin [--model <模型>] [--dry-run] [--yes] [--json <字段>]",
 			arity:   "none",
 			args:    []string{"（无位置参数：点名走 `--model`）"},
 			fields:  []string{"model", "machine", "expires_at", "remaining_s", "state"},
@@ -1163,7 +1164,7 @@ func init() {
 			path:    []string{"resource", "pin"},
 			kind:    "ResourcePin",
 			summary: "钉住资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2）",
-			usage:   "zerg resource pin <资源 id> [--dry-run | --yes]",
+			usage:   "zerg resource pin <资源 id> [--dry-run] [--yes]",
 			arity:   "any",
 			args:    []string{"资源 id"},
 			run:     cmdHazardWrite,
@@ -1172,7 +1173,7 @@ func init() {
 			path:    []string{"resource", "unpin"},
 			kind:    "ResourceUnpin",
 			summary: "解钉资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2）",
-			usage:   "zerg resource unpin <资源 id> [--dry-run | --yes]",
+			usage:   "zerg resource unpin <资源 id> [--dry-run] [--yes]",
 			arity:   "any",
 			args:    []string{"资源 id"},
 			run:     cmdHazardWrite,
@@ -1181,7 +1182,7 @@ func init() {
 			path:    []string{"gateway", "breakers"},
 			kind:    "GatewayBreakers",
 			summary: "网关断路开关（D2 写面 · `--reset` 要 `--yes`）",
-			usage:   "zerg gateway breakers [--reset] [--dry-run | --yes]",
+			usage:   "zerg gateway breakers [--reset] [--dry-run] [--yes]",
 			run:     cmdHazardWrite,
 		},
 		// ---- 批 D · T-47 虫卵 / 虫茧两族（I / J 族 · §3.4 · §7.1 P6 · N4 硬占位表）----
@@ -1227,7 +1228,7 @@ func init() {
 			path:     []string{"egg", "run"},
 			kind:     "EggRun",
 			summary:  "把卵的模型**装到**那台机上（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/control/load`）",
-			usage:    "zerg egg run <卵 id> [--machine <机>] [--dry-run | --yes] [--json <字段>]",
+			usage:    "zerg egg run <卵 id> [--machine <机>] [--dry-run] [--yes] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"卵 id（`<模型 id>@<主机>`，照 `egg ls` 的 egg_id 那一格）", "机器（`--machine`，可省：缺省用卵档案里那台机）"},
 			fields:   eggActFields,
@@ -1238,7 +1239,7 @@ func init() {
 			path:     []string{"egg", "stop"},
 			kind:     "EggStop",
 			summary:  "卸载一枚卵 —— 把那台机上的该模型**卸掉**（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/control/unload`）",
-			usage:    "zerg egg stop <卵 id> [--machine <机>] [--dry-run | --yes] [--json <字段>]",
+			usage:    "zerg egg stop <卵 id> [--machine <机>] [--dry-run] [--yes] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"卵 id（`<模型 id>@<主机>`，照 `egg ls` 的 egg_id 那一格）", "机器（`--machine`，可省：缺省用卵档案里那台机）"},
 			fields:   eggActFields,
@@ -1742,7 +1743,7 @@ func init() {
 			path:    []string{"calib", "run"},
 			kind:    "Calib",
 			summary: "跑一支标定脚本（D2 三态 · --dry-run 零副作用 · 缺 --yes ⇒ 2 · 真调旧脚本、退码原样转出）",
-			usage:   "zerg calib run <名> [位置参数…] [--dry-run | --yes]",
+			usage:   "zerg calib run <名> [位置参数…] [--dry-run] [--yes]",
 			arity:   "any",
 			args:    []string{"件名（与 `zerg calib ls` 逐字相同）", "位置参数（原样交给脚本）"},
 			fields:  calibRunFields,
@@ -1778,7 +1779,7 @@ func init() {
 			path:    []string{"eval", "run"},
 			kind:    "Eval",
 			summary: "跑一支评测脚本（D2 三态 · **只对 ① 收编的件开放** · 缺 --yes ⇒ 2 · 真调旧脚本、退码原样转出）",
-			usage:   "zerg eval run <名> [位置参数…] [--dry-run | --yes]",
+			usage:   "zerg eval run <名> [位置参数…] [--dry-run] [--yes]",
 			arity:   "any",
 			args:    []string{"件名（与 `zerg eval ls` 逐字相同）", "位置参数（原样交给脚本）"},
 			fields:  evalRunFields,
@@ -1825,12 +1826,13 @@ func init() {
 		//   一只 BagIt 袋（`data/` + 两份清单）；落点非空**即拒**（不覆盖别人的件）；写失败 ⇒
 		//   `os.RemoveAll(out)` **回滚**（盘上不留半个袋）；归档区/载荷**一个字不碰**（不 chmod /
 		//   不搬件 / 不删件）⇒「可逆的写」不是「不可逆的破坏」⇒ **D2**（`--yes` 即可），不是 D3。
-		//   `usage` 串**逐字未动**：本条的 `[--dry-run | --yes]` 三态面**已接**（`cmdArchiveManifest`）。
+		//   `usage` 串本批**收口**：本条的互斥形态 `[--dry-run | --yes]` **未接**（同给 ⇒ `--dry-run` 优先 · 零副作用）
+		//   ⇒ 逐字改成 `[--dry-run] [--yes]`（与 `cmdArchiveManifest` 实现口径一致）。
 		{
 			path:    []string{"archive", "manifest"},
 			kind:    "ArchiveManifest",
 			summary: "出归档**三件套**（RFC 8493 BagIt：载荷 `data/` + `manifest-sha256.txt` + `tagmanifest-sha256.txt`）· `--dry-run` 先出逐件清单 · 真写要 `--yes` · 失败回滚",
-			usage:   "zerg archive manifest <载荷目录> --out <袋目录> [--dry-run | --yes] [--json <字段>]",
+			usage:   "zerg archive manifest <载荷目录> --out <袋目录> [--dry-run] [--yes] [--json <字段>]",
 			arity:   "any",
 			args:    []string{"载荷目录", "袋落点（--out）"},
 			fields:  []string{"bag", "entry", "sha256"},
@@ -1873,7 +1875,7 @@ func init() {
 			path:     []string{"model", "add"},
 			kind:     "ModelAdd",
 			summary:  "往名册件（`gateway/fleet.yaml`）**先校验后写**加一条模型（`--dry-run` 先行 · 真写要 `--yes` · 写完读回再校 · 任一步不过 ⇒ 回滚 · 不覆盖别人的条）——**块按 `--model`（模型名）定位/新建**（列表形与裸映射形都认）· `--host` 只作该条的 `host:` 字段值",
-			usage:    "zerg model add --model <模型名> --host <主机> --file <GGUF 路径> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run | --yes] [--json <字段>]",
+			usage:    "zerg model add --model <模型名> --host <主机> --file <GGUF 路径> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run] [--yes] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"模型名（--model：`models:` 段的键 / 块名 ⇒ 按它定位或新建那一块）", "主机（--host：该条 `host:` 的字段值 ＝ 这台模型跑在哪台机器）", "GGUF 路径（--file）"},
 			fields:   []string{"model", "host", "file", "fleet", "line", "added"},
@@ -1950,7 +1952,7 @@ func init() {
 			path:     []string{"gap", "export"},
 			kind:     "GapExport",
 			summary:  "缺口真源 → 「结转账 markdown 片段」导出面（**只打 stdout 时零写盘**：不写真源、不写审计；**`--out <目录>` 那一支会拆件落盘** ⇒ 本表项按**写面**登记 `D2`）· **只列未闭**（`已解`/`不做` 不进正文，只进件头计数）· 件头 = 仪表盘（条数/未闭/已闭/逐面计数/最老未闭天数）· 单行 ≤200 字符 · 读不到真源 ⇒ 退 8（fail-closed）",
-			usage:    "zerg gap export [--out <目录>] [--json <字段>] [--dry-run | --yes]",
+			usage:    "zerg gap export [--out <目录>] [--json <字段>] [--dry-run] [--yes]",
 			fields:   gapExportFields,
 			danger:   &dangerSpec{dangerD2, "落点目录（`--out`）", "往 `--out <目录>` 拆件落盘（索引件 1 + 页件 N：`缺口总账-<日期>.md` / `-<面>-pNN.md`）；真源 `zerg-cli-gaps.jsonl` 与审计 `edit_audit.jsonl` **一个字不动**（可逆：删掉新落的那些件即回到原状）", "缺口账（2026-09-27）· `ddf57491` 接上 `--out` 真写盘 ⇒ 旧表项无 `danger`，本族写命令一直被 `zerg help` 判成**安全档** ✗ · 同族写面先例 `设计-命令面-gap族-v1.0-20260923.md §二.2/§三/§四` · `H-10`（`--yes` 是命令行确认档，不是批准件）", false},
 			opened:   true,
@@ -1965,7 +1967,7 @@ func init() {
 			path:     []string{"gap", "set-state"},
 			kind:     "GapSetState",
 			summary:  "改一条缺口的状态（写面 · 留证据）：`--state` 只认**三值闭集**（`仍缺` / `已解` / `不做`）—— 闭集外 ⇒ 2 并逐字印闭集 · 转 `已解` 写 `solved_at` + `solved_evidence` · 同 id 同态同证据 ⇒ 「无变化」0（不写）· 审计进 `edit_audit.jsonl`（写不进就不写真源）",
-			usage:    "zerg gap set-state <GAP id> --state <仍缺|已解|不做> --evidence <一句话> [--by <谁>] [--dry-run|--yes] [--json <字段>]",
+			usage:    "zerg gap set-state <GAP id> --state <仍缺|已解|不做> --evidence <一句话> [--by <谁>] [--dry-run] [--yes] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"缺口 id（**恰好一条** —— 本动作不做批量改态）"},
 			fields:   gapSetStateFields,
@@ -1978,7 +1980,7 @@ func init() {
 			path:     []string{"gap", "note"},
 			kind:     "GapNote",
 			summary:  "给一条缺口追加一条**口径/上下文注**（写面）：落真源那一行的 `notes` 数组（`<时刻> · <谁>：<文本>`）· **不改 `state`**（形状里根本没有 `--state` ⇒ 收到即拒 2）· 同 by 同 text 已在位 ⇒ 「无变化」0（不写）· 审计进 `edit_audit.jsonl`（写不进就不写真源）",
-			usage:    "zerg gap note <GAP id> --text <一句话> [--by <谁>] [--dry-run|--yes] [--json <字段>]",
+			usage:    "zerg gap note <GAP id> --text <一句话> [--by <谁>] [--dry-run] [--yes] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"缺口 id（**恰好一条**）"},
 			fields:   gapNoteFields,
