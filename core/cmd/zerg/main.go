@@ -1897,9 +1897,10 @@ func init() {
 		{
 			path:     []string{"gap", "export"},
 			kind:     "GapExport",
-			summary:  "缺口真源 → 「结转账 markdown 片段」导出面（**只读**：不写真源、不写审计）· **只列未闭**（`已解`/`不做` 不进正文，只进件头计数）· 件头 = 仪表盘（条数/未闭/已闭/逐面计数/最老未闭天数）· 单行 ≤200 字符 · 读不到真源 ⇒ 退 8（fail-closed）",
-			usage:    "zerg gap export [--out <目录>] [--json <字段>]",
+			summary:  "缺口真源 → 「结转账 markdown 片段」导出面（**只打 stdout 时零写盘**：不写真源、不写审计；**`--out <目录>` 那一支会拆件落盘** ⇒ 本表项按**写面**登记 `D2`）· **只列未闭**（`已解`/`不做` 不进正文，只进件头计数）· 件头 = 仪表盘（条数/未闭/已闭/逐面计数/最老未闭天数）· 单行 ≤200 字符 · 读不到真源 ⇒ 退 8（fail-closed）",
+			usage:    "zerg gap export [--out <目录>] [--json <字段>] [--dry-run | --yes]",
 			fields:   gapExportFields,
+			danger:   &dangerSpec{dangerD2, "落点目录（`--out`）", "往 `--out <目录>` 拆件落盘（索引件 1 + 页件 N：`缺口总账-<日期>.md` / `-<面>-pNN.md`）；真源 `zerg-cli-gaps.jsonl` 与审计 `edit_audit.jsonl` **一个字不动**（可逆：删掉新落的那些件即回到原状）", "缺口账（2026-09-27）· `ddf57491` 接上 `--out` 真写盘 ⇒ 旧表项无 `danger`，本族写命令一直被 `zerg help` 判成**安全档** ✗ · 同族写面先例 `设计-命令面-gap族-v1.0-20260923.md §二.2/§三/§四` · `H-10`（`--yes` 是命令行确认档，不是批准件）"},
 			endpoint: "",
 			run:      cmdGapExport,
 		},
