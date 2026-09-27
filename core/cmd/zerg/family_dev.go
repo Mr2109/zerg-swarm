@@ -266,6 +266,12 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, rec.ID)
 	fmt.Fprintf(stderr, "提案件落点: %s\n", rec.Path)
 	fmt.Fprintf(stderr, "状态: %s（「提 ≠ 批」：批准要人给 · §九 M18 C4）\n", rec.State)
+	// 本提案声明件 —— 回执**逐件列出**用户声明的 `--file`（复用上面已解析的 `rec.Files`，不重解析一遍）：
+	// 声明的件清单是 `zerg dev edit` 的唯一作用域真源；回执不回显它 ⇒ 提的人看不见自己声明的面。
+	// 空声明（没给 `--file`）不加行 —— 既有回执逐字不变。
+	if len(rec.Files) > 0 {
+		fmt.Fprintf(stderr, "本提案声明件: %s\n", strings.Join(rec.Files, " · "))
+	}
 	fmt.Fprintf(stderr, "零副作用口径：本命令**不触主控**（零 HTTP）· **不写入仓** —— 产出后系统状态逐字不变（§17.3 铁律③ 判据）\n")
 	return exitOK
 }
