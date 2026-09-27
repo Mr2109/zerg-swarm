@@ -527,13 +527,6 @@
       "备注": "登记依据 = 门⑩ `R1`（现跑命中即红）。同族测试件处置（`cli_route_test.go` 等）：不声明语义，只**判**那一档。"
     },
     {
-      "file": "core/cmd/zerg/zzzrepro_test.go",
-      "类": "命令面测试件（`ask --dry-run` 的复现/对拍件 —— 把 `--dry-run` 当数据调用）",
-      "语义": "dryrun.v1",
-      "零副作用判据": "本件是**复现件**：现跑把 `ask <问> --dry-run` 当**数据**调用（`zerg.RunForTest`），宿主一律指到 `httptest` 本地假机（`ZERG_PORT` 指到 127.0.0.1 的 `httptest.Server`、`t.Cleanup` 关掉）⇒ 不碰真主控、不发真请求；本件只 `fmt.Printf` 打读数，不写任何件：不落盘 / 不删 / 不推 / 不造目录 / 不改 git 状态。",
-      "备注": "登记依据 = 门⑩ `R1`（现跑命中即红）。同 `cli_route_test.go` 的「消费者」处置 —— 它不声明语义，只是拿那一档当数据复现/对拍。"
-    },
-    {
       "file": "scripts/build/pack-release.sh",
       "类": "脚本侧（发布）：`pack-release.sh --dry-run` 的计划件（只出计划、不执行 —— 归并后那一套）",
       "语义": "dryrun.v1",
