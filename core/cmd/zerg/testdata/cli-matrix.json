@@ -5802,6 +5802,17 @@
    "why": "`--machine` 后面没跟值 ⇒ 判 2（`--machine` 是**值旗标**且 `route pin` 判「给没给」，空串不算给了）"
   },
   {
+   "id": "publish/set#缺路径",
+   "command": "publish set",
+   "argv": [
+    "publish",
+    "set"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺仓内路径 ⇒ 用法错（§4.1 K14 四件套）· 执行前判，判定链真源一件都不读、不碰任何目标（读数 = `go test ./cmd/zerg/ -run TestPublishSet` 用法面那一格逐字断言的同一读数）"
+  },
+  {
    "id": "publish/preflight#未知旗标",
    "command": "publish preflight",
    "argv": [
