@@ -412,6 +412,16 @@ func doctorItems(inv *invocation) []map[string]string {
 		items = append(items, map[string]string{
 			"name": "仓库根", "verdict": "FAIL", "detail": "解析不到仓根（找 core/internal/version/version.go 失败）",
 			"advice": "在仓内跑，或设 ZERG_REPO=<仓根>"})
+	} else if !isRepoRoot(root) {
+		// ★ 收窄形（缺口 `GAP-20260927-436`）：`ZERG_REPO` 是**无条件采信**的（`root.go` 第 16 行 · 那里不动）。
+		// 指到非仓根时上游每一面都 fail-closed（`gate run`/`gate ls` 硬错 rc=2 · `repo status`/`repo commit` 硬错 rc=8），
+		// 唯独本行会把毒根报成「仓库根 PASS」= 静默换源且落在**报绿**这一侧（最险）。
+		// ⇒ 本行只治这一面：解析出的位置**不是仓根**（判据同 `isRepoRoot` ⇒ 找不到 `core/internal/version/version.go`）
+		//   ⇒ 不报 PASS，报「拿不到结论」（BLOCKED ⇒ 退码 8 · §九 M9 `RC9`：读不到不许当健康），并点名那枚毒值。
+		items = append(items, map[string]string{
+			"name": "仓库根", "verdict": "BLOCKED",
+			"detail": "拿不到结论：ZERG_REPO 指到的位置不是仓根（找不到 core/internal/version/version.go）· ZERG_REPO=" + root,
+			"advice": "请 `env -u ZERG_REPO` 再跑，或把它改指真仓根；本栏不猜路径、也不回退到上溯推导"})
 	} else {
 		items = append(items, map[string]string{
 			"name": "仓库根", "verdict": "PASS", "detail": root, "advice": ""})
