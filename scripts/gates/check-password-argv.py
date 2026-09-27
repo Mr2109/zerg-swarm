@@ -47,6 +47,16 @@
     python3 scripts/gates/check-password-argv.py --self-test
     # 自检四档：逐档负控（四型逐型 rc=1）＋ 正控（三正门 rc=0）＋ 真目标（现读仓内计数）＋ 退码 0-1-2 钳
     #   ＋ **防空绿档**（旧档同形 ⇒ 本门 rc=1 ∧ 兄弟门 check-token-argv.py rc=0）
+
+★ 环境旋钮登记（本件现读的**这一枚** · 只登记、不改行为）—— `ZERG_REPO_ROOT` = **脚本侧仓根**：
+    谁读 / 读什么：`REPO_ROOT = os.environ.get("ZERG_REPO_ROOT") or os.path.dirname(...)`（本模块
+    常量区那行）—— 设了就**无条件采信**（不校验是不是真仓根、不回落）；**不设** ⇒ 按本件位置上溯三级推得。
+    它唯一的用处是给 `--root` 定默认值（`--root` 不给 ⇒ 扫 `REPO_ROOT`），并决定自检「真目标档」扫哪儿
+    （自检里逐字打印 `$ZERG_REPO_ROOT` 的那一行就是它）；给了 `--root` ⇒ 本旋钮被绕开。
+    ★ 与 CLI 侧**同名族** `ZERG_REPO`（`core/cmd/zerg/root.go` 件头登记的那一枚）是**两枚、互不读取**：
+    脚本面**不认识** `ZERG_REPO`、CLI 面**不认识** `ZERG_REPO_ROOT` ⇒ 要用哪一面就在**哪一面显式设**。
+    为何要设 / 正确用法：只用来把**默认扫描根**／自检「真目标」指到另一份仓副本或合成假仓根；
+    日常跑门**不要设**（设错 ⇒ 扫的是别处；扫描根不存在 ⇒ rc=2 不给结论，不当绿 ✓）。
 """
 import argparse
 import json
