@@ -4154,11 +4154,29 @@
    "argv": [
     "approve",
     "new",
-    "x"
+    "--tool",
+    "dev_edit",
+    "--by",
+    "Mr2109",
+    "--note",
+    "理由"
    ],
    "want_rc": 2,
    "want_stdout_bytes": 0,
-   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）。★ 2026-09-28 改 argv 修**假绿**：原 argv 是 `approve new x` —— 只撞**参数校验**（缺 --tool/--by/--note）、根本走不到 `--confirm` 那一道 ⇒ 判据弱于对象（与 `GAP-20260928-01` 同族）。新 argv 参数齐、现跑逐字命中 `error.kind=usage · detail=confirm_required · remedy=fix_usage`（rc 2 / stdout 0 字节）"
+  },
+  {
+   "id": "approve/new#--dry-run 与 --yes 同给",
+   "command": "approve new",
+   "argv": [
+    "approve",
+    "new",
+    "--dry-run",
+    "--yes"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "两道确认档自相矛盾（干跑 ⟷ 真签）⇒ 硬失败退 2 并点名 `detail=dry_run_yes_conflict`（复用已签共享判定 `dryRunYesConflict` · 位置 = 命令处理器入口 ⇒ 早于参数校验；`GAP-20260928-01` 同批收）；现跑两遍一致 rc 2 / stdout 0 字节"
   },
   {
    "id": "approve/new#--confirm 值不匹配",
