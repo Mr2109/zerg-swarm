@@ -17,6 +17,9 @@
 #      —— 它读的是**当前源码**的运行期行为（不是 `bin/` 里的旧制品）。
 #   T5 **矩阵不留空白 + baseline 棘轮**：空白数 > baseline 里记的数 ⇒ 红（只许下调）；
 #      豁免**没有 reason** ⇒ **rc=2**（「写不清理由的豁免就是洗白」`T5` 逐字）；baseline 缺/不可解析 ⇒ 2。
+#   T5d **`why` ⟷ 值 同源**（2026-09-27 补 · 题面作 `T6`）：`why` 里的绝对数字（字节/条数/退码）
+#      必须与本格的值同源，或落进四类豁免（出处/编号 · 门槛/上限 · 历史/他格 · 否定式）——
+#      值漂了 why 不跟着漂时红（why 与派生列是同格内的两处真源：写面只刷值、判定口只比值）。
 #   T6 **引用 M6 `R7`**：本门头部引用它 + 契约登记表 `registry.json` 的命令面条目 `gate` 字段
 #      **点名本脚本**（引用面非 0 = 它真的被用，不是挂在空气上）。
 #   R7 **族名闭合**（§十二 `P-038` 的落判 · 开工单 T-43 ①）：族名只有一个 `agent`；
@@ -444,6 +447,106 @@ def emit_matrix(root, out_path=None):
     return 0, lines
 
 
+# ── `T5d`（题面作 `T6`）`why` ⟷ 值 同源：`why` 里的**绝对数字**必须与本格的值同源（或落进四类豁免）──
+#   病灶（两处「各自按设计」的交叉处，实测）：`--emit-matrix` 只刷机器可派生列、`why` 一个字符都不碰
+#   （本件 `emit_matrix` 内逐字「只动这两列；id/command/argv/why 一字不改」）；判定口
+#   `cli_matrix_test.go` 的 `judgeCase` 只比 `want_rc` 与 stdout 字节数、**不读 `c.Why`** ⇒ 值漂了
+#   why 不跟着漂，中间**没有一处**会红（实测：`gate/matrix#--json 不给字段` 的 why 写「stdout 0 字节」
+#   而 `want_stdout_bytes` = 290）。本档就是那处「会红」。
+#   判据面 = 三 regex（R1 字节读数 · R2 条数读数 · R3 退码读数）；命中处的数字必须**等于**本格对应列：
+#   R1 ⟷ `want_stdout_bytes` · R3 ⟷ `want_rc` · R2 ⟷ 带 `*_public` 列的格数（「两档格 N → M 条」）。
+#   四类豁免（`E1`–`E4`）的窗口**全部量自现件实测距离**（见逐行注释），且**只认数字之前**的标记：
+WHY_R1_BYTES_RE = re.compile(r'(\d+)\s*字节')
+WHY_R2_COUNT_RE = re.compile(r'(\d+)\s*(?:条|行|格|处|项|列|个|件|层|位)')
+WHY_R3_RC_RE = re.compile(r'退\s*(\d+)')
+#   E1 出处/编号：数字紧跟在 `第` 后（「设计稿 §二 第 1 条」「`zerg help` 第 1 行」= 引用，不是读数）。
+#   E2 门槛/上限：数字前 6 字符内含 ≤/≥/</> 或 上限/门槛/最多/至少（现件：`深度 ≤ 3 层`）。
+#   E3 历史/他格：**两档窗口** —— 格级前身词窗口 200（现件实测：「前身」距 `419` 25 字符、距那处
+#      `退 1` 151 字符；而 `gate/run` 那句**真判据**「两档格 8 → 7 条」最近的标记在 190 字符外 ⇒
+#      200 是「罩得住前身叙述、罩不住真断言」的实测取法）；变更史词窗口 40（「改前」距数字 2 字符、
+#      「旧值」距那处「本机退 1」31 字符）。
+#      ★ **单向**（只看数字**之前**）：双向窗口会把 `gate/matrix` 的真断言「0 字节」一起罩掉
+#      （同格另有一句在后头的「改前退 1」，实测）。
+#   E4 否定式：数字前 8 字符（**先去掉 markdown `*`**，否则「**不是** 0 字节」量不到）内含
+#      不是/不为/不记/不用/非。
+WHY_E2_MARKS = ('≤', '≥', '<', '>', '上限', '门槛', '最多', '至少')
+WHY_E2_WINDOW = 6
+WHY_E3_WIDE_MARKS = ('前身', '原本', '已删', '已移走', '原值')
+WHY_E3_WIDE_WINDOW = 200
+WHY_E3_TIGHT_MARKS = ('改前', '旧值', '曾')
+WHY_E3_TIGHT_WINDOW = 40
+WHY_E4_MARKS = ('不是', '不为', '不记', '不用', '非')
+WHY_E4_WINDOW = 8
+
+
+def why_claim_exempt(why, mt):
+    """这处命中的数字落进哪一类豁免 ⇒ 类名；`None` = **本格断言**（要判）。
+
+    次序即语义：`E4 否定式`（最贴切的一类）先于 `E3 历史/他格` —— 实测 `script/inventory/sync`
+    的「stdout **不是** 0 字节」两类都沾（前 26 字符另有「改前」）⇒ 先判 E4 才不会被 E3 抢走标签。
+    """
+    pre = why[:mt.start(1)]
+    if pre.rstrip().endswith('第'):
+        return 'E1 出处/编号'
+    if any(m in pre[-WHY_E2_WINDOW:] for m in WHY_E2_MARKS):
+        return 'E2 门槛/上限'
+    if any(m in pre[max(0, len(pre) - WHY_E4_WINDOW):].replace('*', '') for m in WHY_E4_MARKS):
+        return 'E4 否定式'
+    if any(m in pre[max(0, len(pre) - WHY_E3_WIDE_WINDOW):] for m in WHY_E3_WIDE_MARKS):
+        return 'E3 历史/他格'
+    if any(m in pre[max(0, len(pre) - WHY_E3_TIGHT_WINDOW):] for m in WHY_E3_TIGHT_MARKS):
+        return 'E3 历史/他格'
+    return None
+
+
+def why_value_claims(cases):
+    """`T5d` 判定口：逐格核 `why` 里的绝对数字 ⟷ 本格的值 ⇒ `(errs, stat)`。
+
+    `errs` 只装**不一致**（判据要的那部分）；`stat` 供机器面头行用；`cases` 不是表 ⇒ `(None, None)`
+    （调用方照「不给结论 rc=2」处理 —— 「判不了」不许当绿）。
+    """
+    if not isinstance(cases, list):
+        return None, None
+    pub = len([c for c in cases
+               if c.get('want_rc_public') is not None or c.get('want_stdout_bytes_public') is not None])
+    errs, exempt, judged, bad_cells = [], {}, 0, set()
+    for c in cases:
+        why = c.get('why')
+        if not isinstance(why, str):
+            continue
+        cid = c.get('id', '?')
+        hits = []
+        for kind, rx in (('R1', WHY_R1_BYTES_RE), ('R2', WHY_R2_COUNT_RE), ('R3', WHY_R3_RC_RE)):
+            for mt in rx.finditer(why):
+                hits.append((mt.start(), kind, mt))
+        for _, kind, mt in sorted(hits, key=lambda h: h[0]):
+            ex = why_claim_exempt(why, mt)
+            if ex:
+                exempt[ex] = exempt.get(ex, 0) + 1
+                continue
+            judged += 1
+            num = int(mt.group(1))
+            if kind == 'R1':
+                val, col = c.get('want_stdout_bytes'), 'want_stdout_bytes'
+            elif kind == 'R3':
+                val, col = c.get('want_rc'), 'want_rc'
+            else:
+                val, col = pub, '带 `*_public` 列的格数'
+            if val is None:
+                errs.append('T5d why⟷值：%s 的 why 有一处%s读数（%r）而本格**没有 %s** ⇒ 判不了'
+                            % (cid, kind, mt.group(0), col))
+                bad_cells.add(cid)
+                continue
+            if num == val:
+                continue
+            quote = why[max(0, mt.start(1) - 12):mt.end(1) + 12].replace('\n', '⏎')
+            errs.append('T5d why⟷值：%s ｜ why 里「%s」= %d ≠ %s = %d（原句「…%s…」）'
+                        % (cid, mt.group(0).strip(), num, col, val, quote))
+            bad_cells.add(cid)
+    stat = {'judged': judged, 'bad_cells': len(bad_cells), 'bad': len(errs), 'exempt': exempt}
+    return errs, stat
+
+
 def check(root, no_runtime=False):
     """返回 (rc, 行列表)。rc：0 全过 · 1 有红 · 2 不给结论。"""
     lines = []
@@ -553,6 +656,14 @@ def check(root, no_runtime=False):
         errs.append('T5 棘轮：空白 %d 条 > baseline %d 条（棘轮只许**下调**；新增命令必须补 must-fail）'
                     % (len(blanks), int(baseline['blanks'])))
 
+    # ---- T5d `why` ⟷ 值 同源（2026-09-27 补 · 题面作 `T6`）----
+    #   与 T5b/T5c 同族（都在看「矩阵这笔账自己对不对」）：T5b 锚格数、T5c 锚树条数、本档锚
+    #   **同格内 why 的绝对数 ⟷ 值列**（解绑的机制本体见 `why_value_claims` 上方一段）。
+    t5d_errs, t5d_stat = why_value_claims(cases)
+    if t5d_stat is None:
+        return 2, ['⛔ 不给结论：why ⟷ 值的判据面拿不到（`cases` 不是表）—— 判不了不许当绿']
+    errs.extend(t5d_errs)
+
     # ---- T6 引用 M6 R7 ----
     gates = registry_gate_names(root)
     if gates is None:
@@ -603,6 +714,11 @@ def check(root, no_runtime=False):
     lines.append('T6 契约登记表 gate 字段点名本脚本：%s'
                  % ('是' if any('check-cli-contract.py' in g for g in gates) else '否'))
     lines.append('R7 族名闭合（`agent` 唯一 · 全仓 `zerg node <动作>` 命中）：%d 处' % len(hits))
+    lines.append('T5d why ⟷ 值 同源（三 regex：字节/条数/退码）：判 %d 处 · 不一致 %d 格 %d 处 · '
+                 '免于判 %d 处（%s）'
+                 % (t5d_stat['judged'], t5d_stat['bad_cells'], t5d_stat['bad'],
+                    sum(t5d_stat['exempt'].values()),
+                    ' · '.join('%s %d' % kv for kv in sorted(t5d_stat['exempt'].items())) or '无'))
     for e in errs:
         lines.append('✗ ' + e)
     return (1 if errs else 0), lines
