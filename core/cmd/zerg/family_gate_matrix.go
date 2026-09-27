@@ -96,10 +96,8 @@ func cmdGateMatrix(inv *invocation, stdout, stderr io.Writer) int {
 		//   `--dry-run` ⇒ 计划件走 stdout + rc=0（**一个字节都不落**）；缺 `--yes` ⇒ 计划件走 stderr + 2
 		//   （fail-closed：从不提问）；两枚**同给**（自相矛盾）⇒ 2（与 `--out`/`--json` 不许同给同一形状）。
 		//   三条都判在**本函数唯一的写盘点**（下面那一行 `os.WriteFile`）**之前** ⇒ 未过门前不建件、不建目录。
-		if inv.dryRun && inv.yes {
-			inv.setErr("usage", "dry_run_yes_conflict", "--dry-run 与 --yes 不许同给")
-			fmt.Fprintf(stderr, "%s: `--dry-run`（只出计划件）与 `--yes`（真写）**不许同给** ⇒ 用法错 2（两道确认档自相矛盾 ⇒ 不给结论）\n", progName)
-			return exitUsage
+		if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+			return rc
 		}
 		if inv.dryRun {
 			gateMatrixOutPlan(stdout, path, out, len(rows), nonzero, len(mf.Exemptions), "--dry-run")
