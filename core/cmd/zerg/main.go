@@ -962,12 +962,25 @@ func init() {
 			endpoint: "",
 			run:      cmdGateExplain,
 		},
+		// ── `danger`（**D2**）：本表项**真写盘**（修前无 `danger` ⇒ `zerg help` 把它判成安全档 ✗）
+		//   定档理由（逐条读 `family_gate_matrix.go:cmdGateMatrix` 得）：`--out <件>` 那一支
+		//   `os.WriteFile` 写一份逐格 TSV —— 只**新建/覆盖产出件**；不删件、不改矩阵真源
+		//   `testdata/cli-matrix.json`、不改任何仓内真值 ⇒ 可逆（删掉/换回落点件即回原状）
+		//   ⇒ **D2**（`--yes` 即可），不是 D3。
+		//   ⚠ 缺口（**本单不改** · 待派）：本条的三态面（`--dry-run` / 缺 `--yes` ⇒ 2）**尚未接**
+		//   （`cmdGateMatrix` 不读这两枚旗标）⇒ `usage` 串**故意不写** `[--dry-run | --yes]`
+		//   （写了就成了「人面说有、实现不认」的新假话）；补三态面要动第三件
+		//   `core/cmd/zerg/family_gate_matrix.go` ⇒ 超出本单「只改两件」，单列待派。
 		{
-			path:     []string{"gate", "matrix"},
-			kind:     "GateMatrix",
-			summary:  "命令面自己的 must-fail 矩阵（逐格可读可导 —— 新增命令照着它补格）",
-			usage:    "zerg gate matrix [--out <件>] [--json <字段>]",
-			fields:   []string{"command", "case", "want_rc", "why"},
+			path:    []string{"gate", "matrix"},
+			kind:    "GateMatrix",
+			summary: "命令面自己的 must-fail 矩阵（逐格可读可导 —— 新增命令照着它补格）",
+			usage:   "zerg gate matrix [--out <件>] [--json <字段>]",
+			fields:  []string{"command", "case", "want_rc", "why"},
+			danger: &dangerSpec{dangerD2, "落点件（`--out`）",
+				"往 `--out <件>` 写一份逐格 TSV（command/case/want_rc/want_stdout_bytes/argv/why）；矩阵真源 `testdata/cli-matrix.json` 与仓内真值一个字不动（可逆：删掉落点件即回原状）",
+				"缺口-命令面-20260921 §十一 P0-5 · 同族写面先例 `zerg gap export`（`--out` 真写盘）· §九 M3 C1"},
+			opened:   true,
 			endpoint: "",
 			run:      cmdGateMatrix,
 		},
@@ -1806,14 +1819,24 @@ func init() {
 			endpoint: "",
 			run:      cmdArchiveHash,
 		},
+		// ── `danger`（**D2**）：本表项**真写盘**（修前无 `danger` ⇒ `zerg help` 把它判成安全档 ✗）
+		//   定档理由（逐条读 `family_archive.go:cmdArchiveManifest` 得）：真跑按 `--out` **新建**
+		//   一只 BagIt 袋（`data/` + 两份清单）；落点非空**即拒**（不覆盖别人的件）；写失败 ⇒
+		//   `os.RemoveAll(out)` **回滚**（盘上不留半个袋）；归档区/载荷**一个字不碰**（不 chmod /
+		//   不搬件 / 不删件）⇒「可逆的写」不是「不可逆的破坏」⇒ **D2**（`--yes` 即可），不是 D3。
+		//   `usage` 串**逐字未动**：本条的 `[--dry-run | --yes]` 三态面**已接**（`cmdArchiveManifest`）。
 		{
-			path:     []string{"archive", "manifest"},
-			kind:     "ArchiveManifest",
-			summary:  "出归档**三件套**（RFC 8493 BagIt：载荷 `data/` + `manifest-sha256.txt` + `tagmanifest-sha256.txt`）· `--dry-run` 先出逐件清单 · 真写要 `--yes` · 失败回滚",
-			usage:    "zerg archive manifest <载荷目录> --out <袋目录> [--dry-run | --yes] [--json <字段>]",
-			arity:    "any",
-			args:     []string{"载荷目录", "袋落点（--out）"},
-			fields:   []string{"bag", "entry", "sha256"},
+			path:    []string{"archive", "manifest"},
+			kind:    "ArchiveManifest",
+			summary: "出归档**三件套**（RFC 8493 BagIt：载荷 `data/` + `manifest-sha256.txt` + `tagmanifest-sha256.txt`）· `--dry-run` 先出逐件清单 · 真写要 `--yes` · 失败回滚",
+			usage:   "zerg archive manifest <载荷目录> --out <袋目录> [--dry-run | --yes] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"载荷目录", "袋落点（--out）"},
+			fields:  []string{"bag", "entry", "sha256"},
+			danger: &dangerSpec{dangerD2, "袋落点（`--out`）",
+				"按 `--out` 新建一只 BagIt 袋（`data/` + `manifest-sha256.txt` + `tagmanifest-sha256.txt`）；落点非空即拒 · 写失败即回滚（删掉本次建的袋）；归档区不碰（可逆：删掉新建的袋目录即回原状）",
+				"缺口-命令面-20260921 §一 G-07 · RFC 8493 BagIt · 同族写面先例 `zerg gap export`（同样真写盘）· §九 M3 C1"},
+			opened:   true,
 			endpoint: "",
 			run:      cmdArchiveManifest,
 		},
