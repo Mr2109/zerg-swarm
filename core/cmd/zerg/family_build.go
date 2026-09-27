@@ -270,7 +270,7 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "先看计划件：%s\n", gateHint)
 		return exitUsage
 	}
-	if inv.confirm != host {
+	if !devEditHostAccept(inv.confirm) {
 		msg := fmt.Sprintf("确认值不匹配目标（--confirm 给的是 %q，本机主机名是 %q）⇒ 不执行", inv.confirm, host)
 		inv.setErr("usage", "confirm_mismatch", msg)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)

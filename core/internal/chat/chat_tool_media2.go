@@ -212,13 +212,24 @@ func fileCount(args map[string]any, workDir string) (string, error) {
 	}
 	extCount := map[string]int{}
 	total := 0
+	// ★「读不到」≠「真的空目录」（同族治法同 chat_tool_zerg.go 的 zergVersion 三态）：
+	//   本件 walk 是递归的，旧码在 os.ReadDir 报错时只 return ⇒ 子目录读不到就当没内容，
+	//   与「真的空目录」同形且 err=nil ⇒ 调用方分不出 ⇒ 假绿。现按三态分开：
+	//     ①读到（含空目录）⇒ 现行输出一字不改；
+	//     ②目录不在盘上（父目录列出后消失——竞态）⇒ 不当「读失败」，照旧跳过、不另报；
+	//     ③其他读失败（权限等）⇒ 不给结论，报因带目录路径与底层错。
+	var walkErr error
 	var walk func(dir string, level int)
 	walk = func(dir string, level int) {
-		if level > depth {
+		if walkErr != nil || level > depth {
 			return
 		}
 		entries, err := os.ReadDir(dir)
 		if err != nil {
+			if os.IsNotExist(err) {
+				return
+			}
+			walkErr = fmt.Errorf("目录读不到（不给结论）：%s ⇒ %v", dir, err)
 			return
 		}
 		for _, e := range entries {
@@ -238,6 +249,9 @@ func fileCount(args map[string]any, workDir string) (string, error) {
 		}
 	}
 	walk(full, 1)
+	if walkErr != nil {
+		return "", walkErr
+	}
 	keys := make([]string, 0, len(extCount))
 	for k := range extCount {
 		keys = append(keys, k)

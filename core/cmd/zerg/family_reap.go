@@ -100,6 +100,23 @@ func classOf(rel string, spec *contract.ReapSpec, readable bool) (tier, class, j
 	return tier, class, judge
 }
 
+// badSpecGlob —— 清册类里**模式本身**写坏的那一条（`filepath.Match` 的 `ErrBadPattern`）。
+//
+// 与同族已治件 `family_code.go` 的 `--glob` 那一处**同一条口径**：拿**空名字**试一次
+// `filepath.Match`（`Match` 的 `failed` 档会继续解析模式本身 ⇒ 空名字也验得出坏模式），
+// 把模式单独验一遍。只判**模式本身**：目录/件读不到仍走 walk 里的「跳过」那一支，
+// **不许**把「读不到」读成「模式坏」。
+func badSpecGlob(spec *contract.ReapSpec) (classID, glob string, gerr error) {
+	for _, c := range spec.ObjectClasses {
+		for _, g := range c.Globs {
+			if _, err := filepath.Match(filepath.FromSlash(g), ""); err != nil {
+				return c.ID, g, err
+			}
+		}
+	}
+	return "", "", nil
+}
+
 // diffOf —— 差集归类（本版只有「现值有 · 声明无」与「读不到」两类 —— 不臆造第六个值 · `RC4`）。
 func diffOf(tier string) string {
 	if tier == "skip" {
@@ -255,6 +272,20 @@ func cmdAgentReap(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("blocked", "no_repo_root", "解析不到仓根")
 		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 不给结论（读不到不当没有 · `RC9`）\n", progName)
 		return exitBlocked
+	}
+	// ── 清册类 glob 写法非法：**当场判住**（2026-09-28 · 本笔 · 同族第二处）──────────
+	// `classOf` 里那句 `if ok, _ := filepath.Match(filepath.FromSlash(g), filepath.FromSlash(rel))`
+	// 把 `Match` 的**第二返回值（`ErrBadPattern`）丢了** ⇒ 模式写坏时每一件都不命中 ⇒
+	// 该件静默落进「（清册外）」档 ③（判词 = 默认拒绝）—— 使用者看不出是自己的清册写坏了
+	// （与同一天的 `family_code.go` 的 `--glob` 同一形态）。
+	// 治法照同族已治件 `family_code.go` **同一口径**（用法错 2 + 逐字点名），判在 walk **之前**
+	// ⇒ 零副作用；模式好时这一趟 `Match` 不参与分档 ⇒ 命中集合/档位/人面输出/退码逐字节相同。
+	// 顺带收口同一真源上 `buildReapPlan` 里 `filepath.Glob(…, _)` 那一处的吞错（同一批模式）。
+	if cid, bg, gerr := badSpecGlob(spec); gerr != nil {
+		inv.setErr("usage", "bad_glob", "清册类 glob 模式非法")
+		fmt.Fprintf(stderr, "%s: 清册类 %s 的 glob 模式非法（模式 %q）：%v ⇒ 退码 2\n", progName, cid, bg, gerr)
+		fmt.Fprintf(stderr, "下一步：改回收真源 reap.json 里那一类的 object_classes[].globs —— 通配符要成对，[ 要配 ]\n")
+		return exitUsage
 	}
 	plan := buildReapPlan(root, spec, minAge, gitTrackedInRepo(root), time.Now())
 

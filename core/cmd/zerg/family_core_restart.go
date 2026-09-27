@@ -521,7 +521,7 @@ func cmdCoreRestart(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "error.kind=usage · detail=confirm_required · retryable=false · remedy=fix_usage\n")
 		return exitUsage
 	}
-	if inv.confirm != host {
+	if !devEditHostAccept(inv.confirm) {
 		msg := fmt.Sprintf("确认值不匹配目标（--confirm 给的是 %q，本机主机名是 %q）⇒ 不执行", inv.confirm, host)
 		inv.setErr("usage", "confirm_mismatch", msg)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
@@ -588,7 +588,16 @@ func cmdCoreRestart(inv *invocation, stdout, stderr io.Writer) int {
 		line := base
 		line.At, line.Event, line.RC, line.Readiness = time.Now().Format(time.RFC3339), "failed", exitFail, "action_failed"
 		line.Note = err.Error()
-		_ = appendCoreRestartAudit(auditPath, line)
+		if aerr := appendCoreRestartAudit(auditPath, line); aerr != nil {
+			fmt.Fprintf(stderr, "%s: ⚠ 失败那一行审计落不下：%v（判词照实打出来，不改判决）\n", progName, aerr)
+			// ★ 补偿行：把「主落点失败」本身记账到备用落点（**不**改判决 · **不**改退码 · **不**升 fail-closed）。
+			if cerr := appendAuditCompensation(by, auditPath, aerr); cerr == nil {
+				fmt.Fprintf(stderr, "%s: 已把「主落点失败」记一条补偿行到备用落点 %s\n", progName, fallbackAuditPath())
+			} else {
+				fmt.Fprintf(stderr, "%s: ⚠ 补偿行也落不下（%s）：%v —— 只出声（判决/退码一字不变）\n",
+					progName, fallbackAuditPath(), cerr)
+			}
+		}
 		msg := fmt.Sprintf("动作失败（%s）：%v ⇒ 退码 1", coreRestartExitLine(branch), err)
 		inv.setErr("failed", "restart_action_failed", msg)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
@@ -611,6 +620,13 @@ func cmdCoreRestart(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if err := appendCoreRestartAudit(auditPath, line); err != nil {
 		fmt.Fprintf(stderr, "%s: ⚠ 就绪那一行审计落不下：%v（判词照实打出来，不改判决）\n", progName, err)
+		// ★ 补偿行：把「主落点失败」本身记账到备用落点（**不**改判决 · **不**改退码 · **不**升 fail-closed）。
+		if cerr := appendAuditCompensation(by, auditPath, err); cerr == nil {
+			fmt.Fprintf(stderr, "%s: 已把「主落点失败」记一条补偿行到备用落点 %s\n", progName, fallbackAuditPath())
+		} else {
+			fmt.Fprintf(stderr, "%s: ⚠ 补偿行也落不下（%s）：%v —— 只出声（判决/退码一字不变）\n",
+				progName, fallbackAuditPath(), cerr)
+		}
 	}
 	if !okReady {
 		if rc == exitBlocked {

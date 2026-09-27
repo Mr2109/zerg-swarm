@@ -155,7 +155,20 @@ func repoStatusMulti(roots []string, inv *invocation, stdout, stderr io.Writer) 
 			fmt.Fprintf(stderr, "%s: `git status` 在 %s 跑不动 ⇒ 不给结论（退码 8）：%v\n", progName, r, err)
 			return exitBlocked
 		}
-		head, _ := gitRun(r, "rev-parse", "--short", "HEAD")
+		// laneEM：`rev-parse` 与上面 `git status` 那道守卫**同口径** —— HEAD 读不到就不给结论。
+		// 分法与单仓面同源（见 repoStatusOne 里那段）：能走到这里 ⇒ `git status` 在同一仓根已成功
+		// ⇒ `rev-parse` 失败只剩「HEAD 未出生」一种成因；git 本身坏掉由前面两道守卫先兜住。
+		head, herr := gitRun(r, "rev-parse", "--short", "HEAD")
+		if herr != nil {
+			if strings.HasPrefix(porcelain, repoUnbornHeadMark) {
+				inv.setErr("blocked", "git_head_unborn", herr.Error())
+				fmt.Fprintf(stderr, "%s: %s 还没有任何提交（HEAD 未出生）⇒ 读不到 HEAD ⇒ 不给结论（退码 8）\n", progName, r)
+				return exitBlocked
+			}
+			inv.setErr("blocked", "git_rev_parse_failed", herr.Error())
+			fmt.Fprintf(stderr, "%s: `rev-parse --short HEAD` 在 %s 跑不动 ⇒ 不给结论（退码 8）：%v\n", progName, r, herr)
+			return exitBlocked
+		}
 		it := repoRow{label: filepath.Base(strings.TrimRight(r, string(os.PathSeparator))),
 			root: r, head: strings.TrimSpace(head), held: "否"}
 		if _, err := os.Stat(filepath.Join(r, ".git", "index.lock")); err == nil {
@@ -246,7 +259,22 @@ func repoStatusOne(root string, inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `git status` 跑不动 ⇒ 不给结论（退码 8）：%v\n", progName, err)
 		return exitBlocked
 	}
-	head, _ := gitRun(root, "rev-parse", "--short", "HEAD")
+	// ★ laneEM（与上面 `git status` 那道守卫**同口径**）：**HEAD 读不到就不给结论**，不再 `head, _` 把错丢掉。
+	//   可分性（现读坐实 · 见回执「三态真跑」）：能走到这一行 ⇒ `git status --porcelain=v1 --branch` 已经成功
+	//   ⇒ **同一个 git 在同一个仓根上跑得动** ⇒ 此刻 `rev-parse --short HEAD` 失败只剩一种成因：
+	//   **HEAD 还没出生**（这个仓里一个提交都还没有）—— 与「git 本身坏了 / 仓根不是工作树」**分得开**：
+	//   后两者由前面两道守卫（`.git` 不在 ⇒ :236 · `git status` 跑不动 ⇒ :243）先退 8。
+	head, herr := gitRun(root, "rev-parse", "--short", "HEAD")
+	if herr != nil {
+		if strings.HasPrefix(porcelain, repoUnbornHeadMark) {
+			inv.setErr("blocked", "git_head_unborn", herr.Error())
+			fmt.Fprintf(stderr, "%s: 这个 git 仓**还没有任何提交**（HEAD 未出生 · 仓 %s）⇒ 读不到 HEAD ⇒ 不给结论（退码 8）\n", progName, root)
+			return exitBlocked
+		}
+		inv.setErr("blocked", "git_rev_parse_failed", herr.Error())
+		fmt.Fprintf(stderr, "%s: `rev-parse --short HEAD` 跑不动（仓 %s）⇒ 不给结论（退码 8）：%v\n", progName, root, herr)
+		return exitBlocked
+	}
 	head = strings.TrimSpace(head)
 
 	sum := repoStatusSummary{head: head, held: "否"}
@@ -353,6 +381,11 @@ func repoStatusOne(root string, inv *invocation, stdout, stderr io.Writer) int {
 
 // repoIdentityAbsent —— 身份格读不到时的**逐字**占位（不编造、不拿 0 顶替）。
 const repoIdentityAbsent = "（读不到）"
+
+// repoUnbornHeadMark —— 空仓（**还没有任何提交**）在 `git status --porcelain=v1 --branch` 首行里的**逐字**标记。
+// laneEM：`rev-parse --short HEAD` 失败时拿它把「HEAD 未出生（空仓）」与「git 本身坏了」**分开** ——
+// 依据是**同一份 porcelain**（不新开第二次取数口径）：同一次 `git status` 已经成功 ⇒ git 在跑。
+const repoUnbornHeadMark = "## No commits yet on "
 
 // repoFace —— 一个**会话面**（一枚会话 = 一棵工作树）在本次查询里的现读。
 type repoFace struct {
@@ -499,6 +532,12 @@ func repoPrintShared(stderr io.Writer, faces []repoFace) {
 
 // parsePorcelainBranch —— 解析 `--branch` 的第一行：`main...origin/main [ahead 1]` ⇒ `main`。
 func parsePorcelainBranch(s string) string {
+	// ★ laneEM：空仓（**还没有任何提交**）时 `git status --branch` 的第一行是
+	//   `No commits yet on main` —— 它**不是分支名**，而现读会把它截成 `No` 当分支报（同一种 fail-open 的第二种形态）。
+	//   这里**照实返回「读不到」**（空串）⇒ 由调用方既有的占位「（detached / 读不到）」兜住。
+	if strings.HasPrefix(s, "No commits yet on ") {
+		return ""
+	}
 	if i := strings.Index(s, "..."); i >= 0 {
 		s = s[:i]
 	}

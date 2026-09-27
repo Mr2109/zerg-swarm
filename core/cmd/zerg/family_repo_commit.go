@@ -410,6 +410,53 @@ type commitAuditLine struct {
 // commitAuditPath —— 审计落点（与 `edit_audit.jsonl` 同目录：`<状态目录>/commit_audit.jsonl`）。
 func commitAuditPath() string { return filepath.Join(stateDirOf(), "commit_audit.jsonl") }
 
+// fallbackAuditPath —— **备用**审计落点（与主落点同目录：`<状态目录>/audit_fallback.jsonl`）。
+//
+// ★ 它**不是**主落点的替身：**只有**「主落点写不进」这件事本身落到这里（一行一事件 · 追加只写）。
+// 本命令的判决与退码**一字不变**（提交/签名不可逆 ⇒ 升 fail-closed 会把「审计盘满」变成「提交做不了」）。
+func fallbackAuditPath() string { return filepath.Join(stateDirOf(), "audit_fallback.jsonl") }
+
+// auditCompensationLine —— **补偿审计行**：「主落点写不进」这件事本身的一行（落 `audit_fallback.jsonl`）。
+//
+// ★ 硬口径：这一行白纸黑字带**主落点路径**（`audit_path`）+ **失败原因**（`reason` 归类 · `note` 原文）；
+// 字段名照同件体例（`snake_case` · 与 `commitAuditLine` 同族）。
+type auditCompensationLine struct {
+	At        string `json:"at"`
+	Event     string `json:"event"`          // 恒 `audit_compensated`
+	Reason    string `json:"reason"`         // 恒 `audit_unwritable`
+	By        string `json:"by,omitempty"`   // 谁（commit=`--by` · approve=批准人）
+	AuditPath string `json:"audit_path"`     // **主落点**（写不进的那一处）
+	Note      string `json:"note,omitempty"` // 失败原因原文（`error.Error()`）
+}
+
+// appendAuditCompensation —— 把「主落点失败」写一条到**备用落点**（`O_APPEND` · 一行一事件）。
+//
+// ★ 备用落点也写不进 ⇒ 返回 err：调用方**只**出声，**不**改判决、**不**改退码（不假报失败、
+// 不掩盖「提交/签名已成功」这个事实）。本函数**不**引入任何 env 开关。
+func appendAuditCompensation(by, primaryPath string, cause error) error {
+	line := auditCompensationLine{
+		At: time.Now().Format(time.RFC3339), Event: "audit_compensated", Reason: "audit_unwritable",
+		By: by, AuditPath: primaryPath, Note: cause.Error(),
+	}
+	body, err := json.Marshal(line)
+	if err != nil {
+		return err
+	}
+	p := fallbackAuditPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(body, '\n')); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
 // appendCommitAudit 追加一行（O_APPEND · 一行一事件）。**失败即拒**（调用方据此不改仓）。
 func appendCommitAudit(path string, line commitAuditLine) error {
 	if path == "" {
@@ -654,6 +701,13 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 			}
 			if aerr := appendCommitAudit(auditPath, line); aerr != nil {
 				fmt.Fprintf(stderr, "%s: ⚠ 撞红那一行审计落不下：%v\n", progName, aerr)
+				// ★ 补偿行：把「主落点失败」本身记账到备用落点（**不**改判决 · **不**改退码）。
+				if cerr := appendAuditCompensation(by, auditPath, aerr); cerr == nil {
+					fmt.Fprintf(stderr, "%s: 已把「主落点失败」记一条补偿行到备用落点 %s\n", progName, fallbackAuditPath())
+				} else {
+					fmt.Fprintf(stderr, "%s: ⚠ 补偿行也落不下（%s）：%v —— 只出声（判决/退码一字不变）\n",
+						progName, fallbackAuditPath(), cerr)
+				}
 			}
 			if gtRC == exitFail {
 				inv.setErr("failed", "gate_failed", "快速档有失败项")
@@ -731,6 +785,13 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 	}
 	if aerr := appendCommitAudit(auditPath, line); aerr != nil {
 		fmt.Fprintf(stderr, "%s: ⚠ 审计落不下（%s）：%v —— 判决照旧（本行只记账）\n", progName, auditPath, aerr)
+		// ★ 补偿行：把「主落点失败」本身记账到备用落点（**不**改判决 · **不**改退码 · **不**升 fail-closed）。
+		if cerr := appendAuditCompensation(by, auditPath, aerr); cerr == nil {
+			fmt.Fprintf(stderr, "%s: 已把「主落点失败」记一条补偿行到备用落点 %s\n", progName, fallbackAuditPath())
+		} else {
+			fmt.Fprintf(stderr, "%s: ⚠ 补偿行也落不下（%s）：%v —— 只出声（判决/退码一字不变）\n",
+				progName, fallbackAuditPath(), cerr)
+		}
 	}
 
 	// ⑧ 被排除件那一片：**显式逐条**（不是「我们跳过了」；`N=0` 也写口径，不许沉默）

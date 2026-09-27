@@ -36,7 +36,35 @@ type gateStepDecl struct {
 
 // addStepRE —— `add_step` 声明的四种引法（名字与命令必带引号；scope/mode 不带）。
 // 口径：脚本里**逐字**怎么写，这里就怎么读（不解析变量 —— 读不出的位置明说「脚本里是变量」）。
-var addStepRE = regexp.MustCompile(`add_step\s+(\S+)\s+"([^"]*)"\s+(\S+)\s+"([^"]*)"\s+"([^"]*)"`)
+//
+// ★ 第五格**必须吃下内层转义引号**（本批量修的唯一一处解析真源）：
+//
+//	旧形态 `"([^"]*)"` 在命令串里第一个 `\"` 的那个引号上就停 —— `[^"]` 不含 `"`，
+//	而 `\"` 里**有**一个真引号字符。于是 `precommit-gates.sh:2866` 的第五格只捕到
+//	`[ -d \`，**件名整段落在捕获串之外** ⇒ `gate find check-placeholder-residue.py`
+//	把「已挂在这一步上的件」读成「不在步骤表里」（假阴性 · 同族另有 4 件）。
+//
+//	新形态 `((?:[^"\\]|\\.)*)` = 「非引号非反斜杠的普通字符」或「反斜杠 + 任意一字符（含 `\"`/`\\`）」
+//	—— 逐对吃转义，等同 bash 双引号内的解析规则；捕获的是**源文形态**，故 `parseAddSteps`
+//	捕获后按 `\"`→`"`、`\\`→`\` 单遍 unescape（**只认这两个**：bash 双引号里 `\n` 原样保留
+//	两字符，不许一并吃掉 —— 那才是另一处静默改字）。
+var addStepRE = regexp.MustCompile(`add_step\s+(\S+)\s+"([^"]*)"\s+(\S+)\s+"([^"]*)"\s+"((?:[^"\\]|\\.)*)"`)
+
+// addStepLineRE —— 「行首看起来就是一条 add_step 声明」的**粗筛**（比 addStepRE 松得多）。
+// 用途只有一处：addStepRE 吃不下、而粗筛说「这本该是一条声明」的行 ⇒ **解析不确定**，
+// 要点名报出来。为什么不许静默跳过：本仓口径是「**读不到不许当健康**」
+// （退码 8 那一族）—— 一条声明被静默漏掉，下游 `gate find`/`gate explain`/`gate run-step`
+// 就会把「已接线的件」读成「不在步骤表里」，而**输出上看不出任何异常**（这正是本批的病）。
+var addStepLineRE = regexp.MustCompile(`^\s*add_step\s`)
+
+// gateStepUncertain —— 一条「看起来是 add_step 声明、但解析器吃不下（或吃得不完整）」的行。
+//
+//	Line：行号（1 起）；Why：为什么判不确定；Raw：该行原文（截 160 字，够人核对）。
+type gateStepUncertain struct {
+	Line int
+	Why  string
+	Raw  string
+}
 
 func cmdGateExplain(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) == 0 || strings.TrimSpace(inv.args[0]) == "" {
@@ -57,7 +85,8 @@ func cmdGateExplain(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 门禁最小入口不在（%s）—— 它是自举件，就地缺席即硬错\n", progName, gateScriptRel)
 		return exitUsage
 	}
-	decls := parseAddSteps(string(b))
+	decls, unc := parseAddStepsStrict(string(b))
+	reportUncertainSteps(stderr, unc)
 	hits := []gateStepDecl{}
 	for _, d := range decls {
 		if d.Name == want {
@@ -102,15 +131,92 @@ func cmdGateExplain(inv *invocation, stdout, stderr io.Writer) int {
 }
 
 // parseAddSteps 读出脚本里所有 `add_step` 声明（行号从 1 数）。
-func parseAddSteps(src string) []gateStepDecl {
+//
+// 口径（同 `gate explain`/`gate find`/`gate run-step` 共用这一处，不各写一份）：
+//
+//	① addStepRE 吃得下 ⇒ 收；第五格按 `\"`→`"`、`\\`→`\` **单遍** unescape（源文形态 ⇒ 运行期形态）；
+//	② 粗筛说「这是一条声明」而 addStepRE 吃不下 ⇒ 进「解析不确定」清单，**不许静默跳过**；
+//	③ 吃下了、但匹配**没走到行尾**（尾巴还有非空白字符 —— 说明捕获串与真源不符）⇒ 同样进清单：
+//	   宁可报「解析不确定」，不许拿一条截断的命令串当真源（旧形态在这里是静默的，本批量修的第二处）。
+func parseAddStepsStrict(src string) ([]gateStepDecl, []gateStepUncertain) {
 	out := []gateStepDecl{}
+	unc := []gateStepUncertain{}
 	for i, ln := range strings.Split(src, "\n") {
-		m := addStepRE.FindStringSubmatch(ln)
-		if m == nil {
+		loc := addStepRE.FindStringSubmatchIndex(ln)
+		if loc == nil {
+			if addStepLineRE.MatchString(ln) {
+				unc = append(unc, gateStepUncertain{
+					Line: i + 1,
+					Why:  "行首是 add_step，但四格引号串不闭合（命令串多半是**多行/heredoc**）⇒ 读不出这一条",
+					Raw:  clipLine(ln, 160),
+				})
+			}
 			continue
 		}
-		out = append(out, gateStepDecl{Scope: m[1], Name: m[2], Mode: m[3], Dir: m[4], Cmd: m[5], Line: i + 1})
+		if tail := strings.TrimSpace(ln[loc[1]:]); tail != "" {
+			unc = append(unc, gateStepUncertain{
+				Line: i + 1,
+				Why:  fmt.Sprintf("第五格捕获串与行尾不符（捕获后行尾还留着 %q）⇒ 捕获串可能是截断的，不当真源", clipLine(tail, 60)),
+				Raw:  clipLine(ln, 160),
+			})
+		}
+		out = append(out, gateStepDecl{
+			Scope: ln[loc[2]:loc[3]],
+			Name:  addStepUnescape(ln[loc[4]:loc[5]]),
+			Mode:  ln[loc[6]:loc[7]],
+			Dir:   addStepUnescape(ln[loc[8]:loc[9]]),
+			Cmd:   addStepUnescape(ln[loc[10]:loc[11]]),
+			Line:  i + 1,
+		})
 	}
+	return out, unc
+}
+
+// reportUncertainSteps —— 「解析不确定」清单的唯一打印口（`gate explain` / `gate find` 直接调它；
+// `gate show --json` / `gate run --step` 经 parseAddSteps 调它 —— 四处共用一处，各写一份必然漂）。
+// **读不到不许当健康**：吃不下就点名行号 + 原文，不许静默跳过。
+func reportUncertainSteps(stderr io.Writer, unc []gateStepUncertain) {
+	if len(unc) == 0 {
+		return
+	}
+	fmt.Fprintf(stderr, "%s: ★ **解析不确定 %d 条**（这些行读不出来 ⇒ 下游「未点名」结论对这 %d 条不成立，别当健康）：\n",
+		progName, len(unc), len(unc))
+	for _, u := range unc {
+		fmt.Fprintf(stderr, "  %s:%d  %s\n      原文：%s\n", gateScriptRel, u.Line, u.Why, u.Raw)
+	}
+}
+
+// addStepUnescape —— 源文形态 ⇒ 运行期形态：**只认** `\"`→`"` 与 `\\`→`\`（单遍、不回头替换）。
+//
+// 为什么不写通用「反斜杠吃掉下一字符」：bash 双引号里只有美元符、反引号、双引号、反斜杠与换行前的反斜杠
+// 是特义，`\n` 原样是**两个**字符。通用版会把 `python3 -c "...\n..."` 里的 `\n` 悄悄改成 `n`
+// —— 那是比「截断」更坏的错（读数看着像真的）。
+func addStepUnescape(s string) string {
+	return strings.NewReplacer(`\"`, `"`, `\\`, `\`).Replace(s)
+}
+
+// clipLine —— 取证行原文截断（本仓口径：截断必须**看得出来**，故补 `…`）。
+func clipLine(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
+// parseAddSteps 读出脚本里所有 `add_step` 声明（行号从 1 数）。
+//
+// ★ 「读不准」的声明**不许静默丢弃**：`gate show --json` 与 `gate run --step` 三档
+// （--json / --verify-live / --show-log）的步名真源都是本函数，而 `gate find`/`gate explain`
+// 另走 parseAddStepsStrict。丢弃过的 unc 清单在这里**直接上报**到进程 stderr —— 与
+// `gate find`/`gate explain` 同一处打印口（reportUncertainSteps），三入口同口径。
+// 为什么必须上报：一条声明被静默漏掉，查询者会把「读不出的步」读成「步骤表里没有这一步」，
+// 而输出上看不出任何异常 —— 本仓口径「读不到不许当健康」（退码 8 那一族）。
+//
+// 注：签名保持 []gateStepDecl 不变（调用点零改动，与 GAP-20260927-31 的拍板一致）；
+// unc 为空时一个字都不打，正常路径的输出与退码逐字节不变。
+func parseAddSteps(src string) []gateStepDecl {
+	out, unc := parseAddStepsStrict(src)
+	reportUncertainSteps(os.Stderr, unc)
 	return out
 }
 

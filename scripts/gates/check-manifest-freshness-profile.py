@@ -73,6 +73,15 @@ MF = load_manifest_freshness()
 
 
 # ── 两条判据（**逐条一个 id · 逐条一句人话 · 不许合并**）──────────────────────────
+def _pair(x, y):
+    """出口成对打印：12 位截断**有鉴别力**时照旧截断（既有合法输入的判词一字不改）；
+    两枚不同串共享前 12 位（截断看不出来）⇒ 给全串 —— 判词不得与显示面自相矛盾。"""
+    sx, sy = x[:12], y[:12]
+    if sx == sy and x != y:
+        return x, y
+    return sx, sy
+
+
 def judge(mf, release_head):
     """返回 [(id, 说明, 命中?, 原样读数)] —— 两条判据独立成行，合并成一句即失去一条。"""
     out = []
@@ -86,13 +95,22 @@ def judge(mf, release_head):
     elif not release_head:
         out.append(("J1", "source_sha 等于发布提交 HEAD", None,
                     "取不到发布提交 HEAD ⇒ 这一条**不给结论**"))
-    elif src == release_head or release_head.startswith(src) or src.startswith(release_head):
+    elif src == release_head:
         out.append(("J1", "source_sha 等于发布提交 HEAD", False,
-                    "source_sha=%s == 发布提交 HEAD=%s" % (src[:12], release_head[:12])))
+                    "source_sha=%s == 发布提交 HEAD=%s" % _pair(src, release_head)))
+    elif release_head.startswith(src) or src.startswith(release_head):
+        # ★ 短串形态：**不是相等**（明文判据是逐字 `==`）—— 只是「前缀弱匹配」，
+        #   无鉴别力 ⇒ 不当「相等」判（与「不等」同判 · 宁拒不可猜），判词回写比的是哪两个值。
+        a, b = _pair(src, release_head)
+        out.append(("J1", "source_sha 等于发布提交 HEAD", True,
+                    "source_sha=%s ≠ 发布提交 HEAD=%s —— 只是**前缀弱匹配**（前 %d 位同），不是相等"
+                    "（明文判据是逐字全串 ==；短串无鉴别力 ⇒ 不当「相等」判）"
+                    % (a, b, min(len(src), len(release_head)))))
     else:
+        a, b = _pair(src, release_head)
         out.append(("J1", "source_sha 等于发布提交 HEAD", True,
                     "source_sha=%s ≠ 发布提交 HEAD=%s（**用 A 打包、声称是 B**）"
-                    % (src[:12], release_head[:12])))
+                    % (a, b)))
 
     # J2：dirty == false
     if dirty is None:
@@ -139,7 +157,7 @@ def rc_of(profile, ev):
 
 
 # ── 自检（正/负成对 · 合成夹具 · 不碰真目标）────────────────────────────────────
-FRESH = {"commit": "abc1234567", "source_sha": "abc1234567890", "dirty": False,
+FRESH = {"commit": "abc1234567890", "source_sha": "abc1234567890", "dirty": False,
          "generated_at": "2026-09-23T00:00:00Z"}
 
 
@@ -180,7 +198,7 @@ def self_test():
     check("负控 · 两条同时命中 ⇒ 报出两条 id", ids, ["J1", "J2"])
 
     # ⑤ 字段缺失 ⇒ 公开制品档红（宁拒不可猜）· dev 档不拦
-    ev = evaluate({"commit": "abc1234567"}, "", head, 720)
+    ev = evaluate({"commit": "abc1234567890"}, "", head, 720)
     check("负控 · 字段缺失 ⇒ 公开制品档 rc", rc_of("public", ev), 1)
     check("负控 · 字段缺失 ⇒ dev 档 rc", rc_of("dev", ev), 0)
 

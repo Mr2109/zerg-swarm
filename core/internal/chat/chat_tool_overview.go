@@ -251,7 +251,19 @@ func zergOverviewSection(sec string) (string, error) {
 		if verDir != "" {
 			guides, _ := filepath.Glob(filepath.Join(verDir, releaseArtifactGlob))
 			if len(guides) > 0 {
-				b, _ := os.ReadFile(guides[0])
+				// ★「读不到」≠「真的空」（同 family_repo.go「读不到 HEAD ⇒ 不给结论」体例）：
+				// 旧码把 os.ReadFile 的错丢掉 ⇒ 文件读不到时照样输出「全文」标题却空正文且 err=nil，
+				// 调用方分不出「文件真的空」与「没读到」⇒ 假绿。现按三态分开，禁自创：
+				//   ①读到了（含 0 字节）⇒ 现行输出一字不改；
+				//   ②glob 命中却已不在盘上（断链/竞态删除）⇒ 单独一态，点名路径，不当「读失败」；
+				//   ③其他读失败（权限等）⇒ 不给结论，报因带底层错。
+				b, rerr := os.ReadFile(guides[0])
+				if rerr != nil {
+					if os.IsNotExist(rerr) {
+						return "", fmt.Errorf("使用指南文档已不在盘上（glob 命中后消失——不给结论）：%s", guides[0])
+					}
+					return "", fmt.Errorf("使用指南文档读不到（不给结论）：%s ⇒ %v", guides[0], rerr)
+				}
 				return fmt.Sprintf("# 使用虫族指南（%s——全文——人模型双视角）\n%s", filepath.Base(verDir), string(b)), nil
 			}
 		}
@@ -266,7 +278,14 @@ func zergOverviewSection(sec string) (string, error) {
 		if verDir != "" {
 			archFiles, _ := filepath.Glob(filepath.Join(verDir, "00-架构*.md"))
 			if len(archFiles) > 0 {
-				b, _ := os.ReadFile(archFiles[0])
+				// ★ 读不到 ≠ 真的空：三态同「使用」分支（读到含 0 字节 ⇒ 现行输出一字不改）
+				b, rerr := os.ReadFile(archFiles[0])
+				if rerr != nil {
+					if os.IsNotExist(rerr) {
+						return "", fmt.Errorf("架构文档已不在盘上（glob 命中后消失——不给结论）：%s", archFiles[0])
+					}
+					return "", fmt.Errorf("架构文档读不到（不给结论）：%s ⇒ %v", archFiles[0], rerr)
+				}
 				// 返回文档首 2500 字（深度——全文让模型 read）
 				content := string(b)
 				if len([]rune(content)) > 2500 {
@@ -290,7 +309,14 @@ func zergOverviewSection(sec string) (string, error) {
 			}
 			// 匹配: section 含模块名 或 模块名含 section（宽松子串）
 			if strings.Contains(strings.ToLower(sec), strings.ToLower(docName)) || strings.Contains(strings.ToLower(docName), strings.ToLower(sec)) {
-				b, _ := os.ReadFile(mf)
+				// ★ 读不到 ≠ 真的空：三态同「使用」分支（读到含 0 字节 ⇒ 现行输出一字不改）
+				b, rerr := os.ReadFile(mf)
+				if rerr != nil {
+					if os.IsNotExist(rerr) {
+						return "", fmt.Errorf("模块文档已不在盘上（glob 命中后消失——不给结论）：%s", mf)
+					}
+					return "", fmt.Errorf("模块文档读不到（不给结论）：%s ⇒ %v", mf, rerr)
+				}
 				content := string(b)
 				if len([]rune(content)) > 2000 {
 					content = string([]rune(content)[:2000]) + "\n…（文档长——完整: read " + mf + "）\n"

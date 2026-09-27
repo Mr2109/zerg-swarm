@@ -47,6 +47,14 @@
       "note": "`4 = 可重试` 与命令面 `4` = 未认证 **撞号**（`P-013` ⑤ 点名 · 调研-M7:377）。"
     },
     {
+      "id": "zerg-agentd",
+      "kind": "组件自有码空间（**子端守护进程** · 独立模块 agent/ 的常驻件）",
+      "owner": "agent/cmd/zerg-agentd/main.go",
+      "scan": "go",
+      "declared": { "2": "用法错（令牌走 argv = 硬失败，拒绝启动）", "8": "缺令牌 / 未配置共享令牌（拒绝启动，**不假装健康**）" },
+      "note": "★ **为何今天才入表**：本件过去不在 `sites` ⇒ 门⑨ 看不见它（门只判**单命名空间内**两义，见本表 `collisions[2].verdict`）；现读两处 `os.Exit` = `:69`（令牌走 argv ⇒ 2）与 `:77`（拿不到令牌 ⇒ 8）。★ **与命令面的差异逐字**：命令面 `『缺令牌 ⇒ 退码 4』那一行（core/cmd/zerg/exitcodes.go）` 写「缺令牌 ⇒ 退码 `4`（未认证）」；子端同一件事退 `8`。这条差异**不是在册设计外的漏码**，而是命令面自描述面 `zerg help exit-codes` 的「一份口径（防误读）」（`『一份口径（防误读）』那句（core/cmd/zerg/exitcodes.go）` 逐字：组件的自有码空间与命令面这张表**不是同一张表** …… 值面对齐要先给它们的自有语义重新取号，属 `P-013` 的拍板项）所覆盖的**已签差异** ⇒ 只报告、不阻断，见 `signed_differences`。★ 值面对齐属 `P-013`（`GAP-20260928-71`），**不许就地改任何既有码的数值**。"
+    },
+    {
       "id": "zerg-swap-core.sh",
       "kind": "脚本自有码空间（换件）",
       "owner": "scripts/build/zerg-swap-core.sh",
@@ -70,6 +78,54 @@
       "declared": { "0": "全绿", "1": "有失败项", "2": "**不给结论**（用法错/前置缺件/自检不过/有步骤报 BLOCKED）" },
       "internal": { "3": "脚本内部异常码（自检/内部错误）—— 不对命令面承诺，出现在步骤表里一律按 FAIL 计", "127": "命令不存在（跑不起来）—— 同上，按 FAIL 计" },
       "note": "命令面**直通不翻译**：`zerg gate run` 原样转出 0/1/2（`exitcodeGatePass` + `gateExitLine` 逐字取自本件第 35 行）。"
+    },
+    {
+      "id": "all.sh",
+      "kind": "脚本自有码空间（门面统一入口）",
+      "owner": "scripts/gates/all.sh",
+      "scan": "sh",
+      "declared": { "0": "全绿", "1": "有门红（逐门点名）", "8": "判不了（缺件 / 读不到四数）" },
+      "note": "普查入表（laneEH · 2026-09-28）：本件自述第 35 行逐字「退出码：0 全绿 · 1 有门红（逐门点名）· 8 判不了（缺件 / 读不到四数 —— 不许当绿）」。本件 8 与命令面 8 = blocked 同号并存 ⇒ 逐条见 signed_differences。"
+    },
+    {
+      "id": "real-gates.sh",
+      "kind": "脚本自有码空间（真跑档）",
+      "owner": "scripts/gates/real-gates.sh",
+      "scan": "sh",
+      "declared": { "0": "跑到的都绿", "1": "有门真跑非 0（逐门点名）", "8": "判不了（缺件 / 一只都没跑 / --only 点到不在真跑面的门）" },
+      "internal": { "124": "单只门超时标记（--timeout）—— 也是非 0、进总 rc" },
+      "note": "普查入表（laneEH · 2026-09-28）：本件自述第 19 行逐字「退出码：0 跑到的都绿 · 1 有门真跑非 0（逐门点名）· 8 判不了（缺件 / 一只都没跑 / --only 点到不在真跑面的门）」，第 20 行「rc=124 表示这一只超时（--timeout）—— 也是非 0，也进总 rc」。8 与命令面 8 同号 ⇒ 逐条见 signed_differences；124 为件内单只标记，按 internal 记。"
+    },
+    {
+      "id": "pack-release.sh",
+      "kind": "脚本自有码空间（打包器）",
+      "owner": "scripts/build/pack-release.sh",
+      "scan": "sh",
+      "declared": { "0": "成功", "8": "不给结论（前置不在：制品目录不在 / 无制品）" },
+      "note": "普查入表（laneEH · 2026-09-28）：本件现读第 101 行逐字注释「前置（不在 ⇒ 退 8 · 不给结论，与门禁族「rc=2 不给结论」同口径）」、第 105 行「⇒ 不给结论（退 8）」⇒ 本件的 8 = 不给结论（与命令面 2 同义不同号），却又与命令面 8 = blocked 同号 ⇒ 同号不同义并存，逐条见 signed_differences。"
+    },    {
+      "id": "build-all.sh",
+      "kind": "脚本自有码空间（全量构建档）",
+      "owner": "scripts/build/build-all.sh",
+      "scan": "sh",
+      "declared": { "0": "全绿", "64": "用法错：未知参数 / --only-* 互斥 / --dist 与 --only-agentd 互斥" },
+      "note": "入表（2026-09-28 父代理 · 拍板「按建议」）：64 在自留区（3–63）外 ⇒ 逐条见 out_of_range；与 zerg-upgrade.sh 同形同义（都是用法错）。"
+    },
+    {
+      "id": "mirror-cn.sh",
+      "kind": "脚本自有码空间（国内镜像推送 · Gitee）",
+      "owner": "publish/mirror-cn.sh",
+      "scan": "sh",
+      "declared": { "2": "用法错：未知参数 / 缺 --remote 或 --out", "3": "非快进 ⇒ 拒绝推送（Gitee 禁强推铁律）" },
+      "note": "入表（2026-09-28 父代理 · 拍板「按建议」）：命令面主表里没有 3 ⇒ 本件 3 不与命令面同号；与 collisions 里 zerg-model/zerg-compat 的 3 也不同源（本件 = 拒推）。"
+    },
+    {
+      "id": "mirror-public.sh",
+      "kind": "脚本自有码空间（公开镜像推送）",
+      "owner": "publish/mirror-public.sh",
+      "scan": "sh",
+      "declared": { "1": "缺件/缺工具（缺 lib、缺 python3、缺 git）", "2": "用法错：未知参数 / 不是 git 仓 / --out 落在私有仓", "3": "--push 被双重保险拦下（需 --push 且 ZERG_MIRROR_ALLOW_PUSH=1）" },
+      "note": "入表（2026-09-28 父代理 · 拍板「按建议」）：3 = 推送保险，不是用法错 ⇒ 不与命令面同号；命令面主表里没有 3。"
     }
   ],
   "collisions": [
@@ -104,20 +160,84 @@
   ],
   "out_of_range": [
     {
-      "owner": "scripts/build/zerg-upgrade.sh",
+      "owner": "scripts/build/zerg-upgrade.sh 与 scripts/build/build-all.sh",
       "code": 64,
-      "meaning": "未知参数（用法错）—— 唯一一处 `exit 64`",
+      "meaning": "未知参数（用法错）—— 两件同形同义（zerg-upgrade.sh 一处；build-all.sh 三处：未知参数 / --only-* 互斥 / --dist 与 --only-agentd 互斥）",
       "verdict": "**越界**：占号纪律写「只在 3–63 自留区取号」，`64` 在区外。**不许就地改**：本件自己的 `2` 已被「无需升级」占着，把用法错改成 `2` 会在**同一命名空间内**造出第二个两义（正是 T-26 要治的病）。",
       "trigger": "与 `collisions` 同一批拍板（`P-013` ⑨ · E7）——重新取号要按组件自有语义整段搬，不是单点改一个数字。",
       "registered_by": "T-26（本件）；新出现任何自留区外的号 ⇒ 门⑨ 立即红。"
+    }
+  ],
+  "signed_differences": [
+    {
+      "site": "agent/cmd/zerg-agentd/main.go",
+      "code": 8,
+      "cli_code": 4,
+      "reason": "已签差异：子端守护与命令面**不是同一张表**。现读 `agent/cmd/zerg-agentd/main.go:77` 拿不到令牌 `os.Exit(8)`（拒绝启动），而命令面 `『缺令牌 ⇒ 退码 4』那一行（core/cmd/zerg/exitcodes.go）` 同一件事退 `4`（未认证）。命令面自描述面 `zerg help exit-codes` 的「一份口径（防误读）」（`『一份口径（防误读）』那句（core/cmd/zerg/exitcodes.go）`）逐字写着：**组件的自有码空间**与命令面这张表**不是同一张表** —— 命令面只把它们**原样转出**；值面对齐要先给它们的自有语义重新取号，属 `P-013` 的拍板项 ⇒ 这一对并存是**已签差异**（不是漏登、不是本门该拦的病）。",
+      "signed_by": "『一份口径（防误读）』那句（core/cmd/zerg/exitcodes.go）（`zerg help exit-codes` 自描述面）· 差集登记逐条在《开工记录-批A-20260920.md》T-04 节",
+      "trigger": "值面对齐（把子端的 8 与命令面的 4 收敛成一码）＝ 走 `P-013` 拍板；在拍板前**禁就地改码**（`GAP-20260928-71`）。"
+    },
+    {
+      "site": "scripts/gates/all.sh",
+      "code": 8,
+      "cli_code": 8,
+      "reason": "普查签字（laneEH · 2026-09-28 · 签字人 assistant）：本件自述第 35 行逐字「退出码：0 全绿 · 1 有门红（逐门点名）· 8 判不了（缺件 / 读不到四数 —— 不许当绿）」。这是门禁脚本族的自有码空间，与命令面这张表不是同一张表（『一份口径（防误读）』那句（core/cmd/zerg/exitcodes.go） 逐字「组件的自有码空间与命令面这张表不是同一张表……值面对齐……属 P-013 的拍板项」）⇒ 本件 8 与命令面 8 = blocked 同号并存，属已签差异，只报告不阻断。",
+      "signed_by": "assistant（laneEH 普查 · 待 Mr2109 拍板）",
+      "trigger": "值面对齐（本件 8 与命令面 8 / 门禁族 2 收敛成一码）＝ 走 P-013 拍板（连带 GAP-20260928-46 的 2-vs-8 未归一口径）；拍板前禁就地改码。"
+    },
+    {
+      "site": "scripts/gates/real-gates.sh",
+      "code": 8,
+      "cli_code": 8,
+      "reason": "普查签字（laneEH · 2026-09-28 · 签字人 assistant）：本件自述第 19 行逐字「退出码：0 跑到的都绿 · 1 有门真跑非 0（逐门点名）· 8 判不了（缺件 / 一只都没跑 / --only 点到不在真跑面的门）」。与 all.sh 同族的脚本自有码空间，8 与命令面 8 = blocked 同号并存 ⇒ 已签差异，只报告不阻断。",
+      "signed_by": "assistant（laneEH 普查 · 待 Mr2109 拍板）",
+      "trigger": "值面对齐 ＝ 走 P-013 拍板（连带 GAP-20260928-46）；拍板前禁就地改码。"
+    },
+    {
+      "site": "scripts/build/pack-release.sh",
+      "code": 8,
+      "cli_code": 8,
+      "reason": "普查签字（laneEH · 2026-09-28 · 签字人 assistant）：本件现读第 101 行逐字注释「前置（不在 ⇒ 退 8 · 不给结论，与门禁族「rc=2 不给结论」同口径）」与第 105 行「⇒ 不给结论（退 8）」⇒ 本件 8 = 不给结论（与命令面 2 = 不给结论同义不同号），又与命令面 8 = blocked 同号 ⇒ 同号不同义并存，属已签差异，只报告不阻断。",
+      "signed_by": "assistant（laneEH 普查 · 待 Mr2109 拍板）",
+      "trigger": "值面对齐（本件 8 收敛到命令面 2）＝ 走 P-013 拍板；拍板前禁就地改码。"
+    },    {
+      "site": "scripts/build/build-all.sh",
+      "code": 64,
+      "cli_code": 2,
+      "trigger": "自留区外的号（命令面主表无 64）",
+      "reason": "签字（2026-09-28 Mr2109 拍板按助手建议记入）：本件是构建脚本自有码空间，64 与命令面「用法错」同义但取了自留区外的号，与 zerg-upgrade.sh 同形 ⇒ 只报告不阻断。",
+      "signed_by": "assistant"
+    },
+    {
+      "site": "publish/mirror-cn.sh",
+      "code": 3,
+      "cli_code": 3,
+      "trigger": "命令面主表里无 3",
+      "reason": "签字（2026-09-28 Mr2109 拍板按助手建议记入）：本件 3 = 非快进拒绝推送（Gitee 禁强推铁律），是脚本自有码空间 ⇒ 只报告不阻断。",
+      "signed_by": "assistant"
+    },
+    {
+      "site": "publish/mirror-public.sh",
+      "code": 3,
+      "cli_code": 3,
+      "trigger": "命令面主表里无 3",
+      "reason": "签字（2026-09-28 Mr2109 拍板按助手建议记入）：本件 3 = --push 被双重保险拦下（需 --push 且 ZERG_MIRROR_ALLOW_PUSH=1），是脚本自有码空间 ⇒ 只报告不阻断。",
+      "signed_by": "assistant"
     }
   ],
   "sites": [
     "core/cmd/zerg-compat/main.go",
     "core/cmd/zerg-model/main.go",
     "core/cmd/zerg-agent/main.go",
+    "agent/cmd/zerg-agentd/main.go",
     "scripts/gates/precommit-gates.sh",
     "scripts/build/zerg-swap-core.sh",
-    "scripts/build/zerg-upgrade.sh"
+    "scripts/build/zerg-upgrade.sh",
+    "scripts/gates/all.sh",
+    "scripts/gates/real-gates.sh",
+    "scripts/build/pack-release.sh",
+    "scripts/build/build-all.sh",
+    "publish/mirror-cn.sh",
+    "publish/mirror-public.sh"
   ]
 }

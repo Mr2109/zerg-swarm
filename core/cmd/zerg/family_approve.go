@@ -243,6 +243,19 @@ func cmdApproveShow(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	tool := inv.args[0]
+	// ★ `GAP-20260928-33`（laneAX）：字段面**前移到副作用/人签闸之前** —— 照抄同族 `ls`（`cmdApproveLs`）
+	//   的**位置与退码**：`--json <未知字段>` ⇒ 在**读批准件**（下面那枚 `os.ReadFile`）之前就退 2 并
+	//   **点名**那个坏字段。旧码把这一判落在批准件读**之后**（`family_approve.go` 旧 :270）⇒ 坏字段名在
+	//   「件不存在」时先撞 `approval_not_found`（退 1）、**坏名没被点到** —— 与同族 `ls` 口径漂
+	//   （`ls` 退 2 点名）。判定口只有一枚（`approveBadField` + `reportBadField`），本处**不自创退码**。
+	if inv.jsonGiven && len(inv.fields) > 0 {
+		// ★ D1 落地：字段面判定抽成一枚共用口（九键 + **可选**字段）；九键那一份是冻结面，
+		// **不许**并进 `approveFields`（见上方档位面那段口径）。
+		if bad := approveBadField(inv.path, inv.fields); bad != "" {
+			inv.setErr("usage", "json_field_unknown:"+bad, fmt.Sprintf("未知字段 %q", bad))
+			return reportBadField(stderr, inv.path, bad)
+		}
+	}
 	p := filepath.Join(approveDir(), tool+".json")
 	b, err := os.ReadFile(p)
 	if err != nil {
@@ -267,10 +280,8 @@ func cmdApproveShow(inv *invocation, stdout, stderr io.Writer) int {
 		// （点 `--json name` 也 rc=0、还把九格全打出来）⇒ 可选字段（`strength` /
 		// `key_id_in_use`）**根本取不出来**。落 D1 就得把这一格补上：**点哪几格给哪几格**（§4.1 K1）。
 		// 九键**语义与顺序**一字不动（`approveFields` 那一份没改）；变的是「以前忽略你的点单」。
-		if bad := approveBadField(inv.path, inv.fields); bad != "" {
-			inv.setErr("usage", "json_field_unknown:"+bad, fmt.Sprintf("未知字段 %q", bad))
-			return reportBadField(stderr, inv.path, bad)
-		}
+		// ★ `GAP-20260928-33`：这一判已**前移**到本函数开头（读批准件之前 · 见那一段）——
+		// 判定口仍只有一枚（`approveBadField` + `reportBadField`），此处**不留第二处**。
 		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, row)
 	}
 	fmt.Fprintf(stdout, "工具     : %s\n", tk.Tool)
@@ -473,6 +484,19 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 		}
 	}
 	if inv.dryRun {
+		// ★ `DEV-0491` 的另一半（laneFH · 干跑那一态）：字段面在**干跑档**同样要**先判**并**点名**那个坏
+		//   字段 —— 照同族 `ls` / `show` 与下面真签那一处的**同一枚**判定口（`approveBadField` +
+		//   `reportBadField`），不另立口径、不自创退码。旧码把这一判只留在真签那一路（下面那处）⇒
+		//   干跑档给个坏字段名**静默 rc=0**（坏名一个字都没被点到），与同族「执行前判 + 点名」口径漂。
+		//   ★ 落点 = 干跑支**最前**（在 printSummary 之前）= **干跑专用分档** ⇒ 非干跑各态（缺确认 /
+		//   确认对之后那处字段判 / 非终端 / 真签）的**位置、逐字输出与退码一字不动**；好字段的干跑档
+		//   也逐字节不变（`approveBadField` 对合法字段回空串 ⇒ 这一块不产生任何输出/退码）。
+		if inv.jsonGiven && len(inv.fields) > 0 {
+			if bad := approveBadField(inv.path, inv.fields); bad != "" {
+				inv.setErr("usage", "json_field_unknown:"+bad, fmt.Sprintf("未知字段 %q", bad))
+				return reportBadField(stderr, inv.path, bad)
+			}
+		}
 		// 干跑那一态：只出**计划面** —— 一个字节都不写（不落件 · 不落审计 · 不动在册件 · 不读口令）。
 		// 这一态**不受终端判据约束**（它本来就不签）—— 两行照打，便于「AI 可提」那一半自证要签什么。
 		printSummary()
@@ -494,6 +518,20 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 			progName, tk.Tool, tk.Tool)
 		fmt.Fprintf(stderr, "error.kind=usage · detail=confirm_required · retryable=false · remedy=fix_usage\n")
 		return exitUsage
+	}
+	// ★ `GAP-20260928-33`（laneFA）：字段面**前移到副作用/人签闸之前** —— 照同族 `ls`（`cmdApproveLs`）
+	//   与 `show`（`cmdApproveShow`）的**位置与退码**：`--json <未知字段>` ⇒ 在**人签闸**（下面那枚
+	//   `isTTYFile`）与**落件**（后面那枚 `os.OpenFile`）之前就退 2 并**点名**那个坏字段。旧码把这一判
+	//   留在 `selectJSON`（本函数尾部 · 真签才算得出来）⇒ 模型路径先撞 `not_a_human`（退 2 · 坏名**没被
+	//   点到**）、人在终端那一路更是**件已经落盘**才因字段面退 2 —— 与同族「执行前判」口径漂。
+	//   判定口只有一枚（`approveBadField` + `reportBadField`），本处**不自创退码**；位置在 `--dry-run` 支
+	//   与 D3 确认对之后 ⇒ 干跑那一态（rc=0 · 零副作用）与既有各格的先手**一字不动**。
+	if inv.jsonGiven && len(inv.fields) > 0 {
+		// ★ 与 `ls` / `show` 同一枚判定口（九键 + **可选**字段）——见 `approveBadField` 那段口径。
+		if bad := approveBadField(inv.path, inv.fields); bad != "" {
+			inv.setErr("usage", "json_field_unknown:"+bad, fmt.Sprintf("未知字段 %q", bad))
+			return reportBadField(stderr, inv.path, bad)
+		}
 	}
 	if !isTTYFile(os.Stdin) {
 		// 这一态**一个字节都不往 stdout 写**（矩阵 `approve/new#非终端不给签（模型路径）` 判据 = stdout 0 字节 ·
@@ -557,6 +595,13 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 	if ap, aerr := recordApprovalAuditWithTTL(tk, payload, p, ttl); aerr != nil {
 		fmt.Fprintf(stderr, "%s: ⚠ 审计那一行没落成（%v）—— **本次签名照旧有效**（审计是记录面，不是放行条件；落点 %s）\n",
 			progName, aerr, ap)
+		// ★ 补偿行：把「主落点失败」本身记账到备用落点（**不**改判决 · **不**改退码 · **不**升 fail-closed）。
+		if cerr := appendAuditCompensation(tk.Approver, ap, aerr); cerr == nil {
+			fmt.Fprintf(stderr, "%s: 已把「主落点失败」记一条补偿行到备用落点 %s\n", progName, fallbackAuditPath())
+		} else {
+			fmt.Fprintf(stderr, "%s: ⚠ 补偿行也落不下（%s）：%v —— 只出声（判决/退码一字不变）\n",
+				progName, fallbackAuditPath(), cerr)
+		}
 	} else {
 		fmt.Fprintf(stderr, "  审计  ：%s（追加一行 `%s` · 只写不改）\n", ap, approveAuditEvent)
 	}

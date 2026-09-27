@@ -23,7 +23,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -48,6 +50,15 @@ func taskDetail(inv *invocation, id string, stderr io.Writer) (jsonObj, int) {
 // runGit RO 跑一条白名单内的只读 git 命令（cwd 用 `-C` 指定，不 chdir）。
 func runGitRO(workdir string, argv ...string) (string, error) {
 	args := append([]string{"-C", workdir, "-c", "core.quotepath=false"}, argv...)
+	out, err := exec.Command("git", args...).CombinedOutput()
+	return strings.TrimRight(string(out), "\n"), err
+}
+
+// runGitRONoLock 与 `runGitRO` 同形，但走 `--no-optional-locks`（**一个可选锁都不取**）——
+// 只读的**探读**面用它（照同族 `family_repo.go` 的 `gitRunNoLock`）：连 `git status` 的索引刷新
+// 都不许发生（本命令是只读面，不许因为探读而在工作树里落任何痕迹）。
+func runGitRONoLock(workdir string, argv ...string) (string, error) {
+	args := append([]string{"-C", workdir, "-c", "core.quotepath=false", "--no-optional-locks"}, argv...)
 	out, err := exec.Command("git", args...).CombinedOutput()
 	return strings.TrimRight(string(out), "\n"), err
 }
@@ -102,15 +113,56 @@ func cmdTaskGit(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 任务 %q 的载荷里**没有 workdir** ⇒ 不给结论（退码 8）\n", progName, id)
 		return exitBlocked
 	}
+	// laneEV：git 读不到**不许再谎报「干净」**。照同族已治件 `family_repo.go` 的治法定型
+	// （照它，禁自创）：读不到就**自报 + 不给结论（退码 8）**，且成因**分开报** ——
+	//   ① 仓根下没有 `.git` ⇒ 这不是一个 git 工作树（与「git 命令失败」**不是一回事**）；
+	//   ② `git status` 跑不动 ⇒ git 面读不到；
+	//   ③ HEAD 读不到：同一份 porcelain 带「未出生」标记 ⇒ 空仓（另档），否则 `rev-parse` 读不到。
+	// 探读一律走 `--no-optional-locks`（一个可选锁都不取 ⇒ 连索引刷新都不发生）。
+	if _, err := os.Stat(filepath.Join(workdir, ".git")); err != nil {
+		inv.setErr("blocked", "not_a_git_repo", "任务工作树里没有 .git")
+		fmt.Fprintf(stderr, "%s: 任务 %q 的 workdir %s 下没有 .git ⇒ 这不是一个 git 工作树（不给结论 · 退码 8）\n",
+			progName, id, workdir)
+		return exitBlocked
+	}
+	porcelain, perr := runGitRONoLock(workdir, "status", "--porcelain=v1", "--branch")
+	if perr != nil {
+		inv.setErr("blocked", "git_status_failed", perr.Error())
+		fmt.Fprintf(stderr, "%s: `git status` 在 %s 跑不动 ⇒ 读不到工作树 ⇒ 不给结论（退码 8）：%v\n",
+			progName, workdir, perr)
+		return exitBlocked
+	}
 	branch, _ := runGitRO(workdir, "branch", "--show-current")
-	head, _ := runGitRO(workdir, "rev-parse", "HEAD")
-	// `git diff --stat` 有输出 ⇒ 有未提交改动（只读；不写任何东西）
-	diff, _ := runGitRO(workdir, "diff", "--stat")
+	head, herr := runGitRO(workdir, "rev-parse", "HEAD")
+	if herr != nil {
+		if strings.HasPrefix(porcelain, repoUnbornHeadMark) {
+			inv.setErr("blocked", "git_head_unborn", herr.Error())
+			fmt.Fprintf(stderr, "%s: 任务 %q 的工作树**还没有任何提交**（HEAD 未出生）⇒ 读不到 HEAD ⇒ 不给结论（退码 8）\n",
+				progName, id)
+			return exitBlocked
+		}
+		inv.setErr("blocked", "git_rev_parse_failed", herr.Error())
+		fmt.Fprintf(stderr, "%s: `rev-parse HEAD` 在 %s 跑不动 ⇒ 读不到 HEAD ⇒ 不给结论（退码 8）：%v\n",
+			progName, workdir, herr)
+		return exitBlocked
+	}
+	// `git diff --stat` 有输出 ⇒ 有未提交改动（只读；不写任何东西）。
+	// ★ 本笔要治的**谎报**就在下面这一处：旧写法 `diff, _ := …` 把错丢掉、随后默认 `dirty="false"`
+	//   ⇒ git 读不到时任务面报「干净」。现在 git 读不到 ⇒ **不给结论**（退码 8），绝不退化成「干净」。
+	diff, derr := runGitRO(workdir, "diff", "--stat")
+	if derr != nil {
+		inv.setErr("blocked", "git_diff_failed", derr.Error())
+		fmt.Fprintf(stderr, "%s: `git diff --stat` 在 %s 跑不动 ⇒ 读不到工作树改动 ⇒ 不给结论（退码 8）：%v\n",
+			progName, workdir, derr)
+		return exitBlocked
+	}
 	dirty := "false"
 	if strings.TrimSpace(diff) != "" {
 		dirty = "true"
 	}
-	// 与 main 的距离（`rev-list --count` · 只读）：判「产物有没有落回主分支」时要用
+	// 与 main 的距离（`rev-list --count` · 只读）：判「产物有没有落回主分支」时要用。
+	// ★ 这一格**不**跟着 fail-closed：默认分支不是 `main`（或仓里还没有 `main`）时它本来就跑不动，
+	//   那时给空串是既有口径（判「有没有落回主分支」由调用方自己判）⇒ **不改**，免得把正常仓判死。
 	ahead, _ := runGitRO(workdir, "rev-list", "--count", "HEAD", "--not", "main")
 	row := map[string]string{"id": id, "workdir": workdir, "branch": branch,
 		"head": head, "dirty": dirty, "ahead_of_main": strings.TrimSpace(ahead)}

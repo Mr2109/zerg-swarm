@@ -100,8 +100,83 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 		}
 	}
 	glob := strings.TrimSpace(inv.flagVal("--glob"))
+	// ★ 非法 `--glob` 模式**当场判住**（2026-09-28 · 本笔）：下面 walk 里那句
+	// `if ok, _ := filepath.Match(glob, filepath.Base(p))` 把 `Match` 的**第二返回值
+	// （`ErrBadPattern`）丢了** ⇒ 模式写坏时每一件都被 `!ok` 拦掉 ⇒ 扫了 0 件 · 命中 0 条 ·
+	// 退码 1，与「真的零命中」**同一个形状**（机器面还照报 kind=failed/detail=no_match/
+	// message=零命中）⇒ 使用者分不出「我的模式写坏了」与「真没有」。
+	//
+	// 治法照本命令既有两处**同一口径**（坏正则 :58 / 坏 --limit :118：用法错 2 + 逐字点名），
+	// 判在 walk **之前** ⇒ 零副作用：拿**空名字**试一次 `filepath.Match`，把模式单独验一遍
+	// （`Match` 的 `failed` 档会**继续解析模式本身** ⇒ 空名字也验得出坏模式：实测
+	// 单字 `[` · `a[` · 单反斜杠 · `*.[` 全报 syntax error in pattern，好模式一律 nil）。
+	// 只判**模式本身**：目录/件读不到仍走 walk 里的「跳过」那一支，**不许**把「读不到」读成
+	// 「模式坏」；模式好时这一趟 `Match` 不参与扫描 ⇒ 命中面与改前逐字节相同。
+	// （同族第二处同类 `family_reap.go:71` 不在本件面上 ⇒ 只记回执，不越面改。）
+	if glob != "" {
+		if _, gerr := filepath.Match(glob, ""); gerr != nil {
+			inv.setErr("usage", "bad_glob", "--glob 模式非法")
+			fmt.Fprintf(stderr, "%s: --glob 模式非法（模式 %q）：%v ⇒ 退码 2\n", progName, glob, gerr)
+			fmt.Fprintf(stderr, "下一步：换一个模式（例：--glob '*.go' · --glob 'family_*.go'）—— 通配符要成对，[ 要配 ]\n")
+			return exitUsage
+		}
+	}
+	// `--limit <N>`（缺口 `GAP-20260927-15` · 2026-09-28）：本页最多列多少条（正整数 · 默认
+	// `codeFindRowCap`）。此前 `code find` **没有**这一枚 —— 200 条是硬顶，页脚还建议「收窄」，
+	// 真给它一枚在册旗标（`--limit`）却被**静默吞**（`--full` 也不抬顶：它只管长行截断）。
+	//
+	// 治法取 **ⓐ 接线**（不是退 2 + 从名表里去掉），理由三条（现读坐标见批注）：
+	//   ① 截断口**本来就在本命令里**：`len(rows) < codeFindRowCap`（下面 walk 里那一行）
+	//      = 一个现成的参数口，接线只是把常量换成这一趟的值；
+	//   ② 名表是**跨族共用**的一张（`main.go` 的 `valueFlagName` 里 `--limit` 与 `zerg find`
+	//      共用一枚名）⇒ 「从旗标登记表里去掉」会连 `zerg find --limit` 一起弄死；
+	//   ③ 给这两族各开一个解析分叉是 `main.go` 明文的禁止项（「解析器不许给两条命令各开一个
+	//      分叉」）⇒ 退 2 那条路在此处要么不成立、要么要动共用名表。
+	// 默认（不给这一枚）时这一趟的值就是 `codeFindRowCap` ⇒ 不带旗标的 rc/输出**逐字节不变**。
+	rowCap := codeFindRowCap
+	if lim := strings.TrimSpace(inv.flagVal("--limit")); lim != "" {
+		n, lerr := strconv.Atoi(lim)
+		if lerr != nil || n <= 0 {
+			inv.setErr("usage", "bad_limit", "--limit 非法")
+			fmt.Fprintf(stderr, "%s: --limit 必须是正整数（得到 %q）⇒ 退码 2\n", progName, lim)
+			return exitUsage
+		}
+		rowCap = n
+	}
+	// 本族只认自己那几枚旗标（`--path`/`--glob`/`--full`/`--limit`）。
+	// 解析器**收下来**、本命令**不消费**的（例：`--all` 是给 `build show`/`gap verify` 一族用的
+	// 全局布尔）过去被**静默吞** —— 同一个命令上因此并存两套命运（`--max` 会被点名退 2、
+	// `--all` 却一声不响），这正是缺口 `GAP-20260927-16`。现按 dispatch 那条「未知旗标 2」的
+	// **同一形状**归一：rc=2 + 逐字点名。判在扫之前 ⇒ 零副作用。
+	if bad := foreignFlag(inv, "--path", "--glob", "--full", "--limit", "--count", "--files-only"); bad != "" {
+		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, bad)
+		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+		return exitUsage
+	}
+
+	// ★ 按件聚合两档（缺口 `GAP-20260928-53` 的 ② · 在册「想要」逐字
+	// `zerg code-show-lines-range-and-find-files-only-count` ⇒ 旗标名就照它取：`--count` / `--files-only`）。
+	//
+	// 为什么这两枚要**上全局户口**（`main.go` 的解析器）：本仓的解析器只有**一张**旗标表，
+	// 而且 `main.go` 明文禁止「给两条命令各开一个分叉」⇒ 一族用的旗标只能在那一处登记
+	// （与 `--full`/`--last`/`--utf8` 同一种形态：全局布尔、谁用谁读）。「不归本命令用」由本命令 +
+	// 同族 `code show` + `find` 三处 own-list 兜住：这三处不认的旗标一律 rc=2 点名（见 `foreignFlag`）。
+	//
+	// 两档互斥（同给 = 自相矛盾 ⇒ 用法错 2），与同仓 `--dry-run`/`--yes` 那一对的判法同一条口径。
+	// 判在 walk 之前 ⇒ 零副作用（不扫一个件）。
+	aggFilesOnly := inv.hasFlag("--files-only")
+	aggCount := inv.hasFlag("--count")
+	if aggFilesOnly && aggCount {
+		inv.setErr("usage", "agg_flags_conflict", "--count 与 --files-only 同给")
+		fmt.Fprintf(stderr, "%s: --count 与 --files-only 是**两枚互斥的聚合档**（同给 = 自相矛盾 · 只给一枚）⇒ 退码 2\n", progName)
+		fmt.Fprintf(stderr, "用法：zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--limit <N>] [--count | --files-only] [--full] [--json <字段>]\n")
+		return exitUsage
+	}
 
 	rows := []map[string]string{}
+	// 逐件命中数（**不受一页硬顶影响** —— 「数命中」与「列一页」是两件事；下面 walk 里每命中一条就 +1）。
+	fileHits := map[string]int{}
+	filesOrder := []string{}
 	hits, scanned, skippedBig := 0, 0, 0
 	walkErr := filepath.Walk(base, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -114,6 +189,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 			return nil
 		}
 		if glob != "" {
+			// 上面已验过模式：这里的第二返回值（坏模式）此刻必为 nil ⇒ 丢弃不再是吞错。
 			if ok, _ := filepath.Match(glob, filepath.Base(p)); !ok {
 				return nil
 			}
@@ -137,7 +213,11 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 				continue
 			}
 			hits++
-			if len(rows) < codeFindRowCap {
+			if fileHits[rel] == 0 {
+				filesOrder = append(filesOrder, rel)
+			}
+			fileHits[rel]++
+			if len(rows) < rowCap {
 				rows = append(rows, map[string]string{
 					"path": rel,
 					"line": strconv.Itoa(i + 1),
@@ -158,11 +238,70 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		return atoiSafe(rows[i]["line"]) < atoiSafe(rows[j]["line"])
 	})
+	// ★ 聚合两档的出口（缺口 `GAP-20260928-53` 的 ②）：**件名 + 命中数**（`--count`）或**只列件名**
+	// （`--files-only`）。走同一份汇总前缀（「扫了 N 件 · 命中 M 条」）⇒ 两档与默认档的读者拿到同一组底数。
+	// 硬顶（本页最多 `rowCap` 行）在聚合面上仍然生效，且**照实自报**（`markTruncated` + `warnings[]` +
+	// `meta.truncated_detail` 三件，与默认档同一条路 —— 缺口 `GAP-20260927-273` 的判法不许只覆盖一半）。
+	if aggFilesOnly || aggCount {
+		files := append([]string{}, filesOrder...)
+		sort.Strings(files) // 判词确定性：map 的乱序不许决定输出次序
+		aggRows := make([]map[string]string, 0, len(files))
+		for _, f := range files {
+			if aggFilesOnly {
+				aggRows = append(aggRows, map[string]string{"path": f})
+			} else {
+				aggRows = append(aggRows, map[string]string{"path": f, "count": strconv.Itoa(fileHits[f])})
+			}
+		}
+		if aggCount {
+			// 命中多的在前（同数按件名字典序 —— 上面已排好 ⇒ 稳定排序给出的次序是确定的）。
+			sort.SliceStable(aggRows, func(i, j int) bool {
+				return atoiSafe(aggRows[i]["count"]) > atoiSafe(aggRows[j]["count"])
+			})
+		}
+		totalFiles := len(aggRows)
+		cut := totalFiles > rowCap
+		if cut {
+			aggRows = aggRows[:rowCap]
+		}
+		fmt.Fprintf(stderr, "%s: 扫了 %d 件 · 命中 %d 条", progName, scanned, hits)
+		aggFields := []string{"path"}
+		if aggCount {
+			aggFields = []string{"path", "count"}
+		}
+		fmt.Fprintf(stderr, " · 命中件 %d 个", totalFiles)
+		if cut {
+			fmt.Fprintf(stderr, "（本页只列前 %d 个件 —— 收窄：--path / --glob / --limit）", len(aggRows))
+		}
+		if skippedBig > 0 {
+			fmt.Fprintf(stderr, " · 跳过 >%dMB 的件 %d 个", codeFindMaxFileBytes>>20, skippedBig)
+		}
+		fmt.Fprintln(stderr)
+		if hits == 0 {
+			inv.setErr("failed", "no_match", "零命中")
+			fmt.Fprintf(stderr, "%s: 零命中 —— 这不是错，是「没有」（退码 1）；要当错用得自己判\n", progName)
+			return exitFail
+		}
+		if cut {
+			inv.markTruncated()
+			inv.warnf("已裁 %d 个件（code find 一页 %d 个件 / 真命中 %d 个件）", totalFiles-len(aggRows), len(aggRows), totalFiles)
+			inv.metaAddJSON("truncated_detail", fmt.Sprintf(
+				`{"cut_from":"tail","kept_items":%d,"dropped_items":%d,"total_items":%d}`,
+				len(aggRows), totalFiles-len(aggRows), totalFiles))
+		}
+		rcAgg := listCmd(inv, stdout, stderr, aggFields, aggRows)
+		if cut {
+			fmt.Fprintf(stderr,
+				"%s: ⚠ 本页只列前 %d 个件 · 真命中 %d 个件（已裁 %d 个件）—— **这不是全集**，别据此下「有/无」结论；要收窄：--path / --glob / --limit\n",
+				progName, len(aggRows), totalFiles, totalFiles-len(aggRows))
+		}
+		return rcAgg
+	}
 	fmt.Fprintf(stderr, "%s: 扫了 %d 件 · 命中 %d 条", progName, scanned, hits)
 	// cut —— 本跑**真裁了条**（命中数比这一页多）⇒ 两面都要自报（缺口 `GAP-20260927-273`）。
 	cut := len(rows) < hits
 	if cut {
-		fmt.Fprintf(stderr, "（本页只列前 %d 条 —— 收窄：--path / --glob）", len(rows))
+		fmt.Fprintf(stderr, "（本页只列前 %d 条 —— 收窄：--path / --glob / --limit）", len(rows))
 	}
 	if skippedBig > 0 {
 		fmt.Fprintf(stderr, " · 跳过 >%dMB 的件 %d 个", codeFindMaxFileBytes>>20, skippedBig)
@@ -201,7 +340,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	if cut {
 		// 人面末行：表格之后再钉一句 —— 「这一页不是全集」不许靠读者自己推。
 		fmt.Fprintf(stderr,
-			"%s: ⚠ 本页只列前 %d 条 · 真命中 %d 条（已裁 %d 条）—— **这不是全集**，别据此下「有/无」结论；要收窄：--path / --glob\n",
+			"%s: ⚠ 本页只列前 %d 条 · 真命中 %d 条（已裁 %d 条）—— **这不是全集**，别据此下「有/无」结论；要收窄：--path / --glob / --limit\n",
 			progName, len(rows), hits, hits-len(rows))
 	}
 	return rc
@@ -225,6 +364,21 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 //
 //	—— 用法错（任务单 `波7` 序71 的判据逐字：「负控：行号越界 ⇒ rc=2」）。
 func cmdCodeShow(inv *invocation, stdout, stderr io.Writer) int {
+	// `--count` / `--files-only` 是 `code find` 的**按件聚合**两档（缺口 `GAP-20260928-53` 的 ②）。
+	// 它们今天在本命令上是 dispatch 那条「未知旗标 2」（解析器还没有这两个名字）；
+	// 现在它们**上了全局户口**（`main.go` 的解析器只有一张旗标表、且明文禁止「给两条命令
+	// 各开一个分叉」⇒ 只能在那一处登记）⇒ 必须在这里按**同一形状**把「不归本命令用
+	// 的旗标」留住：rc=2 + 逐字点名（与 dispatch 那两行逐字同形）。不这么做，它们会从「rc=2」
+	// 退成**静默吞** —— 正是缺口 `GAP-20260927-16` 记的那一类病。判在一切之前 ⇒ 零副作用。
+	if inv.hasFlag("--count") || inv.hasFlag("--files-only") {
+		bad := "--count"
+		if inv.hasFlag("--files-only") {
+			bad = "--files-only"
+		}
+		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, bad)
+		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+		return exitUsage
+	}
 	if len(inv.args) == 0 || strings.TrimSpace(inv.args[0]) == "" {
 		inv.setErr("usage", "missing_target", "缺 <件:行>")
 		fmt.Fprintf(stderr, "%s: `code show` 要给 <件:行>（例：zerg code show core/cmd/zerg/main.go:100）\n", progName)
@@ -239,11 +393,39 @@ func cmdCodeShow(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "例：zerg code show core/go.mod:12\n")
 		return exitUsage
 	}
-	rel, lineStr := target[:colon], target[colon+1:]
-	lineNo, aerr := strconv.Atoi(lineStr)
-	if aerr != nil || lineNo < 1 {
-		inv.setErr("usage", "bad_line", "行号不是正整数")
-		fmt.Fprintf(stderr, "%s: 行号要是正整数：%q ⇒ 退码 2\n", progName, lineStr)
+	rel, spec := target[:colon], target[colon+1:]
+	// ★ **区间档**（缺口 `GAP-20260928-53` 的 ① · 2026-09-28）：`件:起-止` 一发读出起止之间的**每一行**
+	// （在册那条缺口的实测例逐字就是 `（:53-65 / :67-71）` 这一形态 —— 核一件的分区结构过去只能逐段读、
+	// 或退回 read_file）。
+	//
+	// 旗标选型理由（为什么把区间写在**位置参数**里、而不新开一枚 `--lines <起-止>`）三条：
+	//   ① **在册缺口自己把它写成了位置参数**：复现例就是 `:53-65`（同一个位置上从「一个行号」变成「一个行号区间」）；
+	//   ② `--ctx` 本就是本命令的**窗口半径**（±N）—— 区间与它在语义上是同一条轴（改起止 vs 改半径），
+	//     再开一枚取值旗标会让同一件事有**两个入口**；
+	//   ③ 名表（`main.go` 的 `valueFlagName`）是**跨族共用**的一张（`--limit` 就与 `zerg find` 共用）
+	//     ⇒ 少响一枚就少一处外溢。
+	//
+	// 单行（无 `-`）走**原来那一支、一行不动**（rc/输出逐字节不变）；区间走新支。
+	lineNo, endNo, isRange := 0, 0, false
+	if dash := strings.Index(spec, "-"); dash > 0 && dash < len(spec)-1 {
+		if sn, s1 := strconv.Atoi(spec[:dash]); s1 == nil {
+			if en, e1 := strconv.Atoi(spec[dash+1:]); e1 == nil && sn >= 1 && en >= 1 {
+				isRange = true
+				lineNo, endNo = sn, en
+			}
+		}
+	}
+	if !isRange {
+		n, aerr := strconv.Atoi(spec)
+		if aerr != nil || n < 1 {
+			inv.setErr("usage", "bad_line", "行号不是正整数")
+			fmt.Fprintf(stderr, "%s: 行号要是正整数：%q ⇒ 退码 2\n", progName, spec)
+			return exitUsage
+		}
+		lineNo = n
+	} else if lineNo > endNo {
+		inv.setErr("usage", "bad_range", "区间起点比终点大")
+		fmt.Fprintf(stderr, "%s: 区间的起点比终点大：%s ⇒ 退码 2\n", progName, spec)
 		return exitUsage
 	}
 	ctx := codeShowDefaultCtx
@@ -255,6 +437,11 @@ func cmdCodeShow(inv *invocation, stdout, stderr io.Writer) int {
 			return exitUsage
 		}
 		ctx = n
+	}
+	// 区间档的窗口默认半径 0（区间本身就是**显式**的起止 ⇒ 不再自动外扩；
+	// `--ctx` **给过**才向两端扩）—— 与 `--ttl`/`--prefix` 同一条口径：「给过旗标」与「没给」是两件事。
+	if isRange && !inv.hasFlag("--ctx") {
+		ctx = 0
 	}
 	root := repoRoot()
 	if root == "" {
@@ -303,13 +490,24 @@ func cmdCodeShow(inv *invocation, stdout, stderr io.Writer) int {
 	if len(lines) > 1 && lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}
-	if lineNo > len(lines) {
+	if lineNo > len(lines) || (isRange && endNo > len(lines)) {
 		inv.setErr("usage", "line_out_of_range", "行号越界")
-		fmt.Fprintf(stderr, "%s: 行号越界：%s 共 %d 行，点了第 %d 行 ⇒ 退码 2\n", progName, rel, len(lines), lineNo)
+		if isRange {
+			hit := lineNo
+			if endNo > len(lines) {
+				hit = endNo
+			}
+			fmt.Fprintf(stderr, "%s: 区间越界：%s 共 %d 行，区间点到了第 %d 行 ⇒ 退码 2\n", progName, rel, len(lines), hit)
+		} else {
+			fmt.Fprintf(stderr, "%s: 行号越界：%s 共 %d 行，点了第 %d 行 ⇒ 退码 2\n", progName, rel, len(lines), lineNo)
+		}
 		fmt.Fprintf(stderr, "下一步：先 `zerg code find <正则>` 拿到真行号\n")
 		return exitUsage
 	}
 	lo, hi := lineNo-ctx, lineNo+ctx
+	if isRange {
+		hi = endNo + ctx
+	}
 	if lo < 1 {
 		lo = 1
 	}
@@ -320,7 +518,11 @@ func cmdCodeShow(inv *invocation, stdout, stderr io.Writer) int {
 	rows := make([]map[string]string, 0, hi-lo+1)
 	for i := lo; i <= hi; i++ {
 		mark := "no"
-		if i == lineNo {
+		if isRange {
+			if i >= lineNo && i <= endNo {
+				mark = "yes"
+			}
+		} else if i == lineNo {
 			mark = "yes"
 		}
 		rows = append(rows, map[string]string{
@@ -330,7 +532,11 @@ func cmdCodeShow(inv *invocation, stdout, stderr io.Writer) int {
 			"target": mark,
 		})
 	}
-	fmt.Fprintf(stderr, "%s: %s 第 %d 行（共 %d 行 · 窗口 ±%d）\n", progName, nrel, lineNo, len(lines), ctx)
+	if isRange {
+		fmt.Fprintf(stderr, "%s: %s 第 %d-%d 行（共 %d 行 · 窗口 ±%d）\n", progName, nrel, lineNo, endNo, len(lines), ctx)
+	} else {
+		fmt.Fprintf(stderr, "%s: %s 第 %d 行（共 %d 行 · 窗口 ±%d）\n", progName, nrel, lineNo, len(lines), ctx)
+	}
 	return listCmd(inv, stdout, stderr, []string{"line", "text"}, rows)
 }
 
@@ -359,4 +565,40 @@ func truncateDisplay(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n]) + "…"
+}
+
+// foreignFlag —— 判「解析器收下来了、但本命令**不消费**」的旗标（一枚都没有 ⇒ 空串）。
+// 缺口 `GAP-20260927-16`（未知/无用旗标被静默吞 · 同一个命令上两套命运）。
+//
+// 为什么要有它：同一个命令上过去并存**两套命运** —— 不在名表里的（例 `code find --max 5`）由
+// dispatch 那条「未知旗标 2」**点名拒**；而在名表里（或全局布尔里）、却**不归本命令用**的
+// （例 `code find --all`、`find --glob`）被**静默吞** ⇒ rc=0 且毫无可观察效果。于是「给了旗标」
+// 与「没给旗标」被并成**同一个形状** —— 正是本仓判为 P0 的那一类病（用户以为收窄了，拿到的却是
+// 未收窄的全集）。
+//
+// 口径：形状**照抄** dispatch 那条既有拒法（`未知旗标 %q` + `See '…--help'。` + 退码 2），
+// 不新造退码、不新造词。判定面**只在本族自己的实现件里**（`inv.kv` 的取值旗标 + `--all`/`--full`
+// 两枚全局布尔），**不碰解析器** —— `main.go` 明文：解析器不许给两条命令各开一个分叉。
+func foreignFlag(inv *invocation, own ...string) string {
+	ok := make(map[string]bool, len(own))
+	for _, n := range own {
+		ok[n] = true
+	}
+	names := make([]string, 0, len(inv.kv))
+	for n := range inv.kv {
+		if !ok[n] {
+			names = append(names, n)
+		}
+	}
+	if len(names) > 0 {
+		sort.Strings(names) // 判词确定性：map 的乱序不许决定报哪一枚
+		return names[0]
+	}
+	if inv.all && !ok["--all"] {
+		return "--all"
+	}
+	if inv.full && !ok["--full"] {
+		return "--full"
+	}
+	return ""
 }

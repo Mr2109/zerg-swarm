@@ -54,8 +54,24 @@ func docSearch(args map[string]any, workDir string) (string, error) {
 	hitMap := map[string]*hit{}
 	var order []string
 
+	// ★「读不到」≠「没有命中」（同族治法同 chat_tool_zerg.go 的 zergVersion / treeDir 与
+	//   chat_tool_media2.go 的 fileCount 三态）：旧码在 walk 把读错（权限等）交进来时一律 return nil
+	//   ⇒ 目录读不到就当没内容，与「真的没有命中」同形且 err=nil ⇒ 调用方分不出 ⇒ 假绿。现按三态分开：
+	//     ①读到（含空目录）⇒ 现行输出一字不改；
+	//     ②路径不在盘上（os.IsNotExist——父目录列出后消失·竞态）⇒ 不当「读失败」，照旧跳过、不另报；
+	//     ③其他读失败（权限等）⇒ 不给结论，报因带路径与底层错。
+	var walkReadErr error
 	walkFn := func(fp string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			if walkReadErr == nil {
+				walkReadErr = fmt.Errorf("docs 树读不到（不给结论）：%s ⇒ %v", fp, err)
+			}
+			return err
+		}
+		if info.IsDir() {
 			return nil
 		}
 		if !strings.HasSuffix(fp, ".md") {
@@ -66,7 +82,13 @@ func docSearch(args map[string]any, workDir string) (string, error) {
 		}
 		data, err := os.ReadFile(fp)
 		if err != nil {
-			return nil
+			if os.IsNotExist(err) { // 路径消失（父目录列出后消失——竞态）⇒ 照旧跳过、不另报
+				return nil
+			}
+			if walkReadErr == nil { // 其他读失败（权限等）≠「没有命中」⇒ 报因带路径与底层错
+				walkReadErr = fmt.Errorf("docs 件读不到（不给结论）：%s ⇒ %v", fp, err)
+			}
+			return err
 		}
 		content := string(data)
 		lc := strings.ToLower(content)
@@ -120,6 +142,9 @@ func docSearch(args map[string]any, workDir string) (string, error) {
 	}
 	for _, r := range roots {
 		filepath.Walk(r, walkFn)
+	}
+	if walkReadErr != nil {
+		return "", walkReadErr
 	}
 	if len(order) == 0 {
 		note := ""

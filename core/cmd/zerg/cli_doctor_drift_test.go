@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,6 +78,20 @@ func TestDoctorDriftThreeStates(t *testing.T) {
 		t.Errorf("②-b 未提交件（c.txt）没进对拍：%s", it["detail"])
 	}
 
+	// ②-c 截短同形（缺口 `GAP-20260928-60`）：真差异在第八位之后 / 制品身份带 `+dirty` 后缀 ⇒
+	// 判等**仍旧按全串**（REPORT「过期」，退码不动），但出口**不许**印出两侧同值的 `X ≠ X`。
+	version.Commit = head[:8] + "+dirty"
+	it = doctorDriftItem()
+	if it["verdict"] != "REPORT" || !strings.Contains(it["detail"], "过期") {
+		t.Errorf("②-c 截短同形态：verdict=%q detail=%q（要 REPORT 且含「过期」，判等不许变）", it["verdict"], it["detail"])
+	}
+	if strings.Contains(it["detail"], driftShort(head)+" ≠ "+driftShort(head)) {
+		t.Errorf("②-c 出口印出了两侧同值的「不等」行（判词与显示自相矛盾）：%s", it["detail"])
+	}
+	if !strings.Contains(it["detail"], "+dirty") {
+		t.Errorf("②-c 制品身份的真差异（`+dirty` 后缀）在出口不可见：%s", it["detail"])
+	}
+
 	// ③ 拿不到结论：`version.Commit` 未注入（裸 go build / 进程内测试的形态）⇒ REPORT 明说拿不到
 	version.Commit = "unknown"
 	it = doctorDriftItem()
@@ -92,5 +107,55 @@ func TestDoctorDriftThreeStates(t *testing.T) {
 	it = doctorDriftItem()
 	if it["verdict"] == "FAIL" {
 		t.Errorf("③-b 真源取不到时不许判 FAIL（不许凭猜）：%+v", it)
+	}
+}
+
+// TestDoctorDriftJSONFullFingerprints —— 缺口 `GAP-20260928-60` 的另一半：**机读面拿到两侧完整指纹原文**。
+//
+// 上一条用例（`TestDoctorDriftThreeStates`）治的是**显示层**（截短后同形时把窗口加长）。
+// 本条治**机读面**：人面怎么掐位不变，但 `--json` 必须能拿到两侧**未截断**的原文 ——
+// 消费方要能自己判「制品身份带 +dirty / 差异落在第九位之后」这类真差异。
+//
+// 三断言：① 同值态两侧都等于源码 HEAD 全串 · ② 真不同态两串必须不同且都不截断 · ③ 端到端点这两键
+// **不许**落「未知字段」（`emitSelected` 逐行核键 ⇒ 别的行也要有键，否则整单退 2）。
+func TestDoctorDriftJSONFullFingerprints(t *testing.T) {
+	root, _, head := driftFixture(t)
+	t.Setenv("ZERG_REPO", root)
+	old := version.Commit
+	t.Cleanup(func() { version.Commit = old })
+
+	// ① 同值态：制品身份 == 源码 HEAD ⇒ 两侧原文都等于 HEAD 全串（40 位，未截断）
+	version.Commit = head
+	it := doctorDriftItem()
+	if it["artifact_commit"] != head || it["source_head"] != head {
+		t.Errorf("① 同值态机读面：artifact_commit=%q source_head=%q（要都等于源码 HEAD 全串 %q）",
+			it["artifact_commit"], it["source_head"], head)
+	}
+
+	// ② 真不同态：制品身份带 `+dirty` ⇒ 机读面两串**必须不同**，且两侧都是原文（不截断）
+	version.Commit = head[:8] + "+dirty"
+	it = doctorDriftItem()
+	if it["artifact_commit"] == it["source_head"] {
+		t.Errorf("② 真不同态机读面两串同值（拿不到差异原文）：%q", it["artifact_commit"])
+	}
+	if it["source_head"] != head {
+		t.Errorf("② source_head 不是源码 HEAD 全串（被截断或串错）：%q", it["source_head"])
+	}
+	if it["artifact_commit"] != head[:8]+"+dirty" {
+		t.Errorf("② artifact_commit 不是制品身份原文（`+dirty` 后缀丢了或被截短）：%q", it["artifact_commit"])
+	}
+
+	// ③ 端到端：旧字段一个不删、新字段点得到 ⇒ rc 不许是 2（「未知字段」），包封里要真出现两键
+	// （落点在本包：`runCapture` 在 main_test 包里够不着 ⇒ 这里直接走只读桥 `RunForTest`。）
+	var out, errb bytes.Buffer
+	rc := RunForTest([]string{"doctor", "--quick", "--json",
+		"name,verdict,detail,advice,artifact_commit,source_head"}, &out, &errb)
+	if rc == 2 {
+		t.Fatalf("③ `--json` 点这两键被判未知字段（机读面够不着）：rc=%d stderr=%s", rc, errb.String())
+	}
+	for _, k := range []string{"artifact_commit", "source_head"} {
+		if !strings.Contains(out.String(), k) {
+			t.Errorf("③ `--json` 面里没有 %s 键：%s", k, out.String())
+		}
 	}
 }
