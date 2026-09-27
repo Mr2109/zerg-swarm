@@ -100,6 +100,19 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
+// dangerFlags —— 危险档的**三态形状**，按登记现算（`dangerSpec.ChecksConfirm`）：只有实现真读 `--confirm`
+// 的那几条才印它 —— 与 `zerg help dangerous`（`guard.go` 的 `helpDangerous`）**同源**，不许两处各拼一份。
+// `withTarget` = 印 `--confirm=<目标>`（人面逐条清单用）；导出物的表里目标单占一列 ⇒ 那一处印裸 `--confirm`。
+func dangerFlags(c *command, withTarget bool) string {
+	if !c.danger.ChecksConfirm {
+		return "--dry-run · --yes"
+	}
+	if withTarget {
+		return "--dry-run · --confirm=<" + c.danger.Target + "> · --yes"
+	}
+	return "--dry-run · --confirm · --yes"
+}
+
 // helpExportList —— **逐条清单**（人面只读档用）：与人面/导出物**同源** —— 全部现算自 `catalog()`。
 // 危险动作逐条带**档位**（`D2`/`D3`）与**本版开没开**（`opened`）—— 这正是 `G-17` 说「只在人面」的那两格。
 func helpExportList(w io.Writer) {
@@ -120,8 +133,8 @@ func helpExportList(w io.Writer) {
 		if c.opened {
 			opened = "已开放"
 		}
-		fmt.Fprintf(w, "  zerg %s ｜ %s ｜ %s ｜ --confirm=<%s> ｜ %s\n",
-			strings.Join(c.path, " "), c.danger.Level, opened, c.danger.Target, c.danger.Effect)
+		fmt.Fprintf(w, "  zerg %s ｜ %s ｜ %s ｜ %s ｜ %s\n",
+			strings.Join(c.path, " "), c.danger.Level, opened, dangerFlags(c, true), c.danger.Effect)
 	}
 }
 
@@ -289,8 +302,8 @@ func renderHelpMarkdown(landing ...string) string {
 		if c.opened {
 			opened = "**已开放**"
 		}
-		fmt.Fprintf(&b, "| `%s` | %s | %s | --dry-run · --confirm · --yes | %s | %s | %s | `%s` |\n",
-			"zerg "+strings.Join(c.path, " "), c.danger.Level, opened, c.danger.Target, c.danger.Effect, c.danger.Source, c.layer)
+		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %s | %s | %s | `%s` |\n",
+			"zerg "+strings.Join(c.path, " "), c.danger.Level, opened, dangerFlags(c, false), c.danger.Target, c.danger.Effect, c.danger.Source, c.layer)
 	}
 	b.WriteString("\n## 三、退码表（唯一真源）\n\n")
 	b.WriteString("| 码 | 名 | 语义 | 可重试性 |\n|---|---|---|---|\n")
