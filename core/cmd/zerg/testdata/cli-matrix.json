@@ -1225,8 +1225,8 @@
     "--json"
    ],
    "want_rc": 2,
-   "want_stdout_bytes": 292,
-   "why": "给了 --json 不给字段 ⇒ **2**（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）。★ 这一格的 stdout 不是 0 字节：本命令是**危险档**（D2 写面）⇒ 框架把错误面打成机器可读包封走 stdout（同 `repo commit` 那条先例）· 逐字现读 `{\"schema\":\"zerg/v1\",\"kind\":\"ScriptInventorySync\",\"items\":[],…\"error\"…}` = **293 字节**（两跑逐字节一致 · 不含时刻）"
+   "want_stdout_bytes": 299,
+   "why": "给了 --json 不给字段 ⇒ **2**（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）。★ 这一格的 stdout **不是** 0 字节：本命令是**危险档**（D2 写面）⇒ 框架把错误面打成机器可读包封走 stdout（同 `repo commit` 那条先例）· 逐字形态现读见 `want_stdout_bytes` 那一格（★ 本 why **不记绝对字节数**：手写的时点读数会烂 —— 2026-09-27 补 `detail` 后包封就变长过一轮）"
   },
   {
    "id": "script/inventory/sync#--set 逐条改（第二条写路径）",
@@ -3357,7 +3357,7 @@
     "--json"
    ],
    "want_rc": 2,
-   "want_stdout_bytes": 283,
+   "want_stdout_bytes": 290,
    "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
   },
   {
@@ -4998,8 +4998,8 @@
     "--json"
    ],
    "want_rc": 2,
-   "want_stdout_bytes": 288,
-   "why": "给了 --json 不给字段 ⇒ 2 + stdout 0 字节（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）"
+   "want_stdout_bytes": 295,
+   "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）（§4.1 K2 甲档 · `K2` 归一后码**取自退码表** `usage` = 2；改前退 1）。★ 本命令是**危险档**（D2 写面）⇒ 走 `main.go:182-183` 那条有意设计：**危险动作没有结果面，但错误面必须机器可读**（§九 M7：AI 自愈靠 kind）⇒ 收 `--json` 只当错误面用 —— 所以这里该是**包封字节数**，不是 0（★ 本 why 不记绝对数：手写时点读数会烂）"
   },
   {
    "id": "archive/verify#未知旗标",
