@@ -196,6 +196,34 @@ func TestAskPicksCandidateViaRegistryIDJoin(t *testing.T) {
 	}
 }
 
+// TestAskModelOrNodeNotFoundIsUsageExit —— GAP-20260925-30：`--model`/`--node`
+// 点名不存在 ⇒ exit 2（usage）+ 明确「无此模型/无此机器」+ 列可选值，**不静默退回默认**。
+func TestAskModelOrNodeNotFoundIsUsageExit(t *testing.T) {
+	srv := newSyntheticMaster(t, map[string]string{
+		"/api/fleet/models":    `{"count":1,"models":[{"id":"example-35b-v2","host":"Mr2109","backend":"llama-server","mem_gb":21,"registry_id":"example-35b-v2-1-5-35b-q4-k-m"}]}`,
+		"/api/models/registry": `{"count":1,"records":[{"id":"example-35b-v2-1-5-35b-q4-k-m","fleet_id":"example-35b-v2","capabilities":[{"name":"text","value":true,"source":"probed","evidence":"probe.text.v1"}]}]}`,
+	})
+	defer srv.Close()
+
+	// ① `--model` 点名不存在 ⇒ 2 + 无此模型 + 列可选模型。
+	rc, _, errb := fusionRun(t, "ask", "只回答 OK", "--model", "绝无此模型", "--capability", "text")
+	if rc != 2 {
+		t.Errorf("`--model` 不存在 ⇒ 退码 %d（要 2）· stderr=%s", rc, errb)
+	}
+	if !strings.Contains(errb, "无此模型") || !strings.Contains(errb, "example-35b-v2") {
+		t.Errorf("`--model` 不存在 ⇒ stderr 要报「无此模型」并列可选模型 · stderr=%s", errb)
+	}
+
+	// ② `--node` 点名不存在 ⇒ 2 + 无此机器 + 列可选机器。
+	rc, _, errb = fusionRun(t, "ask", "只回答 OK", "--node", "绝无此机器", "--capability", "text")
+	if rc != 2 {
+		t.Errorf("`--node` 不存在 ⇒ 退码 %d（要 2）· stderr=%s", rc, errb)
+	}
+	if !strings.Contains(errb, "无此机器") || !strings.Contains(errb, "Mr2109") {
+		t.Errorf("`--node` 不存在 ⇒ stderr 要报「无此机器」并列可选机器 · stderr=%s", errb)
+	}
+}
+
 // ---- 判据⑤ / 判据③④：plan 零副作用 · apply 四层 -------------------------------------------
 
 // TestPlanIsZeroSideEffect —— 判据⑤：`plan` 只写**那一件**，工作目录逐字节不变。

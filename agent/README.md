@@ -22,12 +22,14 @@ GOOS=linux GOARCH=amd64 go build -o zerg-agent-linux-amd64 ./cmd/zerg-agent
 ## 运行
 
 ```bash
+# 令牌**不走 argv**（会进本机 `ps` 与 shell 历史 ✗）：本机跑读 600 档 `~/.zerg/token`；
+# 跨机由部署脚本入口写入 600 环境档（单元/plist 只引用它）——
+#   gateway/deploy_x3.sh --token-file <600档> / printf '%s\n' <令牌> | $0 --token-stdin …
 ./zerg-agent \
   --host 0.0.0.0 \
   --port 8100 \
   --machine <本机标识> \
   --controller http://<主控地址>:8580 \
-  --token <共享令牌> \
   --registry agent_models.yaml
 ```
 
@@ -56,7 +58,7 @@ example-35b-v2:
 
 **`chat_template`（可选）**：某些模型（如 example-35b-v2 系）的 GGUF 内嵌模板过旧，需外部模板覆盖。
 路径支持 `~` 前缀；相对路径按 agent 工作目录解析。
-解析优先级：**`chat_template` 字段 → 环境变量 `ZERG_ORNITH_TEMPLATE` → `~/.zerg/example-35b-v2_chat_template.jinja` → 仓库内相对路径**；
+解析优先级：**`chat_template` 字段 → 环境变量 `ZERG_EXAMPLE_TEMPLATE` → `~/.zerg/example-35b-v2_chat_template.jinja` → 仓库内相对路径**；
 链路上显式配置但文件不存在时记 WARN 并继续回退（不会把坏路径传给后端）。
 
 ## 环境变量
@@ -64,7 +66,7 @@ example-35b-v2:
 | 变量 | 用途 |
 |---|---|
 | `ZERG_TOKEN` | 共享令牌（等同 `--token`） |
-| `ZERG_ORNITH_TEMPLATE` | 可选：example-35b-v2 系模型的 chat template 路径（默认找 `~/.zerg/example-35b-v2_chat_template.jinja`） |
+| `ZERG_EXAMPLE_TEMPLATE` | 可选：example-35b-v2 系模型的 chat template 路径（默认找 `~/.zerg/example-35b-v2_chat_template.jinja`） |
 
 ## 预编译二进制
 

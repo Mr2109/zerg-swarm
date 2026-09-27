@@ -21,9 +21,9 @@
       "who_calls": "主控侧的**子端调度器**在生产默认路径上 exec 它 · 构建/打包/升级三条脚本出它 · CI 工作流出它 · 文档把它写成常驻子端（systemd `x3-agent.service` / LaunchDaemon `com.zerg.agent`）",
       "callers": [
         {"file": "core/internal/agent/scheduler.go", "anchor": "exec.CommandContext(ctx, \"zerg-agent\"", "line_hint": 419, "公开面对应件": "core/internal/agent/scheduler.go", "what": "生产默认：`exec zerg-agent`（唯一的仓内运行时调用）"},
-        {"file": "scripts/build/pack-release.sh", "anchor": "cp -p \"$DIST/zerg-agent\"", "line_hint": 80, "公开面对应件": "scripts/build/pack-release.sh", "what": "打包：落进发布目录（darwin）"},
+        {"file": "scripts/build/pack-release.sh", "anchor": "cp -p \"$DIST/zerg-agent\"", "line_hint": 164, "公开面对应件": "scripts/build/pack-release.sh", "what": "打包：落进发布目录（darwin）"},
         {"file": "publish/ci/release-agent.yml", "anchor": "zerg-agent-$GOOS-$GOARCH\" ./cmd/zerg-agent", "line_hint": 97, "公开面对应件": ".github/workflows/release-agent.yml", "what": "CI：交叉编译出该件"},
-        {"file": "scripts/build/zerg-upgrade.sh", "anchor": "子端 : $(ver_of \"$PREFIX/zerg-agent\")", "line_hint": 693, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "升级器：读它的版本号（四件清单之一）"},
+        {"file": "scripts/build/zerg-upgrade.sh", "anchor": "子端 : $(ver_of \"$PREFIX/zerg-agent\")", "line_hint": 705, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "升级器：读它的版本号（四件清单之一）"},
         {"file": "README.md", "anchor": "`/usr/local/bin/zerg-agent`，LaunchDaemon `com.zerg.agent`", "line_hint": 82, "公开面对应件": "不进公开面 ⇒ 该证据只在私有面成立", "what": "文档：常驻面（Linux systemd / macOS LaunchDaemon · :8100）"}
       ],
       "verdict": "待拍（P13 第一条：件是任务运行器还是子端常驻，与 agent/cmd/zerg-agentd 的分工要人定）"

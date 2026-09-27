@@ -7,11 +7,11 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
-// 编译期验证：OrnithAdapter 实现 Plugin 接口
-var _ plugin.Plugin = (*OrnithAdapter)(nil)
+// 编译期验证：ExampleAdapter 实现 Plugin 接口
+var _ plugin.Plugin = (*ExampleAdapter)(nil)
 
-func TestOrnithAdapter_Interface(t *testing.T) {
-	a := NewOrnithAdapter()
+func TestExampleAdapter_Interface(t *testing.T) {
+	a := NewExampleAdapter()
 	if a.Name() != "example-35b-v2" {
 		t.Errorf("Name = %s, want example-35b-v2", a.Name())
 	}
@@ -26,8 +26,8 @@ func TestOrnithAdapter_Interface(t *testing.T) {
 	}
 }
 
-func TestOrnithAdapter_DefaultConfig(t *testing.T) {
-	a := NewOrnithAdapter()
+func TestExampleAdapter_DefaultConfig(t *testing.T) {
+	a := NewExampleAdapter()
 	if a.Temperature != 0.8 {
 		t.Errorf("Temperature = %v, want 0.8", a.Temperature)
 	}
@@ -42,8 +42,8 @@ func TestOrnithAdapter_DefaultConfig(t *testing.T) {
 	}
 }
 
-func TestOrnithAdapter_Init(t *testing.T) {
-	a := NewOrnithAdapter()
+func TestExampleAdapter_Init(t *testing.T) {
+	a := NewExampleAdapter()
 	cfg := map[string]interface{}{
 		"temperature": 0.5,
 		"auth_token":  "custom-token",
@@ -63,8 +63,8 @@ func TestOrnithAdapter_Init(t *testing.T) {
 	}
 }
 
-func TestOrnithAdapter_Lifecycle(t *testing.T) {
-	a := NewOrnithAdapter()
+func TestExampleAdapter_Lifecycle(t *testing.T) {
+	a := NewExampleAdapter()
 	if err := a.Init(nil); err != nil {
 		t.Fatalf("Init error = %v", err)
 	}
@@ -85,8 +85,8 @@ func TestOrnithAdapter_Lifecycle(t *testing.T) {
 	}
 }
 
-func TestOrnithAdapter_ExecuteBeforeStart(t *testing.T) {
-	a := NewOrnithAdapter()
+func TestExampleAdapter_ExecuteBeforeStart(t *testing.T) {
+	a := NewExampleAdapter()
 	a.Init(nil)
 	// 不 Start 直接 Execute——应报错
 	_, err := a.Execute(plugin.PluginInput{Context: map[string]interface{}{"prompt": "test"}})
@@ -95,8 +95,8 @@ func TestOrnithAdapter_ExecuteBeforeStart(t *testing.T) {
 	}
 }
 
-func TestOrnithAdapter_Execute(t *testing.T) {
-	a := NewOrnithAdapter()
+func TestExampleAdapter_Execute(t *testing.T) {
+	a := NewExampleAdapter()
 	a.Init(nil)
 	a.Start()
 	resp, err := a.Execute(plugin.PluginInput{Context: map[string]interface{}{"prompt": "你好世界"}})
@@ -115,8 +115,8 @@ func TestOrnithAdapter_Execute(t *testing.T) {
 	}
 }
 
-func TestOrnithAdapter_Execute_EmptyPrompt(t *testing.T) {
-	a := NewOrnithAdapter()
+func TestExampleAdapter_Execute_EmptyPrompt(t *testing.T) {
+	a := NewExampleAdapter()
 	a.Init(nil)
 	a.Start()
 	_, err := a.Execute(plugin.PluginInput{Context: map[string]interface{}{"prompt": ""}})
@@ -138,7 +138,7 @@ func TestDefaultFinishWords(t *testing.T) {
 }
 
 func TestContainsFinishWords(t *testing.T) {
-	a := NewOrnithAdapter()
+	a := NewExampleAdapter()
 	detected, matched := ContainsFinishWords("任务已完成，文件已写入", a.FinishWords)
 	if !detected {
 		t.Error("应检测到完成词")
@@ -152,8 +152,8 @@ func TestContainsFinishWords(t *testing.T) {
 	}
 }
 
-func TestOrnithAdapter_Execute_WithFinishWords(t *testing.T) {
-	a := NewOrnithAdapter()
+func TestExampleAdapter_Execute_WithFinishWords(t *testing.T) {
+	a := NewExampleAdapter()
 	a.Init(nil)
 	a.Start()
 	resp, err := a.Execute(plugin.PluginInput{Context: map[string]interface{}{"prompt": "任务已完成"}})
@@ -166,9 +166,9 @@ func TestOrnithAdapter_Execute_WithFinishWords(t *testing.T) {
 	}
 }
 
-func TestRegisterOrnithAdapter(t *testing.T) {
+func TestRegisterExampleAdapter(t *testing.T) {
 	reg := plugin.NewRegistry()
-	a := NewOrnithAdapter()
+	a := NewExampleAdapter()
 	if err := reg.Register(a); err != nil {
 		t.Fatalf("Register error = %v", err)
 	}

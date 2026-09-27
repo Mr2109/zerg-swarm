@@ -9,7 +9,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/plugin"
 )
 
-// OrnithAdapter 实现 plugin.Plugin 接口
+// ExampleAdapter 实现 plugin.Plugin 接口
 //
 // 封装 example-35b-v2 模型的散落假设（设计-v2.5.4.2）:
 //   - Temperature 默认 0.8（实测 0.3 更差）
@@ -17,8 +17,8 @@ import (
 //   - 零外部依赖；Init 可覆盖默认值；纯函数式检测（可独立测试）
 // 状态：定稿——待测试验证
 
-// OrnithAdapter 实现 plugin.Plugin 接口
-type OrnithAdapter struct {
+// ExampleAdapter 实现 plugin.Plugin 接口
+type ExampleAdapter struct {
 	name    string
 	version string
 	// 可配置参数（Init 后生效）
@@ -41,9 +41,9 @@ type OrnithAdapter struct {
 	started     bool
 }
 
-// NewOrnithAdapter 创建 OrnithAdapter（默认配置）
-func NewOrnithAdapter() *OrnithAdapter {
-	return &OrnithAdapter{
+// NewExampleAdapter 创建 ExampleAdapter（默认配置）
+func NewExampleAdapter() *ExampleAdapter {
+	return &ExampleAdapter{
 		name:            "example-35b-v2",
 		version:         "0.1.0",
 		Temperature:     0.8,
@@ -62,16 +62,16 @@ func NewOrnithAdapter() *OrnithAdapter {
 }
 
 // Name 插件唯一名称
-func (o *OrnithAdapter) Name() string { return o.name }
+func (o *ExampleAdapter) Name() string { return o.name }
 
 // Type 插件类型
-func (o *OrnithAdapter) Type() plugin.PluginType { return plugin.PluginTypeModelAdapter }
+func (o *ExampleAdapter) Type() plugin.PluginType { return plugin.PluginTypeModelAdapter }
 
 // Version 插件版本（SemVer 格式）
-func (o *OrnithAdapter) Version() string { return o.version }
+func (o *ExampleAdapter) Version() string { return o.version }
 
 // Capabilities 插件声明的能力列表
-func (o *OrnithAdapter) Capabilities() []string {
+func (o *ExampleAdapter) Capabilities() []string {
 	return []string{
 		"example-35b-v2-temperature-0.8",
 		"example-35b-v2-auth-token",
@@ -87,7 +87,7 @@ func (o *OrnithAdapter) Capabilities() []string {
 //   - finish_words: []string（覆盖默认完成词表）
 //   - gateway_url: string（覆盖默认网关）
 //   - use_responses_api: bool（覆盖默认 true）
-func (o *OrnithAdapter) Init(cfg map[string]interface{}) error {
+func (o *ExampleAdapter) Init(cfg map[string]interface{}) error {
 	if cfg == nil {
 		cfg = map[string]interface{}{} // 无配置用默认
 	}
@@ -207,7 +207,7 @@ func (o *OrnithAdapter) Init(cfg map[string]interface{}) error {
 }
 
 // Start 启动插件（非阻塞，等待就绪）
-func (o *OrnithAdapter) Start() error {
+func (o *ExampleAdapter) Start() error {
 	if !o.initialized {
 		return fmt.Errorf("example-35b-v2: not initialized")
 	}
@@ -216,13 +216,13 @@ func (o *OrnithAdapter) Start() error {
 }
 
 // Stop 停止插件（优雅停止——等待当前任务完成）
-func (o *OrnithAdapter) Stop() error {
+func (o *ExampleAdapter) Stop() error {
 	o.started = false
 	return nil
 }
 
 // Close 关闭插件——释放所有资源（不可逆）
-func (o *OrnithAdapter) Close() error {
+func (o *ExampleAdapter) Close() error {
 	o.initialized = false
 	o.started = false
 	return nil
@@ -237,7 +237,7 @@ func (o *OrnithAdapter) Close() error {
 // 返回 PluginOutput:
 //   - Result: map[string]interface{}（响应数据）
 //   - Meta: map[string]interface{}（含 finish_words_detected, gateway_url 等）
-func (o *OrnithAdapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, error) {
+func (o *ExampleAdapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, error) {
 	if !o.started {
 		return plugin.PluginOutput{}, fmt.Errorf("example-35b-v2: not started")
 	}
@@ -321,12 +321,12 @@ func ContainsFinishWords(text string, words []string) (bool, []string) {
 	return len(matched) > 0, matched
 }
 
-// 验证 OrnithAdapter 实现 Plugin 接口（编译期检查）
-// 如果 OrnithAdapter 没有完全实现 Plugin 接口，编译会报错
-var _ plugin.Plugin = (*OrnithAdapter)(nil)
+// 验证 ExampleAdapter 实现 Plugin 接口（编译期检查）
+// 如果 ExampleAdapter 没有完全实现 Plugin 接口，编译会报错
+var _ plugin.Plugin = (*ExampleAdapter)(nil)
 
 // OptionSchema 声明本适配器可编辑参数（Mr2109 2026-08-27——每个模型各自不同——调用该模型的所有参数都列出+说明）
-func (o *OrnithAdapter) OptionSchema() []plugin.OptionDef {
+func (o *ExampleAdapter) OptionSchema() []plugin.OptionDef {
 	return []plugin.OptionDef{
 		{Key: "temperature", Type: "number", Value: o.Temperature, Desc: "采样温度——越高回答越随机（0.8 实测最佳，0.3 更差）", Min: 0, Max: 2},
 		{Key: "top_p", Type: "number", Value: o.TopP, Desc: "核采样——只从累计概率 top_p 的 token 中采样（0.95 默认宽松）", Min: 0, Max: 1},
@@ -344,6 +344,6 @@ func (o *OrnithAdapter) OptionSchema() []plugin.OptionDef {
 }
 
 // UpdateOptions 运行时更新配置（Init 覆盖式——实时生效不重启）
-func (o *OrnithAdapter) UpdateOptions(cfg map[string]interface{}) error {
+func (o *ExampleAdapter) UpdateOptions(cfg map[string]interface{}) error {
 	return o.Init(cfg)
 }

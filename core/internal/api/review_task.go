@@ -46,7 +46,7 @@ func pickReviewModel(execModel string) string {
 		case strings.Contains(ml, "qwable"):
 			return "qwable"
 		case strings.Contains(ml, "muse") || strings.Contains(ml, "glimmer") || strings.Contains(ml, "llama"):
-			return "meta" // Meta 家族（Muse-Glimmer 是 Meta 开源）
+			return "meta" // Meta 家族（example-30b 是 Meta 开源）
 		case strings.Contains(ml, "nemotron") || strings.Contains(ml, "nvidia"):
 			return "nvidia" // NVIDIA 家族
 		default:

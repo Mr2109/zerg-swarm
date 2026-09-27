@@ -760,8 +760,9 @@ func expandTilde(p string) string {
 
 // ── 引擎参数构造（裸 exec 路径与孵化路径共用同一份）──────────────────────────
 
-// buildEngineArgv 构建引擎启动命令：适配器参数 → {file}/{port} 占位符替换 → cmd: 覆盖（兼容旧配置）
-// → 空闲自退透传（P6/R6）。返回 (可执行路径, 参数)。
+// buildEngineArgv 构建引擎启动命令：适配器参数 + 卵清单 `cmd:` **合并**（Q-218 · 2026-09-26 拍板：
+// 合并而非覆盖 · 卵清单显式项优先 · 适配器补缺）→ {file}/{port} 占位符替换 → 空闲自退透传（P6/R6）。
+// 返回 (可执行路径, 参数)。
 //
 // 这段逻辑从 doStart 原样抽出，**只为「两处不漂移」**：孵化路径要把宿主权重路径改写成空间内路径，
 // 必须拿到与裸 exec 路径逐字相同的参数序列（§6.7：参数由卵声明/适配器产出，孵化器只照单执行）。
@@ -777,22 +778,22 @@ func buildEngineArgv(modelName string, entry *registry.ModelEntry, port int) (st
 		cmdPath = detectLlamaServerPath()
 	}
 	// 替换 {file}/{port} 占位符（适配器可返回占位符）
-	for i, arg := range cmdArgs {
-		cur := strings.ReplaceAll(arg, "{port}", fmt.Sprintf("%d", port))
-		cur = strings.ReplaceAll(cur, "{file}", entry.File)
-		cmdArgs[i] = cur
-	}
+	replaceArgvPlaceholders(cmdArgs, entry.File, port)
 
-	// 如果有自定义 cmd（字符串，空格分隔），优先使用（兼容旧配置覆盖）
+	// 有自定义 cmd（字符串，空格分隔）⇒ 与适配器参数**合并**（Q-218 · 2026-09-26 拍板「合并而非覆盖」）。
+	// 改前这里是 `cmdArgs = strings.Fields(entry.Cmd)`（**整段覆盖**）⇒ 适配器整套族级参数对写了
+	// `cmd:` 的卵从未生效 ✗，而读代码的人以为生效 ✗（同一模型的启动参数两个真源、谁说了算取决于
+	// 「有没有写 cmd:」）。改后的键规则与优先级见 mergeEngineArgs。
 	if entry.Cmd != "" {
-		cmdArgs = strings.Fields(string(entry.Cmd))
-		for i, arg := range cmdArgs {
-			cur := strings.ReplaceAll(arg, "{port}", fmt.Sprintf("%d", port))
-			cur = strings.ReplaceAll(cur, "{file}", entry.File)
-			cmdArgs[i] = cur
-		}
-		if len(cmdArgs) > 0 {
-			cmdPath = cmdArgs[0]
+		eggArgs := strings.Fields(string(entry.Cmd))
+		if len(eggArgs) == 0 {
+			// 空/空白 cmd: = 没声明（与 engineHostPath 的 TrimSpace 口径一致）⇒ 走适配器参数。
+			// （旧行为：产出**空 argv**（起不来的卵）✗ —— 那不是任何一处声明的意图。）
+		} else {
+			replaceArgvPlaceholders(eggArgs, entry.File, port)
+			// 首词 = 可执行文件/wrapper（非主线引擎的 run-k2.sh 就在这里，**只能由卵清单定** ✗）
+			cmdPath = eggArgs[0]
+			cmdArgs = append([]string{cmdPath}, mergeEngineArgs(cmdArgs, eggArgs[1:])...)
 		}
 	}
 
@@ -806,6 +807,154 @@ func buildEngineArgv(modelName string, entry *registry.ModelEntry, port int) (st
 	// P6（R6）：受管模型的空闲自退透传 —— 只对 llama 家族、且仅在配置了 ZERG_IDLE_SLEEP_S 时才加。
 	// 位置刻意放在 cmd 覆盖之后：无论走适配器还是走 cmd:，最终参数都经过这一道。
 	return cmdPath, applyIdleSelfSleep(execArgs, entry.Backend)
+}
+
+// replaceArgvPlaceholders 就地替换参数里的 {file}/{port} 占位符（适配器与卵清单**两侧同一口径**）。
+func replaceArgvPlaceholders(args []string, file string, port int) {
+	for i, arg := range args {
+		cur := strings.ReplaceAll(arg, "{port}", fmt.Sprintf("%d", port))
+		args[i] = strings.ReplaceAll(cur, "{file}", file)
+	}
+}
+
+// ═══ Q-218（2026-09-26 Mr2109 拍板）：启动参数「合并而非覆盖」═══════════════════
+//
+// **改前**：卵清单有 `cmd:` 就整段覆盖适配器参数 ⇒ 同一模型的启动参数有**两个真源**
+// （适配器 `BuildArgs` vs 卵清单 `cmd:`），谁说了算只取决于「有没有写 cmd:」✗；实测两机在册的卵
+// **全都**写了 `cmd:` ⇒ 适配器那一整套族级参数（`-ctk/-ctv/-fa/--cache-prompt/-cb/-np 1/…`）
+// 对它们**从未生效**，而读代码的人以为生效 ✗（Q-218 的登记原文：读代码必误判）。
+//
+// **改后**：两侧**合并** —— 卵清单显式项优先、适配器补缺。键（旗标）规则如下：
+//   - 键归一：`--foo=bar` 取 `--foo`；别名按 argKeyAlias 归一（只登记确知同义的）；
+//   - 同名键 ⇒ **卵清单优先**，就地替换（保两侧各自的位次）⇒ 同名参数只留一个 ✓；
+//   - 卵清单没发的键 ⇒ 适配器补缺，追加在末尾 ✓（两侧异名参数并存）；
+//   - 可执行文件（`cmd:` 首词）**只能由卵清单定** ✗ —— 非主线引擎的 wrapper（`run-k2.sh` /
+//     `run-bonsai.sh`）就在这里，适配器不许改写它（P1 守卫的判据是 `entry.Cmd != ""`，同源）。
+//
+// **为什么是「卵清单优先」而不是适配器优先**（三条，按分量排）：
+//  ① 卵清单是「每机每模型」的**现场真源** —— 机器特有路径、内存上界（`-c 65536/131072`）、
+//     非主线引擎 wrapper、实测处置（`--reasoning-budget 256`）都写在它里面；适配器是**族级默认**
+//     （跨机同族共用一份），定位天然是补缺、不是覆盖；
+//  ② 它**就是当前生效的那一侧**（现读两机运行态命令行与卵清单逐字一致 ✓）⇒ 只有让它优先，
+//     拍板理由「运行参数一律不动（4 槽与 08-15 认知一致）」才成立：`-c`/`-ngl` 全不变；
+//  ③ 适配器优先会把单机显式声明打掉（4 槽→1 槽那类），而那种「反向修法」已在 §五十.8 被判过 ✗。
+//
+// **同批**：其余适配器（`gemma/generic/qwen36/qwen38flash/k2horizon`）里「v2.5.5 单槽铁律」的
+// `-np 1` 与本批**不动**（默认值不动 ✗）。但它原先带一条**后果**，现已由下面的例外解决（2026-09-26）：
+//
+//	合并会把这五处的 `-np 1` **首次**注入到「写了 `cmd:`、但没写 `-np`」的卵
+//	（Mr2109 现读 7 枚全部属于这一类）⇒ 下次装载槽数从 `-np` 缺省（`-1 = auto`，实测 4 槽）变成 1 槽 ✗。
+//	⇒ 解法 = `mergeEngineArgs` 的 **`-np` 例外**（见该函数注释）：卵清单**没显式写** `-np` 就摘掉
+//	适配器那一份 ⇒ 槽数维持引擎缺省 ✓；而 `cmd:` 为空的卵（x3 现读 4 枚：`GLM-4.7-Flash` /
+//	`example-8b-quant` / `Qwen3.6-35B-A3B` / `qwen2.5-3b`）适配器仍是**唯一真源** ⇒ `-np 1` 照旧 ✓。
+//	判据 = `hasExplicitNP(eggArgs)`，只作用于 `-np` 一个键 ✗ 其余参数的补缺规则不变。
+
+// argKeyAlias 同一旗标的两种写法归一（免得合并后同义参数出现两次、负控「同名只留一个」失效）。
+// 只登记**确知同义**的：`-mm` / `--mmproj` 是 llama-server 的同一个 flag（`-mm, --mmproj FILE`）。
+// 不在这里「顺手」登记存疑的同义关系 —— 认错键会把两侧本来不同的参数误并成一个 ✗。
+var argKeyAlias = map[string]string{"--mmproj": "-mm"}
+
+// argKey 取参数的键：`--foo=bar` → `--foo`；别名归一；其余原样。
+func argKey(tok string) string {
+	key := tok
+	if i := strings.Index(key, "="); i > 0 && strings.HasPrefix(key, "-") {
+		key = key[:i]
+	}
+	if alias, ok := argKeyAlias[key]; ok {
+		return alias
+	}
+	return key
+}
+
+// argvItem 参数序列里的一项：键 + 该项的原文 token（旗标，及其 0..n 个值）。
+type argvItem struct {
+	key    string
+	tokens []string
+}
+
+// splitArgvItems 把参数切成「旗标 + 它的值」项序列。
+// 值 = 紧跟旗标之后、且不以 `-` 开头的连续 token（`-c 0` / `-fa on` / `--chat-template-kwargs {…}`）。
+// 首 token 不是旗标时（可执行文件）单列一项，键 = 它自己（只占位次、不参与同名判定）。
+func splitArgvItems(args []string) []argvItem {
+	items := make([]argvItem, 0, len(args))
+	for i := 0; i < len(args); {
+		tok := args[i]
+		if !strings.HasPrefix(tok, "-") {
+			items = append(items, argvItem{key: tok, tokens: []string{tok}})
+			i++
+			continue
+		}
+		item := argvItem{key: argKey(tok), tokens: []string{tok}}
+		j := i + 1
+		for j < len(args) && !strings.HasPrefix(args[j], "-") {
+			item.tokens = append(item.tokens, args[j])
+			j++
+		}
+		items = append(items, item)
+		i = j
+	}
+	return items
+}
+
+// hasExplicitNP 卵清单是否**显式**声明了槽数（`-np 4` / `-np=4` / `--parallel 4` 除外——别名未登记）。
+func hasExplicitNP(args []string) bool {
+	for _, a := range args {
+		if argKey(a) == "-np" {
+			return true
+		}
+	}
+	return false
+}
+
+// dropFlagItems 摘掉某键及其值（`-np` 例外专用）。
+func dropFlagItems(args []string, key string) []string {
+	out := make([]string, 0, len(args))
+	for _, it := range splitArgvItems(args) {
+		if it.key == key {
+			continue
+		}
+		out = append(out, it.tokens...)
+	}
+	return out
+}
+
+// mergeEngineArgs 合并两侧参数：**适配器为底、卵清单显式项优先**（同名就地替换、异名追加）。
+// 入参都不含可执行文件（调用方单独拼首词）；任一侧为空 ⇒ 直接返回另一侧。
+//
+// **`-np` 例外**（Q-218 · 2026-09-26 父代理拍：`-np` 只认卵清单显式声明）：卵清单写了 `cmd:`
+// 但**没写** `-np` ⇒ 先摘掉适配器的 `-np`，再照常合并。为什么 `-np` 不同于其他参数：其余参数是
+// **能力/性能**声明（`-ctk/-fa/--cache-prompt/…` 是族级默认，适配器补缺正是补该补的），而槽数是
+// **这台机这个模型**的并发容量 —— 卵清单不写 `-np` 的意思是「沿用引擎缺省（实测 4 槽）」，**不是**
+// 「请适配器替我定成 1 槽」；让适配器补缺 = 静默把 4 槽压成 1 槽 ✗（= 改运行参数，与拍板理由相抵）。
+// 卵清单 `cmd:` 为空时走上面的早退分支、压根不经过这里 ⇒ 适配器仍是**唯一真源**，`-np 1` 照旧生效 ✓。
+func mergeEngineArgs(adapterArgs, eggArgs []string) []string {
+	if len(eggArgs) == 0 {
+		return adapterArgs
+	}
+	if len(adapterArgs) == 0 {
+		return eggArgs
+	}
+	if !hasExplicitNP(eggArgs) {
+		adapterArgs = dropFlagItems(adapterArgs, "-np")
+	}
+	out := splitArgvItems(adapterArgs)
+	index := make(map[string]int, len(out))
+	for i, it := range out {
+		index[it.key] = i
+	}
+	for _, it := range splitArgvItems(eggArgs) {
+		if at, ok := index[it.key]; ok {
+			out[at] = it // 同名 ⇒ 卵清单优先（就地替换，位次留在适配器那一侧）
+			continue
+		}
+		index[it.key] = len(out)
+		out = append(out, it) // 异名 ⇒ 适配器补缺（追加在末尾，卵清单原有顺序在前）
+	}
+	flat := make([]string, 0, len(adapterArgs)+len(eggArgs))
+	for _, it := range out {
+		flat = append(flat, it.tokens...)
+	}
+	return flat
 }
 
 // ═══ 2026-09-15 修正：WorkDir 的语义缺陷与 KV 落点（Mr2109 拍板）═════════════

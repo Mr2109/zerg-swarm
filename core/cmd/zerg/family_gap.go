@@ -112,6 +112,12 @@ type gapRecord struct {
 	Verified  string   `json:"last_verified_at,omitempty"`
 	SolvedAt  string   `json:"solved_at,omitempty"`
 	Evidence  string   `json:"solved_evidence,omitempty"`
+	// Notes —— **口径/上下文注**（`zerg gap note` 追加 · 2026-09-26）。落点取定：真源那一行上
+	// **新增一格**（`notes`），一条注 = 一格字符串 `<时刻> · <谁>：<文本>`。
+	// 为什么另开一格而不是塞进 `solved_evidence`：后者是**状态那一维**的证据（由 `verify` 或
+	// `set-state` 写、与 `state` 同批变），注是**上下文那一维**（与状态无关、可累积）⇒ 混一格
+	// 会让「这条现在什么态」与「谁说过什么」互相覆盖。`omitempty` ⇒ 没注过的行**逐字节不变**。
+	Notes []string `json:"notes,omitempty"`
 }
 
 // gapLedger —— 读进来的真源（原样字节 + 逐行原文 + 解析后的记录）。
@@ -508,7 +514,7 @@ func gapPlanBlock(w io.Writer, title, ledgerPath string, lines int, rec gapRecor
 // ── 二.1 `zerg gap ls`（只读面：不写真源、不写审计）──────────────────────────────────────────────
 
 // gapListFields —— `--json` 可取字段（与命令树里的 `fields` 同一份口径）。
-var gapListFields = []string{"id", "prio", "impact", "state", "want", "summary", "fp", "verify_cmd", "found_at", "last_verified_at", "solved_at"}
+var gapListFields = []string{"id", "prio", "impact", "state", "want", "summary", "fp", "verify_cmd", "found_at", "last_verified_at", "solved_at", "notes"}
 
 func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 	// ① 用法面（在任何盘面动作之前）
@@ -601,6 +607,9 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 			"found_at":         r.FoundAt,
 			"last_verified_at": r.Verified,
 			"solved_at":        r.SolvedAt,
+			// `notes` —— 口径注那一格的**只读回吐**（`zerg gap note` 写的；多条按 `⏎` 连起来，
+			// 与 `verify` 那一路的 `solved_evidence` 同一种收法）。读面**只回吐、不改**。
+			"notes": strings.Join(r.Notes, " ⏎ "),
 		})
 	}
 	if len(out) == 0 {

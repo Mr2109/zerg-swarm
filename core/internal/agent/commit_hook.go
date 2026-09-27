@@ -22,7 +22,8 @@ type gitRunner interface {
 type realGitRunner struct{}
 
 func (r *realGitRunner) run(repoDir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	// ★ `-c core.quotepath=false` 补在 argv 首 ⇒ 落在子命令之前（repoDir 走 cmd.Dir，不涉 `-C`）。
+	cmd := exec.Command("git", append([]string{"-c", "core.quotepath=false"}, args...)...)
 	cmd.Dir = repoDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {

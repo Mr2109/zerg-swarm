@@ -83,7 +83,7 @@ type impactHookFacts struct {
 	Rel       string // 件（仓内相对路径）
 	BeforeSHA string // 被删对象的 sha256（删之前现算 · 与 dev edit 的 before_sha256 同一算法）
 	Tracked   bool   // `git ls-files --error-unmatch` 认它
-	GitSHA    string // `git log -1 --format=%H -- <件>`（可找回路径之一）
+	GitSHA    string // 末笔碰过本件的提交 sha（`git log -1 --format=%H -- <件>`）—— **不是退点**（只作「那件在 git 历史里」的线索；退点判据 = 写回后件 sha256 == BeforeSHA · `GAP-20260927-216` 同族）
 	Archive   string // 归档区里的副本路径（可找回路径之二；空 = 取不到）
 	Outside   bool   // 件不在仓根下
 }
@@ -184,6 +184,9 @@ func impactHookFactsOf(root, rel string, before []byte) impactHookFacts {
 	if _, _, code, err := impactRunIn(root, "git", "ls-files", "--error-unmatch", "--", rel); err == nil && code == 0 {
 		f.Tracked = true
 	}
+	// ★ `GAP-20260927-216` 同族口径：这里拿回来的是**末笔碰过本件的提交**，**不是退点** ——
+	// 它只作「那件在不在 git 历史里」的线索（判据①②③里第②条读的就是「取不到」这一格）。
+	// 退点一律锚 `before_sha256` + 退点件；本钩子拿不到退点件 ⇒ 证据那一条只给线索、**不给退法**。
 	f.GitSHA = impactLastCommit(root, rel)
 	f.Archive = impactArchiveCopy(root, rel)
 	return f
@@ -267,7 +270,15 @@ func impactHookDecide(f impactHookFacts) impactHook {
 		if len(short) > 12 {
 			short = short[:12]
 		}
-		p := "git 提交 `" + short + "` + 件路径 `" + f.Rel + "`（`git revert " + short + " -- " + f.Rel + "`）"
+		// ★ 措辞口径（`GAP-20260927-216` 同族 · 与 `family_dev_edit.go` 的 `devEditReturnPoint` 一致）：
+		// 查到的这枚是**末笔碰过本件的提交**，**不是退点** —— `git revert <它> -- <件>` 跑不通
+		// （`git revert` **不吃 pathspec** · 实测 rc=128），且它锚的是**提交里**那一版、不等于删前工作树
+		// （未提交的改动不在任何提交里）⇒ 这一条**只作线索**（能取到哪一版照实说），**不当退法给**；
+		// 真判据逐字给出（写回后件 sha256 == 删前指纹），退点件拿不到 ⇒ 明说「不给退法」、禁编。
+		p := "末笔碰过本件的提交 `" + short + "`（**不是退点**）：线索用法 `git show " + short + ":" + f.Rel + "`" +
+			" 取的是**那笔提交里**那一版（≠ 删前工作树）；件路径 `" + f.Rel + "`" +
+			" · ★ 不按退点用：`git revert " + short + " -- " + f.Rel + "` **跑不通**（`git revert` 不吃 pathspec · 实测 rc=128）" +
+			" ⇒ **本钩子拿不到退点件 ⇒ 不给退法**（真判据只有一条：写回后件 sha256 == 删前指纹 " + dashIfEmpty(f.BeforeSHA) + "）"
 		if path == "" {
 			path = p
 		} else {

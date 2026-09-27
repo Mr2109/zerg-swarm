@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -19,6 +18,7 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/agentstate"
 	"github.com/Mr2109/zerg-swarm/core/internal/compressor"
 	"github.com/Mr2109/zerg-swarm/core/internal/ffp"
+	"github.com/Mr2109/zerg-swarm/core/internal/gitpaths"
 	"github.com/Mr2109/zerg-swarm/core/internal/hermes"
 	"github.com/Mr2109/zerg-swarm/core/internal/loopguard"
 )
@@ -655,9 +655,10 @@ func (ls *loopState) hasRealChanges() bool {
 		return false
 	}
 	workDir := ls.agent.execContext.WorkDir
-	// 工作区是 git 仓库？——git diff 检查
-	cmd := exec.Command("git", "-C", workDir, "diff", "--name-only")
-	out, err := cmd.Output()
+	// ★ C3（2026-09-27）：取「改动件名」一律经 A1 出口（gitpaths.List · FaceDiff）
+	// —— 本处原先裸拼 `git -C <workDir> -c core.quotepath=false diff --name-only`；
+	// 出口 argv 同面（`diff --name-only -z`），`-z` 全免疫 + C-5 自检硬拒转义形态。
+	ents, err := gitpaths.List(workDir, gitpaths.FaceDiff)
 	if err != nil {
 		// 非 git 仓库——检查新建文件（找 .go/.py/.json 等代码文件）
 		entries, _ := os.ReadDir(workDir)
@@ -672,7 +673,8 @@ func (ls *loopState) hasRealChanges() bool {
 		}
 		return false
 	}
-	for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, e := range ents {
+		f := e.String()
 		if f == "" {
 			continue
 		}

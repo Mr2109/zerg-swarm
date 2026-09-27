@@ -53,7 +53,7 @@ func (a *Ornith) BuildArgs(entry *registry.ModelEntry, port int) []string {
 // templatePath 解析 example-35b-v2 外部 chat template 路径（可选；都不存在时不加该参数）。
 // 2026-09-11 登记表配置化：优先级如下（前两者命中即返回）
 //  1. 登记表 `chat_template:` 字段 —— 任意机器/任意模型可配，推荐用法
-//  2. 环境变量 ZERG_ORNITH_TEMPLATE
+//  2. 环境变量 ZERG_EXAMPLE_TEMPLATE
 //  3. ~/.zerg/example-35b-v2_chat_template.jinja
 //  4. 仓库内相对路径 agent/example-35b-v2_chat_template.jinja（及其上一级）
 //
@@ -67,7 +67,7 @@ func (a *Ornith) templatePath(entry *registry.ModelEntry) string {
 		logx.Warnf("modeladapter", "登记表 chat_template 不存在，已忽略并回退", "path", entry.ChatTemplate)
 	}
 	candidates := []string{}
-	if p := os.Getenv("ZERG_ORNITH_TEMPLATE"); p != "" {
+	if p := os.Getenv("ZERG_EXAMPLE_TEMPLATE"); p != "" {
 		candidates = append(candidates, expandHome(p))
 	}
 	if home, err := os.UserHomeDir(); err == nil {

@@ -85,7 +85,7 @@ Some models' GGUF files **embed an outdated template** (for example, tool-call/t
 Priority (highest to lowest):
 
 1. Agent registry field `chat_template: <path>` (supports `~`) — **recommended**
-2. Environment variable `ZERG_ORNITH_TEMPLATE`
+2. Environment variable `ZERG_EXAMPLE_TEMPLATE`
 3. `~/.zerg/example-35b-v2_chat_template.jinja`
 4. Repo-relative path `agent/example-35b-v2_chat_template.jinja`
 

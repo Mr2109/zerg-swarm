@@ -632,9 +632,9 @@ func (h *Handlers) TaskGitHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// git diff --stat（未提交改动）
-	statOut, _ := exec.Command("git", "-C", wtDir, "diff", "--stat").Output()
+	statOut, _ := exec.Command("git", "-C", wtDir, "-c", "core.quotepath=false", "diff", "--stat").Output()
 	// git status --short
-	statusOut, _ := exec.Command("git", "-C", wtDir, "status", "--short").Output()
+	statusOut, _ := exec.Command("git", "-C", wtDir, "-c", "core.quotepath=false", "status", "--short").Output()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"task_id":   taskID,
 		"worktree":  wtDir,
@@ -653,7 +653,7 @@ func (h *Handlers) TaskDiffHandler(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusNotFound, "WORKTREE_NOT_FOUND", "任务 worktree 不存在: "+taskID)
 		return
 	}
-	diffOut, err := exec.Command("git", "-C", wtDir, "diff").Output()
+	diffOut, err := exec.Command("git", "-C", wtDir, "-c", "core.quotepath=false", "diff").Output()
 	if err != nil {
 		writeErrorCode(w, http.StatusInternalServerError, "GIT_DIFF_FAILED", "git diff 失败: "+err.Error())
 		return

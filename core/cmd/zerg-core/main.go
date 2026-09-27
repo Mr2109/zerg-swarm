@@ -203,8 +203,8 @@ func main() {
 	// 加载插件管理器 + 注册 6 个模型适配器（example-35b-v2/ds4/nemotron/qwen38/qwable/gemma）
 	// 无适配器的模型 → 回退旧路由（fleet.yaml + 打分）——兼容
 	adapterRegistry := map[string]plugin.Plugin{
-		"example-35b":             adapters.NewOrnithAdapter(),
-		"example-35b-v2":             adapters.NewOrnithAdapter(), // 2026-08-20 接入——新版——不替换1.0
+		"example-35b":             adapters.NewExampleAdapter(),
+		"example-35b-v2":             adapters.NewExampleAdapter(), // 2026-08-20 接入——新版——不替换1.0
 		"deepseek-v4-flash":          adapters.NewDs4Adapter(),
 		"Nemotron-3.5-Lightning":     adapters.NewNemotronAdapter(),
 		"Qwen3.8-27B":                adapters.NewQwen38Adapter(),
@@ -212,7 +212,7 @@ func main() {
 		"Qwen3.8-Flash-Next-IQ4_XS":  adapters.NewQwen38FlashAdapter(), // 2026-08-30 X3 三档量化——IQ4_XS 93.7GB（内存更宽）
 		"Qwen3.8-Flash-Next-Q3_K_XL": adapters.NewQwen38FlashAdapter(), // 2026-08-30 X3 三档量化——Q3_K_XL 89.9GB（内存最宽）
 		"example-8b-quant":           adapters.NewQwableAdapter(),
-		"Qwable-v1.Q5_K_M":           adapters.NewQwableAdapter(),
+		"example-8b-quant.Q5_K_M":           adapters.NewQwableAdapter(),
 		"gemma-4-26B":                adapters.NewGemmaAdapter(),
 		"gemma-4-12B":                adapters.NewGemmaAdapter(),
 		"GLM-4.7-Flash":              adapters.NewGlm47Adapter(),       // 2026-08-28 补全——智谱30B-A3B MoE
@@ -229,7 +229,7 @@ func main() {
 	// 这些**声明一个都不下发**（fleet.yaml 里那句「适配器 max_tokens/thinking 已控」是**死声明**）。
 	//
 	// 修法 = 装配链上补 `Start()`（适配器的生命周期契约本来就是 Init → Start 两步，见
-	// adapters/example-35b-v2_test.go 的 TestOrnithAdapter_Lifecycle / TestOrnithAdapter_ExecuteBeforeStart；
+	// adapters/example-35b-v2_test.go 的 TestExampleAdapter_Lifecycle / TestExampleAdapter_ExecuteBeforeStart；
 	// 判据钉在 adapters/adapter_start_wiring_test.go：本文件里 Init 与 Start 必须**同现**）。
 	// 与上一行同一口径：**坏一枚适配器不打死整条启动**（记日志、继续）。
 	for name, adp := range adapterRegistry {
@@ -299,7 +299,11 @@ func main() {
 	} else {
 		agentBin = filepath.Join(statepath.WorkspaceRoot(), "bin", "zerg-agent")
 	}
-	masterSched := api.NewMasterScheduler(agentBin, 1, &api.StoreSnapshotReader{Store: fleetStore}) // 单槽——串行——v2.5.6 注入 store（ping 快照优先）
+	// ★ 2026-09-27 Mr2109 拍板「停」：并发槽位 1 → 0 = **暂停派活**（不再起新的 zerg-agent）。
+	// 判据（非自造，官方语义）：master_scheduler.go:370 `for len(s.queue) > 0 && len(s.running) < s.maxConcurrent`
+	// ⇒ maxConcurrent=0 时恒假 ⇒ 只入队排队、不起进程；本语义另有测试背书（slice_schema_test.go:15/29 逐字
+	//「maxConcurrent=0 ⇒ 放行只排队、不起进程」）。恢复：把下面的 0 改回 1 并重启主控（队列一件不丢）。
+	masterSched := api.NewMasterScheduler(agentBin, 0, &api.StoreSnapshotReader{Store: fleetStore}) // ★ 0=暂停派活（原为 1）
 	handlers.Scheduler = masterSched
 	// 2026-09-13: 显式启动（派发恢复的排队任务 + 启动故障自愈扫描）——构造期不再自动执行任务
 	masterSched.Start()

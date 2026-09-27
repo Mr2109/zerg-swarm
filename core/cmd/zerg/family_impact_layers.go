@@ -137,6 +137,14 @@ const impactPublishFaceSyncRel = "scripts/gates/check-publish-face-sync.py"
 // impactRunIn 在 dir 里跑一条外部命令（**只读**用途；stdout/stderr 分开收）。
 // 起不来 ⇒ err 非空（调用方按「读不到」处置 —— **不给结论**，不许当成「没有」）。
 func impactRunIn(dir, name string, args ...string) (string, string, int, error) {
+	// ★ 件名含非 ASCII 时（本仓大量中文名件），git 默认把路径转义（"\346\227\245..." 形态）：
+	//   本包装里**取件名**的调用点（`git grep` / `git ls-files` / `git status`）下游按真路径解，
+	//   转义后键永远对不上真路径。`-c core.quotepath=false` 是**全局选项**，须落在**子命令之前**。
+	// ★ 本包装是**通用**的（name 还会是 python3 / bash / go / sg）⇒ **只对 git 注入**，
+	//   不无条件加 `-c`（那会污染非 git 调用点）。
+	if name == "git" {
+		args = append([]string{"-c", "core.quotepath=false"}, args...)
+	}
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	var out, errb bytes.Buffer

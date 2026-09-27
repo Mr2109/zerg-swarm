@@ -101,7 +101,8 @@ func NeedsEngineImpl(c ModelCandidate) bool {
 func isKnownHost(host string) bool {
 	// 3c（2026-09-16）：本机角色（localback）退役 ⇒ 本机 = 名为 Mr2109 的普通子端（与 x3 同形）。
 	// ⚠ 这份名单是**硬编码**的：以后加机器别忘了同步（或改为从 fleet 动态取，承接项）。
-	known := []string{"Mr2109", "x3", "mini1", "mini2", "mini3"}
+	// 2026-09-26 定点修正：删去名册（真源）里没有的 mini3——名单现状 == 真源键集。
+	known := []string{"Mr2109", "x3", "mini1", "mini2"}
 	for _, h := range known {
 		if h == host {
 			return true

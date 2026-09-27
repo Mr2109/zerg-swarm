@@ -39,6 +39,26 @@ func runEggCmd(t *testing.T, argv ...string) (int, string, string) {
 	return rc, out.String(), errb.String()
 }
 
+// eggStubBackends 把**子端真后端探测口**换成合成回据（`GAP-20260926-08`）。
+//
+// 为什么判据件必须换口：子端地址来自 `gateway/fleet.yaml`（真机地址），而本机 `Mr2109` 的子端
+// **恰好活着** ⇒ 走真口测出来的绿是「今天恰好是这样」的绿（不 hermetic）。换成合成回据之后，
+// 三态**每一态都能稳定造出来**（真后端在跑 / 不在 / 取不到），判据才钉得住。
+func eggStubBackends(t *testing.T, byHost map[string]zerg.EggBackendFactForTest) {
+	t.Helper()
+	t.Cleanup(zerg.SetEggBackendProbeForTest(byHost))
+}
+
+// eggStubOnMS01 —— 最常用的一份合成回据：`Mr2109` 答得动（`Egg-A` 在跑 · 端口 9001），`x3` 答得动但没有卵。
+// 名册里没有的机 ⇒ 不在表里 ⇒ 「取不到」（与真路径同形）。
+func eggStubOnMS01(t *testing.T) {
+	t.Helper()
+	eggStubBackends(t, map[string]zerg.EggBackendFactForTest{
+		"Mr2109": {Reachable: true, Running: map[string]int{"Egg-A": 9001}},
+		"x3":   {Reachable: true},
+	})
+}
+
 // 判据①：每行三格齐 · 表头就是三格 · rc=0（今天那条 rc=8 的 fail-closed 不许留）。
 func TestEggLsMatrixThreeCells(t *testing.T) {
 	srv := newSyntheticMaster(t, map[string]string{
@@ -48,6 +68,7 @@ func TestEggLsMatrixThreeCells(t *testing.T) {
 		"/api/models/Egg-B": `{"name":"Egg-B","host":"Mr2109","status":"未加载"}`,
 	})
 	defer srv.Close()
+	eggStubOnMS01(t) // 判据件不连真网：子端真后端回据换成合成件
 
 	rc, stdout, stderr := runEggCmd(t, "egg", "ls", "--plain")
 	if rc != 0 {
@@ -72,8 +93,13 @@ func TestEggLsMatrixThreeCells(t *testing.T) {
 	}
 }
 
-// 判据②：`state` 值域**只有主控的两个词** —— 已加载 / 未加载，逐字（正例两字都出得来）。
-func TestEggStateVerbatimFromMasterStatus(t *testing.T) {
+// 判据②（改版 · `GAP-20260926-08`）：`state` 值域是**卵面四词闭集**（`已加载` / `未加载` /
+// `已声明但后端不在` / `取不到`）—— 闭集外的词一个都不许出现。
+//
+// 前身是「`state` 只有主控那两个词」：那条判据在**同一条链的两处读数**之间判一致
+// （主控 `status` ⟷ 心跳快照），而**两处的源头是同一个子端声明**（`RegistryNames()`）
+// ⇒ 它判不出「声明 ≠ 真后端」，正是本缺口的成因。判据改成「闭集收口 + 三态可造」。
+func TestEggStateValueDomainIsClosedSet(t *testing.T) {
 	srv := newSyntheticMaster(t, map[string]string{
 		"/api/fleet/models": eggFleetJSON,
 		"/api/fleet/status": eggStatusJSON,
@@ -81,22 +107,28 @@ func TestEggStateVerbatimFromMasterStatus(t *testing.T) {
 		"/api/models/Egg-B": `{"name":"Egg-B","host":"Mr2109","status":"未加载"}`,
 	})
 	defer srv.Close()
+	eggStubOnMS01(t)
 
 	rc, stdout, stderr := runEggCmd(t, "egg", "ls", "--plain")
 	if rc != 0 {
 		t.Fatalf("egg ls 退码 = %d（要 0）· stderr=%s", rc, stderr)
 	}
+	closed := map[string]bool{}
+	for _, w := range zerg.EggStateClosedSetForTest() {
+		closed[w] = true
+	}
 	seen := map[string]bool{}
 	for _, ln := range strings.Split(strings.TrimRight(stdout, "\n"), "\n")[1:] {
-		f := strings.Split(ln, "\t")
+		f := strings.Split(ln, "	")
 		seen[f[2]] = true
 	}
+	// 正例：真后端在跑那枚 ⇒ `已加载`；没声也没跑那两枚 ⇒ `未加载`。
 	if !seen["已加载"] || !seen["未加载"] {
-		t.Fatalf("两个词都要出得来（主控 `GET /api/models/{name}` 的 `status` 就是这个闭集）：%v", seen)
+		t.Fatalf("`已加载` / `未加载` 两个词都要出得来：%v", seen)
 	}
 	for w := range seen {
-		if w != "已加载" && w != "未加载" {
-			t.Errorf("`state` 出现了闭集外的词 %q（判据②：同一格不许两套词）", w)
+		if !closed[w] {
+			t.Errorf("`state` 出现了闭集外的词 %q（闭集 = %v）", w, zerg.EggStateClosedSetForTest())
 		}
 	}
 }
@@ -123,28 +155,151 @@ func TestEggLsHostAbsentMustGoRed(t *testing.T) {
 	}
 }
 
-// 判据② 正面：主控点名那台机上那一格**逐字取主控原话** —— 哪怕快照（同一台机）与它不一致，
-// 也不许自己算一个、更不许因此判红（只读投影要**可重复**；「两次读数的时序差」不是语义分歧）。
-func TestEggAuthoritativeCellIsMasterWordVerbatim(t *testing.T) {
+// ★ `GAP-20260926-08` 的**正题**（本判据件的前身逐字钉住的正是那个 bug，故此处整条重写）：
+//
+//	主控说 `已加载`，而子端 `/eggs` 说**没这枚卵**（引擎进程已经没了）
+//	⇒ `state` 必须落 `已声明但后端不在`，**不许**逐字照抄主控的 `已加载`。
+//
+// 前身 `TestEggAuthoritativeCellIsMasterWordVerbatim` 的判据是「主控点名那台机上那一格**逐字取
+// 主控原话**」—— 它把「声明」当成了真值，所以**卸载之后引擎已无、`egg ls` 仍报「已加载」**
+// 这个 P0 现象在它眼里是**绿**的（实测：`Mr2109` 注册表 7 条 ⇒ 报 7 枚已加载，而 `ps` 上只有 1 个
+// `llama-server`）。修法是把那一格改由**子端真后端回据**落定；本判据钉住新语义。
+//
+// 同时钉住**取不到**这一档：读不到就只是读不到 —— 既不报「已加载」（本缺口），也不并进
+// 「未加载」（那是**编一个数**）。
+func TestEggStateFollowsChildBackendNotMasterDeclaration(t *testing.T) {
 	srv := newSyntheticMaster(t, map[string]string{
 		"/api/fleet/models": eggFleetJSON,
 		"/api/fleet/status": eggStatusJSON, // Mr2109 的快照里只有 Egg-A
 		"/api/models/Egg-A": `{"name":"Egg-A","host":"Mr2109","status":"已加载"}`,
-		// 主控说 Egg-B 在 Mr2109 上是 `已加载`（快照里没有它）⇒ 这一格必须照主控的原文出。
+		// 主控说 Egg-B 在 Mr2109 上是 `已加载` —— 但子端 `/eggs` 里**没有它**（真后端不在）。
 		"/api/models/Egg-B": `{"name":"Egg-B","host":"Mr2109","status":"已加载"}`,
 	})
 	defer srv.Close()
+	// 合成子端：Mr2109 答得动、只有 Egg-A 在跑（端口 9001）；x3 答得动、没有卵。
+	eggStubOnMS01(t)
 
 	rc, stdout, stderr := runEggCmd(t, "egg", "ls", "--plain")
 	if rc != 0 {
-		t.Fatalf("主控原话与快照有差拍 ⇒ 只读投影**不许**判红：rc=%d · stderr=%s", rc, stderr)
+		t.Fatalf("egg ls 退码 = %d（要 0）· stderr=%s", rc, stderr)
 	}
-	if !strings.Contains(stdout, "Mr2109	Egg-B	已加载") {
-		t.Errorf("主控点名的那一格必须**逐字**取主控 `status`：%q", stdout)
+	// ① 声明与回据一致 ⇒ 真 `已加载`。
+	if !strings.Contains(stdout, "Mr2109	Egg-A	已加载") {
+		t.Errorf("子端 `/eggs` 里在跑的那一枚要落 `已加载`：%q", stdout)
 	}
-	// 另一台机（快照里确实没驻留）那一格，按同一闭集填 `未加载`。
+	// ② 声明说「已加载」而真后端不在 ⇒ **必须**是 `已声明但后端不在`（不许照抄声明）。
+	if !strings.Contains(stdout, "Mr2109	Egg-B	已声明但后端不在") {
+		t.Errorf("主控声「已加载」而子端回据里没有它 ⇒ 必须落 `已声明但后端不在`：%q", stdout)
+	}
+	if strings.Contains(stdout, "Mr2109	Egg-B	已加载") {
+		t.Errorf("**本缺口的原现象**：不许把主控的声明当真值（`Egg-B@Mr2109` 照抄成了 `已加载`）：%q", stdout)
+	}
+	// ③ 非主控点名的那台机：主控没声、子端也没有 ⇒ `未加载`（两处一致）。
 	if !strings.Contains(stdout, "x3	Egg-B	未加载") {
-		t.Errorf("非主控点名的那台机按快照填同一闭集的词：%q", stdout)
+		t.Errorf("两处一致地「没在跑」那一格要落 `未加载`：%q", stdout)
+	}
+}
+
+// `取不到` 必须是**独立一格**：子端 `/eggs` 打不到 ⇒ `state` 落 `取不到`，且**整张表都不给结论**
+// （退码 8 · stdout 0 字节）—— 不许把它写进 `已加载`（本缺口）或 `未加载`（编一个数）。
+func TestEggBackendUnreadableIsItsOwnState(t *testing.T) {
+	srv := newSyntheticMaster(t, map[string]string{
+		"/api/fleet/models": eggFleetJSON,
+		"/api/fleet/status": eggStatusJSON,
+		"/api/models/Egg-A": `{"name":"Egg-A","host":"Mr2109","status":"已加载"}`,
+		"/api/models/Egg-B": `{"name":"Egg-B","host":"Mr2109","status":"已加载"}`,
+	})
+	defer srv.Close()
+	// 合成子端：**两台机都答不动** ⇒ 全表都是 `取不到`。
+	eggStubBackends(t, map[string]zerg.EggBackendFactForTest{
+		"Mr2109": {Reachable: false},
+		"x3":   {Reachable: false},
+	})
+
+	rc, stdout, stderr := runEggCmd(t, "egg", "ls", "--plain")
+	if rc != 8 {
+		t.Fatalf("整张表的真后端回据都取不到 ⇒ 退码 8（blocked · 前置拿不到），实际 rc=%d · stdout=%q", rc, stdout)
+	}
+	// ★ 表格**照旧打出来**：`取不到` 是逐枚卵的结论，机器/人都要看得见它（清空 stdout 等于让
+	//   「取不到」这一态消失）。人面三格那一格里逐字写着 `取不到` ⇒ 不会被当成「已加载」。
+	if !strings.Contains(stdout, "	取不到") {
+		t.Errorf("人面也要逐字说白 `取不到`（不许清空 stdout、更不许并进 `已加载`）：%q", stdout)
+	}
+	if strings.Contains(stdout, "已加载") || strings.Contains(stdout, "未加载") {
+		t.Errorf("取不到**不许**塌成 `已加载` / `未加载`：%q", stdout)
+	}
+	if !strings.Contains(stderr, "取不到") {
+		t.Errorf("判词要点名 `取不到` 这一档：stderr=%s", stderr)
+	}
+	if !strings.Contains(stderr, "backend_unreadable") {
+		t.Errorf("机器面要留 detail=backend_unreadable：stderr=%s", stderr)
+	}
+
+	// 机器面：三态照样分得开（`取不到` 不许塌成 `未加载`）。
+	rc, stdout, stderr = runEggCmd(t, "egg", "ls", "--json", "host,model,state,declared,backend_port")
+	if rc != 8 {
+		t.Fatalf("有卵取不到 ⇒ 退码 8，实际 rc=%d · stderr=%s", rc, stderr)
+	}
+	if !strings.Contains(stdout, `"state":"取不到"`) {
+		t.Errorf("机器面上 `取不到` 必须逐字出得来：%q", stdout)
+	}
+	if strings.Contains(stdout, `"state":"未加载"`) || strings.Contains(stdout, `"state":"已加载"`) {
+		t.Errorf("取不到**不许**塌成 `已加载` / `未加载`：%q", stdout)
+	}
+}
+
+// 三态在同一跑里**分得开**：真在跑 / 已声明而后端不在 / 取不到，三行三词（机器面逐字可辨）。
+func TestEggThreeStatesDistinguishable(t *testing.T) {
+	srv := newSyntheticMaster(t, map[string]string{
+		"/api/fleet/models": eggFleetJSON,
+		"/api/fleet/status": eggStatusJSON,
+		"/api/models/Egg-A": `{"name":"Egg-A","host":"Mr2109","status":"已加载"}`,
+		"/api/models/Egg-B": `{"name":"Egg-B","host":"Mr2109","status":"已加载"}`,
+	})
+	defer srv.Close()
+	// Mr2109 答得动（Egg-A 在跑）· x3 **答不动**（⇒ 那枚卵取不到）。
+	eggStubBackends(t, map[string]zerg.EggBackendFactForTest{
+		"Mr2109": {Reachable: true, Running: map[string]int{"Egg-A": 9001}},
+		"x3":   {Reachable: false},
+	})
+
+	rc, stdout, stderr := runEggCmd(t, "egg", "ls", "--json", "host,model,state,declared,backend_port")
+	if rc != 8 {
+		t.Fatalf("有机取不到 ⇒ 退码 8（部分不给结论），实际 rc=%d · stderr=%s", rc, stderr)
+	}
+	var doc struct {
+		Items []map[string]string `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("--json 输出不是合法对象：%v · stdout=%s", err, stdout)
+	}
+	got := map[string]map[string]string{}
+	for _, it := range doc.Items {
+		got[it["host"]+"	"+it["model"]] = it
+	}
+	// ① 真 `已加载`：声明与子端回据一致，且 `backend_port` 逐字带出端口。
+	a := got["Mr2109	Egg-A"]
+	if a["state"] != "已加载" || a["declared"] != "已加载" || a["backend_port"] != "9001" {
+		t.Errorf("真 `已加载` 那一格：state/declared/backend_port = %v（要 已加载/已加载/9001）", a)
+	}
+	// ② `已声明但后端不在`：声明 `已加载`、回据里没有它、端口空格。
+	b := got["Mr2109	Egg-B"]
+	if b["state"] != "已声明但后端不在" || b["declared"] != "已加载" || b["backend_port"] != "" {
+		t.Errorf("`已声明但后端不在` 那一格：%v（要 已声明但后端不在/已加载/空）", b)
+	}
+	// ③ `取不到`：子端答不动那一台机上那一枚。
+	c := got["x3	Egg-B"]
+	if c["state"] != "取不到" {
+		t.Errorf("`取不到` 那一格：%v", c)
+	}
+	// 三态互不相同（不许塌成一格）。
+	words := map[string]bool{a["state"]: true, b["state"]: true, c["state"]: true}
+	if len(words) != 3 {
+		t.Errorf("三态必须分得开，实得 %d 种：%v", len(words), words)
+	}
+	// `已加载` 与 `未加载` 两个旧词**逐字未动**（不许换字）。
+	if a["state"] != "已加载" || b["state"] == "已加载" {
+		t.Errorf("旧词逐字未动这条不成立：%v", words)
 	}
 }
 
@@ -182,6 +337,7 @@ func TestEggShowTargets(t *testing.T) {
 		"/api/models/Egg-B": `{"name":"Egg-B","host":"Mr2109","status":"未加载"}`,
 	})
 	defer srv.Close()
+	eggStubOnMS01(t)
 
 	rc, stdout, stderr := runEggCmd(t, "egg", "show", "Egg-A@Mr2109", "--plain")
 	if rc != 0 {
@@ -226,6 +382,7 @@ func TestEggLsJSONFields(t *testing.T) {
 		"/api/models/Egg-B": `{"name":"Egg-B","host":"Mr2109","status":"未加载"}`,
 	})
 	defer srv.Close()
+	eggStubOnMS01(t)
 
 	rc, stdout, stderr := runEggCmd(t, "egg", "ls", "--json", "egg_id,host,model,state")
 	if rc != 0 {

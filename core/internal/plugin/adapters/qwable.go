@@ -1,6 +1,6 @@
 package adapters
 
-// QwableAdapter — Qwable-v1 模型适配器（v2.5.4.9——2026-08-17 注册）
+// QwableAdapter — example-8b-quant 模型适配器（v2.5.4.9——2026-08-17 注册）
 // 特性: 双角色（编码路由 q5_k_m + MoA 参考 IQ4_XS）——MoE——高吞吐
 // 优化: CA 调研（other-adapter-analysis.md）——编码 temp 0.3-0.4（确定性）/ MoA temp 0.7（多样性）
 // 注意: 同一模型两个量化变体——variant 参数区分（精度/速度权衡）
@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	qwableName         = "Qwable-v1"
+	qwableName         = "example-8b-quant"
 	qwableCtxWindow    = 32768 // 保守声明（量化 GGUF 通常 32K）
 	qwableMaxTokens    = 16384 // 编码场景（代码生成块）
 	qwableMoAMaxTokens = 2000  // MoA 参考（RefMaxTokens 一致）
@@ -156,7 +156,7 @@ func (a *QwableAdapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, 
 
 // GetDescriptions — 描述
 func (a *QwableAdapter) GetDescriptions() string {
-	return "Qwable-v1——MoE高吞吐——双角色(编码路由q5_k_m/MoA参考IQ4_XS)——编码temp0.35/MoA temp0.7"
+	return "example-8b-quant——MoE高吞吐——双角色(编码路由q5_k_m/MoA参考IQ4_XS)——编码temp0.35/MoA temp0.7"
 }
 
 // Options 适配器配置项（Mr2109 2026-08-27——UI 显示适配器所有选项）

@@ -1334,7 +1334,7 @@ func (g *Gateway) pickRoute(model string, sessionID string, prompt string, requi
 			}
 			// 活性过滤（2026-09-16）：**没有心跳快照的机器不参与路由** —— 配置里的预留机位
 			// （mini1/2/3 等）尚未部署时表现为"快照为 nil"，此前会被选中并撞连接超时。
-			// 实测：压缩兜底挑了 <worker-ip>:8100（fleet.yaml 的 mini1）⇒ 超时 ⇒ 整次压缩失败。
+			// 实测：压缩兜底挑了 <worker-ip>:8100（fleet.yaml 的 mini1；该机端口 2026-09-25 起为 8101，此处 8100 = 当时实测值）⇒ 超时 ⇒ 整次压缩失败。
 			// 策略：按心跳**动态**判定——预留机哪天起来心跳，就自动成为候选（无需改配置）。
 			if anyAlive {
 				if snap := g.snapshotFor(candidate.Host); snap == nil {

@@ -19,11 +19,11 @@
 
 ```bash
 cp .env.example .env
-printf 'ZERG_AUTH_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
+umask 077; openssl rand -hex 32 > ~/.zerg/token   # 令牌档（600 权限 · 推荐入口，仓库外）
 set -a; . ./.env; set +a          # 让当前 shell 及子进程拿到
 ```
 
-规则：`fleet.yaml` 里的 `auth.token` **保持空**；子端用 `--token` 或环境变量接收同一个值。
+规则：`fleet.yaml` 里的 `auth.token` **保持空**；子端**不用** `--token` 传（令牌会进本机 `ps` 与 shell 历史 ✗），由部署脚本 `--token-file <600档>` / `printf '%s\n' <令牌> | $0 --token-stdin …` 写入 600 环境档，子端从环境读；环境变量 `ZERG_AUTH_TOKEN` 已弃用（仍能跑 · 会打一次性警告；文档/用法不再教）。
 主控与子端在令牌缺失时**拒绝启动**（避免"所有 API 401 但日志正常"的隐形故障）。
 
 ---
@@ -74,7 +74,7 @@ UI 侧指向主控/网关：
 |---|---|
 | `ZERG_SEARXNG_PY` / `ZERG_SEARXNG_SETTINGS` / `ZERG_SEARXNG_SRC` | 自建 searxng 的解释器 / 设置文件 / 源码目录（默认找 `<工作区>/vendor/searxng/...`，再退到 `PATH` 里的 `python3`） |
 | `ZERG_RTK` | `0` = 关闭 rtk 命令包装。**未安装 rtk 时自动降级**，无需设置 |
-| `ZERG_ORNITH_TEMPLATE` | 某些模型需外部 chat template 覆盖内嵌旧模板时的文件路径（也支持登记表字段，见 [MODELS.md](MODELS.zh-CN.md)） |
+| `ZERG_EXAMPLE_TEMPLATE` | 某些模型需外部 chat template 覆盖内嵌旧模板时的文件路径（也支持登记表字段，见 [MODELS.md](MODELS.zh-CN.md)） |
 | `ZERG_AUTOCUT_DIR` / `ZERG_MUSIC_DIR` / `ZERG_DRP_FILE` | 影音工具链的可选目录/工程文件 |
 | `ZERG_DF_PATHS` | 磁盘巡检工具额外统计的挂载点（默认只看 `/`） |
 | `ZERG_FONT_PATH` | UI 中文字体文件 |
@@ -142,7 +142,7 @@ fleet:                      # 机器清单
   chat_template: ~/.zerg/example-35b-v2_chat_template.jinja   # 可选（支持 ~）
 ```
 
-`chat_template` 的解析优先级：**登记表字段 → `ZERG_ORNITH_TEMPLATE` → `~/.zerg/example-35b-v2_chat_template.jinja` → 仓库内相对路径**；
+`chat_template` 的解析优先级：**登记表字段 → `ZERG_EXAMPLE_TEMPLATE` → `~/.zerg/example-35b-v2_chat_template.jinja` → 仓库内相对路径**；
 任一处显式配置但文件不存在 → 记 WARN 并继续回退（不会把坏路径传给后端）。
 
 ---

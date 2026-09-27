@@ -34,6 +34,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/gitpaths"
 )
 
 // impactStateContractRel —— 落点契约件（**唯一真源**：目录名 / 缓存键 / 失效条件都读它）。
@@ -148,12 +150,16 @@ func impactCacheFingerprint(root, scopeRel string) (string, int, error) {
 		scope = "."
 	}
 	files := map[string]bool{}
-	out, _, code, err := impactRunIn(root, "git", "ls-files", "-z", "--", scope)
-	if err != nil || code != 0 {
-		return "", 0, fmt.Errorf("`git ls-files` 起不来或退码 %d ⇒ 取不了源指纹（不给结论）", code)
+	// ★ C1（2026-09-27）：取「已跟踪件」一律经 A1 出口（`gitpaths.List` · FaceTracked）——
+	// 本处原先裸拼 `git ls-files -z -- <scope>`；出口 argv 与它逐字同形
+	// （`gitpaths.go` FaceTracked.args：`ls-files -z` + `-- <前缀>`），且出口另带 C-5 自检
+	// （转义形态硬失败，不静默典当）。
+	ents, err := gitpaths.List(root, gitpaths.FaceTracked, gitpaths.WithPrefix(scope))
+	if err != nil {
+		return "", 0, fmt.Errorf("`gitpaths.List(FaceTracked)` 起不来 ⇒ 取不了源指纹（不给结论）: %w", err)
 	}
-	for _, p := range strings.Split(out, "\x00") {
-		if strings.HasSuffix(p, ".go") {
+	for _, e := range ents {
+		if p := e.String(); strings.HasSuffix(p, ".go") {
 			files[p] = true
 		}
 	}

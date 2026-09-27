@@ -60,6 +60,18 @@ PREFIX="${ZERG_PREFIX:-}"
 COMPONENTS="${ZERG_SETUP_COMPONENTS:-}"
 API="${ZERG_API_BASE:-http://127.0.0.1:8580}"
 TOKEN_FILE="${ZERG_TOKEN_FILE:-$HOME/.zerg/token}"
+# ── 令牌**不进 argv**（`Q-207` 拍板 · Mr2109 2026-09-26 · 缺口账 §附录四十五）──────────
+# 值经 **stdin** 交给 curl（`-H @-`）⇒ 命令行上永不出现令牌的**字面值**、也不出现**变量展开**
+# （目标机 `ps`/进程表里取不到实参令牌）；读法沿用旧口径：`$TOKEN_FILE`（默认 `~/.zerg/token`，600）。
+# 缺件/读不到 ⇒ 退「不带该头」的形态（与旧行为等价：服务端回 401，判据照旧判红/判 BLOCKED）。
+TOKEN_FILE="${TOKEN_FILE:-$HOME/.zerg/token}"
+curl_tok() {  # curl_tok <curl 参数…>
+  if [ -r "$TOKEN_FILE" ]; then
+    printf 'X-Auth-Token: %s\n' "$(cat "$TOKEN_FILE" 2>/dev/null || true)" | curl -H @- "$@"
+  else
+    curl "$@"
+  fi
+}
 CONTROLLER_URL="${ZERG_SETUP_CONTROLLER:-http://127.0.0.1:8580}"
 NODE_NAME="${ZERG_SETUP_NODE_NAME:-$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo node)}"
 LAUNCHCTL="${ZERG_SETUP_LAUNCHCTL:-launchctl}"
@@ -372,10 +384,8 @@ disk_identity() { # $1 = 二进制 → 自报 commit（短 sha）
 }
 tree_head() { git -C "$TREE" rev-parse HEAD 2>/dev/null || echo ''; }
 live_code_sha() {
-  local raw='' hdr
-  hdr=()
-  [ -f "$TOKEN_FILE" ] && hdr=(-H "X-Auth-Token: $(cat "$TOKEN_FILE" 2>/dev/null || true)")
-  raw="$(curl -s -m 3 ${hdr[@]+"${hdr[@]}"} "$API/api/capabilities" 2>/dev/null || true)"
+  local raw=''
+  raw="$(curl_tok -s -m 3 "$API/api/capabilities" 2>/dev/null || true)"
   [ -n "$raw" ] || return 0
   printf '%s' "$raw" | python3 -c 'import json,sys
 try: d=json.load(sys.stdin)

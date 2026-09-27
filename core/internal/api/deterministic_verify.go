@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/gitpaths"
 )
 
 // VerifyResult 确定性验证结果
@@ -65,17 +67,19 @@ func VerifyTaskOutput(worktreeDir, reportPath string, taskDesc string) *VerifyRe
 
 // gitHasChanges 检查 worktree 是否有改动（git status 非 clean / 有提交）
 func gitHasChanges(worktreeDir string) bool {
-	cmd := exec.Command("git", "-C", worktreeDir, "status", "--porcelain")
-	out, err := cmd.Output()
+	// C4：`status` 面走 A1 出口（gitpaths.List）——件名列表非空即「有改动」；
+	// 出口按协议剥 `XY ` 前缀（`status --porcelain -z`）+ C-5 自检，件名一律真名
+	// （旧写法裸拼 argv 只判原始文本空否——转义形态照样算「有改动」，口径不变）。
+	ents, err := gitpaths.List(worktreeDir, gitpaths.FaceStatus)
 	if err != nil {
 		// 可能不是 git 仓库——返回 true（不误判）
 		return true
 	}
-	if strings.TrimSpace(string(out)) != "" {
+	if len(ents) > 0 {
 		return true // 有未提交改动
 	}
 	// 无未提交改动——检查是否有提交（分支领先 main）
-	cmd2 := exec.Command("git", "-C", worktreeDir, "log", "--oneline", "-3")
+	cmd2 := exec.Command("git", "-C", worktreeDir, "-c", "core.quotepath=false", "log", "--oneline", "-3")
 	out2, err2 := cmd2.Output()
 	if err2 == nil && strings.TrimSpace(string(out2)) != "" {
 		return true // 有提交历史

@@ -37,7 +37,7 @@ func TestOrnithTemplateRegistryWins(t *testing.T) {
 	t.Setenv("HOME", home)
 	fromCfg := writeTemplate(t, filepath.Join(home, "cfg"), "a.jinja")
 	fromEnv := writeTemplate(t, filepath.Join(home, "env"), "b.jinja")
-	t.Setenv("ZERG_ORNITH_TEMPLATE", fromEnv)
+	t.Setenv("ZERG_EXAMPLE_TEMPLATE", fromEnv)
 
 	got := argsWithTemplate(&registry.ModelEntry{File: "/m/x.gguf", ChatTemplate: fromCfg})
 	if !strings.Contains(got, "--chat-template-file "+fromCfg) {
@@ -52,7 +52,7 @@ func TestOrnithTemplateRegistryWins(t *testing.T) {
 func TestOrnithTemplateMissingConfigIgnored(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("ZERG_ORNITH_TEMPLATE", "")
+	t.Setenv("ZERG_EXAMPLE_TEMPLATE", "")
 	bogus := filepath.Join(home, "nope", "missing.jinja")
 
 	got := argsWithTemplate(&registry.ModelEntry{File: "/m/x.gguf", ChatTemplate: bogus})
@@ -72,7 +72,7 @@ func TestOrnithTemplateEnvFallback(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	fromEnv := writeTemplate(t, filepath.Join(home, "env"), "c.jinja")
-	t.Setenv("ZERG_ORNITH_TEMPLATE", fromEnv)
+	t.Setenv("ZERG_EXAMPLE_TEMPLATE", fromEnv)
 
 	got := argsWithTemplate(&registry.ModelEntry{File: "/m/x.gguf"})
 	if !strings.Contains(got, "--chat-template-file "+fromEnv) {
@@ -84,7 +84,7 @@ func TestOrnithTemplateEnvFallback(t *testing.T) {
 func TestOrnithTemplateTildeAndHomeConvention(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("ZERG_ORNITH_TEMPLATE", "")
+	t.Setenv("ZERG_EXAMPLE_TEMPLATE", "")
 
 	// 4a) 登记表写 ~/... → 正确展开
 	rel := filepath.Join(home, "tilde", "t.jinja")

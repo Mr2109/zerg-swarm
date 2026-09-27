@@ -65,8 +65,17 @@ import (
 )
 
 // devEditFields —— `--json` 面的全部字段（K1：机器面先定）。
+// ★ 2026-09-27（`GAP-20260927-216` 同族 · 本枚）：末四格 = **退点档**（**只有干跑档填**；真写档一行不加 ✗）。
+//
+//	病灶（上游刚报的缺口）：退建议此前**只走 stderr 人面** ⇒ `--json` 里没有退点档字段 ⇒ 脚本切不出
+//	「可退 / 不可退」与退法那一行（★ 目测能用、程序用不了 ✗）。四格取值**与 stderr 那一块同源** ——
+//	同一个 `devEditReturnPoint`（禁人面一套、机器面另一套 ✗ · 禁二次算 ✗）。
+//	`rollback_verdict` = 能不能退（闭集 `可退` / `不可退`）· `rollback_tier` = 档位（闭集 `1`/`2`/`3`/`4`）·
+//	`rollback_cmd` = 退法那一行（档 1 = `cp -p <退点件> <件>` · 档 3 = `rm <件>` · 档 2/4 **空** ⇒ 不编）·
+//	`rollback_why` = 不可退的原因片段（档 1 = 空；2/3/4 逐字 = stderr 那一行里的同一段）。
 var devEditFields = []string{"proposal", "file", "mode", "result", "before_sha256", "after_sha256",
-	"before_bytes", "after_bytes", "audit_path", "out_path", "approval", "approver"}
+	"before_bytes", "after_bytes", "audit_path", "out_path", "approval", "approver",
+	"rollback_verdict", "rollback_tier", "rollback_cmd", "rollback_why"}
 
 // replacePair —— `--replace <件>` 里的一枚替换（JSON 数组的一格）。
 // 形态：`[{"old":"…","new":"…"}, …]` —— **精确、唯一命中**才许改（模糊替换会静默改错地方）。
@@ -243,6 +252,23 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		// 影响面摘要打 stderr（人面三行**只在受影响项 ≥1 时**打 —— 零影响时打三行 = 灌噪声）。
 		emitImpactDryRunSummary(stderr, summary)
 		emitImpactHookBlock(stderr, hook)
+		// ★ 退建议（本件口径 · `GAP-20260927-216`）：上面那张卡片的「能退吗」档 2 给的是
+		// `git revert <末笔碰本件的提交> -- <件>` —— 它**跑不通**（`git revert` 不吃 pathspec）、
+		// 也**取不到改前态**（改前工作树含未提交改动 ⇒ 那一版不在任何提交里）。这一块把真能回来的
+		// 那一行给出来（锚 `before_sha256` + 提案退点件），无退点可用时**明说不可退**。
+		// ★ 2026-09-27（本枚）**退点档只算一次**：这一枚 `rp` **同时**给人面（下面那块）与机器面
+		// （`rollback_*` 四格）用 ⇒ 两个面读**同一格**，没有第二处算法。
+		rp := devEditReturnPointOf(root, prop, fileRel, beforeSHA, beforeMissing)
+		row["rollback_verdict"] = rp.Verdict()
+		row["rollback_tier"] = fmt.Sprintf("%d", rp.Tier)
+		row["rollback_cmd"] = rp.Cmd
+		row["rollback_why"] = rp.Why
+		// ★ `approver` 这一格今天**悬空**：`devEditFields` 列着它、干跑 row 里却没有 ⇒ 任何 `--json`
+		// 都在字段面倒下、还报「未知字段 approver」而同一行又把 approver 列成合法字段（本枚实测）。
+		// 这里补上**同一枚批准件**读出的批准人（与上面「批准件」那一格同源 · 不另算）。
+		// ★ **真写档一字不动** ✗（本单要求：真写档机器面逐字不变 ⇒ 只在这一支里补）。
+		row["approver"] = appr.Appr
+		emitDevEditRollbackAdvice(stderr, prop, fileRel, beforeSHA, len(before), rp)
 		// 指纹（**摘要正文逐字进哈希** ⇒ 第三者可复算；正文本身打到上面那段，不进审计）。
 		if summary.Taken {
 			fmt.Fprintf(stderr, "%s: 波纹指纹 impact_digest=%s（sha256 of 上面那段摘要正文 · 第三者可复算 · §四.2 只留指纹）\n",
@@ -267,11 +293,15 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		if !inv.dryRun {
 			// 三态：**没带干跑旗标但确认档不齐** ⇒ 出计划件（fail-closed：从不提问、也从不偷偷写）
 			row["result"] = "planned"
-			emitDevEditPlan(stdout, stderr, row, prop, beforeMissing, inv, true, hook)
+			if rc := emitDevEditPlan(stdout, stderr, row, prop, beforeMissing, inv, true, hook); rc != exitOK {
+				return rc
+			}
 			return exitUsage
 		}
 		row["result"] = "planned"
-		emitDevEditPlan(stdout, stderr, row, prop, beforeMissing, inv, false, hook)
+		if rc := emitDevEditPlan(stdout, stderr, row, prop, beforeMissing, inv, false, hook); rc != exitOK {
+			return rc
+		}
 		// 钩子判决「必拦」⇒ **这一步没通过钩子**：干跑不给放行判决（退码 2 · 与既有的
 		//「缺确认档 ⇒ 2」同一档，不新立码）。**真写前置一字未动** ⇒ 这一条**只落在干跑上**
 		//（`R28` 的「删前波纹门」是另开一门，属 `C1`）—— 差口在上面那一块里照实点名。
@@ -485,7 +515,7 @@ func editSyntaxCheck(fileRel string, content []byte) (judg, why string) {
 // `A4` 起多一行**钩子判决**（`hook`）：它是**计划的一部分**（这一步的钩子是哪一档），
 // 但**不是放行条件** ✗（§3.5 卡片铁律「提 ≠ 批」）。
 func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *proposalRecord,
-	beforeMissing bool, inv *invocation, blocked bool, hook impactHook) {
+	beforeMissing bool, inv *invocation, blocked bool, hook impactHook) int {
 	fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未写任何文件、未改任何状态）")
 	fmt.Fprintf(stdout, "  动作     : %s dev edit（受控写 · 只改提案声明过的件）\n", progName)
 	fmt.Fprintf(stdout, "  提案     : %s（状态 %s · 声明改件 %s）\n", prop.ID, prop.State, orDashList(prop.Files))
@@ -497,20 +527,27 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 	fmt.Fprintf(stdout, "  批准件   : %s —— %s\n", row["approval_path"], row["approval"])
 	fmt.Fprintf(stdout, "  语法自检 : %s%s\n", row["syntax"], ifStr(row["syntax"] == "不过", " —— **真写会被拒**（`.py`=ast.parse / `.sh`=bash -n / `.json`·`.yaml`=Go 侧解析；先改内容）", ""))
 	fmt.Fprintf(stdout, "  影响面钩子: %s（类=%s · §4.3 分档 —— 判据见 stderr 的 `impact_hook` 那两行）\n", hook.Tier, hook.Class)
-	fmt.Fprintf(stdout, "  回滚路径 : %s（提案的退点 + git）\n", orDash(prop.Rollback))
+	fmt.Fprintf(stdout, "  回滚路径 : %s（提案的退点件 —— **退建议见 stderr 那一块**：判据 = 回到 before_sha256；`git revert` 不算退点）\n", orDash(prop.Rollback))
 	if blocked {
 		fmt.Fprintf(stdout, "  未执行   : D3 档确认不齐 —— 要 `--confirm=%s --yes` 同时到（fail-closed：从不提问）\n", planHost())
 	} else if hook.Tier == impactHookTierBlock {
 		fmt.Fprintf(stdout, "  未执行   : 钩子判决「必拦」（类=%s）⇒ 干跑退 2 · **真写前置一字未动**（差口见 stderr 那一块）\n", hook.Class)
 	}
 	if inv.jsonGiven {
-		_ = selectJSON(stdout, stderr, inv, inv.path, devEditFields, row)
+		// ★ 2026-09-27（本枚）：投影表传 `inv.fields`（**用户点名的那几个**）而不是 `devEditFields` ——
+		// 原写法把整张字段表当投影表 ⇒ ① 用户点名的字段被**忽略**；② 任何 `--json` 都因 row 缺
+		// `approver` 在**字段面**就倒下（`--json proposal` 也报「未知字段 approver」· 实测 rc=0 且无包封）。
+		// 口径与同族单件出口一致（`family_impact.go:294` 传 `inv.fields`）。rc **不再丢**（见下面 `return exitOK`）。
+		if rc := selectJSON(stdout, stderr, inv, inv.path, inv.fields, row); rc != exitOK {
+			return rc
+		}
 	}
 	if blocked {
 		fmt.Fprintf(stderr, "%s: `dev edit` 是 D3 档（改仓内件）——**缺 `--confirm=<主机名>` 或 `--yes` ⇒ 不执行**（退码 2）\n", progName)
-		return
+		return exitOK
 	}
 	fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未写任何文件）")
+	return exitOK
 }
 
 // ---- ③-a 人签批准件（与 `approve` 族同一套验签 · 不另立第二套）----
@@ -694,4 +731,97 @@ func ifStr(cond bool, yes, no string) string {
 		return yes
 	}
 	return no
+}
+
+// ---- ★ 退建议（本件口径 · `GAP-20260927-216` · 2026-09-27 本枚）--------------------------------
+//
+// 病灶（**上游实测坐实**，不是「不推荐」）：干跑那张卡片的「能退吗」档 2（`family_impact_card.go`
+// `impactReversibilityDecide`）给的退法是 `git revert <末笔碰本件的提交> -- <件>`。三条错：
+//
+//	① **跑不通**：`git revert` **不吃 pathspec** ⇒ `git revert <sha> -- <件>` 实测
+//	   `fatal: bad revision '<件>'`（rc=128）；
+//	② **取不到改前态**：就算去掉后半截，revert 回到的是**提交记录里**那一版；而「改前工作树」
+//	   含**未提交**改动 ⇒ 那一版**不在任何提交里**（`HEAD:<件>` ≠ 改前工作树）⇒ 照它跑完 sha ≠ 改前 sha；
+//	③ **锚错了对象**：`git log -1 -- <件>` 只是「末笔碰过本件」，**不保证它是本件的基线** ——
+//	   那笔提交可能与本次改动无关（实测那笔提交还顺手改了别的件）。
+//
+// 真的退点**就在手边**：干跑回执里已经有 `before_sha256`（改前件内容的指纹），提案侧有
+// `--rollback <仓外退点件>`。⇒ 退建议改锚这两样，判据只有一条机械可判的：
+//
+//	**写回之后，件的 sha256 要 == `before_sha256`**（不等 ⇒ 没回到改前态）。
+//
+// ★ 无退点可用的两格**明说不可退**（新件 = 写前不在盘 ⇒ 无改前内容；退点件 sha 对不上 ⇒ 取不回改前态），
+// **禁编一条看起来能的建议** —— 编出来比空着更坏：空着会被读成「没提到」，编了会被照着跑。
+//
+// 只读：本块读退点件算一遍 sha256 就完事（**一个字节不写**，干跑仍零副作用）。
+type devEditReturnPoint struct {
+	Tier int    // 1 退点件即改前那一版 · 2 退点件不是改前那一版 · 3 新件（无改前态）· 4 提案没给退点
+	Cmd  string // 可执行的那一行（Tier 1 是 `cp -p <退点件> <件>`、Tier 3 是 `rm <件>`）
+	// Why = **不可退的原因片段**（Tier 1 为空；2/3/4 逐字给）。★ 它是**唯一**一份原因文本：
+	// 人面那一行把它原样嵌进句子、机器面 `rollback_why` 直接取它 ⇒ 不存在第二份措辞。
+	Why string
+}
+
+// Verdict —— 「能不能退」的两态（机器面 `rollback_verdict` 的**唯一**取法：档 1 ⇒ 可退，其余 ⇒ 不可退）。
+// 为什么不写成一个常量对：`rollback_verdict` 与 `rollback_tier` 必须由**同一个** `Tier` 派生
+// （两个面各自判一次 = 迟早自相矛盾 ✗）。
+func (r devEditReturnPoint) Verdict() string {
+	if r.Tier == 1 {
+		return "可退"
+	}
+	return "不可退"
+}
+
+// devEditReturnPointOf 现算退点档（**只读**：读退点件 + 算 sha256 → 与改前指纹对拍）。
+func devEditReturnPointOf(root string, prop *proposalRecord, fileRel, beforeSHA string, beforeMissing bool) devEditReturnPoint {
+	if beforeMissing {
+		// 写前不在盘 ⇒ 没有「改前内容」可退回；要回到「写前态」只有删件这一条。
+		return devEditReturnPoint{Tier: 3, Cmd: fmt.Sprintf("rm %s", fileRel), Why: "该件写前**不在盘**（新件 · 无改前内容）"}
+	}
+	rb := strings.TrimSpace(prop.Rollback)
+	if rb == "" {
+		return devEditReturnPoint{Tier: 4, Why: "没给 `--rollback` 退点件"}
+	}
+	p := rb
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(root, filepath.FromSlash(p))
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return devEditReturnPoint{Tier: 2, Why: "退点件读不到：" + err.Error()}
+	}
+	if got := sha256Of(b); got != beforeSHA {
+		return devEditReturnPoint{Tier: 2, Why: fmt.Sprintf("退点件现读 sha256 = %s ≠ 改前态 sha256 = %s（**不是同一版** ⇒ 照它写回取不到改前态）", got, beforeSHA)}
+	}
+	return devEditReturnPoint{Tier: 1, Cmd: fmt.Sprintf("cp -p %s %s", rb, fileRel)}
+}
+
+// emitDevEditRollbackAdvice —— 干跑档的**退建议**（stderr 一块 · 人读 + 逐条理由）。
+// 位置：紧跟影响面摘要与钩子判决之后 —— 卡片给的是「波纹」判决，本块给的是「退得回来吗」。
+// ★ 2026-09-27（本枚）：`r` 由**调用方算好传进来**（干跑档那一处 `devEditReturnPointOf`）——
+// 人面这一段与机器面 `rollback_*` 四格读的是**同一格**（禁二次算 ✗ · 禁两套措辞 ✗）。
+func emitDevEditRollbackAdvice(w io.Writer, prop *proposalRecord, fileRel, beforeSHA string, beforeBytes int, r devEditReturnPoint) {
+	fmt.Fprintf(w, "%s: ★ 退建议（本件口径 · `GAP-20260927-216`）—— 回到改前态锚 **`before_sha256` + 提案退点件**，不锚 git 提交\n", progName)
+	switch r.Tier {
+	case 1:
+		fmt.Fprintf(w, "  改前态指纹：before_sha256 = %s（%d 字节）—— **回到没回到，让这一个数说话**\n", beforeSHA, beforeBytes)
+		fmt.Fprintf(w, "  可执行那一行：%s\n", r.Cmd)
+		fmt.Fprintf(w, "  判据      ：`shasum -a 256 %s` 的输出要**逐字等于**上面那个 sha256（不等 ⇒ 没回到改前态）\n", fileRel)
+		fmt.Fprintf(w, "  退点件核验：%s（现读 sha256 == 改前态 ⇒ **同一版**）\n", orDash(prop.Rollback))
+	case 3:
+		fmt.Fprintf(w, "  退建议    ：**不可退** —— %s：`before_sha256` = %s 是**空内容**的指纹，它只说「没有」，**没有一版可以退回**。\n", r.Why, shortSHA(beforeSHA))
+		fmt.Fprintf(w, "  写前态      ：不存在 ⇒ 要「回到写前」只有一条：删掉该件 —— `%s`（本命令不会自动执行）\n", r.Cmd)
+		fmt.Fprintf(w, "  ★ 禁编：这一格**不存在**「revert 一笔提交回到改前」这回事（写前根本没有这一件、也没有基线）\n")
+	case 4:
+		fmt.Fprintf(w, "  退建议    ：**不可退（今天没有退点可用）** —— 提案 %s %s，而改前那一版（sha256 = %s · %d 字节）**不在任何提交里**就取不回来 ⇒ **明说不可退**，不编一条看起来能的建议。\n", prop.ID, r.Why, beforeSHA, beforeBytes)
+		fmt.Fprintf(w, "  下一步    ：要么**动手写之前**把改前那一版留成退点件（sha256 要对得上 %s）再重跑本命令，要么这一趟别写（`--dry-run` 不改件）\n", shortSHA(beforeSHA))
+	default:
+		fmt.Fprintf(w, "  退建议    ：**不可退（今天的退点件取不到改前态）** —— 提案 `--rollback` 指 %s：%s ⇒ 照它写回得到的是**另一版**，不是改前态。\n", orDash(prop.Rollback), r.Why)
+		fmt.Fprintf(w, "  改前态指纹：before_sha256 = %s（%d 字节）—— 退点件要**逐字节**是这一版才叫退得回来\n", beforeSHA, beforeBytes)
+		fmt.Fprintf(w, "  ★ 禁编：不许拿一个 sha 对不上的退点件冒充退点（`cp -p` 跑完 `shasum -a 256` ≠ 上面那个 sha ⇒ 没回到改前态）\n")
+	}
+	fmt.Fprintf(w, "  ✗ 不用 `git revert <末笔碰本件的提交>`（卡片那一条为什么不算退点）：\n")
+	fmt.Fprintf(w, "      · ① 跑不通：`git revert` **不吃 pathspec** —— 卡片的 `git revert <sha> -- %s` 实测 `fatal: bad revision '%s'`（rc=128）\n", fileRel, fileRel)
+	fmt.Fprintf(w, "      · ② 取不到改前态：revert 回到的是**提交记录里**那一版，而**改前工作树含未提交改动** ⇒ 那一版不在任何提交里（`HEAD:本件` ≠ 改前工作树）⇒ 跑完 sha ≠ 改前 sha %s\n", shortSHA(beforeSHA))
+	fmt.Fprintf(w, "      · ③ 锚错对象：`git log -1 -- <件>` 只是「**末笔碰过本件**」，不保证它是本件的基线（那笔提交可能与本次改动无关）\n")
 }

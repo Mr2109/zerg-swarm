@@ -170,7 +170,9 @@ def fleet_topology() -> str:
         "connectivity": {
             "local_en0": "<controller-ip> (网线直连 X3)",
             "x3_eno1": "<worker-ip> (网线直连本机)",
-            "mini1": "<worker-ip> (雷电桥，待验证)",
+            # ⚠ 地址一律以真源为准（名册 ~/.zerg/contexts/default.yaml + gateway/fleet.yaml 的 fleet: 段）：
+            #   mini1 真源 = <worker-ip>（2026-09-26 改；原写 <worker-ip> 与真源不符）。
+            "mini1": "<worker-ip> (名册/fleet.yaml 真源)",
         },
     }}, ensure_ascii=False)
 

@@ -259,7 +259,7 @@ func TestValidate_UnknownHost(t *testing.T) {
 
 // TestValidate_KnownHostsNoWarning 已知主机不触发 V011
 func TestValidate_KnownHostsNoWarning(t *testing.T) {
-	knownHosts := []string{"Mr2109", "x3", "mini1", "mini2", "mini3"}
+	knownHosts := []string{"Mr2109", "x3", "mini1", "mini2"}
 	for _, host := range knownHosts {
 		t.Run(host, func(t *testing.T) {
 			c := validCandidate()
@@ -275,6 +275,23 @@ func TestValidate_KnownHostsNoWarning(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestValidate_GhostHostWarns 幽灵主机（名册里没有）必须触发 V011
+// 负控：与上一条成对，证明 V011 仍有牙 —— 免得「删掉一个用例」被当成修好。
+func TestValidate_GhostHostWarns(t *testing.T) {
+	c := validCandidate()
+	c.Host = "mini3" // 名册与 gateway/fleet.yaml 都没有这台
+	c.ToolSupport = boolPtr(false)
+	c.Description = "测试"
+	c.Arch = "llama"
+	result := Validate("test-model", c)
+	for _, w := range result.Warnings {
+		if w.Field == "host" {
+			return // 命中即过
+		}
+	}
+	t.Fatalf("host %q 不在名册里，应当警告 V011，但一条 host 警告都没有", c.Host)
 }
 
 // TestValidate_InfoLevelWarnings Info 级别提示

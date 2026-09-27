@@ -190,9 +190,45 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		scriptArgs = []string{"--only-agentd"}
 		effect = "只写 `bin/zerg-agentd` 一件（**子端换件专用档** · 批六①）—— 其余制品与 `build-info.json` 一个字节不动"
 	}
+	// ★ 缺口 `Q-226`（2026-09-26 · ★★/P1 · 决策单第 7 条「**单开一档**」）：`build release --manifest-only`
+	//   = **清单档**，只重写 `dist/<版本>/release/` 的清单与目录内逐件 sha256。与换件档**解耦**：
+	//   · 不编译（不调 `build-all.sh`）· 不交叉编 linux 三件 · 不 `rm -rf` 重打包 · 不编茧壁；
+	//   · **不拷进 `bin/`、不重签、不重启** ⇒ 碰不到正在跑的件（爆炸半径 = `dist/` 一个目录）。
+	//   为什么必须有这一档：闸⑥（清单新鲜度 · 公开制品档 = **阻断**）读 `manifest.json` 的
+	//   `source_sha` 与 `dirty`；清单过期 ⇒ 预检判红、发布链无路可走 —— 而此前 CLI 里**没有**这条路
+	//   （唯一相关命令 `build release` 是换件档 ⇒ 真跑拒执退 2）⇒ 只能手搓 `pack-release.sh`（违「CLI 为主」）。
+	//   档名与语义照设计稿 `设计-发布清单重生成档-v1.0-20260925.md`（§3 推荐「加子档、不新开命令」）。
+	if action == "release" && inv.manifestOnly {
+		scriptArgs = []string{"--manifest-only"}
+		openForExec = true
+		effect = "只重写 `dist/<版本>/release/` 的**清单与逐件 sha256** —— 不编译、不重打包、不拷进 `bin/`、不重签、不重启（碰不到正在跑的件）"
+	}
 	if inv.dryRun {
 		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
 		fmt.Fprintf(stdout, "  动作     : %s build %s%s\n", progName, action, onlyNote(only))
+		// 缺口 `Q-226`：清单档的计划件**逐条明写**「会跑哪几步 / 会写哪些件」——
+		//   本档会写 `publish/` 外的落点（`dist/<版本>/release/` 三处）⇒ 必须在计划件里点名 ✗ 不许静默重打包。
+		if action == "release" && inv.manifestOnly {
+			fmt.Fprintf(stdout, "  危险档   : D2（清单档：只写 `dist/<版本>/release/` 一个目录 —— **不碰 `bin/` 里的在跑件**）\n")
+			fmt.Fprintf(stdout, "  它会调   : bash %s --manifest-only\n", script)
+			fmt.Fprintf(stdout, "  它会动   : %s\n", effect)
+			fmt.Fprintf(stdout, "  会跑哪几步:\n")
+			fmt.Fprintf(stdout, "    ① 前置检查 `dist/<版本>/release/` 存在且内有 zerg-* 制品（不在 ⇒ 退 8 · 不给结论）\n")
+			fmt.Fprintf(stdout, "    ② 逐件重算 `dist/<版本>/release/<件>.sha256` 与 `checksums.txt`\n")
+			fmt.Fprintf(stdout, "    ③ ZERG_MANIFEST_LOCAL=1 python3 scripts/evals/make-manifest.py <release 目录> <版本> <commit> <build_time>\n")
+			fmt.Fprintf(stdout, "       （版本 / commit / build_time 取**既有清单**，退而取 `build-info.json` —— 保住「这批制品是谁产的」）\n")
+			fmt.Fprintf(stdout, "    ④ 复跑脚本自带校验段：manifest 逐件 sha256 / 体积必须与文件一致\n")
+			fmt.Fprintf(stdout, "  会写哪些件（**全在 `publish/` 外** —— 只此三处）:\n")
+			fmt.Fprintf(stdout, "    dist/<版本>/release/manifest.json\n")
+			fmt.Fprintf(stdout, "    dist/<版本>/release/<逐件>.sha256\n")
+			fmt.Fprintf(stdout, "    dist/<版本>/release/checksums.txt\n")
+			fmt.Fprintf(stdout, "  不会动   : `bin/`（在跑的件）· `wall/target/` · 不重编译 · 不拷贝二进制 · 不重签 · 不重启\n")
+			fmt.Fprintf(stdout, "  执行要   : --confirm=<主机名> 与 --yes 同时到\n")
+			fmt.Fprintf(stdout, "  本版状态 : **已开放**（Mr2109 2026-09-26 决策单第 7 条「单开一档」）\n")
+			fmt.Fprintf(stdout, "  下一步   : %s publish preflight <产物目录>（只读复核 · 闸⑥ 应转绿）\n", progName)
+			fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
+			return exitOK
+		}
 		fmt.Fprintf(stdout, "  危险档   : D3（换件档：会覆盖 `bin/` 里的在跑制品）\n")
 		fmt.Fprintf(stdout, "  它会调   : bash %s %s\n", script, strings.Join(scriptArgs, " "))
 		fmt.Fprintf(stdout, "  它会动   : %s\n", effect)
@@ -215,14 +251,23 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "本版唯一开放执行的档：`%s build all --only cli`（只写 bin/zerg 一件 · 自举档）\n", progName)
 		return exitUsage
 	}
-	// ② 真跑（自举档）：D3 三态 —— `--confirm=<主机名>`（值必须与主机名逐字相同）与 `--yes` 同时到。
+	// ② 真跑（自举档 / 清单档）：D 档三态 —— `--confirm=<主机名>`（值必须与主机名逐字相同）与 `--yes` 同时到。
+	//   缺口 `Q-226`：清单档写的是 `dist/`（**不碰 `bin/` 里的在跑件**）⇒ 与写 `bin/` 的自举档**风险档不同**，
+	//   判词与退码同表（`2`），但错话不许把两件事说成一件 ⇒ 两档各给逐字判词。
 	host := planHost()
+	gateLevel, gateSubject, gateHint := "D3", fmt.Sprintf("`build all --only %s` 会写 `bin/`", buildOnlyOpen),
+		fmt.Sprintf("%s build all --only %s --dry-run", progName, buildOnlyOpen)
+	if action == "release" && inv.manifestOnly {
+		gateLevel = "D2"
+		gateSubject = "`build release --manifest-only` 会写 `dist/<版本>/release/`（**不碰 `bin/` 里的在跑件**）"
+		gateHint = fmt.Sprintf("%s build release --manifest-only --dry-run", progName)
+	}
 	if !inv.confirmGiven {
-		msg := fmt.Sprintf("`build all --only %s` 会写 `bin/` ⇒ 按 D3 档：**缺确认 ⇒ 不执行**", buildOnlyOpen)
+		msg := fmt.Sprintf("%s ⇒ 按 %s 档：**缺确认 ⇒ 不执行**", gateSubject, gateLevel)
 		inv.setErr("usage", "confirm_required", msg)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "要执行得给：--confirm=%s --yes\n", host)
-		fmt.Fprintf(stderr, "先看计划件：%s build all --only %s --dry-run\n", progName, buildOnlyOpen)
+		fmt.Fprintf(stderr, "先看计划件：%s\n", gateHint)
 		return exitUsage
 	}
 	if inv.confirm != host {
@@ -233,7 +278,7 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if !inv.yes {
-		msg := fmt.Sprintf("`build all --only %s` 是 D3 档 —— **缺 --yes ⇒ 不执行**", buildOnlyOpen)
+		msg := fmt.Sprintf("%s 是 %s 档 —— **缺 --yes ⇒ 不执行**", gateSubject, gateLevel)
 		inv.setErr("usage", "yes_required", msg)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		return exitUsage
@@ -249,7 +294,11 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 构建脚本不在（%s）⇒ 不给结论（退码 8）\n", progName, script)
 		return exitBlocked
 	}
-	fmt.Fprintf(stderr, "%s: 自举档执行 —— bash %s %s（只写 bin/zerg 一件）\n", progName, script, strings.Join(scriptArgs, " "))
+	execNote := "只写 bin/zerg 一件"
+	if action == "release" && inv.manifestOnly {
+		execNote = "只写 `dist/<版本>/release/` 的清单与逐件 sha256 —— 不碰 `bin/` 里的在跑件"
+	}
+	fmt.Fprintf(stderr, "%s: %s执行 —— bash %s %s（%s）\n", progName, gateLevel, script, strings.Join(scriptArgs, " "), execNote)
 	cmd := exec.Command("bash", append([]string{filepath.Join(root, script)}, scriptArgs...)...)
 	runningChild = cmd
 	defer func() { runningChild = nil }()

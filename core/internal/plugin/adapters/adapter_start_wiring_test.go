@@ -79,11 +79,11 @@ func TestAdapterAssembly_InitsAndStarts(t *testing.T) {
 }
 
 // ② 行为级：Init + Start 之后，声明袋必须出得来，且三个键的类型正是网关认的那三种。
-func TestOrnithAdapter_InitThenStart_DeclarationBagDelivered(t *testing.T) {
+func TestExampleAdapter_InitThenStart_DeclarationBagDelivered(t *testing.T) {
 	// main.go 注册表里挂的正是这两枚 example-35b-v2（example-35b / example-35b-v2，同一个构造器）。
 	for _, model := range []string{"example-35b", "example-35b-v2"} {
 		t.Run(model, func(t *testing.T) {
-			a := NewOrnithAdapter()
+			a := NewExampleAdapter()
 			if err := a.Init(nil); err != nil { // main.go：只 Init 过它
 				t.Fatalf("Init: %v", err)
 			}

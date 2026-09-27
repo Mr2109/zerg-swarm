@@ -130,12 +130,30 @@ def main() -> int:
             "sha256": h,
         })
 
+    # 整包内容指纹（2026-09-26 补 · 缺口 `Q-179` ① 的「整包 manifest 指纹」那一档）：
+    #   逐件 sha256 早就在 `artifacts[]` 里（下面 `"sha256": h`），**消费侧也真校**（内核换装时
+    #   对暂存件先校 sha 再 ad-hoc 重签 —— 见 `core/internal/selfupdate/build.go` 的口径注释）⇒
+    #   它答的是「逐件有没有变」，**答不了「整包变了没有」**：清单顶层的身份字段
+    #   （`commit` / `source_sha` / `dirty` / `generated_at`）在同一个 `source_sha` 下、
+    #   两颗内容不同的产物树上**可以一字不变** ⇒ 单看顶层分不开两版。
+    #   故按 **(name, size, sha256) 字典序** 拼串再取 sha256，落成 `manifest_sha256`。
+    #   规则写死：**只看这三段 · 按 name 字典序 · 行内 `\t` 分隔 · 行尾 `\n`**；
+    #   改这条规则 = 改发布契约（消费侧要与 `scripts/build/pack-release.sh` 与 CI 同批改）。
+    #   易变字段（`generated_at` / `host` / `toolchain` / `build_time`）**不进**指纹 ——
+    #   否则同内容两跑会得两个值，这条判据就永远不成立。
+    fp = hashlib.sha256()
+    for a in sorted(arts, key=lambda x: x["name"]):
+        fp.update(("%s\t%d\t%s\n" % (a["name"], a["size"], a["sha256"])).encode("utf-8"))
+    manifest_sha256 = fp.hexdigest()
+
     manifest = {
         "schema": 1,
         "version": version,
         "tag": "v" + version,
         "commit": commit,
         "build_time": build_time,
+        # 整包内容指纹：同内容 ⇒ 同值（与 generated_at/host 无关）；内容变 ⇒ 必变。
+        "manifest_sha256": manifest_sha256,
         "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         # 新鲜度（2026-09-16 加固③，依据 Debian apt.conf(5)：对"可能滞后的分发"是**放宽窗口**而非关掉检查）：
         # source_sha = 产出这批资产时的本地提交；dirty = 当时工作树是否有未提交改动。

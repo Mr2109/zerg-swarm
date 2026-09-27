@@ -26,6 +26,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/gitpaths"
 )
 
 // repoCommitFields —— `--json` 面的全部字段（K1：机器面先定）。
@@ -157,19 +159,20 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	// ③ 暂存前：索引面必须是空的（不许把「别人已暂存的」顺手提交）
-	// ★ `-c core.quotepath=false`：件名含非 ASCII（本项目大量中文件名）时，git 默认会把路径**转义成**
-	// `\345\217\202…` 形态 ⇒ 与「人给的件名」逐字对不上，「复核暂存清单」这条判据会当场假红。
+	// ★ 件名**只**经 A1 出口（`core/internal/gitpaths` · C-1）：`FaceDiffCached` = 索引 vs HEAD，
+	// argv 逐字 `git -C <仓> diff --cached --name-only -z` ⇒ `-z` 全免疫（真名逐字节）。
+	// 旧写法那枚 `-c core.quotepath=false` 只管非 ASCII 一类，且本件 `gitRun` 已自带一枚（重复）；
 	// 这不是放宽判据，是把两处读的**同一个东西**（件名）读成同一种形态。
-	pre, err := gitRun(root, "-c", "core.quotepath=false", "diff", "--cached", "--name-only")
+	preEntries, err := gitpaths.List(root, gitpaths.FaceDiffCached)
 	if err != nil {
 		inv.setErr("blocked", "git_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 读不了暂存面：%v ⇒ 不给结论（退码 8）\n", progName, err)
 		return exitBlocked
 	}
-	if strings.TrimSpace(pre) != "" {
+	if len(preEntries) > 0 {
 		inv.setErr("usage", "index_not_empty", "暂存面不是空的")
 		fmt.Fprintf(stderr, "%s: 暂存面**已经不是空的**（已暂存：%s）⇒ 拒执（退码 2）：\n",
-			progName, strings.ReplaceAll(strings.TrimSpace(pre), "\n", " · "))
+			progName, strings.Join(entryNames(preEntries), " · "))
 		fmt.Fprintf(stderr, "本命令只认「按文件名逐件暂存」这一条路 —— 先把别人的暂存清掉（`git reset`），别让它们混进这次提交\n")
 		return exitUsage
 	}
@@ -206,13 +209,13 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `git add` 失败（逐件暂存）：%v\n", progName, err)
 		return exitFail
 	}
-	post, err := gitRun(root, "-c", "core.quotepath=false", "diff", "--cached", "--name-only")
+	postEntries, err := gitpaths.List(root, gitpaths.FaceDiffCached)
 	if err != nil {
 		inv.setErr("blocked", "git_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 读不了暂存面：%v ⇒ 不给结论（退码 8）\n", progName, err)
 		return exitBlocked
 	}
-	staged := splitLines(post)
+	staged := entryNames(postEntries)
 	if same, extra, missing := compareFileSets(files, staged); !same {
 		inv.setErr("usage", "staged_mismatch", "暂存清单与给的清单不一致")
 		fmt.Fprintf(stderr, "%s: **暂存清单与给的清单不一致 ⇒ 拒执**（退码 2）\n", progName)
@@ -304,7 +307,7 @@ func runFastGate(root, logDir string, stderr io.Writer) (int, error) {
 
 // runGitCommit —— `git commit -F <件>`（**不加 `--no-verify`**）：输出原样打印、退码原样返回。
 func runGitCommit(root, msgPath string, stdout, stderr io.Writer) int {
-	cmd := exec.Command("git", "-C", root, "commit", "-F", msgPath)
+	cmd := exec.Command("git", "-C", root, "-c", "core.quotepath=false", "commit", "-F", msgPath)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -339,6 +342,16 @@ func compareFileSets(want, got []string) (bool, []string, []string) {
 	sort.Strings(extra)
 	sort.Strings(missing)
 	return len(extra) == 0 && len(missing) == 0, extra, missing
+}
+
+// entryNames —— A1 出口（`gitpaths.Entry`）→ 逐件名文本：**只渲染、不开第二个出口**。
+// 出口的字节面在这里派生一次（C-10「字符串只在末端派生」），供本件的对拍与打印用。
+func entryNames(entries []gitpaths.Entry) []string {
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.String())
+	}
+	return out
 }
 
 // splitLines —— 逐行（丢空行）。
@@ -495,13 +508,13 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 	}
 
 	// ② 提交前读数：别人的暂存面（**允许非空** —— 那是本模式存在的理由）+ 点名件匹配面
-	preRaw, err := gitRun(root, "-c", "core.quotepath=false", "diff", "--cached", "--name-only")
+	preEntries, err := gitpaths.List(root, gitpaths.FaceDiffCached)
 	if err != nil {
 		inv.setErr("blocked", "git_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: 读不了暂存面：%v ⇒ 不给结论（退码 8）\n", progName, err)
 		return exitBlocked
 	}
-	preStaged := splitLines(preRaw)
+	preStaged := entryNames(preEntries)
 	matched, unmatched := onlyMatchPaths(root, paths)
 	if len(matched) == 0 {
 		inv.setErr("usage", "only_not_matched", "点名的路径一件都没匹配上")
@@ -517,7 +530,7 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 	// ⇒ 先做**意图登记**（`git add -N`：只把路径记进索引、不写内容、不动别人的暂存 —— 这是 git 的硬要求，
 	// 不是「暂存」）。现读实测：不带这一步，新件一提交就 `rc=1`（`pathspec did not match`）。
 	untracked := []string{}
-	uargs := append([]string{"ls-files", "--others", "--exclude-standard", "--"}, paths...)
+	uargs := append([]string{"-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard", "--"}, paths...)
 	if out, uerr := gitRun(root, uargs...); uerr == nil {
 		untracked = splitLines(out)
 	}
@@ -668,10 +681,10 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 	}
 
 	// ⑥ 三格对拍（缺一格不给结论）：① 点名的件真进了这次提交 ② 别人的暂存件一枚都没少 ③ 条数
-	postRaw, perr := gitRun(root, "-c", "core.quotepath=false", "diff", "--cached", "--name-only")
+	postEntries, perr := gitpaths.List(root, gitpaths.FaceDiffCached)
 	postStaged := []string{}
 	if perr == nil {
-		postStaged = splitLines(postRaw)
+		postStaged = entryNames(postEntries)
 	}
 	committed := []string{}
 	if rc == exitOK {
@@ -777,7 +790,8 @@ func runFastGateCapture(root, logDir string) (int, string, error) {
 // gitRunWrite —— 跑一条**会写索引**的 git 命令（唯一用途：新件的意图登记 `git add -N`）。
 // ★ 与 `gitRun`（只读契约）分开命名：写面**一处一命名**，免得「只读」这个词被悄悄放宽。
 func gitRunWrite(root string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	// ★ `-c core.quotepath=false` 必落**子命令之前**（`-C` 前后均可；放子命令之后：ls-files 的 `-c` 被当 `--cached` ⇒ rc=0 但 0 行）。
+	cmd := exec.Command("git", append([]string{"-C", root, "-c", "core.quotepath=false"}, args...)...)
 	var out, errb strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
@@ -791,7 +805,8 @@ func gitRunWrite(root string, args ...string) (string, error) {
 // 路径走 argv 数组直传（`fork/exec`、**不经 `sh -c`**）⇒ 空格 / 中文 / `$` / 引号天然不被解释。
 func runGitCommitOnly(root, msgPath string, paths []string, stdout, stderr io.Writer) int {
 	args := append([]string{"-C", root, "commit", "--only", "-F", msgPath, "--"}, paths...)
-	cmd := exec.Command("git", args...)
+	// ★ 同上：`-c core.quotepath=false` 补在 `args`（首项 `-C`）**之前** ⇒ 仍在子命令之前。
+	cmd := exec.Command("git", append([]string{"-c", "core.quotepath=false"}, args...)...)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {

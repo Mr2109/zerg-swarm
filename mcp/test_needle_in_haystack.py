@@ -95,7 +95,7 @@ def run_needle_test(needle, qa_question, expected_answer, rounds=3):
         print(f"  压缩 {r+1} 次 → 摘要 {len(summary)} 字")
 
     # 问模型（直接回答，检查 content + reasoning 两个字段）
-    ans = call_chat("Qwable-v1.Q5_K_M", [
+    ans = call_chat("example-8b-quant.Q5_K_M", [
         {"role": "system", "content": "根据以下摘要直接回答问题，不要思考过程，只输出答案。摘要:\n" + summary},
         {"role": "user", "content": qa_question},
     ], max_tokens=100)

@@ -4,7 +4,7 @@
 > **v2 状态（2026-08-09）**：主控已 Go 重写（zerg-core），子端已 Go 重写（zerg-agent），协议保持 v1 兼容（token/心跳/status 字段一致），新增 backend_state。详见文末 §12。
 
 ## 0. 共享 Token
-- 值: `$ZERG_AUTH_TOKEN`（fleet.yaml 中 `auth.token`；agent.py 顶部默认常量；主控 FleetController 读取）
+- 值: 600 令牌档 `~/.zerg/token`（fleet.yaml 中 `auth.token` **保持空**；部署脚本 `--token-file <600档>` / `printf '%s\n' <令牌> | $0 --token-stdin …` 写入 600 环境档；环境变量 `ZERG_AUTH_TOKEN` 已弃用 —— 仍能跑 · 打一次性警告 · 文档/用法不再教；主控 FleetController 读取）
 - 所有子端 :8100 端点、主控 :8580 的 fleet 端点、统一入口 :8082 均校验 HTTP 头 `X-Auth-Token`。
 - 不匹配 → 401 `{"error":"unauthorized"}`。
 
@@ -134,7 +134,7 @@ qwen2.5-3b:
 ## 9. 路由表 fleet.yaml（主控 FleetController 读取，三件套共用）
 ```yaml
 auth:
-  token: $ZERG_AUTH_TOKEN
+  token: ""            # **保持空**：值走 600 令牌档 ~/.zerg/token（ZERG_AUTH_TOKEN 已弃用）
 models:
   example-35b:  { host: local, backend: llama-server, file: ~/models/example-35b-Q4_K_M.gguf, mem_gb: 22 }
   deepseek-v4-flash: { host: x3, backend: ds4-server, file: /data/models/DeepSeek-V4-Flash.gguf, mem_gb: 86 }

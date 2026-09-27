@@ -47,7 +47,7 @@ func taskDetail(inv *invocation, id string, stderr io.Writer) (jsonObj, int) {
 
 // runGit RO 跑一条白名单内的只读 git 命令（cwd 用 `-C` 指定，不 chdir）。
 func runGitRO(workdir string, argv ...string) (string, error) {
-	args := append([]string{"-C", workdir}, argv...)
+	args := append([]string{"-C", workdir, "-c", "core.quotepath=false"}, argv...)
 	out, err := exec.Command("git", args...).CombinedOutput()
 	return strings.TrimRight(string(out), "\n"), err
 }

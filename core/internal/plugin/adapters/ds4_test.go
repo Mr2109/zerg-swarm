@@ -199,10 +199,10 @@ func TestDs4Adapter_Execute_NotInitialized(t *testing.T) {
 	}
 }
 
-// ─── 测试 OrnithAdapter 和 Ds4Adapter 并存 ────────────────────────────────────
+// ─── 测试 ExampleAdapter 和 Ds4Adapter 并存 ────────────────────────────────────
 
 func TestOrnithAndDs4_Parallel(t *testing.T) {
-	o := NewOrnithAdapter()
+	o := NewExampleAdapter()
 	d := NewDs4Adapter()
 
 	if o.Name() == d.Name() {

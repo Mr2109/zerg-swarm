@@ -405,10 +405,35 @@ def cmd_selftest(root):
     return 0
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
+#    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
+#    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
+JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_json_without_machine_face(argv=None):
+    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
+    if not hit:
+        return None
+    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+                     % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
+    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
+                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
+    return 2
+
+
 def main():
+    rc_q176 = refuse_json_without_machine_face()
+    if rc_q176 is not None:
+        return rc_q176
     ap = argparse.ArgumentParser(description='跨版本状态文件兼容清单门禁（B7 / G10）')
     ap.add_argument('root', nargs='?', help='仓库根（默认自动定位）')
-    ap.add_argument('--selftest', action='store_true', help='跑门禁自测：反例必须全部被抓到')
+    # ★ `Q-176` 第六批：拼法统一 —— **准拼法 `--self-test`**，旧拼法 `--selftest` 作别名（两个都认；新门只写准的）
+    ap.add_argument('--self-test', '--selftest', dest='selftest', action='store_true',
+                    help='跑门禁自测：反例必须全部被抓到（`--selftest` = 旧拼法，同档）')
     args = ap.parse_args()
 
     root = find_root(args.root or os.path.dirname(os.path.abspath(__file__)))

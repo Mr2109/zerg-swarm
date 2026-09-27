@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/gitpaths"
 )
 
 // VerifyResult — 核验结果
@@ -96,36 +98,35 @@ func tailStr(s string, n int) string {
 }
 
 func gitHasChanges(dir string) bool {
-	cmd := exec.Command("git", "-C", dir, "status", "--porcelain")
-	out, err := cmd.Output()
+	// C4：`status` 面走 A1 出口（gitpaths.List）——件名列表非空即「有改动」；
+	// 出口报错（含非 git 仓）照旧不误判。
+	ents, err := gitpaths.List(dir, gitpaths.FaceStatus)
 	if err != nil {
 		return true // 非 git——不误判
 	}
-	if strings.TrimSpace(string(out)) != "" {
+	if len(ents) > 0 {
 		return true
 	}
-	cmd2 := exec.Command("git", "-C", dir, "log", "--oneline", "-3")
+	cmd2 := exec.Command("git", "-C", dir, "-c", "core.quotepath=false", "log", "--oneline", "-3")
 	out2, err2 := cmd2.Output()
 	return err2 == nil && strings.TrimSpace(string(out2)) != ""
 }
 
 func gitChangedFiles(dir string) []string {
 	var out []string
-	cmd := exec.Command("git", "-C", dir, "status", "--porcelain")
-	if b, err := cmd.Output(); err == nil {
-		for _, line := range strings.Split(string(b), "\n") {
-			line = strings.TrimSpace(line)
-			if len(line) > 3 {
-				out = append(out, strings.TrimPrefix(line[3:], "\""))
-			}
+	// C4：`status` 面走 A1 出口——出口按协议剥 `XY ` 前缀并跑 C-5 自检，件名是真名。
+	if ents, err := gitpaths.List(dir, gitpaths.FaceStatus); err == nil {
+		for _, e := range ents {
+			out = append(out, e.String())
 		}
 	}
-	cmd2 := exec.Command("git", "-C", dir, "diff", "--name-only", "main...HEAD")
-	if b, err := cmd2.Output(); err == nil {
-		for _, line := range strings.Split(string(b), "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				out = append(out, line)
+	// ★ C3（2026-09-27）：取「改动件名」一律经 A1 出口（gitpaths.List · FaceDiff + WithRev）
+	// —— 本处原先裸拼 `git -C <dir> -c core.quotepath=false diff --name-only main...HEAD`；
+	// 出口 argv 同面（`diff --name-only -z main...HEAD`），`-z` 全免疫 + C-5 自检硬拒转义形态。
+	if ents, err := gitpaths.List(dir, gitpaths.FaceDiff, gitpaths.WithRev("main...HEAD")); err == nil {
+		for _, e := range ents {
+			if name := e.String(); name != "" {
+				out = append(out, name)
 			}
 		}
 	}

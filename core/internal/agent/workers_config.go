@@ -18,7 +18,7 @@ import (
 // DeviceConfig — 单个设备的并发配置
 type DeviceConfig struct {
 	Hostname   string `yaml:"hostname"`
-	MaxWorkers int    `yaml:"max_workers"`
+	MaxWorkers *int   `yaml:"max_workers"` // nil=未给（回退默认）· 0=显式暂停 · >0=并发上限
 }
 
 // DeviceAwareConfig — config/workers.yaml 完整结构
@@ -32,7 +32,7 @@ type DeviceAwareConfig struct {
 var defaultDeviceMap = map[string]int{
 	"mini1": 1,
 	"x3":    3,
-	"Mr2109":  2, // 3c：本机角色 localback 退役 ⇒ 本机 = 名为 Mr2109 的子端
+	"Mr2109":  0, // ★ 显式暂停（Mr2109 2026-09-27 拍板）：0 ⇒ scheduler.go:319 的 activeCount>=maxWorkers 恒真 ⇒ 不派活。恢复：改回 2
 	"mini2": 1,
 }
 
@@ -40,7 +40,7 @@ var defaultDeviceMap = map[string]int{
 
 // loadDeviceMaxWorkers — 从 config/workers.yaml 加载并解析设备配置
 func loadDeviceMaxWorkers(workDir string) (*DeviceAwareConfig, error) {
-	cfgPath := filepath.Join(workDir, "config", workersConfigPath)
+	cfgPath := filepath.Join(workDir, workersConfigPath) // 修双 config：workersConfigPath 已含 config/
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read workers.yaml: %w", err)
@@ -57,8 +57,8 @@ func resolveByDevice(devices []DeviceConfig, hostname string, fallback map[strin
 	// 精确匹配
 	for _, d := range devices {
 		if strings.EqualFold(d.Hostname, hostname) {
-			if d.MaxWorkers > 0 {
-				return d.MaxWorkers
+			if d.MaxWorkers != nil {
+				return *d.MaxWorkers
 			}
 		}
 	}
@@ -66,8 +66,8 @@ func resolveByDevice(devices []DeviceConfig, hostname string, fallback map[strin
 	for _, d := range devices {
 		if strings.Contains(strings.ToLower(hostname), strings.ToLower(d.Hostname)) ||
 			strings.Contains(strings.ToLower(d.Hostname), strings.ToLower(hostname)) {
-			if d.MaxWorkers > 0 {
-				return d.MaxWorkers
+			if d.MaxWorkers != nil {
+				return *d.MaxWorkers
 			}
 		}
 	}
@@ -121,11 +121,11 @@ func ValidateWorkersConfig(devices []DeviceConfig) []string {
 			issues = append(issues, fmt.Sprintf("devices[%d]: hostname must not be empty", i))
 			continue
 		}
-		if d.MaxWorkers <= 0 {
-			issues = append(issues, fmt.Sprintf("devices[%d] (%s): max_workers must be > 0, current=%d", i, d.Hostname, d.MaxWorkers))
+		if d.MaxWorkers != nil && *d.MaxWorkers < 0 {
+			issues = append(issues, fmt.Sprintf("devices[%d] (%s): max_workers must be >= 0 (0=暂停调度), current=%d", i, d.Hostname, *d.MaxWorkers))
 		}
-		if d.MaxWorkers > 16 {
-			issues = append(issues, fmt.Sprintf("devices[%d] (%s): max_workers should not exceed 16, current=%d", i, d.Hostname, d.MaxWorkers))
+		if d.MaxWorkers != nil && *d.MaxWorkers > 16 {
+			issues = append(issues, fmt.Sprintf("devices[%d] (%s): max_workers should not exceed 16, current=%d", i, d.Hostname, *d.MaxWorkers))
 		}
 	}
 	return issues

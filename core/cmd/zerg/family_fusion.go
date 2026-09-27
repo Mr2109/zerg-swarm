@@ -261,6 +261,24 @@ func cmdAsk(inv *invocation, stdout, stderr io.Writer) int {
 	// 2) 能力筛（**先**能力、**后**打分 —— §十八.3-4 的次序逐字）
 	routes := askFilter(fleet, reg, caps, inv)
 	if len(routes) == 0 {
+		// ★GAP-20260925-30：`--model`/`--node` 点名了**不存在**的目标 ⇒ exit 2 + 明确报错 + 列可选值。
+		// 与「在词表但无候选」（exit 1）严格分开：缺目标 ≠ 缺能力证据 —— 不许静默退回默认。
+		if inv.modelWant != "" && !fleetHasModel(fleet, strings.TrimSpace(inv.modelWant)) {
+			inv.setErr("usage", "no_such_model",
+				fmt.Sprintf("没有叫 %q 的模型（`--model` 点名不在 fleet 里）", inv.modelWant))
+			fmt.Fprintf(stderr, "%s: `--model %q` 无此模型 —— 路由表里查不到这个 id ⇒ 退码 2（**不静默退回默认**）\n", progName, inv.modelWant)
+			fmt.Fprintf(stderr, "可选模型（fleet）：%s\n", orDash(strings.Join(listFleetModels(fleet), ", ")))
+			fmt.Fprintf(stderr, "error.kind=usage · detail=no_such_model · retryable=false（GAP-20260925-30：点名不存在 ⇒ 2）\n")
+			return exitUsage
+		}
+		if len(inv.nodes) > 0 && !fleetHasHost(fleet, inv.nodes) {
+			inv.setErr("usage", "no_such_node",
+				fmt.Sprintf("没有叫 %q 的机器（`--node` 点名不在 fleet 里）", strings.Join(inv.nodes, ", ")))
+			fmt.Fprintf(stderr, "%s: `--node %q` 无此机器 —— 路由表里查不到这台 host ⇒ 退码 2（**不静默退回默认**）\n", progName, strings.Join(inv.nodes, ", "))
+			fmt.Fprintf(stderr, "可选机器（fleet）：%s\n", orDash(strings.Join(listFleetHosts(fleet), ", ")))
+			fmt.Fprintf(stderr, "error.kind=usage · detail=no_such_node · retryable=false（GAP-20260925-30：点名不存在 ⇒ 2）\n")
+			return exitUsage
+		}
 		// 在词表但无候选 ⇒ `1`（**不新增码**）。缺证据 ≠ 有证据（`调研-R2` `R2-D1`）。
 		inv.setErr("failed", "no_capability_candidate",
 			"能力在词表里，但路由表里没有任何一条候选**证过**该能力")
@@ -321,6 +339,70 @@ func cmdAsk(inv *invocation, stdout, stderr io.Writer) int {
 // 次序（§十八.3-4 逐字）：L3 作用域（`--node`）→ `--model` 收窄 → **能力筛（硬）** → 打分（软）。
 // 能力证据取自 `/api/models/registry` 的能力快照，经 **T-41 的 id 规范化真源**（`registry_id`）
 // 与路由表接起来 —— 这条接缝不拍（`R2-P1`），`ask` 就永远无表可查。
+//
+// ★GAP-20260925-30 配套：下面三个小助手只读 fleet 面，用来在 `--model`/`--node`
+// 点名不存在时「报此目标 + 列可选值」—— 它们不碰主控写面，纯判定。
+func fleetHasModel(fleet jsonObj, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return false
+	}
+	for _, it := range asList(fleet["models"]) {
+		if o := asObj(it); o != nil {
+			if id, _ := o["id"].(string); id == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func fleetHasHost(fleet jsonObj, want []string) bool {
+	need := map[string]bool{}
+	for _, n := range want {
+		need[n] = true
+	}
+	for _, it := range asList(fleet["models"]) {
+		if o := asObj(it); o != nil {
+			if host, _ := o["host"].(string); host != "" && need[host] {
+				delete(need, host)
+				if len(need) == 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func listFleetModels(fleet jsonObj) []string {
+	out := []string{}
+	for _, it := range asList(fleet["models"]) {
+		if o := asObj(it); o != nil {
+			if id, _ := o["id"].(string); id != "" {
+				out = append(out, id)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func listFleetHosts(fleet jsonObj) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, it := range asList(fleet["models"]) {
+		if o := asObj(it); o != nil {
+			if host, _ := o["host"].(string); host != "" && !seen[host] {
+				seen[host] = true
+				out = append(out, host)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func askFilter(fleet, reg jsonObj, caps []string, inv *invocation) []askRoute {
 	// registry_id ⇒ 记录（能力断言）
 	byRegistry := map[string]jsonObj{}

@@ -84,7 +84,7 @@ zerg model add --host <机器名> --model <模型名> --file <GGUF 路径> --bac
 优先级（从高到低）：
 
 1. 子端登记表字段 `chat_template: <path>`（支持 `~`）—— **推荐**
-2. 环境变量 `ZERG_ORNITH_TEMPLATE`
+2. 环境变量 `ZERG_EXAMPLE_TEMPLATE`
 3. `~/.zerg/example-35b-v2_chat_template.jinja`
 4. 仓库内相对路径 `agent/example-35b-v2_chat_template.jinja`
 

@@ -179,7 +179,7 @@ func TestAllPluginTypesCoexist(t *testing.T) {
 	reg.Register(NewSkillPlugin(&mockSkillLoader{}))
 	reg.Register(NewMcpPlugin(&mockMCPClient{}))
 	reg.Register(NewCaPlugin(&mockAgentRunner{}))
-	reg.Register(NewOrnithAdapter())
+	reg.Register(NewExampleAdapter())
 
 	if len(reg.ByType(plugin.PluginTypeSkill)) != 1 {
 		t.Error("skill 应 1 个")
@@ -322,7 +322,7 @@ func TestAllPluginsCoexist(t *testing.T) {
 	reg.Register(NewSkillPlugin(&mockSkillLoader{}))
 	reg.Register(NewMcpPlugin(&mockMCPClient{}))
 	reg.Register(NewCaPlugin(&mockAgentRunner{}))
-	reg.Register(NewOrnithAdapter())
+	reg.Register(NewExampleAdapter())
 	reg.Register(NewDs4Adapter())
 	reg.Register(NewToolPlugin())
 	reg.Register(NewClusterPlugin(nil))

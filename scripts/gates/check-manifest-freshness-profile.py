@@ -217,7 +217,35 @@ def list_rules():
     return 0
 
 
+# ── 缺口 `Q-176`（门禁面 · 统一口）：`--json <字段>` 的**字段名打错**不许静默 / 不许炸堆栈 ✗
+#    口径照 `check-replace-rule-fixtures.py`（`:94` / `:395` / `:401-410`）：**用法错 `rc=2` ＋ 印可选字段表** ——
+#    「字段名打错 ≠ 零命中」两态在机器面上必须分得开；**合法字段照旧走命中面**（业务判据与退码一字未动）。
+JSON_FIELDS = ['profile', 'manifest', 'release_head', 'rc', 'hits', 'stale']          # 本门机器读面字段表（**唯一真源**：印表与拒收同读这一处）
+
+
+def refuse_unknown_json_fields(argv=None):
+    """`--json <字段>` 里有**不认的名** ⇒ rc=2 ＋ 印可选字段表；没给 / 全合法 ⇒ `None`（原路照走）。"""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    want = []
+    for i, x in enumerate(argv):
+        if x == "--json":
+            want += (argv[i + 1] if i + 1 < len(argv) else "").split(",")
+        elif x.startswith("--json="):
+            want += x.split("=", 1)[1].split(",")
+    want = [f.strip() for f in want if f.strip()]
+    bad = [f for f in want if f not in JSON_FIELDS]
+    if not bad:
+        return None
+    print("⛔ `--json` 不认的字段名：%s" % " · ".join("`%s`" % b for b in bad), file=sys.stderr)
+    print("   可选字段表：%s" % " · ".join("`%s`" % f for f in JSON_FIELDS), file=sys.stderr)
+    print("⇒ 用法错（rc=2）：**字段名打错 ≠ 零命中** —— 两态在机器面上必须分得开", file=sys.stderr)
+    return 2
+
+
 def main():
+    rc_q176 = refuse_unknown_json_fields()
+    if rc_q176 is not None:
+        return rc_q176
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("--profile", default="dev", choices=PROFILES)
     ap.add_argument("--manifest", default="")

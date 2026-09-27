@@ -69,3 +69,4 @@ gateway/*.bak-*
 # 运行期产物（2026-09-20「目录归真」登记层）：顶层只允许四类东西（模块/生命周期/元文件/点目录）
 /internal-task-report.md
 /task-internal-*/
+/core/zerg

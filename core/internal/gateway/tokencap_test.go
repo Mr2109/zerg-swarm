@@ -287,7 +287,7 @@ func (b *bareAdapter) Execute(input plugin.PluginInput) (plugin.PluginOutput, er
 func TestApplyAdapterOverrides_OrnithStartedDeclarationReachesBody(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("ZERG_EGG_PROFILE_DIR", dir) // 无档案 ⇒ 上限只用声明，不受本机档案干扰
-	ada := adapters.NewOrnithAdapter()    // 与 main.go 注册表同一个构造器
+	ada := adapters.NewExampleAdapter()    // 与 main.go 注册表同一个构造器
 	if err := ada.Init(nil); err != nil {
 		t.Fatalf("Init: %v", err)
 	}

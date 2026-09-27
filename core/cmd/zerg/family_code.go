@@ -137,7 +137,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 				rows = append(rows, map[string]string{
 					"path": rel,
 					"line": strconv.Itoa(i + 1),
-					"text": truncateDisplay(strings.TrimRight(ln, "\r"), 200),
+					"text": codeTextCell(inv, ln),
 				})
 			}
 		}
@@ -155,7 +155,9 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 		return atoiSafe(rows[i]["line"]) < atoiSafe(rows[j]["line"])
 	})
 	fmt.Fprintf(stderr, "%s: 扫了 %d 件 · 命中 %d 条", progName, scanned, hits)
-	if len(rows) < hits {
+	// cut —— 本跑**真裁了条**（命中数比这一页多）⇒ 两面都要自报（缺口 `GAP-20260927-273`）。
+	cut := len(rows) < hits
+	if cut {
 		fmt.Fprintf(stderr, "（本页只列前 %d 条 —— 收窄：--path / --glob）", len(rows))
 	}
 	if skippedBig > 0 {
@@ -167,7 +169,38 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 零命中 —— 这不是错，是「没有」（退码 1）；要当错用得自己判\n", progName)
 		return exitFail
 	}
-	return listCmd(inv, stdout, stderr, []string{"path", "line", "text"}, rows)
+	// ★ 截断**自报**（缺口 `GAP-20260927-273` · 2026-09-27）。
+	//
+	// 病根（父代理现场实测）：命中 250 条时 `items` 只有 200 条，而包封 `truncated` 恒 `false`、
+	// `warnings[]` 恒空 ⇒ **机器面**拿到的是一份「看起来完整」的残缺清单 ✗（脚本/子代理据此判
+	// 「有/无」正好判错）；**人面** TTY 末行还会说「共 200 条」（同病：看起来是全集）。
+	//
+	// 口径（**只用既有的面** —— 不加新旗标 ✗ · 不动 `codeFindRowCap` 这个上限值 ✗）：
+	//
+	//	① 机器面真值 ← 复用既有包封件（顶层六键**一个不多一个不少** ✗ 第七键）：
+	//	   `truncated=true`（`inv.markTruncated()` 是**唯一**置位口）
+	//	   + `warnings[]` 一条「已裁 N 条」（与 `truncated=true` 同批）
+	//	   + `meta.truncated_detail` 四键（块D `K-1` 形状 · 唯一判定口 `truncatedDetailJudge`）。
+	//	   `cut_from` 取 `tail`：命中**攒满一页之后的那些被丢掉**（cap 判在 `len(rows) < codeFindRowCap`）；
+	//	   三数自校：`kept_items + dropped_items == total_items`。
+	//	② 人面末行 ← 见 `listCmd` 之后那一句：表格出完才说，**明说本页不是全集**。
+	//
+	// 没裁 ⇒ 三件**一律不写**（余量不是「裁了」· 缺席 ≠ 假值）：未截断两面的字节与今日**逐字相同**。
+	if cut {
+		inv.markTruncated()
+		inv.warnf("已裁 %d 条（code find 一页 %d 条 / 真命中 %d 条）", hits-len(rows), len(rows), hits)
+		inv.metaAddJSON("truncated_detail", fmt.Sprintf(
+			`{"cut_from":"tail","kept_items":%d,"dropped_items":%d,"total_items":%d}`,
+			len(rows), hits-len(rows), hits))
+	}
+	rc := listCmd(inv, stdout, stderr, []string{"path", "line", "text"}, rows)
+	if cut {
+		// 人面末行：表格之后再钉一句 —— 「这一页不是全集」不许靠读者自己推。
+		fmt.Fprintf(stderr,
+			"%s: ⚠ 本页只列前 %d 条 · 真命中 %d 条（已裁 %d 条）—— **这不是全集**，别据此下「有/无」结论；要收窄：--path / --glob\n",
+			progName, len(rows), hits, hits-len(rows))
+	}
+	return rc
 }
 
 // cmdCodeShow —— `zerg code show <件:行>`：读出源码里**某一行的邻域**（只读 · 与 `code find` 同族）。
@@ -289,7 +322,7 @@ func cmdCodeShow(inv *invocation, stdout, stderr io.Writer) int {
 		rows = append(rows, map[string]string{
 			"path":   nrel,
 			"line":   strconv.Itoa(i),
-			"text":   truncateDisplay(strings.TrimRight(lines[i-1], "\r"), 200),
+			"text":   codeTextCell(inv, lines[i-1]),
 			"target": mark,
 		})
 	}
@@ -299,6 +332,22 @@ func cmdCodeShow(inv *invocation, stdout, stderr io.Writer) int {
 
 // codeShowDefaultCtx —— `code show` 默认窗口半径（±3 行 = 「一眼看得到上下文」的最小面）。
 const codeShowDefaultCtx = 3
+
+// codeTextCell —— `code find` / `code show` 的行文本格（缺口 `GAP-20260927-09` · 2026-09-27）。
+//
+// 病根（父代理现场实测）：`zerg code show gateway/fleet.yaml:115` 出到 `…mmproj: "~/zerg-models/O…`
+// 就断了，而**这一格同时喂人面与机器面**（`listCmd` 同一份 rows）⇒ 长行尾巴在**两面上一起消失** ✗，
+// 取证时只能退回手搓 `read_file` ✗ —— 「能走 CLI 就走」在长行上正好走不通。
+//
+// 口径：默认仍截断 200 字（人面好看的既有行为**不动** · `--full` 才不截断）；不截断是**显式**档，
+// 不把默认面加长（既有面的字节数一个不动 · 契约矩阵的既有格逐字保留）。
+func codeTextCell(inv *invocation, ln string) string {
+	s := strings.TrimRight(ln, "\r")
+	if inv.full {
+		return s
+	}
+	return truncateDisplay(s, 200)
+}
 
 // truncateDisplay 只为人面好看：超长行截断（**不改机器面已列出的原文之外的东西**）。
 func truncateDisplay(s string, n int) string {
