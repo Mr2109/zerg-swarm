@@ -3358,5 +3358,34 @@ func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
 	// `inv.all`（`--all`）在这一条命令上**只加出口**（缺口 `Q-071` · 波11 序93）：危险动作那一段
 	// 逐条列全。命令树**一条都不新增**（`--all` 是既有全局布尔，`parseInvocation` 那一格认它）。
 	fmt.Fprint(stdout, helpText(inv.all))
+	// 族级发现面（缺口 `-25` · 2026-09-27）：`help --all` 与主帮助此前都**不列族名清单** ——
+	// 用户要找某族只能猜族名（正门指路此前只出现在「敲错族名」那条 stderr 里，见本文件 `:130`）。
+	// 只在 `--all` 这一档末尾追加族名清单：族名与顺序**现算**（`catalog()` 名字序稳定 ⇒
+	// 一个数字都不写死，命令树长一条这条跟着长）。三条纪律：
+	//   ① 只加在 `--all` 上（裸 `help` / `--help` 逐字节不动；`check-public-face-commands.py`
+	//      读的是裸 `help` 那棵树，不动它）；
+	//   ② 新行**不以「两个空格 + `zerg `」开头** —— `cli_help_all_test.go` 的条数等式
+	//      （`--all` 条数 = `help` 条数 + 危险档条数）靠这一条守住；
+	//   ③ 两态 rc 语义一字不动（族名仍不吃 `--help`，见 `:130` 那段拍板口径）。
+	if inv.all {
+		seen := map[string]bool{}
+		var fams []string
+		for _, c := range catalog() {
+			if len(c.path) == 0 || seen[c.path[0]] {
+				continue
+			}
+			seen[c.path[0]] = true
+			fams = append(fams, c.path[0])
+		}
+		fmt.Fprintf(stdout, "\n族级面（%d 族 · 不必猜族名 · 逐族 `%s help <族名>` 列该族全部动作）:\n", len(fams), progName)
+		const perRow = 8
+		for i := 0; i < len(fams); i += perRow {
+			j := i + perRow
+			if j > len(fams) {
+				j = len(fams)
+			}
+			fmt.Fprintf(stdout, "  %s\n", strings.Join(fams[i:j], " · "))
+		}
+	}
 	return exitOK
 }
