@@ -1052,7 +1052,7 @@ def selftest():
     f_call = _fixture(base, "pos-call", dict(ok_files, **{
         "scripts/gates/check-epsilon.py": "# ck\n",
         "scripts/gates/precommit-gates.sh": GATE_A +
-            'python3 "$Z/scripts/gates/check-epsilon.py" "$D" > /tmp/x.log 2>&1\n'
+            'python3 "$Z/scripts/gates/check-epsilon.py" "$D" > "$D/x.log" 2>&1\n'
             'echo "   ⑧c ── 已接线（按名调用 check-epsilon.py）"\n',
     }))
     run_case("⑮ 正控：命令位调用（引号 + 变量前缀）⇒ 已挂（A 命中 0）",

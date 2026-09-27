@@ -37,10 +37,11 @@ GOOS=linux GOARCH=amd64 go build -o zerg-agent-linux-amd64 ./cmd/zerg-agent
 |---|---|---|
 | `--host` | `127.0.0.1` | 监听地址；跨机部署用 `0.0.0.0` |
 | `--port` | `8100` | 监听端口 |
-| `--token` | 环境变量 `ZERG_TOKEN` | 共享认证令牌 |
 | `--controller` | `http://127.0.0.1:8580` | 主控地址（心跳上报目标） |
 | `--machine` | 主机名 | 机器标识（主控路由按此寻址） |
 | `--registry` | — | 模型登记表（YAML：模型名 → 权重路径、上下文、显存需求等） |
+
+> 令牌**不从命令行传**（`--token` 旗标已停用：一旦带上即硬失败）——只走环境变量或 `~/.zerg/token` 600 档。
 
 ## 模型登记表（agent_models.yaml）
 
@@ -65,7 +66,7 @@ example-35b-v2:
 
 | 变量 | 用途 |
 |---|---|
-| `ZERG_TOKEN` | 共享令牌（等同 `--token`） |
+| `ZERG_AUTH_TOKEN` | 共享令牌（推荐入口；兼容旧名 `ZERG_API_TOKEN` / `ZERG_TOKEN`） |
 | `ZERG_EXAMPLE_TEMPLATE` | 可选：example-35b-v2 系模型的 chat template 路径（默认找 `~/.zerg/example-35b-v2_chat_template.jinja`） |
 
 ## 预编译二进制

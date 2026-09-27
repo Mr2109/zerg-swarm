@@ -112,7 +112,17 @@ func gateResults(inv *invocation, stdout, stderr io.Writer, root string) int {
 	scanned := 0
 	if dir == "" {
 		var ok bool
-		dir, scanned, ok = gateResultsFindLast()
+		var ferr error
+		dir, scanned, ok, ferr = gateResultsFindLast()
+		if ferr != nil {
+			// laneEX：扫「最近一趟」时**读盘读不动**（临时目录读不到 / 候选结果表点不动）
+			// ⇒ **不吞**（先例 `family_repo.go:155`：`git status` 跑不动 ⇒ 不给结论 8）——
+			// 吞掉就会把「看不见」说成「没有那一趟」，更坏的是拿**更旧**那一趟冒充最近一趟。
+			inv.setErr("blocked", "gate_runs_unreadable", ferr.Error())
+			fmt.Fprintf(stderr, "%s: 找「最近一趟」时**读盘读不动** ⇒ 不给结论（退码 8）：%v\n", progName, ferr)
+			fmt.Fprintf(stderr, "口径：「看不见」既不是绿、也不等于「没有那一趟」—— 不拿更旧的那一趟充数\n")
+			return exitBlocked
+		}
 		if !ok {
 			inv.setErr("blocked", "no_gate_run", "本机没有现成的门禁产物")
 			fmt.Fprintf(stderr, "%s: **读不到那一趟** —— 找过 %s 下所有 `%s*` 目录，没有一份带 %s 的 ⇒ 不给结论（退码 8）\n",
@@ -219,12 +229,20 @@ func gateResults(inv *invocation, stdout, stderr io.Writer, root string) int {
 }
 
 // gateResultsFindLast —— 最近一趟的日志目录：扫 `<TMPDIR>` 下所有 `zerg-gates-*`，取 `results.tsv`
-// 的 mtime 最新的那一份。返回（目录 · 扫过几份 · 找没找到）。
-func gateResultsFindLast() (string, int, bool) {
+// 的 mtime 最新的那一份。返回（目录 · 扫过几份 · 找没找到 · 读盘错）。
+//
+// laneEX：扫的这一路上**两个 `err` 都不吞**（先例 `family_repo.go:155`：跑不动 ⇒ 不给结论 8）：
+//
+//	① 临时目录 `ReadDir` 报错 ⇒ 连「有没有那一趟」都看不见 ⇒ **逐字带上去**（原来一并吐成
+//	  「没有一份带 results.tsv 的」—— 把「看不见」说成了「没有」，成因被吞）；
+//	② 候选目录的 `results.tsv` `Stat` 报错：**只有「不存在」才算「不是一趟」**（跑了半趟/已清走），
+//	  其余成因（权限/IO）**不许静默跳过** —— 跳过 = 拿**更旧**那一趟冒充「最近一趟」，
+//	  于是「那一趟红了」被报成更旧那趟的绿（本命令退码判的是读，人不看 stderr 就看不出来）。
+func gateResultsFindLast() (string, int, bool, error) {
 	base := os.TempDir()
 	ents, err := os.ReadDir(base)
 	if err != nil {
-		return "", 0, false
+		return "", 0, false, fmt.Errorf("读不到临时目录 %s：%w", base, err)
 	}
 	best, scanned := "", 0
 	var bestT time.Time
@@ -235,7 +253,10 @@ func gateResultsFindLast() (string, int, bool) {
 		p := filepath.Join(base, e.Name())
 		st, err := os.Stat(filepath.Join(p, gateResultsTSV))
 		if err != nil {
-			continue // 没有结果表 ⇒ 不是「一趟」（跑了半趟/已清走），不算候选
+			if os.IsNotExist(err) {
+				continue // 没有结果表 ⇒ 不是「一趟」（跑了半趟/已清走），不算候选
+			}
+			return "", scanned, false, fmt.Errorf("点不动候选结果表 %s：%w", filepath.Join(p, gateResultsTSV), err)
 		}
 		scanned++
 		if best == "" || st.ModTime().After(bestT) {
@@ -243,9 +264,9 @@ func gateResultsFindLast() (string, int, bool) {
 		}
 	}
 	if best == "" {
-		return "", scanned, false
+		return "", scanned, false, nil
 	}
-	return best, scanned, true
+	return best, scanned, true, nil
 }
 
 // gateResultsReadTSV —— 读结果表：返回（可判的行 · 认不出的行号 · 读文件错）。

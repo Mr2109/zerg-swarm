@@ -88,8 +88,9 @@ func cmdDevProposal(inv *invocation, stdout, stderr io.Writer) int {
 		return cmdDevProposalCheck(inv, stdout, stderr)
 	case "":
 		fmt.Fprintf(stderr, "%s: `dev proposal` 要给动作：new | list | show | check\n", progName)
-		fmt.Fprintf(stderr, "用法：zerg dev proposal new --title <题> --target <既有编号> --goal <目标> "+
-			"--evidence <出处> --rollback <退点> --criterion <可跑的判据> [--file <要改的件>]… [--by <提出者>]\n")
+		fmt.Fprintf(stderr, "用法：zerg dev proposal new --title <题> --target <既有编号（只收 D/E/F/G 族 · 逐条闭集真源 core/internal/contract/dev-targets.json）> --goal <目标> "+
+			"--evidence <出处（必填 · 至少一条）> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态）> "+
+			"--criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--file <要改的件>]… [--by <提出者>]\n")
 		fmt.Fprintf(stderr, "       zerg dev proposal list [--state 未决|已批准|已否决]\n")
 		fmt.Fprintf(stderr, "       zerg dev proposal show <提案 id>\n")
 		fmt.Fprintf(stderr, "       zerg dev proposal check [<提案 id>]   # 判据**可机检**复核（缺判据/判据跑不动 ⇒ 退码 2）\n")
@@ -113,6 +114,16 @@ func cmdProposeLs(inv *invocation, stdout, stderr io.Writer) int {
 // ---- new ----
 
 func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
+	// ★ 2026-09-28（缺口 GAP-20260928-77 · 本单）：多余位置参数 ⇒ 用法错 2 · 一个字节不落。
+	//   病灶（本单修前现读实据，仓外二进制 + 仓外状态目录）：dev proposal new extraarg ... ⇒ 退 0，
+	//   且**真写了提案件**（DEV-0002.json 落盘）—— 多给的那一枚被静默吞、写盘照走。
+	//   同族口径（§4.1 K14 四件套 · 缺口 Q-154）：命令面不许把「给错了」读成「给对了」。
+	//   位置 = 任何盘面动作**之前**判（同 family_gate_results.go 多余位置参数那一条的体例）。
+	if len(inv.args) > 1 {
+		inv.setErr("usage", "extra_args", "多余位置参数")
+		fmt.Fprintf(stderr, "%s: dev proposal new 不收位置参数（new 之后多给了 %q）—— 字段一律走旗标 · 未写任何件\n", progName, inv.args[1])
+		return exitUsage
+	}
 	rec := proposalRecord{
 		Title:     strings.TrimSpace(inv.flagVal("--title")),
 		Target:    strings.TrimSpace(inv.flagVal("--target")),

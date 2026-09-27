@@ -770,7 +770,7 @@ func emitImpactBackfillBlock(w io.Writer, inv *invocation, root string, tgt *imp
 
 	// ⑥ 干跑 vs 真写（**干跑一个字节都不落** · 写失败不影响退码）
 	missing, complete := impactBackfillValidate(rec)
-	realWrite := !inv.dryRun && inv.confirmGiven && inv.yes && inv.confirm == planHost()
+	realWrite := !inv.dryRun && inv.confirmGiven && inv.yes && devEditHostAccept(inv.confirm)
 	wrote, writeNote := false, ""
 	if realWrite {
 		switch {

@@ -278,7 +278,7 @@ NEG_CASES = [
      'ExecStart=/usr/bin/python3 /home/<user>/agent/agent.py --controller http://<cluster-ip>:8580 '
      '--token 9f3c1d7a5b2e4f60\n', "UNIT-OPT-ARGV"),
     ("③", "单元正文在 .sh 的 heredoc 里（卵里生成）", "neg3b-unit-in-heredoc", "deploy_x3.sh",
-     '#!/usr/bin/env bash\ncat > /tmp/edge-node-agent.service << UNIT_EOF\n[Service]\n'
+     '#!/usr/bin/env bash\ncat > ${D}/edge-node-agent.service << UNIT_EOF\n[Service]\n'
      'ExecStart=/usr/bin/python3 ${D}/agent.py --host 0.0.0.0 --token=9f3c1d7a5b2e4f60\n'
      'UNIT_EOF\n', "UNIT-OPT-ARGV"),
     ("④", "launchd plist「选项名+值」（两串）", "neg4-launchd-plist", "com.x3gw.agent.plist",

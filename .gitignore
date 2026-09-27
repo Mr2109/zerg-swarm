@@ -75,3 +75,4 @@ gateway/*.bak-*
 #   ⇒ .stage/ 是试验落地目录（含机器专属 plist）、ID 是 0 字节重定向残渣，两者皆点名忽略
 /.stage/
 /ID
+scripts/gates/_history/
