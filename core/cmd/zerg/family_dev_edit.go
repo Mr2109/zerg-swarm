@@ -114,6 +114,20 @@ type editAuditLine struct {
 
 // cmdDevEdit —— `zerg dev edit`：受控写入的唯一入口（默认干跑）。
 func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
+	// ★ 同给判定（`GAP-20260927-376` · `--dry-run` 与确认档**同给**）：`--dry-run`（只出计划件）与
+	//   `--yes`（真写）**同给** = 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）。
+	//   修前：本命令走下面那条合并判定 `inv.dryRun || !(inv.confirmGiven && inv.yes)` ⇒ `inv.dryRun`
+	//   一真就进干跑支、**退 0**（零写入、审计也不落）—— 人给了 `--confirm=<主机名> --yes` 以为写了，
+	//   实际一个字节没落：真写与计划件**退码不可区分、输出同形**（靠 sha256 回读才发现）。
+	//   ★ 判定走**共享**那一处（`guard.go` 的 `dryRunYesConflict` —— `D3b` 反向对齐（2026-09-27）的
+	//   **唯一共享判定**，全树 19 条真判「同给 ⇒ 2」命令同一口径）⇒ **不另写第二套**（禁同一口径两处实现 ✗）。
+	//   ★ 位置 = **命令处理器入口**、在任何分支 / 任何盘面动作之前（与 `cmdGuarded` 同一形状；
+	//   本命令的 `usage` 串早已声明互斥：`[--dry-run | --confirm=<本机名> --yes]`）。
+	//   ★ 未同给（两枚未同时到）⇒ `dryRunYesConflict` 返回 `exitOK` ⇒ 照原样往下走
+	//   （**单给任一档零行为改动**：`--dry-run` 独给仍退 0 · 确认档独给仍走下面原有的闸）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	proposalID := strings.TrimSpace(inv.flagVal("--proposal"))
 	fileRel := strings.TrimSpace(inv.flagVal("--file"))
 	fromPath := strings.TrimSpace(inv.flagVal("--from"))
