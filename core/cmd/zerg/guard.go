@@ -27,6 +27,13 @@ type dangerSpec struct {
 	Target string // `--confirm=<目标>` 里的「目标」是什么（任务 id / 机器名 / 主机名 / 候选 id）
 	Effect string // 它会动什么（计划件逐条写出来）
 	Source string // 定稿出处（可追溯到 §节）
+	// ChecksConfirm —— 本命令的**实现**真读 `--confirm` 吗（直读 `inv.confirm`/`confirmGiven`，
+	// 或真跑那一态转交 `cmdGuarded`）。真读 ⇒ 清单行才印 `--confirm=<目标>`；不读 ⇒ 不印。
+	// 为什么要有这一格：清单行原来**无条件机械拼** `--confirm=<目标>`，而「前言」又无条件承诺
+	// 「D3 必须给，D2 给了就校验」—— 命令树里一批**已开放**的实现根本不读 `--confirm` ⇒
+	// 表在替实现许一个空承诺（§九 M3 C1：危险档 ↔ 确认档一一映射）。逐条登记见 main.go 每一处
+	// `danger: &dangerSpec{…, ChecksConfirm}`；此格是**位置参数**，漏登记编译不过。
+	ChecksConfirm bool
 }
 
 // cmdGuarded —— 所有登记为「危险」的动作的唯一执行门（本批只到「拒执 + 计划件」）。
@@ -216,13 +223,14 @@ func orDash(s string) string {
 	return s
 }
 
-// helpDangerous 渲染「危险动作清单」：**§三 全族里标危险的动作逐条带 `--dry-run` 与 `--confirm`**。
+// helpDangerous 渲染「危险动作清单」：**§三 全族里标危险的动作逐条带 `--dry-run` 与 `--yes`**；
+// `--confirm=<目标>` **只在 `dangerSpec.ChecksConfirm` 为真的那几条上印** —— 印了就是实现真会校验它。
 func helpDangerous() string {
 	var b strings.Builder
 	b.WriteString("危险动作清单（§三 全族里标「危险」的动作 · 逐条给三态形状 · 契约 §七）\n\n")
 	b.WriteString("三态（§4.1 K7 · §九 M3 C1/C2/C4 · §十二 P-014）：\n")
 	b.WriteString("  --dry-run                 只出**计划件**，零副作用 —— 系统状态逐字不变\n")
-	b.WriteString("  --confirm=<目标>          值必须与目标**逐字相同**；给错值 = 拒绝（不是「当没给」）· D3 **必须给**，D2 给了就校验\n")
+	b.WriteString("  --confirm=<目标>          值必须与目标**逐字相同**；给错值 = 拒绝（不是「当没给」）· D3 **必须给**；**下表逐条标出哪几条真读它** —— 没标 `--confirm` 的那几条本版实现**不读**它（给了也等于没给），D2 本就不需要它\n")
 	b.WriteString("  --yes                     D2 单独有效；**D3 必须 `--confirm` 与 `--yes` 同时到**（§十二 P-014 双档）\n")
 	b.WriteString("  非交互：无 TTY **零提示词**、缺确认一律 **fail-closed**（不执行）\n\n")
 	b.WriteString("清单（命令 · 档 · `--confirm` 的目标是什么 · 它会动什么 · 出处）：\n")
@@ -240,7 +248,13 @@ func helpDangerous() string {
 			continue
 		}
 		name := "zerg " + strings.Join(c.path, " ")
-		line := "  " + pad(name, w) + "  " + c.danger.Level + "  --dry-run · --confirm=<" + c.danger.Target + "> · --yes"
+		// 三态形状**按登记现算**（`dangerSpec.ChecksConfirm`）：只有真读 `--confirm` 的命令才印它；
+		// 不读的不印 —— 表与实现同源，不许替实现许空承诺。
+		flags := "  --dry-run · --yes"
+		if c.danger.ChecksConfirm {
+			flags = "  --dry-run · --confirm=<" + c.danger.Target + "> · --yes"
+		}
+		line := "  " + pad(name, w) + "  " + c.danger.Level + flags
 		line += "  " + c.danger.Effect + "  [" + c.danger.Source + "]"
 		if c.opened {
 			line += "  ← **已开放**（确认档齐就真执行）"
