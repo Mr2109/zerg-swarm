@@ -515,6 +515,19 @@ def check(root, no_runtime=False):
                     '确需下调须显式改 %s 并写明理由 —— 防「同命令内部掉一格」静默）'
                     % (n_mustfail, base_mf, BASELINE_REL))
 
+    # ---- T5c 树条数**相等判**（2026-09-27 父代理补 · 补 T5/T5b 同族的「不等式恒绿」缺口）----
+    #   T5（空白条数）与 T5b（格数）都是**不等式**棘轮 ⇒ 树条数本身漂了时两道判据都不红：
+    #   树**掉**一条命令 = T1/T2 对那条命令整片静默失效；树**多**一条命令 = 契约被悄悄放宽。
+    #   本档锚**命令树条数**：baseline 里写死的数必须**等于**现算真值（`parse_tree` 的条数）。
+    base_cmds = baseline.get('commands')
+    if not isinstance(base_cmds, int):
+        return 2, ['⛔ 不给结论：baseline 棘轮缺 `commands`（树条数锚点）—— 树条数漂了会静默（%s）'
+                   % BASELINE_REL]
+    if len(tree) != base_cmds:
+        errs.append('T5c 树条数相等判：现算命令树 %d 条 ≠ baseline 记的 %d 条（差 %+d）—— 两处真源开始漂了；'
+                    '确需变动须显式改 %s 并写明理由'
+                    % (len(tree), base_cmds, len(tree) - base_cmds, BASELINE_REL))
+
     # ---- T3 退码表唯一 ----
     codes = [r[0] for r in table]
     seen = {}
@@ -653,7 +666,8 @@ GOOD_MATRIX = {
     ],
 }
 GOOD_BASELINE = {"id": "cli-contract-baseline.v1", "blanks": 0, "mustfail_cases": 2,
-                 "note": "只许下调：本门落地时空白已清零 ⇒ 从此任何空白即红"}
+                 "commands": 2,
+                 "note": "只许下调：本门落地时空白已清零 ⇒ 从此任何空白即红；`commands` 是 T5c 的**相等判**锚点（夹具树 = version + core stop 两条）"}
 GOOD_REGISTRY = {"schema": "zerg-contract-registry/1", "entries": [
     {"id": "S-g", "name": "命令面契约（本件）",
      "gate": "scripts/gates/check-error-kinds.py · scripts/gates/check-cli-contract.py"},
