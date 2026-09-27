@@ -530,10 +530,126 @@ func doctorItems(inv *invocation) []map[string]string {
 		"name": "命令面", "verdict": "PASS",
 		"detail": version.Line(progName), "advice": ""})
 
+	// ⑦-b 源码 ↔ 制品两代对拍（缺口 `GAP-20260927-410`）：doctor 已报的制品代码 id（⑦）与源码 HEAD
+	// 之间**补一条判据** —— 「当前 bin 是哪个提交编的 · 源码之后又改过哪些件」。不开第二份口径、不建新命令。
+	items = append(items, doctorDriftItem())
+
 	// ⑧ 回收候选（§十五.3 对象清册 · §九 M9：**幽灵服务不进自动候选**）
 	items = append(items, ghostReapItem())
 
 	return items
+}
+
+// doctorDriftItem —— 「源码 ↔ 制品」两代对拍的一条判据（缺口 `GAP-20260927-410`）。
+//
+// 病：`dev edit` 只写源码、**不触发重编** ⇒ 新行为在源码层成立而 `./bin/zerg` 还是旧代；今天只能
+// 靠人记得重编。本项把「制品是哪个提交编的 · 源码之后又改过哪些件」摊成一格，一条 `zerg doctor` 可读。
+//
+// 口径（三态，逐字可读）：
+//
+//	① 干净：制品 `version.Commit` == 源码 `git rev-parse HEAD` ⇒ PASS「未过期」
+//	② 过期：二者不等 ⇒ REPORT「过期 + 源码之后改过的件名」（REPORT = 只报告、**不改 doctor 退码**）
+//	③ 拿不到结论：`version.Commit` 未注入（裸 `go build` / 进程内测试）或取不到仓根/HEAD ⇒ REPORT 明说拿不到
+//
+// 只读：只跑 `git rev-parse` / `git diff --name-only` / `git status --porcelain`（不写盘、不联网）。
+// 制品身份真源 = `version.Commit`（`-ldflags -X` 注入 · 见 `scripts/build/build-all.sh`）—— 不另造第二份口径。
+func doctorDriftItem() map[string]string {
+	art := strings.TrimSpace(version.Commit)
+	if art == "" || art == "unknown" {
+		return map[string]string{
+			"name": "源码/制品对拍", "verdict": "REPORT",
+			"detail": "拿不到结论：本制品**没注入代码 id**（`version.Commit`=" + art + "）—— 裸 `go build` / 进程内测试的形态",
+			"advice": "要能对拍就走正门重编：`zerg build all --only cli`（`-ldflags -X` 才会写进 `version.Commit`）"}
+	}
+	root := repoRoot()
+	if root == "" {
+		return map[string]string{
+			"name": "源码/制品对拍", "verdict": "REPORT",
+			"detail": "拿不到结论：解析不到仓根 ⇒ 取不到源码 HEAD（不猜一个路径）",
+			"advice": "在仓内跑，或设 `ZERG_REPO=<仓根>`"}
+	}
+	head, err := runGitRO(root, "rev-parse", "HEAD")
+	head = strings.TrimSpace(head)
+	if err != nil || head == "" {
+		return map[string]string{
+			"name": "源码/制品对拍", "verdict": "REPORT",
+			"detail": "拿不到结论：`git rev-parse HEAD` 在仓根取不到（" + errText(err) + "）",
+			"advice": "确认仓根是真的 git 工作树（`git -C <仓根> rev-parse HEAD`）"}
+	}
+	if head == art || strings.HasPrefix(head, art) || strings.HasPrefix(art, head) {
+		return map[string]string{
+			"name": "源码/制品对拍", "verdict": "PASS",
+			"detail": "未过期：制品 " + driftShort(art) + " == 源码 HEAD " + driftShort(head),
+			"advice": ""}
+	}
+	detail := "**过期**：制品 " + driftShort(art) + " ≠ 源码 HEAD " + driftShort(head)
+	if files := driftChangedFiles(root, art); len(files) == 0 {
+		detail += "（git 面没列出改动件 —— 制品那笔可能不在本仓历史里）"
+	} else {
+		const maxShow = 5
+		shown := files
+		suffix := ""
+		if len(shown) > maxShow {
+			shown = shown[:maxShow]
+			suffix = fmt.Sprintf(" 等 %d 件", len(files))
+		}
+		detail += "；源码之后改过 " + strconv.Itoa(len(files)) + " 件：" + strings.Join(shown, " · ") + suffix
+	}
+	return map[string]string{
+		"name": "源码/制品对拍", "verdict": "REPORT", "detail": detail,
+		"advice": "重编走正门：`zerg build all --only cli`（不重编则 `./bin/zerg` 还是旧代 · `-ldflags` 才写代码 id）"}
+}
+
+// driftShort —— 代码 id 取前 8 位（制品可能是短 sha、源码 HEAD 是 40 位；对拍只比 `==`/前缀，不截断取值）。
+func driftShort(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
+}
+
+// driftChangedFiles —— 制品那笔之后源码改过的件（**已提交**的 `art..HEAD` + **未提交**的工作树），
+// 去重排序。取不到的部分按空处理（对拍只报能拿到的，不猜、不失败）。
+func driftChangedFiles(root, art string) []string {
+	seen := map[string]bool{}
+	addPaths := func(out string) {
+		for _, ln := range strings.Split(out, "\n") {
+			if ln = strings.TrimSpace(ln); ln != "" {
+				seen[ln] = true
+			}
+		}
+	}
+	if out, err := runGitRO(root, "diff", "--name-only", art+"..HEAD"); err == nil {
+		addPaths(out)
+	}
+	// porcelain 每行 `XY <路径>`（状态码两列 + 一个空格）⇒ 第 4 字节起是路径。
+	if out, err := runGitRO(root, "status", "--porcelain"); err == nil {
+		for _, ln := range strings.Split(out, "\n") {
+			if len(ln) > 3 {
+				seen[strings.TrimSpace(ln[3:])] = true
+			}
+		}
+	}
+	files := make([]string, 0, len(seen))
+	for f := range seen {
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	sort.Strings(files)
+	return files
+}
+
+// errText —— 把 error 摊成短文本（nil ⇒ "无错误"），doctor 格里不塞长串。
+func errText(err error) string {
+	if err == nil {
+		return "无错误"
+	}
+	s := err.Error()
+	if len(s) > 120 {
+		s = s[:120] + "…"
+	}
+	return s
 }
 
 // ghostReapItem —— 「现值有 · 声明无」的幽灵服务（§二十一 第 3 条 / §十五.3）。
