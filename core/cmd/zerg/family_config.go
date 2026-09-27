@@ -269,10 +269,30 @@ func modelAddLocate(lines []string, name string) (modelAddPlacement, string) {
 	return p, ""
 }
 
+// requireJSONFields —— 危险档 `--json` 用法面的**收口处**（本族唯一一份）。
+//
+// ★ 不是另开一份口径，而是把两个**既有**口子拼起来、顺序写死：
+//   - 判退码：`requireFields`（`main.go:2702` · 退码表唯一出口 —— 本函数不自己定码）；
+//   - 记错误面：`inv.setErr`（`errors.go:138` · 谁先报谁为准 —— 本函数不自己拼包封）。
+//
+// 补的是 `requireFields` 的已知缺口（`GAP-20260927-360`）：那个口子只写 stderr、**不调 `setErr`**
+// ⇒ 危险档（`main.go:182-183` 的设计：危险动作没有结果面，但错误面必须机器可读 —— §九 M7）
+// 走到这里时包封里没有 `error.detail`，退化成「（命令未报出 kind，按退码兜底）」，AI 自愈只剩退码。
+// gap 族 6 处（`family_gap.go:558/726/990` · `family_gap_export.go:50` · `family_gap_state.go:223/356`）
+// 是各写各的 `setErr("usage","json_fields_required","--json 不给字段")`；本族（`model add` /
+// `config reload`）此前**一处都没写**。此处收成一份，与那 6 处**逐字同 kind 同 detail**。
+func requireJSONFields(inv *invocation, stderr io.Writer) int {
+	rc := requireFields(inv, stderr)
+	if rc != exitOK {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+	}
+	return rc
+}
+
 // cmdModelAdd —— `zerg model add`：先校验后写（`--dry-run` 先行 · 真写要 `--yes` · 失败回滚）。
 func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.jsonGiven {
-		if rc := requireFields(inv, stderr); rc != exitOK {
+		if rc := requireJSONFields(inv, stderr); rc != exitOK {
 			return rc
 		}
 	}
@@ -547,7 +567,7 @@ func writeFleetAtomic(path, oldText, newText string, stderr io.Writer) int {
 // 过了才打**已在路由上**的 `POST /api/config/reload`（主控零改动 ✓）。
 func cmdConfigReload(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.jsonGiven {
-		if rc := requireFields(inv, stderr); rc != exitOK {
+		if rc := requireJSONFields(inv, stderr); rc != exitOK {
 			return rc
 		}
 	}

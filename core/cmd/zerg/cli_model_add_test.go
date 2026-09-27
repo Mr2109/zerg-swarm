@@ -563,14 +563,14 @@ func TestModelAddJSONNoFields(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &env); err != nil {
 		t.Fatalf("危险档的 `--json` 错误面必须是合法包封（§九 M7）：解析失败 %v · stdout=%q", err, out)
 	}
-	// ★ 判据只收到**真成立**的那部分：包封合法 + `error.kind == "usage"` + 零落盘。
-	//   ★ 不写 `detail`：现读族间不一致 —— `json_fields_required` 这句只出现在 gap 族 6 处
-	//   （`family_gap.go:558/726/990` · `family_gap_export.go:50` · `family_gap_state.go:223/356`），
-	//   `model add` / `config reload` 这一族**没有**它 ⇒ 包封落到「（命令未报出 kind，按退码兜底）」
-	//   的兜底文案、`detail` 为空。那是**实现缺口**（AI 自愈靠 kind，缺 detail 就只剩退码），
-	//   已入账 `GAP-20260927-361` 另派；判据**不许比实现严**，否则本件会一直红着当噪声。
-	if env.Error.Kind != "usage" {
-		t.Fatalf("错误面该点名 usage，得到 %q（detail=%q）· stdout=%q", env.Error.Kind, env.Error.Detail, out)
+	// ★ 2026-09-27 同批收口（`GAP-20260927-360` 已修）：本族此前**不报 detail** ⇒ 包封落到
+	//   「（命令未报出 kind，按退码兜底）」，AI 自愈只剩退码。现由 `family_config.go` 的
+	//   `requireJSONFields` 一处收口（拼的是既有口子 `requireFields` + `inv.setErr`），
+	//   与 gap 族 6 处**逐字同 kind 同 detail** ⇒ 判据收到**精确断言**（不许再放宽）。
+	//   （本体原注引的是 `GAP-20260927-361` —— 现读账内 361 实为 `--confirm` 口径那条 ⇒ 逐字订正为 360。）
+	if env.Error.Kind != "usage" || env.Error.Detail != "json_fields_required" {
+		t.Fatalf("错误面该点名 usage/json_fields_required，得到 kind=%q detail=%q · stdout=%q",
+			env.Error.Kind, env.Error.Detail, out)
 	}
 	if after := fileSHA(t, path); after != before {
 		t.Fatalf("只读用法面却改了文件")
