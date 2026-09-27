@@ -67,6 +67,12 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 
 	// ② 默认档：真写（**旧行为一字不变**）；只读档：`--dry-run` ⇒ 这一步整个跳过。
 	if !inv.dryRun {
+		// ★ 2026-09-27（缺口 `GAP-20260927-299` · 甲档硬失败）：身份**两格同时**塌（`version.Commit` · `version.BuildTime` 皆未注入的 `unknown`，= 裸 `go build` 的形态）⇒ 导出物里那句「命令面身份」（`version.Line(progName)`）是**空白凭据** ⇒ **不写一个字节**、退 `exitBlocked`（8）。只拦「两格同时空」：单格空是 `build-all.sh` 的正常降级（读不到 HEAD），`+dirty` **不拦**（有出处 ≠ 空白凭据）。
+		if version.Commit == "unknown" && version.BuildTime == "unknown" {
+			fmt.Fprintf(stderr, "%s: **不写导出物** —— 身份两格同时是 `unknown`（`version.Commit` · `version.BuildTime` 都没注入 · 裸 `go build` 的形态）⇒ 写出件里的「命令面身份」行会是**空白凭据**\n", progName)
+			fmt.Fprintln(stderr, "下一步：`bash scripts/build/build-all.sh --only-cli`（命令面 `zerg build all --only cli`）重编出**带身份**的制品，再跑 `zerg help export`")
+			return exitBlocked
+		}
 		if err := os.WriteFile(path, []byte(md), 0o644); err != nil {
 			fmt.Fprintf(stderr, "%s: 写不进导出物：%v\n", progName, err)
 			return exitFail

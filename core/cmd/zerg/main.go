@@ -908,7 +908,7 @@ func init() {
 			path:     []string{"code", "find"},
 			kind:     "CodeFind",
 			summary:  "在码里找一处东西在哪（只读取证 · 手搓 grep/git grep 的替身 · **扫工作树**：含未跟踪件与被忽略目录，比 `git grep` 的索引面多一片（两个面各扫多少件，命令每跑一次自己报一行「扫了 N 件」—— **不在这里写死**，写了就会烂；差值由运行时的数说话）；跳过 >2MB 的件）",
-			usage:    "zerg code find <正则> [--path <子目录>] [--glob <模式>] [--full] [--json <字段>]",
+			usage:    "zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--full] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"正则（POSIX 语法）"},
 			fields:   []string{"path", "line", "text"},
