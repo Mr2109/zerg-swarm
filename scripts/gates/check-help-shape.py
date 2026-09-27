@@ -77,6 +77,30 @@
      （等长换字 · 名字集合不变 ⇒ S4d / S4e 都看不见）⇒ **S4f** 红并点名到条目；表尾计数对不上 ⇒ S4a/S4b 红；
      该面行数/字节漂 ⇒ S4e 红。**S4 只判形状**：逐条「它会动什么 / 出处」的**文字**与档位语义不在本格。
 
+  S5 **配置主题面（`help config` 的形状 —— 2026-09-27 补 · 缺口 `GAP-20260927-440`）**
+     病：判据面只跑 `help` / `help --all` / `help dangerous` 三面，**不含 `help config`** ——
+     `exitcodes.go` 的 `helpConfig()`（第 102 行起）文案改动**没有任何判据会响**（现读 `help config`
+     17 行 / 1392 B 全裸奔）。S5 把该面收进同一套「现算 + 交叉 + 精确闭集常量」：
+     S5a **同面交叉（优先级链 ⟷ 逐级说明 · 现算 · 无常数）**：`help config` 里那一条
+         `  <级> > <级> > …` 链行现算出的**级名表**，必须与 `  N. **<名字>**` 这一批编号条目的
+         **名字表同序逐字相等**（两边都剥掉反引号 —— 与 S4d 的剥法同口径）；另判编号必须是
+         `1..N` 连号无重复。牙口：链与逐级说明**任何一处**改名 / 改序 / 掉一级 ⇒ 红（同面的两个
+         独立格式必须互相对得上）；链行不许 0 条、不许抄出第二条。
+     S5b **同源跨面（`help config` ⟷ 裸 `help` 的那一行 · 现算 · 无常数）**：两面的链行必须
+         **逐字相等** —— 它们是**同一个真源**（`core/cmd/zerg/helptext.go` 的 `configPriorityLine`
+         常量：`help config` 由 `exitcodes.go:104` 拼 `"  " + 常量`，裸 `help` 由 `helptext.go:95`
+         拼同一常量）。牙口：谁把链**抄成第二份**（不复用常量）⇒ 两面字面分家 ⇒ 红。
+     S5c **精确闭集常量**：`help config` 的 `lines` / `bytes` 必须逐格等于冻结读数（**现跑取数** ·
+         禁手写 · `--emit-baseline` 刷）—— 这是「改 `helpConfig()` 文案 ⇒ 有人响」的**直接**牙口：
+         任何一字增删 ⇒ 字节或行数当场不等。
+     ★ 与旧腿的关系（我的选择 · 写在件头供后人对界）：**独立一条腿（S5）**，S1–S4 的判定式与冻结值
+       **一字不动**；不改 S2 的关系式 —— `help config` 是**主题面**（`topics.go` 那张表分派），
+       不参与 `rows(--all) == rows(help) + rows(dangerous)` 那条等式（现读该面 0 条用法行）。
+     ★ 不假装覆盖（照实登记）：`help config` 只判**形状/结构**；「凭据」那四条条目的**文字**、主题表
+       `topics.go` 的 `Brief` 串（`五级配置优先级 + 凭据四条`）与本面同源不同源**不在本格** ——
+       那要新开一处「读 Go 源」的口径；本单**不开第三份口径**（也确无现成口子：本件的面表就是
+       `main()` 里那一个元组，加第四面即走同一处）。
+
 形态说明（为什么用「常量 + 关系式」而不是纯现算）
 --------------------------------------------------
   · 族名 / 命令条数 / 段行数：**纯现算**（有第二个真源：命令树矩阵）。✓
@@ -87,7 +111,7 @@
 
 退码
 ----
-  0 = 三条都合 · 1 = 判红（段缺 / token 不等 / 关系式不成立 / 常量不等 / 末行不符）
+  0 = 全部腿都合 · 1 = 判红（段缺 / token 不等 / 关系式不成立 / 常量不等 / 末行不符 / `help config` 面形状不符）
   2 = **不给结论**（`bin/zerg` 不在盘 · 矩阵不在盘 / 读不回来 · 现跑退码非 0 · 输出零行）
 
 用法
@@ -110,7 +134,7 @@ import re
 import subprocess
 import sys
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 MATRIX_REL = os.path.join("core", "cmd", "zerg", "testdata", "cli-matrix.json")
 
@@ -132,6 +156,14 @@ DANGER_PAREN_RE = re.compile(r"（[^）]*）")
 DANGER_OT_RE = re.compile(r"← \*\*已开放\*\*|← 本版未开放")
 DANGER_OPEN_MARK = "← **已开放**"
 DANGER_CLOSED_MARK = "← 本版未开放"
+
+# ── 配置主题面（`help config` · S5）的形状件 ──
+# 优先级链行：恰好两空格缩进 + 非编号条目行 + 至少三段 ` > ` 分隔（现读 `help config` / 裸 `help`
+# 各恰好 1 条：`  旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg/config.yaml > 内置默认`）。
+CFG_CHAIN_RE = re.compile(r"^  \S.*? > .+ > .+$")
+# 逐级说明编号条目：`  1. **旗标**            本次调用…`
+CFG_LEVEL_RE = re.compile(r"^  (\d+)\. \*\*(.+?)\*\*")
+CFG_CHAIN_SPLIT = " > "
 
 # 布局常量（源件 `core/cmd/zerg/main.go:3380` 一带）：族名清单段的**段头占 1 行**（段头之前必须另有 1 行空行）
 # · 族名每行 8 族
@@ -157,6 +189,10 @@ BASELINE = {
                        "tail": "上表 47 条：**已开放 19 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 28 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。",
                        "confirm_not_in_usage": ["agent reap", "itask start", "itask stop"],
                        "confirm_value_mismatch": []},
+    # ★ 配置主题面（S5 · 2026-09-27 补 · 缺口 `GAP-20260927-440`）：**现跑取数** · 禁手写 ——
+    #   取法 = `./bin/zerg help config | wc -l -c`（lines/bytes）；刷新 = `--emit-baseline`。
+    #   来源件 = `core/cmd/zerg/exitcodes.go` 的 `helpConfig()`（主题表 `topics.go` 分派）。
+    "help config": {"lines": 17, "bytes": 1392},
 }
 
 
@@ -286,14 +322,40 @@ def danger_confirm_value_mismatch(danger_text: str, all_text: str):
     return sorted([p for p in danger_confirm_pairs(danger_text, all_text) if p[1] != p[2]])
 
 
+# ── 纯函数：配置主题面（S5）的形状抽取 ──
+def cfg_chain_lines(text: str):
+    """现算 `help config` / 裸 `help` 里的优先级链行（返回全表 —— 恰好 1 条才合格）。"""
+    return [l for l in text.splitlines() if CFG_CHAIN_RE.match(l)]
+
+
+def cfg_chain_tokens(line: str):
+    """链行 ⇒ 级名表（按 ` > ` 切 · 剥反引号 —— 与 S4d 的剥法同口径）。"""
+    return [t.strip().replace("`", "") for t in line.strip().split(CFG_CHAIN_SPLIT)]
+
+
+def cfg_levels(text: str):
+    """逐级说明的编号条目 ⇒ [(编号, 名字)]（名字剥反引号）。"""
+    out = []
+    for l in text.splitlines():
+        m = CFG_LEVEL_RE.match(l)
+        if m:
+            out.append((int(m.group(1)), m.group(2).strip().replace("`", "")))
+    return out
+
+
 def rebuilt_last_family_line(fams):
     """族名清单末行的**现算重建**（每 8 族一行，取最后一块）。"""
     chunk = fams[(len(fams) // FAMILY_PER_LINE) * FAMILY_PER_LINE:]
     return "  " + " · ".join(chunk)
 
 
-def judge(all_text: str, bare_text: str, danger_text: str, cmds, baseline=None) -> list:
-    """判据本体（**唯一一处** · 纯函数 · 不现跑、不读盘）。"""
+def judge(all_text: str, bare_text: str, danger_text: str, cmds, baseline=None, config_text=None) -> list:
+    """判据本体（**唯一一处** · 纯函数 · 不现跑、不读盘）。
+
+    `config_text` = `help config` 那一面；**生产路径由 `main()` 每跑必传**（见下 S5 段）。
+    `None` 只留给**本件自检里那些不带该面的旧格**（S1–S4 的 15 格一字不改）——
+    ★ 这不是「静默不判」的洞：`""`（空串）走的是**判红**那条路，自检有专格钉它。
+    """
     bl = BASELINE if baseline is None else baseline
     bad = []
     fams = families_of(cmds)
@@ -415,6 +477,43 @@ def judge(all_text: str, bare_text: str, danger_text: str, cmds, baseline=None) 
                        % (key, got, dbl[key]))
     if "tail" in dbl and tail != dbl["tail"]:
         bad.append("S4e 常量：`help dangerous` 表尾逐字 %r ≠ 冻结读数 %r" % (tail, dbl["tail"]))
+
+    # ---- S5 配置主题面（`help config` 的形状 · 2026-09-27 补 · 缺口 `GAP-20260927-440`）----
+    if config_text is not None:
+        cb = bl.get("help config", {})
+        chains = cfg_chain_lines(config_text)
+        chain = None
+        if len(chains) != 1:
+            bad.append("S5a 优先级链：`help config` 里那条链行现读 %d 条（期望恰好 1 条 —— "
+                       "链被删 / 被拆行 / 被抄出第二份？）" % len(chains))
+        else:
+            chain = chains[0]
+        lv = cfg_levels(config_text)
+        nums = [n for n, _ in lv]
+        if nums != list(range(1, len(nums) + 1)):
+            bad.append("S5a 逐级说明：编号必须是 `1..N` 连号无重复 —— 现读 %s"
+                       % (" · ".join(str(n) for n in nums) if nums else "一条都没有"))
+        if chain is not None:
+            toks = cfg_chain_tokens(chain)
+            names = [n for _, n in lv]
+            if names != toks:
+                bad.append("S5a 同面交叉：优先级链 %d 级（%s）≠ 逐级说明 %d 条（%s）—— "
+                           "同一个面上的两处必须同序逐字相等"
+                           % (len(toks), " · ".join(toks), len(names), " · ".join(names)))
+            # S5b 同源跨面：裸 `help` 那条链行（同源 = `helptext.go` 的 `configPriorityLine`）
+            hchains = cfg_chain_lines(bare_text) if bare_text else []
+            if len(hchains) != 1:
+                bad.append("S5b 同源跨面：裸 `help` 里那条同源链行现读 %d 条（期望恰好 1 条 —— "
+                           "真源常量 `configPriorityLine` 的那一行只能有一处出口）" % len(hchains))
+            elif hchains[0] != chain:
+                bad.append("S5b 同源跨面：`help config` 的链行 %r ≠ 裸 `help` 的链行 %r（两处同源 "
+                           "= `helptext.go` 的 `configPriorityLine` 常量 ⇒ 字面必须逐字相等；"
+                           "分家 = 有人把链抄成了第二份）" % (chain, hchains[0]))
+        for key, got in (("lines", len(config_text.splitlines())),
+                         ("bytes", len(config_text.encode("utf-8")))):
+            if key in cb and got != cb[key]:
+                bad.append("S5c 常量：`help config` %s %d ≠ 冻结读数 %d（该面漂了 —— "
+                           "取法见件头 `BASELINE` 注释 · `--emit-baseline` 刷）" % (key, got, cb[key]))
     return bad
 
 
@@ -443,6 +542,22 @@ FIX_DANGER = [
 FIX_TAIL = ("上表 5 条：**已开放 1 条**（确认档齐就真执行 —— 逐条见上行标记）；"
             "**未开放 4 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。")
 
+# ★ 配置主题面（S5）夹具：链行 ⟷ 逐级说明必须**同序逐字相等**（两边剥反引号）——
+#   链行与裸 `help` 里那一行**同源**（真件 = `helptext.go` 的 `configPriorityLine`），
+#   所以夹具的裸 `help` 面里也必须有**同一条**链行（否则 S5b 的正控就不成立）。
+FIX_CHAIN = "旗标 > ZERG_* 环境变量 > 项目 .env > ~/.zerg/config.yaml > 内置默认"
+# 逐级说明的五条（反引号只在**说明侧** —— 与真件同形：真件链行没有反引号，条目名有）。
+FIX_CFG_LEVELS = ["旗标", "`ZERG_*` 环境变量", "项目 `.env`", "`~/.zerg/config.yaml`", "内置默认"]
+
+
+def fix_config_text():
+    """现造 `help config` 那面（真件的形状：链行 + 编号条目 + 凭据条目）。"""
+    body = ["配置优先级（契约 §八 · §4.1 `K10` · clig.dev 五级序）：", "",
+            "  " + FIX_CHAIN, "", "逐级说明（左高右低，高者覆盖低者）："]
+    body += ["  %d. **%s**  夹具第 %d 级" % (i, n, i) for i, n in enumerate(FIX_CFG_LEVELS, 1)]
+    body += ["", "凭据（夹具）：", "  · 夹具凭据一", "  · 夹具凭据二"]
+    return "\n".join(body) + "\n"
+
 
 def fix_danger_rows():
     return ["  zerg " + p + "  " + lvl + "  --dry-run · --confirm=<" + tgt + "> · --yes  它会动什么  [出处]  " + mark
@@ -450,7 +565,8 @@ def fix_danger_rows():
 
 
 def fix_texts():
-    """按真件形态现造三面文本（族名清单 = 字典序 · 每 8 族一行；危险档面带逐条标记 + 表尾）。"""
+    """按真件形态现造四面文本（族名清单 = 字典序 · 每 8 族一行；危险档面带逐条标记 + 表尾；
+    配置主题面 = 链行 + 编号条目 + 凭据条目）。"""
     fams = families_of(FIX_CMDS)
     rows_bare = ["  zerg " + c + " ｜ 茧壁:host ｜ 说明" for c in FIX_CMDS[:5]]
     rows_all = rows_bare + [u for _p, _l, _t, u, _m in FIX_DANGER]
@@ -458,10 +574,11 @@ def fix_texts():
                 + "\n\n族级面（%d 族 · 不必猜族名 · 逐族 `zerg help <族名>` 列该族全部动作）:\n" % len(fams)
                 + "\n".join("  " + " · ".join(fams[i:i + FAMILY_PER_LINE])
                             for i in range(0, len(fams), FAMILY_PER_LINE)) + "\n")
+    # ★ 裸 `help` 面里放**同一条**链行（S5b 的正控就靠它 —— 与真件同形：真件两处同源同一常量）。
     bare_text = ("zerg —— 形状夹具\n\n" + "\n".join(rows_bare)
-                 + "\n" + BASELINE["help"]["last"] + "\n")
+                 + "\n配置优先级:\n  " + FIX_CHAIN + "\n" + BASELINE["help"]["last"] + "\n")
     dang_text = "\n".join(fix_danger_rows()) + "\n\n" + FIX_TAIL + "\n"
-    return all_text, bare_text, dang_text
+    return all_text, bare_text, dang_text, fix_config_text()
 
 
 def self_test(out) -> bool:
@@ -485,12 +602,13 @@ def self_test(out) -> bool:
         for b in bad[:3]:
             out.write("      ↳ %s\n" % b)
 
-    all_t, bare_t, dang_t = fix_texts()
+    all_t, bare_t, dang_t, cfg_t = fix_texts()
     d_rows = danger_rows(dang_t)
     # 夹具基线（否则常量格必红 ⇒ 干扰判别）：只钉夹具自己的数
     bl = {"help --all": {"lines": len(all_t.splitlines()), "bytes": len(all_t.encode())},
           "help": {"lines": len(bare_t.splitlines()), "bytes": len(bare_t.encode()),
                    "last": BASELINE["help"]["last"]},
+          "help config": {"lines": len(cfg_t.splitlines()), "bytes": len(cfg_t.encode())},
           "help dangerous": {"lines": len(dang_t.splitlines()), "bytes": len(dang_t.encode()),
                              "rows": len(d_rows), "tail": FIX_TAIL,
                              "confirm_not_in_usage": ["agent reap"],
@@ -522,6 +640,23 @@ def self_test(out) -> bool:
                FIX_CMDS, bl), want_sub="S4d", forbid_sub="S4f")
     case("对界：夹具正控上 S4f 不许误报（两面同印的值逐字相等 · 现读 1 条）⇒ 绿且无 S4f 断言", False,
          judge(all_t, bare_t, dang_t, FIX_CMDS, bl), forbid_sub="S4f")
+
+    # 负控（S5 配置主题面 · 2026-09-27 补 · 缺口 GAP-20260927-440）
+    bad_chain = "  " + FIX_CHAIN.replace("内置默认", "内置缺省")
+    case("正控②：配置面原样（链 ⟷ 逐级说明同序 · 与裸 `help` 同源）⇒ 必绿且不许有 S5 断言", False,
+         judge(all_t, bare_t, dang_t, FIX_CMDS, bl, cfg_t), forbid_sub="S5")
+    case("负控⑪：只改链行一个字（`内置默认`→`内置缺省` · **等长换字** ⇒ 字节常量看不见）"
+         "⇒ S5a/S5b 必红、S5c 不许响", True,
+         judge(all_t, bare_t, dang_t, FIX_CMDS, bl, cfg_t.replace("  " + FIX_CHAIN, bad_chain)),
+         want_sub="S5a", forbid_sub="S5c")
+    case("负控⑫：只改**裸 `help`**那条同源链行（配置面一字不动）⇒ S5b 必红、S5a 不许抢账", True,
+         judge(all_t, bare_t.replace(FIX_CHAIN, FIX_CHAIN.replace("内置默认", "内置缺省")),
+               dang_t, FIX_CMDS, bl, cfg_t), want_sub="S5b", forbid_sub="S5a")
+    case("负控⑬：配置面掉一条逐级说明 ⇒ S5a 必红（编号连号 ⟷ 链级数）", True,
+         judge(all_t, bare_t, dang_t, FIX_CMDS, bl,
+               "\n".join(cfg_t.splitlines()[:5] + cfg_t.splitlines()[6:]) + "\n"), want_sub="S5a")
+    case("对界：配置面喂**空串** ⇒ 必红（证明「这个面没了」不是静默绿）", True,
+         judge(all_t, bare_t, dang_t, FIX_CMDS, bl, ""), want_sub="S5a")
 
     lines = all_t.splitlines()
     idx = [i for i, l in enumerate(lines) if l.startswith(SEC_HEADER_PREFIX)][0]
@@ -567,11 +702,20 @@ LIST_RULES = """判据（三条 · 现算 + 对界 · 缺口 GAP-20260927-401）
      S4f 两面**同印** `--confirm=` 的值须**逐字相等**（现算值冲突集合 == 冻结名单 · 现读空集 —— 独立一条腿：
          S4d 只判「名字在不在用法串里」⇒ 值冲突但名字集合不变时 S4d 看不见）·
      S4e 该面的 lines / bytes / 条数 / 表尾逐字 == 冻结读数（现跑取数 · --emit-baseline 刷）
+  S5 配置主题面（`help config` · 2026-09-27 补 · 缺口 GAP-20260927-440）：
+     S5a 同面交叉：优先级链行现算的级名表 == 逐级说明 `N. **名字**` 的名字表（同序逐字 · 两边剥反引号）·
+         编号必须 `1..N` 连号无重复 · 链行恰好 1 条 ·
+     S5b 同源跨面：`help config` 的链行**逐字等于**裸 `help` 的那一行（同源 = `helptext.go` 的
+         `configPriorityLine` 常量 —— 分家 = 有人抄了第二份）·
+     S5c 该面的 lines / bytes == 冻结读数（现跑取数 · --emit-baseline 刷）
 
 不假装覆盖（照实登记）
 ----------------------
   · 只判**形状**（段 / 条数 / 行数 / 末行）；段的**说明文字**逐字、危险档判词、层级列不在本格
   · 两态 rc 语义（`zerg <族> --help` 退 2 等）**不在本件**（那是 `cli_help_twostate_test.go` 的面，禁碰）
+  · `help config` 只判**形状/结构**：链 ⟷ 逐级说明同序 · 同源链行逐字 · lines/bytes 常量；
+    「凭据」那批条目的**文字**与主题表 `topics.go` 的 `Brief` 串同源不同源**不在本格**
+    （要另开一处读 Go 源的口径 —— 本单不开第三份口径）
   · 建件时本件**未挂门**（挂门 + `scripts/公开标记.tsv` + `dryrun-semantics.json` 三处登记是随动口）
 """
 
@@ -605,7 +749,7 @@ def main() -> int:
         return 2
     faces = {}
     for face, argv in (("help --all", ["help", "--all"]), ("help", ["help"]),
-                       ("help dangerous", ["help", "dangerous"])):
+                       ("help dangerous", ["help", "dangerous"]), ("help config", ["help", "config"])):
         text, why = run_face(binz, argv)
         if text is None:
             sys.stdout.write("⛔ 不给结论（rc=2）：%s\n" % why)
@@ -621,7 +765,8 @@ def main() -> int:
         drows = danger_rows(d)
         _t, _n, _x, _y = danger_tail(d)
         sys.stdout.write(
-            '  # ↑ 前三行照抄进 BASELINE。危险档面（S4）那一条照抄下面这三行：\n'
+            '  # ↑ 前四行照抄进 BASELINE。危险档面（S4）那一条照抄下面这三行；配置主题面（S5）'
+            '照抄末行给出的那一条：\n'
             '    "help dangerous": {"lines": %d, "bytes": %d, "rows": %d,\n'
             '                       "tail": %r,\n'
             '                       "confirm_not_in_usage": %s,\n'
@@ -629,9 +774,12 @@ def main() -> int:
             % (len(d.splitlines()), len(d.encode("utf-8")), len(drows),
                danger_tail(d)[0], json.dumps(danger_confirm_gap(d, faces["help --all"]), ensure_ascii=False),
                json.dumps(danger_confirm_value_mismatch(d, faces["help --all"]), ensure_ascii=False)))
+        cf = faces["help config"]
+        sys.stdout.write('    "help config": {"lines": %d, "bytes": %d},\n'
+                         % (len(cf.splitlines()), len(cf.encode("utf-8"))))
         return 0
 
-    sys.stdout.write("`help` 面形状判据 · v%s（族级段 / 条数 / 末行）\n" % VERSION)
+    sys.stdout.write("`help` 面形状判据 · v%s（族级段 / 条数 / 末行 / 危险档 / 配置主题）\n" % VERSION)
     fams = families_of(cmds)
     idx, num, toks, sec_lines = family_section(faces["help --all"])
     sys.stdout.write("  命令树 %d 条 ⇒ 现算 %d 族 · `help --all` %d 行 / %d 字节 · 裸 `help` %d 行 · "
@@ -639,7 +787,8 @@ def main() -> int:
                      % (len(cmds), len(fams), len(faces["help --all"].splitlines()),
                         len(faces["help --all"].encode("utf-8")), len(faces["help"].splitlines()),
                         sec_lines if idx is not None else "缺", len(toks)))
-    bad = judge(faces["help --all"], faces["help"], faces["help dangerous"], cmds)
+    bad = judge(faces["help --all"], faces["help"], faces["help dangerous"], cmds,
+                config_text=faces["help config"])
     if bad:
         sys.stdout.write("⇒ 判红（rc=1）：\n")
         for b in bad:
@@ -665,7 +814,12 @@ def main() -> int:
                             dbl_l := len(faces["help dangerous"].splitlines()),
                             dbl_b := len(faces["help dangerous"].encode("utf-8")),
                             dbl_r := len(danger_rows(faces["help dangerous"]))))
-        sys.stdout.write("⇒ 四条都合（rc=0）\n")
+        cf = faces["help config"]
+        sys.stdout.write("  ✓ S5 配置主题面：链行 ⟷ 逐级说明 %d 级同序逐字相等；链行 ⟷ 裸 `help` 同源逐字；"
+                         "行/字节 == 冻结读数 %d/%d\n"
+                         % (len(cfg_chain_tokens(cfg_chain_lines(cf)[0])) if cfg_chain_lines(cf) else -1,
+                            len(cf.splitlines()), len(cf.encode("utf-8"))))
+        sys.stdout.write("⇒ 五条都合（rc=0）\n")
     if a.json:
         sys.stdout.write(json.dumps({
             "schema": "zerg-gate/v1", "gate": "check-help-shape", "version": VERSION,
@@ -680,6 +834,9 @@ def main() -> int:
             "danger_confirm_not_in_usage": danger_confirm_gap(faces["help dangerous"], faces["help --all"]),
             "danger_confirm_both_faces": len(danger_confirm_pairs(faces["help dangerous"], faces["help --all"])),
             "danger_confirm_value_mismatch": danger_confirm_value_mismatch(faces["help dangerous"], faces["help --all"]),
+            "config_lines": len(faces["help config"].splitlines()),
+            "config_bytes": len(faces["help config"].encode("utf-8")),
+            "config_chain_lines": len(cfg_chain_lines(faces["help config"])),
             "bad": bad, "mode": "judge",
         }, ensure_ascii=False) + "\n")
     return 0 if not bad else 1
