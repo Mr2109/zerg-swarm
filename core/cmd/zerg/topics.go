@@ -24,7 +24,7 @@ func helpTopics() []helpTopic {
 	return []helpTopic{
 		{"exit-codes", "退码表（唯一真源）", helpExitCodes},
 		{"config", "五级配置优先级 + 凭据四条", helpConfig},
-		{"dangerous", "危险动作清单（23 条 · 三态）", helpDangerous},
+		{"dangerous", "危险动作清单（条数以 `zerg help dangerous` 现读为准 · 三态）", helpDangerous},
 		{"contract", "输出契约：三层版本 + 包封 + 字段稳定性承诺", helpContract},
 		{"errors", "error.kind 闭集 + 可重试性 + 自愈入口", helpErrors},
 		{"idempotency", "幂等四字段（幂等档/重跑语义/生效语义/危险档）", helpIdempotency},

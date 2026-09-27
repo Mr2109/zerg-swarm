@@ -7,7 +7,7 @@
 // §十二 `P-014`（D2 用 `--yes`；**D3 必须 `--confirm` 与 `--yes` 同时到**）。
 //
 // **本批（S2 · 批 A）零写操作**（§6.2 逐字：「批 1 期间**不许有任何写操作命令**」）⇒ 这里登记的是
-// **危险动作的形状与清单**，不是它们的实现：真跑一律**拒执**（退码 2 = 不给结论），只回**计划件**。
+// **危险动作的形状与清单**，不是它们的实现：**未开放的那批**真跑一律**拒执**（退码 2 = 不给结论），只回**计划件**；**已开放**的走自家 runner、确认档齐就真执行（逐条以 `zerg help dangerous` 现读为准）。
 package main
 
 import (
@@ -36,7 +36,7 @@ type dangerSpec struct {
 	ChecksConfirm bool
 }
 
-// cmdGuarded —— 所有登记为「危险」的动作的唯一执行门（本批只到「拒执 + 计划件」）。
+// cmdGuarded —— **登记到本门名下**（`run: cmdGuarded`）那批危险动作的执行门（未开放的那批只到「拒执 + 计划件」；**已开放**的各走自家 runner、不以本门为门 —— 逐条以 `zerg help dangerous` 现读为准）。
 func cmdGuarded(inv *invocation, stdout, stderr io.Writer) int {
 	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
 		return rc
