@@ -1,6 +1,6 @@
 // family_gate_matrix.go —— `zerg gate matrix`（§四 D4 · 缺口-命令面-20260921 §十一 P0-5）。
 //
-// 为什么它排 P0：命令面自己的 **241 条 must-fail 格**今天只以「计数」形式存在
+// 为什么它排 P0：命令面自己的 must-fail 格（**格数以 `core/cmd/zerg/testdata/cli-matrix.json` 的 `cases` 现读为准**）今天只以「计数」形式存在
 // （`check-cli-contract.py` 现跑：`命令树 … · 矩阵 case …`）—— **格本身导不出来**，
 // 而纪律要求「新增命令**同批**补 must-fail」。命令化之后：新增命令时能照着矩阵补格、
 // `M17 T1–T6` 从「脚本自查」升成「可回读的物」、门禁红时能一眼看出是**哪一格**红。
@@ -12,6 +12,7 @@
 //	退码 `0` 读到 / `8` 读不到（矩阵读不出）/ `2` 用法错（含 `--out` 档：缺 `--yes` · 两枚同给）
 //	三态（`--out <件>` 写面 · §九 M3 C1/C2）：`--dry-run` ⇒ 计划件走 stdout + 零落盘；
 //	缺 `--yes` ⇒ 计划件走 stderr + 2；`--dry-run` 与 `--yes` 同给 ⇒ 2（先过门、后落盘）
+//	★ 无 `--out` 时本命令是纯读面，这两枚确认档**被静默忽略**（不判、不报未知旗标）。
 //
 // ★ 真源只有一处：`core/cmd/zerg/testdata/cli-matrix.json`（本命令**只读它**，不重算、
 // 不重新生成 —— 生成/合并是 `check-cli-contract.py --emit-matrix` 的活，命令面不抢）。
