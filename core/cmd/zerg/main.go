@@ -1898,7 +1898,7 @@ func init() {
 			path:     []string{"gap", "export"},
 			kind:     "GapExport",
 			summary:  "缺口真源 → 「结转账 markdown 片段」导出面（**只读**：不写真源、不写审计）· **只列未闭**（`已解`/`不做` 不进正文，只进件头计数）· 件头 = 仪表盘（条数/未闭/已闭/逐面计数/最老未闭天数）· 单行 ≤200 字符 · 读不到真源 ⇒ 退 8（fail-closed）",
-			usage:    "zerg gap export [--json <字段>]",
+			usage:    "zerg gap export [--out <目录>] [--json <字段>]",
 			fields:   gapExportFields,
 			endpoint: "",
 			run:      cmdGapExport,
