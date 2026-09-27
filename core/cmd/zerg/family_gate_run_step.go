@@ -35,7 +35,7 @@ import (
 )
 
 // gateRunStepFields —— `gate run --step … --json` 的全部字段（K1：机器面先定）。
-var gateRunStepFields = []string{"step", "scope", "mode", "verdict", "rc", "secs", "log", "outdir"}
+var gateRunStepFields = []string{"step", "scope", "mode", "verdict", "rc", "secs", "log", "outdir", "log_body"}
 
 // gateRunStepJSON —— 单步档的机器面（人面仍由脚本原样给出，走 stderr）。
 //
@@ -155,6 +155,7 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 	row := map[string]string{
 		"step": d.Name, "scope": d.Scope, "mode": d.Mode, "outdir": outdir,
 		"verdict": "（读不到：脚本没落结果表）", "rc": "（读不到）", "secs": "（读不到）", "log": "（读不到）",
+		"log_body": "（读不到：脚本没落结果表）",
 	}
 	if body, rerr := os.ReadFile(filepath.Join(outdir, "results.tsv")); rerr == nil {
 		for _, ln := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
@@ -168,6 +169,18 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 	} else {
 		fmt.Fprintf(stderr, "%s: 结果表读不到（%s）：%v ⇒ 这一格的判决**不给结论**（不许当绿）\n",
 			progName, filepath.Join(outdir, "results.tsv"), rerr)
+	}
+	// ⑤ 门步**自己的 stdout 正文**（判据件的自检正文/逐格读数）从那一格日志件读回：
+	//   结果表的第 5 列就是这一步的日志件绝对路径（脚本「一步一文件」），命令面只**原样读回**，
+	//   不截断、不另拼一份报告 —— 读不到就写「（读不到）」并在 stderr 点名（不许编数）。
+	if lp := strings.TrimSpace(row["log"]); lp != "" && !strings.HasPrefix(lp, "（读不到") {
+		if body, lerr := os.ReadFile(lp); lerr == nil {
+			row["log_body"] = string(body)
+		} else {
+			row["log_body"] = "（读不到）"
+			fmt.Fprintf(stderr, "%s: 步骤日志件读不到（%s）：%v ⇒ `log_body` 写「（读不到）」（不许编格数）\n",
+				progName, lp, lerr)
+		}
 	}
 	if rc := listCmd(inv, stdout, stderr, gateRunStepFields, []map[string]string{row}); rc != exitOK {
 		return rc
