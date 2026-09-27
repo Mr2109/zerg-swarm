@@ -133,6 +133,7 @@ import argparse
 import atexit
 import fnmatch
 import glob
+import io
 import json
 import os
 import re
@@ -521,6 +522,21 @@ def tracked_files(root):
 # ══════════════════════════════════════════════════════════════════
 # 4. 汇总 / 报告
 # ══════════════════════════════════════════════════════════════════
+def counts_certify(a_covered, a_wl, a_red, a_items, b_counts, cands):
+    """计数自证 —— 两条恒等式：**三列表之和 == 总项数** ∧ **三档之和 == 候选数**。
+
+    ★ 为什么必须是一个**独立函数**（`GAP-20260928-11`）：这两条恒等式原先只在
+      `analyse()` 里就地算成一个 bool —— 判据与构造同源（三列表由 `:535-540` 三分支穷尽、
+      三档由 `script_tier` 三个 `return` 穷尽）⇒ **自我重述、恒真**，没有任何输入能把它置假，
+      `:706` 的「✗ ⇒ rc=2」成了死码、`:1021` 的自检只断言输出里有那两行字面串。
+      抽成这一处**唯一口径**之后：`analyse()` 与 `--self-test` 的成对负控**同走本函数** ——
+      自检里「三列表之和 ≠ 总项数 / 三档之和 ≠ 候选数」的合成输入置假的，就是真判据本身。
+    ★ 口径一字未放宽（仍是这两条恒等式），也不另开第三份计数口径。
+    """
+    return (len(a_covered) + len(a_wl) + len(a_red) == len(a_items)
+            and sum(b_counts.values()) == len(cands))
+
+
 def analyse(root, cfg, steps, gates_text, max_examples):
     cmds_text = "\n".join(s[4] for s in steps)
 
@@ -605,8 +621,7 @@ def analyse(root, cfg, steps, gates_text, max_examples):
     }
     rep["a"]["empty"] = len(a_items) == 0
     rep["b"]["empty"] = len(cands) == 0
-    rep["certify"] = (len(a_covered) + len(a_wl) + len(a_red) == len(a_items)
-                      and sum(rep["b"]["counts"].values()) == len(cands))
+    rep["certify"] = counts_certify(a_covered, a_wl, a_red, a_items, rep["b"]["counts"], cands)
     return rep
 
 
@@ -1019,6 +1034,37 @@ def self_test(sink=None, deep=None):
 
     # ── 计数自证行真的在 ────────────────────────────────────────────────
     check("⑮ 报告含「计数自证」两条恒等式", "计数自证" in out2 and "① 1 + ② 1 + ③ 0 = 2（候选 2）" in out2)
+
+    # ── ⑮b–⑮d 计数自证**成对负控**（`GAP-20260928-11`）：恒等式必须能被输入置假 ────────
+    #   判据面 = `counts_certify`（analyse 与这里**同一份**口径）⇒ 自检里置假 = 置假真判据。
+    #   ⑮b 正控（真仓形态：三列表 1+1+1 == 3 · 三档 1+1+1 == 3）⇒ ✓；
+    #   ⑮c/⑮d 负控（分别只砸两条恒等式中的一条）⇒ 必 ✗。**合起来才证明它有牙**。
+    _c3 = [{"script": "x"}, {"script": "y"}, {"script": "z"}]
+    _c_ok3 = {"in_steps": 1, "mentioned": 1, "unmentioned": 1}
+    check("⑮b 计数自证 正控：三列表 1+1+1 == 总项数 3 · 三档 1+1+1 == 候选 3 ⇒ ✓",
+          counts_certify([1], [1], [1], _c3, _c_ok3, _c3) is True)
+    check("⑮c 计数自证 负控：三列表 1+1+0 == 2 ≠ 总项数 3 ⇒ **必 ✗**（三列表那一半有牙）",
+          counts_certify([1], [1], [], _c3, _c_ok3, _c3) is False)
+    check("⑮d 计数自证 负控：三档 1+1+0 == 2 ≠ 候选数 3 ⇒ **必 ✗**（三档那一半有牙）",
+          counts_certify([1], [1], [1], _c3,
+                         {"in_steps": 1, "mentioned": 1, "unmentioned": 0}, _c3) is False)
+    #   ★ 端到端成对负控：判据被置假 ⇒ **真退 2**（证明 `:706`/`:1178` 那条路不是死码）；
+    #     复位后**同一夹具**回绿。两次都走真 `main()`（只把判据与 stdout 换掉，别的一字不动）。
+    _sv_cert, _sv_out = globals()["counts_certify"], sys.stdout
+    _buf_bad, _buf_ok = io.StringIO(), io.StringIO()
+    try:
+        globals()["counts_certify"] = lambda *a, **k: False
+        sys.stdout = _buf_bad
+        rc_bad = main(["--no-self-test", "--root", good])
+        globals()["counts_certify"] = _sv_cert
+        sys.stdout = _buf_ok
+        rc_ok = main(["--no-self-test", "--root", good])
+    finally:
+        globals()["counts_certify"] = _sv_cert
+        sys.stdout = _sv_out
+    check("⑮e 端到端负控：计数自证被置假 ⇒ rc=2（不给结论，不是死码）", rc_bad == 2, "rc=%d" % rc_bad)
+    check("⑮f 且逐字点名「计数自证不过」", "计数自证不过" in _buf_bad.getvalue())
+    check("⑮g 正控：判据复位后**同一夹具**⇒ rc=0（与 ⑮e 成对）", rc_ok == 0, "rc=%d" % rc_ok)
 
     # ── ④ 新格：**新件未挂门**（与存量债分开）—— 成对负控 ─────────────────
     #   判据面 = 「不在 git 索引里」⇒ 夹具必须先真 `git init` + `git add`（不提交）。
