@@ -1,4 +1,10 @@
-// `zerg gap export` —— 缺口真源 → 「结转账 markdown 片段」导出面（**只读**：不写真源、不写审计）。
+// `zerg gap export` —— 缺口真源 → 「结转账 markdown 片段」导出面（**只打 stdout 时零写盘**：不写真源、不写审计）。
+//
+// 两面（命令表项 2026-09-27 补 `danger: D2` —— 此前写命令冒充只读档 ✗）：
+//   - **只读面**（裸跑 / `--json`）：零写盘，保持旧行为一字不变；
+//   - **写面**（`--out <目录>`，`ddf57491` 接上）：拆件落盘 ⇒ 三态照同族 `gap add|verify`
+//     （`§九 M3 C1` 危险档→确认档一一映射）：`--dry-run` ⇒ 计划件 stdout + rc=0（**连目录都不建**）/
+//     缺 `--yes` ⇒ 计划件 stderr + 2（fail-closed：从不提问）/ `--yes` 才真写。
 //
 // 病根（设计稿 `设计-缺口账视图分离-v1.1/v1.2/v1.3` §1 · 真源 `GAP-20260925-02`）：
 // CLI 真源（`<状态目录>/zerg-cli-gaps.jsonl`）与文档侧的结转账（`Zerg-内部文档/…/缺口总账-*.md`）
@@ -271,6 +277,20 @@ func gapExportWriteFiles(inv *invocation, stdout, stderr io.Writer, led gapLedge
 		fmt.Fprintf(stderr, "%s: `--out %s` 落点是单件、不是目录 ⇒ 退 8（拆件要目录；不覆盖别人的件）\n", progName, dir)
 		return exitBlocked
 	}
+	// ★ 三态门（D2 · §九 M3 C1/C2 —— 与同族 `gap add|verify` 逐字同一条）：
+	//   `--dry-run` ⇒ 计划件走 stdout + rc=0（**连目录都不建**）；缺 `--yes` ⇒ 计划件走 stderr + 2
+	//   （fail-closed：从不提问）。两条都在 `os.MkdirAll` **之前** ⇒ 本档一个字节都不落。
+	//   退码与真跑**同一张表**（预演不新增码）：`--out` 空值 ⇒ 2 / 落点是单件 ⇒ 8 已在读盘面先判。
+	if inv.dryRun {
+		gapExportOutPlan(stdout, led, open, closedCount, noDecideCount, dir, "--dry-run")
+		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未建目录、未落任何件；真源与审计一个字未动）\n")
+		return exitOK
+	}
+	if !inv.yes {
+		gapExportOutPlan(stderr, led, open, closedCount, noDecideCount, dir, "缺 `--yes`（D2 档）")
+		inv.setErr("usage", "yes_required", "缺 --yes")
+		return exitUsage
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		inv.setErr("blocked", "out_mkdir_failed", "建不出产出目录")
 		fmt.Fprintf(stderr, "%s: 建不出产出目录 %s：%v（退码 8 —— fail-closed，缺目录不当绿）\n", progName, dir, err)
@@ -386,4 +406,45 @@ func gapExportWriteFiles(inv *invocation, stdout, stderr io.Writer, led gapLedge
 	fmt.Fprintf(stdout, "未闭 %d 条 · 每页上限 %d 条 · 单行上限 %d 字符（**不许手改**）\n",
 		len(open), gapExportPageSize, gapExportLineMax)
 	return exitOK
+}
+
+// gapExportOutPlan —— `--out` 落盘面的**计划件**（`--dry-run` ⇒ 走 stdout · 缺 `--yes` ⇒ 走 stderr）。
+//
+// 纯函数：只**算**件名与条数、只往 `io.Writer` 写 ⇒ dryrun.v1「零副作用」的落点就在这一行
+// （不建目录 · 不落件 · 不写真源 · 不写审计）。件名与真写**同一份算法**（`gapExportOutPrefix` /
+// `gapExportPageSize` / `gapImpactClosed` 六值闭集）—— 计划与真跑不许两套名字（名字不对 = 假预演 ✗）。
+func gapExportOutPlan(w io.Writer, led gapLedger, open []gapRecord, closedCount, noDecideCount int, dir, why string) {
+	date := time.Now().Format("2006-01-02")
+	perImpact := map[string]int{}
+	for _, r := range open {
+		perImpact[r.Impact]++
+	}
+	fmt.Fprintf(w, "计划件（%s · `zerg gap export --out %s`）\n", why, dir)
+	fmt.Fprintf(w, "  落点目录 : %s\n", dir)
+	fmt.Fprintf(w, "  真源     : %s（只读：本档不写真源、不写审计）\n", led.Path)
+	fmt.Fprintf(w, "  计数     : 真源 %d 条 · 未闭 %d · 已闭 %d（其中「不做」%d）\n",
+		len(led.Recs), len(open), closedCount, noDecideCount)
+	nPages := 0
+	for _, im := range gapImpactClosed {
+		n := perImpact[im]
+		if n == 0 {
+			continue // 空面不出件（一级 = 面）
+		}
+		total := (n + gapExportPageSize - 1) / gapExportPageSize
+		fmt.Fprintf(w, "  面       : %s（%d 条 · %d 页）\n", im, n, total)
+		for pg := 1; pg <= total; pg++ {
+			lo := (pg-1)*gapExportPageSize + 1
+			hi := lo + gapExportPageSize - 1
+			if hi > n {
+				hi = n
+			}
+			fmt.Fprintf(w, "  页件     : %s-%s-%s-p%02d.md（面内 %d–%d 条）\n",
+				gapExportOutPrefix, date, im, pg, lo, hi)
+			nPages++
+		}
+	}
+	fmt.Fprintf(w, "  索引件   : %s-%s.md\n", gapExportOutPrefix, date)
+	fmt.Fprintf(w, "  件数     : 索引 1 + 页 %d\n", nPages)
+	fmt.Fprintf(w, "  落盘次序 : 先页件、后索引件（索引是入口 ⇒ 只有全部页件都写成才落它）\n")
+	fmt.Fprintf(w, "  未执行   : %s —— 本档**一个字节都不落**（真写要 `--yes`）\n", why)
 }

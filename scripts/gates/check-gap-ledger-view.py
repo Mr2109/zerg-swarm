@@ -94,8 +94,18 @@ SOURCE_NAME = "zerg-cli-gaps.jsonl"
 STATE_DIR_DEFAULT = os.path.join(os.path.expanduser("~"), ".zerg", "state")
 LEDGER_DIR = "项目文档"
 LEDGER_NAME_RE = re.compile(r"^缺口总账-(\d{8})\.md$")
+#   ★ 拆件后的**件族**形状（2026-09-27 现读真产出现形状）：索引件 `缺口总账-<日期>.md`
+#   + 页件 `缺口总账-<日期>-<面>-pNN.md`（面 = 六值闭集 · pNN 两位）。日期两种形态都收：
+#   `20260927`（历史件既有形态）与 `2026-09-27`（拆件产出形态）—— 归一化只去 `-` 再比。
+LEDGER_DATE_PAT = r"(\d{8}|\d{4}-\d{2}-\d{2})"
+INDEX_NAME_RE = re.compile(r"^缺口总账-%s\.md$" % LEDGER_DATE_PAT)
+PAGE_NAME_RE = re.compile(r"^缺口总账-%s-([^-]+)-p(\d{2})\.md$" % LEDGER_DATE_PAT)
 #   生成标记逐字句（`zerg gap export` 人面第 3 行现读逐字 · 本件照抄、不新造）
 GENERATED_MARKER = "> 生成件：由 `zerg gap export`"
+#   ★ 生成标记的逐字句**含「命令怎么调的」**：真 `zerg gap export` 人面 = 上面那一句；拆件产出
+#   （`zerg gap export --out <目录>`）把旗标写进反引号里 ⇒ 收尾反引号那一字对不上（现读真产出坐实）。
+#   ⇒ 收两种形态：完整句 + **同一句去掉收尾反引号的前缀**（同源派生 · 不新造口径）。
+GENERATED_MARKERS = (GENERATED_MARKER, GENERATED_MARKER.rstrip("`"))
 #   未闭 / 已闭态闭集（与 export 的 gapOpenStates / gapStateClosed 同口径）
 OPEN_STATES = ("仍缺", "已派", "已立项", "回归")
 CLOSED_STATES = ("已解", "不做")
@@ -295,6 +305,66 @@ def collect_ledgers(docs):
     return current, history, [x for x in found if x["exempt"]]
 
 
+def collect_ledgers_family(docs):
+    """★ 件族（**新增** · 2026-09-27 拆件后）：索引件 / 页件族（三锁）/ 历史件 / 豁免件。
+
+    三锁（页件必须三条同时满足才进族；不满足 ⇒ 落历史件**只报告**，绝不静默丢弃 ✗）：
+      ① 名：`PAGE_NAME_RE` 枚举式匹配，且「面」∈ 六值闭集、页号两位；
+      ② 日期：与索引件**归一化后**同日期（`2026-09-27` == `20260927`）；
+      ③ 同目录：与索引件同一目录（`os.path.dirname` 逐字相等）。
+    ★ 排序键补件名 + **索引件优先**：旧键 `(vkey(ver), date)` 不含件名 ⇒ 索引件与页件同键、
+      `cand[-1]` 可能挑中**页件**（真缺陷）。本函数先分池，当期 = **索引池**里 (版本, 日期, 件名) 最大者。
+    """
+    base = os.path.join(docs, LEDGER_DIR)
+    found = []
+    if os.path.isdir(base):
+        for ver in sorted(os.listdir(base)):
+            vdir = os.path.join(base, ver)
+            if not os.path.isdir(vdir):
+                continue
+            for root, _dirs, files in os.walk(vdir):
+                for fn in sorted(files):
+                    pm = PAGE_NAME_RE.match(fn)
+                    m = INDEX_NAME_RE.match(fn)
+                    if not pm and not m:
+                        continue
+                    p = os.path.join(root, fn)
+                    rel = os.path.relpath(p, docs)
+                    g = pm or m
+                    found.append({"path": p, "rel": rel, "ver": ver,
+                                  "dir": os.path.dirname(p),
+                                  "kind": "page" if pm else "index",
+                                  "date": g.group(1), "date_key": g.group(1).replace("-", ""),
+                                  "face": pm.group(2) if pm else "",
+                                  "page": pm.group(3) if pm else "",
+                                  "exempt": any(seg in rel for seg in EXEMPT_PATH_SEGS)})
+
+    def vkey(ver):
+        nums = re.findall(r"\d+", ver)
+        return (tuple(int(x) for x in nums), ver)
+
+    live = [x for x in found if not x["exempt"]]
+    idx_pool = [x for x in live if x["kind"] == "index"]
+    idx_pool.sort(key=lambda x: (vkey(x["ver"]), x["date_key"], x["path"]))
+    index = idx_pool[-1] if idx_pool else None
+    pages, orphans = [], []
+    if index is not None:
+        for x in live:
+            if x["kind"] != "page":
+                continue
+            ok = (x["face"] in IMPACT_CLOSED and x["date_key"] == index["date_key"]
+                  and x["dir"] == index["dir"])
+            (pages if ok else orphans).append(x)
+        pages.sort(key=lambda x: (x["face"], x["page"], x["path"]))
+    else:
+        orphans = [x for x in live if x["kind"] == "page"]
+    family = ([index] if index else []) + pages
+    fam_paths = set(x["path"] for x in family)
+    history = [x for x in found if x["path"] not in fam_paths]
+    return {"index": index, "pages": pages, "family": family, "history": history,
+            "exempt": [x for x in found if x["exempt"]], "orphan_pages": orphans}
+
+
 def split_diff(want, got):
     """两个 id 集的差集（(仅 want 有, 仅 got 有)）。"""
     w, g = set(want), set(got)
@@ -361,14 +431,22 @@ def run(root, docs_root, source, json_out, export_cmd=None):
                                  "read": {"bytes": len(eout.encode())}})
 
     # ── 当期结转账件 + 历史件（R6 只报告）────────────────────────────────────────
-    current, history, exempt = collect_ledgers(docs)
+    #   ★ 选件 = **件族**（索引池 / 页池分选 · 索引件优先为当期）
+    fam = collect_ledgers_family(docs)
+    current, pages, history, exempt = fam["index"], fam["pages"], fam["history"], fam["exempt"]
     led = None
     if current is None:
-        problems.append({"rule": "R5", "what": "文档仓里一件 `缺口总账-*.md` 都没有（空转 ⇒ 判不了三方）",
+        problems.append({"rule": "R5", "what": "文档仓里一件当期**索引件** `缺口总账-<日期>.md` 都没有"
+                         "（空转 ⇒ 判不了三方）",
                          "read": {"glob": "%s/<版>/缺口总账-<日期>.md" % LEDGER_DIR}})
     else:
         led = ledger_stats(current["path"])
         led["rel"] = current["rel"]
+    fam_led = []  # ★ 族内逐件现读（R2/R3 逐件判的靶子）
+    for x in fam["family"]:
+        s = ledger_stats(x["path"])
+        s["rel"], s["kind"] = x["rel"], x["kind"]
+        fam_led.append((x, s))
     for x in history:
         s = ledger_stats(x["path"])
         reports.append({"rule": "R6", "what": "历史账（只报告 · 不入退码）%s" % x["rel"],
@@ -415,13 +493,17 @@ def run(root, docs_root, source, json_out, export_cmd=None):
             reds.append({"rule": "R1a", "what": "「不做」%d > 已闭 %d（不可能）"
                          % (exp["no_decide"], exp["closed"]), "read": {}})
         # R1b：真源 ↔ 当期结转账件（第三方腿）
-        ldiff_miss, ldiff_extra = split_diff(sread["open"], led["ids"])
+        fam_ids = sorted(set(i for _x, _s in fam_led for i in _s["ids"]))
+        page_ids = [(_s["rel"], _s["ids"]) for _x, _s in fam_led if _x["kind"] == "page"]
+        ldiff_miss, ldiff_extra = split_diff(sread["open"], fam_ids)
         r1["ledger"] = {"rel": led["rel"], "lines": led["lines"], "bytes": led["bytes"],
                         "generated": led["generated"], "ids": len(led["ids"]),
-                        "header": led["header"]}
-        if not led["generated"]:
+                        "header": led["header"], "pages": len(pages),
+                        "family_ids": len(fam_ids)}
+        if not any(_mk in led["text"] for _mk in GENERATED_MARKERS):
             reds.append({"rule": "R1b", "what": "**生成件未接管**：当期结转账件 `%s` 里没有生成标记逐字句"
-                         "「%s」⇒ 它仍是手写账（第三方腿不是真源视图）" % (led["rel"], GENERATED_MARKER),
+                         "「%s」（或**同一句去掉收尾反引号**的前缀形态）⇒ 它仍是手写账（第三方腿不是真源视图）"
+                         % (led["rel"], GENERATED_MARKER),
                          "read": {}})
         elif led["header"]:
             if led["header"]["open"] != exp["open"]:
@@ -436,23 +518,45 @@ def run(root, docs_root, source, json_out, export_cmd=None):
         if ldiff_extra:
             reds.append({"rule": "R1b", "what": "账件里有、真源未闭里**多**（含已闭/历史号）", "read": {}})
             reds[-1]["name"] = name_list(ldiff_extra, "多")
+        #   ★ R1c：页件两两 id 不交 —— 同一号在两页各点一次时【并集仍然对】⇒ 必须独立判
+        seen, dup_pairs = {}, []
+        for _rel, _ids in page_ids:
+            for _i in _ids:
+                if _i in seen:
+                    dup_pairs.append((_i, seen[_i], _rel))
+                seen.setdefault(_i, _rel)
+        if dup_pairs:
+            reds.append({"rule": "R1c", "what": "页件两两 id 有交集（同一号在多页重复 ⇒ 并集会把重页完全掩盖）：%d 处"
+                         % len(dup_pairs), "read": {"first": [list(x) for x in dup_pairs[:3]]}})
+            reds[-1]["name"] = name_list(sorted(set(x[0] for x in dup_pairs)), "重号")
+        #   ★ R1d：Σ页条目 == 索引件头「未闭」—— 漏页时并集少号、重页时并集掩盖 ⇒ 独立的一格
+        if pages and led["header"]:
+            _ptot = sum(len(v) for _r, v in page_ids)
+            if _ptot != led["header"]["open"]:
+                reds.append({"rule": "R1d", "what": "Σ页条目 %d ≠ 索引件头「未闭 %d」（漏页 / 重页 / 多算）"
+                             % (_ptot, led["header"]["open"]),
+                             "read": {"page_entries": _ptot, "index_open": led["header"]["open"]}})
 
     # ── R2 体积 ─────────────────────────────────────────────────────────────────
-    if led is not None:
+    #   ★ R2 体积：**逐件**（索引件 + 每一页件各判一次）
+    for _x, _s in fam_led:
         over = []
-        if led["lines"] > MAX_LINES:
-            over.append("行数 %d > 上限 %d" % (led["lines"], MAX_LINES))
-        if led["bytes"] > MAX_BYTES:
-            over.append("字节 %d > 上限 %d" % (led["bytes"], MAX_BYTES))
+        if _s["lines"] > MAX_LINES:
+            over.append("行数 %d > 上限 %d" % (_s["lines"], MAX_LINES))
+        if _s["bytes"] > MAX_BYTES:
+            over.append("字节 %d > 上限 %d" % (_s["bytes"], MAX_BYTES))
         if over:
-            reds.append({"rule": "R2", "what": "结转账件体积超限：%s（件 `%s`）" % (" · ".join(over), led["rel"]),
-                         "read": {"lines": led["lines"], "bytes": led["bytes"]}})
+            reds.append({"rule": "R2", "what": "结转账件体积超限：%s（件 `%s`）" % (" · ".join(over), _s["rel"]),
+                         "read": {"lines": _s["lines"], "bytes": _s["bytes"]}})
 
     # ── R3 单行 ─────────────────────────────────────────────────────────────────
-    if led is not None and led["maxline_len"] > MAX_LINE_CHARS:
-        reds.append({"rule": "R3", "what": "结转账件最长行 %d 字符 > 上限 %d（第 %d 行 · 前 60 字：%s）"
-                     % (led["maxline_len"], MAX_LINE_CHARS, led["maxline_no"], led["maxline_head"]),
-                     "read": {"line": led["maxline_no"], "len": led["maxline_len"]}})
+    #   ★ R3 单行：**逐件**
+    for _x, _s in fam_led:
+        if _s["maxline_len"] > MAX_LINE_CHARS:
+            reds.append({"rule": "R3", "what": "结转账件最长行 %d 字符 > 上限 %d（第 %d 行 · 前 60 字：%s）（件 `%s`）"
+                         % (_s["maxline_len"], MAX_LINE_CHARS, _s["maxline_no"], _s["maxline_head"],
+                            _s["rel"]),
+                         "read": {"line": _s["maxline_no"], "len": _s["maxline_len"]}})
 
     # ── R4 写保护（指纹 · 有则判红 / 无则只报告）──────────────────────────────────
     r4 = {"export_fp": exp["fingerprint"] if exp else None,
@@ -491,6 +595,10 @@ def run(root, docs_root, source, json_out, export_cmd=None):
                                 "max_line_chars": MAX_LINE_CHARS},
                      "export": r1["export"], "ledger": r1["ledger"],
                      "history_ledgers": len(history), "exempt_ledgers": len(exempt),
+                     "ledger_family": {"index": led["rel"] if led else None,
+                                       "pages": len(pages),
+                                       "family_ids": len(fam_ids) if not problems else None,
+                                       "orphan_pages": len(fam["orphan_pages"])},
                      "fingerprint": r4, "generated_taken_over": bool(led and led["generated"])},
             "reds": reds, "problems": problems, "reports": reports, "warnings": [],
             "truncated": False,
@@ -504,7 +612,9 @@ def run(root, docs_root, source, json_out, export_cmd=None):
     print("  真源    : %s" % src)
     print("  导出器  : %s %s（**现跑**）" % (EXPORT_BIN, " ".join(EXPORT_ARGS)))
     print("  文档仓  : %s" % docs)
-    print("  当期账件: %s" % (led["rel"] if led else "（一件都没有）"))
+    print("  当期索引件: %s" % (led["rel"] if led else "（一件都没有）"))
+    print("  页件    : %d 件（历史件 %d · 豁免件 %d · 非族页件 %d）"
+          % (len(pages), len(history), len(exempt), len(fam["orphan_pages"])))
     if not problems:
         print("  ── R1 三方对拍 ──")
         print("     真源    : %d 条 · 未闭 %d · 已闭 %d" % (sread["recs"], len(sread["open"]), len(sread["closed"])))
@@ -512,14 +622,19 @@ def run(root, docs_root, source, json_out, export_cmd=None):
               % (exp["total"], exp["open"], exp["closed"], exp["no_decide"], len(exp["bullets"]), exp["foot_open"]))
         print("     账件    : %s（生成件=%s）· 行 %d · 字节 %d · id %d 个"
               % (led["rel"], "是" if led["generated"] else "**否**✗", led["lines"], led["bytes"], len(led["ids"])))
-        print("  ── R2 体积 ──")
-        print("     行数 %d / 上限 %d %s · 字节 %d / 上限 %d %s"
-              % (led["lines"], MAX_LINES, "✓" if led["lines"] <= MAX_LINES else "**超**✗",
-                 led["bytes"], MAX_BYTES, "✓" if led["bytes"] <= MAX_BYTES else "**超**✗"))
-        print("  ── R3 单行 ──")
-        print("     最长行 %d 字符（第 %d 行）/ 上限 %d %s"
-              % (led["maxline_len"], led["maxline_no"], MAX_LINE_CHARS,
-                 "✓" if led["maxline_len"] <= MAX_LINE_CHARS else "**超**✗"))
+        print("     件族    : 索引 1 + 页 %d ⇒ 族内 id 并集 %d 个 · Σ页条目 %d"
+              % (len(pages), len(fam_ids),
+                 sum(len(_s["ids"]) for _x, _s in fam_led if _x["kind"] == "page")))
+        print("  ── R2 体积（逐件）──")
+        for _x, _s in fam_led:
+            print("     [%s] 行数 %d / 上限 %d %s · 字节 %d / 上限 %d %s"
+                  % (_s["rel"], _s["lines"], MAX_LINES, "✓" if _s["lines"] <= MAX_LINES else "**超**✗",
+                     _s["bytes"], MAX_BYTES, "✓" if _s["bytes"] <= MAX_BYTES else "**超**✗"))
+        print("  ── R3 单行（逐件）──")
+        for _x, _s in fam_led:
+            print("     [%s] 最长行 %d 字符（第 %d 行）/ 上限 %d %s"
+                  % (_s["rel"], _s["maxline_len"], _s["maxline_no"], MAX_LINE_CHARS,
+                     "✓" if _s["maxline_len"] <= MAX_LINE_CHARS else "**超**✗"))
         print("  ── R4 写保护 ──")
         print("     导出产出指纹: %s · 账件指纹: %s" % (r4["export_fp"] or "**无**",
                                                      r4["ledger_fp"] or "**无**"))
@@ -784,6 +899,101 @@ def self_test():
     rc, out = cap(r13, d13, s13, False, [sys.executable, fixture])
     case("⑬ 负控 R1b：条目标记形式的 `Q-999` ⇒ rc=1 点名「多」", 1, rc,
          ("[R1b]" in out and "`Q-999`" in out and "多" in out))
+
+
+    # ── ★ 件族（索引件 + 页件）：2026-09-27 拆件后**新增**的格（老 13 格一字未动）────────
+    def mk_family(src_recs, exp_md, index_lines, page_files, export_rc=0):
+        """件族夹具（**新函数** · 不动 mk）：索引件 + 页件同落 `项目文档/vX/`。"""
+        n_case[0] += 1
+        base = os.path.join(tmp, "case-%02d" % n_case[0])
+        repo = os.path.join(base, "repo")
+        os.makedirs(os.path.join(repo, "scripts", "gates"), exist_ok=True)
+        state = os.path.join(base, "state")
+        os.makedirs(state, exist_ok=True)
+        with open(os.path.join(state, SOURCE_NAME), "w", encoding="utf-8") as f:
+            for r in src_recs:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        with open(os.path.join(state, "export-rc"), "w", encoding="utf-8") as f:
+            f.write(str(export_rc))
+        with open(os.path.join(state, "export-fixture.md"), "w", encoding="utf-8") as f:
+            f.write(exp_md)
+        docs = os.path.join(base, "Zerg-内部文档")
+        vdir = os.path.join(docs, LEDGER_DIR, "vX")
+        os.makedirs(vdir, exist_ok=True)
+        with open(os.path.join(vdir, "缺口总账-2026-09-27.md"), "w", encoding="utf-8") as f:
+            f.write("\n".join(index_lines) + "\n")
+        for fn, lines in page_files:
+            with open(os.path.join(vdir, fn), "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        return repo, docs, os.path.join(state, SOURCE_NAME)
+
+    def index_md(items, pages, marker=True):
+        """索引件正文：件头（HDR 认得出未闭数）+ 逐页清单。"""
+        per = collections.Counter(i["impact"] for i in items)
+        head = ["> 生成件：由 `zerg gap export` 从真源 `/x/zerg-cli-gaps.jsonl` 生成 —— "
+                "**不许手改** ✗（手改会被门禁判红）。"] if marker else ["> 说明：本件手写。"]
+        out = ["## 缺口真源导出（**只列未闭**） · 2026-09-27", ""] + head + [
+            "> 真源条数 **%d** · 未闭 **%d** · 已闭 **%d**（其中「不做」**%d**）"
+            % (len(items) + 1, len(items), 1, 0),
+            "> 按面：%s" % " · ".join("%s %d" % (f, per[f]) for f in IMPACT_CLOSED),
+            "> 拆件：一级 = 面 · 二级 = 每页 120 条 · 页件名 `缺口总账-<日期>-<面>-pNN.md`", ""]
+        for face, cnt in pages:
+            out.append("### %s（%d 条）" % (face, cnt))
+            out.append("")
+            out.append("- 第 1 页：`缺口总账-2026-09-27-%s-p01.md` · 面内 1–%d 条" % (face, cnt))
+        return out
+
+    def page_md(items, face, pno=1, total=None):
+        """页件正文（真产出形状：页头逐字 + 条目行）。"""
+        out = ["# %s · 缺口总账 2026-09-27" % face, "",
+               "> 第 %d 页·本页 %d 条·面内 1–%d 条·本面共 %d 条"
+               % (pno, len(items), len(items), total if total is not None else len(items)),
+               "> 真源 = `/x/zerg-cli-gaps.jsonl` · 面内顺序 = `(prioRank, id)` 稳定序 · "
+               "单行上限 200 字符 · 生成件**不许手改** ✗", ""]
+        for i in items:
+            out.append("- `%s` %s · **%s** · %s" % (i["id"], i["prio"], i["state"], i["symptom"]))
+        return out
+
+    E = rec("GAP-20260927-01", symptom="戊")
+    F = rec("GAP-20260927-02", symptom="己")
+    G = rec("GAP-20260927-03", impact="门禁面", symptom="庚")
+    fam_items = [E, F, G]
+    exp_efg = mk_export_md(fam_items, 4, 1, 0)
+    idx_lines = index_md(fam_items, [("命令面", 2), ("门禁面", 1)])
+    p_cmd = page_md([E, F], "命令面")
+    p_doc = page_md([G], "门禁面")
+
+    # ⑭ 正控 · 件族：索引 + 2 页（并集 == 真源未闭 · Σ页 == 索引件头未闭）⇒ rc=0
+    r14, d14, s14 = mk_family(fam_items + [B], exp_efg, idx_lines,
+                              [("缺口总账-2026-09-27-命令面-p01.md", p_cmd),
+                               ("缺口总账-2026-09-27-门禁面-p01.md", p_doc)])
+    rc, out = cap(r14, d14, s14, False, [sys.executable, fixture])
+    case("⑭ 正控 · 件族（索引+2 页 · 并集一致）⇒ rc=0", 0, rc, "三方一致" in out)
+
+    # ⑮ 负控 · 漏页：p02 缺 ⇒ Σ页 2 ≠ 索引件头 3（并集也少号）⇒ rc=1
+    r15, d15, s15 = mk_family(fam_items + [B], exp_efg, idx_lines,
+                              [("缺口总账-2026-09-27-命令面-p01.md", page_md([E], "命令面", total=2)),
+                               ("缺口总账-2026-09-27-门禁面-p01.md", p_doc)])
+    rc, out = cap(r15, d15, s15, False, [sys.executable, fixture])
+    case("⑮ 负控 · 漏页（Σ页 2 ≠ 索引件头未闭 3）⇒ rc=1 + [R1d]", 1, rc,
+         ("[R1d]" in out and "[R1b]" in out))
+
+    # ⑯ 负控 · 重页：F 同时出现在两页 ⇒ 并集仍对（掩盖）⇒ 必须由 R1c 抓到 ⇒ rc=1
+    r16, d16, s16 = mk_family(fam_items + [B], exp_efg, idx_lines,
+                              [("缺口总账-2026-09-27-命令面-p01.md", p_cmd),
+                               ("缺口总账-2026-09-27-命令面-p02.md", page_md([F, G], "命令面", pno=2))])
+    rc, out = cap(r16, d16, s16, False, [sys.executable, fixture])
+    case("⑯ 负控 · 重页（并集仍一致 ⇒ 靠 R1c 抓）⇒ rc=1 + [R1c]", 1, rc,
+         ("[R1c]" in out and "[R1b]" not in out and "[R1d]" in out))
+
+    # ⑰ 三锁 · 日期锁：异日期的页件**不进族**（落历史 · 只报告）⇒ rc=0
+    r17, d17, s17 = mk_family(fam_items + [B], exp_efg, idx_lines,
+                              [("缺口总账-2026-09-27-命令面-p01.md", p_cmd),
+                               ("缺口总账-2026-09-27-门禁面-p01.md", p_doc),
+                               ("缺口总账-2026-09-26-命令面-p01.md", page_md([E, F], "命令面"))])
+    rc, out = cap(r17, d17, s17, False, [sys.executable, fixture])
+    case("⑰ 三锁（日期锁）：异日期页件不入族 · 只报告 ⇒ rc=0 + [R6]", 0, rc,
+         ("[R6]" in out and "三方一致" in out))
 
     print("自检格数: %d" % n_case[0])
     print("自检结论: " + ("全过" if ok else "**有断言失败**"))
