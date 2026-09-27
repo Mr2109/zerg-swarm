@@ -83,14 +83,95 @@ func TestPublishSet_ThreeBlockedOneControl(t *testing.T) {
 	}
 }
 
+// TestPublishSet_PrivateFaceHardGate —— 必验①：真在 `publish/private-paths.txt` 里的件 ⇒ 不发 + 层名
+// `私有面硬门禁`；不在清单里的件 ⇒ 该层名**不出现**（两半都在一条口令里现跑对拍）。
+//
+// 真源现读：`scripts/gates/check-history-secrets.py` 是 `publish/private-paths.txt:73` 逐字一行
+// （发布机制自身 · 只增不减）；`core/cmd/zerg/main.go` 不在那份清单里（控制件）。
+func TestPublishSet_PrivateFaceHardGate(t *testing.T) {
+	const privateFile = "scripts/gates/check-history-secrets.py"
+	const control = "core/cmd/zerg/main.go"
+	rc, out, errb := publishSetRun(t, "publish", "set", privateFile, control,
+		"--json", "path,caliber,will_publish,layer,public_path,private_face,non_blob_basis")
+	t.Logf("rc=%d\nstdout=%s\nstderr=%s", rc, out, errb)
+	if rc != 0 {
+		t.Fatalf("两件都给出了答案（「不发」也是答案）⇒ rc=0，得到 %d · stderr=%s", rc, errb)
+	}
+	items := publishTreeItems(t, out)
+	if len(items) != 2 {
+		t.Fatalf("点名 2 件 ⇒ 必须 2 条读数，得到 %d 条", len(items))
+	}
+	// ① 私有面件：不发 + 层名 = 私有面硬门禁 + `private_face` 报出命中的规则。
+	if items[0]["will_publish"] != "否" {
+		t.Errorf("%s 该是「不发」（私有面硬门禁），得到 %q", privateFile, items[0]["will_publish"])
+	}
+	if items[0]["layer"] != "私有面硬门禁" {
+		t.Errorf("%s 该报「拦的层 = 私有面硬门禁」，得到 %q", privateFile, items[0]["layer"])
+	}
+	if f := items[0]["private_face"]; f == "" || f == "—" {
+		t.Errorf("%s 的 `private_face` 该报出命中的规则，得到 %q", privateFile, f)
+	}
+	if items[0]["public_path"] != "—" {
+		t.Errorf("%s 不发却给了公开路径 %q", privateFile, items[0]["public_path"])
+	}
+	// ② 控制件：该层名**不出现**（读数仍是既有五层那一套）。
+	if items[1]["layer"] == "私有面硬门禁" {
+		t.Errorf("%s 不在私有面清单里，却报了 `私有面硬门禁`（假命中）", control)
+	}
+	if items[1]["private_face"] != "—" {
+		t.Errorf("%s 的 `private_face` 该是「未命中」，得到 %q", control, items[1]["private_face"])
+	}
+}
+
+// TestPublishSet_NonBlobLayerUnreachable —— 必验②：⑥ 非 blob 层**拿不到结论**（免树口径不读树/索引）
+// ⇒ 逐条照实登记在 `non_blob_basis` 那一格里（**声明**，不是猜），且**不动**既有五层的读数。
+//
+// 真跑形态：本仓 `git ls-files -s` 现读有 2 条 gitlink（`vendor/rtk` / `vendor/searxng`，模式 `160000`），
+// 但本命令**不读**索引/树 ⇒ 拿不到模式 ⇒ 那一格恒为「拿不到结论」（拿一个**真** gitlink 跑也照此）。
+func TestPublishSet_NonBlobLayerUnreachable(t *testing.T) {
+	const gitlink = "vendor/rtk" // 现读：git ls-files -s ⇒ `160000 … vendor/rtk`
+	rc, out, errb := publishSetRun(t, "publish", "set", gitlink,
+		"--json", "path,caliber,will_publish,layer,public_path,private_face,non_blob_basis")
+	t.Logf("rc=%d\nstdout=%s\nstderr=%s", rc, out, errb)
+	if rc != 0 {
+		t.Fatalf("「拿不到结论」落在**单层**这一格上 ⇒ 命令仍是 rc=0，得到 %d", rc)
+	}
+	items := publishTreeItems(t, out)
+	if len(items) != 1 {
+		t.Fatalf("点名 1 件 ⇒ 必须 1 条读数，得到 %d 条", len(items))
+	}
+	basis := items[0]["non_blob_basis"]
+	if !strings.Contains(basis, "非 blob（子模块 gitlink）") {
+		t.Errorf("`non_blob_basis` 里该点名层名 `非 blob（子模块 gitlink）`，得到 %q", basis)
+	}
+	if !strings.Contains(basis, "拿不到结论") {
+		t.Errorf("`non_blob_basis` 该逐字说「拿不到结论」，得到 %q", basis)
+	}
+	if strings.Contains(basis, ".gitmodules") && !strings.Contains(basis, "顶替") {
+		t.Errorf("`non_blob_basis` 提到了 `.gitmodules` 却说不出「不拿它顶替」：%q", basis)
+	}
+	// ⑥ 层**永不**出现在 `layer` 那一格（判不出来的答案不许冒充答案）。
+	if items[0]["layer"] == "非 blob（子模块 gitlink）" {
+		t.Errorf("⑥ 层恒「拿不到结论」，却出现在 `layer` 那一格：%q", items[0]["layer"])
+	}
+	// 既有五层读数一字未动：gitlink 件未被白名单收 ⇒ 仍是 `白名单未命中`。
+	if items[0]["layer"] != "白名单未命中" {
+		t.Errorf("既有五层读数被动过：%s 该是「白名单未命中」，得到 %q", gitlink, items[0]["layer"])
+	}
+	if items[0]["will_publish"] != "否" {
+		t.Errorf("既有五层读数被动过：%s 该是「不发」，得到 %q", gitlink, items[0]["will_publish"])
+	}
+}
+
 // TestPublishSet_JSONMachineFace —— 必验④：`--json` 机器面 + 缺身份格 ⇒ rc=2 且 stdout 0 字节。
 func TestPublishSet_JSONMachineFace(t *testing.T) {
 	rc, out, _ := publishSetRun(t, "publish", "set", "core/cmd/zerg/main.go",
-		"--json", "path,caliber,will_publish,layer,public_path")
+		"--json", "path,caliber,will_publish,layer,public_path,private_face,non_blob_basis")
 	if rc != 0 {
 		t.Fatalf("给了合法 `--json` ⇒ rc=0，得到 %d", rc)
 	}
-	for _, want := range []string{`"items"`, `"caliber"`, `"will_publish"`, `"layer"`, `"public_path"`} {
+	for _, want := range []string{`"items"`, `"caliber"`, `"will_publish"`, `"layer"`, `"public_path"`,
+		`"private_face"`, `"non_blob_basis"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("`--json` 出参里没有 %s：%s", want, out)
 		}

@@ -1082,7 +1082,7 @@ func init() {
 			usage:    "zerg publish set <仓内路径>… [--json <字段>]",
 			arity:    "any",
 			args:     []string{"仓内路径（相对仓根 —— 形状不合口径 ⇒ 2）"},
-			fields:   []string{"path", "caliber", "will_publish", "layer", "public_path"},
+			fields:   []string{"path", "caliber", "will_publish", "layer", "public_path", "private_face", "non_blob_basis"},
 			endpoint: "",
 			run:      cmdPublishSet,
 		},
