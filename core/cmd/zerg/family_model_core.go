@@ -122,6 +122,9 @@ func cmdModelOpts(inv *invocation, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "%s: 至少给一个 `--set 键=值`（主控对空体回 `NO_PARAMS`）\n", progName)
 			return exitUsage
 		}
+		if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+			return rc
+		}
 		if inv.dryRun {
 			fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
 			fmt.Fprintf(stdout, "  动作     : %s model opts set\n", progName)

@@ -211,6 +211,9 @@ func cmdCalibRun(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	// ① fail-closed 那一态：没给 `--dry-run` 也没给 `--yes` ⇒ 计划件走 stderr、**不执行**、退 2。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if !inv.dryRun && !inv.yes {
 		inv.setErr("usage", "missing_yes", "缺 --yes（D2 写面）")
 		emitCalibPlan(stderr, e, argv, true)

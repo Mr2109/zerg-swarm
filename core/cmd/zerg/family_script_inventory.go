@@ -540,6 +540,9 @@ func cmdScriptInventorySync(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if inv.dryRun {
 		// ★ 机器面分家：给了 `--json` ⇒ 计划件走 **stderr**、stdout 只留六键包封
 		//   （stdout 是结果面 —— 混进人面文字会让消费侧解析不到包封）。

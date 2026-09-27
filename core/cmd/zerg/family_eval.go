@@ -276,6 +276,9 @@ func cmdEvalRun(inv *invocation, stdout, stderr io.Writer) int {
 		"result": "planned", "rc": "未跑", "note": "",
 	}
 
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if !inv.dryRun && !inv.yes {
 		inv.setErr("usage", "missing_yes", "缺 --yes（D2 写面）")
 		emitEvalPlan(stderr, e, argv, true)

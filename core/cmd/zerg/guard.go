@@ -279,3 +279,21 @@ func helpDangerous() string {
 		open+closed, open, closed)
 	return b.String()
 }
+
+// dryRunYesConflict —— 「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」的**唯一**共享判定
+// （`D3b` 反向对齐 · 2026-09-27）：两道确认档自相矛盾 ⇒ 用法错 2（不给结论），与写门
+// `family_gate_matrix.go:99` 那处**逐字同一口径**（kind=`usage` · code=`dry_run_yes_conflict`）。
+//
+// 为什么单独抽一处：同给 = 自相矛盾，**不许**静默挑一枚（此前 18 条命令一律静默走 `--dry-run`
+// 支、退 0 —— 人给了 `--yes` 以为写了，实际一个字节没落）。逐条命令在**自己的唯一写盘点之前**
+// 调用（未过门前不建件、不建目录、不打任何请求）。
+//
+// 不成立（两枚未同给）⇒ 返回 `exitOK`，调用点照原样往下走（零行为改动）。
+func dryRunYesConflict(inv *invocation, stderr io.Writer) int {
+	if !inv.dryRun || !inv.yes {
+		return exitOK
+	}
+	inv.setErr("usage", "dry_run_yes_conflict", "--dry-run 与 --yes 不许同给")
+	fmt.Fprintf(stderr, "%s: `--dry-run`（只出计划件）与 `--yes`（真写）**不许同给** ⇒ 用法错 2（两道确认档自相矛盾 ⇒ 不给结论）\n", progName)
+	return exitUsage
+}

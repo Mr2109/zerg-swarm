@@ -669,6 +669,9 @@ func cmdAgentRegistry(inv *invocation, stdout, stderr io.Writer) int {
 		"写完读回 : 重新解析该件，逐格核 `file`/`mem_gb`/`cmd` —— 不过即从备份回滚",
 		"生效     : 写完要 `"+progName+" agent reload "+machine+"` 才进子端运行态",
 	)
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if inv.dryRun {
 		w := stdout
 		if inv.jsonGiven {
