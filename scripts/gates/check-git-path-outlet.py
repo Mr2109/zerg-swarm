@@ -749,6 +749,58 @@ def selftest(out):
         case("⑪ `--json` 全量字段 `hits_all`：字段在 · 条数 == hits · `top` 仍只前 10 条",
              (True, 12, 10),
              ("hits_all" in _j11, len(_j11.get("hits_all", [])), len(_j11.get("top", []))))
+
+        # ── ⑫ 扫面面空 / 根不存在 ⇒ rc=2 且点名（`GAP-20260928-11` 同族）—— 成对负控 ──
+        #   判据面 = `res["scanned"]`（主面那一处口径，**不另开第三份**）。
+        #   负控 A 根不存在 · 负控 B 空目录（存在但一件没有）⇒ 二者都必须 rc=2 + 点名；
+        #   正控：把同一命令的 `--repo` 换成一个真有 `.sh` 件的仓 ⇒ rc=0（证明退码差
+        #   只由「扫了几件」决定，不是被别的东西兜的）。
+        _sva2, _svt2 = globals()["validate_allowlist"], globals()["validate_text_allow"]
+        _sargv2 = sys.argv
+
+        def _run_main(repo):
+            _b = io.StringIO()
+            try:
+                globals()["validate_allowlist"] = lambda *a, **k: []
+                globals()["validate_text_allow"] = lambda *a, **k: []
+                sys.argv = ["check-git-path-outlet.py", "--repo", repo, "--json"]
+                sys.stdout = _b
+                _rc = main()
+            finally:
+                sys.stdout = _sout
+            return _rc, _b.getvalue()
+
+        try:
+            _d12 = os.path.join(base, "c12_scan_real", "scripts")
+            os.makedirs(_d12, exist_ok=True)
+            with open(os.path.join(_d12, "case.sh"), "w", encoding="utf-8") as f:
+                f.write("x\n")
+            _rc_p, _out_p = _run_main(os.path.dirname(_d12))
+            case("⑫ 正控：根里真有可扫件 ⇒ 判到（rc=0 · 扫面 1 件）",
+                 (0, True), (_rc_p, "扫面 1 件" in _out_p))
+            _d12e = os.path.join(base, "c12_scan_empty")
+            os.makedirs(_d12e, exist_ok=True)
+            _rc_a, _out_a = _run_main(os.path.join(base, "c12_根不存在-XYZ"))
+            case("⑫ 负控 A：根不存在 ⇒ rc=2（不给结论）", 2, _rc_a)
+            case("⑫ 负控 A 且逐字点名「扫面 0 件」", True, "扫面 0 件" in _out_a)
+            _rc_b, _out_b = _run_main(_d12e)
+            case("⑫ 负控 B：空目录（存在但一件没有）⇒ rc=2 —— 与正控同一条命令，只换根",
+                 2, _rc_b)
+            case("⑫ 负控 B 且逐字点名「扫面 0 件」", True, "扫面 0 件" in _out_b)
+            _j12 = {}
+            for _ln in reversed(_out_b.strip().splitlines()):
+                if _ln.startswith("{"):
+                    try:
+                        _j12 = json.loads(_ln)
+                        break
+                    except Exception:
+                        continue
+            case("⑫ 负控 A/B 的机器面：refused=True · refuse_reason=empty_scan · scanned=0",
+                 (True, "empty_scan", 0),
+                 (_j12.get("refused"), _j12.get("refuse_reason"), _j12.get("scanned")))
+        finally:
+            globals()["validate_allowlist"], globals()["validate_text_allow"] = _sva2, _svt2
+            sys.argv = _sargv2
     finally:
         shutil.rmtree(base, ignore_errors=True)
     out.write("  自检 %d 格 · 失败 %d 格\n" % (total[0], total[1]))
