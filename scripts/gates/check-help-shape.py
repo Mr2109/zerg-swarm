@@ -51,10 +51,30 @@
         现读有 3 处**已知脱钩**（`agent reap` / `itask start` / `itask stop`，照实冻结，不假装没有）⇒
         判据 = 现算脱钩集合 **逐字等于**冻结集合：多一处 ⇒ 红（旗标串新脱钩）；少一处 ⇒ 红（缺口真被修了，
         须 `--emit-baseline` 刷新冻结值 ⇒ 不许静默漂）。
+     ★ S4d 的盲区（缺口 `GAP-20260927-423` · 2026-09-27）：它只判**集合** —— 危险面印 `--confirm=<提案 id>`、
+       用法串印 `--confirm=<主机名>` 时，只要 `提案 id` 在该命令用法串的**别处**（`--proposal <提案 id>`）露过面，
+       集合就不变 ⇒ **不红**（`6f7edb2a` 之前 `dev edit` 那处真值冲突正是这样藏住的）。
+     S4f **两面同印 `--confirm=` ⇒ 值须逐字相等（独立一条腿 · 2026-09-27 补 · 缺口 `GAP-20260927-423`）**：
+        凡危险面某条印了 `--confirm=<X>`，**且**该命令在 `help --all` 的用法行里也印了 `--confirm=<Y>`
+        （现读 16 条这种两面同印的条目）⇒ 判 `X == Y` **逐字**（不做任何规范化：`--confirm` 的值就是用户在
+        终端上照敲的那一串，两面各说一个名字 = 用户照哪面敲都可能被拒 —— 正是本腿要收的账）。
+        判据 = 现算「值冲突」条目集合（`[命令路径, 危险面值, 用法串值]`）**逐字等于**冻结名单
+        （**现读空集** · `confirm_value_mismatch: []`）：多一处 ⇒ 红（新值冲突）；少一处 ⇒ 红（真被修了 ⇒
+        `--emit-baseline` 刷，不许静默漂）。
+        ★ 与 S4d 的关系 = **两条独立腿**，不是改 S4d：S4d 判「那个名字在不在用法串里」（集合账），S4f 判
+        「两面印的值是不是同一个」（值账）；S4d 的判定式与冻结名单（3 处已知脱钩）**一字不动** —— 免得把两种
+        性质的账混进一个名单里（混进去后「新增一处脱钩」这句话就说不清了）。
+        ★ 我的选择（写在件头 · 供后人对界）：**只覆盖「两面都印 `--confirm=`」的条目** —— 一面印、一面不印的
+        （现读 16 条 = S4d 已入账的 3 处脱钩 + 13 条把目标写在位置参数里的）不是本腿的账，本腿不许假装判了。
+        ★ 误报面（我的选择 + 理由）：两面若印**同义不同形**的值（如一面 `模型名（\`--model\`）`、一面 `模型名`）
+        ⇒ 本腿判**红**（把「形态差」按**值冲突**入账，不为它另开第三份口径）—— 理由：界面上 `--confirm=<…>`
+        的字面就是用户要敲的东西，两面字面不同就该有人来解释；现读 0 例。若将来确有正当的形态差 ⇒ 走
+        `--emit-baseline` 冻结（一个看得见的决定），不许在本腿里默默放宽。
      S4e **行数/字节/条数常量**：`help dangerous` 的 `lines` / `bytes` / `rows` 必须逐格等于冻结读数
         （**现跑取数** · 禁手写 · `--emit-baseline` 刷）。★ 本条正是 `approve new` 那类病的**直接**牙口：
         逐条行多印一段旗标 / 表尾改数 ⇒ 字节或条数当场不等。
-     牙口：改一条的旗标串（等长换字 ⇒ 字节不变）⇒ S4d 红并点名到条目；表尾计数对不上 ⇒ S4a/S4b 红；
+     牙口：改一条的旗标串（等长换字 ⇒ 字节不变）⇒ S4d 红并点名到条目；两面同印 `--confirm=` 而值不等
+     （等长换字 · 名字集合不变 ⇒ S4d / S4e 都看不见）⇒ **S4f** 红并点名到条目；表尾计数对不上 ⇒ S4a/S4b 红；
      该面行数/字节漂 ⇒ S4e 红。**S4 只判形状**：逐条「它会动什么 / 出处」的**文字**与档位语义不在本格。
 
 形态说明（为什么用「常量 + 关系式」而不是纯现算）
@@ -77,7 +97,7 @@
     python3 scripts/gates/check-help-shape.py --emit-baseline   # 现跑打印常量新值（只读）
     python3 scripts/gates/check-help-shape.py --json
     python3 scripts/gates/check-help-shape.py --list-rules
-    python3 scripts/gates/check-help-shape.py --self-test       # 合成夹具（正控 + 三负控）
+    python3 scripts/gates/check-help-shape.py --self-test       # 合成夹具（正控 + 负控 + 对界）
 """
 
 from __future__ import annotations
@@ -90,7 +110,7 @@ import re
 import subprocess
 import sys
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 MATRIX_REL = os.path.join("core", "cmd", "zerg", "testdata", "cli-matrix.json")
 
@@ -129,11 +149,14 @@ BASELINE = {
     # ★ 危险档面（S4 · 2026-09-27 补）：**现跑取数** · 禁手写 ——
     #   取法 = `./bin/zerg help dangerous | wc -l -c`（lines/bytes）· 逐条行数（`rows`）·
     #          末行逐字（`tail`）· 现算的「`--confirm` 核心名不在该命令用法串里」的条目名单
-    #          （`confirm_not_in_usage` · 现读 3 处**已知脱钩**，照实冻结，不是白名单）。
+    #          （`confirm_not_in_usage` · 现读 3 处**已知脱钩**，照实冻结，不是白名单）·
+    #          两面**同印** `--confirm=` 的值冲突名单（`confirm_value_mismatch` · 现读**空集** ——
+    #          两面同印的那 16 条值全部逐字相等，照实冻结；现跑取数 · 禁手写）。
     #   刷新 = `--emit-baseline`（现跑打印 · 照抄 · 别手写）。
     "help dangerous": {"lines": 58, "bytes": 14895, "rows": 47,
                        "tail": "上表 47 条：**已开放 19 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 28 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。",
-                       "confirm_not_in_usage": ["agent reap", "itask start", "itask stop"]},
+                       "confirm_not_in_usage": ["agent reap", "itask start", "itask stop"],
+                       "confirm_value_mismatch": []},
 }
 
 
@@ -230,6 +253,37 @@ def danger_confirm_gap(danger_text: str, all_text: str):
         if not core or core not in u:
             gap.append(m.group("path"))
     return sorted(set(gap))
+
+
+def danger_confirm_pairs(danger_text: str, all_text: str):
+    """两面**都印** `--confirm=` 的条目 ⇒ [[命令路径, 危险面值, 用法串值]]（字典序）。
+
+    ★ 只收「该命令在 `help --all` 的用法行里也印了 `--confirm=<Y>`」的条目（现读 16 条）：
+    一面印、一面不印的不是本腿的账（那些归 S4d / 位置参数），本腿不许假装判了。
+    """
+    used = usage_index(all_text)
+    pairs = []
+    for l in danger_rows(danger_text):
+        m = DANGER_ROW_RE.match(l)
+        if not m:
+            continue
+        c = DANGER_CONFIRM_RE.search(m.group("flags"))
+        if not c:
+            continue
+        uc = DANGER_CONFIRM_RE.search(used.get(m.group("path"), ""))
+        if not uc:
+            continue
+        pairs.append([m.group("path"), c.group(1), uc.group(1)])
+    return sorted(pairs)
+
+
+def danger_confirm_value_mismatch(danger_text: str, all_text: str):
+    """现算「两面都印 `--confirm=` 但值不**逐字**相等」的条目 ⇒ [[路径, 危险面值, 用法串值]]（字典序）。
+
+    ★ 与 `danger_confirm_gap` 是**两件事**：那边判「值在不在用法串里」（集合），这边判「两面印的值是不是
+    同一个」（值）—— 值冲突但名字集合不变时（本腿要收的病）那边**看不见**。
+    """
+    return sorted([p for p in danger_confirm_pairs(danger_text, all_text) if p[1] != p[2]])
 
 
 def rebuilt_last_family_line(fams):
@@ -338,6 +392,21 @@ def judge(all_text: str, bare_text: str, danger_text: str, cmds, baseline=None) 
         if fixed:
             bad.append("S4d 旗标串 ⟷ 真实用法串：%d 处脱钩**已消失**（缺口真被修了 ⇒ 用 `--emit-baseline` "
                        "刷新冻结名单，别让判据静默漂）—— %s" % (len(fixed), " · ".join(fixed[:5])))
+    vm = [list(x) for x in danger_confirm_value_mismatch(danger_text, all_text)]
+    want_vm = sorted([list(x) for x in dbl.get("confirm_value_mismatch", [])])
+    if vm != want_vm:
+        new = [x for x in vm if x not in want_vm]
+        gone = [x for x in want_vm if x not in vm]
+        if new:
+            bad.append("S4f 两面同印 `--confirm=` ⟷ 值须逐字相等：新增 %d 处**值冲突**（危险面印的名字 ≠ "
+                       "用法串里印的名字 ⇒ 用户照哪面敲都可能被拒）—— %s"
+                       % (len(new), " · ".join("%s（危险面 `%s` ≠ 用法串 `%s`）" % (x[0], x[1], x[2])
+                                                for x in new[:5])))
+        if gone:
+            bad.append("S4f 两面同印 `--confirm=` ⟷ 值须逐字相等：%d 处值冲突**已消失**（缺口真被修了 ⇒ 用 "
+                       "`--emit-baseline` 刷新冻结值，别让判据静默漂）—— %s"
+                       % (len(gone), " · ".join("%s（危险面 `%s` ⟷ 用法串 `%s`）" % (x[0], x[1], x[2])
+                                                for x in gone[:5])))
     for key, got in (("lines", len(danger_text.splitlines())),
                      ("bytes", len(danger_text.encode("utf-8"))),
                      ("rows", len(drows))):
@@ -364,8 +433,12 @@ FIX_DANGER = [
      "  zerg model start <模型 id> --yes [--dry-run]   装载", "← 本版未开放"),
     ("task pause", "D2", "任务 id",
      "  zerg task pause <任务 id> --yes [--dry-run]   暂停", "← 本版未开放"),
+    # ★ 这一条的用法串里**故意多一个别的名字**（`--host <机器名>`，与 `--confirm=<主机名>` 等长 = 9 字节）——
+    #   供 S4f 的负控⑨：把危险面那格的名字换成 `机器名` ⇒ 名字**仍在**该命令的用法串里（S4d 绿 · 字节常量
+    #   也看不见），只有「两面同印的值须逐字相等」这条腿抓得住。
     ("core restart", "D3", "主机名",
-     "  zerg core restart --confirm=<主机名> --yes [--dry-run]   停起主控", "← **已开放**（确认档齐就真执行）"),
+     "  zerg core restart --host <机器名> --confirm=<主机名> --yes [--dry-run]   停起主控",
+     "← **已开放**（确认档齐就真执行）"),
 ]
 FIX_TAIL = ("上表 5 条：**已开放 1 条**（确认档齐就真执行 —— 逐条见上行标记）；"
             "**未开放 4 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。")
@@ -394,11 +467,17 @@ def fix_texts():
 def self_test(out) -> bool:
     total, failed = 0, 0
 
-    def case(name, want_red, bad):
+    def case(name, want_red, bad, want_sub=None, forbid_sub=None):
+        """`want_sub` = 判词里**必须**出现的子串（点名到具体那条腿）· `forbid_sub` = 必须**不**出现
+        （成对控制：证明这一格是**哪条腿**在响，而不是别的腿顺手一起红）。"""
         nonlocal total, failed
         total += 1
         got_red = bool(bad)
         ok = got_red == want_red
+        if ok and want_sub is not None and not any(want_sub in b for b in bad):
+            ok = False
+        if ok and forbid_sub is not None and any(forbid_sub in b for b in bad):
+            ok = False
         if not ok:
             failed += 1
         out.write("  %s %s（期望%s · 实得%s）\n"
@@ -414,7 +493,8 @@ def self_test(out) -> bool:
                    "last": BASELINE["help"]["last"]},
           "help dangerous": {"lines": len(dang_t.splitlines()), "bytes": len(dang_t.encode()),
                              "rows": len(d_rows), "tail": FIX_TAIL,
-                             "confirm_not_in_usage": ["agent reap"]}}
+                             "confirm_not_in_usage": ["agent reap"],
+                             "confirm_value_mismatch": []}}
 
     case("正控：原样 ⇒ 必绿", False, judge(all_t, bare_t, dang_t, FIX_CMDS, bl))
     # 负控（危险档面 S4 · 等长换字 ⇒ 字节常量**看不见**，只有语义判据抓得住）
@@ -427,6 +507,21 @@ def self_test(out) -> bool:
     case("负控⑧：抹掉一条的 `--yes`（旗标串破形）⇒ 必红", True,
          judge(all_t, bare_t, dang_t.replace("--dry-run · --confirm=<主机名> · --yes",
                                              "--confirm=<主机名> --yes"), FIX_CMDS, bl))
+
+    # 负控（S4f 的值冲突面 · 2026-09-27 补 · 缺口 GAP-20260927-423）
+    case("负控⑨：两面同印 `--confirm=` 但值不等（等长换字 · 名字仍在用法串里 ⇒ S4d/字节常量都看不见）⇒ S4f 必红",
+         True,
+         judge(all_t, bare_t,
+               dang_t.replace("zerg core restart  D3  --dry-run · --confirm=<主机名>",
+                              "zerg core restart  D3  --dry-run · --confirm=<机器名>"),
+               FIX_CMDS, bl), want_sub="S4f", forbid_sub="S4d")
+    case("负控⑩：危险面值挪出用法串（名字集合变化 = S4d 的账）⇒ 旧 S4d 仍必红、S4f 不许抢账", True,
+         judge(all_t, bare_t,
+               dang_t.replace("zerg agent load  D2  --dry-run · --confirm=<机器名>",
+                              "zerg agent load  D2  --dry-run · --confirm=<主机名>"),
+               FIX_CMDS, bl), want_sub="S4d", forbid_sub="S4f")
+    case("对界：夹具正控上 S4f 不许误报（两面同印的值逐字相等 · 现读 1 条）⇒ 绿且无 S4f 断言", False,
+         judge(all_t, bare_t, dang_t, FIX_CMDS, bl), forbid_sub="S4f")
 
     lines = all_t.splitlines()
     idx = [i for i, l in enumerate(lines) if l.startswith(SEC_HEADER_PREFIX)][0]
@@ -469,6 +564,8 @@ LIST_RULES = """判据（三条 · 现算 + 对界 · 缺口 GAP-20260927-401）
      S4b 逐条行尾标记出现次数 == 表尾 X / Y ·
      S4c 逐条行形状闭集（`zerg <路径>  D2|D3  --dry-run · [--confirm=<目标> · ]--yes  …  ← 标记`）·
      S4d 逐条 `--confirm=<目标>` 的核心名 ⟷ 该命令在 `help --all` 的用法串（现算脱钩集合 == 冻结名单）·
+     S4f 两面**同印** `--confirm=` 的值须**逐字相等**（现算值冲突集合 == 冻结名单 · 现读空集 —— 独立一条腿：
+         S4d 只判「名字在不在用法串里」⇒ 值冲突但名字集合不变时 S4d 看不见）·
      S4e 该面的 lines / bytes / 条数 / 表尾逐字 == 冻结读数（现跑取数 · --emit-baseline 刷）
 
 不假装覆盖（照实登记）
@@ -527,9 +624,11 @@ def main() -> int:
             '  # ↑ 前三行照抄进 BASELINE。危险档面（S4）那一条照抄下面这三行：\n'
             '    "help dangerous": {"lines": %d, "bytes": %d, "rows": %d,\n'
             '                       "tail": %r,\n'
-            '                       "confirm_not_in_usage": %s},\n'
+            '                       "confirm_not_in_usage": %s,\n'
+            '                       "confirm_value_mismatch": %s},\n'
             % (len(d.splitlines()), len(d.encode("utf-8")), len(drows),
-               danger_tail(d)[0], json.dumps(danger_confirm_gap(d, faces["help --all"]), ensure_ascii=False)))
+               danger_tail(d)[0], json.dumps(danger_confirm_gap(d, faces["help --all"]), ensure_ascii=False),
+               json.dumps(danger_confirm_value_mismatch(d, faces["help --all"]), ensure_ascii=False)))
         return 0
 
     sys.stdout.write("`help` 面形状判据 · v%s（族级段 / 条数 / 末行）\n" % VERSION)
@@ -556,10 +655,13 @@ def main() -> int:
         _t, _n, _x, _y = danger_tail(faces["help dangerous"])
         sys.stdout.write("  ✓ S4 危险档面：表尾 %d 条 == 已开放 %d + 未开放 %d == 逐条行数 %d；逐条标记逐数相符；"
                          "逐条行形状全合；`--confirm` 目标 ⟷ 用法串脱钩 %d 处（= 冻结名单）；"
+                         "两面同印 `--confirm=` 的 %d 条值逐字相等（值冲突 %d 处 = 冻结值）；"
                          "行/字节/条数 == 冻结读数 %d/%d/%d\n"
                          % (_n if _n is not None else -1, _x if _x is not None else -1,
                             _y if _y is not None else -1, len(danger_rows(faces["help dangerous"])),
                             len(danger_confirm_gap(faces["help dangerous"], faces["help --all"])),
+                            len(danger_confirm_pairs(faces["help dangerous"], faces["help --all"])),
+                            len(danger_confirm_value_mismatch(faces["help dangerous"], faces["help --all"])),
                             dbl_l := len(faces["help dangerous"].splitlines()),
                             dbl_b := len(faces["help dangerous"].encode("utf-8")),
                             dbl_r := len(danger_rows(faces["help dangerous"]))))
@@ -576,6 +678,8 @@ def main() -> int:
             "danger_bytes": len(faces["help dangerous"].encode("utf-8")),
             "danger_rows": len(danger_rows(faces["help dangerous"])),
             "danger_confirm_not_in_usage": danger_confirm_gap(faces["help dangerous"], faces["help --all"]),
+            "danger_confirm_both_faces": len(danger_confirm_pairs(faces["help dangerous"], faces["help --all"])),
+            "danger_confirm_value_mismatch": danger_confirm_value_mismatch(faces["help dangerous"], faces["help --all"]),
             "bad": bad, "mode": "judge",
         }, ensure_ascii=False) + "\n")
     return 0 if not bad else 1
