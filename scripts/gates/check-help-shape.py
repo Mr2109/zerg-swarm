@@ -27,11 +27,35 @@
                      取法 = `./bin/zerg help --all | wc -l -c` 与 `./bin/zerg help | wc -l -c`；
                      刷新 = 本件 `--emit-baseline`（现跑打印新值，照抄进 `BASELINE`，**别手写**）。
      牙口：`--all` 少/多一行 ⇒ 常量格红；整面漂 ⇒ 常量格红；`--all` 少一条命令行 ⇒ 关系式红。
-  S3 **末行（现算重建 ⟷ 逐字）**
+                  S3 **末行（现算重建 ⟷ 逐字）**
      末行必须是**由族名清单现算重建**的那一行（族名按字典序每 8 族一行，取最后一块，`"  " + " · ".join(块)`）⇒
      改末行任何一个字 / 掉一族 / 换分隔符都红。
      另钉裸 `help` 末行逐字（`BASELINE["help"]["last"]`）· 判据与 `--all` 末行**必须是两条不同的断言**
      （两态各自的末行都不许被改写）。
+
+  S4 **危险档面（`help dangerous` 的形状 —— 2026-09-27 补 · 缺口 `GAP-20260927-418`）**
+     病：本件此前只在 S2 关系式里**数**危险档的行数（`rows(--all) == rows(help) + rows(dangerous)`），
+     该面自己的**条数 / 字节 / 逐条旗标串 / 表尾计数**一个都没钉 —— 实测（2026-09-27）`approve new`
+     翻开 `ChecksConfirm` ⇒ 该面 14870→14895 B（逐条行多印一段 `--confirm=<工具名>`）、行数 +1，
+     **门69 照绿**，全靠施工卵自报才发现。S4 把该面收进同一套「现算 + 对界 + 精确闭集常量」：
+     S4a **表尾计数（自洽 + 对条数）**：末行必须形如 `上表 N 条：**已开放 X 条**…**未开放 Y 条**`，
+        判 `N == X + Y` 且 `N == 逐条行数`（危险档行 = 两空格 + `zerg ` 开头那一批）。
+     S4b **逐条标记计数 ⟷ 表尾**：`← **已开放**` / `← 本版未开放` 两种行尾标记的**出现次数**必须
+        分别等于表尾的 `X` / `Y`（表尾与逐条不许各说各话）。
+     S4c **逐条行形状闭集**：每条必须形如
+        `  zerg <命令路径>  D2|D3  --dry-run · [--confirm=<目标> · ]--yes  <它会动什么>  [出处]  ← 标记`，
+        旗标串**只许**两种形态（印不印 `--confirm=` 由登记现算）—— 少印/多印一段、档位写成别的、标记改字 ⇒ 红。
+     S4d **`--confirm=<目标>` ⟷ 该命令真实用法串（同源 · 不恒绿）**：凡逐条行印了 `--confirm=<X>`，
+        取 `X` 的**核心名**（剥掉 `（…）` 括注与反引号），它必须在 `help --all` 里**该命令那一行**的
+        用法串中逐字出现（用法串 = 命令树旗标定义的另一面，与本面的登记字段是两处来源）。
+        现读有 3 处**已知脱钩**（`agent reap` / `itask start` / `itask stop`，照实冻结，不假装没有）⇒
+        判据 = 现算脱钩集合 **逐字等于**冻结集合：多一处 ⇒ 红（旗标串新脱钩）；少一处 ⇒ 红（缺口真被修了，
+        须 `--emit-baseline` 刷新冻结值 ⇒ 不许静默漂）。
+     S4e **行数/字节/条数常量**：`help dangerous` 的 `lines` / `bytes` / `rows` 必须逐格等于冻结读数
+        （**现跑取数** · 禁手写 · `--emit-baseline` 刷）。★ 本条正是 `approve new` 那类病的**直接**牙口：
+        逐条行多印一段旗标 / 表尾改数 ⇒ 字节或条数当场不等。
+     牙口：改一条的旗标串（等长换字 ⇒ 字节不变）⇒ S4d 红并点名到条目；表尾计数对不上 ⇒ S4a/S4b 红；
+     该面行数/字节漂 ⇒ S4e 红。**S4 只判形状**：逐条「它会动什么 / 出处」的**文字**与档位语义不在本格。
 
 形态说明（为什么用「常量 + 关系式」而不是纯现算）
 --------------------------------------------------
@@ -66,7 +90,7 @@ import re
 import subprocess
 import sys
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 MATRIX_REL = os.path.join("core", "cmd", "zerg", "testdata", "cli-matrix.json")
 
@@ -75,6 +99,19 @@ SEC_HEADER_RE = re.compile(r"^族级面（(\d+) 族 ·.*）:$")
 SEC_HEADER_PREFIX = "族级面（"
 # 用法行前缀（与既有 Go 判据同一形态：两空格 + `zerg ` + 非空）
 ROW_RE = re.compile(r"^\s{2}zerg\s+\S")
+
+# ── 危险档面（`help dangerous` · S4）的形状件 ──
+# 逐条行：`  zerg <路径>  D2|D3  --dry-run · [--confirm=<目标> · ]--yes  <它会动什么>  [出处]  ← 标记`
+DANGER_ROW_RE = re.compile(
+    r"^\s{2}zerg\s+(?P<path>[a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*)*)\s+"
+    r"(?P<level>D[23])\s+"
+    r"(?P<flags>--dry-run · (?:--confirm=<[^>]*> · )?--yes)\s+")
+DANGER_TAIL_RE = re.compile(r"^上表 (\d+) 条：\*\*已开放 (\d+) 条\*\*.*\*\*未开放 (\d+) 条\*\*")
+DANGER_CONFIRM_RE = re.compile(r"--confirm=<([^>]*)>")
+DANGER_PAREN_RE = re.compile(r"（[^）]*）")
+DANGER_OT_RE = re.compile(r"← \*\*已开放\*\*|← 本版未开放")
+DANGER_OPEN_MARK = "← **已开放**"
+DANGER_CLOSED_MARK = "← 本版未开放"
 
 # 布局常量（源件 `core/cmd/zerg/main.go:3380` 一带）：族名清单段的**段头占 1 行**（段头之前必须另有 1 行空行）
 # · 族名每行 8 族
@@ -89,6 +126,14 @@ BASELINE = {
     "help --all": {"lines": 274, "bytes": 67793},
     "help": {"lines": 218, "bytes": 48027,
              "last": "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+    # ★ 危险档面（S4 · 2026-09-27 补）：**现跑取数** · 禁手写 ——
+    #   取法 = `./bin/zerg help dangerous | wc -l -c`（lines/bytes）· 逐条行数（`rows`）·
+    #          末行逐字（`tail`）· 现算的「`--confirm` 核心名不在该命令用法串里」的条目名单
+    #          （`confirm_not_in_usage` · 现读 3 处**已知脱钩**，照实冻结，不是白名单）。
+    #   刷新 = `--emit-baseline`（现跑打印 · 照抄 · 别手写）。
+    "help dangerous": {"lines": 58, "bytes": 14895, "rows": 47,
+                       "tail": "上表 47 条：**已开放 19 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 28 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。",
+                       "confirm_not_in_usage": ["agent reap", "itask start", "itask stop"]},
 }
 
 
@@ -140,6 +185,51 @@ def family_section(text: str):
 
 def families_of(cmds):
     return sorted({c.split()[0] for c in cmds if c.split()})
+
+
+# ── 纯函数：危险档面（S4）的形状抽取 ──
+def danger_rows(text: str):
+    return [l for l in text.splitlines() if ROW_RE.match(l)]
+
+
+def danger_tail(text: str):
+    """末非空行（表尾）⇒ (原行, N|None, X|None, Y|None)。"""
+    lines = [l for l in text.splitlines() if l.strip()]
+    if not lines:
+        return "", None, None, None
+    last = lines[-1]
+    m = DANGER_TAIL_RE.match(last.strip())
+    if not m:
+        return last, None, None, None
+    return last, int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+def usage_index(all_text: str):
+    """`help --all` 的用法行 ⇒ {命令路径: 整行}（取首个命中 · 用法串的另一处来源）。"""
+    out = {}
+    for l in all_text.splitlines():
+        m = re.match(r"^\s{2}zerg\s+([a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*)*)\s", l)
+        if m:
+            out.setdefault(m.group(1), l)
+    return out
+
+
+def danger_confirm_gap(danger_text: str, all_text: str):
+    """现算「印了 `--confirm=<目标>` 但目标核心名**不在**该命令用法串里」的条目名单（字典序）。"""
+    used = usage_index(all_text)
+    gap = []
+    for l in danger_rows(danger_text):
+        m = DANGER_ROW_RE.match(l)
+        if not m:
+            continue
+        c = DANGER_CONFIRM_RE.search(m.group("flags"))
+        if not c:
+            continue
+        core = DANGER_PAREN_RE.sub("", c.group(1)).strip().strip("`").strip()
+        u = used.get(m.group("path"), "")
+        if not core or core not in u:
+            gap.append(m.group("path"))
+    return sorted(set(gap))
 
 
 def rebuilt_last_family_line(fams):
@@ -207,27 +297,97 @@ def judge(all_text: str, bare_text: str, danger_text: str, cmds, baseline=None) 
     want_bare = bl.get("help", {}).get("last")
     if want_bare is not None and bare_last != want_bare:
         bad.append("S3 末行：裸 `help` 末行 %r ≠ 冻结读数 %r" % (bare_last, want_bare))
+
+    # ---- S4 危险档面（`help dangerous` 的形状）----
+    dbl = bl.get("help dangerous", {})
+    drows = danger_rows(danger_text)
+    tail, n_total, n_open, n_closed = danger_tail(danger_text)
+    if n_total is None:
+        bad.append("S4a 表尾：`help dangerous` 末非空行不是表尾形状（`上表 N 条：**已开放 X 条**…**未开放 Y 条**`）"
+                   "—— 现读 %r（表尾被删 / 改字 / 换口径？）" % tail[:80])
+    else:
+        if n_total != n_open + n_closed:
+            bad.append("S4a 表尾自洽：上表 %d 条 ≠ 已开放 %d + 未开放 %d（= %d）"
+                       % (n_total, n_open, n_closed, n_open + n_closed))
+        if n_total != len(drows):
+            bad.append("S4a 表尾 ⟷ 逐条：表尾称 %d 条 ≠ 逐条行数 %d（两处不许各说各话）"
+                       % (n_total, len(drows)))
+    n_om, n_cm = danger_text.count(DANGER_OPEN_MARK), danger_text.count(DANGER_CLOSED_MARK)
+    if n_open is not None:
+        if n_om != n_open:
+            bad.append("S4b 逐条标记 ⟷ 表尾：`%s` 出现 %d 次 ≠ 表尾「已开放 %d 条」"
+                       % (DANGER_OPEN_MARK, n_om, n_open))
+        if n_cm != n_closed:
+            bad.append("S4b 逐条标记 ⟷ 表尾：`%s` 出现 %d 次 ≠ 表尾「未开放 %d 条」"
+                       % (DANGER_CLOSED_MARK, n_cm, n_closed))
+    if n_om + n_cm != len(drows):
+        bad.append("S4b 逐条标记：逐条行 %d 条，带标记的只有 %d 条（有行没印 ← 已开放 / ← 本版未开放）"
+                   % (len(drows), n_om + n_cm))
+    for i, l in enumerate(drows, 1):
+        if not DANGER_ROW_RE.match(l):
+            bad.append("S4c 逐条行形状：第 %d 条不符（旗标串只许 `--dry-run · [--confirm=<目标> · ]--yes` · "
+                       "档位只许 D2/D3）—— %r" % (i, l[:110]))
+    gap = danger_confirm_gap(danger_text, all_text)
+    want_gap = sorted(dbl.get("confirm_not_in_usage", []))
+    if want_gap and gap != want_gap:
+        new = [p for p in gap if p not in want_gap]
+        fixed = [p for p in want_gap if p not in gap]
+        if new:
+            bad.append("S4d 旗标串 ⟷ 真实用法串：新增 %d 处脱钩（印了 `--confirm=<目标>`，但该命令在 `help --all` "
+                       "的用法串里没有这个目标的核心名）—— %s" % (len(new), " · ".join(new[:5])))
+        if fixed:
+            bad.append("S4d 旗标串 ⟷ 真实用法串：%d 处脱钩**已消失**（缺口真被修了 ⇒ 用 `--emit-baseline` "
+                       "刷新冻结名单，别让判据静默漂）—— %s" % (len(fixed), " · ".join(fixed[:5])))
+    for key, got in (("lines", len(danger_text.splitlines())),
+                     ("bytes", len(danger_text.encode("utf-8"))),
+                     ("rows", len(drows))):
+        if key in dbl and got != dbl[key]:
+            bad.append("S4e 常量：`help dangerous` %s %d ≠ 冻结读数 %d（该面漂了 —— 取法见件头 `BASELINE` 注释）"
+                       % (key, got, dbl[key]))
+    if "tail" in dbl and tail != dbl["tail"]:
+        bad.append("S4e 常量：`help dangerous` 表尾逐字 %r ≠ 冻结读数 %r" % (tail, dbl["tail"]))
     return bad
 
 
 # ── 夹具（合成 · 不碰真目标）──
-FIX_CMDS = ["agent ls", "agent load", "gap ls", "gate run", "help", "model show",
-            "repo commit", "task ls", "version", "watch"]
+FIX_CMDS = ["agent ls", "gap ls", "gate run", "help", "version",
+            "watch ls", "agent reap", "agent load", "model start", "task pause", "core restart"]
+
+# 危险档夹具逐条（路径 · 档 · 印出的 `--confirm` 目标 · 该命令在 `--all` 里的用法行 · 行尾标记）
+# ★ `agent reap` 的用法串里**故意没有**「机器名」⇒ 夹具自带 1 处已知脱钩（供 S4d 的成对负控）。
+FIX_DANGER = [
+    ("agent reap", "D3", "机器名",
+     "  zerg agent reap --dry-run --min-age-days <n>   # 干跑单（带 plan_id）", "← 本版未开放"),
+    ("agent load", "D2", "机器名",
+     "  zerg agent load <机器名> <模型> --yes [--dry-run]   装模型", "← 本版未开放"),
+    ("model start", "D2", "模型 id",
+     "  zerg model start <模型 id> --yes [--dry-run]   装载", "← 本版未开放"),
+    ("task pause", "D2", "任务 id",
+     "  zerg task pause <任务 id> --yes [--dry-run]   暂停", "← 本版未开放"),
+    ("core restart", "D3", "主机名",
+     "  zerg core restart --confirm=<主机名> --yes [--dry-run]   停起主控", "← **已开放**（确认档齐就真执行）"),
+]
+FIX_TAIL = ("上表 5 条：**已开放 1 条**（确认档齐就真执行 —— 逐条见上行标记）；"
+            "**未开放 4 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。")
+
+
+def fix_danger_rows():
+    return ["  zerg " + p + "  " + lvl + "  --dry-run · --confirm=<" + tgt + "> · --yes  它会动什么  [出处]  " + mark
+            for p, lvl, tgt, _u, mark in FIX_DANGER]
 
 
 def fix_texts():
-    """按真件形态现造三面文本（族名清单 = 字典序 · 每 8 族一行）。"""
+    """按真件形态现造三面文本（族名清单 = 字典序 · 每 8 族一行；危险档面带逐条标记 + 表尾）。"""
     fams = families_of(FIX_CMDS)
-    rows_all = ["  zerg " + c + " ｜ 茧壁:host ｜ 说明" for c in FIX_CMDS]
-    rows_bare = rows_all[:5]
-    rows_dang = rows_all[5:]
+    rows_bare = ["  zerg " + c + " ｜ 茧壁:host ｜ 说明" for c in FIX_CMDS[:5]]
+    rows_all = rows_bare + [u for _p, _l, _t, u, _m in FIX_DANGER]
     all_text = ("zerg —— 形状夹具 · 深度 ≤ 3 层\n\n" + "\n".join(rows_all)
                 + "\n\n族级面（%d 族 · 不必猜族名 · 逐族 `zerg help <族名>` 列该族全部动作）:\n" % len(fams)
                 + "\n".join("  " + " · ".join(fams[i:i + FAMILY_PER_LINE])
                             for i in range(0, len(fams), FAMILY_PER_LINE)) + "\n")
     bare_text = ("zerg —— 形状夹具\n\n" + "\n".join(rows_bare)
                  + "\n" + BASELINE["help"]["last"] + "\n")
-    dang_text = "\n".join(rows_dang) + "\n"
+    dang_text = "\n".join(fix_danger_rows()) + "\n\n" + FIX_TAIL + "\n"
     return all_text, bare_text, dang_text
 
 
@@ -247,12 +407,26 @@ def self_test(out) -> bool:
             out.write("      ↳ %s\n" % b)
 
     all_t, bare_t, dang_t = fix_texts()
+    d_rows = danger_rows(dang_t)
     # 夹具基线（否则常量格必红 ⇒ 干扰判别）：只钉夹具自己的数
     bl = {"help --all": {"lines": len(all_t.splitlines()), "bytes": len(all_t.encode())},
           "help": {"lines": len(bare_t.splitlines()), "bytes": len(bare_t.encode()),
-                   "last": BASELINE["help"]["last"]}}
+                   "last": BASELINE["help"]["last"]},
+          "help dangerous": {"lines": len(dang_t.splitlines()), "bytes": len(dang_t.encode()),
+                             "rows": len(d_rows), "tail": FIX_TAIL,
+                             "confirm_not_in_usage": ["agent reap"]}}
 
     case("正控：原样 ⇒ 必绿", False, judge(all_t, bare_t, dang_t, FIX_CMDS, bl))
+    # 负控（危险档面 S4 · 等长换字 ⇒ 字节常量**看不见**，只有语义判据抓得住）
+    case("负控⑤：改一条的 `--confirm` 目标（等长换字 · 字节不变）⇒ 必红", True,
+         judge(all_t, bare_t, dang_t.replace("--confirm=<模型 id>", "--confirm=<主机 id>"), FIX_CMDS, bl))
+    case("负控⑥：表尾计数对不上（等长改数）⇒ 必红", True,
+         judge(all_t, bare_t, dang_t.replace("上表 5 条", "上表 6 条"), FIX_CMDS, bl))
+    case("负控⑦：删掉表尾一行 ⇒ 必红", True,
+         judge(all_t, bare_t, "\n".join(dang_t.splitlines()[:-2]) + "\n", FIX_CMDS, bl))
+    case("负控⑧：抹掉一条的 `--yes`（旗标串破形）⇒ 必红", True,
+         judge(all_t, bare_t, dang_t.replace("--dry-run · --confirm=<主机名> · --yes",
+                                             "--confirm=<主机名> --yes"), FIX_CMDS, bl))
 
     lines = all_t.splitlines()
     idx = [i for i, l in enumerate(lines) if l.startswith(SEC_HEADER_PREFIX)][0]
@@ -290,6 +464,12 @@ LIST_RULES = """判据（三条 · 现算 + 对界 · 缺口 GAP-20260927-401）
      族级段行数 == 1 + ceil(族数/8)（段头之前必须是空行）；两个面的 lines/bytes == 冻结常量
      （现跑取数 · --emit-baseline 刷）
   S3 末行：`--all` 末行 == 由族名清单现算重建的那一行；裸 `help` 末行 == 冻结读数（逐字）
+  S4 危险档面（`help dangerous` · 2026-09-27 补 · 缺口 GAP-20260927-418）：
+     S4a 表尾计数（`上表 N 条：已开放 X / 未开放 Y` ⇒ N == X + Y == 逐条行数）·
+     S4b 逐条行尾标记出现次数 == 表尾 X / Y ·
+     S4c 逐条行形状闭集（`zerg <路径>  D2|D3  --dry-run · [--confirm=<目标> · ]--yes  …  ← 标记`）·
+     S4d 逐条 `--confirm=<目标>` 的核心名 ⟷ 该命令在 `help --all` 的用法串（现算脱钩集合 == 冻结名单）·
+     S4e 该面的 lines / bytes / 条数 / 表尾逐字 == 冻结读数（现跑取数 · --emit-baseline 刷）
 
 不假装覆盖（照实登记）
 ----------------------
@@ -340,6 +520,16 @@ def main() -> int:
             sys.stdout.write("%s\tlines=%d\tbytes=%d\tlast=%s\n"
                              % (face, len(text.splitlines()), len(text.encode("utf-8")),
                                 text.splitlines()[-1] if text.splitlines() else ""))
+        d = faces["help dangerous"]
+        drows = danger_rows(d)
+        _t, _n, _x, _y = danger_tail(d)
+        sys.stdout.write(
+            '  # ↑ 前三行照抄进 BASELINE。危险档面（S4）那一条照抄下面这三行：\n'
+            '    "help dangerous": {"lines": %d, "bytes": %d, "rows": %d,\n'
+            '                       "tail": %r,\n'
+            '                       "confirm_not_in_usage": %s},\n'
+            % (len(d.splitlines()), len(d.encode("utf-8")), len(drows),
+               danger_tail(d)[0], json.dumps(danger_confirm_gap(d, faces["help --all"]), ensure_ascii=False)))
         return 0
 
     sys.stdout.write("`help` 面形状判据 · v%s（族级段 / 条数 / 末行）\n" % VERSION)
@@ -363,7 +553,17 @@ def main() -> int:
                             len(rows_of(faces["help dangerous"])),
                             sec_lines if sec_lines is not None else -1, len(cmds)))
         sys.stdout.write("  ✓ S3 末行 = 族名清单现算重建的那一行（裸 `help` 末行逐字符合）\n")
-        sys.stdout.write("⇒ 三条都合（rc=0）\n")
+        _t, _n, _x, _y = danger_tail(faces["help dangerous"])
+        sys.stdout.write("  ✓ S4 危险档面：表尾 %d 条 == 已开放 %d + 未开放 %d == 逐条行数 %d；逐条标记逐数相符；"
+                         "逐条行形状全合；`--confirm` 目标 ⟷ 用法串脱钩 %d 处（= 冻结名单）；"
+                         "行/字节/条数 == 冻结读数 %d/%d/%d\n"
+                         % (_n if _n is not None else -1, _x if _x is not None else -1,
+                            _y if _y is not None else -1, len(danger_rows(faces["help dangerous"])),
+                            len(danger_confirm_gap(faces["help dangerous"], faces["help --all"])),
+                            dbl_l := len(faces["help dangerous"].splitlines()),
+                            dbl_b := len(faces["help dangerous"].encode("utf-8")),
+                            dbl_r := len(danger_rows(faces["help dangerous"]))))
+        sys.stdout.write("⇒ 四条都合（rc=0）\n")
     if a.json:
         sys.stdout.write(json.dumps({
             "schema": "zerg-gate/v1", "gate": "check-help-shape", "version": VERSION,
@@ -372,6 +572,10 @@ def main() -> int:
             "all_bytes": len(faces["help --all"].encode("utf-8")),
             "bare_lines": len(faces["help"].splitlines()),
             "family_section_lines": sec_lines, "family_tokens": len(toks),
+            "danger_lines": len(faces["help dangerous"].splitlines()),
+            "danger_bytes": len(faces["help dangerous"].encode("utf-8")),
+            "danger_rows": len(danger_rows(faces["help dangerous"])),
+            "danger_confirm_not_in_usage": danger_confirm_gap(faces["help dangerous"], faces["help --all"]),
             "bad": bad, "mode": "judge",
         }, ensure_ascii=False) + "\n")
     return 0 if not bad else 1
