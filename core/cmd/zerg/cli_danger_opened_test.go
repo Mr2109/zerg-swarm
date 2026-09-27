@@ -26,7 +26,9 @@
 //	④ 内建负控：判定口是**纯函数** `dangerOpenedProblems`，正控（真命令树）与负控（合成夹具）都调它 ——
 //	   合成夹具必须被判红（判据不是恒绿）。
 //
-// 数（现读基线 2026-09-27）：危险档 45 条 = 已开放 16 + 未开放 29；未开放那 29 条的 runner 分布 =
+// 数：★ 本件**不记任何绝对条数**（件头读数会烂、且改数字=明年还会烂）——
+// 危险档总条数 / 已开放 / 未开放三格一律由 `zerg help dangerous` 现读，本件只判**形状**；下面那串 runner
+// 分布 =
 // `cmdGuarded` 25 · `cmdAgentReap` 1 · `cmdDevBuild` 1 · `cmdDevTest` 1 · `cmdGapExport` 1（**修前这一枚就是脱钩的那条**）。
 package main
 
