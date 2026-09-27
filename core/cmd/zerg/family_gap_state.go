@@ -254,6 +254,9 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 
 	// ② 缺 `--yes`（且非 `--dry-run`）：fail-closed **rc=2**，计划件走 stderr（同族 ④）。
 	//    ⚠ 判在**读真源之前**：确认档不齐 ⇒ 一行都不读、一行都不写。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if !inv.dryRun && !inv.yes {
 		ids := gapIDsOf(inv)
 		id := "（未给：缺必填）"
@@ -375,6 +378,9 @@ func cmdGapNote(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	// ② 缺 `--yes`（且非 `--dry-run`）：fail-closed **rc=2**，计划件走 stderr
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
 	if !inv.dryRun && !inv.yes {
 		ids := gapIDsOf(inv)
 		id := "（未给：缺必填）"
