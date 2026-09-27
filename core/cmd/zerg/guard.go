@@ -298,5 +298,9 @@ func dryRunYesConflict(inv *invocation, stderr io.Writer) int {
 	}
 	inv.setErr("usage", "dry_run_yes_conflict", "--dry-run 与 --yes 不许同给")
 	fmt.Fprintf(stderr, "%s: `--dry-run`（只出计划件）与 `--yes`（真写）**不许同给** ⇒ 用法错 2（两道确认档自相矛盾 ⇒ 不给结论）\n", progName)
+	// ★ 机器面读法（补的就是这一行）：默认档（不给 `--json`）下 stdout 恒 0 字节、stderr 这条判词
+	//   又与别的「前置检查退 2」看着一样 ⇒ 机器分不出这一发是不是本判定给的。上句人面**一字不动**，
+	//   只按本文件既有形状（`cmdGuarded` 的 `confirm_required` 那处）补一行 `error.*` 读法。
+	fmt.Fprintf(stderr, "error.kind=usage · detail=dry_run_yes_conflict · retryable=false · remedy=fix_usage\n")
 	return exitUsage
 }
