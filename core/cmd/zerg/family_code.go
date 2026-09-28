@@ -289,6 +289,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 				`{"cut_from":"tail","kept_items":%d,"dropped_items":%d,"total_items":%d}`,
 				len(aggRows), totalFiles-len(aggRows), totalFiles))
 		}
+		markCodeFindTruncated(inv, aggRows, cut)
 		rcAgg := listCmd(inv, stdout, stderr, aggFields, aggRows)
 		if cut {
 			fmt.Fprintf(stderr,
@@ -336,6 +337,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 			`{"cut_from":"tail","kept_items":%d,"dropped_items":%d,"total_items":%d}`,
 			len(rows), hits-len(rows), hits))
 	}
+	markCodeFindTruncated(inv, rows, cut)
 	rc := listCmd(inv, stdout, stderr, []string{"path", "line", "text"}, rows)
 	if cut {
 		// 人面末行：表格之后再钉一句 —— 「这一页不是全集」不许靠读者自己推。
@@ -344,6 +346,32 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 			progName, len(rows), hits, hits-len(rows))
 	}
 	return rc
+}
+
+// markCodeFindTruncated —— `GAP-20260928-118`（2026-09-28 · 本枚）：把**跑级**截断真值落到字段面上。
+//
+// 病灶（现读）：截断此前只有一个读口 —— 顶层包封的 `truncated`（+ `warnings[]` + `meta.truncated_detail`）；
+// 字段面（`--json <字段>`）合法名字仅 `path,line,text`，点名 `truncated` 直接报未知字段 ⇒ 只想看截断位
+// 的机检脚本在字段面上**拿不到直读口**（本命令三档面：默认 / `--count` / `--files-only`）。
+//
+// 口径（**只加新键 · 不动既有任何格 · 不新旗标**）：
+//
+//	· 值 = 本跑**那一档面自己的**截断真值（默认面 = 行数被一页裁掉；聚合两档 = 件数被裁掉）——
+//	  与置 `inv.markTruncated()` 的**同一个** `cut` 变量同源，**不另算一遍** ✗；
+//	· 逐行写（`items` 里每一格同一值：这是跑级真值，不是一个条目自己的属性 —— 注解写清，不冒充行属性）；
+//	· **只在 `--json` 那一态落键**：非 JSON 面（表格）与不给这一格的调用**逐字节不变**；
+//	· 值与包封 `truncated` 恒同真（不给这一格时包封那一格照旧，两处不是两套判据）。
+func markCodeFindTruncated(inv *invocation, rows []map[string]string, cut bool) {
+	if inv == nil || !inv.jsonGiven {
+		return
+	}
+	v := "false"
+	if cut {
+		v = "true"
+	}
+	for _, r := range rows {
+		r["truncated"] = v
+	}
 }
 
 // cmdCodeShow —— `zerg code show <件:行>`：读出源码里**某一行的邻域**（只读 · 与 `code find` 同族）。

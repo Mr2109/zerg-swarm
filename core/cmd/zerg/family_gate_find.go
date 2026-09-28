@@ -15,7 +15,9 @@
 //	① `precommit-gates.sh` 的 `add_step <scope> "<名>" <模式> "<目录>" "<命令>"` —— 命令串点名；
 //	② `all.sh:179` `for f in "${GATEDIR}"/*.py` —— **按通配收**：件在即跑得到，**名字一次都不出现**，
 //	   且**只收 `.py`** ⇒ 11 只 `.sh` 门在这一面完全不可见 ✗；
-//	③ `real-gates.sh` —— 一份**名录**（`--only <门名>` 的过滤面），名单外的件按「可跑」处理。
+//	③ `real-gates.sh` —— 一份**名录**（`--only <门名>` 的过滤面），且现盘门面收敛为 `*.py`；
+//	   名单外的件**默认档保守不进真跑面**（`skip-unclassified`：副作用未经实测 · `GAP-20260928-129`），
+//	   只有 `--only <名>` 显式点名那一支才真跑（**不是**「可跑」✗ —— `GAP-20260928-129`）。
 //
 // ⇒ 只知道①，会把「门⑫根本没进 precommit（却跑得到）」误读成「这门不存在」✗。故本命令出**两种行**：
 //
@@ -243,6 +245,54 @@ func joinLines(ls []int) string {
 	return strings.Join(parts, " · ")
 }
 
+// gateWhatFileName —— 从 `what`（**门件路径**或**步骤命令串**）里取**门件文件名**（`GAP-20260928-113`）。
+//
+// 病根：旧形态对整串取 `filepath.Base`。门件行传的是件路径（`scripts/gates/x.py`）⇒ 没问题；但
+// **步骤行**传的是**带实参的命令串**（`python3 scripts/gates/x.py --scope devdocs --missing=fail`）
+// ⇒ 基名成 `x.py --scope devdocs --missing=fail` ⇒ 后缀判 `.py` **不成立** ⇒ 落进非目标支、
+// 被**误印成「该面不收」** ✗，且 precommit 点名面与 real-gates 名录面按基名找也**全部落空**。
+// 现按**空白切词**认那一概含 `gates/` 且以 `.py`/`.sh` 收尾的词（本命令的三处面都住在
+// `scripts/gates/`）⇒ 取它的 `filepath.Base`。
+//
+// **范围**：只认**门件目录**里那一概 —— 不含 `gates/` 的形态（如 `scripts/docs/gen-x.py --check`、
+// `scripts/*.sh` 通配）**照旧**落回整串 `filepath.Base`，与改前**逐字同**（两态判据②）。
+func gateWhatFileName(what string) string {
+	for _, f := range strings.Fields(what) {
+		t := strings.Trim(f, "\"'`")
+		if !strings.Contains(t, "gates/") {
+			continue
+		}
+		if strings.HasSuffix(t, ".py") || strings.HasSuffix(t, ".sh") {
+			return filepath.Base(t)
+		}
+	}
+	return filepath.Base(what)
+}
+
+// gateFaceNotApplicable —— 「**面态＝不适用**」那句的**唯一**定义处（`GAP-20260928-102` ·
+// `GAP-20260928-129` 复用同一处，不另写第二份文案）。
+//
+// 用在：某件在**某个接线面**上因该面的收集条件（`*.py` 通配）而**恒不出现**时 —— 要把它印成
+// 「**该面对它不适用**」，不是「这件没接线」✗。`ext` 传该件的后缀（如 `.sh`）。
+func gateFaceNotApplicable(face, ext string) string {
+	return fmt.Sprintf(" · **面态＝不适用**：%s 面：对 %s 件不生效", face, ext)
+}
+
+// gateRealGatesUnlisted —— real-gates 面「**名单外件**」那句的**唯一**定义处（`GAP-20260928-129`）。
+//
+// 现读真源（`scripts/gates/real-gates.sh`）：默认档选面走 `else` 支，名录外件（既不在 `FAST_NAMES`
+// 也不在 `SLOW_NAMES`、且不在白名单）**一律** `add "$n" skip-unclassified`，汇总里该态的 reason
+// 逐字是「unclassified: 名单外新件（副作用未经实测 ⇒ 保守不进真跑面，请登记后并入名单）」
+// ⇒ **真实动作＝保守跳过，不是「可跑」**。只有 `--only <名>` 那一支**不查名录**、照跑
+// （同件的 `GAP-20260928-112`）。
+//
+// 旧文案（`GAP-20260928-129` 正文引的那句）把「保守跳过」印成**可跑**＝伪结论 ✗；
+// 本函数只改**说法**：选面逻辑、退码、名录筛选一字未动。
+func gateRealGatesUnlisted(base string) string {
+	return "real-gates: **名单外** —— 默认档口径＝`skip-unclassified`（副作用未经实测）" +
+		"⇒ **保守不进真跑面**；只有 `--only " + base + "` 显式点名那一支才真跑"
+}
+
 // gateWiringNote —— 一件门件在**三处接线面**的现读结论（同夜补的第二半）：
 //
 //	precommit：`add_step` 的命令串里点到它的那几步（步名 + 出处行）；
@@ -250,12 +300,16 @@ func joinLines(ls []int) string {
 //	          `.py` ⇒ 按通配收（**实际生效**）；`.sh` ⇒ **面态＝不适用**（`GAP-20260928-102`：
 //	          旧文案只说「不收 … 不可见」⇒ 读成「这件没接线」✗；现补一句显式的「对 .sh 件不生效」
 //	          ＋「该面不含它 ≠ 没接线」。**只加信息**：`.py` 路径的输出字节一字未动）；
-//	          `.sh` 以外的非 `.py` 形态（如带实参的命令串）**照旧**不动 —— 不给没读过的面下结论；
-//	real-gates：名录里点到它的首行（名单外 ⇒ 「名单外（按可跑处理）」）。
+//	          ★ 后缀判按**门件文件名**（`gateWhatFileName`：从命令串里认那一概含 `gates/` 的件）
+//	          —— `GAP-20260928-113`：旧形态对整串取 `filepath.Base` ⇒ 步骤行的**带实参命令串**
+//	          （`…/check-x.py --scope devdocs`）后缀判不成立 ⇒ `.py` 门件被**误印成「该面不收」** ✗；
+//	real-gates：名录里点到它的首行；名单外 ⇒ `GAP-20260928-129`：印**默认档口径＝保守不进真跑面**
+//	          （`skip-unclassified`），非 `.py` 件再加一句**面态＝不适用**（该面收集面只收 `*.py`）——
+//	          旧文案（`GAP-20260928-129` 正文引的那句）把「保守跳过」印成「可跑」＝**伪结论** ✗。
 //
 // `what` 既可能是**命令串**（步骤行）也可能是**件路径**（门件行）⇒ 两种都按基名子串找，宁多勿漏。
 func gateWiringNote(root, what string, decls []gateStepDecl, unc []gateStepUncertain) string {
-	base := filepath.Base(what)
+	base := gateWhatFileName(what)
 	parts := []string{}
 
 	named := []string{}
@@ -283,7 +337,7 @@ func gateWiringNote(root, what string, decls []gateStepDecl, unc []gateStepUncer
 		//   **面态**（对该件**不适用**，不是「未接线」）显式写出来；`.py` 路径的字节**一字不动**
 		//   （两态判据②：同一枚 `.py` 门件跑同一条 ⇒ 既有字节逐字同）。
 		parts = append(parts, "all.sh: **不收**（`all.sh:179` 只收 `*.py` ⇒ 非 `.py` 件（含 `.sh` 门）在这一面不可见）"+
-			" · **面态＝不适用**：all.sh 面：对 .sh 件不生效"+
+			gateFaceNotApplicable("all.sh", ".sh")+
 			"（该面的收集面就是 `${GATEDIR}/*.py` 通配 · 现读 `all.sh`）"+
 			"—— 「该面不含它」≠「这件没接线」：`.sh` 门件的生效面看本格点名它的那一项")
 	} else {
@@ -300,8 +354,17 @@ func gateWiringNote(root, what string, decls []gateStepDecl, unc []gateStepUncer
 		}
 		if line > 0 {
 			parts = append(parts, fmt.Sprintf("real-gates: 名录点名@%d", line))
+		} else if strings.HasSuffix(base, ".sh") {
+			// ★ 治法（`GAP-20260928-129`）：名录外的 `.sh` 门件在这一面**两处都不是**旧文案说的那样 ——
+			//   ① 它是名录外件 ⇒ **默认档口径＝`skip-unclassified` 保守不进真跑面**（不是「可跑」）；
+			//   ② 该面的**收集面**是现盘 `*.py`（`LIVE`，现读）⇒ 它在那一面的逐只表里**根本不出现**
+			//   ⇒ 面态＝**不适用**（与 `all.sh` 面同形 · `GAP-20260928-102` 那句**复用同一处定义**）。
+			parts = append(parts, gateRealGatesUnlisted(base)+
+				gateFaceNotApplicable("real-gates", ".sh")+
+				"（该面的收集面只收 `*.py`（现盘 `LIVE`）⇒ `.sh` 门在那一面的逐只表里**根本不出现** · 现读 `real-gates.sh`）"+
+				"—— 「该面不含它」≠「这件没接线」")
 		} else {
-			parts = append(parts, "real-gates: 名单外（按可跑处理）")
+			parts = append(parts, gateRealGatesUnlisted(base))
 		}
 	} else {
 		parts = append(parts, "real-gates: 读不到该件 ⇒ 判不了")

@@ -88,7 +88,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(HERE))  # scripts/gates → 仓根
 
 DEFAULT_REPO = "https://github.com/Mr2109/zerg-swarm.git"
-DEFAULT_TIMEOUT = 900  # 秒：clone（实测 8s）+ go 包编译 + 跑测试（实测首跑 < 2min，宽给）
+DEFAULT_TIMEOUT = 900  # 秒：clone（耗时以该件自检自报为准 · 不在此写死）+ go 包编译 + 跑测试（耗时以该件自检自报为准 · 不在此写死，宽给）
 
 # ── 探针表（**判据写在一处**：命令串、具名红因、必须存在的树内件）────────────────────────
 PROBES = [
@@ -328,6 +328,54 @@ def self_test():
         print("   ✓ 缺一侧 sha（本机读不到）⇒ **未证**（不给结论，不许当绿）：%s" % v_lack[1])
     else:
         bad.append("双方 HEAD sha 缺一侧 ⇒ 未证")
+    # ── ★ 回归自测格（缺口 `GAP-20260928-51` · 2026-09-28 补）：**真探针执行面 `run_probe()` / 取数面 `read_head()`** 不许哑化 ──
+    #   病灶（本格是牙齿 · 现状实测）：本自测此前只喂**判决面**（`judge()` / `judge_heads()` 的合成文本），
+    #   而**真探针执行面 `run_probe()` 与取数面 `read_head()` 一个都不进自检** ⇒ 把 `run_probe()` 体
+    #   首行后插一行 `return []` 哑化后 `--self-test` 仍 `rc=0`「13 条全过」（假安全；2026-09-28
+    #   仓外硬拷贝实测复现：哑化后 `py_compile` rc=0、自测 rc=0 —— 因为自检从不调 `run_probe()`）。
+    #   治法：拿一个**受控探针**（合成命令，输出里带具名红因）喂给**真执行面 `run_probe()`**，断言它
+    #   真跑、真回传文本、且 `judge()` 对这段**真输出**真判 `hit`；再拿一枚真 git 夹具喂 **`read_head()`**
+    #   断言它真读出 40 位 HEAD。谁把这两处哑化成空/异常，本格立刻变红（不靠异常崩，逐格点名 rc=2）。
+    _sx_probe = {"id": "SX", "name": "自检受控探针", "cwd": ".",
+                 "argv": [sys.executable or "python3", "-c", "print('LEAK: selftest-synthetic')"],
+                 "needs_argv": [], "needs_tree": [], "marks": ["LEAK:"],
+                 "fail_lines": ["--- FAIL"], "why": "自检受控探针（合成输出 · 不碰真目标/不走网）"}
+    _sx_root = tempfile.mkdtemp(prefix="selfcheck-selftest-")
+    _sx_cases = []
+    try:
+        _rc, _text, _secs, _note = run_probe(_sx_root, _sx_probe, 60)
+        _v = judge(_text or "", _rc if _rc is not None else 1, _sx_probe)[0]
+        _sx_cases = [
+            (_rc == 0, "run_probe 真跑合成命令 ⇒ rc=0（现读 %r）" % (_rc,)),
+            ("LEAK:" in (_text or ""), "run_probe 真回传子进程输出（现读 %r）" % ((_text or "")[:80],)),
+            (_v == "hit", "判决面对**真执行面**输出真判 `hit`（现读 %s）" % _v),
+        ]
+    except Exception as _exc:
+        _sx_cases = [(False, "真执行面 `run_probe()` 哑化/异常（%s: %s）⇒ 不许静默绿"
+                      % (type(_exc).__name__, _exc))]
+    try:
+        _sx_env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@e",
+                       GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e")
+        subprocess.run(["git", "init", "-q", "-b", "main", _sx_root], check=True, env=_sx_env)
+        subprocess.run(["git", "-C", _sx_root, "commit", "-q", "--allow-empty", "-m", "fx"],
+                       check=True, env=_sx_env)
+        _sx_want = subprocess.run(["git", "-C", _sx_root, "rev-parse", "HEAD"],
+                                  capture_output=True, text=True).stdout.strip()
+        _sx_got = read_head(_sx_root, full=True)
+        _sx_cases.append((_sx_got == _sx_want and len(_sx_got) == 40,
+                          "read_head 真读出 40 位 HEAD（现读 %r）" % (_sx_got or "")))
+    except Exception as _exc2:
+        _sx_cases.append((False, "取数面 `read_head()` 哑化/异常（%s: %s）⇒ 不许静默绿"
+                          % (type(_exc2).__name__, _exc2)))
+    finally:
+        shutil.rmtree(_sx_root, ignore_errors=True)
+    for _okx, _whyx in _sx_cases:
+        if _okx:
+            ok += 1
+            print("   ✓ %-32s | %s" % ("runprobe/readhead-truly-live", _whyx))
+        else:
+            bad.append("runprobe/readhead-truly-live")
+            print("   ✗ %-32s | %s" % ("runprobe/readhead-truly-live", _whyx))
     print("自检结论: %s（断言 %d 条 · 失败 %d 条）"
           % ("全过" if not bad else "**不过**", ok + len(bad), len(bad)))
     return 0 if not bad else 2

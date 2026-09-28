@@ -113,7 +113,7 @@ def load_sibling(path=SIBLING):
         spec.loader.exec_module(mod)                             # 顶层只有 def/常量，写面在 __main__ 守卫后
     except Exception as e:                                       # noqa: BLE001
         return None, "同源件加载失败：%s（%s）⇒ 不给结论" % (path, e)
-    for attr in ("parse_decl", "PROC_HINTS", "read_lines"):
+    for attr in ("parse_decl", "PROC_HINTS", "read_lines", "label_set_diff"):
         if not hasattr(mod, attr):
             return None, "同源件里没有 %s ⇒ 口径对不上（不给结论）" % attr
     TOOL_DIR = os.path.dirname(os.path.abspath(path))
@@ -289,11 +289,15 @@ def check(root, mod, decl_path=None, ps_file=None, launchctl_file=None, home=Non
                       "raw": ln.strip()})
 
     # ── 侧②「声明有 / 盘上无」：每条 launchd 声明的三环（装载 / 进程 / 声明件在盘）缺哪一环 ──
-    lc_zerg = [l for l in lc_lines if "zerg" in l.lower()]
+    lc_zerg = [l for l in lc_lines if "zerg" in l.lower()]      # ★ 只留作下面 :308 注记的「行数」计数（输出模板逐字不动）
+    # ★ 装载判据 = **门⑧ 的同一份集合比较**（`label_set_diff` · 同源 import ⇒ 不写第二份口径）：
+    #   旧形态「`name` 末段 / `proc` 子串 ∈ 某条含 zerg 的行」是**猜**（闭集外标签、换名同长都假绿）；
+    #   现改为「整标签 ∈ 闭集内标签集」—— 等价替换 / 集合化收窄（退码语义与输出模板逐字不动）。
+    live_labels = mod.label_set_diff(launchd_rows, lc_lines)[0]
     side2 = []
     for r in launchd_rows:
         missing = []
-        loaded = any(r["name"].split(".")[-1] in l for l in lc_zerg) or any(r["proc"] in l for l in lc_zerg)
+        loaded = r["name"] in live_labels
         if not loaded:
             missing.append("launchctl 未装载")
         if not any(r["proc"] and r["proc"] != "-" and r["proc"] in ln for ln in live):

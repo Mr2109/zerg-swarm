@@ -42,7 +42,7 @@
   3. 本门挂在提交闸（`scripts/gates/precommit-gates.sh` 的 scope `public` · 模式 `tri`）⇒ 表与件一旦不一致
      （悬空/漏登记/public=yes 面有私有面）**在提交前就被拦下**，不再靠「记得导出前跑一遍」。
   ★ 2026-09-21（公开线⑤ · 攒批修）：上面那条**已落地**（此前只有说明、链上一行没接）——
-    `public=no` 的 100 件 + 表自身（共 **101** 条）逐条收进 `scripts/build/publish-public.sh` 的 `EXCLUDES`
+    `public=no` 的件 + 表自身（条数以 `scripts/公开标记.tsv` 的 `public=no` 行数 + 表自身现读为准）逐条收进 `scripts/build/publish-public.sh` 的 `EXCLUDES`
     与 `publish/mirror-public-lib.py` 的 `DROP_EXACT`（走「**不进树**」那一套；**不是** `publish/private-paths.txt`
     的整批中止语义）；表↔两器的漂移由 `scripts/gates/check-publish-face-sync.py` 的**判据⑥**
     （表说 no、链上仍会发 ⇒ 红）**秒级**兜住。表自身也立了一行（`public=no`：判据的真源不许跟着出公开面）。
@@ -438,7 +438,7 @@ def scan_tree(tree):
 
     ★ 为什么两者都要：表里的行**不都在 `scripts/` 下**（现读 2 件面外：`scripts/plugins/zerg-hello` ·
       `core/cmd/compressor_demo/main.go`）⇒ 判「这一件在不在树里」必须看**整棵产出树**；
-      而「未登记」只数 `scripts/` 面（口径 = 基线 21 件：`scripts/` 面 129 件 − 已登记 108 件）。
+      而「未登记」只数 `scripts/` 面（口径 = `scripts/` 面件数 − 已登记件数 · 两值一律现读为准）。
     ★ 排除面**不借** `SKIP_DIRS`：那一份是为仓内 `scripts/<域>/` 面定的，里面有 `build`/`dist`/`target`
       —— 拿来扫产出树会把 `scripts/build/` **整段吃掉**（现跑实测：8 件凭空消失 ⇒ 表里 yes 件被误判成
       「缺产出树」= 假红，同时 no 件被误判成「不在树里」= **假绿**）。产出树只排 VCS / 缓存目录。
@@ -591,7 +591,7 @@ def _run_tree_quiet(tree, table):
 
 
 def selftest():
-    """成对负控 33 条：每条都要「该红的红、该绿的绿」，且断言用例条数（少跑即失效）。
+    """成对负控（条数以该件自检自报为准 · 不在此写死）：每条都要「该红的红、该绿的绿」，且断言用例条数（少跑即失效）。
 
     ①–⑯ = A/B/C 三判（表自身 · 私有面）；⑰–㉓ = **D 档**（产出树 ⨯ 标记表 · 2026-09-21 公开线④）；
     ㉔–㉘ = **域面派生档**（新域 / dev / 顶层进面 · 面外域不进面 · 2026-09-26）；

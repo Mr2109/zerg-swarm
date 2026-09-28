@@ -8,8 +8,13 @@
 #
 # 六条规则（任一不通过 ⇒ 见下方退出码）：
 #   R1 声明树可解析且非空（`deploy/服务声明.tsv`；缺件 / 解析不出行 / 无 launchd 行 ⇒ **rc=2 不给结论**）。
-#   R2 `launchctl list | grep -i zerg` 的**行数 == 声明件数**（= `kind=launchd` 的行数）——
-#      这就是开工单 T-25 判据②；不等 ⇒ rc=1（多一件 = 幽灵没登记；少一件 = 声明悬空）。
+#   R2 **按名字集对拍**：`launchctl list` 的 `com.zerg.` 标签集 ⇄ 声明树 `kind=launchd` 的 `name` 集，
+#      **双向**点名（`A∖B` = 盘上有·声明无 ⇒ 幽灵；`B∖A` = 声明有·盘上无 ⇒ 悬空）⇒ 差集非空即 rc=1。
+#      ★ 这是开工单 T-25 判据②（「`launchctl list | grep -i zerg` 的行数与声明件数一致」）的**加强形**：
+#        行数相等只是集合相等的必要非充分条件 —— 「少 2 条声明 + 多 2 条隧道」恰得 5 == 5 ⇒
+#        只比行数在「数目相同·换了人」这一格恒真假绿（`GAP-20260927-100`）。
+#      ★ 已登记 `kind=ghost` 的件**不算幽灵**（那是人签设计：现值有·声明无的**已登记**幽灵）⇒
+#        只有「**未登记**幽灵」判红；R2 必须把这两态逐条分开（点名时各自标注）。
 #   R3 每条 launchd 声明的「声明件」（`~/…` 形态）在盘上真存在 ⇒ 否则 rc=1。
 #   R4 **现值进程逐条有落点**：ps 里每个自研件进程（命令行含 `bin/zerg-` 或 `bin/cocoon-`）
 #      都必须被某条「进程特征」覆盖（= 在声明面可查），或本身就是一条已登记的 ghost（= 进 reap 候选）；
@@ -37,6 +42,11 @@ TOOL = 'check-service-declaration'
 KINDS = ('launchd', 'ghost')
 # 自研件的进程特征前缀（仓根相对）——两种都算「本仓的件」
 PROC_HINTS = ('bin/zerg-', 'bin/cocoon-')
+# ★ 标签命名空间闭集（`L1` 口径 · 唯一一处）：为什么是**显式闭集**而不是 `'zerg' in label` 这类子串猜 ——
+#   ① 子串猜会吞外来件（`com.example.zerg-probe` 被读成「本仓的件」⇒ 点到错人）；
+#   ② 子串猜判不出「排除」（闭集判得出：闭集外的行属**未覆盖形态**，逐条打印而**不进集合**）；
+#   ③ 判据要用「整标签」（第 3 列），不是整行（整行里的 PID/路径也含 `zerg` 字样 ⇒ 又一份口径）。
+ZERG_LABEL_PREFIXES = ('com.zerg.',)
 SELF_NAME = os.path.basename(__file__)
 
 
@@ -95,6 +105,35 @@ def read_lines(path, cmd):
     return [l for l in out.stdout.splitlines() if l.strip()], 'live', None
 
 
+def parse_launchctl_labels(lines):
+    """`launchctl list` 输出 ⇒ {label: 原始行}。★ 只取**第 3 列**（label）——
+    PID / 退出状态在第 1/2 列，进集合必误报（`L1` 口径）⇒ 只做注记、不进集合。"""
+    out = {}
+    for ln in lines:
+        cells = ln.split('\t')
+        if len(cells) < 3:
+            continue
+        lab = cells[2].strip()
+        if lab:
+            out.setdefault(lab, ln.strip())
+    return out
+
+
+def label_set_diff(launchd_rows, lc_lines):
+    """★ `launchctl` 标签集 ⇄ 声明 `name` 集 的**唯一一处**集合比较（**别在别处再写一份**
+    —— 同族件要按同源 import 本函数，写第二份即「第二份口径」）。
+    ⇒ (live_labels, decl_labels, only_live, only_decl)：
+      live_labels = 闭集内标签（label ⇒ 原始行 · 用于注记行号）；
+      decl_labels = 声明 `name` ⇒ 声明行（用于给「件:行」）；
+      only_live  = 盘上有·声明无（幽灵）；only_decl = 声明有·盘上无（悬空）。两侧**都逐条点名**。"""
+    decl_labels = {r['name']: r for r in launchd_rows}
+    live_labels = {lab: raw for lab, raw in parse_launchctl_labels(lc_lines).items()
+                   if lab.startswith(ZERG_LABEL_PREFIXES)}
+    only_live = sorted(set(live_labels) - set(decl_labels))
+    only_decl = sorted(set(decl_labels) - set(live_labels))
+    return live_labels, decl_labels, only_live, only_decl
+
+
 def check(root, decl_path=None, ps_path=None, launchctl_path=None, home=None):
     decl_path = decl_path or os.environ.get('ZERG_SVCDECL_DECL') or os.path.join(root, 'deploy', '服务声明.tsv')
     ps_path = ps_path if ps_path is not None else os.environ.get('ZERG_SVCDECL_PS')
@@ -128,16 +167,42 @@ def check(root, decl_path=None, ps_path=None, launchctl_path=None, home=None):
     if not live:
         return 2, ['空转：ps 里一件自研件（%s…）都没扫到（不许当绿）' % PROC_HINTS[0]], [], ''
 
-    # R2 判据②：launchctl 行数 == 声明件数
-    lc_zerg = [l for l in lc_lines if 'zerg' in l.lower()]
-    notes.append('launchctl 里 zerg 行数 = %d · 声明件数（kind=launchd）= %d' % (len(lc_zerg), len(launchd_rows)))
-    if len(lc_zerg) != len(launchd_rows):
-        if len(lc_zerg) > len(launchd_rows):
-            problems.append('FAIL R2 launchctl 有 %d 行 zerg 作业、声明树只有 %d 条 ⇒ 差 %d 件没声明（幽灵）'
-                            % (len(lc_zerg), len(launchd_rows), len(lc_zerg) - len(launchd_rows)))
+    # R2 判据②：`launchctl` 标签集 ⇄ 声明 `name` 集（**按名字集对拍** · 双向点名 · 不再只比行数）
+    live_labels, decl_labels, only_live, only_decl = label_set_diff(launchd_rows, lc_lines)
+    notes.append('R2 集合对拍：launchctl 闭集 %s 标签 %d 个 · 声明 name %d 个（行数 %s）'
+                 % (' '.join('`%s`' % p for p in ZERG_LABEL_PREFIXES), len(live_labels), len(decl_labels),
+                    '相等' if len(live_labels) == len(decl_labels) else '不等'))
+    notes.append('R2 现值标签（%d）：%s' % (len(live_labels),
+                 ' · '.join(sorted(live_labels)) or '（空）0 个'))
+    notes.append('R2 声明标签（%d）：%s' % (len(decl_labels),
+                 ' · '.join(sorted(decl_labels)) or '（空）0 个'))
+    # 侧①「盘上有 · 声明无」——差集非空即逐条点名；★ 分「已登记 ghost」与「未登记幽灵」两态
+    for lab in only_live:
+        raw = live_labels[lab]
+        reg = [g for g in ghost_rows if g['name'] == lab
+               or (g['proc'] and g['proc'] != '-' and g['proc'] in raw)]
+        if reg:
+            notes.append('R2 `A∖B` 已登记：%s（`kind=ghost` 行「%s」· 声明树第 %d 行 · 处置=%.40s）'
+                         '—— 已登记幽灵**不是**缺口（人签设计）'
+                         % (lab, reg[0]['name'], reg[0]['line'], reg[0]['disposition']))
         else:
-            problems.append('FAIL R2 声明树 %d 条 launchd、launchctl 只 %d 行 ⇒ 声明悬空（盘上没装载或已失效）'
-                            % (len(launchd_rows), len(lc_zerg)))
+            problems.append('FAIL R2 `A∖B` **未登记幽灵**：launchctl 有标签 %s 而声明树 %d 条 launchd 里'
+                            '查无此名 ⇒ 逐条点名（原始行：%s）' % (lab, len(launchd_rows), raw[:100]))
+    # 侧②「声明有 · 盘上无」
+    for lab in only_decl:
+        r = decl_labels[lab]
+        problems.append('FAIL R2 `B∖A` 声明悬空：声明树第 %d 行（`kind=launchd` · name=%s · 声明件 %s）'
+                        '在 launchctl 闭集里没有同名标签 ⇒ 盘上没装载或已失效' % (r['line'], lab, r['decl']))
+    if not only_live:
+        notes.append('R2 `A∖B`（盘上有 · 声明无）：（空）0 个 —— 闭集内每个标签都在声明面可查')
+    if not only_decl:
+        notes.append('R2 `B∖A`（声明有 · 盘上无）：（空）0 个 —— 声明的每个 name 都有同名标签')
+    # ★ 未覆盖形态（闭集外）逐条打印：`launchctl list` 只列当前 `gui/501` 域 ⇒ 系统域 LaunchDaemon 不在读数里，
+    #   而闭集外的行**不进集合**（既不当幽灵、也不当绿）
+    outside = [lab for lab in parse_launchctl_labels(lc_lines) if not lab.startswith(ZERG_LABEL_PREFIXES)]
+    if outside:
+        notes.append('R2 闭集外 %d 行（未覆盖形态 · 不进集合）：%s'
+                     % (len(outside), ' · '.join(sorted(outside)[:8])))
 
     # R3 声明件在盘上存在
     for r in launchd_rows:
@@ -231,6 +296,9 @@ def self_test():
     cases.append(('负控⑤ 声明件（plist）不在盘上 ⇒ rc=1', 1, 'plist'))
     cases.append(('负控⑥ ps 里一件自研件都没有 ⇒ rc=2（空转不许当绿）', 2, 'empty_ps'))
     cases.append(('负控⑦ 声明树缺件 ⇒ rc=2（判据不可判）', 2, 'no_decl'))
+    cases.append(('负控⑧ 数目同·名字不同（agent-Mr2109 ⇄ tunnel.mini-node-1）⇒ rc=1（**双向点名**）', 1, 'swapped'))
+    cases.append(('负控⑨ 闭集外标签（com.example.zerg-probe）不进集合 ⇒ rc=0（另印「闭集外」行）', 0, 'outsider'))
+    cases.append(('正控⑩ 闭集内标签但**已登记 ghost 行** ⇒ 不算幽灵（区分已知幽灵/未登记幽灵）', 0, 'ghost_reg'))
 
     ok = True
     for name, want, mode in cases:
@@ -244,6 +312,13 @@ def self_test():
                 kw['decl'] = GOOD_DECL.replace('进 reap 候选 · 待 Mr2109 拍', '-')
             elif mode == 'plist':
                 kw['plists'] = ('com.zerg.core.plist',)
+            elif mode == 'swapped':
+                kw['lc'] = '68939\t0\tcom.zerg.core\n86298\t0\tcom.zerg.tunnel.mini-node-1\n'
+            elif mode == 'outsider':
+                kw['lc'] = GOOD_LC + '77777\t0\tcom.example.zerg-probe\n'
+            elif mode == 'ghost_reg':
+                kw['lc'] = GOOD_LC + '88888\t0\tcom.zerg.ghost-registered\n'
+                kw['decl'] = GOOD_DECL + ('ghost\tcom.zerg.ghost-registered\t-\t-\t-\t测试\t待拍\n')
             elif mode == 'empty_ps':
                 kw['ps'] = '    1     0  00:00 /sbin/launchd\n'
             dp, pp, lp, home = mk(d, **kw)
@@ -252,6 +327,12 @@ def self_test():
             rc, problems, notes, _ = check(d, decl_path=dp, ps_path=pp, launchctl_path=lp, home=home)
             flag = '✓' if rc == want else '✗'
             print('  %s %s（rc=%d）' % (flag, name, rc))
+            if mode == 'swapped':                      # 点名断言：两侧名字都必须逐字出现
+                joined = ' '.join(problems)
+                named = ('com.zerg.tunnel.mini-node-1' in joined) and ('com.zerg.agent-Mr2109' in joined)
+                print('  %s 点名断言（`A∖B` + `B∖A` 两侧逐字出现）' % ('✓' if named else '✗'))
+                if not named:
+                    ok = False
             if rc != want:
                 ok = False
                 for p in problems:

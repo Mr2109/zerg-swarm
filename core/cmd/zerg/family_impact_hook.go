@@ -353,15 +353,52 @@ type impactDryRunSummary struct {
 	HeadSHA string
 	Layers  []impactLayer
 	Reason  string // 没打三行的原因（未取数 / 面内未见）
+	// State —— 「没取到数」那一档的**分档**（`""` = 取到数了 · `new_file` = **新增件**（本件改前本来
+	// 就没有前态）· `unreadable` = **改前态读不到**（不是「没有」））。人面、机器面、审计面读**同一格**。
+	State string
 }
+
+// 「没取到数」那一档的**闭集**（照同族 `error.kind` 的纪律：取值写死、不许自由拼串 ⇒ 三个面读同一枚）。
+const (
+	impactSummaryUnresolved = "unresolved" // 目标解析不到（件不在盘上 / 不在仓内 / 在册契约表读不到）
+	impactSummaryNewFile    = "new_file"   // **新增件**：本件改前本来就没有前态（不是「取不到」）
+	impactSummaryUnreadable = "unreadable" // 改前态**读不到**（不是「没有」）⇒ 不给结论
+)
 
 // impactDryRunSummaryOf 取数（**默认档**：§4.4 只吃毫秒层 + 编译器层；贵层按需 —— 干跑不背贵层）。
 // 只读 · 零副作用：**不读也不写缓存**（`A5` 把 `A4` 那条「不写缓存」加强成「连读也不做」——
 // 干跑与缓存完全无关 ⇒ 这一档的判据面一个字不动）· 不落审计 · 不改件。
-func impactDryRunSummaryOf(root, rel string) impactDryRunSummary {
+//
+// `beforeMissing` = **本命令自己已经知道**这一件改前不在盘上（新建件）。
+// ★ 它只用来把「**本件本来就没有改前态**」与「**改前态没读到**」分开 —— 这两态此前**同一种输出**
+// （都落到 not_found 那一句）⇒ 「读不到」被读成「没有」（本单治的就是这一条）。分两态的判据
+// **只用本件的盘上事实**（不新立机制、不引入第二处算法）：`os.Stat` 失败时再看 `os.Lstat` ——
+// 连 `Lstat` 也说没有 ⇒ **这一格真的没东西**（改前没有前件）；`Lstat` 立得住（悬空符号链接）
+// 或错码根本不是「不存在」（无权看 / 路径段不是目录）⇒ **读不到**。
+func impactDryRunSummaryOf(root, rel string, beforeMissing bool) impactDryRunSummary {
 	s := impactDryRunSummary{}
 	tgt, why := impactResolve(root, rel)
 	if tgt == nil {
+		if why == "not_found" {
+			_, lerr := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
+			if lerr == nil || !os.IsNotExist(lerr) {
+				s.State = impactSummaryUnreadable
+				s.Reason = "**读不到**（改前态取不到 —— **不是「没有」**）"
+				s.Text = "影响面：" + s.Reason +
+					" —— 这一格在盘上占着位（悬空符号链接 / 无权看 / 路径段不是目录）却取不到数 ⇒ 按同族口径" +
+					"**不给结论**（既不说「没影响」，也不说「本件没有前件」）"
+				return s
+			}
+			if beforeMissing {
+				s.State = impactSummaryNewFile
+				s.Reason = "**新增件**（本件改前**本来就没有前态**：仓里还没有这一件）"
+				s.Text = "影响面：" + s.Reason +
+					" —— 这**不是**「没取到数」、也**不是**「没影响」：新增件没有改前态可对比" +
+					"（真判据只有一条：写回后件 sha256 与本次算出的那一枚一致）"
+				return s
+			}
+		}
+		s.State = impactSummaryUnresolved
 		s.Reason = "**未取数**（目标解析不到：`" + why + "` —— 件不在盘上 / 不在仓内 / 在册契约表读不到）"
 		s.Text = "影响面：" + s.Reason + " —— 这是**没取到数**，不是「没影响」（`F6`：把『没报』读成『没影响』）"
 		return s

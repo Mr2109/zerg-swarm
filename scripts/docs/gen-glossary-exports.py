@@ -216,6 +216,17 @@ def build():
 
 def main():
     argv = sys.argv[1:]
+    # ── 缺口 `GAP-20260926-197` / `-210`：旗标不许静默吞 ✗（吞了 ⇒ 直落默认写动作、写仓不打报告）。
+    #    口径照同族 `scripts/gates/check-build-tags.py`：未知参数 ⇒ `✗ 未知参数: …` + 用法错 `rc=2`；
+    #    `--help` / `-h` 只读印用法（= 本件 docstring 的「用法」段 · 唯一真源）⇒ `rc=0`，一个字节不写盘。
+    known = {"--check", "--selftest", "--help", "-h"}
+    bad = [a for a in argv if a.startswith("-") and a not in known]
+    if bad:
+        print("✗ 未知参数: %s" % " ".join(bad), file=sys.stderr)
+        return 2
+    if "--help" in argv or "-h" in argv:
+        print(__doc__)
+        return 0
     if "--selftest" in argv:
         return selftest()
     try:

@@ -353,6 +353,137 @@ def live_verify(root, matrix_path=None):
     return rc, lines + bad_lines
 
 
+# ── T7 绿格现跑（`tiers.*.cells` 的 `want_rc`）· 2026-09-28 补 · 缺口 `GAP-20260928-32` ─────────
+# CLI 的「不给结论」退码（`gate.go` 的 `exitBlocked` · §九 退码表：8 = 不给结论，
+# 不是错也不是绿）。仅 T7 的 `state_dependent` 分支用它 —— 既有 T1–T6 的退码口径一字不动。
+CLI_NO_CONCLUSION_RC = 8
+PLACEHOLDER_RE = re.compile(r'^<[^<>]+>$')
+
+
+def tier_cells(tiers, path='tiers'):
+    """递归收集 `tiers` 下**所有** `cells` 列表 ⇒ [(登记路径, 格), …]（现读真件 3 格）。
+
+    `cells` 只认「list of dict」这一种形状（格 = dict）；别的形状一律当「没登记」——
+    宁可判「零格 ⇒ 2 不给结论」，也不许把不认识的东西当格混进来（防假覆盖）。
+    """
+    out = []
+    if isinstance(tiers, dict):
+        for k, v in tiers.items():
+            if not isinstance(v, dict):
+                continue
+            cells = v.get('cells')
+            if isinstance(cells, list):
+                for i, c in enumerate(cells):
+                    if isinstance(c, dict):
+                        out.append(('%s.%s.cells[%d]' % (path, k, i), c))
+            else:
+                out.extend(tier_cells(v, '%s.%s' % (path, k)))
+    return out
+
+
+def step_name_candidates(binz):
+    """占位符 `<步名>` 的真值来源：`gate run --list` **现读**的步名表 ⇒ (步名表, '') / (None, 原因)。"""
+    p = subprocess.run([binz, 'gate', 'run', '--list'], capture_output=True, text=True,
+                       stdin=subprocess.DEVNULL)
+    if p.returncode != 0:
+        return None, '`gate run --list` 退出 %s' % p.returncode
+    names = []
+    for ln in (p.stdout or '').splitlines():
+        if '──' in ln or '清单' in ln:          # 表头/分隔行不是步名
+            continue
+        parts = ln.split(None, 2)
+        if len(parts) == 3 and parts[2].strip():
+            names.append(parts[2].strip())
+    if not names:
+        return None, '步名表里一行都没读到'
+    return names, ''
+
+
+def tier_cell_live(root, matrix):
+    """T7：逐格现跑 `tiers.*.cells[]` 的 `argv`，核 **实测 rc == 该格 `want_rc`**（每格两遍）。
+
+    为什么：`cases[]` 是 must-fail 矩阵（`want_rc == 0` 判红）⇒ 绿格（`want_rc == 0`）只能登记在
+    `tiers.*.cells` 里；而 `T1`–`T6` 与 Go 侧 `matrixTier()` 都只认 `tiers.local`/`tiers.public` 两个键
+    ⇒ 那几格**没有任何机检读它**（恒绿/空转类结构病：`want_rc` 写错也不红）。本档把账（矩阵）与盘
+    （制品）逐格对上，判词**点名到格 id**。
+
+    判据：0 = 逐格合 · 1 = 有 mismatch · 2 = **不给结论**（找不到制品 / 零格 / 占位符判不了）。
+    ★ 占位符：格 `argv` 里 `<步名>` 这类尖括号 token **逐字不是可跑的真值**（格自己的 `why` 说
+      「= 脚本 `--list` 里任一步名」）⇒ 用 `gate run --list` 现读的**第一条**步名替换，替换后**照常**
+      核 `want_rc`；替换源读不到 ⇒ 2（「判不了」不许当绿）。
+    ★ 只核 `rc` 与「两遍退码一致」：本批绿格的 `why` 明说**不冻结** stdout 字节数（随步名 / 结果表 /
+      矩阵涨落）⇒ 拿字节数当判据会变成一颗随仓内容自爆的地雷；字节数只作附注。
+    ★ 状态依赖格（`state_dependent` · 2026-09-28 补 · 缺口 `GAP-20260928-34`）：有的绿格退码取决于
+      **上下文/时序** —— 如 `gate results --json` 要看**那一趟门跑的结果台账**（`results.tsv`）落没落盘：
+      门跑**进行中** ⇒ 退 8（CLI 自陈**不给结论**）；门跑完再跑 ⇒ 退 0。这种格 `want_rc=0` 在「门内」
+      这个上下文里**不可能为真** ⇒ 对它判红是张冠李戴（红 = 账盘不符；8 = 没账可对）。凡格上声明了
+      `state_dependent`（格级可选标记 · 值 = 为什么）、账上写的又是「该绿」（`want_rc == 0`）、现跑
+      两遍都退 8 ⇒ 该格判「**判不了**」：不计合、不判红、逐字打印原因。其余任何 mismatch（含没声明
+      标记的格、`want_rc != 0` 的格退 8）照旧判红、点名到格。★ 不许当空转口子：整块**一格都没判合**
+      ⇒ 仍返 2 不给结论（判不了不许当绿，也不许让整块判据面被清空）。
+    """
+    binz = os.path.join(root, 'bin', 'zerg')
+    if not os.path.isfile(binz):
+        return 2, ['⛔ 不给结论：找不到 bin/zerg —— T7 绿格现跑跑不起来（先用 '
+                   '`bash scripts/build/build-all.sh --only-cli` 出**新**制品）'], [], {}
+    cells = tier_cells(matrix.get('tiers'))
+    if not cells:
+        return 2, ['⛔ 不给结论：矩阵 `tiers.*.cells` **一格都没有**（声明面被清空 = 空转）'
+                   '—— T7 判不了，不许当绿'], [], {'cells': 0}
+    names, err = [], ''
+    if any(PLACEHOLDER_RE.match(t) for _, c in cells for t in (c.get('argv') or [])):
+        cand, err = step_name_candidates(binz)
+        names = cand or []
+    if err:
+        return 2, ['⛔ 不给结论：占位符（`<步名>`）判不了 —— %s' % err], [], {'cells': len(cells)}
+    bad, infos, n_ok, n_blocked, blocked_notes = [], [], 0, 0, []
+    for path, c in cells:
+        cid = c.get('id', '?')
+        argv = c.get('argv') or []
+        if not argv:
+            bad.append('T7 绿格现跑：**格 %s**（登记在 %s）没有 argv ⇒ 声明面没有判据面可跑'
+                       % (cid, path))
+            continue
+        ran = [names[0] if PLACEHOLDER_RE.match(t) else t for t in argv]
+        rc1, b1 = run_once(binz, ran)
+        rc2, b2 = run_once(binz, ran)
+        want_rc = c.get('want_rc')
+        if rc1 == rc2 and rc1 == want_rc:
+            n_ok += 1
+            infos.append('  合：格 %s（%s）⇒ 现跑 argv=%r rc=%r（两遍一致）· stdout %d 字节'
+                         % (cid, path, ran, rc1, b1))
+            continue
+        # ★ 2026-09-28 补（缺口 `GAP-20260928-34`）：**状态依赖绿格**的登记口径（只在 T7 内，T1–T6 一字不动）。
+        #   门内（`results.tsv` 未落盘）`gate results --json` 退 8 = CLI 自陈**不给结论**；门跑完同命令退 0。
+        #   把 8 判红 = 把「没账可对」当成「账盘不符」⇒ 门⑪ 的绿会依赖「本机前序跑过门禁」这一副产品。
+        #   ⇒ 声明了 `state_dependent` 且账上写「该绿」的格，现跑两遍都退 8 ⇒ 判「判不了」（不计合不判红）。
+        sd = c.get('state_dependent')
+        if want_rc == 0 and rc1 == rc2 == CLI_NO_CONCLUSION_RC \
+                and isinstance(sd, str) and sd.strip():
+            n_blocked += 1
+            blocked_notes.append('  判不了：格 %s（登记在 %s）现跑 argv=%r ⇒ 退码 %d（CLI 自陈**不给结论**'
+                                 '· 上下文缺那一趟门跑的结果台账）—— 该格声明为 `state_dependent`：%s'
+                                 % (cid, path, ran, CLI_NO_CONCLUSION_RC, sd))
+            continue
+        how = []
+        if rc1 != rc2:
+            how.append('两次现跑退码不等（%r vs %r）—— 格不稳定' % (rc1, rc2))
+        if rc1 != want_rc:
+            how.append('退码 %r ≠ 账上 want_rc=%r' % (rc1, want_rc))
+        bad.append('T7 绿格现跑：**格 %s**（登记在 %s）现跑 argv=%r ⇒ %s'
+                   % (cid, path, ran, ' · '.join(how)))
+    head = ['绿格现跑（`tiers.*.cells[]` 逐格核 want_rc · 每格两遍）：合 %d / %d 格 · '
+            '判不了 %d 格 · mismatch %d 格' % (n_ok, len(cells), n_blocked, len(bad))]
+    stat = {'cells': len(cells), 'ok': n_ok, 'bad': len(bad), 'blocked': n_blocked,
+            'info': infos, 'blocked_notes': blocked_notes}
+    if n_ok == 0 and not bad:
+        # 全判不了 = 判据面被清空（与「零格 ⇒ 不给结论」同种空转）⇒ 不许当绿。
+        return 2, ['⛔ 不给结论：T7 绿格现跑**一格都没判合**（判不了 %d 格 = 判据面空转）—— '
+                   '`state_dependent` 是给状态依赖格判「判不了」的口径，不是让整块空转的口子'
+                   % n_blocked] + blocked_notes, [], stat
+    return (0 if not bad else 1), head, bad, stat
+
+
 def emit_matrix(root, out_path=None):
     """按命令树 + 现跑制品**增量合并**矩阵。
 
@@ -730,12 +861,29 @@ def check(root, no_runtime=False):
                         + (r.stdout or '')[-1500:] + se[-500:])
         t4 = 'go test -run TestCLIContractJSONShape ⇒ rc=0'
 
+    # ---- T7 绿格现跑（`tiers.*.cells` 的 `want_rc` · 2026-09-28 补 · 缺口 GAP-20260928-32）----
+    #   与 T5b/T5c/T5d 同族（都在看「矩阵这笔账自己对不对」）：那三档只判 `cases[]` 这笔账的形状，
+    #   本档判**绿格那块声明面**（`tiers.*.cells`）—— 它此前没有任何机检读（恒绿/空转结构病：
+    #   `want_rc` 写错也不红）。判据面走**默认档**（不需要 `--verify-live`），矩阵漂了门就红。
+    t7, t7_info = '（--no-runtime：夹具模式跳过）', []
+    if not no_runtime:
+        rc7, head7, bad7, stat7 = tier_cell_live(root, matrix)
+        if rc7 == 2:
+            return 2, head7
+        t7 = head7[0]
+        t7_info = stat7.get('info') if isinstance(stat7.get('info'), list) else []
+        t7_info = list(t7_info) + [x for x in (stat7.get('blocked_notes') or [])
+                                   if isinstance(x, str)]
+        errs.extend(bad7 or [])
+
     lines.append('命令树 %d 条 · 矩阵 case %d 条（must-fail %d）· 空白 %d 条 · 豁免 %d 条'
                  % (len(tree_paths), len(cases), n_mustfail, len(blanks), len(exemptions)))
     lines.append('退码表 %d 格（数字唯一：%s）· 常量 %d 个 · 裸数字退出码 %d 处'
                  % (len(table), '是' if len(set(codes)) == len(codes) else '否',
                     len(consts), len(bare_numeric_returns(root))))
     lines.append('T4 ' + t4)
+    lines.append('T7 ' + t7)
+    lines.extend(t7_info)
     lines.append('T6 契约登记表 gate 字段点名本脚本：%s'
                  % ('是' if any('check-cli-contract.py' in g for g in gates) else '否'))
     lines.append('R7 族名闭合（`agent` 唯一 · 全仓 `zerg node <动作>` 命中）：%d 处' % len(hits))

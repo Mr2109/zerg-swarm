@@ -905,13 +905,17 @@ func init() {
 			run:      cmdLsFace,
 		},
 		{
-			path:     []string{"code", "find"},
-			kind:     "CodeFind",
-			summary:  "在码里找一处东西在哪（只读取证 · 手搓 grep/git grep 的替身 · **扫工作树**：含未跟踪件与被忽略目录，比 `git grep` 的索引面多一片（两个面各扫多少件，命令每跑一次自己报一行「扫了 N 件」—— **不在这里写死**，写了就会烂；差值由运行时的数说话）；跳过 >2MB 的件）",
-			usage:    "zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--limit <N>] [--count | --files-only] [--full] [--json <字段>]",
-			arity:    "any",
-			args:     []string{"正则（POSIX 语法）"},
-			fields:   []string{"path", "line", "text"},
+			path:    []string{"code", "find"},
+			kind:    "CodeFind",
+			summary: "在码里找一处东西在哪（只读取证 · 手搓 grep/git grep 的替身 · **扫工作树**：含未跟踪件与被忽略目录，比 `git grep` 的索引面多一片（两个面各扫多少件，命令每跑一次自己报一行「扫了 N 件」—— **不在这里写死**，写了就会烂；差值由运行时的数说话）；跳过 >2MB 的件）",
+			usage:   "zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--limit <N>] [--count | --files-only] [--full] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"正则（POSIX 语法）"},
+			// ★ `GAP-20260928-118`（2026-09-28 · 本枚）：字段表补上 `truncated` —— 截断位此前
+			// 只能从顶层包封读，字段面没有直读口（给 `truncated` 即报未知字段）。三档面（默认 /
+			// `--count` / `--files-only`）逐行都产出它（**跑级真值**：本跑真裁了 = true，没裁 = false）
+			// ⇒ 表与产出集同源；不给这一格时输出逐字节不变（`marshalObject` 只投影点名的格）。
+			fields:   []string{"path", "line", "text", "truncated"},
 			endpoint: "",
 			run:      cmdCodeFind,
 		},
@@ -1620,7 +1624,7 @@ func init() {
 			path:    []string{"dev", "edit"},
 			kind:    "DevEdit",
 			summary: "受控写入：只改**提案声明过**的件（越界写 ⇒ 2）· 默认干跑 · 一行一事件的审计（写不进审计就不改件）",
-			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件>) [--by <谁>] [--allow-cross-root <理由>] [--dry-run | --confirm=<本机名> --yes] （真写前置：一枚**人签批准件** <状态目录>/approvals/dev_edit.json —— 无件 / 手写件 / 它的 scope 不含本件 ⇒ 一律拒（退 2）；--dry-run 那一态不需要它）",
+			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件>) [--by <谁>] [--allow-cross-root <理由>] [--dry-run | --confirm=<本机名> --yes] （真写前置：一枚**人签批准件** <状态目录>/approvals/dev_edit.json —— 无件 / 手写件 / 它的 scope 不含本件 ⇒ 一律拒（退 2）；--dry-run 那一态不需要它）" + devEditDryRunOnlyNote,
 			arity:   "any",
 			args:    []string{"提案 id（--proposal）", "要改的件（--file · 必须在提案的 files[] 里）"},
 			fields:  devEditFields,
@@ -1707,7 +1711,7 @@ func init() {
 			path:     []string{"plan"},
 			kind:     "Plan",
 			summary:  "**算**：产出一份意图件（M6 包封 · F1–F7 + 四附加件）· **零副作用**",
-			usage:    "zerg plan <族> <动作> <对象…> [--node 名]… [--expect 旧值] [--out <件>] [--json <字段>]",
+			usage:    "zerg plan <族> <动作> <对象…> [--node 名]… [--expect 旧值] [--target-ref <编号>] [--out <件>] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"族（= target.kind）", "动作", "对象名"},
 			fields:   planFields,
@@ -2511,6 +2515,13 @@ func parseInvocation(args []string) (*invocation, error) {
 		// ★ 必须在下面那条「未知旗标」兜底**之前**上户口，否则派单里写着它们会一律退 2。
 		case a == "--count" || a == "--files-only":
 			inv.kvSet(a, "true")
+		// `ask` 的 `--no-fallback`（缺口 `GAP-20260928-127` 的 ⑥ · 本枚）：用法串写**裸形**、语义本就是
+		// **布尔档** ⇒ 从「按取值收」的名字表移到布尔这一面（与上一块逐字同一种形态：写进 `inv.kv`、
+		// `foreignFlag` 看得见）。裸形与 `--k=v` 两态都收 ⇒ 行为逐字不变。
+		case a == "--no-fallback":
+			inv.kvSet(a, "true")
+		case strings.HasPrefix(a, "--no-fallback="):
+			inv.kvSet("--no-fallback", strings.TrimPrefix(a, "--no-fallback="))
 		case a == "--help" || a == "-h":
 			inv.wantHelp = true
 		case a == "--version":
@@ -2553,10 +2564,13 @@ func valueFlagName(a string) string {
 		return a
 	}
 	// 自开发面旗标（批 E · T-57 起）：一族共用一张名字表 —— 值照收，语义在各自命令里判。
+	// ★ 2026-09-28（缺口 `GAP-20260928-127` 的 ②③④ · 本枚）：`--criteria` / `--round` /
+	//   `--producer` 三枚**幽灵死条目**从本表除去 —— 全包零引用 + 全部用法串零提及
+	//   = 给不存在的旗标发户口（门73 判据乙「多一处」）。同日门73 存量豁免表同步除名。
 	switch a {
 	case "--title", "--target", "--goal", "--evidence", "--rollback", "--by",
-		"--criterion", "--criteria", "--candidate", "--state", "--round",
-		"--dir", "--producer", "--expect":
+		"--criterion", "--candidate", "--state",
+		"--dir", "--expect":
 		return a
 	}
 	// 受控写面与提交面旗标（D3b 第二/三步 · 2026-09-21）：受控写入的件名、提交信息、
@@ -2604,8 +2618,20 @@ func valueFlagName(a string) string {
 	// ★ 加这一排的直接理由：`--out` 此前**只写在用法串里、解析器不认** ⇒ 真给就退 2
 	//   （见表二「所见非本批」）—— 用法串里写着的旗标必须真能被解析，否则命令等于不可用。
 	switch a {
-	case "--capability", "--prefer", "--min-ctx", "--min-mem-gb", "--no-fallback",
+	case "--capability", "--prefer", "--min-ctx", "--min-mem-gb",
 		"--timeout", "--out", "--target-ref":
+		return a
+	}
+	// ★ 2026-09-28（缺口 `GAP-20260928-127` 的 ⑥ · 本枚）：`--no-fallback` **从本表移出** ——
+	//   它的语义本就是**布尔档**（用法串只写裸形 `[--no-fallback]`），按「取值」收进本表
+	//   是**形态不统一**（门73 判据丙）。现在与 `--count`/`--files-only` 同一种形态
+	//   （解析面布尔 case + 写进 `inv.kv`）⇒ 两处登记面**同名同形态**。
+	// 事件面旗标（§九 M1 · `W11` · 缺口 `GAP-20260928-128` · 本枚）：`zerg watch` 的用法串写着
+	//   `[--exit-on <kind>]`（跟到某个事件就退），而本表此前**没有**它 ⇒ 照用法串真给就退 2
+	//   「未知旗标」= **承诺与解析面不符**。本排只补「认得」这一件（§九 M1 `W11` 的语义仍归
+	//   事件面：主控面今天没有 `/api/events` ⇒ `zerg watch` 照旧出声明面 + 不给结论，退码 8）。
+	switch a {
+	case "--exit-on":
 		return a
 	}
 	// 度量与排序面旗标（组1 序12 · `zerg metrics`）：读数档的落点。

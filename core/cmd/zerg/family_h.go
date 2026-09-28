@@ -147,7 +147,7 @@ func cmdGatewayModels(inv *invocation, stdout, stderr io.Writer) int {
 	return listCmd(inv, stdout, stderr, []string{"id", "host", "backend", "modality", "mem_gb"}, rows)
 }
 
-// ---- 只读：脚本面（最小面；125 件的「现状标注」在 T-50 落）---------------------------------
+// ---- 只读：脚本面（最小面；件数以 `zerg script ls --json path` 现读为准 · 「现状标注」在 T-50 落）----
 
 // cmdScriptLs —— `zerg script ls`（只读本机面）：`scripts/` 下的脚本逐件列出。
 //
