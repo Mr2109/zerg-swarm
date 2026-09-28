@@ -7403,6 +7403,87 @@
    "want_rc": 2,
    "want_stdout_bytes": 276,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、**错因不同**：这里根本没有字段表）"
+  },
+  {
+   "id": "gap/receipt/check#未知旗标",
+   "command": "gap receipt check",
+   "argv": [
+    "gap",
+    "receipt",
+    "check",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gap/receipt/check#不认的契约主号",
+   "command": "gap receipt check",
+   "argv": [
+    "gap",
+    "receipt",
+    "check",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gap/receipt/check#说明面不认 --json",
+   "command": "gap receipt check",
+   "argv": [
+    "gap",
+    "receipt",
+    "check",
+    "--json",
+    "name"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 304,
+   "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、**错因不同**：这里根本没有字段表）"
+  },
+  {
+   "id": "gap/receipt/apply#未知旗标",
+   "command": "gap receipt apply",
+   "argv": [
+    "gap",
+    "receipt",
+    "apply",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gap/receipt/apply#不认的契约主号",
+   "command": "gap receipt apply",
+   "argv": [
+    "gap",
+    "receipt",
+    "apply",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gap/receipt/apply#缺 --yes（D2）",
+   "command": "gap receipt apply",
+   "argv": [
+    "gap",
+    "receipt",
+    "apply",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
   }
  ],
  "tiers": {
