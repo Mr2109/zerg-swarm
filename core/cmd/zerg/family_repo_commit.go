@@ -178,6 +178,15 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	// ③′ **门新鲜度闸**（缺口 `GAP-20260928-194` · 设计稿《流程规则程序化 v1.0》§2.2 的 `A2`/`A5` · §4 第 2 件）：
+	//   **提交前**先算当前工作树指纹，再去**现有**门跑结果里找「全链 + 含单测步且通过 + 指纹逐字相符」的一趟；
+	//   差任何一条 ⇒ 拒（退码 2）并逐条点名 + 给出该跑的完整真命令。**留痕跳道** = `--allow-stale-gates <理由>`
+	//   （缺理由 ⇒ 拒 2；理由非空 ⇒ 真写一笔审计行，落不下痕也不许跳）。
+	//   ★ 位置在**快速档之前**：闸判的是**别处那一趟**的产物，与本次要不要再跑快速档无关（快速档照旧跑）。
+	if rc := gateFreshnessGate(root, "files", inv, stderr); rc != exitOK {
+		return rc
+	}
+
 	// ④ **过快速档才放行**（在暂存之前跑 ⇒ 被拦下时索引面逐字未动）
 	// ★ 2026-09-27（缺口 `GAP-20260927-434` · 与 `gate run` 那一支同形）：原来目录名按**秒级**时间戳拼 +
 	//   `MkdirAll` 复用同名目录 ⇒ 同一秒内两次提交**共用同一处**日志目录；门禁脚本按 `--outdir` 读回
@@ -649,6 +658,11 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 			return exitUsage
 		}
 		return exitOK
+	}
+
+	// ③′ **门新鲜度闸**（缺口 `GAP-20260928-194`）：同默认模式那一处 —— 本闸只管「提交」这一个落地动作。
+	if rc := gateFreshnessGate(root, "only", inv, stderr); rc != exitOK {
+		return rc
 	}
 
 	// ④ 快速档（**在提交之前跑** ⇒ 被拦下时索引面与工作树逐字未动）；红时给归因三格 + 例外旗标判定。

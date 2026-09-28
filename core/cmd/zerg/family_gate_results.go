@@ -51,7 +51,13 @@ const gateRunPrefix = "zerg-gates-"
 const gateResultsTSV = "results.tsv"
 
 // gateResultsFields —— `--json` 的字段表（每条一行的五格：步名 / 状态 / 退码 / 耗时 / 日志路径）。
-var gateResultsFields = []string{"step", "status", "rc", "secs", "log"}
+//
+// ★ 2026-09-28（缺口 `GAP-20260928-194` · 门新鲜度闸 · 本枚）：再续**两格跑级只读字段**
+// `worktree_fp` / `head` —— 「那一趟**当时**的工作树指纹」与「当时 HEAD」，随件是那一趟目录里的
+// `freshness.json`（由 `gate run` 那一趟写，见 `gate_freshness.go`）。两格是**跑级**（整趟一个值），
+// 在这里按行重复渲染（本命令的行面本来就是逐行投影；跑级值放行内 = 不必另开第二种渲染面）。
+// 读不到随件 ⇒ 两格出空串（**不当绿也不编造**：人面上写「未记」）。
+var gateResultsFields = []string{"step", "status", "rc", "secs", "log", "worktree_fp", "head"}
 
 // gateResultsStatuses —— 状态列的四档闭集（逐字取自脚本 `_judge` 的四个出口）。
 var gateResultsStatuses = []string{"PASS", "FAIL", "BLOCKED", "REPORT"}
@@ -148,6 +154,12 @@ func gateResults(inv *invocation, stdout, stderr io.Writer, root string) int {
 	for _, r := range rows {
 		counts[r.Status]++
 	}
+	// ★ 门新鲜度闸（缺口 `GAP-20260928-194`）：这一趟**当时**的工作树指纹与 HEAD（随件只读）。
+	fresh, freshErr := readGateFreshness(dir)
+	fpOut, headOut := "", ""
+	if freshErr == nil {
+		fpOut, headOut = fresh.Fingerprint, fresh.Head
+	}
 	exit := gateResultsExitCode(counts)
 	var warns []string
 	if len(bad) > 0 {
@@ -183,6 +195,11 @@ func gateResults(inv *invocation, stdout, stderr io.Writer, root string) int {
 		inv.metaAddJSON("blocked", fmt.Sprintf("%d", counts["BLOCKED"]))
 		inv.metaAddJSON("report", fmt.Sprintf("%d", counts["REPORT"]))
 		inv.metaAddJSON("exit_code", fmt.Sprintf("%d", exit))
+		if fpOut != "" || headOut != "" {
+			inv.metaAddJSON("worktree_fp", fpOut)
+			inv.metaAddJSON("head", headOut)
+			inv.metaAddJSON("freshness_at", fresh.At)
+		}
 		if scanned > 0 {
 			inv.metaAddJSON("runs_scanned", fmt.Sprintf("%d", scanned))
 		}
@@ -190,6 +207,7 @@ func gateResults(inv *invocation, stdout, stderr io.Writer, root string) int {
 		for _, r := range rows {
 			items = append(items, map[string]string{
 				"step": r.Name, "status": r.Status, "rc": r.RC, "secs": r.Secs, "log": r.Log,
+				"worktree_fp": fpOut, "head": headOut,
 			})
 		}
 		rc := selectJSONList(stdout, stderr, inv, inv.path, fields, items)
@@ -209,6 +227,13 @@ func gateResults(inv *invocation, stdout, stderr io.Writer, root string) int {
 		counts["PASS"], counts["FAIL"], counts["BLOCKED"], counts["REPORT"])
 	fmt.Fprintf(stdout, "步数 %d · 总退码 %d（脚本自己那条出口口径：有失败项 ⇒ 1；无失败项但有 BLOCKED ⇒ 2；全绿 ⇒ 0）\n",
 		len(rows), exit)
+	// ★ 门新鲜度闸（缺口 `GAP-20260928-194`）：这一趟**当时**的工作树指纹与 HEAD（只读随件）。
+	if fpOut == "" && headOut == "" {
+		fmt.Fprintf(stdout, "工作树指纹（当时）：未记（这一趟没有 `%s` 随件 —— 本命令只读，不补写）· HEAD（当时）：未记\n", gateFreshnessFile)
+	} else {
+		fmt.Fprintf(stdout, "工作树指纹（当时）：%s\n", fpOut)
+		fmt.Fprintf(stdout, "HEAD（当时）      ：%s（随件记于 %s）\n", headOut, fresh.At)
+	}
 	if counts["PASS"] != len(rows) {
 		fmt.Fprintf(stdout, "非 PASS 逐条（状态 / 步名 / rc / 耗时 / 日志路径 —— 照抄结果表）：\n")
 		for _, r := range rows {
