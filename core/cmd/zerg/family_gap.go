@@ -3577,16 +3577,31 @@ func cmdGapIdeaStats(inv *invocation, stdout, stderr io.Writer) int {
 // 零命中 ⇒ 退码 1（「没有」不是「失败」· 也不是绿）；真源读不到 ⇒ 8。
 
 // gapAssignMetaAdd —— `gap assign ls` 的信封字段（写法照同族 `gapLsMetaAdd` / `gapIdeaMetaAdd` · 不另造）。
-func gapAssignMetaAdd(inv *invocation, egg string, total, hits int, ledgerPath string) {
+func gapAssignMetaAdd(inv *invocation, egg string, aging, stale bool, total, hits int, ledgerPath string) {
 	inv.metaAddJSON("total", strconv.Itoa(total))
 	inv.metaAddJSON("hits", strconv.Itoa(hits))
-	q := "{}"
-	if egg != "" {
-		q = "{" + jstr("egg") + ":" + jstr(egg) + "}"
-	}
-	inv.metaAddJSON("query", q)
+	inv.metaAddJSON("query", gapAssignQueryText(egg, aging, stale))
 	inv.metaAddStr("query_ts", gapNow())
 	inv.metaAddStr("ledger_sha16", gapLsLedgerSHA16(ledgerPath))
+}
+
+// gapAssignQueryText —— `meta.query` 的回显（现读收窄入参 · 序 = egg / aging / stale）。
+// 未给的旗标**不写那一格** ⇒ 无收窄时逐字 `{}`（缺席 ≠ 假值 —— 与同族各面同一条口径）。
+func gapAssignQueryText(egg string, aging, stale bool) string {
+	parts := []string{}
+	if egg != "" {
+		parts = append(parts, jstr("egg")+":"+jstr(egg))
+	}
+	if aging {
+		parts = append(parts, jstr("aging")+":true")
+	}
+	if stale {
+		parts = append(parts, jstr("stale")+":true")
+	}
+	if len(parts) == 0 {
+		return "{}"
+	}
+	return "{" + strings.Join(parts, ",") + "}"
 }
 
 // gapAssignItem —— `assign ls` 的一行（账上那条 + 它的作业单登记 + 登记时刻）。
@@ -3597,7 +3612,93 @@ type gapAssignItem struct {
 	regd bool
 }
 
-// cmdGapAssignLs —— `zerg gap assign ls [--egg <卵号>]`：列 `已派` 条与它们的**作业单登记**。
+// gapAssignDeadlineLayouts —— 时限那一格认的写法（**同一套**照 `family_gap_export.go:gapFoundDays`：
+// 纯日期 / RFC3339 / 日期+时刻）。认不出 ⇒ 归「时限不明」（**不猜** ✗）—— 不得当零。
+var gapAssignDeadlineLayouts = []string{"2006-01-02", time.RFC3339, "2006-01-02 15:04:05"}
+
+// gapAssignDeadlineAt —— 把⑤时限那一格解析成**截止时刻**（纯日期 ⇒ 该日**末尾** 23:59:59：
+// 「某日到期」= 那天过完才算超）。空 / 认不出 ⇒ `ok=false`（时限算不出 ⇒ 单列「时限不明」）。
+func gapAssignDeadlineAt(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range gapAssignDeadlineLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			if layout == "2006-01-02" {
+				t = t.Add(24*time.Hour - time.Second)
+			}
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// gapAssignOverdue —— 一条派单的**超时读数**（现读现算 · 不猜）：`d` = 超出去多久、
+// `known` = 时限那一格能不能解出截止时刻、`late` = 真超时（known 且现读晚于截止）。
+func gapAssignOverdue(f gapAssignForm, now time.Time) (d time.Duration, known, late bool) {
+	at, ok := gapAssignDeadlineAt(f.Deadline)
+	if !ok {
+		return 0, false, false
+	}
+	if now.After(at) {
+		return now.Sub(at), true, true
+	}
+	return 0, true, false
+}
+
+// gapAssignDurText —— 超时时长的人面写法（天 / 时 / 分 三档 · 只报读数不猜）。
+func gapAssignDurText(d time.Duration) string {
+	mins := int(d.Minutes())
+	if mins < 0 {
+		mins = -mins
+	}
+	days, rem := mins/(24*60), mins%(24*60)
+	hours, ms := rem/60, rem%60
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%d 天 %d 小时", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%d 小时 %d 分", hours, ms)
+	default:
+		return fmt.Sprintf("%d 分", ms)
+	}
+}
+
+// gapAssignAgingText —— 一行 `aging` 格的三态（未超时 / 超时 <时长> / 时限不明）—— 人面与筛查共用。
+func gapAssignAgingText(f gapAssignForm, now time.Time) string {
+	d, known, late := gapAssignOverdue(f, now)
+	switch {
+	case !known:
+		return "时限不明"
+	case late:
+		return "超时 " + gapAssignDurText(d)
+	default:
+		return "未超时"
+	}
+}
+
+// gapAssignReconcileLine —— 对账口径行的**唯一**拼装口（人面表尾与 `meta.reconcile` **逐字同源**）。
+// 判据 2「自派」的读数行：在飞卵数只存在于助手平台面 ⇒ **只报告不自动断言**。
+func gapAssignReconcileLine(n int) string {
+	return fmt.Sprintf("已派 %d 条 —— 请与平台在飞清单逐条比对（在飞不在本 CLI 真源内，故只报告不自动断言）", n)
+}
+
+// gapAssignFooter —— 表尾**固定**回显的对账口径行（逐字）；有超时条 ⇒ 再补一行点名（缺口号 + 卵号 + 超时时长）。
+func gapAssignFooter(w io.Writer, assignTotal int, overdue []gapAssignItem, now time.Time) {
+	fmt.Fprintf(w, "%s\n", gapAssignReconcileLine(assignTotal))
+	if len(overdue) == 0 {
+		return
+	}
+	parts := make([]string, 0, len(overdue))
+	for _, a := range overdue {
+		d, _, _ := gapAssignOverdue(a.f, now)
+		parts = append(parts, fmt.Sprintf("%s · egg=%s · 超时 %s", a.r.ID, a.f.Egg, gapAssignDurText(d)))
+	}
+	fmt.Fprintf(w, "  超时未收点名：%s\n", strings.Join(parts, "；"))
+}
+
+// cmdGapAssignLs —— `zerg gap assign ls [--egg <卵号>] [--aging] [--stale]`：列 `已派` 条与它们的**作业单登记**。
 func cmdGapAssignLs(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.jsonGiven && len(inv.fields) == 0 {
 		inv.setErr("usage", "json_fields_required", "--json 不给字段")
@@ -3606,12 +3707,14 @@ func cmdGapAssignLs(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	wantEgg := strings.TrimSpace(inv.flagVal("--egg"))
+	wantAging := inv.hasFlag("--aging")
+	wantStale := inv.hasFlag("--stale")
 	led, rc := gapReadLedgerOrDie(inv, stderr)
 	if rc != exitOK {
 		return rc
 	}
-	total, hits, cut := 0, 0, false
-	out := []gapAssignItem{}
+	now := time.Now()
+	all := []gapAssignItem{}
 	for _, r := range led.Recs {
 		if r.State != gapStAssigned {
 			continue
@@ -3620,27 +3723,81 @@ func cmdGapAssignLs(inv *invocation, stdout, stderr io.Writer) int {
 		if wantEgg != "" && (!ok || f.Egg != wantEgg) {
 			continue
 		}
-		total++
-		if total > gapLsRowCap {
-			cut = true
-			continue
-		}
-		out = append(out, gapAssignItem{r, f, at, ok})
+		all = append(all, gapAssignItem{r, f, at, ok})
 	}
-	hits = len(out)
+	assignTotal := len(all)
+	// 超时读数现读现算：`overdueAll` = 全 `已派` 里真超时的那批（点名行用它 —— 与收窄旗标无关地稳定）。
+	overdueAll := []gapAssignItem{}
+	for _, a := range all {
+		if _, _, late := gapAssignOverdue(a.f, now); late {
+			overdueAll = append(overdueAll, a)
+		}
+	}
+	// `--stale` = 只列超时限未收（`已派` 本身即「未收」；「时限不明」算不出 ⇒ 不算超时 ⇒ 不列）。
+	shown := all
+	if wantStale {
+		shown = overdueAll
+	}
+	// `--aging` = 按超时限程度降序（最久的在最前）；「时限不明」单列在尾（**不当零**）。
+	unknown := []gapAssignItem{}
+	if wantAging {
+		okRows := make([]gapAssignItem, 0, len(shown))
+		for _, a := range shown {
+			if _, known, _ := gapAssignOverdue(a.f, now); !known {
+				unknown = append(unknown, a)
+				continue
+			}
+			okRows = append(okRows, a)
+		}
+		shown = okRows
+		sort.SliceStable(shown, func(i, j int) bool {
+			di, _, li := gapAssignOverdue(shown[i].f, now)
+			dj, _, lj := gapAssignOverdue(shown[j].f, now)
+			if li != lj {
+				return li
+			}
+			return di > dj
+		})
+	}
+	total := len(shown)
+	out, cut := shown, false
+	if total > gapLsRowCap {
+		cut = true
+		out = shown[:gapLsRowCap]
+	}
+	hits := len(out)
+
+	// 零命中两档：`--stale` 口径 = 「无超时派单」⇒ rc 0（「没有超时」不是失败）；其余零命中仍 rc 1。
+	if wantStale && total == 0 {
+		inv.changed = boolPtr(false)
+		gapAssignMetaAdd(inv, wantEgg, wantAging, wantStale, assignTotal, 0, led.Path)
+		inv.metaAddJSON("assign_total", strconv.Itoa(assignTotal))
+		inv.metaAddJSON("overdue_count", "0")
+		inv.metaAddStr("reconcile", gapAssignReconcileLine(assignTotal))
+		if inv.jsonGiven {
+			emitEnvelopeWith(stdout, find(inv.path), "[]", 0, inv)
+			return exitOK
+		}
+		fmt.Fprintf(stdout, "无超时派单（已派 %d 条里 0 条超时限未收%s）\n", assignTotal, gapAssignEggSuffix(wantEgg))
+		gapAssignFooter(stdout, assignTotal, overdueAll, now)
+		return exitOK
+	}
 	if total == 0 {
 		inv.changed = boolPtr(false)
 		inv.setErr("failed", "no_match", "零命中")
 		fmt.Fprintf(stderr, "零命中：`已派` 0 条（账内 %d 条%s ⇒ 退码 1 —— 「没有」不是「失败」，也不是绿）\n",
 			len(led.Recs), gapAssignEggSuffix(wantEgg))
 		if inv.jsonGiven {
-			gapAssignMetaAdd(inv, wantEgg, 0, 0, led.Path)
+			gapAssignMetaAdd(inv, wantEgg, wantAging, wantStale, 0, 0, led.Path)
 			emitEnvelopeWith(stdout, find(inv.path), "[]", 0, inv)
 		}
 		return exitFail
 	}
 	inv.changed = boolPtr(false)
-	gapAssignMetaAdd(inv, wantEgg, total, hits, led.Path)
+	gapAssignMetaAdd(inv, wantEgg, wantAging, wantStale, total, hits, led.Path)
+	inv.metaAddJSON("assign_total", strconv.Itoa(assignTotal))
+	inv.metaAddJSON("overdue_count", strconv.Itoa(len(overdueAll)))
+	inv.metaAddStr("reconcile", gapAssignReconcileLine(assignTotal))
 	if cut {
 		inv.markTruncated()
 		inv.warnf("已裁 %d 条（gap assign ls 一页 %d 条 / 真命中 %d 条）", total-hits, hits, total)
@@ -3660,7 +3817,14 @@ func cmdGapAssignLs(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.jsonGiven {
 		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
 	}
-	fmt.Fprintf(stdout, "已派 %d 条（总账 %d 条%s）· 本页 %d 条\n", total, len(led.Recs), gapAssignEggSuffix(wantEgg), hits)
+	head := fmt.Sprintf("已派 %d 条（总账 %d 条%s）· 本页 %d 条", assignTotal, len(led.Recs), gapAssignEggSuffix(wantEgg), hits)
+	if wantAging {
+		head += " · --aging（按超时限降序）"
+	}
+	if wantStale {
+		head += " · --stale（只列超时限未收）"
+	}
+	fmt.Fprintf(stdout, "%s\n", head)
 	for _, a := range out {
 		egg := a.f.Egg
 		if !a.regd {
@@ -3671,12 +3835,23 @@ func cmdGapAssignLs(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "    ② 禁碰面   : %s\n", orDash(a.f.Forbid))
 		fmt.Fprintf(stdout, "    ③ 占用件   : %s\n", orDash(a.f.Occupies))
 		fmt.Fprintf(stdout, "    ④ 出口判据 : %s\n", orDash(a.f.Criterion))
-		fmt.Fprintf(stdout, "    ⑤ 时限     : %s\n", orDash(a.f.Deadline))
+		dl := orDash(a.f.Deadline)
+		if wantAging {
+			dl = fmt.Sprintf("%s（%s）", dl, gapAssignAgingText(a.f, now))
+		}
+		fmt.Fprintf(stdout, "    ⑤ 时限     : %s\n", dl)
 		fmt.Fprintf(stdout, "    ⑥ 该条全文 : %s\n", gapAssignFullText(a.r))
 		fmt.Fprintf(stdout, "    回执       : %s\n", orDash(a.f.Receipt))
 	}
+	if wantAging && len(unknown) > 0 {
+		fmt.Fprintf(stdout, "  ── 时限不明（%d 条 · 时限那一格解不出 ⇒ 单列 · **不当零**）：\n", len(unknown))
+		for _, a := range unknown {
+			fmt.Fprintf(stdout, "    %s · egg=%s · 时限=%s\n", a.r.ID, a.f.Egg, orDash(a.f.Deadline))
+		}
+	}
 	fmt.Fprintf(stdout, "  件面     : %s\n", gapAssignUnitsText(out))
 	fmt.Fprintf(stdout, "  真源     : %s（**本面一字不碰** · 只读）\n", led.Path)
+	gapAssignFooter(stdout, assignTotal, overdueAll, now)
 	return exitOK
 }
 
