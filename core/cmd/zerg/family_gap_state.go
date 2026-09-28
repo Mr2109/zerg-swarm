@@ -98,7 +98,7 @@ func gapFindIdx(led gapLedger, id string) int {
 
 // gapRewriteOne —— 两条新写面的**唯一收口**：算新件 → 审计先落盘 → 整件重写 → 写后读回对拍。
 //
-// 返回 `(detail, rc, msg)`：`rc==0` 即真写成功（`detail`/`msg` 为空）。
+// 返回 `(detail, rc, msg)`：`rc==0` 即真写成功（`detail` 为空 · `msg` = **账写回执行**，由调用方在**人面**打到 stdout；见 `gapLedgerReceipt`）。
 // **未动的行逐字节照原样写回**（`led.Lines` 是原文，不是重序列化）—— 与 `verify` 同一条口径。
 func gapRewriteOne(inv *invocation, led gapLedger, idx int, rec gapRecord, cmdName, before, after string) (string, int, string) {
 	// ⓪ **乐观并发闸**（批4 第七片 · 设计稿 §三十五 `O-14`「改态的并发保护」）：
@@ -130,6 +130,11 @@ func gapRewriteOne(inv *invocation, led gapLedger, idx int, rec gapRecord, cmdNa
 		GapBeforeLines: len(led.Lines), GapAfterLines: len(lines),
 		By: gapByOf(inv), Confirm: "--yes",
 	}
+	// ★ 账写回执（设计稿 `设计-流程规则程序化-v1.0-20260928.md` §2.2 `A3` · §4 第 3 件）：真写真写
+	//   这一刻，把「改前账件 sha256」与「改后账件 sha256」两格**真算**出来 —— 取自本笔审计行的同一
+	//   对值（`gap_ledger_before_sha256` / `gap_ledger_after_sha256` · **不另算、不自填**），生成一行
+	//   **人可读回执行**（两格 `sha16`）。成功那一态经 `msg` 回到调用方打到 stdout。
+	receipt := gapLedgerReceipt(audit.GapBeforeSHA, audit.GapAfterSHA)
 	if err := appendGapAudit(editAuditPath(), audit); err != nil {
 		return "audit_unwritable", exitBlocked, err.Error()
 	}
@@ -140,7 +145,42 @@ func gapRewriteOne(inv *invocation, led gapLedger, idx int, rec gapRecord, cmdNa
 	if err != nil || sha256Of(back) != audit.GapAfterSHA {
 		return "ledger_readback_mismatch", exitBlocked, "写回读对不上"
 	}
-	return "", exitOK, ""
+	return "", exitOK, receipt
+}
+
+// ── 账写回执（设计稿 `设计-流程规则程序化-v1.0-20260928.md` §2.2 `A3` · §4 第 3 件）──────────
+//
+// 病（A3 逐字）：真账一个字节都不许被只读面碰 —— 但「这一发到底碰没碰真账」此前全靠人记（或事后比）。
+// 治：唯一写路每写真写一次，就把**改前账件 sha256** 与**改后账件 sha256** 两格记进那一笔审计行
+// （`gap_ledger_before_sha256` / `gap_ledger_after_sha256` —— 本族审计行自始即有此两格 · **本笔不新增
+// 审计键**），并在**成功的回执行**里逐字印出两格的 `sha16`（`改前 sha16=… → 改后 sha16=…`）。
+//
+// ★ 两格一律**真算**：取自本笔审计行的同一对值（`sha256Of(led.Raw)` 与 `sha256Of(body)`），
+//   不另算、不自填、不拿别的数强凑。
+// ★ 改前 == 改后（真什么都没改）⇒ 如实印「未变」，**不编假差**。
+
+// gapLedgerReceipt —— 「账写回执」那一行（逐字含两格 `sha16` · 本面唯一落点）。
+func gapLedgerReceipt(beforeSHA, afterSHA string) string {
+	b16, a16 := sha16Of(beforeSHA), sha16Of(afterSHA)
+	if beforeSHA == afterSHA {
+		return fmt.Sprintf("  账写回执 : 改前 sha16=%s → 改后 sha16=%s（未变）", b16, a16)
+	}
+	return fmt.Sprintf("  账写回执 : 改前 sha16=%s → 改后 sha16=%s", b16, a16)
+}
+
+// sha16Of —— 取 sha256 十六进制串的**前 16 位**（不足 16 ⇒ 原样 —— 现算现取，不补齐、不估）。
+func sha16Of(sha string) string {
+	if len(sha) <= 16 {
+		return sha
+	}
+	return sha[:16]
+}
+
+// gapReceiptPrint —— 写面成功时把那一行「账写回执」打到 stdout（空串 ⇒ 一个字不打 · 幂等面从不经此）。
+func gapReceiptPrint(w io.Writer, receipt string) {
+	if strings.TrimSpace(receipt) != "" {
+		fmt.Fprintf(w, "%s\n", receipt)
+	}
 }
 
 // gapConcurGate —— 改态的**乐观并发闸**（批4 第七片 · 设计稿 §三十五 `O-14`：「多会话读-改-写会丢更新」）。
@@ -553,6 +593,7 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	if twoStateExempt {
 		gapTwoStateExemptLine(stdout)
 	}
+	gapReceiptPrint(stdout, msg)
 	return exitOK
 }
 
@@ -700,6 +741,7 @@ func cmdGapNote(inv *invocation, stdout, stderr io.Writer) int {
 		r.ID, len(r.Notes)-1, len(r.Notes), len(led.Lines))
 	fmt.Fprintf(stdout, "  state    : %s（**未改** —— 注不改态）\n", r.State)
 	fmt.Fprintf(stdout, "  新那一条 : %s\n", r.Notes[len(r.Notes)-1])
+	gapReceiptPrint(stdout, msg)
 	return exitOK
 }
 
@@ -795,6 +837,7 @@ func gapNoteRetract(inv *invocation, stdout, stderr io.Writer, led gapLedger, id
 		r.ID, n, gapNoteFP(r.Notes[n-1]), len(r.Voids)-1, len(r.Voids))
 	fmt.Fprintf(stdout, "  真源     : %s（%d 行不变 · **注一条没删** —— 只重写目标那一行）\n", led.Path, len(led.Lines))
 	fmt.Fprintf(stdout, "  读面     : 该条已不显示（默认）· `--json void_notes` 带原文出来\n")
+	gapReceiptPrint(stdout, msg)
 	return exitOK
 }
 
@@ -1187,6 +1230,7 @@ func cmdGapAssign(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "  登记那一行 : %s\n", back.Recs[bidx].Notes[len(back.Recs[bidx].Notes)-1])
 	fmt.Fprintf(stdout, "  回执       : %s\n", f.Receipt)
 	fmt.Fprintf(stdout, "  已派 条数  : %d（判据 2「自派」：== 在飞卵数）\n", nAssigned)
+	gapReceiptPrint(stdout, msg)
 	return exitOK
 }
 
@@ -1523,6 +1567,9 @@ func cmdGapBulkSetState(inv *invocation, stdout, stderr io.Writer) int {
 			failed, failRC = 1, rc
 			break
 		}
+		if !inv.jsonGiven {
+			gapReceiptPrint(stdout, msg)
+		}
 		r.Before, r.After, r.Done = before, stateWant, true
 		m++
 	}
@@ -1858,6 +1905,7 @@ func cmdGapVerifyOne(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "  last_verify_rc   : %s\n", r.VerifyRC)
 	fmt.Fprintf(stdout, "  verify_tier      : %s\n", tier)
 	fmt.Fprintf(stdout, "  关键读数行       : %s\n", reading)
+	gapReceiptPrint(stdout, msg)
 	return cmdRC
 }
 
