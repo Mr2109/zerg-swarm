@@ -320,8 +320,21 @@ func gapTargetOne(inv *invocation, led gapLedger, stderr io.Writer, cmdName stri
 //	--before-read "cmd=<命令> · rc=<真退码> · reading=<关键读数一行>"
 //	--after-read  "cmd=<命令> · rc=<真退码> · reading=<关键读数一行>"
 //
-// 三格任一为空 ⇒ 这一段就算「拿不出」（给了个空壳不算）。`reading` 之后**整段**都算读数行
-// （关键读数行自己可能含 ` · ` —— 例如同族 `gapVerifyOneReading` 的形态 `rc=0 · 首行=…`）。
+// ★ 批4 第五片（施工清单 `4-5`「销案证据形态钉死：命令 + rc + 关键读数 · 证据缺 rc 或读数 ⇒ 拒收」）
+// —— **不再只查空串**，四格逐格**真判**（缺一即拒 · 一律点名到格）：
+//
+//	① `cmd` 首词必须是 `zerg`（销案证据只能由本族正门跑出）；
+//	② `rc` 必须是**十进制整数**（空 / 带壳引号 / 非数字 ⇒ 拒收）；
+//	③ `reading` 非空、**不得含换行**（读数是一行）；
+//	④ 三格之外**多一格键** ⇒ 拒收（点名多出来那一格）。
+//
+// `reading` 之后**整段**都算读数行（关键读数行自己可能含 ` · ` —— 例如同族 `gapVerifyOneReading`
+// 的形态 `rc=0 · 首行=…`）：尾段只把**裸 ASCII 键**里不在读数白名单（`rc` / `reading`）的那些当「多出来的一格」。
+//
+// ★ 销案**落账**（同一片）：两态**齐** ⇒ 两态读数按写死的字段名落进该条账行的 `solved_evidence`
+// （设计稿 §11.5 逐字「② 改后态 ③ 两态输出差异 ⇒ 自动写进 `solved_evidence`」· `O-13`「钉成可解析形态」
+// · `D4`「判据 + rc + 读数」三件由程序写、散文只能**补充**）—— 落点取该行**已有**的那一格 ⇒ `gap show`
+// 现读即见、不新增真源键（故本片**只动本件**，一个字都不越到别的件）。
 
 // gapTwoStateDateMin —— 「新账」的分界（号内日期 ≥ 它 ⇒ 新账 · 设计稿 §11.5 生效面）。
 const gapTwoStateDateMin = "20260928"
@@ -358,46 +371,154 @@ func gapTwoStateNewLedger(id string) bool {
 	return d != "" && d >= gapTwoStateDateMin
 }
 
-// gapTwoStateParse —— 一条两态读数**逐格读回**（`cmd=` / `rc=` / `reading=`）。
-// 三格任一为空 ⇒ `ok=false`（「拿不出」包含「给了个空壳」）。`reading` 取到串尾（它自己可能含 ` · `）。
-func gapTwoStateParse(s string) (cmd, rc, reading string, ok bool) {
+// gapTwoStateKeysTxt —— 三格形态的逐字吐法（点名里共用一处，免得四处手写漂掉）。
+const gapTwoStateKeysTxt = "cmd=<命令> · rc=<真退码> · reading=<关键读数一行>"
+
+// gapTwoStateParse —— 一条两态读数**逐格读回 + 逐格真判**（批4 第五片 · 施工清单 `4-5`）。
+//
+// 四格判据（缺一即拒 · 一律**点名**到格）：
+//
+//	① `cmd`：首词必须是 `zerg`；
+//	② `rc` ：必须是**十进制整数**（空 / 带壳引号 / 非数字 ⇒ 拒收）；
+//	③ `reading`：非空、**不得含换行**；
+//	④ 三格之外**多一格键** ⇒ 拒收（点名多出来那一格）。
+//
+// 形态 = `cmd=<命令> · rc=<真退码> · reading=<关键读数一行>`（分隔 ` · ` · 与 `gapAssignLine` 同族）。
+// `reading` 之后**整段**都算读数行（它自己可能含 ` · ` —— 同族 `gapVerifyOneReading` 的形态 `rc=0 · 首行=…`）；
+// 故尾段只把**裸 ASCII 键**里不在读数白名单（`rc` / `reading`）的那些当「多出来的一格」。
+//
+// 返回 (cmd, rc, reading, why, ok)：`ok=false` ⇒ `why` = 那一段的点名（哪一格 · 怎么不对）。
+func gapTwoStateParse(s string) (cmd, rc, reading, why string, ok bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return "", "", "", false
+		return "", "", "", "这一段是空的（没给取值）", false
 	}
-	pick := func(key string) string {
-		probe := key + "="
-		idx := -1
-		if strings.HasPrefix(s, probe) {
-			idx = 0
-		} else if i := strings.Index(s, gapTwoStateSep+probe); i >= 0 {
-			idx = i + len(gapTwoStateSep)
-		}
-		if idx < 0 {
-			return ""
-		}
-		rest := s[idx+len(probe):]
-		if key != "reading" {
-			if j := strings.Index(rest, gapTwoStateSep); j >= 0 {
-				rest = rest[:j]
+	ri, tail := -1, ""
+	if strings.HasPrefix(s, "reading=") {
+		ri, tail = 0, s[len("reading="):]
+	} else if i := strings.Index(s, gapTwoStateSep+"reading="); i >= 0 {
+		ri = i + len(gapTwoStateSep)
+		tail = s[ri+len("reading="):]
+	}
+	if ri < 0 {
+		return "", "", "", "缺 `reading=` 那一格（只认三格：" + gapTwoStateKeysTxt + "）", false
+	}
+	head := strings.TrimSuffix(s[:ri], gapTwoStateSep)
+	segs := []string{}
+	if head != "" {
+		segs = strings.Split(head, gapTwoStateSep)
+	}
+	if len(segs) < 2 {
+		return "", "", "", "前两格不齐（要 `cmd=` · `rc=`；只认三格：" + gapTwoStateKeysTxt + "）", false
+	}
+	if len(segs) > 2 {
+		for _, extra := range segs[2:] {
+			if k := gapTwoStateBareKey(extra); k != "" {
+				return "", "", "", "多了一格：`" + k + "=`（只认三格：" + gapTwoStateKeysTxt + "）", false
 			}
 		}
-		return strings.TrimSpace(rest)
+		return "", "", "", "前两格之后还有 `" + segs[2] + "`（只认三格：" + gapTwoStateKeysTxt + "）", false
 	}
-	cmd, rc, reading = pick("cmd"), pick("rc"), pick("reading")
-	return cmd, rc, reading, cmd != "" && rc != "" && reading != ""
+	if !strings.HasPrefix(segs[0], "cmd=") {
+		return "", "", "", "第一格不是 `cmd=`（得到 `" + segs[0] + "`）", false
+	}
+	if !strings.HasPrefix(segs[1], "rc=") {
+		if k := gapTwoStateBareKey(segs[1]); k != "" && k != "rc" {
+			return "", "", "", "多了一格：`" + k + "=`（只认三格：" + gapTwoStateKeysTxt + "）", false
+		}
+		return "", "", "", "第二格不是 `rc=`（得到 `" + segs[1] + "`）", false
+	}
+	cmd = strings.TrimSpace(segs[0][len("cmd="):])
+	rc = strings.TrimSpace(segs[1][len("rc="):])
+	reading = strings.TrimSpace(tail)
+	// ④ 尾段里的「多出来的一格」（读数行自己含 ` · ` 是允许的：白名单键 `rc` / `reading` 不算多）。
+	if parts := strings.Split(reading, gapTwoStateSep); len(parts) > 1 {
+		for _, part := range parts[1:] {
+			if k := gapTwoStateBareKey(part); k != "" && k != "rc" && k != "reading" {
+				return "", "", "", "多了一格：`" + k + "=`（只认三格：" + gapTwoStateKeysTxt + "）", false
+			}
+		}
+	}
+	// ③ 读数行：非空、不含换行
+	if reading == "" {
+		return "", "", "", "`reading=` 是空的（销案证据必须带关键读数一行）", false
+	}
+	if strings.ContainsAny(reading, "\n\r") {
+		return "", "", "", "`reading=` 含换行（读数必须是**一行**）", false
+	}
+	// ① 命令：首词必须是 `zerg`
+	if fields := strings.Fields(cmd); len(fields) == 0 || fields[0] != "zerg" {
+		return "", "", "", "`cmd=` 首词不是 `zerg`（得到 `" + cmd + "` · 销案证据只认本族正门跑出的命令）", false
+	}
+	// ② 退码：十进制整数
+	if !gapTwoStateDecimal(rc) {
+		return "", "", "", "`rc=` 不是十进制整数（得到 `" + rc + "`）", false
+	}
+	return cmd, rc, reading, "", true
 }
 
-// gapTwoStateMissing —— 两态读数**逐段**点名（缺哪一段就说哪一段）：改前读数 / 改后读数。
+// gapTwoStateBareKey —— 一段 `k=v` 里的**裸 ASCII 键**（不是这种形态 ⇒ 空串）。
+func gapTwoStateBareKey(seg string) string {
+	t := strings.TrimSpace(seg)
+	i := strings.Index(t, "=")
+	if i <= 0 {
+		return ""
+	}
+	k := t[:i]
+	for j, r := range k {
+		okc := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' || (j > 0 && r >= '0' && r <= '9')
+		if !okc {
+			return ""
+		}
+	}
+	return k
+}
+
+// gapTwoStateDecimal —— 十进制整数（可带前导 `-` · 至少一位数字）＝**裸**退码（带壳引号自然落空）。
+func gapTwoStateDecimal(v string) bool {
+	if v == "" {
+		return false
+	}
+	if v[0] == '-' {
+		v = v[1:]
+	}
+	if v == "" {
+		return false
+	}
+	for _, r := range v {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// gapTwoStateMissing —— 两态读数**逐段真判**（批4 第五片：不只查空串 ⇒ 逐格点出**哪一格 · 怎么不对**）。
 func gapTwoStateMissing(beforeRaw, afterRaw string) []string {
 	miss := []string{}
-	if _, _, _, ok := gapTwoStateParse(beforeRaw); !ok {
-		miss = append(miss, "改前读数（--before-read \"cmd=<命令> · rc=<真退码> · reading=<关键读数一行>\"）")
+	if _, _, _, why, ok := gapTwoStateParse(beforeRaw); !ok {
+		miss = append(miss, "改前读数（--before-read）："+why)
 	}
-	if _, _, _, ok := gapTwoStateParse(afterRaw); !ok {
-		miss = append(miss, "改后读数（--after-read \"cmd=<命令> · rc=<真退码> · reading=<关键读数一行>\"）")
+	if _, _, _, why, ok := gapTwoStateParse(afterRaw); !ok {
+		miss = append(miss, "改后读数（--after-read）："+why)
 	}
 	return miss
+}
+
+// gapTwoStateLanded —— 销案落账的**两态对拍那一块**（字段名写死 · 批4 第五片）。
+// 落点 = 该条账行的 `solved_evidence`（设计稿 §11.5 逐字：「两态输出差异 ⇒ 自动写进 `solved_evidence`」
+// · `D4`：「判据 + rc + 读数」三件由程序写、散文只能**补充**）—— 故 `gap show` 现读即见，不新增真源键。
+// 形态（分隔与读数同族 ` · ` · 大括号钉死每段边界 ⇒ 读数行自己含 ` · ` 也不歧义）：
+//
+//	销案两态对拍 · 改前{cmd=… · rc=… · reading=…} · 改后{cmd=… · rc=… · reading=…} · 散文=<evidence>
+func gapTwoStateLanded(evidence, beforeRaw, afterRaw string) string {
+	out := "销案两态对拍" + gapTwoStateSep +
+		"改前{" + strings.TrimSpace(beforeRaw) + "}" + gapTwoStateSep +
+		"改后{" + strings.TrimSpace(afterRaw) + "}"
+	if evidence != "" {
+		out += gapTwoStateSep + "散文=" + evidence
+	}
+	return out
 }
 
 // gapTwoStateJudge —— 两态读数的三件取值（本片**唯一**判处）：
@@ -505,8 +626,17 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	// ④★ 批4 第四片：两态读数**取值**（只在改到 `已解` 时有语义；其余状态 ⇒ 「不适用」· 一个字都不多打）。
 	twoStatePair, twoStateExempt, twoStateMiss := gapTwoStateJudge(inv, r.ID, stateWant)
 
+	// ④★★ 批4 第五片：**销案落账** —— 两态**齐** ⇒ 把两态读数按写死的字段名落进该条账行的
+	// `solved_evidence`（设计稿 §11.5 逐字「自动写进 solved_evidence」· `O-13`「钉成可解析形态」）。
+	// **不许静默丢弃**：只有两段都过上面四格真判（`齐`）才落；不齐 / 非销案 ⇒ 取值逐字 = `--evidence`
+	// （即：现有一切调用路径的行为逐字不变）。`landed` 同时是**幂等比对**与**真写**共用的那一格取值。
+	landed := evidence
+	if twoStatePair == "齐" {
+		landed = gapTwoStateLanded(evidence, inv.flagVal("--before-read"), inv.flagVal("--after-read"))
+	}
+
 	// ⑤ 幂等：状态**与**证据都逐字已在位 ⇒ 「无变化」（0 · 不写真源、不写审计）
-	if r.State == stateWant && r.Evidence == evidence {
+	if r.State == stateWant && r.Evidence == landed {
 		inv.changed = boolPtr(false)
 		if inv.jsonGiven {
 			gapTwoStateMeta(inv, twoStatePair, twoStateExempt)
@@ -551,7 +681,7 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `gap set-state` **销案拒收** —— %s（号内日期 %s ≥ %s ⇒ **新账**：拿不出两态读数就不给销）\n",
 			progName, r.ID, orDash(gapIDDate(r.ID)), gapTwoStateDateMin)
 		for _, m := range twoStateMiss {
-			fmt.Fprintf(stderr, "    ✗ 缺 %s\n", m)
+			fmt.Fprintf(stderr, "    ✗ %s\n", m)
 		}
 		fmt.Fprintf(stderr, "  两态读数形态 : --before-read \"cmd=<命令> · rc=<真退码> · reading=<关键读数一行>\" · --after-read 同形（改前/改后**成对**）\n")
 		fmt.Fprintf(stderr, "  生效面       : 新账（号内日期 ≥ %s）强制 · 存量账豁免（设计稿 §11.5 两态对拍 · 表 `D6` · `M-33`）\n", gapTwoStateDateMin)
@@ -566,7 +696,7 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	//    `state` 是**现态**、`solved_at` 是**历史时刻**，两格不是同一维；历史不抹）。
 	before := r.State
 	r.State = stateWant
-	r.Evidence = evidence
+	r.Evidence = landed
 	if stateWant == gapStSolved {
 		r.SolvedAt = gapNow()
 	}
@@ -575,16 +705,20 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 		gapWriteFail(inv, stderr, detail, msg, "set-state")
 		return rc
 	}
-	inv.changed = boolPtr(!(before == stateWant && led.Recs[idx].Evidence == evidence))
+	inv.changed = boolPtr(!(before == stateWant && led.Recs[idx].Evidence == landed))
 	if inv.jsonGiven {
 		gapTwoStateMeta(inv, twoStatePair, twoStateExempt)
 		return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
-			map[string]string{"id": r.ID, "fp": r.FP, "state": r.State, "changed": boolWord(before != stateWant || led.Recs[idx].Evidence != evidence),
+			map[string]string{"id": r.ID, "fp": r.FP, "state": r.State, "changed": boolWord(before != stateWant || led.Recs[idx].Evidence != landed),
 				"two_state": twoStatePair, "exempt": boolWord(twoStateExempt)})
 	}
 	fmt.Fprintf(stdout, "已改态 %s · state %s → %s（真源 %d 行不变 · 只重写目标那一行 · 审计已落 1 行）\n",
 		r.ID, before, r.State, len(led.Lines))
 	fmt.Fprintf(stdout, "  solved_evidence : %s\n", r.Evidence)
+	if twoStatePair == "齐" {
+		fmt.Fprintf(stdout, "  两态·改前    : %s\n", strings.TrimSpace(inv.flagVal("--before-read")))
+		fmt.Fprintf(stdout, "  两态·改后    : %s\n", strings.TrimSpace(inv.flagVal("--after-read")))
+	}
 	if stateWant == gapStSolved {
 		fmt.Fprintf(stdout, "  solved_at       : %s\n", r.SolvedAt)
 	} else {
