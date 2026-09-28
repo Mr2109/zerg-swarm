@@ -1831,3 +1831,304 @@ func gapEvidenceText(v gapVerdict, at string) string {
 	}
 	return s
 }
+
+// ── 二.4 `zerg gap backfill-unit`（批1 第二片 · **存量回填三键** · 2026-09-28）─────────────────
+//
+// 病（逐字）：批1 第一片把 `unit` / `module` / `unit_source` 三键落进了**新落行**的写口
+// （`gap add` 里那一句 `rec.Unit, rec.Module, rec.UnitSource = gapUnitExtract(…)`），
+// 而**存量 891 条**账里没有这三键 ⇒ 「按件 / 按模块分类」在存量面上**没有数据**（只能人读 891 行）。
+//
+// 本面的口径（逐条 · **不新造形状**）：
+//
+//	① `--dry-run`（只读面）：印两数 —— **可抽到**（`unit_source=auto`）N 与**落兜底**（`hand`）M，
+//	   且 **N + M == 账内总条数**（抽取函数只有这两档 ⇒ 两数之和恒等于总条数，不是巧合）；
+//	   再列前 5 条**待改**（`id` + 抽到的 `unit` / `module`）。
+//	② `--yes`（实写面）：逐条**只加三键** —— 其余键名与值**逐字节不变**、行序不变、末行换行不变。
+//	   做法 = **外科式插入**（`gapUnitInjectLine`：在原文那一行的**最后一个** `}` 之前插入），
+//	   **不走**「解析 → 重序列化」✗（后者会把键序 / 转义形态一起改写 ⇒ 违反逐字节不变）。
+//	③ **幂等**：已带三键的行**跳过**（再跑一次 ⇒ 「新增 0 行改动」+ 真源 sha256 逐字不变）。
+//	④ 值形态**逐字复用**第一片的 `gapUnitExtract`（甲档全等 / 乙档路径子串 / 兜底手写 `拟(x)` 或
+//	   `无件(命令面)` + module `无件` + `unit_source=hand`）—— 本面**不另写一套抽取**。
+//	⑤ 三态照本族写面（`add` / `verify` / `set-state` / `note`）：`--dry-run` 恒 0 · 缺 `--yes`
+//	   fail-closed 2（计划件走 stderr）· `--yes` 才真写；**审计先落盘**（写不进 ⇒ 真源一个字节不改 ⇒ 8）。
+//	   退码**一律引现有表**（`exitcodes.go`）：0 / 2 / 8 —— 本面**不取新号**。
+//	⑥ 读 / 写 / 原子替换 / 取数**一律复用族内现成口子**：`readGapLedger` · `gapWriteLedger` ·
+//	   `appendGapAudit` · `gapTrackedFiles` · `gapUnitExtract` · `gapModuleOfUnit` · `gapByOf`
+//	   （本面**不新写**第二套读写账、第二套抽取）。
+//
+// ★ 两个**本片不覆盖**的（回执里照实点名）：① 「已解 / 不做」条要不要回填（本面**逐条都填** ——
+// 分类轴与状态无关）② 只回填某一段 / 某目录（本面**只做整本账**；收窄要加旗标 = 新形状 ⇒ 不半落 ✗）。
+
+// gapBackfillFields —— `--json` 可取字段（本面自报读数）。
+var gapBackfillFields = []string{"total", "extractable", "fallback", "need_change", "changed_rows"}
+
+// gapJSONStr —— 把一段字符串编成一个 JSON 字面量（**不转义 HTML**：`<` / `>` / `&` 原样）。
+// 为什么不用 `json.Marshal` 直接上：它默认把这三枚转成 `\u00xx`；本面是**外科式插入**，
+// 形态越少变越好（与同族 `gap add` 那一支的默认形态也一致）。
+func gapJSONStr(s string) string {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(s); err != nil {
+		return `""`
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// gapUnitInjectLine —— **外科式**把 `adds`（有序的「键 → 值」对）插进原文那一行：
+// 只在**最后一个** `}` 之前插入，其余字节**逐字照原样**（含 `}` 之后的尾空白）。
+// 形态不对（没有 `}` / `}` 之后还有非空字节）⇒ **拒写**（不猜、不重排、不丢字节）。
+func gapUnitInjectLine(raw string, adds [][2]string) (string, error) {
+	if len(adds) == 0 {
+		return raw, nil
+	}
+	end := strings.LastIndex(raw, "}")
+	if end < 0 {
+		return "", fmt.Errorf("原文那一行找不到结尾的 `}`（形态不对）⇒ 拒写（不猜）")
+	}
+	if tail := raw[end+1:]; strings.TrimSpace(tail) != "" {
+		return "", fmt.Errorf("`}` 之后还有非空字节（%q）⇒ 不认这一行的形态，拒写", tail)
+	}
+	head := strings.TrimRight(raw[:end], " 	")
+	var b strings.Builder
+	b.WriteString(head)
+	sep := "," // 空对象（`{`）⇒ 第一对不加逗号
+	if strings.HasSuffix(head, "{") {
+		sep = ""
+	}
+	for _, kv := range adds {
+		b.WriteString(sep)
+		b.WriteString(gapJSONStr(kv[0]))
+		b.WriteString(":")
+		b.WriteString(gapJSONStr(kv[1]))
+		sep = ","
+	}
+	b.WriteString("}")
+	b.WriteString(raw[end+1:])
+	return b.String(), nil
+}
+
+// gapBackfillRow —— 一条**待改**（预览面与实写面**同一份算法**：不写第二套）。
+type gapBackfillRow struct {
+	Idx  int         // 在 `led.Lines` / `led.Recs` 里的下标（**行序不变**的锚）
+	ID   string      // 预览用
+	Unit string      // 抽到的 unit（手写形态或兜底值原样）
+	Mod  string      // 抽到的 module
+	Adds [][2]string // 逐条要插的「键 → 值」（已带三键 ⇒ 空 ⇒ 跳过）
+}
+
+// gapBackfillPlan —— 整本账算一遍：待改清单 + 两数（`auto` 可抽到 / `hand` 落兜底）。
+// 三键齐 ⇒ `Adds` 空 ⇒ 不进待改（**幂等**那一档）；两数**恒** `auto + hand == len(led.Recs)`。
+func gapBackfillPlan(led gapLedger, tracked []string) (rows []gapBackfillRow, auto, hand int) {
+	for i, r := range led.Recs {
+		u, m, s := gapUnitExtract(r.Symptom, r.Handmade, r.Notes, tracked)
+		if s == gapUnitAuto {
+			auto++
+		} else {
+			hand++
+		}
+		adds := [][2]string{}
+		if r.Unit == "" {
+			adds = append(adds, [2]string{"unit", u})
+		}
+		if r.Module == "" {
+			if r.Unit != "" { // 件面已在位 ⇒ 模块只是它的目录前缀，不必再抽一次
+				m = gapModuleOfUnit(r.Unit)
+			}
+			adds = append(adds, [2]string{"module", m})
+		}
+		if r.UnitSource == "" {
+			if r.Unit != "" { // 件面已在位而来源未记 ⇒ 那不是本面抽的（不冒认 `auto`）
+				s = gapUnitHand
+			}
+			adds = append(adds, [2]string{"unit_source", s})
+		}
+		if len(adds) > 0 {
+			rows = append(rows, gapBackfillRow{Idx: i, ID: r.ID, Unit: u, Mod: m, Adds: adds})
+		}
+	}
+	return rows, auto, hand
+}
+
+func cmdGapBackfillUnit(inv *invocation, stdout, stderr io.Writer) int {
+	// ① 用法面（在任何盘面动作之前）—— 与 `ls` / `show` / `add` 逐字同一条收法
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapBackfillFields, ","))
+		return exitUsage
+	}
+	if len(inv.args) > 0 {
+		inv.setErr("usage", "no_positional_args", "本面不吃位置参数")
+		fmt.Fprintf(stderr, "%s: `gap backfill-unit` 不吃位置参数 —— 范围 = **整本账**（本片不收窄）\n", progName)
+		return exitUsage
+	}
+
+	// ② 缺 `--yes`（且非 `--dry-run`）：fail-closed **rc=2**，计划件走 stderr（件头 ④ 逐字同款）。
+	//    ⚠ 判在**读真源之前**：确认档不齐 ⇒ 一行都不读、一行都不写（从不提问、也不替人猜）。
+	if !inv.dryRun && !inv.yes {
+		fmt.Fprintf(stderr, "计划件（缺 `--yes`（D2 档）· 零副作用 —— 真源未改、未写审计）\n")
+		fmt.Fprintf(stderr, "  真源     : %s（未读 —— 缺 `--yes` ⇒ 不执行）\n", gapLedgerPath())
+		fmt.Fprintf(stderr, "  要动的面 : 逐条**只加** `unit` / `module` / `unit_source` 三键（其余键名与值逐字节不变 · 行序不变）\n")
+		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
+		fmt.Fprintf(stderr, "  ⚠ `--yes` 是**命令行确认档**，不是 `approve` 件（与 `H-10`「不要人签」不冲突）\n")
+		inv.setErr("usage", "yes_required", "缺 --yes")
+		return exitUsage
+	}
+
+	// ③ 读真源（与 `ls` / `show` 逐字同一套收法 · 两枚机器可辨 reason —— 「读不到」不许当绿）
+	led, err := readGapLedger()
+	if err != nil {
+		gapLedgerErr(inv, gapReasonPrecondition, err.Error(), gapLedgerPath())
+		gapLedgerErrFirstLine(stderr, gapReasonPrecondition)
+		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+		fmt.Fprintf(stderr, "真源 = %s；「读不到」不许当绿（退码 8）\n", gapLedgerPath())
+		gapLedgerUnreadableHint(stderr, gapLedgerPath())
+		return exitBlocked
+	}
+	if !led.Exists {
+		gapLedgerErr(inv, gapReasonLedgerAbsent, "真源不在盘上", led.Path)
+		gapLedgerErrFirstLine(stderr, gapReasonLedgerAbsent)
+		fmt.Fprintf(stderr, "%s: 真源不在盘上：%s（退码 8 —— 「读不到」不许当绿）\n", progName, led.Path)
+		gapLedgerAbsentHint(stderr, led.Path)
+		return exitBlocked
+	}
+
+	// ④ 逐条现算（抽取 = 纯函数 `gapUnitExtract`；件面清单唯一的取数口 = `gapTrackedFiles`）
+	tracked := gapTrackedFiles()
+	rows, auto, hand := gapBackfillPlan(led, tracked)
+	need := len(rows)
+	total := len(led.Recs)
+
+	// ⑤ `--dry-run`：只印读数 + 前 5 条预览（stdout · rc=0 · 零副作用）
+	if inv.dryRun {
+		inv.changed = boolPtr(false)
+		if inv.jsonGiven {
+			return selectJSON(stdout, stderr, inv, inv.path, gapBackfillFields, map[string]string{
+				"total": strconv.Itoa(total), "extractable": strconv.Itoa(auto),
+				"fallback": strconv.Itoa(hand), "need_change": strconv.Itoa(need),
+				"changed_rows": "0",
+			})
+		}
+		gapBackfillReadout(stdout, led, total, auto, hand, need, tracked)
+		fmt.Fprintf(stderr, "（--dry-run：只读 · 零副作用 —— 未改真源、未写审计）\n")
+		return exitOK
+	}
+
+	// ⑥ `--yes`：真写 —— ① 外科式造新件 ② 审计先落盘 ③ 写真源 ④ 读回对拍
+	lines := make([]string, len(led.Lines))
+	copy(lines, led.Lines)
+	for _, r := range rows {
+		nl, err := gapUnitInjectLine(led.Lines[r.Idx], r.Adds)
+		if err != nil {
+			inv.setErr("blocked", "ledger_shape_bad", err.Error())
+			fmt.Fprintf(stderr, "%s: 真源第 %d 行（%s）：%v\n", progName, led.No[r.Idx], r.ID, err)
+			fmt.Fprintf(stderr, "  ⇒ 拒写：**一个字节都不改**（不猜、不重排）；逐字看那一行 `%s gap show %s`\n", progName, r.ID)
+			return exitBlocked
+		}
+		// 读回自校：插进去的那一行仍要解得开、且三键读回来的值 = 要插的值（外科式插入不许改语义）
+		var chk gapRecord
+		if err := json.Unmarshal([]byte(nl), &chk); err != nil {
+			inv.setErr("blocked", "ledger_shape_bad", err.Error())
+			fmt.Fprintf(stderr, "%s: 真源第 %d 行插入后解不开（%v）⇒ 拒写\n", progName, led.No[r.Idx], err)
+			return exitBlocked
+		}
+		for _, kv := range r.Adds {
+			got := map[string]string{"unit": chk.Unit, "module": chk.Module, "unit_source": chk.UnitSource}[kv[0]]
+			if got != kv[1] {
+				inv.setErr("blocked", "ledger_shape_bad", "插入后读回对不上")
+				fmt.Fprintf(stderr, "%s: 真源第 %d 行 `%s` 读回 %q ≠ 要插的 %q ⇒ 拒写\n", progName, led.No[r.Idx], kv[0], got, kv[1])
+				return exitBlocked
+			}
+		}
+		lines[r.Idx] = nl
+	}
+	body := []byte{}
+	for _, ln := range lines {
+		body = append(body, []byte(ln+"\n")...) // 未动的行**逐字节照原样** · 行序不变 · 末行换行不变
+	}
+	if need > 0 {
+		audit := gapAuditLine{
+			At: time.Now().Format(time.RFC3339), Event: gapEventName, GapCmd: "backfill-unit",
+			GapID: "（整本账）", GapFP: "（不点名单条）",
+			GapStateBefore: "（不改 state）", GapStateAfter: "（不改 state）",
+			GapLedgerPath: led.Path, GapBeforeSHA: sha256Of(led.Raw), GapAfterSHA: sha256Of(body),
+			GapBeforeLines: len(led.Lines), GapAfterLines: len(lines),
+			By: gapByOf(inv), Confirm: "--yes",
+		}
+		if err := appendGapAudit(editAuditPath(), audit); err != nil {
+			inv.setErr("blocked", "audit_unwritable", err.Error())
+			fmt.Fprintf(stderr, "%s: 审计写不进 ⇒ **真源一个字节不改**（审计先落盘 · 退码 8）：%v\n", progName, err)
+			fmt.Fprintf(stderr, "  审计落点 : %s\n", editAuditPath())
+			return exitBlocked
+		}
+		if err := gapWriteLedger(led.Path, lines); err != nil {
+			inv.setErr("blocked", "ledger_unwritable", err.Error())
+			fmt.Fprintf(stderr, "%s: 真源写不进（审计那一行已落盘）：%v\n", progName, err)
+			return exitBlocked
+		}
+		back, err := os.ReadFile(led.Path)
+		if err != nil || sha256Of(back) != sha256Of(body) {
+			inv.setErr("blocked", "ledger_readback_mismatch", "写回读对不上")
+			fmt.Fprintf(stderr, "%s: 写后读回对不上（审计里的 `gap_ledger_after_sha256`）⇒ 不给结论（退码 8）\n", progName)
+			return exitBlocked
+		}
+	}
+	inv.changed = boolPtr(need > 0)
+	if inv.jsonGiven {
+		return selectJSON(stdout, stderr, inv, inv.path, gapBackfillFields, map[string]string{
+			"total": strconv.Itoa(total), "extractable": strconv.Itoa(auto),
+			"fallback": strconv.Itoa(hand), "need_change": strconv.Itoa(need),
+			"changed_rows": strconv.Itoa(need),
+		})
+	}
+	if need == 0 {
+		fmt.Fprintf(stdout, "新增 0 行改动（%d 条已带三键 ⇒ 跳过 · 幂等命中）· 真源 %d 行逐字节不变\n", total, len(led.Lines))
+		return exitOK
+	}
+	fmt.Fprintf(stdout, "已回填：新增 %d 行改动（真源 %d 行 · 行序不变 · 其余键名与值逐字节不变）· 审计已落 1 行\n",
+		need, len(led.Lines))
+	gapBackfillReadout(stdout, led, total, auto, hand, need, tracked)
+	return exitOK
+}
+
+// gapBackfillReadout —— 两数 + 对账 + 前 5 条预览（**干跑与实写同一份读法** ⇒ 两态读数可比）。
+func gapBackfillReadout(w io.Writer, led gapLedger, total, auto, hand, need int, tracked []string) {
+	fmt.Fprintf(w, "  真源     : %s（现有 %d 行）\n", led.Path, len(led.Lines))
+	fmt.Fprintf(w, "  账内总条数: %d\n", total)
+	fmt.Fprintf(w, "  可抽到   : %d（`unit_source=auto` —— 件面文本里抽到仓内路径）\n", auto)
+	fmt.Fprintf(w, "  落兜底   : %d（`unit_source=hand` —— 手写 `拟(x)` 或 `无件(命令面)` + module `无件`）\n", hand)
+	ok := "✓"
+	if auto+hand != total {
+		ok = "✗（**不对账**：抽取面坏了 —— 不给结论）"
+	}
+	fmt.Fprintf(w, "  对账     : 可抽到 %d + 落兜底 %d == 账内总条数 %d %s\n", auto, hand, total, ok)
+	fmt.Fprintf(w, "  待改     : %d 行（已带三键 %d 行 ⇒ 跳过 · 幂等）\n", need, total-need)
+	fmt.Fprintf(w, "  入库件清单: %d 条（`git ls-files` · 取不到 ⇒ 0 ⇒ 全落兜底 —— 「读不到」不当「没有件」）\n", len(tracked))
+	fmt.Fprintln(w, "  前 5 条预览（id + 抽到的 unit/module）：")
+	if need == 0 {
+		fmt.Fprintln(w, "    （待改 0 条 ⇒ 无预览）")
+		return
+	}
+	n := need
+	if n > 5 {
+		n = 5
+	}
+	shown := 0
+	for _, r := range gapBackfillPreviewRows(led, tracked, 5) {
+		fmt.Fprintf(w, "    %s  unit=%s  module=%s\n", r.ID, r.Unit, r.Mod)
+		shown++
+	}
+	if shown < n {
+		fmt.Fprintf(w, "    （只列出 %d 条）\n", shown)
+	}
+}
+
+// gapBackfillPreviewRows —— 预览面取值口（**与实写面同一份算法** `gapBackfillPlan` · 不另算）。
+func gapBackfillPreviewRows(led gapLedger, tracked []string, n int) []gapBackfillRow {
+	rows, _, _ := gapBackfillPlan(led, tracked)
+	if len(rows) > n {
+		rows = rows[:n]
+	}
+	return rows
+}
