@@ -7126,6 +7126,73 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "id": "gap/idea/ls#未知旗标",
+   "command": "gap idea ls",
+   "argv": [
+    "gap",
+    "idea",
+    "ls",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gap/idea/ls#不认的契约主号",
+   "command": "gap idea ls",
+   "argv": [
+    "gap",
+    "idea",
+    "ls",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gap/idea/add#未知旗标",
+   "command": "gap idea add",
+   "argv": [
+    "gap",
+    "idea",
+    "add",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "id": "gap/idea/add#不认的契约主号",
+   "command": "gap idea add",
+   "argv": [
+    "gap",
+    "idea",
+    "add",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "id": "gap/idea/add#缺 --yes（D2）",
+   "command": "gap idea add",
+   "argv": [
+    "gap",
+    "idea",
+    "add",
+    "x"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
   }
  ],
  "tiers": {

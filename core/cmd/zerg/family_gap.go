@@ -2653,3 +2653,458 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	return exitOK
 }
+
+// ── 批2 第一片（2-1 / 2-2 / 2-4）：候选池独立件 + `source` 四值 + 人面入口 `gap idea` ──────────────
+//
+// 设计出处（唯一真源）：`Zerg-内部文档/项目文档/v2.5.13/设计-缺口账与自进化-v2.0-20260928.md`
+//
+//	§二十七 §11.3（候选池 = **独立文件 · 不进主账** · 字段 `cid`/`source`/`raw`/`created_at`/`ttl_days=7`/
+//	`status=pending|promoted|expired|merged`/`fp`）+ §9.1 第 1/2 条（立候选池 + 加 `source` 四值）
+//	+ 施工清单 `任务清单-缺口账自进化-施工-20260928.md` §3 的 2-1 / 2-2 / 2-4 三行（落点与判据）。
+//
+// 口径（逐条照设计稿 · 不自造）：
+//
+//	① **池件独立**：`<状态目录>/zerg-cli-gap-candidates.jsonl`（`ZERG_STATE_DIR` → `~/.zerg/state`）——
+//	   与真源 `zerg-cli-gaps.jsonl` **完全分离**：本面**任何**路径都不写真源（判据：`idea add` 后账行数不变）。
+//	② **落池时刻与来源进条目**：`created_at`（落池时刻 · RFC3339Nano · 取法与同族 `gapNow` 同一套）+ `source`。
+//	③ **七日归档**：落池**超过七天**的条目移入同目录归档件
+//	   `<状态目录>/zerg-cli-gap-candidates.archive-<YYYYMMDD>.jsonl` —— 命名照 §二十四 真源分层的「档案件」体例
+//	   （`前缀.archive-<日期>.jsonl`）。★ 设计稿**未逐字钉死**候选池归档件名 ⇒ 本件按同族体例取定（回执点名）。
+//	   归档 = **只搬超期条**（`status` 置 `expired`），不丢不重 ⇒ 判据「主池条数 == 未归档条数」。
+//	④ **`source` 四值闭集**：`guard` / `gate` / `egg` / `human`（逐字照 §9.1 第 2 条）；闭集外 ⇒ 退码 **2**
+//	   并在人面**点名闭集**（判词体例照同族 `--state`/`--prio`/`--impact` 三枚闭集旗标）。
+//	⑤ **`gap idea add` = 人随手记的入口**：三态照本族写面（`--dry-run` 恒 0 · 缺 `--yes` fail-closed **2** ·
+//	   计划件走 stderr）；**`gap add` 仍是唯一入账**（本面**不碰**真源）。
+//	⑥ **`gap idea ls` = 最小读面**：`--source` 收窄（闭集外 ⇒ 2）· 人面列表 · `--json` 走同族信封写法
+//	   （`meta.total` / `meta.hits` / 截断自报三件 —— 与 `gap ls` 的 `gapLsMetaAdd` 同一套，不另造）。
+//	⑦ **审计**：设计稿 §11.3 只给候选池「独立文件 + 字段 + 出口」，**未列审计面** ⇒ 本件不写审计
+//	   （「审计先落盘」那条纪律钉的是 `zerg-cli-gaps.jsonl` 的写面）；回执点名这一条取定。
+//	⑧ **池件不在盘上**：照同族读面口径**不当绿**（`ls` 判 8 · 两因机器可辨）—— 与 `gap ls` 逐字同款。
+
+const (
+	gapPoolFile          = "zerg-cli-gap-candidates.jsonl"
+	gapPoolArchivePrefix = "zerg-cli-gap-candidates.archive-"
+	gapPoolTTLDays       = 7
+	gapCandPrefix        = "CAND-"
+)
+
+// gapSourceClosed —— `source` 四值闭集（逐字照 §9.1 第 2 条：`guard` / `gate` / `egg` / `human`）。
+var gapSourceClosed = []string{"guard", "gate", "egg", "human"}
+
+// gapCandidate —— 候选池一行（**七格逐字照 §11.3**；`unit` 是**增补格** —— 照 §三十「并入节字段是增补」，
+// 只为给人随手记的 `--unit` 留落点，缺省不写这一格）。
+type gapCandidate struct {
+	CID       string `json:"cid"`
+	Source    string `json:"source"`
+	Raw       string `json:"raw"`
+	CreatedAt string `json:"created_at"`
+	TTLDays   int    `json:"ttl_days"`
+	Status    string `json:"status"`
+	FP        string `json:"fp"`
+	Unit      string `json:"unit,omitempty"`
+}
+
+// gapPool —— 读进来的候选池（原样字节 + 逐行原文 + 解析后的候选）。
+type gapPool struct {
+	Path   string
+	Raw    []byte
+	Lines  []string
+	No     []int
+	Cands  []gapCandidate
+	Exists bool
+}
+
+// gapPoolPath —— 池件落点（设计稿 §11.3：「独立文件，不进主账」）。
+func gapPoolPath() string { return filepath.Join(stateDirOf(), gapPoolFile) }
+
+// gapPoolArchivePath —— 归档件落点（同目录 · 体例照 §二十四 的档案件命名）。
+func gapPoolArchivePath(day string) string {
+	return filepath.Join(stateDirOf(), gapPoolArchivePrefix+day+".jsonl")
+}
+
+// gapParseTS —— 解析落池时刻（两种布局都收；解析不出 ⇒ 视作「不超期」· 宁可留池也不误归档）。
+func gapParseTS(s string) (time.Time, bool) {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// readGapPool —— 读池件。**件不在**（首次）⇒ `Exists=false` 且无错；读不到 / 某行不是 JSON ⇒ 错（调用方译 8）。
+func readGapPool() (gapPool, error) {
+	p := gapPoolPath()
+	pb := gapPool{Path: p}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return pb, nil
+		}
+		return pb, err
+	}
+	pb.Exists, pb.Raw = true, b
+	txt := strings.TrimRight(string(b), "\n")
+	if strings.TrimSpace(txt) == "" {
+		return pb, nil
+	}
+	for i, l := range strings.Split(txt, "\n") {
+		pb.Lines = append(pb.Lines, l)
+		pb.No = append(pb.No, i+1)
+		var c gapCandidate
+		if err := json.Unmarshal([]byte(l), &c); err != nil {
+			return pb, fmt.Errorf("池第 %d 行不是 JSON：%v", i+1, err)
+		}
+		pb.Cands = append(pb.Cands, c)
+	}
+	return pb, nil
+}
+
+// gapPoolWriteLines —— 整件重写池（归档后回写「未归档」那一批）。空 ⇒ 落零字节件。
+func gapPoolWriteLines(path string, lines []string) error {
+	body := []byte{}
+	if len(lines) > 0 {
+		body = []byte(strings.Join(lines, "\n") + "\n")
+	}
+	return os.WriteFile(path, body, 0o644)
+}
+
+// gapPoolAppendLines —— 追加落池（不动既有行）。
+func gapPoolAppendLines(path string, lines []string) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(strings.Join(lines, "\n") + "\n")
+	return err
+}
+
+// gapPoolSweep —— **七日归档**（2-1）：把落池超过 `ttl_days` 天的条目挑出来（`status` 置 `expired`）。
+// 只分类、不落盘；落盘由调用方按三态纪律做（`--dry-run` 那一态零副作用）。
+func gapPoolSweep(pb gapPool, now time.Time) (keepLines, archLines []string, nArch int) {
+	cut := now.Add(-time.Duration(gapPoolTTLDays) * 24 * time.Hour)
+	for _, l := range pb.Lines {
+		var c gapCandidate
+		if err := json.Unmarshal([]byte(l), &c); err != nil {
+			keepLines = append(keepLines, l)
+			continue
+		}
+		if t, ok := gapParseTS(c.CreatedAt); ok && t.Before(cut) {
+			c.Status = "expired"
+			if b, err := json.Marshal(c); err == nil {
+				archLines = append(archLines, string(b))
+				continue
+			}
+		}
+		keepLines = append(keepLines, l)
+	}
+	return keepLines, archLines, len(archLines)
+}
+
+// gapPoolNextCID —— 池内取号（`CAND-YYYYMMDD-NN` · 号段取**池内当日最大号 + 1**）。
+func gapPoolNextCID(cands []gapCandidate, day string) string {
+	max := 0
+	for _, c := range cands {
+		if !strings.HasPrefix(c.CID, gapCandPrefix+day+"-") {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimPrefix(c.CID, gapCandPrefix+day+"-")); err == nil && n > max {
+			max = n
+		}
+	}
+	return fmt.Sprintf("%s%s-%02d", gapCandPrefix, day, max+1)
+}
+
+// gapLedgerLineCount —— 只读地数真源行数（**不解析、不写**）—— 用来把「真源一字未动」当场印给人看。
+func gapLedgerLineCount(path string) int {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return -1
+	}
+	return strings.Count(string(b), "\n")
+}
+
+// gapPoolCountText —— 池件条数自报（人面/机器面共用一句）。
+func gapPoolCountText(pb gapPool) string {
+	if !pb.Exists {
+		return "池件不在盘上（0 条）"
+	}
+	return fmt.Sprintf("%d 条", len(pb.Cands))
+}
+
+var gapIdeaFields = []string{"cid", "source", "raw", "unit", "created_at", "ttl_days", "status", "fp",
+	"pool_before", "pool_after", "archived", "ledger_lines"}
+
+var gapIdeaListFields = []string{"cid", "source", "raw", "unit", "created_at", "ttl_days", "status", "fp", "age_days"}
+
+// gapIdeaMetaAdd —— `gap idea ls` 的信封字段（写法照拄同族 `gapLsMetaAdd` · **不另造**）。
+func gapIdeaMetaAdd(inv *invocation, source string, total, hits int, poolPath string) {
+	inv.metaAddJSON("total", strconv.Itoa(total))
+	inv.metaAddJSON("hits", strconv.Itoa(hits))
+	q := "{}"
+	if source != "" {
+		q = "{" + jstr("source") + ":" + jstr(source) + "}"
+	}
+	inv.metaAddJSON("query", q)
+	inv.metaAddStr("query_ts", gapNow())
+	inv.metaAddStr("pool_sha16", gapLsLedgerSHA16(poolPath))
+}
+
+// cmdGapIdeaLs —— `zerg gap idea ls`：候选池**最小读面**（只读 · 不写池、不写真源、不写审计）。
+func cmdGapIdeaLs(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapIdeaListFields, ","))
+		return exitUsage
+	}
+	wantSource := strings.TrimSpace(inv.flagVal("--source"))
+	if wantSource != "" && !gapIn(gapSourceClosed, wantSource) {
+		inv.setErr("usage", "bad_source", "source 值不在四值闭集里")
+		fmt.Fprintf(stderr, "%s: `--source %s` 不在闭集里 —— 只认 %s\n", progName, wantSource, gapClosedText(gapSourceClosed))
+		fmt.Fprintf(stderr, "  `source` 四值 = 采集层三源 + 人面随手记（设计稿 §9.1 第 2 条逐字）\n")
+		return exitUsage
+	}
+	pb, err := readGapPool()
+	if err != nil {
+		gapLedgerErr(inv, gapReasonPrecondition, err.Error(), gapPoolPath())
+		gapLedgerErrFirstLine(stderr, gapReasonPrecondition)
+		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+		fmt.Fprintf(stderr, "池件 = %s；「读不到」不许当「没有」（退码 8）\n", gapPoolPath())
+		return exitBlocked
+	}
+	if !pb.Exists {
+		gapLedgerErr(inv, gapReasonLedgerAbsent, "候选池件不在盘上", pb.Path)
+		gapLedgerErrFirstLine(stderr, gapReasonLedgerAbsent)
+		fmt.Fprintf(stderr, "%s: 候选池件不在盘上：%s（退码 8 —— 「读不到」不许当绿）\n", progName, pb.Path)
+		fmt.Fprintf(stderr, "  落一条候选：zerg gap idea add --symptom <一句> --yes\n")
+		return exitBlocked
+	}
+	total, hits, cut := 0, 0, false
+	out := []gapCandidate{}
+	for _, c := range pb.Cands {
+		if wantSource != "" && c.Source != wantSource {
+			continue
+		}
+		total++
+		if total > gapLsRowCap {
+			cut = true
+			continue
+		}
+		out = append(out, c)
+	}
+	hits = len(out)
+	if total == 0 {
+		inv.changed = boolPtr(false)
+		inv.setErr("failed", "no_match", "零命中")
+		fmt.Fprintf(stderr, "零命中：池内 %d 条 · 与筛选条件相符 0 条（退码 1 —— 「没有」不是「失败」，也不是绿）\n", len(pb.Cands))
+		if wantSource != "" {
+			gapIdeaMetaAdd(inv, wantSource, 0, 0, pb.Path)
+			if inv.jsonGiven {
+				emitEnvelopeWith(stdout, find(inv.path), "[]", 0, inv)
+			}
+		}
+		return exitFail
+	}
+	inv.changed = boolPtr(false)
+	gapIdeaMetaAdd(inv, wantSource, total, hits, pb.Path)
+	if cut {
+		inv.markTruncated()
+		inv.warnf("已裁 %d 条（gap idea ls 一页 %d 条 / 真命中 %d 条）", total-hits, hits, total)
+		inv.metaAddJSON("truncated_detail", fmt.Sprintf(
+			`{"cut_from":"tail","kept_items":%d,"dropped_items":%d,"total_items":%d}`, hits, total-hits, total))
+		fmt.Fprintf(stderr, "%s: ⚠ 本页只列前 %d 条 · 真命中 %d 条（已裁 %d 条）—— **这不是全集**\n", progName, hits, total, total-hits)
+	}
+	now := time.Now()
+	rows := []map[string]string{}
+	for _, c := range out {
+		age := ""
+		if t, ok := gapParseTS(c.CreatedAt); ok {
+			age = strconv.Itoa(int(now.Sub(t).Hours() / 24))
+		}
+		rows = append(rows, map[string]string{
+			"cid": c.CID, "source": c.Source, "raw": c.Raw, "unit": c.Unit,
+			"created_at": c.CreatedAt, "ttl_days": strconv.Itoa(c.TTLDays),
+			"status": c.Status, "fp": c.FP, "age_days": age,
+		})
+	}
+	if inv.jsonGiven {
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
+	}
+	cidw, srcw, stw := 0, 0, 0
+	for _, c := range out {
+		cidw = maxInt(cidw, displayWidth(c.CID))
+		srcw = maxInt(srcw, displayWidth(c.Source))
+		stw = maxInt(stw, displayWidth(c.Status))
+	}
+	if wantSource != "" {
+		fmt.Fprintf(stdout, "候选池 %d 条（本次命中 %d 条 · --source %s ⇒ 命中 %d）\n", len(pb.Cands), total, wantSource, total)
+	} else {
+		fmt.Fprintf(stdout, "候选池 %d 条（本次命中 %d 条）\n", len(pb.Cands), total)
+	}
+	fmt.Fprintf(stdout, "  %s  %s  %s  %s  %s\n", pad("cid", cidw), pad("source", srcw), pad("status", stw), "落池时刻", "症状")
+	for _, c := range out {
+		fmt.Fprintf(stdout, "  %s  %s  %s  %s  %s\n",
+			pad(c.CID, cidw), pad(c.Source, srcw), pad(c.Status, stw), c.CreatedAt, truncateDisplay(c.Raw, 40))
+	}
+	return exitOK
+}
+
+// cmdGapIdeaAdd —— `zerg gap idea add`：人随手记 ⇒ **落候选池**（2-4）。★ `gap add` 仍是唯一入账。
+func cmdGapIdeaAdd(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapIdeaFields, ","))
+		return exitUsage
+	}
+	symptom := strings.TrimSpace(inv.flagVal("--symptom"))
+	source := strings.TrimSpace(inv.flagVal("--source"))
+	unit := strings.TrimSpace(inv.flagVal("--unit"))
+	if symptom == "" {
+		inv.setErr("usage", "missing_required", "缺 --symptom")
+		fmt.Fprintf(stderr, "%s: `gap idea add` 缺必填旗标：--symptom\n", progName)
+		fmt.Fprintf(stderr, "用法：zerg gap idea add --symptom <一句> [--source <%s>] [--unit <件路径>] [--dry-run | --yes]\n",
+			strings.Join(gapSourceClosed, "|"))
+		return exitUsage
+	}
+	if source == "" {
+		source = "human" // 人随手记的入口 ⇒ 缺省档（回执点名这一条取定）
+	}
+	if !gapIn(gapSourceClosed, source) {
+		inv.setErr("usage", "bad_source", "source 值不在四值闭集里")
+		fmt.Fprintf(stderr, "%s: `--source %s` 不在闭集里 —— 只认 %s\n", progName, source, gapClosedText(gapSourceClosed))
+		fmt.Fprintf(stderr, "  `source` 四值 = 采集层三源 + 人面随手记（设计稿 §9.1 第 2 条逐字）\n")
+		return exitUsage
+	}
+	if unit != "" && strings.HasPrefix(unit, "-") {
+		inv.setErr("usage", "bad_unit", "--unit 值看起来像旗标")
+		fmt.Fprintf(stderr, "%s: `--unit %s` 看起来像旗标 ⇒ 拒收（值旗标不吃旗标）\n", progName, unit)
+		return exitUsage
+	}
+	raw := symptom
+	if unit != "" {
+		raw = symptom + " · unit=" + unit
+	}
+	cand := gapCandidate{Source: source, Raw: raw, Unit: unit, CreatedAt: gapNow(),
+		TTLDays: gapPoolTTLDays, Status: "pending"}
+	cand.FP = sha256Of([]byte(source + "\x00" + raw))[:12]
+	poolPath := gapPoolPath()
+
+	// ② 缺 `--yes`（且非 `--dry-run`）：fail-closed rc=2，计划件走 stderr（同族写面口径）。
+	if !inv.dryRun && !inv.yes {
+		fmt.Fprintf(stderr, "%s: 缺 `--yes`（D2 档 · 本族写面口径）—— 落池面一个字节不写\n", progName)
+		fmt.Fprintf(stderr, "  池件     : %s（%s）\n", poolPath, gapPoolCountText(mustReadGapPoolQuiet()))
+		fmt.Fprintf(stderr, "  候选     : source=%s · status=pending · ttl_days=%d · fp=%s\n", cand.Source, cand.TTLDays, cand.FP)
+		fmt.Fprintf(stderr, "  真源     : %s（**本面不碰**）\n", gapLedgerPath())
+		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
+		fmt.Fprintf(stderr, "  ⚠ `--yes` 是**命令行确认档**，不是 `approve` 件（同族 `gap add` 的 `H-10` 口径）\n")
+		inv.setErr("usage", "yes_required", "缺 --yes")
+		return exitUsage
+	}
+
+	pb, err := readGapPool()
+	if err != nil {
+		gapLedgerErr(inv, gapReasonPrecondition, err.Error(), poolPath)
+		gapLedgerErrFirstLine(stderr, gapReasonPrecondition)
+		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+		return exitBlocked
+	}
+	before := len(pb.Cands)
+	for _, c := range pb.Cands {
+		if c.FP == cand.FP && c.Source == cand.Source {
+			inv.changed = boolPtr(false)
+			if inv.jsonGiven {
+				return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
+					"cid": c.CID, "source": c.Source, "raw": c.Raw, "unit": c.Unit,
+					"created_at": c.CreatedAt, "ttl_days": strconv.Itoa(c.TTLDays), "status": c.Status, "fp": c.FP,
+					"pool_before": strconv.Itoa(before), "pool_after": strconv.Itoa(before),
+					"archived": "0", "ledger_lines": strconv.Itoa(gapLedgerLineCount(gapLedgerPath())),
+				})
+			}
+			fmt.Fprintf(stdout, "已在池 %s · fp=%s（幂等命中：同 source 同 fp ⇒ 0 且不新增行 · 设计稿 §3.A3）\n", c.CID, shortSHA(c.FP))
+			return exitOK
+		}
+	}
+	cand.CID = gapPoolNextCID(pb.Cands, time.Now().Format("20060102"))
+	keepLines, archLines, nArch := gapPoolSweep(pb, time.Now())
+	ledgerLines := gapLedgerLineCount(gapLedgerPath())
+
+	// ③ `--dry-run`：只出计划件（stdout · rc=0 · 零副作用）
+	if inv.dryRun {
+		if inv.jsonGiven {
+			inv.changed = boolPtr(false)
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
+				"cid": cand.CID, "source": cand.Source, "raw": cand.Raw, "unit": cand.Unit,
+				"created_at": cand.CreatedAt, "ttl_days": strconv.Itoa(cand.TTLDays), "status": cand.Status, "fp": cand.FP,
+				"pool_before": strconv.Itoa(before), "pool_after": strconv.Itoa(len(keepLines) + 1),
+				"archived": strconv.Itoa(nArch), "ledger_lines": strconv.Itoa(ledgerLines),
+			})
+		}
+		fmt.Fprintf(stdout, "（--dry-run 计划件 · 零副作用）\n")
+		fmt.Fprintf(stdout, "  池件     : %s（现有 %d 条）\n", poolPath, before)
+		fmt.Fprintf(stdout, "  将落池   : %s · source=%s · ttl_days=%d · fp=%s\n", cand.CID, cand.Source, cand.TTLDays, cand.FP)
+		fmt.Fprintf(stdout, "  七日归档 : 超期 %d 条 ⇒ %s（真跑才搬）\n", nArch, gapPoolArchivePath(time.Now().Format("20060102")))
+		fmt.Fprintf(stdout, "  真源     : %s（**本面不碰** · 现有 %d 行）\n", gapLedgerPath(), ledgerLines)
+		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未落池、未归档、真源一字未动）\n")
+		return exitOK
+	}
+
+	// ④ 真写：先七日归档（超期条搬入归档件 + 主池回写未归档那批），再追加新候选。
+	if nArch > 0 {
+		if err := gapPoolAppendLines(gapPoolArchivePath(time.Now().Format("20060102")), archLines); err != nil {
+			inv.setErr("blocked", "pool_archive_unwritable", err.Error())
+			fmt.Fprintf(stderr, "%s: 归档件写不进 ⇒ 池件一个字节不写（退码 8）：%v\n", progName, err)
+			return exitBlocked
+		}
+		if err := gapPoolWriteLines(poolPath, keepLines); err != nil {
+			inv.setErr("blocked", "pool_unwritable", err.Error())
+			fmt.Fprintf(stderr, "%s: 池件回写不进（归档件已落）：%v\n", progName, err)
+			return exitBlocked
+		}
+	}
+	b, err := json.Marshal(cand)
+	if err != nil {
+		inv.setErr("failed", "pool_encode_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 候选这一行序列化不过：%v\n", progName, err)
+		return exitFail
+	}
+	if err := gapPoolAppendLines(poolPath, []string{string(b)}); err != nil {
+		inv.setErr("blocked", "pool_unwritable", err.Error())
+		fmt.Fprintf(stderr, "%s: 池件写不进：%v\n", progName, err)
+		return exitBlocked
+	}
+	inv.changed = boolPtr(true)
+	after := before - nArch + 1
+	if inv.jsonGiven {
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
+			"cid": cand.CID, "source": cand.Source, "raw": cand.Raw, "unit": cand.Unit,
+			"created_at": cand.CreatedAt, "ttl_days": strconv.Itoa(cand.TTLDays), "status": cand.Status, "fp": cand.FP,
+			"pool_before": strconv.Itoa(before), "pool_after": strconv.Itoa(after),
+			"archived": strconv.Itoa(nArch), "ledger_lines": strconv.Itoa(ledgerLines),
+		})
+	}
+	fmt.Fprintf(stdout, "已落池 %s · source=%s · status=pending · fp=%s\n", cand.CID, cand.Source, shortSHA(cand.FP))
+	fmt.Fprintf(stdout, "  池件     : %s（%d → %d 条%s）\n", poolPath, before, after,
+		func() string {
+			if nArch > 0 {
+				return fmt.Sprintf(" · 七日归档 %d 条 ⇒ %s", nArch, gapPoolArchivePath(time.Now().Format("20060102")))
+			}
+			return ""
+		}())
+	fmt.Fprintf(stdout, "  真源     : %s（**一字未动** · %d 行 · 本面只读不写）\n", gapLedgerPath(), ledgerLines)
+	return exitOK
+}
+
+// mustReadGapPoolQuiet —— 缺 `--yes` 那一态只想报个池条数（读不动就报「读不到」，**不据此改退码**）。
+func mustReadGapPoolQuiet() gapPool {
+	pb, err := readGapPool()
+	if err != nil {
+		return gapPool{}
+	}
+	return pb
+}
