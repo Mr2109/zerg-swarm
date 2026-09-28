@@ -4,7 +4,7 @@
 // 为什么要有它：D3 当时的实测是「定位一件事只能整档跑」—— `--scope devdocs` 4 步、默认档 60 步，
 // 改一道门要等整档；单门自检只能手搓 `python3 scripts/gates/check-error-kinds.py --self-test`（17 行）。
 //
-// 本件只补三格，执行面一个字都没搬进来：
+// 本件只补四格，执行面一个字都没搬进来：
 //
 //	① **步名逐字校验**（执行前判）：真源 = 脚本自己的 `add_step` 行（`parseAddSteps`，与 `gate explain`
 //	   同一份解析）。未知名 ⇒ 退 2 并给「最像的合法输入」（K14 第三件 · 与 `agent` 族**同一方言**）；
@@ -12,6 +12,9 @@
 //	② `--json <字段>`：给这一步的判决出一份**契约形状**的包封。
 //	③ `--step <步名> --verify-live`：单步**只读复核**的正门 —— 把那只旗标**逐字透传给那一步的
 //	   命令串**（不是自举件；后者不认识它 ⇒ 现读 rc=2），退码原样转出（见件末 `gateRunStepLiveVerify`）。
+//	④ `--step <步名> --show-log`：单步档**步内读数**的手敲正门（缺口 `GAP-20260928-28`）—— 真跑那一步
+//	   后，把**那一步自己的**日志正文（真源 = 脚本的 `results.tsv` 第 5 列）**原样**打到 stdout
+//	   （见件末 `gateRunStepShowLog`）。
 //
 // 为什么不把执行也搬进来（`gate.go` 的「只转发、不翻译」）：步骤表住在脚本里，**唯一真源**在那边——
 // 命令面自己再跑一遍就等于另写一份步骤表（`G1-a` 明令禁止）。所以执行永远是
@@ -344,4 +347,130 @@ func gateRunStepLiveVerify(inv *invocation, stdout, stderr io.Writer, root, scri
 		return exitFail
 	}
 	return exitOK
+}
+
+// ── `zerg gate run --step <步名> --show-log`：单步档**步内读数**的可手敲正门 ──
+//
+// 病（缺口 `GAP-20260928-28` · 2026-09-28 现读）：
+//
+//	· `gate run --step <步名> --only-step` 的透传面只回「状态计数 + 软门禁末段」——
+//	  脚本的 `report()` 只对 FAIL/BLOCKED/REPORT 三档打日志尾巴，**PASS 档只打一行状态**；
+//	· 那一步自己的逐格读数**只在** `<日志目录>/NN-<步名>.log`（日志目录还得先从那行
+//	  `── 日志目录 …` 里抠）⇒ 「拿门跑当活值对拍器」这条正门是断的。
+//
+// 口径（与 `gateRunStepJSON` 同规，零新表、零新口径）：
+//
+//	· 步名 ⇒ 声明的真源仍是脚本自己的 `add_step` 行（`parseAddSteps` · 与 `gate explain`/`gate find` 同一份解析）；
+//	· 日志件的真源仍是脚本自己落的 `results.tsv` 第 5 列 —— **不另拼路径、不自己猜**；
+//	· `--show-log` 是**命令面**的旗标 ⇒ 逐字剔掉（同 `--json`），脚本收到的是它本来就认识的旗标；
+//	· 退码**原样转出**（脚本退多少 = 命令面退多少）；命令面只在「执行前判」退 2。
+const gateShowLogFlag = "--show-log"
+
+// gateRunWantsShowLog —— 这一发 tail 里有没有步内读数旗标。
+func gateRunWantsShowLog(tail []string) bool {
+	for _, a := range tail {
+		if a == gateShowLogFlag {
+			return true
+		}
+	}
+	return false
+}
+
+// gateRunStepShowLog —— 真跑那一步，再把**那一步自己的**日志正文原样打到 stdout。
+// 只由 `gate.go` 的 `run` 支在 `--show-log` 且给了 `--step` 时调进（**既有形态一个字节不改**）。
+func gateRunStepShowLog(inv *invocation, stdout, stderr io.Writer, root, script string, tail []string) int {
+	name := gateStepNameFrom(tail)
+	if strings.TrimSpace(name) == "" {
+		inv.setErr("usage", "missing_step_name", "`--show-log` 只在单步档上有面")
+		fmt.Fprintf(stderr, "%s: `gate run %s` 只在**单步档**（`--step <步名>`）上有面 —— 全档没有「那一步」的读数\n",
+			progName, gateShowLogFlag)
+		fmt.Fprintf(stderr, "例：%s gate run --step 'gofmt -l core' --only-step %s\n", progName, gateShowLogFlag)
+		return exitUsage
+	}
+	src, err := os.ReadFile(script)
+	if err != nil {
+		inv.setErr("blocked", "gate_script_unreadable", "门禁脚本读不到")
+		fmt.Fprintf(stderr, "%s: 读不到门禁脚本 %s（%v）⇒ 不给结论（退码 8）\n", progName, gateScriptRel, err)
+		return exitBlocked
+	}
+	// 步名 ⇒ 声明：与 `--verify-live` 档同一份解析（逐字优先、不中再试唯一前缀、多义退 2）。
+	d, rc := resolveGateStep(parseAddSteps(string(src)), name, stderr)
+	if rc != exitOK {
+		inv.setErr("usage", "step_absent", "步名缺失/不存在/歧义")
+		return rc
+	}
+	// `--show-log`（命令面旗标）逐字剔掉：透传给被包的脚本会被它当未知参数拒掉（rc=2）。
+	scriptTail := make([]string, 0, len(tail))
+	for _, a := range tail {
+		if a == gateShowLogFlag {
+			continue
+		}
+		scriptTail = append(scriptTail, a)
+	}
+	// 日志目录：`--outdir` 给了就用它，没给就自建一个 —— 因为要按它**读回** results.tsv（与 `--json` 档同规）。
+	outdir := ""
+	for i := 0; i < len(scriptTail); i++ {
+		if scriptTail[i] == "--outdir" && i+1 < len(scriptTail) {
+			outdir = scriptTail[i+1]
+		}
+	}
+	if strings.TrimSpace(outdir) == "" {
+		prefix := "zerg-gate-step-" + time.Now().Format("20060102-150405.000000000") + "-"
+		base, mkErr := os.MkdirTemp(os.TempDir(), prefix+"*")
+		if mkErr != nil {
+			inv.setErr("failed", "outdir_unwritable", mkErr.Error())
+			fmt.Fprintf(stderr, "%s: 建不了日志目录（%s*）：%v ⇒ 不给结论（退码 8）\n",
+				progName, filepath.Join(os.TempDir(), prefix), mkErr)
+			return exitBlocked
+		}
+		outdir = base
+		scriptTail = append(scriptTail, "--outdir", outdir)
+	}
+	// 真跑那一步（执行面 = 脚本自己；命令面只转出退码 · 人面报告转 stderr，stdout 只留读数）。
+	cmd := exec.Command("bash", append([]string{script}, scriptTail...)...)
+	cmd.Dir = root
+	cmd.Stdin = os.Stdin
+	var human bytes.Buffer
+	cmd.Stdout = &human
+	cmd.Stderr = stderr
+	runningChild = cmd
+	err = cmd.Run()
+	runningChild = nil
+	rc = exitOK
+	if ee, ok := err.(*exec.ExitError); ok {
+		rc = ee.ExitCode() // ★ 只转发、不翻译：脚本退多少就返多少
+	} else if err != nil {
+		fmt.Fprintf(stderr, "%s: 跑不动门禁脚本：%v\n", progName, err)
+		return exitFail
+	}
+	_, _ = io.Copy(stderr, &human)
+	// 读数真源 = 脚本自己落的结果表第 5 列（这一步的日志件绝对路径）；命令面只**原样读回**。
+	logPath := ""
+	if body, rerr := os.ReadFile(filepath.Join(outdir, "results.tsv")); rerr == nil {
+		for _, ln := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
+			fields := strings.Split(ln, "\t")
+			if len(fields) < 5 {
+				continue
+			}
+			logPath = strings.TrimSpace(fields[4])
+			break
+		}
+	} else {
+		fmt.Fprintf(stderr, "%s: 结果表读不到（%s）：%v ⇒ 这一格的读数**不给结论**（不许当绿）\n",
+			progName, filepath.Join(outdir, "results.tsv"), rerr)
+	}
+	if logPath == "" {
+		fmt.Fprintf(stderr, "%s: 结果表里读不到日志件路径 ⇒ 无正文可回（不许编格数）\n", progName)
+		_, _ = io.WriteString(stdout, "（读不到：脚本没落结果表 / 结果表无可读行）\n")
+		return rc
+	}
+	body, lerr := os.ReadFile(logPath)
+	if lerr != nil {
+		fmt.Fprintf(stderr, "%s: 步骤日志件读不到（%s）：%v ⇒ 写「（读不到）」（不许编格数）\n", progName, logPath, lerr)
+		_, _ = io.WriteString(stdout, "（读不到：日志件不可读）\n")
+		return rc
+	}
+	fmt.Fprintf(stderr, "%s: 步内读数 —— %s（%s:%d）· 日志件 %s\n", progName, d.Name, gateScriptRel, d.Line, logPath)
+	_, _ = stdout.Write(body)
+	return rc
 }

@@ -23,6 +23,13 @@
 //	7 唯一写路径（静态计数见 §五 判据 7 的 grep）·
 //	8 落点白名单 + 读不到不给结论（不许顺手新建一份）·
 //	9 原子写 + 回滚可证（写前备份落状态目录 · 任一复查不过 ⇒ 逐字节写回）。
+//
+// ★ 2026-09-28（缺口 `GAP-20260928-06` · 命令面 · P2）：补「**格值变化**」出口 —— 判据 5 原来只点「新增 / 消失」
+// 两种差异的件名，**已有行**的格值被重算改写时三个数一动不动（「未变」只判名字面在场）⇒ 计划件与 `--json`
+// 机器面都看不见（现读：新增 0 / 消失 0 / 未变 175，而写前 sha ≠ 写后 sha ⇒ 4 行的「行数」格会被改写）。
+// 本批只**增**一面：计划件（干跑与真写两档）多一块「格值变化」+ 机器面多三键（`rows_changed` /
+// `rows_changed_named` / `rows_changed_cells`）；既有退码、既有字段名与既有输出**一字不动**，
+// 零变化那一档的既有输出**逐字不变**（新块只在真有变化时才出，照 `声明行旧` 那一行的同一体例）。
 package main
 
 import (
@@ -222,6 +229,72 @@ func scriptInvRowLine(r scriptInvRow) string {
 	return fmt.Sprintf("%s\t%s\t%s\t%s\t%d", r.Path, r.Kind, r.Help, r.JSON, r.Lines)
 }
 
+// scriptInvCellChange —— 已有行的**格值变化**（5 格里逐格对拍 · 只留真的变了的那几格）。
+//
+// ★ 2026-09-28（缺口 `GAP-20260928-06` · 命令面 · P2）：「未变」那一格只判**名字面在场**（两边都有这个名字就 +1）
+// ⇒ 已有行被整行重算时三个数一动不动（现读：新增 0 / 消失 0 / 未变 175，而 `写前 sha ≠ 写后 sha` 就是铁证 ——
+// 4 行的「行数」格会被改写）。干跑计划件与 `--json` 机器面**共读这一份**（与 `Added`/`Removed` 同一处算出 ⇒
+// 不许两档各算一遍）。列名逐字照台账表头：`类型` / `有--help` / `有--json` / `行数`。
+type scriptInvCellChange struct {
+	Path  string
+	Cells []string // 形如 `行数 1215→1261`（一条一格 · 只列真的变了的那几格）
+}
+
+// scriptInvDiffCells —— 已有行的格值变化（按 `live` 的既有排序 ⇒ 输出稳定）。
+// 只在两侧都在（= 命中了「未变」那一格）的行上对拍：新增行归 `rows_added`、消失行归 `rows_removed`。
+func scriptInvDiffCells(known map[string]scriptInvRow, live []scriptInvRow) []scriptInvCellChange {
+	out := []scriptInvCellChange{}
+	for _, r := range live {
+		old, ok := known[r.Path]
+		if !ok {
+			continue // 新增行：差异已在 `rows_added` 那一面点了名
+		}
+		cells := []string{}
+		if old.Kind != r.Kind {
+			cells = append(cells, fmt.Sprintf("类型 %s→%s", old.Kind, r.Kind))
+		}
+		if old.Help != r.Help {
+			cells = append(cells, fmt.Sprintf("有--help %s→%s", old.Help, r.Help))
+		}
+		if old.JSON != r.JSON {
+			cells = append(cells, fmt.Sprintf("有--json %s→%s", old.JSON, r.JSON))
+		}
+		if old.Lines != r.Lines {
+			cells = append(cells, fmt.Sprintf("行数 %d→%d", old.Lines, r.Lines))
+		}
+		if len(cells) > 0 {
+			out = append(out, scriptInvCellChange{Path: r.Path, Cells: cells})
+		}
+	}
+	return out
+}
+
+// scriptInvChangedNamed / scriptInvChangedCells —— 机器面两枚（与 `rows_added_named` / `rows_removed_named` 同体例）。
+func scriptInvChangedNamed(cs []scriptInvCellChange) string {
+	ps := make([]string, 0, len(cs))
+	for _, c := range cs {
+		ps = append(ps, c.Path)
+	}
+	return strings.Join(ps, ",")
+}
+
+func scriptInvChangedCells(cs []scriptInvCellChange) string {
+	out := make([]string, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, c.Path+"="+strings.Join(c.Cells, " · "))
+	}
+	return strings.Join(out, ";")
+}
+
+// scriptInvChangedTotal —— 本次的**格**总数（计划件那一行报「几行 / 几格」用）。
+func scriptInvChangedTotal(cs []scriptInvCellChange) int {
+	n := 0
+	for _, c := range cs {
+		n += len(c.Cells)
+	}
+	return n
+}
+
 // scriptInvPlan —— 一次真跑/干跑的**全部中间物**（干跑与真写读的是同一份 ⇒ 两档不许各算一遍）。
 type scriptInvPlan struct {
 	Target     string
@@ -229,6 +302,7 @@ type scriptInvPlan struct {
 	Added      []string
 	Removed    []string
 	Unchanged  int
+	Changed    []scriptInvCellChange
 	OldDecl    string
 	NewDecl    string
 	BeforeSHA  string
@@ -274,6 +348,8 @@ func scriptInvBuildPlan(root, target string) (*scriptInvPlan, error) {
 	}
 	sort.Strings(p.Added)
 	sort.Strings(p.Removed)
+	// ★ 2026-09-28（缺口 `GAP-20260928-06`）：「未变」只判名字面在场 ⇒ 已有行的格值变化单独算一份。
+	p.Changed = scriptInvDiffCells(known, live)
 	// 重建件面：**非数据行逐字节原样保留**（头部 4 行口径行 + 别的说明行）·
 	// 存活的数据行**原地**换成现跑值（不重排）· 消失的行**去掉** · 声明行**只换三个数** · 新件按名追加在尾。
 	out := []string{}
@@ -456,6 +532,16 @@ func scriptInvPrintPlan(stdout, stderr io.Writer, p *scriptInvPlan, docsRoot, do
 	for _, r := range p.Removed {
 		fmt.Fprintf(stdout, "    - %s\n", r)
 	}
+	// ★ 2026-09-28（缺口 `GAP-20260928-06`）：**格值变化**那一面 —— 上面「差异」一行只报三个数，而「未变」
+	//   只判名字面在场 ⇒ 已有行整行重算时三个数一动不动。这一块把「哪一行的哪一格从什么变成什么」逐条取出来。
+	//   **只在真有变化时才出**（照本函数里 `声明行旧` 那一行的同一体例）⇒ 零变化那一档的既有输出逐字不变。
+	if len(p.Changed) > 0 {
+		fmt.Fprintf(stdout, "  格值变化 : 已有行 %d 行 / %d 格（逐格对拍 · 只列真的变了的那几格）\n",
+			len(p.Changed), scriptInvChangedTotal(p.Changed))
+		for _, c := range p.Changed {
+			fmt.Fprintf(stdout, "    ~ %s  %s\n", c.Path, strings.Join(c.Cells, " · "))
+		}
+	}
 	fmt.Fprintf(stdout, "  声明行   : %s\n", p.NewDecl)
 	if p.OldDecl != p.NewDecl {
 		fmt.Fprintf(stdout, "  声明行旧 : %s\n", p.OldDecl)
@@ -468,7 +554,8 @@ func scriptInvPrintPlan(stdout, stderr io.Writer, p *scriptInvPlan, docsRoot, do
 		"：只出计划件 · 零副作用）")
 }
 
-// scriptInvEmitJSON —— 机器面（六键包封由 `emitEnvelopeWith` 出；`items` = 一行十格）。
+// scriptInvEmitJSON —— 机器面（六键包封由 `emitEnvelopeWith` 出；`items` = 一行十五格 = 改前十二格
+// + ★ 2026-09-28 缺口 `GAP-20260928-06` 新**增**的三格 `rows_changed` / `rows_changed_named` / `rows_changed_cells` —— 既有十二格逐字不动）。
 func scriptInvEmitJSON(inv *invocation, stdout, stderr io.Writer, p *scriptInvPlan, result string) int {
 	if rc := requireFields(inv, stderr); rc != exitOK {
 		// K2（§4.1）：给了 --json 不给字段 ⇒ 退码由 `requireFields` **取自退码表**回 ——
@@ -488,6 +575,9 @@ func scriptInvEmitJSON(inv *invocation, stdout, stderr io.Writer, p *scriptInvPl
 		"rows_added":              strconv.Itoa(len(p.Added)),
 		"rows_removed":            strconv.Itoa(len(p.Removed)),
 		"rows_unchanged":          strconv.Itoa(p.Unchanged),
+		"rows_changed":            strconv.Itoa(len(p.Changed)),
+		"rows_changed_named":      scriptInvChangedNamed(p.Changed),
+		"rows_changed_cells":      scriptInvChangedCells(p.Changed),
 		"declared_line":           p.NewDecl,
 		"inventory_before_sha256": p.BeforeSHA,
 		"inventory_after_sha256":  p.AfterSHA,
@@ -624,6 +714,14 @@ func cmdScriptInventorySync(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	for _, r := range p.Removed {
 		fmt.Fprintf(stdout, "  - %s\n", r)
+	}
+	// ★ 2026-09-28（缺口 `GAP-20260928-06`）：真写那一档也报**格值变化**（与计划件读同一份 `p.Changed` · 只在真有变化时才出）。
+	if len(p.Changed) > 0 {
+		fmt.Fprintf(stdout, "格值变化 已有行 %d 行 / %d 格（逐格对拍 · 只列真的变了的那几格）\n",
+			len(p.Changed), scriptInvChangedTotal(p.Changed))
+		for _, c := range p.Changed {
+			fmt.Fprintf(stdout, "  ~ %s  %s\n", c.Path, strings.Join(c.Cells, " · "))
+		}
 	}
 	if inv.jsonGiven {
 		return scriptInvEmitJSON(inv, stdout, stderr, p, "written")

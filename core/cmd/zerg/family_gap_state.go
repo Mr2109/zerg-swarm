@@ -54,6 +54,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -359,6 +360,9 @@ func cmdGapNote(inv *invocation, stdout, stderr io.Writer) int {
 		return rc
 	}
 	text := strings.TrimSpace(inv.flagVal("--text"))
+	// ★ 2026-09-28（缺口账 `GAP-20260926-233`）：`--retract <n|指纹>` = **作废**一条已落的注。
+	//   纪律：**禁真删任何注** —— 被作废那条**原样留在 `notes` 里**，只往 `notes_void` 追加标记。
+	retract := strings.TrimSpace(inv.flagVal("--retract"))
 
 	// ① 用法面（在任何盘面动作之前）
 	if inv.jsonGiven && len(inv.fields) == 0 {
@@ -376,10 +380,18 @@ func cmdGapNote(inv *invocation, stdout, stderr io.Writer) int {
 			strings.Join(gapStateSettable, "|"))
 		return exitUsage
 	}
-	if text == "" {
+	if retract != "" && text != "" {
+		inv.setErr("usage", "retract_with_text", "--retract 与 --text 同给")
+		fmt.Fprintf(stderr, "%s: `--retract` 与 `--text` **不许同给**（一条命令一个动作：作废 = 不写新注 · 写新注 = 不作废）\n", progName)
+		fmt.Fprintf(stderr, "  作废：zerg gap note <GAP id> --retract <n|指纹> [--by <谁>] [--dry-run | --yes]\n")
+		fmt.Fprintf(stderr, "  写注：zerg gap note <GAP id> --text <一句话> [--by <谁>] [--dry-run | --yes]\n")
+		return exitUsage
+	}
+	if text == "" && retract == "" {
 		inv.setErr("usage", "missing_required", "缺 --text")
-		fmt.Fprintf(stderr, "%s: `gap note` 缺必填旗标：--text\n", progName)
+		fmt.Fprintf(stderr, "%s: `gap note` 缺必填旗标：--text（或 `--retract <n|指纹>`）\n", progName)
 		fmt.Fprintf(stderr, "用法：zerg gap note <GAP id> --text <一句话> [--by <谁>] [--dry-run | --yes]\n")
+		fmt.Fprintf(stderr, "   或：zerg gap note <GAP id> --retract <n|指纹> [--by <谁>] [--dry-run | --yes]（作废一注 · 不删原文）\n")
 		return exitUsage
 	}
 
@@ -393,9 +405,14 @@ func cmdGapNote(inv *invocation, stdout, stderr io.Writer) int {
 		if len(ids) == 1 {
 			id = ids[0]
 		}
+		plan1, plan2 := "notes        : （在当前那一条之后追加 1 条 · 不改 state）", "text         : "+text
+		if retract != "" {
+			plan1 = "notes_void   : （追加 1 条作废标记 · **注一条不删** · 不改 state）"
+			plan2 = "void         : --retract " + retract + "（名字在真源读进来之后才判）"
+		}
 		gapStatePlanBlock(stderr, "缺 `--yes`（D2 档）", "note", gapLedgerPath(), -1,
 			id, "", "（未读）", "",
-			"notes        : （在当前那一条之后追加 1 条 · 不改 state）", "text         : "+text)
+			plan1, plan2)
 		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
 		fmt.Fprintf(stderr, "  ⚠ `--yes` 是**命令行确认档**，不是 `approve` 件（不产生 `approver` / `approval` 两格）\n")
 		inv.setErr("usage", "yes_required", "缺 --yes")
@@ -415,6 +432,11 @@ func cmdGapNote(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	r := led.Recs[idx]
 	by := gapByOf(inv)
+
+	// ⑤′ `--retract`：**只追加一条作废标记**（禁真删 · 已被作废 ⇒ 幂等「无变化」）
+	if retract != "" {
+		return gapNoteRetract(inv, stdout, stderr, led, idx, r, retract)
+	}
 
 	// ⑤ 幂等：目标条里已有**同 by 同 text** 的一条（时刻那一格不比）⇒ 「无变化」
 	for _, n := range r.Notes {
@@ -467,6 +489,98 @@ func cmdGapNote(inv *invocation, stdout, stderr io.Writer) int {
 		r.ID, len(r.Notes)-1, len(r.Notes), len(led.Lines))
 	fmt.Fprintf(stdout, "  state    : %s（**未改** —— 注不改态）\n", r.State)
 	fmt.Fprintf(stdout, "  新那一条 : %s\n", r.Notes[len(r.Notes)-1])
+	return exitOK
+}
+
+// ── ⒞ `zerg gap note <GAP id> --retract <n|指纹>`（作废一条注 · 缺口账 `GAP-20260926-233`）──────
+
+// gapNoteRetractPick —— `--retract` 的点名面：序号（1 起）/ 指纹（sha256 前 12 位）/ 原文前缀
+// 三选一，返回**全部命中**的序号（调用方判「恰好一条」）。序号会随追加漂移，指纹钉住原文。
+func gapNoteRetractPick(r gapRecord, arg string) []int {
+	hits := []int{}
+	if n, err := strconv.Atoi(arg); err == nil {
+		if n >= 1 && n <= len(r.Notes) {
+			hits = append(hits, n)
+		}
+		return hits
+	}
+	for i, s := range r.Notes {
+		if strings.HasPrefix(gapNoteFP(s), arg) || strings.HasPrefix(s, arg) {
+			hits = append(hits, i+1)
+		}
+	}
+	return hits
+}
+
+// gapNoteRetract —— `--retract` 的真写面：**只往 `notes_void` 追加一条作废标记**。
+// ★ 真删任何注 ✗（被作废那一条在 `notes` 里**逐字节原样留着**，改前改后现算对拍）。
+// 退码：0 落账或幂等「无变化」· 2 点名不到 / 命中多条 / 与 `--text` 同给 · 8 同 `note`。
+func gapNoteRetract(inv *invocation, stdout, stderr io.Writer, led gapLedger, idx int, r gapRecord, arg string) int {
+	hits := gapNoteRetractPick(r, arg)
+	if len(hits) == 0 {
+		inv.setErr("usage", "retract_target_not_found", "点名点不到注")
+		fmt.Fprintf(stderr, "%s: `--retract %s` 在 %s 的 %d 条注里**一条都对不上**（本族口径 = 用法错 2 · 名给错）\n",
+			progName, arg, r.ID, len(r.Notes))
+		fmt.Fprintf(stderr, "  点名三种写法：序号（1 起）/ 指纹（sha256 前 12 位）/ 原文前缀 —— 现读：zerg gap ls --json id,notes,notes_void,void_notes\n")
+		return exitUsage
+	}
+	if len(hits) > 1 {
+		inv.setErr("usage", "retract_target_ambiguous", "点名命中多于一条注")
+		fmt.Fprintf(stderr, "%s: `--retract %s` 在 %s 里命中 %d 条（%v）⇒ 收窄到唯一（用序号或指纹）\n",
+			progName, arg, r.ID, len(hits), hits)
+		return exitUsage
+	}
+	n := hits[0]
+	// 幂等：这条注**已经**在作废位 ⇒ 「无变化」（不写真源、不写审计）
+	for _, v := range r.Voids {
+		if v.N == n {
+			inv.changed = boolPtr(false)
+			if inv.jsonGiven {
+				return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
+					map[string]string{"id": r.ID, "fp": r.FP, "notes": fmt.Sprintf("%d", len(r.Notes)), "changed": "false"})
+			}
+			fmt.Fprintf(stdout, "无变化 %s · 第 %d 条注**已在作废位**（void:true · 幂等命中：不写真源、不写审计）\n", r.ID, n)
+			return exitOK
+		}
+	}
+	// `--dry-run`：只出计划件（stdout · rc=0 · 零副作用）
+	if inv.dryRun {
+		if inv.jsonGiven {
+			inv.changed = boolPtr(false)
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
+				map[string]string{"id": r.ID, "fp": r.FP, "notes": fmt.Sprintf("%d", len(r.Notes)), "changed": "false"})
+		}
+		gapStatePlanBlock(stdout, "--dry-run", "note", led.Path, len(led.Lines), r.ID, r.FP, r.State, "",
+			fmt.Sprintf("notes_void   : %d → %d 条（追加作废标记 · **注一条不删**）", len(r.Voids), len(r.Voids)+1),
+			fmt.Sprintf("作废那一条   : 第 %d 条 · fp=%s（void:true · 原文在真源里逐字节留着）", n, gapNoteFP(r.Notes[n-1])))
+		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未改真源、未写审计）\n")
+		return exitOK
+	}
+	// 真写：**只**追加一条作废标记；`notes` / `state` 逐字不动（改前改后现算对拍，破 ⇒ 不给结论）。
+	before := r.State
+	snapNotes := strings.Join(r.Notes, "\x00")
+	r.Voids = append(append([]gapNoteVoid{}, r.Voids...), gapNoteVoid{
+		Void: true, N: n, FP: gapNoteFP(r.Notes[n-1]), By: gapByOf(inv), At: gapNow(),
+	})
+	if r.State != before || strings.Join(r.Notes, "\x00") != snapNotes {
+		inv.setErr("failed", "note_mutated", "作废这一路动了 notes/state")
+		fmt.Fprintf(stderr, "%s: 内部对拍破了：作废这一路动了 `notes` 或 `state` ⇒ 不给结论（退码 1）\n", progName)
+		return exitFail
+	}
+	detail, rc, msg := gapRewriteOne(inv, led, idx, r, "note", before, before)
+	if rc != exitOK {
+		gapWriteFail(inv, stderr, detail, msg, "note")
+		return rc
+	}
+	inv.changed = boolPtr(true)
+	if inv.jsonGiven {
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
+			map[string]string{"id": r.ID, "fp": r.FP, "notes": fmt.Sprintf("%d", len(r.Notes)), "changed": "true"})
+	}
+	fmt.Fprintf(stdout, "已作废 %s · 第 %d 条注（fp=%s · notes_void %d → %d 条）\n",
+		r.ID, n, gapNoteFP(r.Notes[n-1]), len(r.Voids)-1, len(r.Voids))
+	fmt.Fprintf(stdout, "  真源     : %s（%d 行不变 · **注一条没删** —— 只重写目标那一行）\n", led.Path, len(led.Lines))
+	fmt.Fprintf(stdout, "  读面     : 该条已不显示（默认）· `--json void_notes` 带原文出来\n")
 	return exitOK
 }
 

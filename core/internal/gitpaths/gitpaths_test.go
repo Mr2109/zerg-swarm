@@ -438,8 +438,9 @@ func TestWithPrefix_ZeroOneManyStates(t *testing.T) {
 	if contains(zargv, "--") {
 		t.Fatalf("零段不该出现 `--`（与旧行为逐字相同）：%v", zargv)
 	}
-	if len(zargv) != 3 || zargv[2] != "ls-files" || zargv[1] != "/probe" {
-		t.Fatalf("零段 argv 形态不符：%v", zargv)
+	wantZero := []string{"-C", "/probe", "ls-files", "-z"}
+	if !equalArgv(zargv, wantZero) {
+		t.Fatalf("零段 argv 逐字不等（`-z` 属本面固定拼法 · 见本格逐字形态）：want %v got %v", wantZero, zargv)
 	}
 
 	// 三态②：一段 ⇒ 与旧单参形态逐字相同（向后兼容，旧调用点无需改）。

@@ -111,6 +111,99 @@ func TestCLIGateFindWiringFaceForNonStepFile(t *testing.T) {
 	}
 }
 
+// TestCLIGateFindEscapedQuoteDeclStillMatches —— **命令串内含层转义引号**的声明照样把件名认出来
+// （本批量修的那一处解析：`addStepRE` 第五格旧形态 `[^"]*` 在第一个 `\"` 上就停）。
+//
+// 为什么必须常驻：真源 `scripts/gates/precommit-gates.sh:2866`（B11 那一步）的命令串里就有
+// `\"${REL_D}\"` —— 旧解析把它截成 `[ -d \`，**件名整段落在捕获串之外**，于是
+// `gate find check-placeholder-residue.py` 把「已挂在 B11 上的件」读成「不在步骤表里」（假阴性）。
+// 本条合成夹具**逐字复刻那一形态**（夹具字符串里必须有 `\"`），把「件名 ⇒ 步名」这座桥钉在
+// 「命令串含内层转义引号」这一格上：谁把第五格改回 `[^"]*`，本用例必红。
+func TestCLIGateFindEscapedQuoteDeclStillMatches(t *testing.T) {
+	root := escapedQuoteRepo(t)
+	rc, out, errb := runZergRepo(t, root, "gate", "find", "synthetic-esc.py")
+	if rc != 0 {
+		t.Fatalf("含内层转义引号的声明里点名的件必须命中（rc=0），实得 rc=%d\nstdout=%s\nstderr=%s", rc, out, errb)
+	}
+	// 桥的另一端：**步名**必须出现（只出现件名 = 仍是「未点名」那条假阴性）。
+	if !strings.Contains(out, "合成转义引号步") {
+		t.Fatalf("命令串含内层转义引号时，件名仍须命中到**步名**「合成转义引号步」（否则就是假阴性：把已接线的件读成未点名），实得 stdout=%q", out)
+	}
+	// 命令串那格必须是**完整**的（截断的 `[ -d \` 一眼可辨）：尾部那段 `--all` 得在。
+	if !strings.Contains(out, "--all") {
+		t.Fatalf("第五格必须是**完整命令串**（旧形态截到 `[ -d \\` 会丢掉尾部），实得 stdout=%q", out)
+	}
+}
+
+// TestCLIGateFindUnwiredFileStillUnnamed —— **真未接线件仍报未点名**（防把假阴性治成假阳性）：
+// 修截断后若把「命中」的标准放宽（例如只看行里有没有那个词），真未接线的件会被误报成「点名」。
+//
+// 夹具逐字形态：件名只出现在**heredoc 体**里（声明行的原文里没有）⇒ 解析面读不到它，
+// 所以结论只能是「未点名」，且 `next` 仍是 `code find`（不是 `gate show`）。
+func TestCLIGateFindUnwiredFileStillUnnamed(t *testing.T) {
+	root := escapedQuoteRepo(t)
+	rc, out, errb := runZergRepo(t, root, "gate", "find", "unwired-only.py", "--json", "name,verdict,next,wiring")
+	if rc != 0 {
+		t.Fatalf("真件名命中应 rc=0，实得 rc=%d\nstderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "未点名") {
+		t.Fatalf("真未接线件必须报「未点名」（不许多认出一步），实得 stdout=%q", out)
+	}
+	if strings.Contains(out, "gate show") {
+		t.Fatalf("未接线件的 `next` 不许给 `gate show`（它没有步名可取），实得 stdout=%q", out)
+	}
+	if !strings.Contains(out, "code find") {
+		t.Fatalf("未接线件的 `next` 应回落到 `code find`，实得 stdout=%q", out)
+	}
+}
+
+// TestCLIGateFindUnparsableDeclSaysUncertain —— **解析不确定**必须显式点名（与「读不到不许当健康」同口径）：
+// 一条 `add_step` 声明若命令串是多行/heredoc（四格引号串在**行内**不闭合），解析器读不出它 ——
+// 而它的原文里点到过一个件名。此时那一件**不许**报「未点名」（点没点名判不了），必须报「解析不确定」+ 行号。
+//
+// 为什么这条是必需的另一半：只修「含转义引号的截断」仍会漏掉**根本读不出来的行**，
+// 而那正是「假阴性」的第二条来路（`precommit-gates.sh:1794` 那条 heredoc 声明 · 实机复现见回执）。
+func TestCLIGateFindUnparsableDeclSaysUncertain(t *testing.T) {
+	root := escapedQuoteRepo(t)
+	rc, out, errb := runZergRepo(t, root, "gate", "find", "uncertain-named.py", "--json", "name,verdict,wiring")
+	if rc != 0 {
+		t.Fatalf("真件名命中应 rc=0，实得 rc=%d\nstderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "解析不确定") {
+		t.Fatalf("件名出现在读不出的声明行原文里 ⇒ 必须报「解析不确定」（不许报「未点名」），实得 stdout=%q", out)
+	}
+	if strings.Contains(out, "步骤表里未点名") {
+		t.Fatalf("读不出的行**不许**被读成「未点名」（拿读不到当「没有」），实得 stdout=%q", out)
+	}
+	// 同一个结论也要在 stderr 的清单里点名行号（人核对面）。
+	if !strings.Contains(errb, "解析不确定") || !strings.Contains(errb, "precommit-gates.sh:") {
+		t.Fatalf("stderr 必须点名「解析不确定」与真源行号，实得 stderr=%q", errb)
+	}
+}
+
+// escapedQuoteRepo —— 夹具合成仓（三件 · 一枚声明含**内层转义引号** + 一枚声明**读不出来**）：
+//
+//	`scripts/gates/synthetic-esc.py`    —— 由含 `\"` 的声明点名（桥的正控）；
+//	`scripts/gates/unwired-only.py`     —— 只出现在 heredoc **体**里 ⇒ 真未接线（未点名的正控）；
+//	`scripts/gates/uncertain-named.py`  —— 出现在**读不出**的声明行原文里 ⇒ 解析不确定（第三格）。
+//
+// 本仓真源里这三种形态**都有**（`precommit-gates.sh:2866` / `:1794`），故夹具逐字照造，不自创形态。
+func escapedQuoteRepo(t *testing.T) string {
+	t.Helper()
+	root := syntheticRepo(t, "exit 0\n")
+	for _, f := range []string{"synthetic-esc.py", "unwired-only.py", "uncertain-named.py"} {
+		mustWrite(t, filepath.Join(root, "scripts", "gates", f), "print('合成分')\n")
+	}
+	appendToFile(t, filepath.Join(root, "scripts", "gates", "precommit-gates.sh"),
+		// ① 第五格含 `\"`（与真源 :2866 逐字同形）。
+		"\nadd_step release \"release: 合成转义引号步（只报告）\" tri-report \"${REPO_ROOT}\" \"[ -d \\\"${REL_D}\\\" ] || { echo \\\"缺件\\\" ; exit 2; }; python3 scripts/gates/synthetic-esc.py \\\"${REL_D}\\\" --all\"\n"+
+			// ② 声明行原文里点到一件，但四格引号串**行内不闭合**（heredoc）⇒ 读不出来；件名只在 heredoc 体里出现的另一件 ⇒ 真未接线。
+			"add_step pub \"合成 heredoc 步\" rc \"${REPO_ROOT}\" \"python3 - <<'PYEOF' scripts/gates/uncertain-named.py\n"+
+			"print('scripts/gates/unwired-only.py')\n"+
+			"PYEOF\"\n")
+	return root
+}
+
 // repoFingerprint —— 合成仓的逐件 sha256 清单（按相对路径排序 · 只看**内容**，不看 mtime）。
 func repoFingerprint(t *testing.T, root string) string {
 	t.Helper()
@@ -139,4 +232,62 @@ func repoFingerprint(t *testing.T, root string) string {
 	}
 	sort.Strings(lines)
 	return strings.Join(lines, "\n")
+}
+
+// TestCLIGateFindUnreadableGateDirNoVerdict —— `scripts/gates/` **读不到** ⇒ rc=8「不给结论」的
+// **常驻负控**（缺口 `GAP-20260927-221` · 提案 `DEV-0387` 的「未做项①」）。
+//
+// 为什么这条必须是**测件里的常驻件**（不能只在仓外夹具里取证一次）：同族新出口 `gate_dir_unreadable`
+// （退码 8）若只被仓外夹具证明过一次，就**没有棘轮** —— 谁把 `gateFilesMatching` 改回「吞错 `return nil`」，
+// 旧形态会静默退化回「零命中退码 1」（= 拿半张表当全表），测件却全绿。本用例把**两态**钉成一对：
+//
+//	① 负控（权限 `0111` = 可进不可读）：`scripts/gates/` 读不到 ⇒ rc=**8**（不给结论）· stdout **0 字节** ·
+//	   stderr 含「读不到」与「不给结论」；
+//	② 阳控（同一合成仓 · 同一探针 · 权限复原 `0755`）：回到 rc=**1**「零命中」。
+//
+// 两态成对 ⇒ 探针**有鉴别力**：把①的期望值改错（8→1）本用例必 FAIL（见回执「期望值改错」反证）。
+// 走**进程内** `runZergRepo`（读**当前源码** · 与 `cli_gate_results_test.go` 的 rc=8 同层）——
+// `bin/zerg` 是 gitignore 的**按批重建制品**，本批不重建（同 `cli_gate_show_test.go` 头注那条口径）。
+//
+// 纪律：`0111` 是**危险态**（目录不可读），故 `defer` + `t.Cleanup` 双保险复原 —— 否则 `t.TempDir`
+// 清不掉、同包后续用例受污。探针取一段**谁都不含**的串，保证阳控那态一定是「零命中」而非别的命中。
+func TestCLIGateFindUnreadableGateDirNoVerdict(t *testing.T) {
+	root := showRepo(t) // 合成仓：`scripts/gates/precommit-gates.sh` + 两行 add_step
+	dir := filepath.Join(root, "scripts", "gates")
+
+	// 复原权限的兜底：无论断言在哪一步退场（含 Fatalf），都把 0111 还原。
+	restore := func() { _ = os.Chmod(dir, 0o755) }
+	t.Cleanup(restore)
+	defer restore()
+
+	// 探针：不含任何步名/命令串/件名的串 ⇒ 权限正常时必然「零命中」（阳控的靶子）。
+	const probe = "zzz-本片段谁都不含-zzz"
+
+	// ① 负控：`scripts/gates/` 读不到（0111 = 可进不可读）⇒ rc=8「不给结论」。
+	if err := os.Chmod(dir, 0o111); err != nil {
+		t.Fatalf("造不出「目录读不到」态（chmod 0111 失败）：%v", err)
+	}
+	rc, out, errb := runZergRepo(t, root, "gate", "find", probe)
+	if rc != 8 {
+		t.Fatalf("`scripts/gates/` 读不到必须 rc=8「不给结论」（不是 1「零命中」—— 读不到≠没有），实得 rc=%d\nstdout=%q\nstderr=%q",
+			rc, out, errb)
+	}
+	if len(out) != 0 {
+		t.Fatalf("读不到 ⇒ stdout 必须 **0 字节**（不许拿半张表当全表出半份），实得 %d 字节：%q", len(out), out)
+	}
+	if !strings.Contains(errb, "读不到") || !strings.Contains(errb, "不给结论") {
+		t.Fatalf("stderr 必须明说「读不到」与「不给结论」，实得 %q", errb)
+	}
+
+	// ② 阳控：权限复原 `0755` ⇒ 同仓同名探针回到 rc=1「零命中」——两态成对，证明探针真断到差异。
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatalf("复原 0755 失败：%v", err)
+	}
+	rc2, out2, errb2 := runZergRepo(t, root, "gate", "find", probe)
+	if rc2 != 1 {
+		t.Fatalf("权限复原后同名探针必须 rc=1「零命中」（两态成对），实得 rc=%d\nstderr=%q", rc2, errb2)
+	}
+	if strings.TrimSpace(out2) != "" {
+		t.Fatalf("零命中也不许往 stdout 写东西（K2 的 0 字节档），实得 stdout=%q", out2)
+	}
 }
