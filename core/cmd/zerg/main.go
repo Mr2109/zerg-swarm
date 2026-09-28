@@ -97,6 +97,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 		return exitUsage
 	}
+	// 缺口 `GAP-20260928-151`（值旗标吞旗标 · P1）：那枚「看起来像旗标」的词**不**收下当值（裸形语义
+	// 照旧：给过、值空 ⇒ `hasFlag` 与 `--acceptance` 三态、`publish run --out` / `script inventory
+	// sync --set` 两个守卫逐字不变），但**当场报出来** ⇒ 不再「rc=0 且无信号」的假绿那一半。
+	for _, w := range inv.valueFlagLooksLikeFlag {
+		fmt.Fprintf(stderr, "%s: ⚠ %s\n", progName, w)
+	}
 
 	// `zerg --version` / `zerg version`：同一条命令的两个写法（§九 M15 T4）。
 	if inv.wantVersion && len(inv.path) == 0 {
@@ -2163,6 +2169,9 @@ type invocation struct {
 	// 原样透传用：命令行原样（含未知旗标）+ 这一轮见过的未知旗标（非透传命令要据此报错）
 	orig    []string
 	unknown []string
+	// 缺口 `GAP-20260928-151`：值旗标后面紧跟的词**以连字符开头**的逐条点名（解析面只**记**、不判 ——
+	// 由 `run` 原样报到 stderr；裸形语义与退码一个字节不动）。见 `noteValueFlagLooksLikeFlag`。
+	valueFlagLooksLikeFlag []string
 
 	// 危险动作三态（§4.1 K7 · §九 M3 C1/C2/C4）
 	dryRun bool
@@ -2314,6 +2323,8 @@ func (inv *invocation) hasFlag(name string) bool {
 
 func parseInvocation(args []string) (*invocation, error) {
 	inv := &invocation{orig: append([]string{}, args...)}
+	// 缺口 `GAP-20260928-151`（值旗标吞旗标 · P1）：解析**之前**扫一遍 —— 只**记**信号，不判码。
+	inv.valueFlagLooksLikeFlag = noteValueFlagLooksLikeFlag(args)
 	var pos []string
 	i := 0
 	for ; i < len(args); i++ {
@@ -2556,6 +2567,65 @@ func parseInvocation(args []string) (*invocation, error) {
 }
 
 // ---- 动作面旗标（批 D · S5）：一张名字表 + 一个收值口 ----------------------------------------
+
+// ── 缺口 `GAP-20260928-151`（P1 · 「值旗标吞旗标」）───────────────────────────────────────────
+//
+// 病（2026-09-28 现读实测）：值旗标**紧跟的那枚 token 以连字符开头**时，上面的 switch 一律按
+// 既有的「裸形」一路收下 —— 旗标**给过了**、值是**空串**。裸形本身是**承重**的（「键在、值空」
+// 正是 `hasFlag` 与 `--acceptance` 三态的靠山：`publish run --out`、
+// `script inventory sync --out/--set` 两个守卫的真身就是它）。于是一次「值漏给了」被读成
+// 「给对了」：
+//
+//	`zerg gate results --dir --last` ⇒ `--dir` 的值被静默收空、命令改用**另一个来源**（`--last`）
+//	⇒ stdout 5 行 · rc=0 · stderr 0 字节（现读实测）—— 假绿，且**无信号**。
+//
+// 治法（**只加信号、不动裸形语义**）：解析**之前**扫一遍 argv，把「值旗标 + 看起来像旗标的下一个词」
+// 逐条点名列下，由 `run` 原样报到 stderr。口径**只此一处**（本函数 + 它那两句文案），别处不许再判：
+//
+//	· 退码**一个字节不动**（不改任何既有函数行为、不引入新退码 —— 裸形照旧生效）；
+//	· **不**把那个「看起来像旗标的词」收下当值：那会改掉 `--acceptance --yes` 这类**合法**三态写法
+//	  的语义，也会改掉 `code find --glob -x` 的整个取值面（现读后判为**风险更大**的一边，弃）；
+//	· 与 `--dir/--last` 同形的专用字段旗标（`--json`/`--ttl`/`--confirm`/…）一并覆盖 —— 同一张名单。
+func noteValueFlagLooksLikeFlag(args []string) []string {
+	var hits []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			break // `--` 之后一律位置参数（既有语义）⇒ 不为它下结论
+		}
+		if !valueFlagTakesNext(a) {
+			continue
+		}
+		if i+1 >= len(args) {
+			continue // 已到 argv 尾：裸形（给过、值空）—— 既有语义，不报
+		}
+		nxt := args[i+1]
+		if !strings.HasPrefix(nxt, "-") || nxt == "-" {
+			continue // 真值（含单枚 `-`）
+		}
+		hits = append(hits, fmt.Sprintf(
+			"值旗标 %s 后面跟的是 %s —— 它**看起来像旗标**，故这一发里 %s 的值按**空**收（裸形语义：给过、值空）⇒ 命令可能改用**别的来源**：值漏给了就补上（`%s <值>`），确实要给空值就写 `%s=`",
+			a, nxt, a, a, a))
+	}
+	return hits
+}
+
+// valueFlagTakesNext —— 这枚 token 是不是「**值为下一个 token**」的旗标。
+// 口径与上面 switch 的两处**同表**：`valueFlagName` 那一族 + 九枚专用字段旗标。
+// ★ 只认**裸形**名字：`--k=v` 形态自带值 ⇒ 不在面内（`--json=fields` 也不会命中）。
+func valueFlagTakesNext(a string) bool {
+	if valueFlagName(a) != "" {
+		return true
+	}
+	switch a {
+	case "--json", "--json=", "--idempotency-key", "--idempotency-key=",
+		"--schema", "--schema=", "--node", "--node=", "--context", "--context=",
+		"--accept", "--accept=", "--confirm", "--confirm=", "--ttl", "--ttl=",
+		"--prefix", "--prefix=":
+		return true
+	}
+	return false
+}
 
 // valueFlagName 认「动作面旗标」的名字（**唯一真源**：解析与 `--k=v` 分派都读它）。
 func valueFlagName(a string) string {

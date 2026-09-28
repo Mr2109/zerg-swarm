@@ -111,6 +111,13 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		if rc := gateRunPrecheckFlags(tail, stderr); rc != exitOK {
 			return rc
 		}
+		// ★ 2026-09-28（缺口 `GAP-20260928-153`）：**值面**也前移 —— `--scope <坏值>` 的闭集
+		//   过去是自举件 `build_steps()` 判的（在合成自检＋软门禁**之后**）⇒ 实测 stdout 175 行先落地。
+		//   这里在 exec **之前**按自举件自己的闭集判（闭集只读自它、不复制第二份）；退码语义不变
+		//   （坏值改前 2、改后 2），只不再白跑。取不到闭集 ⇒ 放行（行为与改前逐字相同）。
+		if rc := gateRunPrecheckScopeValues(script, tail, stderr); rc != exitOK {
+			return rc
+		}
 		args = append(args, tail...)
 	case "show":
 		if len(tail) == 0 {

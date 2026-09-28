@@ -418,6 +418,78 @@ func gateRunIsBool(a string) bool {
 	return false
 }
 
+// ── `gate run` 的**值面**前移校验（缺口 `GAP-20260928-153`）──────────────────────────────────
+//
+// 病（2026-09-28 现读实测）：`--scope <坏值>` 的**值闭集**判在**跑完之后** —— 自举件 `main()` 的
+// arg 循环只认「这枚旗标要值」，值域是**后面** `build_steps()` 的 `case` 标签判的（那句
+// `✗ 未知 scope:` 就是它的出口）；而 `build_steps` 在 `self_test()` 与 `precheck()` **之后**才被调到
+// ⇒ 实测 stdout **175 行**先落地（合成自检），然后才退 2。旗标**名**面已由 `gateRunPrecheckFlags`
+// 前移（缺口 `GAP-20260928-146`），值面未。
+//
+// 治法（**只前移校验位、不改退码**）：exec **之前**按自举件自己的闭集逐枚核 `--scope` 的值；
+// 坏值 ⇒ 照它那句判词打印后 `return exitUsage`（2，与自举件同码），**不再 exec**。口径：
+//
+//	· 闭集**只在自举件里定义一处**（`build_steps()` 的 `case` 标签 + 那句 `✗ 未知 scope:` 的可用表）
+//	  —— 本函数**只读**把它取出来（`gateRunScopeClosedSet`），**不复制第二份**（复制就会漂）；
+//	  取不到（读不动/锚没了）⇒ **放行**：照旧交给自举件判，行为与改前逐字相同（fail-open）；
+//	· 退码**一个字节不改**：坏值过去 2、现在 2；合法值原样透传（exec 之前只是**看一眼**）；
+//	· 与「名面」同一种排法（`gateRunPrecheckFlags`）：只读 `tail` + 只读自举件，不写任何件、不建目录。
+func gateRunPrecheckScopeValues(script string, tail []string, stderr io.Writer) int {
+	scopes, list, ok := gateRunScopeClosedSet(script)
+	if !ok {
+		return exitOK // 闭集取不到 ⇒ 不判（放行给自举件）
+	}
+	for i := 0; i < len(tail); i++ {
+		if tail[i] != "--scope" {
+			continue
+		}
+		if i+1 >= len(tail) {
+			return exitOK // 缺值：自举件自己的 `need_flag_val` 口径照旧（本函数不为它下结论）
+		}
+		v := tail[i+1]
+		known := false
+		for _, s := range scopes {
+			if s == v {
+				known = true
+			}
+		}
+		if !known && v != "" {
+			fmt.Fprintf(stderr, "✗ 未知 scope: %s（可用: %s）\n", v, list)
+			fmt.Fprintf(stderr, "%s: 这一发**没跑任何步骤**（stdout 0 行）—— `--scope` 的**值**在**命令面**就校验（缺口 `GAP-20260928-153`；改前先白跑一遍合成自检＋软门禁、stdout 175 行落地才退 2）\n", progName)
+			return exitUsage
+		}
+		i++ // 跳过那个值（值旗标：下一枚 token 就是它的值，逐字跳过 —— 与自举件 `need_flag_val` 同口径）
+	}
+	return exitOK
+}
+
+// gateRunScopeClosedSet —— 从自举件**只读**取 `--scope` 的值闭集（唯一真源 = 脚本那句
+// `✗ 未知 scope: %s（可用: …）` 的可用表；本函数只**解析**它，不另立一份）。返回（闭集 · 原样的
+// 可用表文本 · 取到没有）。取不到 ⇒ 第三值为假 ⇒ 调用方放行（fail-open）。
+func gateRunScopeClosedSet(script string) ([]string, string, bool) {
+	b, err := os.ReadFile(script)
+	if err != nil {
+		return nil, "", false
+	}
+	const anchor = "✗ 未知 scope: %s（可用: "
+	txt := string(b)
+	i := strings.Index(txt, anchor)
+	if i < 0 {
+		return nil, "", false
+	}
+	rest := txt[i+len(anchor):]
+	j := strings.Index(rest, "）")
+	if j < 0 {
+		return nil, "", false
+	}
+	list := strings.TrimSpace(rest[:j])
+	parts := strings.Split(list, " / ")
+	if len(parts) == 0 || parts[0] == "" {
+		return nil, "", false
+	}
+	return parts, list, true
+}
+
 // ── `zerg gate run --step <步名> --show-log`：单步档**步内读数**的可手敲正门 ──
 //
 // 病（缺口 `GAP-20260928-28` · 2026-09-28 现读）：
