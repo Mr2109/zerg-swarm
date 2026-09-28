@@ -252,6 +252,8 @@ def judge(root, art):
 
     rc = RC_OK
     if face_b_lag:
+        # ★ 缺口账 `GAP-20260928-165`：本判据比的是**制品自报的建构时刻**，而 `--only-cli` 档
+        #   只刷新自报 sha、**不刷新自报时刻** ⇒ 照老治法跑判据一动不动。治法必须给全量档。
         rc = RC_FAIL
         lines.append("  ✗ 1 **分离（落后）**：制品建构之后，下列制品输入面又改过 —— 这些改动没进制品：")
         for p, mt in lagging[:10]:
@@ -259,7 +261,7 @@ def judge(root, art):
                          % (os.path.relpath(p, root), _iso(mt), ident["build_time"]))
         if len(lagging) > 10:
             lines.append("    · …另 %d 件（同一判据，此处只列前 10）" % (len(lagging) - 10))
-        lines.append("    ⇒ 治法：`bash scripts/build/build-all.sh --only-cli` 重编（旧件自动留档入 bin/_history/）")
+        lines.append("    ⇒ 治法：`bash scripts/build/build-all.sh`（**全量档**）重编（旧件自动留档入 bin/_history/）")
     elif not known:
         rc = RC_BLOCKED
         lines.append("  ✗ 2 不给结论：面A 说「制品那一代不在本仓对象库」⇒ 两代关系判不了（不猜、不当绿）")
