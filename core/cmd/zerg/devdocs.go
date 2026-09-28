@@ -32,10 +32,12 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/version"
 )
 
-// devDocsMinDocs —— 「不是空壳」的下限：非递归 `*.md` ≥ 本数（`AGENTS.md:52` 逐字「且 ≥3 篇」）。
-// 为什么要有它：`v2.6` 那类**只有 2 篇**的目录版本号最大，但它是历史壳（同 core 侧
-// `zerg_overview` 的「<3 篇 = 空壳」守卫）—— 挑它当「当前版」会把落点与扫描面一起挑歪。
-const devDocsMinDocs = 3
+// ★ 2026-09-29（GAP-20260927-36 收口）：此处原有常量 `devDocsMinDocs`（值 `3` · 「不是空壳」下限）——
+// 该常量**零消费点**（全仓零引用；`devDocsCurrentVersionDir` 只看版本目录在不在，不看篇数）⇒ 空壳常量、守卫无牙。
+// 本件按缺口二选一里的**删除**一支收口。为什么不选「接消费点」：本包**已签**判据 `devdocs_test.go:58`
+// 逐字钉住「当前版目录哪怕只有 2 篇（空壳）也认（人/真源说了算）」⇒ 在 `devDocsCurrentVersionDir()` 里
+// 加「篇数 < 3 ⇒ 退非 0」会**推翻那条已签判据**（而 `devdocs_test.go` 不在本单可改之列）。
+// 注：同批死件 `devDocsVersionKey` / `devDocsCompareVersion` / `devDocsCountMD` 不在本缺口点名范围，留待单独登记。
 
 // devDocsBase —— 版本档案（`<项目文档>`）取源根：**唯一真源 = statepath.DocsBase()**。
 func devDocsBase() string { return statepath.DocsBase() }

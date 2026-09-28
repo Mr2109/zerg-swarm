@@ -196,6 +196,18 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 缺出处（`--evidence <出处>` 至少一条）—— 证据为空的件**不给结论**（§17.3 铁律②③：证据为空 ⇒ 不给结论）\n", progName)
 		return exitUsage
 	}
+	// ③b 出处**在册**（`GAP-20260927-254`）：非空之外再判「该出处 id 在缺口账 / 在册件里真能查到」。
+	//    病灶（本单逐字）：:183-187 只判 `len(rec.Evidence)==0`，对**非空**的出处 id 不做任何账内存在性判
+	//    ⇒ 可以提一件挂着不存在出处的提案而无人拦。
+	//    落法：查不到 ⇒ `rc=2` 不给结论（与 `--criterion` 的可机检**同档** —— 挂空出处的提案与没有人话判据的提案一样，都是噪声）。
+	//    位置：与「缺出处」同段（都在**任何盘面动作之前**判）—— 出处不过就不该落件。
+	if why := evidenceNotInLedgerWhy(rec.Evidence); why != "" {
+		inv.setErr("usage", "evidence_not_in_ledger", why)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, why)
+		fmt.Fprintf(stderr, "口径（§17.3 铁律② · 与 `--criterion` 同档）：出处要**在册** —— `%s gap ls` 的账里、或在册提案件里查得到；"+
+			"查不到的出处 = 挂空的证据 ⇒ 不给结论\n", progName)
+		return exitUsage
+	}
 	if rec.By == "" {
 		rec.By = "（未声明）"
 	}
@@ -728,4 +740,40 @@ func eggSuffix(egg string) string {
 		return ""
 	}
 	return " · egg_id=" + egg
+}
+
+// ---- 出处**在册**（`GAP-20260927-254`）----
+
+// evidenceNotInLedgerWhy 判每条出处 id 是否**在册**：缺口账（`zerg gap ls` 的真源）或在册提案件里查得到。
+// 返回**第一条查不到的**（空串 = 全部在册）。
+//
+// ★ 真源只走读面：缺口账走 `readGapLedger`（与 `gap ls` **同一份式子**，不另抄一份账），
+//
+//	在册件走 `loadProposals`（与 `dev proposal list` 同源）—— 不新立第二套「在册」判据。
+//
+// ★ 「账读不到」**不**退化成「放行」（与 §九 M9「读不到不当没有」同口径）：读不动 ⇒ 不给结论（rc=2）。
+// ★ 大小写折叠只为**容错书写**（`gap show` 面 id 全大写）；判的是「查得到/查不到」，不改 id 本身。
+func evidenceNotInLedgerWhy(ev []string) string {
+	led, err := readGapLedger()
+	if err != nil {
+		return fmt.Sprintf("缺口账读不出来（%v）⇒ 出处**无法校验** ⇒ 不给结论（退码 2）", err)
+	}
+	inLedger := map[string]bool{}
+	for _, r := range led.Recs {
+		inLedger[strings.ToUpper(strings.TrimSpace(r.ID))] = true
+	}
+	inProposal := map[string]bool{}
+	if recs, err := loadProposals(proposalDir()); err == nil {
+		for _, r := range recs {
+			inProposal[strings.ToUpper(strings.TrimSpace(r.ID))] = true
+		}
+	}
+	for _, e := range ev {
+		key := strings.ToUpper(strings.TrimSpace(e))
+		if key == "" || inLedger[key] || inProposal[key] {
+			continue
+		}
+		return fmt.Sprintf("出处 %q 在缺口账 / 在册件里**查不到** ⇒ 不给结论（退码 2）—— 挂不存在出处的提案不许提", e)
+	}
+	return ""
 }
