@@ -48,6 +48,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	// ★ 批1 第一片：件面三键的「入库件清单」**只经既有 A1 出口**取（`gitpaths.List` · FaceTracked）；
+	// 本文件不另写一套 `git ls-files` 的 argv（族件已有该口子 ⇒ 复用，见 `gapTrackedFiles`）。
+	"github.com/Mr2109/zerg-swarm/core/internal/gitpaths"
 )
 
 const (
@@ -123,6 +127,18 @@ type gapRecord struct {
 	// 谁在何时作废」，与 `notes` 的序号一一对上。读面按本格过滤（默认不显示作废项）；
 	// `--json` 走 `void_notes` 那一格带出（作废项**带原文** + `void:true`）。
 	Voids []gapNoteVoid `json:"notes_void,omitempty"`
+	// Unit / Module / UnitSource —— **件面三键**（批1 第一片 · 2026-09-28）。值面口径：
+	//
+	//	`unit`        = 件面（一条账只落**一个主件**）· 值 = 仓内相对路径（必须能在 `git ls-files` 里对上）；
+	//	                抽不到 ⇒ 兜底 `无件(命令面)` / 手写的 `拟(x)`。
+	//	`module`      = 由 `unit` 的**目录前缀**推导（仓根件落 `仓根`；兜底落 `无件`）。
+	//	`unit_source` = `auto`（件面文本里抽到） / `hand`（兜底或手写形态）。
+	//
+	// ★ 三格**不吃** `gapFingerprint` / `gapSameContent`（判定面一个字节未动 ⇒ 判据 5 的 `14` 不受影响）；
+	//   `omitempty` ⇒ 老行（没有这三格）**逐字节不变**（`verify` 整件重写那一支同此）。
+	Unit       string `json:"unit,omitempty"`
+	Module     string `json:"module,omitempty"`
+	UnitSource string `json:"unit_source,omitempty"`
 }
 
 // gapNoteVoid —— 一条「作废标记」（一注一条 · 只加不减 · 序号与 `notes` 对上）。
@@ -1121,6 +1137,153 @@ func maxInt(a, b int) int {
 	return b
 }
 
+// ── 件面三键（批1 第一片 · 2026-09-28）：`unit` / `module` / `unit_source` ─────────────────────
+//
+// 设计口径（批1 分类两轴）：**「件」与「模块」两个坐标** —— 值必须能在 `git ls-files` 清单里对上，
+// **人工成本必须为 0**（全自动抽；兜底形态也由机器写死，不靠人填）。
+//
+//	① `unit`（件面 · 一条账只落**一个主件**）= 仓内相对路径；
+//	② `module` = `unit` 的**目录前缀**（`scripts/gates/x.py` ⇒ `scripts/gates`）；仓根件 ⇒ `仓根`；
+//	③ `unit_source` = `auto`（件面文本里抽到） / `hand`（兜底：`无件(命令面)` 或手写的 `拟(x)`）。
+//
+// **抽取是纯函数**（无 IO / 无全局态）：`gapUnitExtract(症状, 手搓记录, 注, 入库件清单)` ⇒ 三键。
+// 清单**不在**纯函数里取 —— 唯一取数口是下面的 `gapTrackedFiles()`（**复用**族件已有的 A1 出口
+// `gitpaths.List` · `FaceTracked` = `git -C <仓> ls-files -z`；本处不另写一套 git argv）。
+const (
+	// 兜底值（设计稿点名两形态）：命令面缺口没有「件」⇒ 明写「无件(命令面)」；人的意图形态落 `拟(x)`。
+	gapUnitNoFile  = "无件(命令面)"
+	gapUnitNoneMod = "无件" // 兜底那一档的 module
+	gapUnitRootMod = "仓根" // 仓根件（没有目录前缀）的 module
+	// `unit_source` 两值。
+	gapUnitAuto = "auto"
+	gapUnitHand = "hand"
+	// 子串档的最短长度：太短的件名（`a.go` 类）当子串太容易误命中 ⇒ 不认（**宁可落兜底**）。
+	gapUnitMinPathLen = 4
+)
+
+// gapTrackedFiles —— 「入库件清单」的唯一取数口。取不到（不在 git 仓 / git 起不来）⇒ 报 `nil`
+// （调用方一律落兜底 —— **读不到不当有件**，与族件 `gitTracked` 的同向取法一致）。
+func gapTrackedFiles() []string {
+	root := repoRoot()
+	if root == "" {
+		return nil
+	}
+	ents, err := gitpaths.List(root, gitpaths.FaceTracked)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(ents))
+	for _, e := range ents {
+		if p := e.String(); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// gapUnitTokenSep —— 「一个词」的分隔面（空白 + 引号 + 逗号分号冒号 + 各类括号 + 竖线 + 中文顿号/书名号）。
+const gapUnitTokenSep = " \t\r\n'\"`,;:()[]{}<>|·、（）《》“”‘’"
+
+// gapUnitPlannedSep —— 手写 `拟(...)` 那一档的**窄**分隔面（不含圆括号 —— 括号是形态本身）。
+const gapUnitPlannedSep = " \t\r\n'\"`,;|·、"
+
+// gapExactPathInText —— 甲档（**全等**）：格子里某个词逐字等于清单里的一条路径。
+// 取**最长命中**；等长取清单里**先出现**的那条（`ls-files` 顺序稳定 ⇒ 同一输入恒同结果）。
+func gapExactPathInText(text string, set map[string]bool) string {
+	if text == "" || len(set) == 0 {
+		return ""
+	}
+	best := ""
+	for _, tok := range strings.FieldsFunc(text, func(r rune) bool {
+		return strings.ContainsRune(gapUnitTokenSep, r)
+	}) {
+		if set[tok] && len(tok) > len(best) {
+			best = tok
+		}
+	}
+	return best
+}
+
+// gapSubPathInText —— 乙档（**路径子串**）：清单里的一条路径作为**子串**出现在格子里。
+// 同样取最长命中（更具体的件优先）；等长取清单先出现者。`gapUnitMinPathLen` 以下的短件名不认。
+func gapSubPathInText(text string, tracked []string) string {
+	if text == "" {
+		return ""
+	}
+	best := ""
+	for _, p := range tracked {
+		if len(p) < gapUnitMinPathLen || len(p) <= len(best) {
+			continue
+		}
+		if strings.Contains(text, p) {
+			best = p
+		}
+	}
+	return best
+}
+
+// gapPlannedToken —— 兜底里的**手写形态**：一个词逐字形如 `拟(<…>)`（人的意图占位）⇒ 原样当 `unit`。
+// ★ 本档的分隔面**不含圆括号**（`(` / `)` 是形态本身的一部分）⇒ 另用一枚窄分隔集。
+func gapPlannedToken(text string) string {
+	if text == "" {
+		return ""
+	}
+	for _, tok := range strings.FieldsFunc(text, func(r rune) bool {
+		return strings.ContainsRune(gapUnitPlannedSep, r)
+	}) {
+		if strings.HasPrefix(tok, "拟(") && strings.HasSuffix(tok, ")") && len(tok) > len("拟()") {
+			return tok
+		}
+	}
+	return ""
+}
+
+// gapModuleOfUnit —— 模块 = `unit` 的**目录前缀**；仓根件（无目录前缀）⇒ `仓根`；兜底形态 ⇒ `无件`。
+func gapModuleOfUnit(unit string) string {
+	if unit == "" || unit == gapUnitNoFile || strings.HasPrefix(unit, "拟(") {
+		return gapUnitNoneMod
+	}
+	dir := filepath.Dir(unit)
+	if dir == "." || dir == "" || dir == string(filepath.Separator) {
+		return gapUnitRootMod
+	}
+	return dir
+}
+
+// gapUnitExtract —— **纯函数**（无 IO / 无全局态 / 无时钟）：入参 = 一条 gap 的字段集
+// （`symptom` / `handmade` / `notes`）+ 现读的入库件清单；出参 = `unit` / `module` / `unit_source`。
+//
+// 取件顺序（设计稿：**取第一个能识别为仓内件路径的串**）：① `symptom` ② `handmade` ③ `notes`（按序连）。
+// 每一格内先走**甲档全等**、三格走完再回头走**乙档子串**（全等比子串更硬 ⇒ 先扫一遍全等，避免
+// 「症状里提过一句别的件、而手搓记录里才是主件」被子串抢先）。
+// 三档都抽不到 ⇒ 兜底：先认手写的 `拟(x)`（`hand`），否则 `无件(命令面)` + module `无件`（`hand`）。
+func gapUnitExtract(symptom, handmade string, notes []string, tracked []string) (string, string, string) {
+	fields := []string{symptom, handmade, strings.Join(notes, " ⏎ ")}
+	set := make(map[string]bool, len(tracked))
+	for _, p := range tracked {
+		set[p] = true
+	}
+	// 甲档：全等（三格按序）
+	for _, text := range fields {
+		if p := gapExactPathInText(text, set); p != "" {
+			return p, gapModuleOfUnit(p), gapUnitAuto
+		}
+	}
+	// 乙档：路径子串（三格按序）
+	for _, text := range fields {
+		if p := gapSubPathInText(text, tracked); p != "" {
+			return p, gapModuleOfUnit(p), gapUnitAuto
+		}
+	}
+	// 兜底：手写 `拟(x)` → 无件(命令面)
+	for _, text := range fields {
+		if p := gapPlannedToken(text); p != "" {
+			return p, gapUnitNoneMod, gapUnitHand
+		}
+	}
+	return gapUnitNoFile, gapUnitNoneMod, gapUnitHand
+}
+
 // ── 二.2 `zerg gap add`（写面 · 留证据）───────────────────────────────────────────────────────
 
 // gapAddFields —— `--json` 可取字段（设计稿 §二.2：items 里带 `id` / `fp` / `state`）。
@@ -1198,6 +1361,7 @@ func cmdGapAdd(inv *invocation, stdout, stderr io.Writer) int {
 		WantFam: wantFam, WantAct: wantAct, WantArgv: wantArgv,
 		ReproCmd: reproCmd, VerifyCmd: verifyCmd, DependsOn: dependsOn,
 	}
+	rec.Unit, rec.Module, rec.UnitSource = gapUnitExtract(rec.Symptom, rec.Handmade, rec.Notes, gapTrackedFiles())
 	rec.FP = gapFingerprint(rec)
 	planPath := gapLedgerPath()
 
