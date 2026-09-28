@@ -2074,6 +2074,38 @@ func init() {
 			endpoint: "",
 			run:      cmdGapNote,
 		},
+		// ★ 批3 第一片（2026-09-28）：`gap assign`（作业单 + 派单登记）—— 让状态机的 `已派` **首次真启用**
+		//   （现读 0 条）。设计出处：`设计-缺口账与自进化-v2.0-20260928.md` §11.3（派单登记 = 写 `已派` +
+		//   `notes` 记卵号与回执绝对路径）+ §4 判据 2（自派：`已派` 条数 == 在飞卵数 · 作业单必须带占用状态）
+		//   + §8 `M-32`（「同改文件只许一路」⇒ `assign` 前先查占用）。
+		//   ★ 写面**只走现有改态路径**（`family_gap_state.go:gapRewriteOne` 那一个收口 · 不另开写路）：
+		//   `state` → `已派` 与 `notes` 追加登记**同一次**重写、一条审计行。六栏缺一栏 ⇒ 2 并点名缺哪栏。
+		//   实现件 = `family_gap_state.go:cmdGapAssign`（写面）/ `family_gap.go:cmdGapAssignLs`（只读面）。
+		{
+			path:     []string{"gap", "assign"},
+			kind:     "GapAssign",
+			summary:  "派单登记（写面 · `--dry-run` 恒 0 · 缺 `--yes` fail-closed 2）：把该条 `state` 改 **`已派`**（走现有改态路径 `gapRewriteOne` · 不另开写路）并在 `notes` 末尾追加**一行机读登记**（`派单登记 egg=… · receipt=… · allow=… · forbid=… · occupies=… · criterion=… · deadline=…`）· **作业单六栏缺栏拒发**（① `--allow` 允许面 ② `--forbid` 禁碰面 ③ `--occupies` 占用件 ④ `--criterion` 出口判据 ⑤ `--deadline` 时限 ⑥ 该条全文 —— 缺一栏 ⇒ 2 并点名缺哪栏）· 预检「可派状态」= 默认只 `仍缺`（非此 ⇒ 2 并点名当前 state）· `M-32` 占用预检（同件已被另一 `已派` 占住 ⇒ 2）· 同卵号登记已在位 ⇒ 「无变化」0",
+			usage:    "zerg gap assign <GAP id> --egg <卵号> --allow <件清单> --forbid <面> --occupies <件|无> --criterion <出口判据> --deadline <绝对日期> [--receipt <回执绝对路径>] [--by <谁>] [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"缺口 id（**恰好一条** —— 一次只派一条 · 本动作不做批量）"},
+			fields:   gapAssignFields,
+			danger:   &dangerSpec{dangerD2, "缺口 id", "改真源里的 `state`（→ `已派`）+ 往 `notes` 追加一行派单登记 + 审计一行（可逆：照审计那一格回写 · 登记那一行删掉即回原状）；六栏缺一栏 / 非可派状态 ⇒ 2（一个字节都不写）", "批3 第一片（缺口账与自进化 · 2026-09-28）· 设计稿 §11.3 + §4 判据 2 + §8 `M-32` · 同族写面先例 `gap set-state` / `gap note`（`H-10`：`--yes` 是命令行确认档，不是批准件）", false},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapAssign,
+		},
+		{
+			path:     []string{"gap", "assign", "ls"},
+			kind:     "GapAssignLs",
+			summary:  "派单**读面**（只读 · 一字不写真源、不写审计）：列 `已派` 条与它们的作业单登记（六栏 + 卵号 + 回执 + 登记时刻）· `--egg <卵号>` 收窄 · `--json` 走同族信封（`meta.total` / `meta.hits` / `query` / `query_ts` / `ledger_sha16` + 截断自报）· 零命中 ⇒ 1（`已派` 0 条不是绿）· 真源读不到 ⇒ 8。判据 2「自派」的计数落点",
+			usage:    "zerg gap assign ls [--egg <卵号>] [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（无位置参数：收窄走 `--egg`）"},
+			fields:   gapAssignListFields,
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapAssignLs,
+		},
 		// ★ `gap backfill-unit` —— **存量回填三键**（2026-09-28 · 批1 第二片）：第一片只把 `unit` / `module` /
 		//   `unit_source` 落进**新落行**（`gap add`），存量 891 条账里没有 ⇒ 件面 / 模块分类在存量面上**无数据**。
 		//   本面：`--dry-run` 只印「可抽到 N + 落兜底 M」（**N + M == 账内总条数**）+ 前 5 条预览（只读 · 恒 0）；
@@ -2933,6 +2965,9 @@ func valueFlagName(a string) string {
 		"--top",
 		// ★ 批2 第一片（2-2）：`gap idea add|ls` 的 `--source <guard|gate|egg|human>`（四值闭集 · 逐字照
 		//   设计稿 §9.1 第 2 条）。名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
+		// ★ 批3 第一片（2026-09-28）：`gap assign` 的作业单六栏五枚旗标 + 回执路径一枚。
+		//   名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用（同族先例同上）。
+		"--egg", "--allow", "--forbid", "--occupies", "--criterion", "--deadline", "--receipt",
 		"--source":
 		return a
 	}
