@@ -170,7 +170,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	//   ⇒ 由下面那条**同一条**判词 + 同一个退码 2 收口（不另写一句判词 · 不另取一个码）。
 	//   判据 = 「给过 `--top`」且「本命令不是 `gap status`」（`cmd.path` 是 `resolve` 出来的**规范路径**）。
 	//   `--by` 不在此列：它**早已**在名字表上（与 `dev proposal` / `gap add` 共用）⇒ 既有行为不变。
-	if inv.hasFlag("--top") && !(len(cmd.path) == 2 && cmd.path[0] == "gap" && cmd.path[1] == "status") {
+	if inv.hasFlag("--top") && !(len(cmd.path) == 2 && cmd.path[0] == "gap" && (cmd.path[1] == "status" || cmd.path[1] == "plan")) {
 		inv.unknown = append(inv.unknown, "--top")
 	}
 	if len(inv.unknown) > 0 && !cmd.passthrough {
@@ -1992,6 +1992,26 @@ func init() {
 			fields:   gapStatusFields,
 			endpoint: "",
 			run:      cmdGapStatus,
+		},
+		// ★ `gap plan` —— **作业单六件**（批3 第二片 · 只读面 · 2026-09-28 · 设计稿 §3.C `C1` + §11.3）。
+		//   选择器 = 第一个位置参数（件路径或模块目录前缀 · 与 `gap ls --unit/--module` 同口径）；
+		//   `--module` 声明按模块面算（前导匹配）；`--top N` 一页硬顶（缺省 20 · 上限同 `gapLsRowCap`）。
+		//   输出六件（设计稿 §11.3 逐字）：① 该桶全部未闭（按 prio 排序）② 出口判据 = 该桶未闭归零
+		//   （回显现读未闭数）③ 建议允许面（件清单）④ 禁碰面（建议值 + 理由）⑤ 占用状态（桶内 `已派`
+		//   条逐条点名卵号 · 判据 2 `M-32`）⑥ 派单模板骨架（目标/允许面/禁碰面/出口判据/时限 · 无占位符）。
+		//   ★ **零未闭 ≠ 空件**（桶内有条目而 `仍缺==0` ⇒ 照出六件、真报未闭 0、退码 0）；选择器零命中 ⇒ 1。
+		//   实现件 = `family_gap.go:cmdGapPlan`。
+		{
+			path:     []string{"gap", "plan"},
+			kind:     "GapPlan",
+			summary:  "作业单**六件**（只读面 · 一字不写真源、不写审计）：把一件（或一模块）的未闭账变成可直接丢给子代理的派单骨架 —— ① 该桶全部未闭（按 prio 排序 P0→P1→P2 · 同 prio 按缺口号 · `--top` 一页硬顶）② 出口判据 = 该桶未闭归零（回显现读未闭数）③ 建议允许面（该桶涉及的件清单）④ 禁碰面（建议值 + 理由）⑤ 占用状态（桶内 `已派` 条逐条点名卵号 · 判据 2 `M-32`）⑥ 派单模板骨架（目标/允许面/禁碰面/出口判据/时限 · 无占位符）· 选择器 = 第一个位置参数（件路径或模块目录前缀）或 `--unit`/`--module`；`--module` 声明按模块面算（前导匹配 `gapLsModuleHit`）· **零未闭 ≠ 空件**（桶内有条目而 `仍缺==0` ⇒ 真报未闭 0、退码 0）；选择器零命中 ⇒ 1；缺选择器/`--top` 非正整数 ⇒ 2；读不到真源 ⇒ 8",
+			usage:    "zerg gap plan <件路径|模块目录前缀> [--module <模块前缀>] [--unit <件路径|目录前缀>] [--top <N>] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"选择器（件路径或模块目录前缀 · **恰好一个** —— 与 `gap ls --unit/--module` 同口径，含「无件」闭集取值）"},
+			fields:   gapPlanFields,
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapPlan,
 		},
 		// ★ `gap show` —— **单条取全文**（2026-09-28 · 缺口账 `GAP-20260926-15` + 同族 `GAP-20260928-243`）：
 		//   只读面（不登记 `danger` ⇒ 按只读幂等档列）· 点名面复用同族 `gapTargetOne`（**账内没有这个 id ⇒ 2**，
