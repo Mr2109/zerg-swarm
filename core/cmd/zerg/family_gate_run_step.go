@@ -34,6 +34,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/contract"
@@ -146,6 +147,13 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 		scriptTail = append(scriptTail, "--outdir", outdir)
 	}
 
+	// ③ 单实例闸（缺口 `GAP-20260927-214`）：拿不到就**不跑**（退码 2 + 点名持锁者）。
+	lock, lrc := gateRunAcquireInstance(d.Name, stderr)
+	if lrc != exitOK {
+		inv.setErr("usage", "gate_run_concurrent", "已有在飞的门跑")
+		return lrc
+	}
+	defer lock.release()
 	// ③ 真跑那一步（执行面 = 脚本自己；命令面只转出退码）。
 	cmd := exec.Command("bash", append([]string{script}, scriptTail...)...)
 	cmd.Dir = root
@@ -331,6 +339,13 @@ func gateRunStepLiveVerify(inv *invocation, stdout, stderr io.Writer, root, scri
 		fmt.Fprintf(stderr, "⇒ `%s` 没法逐字透传 ⇒ 退码 2（不猜、不翻译）\n", gateLiveVerifyFlag)
 		return exitUsage
 	}
+	// 单实例闸（缺口 `GAP-20260927-214`）：与 `--json` 档同一把锁。
+	lock, lrc := gateRunAcquireInstance(d.Name, stderr)
+	if lrc != exitOK {
+		inv.setErr("usage", "gate_run_concurrent", "已有在飞的门跑")
+		return lrc
+	}
+	defer lock.release()
 	argv := append(strings.Fields(cmdStr), gateLiveVerifyFlag)
 	fmt.Fprintf(stderr, "%s: 只读复核 —— 把 `%s` 逐字透传给这一步（%s）的命令串：%s\n",
 		progName, gateLiveVerifyFlag, d.Name, strings.Join(argv, " "))
@@ -615,6 +630,13 @@ func gateRunStepShowLog(inv *invocation, stdout, stderr io.Writer, root, script 
 		outdir = base
 		scriptTail = append(scriptTail, "--outdir", outdir)
 	}
+	// 单实例闸（缺口 `GAP-20260927-214`）：与 `--json`/`--verify-live` 档同一把锁。
+	lock, lrc := gateRunAcquireInstance(d.Name, stderr)
+	if lrc != exitOK {
+		inv.setErr("usage", "gate_run_concurrent", "已有在飞的门跑")
+		return lrc
+	}
+	defer lock.release()
 	// 真跑那一步（执行面 = 脚本自己；命令面只转出退码 · 人面报告转 stderr，stdout 只留读数）。
 	cmd := exec.Command("bash", append([]string{script}, scriptTail...)...)
 	cmd.Dir = root
@@ -662,4 +684,92 @@ func gateRunStepShowLog(inv *invocation, stdout, stderr io.Writer, root, script 
 	fmt.Fprintf(stderr, "%s: 步内读数 —— %s（%s:%d）· 日志件 %s\n", progName, d.Name, gateScriptRel, d.Line, logPath)
 	_, _ = stdout.Write(body)
 	return rc
+}
+
+// ── 门跑**单实例闸**（缺口 `GAP-20260927-214` · P0）────────────────────────────────────────────
+//
+// 病（现读亲核 · 2026-09-27）：门脚本全书（`scripts/gates/`）零单实例锁 —— `flock` 命中全在
+// `core/internal/`（命令面自己这一侧），门脚本没有闸 ⇒ 多个上层同时起门即**叠加成多份**
+// （那次 CPU 雪崩：进程 1175 · load 203）。本件是门脚本的**调起点之一**（缺口正文列的第 5 个
+// 调起点），故闸落在**命令面这一侧**：exec 之前拿一把**跨进程 flock**，拿到才跑。
+//
+// 口径（为什么是这里、为什么不改退码语义）：
+//
+//	· 锁真源 = **内核 flock（`LOCK_EX|LOCK_NB`）**，不是「锁文件在不在」这种脆判据 ——
+//	  持锁进程**被杀/退出，内核自动放锁**（不会留死锁），所以「锁文件常驻不删」是**故意的**
+//	  （删锁文件会与并发持有者竞态，同 `core/internal/loopcore/lease.go` 那条口径）；
+//	· 拿不到锁 = **不给结论**：照缺口要的「打印『已有在飞的门跑』+ 持锁者信息」后退 **2**
+//	  （`exitUsage`）—— **不排队、不静默叠加**（排队正是雪崩的机制）；
+//	· **fail-open**：锁目录/锁文件造不出来（无写权限等）⇒ 只出一行警告、**照跑**，
+//	  退码与改前**逐字相同**（「单个跑不受影响」这一条不许被基建问题破坏）；
+//	· 现成口子 = 环境变量 `ZERG_GATE_NO_LOCK=1`（本单**不加 CLI 旗标**：旗标登记与用法串
+//	  在 `main.go`，归父代理统一落 —— 见回执「CLI 缺口」栏）；
+//	· 锁目录 = `$ZERG_GATE_LOCK_DIR`（探针/沙盒用）→ 否则 `<TMPDIR>/zerg-gate-instance/`
+//	  —— **不往仓里写任何件**（工作树零污染）。
+const gateInstanceLockFile = "gate-run.lock"
+
+const gateLockDirEnv = "ZERG_GATE_LOCK_DIR"
+
+// gateNoLockEnv —— 关闸的现成口子（非空即关；默认**开**）。
+const gateNoLockEnv = "ZERG_GATE_NO_LOCK"
+
+// gateInstanceLock —— 一次拿住的单实例闸（`f == nil` = 没拿/关闸/fail-open，release 是空操作）。
+type gateInstanceLock struct{ f *os.File }
+
+// release —— 放锁 + 关 fd（内核据此让下一个进程拿到）。nil 安全。
+func (l *gateInstanceLock) release() {
+	if l == nil || l.f == nil {
+		return
+	}
+	_ = syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN)
+	_ = l.f.Close()
+	l.f = nil
+}
+
+// gateInstanceLockPath —— 锁文件路径（仓外：`$ZERG_GATE_LOCK_DIR` 或 `<TMPDIR>/zerg-gate-instance/`）。
+func gateInstanceLockPath() string {
+	if d := strings.TrimSpace(os.Getenv(gateLockDirEnv)); d != "" {
+		return filepath.Join(d, gateInstanceLockFile)
+	}
+	return filepath.Join(os.TempDir(), "zerg-gate-instance", gateInstanceLockFile)
+}
+
+// gateRunAcquireInstance —— exec 之前拿单实例闸。退码：拿到 ⇒ `exitOK`（`release()` 放锁）；
+// 别人持有 ⇒ `exitUsage`（2 · 「不给结论」）且已在 stderr 点名持锁者；基建问题 ⇒ `exitOK`（fail-open）。
+func gateRunAcquireInstance(step string, stderr io.Writer) (*gateInstanceLock, int) {
+	if strings.TrimSpace(os.Getenv(gateNoLockEnv)) != "" {
+		return nil, exitOK // 现成口子：关闸（默认开）
+	}
+	p := gateInstanceLockPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		fmt.Fprintf(stderr, "%s: ⚠ 单实例闸：建不了锁目录（%s）：%v ⇒ 放行（退码不变）\n",
+			progName, filepath.Dir(p), err)
+		return nil, exitOK
+	}
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: ⚠ 单实例闸：开不了锁文件（%s）：%v ⇒ 放行（退码不变）\n", progName, p, err)
+		return nil, exitOK
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		fmt.Fprintf(stderr, "✗ 已有在飞的门跑（单实例闸 · 缺口 `GAP-20260927-214`）⇒ **拒绝并发 · 不给结论 · rc=2**\n")
+		fmt.Fprintf(stderr, "%s: 持锁者（真源 = %s，由持锁进程落笔）：\n", progName, p)
+		if body, rerr := os.ReadFile(p); rerr == nil && strings.TrimSpace(string(body)) != "" {
+			for _, ln := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
+				fmt.Fprintf(stderr, "  %s\n", ln)
+			}
+		} else {
+			fmt.Fprintf(stderr, "  （锁文件读不到持锁者信息：%v —— 但锁确实被别的进程持有）\n", rerr)
+		}
+		fmt.Fprintf(stderr, "%s: 本发**一步都没跑**（不排队、不叠加）；等那一趟完了再发（清场：`ZERG_GATE_NO_LOCK=1` 可显式关闸）\n", progName)
+		_ = f.Close() // 关本地 fd（没拿到锁，无锁可放；持有者的锁不受影响）
+		return nil, exitUsage
+	}
+	// 拿到 ⇒ 把**自己**的持锁者信息落到锁文件（下一发读它来点名）。
+	_, _ = f.Seek(0, io.SeekStart)
+	_ = f.Truncate(0)
+	fmt.Fprintf(f, "pid: %d\nstart: %s\nstep: %s\ncmd: %s\n",
+		os.Getpid(), time.Now().Format(time.RFC3339), step, strings.Join(os.Args, " "))
+	_ = f.Sync()
+	return &gateInstanceLock{f: f}, exitOK
 }
