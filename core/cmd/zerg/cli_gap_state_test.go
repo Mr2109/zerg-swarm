@@ -85,7 +85,10 @@ func TestGapStateFacesSetStateAndNote(t *testing.T) {
 	}
 
 	// ④ 真跑
-	rc, out, errb = gapRun(t, "gap", "set-state", id, "--state", "已解", "--evidence", "e1", "--yes")
+	// ⑤ 批4 第四片：销案两态对拍闸（新账强制）—— 真跑那一发必须带成对的改前/改后读数。
+	rc, out, errb = gapRun(t, "gap", "set-state", id, "--state", "已解", "--evidence", "e1",
+		"--before-read", "cmd=zerg gap ls --state 仍缺 · rc=1 · reading=改前该号列于仍缺",
+		"--after-read", "cmd=zerg gap ls --state 已解 · rc=0 · reading=改后该号列于已解", "--yes")
 	if rc != 0 {
 		t.Fatalf("真跑要 0，得到 %d · stderr=%q", rc, errb)
 	}
