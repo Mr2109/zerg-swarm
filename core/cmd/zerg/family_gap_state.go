@@ -54,6 +54,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -615,3 +616,396 @@ func boolWord(b bool) string {
 	}
 	return "false"
 }
+
+// ── ⒟ `zerg gap assign <GAP id> --egg <卵号> …`（批3 第一片 · 作业单 + 派单登记 · 2026-09-28）──────
+//
+// 设计出处（唯一真源 · `设计-缺口账与自进化-v2.0-20260928.md`）：§11.3（派单登记 = 写 `已派` +
+// `notes` 记卵号与回执绝对路径）· §4 判据 2（自派：`已派` 条数 == 在飞卵数；作业单必须带占用状态）·
+// §8 `M-32`（「同改文件只许一路」⇒ `assign` 前先查占用）。
+//
+// 四条硬纪律（与同族写面逐字同款 · 本片的核心判据）：
+//
+//	① **只走现有改态路径**：`state` 与 `notes` 登记**同一次**重写 —— 只调本族唯一收口
+//	   `gapRewriteOne`（审计先落盘 → 整件重写 → 读回对拍），**不另开写路**。
+//	② **六栏缺栏拒发**：作业单六栏（① 允许面 ② 禁碰面 ③ 占用件 ④ 出口判据 ⑤ 时限 ⑥ 该条全文）
+//	   少一栏 ⇒ 退码 2 并**点名缺哪一栏**。
+//	③ `--dry-run` 只出计划件（零副作用 · 恒 0）· 缺 `--yes` fail-closed 2（D2 档）。
+//	④ 预检「可派状态」：默认**只认 `仍缺`**（非此 ⇒ 用法错 2 并点名当前 `state`）· 占用冲突 ⇒ 2。
+
+// gapStAssigned —— 派单落的那一格（`已派` · 本片**首次真启用**：现读 0 条）。
+const gapStAssigned = "已派"
+
+// gapAssignFrom —— 「可派状态」闭集（默认只 `仍缺`：`已派` ⇒ 已在飞 · `已解` ⇒ 已闭环 · `不做` ⇒ 已拍死）。
+var gapAssignFrom = []string{gapStOpen}
+
+// gapAssignMarker —— 派单登记那一行的**机读标记**（读面按它筛出作业单登记 · 不改 `notes` 的形状）。
+const gapAssignMarker = "派单登记 "
+
+var gapAssignFields = []string{"id", "fp", "state", "egg", "allow", "forbid", "occupies",
+	"criterion", "deadline", "receipt", "changed"}
+var gapAssignListFields = []string{"id", "state", "egg", "allow", "forbid", "occupies",
+	"criterion", "deadline", "receipt", "assigned_at", "unit", "module"}
+
+// gapAssignForm —— 作业单六栏的机器面（栏序照设计稿 · ① 允许面 ② 禁碰面 ③ 占用件 ④ 出口判据 ⑤ 时限）。
+type gapAssignForm struct {
+	Egg       string
+	Allow     string
+	Forbid    string
+	Occupies  string
+	Criterion string
+	Deadline  string
+	Receipt   string
+}
+
+// gapAssignFlagMissing —— ①~⑤ 五栏的**旗标面**缺面点名（读真源之前就能判 · 栏序 = 设计稿 §11.4）。
+func gapAssignFlagMissing(f gapAssignForm) []string {
+	miss := []string{}
+	if f.Allow == "" {
+		miss = append(miss, "① 允许面（--allow）")
+	}
+	if f.Forbid == "" {
+		miss = append(miss, "② 禁碰面（--forbid）")
+	}
+	if f.Occupies == "" {
+		miss = append(miss, "③ 占用件（--occupies）")
+	}
+	if f.Criterion == "" {
+		miss = append(miss, "④ 出口判据（--criterion）")
+	}
+	if f.Deadline == "" {
+		miss = append(miss, "⑤ 时限（--deadline）")
+	}
+	return miss
+}
+
+// gapAssignFullTextMissing —— ⑥「该条全文」那一栏（读真源之后判：两格全空 ⇒ 缺栏）。
+func gapAssignFullTextMissing(r gapRecord) bool {
+	return strings.TrimSpace(r.Symptom) == "" && strings.TrimSpace(r.Handmade) == ""
+}
+
+// gapAssignReceiptDefault —— 回执绝对路径的兜底（`--receipt` 未给时取定 · 本片口径）：
+// `<真源所在目录>/assign-receipts/<卵号>.md`（绝对路径 ⇒ 设计稿 §11.3「notes 记卵号与回执绝对路径」）。
+func gapAssignReceiptDefault(egg string) string {
+	dir := filepath.Dir(gapLedgerPath())
+	if strings.TrimSpace(egg) == "" {
+		return dir
+	}
+	return filepath.Join(dir, "assign-receipts", egg+".md")
+}
+
+// gapAssignLine —— 落到 `notes` 上的**一行机读登记**（形态照同族注：`<时刻> · <谁>：<文本>`，
+// 文本以 `派单登记 ` 起头 · 逐格 `k=v` · 分隔 ` · ` ⇒ `gapAssignParse` 能逐格读回）。
+func gapAssignLine(by, at string, f gapAssignForm) string {
+	return fmt.Sprintf("%s · %s%s%segg=%s · receipt=%s · allow=%s · forbid=%s · occupies=%s · criterion=%s · deadline=%s",
+		at, by, gapNoteSep, gapAssignMarker, f.Egg, f.Receipt, f.Allow, f.Forbid, f.Occupies, f.Criterion, f.Deadline)
+}
+
+// gapAssignParse —— 从一条注里逐格读回派单登记（不是登记 ⇒ `ok=false`）。
+func gapAssignParse(note string) (gapAssignForm, string, bool) {
+	i := strings.Index(note, gapAssignMarker)
+	if i < 0 {
+		return gapAssignForm{}, "", false
+	}
+	f := gapAssignForm{}
+	at := ""
+	if j := strings.Index(note, " · "); j > 0 {
+		at = note[:j]
+	}
+	for _, kv := range strings.Split(note[i+len(gapAssignMarker):], " · ") {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(k) {
+		case "egg":
+			f.Egg = v
+		case "allow":
+			f.Allow = v
+		case "forbid":
+			f.Forbid = v
+		case "occupies":
+			f.Occupies = v
+		case "criterion":
+			f.Criterion = v
+		case "deadline":
+			f.Deadline = v
+		case "receipt":
+			f.Receipt = v
+		}
+	}
+	if f.Egg == "" {
+		return gapAssignForm{}, "", false
+	}
+	return f, at, true
+}
+
+// gapAssignOf —— 一条账上的**最新**派单登记（从 `notes` 末尾往前找第一条命中登记的注）。
+func gapAssignOf(r gapRecord) (gapAssignForm, string, bool) {
+	for i := len(r.Notes) - 1; i >= 0; i-- {
+		if f, at, ok := gapAssignParse(r.Notes[i]); ok {
+			return f, at, true
+		}
+	}
+	return gapAssignForm{}, "", false
+}
+
+// gapAssignOccupies —— 占用件那一栏的**件清单**（`无` / 空 / `-` ⇒ 不占件 · 分隔 `,` / `，` / `、` / 空白）。
+func gapAssignOccupies(s string) []string {
+	out := []string{}
+	for _, t := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == '，' || r == '、' || r == ' ' || r == '\t'
+	}) {
+		t = strings.TrimSpace(t)
+		if t == "" || t == "无" || t == "-" {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// gapAssignConflict —— `M-32` 占用预检：别的 `已派` 条若已占了同一件 ⇒ 报（谁 · 哪件）。
+func gapAssignConflict(led gapLedger, selfIdx int, occupies string) (string, string) {
+	mine := gapAssignOccupies(occupies)
+	if len(mine) == 0 {
+		return "", ""
+	}
+	for i, r := range led.Recs {
+		if i == selfIdx || r.State != gapStAssigned {
+			continue
+		}
+		f, _, ok := gapAssignOf(r)
+		if !ok {
+			continue
+		}
+		for _, t := range gapAssignOccupies(f.Occupies) {
+			for _, m := range mine {
+				if t == m {
+					return r.ID, m
+				}
+			}
+		}
+	}
+	return "", ""
+}
+
+// cmdGapAssign —— `zerg gap assign <GAP id> --egg …`：**派单登记**（写面）。
+func cmdGapAssign(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+
+	// ① 用法面（在任何盘面动作之前 —— 与 `set-state` / `note` 同一条位置）
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapAssignFields, ","))
+		return exitUsage
+	}
+	if len(inv.flagVals("--state")) > 0 {
+		v := strings.TrimSpace(inv.flagVal("--state"))
+		inv.setErr("usage", "state_not_in_shape", "--state 不在 assign 的形状里")
+		fmt.Fprintf(stderr, "%s: `gap assign` 不收 `--state %s` —— 本动作落的态**恒为 `%s`**（派单登记即改态）\n", progName, v, gapStAssigned)
+		return exitUsage
+	}
+	f := gapAssignForm{
+		Egg:       strings.TrimSpace(inv.flagVal("--egg")),
+		Allow:     strings.TrimSpace(inv.flagVal("--allow")),
+		Forbid:    strings.TrimSpace(inv.flagVal("--forbid")),
+		Occupies:  strings.TrimSpace(inv.flagVal("--occupies")),
+		Criterion: strings.TrimSpace(inv.flagVal("--criterion")),
+		Deadline:  strings.TrimSpace(inv.flagVal("--deadline")),
+		Receipt:   strings.TrimSpace(inv.flagVal("--receipt")),
+	}
+	if f.Egg == "" {
+		inv.setErr("usage", "missing_required", "缺 --egg")
+		fmt.Fprintf(stderr, "%s: `gap assign` 缺必填旗标：--egg（派单登记的卵号 —— 设计稿 §11.3 逐字）\n", progName)
+		fmt.Fprintf(stderr, "用法：zerg gap assign <GAP id> --egg <卵号> --allow <件清单> --forbid <面> --occupies <件|无> --criterion <出口判据> --deadline <绝对日期> [--receipt <回执绝对路径>] [--by <谁>] [--dry-run | --yes] [--json <字段>]\n")
+		return exitUsage
+	}
+	if miss := gapAssignFlagMissing(f); len(miss) > 0 {
+		inv.setErr("usage", "order_missing_section", "作业单缺栏（缺 "+strconv.Itoa(len(miss))+" 栏）")
+		fmt.Fprintf(stderr, "%s: 作业单**缺栏拒发** —— 缺 %d 栏：%s\n", progName, len(miss), strings.Join(miss, " · "))
+		fmt.Fprintf(stderr, "  六栏（设计稿 §11.4）：① 允许面 `--allow <件清单>` · ② 禁碰面 `--forbid <面>` · ③ 占用件 `--occupies <件|无>` · ④ 出口判据 `--criterion <可机检的一句>` · ⑤ 时限 `--deadline <绝对日期>` · ⑥ 该条全文（账上那条自己）\n")
+		fmt.Fprintf(stderr, "  ⚠ 缺一栏就**不发**（一个字节都不写）—— 六栏齐才可能落到真源上\n")
+		return exitUsage
+	}
+	if f.Receipt == "" {
+		f.Receipt = gapAssignReceiptDefault(f.Egg)
+	}
+
+	// ② 缺 `--yes`（且非 `--dry-run`）：fail-closed **rc=2**，计划件走 stderr（判在读真源之前）。
+	if !inv.dryRun && !inv.yes {
+		ids := gapIDsOf(inv)
+		id := "（未给：缺必填）"
+		if len(ids) == 1 {
+			id = ids[0]
+		}
+		gapStatePlanBlock(stderr, "缺 `--yes`（D2 档）", "assign", gapLedgerPath(), -1,
+			id, "", "（未读）", gapStAssigned,
+			"作业单六栏  : 齐（①~⑤ 已给 · ⑥ 读真源后判）",
+			"登记       : "+gapAssignMarker+"egg="+f.Egg+" · receipt="+f.Receipt)
+		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
+		fmt.Fprintf(stderr, "  ⚠ `--yes` 是**命令行确认档**，不是 `approve` 件（不产生 `approver` / `approval` 两格）\n")
+		inv.setErr("usage", "yes_required", "缺 --yes")
+		return exitUsage
+	}
+
+	// ③ 读真源（读不到 ⇒ 8）
+	led, rc := gapReadLedgerOrDie(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
+
+	// ④ 点名（恰好一条 · 账内没有 ⇒ 2）
+	idx, rc := gapTargetOne(inv, led, stderr, "assign")
+	if rc != exitOK {
+		return rc
+	}
+	r := led.Recs[idx]
+
+	// ⑤ 作业单第 ⑥ 栏（该条全文）—— 账上两格全空 ⇒ 缺栏
+	if gapAssignFullTextMissing(r) {
+		inv.setErr("usage", "order_missing_section", "作业单缺栏（缺 1 栏）")
+		fmt.Fprintf(stderr, "%s: 作业单**缺栏拒发** —— 缺 1 栏：⑥ 该条全文（%s 的 `symptom` 与 `handmade` 两格都是空的）\n",
+			progName, r.ID)
+		return exitUsage
+	}
+
+	// ⑥ 幂等：已是 `已派` 且已有**同卵号**登记 ⇒ 「无变化」（不写真源、不写审计）
+	//    ★ 判在**可派预检之前**：同卵重派是幂等命中（0），不是「不可派」（2）—— 两档别混。
+	if r.State == gapStAssigned {
+		if old, _, ok := gapAssignOf(r); ok && old.Egg == f.Egg {
+			inv.changed = boolPtr(false)
+			if inv.jsonGiven {
+				return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
+					gapAssignRow(r, old, "", "false"))
+			}
+			fmt.Fprintf(stdout, "无变化 %s · state=%s · egg=%s（同卵号登记已在位 ⇒ 幂等命中：不写真源、不写审计）\n",
+				r.ID, r.State, f.Egg)
+			return exitOK
+		}
+	}
+
+	// ⑦ 可派预检：默认只认 `仍缺`（非此 ⇒ 2 并点名当前 state）
+	if !gapIn(gapAssignFrom, r.State) {
+		inv.setErr("usage", "state_not_assignable", "当前 state 不可派")
+		fmt.Fprintf(stderr, "%s: `%s` 当前 state = **%s** ⇒ 不可派（本片可派闭集 = %s）\n",
+			progName, r.ID, r.State, gapClosedText(gapAssignFrom))
+		fmt.Fprintf(stderr, "  为什么：`已派` ⇒ 已在飞（要换卵走 `unassign` 再派）· `已解` / `不做` ⇒ 已闭环 ⇒ 不重复派\n")
+		return exitUsage
+	}
+
+	// ⑧ 占用预检（`M-32`：同改文件只许一路）
+	if who, tok := gapAssignConflict(led, idx, f.Occupies); who != "" {
+		inv.setErr("usage", "occupies_conflict", "占用件已被另一条已派占住")
+		fmt.Fprintf(stderr, "%s: 占用冲突 —— 件 `%s` 已被**已派**条 `%s` 占住（`M-32`：同改文件只许一路）\n",
+			progName, tok, who)
+		fmt.Fprintf(stderr, "  看在飞 : `zerg gap assign ls`（本动作**不发**）\n")
+		return exitUsage
+	}
+
+	by := gapByOf(inv)
+	line := gapAssignLine(by, gapNow(), f)
+
+	// ⑨ `--dry-run`：只出计划件（stdout · rc=0 · 零副作用）
+	if inv.dryRun {
+		inv.changed = boolPtr(false)
+		if inv.jsonGiven {
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
+				gapAssignRow(r, f, "", "false"))
+		}
+		gapAssignPlanBlock(stdout, "--dry-run", led, r, f, "（真写那一刻取）", line)
+		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未改真源、未写审计）\n")
+		return exitOK
+	}
+
+	// ⑩ 真写：`state` → `已派` + `notes` 追加登记（**同一次**重写 · **走现有改态路径**）
+	before := r.State
+	r.State = gapStAssigned
+	r.Notes = append(append([]string{}, r.Notes...), line)
+	if r.State != gapStAssigned || len(r.Notes) == 0 || !strings.Contains(r.Notes[len(r.Notes)-1], gapAssignMarker) {
+		inv.setErr("failed", "state_mutated", "派单这一路没落到 已派")
+		fmt.Fprintf(stderr, "%s: 内部对拍破了：派单没落到 `%s` ⇒ 不给结论（退码 1）\n", progName, gapStAssigned)
+		return exitFail
+	}
+	detail, wrc, msg := gapRewriteOne(inv, led, idx, r, "assign", before, gapStAssigned)
+	if wrc != exitOK {
+		gapWriteFail(inv, stderr, detail, msg, "assign")
+		return wrc
+	}
+	// 写后自证：读回那一条，`state` 与登记都在（读回对拍外再点一次名）
+	back, err := readGapLedger()
+	if err != nil {
+		inv.setErr("failed", "readback_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 写后读回真源失败（退码 1）：%v\n", progName, err)
+		return exitFail
+	}
+	bidx := gapFindIdx(back, r.ID)
+	if bidx < 0 {
+		inv.setErr("failed", "readback_mismatch", "写后读回找不到目标条")
+		fmt.Fprintf(stderr, "%s: 写后读回找不到 %s（退码 1）\n", progName, r.ID)
+		return exitFail
+	}
+	bf, _, bok := gapAssignOf(back.Recs[bidx])
+	if back.Recs[bidx].State != gapStAssigned || !bok || bf.Egg != f.Egg {
+		inv.setErr("failed", "readback_mismatch", "写后读回与要写的不一致")
+		fmt.Fprintf(stderr, "%s: 写后读回不一致（退码 1）：state=%s · 登记=%v\n", progName, back.Recs[bidx].State, bok)
+		return exitFail
+	}
+	inv.changed = boolPtr(true)
+	if inv.jsonGiven {
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
+			gapAssignRow(back.Recs[bidx], bf, "", "true"))
+	}
+	nAssigned := 0
+	for _, x := range back.Recs {
+		if x.State == gapStAssigned {
+			nAssigned++
+		}
+	}
+	fmt.Fprintf(stdout, "已派单 %s · state %s → %s（真源 %d 行不变 · 只重写目标那一行 · 审计已落 1 行）\n",
+		r.ID, before, gapStAssigned, len(led.Lines))
+	fmt.Fprintf(stdout, "  作业单六栏 : ① %s ② %s ③ %s ④ %s ⑤ %s ⑥ %s\n",
+		f.Allow, f.Forbid, f.Occupies, f.Criterion, f.Deadline, gapAssignFullText(r))
+	fmt.Fprintf(stdout, "  登记那一行 : %s\n", back.Recs[bidx].Notes[len(back.Recs[bidx].Notes)-1])
+	fmt.Fprintf(stdout, "  回执       : %s\n", f.Receipt)
+	fmt.Fprintf(stdout, "  已派 条数  : %d（判据 2「自派」：== 在飞卵数）\n", nAssigned)
+	return exitOK
+}
+
+// gapAssignFullText —— 第 ⑥ 栏（该条全文）的人面缩写：症状 + 手工命令（全文见 `zerg gap show`）。
+func gapAssignFullText(r gapRecord) string {
+	return fmt.Sprintf("symptom=%s | handmade=%s", gapFirstLine(r.Symptom), gapFirstLine(r.Handmade))
+}
+
+// gapAssignRow —— `--json` 那一行的逐格取值（写面与读面共用一份口径）。
+func gapAssignRow(r gapRecord, f gapAssignForm, at, changed string) map[string]string {
+	return map[string]string{
+		"id": r.ID, "fp": r.FP, "state": r.State, "egg": f.Egg, "allow": f.Allow,
+		"forbid": f.Forbid, "occupies": f.Occupies, "criterion": f.Criterion,
+		"deadline": f.Deadline, "receipt": f.Receipt, "assigned_at": at, "changed": changed,
+	}
+}
+
+// gapAssignPlanBlock —— `assign` 的计划件（`--dry-run` 走 stdout · 缺 `--yes` 走 stderr 的旁证）。
+func gapAssignPlanBlock(w io.Writer, title string, led gapLedger, r gapRecord, f gapAssignForm, at, line string) {
+	fmt.Fprintf(w, "计划件（派单登记 · %s · 零副作用 —— 未改真源、未写审计）\n", title)
+	fmt.Fprintf(w, "  真源     : %s（现有 %d 行）\n", led.Path, len(led.Lines))
+	fmt.Fprintf(w, "  目标     : %s（当前 state = %s）\n", r.ID, r.State)
+	fmt.Fprintf(w, "  作业单六栏：\n")
+	fmt.Fprintf(w, "    ① 允许面   : %s\n", f.Allow)
+	fmt.Fprintf(w, "    ② 禁碰面   : %s\n", f.Forbid)
+	fmt.Fprintf(w, "    ③ 占用件   : %s\n", f.Occupies)
+	fmt.Fprintf(w, "    ④ 出口判据 : %s\n", f.Criterion)
+	fmt.Fprintf(w, "    ⑤ 时限     : %s\n", f.Deadline)
+	fmt.Fprintf(w, "    ⑥ 该条全文 : %s\n", gapAssignFullText(r))
+	fmt.Fprintf(w, "  要落的键（逐格）：\n")
+	fmt.Fprintf(w, "    state        : %s → %s\n", r.State, gapStAssigned)
+	fmt.Fprintf(w, "    notes        : %d → %d 条（末尾追加那一行登记）\n", len(r.Notes), len(r.Notes)+1)
+	fmt.Fprintf(w, "    登记那一行   : %s\n", line)
+	fmt.Fprintf(w, "    receipt      : %s\n", f.Receipt)
+	fmt.Fprintf(w, "  审计     : 计划写一行 `event=%s` + `gap_cmd=assign`（这一态**不写**）\n", gapEventName)
+}
+
+// ── ⒠ `zerg gap assign ls [--egg <卵号>]`（只读面 · 批3 第一片）───────────────────────────────────

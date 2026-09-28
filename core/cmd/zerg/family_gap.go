@@ -3569,3 +3569,137 @@ func cmdGapIdeaStats(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "  真源     : %s（**本面一字不碰** · 只读）\n", gapLedgerPath())
 	return exitOK
 }
+
+// ── ⒠ `zerg gap assign ls [--egg <卵号>]`（批3 第一片 · 只读面）────────────────────────────────────
+//
+// 设计出处：§11.3（派单登记读面）+ §4 判据 2（自派：`已派` 条数 == 在飞卵数 —— 本面就是那两枚读数的落点）。
+// 只读：**一字不写真源、不写审计**（零副作用）· 信封走同族写法（`gapLsMetaAdd` 那一套，不另造）。
+// 零命中 ⇒ 退码 1（「没有」不是「失败」· 也不是绿）；真源读不到 ⇒ 8。
+
+// gapAssignMetaAdd —— `gap assign ls` 的信封字段（写法照同族 `gapLsMetaAdd` / `gapIdeaMetaAdd` · 不另造）。
+func gapAssignMetaAdd(inv *invocation, egg string, total, hits int, ledgerPath string) {
+	inv.metaAddJSON("total", strconv.Itoa(total))
+	inv.metaAddJSON("hits", strconv.Itoa(hits))
+	q := "{}"
+	if egg != "" {
+		q = "{" + jstr("egg") + ":" + jstr(egg) + "}"
+	}
+	inv.metaAddJSON("query", q)
+	inv.metaAddStr("query_ts", gapNow())
+	inv.metaAddStr("ledger_sha16", gapLsLedgerSHA16(ledgerPath))
+}
+
+// gapAssignItem —— `assign ls` 的一行（账上那条 + 它的作业单登记 + 登记时刻）。
+type gapAssignItem struct {
+	r    gapRecord
+	f    gapAssignForm
+	at   string
+	regd bool
+}
+
+// cmdGapAssignLs —— `zerg gap assign ls [--egg <卵号>]`：列 `已派` 条与它们的**作业单登记**。
+func cmdGapAssignLs(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapAssignListFields, ","))
+		return exitUsage
+	}
+	wantEgg := strings.TrimSpace(inv.flagVal("--egg"))
+	led, rc := gapReadLedgerOrDie(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
+	total, hits, cut := 0, 0, false
+	out := []gapAssignItem{}
+	for _, r := range led.Recs {
+		if r.State != gapStAssigned {
+			continue
+		}
+		f, at, ok := gapAssignOf(r)
+		if wantEgg != "" && (!ok || f.Egg != wantEgg) {
+			continue
+		}
+		total++
+		if total > gapLsRowCap {
+			cut = true
+			continue
+		}
+		out = append(out, gapAssignItem{r, f, at, ok})
+	}
+	hits = len(out)
+	if total == 0 {
+		inv.changed = boolPtr(false)
+		inv.setErr("failed", "no_match", "零命中")
+		fmt.Fprintf(stderr, "零命中：`已派` 0 条（账内 %d 条%s ⇒ 退码 1 —— 「没有」不是「失败」，也不是绿）\n",
+			len(led.Recs), gapAssignEggSuffix(wantEgg))
+		if inv.jsonGiven {
+			gapAssignMetaAdd(inv, wantEgg, 0, 0, led.Path)
+			emitEnvelopeWith(stdout, find(inv.path), "[]", 0, inv)
+		}
+		return exitFail
+	}
+	inv.changed = boolPtr(false)
+	gapAssignMetaAdd(inv, wantEgg, total, hits, led.Path)
+	if cut {
+		inv.markTruncated()
+		inv.warnf("已裁 %d 条（gap assign ls 一页 %d 条 / 真命中 %d 条）", total-hits, hits, total)
+		inv.metaAddJSON("truncated_detail", fmt.Sprintf(
+			`{"cut_from":"tail","kept_items":%d,"dropped_items":%d,"total_items":%d}`, hits, total-hits, total))
+		fmt.Fprintf(stderr, "%s: ⚠ 本页只列前 %d 条 · 真命中 %d 条（已裁 %d 条）—— **这不是全集**\n", progName, hits, total, total-hits)
+	}
+	rows := []map[string]string{}
+	for _, a := range out {
+		rows = append(rows, map[string]string{
+			"id": a.r.ID, "state": a.r.State, "egg": a.f.Egg, "allow": a.f.Allow,
+			"forbid": a.f.Forbid, "occupies": a.f.Occupies, "criterion": a.f.Criterion,
+			"deadline": a.f.Deadline, "receipt": a.f.Receipt, "assigned_at": a.at,
+			"unit": a.r.Unit, "module": a.r.Module,
+		})
+	}
+	if inv.jsonGiven {
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
+	}
+	fmt.Fprintf(stdout, "已派 %d 条（总账 %d 条%s）· 本页 %d 条\n", total, len(led.Recs), gapAssignEggSuffix(wantEgg), hits)
+	for _, a := range out {
+		egg := a.f.Egg
+		if !a.regd {
+			egg = "（无登记 —— 孤儿：判据 2 的例外面）"
+		}
+		fmt.Fprintf(stdout, "  %s · egg=%s（%s）\n", a.r.ID, egg, orDash(a.at))
+		fmt.Fprintf(stdout, "    ① 允许面   : %s\n", orDash(a.f.Allow))
+		fmt.Fprintf(stdout, "    ② 禁碰面   : %s\n", orDash(a.f.Forbid))
+		fmt.Fprintf(stdout, "    ③ 占用件   : %s\n", orDash(a.f.Occupies))
+		fmt.Fprintf(stdout, "    ④ 出口判据 : %s\n", orDash(a.f.Criterion))
+		fmt.Fprintf(stdout, "    ⑤ 时限     : %s\n", orDash(a.f.Deadline))
+		fmt.Fprintf(stdout, "    ⑥ 该条全文 : %s\n", gapAssignFullText(a.r))
+		fmt.Fprintf(stdout, "    回执       : %s\n", orDash(a.f.Receipt))
+	}
+	fmt.Fprintf(stdout, "  件面     : %s\n", gapAssignUnitsText(out))
+	fmt.Fprintf(stdout, "  真源     : %s（**本面一字不碰** · 只读）\n", led.Path)
+	return exitOK
+}
+
+// gapAssignEggSuffix —— 人面那句收窄回显（没给 `--egg` ⇒ 空串）。
+func gapAssignEggSuffix(egg string) string {
+	if egg == "" {
+		return ""
+	}
+	return " · --egg " + egg
+}
+
+// gapAssignUnitsText —— 人面那一行「件面」（把占用件去重摊开 · 判据 2 的旁证）。
+func gapAssignUnitsText(rows []gapAssignItem) string {
+	seen := []string{}
+	for _, a := range rows {
+		for _, t := range gapAssignOccupies(a.f.Occupies) {
+			if !gapIn(seen, t) {
+				seen = append(seen, t)
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return "（本页没有占件）"
+	}
+	return strings.Join(seen, " · ")
+}
