@@ -25,9 +25,52 @@ import (
 
 // codeScanSkipDirs —— 扫码排除表（与 §十七/§二十一 各处复跑命令**同一套**口径；
 // 另把 `bin` 与对象仓排除掉：它们不是「码」，扫进去只会把命中数灌水）。
+//
+// ★ 2026-09-29（缺口 `GAP-20260927-66` + `GAP-20260927-72`）：由「固定点名单」改成「规则 + 白名单」，
+//
+//	三件事（**不新立第三张表** —— 名字与口径直接照 `scripts/gates/check-hardcoded-private-paths.py`
+//	的 `SKIP_DIRS` 那一份）：
+//	① 运行期/工具态目录**点名**（那份口径里的 `__pycache__`/`.pytest_cache`/`.zerg`/`.codegraph`/
+//	   `.hermes`/`.cache` 等；本表只补 `__pycache__` 这一类**不带点**的名字，带点的走规则②）；
+//	② 其余**任何以 `.` 开头的目录一律跳过**（= 那份口径注释「以 `.` 开头的目录一律跳过」同一条规则）
+//	   —— `.zerg`/`.codegraph`/`.stage`/`.hermes`/`.cache` 由此自动落闸，不必逐个背；
+//	③ 白名单 `codeScanKeepDots`：`.github`/`.githooks` 是**随码发布**的仓库配置（tracked、非运行期态）
+//	   ⇒ 规则②对它们例外（点名单优先）。
+//	件级闸另起（只加目录闸修不掉 `.env`）—— 见下面 `codeScanSkipFile`，理由同批。
 var codeScanSkipDirs = map[string]bool{
 	"target": true, "node_modules": true, "dist": true, "bin": true, "vendor": true,
 	"data": true, ".git": true, ".venv": true, "venv": true, ".build": true,
+	"__pycache__": true, ".pytest_cache": true, ".mypy_cache": true, ".idea": true,
+}
+
+// codeScanKeepDots —— 以 `.` 开头、但**随码发布**的目录白名单（缺口 `GAP-20260927-66` ②）。
+// `.github`（CI/workflow）与 `.githooks`（提交钩子件）是仓库配置、走 git 跟踪、不随一跑就长件
+// ⇒ 目录规则②（点项一律跳过）对它们例外。
+var codeScanKeepDots = map[string]bool{".github": true, ".githooks": true}
+
+// codeScanSkipFile —— 件级闸（缺口 `GAP-20260927-66`：只加目录闸修不掉 `.env`）。
+//
+// 病根现读（改前）：`.env` 在**仓根、不是目录** ⇒ 目录闸对它零作用；`zerg code find ZERG_AUTH_TOKEN`
+// 的默认面把 `.env`（内含 `ZERG_AUTH_TOKEN` 真值）原样扫进 items 并打印命中行。
+//
+// 口径（与目录规则②同一条轴 —— 「点项默认不进码面」，配 `--hidden` 显式放行）：
+// 以 `.` 开头的**件**（`.env`/`.env.example`/`.env.local` 这类凭据与运行期配置）默认不进码面；
+// 白名单目录内部的件照进（`.github/workflows/…`、`.githooks/pre-commit`）。判在 walk 之前
+// 的件级闸与 walk 内的目录闸**同一套判据**，不各写一份。
+func codeScanSkipFile(root, p string) bool {
+	base := filepath.Base(p)
+	if !strings.HasPrefix(base, ".") {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(p))
+	if err == nil {
+		for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
+			if codeScanKeepDots[seg] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // codeFindRowCap —— 一页最多列多少条（**明说**上限，不静默截断）。
@@ -148,7 +191,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	// 全局布尔）过去被**静默吞** —— 同一个命令上因此并存两套命运（`--max` 会被点名退 2、
 	// `--all` 却一声不响），这正是缺口 `GAP-20260927-16`。现按 dispatch 那条「未知旗标 2」的
 	// **同一形状**归一：rc=2 + 逐字点名。判在扫之前 ⇒ 零副作用。
-	if bad := foreignFlag(inv, "--path", "--glob", "--full", "--limit", "--count", "--files-only"); bad != "" {
+	if bad := foreignFlag(inv, "--path", "--glob", "--full", "--limit", "--count", "--files-only", "--hidden", "--include-runtime"); bad != "" {
 		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, bad)
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 		return exitUsage
@@ -173,6 +216,13 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	// ★ 显式放行两枚（缺口 `GAP-20260927-66` 的 `--hidden` · `GAP-20260927-72` 的 `--include-runtime`）：
+	// 点项与运行期态默认不进码面（见 `codeScanSkipDirs`/`codeScanSkipFile` 头注），要扫进来**必须显式点**
+	// —— 照 `--full`/`--all` 同一种形态（全局布尔、谁用谁读；本族只认，**不新开解析分叉**）。
+	// ★ 这两枚名尚未上全局户口（`main.go` 的 `valueFlagName`）⇒ 今天真给会被 dispatch 判「未知旗标 2」
+	//   （**不是静默吞**）；登记片段见回执，由父代理落。
+	showHidden := inv.hasFlag("--hidden")
+	includeRuntime := inv.hasFlag("--include-runtime")
 	rows := []map[string]string{}
 	// 逐件命中数（**不受一页硬顶影响** —— 「数命中」与「列一页」是两件事；下面 walk 里每命中一条就 +1）。
 	fileHits := map[string]int{}
@@ -183,9 +233,15 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 			return nil // 读不动的子树跳过（只读面不许因为一件读不到就整命令失败）
 		}
 		if info.IsDir() {
-			if codeScanSkipDirs[info.Name()] {
+			// 目录闸 = 点名单 ∪ 规则②（任何 `.` 开头 · 白名单例外）；`--include-runtime` 放行整档。
+			dotDir := strings.HasPrefix(info.Name(), ".") && !codeScanKeepDots[info.Name()]
+			if !includeRuntime && (codeScanSkipDirs[info.Name()] || dotDir) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		// 件级闸（缺口 `GAP-20260927-66`）：`.` 开头的件默认不进码面（只加目录闸修不掉 `.env`）。
+		if !showHidden && !includeRuntime && codeScanSkipFile(root, p) {
 			return nil
 		}
 		if glob != "" {
