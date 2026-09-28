@@ -9,7 +9,9 @@
 #    本件治的是**另一半**：常跑门检每次把「残态」当场抓出来。）
 #
 # 真源（唯一）：`scripts/gates/mutation-smoke.sh`（本件**不写死**靶名 / 行号 / 候选行）——
-#   ① `bash <该件> --list` 现读：逐点出「点号 / 名 / 件 / 点名判据」四列；
+#   ① `bash <该件> --list` 现读：**首行**是机读表头（`#` + TAB 连接的列名 —— 列名与列序的**唯一定义处**
+#      是同件源码里的 `MUT_COLS` 数组），其后逐点出行；本件**按列名取数**（见 NEED_COLS），
+#      **不按列数** ⇒ 生产侧往右**加列不破本件**（多出来的列一律忽略）；要的列缺一格才 rc=2；
 #   ② 同件源码里的 `MUT_FILE` / `MUT_OLD` / `MUT_NEW` 三个数组：`--list` **不含原文锚**
 #      ⇒ 原文锚只此一处，仍在**同一件**上 ⇒ 判据只有一个定义处（不另立第二套口径）。
 #   ★ 两读必须**互相对得上**（点号 / 名 / 件 / 判据逐条相等，条数相等）；对不上 ⇒ rc=2 不给结论
@@ -38,6 +40,15 @@ import tempfile
 
 TRUTH_REL = "scripts/gates/mutation-smoke.sh"
 ARRAYS = ("MUT_FILE", "MUT_OLD", "MUT_NEW", "MUT_TEST", "MUT_NAME")
+
+# ── 列契约（`--list` 的机读表头 · 缺口 GAP-20260928-116）───────────────────────────────
+#   本件**只按列名取列**（**不按列数**）—— 原来写死 `len(f) != 4` ⇒ 生产侧往右加一列
+#   整件就 rc=2（判不了，且是**静默**的：加列的人看不到「我这个下游被写死过」）。
+#   现读口径：`--list` 首行 = `#` + TAB 连接的列名（生产侧 `MUT_COLS` 数组是列名与列序的
+#   **唯一**定义处）；本件只认 NEED_COLS 里这几列，**多出来的列一律忽略**，
+#   缺它要的那一列才 rc=2（不给结论 ≠ 绿）。表头认不出（首行不是 `#` 打头 / 列名重复）也 rc=2。
+HEADER_PREFIX = "#"
+NEED_COLS = ("点号", "名", "件", "点名判据")
 
 _STR_RE = re.compile(r'^"((?:[^"\\]|\\.)*)"$')
 
@@ -73,25 +84,41 @@ def parse_arrays(src):
 
 
 def read_list(root, truth):
-    """`bash <真源> --list` 现读；返回 (行列表, 错误说明)。"""
+    """`bash <真源> --list` 现读；返回 (行列表, 列名→位次, 错误说明)。
+
+    首行 = 机读表头（`#` + TAB 连接的列名）；其后为数据行。**按列名定位**：
+    表头里多出来的列忽略（加列不破本件）；本件要的列缺一格 ⇒ 返回错误（rc=2）。
+    """
     try:
         p = subprocess.run(["bash", truth, "--list"], cwd=root,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as e:
-        return None, "起不来：%s" % e
+        return None, None, "起不来：%s" % e
     if p.returncode != 0:
-        return None, "--list rc=%d" % p.returncode
+        return None, None, "--list rc=%d" % p.returncode
+    lines = [raw for raw in p.stdout.decode("utf-8", "replace").splitlines()
+             if raw.strip()]
+    if not lines:
+        return None, None, "--list 空表（0 点）"
+    head = lines[0]
+    if not head.startswith(HEADER_PREFIX):
+        return None, None, "--list 首行不是表头（%s 打头的列名行不在）⇒ 列契约读不出" % HEADER_PREFIX
+    cols = head[len(HEADER_PREFIX):].split("\t")
+    if any(not c for c in cols) or len(set(cols)) != len(cols):
+        return None, None, "--list 表头的列名有空格 / 重复（%s）" % head
+    missing = [c for c in NEED_COLS if c not in cols]
+    if missing:
+        return None, None, "--list 表头缺本件要的列：%s（表头现读 %s）" % ("，".join(missing), head)
+    idx = {c: cols.index(c) for c in NEED_COLS}
     rows = []
-    for raw in p.stdout.decode("utf-8", "replace").splitlines():
-        if not raw.strip():
-            continue
+    for raw in lines[1:]:
         f = raw.split("\t")
-        if len(f) != 4:
-            return None, "--list 某行列数 %d ≠ 4" % len(f)
-        rows.append(f)
+        if len(f) != len(cols):
+            return None, None, "--list 某行列数 %d ≠ 表头列数 %d" % (len(f), len(cols))
+        rows.append([f[idx[c]] for c in NEED_COLS])
     if not rows:
-        return None, "--list 空表（0 点）"
-    return rows, ""
+        return None, None, "--list 空表（0 点 · 只有表头）"
+    return rows, cols, ""
 
 
 def judge(root, truth):
@@ -110,13 +137,13 @@ def judge(root, truth):
     if arrays is None:
         out.append("判不了：真源件的五个索引数组读不出 / 条数不齐 / 0 点 ⇒ 不给结论（rc=2）")
         return 2, out
-    rows, err = read_list(root, truth)
+    rows, cols, err = read_list(root, truth)
     if rows is None:
         out.append("判不了：`--list` 不可解析（%s）⇒ 不给结论（rc=2）" % err)
         return 2, out
     n = len(arrays["MUT_FILE"])
-    out.append("== 突变点表 = %s（`--list` 现读 %d 点 · 原文锚同件源码现读 %d 点）"
-               % (TRUTH_REL, len(rows), n))
+    out.append("== 突变点表 = %s（`--list` 现读 %d 点 · 表头 %d 列：%s · 本件按名取 %d 列 · 原文锚同件源码现读 %d 点）"
+               % (TRUTH_REL, len(rows), len(cols), " / ".join(cols), len(NEED_COLS), n))
     if len(rows) != n:
         out.append("判不了：两读条数不等（--list %d ≠ 源码数组 %d）⇒ 不给结论（rc=2）"
                    % (len(rows), n))
@@ -212,7 +239,16 @@ MUT_NAME=(
   "删 a.go 的 adp.Start() 那一行"
   "b.go 0.8 → 0.9"
 )
+MUT_COLS=(
+  "点号"
+  "名"
+  "件"
+  "点名判据"
+)
 if [ "$1" = "--list" ]; then
+  _SAVE="$IFS"; IFS=$'\\t'
+  printf '#%s\\n' "${MUT_COLS[*]}"
+  IFS="$_SAVE"
   i=0
   while [ "$i" -lt 2 ]; do
     printf '%d\\t%s\\t%s\\t%s\\n' "$i" "${MUT_NAME[$i]}" "${MUT_FILE[$i]}" "${MUT_TEST[$i]}"
@@ -222,6 +258,21 @@ if [ "$1" = "--list" ]; then
 fi
 exit 0
 """
+
+# 加一列（右端）的合成生产侧：表头加一格 + 行加一格 + 数组加一格 —— **既有四格逐字不变**。
+# 本件**必须**对这份照样 rc=0（缺口 GAP-20260928-116 的核心判据）。
+SYNTH_ADDCOL = (SYNTH
+                .replace('  "点名判据"\n)',
+                         '  "点名判据"\n  "备注"\n)')
+                .replace("printf '%d\\t%s\\t%s\\t%s\\n' \"$i\" \"${MUT_NAME[$i]}\" "
+                         "\"${MUT_FILE[$i]}\" \"${MUT_TEST[$i]}\"",
+                         "printf '%d\\t%s\\t%s\\t%s\\t%s\\n' \"$i\" \"${MUT_NAME[$i]}\" "
+                         "\"${MUT_FILE[$i]}\" \"${MUT_TEST[$i]}\" \"第 $i 点备注\""))
+
+# 缺一列（本件要的「点名判据」那一格从表头去掉）⇒ 必须 rc=2（不给结论 ≠ 绿）。
+SYNTH_DROPCOL = (SYNTH
+                 .replace('  "点名判据"\n)',
+                          '  "别的东西"\n)'))
 
 GOOD_A = "func main() {\n\tif err := adp.Start(); err != nil {\n\t\tpanic(err)\n\t}\n}\n"
 GOOD_B = "cfg := Config{\n\tTemperature:     0.8,\n}\n"
@@ -285,12 +336,36 @@ def run_self_test():
     rc, _ = judge(r7, os.path.join(r7, TRUTH_REL))
     assert_eq("⑦ 真源件不在 ⇒ 判不了 rc=2", rc, 2)
 
-    # ⑧ --list 不可解析（行列数不足）⇒ rc=2
+    # ⑧ --list 行与表头不对齐（行列数不足）⇒ rc=2
     r8 = _mktree(tmp, "badlist", GOOD_A, GOOD_B,
                  script=SYNTH.replace("printf '%d\\t%s\\t%s\\t%s\\n'",
                                       "printf '%d\\t%s\\n'"))
     rc, _ = judge(r8, os.path.join(r8, TRUTH_REL))
-    assert_eq("⑧ `--list` 不可解析 ⇒ 判不了 rc=2", rc, 2)
+    assert_eq("⑧ `--list` 行与表头不对齐 ⇒ 判不了 rc=2", rc, 2)
+
+    # ⑨ ★ 加一列（右端 · 既有四格逐字不变）⇒ **必须 rc=0**（缺口 GAP-20260928-116 的核心判据：
+    #   按列名取数之后，生产侧长列不再把下游打成 rc=2）
+    assert_eq("⑨ 夹具 SYNTH_ADDCOL 真的加上了第五列（替换生效）",
+              SYNTH_ADDCOL != SYNTH and SYNTH_ADDCOL.count("\\t%s") == SYNTH.count("\\t%s") + 1, True)
+    r9 = _mktree(tmp, "addcol", GOOD_A, GOOD_B, script=SYNTH_ADDCOL)
+    rc, lines = judge(r9, os.path.join(r9, TRUTH_REL))
+    assert_eq("⑨ 生产侧右端加一列 ⇒ rc=0（加列不破本件）", rc, 0)
+    assert_eq("⑨ 加列后仍逐点报「原形」= 2 行", sum(1 for ln in lines if "原形" in ln and "原文锚命中 1 处" in ln), 2)
+
+    # ⑩ 缺本件要的那一列（表头「点名判据」没了）⇒ rc=2（不给结论 ≠ 绿）
+    assert_eq("⑩ 夹具 SYNTH_DROPCOL 真的去掉了要的那一列（替换生效）",
+              SYNTH_DROPCOL != SYNTH, True)
+    r10 = _mktree(tmp, "dropcol", GOOD_A, GOOD_B, script=SYNTH_DROPCOL)
+    rc, lines = judge(r10, os.path.join(r10, TRUTH_REL))
+    assert_eq("⑩ 表头缺「点名判据」列 ⇒ 判不了 rc=2", rc, 2)
+    assert_eq("⑩ 报的是「缺列」不是别的",
+              sum(1 for ln in lines if "缺本件要的列：点名判据" in ln), 1)
+
+    # ⑪ 表头整行不在（老式无表头的 `--list`）⇒ rc=2（列契约读不出，不猜）
+    r11 = _mktree(tmp, "noheader", GOOD_A, GOOD_B,
+                  script=SYNTH.replace("printf '#%s\\n' \"${MUT_COLS[*]}\"\n", ""))
+    rc, _ = judge(r11, os.path.join(r11, TRUTH_REL))
+    assert_eq("⑪ `--list` 无表头 ⇒ 判不了 rc=2", rc, 2)
 
     print("── 自检结论：断言 %d 条 · 失败 %d 条 ──" % (SELF_TOTAL, SELF_BAD))
     return 0 if SELF_BAD == 0 else 1
