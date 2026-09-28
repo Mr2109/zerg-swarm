@@ -2093,6 +2093,35 @@ func init() {
 			endpoint: "",
 			run:      cmdGapBackfillUnit,
 		},
+		// ★ 批2 第一片（2-1 / 2-2 / 2-4）：候选池独立件 —— `gap idea` 两条（**新件** `<状态目录>/zerg-cli-gap-candidates.jsonl`）。
+		//   设计出处：`设计-缺口账与自进化-v2.0-20260928.md` §11.3（独立文件 · 不进主账 · 七格字段 · ttl_days=7）
+		//   + §9.1 第 1/2 条（立候选池 · `source` 四值 `guard|gate|egg|human`）+ 施工清单 §3 的 2-1/2-2/2-4。
+		//   ★ **`gap add` 仍是唯一入账**：这两条一个字都不写 `zerg-cli-gaps.jsonl`（判据：`idea add` 后账行数不变）。
+		//   实现件 = `family_gap.go:cmdGapIdeaLs` / `cmdGapIdeaAdd`。
+		{
+			path:     []string{"gap", "idea", "ls"},
+			kind:     "GapIdeaLs",
+			summary:  "候选池**最小读面**（只读 · 不写池、不写真源、不写审计）：列池内候选（`cid` / `source` / `status` / 落池时刻 / 症状）· `--source` 收窄（四值闭集 `guard|gate|egg|human`，闭集外 ⇒ 2 并点名闭集）· `--json` 走同族信封（`meta.total` / `meta.hits` / `query_ts` / `pool_sha16` + 截断自报）· 池件不在盘上 ⇒ 8（「读不到」不当绿）· 零命中 ⇒ 1",
+			usage:    "zerg gap idea ls [--source <guard|gate|egg|human>] [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（无位置参数：收窄走 `--source`）"},
+			fields:   gapIdeaListFields,
+			endpoint: "",
+			run:      cmdGapIdeaLs,
+		},
+		{
+			path:     []string{"gap", "idea", "add"},
+			kind:     "GapIdeaAdd",
+			summary:  "人随手记 ⇒ **落候选池**（写面 · `--dry-run` 恒 0 · 缺 `--yes` fail-closed 2）：落一行 `<状态目录>/zerg-cli-gap-candidates.jsonl`（`cid`/`source`/`raw`/`created_at`/`ttl_days=7`/`status=pending`/`fp`）· **真源一字不动**（`gap add` 仍是唯一入账）· 同 source 同 fp ⇒ 幂等 0 · 顺带做**七日归档**（落池超七天的条目搬入同目录 `…archive-<日期>.jsonl` · 只搬超期条）· `--source` 缺省 `human`，闭集外 ⇒ 2 并点名闭集",
+			usage:    "zerg gap idea add --symptom <一句> [--source <guard|gate|egg|human>] [--unit <件路径>] [--dry-run | --yes] [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（无位置参数：全部走旗标）"},
+			fields:   gapIdeaFields,
+			danger:   &dangerSpec{dangerD2, "候选池件（`<状态目录>/zerg-cli-gap-candidates.jsonl`）", "往**候选池**追加一行（可逆：删那一行）+ 顺带把落池超七天的条目搬进同目录归档件；**真源 `zerg-cli-gaps.jsonl` 与审计一个字节都不动**（本面不碰真源 —— 入账仍走 `gap add`）", "设计-缺口账与自进化-v2.0-20260928.md §11.3 + §9.1 第 1/2 条 · 施工清单 `任务清单-缺口账自进化-施工-20260928.md` §3 的 2-1/2-4 · 同族写面先例 `gap add`（`H-10`：`--yes` 是命令行确认档，不是批准件）", false},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapIdeaAdd,
+		},
 		// ---- 度量与排序面（组1 序12 · `承接自-v2.5.11/承接-度量与排序面-20260921.md:40-42` · 2026-09-24）----
 		// 与 `impact`（变更影响面）**配对用、不合并成一条**：前者回答「改这一处会牵动谁」（别改坏），
 		// 本命令回答「**该改哪**」（把四类读数归一成一个可比排序）。只读 ⇒ 不写 `danger`
@@ -2847,7 +2876,10 @@ func valueFlagName(a string) string {
 		//   `--by <unit|module>` **已在上面「自开发面」那一排**（与 `dev proposal` 等共用一张名字表）⇒
 		//   本排只续 `--top` 这一枚新名字（一族共用一张名字表 · **不重开同名旗标**）。
 		//   ★ 名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
-		"--top":
+		"--top",
+		// ★ 批2 第一片（2-2）：`gap idea add|ls` 的 `--source <guard|gate|egg|human>`（四值闭集 · 逐字照
+		//   设计稿 §9.1 第 2 条）。名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
+		"--source":
 		return a
 	}
 	return ""
