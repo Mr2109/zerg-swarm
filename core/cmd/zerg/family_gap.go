@@ -2385,25 +2385,98 @@ func gapBackfillPreviewRows(led gapLedger, tracked []string, n int) []gapBackfil
 // gapStatusDefaultTop —— `--top` 缺省一页桶数（20）。
 const gapStatusDefaultTop = 20
 
-// gapStatusBy 两值（`--by` 的闭集）—— 与件面三键的 `unit` / `module` **同名同义**（不自造第二个词）。
+// gapStatusBy 三值（`--by` 的闭集）—— 前两值与件面三键的 `unit` / `module` **同名同义**
+// （不自造第二个词）；`tier` 是**批4 第二片**新增的第三值（按判据分级分桶 · 只读面）。
 const (
 	gapStatusByUnit   = "unit"
 	gapStatusByModule = "module"
+	// gapStatusByTier —— **批4 第二片（2026-09-28）**：按**判据分级**分桶。
+	// 行 = 三桶闭集（`真判据` / `占位` / `无` ⇒ `gapVerifyTierReal` / `gapVerifyTierPlaceholder` /
+	// `gapVerifyTierNone`，与 `family_gap_state.go` 的 verify-one 同一份常量 —— 不自造第二套字面）；
+	// 列 = **条数** + 其中**仍缺** + 其中**已解**；表尾固定两行（守恒式自校 + 占位桶只报告）。
+	gapStatusByTier = "tier"
 )
 
+// gapStatusTierOrder —— 三桶的**固定**输出序（不是排序键算出来的）：闭集三值按「有效 → 占位 → 无」
+// 排（判据有效性递减）。三桶**穷尽且互斥** ⇒ 任何一条必落且只落一桶（守恒式的地基）。
+var gapStatusTierOrder = []string{gapVerifyTierReal, gapVerifyTierPlaceholder, gapVerifyTierNone}
+
+// gapStatusCmdResolvable —— 「**能被命令树解析**」的判据（分级只用这一条腿）：
+// 剥 `zerg` 前缀后拿**命令树本身**（`resolve` · 与 `gapJudgeArgv` 同一棵树）解析。
+// ★ 为什么不用 `gapJudgeArgv` 整条：它还叠着两枚**与「解析得到吗」无关**的闸（写面 / 自递归）
+//
+//	—— 那两枚判的是「**能不能跑**」，本面判的是「**这条判据是不是真判据的形态**」⇒ 只取解析那一腿。
+func gapStatusCmdResolvable(cmdStr string) bool {
+	fields := strings.Fields(cmdStr)
+	if len(fields) == 0 {
+		return false
+	}
+	if filepath.Base(fields[0]) == progName {
+		fields = fields[1:]
+	}
+	if len(fields) == 0 {
+		return false
+	}
+	c, _ := resolve(fields)
+	return c != nil
+}
+
+// gapStatusTierCompute —— **未落库**时现读 `verify_cmd` 现算分级（三值 · 逐字判据）：
+//
+//	① 去空白后空串（= 空串或**无键** · 两者在结构体上同形）⇒ `无`；
+//	② 串里含**占位标记字样**「占位」⇒ `占位`（与 `family_gap_state.go:gapVerifyOneTier` 同一口径）；
+//	③ 其余**且能被命令树解析**（`gapStatusCmdResolvable`）⇒ `真判据`；
+//	④ 其余（有字却解析不到 ⇒ 跑不到一个结论）⇒ 归 `占位`：**三级必须穷尽**
+//	   （三桶之和 == 总账 的地基），而它既不是「无」（有字）也不是「真判据」（跑不动）。
+func gapStatusTierCompute(cmd string) string {
+	if strings.TrimSpace(cmd) == "" {
+		return gapVerifyTierNone
+	}
+	if strings.Contains(cmd, "占位") {
+		return gapVerifyTierPlaceholder
+	}
+	if !gapStatusCmdResolvable(cmd) {
+		return gapVerifyTierPlaceholder
+	}
+	return gapVerifyTierReal
+}
+
+// gapStatusTierOf —— 一条账的判据分级（本面唯一分档处）。第二返回值 = 该条**落库的
+// `verify_tier` 越界**（不是三值闭集里的值）⇒ 不采信、落回现算（表尾**只报告**点名条数）。
+//
+// 口径（逐字 · 与 verify-one 已落库的值**不许矛盾**）：
+//
+//	· `verify_tier` **已填**（且在闭集里）⇒ **用它**（落库那一刻的判据说了算 —— 本面不回头改写历史）；
+//	· 未填（缺键 / 空串）⇒ 现读 `verify_cmd` 现算（`gapStatusTierCompute`）。
+//
+// 自洽性：verify-one 只在 `gapJudgeArgv` 通过时才写 `真判据` ⇒ 已落库的 `真判据` 必解析得到；
+// 已落库的 `占位` 必含「占位」字样；已落库的 `无` 必为空串 ⇒ 两条口径在闭集上不打架。
+func gapStatusTierOf(r gapRecord) (string, bool) {
+	if t := strings.TrimSpace(r.VerifyTier); t != "" {
+		if gapIn(gapStatusTierOrder, t) {
+			return t, false
+		}
+		return gapStatusTierCompute(r.VerifyCmd), true
+	}
+	return gapStatusTierCompute(r.VerifyCmd), false
+}
+
 // gapStatusFields —— `gap status` 的 `--json` 可取字段（与命令树里的 `fields` 同一份口径）：
-// 桶键 + 三计数（未闭 / 已解 / 净）+ 近邻量化三格（P0/P1/P2）。
-var gapStatusFields = []string{"bucket", "open", "closed", "net", "p0", "p1", "p2"}
+// 桶键 + **条数**（批4 第二片新增 `count`：`--by tier` 三桶的「条数」列）+ 三计数
+// （未闭 / 已解 / 净）+ 近邻量化三格（P0/P1/P2）。
+var gapStatusFields = []string{"bucket", "count", "open", "closed", "net", "p0", "p1", "p2"}
 
 // gapStatusBucket —— 一个桶的计数面。
 type gapStatusBucket struct {
-	Key    string // 桶键：`--by unit` ⇒ `unit`；`--by module` ⇒ `module`
+	Key    string // 桶键：`--by unit` ⇒ `unit`；`--by module` ⇒ `module`；`--by tier` ⇒ 分级三值之一
+	All    int    // 条数（本桶落了多少条 —— `--by tier` 的「条数」列取它）
 	Open   int    // 未闭：`state` 仍缺
 	Closed int    // 已解：`state` 已解
 	P0     int    // 近邻量化：P0 条数
 	P1     int    // 近邻量化：P1 条数
 	P2     int    // 近邻量化：P2 条数
 	// None —— 桶内条目**全部** `module == 无件`（兜底件）⇒ 对账等式里的「无件桶」。
+	// ★ `--by tier` 下这一格**不参与**任何判据（桶键是分级、不是件 ⇒ 件轴对账式在 tier 面不成立）。
 	None bool
 }
 
@@ -2437,10 +2510,43 @@ func (r gapStatusReconcile) JSON() string {
 		r.RealOpen, r.NoneOpen, r.LedgerOpen, r.Diff(), r.OK())
 }
 
+// gapStatusTierReconcile —— `--by tier` 面的**守恒式**三数（**现算** · 不填死）。
+//
+//	Sum     = Σ(三桶条数) —— 由**三桶各自的累加**得出（上桶与下桶是两个独立累加）；
+//	Total   = **现读**总数（本筛选后 —— 无收窄时逐字等于**全账条数**）—— 由筛选循环自己累加；
+//	Ledger  = 现读**全账**条数（收窄时把「收窄 ≠ 全账」这件事摆在明面上）。
+//
+// ★ 守恒式必须**真自校**：两边来自两个不同的累加（桶循环 vs 筛选循环），不是同一个数源抄两遍；
+//
+//	不成立 ⇒ 表尾两个数原文并列 + 判红（退码 1）。
+type gapStatusTierReconcile struct {
+	Sum         int
+	Total       int
+	Ledger      int
+	OutOfSet    int // 落库 `verify_tier` 越界条数（只报告 · 不退码）
+	PlaceOpen   int // 占位桶里 `state == 仍缺` 的条数（表尾「只报告」那行用）
+	PlaceClosed int // 占位桶里 `state == 已解` 的条数
+	Filtered    bool
+}
+
+func (t gapStatusTierReconcile) Diff() int { return t.Sum - t.Total }
+func (t gapStatusTierReconcile) OK() bool  { return t.Diff() == 0 }
+func (t gapStatusTierReconcile) JSON() string {
+	return fmt.Sprintf(`{"buckets_sum":%d,"ledger_total":%d,"diff":%d,"ok":%t,"out_of_set":%d,"narrowed":%t}`,
+		t.Sum, t.Total, t.Diff(), t.OK(), t.OutOfSet, t.Filtered)
+}
+
 // gapStatusMetaAdd —— `gap status` 机器面信封字段的**唯一写入口**（只走 `metaAdd*` 既有口子 ⇒
 // 顶层六键不动）。五格与 `gap ls` **同形**（`total` / `hits` / `query` / `query_ts` / `ledger_sha16`），
-// 另加本面自己的三格（`by` / `top` / `reconcile`）—— 缺一格两个时刻的排行就不可比。
-func gapStatusMetaAdd(inv *invocation, states []string, prio, impact, by string, top, total, hits int, rec gapStatusReconcile, ledgerPath string) {
+// 另加本面自己的三格（`by` / `top` / 对账）—— 缺一格两个时刻的排行就不可比。
+//
+// ★ `--by tier`（批4 第二片）：件轴对账那两数（`real_bucket_open` / `none_bucket_open`）在分级面上
+//
+//	**不成立**（桶键不是件）⇒ 不冒充；改出本面自己的**守恒式两数 + 总账**
+//	（`tier_reconcile` 含 `buckets_sum` / `ledger_total` / `diff` / `ok` / `out_of_set`）
+//	+ 顶层一格 `ledger_total`。**只有 tier 这一支**多出这两键 ⇒ `unit` / `module` 两态一字不变。
+func gapStatusMetaAdd(inv *invocation, states []string, prio, impact, by string, top, total, hits int,
+	rec gapStatusReconcile, tierRec gapStatusTierReconcile, ledgerPath string) {
 	inv.metaAddJSON("total", strconv.Itoa(total))
 	inv.metaAddJSON("hits", strconv.Itoa(hits))
 	inv.metaAddJSON("query", gapStatusQueryText(states, prio, impact, by, top))
@@ -2448,6 +2554,11 @@ func gapStatusMetaAdd(inv *invocation, states []string, prio, impact, by string,
 	inv.metaAddStr("ledger_sha16", gapLsLedgerSHA16(ledgerPath))
 	inv.metaAddStr("by", by)
 	inv.metaAddJSON("top", strconv.Itoa(top))
+	if by == gapStatusByTier {
+		inv.metaAddJSON("tier_reconcile", tierRec.JSON())
+		inv.metaAddJSON("ledger_total", strconv.Itoa(tierRec.Ledger))
+		return
+	}
 	inv.metaAddJSON("reconcile", rec.JSON())
 }
 
@@ -2463,10 +2574,10 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 	if by == "" {
 		by = gapStatusByUnit
 	}
-	if by != gapStatusByUnit && by != gapStatusByModule {
+	if by != gapStatusByUnit && by != gapStatusByModule && by != gapStatusByTier {
 		inv.setErr("usage", "bad_by", "--by 取值不在闭集里")
-		fmt.Fprintf(stderr, "%s: `--by %s` 不在闭集里 —— 只认 %s | %s\n",
-			progName, by, gapStatusByUnit, gapStatusByModule)
+		fmt.Fprintf(stderr, "%s: `--by %s` 不在闭集里 —— 只认 %s | %s | %s\n",
+			progName, by, gapStatusByUnit, gapStatusByModule, gapStatusByTier)
 		return exitUsage
 	}
 	top := gapStatusDefaultTop
@@ -2547,7 +2658,15 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 	wantImpact := strings.TrimSpace(inv.flagVal("--impact"))
 	buckets := map[string]*gapStatusBucket{}
 	order := []string{}
+	if by == gapStatusByTier {
+		// 三桶**固定先建**（闭集穷尽 ⇒ 某桶 0 条也要出这一行 —— 三桶之和才对得上账）。
+		for _, t := range gapStatusTierOrder {
+			buckets[t] = &gapStatusBucket{Key: t}
+			order = append(order, t)
+		}
+	}
 	popTotal, popOpen, noneOpen := 0, 0, 0
+	tierOutOfSet := 0
 	for _, r := range led.Recs {
 		if len(wantStates) > 0 && !gapIn(wantStates, r.State) {
 			continue
@@ -2566,10 +2685,18 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 			}
 		}
 		key := r.Unit
-		if by == gapStatusByModule {
+		switch by {
+		case gapStatusByModule:
 			key = r.Module
+		case gapStatusByTier:
+			// 分级 = **已落库的 `verify_tier` 优先**；未落库 ⇒ 现读 `verify_cmd` 现算（三值穷尽）。
+			t, oos := gapStatusTierOf(r)
+			key = t
+			if oos {
+				tierOutOfSet++
+			}
 		}
-		if key == "" {
+		if by != gapStatusByTier && key == "" {
 			key = gapUnitNoneMod // 无件兜底桶（对账等式里点名的那一枚）
 		}
 		b, ok := buckets[key]
@@ -2578,7 +2705,8 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 			buckets[key] = b
 			order = append(order, key)
 		}
-		if r.Module != gapUnitNoneMod {
+		b.All++
+		if by != gapStatusByTier && r.Module != gapUnitNoneMod {
 			b.None = false
 		}
 		switch r.State {
@@ -2598,26 +2726,30 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	// ⑤ 排序：主键 = 未闭降序 · 次键 = 近邻量化降序（先 P0、再 P1、再 P2）· 再键 = 桶键升序（同分稳定）。
+	//    ★ `--by tier` **不排序**：三桶按闭集**固定序**（有效 → 占位 → 无）出 —— 判据有效性递减，
+	//      两个时刻的表逐行可比；排序键对它没有意义（三桶恒为 3 行）。
 	bs := make([]gapStatusBucket, 0, len(order))
 	for _, k := range order {
 		bs = append(bs, *buckets[k])
 	}
-	sort.SliceStable(bs, func(i, j int) bool {
-		a, b := bs[i], bs[j]
-		if a.Open != b.Open {
-			return a.Open > b.Open
-		}
-		if a.P0 != b.P0 {
-			return a.P0 > b.P0
-		}
-		if a.P1 != b.P1 {
-			return a.P1 > b.P1
-		}
-		if a.P2 != b.P2 {
-			return a.P2 > b.P2
-		}
-		return a.Key < b.Key
-	})
+	if by != gapStatusByTier {
+		sort.SliceStable(bs, func(i, j int) bool {
+			a, b := bs[i], bs[j]
+			if a.Open != b.Open {
+				return a.Open > b.Open
+			}
+			if a.P0 != b.P0 {
+				return a.P0 > b.P0
+			}
+			if a.P1 != b.P1 {
+				return a.P1 > b.P1
+			}
+			if a.P2 != b.P2 {
+				return a.P2 > b.P2
+			}
+			return a.Key < b.Key
+		})
+	}
 	realOpen := 0
 	for _, b := range bs {
 		if !b.None {
@@ -2625,26 +2757,51 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 		}
 	}
 	rec := gapStatusReconcile{RealOpen: realOpen, NoneOpen: noneOpen, LedgerOpen: popOpen}
+	// ★ tier 面守恒式（**两个独立累加** 对账）：
+	//   · 左边 Σ(三桶条数) —— 由桶循环逐条累加出来的 `b.All` 现加（不是从别处抄）；
+	//   · 右边**现读总账条数** —— 由 `gapLedger` 读盘时自己数的行数（`len(led.Recs)`）。
+	//   收窄时右边改成筛选循环自己累加出来的 `popTotal`（**同口径才可比**），并把「全账条数」
+	//   一并摆在表尾 —— 收窄读数 ≠ 全账，这一点在行内点名，不让两数互当。
+	hasNarrow := len(wantStates) > 0 || wantPrio != "" || wantImpact != ""
+	tierRec := gapStatusTierReconcile{
+		Ledger:   len(led.Recs),
+		Total:    popTotal,
+		OutOfSet: tierOutOfSet,
+		Filtered: hasNarrow,
+	}
+	for _, k := range gapStatusTierOrder {
+		if b, ok := buckets[k]; ok {
+			tierRec.Sum += b.All
+		}
+	}
+	if b, ok := buckets[gapVerifyTierPlaceholder]; ok {
+		tierRec.PlaceOpen, tierRec.PlaceClosed = b.Open, b.Closed
+	}
+	if !hasNarrow {
+		// 逐字判据：无收窄 ⇒ 右边就是**总账条数**本身（读盘时数的那个数），不是筛出来的那个。
+		tierRec.Total = len(led.Recs)
+	}
 	total := len(bs)
 	hits, cut := total, false
 	if total > top {
 		hits, cut = top, true
 	}
 
-	// 零命中（筛选后一个桶都没有）⇒ 1（判词与 `gap ls` 同款）。
-	if total == 0 {
+	// 零命中（筛选后一条都不剩 ⇒ 与 `gap ls` 同判：1）—— ★ tier 面另加一档：三桶恒存在，
+	// 故「收窄后 0 条」必须单独判（否则会拿三个 0 冒充读数）。
+	if total == 0 || (by == gapStatusByTier && popTotal == 0) {
 		inv.changed = boolPtr(false)
 		inv.setErr("failed", "no_match", "零命中")
 		fmt.Fprintf(stderr, "零命中：账内 %d 条 · 与筛选条件相符 0 条（退码 1 —— 「没有」不是「失败」，也不是绿）\n", len(led.Recs))
 		if inv.jsonGiven {
-			gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, by, top, 0, 0, rec, led.Path)
+			gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, by, top, 0, 0, rec, tierRec, led.Path)
 			emitEnvelopeWith(stdout, find(inv.path), "[]", 0, inv)
 		}
 		return exitFail
 	}
 
 	inv.changed = boolPtr(false)
-	gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, by, top, total, hits, rec, led.Path)
+	gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, by, top, total, hits, rec, tierRec, led.Path)
 	if clampedTop {
 		inv.warnf("--top 越界（>%d）⇒ 已收到一页硬顶 %d", gapLsRowCap, gapLsRowCap)
 		fmt.Fprintf(stderr, "%s: ⚠ `--top` 超过一页硬顶 %d ⇒ 已收到 %d（与 `gap ls` / `find` / `code find` 同一个数）\n",
@@ -2658,26 +2815,99 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: ⚠ 本页只列前 %d 个桶 · 真命中 %d 个（已裁 %d 个）—— **这不是全集**，别据此下结论；要收窄：--by / --top / --state / --prio / --impact\n",
 			progName, hits, total, total-hits)
 	}
-	if !rec.OK() {
+	if by != gapStatusByTier && !rec.OK() {
 		inv.warnf("对账不成立：Σ(有件桶未闭) %d + 无件桶 %d = %d ≠ 账内仍缺 %d（差 %+d）",
 			rec.RealOpen, rec.NoneOpen, rec.Left(), rec.LedgerOpen, rec.Diff())
+	}
+	// ★ tier 面守恒式**真自校**：Σ(三桶条数) 与 现读总账条数 对不上 ⇒ **判红 1**（不是 warning ——
+	// 分级面自己坏了，「三桶之和 == 总账」这条判据就不成立，读数不许外发）。占位桶只报告（见人面表尾）。
+	if by == gapStatusByTier && !tierRec.OK() {
+		inv.setErr("failed", "tier_not_reconciled", "三桶之和与总账对不上")
+		inv.warnf("守恒式不成立：三桶之和 %d ≠ 总账 %d（差 %+d）", tierRec.Sum, tierRec.Total, tierRec.Diff())
 	}
 
 	// ⑥ 机器面。
 	if inv.jsonGiven {
 		rows := make([]map[string]string, 0, hits)
 		for _, b := range bs[:hits] {
-			rows = append(rows, map[string]string{
+			row := map[string]string{
 				"bucket": b.Key,
+				"count":  strconv.Itoa(b.All),
 				"open":   strconv.Itoa(b.Open),
 				"closed": strconv.Itoa(b.Closed),
 				"net":    strconv.Itoa(b.Net()),
 				"p0":     strconv.Itoa(b.P0),
 				"p1":     strconv.Itoa(b.P1),
 				"p2":     strconv.Itoa(b.P2),
-			})
+			}
+			rows = append(rows, row)
 		}
-		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
+		rc := selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
+		if by == gapStatusByTier && rc == exitOK && !tierRec.OK() {
+			return exitFail
+		}
+		return rc
+	}
+
+	// ⑦-tier 人面（`--by tier` · 批4 第二片）：行 = 三桶闭集 · 列 = 条数 / 其中仍缺 / 其中已解；
+	// 表尾**固定两行** —— ① 守恒式自校（不等 ⇒ 判红 1 并打印两数）② 占位桶只报告（**不退码**）。
+	if by == gapStatusByTier {
+		fmt.Fprintf(stdout, "zerg gap status --by tier · 账内 %d 条 · 本筛选后 %d 条 · 桶 %d 个（本页 %d 个）\n",
+			len(led.Recs), popTotal, total, hits)
+		fmt.Fprintf(stdout, "排序：无 —— 三桶按**闭集固定序**（有效 → 占位 → 无 · 判据有效性递减）出，两个时刻逐行可比\n")
+		fmt.Fprintf(stdout, "查询元：query_ts=%s · ledger_sha16=%s · 收窄回显=%s\n",
+			gapNow(), gapLsLedgerSHA16(led.Path), gapStatusQueryText(wantStates, wantPrio, wantImpact, by, top))
+		kw := displayWidth("分级(tier)")
+		for _, b := range bs {
+			kw = maxInt(kw, displayWidth(b.Key))
+		}
+		fmt.Fprintf(stdout, "  %s  %s  %s  %s\n",
+			pad("分级(tier)", kw), pad("条数", 4), pad("仍缺", 4), pad("已解", 4))
+		for _, b := range bs {
+			fmt.Fprintf(stdout, "  %s  %s  %s  %s\n",
+				pad(b.Key, kw),
+				pad(strconv.Itoa(b.All), 4),
+				pad(strconv.Itoa(b.Open), 4),
+				pad(strconv.Itoa(b.Closed), 4))
+		}
+		// 表尾①-a：三桶条数**原文**（供人一眼核 —— 与守恒式左边是同一份读数）。
+		fmt.Fprintf(stdout, "三桶条数原文：")
+		for i, t := range gapStatusTierOrder {
+			b := buckets[t]
+			if i > 0 {
+				fmt.Fprintf(stdout, " · ")
+			}
+			fmt.Fprintf(stdout, "%s %d", t, b.All)
+		}
+		fmt.Fprintf(stdout, "\n")
+		// 表尾①-b：守恒式自校（两个数各自现算 —— Σ 取三桶累加 · 右边取读盘行数/筛选累加）。
+		mark := "✓"
+		if !tierRec.OK() {
+			mark = "✗（**不对账** —— 分级面坏了）"
+		}
+		if tierRec.Filtered {
+			fmt.Fprintf(stdout, "守恒式：三桶之和 %d == 现读总数 %d %s（差 %d）· **本筛选后** —— 全账 %d 条（收窄读数 ≠ 全账，别据此下结论）\n",
+				tierRec.Sum, tierRec.Total, mark, tierRec.Diff(), tierRec.Ledger)
+		} else {
+			fmt.Fprintf(stdout, "守恒式：三桶之和 %d == 总账 %d %s（差 %d · 两个数各自现算：Σ 取三桶累加 · 总账取读盘行数）\n",
+				tierRec.Sum, tierRec.Total, mark, tierRec.Diff())
+		}
+		if !tierRec.OK() {
+			fmt.Fprintf(stdout, "  ⚠ 守恒式不成立：三桶之和 %d ≠ 总账 %d（差 %+d）—— 分级漏 / 重算，读数不许外发 ⇒ 判红 1\n",
+				tierRec.Sum, tierRec.Total, tierRec.Diff())
+			fmt.Fprintf(stderr, "%s: 守恒式不成立：三桶之和 %d ≠ 总账 %d（差 %+d）⇒ 判红 1\n",
+				progName, tierRec.Sum, tierRec.Total, tierRec.Diff())
+		}
+		if tierRec.OutOfSet > 0 {
+			fmt.Fprintf(stdout, "  ⚠ 落库 `verify_tier` 越界 %d 条（不在三值闭集里）⇒ **不采信、落回现算**（只报告 · 不退码）\n", tierRec.OutOfSet)
+		}
+		// 表尾②：占位桶只报告行（**不退码** —— 设计稿 D2「先只量分布」· §M-31 形态层/有效性层分两层量）。
+		fmt.Fprintf(stdout, "占位桶：%d 条（其中仍缺 %d · 已解 %d）—— **只报告、不阻断**（本行不进退码）\n",
+			buckets[gapVerifyTierPlaceholder].All, tierRec.PlaceOpen, tierRec.PlaceClosed)
+		if !tierRec.OK() {
+			return exitFail
+		}
+		return exitOK
 	}
 
 	// ⑦ 人面（主输出走 stdout · 消息与错误走 stderr）：表头**两个排序键都写**。
