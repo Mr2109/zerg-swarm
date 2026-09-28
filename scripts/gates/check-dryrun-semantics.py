@@ -10,18 +10,28 @@
 #   R2 **幽灵**：登记表里的件，必须在现跑命中里（登记了但件已消失 ⇒ 红 —— 台账不许挂在空气上）；
 #   R3 **字段**：逐件 `语义` 必须 = 顶层唯一 id（`dryrun.v1`，不许第二套）+ `零副作用判据` 非空（就一句话，得有）；
 #   R4 **单一定义**：顶层 id/一句话/零副作用定义齐全，且**归并前的四套语义**必须留档（只报不看 ≠ 没归并过）。
+#
+# ★ 分道（GAP-20260928-101）：**名字引用 ≠ 语义站点** —— 件头照规矩写「见登记表 <登记表名>」时，
+#   那一行只是**名字引用**，不是第五套语义。口径（逐行判）：命中行里把**登记表名**（
+#   `core/internal/contract/dryrun-semantics.json` / `dryrun-semantics.json` / `dryrun-semantics`）抹掉后
+#   regex 不再命中 ⇒ 该行是**引用行**；一件的命中行**全是**引用行 ⇒ 该件**不进 R1 覆盖面**
+#   （判据面自身仍按文件名排除，见下）。
+#   ✗ 不动的：扫描命令（同一 `grep` 口径，不靠删命中面弄绿）· R2 幽灵面（仍按**原始命中件**判 ⇒
+#   对引用件的登记不算幽灵、件真消失照样红）· R3/R4 · 空转 rc=2。
+#   ★ 语义站点 **0** 件（命中只剩名字引用）⇒ rc=2 **不给结论**（不许当绿）。
 # 空转（扫描命中 0 件 / 登记 0 件）⇒ rc=2（不给结论），不许当绿。
 #
 # 用法：
 #   python3 scripts/gates/check-dryrun-semantics.py              # 真目标（仓根）
 #   python3 scripts/gates/check-dryrun-semantics.py --root <dir> # 指根（自检夹具用）
-#   python3 scripts/gates/check-dryrun-semantics.py --self-test  # 1 正控 + 6 负控
+#   python3 scripts/gates/check-dryrun-semantics.py --self-test  # 1 正控 + 6 负控 + 4 分道
 #
 # 退码：0 全绿 · 1 红（R1–R4 任一）· 2 不给结论（空转/前置缺件）
 
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -37,6 +47,23 @@ SKIP_DIRS = {"venv", ".venv"}
 SELF = os.path.basename(os.path.abspath(__file__))
 
 SEMANTICS_ID = "dryrun.v1"
+
+# 分道面（**唯一真源**：判定「引用行 vs 语义行」只读这一处）────────────────────
+# 登记表**名**的三种写法：相对路径 / 文件名 / 名干（引用件常只写到名干）。
+REGISTRY_TOKENS = (
+    REGISTRY_REL.replace(os.sep, "/"),
+    os.path.basename(REGISTRY_REL),
+    os.path.splitext(os.path.basename(REGISTRY_REL))[0],
+)
+SEMANTICS_RE = re.compile(r"dry.?run|DryRun")
+
+
+def line_is_reference_only(text):
+    """命中行抹掉**登记表名引用**后 regex 不再命中 ⇒ 该行只是名字引用（不是语义站点）。"""
+    s = text
+    for tok in REGISTRY_TOKENS:
+        s = s.replace(tok, "")
+    return SEMANTICS_RE.search(s) is None
 
 
 def scan_hits(root):
@@ -54,17 +81,22 @@ def scan_hits(root):
     if p.returncode not in (0, 1):  # grep: 0=有命中 1=无命中
         return None, p.stderr.strip()
     files, lines = set(), 0
+    per_file = {}
     for ln in p.stdout.splitlines():
         lines += 1
-        f = ln.split(":", 1)[0]
-        files.add(os.path.normpath(f))
-    return (files, lines), None
+        f, _, text = ln.partition(":")
+        f = os.path.normpath(f)
+        files.add(f)
+        per_file.setdefault(f, []).append(text)
+    # 分道：一件的命中行**全是引用行** ⇒ 该件不是语义站点（不进 R1 覆盖面）。
+    refs = set(f for f, ts in per_file.items() if all(line_is_reference_only(x) for x in ts))
+    return (files, lines, files - refs, refs), None
 
 
 def check(root, registry, hits):
     """四格判据 → （问题列表, 计数）。"""
     problems = []
-    files, nlines = hits
+    files, nlines, sites, refs = hits
 
     # R4 单一定义
     rid = registry.get("id")
@@ -95,8 +127,8 @@ def check(root, registry, hits):
         if len(judge) < 10:
             problems.append("R3 %s 的「零副作用判据」为空/太短（一句话得有）" % f)
 
-    # R1 覆盖 / R2 幽灵
-    missing = sorted(files - set(reg))
+    # R1 覆盖（**语义站点**面）/ R2 幽灵（仍按**原始命中件**面 ⇒ 未放宽）
+    missing = sorted(sites - set(reg))
     ghost = sorted(set(reg) - files)
     for f in missing:
         problems.append("R1 未登记件（= 又一套语义）：%s" % f)
@@ -109,6 +141,8 @@ def check(root, registry, hits):
         "登记件": len(reg),
         "未登记": len(missing),
         "幽灵": len(ghost),
+        "语义站点": len(sites),
+        "名字引用": len(refs),
     }
     return problems, counts
 
@@ -128,9 +162,12 @@ def run(root, quiet=False):
     if hits is None:
         print("R0 扫描面为空/不可跑（空转 ⇒ 不给结论）%s" % (("：" + err) if err else ""))
         return 2
-    files, nlines = hits
+    files, nlines, sites, refs = hits
     if len(files) == 0 or len(registry.get("件") or []) == 0:
         print("R0 空转：现跑命中 %d 件 / 登记 %d 件 ⇒ 不给结论" % (len(files), len(registry.get("件") or [])))
+        return 2
+    if len(sites) == 0:   # 取数面拿不到（命中只剩名字引用）⇒ 不给结论，不许当绿
+        print("R0 空转：命中 %d 件**全是名字引用**（语义站点 0 件）⇒ 不给结论" % len(files))
         return 2
     problems, counts = check(root, registry, hits)
     if not quiet:
@@ -139,6 +176,8 @@ def run(root, quiet=False):
         print("  语义 id: %s · 现跑 %d 行 / %d 件 · 登记 %d 件"
               % (registry.get("id"), counts["现跑行"], counts["现跑件"], counts["登记件"]))
         print("  排除面（判据面自身）: %s" % SELF)
+        print("  引用面（命中行仅引用登记表名，不计入覆盖判据）: %d 件%s"
+              % (counts["名字引用"], ("：" + " · ".join(sorted(refs))) if refs else "（无）"))
         for p in problems:
             print("  · FAIL " + p)
         if not problems:
@@ -149,7 +188,7 @@ def run(root, quiet=False):
     return 1 if problems else 0
 
 
-# ── 自检（1 正控 + 6 负控）──────────────────────────────────────────────
+# ── 自检（1 正控 + 6 负控 + 4 分道）──────────────────────────────────────────────
 
 GOOD_REG = {
     "schema": "zerg/dryrun-semantics/v1",
@@ -173,6 +212,16 @@ def _mk(root, reg, files):
             fh.write("# dry-run 夹具\n" + rel + "\n")
     with open(os.path.join(root, REGISTRY_REL), "w", encoding="utf-8") as fh:
         json.dump(reg, fh, ensure_ascii=False)
+
+
+def _mk_ref(root, reg, real_files, ref_files):
+    """`_mk` + **引用件**：内容只有登记表名引用，**无** dry-run 语义字面。"""
+    _mk(root, reg, real_files)
+    for rel in ref_files:
+        p = os.path.join(root, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write("# 见登记表 %s（本件不写语义）\n" % REGISTRY_TOKENS[0])
 
 
 def self_test():
@@ -227,7 +276,32 @@ def self_test():
         rc = run(d, quiet=True)
         cases.append(("负控⑦ 登记表缺件 ⇒ rc=2", 2, rc))
 
-    print("── 自检（1 正控 + 6 负控 · 全部合成夹具，不碰真目标）──")
+    # ⑧ 分道：件头**只引用登记表名**且未登记 ⇒ rc=0（不再假红 —— 治本 GAP-20260928-101）
+    with tempfile.TemporaryDirectory() as d:
+        _mk_ref(d, GOOD_REG, ["core/a.go", "scripts/b.sh"], ["agent/ref.go"])
+        cases.append(("分道⑧ 只引用登记表名 + 未登记 ⇒ rc=0（引用≠站点）", 0, run(d, quiet=True)))
+
+    # ⑨ 分道负控：同一件里除引用外**还有真 dry-run 字面**且未登记 ⇒ rc=1（真未登记件必红）
+    with tempfile.TemporaryDirectory() as d:
+        _mk_ref(d, GOOD_REG, ["core/a.go", "scripts/b.sh"], ["agent/ref.go"])
+        with open(os.path.join(d, "agent", "ref.go"), "a", encoding="utf-8") as fh:
+            fh.write("// --dry-run = 只出计划，状态逐字不变\n")
+        cases.append(("分道⑨ 引用件里另有真 dry-run 字面 + 未登记 ⇒ rc=1", 1, run(d, quiet=True)))
+
+    # ⑩ 分道负控：命中只剩名字引用（语义站点 0）⇒ rc=2 不给结论
+    with tempfile.TemporaryDirectory() as d:
+        _mk_ref(d, GOOD_REG, [], ["core/a.go", "agent/ref.go"])
+        cases.append(("分道⑩ 命中全是名字引用（站点 0）⇒ rc=2 不给结论", 2, run(d, quiet=True)))
+
+    # ⑪ 分道：引用件**已登记** ⇒ 既不计入覆盖、也不算幽灵 ⇒ rc=0（R2 未放宽）
+    reg = json.loads(json.dumps(GOOD_REG))
+    reg["件"].append({"file": "agent/ref.go", "类": "脚注", "语义": "dryrun.v1",
+                     "零副作用判据": "本件只引用登记表名，无 dry-run 语义"})
+    with tempfile.TemporaryDirectory() as d:
+        _mk_ref(d, reg, ["core/a.go", "scripts/b.sh"], ["agent/ref.go"])
+        cases.append(("分道⑪ 引用件已登记 ⇒ rc=0（不算幽灵 · R2 面未放宽）", 0, run(d, quiet=True)))
+
+    print("── 自检（1 正控 + 6 负控 + 4 分道 · 全部合成夹具，不碰真目标）──")
     for name, want, got in cases:
         mark = "✓" if want == got else "✗"
         if want != got:
