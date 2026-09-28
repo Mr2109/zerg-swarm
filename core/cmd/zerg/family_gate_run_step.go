@@ -35,6 +35,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Mr2109/zerg-swarm/core/internal/contract"
 )
 
 // gateRunStepFields —— `gate run --step … --json` 的全部字段（K1：机器面先定）。
@@ -488,6 +490,52 @@ func gateRunScopeClosedSet(script string) ([]string, string, bool) {
 		return nil, "", false
 	}
 	return parts, list, true
+}
+
+// ── `gate run` 的 **--candidate 值域**前移校验（缺口 `GAP-20260928-157`）──────────────────────
+//
+// 病（2026-09-28 现读实测）：`--candidate <坏值>` 的闭集判在自举件 `main()` 的 arg 循环**之后**
+// （`case "${candidate_id}" in DEV-[0-9][0-9][0-9][0-9]`）⇒ 自举件走 `return 2`，脚本于是照旧往下
+// 走到**尾部软门禁**那一段 ⇒ 实测 stdout **22 行**先落地（全仓术语扫描），然后才退 2。
+// 名面已前移（缺口 `GAP-20260928-146`）· `--scope` 值面已前移（缺口 `GAP-20260928-153`）。
+//
+// 治法（**只前移校验位、不改退码、不改判词**）：exec **之前**按真源闭集核 `--candidate` 的值；
+// 坏值 ⇒ 照自举件那句判词**逐字**打印后 `return exitUsage`（2，与自举件同码），**不再 exec**。口径：
+//
+//	· 闭集**只在真源里定义一处**（`core/internal/contract/dev-candidate.json` 的 `candidate_id_pattern`
+//	  —— 自举件那句判词自己就写「照 core/internal/contract/dev-candidate.json」）⇒ 本函数复用命令面
+//	  **既有**的那份解析与判定（`contract.DevCandidate()` + `candidateIDValid`，与 `zerg dev verify`
+//	  同一口径），**不复制第二份**（复制就会漂）；
+//	  真源取不到 ⇒ **放行**：照旧交给自举件判，行为与改前逐字相同（fail-open）；
+//	· 偏序照自举件：候选闭集那一段判在 `--scope` 的 `build_steps` **之前** ⇒ 本校验挂在 `--scope`
+//	  值面前移校验**之前**（两处都坏时，先出的是自举件会先出的那一条）；
+//	· 退码**一个字节不改**：坏值过去 2、现在 2；合法值原样透传（exec 之前只是**看一眼**）；
+//	· 与名面/`--scope` 值面同一种排法：只读 `tail` + 只读真源，不写任何件、不建目录。
+func gateRunPrecheckCandidateValue(tail []string, stderr io.Writer) int {
+	id := ""
+	for i := 0; i < len(tail); i++ {
+		if tail[i] != "--candidate" {
+			continue
+		}
+		if i+1 >= len(tail) {
+			return exitOK // 缺值：自举件自己的 `need_flag_val` 口径照旧（本函数不为它下结论）
+		}
+		id = tail[i+1] // 自举件同名旗标取**最后一次**出现的值 ⇒ 本函数逐字同规
+		i++            // 值旗标：下一枚 token 就是它的值，逐字跳过
+	}
+	if id == "" {
+		return exitOK // 空值：自举件 `[ -n "${candidate_id}" ]` 不触发 ⇒ 不为它下结论
+	}
+	spec, err := contract.DevCandidate()
+	if err != nil || spec == nil {
+		return exitOK // 真源取不到 ⇒ 放行给自举件（fail-open：行为与改前逐字相同）
+	}
+	if candidateIDValid(spec, id) {
+		return exitOK
+	}
+	fmt.Fprintf(stderr, "✗ --candidate 的形态不对：%s（闭集 = DEV- 加四位十进制，逐字；照 core/internal/contract/dev-candidate.json）\n", id)
+	fmt.Fprintf(stderr, "%s: 这一发**没跑任何步骤**（stdout 0 行）—— `--candidate` 的**值**在**命令面**就校验（缺口 `GAP-20260928-157`；改前先白跑一遍尾部软门禁、stdout 22 行落地才退 2）\n", progName)
+	return exitUsage
 }
 
 // ── `zerg gate run --step <步名> --show-log`：单步档**步内读数**的可手敲正门 ──
