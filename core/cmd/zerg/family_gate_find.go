@@ -45,7 +45,13 @@ import (
 
 // gateFindFields —— `gate find --json` 的闭集九格。前八格与 `gate explain` 同义字段逐字同名
 // （机读侧拿这一格就能直接换命令用），第九格 `wiring` 是**三处接线位置**的现读结论。
-var gateFindFields = []string{"name", "scope", "mode", "verdict", "cmd", "log", "source", "next", "wiring"}
+var gateFindFields = []string{"name", "scope", "mode", "verdict", "cmd", "log", "source", "next", "wiring",
+	// ★ 治 GAP-20260928-145：机器可读面加两格 —— 命中计数 `hits` 与唯一性标记 `unique`。
+	//   病（现读）：片段命中 4 行仍 rc=0 且 stdout 照给 5 行表（超集）⇒ 只读 stdout 的
+	//   消费者拿不到「命中不唯一」这个信号，会把超集读成一条结论。
+	//   治法：**只加信息**（这两格由 `gateFindHitFace` 一处算、逐行同值）—— 不改退码（现 rc=0
+	//   有现有消费者）、不改前九格的字节与顺序、不改任何既有函数行为。
+	"hits", "unique"}
 
 // cmdGateFind —— `zerg gate find <片段> [--json <字段>]`。
 //
@@ -161,10 +167,48 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 	if len(inv.fields) == 0 {
 		inv.fields = gateFindFields
 	}
+	// ★ 2026-09-28（缺口 `GAP-20260928-145`）：机器可读面逐行盖「命中计数 + 唯一性标记」两格。
+	//   口径只有一处（`gateFindHitFace`）—— 表/JSON 两条路都走 `listCmd`，故两处**同时**有这两格。
+	gateFindStampHits(rows)
 	fmt.Fprintf(stderr, "%s: 片段 %q 命中 %d 行（现读 add_step 行 %d 条 · 三处接线面 = precommit / all.sh / real-gates.sh）\n",
 		progName, probe, len(rows), len(decls))
+	if _, u := gateFindHitFace(len(rows)); u == gateFindUniqueNo {
+		// 「命中不唯一」的那一档：机器面字段已给（hits/unique），这里再把**人面**也说清 ——
+		// 只读 stdout 的消费者拿到的表是**超集**，不能读成一条结论。
+		fmt.Fprintf(stderr, "%s: **命中不唯一**（%d 行）—— 机器面 `hits=%d · unique=%s`：读 stdout 的消费者别把这 %d 行读成一条结论\n",
+			progName, len(rows), len(rows), gateFindUniqueNo, len(rows))
+	}
 	// 表/JSON 两条路都走 `listCmd`（与 `gate explain` 同一入口）⇒ 默认面与机器面**不各写一份**。
 	return listCmd(inv, stdout, stderr, gateFindFields, rows)
+}
+
+// ── 「命中唯一 / 命中多行」在机器可读面上的**唯一一处**定义（缺口 `GAP-20260928-145`）──
+//
+// 病（父代理 2026-09-28 现读）：`gate find check-glossary` 片段命中 4 行仍 `rc=0`、stdout 照给
+// 5 行表（**超集**）⇒ 只读 stdout 的消费者手上没有「命中不唯一」这个机器可辨信号，会把
+// 「多行的并集」读成一条结论（假绿）。
+//
+// 治法：**只加信息、不改退码**（现 `rc=0` 有现有消费者 —— 改码会破它们）。
+// 两格由本处一处算：`hits` = 命中行数（十进制串）· `unique` = `yes`/`no`（机器面只认这两个字，
+// 不做近似匹配）。表路（TSV 末两列）与 `--json` 路都走 `listCmd` ⇒ 两处**同时**有这两格，
+// 口径不另写第二份。
+const gateFindUniqueNo = "no"
+
+// gateFindHitFace —— 命中行数 ⇒ （`hits`, `unique`）两格的**唯一**算法。
+func gateFindHitFace(n int) (string, string) {
+	if n == 1 {
+		return "1", "yes"
+	}
+	return fmt.Sprintf("%d", n), gateFindUniqueNo
+}
+
+// gateFindStampHits —— 把这两格盖到每一行上（逐行同值：它们是**这一发**的读数，不是某行的属性）。
+func gateFindStampHits(rows []map[string]string) {
+	hits, unique := gateFindHitFace(len(rows))
+	for _, r := range rows {
+		r["hits"] = hits
+		r["unique"] = unique
+	}
 }
 
 // gateFilesMatching —— `scripts/gates/` 下件名含片段的真件（仓根相对路径 · 排序后返回）。

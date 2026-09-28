@@ -282,6 +282,18 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 	// 空声明（没给 `--file`）不加行 —— 既有回执逐字不变。
 	if len(rec.Files) > 0 {
 		fmt.Fprintf(stderr, "本提案声明件: %s\n", strings.Join(rec.Files, " · "))
+	} else {
+		// ★ `GAP-20260928-154`：**空声明提案** —— 在**提出的这一刻**当场说清「提得成、但用不了」。
+		//   病灶（缺口正文逐字）：「提案不带声明旗标时声明清单为空，随后写件一律退 2 越界写被拒：
+		//   提案可提但不可用（今夜两次踩中，废两张提案号）」。
+		//   口径：声明的改件清单是 `zerg dev edit` 的唯一作用域真源（empty ⇒ 无件可写）——
+		//   这一条与 `dev edit` 侧那句「越界写被拒 … 声明的是：（未声明）」同源，不新立第二套说法。
+		//   ★ **退码一字不变**（提得成仍退 0）：「当场拒提」= 把 0 改成非 0 ＝ **行为面** ⇒ 登记待拍，
+		//   不在本单擅动（见回执「待拍项」）。
+		fmt.Fprintf(stderr, "★ 警告：本提案**声明件为空**（没给 `--file`）—— 提案**提得成、但用不了**：\n")
+		fmt.Fprintf(stderr, "  `dev edit --proposal %s --file <件>` 对**任何**件都会拒执（**越界写被拒** · 退码 2）——\n", rec.ID)
+		fmt.Fprintf(stderr, "  声明的改件清单（`--file <仓内相对路径>`）是 `dev edit` 的**唯一作用域真源**：清单为空 ⇒ 一个件也写不进去。\n")
+		fmt.Fprintf(stderr, "  下一步：带上声明重提一枚（`--file` 可多枚）；这一枚 %s **请作废，别拿去写件**（带了声明的那一条路不受影响）。\n", rec.ID)
 	}
 	fmt.Fprintf(stderr, "零副作用口径：本命令**不触主控**（零 HTTP）· **不写入仓** —— 产出后系统状态逐字不变（§17.3 铁律③ 判据）\n")
 	return exitOK
