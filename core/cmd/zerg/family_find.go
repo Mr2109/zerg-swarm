@@ -91,6 +91,17 @@ func cmdFind(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	// 本族只认 `--type` / `--root` / `--limit` 三枚（用法串里写着的那三枚）。
+	// 解析器收下来、本命令**不消费**的（例 `--glob`：它归 `code find` 用，`find` 这里从没接过）
+	// 过去被**静默吞** ⇒ rc=0、输出与「没给」逐字相同（缺口 `GAP-20260927-16`：同一个命令上
+	// 并存两套命运 —— 不在名表里的会被点名退 2，在名表里却不归本命令用的却一声不响）。
+	// 现按 dispatch 那条「未知旗标 2」的**同一形状**归一。判在遍历之前 ⇒ 零副作用。
+	if bad := foreignFlag(inv, "--type", "--root", "--limit"); bad != "" {
+		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, bad)
+		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+		return exitUsage
+	}
+
 	// --limit 校验（正整数，默认 200）。
 	limit := findRowCap
 	if lim := strings.TrimSpace(inv.flagVal("--limit")); lim != "" {
@@ -170,7 +181,9 @@ func cmdFind(inv *invocation, stdout, stderr io.Writer) int {
 	})
 
 	fmt.Fprintf(stderr, "%s: 扫了 %d 个子目录 · 命中 %d 件\n", progName, dirsScanned, hits)
-	if len(rows) < hits {
+	// cut —— 本跑**真裁了件**（命中件数比这一页多 ⇒ 一页硬顶命中）。
+	cut := len(rows) < hits
+	if cut {
 		fmt.Fprintf(stderr, "（本页只列前 %d 件 —— 收窄：--root / --type / --limit）\n", len(rows))
 	}
 
@@ -179,7 +192,38 @@ func cmdFind(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 零命中 —— 这不是错，是「没有」（退码 1）\n", progName)
 		return exitFail
 	}
-	return listCmd(inv, stdout, stderr, []string{"relpath", "size", "mtime"}, rows)
+	// ★ 截断**自报**（与同族 `code find` 的**同一处判据 · 同一三件**，不自造第二套写法）。
+	//
+	// 病根（现读实测 · 2026-09-28）：`zerg find a --limit 5` 命中 1183 件时 `items` 只有 5 条，
+	// 而包封 `truncated` 恒 `false`、`warnings[]` 恒空、`meta` 无 `truncated_detail`
+	// ⇒ 机器面拿到的是一份「看起来完整」的残缺清单，与全量输出**同形**（脚本/子代理据此
+	// 判「有/无」正好判错）。人面那一句 `（本页只列前 N 件…）` 只在 stderr ⇒ 机检读不到。
+	//
+	// 口径（**只用既有的面** —— 不加新旗标 ✗ · 不动 `findRowCap` 这个上限值 ✗）：
+	//	① 机器面真值 ← 复用既有包封件（顶层六键**一个不多一个不少** ✗ 第七键）：
+	//	   `truncated=true`（`inv.markTruncated()` 是**唯一**置位口）
+	//	   + `warnings[]` 一条「已裁 N 件」（与 `truncated=true` 同批）
+	//	   + `meta.truncated_detail` 四键（与 `code find` 逐字同形 · 唯一判定口 `truncatedDetailJudge`）。
+	//	   `cut_from` 取 `tail`：命中**攒满一页之后的那些被丢掉**（cap 判在 `len(rows) < limit`）；
+	//	   三数自校：`kept_items + dropped_items == total_items`。
+	//	② 人面末行 ← 见 `listCmd` 之后那一句：表格出完才说，**明说本页不是全集**。
+	//
+	// 没裁 ⇒ 三件**一律不写**（余量不是「裁了」· 缺席 ≠ 假值）：未截断两面的字节与今日**逐字相同**。
+	if cut {
+		inv.markTruncated()
+		inv.warnf("已裁 %d 件（find 一页 %d 件 / 真命中 %d 件）", hits-len(rows), len(rows), hits)
+		inv.metaAddJSON("truncated_detail", fmt.Sprintf(
+			`{"cut_from":"tail","kept_items":%d,"dropped_items":%d,"total_items":%d}`,
+			len(rows), hits-len(rows), hits))
+	}
+	rc := listCmd(inv, stdout, stderr, []string{"relpath", "size", "mtime"}, rows)
+	if cut {
+		// 人面末行：表格之后再钉一句 —— 「这一页不是全集」不许靠读者自己推。
+		fmt.Fprintf(stderr,
+			"%s: ⚠ 本页只列前 %d 件 · 真命中 %d 件（已裁 %d 件）—— **这不是全集**，别据此下「有/无」结论；要收窄：--root / --type / --limit\n",
+			progName, len(rows), hits, hits-len(rows))
+	}
+	return rc
 }
 
 // findHumanSize —— `find` 人面用的体积（只展示，判据一律用字节数）。
