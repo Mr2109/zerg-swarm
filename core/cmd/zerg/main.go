@@ -2122,6 +2122,60 @@ func init() {
 			endpoint: "",
 			run:      cmdGapIdeaAdd,
 		},
+		// ★ 批2 第二片（2-3 出口面 · 2026-09-28）：候选池三条出口 + 一条读数（设计稿 §11.3「出口」+ §4 判据 1）。
+		//   ★ **`promote` 复用 `gap add` 的既有校验（不许绕）**（§11.3 黑体）⇒ 与 `cmdGapAdd` 共用
+		//   `family_gap.go:gapAddApply`（六必填 / impact 闭集 / prio 缺省 / 人面禁写 state / 判据命令树解析 /
+		//   同 fp 幂等与 `14` / 审计先落盘 / 读回对拍）—— 实现件 = `cmdGapIdeaPromote`。
+		{
+			path:     []string{"gap", "idea", "show"},
+			kind:     "GapIdeaShow",
+			summary:  "候选池**单条全文**（只读 · 一字不截）：cid / 来源 / 状态 / 指纹 / 落池时刻 / 存活 / 点名件 / 症状 / **提升后的 `gap_id`**（`pool` 与 `ledger` 两边点名）· 池内没有这个 cid ⇒ 2（同族 `gap show` 口径）· 池件不在盘 ⇒ 8",
+			usage:    "zerg gap idea show <cid> [--json <字段>]",
+			arity:    "any",
+			args:     []string{"候选 id（**恰好一条** —— 本面只取一条）"},
+			fields:   gapIdeaShowFields,
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapIdeaShow,
+		},
+		{
+			path:     []string{"gap", "idea", "promote"},
+			kind:     "GapIdeaPromote",
+			summary:  "池内一条候选 ⇒ **正式账**（写面 · `--dry-run` 恒 0 · 缺 `--yes` fail-closed 2）：**复用 `gap add` 的既有校验与落账路径**（`gapAddApply` —— 六必填 / `impact` 六值闭集 / 人面禁写 `state` / 判据命令树解析 / 同 fp 幂等与 `14` / 审计先落盘 / 读回对拍，一条不绕 · 设计稿 §11.3 黑体）· 只有 `status=pending` 可提升（其余 ⇒ 2 并点名当前 status）· 提升后池行**不删**：`status=promoted` + 记 `gap_id`（先落账、后改池行）",
+			usage:    "zerg gap idea promote <cid> --handmade <命令原样> --impact <六值之一> --want-family <族> --want-action <动作> [--want-argv <段>…] [--prio P0|P1|P2] --repro-cmd <命令> --verify-cmd <命令> [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"候选 id（**恰好一条**）；其余六必填与本族 `gap add` 逐字同款（症状取自池件那一格 `raw`）"},
+			fields:   gapIdeaPromoteFields,
+			danger:   &dangerSpec{dangerD2, "候选 id（池内一条）+ 缺口 fp", "走 `gap add` 那条路往真源（`<状态目录>/zerg-cli-gaps.jsonl`）追加一行 + 审计一行（可逆：删那一行 / 审计历史行不删），并把池件那一行置 `status=promoted` + 记 `gap_id`（池行**不删**）；池件写不进 ⇒ 退 8 并如实报「正式账已落」", "设计-缺口账与自进化-v2.0-20260928.md §11.3（`promote` **复用 `gap add` 的既有校验（不许绕）**）· 批2 第二片（2026-09-28）· 同族写面先例 `gap add`（`H-10`：`--yes` 是命令行确认档，不是批准件）", false},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapIdeaPromote,
+		},
+		{
+			path:     []string{"gap", "idea", "discard"},
+			kind:     "GapIdeaDiscard",
+			summary:  "池内一条候选 ⇒ `status=expired`（写面 · `--dry-run` 恒 0 · 缺 `--yes` fail-closed 2）：**不是删件** —— 池行不删、其余行逐字节不动、真源一个字节不碰 · 只有 `status=pending` 可作废（其余 ⇒ 2 并点名当前 status）",
+			usage:    "zerg gap idea discard <cid> [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"候选 id（**恰好一条**）"},
+			fields:   gapIdeaDiscardFields,
+			danger:   &dangerSpec{dangerD2, "候选池件（`<状态目录>/zerg-cli-gap-candidates.jsonl`）点名那一行", "把池内该行 `status` 置 `expired`（可逆：照 `gap idea show` 的读数改回 `pending`）；池行**不删**、真源 `zerg-cli-gaps.jsonl` 与审计**一个字节不动**", "设计-缺口账与自进化-v2.0-20260928.md §11.3（出口面 · `status` 四值 `pending|promoted|expired|merged`）· 批2 第二片（2026-09-28）· 同族写面先例 `gap add` / `gap idea add`", false},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapIdeaDiscard,
+		},
+		{
+			path:     []string{"gap", "idea", "stats"},
+			kind:     "GapIdeaStats",
+			summary:  "设计稿 §4 判据 1 的读数面（**只报告、不进退码**）：池内各 `status` 计数 + **来源分布**（`source` 四值）+ **候选→入账转换率**（`promoted / (promoted+expired+pending)`，分母逐字写出）· 只读（不写池、不写真源、不写审计）· 池件不在盘 ⇒ 8",
+			usage:    "zerg gap idea stats [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（无位置参数：范围 = 整池）"},
+			fields:   gapIdeaStatsFields,
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapIdeaStats,
+		},
 		// ---- 度量与排序面（组1 序12 · `承接自-v2.5.11/承接-度量与排序面-20260921.md:40-42` · 2026-09-24）----
 		// 与 `impact`（变更影响面）**配对用、不合并成一条**：前者回答「改这一处会牵动谁」（别改坏），
 		// 本命令回答「**该改哪**」（把四类读数归一成一个可比排序）。只读 ⇒ 不写 `danger`
