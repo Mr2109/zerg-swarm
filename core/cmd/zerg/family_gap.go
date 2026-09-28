@@ -3703,3 +3703,323 @@ func gapAssignUnitsText(rows []gapAssignItem) string {
 	}
 	return strings.Join(seen, " · ")
 }
+
+// ── ⒡ `zerg gap plan <件|模块>`（**作业单六件** · 只读面 · 批3 第二片 · 2026-09-28）──────────────
+//
+// 设计出处（唯一真源 · `Zerg-内部文档/…/v2.5.13/设计-缺口账与自进化-v2.0-20260928.md`）：
+//
+//	§3.C `C1`（作业单：无 `plan` ⇒ 建议 `zerg gap plan <件|模块>`：该桶全部未闭 + 出口判据（该桶归零）
+//	  + 建议允许面/禁碰面；直接产出派单模板）· §11.3（**作业单六件** · 逐字：① 该桶全部未闭（按 prio 排序）
+//	  ② 出口判据 = 该桶归零 ③ 建议允许面（件清单）④ 禁碰面 ⑤ 占用状态（该件是否已有在飞卵）
+//	  ⑥ 派单模板骨架）· §4 判据 2（`plan` 输出的作业单必须带**占用状态** · `M-32` 同改文件只许一路）。
+//
+// 本面的口径（逐条照设计稿 · 不自造）：
+//
+//	① **只读面**：一字不写真源、不写审计（与 `gap ls` / `gap status` / `gap assign ls` 同档）。
+//	② **桶** = 选择器命中的账内条目。**选择器三处收敛到一对值**（选择器 + 面）：
+//	   位置参数（首选 · 件路径**或**模块目录前缀 —— `--unit` 面的两形态）/ `--unit <值>` / `--module <值>`；
+//	   `--module` 在场 ⇒ 面 = 模块（前导匹配 `gapLsModuleHit`），否则面 = 件（两形态 `gapLsUnitHit`）
+//	   —— **与 `gap ls` 逐字同一条判据**（不另造一套前缀匹配）。
+//	③ **未闭** = `state == 仍缺`（与 `gap status` 的 `Open` 计数**逐字同口径**）。`已派` 等其余态
+//	   不进 ① 清单，落在 ⑤ 占用面（设计稿把「占用」单列为一件）。
+//	④ **零未闭 ≠ 空件**：桶内有条目而 `仍缺 == 0` ⇒ **照出六件、真报「未闭 0」**（退码 0）；
+//	   桶内**一条都没有** ⇒ 退码 1（「选择器没命中任何条目」是选择器的事，不是「零未闭」）。
+//	⑤ 截断自报（`--top` 一页硬顶 = `gapLsRowCap` · **分页只在人面** ⇒ 机器面报 `truncated_detail`）。
+//	⑥ 派生面**逐条可现算**：清单（①）/ 允许面（③）/ 占用（⑤）全部从真源现读现算，**不自填数字**。
+//
+// 退码：0 出单 / 1 选择器零命中或账内越界 / 2 用法错（缺选择器 / `--top` 非正整数 / `--json` 不给字段）/ 8 真源读不到。
+
+// gapPlanDefaultTop —— `--top` 缺省一页条数（与 `gap status` 的 `gapStatusDefaultTop` 同值 20）。
+const gapPlanDefaultTop = 20
+
+// gapPlanFields —— `--json` 可取字段：前六格是**条目**字段（① 每行 = 一条未闭）；后十格是**桶级六件**
+// 的派生值（②~⑥ + 选择器/面/桶量）—— 逐行**重复**给出（机器面要一次取到六件，不必再读 meta）。
+// ②~⑥ 同时也进 `meta` 子键（人面与 meta 两条路都齐）。
+var gapPlanFields = []string{"id", "prio", "state", "unit", "module", "summary",
+	"selector", "face", "bucket", "open", "criterion", "allow", "forbid", "assigned", "deadline", "template"}
+
+// gapPrioRank —— **复用** `family_gap_export.go:212` 的那一枚（P0<P1<P2 · 未知排最后）：
+// 「按 prio 排序」（设计稿 ①）与导出面的排序键**同源**，不另造第二把尺。
+
+// gapPlanSelector —— 选择器与面：位置参数（首选）→ `--unit <值>` → `--module <值>` 三处收敛到一对值。
+// `--module` 在场（无论值）⇒ 面 = 模块；否则面 = 件（`--unit` 的两形态本身也吃目录前缀 ⇒ 位置参数给
+// 模块目录前缀同样命中，正是设计稿「件路径或模块目录前缀」那一句）。
+func gapPlanSelector(inv *invocation) (string, string) {
+	sel := ""
+	if len(inv.args) > 0 {
+		sel = strings.TrimSpace(inv.args[0])
+	}
+	face := gapStatusByUnit
+	if inv.hasFlag("--module") {
+		face = gapStatusByModule
+	}
+	if sel == "" {
+		if u := strings.TrimSpace(inv.flagVal("--unit")); u != "" {
+			sel = u
+		} else if m := strings.TrimSpace(inv.flagVal("--module")); m != "" {
+			sel, face = m, gapStatusByModule
+		}
+	}
+	return sel, face
+}
+
+// gapPlanHit —— 桶命中的**唯一**判据（与 `gap ls` 的两轴收窄同源：面 = 模块走 `gapLsModuleHit`，否则走 `gapLsUnitHit`）。
+func gapPlanHit(r gapRecord, sel, face string) bool {
+	if face == gapStatusByModule {
+		return gapLsModuleHit(r, sel)
+	}
+	return gapLsUnitHit(r, sel)
+}
+
+// gapPlanQueryText —— `meta.query` 的回显（现读选择器三格 · 序 = selector / face / top）。
+func gapPlanQueryText(sel, face string, top int) string {
+	return "{" + jstr("selector") + ":" + jstr(sel) + "," + jstr("face") + ":" + jstr(face) +
+		"," + jstr("top") + ":" + strconv.Itoa(top) + "}"
+}
+
+// gapPlanDeadline —— 派单模板里的「时限」（**具体绝对日期** · 不是占位符）：出单时刻 + 24h 的自然日。
+func gapPlanDeadline() string { return time.Now().Add(24 * time.Hour).Format("2006-01-02") }
+
+// gapPlanForbid / gapPlanForbidWhy —— ④ 禁碰面的**建议值**与**理由**（设计稿 ④ 要「建议值 + 理由」）。
+// 值面写死（本面是只读建议面 · 不猜调用方的仓外布局）；理由逐条点名为什么这几处禁碰。
+const (
+	gapPlanForbid    = "仓内件（除③允许面所列外全禁） · bin/ · scripts/build/build-all.sh · 真源账 zerg-cli-gaps.jsonl（本面只读）"
+	gapPlanForbidWhy = "卵只许改③给出的件（设计稿 §11.4 六件 ④）；真源账只由 `zerg gap` 正门写、**禁手搓**；" +
+		"`bin/` 与 `scripts/build/build-all.sh` 是共享制品（§8 `M-32`：同改文件只许一路）"
+)
+
+// gapPlanCount —— 桶内某 `prio` 的条数（① 的近邻量化）。
+func gapPlanCount(rs []gapRecord, prio string) int {
+	n := 0
+	for _, r := range rs {
+		if r.Prio == prio {
+			n++
+		}
+	}
+	return n
+}
+
+// gapPlanMetaAdd —— `gap plan` 机器面信封字段的**唯一写入口**（只走 `metaAdd*` 既有口子 ⇒ 顶层六键不动）。
+// 五格与 `gap ls` **同形**（`total` / `hits` / `query` / `query_ts` / `ledger_sha16`），另加本面六件的派生格
+// （selector / face / bucket / criterion / allow / forbid / assigned / deadline / template）—— 缺一格六件就凑不齐。
+func gapPlanMetaAdd(inv *invocation, sel, face string, top, bucketN, total, hits int,
+	criterion, allow, assigned, deadline, template, ledgerPath string) {
+	inv.metaAddJSON("total", strconv.Itoa(total))
+	inv.metaAddJSON("hits", strconv.Itoa(hits))
+	inv.metaAddJSON("query", gapPlanQueryText(sel, face, top))
+	inv.metaAddStr("query_ts", gapNow())
+	inv.metaAddStr("ledger_sha16", gapLsLedgerSHA16(ledgerPath))
+	inv.metaAddStr("selector", sel)
+	inv.metaAddStr("face", face)
+	inv.metaAddJSON("bucket", strconv.Itoa(bucketN))
+	inv.metaAddStr("criterion", criterion)
+	inv.metaAddStr("allow", allow)
+	inv.metaAddStr("forbid", gapPlanForbid)
+	inv.metaAddJSON("assigned", assigned)
+	inv.metaAddStr("deadline", deadline)
+	inv.metaAddStr("template", template)
+}
+
+// cmdGapPlan —— `zerg gap plan <件|模块>`：把一件（或一模块）的未闭账变成**六件式作业单**（只读面）。
+func cmdGapPlan(inv *invocation, stdout, stderr io.Writer) int {
+	// ① 用法面（在任何盘面动作之前）
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapPlanFields, ","))
+		return exitUsage
+	}
+	if len(inv.args) > 1 {
+		inv.setErr("usage", "too_many_args", "多余位置参数")
+		fmt.Fprintf(stderr, "%s: `gap plan` 收**恰好一个**选择器（多给了 %d 枚：%q）\n",
+			progName, len(inv.args)-1, inv.args[1])
+		return exitUsage
+	}
+	sel, face := gapPlanSelector(inv)
+	if sel == "" {
+		inv.setErr("usage", "missing_required", "缺选择器")
+		fmt.Fprintf(stderr, "%s: `gap plan` 缺选择器（件路径 / 模块目录前缀）\n", progName)
+		fmt.Fprintf(stderr, "用法：zerg gap plan <件路径|模块目录前缀> [--module <模块前缀>] [--top <N>] [--json <字段>]\n")
+		return exitUsage
+	}
+	top := gapPlanDefaultTop
+	if v := strings.TrimSpace(inv.flagVal("--top")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			inv.setErr("usage", "bad_top", "--top 要给正整数")
+			fmt.Fprintf(stderr, "%s: `--top %s` 不是正整数（本族口径 = 用法错 2）\n", progName, v)
+			return exitUsage
+		}
+		top = n
+	}
+	if top > gapLsRowCap {
+		top = gapLsRowCap
+	}
+
+	// ② 读真源（读不到 ⇒ 8 · **不许当绿**）
+	led, rc := gapReadLedgerOrDie(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
+	// ③ 账内闭集自查（越界 ⇒ 判红 1 + 点名到行 · 与 `gap ls`/`gap status` 同一条判据）
+	for i, r := range led.Recs {
+		if f, v, bad := gapOutOfRangeOne(r); bad {
+			inv.setErr("failed", "ledger_out_of_range", fmt.Sprintf("第 %d 行 %s 越界", led.No[i], f))
+			fmt.Fprintf(stderr, "账内越界：%d %s\n", led.No[i], f)
+			fmt.Fprintf(stderr, "  %s 的值 %q 不在闭集里（%s）—— 真源只由命令写（防呆③ 同源）\n",
+				f, v, gapClosedText(gapClosureOf(f)))
+			return exitFail
+		}
+	}
+
+	// ④ 分桶（选择器命中 —— 与 `gap ls` 同一条判据）· 同时收①未闭与③件清单
+	bucket := []gapRecord{}
+	open := []gapRecord{}
+	units := []string{}
+	for _, r := range led.Recs {
+		if !gapPlanHit(r, sel, face) {
+			continue
+		}
+		bucket = append(bucket, r)
+		if r.Unit != "" && !gapIn(units, r.Unit) {
+			units = append(units, r.Unit)
+		}
+		if r.State == gapStOpen {
+			open = append(open, r)
+		}
+	}
+	// ① 排序：prio（P0→P1→P2）· 同 prio 按缺口号
+	sort.SliceStable(open, func(i, j int) bool {
+		a, b := gapPrioRank(open[i].Prio), gapPrioRank(open[j].Prio)
+		if a != b {
+			return a < b
+		}
+		return open[i].ID < open[j].ID
+	})
+	// ⑤ 占用状态（桶内 `已派` 条 · 逐条点名卵号 —— 读账内 `state=已派` 与派单登记）
+	occIDs, occEggs, occOcc := []string{}, []string{}, []string{}
+	for _, r := range bucket {
+		if r.State != gapStAssigned {
+			continue
+		}
+		f, _, ok := gapAssignOf(r)
+		egg := f.Egg
+		if !ok {
+			egg = "（无登记 —— 孤儿）"
+		}
+		occIDs = append(occIDs, r.ID)
+		occEggs = append(occEggs, egg)
+		occOcc = append(occOcc, f.Occupies)
+	}
+
+	// ⑤-a 选择器零命中（桶内一条都没有）⇒ 退码 1（**与「零未闭」是两回事**）
+	if len(bucket) == 0 {
+		inv.changed = boolPtr(false)
+		inv.setErr("failed", "no_match", "选择器零命中")
+		fmt.Fprintf(stderr, "零命中：账内 %d 条 · 选择器 %q（面 %s）相符 0 条（退码 1 —— 「没有」不是「零未闭」，也不是绿）\n",
+			len(led.Recs), sel, face)
+		inv.warnf("该选择器在账里没有任何条目 —— 请先 `zerg gap add` 入账，或用 `zerg gap status` 找有料的桶")
+		if inv.jsonGiven {
+			gapPlanMetaAdd(inv, sel, face, top, 0, 0, 0, "", "", "[]", "", "", led.Path)
+			emitEnvelopeWith(stdout, find(inv.path), "[]", 0, inv)
+		}
+		return exitFail
+	}
+
+	inv.changed = boolPtr(false)
+	// ② 出口判据（固定写「该桶未闭归零」并回显现读未闭数）
+	criterion := fmt.Sprintf("该桶未闭归零（现读未闭数 = %d）", len(open))
+	// ③ 建议允许面（该桶涉及的件清单）
+	allow := "（该桶条目都未点名可改件 —— 兜底桶：无件可放）"
+	if len(units) > 0 {
+		allow = strings.Join(units, ",")
+	}
+	deadline := gapPlanDeadline()
+	// ⑤-b 占用那一行/那一格
+	occDetail := "无（该桶 0 条已派 · 无在飞卵占用）"
+	if len(occIDs) > 0 {
+		parts := make([]string, 0, len(occIDs))
+		for i := range occIDs {
+			parts = append(parts, fmt.Sprintf("%s ← 卵 %s", occIDs[i], occEggs[i]))
+		}
+		occDetail = strings.Join(parts, " · ")
+	}
+	occJSONParts := make([]string, 0, len(occIDs))
+	for i := range occIDs {
+		occJSONParts = append(occJSONParts, "{"+jstr("id")+":"+jstr(occIDs[i])+","+jstr("egg")+":"+jstr(occEggs[i])+
+			","+jstr("occupies")+":"+jstr(occOcc[i])+"}")
+	}
+	occJSON := "[" + strings.Join(occJSONParts, ",") + "]"
+	// ⑥ 派单模板骨架（目标 + 允许面 + 禁碰面 + 出口判据 + 时限 · **无占位符符号**）
+	template := fmt.Sprintf(
+		"派单骨架（可直接丢给子代理）\n"+
+			"目标：清空桶 %s（面 %s）的全部未闭缺口（现读未闭 %d 条 · 逐条见①）\n"+
+			"允许面：%s\n"+
+			"禁碰面：%s\n"+
+			"出口判据：该桶未闭归零（现读未闭数 = %d）\n"+
+			"时限：到 %s（绝对日期 · 到点停手）\n"+
+			"附加纪律：禁 browser 系工具 · 改动只在仓外副本 · 走正门（不得手搓）· 账只由 zerg gap 正门写",
+		sel, face, len(open), allow, gapPlanForbid, len(open), deadline)
+
+	// ⑤ 一页硬顶（只裁①清单 · 分页只人面）
+	totalOpen := len(open)
+	hits, cut := totalOpen, false
+	if hits > top {
+		hits, cut = top, true
+	}
+	shown := open
+	if cut {
+		shown = open[:hits]
+	}
+	gapPlanMetaAdd(inv, sel, face, top, len(bucket), totalOpen, hits, criterion, allow, occJSON, deadline, template, led.Path)
+	if cut {
+		inv.markTruncated()
+		inv.warnf("已裁 %d 条（gap plan 一页 %d 条 / 真命中 %d 条）", totalOpen-hits, top, totalOpen)
+		inv.metaAddJSON("truncated_detail", fmt.Sprintf(
+			`{"cut_from":"tail","kept_items":%d,"dropped_items":%d,"total_items":%d}`, hits, totalOpen-hits, totalOpen))
+	}
+
+	if inv.jsonGiven {
+		rows := []map[string]string{}
+		for _, r := range shown {
+			rows = append(rows, map[string]string{
+				"id": r.ID, "prio": r.Prio, "state": r.State,
+				"unit": r.Unit, "module": r.Module, "summary": r.Symptom,
+				"selector": sel, "face": face, "bucket": strconv.Itoa(len(bucket)),
+				"open": strconv.Itoa(totalOpen), "criterion": criterion, "allow": allow,
+				"forbid": gapPlanForbid, "assigned": occJSON, "deadline": deadline, "template": template,
+			})
+		}
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
+	}
+
+	// 人面（六件 · 逐件带件号）
+	fmt.Fprintf(stdout, "作业单（gap plan · 选择器 %q · 面 %s）\n", sel, face)
+	if cut {
+		fmt.Fprintf(stdout, "  桶         : %d 条（未闭 %d 条 · 本页 %d 条 —— 已裁 %d 条，**这不是全集**）\n",
+			len(bucket), totalOpen, hits, totalOpen-hits)
+	} else {
+		fmt.Fprintf(stdout, "  桶         : %d 条（未闭 %d 条）\n", len(bucket), totalOpen)
+	}
+	fmt.Fprintf(stdout, "  ① 该桶未闭 : %d 条 —— P0 %d · P1 %d · P2 %d（按 prio 排序 · 同 prio 按缺口号）\n",
+		totalOpen, gapPlanCount(open, "P0"), gapPlanCount(open, "P1"), gapPlanCount(open, "P2"))
+	for _, r := range shown {
+		fmt.Fprintf(stdout, "      %s  %s  %s  %s  %s\n",
+			r.ID, r.Prio, r.State, orDash(r.Unit), truncateDisplay(r.Symptom, 40))
+	}
+	if cut {
+		fmt.Fprintf(stdout, "      ⚠ 本页只列前 %d 条 · 真命中 %d 条（已裁 %d 条）—— **这不是全集**，要收窄用 `--top`\n",
+			hits, totalOpen, totalOpen-hits)
+	}
+	fmt.Fprintf(stdout, "  ② 出口判据 : %s\n", criterion)
+	fmt.Fprintf(stdout, "  ③ 建议允许面: %s\n", allow)
+	fmt.Fprintf(stdout, "  ④ 禁碰面   : %s\n", gapPlanForbid)
+	fmt.Fprintf(stdout, "      理由    : %s\n", gapPlanForbidWhy)
+	fmt.Fprintf(stdout, "  ⑤ 占用状态 : %s\n", occDetail)
+	fmt.Fprintf(stdout, "  ⑥ 派单模板 :\n")
+	for _, l := range strings.Split(template, "\n") {
+		fmt.Fprintf(stdout, "      %s\n", l)
+	}
+	fmt.Fprintf(stdout, "  真源       : %s（**本面一字不碰** · 只读）\n", led.Path)
+	return exitOK
+}
