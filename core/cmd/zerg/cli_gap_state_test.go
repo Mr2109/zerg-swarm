@@ -20,6 +20,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,7 +97,8 @@ func TestGapStateFacesSetStateAndNote(t *testing.T) {
 		t.Errorf("改态**不许**增行（真源仍应 1 行）")
 	}
 	r := gapRecOf(t, ledger, id)
-	if r["state"] != "已解" || r["solved_evidence"] != "e1" || r["solved_at"] == nil || r["solved_at"] == "" {
+	// ⑤ 批4 第五片：销案证据形态钉死 ⇒ `solved_evidence` 落的是写死形态串（两态对拍 + 散文）。
+	if r["state"] != "已解" || !strings.Contains(fmt.Sprint(r["solved_evidence"]), "散文=e1") || r["solved_at"] == nil || r["solved_at"] == "" {
 		t.Errorf("改态落位不对：state=%v solved_at=%v solved_evidence=%v", r["state"], r["solved_at"], r["solved_evidence"])
 	}
 	rows := gapAuditLines(t, audit)
@@ -110,7 +112,13 @@ func TestGapStateFacesSetStateAndNote(t *testing.T) {
 
 	// ⑤ 幂等：同 id 同态同证据 ⇒ 0「无变化」· 真源 sha 与审计行数都不动
 	sha1, na1 := sha256Of(t, ledger), len(gapAuditLines(t, audit))
-	rc, out, _ = gapRun(t, "gap", "set-state", id, "--state", "已解", "--evidence", "e1", "--yes")
+	// ★ 2026-09-29 随动（批4-5 销案证据形态钉死）：新账销案的 `solved_evidence` 落的是**写死形态串**
+	//   （两态对拍 + 散文，见 `family_gap_state.go` 的 `gapTwoStateLanded`）⇒ 幂等比对的那一格
+	//   = `销案两态对拍 · 改前{…} · 改后{…} · 散文=e1` ⇒ 这一发必须带**与真跑那一发逐字相同**的一对读数，
+	//   否则证据格不同 ⇒ 不走幂等、直撞销案两态闸（退 2）。
+	rc, out, _ = gapRun(t, "gap", "set-state", id, "--state", "已解", "--evidence", "e1",
+		"--before-read", "cmd=zerg gap ls --state 仍缺 · rc=1 · reading=改前该号列于仍缺",
+		"--after-read", "cmd=zerg gap ls --state 已解 · rc=0 · reading=改后该号列于已解", "--yes")
 	if rc != 0 || !strings.Contains(out, "无变化") {
 		t.Errorf("同态同证据要 0「无变化」，得到 rc=%d stdout=%q", rc, out)
 	}
