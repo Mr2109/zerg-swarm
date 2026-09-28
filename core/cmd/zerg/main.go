@@ -2051,6 +2051,25 @@ func init() {
 			endpoint: "",
 			run:      cmdGapNote,
 		},
+		// ★ `gap backfill-unit` —— **存量回填三键**（2026-09-28 · 批1 第二片）：第一片只把 `unit` / `module` /
+		//   `unit_source` 落进**新落行**（`gap add`），存量 891 条账里没有 ⇒ 件面 / 模块分类在存量面上**无数据**。
+		//   本面：`--dry-run` 只印「可抽到 N + 落兜底 M」（**N + M == 账内总条数**）+ 前 5 条预览（只读 · 恒 0）；
+		//   `--yes` 逐条**只加三键**（其余键名与值**逐字节不变** · 行序不变 · 末行换行不变 · 已带三键**跳过** ⇒ 幂等）。
+		//   抽取值形态逐字复用第一片的 `gapUnitExtract`；退码照现有表（0 成事 / 2 缺 `--yes` / 8 读不到或写不进）。
+		//   实现件 = `family_gap.go:cmdGapBackfillUnit`。
+		{
+			path:     []string{"gap", "backfill-unit"},
+			kind:     "GapBackfillUnit",
+			summary:  "给**存量**缺口账回填件面三键（`unit` / `module` / `unit_source`）：`--dry-run` 恒 0 · 只读 · 零副作用 —— 印「**可抽到** N + **落兜底** M」（**N + M == 账内总条数**）+ 前 5 条待改预览（id + unit/module）· `--yes` 逐条**只加三键**（其余键名与值**逐字节不变** · 行序不变 · 末行换行不变）· 已带三键**跳过** ⇒ **幂等**（再跑 ⇒ 「新增 0 行改动」）· 抽取值形态逐字复用 `gapUnitExtract`（甲档全等 / 乙档路径子串 / 兜底手写 `拟(x)` 或 `无件(命令面)` + module `无件` + `unit_source=hand`）· 审计进 `edit_audit.jsonl`（写不进 ⇒ 真源一个字节不改）",
+			usage:    "zerg gap backfill-unit [--dry-run | --yes] [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（无位置参数：范围 = **整本账** · 本片不收窄）"},
+			fields:   gapBackfillFields,
+			danger:   &dangerSpec{dangerD2, "整本缺口账（`<状态目录>/zerg-cli-gaps.jsonl`）", "逐条**只加** `unit` / `module` / `unit_source` 三键（其余键名与值逐字节不变 · 行序不变 · 末行换行不变）+ 审计一行（可逆：删掉新加的那三键即回原状；`--dry-run` 那一态零副作用）", "批1 第二片（存量 891 条回填 · 2026-09-28）· 同族写面先例 `gap add` / `gap verify` / `gap set-state` / `gap note` · `设计-命令面-gap族-v1.0-20260923.md §三 三态纪律` · `H-10`（`--yes` 是命令行确认档，不是批准件）", false},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapBackfillUnit,
+		},
 		// ---- 度量与排序面（组1 序12 · `承接自-v2.5.11/承接-度量与排序面-20260921.md:40-42` · 2026-09-24）----
 		// 与 `impact`（变更影响面）**配对用、不合并成一条**：前者回答「改这一处会牵动谁」（别改坏），
 		// 本命令回答「**该改哪**」（把四类读数归一成一个可比排序）。只读 ⇒ 不写 `danger`
