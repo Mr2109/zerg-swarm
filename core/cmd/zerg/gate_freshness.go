@@ -77,6 +77,11 @@ func worktreeFingerprint(root string) (string, string, error) {
 			names = append(names, n)
 		}
 	}
+	// ★ 口径②（2026-09-29 修 · 血证）：`ls-files --cached --others` 是**两段拼接**（先 tracked 段、
+	//   再未跟踪段）⇒ 一个件从「未跟踪」变成「已跟踪」（正是提交那一刻发生的）会**换位置**，
+	//   于是内容一字未动、指纹却变 ⇒ 头一笔提交后其余几笔全被拒（实测：趟 66c03df3… ≠ 当前 6fa92a39…）。
+	//   治法：清单先**排序**再逐件取内容 —— 排序键只有路径与内容，与「在不在索引里」无关。
+	sort.Strings(names)
 	sum := sha256.New()
 	const batch = 200
 	for a := 0; a < len(names); a += batch {
