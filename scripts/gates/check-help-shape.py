@@ -188,8 +188,8 @@ FAMILY_PER_LINE = 8
 #          2) last：`./bin/zerg help | tail -n 1`（逐字）
 #   刷新：本件 `--emit-baseline` 现跑打印，照抄。
 BASELINE = {
-    "help --all": {"lines": 298, "bytes": 147604},
-    "help": {"lines": 236, "bytes": 99196,
+    "help --all": {"lines": 298, "bytes": 148181},
+    "help": {"lines": 236, "bytes": 99773,
              "last": "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
     # ★ 危险档面（S4 · 2026-09-27 补）：**现跑取数** · 禁手写 ——
     #   取法 = `./bin/zerg help dangerous | wc -l -c`（lines/bytes）· 逐条行数（`rows`）·
