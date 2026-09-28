@@ -28,7 +28,7 @@
 // `gateStepLogNote`）读 —— 判据与日志路径在本仓只有**一处**口径（两处各写一份必然漂 · `G1-a`）。
 // 第八格 `next` 是**可照抄的下一步**，第九格 `wiring` 是三处接线面的**现读**结论（读脚本得的，不是猜的）。
 //
-// 退码：0 有命中 · 1 零命中 · 2 用法错（缺片段）· 8 不给结论（门禁脚本读不到）。
+// 退码：0 有命中 · 1 零命中 · 2 用法错（缺片段）· 8 不给结论（门禁脚本或 `scripts/gates/` 目录读不到）。
 // 全程**只读**：只读脚本与件名，不跑任何步骤、不写任何件。
 package main
 
@@ -69,7 +69,8 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 		return exitBlocked
 	}
 	src := string(b)
-	decls := parseAddSteps(src)
+	decls, unc := parseAddStepsStrict(src)
+	reportUncertainSteps(stderr, unc)
 	needle := strings.ToLower(probe)
 	rows := []map[string]string{}
 
@@ -89,24 +90,56 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 			"log":     logNote,
 			"source":  fmt.Sprintf("%s:%d", gateScriptRel, d.Line),
 			"next":    fmt.Sprintf("%s gate show '%s' --json", progName, d.Name),
-			"wiring":  gateWiringNote(root, d.Cmd, decls),
+			"wiring":  gateWiringNote(root, d.Cmd, decls, unc),
 		})
+	}
+
+	// ★ 门件面先自查：`scripts/gates/` **读不到 ⇒ 不给结论（退码 8）**，与「零命中」分家。
+	// 读不到时「件名面」这一格本来就没有读数 —— 再往下判就是拿半张表当全表（`GAP-20260927-221`）。
+	// 体例逐字照抄同族同形的两处（`family_build.go:47-52` 的 `bin/` 读不到 · `family_approve.go:211-215`）：
+	// 不许自创退码/文案 —— 「读不到」在本仓只有一条出口（退码表 8 = blocked「读不到不许当健康」）。
+	gateFiles, gerr := gateFilesMatching(root, probe)
+	if gerr != nil {
+		inv.setErr("blocked", "gate_dir_unreadable", "scripts/gates/ 读不到")
+		fmt.Fprintf(stderr, "%s: `scripts/gates/` 读不到（%v）⇒ 不给结论（退码 8）\n", progName, gerr)
+		return exitBlocked
 	}
 
 	// ② 门件行：片段命中 `scripts/gates/` 下的**真件名**。这一行的理由：**「零命中」与「不存在」
 	//    是两件事** —— 门⑫（`check-doc-cmds.py`）跑得到，但 `add_step` 里一个字都没有 ⇒ 只回
 	//    「零命中」会把人引到「这门不存在」的错结论上 ✗（这正是补第二半的直接起因）。
-	for _, rel := range gateFilesMatching(root, probe) {
+	//
+	// ★ 本批修的第三处：这一行的 `verdict`/`source` 两格旧形态是**硬编码文案「未点名」** ——
+	//   件名一旦真被点名（如 `check-placeholder-residue.py` @2866），同一行就会出现
+	//   「`verdict` 说未点名 ｜ `wiring` 说点名@2866」的**自相矛盾**。现改成**由接线结果现算**：
+	//   点名了 ⇒ 档位判据取那一步的 `mode`、出处取那一行；没点名 ⇒ 才是「未点名」。
+	for _, rel := range gateFiles {
+		if d, ok := gateFileDecl(rel, decls); ok {
+			mode := gateShowModeCell(d.Mode)
+			logNote, _ := gateStepLogNote(root, d.Name)
+			rows = append(rows, map[string]string{
+				"name":    rel,
+				"scope":   d.Scope,
+				"mode":    mode,
+				"verdict": fmt.Sprintf("（本件由步骤 %q 点名）%s", d.Name, gateModeVerdict(d.Mode)),
+				"cmd":     d.Cmd,
+				"log":     logNote,
+				"source":  fmt.Sprintf("%s:%d（命令串点名）", gateScriptRel, d.Line),
+				"next":    fmt.Sprintf("%s gate show '%s' --json", progName, d.Name),
+				"wiring":  gateWiringNote(root, rel, decls, unc),
+			})
+			continue
+		}
 		rows = append(rows, map[string]string{
 			"name":    rel,
 			"scope":   "—",
 			"mode":    "—",
-			"verdict": "—（真件在，但 `add_step` 步骤表里未点名 —— 判据看 `wiring` 格的三处面）",
+			"verdict": gateFindUnnamedVerdict(rel, unc),
 			"cmd":     "—",
 			"log":     "—",
-			"source":  "scripts/gates/ 下的真件（命令串面：`add_step` 未点名）",
+			"source":  gateFindUnnamedSource(rel, unc),
 			"next":    fmt.Sprintf("%s code find '%s'", progName, filepath.Base(rel)),
-			"wiring":  gateWiringNote(root, rel, decls),
+			"wiring":  gateWiringNote(root, rel, decls, unc),
 		})
 	}
 
@@ -134,10 +167,14 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 
 // gateFilesMatching —— `scripts/gates/` 下件名含片段的真件（仓根相对路径 · 排序后返回）。
 // **只列件名，不读件内容**：本格要回答「这门叫什么、挂在哪」，不是「它判什么」。
-func gateFilesMatching(root, probe string) []string {
+//
+// ★ 目录**读不到**时把 err **交给调用方**（`GAP-20260927-221`）：旧形态在这里 `return nil`，
+// 于是「目录读不到」与「真的一件都没有」在退码与输出上完全同形（都是「零命中」退码 1）⇒
+// 取证面拿到的「零命中」可能是假的。本格不吞错，退码归调用方那一条「读不到 ⇒ 8」出口。
+func gateFilesMatching(root, probe string) ([]string, error) {
 	ents, err := os.ReadDir(filepath.Join(root, "scripts", "gates"))
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	needle := strings.ToLower(probe)
 	out := []string{}
@@ -148,17 +185,76 @@ func gateFilesMatching(root, probe string) []string {
 		out = append(out, filepath.ToSlash(filepath.Join("scripts", "gates", e.Name())))
 	}
 	sort.Strings(out)
+	return out, nil
+}
+
+// gateFileDecl —— 该门件在本脚本的 `add_step` 声明里**第一个**点名它的一步（没有 ⇒ ok=false）。
+//
+// 口径：按命令串的**基名子串**找（件名在命令串里就是 `scripts/gates/x.py` 形态，基名足够）；
+// 声明按源码行序 ⇒ 「第一个」是**源码里最先**点名它的那一步（不是运行期步序 —— 运行期步序是
+// `gate show --json` 的 `log` 格/`gate ls` 的事，这里不混）。
+func gateFileDecl(rel string, decls []gateStepDecl) (gateStepDecl, bool) {
+	base := filepath.Base(rel)
+	for _, d := range decls {
+		if strings.Contains(d.Cmd, base) {
+			return d, true
+		}
+	}
+	return gateStepDecl{}, false
+}
+
+// gateFindUnnamedVerdict / gateFindUnnamedSource —— 门件行「未点名」两格的**现算**口径。
+//
+// ★ 与旧的硬编码文案的差别只有一处、但很关键：当件名出现在某条**解析不确定**的声明行原文里时，
+// 「未点名」这三个字**不成立**（那条声明读不出来 ⇒ 不知它点没点这个件）。此时两格改成
+// 「**解析不确定**」并点名行号 —— 与同族「读不到不许当健康」同口径（宁可说不知道，不假装扫过）。
+func gateFindUnnamedVerdict(rel string, unc []gateStepUncertain) string {
+	if ls := uncertainLinesNaming(rel, unc); len(ls) > 0 {
+		return fmt.Sprintf("— **解析不确定**：该件名出现在读不出的声明行 %s 原文里 ⇒ 点没点名**判不了**（不当「未点名」）",
+			joinLines(ls))
+	}
+	return "—（真件在，但 `add_step` 步骤表里未点名 —— 判据看 `wiring` 格的三处面）"
+}
+
+func gateFindUnnamedSource(rel string, unc []gateStepUncertain) string {
+	if ls := uncertainLinesNaming(rel, unc); len(ls) > 0 {
+		return fmt.Sprintf("%s:%s（**解析不确定** —— 行读不出来，出处存疑）", gateScriptRel, joinLines(ls))
+	}
+	return "scripts/gates/ 下的真件（命令串面：`add_step` 未点名）"
+}
+
+// uncertainLinesNaming —— 读不出的声明行里**原文含该件基名**的行号（用于把「未点名」降级成「判不了」）。
+func uncertainLinesNaming(rel string, unc []gateStepUncertain) []int {
+	base := filepath.Base(rel)
+	out := []int{}
+	for _, u := range unc {
+		if strings.Contains(u.Raw, base) {
+			out = append(out, u.Line)
+		}
+	}
 	return out
+}
+
+func joinLines(ls []int) string {
+	parts := []string{}
+	for _, l := range ls {
+		parts = append(parts, fmt.Sprintf("L%d", l))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // gateWiringNote —— 一件门件在**三处接线面**的现读结论（同夜补的第二半）：
 //
 //	precommit：`add_step` 的命令串里点到它的那几步（步名 + 出处行）；
-//	all.sh  ：`for f in "${GATEDIR}"/*.py`（逐字读自 `all.sh:179`）⇒ **.py 按通配收**、**.sh 不收**；
+//	all.sh  ：收集面 = `${GATEDIR}/*.py` 的**通配**（现读 `scripts/gates/all.sh` 那段 `for f in …`)：
+//	          `.py` ⇒ 按通配收（**实际生效**）；`.sh` ⇒ **面态＝不适用**（`GAP-20260928-102`：
+//	          旧文案只说「不收 … 不可见」⇒ 读成「这件没接线」✗；现补一句显式的「对 .sh 件不生效」
+//	          ＋「该面不含它 ≠ 没接线」。**只加信息**：`.py` 路径的输出字节一字未动）；
+//	          `.sh` 以外的非 `.py` 形态（如带实参的命令串）**照旧**不动 —— 不给没读过的面下结论；
 //	real-gates：名录里点到它的首行（名单外 ⇒ 「名单外（按可跑处理）」）。
 //
 // `what` 既可能是**命令串**（步骤行）也可能是**件路径**（门件行）⇒ 两种都按基名子串找，宁多勿漏。
-func gateWiringNote(root, what string, decls []gateStepDecl) string {
+func gateWiringNote(root, what string, decls []gateStepDecl, unc []gateStepUncertain) string {
 	base := filepath.Base(what)
 	parts := []string{}
 
@@ -170,12 +266,26 @@ func gateWiringNote(root, what string, decls []gateStepDecl) string {
 	}
 	if len(named) > 0 {
 		parts = append(parts, "precommit: 点名 "+strings.Join(named, " · "))
+	} else if ls := uncertainLinesNaming(base, unc); len(ls) > 0 {
+		// ★ 读不出的声明行原文里点到过它 ⇒ **不许报「未点名」**（那是拿读不到当「没有」）。
+		parts = append(parts, fmt.Sprintf(
+			"precommit: **解析不确定**（读不出的声明行 %s 原文里点到过它 ⇒ 点没点名判不了，别当「不在步骤表里」）",
+			joinLines(ls)))
 	} else {
 		parts = append(parts, "precommit: 未点名（不在步骤表里）")
 	}
 
 	if strings.HasSuffix(base, ".py") {
 		parts = append(parts, "all.sh: 按通配收（`*.py` @179）")
+	} else if strings.HasSuffix(base, ".sh") {
+		// ★ 治法①（`GAP-20260928-102`）：`.sh` 门件在这一面**恒**不出现（收集面是 `*.py` 通配），
+		//   而旧文案只说「不收 … 不可见」⇒ 读起来像「这件没接线」✗。**只加信息**：把这一面的
+		//   **面态**（对该件**不适用**，不是「未接线」）显式写出来；`.py` 路径的字节**一字不动**
+		//   （两态判据②：同一枚 `.py` 门件跑同一条 ⇒ 既有字节逐字同）。
+		parts = append(parts, "all.sh: **不收**（`all.sh:179` 只收 `*.py` ⇒ 非 `.py` 件（含 `.sh` 门）在这一面不可见）"+
+			" · **面态＝不适用**：all.sh 面：对 .sh 件不生效"+
+			"（该面的收集面就是 `${GATEDIR}/*.py` 通配 · 现读 `all.sh`）"+
+			"—— 「该面不含它」≠「这件没接线」：`.sh` 门件的生效面看本格点名它的那一项")
 	} else {
 		parts = append(parts, "all.sh: **不收**（`all.sh:179` 只收 `*.py` ⇒ 非 `.py` 件（含 `.sh` 门）在这一面不可见）")
 	}
