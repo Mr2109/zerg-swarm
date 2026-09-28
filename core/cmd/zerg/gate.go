@@ -43,6 +43,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
 
 // gateScriptPath —— 自举件的路径**是条款的一部分**（§九 M11 `G1-e`）：搬家/改名 = 破坏自举，
@@ -73,6 +74,12 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	var args []string
+	// ★ 门新鲜度闸（缺口 `GAP-20260928-194` · 设计稿 §2.2 A2/A5）：`gate run` 那一趟要把**当时**的
+	//   工作树指纹与 HEAD 记进那一趟的产物（`freshness.json`）。指纹在 **exec 之前**取（= 门看到的那棵树），
+	//   落笔在跑完之后（写不下去**不改**本命令的任何退码 —— 只转发不翻译不下岗）。
+	freshFP, freshHead := "", ""
+	runOutdirArg := ""
+	var runSince time.Time
 	switch action {
 	case "ls":
 		args = []string{"--list"}
@@ -128,6 +135,9 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 			return rc
 		}
 		args = append(args, tail...)
+		// 指纹**在执行前**取：它就是这一趟门跑**看到**的那棵树。
+		runOutdirArg, runSince = gateRunOutdirArg(tail), time.Now()
+		freshFP, freshHead, _ = worktreeFingerprint(root)
 	case "show":
 		if len(tail) == 0 {
 			fmt.Fprintf(stderr, "%s: `gate show` 要给步名（例：zerg gate show 'gofmt -l core'）\n", progName)
@@ -169,11 +179,40 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
+			// 门新鲜度闸：跑完了（哪怕红/不给结论）也照样把**当时**的指纹落进那一趟的产物。
+			recordRunFreshness(root, runOutdirArg, runSince, freshFP, freshHead, stderr)
 			// ★ 只转发、不翻译：脚本的码原样返回（连异常码也不改写）。
 			return ee.ExitCode()
 		}
 		fmt.Fprintf(stderr, "%s: 跑不动门禁脚本：%v\n", progName, err)
 		return exitFail
 	}
+	recordRunFreshness(root, runOutdirArg, runSince, freshFP, freshHead, stderr)
 	return exitOK
+}
+
+// recordRunFreshness —— 把这一趟的指纹随件落进那一趟的目录（**只写这一枚**；写不下去只出声、
+// **一字不改**本命令的退码 —— `gate.go` 开头那条「只转发、不翻译」不下岗）。
+//
+// 认「这一趟」的办法两条：`--outdir` 显式给的 ⇒ 就用它；否则取 `<TMPDIR>` 下带 `results.tsv`
+// 且 mtime 落在本次执行窗口内的最新一份（防把**更旧**的一趟当这一趟 —— 同 `gateResultsFindLast` 那条口径）。
+func recordRunFreshness(root, outdirArg string, since time.Time, fp, head string, stderr io.Writer) {
+	if fp == "" {
+		return
+	}
+	dir := outdirArg
+	if dir == "" {
+		dir = gateRunNewestOutdirSince(since)
+	}
+	if dir == "" {
+		if outdirArg == "" {
+			return // `--list`/`--emit-cmd` 一类**不产生趟目录**的档：无事可做，静默
+		}
+		fmt.Fprintf(stderr, "%s: ⚠ 门新鲜度闸：`--outdir %s` 里没有 %s ⇒ 这一趟没记指纹（退码不变）\n",
+			progName, dir, gateResultsTSV)
+		return
+	}
+	if err := writeGateFreshness(dir, root, fp, head); err != nil {
+		fmt.Fprintf(stderr, "%s: ⚠ 门新鲜度闸：指纹随件落不下去（%v）⇒ 这一趟没记指纹（退码不变）\n", progName, err)
+	}
 }

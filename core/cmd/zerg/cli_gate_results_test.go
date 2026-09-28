@@ -154,8 +154,10 @@ func TestGateResultsJSONSubsetProjects(t *testing.T) {
 	// 不给字段 ⇒ 闭集全量（与 K2 通例不同之处：文件头写了理由）。
 	_, outAll, _ := runZergRepo(t, resultsRepo(t), "gate", "results", "--dir", dir, "--json")
 	all := envelopeItems(t, outAll)
-	if len(all) == 0 || len(all[0]) != 5 {
-		t.Fatalf("`--json` 不给字段 ⇒ 出全部五格，得到 %+v", all)
+	// ★ 2026-09-29 随动（门新鲜度闸 `GAP-20260928-194`）：字段表从五格续到**七格**
+	//   （步名/状态/退码/耗时/日志 + 跑级 `worktree_fp`/`head`）⇒ 不给字段那一档出的是七格。
+	if len(all) == 0 || len(all[0]) != 7 {
+		t.Fatalf("`--json` 不给字段 ⇒ 出全部七格（步名/状态/退码/耗时/日志 + 跑级 worktree_fp/head），得到 %+v", all)
 	}
 }
 

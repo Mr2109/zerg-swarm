@@ -980,7 +980,7 @@ func init() {
 			path:    []string{"repo", "commit"},
 			kind:    "RepoCommit",
 			summary: "提交：**按文件名逐件暂存**（禁 `git add -A`）· 或**点名单路径**（`--only <路径…>`：索引面允许非空、别人的暂存只许多不许少）· **过快速档才放行** · 禁 `--no-verify`（例外走 `--waive <步名> --reason <…>` 并进审计）",
-			usage:   "zerg repo commit --message <题> (--file <件>… | --only <路径>[ --only <路径>]…) [--proposal <提案 id>] [--by <谁>] [--trace <id>] [--criterion <判据>] [--waive <步名> --reason <理由>] [--dry-run] [--yes]",
+			usage:   "zerg repo commit --message <题> (--file <件>… | --only <路径>[ --only <路径>]…) [--proposal <提案 id>] [--by <谁>] [--trace <id>] [--criterion <判据>] [--waive <步名> --reason <理由>] [--allow-stale-gates <一句话理由>] [--dry-run] [--yes]",
 			arity:   "any",
 			args:    []string{"提交主题（--message）", "逐件点名（--file · 可重复）或点名单路径（--only · 可重复 · 可 `--only=<路径>`）"},
 			fields:  repoCommitFields,
@@ -3033,7 +3033,12 @@ func valueFlagName(a string) string {
 	//   `--waive <步名>`（可重复 —— 一次可点多个要豁免的步名）与 `--reason <理由>`（缺它 ⇒ 拒执 2）。
 	// ★ 它与 `--no-verify` 是**两件事**：命令面**不提供**绕行；这个旗标只把「红」变成**可回读**的记账。
 	switch a {
-	case "--waive", "--reason":
+	case "--waive", "--reason",
+		// ★ 门新鲜度闸的**留痕跳道**（缺口 `GAP-20260928-194` · 设计稿《流程规则程序化 v1.0》§2.2 A2/A5）：
+		//   `--allow-stale-gates <一句话理由>` —— **不传理由的裸跳不许存在**（语义在 `gateFreshnessGate`
+		//   里判：理由空 ⇒ 拒 2；理由非空 ⇒ 真留一笔痕，落不下痕也不许跳）。名字表是本仓「唯一真源」
+		//   ⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用（同族先例逐字同上）。
+		"--allow-stale-gates":
 		return a
 	}
 	// 影响面实测回填（`B3` · 2026-09-22）：`--gate-results` 是**那次门禁的结果表**（或它的日志目录）——
