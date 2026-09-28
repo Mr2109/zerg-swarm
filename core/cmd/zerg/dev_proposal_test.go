@@ -82,16 +82,32 @@ func snapshotDir(t *testing.T, root string) string {
 // 为什么用 `--dry-run` 那一态：它永远跑得动且零副作用（D3b 第一步的判据口径）。
 const testCriterion = "zerg build all --only cli --dry-run"
 
+// proposalEvidenceDir —— 本仓「出处必须在册」的闸（`GAP-20260927-254`）读的是状态目录里的缺口账
+// （`$ZERG_STATE_DIR/zerg-cli-gaps.jsonl` · 默认 `~/.zerg/state`）。夹具**自带一份合成账**，把出处指到
+// 里面真在册的那一条 ⇒ 与「本机账在不在 / 环境里有没有 ZERG_STATE_DIR」脱钩（判据不变，只换夹具）。
+const proposalEvidenceInLedger = "GAP-20260927-254"
+
+func proposalEvidenceDir(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	line := `{"id":"` + proposalEvidenceInLedger + `"}`
+	if err := os.WriteFile(filepath.Join(dir, "zerg-cli-gaps.jsonl"), []byte(line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ZERG_STATE_DIR", dir)
+}
+
 // ---- D3b 第一步：提案接校验（判据**可机检** · 缺判据 / 判据跑不动 ⇒ rc 2）----
 
 func TestDevProposalCriterionMustBeMachineCheckable(t *testing.T) {
+	proposalEvidenceDir(t)
 	ids, err := contract.DevTargets()
 	if err != nil || len(ids) == 0 {
 		t.Fatalf("回指清单读不出来：%v", err)
 	}
 	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
 	base := []string{"--title", "判据", "--target", "待办:" + ids[0], "--goal", "g",
-		"--evidence", "e", "--rollback", "r"}
+		"--evidence", "GAP-20260927-254", "--rollback", "r"}
 
 	// 负控①：**缺判据** ⇒ 2 · stdout 0 字节 · 点名「判据」
 	rc, out, errb := runProposalNew(t, base...)
@@ -147,6 +163,7 @@ func TestDevProposalCriterionMustBeMachineCheckable(t *testing.T) {
 }
 
 func TestDevProposalCheckFailsClosed(t *testing.T) {
+	proposalEvidenceDir(t)
 	ids, err := contract.DevTargets()
 	if err != nil || len(ids) == 0 {
 		t.Fatalf("回指清单读不出来：%v", err)
@@ -165,7 +182,7 @@ func TestDevProposalCheckFailsClosed(t *testing.T) {
 	out.Reset()
 	errb.Reset()
 	if rc, _, e6 := runProposalNew(t, "--title", "正控", "--target", "待办:"+ids[0], "--goal", "g",
-		"--evidence", "e", "--rollback", "r", "--criterion", testCriterion); rc != 0 {
+		"--evidence", "GAP-20260927-254", "--rollback", "r", "--criterion", testCriterion); rc != 0 {
 		t.Fatalf("正控件提不出来：rc=%d · stderr=%s", rc, e6)
 	}
 	if rc := zerg.RunForTest([]string{"dev", "proposal", "check"}, &out, &errb); rc != 0 {
@@ -243,6 +260,7 @@ func TestDevFamilyIsACHangedOnlyRingNoNewReadCommands(t *testing.T) {
 // ---- 判据③①④：回指 / 拒收 / 退码不新立 ----
 
 func TestDevProposalTargetMustReferenceExistingID(t *testing.T) {
+	proposalEvidenceDir(t)
 	ids, err := contract.DevTargets()
 	if err != nil || len(ids) == 0 {
 		t.Fatalf("回指清单读不出来（%v · %d 条）—— 判据③的判据自己坏了 ⇒ 不给结论", err, len(ids))
@@ -251,7 +269,7 @@ func TestDevProposalTargetMustReferenceExistingID(t *testing.T) {
 
 	// ③-a 回指不上 ⇒ exit 2（**不是**自造码）· stdout 0 字节
 	rc, out, errb := runProposalNew(t, "--title", "回指不上", "--target", "待办:ZZZZ-9999",
-		"--goal", "g", "--evidence", "e", "--rollback", "r", "--criterion", testCriterion)
+		"--goal", "g", "--evidence", "GAP-20260927-254", "--rollback", "r", "--criterion", testCriterion)
 	if rc != 2 {
 		t.Errorf("回指不上的目标 ⇒ 退码 %d（要 2 · §17.6 SD1「回指不上 ⇒ exit=2 · 不新立码」）", rc)
 	}
@@ -264,7 +282,7 @@ func TestDevProposalTargetMustReferenceExistingID(t *testing.T) {
 
 	// ③-b 回指得上（真台账里的既有编号）⇒ exit 0，且件落在提案件目录
 	rc, out, errb = runProposalNew(t, "--title", "回指得上", "--target", "待办:"+ids[0],
-		"--goal", "g", "--evidence", "e", "--rollback", "r", "--criterion", testCriterion)
+		"--goal", "g", "--evidence", "GAP-20260927-254", "--rollback", "r", "--criterion", testCriterion)
 	if rc != 0 {
 		t.Errorf("既有编号 %q ⇒ 退码 %d（要 0）· stderr=%s", ids[0], rc, errb)
 	}
@@ -309,6 +327,7 @@ func TestDevProposalRefusesWithoutRollbackOrEvidence(t *testing.T) {
 // ---- 判据②：产出后系统状态逐字不变 ----
 
 func TestDevProposalNewHasZeroSideEffectOnTheWorkspace(t *testing.T) {
+	proposalEvidenceDir(t)
 	ids, err := contract.DevTargets()
 	if err != nil || len(ids) == 0 {
 		t.Fatalf("回指清单读不出来：%v", err)
@@ -331,7 +350,7 @@ func TestDevProposalNewHasZeroSideEffectOnTheWorkspace(t *testing.T) {
 	t.Setenv("ZERG_PROPOSAL_DIR", prop)
 
 	rc, _, errb := runProposalNew(t, "--title", "零副作用", "--target", "待办:"+ids[0],
-		"--goal", "g", "--evidence", "e", "--rollback", "r", "--criterion", testCriterion)
+		"--goal", "g", "--evidence", "GAP-20260927-254", "--rollback", "r", "--criterion", testCriterion)
 	if rc != 0 {
 		t.Fatalf("`new` 退码 %d（要 0）· stderr=%s", rc, errb)
 	}
