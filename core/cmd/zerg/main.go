@@ -163,6 +163,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return exitUsage
 		}
 	}
+	// ★ 批1 第四片（本枚）：`--top <N>` 是 `gap status` 排行面的**专用旗标** —— 它在 `valueFlagName`
+	//   上刚上户口，而那张名字表是**全族共用的一张** ⇒ 若不在这里收口，别的命令（`gap ls` 等）真给
+	//   `--top` 会从「未知旗标 2」**退化成静默吞**（硬约束⑤：既有命令的退码与输出**一字不动**）。
+	//   治法与形状**逐字照拄**同一处 dispatch 面的既有拒收路：把不归本命令的那一枚**补回 `inv.unknown`**
+	//   ⇒ 由下面那条**同一条**判词 + 同一个退码 2 收口（不另写一句判词 · 不另取一个码）。
+	//   判据 = 「给过 `--top`」且「本命令不是 `gap status`」（`cmd.path` 是 `resolve` 出来的**规范路径**）。
+	//   `--by` 不在此列：它**早已**在名字表上（与 `dev proposal` / `gap add` 共用）⇒ 既有行为不变。
+	if inv.hasFlag("--top") && !(len(cmd.path) == 2 && cmd.path[0] == "gap" && cmd.path[1] == "status") {
+		inv.unknown = append(inv.unknown, "--top")
+	}
 	if len(inv.unknown) > 0 && !cmd.passthrough {
 		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, inv.unknown[0])
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
@@ -1970,6 +1980,19 @@ func init() {
 			endpoint: "",
 			run:      cmdGapLs,
 		},
+		// ★ `gap status` —— **排行面**（批1 第四片 · 只读面 · 2026-09-28）：按件（`--by unit` · 缺省）
+		//   或按模块（`--by module`）分桶排行。实现件 = `family_gap.go:cmdGapStatus`。
+		//   排序两键（都写进表头）：① 未闭降序 ② 近邻量化 P0/P1/P2 降序；对账等式自校
+		//   （Σ(有件桶未闭) + 无件桶 == 账内仍缺）；带 `query_ts` / `ledger_sha16`（两个时刻的排行才可比）。
+		{
+			path:     []string{"gap", "status"},
+			kind:     "GapStatus",
+			summary:  "缺口账**排行面**（只读）：按件（`--by unit` · 缺省）/ 按模块（`--by module`）分桶，逐桶给 **未闭 / 已解 / 净**（可为负）+ 近邻量化（P0/P1/P2 计数）· 排序键 = ① 未闭降序 ② 近邻量化降序（都写进表头）· 对账等式自校（Σ(有件桶未闭) + 无件桶 == 账内仍缺 · 不成立 ⇒ `warnings` 点名差数）· 带 `query_ts` / `ledger_sha16`（不同时刻两个排行才可比）· 截断自报（`--top` 一页硬顶 = `gapLsRowCap`）· 读不到真源 ⇒ 8",
+			usage:    "zerg gap status [--by <unit|module>] [--top <N>] [--state <仍缺|已派|已立项|已解|回归|不做>…] [--prio P0|P1|P2] [--impact <命令面|门禁面|文档面|公开面|换件面|归档面>] [--json <字段>]",
+			fields:   gapStatusFields,
+			endpoint: "",
+			run:      cmdGapStatus,
+		},
 		// ★ `gap show` —— **单条取全文**（2026-09-28 · 缺口账 `GAP-20260926-15` + 同族 `GAP-20260928-243`）：
 		//   只读面（不登记 `danger` ⇒ 按只读幂等档列）· 点名面复用同族 `gapTargetOne`（**账内没有这个 id ⇒ 2**，
 		//   与 `set-state` / `note` 同一口径）· 读不到真源 ⇒ 8。实现件 = `family_gap.go:cmdGapShow`。
@@ -2819,7 +2842,12 @@ func valueFlagName(a string) string {
 		// ★ 批1 第三片：`gap ls` 两轴收窄 —— `--unit <件路径|目录前缀>` / `--module <模块前缀>`。
 		//   名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用（同族先例：
 		//   `--allow-cross-root` 那一排的注释逐字同病）。用法串与本表**必须同改**（门判据乙）。
-		"--unit", "--module":
+		"--unit", "--module",
+		// ★ 批1 第四片：`gap status` 排行面 —— `--top <N>`（一页桶数 · 缺省 20 · 上限同 `gapLsRowCap`）。
+		//   `--by <unit|module>` **已在上面「自开发面」那一排**（与 `dev proposal` 等共用一张名字表）⇒
+		//   本排只续 `--top` 这一枚新名字（一族共用一张名字表 · **不重开同名旗标**）。
+		//   ★ 名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
+		"--top":
 		return a
 	}
 	return ""
