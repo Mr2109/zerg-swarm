@@ -2013,6 +2013,35 @@ func init() {
 			endpoint: "",
 			run:      cmdGapPlan,
 		},
+		// ★ 批3 第四片（2026-09-28）：`gap receipt check` / `gap receipt apply` —— **回执收件面**。
+		//   设计出处：§三十四 `O-12`（卵回执结构规范化：`closed_ids[]` 必填 · 取代散文）+
+		//   施工清单 3-4（回执缺栏即拒收 · 闭案与账一一对应）。实现件 = `family_gap.go`。
+		//   ★ 回执形状本片取定（设计稿只钉死 `closed_ids` 一名）：`egg` / `readings[]`（每条 `gap_id`+`result`）/
+		//   `conclusion` / `closed_ids[]`（键必须在 · 可为空数组）—— 缺栏 ⇒ 2 并点名缺哪栏。
+		{
+			path:     []string{"gap", "receipt", "check"},
+			kind:     "GapReceiptCheck",
+			summary:  "回执**收件体检**（只读面 · 一字不写真源、不写审计）：按设计稿 `O-12` 逐条验 —— 四必填栏（卵号 `egg` · 逐条读数 `readings[]`（每条含 `gap_id`+`result`）· 结论 `conclusion` · 闭案号 `closed_ids[]`（**可为空数组，但键必须在**））缺栏 ⇒ 2 并点名缺哪栏 · 闭案与账一一对应（`closed_ids` 每个号必须在账里且当前 `state=已派`，否则点名冲突 ⇒ 2）· 反面（账里 `已派` 但回执没提）⇒ 列为「未结派单」告警（**不阻断退码**，只报告）· 读不到回执件或真源 ⇒ 8",
+			usage:    "zerg gap receipt check <回执件路径> [--json <字段>]",
+			arity:    "any",
+			args:     []string{"回执件路径（**恰好一条** JSON 件）"},
+			fields:   gapReceiptCheckFields,
+			endpoint: "",
+			run:      cmdGapReceiptCheck,
+		},
+		{
+			path:     []string{"gap", "receipt", "apply"},
+			kind:     "GapReceiptApply",
+			summary:  "回执**闭案落账**（写面 · 缺 `--yes` fail-closed 2）：把 `closed_ids` 逐条改 `已解`（**走现有改态路径 `gapRewriteOne` · 不另开写路**）· 缺 `--evidence` ⇒ 2 · 有冲突号（账里非 `已派`）⇒ 2 且**不动账** · 成败后回显逐条改前→改后计数 · 审计进 `edit_audit.jsonl`（写不进就不写真源）",
+			usage:    "zerg gap receipt apply <回执件路径> --evidence <一句话> --yes [--by <谁>] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"回执件路径（**恰好一条** JSON 件）"},
+			fields:   gapReceiptApplyFields,
+			danger:   &dangerSpec{dangerD2, "回执件（`closed_ids`）", "把回执 `closed_ids[]` 里的号在真源逐条改 `已解`（`state`/`solved_at`/`solved_evidence`）+ 审计逐条一行（可逆：照审计那一格回写）；缺栏 / 冲突号 ⇒ 2（一个字节都不写）", "批3 第四片（缺口账与自进化 · 2026-09-28）· 设计稿 §三十四 `O-12` + 施工清单 3-4 · 同族写面先例 `gap set-state`（`H-10`：`--yes` 是命令行确认档，不是批准件）", false},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapReceiptApply,
+		},
 		// ★ `gap show` —— **单条取全文**（2026-09-28 · 缺口账 `GAP-20260926-15` + 同族 `GAP-20260928-243`）：
 		//   只读面（不登记 `danger` ⇒ 按只读幂等档列）· 点名面复用同族 `gapTargetOne`（**账内没有这个 id ⇒ 2**，
 		//   与 `set-state` / `note` 同一口径）· 读不到真源 ⇒ 8。实现件 = `family_gap.go:cmdGapShow`。
