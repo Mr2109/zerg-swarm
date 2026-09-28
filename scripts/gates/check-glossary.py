@@ -306,11 +306,33 @@ def refuse_json_without_machine_face(argv=None):
     return 2
 
 
+def usage_help():
+    """`--help` 只印这一段：本件 docstring 的「用法」块（**唯一真源** —— 不另存第二份文案，防漂）。"""
+    m = re.search(r"^用法：.*?(?=\n\S)", __doc__ or "", re.S | re.M)
+    return (m.group(0) if m else USAGE).rstrip()
+
+
 def main():
     rc_q176 = refuse_json_without_machine_face()
     if rc_q176 is not None:
         return rc_q176
     argv = sys.argv[1:]
+    # ── 缺口 `GAP-20260926-168`：**旗标面**（只动这一层 —— 扫描判据/词表/输出行文案一字未改）
+    #    ① `--help` / `-h` ⇒ 只印用法 + `rc=0`（**不进扫描**）；口径照同族
+    #       `scripts/docs/gen-glossary-exports.py` 与 `scripts/gates/check-build-tags.py`
+    #       （`--help`/`-h` 只读印用法 · 未知参数 `rc=2`）。
+    #    ② 闭集外的旗标 ⇒ `✗ 未知参数: …` + `rc=2`（**逐字点名 · 不静默吞**），同样不进扫描。
+    #    闭集 = 本件 docstring「用法」段逐字（唯一真源）⟷ 下面这一处；两处不许各说各话。
+    #    `--json` 在闭集里只是为了「用法与实现同一份名单」—— 它先被 `Q-176` 那一支拦下（口径未动）。
+    known = {"--root", "--scope", "--lang", "--paths", "--self-test", "--selftest",
+             "--enforce", "--json", "--no-identifiers", "--help", "-h"}
+    unknown = [a for a in argv if a.startswith("-") and a not in known]
+    if unknown:
+        print("✗ 未知参数: %s" % " ".join(unknown), file=sys.stderr)
+        return 2
+    if "--help" in argv or "-h" in argv:
+        print(usage_help())
+        return 0
     if "--self-test" in argv or "--selftest" in argv:
         return self_test()
     root = ROOT

@@ -1824,7 +1824,7 @@ def main():
         rc = RC_FAIL
     elif any(r.rc() == RC_BLOCKED for r, _e in results.values()):
         rc = RC_BLOCKED
-    print("总耗时 %.2fs · 合计 rc=%d %s（口径：1 优先于 2；BLOCKED 不阻塞提交但不许当绿）" % (elapsed, rc, RC_NAME[rc]))
+    print("总耗时 %.2fs · 合计 rc=%d %s（口径：1 优先于 2；BLOCKED 会阻塞提交但不许当绿）" % (elapsed, rc, RC_NAME[rc]))
     return rc
 
 

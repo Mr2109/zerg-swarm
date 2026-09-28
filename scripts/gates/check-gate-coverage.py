@@ -124,7 +124,8 @@
     0 = 全绿（A 无未收进目录；B 命中数 ≤ 基线）
     1 = **有红**（A 有目录没被任何步收进 且 不在白名单；或 B 命中数 > 基线）
     2 = **不给结论**（用法错 / 缺件：config 或闸文件不在 / config 有未实现键 / 白名单条目缺 reason
-        或 date / **空转**：候选集为 0 ⇒ 假覆盖 / 计数自证不过 / 自检未过）
+        或 date / **空转**：候选集为 0 ⇒ 假覆盖 / 计数自证不过 / 自检未过 /
+        **判不了**：仓根不是 git 仓 且 ③ 档非空 ⇒ 「新件 ⟷ 存量债」分不开（`git_tracked_known=False`））
     ★ 有「判不了」的项时**不给结论**，即便同时有红 —— 判不了的时候报绿报红都是猜。
 
 纪律：**只读**（除 /tmp 夹具外不写盘）· 无三方依赖 · 不联网 · 不起后台进程 · 不改任何已有文件。
@@ -149,6 +150,33 @@ LOCAL_CONFIG = os.path.join("scripts", "gates", "gate-coverage.config.json")
 GATES_REL = os.path.join("scripts", "gates", "precommit-gates.sh")
 
 EXIT_OK, EXIT_FAIL, EXIT_BLOCKED = 0, 1, 2
+
+# ── ④ 格指路的**分类真源**（唯一一处定义，见 `declares_out_of_scope`）──────────────
+#   「永远不该进步骤表」那一类件的既有真源**不是本门发明的**：
+#     · `scripts/gates/gate-coverage.config.json` 第二档白名单口径逐字 = 「只有「永远不该进
+#       步骤表」的件才配进来（本机可用不等于普遍可用：如**会写盘**的工具、判据绑**仓外**
+#       个人语料的只读检查）」；
+#     · 其中「语料在仓外」那条的 reason **逐字引件头**（现读
+#       `scripts/docs/check-outrepo-dead-refs.py:19`「★ 为什么本件**不进门禁步骤表**」）。
+#   ⇒ 本门只**照读**这一句件头自述，把 ④ 格的指路分两路（普通件 ↔ 仓外/写盘类）。
+#   ★ 写盘型件若无这句自述（现读 `scripts/dev/atomic-write.sh` / `writer-lock.sh` /
+#     `scripts/gates/check-writer-guard.py` 三件的件头**都没有**这句，尽管
+#     `scripts/公开标记.tsv:235` 声称有）⇒ 本门**不猜**，只把第二路**无条件**印出来让人自己对。
+OOR_DECL = "不进门禁步骤表"
+DECL_SCAN_LINES = 80          # 自述口径 = 件头（前 80 行）；读不到 ⇒ 不认（不猜）
+
+# ── ④ 格**两条指路文案**（唯一一处定义）────────────────────────────────────────
+#   ★ 为什么抽成常量：判据件 `scripts/gates/check-newfile-registry.py:335 load_wording()`
+#     按「`处置`」块机检「白名单 + reason」两词是否都指到（面⑥）⇒ 这句字面**只许出现一次**，
+#     否则每多引一处就多一个受判块（自检断言里复述一句 = 自己造一个红块）。
+#   ★ 第一路 = 普通件（可入步骤表）：同批挂门 `add_step`；
+#   ★ 第二路 = 语料在**仓外** / **会写盘**的件：**第二档白名单**（`whitelist.scripts` 写
+#     `path`+`reason`+`date`，缺 reason 或缺 date ⇒ rc=2）—— 给这类件 add_step 是死路。
+HINT_ADD_STEP = ("        ⇒ 处置：**真修** —— 该件与本批代码**同批挂门**"
+                 "（`scripts/gates/precommit-gates.sh` 的 `add_step` 按名调用它）；"
+                 "新件**不许**蹭基线棘轮（棘轮只装存量债）。")
+#   ★ 受判块口径：判据件按「处置」块机检「**白名单** + **reason**」两词（`check-newfile-
+#     registry.py:335 load_wording`）⇒ 本串字面**只许出现一次**（多处复述 = 自己造红块）。
 
 # ── 自检里的「stdout 纯度探针」开关（**只有 import 本文件才够得着**：无 CLI 开关、无环境变量）──
 #   探针要跑一次**真命令行**（`--json`）才看得见 stdout 纯不纯；而被探的子进程若跑满自检，
@@ -507,6 +535,11 @@ def tracked_files(root):
       而不是「只要没超基线就绿」。
     ★ 判不了就当**判不了**：非 git 仓 / 无 git / 命令失败 ⇒ 返回 `None`
       （调用方**不按新件论处**，只在报告里照实记一句）—— 绝不把「判不了」读成「全部是存量」。
+    ★ **判不了 ⇒ 不给结论**（`GAP-20260927-105`）：③ 档非空时，`None` 会把每一件都写成
+      「存量债（已提交件 …）」—— 那句**事实断言是假的**，且「新件未挂门」恒 0 ⇒ 新件在基线余额内
+      **静默洗白**（删一条存量债 + 加一条新件 ⇒ 命中数不变 ⇒ rc=0）。故 `main()` 里
+      **③ 档非空 ∧ `git_tracked_known=False` ⇒ rc=2（不给结论）**；③ 档为空时 ④ 格子不承重，
+      照旧给结论（判不了才停，不误报）。
     """
     try:
         proc = subprocess.run(["git", "-C", root, "ls-files", "-z"],
@@ -557,7 +590,7 @@ def analyse(root, cfg, steps, gates_text, max_examples):
 
     # ── B ──────────────────────────────────────────────────────────
     cands, nosuffix = scan_scripts(root, cfg)
-    tracked = tracked_files(root)                       # None = 判不了（非 git 仓）
+    tracked = tracked_files(root)                       # None = 判不了（非 git 仓）⇒ ③ 档非空时 rc=2
     b_items, b_red, b_wl = [], [], []
     buckets = {"in_steps": [], "mentioned": [], "unmentioned": []}
     glob_note = []
@@ -623,6 +656,23 @@ def analyse(root, cfg, steps, gates_text, max_examples):
     rep["b"]["empty"] = len(cands) == 0
     rep["certify"] = counts_certify(a_covered, a_wl, a_red, a_items, rep["b"]["counts"], cands)
     return rep
+
+
+def declares_out_of_scope(root, rel):
+    """件头自述「不进门禁步骤表」？⇒ True / False（读不到 ⇒ False：**不猜**）。
+
+    ★ 分类**只此一处**（`OOR_DECL` + 本函数）。判据面 = 件自己的件头自述，本门只**照读**；
+      不靠关键字猜「会不会写盘」（那是自造判据，必出误判）。
+    ★ 只读前 `DECL_SCAN_LINES` 行：自述按体例都写在件头（`check-outrepo-dead-refs.py:19`），
+      件体中段的引用（如该件 `:229` 的打印行）不算自述 ⇒ 上界就是「件头」这个口径。
+    ★ **不进任何计数 / 不进退码 / 不动覆盖分母**：只决定 ④ 格那句**指路**怎么分两路。
+    """
+    try:
+        with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as fh:
+            head = fh.read(200000)
+    except OSError:
+        return False
+    return any(OOR_DECL in ln for ln in head.splitlines()[:DECL_SCAN_LINES])
 
 
 def _list(items, key, max_examples, indent="     ", mark_wl=False):
@@ -696,12 +746,36 @@ def print_report(rep):
     if not b["git_tracked_known"]:
         print("        （★ 判不了：仓根不是 git 仓 / git 不可用 ⇒ **不按新件论处**、"
               "本格只作照实记录 —— 判不了的时候报绿报红都是猜）")
+        print("        ⇒ **判不了 ⇒ 不给结论（rc=2）**：③ 档 %d 条分不开「新件 / 存量债」；"
+              "③ 档为空（本格不承重）时才照旧给结论" % len(b["hit_items"]))
     for it in b["new_ungated"]:
         print("          ✗ %s  ← %s" % (it["script"], it["reason"]))
     if b["new_ungated"]:
-        print("        ⇒ 处置：**真修** —— 该件与本批代码**同批挂门**"
-              "（`scripts/gates/precommit-gates.sh` 的 `add_step` 按名调用它）；"
-              "新件**不许**蹭基线棘轮（棘轮只装存量债）。")
+        print(HINT_ADD_STEP)
+        # ── 分流（排队项「面⑥ 失败文案仍红」）：上面那句只对「可入步骤表」的件成立。
+        #   另一类件照它做是死路 —— 语料在仓外（本机个人语料）/ 会写盘的工具：挂 `add_step`
+        #   会在「没这棵树」「每次提交都改工作树」的机器上恒红（门禁反向危害），而这类件的
+        #   既有去处就是第二档白名单（config 口径 + 四条先例）。
+        #   ★ 只加字：不改三档计数 / 不进退码 / 不动覆盖分母；普通件那句一字未动。
+        oor = [it for it in b["new_ungated"]
+               if declares_out_of_scope(rep["root"], it["script"])]
+        print("        ⇒ **若不是「可入步骤表」的件，上面那路是死路**（原来只给这一条指路）："
+              "语料在**仓外**（本机个人语料）或**会写盘**的件 —— 本机可用 ≠ 普遍可用 —— "
+              "挂 `add_step` 会在「没有这棵树 / 每次提交都改工作树」的机器上**恒红**"
+              "（门禁反向危害）⇒ 这类件改走**第二档白名单**（真走得通的那一路）：")
+        print("          `scripts/gates/gate-coverage.config.json` 的 `whitelist.scripts` 加一条"
+              " `{\"path\": \"<件仓内相对路径>\", \"reason\": \"<件头自述的理由>\", "
+              "\"date\": \"<YYYY-MM-DD>\"}`（缺 reason 或缺 date ⇒ rc=2，不是绿）；"
+              "先例四条 = `scripts/dev/atomic-write.sh` · `scripts/dev/writer-lock.sh` · "
+              "`scripts/gates/check-writer-guard.py` · `scripts/docs/check-outrepo-dead-refs.py`"
+              "（`whitelist.build_dirs` 同规）；**两路都不许抬 `baseline`**。")
+        if oor:
+            print("          ★ 本格**件头自述「%s」**那一类（照读件头 · 唯一分类处）"
+                  "逐件点名（%d 条 ⇒ 走第二路）：" % (OOR_DECL, len(oor)))
+            for it in oor:
+                print("            - %s  ← 修法 = `whitelist.scripts` 写 `path`+`reason`+`date`，"
+                      "**不许**挂 `add_step`（挂上去就是死路），也**不许**抬 `baseline`。"
+                      % it["script"])
     print("     注：另 %d 条被通用语法步的 glob 兜住（`scripts/*.sh|*.py` 语法）——"
           "**语法过 ≠ 接了门，不计入 ①②③**（第四档）" % len(b["glob_only"]))
     print()
@@ -788,7 +862,8 @@ def print_list_rules():
     print("   0 = 全绿（A 无红；B 命中 ≤ 基线）")
     print("   1 = 有红（A 有未收进目录 且 不在白名单；或 B 命中 > 基线）")
     print("   2 = 不给结论（用法错 / 缺件：config 或闸文件不在 / config 有未实现键 / 白名单条目")
-    print("       缺 reason 或 date / 空转（候选集为 0 = 假覆盖）/ 计数自证不过 / 自检未过）")
+    print("       缺 reason 或 date / 空转（候选集为 0 = 假覆盖）/ 计数自证不过 / 自检未过 /")
+    print("       **判不了**：仓根不是 git 仓 且 ③ 档非空 ⇒ 「新件 ⟷ 存量债」分不开）")
     print()
     print("`--json` 契约（机读面）")
     print("   ★ `--json` ⇒ **stdout 只有 JSON**（可 json.loads）：自检文本全部改走 stderr，"
@@ -853,6 +928,19 @@ def _fixture(base, name, *, steps=(), manifests=("core/go.mod",), scripts=("scri
                json.dumps({"schema": "gate-coverage/1", "baseline": 0, "whitelist": wl},
                           ensure_ascii=False, indent=2))
     return root
+
+
+def _gitify(root):
+    """把夹具变成「索引已知」形态：真 `git init` + `git add -A`（**不提交**）。
+
+    ★ ④/⑤/⑯/⑰ 判的是「新件 ⟷ 存量债」，前提是 `git ls-files` 读得到 ⇒ 夹具必须**有索引**；
+      没有索引的夹具是 `GAP-20260927-105` 那条「`tracked=None` ⇒ 判不了」的形态，现在归 rc=2
+      （见自检 ⑯b/⑯c 成对负控）。
+    """
+    subprocess.run(["git", "init", "-q"], cwd=root,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["git", "add", "-A"], cwd=root,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _run(root):
@@ -942,6 +1030,7 @@ def self_test(sink=None, deep=None):
     _write(os.path.join(rat_ok, "scripts", "gates", "gate-coverage.config.json"),
            json.dumps({"schema": "gate-coverage/1", "baseline": 1, "whitelist": ok_wl},
                       ensure_ascii=False))
+    _gitify(rat_ok)          # ★ 判「新件 ⟷ 存量债」要有索引（无索引 ⇒ rc=2，见 ⑯b/⑯c）
     rc, out = _run(rat_ok)
     check("④ B 命中(1) ≤ 基线(1) ⇒ rc=0", rc == 0, "rc=%d" % rc)
     check("④ 且**打印剩余数**（不许悄悄绿）", "剩余 1 条" in out)
@@ -950,6 +1039,7 @@ def self_test(sink=None, deep=None):
                        steps=[("core", "go build ./...")],
                        scripts=("scripts/ok.py", "scripts/orphan.py"),
                        config=ok_wl)  # baseline=0
+    _gitify(rat_bad)         # ★ 同上：无索引 ⇒ rc=2，会盖掉这条「棘轮超额必红」的判据
     rc, out = _run(rat_bad)
     check("⑤ B 命中(1) > 基线(0) ⇒ rc=1 —— 与 ④ 成对", rc == 1, "rc=%d" % rc)
     check("⑤ 且点名「超过基线 1 条」", "超过基线 1 条" in out)
@@ -1094,6 +1184,54 @@ def self_test(sink=None, deep=None):
     check("⑰ 同批挂门（写进 add_step）⇒ 回绿（rc=0）—— 与 ⑯ 成对", rc == 0, "rc=%d" % rc)
     check("⑰ 且新格归零", "④ **新件未挂门**（本门开张后新建、且没与代码同批挂 add_step）= **0**" in out)
 
+    # ── ⑯d/⑯e ④ 格**第二路指路**（语料在仓外 / 写盘型 ⇒ `add_step` 是死路）成对负控 ──────
+    #   判据面 = `declares_out_of_scope`（分类**只此一处**）—— 真源是**件头自述**
+    #   「不进门禁步骤表」（config 第二档白名单口径逐字引 `check-outrepo-dead-refs.py:19`）。
+    #   这一对证明：① 自述件被**逐件点名**指到第二路（`whitelist.scripts`）；
+    #   ② 普通件那句（`add_step`）**逐字照旧**、一字未动 —— 两路并存不互相吞。
+    oor_fix = _fixture(base, "c-new-ungated-oor",
+                       steps=[("core", "go build ./..."), ("", "python3 scripts/ok.py")],
+                       scripts=("scripts/ok.py",))
+    _gitify(oor_fix)
+    _write(os.path.join(oor_fix, "scripts", "outrepo.py"),
+           "#!/usr/bin/env python3\n"
+           "# -*- coding: utf-8 -*-\n"
+           '"""夹具：★ 为什么本件**不进门禁步骤表** —— 语料在仓外（夹具自称，与真仓同体例）。\n"""\n'
+           "print('outrepo fixture')\n")
+    rc, out = _run(oor_fix)
+    check("⑯d 件头自述「不进门禁步骤表」⇒ 逐件点名走第二路（第二档白名单）",
+          rc == 1 and "- scripts/outrepo.py" in out and "whitelist.scripts" in out
+          and "**不许**挂 `add_step`（挂上去就是死路）" in out, "rc=%d" % rc)
+    check("⑯e 普通件那一路**逐字照旧**（同一字面串 · 复用 `HINT_ADD_STEP` 常量，不另抄一份）",
+          HINT_ADD_STEP in out)
+    #   ★ 负控（与 ⑯d 成对）：把件头那句自述删掉（同一夹具、别的一字不动）⇒ 不再点名第二路
+    _write(os.path.join(oor_fix, "scripts", "outrepo.py"),
+           "#!/usr/bin/env python3\nprint('outrepo fixture')\n")
+    rc, out = _run(oor_fix)
+    check("⑯d- 负控：删掉件头自述 ⇒ 该件不再进第二路点名（分流不是恒真）",
+          rc == 1 and "- scripts/outrepo.py  ← 修法" not in out, "rc=%d" % rc)
+
+    # ── ⑯b/⑯c **索引读不到 ⇒ 判不了** 成对负控（`GAP-20260927-105`）────────────────
+    #   判据面 = 「③ 档非空 ∧ git 索引读不到 ⇒ 不给结论 rc=2」（与 ⑧/⑨ 空转同口径）。
+    #   ⑯b 负控：无 `.git` 的物化树上，③ 档那件**退码面必须不再静默当存量债** ⇒ rc=2 且点名；
+    #   ⑯c 正控：**同一夹具**补真 `git init` + `git add -A` ⇒ 该件=存量债（≤ 基线）⇒ 回绿 rc=0
+    #   —— 与 ⑯b 成对，证明这条判据不是「恒 rc=2」。
+    nu = _fixture(base, "d-tracked-unknown",
+                  steps=[("core", "go build ./...")],
+                  scripts=("scripts/ok.py", "scripts/orphan.py"),
+                  config_raw=json.dumps({"schema": "gate-coverage/1", "baseline": 2,
+                                         "whitelist": {}}, ensure_ascii=False))
+    rc, out = _run(nu)
+    check("⑯b 无 .git 且 ③ 档非空 ⇒ rc=2（判不了，不再静默当存量债 / 不再 rc=0）",
+          rc == 2, "rc=%d" % rc)
+    check("⑯b 且逐字点名「判不了：仓根不是 git 仓」与「不给结论」",
+          "判不了：仓根不是 git 仓" in out and "不给结论" in out)
+    _gitify(nu)
+    rc, out = _run(nu)
+    check("⑯c 同一夹具补真 git init + add ⇒ 该件=存量债 ⇒ rc=0 —— 与 ⑯b 成对（非恒 rc=2）",
+          rc == 0, "rc=%d" % rc)
+    check("⑯c 且输出里不再有「判不了：仓根不是 git 仓」", "判不了：仓根不是 git 仓" not in out)
+
     # ── ⑱/⑲/⑳/㉑/㉒ `--json` 的 **stdout 纯净度**（本门刚治的病：自检文本混进 stdout ⇒ json.loads 直接失败）──
     #   真命令行 · 真退出码 · 真流；判据只问「stdout 能不能 json.loads」⇒ 与实现无关（换实现也拦得住）。
     #   ★ 这一组只在 `deep` 档跑：探针子进程必须剪掉探针自己（否则无限自嵌套，见 _SELFTEST_DEEP）。
@@ -1224,6 +1362,18 @@ def main(argv):
     elif not rep["certify"]:
         rep["verdict"] = {"rc": EXIT_BLOCKED, "code": "CERTIFY_FAILED",
                           "reason": "计数自证不过（三档之和 ≠ 候选总数）⇒ 不给结论"}
+        rep["rc"] = EXIT_BLOCKED
+    elif b["hit_items"] and not b["git_tracked_known"]:
+        # ④ 格子**判不了** ⇒ 不给结论（口径照抄同门 ⑧/⑨ 空转 · ⑥/⑦ 白名单缺理由：判不了就 rc=2，
+        #   「判不了的时候报绿报红都是猜」）。
+        #   ★ 为什么只在「③ 档非空」时判不了：③ 档为空 ⇒ ④ 格子恒 0、「新件 ⟷ 存量债」这条判据
+        #     **不承重** ⇒ 结论仍确定（判不了才停，不误报 —— 同族纪律）。
+        #   ★ 为什么必须 fail-closed：非 git 仓里每一件都被写成「存量债（已提交件 …）」，那句
+        #     事实断言是假的，且「新件未挂门」恒 0 ⇒ 新件在基线余额内静默洗白（`GAP-20260927-105`）。
+        rep["verdict"] = {"rc": EXIT_BLOCKED, "code": "TRACKED_UNKNOWN",
+                          "reason": "判不了：仓根不是 git 仓 / git 不可用 ⇒ ③ 档 %d 条分不开"
+                                    "「新件 / 存量债」⇒ 不给结论"
+                                    % len(b["hit_items"])}
         rep["rc"] = EXIT_BLOCKED
     elif n_red_a or n_over_b > 0 or n_new_b > 0:
         rep["verdict"] = {"rc": EXIT_FAIL, "code": "RED",

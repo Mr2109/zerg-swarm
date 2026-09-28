@@ -73,9 +73,26 @@ import (
 //	`rollback_verdict` = 能不能退（闭集 `可退` / `不可退`）· `rollback_tier` = 档位（闭集 `1`/`2`/`3`/`4`）·
 //	`rollback_cmd` = 退法那一行（档 1 = `cp -p <退点件> <件>` · 档 3 = `rm <件>` · 档 2/4 **空** ⇒ 不编）·
 //	`rollback_why` = 不可退的原因片段（档 1 = 空；2/3/4 逐字 = stderr 那一行里的同一段）。
-var devEditFields = []string{"proposal", "file", "mode", "result", "before_sha256", "after_sha256",
-	"before_bytes", "after_bytes", "audit_path", "out_path", "approval", "approver",
-	"rollback_verdict", "rollback_tier", "rollback_cmd", "rollback_why"}
+//	★ `GAP-20260928-115`（2026-09-28 · 本枚）：这张表原来是一枚**写死的长串** —— 里面混着
+//	**只由干跑档产出**的五格（`approver` 与退点四格），而**真写档一个都不产出**（见下面写前那一拒）。
+//	帮助面照它印，于是表与产出面不实：人按表点名 `approver` 写，真写档当场写前拒（退 2）。
+//	治法（**两片拼接 · 名字仍只此一处**）：把「两档都产出」与「只干跑档产出」拆成两片、
+//	本表由两片拼出（次序 = 帮助面次序，逐字与拆前相同），帮助面那句注解由**后一片派生** ——
+//	这样注解里的名字**不可能与表漂**，也不新立第二份字段名单 ✗。
+var devEditFieldsShared = []string{"proposal", "file", "mode", "result", "before_sha256", "after_sha256",
+	"before_bytes", "after_bytes", "audit_path", "out_path", "approval"}
+
+// devEditDryRunOnlyFields —— 只由**干跑档**填的那几格（真写档产出不了 ⇒ 写前拒）。
+var devEditDryRunOnlyFields = []string{"approver", "rollback_verdict", "rollback_tier",
+	"rollback_cmd", "rollback_why"}
+
+// devEditFields —— `--json` 面的全部字段（K1：机器面先定 · 两片拼接 = **唯一**定义处）。
+var devEditFields = append(append([]string{}, devEditFieldsShared...), devEditDryRunOnlyFields...)
+
+// devEditDryRunOnlyNote —— 帮助面上紧跟在用法串后的那句话（`main.go` 的 `usage` 尾接它）。
+// 名字由上面那片**派生** ⇒ 字段表改了它自己跟着改（`GAP-20260928-115` 要的「表与产出集同源」落在这里）。
+var devEditDryRunOnlyNote = "（★ `--json` 字段表里的这几格 " + strings.Join(devEditDryRunOnlyFields, ",") +
+	" **只有干跑档**（`--dry-run` / 未走确认档那一态）产出 —— 真写档给出这些名字 ⇒ **写前拒**（退 2 · `json_field_unknown`）；脚本要这几格就先跑 `--dry-run`）"
 
 // replacePair —— `--replace <件>` 里的一枚替换（JSON 数组的一格）。
 // 形态：`[{"old":"…","new":"…"}, …]` —— **精确、唯一命中**才许改（模糊替换会静默改错地方）。

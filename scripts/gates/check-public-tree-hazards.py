@@ -237,6 +237,55 @@ def selftest():
         print("   ✗ %-32s | 夹具建不起来（%s）⇒ 不许静默绿" % ("cjk-name-clean-from-list", exc))
     finally:
         _shutil.rmtree(_fx_root, ignore_errors=True)
+    # ── ★ 回归自测格（缺口 `GAP-20260926-216` · 2026-09-28 补）：**真扫描面**不许哑化 ──
+    #   病灶（今天已治，本格是牙齿）：本自测此前只喂**分类面**（`PATH_RES`/`FORM_RES` 逐条正则
+    #   ＋`tree_class()` 纯函数＋`all_paths()` 取清单），**真判据 `scan_paths()` / `scan_forms()`
+    #   一个都不进自检** ⇒ 把 `scan_paths()` 体首行后插一行 `return []` 哑化后 `--self-test`
+    #   仍 `rc=0`（假安全；2026-09-28 **仓外硬拷贝**实测复现：哑化后 `py_compile` rc=0、自测 rc=0）。
+    #   治法：本格拿一艘**含真危险物**的合成树（仓外 `tempfile.mkdtemp`）喂给**真扫描面**，
+    #   断言它**真判红** —— 谁把 `scan_paths()` / `scan_forms()` 哑化成空结果，本格立刻变红
+    #   （负控已在**仓外副本**上实测：`scan_paths()` 体首行后插 `return []` ⇒ 本自测 rc=2、点名本格）。
+    _fx2_root = _tempfile.mkdtemp(prefix="hazards-selftest-scan-")
+    _fx2_repo = _os.path.join(_fx2_root, "repo")
+    _danger_path = ".zerg/logs/events.jsonl"                     # 命中 `.zerg/`・`logs/`・`.jsonl` 三条危险路径判据
+    _danger_body = "note: " + T + "shared0123456789\n"          # 命中项目令牌形态（拼接构造 · 本文件不含完整形态）
+    try:
+        _os.makedirs(_os.path.join(_fx2_repo, ".zerg", "logs"), exist_ok=True)
+        with open(_os.path.join(_fx2_repo, _danger_path), "w", encoding="utf-8") as fh:
+            fh.write(_danger_body)
+        with open(_os.path.join(_fx2_repo, "docs-clean.md"), "w", encoding="utf-8") as fh:
+            fh.write("正常文档\n")
+        subprocess.run(["git", "init", "-q", "-b", "main", _fx2_repo], check=True, env=_git_env)
+        subprocess.run(["git", "-C", _fx2_repo, "add", "-A"], check=True, env=_git_env)
+        subprocess.run(["git", "-C", _fx2_repo, "commit", "-q", "-m", "fixture"], check=True, env=_git_env)
+        # 格③：真**路径**扫描面**真判红**（正控 —— 哑化 `scan_paths()` ⇒ 本格必红）
+        _ph = scan_paths(_fx2_repo, False)
+        _case3 = [
+            (len(_ph) >= 1, "scan_paths 对含危险路径的树真判红（现读 %d 项）" % len(_ph)),
+            (any(_danger_path == p for p, _ in _ph), "命中项逐字点名 `%s`（现读 %r）" % (_danger_path, _ph)),
+        ]
+        for _ok, _why in _case3:
+            bad += (not _ok)
+            n_extra += 1
+            print("   %s %-32s | %s" % ("✓" if _ok else "✗", "scan-paths-catches-hazard", _why))
+        # 格④：真**形态**扫描面**真判红**（正控 —— 哑化 `scan_forms()` ⇒ 本格必红）
+        _fh = scan_forms(_fx2_repo, "HEAD", False)
+        _case4 = [
+            (len(_fh) >= 1, "scan_forms 对含令牌形态的树真判红（现读 %d 项）" % len(_fh)),
+            (any(_danger_path in h for h, _ in _fh), "命中项逐字点名 `%s`（现读 %r）" % (_danger_path, _fh)),
+        ]
+        for _ok, _why in _case4:
+            bad += (not _ok)
+            n_extra += 1
+            print("   %s %-32s | %s" % ("✓" if _ok else "✗", "scan-forms-catches-hazard", _why))
+    except (OSError, subprocess.SubprocessError) as exc:
+        # 建不起夹具（无 git / 临时目录不可写）⇒ **红**：缺语料不许静默绿
+        for _lbl in ("scan-paths-catches-hazard", "scan-forms-catches-hazard"):
+            bad += 1
+            n_extra += 1
+            print("   ✗ %-32s | 夹具建不起来（%s）⇒ 不许静默绿" % (_lbl, exc))
+    finally:
+        _shutil.rmtree(_fx2_root, ignore_errors=True)
     print("   自测: %s（%d 格）" % ("全过" if bad == 0 else "%d 条失败" % bad,
                                    len(cases_path) + len(cases_form) + len(cases_tree) + n_extra))
     return bad == 0

@@ -15,7 +15,7 @@
 //	zerg gate self-test    → bash scripts/gates/precommit-gates.sh --self-test
 //	zerg gate results      → **不走脚本**：读现成一趟的 results.tsv（缺口 `Q-111`/`B-8` · 只读）
 //
-// 五条**例外**（都只在命令面自己的旗标上生效，且都**不改脚本退码**）：
+// 六条**例外**（都只在命令面自己的旗标上生效，且都**不改脚本退码**）：
 //
 //	· `gate run --step <步名> --json <字段>` —— 单步档的机器面（`family_gate_run_step.go`）；
 //	· `gate show <步名> --json [<字段>]`   —— 四格机器面（`family_gate_show.go` · 缺口 `Q-061`/
@@ -29,6 +29,9 @@
 //	  `check-cli-contract.py --verify-live` 逐格回放），交给自举件必被拒（现读 `✗ 未知参数` rc=2），
 //	  直跑脚本又是 CLI 守卫拦下的手搓形态 ⇒ 命令面把它**逐字透传给那一步的命令串**（步名真源仍是
 //	  `add_step` 行）。**缺 `--step` 时一个字节都不动**（仍原样走自举件、退码照旧）。
+//	· `gate run --step <步名> --show-log` —— 单步档**步内读数**的手敲正门（`family_gate_run_step.go`
+//	  的 `gateRunStepShowLog` · 缺口 `GAP-20260928-28`）：把那一步自己的日志正文**原样**打到 stdout
+//	  （真源仍是脚本的 `results.tsv` 第 5 列）；缺 `--step` 时同 `--json` 退 2。
 //
 // 为什么**除这四处**不做 `--json`：其余三条的输出**就是**脚本的输出（逐行相同）；再包一层 JSON
 // 等于在命令面里另写一份步骤表 —— `G1-a` 明令禁止。
@@ -89,6 +92,17 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		if inv.jsonGiven {
 			return gateRunStepJSON(inv, stdout, stderr, root, script, tail)
+		}
+		// ★ 2026-09-28（缺口 `GAP-20260928-28`）：`--show-log` = 单步档**步内读数**的可手敲正门。
+		//   病：`--step <步名> --only-step` 的透传面只回「状态计数 + 软门禁末段」（脚本的 `report()`
+		//   只对 FAIL/BLOCKED/REPORT 三档打日志尾巴，**PASS 档只打一行状态**），那一步自己的逐格读数
+		//   **只在** `<日志目录>/NN-<步名>.log` ⇒ 「拿门跑当活值对拍器」这条正门是断的。
+		//   口径与 `--json` 同：仍复用脚本自己落的 `results.tsv`（第 5 列 = 日志件路径）读回，
+		//   **不另抄步骤表、不改任何脚本退码**；只把读回的那一步正文**原样**打到 stdout。
+		//   与 `--verify-live`/`--json` 同规：**缺 `--step` 时一个字节都不动**（仍原样走自举件）；
+		//   同给 `--json` 时以机器面为先（上一条支已截获）。
+		if gateRunWantsShowLog(tail) {
+			return gateRunStepShowLog(inv, stdout, stderr, root, script, tail)
 		}
 		args = append(args, tail...)
 	case "show":

@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """发布期门禁：扫「私有卷占位符后仍带实质余部」的**形态**（= 规则跨空格失配后的截断残留）。
 
-退出码：0 = 干净；1 = 有残留（不得发布）；2 = 脚本自测未过。
+退出码：0 = 干净；1 = 有残留（不得发布）；2 = **不给结论**（脚本自测未过 / **判不了**：
+      `git grep` 取不到那棵树 —— **取不到 ≠ 零命中**（同族 `TRACKED_UNKNOWN` 口径））。
 原由：替换规则曾用「以空白为终止」的字符类匹配私有卷前缀 ⇒ 含空格的私有路径只被替掉前半段，
       余部（私有目录名）留在正文里；而彼时前缀已消失，任何「扫私有绝对路径」的检查都看不见它。
       故本门禁按**形态**扫：私有卷占位符 + 紧随其后的路径样余部
@@ -19,6 +20,11 @@ LINE_RE = re.compile(r"^(?:([0-9a-f]{7,40}):)?(.*?):(\d+):(.*)$", re.S)
 PLACEHOLDER = "<volume-" + "path>"          # 拆开写，避免本文件出现完整形态
 RESIDUE_RE = re.compile(re.escape(PLACEHOLDER) + r"[ \t]*([^\s\"'`\)]{1,})")
 PATHY_RE = re.compile(r"/")   # 余部含斜杠 ⇒ 视为路径样（实测被截断的私有路径余部都带 /；普通中文正文不误报）
+
+# ── 退码三档（同族口径 · 照抄 `check-gate-coverage.py` 的词表）：0 干净 · 1 有残留 · 2 不给结论 ──
+EXIT_OK, EXIT_FAIL, EXIT_BLOCKED = 0, 1, 2
+# 判不了时的取值（同族词表：`check-gate-coverage.py` 对「git 面取不到」用这一个）：索引读不到
+CODE_TRACKED_UNKNOWN = "TRACKED_UNKNOWN"
 
 
 def is_definition_field(text, m):
@@ -72,13 +78,31 @@ def selftest():
 
 
 def scan(gitdir, all_commits=False, commit=None):
-    commits = (subprocess.run(["git", "-C", gitdir, "-c", "core.quotepath=false", "rev-list", "main"], capture_output=True, text=True)
-               .stdout.split() if all_commits else [commit or "HEAD"])
+    """⇒ (total, files, err)。err 非空 ⇒ **判不了**（rc=2）—— 绝不把「取不到」读成「零命中」。
+
+    ★ 病灶（`GAP-20260927-105` · 同族静默假绿）：原 `:75-79` 只取 `.stdout`、**退码被忽略** ⇒
+      仓根不是 git 仓 / commit 解析不了 / git 不可用 时 `git grep` 非零退出而 stdout 为空 ⇒
+      `total=0` ⇒ `:200` 报「通过」。**「取不到」与「零命中」在退码面上必须分得开**：
+      `git grep` 退码 0 = 有命中 · 1 = 无命中（正常，照走）· ≥2 = 取不到 ⇒ 判不了，不给结论。
+    """
+    commits, err = [], ""
+    if all_commits:
+        r = subprocess.run(["git", "-C", gitdir, "-c", "core.quotepath=false", "rev-list", "main"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            return 0, {}, ("判不了：仓根不是 git 仓 / git 不可用 ⇒ `git rev-list main` 非零退出（rc=%d）"
+                           % r.returncode)
+        commits = r.stdout.split()
+    else:
+        commits = [commit or "HEAD"]
     total, files = 0, {}
     for c in commits:
-        out = subprocess.run(["git", "-C", gitdir, "-c", "core.quotepath=false", "grep", "-n", "-I", PLACEHOLDER, c, "--", "."],
-                             capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
-        for ln in out.split("\n"):
+        r = subprocess.run(["git", "-C", gitdir, "-c", "core.quotepath=false", "grep", "-n", "-I", PLACEHOLDER, c, "--", "."],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if r.returncode >= 2:
+            return 0, {}, ("判不了：仓根不是 git 仓 / git 不可用 ⇒ `git grep` 非零退出（rc=%d · commit=%s）"
+                           % (r.returncode, c))
+        for ln in r.stdout.split("\n"):
             if not ln.strip():
                 continue
             path, lineno, text = content_of(ln)
@@ -86,7 +110,7 @@ def scan(gitdir, all_commits=False, commit=None):
             if hit:
                 total += 1
                 files.setdefault(path, []).append("%s:%s" % (lineno, frag[:60]))
-    return total, files
+    return total, files, ""
 
 
 # ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
@@ -173,6 +197,20 @@ def self_test():
 
         rc, out = run("--json")
         chk("档③′ 用法错：`--json` 而本门无机器读面（`Q-176` 统一口）", 2, rc, out)
+
+        # ── 成对负控（`GAP-20260927-105`）：**取不到**（无 .git 物化树）⇒ 判不了，不再静默当通过 ──
+        #   判据面 = `scan()` 的退码分支（`git grep` ≥2）。同一段残留正文：
+        #   无 .git 树 ⇒ 取不到 ⇒ rc=2；真 git 仓 ⇒ rc=1（档② 那一路）。两者成对才证明它不是恒 rc=2。
+        nogit = os.path.join(tmp, "no-git-tree")
+        os.makedirs(nogit)
+        with open(os.path.join(nogit, "说明.md"), "w", encoding="utf-8") as f:
+            f.write("配置在 %s 中文字目录/示例.json 里\n" % V)
+        rc, out = run(nogit, "HEAD")
+        chk("档④ 负控：无 .git 物化树（`git grep` 取不到）⇒ 判不了 rc=2，**不再静默当通过**", 2, rc, out)
+
+        paired = repo("dirty2", "配置在 %s 中文字目录/示例.json 里\n" % V)
+        rc, out = run(paired, "HEAD")
+        chk("档④′ 成对正控：同一段正文在真 git 仓 ⇒ rc=1（证明档④ 不是恒 rc=2）", 1, rc, out)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("── 自检：%s" % ("全过 ✓" if bad[0] == 0 else "**%d 档不过** ✗" % bad[0]))
@@ -196,10 +234,14 @@ if __name__ == "__main__":
         sys.exit(2)
     target = _argv[0] if _argv else "."
     mode = _argv[1] if len(_argv) > 1 else "HEAD"
-    total, files = scan(target, all_commits=(mode == "--all"))
+    total, files, err = scan(target, all_commits=(mode == "--all"))
+    if err:
+        print("✗ 不给结论（rc=2）：%s ⇒ **取不到 ≠ 零命中**（两态不许同形）；code=%s"
+              % (err, CODE_TRACKED_UNKNOWN), file=sys.stderr)
+        sys.exit(EXIT_BLOCKED)
     if total == 0:
         print("结果: 通过——未发现残留（扫 %s mode=%s）" % (target, mode))
-        sys.exit(0)
+        sys.exit(EXIT_OK)
     print("结果: 不通过——发现 %d 处残留（%d 个文件）：" % (total, len(files)))
     for f, hits in sorted(files.items(), key=lambda x: -len(x[1]))[:15]:
         print("   %s" % f)

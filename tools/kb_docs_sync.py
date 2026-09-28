@@ -136,6 +136,18 @@ def main():
     return 0
 
 if __name__ == "__main__":
+    # ── 旗标面（最小）：未知旗标不许静默吞 ✗（吞了 ⇒ 直落默认写动作：写 REGISTRY/CANDIDATES）。
+    #    口径照同族 scripts/docs/gen-glossary-exports.py（2026-09-28 已治）：
+    #      未知参数 ⇒ 逐字 `✗ 未知参数: <原样>` + rc=2，零写盘；
+    #      `--help` / `-h` ⇒ 只印用法（__doc__「用法」段 · 唯一真源）⇒ rc=0，一个字节不写盘。
+    known = {"--mark", "--help", "-h"}
+    bad = [a for a in sys.argv[1:] if a.startswith("-") and a not in known]
+    if bad:
+        print("✗ 未知参数: %s" % " ".join(bad), file=sys.stderr)
+        sys.exit(2)
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(__doc__)
+        sys.exit(0)
     if "--mark" in sys.argv:
         reg = load_registry()
         ver_dir = current_version_dir()

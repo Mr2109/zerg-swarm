@@ -251,13 +251,32 @@ def read_table_anchors(repo):
     return anchors
 
 
-def judge_readers(hits, anchors=None):
+REGISTRY_REL = "scripts/公开标记.tsv"   # W5 的**第二豁免锚**（登记表本体 · 2026-09-28 拍）：
+#   登记表**首列**逐字点名的件 = 「登记它」，不是「读它」 ⇒ 该表本体里这样的行豁免；
+#   仅限该表**本体**内的行 ✗（别的件照旧一条都不豁免）；表读不到 ⇒ 一条都不豁免 ✗。
+
+
+def read_registry(repo, rel=REGISTRY_REL):
+    """现读登记表真身 ⇒ (相对路径, 首列值集合)；读不到 / 无数据行 ⇒ (相对路径, None)（= 不豁免）。"""
+    try:
+        with open(os.path.join(repo, rel), encoding="utf-8") as f:
+            rows = {ln.split("\t")[0].strip() for ln in f.read().splitlines()
+                    if ln.strip() and not ln.startswith("#")}
+        return rel, (rows or None)
+    except Exception:  # noqa: BLE001 —— 读不到 ≠ 可以豁免
+        return rel, None
+
+
+def judge_readers(hits, anchors=None, registry=None, copy_rel=None):
     """W5：任何运行路径不许读副本。hits = [(相对路径, 行号, 该行原文)]；
     anchors = {相对路径: (表起行, 表止行)}（**现读**得来 · 见 `read_table_anchors`）。
     ⇒ **只有**「命中行落在排除表区间**内** **且** 该行本身是**表元素行**」才豁免（`Q-114` = 甲：那是
        「声明它不进公开面」，不是「读副本」）；表外 / 表内注释行 / 表内非元素行 / 未定出锚的件 ⇒ **红** ✓。
     返回 (判红 list, 豁免 list)。"""
     anchors = anchors or {}
+    reg_rel, reg_rows = (registry if registry else (None, None))
+    rel = (copy_rel or "").replace(os.sep, "/")
+    d = os.path.dirname(rel)
     reds, excused = [], []
     for h in hits:
         path, lineno, text = (h if isinstance(h, (tuple, list)) else (h, 0, ""))
@@ -265,6 +284,13 @@ def judge_readers(hits, anchors=None):
         if span and span[0] <= lineno <= span[1] and is_exclusion_element_line(text):
             excused.append((path, lineno))
             continue
+        # 第二锚（2026-09-28）：命中行**就在登记表本体里**，且该行**首列**逐字点名副本
+        # （本体或它所在目录）⇒ 那是「登记它」；非首列 / 别的件 ⇒ 照旧判红 ✗（豁免不放宽）。
+        if reg_rel and reg_rows is not None and path == reg_rel:
+            first = text.split("\t")[0].strip()
+            if first and (first == rel or (d and first.startswith(d + "/"))):
+                excused.append((path, lineno))
+                continue
         reds.append("W5 破：运行路径里出现副本路径的字面串（%s:%s）⇒ 副本被当运行源读了：%s"
                     % (path, lineno, text.strip()))
     return reds, excused
@@ -396,7 +422,7 @@ def judge_all(r):
     p4, why4 = judge_public_face(r["copy_raw"] is not None,
                                  ex_txt, drop_txt, r.get("copy_rel"))
     reds += p4
-    p5, exc5 = judge_readers(r["readers"], r.get("anchors"))
+    p5, exc5 = judge_readers(r["readers"], r.get("anchors"), registry=read_registry(r["repo"]), copy_rel=r.get("copy_rel"))
     reds += p5
     return reds, nocalls, {"run_kid": run_kid, "state2": state2, "why4": why4,
                            "pub_hits": pub_hits, "others": others, "d": d,
@@ -537,6 +563,78 @@ def self_test(stream=sys.stdout):
           "与**同一批读数**同值（机器面与人面同源）",
           "⑲ 失败：六键不齐 / items 缺格 / 计数与读数不同值（六键 %s · 条目 %s · 同值 %s）"
           % (keys_ok, item_ok, value_ok))
+
+    # ── ★ 回归自测格（缺口 2026-09-28 · 补）：**真取数面 `scan_readers()`** 不许哑化 ──
+    #   病灶（今晚补，本格是牙齿）：本自检此前只喂**纯判据面**（`parse_pub` / `judge_tickets` /
+    #   `judge_pair` / `judge_l7` / `judge_public_face` / `judge_readers` 的**入参**），
+    #   **真取数面 `scan_readers()` 一个都不进自检** ⇒ 把它体首行后插一行 `return []` 哑化后
+    #   `--self-test` **仍 rc=0**（自检假安全；2026-09-28 **仓外副本**实测复现：哑化后 `py_compile`
+    #   rc=0、`--self-test` rc=0、20 格全过、sha 已变）。
+    #   治法：拿一艘**含真问题**的合成夹具（仓外 `tempfile.mkdtemp`：一枚**已跟踪件**里写了副本路径
+    #   的字面串 = 运行路径读了副本）喂给**真取数面 `scan_readers()`**，断言它**真判红**并**逐字点名**；
+    #   再喂**干净输入**断言零命中（证明正控不是怙红）；最后把取数面换成**空结果**（等价哑化）断言
+    #   正控谓词**必红**（谁把 `scan_readers()` 哑化成空结果，本正控格立刻变红）。
+    import shutil as _shutil
+    import tempfile as _tempfile
+    _fx_root = _tempfile.mkdtemp(prefix="ctw-selftest-readers-")
+    _lit = AUDIT_COPY_REL.replace(os.sep, "/")
+    _d = os.path.dirname(_lit)
+    _hit_rel = "core/cmd/zerg/reader.go"                 # 扫描面内（`core/` 前缀 + `.go` 后缀）
+    _clean_rel = "core/cmd/zerg/clean.go"
+    _n_extra = 0
+    try:
+        os.makedirs(os.path.join(_fx_root, "core", "cmd", "zerg"), exist_ok=True)
+        with open(os.path.join(_fx_root, _hit_rel), "w", encoding="utf-8") as _fh:
+            _fh.write('package main\nvar p = "%s"\n' % _lit)   # 运行路径读了副本 ⇒ 真问题
+        with open(os.path.join(_fx_root, _clean_rel), "w", encoding="utf-8") as _fh:
+            _fh.write("package main\n// 干净件：不提副本\n")
+        _tracked = [_hit_rel, _clean_rel]
+        # ⑳ 正控：真取数面 `scan_readers()` 对**含真问题**的夹具**真判红**并**逐字点名**
+        _hits = scan_readers(_fx_root, _tracked, AUDIT_COPY_REL)
+        check(bool(_hits) and any(_h[0] == _hit_rel for _h in _hits),
+              "⑳ 正控（新格 · 真取数面）：合成夹具里运行路径读了副本 ⇒ `scan_readers()` **真判红**并"
+              "逐字点名 `%s`（现读 %r）" % (_hit_rel, _hits),
+              "⑳ 失败：真取数面 `scan_readers()` 没判出命中（**假安全**）—— 现读 %r" % (_hits,))
+        _n_extra += 1
+        # ㉑ 反向对照：同一取数面喂**干净输入**（不含副本字面串）⇒ 零命中（证明⑳不是怙红）
+        _clean_hits = scan_readers(_fx_root, [_clean_rel], AUDIT_COPY_REL)
+        check(not _clean_hits,
+              "㉑ 反控·干净输入：同一真取数面喂**不含副本字面串**的件 ⇒ 零命中（现读 %r；证明⑳不是怙红）"
+              % (_clean_hits,),
+              "㉑ 失败：干净输入也判出命中（假阳）—— 现读 %r" % (_clean_hits,))
+        _n_extra += 1
+        # ㉒ 反控·哑化必红：把真取数面换成**空结果**（等价体首行后插 `return []` 哑化）⇒ ⑳ 的正控谓词必红
+        _keep_scan = scan_readers
+        globals()["scan_readers"] = lambda *a, **k: []
+        try:
+            _dumbed = globals()["scan_readers"](_fx_root, _tracked, AUDIT_COPY_REL)
+        finally:
+            globals()["scan_readers"] = _keep_scan
+        _pos_ok = bool(_dumbed) and any(_h[0] == _hit_rel for _h in _dumbed)
+        check(not _pos_ok,
+              "㉒ 反控·哑化必红：把真取数面换成**空结果**（等价 `return []` 哑化）⇒ ⑳ 的正控谓词"
+              "**必红**（现读哑化 hits=%r ⇒ ⑳ 会 ✗；哑化被本自检抓住）" % (_dumbed,),
+              "㉒ 失败：哑化后正控谓词仍成立（⑳ 没牙）—— 现读 %r" % (_dumbed,))
+        _n_extra += 1
+        # ㉓ 第二豁免锚（登记表本体 · `2026-09-28` 拍）：成对两态 —— 登记行**首列**逐字点名副本 ⇒ 豁免；
+        #   同一字面串落在**非首列** ⇒ 照旧判红（豁免不许放款）。
+        _lit_reg = AUDIT_COPY_REL.replace(os.sep, "/")
+        _reg_hit = (REGISTRY_REL, 170, "%s\tno\tB 类·信任根**审计副本**" % _lit_reg)
+        _reg_bad = (REGISTRY_REL, 171, "说明\t%s\t没点名" % _lit_reg)
+        _r_reg, _e_reg = judge_readers([_reg_hit, _reg_bad], None,
+                                       registry=(REGISTRY_REL, {_lit_reg}), copy_rel=AUDIT_COPY_REL)
+        check(len(_e_reg) == 1 and _e_reg[0] == (REGISTRY_REL, 170) and len(_r_reg) == 1,
+              "㉓ 第二豁免锚（登记表本体 · 首列点名）：登记表的**登记行** ⇒ **豁免**；同一字面串落在"
+              "**非首列** ⇒ **照旧判红**（豁免 1 处 · 判红 1 处）",
+              "㉓ 失败：登记行没豁免（门⑱ 恒红）/ 非首列也豁免（放太宽）—— 判红 %r · 豁免 %r" % (_r_reg, _e_reg))
+        _n_extra += 1
+    except OSError as _exc:
+        # 建不起夹具（临时目录不可写等）⇒ **红**：缺语料不许静默绿
+        for _lbl in ("⑳ 正控（真取数面）", "㉑ 反控·干净输入", "㉒ 反控·哑化必红"):
+            bad += 1
+            print("   ✗ %s | 夹具建不起来（%s）⇒ 不许静默绿" % (_lbl, _exc), file=stream)
+    finally:
+        _shutil.rmtree(_fx_root, ignore_errors=True)
 
     print("   自检：%d 格过 · %d 格不过（真目标只读 · 未改任何字节）" % (ok, bad), file=stream)
     return bad == 0

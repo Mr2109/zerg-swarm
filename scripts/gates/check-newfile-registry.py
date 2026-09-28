@@ -662,7 +662,7 @@ def run_self_test():
         build_fixture(tmp)
         open(os.path.join(tmp, "inv.tsv"), "w").write("件\n")
 
-    # 断言 8 条：正控 2 · 负控 2 · 判不了/边界 4
+    # 断言（条数以该件自检自报为准 · 不在此写死）
     case("正控① · 五表登记齐（报告档）⇒ 0", 0, {"new_files": [probe], "inv": "inv.tsv", "strict": False},
          setup=all_five)
     case("正控② · 五表登记齐（阻断档）⇒ 0", 0, {"new_files": [probe], "inv": "inv.tsv", "strict": True},
