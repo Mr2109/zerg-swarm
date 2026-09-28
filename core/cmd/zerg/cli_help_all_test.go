@@ -186,10 +186,10 @@ func TestCLIHelpAll_DefaultFaceStaysOpenOnly(t *testing.T) {
 		t.Fatalf("`help`=%d · `--help`=%d —— 都要退 0", rcB, rcH)
 	}
 	for _, n := range dangerNames(dang) {
-		if strings.Contains(base, helpLinePrefix+n) {
+		if helpLineIsExact(base, n) {
 			t.Errorf("默认面（裸 `help`）里出现了危险动作 `%s` 的行 —— 默认面只列已开放的一批", n)
 		}
-		if strings.Contains(viaHelp, helpLinePrefix+n) {
+		if helpLineIsExact(viaHelp, n) {
 			t.Errorf("默认面（`--help`）里出现了危险动作 `%s` 的行 —— 默认面只列已开放的一批", n)
 		}
 	}
@@ -201,4 +201,21 @@ func TestCLIHelpAll_DefaultFaceStaysOpenOnly(t *testing.T) {
 			t.Errorf("`zerg %s` 的面上找不到指路句 `%s`（`--all` 就不可发现）", c.name, helpBadgeMark)
 		}
 	}
+}
+
+// helpLineIsExact —— 某动作名在某个面上是否**真占了**一行（不是当下别的命令的名字前缀）。
+// 为什么要有这条：`gap assign`（危险）与 `gap assign ls`（已开放）同前缀，
+// 光用 `strings.Contains("  zerg "+名)` 会把 `  zerg gap assign ls [--egg …]` 误判成危险动作占了默认面。
+// 判法：行首逐字 = 前缀+名，且名后紧跟（行尾 | 空格+`[` | 空格+`--`）—— 后面接别的词就不是它。
+func helpLineIsExact(out, name string) bool {
+	for _, ln := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(ln, helpLinePrefix+name) {
+			continue
+		}
+		rest := ln[len(helpLinePrefix)+len(name):]
+		if rest == "" || strings.HasPrefix(rest, " [") || strings.HasPrefix(rest, " --") {
+			return true
+		}
+	}
+	return false
 }

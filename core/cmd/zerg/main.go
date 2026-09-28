@@ -2153,8 +2153,8 @@ func init() {
 		{
 			path:     []string{"gap", "set-state"},
 			kind:     "GapSetState",
-			summary:  "改一条缺口的状态（写面 · 留证据）：`--state` 只认**三值闭集**（`仍缺` / `已解` / `不做`）—— 闭集外 ⇒ 2 并逐字印闭集 · 转 `已解` 写 `solved_at` + `solved_evidence` · 同 id 同态同证据 ⇒ 「无变化」0（不写）· 审计进 `edit_audit.jsonl`（写不进就不写真源）",
-			usage:    "zerg gap set-state <GAP id> --state <仍缺|已解|不做> --evidence <一句话> [--by <谁>] [--dry-run | --yes] [--json <字段>]",
+			summary:  "改一条缺口的状态（写面 · 留证据）：`--state` 只认**三值闭集**（`仍缺` / `已解` / `不做`）—— 闭集外 ⇒ 2 并逐字印闭集 · 转 `已解` 写 `solved_at` + `solved_evidence` · **销案两态对拍**（批4 第四片 · 设计稿 §11.5 · 表 `D6`）：改到 `已解` 时**新账**（缺口号内日期 ≥ `2026-09-28`）**必须**带改前/改后两条读数（`--before-read` / `--after-read` · 每条形如 `cmd=<命令> · rc=<真退码> · reading=<关键读数一行>`）—— 缺哪一段就退 2 并**逐段点名**（改前读数 / 改后读数）· **存量账**（号内日期 < 阈值）豁免但**不静默**：表尾逐字印「本发为存量豁免（未带两态对拍）」· 改**非** `已解` 的状态 ⇒ 本闸不适用（行为逐字不变）· 同 id 同态同证据 ⇒ 「无变化」0（不写）· 审计进 `edit_audit.jsonl`（写不进就不写真源）",
+			usage:    "zerg gap set-state <GAP id> --state <仍缺|已解|不做> --evidence <一句话> [--before-read <cmd=… · rc=… · reading=…>] [--after-read <cmd=… · rc=… · reading=…>] [--by <谁>] [--dry-run | --yes] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"缺口 id（**恰好一条** —— 本动作不做批量改态）"},
 			fields:   gapSetStateFields,
@@ -3096,6 +3096,10 @@ func valueFlagName(a string) string {
 		// ★ 批3 第一片（2026-09-28）：`gap assign` 的作业单六栏五枚旗标 + 回执路径一枚。
 		//   名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用（同族先例同上）。
 		"--egg", "--allow", "--forbid", "--occupies", "--criterion", "--deadline", "--receipt",
+		// ★ 批4 第四片（2026-09-28）：`gap set-state` 销案**两态对拍**的两枚读数旗标
+		//   （改前 / 改后成对 · 值 = 同族 `k=v · k=v` 逐格串）。名字表是本仓「唯一真源」
+		//   ⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用（同族先例逐字同上）。
+		"--before-read", "--after-read",
 		"--source":
 		return a
 	}
