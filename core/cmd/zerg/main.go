@@ -2082,6 +2082,30 @@ func init() {
 			endpoint: "",
 			run:      cmdGapVerify,
 		},
+		// ★ 批4 第一片（2026-09-28）：`gap verify-one <GAP id>` —— **跑判据即写**（一条一次）。
+		//   病（设计稿 §11.4 批4 · §11.2 批2 D1/D2）：`gap verify` 是**批量面**（点名多条 / `--all`），
+		//   且只有 `--yes` 那一态写 `last_verified_at` ⇒ 「跑判据即写」没落地（现读账里该格仅 1 条）。
+		//   本面 = 一条一次：跑该条的 `verify_cmd`，把 **last_verified_at / last_verify_rc /
+		//   verify_tier** 三格写回该条（走本族唯一收口 `gapRewriteOne`：审计先落盘 → 整件重写 →
+		//   读回对拍；只重写目标那一行）。
+		//   ⚠ 命令名取定 = `verify-one`：`gap verify` 这一格**已被判据批量面占用**（形状/退码一字不许动）
+		//   ⇒ 不占用同一条命令树路径（回执 CLI 缺口栏如实点名）。
+		//   四条硬纪律：① `--dry-run` 只出计划件（**不跑判据**、不写账 · 恒 0）② 缺 `--yes` 真写 ⇒ fail-closed 2
+		//   ③ 该条**无 `verify_cmd`** ⇒ 2 并点名（不当绿）④ 带 shell 元字符（管道/重定向/分号/与或）的判据
+		//   **一律拒跑并点名**（不当绿也不当红）。
+		{
+			path:     []string{"gap", "verify-one"},
+			kind:     "GapVerifyOne",
+			summary:  "跑一条缺口的判据（`verify_cmd`）**一条一次**并**把结果写回该条**（写面）：写 `last_verified_at`（现取时刻）· `last_verify_rc`（真退码）· `verify_tier`（真判据/占位/无）· 走本族唯一收口 `gapRewriteOne`（只重写目标那一行 · 审计进 `edit_audit.jsonl`）· `--dry-run` 只出计划件（不跑判据 · 恒 0）· 缺 `--yes` ⇒ 2 · 无 `verify_cmd` ⇒ 2 点名 · 判据带 shell 元字符 ⇒ 拒跑点名",
+			usage:    "zerg gap verify-one <GAP id> [--by <谁>] [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"缺口 id（**恰好一条** —— 本面一条一次）"},
+			fields:   gapVerifyOneFields,
+			danger:   &dangerSpec{dangerD2, "缺口 id", "改真源里的 `last_verified_at` / `last_verify_rc` / `verify_tier` + 审计一行（可逆：照审计那一格回写）；**本面不改 `state`**（改态是 `gap verify` / `set-state` 的事）", "设计-缺口账与自进化-v2.0-20260928.md §11.4 批4 · §11.2 批2 D1/D2 · 同族写面先例 `设计-命令面-gap族-v1.0-20260923.md §二.2/§三/§四`", false},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapVerifyOne,
+		},
 		{
 			path:     []string{"gap", "export"},
 			kind:     "GapExport",
