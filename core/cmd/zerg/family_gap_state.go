@@ -100,6 +100,12 @@ func gapFindIdx(led gapLedger, id string) int {
 // 返回 `(detail, rc, msg)`：`rc==0` 即真写成功（`detail`/`msg` 为空）。
 // **未动的行逐字节照原样写回**（`led.Lines` 是原文，不是重序列化）—— 与 `verify` 同一条口径。
 func gapRewriteOne(inv *invocation, led gapLedger, idx int, rec gapRecord, cmdName, before, after string) (string, int, string) {
+	// ⓪ **乐观并发闸**（批4 第七片 · 设计稿 §三十五 `O-14`「改态的并发保护」）：
+	//    写前**现读**账件身份，与本进程读入那一刻的基线不符 ⇒ **当场拒写**（退 2 · 点名两个 sha16）。
+	//    它排在「审计先落盘」**之前** ⇒ 拒写那一次真源一个字节不落、审计一行不落。
+	if d, rc, m := gapConcurGate(led, cmdName); rc != exitOK {
+		return d, rc, m
+	}
 	enc, err := json.Marshal(rec)
 	if err != nil {
 		return "ledger_encode_failed", exitFail, err.Error()
@@ -134,6 +140,41 @@ func gapRewriteOne(inv *invocation, led gapLedger, idx int, rec gapRecord, cmdNa
 		return "ledger_readback_mismatch", exitBlocked, "写回读对不上"
 	}
 	return "", exitOK, ""
+}
+
+// gapConcurGate —— 改态的**乐观并发闸**（批4 第七片 · 设计稿 §三十五 `O-14`：「多会话读-改-写会丢更新」）。
+//
+// 病：本族改态是「读整件 → 改一行 → 整件重写（`gapWriteLedger` · 临时件 + rename）」。两个写者各自读旧账、
+// 各自整件重写 ⇒ **后写的那次覆盖先写的那次**（丢更新；实测到同一秒内出现三个不同 sha）。
+//
+// 闸法（乐观并发 —— 只在写入前一刻对一次身份：不加锁、不排序、不改真源格式）：
+//
+//	· 基线 = 本进程**读入那一刻**的整件字节（`led.Raw`）的 `sha256`；
+//	· 写前**现读**盘上那一件，现算 `sha256`；
+//	· 两者不符（或写前现读不到）⇒ 退 `concurrent_write`（调用方 `gapWriteFail` 译成**退码 2** ·
+//	  逐字点名两个 `sha16`）；
+//	· 相符 ⇒ 放行，此后仍是原路（审计先落盘 → 整件重写 → 读回对拍）。
+//
+// 为什么捏在**这一处**：本族所有改态面（`set-state` / `note` / `note --retract` / `assign` /
+// `bulk set-state` / `verify-one` / `receipt apply`）都只走唯一收口 `gapRewriteOne` ⇒ 闸加在收口上，
+// 这些面**自动**被护住（不另开写路 · 也不是每个命令里各写一遍）。
+//
+// ★ 退码取 2（本片取定 · 回执如实点名）：语义是「**这发不算数**、重跑一次即好」—— 不是真源坏（8）、
+// 不是审计坏（8）。仓内另有专号 `exitConflict = 14`（`kind=conflict` · `remedy=wait_or_reload`），
+// 本片**未取**它（本面要的是「谁改谁重跑」，不是「等一会儿再来」）；是否改取 14 留待定夺。
+func gapConcurGate(led gapLedger, cmdName string) (string, int, string) {
+	base := sha256Of(led.Raw)
+	now, err := os.ReadFile(led.Path)
+	if err != nil {
+		return "concurrent_write", exitUsage,
+			fmt.Sprintf("写前**现读**不到账件（%v） ⇒ 拿不到「现在」这一格，拒写", err)
+	}
+	cur := sha256Of(now)
+	if cur == base {
+		return "", exitOK, ""
+	}
+	return "concurrent_write", exitUsage,
+		fmt.Sprintf("基线 sha16=%s（`%s` 读入那一刻） · 现状 sha16=%s（写前现读）", base[:16], cmdName, cur[:16])
 }
 
 // gapStatePlanBlock —— 两条新写面的计划件（`--dry-run` 走 stdout · 缺 `--yes` 走 stderr）。
@@ -593,6 +634,12 @@ func gapNoteRetract(inv *invocation, stdout, stderr io.Writer, led gapLedger, id
 // gapWriteFail —— 真写那三步失败的**唯一报面**（`set-state` / `note` 共用）。
 func gapWriteFail(inv *invocation, stderr io.Writer, detail, msg, cmdName string) {
 	switch detail {
+	case "concurrent_write":
+		inv.setErr("usage", detail, msg)
+		fmt.Fprintf(stderr, "%s: **并发冲突** —— 账件在本进程读入之后被别人改过 ⇒ 本次**拒写**（退码 2）\n", progName)
+		fmt.Fprintf(stderr, "  %s\n", msg)
+		fmt.Fprintf(stderr, "  真源     : %s（一个字节未动 · 审计一行未落 —— 闸在「审计先落盘」**之前**）\n", gapLedgerPath())
+		fmt.Fprintf(stderr, "  下一步   : **重跑一次即可**（重跑以盘上现状为新基线）—— **不要手改账件**（手改正是这条闸要挡的形态）\n")
 	case "audit_unwritable":
 		inv.setErr("blocked", detail, msg)
 		fmt.Fprintf(stderr, "%s: 审计写不进 ⇒ **真源一个字节不改**（审计先落盘 · 退码 8）：%v\n", progName, msg)
