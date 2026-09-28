@@ -21,13 +21,28 @@ import (
 	zerg "github.com/Mr2109/zerg-swarm/core/cmd/zerg"
 )
 
+// aiBoundaryEvidenceDir —— 本仓「出处必须在册」的闸（`GAP-20260927-254`）读的是状态目录里的缺口账
+// （`$ZERG_STATE_DIR/zerg-cli-gaps.jsonl` · 默认 `~/.zerg/state`）。夹具**自带一份合成账**，把出处指到
+// 里面真在册的那一条 ⇒ 与「本机账在不在 / 环境里有没有 ZERG_STATE_DIR」脱钩（判据不变，只换夹具）。
+const aiBoundaryEvidenceInLedger = "GAP-20260927-254"
+
+func aiBoundaryEvidenceDir(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	line := `{"id":"` + aiBoundaryEvidenceInLedger + `"}`
+	if err := os.WriteFile(filepath.Join(dir, "zerg-cli-gaps.jsonl"), []byte(line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ZERG_STATE_DIR", dir)
+}
+
 // proposalNew 跑一次 `dev proposal new`（提案目录指到临时目录 ⇒ 不碰本机状态）。
 func proposalNewAuthz(t *testing.T, extra ...string) (int, string, string) {
 	t.Helper()
 	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
 	argv := append([]string{"dev", "proposal", "new",
 		"--title", "授权面", "--target", "待办:D1", "--goal", "g",
-		"--evidence", "e", "--rollback", "r", "--criterion", "zerg gate run --fast"}, extra...)
+		"--evidence", "GAP-20260927-254", "--rollback", "r", "--criterion", "zerg gate run --fast"}, extra...)
 	return runCapture(argv...)
 }
 
@@ -64,6 +79,7 @@ func TestAIBoundaryContract(t *testing.T) {
 // ---- 判据①：四条规则逐条（含负控）----
 
 func TestProposalAuthzRules(t *testing.T) {
+	aiBoundaryEvidenceDir(t)
 	// ⓐ `--subject-kind ai` + 提出者 ⇒ 过得去（提者可以是 AI）。
 	if rc, _, errb := proposalNewAuthz(t, "--subject", "某AI", "--subject-kind", "ai"); rc != 0 {
 		t.Errorf("`--subject-kind ai` 退码 = %d（要 0）· stderr=%s", rc, errb)
@@ -105,7 +121,7 @@ func TestProposalAuthzRules(t *testing.T) {
 	// 读回一件：subject/subject_kind 必须在；`by` 是兼容别名（两者同值）。
 	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
 	rc, out, errb := runCapture("dev", "proposal", "new", "--title", "读回", "--target", "待办:D1",
-		"--goal", "g", "--evidence", "e", "--rollback", "r", "--by", "老王", "--subject-kind", "ai",
+		"--goal", "g", "--evidence", "GAP-20260927-254", "--rollback", "r", "--by", "老王", "--subject-kind", "ai",
 		"--criterion", "zerg gate run --fast")
 	if rc != 0 {
 		t.Fatalf("落件退码 = %d（要 0）· stderr=%s", rc, errb)
