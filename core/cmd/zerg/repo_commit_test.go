@@ -28,7 +28,16 @@ func fakeGateRepo(t *testing.T, gateRC string) string {
 	if err := os.MkdirAll(filepath.Join(root, "scripts", "gates"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	gate := "#!/usr/bin/env bash\n# 合成门禁（本测试的夹具）：按标定退码退出\nexit " + gateRC + "\n"
+	// ★ 2026-09-29 随动（门新鲜度闸 `GAP-20260928-194`）：提交正门现在会**先读门件自己的步骤清单**
+	//   （`bash scripts/gates/precommit-gates.sh --list`，fail-closed：读不回 ⇒ 退 8、不给结论 —— 有意设计）。
+	//   故夹具的假门件必须能答出清单（≥1 步；「单测那一步」按步名含 `go test ./...` 认）。
+	//   出口形态逐字照脚本 `print_steps`：`printf '   %-5s %-6s %s\n'`（头两列定宽域 + 步名原样）。
+	gate := "#!/usr/bin/env bash\n# 合成门禁（本测试的夹具）：按标定退码退出\n" +
+		"if [ \"${1:-}\" = \"--list\" ]; then\n" +
+		"  printf '   %-5s %-6s %s\\n' PASS fast 'core: go test ./... -count=1'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"exit " + gateRC + "\n"
 	if err := os.WriteFile(filepath.Join(root, "scripts", "gates", "precommit-gates.sh"), []byte(gate), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +49,9 @@ func fakeGateRepo(t *testing.T, gateRC string) string {
 		t.Setenv(k, v)
 	}
 	t.Setenv("ZERG_REPO", root)
+	// ★ 2026-09-29 随动：状态目录指到**仓外临时** —— `--allow-stale-gates` 的留痕（`commit_audit.jsonl`）
+	//   与任何审计不许落到真状态目录（真账/真审计一个字节不碰）。
+	t.Setenv("ZERG_STATE_DIR", t.TempDir())
 	return root
 }
 
@@ -133,6 +145,7 @@ func TestRepoCommitEndToEndFastGate(t *testing.T) {
 	var out, errb strings.Builder
 	rc := zerg.RunForTest([]string{"repo", "commit", "--message", "题 e2e", "--file", "a.txt",
 		"--proposal", "DEV-0007", "--by", "老王", "--trace", "T-D3b", "--criterion", "zerg gate run --fast",
+		"--allow-stale-gates", "合成仓夹具：本测试只管快速档 rc=0 直通，门新鲜度闸另件判",
 		"--yes"}, &out, &errb)
 	if rc != 0 {
 		t.Fatalf("快速档 rc=0 ⇒ 提交应落地，实测 rc=%d · stderr=%s", rc, errb.String())
@@ -169,7 +182,9 @@ func TestRepoCommitBlockedByFastGate(t *testing.T) {
 	}
 	before := repoHead(t, root)
 	var out, errb strings.Builder
-	rc := zerg.RunForTest([]string{"repo", "commit", "--message", "题", "--file", "c.txt", "--yes"}, &out, &errb)
+	rc := zerg.RunForTest([]string{"repo", "commit", "--message", "题", "--file", "c.txt",
+		"--allow-stale-gates", "合成仓夹具：本测试只管快速档 rc=1 直通，门新鲜度闸另件判",
+		"--yes"}, &out, &errb)
 	if rc != 1 {
 		t.Errorf("快速档 rc=1 ⇒ 命令要**直通**退 1，实测 %d · stderr=%s", rc, errb.String())
 	}
