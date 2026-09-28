@@ -67,6 +67,28 @@
 #   UI  → ui/build.rs 读 git/date 写 cargo:rustc-env（ZERG_GIT_SHA / ZERG_BUILD_TIME）
 set -euo pipefail
 
+# ── 自净化（2026-09-28 ·《设计-流程规则程序化-v1.0》§2.2 `A1` / §4 第 1 件）──────────────────────
+# 为什么：本脚本是**重编正门** ⇒ 净化必须自带，**不能**靠调用者记得手写
+#   `env -u ZERG_STATE_DIR -u ZERG_REPO -u ZERG_PROPOSAL_DIR` ＋ 仓外 TMPDIR —— 漏一次就是
+#   把状态写面/仓根指到错地方（血证：`ZERG_STATE_DIR` 毒化 ⇒ 写面跑到仓外目录；
+#   `ZERG_REPO` 毒化 ⇒ 换根、门面指向别的仓）。调用者写了也不出错（`unset` 幂等）。
+# 位置：本段在**解析参数之前、路径推导与一切仓内读写之前** ⇒ 下面每一行动作看到的都是干净环境
+#   （`REPO_ROOT` 的 `cd`/`pwd`、`grep version.go`、`git status` 都在本段之后）。
+# 边界：**只**清这三枚旋钮 —— 其余环境变量另有主人，一个都不动；TMPDIR 自建在**本仓之外**
+#   （先 `mkdir -p` 再 `export`）。基准可经 `ZERG_BUILD_TMP_BASE` 换，但落点落在本仓内时**拒用**。
+unset ZERG_STATE_DIR ZERG_REPO ZERG_PROPOSAL_DIR
+ZERG_SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"   # 脚本所属仓根（只用于「仓外」判据）
+ZERG_BUILD_TMP="${ZERG_BUILD_TMP_BASE:-${HOME:-/tmp}/.zerg-build-tmp}"
+case "$ZERG_BUILD_TMP/" in
+  "$ZERG_SCRIPT_ROOT"/*) ZERG_BUILD_TMP="${HOME:-/tmp}/.zerg-build-tmp" ;;   # 给进来的基准在本仓内 ⇒ 换回仓外缺省
+esac
+if ! mkdir -p "$ZERG_BUILD_TMP"; then
+  echo "══ 自净化失败：仓外 TMPDIR 建不起来（${ZERG_BUILD_TMP}）⇒ 拒绝在未净化的环境里重编" >&2
+  exit 1
+fi
+export TMPDIR="$ZERG_BUILD_TMP"
+echo "══ 自净化：已 unset ZERG_STATE_DIR / ZERG_REPO / ZERG_PROPOSAL_DIR 三枚旋钮 · 本次 TMPDIR=${TMPDIR}（仓外；脚本仓根 ${ZERG_SCRIPT_ROOT}）"
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
