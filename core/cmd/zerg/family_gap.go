@@ -60,6 +60,13 @@ const (
 	gapIDPrefix   = "GAP-"
 )
 
+// gapLsRowCap —— `gap ls` 一页硬顶（批1 第三片 · 本枚新增本件常量）。
+// ★ 取值口径与同两枚清单面**逐字同**：`findRowCap`（`family_find.go:33`）= 200 ·
+// `codeFindRowCap`（`family_code.go:34`）= 200 ⇒ 本面也取 200（不自选第三个数字）。
+// ★ 作用范围**只限收窄查询**（给了 `--unit` / `--module`）：既有三枚闭集旗标那一档
+// 的输出与退码**一字不动**（硬约束⑥ —— 老输出的字节不许被本枚改）⇒ 未给收窄旗标 ⇒ 不裁。
+const gapLsRowCap = 200
+
 // ★ 号段设计句（2026-09-24 · 块A `C-A7` · 缺口 `G-91` · 照 `O-15`「本版只落设计句、不做真写」）：
 //
 //	**对外身份只许 `Q-nnn`** —— 即**版账**（`缺口总账-*.md` 的「本版新增区」）内的全局连续号。
@@ -591,6 +598,87 @@ var gapListFields = []string{"id", "prio", "impact", "state", "want", "summary",
 	"want_family", "want_action", "want_argv", "symptom", "handmade", "repro_cmd",
 	"fp", "verify_cmd", "found_at", "last_verified_at", "solved_at", "notes", "notes_void", "void_notes"}
 
+// ── 批1 第三片：`gap ls` 两轴收窄（`--unit` / `--module`）与机器面信封 ─────────────────────────────
+//
+// 口径（照拄同族既有面 · 不自创第二套）：
+//	① 两枚收窄旗标是**自由值**（件路径 / 模块名属账内自由文本）⇒ **不进**账内闭集自查（与
+//	   `--state`/`--prio`/`--impact` 三枚闭集旗标口径不同）；叠加语义一律 **AND**；
+//	② 截断自报三件与 `find`（`family_find.go:212–218`）/ `code find`（`family_code.go:337`）**逐字同形**：
+//	   `inv.markTruncated()`（唯一置位口）+ `inv.warnf(...)` 一条 + `meta.truncated_detail` 四键
+//	   （三数自校 `kept_items + dropped_items == total_items` · 唯一判定口 `truncatedDetailJudge`）；
+//	③ 信封字段一律走 `meta` 子键：顶层六键**冻结**（`envelopeKeys` · `O-1` 逐字「冻结顶层 / 放开子键」）
+//	   ⇒ **不加第七键**；`truncated` 就是既有的那一个顶层键（不为本枚新造）。
+
+// gapLsModuleHit —— `--module <值>` 的**前导匹配**：全等该模块，或在它名下（`<值>/` 打头）。
+// 「`--module scripts/gates` ⇒ 命中该模块下全部件」= 这条判据（件自己记的 `module` 那一格）。
+func gapLsModuleHit(r gapRecord, want string) bool {
+	if r.Module == want {
+		return true
+	}
+	return strings.HasPrefix(r.Module, want+"/")
+}
+
+// gapLsUnitHit —— `--unit <值>` 支持**两种形态**（本单规格①）：
+//
+//	① 全等件路径（这一条的 `unit` 就是它）；
+//	② 目录前缀 —— 按 **module 语义**处理（`--unit core/cmd/zerg` 命中该目录下全部件）
+//	   ⇒ 复用 `gapLsModuleHit`，**不另造一套前缀判据**（判据同源才不会两处走岔）。
+func gapLsUnitHit(r gapRecord, want string) bool {
+	if r.Unit == want {
+		return true
+	}
+	return gapLsModuleHit(r, want)
+}
+
+// gapLsLedgerSHA16 —— 账本身份 = 真源件的 `sha256` 前 16 位（现读 · 只读）。
+// 取法与 `gap add` 审计行里的 `gap_ledger_before_sha256` **同一套**（`crypto/sha256` + `encoding/hex`）。
+// 读不到 ⇒ 空串（**不编造**：`metaAddStr` 见空即**不写这一格**）。
+func gapLsLedgerSHA16(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])[:16]
+}
+
+// gapLsQueryText —— `meta.query` 的回显（**现读收窄入参** · 序 = state / prio / impact / unit / module）。
+// 未给的旗标**不写那一格** ⇒ 无收窄时逐字 `{}`（缺席 ≠ 假值）。
+func gapLsQueryText(states []string, prio, impact, unit, module string) string {
+	parts := []string{}
+	if len(states) > 0 {
+		q := make([]string, 0, len(states))
+		for _, s := range states {
+			q = append(q, jstr(s))
+		}
+		parts = append(parts, `"state":[`+strings.Join(q, ",")+`]`)
+	}
+	if prio != "" {
+		parts = append(parts, `"prio":`+jstr(prio))
+	}
+	if impact != "" {
+		parts = append(parts, `"impact":`+jstr(impact))
+	}
+	if unit != "" {
+		parts = append(parts, `"unit":`+jstr(unit))
+	}
+	if module != "" {
+		parts = append(parts, `"module":`+jstr(module))
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+// gapLsMetaAdd —— 机器面信封字段的**唯一写入口**（只走 `metaAdd*` 既有口子 ⇒ 顶层六键不动）。
+// `total` = 真命中总数 · `hits` = 本次返回条数 —— **两枚分开写**（规格③：命中数与总数必须是两个字段；
+// 既有 `meta.count` 语义与取值**一字未动**，那是老调用方的格）。
+func gapLsMetaAdd(inv *invocation, states []string, prio, impact, unit, module string, total, hits int, ledgerPath string) {
+	inv.metaAddJSON("total", strconv.Itoa(total))
+	inv.metaAddJSON("hits", strconv.Itoa(hits))
+	inv.metaAddJSON("query", gapLsQueryText(states, prio, impact, unit, module))
+	inv.metaAddStr("query_ts", gapNow())
+	inv.metaAddStr("ledger_sha16", gapLsLedgerSHA16(ledgerPath))
+}
+
 func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 	// ① 用法面（在任何盘面动作之前）
 	if inv.jsonGiven && len(inv.fields) == 0 {
@@ -661,6 +749,11 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 	wantStates := inv.flagVals("--state")
 	wantPrio := strings.TrimSpace(inv.flagVal("--prio"))
 	wantImpact := strings.TrimSpace(inv.flagVal("--impact"))
+	// ★ 批1 第三片（本枚）：两轴收窄 —— `--unit`（件面）与 `--module`（模块面）。
+	//   两枚都取**自由值**：不进上面那两道闭集自查（那是三枚闭集旗标的判据，本面不跨旗标抄）。
+	//   叠加语义 = **AND**，判据就压在下面同一个循环里（不另开第二遍筛选 ⇒ 与既有三枚同源同步）。
+	wantUnit := strings.TrimSpace(inv.flagVal("--unit"))
+	wantModule := strings.TrimSpace(inv.flagVal("--module"))
 	rows, out := []map[string]string{}, []gapRecord{}
 	for _, r := range led.Recs {
 		if len(wantStates) > 0 && !gapIn(wantStates, r.State) {
@@ -670,6 +763,14 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 			continue
 		}
 		if wantImpact != "" && r.Impact != wantImpact {
+			continue
+		}
+		// ★ 两轴收窄（AND · 见上）：`--unit` 两形态（全等件路径 / 目录前缀按 module 语义处理）·
+		//   `--module` 前导匹配（`--module scripts/gates` ⇒ 命中该模块下全部件）。
+		if wantUnit != "" && !gapLsUnitHit(r, wantUnit) {
+			continue
+		}
+		if wantModule != "" && !gapLsModuleHit(r, wantModule) {
 			continue
 		}
 		out = append(out, r)
@@ -699,13 +800,49 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 			"notes_void": fmt.Sprintf("%d", len(r.Voids)),
 		})
 	}
+	// ★ 批1 第三片（本枚）：**一页硬顶 + 截断自报**（口径见 `gapLsRowCap` 顶上那一段）。
+	//   未给收窄旗标 ⇒ 一步不裁（既有三枚旗标那一档的输出与退码**一字不动**）。
+	narrowed := wantUnit != "" || wantModule != ""
+	total, hits, cut := len(out), len(out), false
+	if narrowed && total > gapLsRowCap {
+		hits, cut = gapLsRowCap, true
+		out, rows = out[:hits], rows[:hits]
+	}
 	if len(out) == 0 {
 		inv.changed = boolPtr(false)
 		inv.setErr("failed", "no_match", "零命中")
 		fmt.Fprintf(stderr, "零命中：账内 %d 条 · 与筛选条件相符 0 条（退码 1 —— 「没有」不是「失败」，也不是绿）\n", len(led.Recs))
+		// ★ 「命中 0 不静默」（规格②）：**给了收窄旗标**才追加 —— 既有三枚旗标的零命中输出
+		//   与退码（1）**逐字不动**（硬约束⑥）。机器面那一路：`items` = `[]`（`rows` 空 ⇒
+		//   `emitSelected` 逐字 `[]`）· `meta.total` = `meta.hits` = `0` · `meta.query` = 收窄值回显。
+		if narrowed {
+			fmt.Fprintf(stderr, "%s: 0 命中 —— 收窄值回显：--unit %q · --module %q（退码 1 · 「没有」不是绿）\n",
+				progName, wantUnit, wantModule)
+			gapLsMetaAdd(inv, wantStates, wantPrio, wantImpact, wantUnit, wantModule, 0, 0, led.Path)
+			// ★ 机器面（规格②「机器面 `items` 空数组 + `total=0`」）：本面**自己出包封**。
+			//   为什么必须自己出：失败路径上的兜底包封（`main.go:250` 的 `emitErrEnvelope`）**不带
+			//   `meta` 子键** ⇒ 那一路拿不到 `total`/`hits`/`query`。这里走 `emitEnvelopeWith`
+			//   （顶层六键 + `meta` 既有五子键 + 本枚按需子键 + `error` 块），**且不会两个包封** ——
+			//   兜底那一路的判据是 `cw.n == 0`（`main.go:250`：命令往 stdout 写过就不补）⇒ 自出即抑制。
+			if inv.jsonGiven {
+				emitEnvelopeWith(stdout, find(inv.path), "[]", 0, inv)
+			}
+		}
 		return exitFail
 	}
 	inv.changed = boolPtr(false)
+	if narrowed {
+		gapLsMetaAdd(inv, wantStates, wantPrio, wantImpact, wantUnit, wantModule, total, hits, led.Path)
+	}
+	if cut {
+		inv.markTruncated()
+		inv.warnf("已裁 %d 条（gap ls 一页 %d 条 / 真命中 %d 条）", total-hits, hits, total)
+		inv.metaAddJSON("truncated_detail", fmt.Sprintf(
+			`{"cut_from":"tail","kept_items":%d,"dropped_items":%d,"total_items":%d}`,
+			hits, total-hits, total))
+		fmt.Fprintf(stderr, "%s: ⚠ 本页只列前 %d 条 · 真命中 %d 条（已裁 %d 条）—— **这不是全集**，别据此下「有/无」结论；要收窄：--state / --prio / --impact / --unit / --module\n",
+			progName, hits, total, total-hits)
+	}
 	if inv.jsonGiven {
 		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
 	}

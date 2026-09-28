@@ -1965,7 +1965,7 @@ func init() {
 			path:     []string{"gap", "ls"},
 			kind:     "GapList",
 			summary:  "缺口账（只读面：不写真源、不写审计）· 可按状态/优先级/影响面收窄 · 账内闭集外的值 ⇒ 判红并**点名到行**",
-			usage:    "zerg gap ls [--state <仍缺|已派|已立项|已解|回归|不做>…] [--prio P0|P1|P2] [--impact <命令面|门禁面|文档面|公开面|换件面|归档面>] [--json <字段>]",
+			usage:    "zerg gap ls [--state <仍缺|已派|已立项|已解|回归|不做>…] [--prio P0|P1|P2] [--impact <命令面|门禁面|文档面|公开面|换件面|归档面>] [--unit <件路径|目录前缀>] [--module <模块前缀>] [--json <字段>]",
 			fields:   gapListFields,
 			endpoint: "",
 			run:      cmdGapLs,
@@ -2814,8 +2814,12 @@ func valueFlagName(a string) string {
 	//     语义在命令里判）；本排只续 `--text` 这一枚新名字（`gap note` 的那句话）。
 	//   ★ 2026-09-28（缺口账 `GAP-20260926-233`）：再续 `--retract <n|指纹>` 一枚（作废一注 · 不删原文）。
 	switch a {
-	case "--symptom", "--handmade", "--impact", "--want-family", "--want-action", "--want-argv",
-		"--prio", "--repro-cmd", "--verify-cmd", "--text", "--retract":
+	case "--symptom", "--handmade", "--impact", "--want-family", "--want-action",
+		"--want-argv", "--prio", "--repro-cmd", "--verify-cmd", "--text", "--retract",
+		// ★ 批1 第三片：`gap ls` 两轴收窄 —— `--unit <件路径|目录前缀>` / `--module <模块前缀>`。
+		//   名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用（同族先例：
+		//   `--allow-cross-root` 那一排的注释逐字同病）。用法串与本表**必须同改**（门判据乙）。
+		"--unit", "--module":
 		return a
 	}
 	return ""
