@@ -45,6 +45,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -2268,4 +2269,356 @@ func gapBackfillPreviewRows(led gapLedger, tracked []string, n int) []gapBackfil
 		rows = rows[:n]
 	}
 	return rows
+}
+
+// ── 批1 第四片：`gap status` 排行面（按件 / 按模块排行 · 只读）────────────────────────────────
+//
+// 口径（照拄同族既有面 · 不自创第二套）：
+//	① 两枚**新旗标**：`--by <unit|module>`（缺省 `unit`）与 `--top <N>`（缺省 `gapStatusDefaultTop`；
+//	   上限同 `gapLsRowCap` —— 与 `gap ls` / `find` / `code find` 同一个数，不自选第三个数字）。
+//	   与 `--state` / `--prio` / `--impact` **可叠加**（AND），判据压在与 `cmdGapLs` **同序**的那个
+//	   循环里（三枚闭集旗标的自查与判词**复用** `gapIn` / `gapStateClosed` / `gapClosedText`）。
+//	② 每个桶给四列：**未闭**（`state` 仍缺）/ **已解**（`state` 已解）/ **净**（未闭 − 已解 · 可为负）/
+//	   **近邻量化**（P0/P1/P2 计数 —— 取值口 = 那一条自己的 `prio`）。
+//	③ **两个排序键**（都写进输出表头）：主键 = **未闭**条数降序；次键 = **近邻量化**降序
+//	   （先 P0、再 P1、再 P2）⇒ 同「未闭」的几个桶按严重度排（`P0` 多的在前）。
+//	④ **对账等式自校**（现算 · 不许自填数字）：Σ(有件桶未闭) + 无件桶 == 账内仍缺总数；
+//	   不成立 ⇒ `inv.warnf` 点名差数（进 `warnings[]`）+ 人面另起一行说明。
+//	⑤ **查询元**：人面与机器面都带 `query_ts`（现读时刻）与 `ledger_sha16`（账本身份）——
+//	   不同时刻的两个排行据此才可比；截断自报（`total` 桶数 / `hits` 本页桶数 / `truncated`）。
+//	⑥ 信封：顶层六键冻结（`envelopeKeys` · 一个不多一个不少）⇒ 全走 `meta` 子键
+//	   （`metaAddJSON` / `metaAddStr` 既有口子）· 只读面（不登记 `danger`）。
+
+// gapStatusDefaultTop —— `--top` 缺省一页桶数（20）。
+const gapStatusDefaultTop = 20
+
+// gapStatusBy 两值（`--by` 的闭集）—— 与件面三键的 `unit` / `module` **同名同义**（不自造第二个词）。
+const (
+	gapStatusByUnit   = "unit"
+	gapStatusByModule = "module"
+)
+
+// gapStatusFields —— `gap status` 的 `--json` 可取字段（与命令树里的 `fields` 同一份口径）：
+// 桶键 + 三计数（未闭 / 已解 / 净）+ 近邻量化三格（P0/P1/P2）。
+var gapStatusFields = []string{"bucket", "open", "closed", "net", "p0", "p1", "p2"}
+
+// gapStatusBucket —— 一个桶的计数面。
+type gapStatusBucket struct {
+	Key    string // 桶键：`--by unit` ⇒ `unit`；`--by module` ⇒ `module`
+	Open   int    // 未闭：`state` 仍缺
+	Closed int    // 已解：`state` 已解
+	P0     int    // 近邻量化：P0 条数
+	P1     int    // 近邻量化：P1 条数
+	P2     int    // 近邻量化：P2 条数
+	// None —— 桶内条目**全部** `module == 无件`（兜底件）⇒ 对账等式里的「无件桶」。
+	None bool
+}
+
+// Net 净 = 未闭 − 已解（**可为负** —— 解掉的比还缺的多）。
+func (b gapStatusBucket) Net() int { return b.Open - b.Closed }
+
+// gapStatusQueryText —— `meta.query` 与人面「查询元」那一行的回显（**现读收窄入参**）。
+// 前半段**逐字复用** `gapLsQueryText`（三枚闭集旗标的同一种序与同一种「缺席 ≠ 假值」语义），
+// 本面只续 `by` / `top` 两格 —— 不另造第二套 query 拼装（同源才不会两处走岔）。
+func gapStatusQueryText(states []string, prio, impact, by string, top int) string {
+	base := gapLsQueryText(states, prio, impact, "", "")
+	extra := `"by":` + jstr(by) + `,"top":` + strconv.Itoa(top)
+	if base == "{}" {
+		return "{" + extra + "}"
+	}
+	return strings.TrimSuffix(base, "}") + "," + extra + "}"
+}
+
+// gapStatusReconcile —— 对账等式的三数（**现算** · 不填死）。
+type gapStatusReconcile struct {
+	RealOpen   int // Σ(有件桶未闭)
+	NoneOpen   int // 无件桶（`module == 无件` 且 `state == 仍缺`）
+	LedgerOpen int // 账内仍缺总数（**本筛选后** —— 收窄后两数才同口径可比）
+}
+
+func (r gapStatusReconcile) Left() int { return r.RealOpen + r.NoneOpen }
+func (r gapStatusReconcile) Diff() int { return r.Left() - r.LedgerOpen }
+func (r gapStatusReconcile) OK() bool  { return r.Diff() == 0 }
+func (r gapStatusReconcile) JSON() string {
+	return fmt.Sprintf(`{"real_bucket_open":%d,"none_bucket_open":%d,"ledger_open":%d,"diff":%d,"ok":%t}`,
+		r.RealOpen, r.NoneOpen, r.LedgerOpen, r.Diff(), r.OK())
+}
+
+// gapStatusMetaAdd —— `gap status` 机器面信封字段的**唯一写入口**（只走 `metaAdd*` 既有口子 ⇒
+// 顶层六键不动）。五格与 `gap ls` **同形**（`total` / `hits` / `query` / `query_ts` / `ledger_sha16`），
+// 另加本面自己的三格（`by` / `top` / `reconcile`）—— 缺一格两个时刻的排行就不可比。
+func gapStatusMetaAdd(inv *invocation, states []string, prio, impact, by string, top, total, hits int, rec gapStatusReconcile, ledgerPath string) {
+	inv.metaAddJSON("total", strconv.Itoa(total))
+	inv.metaAddJSON("hits", strconv.Itoa(hits))
+	inv.metaAddJSON("query", gapStatusQueryText(states, prio, impact, by, top))
+	inv.metaAddStr("query_ts", gapNow())
+	inv.metaAddStr("ledger_sha16", gapLsLedgerSHA16(ledgerPath))
+	inv.metaAddStr("by", by)
+	inv.metaAddJSON("top", strconv.Itoa(top))
+	inv.metaAddJSON("reconcile", rec.JSON())
+}
+
+func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
+	// ① 用法面（在任何盘面动作之前）：`--json` 不给字段 / `--by` 越界 / `--top` 不是正整数。
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapStatusFields, ","))
+		return exitUsage
+	}
+	by := strings.TrimSpace(inv.flagVal("--by"))
+	if by == "" {
+		by = gapStatusByUnit
+	}
+	if by != gapStatusByUnit && by != gapStatusByModule {
+		inv.setErr("usage", "bad_by", "--by 取值不在闭集里")
+		fmt.Fprintf(stderr, "%s: `--by %s` 不在闭集里 —— 只认 %s | %s\n",
+			progName, by, gapStatusByUnit, gapStatusByModule)
+		return exitUsage
+	}
+	top := gapStatusDefaultTop
+	if v := strings.TrimSpace(inv.flagVal("--top")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			inv.setErr("usage", "bad_top", "--top 要给正整数")
+			fmt.Fprintf(stderr, "%s: `--top %s` 不是正整数（本族口径 = 用法错 2）\n", progName, v)
+			return exitUsage
+		}
+		top = n
+	}
+	clampedTop := false
+	if top > gapLsRowCap {
+		top, clampedTop = gapLsRowCap, true
+	}
+	for _, s := range inv.flagVals("--state") {
+		if !gapIn(gapStateClosed, s) {
+			inv.setErr("usage", "bad_state", "state 值不在六值闭集里")
+			fmt.Fprintf(stderr, "%s: `--state %s` 不在闭集里 —— 只认 %s\n", progName, s, gapClosedText(gapStateClosed))
+			return exitUsage
+		}
+	}
+	if p := strings.TrimSpace(inv.flagVal("--prio")); p != "" && !gapIn(gapPrioClosed, p) {
+		inv.setErr("usage", "bad_prio", "prio 值不在三值闭集里")
+		fmt.Fprintf(stderr, "%s: `--prio %s` 不在闭集里 —— 只认 %s\n", progName, p, gapClosedText(gapPrioClosed))
+		return exitUsage
+	}
+	if im := strings.TrimSpace(inv.flagVal("--impact")); im != "" && !gapIn(gapImpactClosed, im) {
+		inv.setErr("usage", "bad_impact", "impact 值不在六值闭集里")
+		fmt.Fprintf(stderr, "%s: `--impact %s` 不在闭集里 —— 只认 %s\n", progName, im, gapClosedText(gapImpactClosed))
+		return exitUsage
+	}
+
+	// ② 读真源（读不到 ⇒ 8 · 不许当绿）—— 与 `gap ls` **逐字同一套收法**（两枚机器可辨 reason）。
+	led, err := readGapLedger()
+	if err != nil {
+		gapLedgerErr(inv, gapReasonPrecondition, err.Error(), gapLedgerPath())
+		gapLedgerErrFirstLine(stderr, gapReasonPrecondition)
+		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+		fmt.Fprintf(stderr, "真源 = %s；「读不到」不许当「没有」（退码 8）\n", gapLedgerPath())
+		gapLedgerUnreadableHint(stderr, gapLedgerPath())
+		return exitBlocked
+	}
+	if !led.Exists {
+		gapLedgerErr(inv, gapReasonLedgerAbsent, "真源不在盘上", led.Path)
+		gapLedgerErrFirstLine(stderr, gapReasonLedgerAbsent)
+		fmt.Fprintf(stderr, "%s: 真源不在盘上：%s（退码 8 —— 「读不到」不许当绿）\n", progName, led.Path)
+		gapLedgerAbsentHint(stderr, led.Path)
+		return exitBlocked
+	}
+
+	// ③ 账内闭集自查（出现闭集外的值 ⇒ 判红 1 + 点名到行）—— 判据与 `gap ls` 同一条。
+	for i, r := range led.Recs {
+		field, val := "", ""
+		switch {
+		case !gapIn(gapStateClosed, r.State):
+			field, val = "state", r.State
+		case !gapIn(gapImpactClosed, r.Impact):
+			field, val = "impact", r.Impact
+		case !gapIn(gapPrioClosed, r.Prio):
+			field, val = "prio", r.Prio
+		}
+		if field == "" {
+			continue
+		}
+		inv.setErr("failed", "ledger_out_of_range", fmt.Sprintf("第 %d 行 %s 越界", led.No[i], field))
+		fmt.Fprintf(stderr, "账内越界：%d %s\n", led.No[i], field)
+		fmt.Fprintf(stderr, "  %s 的值 %q 不在闭集里（%s）—— 真源只由命令写（防呆③ 同源）\n",
+			field, val, gapClosedText(gapClosureOf(field)))
+		fmt.Fprintf(stderr, "  ⇒ 判红 1（账坏了不是「零命中」；修法：`zerg gap verify` 或手工订正该行）\n")
+		return exitFail
+	}
+
+	// ④ 筛选（AND）+ 分桶 —— 一次过。判据序与 `gap ls` 同：state / prio / impact。
+	wantStates := inv.flagVals("--state")
+	wantPrio := strings.TrimSpace(inv.flagVal("--prio"))
+	wantImpact := strings.TrimSpace(inv.flagVal("--impact"))
+	buckets := map[string]*gapStatusBucket{}
+	order := []string{}
+	popTotal, popOpen, noneOpen := 0, 0, 0
+	for _, r := range led.Recs {
+		if len(wantStates) > 0 && !gapIn(wantStates, r.State) {
+			continue
+		}
+		if wantPrio != "" && r.Prio != wantPrio {
+			continue
+		}
+		if wantImpact != "" && r.Impact != wantImpact {
+			continue
+		}
+		popTotal++
+		if r.State == gapStOpen {
+			popOpen++
+			if r.Module == gapUnitNoneMod {
+				noneOpen++
+			}
+		}
+		key := r.Unit
+		if by == gapStatusByModule {
+			key = r.Module
+		}
+		if key == "" {
+			key = gapUnitNoneMod // 无件兜底桶（对账等式里点名的那一枚）
+		}
+		b, ok := buckets[key]
+		if !ok {
+			b = &gapStatusBucket{Key: key, None: true}
+			buckets[key] = b
+			order = append(order, key)
+		}
+		if r.Module != gapUnitNoneMod {
+			b.None = false
+		}
+		switch r.State {
+		case gapStOpen:
+			b.Open++
+		case gapStSolved:
+			b.Closed++
+		}
+		switch r.Prio {
+		case "P0":
+			b.P0++
+		case "P1":
+			b.P1++
+		case "P2":
+			b.P2++
+		}
+	}
+
+	// ⑤ 排序：主键 = 未闭降序 · 次键 = 近邻量化降序（先 P0、再 P1、再 P2）· 再键 = 桶键升序（同分稳定）。
+	bs := make([]gapStatusBucket, 0, len(order))
+	for _, k := range order {
+		bs = append(bs, *buckets[k])
+	}
+	sort.SliceStable(bs, func(i, j int) bool {
+		a, b := bs[i], bs[j]
+		if a.Open != b.Open {
+			return a.Open > b.Open
+		}
+		if a.P0 != b.P0 {
+			return a.P0 > b.P0
+		}
+		if a.P1 != b.P1 {
+			return a.P1 > b.P1
+		}
+		if a.P2 != b.P2 {
+			return a.P2 > b.P2
+		}
+		return a.Key < b.Key
+	})
+	realOpen := 0
+	for _, b := range bs {
+		if !b.None {
+			realOpen += b.Open
+		}
+	}
+	rec := gapStatusReconcile{RealOpen: realOpen, NoneOpen: noneOpen, LedgerOpen: popOpen}
+	total := len(bs)
+	hits, cut := total, false
+	if total > top {
+		hits, cut = top, true
+	}
+
+	// 零命中（筛选后一个桶都没有）⇒ 1（判词与 `gap ls` 同款）。
+	if total == 0 {
+		inv.changed = boolPtr(false)
+		inv.setErr("failed", "no_match", "零命中")
+		fmt.Fprintf(stderr, "零命中：账内 %d 条 · 与筛选条件相符 0 条（退码 1 —— 「没有」不是「失败」，也不是绿）\n", len(led.Recs))
+		if inv.jsonGiven {
+			gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, by, top, 0, 0, rec, led.Path)
+			emitEnvelopeWith(stdout, find(inv.path), "[]", 0, inv)
+		}
+		return exitFail
+	}
+
+	inv.changed = boolPtr(false)
+	gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, by, top, total, hits, rec, led.Path)
+	if clampedTop {
+		inv.warnf("--top 越界（>%d）⇒ 已收到一页硬顶 %d", gapLsRowCap, gapLsRowCap)
+		fmt.Fprintf(stderr, "%s: ⚠ `--top` 超过一页硬顶 %d ⇒ 已收到 %d（与 `gap ls` / `find` / `code find` 同一个数）\n",
+			progName, gapLsRowCap, gapLsRowCap)
+	}
+	if cut {
+		inv.markTruncated()
+		inv.warnf("已裁 %d 个桶（gap status 一页 %d 个 / 真命中 %d 个）", total-hits, hits, total)
+		inv.metaAddJSON("truncated_detail", fmt.Sprintf(
+			`{"cut_from":"tail","kept_items":%d,"dropped_items":%d,"total_items":%d}`, hits, total-hits, total))
+		fmt.Fprintf(stderr, "%s: ⚠ 本页只列前 %d 个桶 · 真命中 %d 个（已裁 %d 个）—— **这不是全集**，别据此下结论；要收窄：--by / --top / --state / --prio / --impact\n",
+			progName, hits, total, total-hits)
+	}
+	if !rec.OK() {
+		inv.warnf("对账不成立：Σ(有件桶未闭) %d + 无件桶 %d = %d ≠ 账内仍缺 %d（差 %+d）",
+			rec.RealOpen, rec.NoneOpen, rec.Left(), rec.LedgerOpen, rec.Diff())
+	}
+
+	// ⑥ 机器面。
+	if inv.jsonGiven {
+		rows := make([]map[string]string, 0, hits)
+		for _, b := range bs[:hits] {
+			rows = append(rows, map[string]string{
+				"bucket": b.Key,
+				"open":   strconv.Itoa(b.Open),
+				"closed": strconv.Itoa(b.Closed),
+				"net":    strconv.Itoa(b.Net()),
+				"p0":     strconv.Itoa(b.P0),
+				"p1":     strconv.Itoa(b.P1),
+				"p2":     strconv.Itoa(b.P2),
+			})
+		}
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
+	}
+
+	// ⑦ 人面（主输出走 stdout · 消息与错误走 stderr）：表头**两个排序键都写**。
+	colName := "件(unit)"
+	if by == gapStatusByModule {
+		colName = "模块(module)"
+	}
+	kw := displayWidth(colName)
+	for _, b := range bs[:hits] {
+		kw = maxInt(kw, displayWidth(truncateDisplay(b.Key, 48)))
+	}
+	fmt.Fprintf(stdout, "zerg gap status --by %s · 账内 %d 条 · 本筛选后 %d 条 · 桶 %d 个（本页 %d 个）\n",
+		by, len(led.Recs), popTotal, total, hits)
+	fmt.Fprintf(stdout, "排序键：① 未闭 降序  ② 近邻量化 P0/P1/P2 降序（先 P0 · 再 P1 · 再 P2）\n")
+	fmt.Fprintf(stdout, "查询元：query_ts=%s · ledger_sha16=%s · 收窄回显=%s\n",
+		gapNow(), gapLsLedgerSHA16(led.Path), gapStatusQueryText(wantStates, wantPrio, wantImpact, by, top))
+	fmt.Fprintf(stdout, "  %s  %s  %s  %s  %s\n",
+		pad(colName, kw), pad("未闭", 4), pad("已解", 4), pad("净", 4), "近邻(P0/P1/P2)")
+	for _, b := range bs[:hits] {
+		fmt.Fprintf(stdout, "  %s  %s  %s  %s  %s\n",
+			pad(truncateDisplay(b.Key, 48), kw),
+			pad(strconv.Itoa(b.Open), 4),
+			pad(strconv.Itoa(b.Closed), 4),
+			pad(strconv.Itoa(b.Net()), 4),
+			fmt.Sprintf("%d/%d/%d", b.P0, b.P1, b.P2))
+	}
+	mark := "✓"
+	if !rec.OK() {
+		mark = "✗（**不对账** —— 分桶面坏了 · 差数见下）"
+	}
+	fmt.Fprintf(stdout, "对账：Σ(有件桶未闭) %d + 无件桶 %d = %d == 账内仍缺 %d %s（差 %d）\n",
+		rec.RealOpen, rec.NoneOpen, rec.Left(), rec.LedgerOpen, mark, rec.Diff())
+	if !rec.OK() {
+		fmt.Fprintf(stdout, "  ⚠ 对账不成立：Σ(有件桶未闭) + 无件桶 与 账内仍缺 对不上 —— 差数 %+d（分桶漏/重算 · 别据此下结论）\n", rec.Diff())
+	}
+	return exitOK
 }
