@@ -4023,3 +4023,391 @@ func cmdGapPlan(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "  真源       : %s（**本面一字不碰** · 只读）\n", led.Path)
 	return exitOK
 }
+
+// ── ⒢ `zerg gap receipt check|apply <回执件路径>`（回执**收件面** · 批3 第四片 · 2026-09-28）──────
+//
+// 设计出处（唯一真源 · `Zerg-内部文档/…/v2.5.13/设计-缺口账与自进化-v2.0-20260928.md`）：
+//
+//	§三十四 `O-12`（卵回执结构规范化：`closed_ids[]`（缺口 id）**必填**，取代散文）·
+//	施工清单 `任务清单-缺口账自进化-施工-20260928.md` 3-4（回执结构化 `closed_ids[]` 必填 ·
+//	回执缺栏即拒收 · 闭案与账一一对应）。
+//
+// 回执形状（本片**取定** · 设计稿只把 `closed_ids[]` 一名钉死，其余三名按最小惊讶取定、回执里点名）：
+//
+//	{
+//	  "egg":         "<卵号>",                                    // 必填：卵号
+//	  "readings":    [{"gap_id":"…","result":"…"}, …],            // 必填：逐条读数（每条含 缺口号 + 结果）
+//	  "conclusion":  "<结论>",                                    // 必填：结论
+//	  "closed_ids":  ["GAP-…", …]                                 // 必填**键**（可为空数组，但键必须在）
+//	}
+//
+// 两条动作：
+//
+//	⒜ `zerg gap receipt check <回执件>`（**只读**）：按收件判据逐条验并出人面报告 + `--json`；
+//	   验完只出结论，**绝不写账**（本面只读）。
+//	⒝ `zerg gap receipt apply <回执件> --evidence <串> --yes`（D2 写面）：把 `closed_ids` 逐条改 `已解`，
+//	   **走现有改态路径** `gapRewriteOne`（不另开写路）· 缺 `--yes` ⇒ 2 · 有冲突号 ⇒ 2 且**不动账** ·
+//	   成败后回显逐条改前→改后计数。
+//
+// 收件判据（逐条照施工清单 3-4）：
+//
+//	① 必填栏：卵号 · 逐条读数（每条含 缺口号 + 结果）· 结论 · `closed_ids[]`；缺栏 ⇒ 2 并**点名缺哪栏**。
+//	② `closed_ids[]` 必填（可为空数组但**键必须在**）。
+//	③ 闭案与账**一一对应**：每个 `closed_ids` 里的号必须在账里且当前 `state=已派`（否则点名冲突 ⇒ 2）。
+//	④ **反面**：账里 `已派` 但回执没提的 ⇒ 列为「**未结派单**」告警（**不阻断退码**，只报告）。
+//
+// 退码：0 验过（或 apply 落账）· 2 缺栏 / 冲突号 / 缺 `--yes` / 缺 `--evidence` / 用法错 · 8 回执件或真源读不到。
+
+// 回执四个必填栏的**键名**（设计稿只钉死 `closed_ids`；另三名取定 · 见上）。
+const (
+	gapReceiptEggKey    = "egg"
+	gapReceiptRowsKey   = "readings"
+	gapReceiptConclKey  = "conclusion"
+	gapReceiptClosedKey = "closed_ids"
+)
+
+// gapReceiptCheckFields / gapReceiptApplyFields —— `--json` 可取字段（与命令树里的 `fields` 同一份口径）。
+var gapReceiptCheckFields = []string{"egg", "readings", "conclusion", "closed_ids",
+	"missing", "conflicts", "unclosed", "ok"}
+var gapReceiptApplyFields = []string{"egg", "closed_ids", "solved", "changed"}
+
+// gapReceiptRow —— 回执里的一条**逐条读数**（每条含 缺口号 + 结果 —— 设计稿 `O-12` 的反散文落点）。
+type gapReceiptRow struct {
+	GapID  string `json:"gap_id"`
+	Result string `json:"result"`
+}
+
+// gapReceipt —— 读回来的回执（四栏 + 键在场面）。
+type gapReceipt struct {
+	Egg        string
+	Readings   []gapReceiptRow
+	Conclusion string
+	ClosedIDs  []string
+}
+
+// gapReceiptLoad —— 读回执件（JSON 对象）。返回 `(回执, 缺栏名单, err)`：
+// `err != nil` ⇒ 件读不到 / 读不出（调用方退 8）；`缺栏名单` 非空 ⇒ 缺栏拒收（调用方退 2）。
+// ★ 逐条读数每条**必须**同时有 `gap_id` 与 `result`（否则那一条算缺栏 —— 否则「读数」等于散文）。
+func gapReceiptLoad(path string) (gapReceipt, []string, error) {
+	r := gapReceipt{Readings: []gapReceiptRow{}, ClosedIDs: []string{}}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return r, nil, err
+	}
+	obj := map[string]json.RawMessage{}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return r, nil, fmt.Errorf("不是 JSON 对象（%v）", err)
+	}
+	miss := []string{}
+	// ① 卵号
+	if v, ok := obj[gapReceiptEggKey]; !ok {
+		miss = append(miss, "卵号（"+gapReceiptEggKey+"）")
+	} else if err := json.Unmarshal(v, &r.Egg); err != nil || strings.TrimSpace(r.Egg) == "" {
+		miss = append(miss, "卵号（"+gapReceiptEggKey+"）")
+	} else {
+		r.Egg = strings.TrimSpace(r.Egg)
+	}
+	// ② 逐条读数（键必须在 **且** 至少一条 · 每条含缺口号 + 结果）
+	if v, ok := obj[gapReceiptRowsKey]; !ok {
+		miss = append(miss, "逐条读数（"+gapReceiptRowsKey+"）")
+	} else {
+		_ = json.Unmarshal(v, &r.Readings)
+		if len(r.Readings) == 0 {
+			miss = append(miss, "逐条读数（"+gapReceiptRowsKey+"）")
+		}
+		for i, row := range r.Readings {
+			if strings.TrimSpace(row.GapID) == "" || strings.TrimSpace(row.Result) == "" {
+				miss = append(miss, fmt.Sprintf("逐条读数第 %d 条（缺 %s 或 %s）", i+1, "gap_id", "result"))
+			}
+		}
+	}
+	// ③ 结论
+	if v, ok := obj[gapReceiptConclKey]; !ok {
+		miss = append(miss, "结论（"+gapReceiptConclKey+"）")
+	} else if err := json.Unmarshal(v, &r.Conclusion); err != nil || strings.TrimSpace(r.Conclusion) == "" {
+		miss = append(miss, "结论（"+gapReceiptConclKey+"）")
+	} else {
+		r.Conclusion = strings.TrimSpace(r.Conclusion)
+	}
+	// ④ 闭案号（键必须在 · 可为空数组）
+	if v, ok := obj[gapReceiptClosedKey]; !ok {
+		miss = append(miss, "闭案号（"+gapReceiptClosedKey+"）")
+	} else if err := json.Unmarshal(v, &r.ClosedIDs); err != nil {
+		miss = append(miss, "闭案号（"+gapReceiptClosedKey+"）")
+	}
+	if r.ClosedIDs == nil {
+		r.ClosedIDs = []string{}
+	}
+	return r, miss, nil
+}
+
+// gapReceiptVerdict —— 收件对账的结论面（三层：缺栏 / 冲突号 / 未结派单）。
+type gapReceiptVerdict struct {
+	conflicts []string // 「<号>：<原因>」（每个 `closed_ids` 里的号不满足「在账且 state=已派」）
+	unclosed  []string // 账里 `已派` 但回执没提的号（**告警 · 不阻断退码**）
+}
+
+// gapReceiptVerify —— 闭案与账**一一对应**的对账面：
+//
+//	③ 每个 `closed_ids` 里的号必须在账里且当前 `state=已派` ⇒ 不满足即入 `conflicts`（阻断 · 2）；
+//	④ 账里 `已派` 但回执没提的 ⇒ 入 `unclosed`（告警 · 只报告）。
+func gapReceiptVerify(rec gapReceipt, led gapLedger) gapReceiptVerdict {
+	out := gapReceiptVerdict{conflicts: []string{}, unclosed: []string{}}
+	inClosed := map[string]bool{}
+	for _, id := range rec.ClosedIDs {
+		inClosed[id] = true
+		idx := gapFindIdx(led, id)
+		if idx < 0 {
+			out.conflicts = append(out.conflicts, id+"：账内没有这个号")
+			continue
+		}
+		if st := led.Recs[idx].State; st != gapStAssigned {
+			out.conflicts = append(out.conflicts, fmt.Sprintf("%s：当前 state=%s（非 已派）", id, st))
+		}
+	}
+	for _, r := range led.Recs {
+		if r.State == gapStAssigned && !inClosed[r.ID] {
+			out.unclosed = append(out.unclosed, r.ID)
+		}
+	}
+	return out
+}
+
+// gapReceiptArg —— 两条动作共用的**点名面**（恰好一条回执件路径 · 与同族 `gapTargetOne` 同一条纪律）。
+func gapReceiptArg(inv *invocation, stderr io.Writer, cmd string) (string, int) {
+	args := []string{}
+	for _, a := range inv.args {
+		if s := strings.TrimSpace(a); s != "" {
+			args = append(args, s)
+		}
+	}
+	if len(args) != 1 {
+		inv.setErr("usage", "target_arity", "要点名恰好一条回执件路径")
+		fmt.Fprintf(stderr, "%s: `gap receipt %s` 要给**恰好一条**回执件路径（收到 %d 条）\n", progName, cmd, len(args))
+		fmt.Fprintf(stderr, "用法：zerg gap receipt %s <回执件路径>%s\n", cmd, gapReceiptUsageSuffix(cmd))
+		return "", exitUsage
+	}
+	return args[0], exitOK
+}
+
+// gapReceiptUsageSuffix —— 两条动作各自的用法尾（check 只读 / apply 写面）。
+func gapReceiptUsageSuffix(cmd string) string {
+	if cmd == "apply" {
+		return " --evidence <一句话> --yes [--by <谁>] [--json <字段>]"
+	}
+	return " [--json <字段>]"
+}
+
+// gapReceiptIDsJSON —— 一串 id 的机器面（恒数组 · 空为 `[]` · 永不为 null）。
+func gapReceiptIDsJSON(ids []string) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, jstr(id))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+// gapReceiptIDsText —— 一串 id 的人面（空 ⇒ 明写「空数组」）。
+func gapReceiptIDsText(ids []string) string {
+	if len(ids) == 0 {
+		return "（空数组）"
+	}
+	return strings.Join(ids, " · ")
+}
+
+// gapReceiptCheckRow —— `check` 的 `--json` 那一行（缺栏面与对账面同一份口径）。
+func gapReceiptCheckRow(rec gapReceipt, miss, conflicts, unclosed []string) map[string]string {
+	return map[string]string{
+		"egg":        rec.Egg,
+		"readings":   strconv.Itoa(len(rec.Readings)),
+		"conclusion": rec.Conclusion,
+		"closed_ids": gapReceiptIDsJSON(rec.ClosedIDs),
+		"missing":    strings.Join(miss, " · "),
+		"conflicts":  strings.Join(conflicts, " · "),
+		"unclosed":   gapReceiptIDsJSON(unclosed),
+		"ok":         boolWord(len(miss) == 0 && len(conflicts) == 0),
+	}
+}
+
+// cmdGapReceiptCheck —— `zerg gap receipt check <回执件>`：收件体检（**只读** · 一字不写真源、不写审计）。
+func cmdGapReceiptCheck(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapReceiptCheckFields, ","))
+		return exitUsage
+	}
+	path, rc := gapReceiptArg(inv, stderr, "check")
+	if rc != exitOK {
+		return rc
+	}
+	rec, miss, err := gapReceiptLoad(path)
+	if err != nil {
+		inv.setErr("blocked", "receipt_unreadable", err.Error())
+		fmt.Fprintf(stderr, "%s: 回执件读不到 / 读不出：%v（退码 8 —— 「读不到」不许当绿）\n", progName, err)
+		fmt.Fprintf(stderr, "  回执件 : %s\n", path)
+		return exitBlocked
+	}
+	inv.changed = boolPtr(false)
+	// ① 缺栏 ⇒ 2（判在**读账之前** —— 缺栏即拒收，一个字节都不读）
+	if len(miss) > 0 {
+		inv.setErr("usage", "receipt_missing_field", "回执缺栏")
+		fmt.Fprintf(stderr, "%s: 回执**缺栏拒收** —— 缺 %d 栏：%s\n", progName, len(miss), strings.Join(miss, " · "))
+		fmt.Fprintf(stderr, "  必填栏（设计稿 §三十四 `O-12`）：卵号 `%s` · 逐条读数 `%s[]`（每条含 `gap_id`+`result`）· 结论 `%s` · 闭案号 `%s[]`（**可为空数组，但键必须在**）\n",
+			gapReceiptEggKey, gapReceiptRowsKey, gapReceiptConclKey, gapReceiptClosedKey)
+		fmt.Fprintf(stderr, "  回执件 : %s\n", path)
+		if inv.jsonGiven {
+			selectJSON(stdout, stderr, inv, inv.path, inv.fields, gapReceiptCheckRow(rec, miss, nil, nil))
+		}
+		return exitUsage
+	}
+	// ② 读真源（读不到 ⇒ 8）
+	led, lrc := gapReadLedgerOrDie(inv, stderr)
+	if lrc != exitOK {
+		return lrc
+	}
+	v := gapReceiptVerify(rec, led)
+	// 机器面（`--json` ⇒ **只出包封** · 与人面分面 —— 同族 `gap ls` / `gap status` / `gap plan` 的口径）
+	if inv.jsonGiven {
+		selectJSON(stdout, stderr, inv, inv.path, inv.fields, gapReceiptCheckRow(rec, nil, v.conflicts, v.unclosed))
+		if len(v.conflicts) > 0 {
+			fmt.Fprintf(stderr, "%s: 闭案与账对不上 —— %d 个号冲突（退码 2）\n", progName, len(v.conflicts))
+			return exitUsage
+		}
+		return exitOK
+	}
+	// 人面报告（三段：读数 / 对账 / 未结派单告警）
+	fmt.Fprintf(stdout, "回执收件体检（gap receipt check · 只读 —— 一字不写真源、不写审计）\n")
+	fmt.Fprintf(stdout, "  回执件   : %s\n", path)
+	fmt.Fprintf(stdout, "  卵号     : %s\n", rec.Egg)
+	fmt.Fprintf(stdout, "  逐条读数 : %d 条\n", len(rec.Readings))
+	for i, rr := range rec.Readings {
+		fmt.Fprintf(stdout, "      %d) %s — %s\n", i+1, rr.GapID, rr.Result)
+	}
+	fmt.Fprintf(stdout, "  结论     : %s\n", rec.Conclusion)
+	fmt.Fprintf(stdout, "  闭案号   : %d 条 — %s\n", len(rec.ClosedIDs), gapReceiptIDsText(rec.ClosedIDs))
+	if len(v.conflicts) > 0 {
+		fmt.Fprintf(stdout, "  闭案对账 : ✗ %d 个号与账对不上 —— %s\n", len(v.conflicts), strings.Join(v.conflicts, " · "))
+	} else {
+		fmt.Fprintf(stdout, "  闭案对账 : ✓ %d 个号都在账里且当前 state=已派（与账一一对应）\n", len(rec.ClosedIDs))
+	}
+	if len(v.unclosed) > 0 {
+		fmt.Fprintf(stdout, "  ⚠ 未结派单 : %d 条（账里 `已派` 但回执没提）—— %s\n", len(v.unclosed), strings.Join(v.unclosed, " · "))
+		fmt.Fprintf(stdout, "      （**告警不阻断退码** · 只报告 —— 施工清单 3-4 的「反面」）\n")
+	} else {
+		fmt.Fprintf(stdout, "  未结派单 : 0 条（账里 `已派` 都已在回执里点名）\n")
+	}
+	fmt.Fprintf(stdout, "  真源     : %s（**本面一字不碰** · 只读）\n", led.Path)
+	if len(v.conflicts) > 0 {
+		fmt.Fprintf(stderr, "%s: 闭案与账对不上 —— %d 个号冲突（退码 2）\n", progName, len(v.conflicts))
+		return exitUsage
+	}
+	return exitOK
+}
+
+// cmdGapReceiptApply —— `zerg gap receipt apply <回执件> --evidence <串> --yes`：
+// 把 `closed_ids` 逐条改 `已解`（**走现有改态路径** `gapRewriteOne` · 不另开写路）。
+func cmdGapReceiptApply(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapReceiptApplyFields, ","))
+		return exitUsage
+	}
+	evidence := strings.TrimSpace(inv.flagVal("--evidence"))
+	path, rc := gapReceiptArg(inv, stderr, "apply")
+	if rc != exitOK {
+		return rc
+	}
+	if evidence == "" {
+		inv.setErr("usage", "missing_required", "缺 --evidence")
+		fmt.Fprintf(stderr, "%s: `gap receipt apply` 缺必填旗标：--evidence（**改态必留一句证据** —— 与 `gap set-state` 同一条纪律）\n", progName)
+		return exitUsage
+	}
+	// 缺 `--yes`（fail-closed 2 · 计划件走 stderr · 判在读盘之前）
+	if !inv.yes {
+		fmt.Fprintf(stderr, "计划件（回执闭案落账 · 缺 `--yes`（D2 档）· 零副作用 —— 未改真源、未写审计）\n")
+		fmt.Fprintf(stderr, "  真源     : %s（未读 —— 缺 `--yes` ⇒ 不执行）\n", gapLedgerPath())
+		fmt.Fprintf(stderr, "  回执件   : %s\n", path)
+		fmt.Fprintf(stderr, "  证据     : %s\n", evidence)
+		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
+		fmt.Fprintf(stderr, "  ⚠ `--yes` 是**命令行确认档**，不是 `approve` 件\n")
+		inv.setErr("usage", "yes_required", "缺 --yes")
+		return exitUsage
+	}
+	rec, miss, err := gapReceiptLoad(path)
+	if err != nil {
+		inv.setErr("blocked", "receipt_unreadable", err.Error())
+		fmt.Fprintf(stderr, "%s: 回执件读不到 / 读不出：%v（退码 8）\n", progName, err)
+		return exitBlocked
+	}
+	// 缺栏 ⇒ 2 且**不动账**（一个字节都不写）
+	if len(miss) > 0 {
+		inv.setErr("usage", "receipt_missing_field", "回执缺栏")
+		fmt.Fprintf(stderr, "%s: 回执**缺栏拒收** —— 缺 %d 栏：%s（账不动 · 退码 2）\n", progName, len(miss), strings.Join(miss, " · "))
+		return exitUsage
+	}
+	led, lrc := gapReadLedgerOrDie(inv, stderr)
+	if lrc != exitOK {
+		return lrc
+	}
+	// 有冲突号 ⇒ 2 且**不动账**
+	v := gapReceiptVerify(rec, led)
+	if len(v.conflicts) > 0 {
+		inv.setErr("usage", "closed_conflict", "闭案号与账对不上")
+		fmt.Fprintf(stderr, "%s: 闭案与账对不上 —— %d 个号冲突（**账不动** · 退码 2）：\n", progName, len(v.conflicts))
+		for _, c := range v.conflicts {
+			fmt.Fprintf(stderr, "  ✗ %s\n", c)
+		}
+		return exitUsage
+	}
+	// 真写：逐条 `已派` → `已解`（**走现有改态路径** `gapRewriteOne` · 不另开写路）
+	solved := 0
+	lines := []string{}
+	seen := map[string]bool{}
+	for _, id := range rec.ClosedIDs {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		idx := gapFindIdx(led, id)
+		r := led.Recs[idx]
+		before := r.State
+		r.State = gapStSolved
+		r.SolvedAt = gapNow()
+		r.Evidence = evidence
+		detail, wrc, msg := gapRewriteOne(inv, led, idx, r, "receipt", before, gapStSolved)
+		if wrc != exitOK {
+			gapWriteFail(inv, stderr, detail, msg, "receipt")
+			return wrc
+		}
+		solved++
+		lines = append(lines, fmt.Sprintf("%s  %s → %s", id, before, gapStSolved))
+		// 逐条落账后刷新内存账（后续条基于最新 Lines/Raw · 审计的 before sha 才逐次对得上）
+		if l2, e2 := readGapLedger(); e2 == nil {
+			led = l2
+		}
+	}
+	inv.changed = boolPtr(solved > 0)
+	if inv.jsonGiven {
+		selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
+			"egg":        rec.Egg,
+			"closed_ids": gapReceiptIDsJSON(rec.ClosedIDs),
+			"solved":     strconv.Itoa(solved),
+			"changed":    boolWord(solved > 0),
+		})
+		return exitOK
+	}
+	fmt.Fprintf(stdout, "已结案（gap receipt apply · 卵号 %s）· 逐条改态（**走现有改态路径** `gapRewriteOne`）\n", rec.Egg)
+	for _, l := range lines {
+		fmt.Fprintf(stdout, "  %s\n", l)
+	}
+	fmt.Fprintf(stdout, "  计数     : 已派 → 已解 %d 条（真源 %s · 只重写那 %d 行 · 审计已落 %d 行）\n",
+		solved, led.Path, solved, solved)
+	fmt.Fprintf(stdout, "  证据     : %s（逐条落进各条的 `solved_evidence`）\n", evidence)
+	fmt.Fprintf(stdout, "  出口判据 : `closed_ids` 全落 `已解`（现读 %d / %d）\n", solved, len(rec.ClosedIDs))
+	return exitOK
+}
