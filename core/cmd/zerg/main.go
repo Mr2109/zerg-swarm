@@ -2146,8 +2146,8 @@ func init() {
 		{
 			path:     []string{"gap", "assign", "ls"},
 			kind:     "GapAssignLs",
-			summary:  "派单**读面**（只读 · 一字不写真源、不写审计）：列 `已派` 条与它们的作业单登记（六栏 + 卵号 + 回执 + 登记时刻）· `--egg <卵号>` 收窄 · `--json` 走同族信封（`meta.total` / `meta.hits` / `query` / `query_ts` / `ledger_sha16` + 截断自报）· 零命中 ⇒ 1（`已派` 0 条不是绿）· 真源读不到 ⇒ 8。判据 2「自派」的计数落点",
-			usage:    "zerg gap assign ls [--egg <卵号>] [--json <字段>]",
+			summary:  "派单**读面**（只读 · 一字不写真源、不写审计）：列 `已派` 条与它们的作业单登记（六栏 + 卵号 + 回执 + 登记时刻）· `--egg <卵号>` 收窄 · `--aging`（按登记时刻与时限算超时多少 · **降序**最久的在最前 · 时限算不出的单列「时限不明」**不当零**）· `--stale`（只列超时限未收的派单 · 无一条 ⇒ rc 0 且明写「无超时派单」）· 表尾**固定**回显对账口径行（`已派 N 条 —— 请与平台在飞清单逐条比对` · N 现读现算），有超时条再点名它们的缺口号 + 卵号 + 超时时长（**只报告不自动断言** —— 在飞不在本 CLI 真源内）· `--json` 走同族信封（`meta.total` / `meta.hits` / `query` / `query_ts` / `ledger_sha16` / `assign_total` / `overdue_count` / `reconcile` + 截断自报）· 零命中 ⇒ 1（`已派` 0 条不是绿）· 真源读不到 ⇒ 8。判据 2「自派」的计数落点",
+			usage:    "zerg gap assign ls [--egg <卵号>] [--aging] [--stale] [--json <字段>]",
 			arity:    "none",
 			args:     []string{"（无位置参数：收窄走 `--egg`）"},
 			fields:   gapAssignListFields,
@@ -2739,6 +2739,12 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.kvSet(a, "true")
 		case strings.HasPrefix(a, "--no-fallback="):
 			inv.kvSet("--no-fallback", strings.TrimPrefix(a, "--no-fallback="))
+		// ★ 批3 第三片（2026-09-28）：`gap assign ls` 的两枚**布尔**面旗标 —— `--aging`（按超时限程度
+		//   降序 · 时限算不出的单列「时限不明」）/ `--stale`（只列超时限未收的派单）。与上一块
+		//   `--count`/`--files-only` 逐字同一种形态：写进 `inv.kv`（`kvSet`）⇒ `foreignFlag` 看得见；
+		//   ★ 必须在下面「未知旗标」兜底**之前**上户口，否则派单里写着它们会一律退 2「未知旗标」。
+		case a == "--aging" || a == "--stale":
+			inv.kvSet(a, "true")
 		case a == "--help" || a == "-h":
 			inv.wantHelp = true
 		case a == "--version":
