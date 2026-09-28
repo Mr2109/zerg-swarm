@@ -4823,3 +4823,307 @@ func cmdGapReceiptApply(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "  出口判据 : `closed_ids` 全落 `已解`（现读 %d / %d）\n", solved, len(rec.ClosedIDs))
 	return exitOK
 }
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// 批4 第三片：`gap regress <件…>` —— 分层回归巡检（**只读面** · 2026-09-28）
+//
+// 设计出处（逐字）：`设计-缺口账与自进化-v2.0-20260928.md` §11.4 批4 D3「回归巡检」+
+// §附录「巡检条款措辞限缩（35.2 源四）」。
+//
+// 病（§11.2 批4 · §11.4）：`gap verify-one` 一条一次 —— 改一件之后无法快速知道「我碰过的那件
+// 名下、账里那些条的判据还站不站得住」；900+ 条全跑贵且慢（`M-34`）。
+// 治（§11.4 分层巡检算法逐字）：① 取本次改动碰过的件 ② 在账里找 `unit` 命中的条 ③ 逐条跑
+// `verify_cmd` ④ rc≠0 ⇒ 报出来 ⑤ **报告面不改态**（本面独立只读档 · 不写 `state`）。
+//
+// 六条口径（逐条可对拍）：
+//
+//	① **只读面**：一字不写真源、不写审计、不改任何 `state`（与 `gap ls`/`status`/`plan` 同档）。
+//	② **件面** = 位置参数（一个或多个仓内相对路径）；一条账按 `unit` **精确等值**该件命中
+//	   （**不含**模块前缀 —— 那是 `gap ls --unit` 的第二形态，本面只取「unit 就是它」这一态）。
+//	   件不在仓里 ⇒ 2 并**逐条点名**（fail-closed：任一件缺 ⇒ 一条判据都不跑）。
+//	③ **跑法逐字照 `verify-one` 的安全边界**：只跑账里 `verify_cmd` 那一格命令本身（进程内走同一
+//	   `run` 入口 · **不拼 shell 串**）；含 **shell 元字符**（管道 `|` / 重定向 `>` `<` / 分号 `;` /
+//	   与或 `&` / 反引号 / `$` / 括号）⇒ **拒跑并点名**（不当绿也不当红）；写面（危险档且没带
+//	   `--dry-run`）/ 无判据 / 占位 ⇒ 拒跑（**不执行**）。
+//	④ **汇总六数**：件 → 条数 · 实跑数 · 通过数 · 失败数 · 拒跑数 · 未跑数（被 `--limit` 截掉的）。
+//	⑤ **声称纪律（本片核心）**：表尾**逐字**声明只覆盖 modification-traversing 级；某件零条 ⇒
+//	   明写「零条（不是通过）」。
+//	⑥ `--dry-run` 只列出将要跑的命令（**不执行**）。
+//
+// 退码：0 全过（含零条 / 全是拒跑）· 1 有条判红（`verify_cmd` rc≠0）· 2 用法错（缺件 / 件不在仓 /
+// `--limit` 非非负整数 / `--json` 不给字段）· 8 真源读不到 / 仓根取不到。★ **拒跑不当红**。
+
+// gapRegressDefaultLimit —— `--limit` 缺省一页条数（与 `gap status`/`gap plan` 的 20 同值）。
+const gapRegressDefaultLimit = 20
+
+// gapRegressClaim —— 表尾**逐字**声称纪律行（设计稿 §附录「措辞限缩」原文口径 · **不许改写**）。
+const gapRegressClaim = "本次只覆盖 modification-traversing 级（只跑了与被改件直接相关的账）；" +
+	"这不等于 safe，也不覆盖非确定性/环境依赖场景"
+
+// gapRegressFields —— `--json` 可取字段（每行 = 一件的汇总）。
+var gapRegressFields = []string{"file", "in_repo", "total", "ran", "passed", "failed", "refused", "skipped", "zero", "states"}
+
+// gapRegressRow —— 一件的汇总面（六数 + 状态分栏 + 逐条点名行）。
+type gapRegressRow struct {
+	File    string
+	Total   int
+	Ran     int
+	Passed  int
+	Failed  int
+	Refused int
+	Skipped int
+	States  []int // 按 gapStateClosed 序的计数（仍缺/已派/已立项/已解/回归/不做）
+	Lines   []string
+}
+
+// gapRegressRefuse —— 分类一条判据「拒跑」的因（空串 ⇒ 可跑）。★ 只读面：本函数不执行任何东西。
+func gapRegressRefuse(r gapRecord) string {
+	if strings.TrimSpace(r.VerifyCmd) == "" {
+		return "无 verify_cmd（空串 ⇒ 判据分级=无 · 空判据不算「验过」）"
+	}
+	if t, _ := gapStatusTierOf(r); t == gapVerifyTierPlaceholder {
+		return "占位判据（不是可跑命令 ⇒ 不执行）"
+	}
+	if m := gapVerifyOneMetaHit(r.VerifyCmd); m != "" {
+		return fmt.Sprintf("含 shell 元字符 %q（只跑「那一格命令本身」· 不拼 shell 串）", m)
+	}
+	if gapWriteFaceWhy(r.VerifyCmd) != "" {
+		return "写面判据（危险档且没带 `--dry-run` ⇒ 真跑会真写盘）"
+	}
+	return ""
+}
+
+// gapRegressQueryText —— `meta.query` 的回显（现读入参 · 序 = files / limit / dry_run）。
+func gapRegressQueryText(files []string, limit int, dry bool) string {
+	q := make([]string, 0, len(files))
+	for _, f := range files {
+		q = append(q, jstr(f))
+	}
+	return "{" + jstr("files") + ":[" + strings.Join(q, ",") + "]," +
+		jstr("limit") + ":" + strconv.Itoa(limit) + "," + jstr("dry_run") + ":" + strconv.FormatBool(dry) + "}"
+}
+
+// gapRegressStatesText —— 状态分栏的打印面（按 `gapStateClosed` 六值序 · 与账内闭集同源）。
+func gapRegressStatesText(states []int) string {
+	parts := make([]string, 0, len(gapStateClosed))
+	for i, s := range gapStateClosed {
+		parts = append(parts, fmt.Sprintf("%s %d", s, states[i]))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// gapRegressStatesJSON —— 状态分栏的机器面（同一份数据 · 闭集为键）。
+func gapRegressStatesJSON(states []int) string {
+	parts := make([]string, 0, len(gapStateClosed))
+	for i, s := range gapStateClosed {
+		parts = append(parts, jstr(s)+":"+strconv.Itoa(states[i]))
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+// cmdGapRegress —— `zerg gap regress <件…>`：只跑被点名件名下账的判据（分层巡检 · 只读）。
+func cmdGapRegress(inv *invocation, stdout, stderr io.Writer) int {
+	// ① 用法面（在任何盘面动作之前）
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapRegressFields, ","))
+		return exitUsage
+	}
+	if len(inv.flagVals("--state")) > 0 || inv.hasFlag("--prio") || inv.hasFlag("--impact") {
+		inv.setErr("usage", "narrow_not_in_shape", "本面不收收窄旗标")
+		fmt.Fprintf(stderr, "%s: `gap regress` 只认件（位置参数）+ `--limit` / `--dry-run` / `--json` —— 不收 `--state/--prio/--impact`\n", progName)
+		return exitUsage
+	}
+	files := []string{}
+	for _, a := range inv.args {
+		if s := strings.TrimSpace(a); s != "" {
+			files = append(files, s)
+		}
+	}
+	if len(files) == 0 {
+		inv.setErr("usage", "target_required", "缺件")
+		fmt.Fprintf(stderr, "%s: 要给件：`zerg gap regress <件路径>…`（仓内相对路径 · 一个或多个）\n", progName)
+		fmt.Fprintf(stderr, "  例   : `zerg gap regress core/cmd/zerg/family_gap.go`\n")
+		return exitUsage
+	}
+	limit := gapRegressDefaultLimit
+	if v := strings.TrimSpace(inv.flagVal("--limit")); v != "" {
+		n, lerr := strconv.Atoi(v)
+		if lerr != nil || n < 0 {
+			inv.setErr("usage", "bad_limit", "--limit 要给非负整数")
+			fmt.Fprintf(stderr, "%s: `--limit %s` 不是非负整数（本族口径 = 用法错 2）\n", progName, v)
+			return exitUsage
+		}
+		limit = n
+	}
+
+	// ② 读真源（读不到 ⇒ 8 · 不许当绿）· 两种因**机器可辨**（`Q-138`）
+	led, err := readGapLedger()
+	if err != nil {
+		gapLedgerErr(inv, gapReasonPrecondition, err.Error(), gapLedgerPath())
+		gapLedgerErrFirstLine(stderr, gapReasonPrecondition)
+		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+		fmt.Fprintf(stderr, "真源 = %s；「读不到」不许当绿（退码 8）\n", gapLedgerPath())
+		gapLedgerUnreadableHint(stderr, gapLedgerPath())
+		return exitBlocked
+	}
+	if !led.Exists {
+		gapLedgerErr(inv, gapReasonLedgerAbsent, "真源不在盘上", led.Path)
+		gapLedgerErrFirstLine(stderr, gapReasonLedgerAbsent)
+		fmt.Fprintf(stderr, "%s: 真源不在盘上：%s（退码 8 —— 「读不到」不许当绿）\n", progName, led.Path)
+		gapLedgerAbsentHint(stderr, led.Path)
+		return exitBlocked
+	}
+
+	// ③ 件存在性（在任何跑判据之前 · fail-closed：任一件不在仓里 ⇒ 2 并点名、一条判据都不跑）
+	root := repoRoot()
+	if root == "" {
+		inv.setErr("blocked", gapReasonPrecondition, "仓根解析不到，判不了件在不在仓里")
+		fmt.Fprintf(stderr, "%s: 仓根解析不到 ⇒ 判不了件在不在仓里（**没读到** 不是 没有 · 退码 8）\n", progName)
+		fmt.Fprintf(stderr, "  修法：进仓根再跑；或显式给 `ZERG_REPO`\n")
+		return exitBlocked
+	}
+	missing := []string{}
+	for _, f := range files {
+		st, serr := os.Stat(filepath.Join(root, f))
+		if serr != nil || st.IsDir() {
+			missing = append(missing, f)
+		}
+	}
+	if len(missing) > 0 {
+		inv.setErr("usage", "file_not_in_repo", "点名件不在仓里")
+		fmt.Fprintf(stderr, "%s: 仓里没有这几个件（仓根 %s 下找不到）：\n", progName, root)
+		for _, f := range missing {
+			fmt.Fprintf(stderr, "  ✗ %s\n", f)
+		}
+		fmt.Fprintf(stderr, "  ⇒ 「没读到」不是「没有」：退码 2（点名面名字给错 = 用法错，与 `gap show <件路径>` 同一口径）\n")
+		fmt.Fprintf(stderr, "  注 : 「件在仓里、但账内 0 条」是**另一态**（退 0 且明写「零条（不是通过）」）—— 两态不许混\n")
+		return exitUsage
+	}
+
+	// ④ 逐件：取 unit 精确等值的条（不分状态 · 分栏显示）→ 跑前 `limit` 条 → 汇总六数
+	rows := make([]*gapRegressRow, 0, len(files))
+	anyFail := false
+	matchTotal := 0
+	for _, f := range files {
+		row := &gapRegressRow{File: f, States: make([]int, len(gapStateClosed))}
+		recs := []gapRecord{}
+		for _, r := range led.Recs {
+			if r.Unit == f {
+				recs = append(recs, r)
+			}
+		}
+		row.Total = len(recs)
+		matchTotal += row.Total
+		for _, r := range recs {
+			for i, s := range gapStateClosed {
+				if r.State == s {
+					row.States[i]++
+					break
+				}
+			}
+		}
+		run := recs
+		if len(run) > limit {
+			run = run[:limit]
+			row.Skipped = row.Total - limit
+		}
+		for _, r := range run {
+			if why := gapRegressRefuse(r); why != "" {
+				row.Refused++
+				row.Lines = append(row.Lines, fmt.Sprintf("⛔ %s · 拒跑：%s · 判据=%s", r.ID, why, gapShowText(r.VerifyCmd)))
+				continue
+			}
+			if inv.dryRun {
+				row.Lines = append(row.Lines, fmt.Sprintf("·  %s · 将跑：%s", r.ID, gapShowText(r.VerifyCmd)))
+				continue
+			}
+			c, out, jwhy := gapVerifyOneRun(r.VerifyCmd)
+			if jwhy != "" {
+				row.Refused++
+				row.Lines = append(row.Lines, fmt.Sprintf("⛔ %s · 拒跑（判据不可跑）：%s · 判据=%s", r.ID, jwhy, gapShowText(r.VerifyCmd)))
+				continue
+			}
+			row.Ran++
+			if c == 0 {
+				row.Passed++
+				row.Lines = append(row.Lines, fmt.Sprintf("✓ %s · %s", r.ID, gapVerifyOneReading(c, out)))
+			} else {
+				row.Failed++
+				anyFail = true
+				row.Lines = append(row.Lines, fmt.Sprintf("✗ %s · %s", r.ID, gapVerifyOneReading(c, out)))
+			}
+		}
+		rows = append(rows, row)
+	}
+
+	// ⑤ 机器面信封（只走 `metaAdd*` 既有口子 ⇒ 顶层六键不动）
+	inv.changed = boolPtr(false)
+	inv.metaAddJSON("total", strconv.Itoa(matchTotal))
+	inv.metaAddJSON("files", strconv.Itoa(len(files)))
+	inv.metaAddJSON("limit", strconv.Itoa(limit))
+	inv.metaAddStr("query", gapRegressQueryText(files, limit, inv.dryRun))
+	inv.metaAddStr("query_ts", gapNow())
+	inv.metaAddStr("ledger_sha16", gapLsLedgerSHA16(led.Path))
+	inv.metaAddStr("claim", gapRegressClaim)
+	inv.metaAddStr("tier", "modification-traversing")
+
+	if inv.jsonGiven {
+		js := make([]map[string]string, 0, len(rows))
+		for _, row := range rows {
+			js = append(js, map[string]string{
+				"file":    row.File,
+				"in_repo": "true",
+				"total":   strconv.Itoa(row.Total),
+				"ran":     strconv.Itoa(row.Ran),
+				"passed":  strconv.Itoa(row.Passed),
+				"failed":  strconv.Itoa(row.Failed),
+				"refused": strconv.Itoa(row.Refused),
+				"skipped": strconv.Itoa(row.Skipped),
+				"zero":    boolWord(row.Total == 0),
+				"states":  gapRegressStatesJSON(row.States),
+			})
+		}
+		if rc := selectJSONList(stdout, stderr, inv, inv.path, gapRegressFields, js); rc != exitOK {
+			return rc
+		}
+		if anyFail {
+			return exitFail
+		}
+		return exitOK
+	}
+
+	// ⑥ 人面（表尾逐字声称纪律 —— 本片核心判据）
+	mode := "真跑"
+	if inv.dryRun {
+		mode = "干跑（--dry-run · 只列命令、**不执行**）"
+	}
+	fmt.Fprintf(stdout, "缺口账回归巡检（只读面 · 分层 · 只跑被点名件名下的账）\n")
+	fmt.Fprintf(stdout, "  真源     : %s（现有 %d 行 · sha256 前16 = %s）\n",
+		led.Path, len(led.Lines), gapLsLedgerSHA16(led.Path))
+	fmt.Fprintf(stdout, "  件面     : %d 个 · 账内 `unit` **精确等值**命中 %d 条（**不**含模块前缀面）\n", len(files), matchTotal)
+	fmt.Fprintf(stdout, "  档       : %s · `--limit %d` 一页硬顶（被截掉的记「未跑」）\n", mode, limit)
+	fmt.Fprintf(stdout, "  ★ 安全边界：只跑账里那一格 `verify_cmd` **本身** —— 含 shell 元字符 / 写面 ⇒ 拒跑并点名（不当红）\n")
+	for _, row := range rows {
+		fmt.Fprintf(stdout, "件: %s（在仓里）\n", row.File)
+		if row.Total == 0 {
+			fmt.Fprintf(stdout, "  零条（不是通过）—— 该件名下账内 `unit` 精确等值命中 0 条。\n")
+			continue
+		}
+		fmt.Fprintf(stdout, "  条数 %d · 实跑 %d · 通过 %d · 失败 %d · 拒跑 %d · 未跑 %d\n",
+			row.Total, row.Ran, row.Passed, row.Failed, row.Refused, row.Skipped)
+		fmt.Fprintf(stdout, "  状态分栏：%s\n", gapRegressStatesText(row.States))
+		for _, l := range row.Lines {
+			fmt.Fprintf(stdout, "    %s\n", l)
+		}
+		if row.Skipped > 0 {
+			fmt.Fprintf(stdout, "    （另有 %d 条被 `--limit %d` 截掉 ⇒ 记「未跑」· 这不是「通过」）\n", row.Skipped, limit)
+		}
+	}
+	fmt.Fprintf(stdout, "表尾声称：%s\n", gapRegressClaim)
+	if anyFail {
+		return exitFail
+	}
+	return exitOK
+}
