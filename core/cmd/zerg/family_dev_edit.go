@@ -84,7 +84,7 @@ var devEditFieldsShared = []string{"proposal", "file", "mode", "result", "before
 
 // devEditDryRunOnlyFields —— 只由**干跑档**填的那几格（真写档产出不了 ⇒ 写前拒）。
 var devEditDryRunOnlyFields = []string{"approver", "rollback_verdict", "rollback_tier",
-	"rollback_cmd", "rollback_why"}
+	"rollback_cmd", "rollback_why", "diff_body", "diff_body_truncated"}
 
 // devEditFields —— `--json` 面的全部字段（K1：机器面先定 · 两片拼接 = **唯一**定义处）。
 var devEditFields = append(append([]string{}, devEditFieldsShared...), devEditDryRunOnlyFields...)
@@ -374,6 +374,19 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		// 这里补上**同一枚批准件**读出的批准人（与上面「批准件」那一格同源 · 不另算）。
 		// ★ **真写档一字不动** ✗（本单要求：真写档机器面逐字不变 ⇒ 只在这一支里补）。
 		row["approver"] = appr.Appr
+		// ★ `GAP-20260928-155`（2026-09-28 · 本枚）：**差异正文进机器面** —— 人面那一块
+		//   （`emitDevEditDiffBody`）已可用，可机器面此前只有行号面 + `±N` ⇒ 脚本切不出「到底改了什么」。
+		//   两格都取自**同一趟对齐 / 同一处 hunk 边界**（上面那句 `devEditDiffBodyOf(align)` 的 `bodyDiff`）
+		//   ⇒ 与人面正文**逐字同源**，**不新开第二条差异生成链** ✗；人面既有输出一字不动 ✗。
+		//   ★ `diff_body` = 统一差异正文（` `上下文 / `-`改前 / `+`改后 · 每行一条）逐字。
+		//   ★ `diff_body_truncated` = **未给全的实话**（三态可判 · `true` 起头那一档自带宽条数）：
+		//     · 逐字节相同 ⇒ 正文空 + `false`（没有正文可给 —— 与「粗档不给」不是一回事）
+		//     · 粗档（超预算）⇒ 正文空 + `不适用（…）`（逐行对齐无精确值 ⇒ 不给正文，禁编）
+		//     · 真截断 ⇒ 正文 = 已给的条 + `true（未列 N 条 …）`（**条数照实 · 禁默默丢** ✗）
+		//     · 未截断 ⇒ 正文 = 全部条 + `false`
+		//   ★ 两格只在**干跑档**填（真写档一格不给 ⇒ 写前拒 · 见 `devEditDryRunOnlyFields`）。
+		row["diff_body"] = strings.Join(bodyDiff.Lines, "\n")
+		row["diff_body_truncated"] = devEditDiffBodyTruncFlag(bodyDiff)
 		emitDevEditRollbackAdvice(stderr, prop, fileRel, beforeSHA, len(before), rp)
 		// 指纹（**摘要正文逐字进哈希** ⇒ 第三者可复算；正文本身打到上面那段，不进审计）。
 		if summary.Taken {
@@ -1169,6 +1182,24 @@ func devEditDiffBodyOf(a devEditDiffAlign) devEditDiffBodyBlock {
 		}
 	}
 	return b
+}
+
+// devEditDiffBodyTruncFlag —— 差异正文面的**未给全**档（机器面一格 · **纯函数** · 与人面同源）。
+// 取值三态（`true` 起头那一档自带**未列条数** —— 禁默默丢 ✗）：逐字节相同 / 未截断 ⇒ `false`；
+// 粗档 ⇒ `不适用（…）`（那一档本来就没有精确正文可给，**不是「没有差异」**）；真截断 ⇒
+// `true（未列 N 条 · 正文面预算 B 字节）`。
+func devEditDiffBodyTruncFlag(b devEditDiffBodyBlock) string {
+	switch {
+	case b.Same:
+		return "false"
+	case b.Coarse:
+		return fmt.Sprintf("不适用（粗档：老行×新行超预算 %d 格 ⇒ 逐行对齐无精确值 ⇒ 正文一格不给 · 未列条数未算（不是 0））",
+			devEditDiffCellBudget)
+	case b.More > 0:
+		return fmt.Sprintf("true（未列 %d 条 · 正文面预算 %d 字节 —— 只给前面这些，不说成完整）",
+			b.More, devEditDiffBodyBudget)
+	}
+	return "false"
 }
 
 // emitDevEditDiffBody —— 打差异正文那一块（**只由 `emitDevEditPlan` 调** —— 干跑 / 计划面独有）。

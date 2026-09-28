@@ -111,6 +111,15 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		if rc := gateRunPrecheckFlags(tail, stderr); rc != exitOK {
 			return rc
 		}
+		// ★ 2026-09-28（缺口 `GAP-20260928-157`）：`--candidate` 的**值域**（闭集 = 真源
+		//   `core/internal/contract/dev-candidate.json` 的 `candidate_id_pattern`）也前移 —— 过去是自举件
+		//   `main()` 判的，且它走 `return 2` ⇒ 脚本还会往下跑完**尾部软门禁**（实测 stdout 22 行先落地）。
+		//   这里在 exec **之前**按真源判（真源只读自 JSON、复用命令面既有解析，不复制第二份）；退码语义不变
+		//   （坏值改前 2、改后 2）。偏序照自举件：这一条在自举件里判在 `--scope` 的 `build_steps` 之前。
+		//   取不到真源 ⇒ 放行（行为与改前逐字相同）。
+		if rc := gateRunPrecheckCandidateValue(tail, stderr); rc != exitOK {
+			return rc
+		}
 		// ★ 2026-09-28（缺口 `GAP-20260928-153`）：**值面**也前移 —— `--scope <坏值>` 的闭集
 		//   过去是自举件 `build_steps()` 判的（在合成自检＋软门禁**之后**）⇒ 实测 stdout 175 行先落地。
 		//   这里在 exec **之前**按自举件自己的闭集判（闭集只读自它、不复制第二份）；退码语义不变
