@@ -1008,4 +1008,368 @@ func gapAssignPlanBlock(w io.Writer, title string, led gapLedger, r gapRecord, f
 	fmt.Fprintf(w, "  审计     : 计划写一行 `event=%s` + `gap_cmd=assign`（这一态**不写**）\n", gapEventName)
 }
 
+// ── ⒡ `zerg gap bulk set-state <清单件> --state <…>`（族级批量改态 · 批3 第五片 · 2026-09-28）──────
+//
+// 病（缺口账 `GAP-20260926-97` 逐字：想要 `zerg gap-batch-state`）：`gap` 族只有**单条**改态面
+// （`set-state` 一次一条）⇒ 结账/收版时逐条改态成本高。本面 = 一次改 N 条。
+//
+// 四条硬纪律（本片的核心判据 · 逐条可对拍）：
+//
+//	① **全量预检先行**：清单任一条缺 `id` / `evidence`、或 `id` 不在账、或该条当前 `state` 不可改
+//	   ⇒ **整批拒**（退码 2 · 逐条点名到行）· **一字不写**（真源一个字节不写、审计一行不落）。
+//	② **全过后才真写**：逐条改态，逐条写**自己那一行**的 `evidence`（不是清单里第一行的口径）。
+//	③ **半途不落半截**：任一条写失败 ⇒ **当场停手**并如实报「已改 m 条 / 未改 n 条」（不得静默）。
+//	④ **不另开写路**：逐条走本族唯一收口 `gapRewriteOne`（审计先落盘 → 整件重写 → 写后读回对拍），
+//	   审计**逐条**一行 —— 与单条 `set-state` 同一条路、同一张退码表，不另造机制。
+//
+// ★「当前 `state` 不可改」的口径（本片取定 · 回执如实点名）：**当前态必须是 `gapStateSettable`
+// 三值之一**（`仍缺` / `已解` / `不做`）—— `已派` / `已立项` 是**排期面**（各有各的面管）、
+// `回归` 是 `gap verify` 跑判据判出来的**机器态** ⇒ 批量面**不替它们改**（与单条 `set-state`
+// 同一句口径逐字：本动作只回答「这条**还在不在** / **还要不要做**」）。
+// ⚠ 单条 `set-state` **不加**这道从态闸（它逐条人点名）⇒ 单条行为**一个字节不动**（本片对拍项）。
+//
+// 退码（一律引现有表 `exitcodes.go` · 本族**不取新号**）：0 全成事或全幂等「无变化」·
+// 1 真源这一行序列化不过 · 2 用法错（缺/多清单件 / `--state` 缺或闭集外 / 清单件空 /
+// **任一条预检不合规** / 缺 `--yes`）· 8 清单件读不到 / 真源读不到 / 审计写不进 / 真源写不进。
+
+var gapBulkSetStateFields = []string{"id", "before", "after", "evidence", "changed", "fail"}
+
+// gapBulkRow —— 清单件一行（JSONL · 每行至少 `id` 与 `evidence` 两键）+ 本面的预检产物。
+type gapBulkRow struct {
+	No      int    // 清单件里的行号（1 起 · 不数空行）
+	ID      string // `id` 键
+	Ev      string // `evidence` 键（**这一行自己的**证据）
+	Before  string // 改前 state（读账之后填）
+	After   string // 改后 state
+	Changed bool   // 真要写（同 id 同态同证据 ⇒ false = 幂等「无变化」）
+	Done    bool   // 真写过（半途停手时用它数「已改 / 未改」）
+	Fail    string // 非空 ⇒ 该行拒因（逐条点名）
+}
+
+// gapBulkReadList —— 读清单件（JSONL · 每行至少 `id` 与 `evidence` 两键）。
+// 逐行判：不是 JSON 对象 / 缺键 / 值为空 ⇒ 落该行的 `Fail`（**不在读面退码** —— 退码由全量预检统一给）。
+// 件读不到 ⇒ `error`（调用方退 8：本族口径「读不到不许当绿」）。
+func gapBulkReadList(path string) ([]gapBulkRow, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	rows := []gapBulkRow{}
+	no := 0
+	for _, ln := range strings.Split(string(raw), "\n") {
+		s := strings.TrimSpace(ln)
+		if s == "" {
+			continue
+		}
+		no++
+		r := gapBulkRow{No: no}
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(s), &obj); err != nil {
+			r.Fail = fmt.Sprintf("第 %d 行：不是 JSON 对象（%v）", no, err)
+			rows = append(rows, r)
+			continue
+		}
+		r.ID = gapBulkStr(obj["id"])
+		r.Ev = gapBulkStr(obj["evidence"])
+		switch {
+		case r.ID == "":
+			r.Fail = fmt.Sprintf("第 %d 行：缺 `id` 键（或值不是非空字符串）", no)
+		case r.Ev == "":
+			r.Fail = fmt.Sprintf("第 %d 行：缺 `evidence` 键（或值不是非空字符串）—— 逐条改态要逐条给证据", no)
+		}
+		rows = append(rows, r)
+	}
+	return rows, nil
+}
+
+// gapBulkStr —— 从一个 JSON 键取非空字符串（缺键 / 不是字符串 ⇒ 空串）。
+func gapBulkStr(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
+// gapBulkPrecheck —— **全量预检**（本片硬要求 ①）：逐条判、逐条填 `Before`/`Changed`/`Fail`，
+// 返回**全部**拒因（空 ⇒ 整批可写）。**读面动作**：一个字都不写。
+func gapBulkPrecheck(rows []gapBulkRow, led gapLedger, stateWant string) []string {
+	bad := []string{}
+	seen := map[string]int{}
+	for i := range rows {
+		r := &rows[i]
+		if r.Fail != "" {
+			bad = append(bad, r.Fail)
+			continue
+		}
+		if n, dup := seen[r.ID]; dup {
+			r.Fail = fmt.Sprintf("第 %d 行：id %s 与第 %d 行**重复**（同一条不许在同一批里改两次）", r.No, r.ID, n)
+			bad = append(bad, r.Fail)
+			continue
+		}
+		idx := gapFindIdx(led, r.ID)
+		if idx < 0 {
+			r.Fail = fmt.Sprintf("第 %d 行：id %s **不在账**（账里 %d 条）—— 「名给错」是用法错（同族 `set-state` 同一口径）",
+				r.No, r.ID, len(led.Recs))
+			bad = append(bad, r.Fail)
+			continue
+		}
+		seen[r.ID] = r.No
+		cur := led.Recs[idx]
+		r.Before, r.After = cur.State, stateWant
+		if !gapIn(gapStateSettable, cur.State) {
+			r.Fail = fmt.Sprintf("第 %d 行：%s 当前 state=`%s` **不可改** —— 批量面只改 %s 三态之一（`已派`/`已立项` 是排期面、`回归` 是 `verify` 的机器态）",
+				r.No, r.ID, cur.State, gapClosedText(gapStateSettable))
+			bad = append(bad, r.Fail)
+			continue
+		}
+		r.Changed = !(cur.State == stateWant && cur.Evidence == r.Ev)
+	}
+	return bad
+}
+
+// gapBulkPlanBlock —— 批量面的计划件（`--dry-run` 走 stdout · 缺 `--yes` 走 stderr）。
+// `total < 0` ⇒ 清单件**未读**（缺 `--yes` 那一档：一个盘面动作都还没做）。
+func gapBulkPlanBlock(w io.Writer, title, listPath, stateWant string, total int) {
+	fmt.Fprintf(w, "计划件（族级批量改态 · %s · 零副作用 —— 未改真源、未写审计）\n", title)
+	fmt.Fprintf(w, "  清单件   : %s\n", listPath)
+	fmt.Fprintf(w, "  真源     : %s\n", gapLedgerPath())
+	fmt.Fprintf(w, "  要落的键（逐条）：state → %s · solved_evidence → 该行自己的 `evidence`\n", stateWant)
+	if total < 0 {
+		fmt.Fprintf(w, "  条数     : （清单件未读 —— 缺 `--yes` ⇒ 不执行）\n")
+	} else {
+		fmt.Fprintf(w, "  条数     : %d 条（全量预检已过才真写；任一条不合规 ⇒ 整批拒 + 一字不写）\n", total)
+	}
+	fmt.Fprintf(w, "  审计     : 逐条计划写一行 `event=%s` + `gap_cmd=bulk set-state`（这一态**不写**）\n", gapEventName)
+}
+
+// gapBulkTable —— 表尾回显（总数 / 逐条改前 → 改后 / 失败条数）—— 人面与机器面**同一份数据**。
+// `dry==true` ⇒ 这一态没有真写（`--dry-run` 的计划件）：未写的行标「计划改」而不是「半途停手」。
+func gapBulkTable(w io.Writer, rows []gapBulkRow, stateWant string, m, n, failed int, dry bool) {
+	fmt.Fprintf(w, "批量改态表（清单 %d 条 · 目标 state = %s）：\n", len(rows), stateWant)
+	for i := range rows {
+		r := &rows[i]
+		mark := ""
+		switch {
+		case r.Fail != "":
+			mark = "  ✗ " + r.Fail
+		case r.Changed && r.Done:
+			mark = "  ✓ 已改"
+		case r.Changed && dry:
+			mark = "  → 计划改（--dry-run：本态未执行）"
+		case r.Changed && !r.Done:
+			mark = "  － 未改（半途停手）"
+		case !r.Changed:
+			mark = "  = 无变化（同 id 同态同证据 ⇒ 幂等：不写真源、不写审计）"
+		}
+		before, after := r.Before, r.After
+		if before == "" {
+			before = "（未读）"
+		}
+		if after == "" {
+			after = stateWant
+		}
+		fmt.Fprintf(w, "  第 %d 行 · %s · 改前 %s → 改后 %s%s\n", r.No, orDash(r.ID), before, after, mark)
+	}
+	fmt.Fprintf(w, "  表尾：总数 %d 条 · 已改 %d 条 · 未改 %d 条 · 失败 %d 条\n", len(rows), m, n, failed)
+}
+
+func cmdGapBulkSetState(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	stateWant := strings.TrimSpace(inv.flagVal("--state"))
+	args := gapIDsOf(inv)
+
+	// ① 用法面（在任何盘面动作之前 —— 与同族写面同一条位置）
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapBulkSetStateFields, ","))
+		return exitUsage
+	}
+	if stateWant == "" {
+		inv.setErr("usage", "missing_required", "缺 --state")
+		fmt.Fprintf(stderr, "%s: `gap bulk set-state` 缺必填旗标：--state\n", progName)
+		fmt.Fprintf(stderr, "用法：zerg gap bulk set-state <清单件.jsonl> --state <%s> [--by <谁>] [--dry-run | --yes] [--json <字段>]\n",
+			strings.Join(gapStateSettable, "|"))
+		return exitUsage
+	}
+	if !gapIn(gapStateSettable, stateWant) {
+		inv.setErr("usage", "bad_state", "state 值不在本动作闭集里")
+		fmt.Fprintf(stderr, "%s: `--state %s` 不在闭集里 —— 只认 %s（与单条 `set-state` 同一闭集）\n",
+			progName, stateWant, gapClosedText(gapStateSettable))
+		return exitUsage
+	}
+	if len(args) != 1 {
+		inv.setErr("usage", "target_arity", "要点名**恰好一个**清单件")
+		fmt.Fprintf(stderr, "%s: `gap bulk set-state` 的第一位置参 = **清单件路径**（恰好一个 · 收到 %d 个）\n", progName, len(args))
+		fmt.Fprintf(stderr, "  清单件 = JSONL：每行至少 `id` 与 `evidence` 两键（`{\"id\":\"GAP-…\",\"evidence\":\"…\"}`）\n")
+		return exitUsage
+	}
+	listPath := args[0]
+
+	// ② 缺 `--yes`（且非 `--dry-run`）：fail-closed **rc=2**，计划件走 stderr。
+	//    ⚠ 判在**读清单件与真源之前**：确认档不齐 ⇒ 一行都不读、一行都不写（与单条 `set-state` 逐字同位置）。
+	if !inv.dryRun && !inv.yes {
+		gapBulkPlanBlock(stderr, "缺 `--yes`（D2 档）", listPath, stateWant, -1)
+		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
+		fmt.Fprintf(stderr, "  ⚠ `--yes` 是**命令行确认档**，不是 `approve` 件（不产生 `approver` / `approval` 两格）\n")
+		inv.setErr("usage", "yes_required", "缺 --yes")
+		return exitUsage
+	}
+
+	// ③ 读清单件（读不到 ⇒ 8：本族口径「读不到不许当绿」）
+	rows, err := gapBulkReadList(listPath)
+	if err != nil {
+		inv.setErr("blocked", "list_unreadable", err.Error())
+		fmt.Fprintf(stderr, "%s: 清单件读不到：%v\n", progName, err)
+		fmt.Fprintf(stderr, "  清单件 = %s（退码 8 —— 取数不到不许当绿）\n", listPath)
+		return exitBlocked
+	}
+	if len(rows) == 0 {
+		inv.setErr("usage", "list_empty", "清单件里一行都没有")
+		fmt.Fprintf(stderr, "%s: 清单件是空的（0 行）：%s —— 空清单不是「改完了」（用法错 2）\n", progName, listPath)
+		return exitUsage
+	}
+
+	// ④ 读真源（读不到 ⇒ 8）
+	led, rc := gapReadLedgerOrDie(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
+
+	// ⑤ **全量预检先行**：任一不合规 ⇒ 整批拒（2 · 逐条点名）· **一字不写**
+	if bad := gapBulkPrecheck(rows, led, stateWant); len(bad) > 0 {
+		inv.setErr("usage", "precheck_rejected", fmt.Sprintf("%d 条不合规", len(bad)))
+		fmt.Fprintf(stderr, "%s: `gap bulk set-state` **整批拒**（%d 条不合规 ⇒ 退码 2 · **一字不写**：真源一个字节未改、审计一行未落）\n",
+			progName, len(bad))
+		fmt.Fprintf(stderr, "  清单件   : %s（%d 条）\n", listPath, len(rows))
+		fmt.Fprintf(stderr, "  真源     : %s（现有 %d 行 · **本发未碰**）\n", led.Path, len(led.Lines))
+		for _, b := range bad {
+			fmt.Fprintf(stderr, "    ✗ %s\n", b)
+		}
+		fmt.Fprintf(stderr, "  修法     : 逐条补齐（每行 `id` + `evidence` 两键 · id 用 `zerg gap ls` 现读核对）后重发\n")
+		if inv.jsonGiven {
+			gapBulkMeta(inv, len(rows), 0, 0, len(bad), stateWant, led.Path)
+			return emitGapBulkJSON(stdout, stderr, inv, rows)
+		}
+		return exitUsage
+	}
+
+	// ⑥ `--dry-run`：计划件（stdout · 恒 0 · 零副作用）
+	if inv.dryRun {
+		inv.changed = boolPtr(false)
+		gapBulkMeta(inv, len(rows), 0, len(rows), 0, stateWant, led.Path)
+		if inv.jsonGiven {
+			return emitGapBulkJSON(stdout, stderr, inv, rows)
+		}
+		gapBulkPlanBlock(stdout, "--dry-run", listPath, stateWant, len(rows))
+		gapBulkTable(stdout, rows, stateWant, 0, len(rows), 0, true)
+		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未改真源、未写审计）\n")
+		return exitOK
+	}
+
+	// ⑦ 真写：逐条走**现有单条改态路径**（`gapRewriteOne`）—— 逐条改态、逐条写自己的 evidence、
+	//    审计逐条一行。任一条写失败 ⇒ **当场停手**（不静默 · 如实报「已改 m 条 / 未改 n 条」）。
+	m, failed, failRC := 0, 0, exitOK
+	for i := range rows {
+		r := &rows[i]
+		if !r.Changed {
+			continue
+		}
+		fresh, rc := gapReadLedgerOrDie(inv, stderr)
+		if rc != exitOK {
+			r.Fail = "重读真源失败 ⇒ 当场停手（本条与后条一律未改）"
+			failed, failRC = 1, rc
+			break
+		}
+		idx := gapFindIdx(fresh, r.ID)
+		if idx < 0 {
+			r.Fail = "重读真源：该 id 不见了 ⇒ 当场停手（本条与后条一律未改）"
+			failed, failRC = 1, exitBlocked
+			break
+		}
+		rec := fresh.Recs[idx]
+		before := rec.State
+		rec.State = stateWant
+		rec.Evidence = r.Ev
+		if stateWant == gapStSolved {
+			rec.SolvedAt = gapNow()
+		}
+		detail, rc, msg := gapRewriteOne(inv, fresh, idx, rec, "bulk set-state", before, stateWant)
+		if rc != exitOK {
+			gapWriteFail(inv, stderr, detail, msg, "bulk set-state")
+			r.Fail = fmt.Sprintf("真写失败（%s）⇒ 当场停手：本条与后条一律未改", detail)
+			failed, failRC = 1, rc
+			break
+		}
+		r.Before, r.After, r.Done = before, stateWant, true
+		m++
+	}
+	n := 0
+	for i := range rows {
+		if !rows[i].Done {
+			n++
+		}
+	}
+	inv.changed = boolPtr(m > 0)
+	gapBulkMeta(inv, len(rows), m, n, failed, stateWant, led.Path)
+	if inv.jsonGiven {
+		if rc := emitGapBulkJSON(stdout, stderr, inv, rows); rc != exitOK {
+			return rc
+		}
+	} else {
+		gapBulkTable(stdout, rows, stateWant, m, n, failed, false)
+		if failed > 0 {
+			fmt.Fprintf(stdout, "  半途停手：已改 %d 条 / 未改 %d 条（真源 %s 行 · 审计已落 %d 行）—— 后条**一律未动**，不静默\n",
+				m, n, gapBulkNowLines(), m)
+		} else {
+			fmt.Fprintf(stdout, "  已改 %d 条 / 未改 %d 条（幂等「无变化」不计改）· 真源 %s 行不变 · 只重写目标那几行 · 审计已落 %d 行\n",
+				m, n, gapBulkNowLines(), m)
+		}
+	}
+	if failed > 0 {
+		return failRC
+	}
+	return exitOK
+}
+
+// gapBulkNowLines —— 真写之后真源的**现读**行数（半途停手时也如实报）。
+func gapBulkNowLines() string {
+	led, err := readGapLedger()
+	if err != nil || !led.Exists {
+		return "（读不回）"
+	}
+	return strconv.Itoa(len(led.Lines))
+}
+
+// gapBulkMeta —— 同族信封的元格（五格同形 + 本面四件派生格）。
+func gapBulkMeta(inv *invocation, total, changed, unchanged, failed int, stateWant, ledgerPath string) {
+	inv.metaAddStr("query", "bulk set-state")
+	inv.metaAddStr("query_ts", gapNow())
+	inv.metaAddStr("ledger_sha16", gapLsLedgerSHA16(ledgerPath))
+	inv.metaAddJSON("total", strconv.Itoa(total))
+	inv.metaAddJSON("changed_n", strconv.Itoa(changed))
+	inv.metaAddJSON("unchanged_n", strconv.Itoa(unchanged))
+	inv.metaAddStr("state", stateWant)
+	inv.metaAddJSON("failed_n", strconv.Itoa(failed))
+}
+
+// emitGapBulkJSON —— `--json` 走同族信封面（逐条一行 · 与表尾**同一份数据**）。
+func emitGapBulkJSON(stdout, stderr io.Writer, inv *invocation, rows []gapBulkRow) int {
+	out := []map[string]string{}
+	for i := range rows {
+		r := &rows[i]
+		out = append(out, map[string]string{
+			"id": r.ID, "before": r.Before, "after": r.After, "evidence": r.Ev,
+			"changed": boolWord(r.Changed && r.Done), "fail": r.Fail,
+		})
+	}
+	return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, out)
+}
+
 // ── ⒠ `zerg gap assign ls [--egg <卵号>]`（只读面 · 批3 第一片）───────────────────────────────────

@@ -2110,6 +2110,26 @@ func init() {
 			endpoint: "",
 			run:      cmdGapSetState,
 		},
+		// ★ 批3 第五片（2026-09-28）：`gap bulk set-state` —— **族级批量改态**（一次改 N 条）。
+		//   病源 = 缺口账 `GAP-20260926-97`（逐字：想要 `zerg gap-batch-state` · 「一次只能改一个 GAP id
+		//   （结账/收版时逐条改态成本高）」）；本片 = 该条点名的治法，**不另开写路**：逐条仍走
+		//   `family_gap_state.go:gapRewriteOne` 那一个收口（审计先落盘 → 整件重写 → 写后读回对拍）。
+		//   四条硬纪律：① 全量预检先行（任一不合规 ⇒ 整批拒 2 + 逐条点名 + **一字不写**）
+		//   ② 逐条改态、逐条写**自己那一行**的 evidence ③ 任一条写失败 ⇒ 当场停手 + 如实报「已改 m/未改 n」
+		//   ④ `--dry-run` 恒 0 / 缺 `--yes` fail-closed 2（D2）。实现件 = `family_gap_state.go:cmdGapBulkSetState`。
+		{
+			path:     []string{"gap", "bulk", "set-state"},
+			kind:     "GapBulkSetState",
+			summary:  "族级**批量改态**（一次改 N 条 · 写面）：第一位置参 = 清单件（JSONL · 每行至少 `id` 与 `evidence` 两键）· `--state` 闭集同单条（`仍缺` / `已解` / `不做`）· **全量预检先行**：任一条缺 `id`/`evidence`、或 `id` 不在账、或该条当前 `state` 不可改（必须是闭集三值之一 —— `已派`/`已立项`/`回归` 不归本面）⇒ **整批拒**（退 2 · 逐条点名到行 · **一字不写**）· 全过后才真写：逐条改态、逐条写自己的 `evidence`、审计逐条一行（走现有单条改态路径 `gapRewriteOne`，不另开写路）· 任一条写失败 ⇒ **当场停手**并如实报「已改 m 条 / 未改 n 条」· 表尾回显总数 / 逐条改前 → 改后 / 失败条数 · `--dry-run` 恒 0 零副作用 · 缺 `--yes` fail-closed 2",
+			usage:    "zerg gap bulk set-state <清单件.jsonl> --state <仍缺|已解|不做> [--by <谁>] [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"清单件路径（**恰好一个** · JSONL：每行至少 `id` 与 `evidence` 两键）"},
+			fields:   gapBulkSetStateFields,
+			danger:   &dangerSpec{dangerD2, "整批缺口 id（清单件点名的那几条）", "按清单逐条改真源里的 `state` / `solved_at` / `solved_evidence`（逐条写自己的 evidence）+ 审计**逐条**一行（可逆：照审计那一格逐条回写）；任一条不合规 ⇒ 2 且**一个字节都不写**（预检在真写之前）", "批3 第五片（缺口账与自进化 · 2026-09-28）· 缺口账 `GAP-20260926-97`（本片治法逐字）· 同族写面先例 `gap set-state` / `gap assign`（`H-10`：`--yes` 是命令行确认档，不是批准件）", false},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapBulkSetState,
+		},
 		{
 			path:     []string{"gap", "note"},
 			kind:     "GapNote",
