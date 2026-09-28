@@ -311,10 +311,10 @@
     },
     {
       "file": "core/cmd/zerg/family_gap.go",
-      "类": "命令面三态（`gap add|verify` 的计划件 · 与 guard.go 同一套语义；`--dry-run` ⇒ 计划件走 stdout + rc=0，缺 `--yes` ⇒ 计划件走 stderr + rc=2，与 `family_calib.go` 同一档）",
+      "类": "命令面三态（`gap add|verify|backfill-unit` 的计划件 · 与 guard.go 同一套语义；`--dry-run` ⇒ 计划件走 stdout + rc=0，缺 `--yes` ⇒ 计划件走 stderr + rc=2，与 `family_calib.go` 同一档）",
       "语义": "dryrun.v1",
-      "零副作用判据": "`--dry-run` 前后真源 `<状态目录>/zerg-cli-gaps.jsonl` 的 sha256 与 `edit_audit.jsonl` 行数**逐字不变**（未追加真源、未写审计）；`gap ls` 是只读面，跑前后审计行数同样不变（Go 判据 `TestGapFamily_DryRunZeroSideEffect` / `TestGapFamily_LsWritesNoAudit` 现跑同判）",
-      "备注": "缺口族（设计稿 `设计-命令面-gap族-v1.0-20260923.md` §三 三态纪律 · §六 判据 2/7/8）"
+      "零副作用判据": "`--dry-run` 前后真源 `<状态目录>/zerg-cli-gaps.jsonl` 的 sha256 与 `edit_audit.jsonl` 行数**逐字不变**（未追加真源、未写审计）；`gap ls` / `gap status` 是只读面，跑前后审计行数同样不变（Go 判据 `TestGapFamily_DryRunZeroSideEffect` / `TestGapFamily_LsWritesNoAudit` 现跑同判）；`gap backfill-unit`（批1 第二片 · 存量回填三键）的 `--dry-run` 那一态**从命令树用法串现读**为「恒 0 · 只读 · 零副作用」：只印「**可抽到** N + **落兜底** M」（**N + M == 账内总条数**）+ 前 5 条待改预览（id + unit/module），**不调**任何写面（写只在 `--yes` 分支：逐条只加 `unit`/`module`/`unit_source` 三键、其余键名与值逐字节不变 · 行序不变 · 末行换行不变 · 审计进 `edit_audit.jsonl`）—— 同属 `dryrun.v1`，**不是第五套语义**",
+      "备注": "缺口族（设计稿 `设计-命令面-gap族-v1.0-20260923.md` §三 三态纪律 · §六 判据 2/7/8）；本轮两条新命令的干跑档同批并入本格：`gap backfill-unit`（批1 第二片 · D2）与 `gap status`（批1 第四片 · 只读排行面 —— 只读面**不新增语义**，照 `gap ls` 同一档登记）"
     },
     {
       "file": "core/cmd/zerg/family_doc.go",
