@@ -1,0 +1,108 @@
+# client_tool_names.txt — 客户端工具名面（网关转发请求里模型要调的名字）的**仓内清单件**。
+#
+# 它是什么：GAP-20260926-176（P1 · 换件面）的「漏名即红」机检的**仓内真源快照**。
+#   消费方：core/internal/agent/client_tool_names_test.go（两条判据）。
+#   口径：本清单 == core/internal/control/rules.yaml 的「客户端命名空间」逐条，
+#         即 rules.yaml 全部 - name: 减去 ① CA 面（core 模块里 gate.Check("X") 的真名）
+#         减去 ② 后缀通配 mcp_* 之后剩下的那一段。
+#   为什么要有这一件：rules.yaml 的客户端名面此前**只有人肉记性**在维护（表里 :207 自己
+#   登记了这一条缺口：Hermes 侧新增工具后这里也会漏 ⇒ 症状 = 子代理一发 403）。
+#   本件把「该有哪些名字」变成可 diff 的形态：表里增删而本件不跟着动 ⇒ 测试当场红。
+#
+# 边界（须知 · 别当全绿）：本件是**仓内快照**，不是 Hermes 实例的注册面。
+#   真正的权威面在仓外：~/.hermes/hermes-agent/tools/*.py。测试另有一条判据①直读那个目录
+#   （在才判、不在则降级并打印声明），所以本机上是**全覆盖**；换一台没有该目录的机器，
+#   该条降级，仅剩「清单 ⟷ 表」一致性棘轮。
+#
+# 复现/重生成（仓外权威面 names 的现读口径，逐字）：
+#   grep -hoE 'name="[a-z_]{3,40}"' ~/.hermes/hermes-agent/tools/*.py
+#   grep -hoE '"name"[[:space:]]*:[[:space:]]*"[a-z][a-z0-9_]{2,40}"' ~/.hermes/hermes-agent/tools/*.py
+# 两式取并集 = Hermes 侧已宣告的工具名面；差集非空的那几条就是要补进 rules.yaml 的缺名。
+#
+# 一行一个名字；# 起头为注释；空行忽略。
+annotate_preview
+apply_layout
+browser_back
+browser_cdp
+browser_click
+browser_console
+browser_dialog
+browser_exec
+browser_get_images
+browser_navigate
+browser_press
+browser_scroll
+browser_snapshot
+browser_type
+browser_vault_enter_code
+browser_vault_fill
+browser_vault_list
+browser_vault_save_login
+browser_vault_unlock
+browser_vision
+clarify
+close_preview
+close_terminal
+computer_use
+cronjob_manage
+curl
+delegate_task
+desktop_preview
+desktop_project
+drive_preview
+edit_rules_yaml
+edit_scoring
+execute_code
+feishu_doc_read
+feishu_drive_add_comment
+feishu_drive_list_comment_replies
+feishu_drive_list_comments
+feishu_drive_reply_comment
+focus_pane
+git_commit
+gui_tour
+ha_call_service
+ha_get_state
+ha_list_entities
+ha_list_services
+image_generate
+manage_catalog
+manage_connections
+memory
+open_preview
+patch
+patch_fleet_yaml
+process_manage
+react_to_message
+read_file
+read_preview
+read_terminal
+read_window_below
+screenshot
+search_files
+send_message
+session_search
+show_tip
+skill_load
+skill_manage
+skill_view
+skills_list
+terminal
+text_to_speech
+todo_list
+tool_call
+tool_describe
+tool_search
+video_analyze
+video_generate
+vision_analyze
+web_extract
+web_fetch
+web_search
+write_file
+x_search
+yb_query_group_info
+yb_query_group_members
+yb_search_sticker
+yb_send_dm
+yb_send_sticker
