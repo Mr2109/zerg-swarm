@@ -1373,3 +1373,276 @@ func emitGapBulkJSON(stdout, stderr io.Writer, inv *invocation, rows []gapBulkRo
 }
 
 // ── ⒠ `zerg gap assign ls [--egg <卵号>]`（只读面 · 批3 第一片）───────────────────────────────────
+
+// ── ⒡ `zerg gap verify-one <GAP id>`（跑判据即写 · 批4 第一片 · 2026-09-28）──────────────────────
+//
+// 设计出处（唯一真源 · `设计-缺口账与自进化-v2.0-20260928.md`）：§11.4 批4（回归巡检：跑 `verify_cmd`
+// → 记 `last_verify_rc`）· §11.2 批2 D1/D2（`last_verified_at` 覆盖率 · `verify_tier` 分布可读）。
+//
+// 病：`gap verify` 是**批量面**（点名多条 / `--all`），且只有 `--yes` 那一态写 `last_verified_at`
+// ⇒ 「跑判据即写」没落地（现读真账 918 条里该格**仅 1 条**）。本面 = 一条一次，把三格写回该条。
+//
+// 四条硬纪律（逐条可对拍）：
+//
+//	① **不另开写路**：只调本族唯一收口 `gapRewriteOne`（审计先落盘 → 整件重写 → 读回对拍）——
+//	   未动的行**逐字节照原样**写回，**只重写目标那一行**。**本面不改 `state`**（改态另有其面）。
+//	② `--dry-run` 只出计划件（**不跑判据**、不写账 · 恒 0）· 缺 `--yes` 真写 ⇒ fail-closed **2**。
+//	③ 该条**无 `verify_cmd`**（空串 ⇒ 分级=无）⇒ **2 并点名**（不当绿）。
+//	④ 判据带 **shell 元字符**（管道 `|` / 重定向 `>` `<` / 分号 `;` / 与或 `&` / 反引号 / `$` / 括号）
+//	   ⇒ **一律拒跑并点名**（不当绿也不当红）。只跑账里那一格命令本身，**不拼 shell 串**。
+//
+// 退码（一律引现有表 `exitcodes.go` · 本族**不取新号**）：0 跑判据过（`verify_cmd` rc=0）或占位落账 ·
+// 1 判据跑出来**非 0**（判红 · 三格仍已写回）· 2 用法错（缺 id / id 多于一条 / 账内没有 / 无 `verify_cmd` /
+// 判据带 shell 元字符 / 判据是写面 / 判据不可跑 / 缺 `--yes`）· 8 真源读不到 / 审计写不进 / 真源写不进 /
+// 写回读不对拍。
+//
+// ★ 两条取定（设计稿未钉死 · 回执如实点名）：
+//   · 命中第 ④ 条「元字符」与写面闸、判据不可跑 —— 都归**用法面 2**（「改用法后可重试」），
+//     且**一个字节都不写**（真跑会动盘/会跑危险命令 ⇒ 不当绿也不当红）。
+//   · 占位判据**不执行**（占位是「真判据还没建」的标记、不是可跑命令）：落 `last_verify_rc=n/a`，
+//     命令本身退 **0**（写回成功）。
+
+const (
+	gapVerifyTierReal        = "真判据"
+	gapVerifyTierPlaceholder = "占位"
+	gapVerifyTierNone        = "无"
+)
+
+// gapVerifyNoneRC —— 占位判据不跑时 `last_verify_rc` 落的常量（表示「这一格压根没跑」）。
+const gapVerifyNoneRC = "n/a"
+
+var gapVerifyOneFields = []string{"id", "fp", "judge", "verify_tier", "last_verify_rc", "last_verified_at", "changed"}
+
+// gapVerifyOneTier —— 判据分级（三值 · 本面唯一分档处）：含「占位」字样 ⇒ 占位；去空白空串 ⇒ 无；其余 ⇒ 真判据。
+func gapVerifyOneTier(cmd string) string {
+	if strings.TrimSpace(cmd) == "" {
+		return gapVerifyTierNone
+	}
+	if strings.Contains(cmd, "占位") {
+		return gapVerifyTierPlaceholder
+	}
+	return gapVerifyTierReal
+}
+
+// gapVerifyOneMetaHit —— 判据里的 shell 元字符（管道/重定向/分号/与或/反引号/`$`/括号/换行）。
+// 命中 ⇒ 返回那一个字符（非空 = 拒跑）；纯命令词（`zerg …` 那种）不含这些 ⇒ 空串。
+func gapVerifyOneMetaHit(cmd string) string {
+	for _, r := range cmd {
+		switch r {
+		case '|', '&', ';', '<', '>', '`', '$', '(', ')', '\n', '\r':
+			return string(r)
+		}
+	}
+	return ""
+}
+
+// gapVerifyOneRun —— 跑一条**真判据**：解析走命令树（`gapJudgeArgv`），**只收 stdout**（关键读数行取它）。
+// 解析不过 ⇒ why 非空（调用方译成 2）。
+func gapVerifyOneRun(cmdStr string) (int, string, string) {
+	args, why := gapJudgeArgv(cmdStr)
+	if why != "" {
+		rc, out := 0, ""
+		return rc, out, why
+	}
+	out := &gapCapWriter{max: 8192}
+	errw := &gapCapWriter{max: 1024}
+	rc := run(args, out, errw)
+	return rc, strings.TrimSpace(out.String()), ""
+}
+
+// gapVerifyOneReading —— 「关键读数行」：stdout 首行**前 120 显示宽** + 该段字节数。
+func gapVerifyOneReading(rc int, out string) string {
+	if out == "" {
+		return fmt.Sprintf("rc=%d · （无 stdout）· 字节 0", rc)
+	}
+	line := out
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	runes := []rune(line)
+	if len(runes) > 120 {
+		runes = runes[:120]
+	}
+	seg := string(runes)
+	return fmt.Sprintf("rc=%d · 首行=%q · 首行字节 %d · stdout 字节 %d", rc, seg, len([]byte(seg)), len([]byte(out)))
+}
+
+// gapVerifyOnePlanBlock —— 计划件（`--dry-run` 走 stdout · 缺 `--yes` 走 stderr）。
+// `lines < 0` ⇒ 真源**未读**（缺 `--yes` 那一档：一个盘面动作都还没做）。
+func gapVerifyOnePlanBlock(w io.Writer, title, ledgerPath string, lines int, id, judge, tier string) {
+	fmt.Fprintf(w, "计划件（跑判据即写 · %s · 零副作用 —— **未跑判据**、未改真源、未写审计）\n", title)
+	if lines < 0 {
+		fmt.Fprintf(w, "  真源     : %s（未读 —— 缺 `--yes` ⇒ 不执行）\n", ledgerPath)
+	} else {
+		fmt.Fprintf(w, "  真源     : %s（现有 %d 行）\n", ledgerPath, lines)
+	}
+	fmt.Fprintf(w, "  目标     : %s\n", id)
+	fmt.Fprintf(w, "  判据分级 : %s\n", tier)
+	fmt.Fprintf(w, "  将跑     : %s\n", judge)
+	if tier == gapVerifyTierPlaceholder {
+		fmt.Fprintf(w, "  ⚠ 占位判据 : **不执行**（占位 = 真判据还没建 · 落 `last_verify_rc=%s`）\n", gapVerifyNoneRC)
+	}
+	fmt.Fprintf(w, "  要落的键 : last_verified_at（现取时刻 · RFC3339Nano）· last_verify_rc（真退码）· verify_tier（%s）\n", tier)
+	fmt.Fprintf(w, "  审计     : 计划写一行 `event=%s` + `gap_cmd=verify-one`（这一态**不写**）\n", gapEventName)
+}
+
+// gapVerifyOneEmitJSON —— `--json` 走同族信封面（一格一行 · 与表尾**同一份数据**）。
+func gapVerifyOneEmitJSON(stdout, stderr io.Writer, inv *invocation, id, fp, judge, tier, rc, at, changed string) int {
+	return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
+		"id": id, "fp": fp, "judge": judge, "verify_tier": tier,
+		"last_verify_rc": rc, "last_verified_at": at, "changed": changed,
+	})
+}
+
+func cmdGapVerifyOne(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+
+	// ① 用法面（在任何盘面动作之前 —— 与同族写面同一条位置）
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapVerifyOneFields, ","))
+		return exitUsage
+	}
+	if len(inv.flagVals("--state")) > 0 {
+		v := strings.TrimSpace(inv.flagVal("--state"))
+		inv.setErr("usage", "state_not_in_shape", "--state 不在 verify-one 的形状里")
+		fmt.Fprintf(stderr, "%s: `gap verify-one` 不收 `--state %s` —— 本面**只写判据三格、不改 `state`**\n", progName, v)
+		fmt.Fprintf(stderr, "  改态 : `zerg gap verify <GAP id>…`（机器态）或 `zerg gap set-state <GAP id> --state <…> --evidence <…>`（人的口径）\n")
+		return exitUsage
+	}
+
+	// ② 缺 `--yes`（且非 `--dry-run`）：fail-closed **rc=2**，计划件走 stderr（**判在读真源之前**）。
+	if !inv.dryRun && !inv.yes {
+		ids := gapIDsOf(inv)
+		id := "（未给：缺必填）"
+		if len(ids) == 1 {
+			id = ids[0]
+		}
+		gapVerifyOnePlanBlock(stderr, "缺 `--yes`（D2 档）", gapLedgerPath(), -1, id, "（未读）", "（未读）")
+		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
+		fmt.Fprintf(stderr, "  ⚠ `--yes` 是**命令行确认档**，不是 `approve` 件（不产生 `approver` / `approval` 两格）\n")
+		inv.setErr("usage", "yes_required", "缺 --yes")
+		return exitUsage
+	}
+
+	// ③ 读真源（`--dry-run` 与 `--yes` 都要它：读不到 ⇒ 8）
+	led, rc := gapReadLedgerOrDie(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
+
+	// ④ 点名（恰好一条 · 账内没有 ⇒ 2）
+	idx, rc := gapTargetOne(inv, led, stderr, "verify-one")
+	if rc != exitOK {
+		return rc
+	}
+	r := led.Recs[idx]
+	tier := gapVerifyOneTier(r.VerifyCmd)
+	meta := func() {
+		inv.metaAddStr("query", "verify-one")
+		inv.metaAddStr("query_ts", gapNow())
+		inv.metaAddStr("ledger_sha16", gapLsLedgerSHA16(led.Path))
+		inv.metaAddStr("verify_tier", tier)
+	}
+
+	// ⑤ 无判据（空串 ⇒ 分级=无）⇒ 2 并点名（**不当绿** · 一个字节都不写）
+	if tier == gapVerifyTierNone {
+		inv.setErr("usage", "verify_cmd_absent", "该条无 verify_cmd")
+		fmt.Fprintf(stderr, "%s: `%s` 的 `verify_cmd` 是**空的**（判据分级 = **%s**）⇒ 没有可跑的判据\n", progName, r.ID, gapVerifyTierNone)
+		fmt.Fprintf(stderr, "  ⇒ 不跑、不写账（退码 2 —— **不当绿**；空判据不算「验过」）\n")
+		fmt.Fprintf(stderr, "  修法 : 先给它一条可机检的判据（`zerg gap add … --verify-cmd <命令>` 或补账）\n")
+		return exitUsage
+	}
+
+	// ⑥ 口径闸（只对**真判据**）：shell 元字符 / 写面（危险档且没带 --dry-run）⇒ 拒跑并点名（2 · 不写账）
+	if tier == gapVerifyTierReal {
+		if m := gapVerifyOneMetaHit(r.VerifyCmd); m != "" {
+			inv.setErr("usage", "verify_cmd_shell_meta", "判据含 shell 元字符")
+			fmt.Fprintf(stderr, "%s: %s 的判据含 shell 元字符 %q —— **拒跑**（本面只跑「那一格命令本身」· 不拼 shell 串）\n",
+				progName, r.ID, m)
+			fmt.Fprintf(stderr, "  判据 : %s\n", r.VerifyCmd)
+			fmt.Fprintf(stderr, "  ⇒ 既**不当绿也不当红**、一个字节都不写（退码 2）\n")
+			return exitUsage
+		}
+		if why := gapWriteFaceWhy(r.VerifyCmd); why != "" {
+			inv.setErr("usage", "verify_cmd_write_face", why)
+			fmt.Fprintf(stderr, "%s: %s 的判据是**写面**（真跑会真写盘）：%s\n", progName, r.ID, why)
+			fmt.Fprintf(stderr, "  ⇒ 拒跑、不给结论、一个字节都不写（退码 2；要拿写面当判据就写它的 `--dry-run` 那一态）\n")
+			return exitUsage
+		}
+	}
+
+	// ⑦ `--dry-run`：只出计划件（**不跑判据** · stdout · rc=0 · 零副作用）
+	if inv.dryRun {
+		inv.changed = boolPtr(false)
+		meta()
+		if inv.jsonGiven {
+			return gapVerifyOneEmitJSON(stdout, stderr, inv, r.ID, r.FP, r.VerifyCmd, tier, "", "", "false")
+		}
+		gapVerifyOnePlanBlock(stdout, "--dry-run", led.Path, len(led.Lines), r.ID, r.VerifyCmd, tier)
+		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— **未跑判据**、未改真源、未写审计）\n")
+		return exitOK
+	}
+
+	// ⑧ 跑判据（占位**不跑**）
+	judgeRC := 0
+	reading := ""
+	if tier == gapVerifyTierReal {
+		c, out, why := gapVerifyOneRun(r.VerifyCmd)
+		if why != "" {
+			inv.setErr("usage", "verify_cmd_unresolved", why)
+			fmt.Fprintf(stderr, "%s: %s 的判据不可跑：%s\n", progName, r.ID, why)
+			fmt.Fprintf(stderr, "  ⇒ 不给结论（退码 2）；真源**一个字节未改**\n")
+			return exitUsage
+		}
+		judgeRC, reading = c, gapVerifyOneReading(c, out)
+	} else {
+		reading = fmt.Sprintf("rc=%s · 占位判据**未执行**", gapVerifyNoneRC)
+	}
+
+	// ⑨ 真写：三格（`state` 逐字不动 · 走本族唯一收口 `gapRewriteOne`）
+	now := gapNow()
+	before := r.State
+	r.Verified = now
+	r.VerifyTier = tier
+	if tier == gapVerifyTierReal {
+		r.VerifyRC = strconv.Itoa(judgeRC)
+	} else {
+		r.VerifyRC = gapVerifyNoneRC
+	}
+	if r.State != before {
+		inv.setErr("failed", "state_mutated", "verify-one 这一路改了 state")
+		fmt.Fprintf(stderr, "%s: 内部对拍破了：本面改了 `state` ⇒ 不给结论（退码 1）\n", progName)
+		return exitFail
+	}
+	detail, wrc, msg := gapRewriteOne(inv, led, idx, r, "verify-one", before, before)
+	if wrc != exitOK {
+		gapWriteFail(inv, stderr, detail, msg, "verify-one")
+		return wrc
+	}
+
+	cmdRC := exitOK
+	if tier == gapVerifyTierReal && judgeRC != 0 {
+		cmdRC = exitFail // 判红：三格已写回，但这一跑**不是绿**
+	}
+	inv.changed = boolPtr(true)
+	meta()
+	if inv.jsonGiven {
+		if rc := gapVerifyOneEmitJSON(stdout, stderr, inv, r.ID, r.FP, r.VerifyCmd, tier, r.VerifyRC, now, "true"); rc != exitOK {
+			return rc
+		}
+		return cmdRC
+	}
+	fmt.Fprintf(stdout, "已验一条 %s · 判据分级=%s（真源 %d 行不变 · **只重写目标那一行** · 审计已落 1 行）\n",
+		r.ID, tier, len(led.Lines))
+	fmt.Fprintf(stdout, "  last_verified_at : %s\n", now)
+	fmt.Fprintf(stdout, "  last_verify_rc   : %s\n", r.VerifyRC)
+	fmt.Fprintf(stdout, "  verify_tier      : %s\n", tier)
+	fmt.Fprintf(stdout, "  关键读数行       : %s\n", reading)
+	return cmdRC
+}
+
+// ── ⒢ `zerg gap assign ls [--egg <卵号>]`（只读面 · 批3 第一片）────────────────────────────────

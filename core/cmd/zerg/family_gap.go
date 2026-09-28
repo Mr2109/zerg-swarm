@@ -122,8 +122,15 @@ type gapRecord struct {
 	DependsOn []string `json:"depends_on,omitempty"`
 	FoundAt   string   `json:"found_at"`
 	Verified  string   `json:"last_verified_at,omitempty"`
-	SolvedAt  string   `json:"solved_at,omitempty"`
-	Evidence  string   `json:"solved_evidence,omitempty"`
+	// VerifyRC —— 判据**真退码**（`zerg gap verify-one` 真跑 `verify_cmd` 那一刻原样记下）。
+	// 占位判据**不执行** ⇒ 落常量 `n/a`（不是「绿」也不是「红」：那一格压根没跑）。
+	// `omitempty` ⇒ 老行（没有这一格）**逐字节不变**（本族整件重写那一支同此）。
+	VerifyRC string `json:"last_verify_rc,omitempty"`
+	// VerifyTier —— 判据**分级**（三值：真判据 / 占位 / 无）。含「占位」字样 ⇒ `占位`；
+	// 去空白后空串 ⇒ `无`；其余 ⇒ `真判据`。同一支重写口径：`omitempty` ⇒ 老行逐字节不变。
+	VerifyTier string `json:"verify_tier,omitempty"`
+	SolvedAt   string `json:"solved_at,omitempty"`
+	Evidence   string `json:"solved_evidence,omitempty"`
 	// Notes —— **口径/上下文注**（`zerg gap note` 追加 · 2026-09-26）。落点取定：真源那一行上
 	// **新增一格**（`notes`），一条注 = 一格字符串 `<时刻> · <谁>：<文本>`。
 	// 为什么另开一格而不是塞进 `solved_evidence`：后者是**状态那一维**的证据（由 `verify` 或
