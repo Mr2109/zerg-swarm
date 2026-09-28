@@ -104,6 +104,13 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		if gateRunWantsShowLog(tail) {
 			return gateRunStepShowLog(inv, stdout, stderr, root, script, tail)
 		}
+		// ★ 2026-09-28（缺口 `GAP-20260928-146`）：旗标校验**前移** —— 自举件的 arg 循环在
+		//   `main()` 很后面 ⇒ 未知参数要等「合成自检 + 软门禁」跑完才判到（实测 stdout 先落 22 行）。
+		//   这里在 exec **之前**逐枚核一遍，未知 ⇒ 照自举件的逐字判词退 2、**不再 exec**。
+		//   退码语义不变（未知参数改前 2、改后 2）；合法形态原样透传（本函数只读、不翻译）。
+		if rc := gateRunPrecheckFlags(tail, stderr); rc != exitOK {
+			return rc
+		}
 		args = append(args, tail...)
 	case "show":
 		if len(tail) == 0 {
