@@ -234,7 +234,7 @@ func cmdTaskLs(inv *invocation, stdout, stderr io.Writer) int {
 	if rc := fetchInv(inv, c, "/api/tasks", &resp, stderr); rc != exitOK {
 		return rc
 	}
-	fields := []string{"id", "status", "model", "machine", "priority", "created_at", "description"}
+	fields := []string{"id", "status", "model", "machine", "priority", "created_at", "description", "slice_id"}
 	rows := []map[string]string{}
 	for _, it := range asList(resp["tasks"]) {
 		if o := asObj(it); o != nil {
