@@ -531,9 +531,10 @@ func gapNoteRetract(inv *invocation, stdout, stderr io.Writer, led gapLedger, id
 		return exitUsage
 	}
 	n := hits[0]
-	// 幂等：这条注**已经**在作废位 ⇒ 「无变化」（不写真源、不写审计）
+	// 幂等（★ `GAP-20260928-167`）：这条注已在作废位 **且** state 已是闭集里的 `不做` ⇒ 「无变化」
+	// （只作废不改态的老账行会落到下面真写那一路 —— 补态，仍幂等一次到位）。
 	for _, v := range r.Voids {
-		if v.N == n {
+		if v.N == n && r.State == gapStWontDo {
 			inv.changed = boolPtr(false)
 			if inv.jsonGiven {
 				return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
@@ -551,23 +552,25 @@ func gapNoteRetract(inv *invocation, stdout, stderr io.Writer, led gapLedger, id
 				map[string]string{"id": r.ID, "fp": r.FP, "notes": fmt.Sprintf("%d", len(r.Notes)), "changed": "false"})
 		}
 		gapStatePlanBlock(stdout, "--dry-run", "note", led.Path, len(led.Lines), r.ID, r.FP, r.State, "",
-			fmt.Sprintf("notes_void   : %d → %d 条（追加作废标记 · **注一条不删**）", len(r.Voids), len(r.Voids)+1),
+			fmt.Sprintf("notes_void   : %d → %d 条（追加作废标记 · **注一条不删**）· state: %s → %s（★ `GAP-20260928-167`：同一次写盘里改态）", len(r.Voids), len(r.Voids)+1, r.State, gapStWontDo),
 			fmt.Sprintf("作废那一条   : 第 %d 条 · fp=%s（void:true · 原文在真源里逐字节留着）", n, gapNoteFP(r.Notes[n-1])))
 		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未改真源、未写审计）\n")
 		return exitOK
 	}
-	// 真写：**只**追加一条作废标记；`notes` / `state` 逐字不动（改前改后现算对拍，破 ⇒ 不给结论）。
+	// 真写（★ 缺口账 `GAP-20260928-167`）：**同一次写盘**里落一条作废标记 + 把该条 `state` 置闭集里的
+	//   `不做`（撤回在旗舰读数上生效）；`notes` 逐字不动（真删注 ✗ · 改前改后现算对拍，破 ⇒ 不给结论）。
 	before := r.State
 	snapNotes := strings.Join(r.Notes, "\x00")
 	r.Voids = append(append([]gapNoteVoid{}, r.Voids...), gapNoteVoid{
-		Void: true, N: n, FP: gapNoteFP(r.Notes[n-1]), By: gapByOf(inv), At: gapNow(),
+		Void: true, N: n, FP: gapNoteFP(r.Notes[n-1]), By: gapByOf(inv), At: gapNow(), Why: "撤回",
 	})
-	if r.State != before || strings.Join(r.Notes, "\x00") != snapNotes {
+	r.State = gapStWontDo
+	if strings.Join(r.Notes, "\x00") != snapNotes {
 		inv.setErr("failed", "note_mutated", "作废这一路动了 notes/state")
-		fmt.Fprintf(stderr, "%s: 内部对拍破了：作废这一路动了 `notes` 或 `state` ⇒ 不给结论（退码 1）\n", progName)
+		fmt.Fprintf(stderr, "%s: 内部对拍破了：作废这一路动了 `notes` ⇒ 不给结论（退码 1）\n", progName)
 		return exitFail
 	}
-	detail, rc, msg := gapRewriteOne(inv, led, idx, r, "note", before, before)
+	detail, rc, msg := gapRewriteOne(inv, led, idx, r, "note", before, r.State)
 	if rc != exitOK {
 		gapWriteFail(inv, stderr, detail, msg, "note")
 		return rc

@@ -156,6 +156,9 @@ type gapNoteVoid struct {
 	FP   string `json:"fp"`   // 被作废那条注的**指纹**（sha256 前 12 位 · `--retract <指纹>` 拿它点名）
 	By   string `json:"by"`
 	At   string `json:"at"`
+	// Why —— 这一笔作废的**动作名**（★ 缺口账 `GAP-20260928-167`：`--retract` 落的标记写 `撤回`）。
+	//   `omitempty`：老账里没有这一格的标记**逐字节不动**（读面不因新格回退）。
+	Why string `json:"why,omitempty"`
 }
 
 // gapLedger —— 读进来的真源（原样字节 + 逐行原文 + 解析后的记录）。
@@ -865,7 +868,14 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 	if notew > 40 {
 		notew = 40
 	}
-	fmt.Fprintf(stdout, "账内 %d 条（筛选后 %d 条）\n", len(led.Recs), len(out))
+	// ★ 2026-09-28（缺口账 `GAP-20260928-162`）：裁过页时**本页条数 ≠ 筛选后命中数** ⇒ 两数分列
+	//   （真命中 N / 本页 M + 已裁 N−M）；不裁页（两数相等 · 含既有各档）这一行**逐字节不动**。
+	if cut {
+		fmt.Fprintf(stdout, "账内 %d 条（本次命中 %d 条 · 本页 %d 条 —— 已裁 %d 条，**这不是全集**）\n",
+			len(led.Recs), total, hits, total-hits)
+	} else {
+		fmt.Fprintf(stdout, "账内 %d 条（筛选后 %d 条）\n", len(led.Recs), len(out))
+	}
 	if anyNote {
 		fmt.Fprintf(stdout, "  %s  %s  %s  %s  %s  %s  %s\n", pad("id", idw), pad("prio", priow), pad("impact", imw), pad("state", stw), pad("want", wantw), "摘要", pad("注", notew))
 	} else {
@@ -1076,14 +1086,24 @@ func gapShowByFile(inv *invocation, led gapLedger, stdout, stderr io.Writer, fil
 		return exitUsage
 	}
 
-	rows, hits, linesOf := []map[string]string{}, []gapRecord{}, [][]int{}
+	// ★ 2026-09-28（缺口账 `GAP-20260928-75` / 子项 `-168`）：**两个数不是一回事** ——
+	//   ① 轴面 = `unit` 键面**精确等值** N 条（与 `gap ls --unit <件>` 同口径）；
+	//   ② 逐字子串面 = 正文/判据/手搓/证据/注文里提过该件 M 条（N ⊆ M）。
+	//   人面按①列条目、把②的差额**如实印出来**（两个数都不删）；机器面逐字沿用②的全集（不动）。
+	rows, sub, hits, extra := []map[string]string{}, []gapRecord{}, []gapRecord{}, []gapRecord{}
+	linesOf := [][]int{}
 	for _, r := range led.Recs {
 		text := gapRecordFileText(r)
 		if !strings.Contains(text, file) {
 			continue
 		}
-		hits = append(hits, r)
-		linesOf = append(linesOf, gapLinesOf(text, file))
+		sub = append(sub, r)
+		if r.Unit == file {
+			hits = append(hits, r)
+			linesOf = append(linesOf, gapLinesOf(text, file))
+		} else {
+			extra = append(extra, r)
+		}
 		if inv.jsonGiven {
 			rows = append(rows, gapShowRow(r))
 		}
@@ -1092,9 +1112,11 @@ func gapShowByFile(inv *invocation, led gapLedger, stdout, stderr io.Writer, fil
 		return selectJSONList(stdout, stderr, inv, inv.path, gapShowFields, rows)
 	}
 
-	fmt.Fprintf(stdout, "件: %s（在仓里 · 账内 %d 条里**逐字子串**命中 %d 条）\n", file, len(led.Recs), len(hits))
-	fmt.Fprintf(stdout, "  ★ 账里**没有**「件」这一格：命中 = 该件路径逐字出现在 正文/判据/手搓/证据/注文 里（见件头 ★）\n")
-	if len(hits) == 0 {
+	fmt.Fprintf(stdout, "件: %s（在仓里 · 轴面 unit 精确等值 %d 条（另有 %d 条正文里提到但未归入该件））\n",
+		file, len(hits), len(extra))
+	fmt.Fprintf(stdout, "  ★ 口径：本面按 **`unit` 键面精确等值**反查（与 `gap ls --unit %s` 同口径）；第二个数 = 逐字子串面\n", file)
+	fmt.Fprintf(stdout, "    （正文/判据/手搓/证据/注文里提到该件、但 `unit` 不是它）—— 两个数**都列出、都不删**；账里没有「件」这一格\n")
+	if len(sub) == 0 {
 		fmt.Fprintf(stdout, "  （该件上 0 条 —— 「没有」不是错：退码 0）\n")
 		fmt.Fprintf(stdout, "  注：条目若只写行号不写件、或写成别的相对路径，本面抓不到 —— 那是账的写法问题，不是本面判错\n")
 		return exitOK
@@ -1109,6 +1131,15 @@ func gapShowByFile(inv *invocation, led gapLedger, stdout, stderr io.Writer, fil
 				strs = append(strs, strconv.Itoa(n))
 			}
 			fmt.Fprintf(stdout, "      提到行号: %s\n", strings.Join(strs, ", "))
+		}
+	}
+	// ★ 差额如实印出（`GAP-20260928-75`：两个数都不删）—— 轴面没归入、但正文里提到过该件的那些条。
+	if len(extra) > 0 {
+		fmt.Fprintf(stdout, "  另有 %d 条正文里提到该件、`unit` 不是它（**未归入该件** · 只列不减）：\n", len(extra))
+		fmt.Fprintf(stdout, "  %s  %s  %s  %s  %s  %s\n", pad("id", 18), pad("state", 6), pad("prio", 4), pad("impact", 6), pad("want", 12), "症状首行")
+		for _, r := range extra {
+			fmt.Fprintf(stdout, "  %s  %s  %s  %s  %s  %s  （unit=%s）\n", pad(r.ID, 18), pad(r.State, 6), pad(r.Prio, 4),
+				pad(r.Impact, 6), pad(gapWantText(r), 12), truncateDisplay(gapFirstLine(r.Symptom), 60), gapShowText(r.Unit))
 		}
 	}
 	return exitOK
@@ -1378,7 +1409,7 @@ func gapPlannedToken(text string) string {
 
 // gapModuleOfUnit —— 模块 = `unit` 的**目录前缀**；仓根件（无目录前缀）⇒ `仓根`；兜底形态 ⇒ `无件`。
 func gapModuleOfUnit(unit string) string {
-	if unit == "" || unit == gapUnitNoFile || strings.HasPrefix(unit, "拟(") {
+	if unit == "" || strings.HasPrefix(unit, "无件") || strings.HasPrefix(unit, "拟(") {
 		return gapUnitNoneMod
 	}
 	dir := filepath.Dir(unit)
