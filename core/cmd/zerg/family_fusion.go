@@ -259,7 +259,7 @@ func cmdAsk(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	// 2) 能力筛（**先**能力、**后**打分 —— §十八.3-4 的次序逐字）
-	routes := askFilter(fleet, reg, caps, inv)
+	routes, screen := askFilter(fleet, reg, caps, inv)
 	if len(routes) == 0 {
 		// ★GAP-20260925-30：`--model`/`--node` 点名了**不存在**的目标 ⇒ exit 2 + 明确报错 + 列可选值。
 		// 与「在词表但无候选」（exit 1）严格分开：缺目标 ≠ 缺能力证据 —— 不许静默退回默认。
@@ -278,6 +278,21 @@ func cmdAsk(inv *invocation, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "可选机器（fleet）：%s\n", orDash(strings.Join(listFleetHosts(fleet), ", ")))
 			fmt.Fprintf(stderr, "error.kind=usage · detail=no_such_node · retryable=false（GAP-20260925-30：点名不存在 ⇒ 2）\n")
 			return exitUsage
+		}
+		// ★GAP-20260925-30 治法⑴：**点名档**（`--model`/`--node`）把两种失败理由拆开报。
+		//   现读两种失败压成同一句「无候选」⇒ 使用者分不出「模型没接线」（`registry_id` 空，
+		//   接不上能力面 ✗）与「模型没证据」（接了面、没证过该能力 ✗）—— 这正是本笔缺口
+		//   收窄后的定义。**只改报错面**：筛选语义、退码一律不动（仍是 1）。
+		//   未点名档**一字不动**（那一档的 `no_capability_candidate` 有既有正控钉着）。
+		if askPinned(inv) && screen.pinned > 0 && screen.noLink > 0 && screen.unproven == 0 {
+			inv.setErr("failed", "no_registry_link",
+				fmt.Sprintf("点名的目标在路由表里有 %d 行，但都接不上能力面（registry_id 空或在名册里查不到）",
+					screen.pinned))
+			fmt.Fprintf(stderr, "%s: 点名目标在路由表里（%d 行），但这 %d 行**接不上能力面**（`registry_id` 空 · 或在 `GET /api/models/registry` 的名册里查不到）⇒ 退码 1\n",
+				progName, screen.pinned, screen.noLink)
+			fmt.Fprintf(stderr, "口径：这**不是**「没证过该能力」—— 是**没接线**（能力面只认经 `registry_id` 接上的断言）⇒ 分辨点看 `error.detail`\n")
+			fmt.Fprintf(stderr, "error.kind=failed · detail=no_registry_link · retryable=false（GAP-20260925-30：**接不上面 ≠ 没证过**）\n")
+			return exitFail
 		}
 		// 在词表但无候选 ⇒ `1`（**不新增码**）。缺证据 ≠ 有证据（`调研-R2` `R2-D1`）。
 		inv.setErr("failed", "no_capability_candidate",
@@ -403,7 +418,7 @@ func listFleetHosts(fleet jsonObj) []string {
 	return out
 }
 
-func askFilter(fleet, reg jsonObj, caps []string, inv *invocation) []askRoute {
+func askFilter(fleet, reg jsonObj, caps []string, inv *invocation) ([]askRoute, askScreen) {
 	// registry_id ⇒ 记录（能力断言）
 	byRegistry := map[string]jsonObj{}
 	for _, it := range asList(reg["records"]) {
@@ -422,6 +437,7 @@ func askFilter(fleet, reg jsonObj, caps []string, inv *invocation) []askRoute {
 	minMem := atofSafe(inv.flagVal("--min-mem-gb"))
 
 	out := []askRoute{}
+	screen := askScreen{}
 	for _, it := range asList(fleet["models"]) {
 		o := asObj(it)
 		if o == nil {
@@ -442,9 +458,11 @@ func askFilter(fleet, reg jsonObj, caps []string, inv *invocation) []askRoute {
 				continue
 			}
 		}
+		screen.pinned++
 		// 能力筛是**硬**筛：没有 registry_id（接不上能力面）或没证过该能力 ⇒ 不是候选。
 		rec, ok := byRegistry[registryID]
 		if !ok || registryID == "" {
+			screen.noLink++
 			continue
 		}
 		if minCtx > 0 {
@@ -474,6 +492,7 @@ func askFilter(fleet, reg jsonObj, caps []string, inv *invocation) []askRoute {
 			pass = false
 		}
 		if !pass {
+			screen.unproven++
 			continue
 		}
 		all := []string{}
@@ -509,7 +528,28 @@ func askFilter(fleet, reg jsonObj, caps []string, inv *invocation) []askRoute {
 		}
 		return out[i].Host < out[j].Host
 	})
-	return out
+	return out, screen
+}
+
+// askScreen —— 能力筛的**丢弃归因**（`GAP-20260925-30` 治法⑴ · 算法**只此一处**）。
+//
+// 为什么要有它：`askFilter` 把两种完全不同的失败压成同一个空结果 ——
+// ① 该行**接不上能力面**（`registry_id` 空 / 名册里查不到）✗；
+// ② 接了面、但没证过要的那个能力 ✗。
+// 使用者（人/助手）拿到「无候选」一句话，**分不出**是「模型没接线」还是「模型没证据」
+// ⇒ 「没有任何 CLI 面能验证某模型在某台机器上真能答话」正是这么来的。
+// 本结构只**记数**（不改任何筛选语义 —— 硬筛一字未动），报错面按它分家。
+type askScreen struct {
+	pinned   int // 过了 `--model`/`--node`/`--min-mem-gb` 收窄、进到能力筛的行数
+	noLink   int // 其中：接不上能力面（`registry_id` 空 / 名册里查不到）
+	unproven int // 其中：接了面，但没证过要的能力
+}
+
+// askPinned —— 本次调用是否**点名**了目标（`--model` / `--node`）。
+// 只有点名档才做分家报错：未点名档的 `no_capability_candidate` 是既有口径
+// （`fusion_test.go` 的正控钉着它），一字不动。
+func askPinned(inv *invocation) bool {
+	return strings.TrimSpace(inv.modelWant) != "" || len(inv.nodes) > 0
 }
 
 // askInfer 真问一次（经**网关**，不直连引擎、不持端口 —— §十八.1 铁律 Ⅰ）。

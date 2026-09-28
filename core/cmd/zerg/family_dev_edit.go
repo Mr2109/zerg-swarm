@@ -54,6 +54,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"os/exec"
@@ -646,6 +648,17 @@ var editSyntaxInProc = map[string]func([]byte) error{
 	".json": func(b []byte) error {
 		var v any
 		return json.Unmarshal(b, &v)
+	},
+	// ★ GAP-20260927-263（2026-09-29 本枚）：**扩面到 `.go`**（「只做语法检查」的 Go 正门）。
+	// 病灶：`.go` 此前既不在本表、也不在外部检查器表（`editSyntaxProbe`）⇒ 任何 Go 件的改后内容
+	// 一律落 `editSyntaxCheck` 的「不适用」⇒ 写面**零守门**（与 GAP-20260927-209「编译不过不在提交闸里」互补）。
+	// 走**进程内**支与「零新依赖 / 零新命令节点」同口径：`go/parser` + `go/token` 是**标准库**（`core/go.mod` 零改动）。
+	// 口径边界**照实**：纯 `parser.ParseFile` = **语法级**（读得动 / 读不动）—— **不是**类型检查
+	// （逐件类型检查需要**整包上下文 + import 解析**，单件走 stdin 拿不到 ⇒ 硬做只会把好件误判「不过」= 假红）。
+	// 故本门点名的能力是 **go-syntax-gate**（缺口标题逐字），不是 `go vet` 级。空 `token.FileSet` 只为定位，不落盘。
+	".go": func(b []byte) error {
+		_, err := parser.ParseFile(token.NewFileSet(), "src.go", b, parser.SkipObjectResolution)
+		return err
 	},
 	".yaml": yamlParse,
 	".yml":  yamlParse,
