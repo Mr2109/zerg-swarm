@@ -349,6 +349,75 @@ func gateRunStepLiveVerify(inv *invocation, stdout, stderr io.Writer, root, scri
 	return exitOK
 }
 
+// ── `gate run` 的**旗标前移校验**（缺口 `GAP-20260928-146`）──
+//
+// 病（2026-09-28 现读实测）：`zerg gate run --frobnicate`
+//
+//	· 自举件 `scripts/gates/precommit-gates.sh` 的 arg 循环在 `main()` 的**很后面** ⇒
+//	  未知参数要等「合成自检 + 软门禁」**跑完**才判到（实测：stdout 22 行先落地，
+//	  然后才是 stderr 那 1 行判词）⇒ 白跑一遍；`--scope <坏值>`/`--step <不存在的步名>`
+//	  同形（父代理现读：均 `rc=2`，只是**判在跑完之后**）；
+//	· 后果：参数写错的代价 = 一次完整前置跑，且「参数错」与真跑在 stdout 上**不可分**。
+//
+// 治法（**只前移校验位、不改退码、不改既有函数行为**）：命令面在 exec 之前，按自举件
+// `main()` 里那张旗标表逐枚核 `tail` —— 命中未知旗标 ⇒ **照自举件的逐字判词**（`✗ 未知参数: %s`）
+// 打印后 `return exitUsage`（2，与自举件同码），**不再 exec**。
+//
+// 口径（为什么不另写一份步骤表 / 为什么不改退码）：
+//
+//	· 这一张表是自举件 `main()` 那两排 `case` 的**逐字转录**（值旗标 6 枚 · 布尔 6 枚 + 命令面
+//	  自己的两枚），**唯一一处定义**（`gateRunValueFlags`/`gateRunBoolFlags`）；
+//	· 退码**一个字节不改**：未知参数过去 2、现在 2；合法形态原样透传（exec 之前只是**看一眼**）。
+//	  故「参数写错」与「跑成功」在退码上**仍然**与改前逐字相同 —— 本单治的是「**白跑**」那一半；
+//	  若要把「参数错」与「跑成功」在退码上分开，得改码语义 ⇒ 归**待拍项**（见回执）；
+//	· 值与旗标的分野**逐字照自举件**：值旗标的**下一个 token 无论是否以连字符开头都当值**
+//	  （自举件 `need_flag_val` 只数个数、不看形状）⇒ 前移校验与自举件对同一串 argv 的结论一致，
+//	  不出现「命令面拒了、自举件本来会收」的新分歧。
+var gateRunValueFlags = []string{"--scope", "--outdir", "--candidate", "--timeout", "--emit-cmd", "--step"}
+
+var gateRunBoolFlags = []string{"--list", "--self-test", "--only-step", "--fast", "-h", "--help",
+	gateLiveVerifyFlag} // `--show-log` 在进本函数之前已被 `gateRunWantsShowLog` 截获（走单步读数档）
+
+// gateRunPrecheckFlags —— exec 之前核 `tail` 的旗标；未知 ⇒ 逐字判词 + 退 2（不 exec）。
+// 只读 `tail`，不碰任何既有函数、不写任何件、不建任何目录。
+func gateRunPrecheckFlags(tail []string, stderr io.Writer) int {
+	for i := 0; i < len(tail); i++ {
+		a := tail[i]
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			continue // 位置参数：自举件自重排，本函数不为它下结论
+		}
+		if gateRunTakesValue(a) {
+			i++ // 值（含以连字符开头者）逐字跳过 —— 与自举件 `need_flag_val` 同口径
+			continue
+		}
+		if gateRunIsBool(a) {
+			continue
+		}
+		fmt.Fprintf(stderr, "✗ 未知参数: %s\n", a)
+		fmt.Fprintf(stderr, "%s: 这一发**没跑任何步骤** —— `gate run` 的旗标在**命令面**就校验（缺口 `GAP-20260928-146`；改前先白跑合成自检＋软门禁才退 2）\n", progName)
+		return exitUsage
+	}
+	return exitOK
+}
+
+func gateRunTakesValue(a string) bool {
+	for _, f := range gateRunValueFlags {
+		if a == f {
+			return true
+		}
+	}
+	return false
+}
+
+func gateRunIsBool(a string) bool {
+	for _, f := range gateRunBoolFlags {
+		if a == f {
+			return true
+		}
+	}
+	return false
+}
+
 // ── `zerg gate run --step <步名> --show-log`：单步档**步内读数**的可手敲正门 ──
 //
 // 病（缺口 `GAP-20260928-28` · 2026-09-28 现读）：
