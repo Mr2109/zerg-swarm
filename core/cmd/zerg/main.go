@@ -594,6 +594,17 @@ func init() {
 			endpoint: "",
 			run:      cmdGateFourStates,
 		},
+		{
+			path:     []string{"gate", "reap"},
+			kind:     "GateReap",
+			summary:  "回收**陈旧/卡死门跑根**（只收祖链已断或死趟残儿的根**及其门谱系**；真在飞的门跑绝不碰）· 每个收回动作入审计",
+			usage:    "zerg gate reap --stale [--dry-run | --yes] [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（不收位置参数：`--dry-run` 只列清单、`--yes` 才真收）"},
+			fields:   gateReapFields,
+			endpoint: "",
+			run:      cmdGateReap,
+		},
 		// ---- 批 B · T-19 茧壁：`agent ping` 默认经主控、`--direct` 才直连（§十五.4 丙案）----
 		{
 			path:     []string{"agent", "ping"},
@@ -2862,7 +2873,12 @@ func parseInvocation(args []string) (*invocation, error) {
 		//   降序 · 时限算不出的单列「时限不明」）/ `--stale`（只列超时限未收的派单）。与上一块
 		//   `--count`/`--files-only` 逐字同一种形态：写进 `inv.kv`（`kvSet`）⇒ `foreignFlag` 看得见；
 		//   ★ 必须在下面「未知旗标」兜底**之前**上户口，否则派单里写着它们会一律退 2「未知旗标」。
-		case a == "--aging" || a == "--stale":
+		//   ★ `--stale` 单列一条 `case`（行为逐字不变 —— 两枚仍各自 `kvSet(a, "true")`）：门73
+		//   的取数面按 `case a == "--x"` 逐条现读，写成 `--aging || --stale` 时它只读得到前者
+		//   ⇒ `gate reap --stale […]`（用法串是取值形态）被判成「解析面不认」= 假红。
+		case a == "--aging":
+			inv.kvSet(a, "true")
+		case a == "--stale":
 			inv.kvSet(a, "true")
 		case a == "--help" || a == "-h":
 			inv.wantHelp = true

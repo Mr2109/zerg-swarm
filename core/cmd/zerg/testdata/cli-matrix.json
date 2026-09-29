@@ -7714,6 +7714,31 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "报告**只给净数**（缺 原始 diff / 增 / 减 三格）⇒ 未报 ⇒ 判不了（退 2，非 0）· stdout 0 字节（读数由现跑派生 · 三格齐与缺件两档见 `tiers.green_cells` 与本格外的现跑读数）"
+  },
+  {
+   "id": "gate/reap#未知旗标",
+   "command": "gate reap",
+   "argv": [
+    "gate",
+    "reap",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（读数现跑派生：rc=2 · stdout 0 字节）"
+  },
+  {
+   "id": "gate/reap#不认的契约主号",
+   "command": "gate reap",
+   "argv": [
+    "gate",
+    "reap",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判（读数现跑派生：rc=2 · stdout 0 字节）"
   }
  ],
  "tiers": {
