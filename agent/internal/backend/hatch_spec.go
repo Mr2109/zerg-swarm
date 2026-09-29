@@ -852,7 +852,7 @@ func replaceArgvPlaceholders(args []string, file string, port int) {
 // argKeyAlias 同一旗标的两种写法归一（免得合并后同义参数出现两次、负控「同名只留一个」失效）。
 // 只登记**确知同义**的：`-mm` / `--mmproj` 是 llama-server 的同一个 flag（`-mm, --mmproj FILE`）。
 // 不在这里「顺手」登记存疑的同义关系 —— 认错键会把两侧本来不同的参数误并成一个 ✗。
-var argKeyAlias = map[string]string{"--mmproj": "-mm"}
+var argKeyAlias = map[string]string{"--mmproj": "-mm", "--parallel": "-np"} // --parallel：依据 llama-server --help 逐字「-np,   --parallel N」(env LLAMA_ARG_N_PARALLEL) ⇒ 确知同义（2026-09-29 现读）
 
 // argKey 取参数的键：`--foo=bar` → `--foo`；别名归一；其余原样。
 func argKey(tok string) string {
@@ -896,7 +896,7 @@ func splitArgvItems(args []string) []argvItem {
 	return items
 }
 
-// hasExplicitNP 卵清单是否**显式**声明了槽数（`-np 4` / `-np=4` / `--parallel 4` 除外——别名未登记）。
+// hasExplicitNP 卵清单是否**显式**声明了槽数（`-np 4` / `-np=4` / `--parallel 4` —— 长写法经 argKeyAlias 归一）。
 func hasExplicitNP(args []string) bool {
 	for _, a := range args {
 		if argKey(a) == "-np" {
