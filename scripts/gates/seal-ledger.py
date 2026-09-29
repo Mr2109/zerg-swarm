@@ -30,7 +30,12 @@ import argparse, datetime, hashlib, json, os, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-LEDGER_DEFAULT = os.path.join(HERE, "seal-ledger.jsonl")
+LEDGER_REL = os.path.join("scripts", "gates", "seal", "ledger.jsonl")
+# ★ 落点（2026-09-30 修 · N6）：原 `scripts/gates/seal-ledger.jsonl` 与判据件
+#   `scripts/gates/seal-ledger.py` **同目录同基名、扩展名不同** ⇒ 撞命名规则 ⑥（N6）
+#   ⇒ 换落到**子目录** `scripts/gates/seal/ledger.jsonl`（名字语义保留）。本常量是**单一真源**：
+#   指纹 / 摘要口径照它**精确排除章账自身**（只此一件）。
+LEDGER_DEFAULT = os.path.join(REPO_ROOT, LEDGER_REL)
 GATE_SCRIPT = os.path.join("scripts", "gates", "precommit-gates.sh")
 BASELINE = os.path.join(HERE, "wallclock-baseline.json")
 
@@ -60,11 +65,27 @@ def git(root, *args):
     return p.stdout if p.returncode == 0 else ""
 
 
-def item_set_digest(root):
+def ledger_rel_of(root, ledger):
+    """章账的**仓内相对路径**（用于「精确排除章账自身」）。不在本仓内 ⇒ 回落缺省落点。"""
+    try:
+        rel = os.path.relpath(os.path.abspath(ledger), root)
+    except ValueError:
+        return LEDGER_REL
+    if rel.startswith("..") or os.path.isabs(rel):
+        return LEDGER_REL
+    return rel
+
+
+def item_set_digest(root, exclude_rel=None):
     """① 件集内容摘要 = 「这一章盖住了哪些件」——由**现读改动面**算出（只读 git）。
 
     口径与 `gate_freshness.go` 的整树指纹**故意不同**：这里只收**改动的件**（脏面），
     逐件取**工作树内容** blob sha，件名排序后整串再 hash 一次 ⇒ 件名清单变或内容变即变。
+
+    ★ 精确排除章账自身（2026-09-30 修 · 自 stale 闭环）：章账 append-only ⇒ 追加一枚章就改
+    自己的内容 ⇒ 它若进摘要，摘要里就含「记着摘要的那份账」⇒ **固定点不可达**：每盖一章摘要
+    立刻变 ⇒ 刚盖的章在下次 `--verify` 全判 stale。只排除**那一个件**（缺省 = `LEDGER_REL`，
+    调用方按 `--ledger` 现算），不动别的件、不改粒度 —— 不是放宽判据。
     """
     raw = git(root, "--no-optional-locks", "status", "--porcelain", "-z")
     names = []
@@ -76,7 +97,8 @@ def item_set_digest(root):
         if len(tok) > 3 and tok[2] == " ":
             tok = tok[3:]
         names.append(tok)
-    names = sorted(set(n for n in names if n))
+    skip = exclude_rel or LEDGER_REL
+    names = sorted(set(n for n in names if n and n != skip))
     h = hashlib.sha256()
     h.update(b"item-set/1\x00")
     for n in names:
@@ -243,7 +265,7 @@ def do_seal(args):
     if not rows:
         die(f"✗ `{rt}` 一行都读不出 ⇒ 判不了(2)")
     fp = read_freshness(run_dir)
-    isd, changed = item_set_digest(REPO_ROOT)
+    isd, changed = item_set_digest(REPO_ROOT, ledger_rel_of(REPO_ROOT, args.ledger))
     gv, gident = gate_version(REPO_ROOT)
     names, cmds = step_cmds(REPO_ROOT)
     ledger = args.ledger
@@ -299,7 +321,7 @@ def do_verify(args):
     names, cmds = step_cmds(REPO_ROOT)
     if names is None:
         die("✗ 核章：读不回门件自己的步骤清单 ⇒ **不给结论**(2)")
-    isd, changed = item_set_digest(REPO_ROOT)
+    isd, changed = item_set_digest(REPO_ROOT, ledger_rel_of(REPO_ROOT, args.ledger))
     gv, gident = gate_version(REPO_ROOT)
 
     seals = [r for r in recs if r.get("kind") != "cover" and not r.get("_unparseable")]
@@ -491,7 +513,7 @@ def main():
     ap.add_argument("--seal", default=None, help="把一趟真跑产物升格成章（<趟目录>）")
     ap.add_argument("--verify", action="store_true", help="核章：只读核章链（不真跑 · 不写盘 · 不续期）")
     ap.add_argument("--check", action="store_true", help="自检（合成夹具 · 成对正负控）")
-    ap.add_argument("--ledger", default=LEDGER_DEFAULT, help="章账落点（append-only · 默认 scripts/gates/seal-ledger.jsonl）")
+    ap.add_argument("--ledger", default=LEDGER_DEFAULT, help="章账落点（append-only · 默认 scripts/gates/seal/ledger.jsonl）")
     ap.add_argument("--write", action="store_true", help="盖章时真落盘（必须同带 --reason）")
     ap.add_argument("--reason", default="", help="盖章留痕理由（--write 必填）")
     ap.add_argument("--json", default="", help="核章机读面（闭集字段见输出）")

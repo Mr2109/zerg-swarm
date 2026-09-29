@@ -605,6 +605,17 @@ func init() {
 			endpoint: "",
 			run:      cmdGateReap,
 		},
+		{
+			path:     []string{"gate", "seal", "verify"},
+			kind:     "GateSealVerify",
+			summary:  "核章档（第四档）章账**只读**核验：九格齐备 + 断言 executed 计数 0 + 失效规则（head/worktree_fp 与现读不符 ⇒ stale；步不在现读步集 ⇒ gap）· 三态逐字输出（未真跑（核章）/stale/gap）",
+			usage:    "zerg gate seal verify [<章账>] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"章账（append-only JSONL · 可省：缺省 scripts/gates/seal/ledger.jsonl）"},
+			fields:   gateSealVerifyFields,
+			endpoint: "",
+			run:      cmdGateSealVerify,
+		},
 		// ---- 批 B · T-19 茧壁：`agent ping` 默认经主控、`--direct` 才直连（§十五.4 丙案）----
 		{
 			path:     []string{"agent", "ping"},
