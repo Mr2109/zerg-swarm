@@ -610,6 +610,13 @@
     "类": "命令面实现件：**字样引用**（不是干跑语义站点 —— 全件命中只出现在件头注释与一条判据串 `改件污染了 dry-run 面` 里；本命令 `gate four-states` **没有** `--dry-run` 档，只按两条命令串逐格跑、零写面）",
     "语义": "dryrun.v1",
     "零副作用判据": "本件只跑两条**由用户逐字给定**的 argv（不做 shell 展开），读面取 stdout 字节数；自己不起门禁、不读不写 `scripts/gates/` 下任何件、不落盘 / 不删 / 不推 / 不改 git 状态。登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**引文**（判据散文里提到 `dry-run 面`），同 `family_lsface.go` / `family_code.go` 的「字样引用」处置，不是第五套语义。"
+  },
+  {
+    "file": "core/cmd/zerg/family_gate_reap.go",
+    "类": "实现站点：`gate reap --stale` 的 D2 三态写门（`--dry-run` / 缺 `--yes` / `--yes`）",
+    "语义": "dryrun.v1",
+    "零副作用判据": "`bin/zerg gate reap --stale --dry-run` ⇒ 退码 0 · stdout = 干跑单（别的根数 + 逐根 verdict/谱系/在飞工/理由）+ stderr 一行「★ 干跑：一个信号都没发、一个字节都没写」；**一个信号都不发**（现跑对拍：跑前后 `ps` 门根集逐条不变）· 不落盘；真收（`--yes`）才逐 pid SIGTERM→SIGKILL 并把每个收回动作 append 进仓外审计 `<锁目录>/reap-audit.jsonl`。",
+    "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：`--dry-run` 走进本命令的解析面（dryrun.v1 的同一套语义），不另立第五套。"
   }
   ]
 }
