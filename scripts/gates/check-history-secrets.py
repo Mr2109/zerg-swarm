@@ -181,55 +181,64 @@ def mask(s):
     return s[:6] + "…" + ("（%d 字符）" % len(s)) if len(s) > 8 else s
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--repo", default=REPO, help="仓库路径（默认本仓；自测/B1 复用时可指向别处）")
-    ap.add_argument("--range", dest="rng", default=None, help="提交区间，如 A..B；默认 --all")
-    ap.add_argument("--json", dest="json_out", default=None)
-    ap.add_argument("--max-hits", type=int, default=200)
-    # ★ `Q-176` 第六批：拼法统一 —— **准拼法 `--self-test`**，旧拼法 `--selftest` 作别名
-    ap.add_argument("--self-test", "--selftest", dest="selftest", action="store_true",
-                    help="只跑成对负控自检（合成夹具 + 现读真仓结构 · 不碰真目标 · 不跑全历史）")
-    args = ap.parse_args()
+# ══════════════════════════════════════════════════════════════════
+# 并行档（`--jobs`）：把「逐提交」这段**天然可并行**的活按提交区间分片
+# ══════════════════════════════════════════════════════════════════
+# 为什么能并：主循环对每一笔提交独立地做「读提交信息 · 取白名单内文件清单 · 逐 blob 扫描」，
+#   提交之间**零数据依赖**；唯一的共享物是 blob 判定缓存，而判定是 (blob 字节, iso) 的**纯函数**
+#   ⇒ 分片各存一份缓存，结论与串行同值。
+#
+# ★ 结果面为什么与串行**逐字一致**（判据 = 串行档 stdout 与并行档 stdout `diff` 为空）：
+#   ① 命中集合/顺序：每片内部仍按 revs 顺序、ls-tree 行顺序追加 ⇒ 父进程按**片序**拼接
+#      = 串行的全局顺序（同一提交集合 · 同一命中集合 · 同一排序）。
+#   ② 「文件版本 N 个 / X MB」= **首见计数**：串行档每个 (blob, iso) 只计一次 ⇒
+#      父进程按**最小提交序号**归并各片的计数事件、取每 key 的首次 ⇒ 与串行逐字同值。
+#   ③ 进度行 `…已审 k/200 笔提交（文件 x，y MB）`：父进程用归并后的首见序号重算第 200/400/… 笔
+#      时的累计值 ⇒ 与串行逐字同值；且串行里进度行**先于**收尾统计输出 ⇒ 拼接顺序也一致。
+#   ★ 资源上限（写死判据）：并发数 = `--jobs`；`--jobs 0`/缺省自动 = `min(8, max(1, 核数//2))`；
+#     显式值必须落 1..32 闭集，越界 ⇒ **rc=2 不给结论**（不猜、不截断）。
+#   ★ `--jobs 1`（默认）= **原串行路径**（自检面 WANT_CASES 全走这一档 ⇒ 判据与退码一字未改）。
 
-    if args.selftest:
-        import atexit
-        atexit.register(cleanup)
-        print("── check-history-secrets.py 自证（成对正负控 + 防空绿档 · 仓外夹具 · 真退出码）")
-        return self_test()
 
-    repo = os.path.abspath(args.repo)
-    if not os.path.isdir(os.path.join(repo, ".git")):
-        print("✗ 不是 git 仓库：%s" % repo)
-        return 2
+def cpu_count():
+    try:
+        n = os.cpu_count()
+    except Exception:
+        n = None
+    return int(n) if isinstance(n, int) and n >= 1 else 4
 
-    literals, regexes, isolated = load_rules()
-    ex_list = load_excludes()
-    print("排除项: %d 条（从 publish-public.sh 的 EXCLUDES 解析）+ 噪声后缀 %s" % (len(ex_list), "/".join(NOISE_SUFFIX)))
-    print("替换规则: %d 条字面 + %d 条正则（扫描前先套用——审计的是『真会公开的形状』）" % (len(literals), len(regexes)))
-    print("夹具隔离: %d 条 glob（命中件整段跳过替换 · §五 第三批）%s"
-          % (len(isolated), "：%s" % " · ".join(isolated) if isolated else ""))
-    entries = load_whitelist(os.path.join(repo, "publish", "whitelist.txt") if os.path.exists(
-        os.path.join(repo, "publish", "whitelist.txt")) else WHITELIST)
-    if args.rng:
-        revs = sh(["git", "rev-list", args.rng], cwd=repo).split()
-        scope = args.rng
-    else:
-        revs = sh(["git", "rev-list", "--all"], cwd=repo).split()
-        scope = "--all"
-    print("审计范围: %s（%d 笔提交）" % (scope, len(revs)))
-    print("白名单条目: %d（只审『真会被公开』的那些路径）" % len(entries))
 
-    blob_cache = {}  # blob sha → (kind, why, sample)
-    hits = []
-    info_hits = []
-    scanned_files = 0
-    scanned_bytes = 0
+def resolve_jobs(v):
+    """并发数闭集：None/0 = 自动 `min(8, max(1, 核数//2))` · 1..32 直给 · 其余 ⇒ None（调用方判 rc=2）"""
+    if v in (None, 0):
+        return min(8, max(1, cpu_count() // 2))
+    return v if 1 <= v <= 32 else None
 
-    blk = [(re.compile(rx), why) for rx, why in BLOCK]
-    inf = [(re.compile(rx), why) for rx, why in INFO]
 
-    for idx, sha in enumerate(revs, 1):
+def split_bounds(total, n):
+    """把 total 笔提交切成 n 段**连续**区间（前 r 段各多一笔）——父/子两处用同一份算法。"""
+    q, r = divmod(total, n)
+    out, s = [], 0
+    for i in range(n):
+        e = s + q + (1 if i < r else 0)
+        out.append((s, e))
+        s = e
+    return out
+
+
+def scan_commits(revs, repo, literals, regexes, isolated, entries, ex_list, blk, inf,
+                 base_idx=0, emit_progress=False, cache=None, counted=None):
+    """按 revs 顺序扫描一段提交（**串行档与并行片共用同一份判据**：本函数就是原来那段循环）。
+    `cache`：key=(osha, iso) → verdict（纯函数缓存）。
+    `counted`：key=(osha, iso) → [首次出现的全局提交序号, 字节数] —— 串行档 = 全局首见计数；
+               并行档每片各一份，父进程按**最小序号**归并（见上 ②/③）。"""
+    hits, info_hits = [], []
+    if cache is None:
+        cache = {}
+    if counted is None:
+        counted = {}
+    for local, sha in enumerate(revs):
+        idx = base_idx + local + 1
         # ① 提交信息本身也会被镜像 ⇒ 一起审
         msg = apply_rules(sh(["git", "log", "-1", "--format=%B", sha], cwd=repo), literals, regexes)
         for rx, why in blk:
@@ -250,18 +259,17 @@ def main():
             if rel.lower().endswith(BINARY_SUFFIX):
                 continue
             iso = is_isolated(rel, isolated)
-            verdict = blob_cache.get((osha, iso))
+            verdict = cache.get((osha, iso))
             if verdict is None:
                 blob = sh(["git", "cat-file", "blob", osha], cwd=repo, binary=True)
                 if blob is None or len(blob) > MAX_BLOB or b"\x00" in blob[:8192]:
-                    blob_cache[(osha, iso)] = ("skip", None, None)
+                    cache[(osha, iso)] = ("skip", None, None)
                     continue
-                scanned_files += 1
-                scanned_bytes += len(blob)
+                counted.setdefault((osha, iso), [idx, len(blob)])
                 try:
                     text = blob.decode("utf-8")
                 except Exception:
-                    blob_cache[(osha, iso)] = ("skip", None, None)
+                    cache[(osha, iso)] = ("skip", None, None)
                     continue
                 text = apply_rules(text, literals, regexes, isolated, rel)  # 关键：先变换，再扫描（夹具隔离件原样通过）
                 verdict = ("clean", None, None)
@@ -275,15 +283,200 @@ def main():
                         if rx.search(text):
                             verdict = ("info", why, None)
                             break
-                blob_cache[(osha, iso)] = verdict
+                cache[(osha, iso)] = verdict
             kind, why, sample = verdict
             if kind == "block":
                 hits.append({"commit": sha[:10], "path": rel, "why": why, "match": sample})
             elif kind == "info":
                 info_hits.append({"commit": sha[:10], "path": rel, "why": why})
-        if idx % 200 == 0:
-            print("  …已审 %d/%d 笔提交（文件 %d，%.1f MB）" % (idx, len(revs), scanned_files,
-                                                          scanned_bytes / 1048576))
+        if emit_progress and idx % 200 == 0:
+            print("  …已审 %d/%d 笔提交（文件 %d，%.1f MB）" % (idx, len(revs), len(counted),
+                                                          sum(v[1] for v in counted.values()) / 1048576))
+    return hits, info_hits, counted
+
+
+def _setup_repo(repo):
+    """两档（串行/片）共用的读面：规则 · 排除项 · 白名单 —— 口径一字不改（与 main() 同源）。"""
+    literals, regexes, isolated = load_rules()
+    ex_list = load_excludes()
+    entries = load_whitelist(os.path.join(repo, "publish", "whitelist.txt") if os.path.exists(
+        os.path.join(repo, "publish", "whitelist.txt")) else WHITELIST)
+    blk = [(re.compile(rx), why) for rx, why in BLOCK]
+    inf = [(re.compile(rx), why) for rx, why in INFO]
+    return literals, regexes, isolated, ex_list, entries, blk, inf
+
+
+def _read_revs(repo, rng):
+    return sh(["git", "rev-list", rng] if rng else ["git", "rev-list", "--all"], cwd=repo).split()
+
+
+def shard_worker(args):
+    """分片工作进程：扫本片提交区间，把「命中 + 首见计数事件」写成 JSON（**不自己印报告**）。"""
+    repo = os.path.abspath(args.repo)
+    if not os.path.isdir(os.path.join(repo, ".git")):
+        print("✗ 不是 git 仓库：%s" % repo, file=sys.stderr)
+        return 2
+    try:
+        k, n = (int(x) for x in args.shard_spec.split("/"))
+    except Exception:
+        print("✗ 分片参数读不出：%r" % (args.shard_spec,), file=sys.stderr)
+        return 2
+    literals, regexes, isolated, ex_list, entries, blk, inf = _setup_repo(repo)
+    revs = _read_revs(repo, args.rng)
+    # ★ 对齐校验：父进程与子进程各自现读 rev-list ⇒ 必须逐字同长、同首笔（否则结果面不可信 ⇒ 判不了）
+    if args.shard_total is not None and len(revs) != args.shard_total:
+        print("✗ 分片对齐失败：父见 %d 笔 · 本片现读 %d 笔 ⇒ 判不了(2)" % (args.shard_total, len(revs)),
+              file=sys.stderr)
+        return 2
+    bounds = split_bounds(len(revs), n)
+    a, b = bounds[k]
+    if args.shard_first is not None and b > a and revs[a] != args.shard_first:
+        print("✗ 分片对齐失败：本片首笔 %s ≠ 父见 %s ⇒ 判不了(2)" % (revs[a][:12], args.shard_first[:12]),
+              file=sys.stderr)
+        return 2
+    hits, info_hits, counted = scan_commits(revs[a:b], repo, literals, regexes, isolated, entries,
+                                            ex_list, blk, inf, base_idx=a, emit_progress=False)
+    payload = {"hits": hits, "info_hits": info_hits,
+               "counted": {"%s|%s" % (kk[0], kk[1]): v for kk, v in counted.items()}}
+    with open(args.shard_out, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False)
+    return 0
+
+
+def run_parallel(revs, repo, jobs, literals, regexes, isolated, ex_list, entries, blk, inf, rng=None):
+    """按提交区间并发跑分片、按最小序号归并 ⇒ (hits, info_hits, merged_counted, n_shards)。"""
+    n = min(jobs, len(revs))
+    bounds = split_bounds(len(revs), n)
+    wd = tempfile.mkdtemp(prefix="chs-par-")
+    procs, outs = [], []
+    try:
+        for i, (a, _b) in enumerate(bounds):
+            outp = os.path.join(wd, "shard-%d.json" % i)
+            outs.append(outp)
+            cmd = [sys.executable, SELF_PATH, "--repo", repo, "--_shard", "%d/%d" % (i, n),
+                   "--_shard-out", outp, "--_shard-total", str(len(revs)),
+                   "--_shard-first", revs[a]]
+            if rng:                       # ★ `--range` 必须透传给工作进程（否则子读 --all、父读区间 ⇒ 对齐校验当场判 2）
+                cmd += ["--range", rng]
+            if _b <= a:
+                print("✗ 分片 %d 为空片 ⇒ 判不了(2)（不许静默少审）" % i, file=sys.stderr)
+                return None
+            procs.append(subprocess.Popen(cmd, cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+        bad = []
+        for i, p in enumerate(procs):
+            _o, e = p.communicate()
+            if p.returncode != 0:
+                bad.append("片%d rc=%s %s" % (i, p.returncode, e.decode("utf-8", "replace").strip()[:200]))
+        if bad:
+            print("✗ 并行分片失败：%s ⇒ 判不了(2)（不给结论）" % " · ".join(bad), file=sys.stderr)
+            return None
+        hits, info_hits, merged = [], [], {}
+        for o in outs:
+            with open(o, encoding="utf-8") as fh:
+                d = json.load(fh)
+            hits.extend(d["hits"])
+            info_hits.extend(d["info_hits"])
+            for key, v in d["counted"].items():
+                cur = merged.get(key)
+                if cur is None or v[0] < cur[0]:
+                    merged[key] = v
+        print("并行档：%d 片（提交区间连续切分 · 结果面按片序拼接 + 首见序号归并 ⇒ 与串行逐字一致）" % n,
+              file=sys.stderr)   # ★ 走 stderr：**stdout 必须与串行逐字一致**（对拍判据 = diff 为空）
+        return hits, info_hits, merged, n
+    finally:
+        shutil.rmtree(wd, ignore_errors=True)
+
+
+def cumulative_at(merged, idx):
+    """merged（key → [首见序号, 字节]）在「审到第 idx 笔」时的 (文件数, 字节数) —— 与串行同值。"""
+    f = b = 0
+    for _k, v in merged.items():
+        if v[0] <= idx:
+            f += 1
+            b += v[1]
+    return f, b
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--repo", default=REPO, help="仓库路径（默认本仓；自测/B1 复用时可指向别处）")
+    ap.add_argument("--range", dest="rng", default=None, help="提交区间，如 A..B；默认 --all")
+    ap.add_argument("--json", dest="json_out", default=None)
+    ap.add_argument("--max-hits", type=int, default=200)
+    # ★ 并行档（提速第三批）：把「逐提交」这段分片跑。缺省 1 = 原串行路径**逐字不变**；
+    #   0 = 自动 `min(8, max(1, 核数//2))`（资源上限写死）；显式 1..32；越界 ⇒ rc=2。
+    ap.add_argument("--jobs", type=int, default=1,
+                    help="并行分片数（缺省 1=串行·2..32 直给·0=自动 min(8, 核数//2)）")
+    # 内部档（分片工作进程用；不进用法面）
+    ap.add_argument("--_shard", dest="shard_spec", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--_shard-out", dest="shard_out", default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--_shard-total", dest="shard_total", type=int, default=None, help=argparse.SUPPRESS)
+    ap.add_argument("--_shard-first", dest="shard_first", default=None, help=argparse.SUPPRESS)
+    # ★ `Q-176` 第六批：拼法统一 —— **准拼法 `--self-test`**，旧拼法 `--selftest` 作别名
+    ap.add_argument("--self-test", "--selftest", dest="selftest", action="store_true",
+                    help="只跑成对负控自检（合成夹具 + 现读真仓结构 · 不碰真目标 · 不跑全历史）")
+    args = ap.parse_args()
+
+    if args.selftest:
+        import atexit
+        atexit.register(cleanup)
+        print("── check-history-secrets.py 自证（成对正负控 + 防空绿档 · 仓外夹具 · 真退出码）")
+        return self_test()
+
+    # ── 分片工作进程档（内部档：由 `--jobs>1` 的父进程拉起；**不自己印报告**）──────────
+    if args.shard_spec:
+        return shard_worker(args)
+
+    repo = os.path.abspath(args.repo)
+    if not os.path.isdir(os.path.join(repo, ".git")):
+        print("✗ 不是 git 仓库：%s" % repo)
+        return 2
+
+    jobs = resolve_jobs(args.jobs)
+    if jobs is None:
+        print("✗ --jobs 只认 1..32（0/缺省 = 自动 min(8, max(1, 核数//2))）：%r ⇒ 判不了(2)" % (args.jobs,))
+        return 2
+
+    literals, regexes, isolated = load_rules()
+    ex_list = load_excludes()
+    print("排除项: %d 条（从 publish-public.sh 的 EXCLUDES 解析）+ 噪声后缀 %s" % (len(ex_list), "/".join(NOISE_SUFFIX)))
+    print("替换规则: %d 条字面 + %d 条正则（扫描前先套用——审计的是『真会公开的形状』）" % (len(literals), len(regexes)))
+    print("夹具隔离: %d 条 glob（命中件整段跳过替换 · §五 第三批）%s"
+          % (len(isolated), "：%s" % " · ".join(isolated) if isolated else ""))
+    entries = load_whitelist(os.path.join(repo, "publish", "whitelist.txt") if os.path.exists(
+        os.path.join(repo, "publish", "whitelist.txt")) else WHITELIST)
+    if args.rng:
+        revs = sh(["git", "rev-list", args.rng], cwd=repo).split()
+        scope = args.rng
+    else:
+        revs = sh(["git", "rev-list", "--all"], cwd=repo).split()
+        scope = "--all"
+    print("审计范围: %s（%d 笔提交）" % (scope, len(revs)))
+    print("白名单条目: %d（只审『真会被公开』的那些路径）" % len(entries))
+
+    blk = [(re.compile(rx), why) for rx, why in BLOCK]
+    inf = [(re.compile(rx), why) for rx, why in INFO]
+
+    # ── 两档分发（提速第三批）：`--jobs 1`（缺省）= 原串行逐提交路径 · `>1` = 提交区间并行 ──
+    if jobs > 1 and len(revs) > 1:
+        got = run_parallel(revs, repo, jobs, literals, regexes, isolated, ex_list, entries, blk, inf,
+                           rng=args.rng)
+        if got is None:
+            return 2                      # 分片失败/空片 ⇒ 判不了（绝不当绿）
+        hits, info_hits, merged, _nsh = got
+        for _idx in range(200, len(revs) + 1, 200):
+            _f, _b = cumulative_at(merged, _idx)
+            print("  …已审 %d/%d 笔提交（文件 %d，%.1f MB）" % (_idx, len(revs), _f, _b / 1048576))
+        scanned_files = len(merged)
+        scanned_bytes = sum(v[1] for v in merged.values())
+    else:
+        blob_cache = {}  # blob sha → (kind, why, sample)
+        counted = {}     # (blob sha, iso) → [首见提交序号, 字节数] = 首见计数（旧 scanned_* 同一口径）
+        hits, info_hits, counted = scan_commits(revs, repo, literals, regexes, isolated, entries,
+                                                ex_list, blk, inf, base_idx=0, emit_progress=True,
+                                                cache=blob_cache, counted=counted)
+        scanned_files = len(counted)
+        scanned_bytes = sum(v[1] for v in counted.values())
 
     print("\n扫描完成：提交 %d 笔 · 文件版本 %d 个 · %.1f MB 文本" % (len(revs), scanned_files,
                                                               scanned_bytes / 1048576))
