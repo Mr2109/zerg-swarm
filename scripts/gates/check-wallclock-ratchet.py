@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""check-wallclock-ratchet.py —— 墙钟棘轮（三档：日常 / 中 / 盖章）· **只许下降**
+"""check-wallclock-ratchet.py —— 墙钟棘轮（四档：日常 / 核章 / 中 / 盖章）· **只许下降**
+
+档位链（唯一真源 = 基线件的 `chain` 字段）：日常快速档 ⊂ 核章档 ⊂ 中档 ⊂ 盖章档
 
 口径照抄仓内既有棘轮（`scripts/gates/baseline-ratchet.py` 的「唯一写通道 + append-only 审计 + 事后对账」）：
 
@@ -33,7 +35,7 @@ import argparse, datetime, json, os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = os.path.join(HERE, "wallclock-baseline.json")
-TIERS = ("daily", "medium", "stamp")
+TIERS = ("daily", "seal", "medium", "stamp")
 
 
 def die(msg, rc=2):
@@ -136,6 +138,15 @@ def main():
     unmeasured = bool(t.get("_unmeasured")) or cur is None
 
     # ── 事后对账（--check）：现值必须 == 台账最后一条 new（否则「有人手改」）──────
+    #   ★ 顺序：**未标定 / 不计墙钟** 的档先出口（rc=2 不给结论）—— 这两档没有台账
+    #     记录可言，若先走 `--check` 会把「本来就不可标定的档」误判成「有人手改」（假红）。
+    if unmeasured:
+        if t.get("_not_a_wallclock"):
+            die(f"✗ `{args.tier}` 档**不计墙钟**（`_not_a_wallclock=true`：本档不真跑任何步，无「跑门耗时」这一项）"
+                f" ⇒ 不给结论(rc=2)：核章档的判据是章链覆盖与新鲜度，走 `scripts/gates/seal-ledger.py --verify`")
+        die(f"✗ `{args.tier}` 档**未标定**（secs={cur} · _unmeasured={bool(t.get('_unmeasured'))}）"
+            f" ⇒ 不给结论(rc=2)：先在有门跑窗口实测并 `--write` 标定，不许静默当绿")
+
     last = last_audit(audit_path(cfg))
     if args.check:
         if last is None:
@@ -146,10 +157,6 @@ def main():
             die(f"✗ --check：现值 {cur} ≠ 台账最后一条 new {last.get('new')} ⇒ **有人手改** ⇒ 判红(1)", rc=1)
         print(f"✓ --check 过：{args.tier} 现值 {cur} == 台账最后一条 new")
         return 0
-
-    if unmeasured:
-        die(f"✗ `{args.tier}` 档**未标定**（secs={cur} · _unmeasured={bool(t.get('_unmeasured'))}）"
-            f" ⇒ 不给结论(rc=2)：先在有门跑窗口实测并 `--write` 标定，不许静默当绿")
 
     ms = measured_secs(cfg, args.tier, args)
     print(f"[{args.tier}] 现值 {cur}s · 现测 {ms}s")
