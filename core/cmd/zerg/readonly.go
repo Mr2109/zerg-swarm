@@ -241,7 +241,7 @@ func cmdTaskLs(inv *invocation, stdout, stderr io.Writer) int {
 			rows = append(rows, project(o, fields))
 		}
 	}
-	return listCmd(inv, stdout, stderr, []string{"id", "status", "model", "machine", "priority", "created_at"}, rows)
+	return listCmd(inv, stdout, stderr, []string{"id", "status", "model", "machine", "priority", "created_at", "description"}, rows)
 }
 
 // ---- model 族（只读：ls）----
