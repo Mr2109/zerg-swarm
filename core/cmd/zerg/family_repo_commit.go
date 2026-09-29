@@ -196,7 +196,7 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 	//   —— 目录必是**本次调用新建的空目录** ⇒ 这一轮没落表就一定读不回（不靠 mtime 一类脆判据，
 	//   也不与任何旧目录重名）。`logDirPattern` 不动：它是计划件里的**模式**（§九 M11 同一判据跑两遍必须一致）。
 	prefix := "zerg-repo-commit-" + time.Now().Format("20060102-150405.000000000") + "-"
-	logDir, mkErr := os.MkdirTemp(os.TempDir(), prefix+"*")
+	logDir, mkErr := os.MkdirTemp(osTempRoot(), prefix+"*")
 	if mkErr != nil {
 		inv.setErr("failed", "logdir_failed", mkErr.Error())
 		fmt.Fprintf(stderr, "%s: 建不了门禁日志目录 %s：%v\n", progName, filepath.Join(os.TempDir(), prefix), mkErr)
@@ -302,6 +302,15 @@ func commitMessageTemplate(title, proposal, by, trace, criterion string, files [
 	fmt.Fprintf(&b, "件: %s\n", strings.Join(files, " · "))
 	fmt.Fprintf(&b, "门禁: 快速档 rc=0（scripts/gates/precommit-gates.sh --fast）\n")
 	return b.String()
+}
+
+// osTempRoot —— 临时根的**注入缝**（件⑤ · 2026-09-29 提速第一批：测试夹具不得污染真临时根）。
+// 优先 ZERG_TMP_ROOT（测试/夹具置它 ⇒ t.TempDir()），否则退回 os.TempDir()（生产行为逐字不变）。
+func osTempRoot() string {
+	if d := strings.TrimSpace(os.Getenv("ZERG_TMP_ROOT")); d != "" {
+		return d
+	}
+	return os.TempDir()
 }
 
 // runFastGate —— 跑快速档（**退码直通**：不翻译、不吞输出）。
@@ -673,7 +682,7 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 	//   —— 目录必是**本次调用新建的空目录** ⇒ 这一轮没落表就一定读不回（不靠 mtime 一类脆判据，
 	//   也不与任何旧目录重名）。`logDirPattern` 不动：它是计划件里的**模式**（§九 M11 同一判据跑两遍必须一致）。
 	prefix := "zerg-repo-commit-" + time.Now().Format("20060102-150405.000000000") + "-"
-	logDir, mkErr := os.MkdirTemp(os.TempDir(), prefix+"*")
+	logDir, mkErr := os.MkdirTemp(osTempRoot(), prefix+"*")
 	if mkErr != nil {
 		inv.setErr("failed", "logdir_failed", mkErr.Error())
 		fmt.Fprintf(stderr, "%s: 建不了门禁日志目录 %s：%v\n", progName, filepath.Join(os.TempDir(), prefix), mkErr)
