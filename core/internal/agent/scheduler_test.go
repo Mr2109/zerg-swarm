@@ -72,6 +72,23 @@ func newTestWorkDir(t *testing.T) string {
 	return dir
 }
 
+// waitWorkersIdle — 等所有在飞 worker goroutine 收尾（测试用 · 生产侧不需要 join 点）。
+// 为什么：dispatchIssue 内是 `go s.runWorker(...)`（无 join 点），runWorker 的 defer 才 `activeCount--`；
+// 而 handleSuccess 的 `os.WriteFile` 在 defer **之前** ⇒ activeCount 归零 = 该 goroutine 已不再碰 workDir
+// ⇒ t.TempDir() 的 RemoveAll 不再与它抢时序。
+// 依据（2026-09-30 公开 CI 逐字红）：`TempDir RemoveAll cleanup: unlinkat …/docs/issues: directory not empty`
+// —— 测试体已返回、worker 仍在写盘；RemoveAll 删空目录后又被 WriteFile 重建。
+func waitWorkersIdle(t *testing.T, s *Scheduler) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for s.ActiveCount() > 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("等 worker 收尾超时（activeCount=%d）", s.ActiveCount())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // ─── 测试 1: 扫描 issue ───────────────────────────────────
 
 func TestScanIssues(t *testing.T) {
@@ -164,6 +181,9 @@ func TestDispatchIssue(t *testing.T) {
 		t.Errorf("期望 1 个活跃 worker，实际 %d", s.ActiveCount())
 	}
 	close(release) // 断言已完成 ⇒ 放行 mock worker，让收尾逻辑（activeCount-- 等）正常跑完
+	// 等 runWorker 真收尾（2026-09-30 修 flake）：只 close(release) 不够——goroutine 还要跑完 handleSuccess 的
+	// os.WriteFile 才轮到 defer；测试体若就此返回，t.TempDir() 的 RemoveAll 就与那次写盘抢时序（公开 CI 逐字红）。
+	waitWorkersIdle(t, s)
 
 	// 清理：模拟 worker 完成（完整状态链——running→fixing→verified→done）
 	content := readContent(t, path)
