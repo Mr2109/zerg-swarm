@@ -208,6 +208,14 @@ TEXT_ALLOW = (
         "reason": "报告文字串：往人读的报告里印「本门用的是哪条命令」（自证面），非 argv。",
         "replacement": "无需改：报告文字面。",
     },
+    {
+        "path": "scripts/gates/check-gap-axis-reconcile.py", "rule": "GPO-F1",
+        "anchor": "现读 " + GIT_TOK + " " + N_LSFILES + " 失败",
+        "reason": ("消息串：`ctx.get` 的第二实参 = **兜底文字**（戊 取数面拿不到时印给人看的报错文本），"
+                   "不是 argv —— 没有哪台机器会去跑它。同件真调用在 L143 且已带 `-z`（三锚点：`-C` +"
+                   " `core.quotepath=false` + `-z` · 同函数按 NUL 逐字切分 stdout = 证据）。"),
+        "replacement": "无需改：真调用已合规；本行只是报错文本里的字面。",
+    },
 )
 
 # ── 文字面掩蔽：行首即注释的行，**整行**不判（宁可漏报，不可把散文判成 argv）───────

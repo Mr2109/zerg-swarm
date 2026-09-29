@@ -85,11 +85,41 @@ var devEditFieldsShared = []string{"proposal", "file", "mode", "result", "before
 	"before_bytes", "after_bytes", "audit_path", "out_path", "approval"}
 
 // devEditDryRunOnlyFields —— 只由**干跑档**填的那几格（真写档产出不了 ⇒ 写前拒）。
+// ★ 2026-09-29（`GAP-20260927-261` · 本枚）：末两格 = **红契约机器面**。此前「会红」判决
+// **只有自然语言**（stderr 那一行「会红：契约 S-g（`change_class=B` …）」）⇒ 机读方切不出
+// 「红线是哪条契约」；`--json contract_hits` 当时直接判**未知字段**（退 2）。两格取值与
+// 人面那一行**同源**（同一趟 `Layers` · 同一个抽取函数 `impactRedContractIDs` —— 禁二次算 ✗）。
 var devEditDryRunOnlyFields = []string{"approver", "rollback_verdict", "rollback_tier",
-	"rollback_cmd", "rollback_why", "diff_body", "diff_body_truncated"}
+	"rollback_cmd", "rollback_why", "diff_body", "diff_body_truncated",
+	"red_contracts", "contract_hits"}
 
 // devEditFields —— `--json` 面的全部字段（K1：机器面先定 · 两片拼接 = **唯一**定义处）。
 var devEditFields = append(append([]string{}, devEditFieldsShared...), devEditDryRunOnlyFields...)
+
+// devEditRedContractsCell —— 干跑档机器面 `red_contracts` 这一格（`GAP-20260927-261`）。
+// 取值 = 与人面「会红」行**同一趟**的抽取结果（`impactRedContractIDs(summary.Layers)`），
+// 红契约 id 用 `,` 拼 · 无红 ⇒ 空串（与 ③ 层 `red` 字段「空 = 没有」同款）。
+// ★ 「没取到数」**不写空串**（空串会被读成「一条红契约都没有」＝ 把「没数」当「没有」✗）。
+func devEditRedContractsCell(s impactDryRunSummary) string {
+	if !s.Taken {
+		if s.State == impactSummaryUnreadable {
+			return "（读不到 —— 不是「没有」· 不给结论）"
+		}
+		return "（未取数 —— 不是「没有」）"
+	}
+	return strings.Join(impactRedContractIDs(s.Layers), ",")
+}
+
+// devEditContractHitsCell —— 干跑档机器面 `contract_hits` 这一格（同上 · 只给计数）。
+func devEditContractHitsCell(s impactDryRunSummary) string {
+	if !s.Taken {
+		if s.State == impactSummaryUnreadable {
+			return "（读不到 —— 不是「没有」· 不给结论）"
+		}
+		return "（未取数 —— 不是「没有」）"
+	}
+	return fmt.Sprintf("%d", impactContractHitCount(s.Layers))
+}
 
 // devEditDryRunOnlyNote —— 帮助面上紧跟在用法串后的那句话（`main.go` 的 `usage` 尾接它）。
 // 名字由上面那片**派生** ⇒ 字段表改了它自己跟着改（`GAP-20260928-115` 要的「表与产出集同源」落在这里）。
@@ -389,6 +419,14 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		//   ★ 两格只在**干跑档**填（真写档一格不给 ⇒ 写前拒 · 见 `devEditDryRunOnlyFields`）。
 		row["diff_body"] = strings.Join(bodyDiff.Lines, "\n")
 		row["diff_body_truncated"] = devEditDiffBodyTruncFlag(bodyDiff)
+		// ★ 2026-09-29（`GAP-20260927-261` · 本枚）：**红契约进机器面**。上面那个
+		//   `impactDryRunSummaryOf` 已经把层行算好（`summary.Layers` —— 人面那三行也是从它出的）
+		//   ⇒ 这里**不另跑一遍、不解析散文** ✗，只把同一趟层行里的**闭集字段 `red`** 抽出来。
+		//   ★ 「没取到数」那一档（`summary.Taken == false`）**不许写零 / 不许写空当「没有」**：
+		//     三态逐字（与 `impact_digest` 那一格同款纪律）：取到数 ⇒ 取值 · 未取数 ⇒ 明写「未取数」·
+		//     读不到 ⇒ 明写「读不到 ⇒ 不给结论」。脚本据此可把「没红」与「没数」分开。
+		row["red_contracts"] = devEditRedContractsCell(summary)
+		row["contract_hits"] = devEditContractHitsCell(summary)
 		emitDevEditRollbackAdvice(stderr, prop, fileRel, beforeSHA, len(before), rp)
 		// 指纹（**摘要正文逐字进哈希** ⇒ 第三者可复算；正文本身打到上面那段，不进审计）。
 		if summary.Taken {

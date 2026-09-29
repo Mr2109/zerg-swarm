@@ -89,16 +89,75 @@ func cmdAgentModels(inv *invocation, stdout, stderr io.Writer) int {
 	if rc := fetchInv(inv, c, "/api/fleet/models", &resp, stderr); rc != exitOK {
 		return rc
 	}
+	// ★ 对账证据面（照 `family_eggs_cocoons.go:57-63` 已有的四态对账形态办 —— **不新开一条路**）：
+	// 主控名册（`/api/fleet/models` = **声明**）⟷ **子端注册表回据**（各机心跳快照 `models[]`，
+	// 来源 = 子端 `backend.Manager.RegistryNames()`）。逐条落进四态之一：
+	//
+	//	declared=名册有 + subend=子端有   两处一致：名册与子端都有
+	//	declared=名册有 + subend=子端无   **名册有、子端无**（本账 `GAP-20260926-07` 的症状）
+	//	declared=名册无 + subend=子端有   子端有、名册无
+	//	subend=取不到                     快照里没有这台机／回据不是合法列表 ⇒ **不给结论**
+	//
+	// ★ `取不到` 必须是独立一格、不许并进「子端无」：读不到只是读不到，把它写成「子端无」
+	// 是**编一个数**（§九 M3），把它写成「子端有」正是本缺口本身。
+	const (
+		agentModelsDeclaredYes = "名册有"
+		agentModelsDeclaredNo  = "名册无"
+		agentModelsSubendYes   = "子端有"
+		agentModelsSubendNo    = "子端无"
+		agentModelsUnknown     = "取不到"
+	)
+	subend := map[string]bool{}
+	subendKnown := false
+	var snap jsonObj
+	if err := c.getJSON("/api/fleet/status", &snap); err == nil {
+		if so := asObj(asObj(snap["machines"])[machine]); so != nil && asList(so["models"]) != nil {
+			subendKnown = true
+			for _, it := range asList(so["models"]) {
+				subend[cell(it)] = true
+			}
+		}
+	}
+	declaredMissing := 0
 	fields := []string{"id", "host", "backend", "modality", "mem_gb", "file"}
 	rows := []map[string]string{}
+	inRoster := map[string]bool{}
 	for _, it := range asList(resp["models"]) {
 		o := asObj(it)
 		if o == nil || cell(o["host"]) != machine {
 			continue
 		}
-		rows = append(rows, project(o, fields))
+		row := project(o, fields)
+		inRoster[cell(o["id"])] = true
+		row["declared"] = agentModelsDeclaredYes
+		switch {
+		case !subendKnown:
+			row["subend"] = agentModelsUnknown
+		case subend[cell(o["id"])]:
+			row["subend"] = agentModelsSubendYes
+		default:
+			row["subend"] = agentModelsSubendNo
+			declaredMissing++
+		}
+		rows = append(rows, row)
 	}
-	return listCmd(inv, stdout, stderr, []string{"id", "host", "backend", "modality", "mem_gb"}, rows)
+	if subendKnown {
+		// 反向那一半（子端有、名册无）也要显形，否则「对账」只做了一半。
+		extra := make([]string, 0, len(subend))
+		for n := range subend {
+			if !inRoster[n] {
+				extra = append(extra, n)
+			}
+		}
+		sort.Strings(extra)
+		for _, n := range extra {
+			rows = append(rows, map[string]string{"id": n, "host": machine, "backend": "", "modality": "",
+				"mem_gb": "", "declared": agentModelsDeclaredNo, "subend": agentModelsSubendYes})
+		}
+		fmt.Fprintf(stderr, "%s: 对账（名册 ⟷ 子端注册表回据）—— 名册 %d 条 · 子端 %d 条 · 名册有子端无 %d 条 · 子端有名册无 %d 条\n",
+			progName, len(inRoster), len(subend), declaredMissing, len(extra))
+	}
+	return listCmd(inv, stdout, stderr, []string{"id", "host", "backend", "modality", "mem_gb", "declared", "subend"}, rows)
 }
 
 // cmdAgentLogs —— `zerg agent logs <机>`：**端点缺 ⇒ 不给结论**（不许拿别的东西当日志流）。

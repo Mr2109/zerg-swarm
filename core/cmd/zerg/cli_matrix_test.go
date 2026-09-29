@@ -210,6 +210,18 @@ func judgeCase(c matrixCase, rc, stdoutBytes int) error {
 // runCase 跑一条口令（进程内 · 层①）。stdin 一律为空：**无 TTY 零提示词**（K6）。
 func runCase(c matrixCase) (int, int) {
 	var out, errb bytes.Buffer
+	// ★ 只增（舱外改件 · 2026-09-29）：钉住本格的**取法** —— 格 why 写明的取法是
+	// `env -u ZERG_STATE_DIR -u ZERG_REPO`，判定口必须照同法复算。跑者的 `ZERG_STATE_DIR`
+	// 若泄漏进来（指到没有 `zerg-cli-gaps.jsonl` 的状态目录），`gap export`/`gap status`
+	// 会先撞「真源不在盘上」⇒ `error.kind=blocked`/`detail=ledger_absent` ⇒ 退码 `8`
+	// （「缺件优先于参数校验」正是既有设计），于是这两格**不可复算**（读数 8 ≠ 格 2）。
+	// 只增：调完即还原，不动既有两列、不动命令实现。
+	for _, k := range []string{"ZERG_STATE_DIR", "ZERG_REPO"} {
+		if v, ok := os.LookupEnv(k); ok {
+			os.Unsetenv(k)
+			defer os.Setenv(k, v)
+		}
+	}
 	rc := zerg.RunForTest(c.Argv, &out, &errb)
 	return rc, out.Len()
 }

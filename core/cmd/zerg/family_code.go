@@ -288,6 +288,17 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 扫不动（%v）⇒ 不给结论（退码 8）\n", progName, walkErr)
 		return exitBlocked
 	}
+	// ★ 面标记（缺口 `GAP-20260929-29` · 2026-09-29）：本命令的**机器面**自带「面」这一格读数。
+	// 本命令走 `filepath.Walk` **直读工作树**（tracked + 未跟踪件）；同仓两把「词在哪儿」的正门里，
+	// `impact` 的 ④a 走 `git grep` —— **索引面(tracked 件的工作树内容)**，两面对同一个词可以给出
+	// 不同答案。过去「面」只在散文/口径串里说 ⇒ 机器面拿不到直读口。此处按**只增**落键：
+	//   · 只写 `meta` 的**按需子键**（`face`）—— 不加第七个顶层键（`main.go` 口径 2）、
+	//     不覆盖任何旧子键（`face` 不在 `envMetaReserved` 里）；
+	//   · **只在 `--json` 那一态落键**（人面表格 / 退码 / 既有键逐字节不变，判在打印之前）；
+	//   · 零命中那一档同样落键（**零命中 ≠ 没有** —— 正是要知道「读的是哪个面」的场合）。
+	if inv.jsonGiven {
+		inv.metaAddJSON("face", jstr(codeFaceWorktree))
+	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i]["path"] != rows[j]["path"] {
 			return rows[i]["path"] < rows[j]["path"]
@@ -685,4 +696,82 @@ func foreignFlag(inv *invocation, own ...string) string {
 		return "--full"
 	}
 	return ""
+}
+
+// -------- 「面」的机器格与两面断言（缺口 `GAP-20260929-29` + `GAP-20260927-55`）----------------
+
+// codeFaceWorktree / codeFaceIndex —— 同仓两把「词在哪儿」的正门各自读的**面**（缺口 `GAP-20260929-29`）。
+//
+//	· 工作树面（`codeFaceWorktree`）：**tracked + 未跟踪**件的**工作树内容**（非快照），
+//	  目录闸取 `codeScanSkipDirs` ∪ 点项规则、件级闸取 `codeScanSkipFile`、排 `>2MB` 与非 UTF-8。
+//	  本命令 `code find` 与 `codeWorktreeFaceHits` 走这一面。
+//	· 索引面（`codeFaceIndex`）：只有 **tracked** 件的**工作树内容**（`git grep` 的实义 ——
+//	  不是 `--cached` 快照），未跟踪件不在面内。`impact` 的 ④a 走这一面。
+//
+// 「面」必须是**显式读数**：同一件、同一个词，两面的答案可以不同 ⇒ 零命中 ≠ 「没有」。二者与
+// `codeScanSkipDirs` 同处一件，`GAP-20260927-55` 的 ⑤c『两处共用同一枚排除表、禁抄一份』由此落地。
+const (
+	codeFaceWorktree = "工作树(tracked+未跟踪)"
+	codeFaceIndex    = "索引(tracked)"
+)
+
+// codeWorktreeFaceHits —— **工作树面**取「一个词」在仓内的命中行数（缺口 `GAP-20260927-55` 的 ④a 改法用）。
+//
+// 为什么它在本件里：统一口径要求『两处必须共用同一枚排除表、禁抄一份』⇒ 排除表 `codeScanSkipDirs` 与
+// 件级闸 `codeScanSkipFile` 只有**一处**真源（就是本件）；`impact` ④a 要换到工作树面就调这一枚，
+// **不再第二次实现**（也就不会漂出第二套口径）。
+//
+// 口径与 `cmdCodeFind` 的 walk **逐条同一**（目录闸 ∪ 件级闸 ∪ `>2MB` ∪ 非 UTF-8），只数**行命中数**、
+// 不建行清单 ⇒ 不碰 `cmdCodeFind` 的任何既有行为（本函数纯增）。
+func codeWorktreeFaceHits(root, word string) (int, error) {
+	re, err := regexp.Compile(regexpQuote(word))
+	if err != nil {
+		return 0, err
+	}
+	hits := 0
+	walkErr := filepath.Walk(root, func(p string, info os.FileInfo, werr error) error {
+		if werr != nil {
+			return nil // 只读面：读不动的子树跳过（与 `cmdCodeFind` 同一条判法）
+		}
+		if info.IsDir() {
+			dotDir := strings.HasPrefix(info.Name(), ".") && !codeScanKeepDots[info.Name()]
+			if codeScanSkipDirs[info.Name()] || dotDir {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if codeScanSkipFile(root, p) {
+			return nil
+		}
+		if info.Size() > codeFindMaxFileBytes {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil || !utf8.Valid(b) {
+			return nil
+		}
+		for _, ln := range strings.Split(string(b), "\n") {
+			if re.MatchString(ln) {
+				hits++
+			}
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return 0, walkErr
+	}
+	return hits, nil
+}
+
+// codeFaceMismatchNote —— 「两面不一致必须点名」的断言（缺口 `GAP-20260927-55` 的第二半）。
+//
+// 判据：同一个词在**工作树面**与**索引面**的答案不一致时，必须**点名**说出「差因是面」，
+// 而不是把一个 0 当「没有」。两面一致 ⇒ 回空串（不点名 ⇒ 调用方不产生任何输出）。
+func codeFaceMismatchNote(word string, worktreeHits, indexHits int) string {
+	if worktreeHits == indexHits {
+		return ""
+	}
+	return fmt.Sprintf(
+		"⚠ 两面不一致：词 %q 在**工作树面**(%d 条)与**索引面**(%d 条)答案不同 —— 差因是「面」，不是「有没有」；未跟踪件只在工作树面（%s）内 ⇒ 判影响请用 `zerg code find`",
+		word, worktreeHits, indexHits, codeFaceWorktree)
 }
