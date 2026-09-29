@@ -697,7 +697,7 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	before := r.State
 	r.State = stateWant
 	r.Evidence = landed
-	if stateWant == gapStSolved {
+	if stateWant == gapStSolved || stateWant == gapStWontDo {
 		r.SolvedAt = gapNow()
 	}
 	detail, rc, msg := gapRewriteOne(inv, led, idx, r, "set-state", before, stateWant)
@@ -1691,7 +1691,7 @@ func cmdGapBulkSetState(inv *invocation, stdout, stderr io.Writer) int {
 		before := rec.State
 		rec.State = stateWant
 		rec.Evidence = r.Ev
-		if stateWant == gapStSolved {
+		if stateWant == gapStSolved || stateWant == gapStWontDo {
 			rec.SolvedAt = gapNow()
 		}
 		detail, rc, msg := gapRewriteOne(inv, fresh, idx, rec, "bulk set-state", before, stateWant)

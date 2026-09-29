@@ -74,7 +74,7 @@
  "red_line": {
   "rule": "`RC11`：**入库件（git-tracked）永不进候选** —— 本件**唯一不可让的红线**。",
   "enforcement": "候选里出现一件 git-tracked ⇒ **整单拒**（退码 2，detail=tracked_in_candidates），不是「跳过那一件」—— 跳过去就说明判据自己看走了眼。",
-  "known": "`gateway/fleet.yaml.bak` 是 tracked（`git ls-files` 实测 · 调研-M19:522）—— 它是这条红线的活样本。"
+  "known": "`gateway/fleet.yaml.bak` 曾是这条红线的活样本（`git ls-files` 实测 · 调研-M19:522）；★ 2026-09-29 现读：该件已**仓外归档**、`git ls-files -- gateway/*.bak` **零命中**（出仓动作已执行完）⇒ 红线判据一字未改，只是**在仓活样本暂无**。"
  },
  "retired_marker": {
   "question": "`P-111`：退役的「标记」放哪（`RC2` 的 `orphan` 档需要一个可查的标记）",
@@ -159,7 +159,7 @@
     "gateway/*.bak"
    ],
    "tier": "2",
-   "judge": "档 ② **点名可动**：类在清册内（配置备份）⇒ 要人点名才动；★ 本类实测含**入库件**（`gateway/fleet.yaml.bak`）⇒ 那一件由 `RC11` 红线拦（整单拒）"
+   "judge": "档 ② **点名可动**：类在清册内（配置备份）⇒ 要人点名才动；★ 本类当初实测含**入库件**（`gateway/fleet.yaml.bak`）⇒ 那一件由 `RC11` 红线拦（整单拒）；★ 2026-09-29 现读：该件已仓外归档、`gateway/*.bak` 零命中 ⇒ 该样本不再在仓（`RC11` 一字未动）"
   },
   {
    "id": "#6",

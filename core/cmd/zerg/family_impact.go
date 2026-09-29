@@ -171,6 +171,19 @@ func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 			"（照实明说，不静默挑一个 · `R23`）\n", progName)
 	}
 	layers, budget := impactPullLayers(root, tgt, cheap, impactCacheOn, !cheap, docTier)
+	// 接线（`GAP-20260927-140` · 只此一处）：`impact` 在**真发生落盘那一刻**把本跑视为
+	// 「状态已改变」（§九 M4：changed = 本次调用是否改变状态）。取值来自**写点登记表**所辖
+	// 的那一处（`family_impact_cache.go` 的 `impactCacheWritePoints` · owner = `impactCacheStore`）
+	// —— 不另加分支：只读挡位（`impactCacheOff` / 干跑）与「状态≠取值」的不落盘层天然 `false`；
+	// 缓存**命中**不重写 ⇒ 亦 `false`。退码与人面/层表一个字不动（本行只落 `meta.changed`）。
+	wrote := false
+	for i := range layers {
+		if layers[i].cacheStored {
+			wrote = true
+			break
+		}
+	}
+	inv.changed = boolPtr(wrote)
 	rows, totalRows := impactCollectRows(layers)
 	// `B1`：「会红」那一行的**门步名**那一格 —— 真源 = 门禁 `--list` 现跑 + 逐名 `--emit-cmd`
 	// 探针（只读 · 零副作用）。两条闸：① 只在**有可 join 的脚本路径**时才拉（没有候选就不跑，
@@ -506,7 +519,12 @@ func impactDistinctFiles(items []map[string]string) int {
 //
 // ★ §3.5 铁律（`A3` 落成可判的形态）：**语义级条目只进「建议」行、永不进「会红」行** ——
 // 义近（概率）条目即使带着 `red` 也不许进这一行；`why` 归一到六选一后按 `义近` 逐条挡掉。
-func impactRedLine(layers []impactLayer, cheap bool, proj impactStepProjection) string {
+// impactRedContractIDs —— 从层行里抽**红契约 id**（③ 契约层命中条的闭集字段 `red`）。
+// ★ **唯一**抽取处（`GAP-20260927-261`）：人面「会红」行（`impactRedLine`）与 `dev edit`
+// 干跑档机器面（`red_contracts` / `contract_hits`）读**同一趟** ⇒ 禁二次算 ✗ · 禁两套口径 ✗。
+// 取值纪律逐字照搬原 `impactRedLine` 里那一段（`red` 空串不算 · `why` 归一为「义近」不算 · 去重 ·
+// 有红才排序）⇒ 人面那一行**输出逐字不变**。
+func impactRedContractIDs(layers []impactLayer) []string {
 	reds := []string{}
 	seen := map[string]bool{}
 	for _, l := range layers {
@@ -520,9 +538,32 @@ func impactRedLine(layers []impactLayer, cheap bool, proj impactStepProjection) 
 			}
 		}
 	}
-	parts := []string{}
 	if len(reds) > 0 {
 		sort.Strings(reds)
+	}
+	return reds
+}
+
+// impactContractHitCount —— ③ 契约层的**命中条数**（机器面 `contract_hits` 的取值 · 与
+// `impact_criteria` 那行的 `criteria_hits` 同款「只给计数 · 不给名字」；名字由上面那个函数给）。
+// 读法逐字来自 ③ 层取数处：行**只在命中时才 append**（一条命中 = 一行）⇒ 行数即命中条数。
+func impactContractHitCount(layers []impactLayer) int {
+	n := 0
+	for _, l := range layers {
+		if l.Seq != "③" {
+			continue
+		}
+		n += len(l.Rows)
+	}
+	return n
+}
+
+// impactRedLine 「会红」那一行（红契约名 = `impactRedContractIDs` 的同一趟结果；门步那一格见
+// `impactStepLineText` · 只预测不真跑）。
+func impactRedLine(layers []impactLayer, cheap bool, proj impactStepProjection) string {
+	reds := impactRedContractIDs(layers)
+	parts := []string{}
+	if len(reds) > 0 {
 		parts = append(parts, "契约 "+strings.Join(reds, ",")+"（`change_class=B` —— 改它会破承诺）")
 	} else {
 		parts = append(parts, "没命中契约条目（③ 层现读 `registry.json`）")

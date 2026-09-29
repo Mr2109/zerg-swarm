@@ -7599,6 +7599,121 @@
    "want_rc": 2,
    "want_stdout_bytes": 272,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、**错因不同**：这里根本没有字段表）"
+  },
+  {
+   "id": "gate/selfreport/diff#未知旗标",
+   "command": "gate selfreport diff",
+   "argv": [
+    "gate",
+    "selfreport",
+    "diff",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "执行前判（旗标名字表 `valueFlagName` = 唯一真源）⇒ 2 · stdout 0 字节；读数由**现跑派生**（仓外 overlay 制品 `laneB195-after-zerg`）"
+  },
+  {
+   "id": "gate/selfreport/diff#缺 --source（自报方）",
+   "command": "gate selfreport diff",
+   "argv": [
+    "gate",
+    "selfreport",
+    "diff"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺自报件 ⇒ 用法错 2 · stdout 0 字节（现跑派生）"
+  },
+  {
+   "id": "gate/selfreport/diff#两枚件同名（禁自报面自打分）",
+   "command": "gate selfreport diff",
+   "argv": [
+    "gate",
+    "selfreport",
+    "diff",
+    "--source",
+    "/var/tmp/laneB195-fx/selfreport-source.json",
+    "--against",
+    "/var/tmp/laneB195-fx/selfreport-source.json"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--source` 与 `--against` 指**同一枚件** ⇒ 自己跟自己比必然恒同（假绿）⇒ 用法错 2 · stdout 0 字节（现跑派生）"
+  },
+  {
+   "id": "gate/four-states#未知旗标",
+   "command": "gate four-states",
+   "argv": [
+    "gate",
+    "four-states",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "执行前判（旗标名字表 = 唯一真源）⇒ 2 · stdout 0 字节；读数由**现跑派生**"
+  },
+  {
+   "id": "gate/four-states#缺 --current/--patched",
+   "command": "gate four-states",
+   "argv": [
+    "gate",
+    "four-states"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺两条命令串 ⇒ 用法错 2 · stdout 0 字节（现跑派生）"
+  },
+  {
+   "id": "gate/four-states#两条命令串逐字相同",
+   "command": "gate four-states",
+   "argv": [
+    "gate",
+    "four-states",
+    "--current",
+    "/var/tmp/laneB195-fx/cand.sh",
+    "--patched",
+    "/var/tmp/laneB195-fx/cand.sh"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "两条命令串逐字相同 ⇒ 写面必然恒同（假红）⇒ 用法错 2 · stdout 0 字节（现跑派生）"
+  },
+  {
+   "id": "repo/diffstat#未知旗标",
+   "command": "repo diffstat",
+   "argv": [
+    "repo",
+    "diffstat",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "执行前判（旗标名字表 `valueFlagName` = 唯一真源）⇒ 2 · stdout 0 字节；读数由**现跑派生**（仓外 overlay 制品 `laneB198-after-zerg`）"
+  },
+  {
+   "id": "repo/diffstat#缺 --report（报告件）",
+   "command": "repo diffstat",
+   "argv": [
+    "repo",
+    "diffstat"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺报告件 ⇒ 用法错 2 · stdout 0 字节（现跑派生）"
+  },
+  {
+   "id": "repo/diffstat#只给净数（未报 · 判不了）",
+   "command": "repo diffstat",
+   "argv": [
+    "repo",
+    "diffstat",
+    "--report",
+    "/var/tmp/laneB198-fx/net-only.txt"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "报告**只给净数**（缺 原始 diff / 增 / 减 三格）⇒ 未报 ⇒ 判不了（退 2，非 0）· stdout 0 字节（读数由现跑派生 · 三格齐与缺件两档见 `tiers.green_cells` 与本格外的现跑读数）"
   }
  ],
  "tiers": {
@@ -7645,7 +7760,7 @@
        "--json"
       ],
       "want_rc": 0,
-      "why": "字段面 = 闭集五格 `step`/`status`/`rc`/`secs`/`log`（`core/cmd/zerg/family_gate_results.go:54`）⇒ 不给字段 = 闭集全量 · 退 0（同上一格：只登记 `want_rc`；stdout 字节数随那一趟结果表变，不冻结）",
+      "why": "字段面 = 闭集七格 `step`/`status`/`rc`/`secs`/`log`/`worktree_fp`/`head`（`core/cmd/zerg/family_gate_results.go:54`）⇒ 不给字段 = 闭集全量 · 退 0（同上一格：只登记 `want_rc`；stdout 字节数随那一趟结果表变，不冻结）",
       "state_dependent": "`gate results --json` 的退码取决于**那一趟门跑的结果台账**（`results.tsv`）落没落盘：门跑**进行中**（本格正是门⑪ 自己跑它的时候）台账还没落盘 ⇒ 现跑退 **8**（CLI 自陈**不给结论**）；门跑完再跑同一条命令 ⇒ 退 0。⇒ 本格 `want_rc=0` 在「门内」这个上下文里**不可能为真**（时序依赖，且门⑪ 的绿不许依赖「本机前序跑过门禁」这一副产品）；对它判红 = 把「没账可对」当成「账盘不符」。登记口径见缺口 `GAP-20260928-34`：格级可选标记 `state_dependent` ⇒ T7 对该格判**判不了**（不计合、不判红；真值若漂成别的退码照旧判红点名到格）。"
      }
     ]
@@ -7666,6 +7781,18 @@
      ],
      "want_rc": 0,
      "why": "`gate matrix` **无 `--out`** 时是纯读面：`--dry-run` 与 `--yes` 两枚确认档**被静默忽略**（不判、不报未知旗标）⇒ 退 0 + 逐格 TSV 上 stdout。同族 `gap export` / `archive manifest` 判在**命令处理器入口**、裸同给退 2；而本命令的三态门只开在 `--out` 那一支（`family_gate_matrix.go` 里那道 `dryRunYesConflict` 落在 `--out` 支内）⇒ 矩阵里那两格的 argv 都带 `--out`、只在「判在哪一层」这一点上与本格不同（形状相同则分辨不出 —— GAP-20260928-21）。★ 只登记 `want_rc`，**不冻结** stdout 字节数（= 整个矩阵的逐格 TSV，随 `cases[]` 涨落）。"
+    },
+    {
+     "id": "repo/diffstat#三格齐（报数三格全给）",
+     "command": "repo diffstat",
+     "argv": [
+      "repo",
+      "diffstat",
+      "--report",
+      "/var/tmp/laneB198-fx/three.txt"
+     ],
+     "want_rc": 0,
+     "why": "三格齐（`原始 diff N` / `净=…` 之外**真给** `增 N` / `减 N`）⇒ 退 0 + 三格逐字上 stdout —— **这一格才分辨得出「新子命令在不在」**（老制品跑同一 argv ⇒ `未知命令` rc 2 ⇒ 与本格 0 不符）；`cases[]` 是 must-fail 矩阵（不许 rc=0）⇒ 照既有绿格体例只登记在本块，Go 侧 `matrixFile.Tiers` 只认 `local`/`public` ⇒ 本格对判定口不可见（declaration-only）。★ 只登记 `want_rc`、不冻结 stdout 字节数。"
     }
    ]
   }

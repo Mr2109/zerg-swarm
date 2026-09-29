@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -256,6 +257,24 @@ func coreDaemonScripts(root string) []string {
 	return out
 }
 
+// coreDaemonLaunchdState —— ★B100 只增：`launchctl list` 的**只读快照**（label → [pid, 退出码]）。
+// 硬规矩：只跑只读的 `launchctl list`，**不启停 / 不加载 / 不卸载**；读不到 ⇒ 空表（调用方列「-」）。
+func coreDaemonLaunchdState() (map[string][2]string, string) {
+	out := map[string][2]string{}
+	b, err := exec.Command("launchctl", "list").Output()
+	if err != nil {
+		return out, fmt.Sprintf("`launchctl list` 跑不起来：%v", err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) < 3 {
+			continue
+		}
+		out[strings.TrimSpace(f[2])] = [2]string{strings.TrimSpace(f[0]), strings.TrimSpace(f[1])}
+	}
+	return out, ""
+}
+
 // cmdCoreDaemonLs —— `zerg core daemon ls [--declared]`（只读 · 本机面）：`scripts/svc/` 逐件 + 声明面。
 //
 // 为什么并进 `core` 而不新立 `svc` 族（§7.1 `P11` 的推荐口径）：服务族与构建族共用
@@ -292,6 +311,7 @@ func cmdCoreDaemonLs(inv *invocation, stdout, stderr io.Writer) int {
 	} else {
 		decl = rows
 	}
+	jobs, _ := coreDaemonLaunchdState() // ★B100 只增：只读快照，不启停
 	rows := []map[string]string{}
 	for _, s := range scripts {
 		rel := filepath.Join("scripts", "svc", s)
@@ -308,6 +328,16 @@ func cmdCoreDaemonLs(inv *invocation, stdout, stderr io.Writer) int {
 				row["note"] = "声明面没点名它 ⇒ 它是**手动脚本**（按 §十五.3 口径只报、不进自动候选）"
 			}
 		}
+		// ★B100 只增：三格（pid / 退出码 / 加载态）—— 只增列、不动既有列、不加启停动作
+		lpid, lexit, lload := "-", "-", "无作业"
+		if dr, ok := declaredForScript(decl, rel); ok && dr.Kind == "launchd" {
+			if v, ok2 := jobs[dr.Name]; ok2 {
+				lpid, lexit, lload = v[0], v[1], "已装载"
+			} else {
+				lload = "未装载"
+			}
+		}
+		row["pid"], row["exit"], row["loaded"] = lpid, lexit, lload
 		rows = append(rows, row)
 	}
 	// ── `--declared`：并给**幽灵段**（与 `doctor` 的「回收候选（幽灵服务）」同源同值）──
@@ -332,7 +362,7 @@ func cmdCoreDaemonLs(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.declared {
 		fmt.Fprintf(stderr, "%s: 幽灵条数 %d（与 doctor 的「回收候选（幽灵服务）」同源同值）· 只读：没杀、没停、没改任何进程\n", progName, ghostCount)
 	}
-	return listCmd(inv, stdout, stderr, []string{"name", "script", "declared", "note"}, rows)
+	return listCmd(inv, stdout, stderr, []string{"name", "script", "declared", "note", "pid", "exit", "loaded"}, rows)
 }
 
 // firstLine 取一段文本的首行（错误回显用）。

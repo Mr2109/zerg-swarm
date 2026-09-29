@@ -43,7 +43,7 @@
 //	     ★ 本单实测脚注：件头若**写出登记表的件名本身**，那个件名里的 ASCII 词会被扫描口径（`grep -E`）
 //	     认成命中 ⇒ 本行改写为不带该词（改写前：本件 1 行命中 ⇒ 门⑩ 必红；改写后：0 行命中）。
 //	面⑥ 脚本台账 / 公开标记（`scripts/公开标记.tsv` · 仓外台账）—— **不适用**：那两张表管的是
-//	     `scripts/` 面下的脚本件，本件是 `core/` 下的 Go 件（门72 `check-newfile-registry.py` 的分母
+//	     `scripts/` 面下的脚本件，本件是 `core/` 下的 Go 件（门76 `check-newfile-registry.py` 的分母
 //	     口径 = `scripts/` 面 ⇒ 本件不在其分母里）。
 //
 // 退码（真源 `zerg help exit-codes` / `exitcodes.go`）：`0` 报告跑通（含「有未覆盖件」—— 只报告档）·

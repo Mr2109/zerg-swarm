@@ -318,8 +318,21 @@ func TestEnvelopeTruth_MetaSubkeysAndOldKeys(t *testing.T) {
 	if strings.TrimSpace(src) == "" {
 		t.Error("旧子键语义破了：`meta.source` 空")
 	}
-	if string(meta["changed"]) != "false" {
-		t.Errorf("旧子键语义破了：只读命令的 `meta.changed` = %s（要 false）", string(meta["changed"]))
+	// ★ 2026-09-29 订正（新行为逐字）：`impact` 默认档**真写** impact 缓存件
+	// （`GAP-20260927-140`）⇒ 本跑**不是只读** ⇒ `meta.changed` 必须逐字 `true`。
+	// 旧断言（只读命令 ⇒ false）钉的是 A1 时代的只读骨架，已作废。
+	if string(meta["changed"]) != "true" {
+		t.Errorf("旧子键语义破了：`impact` 默认档真写 impact 缓存件 ⇒ `meta.changed` = %s（要逐字 true）", string(meta["changed"]))
+	}
+	// 成对负控（**真只读**）：`version` 一跑没有任何写面 ⇒ `meta.changed` 必须逐字 `false`
+	// （这条把「changed 不许恒 true」钉住 —— 否则上面那格退化成恒真）。
+	pdoc, _ := envelopeDoc(t, "version", "--json", "name")
+	var pmeta2 map[string]json.RawMessage
+	if err := json.Unmarshal(pdoc["meta"], &pmeta2); err != nil {
+		t.Fatalf("`version` 的 `meta` 不是对象：%v", err)
+	}
+	if string(pmeta2["changed"]) != "false" {
+		t.Errorf("负控失败：真只读命令 `version` 的 `meta.changed` = %s（要逐字 false）", string(pmeta2["changed"]))
 	}
 	// 新增子键**逐条**在册（本批两处 + 干跑那一处见下一条）：`layers_not_run[]` / `how_to_restore`。
 	for _, k := range []string{"layers_not_run", "how_to_restore"} {

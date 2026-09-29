@@ -2395,7 +2395,49 @@ const (
 	// `gapVerifyTierNone`，与 `family_gap_state.go` 的 verify-one 同一份常量 —— 不自造第二套字面）；
 	// 列 = **条数** + 其中**仍缺** + 其中**已解**；表尾固定两行（守恒式自校 + 占位桶只报告）。
 	gapStatusByTier = "tier"
+	// gapStatusByDay —— **时间维度面（缺口账 `GAP-20260929-34`）**：按**日**分桶（只读面）。
+	// 行 = 日桶（`found_at` / `solved_at` 两轴共用的键 = `YYYY-MM-DD` · 升序）；
+	// 列 = **新增**（`found_at` 落那一天）+ **销案**（`solved_at` 落那一天）+ **净**；
+	// 为什么另开一值而不是改 unit/module/tier：那三轴量的是「谁在欠」，本轴量的是「何时在变」
+	// —— 「新增 vs 销案」两条线是**趋势**，与三轴的静态分布不是同一维（混一轴两边都不清楚）。
+	gapStatusByDay = "day"
+	// gapStatusByFamily —— **片 FAM-1（2026-09-29）**：按账**自带的归属轴** `want_family` 分桶（只读面）。
+	// 与 `--by unit` / `--by module` **同形状、同排序键、同表尾对账自校**（行 = 族桶 · 列 = 未闭 / 已解 / 净 / 近邻量化）。
+	// 为什么另开一值而不并进 unit/module：那两轴量的是「**哪一件**在欠」（件面），本轴量的是「**哪一族**在欠」——
+	// `want_family` 是每条账**自带、不经推断**的归属；`unit` 兜底的那 529 条里只有 16% 抽得到仓内路径。
+	// ★ 脏值口径：族值**原值原样成桶**（同义异写不合并 —— 合并/归并不许由渲染面代办）；
+	//   空串 / 缺键 ⇒ 单列一桶 `gapFamNone`（逐字点名 · 不静默少算 · 不并进任何既有桶）。
+	gapStatusByFamily = "family"
 )
+
+// gapFamNone —— 族桶里 `want_family` 缺失 / 空串那一格的名字（「原值原样成桶」的对偶：空值也要有名有姓）。
+const gapFamNone = "（空 want_family）"
+
+// gapUnitNoFileSub —— 兜底件 `无件(命令面)`（`gapUnitNoFile`）的**渲染键**：按**该条自己的 `impact`**
+// 细分成 `无件(<impact>)`（六值：命令面 / 门禁面 / 文档面 / 公开面 / 换件面 / 归档面）。
+// ★ **只在渲染面改名**：账内 `unit` 一个字节不动（不改账、不写账）。
+// ★ 逐字：`impact == 命令面` 时返回值**逐字等于** `gapUnitNoFile` ⇒ 那一半既有读数零变；其余五值才分流。
+// ★ `impact` 取不到（不该有 —— 账内闭集自查已挡）⇒ 点名而不是冒充某个面。
+func gapUnitNoFileSub(impact string) string {
+	if strings.TrimSpace(impact) == "" {
+		return gapUnitNoFile + "（空 impact）"
+	}
+	return "无件(" + impact + ")"
+}
+
+// gapDayNone —— 日桶里**没有入账时刻**那一格的名字（`found_at` 缺 / 短于 10 字 ⇒ 进不了日轴）。
+// 逐字点名而不是丢掉：丢一条 = 日轴 Σ ≠ 账内条数 ⇒ 两条线当场对不上（不许静默少算）。
+const gapDayNone = "（无入账时刻）"
+
+// gapDayOf —— 一条时刻串的**日**（`YYYY-MM-DD` · `RFC3339Nano` 的前 10 字节）。
+// 取不到（空 / 短于 10）⇒ 空串（调用方自己点名兜底桶）——本函数**不判**合法性。
+func gapDayOf(ts string) string {
+	ts = strings.TrimSpace(ts)
+	if len(ts) < 10 {
+		return ""
+	}
+	return ts[:10]
+}
 
 // gapStatusTierOrder —— 三桶的**固定**输出序（不是排序键算出来的）：闭集三值按「有效 → 占位 → 无」
 // 排（判据有效性递减）。三桶**穷尽且互斥** ⇒ 任何一条必落且只落一桶（守恒式的地基）。
@@ -2536,6 +2578,31 @@ func (t gapStatusTierReconcile) JSON() string {
 		t.Sum, t.Total, t.Diff(), t.OK(), t.OutOfSet, t.Filtered)
 }
 
+// gapStatusFamReconcile —— `--by family` 面的**守恒式**三数（**现算** · 不填死）：
+// `Σ(桶内未闭) + 桶外 == 账内仍缺`。
+//
+// \tPageOpen   = Σ(本页桶未闭)   —— 由桶循环逐条累加出来的 `b.Open` 现加（不是从别处抄）；
+// \tOutside    = Σ(未上页桶未闭) —— 收窄到一页时那些桶的未闭数（**点名「桶外」而不是丢掉**）；
+// \tSumOpen    = PageOpen + Outside = Σ(**全部**桶未闭)；
+// \tLedgerOpen = 筛选循环自己累加的「账内仍缺」（**另一个独立累加**）。
+//
+// ★ 两边来自两个独立累加（桶循环 vs 筛选循环）⇒ 对不上就是本面坏了（与 unit/module 面同一条规矩）。
+type gapStatusFamReconcile struct {
+	PageOpen   int
+	Outside    int
+	LedgerOpen int
+	Buckets    int // 全部桶数（不是本页码数）
+	Filtered   bool
+}
+
+func (f gapStatusFamReconcile) SumOpen() int { return f.PageOpen + f.Outside }
+func (f gapStatusFamReconcile) Diff() int    { return f.SumOpen() - f.LedgerOpen }
+func (f gapStatusFamReconcile) OK() bool     { return f.Diff() == 0 }
+func (f gapStatusFamReconcile) JSON() string {
+	return fmt.Sprintf(`{"bucket_sum_open":%d,"outside_open":%d,"ledger_open":%d,"diff":%d,"ok":%t,"buckets":%d,"narrowed":%t}`,
+		f.SumOpen(), f.Outside, f.LedgerOpen, f.Diff(), f.OK(), f.Buckets, f.Filtered)
+}
+
 // gapStatusMetaAdd —— `gap status` 机器面信封字段的**唯一写入口**（只走 `metaAdd*` 既有口子 ⇒
 // 顶层六键不动）。五格与 `gap ls` **同形**（`total` / `hits` / `query` / `query_ts` / `ledger_sha16`），
 // 另加本面自己的三格（`by` / `top` / 对账）—— 缺一格两个时刻的排行就不可比。
@@ -2546,7 +2613,7 @@ func (t gapStatusTierReconcile) JSON() string {
 //	（`tier_reconcile` 含 `buckets_sum` / `ledger_total` / `diff` / `ok` / `out_of_set`）
 //	+ 顶层一格 `ledger_total`。**只有 tier 这一支**多出这两键 ⇒ `unit` / `module` 两态一字不变。
 func gapStatusMetaAdd(inv *invocation, states []string, prio, impact, by string, top, total, hits int,
-	rec gapStatusReconcile, tierRec gapStatusTierReconcile, ledgerPath string) {
+	rec gapStatusReconcile, tierRec gapStatusTierReconcile, famRec gapStatusFamReconcile, ledgerPath string) {
 	inv.metaAddJSON("total", strconv.Itoa(total))
 	inv.metaAddJSON("hits", strconv.Itoa(hits))
 	inv.metaAddJSON("query", gapStatusQueryText(states, prio, impact, by, top))
@@ -2557,6 +2624,13 @@ func gapStatusMetaAdd(inv *invocation, states []string, prio, impact, by string,
 	if by == gapStatusByTier {
 		inv.metaAddJSON("tier_reconcile", tierRec.JSON())
 		inv.metaAddJSON("ledger_total", strconv.Itoa(tierRec.Ledger))
+		return
+	}
+	// ★ 族轴（片 FAM-1）：件轴对账那两数（`real_bucket_open` / `none_bucket_open`）在族面上**不成立**
+	//   （桶键是族、不是件）⇒ 不冒充；改出本面自己的守恒式 `family_reconcile`
+	//   （`bucket_sum_open` + `outside_open` == `ledger_open`）。**只有族这一支**多出这一键。
+	if by == gapStatusByFamily {
+		inv.metaAddJSON("family_reconcile", famRec.JSON())
 		return
 	}
 	inv.metaAddJSON("reconcile", rec.JSON())
@@ -2574,10 +2648,11 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 	if by == "" {
 		by = gapStatusByUnit
 	}
-	if by != gapStatusByUnit && by != gapStatusByModule && by != gapStatusByTier {
+	if by != gapStatusByUnit && by != gapStatusByModule && by != gapStatusByTier && by != gapStatusByDay &&
+		by != gapStatusByFamily {
 		inv.setErr("usage", "bad_by", "--by 取值不在闭集里")
-		fmt.Fprintf(stderr, "%s: `--by %s` 不在闭集里 —— 只认 %s | %s | %s\n",
-			progName, by, gapStatusByUnit, gapStatusByModule, gapStatusByTier)
+		fmt.Fprintf(stderr, "%s: `--by %s` 不在闭集里 —— 只认 %s | %s | %s | %s | %s\n",
+			progName, by, gapStatusByUnit, gapStatusByModule, gapStatusByTier, gapStatusByDay, gapStatusByFamily)
 		return exitUsage
 	}
 	top := gapStatusDefaultTop
@@ -2652,6 +2727,126 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 		return exitFail
 	}
 
+	// ③′ ★ **时间维度面（`--by day` · 缺口账 `GAP-20260929-34`）**：只读 · 早返。
+	//   为什么早返而不并进下面的桶循环：下面的桶/排序/对账三条判据量的是「谁在欠」（件面静态分布），
+	//   本面量的是「何时在变」（时间趋势）—— 共用一个桶结构会把两套口径混成一笔（`All` 既当条数
+	//   又当新增数 ⇒ 对账等式当场失去意义）。早返**一个既有字节都不动**：既有三值的读数逐字不变。
+	//   口径：**新增** = `found_at` 落那一天 · **销案** = `solved_at` 落那一天（两轴各自累加 ·
+	//   同一天两数并列）· **净** = 新增 − 销案。
+	//   ★ 自报缺口（不许静默少算）：`不做` 那一支**不落闭案时刻**（`set-state` 只在转 `已解` 时
+	//     写 `solved_at` · `family_gap_state.go`）⇒ 销案线对那 11 条**系统性少**，表尾逐条点名条数。
+	if by == gapStatusByDay {
+		wantStates := inv.flagVals("--state")
+		wantPrio := strings.TrimSpace(inv.flagVal("--prio"))
+		wantImpact := strings.TrimSpace(inv.flagVal("--impact"))
+		type gapDayBucket struct{ newN, closedN int }
+		days := map[string]*gapDayBucket{}
+		order := []string{}
+		addDay := func(d string) *gapDayBucket {
+			b, ok := days[d]
+			if !ok {
+				b = &gapDayBucket{}
+				days[d] = b
+				order = append(order, d)
+			}
+			return b
+		}
+		popTotal, closedTotal, noTsNone, closedNoTs := 0, 0, 0, 0
+		for _, r := range led.Recs {
+			if len(wantStates) > 0 && !gapIn(wantStates, r.State) {
+				continue
+			}
+			if wantPrio != "" && r.Prio != wantPrio {
+				continue
+			}
+			if wantImpact != "" && r.Impact != wantImpact {
+				continue
+			}
+			popTotal++
+			d := gapDayOf(r.FoundAt)
+			if d == "" {
+				d, noTsNone = gapDayNone, noTsNone+1
+			}
+			addDay(d).newN++
+			if s := gapDayOf(r.SolvedAt); s != "" {
+				addDay(s).closedN++
+				closedTotal++
+			} else if r.State == gapStSolved || r.State == gapStWontDo {
+				closedNoTs++
+			}
+		}
+		sort.Strings(order)
+		total := len(order)
+		hits, cut := total, false
+		if total > top {
+			hits, cut = top, true
+		}
+		if total == 0 {
+			inv.changed = boolPtr(false)
+			inv.setErr("failed", "no_match", "零命中")
+			fmt.Fprintf(stderr, "零命中：账内 %d 条 · 与筛选条件相符 0 条（退码 1 —— 「没有」不是「失败」，也不是绿）\n", len(led.Recs))
+			return exitFail
+		}
+		inv.changed = boolPtr(false)
+		if cut {
+			inv.markTruncated()
+			fmt.Fprintf(stderr, "%s: ⚠ 本页只列前 %d 个日桶 · 真命中 %d 个（已裁 %d 个）—— **这不是全集**\n",
+				progName, hits, total, total-hits)
+		}
+		if inv.jsonGiven {
+			rows := make([]map[string]string, 0, hits)
+			for _, d := range order[:hits] {
+				b := days[d]
+				rows = append(rows, map[string]string{
+					"bucket": d,
+					"count":  strconv.Itoa(b.newN),
+					"open":   strconv.Itoa(b.newN),
+					"closed": strconv.Itoa(b.closedN),
+					"net":    strconv.Itoa(b.newN - b.closedN),
+					"new":    strconv.Itoa(b.newN),
+				})
+			}
+			return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
+		}
+		fmt.Fprintf(stdout, "zerg gap status --by day · 账内 %d 条 · 本筛选后 %d 条 · 日桶 %d 个（本页 %d 个）\n",
+			len(led.Recs), popTotal, total, hits)
+		fmt.Fprintf(stdout, "口径：新增 = `found_at` 落那一天（入账轴）· 销案 = `solved_at` 落那一天（闭案轴）· 净 = 新增 − 销案\n")
+		fmt.Fprintf(stdout, "查询元：query_ts=%s · ledger_sha16=%s\n", gapNow(), gapLsLedgerSHA16(led.Path))
+		fmt.Fprintf(stdout, "  %s  %s  %s  %s\n", pad("日期", 10), pad("新增", 6), pad("销案", 6), pad("净", 6))
+		for _, d := range order[:hits] {
+			b := days[d]
+			fmt.Fprintf(stdout, "  %s  %s  %s  %s\n", pad(d, 10),
+				pad(strconv.Itoa(b.newN), 6), pad(strconv.Itoa(b.closedN), 6),
+				pad(fmt.Sprintf("%+d", b.newN-b.closedN), 6))
+		}
+		// 表尾守恒式：左边 **由桶循环自己累加出来的** `sumNew`，右边是筛选循环数的 `popTotal`
+		// —— 两个独立累加（不是同一个变量抄两遍）⇒ 对不上就是本面坏了，判红 1（与 tier 面同一条规矩）。
+		sumNew := 0
+		for _, d := range order {
+			sumNew += days[d].newN
+		}
+		mark := "✓"
+		if sumNew != popTotal {
+			mark = "✗（**不对账** —— 日轴丢了/重算了条数）"
+		}
+		fmt.Fprintf(stdout, "守恒式：Σ新增 %d == 本筛选后条数 %d %s（差 %d · 两个数各自现算）· Σ销案 %d\n",
+			sumNew, popTotal, mark, sumNew-popTotal, closedTotal)
+		if sumNew != popTotal {
+			inv.setErr("failed", "day_not_reconciled", "日轴 Σ新增 与本筛选后条数对不上")
+			fmt.Fprintf(stdout, "  ⚠ 守恒式不成立：Σ新增 %d ≠ 本筛选后条数 %d（差 %+d）⇒ 读数不许外发 ⇒ 判红 1\n",
+				sumNew, popTotal, sumNew-popTotal)
+			return exitFail
+		}
+		if noTsNone > 0 {
+			fmt.Fprintf(stdout, "  ⚠ 无 `found_at` 的 %d 条落 `%s` 桶（没入账时刻 ⇒ 进不了日轴 · 已点名，未丢）\n",
+				noTsNone, gapDayNone)
+		}
+		if closedNoTs > 0 {
+			fmt.Fprintf(stdout, "  ⚠ **闭案无时刻** %d 条（现态已闭（已解/不做）却无 `solved_at`）⇒ 销案线**系统性少算**，本读数**不是**净减\n", closedNoTs)
+		}
+		return exitOK
+	}
+
 	// ④ 筛选（AND）+ 分桶 —— 一次过。判据序与 `gap ls` 同：state / prio / impact。
 	wantStates := inv.flagVals("--state")
 	wantPrio := strings.TrimSpace(inv.flagVal("--prio"))
@@ -2688,6 +2883,9 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 		switch by {
 		case gapStatusByModule:
 			key = r.Module
+		case gapStatusByFamily:
+			// 族轴：键 = 账**自带**的 `want_family`（原值原样成桶 · 不经推断 · 不合并同义异写）。
+			key = r.WantFam
 		case gapStatusByTier:
 			// 分级 = **已落库的 `verify_tier` 优先**；未落库 ⇒ 现读 `verify_cmd` 现算（三值穷尽）。
 			t, oos := gapStatusTierOf(r)
@@ -2696,7 +2894,16 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 				tierOutOfSet++
 			}
 		}
-		if by != gapStatusByTier && key == "" {
+		if by == gapStatusByFamily && strings.TrimSpace(key) == "" {
+			key = gapFamNone // 空值单列一桶（逐字点名 —— 不并进任何既有桶）
+		}
+		// ★ **兜底值渲染面细分**（片 FAM-1）：`unit` **恰等于**兜底字面量 `gapUnitNoFile`（`无件(命令面)`）时，
+		//   桶键按**该条自己的 `impact`** 细分成 `无件(<impact>)` —— 只改渲染键，**不改账、不写账**。
+		//   逐字判据：仅 `by == unit` 且键恰等于兜底字面量这一格细分（其余 197 个 unit 值一个字节不动）。
+		if by == gapStatusByUnit && key == gapUnitNoFile {
+			key = gapUnitNoFileSub(r.Impact)
+		}
+		if by != gapStatusByTier && by != gapStatusByFamily && key == "" {
 			key = gapUnitNoneMod // 无件兜底桶（对账等式里点名的那一枚）
 		}
 		b, ok := buckets[key]
@@ -2706,7 +2913,7 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 			order = append(order, key)
 		}
 		b.All++
-		if by != gapStatusByTier && r.Module != gapUnitNoneMod {
+		if (by == gapStatusByUnit || by == gapStatusByModule) && r.Module != gapUnitNoneMod {
 			b.None = false
 		}
 		switch r.State {
@@ -2786,6 +2993,15 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 	if total > top {
 		hits, cut = top, true
 	}
+	// 族轴守恒式**现算**（片 FAM-1）：本页桶未闭 / 桶外未闭 各自累加 ⇒ 与筛选循环的 `popOpen` 对账。
+	famRec := gapStatusFamReconcile{LedgerOpen: popOpen, Buckets: total, Filtered: hasNarrow}
+	for i, b := range bs {
+		if i < hits {
+			famRec.PageOpen += b.Open
+			continue
+		}
+		famRec.Outside += b.Open
+	}
 
 	// 零命中（筛选后一条都不剩 ⇒ 与 `gap ls` 同判：1）—— ★ tier 面另加一档：三桶恒存在，
 	// 故「收窄后 0 条」必须单独判（否则会拿三个 0 冒充读数）。
@@ -2794,14 +3010,14 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("failed", "no_match", "零命中")
 		fmt.Fprintf(stderr, "零命中：账内 %d 条 · 与筛选条件相符 0 条（退码 1 —— 「没有」不是「失败」，也不是绿）\n", len(led.Recs))
 		if inv.jsonGiven {
-			gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, by, top, 0, 0, rec, tierRec, led.Path)
+			gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, by, top, 0, 0, rec, tierRec, famRec, led.Path)
 			emitEnvelopeWith(stdout, find(inv.path), "[]", 0, inv)
 		}
 		return exitFail
 	}
 
 	inv.changed = boolPtr(false)
-	gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, by, top, total, hits, rec, tierRec, led.Path)
+	gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, by, top, total, hits, rec, tierRec, famRec, led.Path)
 	if clampedTop {
 		inv.warnf("--top 越界（>%d）⇒ 已收到一页硬顶 %d", gapLsRowCap, gapLsRowCap)
 		fmt.Fprintf(stderr, "%s: ⚠ `--top` 超过一页硬顶 %d ⇒ 已收到 %d（与 `gap ls` / `find` / `code find` 同一个数）\n",
@@ -2815,9 +3031,14 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: ⚠ 本页只列前 %d 个桶 · 真命中 %d 个（已裁 %d 个）—— **这不是全集**，别据此下结论；要收窄：--by / --top / --state / --prio / --impact\n",
 			progName, hits, total, total-hits)
 	}
-	if by != gapStatusByTier && !rec.OK() {
+	if (by == gapStatusByUnit || by == gapStatusByModule) && !rec.OK() {
 		inv.warnf("对账不成立：Σ(有件桶未闭) %d + 无件桶 %d = %d ≠ 账内仍缺 %d（差 %+d）",
 			rec.RealOpen, rec.NoneOpen, rec.Left(), rec.LedgerOpen, rec.Diff())
+	}
+	// ★ 族轴守恒式告警（片 FAM-1）：Σ(桶内未闭) + 桶外 ≠ 账内仍缺 ⇒ 点名（与 unit/module 面同判：warning）。
+	if by == gapStatusByFamily && !famRec.OK() {
+		inv.warnf("族轴守恒式不成立：Σ(桶内未闭) %d + 桶外 %d = %d ≠ 账内仍缺 %d（差 %+d）",
+			famRec.PageOpen, famRec.Outside, famRec.SumOpen(), famRec.LedgerOpen, famRec.Diff())
 	}
 	// ★ tier 面守恒式**真自校**：Σ(三桶条数) 与 现读总账条数 对不上 ⇒ **判红 1**（不是 warning ——
 	// 分级面自己坏了，「三桶之和 == 总账」这条判据就不成立，读数不许外发）。占位桶只报告（见人面表尾）。
@@ -2915,6 +3136,9 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 	if by == gapStatusByModule {
 		colName = "模块(module)"
 	}
+	if by == gapStatusByFamily {
+		colName = "族(want_family)"
+	}
 	kw := displayWidth(colName)
 	for _, b := range bs[:hits] {
 		kw = maxInt(kw, displayWidth(truncateDisplay(b.Key, 48)))
@@ -2937,6 +3161,18 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 	mark := "✓"
 	if !rec.OK() {
 		mark = "✗（**不对账** —— 分桶面坏了 · 差数见下）"
+	}
+	if by == gapStatusByFamily {
+		fmark := "✓"
+		if !famRec.OK() {
+			fmark = "✗（**不对账** —— 族轴分桶面坏了 · 差数见下）"
+		}
+		fmt.Fprintf(stdout, "对账：Σ(桶内未闭) %d + 桶外 %d = %d == 账内仍缺 %d %s（差 %d · 桶 %d 个）\n",
+			famRec.PageOpen, famRec.Outside, famRec.SumOpen(), famRec.LedgerOpen, fmark, famRec.Diff(), famRec.Buckets)
+		if !famRec.OK() {
+			fmt.Fprintf(stdout, "  ⚠ 族轴守恒式不成立：Σ(桶内未闭) + 桶外 与 账内仍缺 对不上 —— 差数 %+d（族轴分桶漏/重算 · 别据此下结论）\n", famRec.Diff())
+		}
+		return exitOK
 	}
 	fmt.Fprintf(stdout, "对账：Σ(有件桶未闭) %d + 无件桶 %d = %d == 账内仍缺 %d %s（差 %d）\n",
 		rec.RealOpen, rec.NoneOpen, rec.Left(), rec.LedgerOpen, mark, rec.Diff())

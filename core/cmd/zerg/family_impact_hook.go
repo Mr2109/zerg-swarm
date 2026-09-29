@@ -356,6 +356,11 @@ type impactDryRunSummary struct {
 	// State —— 「没取到数」那一档的**分档**（`""` = 取到数了 · `new_file` = **新增件**（本件改前本来
 	// 就没有前态）· `unreadable` = **改前态读不到**（不是「没有」））。人面、机器面、审计面读**同一格**。
 	State string
+	// ★ `GAP-20260927-261`（**门步那一半**）：门步那一格的**取值本体** —— 与下面人面 `Lines[1]` 里
+	// 「门步：…」那一格**同源**（同一次 `impactStepProjectionNotRun()` 传给 `impactHumanLines`
+	// 的那一枚 · 禁另算一遍 ✗）。机器面按干跑既有那两行机读行的形状把它接出去
+	// （`impactStepsMachineLine`）⇒ 人面一个字节不变、机器面多一格可判的 `impact_steps`。
+	Step impactStepProjection
 }
 
 // 「没取到数」那一档的**闭集**（照同族 `error.kind` 的纪律：取值写死、不许自由拼串 ⇒ 三个面读同一枚）。
@@ -412,7 +417,10 @@ func impactDryRunSummaryOf(root, rel string, beforeMissing bool) impactDryRunSum
 	rev := impactReversibilityOf(root, tgt)
 	// `B1`：干跑那一档**不拉步名真源**（`--list` 现跑会先跑整套门禁自检 · 本机 8.3–9.5s ⇒
 	// §4.4 的档位纪律：干跑是人每次敲都走的那条路）⇒ 那一格照实写「**未机检**」并给出怎么拉。
-	l1, l2, l3 := impactHumanLines(tgt, layers, rows, rev, true, impactStepProjectionNotRun())
+	proj := impactStepProjectionNotRun()
+	l1, l2, l3 := impactHumanLines(tgt, layers, rows, rev, true, proj)
+	// ★ 门步那一格**同一个取值**同时喂人面（`l2`）与机器面（`s.Step`）⇒ 两面不会漂。
+	s.Step = proj
 	if total == 0 {
 		s.Reason = "**面内未见**（六层全量 **0** 条）"
 		s.Text = fmt.Sprintf("影响面：%s —— 按 §八 第 2 件**不打三行**（零影响时打三行 = 灌噪声）；「没报 ≠ 没事」（`F6`）· head_sha=%s",
@@ -507,4 +515,25 @@ func emitImpactDryRunSummary(w io.Writer, s impactDryRunSummary) {
 	}
 	fmt.Fprintf(w, "%s: 影响面摘要：六层全量 %d 条 · head_sha=%s（默认档 · §4.4 只吃毫秒层 + 编译器层）\n",
 		progName, s.Rows, dashIfEmpty(s.HeadSHA))
+	// ★ `GAP-20260927-261`（**门步那一半**）：门步那一格进机器面 —— 与人面上一行（`Lines[1]` 的
+	// 「门步：…」）**同一枚取值**（`s.Step` · 上面 `impactDryRunSummaryOf` 里那一次赋值）⇒
+	// 不二次算、不解析人面散文。形状 = 干跑既有那两行机读行同款 ⇒ 脚本能切这一格。
+	fmt.Fprintf(w, "%s\n", impactStepsMachineLine(s.Step))
+}
+
+// impactStepsMachineLine —— 干跑机器面上「门步」那一格的取值（`GAP-20260927-261` 门步那一半）。
+//
+// 形状：照干跑既有的那两行机读行（`impact_hook` / `impact_criteria` —— `key=value` · 一行一事实 ·
+// 布尔/占位用纯 ASCII · 闭集 token 逐字用投影自己的词），落同一处 stderr；**不新造子命令、
+// 不新立旗标、不改六键包封** ✗。
+//
+// 取值：**只取现成的投影本体**（`impactDryRunSummary.Step` —— 与人面「门步：…」那一行同一枚，
+// 同一次 `impactStepProjectionNotRun()`）⇒ 不二次算、不解析散文、不另立第二套口径。
+//
+// 三态**不许混**（同族纪律）：`state` = 投影自己的闭集 token（取值 / 未机检 / 未拉 / 不可机检 / 空）
+// ⇒ 脚本能把「**没跑**」与「**没有**」分开；`steps=0` 只表示本跑没投影出步名（`state=未机检` 时
+// **不是**「这条没有门步」）。
+func impactStepsMachineLine(p impactStepProjection) string {
+	return fmt.Sprintf("impact_steps state=%s cands=%d steps=%d unjoined=%d",
+		kvOrDash(p.Status), p.Cands, len(p.Steps), len(p.Unjoined))
 }
