@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""check-newfile-registry.py —— 门72 **新件登记完整性**：件级 × 六张登记表（**只报告** · 起手不接闸）
+"""check-newfile-registry.py —— 门76 **新件登记完整性**：件级 × 六张登记表（**只报告** · 起手不接闸）
 
 一句话：**一张新落的脚本件，逐面问「这张表里有没有它」**——缺哪张表就逐条点名。
 （域级对拍已由门57 `check-marks-coverage-parity.py` 做 ⇒ **本门只补件级**，不重造域级。）
@@ -469,7 +469,7 @@ def audit(root, new_files=None, inv=None, baseline=None):
 
 def run(root, new_files, inv, strict, baseline=None):
     res = audit(root, new_files=new_files, inv=inv, baseline=baseline)
-    print("门72 新件登记完整性（件级 × 六张登记表 · **只报告**）")
+    print("门76 新件登记完整性（件级 × 六张登记表 · **只报告**）")
     print("  仓根：%s" % root)
     d = res["faces"].get("口径差") or {}
     print("  口径差栏：台账口径 %s 件 · 门①候选面 %s 件 · 对差 %s 件（参照读数 · 不并入判红）"
@@ -571,7 +571,7 @@ FIXTURE_DRY = """{
   "件": [{"file": "scripts/old.sh"}]\n}\n"""
 
 FIXTURE_STEPS = """#!/usr/bin/env bash
-add_step "gates" tri-report "门72 新件登记完整性（只报告）" python3 scripts/gates/check-newfile-registry.py
+add_step "gates" tri-report "门76 新件登记完整性（只报告）" python3 scripts/gates/check-newfile-registry.py
 add_step "gates" tri "门⑩ 干跑：一套语义（阻断）" scripts/gates/check-semantics-stub.py
 add_step "gates" tri "public: 公开面标记表" python3 scripts/gates/check-public-marks.py
 """
@@ -698,7 +698,7 @@ def run_self_test():
 
 def main():
     ap = argparse.ArgumentParser(add_help=True,
-                                 description="门72 新件登记完整性：件级 × 六张登记表（只报告 · 起手不接闸）")
+                                 description="门76 新件登记完整性：件级 × 六张登记表（只报告 · 起手不接闸）")
     ap.add_argument("--repo", default=REPO, help="被查仓根（默认本仓）")
     ap.add_argument("--baseline", default=DEFAULT_BASELINE, help="冻结基线（仓外生成件 · --dump-baseline 生成）")
     ap.add_argument("--dump-baseline", default=None, help="把现读件集写成基线（仓外路径）后退出")
@@ -717,7 +717,7 @@ def main():
             return 2
         os.makedirs(os.path.dirname(os.path.abspath(args.dump_baseline)), exist_ok=True)
         with open(args.dump_baseline, "w", encoding="utf-8") as fh:
-            fh.write("# 门72 冻结基线（现读件集 · 生成件 · 禁手维）\n")
+            fh.write("# 门76 冻结基线（现读件集 · 生成件 · 禁手维）\n")
             for f in sorted(face):
                 fh.write(f + "\n")
         print("基线已写：%s（%d 件）" % (args.dump_baseline, len(face)))

@@ -92,6 +92,11 @@ type impactLayer struct {
 	CacheNote string
 	CacheCost time.Duration
 
+	// 本跑这一层**真发生落盘**（`impactCacheStore` 成功返回）—— 只驱动 `meta.changed`
+	// （`GAP-20260927-140`：写点登记表 `impactCacheWritePoints` owner = `impactCacheStore`
+	// 所辖的那一处；命中不重写 ⇒ 恒 `false`）。非导出：不进任何人面/机器面、不改层表六行。
+	cacheStored bool
+
 	// `B4` 分层预算：这一层这一跑在**取数闭包里自计时**的耗时（`B4`：缓存态与耗时**同源** ——
 	// 命中 = 读落盘件的耗时 · 未命中 = 该层取数耗时）；`= 0` 表示本层没自计时（③④⑤⑥ 今天不自计
 	// ⇒ 照实记 0，**不进预算裁决**、也不补零）。
@@ -318,6 +323,7 @@ func impactPullLayers(root string, tgt *impactTarget, cheap bool, mode impactCac
 				lay.HeadSHA, lay.At = head, at
 				if lay.Status == "取值" {
 					if serr := impactCacheStore(path, lay, fp, lay.Cost); serr == nil {
+						lay.cacheStored = true
 						lay.CacheNote = "未命中（" + why + "）⇒ 现算 + 落盘"
 					} else {
 						lay.CacheNote = "未命中（" + why + "）⇒ 现算（落盘失败：" + serr.Error() + "）"
@@ -771,6 +777,14 @@ func impactLayerLexical(root string, tgt *impactTarget) impactLayer {
 	}
 	hits := add(w1, "词法", "词边界命中（`git grep -w`）", impactRowPage)
 	hitsR := add(w2, "词法", "正则面命中（`git grep -E`）", impactRowPage)
+	// ④a 面标记（GAP-20260927-55 · 「面」作显式读数而非散文）：④a 走 `git grep` ⇒ **索引面(tracked 件的工作树内容)**，
+	// 未跟踪件不在面内 ⇒ 与 `zerg code find` 的**工作树面**不同源。零命中 ≠ 「没有」。
+	// ★ 2026-09-29 订正（GAP-20260927-55 落点修正）：这一句是**面读数、不是命中条目** —— 不许进 `lay.Rows`
+	// （进了会被 `impactCollectRows`（family_impact.go:327）当候选项计入 `truncated_detail.total_items/dropped_items`
+	// 与「已裁 N 条」⇒ 真·零命中件也恒报 `truncated=true`）。落点改用本层**已存在**的人面读数格 `lay.Detail`
+	// （下方 `读数：` 那一行 ⇒ 仍在可见输出里）⇒ **不另加字段**、不进卡片闭集、不算候选。
+	faceMark := "④a 词法面 = **索引面(tracked 件的工作树内容)**（`git grep` 只搜 tracked）" +
+		"：**未跟踪件不在面内** ⇒ 判影响须用工作树面 `zerg code find`；零命中 ≠ 没有"
 
 	// ④b 形近（`ast-grep` · `R11` 已拍）：目标件的**顶层符号**的**调用形状**（`名($$$A)`）——
 	// 结构面与词法面的分野：注释里提到 `foo` 只有词法面看得见，`foo(` 这种**调用形状**才是形近面。
@@ -832,8 +846,8 @@ func impactLayerLexical(root string, tgt *impactTarget) impactLayer {
 	}
 	lay.Rows = rows
 	lay.Status = "取值"
-	lay.Detail = fmt.Sprintf("④a 词边界 `git grep -w` %d 条 · 正则面 `git grep -E` %d 条（**两个数不同源**，别混用）· %s · 条数上限 %d/档（`truncated` 那一格今天在 `emitEnvelopeWith` 里是死的 ⇒ 上限走这里明说）",
-		hits, hitsR, sgNote, len(rows))
+	lay.Detail = fmt.Sprintf("④a 词边界 `git grep -w` %d 条 · 正则面 `git grep -E` %d 条（**两个数不同源**，别混用）· %s · 条数上限 %d/档（`truncated` 那一格今天在 `emitEnvelopeWith` 里是死的 ⇒ 上限走这里明说）· 面：%s",
+		hits, hitsR, sgNote, len(rows), faceMark)
 	return lay
 }
 

@@ -357,3 +357,36 @@ func shortHex(s string) string {
 	}
 	return dashIfEmpty(s)
 }
+
+// ---- 写点登记（`GAP-20260927-140` P0 · 只增登记 · 零行为改动）--------------------------------
+//
+// 为什么要它：`zerg impact` 走默认档 `impactCacheOn` ⇒ **真写盘**（下限三处：建目录 + 写临时件 +
+// 改名）；而该命令面在 `catalog()`（`main.go` 的 `path: []string{"impact"}` 那一条）里**没有
+// `danger`** ⇒ 本仓唯一执行门 `cmdGuarded`（它只照登记了 `danger` 的面）**照不到它** ⇒ 症状里的
+// 「默认档写盘零授权」。全账 9 个零授权写点里本件占 1 个（`impact`）。
+//
+// 本登记把「**写调用 → 所属函数 → 建议授权档**」三件**逐字**摊在源码里（机读形状），供两处消费：
+//
+//	① 静态元门（缺口正文 §⑤ 的 `check-write-authz.py`：判据 = 写点 → 所属函数 → `catalog()`
+//	   命令面 → 授权档；红灯 = 不在白名单也不在豁免清单）；
+//	② 给 `catalog()` 补 `dangerSpec` 时**不必再读一遍实现**（档位与写点由本表现读对拍）。
+//
+// 纪律（本登记自身守住的边界）：
+//   - **只增**：没有改任何既有函数的行为、没有删任何既有旗标登记、没有削任何断言；
+//   - `Call` 一栏**逐字**抄本件源码（去掉了外层 `if err :=` / 缩进）⇒ 现读可对拍，不做自然语言转写；
+//   - `Tier` 是**建议档**（本表不是执行门本身）：执行门仍只认 `catalog()` 的 `dangerSpec`，
+//     本表**不**替代它 —— 只把它「照不到」的那一格摊在亮处（避免「登记表看起来像闸门」的误读）。
+//
+// 落点是**状态目录**（`stateDirOf()` · 不在仓内）—— 本登记不改落点，只把落点的事实登记下来。
+type impactCacheWritePoint struct {
+	Call  string // 写调用（逐字来自本件源码 · 现读可对拍）
+	Owner string // 所属函数（写点所在地）
+	Tier  string // 建议授权档（闭集同 `guard.go`：`dangerD2` / `dangerD3`）
+}
+
+// impactCacheWritePoints —— 本件的写点全表（**增写点必须同时增表行** ⇒ 静态门照得到）。
+var impactCacheWritePoints = []impactCacheWritePoint{
+	{Call: "os.MkdirAll(filepath.Dir(path), 0o755)", Owner: "impactCacheStore", Tier: dangerD2},
+	{Call: "os.WriteFile(tmp, b, 0o644)", Owner: "impactCacheStore", Tier: dangerD2},
+	{Call: "os.Rename(tmp, path)", Owner: "impactCacheStore", Tier: dangerD2},
+}

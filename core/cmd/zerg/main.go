@@ -568,6 +568,32 @@ func init() {
 			passthrough: true,
 			run:         cmdGate,
 		},
+		// ---- T09/T11 正门两条（本枚 · **只增**）----
+		// ★ 两条都**不走** `cmdGate`：`cmdGate` 的动作分派长在 `gate.go`（本枚不许改的第三件之外），
+		//   而 `resolve()` 的 3 段前缀试探（见其函数头）已能把 `gate selfreport diff` 精确命中 ⇒
+		//   直接把 `run` 指向本枚新增的两个处理器即可（零改既有分派）。
+		{
+			path:     []string{"gate", "selfreport", "diff"},
+			kind:     "GateSelfreportDiff",
+			summary:  "自报件 × 独立对拍件**六格逐格**对拍（query_ts/computed_at/source/digest/verifier/verdict）· 只读 · 判不了不给结论",
+			usage:    "zerg gate selfreport diff --source <件> --against <件> [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（不收位置参数：自报方与对拍方分别由 `--source` / `--against` 指 —— 两枚同名即用法错，禁自报面自打分）"},
+			fields:   gateSelfreportFields,
+			endpoint: "",
+			run:      cmdGateSelfreportDiff,
+		},
+		{
+			path:     []string{"gate", "four-states"},
+			kind:     "GateFourStates",
+			summary:  "四态亲测：现役件／改件 × 不带／带 `--yes` 各跑一次，四格逐格比对 · 只读面必须逐字节相同、写面不许恒同",
+			usage:    "zerg gate four-states --current <命令串> --patched <命令串> [--yes-flag <旗标>] [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（不收位置参数：两条命令串由 `--current` / `--patched` 指；命令串按**空白切词**，不做 shell 展开）"},
+			fields:   gateFourStatesFields,
+			endpoint: "",
+			run:      cmdGateFourStates,
+		},
 		// ---- 批 B · T-19 茧壁：`agent ping` 默认经主控、`--direct` 才直连（§十五.4 丙案）----
 		{
 			path:     []string{"agent", "ping"},
@@ -954,6 +980,22 @@ func init() {
 			fields:   []string{"head", "branch", "path", "status", "untracked", "mtime", "sha256"},
 			endpoint: "",
 			run:      cmdRepoStatus,
+		},
+		// ---- T20 正门一条（本枚 · **只增**）----
+		// 「报行数三格」的机检面：判一份 diffstat 报没报齐 `原始 diff / 增 / 减`。
+		// ★ 不退 `cmdRepo` 分派：本族 `repo status` 已是**直挂处理器**（`run: cmdRepoStatus`）⇒
+		//   照它同规把 `run` 指向本枚新增的 `cmdRepoDiffstat`（零改既有分派 · 零改 `repo.go`）。
+		// ★ 写旗标一律拒（`repoWriteWords`）—— 与 `repo status` 同一道只读牙（同族同守）。
+		{
+			path:     []string{"repo", "diffstat"},
+			kind:     "RepoDiffstat",
+			summary:  "报数三格机检（`原始 diff` / `增` / `减`）：三格齐 ⇒ 退 0；**只给净数（或缺任一格）⇒ 未报 ⇒ 判不了（退 2）** · 件读不到 ⇒ 判不了（退 8）· 只读",
+			usage:    "zerg repo diffstat --report <报告件> [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（不收位置参数：报告件由 `--report <件>` 指）"},
+			fields:   repoDiffstatFields,
+			endpoint: "",
+			run:      cmdRepoDiffstat,
 		},
 		// ---- `GAP-20260928-98` 族（2026-09-28 · laneGS · 用户拍「按推荐」= laneGJ 设计稿 §二 乙档）----
 		// 「工作树脏件 ↔ 审计行」的**对拍面**：分母 = `git status --porcelain=v1` 的**已跟踪 `M`/`A` 行**
@@ -1851,12 +1893,16 @@ func init() {
 		// ---- 变更影响面（设计-变更影响面-v1.6 §7.1/§7.3/§7.4 · 任务单-影响面实施-20260922 §二 `A1`–`A3` · 2026-09-22）----
 		// `A1` = 骨架（人面三行 + 六键包封）；`A2` = 六层取数；`A3` = 波纹卡片（四字段 · why 闭集六选一 ·
 		// 四级排序 · 按档裁 · §3.7 公开面行 · §3.8 可逆性行 · 两档 `--for-model`/`--for-human`）。
-		// 挂干跑与缓存分别属 `A4`/`A5`。只读 ⇒ 不写 `danger`（走默认「只读」幂等档）、不改 `emitEnvelope`、
-		// 不写缓存、不落审计。
+		// 挂干跑与缓存分别属 `A4`/`A5`。不改 `emitEnvelope`、不落审计。
+		// ── 2026-09-29 订正：本条**不是**只读 —— 默认档真写 impact 缓存件（现读写点
+		//   `family_impact_cache.go:291/:305/:308`，账 `GAP-20260927-140` 现读坐实）；修前那句
+		//   「只读 ⇒ 不写 danger / 不写缓存」是**自证式反证断言**（件里写着不写、实现却写）。
+		//   定档与执行门**待拍板**（账 `GAP-20260929-31`：登记 ≠ 拦 —— 实测不给 `--yes` 也 rc=0 且真写），
+		//   拍前不挂 `danger`（挂了只会让帮助面计数与真实行为不一致）。
 		{
 			path:     []string{"impact"},
 			kind:     "Impact",
-			summary:  "改一处会牵动谁（只读：人面三行 + 波纹卡片 ≤12 条/≤1.2k token + 六键包封；挂干跑属 `A4`）",
+			summary:  "改一处会牵动谁（判定只读；默认档会写 impact 缓存件 ⇒人面三行 + 波纹卡片 ≤12 条/≤1.2k token + 六键包封；挂干跑属 `A4`）",
 			usage:    impactUsageLine,
 			arity:    "any",
 			args:     []string{"目标（仓内件路径 · 或在册契约 id，如 S-g）"},
@@ -1990,8 +2036,8 @@ func init() {
 		{
 			path:     []string{"gap", "status"},
 			kind:     "GapStatus",
-			summary:  "缺口账**排行面**（只读）：按件（`--by unit` · 缺省）/ 按模块（`--by module`）/ 按**判据分级**（`--by tier`）分桶。件轴／模块轴：逐桶给 **未闭 / 已解 / 净**（可为负）+ 近邻量化（P0/P1/P2 计数）· 排序键 = ① 未闭降序 ② 近邻量化降序（都写进表头）· 对账等式自校（Σ(有件桶未闭) + 无件桶 == 账内仍缺 · 不成立 ⇒ `warnings` 点名差数）。**tier 轴**：行 = 三桶闭集（真判据 / 占位 / 无 —— `verify_tier` 已落库则用它，未落库则现读 `verify_cmd` 现算：空串/无键 ⇒ 无 · 含「占位」字样 ⇒ 占位 · 其余且能被命令树解析 ⇒ 真判据）· 列 = **条数 / 其中仍缺 / 其中已解** · 表尾固定两行：① 守恒式自校「三桶之和 == 总账」（两数各自现算 · 不等 ⇒ **判红 1** 并打印两数）② 占位桶**只报告不阻断**（不退码 · 先量分布）。全轴带 `query_ts` / `ledger_sha16`（不同时刻两个排行才可比）· 截断自报（`--top` 一页硬顶 = `gapLsRowCap`）· 读不到真源 ⇒ 8",
-			usage:    "zerg gap status [--by <unit|module|tier>] [--top <N>] [--state <仍缺|已派|已立项|已解|回归|不做>…] [--prio P0|P1|P2] [--impact <命令面|门禁面|文档面|公开面|换件面|归档面>] [--json <字段>]",
+			summary:  "缺口账**排行面**（只读）：按件（`--by unit` · 缺省）/ 按模块（`--by module`）/ 按**判据分级**（`--by tier`）／按**入账日**（`--by day` · 新增走 found_at 轴、销案走 solved_at 轴、同给净）分桶。按**命令族**（`--by family` · 走账自带 `want_family` 原值成桶）分桶。件轴／模块轴：逐桶给 **未闭 / 已解 / 净**（可为负）+ 近邻量化（P0/P1/P2 计数）· 排序键 = ① 未闭降序 ② 近邻量化降序（都写进表头）· 对账等式自校（Σ(有件桶未闭) + 无件桶 == 账内仍缺 · 不成立 ⇒ `warnings` 点名差数）。**tier 轴**：行 = 三桶闭集（真判据 / 占位 / 无 —— `verify_tier` 已落库则用它，未落库则现读 `verify_cmd` 现算：空串/无键 ⇒ 无 · 含「占位」字样 ⇒ 占位 · 其余且能被命令树解析 ⇒ 真判据）· 列 = **条数 / 其中仍缺 / 其中已解** · 表尾固定两行：① 守恒式自校「三桶之和 == 总账」（两数各自现算 · 不等 ⇒ **判红 1** 并打印两数）② 占位桶**只报告不阻断**（不退码 · 先量分布）。全轴带 `query_ts` / `ledger_sha16`（不同时刻两个排行才可比）· 截断自报（`--top` 一页硬顶 = `gapLsRowCap`）· 读不到真源 ⇒ 8",
+			usage:    "zerg gap status [--by <unit|module|tier|day|family>] [--top <N>] [--state <仍缺|已派|已立项|已解|回归|不做>…] [--prio P0|P1|P2] [--impact <命令面|门禁面|文档面|公开面|换件面|归档面>] [--json <字段>]",
 			fields:   gapStatusFields,
 			endpoint: "",
 			run:      cmdGapStatus,
@@ -2943,6 +2989,22 @@ func valueFlagName(a string) string {
 	// （`publish tree has` 判「点没点名」「树在不在盘」「树身份读得到吗」）。
 	switch a {
 	case "--tree":
+		return a
+	}
+	// T09/T11 正门两条的旗标（本枚 · **只增**）：与上面各排同一口径 —— 值照收，语义在各自命令里判。
+	//   `gate selfreport diff`：`--source`（自报件）/ `--against`（独立对拍件）；
+	//   `gate four-states`   ：`--current`（现役件命令串）/ `--patched`（改件命令串）/ `--yes-flag`（确认旗标名，缺省 `--yes`）。
+	// ★ 本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用（照 `--allow-cross-root` 那一条的现读口径）。
+	switch a {
+	case "--source", "--against", "--current", "--patched", "--yes-flag":
+		return a
+	}
+	// T20 正门一条的旗标（本枚 · **只增**）：`repo diffstat --report <件>` 的报告件。
+	// 与上面各排同一口径 —— 值照收，语义在各自命令里判；★ 本排是名字表「唯一真源」⇒
+	// 不登记就一律退 2「未知旗标」= 新旗标等于不可用（已现读实测：只加命令树格不加本表
+	// ⇒ `zerg: 未知旗标 "--report"` rc=2）。
+	switch a {
+	case "--report":
 		return a
 	}
 	// 公开面 CI 归绿面旗标（`W-51` · 任务单序133 · 2026-09-24 波18）：`--run <记录件>`（check-run

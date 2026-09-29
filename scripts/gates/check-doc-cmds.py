@@ -101,6 +101,9 @@ BASELINE_REL = os.path.join("scripts", "gates", "doc-cmds-baseline.json")
 
 RC_OK, RC_FAIL, RC_BLOCKED = 0, 1, 2
 
+# §3.1 深度上限（`path: []string{…}` 最多三段）—— 最长前缀收窄的收窄上限（不是判据深度）。
+MAX_DEPTH = 3
+
 # 排除表：与仓内其它门的扫描口径同一张（grep --exclude-dir 的同款），不留静默的洞。
 EXCL = {"target", "node_modules", "dist", "bin", "vendor", "data", ".git",
         ".venv", "venv", ".build", "__pycache__", ".history", ".obsidian"}
@@ -178,7 +181,12 @@ def read(path):
 
 
 def parse_tree(root):
-    """命令树 → {('dev','proposal'): True, …}（L1 与 L2 都登记：L2 命中先查，查不到退化查 L1）。"""
+    """命令树 → {('dev','proposal'): True, …}（L1 与 L2 都登记：键集与修前逐字相同）。
+
+    ★ 值 = 这条键**是不是一条完整命令**（真源里写得出 `path: []string{…}` 的那条 = `True`；
+      只被当族名/前缀用的键 = `False`）—— 最长前缀判据靠这个值区分「能停靠的命令」与
+      「只是前缀」，`zerg dev propozal` 这类坏动作才不会被族名 `dev` 放行（见 `resolve_cmd`）。
+    """
     src = read(os.path.join(root, MAIN_REL))
     try:
         start = src.index('commands = []*command{')
@@ -191,10 +199,38 @@ def parse_tree(root):
         parts = re.findall(r'"([^"]+)"', m.group(1))
         if not parts:
             continue
-        out[tuple(parts)] = True
-        out[tuple(parts[:1])] = True          # L1：裸动词/族名也登记
-        out[tuple(parts[:2])] = True          # L2：对象 + 动作
+        out[tuple(parts)] = True              # 完整路径 = 命令树真源里的**一条命令**
+        for k in (1, 2):
+            if k < len(parts):
+                # L1 族名 / L2 对象+动作：照旧登记（键集不变），但**不是完整命令** ⇒ 值 False
+                out.setdefault(tuple(parts[:k]), False)
     return out
+
+
+def resolve_cmd(words, tree):
+    """命令树**逐段收窄**（最长前缀）⇒ 命中的命令路径长度 k（0 = 拼不出命令树里的命令）。
+
+    ★ 为什么不能定长取前两段（2026-09-29 · 顶层命令 + 用法串带子动作 · 实测假红）：
+      `zerg isolate-ro new` 的 `isolate-ro` 在真源里是**单段顶层命令**（`path: []string{"isolate-ro"}`），
+      紧跟的 `new` 是它自己的**子动作**（命令树里没有第二条路径）⇒ 定长取前两段得到
+      `('isolate-ro','new')` **永远查不到** ⇒ 真命令**必然假红**（formal 三处：zh/en 参考-命令行）。
+      逐段收窄后命中 `('isolate-ro',)` = **完整命令** ⇒ 其后各段按 §3.1「L3+ 只放 id/名 —— 不判」当数据。
+    ★ 同时不许把**族名当前缀停靠**：`('dev',)` 只是前缀（真源里没有 `path: ["dev"]`）⇒ 值 False
+      ⇒ `zerg dev propozal` / `zerg grep sort` 照旧红（坏动作不被族名放行）。
+    """
+    k = 0
+    for n in range(1, min(len(words), MAX_DEPTH) + 1):
+        if tuple(words[:n]) in tree:
+            k = n                        # 收到底：最长的那条可解析前缀
+    if k == 0:
+        return 0
+    if tree.get(tuple(words[:k])) is True:   # 前缀本身就是完整命令（含单段顶层命令）⇒ 命中
+        return k
+    if k == 2:                           # L2 命中（对象 + 动作 · M12 起步深度）：三段命令的「对象+动作」前缀
+        return k
+    if k == len(words):                  # 整串就是一个族名/前缀（旧 L1 单段口径）
+        return k
+    return 0
 
 
 def extract_zerg_segments(text, stats=None):
@@ -258,8 +294,8 @@ def judge_md(files, tree, stats=None):
             # 空串 = **已认出**的非命令（身份行/版本串/噪声），不是修前那种「抽不出来 ⇒ 静默」（见文件头 ★）。
             if not words:
                 continue
-            # L2 优先：前两段能解析 ⇒ 过；否则退化查 L1（裸动词）
-            if tuple(words[:2]) in tree or tuple(words[:1]) in tree:
+            # 命令树逐段收窄（最长前缀）⇒ 命中即过（其后各段是子动作/数据 · §3.1「L3+ 不判」）
+            if resolve_cmd(words, tree):
                 continue
             n = n_block
             details.append("%s:%d → zerg %s（命令树里没有它；最像的：见 `zerg --help`）"
@@ -282,18 +318,16 @@ def judge(files, tree, blocking, stats=None):
             # 空串 = **已认出**的非命令（身份行/版本串/噪声），不是修前那种「抽不出来 ⇒ 静默」（见文件头 ★）。
             if not words:
                 continue
-            # L2 优先（§九 M12 起步深度：对象 + 动作）。L1 只救**单段**命令（裸动词如 `zerg doctor`）——
-            # 两段里第一段族名对、第二段动作错 ⇒ 必须红（否则 `dev propozal` 这类坏动作被族名放行）。
-            # ★ 2026-09-21：`help <主题>` 的第二段是**主题数据**（在 `topics.go`，不在命令树里）
-            #   ⇒ 只判族名 `help` 在树里（族名不在 ⇒ 照旧红，不是无脑放行）。
-            l2 = tuple(words[:2]) if len(words) >= 2 else None
-            l1set = {t[0] for t in tree if len(t) == 1}
-            if words[0] == 'help' and words[0] in l1set:
-                continue
-            if (l2 and l2 in tree) or (len(words) == 1 and words[0] in l1set):
+            # 命令树**逐段收窄**（最长前缀 · 见 `resolve_cmd`）：命中的那条完整命令之前/本身的段必须
+            # 逐段对得上；其后各段是子动作/id/名（§3.1「L3+ 只放 id/名 —— 不判」）当数据，不判。
+            # ★ 两段里第一段族名对、第二段动作错 ⇒ 照旧红（`dev`/`grep` 只是前缀，不是完整命令 ⇒
+            #   `zerg dev propozal` 不会被族名放行）。
+            # ★ 2026-09-21 `help <主题>` 的第二段是**主题数据**（在 `topics.go`，不在命令树里）——
+            #   该口径**一字未改**：`help` 在真源里是完整单段命令 ⇒ 逐段收窄同样停在 `('help',)` 上过。
+            if resolve_cmd(words, tree):
                 continue
             n += 1
-            details.append("%s:%d → `zerg %s` 不在命令树（L2 判据）" % (rel, lineno, " ".join(words[:2])))
+            details.append("%s:%d → `zerg %s` 不在命令树（最长前缀判据）" % (rel, lineno, " ".join(words[:2])))
     if blocking:
         return n, 0, details
     return 0, n, details
@@ -390,6 +424,9 @@ def self_test():
         '\t\t{path: []string{"update"}, run: cmdUpdate},\n'
         '\t\t{path: []string{"agent", "logs"}, run: cmdAgentLogs},\n'
         '\t\t{path: []string{"task", "ls"}, run: cmdTaskLs},\n'
+        # ★ 2026-09-29：⑱/⑲ 两组控要用「**单段顶层命令 + 用法串带子动作**」的形态 ⇒ 夹具树补这一条
+        #   （真源里 `isolate-ro` 就是这种：`path: []string{"isolate-ro"}`，子动作 `new` 不在树里）
+        '\t\t{path: []string{"isolate-ro"}, run: cmdIsolateRO},\n'
         "\t}\n}\n"
     )
     open(os.path.join(tmp, MAIN_REL), "w", encoding="utf-8").write(tree_src)
@@ -573,6 +610,26 @@ def self_test():
     rc, _ = check(tmp, ["devdocs"])
     case("⑰b 成对负控（devdocs · 0 篇那根塞回好件 ⇒ 0）", 0, rc)
     del os.environ["ZERG_DEVDOCS_ROOT"]
+
+    # ── 顶层命令 + 用法串带子动作（2026-09-29 · 治本）：定长取前两段 ⇒ 真命令**必然假红** ──────────
+    # ⑱ 正控：`isolate-ro` 是**单段顶层命令**（真源 `path: []string{"isolate-ro"}`），`new` 是它自己的
+    #    子动作（命令树里没有第二条路径 ⇒ `('isolate-ro','new')` 永远查不到）⇒ 逐段收窄停在
+    #    `('isolate-ro',)`（完整命令）⇒ 必须绿（修前恒红 · 语料里 zh/en 参考-命令行 三处就这么红的）。
+    open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
+        "```sh\nzerg isolate-ro new <真仓>\n```\n")
+    rc, lines = check(tmp, ["formal"])
+    case("⑱ 正控（顶层命令 + 子动作 ⇒ 0；修前是假红）", 0, rc)
+    if rc:
+        bad.append("⑱ 正控：`isolate-ro new` 仍被判红 —— 判词 %s" % (" | ".join(lines[:4]),))
+
+    # ⑲ 负控（成对）：同一形态里第一段只是**族名前缀**（`dev` —— 真源里没有 `path: ["dev"]`）
+    #    ⇒ 第二段是坏动作照旧红 —— 证明最长前缀没把区分度让掉
+    open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
+        "```sh\nzerg dev propozal\n```\n")
+    rc, lines = check(tmp, ["formal"])
+    case("⑲ 负控（族名不许当前缀停靠 · 坏动作 ⇒ 1）", 1, rc)
+    if not any("propozal" in l for l in lines):
+        bad.append("⑲ 负控：判词里没有坏命令名")
 
     if bad:
         print("自检失败：")

@@ -31,8 +31,15 @@ func TestImpact_CommandTreeAndEnvelopeSource(t *testing.T) {
 	if !ok {
 		t.Fatalf("命令树里没有 `impact` 这条命令（注册漏了）")
 	}
+	// ★ 2026-09-29 订正（新行为逐字）：`impact` **不再是只读骨架** —— 默认档真写 impact 缓存件
+	// （写点 `family_impact_cache.go:291/:305/:308` · 账 `GAP-20260927-140` 现读坐实；人面那句
+	// 「只读零副作用不写缓存」是**自证式反证断言**）。
+	// 但**定档与执行门待拍板**（账 `GAP-20260929-31`：登记 ≠ 拦 —— 实测已挂 D2 时不给 `--yes`
+	// 也 rc=0 且真写三件缓存；挂 D2 只会让帮助面计数与真实行为不一致）⇒ 本条**不挂 `danger`**。
+	// 本格由「唯不许非空」改成**逐字钉状态**：要**空串**（一旦有人挂了 `D2`/`D1`/`D3` 而执行门
+	// 未同修 ⇒ 判红，逼其与 `GAP-20260929-31` 的治法同批落）。比原本的空串断言**更窄**，不是放宽。
 	if info.DangerLevel != "" {
-		t.Errorf("`impact` 是危险动作（%s）—— A1 是**只读**骨架（§7.1「只读、零副作用」）", info.DangerLevel)
+		t.Errorf("`impact` 档位 = %q（要**逐字**空串）—— 它是写面（账 `GAP-20260927-140`），但定档与执行门待拍板（账 `GAP-20260929-31`：登记 ≠ 拦）⇒ 拍板前不挂 danger；挂档必须与执行门同批落", info.DangerLevel)
 	}
 	if strings.Join(info.Fields, ",") != "what,why,how,red" {
 		t.Errorf("字段表 = %v（要 §3.1 的四字段 what/why/how/red）", info.Fields)
