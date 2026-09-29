@@ -440,7 +440,8 @@ def parse_export_table(lines, heading):
             continue
         if set(l) <= set("|- "):
             continue          # 分隔行
-        cells = [c.strip() for c in l.strip().strip("|").split("|")]
+        cells = [c.strip().replace("\\|", "|")
+                 for c in re.split(r"(?<!\\)\|", l.strip().strip("|"))]
         if header is None:
             header = cells     # 表头行（本节只有一张表 ⇒ 第一行恒是表头）
             continue
