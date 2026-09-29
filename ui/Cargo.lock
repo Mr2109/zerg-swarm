@@ -7542,7 +7542,7 @@ dependencies = [
 
 [[package]]
 name = "zerg-ui"
-version = "2.5.12"
+version = "2.5.13"
 dependencies = [
  "chrono",
  "comrak",
