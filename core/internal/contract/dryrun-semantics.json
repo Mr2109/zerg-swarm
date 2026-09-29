@@ -13,6 +13,13 @@
   "_扫描命令": "grep -r -E \"dry.?run|DryRun\" --include=*.go --include=*.sh --include=*.py --include=*.rs --exclude-dir=venv --exclude-dir=.venv core agent scripts wall gateway ui",
   "件": [
     {
+      "file": "scripts/gates/check-newcmd-followup.py",
+      "类": "只读聚合门（判据面 · 本件用 dry-run 一词作**被检字段名**，不是第五套语义）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "全程只读：不写盘 / 不改状态 / 不 exec 任何被测命令；唯一写动作局限于 `--self-test` 在 `tempfile.mkdtemp()` 的**仓外夹具**里造合成树（跑完即删），真目标档（裸跑 / `--root`）一个字节都不写",
+      "备注": "第三批甲④「新命令随动总账」的**面①（dryrun 落点）**判据件"
+    },
+    {
       "file": "agent/internal/backend/manager.go",
       "类": "收卵前静态判据模拟",
       "语义": "dryrun.v1",
