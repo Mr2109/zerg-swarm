@@ -69,6 +69,35 @@ def last_audit(path):
     return last
 
 
+def last_audit_for_tier(path, tier):
+    """台账里**该档**的最后一条（按档筛选 —— **不取整份台账的最后一行**）。
+
+    ★ 2026-09-30 修（门77 假红 · 缺口逐字）：原口径取整份台账的**最后一行**再比对档名 ⇒
+      只要有人给**别的档**标定过（现读：medium 在 2026-09-29T18:32:13Z 落了一条），
+      `--tier daily --check` 就恒红（`✗ --check：台账最后一条是 medium 档，与 --tier daily 不符`）
+      —— 那是**假红**：daily 的现值与它**自己**那条台账记录逐字相符，也从未被人手改。
+      判据一条不放宽、一条不删：①该档**必须**有台账记录（没有 ⇒ 判红(1)，与改前同码同因）；
+      ②现值**必须**等于**该档**最新一条的 new（不等 ⇒ 「有人手改」判红(1)）；
+      ③`--write` 仍只往台账**追**一条（append-only 不改）；④「最后一条」这一格换成了
+      「该档最新一条」—— 没有新增任何放行分支，也没有放宽任何一格。
+    """
+    if not os.path.isfile(path):
+        return None
+    last = None
+    with open(path, encoding="utf-8") as f:
+        for ln in f:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                rec = json.loads(ln)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("tier") == tier:
+                last = rec
+    return last
+
+
 def measured_secs(cfg, tier, args):
     if args.measured is not None:
         return float(args.measured)
@@ -149,13 +178,13 @@ def main():
 
     last = last_audit(audit_path(cfg))
     if args.check:
-        if last is None:
-            die(f"✗ --check：台账 {audit_path(cfg)} 无记录，而基线件有值 ⇒ 判红(1)", rc=1)
-        if last.get("tier") != args.tier:
-            die(f"✗ --check：台账最后一条是 `{last.get('tier')}` 档，与 --tier {args.tier} 不符 ⇒ 判红(1)", rc=1)
-        if float(last.get("new")) != float(cur):
-            die(f"✗ --check：现值 {cur} ≠ 台账最后一条 new {last.get('new')} ⇒ **有人手改** ⇒ 判红(1)", rc=1)
-        print(f"✓ --check 过：{args.tier} 现值 {cur} == 台账最后一条 new")
+        # ★ 按档筛选（不取整份台账的最后一行）：见 last_audit_for_tier 的逐字真因。
+        last_t = last_audit_for_tier(audit_path(cfg), args.tier)
+        if last_t is None:
+            die(f"✗ --check：台账 {audit_path(cfg)} 里**没有 `{args.tier}` 档**的记录，而基线件有值 ⇒ 判红(1)", rc=1)
+        if float(last_t.get("new")) != float(cur):
+            die(f"✗ --check：现值 {cur} ≠ 台账里 `{args.tier}` 档最新一条 new {last_t.get('new')} ⇒ **有人手改** ⇒ 判红(1)", rc=1)
+        print(f"✓ --check 过：{args.tier} 现值 {cur} == 台账里 `{args.tier}` 档最新一条 new")
         return 0
 
     ms = measured_secs(cfg, args.tier, args)
