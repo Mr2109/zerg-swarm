@@ -2367,7 +2367,7 @@ func init() {
 		{
 			path:     []string{"gap", "idea", "stats"},
 			kind:     "GapIdeaStats",
-			summary:  "设计稿 §4 判据 1 的读数面（**只报告、不进退码**）：池内各 `status` 计数 + **来源分布**（`source` 四值）+ **候选→入账转换率**（`promoted / (promoted+expired+pending)`，分母逐字写出）· 只读（不写池、不写真源、不写审计）· 池件不在盘 ⇒ 8",
+			summary:  "（设计稿 §4 判据 1）读数面（**只报告、不进退码**）：池内各 `status` 计数 + **来源分布**（`source` 四值）+ **候选→入账转换率**（`promoted / (promoted+expired+pending)`，分母逐字写出）· 只读（不写池、不写真源、不写审计）· 池件不在盘 ⇒ 8",
 			usage:    "zerg gap idea stats [--json <字段>]",
 			arity:    "none",
 			args:     []string{"（无位置参数：范围 = 整池）"},
