@@ -244,7 +244,7 @@ func cmdCalibRun(inv *invocation, stdout, stderr io.Writer) int {
 	}
 
 	// ③ 真跑那一态：执行面 = 旧脚本自己；命令面只转出退码（**连异常码也不改写**）。
-	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd := armChildGroup(exec.Command(argv[0], argv[1:]...))
 	cmd.Dir = root
 	cmd.Stdin = os.Stdin
 	var human bytes.Buffer

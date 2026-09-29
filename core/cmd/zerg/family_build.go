@@ -299,7 +299,7 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 		execNote = "只写 `dist/<版本>/release/` 的清单与逐件 sha256 —— 不碰 `bin/` 里的在跑件"
 	}
 	fmt.Fprintf(stderr, "%s: %s执行 —— bash %s %s（%s）\n", progName, gateLevel, script, strings.Join(scriptArgs, " "), execNote)
-	cmd := exec.Command("bash", append([]string{filepath.Join(root, script)}, scriptArgs...)...)
+	cmd := armChildGroup(exec.Command("bash", append([]string{filepath.Join(root, script)}, scriptArgs...)...))
 	runningChild = cmd
 	defer func() { runningChild = nil }()
 	cmd.Dir = root

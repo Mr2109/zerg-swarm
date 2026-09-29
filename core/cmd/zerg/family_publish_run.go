@@ -161,7 +161,7 @@ func cmdPublishRun(inv *invocation, stdout, stderr io.Writer) int {
 
 // runPublishChild 调脚本并把退码**原样转发**（与 gate 族/构建族同一条口径 · §4.3 U1）。
 func runPublishChild(inv *invocation, root, script string, args []string, stdout, stderr io.Writer) int {
-	cmd := exec.Command("bash", append([]string{filepath.Join(root, script)}, args...)...)
+	cmd := armChildGroup(exec.Command("bash", append([]string{filepath.Join(root, script)}, args...)...))
 	runningChild = cmd
 	defer func() { runningChild = nil }()
 	cmd.Dir = root
