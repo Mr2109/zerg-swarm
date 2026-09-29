@@ -79,7 +79,7 @@ func cmdIsolateRO(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 动作两枚 —— new <真仓> [--dst <目录>] 造副本（写只落在副本里）· "+
 			"verify <副本> <真仓> 逐件 sha256 验回；另有 `--self-test` 自检\n", progName)
 	}
-	cmd := exec.Command("bash", append([]string{script}, tail...)...)
+	cmd := armChildGroup(exec.Command("bash", append([]string{script}, tail...)...))
 	runningChild = cmd
 	defer func() { runningChild = nil }()
 	cmd.Dir = root

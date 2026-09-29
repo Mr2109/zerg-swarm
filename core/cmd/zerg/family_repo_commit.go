@@ -576,6 +576,23 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 		fmt.Fprintf(stderr, "%s: %s 下没有 .git ⇒ 不是 git 工作树（退码 8）\n", progName, root)
 		return exitBlocked
 	}
+	// ★ ② 点名件匹配判定：**在撞车判定之前**（2026-09-30 修 · 矩阵偶发退码 14 的真因）——
+	//   「点名的件一件都没命中 = 我敲错了」是**永久**用法错（退 2）；`.git/index.lock` 在是**瞬时**被占
+	//   （退 14 · 「可等可重来」）。**永久判决不许被瞬时态挡住**：等下去也不会把敲错的件名等对，
+	//   等完拿到的仍是同一个 2 ⇒ 先报 14 是把人支去等一件等不成的事。
+	//   这一判只是只读 `git status`（`onlyMatchPaths`）—— **不写索引、不取锁** ⇒ 别的进程持锁时照样判得出，
+	//   故「缺件优先于参数校验」那条理由（判不出才先报缺件）在这里**不适用**。
+	matched, unmatched := onlyMatchPaths(root, paths)
+	if len(matched) == 0 {
+		inv.setErr("usage", "only_not_matched", "点名的路径一件都没匹配上")
+		fmt.Fprintf(stderr, "%s: 点名的 %d 件**一件都没匹配上**（工作树里没有这些改动）⇒ 拒执（退码 2）\n", progName, len(paths))
+		for _, p := range unmatched {
+			fmt.Fprintf(stderr, "  没匹配上：%s\n", p)
+		}
+		fmt.Fprintf(stderr, "口径（设计稿 §2.3「**不学** `jj` 的 warning」）：点名的件一件都没命中 ⇒ 那一定是我敲错了\n")
+		return exitUsage
+	}
+	// ⑤ 撞车：别人正在写这个仓（**点名件全部命中之后**才判被占 —— 理由见上）
 	if _, err := os.Stat(filepath.Join(root, ".git", "index.lock")); err == nil {
 		inv.setErr("conflict", "repo_busy", "另一个 git 进程正在写这个仓")
 		fmt.Fprintf(stderr, "%s: `.git/index.lock` 在 ⇒ **被占**（另有 git 进程在写这个仓）—— 退码 14（可等可重来）\n", progName)
@@ -590,16 +607,6 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 		return exitBlocked
 	}
 	preStaged := entryNames(preEntries)
-	matched, unmatched := onlyMatchPaths(root, paths)
-	if len(matched) == 0 {
-		inv.setErr("usage", "only_not_matched", "点名的路径一件都没匹配上")
-		fmt.Fprintf(stderr, "%s: 点名的 %d 件**一件都没匹配上**（工作树里没有这些改动）⇒ 拒执（退码 2）\n", progName, len(paths))
-		for _, p := range unmatched {
-			fmt.Fprintf(stderr, "  没匹配上：%s\n", p)
-		}
-		fmt.Fprintf(stderr, "口径（设计稿 §2.3「**不学** `jj` 的 warning」）：点名的件一件都没命中 ⇒ 那一定是我敲错了\n")
-		return exitUsage
-	}
 	excluded := setMinus(preStaged, paths)
 	// ②′ 新件（未跟踪）：`git commit --only -- <未跟踪件>` 会 `did not match any file(s) known to git`
 	// ⇒ 先做**意图登记**（`git add -N`：只把路径记进索引、不写内容、不动别人的暂存 —— 这是 git 的硬要求，
