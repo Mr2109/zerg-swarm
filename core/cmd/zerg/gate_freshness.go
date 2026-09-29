@@ -73,9 +73,19 @@ func worktreeFingerprint(root string) (string, string, error) {
 	}
 	names := []string{}
 	for _, n := range strings.Split(strings.TrimRight(ls, "\x00"), "\x00") {
-		if n != "" {
-			names = append(names, n)
+		if n == "" {
+			continue
 		}
+		// ★ 口径③（2026-09-30 修 · 章账自 stale 闭环）：**精确排除章账自身**（只此一件 ——
+		//   路径常量 = `sealLedgerDefaultRel`，与 `family_gate_seal_verify.go` 同源）。
+		//   为什么改：章账是 append-only ⇒ **落盘 / 追加一枚章就改工作树内容** ⇒ 它若进指纹，
+		//   指纹里就含「记着指纹的那份账」的内容 ⇒ **固定点不可达**（内容含指纹、指纹含内容）：
+		//   每盖一章整树指纹立刻变 ⇒ `gate seal verify` 与新鲜度闸把**刚盖的章全判 stale**。
+		//   只排除这一件：不动别的件、也不把指纹改粗（鉴别的粒度一字未变）。
+		if n == sealLedgerDefaultRel {
+			continue
+		}
+		names = append(names, n)
 	}
 	// ★ 口径②（2026-09-29 修 · 血证）：`ls-files --cached --others` 是**两段拼接**（先 tracked 段、
 	//   再未跟踪段）⇒ 一个件从「未跟踪」变成「已跟踪」（正是提交那一刻发生的）会**换位置**，

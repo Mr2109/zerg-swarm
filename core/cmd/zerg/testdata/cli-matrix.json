@@ -4,6 +4,14 @@
  "exemptions": [],
  "cases": [
   {
+   "id": "gate seal verify#章账读不到",
+   "command": "gate seal verify",
+   "argv": ["gate", "seal", "verify", "/nonexistent-seal-ledger-zz.jsonl"],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "章账读不到 ⇒ 判不了（不给结论 · 退码 2）· stdout 零字节"
+  },
+  {
    "id": "version#未知旗标",
    "command": "version",
    "argv": [
