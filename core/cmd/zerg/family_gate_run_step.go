@@ -157,6 +157,8 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 	// ③ 真跑那一步（执行面 = 脚本自己；命令面只转出退码）。
 	cmd := exec.Command("bash", append([]string{script}, scriptTail...)...)
 	cmd.Dir = root
+	// ★ 门槛（件①）：本进程已在外层拿同一把 flock ⇒ 把「已持锁」标记交给子脚本，防双锁假红。
+	cmd.Env = append(os.Environ(), "ZERG_GATE_LOCK_HELD=1")
 	cmd.Stdin = os.Stdin
 	var human bytes.Buffer
 	cmd.Stdout = &human // 人面（脚本的报告）先收着，稍后原样转到 stderr —— stdout 只留机器面
@@ -351,6 +353,7 @@ func gateRunStepLiveVerify(inv *invocation, stdout, stderr io.Writer, root, scri
 		progName, gateLiveVerifyFlag, d.Name, strings.Join(argv, " "))
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "ZERG_GATE_LOCK_HELD=1")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -640,6 +643,7 @@ func gateRunStepShowLog(inv *invocation, stdout, stderr io.Writer, root, script 
 	// 真跑那一步（执行面 = 脚本自己；命令面只转出退码 · 人面报告转 stderr，stdout 只留读数）。
 	cmd := exec.Command("bash", append([]string{script}, scriptTail...)...)
 	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "ZERG_GATE_LOCK_HELD=1")
 	cmd.Stdin = os.Stdin
 	var human bytes.Buffer
 	cmd.Stdout = &human
