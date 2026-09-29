@@ -15,9 +15,14 @@
   stamp  = 盖章档（**全量 154 步 + 全冷跑**：断言 `CACHED` 计数 == 0；见件④ 正文）
 
 现测值从哪来（**现跑**、不是常量）：
-  `--from-bench <json>`：读 `zerg gate bench [--fast] --json <字段>` 的输出，取 `secs` 一栏；
+  `--from-bench <json>`：读 `zerg gate bench [--fast] --json real_ms` 的**现跑输出**（真形状：
+  `{"schema":"zerg/v1","kind":"GateBench","items":[{"real_ms":"24763"},…],…}`）——
+  `items[].real_ms` 是**毫秒字符串** ⇒ **/1000 得秒**（本件口径一律「秒」）；多趟取**最差**（max，拧紧）。
+  （旧口径「取 `secs` 一栏」在现闭集里**不存在** —— `--json` 闭集真源 = `core/cmd/zerg/main.go`
+   `GateBench` 条的 `fields` = `run,real_ms,user_ms,sys_ms,rc,log`，喂 `secs` 逐字报「未知字段」rc=2。）
   或 `--measured <秒>`：由调用方直接给（CI/人工复核用）。
   两样都不给 ⇒ **rc=2 不给结论**（不许拿记忆充数）。
+  ★ 裸数字形态（整件就是个数字）**一律按秒读**（历史口径，未改）：要毫秒请给真 envelope。
 
 基线件 `scripts/gates/wallclock-baseline.json`（schema `wallclock-ratchet/1`）：
   { "tiers": { "daily": {"secs": <num>|null, "_unmeasured": bool, "note": "…"}, … },
@@ -75,6 +80,27 @@ def measured_secs(cfg, tier, args):
                 # 允许 `zerg gate bench --json secs` 的裸数字形态
                 data = float(raw.strip())
             if isinstance(data, dict):
+                # ── 2026-09-29 收口：`zerg gate bench` 的**真**输出形状 ──────────────────
+                #   {"schema":"zerg/v1","kind":"GateBench","items":[{"real_ms":"24763"},…]}
+                #   `items[].real_ms` = **毫秒字符串** ⇒ /1000 得秒；多趟取 max（拧紧，非中位）。
+                #   （`--json real_ms` 是闭集里唯一给墙钟的字段；`secs` 不在闭集里。）
+                items = data.get("items")
+                if isinstance(items, list) and items:
+                    ms = []
+                    for it in items:
+                        if isinstance(it, dict) and it.get("real_ms") not in (None, ""):
+                            try:
+                                ms.append(float(it["real_ms"]))
+                            except (TypeError, ValueError):
+                                die(f"✗ --from-bench 的 items[].real_ms 读不出数：{it.get('real_ms')!r} ⇒ 不给结论(2)")
+                    if not ms:
+                        die("✗ --from-bench 的 items 里一条可用 real_ms 都没有 ⇒ 不给结论(2)")
+                    return max(ms) / 1000.0
+                if data.get("real_ms") not in (None, ""):
+                    try:
+                        return float(data["real_ms"]) / 1000.0
+                    except (TypeError, ValueError):
+                        die(f"✗ --from-bench 的 real_ms 读不出数：{data.get('real_ms')!r} ⇒ 不给结论(2)")
                 for k in ("secs", "seconds", "wall"):
                     if k in data:
                         return float(data[k])
