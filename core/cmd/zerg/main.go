@@ -18,8 +18,10 @@ import (
 	"os/exec"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/version"
 )
@@ -75,11 +77,124 @@ func wantsCancelOnInterrupt(args []string) bool {
 // runningChild —— 当前在跑的子进程（透传型命令登记在这里，供「取消」用；nil = 没有）。
 var runningChild *exec.Cmd
 
-// cancelRunningChild 只杀我们**亲手起的那个子进程**（不杀进程组、不碰别人）。
-func cancelRunningChild() {
-	if runningChild != nil && runningChild.Process != nil {
-		_ = runningChild.Process.Kill()
+// childKillGrace —— 两段收尾的宽限：TERM 之后等这么久，幸存者再吃 KILL。
+// 先例：GNU `timeout -k`（先 TERM、宽限后 KILL）· lefthook（`Cancel` = `kill(-pgid, SIGKILL)`）。
+// 是变量：判据件要把它压短（否则每条超时用例都要真等满宽限）。
+var childKillGrace = 2 * time.Second
+
+// armChildGroup 在**起子进程之前**把它自成一组（组长 = 它自己），返回同一个 cmd 便于链式登记。
+//
+// 为什么必须成组：到点要收的是**一整棵**。命令面起的多是 `bash <脚本>`，脚本再 fork 孙进程
+// （门步骤 / `go test` / 子脚本）⇒ 只打直接子进程的话，孙进程改嫁后照跑（`GAP-…`：实测
+// 不处理信号的壳被 `kill -9` 后，其子件/孙件 `PPID=1` 继续跑）。
+func armChildGroup(cmd *exec.Cmd) *exec.Cmd {
+	if cmd == nil {
+		return cmd
 	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
+	return cmd
+}
+
+// cancelRunningChild 收**本趟亲手起的那一棵**：先 TERM 到进程组 → 宽限 → KILL 到进程组。
+func cancelRunningChild() {
+	terminateChildTree(runningChild)
+}
+
+// terminateChildTree 两段收尾（GNU `timeout -k` 的先例）：先给整树一枚 SIGTERM（给得出优雅退出
+// 的进程一个窗口），宽限内没走干净 ⇒ 再对**重算过**的清单发 SIGKILL。
+func terminateChildTree(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil || cmd.Process.Pid <= 0 {
+		return
+	}
+	pid := cmd.Process.Pid
+	signalChildTree(childTreeTargets(pid), syscall.SIGTERM)
+	if childTreeGone(pid) {
+		return
+	}
+	// 宽限里可能又冒出新后代 ⇒ 收尾前重算一次靶清单。
+	signalChildTree(childTreeTargets(pid), syscall.SIGKILL)
+}
+
+// childTreeTargets —— 这一趟收尾要打的靶：**成组**（组长 = 自己）⇒ 只给 `-pgid`（一条信号管全树，
+// 且不碰调用者与别人的组）；**未成组** ⇒ 本 pid + 沿 `ppid` 树收全部后代（只收自己这棵）。
+func childTreeTargets(pid int) []int {
+	if pgid, err := syscall.Getpgid(pid); err == nil && pgid == pid {
+		return []int{-pid}
+	}
+	return descendantPids(pid)
+}
+
+// descendantPids —— 沿 `ps -Ao pid=,ppid=` 的 `ppid` 树从 root 收全部后代（含 root 自己）。
+// 读不到进程表 ⇒ 只给 root（宁可弱一拍，也不误伤别人）。
+// 只用于**没走 `armChildGroup`** 的少数落点：这种收法认的是当下的父子关系，已改嫁的漏网。
+func descendantPids(root int) []int {
+	out := []int{root}
+	raw, err := exec.Command("ps", "-Ao", "pid=,ppid=").Output()
+	if err != nil {
+		return out
+	}
+	kids := map[int][]int{}
+	for _, ln := range strings.Split(string(raw), "\n") {
+		f := strings.Fields(ln)
+		if len(f) < 2 {
+			continue
+		}
+		p, e1 := strconv.Atoi(f[0])
+		pp, e2 := strconv.Atoi(f[1])
+		if e1 != nil || e2 != nil {
+			continue
+		}
+		kids[pp] = append(kids[pp], p)
+	}
+	seen := map[int]bool{root: true}
+	queue := []int{root}
+	for len(queue) > 0 {
+		p := queue[0]
+		queue = queue[1:]
+		for _, c := range kids[p] {
+			if seen[c] {
+				continue
+			}
+			seen[c] = true
+			out = append(out, c)
+			queue = append(queue, c)
+		}
+	}
+	return out
+}
+
+// signalChildTree 逐靶发一枚信号（负靶 = 整组；`ESRCH` 当已不在，不当失败）。
+func signalChildTree(targets []int, sig syscall.Signal) {
+	for _, tgt := range targets {
+		_ = syscall.Kill(tgt, sig)
+	}
+}
+
+// childTreeGone 宽限内轮询「整棵收干净了吗」；到点还没干净 ⇒ 假（交给第二段 KILL）。
+func childTreeGone(pid int) bool {
+	deadline := time.Now().Add(childKillGrace)
+	for {
+		if !childTreeAlive(pid) {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// childTreeAlive —— 成组看整组还有没有活的；未成组看本树逐个。
+func childTreeAlive(pid int) bool {
+	for _, tgt := range childTreeTargets(pid) {
+		if syscall.Kill(tgt, 0) == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // run 是唯一入口的实现面：解析旗标 → 查命令树 → 执行 → 把码原样返回。

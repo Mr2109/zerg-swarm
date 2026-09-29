@@ -155,7 +155,7 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 	}
 	defer lock.release()
 	// ③ 真跑那一步（执行面 = 脚本自己；命令面只转出退码）。
-	cmd := exec.Command("bash", append([]string{script}, scriptTail...)...)
+	cmd := armChildGroup(exec.Command("bash", append([]string{script}, scriptTail...)...))
 	cmd.Dir = root
 	// ★ 门槛（件①）：本进程已在外层拿同一把 flock ⇒ 把「已持锁」标记交给子脚本，防双锁假红。
 	cmd.Env = append(os.Environ(), "ZERG_GATE_LOCK_HELD=1")
@@ -351,7 +351,7 @@ func gateRunStepLiveVerify(inv *invocation, stdout, stderr io.Writer, root, scri
 	argv := append(strings.Fields(cmdStr), gateLiveVerifyFlag)
 	fmt.Fprintf(stderr, "%s: 只读复核 —— 把 `%s` 逐字透传给这一步（%s）的命令串：%s\n",
 		progName, gateLiveVerifyFlag, d.Name, strings.Join(argv, " "))
-	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd := armChildGroup(exec.Command(argv[0], argv[1:]...))
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "ZERG_GATE_LOCK_HELD=1")
 	cmd.Stdin = os.Stdin
@@ -641,7 +641,7 @@ func gateRunStepShowLog(inv *invocation, stdout, stderr io.Writer, root, script 
 	}
 	defer lock.release()
 	// 真跑那一步（执行面 = 脚本自己；命令面只转出退码 · 人面报告转 stderr，stdout 只留读数）。
-	cmd := exec.Command("bash", append([]string{script}, scriptTail...)...)
+	cmd := armChildGroup(exec.Command("bash", append([]string{script}, scriptTail...)...))
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "ZERG_GATE_LOCK_HELD=1")
 	cmd.Stdin = os.Stdin

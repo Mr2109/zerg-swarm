@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""check-approve-backfill.py v1.0.0 —— 「补签件与在场件**可分**」的判据件（2.5.11 人签 E 批 · `E2`）
+"""check-approve-backfill.py v1.1.0 —— 「补签件与在场件**可分**」的判据件（2.5.11 人签 E 批 · `E2`）
 
 为什么存在（`E2` 的任务原文 + 已拍的落点）
 --------------------------------------------------
@@ -11,6 +11,9 @@
 
 ★ 本件**只判、不改**：读 `core/cmd/zerg/family_approve.go`（静态面）、读真审计件（只读）、
 读真批准件（只读）；**一个字节都不写** ✗（不写审计、不落在册件、不建归档位）。
+`v1.1.0`（缺口 `GAP-20260928-88`）给**本件自己**（不是给那些只读目标）加了一条**正门刷新通道**：
+常量 `DEV_EDIT_SHA256` 的值由 `--refresh-constant [--yes]` 从**真源件**现读刷进来，不再靠人肉改件。
+通道的**写面只动那一个常量的字面量**（最小文本替换 + 先落仓外备份），**读判据一个字没放松**。
 
 判据（B1–B5 · 每条都能单独失败）
 --------------------------------------------------
@@ -26,7 +29,19 @@
      （判 `signed_not_in_person=true`；换件判据：在场签名也追加 `approve_signed` ⇒ 按字面数会误伤 ·
      2026-09-23 改宽）；补签那一路本版**不实现** ⇒ 补签该是 0 条（**不许**把「读不到」当绿：读不到 ⇒ rc=2 未取数）。
   B5 **在册件零改**：`dev_edit.json` 既不是补签件、也不带明标 ⇒ 它的 `sha256` 与登记值一致
-     （明标没进件 = 这一枚件一个字节没动）。
+     （明标没进件 = 这一枚件一个字节没动）。**红行必须印出应有值**（缺口 `GAP-20260928-88`：
+     只说「≠ 登记值」不说该是多少 ⇒ 只能人肉发现 + 手改门件）。
+
+常量刷新通道（缺口 `GAP-20260928-88` · 判据 B5 的**配套**，不是它的替代）
+--------------------------------------------------
+  `--emit-constant`      **只读**：把**现读应有的**常量值打到 stdout（真源件现算 sha256 + 前缀解释 +
+                         现成的那一行字面量）。**不写件**（rc：0 = 与件内一致 · 1 = 不一致 · 2 = 未取数）。
+  `--refresh-constant`   **默认干跑不写**：只印「现值 → 应有值 + 计划的最小替换（含行号）」。
+  `--refresh-constant --yes`  真写：**最小文本替换**（只换常量行的那 64 位字面量，其余逐字节不动 ·
+                          替换前后**字节数相等**）＋ **先落仓外备份**（默认 `~/.zerg/state/gate-backups/`，
+                          落仓内 ⇒ 拒写 rc=2）。写前先过自检（不过 ⇒ 拒写 rc=1）。
+  ★ 两者都**不放宽任何判据**：B5 仍逐字比 sha256，常量错了仍 rc=1 —— 刷新通道只是把「人肉改件」
+  换成「正门刷值」。
 
 退码
 --------------------------------------------------
@@ -37,6 +52,9 @@
   python3 scripts/gates/check-approve-backfill.py             # 先自检，再扫真目标
   python3 scripts/gates/check-approve-backfill.py --self-test # 只跑自检（合成夹具 · 不碰真目标）
   python3 scripts/gates/check-approve-backfill.py --root <仓根> --state <状态目录>
+  python3 scripts/gates/check-approve-backfill.py --emit-constant            # 只读：应有值是多少
+  python3 scripts/gates/check-approve-backfill.py --refresh-constant         # 干跑：印计划 · 不写
+  python3 scripts/gates/check-approve-backfill.py --refresh-constant --yes   # 真写（最小替换 + 仓外备份）
 """
 
 import argparse
@@ -47,7 +65,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ROOT = os.path.dirname(os.path.dirname(HERE))
-VERSION = "check-approve-backfill.py v1.0.0"
+VERSION = "check-approve-backfill.py v1.1.0"
 
 APPROVE_GO_REL = os.path.join("core", "cmd", "zerg", "family_approve.go")
 TICKET_EIGHT = ["tool", "approver", "approved_at", "scope", "note", "sig_alg", "key_id", "sig"]
@@ -55,9 +73,38 @@ MARK_FIELD = "signed_not_in_person"
 EVENT = "approve_signed"
 LEGACY_SIX = ["before_sha256", "after_sha256", "before_bytes", "after_bytes", "approval", "approver"]
 # ★ 本常量 = **批准件重签后**的现读值（2026-09-28 02:16:25 Mr2109 重签 `dev_edit.json`：全量 scope + 追加 deploy/，
-#   key_id `8b69ad95939df5cf`；审计行在 `<状态目录>/edit_audit.jsonl`）。**任何时候重签了该件，须同一批把本常量
-#   跟到新值** —— 否则门⑰ 会以「B5 破」恒红（今晚即如此）。
-DEV_EDIT_SHA256 = "afb8dc93d571dc6ae1abf4844ac0f54206e6556d4f5fb89f229426f77c9bccbe"
+#   key_id `8b69ad95939df5cf`；审计行在 `<状态目录>/edit_audit.jsonl`）。**任何时候重签了该件，走本件自己的正门
+#   刷新通道把它跟到新值**（先 `--emit-constant` 看应有值，再 `--refresh-constant` 干跑，最后带 `--yes` 落）——
+#   不然门⑰ 会以「B5 破」恒红；**禁**手改本行（那是缺口 `GAP-20260928-88` 记的那条坏路）。
+DEV_EDIT_SHA256 = "ee1ee42774ea9f538b1a3e8cfdc0f82052bd11cd07b4e81cc24a4d0a72f4ea80"
+
+# ── 常量刷新的取数口（emit / refresh / 自检同读这一处 · 单一真源）────────────────────
+CONST_NAME = "DEV_EDIT_SHA256"
+CONST_RE = re.compile(r'(?m)^(' + CONST_NAME + r' = ")([0-9a-f]{64})(")$')
+TICKET_REL = os.path.join("approvals", "dev_edit.json")
+
+
+def sha256_file(path):
+    import hashlib
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def find_constant(src):
+    """返回 `(现读字面量, 行号, (start, end))`；解不出来 ⇒ `(None, None, None)`。"""
+    m = CONST_RE.search(src)
+    if not m:
+        return None, None, None
+    return m.group(2), src[:m.start()].count("\n") + 1, (m.start(2), m.end(2))
+
+
+def default_backup_dir():
+    return os.path.join(os.path.expanduser("~"), ".zerg", "state", "gate-backups")
+
+
+def _inside(path, root):
+    path, root = os.path.abspath(path), os.path.abspath(root)
+    return path == root or path.startswith(root + os.sep)
 
 
 # ── 判定口（纯函数：自检与真目标**共用同一套**）──────────────────────────────────────
@@ -170,6 +217,98 @@ def judge_event_count(rows):
     return n, ev, bf
 
 
+# ── 常量刷新通道（只读 emit + 最小替换写入 · 缺口 `GAP-20260928-88`）──────────────────
+
+def emit_constant(gate_path, dev_sha, out=None):
+    """只读档：把**现读应有的**常量值打到 stdout —— **不写件**。
+
+    rc：0 = 件内常量 == 应有值 · 1 = **不一致**（=门⑰ 现读会 B5 破 · 该走 `--refresh-constant`）·
+        2 = 未取数（常量行解不出来 / 真源件读不到）。
+    """
+    out = sys.stdout if out is None else out
+    out.write("── 常量发射档（只读 · 一个字节都不写）\n")
+    out.write("   常量       : %s（件内 = %s）\n" % (CONST_NAME, gate_path))
+    out.write("   口径       : 在册批准件的**整件文件** sha256（含末尾换行）—— 人做一次合法重签\n")
+    out.write("                （`zerg approve new`）该值必变 ⇒ 冻在件里就会陈腐（缺口 GAP-20260928-88）\n")
+    if dev_sha is None:
+        out.write("⛔ 未取数：真源件读不到 ⇒ **不出结论**（rc=2）\n")
+        return 2
+    out.write("   真源件     : %s\n" % TICKET_REL)
+    out.write("   应有值     : %s\n" % dev_sha)
+    try:
+        with open(gate_path, encoding="utf-8") as f:
+            src = f.read()
+    except OSError as e:
+        out.write("⛔ 未取数：件读不到（%s）⇒ **不出结论**（rc=2）\n" % e)
+        return 2
+    cur, line, _ = find_constant(src)
+    if cur is None:
+        out.write("⛔ 未取数：常量行 `%s = \"…\"` 在件里解不出来 ⇒ **不出结论**（rc=2）\n" % CONST_NAME)
+        return 2
+    out.write("   件内现值   : %s（第 %d 行）\n" % (cur, line))
+    if cur == dev_sha:
+        out.write("   判定       : 一致 ⇒ 门⑰ 的 B5 该过\n")
+        out.write("   %s = \"%s\"\n" % (CONST_NAME, cur))
+        return 0
+    out.write("   判定       : **不一致** ⇒ 门⑰ 现读 B5 破 · 该刷成下面这一行\n")
+    out.write("   %s = \"%s\"\n" % (CONST_NAME, dev_sha))
+    out.write("   正门       : python3 scripts/gates/check-approve-backfill.py"
+              " --refresh-constant --yes（先干跑不带 `--yes` · 只读再看一遍用 `--emit-constant`）\n")
+    return 1
+
+
+def refresh_constant(gate_path, dev_sha, apply=False, backup_dir=None, repo_root=None, out=None):
+    """常量刷新档：**默认干跑不写**；`apply=True`（=命令行 `--yes`）才落。
+
+    写面 = **最小文本替换**：只换 `CONST_RE` 命中的那 64 位字面量，其余**逐字节不动**（替换前后
+    字节数相等 —— 等长替换）。写前先把改前整件**备份到仓外**（默认 `~/.zerg/state/gate-backups/`；
+    备份落点在仓内 ⇒ 拒写 rc=2）。
+    rc：0 = 落成 / 干跑印完 / 现值已等于应有值 · 2 = 未取数或落点非法（拒写）。
+    """
+    out = sys.stdout if out is None else out
+    if dev_sha is None:
+        out.write("⛔ 未取数：真源件读不到 ⇒ 拒写（rc=2）\n")
+        return 2
+    try:
+        with open(gate_path, "rb") as f:
+            raw = f.read()
+    except OSError as e:
+        out.write("⛔ 未取数：件读不到（%s）⇒ 拒写（rc=2）\n" % e)
+        return 2
+    src = raw.decode("utf-8")
+    cur, line, span = find_constant(src)
+    if cur is None:
+        out.write("⛔ 未取数：常量行 `%s = \"…\"` 解不出来 ⇒ 拒写（rc=2）\n" % CONST_NAME)
+        return 2
+    out.write("── 常量刷新档（%s）\n" % ("**干跑** · 未写件" if not apply else "**真写**"))
+    out.write("   目标件 : %s\n" % gate_path)
+    out.write("   替换点 : 第 %d 行 · 最小文本替换（只动那 64 位字面量 · 其余逐字节不动）\n" % line)
+    out.write("   现值   : %s\n" % cur)
+    out.write("   应有值 : %s\n" % dev_sha)
+    if cur == dev_sha:
+        out.write("   ⇒ 现值已 == 应有值 ⇒ 无需动笔（rc=0）\n")
+        return 0
+    if not apply:
+        out.write("   ⇒ **干跑未写**：加 `--yes` 才落（本门默认不写件）\n")
+        return 0
+    bdir = os.path.abspath(backup_dir or default_backup_dir())
+    if repo_root and _inside(bdir, repo_root):
+        out.write("⛔ 拒写：备份落点在**仓内**（%s ⊂ %s）—— 备份必须落仓外（rc=2）\n" % (bdir, repo_root))
+        return 2
+    os.makedirs(bdir, exist_ok=True)
+    import time as _time
+    bpath = os.path.join(bdir, os.path.basename(gate_path) + "." + _time.strftime("%Y%m%d-%H%M%S") + ".bak")
+    with open(bpath, "wb") as f:
+        f.write(raw)
+    new_raw = (src[:span[0]] + dev_sha + src[span[1]:]).encode("utf-8")
+    with open(gate_path, "wb") as f:
+        f.write(new_raw)
+    out.write("   备份   : %s（仓外 · 改前整件 %d B）\n" % (bpath, len(raw)))
+    out.write("   字节   : 前 %d B → 后 %d B（等长替换 ⇒ 除那一个字面量外一字未动）\n" % (len(raw), len(new_raw)))
+    out.write("   ⇒ 已落（rc=0）：复跑门⑰ 单步该转绿（自检格数不变）\n")
+    return 0
+
+
 # ── 取数 ─────────────────────────────────────────────────────────────────────────
 
 def state_dir_of(given=None):
@@ -205,12 +344,10 @@ def read_all(repo, state):
             rows = f.read().splitlines()
     else:
         return None, "审计件不在（%s）⇒ 未取数（**不许**把「文件不存在」当没问题）" % audit
-    ticket = os.path.join(state, "approvals", "dev_edit.json")
+    ticket = os.path.join(state, TICKET_REL)
     if not os.path.exists(ticket):
         return None, "在册那枚批准件不在（%s）⇒ 未取数" % ticket
-    import hashlib
-    with open(ticket, "rb") as f:
-        dev_sha = hashlib.sha256(f.read()).hexdigest()
+    dev_sha = sha256_file(ticket)
     return {"src": src, "ticket_tags": ticket_tags, "audit_tags": audit_tags, "own_fields": own_fields, "rows": rows,
             "state": state, "audit_path": audit, "ticket": ticket, "dev_sha": dev_sha}, ""
 
@@ -228,8 +365,13 @@ def judge_all(r):
     n, ev, bf = judge_event_count(r["rows"])
     if bf > 0:
         problems.append("B4 破：现网审计里有 %d 条**补签**事件（`%s=true`）—— 本版补签那一路**不实现** ⇒ 该是 0 条（在场签名含 `%s` 事件属正常，不判）" % (bf, MARK_FIELD, EVENT))
+    # ★ 缺口 `GAP-20260928-88`：红行**必须印出应有值**（旧版只说「≠ 登记值」⇒ 只能人肉发现 + 手改门件）。
+    #   判据**一字不放宽**：仍逐字比 sha256；打印只是把「该改成多少」一并给出（正门 = `--refresh-constant`）。
     if r["dev_sha"] != DEV_EDIT_SHA256:
-        problems.append("B5 破：在册 `dev_edit.json` 的 sha256 = %s ≠ 登记值（明标没进件 = 它一个字节不该动）" % r["dev_sha"])
+        problems.append("B5 破：在册 `dev_edit.json` 的 sha256 = %s ≠ 登记值（明标没进件 = 它一个字节不该动）"
+                        "· **应改为** %s = \"%s\" —— 正门刷值：`python3 scripts/gates/check-approve-backfill.py"
+                        " --refresh-constant`（先干跑）· 加 `--yes` 才落（只读看值：`--emit-constant`）"
+                        % (r["dev_sha"], CONST_NAME, r["dev_sha"]))
     return problems, (n, ev, bf)
 
 
@@ -382,6 +524,62 @@ def self_test(repo, state):
           % (_noaudit[1], "未取数" in _noaudit[0]))
     _shutil.rmtree(_fx_root, ignore_errors=True)
 
+    # ── ★ 缺口 `GAP-20260928-88` 的自证格（2026-09-30 补）：刷新通道**两态**都要有牙 ──
+    #   牙齿对象：谁把 `--emit-constant` 弄成写件 / 把 `--refresh-constant` 弄成默认就写 /
+    #   把最小替换弄成整件重写 / 把备份落在仓内，本组格立刻变红。
+    _fx2 = _tempfile.mkdtemp(prefix="backfill-const-selftest-")
+    _gate_fx = os.path.join(_fx2, "check-approve-backfill.py")
+    _old_sha = "0" * 64
+    _new_sha = "1" * 64
+    _gate_src = ("#!/usr/bin/env python3\n# 注释行（非 ASCII · 锚定逐字节不动）\n"
+                 '%s = "%s"\nprint("tail")\n' % (CONST_NAME, _old_sha))
+    with open(_gate_fx, "w", encoding="utf-8") as _fh:
+        _fh.write(_gate_src)
+    _before = open(_gate_fx, "rb").read()
+
+    def _cap(_fn, *a, **kw):
+        _buf = _io.StringIO()
+        with _ctx.redirect_stdout(_buf):
+            _rc = _fn(*a, **kw)
+        return _buf.getvalue(), _rc
+
+    _emit_out, _rc_emit = _cap(emit_constant, _gate_fx, _new_sha)
+    check(_rc_emit == 1 and _new_sha in _emit_out and _old_sha in _emit_out
+          and open(_gate_fx, "rb").read() == _before,
+          "⑦ 正控（`--emit-constant`）：**只读不写件**且印出**应有值**（现读 rc=%s · 应有值在=%s · 件未动=%s）"
+          % (_rc_emit, _new_sha in _emit_out, open(_gate_fx, "rb").read() == _before),
+          "⑦ 正控失败：emit 档没印出应有值或**动了件**（rc=%s · 应有值在=%s · 件未动=%s）"
+          % (_rc_emit, _new_sha in _emit_out, open(_gate_fx, "rb").read() == _before))
+    _dry_bdir = os.path.join(_fx2, "bak-dry")
+    _dry_out, _rc_dry = _cap(refresh_constant, _gate_fx, _new_sha, False, _dry_bdir, None)
+    check(_rc_dry == 0 and open(_gate_fx, "rb").read() == _before and not os.path.exists(_dry_bdir)
+          and "干跑" in _dry_out,
+          "⑧ 负控（干跑默认不写）：不带 `--yes` ⇒ **零写入**（rc=%s · 件未动=%s · 备份目录未建=%s）"
+          % (_rc_dry, open(_gate_fx, "rb").read() == _before, not os.path.exists(_dry_bdir)),
+          "⑧ 负控失败：干跑档**写了件**或建了备份（rc=%s · 件未动=%s）"
+          % (_rc_dry, open(_gate_fx, "rb").read() == _before))
+    _bdir = os.path.join(_fx2, "bak")
+    _wr_out, _rc_wr = _cap(refresh_constant, _gate_fx, _new_sha, True, _bdir, os.path.join(_fx2, "repo"))
+    _after = open(_gate_fx, "rb").read()
+    _baks = os.listdir(_bdir) if os.path.isdir(_bdir) else []
+    _bak_path = os.path.join(_bdir, _baks[0]) if _baks else ""
+    # 最小替换的**逐字节**判据：改后 == 改前把那一处 64 位字面量原样换成新值（其余字节逐字不动）
+    _bsrc = _gate_src.encode("utf-8")
+    _bi = _bsrc.index(_old_sha.encode("utf-8"))
+    _expect = _bsrc[:_bi] + _new_sha.encode("utf-8") + _bsrc[_bi + len(_old_sha):]
+    check(_rc_wr == 0 and _after == _expect and len(_after) == len(_before)
+          and len(_baks) == 1 and open(_bak_path, "rb").read() == _before,
+          "⑨ 正控（`--refresh-constant --yes`）：最小替换（等长 %d→%d B · 常量外逐字节不动 · 字节级==期望）"
+          "+ 仓外备份 1 份=改前态" % (len(_before), len(_after)),
+          "⑨ 正控失败：替换不是最小 / 未落备份（rc=%s · 字节级相等=%s · 等长=%s · 备份数=%s）"
+          % (_rc_wr, _after == _expect, len(_after) == len(_before), len(_baks)))
+    _in_repo_out, _rc_in_repo = _cap(refresh_constant, _gate_fx, _old_sha, True,
+                                     os.path.join(_fx2, "repo", "bak-in-repo"), os.path.join(_fx2, "repo"))
+    check(_rc_in_repo == 2 and "仓内" in _in_repo_out,
+          "⑩ 负控（备份落仓内 ⇒ 拒写 rc=2 并逐字点名）：现读 rc=%s" % _rc_in_repo,
+          "⑩ 负控失败：备份落仓内还写了（rc=%s）" % _rc_in_repo)
+    _shutil.rmtree(_fx2, ignore_errors=True)
+
     print("   自检：%d 格过 · %d 格不过（真目标只读 · 未改任何字节）" % (ok, bad))
     return bad == 0
 
@@ -440,9 +638,38 @@ def main():
     ap.add_argument("--state", default=None, help="状态目录（默认 = `ZERG_STATE_DIR` > `~/.zerg/state`）")
     ap.add_argument("--self-test", action="store_true", help="只跑自检（不碰真目标）")
     ap.add_argument("--no-self-test", action="store_true", help="跳过自检（只有已自证过的调用方才该用）")
+    ap.add_argument("--emit-constant", action="store_true",
+                    help="只读档：把**现读应有的**常量值打到 stdout（含真源件现算 sha256 + 前缀解释 · 不写件）")
+    ap.add_argument("--refresh-constant", action="store_true",
+                    help="刷新常量：**默认干跑不写**；带 `--yes` 才落（最小文本替换 + 先落仓外备份）")
+    ap.add_argument("--yes", action="store_true", help="与 `--refresh-constant` 连用 = 真写（干跑默认不写）")
+    ap.add_argument("--backup-dir", default=None,
+                    help="刷新时的备份落点（默认 `~/.zerg/state/gate-backups` · 落仓内 ⇒ 拒写）")
     args = ap.parse_args()
     repo = os.path.abspath(args.root)
     state = state_dir_of(args.state)
+    gate_path = os.path.abspath(__file__)
+    ticket = os.path.join(state, TICKET_REL)
+    dev_sha = sha256_file(ticket) if os.path.exists(ticket) else None
+
+    if args.emit_constant and args.refresh_constant:
+        print("⛔ 用法错（rc=2）：`--emit-constant` 与 `--refresh-constant` 互斥（一个只读、一个可能写）", file=sys.stderr)
+        return 2
+    if args.yes and not args.refresh_constant:
+        print("⛔ 用法错（rc=2）：`--yes` 只跟 `--refresh-constant` 连用（本门**默认干跑不写**）", file=sys.stderr)
+        return 2
+    if args.emit_constant:
+        print(VERSION)
+        return emit_constant(gate_path, dev_sha)
+    if args.refresh_constant:
+        print(VERSION)
+        if not args.no_self_test and not self_test(repo, state):
+            print("⛔ 自检不过 ⇒ **拒写**（rc=1）：先修自检再谈刷值")
+            return 1
+        if dev_sha is None:
+            print("⛔ 未取数：在册批准件不在（%s）⇒ **拒写**（rc=2）" % ticket)
+            return 2
+        return refresh_constant(gate_path, dev_sha, apply=args.yes, backup_dir=args.backup_dir, repo_root=repo)
     print(VERSION)
     if not args.no_self_test and not self_test(repo, state):
         return 1

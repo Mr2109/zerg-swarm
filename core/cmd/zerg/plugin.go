@@ -230,7 +230,7 @@ func tryPlugin(inv *invocation, stdout, stderr io.Writer) (int, bool) {
 		argv = inv.orig[1:] // 去掉插件短名那一格，其余**原样**交给插件
 	}
 	fmt.Fprintf(stderr, "插件 %s：%s（信任声明：%s）\n", pluginPrefix+hit.Name, hit.Path, pluginTrustNotice)
-	cmd := exec.Command(hit.Path, argv...)
+	cmd := armChildGroup(exec.Command(hit.Path, argv...))
 	runningChild = cmd
 	defer func() { runningChild = nil }()
 	cmd.Stdin = os.Stdin
