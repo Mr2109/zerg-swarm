@@ -16,6 +16,7 @@ package main_test
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -241,6 +242,23 @@ func TestImpactLayers_PublicFacePositiveAndNegative(t *testing.T) {
 func TestImpactLayers_PublicLineThreePieces(t *testing.T) {
 	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
 	t.Setenv("ZERG_STATE_DIR", t.TempDir())
+	// ★ 自造夹具产出树（本判据 ✗ 不许依赖仓外写死的固定路径 —— 形如 `/tmp/zerg-pub-final-20260921`
+	//   那种**临时目录**早已不在；依赖它 ⇒ 「环境不在场」被误报成 `C5` 正控破 = **判据缺陷** ✗）。
+	//   判据②要判的正是「产出树路径 + 扫的时刻 + `head_sha` 三件齐 ⇒ 才出数字那一句」，
+	//   这需要一棵**真在**的产出树：测试自己造一棵（仓外 · `t.TempDir`），把产出树路径注入
+	//   `ZERG_PUB_TREE`（生产读它的口径一字不动 · 判据一格不放宽）。负控丙（下方）另把
+	//   `ZERG_PUB_TREE` 指到一个**不存在**的目录 —— 那才是「读不到 ⇒ 未取数」的负控面。
+	pubTree := t.TempDir()
+	for _, rel := range []string{"README.md", "docs/index.md"} {
+		abs := filepath.Join(pubTree, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatalf("铺夹具产出树失败：%v", err)
+		}
+		if err := os.WriteFile(abs, []byte("laneB317 fixture\n"), 0o644); err != nil {
+			t.Fatalf("铺夹具产出树失败：%v", err)
+		}
+	}
+	t.Setenv("ZERG_PUB_TREE", pubTree)
 	rc, out, errb := runCapture("impact", "scripts/公开标记.tsv")
 	if rc != 0 {
 		t.Fatalf("生效面上的件 ⇒ 期望 rc=0，得到 %d · stderr=%s", rc, tail(errb, 300))
