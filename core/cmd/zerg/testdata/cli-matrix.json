@@ -7747,6 +7747,31 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判（读数现跑派生：rc=2 · stdout 0 字节）"
+  },
+  {
+   "id": "gate/check#不认的契约主号",
+   "command": "gate check",
+   "argv": [
+    "gate",
+    "check",
+    "--schema",
+    "zerg/v9"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判 —— 与其余透传型（`gate ls`/`show`）同形"
+  },
+  {
+   "id": "gate/check#未知名（拒绝并给可用名列表）",
+   "command": "gate check",
+   "argv": [
+    "gate",
+    "check",
+    "zzz-没有这条判据-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "判据名不在册 ⇒ **拒**并给可用名列表（✗ 不猜 · ✗ 不模糊匹配）；用法错 · 退 2 · stdout 零字节"
   }
  ],
  "tiers": {
