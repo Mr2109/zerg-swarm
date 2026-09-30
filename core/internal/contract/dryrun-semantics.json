@@ -624,6 +624,13 @@
     "语义": "dryrun.v1",
     "零副作用判据": "`bin/zerg gate reap --stale --dry-run` ⇒ 退码 0 · stdout = 干跑单（别的根数 + 逐根 verdict/谱系/在飞工/理由）+ stderr 一行「★ 干跑：一个信号都没发、一个字节都没写」；**一个信号都不发**（现跑对拍：跑前后 `ps` 门根集逐条不变）· 不落盘；真收（`--yes`）才逐 pid SIGTERM→SIGKILL 并把每个收回动作 append 进仓外审计 `<锁目录>/reap-audit.jsonl`。",
     "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：`--dry-run` 走进本命令的解析面（dryrun.v1 的同一套语义），不另立第五套。"
-  }
+  },
+    {
+      "file": "scripts/gates/check-judge-registry.py",
+      "类": "判据面：**字样引用**（不是干跑语义站点 —— 全件命中恰 2 处，都是判据注册表的**列名/字段**：件头列面散文里的 `dry_run`（`none`/`argv`/`noop` · 默认 `none`）与 `build_registry` 里逐条写出的 `dry_run` 字段；本件本身**没有** `--dry-run` 档，三个档 `--emit`/`--check`/`--self-test` 都不驱动干跑）",
+      "语义": "dryrun.v1",
+      "零副作用判据": "本件不是干跑站点：`dry-run` 字样在本件只作判据注册表的**字段名**出现，不驱动任何行为。它自己的动作面：`--check` 只读（双向差集 + 列面机检 + 逐件 `sha256` 比对，不写盘）；`--self-test` 全跑在 `tempfile.TemporaryDirectory(prefix=judge-reg-self-)` 的**仓外夹具**里（跑完即删，不碰真目标）；`--emit` 是**唯一写面** —— 只写 `--out` 一件（默认 `scripts/gates/judge-registry.json`），内容是现读名录的**确定性**序列化（无时间戳/无随机）。不落盘到写出件以外 · 不删 · 不推 · 不造目录 · 不调服务。",
+      "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**字段名引用**（`dry_run` 列），不是第五套 dry-run 语义 —— 同门先例 `check-public-face-commands.py` / `check-help-shape.py` / `check-help-snapshot.py` 的「消费者 / 字样引用」处置。"
+    }
   ]
 }
