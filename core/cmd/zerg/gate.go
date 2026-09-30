@@ -6,7 +6,7 @@
 //	· 不动脚本退码（脚本退多少，命令面就返多少：`return cmd.ProcessState.ExitCode()`；
 //	  全文件**零分支**改写退码 —— 这就是「不翻译」的证明面）。
 //
-// 六条动作与脚本旗标的对应（一一对应，不加戏）：
+// 六条动作与脚本旗标的对应（一一对应，不加戏）；`check` 是第七条第**不走脚本**的（判据转发壳）：
 //
 //	zerg gate ls          → bash scripts/gates/precommit-gates.sh --list
 //	zerg gate run  <原样>  → bash scripts/gates/precommit-gates.sh <原样>      （--scope/--fast/--outdir/… 逐字透传）
@@ -14,6 +14,10 @@
 //	zerg gate find <片段>  → **不走脚本**：门件名 ⇒ 步名 的桥（缺口 `GAP-20260927-07` · 只读）
 //	zerg gate self-test    → bash scripts/gates/precommit-gates.sh --self-test
 //	zerg gate results      → **不走脚本**：读现成一趟的 results.tsv（缺口 `Q-111`/`B-8` · 只读）
+//	zerg gate check <判据名> → **不走脚本**：判据名 ⇒ `scripts/gates/*.py|*.sh` 的**保守**解析 ＋ 逐字透传子件
+//	                          （v2.5.14 · M1 首项 · 设计-判据 CLI 化-v1.7 §9.1 · 见 `family_gate_check.go`：
+//	                          名录真源 = 现读 `scripts/gates/` 目录列举；不在册 ⇒ 拒并给可用名；件自身崩 ⇒ `8`
+//	                          ＋ `detail=judge_broken` ＋ `raw_rc` —— **零新占号**）
 //
 // 六条**例外**（都只在命令面自己的旗标上生效，且都**不改脚本退码**）：
 //
@@ -163,9 +167,15 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		// 不写不删任何日志）。本动作**不走脚本**（脚本没有这个动作）⇒ 是第四条命令面分支，
 		// 与 `run --step --json` / `show --json` 同规：只在命令面自己的旗标上生效。
 		return gateResults(inv, stdout, stderr, root)
+	case "check":
+		// ★ v2.5.14 · M1 首项（设计-判据 CLI 化-v1.7 §9.1）：**判据转发壳**。
+		// 判据名 ⇒ 件 的**保守**解析（名录真源 = 现读 `scripts/gates/` 目录列举）＋ 逐字透传；
+		// 件自身崩 ⇒ `8` ＋ `detail=judge_broken` ＋ `raw_rc`（**不占新号** · 见 `family_gate_check.go`）。
+		// 与既有六条同规：只转发、不翻译；除本动作**不改任何既有动作**的判定与退码。
+		return gateCheck(inv, stdout, stderr, root)
 	default:
 		fmt.Fprintf(stderr, "%s: 未知 `gate` 动作 %q\n", progName, action)
-		fmt.Fprintf(stderr, "可用：ls · run · show · find · self-test · results\n")
+		fmt.Fprintf(stderr, "可用：ls · run · show · find · self-test · results · check\n")
 		return exitUsage
 	}
 

@@ -683,6 +683,23 @@ func init() {
 			passthrough: true,
 			run:         cmdGate,
 		},
+		// ---- v2.5.14 · M1 首项：判据转发壳 `zerg gate check <判据名>`（设计-判据 CLI 化-v1.7 §9.1）----
+		// 形状：**动词做命令、名词做参数** ⇒ 判据名是**参数**，不是 189 条平级命令（§5.3）。
+		// 走 `cmdGate` 的新动作分支（`gate.go` 的 `case "check"` → `family_gate_check.go`）：
+		// 判据名 ⇒ 件 的**保守**解析（名录真源 = 现读 `scripts/gates/` 目录列举）＋ 逐字透传退码与两路输出；
+		// 不在册 ⇒ 拒并给可用名；件自身崩 ⇒ `8` ＋ `detail=judge_broken` ＋ `raw_rc`（**零新占号**）。
+		// 透传型（同 `gate run`/`show`）：子件的旗标与位置参数逐字交给子件 ⇒ 命令面不另判旗标面。
+		{
+			path:        []string{"gate", "check"},
+			kind:        "GateCheck",
+			summary:     "跑**一件判据件**（判据名 ⇒ scripts/gates/*.py|*.sh 的保守解析 · 逐字透传退码与输出；不在册 ⇒ 拒并给可用名；件自身崩 ⇒ 8 不给结论）",
+			usage:       "zerg gate check <判据名> [子件参数…]",
+			arity:       "any",
+			args:        []string{"判据名（＝ scripts/gates/ 下件名去扩展名 · 逐字相同；✗ 不模糊匹配）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdGate,
+		},
 		// ---- T09/T11 正门两条（本枚 · **只增**）----
 		// ★ 两条都**不走** `cmdGate`：`cmdGate` 的动作分派长在 `gate.go`（本枚不许改的第三件之外），
 		//   而 `resolve()` 的 3 段前缀试探（见其函数头）已能把 `gate selfreport diff` 精确命中 ⇒
