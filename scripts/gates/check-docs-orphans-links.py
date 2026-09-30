@@ -71,15 +71,24 @@
 退码（**只报不拦** —— 与仓内其余门脚本不同，本门**没有 1**）
 --------------------------------------------------------------
   0 = 判得了（**无论两格命中多少** —— 「先只报不拦」逐字：命中**不改**退出码 ✗）
-  2 = **不给结论**：`--repo-root` 不在盘 / 扫面 **0 件** / 件读不了 / `--self-test` 不过
-      ★ 导出树不在盘 ⇒ **孤儿格 = 判不了**（照实打印 `orphans = None`），**其余格照判**、rc 仍 0
-        —— 「这一格判不了」与「整门判不了」是两件事，不许混（本仓那条「缺件 ≠ 绿」也只钉被影响的那一格）。
+  2 = **不给结论**：`--repo-root` 不在盘 / 扫面 **0 件** / 件读不了 / `--self-test` 不过 /
+      **导出树读不到**（取树次序 `--tree` → 主名 env → 兼容别名 env → 无；都指不到真件 ⇒ 同此档）
+      ★ 导出树 ⇒ **孤儿格 = 判不了**（照实打印 `orphans = None`）· **其余格照判**（照实打印），
+        但导出树是本门判据的**必需输入** ⇒ **缺件 ≠ 绿**：本门退 **2 不给结论**（与 B12/B14/B16/B17 同口径）。
+        ★ v1.1.0 及以前此处 rc 仍 0 = **静默绿** ✗（默认值写死一条早已不在盘的日期路径所致）—— 2026-10-01 收口。
+
+env 名（2026-10-01 统一 · 同族口径）
+----------------------------------
+  · 主名 `ZERG_PUB_TREE`（与同族 `core/cmd/zerg/family_impact_layers.go` 逐字一致）。
+  · 兼容别名 `ZERG_PUBLIC_TREE`（门侧 `precommit-gates.sh` 现用名）—— **只在主名为空时读它**。
+  · 两者都设 ⇒ **主名优先**；都空 ⇒ 同「导出树读不到」（rc=2）。
+  · ✗ 不许两边各改成一个互相不认识的第三个名字（那正是本口子的来源）。
 
 用法
 ----
     python3 scripts/gates/check-docs-orphans-links.py                  # 两格全判（只报）
     python3 scripts/gates/check-docs-orphans-links.py --json           # 末尾追加机器面一行
-    python3 scripts/gates/check-docs-orphans-links.py --tree DIR       # 换导出树（默认 $ZERG_PUB_TREE）
+    python3 scripts/gates/check-docs-orphans-links.py --tree DIR       # 换导出树（默认 $ZERG_PUB_TREE · 兼容 $ZERG_PUBLIC_TREE）
     python3 scripts/gates/check-docs-orphans-links.py --list-rules     # 打判据 / 两格定义 / 覆盖与未覆盖
     python3 scripts/gates/check-docs-orphans-links.py --self-test      # 只跑自检（合成夹具，不碰真目标）
 """
@@ -94,8 +103,15 @@ import sys
 import tempfile
 import urllib.parse
 
-VERSION = "1.1.0"
-DEFAULT_TREE = "/tmp/zerg-pub-final-20260921"
+VERSION = "1.2.0"
+# ★ 导出树默认值：**空**（不默写任何路径）。
+#   旧值是一条**写死日期的 /tmp 快照路径**（早已不在盘）⇒ 树缺时本门沿默认值走、孤儿格判不了却仍 `rc=0`
+#   = **静默绿** ✗（`GAP-20261001-01` 的唯一真口子 · 2026-10-01 收口）。
+#   取树次序（写死）：`--tree` → `$ZERG_PUB_TREE`（主名 · 与同族 `core/cmd/zerg/family_impact_layers.go` 逐字一致）
+#   → `$ZERG_PUBLIC_TREE`（兼容别名 · 门侧 `precommit-gates.sh` 现用名）→ 无。
+DEFAULT_TREE = ""
+PUB_TREE_ENV = "ZERG_PUB_TREE"            # 主名（go/py 同族）
+PUB_TREE_ENV_ALIAS = "ZERG_PUBLIC_TREE"   # 兼容别名（门侧现名 · 只在主名为空时读它）
 
 # ── 基准偏移登记（「件在 A 处、链接按 B 基准写」—— **收窄判据**，不是豁免名单）──────────────
 #   为什么/治法/体检三态见件头「基准偏移登记」一节（与 `check-links-lychee.py` 同一枚登记面、同一枚复核。
@@ -140,6 +156,18 @@ def is_external(target: str) -> str:
 
 def _norm(path: str) -> str:
     return os.path.normpath(path).replace(os.sep, "/")
+
+
+def resolve_tree(cli_tree):
+    """取导出树 + 来源（次序写死 · 见件头「env 名」与「退码」两节）：
+    `--tree` → 主名 env → 兼容别名 env → 无。都没有 ⇒ 返回 ("", "")（调用方按「读不到」处理）。"""
+    if cli_tree is not None:
+        return cli_tree, "--tree"
+    for name in (PUB_TREE_ENV, PUB_TREE_ENV_ALIAS):
+        val = os.environ.get(name, "")
+        if val.strip():
+            return val.strip(), "$" + name
+    return "", ""
 
 
 # ── 遮蔽（**不是**判据：挡的是「本来就不是链接的文本」）──────────────────────────────
@@ -463,7 +491,8 @@ LIST_RULES = """判据（两格 · 只报不拦）
 退码
 ----
   0 = 判得了（命中多少都不改码 —— 「先只报不拦」）
-  2 = 不给结论（仓根缺 / 扫面 0 件 / 件读不了 / **基准偏移登记过期** / 自检不过）
+  2 = 不给结论（仓根缺 / 扫面 0 件 / 件读不了 / **基准偏移登记过期** / 自检不过 /
+                **导出树读不到** —— 缺件 ≠ 绿）
 """
 
 
@@ -639,7 +668,9 @@ def main() -> int:
     ap.add_argument("--repo-root", default=repo_default)
     ap.add_argument("--docs-root", default=None,
                     help="第二棵树（默认 = 同级目录 Zerg-内部文档；不在盘 ⇒ 照实标缺）")
-    ap.add_argument("--tree", default=None, help="导出树（默认 $ZERG_PUB_TREE 或 %s）" % DEFAULT_TREE)
+    ap.add_argument("--tree", default=None,
+                    help="导出树（默认 $%s · 兼容别名 $%s；都没有 ⇒ 不给结论）"
+                         % (PUB_TREE_ENV, PUB_TREE_ENV_ALIAS))
     ap.add_argument("--max-examples", type=int, default=20)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--list-rules", action="store_true")
@@ -657,13 +688,16 @@ def main() -> int:
         sys.stdout.write("⛔ 仓根不在盘：%s ⇒ 不给结论（rc=2）\n" % a.repo_root)
         return 2
     docs_root = a.docs_root if a.docs_root is not None else os.path.join(os.path.dirname(a.repo_root), "Zerg-内部文档")
-    tree = a.tree if a.tree is not None else os.environ.get("ZERG_PUB_TREE", DEFAULT_TREE)
+    tree, tree_src = resolve_tree(a.tree)   # 次序：--tree → $ZERG_PUB_TREE → $ZERG_PUBLIC_TREE → 无
 
     sys.stdout.write("文档孤儿 / 本地断链（两格 · 只报不拦）· v%s\n" % VERSION)
     sys.stdout.write("  判据见 `--list-rules`：① local_broken（域 = 两棵树）· ② orphans（域 = 导出树）\n")
     sys.stdout.write("  域① 主仓根 = %s\n" % a.repo_root)
     sys.stdout.write("  域① 第二棵树 = %s%s\n" % (docs_root, "" if os.path.isdir(docs_root) else "  ★不在盘（该树照实标缺 · 不影响另一棵）"))
-    sys.stdout.write("  域② 导出树 = %s%s\n" % (tree, "" if os.path.isdir(tree) else "  ★不在盘（孤儿格 = 判不了）"))
+    sys.stdout.write("  域② 导出树 = %s（来源 %s）%s\n"
+                     % (tree if tree else "（未给）", tree_src or "无",
+                        "" if (tree and os.path.isdir(tree))
+                        else "  ★读不到（孤儿格 = 判不了 ⇒ 本门不给结论 rc=2）"))
 
     bad = 0
     br_counts = {}
@@ -705,7 +739,8 @@ def main() -> int:
     for nested in NESTED_SEEN.get(tree, []):
         sys.stdout.write("      ⊘ 剪掉的嵌套仓（域外 · 别仓的件）：%s\n" % nested)
     if on is None:
-        sys.stdout.write("  ⛔ 孤儿 · 导出树：判不了（%s）—— 这一格判不了 ≠ 整门判不了\n" % owhy)
+        sys.stdout.write("  ⛔ 孤儿 · 导出树：判不了（%s）—— 这一格判不了 ≠ 整门判不了；"
+                         "★ 导出树是本门判据的必需输入 ⇒ **缺件 ≠ 绿**：本门不给结论（rc=2）\n" % owhy)
     else:
         sys.stdout.write("  ✓ 孤儿 · 导出树：%d 件（入链 = 0）\n" % on)
         for h in ohits[: a.max_examples]:
@@ -740,6 +775,11 @@ def main() -> int:
             sys.stdout.write("      %s（%s）\n" % (h["file"], nav_word))
 
     if br_counts.get("主仓", 0) is None:
+        return 2
+    if on is None:   # ★ 导出树读不到 ⇒ 孤儿格判不了 · 缺件 ≠ 绿 ⇒ 本门不给结论（零放宽）
+        sys.stdout.write("\n结论：**不给结论（rc=2）** —— 导出树读不到（%s）\n"
+                         "      取树次序 `--tree` → `$%s` → `$%s`（与 B12/B14/B16/B17 同口径 · 缺件 ≠ 绿）\n"
+                         % (owhy, PUB_TREE_ENV, PUB_TREE_ENV_ALIAS))
         return 2
     ex_all = {k: len(v) for k, v in br_exempt.items()}
     sys.stdout.write("\n结论（只报不拦）：本地断链 主仓 %s 件 / 第二棵树 %s 件 · "
