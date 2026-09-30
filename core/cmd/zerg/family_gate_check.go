@@ -12,9 +12,10 @@
 //	② **件自身崩 / 跑不起来**（exec 层：解释器找不到 / 不可执行）⇒ 壳给 `8`（不给结论）
 //	   ＋ `detail=judge_broken` ＋ `raw_rc` 留痕。**不抄 Docker 的 125/126/127**（那是它自家约定）；
 //	   透传会把「壳故障」冒充成「件判负」✗（拍定第二条）。
-//	③ **名字 ⇒ 件** 的解析面**保守且现读可机检**：名单真源 = **现读** `<仓根>/scripts/gates/` 的
-//	   目录列举（`*.py` / `*.sh`；名字 ＝ 文件名去扩展名，§6「判据名 ＝ 件名去扩展名，逐字相同」）。
-//	   **不手敲名录**、**不模糊匹配**、**不猜**：名字不在册 ⇒ 拒（`2`）并**给可用名列表**。
+//	③ **名字 ⇒ 件** 的解析面**保守且现读可机检**：名单真源 = **现读** `<仓根>/scripts/` 的
+//	   **递归**列举（`*.py` / `*.sh`；名字 ＝ 文件名去扩展名，§6「判据名 ＝ 件名去扩展名，逐字相同」）。
+//	   **不手敲名录**、**不模糊匹配**、**不猜**：名字不在册 ⇒ 拒（`2`）并**给可用名列表**；
+//	   递归后同名落在不同子目录 ⇒ **显式报歧义并拒**（✗ 不静默挑一个）。
 //	   ★ 名录由目录列举派生 ⇒ 新增判据件**自动**在册，**不动命令树**（§5.3）。
 //
 // 路径边界（承 §6）：解析出的件必须在 `<仓根>/scripts/` 前缀内，越界 ⇒ `2`（壳自身错，
@@ -27,6 +28,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,39 +37,68 @@ import (
 )
 
 // gateCheckRosterDirRel —— 判据件名录的**目录真源**（相对仓根）。只此一处拼它，别处不许再拼。
-const gateCheckRosterDirRel = "scripts/gates"
+// ★ 本刀（M1 名录扩面第 1 刀）：由 `scripts/gates` 放宽到 `scripts` 并**递归全子树** —— 子目录件
+// 也可达；后缀面仍只收 `.py` / `.sh`（无后缀档是下一刀，不在本刀）。
+const gateCheckRosterDirRel = "scripts"
 
 // gateCheckInterpreter —— 判据件扩展名 ⇒ 解释器（**不是**按位可执行位判 —— 件在仓库里多为 0644）。
 // 闭集只有两种：`.py` ⇒ `python3`；`.sh` ⇒ `bash`（设计 §五「库类 21 件 + sh 42 件不特殊化」）。
 var gateCheckInterpreter = map[string]string{".py": "python3", ".sh": "bash"}
 
-// gateCheckRoster —— 现读名录：`{判据名: 件绝对路径}` ＋ 同名字列表（保守面）＋ 读不动的原因。
+// gateCheckRoster —— 现读名录：`{判据名: 件绝对路径}` ＋ 同名歧义列表（保守面）＋ 读不动的原因。
 //
-// 判据名 ＝ 文件名去扩展名（§6）；只收 `.py` / `.sh` 两种扩展名。同名两件（`x.py` 与 `x.sh` 并存）
-// 逐条登记在 `dupes` —— 调用方**保守拒**（不许挑一个），因为「挑」就是猜。
+// 判据名 ＝ 文件名去扩展名（§6）；只收 `.py` / `.sh` 两种扩展名。递归全子树后，同名（含**不同子
+// 目录**下的同名件，如 `a/x.py` 与 `b/x.sh`）逐条登记在 `dupes` —— 调用方**保守拒**（不许挑一个），
+// 因为「挑」就是猜。
 func gateCheckRoster(root string) (map[string]string, []string, error) {
 	dir := filepath.Join(root, gateCheckRosterDirRel)
-	ents, err := os.ReadDir(dir)
+	paths := map[string][]string{}
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			// `__pycache__` 是**编译缓存**、不是判据件 ⇒ 不递归进去（也不许它污染名录）。
+			if d.Name() == "__pycache__" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		n := d.Name()
+		if _, ok := gateCheckInterpreter[filepath.Ext(n)]; !ok {
+			return nil
+		}
+		name := strings.TrimSuffix(n, filepath.Ext(n))
+		paths[name] = append(paths[name], p)
+		return nil
+	})
 	if err != nil {
 		return nil, nil, err
 	}
 	byName := map[string]string{}
 	dupes := []string{}
-	for _, e := range ents {
-		if e.IsDir() {
+	names := make([]string, 0, len(paths))
+	for n := range paths {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		ps := paths[name]
+		if len(ps) == 1 {
+			byName[name] = ps[0]
 			continue
 		}
-		n := e.Name()
-		if _, ok := gateCheckInterpreter[filepath.Ext(n)]; !ok {
-			continue
+		// 同名 ⇒ 名字 ⇒ 件 **不唯一**：显式报歧义（仓根相对路径逐条摆出 · ✗ 不静默挑一个）。
+		sort.Strings(ps)
+		rel := make([]string, 0, len(ps))
+		for _, p := range ps {
+			if r, rerr := filepath.Rel(root, p); rerr == nil {
+				rel = append(rel, r)
+			} else {
+				rel = append(rel, p)
+			}
 		}
-		name := strings.TrimSuffix(n, filepath.Ext(n))
-		if prev, exists := byName[name]; exists {
-			dupes = append(dupes, fmt.Sprintf("%s（%s · %s 同名两件）", name,
-				filepath.Base(prev), n))
-			continue
-		}
-		byName[name] = filepath.Join(dir, n)
+		dupes = append(dupes, fmt.Sprintf("%s（%s 同名 %d 件）", name, strings.Join(rel, " · "), len(ps)))
 	}
 	sort.Strings(dupes)
 	return byName, dupes, nil
@@ -127,7 +158,7 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 		return exitBlocked
 	}
 	if len(dupes) > 0 {
-		fmt.Fprintf(stderr, "%s: ⛔ 判据名录里有**同名两件**（名字 ⇒ 件 不唯一）⇒ **不给结论**（禁猜）：\n", progName)
+		fmt.Fprintf(stderr, "%s: ⛔ 判据名录里有**同名多件**（名字 ⇒ 件 不唯一）⇒ **不给结论**（禁猜）：\n", progName)
 		for _, d := range dupes {
 			fmt.Fprintf(stderr, "  · %s\n", d)
 		}
@@ -140,7 +171,7 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 		// **保守拒**：名字不在册 ⇒ 拒并给可用名列表（✗ 不猜 · 不模糊匹配）。
 		fmt.Fprintf(stderr, "%s: 判据名 %q **不在册**（名字 ⇒ 件 只认逐字同名；不模糊匹配）\n", progName, name)
 		names := gateCheckRosterSorted(byName)
-		fmt.Fprintf(stderr, "%s: 可用名 %d 条（现读 %s/ 列举）：\n", progName, len(names), gateCheckRosterDirRel)
+		fmt.Fprintf(stderr, "%s: 可用名 %d 条（现读 %s/ 递归列举）：\n", progName, len(names), gateCheckRosterDirRel)
 		for _, ln := range gateCheckAvailableLines(names, 4) {
 			fmt.Fprintln(stderr, ln)
 		}
