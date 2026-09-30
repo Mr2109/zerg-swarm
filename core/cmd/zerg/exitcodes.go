@@ -27,6 +27,9 @@ type exitcodeRow struct {
 // 批 B 落判（§十二 `P-013` ②③④ 与 §九 M7 的落地）：`10` 资源不足 · `11` 超时 ·
 // `12` 不可达 · `14` 冲突/被占（**不许**再用 `507` 表达）从「已挂号」转**启用** ——
 // 它们的 kind 见 `zerg help errors`（kind → 码是**唯一真源**，本表是它的投影）。
+// ★ `130` 人打断（Ctrl-C）由「已挂号」转**启用**（2026-09-30 · 标注与事实对齐）：本 CLI
+// 主动捕获 SIGINT 并退 `130`（落点 `main.go` 的 `exitInterrupted` + `os.Exit(exitInterrupted)`）
+// ⇒ 它**早已是启用行为**，此前误挂在「已挂号、尚未启用」段（`kind` = `interrupted`）。
 var exitcodeTable = []exitcodeRow{
 	{0, "ok", "成功", "—"},
 	{1, "failed", "一般失败（跑到了、没成功）", "看 error.kind；默认不可重试"},
@@ -37,12 +40,12 @@ var exitcodeTable = []exitcodeRow{
 	{11, "timeout", "超时（「等到了坏结果」与「等不起」分开）", "可重试"},
 	{12, "unreachable", "不可达（打不到主控）—— **fail-closed**，不偷偷换端点", "链路恢复后可重试"},
 	{14, "conflict", "冲突 / 被占（**不许**再用 `507` 表达 · 幂等优先）", "显式 `--wait` 才排队；已在该状态按状态报"},
+	{130, "interrupted", "人打断（Ctrl-C · 默认只退订、不取消）", "—"},
 }
 
 // exitcodeReserved —— **已挂号、尚未启用**（登记在此，不启用；启用是后续版本的拍板项）。
-var exitcodeReserved = []exitcodeRow{
-	{130, "interrupted", "人打断（Ctrl-C · 默认只退订、不取消）", "—"},
-}
+// ★ 现读为空：此前唯一挂号项 `130`（`interrupted`）已随主表转**启用**（见上）。
+var exitcodeReserved = []exitcodeRow{}
 
 // exitcodePolicy —— 占号纪律（§九 M7 `E8`）。一字不改地用在一处，别处只许引用。
 const exitcodePolicy = "占号纪律：只在 3–63 自留区取号；每号必须在 `zerg help exit-codes` 写明语义与可重试性；**禁止同数字两义**（同数字两义 ⇒ 门禁红）"
@@ -87,14 +90,13 @@ func helpExitCodes() string {
 		}
 	}
 	emit("主表（五档）：", exitcodeTable)
-	out += "\n"
-	emit("已挂号、尚未启用（登记在此，不启用）：", exitcodeReserved)
 	out += "\n" + exitcodePolicy + "\n"
 	out += "\n" + exitcodeGatePass + "\n"
 	out += "  门禁直通档（不翻译）：" + gateExitLine + "\n"
 	out += "\n一份口径（防误读）：**组件的自有码空间**（`zerg-compat` / `zerg-model` / `zerg-agent` 的进程内语义码）" +
 		"与命令面这张表**不是同一张表** —— 命令面只把它们**原样转出**；值面对齐要先给它们的自有语义重新取号，" +
 		"属 `P-013` 的拍板项（差集逐条登记在《开工记录-批A-20260920.md》T-04 节）。\n"
+	out += "**`130` 消歧（防误读）**：本 CLI 主动捕获 SIGINT 并退 `130`，与惯例 `128+2`（`128` 基 + 信号号 `2`）是同一件事。\n"
 	out += "\n" + exitcodeJudgeLine + "\n"
 	return out
 }

@@ -10,9 +10,9 @@
       "kind": "命令面（对外唯一契约面）",
       "owner": "core/cmd/zerg/exitcodes.go",
       "scan": "go-table",
-      "table": [0, 1, 2, 4, 8, 10, 11, 12, 14],
-      "reserved": [130],
-      "note": "`14` = 冲突/被占（**不许**再用 `507`）；`10/11/12/14` 由批 B · T-10 从「已挂号」转启用；`130` 仍挂号未启用。"
+      "table": [0, 1, 2, 4, 8, 10, 11, 12, 14, 130],
+      "reserved": [],
+      "note": "`14` = 冲突/被占（**不许**再用 `507`）；`10/11/12/14` 由批 B · T-10 从「已挂号」转启用；`130`（`interrupted` · 人打断 Ctrl-C · 默认只退订、不取消）**同批转启用**——本 CLI 主动捕获 SIGINT 并退 `130`（落点 `core/cmd/zerg/main.go` 的 `exitInterrupted` + `os.Exit(exitInterrupted)`），与惯例 `128+2`（`128` 基 + 信号号 `2`）是同一件事 ⇒ 它早已是**启用行为**，此前误挂在「已挂号、尚未启用」段，本次只对齐标注、零行为变更；`reserved` 现读为空。"
     },
     {
       "id": "cli.blocked-priority",

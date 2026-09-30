@@ -319,7 +319,7 @@ func runFastGate(root, logDir string, stderr io.Writer) (int, error) {
 	if _, err := os.Stat(script); err != nil {
 		return exitBlocked, fmt.Errorf("门禁最小入口不在（%s）", script)
 	}
-	cmd := exec.Command("bash", script, "--fast", "--outdir", logDir)
+	cmd := armChildGroup(exec.Command("bash", script, "--fast", "--outdir", logDir))
 	runningChild = cmd
 	defer func() { runningChild = nil }()
 	cmd.Dir = root
@@ -883,7 +883,7 @@ func runFastGateCapture(root, logDir string) (int, string, error) {
 	if _, err := os.Stat(script); err != nil {
 		return exitBlocked, "", fmt.Errorf("门禁最小入口不在（%s）", script)
 	}
-	cmd := exec.Command("bash", script, "--fast", "--outdir", logDir)
+	cmd := armChildGroup(exec.Command("bash", script, "--fast", "--outdir", logDir))
 	runningChild = cmd
 	defer func() { runningChild = nil }()
 	cmd.Dir = root
