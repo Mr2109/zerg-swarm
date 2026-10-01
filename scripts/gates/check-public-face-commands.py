@@ -414,6 +414,12 @@ def judge(root, zerg=None, self_exempt=True):
     if unjudged:
         lines.append("   · **未判**旗标 **%d** 处（该命令的用法串两处都取不到 ⇒ 照实登记、不当绿）"
                      "：%s" % (len(unjudged), " · ".join(unjudged[:4])))
+        # ★ `GAP-20260927-95`：这一档原只打印「不当绿」、退码仍落 `if hits` 之后的 0 ⇒
+        #   同屏「不当绿」紧跟「全绿 rc=0」。「未判」= 取不到真源 = **判不了** ⇒ 按三档 2（不给结论）收口，
+        #   优先级 2 > 1 > 0（与仓内其余门同口径）。
+        lines.append("⇒ **不给结论（rc=2）**：%d 处旗标**未判**（用法串两处都取不到）——"
+                     "「取不到」≠ 全绿" % len(unjudged))
+        return 2, lines, data
     data["hits"] = hits
     if hits:
         for h in hits:

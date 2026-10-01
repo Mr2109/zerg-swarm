@@ -169,6 +169,14 @@ def report(root, rc, files, hits, quiet=False):
             print("   补救：改生成器/模板里那一处（缺 `.format(...)` 就补上，或把该占位删掉）⇒ 重跑 `--emit`")
             print("⇒ **不通过（rc=1）**：产物里 %d 处未代入的命名花括号占位" % len(hits))
         return 1
+    if rc != 0:
+        # ★ `GAP-20260927-95` 活证：原 `report()` 的形参 `rc` **零引用**、只看 `hits`
+        #   ⇒ `judge()` 因「扫面 0 件 / 件读不了」返 1、hits=[] 时被折成 rc=0（假绿）。
+        #   修法：无命中时**退码以判据结论为准**（rc=1 = 判不了 ⇒ 两值制按红记）。
+        if not quiet:
+            print("   ⛔ 命中 0 处，但**判据不可判**（扫面 0 件 / 件读不了）⇒ 两值制按红记")
+            print("⇒ **不通过（rc=%d）**：判据不可判 ≠ 零命中" % rc)
+        return rc
     if not quiet:
         print("   ✓ 命中 **0 处**（本判据两值：0 / 1 ⇒ 不给「没结论」档）")
         print("⇒ **全过（rc=0）**：产物句面无未代入的命名花括号占位")
@@ -229,15 +237,29 @@ def self_test():
     # 格 5 空转负控：扫面 0 件 ⇒ **1**（两值制 ⇒ 不给「没结论」档）
     d5 = fixture("empty", {"docs/zh/空.md": ""})
     os.remove(os.path.join(d5, "docs", "zh", "空.md"))
-    check("格 5 空转负控（扫面 0 件 ⇒ rc=1 · 两值制不给「没结论」档）", judge(d5)[0], 1)
-    # 格 6 缺根 ⇒ 1（同上口径）
-    check("格 6 缺根负控（找不到仓根 ⇒ rc=1）", judge(os.path.join(t, "no-such"))[0], 1)
-    # 格 7 读不了件 ⇒ 1（用 `chmod 000` 造读不了的 .md 件）
+    # ★ `GAP-20260927-95`：这几格走**真出口 `report()`**（别再只断言内部 `judge()` ——
+    #   旧版 judge 已返 1，但 report 把 rc 折成 0 ⇒ 断言 judge 恒绿、真退码假绿）。
+    check("格 5 空转负控（扫面 0 件 ⇒ rc=1 · 走 report 真出口）", report(d5, *judge(d5), quiet=True), 1)
+    # 格 5b 成对（区分度）：同口径补回一件干净产物 ⇒ report 真返 0
+    with open(os.path.join(d5, "docs", "zh", "空.md"), "w", encoding="utf-8") as f:
+        f.write("# 参考\n\n命令 `zerg help` 只读。\n")
+    check("格 5b 成对（同一夹具补回好件 ⇒ rc=0）", report(d5, *judge(d5), quiet=True), 0)
+    # 格 6 缺根 ⇒ 1（同上口径 · 走 report 真出口）
+    _d6 = os.path.join(t, "no-such")
+    check("格 6 缺根负控（找不到仓根 ⇒ rc=1）", report(_d6, *judge(_d6), quiet=True), 1)
+    # 格 7 读不了件 ⇒ 1（用 `chmod 000` 造读不了的 .md 件 · 走 report 真出口）
     d7 = fixture("unreadable", {"docs/zh/好.md": "干净\n", "docs/zh/坏.md": "读不了\n"})
     p7 = os.path.join(d7, "docs", "zh", "坏.md")
     os.chmod(p7, 0)
-    check("格 7 读不了负控（件读不了 ⇒ rc=1）", judge(d7)[0], 1)
+    check("格 7 读不了负控（件读不了 ⇒ rc=1）", report(d7, *judge(d7), quiet=True), 1)
     os.chmod(p7, 0o644)
+    # ★ 格 9 端到端（`GAP-20260927-95`：自检至少一格必須取**真命令行退码**，不许只断言内部函数）
+    import subprocess as _sp
+    d9 = fixture("empty_e2e", {"docs/zh/空.md": ""})
+    os.remove(os.path.join(d9, "docs", "zh", "空.md"))
+    _p = _sp.run([sys.executable, os.path.abspath(__file__), "--root", d9],
+                 capture_output=True, text=True)
+    check("格 9 端到端（子进程真退码 · 空转 ⇒ 1）", _p.returncode, 1)
     # 格 8 真树现跑：只证「判得动」（照实打印现值 · 不要求 0）
     root = find_root(os.getcwd())
     if root:
