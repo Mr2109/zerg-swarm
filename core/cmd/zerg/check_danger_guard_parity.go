@@ -6,8 +6,9 @@
 //
 // 本闸判据（可机检 · 全静态 · 零网络 · 零写盘）：
 //
-//	凡 `catalog()` 里 `danger != nil` 且 `!openedForRun(c)` 的命令，其 `run` **必须是**
-//	`cmdGuarded`（未开放的统一实现：只出计划件 + 拒执退码 2）。否则判红 —— 说明
+//	凡 `catalog()` 里 `danger != nil` 且 `!openedForRun(c)` 的命令，其 `run` **必须**走
+//	未开放的统一实现 `cmdGuarded`，**或**走一枚其真跑分支内部转到 `cmdGuarded` 的包装
+//	函数（白名单见 `dangerGuardParityGuardedRunners`，逐条带件:行号）。否则判红 —— 说明
 //	「声明未开放」与「实现真跑」两件事脱钩：要么该命令其实有真实现（应逐条标 `opened: true`），
 //	要么它该走 `cmdGuarded`（未开放）。
 //
@@ -53,16 +54,38 @@ func dangerGuardFuncName(f func(*invocation, io.Writer, io.Writer) int) string {
 	return full
 }
 
+// dangerGuardParityGuardedRunners —— 「未开放的危险档」可接受的 `run` 名字集合。
+//
+// 为什么不是「恰好 == cmdGuarded」：本仓有三枚**包装函数**（`cmdAgentReap` ·
+// `cmdDevBuild` · `cmdDevTest`），它们的**真跑分支内部才转到 `cmdGuarded`**
+// （`family_reap.go:245-249` · `family_dev_candidate.go:307-341` 的 `:340`；`dev test` 只有
+// `--pkg` 作用域档真起 `go test`，见 `family_dev_scoped.go:108-152`），契约真源同向
+// （`core/internal/contract/dev-candidate.json:26` 的 `not_opened` · `dryrun-semantics.json:251/260`）。
+// 只认函数值相等 ⇒ 这三条被判脱钩 = **假阳性**（2026-10-02 现读源码定案并纠正）。
+//
+// ★ 这是**白名单、不是放宽**：任何**其它** `run`（既非 `cmdGuarded`、也不在此表里）仍判红 ——
+// 「声明未开放却接了真 runner」这条牙照旧在。新增包装函数必须同批登记于此（带件:行号）。
+var dangerGuardParityGuardedRunners = []string{
+	"cmdGuarded",   // 未开放的统一实现：只出计划件 + 拒执退码 2
+	"cmdAgentReap", // 包装：真跑分支 → cmdGuarded（family_reap.go:245-249）
+	"cmdDevBuild",  // 包装：devOrderedAction → cmdGuarded（family_dev_candidate.go:282 经 :340）
+	"cmdDevTest",   // 包装：候选区档同上；仅 `--pkg` 作用域档真执行（family_dev_scoped.go:108-152）
+}
+
 // dangerGuardParityOffenders —— 现算脱钩清单（`catalog()` 现读 ⇒ 命令树一变它即变）。
 func dangerGuardParityOffenders() []dangerGuardParityOffender {
-	want := dangerGuardFuncName(cmdGuarded)
+	guarded := map[string]bool{}
+	for _, n := range dangerGuardParityGuardedRunners {
+		guarded[n] = true
+	}
+	want := strings.Join(dangerGuardParityGuardedRunners, " | ")
 	var out []dangerGuardParityOffender
 	for _, c := range catalog() {
 		if c.danger == nil || openedForRun(c) {
 			continue
 		}
 		got := dangerGuardFuncName(c.run)
-		if got == want {
+		if guarded[got] {
 			continue
 		}
 		out = append(out, dangerGuardParityOffender{
