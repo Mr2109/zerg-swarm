@@ -271,3 +271,109 @@ func TestDevEdit_DryRunNeedsNoApprovalButShowsIt(t *testing.T) {
 		t.Errorf("干跑零副作用：%q", got)
 	}
 }
+
+// synthRepoWithSibling —— 建「主仓 + 同级文仓」合成树：base/repo（主仓）+ base/Zerg-内部文档（同级文仓）。
+// 返回 (主仓根, 同级仓根, 同级仓内相对路径)。**不碰真 Zerg-内部文档**（隔离纪律同 devdocs_test.go）。
+func synthRepoWithSibling(t *testing.T) (string, string, string) {
+	t.Helper()
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	sib := filepath.Join(base, "Zerg-内部文档")
+	mustWrite(t, filepath.Join(repo, "core", "internal", "version", "version.go"), "package version\n")
+	rel := filepath.Join("项目文档", "合成清单.md")
+	mustWrite(t, filepath.Join(sib, rel), "改前\n")
+	return repo, sib, rel
+}
+
+// TestDevEdit_SiblingRepoFlagGate —— `GAP-20261001-07` 甲案：`--allow-sibling-repo <名>`。
+//
+// 成对负控（✗ 禁恒绿 —— 每一条都有相反的那一格）：
+//
+//	① 不带旗标 + `--file ../Zerg-内部文档/…` ⇒ rc=2 · **前闸逐字**（`bad_file_path` 那一行）；
+//	② 不带旗标 + `--file Zerg-内部文档/…`（无 `..`）⇒ **静默改道**：件落在仓内假路径
+//	   〈仓根〉/Zerg-内部文档/… 而**真同级仓那一件一个字节不动**（病灶直证）；
+//	③ 带旗标 + 闭集名 + 干跑 ⇒ rc=0 且零副作用；
+//	④ 旗标值不在闭集（路径形态 / 大小写别名 / 陌生名 / 空名）⇒ 一律 rc=2 · 逐字；
+//	⑤ 闭集名但同级仓根不在盘 ⇒ rc=8（不猜）；
+//	⑥ 带旗标真写（人签齐）⇒ rc=0 · 件落在**真同级仓**里 + 审计行带 `sibling_repo` / `sibling_root`。
+func TestDevEdit_SiblingRepoFlagGate(t *testing.T) {
+	repo, sib, rel := synthRepoWithSibling(t)
+	prop, state := t.TempDir(), t.TempDir()
+	writeEditProposal(t, prop, "DEV-9101", rel)                             // 声明「同级仓内相对路径」
+	writeEditProposal(t, prop, "DEV-9102", filepath.Join("Zerg-内部文档", rel)) // 声明「无 `..` 的改道路径」
+	sign := writeOperatorKey(t, state)
+	mustWrite(t, filepath.Join(state, "approvals", "dev_edit.json"),
+		string(sign("dev_edit", "*", "张三", "2026-10-01T00:00:00+08:00", "放行同级文仓"))+"\n")
+	from := filepath.Join(t.TempDir(), "new.md")
+	mustWrite(t, from, "改后\n")
+
+	// ① 默认态（不带旗标）+ `..` ⇒ rc=2 · 前闸逐字不变
+	rc, _, errb := runDevEdit(t, repo, prop, state, "--proposal", "DEV-9101", "--file",
+		filepath.Join("..", "Zerg-内部文档", rel), "--from", from, "--dry-run")
+	if rc != 2 || !strings.Contains(errb, "里有 `..` —— 不许越出仓根") {
+		t.Fatalf("默认态 `..` ⇒ rc=2 · 逐字前闸：rc=%d stderr=%q", rc, errb)
+	}
+
+	// ② 默认态 + 无 `..` 的同级仓相对路径 ⇒ **静默改道**（主闸也放行）
+	rc, _, errb = runDevEdit(t, repo, prop, state, "--proposal", "DEV-9102", "--file",
+		filepath.Join("Zerg-内部文档", rel), "--from", from, "--confirm="+hostnameOf(t), "--yes")
+	if rc != 0 {
+		t.Fatalf("默认态无 `..` ⇒ 主闸放行（改道），rc=%d stderr=%q", rc, errb)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "Zerg-内部文档", rel)); err != nil {
+		t.Errorf("改道的牙口：件应落在**仓内假路径** %s：%v", filepath.Join(repo, "Zerg-内部文档", rel), err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(sib, rel)); string(got) != "改前\n" {
+		t.Errorf("默认态**到不了**真同级仓 ⇒ 同级仓件一个字节不许动：%q", got)
+	}
+
+	// ③ 带旗标 + 闭集名 + 干跑 ⇒ rc=0（零副作用）
+	rc, _, errb = runDevEdit(t, repo, prop, state, "--proposal", "DEV-9101", "--file", rel,
+		"--from", from, "--dry-run", "--allow-sibling-repo", "Zerg-内部文档")
+	if rc != 0 {
+		t.Fatalf("带旗标干跑 ⇒ rc=0：rc=%d stderr=%q", rc, errb)
+	}
+	if got, _ := os.ReadFile(filepath.Join(sib, rel)); string(got) != "改前\n" {
+		t.Errorf("干跑零副作用：%q", got)
+	}
+
+	// ④ 旗标值不在闭集 ⇒ 一律 rc=2 · 逐字
+	for _, bad := range []string{filepath.Join("..", "Zerg-内部文档"), "/etc", "ZergDocs", "foo", ""} {
+		rc, _, errb = runDevEdit(t, repo, prop, state, "--proposal", "DEV-9101", "--file", rel,
+			"--from", from, "--dry-run", "--allow-sibling-repo", bad)
+		if rc != 2 || !strings.Contains(errb, "只收闭集里的名") {
+			t.Errorf("旗标值 %q 不在闭集 ⇒ rc=2 · 逐字：rc=%d stderr=%q", bad, rc, errb)
+		}
+	}
+
+	// ⑤ 闭集名但同级仓根不在盘 ⇒ rc=8（不给结论）
+	repo2 := t.TempDir()
+	mustWrite(t, filepath.Join(repo2, "core", "internal", "version", "version.go"), "package version\n")
+	rc, _, errb = runDevEdit(t, repo2, prop, state, "--proposal", "DEV-9101", "--file", rel,
+		"--from", from, "--dry-run", "--allow-sibling-repo", "Zerg-内部文档")
+	if rc != 8 || !strings.Contains(errb, "不在盘上") {
+		t.Errorf("同级仓根不在盘 ⇒ rc=8 · 逐字：rc=%d stderr=%q", rc, errb)
+	}
+
+	// ⑥ 带旗标真写 ⇒ rc=0 · 件落在**真同级仓**里 + 审计行带两格
+	rc, _, errb = runDevEdit(t, repo, prop, state, "--proposal", "DEV-9101", "--file", rel,
+		"--from", from, "--confirm="+hostnameOf(t), "--yes", "--allow-sibling-repo", "Zerg-内部文档")
+	if rc != 0 {
+		t.Fatalf("带旗标真写 ⇒ rc=0：rc=%d stderr=%q", rc, errb)
+	}
+	if got, _ := os.ReadFile(filepath.Join(sib, rel)); string(got) != "改后\n" {
+		t.Errorf("真写要落在同级仓里：%q", got)
+	}
+	ab, err := os.ReadFile(filepath.Join(state, "edit_audit.jsonl"))
+	if err != nil {
+		t.Fatalf("真写要落审计：%v", err)
+	}
+	all := strings.Split(strings.TrimSpace(string(ab)), "\n")
+	var line map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(all[len(all)-1])), &line); err != nil {
+		t.Fatalf("审计不是一行 JSON：%v", err)
+	}
+	if line["sibling_repo"] != "Zerg-内部文档" || line["sibling_root"] != sib {
+		t.Errorf("审计要回读「同级仓名 + 它的根」：%+v（想要 repo=Zerg-内部文档 root=%s）", line, sib)
+	}
+}

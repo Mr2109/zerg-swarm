@@ -17,13 +17,15 @@
 ------------------
   ① `local_broken`（**本地断链** · 域 = **两棵树**）：markdown 件里的**仓内相对链接**解析后**指不到**
      真件 ⇒ 该**件**记一处。域 = `--repo-root`（默认 = 本文件上溯两级）+ `--docs-root`
-     （默认 = 同级目录 `Zerg-内部文档`；不在盘 ⇒ 该树**照实标「缺」**、另一棵树照判 · **不**因它判不了）。
+     （默认 = 同级目录 `Zerg-内部文档`；不在盘 ⇒ 该树**判不了**（照实打印）⇒ **缺根 ≠ 绿**：
+     两棵树都是本格的域 ⇒ **本门不给结论 rc=2** · 2026-10-01 收口）。
   ② `orphans`（**孤儿** · 域 = **主仓导出树**）：导出树里**入链 = 0** 的 `.md` 件。
      「入链」的判据 = 树内**别的**件有一条**仓内相对**链接解析后落在它身上（**同名同路径**才算）。
      ★ **不是**「有没有被人读过」、**不是** mtime/体积/占用 ⇒ 只数**链接**（照 `W-06` 的「入链 = 0」同一枚度量）。
   ③ `inbound_zero`（**入链 = 0** · 域 = **第二棵树整棵** · `W-06` 序91）：**与 ② 同名度量、不同域** ——
      ② 的域是**主仓导出树**、③ 的域是**另一棵树整棵**；两格的件**不许互称**（`term_guard`）。
      ★ 与 ② 不是一件事：导出树是**产物**（没链进产物 = 发布面漏了）、另一棵树是**源**（没链进源 = 源里悬着）。
+     ★ 第二棵树不在盘 ⇒ **本格判不了 ⇒ 不给结论 rc=2**（缺件 ≠ 绿 · 2026-10-01 收口；与 ① 第二棵树格同域）。
   ④ `not_in_nav`（**不在 nav 白名单** · 域 = **有 `mkdocs.yml` 的树** · `W-06` 序91）：**另一枚词、另一个域**
      —— 只在有 `mkdocs.yml` 的树里判（抽白名单 = `mkdocs.yml` 的 `nav:`）。**本仓无 `mkdocs.yml`**
      ⇒ 这一格**无适用域**（照实打印「无适用域」并登记那一行），**不是**「0 件」✗。
@@ -72,10 +74,13 @@
 --------------------------------------------------------------
   0 = 判得了（**无论两格命中多少** —— 「先只报不拦」逐字：命中**不改**退出码 ✗）
   2 = **不给结论**：`--repo-root` 不在盘 / 扫面 **0 件** / 件读不了 / `--self-test` 不过 /
-      **导出树读不到**（取树次序 `--tree` → 主名 env → 兼容别名 env → 无；都指不到真件 ⇒ 同此档）
+      **导出树读不到** / **第二棵树（`--docs-root` · 默认同级 `Zerg-内部文档`）读不到** —— 缺件 ≠ 绿。
       ★ 导出树 ⇒ **孤儿格 = 判不了**（照实打印 `orphans = None`）· **其余格照判**（照实打印），
         但导出树是本门判据的**必需输入** ⇒ **缺件 ≠ 绿**：本门退 **2 不给结论**（与 B12/B14/B16/B17 同口径）。
-        ★ v1.1.0 及以前此处 rc 仍 0 = **静默绿** ✗（默认值写死一条早已不在盘的日期路径所致）—— 2026-10-01 收口。
+      ★ 第二棵树 ⇒ **① local_broken 第二棵树格 与 ③ `inbound_zero` 格 = 判不了**（照实打印），
+        该树是这两格的域 ⇒ 同「缺件 ≠ 绿」：本门退 **2 不给结论** · 2026-10-01 收口。
+        ★ v1.1.0 及以前此处 rc 仍 0 = **静默绿** ✗（默认值写死一条早已不在盘的日期路径所致 ·
+          第二棵树缺席时同病：① 第二棵树格 + ③ 格一并消失而 rc 不变）—— 2026-10-01 一并收口。
 
 env 名（2026-10-01 统一 · 同族口径）
 ----------------------------------
@@ -492,7 +497,7 @@ LIST_RULES = """判据（两格 · 只报不拦）
 ----
   0 = 判得了（命中多少都不改码 —— 「先只报不拦」）
   2 = 不给结论（仓根缺 / 扫面 0 件 / 件读不了 / **基准偏移登记过期** / 自检不过 /
-                **导出树读不到** —— 缺件 ≠ 绿）
+                **导出树读不到** / **第二棵树读不到** —— 缺件 ≠ 绿 · 2026-10-01 收口）
 """
 
 
@@ -667,7 +672,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(add_help=True, description="文档孤儿 / 本地断链两格（只报不拦）")
     ap.add_argument("--repo-root", default=repo_default)
     ap.add_argument("--docs-root", default=None,
-                    help="第二棵树（默认 = 同级目录 Zerg-内部文档；不在盘 ⇒ 照实标缺）")
+                    help="第二棵树（默认 = 同级目录 Zerg-内部文档；不在盘 ⇒ 判不了 ⇒ 本门不给结论 rc=2）")
     ap.add_argument("--tree", default=None,
                     help="导出树（默认 $%s · 兼容别名 $%s；都没有 ⇒ 不给结论）"
                          % (PUB_TREE_ENV, PUB_TREE_ENV_ALIAS))
@@ -693,13 +698,15 @@ def main() -> int:
     sys.stdout.write("文档孤儿 / 本地断链（两格 · 只报不拦）· v%s\n" % VERSION)
     sys.stdout.write("  判据见 `--list-rules`：① local_broken（域 = 两棵树）· ② orphans（域 = 导出树）\n")
     sys.stdout.write("  域① 主仓根 = %s\n" % a.repo_root)
-    sys.stdout.write("  域① 第二棵树 = %s%s\n" % (docs_root, "" if os.path.isdir(docs_root) else "  ★不在盘（该树照实标缺 · 不影响另一棵）"))
+    sys.stdout.write("  域① 第二棵树 = %s%s\n" % (docs_root, "" if os.path.isdir(docs_root) else "  ★不在盘（该树判不了 ⇒ 本门不给结论 rc=2 · 缺件 ≠ 绿）"))
     sys.stdout.write("  域② 导出树 = %s（来源 %s）%s\n"
                      % (tree if tree else "（未给）", tree_src or "无",
                         "" if (tree and os.path.isdir(tree))
                         else "  ★读不到（孤儿格 = 判不了 ⇒ 本门不给结论 rc=2）"))
 
     bad = 0
+    second_missing = False   # ★ 第二棵树读不到 ⇒ ① 第二棵树格 + ③ 格判不了 · 缺件 ≠ 绿
+    second_why = ""
     br_counts = {}
     br_all = []
     br_exempt = {}
@@ -713,6 +720,9 @@ def main() -> int:
             sys.stdout.write("  ⛔ 本地断链 · %s：判不了（%s）\n" % (label, why))
             if label == "主仓":
                 bad = 1
+            else:   # 第二棵树 = 本格域的必需一半 ⇒ 缺件 ≠ 绿（2026-10-01 收口）
+                second_missing = True
+                second_why = why
         else:
             sys.stdout.write("  ✓ 本地断链 · %s：%d 件\n" % (label, n))
             for h in hits[: a.max_examples]:
@@ -757,8 +767,8 @@ def main() -> int:
     for nested in NESTED_SEEN.get(docs_root, []):
         sys.stdout.write("      ⊘ 剪掉的嵌套仓（域外 · 别仓的件）：%s\n" % nested)
     if inz is None:
-        sys.stdout.write("  ⛔ %s · 第二棵树整棵：判不了（%s）—— 这一格判不了 ≠ 整门判不了\n"
-                         % (inz_word, inz_why))
+        sys.stdout.write("  ⛔ %s · 第二棵树整棵：判不了（%s）—— ★ 第二棵树是本格域的必需输入 ⇒ "
+                         "**缺件 ≠ 绿**：本门不给结论（rc=2）\n" % (inz_word, inz_why))
     else:
         sys.stdout.write("  ✓ %s · 第二棵树整棵：%d 件（与 ② 同度量 · 不同域）\n" % (inz_word, inz))
         for h in inz_hits[: a.max_examples]:
@@ -775,6 +785,19 @@ def main() -> int:
             sys.stdout.write("      %s（%s）\n" % (h["file"], nav_word))
 
     if br_counts.get("主仓", 0) is None:
+        return 2
+    # ★ 第二棵树读不到 ⇒ ① 第二棵树格 + ③ 格判不了 · 缺件 ≠ 绿（两格同域 ⇒ **逐格点名**）
+    no_concl = []
+    if second_missing:
+        no_concl.append("① local_broken 第二棵树格：读不到（%s）" % second_why)
+    if inz is None:
+        no_concl.append("③ %s 格（域 = 第二棵树整棵）：读不到（%s）" % (inz_word, inz_why))
+    if no_concl:
+        sys.stdout.write("\n结论：**不给结论（rc=2）** —— 第二棵树是本门 ①③ 两格的域 · 缺件 ≠ 绿：\n")
+        for r in no_concl:
+            sys.stdout.write("      · %s\n" % r)
+        sys.stdout.write("      （本地断链 域 = 两棵树 `--repo-root` + `--docs-root`/同级 `Zerg-内部文档`；"
+                         "两格同域 ⇒ 一并触碰）\n")
         return 2
     if on is None:   # ★ 导出树读不到 ⇒ 孤儿格判不了 · 缺件 ≠ 绿 ⇒ 本门不给结论（零放宽）
         sys.stdout.write("\n结论：**不给结论（rc=2）** —— 导出树读不到（%s）\n"

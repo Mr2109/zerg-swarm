@@ -44,6 +44,13 @@
 //	逐字不变；**钩子判决不是放行条件** ✗（卡片铁律 §3.5「提 ≠ 批」）—— 干跑里「必拦」那一档
 //	**只让干跑退 2**，`R28` 的「删前波纹门」是**另开一门**（属 `C1`），本批不许塞进真写前置。
 //
+// ⑤（2026-10-01 · `GAP-20261001-07` 甲案）**同级文仓显式开闸**：`--file` 此前到不了与主仓同级的
+// 文仓（`Zerg-内部文档`）—— 带 `..` 被前闸按用法错杀、不带 `..` 被 `Join` 静默改道到仓内假路径。
+// 新增 `--allow-sibling-repo <名>`（**只收闭集里的名，不收路径** · 先例 `--allow-cross-root`）：给旗标 ⇒ 换根到
+// `<filepath.Dir(仓根)>/<名>`（与 `statepath.DocsAltRoot()` 同一条默认规则 · ✗ 不引第三个 env）、落点判据用**路径段版**
+// `pathWithinDir`（✗ 不用 `strings.HasPrefix`），放行写进审计行两格（`sibling_repo` / `sibling_root` · 只增键）。
+// **不给旗标 ⇒ 两条旧闸逐字不动** ✗。
+//
 // 与既有条文的接缝（**不重复立项** ✗）：写面**不新立锁**（§九 M5：真源在持锁者）、**不新立退码**
 // （照 §4.1 K3 那张表）、**不改契约**；本件只是「改」这一环的**唯一入口**。
 package main
@@ -172,6 +179,41 @@ type editAuditLine struct {
 	//   没放行 ⇒ 两格都不写（既有行 / 历史行逐字节不变 · 只增键，既有键不动）。
 	AllowCrossRoot string `json:"allow_cross_root,omitempty"`
 	AllowReason    string `json:"allow_reason,omitempty"`
+	// ★ GAP-20261001-07（甲案 · 2026-10-01）：**目标件换仓**两格 —— 显式开闸
+	//   `--allow-sibling-repo <名>` 放行时明写「同级仓名」与「它的根」（机器可读 · 可回读）；
+	//   `File` 仍是**同级仓内**的相对路径 ⇒ 绝对落点 = SiblingRoot + "/" + File。
+	//   两格 `omitempty`：不给旗标 ⇒ 两格都不写（既有行 / 历史行逐字节不变 · 只增键，既有键不动）。
+	SiblingRepo string `json:"sibling_repo,omitempty"`
+	SiblingRoot string `json:"sibling_root,omitempty"`
+}
+
+// ── GAP-20261001-07（甲案 · 2026-10-01）：同级文仓显式开闸 `--allow-sibling-repo <名>` ──────────
+//
+// 病灶（现读）：`--file` 够不着与主仓**同级**的文仓（`Zerg-内部文档`）—— 两条路都断：
+// `--file ../Zerg-内部文档/x.md`（含 `..`）在**前闸** `declaredFilesWhy` 被按用法错杀（rc=2 · `bad_file_path`）；
+// `--file Zerg-内部文档/x.md`（无 `..`）被 `filepath.Join(root, …)` **静默改道**到仓内不存在的
+// 假路径 `<仓根>/Zerg-内部文档/…`（当成新建件）—— 主闸也放行，件落在错的地方。
+// ⇒ 只动一处闸不够，换根与落点判据都要动。
+//
+// 本条的选择（甲案 · 有先例、不另造成语）：
+// 旗标**只收「名」不收路径**，名必须 ∈ 下面这份**编译期闭集** ⇒ 可达面 = 固定的
+// 「主仓 + 表里那几个同级仓」两棵树（与门禁侧 `check-newfile-registry.py` 的 `LEDGER_SIBLING`
+// 与 `check-docs-orphans-links.py` 的「两棵树 = 仓根 + 同级 Zerg-内部文档」**同集** ⇒ 不留「仓外任意件」的口子）。
+// 根解析**接现读、不另造**：`<主仓根>/../<名>` —— 与 `statepath.DocsAltRoot()` / `scriptInvDocsRoot`
+// 已有的同一条默认规则同形（✗ **不引第三个 env 名**：同级根的两枚 env 是既存债，不在本单扩）。
+// 落点包含判据用**路径段版** `pathWithinDir`（`family_code.go` 那一件）✗ 不用 `strings.HasPrefix`。
+// **默认态逐字节不变**：不给旗标 ⇒ 两条旧闸（`declaredFilesWhy` / `file_outside_repo`）判定式、
+// 退码、输出逐字不动（下面走 `else` 那一支，语句与改前一字不差）。
+var devEditSiblingRepos = []string{"Zerg-内部文档"}
+
+// devEditSiblingRepoKnown —— 名是否在编译期闭集里（**逐字相等** · 不做大小写/路径规范化）。
+func devEditSiblingRepoKnown(name string) bool {
+	for _, n := range devEditSiblingRepos {
+		if name == n {
+			return true
+		}
+	}
+	return false
 }
 
 // cmdDevEdit —— `zerg dev edit`：受控写入的唯一入口（默认干跑）。
@@ -223,8 +265,39 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 不给结论（退码 8）\n", progName)
 		return exitBlocked
 	}
+	// ★ GAP-20261001-07（甲案）：同级文仓显式开闸 —— `--allow-sibling-repo <名>`（**只收闭集里的名**）。
+	//   名不在闭集（含给路径 / 给 `../Zerg-内部文档` / 空名）⇒ 退码 2；名在闭集但根不在盘 ⇒ 退码 8（不猜）。
+	siblingGiven := inv.hasFlag("--allow-sibling-repo")
+	siblingName, siblingRoot := "", ""
+	if siblingGiven {
+		siblingName = strings.TrimSpace(inv.flagVal("--allow-sibling-repo"))
+		if !devEditSiblingRepoKnown(siblingName) {
+			inv.setErr("usage", "unknown_sibling_repo", "同级仓名不在编译期闭集里")
+			fmt.Fprintf(stderr, "%s: ★ **拒执** —— `--allow-sibling-repo %s`：同级仓**只收闭集里的名**（%s · 只收名、**不收路径** —— 路径形态一律拒）⇒ 退码 2（可达面 = 固定的「主仓 + 同级仓」两棵树 · GAP-20261001-07）\n",
+				progName, siblingName, strings.Join(devEditSiblingRepos, " / "))
+			return exitUsage
+		}
+		siblingRoot = filepath.Join(filepath.Dir(root), siblingName)
+		if st, serr := os.Stat(siblingRoot); serr != nil || !st.IsDir() {
+			inv.setErr("blocked", "sibling_root_absent", "同级仓根不在盘上")
+			fmt.Fprintf(stderr, "%s: 同级仓 %s 的根不在盘上（%s）⇒ 不给结论（退码 8 · 不猜 · GAP-20261001-07）\n",
+				progName, siblingName, siblingRoot)
+			return exitBlocked
+		}
+		fmt.Fprintf(stderr, "%s: ★ **显式开闸**（`--allow-sibling-repo %s`）—— 目标件换仓：相对路径按同级仓根 %s 解析（同级仓名与根进审计行 · GAP-20261001-07）\n",
+			progName, siblingName, siblingRoot)
+	}
 	outPath := filepath.Join(root, filepath.FromSlash(fileRel))
-	if !strings.HasPrefix(outPath, root+string(os.PathSeparator)) {
+	if siblingGiven {
+		outPath = filepath.Join(siblingRoot, filepath.FromSlash(fileRel))
+		// 落点包含判据 = **路径段**版（✗ 不用 `strings.HasPrefix` —— 字符串前缀会把
+		// `…/模型类/Zerg-内部文档` 当成 `…/模型类/Zerg` 的「仓内」，正是 `W-03` 病根）。
+		if !pathWithinDir(siblingRoot, outPath) {
+			inv.setErr("usage", "file_outside_repo", "件不在同级仓根下")
+			fmt.Fprintf(stderr, "%s: `--file %s` 解析后不在同级仓根 %s 下 ⇒ 拒执（越界写 · 退码 2）\n", progName, fileRel, siblingRoot)
+			return exitUsage
+		}
+	} else if !strings.HasPrefix(outPath, root+string(os.PathSeparator)) {
 		inv.setErr("usage", "file_outside_repo", "件不在仓根下")
 		fmt.Fprintf(stderr, "%s: `--file %s` 解析后不在仓根下 ⇒ 拒执（越界写 · 退码 2）\n", progName, fileRel)
 		return exitUsage
@@ -592,6 +665,13 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		// ★ GAP-20260928-79：回指授权物 —— 当趟真用的提案落点与提案件 sha16
 		// （提案号 → 件 = <proposal_dir>/<proposal>.json，sha16 钉住它的字节）。
 		ProposalDir: propDirUsed, ProposalSHA16: propSHA16,
+	}
+	if siblingGiven {
+		// ★ GAP-20261001-07：目标件换仓的放行**必须留痕** —— 同级仓名 + 它的根两格写进审计行
+		//   （`File` 仍是同级仓内相对路径；绝对落点 = `SiblingRoot` + "/" + `File`）。
+		//   只增键 + `omitempty` ⇒ 不给旗标的行 / 历史行逐字节不变。
+		line.SiblingRepo = siblingName
+		line.SiblingRoot = siblingRoot
 	}
 	if allowCrossUsed {
 		// ★ GAP-20260928-79 显式放行档：放行**必须留痕** —— 放行标志 + 理由两格写进审计行

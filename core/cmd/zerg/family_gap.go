@@ -48,6 +48,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	// ★ 批1 第一片：件面三键的「入库件清单」**只经既有 A1 出口**取（`gitpaths.List` · FaceTracked）；
@@ -411,11 +412,17 @@ func gapWriteFaceWhy(cmdStr string) string {
 
 // gapCapWriter —— 判据输出**有界**收集（只留一小段当证据；不把被判命令的整段输出吃进内存）。
 type gapCapWriter struct {
+	// ★ 并发安全（GAP-20261002-13）：`os/exec` 会给 Stdout/Stderr 各起一个 goroutine 并发调
+	// Write（exec.go 的 writerDescriptor），而 `strings.Builder` **不支持并发写** ⇒ 竞态档报
+	// DATA RACE。互斥锁护住 b/max 的读改写与 String 的读。
+	mu  sync.Mutex
 	b   strings.Builder
 	max int
 }
 
 func (w *gapCapWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if w.b.Len() < w.max {
 		room := w.max - w.b.Len()
 		if room > len(p) {
@@ -427,7 +434,11 @@ func (w *gapCapWriter) Write(p []byte) (int, error) {
 }
 
 // String —— 收下来的那一小段（当证据用；超出上限的部分**没收**，不假装有）。
-func (w *gapCapWriter) String() string { return w.b.String() }
+func (w *gapCapWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.String()
+}
 
 // gapRunJudge —— 跑一条判据（**进程内**走同一个 `run` 入口：不拼 shell、不进 `exec`），
 // 返回它的退码与一小段输出（当证据用）。解析不过 ⇒ why 非空（调用方按设计稿译成 2）。

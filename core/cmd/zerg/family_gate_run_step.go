@@ -43,6 +43,18 @@ import (
 // gateRunStepFields —— `gate run --step … --json` 的全部字段（K1：机器面先定）。
 var gateRunStepFields = []string{"step", "scope", "mode", "verdict", "rc", "secs", "log", "outdir", "log_body"}
 
+// normStepName —— 步名**归一**（★ 2026-10-01 · 缺口 `GAP-20261001-31`）：只做「去掉全部反斜杠」，
+// 与**权威面同一串空间** —— 脚本自己的 `filter_step` / `step_decl_count` 就是这么比的
+// （`want="${want//\\/}"`，两处注释明写这是「带反斜杠」与「不带反斜杠」两种输入的归一）。
+//
+// 为什么必须有它（现读实测 · 两态）：脚本里有 4 条步名的声明把反引号与美元符写成**转义形态**
+// —— bash 采表（双引号展开）后是**不带反斜杠**的运行期形态，也就是 `zerg gate ls` / `--list`
+// 打出来的那一形态；而本命令面走的 `parseAddSteps`→`addStepUnescape` **只**还原 `\"` 与 `\\`
+// ⇒ 两个串空间不等 ⇒ `--list` 打出来的名字在机器面（`--json`/`--show-log`/`--verify-live`）
+// 被逐字判成「步名不存在」退 2（机器面读数对这几步**不可用** · 与脚本面 rc=0 自相矛盾）。
+// 对不含反斜杠的名字（其余 200 条）去掉反斜杠是**恒等** ⇒ 既有形态逐字节不变。
+func normStepName(s string) string { return strings.ReplaceAll(s, "\\", "") }
+
 // gateRunStepJSON —— 单步档的机器面（人面仍由脚本原样给出，走 stderr）。
 //
 // 退码口径：**脚本的码原样转出**（0 全绿 / 1 有失败项 / 2 不给结论）；命令面自己只在
@@ -66,6 +78,12 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 			continue
 		}
 		if strings.HasPrefix(a, "--json=") {
+			continue
+		}
+		// 缺口 `GAP-20261002-15`（2026-10-02）：`--cancel-on-interrupt` 与 `--json` 同档 ——
+		//   它喂给 **zerg 自己**（`wantsCancelOnInterrupt` 扫真 `os.Args`），自举件不认识它
+		//   （透传 ⇒ 被当未知参数 ⇒ rc=2）。剔掉它**不影响取消**：handler 读的是 `os.Args`。
+		if a == "--cancel-on-interrupt" || a == "--cancel-on-interrupt=true" {
 			continue
 		}
 		scriptTail = append(scriptTail, a)
@@ -98,9 +116,10 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 		return exitBlocked
 	}
 	decls := parseAddSteps(string(src))
+	want := normStepName(name)
 	hits := []gateStepDecl{}
 	for _, d := range decls {
-		if d.Name == name {
+		if normStepName(d.Name) == want {
 			hits = append(hits, d)
 		}
 	}
@@ -177,7 +196,10 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 
 	// ④ 判决从脚本自己的结果表读回（不自己判）。
 	row := map[string]string{
-		"step": d.Name, "scope": d.Scope, "mode": d.Mode, "outdir": outdir,
+		// ★ 2026-10-01（缺口 `GAP-20261001-31`）：`step` 报**归一后**的名字（= 权威面 `--list` /
+		//   results.tsv 打出来的那一形态）—— 直接报 `d.Name` 会让带反斜杠的那 4 步在机器面报出
+		//   一个与 `--list`/`zerg gate ls` **不同**的串（读音与实际不一致）；对不含反斜杠的步是恒等。
+		"step": normStepName(d.Name), "scope": d.Scope, "mode": d.Mode, "outdir": outdir,
 		"verdict": "（读不到：脚本没落结果表）", "rc": "（读不到）", "secs": "（读不到）", "log": "（读不到）",
 		"log_body": "（读不到：脚本没落结果表）",
 	}
@@ -262,42 +284,28 @@ func resolveGateStep(decls []gateStepDecl, name string, stderr io.Writer) (gateS
 			progName, gateLiveVerifyFlag)
 		return gateStepDecl{}, exitUsage
 	}
+	want := normStepName(name)
 	hits := []gateStepDecl{}
 	for _, d := range decls {
-		if d.Name == name {
+		if normStepName(d.Name) == want {
 			hits = append(hits, d)
 		}
 	}
 	if len(hits) == 0 {
-		// 唯一前缀档：逐字不中才试；命中恰一条 ⇒ 用（并在 stderr 明说用了哪条）。
-		pre := []gateStepDecl{}
-		for _, d := range decls {
-			if strings.HasPrefix(d.Name, name) {
-				pre = append(pre, d)
-			}
+		// ★ 2026-10-01（缺口 `GAP-20261001-31`）：**取消「唯一前缀档」** —— 旧形态「逐字不中再试唯一前缀」
+		//   与权威面（脚本 `filter_step` **只认逐字**）口径不一：本命令面报「按 X 走」，脚本却照旧退 2
+		//   （`--show-log` 那条根本跑不动）；而 `--verify-live` 那条真按前缀把**没被逐字点名**的那一步
+		//   跑掉 ⇒「读音与实际不一致」。缺口 want_action 明写：_解析不中或歧义应拒执而非落到别的步_
+		//   ⇒ 现在逐字（归一后）不中一律退 2 并给「最像的合法输入」，不猜、不落到别的步。
+		fmt.Fprintf(stderr, "%s: 步骤名 %q **逐字**找不到（现读脚本里的 add_step 行 %d 条）⇒ 退码 2\n",
+			progName, name, len(decls))
+		if s := nearestSteps(decls, name, 1); len(s) > 0 {
+			fmt.Fprintf(stderr, "最像的合法输入: %s\n", s[0])
 		}
-		switch len(pre) {
-		case 1:
-			fmt.Fprintf(stderr, "%s: 步名 %q 逐字不中，但是**唯一前缀** ⇒ 按 %q 走\n", progName, name, pre[0].Name)
-			return pre[0], exitOK
-		case 0:
-			fmt.Fprintf(stderr, "%s: 步骤名 %q **逐字**与前缀都找不到（现读脚本里的 add_step 行 %d 条）⇒ 退码 2\n",
-				progName, name, len(decls))
-			if s := nearestSteps(decls, name, 1); len(s) > 0 {
-				fmt.Fprintf(stderr, "最像的合法输入: %s\n", s[0])
-			}
-			for _, s := range nearestSteps(decls, name, 3) {
-				fmt.Fprintf(stderr, "  候选：%s\n", s)
-			}
-			return gateStepDecl{}, exitUsage
-		default:
-			fmt.Fprintf(stderr, "%s: 前缀 %q 命中 %d 条 ⇒ **有歧义**（判据要一个答案 · 退码 2）：\n",
-				progName, name, len(pre))
-			for _, d := range pre {
-				fmt.Fprintf(stderr, "  %s:%d  %s\n", gateScriptRel, d.Line, d.Name)
-			}
-			return gateStepDecl{}, exitUsage
+		for _, s := range nearestSteps(decls, name, 3) {
+			fmt.Fprintf(stderr, "  候选：%s\n", s)
 		}
+		return gateStepDecl{}, exitUsage
 	}
 	if len(hits) > 1 {
 		fmt.Fprintf(stderr, "%s: 步骤名 %q 在脚本里出现 %d 次 ⇒ **歧义**（判据要一个答案 · 退码 2）：\n",
@@ -396,7 +404,12 @@ func gateRunStepLiveVerify(inv *invocation, stdout, stderr io.Writer, root, scri
 var gateRunValueFlags = []string{"--scope", "--outdir", "--candidate", "--timeout", "--emit-cmd", "--step"}
 
 var gateRunBoolFlags = []string{"--list", "--self-test", "--only-step", "--fast", "-h", "--help",
-	gateLiveVerifyFlag} // `--show-log` 在进本函数之前已被 `gateRunWantsShowLog` 截获（走单步读数档）
+	gateLiveVerifyFlag, // `--show-log` 在进本函数之前已被 `gateRunWantsShowLog` 截获（走单步读数档）
+	// 缺口 `GAP-20261002-15`（2026-10-02）：`--cancel-on-interrupt` 是**喂给 zerg 自己** 的全局布尔
+	// （main.go 的解析器 case · `wantsCancelOnInterrupt` 扫真 `os.Args`），以前没进这张表
+	// ⇒ `gate run` 加它被前移校验 rc=2 拒，而 `gate.go` 那处**明明登记了子进程「供取消」**
+	// ⇒ 门跑的取消路走不通。它是**命令面旗标、不透传给自举件**（与 `--show-log` 同档）。
+	"--cancel-on-interrupt"}
 
 // gateRunPrecheckFlags —— exec 之前核 `tail` 的旗标；未知 ⇒ 逐字判词 + 退 2（不 exec）。
 // 只读 `tail`，不碰任何既有函数、不写任何件、不建任何目录。
@@ -610,6 +623,10 @@ func gateRunStepShowLog(inv *invocation, stdout, stderr io.Writer, root, script 
 	scriptTail := make([]string, 0, len(tail))
 	for _, a := range tail {
 		if a == gateShowLogFlag {
+			continue
+		}
+		// 缺口 `GAP-20261002-15`：同全量档 —— 命令面旗标不透传给自举件（它只认自己那张表）。
+		if a == "--cancel-on-interrupt" || a == "--cancel-on-interrupt=true" {
 			continue
 		}
 		scriptTail = append(scriptTail, a)

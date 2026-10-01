@@ -50,7 +50,17 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ROOT = os.path.dirname(os.path.dirname(HERE))  # scripts/gates -> 仓根
 
-FIELDS = ("root", "scanned", "count", "hits", "report_only", "compliant", "rc", "verdict")
+FIELDS = ("root", "scanned", "count", "hits", "report_only", "compliant", "rc", "verdict",
+          "write_ledger_missing", "write_ledger_stale")
+
+# ── 写工具分类台账腿（G0/G1/G2 · 名录收写工具 · 强制危险档的**分类真源机检**）──────────────
+#   真源 = 每件自己头部的一行 `#zerg-class: write D2|D3`（同 core/cmd/zerg/main.go 的 dangerSpec 形状）。
+#   ★ 本串与 core/cmd/zerg/family_gate_check.go 的 `gateCheckClassRE` **同一串**（语义逐字同）。
+CLASS_RE = re.compile(r"^#\s*zerg-class:\s*(read|write)\s+(D0|D2|D3)\s*$")
+LEDGER_REL = os.path.join("scripts", "gates", "gate-check-write-tools.json")
+LEDGER_SCHEMA = "gate-check-write-tools/1"
+ROSTER_SUFFIXES = (".py", ".sh")  # 与 gateCheckRoster 的扩展名闭集同源
+
 
 # 扫描面：只收脚本件（后缀族 + 无后缀但有 shebang）
 SCRIPT_SUFFIXES = (".sh", ".bash", ".zsh", ".py")
@@ -195,6 +205,106 @@ def collect_scripts(root):
     return out
 
 
+def parse_decl(path):
+    """现读件**头部**（前 80 行）的 `#zerg-class:` 声明 ⇒ (class, level)；无 ⇒ None。"""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f):
+                if i >= 80:
+                    break
+                m = CLASS_RE.match(line.rstrip("\r\n"))
+                if m:
+                    return m.group(1), m.group(2)
+    except OSError:
+        return None
+    return None
+
+
+def collect_declared(root):
+    """递归列举 `<root>/scripts/` 的 `.py`/`.sh`（与 gateCheckRoster 同域），收有声明行的件。"""
+    out = {}
+    base = os.path.join(root, "scripts")
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for fn in filenames:
+            if not fn.endswith(ROSTER_SUFFIXES):
+                continue
+            p = os.path.join(dirpath, fn)
+            d = parse_decl(p)
+            if d:
+                out[os.path.relpath(p, root)] = d
+    return out
+
+
+def load_ledger(root):
+    with open(os.path.join(root, LEDGER_REL), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def check_ledger(root):
+    """G0 解析自证（⇒2）· G1 双向差集（⇒1 点名）· G2 覆盖腿（⇒1 点名）。返回 (rc, info, notes)。"""
+    info = {"write_ledger_missing": 0, "write_ledger_stale": 0}
+    notes = []
+    # ── G0 解析自证（不合 ⇒ rc=2 不给结论）─────────────────────────────────
+    try:
+        led = load_ledger(root)
+    except Exception as e:
+        return 2, info, ["⛔ G0 不给结论：台账读不到/解析失败（%s）：%s" % (LEDGER_REL, e)]
+    if led.get("schema") != LEDGER_SCHEMA:
+        return 2, info, ["⛔ G0 不给结论：台账 schema 不对（%r ≠ %r）" % (led.get("schema"), LEDGER_SCHEMA)]
+    try:
+        re.compile(led.get("regex", ""))
+    except re.error as e:
+        return 2, info, ["⛔ G0 不给结论：台账 regex 编译不过：%s" % e]
+    items = led.get("items")
+    if not isinstance(items, list) or not items:
+        return 2, info, ["⛔ G0 不给结论：台账 items 空集（空转不当绿）"]
+    if led.get("count") != len(items):
+        return 2, info, ["⛔ G0 不给结论：台账 count(%r) ≠ items 数(%d)" % (led.get("count"), len(items))]
+    for it in items:
+        f = it.get("file") or ""
+        if not f.startswith("scripts" + os.sep) and not f.startswith("scripts/"):
+            return 2, info, ["⛔ G0 不给结论：台账点名件不在 `scripts/` 域（%r）" % f]
+        if not os.path.isfile(os.path.join(root, f)):
+            return 2, info, ["⛔ G0 不给结论：台账点名件不在盘（%r）" % f]
+    # ── G1 双向差集（⇒ rc=1 逐条点名）──────────────────────────────────────
+    declared = collect_declared(root)
+    lset = {it.get("file"): (it.get("class"), it.get("level")) for it in items}
+    stale = sorted(f for f in declared if f not in lset)                 # 件头声明了、台账没登记（新增漏登记）
+    missing = sorted(f for f in lset if f not in declared)               # 台账点名、件头无声明（陈旧）
+    mismatch = sorted("%s(台账 %r ⟷ 件头 %r)" % (f, lset[f], declared[f])
+                      for f in lset if f in declared and lset[f] != declared[f])
+    info["write_ledger_missing"] = len(missing) + len(mismatch)
+    info["write_ledger_stale"] = len(stale)
+    rc = 0
+    if stale:
+        rc = 1
+        for f in stale:
+            notes.append("G1 新落写工具漏登记（件头声明了 · 台账 items 无）：%s ⇒ 同批登记 `%s`" % (f, LEDGER_REL))
+    if missing:
+        rc = 1
+        for f in missing:
+            notes.append("G1 台账陈旧（台账点名 · 件头无声明）：%s" % f)
+    if mismatch:
+        rc = 1
+        for d in mismatch:
+            notes.append("G1 class/level 与件头不符：%s" % d)
+    # ── G2 覆盖腿（凡正文命中写形态的件必须显式标 write ⇒ rc=1 点名）─────────
+    base = os.path.join(root, "scripts")
+    if os.path.isdir(base):
+        for p, rel in sorted(collect_scripts(base), key=lambda x: x[1]):
+            hits = scan_file(p, rel, root)
+            if not hits:
+                continue
+            decl = parse_decl(p)
+            if decl is None or decl[0] != "write":
+                rc = 1
+                info["write_ledger_missing"] += 1
+                notes.append("G2 漏标写形态：scripts/%s 命中整件覆盖写（%d 处）却未显式声明 `#zerg-class: write D2|D3`"
+                             % (rel, len(hits)))
+    return rc, info, notes
+
+
 def check(root, report_only=False):
     """返回 (rc, info). rc: 0 / 1 / 2."""
     info = {"root": root, "scanned": 0, "count": 0, "hits": [],
@@ -303,6 +413,44 @@ def selftest():
         chk("⑨ 干跑档 rc=0 且计数不丢", rc3 == 0 and info3["count"] == info["count"],
             "rc=%d count=%d" % (rc3, info3["count"]))
 
+        # ── 台账腿（G0/G1/G2 成对负控 · 写工具分类真源机检）────────────────────
+        lfake = os.path.join(tmp, "lrepo")
+        os.makedirs(os.path.join(lfake, "scripts", "dev"))
+        os.makedirs(os.path.join(lfake, "scripts", "gates"))
+        with open(os.path.join(lfake, "scripts", "gates", "demo.sh"), "w", encoding="utf-8") as f:
+            f.write("OLD\n")
+        with open(os.path.join(lfake, "scripts", "dev", "w.sh"), "w", encoding="utf-8") as f:
+            f.write("#!/usr/bin/env bash\n#zerg-class: write D2\nprintf NEW > scripts/gates/demo.sh\n")
+        lf = os.path.join(lfake, "scripts", "gates", "gate-check-write-tools.json")
+
+        def wr_ledger(items):
+            with open(lf, "w", encoding="utf-8") as f:
+                json.dump({"schema": LEDGER_SCHEMA, "head": "x", "count": len(items),
+                           "regex": CLASS_RE.pattern, "items": items}, f)
+
+        wr_ledger([{"file": "scripts/dev/w.sh", "class": "write", "level": "D2"}])
+        lrc, _, _ = check_ledger(lfake)
+        chk("⑩ 台账腿正控（声明齐 + 台账齐）⇒ rc=0", lrc == 0, "rc=%d" % lrc)
+
+        with open(os.path.join(lfake, "scripts", "dev", "x.sh"), "w", encoding="utf-8") as f:
+            f.write("#!/usr/bin/env bash\necho hi\n")
+        wr_ledger([{"file": "scripts/dev/w.sh", "class": "write", "level": "D2"},
+                   {"file": "scripts/dev/x.sh", "class": "write", "level": "D2"}])
+        l2, _, ln2 = check_ledger(lfake)
+        chk("⑪ 台账多一条 ⇒ rc=1 且点名", l2 == 1 and any("x.sh" in n for n in ln2), "rc=%d" % l2)
+
+        os.remove(os.path.join(lfake, "scripts", "dev", "x.sh"))
+        with open(os.path.join(lfake, "scripts", "dev", "y.sh"), "w", encoding="utf-8") as f:
+            f.write("#!/usr/bin/env bash\nprintf NEW > scripts/gates/demo.sh\n")
+        wr_ledger([{"file": "scripts/dev/w.sh", "class": "write", "level": "D2"}])
+        l3, _, ln3 = check_ledger(lfake)
+        chk("⑫ 未标写形态件 ⇒ rc=1 且点名", l3 == 1 and any("y.sh" in n for n in ln3), "rc=%d" % l3)
+        os.remove(os.path.join(lfake, "scripts", "dev", "y.sh"))
+
+        wr_ledger([])
+        l4, _, _ = check_ledger(lfake)
+        chk("⑬ 台账空集 ⇒ rc=2 不给结论", l4 == 2, "rc=%d" % l4)
+
         bad = [c for c in checks if not c[1]]
         for name, ok, det in checks:
             print("   %s %s%s" % ("✓" if ok else "✗", name, ("（%s）" % det) if det else ""))
@@ -321,6 +469,8 @@ def emit_json(info, rc, fields):
         "hits": info["hits"], "report_only": info["report_only"],
         "compliant": info["compliant"], "rc": rc,
         "verdict": {0: "green", 1: "red", 2: "blocked"}[rc],
+        "write_ledger_missing": info.get("write_ledger_missing", 0),
+        "write_ledger_stale": info.get("write_ledger_stale", 0),
     }
     print(json.dumps({k: data[k] for k in fields}, ensure_ascii=False, indent=2))
 
@@ -355,6 +505,11 @@ def main(argv):
     root = args.root or DEFAULT_ROOT
     report_only = bool(args.report_only)
     rc, info, notes = check(root, report_only=report_only)
+    lrc, linfo, lnotes = check_ledger(root)
+    info.update(linfo)
+    notes = notes + lnotes
+    if not report_only:
+        rc = max(rc, lrc)
     if fields is not None:
         emit_json(info, rc, fields)
         return rc

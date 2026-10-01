@@ -46,7 +46,21 @@
 --------------------------------
   0 = 无命中（或命中全在登记表里）
   1 = 有**未登记**的悬空引用（live + ledger 两类合计）
-  2 = **不给结论**（不在仓根 / 扫到 0 件 / 登记表缺 reason·date·形态不对 / 自检不过）
+  2 = **不给结论**（不在仓根 / 扫到 0 件 / 登记表缺 reason·date·形态不对 / 自检不过 /
+      **同级语料树 `Zerg-内部文档` 取不到根** —— 落点判不了 ⇒ 不当 0 也不当 1）
+
+★ 同级语料树取不到根 ⇒ **不给结论档（rc=2）**（2026-09-27 · `GAP-20260927-82` 批2）
+----------------------------------------------------------------------
+  改前：`tree_of()`（141 行）对缺席树一律 `continue` 跳过 ⇒ 同级语料树不在盘时照判主仓、
+  末行落 `rc∈{0,1}` = **静默**（输出只印「**不在** —— 落点只报主仓」，读者会把「判不了」当成「已判完」）✗。
+  改后：同级语料树 `Zerg-内部文档` **取不到根**（`ZERG_DOCS_ROOT` / `ZERG_DOCS_ALT` / `ZERG_DOCS` /
+  `<仓父>/Zerg-内部文档` 都不在盘）⇒ 打印缺件路径 + 换根候选后 `return 2`（逐条命中**仍照原样打印**，不藏）。
+  取根规则与同族件归一（批1）：`ZERG_DOCS_ROOT` > `ZERG_DOCS_ALT` / `ZERG_DOCS` > `<仓父>/Zerg-内部文档`；
+  `ZERG_ARCHIVE_ROOT` > `<仓父>/Zerg-归档`（**不新引 env 名**）。
+  ★ **归档树缺席不翻退码**（只报主仓落点 · 与原档逐字一致）：本机 `../Zerg-归档` 是**未挂载的断链**
+  （`-> /Volumes/ZERG-ARCHIVE`）⇒ 按「任一不在盘 ⇒ 2」会把**默认档**从 rc=1 翻成 rc=2 = 改现役行为 ✗
+  （本批铁律：默认档零行为变更）；归档域的收口挂**批3**（与 `check-archive-mount.py` 同批）。
+  **`Zerg-内部文档` 在盘时判据一字未改**（成对负控见 `--self-test` ⑩：语料树缺席 ⇒ 报 1 条；在盘 ⇒ 报 0 条）。
 
 用法
 ----
@@ -149,6 +163,16 @@ def tree_of(ctx, rel):
         for hit in ctx.base_index().get(base, [])[:3]:
             out.append("（同名件）" + DOCS_TREE_NAME + "/" + hit)
     return out
+
+
+def absent_corpus_trees(docs_root, arch_root):
+    """**该翻 rc=2** 的缺席同级树（唯一真源 · 见件头 ★ · `GAP-20260927-82` 批2）。
+
+    只认**同级语料树** `Zerg-内部文档`（主仓 `docs` 面引用的落点基准）：取不到 ⇒ 不给结论，既不当 0
+    也不当 1。归档树缺席**不翻退码**（只报主仓落点）—— 本机 `../Zerg-归档` 是**未挂载的断链**，
+    若按「任一不在盘 ⇒ 2」会把**默认档**从 rc=1 翻成 rc=2 = 改变现役行为 ✗（本批铁律：默认档零行为变更）。
+    """
+    return [(n, t) for n, t in ((DOCS_TREE_NAME, docs_root),) if not t or not os.path.isdir(t)]
 
 
 def registry_hit(ctx, file_rel, ref):
@@ -478,9 +502,19 @@ def selftest():
           % ("✓" if good else "✗", inside[0]["cls"] if inside else "—",
              outside[0]["cls"] if outside else "—"))
 
-    assert cases == 9, "自检用例数必须为 9，实际 %d（少跑即失效）" % cases
-    print("  自检：%s（9 格：必红×2 · 豁免×1 · 拼接×1 · 前缀×1 · 无输入×1 · 登记表×1 · 整件豁免×1 ·"
-          " 前缀越界×1）" % ("通过 ✓" if ok else "**失败** ✗"))
+    # ⑩ 缺语料夹具：同级**语料树**取不到根 ⇒ 报缺（真跑据此 `return 2` · `GAP-20260927-82` 批2）；
+    #    成对负控 = 语料树在盘 ⇒ 报 0 条（**在盘时判据一字未改**）；归档树缺席**不翻退码**（本机是断链）。
+    miss_bad = absent_corpus_trees(os.path.join(tmp, "no-such-Zerg-内部文档"), None)
+    miss_arch = absent_corpus_trees(docs, os.path.join(tmp, "no-such-Zerg-归档"))
+    cases += 1
+    good = len(miss_bad) == 1 and miss_arch == []
+    ok = ok and good
+    print("  %s [缺语料夹具] 语料树缺席报 %s 条 · 语料树在盘(归档缺席)报 %s 条（期望 1 / 0 ⇒ 缺根不给结论·在盘照旧）"
+          % ("✓" if good else "✗", len(miss_bad), len(miss_arch)))
+
+    assert cases == 10, "自检用例数必须为 10，实际 %d（少跑即失效）" % cases
+    print("  自检：%s（10 格：必红×2 · 豁免×1 · 拼接×1 · 前缀×1 · 无输入×1 · 登记表×1 · 整件豁免×1 ·"
+          " 前缀越界×1 · 缺语料×1）" % ("通过 ✓" if ok else "**失败** ✗"))
     return ok
 
 
@@ -548,7 +582,8 @@ def print_rules():
     print("    报出来但按 ledger 判（要有意保留就登记），**不许按主仓同名树改**")
     print("  · 软链 / 大小写变体 / 非 UTF-8 件（记入 files_unreadable）· 未 `git add` 的新件")
     print("  · markdown 相对链接 `[](../x.md)` —— 属 `check-doc-freshness.py` D1，本门不重复")
-    print("\n【退码】0 无命中（或全登记）· 1 有未登记悬空 · 2 不给结论（不在仓根/0 件/登记表不合格/自检不过）")
+    print("\n【退码】0 无命中（或全登记）· 1 有未登记悬空 · 2 不给结论（不在仓根/0 件/登记表不合格/"
+          "同级语料树 Zerg-内部文档 取不到根/自检不过）")
 
 
 def main(argv):
@@ -604,8 +639,12 @@ def main(argv):
         return 2
 
     parent = os.path.dirname(root)
-    docs_root = os.environ.get("ZERG_DOCS_ROOT") or os.path.join(parent, DOCS_TREE_NAME)
+    # 取根规则与同族件归一（批1）：ZERG_DOCS_ROOT > 同级根 ZERG_DOCS_ALT/ZERG_DOCS > <仓父>/Zerg-内部文档。
+    sibling = (os.environ.get("ZERG_DOCS_ALT") or os.environ.get("ZERG_DOCS")
+               or os.path.join(parent, DOCS_TREE_NAME))
+    docs_root = os.environ.get("ZERG_DOCS_ROOT") or sibling
     arch_root = os.environ.get("ZERG_ARCHIVE_ROOT") or os.path.join(parent, ARCH_TREE_NAME)
+    absent = absent_corpus_trees(docs_root, arch_root)
     ctx = Ctx(root, docs_root, arch_root, files, reg or {})
     stats, hits = scan(ctx)
     if stats["files_scanned"] == 0:
@@ -621,7 +660,13 @@ def main(argv):
     print("%s —— 主仓悬空引用（`docs/…` 指向不存在）" % VERSION)
     print("仓根：%s" % root)
     for name, tree in ((DOCS_TREE_NAME, docs_root), (ARCH_TREE_NAME, arch_root)):
-        print("  %s：%s（%s）" % (name, tree, "在" if os.path.isdir(tree) else "**不在** —— 落点只报主仓"))
+        if os.path.isdir(tree):
+            state = "在"
+        elif name == DOCS_TREE_NAME:
+            state = "**不在盘** —— 落点判不了 ⇒ 本门不给结论（rc=2）"
+        else:
+            state = "**不在** —— 落点只报主仓"      # 归档树缺席不翻退码（与现役档逐字一致 · 见件头 ★）
+        print("  %s：%s（%s）" % (name, tree, state))
     print("扫描面：git ls-files %d 件 ⇒ 文本件 %d · 提取引用 %d 处（另滤掉散文误吞 %d 处）· 悬空 %d 处"
           % (stats["files_seen"], stats["files_scanned"], stats["refs"],
              stats.get("refs_prose_skipped", 0), stats["dangling"]))
@@ -670,6 +715,13 @@ def main(argv):
             print("✗ 落不了盘 %s：%s ⇒ 不给结论" % (dump_path, e), file=sys.stderr)
             return 2
 
+    if absent:
+        # 缺语料 ⇒ **不给结论**（rc=2）：既不当 0（无问题）也不当 1（有问题）—— `GAP-20260927-82` 批2。
+        for name, tree in absent:
+            print("\n⛔ 不给结论（rc=2）：同级语料树 `%s` 取不到根（%s）—— 落点判不了"
+                  "\n   换根候选：`ZERG_DOCS_ROOT`，或同级根 `ZERG_DOCS_ALT`/`ZERG_DOCS`"
+                  % (name, tree))
+        return 2
     if n_live + n_led == 0:
         print("\n结论：无命中（或全在登记表里）⇒ rc=0")
         return 0

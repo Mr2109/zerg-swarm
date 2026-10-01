@@ -130,9 +130,18 @@ var impactPublishFace = []string{
 	"publish/replace-rules.tsv",
 }
 
-// impactPubTreeDefault —— 产出树路径（§3.7 口径三件之一：**产出树路径 + 扫的时刻 + `head_sha`**）。
-// 环境变量优先（同一口径可指向别的快照）；不写死私有绝对路径（门 `check-hardcoded-private-paths.py`）。
-const impactPubTreeDefault = "/tmp/zerg-pub-final-20260921"
+// impactPubTreeDefault —— 产出树默认值（§3.7 口径三件之一：**产出树路径 + 扫的时刻 + `head_sha`**）。
+//
+// **空**（不默写任何路径）—— 与已收口取树规则逐字一致（`scripts/gates/check-docs-orphans-links.py` 的
+// 默认值 `""` · 见该件头「env 名」「退码」两节）。旧值是一条**写死日期的 `/tmp` 快照路径**（早已不在盘）
+// ⇒ 树缺时沿默认值走、那一格判不了却照旧出数 = **静默绿** ✗（`GAP-20261001-01` 的唯一真口子 · 收口）。
+// 取树次序（写死）：`$ZERG_PUB_TREE`（主名）→ `$ZERG_PUBLIC_TREE`（兼容别名 · 门侧 `precommit-gates.sh`
+// 现用名）→ 无。无 ⇒ 本层照「读不到 ⇒ 未取数」走（不拿 0 / 旧数顶上 · 退码语义零改）。
+const impactPubTreeDefault = ""
+
+// impactPubTreeEnvAlias —— 取树**兼容别名**（门侧 `precommit-gates.sh` 现用名 · **只在主名为空时读它** ·
+// 与 `scripts/gates/check-docs-orphans-links.py` 的兼容别名逐字一致）。
+const impactPubTreeEnvAlias = "ZERG_PUBLIC_TREE"
 
 // impactPublishFaceSyncRel —— 第 ⑥ 层的**判据面**（`A2` 产物：**复用 · 不改它**，只消费它的输出）。
 const impactPublishFaceSyncRel = "scripts/gates/check-publish-face-sync.py"
@@ -1053,7 +1062,11 @@ func impactLayerPublic(root string, tgt *impactTarget, cheap bool) impactLayer {
 			code, impactScriptNum(merged, "候选"), impactScriptNum(merged, "判据①"), impactScriptNum(merged, "判据②"), impactScriptNum(merged, "判据⑥"))
 		lay.Detail += fmt.Sprintf(" · 判据面现跑 rc=%d（**只消费不改**）", code)
 	}
+	// 取树次序（写死 · 与已收口规则逐字一致）：`$ZERG_PUB_TREE`（主名）→ `$ZERG_PUBLIC_TREE`（兼容别名）→ 默认（空）。
 	tree := os.Getenv("ZERG_PUB_TREE")
+	if tree == "" {
+		tree = os.Getenv(impactPubTreeEnvAlias)
+	}
 	if tree == "" {
 		tree = impactPubTreeDefault
 	}

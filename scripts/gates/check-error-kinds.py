@@ -13,8 +13,12 @@
 #      （`exitcodes.go` 的主表 + 已挂号表 —— 新 kind 想用个新码而不登记号，就红）。
 #      ★ 口径（防误读）：**同一个码下允许多个 kind 且可重试性不同** —— 那正是 `E7` 的前提
 #      （「拿退出码判重试」会出错，所以只许读 kind）；本门**不**把这种情况判红。
-#   R3 **用法面**：`core/cmd/zerg/*.go` 里所有 `setErr("…"` / `kind="…"` 的字面量必须在闭集内
-#      （写了个闭集外的 kind ⇒ 红；这样「新加 kind 忘了登记」也会被拦）。
+#   R3 **用法面**：`core/cmd/zerg/*.go`（非测试 · **剥掉注释后的代码位**）里所有
+#      `setErr("<kind>"…` 的**首参字面量**必须在闭集内（写了个闭集外的 kind ⇒ 红；
+#      这样「新加 kind 忘了登记」也会被拦）。
+#      ★ 不扫 `"kind": "…"` 的 JSON 字面 —— 那个 `kind` 是**输出信封的 schema 标签**
+#        （`DoctorCheck` / `GapLedgerFace` / `ZeroSideEffectProof` …），与 error.kind 是两套
+#        命名空间；实测该正则在本仓非测试源码里 0 条真命中、8 条误报（见 2026-10-02 回执）。
 #
 # 空转 = 假覆盖：扫到 0 个 kind ⇒ **rc=2（不给结论）**，不是绿（照 §17.6 `E-M6` 的口径）。
 #
@@ -29,9 +33,10 @@ import sys
 KIND_RE = re.compile(r'^[a-z][a-z0-9_]*$')
 # errors.go 的闭集表行形如：	{"conflict", 14, false, "wait_or_reload", "…", "…"},
 ROW_RE = re.compile(r'^\s*\{\s*"([^"]+)"\s*,\s*(-?\d+)\s*,\s*(true|false)\s*,', re.M)
-# 用法面：setErr("<kind>"…) 或 kind = "<kind>" / kind:"<kind>"
+# 用法面：只认**错误构造调用** `setErr("<kind>"…)` 的首参（真源 API）。
+# ★ 不扫 `"kind": "…"` 的 JSON 字面（那个 `kind` 是输出信封的 schema 标签，与 error.kind 是
+#   两套命名空间）：实测在本仓非测试源码里 0 条真命中、8 条误报 ⇒ 剔除该正则（2026-10-02）。
 USE_RE = re.compile(r'setErr\(\s*"([^"]+)"')
-JSON_KIND_RE = re.compile(r'"kind"\s*:\s*"([^"]+)"')
 
 
 def find_root(start):
@@ -57,6 +62,55 @@ def parse_closed_set(text):
         rows.append({'kind': m.group(1), 'code': int(m.group(2)),
                      'retryable': m.group(3) == 'true'})
     return rows
+
+
+def strip_go_comments(text):
+    """剥掉 Go 的 `//` 行注释与 `/* … */` 块注释（**保留字符串 / 字符字面量内的字符**）。
+
+    目的 = 让 R3 只认**代码位**的 kind 用法：散文 / 注释里提一句 `setErr("…")` 是文档，
+    不是「用了个闭集外的 kind」（本仓大量门脚本的自指说明正是这种形态 ⇒ 不剥即误报）。
+
+    ★ 不剥字符串字面量：`setErr("<kind>"…)` 的 kind 本身就写在字符串里，剥了就等于空转。
+    """
+    out = []
+    i, n = 0, len(text)
+    quote = None  # None | '"' | "'" | '`'
+    while i < n:
+        c = text[i]
+        if quote is not None:
+            out.append(c)
+            if quote == '`':
+                if c == '`':
+                    quote = None
+            elif c == '\\':
+                if i + 1 < n:
+                    out.append(text[i + 1])
+                    i += 2
+                    continue
+            elif c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in ('"', "'", '`'):
+            quote = c
+            out.append(c)
+            i += 1
+            continue
+        if c == '/' and i + 1 < n and text[i + 1] == '/':
+            j = text.find('\n', i)
+            if j < 0:
+                break
+            out.append('\n')
+            i = j + 1
+            continue
+        if c == '/' and i + 1 < n and text[i + 1] == '*':
+            j = text.find('*/', i + 2)
+            i = n if j < 0 else j + 2
+            out.append(' ')
+            continue
+        out.append(c)
+        i += 1
+    return ''.join(out)
 
 
 def check(root):
@@ -92,16 +146,15 @@ def check(root):
             errs.append(f"R2 kind {r['kind']!r} 用的码 {r['code']} **不在退码表里**"
                         f"（先登记号再启用：占号纪律 §九 M7 `E8`）")
 
-    # R3 用法面
+    # R3 用法面（只认**代码位**：先剥注释 —— 注释里提一句 `setErr("…")` 是散文不是用法）
     dirpath = os.path.join(root, 'core', 'cmd', 'zerg')
     used = set()
     for name in sorted(os.listdir(dirpath)):
         if not name.endswith('.go') or name.endswith('_test.go'):
             continue
         with open(os.path.join(dirpath, name), encoding='utf-8') as f:
-            text = f.read()
+            text = strip_go_comments(f.read())
         used |= set(USE_RE.findall(text))
-        used |= set(JSON_KIND_RE.findall(text))
     used.discard('kind')
     for u in sorted(used):
         if u not in seen:
@@ -159,6 +212,22 @@ def self_test():
         rc, lines = check(mk(t, ghost))
         print(f"  自检④ 未登记的码 99 ⇒ rc={rc}（要 1）· {[l for l in lines if 'R2' in l]}")
         ok &= rc == 1
+    # R3 成对负控（真写错 kind 必须抓到）：代码位写了个闭集外的 kind ⇒ 红
+    r3_bad = ('var errorKinds = []errorKindRow{\n'
+              '\t{"conflict", 14, false, "r", "m", "s"},\n}\n'
+              'func f() { setErr("bogus_kind", "x", "y") }\n')
+    with tempfile.TemporaryDirectory() as t:
+        rc, lines = check(mk(t, r3_bad))
+        print(f"  自检⑤ R3 代码位用了闭集外的 kind ⇒ rc={rc}（要 1）· {[l for l in lines if 'R3' in l]}")
+        ok &= rc == 1
+    # R3 反误报对拍：同一句只写在**注释**里 ⇒ 不红（注释已剥）
+    r3_comment = ('var errorKinds = []errorKindRow{\n'
+                  '\t{"conflict", 14, false, "r", "m", "s"},\n}\n'
+                  '// 说明：勿用 setErr("bogus_kind", ...)（散文，不是用法）\n')
+    with tempfile.TemporaryDirectory() as t:
+        rc, _ = check(mk(t, r3_comment))
+        print(f"  自检⑥ R3 注释位出现同句 ⇒ rc={rc}（要 0 —— 注释剥掉后不误报）")
+        ok &= rc == 0
     print('自检结论: ' + ('全过' if ok else '**有断言失败**'))
     return 0 if ok else 1
 

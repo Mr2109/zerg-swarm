@@ -3548,6 +3548,57 @@
    "why_public": "同上一格的机理：公开面先撞「门禁最小入口不在」⇒ 退码同为 2，但**包封字节数不同**（本机 301 → 公开 285）。285 字节是**不含路径**的通用错误包封（逐字现读：{\"schema\":\"zerg/v1\",\"kind\":\"GateResults\",\"items\":[]…\"error\"…}）⇒ 与那棵树 clone 到哪无关；与本机那份的差 = 少了字段表那几行字（`GateResults` 比 `GateRun` 长 4 字节，同族 281 字节那格 +4 = 285 ✓ 现读核对）"
   },
   {
+   "id": "gate/progress#--dir 与 --last 同给",
+   "command": "gate progress",
+   "argv": [
+    "gate",
+    "progress",
+    "--dir",
+    "/nonexistent-zerg-zz",
+    "--last"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--dir`（点名那一趟）与 `--last`（按最新写入挑）是**两个来源** ⇒ 同给 = 用法错 2（不猜谁优先 · 与 `gate results` 同族）· 执行前判、stdout 零字节"
+  },
+  {
+   "id": "gate/progress#未知旗标",
+   "command": "gate progress",
+   "argv": [
+    "gate",
+    "progress",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "非透传命令：未知旗标是命令面的用法错（`cmdGateProgress` 不回落脚本）· 执行前判、stdout 零字节"
+  },
+  {
+   "id": "gate/wait#--timeout 0 不学无穷",
+   "command": "gate wait",
+   "argv": [
+    "gate",
+    "wait",
+    "--timeout",
+    "0"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--timeout` 显式 0/负 ⇒ 拒执用法错 2（**不学 `kubectl rollout status` 的 0=无穷** · 设计-门进度可查-v0.3 §十.6）；执行前判、stdout 零字节"
+  },
+  {
+   "id": "gate/wait#未知旗标",
+   "command": "gate wait",
+   "argv": [
+    "gate",
+    "wait",
+    "--nosuchflag-zz"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "非透传命令：未知旗标是命令面的用法错（`cmdGateWait` 不回落脚本）· 执行前判、stdout 零字节"
+  },
+  {
    "id": "dev/test#作用域档：缺 --pkg",
    "command": "dev test",
    "argv": [
@@ -7772,6 +7823,22 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "判据名不在册 ⇒ **拒**并给可用名列表（✗ 不猜 · ✗ 不模糊匹配）；用法错 · 退 2 · stdout 零字节"
+  },
+  {
+   "id": "gate/check#写工具·缺--yes",
+   "command": "gate check",
+   "argv": [
+    "gate",
+    "check",
+    "atomic-write",
+    "--target",
+    "scripts/gates/_history/x",
+    "--from",
+    "/tmp/nonexistent"
+   ],
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "名录收写工具但壳侧强制危险档：件头 `#zerg-class: write D2` ⇒ **非交互缺 --yes ⇒ 拒执**（fail-closed · 零新占号 · 退 2 `yes_required`）；判定在 exec 之前 ⇒ 不碰任何目标件（成对负控：真仓跑零新件 + HEAD 未动）"
   }
  ],
  "tiers": {

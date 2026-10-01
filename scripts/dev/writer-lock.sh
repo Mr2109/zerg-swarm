@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+#zerg-class: write D2
 # writer-lock.sh —— 写者锁（mkdir 原子锁 · 缺口 GAP-20260926-94 施工清单第 3 件）。
 #
 # 为什么有这件：写 scripts/gates 这一面此前没有写者互斥 —— 两个写者窗口重叠时会整件互盖（本夜真出过一次）。

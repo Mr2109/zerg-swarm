@@ -199,7 +199,10 @@ def devdocs_root_of(root, given=None):
     env = os.environ.get("ZERG_DEVDOCS_ROOT")
     if env:
         return os.path.abspath(env)
-    return os.path.join(os.path.dirname(root), "Zerg-内部文档", DEVDOCS_TAIL)
+    # 同级根归一（GAP-20260927-82 批1）：ZERG_DOCS_ALT（同 statepath.DocsAltRoot）/ ZERG_DOCS（同 scriptInvDocsRoot）
+    sibling = (os.environ.get("ZERG_DOCS_ALT") or os.environ.get("ZERG_DOCS")
+               or os.path.join(os.path.dirname(root), "Zerg-内部文档"))
+    return os.path.join(sibling, DEVDOCS_TAIL)
 
 
 # ── 自检（先自证会红，再扫真目标）────────────────────────────────────────────────

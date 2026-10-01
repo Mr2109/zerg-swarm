@@ -147,7 +147,10 @@ def docs_root_of(repo, given=None):
     env = os.environ.get("ZERG_DEVDOCS_ROOT")
     if env:
         return os.path.abspath(env)
-    return os.path.join(os.path.dirname(repo), "Zerg-内部文档", "项目文档", DOCS_VER)
+    # 同级根归一（GAP-20260927-82 批1）：ZERG_DOCS_ALT（同 statepath.DocsAltRoot）/ ZERG_DOCS（同 scriptInvDocsRoot）
+    sibling = (os.environ.get("ZERG_DOCS_ALT") or os.environ.get("ZERG_DOCS")
+               or os.path.join(os.path.dirname(repo), "Zerg-内部文档"))
+    return os.path.join(sibling, "项目文档", DOCS_VER)
 
 
 def read_all(repo, docs_root):

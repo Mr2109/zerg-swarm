@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# ★ 甲案 C 类第 7 枚（W2 交付）落件：本行注释为最小行为无关落件（仅占位，不改任何判据/旋钮）。
 """check-doc-name.py —— 命名规范化门（把《清单-命名规范化》已落地的规则写成可执行判据）
 
 规格与真源（只读）
@@ -92,8 +93,12 @@ def devdocs_root(repo_root=REPO_ROOT_DEFAULT):
     env = os.environ.get("ZERG_DEVDOCS_ROOT")
     if env:
         return os.path.abspath(env)
-    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(repo_root)),
-                                        "Zerg-内部文档", "项目文档", "v2.5.10"))
+    # 同级根归一（GAP-20260927-82 批1）：接现成同级根旋钮 ZERG_DOCS_ALT
+    # （与 core/internal/statepath.DocsAltRoot() 同根同默认）/ ZERG_DOCS
+    # （同 scriptInvDocsRoot）> <仓根 的上一级>/Zerg-内部文档 —— 全族「读外部树」判据件共用一个取根规则。
+    sibling = (os.environ.get("ZERG_DOCS_ALT") or os.environ.get("ZERG_DOCS")
+               or os.path.join(os.path.dirname(os.path.abspath(repo_root)), "Zerg-内部文档"))
+    return os.path.abspath(os.path.join(sibling, "项目文档", "v2.5.10"))
 
 
 # 扫描域排除名单：逐字照抄《清单-命名规范化》§0（EXCL / PRE / 隐藏项口径）

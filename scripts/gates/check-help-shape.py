@@ -188,8 +188,8 @@ FAMILY_PER_LINE = 8
 #          2) last：`./bin/zerg help | tail -n 1`（逐字）
 #   刷新：本件 `--emit-baseline` 现跑打印，照抄。
 BASELINE = {
-    "help --all": {"lines": 314, "bytes": 161553},
-    "help": {"lines": 250, "bytes": 108192,
+    "help --all": {"lines": 317, "bytes": 166186},
+    "help": {"lines": 252, "bytes": 110196,
              "last": "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
     # ★ 危险档面（S4 · 2026-09-27 补）：**现跑取数** · 禁手写 ——
     #   取法 = `./bin/zerg help dangerous | wc -l -c`（lines/bytes）· 逐条行数（`rows`）·
@@ -200,8 +200,8 @@ BASELINE = {
     #          `danger_confirm_both_faces` 格 = 现跑自报的「两面同印 `--confirm=` 的 N 条值」），
     #          全部逐字相等；照实冻结、现跑取数）。
     #   刷新 = `--emit-baseline`（现跑打印 · 照抄 · 别手写）。
-    "help dangerous": {"lines": 66, "bytes": 19537, "rows": 55,
-                       "tail": '上表 55 条：**已开放 27 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 28 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。',
+    "help dangerous": {"lines": 67, "bytes": 19831, "rows": 56,
+                       "tail": '上表 56 条：**已开放 28 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 28 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。',
                        "confirm_not_in_usage": ["agent reap", "itask start", "itask stop"],
                        "confirm_value_mismatch": []},
     # ★ 配置主题面（S5 · 2026-09-27 补 · 缺口 `GAP-20260927-440`）：**现跑取数** · 禁手写 ——
