@@ -2,7 +2,9 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // ValidationLevel 校验严重级别
@@ -97,18 +99,73 @@ func NeedsEngineImpl(c ModelCandidate) bool {
 	return false
 }
 
-// isKnownHost 检查主机是否在 fleet 已知列表中
-func isKnownHost(host string) bool {
-	// 3c（2026-09-16）：本机角色（localback）退役 ⇒ 本机 = 名为 Mr2109 的普通子端（与 edge-node 同形）。
-	// ⚠ 这份名单是**硬编码**的：以后加机器别忘了同步（或改为从 fleet 动态取，承接项）。
-	// 2026-09-26 定点修正：删去名册（真源）里没有的 mini3——名单现状 == 真源键集。
-	known := []string{"Mr2109", "edge-node", "mini-node-1", "mini-node-2"}
-	for _, h := range known {
-		if h == host {
-			return true
-		}
+// knownHostsBuiltin — 编译期回落名单（仅在读不到投影 fleet.yaml 时使用）。
+// 3c（2026-09-16）：本机角色（localback）退役 ⇒ 本机 = 名为 Mr2109 的普通子端（与 edge-node 同形）。
+var knownHostsBuiltin = []string{"Mr2109", "edge-node", "mini-node-1", "mini-node-2"}
+
+var (
+	knownHostsOnce sync.Once
+	knownHostsSet  map[string]bool
+	knownHostsSrc  = "builtin"
+)
+
+// fleetYAMLPath — 取投影 fleet.yaml：ZERG_FLEET_YAML（显式）> 自 cwd 逐级向上找 gateway/fleet.yaml。
+func fleetYAMLPath() string {
+	if p := os.Getenv("ZERG_FLEET_YAML"); p != "" {
+		return p
 	}
-	return false
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		p := filepath.Join(dir, "gateway", "fleet.yaml")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+// knownHosts — 已知主机集合 + 来源标签（GAP-20260927-174③）。
+// 真源 = 投影 `gateway/fleet.yaml` 的 `fleet:` 键集；读不到 ⇒ 回落编译期名单并**明标** `builtin`
+// （不许静默 —— 回落态可由 `KnownHostsSource()` 读回）。
+func knownHosts() (map[string]bool, string) {
+	knownHostsOnce.Do(func() {
+		knownHostsSet = map[string]bool{}
+		if p := fleetYAMLPath(); p != "" {
+			if cfg, err := LoadFleetConfig(p); err == nil && len(cfg.Fleet) > 0 {
+				for h := range cfg.Fleet {
+					knownHostsSet[h] = true
+				}
+				knownHostsSrc = p
+				return
+			}
+		}
+		for _, h := range knownHostsBuiltin {
+			knownHostsSet[h] = true
+		}
+	})
+	return knownHostsSet, knownHostsSrc
+}
+
+// KnownHostsSource — 回读已知主机名单的取值真源（件路径 或 "builtin"）。
+func KnownHostsSource() string {
+	_, src := knownHosts()
+	return src
+}
+
+// isKnownHost 检查主机是否在 fleet 已知列表中（真源见 knownHosts —— 不再拿硬编码当唯一真源）。
+func isKnownHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	set, _ := knownHosts()
+	return set[host]
 }
 
 // isKnownFamily 检查家族是否在已知列表中

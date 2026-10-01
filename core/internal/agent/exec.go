@@ -625,6 +625,9 @@ type writeOpts struct {
 	BOM     bool   // 前加 UTF-8 BOM(Windows/Excel 中文)
 	LineEnd string // lf/crlf(默认 lf)
 	Format  string // auto(默认,防呆+自检)/ raw(裸写逃生门)
+	// LedgerMode — GAP-20260927-80：件级账里 mode 那一格的取值（write/edit）——
+	// `executeEdit` 经本入口复用原子写，靠这一格把「edit」与「write」在账上分开。
+	LedgerMode string
 }
 
 // nonTextWriteKinds — 禁文本直写类型(与 read 探测集合对齐——Mr2109拍板)
@@ -789,16 +792,27 @@ func (ec *ExecContext) executeWrite(ctx context.Context, path string, content st
 		cleanup()
 		return "", fmt.Errorf("写后回读校验不符(%d vs %d 字节)——已撤销(磁盘/截断问题)", len(back), len(s))
 	}
+	// GAP-20260927-80：rename 前取旧内容指纹（件级账 before_sha256/before_bytes）。
+	beforeBytes, _ := os.ReadFile(absPath)
 	if err := os.Rename(tmpFile, absPath); err != nil {
 		cleanup()
 		return "", fmt.Errorf("重命名文件失败: %w", err)
 	}
 
 	// 结构化写后自检(2.2——坏则回滚删除,不留坏文件)
-	if note, verr := validateWritten(absPath); verr != "" {
+	// GAP-20260927-80 落账需要 note ⇒ 不再写在 if 初始化式里（否则作用域只到 if 体）。
+	note, verr := validateWritten(absPath)
+	if verr != "" {
 		os.Remove(absPath)
 		return "", fmt.Errorf("写后自检失败——已回滚删除目标:%s", verr)
-	} else if note != "" {
+	}
+	// GAP-20260927-80：真改盘成功 ⇒ 落一条件级账（与 `dev edit` 同一件账、同形键集）。
+	mode := o.LedgerMode
+	if mode == "" {
+		mode = "write"
+	}
+	recordAgentEditLedger(mode, absPath, beforeBytes, []byte(s), ec.AgentName)
+	if note != "" {
 		return fmt.Sprintf("已写入 %d 字节到 %s\n%s", len(s), path, note), nil
 	}
 
@@ -848,7 +862,7 @@ func (ec *ExecContext) executeEdit(ctx context.Context, path string, search stri
 	newContent := content[:idx] + replace + content[idx+len(search):]
 
 	// 原子写入(edit 沿用 write v1.0.1 原子写/回读/自检——但类型防呆已在上方拦非文本目标)
-	return ec.executeWrite(ctx, path, newContent, writeOpts{}, nil)
+	return ec.executeWrite(ctx, path, newContent, writeOpts{LedgerMode: "edit"}, nil)
 }
 
 // executeApplyPatch — 精确补丁应用（Codex apply_patch 借鉴——2026-08-21 Mr2109 P0）
@@ -882,12 +896,17 @@ func (ec *ExecContext) executeApplyPatch(ctx context.Context, path string, patch
 	}
 	patchFile.Close()
 
+	// GAP-20260927-80：先取旧内容指纹（件级账用），再严格应用。
+	beforeBytes, _ := os.ReadFile(absPath)
 	// 严格应用（patch 命令——--fuzz=0 精确匹配——失败报错）
 	cmd := exec.CommandContext(ctx, "patch", "--fuzz=0", "--silent", absPath, patchFile.Name())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// 应用失败——返回错误（不默默改错——模型重新读再写）
 		return "", fmt.Errorf("补丁应用失败（位置/上下文不匹配——重新读文件再写）: %v\n%s", err, tailStr(string(out), 300))
+	}
+	if afterBytes, rerr := os.ReadFile(absPath); rerr == nil {
+		recordAgentEditLedger("apply_patch", absPath, beforeBytes, afterBytes, ec.AgentName)
 	}
 	return "✅ 补丁应用成功（精确匹配）\n" + tailStr(string(out), 200), nil
 }

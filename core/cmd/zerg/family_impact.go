@@ -94,8 +94,14 @@ type impactTarget struct {
 	ID   string // 契约目标：契约 id
 }
 
-// cmdImpact —— `zerg impact <目标>`：`A1` 骨架 + `A2` 六层取数 + `A3` 波纹卡片
-// （只读 · 零副作用 · 不写缓存 · 不落审计）。
+// cmdImpact —— `zerg impact <目标>`：`A1` 骨架 + `A2` 六层取数 + `A3` 波纹卡片。
+//
+// ⚠ 2026-10-02 订正（缺口 `GAP-20260927-140` ②）：本命令**不是**只读 —— 默认档
+// `impactCacheOn` 真写 impact 缓存件（写点现读 = `impactCacheWritePoints` 全表：
+// `os.MkdirAll` / `os.WriteFile` / `os.Rename`，owner = `impactCacheStore`）。
+// 修前那句「只读 · 零副作用 · 不写缓存 · 不落审计」是**自证式反证断言**（件里写着不写、
+// 实现却写）⇒ 声明侧照实改齐。授权侧（`catalog()` 补 `dangerSpec` + 接唯一执行门
+// `cmdGuarded`）另批 —— 见 `GAP-20260927-140`/`-90`：**登记 ≠ 拦**。
 func cmdImpact(inv *invocation, stdout, stderr io.Writer) int {
 	raw := ""
 	if len(inv.args) > 0 {
