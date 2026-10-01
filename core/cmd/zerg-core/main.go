@@ -303,7 +303,20 @@ func main() {
 	// 判据（非自造，官方语义）：master_scheduler.go:370 `for len(s.queue) > 0 && len(s.running) < s.maxConcurrent`
 	// ⇒ maxConcurrent=0 时恒假 ⇒ 只入队排队、不起进程；本语义另有测试背书（slice_schema_test.go:15/29 逐字
 	//「maxConcurrent=0 ⇒ 放行只排队、不起进程」）。恢复：把下面的 0 改回 1 并重启主控（队列一件不丢）。
-	masterSched := api.NewMasterScheduler(agentBin, 0, &api.StoreSnapshotReader{Store: fleetStore}) // ★ 0=暂停派活（原为 1）
+	// ★ `GAP-20260927-211`（P0 · 2026-10-02）：并发槽位不再**硬编码** —— 外部真源 = 环境变量
+	//   `ZERG_SCHED_MAX_CONCURRENT`（非负整数）。缺省 0 = 保持 2026-09-27 Mr2109「停」的现状
+	//   （改前是源码里写死的 0 ⇒ 想改只能手搓、审计丢一半）；给了合法值 ⇒ 用它。
+	//   这是「硬编码旋钮有正门」的最小一步：**不改默认行为**、只把值从源码里挪出来。
+	//   长线：`zerg sched show/pause/resume` 一等公民命令 + 配置文件（另批）。
+	maxConcurrent := 0
+	if v := strings.TrimSpace(os.Getenv("ZERG_SCHED_MAX_CONCURRENT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			maxConcurrent = n
+		} else {
+			log.Printf("⚠️ 忽略非法 ZERG_SCHED_MAX_CONCURRENT=%q（要非负整数）—— 用缺省 %d", v, maxConcurrent)
+		}
+	}
+	masterSched := api.NewMasterScheduler(agentBin, maxConcurrent, &api.StoreSnapshotReader{Store: fleetStore})
 	handlers.Scheduler = masterSched
 	// 2026-09-13: 显式启动（派发恢复的排队任务 + 启动故障自愈扫描）——构造期不再自动执行任务
 	masterSched.Start()
