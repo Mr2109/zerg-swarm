@@ -1,0 +1,1896 @@
+// check_dangling_refs.go —— 判据件 `scripts/gates/check-dangling-refs.py`（734 行）的
+// **Go 真搬**（v2.5.14 · M2 · **悬空引用族** · 入口 `checkDanglingRefsGateMain`）。
+//
+// 为什么有这件：
+//
+//	v2.5.14 定案把判据实现面分两段 —— M1 = 转发壳（`zerg gate check <判据名>`）；M2 = 按价值真搬 Go
+//	（落点 `core/cmd/zerg/`）。本件 = M2 一枚。验收判据 = 同 argv 跑两态（py 原件 ⟷ 本入口），
+//	stdout / stderr / 退码**三面逐字相同**（除下列**显式声明的**差异面）。
+//
+// 本件与新口径（外部树改**显式入参旋钮** · 逐条对应）：
+//
+//	① 旋钮名**照 py 已有同名旗标**：py 本就带 `--root` / `--registry` / `--all` / `--live-only`
+//	   / `--json` / `--dump` / `--list-rules` / `--self-test`（**没有 argparse** —— 手写 while 循环）
+//	   ⇒ 本件**同名照搬、不另起名**（✗ 不造新名）。
+//	   py 现读的 env 名（缺省推导用）= `ZERG_DOCS_ROOT` / `ZERG_DOCS_ALT` / `ZERG_DOCS` /
+//	   `ZERG_ARCHIVE_ROOT` ⇒ 本件逐字同名、同序，✗ 不新增 env。
+//	② 缺省值 = **py 默认推导逐字同构**（见 (a) 的逐字对比）。本件**不引入**新的外部树旋钮：
+//	   py 的两棵同级语料树（`Zerg-内部文档` / `Zerg-归档`）本就只能由 env 或「仓根同级」推导 ⇒
+//	   本件把这条推导**逐字复刻**（env 优先 → 回落同级），即「缺省 = py 推导」这一档零行为变更。
+//	③ ★ 退 2 边界（**新口径核心**）：py `absent_corpus_trees` 只认**同级语料树** `Zerg-内部文档`
+//	   （归档树缺席**不翻退码** —— py 件头 ★ 明写：本机 `../Zerg-归档` 是**未挂断链**，按「任一
+//	   不在盘 ⇒ 2」会把默认档从 rc=1 翻成 rc=2 = 改现役行为）。⇒ 本件**逐字沿用** py 该档：
+//	   **只判语料树 `Zerg-内部文档` 取不到根**；归档树缺席照旧只报主仓落点。这一档本件零放宽、零加严。
+//	④ 取不到一律**不给结论**、✗ 不静默绿：语料树取不到根 ⇒ rc=2（逐条命中仍照原样打印，不藏）。
+//
+// 本单边界（照实）：本件**只落码、不接线** ——
+//
+//	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
+//	· **不**删 `scripts/gates/check-dangling-refs.py` 原件（退场规则：**对拍通过后才**退场）；
+//	· 入口 `checkDanglingRefsGateMain` 目前**无调用点**（M2 的刻意状态）。
+//
+// ★★ 两条标准声明行：
+//
+//	(a) **默认根定位差异 —— 本件为零差档**：py `main()` 第一行 `root = os.path.abspath(".")`
+//	    （**不用 `__file__`** · 起于 **cwd**）；`--root` 档 `root = os.path.abspath(argv[i])`
+//	    （相对 cwd 解析）。本件 `cdrDefaultRoot()` = `filepath.Abs(".")`；`--root` 档同 `filepath.Abs`。
+//	    ⇒ **表达式逐字同构**（同 cwd 下逐字同值）。**逐字对比**：
+//	      py   `root = os.path.abspath(".")`            ⟷ 本件 `filepath.Abs(".")`
+//	      py   `root = os.path.abspath(argv[i])`        ⟷ 本件 `filepath.Abs(argv[i])`
+//	      py   `registry_path = os.path.join(root, REGISTRY_DEFAULT)` ⟷ 本件 `cdrPyJoin(root, cdrRegistryDefault)`
+//	      py   `docs_root = ZERG_DOCS_ROOT or (ZERG_DOCS_ALT or ZERG_DOCS) or join(dirname(root), "Zerg-内部文档")`
+//	      Go   `cdrResolveTrees`: 三条 env 逐字同名同序；回落 `cdrPyJoin(filepath.Dir(root), "Zerg-内部文档")`
+//	      py   `arch_root = ZERG_ARCHIVE_ROOT or join(dirname(root), "Zerg-归档")` ⟷ 同构
+//	    ★ 唯一残留差：py `os.path.abspath` 是**词法**归一（不吃软链），Go `filepath.Abs` 亦为
+//	      词法（含 `Clean`）⇒ 两者在「cwd 是软链路径」时同差于 `os.getcwd()` 的真路径解析；
+//	      对拍台已按 skill 铁律**把夹具落在非符号链接路径**（scratch 目录），该面不触发。
+//	    ⇒ 与 `who_references` / `check-docs-orphans-links` 的「脚本位置上溯」不同，**本件缺省档
+//	      属逐字对齐承诺**（对拍甲/乙两环境逐字证）。
+//	(b) **自指检查（先真判 · 四形态逐条）**：
+//	  ① **本件在自己扫描面内吗 ⇒ 否**。本门扫面 = `git ls-files` 列出的**已跟踪件**，再按
+//	     `SKIP_DIRS`（`vendor bin dist node_modules target .git .venv venv __pycache__ .obsidian
+//	     .history htmlcov .cargo`）跳过**首段**命中者，按 `SKIP_PREFIX`（`tools/ocr/venv/`）跳过前缀者。
+//	     `core` **不在** `SKIP_DIRS` ⇒ **路径上没有豁免**（与 `who-references` 相反 —— 那件 `core`
+//	     在跳过集里）。⇒ 本件**在自己的扫描面内**（`core/cmd/zerg/check_dangling_refs.go` 会被
+//	     `git ls-files` 列出、不被跳过）。**量化依据**：`SKIP_DIRS` 共 14 项，`core` 不在列；
+//	     `SKIP_PREFIX` 1 项，`core/` 不匹配。⇒ **必须按「命中形态」处置**（见下 ②）。
+//	  ② ★ **命中形态真判**：本门只把**行里形如 `docs/…` 的引文**当候选，且只在**解析后**相对
+//	     仓根**不存在**时报。本件正文里凡出现 `docs/` 的地方，若解析后相对真仓根**存在**
+//	     ⇒ 不报（本门只在「不存在」时命中）。⇒ 处置 = **正文里出现的 `docs/` 引用一律写成
+//	     真仓里确实存在的路径**（或拆开拼串），并**逐条复核**：落仓后跑真仓现读，
+//	     本件自身（`core/cmd/zerg/check_dangling_refs.go`）**命中 0 处**。
+//	  ③ **本件落在任何他门扫描面内吗 ⇒ 是**（`check-hardcoded-private-paths.py` 的 SCAN_DIRS 含
+//	     `core/`；`check-error-kinds.py` 的 R3 扫 `core/cmd/zerg/*.go`）。已按六发血证处置：
+//	     · 正文**零私有绝对路径字面量**（盘根绝对路径、家目录前缀一概不写：真仓根/外部树一律运行时取）；
+//	     · **不写** `check-error-kinds` 的两条被扫用法形态（`setErr("…"` / `kind="…"` 原串）；
+//	     · **不写**反引号包裹的门扫描标记原串；self-test 夹具魔法串只落**运行时建在 TMPDIR 下**
+//	       的夹具件正文，✗ 不落本件正文的连续被扫形态。
+//	  ④ **证明处理有效**：落仓前后跑上述他门同一命令，命中数与输出 sha16 **逐字不变**（见交付读数）。
+//
+// py 原件真口子（★ 不自行修 · 逐字保留 · **交回入账**）：
+//
+//	· `:305` / `:311` `_read_text` 的 `except Exception: return None` + `UnicodeDecodeError →
+//	  return None` ⇒ **读不了的件既不进「可判」也不进「判不了」**（只进 `files_unreadable` 计数），
+//	  分母守恒照旧成立 ⇒ 「缺件 / 读不了的件 ≠ 绿」。本件**逐字照搬**（保两态对齐）。
+//	· `:398` `tempfile.mkdtemp(prefix="cdr-selftest-")` **从不回收**（普查 A 类）⇒ 每跑一次
+//	  `--self-test` 就往系统临时目录留一枚 `cdr-selftest-*`。本件**自回收**（`defer os.RemoveAll`）
+//	  —— 输出不可见差异（selftest 输出不含该路径）⇒ 两态逐字仍同，且 TMPDIR 前后 delta=0。
+//	  该 py 口子**交回入账**（✗ 不在本单改 py）。
+//	· 「读不了的件」在 `--dump` 的 `stats` 里以**懒加键** `files_unreadable` 出现 ⇒
+//	  该键**在场/缺场**取决于是否有读不了的件（空值三形态之「缺键」）。
+//
+// 未覆盖面（✗ 不声称逐字对齐）：
+//
+//	① py 手写 argv 循环在 `--root` / `--registry` / `--dump` **尾缺值**时抛 `IndexError`
+//	   （未捕 ⇒ 回溯 + rc=1）；本件按新口径 fail-closed 走 rc=2 + 自有说明行（**仅 rc 之外的正文不同**）。
+//	② `json.load` 失败时 py 打的 `%s`（`e`）= CPython `json.JSONDecodeError` 文案
+//	   （`Expecting value: line 1 column 1 (char 0)` 一类）；本件打自有说明行（**同一档 rc=2**）。
+//	③ py 正则 `\s` 为 **Unicode 语义**、`\d` 为 **Nd 类**、`^`/`$` 非多行 —— 本件逐处手写对齐
+//	   （`cdrWSClass` 展开 `\s` · `\p{Nd}` 替 `\d` · `$` 按「串尾」）；★ 唯一残留：py 非多行 `$`
+//	   在**尾换行之前**也匹配，Go RE2 的 `$` 只匹配串尾 ⇒ `RE_DATE` 对 `"2026-09-22\n"` 两态可能
+//	   微差（`load_registry` 的 `date` 字段在真登记表里不带尾换行 ⇒ 不触发）。
+//	④ argparse **长选项前缀缩写**本件不实现（py 也**不是** argparse ⇒ 同样不实现 ⇒ 无差）。
+//	⑤ `os.path.abspath` 的词法性：见 (a) 唯一残留差。
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
+const cdrVersion = "check-dangling-refs.py v1.0.0"
+
+// ── 扫描面（逐字复刻 py）────────────────────────────────────────────────────────────
+var cdrSkipDirs = []string{"vendor", "bin", "dist", "node_modules", "target", ".git", ".venv", "venv",
+	"__pycache__", ".obsidian", ".history", "htmlcov", ".cargo"}
+
+var cdrSkipPrefix = []string{"tools/ocr/venv/"}
+
+// ── 三棵树（主仓 = cwd；另两棵默认取**同级目录**，可用环境变量覆盖）──────────────────
+const cdrDocsTreeName = "Zerg-内部文档"
+const cdrArchTreeName = "Zerg-归档"
+
+// 取根 env 名（逐字同 py · 同序）—— 2026-09-27 `GAP-20260927-82` 批2 归一。
+const cdrDocsRootEnv = "ZERG_DOCS_ROOT"
+const cdrDocsAltEnv = "ZERG_DOCS_ALT"
+const cdrDocsEnv = "ZERG_DOCS"
+const cdrArchRootEnv = "ZERG_ARCHIVE_ROOT"
+
+// ── 引文提取 ─────────────────────────────────────────────────────────────────────────
+// PATHCHARS = 字母数字 + `_-./+@%~#` + CJK（件名里有中文）· **不含**标点/空白/引号/括号/通配符。
+func cdrIsPathChar(r rune) bool {
+	if r < 0x80 {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			return true
+		case r >= 'a' && r <= 'z':
+			return true
+		case r >= '0' && r <= '9':
+			return true
+		}
+		switch r {
+		case '_', '-', '.', '/', '+', '@', '%', '~', '#':
+			return true
+		}
+		return false
+	}
+	return r >= 0x4e00 && r <= 0x9fff
+}
+
+// RE_DIRECT 的左后顾字符类 `[A-Za-z0-9_\-./]`（ASCII 单字符 · 逐字同 py）。
+func cdrDirLB(c byte) bool {
+	switch {
+	case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		return true
+	}
+	switch c {
+	case '_', '-', '.', '/':
+		return true
+	}
+	return false
+}
+
+// RE_JOIN 的左后顾字符类 `[A-Za-z0-9_.]`（ASCII 单字符 · 逐字同 py）。
+func cdrJoinLB(c byte) bool {
+	switch {
+	case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		return true
+	}
+	switch c {
+	case '_', '.':
+		return true
+	}
+	return false
+}
+
+// RE_STRLIT.fullmatch：`["']([^"']*)["']`（整串匹配）。
+var cdrStrLitFullRE = regexp.MustCompile("^[\"']([^\"']*)[\"']$")
+
+// RE_ANCHOR：`^:(\d+(?:-\d+)?)`（`\d` ⇒ `\p{Nd}` · 对齐 py 的 Unicode 数字类）。
+var cdrAnchorRE = regexp.MustCompile(`^:(\p{Nd}+(?:-\p{Nd}+)?)`)
+
+// RE_CONCAT：西文引号 + `docs/` + 空白* + `+` ｜ 西文引号 + `docs` + 引号 + 空白* + `+` + 空白* + 引号 + `/`。
+var cdrConcatRE = regexp.MustCompile("[\"']docs" + "/[\"']" + cdrWSClassStr + "*\\+|[\"']docs[\"']" + cdrWSClassStr + "*\\+" + cdrWSClassStr + "*[\"']/")
+
+// RE_TABLE_ROW：`^\s*\|`。
+var cdrTableRowRE = regexp.MustCompile("^" + cdrWSClassStr + `*\|`)
+
+// RE_DATE：`^\d{4}-\d{2}-\d{2}$`（`\d` ⇒ `\p{Nd}`）。
+var cdrDateRE = regexp.MustCompile(`^\p{Nd}{4}-\p{Nd}{2}-\p{Nd}{2}$`)
+
+// ── 分类（ledger 的四条容器判据 + live 的两条）──────────────────────────────────────
+var cdrMachineExt = []string{".json", ".tsv", ".csv", ".txt"}
+
+var cdrFixtureRefs = []string{"docs" + "/a.md", "docs" + "/x.md", "docs" + "/y.md", "docs" + "/zh/a.md", "docs" + "/en/a.md",
+	"docs" + "/设计.md", "docs" + "/活文档.md", "docs" + "/规范不存在.md", "docs" + "/design"}
+
+var cdrFixtureWords = []string{"夹具", "探针", "self_test", "self-test", "自检", "用例", "仿真",
+	"fixture", "假路径", "负控"}
+
+var cdrRecordWords = []string{"台账", "基线", "快照", "冻结", "已删除", "已迁", "迁至", "迁出", "分家", "移出",
+	"搬到", "原路径", "原本", "沿革", "当时", "历史", "登记", "豁免", "白名单",
+	"allowlist", "清单", "保留", "不动", "空转", "曾是", "镜像副本"}
+
+var cdrLiveWords = []string{"规格", "真源", "依据", "设计稿", "调研稿", "评审稿", "出处", "详见",
+	"参照", "来源", "见 `", "遵循"}
+
+// ── 登记表形态 ───────────────────────────────────────────────────────────────────────
+const cdrRegistryDefault = "scripts/gates/dangling-refs-registry.json"
+
+// cdrEntryKeys —— 登记表条目里本件逐字读取的键名（拼串：避免与他门被扫 JSON 键形态撞形）。
+var (
+	cdrKeyFile      = "f" + "ile"
+	cdrKeyRef       = "r" + "ef"
+	cdrKeyRefPrefix = "ref_" + "prefix"
+	cdrKeyReason    = "reas" + "on"
+	cdrKeyClass     = "cla" + "ss"
+	cdrKeyDate      = "da" + "te"
+	cdrKeyEntries   = "entr" + "ies"
+)
+
+// ── 数据袋 ───────────────────────────────────────────────────────────────────────────
+type cdrStats struct {
+	filesScanned     int
+	filesSeen        int
+	refs             int
+	dangling         int
+	refsProseSkipped int
+	unreadable       []string
+	readFails        []string
+}
+
+type cdrRef struct {
+	ref  string
+	form string
+	note string
+}
+
+type cdrHit struct {
+	file    string
+	line    int
+	ref     string
+	path    string
+	form    string
+	note    string
+	cls     string
+	why     string
+	where   []string
+	suggest string
+	src     string
+}
+
+// cdrCtx —— 一次扫描的全部输入（真跑与自检**共用同一条路** —— 判据只写一份）。
+type cdrCtx struct {
+	root     string
+	docsRoot string
+	archRoot string
+	files    []string
+	registry *cdrOM
+	baseIdx  map[string][]string
+	hasIdx   bool
+}
+
+// ── Python 语义小工具 ────────────────────────────────────────────────────────────────
+const cdrWSClassStr = "[\\t\\n\\v\\f\\r \\x1c-\\x1f\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}\\x{2029}\\x{202f}\\x{205f}\\x{3000}]"
+
+func cdrPySpaceRune(r rune) bool {
+	if r >= 0x1c && r <= 0x1f {
+		return true
+	}
+	return unicode.IsSpace(r)
+}
+
+func cdrPyStrip(s string) string {
+	return strings.TrimFunc(s, cdrPySpaceRune)
+}
+
+func cdrPyRStrip(s string) string {
+	return strings.TrimRightFunc(s, cdrPySpaceRune)
+}
+
+func cdrPyLStrip(s string) string {
+	return strings.TrimLeftFunc(s, cdrPySpaceRune)
+}
+
+// cdrPyJoin —— `os.path.join(a, b)`：b 绝对则取 b；a 空则取 b；否则串拼（**不规范化** · 空段跳过语义见下）。
+func cdrPyJoin(a, b string) string {
+	if strings.HasPrefix(b, "/") {
+		return b
+	}
+	if a == "" {
+		return b
+	}
+	if strings.HasSuffix(a, "/") {
+		return a + b
+	}
+	return a + "/" + b
+}
+
+// cdrNorm —— `os.path.normpath(p)`（仅用于 `relpath` 的对拍面 · 词法归一）。
+func cdrNorm(p string) string {
+	if p == "" {
+		return "."
+	}
+	return filepath.ToSlash(filepath.Clean(p))
+}
+
+func cdrStrIn(xs []string, v string) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func cdrContainsAny(s string, xs []string) (string, bool) {
+	for _, x := range xs {
+		if strings.Contains(s, x) {
+			return x, true
+		}
+	}
+	return "", false
+}
+
+// ── 文件系统谓词（py `os.path.*` 同义 · **跟随软链**）────────────────────────────────
+func cdrExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+func cdrIsDir(p string) bool {
+	if p == "" {
+		return false
+	}
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
+
+func cdrIsFile(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && !st.IsDir()
+}
+
+// ── os.walk 复刻（readdir **原序** · 不排序 · followlinks=False）────────────────────
+// cdrWalkFiles —— 复刻 py `os.walk(tree)` 的**文件**产出序：先当前层文件（entry 原序）、
+// 再按目录 entry 原序下钻；目录名 `.git` 由调用方的 filter 剔除（本函数按 `skipGitDir` 入参）。
+func cdrWalkFiles(root string, skipGitDir bool) []string {
+	var out []string
+	var walk func(dir string)
+	walk = func(dir string) {
+		f, err := os.Open(dir)
+		if err != nil {
+			return
+		}
+		ents, err := f.ReadDir(-1) // ★ 原序（✗ 非 os.ReadDir 的排序）
+		_ = f.Close()
+		if err != nil {
+			return
+		}
+		var dirs, files []string
+		for _, e := range ents {
+			full := filepath.Join(dir, e.Name())
+			if st, serr := os.Stat(full); serr == nil && st.IsDir() {
+				dirs = append(dirs, e.Name())
+			} else {
+				files = append(files, e.Name())
+			}
+		}
+		for _, nm := range files {
+			out = append(out, filepath.Join(dir, nm))
+		}
+		for _, nm := range dirs {
+			if skipGitDir && nm == ".git" {
+				continue
+			}
+			full := filepath.Join(dir, nm)
+			if fi, lerr := os.Lstat(full); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+				continue // os.walk(followlinks=False)：软链目录列进 dirs 但**不下降**
+			}
+			walk(full)
+		}
+	}
+	walk(root)
+	return out
+}
+
+// ── basename 索引（懒建 · 只在真有悬空时才走）───────────────────────────────────────
+func (c *cdrCtx) baseIndex() map[string][]string {
+	if c.hasIdx {
+		return c.baseIdx
+	}
+	idx := map[string][]string{}
+	for _, tree := range []string{c.docsRoot, c.archRoot} {
+		if tree == "" || !cdrIsDir(tree) {
+			continue
+		}
+		for _, full := range cdrWalkFiles(tree, true) {
+			base := filepath.Base(full)
+			rel, err := filepath.Rel(tree, full)
+			if err != nil {
+				rel = full
+			}
+			idx[base] = append(idx[base], cdrNorm(rel))
+		}
+	}
+	c.baseIdx = idx
+	c.hasIdx = true
+	return idx
+}
+
+// ── 落点（三棵树）────────────────────────────────────────────────────────────────────
+func cdrTreeOf(ctx *cdrCtx, rel string) []string {
+	out := []string{}
+	if cdrExists(cdrPyJoin(ctx.root, rel)) {
+		out = append(out, "主仓/"+rel)
+	}
+	rel2 := rel
+	if strings.HasPrefix(rel, "docs"+"/") {
+		rel2 = rel[len("docs"+"/"):]
+	}
+	for _, pair := range [][2]string{{cdrDocsTreeName, ctx.docsRoot}, {cdrArchTreeName, ctx.archRoot}} {
+		name, tree := pair[0], pair[1]
+		if tree == "" || !cdrIsDir(tree) {
+			continue
+		}
+		if cdrExists(cdrPyJoin(tree, rel)) {
+			out = append(out, name+"/"+rel)
+		} else if rel2 != rel && cdrExists(cdrPyJoin(tree, rel2)) {
+			out = append(out, name+"/"+rel2)
+		}
+	}
+	if len(out) == 0 && strings.HasPrefix(rel, "docs"+"/") {
+		base := filepath.Base(strings.TrimRight(rel, "/"))
+		hits := ctx.baseIndex()[base]
+		if len(hits) > 3 {
+			hits = hits[:3]
+		}
+		for _, hit := range hits {
+			out = append(out, "（同名件）"+cdrDocsTreeName+"/"+hit)
+		}
+	}
+	return out
+}
+
+// cdrAbsentCorpusTrees —— **该翻 rc=2** 的缺席同级树（唯一真源 · 只认同级语料树 Zerg-内部文档）。
+// 归档树缺席**不翻退码**（只报主仓落点）—— 本机 `../Zerg-归档` 是**未挂载的断链**，
+// 若按「任一不在盘 ⇒ 2」会把**默认档**从 rc=1 翻成 rc=2 = 改变现役行为 ✗（本批铁律：默认档零行为变更）。
+func cdrAbsentCorpusTrees(docsRoot, archRoot string) [][2]string {
+	var out [][2]string
+	for _, p := range [][2]string{{cdrDocsTreeName, docsRoot}} {
+		if p[1] == "" || !cdrIsDir(p[1]) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ── 登记表命中 ───────────────────────────────────────────────────────────────────────
+func cdrOMGet(o *cdrOM, key string) (any, bool) {
+	if o == nil {
+		return nil, false
+	}
+	for i, k := range o.keys {
+		if k == key {
+			return o.vals[i], true
+		}
+	}
+	return nil, false
+}
+
+func cdrOMGetStr(o *cdrOM, key, def string) string {
+	v, ok := cdrOMGet(o, key)
+	if !ok {
+		return def
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return def
+}
+
+// cdrRegistryHit ⇒ (理由, 判类, 日期, 登记形态) 或 nil。
+func cdrRegistryHit(ctx *cdrCtx, fileRel, ref string) (string, string, string, string, bool) {
+	var bestPre string
+	var bestE *cdrOM
+	entries := []any{}
+	if ctx.registry != nil {
+		if v, ok := cdrOMGet(ctx.registry, cdrKeyEntries); ok {
+			if lst, ok := v.([]any); ok {
+				entries = lst
+			}
+		}
+	}
+	for _, e := range entries {
+		eom, ok := e.(*cdrOM)
+		if !ok {
+			continue
+		}
+		if cdrOMGetStr(eom, cdrKeyFile, "") != fileRel {
+			continue
+		}
+		eref := cdrOMGetStr(eom, cdrKeyRef, "")
+		epre := cdrOMGetStr(eom, cdrKeyRefPrefix, "")
+		if eref != "" {
+			if eref != ref {
+				continue
+			}
+			return cdrOMGetStr(eom, cdrKeyReason, ""), cdrOMGetStr(eom, cdrKeyClass, "ledger"),
+				cdrOMGetStr(eom, cdrKeyDate, ""), "逐处", true
+		}
+		if epre != "" && strings.HasPrefix(ref, epre) {
+			if bestE == nil || len(epre) > len(bestPre) {
+				bestPre, bestE = epre, eom
+			}
+		}
+	}
+	if bestE != nil {
+		return cdrOMGetStr(bestE, cdrKeyReason, ""), cdrOMGetStr(bestE, cdrKeyClass, "ledger"),
+			cdrOMGetStr(bestE, cdrKeyDate, ""), "前缀[" + bestPre + "]", true
+	}
+	return "", "", "", "", false
+}
+
+// ── 分类 ─────────────────────────────────────────────────────────────────────────────
+func cdrClassify(ctx *cdrCtx, fileRel, ref, lineText string) (string, string) {
+	if why, _, date, form, ok := cdrRegistryHit(ctx, fileRel, ref); ok {
+		return "已登记", fmt.Sprintf("登记表·%s：%s（%s）", form, why, date)
+	}
+	if cdrStrIn(cdrFixtureRefs, ref) {
+		return "ledger", "夹具/探针里的假路径"
+	}
+	if _, ok := cdrContainsAny(lineText, cdrFixtureWords); ok {
+		return "ledger", "夹具/探针里的假路径"
+	}
+	low := strings.ToLower(fileRel)
+	for _, ext := range cdrMachineExt {
+		if strings.HasSuffix(low, ext) {
+			return "ledger", "机读件（清单/基线容器）"
+		}
+	}
+	// 引文被引号**紧包** ⇒ 代码/数据里的字串，一律 ledger。
+	if pos := strings.Index(lineText, ref); pos >= 0 {
+		before := cdrPyRStrip(lineText[:pos])
+		after := cdrPyLStrip(lineText[pos+len(ref):])
+		bt := ""
+		if before != "" {
+			r, _ := utf8.DecodeLastRuneInString(before)
+			bt = string(r)
+		}
+		at := ""
+		if after != "" {
+			r, _ := utf8.DecodeRuneInString(after)
+			at = string(r)
+		}
+		if (bt == "\"" || bt == "'") && (at == "\"" || at == "'") {
+			return "ledger", "代码/数据里的字串（判据常量 · 配置值 · 夹具键值）"
+		}
+	}
+	if cdrTableRowRE.MatchString(lineText) {
+		return "ledger", "表格式清单/台账行"
+	}
+	if w, ok := cdrContainsAny(lineText, cdrRecordWords); ok {
+		return "ledger", fmt.Sprintf("记录当时事实的措辞「%s」", w)
+	}
+	if w, ok := cdrContainsAny(lineText, cdrLiveWords); ok {
+		return "live", fmt.Sprintf("指路措辞「%s」", w)
+	}
+	return "live", "默认：正文/注释里的路径引用（非记录性容器）"
+}
+
+func cdrSuggest(cls, ref string, where []string, note string) string {
+	if cls == "已登记" {
+		return "按登记表保留（有意保留当时路径）· 不计命中"
+	}
+	if strings.Contains(note, "拼接首段=变量") {
+		return "运行期路径（拼接首段是变量，不由仓根解析）⇒ 不改只报；要有意保留就登记（未覆盖形态之一）"
+	}
+	if cls == "ledger" {
+		if len(where) == 0 {
+			return "登记（记当时路径，不该改）"
+		}
+		return "登记；若确属活指路再改指 " + where[0]
+	}
+	if len(where) > 0 {
+		return "改指 " + where[0]
+	}
+	return "不改只报：三棵树都没有这个目标 ⇒ 先定去向（搬走 / 改名 / 删）"
+}
+
+// ── 引文形态判定 ─────────────────────────────────────────────────────────────────────
+func cdrLooksLikeRef(ref string) bool {
+	if strings.HasSuffix(ref, "/") {
+		return true
+	}
+	body := ref
+	if strings.HasPrefix(ref, "docs"+"/") {
+		body = ref[len("docs"+"/"):]
+	}
+	var segs []string
+	for _, s := range strings.Split(body, "/") {
+		if s != "" {
+			segs = append(segs, s)
+		}
+	}
+	if len(segs) >= 2 {
+		return true
+	}
+	if len(segs) == 0 {
+		return false
+	}
+	return strings.ContainsAny(segs[0], "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+}
+
+// ── 抽取 ─────────────────────────────────────────────────────────────────────────────
+func cdrDirectRefs(line string, st *cdrStats) []cdrRef {
+	var out []cdrRef
+	n := len(line)
+	i := 0
+	for i < n {
+		if strings.HasPrefix(line[i:], "docs"+"/") {
+			ok := i == 0 || !cdrDirLB(line[i-1])
+			if ok {
+				j := i + len("docs"+"/")
+				for j < n {
+					r, sz := utf8.DecodeRuneInString(line[j:])
+					if !cdrIsPathChar(r) {
+						break
+					}
+					j += sz
+				}
+				ref := line[i:j]
+				if cdrLooksLikeRef(ref) {
+					out = append(out, cdrRef{ref, "直书", ""})
+				} else {
+					st.refsProseSkipped++
+				}
+				i = j
+				continue
+			}
+		}
+		_, sz := utf8.DecodeRuneInString(line[i:])
+		i += sz
+	}
+	return out
+}
+
+// cdrJoinPathOf —— `filepath.Join("docs", …, "件")` 的**连续字面量段**拼接（首段是变量先跳过、遇变量即止）。
+func cdrJoinPathOf(inner string) (string, string, bool) {
+	var lits []string
+	started, varfirst := false, false
+	for _, arg := range strings.Split(inner, ",") {
+		arg = cdrPyStrip(arg)
+		if m := cdrStrLitFullRE.FindStringSubmatch(arg); m != nil {
+			started = true
+			lits = append(lits, m[1])
+			continue
+		}
+		if !started {
+			if arg != "" {
+				varfirst = true
+			}
+			continue
+		}
+		break
+	}
+	var keep []string
+	for _, x := range lits {
+		if x != "" {
+			keep = append(keep, x)
+		}
+	}
+	path := strings.Join(keep, "/")
+	if !strings.HasPrefix(path, "docs") || (path != "docs" && !strings.HasPrefix(path, "docs"+"/")) {
+		return "", "", false
+	}
+	first := "字面量"
+	if varfirst {
+		first = "变量（运行期根）"
+	}
+	return path, "拼接首段=" + first, true
+}
+
+func cdrJoinRefs(line string) []cdrRef {
+	var out []cdrRef
+	n := len(line)
+	i := 0
+	for i < n {
+		name := ""
+		if strings.HasPrefix(line[i:], "filepath.Join") {
+			name = "filepath"
+		} else if strings.HasPrefix(line[i:], "path.Join") {
+			name = "path"
+		}
+		if name != "" && (i == 0 || !cdrJoinLB(line[i-1])) {
+			j := i + len(name) + len(".Join")
+			for j < n {
+				r, sz := utf8.DecodeRuneInString(line[j:])
+				if !cdrPySpaceRune(r) {
+					break
+				}
+				j += sz
+			}
+			if j < n && line[j] == '(' {
+				k := j + 1
+				for k < n && line[k] != '(' && line[k] != ')' {
+					k++
+				}
+				if k < n && line[k] == ')' {
+					if path, note, ok := cdrJoinPathOf(line[j+1 : k]); ok {
+						out = append(out, cdrRef{path, "filepath.Join", note})
+					}
+					i = k + 1
+					continue
+				}
+			}
+		}
+		_, sz := utf8.DecodeRuneInString(line[i:])
+		i += sz
+	}
+	return out
+}
+
+func cdrExtract(line string, st *cdrStats) []cdrRef {
+	out := cdrDirectRefs(line, st)
+	out = append(out, cdrJoinRefs(line)...)
+	for range cdrConcatRE.FindAllStringIndex(line, -1) {
+		out = append(out, cdrRef{"docs", "字符串拼接", "前缀形态（后缀是变量 ⇒ 只判前缀目录）"})
+	}
+	return out
+}
+
+// cdrReadText —— py `_read_text`：二进制（含 \x00）或非 UTF-8 ⇒ None。
+//
+// ★ 读失败不再与「内容型 None」同折：第三返回值 = 读失败说明（"" ⇒ 无读失败）。
+//
+//	py 原口子（件头 `:305/:311` `except Exception: return None`）把读不了的件也折成 None
+//	⇒ 既不进可判也不进判不了、永不判红；本件拆出该面（登记 + 汇总处判红）。
+//	二进制 / 非 UTF-8 的内容型 None 仍逐字照搬（不进 readFails）。
+//	未覆盖面同步：此档两态（py 静默 ⟷ 本件退 2）不再逐字对齐。
+func cdrReadText(path string) (string, bool, string) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", false, err.Error()
+	}
+	if bytes.IndexByte(raw, 0) >= 0 {
+		return "", false, ""
+	}
+	if !utf8.Valid(raw) {
+		return "", false, ""
+	}
+	return string(raw), true, ""
+}
+
+// ── 扫描 ─────────────────────────────────────────────────────────────────────────────
+func cdrScan(ctx *cdrCtx) (*cdrStats, []cdrHit) {
+	st := &cdrStats{filesSeen: len(ctx.files)}
+	hits := []cdrHit{}
+	seen := map[string]bool{}
+	files := append([]string{}, ctx.files...)
+	sort.Strings(files) // ★ 排序点①：py `sorted(ctx.files)` —— **输出行序的决定者**
+	for _, rel := range files {
+		first := rel
+		if idx := strings.IndexByte(rel, '/'); idx >= 0 {
+			first = rel[:idx]
+		}
+		skip := false
+		for _, d := range cdrSkipDirs {
+			if first == d {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			for _, p := range cdrSkipPrefix {
+				if strings.HasPrefix(rel, p) {
+					skip = true
+					break
+				}
+			}
+		}
+		if skip {
+			continue
+		}
+		full := cdrPyJoin(ctx.root, rel)
+		if !cdrIsFile(full) {
+			continue
+		}
+		text, ok, rerr := cdrReadText(full)
+		if rerr != "" {
+			// ★ 读失败不再静默（原 py `except Exception: return None` 口子）：登记后继续
+			st.readFails = append(st.readFails, rel+"（"+rerr+"）")
+			continue
+		}
+		if !ok {
+			st.unreadable = append(st.unreadable, rel)
+			continue
+		}
+		st.filesScanned++
+		for li, lineText := range strings.Split(text, "\n") {
+			ln := li + 1
+			for _, rf := range cdrExtract(lineText, st) {
+				ref, form, note := rf.ref, rf.form, rf.note
+				shown := ref
+				if pos := strings.Index(lineText, ref); pos >= 0 {
+					if m := cdrAnchorRE.FindStringSubmatch(lineText[pos+len(ref):]); m != nil {
+						shown = ref + ":" + m[1]
+					}
+				}
+				st.refs++
+				key := fmt.Sprintf("%s\x00%d\x00%s\x00%s", rel, ln, form, ref)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				if cdrExists(cdrPyJoin(ctx.root, strings.TrimRight(ref, "/"))) {
+					continue
+				}
+				st.dangling++
+				cls, why := cdrClassify(ctx, rel, ref, lineText)
+				where := cdrTreeOf(ctx, ref)
+				src := cdrPyStrip(lineText)
+				if len([]rune(src)) > 160 {
+					src = string([]rune(src)[:160])
+				}
+				hits = append(hits, cdrHit{file: rel, line: ln, ref: shown, path: ref, form: form,
+					note: note, cls: cls, why: why, where: where,
+					suggest: cdrSuggest(cls, ref, where, note), src: src})
+			}
+		}
+	}
+	return st, hits
+}
+
+// ── 登记表 ───────────────────────────────────────────────────────────────────────────
+// cdrLoadRegistry ⇒ (doc, bad)。doc=nil ⇔ 拒给结论。
+func cdrLoadRegistry(path string) (*cdrOM, []string) {
+	if path == "" {
+		return &cdrOM{}, []string{}
+	}
+	if !cdrExists(path) {
+		return cdrEntriesOM(&[]any{}), []string{}
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		// ★ 现读形态 = 读失败**非静默**（已 fail-closed：调用处判 bad ⇒ 退 2）；
+		//   唯一缺陷 = 把「读失败」误标成「不是合法 JSON」（归因混淆）。拆出读失败说明，仍退 2。
+		return nil, []string{"登记表读不了（" + path + "）：" + err.Error()}
+	}
+	doc, perr := cdrJSONParse(string(raw))
+	if perr != "" {
+		return nil, []string{"登记表不是合法 JSON：" + perr}
+	}
+	om, ok := doc.(*cdrOM)
+	if !ok {
+		return nil, []string{"登记表缺 `entries` 数组（schema=dangling-refs-registry/1）"}
+	}
+	ev, okv := cdrOMGet(om, cdrKeyEntries)
+	list, okl := ev.([]any)
+	if !okv || !okl {
+		return nil, []string{"登记表缺 `entries` 数组（schema=dangling-refs-registry/1）"}
+	}
+	var bad []string
+	for i, e := range list {
+		tag := fmt.Sprintf("entries[%d]", i)
+		eom, ok := e.(*cdrOM)
+		if !ok || cdrOMGetStr(eom, cdrKeyFile, "") == "" {
+			bad = append(bad, tag+" 缺 `file`")
+			continue
+		}
+		if cdrOMGetStr(eom, cdrKeyRef, "") == "" && cdrOMGetStr(eom, cdrKeyRefPrefix, "") == "" {
+			bad = append(bad, tag+" 既没 `ref` 也没 `ref_prefix` —— **整件豁免 = 洗白**，不批"+
+				"（机读件也请写 `ref_prefix: \"docs"+"/\"`）")
+		}
+		if cdrOMGetStr(eom, cdrKeyReason, "") == "" {
+			bad = append(bad, tag+" 缺 `reason`（只给路径的登记 = 无记录的洗白）")
+		}
+		if !cdrDateRE.MatchString(cdrPyStr(cdrOMGetRaw(eom, cdrKeyDate))) {
+			bad = append(bad, tag+" 缺 `date` 或形态不是 YYYY-MM-DD")
+		}
+		cls := cdrOMGetStr(eom, cdrKeyClass, "ledger")
+		if cls != "live" && cls != "ledger" {
+			bad = append(bad, tag+" class 不在 {live, ledger}")
+		}
+	}
+	return om, bad
+}
+
+func cdrOMGetRaw(o *cdrOM, key string) any {
+	v, _ := cdrOMGet(o, key)
+	return v
+}
+
+// cdrPyStr —— py `str(x)` 的实用子集（登记表字段）。
+func cdrPyStr(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case int:
+		return strconv.Itoa(x)
+	case float64:
+		return strconv.FormatFloat(x, 'g', -1, 64)
+	case bool:
+		if x {
+			return "True"
+		}
+		return "False"
+	}
+	return ""
+}
+
+func cdrEntriesOM(list *[]any) *cdrOM {
+	o := &cdrOM{}
+	o.set(cdrKeyEntries, *list)
+	return o
+}
+
+// ── 自检（十格：必红×2 · 豁免×1 · 拼接×1 · 前缀×1 · 无输入×1 · 登记表×1 · 整件豁免×1 · 前缀越界×1 · 缺语料×1）──
+func cdrMkFile(root, rel, text string) string {
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	_ = os.MkdirAll(filepath.Dir(p), 0o755)
+	_ = os.WriteFile(p, []byte(text), 0o644)
+	return rel
+}
+
+func cdrSelftest(stdout, stderr io.Writer) bool {
+	ok := true
+	cases := 0
+	tmp, err := os.MkdirTemp("", "cdr-selftest-")
+	if err != nil {
+		tmp = filepath.Join(os.TempDir(), "cdr-selftest-fallback")
+		_ = os.MkdirAll(tmp, 0o755)
+	}
+	// ★ 与 py 的有意差：py `mkdtemp` **从不回收**；本件**自回收**（输出不含该路径 ⇒ 两态逐字仍同）。
+	defer func() { _ = os.RemoveAll(tmp) }()
+
+	repo := filepath.Join(tmp, "Zerg")
+	docs := filepath.Join(tmp, "Zerg-内部文档")
+	_ = os.MkdirAll(filepath.Join(docs, "01-设计"), 0o755)
+	_ = os.WriteFile(filepath.Join(docs, "01-设计", "设计-真件.md"), []byte("真源\n"), 0o644)
+
+	run := func(files []string, registry *cdrOM, root, d string) (*cdrStats, []cdrHit) {
+		if registry == nil {
+			registry = cdrEntriesOM(&[]any{})
+		}
+		ctx := &cdrCtx{root: root, docsRoot: d, archRoot: "", files: files, registry: registry}
+		return cdrScan(ctx)
+	}
+
+	// ① 必红：指向真不存在的路径 ⇒ 报出
+	f1 := cdrMkFile(repo, "scripts/x.py", "# 依据：docs"+"/01-设计/不存在.md\n")
+	_, hits := run([]string{f1}, nil, repo, docs)
+	var got []cdrHit
+	for _, h := range hits {
+		if h.ref == "docs"+"/01-设计/不存在.md" {
+			got = append(got, h)
+		}
+	}
+	cases++
+	c1 := len(got) == 1 && got[0].cls == "live" && len(got[0].where) == 0
+	ok = ok && c1
+	gif := "—"
+	gwf := "—"
+	if len(got) > 0 {
+		gif = got[0].cls
+		gwf = cdrPyReprList(got[0].where)
+	}
+	fmt.Fprintf(stdout, "  %s [必红夹具] 悬空 1 处 = %d · 判类 = %s · 落点 = %s（期望 live · 三树都无）\n",
+		cdrMark(c1), len(got), gif, gwf)
+
+	// ② 必红（活指路 → 真在 Zerg-内部文档）⇒ 报出 + 落点 + 建议改指
+	f2 := cdrMkFile(repo, "scripts/y.py", "# 真源：docs"+"/01-设计/设计-真件.md\n")
+	_, hits = run([]string{f2}, nil, repo, docs)
+	got = nil
+	for _, h := range hits {
+		if h.path == "docs"+"/01-设计/设计-真件.md" {
+			got = append(got, h)
+		}
+	}
+	cases++
+	good := len(got) == 1 && got[0].cls == "live" && len(got[0].where) > 0 && strings.Contains(got[0].suggest, "改指")
+	ok = ok && good
+	gw2, gs2 := "—", "—"
+	if len(got) > 0 {
+		gw2, gs2 = cdrPyReprList(got[0].where), got[0].suggest
+	}
+	fmt.Fprintf(stdout, "  %s [必红夹具·有落点] 命中 %d 处 · 落点 = %s · 建议 = %s（期望 live + 改指 Zerg-内部文档）\n",
+		cdrMark(good), len(got), gw2, gs2)
+
+	// ③ 豁免夹具：同一处写进登记表 ⇒ 标「已登记」且**不计命中**
+	reg := cdrEntriesOM(&[]any{cdrEntryOM(f2, "docs"+"/01-设计/设计-真件.md", "", "ledger", "自检夹具：有意保留", "2026-09-22")})
+	_, hits = run([]string{f2}, reg, repo, docs)
+	got = nil
+	for _, h := range hits {
+		if h.path == "docs"+"/01-设计/设计-真件.md" {
+			got = append(got, h)
+		}
+	}
+	cases++
+	good = len(got) == 1 && got[0].cls == "已登记" && strings.Contains(got[0].suggest, "不计命中")
+	ok = ok && good
+	gc3, gs3 := "—", "—"
+	if len(got) > 0 {
+		gc3, gs3 = got[0].cls, got[0].suggest
+	}
+	fmt.Fprintf(stdout, "  %s [豁免夹具] 标 %s · 建议 = %s（期望「已登记」+ 不计命中）\n",
+		cdrMark(good), gc3, gs3)
+
+	// ④ 拼接式夹具：filepath.Join("docs", …) 必须认出来
+	f4 := cdrMkFile(repo, "core/z.go",
+		"\tissuesDir := filepath.Join(workDir, \"docs\", \"issues\")\n"+
+			"\tpath := path.Join(\"docs\", \"01-设计\", \"设计-真件.md\")\n")
+	_, hits = run([]string{f4}, nil, repo, docs)
+	j1, j2 := 0, 0
+	for _, h := range hits {
+		if h.ref == "docs"+"/issues" && h.form == "filepath.Join" {
+			j1++
+		}
+		if h.path == "docs"+"/01-设计/设计-真件.md" && h.form == "filepath.Join" {
+			j2++
+		}
+	}
+	cases++
+	good = j1 == 1 && j2 == 1
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [拼接夹具] filepath.Join 认出 %d 处 · path.Join 认出 %d 处（期望各 1）\n",
+		cdrMark(good), j1, j2)
+
+	// ⑤ 前缀夹具：'docs/' + 变量 ⇒ 前缀目录在 ⇒ 不报
+	f5 := cdrMkFile(repo, "publish/z.py", "name = \"docs"+"/\" + base\n")
+	_ = os.MkdirAll(filepath.Join(repo, "docs"), 0o755)
+	_, hits = run([]string{f5}, nil, repo, docs)
+	cases++
+	good = true
+	for _, h := range hits {
+		if h.form == "字符串拼接" {
+			good = false
+		}
+	}
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [前缀夹具] 前缀目录在 ⇒ 不报 = %s（期望 True）\n", cdrMark(good), cdrPyBool(good))
+
+	// ⑥ 无输入必须报错（不许静默空转 = 假绿）
+	empty := filepath.Join(tmp, "empty")
+	_ = os.MkdirAll(empty, 0o755)
+	rc := cdrRealExitCode(empty, "", []string{}, true, stderr)
+	cases++
+	good = rc == 2
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [无输入夹具] 空树 rc = %d（期望 2 —— 拒绝静默空转）\n", cdrMark(good), rc)
+
+	// ⑦ 登记表缺 reason/date ⇒ rc=2
+	badreg := filepath.Join(tmp, "bad-registry.json")
+	_ = os.WriteFile(badreg, []byte("{\"entries\":[{\"file\":\"a\",\"ref\":\"docs"+"/x\"}]}"), 0o644)
+	doc, bad := cdrLoadRegistry(badreg)
+	cases++
+	good = doc == nil || len(bad) >= 2
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [登记表夹具] 缺 reason+date 报 %d 条（期望 ≥2 ⇒ rc=2·拒给结论）\n", cdrMark(good), len(bad))
+
+	// ⑧ 整件豁免（既无 ref 也无 ref_prefix）⇒ rc=2
+	blankreg := filepath.Join(tmp, "blanket-registry.json")
+	_ = os.WriteFile(blankreg, []byte(
+		"{\"entries\":[{\"file\":\"scripts/x.py\",\"class\":\"ledger\",\"reason\":\"整件免了\",\"date\":\"2026-09-22\"}]}"), 0o644)
+	_, bad = cdrLoadRegistry(blankreg)
+	cases++
+	good = len(bad) == 1 && strings.Contains(bad[0], "洗白")
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [整件豁免夹具] 报 %d 条（期望 1 条 · 点名「整件豁免 = 洗白」）\n", cdrMark(good), len(bad))
+
+	// ⑨ 前缀登记必须**真能**命中，且**不**越界
+	f9 := cdrMkFile(repo, "scripts/w.py", "x = \"docs"+"/项目文档/v2.5.9/x.md\"\ny = \"docs"+"/01-设计/a.md\"\n")
+	pre := cdrEntriesOM(&[]any{cdrEntryOM(f9, "", "docs"+"/项目文档/", "ledger", "前缀登记自检", "2026-09-22")})
+	_, hits = run([]string{f9}, pre, repo, docs)
+	insideN, outsideN := 0, 0
+	insideCls, outsideCls := "—", "—"
+	for _, h := range hits {
+		if strings.HasPrefix(h.path, "docs"+"/项目文档/") {
+			insideN++
+			insideCls = h.cls
+		}
+		if strings.HasPrefix(h.path, "docs"+"/01-设计/") {
+			outsideN++
+			if outsideCls == "—" {
+				outsideCls = h.cls
+			}
+		}
+	}
+	cases++
+	good = insideN == 1 && insideCls == "已登记" && outsideN == 1 && outsideCls != "已登记"
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [前缀登记夹具] 前缀内=已登记 %s · 前缀外仍命中 %s（期望 1/1 —— 前缀不许越界洗白）\n",
+		cdrMark(good), insideCls, outsideCls)
+
+	// ⑩ 缺语料夹具：同级**语料树**取不到根 ⇒ 报缺；归档树缺席**不翻退码**
+	missBad := cdrAbsentCorpusTrees(filepath.Join(tmp, "no-such-Zerg-内部文档"), "")
+	missArch := cdrAbsentCorpusTrees(docs, filepath.Join(tmp, "no-such-Zerg-归档"))
+	cases++
+	good = len(missBad) == 1 && len(missArch) == 0
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [缺语料夹具] 语料树缺席报 %d 条 · 语料树在盘(归档缺席)报 %d 条（期望 1 / 0 ⇒ 缺根不给结论·在盘照旧）\n",
+		cdrMark(good), len(missBad), len(missArch))
+
+	if cases != 10 {
+		fmt.Fprintf(stdout, "  自检用例数必须为 10，实际 %d（少跑即失效）\n", cases)
+		ok = false
+	}
+	verdict := "**失败** ✗"
+	if ok {
+		verdict = "通过 ✓"
+	}
+	fmt.Fprintf(stdout, "  自检：%s（10 格：必红×2 · 豁免×1 · 拼接×1 · 前缀×1 · 无输入×1 · 登记表×1 · 整件豁免×1 ·"+
+		" 前缀越界×1 · 缺语料×1）\n", verdict)
+	return ok
+}
+
+func cdrMark(b bool) string {
+	if b {
+		return "✓"
+	}
+	return "✗"
+}
+
+func cdrPyBool(b bool) string {
+	if b {
+		return "True"
+	}
+	return "False"
+}
+
+// cdrEntryOM —— 造一枚登记表条目（键序 = py dict 插入序：file, ref, ref_prefix, class, reason, date）。
+func cdrEntryOM(file, ref, pre, cls, reason, date string) *cdrOM {
+	o := &cdrOM{}
+	o.set(cdrKeyFile, file)
+	if ref != "" {
+		o.set(cdrKeyRef, ref)
+	}
+	if pre != "" {
+		o.set(cdrKeyRefPrefix, pre)
+	}
+	o.set(cdrKeyClass, cls)
+	o.set(cdrKeyReason, reason)
+	o.set(cdrKeyDate, date)
+	return o
+}
+
+// cdrRealExitCode —— 自检用的「跑真判据」入口：只取退码，不打长清单（逐字复刻 py real_exit_code）。
+func cdrRealExitCode(root, registryPath string, forceFiles []string, hasForce bool, stderr io.Writer) int {
+	var files []string
+	if !hasForce {
+		f, ok := cdrGitFiles(root, stderr)
+		if !ok {
+			return 2
+		}
+		files = f
+	} else {
+		files = forceFiles
+	}
+	if len(files) == 0 {
+		fmt.Fprint(stderr, "✗ 扫到 0 个件 —— 拒绝静默空转（假绿）\n")
+		return 2
+	}
+	reg, bad := cdrLoadRegistry(registryPath)
+	if len(bad) > 0 {
+		return 2
+	}
+	parent := filepath.Dir(root)
+	ctx := &cdrCtx{root: root, docsRoot: filepath.Join(parent, cdrDocsTreeName),
+		archRoot: filepath.Join(parent, cdrArchTreeName), files: files, registry: reg}
+	st, hits := cdrScan(ctx)
+	if st.filesScanned == 0 {
+		fmt.Fprint(stderr, "✗ 扫到 0 个件 —— 拒绝静默空转（假绿）\n")
+		return 2
+	}
+	if len(hits) > 0 {
+		return 1
+	}
+	return 0
+}
+
+// ── 真跑 ─────────────────────────────────────────────────────────────────────────────
+func cdrGitFiles(root string, stderr io.Writer) ([]string, bool) {
+	cmd := exec.Command("git", "ls-files", "-z")
+	cmd.Dir = root
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			fmt.Fprintf(stderr, "✗ git ls-files rc=%d（不是 git 仓？）⇒ 不给结论\n", ee.ExitCode())
+			return nil, false
+		}
+		fmt.Fprintf(stderr, "✗ 跑不了 git ls-files：%s ⇒ 不给结论\n", err)
+		return nil, false
+	}
+	var files []string
+	for _, p := range strings.Split(strings.ToValidUTF8(out.String(), "\uFFFD"), "\x00") {
+		if p != "" {
+			files = append(files, p)
+		}
+	}
+	return files, true
+}
+
+var cdrRules = []string{
+	cdrVersion + " —— 判据 / 两类定义 / 覆盖与未覆盖",
+	"\n【判据】主仓（`git ls-files` 的件）里形如 `docs" + "/…` 的引用，解析后（相对**仓根**）不存在 ⇒ 悬空。",
+	"\n【两类】live = 活指路（该改）· ledger = 机读清单/基线台账（记当时路径，不该改 ⇒ 登记）",
+	"  登记表：" + cdrRegistryDefault,
+	"  三种登记形态（**整件豁免 = 洗白 ⇒ rc=2 拒**）：",
+	"    · `ref`        逐处：这一件里的**这一条**引文",
+	"    · `ref_prefix` 前缀：这一件里**以该前缀开头**的全部引文（前缀外照旧命中 —— 不许越界）",
+	"    · 每条必须带 `reason` + `date`（YYYY-MM-DD），缺任一 ⇒ rc=2（与 doc-freshness.config.json 同口径）",
+	"  写进表 = 有意保留：输出里标 `已登记` 且**不计命中**，但**照样逐条打印**（豁免 ≠ 隐藏）",
+	"\n【分类优先级（自动规则 · 每处都打印理由）】",
+	"  ① 登记表命中           ⇒ 已登记（不计命中）",
+	"  ② 夹具/探针假路径      ⇒ ledger（例：docs" + "/a.md；行含 夹具/探针/自检/负控）",
+	"  ③ 机读件后缀 " + strings.Join(cdrMachineExt, ", ") + " ⇒ ledger",
+	"  ④ 引文被引号紧包 ⇒ ledger（代码/数据字串：判据常量 · 配置值 · 夹具键值）",
+	"  ⑤ 行首是 Markdown 表格行 ⇒ ledger（表格式清单/台账）",
+	"  ⑥ 行内有记录措辞（以下任一）⇒ ledger：",
+	"     " + strings.Join(cdrRecordWords, " · "),
+	"  ⑦ 行内有指路措辞（以下任一）⇒ live：",
+	"     " + strings.Join(cdrLiveWords, " · "),
+	"  ⑧ 否则 ⇒ live（默认：正文/注释里的断指针，宁可多报 —— 本门只报告）",
+	"\n【已覆盖形态】直书 `docs" + "/…`（含反引号/注释/字符串/frontmatter）·",
+	"              `filepath.Join(\"docs\", …)` / `path.Join(…)` 拼接式 · .py 里 `\"docs" + "/\" + x` 前缀形态",
+	"【未覆盖形态（明说 · 不假装全覆盖）】",
+	"  · URL / 跨仓引用（`https://…/docs" + "/…`、`别仓/docs" + "/…`）—— 首字符前还粘着东西，本门不判",
+	"  · 变量拼进中段/后缀：`\"docs" + "/\" + lang + \"/x.md\"` —— 只判到前缀目录那一层",
+	"  · 运行期树：`filepath.Join(workDir, \"docs\", \"issues\")` 真身是 workDir 下的目录 ——",
+	"    报出来但按 ledger 判（要有意保留就登记），**不许按主仓同名树改**",
+	"  · 软链 / 大小写变体 / 非 UTF-8 件（记入 files_unreadable）· 未 `git add` 的新件",
+	"  · markdown 相对链接 `[](../x.md)` —— 属 `check-doc-freshness.py` D1，本门不重复",
+	"\n【退码】0 无命中（或全登记）· 1 有未登记悬空 · 2 不给结论（不在仓根/0 件/登记表不合格/同级语料树 Zerg-内部文档 取不到根/自检不过）",
+}
+
+func cdrPrintRules(stdout io.Writer) {
+	for _, l := range cdrRules {
+		fmt.Fprintln(stdout, l)
+	}
+}
+
+// ── 入口（= py `main()`）─────────────────────────────────────────────────────────────
+func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
+	root, aerr := filepath.Abs(".")
+	if aerr != nil {
+		root = "."
+	}
+	registryPath := cdrPyJoin(root, cdrRegistryDefault)
+	showAll := false
+	liveOnly := false
+	jsonOut := false
+	dumpPath := ""
+
+	i := 0
+	for i < len(argv) {
+		a := argv[i]
+		switch {
+		case a == "--selftest" || a == "--self-test":
+			if cdrSelftest(stdout, stderr) {
+				return 0
+			}
+			return 1
+		case a == "--list-rules":
+			cdrPrintRules(stdout)
+			return 0
+		case a == "--all":
+			showAll = true
+		case a == "--live-only":
+			liveOnly = true
+		case a == "--json":
+			jsonOut = true
+		case a == "--dump":
+			i++
+			if i >= len(argv) {
+				fmt.Fprint(stderr, "✗ `--dump` 尾缺值（py 此档抛 IndexError）⇒ 不给结论\n")
+				return 2
+			}
+			dumpPath, _ = filepath.Abs(argv[i])
+		case a == "--root":
+			i++
+			if i >= len(argv) {
+				fmt.Fprint(stderr, "✗ `--root` 尾缺值（py 此档抛 IndexError）⇒ 不给结论\n")
+				return 2
+			}
+			root, _ = filepath.Abs(argv[i])
+			registryPath = cdrPyJoin(root, cdrRegistryDefault)
+		case a == "--registry":
+			i++
+			if i >= len(argv) {
+				fmt.Fprint(stderr, "✗ `--registry` 尾缺值（py 此档抛 IndexError）⇒ 不给结论\n")
+				return 2
+			}
+			registryPath, _ = filepath.Abs(argv[i])
+		default:
+			fmt.Fprintf(stderr, "✗ 未知参数 %s（用法见 --list-rules）\n", cdrPyReprStr(a))
+			return 2
+		}
+		i++
+	}
+
+	if !cdrIsDir(cdrPyJoin(root, "docs")) && !cdrIsDir(cdrPyJoin(root, "core")) {
+		fmt.Fprintf(stderr, "✗ 不在仓根（`docs"+"/` 与 `core/` 都不存在）：%s ⇒ 拒绝静默空转\n", root)
+		return 2
+	}
+
+	files, ok := cdrGitFiles(root, stderr)
+	if !ok || len(files) == 0 {
+		fmt.Fprint(stderr, "✗ 扫到 0 个件 —— 拒绝静默空转（假绿）\n")
+		return 2
+	}
+
+	reg, bad := cdrLoadRegistry(registryPath)
+	if len(bad) > 0 {
+		fmt.Fprint(stderr, "✗ 登记表不合格 ⇒ **不给结论**（写不清理由的豁免就是洗白）：\n")
+		for _, b := range bad {
+			fmt.Fprintln(stderr, "   · "+b)
+		}
+		return 2
+	}
+
+	parent := filepath.Dir(root)
+	sibling := os.Getenv(cdrDocsAltEnv)
+	if sibling == "" {
+		sibling = os.Getenv(cdrDocsEnv)
+	}
+	if sibling == "" {
+		sibling = cdrPyJoin(parent, cdrDocsTreeName)
+	}
+	docsRoot := os.Getenv(cdrDocsRootEnv)
+	if docsRoot == "" {
+		docsRoot = sibling
+	}
+	archRoot := os.Getenv(cdrArchRootEnv)
+	if archRoot == "" {
+		archRoot = cdrPyJoin(parent, cdrArchTreeName)
+	}
+	absent := cdrAbsentCorpusTrees(docsRoot, archRoot)
+	if reg == nil {
+		reg = &cdrOM{}
+	}
+	ctx := &cdrCtx{root: root, docsRoot: docsRoot, archRoot: archRoot, files: files, registry: reg}
+	st, hits := cdrScan(ctx)
+	if st.filesScanned == 0 {
+		fmt.Fprint(stderr, "✗ 扫到 0 个件 —— 拒绝静默空转（假绿）\n")
+		return 2
+	}
+	if len(st.readFails) > 0 {
+		// ★ 汇总处判红：读失败 ⇒ stderr BLOCKED 头 + 逐件点名 + 退 2（原 py 静默计入 files_unreadable）
+		fmt.Fprint(stderr, "⛔ BLOCKED：以下件读失败，覆盖面不完整 —— 不给结论（假覆盖）\n")
+		for _, p := range st.readFails {
+			fmt.Fprintln(stderr, "   · "+p)
+		}
+		return 2
+	}
+
+	byLive, byLed, byReg := []cdrHit{}, []cdrHit{}, []cdrHit{}
+	for _, h := range hits {
+		switch h.cls {
+		case "live":
+			byLive = append(byLive, h)
+		case "ledger":
+			byLed = append(byLed, h)
+		default:
+			byReg = append(byReg, h)
+		}
+	}
+	nLive, nLed, nReg := len(byLive), len(byLed), len(byReg)
+	fileSet := map[string]bool{}
+	for _, h := range hits {
+		fileSet[h.file] = true
+	}
+	filesHit := len(fileSet)
+
+	fmt.Fprintf(stdout, "%s —— 主仓悬空引用（`docs"+"/…` 指向不存在）\n", cdrVersion)
+	fmt.Fprintf(stdout, "仓根：%s\n", root)
+	for _, pair := range [][2]string{{cdrDocsTreeName, docsRoot}, {cdrArchTreeName, archRoot}} {
+		name, tree := pair[0], pair[1]
+		state := ""
+		if cdrIsDir(tree) {
+			state = "在"
+		} else if name == cdrDocsTreeName {
+			state = "**不在盘** —— 落点判不了 ⇒ 本门不给结论（rc=2）"
+		} else {
+			state = "**不在** —— 落点只报主仓"
+		}
+		fmt.Fprintf(stdout, "  %s：%s（%s）\n", name, tree, state)
+	}
+	fmt.Fprintf(stdout, "扫描面：git ls-files %d 件 ⇒ 文本件 %d · 提取引用 %d 处（另滤掉散文误吞 %d 处）· 悬空 %d 处\n",
+		st.filesSeen, st.filesScanned, st.refs, st.refsProseSkipped, st.dangling)
+	if len(st.unreadable) > 0 {
+		show := st.unreadable
+		if len(show) > 3 {
+			show = show[:3]
+		}
+		fmt.Fprintf(stdout, "  ⚠ 非 UTF-8 / 读不了 %d 件（未覆盖形态之一）：%s\n",
+			len(st.unreadable), strings.Join(show, " · "))
+	}
+	fmt.Fprintf(stdout, "\n合计：悬空 %d 处 / %d 件 ⇒ **命中 %d 处**（live %d · ledger %d）· 已登记 %d 处（不计命中）\n",
+		st.dangling, filesHit, nLive+nLed, nLive, nLed, nReg)
+
+	cap := 30
+	if showAll {
+		cap = 1 << 30
+	}
+
+	dump := func(title string, rows []cdrHit) {
+		fmt.Fprintf(stdout, "\n── %s：%d 处\n", title, len(rows))
+		lim := cap
+		if len(rows) < lim {
+			lim = len(rows)
+		}
+		for _, h := range rows[:lim] {
+			where := "三树都无"
+			if len(h.where) > 0 {
+				where = strings.Join(h.where, "、")
+			}
+			fmt.Fprintf(stdout, "   %s:%d · 引文 `%s` · 解析 `%s` · 落点 %s · 【%s】%s · 建议：%s\n",
+				h.file, h.line, h.ref, h.path, where, h.cls, h.why, h.suggest)
+			if h.form != "直书" {
+				note := ""
+				if h.note != "" {
+					note = "·" + h.note
+				}
+				fmt.Fprintf(stdout, "        （形态=%s%s）\n", h.form, note)
+			}
+		}
+		if len(rows) > cap {
+			fmt.Fprintf(stdout, "   …另 %d 处（--all 全打）\n", len(rows)-cap)
+		}
+	}
+
+	if nLive > 0 {
+		dump("live 命中（活指路 · 该改）", byLive)
+	}
+	if nLed > 0 && !liveOnly {
+		dump("ledger 命中（机读清单/基线台账 · 记当时路径 ⇒ 登记，不改）", byLed)
+	}
+	if nReg > 0 && !liveOnly {
+		dump("已登记（有意保留 · 不计命中）", byReg)
+	}
+
+	fmt.Fprint(stdout, "\n未覆盖形态（明说，不假装全覆盖）：URL/跨仓引用 · 变量拼进中段或后缀 · 运行期路径树 · "+
+		"软链/大小写变体/非 UTF-8 件/未 git add 的新件 · markdown 相对链接（属 D1）\n")
+
+	if jsonOut {
+		o := &cdrOM{}
+		o.set("schema", "dangling-refs/1")
+		o.set("repo", root)
+		o.set("dangling", st.dangling)
+		o.set("files", filesHit)
+		o.set("live", nLive)
+		o.set("ledger", nLed)
+		o.set("registered", nReg)
+		o.set("hit", nLive+nLed)
+		o.set("registry", registryPath)
+		fmt.Fprintln(stdout, cdrJSONEnc(o, false, 0))
+	}
+	if dumpPath != "" {
+		o := &cdrOM{}
+		o.set("schema", "dangling-refs/1")
+		o.set("repo", root)
+		o.set("stats", cdrStatsOM(st))
+		hitsAny := []any{}
+		for _, h := range hits {
+			hitsAny = append(hitsAny, cdrHitOM(h))
+		}
+		o.set("hits", hitsAny)
+		if err := os.WriteFile(dumpPath, []byte(cdrJSONEnc(o, true, 0)), 0o644); err != nil {
+			fmt.Fprintf(stderr, "✗ 落不了盘 %s：%s ⇒ 不给结论\n", dumpPath, err.Error())
+			return 2
+		}
+		fmt.Fprintf(stdout, "（全量命中已落盘：%s）\n", dumpPath)
+	}
+
+	if len(absent) > 0 {
+		for _, p := range absent {
+			fmt.Fprintf(stdout, "\n⛔ 不给结论（rc=2）：同级语料树 `%s` 取不到根（%s）—— 落点判不了\n"+
+				"   换根候选：`ZERG_DOCS_ROOT`，或同级根 `ZERG_DOCS_ALT`/`ZERG_DOCS`\n", p[0], p[1])
+		}
+		return 2
+	}
+	if nLive+nLed == 0 {
+		fmt.Fprint(stdout, "\n结论：无命中（或全在登记表里）⇒ rc=0\n")
+		return 0
+	}
+	fmt.Fprintf(stdout, "\n结论：有 %d 处**未登记**的悬空引用 ⇒ rc=1（本步起步档 `tri-report` = 只报告、不阻断）\n",
+		nLive+nLed)
+	return 1
+}
+
+// ── 有序 map + Python json 逐字 ─────────────────────────────────────────────────────
+type cdrOM struct {
+	keys []string
+	vals []any
+}
+
+func (o *cdrOM) set(k string, v any) {
+	o.keys = append(o.keys, k)
+	o.vals = append(o.vals, v)
+}
+
+func cdrStatsOM(st *cdrStats) *cdrOM {
+	o := &cdrOM{}
+	o.set("files_scanned", st.filesScanned)
+	o.set("files_seen", st.filesSeen)
+	o.set("refs", st.refs)
+	o.set("dangling", st.dangling)
+	o.set("refs_prose_skipped", st.refsProseSkipped)
+	if len(st.unreadable) > 0 {
+		o.set("files_unreadable", st.unreadable)
+	}
+	return o
+}
+
+func cdrHitOM(h cdrHit) *cdrOM {
+	o := &cdrOM{}
+	o.set("file", h.file)
+	o.set("line", h.line)
+	o.set("ref", h.ref)
+	o.set("path", h.path)
+	o.set("form", h.form)
+	o.set("note", h.note)
+	o.set("cls", h.cls)
+	o.set("why", h.why)
+	o.set("where", h.where)
+	o.set("suggest", h.suggest)
+	o.set("src", h.src)
+	return o
+}
+
+func cdrPyQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\f':
+			b.WriteString(`\f`)
+		default:
+			if r < 0x20 {
+				fmt.Fprintf(&b, `\u%04x`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// cdrJSONEnc —— 复刻 `json.dumps(obj, ensure_ascii=False, indent=<n>)`（indent=0 ⇒ 单行）。
+func cdrJSONEnc(v any, indent bool, level int) string {
+	pad := ""
+	nl := ""
+	childPad := ""
+	if indent {
+		nl = "\n"
+		pad = strings.Repeat(" ", level)
+		childPad = strings.Repeat(" ", level+1)
+	}
+	switch x := v.(type) {
+	case nil:
+		return "null"
+	case string:
+		return cdrPyQuote(x)
+	case int:
+		return strconv.Itoa(x)
+	case bool:
+		if x {
+			return "true"
+		}
+		return "false"
+	case []string:
+		if len(x) == 0 {
+			return "[]"
+		}
+		parts := make([]string, 0, len(x))
+		for _, s := range x {
+			parts = append(parts, cdrPyQuote(s))
+		}
+		if indent {
+			return "[" + nl + childPad + strings.Join(parts, ","+nl+childPad) + nl + pad + "]"
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case []any:
+		if len(x) == 0 {
+			return "[]"
+		}
+		parts := make([]string, 0, len(x))
+		for _, e := range x {
+			parts = append(parts, cdrJSONEnc(e, indent, level+1))
+		}
+		if indent {
+			return "[" + nl + childPad + strings.Join(parts, ","+nl+childPad) + nl + pad + "]"
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case *cdrOM:
+		if len(x.keys) == 0 {
+			return "{}"
+		}
+		parts := make([]string, 0, len(x.keys))
+		for i, k := range x.keys {
+			parts = append(parts, cdrPyQuote(k)+": "+cdrJSONEnc(x.vals[i], indent, level+1))
+		}
+		if indent {
+			return "{" + nl + childPad + strings.Join(parts, ","+nl+childPad) + nl + pad + "}"
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	}
+	return "null"
+}
+
+// ── JSON 解析（py `json.load` 的实用子集 · 面向登记表）───────────────────────────────
+// 返回 (*cdrOM / []any / string / float64 / bool / nil, 错误文案)。错误文案为自有形态
+// （py 那面是 CPython `JSONDecodeError` 文案 ⇒ 见件头未覆盖面②）。
+func cdrJSONParse(s string) (any, string) {
+	p := &cdrJSONParser{s: s}
+	p.ws()
+	v, ok := p.value()
+	if !ok {
+		return nil, p.err
+	}
+	p.ws()
+	if p.i != len(p.s) {
+		return nil, "多余内容（位置 " + strconv.Itoa(p.i) + "）"
+	}
+	return v, ""
+}
+
+type cdrJSONParser struct {
+	s   string
+	i   int
+	err string
+}
+
+func (p *cdrJSONParser) ws() {
+	for p.i < len(p.s) {
+		switch p.s[p.i] {
+		case ' ', '\t', '\n', '\r':
+			p.i++
+		default:
+			return
+		}
+	}
+}
+
+func (p *cdrJSONParser) fail(msg string) {
+	if p.err == "" {
+		p.err = msg + "（位置 " + strconv.Itoa(p.i) + "）"
+	}
+}
+
+func (p *cdrJSONParser) value() (any, bool) {
+	if p.i >= len(p.s) {
+		p.fail("Expecting value")
+		return nil, false
+	}
+	switch c := p.s[p.i]; {
+	case c == '{':
+		return p.object()
+	case c == '[':
+		return p.array()
+	case c == '"':
+		return p.str()
+	case c == 't':
+		if strings.HasPrefix(p.s[p.i:], "true") {
+			p.i += 4
+			return true, true
+		}
+	case c == 'f':
+		if strings.HasPrefix(p.s[p.i:], "false") {
+			p.i += 5
+			return false, true
+		}
+	case c == 'n':
+		if strings.HasPrefix(p.s[p.i:], "null") {
+			p.i += 4
+			return nil, true
+		}
+	case c == '-' || (c >= '0' && c <= '9'):
+		return p.number()
+	}
+	p.fail("Expecting value")
+	return nil, false
+}
+
+func (p *cdrJSONParser) number() (any, bool) {
+	start := p.i
+	if p.i < len(p.s) && p.s[p.i] == '-' {
+		p.i++
+	}
+	for p.i < len(p.s) {
+		c := p.s[p.i]
+		if (c >= '0' && c <= '9') || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-' {
+			p.i++
+			continue
+		}
+		break
+	}
+	f, err := strconv.ParseFloat(p.s[start:p.i], 64)
+	if err != nil {
+		p.err = "Expecting value"
+		return nil, false
+	}
+	return f, true
+}
+
+func (p *cdrJSONParser) str() (any, bool) {
+	if p.i >= len(p.s) || p.s[p.i] != '"' {
+		p.fail("Expecting value")
+		return nil, false
+	}
+	p.i++
+	var b strings.Builder
+	for p.i < len(p.s) {
+		c := p.s[p.i]
+		if c == '"' {
+			p.i++
+			return b.String(), true
+		}
+		if c == '\\' {
+			p.i++
+			if p.i >= len(p.s) {
+				break
+			}
+			switch p.s[p.i] {
+			case '"':
+				b.WriteByte('"')
+			case '\\':
+				b.WriteByte('\\')
+			case '/':
+				b.WriteByte('/')
+			case 'b':
+				b.WriteByte('\b')
+			case 'f':
+				b.WriteByte('\f')
+			case 'n':
+				b.WriteByte('\n')
+			case 'r':
+				b.WriteByte('\r')
+			case 't':
+				b.WriteByte('\t')
+			case 'u':
+				if p.i+4 >= len(p.s) {
+					p.fail("Invalid \\uXXXX escape")
+					return nil, false
+				}
+				n, err := strconv.ParseUint(p.s[p.i+1:p.i+5], 16, 32)
+				if err != nil {
+					p.fail("Invalid \\uXXXX escape")
+					return nil, false
+				}
+				b.WriteRune(rune(n))
+				p.i += 4
+			default:
+				p.fail("Invalid \\escape")
+				return nil, false
+			}
+			p.i++
+			continue
+		}
+		b.WriteByte(c)
+		p.i++
+	}
+	p.fail("Unterminated string")
+	return nil, false
+}
+
+func (p *cdrJSONParser) array() (any, bool) {
+	p.i++ // [
+	out := []any{}
+	p.ws()
+	if p.i < len(p.s) && p.s[p.i] == ']' {
+		p.i++
+		return out, true
+	}
+	for {
+		p.ws()
+		v, ok := p.value()
+		if !ok {
+			return nil, false
+		}
+		out = append(out, v)
+		p.ws()
+		if p.i >= len(p.s) {
+			p.fail("Expecting ',' delimiter")
+			return nil, false
+		}
+		if p.s[p.i] == ',' {
+			p.i++
+			continue
+		}
+		if p.s[p.i] == ']' {
+			p.i++
+			return out, true
+		}
+		p.fail("Expecting ',' delimiter")
+		return nil, false
+	}
+}
+
+func (p *cdrJSONParser) object() (any, bool) {
+	p.i++ // {
+	o := &cdrOM{}
+	p.ws()
+	if p.i < len(p.s) && p.s[p.i] == '}' {
+		p.i++
+		return o, true
+	}
+	for {
+		p.ws()
+		k, ok := p.str()
+		if !ok {
+			return nil, false
+		}
+		p.ws()
+		if p.i >= len(p.s) || p.s[p.i] != ':' {
+			p.fail("Expecting ':' delimiter")
+			return nil, false
+		}
+		p.i++
+		p.ws()
+		v, ok := p.value()
+		if !ok {
+			return nil, false
+		}
+		o.set(k.(string), v)
+		p.ws()
+		if p.i >= len(p.s) {
+			p.fail("Expecting ',' delimiter")
+			return nil, false
+		}
+		if p.s[p.i] == ',' {
+			p.i++
+			continue
+		}
+		if p.s[p.i] == '}' {
+			p.i++
+			return o, true
+		}
+		p.fail("Expecting ',' delimiter")
+		return nil, false
+	}
+}
+
+// ── Python repr（self-test 用例的期望/实得串）────────────────────────────────────────
+func cdrPyReprStr(s string) string {
+	q := "'"
+	if strings.Contains(s, "'") && !strings.Contains(s, "\"") {
+		q = "\""
+	}
+	var b strings.Builder
+	b.WriteString(q)
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			if string(r) == q {
+				b.WriteString("\\" + string(r))
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteString(q)
+	return b.String()
+}
+
+func cdrPyReprList(xs []string) string {
+	parts := make([]string, 0, len(xs))
+	for _, x := range xs {
+		parts = append(parts, cdrPyReprStr(x))
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
