@@ -148,12 +148,19 @@ func InitToolVersions() {
 	}
 }
 
-// ToolVersion 查询工具版本（未登记默认 v1.0.0）
+// ToolVersion 查询工具版本。**未登记 ⇒ 空串**（GAP-20260927-174①：台账未登记项不许静默
+// 回落 v1.0.0 —— 那会把「台账里没有」装扮成「台账里有、值是 v1.0.0」= 拿台账当证据）。
+// 消费面（api/handlers.go）据此显示空 = 「未登记」，不再造一个假版本号。
 func ToolVersion(name string) string {
 	toolUseMu.Lock()
 	defer toolUseMu.Unlock()
-	if v, ok := toolVersions[name]; ok {
-		return v
-	}
-	return "v1.0.0"
+	return toolVersions[name]
+}
+
+// ToolVersionRegistered — 显式区分「台账里有」与「台账里没有」（GAP-20260927-174①）。
+func ToolVersionRegistered(name string) (string, bool) {
+	toolUseMu.Lock()
+	defer toolUseMu.Unlock()
+	v, ok := toolVersions[name]
+	return v, ok
 }

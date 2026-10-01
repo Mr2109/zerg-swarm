@@ -94,12 +94,15 @@ func (dw *DockerWorker) RunDev(repoDir, workDir, task, branch string) (int, erro
 	//   /tasks     = workDir（任务区——容器内读 issue：/tasks/docs/issues/xxx.md）
 	// 挂载：-v repoDir:/workspace + -v workDir:/tasks
 	// zerg-agent: --issue /tasks/docs/issues/<instanceID>.md --workdir /workspace
+	// GAP-20260927-162：插值一律经 `shSingleQuote` 包裹 —— 此前裸 `%s` 把 branch/issueBase
+	// 直接拼进 shell 串（含空白/引号/元字符即被 shell 二次解释）。
 	shellCmd := fmt.Sprintf(
 		"cd /workspace && git checkout -b %s 2>/dev/null; "+
 			"/zerg-agent -issue /tasks/docs/issues/%s.md -gateway http://host.docker.internal:8082 -workdir /workspace 2>&1; "+
-			"git add -A && git -c user.email=zerg@local -c user.name='Zerg AI' commit -m 'task: %s' 2>/dev/null; "+
-			"echo '## PR: %s' > pr-%s.md && git -c core.quotepath=false diff main...HEAD --stat >> pr-%s.md 2>/dev/null; echo 'PR 已生成'",
-		branch, issueBase, branch, branch, branch, branch)
+			"git add -A && git -c user.email=zerg@local -c user.name='Zerg AI' commit -m %s 2>/dev/null; "+
+			"echo %s > %s && git -c core.quotepath=false diff main...HEAD --stat >> %s 2>/dev/null; echo 'PR 已生成'",
+		shSingleQuote(branch), shSingleQuote(issueBase), shSingleQuote("task: "+branch),
+		shSingleQuote("## PR: "+branch), shSingleQuote("pr-"+branch+".md"), shSingleQuote("pr-"+branch+".md"))
 
 	cmd := []string{
 		"run", "--rm",
@@ -202,6 +205,12 @@ func (dw *DockerWorker) buildCommand(issuePath, workDir string) []string {
 		dw.image,
 		"sh", "-c", shellCmd,
 	}
+}
+
+// shSingleQuote — 把一段字串安全地放进 POSIX shell 的单引号里（GAP-20260927-162）：
+// 单引号内字串不被 shell 解释；内嵌的单引号按 close-escape-reopen 逃出。
+func shSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // runCommand — 执行 docker 命令（可注入 mock）
