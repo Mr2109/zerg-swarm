@@ -23,7 +23,7 @@
 //	  · 输出   —— stdout/stderr 与 py 逐字节对齐（见下「已对拍面 / 未覆盖面」）
 //
 // 已对拍面（仓外夹具两态逐字）：目录根输入（默认根 · 指定根 · 成对负控 · 空闭集 · 取不到输入）·
-// `--json` 拒收（rc=2 · stderr）· `--self-test` 成对负控（4 格）。
+// `--json` 拒收（rc=2 · stderr）· `--self-test` 成对负控（6 格 · 含 R3 代码位/注释位成对对拍）。
 // 未覆盖面（✗ 不声称逐字对齐）：`-h/--help` 的 argparse 帮助正文 · 未知旗标的 argparse usage 正文 ·
 // `exitcodes.go` 缺件时的异常路径（py 抛 traceback ⇒ rc=1；本件落「退码表空」⇒ rc=2）。
 //
@@ -49,8 +49,6 @@ var (
 	cekRowRE = regexp.MustCompile(`(?m)^\s*\{\s*"([^"]+)"\s*,\s*(-?\d+)\s*,\s*(true|false)\s*,`)
 	// USE_RE = setErr\(\s*"([^"]+)"
 	cekUseRE = regexp.MustCompile(`setErr\(\s*"([^"]+)"`)
-	// JSON_KIND_RE = "kind"\s*:\s*"([^"]+)"
-	cekJSONKindRE = regexp.MustCompile(`"kind"\s*:\s*"([^"]+)"`)
 	// 退码表行 = ^\s*\{(\d+),\s*"
 	cekDeclRE = regexp.MustCompile(`^\s*\{(\d+),\s*"`)
 )
@@ -175,6 +173,67 @@ func errorKindsGateParseClosedSet(text string) []cekRow {
 	return rows
 }
 
+// cekStripGoComments —— py `strip_go_comments()`：剥掉 Go 的 `//` 行注释与 `/* … */` 块注释
+// （**保留字符串 / 字符 / 原生字符串字面量内的字符**）。
+//
+// 目的 = 让 R3 只认**代码位**的 kind 用法：散文 / 注释里提一句 `setErr("…")` 是文档，不是
+// 「用了个闭集外的 kind」（本仓大量门脚本的自指说明正是这种形态 ⇒ 不剥即误报）。
+// ★ 不剥字符串字面量：`setErr("<kind>"…)` 的 kind 本身就写在字符串里，剥了就等于空转。
+func cekStripGoComments(text string) string {
+	var out strings.Builder
+	i, n := 0, len(text)
+	var quote byte // 0 = 不在字面量内；'"' / '\'' / '`'
+	for i < n {
+		c := text[i]
+		if quote != 0 {
+			out.WriteByte(c)
+			if quote == '`' {
+				if c == '`' {
+					quote = 0
+				}
+			} else if c == '\\' {
+				if i+1 < n {
+					out.WriteByte(text[i+1])
+					i += 2
+					continue
+				}
+			} else if c == quote {
+				quote = 0
+			}
+			i++
+			continue
+		}
+		if c == '"' || c == '\'' || c == '`' {
+			quote = c
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		if c == '/' && i+1 < n && text[i+1] == '/' {
+			j := strings.IndexByte(text[i:], '\n')
+			if j < 0 {
+				break
+			}
+			out.WriteByte('\n')
+			i += j + 1
+			continue
+		}
+		if c == '/' && i+1 < n && text[i+1] == '*' {
+			j := strings.Index(text[i+2:], "*/")
+			if j < 0 {
+				i = n
+			} else {
+				i = i + 2 + j + 2
+			}
+			out.WriteByte(' ')
+			continue
+		}
+		out.WriteByte(c)
+		i++
+	}
+	return out.String()
+}
+
 // errorKindsGateCheck —— py `check()`：返回 (rc, 报告行列表)。rc 0=绿 1=红 2=不给结论。
 func errorKindsGateCheck(root string) (int, []string) {
 	var errs []string
@@ -230,11 +289,9 @@ func errorKindsGateCheck(root string) (int, []string) {
 		if err != nil {
 			continue
 		}
-		txt := string(b)
+		// 只认**代码位**：先剥注释（注释里提一句 setErr("…") 是散文不是用法；对应 py 的 strip_go_comments）。
+		txt := cekStripGoComments(string(b))
 		for _, m := range cekUseRE.FindAllStringSubmatch(txt, -1) {
-			used[m[1]] = true
-		}
-		for _, m := range cekJSONKindRE.FindAllStringSubmatch(txt, -1) {
 			used[m[1]] = true
 		}
 	}
@@ -360,6 +417,18 @@ func errorKindsGateSelfTest(stdout io.Writer) int {
 	rc, lines = errorKindsGateCheck(mk(ghost))
 	fmt.Fprintf(stdout, "  自检④ 未登记的码 99 ⇒ rc=%d（要 1）· %s\n", rc, cekPyReprList(filter(lines, "R2")))
 	ok = ok && rc == 1
+
+	// R3 成对负控（真写错 kind 必须抓到）：代码位写了个闭集外的 kind ⇒ 红。
+	r3bad := "var errorKinds = []errorKindRow{\n\t{\"conflict\", 14, false, \"r\", \"m\", \"s\"},\n}\nfunc f() { setErr(\"bogus_kind\", \"x\", \"y\") }\n"
+	rc, lines = errorKindsGateCheck(mk(r3bad))
+	fmt.Fprintf(stdout, "  自检⑤ R3 代码位用了闭集外的 kind ⇒ rc=%d（要 1）· %s\n", rc, cekPyReprList(filter(lines, "R3")))
+	ok = ok && rc == 1
+
+	// R3 反误报对拍：同一句只写在**注释**里 ⇒ 不红（注释已剥）。
+	r3comment := "var errorKinds = []errorKindRow{\n\t{\"conflict\", 14, false, \"r\", \"m\", \"s\"},\n}\n// 说明：勿用 setErr(\"bogus_kind\", ...)（散文，不是用法）\n"
+	rc, _ = errorKindsGateCheck(mk(r3comment))
+	fmt.Fprintf(stdout, "  自检⑥ R3 注释位出现同句 ⇒ rc=%d（要 0 —— 注释剥掉后不误报）\n", rc)
+	ok = ok && rc == 0
 
 	if ok {
 		fmt.Fprintln(stdout, "自检结论: 全过")
