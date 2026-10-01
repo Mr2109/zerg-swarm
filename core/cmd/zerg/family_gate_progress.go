@@ -38,12 +38,14 @@ import (
 
 const (
 	gateProgressSchemaName  = "zerg.gate.progress"
-	gateProgressVersion     = "1.0"
-	gateProgressDepthLimit  = 8   // §十.3 铁律三
-	gateProgressSilentDef   = 120 // §十.2：silent_secs 报成 `x/120`
-	gateProgressListLimit   = 20  // §十.9：历史趟懒加载默认只取最新 20
-	gateWaitDefaultTimeout  = 300 // §十.6：`--timeout` **默认有限**（不许 0=无穷）
-	gateWaitDefaultInterval = 2   // §十.2：可见刷新 2~3s
+	gateProgressVersion     = "1.1" // §十.5：向后兼容的**增补**只涨 minor（加 elapsed_secs / slowest_steps · GAP-20261002-19）
+	gateProgressDepthLimit  = 8     // §十.3 铁律三
+	gateProgressSilentDef   = 120   // §十.2：silent_secs 报成 `x/120`
+	gateProgressListLimit   = 20    // §十.9：历史趟懒加载默认只取最新 20
+	gateProgressSlowDef     = 3     // GAP-20261002-19：`步耗时：最慢 N 步` 默认 N=3
+	gateProgressSlowCap     = 20    // GAP-20261002-19：`--limit` 覆盖**带上限**（与 §十.9 的 `--limit` 同天花板）
+	gateWaitDefaultTimeout  = 300   // §十.6：`--timeout` **默认有限**（不许 0=无穷）
+	gateWaitDefaultInterval = 2     // §十.2：可见刷新 2~3s
 )
 
 // gateProgressFields —— `zerg gate progress --json` 的字段表（snake_case · §十.5）。
@@ -51,9 +53,9 @@ const (
 var gateProgressFields = []string{
 	"run_dir", "finished", "alive", "root_pid", "origin_kind", "origin",
 	"steps_done", "steps_total", "steps_source_sha",
-	"current_step", "current_step_name", "current_secs",
+	"current_step", "current_step_name", "current_secs", "elapsed_secs",
 	"last_activity_ts", "silent_secs", "silent_threshold",
-	"pass", "fail", "blocked", "report", "exit_code",
+	"pass", "fail", "blocked", "report", "exit_code", "slowest_steps",
 	"advancing", "deepest_pid", "deepest_cmd", "deepest_secs", "depth_limit_reached",
 }
 
@@ -288,6 +290,89 @@ func gateProgressStepLogs(dir string) (maxNum int, curName string, newest time.T
 	return maxNum, curName, newest, count, true
 }
 
+// ── 步耗时（GAP-20261002-19）────────────────────────────────────────────────────────────
+
+// gateProgressStepCost —— 一条「已完成步耗时」（读 `results.tsv` 第 4 列）。
+type gateProgressStepCost struct {
+	name string
+	secs int64
+}
+
+// gateProgressStartTime —— 这一趟的**不可变起跑时刻**（GAP-20261002-19 的 B）。
+//
+// ★ 取法：趟目录内**最早那个文件**的 mtime —— 各步日志件与 `results.tsv` 都在起跑时创建，
+// 之后只**追加**（`results.tsv` 的 mtime 会涨，当不了最小 ⇒ 不影响）。**绝不**取目录 mtime
+// 或任何会被写入刷新的产物 mtime：旧实现正是拿 `max(results.tsv mtime, 最新日志 mtime)` 当起跑
+// 时刻 ⇒ 每写一次就归零（实测趟已跑 6 分 24 秒时印成 `已 00:00:09`）。取不到 ⇒ ok=false。
+func gateProgressStartTime(dir string) (time.Time, bool) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return time.Time{}, false
+	}
+	var earliest time.Time
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		st, err := e.Info()
+		if err != nil {
+			continue
+		}
+		m := st.ModTime()
+		if earliest.IsZero() || m.Before(earliest) {
+			earliest = m
+		}
+	}
+	if earliest.IsZero() {
+		return time.Time{}, false
+	}
+	return earliest, true
+}
+
+// gateProgressParseSecs —— 解 `results.tsv` 第 4 列的秒数（`103s` / `2s` / `0s`；纯数字也认）。
+func gateProgressParseSecs(s string) (int64, bool) {
+	s = strings.TrimSpace(s)
+	s = strings.TrimSuffix(s, "s")
+	if s == "" {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+// gateProgressSlowest —— 已完成步按第 4 列秒数降序取前 n（GAP-20261002-19：默认 3 · `--limit` 覆盖带上限）。
+func gateProgressSlowest(rows []gateResultsRow, n int) []gateProgressStepCost {
+	if n <= 0 {
+		n = gateProgressSlowDef
+	}
+	if n > gateProgressSlowCap {
+		n = gateProgressSlowCap
+	}
+	costs := []gateProgressStepCost{}
+	for _, r := range rows {
+		if s, ok := gateProgressParseSecs(r.Secs); ok {
+			costs = append(costs, gateProgressStepCost{name: r.Name, secs: s})
+		}
+	}
+	sort.SliceStable(costs, func(a, b int) bool { return costs[a].secs > costs[b].secs })
+	if len(costs) > n {
+		costs = costs[:n]
+	}
+	return costs
+}
+
+// gateProgressSlowestJSON —— 最慢步清单 ⇒ JSON 数组（恒 `[]`，绝不 `null` · §十.5）。
+func gateProgressSlowestJSON(items []gateProgressStepCost) string {
+	parts := make([]string, 0, len(items))
+	for _, s := range items {
+		parts = append(parts, "{\"step\":"+gpJSONStr(s.name)+",\"secs\":"+strconv.FormatInt(s.secs, 10)+"}")
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
 // ── 八格读数（§3.2）──────────────────────────────────────────────────────────────────────
 
 type gateProgressInfo struct {
@@ -309,6 +394,12 @@ type gateProgressInfo struct {
 	currentName string
 	currentSecs int64
 	currentOK   bool
+
+	// GAP-20261002-19：elapsed_* = **整趟已耗时**（now − 不可变起跑时刻 · 趟目录内最早文件 mtime）；
+	// slowest = 已完成步最慢 N 条（读 `results.tsv` 第 4 列）。
+	elapsedSecs int64
+	elapsedOK   bool
+	slowest     []gateProgressStepCost
 
 	lastActivity time.Time
 	lastOK       bool
@@ -344,7 +435,7 @@ func (i *gateProgressInfo) silentThreshold() int {
 
 // gateProgressCollect —— 引擎：读一趟的八格（**只读** · 绝不写盘 / 碰进程）。
 // 返回（读数 · 退码）：退码 0=读到 · 8=判不出（空趟 / 不可读 / 进程树取不到 · §3.8）。
-func gateProgressCollect(dir, root string, silentN int) (*gateProgressInfo, int) {
+func gateProgressCollect(dir, root string, silentN, slowN int) (*gateProgressInfo, int) {
 	info := &gateProgressInfo{runDir: dir, silentN: silentN}
 	if strings.TrimSpace(dir) == "" {
 		return info, exitBlocked
@@ -398,8 +489,26 @@ func gateProgressCollect(dir, root string, silentN int) (*gateProgressInfo, int)
 			d, info.clockSkew = 0, true // §3.3 G8：负数一律 0 并标注时钟跳变
 		}
 		info.silentSecs = d
-		info.currentSecs, info.currentOK = d, true
 	}
+	// ④′ 该步已跑 = now − **该步日志件**的 mtime（GAP-20261002-19 · 与整趟耗时**分开**）：
+	//     日志件边跑边写 ⇒ `newest` 就是当前步那份 `NN-*.log` 的 mtime（§3.3 current_secs）。
+	if !newest.IsZero() {
+		s := int64(time.Since(newest).Seconds())
+		if s < 0 {
+			s = 0
+		}
+		info.currentSecs, info.currentOK = s, true
+	}
+	// ④″ 整趟已耗时 = now − **不可变**的起跑时刻（GAP-20261002-19 的 B：**不许再取会变的产物 mtime**）。
+	if st, ok := gateProgressStartTime(dir); ok {
+		e := int64(time.Since(st).Seconds())
+		if e < 0 {
+			e = 0
+		}
+		info.elapsedSecs, info.elapsedOK = e, true
+	}
+	// ④‴ 本趟最慢 N 步 = `results.tsv` 第 4 列秒数降序取前 N（GAP-20261002-19）。
+	info.slowest = gateProgressSlowest(rows, slowN)
 
 	// ⑤ 进程面（与 reap **同源**）：门进程表 + 全表 + 活性。
 	gate, gateOK := gateReapScan()
@@ -471,6 +580,11 @@ func gateProgressCollect(dir, root string, silentN int) (*gateProgressInfo, int)
 			}
 		}
 	}
+	// ⑧ 退码（§3.6 · 缺口 `GAP-20261002-20`）：读到 ⇒ 0；**已收工且那一趟有红** ⇒ 1。
+	//    ★ 在跑的趟即使表里已有 FAIL 也退 0 —— 「读成功」≠「门禁绿」，两者必须分开（gh 的 watch 陷阱反面）。
+	if info.finished && info.fail > 0 {
+		return info, exitFail
+	}
 	return info, exitOK
 }
 
@@ -510,6 +624,7 @@ func cmdGateProgress(inv *invocation, stdout, stderr io.Writer) int {
 		return gateProgressList(inv, stdout, stderr)
 	}
 	silent := gateProgressIntFlag(inv, "--silent-threshold", gateProgressSilentDef)
+	slowN := gateProgressIntFlag(inv, "--limit", gateProgressSlowDef) // GAP-20261002-19：`--limit` 覆盖「最慢 N 步」的 N（带上限）
 	root := repoRoot()
 
 	resolved, multi, rc := gateProgressResolveDir(inv, dir, stderr)
@@ -546,7 +661,7 @@ func cmdGateProgress(inv *invocation, stdout, stderr io.Writer) int {
 		}
 	}
 
-	info, code := gateProgressCollect(resolved, root, silent)
+	info, code := gateProgressCollect(resolved, root, silent, slowN)
 	info.pickReason = pick
 	if inv.jsonGiven {
 		return gateProgressEmitJSON(inv, stdout, info, code)
@@ -623,7 +738,7 @@ func cmdGateWait(inv *invocation, stdout, stderr io.Writer) int {
 		} else {
 			pick = "由 `--dir` 点名"
 		}
-		info, code := gateProgressCollect(resolved, root, silent)
+		info, code := gateProgressCollect(resolved, root, silent, gateProgressSlowDef)
 		if info != nil {
 			info.pickReason = pick
 		}
@@ -893,7 +1008,7 @@ func gateProgressEmitHuman(w io.Writer, info *gateProgressInfo, code int) {
 		state = "已收工"
 	}
 	fmt.Fprintf(w, "趟：%s（%s · 根 pid %d · 已 %s · 挑取依据：%s）\n",
-		info.runDir, state, info.rootPid, gateProgressDur(info.currentSecs), dashIfEmpty(info.pickReason))
+		info.runDir, state, info.rootPid, gateProgressDur(info.elapsedSecs), dashIfEmpty(info.pickReason))
 	originText := "判不了"
 	switch info.originKind {
 	case "machine":
@@ -908,8 +1023,19 @@ func gateProgressEmitHuman(w io.Writer, info *gateProgressInfo, code int) {
 	}
 	fmt.Fprintf(w, "进度：**%d / %s 步**（PASS %d · FAIL %d · BLOCKED %d · REPORT %d）\n",
 		info.stepsDone, total, info.pass, info.fail, info.blocked, info.report)
+	if len(info.slowest) > 0 {
+		parts := make([]string, 0, len(info.slowest))
+		for _, s := range info.slowest {
+			parts = append(parts, fmt.Sprintf("%ds %s", s.secs, s.name))
+		}
+		fmt.Fprintf(w, "步耗时：最慢 %d 步 —— %s\n", len(info.slowest), strings.Join(parts, " · "))
+	}
 	if info.currentStep > 0 {
-		fmt.Fprintf(w, "正在跑：第 %d 步 —— %s\n", info.currentStep, dashIfEmpty(info.currentName))
+		cur := ""
+		if info.currentOK {
+			cur = fmt.Sprintf(" · 该步已 %ds", info.currentSecs)
+		}
+		fmt.Fprintf(w, "正在跑：第 %d 步 —— %s%s\n", info.currentStep, dashIfEmpty(info.currentName), cur)
 	}
 	sil := fmt.Sprintf("%d/%d", info.silentSecs, info.silentThreshold())
 	if info.clockSkew {
@@ -944,7 +1070,7 @@ func gateProgressEmitHuman(w io.Writer, info *gateProgressInfo, code int) {
 	if info.depthCapped {
 		fmt.Fprintf(w, "         ⚠ 更深层未展开（深度上限 %d）\n", gateProgressDepthLimit)
 	}
-	fmt.Fprintf(w, "（退码 %d：0=读到 · 1=门禁有红 · 2=用法错 · 8=判不出 —— 那一趟自身的红绿在上一行，不在本命令的退码里）\n", code)
+	fmt.Fprintf(w, "（退码 %d：0=读到（在跑 / 已收工且全绿）· 1=读到且**那一趟有红**（仅已收工才透 · §3.6）· 2=用法错 · 8=判不出）\n", code)
 }
 
 func gateProgressDur(secs int64) string {
@@ -989,6 +1115,12 @@ func gateProgressValues(info *gateProgressInfo) map[string]string {
 	}
 	if info.currentOK {
 		v["current_secs"] = strconv.FormatInt(info.currentSecs, 10)
+	}
+	if info.elapsedOK {
+		v["elapsed_secs"] = strconv.FormatInt(info.elapsedSecs, 10)
+	}
+	if info.found {
+		v["slowest_steps"] = gateProgressSlowestJSON(info.slowest)
 	}
 	if info.lastOK {
 		v["last_activity_ts"] = gpJSONStr(info.lastActivity.Format(time.RFC3339))

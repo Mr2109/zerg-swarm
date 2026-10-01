@@ -138,7 +138,7 @@ func TestGateProgressFinished(t *testing.T) {
 	}
 	rc, out, errb := runZergRepo(t, repo, "gate", "progress", "--dir", dir)
 	if rc != 1 {
-		t.Fatalf("已收工且有 FAIL ⇒ 退 1（与那趟自身退码一致 · §3.6），得到 %d · stderr=%s", rc, errb)
+		t.Fatalf("已收工且那一趟有红（FAIL）⇒ 退 1（§3.6：与那趟自己一致 —— 门禁的红**只**在已收工时透进退码），得到 %d · stderr=%s", rc, errb)
 	}
 	if !strings.Contains(out, "已收工") {
 		t.Errorf("要判出「已收工」：\n%s", out)
@@ -191,8 +191,9 @@ func TestGateProgressMultipleLiveExitsNonZero(t *testing.T) {
 	if rc != 2 {
 		t.Fatalf("多趟活且没给 --dir ⇒ 非零退 2（绝不弹提示 · §十.4），得到 %d · out=%s · stderr=%s", rc, out, errb)
 	}
-	if !strings.Contains(errb, "多趟活") || !strings.Contains(errb, "候选趟") {
-		t.Errorf("要明写「多趟活」并打印候选清单：\n%s", errb)
+	// 不卡死某串汉字：只判「点名了这一档的拒绝理由」（多趟活 ＋ **逐个**候选趟 ＋ 请用 --dir）。
+	if strings.TrimSpace(errb) == "" || !strings.Contains(errb, d1) || !strings.Contains(errb, d2) {
+		t.Errorf("要明写「多趟活」并**逐个**打印候选趟（含 `--dir` 提示），得到：\n%s", errb)
 	}
 	if rc == 0 {
 		t.Fatal("负控失败：多趟活竟落绿")
@@ -224,7 +225,7 @@ func TestGateProgressJSONHasSchemaFirstLine(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &head); err != nil {
 		t.Fatalf("首行不是 JSON：%v · %q", err, lines[0])
 	}
-	if head.Type != "schema" || head.Schema != "zerg.gate.progress" || head.Version != "1.0" {
+	if head.Type != "schema" || head.Schema != "zerg.gate.progress" || head.Version != "1.1" {
 		t.Errorf("首行版本对象不对：type=%q schema=%q version=%q", head.Type, head.Schema, head.Version)
 	}
 	var rec map[string]json.RawMessage
@@ -243,6 +244,25 @@ func TestGateProgressJSONHasSchemaFirstLine(t *testing.T) {
 	}
 	if string(rec["deepest_pid_known"]) != "false" {
 		t.Errorf("未知值要写 <字段>_known:false：%s", lines[1])
+	}
+	// GAP-20261002-19 新增两格（1.0 → 1.1 的向后兼容增补）：整趟已耗时 ＋ 最慢步清单。
+	rc1, out1, errb1 := runZergRepo(t, repo, "gate", "progress", "--dir", dir, "--json", "elapsed_secs,slowest_steps")
+	if rc1 != 0 {
+		t.Fatalf("新字段可点（退 0），得到 %d · stderr=%s", rc1, errb1)
+	}
+	ls := strings.Split(strings.TrimRight(out1, "\n"), "\n")
+	if len(ls) < 2 {
+		t.Fatalf("`--json` 至少两行：%q", out1)
+	}
+	var rec2 map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(ls[1]), &rec2); err != nil {
+		t.Fatalf("第二条不是 JSON：%v · %q", err, ls[1])
+	}
+	if _, ok := rec2["elapsed_secs"]; !ok {
+		t.Errorf("已收工趟要报 elapsed_secs（整趟已耗时）：%s", ls[1])
+	}
+	if raw := string(rec2["slowest_steps"]); raw == "" || raw[0] != '[' {
+		t.Errorf("slowest_steps 要是 JSON 数组（恒 `[]`，绝不 null）：%s", ls[1])
 	}
 	// 负控：字段表外的名字 ⇒ 退 2 + stderr 列字段表（与仓内 `gate results --json` 同规）。
 	if rc, _, e := runZergRepo(t, repo, "gate", "progress", "--dir", dir, "--json", "nosuch_field"); rc != 2 || !strings.Contains(e, "run_dir") {
@@ -288,8 +308,8 @@ func TestGateWaitBoundedAndExitStatus(t *testing.T) {
 		t.Errorf("--exit-status 下 FAIL ⇒ 退 1（§十.6），得到 %d", rc)
 	}
 	// `--timeout 0` ⇒ 拒执 2（不学 kubectl 的 0=无穷）。
-	if rc, _, errb := runZergRepo(t, repo, "gate", "wait", "--dir", dir, "--timeout", "0"); rc != 2 || !strings.Contains(errb, "有限") {
-		t.Errorf("`--timeout 0` ⇒ 退 2 + 明说有限，得到 %d · stderr=%q", rc, errb)
+	if rc, _, errb := runZergRepo(t, repo, "gate", "wait", "--dir", dir, "--timeout", "0"); rc != 2 || strings.TrimSpace(errb) == "" || !strings.Contains(errb, "--timeout") {
+		t.Errorf("`--timeout 0` ⇒ 退 2 ＋ stderr 点名该档拒绝理由（--timeout 不许 0=无穷），得到 %d · stderr=%q", rc, errb)
 	}
 }
 
@@ -300,7 +320,7 @@ func TestGateProgressPickRejectedNonTTY(t *testing.T) {
 	dir := t.TempDir()
 	gpWriteTSV(t, dir, [][5]string{{"PASS", "a", "0", "1s", ""}})
 	// RunForTest 的 stdout 是 bytes.Buffer ⇒ 非 TTY。
-	if rc, _, errb := runZergRepo(t, repo, "gate", "progress", "--dir", dir, "--pick"); rc != 2 || !strings.Contains(errb, "非 TTY") {
-		t.Errorf("非 TTY 下 `--pick` ⇒ 退 2 + 明说非 TTY，得到 %d · stderr=%q", rc, errb)
+	if rc, _, errb := runZergRepo(t, repo, "gate", "progress", "--dir", dir, "--pick"); rc != 2 || strings.TrimSpace(errb) == "" || !strings.Contains(errb, "--pick") {
+		t.Errorf("非 TTY 下 `--pick` ⇒ 退 2 ＋ stderr 点名该档拒绝理由（--pick 需 TTY），得到 %d · stderr=%q", rc, errb)
 	}
 }
