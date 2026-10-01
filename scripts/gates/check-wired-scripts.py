@@ -430,6 +430,26 @@ def list_files(root):
             fs.append(rel(root, p))
     return sorted(fs), "文件系统遍历（非 git 目录）"
 
+def candidate_files(root, files, mode):
+    """候选面（**枚举待判对象**）—— 可换 fs；**引用面（judge_b 吃的 `files`）不许换**。
+
+    ★ `GAP-20260927-159/169`：候选面原先也从索引派生（`list_files` 只给 `git ls-files`）
+      ⇒ 未跟踪的新件**静默掉出候选面**（本门开张后新建的脚本永远看不到 = 永久静默）。
+      改法照 `check-gate-coverage.py` 的现成形状：**候选面 = 索引件 ∪ 未跟踪未忽略件**，
+      索引退成分档器（tracked ⇒ 存量债 / untracked ⇒ 新件）。
+    ★ 方向性（`GAP-20260927-169`）：只换**候选面**这一半；引用面 `files` 一字不动 ——
+      在途件里一句字面引用会把「零引用死件」**洗白**（= 松判），故引用面必须仍走索引。
+    ★ 禁裸 fs 递归：白名单前缀下 ignored 实测 170,736 件 ⇒ 盘上面一律走
+      `git ls-files --others --exclude-standard`，不用 `os.walk` 全量。
+    """
+    if not mode.startswith("git"):
+        return files                      # 非 git 夹具：list_files 已是 fs 遍历 ⇒ 原样
+    out = git_out(root, ["ls-files", "--others", "--exclude-standard", "-z"])
+    extra = [p for p in (out or "").split("\0") if p]
+    if not extra:
+        return files
+    return sorted(set(files) | set(extra))
+
 def read_text(path):
     try:
         if os.path.getsize(path) > MAX_BYTES:
@@ -1005,6 +1025,19 @@ def selftest():
     run_case("⑩ 缺件：闸清单一个都不在位 ⇒ rc=2（不给结论）", f_nogate, [], [], 2,
              ["不给结论", "rc=2"], [], results)
 
+    # ⑩b 负控（与 ⑩ 成对 · `GAP-20260927-154`）：闸清单**只缺一条**（非全缺）⇒ 也必须 rc=2。
+    #   旧口径 `n_gate_present == 0` ⇒ 缺 1~5 条恒绿（改名/搬走一条闸即静默）⇒ 这条正是它的牙。
+    f_partial = _fixture(base, "one-gate-missing", {
+        "scripts/gates/precommit-gates.sh": GATE_A,
+        "scripts/build/publish-preflight.sh": GATE_B,
+        "publish/mirror-public.sh": "#!/usr/bin/env bash\n",
+        "publish/mirror-public-lib.py": "# lib\n",
+        "publish/ci/ci.yml": "name: ci\n",
+        "scripts/check-solo.py": "# ck\n",
+    })
+    run_case("⑩b 闸清单只缺 1 条（非全缺）⇒ 必 rc=2 并点名缺件", f_partial, [], [], 2,
+             ["不给结论", "缺件", "release-agent.yml"], [], results)
+
     # ⑪ 说明书自称门：同干 .md 头部含「门」⇒ 该脚本成为候选
     f_decl = _fixture(base, "decl", dict(ok_files, **{
         "scripts/tool-x.sh": "#!/usr/bin/env bash\necho x\n",
@@ -1067,7 +1100,24 @@ def selftest():
     run_case("⑯ 负控 A4: 只在文案里被提到（0 次命令位调用）⇒ 仍算未挂",
              f_echo, wl_ok, [], 0, ["check-zeta.py", "A 命中 1"], [], results)
 
-    npass = len([1 for _, ok, _ in results if ok])
+    # ── ⑰/⑱ 候选面换 fs、引用面不换（`GAP-20260927-159/169`）成对负控 ────────────────
+    #   ⑰ 正控：git 夹具 + 一个**未跟踪**的新 check- 脚本 ⇒ 必进候选面并被断言 A 报出。
+    #      旧口径（候选面 = 索引）⇒ 看不到它 ⇒ A 命中 0（恒静默）。这条是它的牙。
+    #      （若环境无 git，list_files 退 fs 遍历 ⇒ ⑰ 也会过：不会假红，只会不覆盖回归。）
+    f_unt = _fixture(base, "untracked-cand", dict(ok_files))
+    subprocess.run(["git", "init", "-q"], cwd=f_unt,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["git", "add", "-A"], cwd=f_unt,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _write(os.path.join(f_unt, "scripts", "check-untracked.py"), "# ck（未跟踪新件）\n")
+    run_case("⑰ 未跟踪的新门脚本必进候选面（候选面换 fs · 索引只分档）",
+             f_unt, wl_ok, [], 0, ["check-untracked.py", "A 命中 1"], ["A 命中 0"], results)
+
+    #   ⑱ 单元负控（与 ⑰ 成对 · 方向性）：候选面函数在**非 git 档**原样返回（候选面 = 引用面），
+    #      证明「换面」只写在 git 分支里、没有顺手把引用面也换掉（在途件洗白 = 松判）。
+    check("⑱ candidate_files 非 git 档原样返回（换面只在候选面这一半）",
+          candidate_files(base, ["a.py"], "文件系统遍历（非 git 目录）") == ["a.py"])
+
     print("门③ --self-test（成对负控 · 真命令行 + 真退出码）：%d/%d 通过" % (npass, len(results)))
     for label, ok, why in results:
         print("  %s %s%s" % ("✓" if ok else "✗", label, "" if ok else "   ← %s" % why))
@@ -1114,7 +1164,8 @@ def main(argv=None):
     if not files:
         print("FATAL: 引用面 0 个文件（空转）⇒ rc=2")
         return 2
-    cands, _notes = build_candidates(root, files)
+    cand_files = candidate_files(root, files, mode)   # 候选面可换 fs；引用面仍用 files（索引）
+    cands, _notes = build_candidates(root, cand_files)
     if not cands:
         print("FATAL: scripts/ 顶层脚本候选 0 只（空转 ⇒ 不给结论）⇒ rc=2")
         return 2
@@ -1137,8 +1188,8 @@ def main(argv=None):
             return 2
 
     hits_a, wired_a, n_gate_present, missing_gates = judge_a(root, a_cands)
-    if n_gate_present == 0:
-        print("FATAL: 闸清单 %d 个**一个都不在位**（判据无依据 ⇒ 不给结论）⇒ rc=2" % len(GATES))
+    if missing_gates:  # ★ GAP-20260927-154：缺一条即不给结论（旧口径「全缺才 rc=2」⇒ 改名/搬走 1~5 条恒绿）
+        print("FATAL: 闸清单有 %d 个**缺件**（判据无依据 ⇒ 不给结论）⇒ rc=2" % len(missing_gates))
         for g in missing_gates:
             print("  缺：%s" % g)
         return 2

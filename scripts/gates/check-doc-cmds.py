@@ -181,7 +181,10 @@ def command_words(seg):
 
 
 def read(path):
-    with open(path, encoding="utf-8") as f:
+    # ★ `GAP-20260927-83`：改前无 `errors` ⇒ 语料里混入非 UTF-8（如把整棵文档仓当根扫到二进制）
+    #   会抛 UnicodeDecodeError（非 OSError，下游 except 抓不住）⇒ traceback + rc=1 假红。改用替换字符，
+    #   读面永不因解码崩（真·形态误用由 devdocs_root_is_repo_root() 在取根处 rc=2 拦住）。
+    with open(path, encoding="utf-8", errors="replace") as f:
         return f.read()
 
 
@@ -360,6 +363,12 @@ def sibling_docs_base(root):
                            or os.path.join(os.path.dirname(os.path.abspath(root)), "Zerg-内部文档"))
 
 
+def devdocs_root_is_repo_root(p):
+    """根形态误用探测器（`GAP-20260927-83`）：把**文档仓仓根**当版本面根传进来时，
+    它下面一定有 `项目文档/`（版本目录的父）⇒ 判为形态误用（拿整仓根当面扫会把整棵树误判）。"""
+    return os.path.isdir(os.path.join(p, "项目文档"))
+
+
 def check(root, scopes):
     if not os.path.isfile(os.path.join(root, MAIN_REL)):
         return RC_BLOCKED, ["⛔ 不给结论：命令树读不出来（%s 缺件/空转）—— 判据不可判 ⇒ 不给结论" % MAIN_REL]
@@ -390,6 +399,11 @@ def check(root, scopes):
         else:
             docs_root = os.environ.get("ZERG_DEVDOCS_ROOT") or os.path.join(
                 sibling_docs_base(root), "项目文档", "v2.5.13")
+            if devdocs_root_is_repo_root(docs_root):
+                blocked.append("⛔ 不给结论：devdocs 根**形态误用**（%s 下面还有 `项目文档/` ⇒ 这是"
+                               "**文档仓仓根**、不是版本面根）—— 拿整仓根当面扫会把整棵树误判 ⇒ 判据不可判"
+                               "（`GAP-20260927-83`）：请设 `ZERG_DEVDOCS_ROOT=<...>/项目文档/vX.Y.Z`" % docs_root)
+                continue
             files = collect_md(os.path.dirname(docs_root), os.path.basename(docs_root))
             if files is None:
                 # 取不到根 ⇒ 与 ①/②/③ 同档：归 blocked（rc=2 · **不当 0 也不当 1**）——

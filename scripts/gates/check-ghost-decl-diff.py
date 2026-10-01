@@ -116,6 +116,11 @@ def load_sibling(path=SIBLING):
     for attr in ("parse_decl", "PROC_HINTS", "read_lines", "label_set_diff"):
         if not hasattr(mod, attr):
             return None, "同源件里没有 %s ⇒ 口径对不上（不给结论）" % attr
+    # ★ `GAP-20260927-107`：本件 `SIBLING_HINTS` 是门⑧ `PROC_HINTS` 的第二份副本 —— 加**同源断言**
+    #   把它钉死（值不等 ⇒ 不给结论），杜绝两份进程特征口径各自漂移（✗ 不静默各用各的）。
+    if tuple(SIBLING_HINTS) != tuple(mod.PROC_HINTS):
+        return None, ("同源漂移：本件 `SIBLING_HINTS`=%r ≠ 门⑧ `PROC_HINTS`=%r ⇒ 两份进程特征口径已分叉"
+                      "（`GAP-20260927-107`：同族件不许再写第二份）" % (tuple(SIBLING_HINTS), tuple(mod.PROC_HINTS)))
     TOOL_DIR = os.path.dirname(os.path.abspath(path))
     return mod, None
 
@@ -300,7 +305,10 @@ def check(root, mod, decl_path=None, ps_file=None, launchctl_file=None, home=Non
         loaded = r["name"] in live_labels
         if not loaded:
             missing.append("launchctl 未装载")
-        if not any(r["proc"] and r["proc"] != "-" and r["proc"] in ln for ln in live):
+        # ★ 词界锚（`GAP-20260927-100`/`-107` 同族）：进程特征须作**整词**出现（后随空白/行尾），
+        #   `bin/zerg-core` 不再被 `bin/zerg-core-test` 子串假绿（与门⑧ R4 同一口径）。
+        if not any(r["proc"] and r["proc"] != "-"
+                   and re.search(re.escape(r["proc"]) + r"(?=\s|$)", ln) for ln in live):
             missing.append("ps 无此进程")
         p = r["decl"]
         exp = os.path.join(home, p[2:]) if p.startswith("~/") else p

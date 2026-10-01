@@ -228,7 +228,7 @@ exec 3>&1
 dump() {
   local i=0
   while [ "$i" -lt "${#STEP_NAME[@]}" ]; do
-    printf '%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\0' \
       "${STEP_SCOPE[$i]}" "${STEP_NAME[$i]}" "${STEP_MODE[$i]}" "${STEP_DIR[$i]}" "${STEP_CMD[$i]}" >&3
     i=$((i+1))
   done
@@ -261,10 +261,14 @@ def extract_steps(root, tmpdir):
                     "wall/Cargo.toml · ui/Cargo.toml · publish/whitelist.txt 七件）、或仓不完整；stderr 末行：%s"
                     % (proc.returncode, tail))
     steps = []
-    for line in out.split("\n"):
-        if line.count("\t") < 4:
+    #   ★ 记录用 NUL 分隔（`GAP-20260927-127`）：命令串里可能含**换行**（多行 add_step）⇒
+    #   用 `\n` 作分隔会把一条记录切成几行、读侧只取到首行（脚本名若在第 2 行 ⇒
+    #   误判成 ② 弱挂载：既不进 ① 也不进 ③，永久静默）。NUL 不出现在 shell 命令里，
+    #   故改用 `\0` 作**记录分隔符**，命令原样保留。
+    for rec in out.split("\0"):
+        if rec.count("\t") < 4:
             continue
-        parts = line.split("\t", 4)
+        parts = rec.split("\t", 4)
         if parts[1].startswith("自检-"):  # 合成步骤（闸自己的负控）不算真目标
             continue
         steps.append(tuple(parts))
@@ -1183,6 +1187,20 @@ def self_test(sink=None, deep=None):
     rc, out = _run(ng)
     check("⑰ 同批挂门（写进 add_step）⇒ 回绿（rc=0）—— 与 ⑯ 成对", rc == 0, "rc=%d" % rc)
     check("⑰ 且新格归零", "④ **新件未挂门**（本门开张后新建、且没与代码同批挂 add_step）= **0**" in out)
+
+    # ── ⑰b 多行 add_step 命令：脚本名在第 2 行 ⇒ 必判 ①（`GAP-20260927-127` 成对负控）──────
+    #   判据面 = 步骤抽取器：记录改 NUL 分隔 ⇒ 多行命令原样进 cmds_text。
+    #   负控（真退码）：命令拆两行、脚本名放第 2 行 ⇒ 旧口径切成 ② 弱挂载（不进 ①/③）；
+    #   本口径必须判 ①、② 档为 0 ⇒ 该件被认定「真挂门」⇒ 不进 ③/④ ⇒ rc=0（baseline 0）。
+    ml = _fixture(base, "multiline-step",
+                  steps=[("core", "go build ./..."),
+                         ("", "true\npython3 scripts/multiline.py")],
+                  scripts=("scripts/multiline.py",))
+    rc, out = _run(ml)
+    check("⑰b 多行 add_step（脚本名在第 2 行）⇒ 判 ①（不被首行截断）", rc == 0, "rc=%d" % rc)
+    check("⑰b 且 ① 档点名 1 条", "① add_step 命令串里点名：1" in out)
+    check("⑰b 且 ② 档为 0（旧口径会把这条切成弱挂载）",
+          "② 闸文件里被提到、但不在任何 add_step 命令串里（弱挂载 · 单列）：0" in out)
 
     # ── ⑯d/⑯e ④ 格**第二路指路**（语料在仓外 / 写盘型 ⇒ `add_step` 是死路）成对负控 ──────
     #   判据面 = `declares_out_of_scope`（分类**只此一处**）—— 真源是**件头自述**

@@ -119,6 +119,13 @@ def parse_launchctl_labels(lines):
     return out
 
 
+def load_zerg_labels():
+    """闭集内标签前缀（`GAP-20260927-107` 步② · **唯一常量**）：本仓 launchd label 命名空间。
+    同族件要 label 口径一律 `import` 本函数，✗ 不许在别处再写一份 `'zerg' in label` 子串猜
+    （子串猜会吞 `org.other.zergish` 这类外来件、也判不出「排除」）。"""
+    return ZERG_LABEL_PREFIXES
+
+
 def label_set_diff(launchd_rows, lc_lines):
     """★ `launchctl` 标签集 ⇄ 声明 `name` 集 的**唯一一处**集合比较（**别在别处再写一份**
     —— 同族件要按同源 import 本函数，写第二份即「第二份口径」）。
@@ -128,7 +135,7 @@ def label_set_diff(launchd_rows, lc_lines):
       only_live  = 盘上有·声明无（幽灵）；only_decl = 声明有·盘上无（悬空）。两侧**都逐条点名**。"""
     decl_labels = {r['name']: r for r in launchd_rows}
     live_labels = {lab: raw for lab, raw in parse_launchctl_labels(lc_lines).items()
-                   if lab.startswith(ZERG_LABEL_PREFIXES)}
+                   if lab.startswith(load_zerg_labels())}
     only_live = sorted(set(live_labels) - set(decl_labels))
     only_decl = sorted(set(decl_labels) - set(live_labels))
     return live_labels, decl_labels, only_live, only_decl
@@ -215,7 +222,11 @@ def check(root, decl_path=None, ps_path=None, launchctl_path=None, home=None):
     # R4 现值进程逐条有落点
     covered = []
     for ln in live:
-        hit = [r for r in rows if r['proc'] and r['proc'] != '-' and r['proc'] in ln]
+        # ★ 词界锚（`GAP-20260927-100` 面② · 禁子串猜）：声明行的「进程特征」必须作为**整词**出现在
+        #   现值命令行里（后随空白或行尾）⇒ `bin/zerg-core` 不再被 `bin/zerg-core-test` 子串假绿。
+        #   ✗ 不用 split()[3]：本仓路径含空格（`00 项目`）切词会把 argv[0] 截断 ⇒ 只用正则词界。
+        hit = [r for r in rows if r['proc'] and r['proc'] != '-'
+               and re.search(re.escape(r['proc']) + r'(?=\s|$)', ln)]
         if hit:
             covered.append((ln, hit[0]))
             continue
@@ -299,6 +310,8 @@ def self_test():
     cases.append(('负控⑧ 数目同·名字不同（agent-Mr2109 ⇄ tunnel.mini-node-1）⇒ rc=1（**双向点名**）', 1, 'swapped'))
     cases.append(('负控⑨ 闭集外标签（com.example.zerg-probe）不进集合 ⇒ rc=0（另印「闭集外」行）', 0, 'outsider'))
     cases.append(('正控⑩ 闭集内标签但**已登记 ghost 行** ⇒ 不算幽灵（区分已知幽灵/未登记幽灵）', 0, 'ghost_reg'))
+    cases.append(('负控⑪ 现值是 `bin/zerg-core-test`（≠ 声明的 `bin/zerg-core`）⇒ rc=1（**词界锚** · 杀子串假绿）', 1, 'sibling_name'))
+    cases.append(('负控⑫ 闭集内新标签 `com.zerg.newthing`（声明无）⇒ rc=1（闭集内判得红；闭集外见正控⑨）', 1, 'newthing'))
 
     ok = True
     for name, want, mode in cases:
@@ -319,6 +332,13 @@ def self_test():
             elif mode == 'ghost_reg':
                 kw['lc'] = GOOD_LC + '88888\t0\tcom.zerg.ghost-registered\n'
                 kw['decl'] = GOOD_DECL + ('ghost\tcom.zerg.ghost-registered\t-\t-\t-\t测试\t待拍\n')
+            elif mode == 'sibling_name':
+                # 现值只有 `bin/zerg-core-test`：声明行的 proc 是 `bin/zerg-core` ⇒ 子串会假绿，词界锚必红
+                kw['ps'] = ('  68939     1       56:36 /repo/bin/zerg-core-test\n'
+                            '  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n'
+                            '  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n')
+            elif mode == 'newthing':
+                kw['lc'] = GOOD_LC + '77777\t0\tcom.zerg.newthing\n'
             elif mode == 'empty_ps':
                 kw['ps'] = '    1     0  00:00 /sbin/launchd\n'
             dp, pp, lp, home = mk(d, **kw)

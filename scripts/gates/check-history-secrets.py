@@ -82,6 +82,22 @@ def sh(args, cwd=REPO, binary=False):
     return r.stdout
 
 
+def sh_checked(args, cwd=REPO):
+    """领域获取专用：**退码非 0 ⇒ 返回 None**（取不到 ≠ 空）。
+
+    ★ 病灶（`GAP-20260927-114` · 同族静默假绿）：`sh()`（:78-82）是全件唯一 git 出口、
+      **退码与 stderr 全丢** ⇒ 坏范围 / 非 git 仓 / git 不可用时 `revs=[]`
+      且打印「审计范围（0 笔提交）」后 rc=0 通过（覆盖面最大的一格）。
+      领域获取点（`rev-list`）必須用本函数：取不到 ⇒ 不给结论。"""
+    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+    if r.returncode != 0:
+        print("⛔ 取不到域：`%s` 退出码 %d（非「零命中」）：%s"
+              % (" ".join(args), r.returncode, (r.stderr or "").strip()[:160]), file=sys.stderr)
+        return None
+    return r.stdout
+
+
 def load_whitelist(path=WHITELIST):
     entries = []
     with open(path, encoding="utf-8") as fh:
@@ -307,7 +323,9 @@ def _setup_repo(repo):
 
 
 def _read_revs(repo, rng):
-    return sh(["git", "rev-list", rng] if rng else ["git", "rev-list", "--all"], cwd=repo).split()
+    """⇒ revs 列表；**取不到域 ⇒ None**（`GAP-20260927-114`：退码不再被吞成「0 笔」）。"""
+    out = sh_checked(["git", "rev-list", rng] if rng else ["git", "rev-list", "--all"], cwd=repo)
+    return None if out is None else out.split()
 
 
 def shard_worker(args):
@@ -323,6 +341,9 @@ def shard_worker(args):
         return 2
     literals, regexes, isolated, ex_list, entries, blk, inf = _setup_repo(repo)
     revs = _read_revs(repo, args.rng)
+    if revs is None:
+        print("✗ 分片取不到域（`git rev-list` 非零退出）⇒ 判不了(2)", file=sys.stderr)
+        return 2
     # ★ 对齐校验：父进程与子进程各自现读 rev-list ⇒ 必须逐字同长、同首笔（否则结果面不可信 ⇒ 判不了）
     if args.shard_total is not None and len(revs) != args.shard_total:
         print("✗ 分片对齐失败：父见 %d 笔 · 本片现读 %d 笔 ⇒ 判不了(2)" % (args.shard_total, len(revs)),
@@ -446,11 +467,19 @@ def main():
     entries = load_whitelist(os.path.join(repo, "publish", "whitelist.txt") if os.path.exists(
         os.path.join(repo, "publish", "whitelist.txt")) else WHITELIST)
     if args.rng:
-        revs = sh(["git", "rev-list", args.rng], cwd=repo).split()
+        _rv = sh_checked(["git", "rev-list", args.rng], cwd=repo)
         scope = args.rng
     else:
-        revs = sh(["git", "rev-list", "--all"], cwd=repo).split()
+        _rv = sh_checked(["git", "rev-list", "--all"], cwd=repo)
         scope = "--all"
+    if _rv is None:
+        print("⛔ 判不了（rc=2）：审计域取不到（`git rev-list %s` 非零退出）——"
+              "「取不到」与「零命中」不许同形（GAP-20260927-114）" % scope, file=sys.stderr)
+        return 2
+    revs = _rv.split()
+    if not revs:
+        print("⛔ 判不了（rc=2）：审计域为空（0 笔提交）—— 空转不许当绿", file=sys.stderr)
+        return 2
     print("审计范围: %s（%d 笔提交）" % (scope, len(revs)))
     print("白名单条目: %d（只审『真会被公开』的那些路径）" % len(entries))
 

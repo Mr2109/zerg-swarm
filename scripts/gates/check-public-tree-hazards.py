@@ -299,10 +299,14 @@ def all_paths(gitdir, commit):
 
 
 def scan_paths(gitdir, commits_all):
+    """⇒ 命中列表；**取不到域 ⇒ None**（`GAP-20260927-114`：`--all` 审计档 rev-list 退码未查）。"""
     hits = []
     if commits_all:
-        out = subprocess.run(["git", "-C", gitdir, "-c", "core.quotepath=false", "rev-list", "--objects", "--all"],
-                             capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+        _r = subprocess.run(["git", "-C", gitdir, "-c", "core.quotepath=false", "rev-list", "--objects", "--all"],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if _r.returncode != 0:
+            return None
+        out = _r.stdout
         paths = sorted({ln.split(" ", 1)[1] for ln in out.split("\n") if " " in ln})
         for rx, why in PATH_RES:
             hits.extend((p, why) for p in paths if rx.search(p))
@@ -315,10 +319,14 @@ def scan_paths(gitdir, commits_all):
 
 
 def scan_forms(gitdir, commit, commits_all):
+    """⇒ 命中列表；**取不到域 ⇒ None**（`GAP-20260927-114`）。"""
     hits = []
     if commits_all:
-        commits = subprocess.run(["git", "-C", gitdir, "rev-list", "main"],
-                                 capture_output=True, text=True).stdout.split()
+        _r = subprocess.run(["git", "-C", gitdir, "rev-list", "main"],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if _r.returncode != 0:
+            return None
+        commits = _r.stdout.split()
         seen = set()
         for c in commits:
             o = subprocess.run(["git", "-C", gitdir, "grep", "-I", "-E", "-l",
@@ -400,6 +408,10 @@ if __name__ == "__main__":
 
     ph = scan_paths(target, commits_all)
     fh = scan_forms(target, mode if not commits_all else "main", commits_all)
+    if ph is None or fh is None:
+        print("⛔ 不给结论（rc=2）：域取不到（`git rev-list` 非零退出）——"
+              "「取不到」与「零命中」不许同形（GAP-20260927-114）", file=sys.stderr)
+        sys.exit(2)
     total = len(ph) + len(fh)
 
     if total == 0:
