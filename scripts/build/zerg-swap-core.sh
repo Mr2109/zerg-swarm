@@ -238,7 +238,7 @@ bootstrap_job() {
 restart_master() {
   local lp dp
   # 自测桩（只有 --self-test-rollback 会设它）：抛靶里没有第二个能真启动的目标
-  if [ -n "${ZERG_SWAP_RESTART_STUB:-}" ]; then
+  if [ "$SELF_TEST_ROLLBACK" = "1" ] && [ -n "${ZERG_SWAP_RESTART_STUB:-}" ]; then
     say "  [重启] 自测桩：${ZERG_SWAP_RESTART_STUB}"
     eval "$ZERG_SWAP_RESTART_STUB"
     return $?
