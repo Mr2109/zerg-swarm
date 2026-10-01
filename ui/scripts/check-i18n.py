@@ -127,6 +127,34 @@ def declared_count(baseline):
     return int(v)
 
 
+# ── 棘轮台账交叉核对（「上牙」·缺口 `GAP-20260927-170`）──────────────────────
+# 四条棘轮今天只有「下牙」（实测 > 基线 ⇒ 红），**上调基线数字**这一向在本门只落 warn
+# ⇒ 手改 `allowed_count` 无人拦。本函数把棘轮台账读一处出来：**声明数与台账最后一条 new 不符 ⇒ 放宽未登记**。
+#   · 台账件缺 / 无该条件记录 ⇒ 返回 None（**本门不据此新判红** —— 那两态由
+#     `baseline-ratchet.py --check` 判；本门保持既有 warn 语义，不误伤公开树 / CI 树）；
+#   · 台账解不动 ⇒ 返回 None（同上，交给棘轮本件判 rc=2）。
+RATCHET_LEDGER = os.path.join(ROOT, "scripts", "gates", "baseline-audit.jsonl")
+
+
+def ratchet_ledger_last(name):
+    """⇒ 台账里 `name` 这个条件的**最后一条**记录的 `new` 值；读不到 ⇒ None。"""
+    if not os.path.isfile(RATCHET_LEDGER):
+        return None
+    last = None
+    try:
+        with open(RATCHET_LEDGER, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                rec = json.loads(line)
+                if rec.get("name") == name and "new" in rec:
+                    last = rec["new"]
+    except (OSError, ValueError):
+        return None
+    return last
+
+
 def main():
     list_only = "--list" in sys.argv
     errors, warns = [], []
@@ -235,9 +263,18 @@ def main():
                           "唯一通道 = `python3 scripts/gates/baseline-ratchet.py --write --reason '…' --allow-raise`"
                           "（改数并留台账）" % (len(allowed), declared))
         elif declared > len(allowed):
-            warns.append("G4 声明数 %d > 白名单实条数 %d（收的方向不拦，只提示）：请走唯一写入口把声明数同降 —— "
-                         "`python3 scripts/gates/baseline-ratchet.py --write --reason '…'`"
-                         % (declared, len(allowed)))
+            # ★ 上牙（缺口 `GAP-20260927-170`）：声明数被**上调**这一向必须与棘轮台账对得上，
+            #   否则就是「手改没留痕」（放宽未登记）。台账读不到 ⇒ 退回既有 warn（不新判红）。
+            ledger_last = ratchet_ledger_last("i18n.allowed_count")
+            if ledger_last is not None and ledger_last != declared:
+                errors.append("G4 **放宽未登记**：声明数 %d 与棘轮台账（scripts/gates/baseline-audit.jsonl）"
+                              "里 `i18n.allowed_count` 最后一条 new=%r 不符 ⇒ 上调只许走 "
+                              "`python3 scripts/gates/baseline-ratchet.py --write --reason '…' --allow-raise`"
+                              % (declared, ledger_last))
+            else:
+                warns.append("G4 声明数 %d > 白名单实条数 %d（收的方向不拦，只提示）：请走唯一写入口把声明数同降 —— "
+                             "`python3 scripts/gates/baseline-ratchet.py --write --reason '…'`"
+                             % (declared, len(allowed)))
 
     # G5 错误码 ↔ UI 键（多语言 L4——服务端 46 个 code 应有对应 apierr.* 键）
     # 强度：warn（未收录的 code 会回退服务端 message——客户端不改即可运行，故不阻断）
