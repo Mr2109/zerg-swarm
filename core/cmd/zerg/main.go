@@ -46,18 +46,30 @@ const (
 )
 
 func main() {
-	// 人打断（§九 M8 · §十二 `P-033`）：**默认只退订、不取消** —— Ctrl-C 退 `130`，
+	// 人打断 / 被要求终止（§九 M8 · §十二 `P-033`）：**默认只退订、不取消** —— 退 `130`，
 	// 被跟的任务/被包的脚本**继续跑**；要真取消得给显式旗标 `--cancel-on-interrupt`。
 	// 为什么不在这里做别的清理：命令面**无常驻状态**（§6.1），「退订」= 本进程退出。
+	// 2026-10-02（缺口 `GAP-20261002-11`）：触发面不只 Ctrl-C —— `SIGTERM`/`SIGHUP` 同路，
+	//   **退码仍统一 `130`**（不退 143/129：主表无号，裸数字会被门⑪ 判「表外码」）。
 	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT)
+	// 2026-10-02（缺口 `GAP-20261002-11`）：信号面从**只有 SIGINT** 扩到 `SIGINT`/`SIGTERM`/`SIGHUP`。
+	// 缺口的实测形态是「父被 TERM 掉 ⇒ 子进程组无主仍跑（PPID=1 · 占住并发门跑闸）」
+	// —— 清理逻辑（`cancelRunningChild`）一直在，从没被触发过，因为处理器只听 Ctrl-C。
+	// `SIGKILL` 捕不到（那一路由探针自灭 ＋ `gate reap` 兜），但 `SIGTERM`/`SIGHUP` 是
+	// **有主可捕**的常见形态（脚本 timeout、CI 取消、登出）。
+	// **语义面一字不改**：仍尊重 `--cancel-on-interrupt`（默认只退订、不取消）。
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
-		<-sigs
+		sig := <-sigs
+		what := "人打断（Ctrl-C）"
+		if sig != syscall.SIGINT {
+			what = fmt.Sprintf("收到 %v", sig)
+		}
 		if wantsCancelOnInterrupt(os.Args[1:]) {
 			cancelRunningChild()
-			fmt.Fprintf(os.Stderr, "%s: 人打断（Ctrl-C）—— 已按 `--cancel-on-interrupt` **取消**在跑的步骤\n", progName)
+			fmt.Fprintf(os.Stderr, "%s: %s —— 已按 `--cancel-on-interrupt` **取消**在跑的步骤\n", progName, what)
 		} else {
-			fmt.Fprintf(os.Stderr, "%s: 人打断（Ctrl-C）—— **只退订、不取消**（在跑的任务/脚本不受影响；要取消给 --cancel-on-interrupt）\n", progName)
+			fmt.Fprintf(os.Stderr, "%s: %s —— **只退订、不取消**（在跑的任务/脚本不受影响；要取消给 --cancel-on-interrupt）\n", progName, what)
 		}
 		os.Exit(exitInterrupted)
 	}()
@@ -690,13 +702,26 @@ func init() {
 		// 不在册 ⇒ 拒并给可用名；件自身崩 ⇒ `8` ＋ `detail=judge_broken` ＋ `raw_rc`（**零新占号**）。
 		// 透传型（同 `gate run`/`show`）：子件的旗标与位置参数逐字交给子件 ⇒ 命令面不另判旗标面。
 		{
-			path:        []string{"gate", "check"},
-			kind:        "GateCheck",
-			summary:     "跑**一件判据件**（判据名 ⇒ scripts/gates/*.py|*.sh 的保守解析 · 逐字透传退码与输出；不在册 ⇒ 拒并给可用名；件自身崩 ⇒ 8 不给结论）",
-			usage:       "zerg gate check <判据名> [子件参数…]",
-			arity:       "any",
-			args:        []string{"判据名（＝ scripts/gates/ 下件名去扩展名 · 逐字相同；✗ 不模糊匹配）"},
-			endpoint:    "",
+			path:     []string{"gate", "check"},
+			kind:     "GateCheck",
+			summary:  "跑**一件判据件**（判据名 ⇒ scripts/gates/*.py|*.sh 的保守解析 · 逐字透传退码与输出；不在册 ⇒ 拒并给可用名；件自身崩 ⇒ 8 不给结论；**写工具**件强制危险档 · 缺 --yes ⇒ 2）",
+			usage:    "zerg gate check <判据名> [--dry-run | --yes] [子件参数…]",
+			arity:    "any",
+			args:     []string{"判据名（＝ scripts/gates/ 下件名去扩展名 · 逐字相同；✗ 不模糊匹配）"},
+			endpoint: "",
+			// ★ `--json` 字段表（M1 尾 · 全局字段表闸）：与 `family_gate_check.go` 的
+			//   `gateCheckFullTable` 机器面**同源** —— 现读那一处 `enc.Encode(map[string]any{…})`
+			//   的四个键（`count` / `resolved` / `dry_run` / `entries`），一字不多一字不少。
+			//   没有它，`zerg gate check --json` 会被命令面当「说明面」拒成 2
+			//   （逐字：``zerg gate check` 没有 --json 字段表（它是说明面）`）。
+			// ★ 必须写成 `[]string{…}` **字面量**（契约脚本的 `FIELDS_RE` 只认字面量；
+			//   抽成变量 = 该条被读成「没有字段表」）—— 与 `net probe` / `publish tree has` 同一条纪律。
+			fields: []string{"count", "resolved", "dry_run", "entries"},
+			// ★ 写工具危险档（M1 批B）：件头 `#zerg-class: write D2|D3` ⇒ 壳侧 exec 前强制确认档。
+			// 取**最坏档 D3** 登记（写工具里最坏是不可逆；命令树一格只能写一档 ⇒ 取最坏）；
+			// `ChecksConfirm: true` = 实现真读 `--confirm`（family_gate_check.go 的写工具闸 · 真读才印）。
+			danger:      &dangerSpec{dangerD3, "判据名", "跑一件**写工具**（会真改盘：换件/落临时副本/落锁）；只读件不受影响", "本单 · 同族先例 §九 M3 C1 · family_gate_matrix.go:12-15", true},
+			opened:      true,
 			passthrough: true,
 			run:         cmdGate,
 		},
@@ -736,6 +761,28 @@ func init() {
 			fields:   gateReapFields,
 			endpoint: "",
 			run:      cmdGateReap,
+		},
+		{
+			path:     []string{"gate", "progress"},
+			kind:     "GateProgress",
+			summary:  "**只读快照**：看正在跑那一趟门禁的活进度（八格：趟号步数/正跑哪步/已耗时/静默秒/四数/是否在跑/趟归属/advancing）· 纯只读 · 立即返回 · 绝不阻塞（设计-门进度可查-v0.3 §三/§十） · 判活**只判第 3 层**（当前步日志 mtime 推进 ＋ 谱系 pcpu>0）：快照不做长采样，**完整三层取或**只在有时间窗口的 `gate wait` 落（缺口 `GAP-20261002-16`）",
+			usage:    "zerg gate progress [--dir <目录> | --last] [--list] [--limit <n>] [--silent-threshold <秒>] [--json <字段>]（`--last` **按最新写入挑**：`results.tsv` 的 mtime 最新 · 与 `zerg gate results --last` 同口径；点名那一趟用 `--dir`）",
+			arity:    "none",
+			args:     []string{"（不收位置参数：那一趟由 `--dir` / `--last` 指 —— 非 TTY 下多趟活 ⇒ 列清单 + 退 2，绝不弹提示）"},
+			fields:   []string{"run_dir", "finished", "alive", "root_pid", "origin_kind", "origin", "steps_done", "steps_total", "steps_source_sha", "current_step", "current_step_name", "current_secs", "last_activity_ts", "silent_secs", "silent_threshold", "pass", "fail", "blocked", "report", "exit_code", "advancing", "deepest_pid", "deepest_cmd", "deepest_secs", "depth_limit_reached"},
+			endpoint: "",
+			run:      cmdGateProgress,
+		},
+		{
+			path:     []string{"gate", "wait"},
+			kind:     "GateWait",
+			summary:  "**有界阻塞**等门跑收工（与 progress 共享同一引擎）；`--timeout` **默认有限**（不学 kubectl 的 0=无穷）；`--exit-status` 把门禁的红透成退码（设计-门进度可查-v0.3 §十.6） · 判活**自第二帧起判完整三层取或**（活动计数 / 最深层 PID 换过 / 当前步日志 mtime 推进 · §十.1）：与 `gate progress` 的快照口径（只判第 3 层 ＋ 谱系 pcpu>0）不同（缺口 `GAP-20261002-16`）",
+			usage:    "zerg gate wait [--dir <目录> | --last] [--interval <秒>] [--timeout <秒>] [--exit-status] [--json <字段>]（`--last` **按最新写入挑**：`results.tsv` 的 mtime 最新 · 与 `zerg gate results --last` 同口径；点名那一趟用 `--dir`）",
+			arity:    "none",
+			args:     []string{"（不收位置参数：那一趟由 `--dir` / `--last` 指）"},
+			fields:   []string{"run_dir", "finished", "alive", "root_pid", "origin_kind", "origin", "steps_done", "steps_total", "steps_source_sha", "current_step", "current_step_name", "current_secs", "last_activity_ts", "silent_secs", "silent_threshold", "pass", "fail", "blocked", "report", "exit_code", "advancing", "deepest_pid", "deepest_cmd", "deepest_secs", "depth_limit_reached", "waited_secs", "timed_out", "interval", "timeout"},
+			endpoint: "",
+			run:      cmdGateWait,
 		},
 		{
 			path:     []string{"gate", "seal", "verify"},
@@ -1836,7 +1883,7 @@ func init() {
 			path:    []string{"dev", "edit"},
 			kind:    "DevEdit",
 			summary: "受控写入：只改**提案声明过**的件（越界写 ⇒ 2）· 默认干跑 · 一行一事件的审计（写不进审计就不改件）",
-			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件>) [--by <谁>] [--allow-cross-root <理由>] [--dry-run | --confirm=<本机名> --yes] （真写前置：一枚**人签批准件** <状态目录>/approvals/dev_edit.json —— 无件 / 手写件 / 它的 scope 不含本件 ⇒ 一律拒（退 2）；--dry-run 那一态不需要它）" + devEditDryRunOnlyNote,
+			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件>) [--by <谁>] [--allow-cross-root <理由>] [--allow-sibling-repo <名>] [--dry-run | --confirm=<本机名> --yes] （真写前置：一枚**人签批准件** <状态目录>/approvals/dev_edit.json —— 无件 / 手写件 / 它的 scope 不含本件 ⇒ 一律拒（退 2）；--dry-run 那一态不需要它）" + devEditDryRunOnlyNote,
 			arity:   "any",
 			args:    []string{"提案 id（--proposal）", "要改的件（--file · 必须在提案的 files[] 里）"},
 			fields:  devEditFields,
@@ -2984,6 +3031,11 @@ func parseInvocation(args []string) (*invocation, error) {
 		// 写着它们会一律退 2「未知旗标」= 新命令等于不可用。
 		case a == "--tracked" || a == "--others" || a == "--staged" || a == "--diff" || a == "--utf8":
 			inv.kvSet(a, "true")
+		// 门进度可查（设计-门进度可查-v0.3 §3.1/§十.4/§十.6）：两枚**布尔**旗标。
+		// `--pick` = 多趟活时挑一趟（**非 TTY 下拒执**，由 family_gate_progress.go 判）；
+		// `--exit-status` = `gate wait` 把门禁的红透成退码。写进 inv.kv ⇒ foreignFlag 看得见。
+		case a == "--pick" || a == "--exit-status":
+			inv.kvSet(a, "true")
 		case a == "--prefix" || a == "--prefix=":
 			// 裸形（后面跟的是另一枚旗标、或已到 argv 尾）与 `--prefix=` 走同一条路：
 			// 键**一定**存在、值空 ⇒ 命令面靠 `hasFlag("--prefix")` 判「给过没有」、再判空值
@@ -3140,7 +3192,7 @@ func valueFlagName(a string) string {
 	//   本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用）。
 	switch a {
 	case "--file", "--message", "--proposal", "--tool", "--note", "--from", "--replace", "--root",
-		"--allow-cross-root":
+		"--allow-cross-root", "--allow-sibling-repo":
 		return a
 	}
 	// 产出树面旗标（`W-50` · 任务单序132 · 2026-09-24 波17）：`--tree <树>`（**可重复** ——
@@ -3164,6 +3216,12 @@ func valueFlagName(a string) string {
 	// ⇒ `zerg: 未知旗标 "--report"` rc=2）。
 	switch a {
 	case "--report":
+		return a
+	}
+	// 门进度可查（设计-门进度可查-v0.3 §三/§十.6）：三枚**取值**旗标（值照收，语义在 family_gate_progress.go 里判）。
+	// ★ 本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
+	switch a {
+	case "--interval", "--silent-threshold", "--limit":
 		return a
 	}
 	// 公开面 CI 归绿面旗标（`W-51` · 任务单序133 · 2026-09-24 波18）：`--run <记录件>`（check-run

@@ -80,8 +80,12 @@ def devdocs_root(repo_root=REPO_ROOT_DEFAULT):
     env = os.environ.get("ZERG_DEVDOCS_ROOT")
     if env:
         return os.path.abspath(env)
-    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(repo_root)),
-                                        "Zerg-内部文档", "项目文档", "v2.5.10"))
+    # 同级根归一（GAP-20260927-82 批1）：接现成同级根旋钮 ZERG_DOCS_ALT
+    # （与 core/internal/statepath.DocsAltRoot() 同根同默认）/ ZERG_DOCS
+    # （同 scriptInvDocsRoot）> <仓根 的上一级>/Zerg-内部文档 —— 全族「读外部树」判据件共用一个取根规则。
+    sibling = (os.environ.get("ZERG_DOCS_ALT") or os.environ.get("ZERG_DOCS")
+               or os.path.join(os.path.dirname(os.path.abspath(repo_root)), "Zerg-内部文档"))
+    return os.path.abspath(os.path.join(sibling, "项目文档", "v2.5.10"))
 
 DOC_EXT = (".md", ".markdown", ".mdx")
 

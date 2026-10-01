@@ -41,7 +41,10 @@ DEFAULT_ROOT = os.path.dirname(os.path.dirname(HERE))  # scripts/gates → 仓�
 REGISTRY_REL = os.path.join("core", "internal", "contract", "dryrun-semantics.json")
 SCAN_DIRS = ["core", "agent", "scripts", "wall", "gateway", "ui"]
 SCAN_EXTS = ["*.go", "*.sh", "*.py", "*.rs"]
-SKIP_DIRS = {"venv", ".venv"}
+# ★ 排除 `target`（cargo 构建产物 · 实测 9 万余件）：非源码面，且构建中的瞬时件会让
+# 递归扫描报「No such file or directory」⇒ 退 2 不给结论（缺口 GAP-20261002-09）。
+# Go 搬体 `drsSkipDirs` **同批**加同一项。
+SKIP_DIRS = {"venv", ".venv", "target"}
 # 排除面（**判据面自身，不是 dry-run 语义站点**）：本门禁脚本里必然出现 `dry-run` 字样（它就是判据文本）。
 # 口径：按**文件名**排除（窄排除，不按目录/正则）—— 成对负控见自检②（另加一件立刻红）。
 SELF = os.path.basename(os.path.abspath(__file__))

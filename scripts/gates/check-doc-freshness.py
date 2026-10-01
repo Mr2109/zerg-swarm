@@ -42,6 +42,7 @@ import json
 import os
 import posixpath
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -66,8 +67,12 @@ def devdocs_root(repo_root=DEFAULT_REPO):
     env = os.environ.get("ZERG_DEVDOCS_ROOT")
     if env:
         return os.path.abspath(env)
-    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(repo_root)),
-                                        "Zerg-内部文档", "项目文档", "v2.5.10"))
+    # 同级根归一（GAP-20260927-82 批1）：接现成同级根旋钮 ZERG_DOCS_ALT
+    # （与 core/internal/statepath.DocsAltRoot() 同根同默认）/ ZERG_DOCS
+    # （同 scriptInvDocsRoot）> <仓根 的上一级>/Zerg-内部文档 —— 全族「读外部树」判据件共用一个取根规则。
+    sibling = (os.environ.get("ZERG_DOCS_ALT") or os.environ.get("ZERG_DOCS")
+               or os.path.join(os.path.dirname(os.path.abspath(repo_root)), "Zerg-内部文档"))
+    return os.path.abspath(os.path.join(sibling, "项目文档", "v2.5.10"))
 
 RC_OK, RC_FAIL, RC_BLOCKED = 0, 1, 2
 RC_NAME = {0: "OK（全绿）", 1: "FAIL（有失败项）", 2: "BLOCKED（不给结论）"}
@@ -1172,98 +1177,101 @@ def gate_d4(tree, args):
         r.errors.append("生成器清单为空（config.d4.generators）⇒ 缺件，不给结论")
         return r
     tmp = tempfile.mkdtemp(prefix="docfresh-d4-")
-    r.counted("生成器条目", len(gens))
-    judged = 0
-    for g in gens:
-        gid = g.get("id", "?")
-        mode = g.get("mode", "stdout")
-        targets = []
-        if g.get("targets_glob"):
-            for pat in g["targets_glob"]:
-                for p in tree.files:
-                    if fnmatch.fnmatch(p, pat):
-                        targets.append(p)
-            #   ★ 2026-09-19 二次分家批2（生成器靶双认 · 先仓内、缺则仓外取源根）：仓内零命中 ⇒ 试
-            #     `alt_root`（默认 `../Zerg-内部文档`，与 export-and-build.sh 的 `ZERG_DOCS_ALT` 同根同默认）
-            #     下的 `targets_glob_alt`（相对 alt_root 的路径）。**两处都零命中 ⇒ 不补 targets ⇒**
-            #     照原口径「未声明产物…⇒ 缺件，不给结论」rc=2（不假绿）。两棵都在（批3 的 `cp -a` 窗口）
-            #     ⇒ 只判仓内那批（仓内先匹配，不双计）。
-            if not targets and g.get("targets_glob_alt"):
-                targets += alt_glob_targets(tree.repo, g.get("alt_root", "../Zerg-内部文档"),
-                                            g["targets_glob_alt"])
-        elif g.get("output"):
-            targets.append(g["output"])
-        # 缺件判定
-        script = g.get("script")
-        optional = bool(g.get("optional"))
-        # GAP-20260927-12：生成器脚本与 d3.spec_doc 同源——都是**主仓根**相对路径（见 :181 自述）
-        #   devdocs 档下 tree.repo 已换到文档面 ⇒ 一律按 tree.main_repo 解析，免得把真身在盘的脚本
-        #   判成「缺脚本」（假 BLOCKED；缺件判定该判「产物」，不该判「脚本不在文档仓」）。
-        if script and not os.path.exists(os.path.join(tree.main_repo, script)):
-            if optional:
-                r.counted("[%s] 可选生成器缺脚本（单列）" % gid)
-                continue
-            r.errors.append("[%s] 缺生成器脚本 %s ⇒ 不给结论" % (gid, script))
-            continue
-        if not targets:
-            if optional:
-                r.counted("[%s] 可选生成器未声明产物（单列）" % gid)
-                continue
-            r.errors.append("[%s] 未声明产物，也没有 targets_glob ⇒ 缺件，不给结论" % gid)
-            continue
-        for t in targets:
-            out_rel = t
-            if not os.path.exists(os.path.join(tree.repo, t)):
-                r.counted("[%s] 产物不存在（单列）" % gid)
-                continue
-            dom = tree.domain(t)
-            if dom != DOM_LOCAL and not tree.strict_all:
-                r.counted("[%s] %s（单列·不进退码）" % (gid, dom))
-                continue
-            judged += 1
-            tmpout = os.path.join(tmp, "%s-%s" % (gid, sha1_text(t)[:8]))
-            d = posixpath.dirname(t)
-            cmd = [_fill(x, tree.repo, OUT=tmpout, DIR=os.path.join(tree.repo, d), TARGET=t) for x in g["cmd"]]
-            cwd = _fill(g.get("cwd", "{REPO}"), tree.repo)
-            try:
-                pr = subprocess.run(cmd, cwd=cwd, capture_output=True, timeout=g.get("timeout_s", 120))
-            except Exception as e:
-                r.errors.append("[%s] 重建失败（%s）⇒ 不给结论" % (gid, e))
-                continue
-            if mode == "stdout":
-                rebuilt = pr.stdout.decode("utf-8", "replace")
-            else:
-                if pr.returncode != 0:
-                    r.errors.append("[%s] 生成器 rc=%d，stderr 前 200 字：%s ⇒ 不给结论"
-                                    % (gid, pr.returncode, pr.stderr.decode("utf-8", "replace")[:200].replace("\n", " ")))
+    try:
+        r.counted("生成器条目", len(gens))
+        judged = 0
+        for g in gens:
+            gid = g.get("id", "?")
+            mode = g.get("mode", "stdout")
+            targets = []
+            if g.get("targets_glob"):
+                for pat in g["targets_glob"]:
+                    for p in tree.files:
+                        if fnmatch.fnmatch(p, pat):
+                            targets.append(p)
+                #   ★ 2026-09-19 二次分家批2（生成器靶双认 · 先仓内、缺则仓外取源根）：仓内零命中 ⇒ 试
+                #     `alt_root`（默认 `../Zerg-内部文档`，与 export-and-build.sh 的 `ZERG_DOCS_ALT` 同根同默认）
+                #     下的 `targets_glob_alt`（相对 alt_root 的路径）。**两处都零命中 ⇒ 不补 targets ⇒**
+                #     照原口径「未声明产物…⇒ 缺件，不给结论」rc=2（不假绿）。两棵都在（批3 的 `cp -a` 窗口）
+                #     ⇒ 只判仓内那批（仓内先匹配，不双计）。
+                if not targets and g.get("targets_glob_alt"):
+                    targets += alt_glob_targets(tree.repo, g.get("alt_root", "../Zerg-内部文档"),
+                                                g["targets_glob_alt"])
+            elif g.get("output"):
+                targets.append(g["output"])
+            # 缺件判定
+            script = g.get("script")
+            optional = bool(g.get("optional"))
+            # GAP-20260927-12：生成器脚本与 d3.spec_doc 同源——都是**主仓根**相对路径（见 :181 自述）
+            #   devdocs 档下 tree.repo 已换到文档面 ⇒ 一律按 tree.main_repo 解析，免得把真身在盘的脚本
+            #   判成「缺脚本」（假 BLOCKED；缺件判定该判「产物」，不该判「脚本不在文档仓」）。
+            if script and not os.path.exists(os.path.join(tree.main_repo, script)):
+                if optional:
+                    r.counted("[%s] 可选生成器缺脚本（单列）" % gid)
                     continue
+                r.errors.append("[%s] 缺生成器脚本 %s ⇒ 不给结论" % (gid, script))
+                continue
+            if not targets:
+                if optional:
+                    r.counted("[%s] 可选生成器未声明产物（单列）" % gid)
+                    continue
+                r.errors.append("[%s] 未声明产物，也没有 targets_glob ⇒ 缺件，不给结论" % gid)
+                continue
+            for t in targets:
+                out_rel = t
+                if not os.path.exists(os.path.join(tree.repo, t)):
+                    r.counted("[%s] 产物不存在（单列）" % gid)
+                    continue
+                dom = tree.domain(t)
+                if dom != DOM_LOCAL and not tree.strict_all:
+                    r.counted("[%s] %s（单列·不进退码）" % (gid, dom))
+                    continue
+                judged += 1
+                tmpout = os.path.join(tmp, "%s-%s" % (gid, sha1_text(t)[:8]))
+                d = posixpath.dirname(t)
+                cmd = [_fill(x, tree.repo, OUT=tmpout, DIR=os.path.join(tree.repo, d), TARGET=t) for x in g["cmd"]]
+                cwd = _fill(g.get("cwd", "{REPO}"), tree.repo)
                 try:
-                    rebuilt = open(tmpout, encoding="utf-8").read()
-                except OSError as e:
-                    r.errors.append("[%s] 重建产物读不到（%s）⇒ 不给结论" % (gid, e))
+                    pr = subprocess.run(cmd, cwd=cwd, capture_output=True, timeout=g.get("timeout_s", 120))
+                except Exception as e:
+                    r.errors.append("[%s] 重建失败（%s）⇒ 不给结论" % (gid, e))
                     continue
-            committed = tree.text(t)
-            if committed == rebuilt:
-                r.counted("过·逐字节一致")
-                continue
-            if normalize_lines(committed) == normalize_lines(rebuilt):
-                r.counted("黄·仅易变行不同")
-                r.add(t, 0, gid, "黄·仅易变行不同", "归一化（去尾空格 + 时间戳/版本/本机路径 → <VAR>）后一致", dom)
-                continue
-            first = first_diff(committed, rebuilt)
-            ae = allowlisted(tree, "d4", t, gid)
-            if ae:
-                r.counted("豁免（allowlist）")
-                r.add(t, 0, gid, "豁免（allowlist）", "%s（登记于 %s）" % (ae.get("reason", ""), ae.get("date", "")), dom)
-                continue
-            r.counted("drift")
-            r.add(t, first, gid, "红·drift",
-                  "提交物 %d 行 vs 重建 %d 行，首个不同行 %d： %s  ←→  %s | 修法：%s"
-                  % (committed.count("\n"), rebuilt.count("\n"), first,
-                     clip(line_at(committed, first)), clip(line_at(rebuilt, first)), g.get("fix", "重跑生成器")), dom)
-    if judged == 0 and not r.errors:
-        r.errors.append("0 个可比对产物（缺件/全在非本地域）⇒ 不给结论")
-    r.counted("可比对产物数", judged)
+                if mode == "stdout":
+                    rebuilt = pr.stdout.decode("utf-8", "replace")
+                else:
+                    if pr.returncode != 0:
+                        r.errors.append("[%s] 生成器 rc=%d，stderr 前 200 字：%s ⇒ 不给结论"
+                                        % (gid, pr.returncode, pr.stderr.decode("utf-8", "replace")[:200].replace("\n", " ")))
+                        continue
+                    try:
+                        rebuilt = open(tmpout, encoding="utf-8").read()
+                    except OSError as e:
+                        r.errors.append("[%s] 重建产物读不到（%s）⇒ 不给结论" % (gid, e))
+                        continue
+                committed = tree.text(t)
+                if committed == rebuilt:
+                    r.counted("过·逐字节一致")
+                    continue
+                if normalize_lines(committed) == normalize_lines(rebuilt):
+                    r.counted("黄·仅易变行不同")
+                    r.add(t, 0, gid, "黄·仅易变行不同", "归一化（去尾空格 + 时间戳/版本/本机路径 → <VAR>）后一致", dom)
+                    continue
+                first = first_diff(committed, rebuilt)
+                ae = allowlisted(tree, "d4", t, gid)
+                if ae:
+                    r.counted("豁免（allowlist）")
+                    r.add(t, 0, gid, "豁免（allowlist）", "%s（登记于 %s）" % (ae.get("reason", ""), ae.get("date", "")), dom)
+                    continue
+                r.counted("drift")
+                r.add(t, first, gid, "红·drift",
+                      "提交物 %d 行 vs 重建 %d 行，首个不同行 %d： %s  ←→  %s | 修法：%s"
+                      % (committed.count("\n"), rebuilt.count("\n"), first,
+                         clip(line_at(committed, first)), clip(line_at(rebuilt, first)), g.get("fix", "重跑生成器")), dom)
+        if judged == 0 and not r.errors:
+            r.errors.append("0 个可比对产物（缺件/全在非本地域）⇒ 不给结论")
+        r.counted("可比对产物数", judged)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     return r
 
 

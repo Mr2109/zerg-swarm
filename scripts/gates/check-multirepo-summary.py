@@ -309,7 +309,10 @@ def discover_docs_root(root, explicit=None):
     env = os.environ.get("ZERG_DOCS_ROOT")
     if env:
         return env
-    cand = os.path.join(os.path.dirname(os.path.abspath(root)), "Zerg-内部文档")
+    # 同级根归一（GAP-20260927-82 批1）：ZERG_DOCS_ROOT 之后接现成同级根旋钮
+    # ZERG_DOCS_ALT（同 statepath.DocsAltRoot）/ ZERG_DOCS（同 scriptInvDocsRoot）。
+    cand = (os.environ.get("ZERG_DOCS_ALT") or os.environ.get("ZERG_DOCS")
+            or os.path.join(os.path.dirname(os.path.abspath(root)), "Zerg-内部文档"))
     return cand
 
 

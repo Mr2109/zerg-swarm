@@ -51,23 +51,28 @@ M12 判到的深度（§九 M12：**判到 L2（对象 + 动作）起步**）
   照实登记的**未覆盖形态**：`zerg <sha>+dirty`（带 sha 但**无时刻**、且 sha 首位是字母）仍按命令判 ——
   今天正式面用的是`版本号 + sha + 时刻`形态，这一形态本件**不覆盖**、不假装全覆盖 ✗。
 
-★ 缺件/空转 ⇒ **不给结论档（rc=2）**：三条语料分支一律走 BLOCKED（2026-09-24 治本 · 缺口 `Q-157`）
+★ 缺件/空转 ⇒ **不给结论档（rc=2）**：四条语料分支一律走 BLOCKED（2026-09-24 治本 · 缺口 `Q-157`
+  三条 · 2026-09-27 补第四条 · 缺口 `GAP-20260927-82` 批2）
 ------------------------------------------------------------------------------------------
-  三条分支 = ① formal 的 `docs/` **整棵不在** · ② formal 的 `docs/` 在但**扫到 0 篇** ·
-             ③ devdocs 面**扫到 0 篇**。
+  四条分支 = ① formal 的 `docs/` **整棵不在** · ② formal 的 `docs/` 在但**扫到 0 篇** ·
+             ③ devdocs 面**扫到 0 篇** · ④ devdocs 根**整棵不在盘**（取不到根）。
   改前三条都走 `errs.append` ⇒ 经末行 `return (RC_FAIL if errs else RC_OK)` **恒落 rc=1**，
   与本文件头「退码」那一行（缺件/空转 ⇒ **2**）及 K3 自述不符 —— 「**判据不可判**」被记成
   「**有阻断红**」是两种命：读的人会去改文档，而真问题是语料不在。
   改后三条一律进 `blocked` ⇒ **先于 `errs`** 判 `RC_BLOCKED`（`2` 是**既有**那一档，**不新立码** ✗）。
   成对负控在本件 `--self-test` ⑮/⑯/⑰ 三格：每格都是「这一条分支给 2」＋「同一条分支在语料
   真在且非空时**照旧** 0/1」—— 不许为了拿到 2 而把红判没了。
-  另一条**刻意不动**：devdocs 根**整棵不在**（`../Zerg-内部文档/…` 在公开树里天生没有）仍走
-  「本机判不了这一棵（不红、给 REPORT 0）」那一行 —— 它是登记在案的既有口径，**不在**本次三格内 ✗。
+  ★ 2026-09-27（`GAP-20260927-82` 批2）把**第四条**从「静默绿」补进本档：devdocs 根取不到
+  （`ZERG_DEVDOCS_ROOT` / 同级根 `ZERG_DOCS_ALT` / `ZERG_DOCS` 都指不到、默认 `<仓父>/Zerg-内部文档/…`
+  也不在盘）时，改前只 `lines.append("…不红、给 REPORT 0")` 后 `continue` ⇒ 不归 `blocked`
+  ⇒ **rc 仍 0/1 = 静默绿** ✗；改后与 ①/②/③ 同法归 `blocked` ⇒ `RC_BLOCKED(rc=2)`。
+  口径理由：「本机判不了这一棵」**不是**「这一棵全过」—— 取不到语料就**不给结论**，不当 0 也不当 1。
+  成对负控见 `--self-test` ⑰c：缺根 ⇒ 2；同格把根指回真在的语料（⑰b）⇒ 照旧 0（不放松真判据）。
 
 两棵语料（§二 2.3 文档体系 + §6.4 D3 的接缝）
 ---------------------------------------------
   formal  = 正式面 `docs/**`（**手写命令示例在这里应当是阻断**；今天仓内 0 命中 ⇒ 一上来就能挂阻断档）
-  devdocs = 开发文档面 `Zerg-内部文档/项目文档/v2.5.10/`（**先只报告档起步**：1250+ 篇历史稿，
+  devdocs = 开发文档面 `Zerg-内部文档/项目文档/v2.5.13/`（**先只报告档起步**：1250+ 篇历史稿，
             一次全红等于锁死提交闸 —— 照 D2 先例与《待办 D3》② 的节奏，**清到 0 再升 `tri`**）
 
 两棵的档位**不许一样**：formal 阻断 + devdocs 只报告 —— 这个差本身就是 D3 的落地节奏
@@ -80,13 +85,13 @@ tri-report 语义（§6.3 S6 的「起步 tri-report + baseline 棘轮」）
   formal 侧走 **tri**（rc=1 阻断）—— 基线 = 0（今天仓内 0 命中 ⇒ 起步即阻断，不放假绿）。
 
 退码（§4.1 K3，不新立）：0 全过 · 1 有阻断红 · 2 **不给结论**（缺件/空转/判据不可判/自检不过）。
-  语料缺件/空转的**三条分支**（`docs/` 不在 · `docs/` 0 篇 · devdocs 0 篇）恒走 **2**（见上 ★ · `Q-157`）。
+  语料缺件/空转的**四条分支**（`docs/` 不在 · `docs/` 0 篇 · devdocs 0 篇 · devdocs 根不在盘）恒走 **2**。
 
 用法：
   python3 scripts/gates/check-doc-cmds.py                      # 两棵都判（默认档）
   python3 scripts/gates/check-doc-cmds.py --scope formal       # 只判正式面
-  python3 scripts/gates/check-doc-cmds.py --scope devdocs      # 只判开发文档面（语料不在主仓 —— 走 ZERG_DEVDOCS_ROOT 或默认 ../Zerg-内部文档/项目文档/v2.5.10）
-  python3 scripts/gates/check-doc-cmds.py --self-test          # 成对负控（好件/坏件/空转 + 旗标/主题 + 身份行/噪声 + 语料缺件三条分支）；**组数以末行自印为准**（不写死）
+  python3 scripts/gates/check-doc-cmds.py --scope devdocs      # 只判开发文档面（语料不在主仓 —— 走 ZERG_DEVDOCS_ROOT 或同级根 ZERG_DOCS_ALT/ZERG_DOCS，默认 ../Zerg-内部文档/项目文档/v2.5.13；取不到根 ⇒ rc=2）
+  python3 scripts/gates/check-doc-cmds.py --self-test          # 成对负控（好件/坏件/空转 + 旗标/主题 + 身份行/噪声 + 语料缺件四条分支，含 devdocs 根不在盘）；**组数以末行自印为准**（不写死）
 """
 import argparse
 import json
@@ -344,6 +349,17 @@ def load_baseline(root):
         return None
 
 
+def sibling_docs_base(root):
+    """同级开发文档仓根（仓外 · 绝对路径）—— 与同族件**同一取根规则**（批1 归一 · `GAP-20260927-82`）。
+
+    优先级：`ZERG_DOCS_ALT` > `ZERG_DOCS` > `<仓根 的上一级>/Zerg-内部文档`
+    （与 `check-doc-meta.py` / `check-glossary.py` / `check-doc-freshness.py` 逐字同口径；
+    本件**不另立**第三套旋钮名 ✗）。
+    """
+    return os.path.abspath(os.environ.get("ZERG_DOCS_ALT") or os.environ.get("ZERG_DOCS")
+                           or os.path.join(os.path.dirname(os.path.abspath(root)), "Zerg-内部文档"))
+
+
 def check(root, scopes):
     if not os.path.isfile(os.path.join(root, MAIN_REL)):
         return RC_BLOCKED, ["⛔ 不给结论：命令树读不出来（%s 缺件/空转）—— 判据不可判 ⇒ 不给结论" % MAIN_REL]
@@ -373,10 +389,14 @@ def check(root, scopes):
                 errs.append("formal（正式面 · **阻断**）：%d 处手写 `zerg …` 示例拼不到命令树（§九 M12）" % n)
         else:
             docs_root = os.environ.get("ZERG_DEVDOCS_ROOT") or os.path.join(
-                os.path.dirname(root), "Zerg-内部文档", "项目文档", "v2.5.13")
+                sibling_docs_base(root), "项目文档", "v2.5.13")
             files = collect_md(os.path.dirname(docs_root), os.path.basename(docs_root))
             if files is None:
-                lines.append("devdocs：开发文档面不在（%s）—— 本机判不了这一棵（不红、给 REPORT 0）" % docs_root)
+                # 取不到根 ⇒ 与 ①/②/③ 同档：归 blocked（rc=2 · **不当 0 也不当 1**）——
+                # 改前这里只 lines.append(…不红、给 REPORT 0) + continue ⇒ 静默绿（`GAP-20260927-82` 批2）。
+                blocked.append("⛔ 不给结论：devdocs 根整棵不在盘（%s · 语料域缺件）—— 判据不可判"
+                               "（换根请设 `ZERG_DEVDOCS_ROOT` 或同级根 `ZERG_DOCS_ALT`/`ZERG_DOCS`）"
+                               % docs_root)
                 continue
             if not files:
                 blocked.append("⛔ 不给结论：devdocs 扫到 0 篇（空转 = 假绿）—— 判据不可判")
@@ -609,6 +629,15 @@ def self_test():
     open(os.path.join(empty_dev, "good.md"), "w", encoding="utf-8").write("行内 `zerg version` 一行好件。\n")
     rc, _ = check(tmp, ["devdocs"])
     case("⑰b 成对负控（devdocs · 0 篇那根塞回好件 ⇒ 0）", 0, rc)
+    del os.environ["ZERG_DEVDOCS_ROOT"]
+
+    # ⑰c devdocs · **根整棵不在盘**（取不到根）⇒ 2（改前 rc=0/1 = 静默绿 · `GAP-20260927-82` 批2）
+    #     成对负控 = 同一格把根指回**真在**的语料（⑰b）⇒ 照旧 0 —— 不许为拿到 2 而放松真判据。
+    os.environ["ZERG_DEVDOCS_ROOT"] = os.path.join(tmp, "no-such-Zerg-内部文档")
+    rc, lines = check(tmp, ["devdocs"])
+    case("⑰c 缺件（devdocs · 根整棵不在盘 ⇒ 2；改前 0/1 静默绿）", 2, rc)
+    if not any("整棵不在盘" in l for l in lines):
+        bad.append("⑰c 缺件：判词里没说清「devdocs 根整棵不在盘」")
     del os.environ["ZERG_DEVDOCS_ROOT"]
 
     # ── 顶层命令 + 用法串带子动作（2026-09-29 · 治本）：定长取前两段 ⇒ 真命令**必然假红** ──────────

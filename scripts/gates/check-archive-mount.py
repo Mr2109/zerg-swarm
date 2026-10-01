@@ -31,17 +31,21 @@
   A5 **挂了但读到错件**：样本件（默认 `版次索引.md`）必须**读得到且非空**；读不到 ⇒ 「挂的不是本档」。
   A6 **两处读数一致**：`mount` 说挂了而 `hdiutil info` 不认（或反过来）⇒ **rc=2 不给结论**（读数打架）。
 
-成对负控（`--self-test` 9 格 · 合成夹具 · 一件真东西都不碰）
+成对负控（`--self-test` 13 格 · 合成夹具 · 一件真东西都不碰）
 ----------------------------------------------------------
   ① 未挂 + 原路径**不存在** ⇒ 0（这就是「明确失败」的样子）
+  ①′ 未挂 + **悬空符号链接** ⇒ 0（同上 · 与 ① 成对）
   ② 未挂 + 原路径是**空目录** ⇒ 1（**静默返回空** ⇒ 本门要防的核心形态）—— 与 ① 成对
   ③ 未挂 + 原路径是**非空实体目录** ⇒ 1（数据面与挂载面同时两份）
   ④ 已挂 read-only + 件数够 + 样本读得到 ⇒ 0
   ⑤ 已挂**可写**（挂载行无 `read-only`）⇒ 1 —— 与 ④ 成对
   ⑥ 已挂 read-only 但**件数 0** ⇒ 1（「挂了但读到空」）—— 与 ④ 成对
   ⑦ 已挂 read-only 但**挂的是别的卷**（原路径不是符号链接）⇒ 1（「不是本档」）—— 与 ④ 成对
+  ⑦′ 已挂 read-only 但**样本件读不到** ⇒ 1（「读到错件」）—— 与 ④ 成对
   ⑧ 两处读数打架（`mount` 有行 · `hdiutil` 不认）⇒ 2（不给结论）
   ⑨ 挂载表件读不到 / 0 行 ⇒ 2（空转 = 假覆盖，不许当绿）
+  ⑩ 旋钮**显式**指的归档树根在盘上取不到 ⇒ 2（不给结论）—— 与 ⑩′ 成对
+  ⑩′ 未挂**断链**（符号链接在）⇒ **不**算缺席（默认档常态 · 仍按 A3 判）
 
 用法
 ----
@@ -49,10 +53,17 @@
     python3 scripts/gates/check-archive-mount.py --root <仓根>        # 换仓根（默认取本件上一级）
     python3 scripts/gates/check-archive-mount.py --mount-table <件> --path <原路径> --min-files N
     python3 scripts/gates/check-archive-mount.py --no-hdiutil         # 只判挂载表（跳过两处读数那一格）
-    python3 scripts/gates/check-archive-mount.py --self-test          # 9 格合成夹具（不碰真目标）
+    python3 scripts/gates/check-archive-mount.py --self-test          # 13 格合成夹具（不碰真目标）
     python3 scripts/gates/check-archive-mount.py --list-rules
 
-退码：0 全绿 · 1 红（A1–A5 任一）· 2 **不给结论**（缺件 / 挂载表 0 行 / 两处读数打架 / `--self-test` 不过）
+取根体例（与同族批1/批2 同口径 · ✗ 不造新名）
+------------------------------------------------
+  归档树根（原路径）= `--path` 旗标 > env `ZERG_ARCHIVE_ROOT`（**现读在册唯一名**）> 默认 `<仓根同级>/Zerg-归档`。
+  挂载点 = `--mountpoint` 旗标 > 默认 `/Volumes/ZERG-ARCHIVE`（**无 env 旋钮** —— 现读在册名单里没有挂载点那个名 · 不造新名）。
+  缺席分支：**旋钮显式指的**归档树根在盘上完全取不到（连符号链接都没有）⇒ rc=2 **不给结论**；
+  **默认档（无旋钮）不判这一档** —— 未挂**断链**（符号链接在、目标 = 挂载点不在）是常态（A3 核心格）。
+
+退码：0 全绿 · 1 红（A1–A5 任一）· 2 **不给结论**（挂载表 0 行 / 两处读数打架 / 旋钮显式指的归档树根取不到 / `--self-test` 不过）
 
 红线：**本门只读** —— 不挂载、不卸载、不写任何件、不 `chmod`、不删（归档区一个字节都不碰）。
      「挂/摘」只有一个入口：`bash scripts/svc/archive-mount.sh on|off|status`（按需 · 不信手挂）。
@@ -122,6 +133,15 @@ def count_files(path):
     for root, _dirs, files in os.walk(path):
         n += len(files)
     return n
+
+
+def archive_root_absent(path):
+    """归档树根在盘上**完全取不到**（既不是符号链接、也不是实体档/目录）。
+
+    注意：**悬空符号链接不算缺席** —— 那是「未挂档」的常态（符号链接在、目标 = 挂载点不在），
+    正是本门 A3 核心格要判的形态（读它**必须明确失败** = 对的样子）。缺席 = 连符号链接都没有。
+    """
+    return (not os.path.islink(path)) and (not os.path.exists(path))
 
 
 def judge(verdict, mount_text, path, mountpoint, min_files, sample, hdiutil_text, hdiutil_checked):
@@ -210,7 +230,7 @@ def read_text(cmd=None, path=None):
 
 
 def run_self_test():
-    """10 格合成夹具（成对为主）—— 一件真东西都不碰。
+    """13 格合成夹具（成对为主）—— 一件真东西都不碰。
 
     夹具里的挂载点路径是**临时目录**（不是 `/Volumes/ZERG-ARCHIVE`）⇒ 挂载表那一行**按夹具自己的
     挂载点**拼出来 —— 这一条同时现证了「按挂载点路径取行」而非按卷名（设计稿 §三 3.5）。
@@ -296,6 +316,22 @@ def run_self_test():
     case("⑦′ 已挂 read-only 但**样本件读不到** ⇒ 「读到错件」", EXIT_RED, "ro", build=mounted_ok_no_sample)
     case("⑧ 两处读数打架（挂载表有行 · `hdiutil` 不认）⇒ 不给结论", EXIT_NOCONCL, "ro", build=mounted_ok, hdi="unknown")
     case("⑨ 挂载表 0 行 ⇒ 空转不给结论", EXIT_NOCONCL, None)
+
+    # ⑩ 新档（批3）的牙：旋钮**显式**指的归档树根在盘上取不到 ⇒ 缺席档 rc=2；未挂**断链**不算缺席（成对）。
+    with tempfile.TemporaryDirectory() as d10:
+        absent_p = os.path.join(d10, "no-such-arch")
+        dangling_p = os.path.join(d10, "dangling-arch")
+        os.symlink(os.path.join(d10, "gone"), dangling_p)
+        for label, want, probe in (
+                ("⑩ 旋钮指到不在盘的归档树根 ⇒ 缺席档（rc=2 档）", True, absent_p),
+                ("⑩′ 未挂断链（符号链接在）⇒ **不**算缺席（默认档常态）", False, dangling_p)):
+            total += 1
+            got = archive_root_absent(probe)
+            ok = got == want
+            if not ok:
+                bad += 1
+            print("  %s %s（archive_root_absent=%s · 期望 %s）" % ("✓" if ok else "✗", label, got, want))
+
     print("  ── 自检：%d 格 · %d 格不过" % (total, bad))
     return 0 if bad == 0 else EXIT_NOCONCL
 
@@ -338,22 +374,38 @@ def main():
     a = ap.parse_args()
 
     if a.list_rules:
-        print("门㉛ 归档挂载档 —— 判据（A 档）；缺陷一格 = rc=1；读数打架/缺件/空转 = rc=2")
+        print("门㉛ 归档挂载档 —— 判据（A 档）；缺陷一格 = rc=1；读数打架/空转/旋钮指空的树根 = rc=2")
         for c, m, src in RULES:
             print("  %s %s（%s）" % (c, m, src))
         print("  红线：本门只读 —— 不挂/不摘/不写/不 chmod；挂摘只走 `bash scripts/svc/archive-mount.sh on|off|status`")
         return EXIT_OK
 
     if a.self_test:
-        print("── 自检（合成夹具 · 11 格成对负控）──")
+        print("── 自检（合成夹具 · 13 格成对负控）──")
         rc = run_self_test()
         print("自检结论: %s" % ("全过" if rc == 0 else "不过（拒绝扫真目标）"))
         return rc
 
-    # 仓根 = 本件上溯三级（`scripts/gates/<件>` → 仓根）；原路径 = **仓根同级**的 `Zerg-归档`
-    # （三处硬编码用的就是这个名字 —— 现读 `check-dangling-refs.py:76 ARCH_TREE_NAME` 等三点）。
+    # 仓根 = 本件上溯三级（`scripts/gates/<件>` → 仓根）；归档树根（原路径）= **仓根同级**的 `Zerg-归档`
+    # （三处硬编码用的就是这个名字 —— 现读 `check-dangling-refs.py:646 ARCH_TREE_NAME` 等三点）。
+    # 取根体例（与批1/批2 同口径 · ✗ 不造新名）：`--path` 旗标 > env `ZERG_ARCHIVE_ROOT`（**现读在册唯一名**）
+    # > 默认 `<仓根同级>/Zerg-归档`（默认值逐字不变 ⇒ **无旋钮档零行为变更**）。
     root = a.root or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    path = a.path or os.path.join(os.path.dirname(os.path.abspath(root)), DEFAULT_ARCHIVE_NAME)
+    explicit_arch = a.path or (os.environ.get("ZERG_ARCHIVE_ROOT") or "")
+    path = explicit_arch or os.path.join(os.path.dirname(os.path.abspath(root)), DEFAULT_ARCHIVE_NAME)
+    # 缺席分支（批3 收口 · 同族「取不到根 ⇒ 不给结论」体例）：**旋钮显式指的**归档树根若在盘上完全取不到
+    # （既不是符号链接、也不是实体档/目录）⇒ rc=2 **不给结论**（✗ 不当 0）。
+    # ⚠ 默认档（无旋钮）**不判这一档**：本机 `../Zerg-归档` 是**未挂断链**（符号链接在、目标不在），
+    #   那是本门 A3 核心格要判的常态（「未挂 ⇒ 读它明确失败」）⇒ 硬一律判 rc=2 会翻改现役默认档 ⇒ 只收口旋钮档。
+    if explicit_arch and archive_root_absent(path):
+        print("门㉛ 归档挂载档（`A8`）· 仓根 %s" % root)
+        print("  ⛔ 归档树根（旋钮**显式**指到）在盘上取不到：%s" % path)
+        print("     （既不是符号链接、也不是实体档/目录 ⇒ 挂载档判不了 ⇒ **不给结论**）")
+        print("     旋钮现读：`--path`=%r · env `ZERG_ARCHIVE_ROOT`=%r"
+              % (a.path, os.environ.get("ZERG_ARCHIVE_ROOT") or ""))
+        print("     ⚠ 默认档（无旋钮）不判这一档 —— 未挂断链是常态（见件内注释）")
+        print("⇒ **不给结论**（rc=2）")
+        return EXIT_NOCONCL
     mount_text = read_text(path=a.mount_table) if a.mount_table else read_text(cmd=["mount"])
     if mount_text is None and not a.mount_table:
         print("门㉛ 归档挂载档：挂载表读不到（`mount` 跑了没成）⇒ **不给结论**（退码 2）")

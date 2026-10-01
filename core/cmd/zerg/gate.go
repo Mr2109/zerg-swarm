@@ -3,8 +3,9 @@
 // **一条铁律：只转发，不翻译**（§6.3 S3 判据③ · §九 M11 `G1-a`）——
 //
 //	· 不另写一份步骤表（`--list` 就是步骤表的**唯一真源**，命令面只把它原样转出）；
-//	· 不动脚本退码（脚本退多少，命令面就返多少：`return cmd.ProcessState.ExitCode()`；
-//	  全文件**零分支**改写退码 —— 这就是「不翻译」的证明面）。
+//	· 不动脚本退码（脚本退多少、命令面就返多少 —— **正码**逐字透传）；
+//	  **唯一例外 = 表外负码**：子进程被信号打死时 Go 的 `ExitCode()` 给 `-1`（它**不是退码**、
+//	  是「没有退码」）⇒ 显式收回 `exitInterrupted`(130)，落点见本文件 `:198`（缺口 `GAP-20261002-18`）。
 //
 // 六条动作与脚本旗标的对应（一一对应，不加戏）；`check` 是第七条第**不走脚本**的（判据转发壳）：
 //
@@ -18,6 +19,9 @@
 //	                          （v2.5.14 · M1 首项 · 设计-判据 CLI 化-v1.7 §9.1 · 见 `family_gate_check.go`：
 //	                          名录真源 = 现读 `scripts/gates/` 目录列举；不在册 ⇒ 拒并给可用名；件自身崩 ⇒ `8`
 //	                          ＋ `detail=judge_broken` ＋ `raw_rc` —— **零新占号**）
+//	                          ★ 写工具（件头 `#zerg-class: write D2|D3`）**经壳强制危险档**：exec 前闸 ·
+//	                          缺 `--yes` ⇒ 2 `yes_required`（非交互 fail-closed）· `--dry-run` 只出计划件 ⇒ 0 ·
+//	                          过闸后壳级确认旗标不落给子件（见 `family_gate_check.go` 的写工具闸）。
 //
 // 六条**例外**（都只在命令面自己的旗标上生效，且都**不改脚本退码**）：
 //
@@ -191,8 +195,18 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		if ee, ok := err.(*exec.ExitError); ok {
 			// 门新鲜度闸：跑完了（哪怕红/不给结论）也照样把**当时**的指纹落进那一趟的产物。
 			recordRunFreshness(root, runOutdirArg, runSince, freshFP, freshHead, stderr)
-			// ★ 只转发、不翻译：脚本的码原样返回（连异常码也不改写）。
-			return ee.ExitCode()
+			// ★ 只转发、不翻译：脚本的**正码**原样返回（0/1/2/8… 逐字透传，不改写）。
+			code := ee.ExitCode()
+			// ★★ 缺口 `GAP-20261002-18`（2026-10-02）：**被信号打死**的子进程在 Go 里
+			//   `ExitCode()` 返回 **-1**（`os/exec_posix.go` 的语义：ProcessState 只带信号号、
+			//   没有退出码）⇒ 原样 `os.Exit(-1)` 会被掩码成**表外码 255**（主表根本没有 255）。
+			//   故**只对负码**显式收回 `exitInterrupted`(130)：`-1` 本就**不是退码**、是
+			//   「没有退码」⇒ 这一格不是把码翻译成别的码，是把表外码收回表内（与 `main.go:74`
+			//   的 `os.Exit(exitInterrupted)` 同号同义 —— SIGINT/SIGTERM/SIGHUP 同一路）。
+			if code < 0 {
+				return exitInterrupted
+			}
+			return code
 		}
 		fmt.Fprintf(stderr, "%s: 跑不动门禁脚本：%v\n", progName, err)
 		return exitFail

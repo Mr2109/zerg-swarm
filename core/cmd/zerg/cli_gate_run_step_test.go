@@ -19,6 +19,33 @@ import (
 	"testing"
 )
 
+// init —— 本件的测试会**真调**门跑（`zerg gate run --step`），而门跑带**单实例闸**
+// （缺口 `GAP-20260927-214`）。分片跑时门分片器**并发起 4 个进程跑同一个包**，每个进程
+// 都去拿**同一把** `<TMPDIR>/zerg-gate-instance/gate-run.lock` ⇒ 组内测试撞上「门自己那一趟
+// 持有的锁」⇒ 一律 rc=2（缺口 `GAP-20261002-05`）。
+//
+// 处置：把**本进程**的锁目录指到进程私有处 —— 用正门旋钮 `ZERG_GATE_LOCK_DIR`
+// （真源自陈「探针/沙盒用」，见 `family_gate_run_step.go` 的单实例闸注释）。每个分片进程
+// 各得一把锁 ⇒ 与门那一趟互不见面。
+//
+// **不关闸**：不用 `ZERG_GATE_NO_LOCK`（关掉会把「闸存在」这件事本身关出测试面）；
+// 只换锁域，闸照跑。进程级临时目录随系统清理（`init` 里没有 `*testing.T` 可用）。
+func init() {
+	// ★ **只在没被显式指定时才换锁域**：本包的测试会起「探针子进程」（`jlkSelfExe` 换成测试
+	// 二进制自己，见 judge_lock_test.go），而子进程启动时会**再跑一遍本 `init()`**。若无条件换，
+	// 就会把子进程从父测试**继承来的** `ZERG_GATE_LOCK_DIR`（`t.Setenv` 设的）顶掉 ⇒ 探针那一半与
+	// 持锁那一半**锁域不再相同** ⇒ 「同名竞争」不再互阻 ⇒ 跨进程三态测试假红。
+	// 显式设了（探针/沙盒/上述测试）就尊重它；只有「没人指过」时才换私有域 —— 那正是
+	// 分片跑的场景（门持锁 ＋ 分片器并发起 4 个进程 ⇒ GAP-20261002-05）。
+	if strings.TrimSpace(os.Getenv("ZERG_GATE_LOCK_DIR")) != "" {
+		return
+	}
+	d, err := os.MkdirTemp("", "zerg-grs-lock-")
+	if err == nil {
+		_ = os.Setenv("ZERG_GATE_LOCK_DIR", d)
+	}
+}
+
 // stepGateScript —— 合成门禁脚本：认识 `--step`/`--outdir`，落一行结果表，遇到 `--json` **必红**
 // （② 的判据：命令面的旗标不许漏给脚本）。`$1` 是它收到的第一枚参数。
 const stepGateScript = `if [ "${1:-}" = "--list" ]; then

@@ -149,6 +149,82 @@ def named_consts(root):
     return dict((m.group(1), int(m.group(2))) for m in CONST_RE.finditer(block))
 
 
+def strip_go_code(src):
+    """去掉 Go 源里的**字符串/字符字面量与注释**（换行原样保留、其余字符以空格顶替），
+    使 T3 的裸数字判据只看**真源码位置** —— 夹具字符串里的 `func … { return 3 }`、
+    注释里的 `return 9` 都**不算**退码（缺口 GAP-20261002-12：此前全文扫 ⇒ 假红三处）。
+    ★ 真源码里的 `return 127` 仍原样留在结果里 ⇒ **真缺口照红**（负控面不缩水）。
+    """
+    out = list(src)
+    CODE, LINE, BLOCK, STR, RAW, RUNE = range(6)
+    st = CODE
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        nx = src[i + 1] if i + 1 < n else ''
+        if st == CODE:
+            if c == '/' and nx == '/':
+                out[i] = out[i + 1] = ' '
+                i += 2
+                st = LINE
+                continue
+            if c == '/' and nx == '*':
+                out[i] = out[i + 1] = ' '
+                i += 2
+                st = BLOCK
+                continue
+            if c == '"':
+                out[i] = ' '
+                st = STR
+            elif c == '`':
+                out[i] = ' '
+                st = RAW
+            elif c == "'":
+                out[i] = ' '
+                st = RUNE
+        elif st == LINE:
+            if c == '\n':
+                st = CODE
+            else:
+                out[i] = ' '
+        elif st == BLOCK:
+            if c == '*' and nx == '/':
+                out[i] = out[i + 1] = ' '
+                i += 2
+                st = CODE
+                continue
+            if c != '\n':
+                out[i] = ' '
+        elif st == STR:
+            if c == '\\' and nx:
+                out[i] = out[i + 1] = ' '
+                i += 2
+                continue
+            if c == '"':
+                out[i] = ' '
+                st = CODE
+            elif c != '\n':
+                out[i] = ' '
+        elif st == RAW:
+            if c == '`':
+                out[i] = ' '
+                st = CODE
+            elif c != '\n':
+                out[i] = ' '
+        elif st == RUNE:
+            if c == '\\' and nx:
+                out[i] = out[i + 1] = ' '
+                i += 2
+                continue
+            if c == "'":
+                out[i] = ' '
+                st = CODE
+            elif c != '\n':
+                out[i] = ' '
+        i += 1
+    return ''.join(out)
+
+
 def bare_numeric_returns(root):
     """命令面源码里的**裸数字**退出码（`return N` / `os.Exit(N)`）→ [(file, N)]。"""
     d = os.path.join(root, 'core', 'cmd', 'zerg')
@@ -156,7 +232,7 @@ def bare_numeric_returns(root):
     for name in sorted(os.listdir(d)):
         if not name.endswith('.go') or name.endswith('_test.go'):
             continue
-        for m in BARE_RET_RE.finditer(read(os.path.join(d, name))):
+        for m in BARE_RET_RE.finditer(strip_go_code(read(os.path.join(d, name)))):
             out.append((name, int(m.group(1))))
     return out
 

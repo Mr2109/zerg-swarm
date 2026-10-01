@@ -358,6 +358,66 @@ func TestImpactLayers_MachineFaceItemsCarryLayerWhy(t *testing.T) {
 	}
 }
 
+// TestImpactLayers_PubTreeEnvOrder —— 生产取树默认的**定向判据**（承 `GAP-20261001-01` 残口）：
+// `core/cmd/zerg/family_impact_layers.go` 的取树默认必须与已收口规则逐字一致 ——
+// 主名 `ZERG_PUB_TREE` → 兼容别名 `ZERG_PUBLIC_TREE` → 无（默认=空 · 不默写任何路径）。
+//
+//	① 主名在场：本跑用它（真在的夹具树 ⇒ 出「公开面：…改变公开产出树…」那一行）；
+//	② 主名缺席、兼容别名在场：本跑**必须**读别名（旧码不读别名 ⇒ 会误判「未取数」· 本用例判红）；
+//	③ 两名都缺席：默认=空 ⇒ 照「读不到 ⇒ 未取数」走（**不打数字那一句** · 不拿 0 / 旧数顶上）。
+func TestImpactLayers_PubTreeEnvOrder(t *testing.T) {
+	t.Setenv("ZERG_REPO", repoRootFromCLI(t))
+	t.Setenv("ZERG_STATE_DIR", t.TempDir())
+	// 自造夹具产出树（仓外 · 不依赖任何写死的固定路径）。
+	pubTree := t.TempDir()
+	if err := os.WriteFile(filepath.Join(pubTree, "README.md"), []byte("laneB376 fixture\n"), 0o644); err != nil {
+		t.Fatalf("铺夹具产出树失败：%v", err)
+	}
+	tgt := "scripts/公开标记.tsv"
+
+	// ① 主名在场。
+	t.Setenv("ZERG_PUB_TREE", pubTree)
+	t.Setenv("ZERG_PUBLIC_TREE", "")
+	rc, out, errb := runCapture("impact", tgt)
+	if rc != 0 {
+		t.Fatalf("① 期望 rc=0，得到 %d · stderr=%s", rc, tail(errb, 300))
+	}
+	if line := lineOf(out, "公开面："); !strings.Contains(line, "此改动会改变公开产出树") {
+		t.Errorf("① 主名 ZERG_PUB_TREE 在场却没出数字那一行：%q", line)
+	}
+
+	// ② 主名缺席、兼容别名在场 ⇒ 必须读别名（这一格就是残口：旧码只认主名）。
+	t.Setenv("ZERG_PUB_TREE", "")
+	t.Setenv("ZERG_PUBLIC_TREE", pubTree)
+	rc2, out2, errb2 := runCapture("impact", tgt)
+	if rc2 != 0 {
+		t.Fatalf("② 期望 rc=0，得到 %d · stderr=%s", rc2, tail(errb2, 300))
+	}
+	line2 := lineOf(out2, "公开面：")
+	if !strings.Contains(line2, "此改动会改变公开产出树") {
+		t.Errorf("② 兼容别名 ZERG_PUBLIC_TREE 未被读到（主名为空时应读别名）：%q", line2)
+	}
+
+	// ③ 两名都缺席 ⇒ 默认空 ⇒ 未取数（不打数字那一句）。
+	t.Setenv("ZERG_PUB_TREE", "")
+	t.Setenv("ZERG_PUBLIC_TREE", "")
+	rc3, out3, errb3 := runCapture("impact", tgt)
+	if rc3 != 0 {
+		t.Fatalf("③ 期望 rc=0（这一行不是闸），得到 %d · stderr=%s", rc3, tail(errb3, 300))
+	}
+	line3 := lineOf(out3, "公开面：")
+	if line3 == "" {
+		t.Errorf("③ 命中生效面时这一行必须在（三件不齐 ⇒ 写未取数，而不是不打）")
+	} else {
+		if !strings.Contains(line3, "未取数") {
+			t.Errorf("③ 两名都缺席 ⇒ 该写未取数（默认=空 · 不默写路径），实得 %q", line3)
+		}
+		if strings.Contains(line3, "此改动会改变公开产出树") {
+			t.Errorf("③ 三件不齐却打出了数字那一句：%q", line3)
+		}
+	}
+}
+
 // ---- 小工具（只在本文件用）-----------------------------------------------------------------
 
 func countNonEmpty(s string) int {

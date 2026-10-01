@@ -249,7 +249,13 @@ func cmdRoutePin(inv *invocation, stdout, stderr io.Writer) int {
 		Note:       strings.TrimSpace(inv.flagVal("--note")),
 	}
 	prev, prevActive := tbl.HostFor(model, now)
-	same := prevActive && prev.Machine == machine && prev.ExpiresAt == p.ExpiresAt
+	// ★ 幂等口径（`GAP-20261002-06` · Mr2109 2026-10-02 拍板）：**不比「到期时刻」**。
+	// `p.ExpiresAt` 是 `now + ttl`、秒粒度，两次调用必落在不同刻 ⇒ 拿它比相等是**恒不等**
+	// ⇒「已在该状态」永不成立 ⇒ 每次都重写覆盖表（`CreatedAt` 被刷新、sha 变、幂等不真；
+	// 只有「同一秒内跑两次」才偶绿）。幂等的本质 = **状态已是目标状态**，「还差多久到期」
+	// 不是状态的一部分 ⇒ 真口径 = 同一目标 ＋ 同 `by`/`note` ＋ 旧钉**仍生效**。
+	// 要换更长时效：显式 `route unpin` 再 pin（正门有路），不让幂等去承担续期。
+	same := prevActive && prev.Machine == machine && prev.By == p.By && prev.Note == p.Note
 	plan := []string{
 		fmt.Sprintf("钉住     : 模型 %s → 机器 %s", model, machine),
 		fmt.Sprintf("时效     : %s（到期 %s）", ttl.Truncate(time.Second), p.ExpiresAt),
@@ -264,7 +270,7 @@ func cmdRoutePin(inv *invocation, stdout, stderr io.Writer) int {
 	if same {
 		changed := false
 		inv.changed = &changed
-		fmt.Fprintf(stderr, "%s: 已在该状态（模型 %s 已钉在 %s、到期时刻逐字相同）⇒ **幂等：覆盖表一个字节都没写**\n", progName, model, machine)
+		fmt.Fprintf(stderr, "%s: 已在该状态（模型 %s 已钉在 %s、时效未到期、同一来源与备注）⇒ **幂等：覆盖表一个字节都没写**（要改时效先 `%s route unpin --model %s --yes`）\n", progName, model, machine, progName, model)
 		return routeEmit(inv, stdout, stderr, routeRow(prev, now, routeStateActive), routeStateActive, path, model)
 	}
 	tbl.Upsert(p)

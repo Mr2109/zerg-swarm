@@ -78,50 +78,53 @@ TIMEOUT = 120
 def run_pair(cmd, timeout=TIMEOUT):
     """跑两态 → dict（**同一份 harness 供自检与真目标用**）。"""
     d = tempfile.mkdtemp(prefix="zerg-tty-")
-    cap_n, cap_t = os.path.join(d, "cap_nontty"), os.path.join(d, "cap_tty")
-    err_n, err_t = os.path.join(d, "err_nontty"), os.path.join(d, "err_tty")
-    mk_n, mk_t = os.path.join(d, "isatty_nontty"), os.path.join(d, "isatty_tty")
-    res = {"dir": d, "cmd": cmd}
-
-    # 非 TTY：stdout → 文件（isatty(1)=0）· stderr → 文件
-    inner_n = "%s >%s 2>%s; [ -t 1 ] && echo 1 >%s || echo 0 >%s" % (cmd, cap_n, err_n, mk_n, mk_n)
-    # TTY：`script -q` 给目标进程一个 PTY ⇒ stdout 是 PTY（isatty(1)=1）· stderr 仍落文件
-    inner_t = "%s 2>%s; [ -t 1 ] && echo 1 >%s || echo 0 >%s" % (cmd, err_t, mk_t, mk_t)
-
-    t0 = time.time()
     try:
-        pn = subprocess.run(["sh", "-c", inner_n], capture_output=True, timeout=timeout, cwd=REPO_ROOT)
-    except subprocess.TimeoutExpired:
-        return {**res, "note": "非 TTY 跑超时（>%ds）" % timeout}
-    except OSError as e:
-        return {**res, "note": "非 TTY 跑不起来：%s" % e}
+        cap_n, cap_t = os.path.join(d, "cap_nontty"), os.path.join(d, "cap_tty")
+        err_n, err_t = os.path.join(d, "err_nontty"), os.path.join(d, "err_tty")
+        mk_n, mk_t = os.path.join(d, "isatty_nontty"), os.path.join(d, "isatty_tty")
+        res = {"dir": d, "cmd": cmd}
 
-    if shutil.which("script") is None:
-        return {**res, "note": "`script` 不在 PATH ⇒ 造不出真 TTY（缺件不给结论）"}
-    try:
-        pt = subprocess.run(["script", "-q", cap_t, "sh", "-c", inner_t],
-                            capture_output=True, timeout=timeout, cwd=REPO_ROOT)
-    except subprocess.TimeoutExpired:
-        return {**res, "note": "TTY 跑超时（>%ds）" % timeout}
-    except OSError as e:
-        return {**res, "note": "TTY 跑不起来：%s" % e}
+        # 非 TTY：stdout → 文件（isatty(1)=0）· stderr → 文件
+        inner_n = "%s >%s 2>%s; [ -t 1 ] && echo 1 >%s || echo 0 >%s" % (cmd, cap_n, err_n, mk_n, mk_n)
+        # TTY：`script -q` 给目标进程一个 PTY ⇒ stdout 是 PTY（isatty(1)=1）· stderr 仍落文件
+        inner_t = "%s 2>%s; [ -t 1 ] && echo 1 >%s || echo 0 >%s" % (cmd, err_t, mk_t, mk_t)
 
-    def rd(p):
+        t0 = time.time()
         try:
-            return open(p, "rb").read()
-        except OSError:
-            return None
+            pn = subprocess.run(["sh", "-c", inner_n], capture_output=True, timeout=timeout, cwd=REPO_ROOT)
+        except subprocess.TimeoutExpired:
+            return {**res, "note": "非 TTY 跑超时（>%ds）" % timeout}
+        except OSError as e:
+            return {**res, "note": "非 TTY 跑不起来：%s" % e}
 
-    out_n, out_t = rd(cap_n), rd(cap_t)
-    if out_n is None or out_t is None:
-        return {**res, "note": "一侧没落 transcript（缺件）"}
-    return {**res,
-            "out_n": out_n, "out_t": out_t,
-            "err_n": rd(err_n) or b"", "err_t": rd(err_t) or b"",
-            "rc_n": pn.returncode, "rc_t": pt.returncode,
-            "isatty_n": (rd(mk_n) or b"").strip().decode() or "取不到",
-            "isatty_t": (rd(mk_t) or b"").strip().decode() or "取不到",
-            "secs": time.time() - t0}
+        if shutil.which("script") is None:
+            return {**res, "note": "`script` 不在 PATH ⇒ 造不出真 TTY（缺件不给结论）"}
+        try:
+            pt = subprocess.run(["script", "-q", cap_t, "sh", "-c", inner_t],
+                                capture_output=True, timeout=timeout, cwd=REPO_ROOT)
+        except subprocess.TimeoutExpired:
+            return {**res, "note": "TTY 跑超时（>%ds）" % timeout}
+        except OSError as e:
+            return {**res, "note": "TTY 跑不起来：%s" % e}
+
+        def rd(p):
+            try:
+                return open(p, "rb").read()
+            except OSError:
+                return None
+
+        out_n, out_t = rd(cap_n), rd(cap_t)
+        if out_n is None or out_t is None:
+            return {**res, "note": "一侧没落 transcript（缺件）"}
+        return {**res,
+                "out_n": out_n, "out_t": out_t,
+                "err_n": rd(err_n) or b"", "err_t": rd(err_t) or b"",
+                "rc_n": pn.returncode, "rc_t": pt.returncode,
+                "isatty_n": (rd(mk_n) or b"").strip().decode() or "取不到",
+                "isatty_t": (rd(mk_t) or b"").strip().decode() or "取不到",
+                "secs": time.time() - t0}
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def normalize_tty(raw):

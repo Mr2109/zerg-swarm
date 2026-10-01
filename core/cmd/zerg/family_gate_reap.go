@@ -11,10 +11,17 @@
 //
 // 四条口径：
 //
-//	① 分类（`--stale`）—— 一个门根算**陈旧** iff 它不是本趟自身树，且满足其一：
-//	   · 门谱系令牌里那个门 pid **已不在进程表**（= 死趟残儿）；或
-//	   · 祖链已断（`ppid == 1` —— 拉起它的那一层壳已经没了 ⇒ 这趟门不可能再被正确收集）。
-//	   其余（父壳还在 = 真在飞的门跑）一律**跳过并如实报**，一个字节都不动。
+//	① 分类（`--stale`）—— 一个门根算**陈旧** iff 它不是本趟自身树，且**两条都成立**：
+//	   · **祖链已断**：门谱系令牌里那个门 pid **已不在进程表**（= 死趟残儿）；或 `ppid == 1`
+//	     （拉起它的那一层壳已经没了）；**并且**
+//	   · **谱系内无活的**：根 + **全部后代**（门与非门，递归）里**没有**任何「在烧 CPU」
+//	     （`pcpu > 0`）或「刚起」的活子进程（后代 `etime < gateReapYoungSecs`）。
+//	   ★ 后一条是 2026-10-01 现读补上的（`GAP-20261001-17` · P0）：原判据只看 `ppid == 1`，
+//	     实测把**活的门跑**（根 pid=69881 `ppid=1`、子 85695 `etime=00:03` 在飞）也判成 `stale`
+//	     ⇒ 带 `--yes` 会杀掉正在跑的真门跑（毁掉唯一反馈通道），与它自称的「活的门跑一个不碰」
+//	     自相矛盾。铁律：僵壳 =「根 + 无子进程 + 0% CPU 持续」或「整棵树里没有任何在烧 CPU 的活」；
+//	     活门跑永不回收。**保守取向：拿不准就不判 stale**（把活门跑误杀 = 灾难，漏收残儿 = 只多一枚清单行）。
+//	   · 其余（父壳还在、或谱系里还有活的）一律**跳过并如实报**，一个字节都不动。
 //	② 回收单位 = 根**及其门谱系**（`precommit-gates.sh` 后代，递归）—— 只掐根会立刻把子门
 //	   变成新的根（实测：43 根之下另有 43 个门），等式收不干净。非门后代（真活工）**不碰**。
 //	③ 每个收回动作落审计（append-only jsonl · 仓外 `<锁目录>/reap-audit.jsonl`），失败即出声。
@@ -37,28 +44,41 @@ import (
 
 const gateReapScriptTag = "precommit-gates.sh"
 
+// gateReapYoungSecs —— 「刚起」门限（秒）：谱系**后代**的 `etime` 小于它 ⇒ 视为活的在飞工
+// （新起的门步子进程正是 `GAP-20261001-17` 的病灶形态）。★ 不是魔数绕法 —— 它是保守取向的显式门限：
+// 拿不准就不判 stale。根的**自身**年龄不参判（孤儿根被收养的时点不代表活跃度），根只看 `pcpu`。
+const gateReapYoungSecs = 300
+
 // gateReapFields —— `gate reap --json` 的全部字段（K1：机器面先定）。
 var gateReapFields = []string{"pid", "ppid", "token", "orphan", "verdict", "lineage", "work", "reason", "cmd"}
 
 // gateProc —— 进程表里一行门进程。
 type gateProc struct {
-	pid  int
-	ppid int
-	cmd  string
-	tok  string
+	pid   int
+	ppid  int
+	pcpu  float64
+	etime string
+	cmd   string
+	tok   string
 }
 
-// gateReapScan —— 读进程表（`ps -Ao pid=,ppid=,command=`），只挑门进程。
+// gateReapStat —— 全表任一进程的活性读数（判「谱系里有没有活的」要用全表，不只门表）。
+type gateReapStat struct {
+	pcpu  float64
+	etime string
+}
+
+// gateReapScan —— 读进程表（`ps -Ao pid=,ppid=,pcpu=,etime=,command=`），只挑门进程。
 // 取不到 ⇒ 第二个返回值为假（调用方判「读不到不当没有」⇒ 不给结论）。
 func gateReapScan() (map[int]gateProc, bool) {
-	out, err := exec.Command("ps", "-Ao", "pid=,ppid=,command=").Output()
+	out, err := exec.Command("ps", "-Ao", "pid=,ppid=,pcpu=,etime=,command=").Output()
 	if err != nil || len(out) == 0 {
 		return nil, false
 	}
 	m := map[int]gateProc{}
 	for _, ln := range strings.Split(string(out), "\n") {
 		f := strings.Fields(ln)
-		if len(f) < 3 {
+		if len(f) < 5 {
 			continue
 		}
 		pid, e1 := strconv.Atoi(f[0])
@@ -66,11 +86,12 @@ func gateReapScan() (map[int]gateProc, bool) {
 		if e1 != nil || e2 != nil {
 			continue
 		}
-		cmd := strings.TrimSpace(ln[strings.Index(ln, f[2]):])
+		cpu, _ := strconv.ParseFloat(f[2], 64)
+		cmd := strings.TrimSpace(ln[strings.Index(ln, f[4]):])
 		if !strings.Contains(cmd, gateReapScriptTag) {
 			continue
 		}
-		gp := gateProc{pid: pid, ppid: ppid, cmd: cmd}
+		gp := gateProc{pid: pid, ppid: ppid, pcpu: cpu, etime: f[3], cmd: cmd}
 		if k := strings.Index(cmd, "--zerg-lane-token="); k >= 0 {
 			rest := cmd[k+len("--zerg-lane-token="):]
 			if j := strings.IndexAny(rest, " \t"); j >= 0 {
@@ -171,6 +192,106 @@ func gateReapAllCmds() map[int]string {
 		m[pid] = strings.TrimSpace(ln[i:])
 	}
 	return m
+}
+
+// gateReapAllStat —— 全表 pid ⇒ (pcpu, etime)（判「谱系里有没有活的」要全表：活子进程常是**非门**工）。
+func gateReapAllStat() map[int]gateReapStat {
+	out, _ := exec.Command("ps", "-Ao", "pid=,pcpu=,etime=").Output()
+	m := map[int]gateReapStat{}
+	for _, ln := range strings.Split(string(out), "\n") {
+		f := strings.Fields(ln)
+		if len(f) < 3 {
+			continue
+		}
+		pid, e := strconv.Atoi(f[0])
+		if e != nil {
+			continue
+		}
+		cpu, _ := strconv.ParseFloat(f[1], 64)
+		m[pid] = gateReapStat{pcpu: cpu, etime: f[2]}
+	}
+	return m
+}
+
+// gateReapEtimeSecs —— `ps etime`（`[[dd-]hh:]mm:ss`）⇒ 秒；解析不了 ⇒ -1（当作读不到，不据此判活）。
+func gateReapEtimeSecs(s string) int {
+	days := 0
+	if k := strings.Index(s, "-"); k >= 0 {
+		d, err := strconv.Atoi(s[:k])
+		if err != nil {
+			return -1
+		}
+		days = d
+		s = s[k+1:]
+	}
+	parts := strings.Split(s, ":")
+	var h, m, sec int
+	switch len(parts) {
+	case 2:
+		var e1, e2 error
+		m, e1 = strconv.Atoi(parts[0])
+		sec, e2 = strconv.Atoi(parts[1])
+		if e1 != nil || e2 != nil {
+			return -1
+		}
+	case 3:
+		var e1, e2, e3 error
+		h, e1 = strconv.Atoi(parts[0])
+		m, e2 = strconv.Atoi(parts[1])
+		sec, e3 = strconv.Atoi(parts[2])
+		if e1 != nil || e2 != nil || e3 != nil {
+			return -1
+		}
+	default:
+		return -1
+	}
+	return days*86400 + h*3600 + m*60 + sec
+}
+
+// gateReapAllDescendants —— 根 + **全部**后代（门与非门，递归），升序。
+// 与 `gateReapLineage`（只门过后代 · 用于**动作面**）分工不同：本条用于**判据面**的活性判读。
+func gateReapAllDescendants(root int, allPPID map[int]int) []int {
+	kids := map[int][]int{}
+	for p, pp := range allPPID {
+		kids[pp] = append(kids[pp], p)
+	}
+	out := []int{root}
+	seen := map[int]bool{root: true}
+	var walk func(int)
+	walk = func(p int) {
+		for _, c := range kids[p] {
+			if seen[c] {
+				continue
+			}
+			seen[c] = true
+			out = append(out, c)
+			walk(c)
+		}
+	}
+	walk(root)
+	sort.Ints(out)
+	return out
+}
+
+// gateReapLiveInTree —— 谱系（根 + 全部后代）里是否存在「活的」进程。命中 ⇒ (true, pid, 理由)。
+// 活 = 任一进程 `pcpu > 0`（在烧 CPU）；或任一**后代**（不含根本身）`etime < gateReapYoungSecs`（刚起 ⇒ 在飞）。
+// 读不到某个进程的 `ps` 读数 ⇒ 跳过那一行（不据此判活）；**保守取向**：宁可漏收也不误杀活门跑。
+func gateReapLiveInTree(root int, allPPID map[int]int, stat map[int]gateReapStat) (bool, int, string) {
+	for _, p := range gateReapAllDescendants(root, allPPID) {
+		st, ok := stat[p]
+		if !ok {
+			continue
+		}
+		if st.pcpu > 0 {
+			return true, p, fmt.Sprintf("pcpu=%.1f%%", st.pcpu)
+		}
+		if p != root {
+			if e := gateReapEtimeSecs(st.etime); e >= 0 && e < gateReapYoungSecs {
+				return true, p, fmt.Sprintf("etime=%s（<%ds ⇒ 刚起在飞）", st.etime, gateReapYoungSecs)
+			}
+		}
+	}
+	return false, 0, ""
 }
 
 // gateReapRoots —— 门根 = 祖链上**没有第二个门**的门进程（与自举件 `gate_root_count_check` 同一算法）。
@@ -291,6 +412,7 @@ func cmdGateReap(inv *invocation, stdout, stderr io.Writer) int {
 		return exitBlocked
 	}
 	allPPID := gateReapAllPPID()
+	stat := gateReapAllStat()
 	cmds := gateReapAllCmds()
 	self := gateReapSelfPids(gate, allPPID)
 	roots := gateReapRoots(gate)
@@ -302,7 +424,7 @@ func cmdGateReap(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		gp := gate[r]
 		orphan := gp.ppid == 1 || allPPID[gp.ppid] == 0
-		stale := orphan
+		broken := orphan
 		reason := "祖链已断（ppid=1：拉起它的那一层壳已不在）"
 		if gp.tok != "" {
 			tp := 0
@@ -310,14 +432,25 @@ func cmdGateReap(inv *invocation, stdout, stderr io.Writer) int {
 				tp, _ = strconv.Atoi(gp.tok[:k])
 			}
 			if tp > 0 && allPPID[tp] == 0 {
-				stale = true
+				broken = true
 				reason = fmt.Sprintf("门谱系令牌 pid=%d 已不在进程表（死趟残儿）", tp)
+			}
+		}
+		stale := broken
+		if broken {
+			// ★ 并入「谱系内无活子进程 / 无烧 CPU 的活」—— 活门跑永不回收（`GAP-20261001-17`）。
+			// 祖链断 ≠ 门跑已死：根自己可能还活着并在拉子步子进程 —— 那种根**一个字节都不动**。
+			if live, lp, why := gateReapLiveInTree(r, allPPID, stat); live {
+				stale = false
+				reason = fmt.Sprintf("祖链虽断，但谱系内仍有活的（pid=%d %s）⇒ 判**活** · 绝不碰", lp, why)
 			}
 		}
 		v := "stale"
 		if !stale {
 			v = "live"
-			reason = "父壳还在 ⇒ 真在飞的门跑 ⇒ **跳过**（绝不碰）"
+			if !broken {
+				reason = "父壳还在 ⇒ 真在飞的门跑 ⇒ **跳过**（绝不碰）"
+			}
 		}
 		rows = append(rows, gateReapRow{pid: r, ppid: gp.ppid, tok: gp.tok, orphan: orphan, verdict: v,
 			lineage: gateReapLineage(r, allPPID, gate), work: workersUnder(r, allPPID, cmds),
