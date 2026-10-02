@@ -26,9 +26,10 @@
 //	   （**单开一件**：`edit_audit.jsonl` 的语义是「改件」）—— 审计写不进去 ⇒ **不动进程**（rc=8）。
 //
 // 红线（本波）：**绝不真重启主控**。执行动作与就绪等待各留一枚**函数级接缝**
-// （`coreRestartAction` / `coreRestartAuditPath` …）+ 一枚自测桩环境变量 `ZERG_CORE_RESTART_STUB`
-// ——后者的形态照 `scripts/build/zerg-swap-core.sh` 的 `ZERG_SWAP_RESTART_STUB` **同形**（那件也是
-// 只在自测档设它）。本波的全部「真跑」证据都在这两个接缝上做，真 `kickstart` **一次都没发生**。
+// （`coreRestartAction` / `coreRestartAuditPath` …）——测试/自测桩在进程内替换这些变量即可，缝**只在 Go 里**。
+// ★ 缺口 `GAP-20260927-145`：早先还留过一枚自测桩环境变量（`os.Getenv(...)` → `bash -c` 执行那一串）
+// ⇒ 那是「执行位 ← 仓外输入」的形态，外部一次 export 即可命中（无旗标校验）⇒ **已移除**（测试缝只认上面这些变量）。
+// 本波的全部「真跑」证据都在这两个接缝上做，真 `kickstart` **一次都没发生**。
 //
 // 退码：0 干跑计划件 / 真跑且就绪三子句齐 · 1 动作失败或就绪不过 · 2 用法错（缺确认档）·
 //
@@ -478,21 +479,14 @@ func coreRestartReadyOnce(oldPid, oldLstart string) (bool, string, int) {
 		newPid, lstart, orX(oldLstart, "（未记录）")), 0
 }
 
-// ── 真跑动作（默认实现；自测桩见 coreRestartAction 与 `ZERG_CORE_RESTART_STUB`）───────────────
+// ── 真跑动作（默认实现；测试缝 = 本文件的 `coreRestartAction` 变量）─────────────────────────────
 
 // coreRestartKickstart —— `launchctl kickstart -k <域>/<标签>`（设计稿 §一.5 的 kickstart-k 那一支）。
 //
-// ★ 自测桩：`ZERG_CORE_RESTART_STUB` 非空 ⇒ 只跑那一串（照 `zerg-swap-core.sh` 的
-// `ZERG_SWAP_RESTART_STUB` 同形，本件**只在测试/探针里设它**）——不真重启。
+// ★ 测试缝**只在 Go 里**：覆盖包级变量 `coreRestartAction`（见文件头）。**不从环境变量取要执行的命令串**
+// ——缺口 `GAP-20260927-145`：`os.Getenv(...)` → `bash -c` 是「执行位 ← 仓外输入」，外部一次 export
+// 即可命中（无旗标校验）⇒ 与静态门「同件双条件」判据相冲 ⇒ 本件去掉该分支（测试改覆盖变量）。
 func coreRestartKickstart() error {
-	if stub := strings.TrimSpace(os.Getenv("ZERG_CORE_RESTART_STUB")); stub != "" {
-		fmt.Fprintf(os.Stderr, "%s: [重启] 自测桩：%s（**未真重启**）\n", progName, stub)
-		out, err := exec.Command("bash", "-c", stub).CombinedOutput()
-		if len(out) > 0 {
-			fmt.Fprint(os.Stderr, string(out))
-		}
-		return err
-	}
 	cmd := exec.Command("launchctl", "kickstart", "-k", coreRestartServiceTarget())
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	return cmd.Run()

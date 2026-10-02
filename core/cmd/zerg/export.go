@@ -21,10 +21,12 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/version"
 )
 
-// 档位（本命令的两档行为，逐条写在用法与 `zerg help export` 的输出里）：
+// 档位（本命令的三档行为，逐条写在用法与 `zerg help export` 的输出里）：
 //
-//	默认档（**裸跑**）  —— 真写一件（`导出-命令面帮助-<YYYYMMDD>.md`），stdout 出落点路径（**旧行为一字不变**）；
-//	只读档（`--dry-run`）—— **一个字节都不写**：把「逐条清单 + 它若真写会落哪件」打到 stdout（缺口 `G-17` ①）。
+//	默认档（**裸跑**）  —— **只读**：把「逐条清单 + 它若真写会落哪件」打到 stdout，**一个字节都不写**，
+//	                       退码 2（缺 `--yes`）——与 `zerg doc meta fill` 的写面同口径（缺口 `GAP-20260927-135`）；
+//	只读档（`--dry-run`）—— 同上但退码 0（显式只读）；
+//	写档（`--yes`）      —— 真写一件（`导出-命令面帮助-<YYYYMMDD>.md`），stdout 出落点路径。
 func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 	at := time.Now()
 
@@ -60,13 +62,14 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 		Root:        devDocsBase(),
 		DocsVersion: filepath.Base(outDir),
 		GeneratedAt: at.Format(time.RFC3339),
-		Written:     !inv.dryRun,
+		Written:     inv.yes && !inv.dryRun,
 		DryRun:      inv.dryRun,
 	}
 	md := renderHelpMarkdown(outDir)
 
-	// ② 默认档：真写（**旧行为一字不变**）；只读档：`--dry-run` ⇒ 这一步整个跳过。
-	if !inv.dryRun {
+	// ② 写档（`--yes` 且非干跑）才真写；默认档（裸跑）与 `--dry-run` 都**一个字节不写**。
+	write := inv.yes && !inv.dryRun
+	if write {
 		// ★ 2026-09-27（缺口 `GAP-20260927-299` · 甲档硬失败）：身份**两格同时**塌（`version.Commit` · `version.BuildTime` 皆未注入的 `unknown`，= 裸 `go build` 的形态）⇒ 导出物里那句「命令面身份」（`version.Line(progName)`）是**空白凭据** ⇒ **不写一个字节**、退 `exitBlocked`（8）。只拦「两格同时空」：单格空是 `build-all.sh` 的正常降级（读不到 HEAD），`+dirty` **不拦**（有出处 ≠ 空白凭据）。
 		if version.Commit == "unknown" && version.BuildTime == "unknown" {
 			fmt.Fprintf(stderr, "%s: **不写导出物** —— 身份两格同时是 `unknown`（`version.Commit` · `version.BuildTime` 都没注入 · 裸 `go build` 的形态）⇒ 写出件里的「命令面身份」行会是**空白凭据**\n", progName)
@@ -79,20 +82,40 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 		}
 	}
 	nCmd, nDanger := countCommands()
+	if !write && !inv.dryRun {
+		inv.setErr("usage", "missing_yes", "缺 --yes")
+	}
 	if inv.jsonGiven {
 		if rc := requireFields(inv, stderr); rc != exitOK {
 			return rc
 		}
-		return selectJSONList(stdout, stderr, inv, inv.path, helpExportFieldList(inv.fields), helpExportRows(facts))
+		rc := selectJSONList(stdout, stderr, inv, inv.path, helpExportFieldList(inv.fields), helpExportRows(facts))
+		if rc != exitOK {
+			return rc
+		}
+		if !write && !inv.dryRun {
+			return exitUsage
+		}
+		return exitOK
 	}
-	if inv.dryRun {
-		// 只读档：stdout = 落点预告 + 逐条清单（与人面/导出物**同源**：都现算自命令树）。
-		fmt.Fprintf(stdout, "（干跑 · 只读档：**一个字节都不写** · 由 `--dry-run` 打开）\n")
+	if !write {
+		// 只读档（`--dry-run` 或裸跑）：stdout = 落点预告 + 逐条清单（与人面/导出物**同源**：都现算自命令树）。
+		if inv.dryRun {
+			fmt.Fprintf(stdout, "（干跑 · 只读档：**一个字节都不写** · 由 `--dry-run` 打开）\n")
+		} else {
+			fmt.Fprintf(stdout, "（只读档：**一个字节都不写** —— 缺 `--yes`；要真写加 `--yes`）\n")
+		}
 		fmt.Fprintf(stdout, "它若真写会落：%s（版本档案目录 `%s` · 生成时刻 %s）\n", path, facts.DocsVersion, facts.GeneratedAt)
 		helpExportList(stdout)
-		fmt.Fprintf(stderr, "干跑（零副作用）：命令 %d 条 · 危险动作 %d 条（已开放 %d · 未开放 %d）· **未写任何件** · 若真写落 %s\n",
-			nCmd, nDanger, dangerOpen(), nDanger-dangerOpen(), path)
-		return exitOK
+		if inv.dryRun {
+			fmt.Fprintf(stderr, "干跑（零副作用）：命令 %d 条 · 危险动作 %d 条（已开放 %d · 未开放 %d）· **未写任何件** · 若真写落 %s\n",
+				nCmd, nDanger, dangerOpen(), nDanger-dangerOpen(), path)
+			return exitOK
+		}
+		// 裸跑（default 档，缺口 `GAP-20260927-135`）：**只读** + 退码 2（缺 --yes，与 `doc meta fill` 同口径）。
+		fmt.Fprintf(stderr, "%s: 这一步是写面（往 %s 落一件）—— **缺 `--yes` ⇒ 不执行**（退码 2）；先看 `--dry-run` 的计划件\n",
+			progName, path)
+		return exitUsage
 	}
 	fmt.Fprintln(stdout, path) // stdout 只出结果：写哪儿了
 	fmt.Fprintf(stderr, "导出 %d 条命令（其中危险动作 %d 条 · 已开放 %d · 未开放 %d）→ %s（版本档案目录 %s · 生成时刻 %s）\n",
