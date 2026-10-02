@@ -168,15 +168,15 @@ func TestCheckSignatureIdentityGatePort(t *testing.T) {
 		}
 	})
 
-	// ⑧ `--self-test` 成对负控 7 断言 ⇒ rc=0（哑化任一夹具断言必 FAIL）。
-	t.Run("self-test-七断言", func(t *testing.T) {
+	// ⑧ `--self-test` 成对负控 9 断言 ⇒ rc=0（哑化任一夹具断言必 FAIL）。
+	t.Run("self-test-九断言", func(t *testing.T) {
 		rc, out, _ := csidTestRun("--self-test")
 		if rc != 0 {
 			t.Fatalf("自检 失败：rc=%d out=%q", rc, out)
 		}
 		if !strings.Contains(out, "  ✓ 夹具① ad-hoc 件 ⇒ **必判红**（负控半边）\n") ||
 			!strings.Contains(out, "  ✓ 夹具② 原样苹果签名件 ⇒ **必判绿**（正控半边）\n") ||
-			!strings.Contains(out, "自检结论: 全过（断言 7 条 · 失败 0 条）\n") {
+			!strings.Contains(out, "自检结论: 全过（断言 9 条 · 失败 0 条）\n") {
 			t.Fatalf("自检 stdout 不符：%q", out)
 		}
 	})
@@ -264,30 +264,20 @@ func TestCheckSignatureIdentityGatePort(t *testing.T) {
 		}
 	})
 
-	// ⑭ 自回收：跑两趟 `--self-test` 后，TMPDIR 里 zerg-sigident- 前缀目录数必须回到 0（delta=0）。
+	// ⑭ 自回收：跑两趟 `--self-test` 后，专属根里 zerg-sigident- 前缀目录数必须为 0（= 已回收）。
 	t.Run("自回收-临时目录delta0", func(t *testing.T) {
-		root := t.TempDir() // ★ 专属根：自检目录随 TMPDIR 落在这里，前后计数只数自己
+		root := t.TempDir() // ★ 专属根：自检目录随 TMPDIR 落在这里，判「这根算不算已回收」只数自己
 		// 旧写法数共享 TMPDIR → 别的进程同时建/删 `zerg-sigident-` 就翻 delta ⇒ 假红（GAP-20261003-01、-race 档 4 片并跑时更易碰）。
 		t.Setenv("TMPDIR", root)
-		count := func() int {
-			es, _ := os.ReadDir(root)
-			n := 0
-			for _, e := range es {
-				if strings.HasPrefix(e.Name(), "zerg-sigident-") {
-					n++
-				}
-			}
-			return n
-		}
-		before := count()
 		for i := 0; i < 2; i++ {
 			if rc, out, _ := csidTestRun("--self-test"); rc != 0 {
 				t.Fatalf("自回收 前置失败：rc=%d out=%q", rc, out)
 			}
 		}
-		after := count()
-		if after-before != 0 {
-			t.Fatalf("自检临时目录未回收：before=%d after=%d delta=%d", before, after, after-before)
+		// 断言口径与旧 `after-before==0` 等价（专属根 before 恒为 0 ⇒ delta==0 ⇔ 根内该前缀数==0），
+		// 但改走判据件自己的 csidSelfCheck —— 与 `--self-test` 成对格**同一把尺**。
+		if err := csidSelfCheck(root); err != nil {
+			t.Fatalf("自检临时目录未回收：%v", err)
 		}
 	})
 }
