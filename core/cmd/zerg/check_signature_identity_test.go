@@ -266,8 +266,11 @@ func TestCheckSignatureIdentityGatePort(t *testing.T) {
 
 	// ⑭ 自回收：跑两趟 `--self-test` 后，TMPDIR 里 zerg-sigident- 前缀目录数必须回到 0（delta=0）。
 	t.Run("自回收-临时目录delta0", func(t *testing.T) {
+		root := t.TempDir() // ★ 专属根：自检目录随 TMPDIR 落在这里，前后计数只数自己
+		// 旧写法数共享 TMPDIR → 别的进程同时建/删 `zerg-sigident-` 就翻 delta ⇒ 假红（GAP-20261003-01、-race 档 4 片并跑时更易碰）。
+		t.Setenv("TMPDIR", root)
 		count := func() int {
-			es, _ := os.ReadDir(os.TempDir())
+			es, _ := os.ReadDir(root)
 			n := 0
 			for _, e := range es {
 				if strings.HasPrefix(e.Name(), "zerg-sigident-") {
