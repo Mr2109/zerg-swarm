@@ -17,8 +17,8 @@
     正是 GAP-20260928-69 的病根）⇒ 「新」只由**基线的差**定义。
   · 基线 = 上一趟只报告档落下的**逐件名录**（生成件 · `--dump-baseline <路径>` 生成 · 仓外）。
     基线不在盘 ⇒ **rc=2 判不了**（本门**不替**基线猜一个「全盘都是新件」的分母）。
-  · 分母 **0 件 ⇒ rc=2 不给结论**（照门① `check-gate-coverage.py:704-706` 自己的口径）——
-    「真的没有新件」与「判不了」是两态，必须分得开。
+  · 分母 **0 件分两态（GAP-20261001-21 修）**：**全树扫过（扫描面非空）∖ 在盘基线 = 0 件** ⇒ **正常态 rc=0**；
+    仅「扫描面为空 / 基线不在盘 / 显式空件集」= **判不了 ⇒ rc=2**（★ 零执行探针 ✗ 不许放宽）。
   · 口径差栏（**照实印，不并入判红**）：台账口径（上）与门① 候选面口径（`gate-coverage.config.json`
     的 `scan.script_globs` + `nosuffix_dir`）**不相等** ⇒ 两集的对差逐条点名。本门**分母取台账口径**，
     门① 候选面口径只作**参照读数**（不选它，是为了不与面①③⑤ 的「该不该接门」定义面抢活儿）。
@@ -59,7 +59,7 @@
 
   0 = 判到了（逐格给数 + 逐条点名；**报告档不阻断**）
   1 = 只有 `--strict` 档才可能：R1/R2/R3/R5 任一格 > 0（逐条点名；R4 / R6 = 旁栏不进退码）
-  2 = **不给结论**：分母 0 件 · 基线不在盘 · 任一登记表读不到 / 解析出 0 条（空转 = 假绿）·
+  2 = **不给结论**：基线不在盘 / 扫描面为空 / 显式空件集（零执行 = 假绿）· 任一登记表读不到 / 解析出 0 条 ·
       **任一面判不了**（含面④ 仓外真源不在 · 面⑥ 判据件不在）· `--self-test` 不过 ·
       `--json` 断面名不认 / 为空 · `--yes` 不与 `--dump-baseline` 连用 ·
       **面清单里出现未产出记录的面**（聚合器合成 `UNKNOWN · reason_code=MISSING_FACE · decided=false` ⇒ 退码钉 2）
@@ -112,6 +112,7 @@
 
 import argparse
 import glob as globmod
+import hashlib
 import importlib.util
 import io
 import json
@@ -168,7 +169,7 @@ FACES = (
 #   FAIL    = 判到了且该面 > 0 条缺登记（R1/R2/R3/R5）
 #   BLOCKED = 该面自己的真源读不到 / 面判不了（面级不给结论）
 #   REPORT  = 只报不判的面（R4/R6 旁栏不进退码 · 口径差栏/自指 = 参照/自指读数）
-#   UNKNOWN = 整跑在**面级判读之前**就短路（分母级判不了：扫面不在盘 / 分母 0 / 基线不在盘）⇒ 该面结论未知
+#   UNKNOWN = 整跑在**面级判读之前**就短路（分母级判不了：扫面不在盘 / 基线不在盘 / 扫描面为空）⇒ 该面结论未知
 #   ★ **HOST-REQUIRED** = **机器相关面（host-bound）**：本机家目录态、不进仓、不可移植 ⇒ 既不 PASS
 #     （假绿）也不硬 FAIL。聚合时**不计入 pass 也不计入 fail**，但必须**显式列出并暴露计数**
 #     （green gate never hides which faces did not actually run）。
@@ -370,8 +371,8 @@ def load_excludes(root):
         return None
     out = set()
     for ln in m.group(1).splitlines():
-        s = ln.strip()
-        if not s or s.startswith("#"):
+        s = ln.split("#")[0].strip()          # ★ ② 剥行内注释（消假阳性 · 与 load_drop_exact 同法）
+        if not s:
             continue
         s = s.strip('"').strip("'")
         if s:
@@ -640,9 +641,148 @@ def run_check_missing(root, paths, outdir=None, as_json=False):
 
 
 # ── 主判据 ────────────────────────────────────────────────────────────────
+# ── ③ B1-3：基线 v2（件数 + 指纹）· 确定性 · 禁部分扫描写整树 ──────────────────
+def baseline_fingerprint(face):
+    """现读件集的稳定指纹（排序逐行 · 纯内容派生 · 禁 mtime / 禁读盘序）。返回 16 位 hex。"""
+    h = hashlib.sha256()
+    for f in sorted(face):
+        h.update(f.encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest()[:16]
+
+
+def parse_baseline_header(text):
+    """基线 v2 首行注释头（件数 / 指纹）。无头（v1 旧件 / 合成夹具）⇒ (None, None) 照读。"""
+    for ln in text.splitlines()[:3]:
+        if not ln.startswith("#"):
+            continue
+        m = re.search(r"件数=(\d+)(?:\s+指纹=([0-9a-fA-F]{6,64}))?", ln)
+        if m:
+            return int(m.group(1)), m.group(2)
+    return None, None
+
+
+def scan_ledger_twice(root):
+    """双跑 cmp 自证（确定性闸）：两次扫描不等 ⇒ 判不了（禁部分扫描写整树）。"""
+    a = scan_ledger_face(root)
+    b = scan_ledger_face(root)
+    return a, (a is not None and b is not None and set(a) == set(b))
+
+
+# ── ④ B1-4 补齐档：只写纯派生面 · 面③⑤⑧ 只报「该跑哪条正门」──────────────────
+def run_sync(root, yes, baseline):
+    """补齐档：默认干跑（零写入）；显式 --yes 才真写，且只写纯派生面（面① 占位行），
+    走 temp+fsync+rename 原子写。面③（要拍档）⑤（public=no 才要·两器同批）⑧（人签）只报「该跑哪条正门」。"""
+    face, det = scan_ledger_twice(root)
+    if face is None:
+        print("✗ 扫面不在盘 ⇒ 不给结论（rc=2）", file=sys.stderr)
+        return 2
+    if not det:
+        print("✗ 双跑 cmp 不一致（扫描非确定）⇒ 拒写（禁部分扫描写整树）", file=sys.stderr)
+        return 2
+    base = set()
+    if baseline and os.path.isfile(baseline):
+        try:
+            btxt = read_text(baseline)
+        except OSError as e:
+            print("✗ 基线在盘但读不出（%s）⇒ fail-closed 拒写 rc=2" % e, file=sys.stderr)
+            return 2
+        for ln in btxt.splitlines():
+            ln = ln.strip()
+            if ln and not ln.startswith("#"):
+                base.add(ln)
+    newf = sorted(face - base)
+    marks = load_marks(root)
+    miss = [f for f in newf if marks is None or f not in marks]
+    print("── 补齐档 `--sync`（%s）──" % ("真写" if yes else "干跑 · 未写件"))
+    print("   面① 公开标记表：补占位行 %d 件" % len(miss))
+    print("   面④ 脚本台账：该跑正门 `zerg script inventory sync --docs-root <Zerg-内部文档> --yes`（本档不代跑）")
+    print("   面⑦ 判据注册表：该跑正门 `zerg gate check check-judge-registry --emit`（本档不代跑）")
+    print("   面③ 门①两张真源：该跑正门 = 人加 add_step 或 whitelist.scripts（要拍档 · 本档不替人拍）")
+    print("   面⑤ 两器排除表：该跑正门 = public=no 才要，EXCLUDES + DROP_EXACT 两器同批（本档不代改）")
+    print("   面⑧ 批准件 scope：该跑正门 = `zerg approve new --tool dev_edit`（人签 · 非交互拒）")
+    if not yes:
+        print("   ⇒ **干跑未写**：加 `--yes` 才落（只写纯派生面；面③⑤⑧ 只报该跑哪条正门）")
+        return 0
+    if not miss:
+        print("   ⇒ 计划件 0 ⇒ 零写入")
+        return 0
+    p = os.path.join(root, MARKS_REL)
+    _dir = os.path.dirname(os.path.abspath(p))
+    os.makedirs(_dir, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".gnr-marks-", dir=_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            if os.path.isfile(p):
+                fh.write(read_text(p))
+            for f in miss:
+                fh.write("%s\tno\t待补理由（--sync 占位 · 人补）\n" % f)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    print("   已写 面① 占位行 %d 件（原子写 · temp+fsync+rename）" % len(miss))
+    return 0
+
+
+def dump_baseline(root, target, yes):
+    """③ B1-3 冻结基线生成口：双跑 cmp 自证 + v2 头（件数+指纹）+ 只许下调 + 原子写（temp+fsync+rename）。"""
+    face, det = scan_ledger_twice(root)
+    if face is None:
+        print("✗ 扫面不在盘：%s ⇒ 不写基线" % os.path.join(root, "scripts"), file=sys.stderr)
+        return 2
+    if not det:  # ★ ③ 双跑 cmp 自证：扫描非确定 ⇒ 禁部分扫描写整树
+        print("✗ 双跑 cmp 不一致（扫描非确定）⇒ 拒写（禁部分扫描写整树）", file=sys.stderr)
+        return 2
+    fp = baseline_fingerprint(face)
+    old_cnt = None
+    if os.path.isfile(target):
+        try:
+            old_cnt, _ = parse_baseline_header(read_text(target))
+        except OSError:
+            old_cnt = None
+    if not yes:
+        # 默认干跑：只打印计划、一个字节都不写（比「默认真写」的写器保守）
+        print("── 冻结基线生成档（**干跑** · 未写件）")
+        print("   目标件 : %s" % target)
+        print("   将写   : %d 件（现读台账口径件集逐行 · 首行注释 + 逐件一行）" % len(face))
+        if old_cnt is not None and len(face) > old_cnt:
+            print("   ✗ 基线只许下调：新 %d > 旧 %d ⇒ 加 `--yes` 也拒写" % (len(face), old_cnt), file=sys.stderr)
+            return 2
+        print("   ⇒ **干跑未写**：加 `--yes` 才落（本件默认不写件）")
+        return 0
+    if old_cnt is not None and len(face) > old_cnt:  # ★ ③ 基线只许下调
+        print("✗ 基线只许下调：新 %d 件 > 旧 %d 件 ⇒ 拒写（fail-closed）" % (len(face), old_cnt), file=sys.stderr)
+        return 2
+    _dir = os.path.dirname(os.path.abspath(target))
+    os.makedirs(_dir, exist_ok=True)
+    fd, _tmp = tempfile.mkstemp(prefix=".gnr-base-", dir=_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("# 门76 冻结基线 v2 件数=%d 指纹=%s（现读件集 · 生成件 · 禁手维）\n" % (len(face), fp))
+            for f in sorted(face):
+                fh.write(f + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(_tmp, target)
+    except BaseException:
+        try:
+            os.unlink(_tmp)
+        except OSError:
+            pass
+        raise
+    print("基线已写：%s（%d 件）" % (target, len(face)))
+    return 0
+
+
 def audit(root, new_files=None, inv=None, baseline=None):
     res = {"counts": None, "faces": {}, "problems": [], "not_judged": [], "roster": None,
-           "face_judged": {}}
+           "face_judged": {}, "den_from_baseline": False, "den_scan_empty": True}
     ledger_face = scan_ledger_face(root)
     if ledger_face is None:
         res["problems"].append("扫面 0 件：`%s` 不在盘 ⇒ 空转 = 假绿" % os.path.join("scripts"))
@@ -663,13 +803,32 @@ def audit(root, new_files=None, inv=None, baseline=None):
                 % (baseline or DEFAULT_BASELINE))
             return res
         base = set()
-        for ln in read_text(baseline).splitlines():
+        try:
+            _btxt = read_text(baseline)
+        except OSError as _e:  # ★ ① 基线在盘但读不出 ⇒ fail-closed（未捕获 OSError 曾是 rc 回落 0 的静默绿口）
+            res["problems"].append(
+                "分母判不了：冻结基线在盘但读不出（%s：%s）⇒ fail-closed 不给结论（rc=2）"
+                % (baseline, _e))
+            return res
+        _bcount, _bfp = parse_baseline_header(_btxt)
+        for ln in _btxt.splitlines():
             ln = ln.strip()
             if ln and not ln.startswith("#"):
                 base.add(ln)
         new_files = sorted(ledger_face - base)
+        # ★ ③ B1-3：基线 v2 头（件数+指纹）· 过期即红（件在减少 ⇒ 基线已不描述本树）
+        if _bcount is not None and len(ledger_face) < _bcount:
+            res["problems"].append(
+                "基线过期（v2 头声明 %d 件 ⟷ 现读扫面 %d 件 ⇒ 件在减少）⇒ 判红 rc=2；"
+                "先跑 `--dump-baseline <仓外路径> --yes` 重打" % (_bcount, len(ledger_face)))
+        # ★ 甲/乙 分档（GAP 待入账）：分母 = **非空扫描面 ∖ 在盘基线** ⇒ 差集为空是**正常态**
+        #   （全树扫过、确定性无新件 ⇒ rc=0）；扫描面自身为空 = 零执行探针 ⇒ 仍判不了。
+        res["den_from_baseline"] = True
+        res["den_scan_empty"] = (not ledger_face)
     else:
         new_files = sorted(set(new_files))
+        res["den_from_baseline"] = False
+        res["den_scan_empty"] = (not ledger_face)
 
     def cnt(name, val):
         res["faces"][name] = val
@@ -818,7 +977,10 @@ def _verdict(res, strict, faces=None):
     c = res["counts"]
     bad = c["R1"] + c["R2"] + c["R3"] + c["R5"]              # R4 / R6 = 单列旁栏（写死边界：不进退码）
     unjudged = len(res["not_judged"]) + len(res["problems"]) + (1 if c["R4"] is None else 0)
-    if unjudged or not res["new_files"]:
+    # ★ 甲/乙 分档：分母由「**非空**扫描面 ∖ **在盘**基线」派生 ⇒ 差集 0 件 = 正常态（rc 落到 bad 判定）；
+    #   其余空件集（显式空分母 / 扫描面为空）= **零执行探针** ⇒ 仍 rc=2（✗ 不许放宽）。
+    den_ok = bool(res.get("den_from_baseline")) and not res.get("den_scan_empty")
+    if unjudged or (not res["new_files"] and not den_ok):
         return 2, bad, unjudged
     if missing_faces(res, faces):                            # ★ 缺面 ⇒ 退码钉 2
         return 2, bad, unjudged
@@ -842,7 +1004,7 @@ def build_face_states(res):
     """
     c = res.get("counts")
     fj = res.get("face_judged") or {}
-    # counts is None ⇒ audit 在读到任何面之前就短路（扫面不在盘 / 分母 0 / 基线不在盘）
+    # counts is None ⇒ audit 在读到任何面之前就短路（扫面不在盘 / 基线不在盘 / 扫描面为空）
     # ⇒ 六个登记面**一条都没判**，结论 = UNKNOWN（不是 BLOCKED：BLOCKED 留给「该面真源读不到」）。
     unknown_all = c is None
     st = {}
@@ -870,8 +1032,11 @@ def _verdict_text(res, rc):
     c = res["counts"]
     bad = c["R1"] + c["R2"] + c["R3"] + c["R5"]
     unjudged = len(res["not_judged"]) + len(res["problems"]) + (1 if c["R4"] is None else 0)
-    if unjudged or not res["new_files"]:
+    den_ok = bool(res.get("den_from_baseline")) and not res.get("den_scan_empty")
+    if unjudged or (not res["new_files"] and not den_ok):
         return "判不了 / 分母 0 ⇒ 不给结论（rc=2）"
+    if not res["new_files"]:
+        return "判到了 —— 全树 ∖ 冻结基线 = 0 件新件（正常态；五张登记表无新件可判）"
     if bad:
         return "%d 条缺登记（报告档 rc=%d）" % (bad, rc)
     return "判到了 —— 五张登记表逐面 0 条缺登记"
@@ -1037,8 +1202,12 @@ def run(root, new_files, inv, strict, baseline=None):
              "缺登记" if SELF_REL in res["items"]["R5"] else "不在缺登记名单"))
     for p in res["problems"]:
         print("  ✗ %s" % p)
-    if unjudged or not res["new_files"]:
+    den_ok = bool(res.get("den_from_baseline")) and not res.get("den_scan_empty")
+    if unjudged or (not res["new_files"] and not den_ok):
         print("  判据结论：**判不了 / 分母 0 ⇒ 不给结论（rc=2）**（真的没有 ≠ 判不了）")
+        return rc
+    if not res["new_files"]:
+        print("  判据结论：判到了 —— **全树扫过、确定性无新件**（现读件集 ∖ 冻结基线 = 0 件 · 正常态 · rc=0）")
         return rc
     if bad:
         print("  判据结论：**%d 条缺登记**（逐条点名如上）；报告档 rc=%d（只报告 · 不接闸）"
@@ -1324,6 +1493,143 @@ def run_self_test():
         shutil.rmtree(tmpW, ignore_errors=True)
         shutil.rmtree(outd, ignore_errors=True)
 
+    # (C) ★ 甲/乙 分档（本片核心 · 成对负控）：--dump-baseline 打当前树后**不再必然 rc=2** ——
+    #     「全树扫过（面非空）∖ 在盘基线 = 0 件」= 正常态 ⇒ 0；「基线不在盘 / 显式空件集 / 扫描面为空」⇒ 2（零执行 ✗ 不放宽）。
+    tmpD = tempfile.mkdtemp(prefix="gnr-selftest-")
+    try:
+        build_fixture(tmpD, probe=probe, register={"①", "②", "③", "⑤"})
+        open(os.path.join(tmpD, "inv.tsv"), "w").write("件\n%s\n" % probe)
+        baseD = os.path.join(tmpD, "baseline.tsv")
+        with open(baseD, "w") as fh:
+            fh.write("# 夹具冻结基线（现读件集快照）\n")
+            for f in sorted(scan_ledger_face(tmpD)):
+                fh.write(f + "\n")
+        _old = sys.stdout
+
+        def _quiet_rc(**kw):
+            _buf = io.StringIO()
+            sys.stdout = _buf
+            try:
+                return run(tmpD, **kw)
+            finally:
+                sys.stdout = _old
+
+        rcA = _quiet_rc(new_files=None, inv="inv.tsv", strict=False, baseline=baseD)
+        add_check("甲·全树扫过 ∖ 在盘基线 = 0 件 ⇒ 0（正常态 · dump 后不再必然 2）", 0, rcA, rcA == 0)
+        rcB = _quiet_rc(new_files=None, inv="inv.tsv", strict=False,
+                        baseline=os.path.join(tmpD, "no-such-baseline.tsv"))
+        add_check("乙·基线不在盘（真源拿不到）⇒ 2（未放宽）", 2, rcB, rcB == 2)
+        rcZ = _quiet_rc(new_files=[], inv="inv.tsv", strict=False, baseline=None)
+        add_check("乙·显式空件集（零执行探针）⇒ 2（未放宽）", 2, rcZ, rcZ == 2)
+    finally:
+        shutil.rmtree(tmpD, ignore_errors=True)
+    # 乙·扫描面为空（零执行）· 与甲 成对（同一 res 形状只差 den_scan_empty）
+    def _res_den(baseline_derived, scan_empty):
+        return {"counts": {"R1": 0, "R2": 0, "R3": 0, "R4": 0, "R5": 0, "R6": 0},
+                "new_files": [], "not_judged": [], "problems": [], "faces": {}, "face_judged": {},
+                "den_from_baseline": baseline_derived, "den_scan_empty": scan_empty}
+
+    rcSE = _verdict(_res_den(True, True), False)[0]
+    add_check("乙·扫描面为空（基线在盘但面空 = 零执行）⇒ 2（未放宽）", 2, rcSE, rcSE == 2)
+    rcSN = _verdict(_res_den(True, False), False)[0]
+    add_check("区分度·同一 res 形状：面非空 ⇒ 0 · 面空 ⇒ 2（甲/乙 真分开）", 0, rcSN,
+              rcSN == 0 and rcSE == 2)
+
+    # (D) ★ B1-5 成对负控（本片新增：① OSError 在盘但读不出 · ② 行内注释 · ③ 基线 v2 过期/只许下调/指纹读回 · ④ --sync 两态）
+    tmpS = tempfile.mkdtemp(prefix="gnr-selftest-")
+    try:
+        build_fixture(tmpS, probe=probe, register={"①", "②", "③", "⑤"})
+        open(os.path.join(tmpS, "inv.tsv"), "w").write("件\n%s\n" % probe)
+        n_scan = len(scan_ledger_face(tmpS) or set())
+
+        def _quiet(fn, *a, **kw):
+            _b = io.StringIO()
+            _oo = sys.stdout
+            sys.stdout = _b
+            try:
+                return fn(*a, **kw)
+            finally:
+                sys.stdout = _oo
+
+        # ① 基线在盘但读不出（chmod 000）⇒ 2 fail-closed ⟷ 同件可读 ⇒ 0（成对）
+        baseRO = os.path.join(tmpS, "base-ro.tsv")
+        with open(baseRO, "w") as fh:
+            fh.write("# 门76 冻结基线 v2 件数=%d 指纹=deadbeefdeadbeef\n" % n_scan)
+        os.chmod(baseRO, 0)
+        rcRO = _quiet(run, tmpS, new_files=None, inv="inv.tsv", strict=False, baseline=baseRO)
+        add_check("B1-5·① 基线在盘但读不出（chmod 000）⇒ 2（fail-closed · 未捕获 OSError 曾静默绿）",
+                  2, rcRO, rcRO == 2)
+        os.chmod(baseRO, 0o644)
+        rcROk = _quiet(run, tmpS, new_files=None, inv="inv.tsv", strict=False, baseline=baseRO)
+        add_check("B1-5·① 成对正控：同基线可读且件数吻合 ⇒ 0（读得出 ⇒ 判得了）", 0, rcROk, rcROk == 0)
+
+        # ② load_excludes 剥行内注释（消假阳性）
+        tmpL = tempfile.mkdtemp(prefix="gnr-selftest-")
+        try:
+            os.makedirs(os.path.join(tmpL, os.path.dirname(PUB_REL)), exist_ok=True)
+            with open(os.path.join(tmpL, PUB_REL), "w") as fh:
+                fh.write('EXCLUDES=(\n  "a.sh"   # 行内注释\n  "b.sh"\n)\n')
+            _ex = load_excludes(tmpL)
+        finally:
+            shutil.rmtree(tmpL, ignore_errors=True)
+        add_check("B1-5·② load_excludes 剥行内注释 ⇒ {a.sh,b.sh}（消假阳性）", 1,
+                  1 if _ex == {"a.sh", "b.sh"} else 0, _ex == {"a.sh", "b.sh"})
+        # ② 成对负控：原样不剥 ⇒ 注释尾巴混进件名（假阳性）——证明本修必要
+        tmpL2 = tempfile.mkdtemp(prefix="gnr-selftest-")
+        try:
+            os.makedirs(os.path.join(tmpL2, os.path.dirname(PUB_REL)), exist_ok=True)
+            with open(os.path.join(tmpL2, PUB_REL), "w") as fh:
+                fh.write('EXCLUDES=(\n  "a.sh"   # 行内注释\n  "b.sh"\n)\n')
+            _txt2 = read_text(os.path.join(tmpL2, PUB_REL)) or ""
+            _m2 = re.search(r"EXCLUDES=\((.*?)\)", _txt2, re.S)
+            _naive = {q.strip().strip('"').strip("'")
+                      for q in (_m2.group(1).split("\n") if _m2 else [])
+                      if q.strip() and not q.strip().startswith("#")}
+        finally:
+            shutil.rmtree(tmpL2, ignore_errors=True)
+        add_check("B1-5·② 负控：原样不剥注释 ⇒ 注释尾混入件名（假阳性 · 证明本修必要）", 1,
+                  1 if any("#" in x for x in _naive) else 0, any("#" in x for x in _naive))
+
+        # ③ 基线 v2 过期即红（声明件数 > 现读扫面）
+        baseEX = os.path.join(tmpS, "base-expired.tsv")
+        with open(baseEX, "w") as fh:
+            fh.write("# 门76 冻结基线 v2 件数=%d 指纹=0000000000000000\n" % (n_scan + 100))
+        rcEX = _quiet(run, tmpS, new_files=None, inv="inv.tsv", strict=False, baseline=baseEX)
+        add_check("B1-5·③ 基线 v2 过期（声明 %d > 现读 %d）⇒ 2（过期即红）" % (n_scan + 100, n_scan),
+                  2, rcEX, rcEX == 2)
+
+        # ③ 基线 v2 头（件数+指纹）可解析读回 + dump 只许下调拒写
+        baseSmall = os.path.join(tmpS, "base-small.tsv")
+        with open(baseSmall, "w") as fh:
+            fh.write("# 门76 冻结基线 v2 件数=1 指纹=1111111111111111\n")
+        _c, _f = parse_baseline_header(read_text(baseSmall))
+        add_check("B1-5·③ 基线 v2 头（件数/指纹）读回一致", 1,
+                  1 if (_c == 1 and _f == "1111111111111111") else 0,
+                  _c == 1 and _f == "1111111111111111")
+        rcDown = _quiet(dump_baseline, tmpS, os.path.join(tmpS, "base-down.tsv"), False)
+        # 旧基线件数=1 < 现读 n_scan ⇒ 只许下调 ⇒ 干跑也拒写 rc=2
+        rcDown2 = _quiet(dump_baseline, tmpS, baseSmall, False)
+        add_check("B1-5·③ 基线只许下调（旧 1 < 现读 %d）⇒ 干跑即拒写 2" % n_scan, 2, rcDown2, rcDown2 == 2)
+
+        # ④ --sync 干跑零写入 ⟷ --yes 真写（成对 · 原子写 · 无残留）
+        _p = os.path.join(tmpS, MARKS_REL)
+        _sha0 = hashlib.sha256(open(_p, "rb").read()).hexdigest()
+        baseS = os.path.join(tmpS, "base-sync.tsv")
+        with open(baseS, "w") as fh:
+            fh.write("# 门76 冻结基线 v2 件数=%d 指纹=cafecafecafecafe\n" % n_scan)
+        rcSD = _quiet(run_sync, tmpS, False, baseS)
+        _sha1 = hashlib.sha256(open(_p, "rb").read()).hexdigest()
+        add_check("B1-5·④ `--sync` 干跑 ⇒ 0 且零写入（marks 表 sha 逐字同）", 0, rcSD,
+                  rcSD == 0 and _sha0 == _sha1)
+        rcSY = _quiet(run_sync, tmpS, True, baseS)
+        _sha2 = hashlib.sha256(open(_p, "rb").read()).hexdigest()
+        add_check("B1-5·④ `--sync --yes` ⇒ 0 且真写（marks 表 sha 变 · 与干跑成对）", 0, rcSY,
+                  rcSY == 0 and _sha0 != _sha2)
+        _resid = [f for f in os.listdir(os.path.dirname(_p)) if f.startswith(".gnr-marks-")]
+        add_check("B1-5·④ 原子写无残留临时件（temp+fsync+rename）", 0, len(_resid), len(_resid) == 0)
+    finally:
+        shutil.rmtree(tmpS, ignore_errors=True)
+
     print("── 自检（合成夹具 · 成对 · 不扫真仓）──")
     bad = 0
     for name, want, got, ok in checks:
@@ -1356,10 +1662,16 @@ def main():
                     help="写面确认：只有 `--dump-baseline` 会写件，且**默认干跑不写**；带 `--yes` 才真落"
                          "（本件比「默认真写」的写器更保守）")
     ap.add_argument("--self-test", action="store_true", help="只跑合成夹具自检（不扫真仓）")
+    ap.add_argument("--sync", action="store_true",
+                    help="补齐档（B1-4）：默认干跑；只写纯派生面（面① 占位行）；面③⑤⑧ 只报「该跑哪条正门」；"
+                         "显式 `--yes` 才真写且 write-temp+fsync+rename")
     args = ap.parse_args()
     # 用法错（rc=2 · fail-closed）：旗标组合不合法，先判、不执行任何动作
-    if args.yes and not args.dump_baseline:
-        print("⛔ 用法错（rc=2）：`--yes` 只跟 `--dump-baseline` 连用（本件**默认干跑不写**）", file=sys.stderr)
+    if args.yes and not args.dump_baseline and not args.sync:
+        print("⛔ 用法错（rc=2）：`--yes` 只跟 `--dump-baseline`/`--sync` 连用（本件**默认干跑不写**）", file=sys.stderr)
+        return 2
+    if args.sync and (args.dump_baseline or args.check_missing):
+        print("⛔ 用法错（rc=2）：`--sync` 不与 `--dump-baseline`/`--check-missing` 同用", file=sys.stderr)
         return 2
     if args.json is not None and args.dump_baseline:
         print("⛔ 用法错（rc=2）：`--json` 只跟报告档连用（不与 `--dump-baseline` 同用）", file=sys.stderr)
@@ -1373,6 +1685,11 @@ def main():
     if args.self_test:
         return run_self_test()
     root = os.path.abspath(args.repo)
+    if args.sync:  # ④ B1-4 补齐档：只写纯派生面；面③⑤⑧ 只报「该跑哪条正门」（人拍档 / 人签）
+        if args.json is not None:
+            print("⛔ 用法错（rc=2）：`--sync` 不与 `--json` 同用（补齐档无人面 JSON 断面）", file=sys.stderr)
+            return 2
+        return run_sync(root, args.yes, args.baseline)
     if args.check_missing:
         # `--check-missing` 的机器面断面只认 `chk`（非空且逐字）
         sel = [s.strip() for s in (args.json or "").split(",") if s.strip()]
@@ -1383,24 +1700,7 @@ def main():
         cpaths = [p.strip() for p in (args.paths or "").split(",") if p.strip()]
         return run_check_missing(root, cpaths, outdir=args.outdir, as_json=(args.json is not None))
     if args.dump_baseline:
-        face = scan_ledger_face(root)
-        if face is None:
-            print("✗ 扫面不在盘：%s ⇒ 不写基线" % os.path.join(root, "scripts"), file=sys.stderr)
-            return 2
-        if not args.yes:
-            # 默认干跑：只打印计划、一个字节都不写（比「默认真写」的写器保守）
-            print("── 冻结基线生成档（**干跑** · 未写件）")
-            print("   目标件 : %s" % args.dump_baseline)
-            print("   将写   : %d 件（现读台账口径件集逐行 · 首行注释 + 逐件一行）" % len(face))
-            print("   ⇒ **干跑未写**：加 `--yes` 才落（本件默认不写件）")
-            return 0
-        os.makedirs(os.path.dirname(os.path.abspath(args.dump_baseline)), exist_ok=True)
-        with open(args.dump_baseline, "w", encoding="utf-8") as fh:
-            fh.write("# 门76 冻结基线（现读件集 · 生成件 · 禁手维）\n")
-            for f in sorted(face):
-                fh.write(f + "\n")
-        print("基线已写：%s（%d 件）" % (args.dump_baseline, len(face)))
-        return 0
+        return dump_baseline(root, args.dump_baseline, args.yes)
     if args.json is not None:
         return run_json(root, args.new_file, args.inventory, args.strict, args.baseline, args.json)
     return run(root, args.new_file, args.inventory, args.strict, args.baseline)
