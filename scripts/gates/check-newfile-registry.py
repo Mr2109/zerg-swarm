@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""check-newfile-registry.py —— 门76 **新件登记完整性**：件级 × 六张登记表（**只报告** · 起手不接闸）
+"""check-newfile-registry.py —— 门76 **新件登记完整性**：件级 × 六张登记表 ＋ .sh 门面清册（**只报告** · 起手不接闸）
 
 一句话：**一张新落的脚本件，逐面问「这张表里有没有它」**——缺哪张表就逐条点名。
 （域级对拍已由门57 `check-marks-coverage-parity.py` 做 ⇒ **本门只补件级**，不重造域级。）
@@ -35,6 +35,14 @@
   R5 ⑤ 公开链两张排除表 —— 件判 `public=no` ⇒ 件 ∈ `EXCLUDES` **且** ∈ `DROP_EXACT`（两器同批）
   R6 ⑥ **失败文案面**（**单列旁栏 · 不进退码**）—— 门① 的处置文案是否已指到**白名单档**（reason+date），
         而不是只指 `add_step`。
+
+新 `.sh` 门面清册面（**只读** · 与上面六张表并列的第七个登记面）
+
+  ⑨ `.sh` 门面清册（R7）—— 判 **盘上 `scripts/gates/*.sh` 集合 ⇄ `scripts/gates/real-gates.sh` 的
+     `SH_GATES` 冻结清册集合**的**双向差集**：任一方向非空即该面 **FAIL**（清册点名但盘上无 = 悬空登记；
+     盘上有但未进清册 = 缺登记）。真源 = `real-gates.sh` 里那条 `SH_GATES=( … )`（逐只点名 · 与门65
+     真跑档「`.sh` 门面清册」那一面**同源**）。动机 = `GAP-20261003-06`（落新 `.sh` 门件时门76 曾九面
+     全 PASS，而门65 真跑档当场 rc=8）。★ 面号取 **⑨**：`⑦` 已被 `run_sync` 绑「判据注册表」档（本批不动）。
 
 **边界（写死 · 防假红 · 一条不漏地写在这里）**
 
@@ -102,7 +110,7 @@
 机器面（`--json`）
 
   `--json <断面>`：断面为逗号分隔、只认 `faces` 与 `self`；给了就**只出 JSON**（人面向 stdout 让位）。
-  JSON 恒含：`expected_faces`（本件九面名 · **跑前先生成**）· `reported_faces`（本次实际报出的面）·
+  JSON 恒含：`expected_faces`（本件十面名 · **跑前先生成**）· `reported_faces`（本次实际报出的面）·
   `face_states`（各面 state）· `face_records`（各面 `state/reason_code/decided`）·
   `counts`（五态 + `HOST-REQUIRED` 计数）· `host_required_faces`/`host_required_count`（机器相关面）·
   `missing_faces`/`missing_count`（未产出记录的面 · 非空 ⇒ rc=2）· `fully_exercised` ·
@@ -134,6 +142,9 @@ COV_JUDGE_REL = os.path.join("scripts", "gates", "check-gate-coverage.py")
 # 门⑩ 的登记表路径**不写死**：从步骤表那条干跑步的判据件里现读（见 load_dry_module）
 PUB_REL = os.path.join("scripts", "build", "publish-public.sh")
 MIRROR_REL = os.path.join("publish", "mirror-public-lib.py")
+# 面⑨ 真源：`.sh` 门面冻结清册在 real-gates.sh 里（与门65 真跑档那一面同源）
+SH_GATES_REL = os.path.join("scripts", "gates", "real-gates.sh")
+SH_GATES_DIR = os.path.join("scripts", "gates")
 
 # 面④ 真源在**仓外**姊妹仓（生成物 · 不是手维件）：同级 `Zerg-内部文档/项目文档/<版本>/清单-脚本现状-*.tsv`
 LEDGER_SIBLING = "Zerg-内部文档"
@@ -148,9 +159,12 @@ SCRIPT_EXCLUDES = {
 # 默认基线落点（**仓外** · 生成件）：家目录缓存，不落仓、不进 git
 DEFAULT_BASELINE = os.path.join(os.path.expanduser("~"), ".zerg", "newfile-registry-baseline.tsv")
 
-# ── 机器面：门76 的**九面**（逐字对齐人面向输出里印出的面名 · 顺序 = 打印顺序）────────────
-# 为什么是这九面：六张登记表（①–⑥）＋ **⑧家目录批准件**（host-bound · 机器相关面）＋
+# ── 机器面：门76 的**十面**（逐字对齐人面向输出里印出的面名 · 顺序 = 打印顺序）────────────
+# 为什么是这十面：六张登记表（①–⑥）＋ **⑧家目录批准件**（host-bound · 机器相关面）＋
+#   **⑨.sh门面清册**（盘上 `scripts/gates/*.sh` ⇄ `real-gates.sh` 的 `SH_GATES` 双向差集）＋
 #   口径差栏（参照读数）＋ 自指（本门对自身的登记情形）。
+# ★ 面⑦ 处**故意留空档** —— 该号在 `run_sync` 里已绑「判据注册表」（`zerg gate check check-judge-registry --emit`）
+#   ⇒ 新面**取⑨、不占⑦**（✗ 别顺手把 ⑦ 填了：会与那条正门指路撞号）。
 # ★ `expected_faces()` **跑前先生成**这张清单；任何**未产出记录**的面由 `face_records` 合成
 #   `state=UNKNOWN · reason_code=MISSING_FACE · decided=false` 并**退码钉 2**（禁静默跳过缺面）。
 FACES = (
@@ -161,6 +175,7 @@ FACES = (
     "⑤两器排除表",
     "⑥失败文案面",
     "⑧家目录批准件",
+    "⑨.sh门面清册",
     "口径差栏",
     "自指",
 )
@@ -394,6 +409,37 @@ def load_drop_exact(root):
         if not s:
             continue
         out.add(s.strip('"').strip("'"))
+    return out or None
+
+
+def scan_gates_sh(root):
+    """⑨ 盘上面：`scripts/gates/*.sh` 的 basename 集（**非递归** · 与 real-gates.sh 的 `${GATEDIR}/*.sh` 同口径）。面不在 ⇒ None。"""
+    d = os.path.join(root, SH_GATES_DIR)
+    if not os.path.isdir(d):
+        return None
+    out = set()
+    for name in sorted(os.listdir(d)):
+        p = os.path.join(d, name)
+        if os.path.isfile(p) and name.endswith(".sh"):
+            out.add(name)
+    return out or None
+
+
+def load_sh_gates(root):
+    """⑨ 清册面：`real-gates.sh` 的 `SH_GATES=( … )` 冻结清册（逐只点名 · 支撑反斜杠续行）。缺 / 0 条 / 解析不了 ⇒ None。"""
+    p = os.path.join(root, SH_GATES_REL)
+    if not os.path.isfile(p):
+        return None
+    m = re.search(r"SH_GATES=\((.*?)\)", read_text(p), re.S)
+    if not m:
+        return None
+    out = set()
+    for ln in m.group(1).splitlines():
+        s = ln.split("#")[0].strip()
+        for tok in s.split():
+            tok = tok.strip('"').strip("'").strip()
+            if tok.endswith(".sh"):
+                out.add(tok)
     return out or None
 
 
@@ -701,6 +747,7 @@ def run_sync(root, yes, baseline):
     print("   面③ 门①两张真源：该跑正门 = 人加 add_step 或 whitelist.scripts（要拍档 · 本档不替人拍）")
     print("   面⑤ 两器排除表：该跑正门 = public=no 才要，EXCLUDES + DROP_EXACT 两器同批（本档不代改）")
     print("   面⑧ 批准件 scope：该跑正门 = `zerg approve new --tool dev_edit`（人签 · 非交互拒）")
+    print("   面⑨ .sh 门面清册：该跑正门 = 同批把新 `.sh` 门件登记进 `scripts/gates/real-gates.sh` 的 `SH_GATES`（人拍 · 本档不代改）")
     if not yes:
         print("   ⇒ **干跑未写**：加 `--yes` 才落（只写纯派生面；面③⑤⑧ 只报该跑哪条正门）")
         return 0
@@ -848,8 +895,15 @@ def audit(root, new_files=None, inv=None, baseline=None):
     wl_items, wl_problems = load_whitelist_scripts(root)
     excludes = load_excludes(root)
     drops = load_drop_exact(root)
+    sh_disk = scan_gates_sh(root)
+    sh_roster = load_sh_gates(root)
     led_rows, led_path = load_ledger_rows(root, inv)
     fixed, wording = load_wording(root)
+    if sh_disk is not None and sh_roster is not None:
+        sh_missing = sorted(sh_roster - sh_disk)   # 清册点名 · 盘上无（悬空登记）
+        sh_extra = sorted(sh_disk - sh_roster)     # 盘上有 · 未进清册（缺登记）
+    else:
+        sh_missing, sh_extra = [], []
 
     # 机器面：逐面「真源读到了没有」（面自身判不了 ⇒ BLOCKED；读到但整跑无结论 ⇒ UNKNOWN）
     res["face_judged"] = {
@@ -859,13 +913,15 @@ def audit(root, new_files=None, inv=None, baseline=None):
         "④脚本台账": led_rows is not None,
         "⑤两器排除表": excludes is not None and drops is not None,
         "⑥失败文案面": fixed is not None,
+        "⑨.sh门面清册": sh_disk is not None and sh_roster is not None,
     }
 
     for nm, ok, why in (("①公开标记表", marks is not None, MARKS_REL),
                         ("②干跑登记", dry_hits is not None and dry_reg is not None,
                          dry_rel or (dry_problem or "门⑩ 登记表")),
                         ("③门①两张真源", step_lines is not None and wl_items is not None, STEPS_REL),
-                        ("⑤两器排除表", excludes is not None and drops is not None, PUB_REL)):
+                        ("⑤两器排除表", excludes is not None and drops is not None, PUB_REL),
+                        ("⑨.sh门面清册", sh_disk is not None and sh_roster is not None, SH_GATES_REL)):
         if not ok:
             res["problems"].append("面%s 判不了：%s 读不到 / 解析出 0 条（真源读不全 ⇒ 绿就是假绿）" % (nm, why))
     for p in wl_problems:
@@ -910,8 +966,16 @@ def audit(root, new_files=None, inv=None, baseline=None):
     r4 = None if led_rows is None else [f for f in new_files if f not in led_rows]
     res["counts"] = {"R1": len(r1), "R2": len(r2), "R3": len(r3),
                      "R4": None if r4 is None else len(r4), "R5": len(r5),
-                     "R6": (None if fixed is None else (0 if fixed else 1))}
-    res["items"] = {"R1": r1, "R2": r2, "R3": r3, "R4": r4 or [], "R5": r5}
+                     "R6": (None if fixed is None else (0 if fixed else 1)),
+                     "R7": len(sh_missing) + len(sh_extra)}
+    res["items"] = {"R1": r1, "R2": r2, "R3": r3, "R4": r4 or [], "R5": r5,
+                    "R7": sh_missing + sh_extra}
+    res["sh_gates"] = {
+        "盘上": None if sh_disk is None else sorted(sh_disk),
+        "清册": None if sh_roster is None else sorted(sh_roster),
+        "清册悬空": sh_missing,
+        "盘上未登记": sh_extra,
+    }
     res["weak"] = weak
     res["fourth_tier"] = fourth
     res["dry_na"] = dry_na
@@ -975,7 +1039,7 @@ def _verdict(res, strict, faces=None):
     if res.get("counts") is None:
         return 2, 0, 0
     c = res["counts"]
-    bad = c["R1"] + c["R2"] + c["R3"] + c["R5"]              # R4 / R6 = 单列旁栏（写死边界：不进退码）
+    bad = c["R1"] + c["R2"] + c["R3"] + c["R5"] + c["R7"]    # R4 / R6 = 单列旁栏（不进退码）；R7 = ⑨.sh门面清册
     unjudged = len(res["not_judged"]) + len(res["problems"]) + (1 if c["R4"] is None else 0)
     # ★ 甲/乙 分档：分母由「**非空**扫描面 ∖ **在盘**基线」派生 ⇒ 差集 0 件 = 正常态（rc 落到 bad 判定）；
     #   其余空件集（显式空分母 / 扫描面为空）= **零执行探针** ⇒ 仍 rc=2（✗ 不许放宽）。
@@ -989,15 +1053,16 @@ def _verdict(res, strict, faces=None):
     return 0, bad, unjudged
 
 
-# ── 机器面（`--json`）：八面 × 五态（不改人面向一字）────────────────────────
+# ── 机器面（`--json`）：十面 × 五态（不改人面向一字）────────────────────────
 def _face_count(res, name):
     c = res.get("counts") or {}
     return {"①公开标记表": c.get("R1"), "②干跑登记": c.get("R2"), "③门①两张真源": c.get("R3"),
-            "④脚本台账": c.get("R4"), "⑤两器排除表": c.get("R5"), "⑥失败文案面": c.get("R6")}.get(name)
+            "④脚本台账": c.get("R4"), "⑤两器排除表": c.get("R5"), "⑥失败文案面": c.get("R6"),
+            "⑨.sh门面清册": c.get("R7")}.get(name)
 
 
 def build_face_states(res):
-    """①–⑥ + 口径差栏 + 自指 → 五态（PASS/FAIL/BLOCKED/REPORT/UNKNOWN）。口径见 FACES_STATES 注释。
+    """①–⑥ + ⑨ + 口径差栏 + 自指 → 五态（PASS/FAIL/BLOCKED/REPORT/UNKNOWN）。口径见 FACES_STATES 注释。
 
     ★ **host-bound 面（⑧家目录批准件）不在这里出态** —— 由 `face_records` 统一给
       `HOST-REQUIRED · SKIPPED-HOST-BOUND`（不计 pass/fail）；未产出记录的面由 `face_records` 合成缺面。
@@ -1020,6 +1085,12 @@ def build_face_states(res):
             st[name] = "REPORT" if n else "PASS"    # 旁栏不进退码：有发现记 REPORT
         else:
             st[name] = "FAIL" if n else "PASS"
+    if unknown_all:
+        st["⑨.sh门面清册"] = "UNKNOWN"
+    elif not fj.get("⑨.sh门面清册"):
+        st["⑨.sh门面清册"] = "BLOCKED"          # 清册真源读不到 / 盘面扫不到
+    else:
+        st["⑨.sh门面清册"] = "FAIL" if _face_count(res, "⑨.sh门面清册") else "PASS"
     st["口径差栏"] = ("BLOCKED" if (res.get("faces") or {}).get("口径差") is None
                     else "REPORT")    # 参照读数 · 不并入判红；台账口径扫面缺 ⇒ 参照读数也判不了
     st["自指"] = "UNKNOWN" if unknown_all else "REPORT"   # 自指依赖分母/面③⑤ ⇒ 整跑短路时未知
@@ -1030,7 +1101,7 @@ def _verdict_text(res, rc):
     if res.get("counts") is None:
         return "判不了 ⇒ 不给结论（rc=2）"
     c = res["counts"]
-    bad = c["R1"] + c["R2"] + c["R3"] + c["R5"]
+    bad = c["R1"] + c["R2"] + c["R3"] + c["R5"] + c["R7"]
     unjudged = len(res["not_judged"]) + len(res["problems"]) + (1 if c["R4"] is None else 0)
     den_ok = bool(res.get("den_from_baseline")) and not res.get("den_scan_empty")
     if unjudged or (not res["new_files"] and not den_ok):
@@ -1059,16 +1130,23 @@ def face_detail(res, states):
                     "台账行数": (res.get("ledger") or {}).get("rows")},
         "⑤两器排除表": {"缺登记": c.get("R5"), "items": items.get("R5")},
         "⑥失败文案面": {"未改文案": c.get("R6"), "文案": (res.get("wording") or {}).get("lines")},
+        "⑨.sh门面清册": {"缺登记": c.get("R7"), "items": items.get("R7"),
+                      "盘上": (res.get("sh_gates") or {}).get("盘上"),
+                      "清册": (res.get("sh_gates") or {}).get("清册"),
+                      "清册悬空": (res.get("sh_gates") or {}).get("清册悬空"),
+                      "盘上未登记": (res.get("sh_gates") or {}).get("盘上未登记")},
         "口径差栏": d.get("口径差"),
     }
     for name in FACES[:6]:
         out[name]["judged"] = bool(fj.get(name))
         out[name]["state"] = states[name]
+    out["⑨.sh门面清册"]["judged"] = bool(fj.get("⑨.sh门面清册"))
+    out["⑨.sh门面清册"]["state"] = states["⑨.sh门面清册"]
     return out
 
 
 def self_detail(res):
-    """`--json self` 断面：本门对自身八面的登记情形（逐字对齐人面向「★ 自指」那一行）。"""
+    """`--json self` 断面：本门对自身登记面的情形（逐字对齐人面向「★ 自指」那一行）。"""
     marks = res.get("marks_public_no")
     hits = res.get("dry_hits")
     items = res.get("items") or {}
@@ -1138,7 +1216,7 @@ def run_json(root, new_files, inv, strict, baseline, selector):
 def run(root, new_files, inv, strict, baseline=None):
     res = audit(root, new_files=new_files, inv=inv, baseline=baseline)
     rc, bad, unjudged = _verdict(res, strict)          # 出口判决唯一真源（同 `run_json`）
-    print("门76 新件登记完整性（件级 × 六张登记表 · **只报告**）")
+    print("门76 新件登记完整性（件级 × 六张登记表 ＋ .sh 门面清册 · **只报告**）")
     print("  仓根：%s" % root)
     d = res["faces"].get("口径差") or {}
     print("  口径差栏：台账口径 %s 件 · 门①候选面 %s 件 · 对差 %s 件（参照读数 · 不并入判红）"
@@ -1191,6 +1269,16 @@ def run(root, new_files, inv, strict, baseline=None):
             print("     %s %s" % ("✓" if w["fixed"] else "✗", ln))
         if not w["fixed"]:
             print("     ⇒ 文案仍只指 add_step；对「语料在仓外」与「写盘型」两类件是禁路 ⇒ 应改指白名单档（reason+date）")
+    sg = res.get("sh_gates") or {}
+    print("  面⑨ .sh 门面清册（盘上 `scripts/gates/*.sh` ⇄ `SH_GATES` 冻结清册 · **双向差集任一非空即 FAIL**）：%d" % c["R7"])
+    if sg.get("盘上") is None or sg.get("清册") is None:
+        print("     ✗ 面判不了（真源 %s 读不到 / 解析出 0 条）" % SH_GATES_REL)
+    else:
+        print("     盘上 %d 件 · 清册 %d 件" % (len(sg["盘上"]), len(sg["清册"])))
+        for f in sg.get("清册悬空", []):
+            print("     ✗ %s  ← 清册点名但盘上没有（悬空登记：从 `SH_GATES` 撤名 或 补回盘上那件）" % f)
+        for f in sg.get("盘上未登记", []):
+            print("     ✗ %s  ← 盘上有但没进 `SH_GATES`（须同批登记进 `real-gates.sh` · GAP-20261003-06）" % f)
     self_in = SELF_REL in res["new_files"]
     print("  ★ 自指：本门自身 %s —— 在分母内：%s · 面①：%s · 面②：%s · 面③：%s · 面④：见上「面④」那几行（台账 tsv 里暂无它 · 唯一写入口是仓外 D2 写面 · 需人签）· 面⑤：%s"
           % (SELF_REL, "是" if self_in else "否（本趟不在新件集）",
@@ -1267,7 +1355,7 @@ def report():
 
 
 def build_fixture(tmp, probe=None, register=None):
-    """合成夹具：六张表（最小真形状）+ 一件存量件 + 可选一件新件。register 逐面写登记（两态用）。"""
+    """合成夹具：六张表（最小真形状）+ 一件存量件 + 可选一件新件 + `.sh` 门面清册桩（⑨ 面成对用）。register 逐面写登记（两态用）。"""
     register = register or set()
     for d in ("scripts", "scripts/sandbox", "scripts/build", "scripts/gates", "publish",
               "core/internal/contract"):
@@ -1300,6 +1388,9 @@ def build_fixture(tmp, probe=None, register=None):
     open(os.path.join(tmp, PUB_REL), "w").write(pub)
     open(os.path.join(tmp, MIRROR_REL), "w").write(mir)
     open(os.path.join(tmp, COV_JUDGE_REL), "w").write(FIXTURE_COV_JUDGE)
+    # ⑨ 面真源桩：`scripts/gates/*.sh` 现盘 = {precommit-gates.sh, real-gates.sh} ⇒ 清册逐只点名、两向皆空
+    open(os.path.join(tmp, SH_GATES_REL), "w").write(
+        "SH_GATES=(precommit-gates.sh real-gates.sh)\n")
 
 
 def run_self_test():
@@ -1525,7 +1616,7 @@ def run_self_test():
         shutil.rmtree(tmpD, ignore_errors=True)
     # 乙·扫描面为空（零执行）· 与甲 成对（同一 res 形状只差 den_scan_empty）
     def _res_den(baseline_derived, scan_empty):
-        return {"counts": {"R1": 0, "R2": 0, "R3": 0, "R4": 0, "R5": 0, "R6": 0},
+        return {"counts": {"R1": 0, "R2": 0, "R3": 0, "R4": 0, "R5": 0, "R6": 0, "R7": 0},
                 "new_files": [], "not_judged": [], "problems": [], "faces": {}, "face_judged": {},
                 "den_from_baseline": baseline_derived, "den_scan_empty": scan_empty}
 
@@ -1630,6 +1721,61 @@ def run_self_test():
     finally:
         shutil.rmtree(tmpS, ignore_errors=True)
 
+    # (E) ★ 面⑨ `.sh` 门面清册 成对正负控（盘上 scripts/gates/*.sh ⇄ real-gates.sh 的 SH_GATES 双向差集）
+    def sh_gates_fixture(root, extra_disk=(), extra_roster=()):
+        build_fixture(root, probe=probe, register={"①", "②", "③", "⑤"})
+        open(os.path.join(root, "inv.tsv"), "w").write("件\n%s\n" % probe)
+        roster = ["precommit-gates.sh", "real-gates.sh"] + list(extra_roster)
+        open(os.path.join(root, SH_GATES_REL), "w").write("SH_GATES=(%s)\n" % " ".join(roster))
+        for e in extra_disk:
+            open(os.path.join(root, SH_GATES_DIR, e), "w").write("#!/usr/bin/env bash\necho g\n")
+
+    tmpP = tempfile.mkdtemp(prefix="gnr-selftest-")
+    try:
+        sh_gates_fixture(tmpP)
+        resP = audit(tmpP, new_files=[probe], inv="inv.tsv", baseline=None)
+        stP = build_face_states(resP)
+        sgP = resP["sh_gates"]
+        okP = (stP["⑨.sh门面清册"] == "PASS" and sgP["清册悬空"] == [] and sgP["盘上未登记"] == [])
+        add_check("⑨·正控 盘上 ⇄ SH_GATES 相等（两向皆空）state=PASS", 1, 1 if okP else 0, okP)
+        rcP = _verdict(resP, True)[0]
+        add_check("⑨·正控 相等 ⇒ strict rc=0（不误红）", 0, rcP, rcP == 0)
+    finally:
+        shutil.rmtree(tmpP, ignore_errors=True)
+
+    tmpE = tempfile.mkdtemp(prefix="gnr-selftest-")
+    try:
+        sh_gates_fixture(tmpE, extra_disk=["ghost-on-disk.sh"])
+        resE = audit(tmpE, new_files=[probe], inv="inv.tsv", baseline=None)
+        stE = build_face_states(resE)
+        okE = (stE["⑨.sh门面清册"] == "FAIL" and resE["sh_gates"]["盘上未登记"] == ["ghost-on-disk.sh"]
+               and resE["sh_gates"]["清册悬空"] == [])
+        add_check("⑨·负控甲 盘上有件没进清册 ⇒ FAIL（缺登记）", 1, 1 if okE else 0, okE)
+        rcEs = _verdict(resE, True)[0]
+        add_check("⑨·负控甲 缺登记 ⇒ strict rc=1", 1, rcEs, rcEs == 1)
+        rcEr = _verdict(resE, False)[0]
+        add_check("⑨·负控甲 报告档 rc=0（面 FAIL 但只报告 · 与 strict 成对）", 0, rcEr, rcEr == 0)
+    finally:
+        shutil.rmtree(tmpE, ignore_errors=True)
+
+    tmpM = tempfile.mkdtemp(prefix="gnr-selftest-")
+    try:
+        sh_gates_fixture(tmpM, extra_roster=["ghost-in-roster.sh"])
+        resM = audit(tmpM, new_files=[probe], inv="inv.tsv", baseline=None)
+        stM = build_face_states(resM)
+        okM = (stM["⑨.sh门面清册"] == "FAIL"
+               and resM["sh_gates"]["清册悬空"] == ["ghost-in-roster.sh"]
+               and resM["sh_gates"]["盘上未登记"] == [])
+        add_check("⑨·负控乙 清册点名盘上无 ⇒ FAIL（悬空登记）", 1, 1 if okM else 0, okM)
+        rcMs = _verdict(resM, True)[0]
+        add_check("⑨·负控乙 悬空 ⇒ strict rc=1", 1, rcMs, rcMs == 1)
+    finally:
+        shutil.rmtree(tmpM, ignore_errors=True)
+
+    okD = (stP["⑨.sh门面清册"] == "PASS" and stE["⑨.sh门面清册"] == "FAIL")
+    add_check("⑨·区分度 同一夹具只差一件：相等 ⇒ PASS · 盘上多一件 ⇒ FAIL（成对）", 1,
+              1 if okD else 0, okD)
+
     print("── 自检（合成夹具 · 成对 · 不扫真仓）──")
     bad = 0
     for name, want, got, ok in checks:
@@ -1641,7 +1787,7 @@ def run_self_test():
 
 def main():
     ap = argparse.ArgumentParser(add_help=True,
-                                 description="门76 新件登记完整性：件级 × 六张登记表（只报告 · 起手不接闸）")
+                                 description="门76 新件登记完整性：件级 × 六张登记表 ＋ .sh 门面清册（只报告 · 起手不接闸）")
     ap.add_argument("--repo", default=REPO, help="被查仓根（默认本仓）")
     ap.add_argument("--baseline", default=DEFAULT_BASELINE, help="冻结基线（仓外生成件 · --dump-baseline 生成）")
     ap.add_argument("--dump-baseline", default=None, help="把现读件集写成基线（仓外路径）后退出；**默认干跑不写**，带 `--yes` 才真落")
@@ -1656,7 +1802,7 @@ def main():
     ap.add_argument("--outdir", default=None,
                     help="查缺档报告落点：**生成前先清空该目录**（防旧件残留看着一致）· 只跟 `--check-missing` 连用")
     ap.add_argument("--json", default=None, metavar="SECTIONS",
-                    help="机器面 JSON（逗号分隔断面：faces = 六张登记表逐面状态；self = 自指那一段）"
+                    help="机器面 JSON（逗号分隔断面：faces = 登记面逐面状态（六张登记表 ＋ ⑨.sh门面清册）；self = 自指那一段）"
                          " · 给了就只出 JSON（人面向 stdout 让位）")
     ap.add_argument("--yes", action="store_true",
                     help="写面确认：只有 `--dump-baseline` 会写件，且**默认干跑不写**；带 `--yes` 才真落"

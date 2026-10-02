@@ -152,8 +152,8 @@ func TestCheckNewfileRegistryGatePort(t *testing.T) {
 	}
 	// 成对（写面的牙）：加 --yes 才真落 + 逐字保留「基线已写：%s（%d 件）」
 	rcDY, outDY, _ := gnrRunT(t, "--repo", fx, "--dump-baseline", dump, "--yes")
-	if rcDY != 0 || !strings.Contains(outDY, "基线已写：") || !strings.Contains(outDY, "（6 件）") {
-		t.Fatalf("--dump-baseline --yes 失败：应 rc=0 且逐字打印『基线已写：…（6 件）』，得 rc=%d out=%s", rcDY, outDY)
+	if rcDY != 0 || !strings.Contains(outDY, "基线已写：") || !strings.Contains(outDY, "（7 件）") {
+		t.Fatalf("--dump-baseline --yes 失败：应 rc=0 且逐字打印『基线已写：…（7 件）』，得 rc=%d out=%s", rcDY, outDY)
 	}
 	if _, err := os.Stat(dump); err != nil {
 		t.Fatalf("--dump-baseline --yes 失败：应真落盘，得 %v", err)
@@ -182,7 +182,7 @@ func TestCheckNewfileRegistryGatePort(t *testing.T) {
 
 	// ── 清单 / 自检 / 帮助 / 用法错 ─────────────────────────────────────
 	rcST, outST, _ := gnrRunT(t, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "自检结论: 全过（断言 30 条 · 失败 0）") {
+	if rcST != 0 || !strings.Contains(outST, "自检结论: 全过（断言 38 条 · 失败 0）") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%s", rcST, outST)
 	}
 	rcH, outH, _ := gnrRunT(t, "-h")
@@ -232,12 +232,12 @@ func TestCheckNewfileRegistryMachineFace(t *testing.T) {
 			t.Fatalf("--json 失败：缺顶层键 %q", k)
 		}
 	}
-	if ef, _ := obj["expected_faces"].([]interface{}); len(ef) != 9 {
-		t.Fatalf("--json 失败：expected_faces 应 9 面，得 %v", obj["expected_faces"])
+	if ef, _ := obj["expected_faces"].([]interface{}); len(ef) != 10 {
+		t.Fatalf("--json 失败：expected_faces 应 10 面，得 %v", obj["expected_faces"])
 	}
 	fs, _ := obj["face_states"].(map[string]interface{})
-	if len(fs) != 9 {
-		t.Fatalf("--json 失败：face_states 应 9 键，得 %v", fs)
+	if len(fs) != 10 {
+		t.Fatalf("--json 失败：face_states 应 10 键，得 %v", fs)
 	}
 	cnt, _ := obj["counts"].(map[string]interface{})
 	for _, s := range []string{"PASS", "FAIL", "BLOCKED", "REPORT", "UNKNOWN", "HOST-REQUIRED"} {
@@ -247,8 +247,8 @@ func TestCheckNewfileRegistryMachineFace(t *testing.T) {
 	}
 	// ★ 面⑧ host-bound：单列 HOST-REQUIRED · 不计 pass/fail · 暴露计数
 	fr, _ := obj["face_records"].(map[string]interface{})
-	if fr == nil || len(fr) != 9 {
-		t.Fatalf("--json 失败：face_records 应 9 面，得 %v", fr)
+	if fr == nil || len(fr) != 10 {
+		t.Fatalf("--json 失败：face_records 应 10 面，得 %v", fr)
 	}
 	r8, _ := fr["⑧家目录批准件"].(map[string]interface{})
 	if r8 == nil || r8["state"] != "HOST-REQUIRED" || r8["reason_code"] != "SKIPPED-HOST-BOUND" || r8["decided"] != false {
@@ -287,7 +287,7 @@ func TestCheckNewfileRegistryMachineFace(t *testing.T) {
 		last = i
 	}
 	fsOrder := []string{`"①公开标记表":`, `"②干跑登记":`, `"③门①两张真源":`, `"④脚本台账":`,
-		`"⑤两器排除表":`, `"⑥失败文案面":`, `"⑧家目录批准件":`, `"口径差栏":`, `"自指":`}
+		`"⑤两器排除表":`, `"⑥失败文案面":`, `"⑧家目录批准件":`, `"⑨.sh门面清册":`, `"口径差栏":`, `"自指":`}
 	last = -1
 	for _, k := range fsOrder {
 		i := strings.Index(out, k)
@@ -573,6 +573,72 @@ func TestCheckNewfileRegistryCheckMissing(t *testing.T) {
 	}
 }
 
+// TestCheckNewfileRegistryShGatesFace —— ⑨ `.sh` 门面清册（盘上 `scripts/gates/*.sh` ⇄ `real-gates.sh` 的 `SH_GATES` 双向差集）。
+// ✗ 禁恒绿：正控（相等 ⇒ PASS）⟷ 负控甲（盘上多一件 ⇒ FAIL·缺登记）⟷ 负控乙（清册点名盘上无 ⇒ FAIL·悬空）
+// ⟷ 真源缺（real-gates.sh 不在盘 ⇒ BLOCKED·rc=2 不给结论）四态成对。
+func TestCheckNewfileRegistryShGatesFace(t *testing.T) {
+	allFive := map[string]bool{"①": true, "②": true, "③": true, "⑤": true}
+
+	// 正控：夹具桩（SH_GATES 逐只 == 盘上 scripts/gates/*.sh）⇒ 面⑨ PASS · strict rc=0 · 机器面 PASS
+	fxP := gnrMkFixture(t, allFive)
+	gnrWriteInv(t, fxP, "件\n"+gnrProbeRel+"\n")
+	rcP, outP, _ := gnrRunT(t, "--repo", fxP, "--new-file", gnrProbeRel, "--inventory", "inv.tsv", "--strict")
+	if rcP != 0 || !strings.Contains(outP, "面⑨ .sh 门面清册") || !strings.Contains(outP, "：0") {
+		t.Fatalf("⑨ 正控失败：应 rc=0 且面⑨ 计 0，得 rc=%d out=%s", rcP, outP)
+	}
+	_, outJP, _ := gnrRunT(t, "--repo", fxP, "--new-file", gnrProbeRel, "--inventory", "inv.tsv", "--json", "faces")
+	var oP map[string]interface{}
+	if err := json.Unmarshal([]byte(outJP), &oP); err != nil {
+		t.Fatalf("⑨ 正控机器面非 JSON：%v", err)
+	}
+	if fs, _ := oP["face_states"].(map[string]interface{}); fs["⑨.sh门面清册"] != "PASS" {
+		t.Fatalf("⑨ 正控 face_states 面⑨ 应 PASS，得 %v", fs["⑨.sh门面清册"])
+	}
+
+	// 负控甲：盘上多一件（未进 SH_GATES）⇒ FAIL（缺登记）· 报告档 rc=0 ⟷ 阻断档 rc=1（成对）
+	fxE := gnrMkFixture(t, allFive)
+	gnrWriteInv(t, fxE, "件\n"+gnrProbeRel+"\n")
+	if err := os.WriteFile(filepath.Join(fxE, gnrShGatesDir, "ghost-on-disk.sh"), []byte("#!/usr/bin/env bash\necho g\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rcEr, outEr, _ := gnrRunT(t, "--repo", fxE, "--new-file", gnrProbeRel, "--inventory", "inv.tsv")
+	if rcEr != 0 || !strings.Contains(outEr, "ghost-on-disk.sh") || !strings.Contains(outEr, "盘上有但没进") {
+		t.Fatalf("⑨ 负控甲（报告档）失败：应 rc=0 且点名 ghost-on-disk.sh，得 rc=%d out=%s", rcEr, outEr)
+	}
+	rcEs, _, _ := gnrRunT(t, "--repo", fxE, "--new-file", gnrProbeRel, "--inventory", "inv.tsv", "--strict")
+	if rcEs != 1 {
+		t.Fatalf("⑨ 负控甲（阻断档）失败：应 rc=1，得 rc=%d", rcEs)
+	}
+	if rcEr == rcEs {
+		t.Fatalf("⑨ 成对断言失败：报告档 rc=%d 与阻断档 rc=%d 同码 ⇒ 退码档无牙", rcEr, rcEs)
+	}
+
+	// 负控乙：清册点名一件而盘上无 ⇒ FAIL（悬空登记）· strict rc=1 · 与正控正文不同（有牙）
+	fxM := gnrMkFixture(t, allFive)
+	gnrWriteInv(t, fxM, "件\n"+gnrProbeRel+"\n")
+	if err := os.WriteFile(filepath.Join(fxM, gnrShGatesRel), []byte("SH_GATES=(precommit-gates.sh real-gates.sh ghost-in-roster.sh)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rcMs, outMs, _ := gnrRunT(t, "--repo", fxM, "--new-file", gnrProbeRel, "--inventory", "inv.tsv", "--strict")
+	if rcMs != 1 || !strings.Contains(outMs, "ghost-in-roster.sh") || !strings.Contains(outMs, "悬空登记") {
+		t.Fatalf("⑨ 负控乙失败：应 rc=1 且点名悬空，得 rc=%d out=%s", rcMs, outMs)
+	}
+	if outMs == outP {
+		t.Fatalf("⑨ 成对断言失败：负控乙正文与正控逐字相同 ⇒ 判据无鉴别力")
+	}
+
+	// BLOCKED：真源 real-gates.sh 不在盘 ⇒ 面⑨ 判不了 · rc=2（不给结论 · fail-closed）
+	fxB := gnrMkFixture(t, allFive)
+	gnrWriteInv(t, fxB, "件\n"+gnrProbeRel+"\n")
+	if err := os.Remove(filepath.Join(fxB, gnrShGatesRel)); err != nil {
+		t.Fatal(err)
+	}
+	rcB, outB, _ := gnrRunT(t, "--repo", fxB, "--new-file", gnrProbeRel, "--inventory", "inv.tsv")
+	if rcB != 2 || !strings.Contains(outB, "面⑨.sh门面清册 判不了") {
+		t.Fatalf("⑨ 真源缺失败：应 rc=2 且面⑨ 判不了，得 rc=%d out=%s", rcB, outB)
+	}
+}
+
 // TestGnrRefParity —— 与 py 新版**逐字节对拍**的挂钩（仓外驱动注入环境变量；不设则跳过）。
 // 环境：GNR_MANIFEST=清单 JSON（[{name, argv[], out, err, rc}]）。
 func TestGnrRefParity(t *testing.T) {
@@ -850,17 +916,17 @@ func gnrTRunPyHelp(t *testing.T, pyExe, pyFile string, args ...string) (int, str
 }
 
 // gnrHelpGoSha256 = sha256(gnrHelp) —— Go 现行帮助面正文（COLUMNS=80 · 见 gnrHelpBytes）。
-const gnrHelpGoSha256 = "8682a12780f9cf23788e7123f8b99679108e51d6e5b890902b3e803ccfa20867"
+const gnrHelpGoSha256 = "e6b04dba6dc821bf1b88d5a12826761319daee59ba57b5860267c9b2f45aed49"
 
 // gnrHelpPySha256 = 同一正文 —— py 原件 `COLUMNS=80 /usr/bin/python3 <py 件> -h` 的 stdout 全串。
 // ★ 机械拦阻的核心：两者不等即红（py 正文一改 / Go 副本一改，都当场点名）。
 // 重生成正门（现读打印两值 · 不落任何件）：
 //
 //	GNR_REGEN_HELP_SHA=1 go test ./cmd/zerg -run '^TestGnrHelpParityWithPy$' -v
-const gnrHelpPySha256 = "8682a12780f9cf23788e7123f8b99679108e51d6e5b890902b3e803ccfa20867"
+const gnrHelpPySha256 = "e6b04dba6dc821bf1b88d5a12826761319daee59ba57b5860267c9b2f45aed49"
 
-// gnrHelpBytes —— 帮助面正文字节数（2103 · 与 COLUMNS=80 的 py 现跑一致）。
-const gnrHelpBytes = 2338
+// gnrHelpBytes —— 帮助面正文字节数（2397 · 与 COLUMNS=80 的 py 现跑一致）。
+const gnrHelpBytes = 2397
 
 // TestGnrHelpParityWithPy —— ④ 机械拦阻：Go 的 help 输出 == py 的 --help 输出（stdout+stderr+rc 三面）。
 //
