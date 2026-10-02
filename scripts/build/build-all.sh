@@ -16,6 +16,8 @@
 #   bash scripts/build/build-all.sh --only-compat              # 只出兼容层 bin/zerg-compat（回滚前置校验用）
 #   bash scripts/build/build-all.sh --only-agentd              # 只出子端 bin/zerg-agentd（**子端换件专用**）
 #   （--dist 以外的形态会另编茧壁 zerg-wall → bin/，见 scripts/build/build-wall.sh；它不进 dist 制品矩阵）
+#   ★ 2026-10-03（GAP-20261003-10）：本档另出**跨架构三件**（bin/zerg-agent-darwin-amd64 ·
+#     bin/zerg-agent-linux-amd64 · bin/zerg-agentd-linux-amd64），与其余件同一对签名函数产出。
 #    ★ **--dist 的边界**（2026-09-21 · G4「打包不得换件」）：本档只写 `$OUT`（= dist/<版本>），
 #      bin/ 里那三件只落 bin/ 的件（`zerg-agentd` · `cocoon-docs-service` · `zerg-wall`）**一个都不产**，
 #      签名环节也**不碰 bin/**。三条实据（为什么不是偏好）：
@@ -210,6 +212,12 @@ sign_one() {  # sign_one <文件> —— 单件重签；identifier 按既有固�
     zerg-core)   ZID=com.zerg.core ;;
     zerg-agent)  ZID=com.zerg.agent ;;
     zerg-agentd) ZID=com.zerg.agentd ;;
+    # 跨架构件（GAP-20261003-10）：名字按制品契约四段 `zerg-<组件>-<os>-<arch>`
+    # （真源 core/internal/selfupdate/build.go:96 ArtifactName），但 identifier 必须与
+    # **同组件本机件**一致 —— 同一组件两枚二进制不许两套身份。
+    zerg-agent-darwin-amd64)  ZID=com.zerg.agent ;;
+    zerg-agent-linux-amd64)   ZID=com.zerg.agent ;;
+    zerg-agentd-linux-amd64)  ZID=com.zerg.agentd ;;
     zerg-ui)     ZID=com.zerg.ui ;;
     zerg-wall)   ZID=com.zerg.wall ;;
     *)           ZID="com.zerg.$(basename "$b")" ;;
@@ -412,6 +420,30 @@ echo "→ 守护进程 zerg-agentd（agent 模块，注入 agent 自己的 versi
 (cd agent && GOFLAGS=-mod=mod GOSUMDB=off go build -trimpath -buildvcs=false -tags "$GOTAGS" \
    -ldflags "-s -w -X github.com/Mr2109/zerg-swarm/agent/internal/version.Version=${VERSION} -X github.com/Mr2109/zerg-swarm/agent/internal/version.Commit=${SHA} -X github.com/Mr2109/zerg-swarm/agent/internal/version.BuildTime=${BUILD_TIME}" \
    -o "${REPO_ROOT}/bin/zerg-agentd" ./cmd/zerg-agentd)
+# ── 跨架构三件（2026-10-03 · GAP-20261003-10）：供 linux 工作机 / 容器模式 ────────────────────
+# 为什么可以随**本档**（非 --dist）一起产：文件头「--dist 的边界」第①条实据是「就地覆盖**正在跑**的件」，
+#   而这三件**本机跑不起来**（两枚 linux ELF + 一枚 macOS x86_64，本机 arm64）⇒ 不是运行件 ⇒ 那条不适用。
+# 为什么名字是四段：真源 core/internal/selfupdate/build.go:96 `ArtifactName(c,plat)="zerg-"+c+"-"+plat`。
+#   ★ 名字策略：**本机部署件（在跑的）用三段短名**（zerg-core/zerg-agent/zerg-agentd …）·
+#     **跨架构 / 可分发件用四段契约名** —— 两条并存，别把在跑的那枚改成四段。
+# ★ 为什么**不产 darwin/amd64**（`zerg-agent-darwin-amd64`）：现依赖下编不出 ——
+#   `github.com/yalue/onnxruntime_go` 的 build constraints 不含 darwin/amd64（实测 rc=1：
+#   "build constraints exclude all Go files"）⇒ 该档技术上不可得（GAP-20261003-11 存证）。
+# ★ 两个组件在**不同模块根**、身份包路径也不同（core 用 core/internal/version · agent 用
+#   agent/internal/version）⇒ 不写统一循环，显式三条（照 scripts/sandbox/test-fleet-sandbox.sh:685
+#   那条交叉编译旗标组合写，它已被沙箱 9b 真跑验过）。
+AGENT_CORE_LDFLAGS="-s -w -X github.com/Mr2109/zerg-swarm/core/internal/version.Commit=${SHA}"
+AGENT_SUB_LDFLAGS="-s -w -X github.com/Mr2109/zerg-swarm/agent/internal/version.Version=${VERSION} \
+                  -X github.com/Mr2109/zerg-swarm/agent/internal/version.Commit=${SHA} \
+                  -X github.com/Mr2109/zerg-swarm/agent/internal/version.BuildTime=${BUILD_TIME}"
+echo "→ 跨架构件 zerg-agent-linux-amd64（linux/amd64 · 同一组件）"
+(cd core && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-mod=mod GOSUMDB=off GOTOOLCHAIN=local \
+   go build -trimpath -buildvcs=false -tags "${GOTAGS}" -ldflags "${AGENT_CORE_LDFLAGS}" \
+   -o "${REPO_ROOT}/bin/zerg-agent-linux-amd64" ./cmd/zerg-agent)
+echo "→ 跨架构件 zerg-agentd-linux-amd64（linux/amd64 · 组件 agentd = agent/cmd/zerg-agentd）"
+(cd agent && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-mod=mod GOSUMDB=off GOTOOLCHAIN=local \
+   go build -trimpath -buildvcs=false -tags "${GOTAGS}" -ldflags "${AGENT_SUB_LDFLAGS}" \
+   -o "${REPO_ROOT}/bin/zerg-agentd-linux-amd64" ./cmd/zerg-agentd)
 
 # 文档虫茧的自带 Go 服务（`cocoon-docs-service`）——**独立仓** `zerg-cocoon/文档/service`。
 # 为什么由宿主构建链产出：茧侧 `DocsService::default_bin()` 按「**与宿主可执行文件同目录**」
@@ -461,7 +493,10 @@ if [ "$SIGN" = "1" ] && command -v codesign >/dev/null 2>&1; then
   # bin/ 里那三件只在**本机部署档**（不带 --dist）签名：--dist 一个字节都不碰 bin/（见文件头边界注释）。
   SIGN_LIST=("$OUT"/zerg "$OUT"/zerg-core "$OUT"/zerg-agent "$OUT"/zerg-compat "$OUT"/zerg-ui)
   if [ "$DIST" != "1" ]; then
-    SIGN_LIST+=("$REPO_ROOT"/bin/zerg-agentd "$REPO_ROOT"/bin/cocoon-docs-service "${REPO_ROOT}"/bin/zerg-wall)
+    # ★ 跨架构三件（GAP-20261003-10）与其余件**走同一对函数**（resolve_sign_identity + sign_one）
+    #   —— 不另写一份签名代码。件不在场时 sign_one 自带 [ -f ] 守卫。
+    SIGN_LIST+=("$REPO_ROOT"/bin/zerg-agentd "$REPO_ROOT"/bin/cocoon-docs-service "${REPO_ROOT}"/bin/zerg-wall \
+      "$REPO_ROOT"/bin/zerg-agent-darwin-amd64 "$REPO_ROOT"/bin/zerg-agent-linux-amd64 "$REPO_ROOT"/bin/zerg-agentd-linux-amd64)
   fi
   for b in "${SIGN_LIST[@]}"; do
     sign_one "$b"

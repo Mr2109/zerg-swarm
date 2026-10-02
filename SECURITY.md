@@ -38,6 +38,7 @@
 - **未做 Apple Developer ID 签名，也未做 notarytool 公证** —— 因此**没有**可对外声称的「Apple 已验证」身份，
   首次运行可能出现 Gatekeeper 拦截。本项目**暂不上**开发者账号 + notarytool 改造；
   发布闸里这一项**先入报告档**（标「未公证」），**不假装它是绿的**。
-- **跨架构三件今天无签名**（`zerg-agent-amd64` · `zerg-agent-linux` · `zerg-agentd-linux-amd64`）——
+- **跨架构三件**（`zerg-agent-darwin-amd64` · `zerg-agent-linux-amd64` · `zerg-agentd-linux-amd64`；
+  旧三段名 `zerg-agent-amd64` / `zerg-agent-linux` 已于 2026-10-03 改名迁移）**已纳入构建与签名线**。——
   已知缺口。发布闸按「即刻拦 / 先报告」两档分：**arm64 四件即刻拦**（`zerg-core` · `zerg-agent` · `zerg-ui` · `zerg-wall`），
   这三件**先报告**（跨架构签名需要额外工具链）。
