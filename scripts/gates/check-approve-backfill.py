@@ -76,7 +76,7 @@ LEGACY_SIX = ["before_sha256", "after_sha256", "before_bytes", "after_bytes", "a
 #   key_id `8b69ad95939df5cf`；审计行在 `<状态目录>/edit_audit.jsonl`）。**任何时候重签了该件，走本件自己的正门
 #   刷新通道把它跟到新值**（先 `--emit-constant` 看应有值，再 `--refresh-constant` 干跑，最后带 `--yes` 落）——
 #   不然门⑰ 会以「B5 破」恒红；**禁**手改本行（那是缺口 `GAP-20260928-88` 记的那条坏路）。
-DEV_EDIT_SHA256 = "ee1ee42774ea9f538b1a3e8cfdc0f82052bd11cd07b4e81cc24a4d0a72f4ea80"
+DEV_EDIT_SHA256 = "15083c8d5b90f158d316828da28ce126d03073d24ccc3e66b3a91ddcb218f931"
 
 # ── 常量刷新的取数口（emit / refresh / 自检同读这一处 · 单一真源）────────────────────
 CONST_NAME = "DEV_EDIT_SHA256"
