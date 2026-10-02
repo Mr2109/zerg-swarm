@@ -51,6 +51,20 @@ M12 判到的深度（§九 M12：**判到 L2（对象 + 动作）起步**）
   照实登记的**未覆盖形态**：`zerg <sha>+dirty`（带 sha 但**无时刻**、且 sha 首位是字母）仍按命令判 ——
   今天正式面用的是`版本号 + sha + 时刻`形态，这一形态本件**不覆盖**、不假装全覆盖 ✗。
 
+★ 未建提案书写体例：`想要 `zerg <名>`` 不是「引用了不存在的命令」（2026-10-02 · 分诊批1 口径治本）
+----------------------------------------------------------------------------------------
+  缺口账 / 设计稿里「**判语 + `zerg <名>`**」是**账的书写体例**（记一个**尚未建**的提案名）：
+      · `GAP-…` P1 · **仍缺** · …命题… · 想要 `zerg docname-warn-vs-fail-split` · 判据 `zerg gate ls`
+  那枚 `<名>` 解析不到命令树是**如实**（它本来就还没建），不是「两套契约分叉」⇒ **不计**。
+  判语闭集（**紧贴** `zerg` 之前、只隔空白才认）：想要 / 建议 / 须 / 未建 / 待建 / 待拍 /
+  候选 / 规划 / 新面 / 不建 / 尚未建 / 已拍未建 / 拟建 / 应建 / 提出。
+  ★ **这是纠误判，不是放宽判据**：判语**不在** `zerg` 之前（普通示例）的命中**照旧判红**；
+    真命令示例拼错（`dev propozal`）**照旧判红并点名**。三格成对负控见 `--self-test` ⑳/㉑/㉒。
+  ★ 被跳过的**逐类计数并打印**（`stats["proposal"]`）—— 与「身份行 / 非命令噪声」同法：
+    **认出来了**才丢，不是「抽不出词 ⇒ 静默放过」。
+  ★ 中间有别的词的（`建议收编 `zerg X``）**不认**（那更像「建议把某条真命令收编」）——
+    宁可漏判也不误伤真示例 ✗。
+
 ★ 缺件/空转 ⇒ **不给结论档（rc=2）**：四条语料分支一律走 BLOCKED（2026-09-24 治本 · 缺口 `Q-157`
   三条 · 2026-09-27 补第四条 · 缺口 `GAP-20260927-82` 批2）
 ------------------------------------------------------------------------------------------
@@ -134,6 +148,16 @@ IDENTITY_SEG = re.compile(
     r'[^`]*`?')
 # 版本号形态：`2.5.11` / `2.5.11-rc1`（治法② 用它把「版本串」与「其它噪声」分开计数）。
 VERSION_TOKEN = re.compile(r'^[0-9]+(?:\.[0-9]+)+[0-9A-Za-z.+\-]*$')
+# 未建提案书写体例（2026-10-02 · 分诊批1 · 口径治本）：缺口账/设计稿用「判语 + `zerg <名>`」
+#   记录**尚未建**的面（`想要 `zerg <slug>`` 一类）—— 那个 `<名>` 是**账里的提案名**，
+#   不是**命令示例** ⇒ **不计**。门⑫ 的判据是「文档里的**命令示例**能不能解析到命令树」；
+#   提案名解析不到是**如实**（它本来就还没建），不是「文档/契约分叉」。
+#   ★ 只认**紧贴** `zerg` 之前、只隔空白的判语（`建议收编 `zerg X`` 这种中间有别的词的**不认**：
+#     它更像「建议把某条真命令收编」，宁可漏判也不误伤真示例 ✗）。
+#   ★ 与「身份行 / 版本串」同族：**认出来了**才丢（计入 `stats["proposal"]` 并逐类打印），
+#     不是「抽不出词 ⇒ 静默放过」。
+PROPOSAL_MARK = re.compile(
+    r'(?:想要|建议|须|未建|待建|待拍|候选|规划|新面|不建|尚未建|已拍未建|拟建|应建|提出)\s*$')
 
 
 def segment_words(seg):
@@ -268,6 +292,12 @@ def extract_zerg_segments(text, stats=None):
                     hits.append((lineno, words))
         else:
             for m in ZERG_INLINE.finditer(line):
+                # 未建提案书写体例：`zerg <名>` 紧跟在判语之后 ⇒ 那是**账体例里的提案名**、
+                #   不是命令示例 ⇒ 不计（见文件头「未建提案书写体例」）。与身份行同法：**认出来才丢**。
+                if PROPOSAL_MARK.search(line[:m.start()]):
+                    count_skip(stats, "proposal")
+                    hits.append((lineno, []))
+                    continue
                 kind, words = segment_words(m.group(1) or "")       # 治法②
                 count_skip(stats, kind)
                 hits.append((lineno, words))
@@ -427,8 +457,10 @@ def check(root, scopes):
     lines.append("命令树 %d 条（L1+L2）· formal 命中 %d（阻断档）· devdocs 命中 %d（只报告档）"
                  % (len(tree), formal_hits, devdocs_hits))
     lines.append("识别跳过（**不计入**上面两个数）：身份行 / 版本串形态 %d 段 · 非命令噪声 %d 段"
-                 " —— ★ 此二类是**认出来了**才丢（≠ 修前那种「抽不出词 ⇒ 静默」）"
-                 % (stats.get("identity_lines", 0) + stats.get("identity", 0), stats.get("noise", 0)))
+                 " · 未建提案体例（判语引出的 `zerg <名>`）%d 段"
+                 " —— ★ 三类都是**认出来了**才丢（≠ 修前那种「抽不出词 ⇒ 静默」）"
+                 % (stats.get("identity_lines", 0) + stats.get("identity", 0), stats.get("noise", 0),
+                    stats.get("proposal", 0)))
     lines.extend("  " + d for d in detail_all)
     lines.extend(blocked)                    # 缺件/空转：先于红判「不给结论」（`Q-157`）
     for e in errs:
@@ -477,6 +509,14 @@ def self_test():
         """读现跑输出里那行「身份行 / 版本串形态 N 段」—— 认出来了才丢的**证据**（≥1 才算认过）。"""
         for l in lines_:
             m = re.search(r'身份行 / 版本串形态\s*(\d+)\s*段', l)
+            if m:
+                return int(m.group(1))
+        return -1
+
+    def prop_skips(lines_):
+        """读现跑输出里那行「未建提案体例 … N 段」—— 认出来了才丢的**证据**（≥1 才算认过）。"""
+        for l in lines_:
+            m = re.search(r'未建提案体例[^0-9]*(\d+)\s*段', l)
             if m:
                 return int(m.group(1))
         return -1
@@ -605,6 +645,35 @@ def self_test():
         bad.append("⑭ 负控：身份行没被认出来")
     if not any("propozal" in l for l in lines):
         bad.append("⑭ 负控：判词里没有坏命令名")
+
+    # ── 未建提案书写体例（2026-10-02 · 分诊批1 · 口径治本）──────────────────────────────
+    #  缺口账/设计稿用「判语 + `zerg <名>`」记录**尚未建**的面（`想要 `zerg <slug>`` 一类）——
+    #  那个 `<名>` 是**账里的提案名**，不是**命令示例** ⇒ **不计**（否则门把「记录提案」判成
+    #  「引用了不存在的命令」）。三条成对负控（缺一不可）：① 判语引出 ⇒ **不计**；
+    #  ② **同一条命令**写成普通示例（无判语）⇒ **必计**；③ 真命令示例 + 拼错 ⇒ **必计并点名**。
+    # ⑳ 负控：判语（想要）引出的 `zerg <名>` ⇒ 不计 ⇒ rc=0，且**认出来了**（提案体例计数 ≥1）
+    open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
+        "未建提案：想要 `zerg pipelinedefect` 收成正门。\n")
+    rc, lines = check(tmp, ["formal"])
+    case("⑳ 负控（判语引出的 `zerg <名>` ⇒ 不计 · rc=0）", 0, rc)
+    if prop_skips(lines) < 1:
+        bad.append("⑳ 负控：提案体例没被**认出来**（计数 = 0）—— 换个词就会两态摇摆")
+
+    # ㉑ 正控（成对）：**同一条命令**（`pipelinedefect`）写成**普通示例**（无判语）⇒ **必计** ⇒ rc=1
+    open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
+        "用法：`zerg pipelinedefect` 可直接跑。\n")
+    rc, lines = check(tmp, ["formal"])
+    case("㉑ 正控（同一条命令无判语 ⇒ 必计 · rc=1）", 1, rc)
+    if not any("pipelinedefect" in l for l in lines):
+        bad.append("㉑ 正控：判词里没有该命令名（判据被放宽了）")
+
+    # ㉒ 负控（成对）：真命令示例**拼错**（`dev propozal`，真命令是 `dev proposal`）⇒ **必计并点名**
+    open(os.path.join(docs, "good.md"), "w", encoding="utf-8").write(
+        "```sh\nzerg dev propozal list\n```\n")
+    rc, lines = check(tmp, ["formal"])
+    case("㉒ 负控（真命令拼错 ⇒ 必计并点名 · rc=1）", 1, rc)
+    if not any("propozal" in l for l in lines):
+        bad.append("㉒ 负控：判词里没有拼错的真命令名")
 
     # ── 语料三条分支：缺件/空转 ⇒ **不给结论档 rc=2**（2026-09-24 · 治本 · 缺口 `Q-157`）────────
     # 改前这三条走 `errs` ⇒ 末行 `RC_FAIL if errs else RC_OK` ⇒ **恒 rc=1**（「判据不可判」被记成
