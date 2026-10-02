@@ -78,7 +78,7 @@
 //
 //	func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int
 //	  · argv   —— 与 py `sys.argv[1:]` 同形（不含程序名）
-//	  · 退码   —— 0 判到了（报告档；`--strict` 下 R1/R2/R3/R5 任一 > 0 ⇒ 1） / 2 不给结论
+//	  · 退码   —— 0 判到了（报告档；`--strict` 下 R1/R2/R3/R5/R7 任一 > 0 ⇒ 1） / 2 不给结论
 //	      ★ rc=2 现读含两条**用法错**（照 py `main()` 判序）：`--yes` 不与 `--dump-baseline` 连用 ·
 //	        `--json` 与 `--dump-baseline` 同用 · `--json` 断面名不认 / 为空。
 //	  · 输出   —— stdout/stderr 与 py 逐字节对齐（见上「未覆盖面」）
@@ -93,7 +93,7 @@
 // 机器面（`--json`）
 //
 //	`--json <断面>`：断面为逗号分隔、只认 `faces` 与 `self`；给了就**只出 JSON**（人面向 stdout 让位）。
-//	JSON 恒含：`expected_faces`（本件八面名）· `reported_faces`（本次实际报出的面）· `counts`（五态计数
+//	JSON 恒含：`expected_faces`（本件十面名）· `reported_faces`（本次实际报出的面）· `counts`（五态计数
 //	PASS/FAIL/BLOCKED/REPORT/UNKNOWN）· `all_green`（判到了且 0 条缺登记）；`faces` / `self` 断面分别加
 //	逐面详情与自指详情。断面名不认 / 为空 ⇒ 用法错 rc=2（不给结论）。`--json` 不与 `--dump-baseline` 同用 ⇒ 用法错 rc=2。
 //
@@ -131,12 +131,16 @@ const (
 	gnrCovJudgeRel = "scripts/gates/check-gate-coverage.py"
 	gnrPubRel      = "scripts/build/publish-public.sh"
 	gnrMirrorRel   = "publish/mirror-public-lib.py"
-	gnrLedgerSib   = "Zerg-内部文档"
-	gnrStepMark    = "干跑"
-	gnrAddStep     = "add_step"
-	gnrJudgeRE     = `scripts/[A-Za-z0-9_/.-]+\.py`
-	gnrExcludesRE  = `(?s)EXCLUDES=\((.*?)\n\)`
-	gnrDropRE      = `(?s)DROP_EXACT\s*=\s*\{(.*?)\n\}`
+	// 面⑨ 真源：`.sh` 门面冻结清册在 real-gates.sh 里（与门65 真跑档那一面同源）
+	gnrShGatesRel = "scripts/gates/real-gates.sh"
+	gnrShGatesDir = "scripts/gates"
+	gnrLedgerSib  = "Zerg-内部文档"
+	gnrStepMark   = "干跑"
+	gnrAddStep    = "add_step"
+	gnrJudgeRE    = `scripts/[A-Za-z0-9_/.-]+\.py`
+	gnrExcludesRE = `(?s)EXCLUDES=\((.*?)\n\)`
+	gnrDropRE     = `(?s)DROP_EXACT\s*=\s*\{(.*?)\n\}`
+	gnrShGatesRE  = `(?s)SH_GATES=\((.*?)\)`
 )
 
 var gnrLedgerGlob = filepath.Join("项目文档", "*", "清单-脚本现状-*.tsv")
@@ -151,11 +155,14 @@ var (
 	gnrJudgeRECompiled  = regexp.MustCompile(gnrJudgeRE)
 	gnrExcludesCompiled = regexp.MustCompile(gnrExcludesRE)
 	gnrDropCompiled     = regexp.MustCompile(gnrDropRE)
+	gnrShGatesCompiled  = regexp.MustCompile(gnrShGatesRE)
 )
 
-// ── 机器面：门76 的**九面**（逐字对齐 py `FACES` · 顺序 = 打印顺序）────────────
-// 为什么是这九面：六张登记表（①–⑥）＋ **⑧家目录批准件**（host-bound · 机器相关面）＋
-// 口径差栏（参照读数）＋ 自指（本门对自身的登记情形）。★ 面⑦ 处**故意留空档**（本批禁区件）。
+// ── 机器面：门76 的**十面**（逐字对齐 py `FACES` · 顺序 = 打印顺序）────────────
+// 为什么是这十面：六张登记表（①–⑥）＋ **⑧家目录批准件**（host-bound · 机器相关面）＋
+// **⑨.sh门面清册**（盘上 `scripts/gates/*.sh` ⇄ `real-gates.sh` 的 `SH_GATES` 双向差集）＋
+// 口径差栏（参照读数）＋ 自指（本门对自身的登记情形）。
+// ★ 面⑦ 处**故意留空档** —— 该号在 `gnrRunSync` 里已绑「判据注册表」（`zerg gate check check-judge-registry --emit`）⇒ 新面**取⑨、不占⑦**（✗ 别顺手把 ⑦ 填了：会与那条正门指路撞号）。
 // ★ `gnrExpectedFaces()` **跑前先生成**这张清单；任何**未产出记录**的面由 `gnrFaceRecords` 合成
 // `state=UNKNOWN · reason_code=MISSING_FACE · decided=false` 并**退码钉 2**（禁静默跳过缺面）。
 var gnrFaces = []string{
@@ -166,6 +173,7 @@ var gnrFaces = []string{
 	"⑤两器排除表",
 	"⑥失败文案面",
 	"⑧家目录批准件",
+	"⑨.sh门面清册",
 	"口径差栏",
 	"自指",
 }
@@ -732,6 +740,88 @@ func gnrLoadDropExact(root string) map[string]bool {
 	}
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+// gnrSortedSetDiff —— py `sorted(a - b)`（集合差 · 逐元素码位序排序）。
+func gnrSortedSetDiff(a, b map[string]bool) []string {
+	out := []string{}
+	for k := range a {
+		if !b[k] {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// gnrSortedKeys —— py `sorted(<set>)`（集合 → 排序切片）。
+func gnrSortedKeys(m map[string]bool) []string {
+	out := []string{}
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// gnrScanGatesSh —— py `scan_gates_sh(root)`：⑨ 盘上面 = `scripts/gates/*.sh` 的 basename 集
+// （**非递归** · 与 real-gates.sh 的 `${GATEDIR}/*.sh` 同口径）。面不在 / 0 件 ⇒ nil。
+func gnrScanGatesSh(root string) map[string]bool {
+	d := filepath.Join(root, gnrShGatesDir)
+	if !gnrIsDir(d) {
+		return nil
+	}
+	out := map[string]bool{}
+	names := []string{}
+	ents, err := os.ReadDir(d)
+	if err != nil {
+		return nil
+	}
+	for _, e := range ents {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names) // py `sorted(os.listdir(d))`
+	for _, name := range names {
+		p := filepath.Join(d, name)
+		if gnrIsFile(p) && strings.HasSuffix(name, ".sh") {
+			out[name] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil // py `return out or None`
+	}
+	return out
+}
+
+// gnrLoadShGates —— py `load_sh_gates(root)`：⑨ 清册面 = `real-gates.sh` 的 `SH_GATES=( … )` 冻结清册
+// （逐只点名 · 支撑反斜杠续行）。缺 / 0 条 / 解析不了 ⇒ nil。
+func gnrLoadShGates(root string) map[string]bool {
+	p := filepath.Join(root, gnrShGatesRel)
+	if !gnrIsFile(p) {
+		return nil
+	}
+	txt, ok := gnrReadText(p)
+	if !ok {
+		return nil
+	}
+	m := gnrShGatesCompiled.FindStringSubmatch(txt)
+	if m == nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, ln := range gnrSplitLines(m[1]) {
+		s := strings.TrimSpace(strings.SplitN(ln, "#", 2)[0]) // py `ln.split("#")[0].strip()`
+		for _, tok := range strings.Fields(s) {               // py `s.split()`
+			tok = strings.TrimSpace(gnrStripQ(tok)) // py `tok.strip('"').strip("'").strip()`
+			if strings.HasSuffix(tok, ".sh") {
+				out[tok] = true
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil // py `return out or None`
 	}
 	return out
 }
@@ -1413,6 +1503,7 @@ type gnrNJ struct{ face, item, why string }
 
 type gnrCounts struct {
 	R1, R2, R3, R5 int
+	R7             int
 	R4             *int
 	R6             *int
 }
@@ -1440,6 +1531,11 @@ type gnrRes struct {
 	wLines     []string
 	marks      map[string]string
 	faceJudged map[string]bool
+	// ⑨ `.sh` 门面清册：盘上 `scripts/gates/*.sh` ⇄ `real-gates.sh` 的 `SH_GATES`（双 nil 语义 = 判不了）。
+	shDisk    []string
+	shRoster  []string
+	shMissing []string
+	shExtra   []string
 	// ★ 甲/乙 分档：分母 = 非空扫描面 ∖ 在盘基线 ⇒ 差集为空是正常态（rc=0）；
 	//   扫描面自身为空（零执行探针）⇒ denScanEmpty ⇒ 仍判不了（rc=2）。
 	denFromBaseline bool
@@ -1647,6 +1743,7 @@ func gnrRunSync(stdout, stderr io.Writer, root string, yes bool, baseline string
 	fmt.Fprintln(stdout, "   面③ 门①两张真源：该跑正门 = 人加 add_step 或 whitelist.scripts（要拍档 · 本档不替人拍）")
 	fmt.Fprintln(stdout, "   面⑤ 两器排除表：该跑正门 = public=no 才要，EXCLUDES + DROP_EXACT 两器同批（本档不代改）")
 	fmt.Fprintln(stdout, "   面⑧ 批准件 scope：该跑正门 = `zerg approve new --tool dev_edit`（人签 · 非交互拒）")
+	fmt.Fprintln(stdout, "   面⑨ .sh 门面清册：该跑正门 = 同批把新 `.sh` 门件登记进 `scripts/gates/real-gates.sh` 的 `SH_GATES`（人拍 · 本档不代改）")
 	if !yes {
 		fmt.Fprintln(stdout, "   ⇒ **干跑未写**：加 `--yes` 才落（只写纯派生面；面③⑤⑧ 只报该跑哪条正门）")
 		return 0
@@ -1808,15 +1905,23 @@ func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bo
 	drops := gnrLoadDropExact(root)
 	ledRows, ledPath, _ := gnrLoadLedgerRows(root, inv, invSet)
 	fixed, wLines, wordingOK := gnrLoadWording(root)
+	shDisk := gnrScanGatesSh(root)
+	shRoster := gnrLoadShGates(root)
+	shMissing, shExtra := []string{}, []string{}
+	if shDisk != nil && shRoster != nil {
+		shMissing = gnrSortedSetDiff(shRoster, shDisk) // py `sorted(sh_roster - sh_disk)`（清册点名 · 盘上无）
+		shExtra = gnrSortedSetDiff(shDisk, shRoster)   // py `sorted(sh_disk - sh_roster)`（盘上有 · 未进清册）
+	}
 
 	// 机器面：逐面「真源读到了没有」（面自身判不了 ⇒ BLOCKED；读到但整跑无结论 ⇒ UNKNOWN）
 	res.faceJudged = map[string]bool{
-		"①公开标记表":  marks != nil,
-		"②干跑登记":   dryHits != nil && dryReg != nil,
-		"③门①两张真源": stepLines != nil && wlItems != nil,
-		"④脚本台账":   ledRows != nil,
-		"⑤两器排除表":  excludes != nil && drops != nil,
-		"⑥失败文案面":  fixed != nil,
+		"①公开标记表":   marks != nil,
+		"②干跑登记":    dryHits != nil && dryReg != nil,
+		"③门①两张真源":  stepLines != nil && wlItems != nil,
+		"④脚本台账":    ledRows != nil,
+		"⑤两器排除表":   excludes != nil && drops != nil,
+		"⑥失败文案面":   fixed != nil,
+		"⑨.sh门面清册": shDisk != nil && shRoster != nil,
 	}
 
 	type faceCheck struct {
@@ -1835,6 +1940,7 @@ func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bo
 		{"②干跑登记", dry.hitsOK && dry.regOK, why2},
 		{"③门①两张真源", stepOK && wlItems != nil, gnrStepsRel},
 		{"⑤两器排除表", excludes != nil && drops != nil, gnrPubRel},
+		{"⑨.sh门面清册", shDisk != nil && shRoster != nil, gnrShGatesRel},
 	} {
 		if !fc.ok {
 			res.problems = append(res.problems, "面"+fc.name+" 判不了："+fc.why+" 读不到 / 解析出 0 条（真源读不全 ⇒ 绿就是假绿）")
@@ -1926,12 +2032,25 @@ func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bo
 		}
 		r6n = &v
 	}
-	res.counts = &gnrCounts{R1: len(r1), R2: len(r2), R3: len(r3), R4: r4n, R5: len(r5), R6: r6n}
+	res.counts = &gnrCounts{R1: len(r1), R2: len(r2), R3: len(r3), R4: r4n, R5: len(r5), R6: r6n,
+		R7: len(shMissing) + len(shExtra)}
 	res.items["R1"], res.items["R2"], res.items["R3"] = r1, r2, r3
 	if r4 == nil {
 		r4 = []string{}
 	}
 	res.items["R4"], res.items["R5"] = r4, r5
+	res.items["R7"] = append(append([]string{}, shMissing...), shExtra...)
+	if shDisk == nil {
+		res.shDisk = nil // py `None if sh_disk is None`
+	} else {
+		res.shDisk = gnrSortedKeys(shDisk)
+	}
+	if shRoster == nil {
+		res.shRoster = nil // py `None if sh_roster is None`
+	} else {
+		res.shRoster = gnrSortedKeys(shRoster)
+	}
+	res.shMissing, res.shExtra = shMissing, shExtra
 	res.weak, res.fourth, res.dryNA = weak, fourth, dryNA
 	res.dryHits, res.dryReg = dryHits, dryReg
 	res.dryHitsOK = dryHits != nil
@@ -2081,7 +2200,7 @@ func gnrVerdict(res *gnrRes, strict bool, faces []string) (int, int, int) {
 		return 2, 0, 0
 	}
 	c := res.counts
-	bad := c.R1 + c.R2 + c.R3 + c.R5 // R4 / R6 = 单列旁栏（写死边界：不进退码）
+	bad := c.R1 + c.R2 + c.R3 + c.R5 + c.R7 // R4 / R6 = 单列旁栏（写死边界：不进退码）；R7 = ⑨.sh门面清册
 	unjudged := len(res.notJudged) + len(res.problems)
 	if c.R4 == nil {
 		unjudged++
@@ -2180,6 +2299,19 @@ func gnrRun(stdout io.Writer, root string, newFiles []string, newSet bool, inv s
 		}
 		if res.wording != nil && !*res.wording {
 			fmt.Fprintln(stdout, "     ⇒ 文案仍只指 add_step；对「语料在仓外」与「写盘型」两类件是禁路 ⇒ 应改指白名单档（reason+date）")
+		}
+	}
+	// ★ 面⑨ .sh 门面清册（盘上 `scripts/gates/*.sh` ⇄ `SH_GATES` 冻结清册 · 双向差集任一非空即 FAIL）
+	fmt.Fprintf(stdout, "  面⑨ .sh 门面清册（盘上 `scripts/gates/*.sh` ⇄ `SH_GATES` 冻结清册 · **双向差集任一非空即 FAIL**）：%d\n", c.R7)
+	if res.shDisk == nil || res.shRoster == nil {
+		fmt.Fprintf(stdout, "     ✗ 面判不了（真源 %s 读不到 / 解析出 0 条）\n", gnrShGatesRel)
+	} else {
+		fmt.Fprintf(stdout, "     盘上 %d 件 · 清册 %d 件\n", len(res.shDisk), len(res.shRoster))
+		for _, f := range res.shMissing {
+			fmt.Fprintf(stdout, "     ✗ %s  ← 清册点名但盘上没有（悬空登记：从 `SH_GATES` 撤名 或 补回盘上那件）\n", f)
+		}
+		for _, f := range res.shExtra {
+			fmt.Fprintf(stdout, "     ✗ %s  ← 盘上有但没进 `SH_GATES`（须同批登记进 `real-gates.sh` · GAP-20261003-06）\n", f)
 		}
 	}
 	selfIn := gnrContains(res.newFiles, gnrSelfRel)
@@ -2419,6 +2551,8 @@ func gnrCntIface(c *gnrCounts, which string) interface{} {
 			return nil
 		}
 		return *c.R6
+	case "R7":
+		return c.R7
 	}
 	return nil
 }
@@ -2447,11 +2581,13 @@ func gnrFaceCount(res *gnrRes, name string) (int, bool) {
 			return 0, false
 		}
 		return *c.R6, true
+	case "⑨.sh门面清册":
+		return c.R7, true
 	}
 	return 0, false
 }
 
-// gnrBuildFaceStates —— ①–⑥ + 口径差栏 + 自指 → 五态（PASS/FAIL/BLOCKED/REPORT/UNKNOWN）。口径见 `gnrFacesStates` 注释。
+// gnrBuildFaceStates —— ①–⑥ + ⑨ + 口径差栏 + 自指 → 五态（PASS/FAIL/BLOCKED/REPORT/UNKNOWN）。口径见 `gnrFacesStates` 注释。
 //
 //	★ **host-bound 面（⑧家目录批准件）不在这里出态** —— 由 `gnrFaceRecords` 统一给
 //	  `HOST-REQUIRED · SKIPPED-HOST-BOUND`（不计 pass/fail）；未产出记录的面由 `gnrFaceRecords` 合成缺面。
@@ -2477,6 +2613,16 @@ func gnrBuildFaceStates(res *gnrRes) gnrJObj {
 		default:
 			st = append(st, gnrJField{name, "PASS"})
 		}
+	}
+	// ⑨.sh门面清册：整跑短路 ⇒ UNKNOWN；清册真源读不到 / 盘面扫不到 ⇒ BLOCKED；否则按 R7 计数定 FAIL/PASS
+	if unknownAll {
+		st = append(st, gnrJField{"⑨.sh门面清册", "UNKNOWN"})
+	} else if !res.faceJudged["⑨.sh门面清册"] {
+		st = append(st, gnrJField{"⑨.sh门面清册", "BLOCKED"})
+	} else if n, _ := gnrFaceCount(res, "⑨.sh门面清册"); n != 0 {
+		st = append(st, gnrJField{"⑨.sh门面清册", "FAIL"})
+	} else {
+		st = append(st, gnrJField{"⑨.sh门面清册", "PASS"})
 	}
 	// 参照读数 · 不并入判红；台账口径扫面缺 ⇒ 参照读数也判不了
 	if res.ledgerCnt == nil {
@@ -2550,6 +2696,14 @@ func gnrFaceDetail(res *gnrRes, st gnrJObj) gnrJObj {
 		{"未改文案", gnrCntIface(c, "R6")},
 		{"文案", gnrListOrNil(res.wLines)},
 	})
+	add("⑨.sh门面清册", gnrJObj{
+		{"缺登记", gnrCntIface(c, "R7")},
+		{"items", gnrListOrNil(res.items["R7"])},
+		{"盘上", gnrListOrNil(res.shDisk)},
+		{"清册", gnrListOrNil(res.shRoster)},
+		{"清册悬空", gnrListOrNil(res.shMissing)},
+		{"盘上未登记", gnrListOrNil(res.shExtra)},
+	})
 	out = append(out, gnrJField{"口径差栏", gnrDiffFace(res)})
 	return out
 }
@@ -2590,7 +2744,7 @@ func gnrVerdictText(res *gnrRes, rc int) string {
 		return "判不了 ⇒ 不给结论（rc=2）"
 	}
 	c := res.counts
-	bad := c.R1 + c.R2 + c.R3 + c.R5
+	bad := c.R1 + c.R2 + c.R3 + c.R5 + c.R7
 	unjudged := len(res.notJudged) + len(res.problems)
 	if c.R4 == nil {
 		unjudged++
@@ -2767,6 +2921,9 @@ const gnrFixtureMirror = `DROP_EXACT = {
 }
 `
 
+// gnrFixtureShGates —— ⑨ 面清册桩（与盘上 `scripts/gates/*.sh` 逐只相等 ⇒ 两向皆空 · 逐字照 py `build_fixture`）。
+const gnrFixtureShGates = "SH_GATES=(precommit-gates.sh real-gates.sh)\n"
+
 const gnrFixtureCovJudge = `#!/usr/bin/env python3
 def report():
     print("        ⇒ 处置：**真修** —— 该件与本批代码**同批挂门**"
@@ -2830,6 +2987,8 @@ func gnrBuildFixture(t gnrFailer, tmp, probe string, register map[string]bool) {
 	mk(gnrPubRel, pub)
 	mk(gnrMirrorRel, mir)
 	mk(gnrCovJudgeRel, gnrFixtureCovJudge)
+	// ⑨ 面真源桩：`scripts/gates/*.sh` 现盘 = {precommit-gates.sh, real-gates.sh} ⇒ 清册逐只点名、两向皆空
+	mk(gnrShGatesRel, gnrFixtureShGates)
 }
 
 type gnrTestCase struct {
@@ -3046,6 +3205,51 @@ func gnrSelfTest(stdout io.Writer) int {
 		}
 	}
 
+	// (E) ★ 面⑨ `.sh` 门面清册 成对正负控（盘上 scripts/gates/*.sh ⇄ real-gates.sh 的 SH_GATES 双向差集）
+	shGatesFixture := func(root string, extraDisk, extraRoster []string) {
+		gnrBuildFixture(nil, root, probe, map[string]bool{"①": true, "②": true, "③": true, "⑤": true})
+		os.WriteFile(filepath.Join(root, "inv.tsv"), []byte("件\n"+probe+"\n"), 0o644)
+		roster := append([]string{"precommit-gates.sh", "real-gates.sh"}, extraRoster...)
+		os.WriteFile(filepath.Join(root, gnrShGatesRel),
+			[]byte("SH_GATES=("+strings.Join(roster, " ")+")\n"), 0o644)
+		for _, e := range extraDisk {
+			os.WriteFile(filepath.Join(root, gnrShGatesDir, e),
+				[]byte("#!/usr/bin/env bash\necho g\n"), 0o644)
+		}
+	}
+	shRun := func(extraDisk, extraRoster []string) *gnrRes {
+		root, err := os.MkdirTemp("", "gnr-selftest-")
+		if err != nil {
+			return nil
+		}
+		defer os.RemoveAll(root)
+		shGatesFixture(root, extraDisk, extraRoster)
+		return gnrAudit(root, []string{probe}, true, "inv.tsv", true, "")
+	}
+	resP := shRun(nil, nil)
+	resE := shRun([]string{"ghost-on-disk.sh"}, nil)
+	resM := shRun(nil, []string{"ghost-in-roster.sh"})
+	if resP != nil && resE != nil && resM != nil {
+		mkSt := func(r *gnrRes) string { return gnrJGet(gnrBuildFaceStates(r), "⑨.sh门面清册") }
+		stP, stE, stM := mkSt(resP), mkSt(resE), mkSt(resM)
+		okP := stP == "PASS" && len(resP.shMissing) == 0 && len(resP.shExtra) == 0
+		addCheck("⑨·正控 盘上 ⇄ SH_GATES 相等（两向皆空）state=PASS", 1, gnrB2i(okP), okP)
+		rcP, _, _ := gnrVerdict(resP, true, nil)
+		addCheck("⑨·正控 相等 ⇒ strict rc=0（不误红）", 0, rcP, rcP == 0)
+		okE := stE == "FAIL" && len(resE.shExtra) == 1 && resE.shExtra[0] == "ghost-on-disk.sh" && len(resE.shMissing) == 0
+		addCheck("⑨·负控甲 盘上有件没进清册 ⇒ FAIL（缺登记）", 1, gnrB2i(okE), okE)
+		rcEs, _, _ := gnrVerdict(resE, true, nil)
+		addCheck("⑨·负控甲 缺登记 ⇒ strict rc=1", 1, rcEs, rcEs == 1)
+		rcEr, _, _ := gnrVerdict(resE, false, nil)
+		addCheck("⑨·负控甲 报告档 rc=0（面 FAIL 但只报告 · 与 strict 成对）", 0, rcEr, rcEr == 0)
+		okM := stM == "FAIL" && len(resM.shMissing) == 1 && resM.shMissing[0] == "ghost-in-roster.sh" && len(resM.shExtra) == 0
+		addCheck("⑨·负控乙 清册点名盘上无 ⇒ FAIL（悬空登记）", 1, gnrB2i(okM), okM)
+		rcMs, _, _ := gnrVerdict(resM, true, nil)
+		addCheck("⑨·负控乙 悬空 ⇒ strict rc=1", 1, rcMs, rcMs == 1)
+		okD := stP == "PASS" && stE == "FAIL"
+		addCheck("⑨·区分度 同一夹具只差一件：相等 ⇒ PASS · 盘上多一件 ⇒ FAIL（成对）", 1, gnrB2i(okD), okD)
+	}
+
 	fmt.Fprintln(stdout, "── 自检（合成夹具 · 成对 · 不扫真仓）──")
 	bad := 0
 	for _, c := range checks {
@@ -3179,7 +3383,7 @@ const gnrUsage = "usage: check-newfile-registry.py [-h] [--repo REPO] [--baselin
 // 与 `gnrHelp` 逐字节对拍（stdout+stderr+rc 三面）并钉住正文 sha256 ⇒ py 正文一改，该断言必红。
 const gnrHelp = gnrUsage +
 	"\n" +
-	"门76 新件登记完整性：件级 × 六张登记表（只报告 · 起手不接闸）\n" +
+	"门76 新件登记完整性：件级 × 六张登记表 ＋ .sh 门面清册（只报告 · 起手不接闸）\n" +
 	"\n" +
 	"optional arguments:\n" +
 	"  -h, --help            show this help message and exit\n" +
@@ -3196,8 +3400,8 @@ const gnrHelp = gnrUsage +
 	"  --paths PATHS         查缺档判据路径（逗号分隔 · 默认 scripts）\n" +
 	"  --outdir OUTDIR       查缺档报告落点：**生成前先清空该目录**（防旧件残留看着一致）· 只跟 `--check-missing`\n" +
 	"                        连用\n" +
-	"  --json SECTIONS       机器面 JSON（逗号分隔断面：faces = 六张登记表逐面状态；self = 自指那一段） ·\n" +
-	"                        给了就只出 JSON（人面向 stdout 让位）\n" +
+	"  --json SECTIONS       机器面 JSON（逗号分隔断面：faces = 登记面逐面状态（六张登记表 ＋ ⑨.sh门面清册）；self\n" +
+	"                        = 自指那一段） · 给了就只出 JSON（人面向 stdout 让位）\n" +
 	"  --yes                 写面确认：只有 `--dump-baseline` 会写件，且**默认干跑不写**；带 `--yes`\n" +
 	"                        才真落（本件比「默认真写」的写器更保守）\n" +
 	"  --self-test           只跑合成夹具自检（不扫真仓）\n" +
