@@ -420,6 +420,129 @@ func doctorItems(inv *invocation) []map[string]string {
 	return items
 }
 
+// doctorMemCells —— 缺口 `GAP-20260925-47`：doctor 的「内存余量 / 内核 OOM 归因」两格。
+//
+// 为什么两格：edge-node 的 llama-server 被内核 OOM 杀掉时，主控侧只表现为 503 + 超时，而机器本体健康
+// （子端活、heartbeat 绿）⇒ 运维看不出是 OOM。数据在子端（单元结局）与心跳（mem_available）里
+// 都有，缺的是**诊断面把余量与 OOM 事件露出来**（§九 M9 `RC9`：读不到不当健康）。
+//
+//	① 内核 OOM 归因：读 `machines.<机>.exit_reason`（子端上抛的单元结局词表）；
+//	   命中 `oom-killed` ⇒ REPORT（只报告，不影响 rc）· 名册读得到却**从无该键** ⇒ SKIP（子端未上抛）
+//	   · 有名册且无命中 ⇒ PASS。★ 只认 `oom-killed` 一个词（`signal+9` 一类不误报 —— 误报比漏报更坏）。
+//	② 引擎内存余量：`machines.<机>.mem_available_gb` 对 `/api/fleet/models` 该机**最大**模型
+//	   `mem_gb`（阈值口径 = 缺口 `want_action`③「始终留出 >=1 个最大模型的 mem_gb」）。
+//	   ★ **不二次扣减已驻留**（`monitor/dual_gate.go:7`：MemAvailable 已含 GTT 占用）。
+//	   余量 < 阈值 ⇒ REPORT · 某台读不到 ⇒ SKIP（整格不给结论）。
+//
+// `known=false`（拿不到 `/api/fleet/status` 载荷）⇒ 两格都 SKIP。
+func doctorMemCells(fleet jsonObj, known bool) []map[string]string {
+	oom := map[string]string{"name": "内核 OOM 归因", "verdict": "SKIP",
+		"detail": "读不到机群载荷（/api/fleet/status）", "advice": "先从主控读机群状态（§九 M9 RC9：读不到不当健康）"}
+	mem := map[string]string{"name": "引擎内存余量", "verdict": "SKIP",
+		"detail": "读不到机群载荷（/api/fleet/status）", "advice": "先从主控读机群状态（§九 M9 RC9）"}
+	if !known {
+		return []map[string]string{oom, mem}
+	}
+	ms := asObj(fleet["machines"])
+
+	// ① 内核 OOM 归因（只认 `oom-killed` 一个词）。
+	seenKey := false
+	oomHit := []string{}
+	for name, v := range ms {
+		o := asObj(v)
+		if o == nil {
+			continue
+		}
+		if _, ok := o["exit_reason"]; ok {
+			seenKey = true
+		}
+		if strings.EqualFold(cell(o["exit_reason"]), "oom-killed") {
+			oomHit = append(oomHit, name)
+		}
+	}
+	sort.Strings(oomHit)
+	switch {
+	case !seenKey:
+		oom = map[string]string{"name": "内核 OOM 归因", "verdict": "SKIP",
+			"detail": "主控名册里没有 `exit_reason` 这一格（子端未上抛单元结局 ⇒ 读不到，不当健康）",
+			"advice": "上抛端在子端（另路）：子端把 systemd Result/ExecMainStatus 归类的 `oom-killed` 打进心跳后本格自动生效"}
+	case len(oomHit) > 0:
+		oom = map[string]string{"name": "内核 OOM 归因", "verdict": "REPORT",
+			"detail": "最近有单元被内核 OOM 杀掉：" + strings.Join(oomHit, ", ") + "（心跳绿 ≠ 没被杀过）",
+			"advice": "查该机 dmesg 与常驻模型数；按「mem_available 始终留出 >=1 个最大模型的 mem_gb」控常驻数"}
+	default:
+		oom = map[string]string{"name": "内核 OOM 归因", "verdict": "PASS",
+			"detail": "名册内无 `oom-killed` 结局", "advice": ""}
+	}
+
+	// ② 引擎内存余量。
+	var models jsonObj
+	if err := newClient().getJSON("/api/fleet/models", &models); err != nil {
+		mem = map[string]string{"name": "引擎内存余量", "verdict": "SKIP",
+			"detail": "读不到 /api/fleet/models：" + err.Error(), "advice": "先从主控读模型清单（§九 M9 RC9）"}
+		return []map[string]string{oom, mem}
+	}
+	maxMem := map[string]float64{}
+	for _, it := range asList(models["models"]) {
+		o := asObj(it)
+		if o == nil {
+			continue
+		}
+		h := cell(o["host"])
+		if f, ok := numOf(o["mem_gb"]); ok && f > maxMem[h] {
+			maxMem[h] = f
+		}
+	}
+	low := []string{}
+	unknownHosts := 0
+	for name, v := range ms {
+		o := asObj(v)
+		if o == nil {
+			continue
+		}
+		avail, ok := numOf(o["mem_available_gb"])
+		if !ok {
+			unknownHosts++
+			continue
+		}
+		thr := maxMem[name]
+		if thr <= 0 {
+			continue // 该机无名册模型 ⇒ 无从判（不编一个数）
+		}
+		if avail < thr {
+			low = append(low, fmt.Sprintf("%s（余 %.1f < 最大模型 %.1f GB）", name, avail, thr))
+		}
+	}
+	sort.Strings(low)
+	switch {
+	case len(low) > 0:
+		mem = map[string]string{"name": "引擎内存余量", "verdict": "REPORT",
+			"detail": "余量低于该机最大模型：" + strings.Join(low, " · "),
+			"advice": "按 want_action③：让 mem_available 始终留出 >=1 个最大模型的 mem_gb，再决定是否起新引擎"}
+	case unknownHosts > 0:
+		mem = map[string]string{"name": "引擎内存余量", "verdict": "SKIP",
+			"detail": fmt.Sprintf("%d 台读不到 mem_available_gb（读不到不当健康）", unknownHosts), "advice": "先从主控读机群状态"}
+	default:
+		mem = map[string]string{"name": "引擎内存余量", "verdict": "PASS",
+			"detail": "各机余量均不低于其最大模型 mem_gb", "advice": ""}
+	}
+	return []map[string]string{oom, mem}
+}
+
+// numOf —— 把一个载荷值取成 float64（JSON 数是 float64；字符串形态也认，取不到 ⇒ ok=false）。
+func numOf(v any) (float64, bool) {
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case int:
+		return float64(t), true
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
+		return f, err == nil
+	}
+	return 0, false
+}
+
 // doctorItemsRaw —— 原来的组装体（逐项 + 判定词 + 建议动作），一字未改，只在最外层被 `doctorItems` 补两键。
 func doctorItemsRaw(inv *invocation) []map[string]string {
 	items := []map[string]string{}
@@ -499,9 +622,12 @@ func doctorItemsRaw(inv *invocation) []map[string]string {
 			"detail": "`--quick`：贵项（要打主控的那一项）本轮**跳过**",
 			"advice": "SKIP 也会把整单退码拉到 `8`（「跳过没判」不许当健康 · §九 M9 `RC9` / §十二 P-040）"})
 		items = append(items, ghostReapItem())
+		// 缺口 `GAP-20260925-47`：`--quick` 下两格**仍在表里**（==SKIP），不许整格消失（E 型「绿着错」）。
+		items = append(items, doctorMemCells(nil, false)...)
 		return items
 	}
 	var fleet jsonObj
+	fleetKnown := false
 	if err := c.getJSON("/api/fleet/status", &fleet); err != nil {
 		inv.setErr("blocked", "fleet_unreadable", err.Error())
 		items = append(items, map[string]string{
@@ -548,7 +674,10 @@ func doctorItemsRaw(inv *invocation) []map[string]string {
 				"判决实现已在源码（T-23 · core/internal/api/fleet_health.go），生效要换件重启主控 ⇒ 待 Mr2109 拍"
 		}
 		items = append(items, map[string]string{"name": "子端名册", "verdict": verdict, "detail": detail, "advice": advice})
+		fleetKnown = true
 	}
+	// 缺口 `GAP-20260925-47`：内存余量 / 内核 OOM 归因两格（读得到才判；读不到 ⇒ SKIP · 不当健康）。
+	items = append(items, doctorMemCells(fleet, fleetKnown)...)
 
 	// ⑥ 档位名册（离线也出表）
 	rows := contextRows()

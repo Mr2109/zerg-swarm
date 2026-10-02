@@ -99,11 +99,12 @@ GATES = [
      "GitHub Actions：run: python3 scripts/... （check_version / check-gotoolchain / check-compat-manifest / check_docs / check-shell-unicode-vars）"),
     ("publish/ci/release-agent.yml", "release", "发布闸·CI（Release 重切）",
      "GitHub Actions：python3 scripts/gates/check_version.py · scripts/evals/make-manifest.py"),
+    ("publish/mirror-acceptance.sh", "release", "发布闸·验收套件（推送前置）",
+     "SKIP_BUILD=1 bash publish/mirror-acceptance.sh（`publish/mirror-public.sh` PUSH=1 与 `publish/mirror-cn.sh` 推送段前各一行；rc=1 拦截 · `GAP-20260927-138`）"),
 ]
 
 # 相关但不是闸（打印为「排除域」；判据不吃它们 —— 别把验收套件/弃用器/测试当闸）
 NOT_GATES = [
-    ("publish/mirror-acceptance.sh", "B1 发布器验收套件（逐条能失败，属测试面）"),
     ("scripts/build/publish-public.sh", "压平快照发布器 · 已弃用（Q5 待废弃；现役为 mirror-public.sh）"),
     ("scripts/build/test-publish-parity.sh", "两器一致性测试（测试面）"),
 ]
@@ -134,6 +135,11 @@ RECORD_SURFACES = [
     #     直接写仓外 glob = 空条目（另一种假覆盖）。要真覆盖仓外那棵须把**引用面**也加上仓外根
     #     = 改判据（不是加注）⇒ 属批6 决策，本批不动。
     "docs/项目文档/*/债务台账-*",   # 本门结论的落账面（glob ⇒ 换日期/换版本不用改代码）
+    #   ★ 2026-10-02（缺口 `GAP-20260927-139` · 记录面不得充作引用）：`scripts/公开标记.tsv`
+    #     点名了全部 148 只候选脚本，却 0 处命令位调用 ⇒ 旧口径把它算作「代码侧引用」，
+    #     于是 27 条 WHITELIST 全变「⚠ 可下架」、「未登记 N 只 ⇒ rc=1」这一档结构上永不红。
+    #     本条即把这张记录类表接进 RECORD_SURFACES（门 :113-119 早已写着「记录不能充作引用」）。
+    "scripts/公开标记.tsv",          # 公开面标记表（记录类表面 · 148 只候选全被点名 ⇒ 必须排除）
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -912,6 +918,13 @@ def _fixture(base, name, files):
             f.write(content)
     return d
 
+
+def _write(path, content):
+    """夹具写盘助手（修复：自检 ⑰ 用它写未跟踪件，此前未定义 ⇒ 自检 NameError 崩）。"""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+
 GATE_A = "#!/usr/bin/env bash\nset -u\n# 闸（夹具）\npython3 scripts/check-alpha.py --scope x\n"
 GATE_B = "#!/usr/bin/env bash\npython3 scripts/check-beta.py\n"
 
@@ -943,6 +956,10 @@ def run_case(label, fixture, wl, extra, expect_rc, must, must_not, results):
 def selftest():
     base = tempfile.mkdtemp(prefix="wired-scripts-selftest-")
     results = []
+
+    def check(label, cond):
+        """单元负控登记（修复：⑱ 用到 check，此前未定义 ⇒ 自检 NameError 崩）。"""
+        results.append((label, bool(cond), "" if cond else "断言不成立"))
     wl_ok = [{"name": "helper.py", "reason": "夹具：一次性", "date": "2026-09-18"}]
 
     ok_files = {
@@ -956,6 +973,13 @@ def selftest():
                                 "bash scripts/gates/precommit-gates.sh\n"
                                 "bash scripts/build/publish-preflight.sh /tmp/out\n",
         "Makefile": "check:\n\tbash scripts/run-gates.sh\n",
+        # 闸清单里的每一条都必须「在位」——否则 GAP-154 起 rc=2（缺一即不给结论）。
+        # 旧夹具只放了 2 条闸 ⇒ 修好 NameError 后仍会 rc=2，故补齐其余发布闸（内容无关，只求在位）。
+        "publish/mirror-public.sh": "#!/usr/bin/env bash\n",
+        "publish/mirror-public-lib.py": "# lib\n",
+        "publish/ci/ci.yml": "name: ci\n",
+        "publish/ci/release-agent.yml": "name: rel\n",
+        "publish/mirror-acceptance.sh": "#!/usr/bin/env bash\n",
         # 记录面（本门结论的落账面）：点名 helper.py **不算引用** ⇒ helper.py 仍应是零引用件
         "docs/项目文档/v9.9/债务台账-20990101.md": "helper.py 是零引用\n",
     }
@@ -1118,6 +1142,20 @@ def selftest():
     check("⑱ candidate_files 非 git 档原样返回（换面只在候选面这一半）",
           candidate_files(base, ["a.py"], "文件系统遍历（非 git 目录）") == ["a.py"])
 
+    # ── ⑲ 记录类表不得充作引用（`GAP-20260927-139` · 与 RECORD_SURFACES 新增条目成对）─────
+    #   负控：一只假脚本（check-omega.py）**只被** `scripts/公开标记.tsv`（记录类表面）点名
+    #   ⇒ 必须仍判「未登记」（若该表被算作引用，check-omega.py 就有引用 ⇒ 不报未登记 ⇒ 本格红）。
+    f_mark = _fixture(base, "neg-record-marks", dict(ok_files, **{
+        "scripts/check-omega.py": "# ck\n",
+        "scripts/公开标记.tsv": "scripts/check-omega.py\tpublic=no\n",
+    }))
+    run_case("⑲ 只被记录类表（公开标记.tsv）点名 ⇒ 仍判「未登记」（记录不能充作引用）",
+             f_mark, wl_ok, [], 0, ["check-omega.py", "未登记 1"], ["未登记 0"], results)
+    #   正控（成对 · 反向）：同夹具 + --strict-report ⇒ 该「未登记」必须升为 rc=1（牙真的在）
+    run_case("⑲' 同上 + --strict-report ⇒ rc=1（记录类引用不成牙）",
+             f_mark, wl_ok, ["--strict-report"], 1, ["rc=1"], [], results)
+
+    npass = sum(1 for _lbl, _ok, _w in results if _ok)
     print("门③ --self-test（成对负控 · 真命令行 + 真退出码）：%d/%d 通过" % (npass, len(results)))
     for label, ok, why in results:
         print("  %s %s%s" % ("✓" if ok else "✗", label, "" if ok else "   ← %s" % why))
