@@ -7,17 +7,19 @@
 //	本件 = 甲案 C 类（判据注册表真源生成 + 双向差集自检）的一枚：
 //	验收判据 = 对同一件跑两态（py 原件 ↔ 本件入口），**stdout / stderr / 退码三面逐字相同**。
 //
-// 本件做什么（照 py 真身逐条读出）：
+// 本件做什么（照 py 真身逐条读出 · ★ 已同步 DEV-1142「拆两半」新版）：
 //
-//	`--emit`  —— 现读生成注册表：递归 `<根>/scripts/` 全子树，只收 `.py` / `.sh`
-//	              （目录名 `__pycache__` 不下钻），判据名 = 文件名去扩展名；每条落 12 个列面字段
-//	              （id/name/path/cwd/interp/needs_env/serial/hazard/dry_run/sha256/tool_version/cache_key），
+//	`--emit`  —— 现读生成注册表（**派生半（甲）**）：递归 `<根>/scripts/` 全子树，只收 `.py` / `.sh`
+//	              （目录名 `__pycache__` 不下钻），判据名 = 文件名去扩展名；每条落 8 个列面字段
+//	              （id/name/path/cwd/interp/sha256/tool_version/cache_key），
 //	              另有 schema/generated_by/roster_dir/extensions/min_tool_version/invocation/count/dupes/entries 九个顶层键。
+//	              ★ DEV-1142：四字段（needs_env/serial/hazard/dry_run）**已搬进人签半作 `declare`** ⇒ 派生半**不再出**这四列。
 //	`--check` —— 双向差集（盘上有件表里没点名 ⇒ 红；表里点名盘上无件 ⇒ 红）＋ 四条列面机检
 //	              （路径越出 `scripts/` 前缀 / 判据名 ≠ 去扩展名 / 表内路径与盘上不符 /
-//	              sha256 缓存键过期）⇒ 空 = 绿。
-//	`--self-test` —— 成对负控：合成夹具上正控绿 ＋ 五条负控各自必红（① 盘上有件表里无 ·
-//	              ② 表里点名盘上无 · ③ 缓存键过期 · ④ 同名多件 · ⑤ 路径越出前缀）。
+//	              sha256 缓存键过期）＋ **第三方向 甲⇄乙**（人签半 `scripts/gates/judge-adoption.json` ·
+//	              schema `judge-adoption/1`：三类决定 `adopt`/`exempt`/`declare` · `declare` 四字段闭集 ·
+//	              `enforce` 迁移期与 `enforce_sig` 上牙机检 · 未决定脚注）⇒ 空 = 绿。
+//	`--self-test` —— 成对负控：合成夹具上正控绿 ＋ 拆两半成对负控（格A–格M）＋ 五条甲半负控各自必红。
 //
 // 遍历序（★ 本件逐处现读的结论）：py 用 `os.walk` 且**显式** `dns[:]=sorted(...)` / `sorted(fns)`
 // ⇒ 遍历本身已排序；且 `scan_roster` 的产物**全部**再走 `sorted()`（`build_registry` 按 name 排序、
@@ -35,7 +37,6 @@
 //
 //	① 本件在**自己**的扫描面内吗？—— **否**。本门扫描面 = 调用方给的根下 `scripts/` 子树里的
 //	   `.py` / `.sh` 件；本件落在 `core/cmd/zerg/` 下、后缀是 `.go` ⇒ 双条都不进面。
-//	   取证 = 「落件前后 py 原件 `--emit --out -` 的 stdout sha16 逐字相同」（回执给读数）。
 //	② 本件落在**任何他门**的扫描面内吗？—— **否**。本件正文**零私有卷 / 家目录绝对路径字面**、
 //	   **零登记面件名清单**；若收口批现读发现某他门扫面含 `core/` 且判据含本件形态，按「拼串/转义」
 //	   形态改写（第四形态处置）。
@@ -47,22 +48,24 @@
 //	  · 退码   —— 0 绿 / 1 红 / 2 不给结论（与 py 三码逐字对齐）
 //	  · 输出   —— stdout/stderr 与 py 逐字节对齐（见下「已对拍面 / 未覆盖面」）
 //
-// ⚠ 本单边界（照实）：只落码、不接线 —— 不进命令树 · 不改 `add_step` · 不删 py 原件 ·
-// 入口暂无调用点（先证明「搬得逐字相同」，接线与命令注册是后一单的事）。
+// ⚠ 本单边界（照实）：只落码、不接线 —— 本件不新增命令树项（门79 的 Go 入口**早已**接进转发壳
+// `gateCheckGoEntry` 的 `check-judge-registry` 一格）· 不改 `add_step` · 不删 py 原件。
 //
 // 未覆盖面（✗ 不声称逐字对齐）：
 //
-//	① argparse 帮助 / 用法 / 错误正文（`-h` / 未知旗标 / 互斥二选冲突 / 缺值 / 前缀缩写）：
+//	① argparse 帮助 / 用法 / 错误正文（`-h` / 未知旗标 / 互斥三选冲突 / 缺值 / 前缀缩写）：
 //	   py 打 argparse 生成的 usage 正文（含 prog 名、终端宽度）⇒ 本件只对齐**退码 2**，正文自定。
 //	② 异常路径正文：注册表**读不到**（权限 / 不存在）py 打 `[Errno 2] …` 串；**非 JSON** py 打
-//	   `json.JSONDecodeError` 串 ⇒ 本件同退码（2）· 正文为 Go 的 error 串。
+//	   `json.JSONDecodeError` 串 ⇒ 本件同退码（2）· 正文为 Go 的 error 串。人签半同理。
 //	③ `entries` **在场但非数组**（null / 数字 / 布尔）时 py 在迭代处抛异常 ⇒ 回溯 rc=1；
 //	   本件 fail-closed rc=2 ＋ 具名文案（✗ 不动 py 原件）。
-//	④ 非字符串 `name` 的排序、浮点数的 Python repr、以及 `%r` 对**嵌套 dict 转义**的全枚举：
-//	   本件对常规标量与数组逐字相同，对上述边角未做全枚举对拍。
+//	④ 非字符串 `name` / `id` 的排序与作键、浮点数的 Python repr、以及 `%r` 对**嵌套 dict 转义**的
+//	   全枚举：本件对常规标量与数组逐字相同，对上述边角未做全枚举对拍。
 //	⑤ 子进程面：`.sh` 件的 `tool_version` 走 `bash --version`（与 py 同形、结果缓存）；`.py` 件的
 //	   `tool_version` py 用**运行解释器**的版本 ⇒ 本件改跑 `python3 --version` 取 PATH 上 python3 的
 //	   版本 ⇒ 两者仅在「py 用非 PATH 的 python3 跑」时不同。
+//	⑥ py `load_decisions` 对「件在盘但不可读」抛 `OSError`、对 JSON 解析失败抛 `ValueError`
+//	   （JSONDecodeError 子类）⇒ 两条路 py 文案不同；本件按「读失败 / 解析·schema 失败」两档同构。
 package main
 
 import (
@@ -82,13 +85,32 @@ import (
 )
 
 const (
-	jrSchema          = "judge-registry/1"
-	jrRosterDir       = "scripts"
-	jrRegistryDefault = "scripts/gates/judge-registry.json"
-	jrGeneratedBy     = "scripts/gates/check-judge-registry.py --emit"
+	jrSchema           = "judge-registry/1"
+	jrDecisionsSchema  = "judge-adoption/1"
+	jrRosterDir        = "scripts"
+	jrRegistryDefault  = "scripts/gates/judge-registry.json"
+	jrDecisionsDefault = "scripts/gates/judge-adoption.json"
+	jrGeneratedBy      = "scripts/gates/check-judge-registry.py --emit"
 )
 
 var jrInterp = map[string]string{".py": "python3", ".sh": "bash"}
+
+// ── 闭集（拍板③ · 与 py 逐字同）──
+//
+//	jrDecisionValues    = DECISION_VALUES（决定值闭集 · 第三类 `declare` 与 adopt/exempt 并列）
+//	jrAdoptionValues    = ADOPTION_VALUES（采纳面 = 只这两个值算「采纳/豁免」· 与 declare 正交）
+//	jrDeclareFields     = DECLARE_FIELDS（declare 载荷四字段）
+//	jrDeclareBoolFields = DECLARE_BOOL_FIELDS（布尔两值的那两个）
+//	jrHazardValues      = HAZARD_VALUES（借 v1.2 P9 危险档闭集）
+//	jrDryRunValues      = DRY_RUN_VALUES
+var (
+	jrDecisionValues    = []string{"adopt", "exempt", "declare"}
+	jrAdoptionValues    = []string{"adopt", "exempt"}
+	jrDeclareFields     = []string{"needs_env", "serial", "hazard", "dry_run"}
+	jrDeclareBoolFields = []string{"needs_env", "serial"}
+	jrHazardValues      = []string{"none", "swap", "replace", "publish", "kill"}
+	jrDryRunValues      = []string{"none", "argv", "noop"}
+)
 
 var jrBashVerCache *string
 
@@ -108,16 +130,13 @@ type jrInvocation struct {
 	Note       string `json:"note"`
 }
 
+// jrEntry —— ★ DEV-1142：四字段（needs_env/serial/hazard/dry_run）**已搬进人签半** ⇒ 派生半只留 8 列。
 type jrEntry struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Path        string `json:"path"`
 	Cwd         string `json:"cwd"`
 	Interp      string `json:"interp"`
-	NeedsEnv    bool   `json:"needs_env"`
-	Serial      bool   `json:"serial"`
-	Hazard      string `json:"hazard"`
-	DryRun      string `json:"dry_run"`
 	SHA256      string `json:"sha256"`
 	ToolVersion string `json:"tool_version"`
 	CacheKey    string `json:"cache_key"`
@@ -135,7 +154,7 @@ type jrRegistry struct {
 	Entries        []jrEntry        `json:"entries"`
 }
 
-// jrNote 与 py 第 143-144 行的 note 字面逐字相同。
+// jrNote 与 py 的 note 字面逐字相同。
 const jrNote = "入口参数与期望退码由转发壳逐字透传（`zerg gate check <判据名> [其余逐字给子件]`）；" +
 	"0/1/2 三码透传，件自身崩/超时 ⇒ 壳 8 · judge_broken/timeout。"
 
@@ -251,13 +270,131 @@ func jrPyStr(v *jv) string {
 	return jrPyRepr(v)
 }
 
-// jrPyList 复刻 Python `str(list-of-str)`（供自检负控失败档的 `%s`）。
+// jrPyList 复刻 Python `str(list-of-str)`（供自检负控与闭集 `list(...)` 档的 `%s`）。
 func jrPyList(xs []string) string {
 	parts := make([]string, 0, len(xs))
 	for _, x := range xs {
 		parts = append(parts, jrPyStrRepr(x))
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// jrPyTruthy 复刻 Python 真值判定（供 `if d.get("reason") else ""` / 三件套齐判定复用）。
+func jrPyTruthy(v *jv) bool {
+	if v == nil {
+		return false
+	}
+	switch v.kind {
+	case 'n':
+		return false
+	case 'b':
+		return v.b
+	case 'i':
+		return v.num != "0" && v.num != "0.0"
+	case 's':
+		return v.s != ""
+	case 'a':
+		return len(v.arr) > 0
+	case 'o':
+		return len(v.obj) > 0
+	}
+	return false
+}
+
+// ── 有序 JSON 值的构造 / 克隆 / 改键（供人签半夹具复刻 py 的 dict 字面量与 json 往返）──
+
+func jrNewStr(s string) *jv { return &jv{kind: 's', s: s} }
+func jrNewBool(b bool) *jv  { return &jv{kind: 'b', b: b} }
+func jrNewArr(items ...*jv) *jv {
+	return &jv{kind: 'a', arr: items}
+}
+func jrNewObj(pairs ...jpair) *jv { return &jv{kind: 'o', obj: pairs} }
+
+// jrClone 复刻 `json.loads(json.dumps(x))`（深拷贝 · 保 key 序）。
+func jrClone(v *jv) *jv {
+	if v == nil {
+		return nil
+	}
+	c := &jv{kind: v.kind, b: v.b, num: v.num, s: v.s}
+	if v.arr != nil {
+		c.arr = make([]*jv, len(v.arr))
+		for i, e := range v.arr {
+			c.arr[i] = jrClone(e)
+		}
+	}
+	if v.obj != nil {
+		c.obj = make([]jpair, len(v.obj))
+		for i, kv := range v.obj {
+			c.obj[i] = jpair{kv.k, jrClone(kv.v)}
+		}
+	}
+	return c
+}
+
+// jrSet 复刻 py `d[k] = v`（键在 ⇒ 原位替换 · 键不在 ⇒ 追加）。
+func jrSet(o *jv, k string, v *jv) {
+	if o == nil || o.kind != 'o' {
+		return
+	}
+	for i := range o.obj {
+		if o.obj[i].k == k {
+			o.obj[i].v = v
+			return
+		}
+	}
+	o.obj = append(o.obj, jpair{k, v})
+}
+
+// jrDecisionsArr 取 `decisions` 数组（缺 / 非数组 ⇒ 空表）。
+func jrDecisionsArr(o *jv) []*jv {
+	if dv := jget(o, "decisions"); dv != nil && dv.kind == 'a' {
+		return dv.arr
+	}
+	return nil
+}
+
+func jrAppendDecision(o *jv, d *jv) {
+	if dv := jget(o, "decisions"); dv != nil && dv.kind == 'a' {
+		dv.arr = append(dv.arr, d)
+	}
+}
+
+func jrFilterDecisions(o *jv, keep func(*jv) bool) {
+	dv := jget(o, "decisions")
+	if dv == nil || dv.kind != 'a' {
+		return
+	}
+	out := make([]*jv, 0, len(dv.arr))
+	for _, d := range dv.arr {
+		if keep(d) {
+			out = append(out, d)
+		}
+	}
+	dv.arr = out
+}
+
+func jrForEachDecision(o *jv, f func(*jv)) {
+	for _, d := range jrDecisionsArr(o) {
+		f(d)
+	}
+}
+
+// jrGetOr 复刻 py `d.get(k, def)`（缺键 ⇒ def · 显式 null ⇒ "None"）。
+func jrGetOr(o *jv, k, def string) string {
+	if v := jget(o, k); v != nil {
+		return jrPyStr(v)
+	}
+	return def
+}
+
+// jrInList 复刻 py `x in (a, b, …)`（字符串面）。
+func jrInList(s string, xs []string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // ── 现读读数 ──
@@ -356,6 +493,7 @@ func jrScanRoster(root string) map[string][]string {
 }
 
 // jrBuildRegistry 照 py build_registry（确定性：条目按 name 排序 · 键序固定）。
+// ★ 与人签半**无入参耦合**（构造上不可能覆盖人的决定 · 自检格H）。
 func jrBuildRegistry(root string) *jrRegistry {
 	paths := jrScanRoster(root)
 	dupes := []string{}
@@ -385,7 +523,6 @@ func jrBuildRegistry(root string) *jrRegistry {
 		}
 		entries = append(entries, jrEntry{
 			ID: name, Name: name, Path: rel, Cwd: ".", Interp: interp,
-			NeedsEnv: false, Serial: false, Hazard: "none", DryRun: "none",
 			SHA256: sha, ToolVersion: tv, CacheKey: sha + "|" + tv,
 		})
 	}
@@ -419,9 +556,198 @@ func jrMarshalRegistry(reg *jrRegistry) string {
 	return buf.String()
 }
 
-// jrProblemList 照 py _problem_list：双向差集 ＋ 列面机检 ⇒ 问题清单（空 = 绿）。
+// ── 人签半（乙）读取与机检 ──
+
+// jrLoadDecisions 照 py load_decisions：件不在盘 ⇒ (nil, "")（**不是错** · 迁移期）；
+// 读失败 / 解析·schema 失败 ⇒ (nil, 具名文案)。
+func jrLoadDecisions(path string) (*jv, string) {
+	st, serr := os.Stat(path)
+	if serr != nil || st.IsDir() { // py `not os.path.isfile(path)` ⇒ None
+		return nil, ""
+	}
+	data, rerr := os.ReadFile(path)
+	if rerr != nil {
+		return nil, fmt.Sprintf("⛔ 人签半读不到：%s ⇒ 不给结论（rc=2）", rerr)
+	}
+	dec, perr := jparse(data)
+	if perr != nil {
+		return nil, fmt.Sprintf("⛔ 人签半加载期硬错：%s ⇒ 不给结论（rc=2）", perr)
+	}
+	if dec == nil || dec.kind != 'o' || jrSchemaOf(dec) != jrDecisionsSchema {
+		present := "None"
+		if dec != nil && dec.kind == 'o' {
+			if sv := jget(dec, "schema"); sv != nil {
+				present = jrPyRepr(sv)
+			}
+		} else {
+			present = jrPyRepr(dec)
+		}
+		inner := fmt.Sprintf("人签半 schema 不符（须 `%s` · 现读 %s）", jrDecisionsSchema, present)
+		return nil, fmt.Sprintf("⛔ 人签半加载期硬错：%s ⇒ 不给结论（rc=2）", inner)
+	}
+	return dec, ""
+}
+
+// jrDeclareFieldProblem 照 py _declare_field_problem ⇒ 问题串 or ""。
+func jrDeclareFieldProblem(did, key string, val *jv) string {
+	if jrInList(key, jrDeclareBoolFields) {
+		if val == nil || val.kind != 'b' {
+			return fmt.Sprintf("declare 载荷 `%s` 非布尔（闭集 true/false · 现读 %s）：%s", key, jrPyRepr(val), did)
+		}
+		return ""
+	}
+	closed := jrDryRunValues
+	if key == "hazard" {
+		closed = jrHazardValues
+	}
+	if val == nil || val.kind != 's' || !jrInList(val.s, closed) {
+		return fmt.Sprintf("declare 载荷 `%s` 值不在闭集 %s：%s（现读 %s）", key, jrPyList(closed), did, jrPyRepr(val))
+	}
+	return ""
+}
+
+// jrAdoptionUndecided 照 py _adoption_undecided：在册中**没有采纳/豁免决定**的判据名 · sorted。
+func jrAdoptionUndecided(reg *jv, decisions *jv) []string {
+	names := []string{}
+	if reg != nil {
+		if ev := jget(reg, "entries"); ev != nil && ev.kind == 'a' {
+			for _, e := range ev.arr {
+				if e != nil && e.kind == 'o' && jpresent(e, "name") {
+					names = append(names, jrPyStr(jget(e, "name")))
+				}
+			}
+		}
+	}
+	sort.Strings(names)
+	if decisions == nil {
+		return names
+	}
+	adopted := map[string]bool{}
+	for _, d := range jrDecisionsArr(decisions) {
+		if d == nil || d.kind != 'o' {
+			continue
+		}
+		if !jrInList(jrPyStr(jget(d, "decision")), jrAdoptionValues) {
+			continue
+		}
+		adopted[jrPyStr(jget(d, "id"))] = true
+	}
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if !adopted[n] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// jrEnforceValue 照 py `decisions.get("enforce", ENFORCE_DEFAULT)`（缺键 ⇒ False）。
+func jrEnforceValue(decisions *jv) *jv {
+	if v := jget(decisions, "enforce"); v != nil {
+		return v
+	}
+	return jrNewBool(false)
+}
+
+// jrDecisionStr 照 py `str(x.get("decision"))`（排序键用）。
+func jrDecisionStr(d *jv) string { return jrPyStr(jget(d, "decision")) }
+
+// jrDecisionNotes 照 py _decision_notes：乙半**可见面**（✗ 不判红）。
+//
+// ★ 输出行序的决定者：`enforce` 状态行在最前；逐条备注按 `(id, str(decision))` 排序；
+//
+//	未决定行在最末，名字按 sorted。⇒ 零不确定序。
+func jrDecisionNotes(decisions *jv, reg *jv) []string {
+	if decisions == nil {
+		n := 0
+		if reg != nil {
+			n = len(jrAdoptionUndecided(reg, nil))
+		}
+		return []string{fmt.Sprintf("人签半（`%s`）未建 ⇒ **迁移期**：乙半面只报告不判红（未决定 %d 条）",
+			jrDecisionsDefault, n)}
+	}
+	enforce := jrEnforceValue(decisions)
+	enforceTrue := enforce.kind == 'b' && enforce.b
+	line2 := "迁移期：在册无采纳/豁免决定**不判红**，只报计数"
+	if enforceTrue {
+		line2 = "**上牙**：在册无采纳/豁免决定 ⇒ 判红"
+	}
+	notes := []string{fmt.Sprintf("人签半 `enforce`=%s ⇒ %s", jrPyStr(enforce), line2)}
+
+	type jrNoteRow struct {
+		d      *jv
+		id, dv string
+	}
+	rows := []jrNoteRow{}
+	for _, d := range jrDecisionsArr(decisions) {
+		if d == nil || d.kind != 'o' || !jpresent(d, "id") {
+			continue
+		}
+		rows = append(rows, jrNoteRow{d, jrPyStr(jget(d, "id")), jrDecisionStr(d)})
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].id != rows[j].id {
+			return rows[i].id < rows[j].id
+		}
+		return rows[i].dv < rows[j].dv
+	})
+	for _, r := range rows {
+		d := r.d
+		v := jrDecisionStr(d)
+		var tag, tail string
+		switch {
+		case v == "declare":
+			f := jget(d, "fields")
+			if f == nil || f.kind != 'o' {
+				f = jrNewObj()
+			}
+			tag = "声明（四字段）"
+			parts := make([]string, 0, len(jrDeclareFields))
+			for _, k := range jrDeclareFields {
+				parts = append(parts, fmt.Sprintf("%s=%s", k, jrPyRepr(jget(f, k))))
+			}
+			tail = strings.Join(parts, " · ")
+		case v == "exempt":
+			tag = "豁免"
+			if jrPyTruthy(jget(d, "reason")) {
+				tail = jrPyStr(jget(d, "reason"))
+			}
+		case v == "adopt":
+			tag = "采纳"
+		default:
+			tag = fmt.Sprintf("决定值异常(%s)", jrPyRepr(jget(d, "decision")))
+		}
+		notes = append(notes, fmt.Sprintf("%s：%s（by %s · %s）%s",
+			tag, r.id, jrGetOr(d, "by", "?"), jrGetOr(d, "at", "?"), tail))
+	}
+	if reg != nil {
+		und := jrAdoptionUndecided(reg, decisions)
+		if len(und) > 0 {
+			suffix := "迁移期只报"
+			if enforceTrue {
+				suffix = "上牙 ⇒ 判红"
+			}
+			notes = append(notes, fmt.Sprintf("未决定 %d 条（在册无采纳/豁免决定 · %s）：%s",
+				len(und), suffix, strings.Join(und, " · ")))
+		}
+	}
+	return notes
+}
+
+// jrPairState 照 py _pair_state（绿行用 · 与 _decision_notes 同源）。
+func jrPairState(decisions *jv) string {
+	if decisions == nil {
+		return "迁移期（人签半未建）"
+	}
+	if v := jrEnforceValue(decisions); v.kind == 'b' && v.b {
+		return "对拍过（enforce=true 上牙）"
+	}
+	return "对拍过（enforce=false 迁移期）"
+}
+
+// jrProblemList 照 py _problem_list：双向差集 ＋ 列面机检 ＋ **甲⇄乙 第三方向** ⇒ 问题清单（空 = 绿）。
 // 第二返回值 = 是否给得出结论（false ⇒ 调用方 rc=2 fail-closed · 见件头未覆盖③）。
-func jrProblemList(root string, reg *jv) ([]string, bool) {
+func jrProblemList(root string, reg *jv, decisions *jv) ([]string, bool) {
 	problems := []string{}
 	live := jrScanRoster(root)
 	liveDupes := []string{}
@@ -522,11 +848,98 @@ func jrProblemList(root string, reg *jv) ([]string, bool) {
 			problems = append(problems, fmt.Sprintf("缓存键过期（sha256 不符 · 请 `--emit` 重生成）：%s", rel))
 		}
 	}
+
+	// ── 第三方向：派生半（在册）⇄ 人签半（采纳 / 豁免 / 声明）· fail-closed ──────────────────
+	if decisions != nil {
+		enforce := jrEnforceValue(decisions)
+		if enforce.kind != 'b' {
+			problems = append(problems, fmt.Sprintf("人签半 `enforce` 非布尔（闭集 true/false · 现读 %s）⇒ 按 `false`（迁移期）读", jrPyRepr(enforce)))
+			enforce = jrNewBool(false)
+		}
+		// ★ 上牙（enforce=true）本身必须人签（拍板③）
+		if enforce.kind == 'b' && enforce.b {
+			esig := jget(decisions, "enforce_sig")
+			okSig := esig != nil && esig.kind == 'o' &&
+				jrPyTruthy(jget(esig, "by")) && jrPyTruthy(jget(esig, "at")) && jrPyTruthy(jget(esig, "sig"))
+			if !okSig {
+				problems = append(problems, "人签半 `enforce=true`（**上牙**）**未人签**（缺顶层 `enforce_sig` 的 `by`/`at`/`sig` 之一）")
+			}
+		}
+		adopted := map[string]bool{}
+		declared := map[string]bool{}
+		for _, d := range jrDecisionsArr(decisions) {
+			if d == nil || d.kind != 'o' || !jpresent(d, "id") {
+				problems = append(problems, fmt.Sprintf("人签半条目缺 `id`：%s", jrPyRepr(d)))
+				continue
+			}
+			did := jrPyStr(jget(d, "id"))
+			v := jrPyStr(jget(d, "decision"))
+			if !jrInList(v, jrDecisionValues) {
+				problems = append(problems, fmt.Sprintf("人签半决定值不在闭集 %s：%s（现读 %s）",
+					jrPyList(jrDecisionValues), did, jrPyRepr(jget(d, "decision"))))
+			}
+			if !(jrPyTruthy(jget(d, "by")) && jrPyTruthy(jget(d, "at")) && jrPyTruthy(jget(d, "sig"))) {
+				problems = append(problems, fmt.Sprintf("人签半决定**未人签**（缺 `by`/`at`/`sig` 之一）：%s", did))
+			}
+			if jrInList(v, jrAdoptionValues) {
+				if adopted[did] {
+					problems = append(problems, fmt.Sprintf("人签半内同一条目**采纳/豁免重复或矛盾**：%s", did))
+				}
+				adopted[did] = true
+			} else if v == "declare" {
+				if declared[did] {
+					problems = append(problems, fmt.Sprintf("人签半内同一条目**declare 重复**：%s", did))
+				}
+				declared[did] = true
+				fields := jget(d, "fields")
+				if fields == nil || fields.kind != 'o' {
+					problems = append(problems, fmt.Sprintf("declare 缺载荷 `fields`（四字段 %s）：%s", jrPyList(jrDeclareFields), did))
+				} else {
+					for _, k := range jrDeclareFields {
+						if !jpresent(fields, k) {
+							problems = append(problems, fmt.Sprintf("declare 载荷缺字段 `%s`：%s", k, did))
+							continue
+						}
+						if pb := jrDeclareFieldProblem(did, k, jget(fields, k)); pb != "" {
+							problems = append(problems, pb)
+						}
+					}
+				}
+			}
+		}
+		// 采纳面：在册无采纳/豁免决定 ⇒ **受 enforce 控**（迁移期只脚注 · 上牙判红）
+		undecided := jrAdoptionUndecided(reg, decisions)
+		if enforce.kind == 'b' && enforce.b {
+			for _, n := range undecided {
+				problems = append(problems, fmt.Sprintf("在册判据**无人签采纳/豁免决定**（`enforce=true` 上牙）：%s", n))
+			}
+		}
+		// 悬空：决定点名不在册、盘上也无件（两轴合计 · 与 enforce 无关 —— 这是写错，不是迁移期）
+		seen := map[string]bool{}
+		for k := range adopted {
+			seen[k] = true
+		}
+		for k := range declared {
+			seen[k] = true
+		}
+		dangling := make([]string, 0, len(seen))
+		for k := range seen {
+			dangling = append(dangling, k)
+		}
+		sort.Strings(dangling)
+		for _, n := range dangling {
+			if _, ok := regEntries[n]; !ok {
+				if _, ok2 := live[n]; !ok2 {
+					problems = append(problems, fmt.Sprintf("人签半**悬空**（点名不在册、盘上也无件）：%s", n))
+				}
+			}
+		}
+	}
 	return problems, true
 }
 
 // jrLoadRegistry 照 py load_registry：读文件 → 有序 JSON → schema 校验。
-// 第三返回 = 校验失败文案（空 = 通过）。
+// 第二返回 = 校验失败文案（空 = 通过）。
 func jrLoadRegistry(path string) (*jv, string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -550,14 +963,15 @@ func jrLoadRegistry(path string) (*jv, string) {
 	return reg, ""
 }
 
-func jrSchemaOf(reg *jv) string {
-	if sv := jget(reg, "schema"); sv != nil && sv.kind == 's' {
+// jrSchemaOf 取对象 `schema` 字符串（缺 / 非串 ⇒ ""）。
+func jrSchemaOf(o *jv) string {
+	if sv := jget(o, "schema"); sv != nil && sv.kind == 's' {
 		return sv.s
 	}
 	return ""
 }
 
-// jrCmdEmit 照 py cmd_emit。
+// jrCmdEmit 照 py cmd_emit（**只写派生半** · ✗ 不读 / 不写人签半）。
 func jrCmdEmit(root, out string, stdout, stderr io.Writer) int {
 	reg := jrBuildRegistry(root)
 	text := jrMarshalRegistry(reg)
@@ -573,7 +987,7 @@ func jrCmdEmit(root, out string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "⛔ 注册表写不出：%s ⇒ 不给结论（rc=2）\n", err)
 			return 2
 		}
-		fmt.Fprintf(stdout, "判据注册表已生成：%s（条目 %d · 同名歧义 %d）\n", out, reg.Count, len(reg.Dupes))
+		fmt.Fprintf(stdout, "判据注册表（派生半）已生成：%s（条目 %d · 同名歧义 %d）\n", out, reg.Count, len(reg.Dupes))
 	}
 	if len(reg.Dupes) > 0 {
 		fmt.Fprintf(stderr, "⚠ 盘上有同名多件（%d）：%s\n", len(reg.Dupes), strings.Join(reg.Dupes, " · "))
@@ -581,20 +995,29 @@ func jrCmdEmit(root, out string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// jrCmdCheck 照 py cmd_check。
-func jrCmdCheck(root, regPath string, stdout, stderr io.Writer) int {
+// jrCmdCheck 照 py cmd_check（甲半双向差集 ＋ 甲⇄乙 第三方向 · fail-closed）。
+func jrCmdCheck(root, regPath, decPath string, stdout, stderr io.Writer) int {
 	reg, errMsg := jrLoadRegistry(regPath)
 	if errMsg != "" {
 		fmt.Fprintln(stderr, errMsg)
 		return 2
 	}
-	problems, ok := jrProblemList(root, reg)
+	decisions, derr := jrLoadDecisions(decPath)
+	if derr != "" {
+		fmt.Fprintln(stderr, derr)
+		return 2
+	}
+	// 乙半可见面（✗ 不改退码）：enforce 状态 + 逐条采纳/豁免/声明 + 未决定计数；未建则打迁移期脚注。
+	for _, nt := range jrDecisionNotes(decisions, reg) {
+		fmt.Fprintf(stderr, "  · 乙半 %s\n", nt)
+	}
+	problems, ok := jrProblemList(root, reg, decisions)
 	if !ok {
 		fmt.Fprintln(stderr, "⛔ 注册表 `entries` 非数组 ⇒ 不给结论（rc=2）")
 		return 2
 	}
 	if len(problems) > 0 {
-		fmt.Fprintf(stderr, "✗ 判据注册表对拍**红**（双向差集/列面 %d 条）：\n", len(problems))
+		fmt.Fprintf(stderr, "✗ 判据注册表对拍**红**（双向差集 / 列面 / 甲⇄乙 %d 条）：\n", len(problems))
 		for _, p := range problems {
 			fmt.Fprintln(stderr, "  · "+p)
 		}
@@ -606,7 +1029,8 @@ func jrCmdCheck(root, regPath string, stdout, stderr io.Writer) int {
 			count = n
 		}
 	}
-	fmt.Fprintf(stdout, "✓ 判据注册表对拍绿（rc=0）：条目 %d · 双向差集空 · 缓存键新鲜\n", count)
+	fmt.Fprintf(stdout, "✓ 判据注册表对拍绿（rc=0）：条目 %d · 双向差集空 · 缓存键新鲜 · 甲⇄乙 %s\n",
+		count, jrPairState(decisions))
 	return 0
 }
 
@@ -639,7 +1063,8 @@ func jrAnyContains(xs []string, sub string) bool {
 	return false
 }
 
-// jrCmdSelfTest 照 py cmd_self_test（成对负控）。夹具走 MkdirTemp ＋ defer RemoveAll ⇒ 前后计数 0。
+// jrCmdSelfTest 照 py cmd_self_test（成对负控 · 拆两半格A–格M ＋ 甲半负控①–⑤）。
+// 夹具走 MkdirTemp ＋ defer RemoveAll ⇒ 前后计数 0。
 func jrCmdSelfTest(stdout io.Writer) int {
 	ok := true
 	root, err := os.MkdirTemp("", "judge-reg-self-")
@@ -655,21 +1080,271 @@ func jrCmdSelfTest(stdout io.Writer) int {
 	_ = jrWriteFile(root, "scripts/gates/__pycache__/ignored.py", "# 缓存件，不进名录\n")
 
 	reg := jrBuildRegistry(root)
-	if b, err := json.Marshal(reg); err == nil {
+	regJV := jrJVOf(reg)
+	if b, e := json.Marshal(reg); e == nil {
 		_ = os.WriteFile(pyJoin(root, "reg.json"), b, 0o644)
 	}
 
 	// 正控
-	if probs, _ := jrProblemList(root, jrJVOf(reg)); len(probs) > 0 {
+	if probs, _ := jrProblemList(root, regJV, nil); len(probs) > 0 {
 		fmt.Fprintf(stdout, "✗ 正控：干净夹具被判红：%s\n", jrPyList(probs))
 		ok = false
 	} else {
 		fmt.Fprintf(stdout, "✓ 正控：干净夹具判绿（条目 %d）\n", reg.Count)
 	}
 
+	// ── 拆两半 · 甲⇄乙 成对负控（**在人签半/负控尚未扰动夹具前**跑 · 夹具此刻干净）──────────
+	// 格A：`--emit` 产物 ✗ 不得含人签半任何字段（含四字段已搬走）。
+	emitText := jrMarshalRegistry(reg)
+	badEmit := []string{}
+	for _, k := range []string{"\"decision\"", "\"adopt\"", "\"exempt\"", "\"declare\"", "\"sig\"",
+		"\"adopted\"", "\"needs_env\"", "\"serial\"", "\"hazard\"", "\"dry_run\""} {
+		if strings.Contains(emitText, k) {
+			badEmit = append(badEmit, k)
+		}
+	}
+	if len(badEmit) > 0 {
+		fmt.Fprintf(stdout, "✗ 格A（甲/乙 分离）：`--emit` 产物含人签半字段：%s\n", jrPyList(badEmit))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格A（甲/乙 分离）：`--emit` 产物无人签半字段（含四字段已搬走）")
+	}
+
+	// 格B：人签半未建 ⇒ 乙半面不判红（迁移期）
+	if p, _ := jrProblemList(root, regJV, nil); jrAnyContains(p, "人签") {
+		fmt.Fprintf(stdout, "✗ 格B（人签半未建）：乙半面误判红 ⇒ %s\n", jrPyList(p))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格B（人签半未建）：乙半面不判红（迁移期只报告）")
+	}
+
+	// 人签半夹具：覆盖在册全部件 ⇒ adopt（人签三件套齐）· `enforce=false`（迁移期）
+	names := []string{}
+	for _, e := range reg.Entries {
+		names = append(names, e.Name)
+	}
+	sort.Strings(names)
+	decItems := make([]*jv, 0, len(names))
+	for _, n := range names {
+		decItems = append(decItems, jrNewObj(
+			jpair{"id", jrNewStr(n)},
+			jpair{"decision", jrNewStr("adopt")},
+			jpair{"by", jrNewStr("tester")},
+			jpair{"at", jrNewStr("2026-10-03")},
+			jpair{"sig", jrNewStr("sig-" + n)},
+		))
+	}
+	dec := jrNewObj(
+		jpair{"schema", jrNewStr(jrDecisionsSchema)},
+		jpair{"enforce", jrNewBool(false)},
+		jpair{"decisions", jrNewArr(decItems...)},
+	)
+
+	// 格C：全覆盖 adopt ⇒ 绿
+	if p, _ := jrProblemList(root, regJV, dec); len(p) > 0 {
+		fmt.Fprintf(stdout, "✗ 格C（人签半全覆盖 adopt）：该绿没绿 ⇒ %s\n", jrPyList(p))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格C（人签半全覆盖 adopt）：判绿")
+	}
+
+	// 格D：抽掉一条决定 ＋ 上牙 ⇒ 红（在册无人签采纳/豁免决定）
+	d2 := jrClone(dec)
+	jrSet(d2, "enforce", jrNewBool(true))
+	jrSet(d2, "enforce_sig", jrNewObj(jpair{"by", jrNewStr("tester")}, jpair{"at", jrNewStr("2026-10-03")}, jpair{"sig", jrNewStr("s-enforce")}))
+	jrFilterDecisions(d2, func(d *jv) bool { return jrPyStr(jget(d, "id")) != "a" })
+	if p, _ := jrProblemList(root, regJV, d2); !jrAnyContains(p, "无人签采纳/豁免决定") {
+		fmt.Fprintf(stdout, "✗ 格D（enforce=true · 在册缺一条决定）：该红没红 ⇒ %s\n", jrPyList(p))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格D（enforce=true · 在册缺一条决定）：现红")
+	}
+
+	// 格E：悬空决定 ⇒ 红
+	d3 := jrClone(dec)
+	jrAppendDecision(d3, jrNewObj(
+		jpair{"id", jrNewStr("ghost-x")}, jpair{"decision", jrNewStr("adopt")},
+		jpair{"by", jrNewStr("tester")}, jpair{"at", jrNewStr("2026-10-03")}, jpair{"sig", jrNewStr("s")},
+	))
+	if p, _ := jrProblemList(root, regJV, d3); !jrAnyContains(p, "悬空") {
+		fmt.Fprintf(stdout, "✗ 格E（悬空决定）：该红没红 ⇒ %s\n", jrPyList(p))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格E（悬空决定）：现红")
+	}
+
+	// 格F：决定值不在闭集 ＋ 未人签（sig 空）⇒ 两红
+	d4 := jrClone(dec)
+	jrForEachDecision(d4, func(d *jv) {
+		if jrPyStr(jget(d, "id")) == "a" {
+			jrSet(d, "decision", jrNewStr("maybe"))
+			jrSet(d, "sig", jrNewStr(""))
+		}
+	})
+	if p, _ := jrProblemList(root, regJV, d4); !(jrAnyContains(p, "闭集") && jrAnyContains(p, "未人签")) {
+		fmt.Fprintf(stdout, "✗ 格F（闭集/未人签）：该红没红 ⇒ %s\n", jrPyList(p))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格F（闭集 / 未人签）：现红")
+	}
+
+	// 格G：exempt 可见（notes 逐条打印 · ✗ 不判红）
+	d5 := jrClone(dec)
+	jrForEachDecision(d5, func(d *jv) {
+		if jrPyStr(jget(d, "id")) == "a" {
+			jrSet(d, "decision", jrNewStr("exempt"))
+			jrSet(d, "reason", jrNewStr("太贵"))
+		}
+	})
+	notes := jrDecisionNotes(d5, regJV)
+	visible := false
+	for _, n := range notes {
+		if strings.Contains(n, "豁免") && strings.Contains(n, "a") && strings.Contains(n, "太贵") {
+			visible = true
+		}
+	}
+	if !visible {
+		fmt.Fprintf(stdout, "✗ 格G（exempt 可见）：备注里没印出豁免 ⇒ %s\n", jrPyList(notes))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格G（exempt 可见）：备注逐条打印（非静默放过）")
+	}
+	if p, _ := jrProblemList(root, regJV, d5); len(p) > 0 {
+		fmt.Fprintf(stdout, "✗ 格G2（exempt ✗ 不判红）：豁免被误判红 ⇒ %s\n", jrPyList(p))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格G2（exempt ✗ 不判红）：豁免只报告不判红")
+	}
+
+	// 格H：`--emit` 与人签半**无入参耦合**（构造上不可能覆盖人的决定 · 本件签名即证）
+	fmt.Fprintln(stdout, "✓ 格H（`--emit` ✗ 不碰人签半）：`build_registry` 与人签半无入参耦合")
+
+	// ── 拍板③ · declare 类 ＋ 迁移期 enforce 开关 成对负控 ─────────────────────────────
+	// 格I：declare 类（四字段值合法 · enforce=false）⇒ 不判红 · 载荷可见
+	d6 := jrClone(dec)
+	jrSet(d6, "enforce", jrNewBool(false))
+	jrFilterDecisions(d6, func(d *jv) bool { return jrPyStr(jget(d, "id")) != "b" })
+	jrAppendDecision(d6, jrNewObj(
+		jpair{"id", jrNewStr("b")}, jpair{"decision", jrNewStr("declare")},
+		jpair{"by", jrNewStr("tester")}, jpair{"at", jrNewStr("2026-10-03")}, jpair{"sig", jrNewStr("sig-b")},
+		jpair{"fields", jrNewObj(
+			jpair{"needs_env", jrNewBool(true)}, jpair{"serial", jrNewBool(false)},
+			jpair{"hazard", jrNewStr("swap")}, jpair{"dry_run", jrNewStr("argv")})},
+	))
+	if p, _ := jrProblemList(root, regJV, d6); len(p) > 0 {
+		fmt.Fprintf(stdout, "✗ 格I（declare 合法 + enforce=false）：该绿没绿 ⇒ %s\n", jrPyList(p))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格I（declare 合法 + enforce=false）：判绿（b 仅声明未采纳 ⇒ 采纳面迁移期不判红）")
+	}
+	notes = jrDecisionNotes(d6, regJV)
+	visible = false
+	for _, n := range notes {
+		if strings.Contains(n, "声明") && strings.Contains(n, "hazard") && strings.Contains(n, "swap") && strings.Contains(n, "dry_run") {
+			visible = true
+		}
+	}
+	if !visible {
+		fmt.Fprintf(stdout, "✗ 格I2（declare 可见）：备注里没印出四字段 ⇒ %s\n", jrPyList(notes))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格I2（declare 可见）：备注逐条打印四字段（非静默）")
+	}
+
+	// 格J：declare 载荷缺 `fields` / 缺字段 / 值越出闭集（needs_env 非布尔 · hazard / dry_run 越界）⇒ 红
+	d7 := jrClone(dec)
+	jrSet(d7, "enforce", jrNewBool(false))
+	jrAppendDecision(d7, jrNewObj(
+		jpair{"id", jrNewStr("c")}, jpair{"decision", jrNewStr("declare")},
+		jpair{"by", jrNewStr("tester")}, jpair{"at", jrNewStr("2026-10-03")}, jpair{"sig", jrNewStr("sig-c")},
+		jpair{"fields", jrNewObj(
+			jpair{"needs_env", jrNewStr("yes")}, jpair{"serial", jrNewBool(false)},
+			jpair{"hazard", jrNewStr("boom")}, jpair{"dry_run", jrNewStr("yes")})},
+	))
+	jrAppendDecision(d7, jrNewObj(
+		jpair{"id", jrNewStr("a")}, jpair{"decision", jrNewStr("declare")},
+		jpair{"by", jrNewStr("tester")}, jpair{"at", jrNewStr("2026-10-03")}, jpair{"sig", jrNewStr("sig-a")},
+	))
+	p7, _ := jrProblemList(root, regJV, d7)
+	want7 := jrAnyContains(p7, "`needs_env` 非布尔") && jrAnyContains(p7, "`hazard` 值不在闭集") &&
+		jrAnyContains(p7, "`dry_run` 值不在闭集") && jrAnyContains(p7, "缺载荷 `fields`")
+	if !want7 {
+		fmt.Fprintf(stdout, "✗ 格J（declare 越界/缺键）：该红没红 ⇒ %s\n", jrPyList(p7))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格J（declare 越界/缺键）：现红（非布尔 / 值越闭集 / 缺载荷 各自点名）")
+	}
+
+	// 格J2：declare 载荷缺**单个**字段键 ⇒ 红
+	d7b := jrClone(dec)
+	jrSet(d7b, "enforce", jrNewBool(false))
+	jrAppendDecision(d7b, jrNewObj(
+		jpair{"id", jrNewStr("c")}, jpair{"decision", jrNewStr("declare")},
+		jpair{"by", jrNewStr("tester")}, jpair{"at", jrNewStr("2026-10-03")}, jpair{"sig", jrNewStr("sig-c")},
+		jpair{"fields", jrNewObj(
+			jpair{"needs_env", jrNewBool(false)}, jpair{"serial", jrNewBool(false)}, jpair{"hazard", jrNewStr("none")})},
+	))
+	if p, _ := jrProblemList(root, regJV, d7b); !jrAnyContains(p, "declare 载荷缺字段 `dry_run`") {
+		fmt.Fprintf(stdout, "✗ 格J2（declare 缺字段键）：该红没红 ⇒ %s\n", jrPyList(p))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格J2（declare 缺字段键）：现红（缺 `dry_run` 点名）")
+	}
+
+	// 格K：enforce 两态 —— false 未决定不判红；true（enforce_sig 齐）未决定判红 · 脚注报计数
+	d8 := jrNewObj(jpair{"schema", jrNewStr(jrDecisionsSchema)}, jpair{"enforce", jrNewBool(false)}, jpair{"decisions", jrNewArr()})
+	d9 := jrNewObj(jpair{"schema", jrNewStr(jrDecisionsSchema)}, jpair{"enforce", jrNewBool(true)}, jpair{"decisions", jrNewArr()},
+		jpair{"enforce_sig", jrNewObj(jpair{"by", jrNewStr("tester")}, jpair{"at", jrNewStr("2026-10-03")}, jpair{"sig", jrNewStr("s-enforce")})})
+	pFalse, _ := jrProblemList(root, regJV, d8)
+	pTrue, _ := jrProblemList(root, regJV, d9)
+	if len(pFalse) > 0 {
+		fmt.Fprintf(stdout, "✗ 格K1（enforce=false）：未决定被误判红 ⇒ %s\n", jrPyList(pFalse))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格K1（enforce=false）：未决定不判红（迁移期只报告）")
+	}
+	if !jrAnyContains(pTrue, "无人签采纳/豁免决定") {
+		fmt.Fprintf(stdout, "✗ 格K2（enforce=true）：未决定该红没红 ⇒ %s\n", jrPyList(pTrue))
+		ok = false
+	} else {
+		fmt.Fprintf(stdout, "✓ 格K2（enforce=true）：未决定判红（现 %d 条）\n", len(pTrue))
+	}
+	notesFalse := jrDecisionNotes(d8, regJV)
+	visible = false
+	for _, n := range notesFalse {
+		if strings.Contains(n, fmt.Sprintf("未决定 %d 条", len(reg.Entries))) {
+			visible = true
+		}
+	}
+	if !visible {
+		fmt.Fprintf(stdout, "✗ 格K3（enforce=false 脚注）：未印「未决定 N 条」 ⇒ %s\n", jrPyList(notesFalse))
+		ok = false
+	} else {
+		fmt.Fprintf(stdout, "✓ 格K3（enforce=false 脚注）：脚注报「未决定 %d 条」\n", len(reg.Entries))
+	}
+
+	// 格L：上牙（enforce=true）**未人签** ⇒ 红（拍板③：上牙本身必须人签）
+	d10 := jrNewObj(jpair{"schema", jrNewStr(jrDecisionsSchema)}, jpair{"enforce", jrNewBool(true)}, jpair{"decisions", jrNewArr()})
+	if p, _ := jrProblemList(root, regJV, d10); !(jrAnyContains(p, "上牙") && jrAnyContains(p, "未人签")) {
+		fmt.Fprintf(stdout, "✗ 格L（上牙未人签）：该红没红 ⇒ %s\n", jrPyList(p))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格L（上牙未人签）：现红（enforce=true 缺 enforce_sig）")
+	}
+
+	// 格M：`enforce` 非布尔 ⇒ 红 · 且按 false（迁移期）读
+	d11 := jrNewObj(jpair{"schema", jrNewStr(jrDecisionsSchema)}, jpair{"enforce", jrNewStr("yes")}, jpair{"decisions", jrNewArr()})
+	if p, _ := jrProblemList(root, regJV, d11); !jrAnyContains(p, "`enforce` 非布尔") {
+		fmt.Fprintf(stdout, "✗ 格M（enforce 非布尔）：该红没红 ⇒ %s\n", jrPyList(p))
+		ok = false
+	} else {
+		fmt.Fprintln(stdout, "✓ 格M（enforce 非布尔）：现红（并落回迁移期读）")
+	}
+
+	// ── 甲半负控（承前 · 顺序不变）────────────────────────────────────────────────
 	// 负控①：盘上新增件、表里没有 ⇒ 红
 	_ = jrWriteFile(root, "scripts/d.py", "#!/usr/bin/env python3\nprint('d')\n")
-	if p, _ := jrProblemList(root, jrJVOf(reg)); !jrAnyContains(p, "没点名") {
+	if p, _ := jrProblemList(root, regJV, nil); !jrAnyContains(p, "没点名") {
 		fmt.Fprintf(stdout, "✗ 负控①（盘上有表里无）：该红没红 ⇒ %s\n", jrPyList(p))
 		ok = false
 	} else {
@@ -678,16 +1353,14 @@ func jrCmdSelfTest(stdout io.Writer) int {
 	_ = os.Remove(pyJoin(root, "scripts/d.py"))
 
 	// 负控②：表里点名、盘上无件 ⇒ 红
-	ghost := jrJVOf(reg)
+	ghost := jrClone(regJV)
 	if ev := jget(ghost, "entries"); ev != nil && ev.kind == 'a' {
-		ev.arr = append(ev.arr, &jv{kind: 'o', obj: []jpair{
-			{"id", &jv{kind: 's', s: "ghost"}},
-			{"name", &jv{kind: 's', s: "ghost"}},
-			{"path", &jv{kind: 's', s: "scripts/ghost.py"}},
-			{"sha256", &jv{kind: 's', s: strings.Repeat("0", 64)}},
-		}})
+		ev.arr = append(ev.arr, jrNewObj(
+			jpair{"id", jrNewStr("ghost")}, jpair{"name", jrNewStr("ghost")},
+			jpair{"path", jrNewStr("scripts/ghost.py")}, jpair{"sha256", jrNewStr(strings.Repeat("0", 64))},
+		))
 	}
-	if p, _ := jrProblemList(root, ghost); !jrAnyContains(p, "悬空登记") {
+	if p, _ := jrProblemList(root, ghost, nil); !jrAnyContains(p, "悬空登记") {
 		fmt.Fprintf(stdout, "✗ 负控②（表里点名盘上无）：该红没红 ⇒ %s\n", jrPyList(p))
 		ok = false
 	} else {
@@ -696,7 +1369,7 @@ func jrCmdSelfTest(stdout io.Writer) int {
 
 	// 负控③：件被改、缓存键过期 ⇒ 红
 	_ = jrWriteFile(root, "scripts/a.py", "#!/usr/bin/env python3\nprint('a-changed')\n")
-	if p, _ := jrProblemList(root, jrJVOf(reg)); !jrAnyContains(p, "缓存键过期") {
+	if p, _ := jrProblemList(root, regJV, nil); !jrAnyContains(p, "缓存键过期") {
 		fmt.Fprintf(stdout, "✗ 负控③（缓存键过期）：该红没红 ⇒ %s\n", jrPyList(p))
 		ok = false
 	} else {
@@ -706,7 +1379,7 @@ func jrCmdSelfTest(stdout io.Writer) int {
 
 	// 负控④：同名多件 ⇒ 红
 	_ = jrWriteFile(root, "scripts/sub2/a.py", "#!/usr/bin/env python3\nprint('a2')\n")
-	if p, _ := jrProblemList(root, jrJVOf(reg)); !jrAnyContains(p, "同名多件") {
+	if p, _ := jrProblemList(root, regJV, nil); !jrAnyContains(p, "同名多件") {
 		fmt.Fprintf(stdout, "✗ 负控④（同名多件）：该红没红 ⇒ %s\n", jrPyList(p))
 		ok = false
 	} else {
@@ -714,7 +1387,7 @@ func jrCmdSelfTest(stdout io.Writer) int {
 	}
 
 	// 负控⑤：路径越出前缀 ⇒ 红
-	bad := jrJVOf(reg)
+	bad := jrClone(regJV)
 	if ev := jget(bad, "entries"); ev != nil && ev.kind == 'a' {
 		for _, e := range ev.arr {
 			if nm := jget(e, "name"); nm != nil && nm.kind == 's' && nm.s == "a" {
@@ -724,7 +1397,7 @@ func jrCmdSelfTest(stdout io.Writer) int {
 			}
 		}
 	}
-	if p, _ := jrProblemList(root, bad); !jrAnyContains(p, "前缀") && !jrAnyContains(p, "悬空登记") {
+	if p, _ := jrProblemList(root, bad, nil); !jrAnyContains(p, "前缀") && !jrAnyContains(p, "悬空登记") {
 		fmt.Fprintf(stdout, "✗ 负控⑤（越出前缀）：该红没红 ⇒ %s\n", jrPyList(p))
 		ok = false
 	} else {
@@ -743,6 +1416,7 @@ func checkJudgeRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 	rootSet := false
 	outArg := jrRegistryDefault
 	regArg := jrRegistryDefault
+	decArg := jrDecisionsDefault
 	emit, doCheck, selfTest := false, false, false
 
 	for i := 0; i < len(argv); i++ {
@@ -779,6 +1453,13 @@ func checkJudgeRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 				return 2
 			}
 			regArg = v
+		case a == "--decisions" || strings.HasPrefix(a, "--decisions="):
+			v, okv := val("--decisions")
+			if !okv {
+				fmt.Fprintf(stderr, "用法错：`--decisions` 缺值 ⇒ 不给结论（rc=2）\n")
+				return 2
+			}
+			decArg = v
 		case a == "--emit":
 			emit = true
 		case a == "--check":
@@ -786,7 +1467,7 @@ func checkJudgeRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 		case a == "--self-test":
 			selfTest = true
 		case a == "-h" || a == "--help":
-			fmt.Fprint(stdout, "用法：--emit [--out <件>] | --check [--registry <件>] | --self-test [--root <根>]\n")
+			fmt.Fprint(stdout, "用法：--emit [--out <件>] | --check [--registry <件>] [--decisions <件>] | --self-test [--root <根>]\n")
 			return 0
 		default:
 			fmt.Fprintf(stderr, "用法错：未知旗标 %s ⇒ 不给结论（rc=2）\n", a)
@@ -831,7 +1512,11 @@ func checkJudgeRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 		if !pyIsAbs(regArg) {
 			regPath = pyJoin(root, regArg)
 		}
-		return jrCmdCheck(root, regPath, stdout, stderr)
+		decPath := decArg
+		if !pyIsAbs(decArg) {
+			decPath = pyJoin(root, decArg)
+		}
+		return jrCmdCheck(root, regPath, decPath, stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "用法错：`--emit` / `--check` / `--self-test` 三选一必给一个（都不给 ⇒ rc=2）\n")
 	return 2

@@ -727,6 +727,13 @@
      "语义": "dryrun.v1",
      "零副作用判据": "默认只读：`--json faces,self` / `--check-missing` 只 `os.ReadFile` 现读五张登记表 ＋ `filepath.WalkDir` 只读列举 ＋ `git` 只取件名（不写索引）；`--self-test` 全跑在 `os.MkdirTemp` 的仓外夹具里且 `defer os.RemoveAll`。真写面只有两处、**都默认干跑**：`--dump-baseline`（不显式落盘只打印）与 `--sync`（默认干跑 · 显式 `--yes` 才真写 · 写面走 temp+fsync+rename 原子写）；两者缺 `--yes` 时零字节改动。",
      "备注": "登记依据 = 门⑩ R1 未登记件：命中是 `dry.?run` 作被检字段名/登记表名（面② 干跑登记表），不是第五套 dry-run 语义。"
+    },
+    {
+     "file": "core/cmd/zerg/check_judge_registry_test.go",
+     "类": "判据件测试件（同一套语义的断言侧 —— dry-run 字样只出现在 golden 常量、合成夹具与负控串里）",
+     "语义": "dryrun.v1",
+     "零副作用判据": "测试件本身不驱动仓内写入：正控/负控全在 `os.MkdirTemp` 的仓外夹具上跑（`defer os.RemoveAll`），合成注册表与合成人签半都写在临时目录；真仓 `scripts/gates/judge-registry.json` 与 `judge-adoption.json` 只读不写；不碰任何仓内件。",
+     "备注": "登记依据 = 门⑩ R1 未登记件（扫描面命中的测试件；不登记会被判成「又一套语义」——是扫描面口径，不是真语义分歧）。"
     }
 ]
 }
