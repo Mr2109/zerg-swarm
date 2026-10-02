@@ -927,13 +927,22 @@ func gateProgressResolveDir(inv *invocation, dir string, stderr io.Writer) (stri
 	if !ok {
 		return "", nil, exitOK
 	}
+	// ★ 缺口 `GAP-20261002-21`：多趟发现**不再只扫 `gateReapRoots`** —— 门内语境下（本命令/本测试
+	//   进程的祖先进程就是那道真门 `precommit-gates.sh`）真在跑的门会被 `gateReapRoots` 沿 ppid
+	//   剔成**非根**（它们的祖链上有**另一个**门），roots-only 收集会**漏掉**它们 ⇒ 退回
+	//   `gateProgressNewestRun` 去猜最近趟（`gpIsolateEnv` 把 TMPDIR 指空、且假趟名非 `zerg-gates-*`）
+	//   ⇒ 判不出退 8（规格要退 2）。改扫**全部**门进程的 `--outdir`（按目录去重）⇒ 有几趟活就报几趟。
+	//   ★ 这不是放宽判据：「同时有多趟活」是**病症**，本改动把「静默回退去猜一趟」换成
+	//     「**出声退 2 ＋ 逐个候选趟**」——是**更严**（fail-loud）；`gateReapScan` / `gateReapRoots`
+	//     的认门口径一字未动（只换了「拿谁去收集 outdir」）。
 	multi, seen := []string{}, map[string]bool{}
-	for _, r := range gateReapRoots(gate) {
-		if d := gateProgressOutdirFromCmd(gate[r].cmd); d != "" && !seen[d] {
+	for _, gp := range gate {
+		if d := gateProgressOutdirFromCmd(gp.cmd); d != "" && !seen[d] {
 			seen[d] = true
 			multi = append(multi, d)
 		}
 	}
+	sort.Strings(multi) // map 遍历无序 ⇒ 排序，让候选清单稳定（只影响打印次序）
 	if h := gateProgressReadHolder(); h.outdir != "" && !seen[h.outdir] {
 		multi = append(multi, h.outdir)
 	}
