@@ -61,7 +61,23 @@
   1 = 只有 `--strict` 档才可能：R1/R2/R3/R5 任一格 > 0（逐条点名；R4 / R6 = 旁栏不进退码）
   2 = **不给结论**：分母 0 件 · 基线不在盘 · 任一登记表读不到 / 解析出 0 条（空转 = 假绿）·
       **任一面判不了**（含面④ 仓外真源不在 · 面⑥ 判据件不在）· `--self-test` 不过 ·
-      `--json` 断面名不认 / 为空 · `--yes` 不与 `--dump-baseline` 连用
+      `--json` 断面名不认 / 为空 · `--yes` 不与 `--dump-baseline` 连用 ·
+      **面清单里出现未产出记录的面**（聚合器合成 `UNKNOWN · reason_code=MISSING_FACE · decided=false` ⇒ 退码钉 2）
+
+查缺档档（`--check-missing` · **只读** · 三合并式判红）
+
+  ★ **判红三合并式**（三条**任一非空即红** · **禁只用 `git diff`** —— 它看不见 untracked/ignored）：
+    ① `git diff --exit-code HEAD -- <paths>` · ② `git ls-files --others --exclude-standard -- <paths>` ·
+    ③ `git ls-files --others --ignored --exclude-standard -- <paths>`（若用 `git status --porcelain`
+    必须显式 `--untracked-files=all`；本件优先 ②）。**隔离**：`git worktree add -f -q <tmp> HEAD`，
+    **退出必清**（try/finally）。**生成前先清空 `--outdir`**（防旧件残留看着一致）。
+  退码：`0` 判到了（干净 / 非 git 工作树不适用）· `1` **红** · `2` **判不了**（真源不可读 · 空件集 = 零执行探针）。
+
+机器相关面（host-bound）
+
+  面⑧「家目录批准件」真身在**本机家目录**（`~/.zerg/state/approvals/dev_edit.json`）⇒ 报
+  **HOST-REQUIRED / reason_code=SKIPPED-HOST-BOUND / decided=false**，**不计入 pass 也不计入 fail**
+  （既不 PASS 假绿也不硬 FAIL），但**在机器面显式列出并暴露计数**（`host_required_faces` / `host_required_count`）。
 
 用法
 
@@ -71,6 +87,9 @@
   python3 scripts/gates/check-newfile-registry.py --baseline /仓外/基线.tsv --inventory /仓外/台账.tsv
   python3 scripts/gates/check-newfile-registry.py --strict --json faces,self            # 机器面 JSON
   python3 scripts/gates/check-newfile-registry.py --repo <仓根> --new-file scripts/x.sh   # 指分母（两态取证用）
+  python3 scripts/gates/check-newfile-registry.py --check-missing                        # 查缺档：三合并式（只读）
+  python3 scripts/gates/check-newfile-registry.py --check-missing --paths scripts --json chk   # 机器面
+  python3 scripts/gates/check-newfile-registry.py --check-missing --outdir /仓外/报告     # 生成报告（先清空该目录）
   python3 scripts/gates/check-newfile-registry.py --self-test
 
 默认干跑（写面最小 · 比业界写器保守）
@@ -83,18 +102,23 @@
 机器面（`--json`）
 
   `--json <断面>`：断面为逗号分隔、只认 `faces` 与 `self`；给了就**只出 JSON**（人面向 stdout 让位）。
-  JSON 恒含：`expected_faces`（本件八面名）· `reported_faces`（本次实际报出的面）· `counts`（五态计数
-  PASS/FAIL/BLOCKED/REPORT/UNKNOWN）· `all_green`（判到了且 0 条缺登记）；`faces` / `self` 断面分别加
-  逐面详情与自指详情。断面名不认 / 为空 ⇒ 用法错 rc=2（不给结论）。
+  JSON 恒含：`expected_faces`（本件九面名 · **跑前先生成**）· `reported_faces`（本次实际报出的面）·
+  `face_states`（各面 state）· `face_records`（各面 `state/reason_code/decided`）·
+  `counts`（五态 + `HOST-REQUIRED` 计数）· `host_required_faces`/`host_required_count`（机器相关面）·
+  `missing_faces`/`missing_count`（未产出记录的面 · 非空 ⇒ rc=2）· `fully_exercised` ·
+  `all_green`（判到了且 0 条缺登记）；`faces` / `self` 断面分别加逐面详情与自指详情。
+  断面名不认 / 为空 ⇒ 用法错 rc=2（不给结论）。`--check-missing` 档另认断面 `chk`（只出查缺档机器面）。
 """
 
 import argparse
 import glob as globmod
 import importlib.util
+import io
 import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -123,8 +147,11 @@ SCRIPT_EXCLUDES = {
 # 默认基线落点（**仓外** · 生成件）：家目录缓存，不落仓、不进 git
 DEFAULT_BASELINE = os.path.join(os.path.expanduser("~"), ".zerg", "newfile-registry-baseline.tsv")
 
-# ── 机器面：门76 的**八面**（逐字对齐人面向输出里印出的面名 · 顺序 = 打印顺序）────────────
-# 为什么是这八面：六张登记表（①–⑥）＋ 口径差栏（参照读数）＋ 自指（本门对自身的登记情形）。
+# ── 机器面：门76 的**九面**（逐字对齐人面向输出里印出的面名 · 顺序 = 打印顺序）────────────
+# 为什么是这九面：六张登记表（①–⑥）＋ **⑧家目录批准件**（host-bound · 机器相关面）＋
+#   口径差栏（参照读数）＋ 自指（本门对自身的登记情形）。
+# ★ `expected_faces()` **跑前先生成**这张清单；任何**未产出记录**的面由 `face_records` 合成
+#   `state=UNKNOWN · reason_code=MISSING_FACE · decided=false` 并**退码钉 2**（禁静默跳过缺面）。
 FACES = (
     "①公开标记表",
     "②干跑登记",
@@ -132,6 +159,7 @@ FACES = (
     "④脚本台账",
     "⑤两器排除表",
     "⑥失败文案面",
+    "⑧家目录批准件",
     "口径差栏",
     "自指",
 )
@@ -141,7 +169,24 @@ FACES = (
 #   BLOCKED = 该面自己的真源读不到 / 面判不了（面级不给结论）
 #   REPORT  = 只报不判的面（R4/R6 旁栏不进退码 · 口径差栏/自指 = 参照/自指读数）
 #   UNKNOWN = 整跑在**面级判读之前**就短路（分母级判不了：扫面不在盘 / 分母 0 / 基线不在盘）⇒ 该面结论未知
-FACES_STATES = ("PASS", "FAIL", "BLOCKED", "REPORT", "UNKNOWN")
+#   ★ **HOST-REQUIRED** = **机器相关面（host-bound）**：本机家目录态、不进仓、不可移植 ⇒ 既不 PASS
+#     （假绿）也不硬 FAIL。聚合时**不计入 pass 也不计入 fail**，但必须**显式列出并暴露计数**
+#     （green gate never hides which faces did not actually run）。
+FACES_STATES = ("PASS", "FAIL", "BLOCKED", "REPORT", "UNKNOWN", "HOST-REQUIRED")
+
+# ★ **机器相关面（host-bound）**：真身在**本机家目录**（`~/.zerg/state/approvals/dev_edit.json`），
+#   不进仓、随机器而变 ⇒ 报 HOST-REQUIRED / reason_code=SKIPPED-HOST-BOUND，聚合时不计 pass/fail。
+HOST_BOUND_FACES = ("⑧家目录批准件",)
+APPROVALS_REL = os.path.join(".zerg", "state", "approvals", "dev_edit.json")
+
+# 面级**原因码**（机器面 `face_records[<面>].reason_code` 的闭集）
+REASON_OK = "OK"
+REASON_MISSING_ENTRY = "MISSING_ENTRY"          # 判到了且该面 > 0 条缺登记（FAIL）
+REASON_SOURCE_UNREADABLE = "SOURCE_UNREADABLE"  # 该面真源读不到（BLOCKED）
+REASON_REPORT_ONLY = "REPORT_ONLY"              # 只报不判（REPORT）
+REASON_UNJUDGED = "UNJUDGED"                    # 整跑面级判读前短路（UNKNOWN）
+REASON_MISSING_FACE = "MISSING_FACE"            # ★ 未产出记录的面（聚合器合成 · 退码钉 2）
+REASON_HOST_BOUND = "SKIPPED-HOST-BOUND"        # ★ 机器相关面未跑（HOST-REQUIRED）
 
 
 def rel(root, p):
@@ -391,6 +436,209 @@ def load_wording(root):
     return fixed, [next((x for x in blk if "处置" in x), blk[0]) for blk, _ in rel][:4]
 
 
+# ── 查缺档（三合并式 · 判红机制 · 隔离工作树）─────────────────────────────────
+# ★ **判红三合并式**：三条**任一非空即红** ——
+#     ① tracked 有改动 :  `git diff --exit-code HEAD -- <paths>`   （rc=1 ⇒ 有）
+#     ② untracked      :  `git ls-files --others --exclude-standard -- <paths>`
+#     ③ ignored        :  `git ls-files --others --ignored --exclude-standard -- <paths>`
+#   ★ **禁只用 `git diff` 判红** —— 它看不见 untracked（②）与 ignored（③）⇒ 那两格必须单列现读。
+#   ★ 若改用 `git status --porcelain`，**必须显式 `--untracked-files=all`**
+#     （`git config status.showUntrackedFiles no` 会蒙蔽它）；本件**优先 `ls-files --others`** 那条路。
+# ★ **隔离**：`git worktree add -f -q <tmp> HEAD` 取 HEAD 参照；**退出必清**（try/finally）。
+# ★ **生成前先清空输出目录**（防旧件残留看着一致）—— 见 `run_check_missing` 的 `--outdir` 分支。
+CHK_MISSING_PATHS_DEFAULT = ("scripts",)
+
+
+def _git(root, args):
+    """跑一条 git 命令。返回 (rc|None, 行列表, stderr)。★ 起不来（无 git / OSError）⇒ rc=None。"""
+    try:
+        p = subprocess.run(["git", "-C", root] + list(args),
+                           capture_output=True, text=True)
+    except OSError as e:
+        return None, [], str(e)
+    return p.returncode, [ln for ln in p.stdout.splitlines() if ln.strip()], p.stderr.strip()
+
+
+def git_worktree_kind(root):
+    """root 是不是 git 工作树：'yes' / 'no'（非 git 工作树）/ 'unreadable'（`.git` 在但读不了）。"""
+    has_dotgit = os.path.exists(os.path.join(root, ".git"))
+    rc, _out, _err = _git(root, ["rev-parse", "--is-inside-work-tree"])
+    if rc is None:
+        return "unreadable"          # git 起不来
+    if rc == 0:
+        return "yes"
+    return "unreadable" if has_dotgit else "no"
+
+
+def _worktree_add(root):
+    """`git worktree add -f -q <tmp> HEAD`。返回 (工作树路径, 错误|None)。"""
+    tmp = tempfile.mkdtemp(prefix="gnr-chkmiss-")
+    wt = os.path.join(tmp, "co")
+    rc, _out, err = _git(root, ["worktree", "add", "-f", "-q", wt, "HEAD"])
+    if rc is None or rc != 0:
+        shutil.rmtree(tmp, ignore_errors=True)
+        return None, ("`git worktree add` 起不来 / 失败（rc=%s）：%s" % (rc, err))
+    return wt, None
+
+
+def _worktree_remove(root, wt):
+    """★ 退出必清：移除工作树 + 删临时父目录（幂等）。"""
+    _git(root, ["worktree", "remove", "--force", wt])
+    shutil.rmtree(os.path.dirname(os.path.abspath(wt)), ignore_errors=True)
+
+
+def worktree_three_way(root, paths):
+    """查缺档**判红**：三合并式（tracked 改动 ∥ untracked ∥ ignored）任一非空 ⇒ `red=True`。
+
+    判不了/无数据与红是三态、必须分得开：
+      · `unreadable=True` ⇒ 真源不可读（`.git` 在但 `git` 失败 / `git` 起不来）⇒ 调用方退码 **2**；
+      · `no_data=True`   ⇒ **零执行探针**（空件集：路径下无任何 tracked/untracked 件）⇒ 非绿、退码 **2**；
+      · `applicable=False` ⇒ root 根本不是 git 工作树（如纯合成夹具）⇒ 三合并式不适用（不当绿也不当红）。
+    ★ 隔离：在 HEAD 建一枚 worktree 当参照，**退出必清**（try/finally）；清理结果写进读数。
+    """
+    res = {"applicable": True, "unreadable": False, "reason": None, "paths": list(paths),
+           "tracked_modified": [], "untracked": [], "ignored": [],
+           "red": False, "no_data": False, "file_set_size": 0,
+           "head_tracked_count": None, "worktree": None, "worktree_cleaned": False}
+    kind = git_worktree_kind(root)
+    if kind == "no":
+        res["applicable"] = False
+        res["reason"] = "非 git 工作树（`%s` 不受版本控制）⇒ 三合并式不适用" % (paths[0] if paths else "?")
+        return res
+    if kind == "unreadable":
+        res["unreadable"] = True
+        res["reason"] = "git 真源不可读（`.git` 在、但 `git rev-parse` 失败）"
+        return res
+    rel = [p for p in paths if p]
+    # ① tracked 有改动（--exit-code：0=干净 / 1=有改动；其余 = 判不了）
+    rc, out, err = _git(root, ["diff", "--name-only", "--exit-code", "HEAD", "--"] + rel)
+    if rc is None or rc not in (0, 1):
+        res["unreadable"] = True
+        res["reason"] = "`git diff --exit-code HEAD` rc=%s（应为 0/1）：%s" % (rc, err)
+        return res
+    res["tracked_modified"] = sorted(out)
+    # ② untracked（★ 优先 ls-files --others；③ ignored 同族）
+    rc, out, err = _git(root, ["ls-files", "--others", "--exclude-standard", "--"] + rel)
+    if rc is None or rc != 0:
+        res["unreadable"] = True
+        res["reason"] = "`git ls-files --others` rc=%s：%s" % (rc, err)
+        return res
+    res["untracked"] = sorted(out)
+    rc, out, err = _git(root, ["ls-files", "--others", "--ignored", "--exclude-standard", "--"] + rel)
+    if rc is None or rc != 0:
+        res["unreadable"] = True
+        res["reason"] = "`git ls-files --others --ignored` rc=%s：%s" % (rc, err)
+        return res
+    res["ignored"] = sorted(out)
+    # 文件集大小（判「零执行探针」：空件集 ⇒ no_data、非绿）
+    rc, out, _err = _git(root, ["ls-files", "--"] + rel)
+    tracked_files = sorted(out) if rc == 0 else []
+    res["file_set_size"] = len(set(tracked_files) | set(res["untracked"]))
+    res["red"] = bool(res["tracked_modified"] or res["untracked"] or res["ignored"])
+    if res["file_set_size"] == 0 and not res["red"]:
+        res["no_data"] = True
+    # ★ 隔离：HEAD worktree 当参照 · **退出必清**
+    wt = None
+    try:
+        wt, werr = _worktree_add(root)
+        if wt is None:
+            res["unreadable"] = True
+            res["reason"] = werr
+            return res
+        res["worktree"] = wt
+        rc, out, _err = _git(wt, ["ls-files", "--"] + rel)   # HEAD 参照件集（对照读数）
+        if rc == 0:
+            res["head_tracked_count"] = len(out)
+    finally:
+        if wt is not None:
+            _worktree_remove(root, wt)
+            res["worktree_cleaned"] = True
+    return res
+
+
+def _chk_missing_rc(res):
+    """查缺档退码：不适用/干净 ⇒ 0 · **红 ⇒ 1** · 判不了 / 空件集 ⇒ **2**（绝不 0）。"""
+    if not res.get("applicable"):
+        return 0
+    if res.get("unreadable") or res.get("no_data"):
+        return 2
+    if res.get("red"):
+        return 1
+    return 0
+
+
+def run_check_missing(root, paths, outdir=None, as_json=False):
+    """`--check-missing`：三合并式查缺档（只读 · 隔离工作树 · 生成前清空输出目录）。
+
+    退码：0 = 不适用/干净 · 1 = **红**（三合并式任一非空）· 2 = **判不了 / 空件集**（fail-closed）。
+    ★ 遍历序决定者：三条列表各自 `sorted()`；JSON 顶层键 = 本函数插入序，写盘件 `sort_keys=True`。
+    """
+    sel = [p.strip() for p in (paths or []) if p.strip()] or list(CHK_MISSING_PATHS_DEFAULT)
+    res = worktree_three_way(root, sel)
+    rc = _chk_missing_rc(res)
+    obj = {
+        "schema": "zerg/gate-json/v1",
+        "tool": "check-newfile-registry.py",
+        "gate": "门76 查缺档（三合并式）",
+        "repo": root,
+        "paths": sel,
+        "rc": rc,
+        "applicable": res["applicable"],
+        "red": res["red"],
+        "no_data": res["no_data"],
+        "unreadable": res["unreadable"],
+        "reason": res["reason"],
+        "tracked_modified": res["tracked_modified"],
+        "untracked": res["untracked"],
+        "ignored": res["ignored"],
+        "file_set_size": res["file_set_size"],
+        "head_tracked_count": res["head_tracked_count"],
+        "worktree": res["worktree"],
+        "worktree_cleaned": res["worktree_cleaned"],
+        "outdir": os.path.abspath(outdir) if outdir else None,
+    }
+    if outdir:
+        # ★ 生成前先**清空输出目录**（防旧件残留看着一致）
+        absd = os.path.abspath(outdir)
+        shutil.rmtree(absd, ignore_errors=True)
+        os.makedirs(absd, exist_ok=True)
+        with open(os.path.join(absd, "查缺档.json"), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        with open(os.path.join(absd, "查缺档.tsv"), "w", encoding="utf-8") as fh:
+            fh.write("状态\t路径\n")
+            for leg, items in (("tracked改动", res["tracked_modified"]),
+                               ("untracked", res["untracked"]), ("ignored", res["ignored"])):
+                for it in items:
+                    fh.write("%s\t%s\n" % (leg, it))
+    if as_json:
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=False) + "\n")
+        return rc
+    print("门76 查缺档（三合并式 · 只读 · 隔离工作树）")
+    print("  仓根：%s" % root)
+    print("  判据路径：%s" % ", ".join(sel))
+    print("  三合并式：① tracked 改动 %d · ② untracked %d · ③ ignored %d（任一非空即红）"
+          % (len(res["tracked_modified"]), len(res["untracked"]), len(res["ignored"])))
+    for leg, items in (("tracked改动", res["tracked_modified"]), ("untracked", res["untracked"]),
+                       ("ignored", res["ignored"])):
+        for it in items:
+            print("     ✗ %s %s" % (leg, it))
+    if not res["applicable"]:
+        print("  ⇒ 三合并式**不适用**（非 git 工作树）⇒ 退码 %d" % rc)
+        return rc
+    if res["unreadable"]:
+        print("  ⇒ 判不了（真源不可读）：%s ⇒ **不给结论（rc=2）**" % res["reason"])
+        return rc
+    if res["no_data"]:
+        print("  ⇒ **零执行探针**（空件集，file_set_size=0）⇒ 无数据标志置位、**非绿（rc=2）**")
+        return rc
+    if res["red"]:
+        print("  ⇒ **红**：工作树相对 HEAD 有分歧（见上）⇒ rc=1")
+        return rc
+    print("  ⇒ 判到了 —— 三合并式逐条 0 件（file_set_size=%d · HEAD 参照 %s 件 · 工作树已清 %s）"
+          % (res["file_set_size"], res["head_tracked_count"], "是" if res["worktree_cleaned"] else "否"))
+    return rc
+
+
 # ── 主判据 ────────────────────────────────────────────────────────────────
 def audit(root, new_files=None, inv=None, baseline=None):
     res = {"counts": None, "faces": {}, "problems": [], "not_judged": [], "roster": None,
@@ -516,12 +764,54 @@ def audit(root, new_files=None, inv=None, baseline=None):
     return res
 
 
+# ── 面清单 / 面记录（**跑前先生成 expected_faces** · 缺面必须合成 · 禁静默跳过）────────
+def expected_faces():
+    """★ **跑前先生成** expected_faces 清单（唯一真源 = `FACES`）。"""
+    return list(FACES)
+
+
+def _reason_for(state):
+    """五态 → 原因码（闭集见模块常量）。"""
+    return {"PASS": REASON_OK, "FAIL": REASON_MISSING_ENTRY, "BLOCKED": REASON_SOURCE_UNREADABLE,
+            "REPORT": REASON_REPORT_ONLY}.get(state, REASON_UNJUDGED)
+
+
+def face_records(res, states=None, faces=None):
+    """逐面**记录**（state / reason_code / decided）。★ 聚合器**不得跳过缺面**：
+
+      · host-bound 面（`HOST_BOUND_FACES`）⇒ `HOST-REQUIRED · SKIPPED-HOST-BOUND · decided=false`，
+        **不计 pass 也不计 fail**（机器相关面：本机家目录态）；
+      · 已产出记录的面 ⇒ 照 `build_face_states` 的态 + 原因码；
+      · **未产出记录的面** ⇒ 合成 `UNKNOWN · MISSING_FACE · decided=false`（退码由 `_verdict` 钉 2）。
+    """
+    faces = expected_faces() if faces is None else list(faces)
+    states = build_face_states(res) if states is None else states
+    out = {}
+    for f in faces:
+        if f in HOST_BOUND_FACES:
+            out[f] = {"state": "HOST-REQUIRED", "reason_code": REASON_HOST_BOUND, "decided": False}
+        elif f in states:
+            st = states[f]
+            out[f] = {"state": st, "reason_code": _reason_for(st),
+                      "decided": st in ("PASS", "FAIL", "REPORT")}
+        else:
+            out[f] = {"state": "UNKNOWN", "reason_code": REASON_MISSING_FACE, "decided": False}
+    return out
+
+
+def missing_faces(res, faces=None):
+    """未产出记录的面（reason_code=MISSING_FACE）名单 · `sorted`。"""
+    recs = face_records(res, faces=faces)
+    return sorted(f for f, r in recs.items() if r["reason_code"] == REASON_MISSING_FACE)
+
+
 # ── 出口判决（**唯一真源** · 人面向与机器面共用）────────────────────────────
-def _verdict(res, strict):
+def _verdict(res, strict, faces=None):
     """返回 (rc, bad, unjudged)。0 = 判到了 · 1 = 缺登记（仅 --strict）· 2 = 不给结论。
 
     与 `run()` 的出口分支**同一套数**（`bad` / `unjudged` 只由 res 派生、无副作用）——
     改一处必须两处同源，禁各算一套（`--json` 短路不得改变退码）。
+    ★ **缺面（MISSING_FACE）⇒ 退码钉 2**（fail-closed：缺面不许当齐）。
     """
     if res.get("counts") is None:
         return 2, 0, 0
@@ -529,6 +819,8 @@ def _verdict(res, strict):
     bad = c["R1"] + c["R2"] + c["R3"] + c["R5"]              # R4 / R6 = 单列旁栏（写死边界：不进退码）
     unjudged = len(res["not_judged"]) + len(res["problems"]) + (1 if c["R4"] is None else 0)
     if unjudged or not res["new_files"]:
+        return 2, bad, unjudged
+    if missing_faces(res, faces):                            # ★ 缺面 ⇒ 退码钉 2
         return 2, bad, unjudged
     if bad:
         return (1 if strict else 0), bad, unjudged
@@ -543,7 +835,11 @@ def _face_count(res, name):
 
 
 def build_face_states(res):
-    """八面 → 五态（PASS/FAIL/BLOCKED/REPORT/UNKNOWN）。口径见 FACES_STATES 注释。"""
+    """①–⑥ + 口径差栏 + 自指 → 五态（PASS/FAIL/BLOCKED/REPORT/UNKNOWN）。口径见 FACES_STATES 注释。
+
+    ★ **host-bound 面（⑧家目录批准件）不在这里出态** —— 由 `face_records` 统一给
+      `HOST-REQUIRED · SKIPPED-HOST-BOUND`（不计 pass/fail）；未产出记录的面由 `face_records` 合成缺面。
+    """
     c = res.get("counts")
     fj = res.get("face_judged") or {}
     # counts is None ⇒ audit 在读到任何面之前就短路（扫面不在盘 / 分母 0 / 基线不在盘）
@@ -634,10 +930,14 @@ def run_json(root, new_files, inv, strict, baseline, selector):
         return 2
     res = audit(root, new_files=new_files, inv=inv, baseline=baseline)
     rc, _bad, _unjudged = _verdict(res, strict)
+    faces = expected_faces()                 # ★ 跑前先生成 expected_faces 清单
     states = build_face_states(res)
+    records = face_records(res, states=states, faces=faces)
     counts = {s: 0 for s in FACES_STATES}
-    for v in states.values():
-        counts[v] = counts.get(v, 0) + 1
+    for rec in records.values():
+        counts[rec["state"]] = counts.get(rec["state"], 0) + 1
+    missing = sorted(f for f, r in records.items() if r["reason_code"] == REASON_MISSING_FACE)
+    host_bound = sorted(f for f, r in records.items() if r["reason_code"] == REASON_HOST_BOUND)
     all_green = (rc == 0 and counts["FAIL"] == 0 and counts["BLOCKED"] == 0
                  and counts["UNKNOWN"] == 0)
     obj = {
@@ -648,10 +948,17 @@ def run_json(root, new_files, inv, strict, baseline, selector):
         "selector": sel,
         "strict": bool(strict),
         "rc": rc,
-        "expected_faces": list(FACES),
-        "reported_faces": sorted(states.keys()),
-        "face_states": states,
+        "expected_faces": faces,
+        "reported_faces": sorted(f for f, r in records.items()
+                                 if r["reason_code"] != REASON_MISSING_FACE),
+        "face_states": {f: records[f]["state"] for f in faces},
+        "face_records": records,
         "counts": counts,
+        "host_required_faces": host_bound,
+        "host_required_count": len(host_bound),
+        "missing_faces": missing,
+        "missing_count": len(missing),
+        "fully_exercised": (len(missing) == 0 and len(host_bound) == 0),
         "all_green": all_green,
         "verdict": _verdict_text(res, rc),
     }
@@ -882,6 +1189,141 @@ def run_self_test():
     case("边界② · 仅 basename 弱挂载 ⇒ 不判红（不计入六表缺登记）", 0,
          {"new_files": [probe], "inv": "inv.tsv", "strict": True}, setup=weak_only)
 
+    # ── 查缺档 / host-bound / 缺面（合成夹具 · 成对）──────────────────────────
+    def add_check(name, want, got, ok):
+        checks.append((name, want, got, ok))
+
+    def git_fixture(root):
+        """建一个**真** git 夹具（含被跟踪件 scripts/a.sh 并提交）。"""
+        os.makedirs(os.path.join(root, "scripts"), exist_ok=True)
+        with open(os.path.join(root, "scripts", "a.sh"), "w") as fh:
+            fh.write("#!/usr/bin/env bash\necho a\n")
+        env = dict(os.environ)
+        env.update({"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"})
+        for a in (("init", "-q"), ("add", "-A"), ("commit", "-q", "-m", "init")):
+            subprocess.run(["git", "-C", root] + list(a), capture_output=True, text=True, env=env)
+        return root
+
+    # (A) host-bound 面 + 缺面聚合（纯数据 · 不碰 git）
+    tmpA = tempfile.mkdtemp(prefix="gnr-selftest-")
+    try:
+        build_fixture(tmpA, probe=probe, register={"①", "②", "③", "⑤"})
+        open(os.path.join(tmpA, "inv.tsv"), "w").write("件\n%s\n" % probe)
+        resA = audit(tmpA, new_files=[probe], inv="inv.tsv", baseline=None)
+        recsA = face_records(resA)
+        add_check("查缺档·面⑧ host-bound ⇒ state=HOST-REQUIRED", 1,
+                  1 if recsA["⑧家目录批准件"]["state"] == "HOST-REQUIRED" else 0,
+                  recsA["⑧家目录批准件"]["state"] == "HOST-REQUIRED")
+        add_check("查缺档·面⑧ reason_code=SKIPPED-HOST-BOUND", 1,
+                  1 if recsA["⑧家目录批准件"]["reason_code"] == REASON_HOST_BOUND else 0,
+                  recsA["⑧家目录批准件"]["reason_code"] == REASON_HOST_BOUND)
+        add_check("查缺档·面⑧ decided=false（不当绿也不当红）", 1,
+                  1 if recsA["⑧家目录批准件"]["decided"] is False else 0,
+                  recsA["⑧家目录批准件"]["decided"] is False)
+        cntA = {}
+        for _r in recsA.values():
+            cntA[_r["state"]] = cntA.get(_r["state"], 0) + 1
+        add_check("查缺档·HOST-REQUIRED 单列计数=1（不计入 PASS/FAIL）", 1,
+                  1 if (cntA.get("HOST-REQUIRED") == 1 and cntA.get("FAIL", 0) == 0) else 0,
+                  cntA.get("HOST-REQUIRED") == 1 and cntA.get("FAIL", 0) == 0)
+        bogus = "⑨合成缺面"
+        recs_missing = face_records(resA, faces=expected_faces() + [bogus])
+        add_check("缺面·未产出记录的面 ⇒ 合成 UNKNOWN", 1,
+                  1 if recs_missing[bogus]["state"] == "UNKNOWN" else 0,
+                  recs_missing[bogus]["state"] == "UNKNOWN")
+        add_check("缺面·reason_code=MISSING_FACE", 1,
+                  1 if recs_missing[bogus]["reason_code"] == REASON_MISSING_FACE else 0,
+                  recs_missing[bogus]["reason_code"] == REASON_MISSING_FACE)
+        add_check("缺面·decided=false", 1,
+                  1 if recs_missing[bogus]["decided"] is False else 0,
+                  recs_missing[bogus]["decided"] is False)
+        rc_m = _verdict(resA, True, faces=expected_faces() + [bogus])[0]
+        add_check("缺面·退码钉 2（缺面不许当齐）", 2, rc_m, rc_m == 2)
+        rc_ok = _verdict(resA, True)[0]
+        add_check("正控·无缺面 ⇒ 不因聚合器变 rc", 0, rc_ok, rc_ok == 0)
+        add_check("正控·缺面注入 ⇒ 2 · 不注入 ⇒ 0（区分度）", 2, rc_m,
+                  rc_m == 2 and rc_ok == 0)
+    finally:
+        shutil.rmtree(tmpA, ignore_errors=True)
+
+    # (B) 三合并式四负控（真 git 夹具 · 仓外）
+    # 负控① 未跟踪新件（不 git add）⇒ 红；并证「git diff 单用看不见它」
+    tmpG = tempfile.mkdtemp(prefix="gnr-selftest-")
+    try:
+        git_fixture(tmpG)
+        with open(os.path.join(tmpG, "scripts", "new-probe.sh"), "w") as fh:
+            fh.write("#!/usr/bin/env bash\necho new\n")
+        rU = worktree_three_way(tmpG, ["scripts"])
+        rcU = _chk_missing_rc(rU)
+        add_check("负控①·未跟踪新件（不 git add）⇒ 红 rc=1", 1, rcU,
+                  rcU == 1 and rU["untracked"] == ["scripts/new-probe.sh"])
+        _drc, _dout, _derr = _git(tmpG, ["diff", "--name-only", "--exit-code", "HEAD", "--", "scripts"])
+        add_check("负控①·git diff 单用看不见 untracked（rc=0 · 洞真被 ② 补上）", 0, _drc,
+                  _drc == 0 and _dout == [])
+    finally:
+        shutil.rmtree(tmpG, ignore_errors=True)
+    # 负控② 被 .gitignore 命中的路径 ⇒ 红（ignored 捕获）· 绝不 rc=0
+    tmpI = tempfile.mkdtemp(prefix="gnr-selftest-")
+    try:
+        git_fixture(tmpI)
+        with open(os.path.join(tmpI, ".gitignore"), "w") as fh:
+            fh.write("scripts/ignored/\n")
+        os.makedirs(os.path.join(tmpI, "scripts", "ignored"), exist_ok=True)
+        with open(os.path.join(tmpI, "scripts", "ignored", "x.sh"), "w") as fh:
+            fh.write("#!/usr/bin/env bash\necho x\n")
+        rI = worktree_three_way(tmpI, ["scripts"])
+        rcI = _chk_missing_rc(rI)
+        add_check("负控②·.gitignore 命中 ⇒ 红（ignored 捕获）· 绝不 rc=0", 1, rcI,
+                  rcI == 1 and rI["ignored"] == ["scripts/ignored/x.sh"])
+    finally:
+        shutil.rmtree(tmpI, ignore_errors=True)
+    # 负控③ 零执行探针（空件集）⇒ no_data 置位 · 非绿 rc=2
+    tmpE = tempfile.mkdtemp(prefix="gnr-selftest-")
+    try:
+        git_fixture(tmpE)
+        rE = worktree_three_way(tmpE, ["scripts-nonexistent"])
+        rcE = _chk_missing_rc(rE)
+        add_check("负控③·空件集（零执行探针）⇒ no_data + rc=2", 2, rcE,
+                  rcE == 2 and rE["no_data"] is True and rE["file_set_size"] == 0)
+    finally:
+        shutil.rmtree(tmpE, ignore_errors=True)
+    # 负控④ 真源不可读 ⇒ rc=2 · 绝不 rc=0
+    tmpX = tempfile.mkdtemp(prefix="gnr-selftest-")
+    try:
+        with open(os.path.join(tmpX, ".git"), "w") as fh:
+            fh.write("gitdir: /nonexistent-gnr-selftest\n")
+        rX = worktree_three_way(tmpX, ["scripts"])
+        rcX = _chk_missing_rc(rX)
+        add_check("负控④·真源不可读（.git 破损）⇒ rc=2 · 绝不 0", 2, rcX,
+                  rcX == 2 and rX["unreadable"] is True)
+    finally:
+        shutil.rmtree(tmpX, ignore_errors=True)
+    # 隔离：worktree 退出必清 · 生成前清空输出目录
+    tmpW = tempfile.mkdtemp(prefix="gnr-selftest-")
+    outd = tempfile.mkdtemp(prefix="gnr-selftest-out-")
+    try:
+        git_fixture(tmpW)
+        with open(os.path.join(outd, "旧件残留.txt"), "w") as fh:
+            fh.write("stale\n")
+        rW = worktree_three_way(tmpW, ["scripts"])
+        _lrc, lout, _lerr = _git(tmpW, ["worktree", "list"])
+        add_check("隔离·worktree 退出必清（list 仅 1 条 = 主树）", 1, len(lout),
+                  rW["worktree_cleaned"] is True and len(lout) == 1)
+        _buf = io.StringIO()
+        _old = sys.stdout
+        sys.stdout = _buf
+        try:
+            rcW = run_check_missing(tmpW, ["scripts"], outdir=outd)
+        finally:
+            sys.stdout = _old
+        add_check("隔离·干净夹具 ⇒ rc=0 · 生成前清空输出目录（旧件被清）", 0, rcW,
+                  rcW == 0 and (not os.path.exists(os.path.join(outd, "旧件残留.txt")))
+                  and os.path.exists(os.path.join(outd, "查缺档.json")))
+    finally:
+        shutil.rmtree(tmpW, ignore_errors=True)
+        shutil.rmtree(outd, ignore_errors=True)
+
     print("── 自检（合成夹具 · 成对 · 不扫真仓）──")
     bad = 0
     for name, want, got, ok in checks:
@@ -900,6 +1342,13 @@ def main():
     ap.add_argument("--inventory", default=None, help="面④ 仓外台账 tsv（不给 ⇒ 面④ 判不了 · 需人签）")
     ap.add_argument("--new-file", action="append", default=None, help="直接指分母（可重复 · 两态取证用）")
     ap.add_argument("--strict", action="store_true", help="阻断档：R1–R5 任一 > 0 ⇒ rc=1（默认报告档 rc=0）")
+    ap.add_argument("--check-missing", action="store_true",
+                    help="查缺档（只读）：三合并式（tracked改动 ∥ untracked ∥ ignored）**任一非空即红**"
+                         " · 隔离 HEAD 工作树（退出必清）· 退码 0/1/2")
+    ap.add_argument("--paths", default=None,
+                    help="查缺档判据路径（逗号分隔 · 默认 scripts）")
+    ap.add_argument("--outdir", default=None,
+                    help="查缺档报告落点：**生成前先清空该目录**（防旧件残留看着一致）· 只跟 `--check-missing` 连用")
     ap.add_argument("--json", default=None, metavar="SECTIONS",
                     help="机器面 JSON（逗号分隔断面：faces = 六张登记表逐面状态；self = 自指那一段）"
                          " · 给了就只出 JSON（人面向 stdout 让位）")
@@ -915,9 +1364,24 @@ def main():
     if args.json is not None and args.dump_baseline:
         print("⛔ 用法错（rc=2）：`--json` 只跟报告档连用（不与 `--dump-baseline` 同用）", file=sys.stderr)
         return 2
+    if args.outdir and not args.check_missing:
+        print("⛔ 用法错（rc=2）：`--outdir` 只跟 `--check-missing` 连用", file=sys.stderr)
+        return 2
+    if args.check_missing and args.dump_baseline:
+        print("⛔ 用法错（rc=2）：`--check-missing` 不与 `--dump-baseline` 同用", file=sys.stderr)
+        return 2
     if args.self_test:
         return run_self_test()
     root = os.path.abspath(args.repo)
+    if args.check_missing:
+        # `--check-missing` 的机器面断面只认 `chk`（非空且逐字）
+        sel = [s.strip() for s in (args.json or "").split(",") if s.strip()]
+        if args.json is not None and (not sel or any(s != "chk" for s in sel)):
+            print("⛔ 用法错（rc=2）：`--check-missing` 的 `--json` 只认断面 chk；不认：%s"
+                  % (args.json or ""), file=sys.stderr)
+            return 2
+        cpaths = [p.strip() for p in (args.paths or "").split(",") if p.strip()]
+        return run_check_missing(root, cpaths, outdir=args.outdir, as_json=(args.json is not None))
     if args.dump_baseline:
         face = scan_ledger_face(root)
         if face is None:
