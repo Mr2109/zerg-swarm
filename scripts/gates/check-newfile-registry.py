@@ -52,22 +52,40 @@
   · **不判 `publish/docs/**` 内容、不判公开产物树、不判外链**：只判「这张表里有没有这件」。
   · **一件一笔**：一格一条 ⇒ 报「件 × 缺哪张表」；**跳过 / 丢件必须计数**（口径 `R-19`）。
   · **本件只读**：不改任何登记表、不跑 `zerg script inventory sync`（那是 D2 写面 · 需人签）。
+  · **写面只有一个 `--dump-baseline`**，且**默认干跑不写**（只有显式 `--yes` 才落）—— 这是本件唯一会碰盘的动作；
+    它写的是**仓外生成件**（冻结基线），**不是任何登记表**。六张登记表一律只读。
 
 退码（**只报告档** · 与 `check-registry-vs-disk.py` / `check-docs-orphans-links.py` 同规）
 
   0 = 判到了（逐格给数 + 逐条点名；**报告档不阻断**）
   1 = 只有 `--strict` 档才可能：R1/R2/R3/R5 任一格 > 0（逐条点名；R4 / R6 = 旁栏不进退码）
   2 = **不给结论**：分母 0 件 · 基线不在盘 · 任一登记表读不到 / 解析出 0 条（空转 = 假绿）·
-      **任一面判不了**（含面④ 仓外真源不在 · 面⑥ 判据件不在）· `--self-test` 不过
+      **任一面判不了**（含面④ 仓外真源不在 · 面⑥ 判据件不在）· `--self-test` 不过 ·
+      `--json` 断面名不认 / 为空 · `--yes` 不与 `--dump-baseline` 连用
 
 用法
 
   python3 scripts/gates/check-newfile-registry.py                       # 查本仓（报告档）
-  python3 scripts/gates/check-newfile-registry.py --dump-baseline /仓外/基线.tsv   # 生成冻结基线
+  python3 scripts/gates/check-newfile-registry.py --dump-baseline /仓外/基线.tsv        # 干跑：只打印计划（默认不写）
+  python3 scripts/gates/check-newfile-registry.py --dump-baseline /仓外/基线.tsv --yes  # 真写冻结基线（唯一写面）
   python3 scripts/gates/check-newfile-registry.py --baseline /仓外/基线.tsv --inventory /仓外/台账.tsv
-  python3 scripts/gates/check-newfile-registry.py --strict --json faces,self
+  python3 scripts/gates/check-newfile-registry.py --strict --json faces,self            # 机器面 JSON
   python3 scripts/gates/check-newfile-registry.py --repo <仓根> --new-file scripts/x.sh   # 指分母（两态取证用）
   python3 scripts/gates/check-newfile-registry.py --self-test
+
+默认干跑（写面最小 · 比业界写器保守）
+
+  本门**默认不写任何件**（只读报告 / 干跑）。**唯一的写面 = `--dump-baseline`**（生成冻结基线 · 仓外生成件），
+  且**只有显式 `--yes` 才真落**：不带 `--yes` 时它只把计划（落点 + 将写件数）打到 stdout、**一个字节都不写**。
+  这是本件与「默认真写」的写器（业界常见形态）**刻意不同**的保守面 —— 目的是「先看计划、再显式确认落点」。
+  （`--yes` 不与 `--dump-baseline` 连用 ⇒ 用法错 rc=2；其余旗标一律只读。）
+
+机器面（`--json`）
+
+  `--json <断面>`：断面为逗号分隔、只认 `faces` 与 `self`；给了就**只出 JSON**（人面向 stdout 让位）。
+  JSON 恒含：`expected_faces`（本件八面名）· `reported_faces`（本次实际报出的面）· `counts`（五态计数
+  PASS/FAIL/BLOCKED/REPORT/UNKNOWN）· `all_green`（判到了且 0 条缺登记）；`faces` / `self` 断面分别加
+  逐面详情与自指详情。断面名不认 / 为空 ⇒ 用法错 rc=2（不给结论）。
 """
 
 import argparse
@@ -104,6 +122,26 @@ SCRIPT_EXCLUDES = {
 
 # 默认基线落点（**仓外** · 生成件）：家目录缓存，不落仓、不进 git
 DEFAULT_BASELINE = os.path.join(os.path.expanduser("~"), ".zerg", "newfile-registry-baseline.tsv")
+
+# ── 机器面：门76 的**八面**（逐字对齐人面向输出里印出的面名 · 顺序 = 打印顺序）────────────
+# 为什么是这八面：六张登记表（①–⑥）＋ 口径差栏（参照读数）＋ 自指（本门对自身的登记情形）。
+FACES = (
+    "①公开标记表",
+    "②干跑登记",
+    "③门①两张真源",
+    "④脚本台账",
+    "⑤两器排除表",
+    "⑥失败文案面",
+    "口径差栏",
+    "自指",
+)
+# 五态（`precommit-gates.sh` 的步骤级四档 PASS/FAIL/BLOCKED/REPORT ＋ 自报未知态 UNKNOWN）：
+#   PASS    = 判到了且该面 0 条缺登记（R4/R6 = 无发现）
+#   FAIL    = 判到了且该面 > 0 条缺登记（R1/R2/R3/R5）
+#   BLOCKED = 该面自己的真源读不到 / 面判不了（面级不给结论）
+#   REPORT  = 只报不判的面（R4/R6 旁栏不进退码 · 口径差栏/自指 = 参照/自指读数）
+#   UNKNOWN = 整跑在**面级判读之前**就短路（分母级判不了：扫面不在盘 / 分母 0 / 基线不在盘）⇒ 该面结论未知
+FACES_STATES = ("PASS", "FAIL", "BLOCKED", "REPORT", "UNKNOWN")
 
 
 def rel(root, p):
@@ -355,7 +393,8 @@ def load_wording(root):
 
 # ── 主判据 ────────────────────────────────────────────────────────────────
 def audit(root, new_files=None, inv=None, baseline=None):
-    res = {"counts": None, "faces": {}, "problems": [], "not_judged": [], "roster": None}
+    res = {"counts": None, "faces": {}, "problems": [], "not_judged": [], "roster": None,
+           "face_judged": {}}
     ledger_face = scan_ledger_face(root)
     if ledger_face is None:
         res["problems"].append("扫面 0 件：`%s` 不在盘 ⇒ 空转 = 假绿" % os.path.join("scripts"))
@@ -404,6 +443,16 @@ def audit(root, new_files=None, inv=None, baseline=None):
     drops = load_drop_exact(root)
     led_rows, led_path = load_ledger_rows(root, inv)
     fixed, wording = load_wording(root)
+
+    # 机器面：逐面「真源读到了没有」（面自身判不了 ⇒ BLOCKED；读到但整跑无结论 ⇒ UNKNOWN）
+    res["face_judged"] = {
+        "①公开标记表": marks is not None,
+        "②干跑登记": dry_hits is not None and dry_reg is not None,
+        "③门①两张真源": step_lines is not None and wl_items is not None,
+        "④脚本台账": led_rows is not None,
+        "⑤两器排除表": excludes is not None and drops is not None,
+        "⑥失败文案面": fixed is not None,
+    }
 
     for nm, ok, why in (("①公开标记表", marks is not None, MARKS_REL),
                         ("②干跑登记", dry_hits is not None and dry_reg is not None,
@@ -467,8 +516,156 @@ def audit(root, new_files=None, inv=None, baseline=None):
     return res
 
 
+# ── 出口判决（**唯一真源** · 人面向与机器面共用）────────────────────────────
+def _verdict(res, strict):
+    """返回 (rc, bad, unjudged)。0 = 判到了 · 1 = 缺登记（仅 --strict）· 2 = 不给结论。
+
+    与 `run()` 的出口分支**同一套数**（`bad` / `unjudged` 只由 res 派生、无副作用）——
+    改一处必须两处同源，禁各算一套（`--json` 短路不得改变退码）。
+    """
+    if res.get("counts") is None:
+        return 2, 0, 0
+    c = res["counts"]
+    bad = c["R1"] + c["R2"] + c["R3"] + c["R5"]              # R4 / R6 = 单列旁栏（写死边界：不进退码）
+    unjudged = len(res["not_judged"]) + len(res["problems"]) + (1 if c["R4"] is None else 0)
+    if unjudged or not res["new_files"]:
+        return 2, bad, unjudged
+    if bad:
+        return (1 if strict else 0), bad, unjudged
+    return 0, bad, unjudged
+
+
+# ── 机器面（`--json`）：八面 × 五态（不改人面向一字）────────────────────────
+def _face_count(res, name):
+    c = res.get("counts") or {}
+    return {"①公开标记表": c.get("R1"), "②干跑登记": c.get("R2"), "③门①两张真源": c.get("R3"),
+            "④脚本台账": c.get("R4"), "⑤两器排除表": c.get("R5"), "⑥失败文案面": c.get("R6")}.get(name)
+
+
+def build_face_states(res):
+    """八面 → 五态（PASS/FAIL/BLOCKED/REPORT/UNKNOWN）。口径见 FACES_STATES 注释。"""
+    c = res.get("counts")
+    fj = res.get("face_judged") or {}
+    # counts is None ⇒ audit 在读到任何面之前就短路（扫面不在盘 / 分母 0 / 基线不在盘）
+    # ⇒ 六个登记面**一条都没判**，结论 = UNKNOWN（不是 BLOCKED：BLOCKED 留给「该面真源读不到」）。
+    unknown_all = c is None
+    st = {}
+    for name in FACES[:6]:
+        if unknown_all:
+            st[name] = "UNKNOWN"
+            continue
+        if not fj.get(name):
+            st[name] = "BLOCKED"          # 该面自己的真源读不到 / 面判不了
+            continue
+        n = _face_count(res, name)
+        if name in ("④脚本台账", "⑥失败文案面"):
+            st[name] = "REPORT" if n else "PASS"    # 旁栏不进退码：有发现记 REPORT
+        else:
+            st[name] = "FAIL" if n else "PASS"
+    st["口径差栏"] = ("BLOCKED" if (res.get("faces") or {}).get("口径差") is None
+                    else "REPORT")    # 参照读数 · 不并入判红；台账口径扫面缺 ⇒ 参照读数也判不了
+    st["自指"] = "UNKNOWN" if unknown_all else "REPORT"   # 自指依赖分母/面③⑤ ⇒ 整跑短路时未知
+    return st
+
+
+def _verdict_text(res, rc):
+    if res.get("counts") is None:
+        return "判不了 ⇒ 不给结论（rc=2）"
+    c = res["counts"]
+    bad = c["R1"] + c["R2"] + c["R3"] + c["R5"]
+    unjudged = len(res["not_judged"]) + len(res["problems"]) + (1 if c["R4"] is None else 0)
+    if unjudged or not res["new_files"]:
+        return "判不了 / 分母 0 ⇒ 不给结论（rc=2）"
+    if bad:
+        return "%d 条缺登记（报告档 rc=%d）" % (bad, rc)
+    return "判到了 —— 五张登记表逐面 0 条缺登记"
+
+
+def face_detail(res, states):
+    """`--json faces` 断面：逐面详情（state / judged / 缺登记数 / 命中件名）。"""
+    items = res.get("items") or {}
+    fj = res.get("face_judged") or {}
+    c = res.get("counts") or {}
+    d = res.get("faces") or {}
+    out = {
+        "①公开标记表": {"缺登记": c.get("R1"), "items": items.get("R1")},
+        "②干跑登记": {"缺登记": c.get("R2"), "items": items.get("R2"),
+                    "不适用件": res.get("dry_na")},
+        "③门①两张真源": {"缺登记": c.get("R3"), "items": items.get("R3"),
+                       "弱挂载": res.get("weak"), "通用语法步兜住": res.get("fourth_tier")},
+        "④脚本台账": {"缺登记": c.get("R4"), "items": items.get("R4"),
+                    "台账路径": (res.get("ledger") or {}).get("path"),
+                    "台账行数": (res.get("ledger") or {}).get("rows")},
+        "⑤两器排除表": {"缺登记": c.get("R5"), "items": items.get("R5")},
+        "⑥失败文案面": {"未改文案": c.get("R6"), "文案": (res.get("wording") or {}).get("lines")},
+        "口径差栏": d.get("口径差"),
+    }
+    for name in FACES[:6]:
+        out[name]["judged"] = bool(fj.get(name))
+        out[name]["state"] = states[name]
+    return out
+
+
+def self_detail(res):
+    """`--json self` 断面：本门对自身八面的登记情形（逐字对齐人面向「★ 自指」那一行）。"""
+    marks = res.get("marks_public_no")
+    hits = res.get("dry_hits")
+    items = res.get("items") or {}
+    return {
+        "path": SELF_REL,
+        "在分母内": SELF_REL in (res.get("new_files") or []),
+        "面①": ("已登记（public=%s）" % marks[SELF_REL]) if (marks and SELF_REL in marks) else "未登记",
+        "面②": "需登记" if (hits and SELF_REL in hits) else "不适用（正文不在该口径的扫描面内）",
+        "面③": "缺登记" if SELF_REL in (items.get("R3") or []) else "不在缺登记名单",
+        "面⑤": "缺登记" if SELF_REL in (items.get("R5") or []) else "不在缺登记名单",
+    }
+
+
+def run_json(root, new_files, inv, strict, baseline, selector):
+    """`--json <断面>`：只出机器面 JSON（人面向 stdout 让位）+ 与报告档同源退码。"""
+    sel = [s.strip() for s in (selector or "").split(",") if s.strip()]
+    unknown = [s for s in sel if s not in ("faces", "self")]
+    if unknown:
+        print("⛔ 用法错（rc=2）：`--json` 只认断面 faces,self；不认：%s" % ",".join(unknown),
+              file=sys.stderr)
+        return 2
+    if not sel:
+        print("⛔ 用法错（rc=2）：`--json` 需要断面（faces,self 任一）", file=sys.stderr)
+        return 2
+    res = audit(root, new_files=new_files, inv=inv, baseline=baseline)
+    rc, _bad, _unjudged = _verdict(res, strict)
+    states = build_face_states(res)
+    counts = {s: 0 for s in FACES_STATES}
+    for v in states.values():
+        counts[v] = counts.get(v, 0) + 1
+    all_green = (rc == 0 and counts["FAIL"] == 0 and counts["BLOCKED"] == 0
+                 and counts["UNKNOWN"] == 0)
+    obj = {
+        "schema": "zerg/gate-json/v1",
+        "tool": "check-newfile-registry.py",
+        "gate": "门76 新件登记完整性",
+        "repo": root,
+        "selector": sel,
+        "strict": bool(strict),
+        "rc": rc,
+        "expected_faces": list(FACES),
+        "reported_faces": sorted(states.keys()),
+        "face_states": states,
+        "counts": counts,
+        "all_green": all_green,
+        "verdict": _verdict_text(res, rc),
+    }
+    if "faces" in sel:
+        obj["faces"] = face_detail(res, states)
+    if "self" in sel:
+        obj["self"] = self_detail(res)
+    sys.stdout.write(json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=False) + "\n")
+    return rc
+
+
 def run(root, new_files, inv, strict, baseline=None):
     res = audit(root, new_files=new_files, inv=inv, baseline=baseline)
+    rc, bad, unjudged = _verdict(res, strict)          # 出口判决唯一真源（同 `run_json`）
     print("门76 新件登记完整性（件级 × 六张登记表 · **只报告**）")
     print("  仓根：%s" % root)
     d = res["faces"].get("口径差") or {}
@@ -482,7 +679,7 @@ def run(root, new_files, inv, strict, baseline=None):
         for p in res["problems"]:
             print("  ✗ %s" % p)
         print("  判据结论：**判不了 ⇒ 不给结论（rc=2）**")
-        return 2
+        return rc
     c = res["counts"]
     print("  分母（现读新件 ∖ 冻结基线）：%d 件" % len(res["new_files"]))
     for f in res["new_files"][:40]:
@@ -533,17 +730,15 @@ def run(root, new_files, inv, strict, baseline=None):
              "缺登记" if SELF_REL in res["items"]["R5"] else "不在缺登记名单"))
     for p in res["problems"]:
         print("  ✗ %s" % p)
-    bad = c["R1"] + c["R2"] + c["R3"] + c["R5"]      # R4 / R6 = 单列旁栏（写死边界：不进退码）
-    unjudged = len(res["not_judged"]) + len(res["problems"]) + (1 if c["R4"] is None else 0)
     if unjudged or not res["new_files"]:
         print("  判据结论：**判不了 / 分母 0 ⇒ 不给结论（rc=2）**（真的没有 ≠ 判不了）")
-        return 2
+        return rc
     if bad:
         print("  判据结论：**%d 条缺登记**（逐条点名如上）；报告档 rc=%d（只报告 · 不接闸）"
-              % (bad, 1 if strict else 0))
-        return 1 if strict else 0
+              % (bad, rc))
+        return rc
     print("  判据结论：判到了 —— 五张登记表逐面 **0 条缺登记**（面④/⑥ 见上）")
-    return 0
+    return rc
 
 
 # ── 自检（合成夹具 · 成对 · 不扫真仓）────────────────────────────────────────
@@ -701,12 +896,25 @@ def main():
                                  description="门76 新件登记完整性：件级 × 六张登记表（只报告 · 起手不接闸）")
     ap.add_argument("--repo", default=REPO, help="被查仓根（默认本仓）")
     ap.add_argument("--baseline", default=DEFAULT_BASELINE, help="冻结基线（仓外生成件 · --dump-baseline 生成）")
-    ap.add_argument("--dump-baseline", default=None, help="把现读件集写成基线（仓外路径）后退出")
+    ap.add_argument("--dump-baseline", default=None, help="把现读件集写成基线（仓外路径）后退出；**默认干跑不写**，带 `--yes` 才真落")
     ap.add_argument("--inventory", default=None, help="面④ 仓外台账 tsv（不给 ⇒ 面④ 判不了 · 需人签）")
     ap.add_argument("--new-file", action="append", default=None, help="直接指分母（可重复 · 两态取证用）")
     ap.add_argument("--strict", action="store_true", help="阻断档：R1–R5 任一 > 0 ⇒ rc=1（默认报告档 rc=0）")
+    ap.add_argument("--json", default=None, metavar="SECTIONS",
+                    help="机器面 JSON（逗号分隔断面：faces = 六张登记表逐面状态；self = 自指那一段）"
+                         " · 给了就只出 JSON（人面向 stdout 让位）")
+    ap.add_argument("--yes", action="store_true",
+                    help="写面确认：只有 `--dump-baseline` 会写件，且**默认干跑不写**；带 `--yes` 才真落"
+                         "（本件比「默认真写」的写器更保守）")
     ap.add_argument("--self-test", action="store_true", help="只跑合成夹具自检（不扫真仓）")
     args = ap.parse_args()
+    # 用法错（rc=2 · fail-closed）：旗标组合不合法，先判、不执行任何动作
+    if args.yes and not args.dump_baseline:
+        print("⛔ 用法错（rc=2）：`--yes` 只跟 `--dump-baseline` 连用（本件**默认干跑不写**）", file=sys.stderr)
+        return 2
+    if args.json is not None and args.dump_baseline:
+        print("⛔ 用法错（rc=2）：`--json` 只跟报告档连用（不与 `--dump-baseline` 同用）", file=sys.stderr)
+        return 2
     if args.self_test:
         return run_self_test()
     root = os.path.abspath(args.repo)
@@ -715,6 +923,13 @@ def main():
         if face is None:
             print("✗ 扫面不在盘：%s ⇒ 不写基线" % os.path.join(root, "scripts"), file=sys.stderr)
             return 2
+        if not args.yes:
+            # 默认干跑：只打印计划、一个字节都不写（比「默认真写」的写器保守）
+            print("── 冻结基线生成档（**干跑** · 未写件）")
+            print("   目标件 : %s" % args.dump_baseline)
+            print("   将写   : %d 件（现读台账口径件集逐行 · 首行注释 + 逐件一行）" % len(face))
+            print("   ⇒ **干跑未写**：加 `--yes` 才落（本件默认不写件）")
+            return 0
         os.makedirs(os.path.dirname(os.path.abspath(args.dump_baseline)), exist_ok=True)
         with open(args.dump_baseline, "w", encoding="utf-8") as fh:
             fh.write("# 门76 冻结基线（现读件集 · 生成件 · 禁手维）\n")
@@ -722,6 +937,8 @@ def main():
                 fh.write(f + "\n")
         print("基线已写：%s（%d 件）" % (args.dump_baseline, len(face)))
         return 0
+    if args.json is not None:
+        return run_json(root, args.new_file, args.inventory, args.strict, args.baseline, args.json)
     return run(root, args.new_file, args.inventory, args.strict, args.baseline)
 
 
