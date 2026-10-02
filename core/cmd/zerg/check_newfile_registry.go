@@ -116,6 +116,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -150,8 +151,11 @@ var (
 	gnrDropCompiled     = regexp.MustCompile(gnrDropRE)
 )
 
-// ── 机器面：门76 的**八面**（逐字对齐 py `FACES` · 顺序 = 打印顺序）────────────
-// 为什么是这八面：六张登记表（①–⑥）＋ 口径差栏（参照读数）＋ 自指（本门对自身的登记情形）。
+// ── 机器面：门76 的**九面**（逐字对齐 py `FACES` · 顺序 = 打印顺序）────────────
+// 为什么是这九面：六张登记表（①–⑥）＋ **⑧家目录批准件**（host-bound · 机器相关面）＋
+// 口径差栏（参照读数）＋ 自指（本门对自身的登记情形）。★ 面⑦ 处**故意留空档**（本批禁区件）。
+// ★ `gnrExpectedFaces()` **跑前先生成**这张清单；任何**未产出记录**的面由 `gnrFaceRecords` 合成
+// `state=UNKNOWN · reason_code=MISSING_FACE · decided=false` 并**退码钉 2**（禁静默跳过缺面）。
 var gnrFaces = []string{
 	"①公开标记表",
 	"②干跑登记",
@@ -159,6 +163,7 @@ var gnrFaces = []string{
 	"④脚本台账",
 	"⑤两器排除表",
 	"⑥失败文案面",
+	"⑧家目录批准件",
 	"口径差栏",
 	"自指",
 }
@@ -170,7 +175,28 @@ var gnrFaces = []string{
 //	BLOCKED = 该面自己的真源读不到 / 面判不了（面级不给结论）
 //	REPORT  = 只报不判的面（R4/R6 旁栏不进退码 · 口径差栏/自指 = 参照/自指读数）
 //	UNKNOWN = 整跑在**面级判读之前**就短路（分母级判不了：扫面不在盘 / 分母 0 / 基线不在盘）⇒ 该面结论未知
-var gnrFacesStates = []string{"PASS", "FAIL", "BLOCKED", "REPORT", "UNKNOWN"}
+//	★ **HOST-REQUIRED** = **机器相关面（host-bound）**：本机家目录态、不进仓、不可移植 ⇒ 既不 PASS
+//	  也不硬 FAIL。聚合时**不计入 pass 也不计入 fail**，但必须**显式列出并暴露计数**。
+var gnrFacesStates = []string{"PASS", "FAIL", "BLOCKED", "REPORT", "UNKNOWN", "HOST-REQUIRED"}
+
+// ★ **机器相关面（host-bound）**：真身在**本机家目录**（`~/.zerg/state/approvals/dev_edit.json`），
+// 不进仓、随机器而变 ⇒ 报 HOST-REQUIRED / reason_code=SKIPPED-HOST-BOUND，聚合时不计 pass/fail。
+var gnrHostBoundFaces = []string{"⑧家目录批准件"}
+
+// gnrApprovalsRel —— py `APPROVALS_REL = os.path.join(".zerg","state","approvals","dev_edit.json")` 的字面。
+// ★ py 侧仅作「真身在哪」的声明面（正文从不读它）⇒ 本件逐字保留该声明，✗ 不擅自把它变成读面。
+const gnrApprovalsRel = ".zerg/state/approvals/dev_edit.json"
+
+// 面级**原因码**（机器面 `face_records[<面>].reason_code` 的闭集）
+const (
+	gnrReasonOK               = "OK"
+	gnrReasonMissingEntry     = "MISSING_ENTRY"      // 判到了且该面 > 0 条缺登记（FAIL）
+	gnrReasonSourceUnreadable = "SOURCE_UNREADABLE"  // 该面真源读不到（BLOCKED）
+	gnrReasonReportOnly       = "REPORT_ONLY"        // 只报不判（REPORT）
+	gnrReasonUnjudged         = "UNJUDGED"           // 整跑面级判读前短路（UNKNOWN）
+	gnrReasonMissingFace      = "MISSING_FACE"       // ★ 未产出记录的面（聚合器合成 · 退码钉 2）
+	gnrReasonHostBound        = "SKIPPED-HOST-BOUND" // ★ 机器相关面未跑（HOST-REQUIRED）
+)
 
 // gnrDryDriverPy —— py `load_dry_module()` + `collect_paths()` + `dry_registry()` 的**逐字复刻驱动**。
 // argv：1=判据件绝对路径 · 2=仓根 · 3=步骤表里抽出的**仓根相对**判据件名（仅用于例外文案）。
@@ -825,6 +851,400 @@ func gnrLoadWording(root string) (*bool, []string, bool) {
 	return &fixed, out, true
 }
 
+// ── 查缺档（三合并式 · 判红机制 · 隔离工作树）─────────────────────────────────
+// ★ **判红三合并式**：三条**任一非空即红** ——
+//
+//	  ① tracked 有改动 :  `git diff --exit-code HEAD -- <paths>`   （rc=1 ⇒ 有）
+//	  ② untracked      :  `git ls-files --others --exclude-standard -- <paths>`
+//	  ③ ignored        :  `git ls-files --others --ignored --exclude-standard -- <paths>`
+//	★ **禁只用 `git diff` 判红** —— 它看不见 untracked（②）与 ignored（③）⇒ 那两格必须单列现读。
+//	★ 若改用 `git status --porcelain`，**必须显式 `--untracked-files=all`**；本件**优先 ls-files --others** 那条路。
+//
+// ★ **隔离**：`git worktree add -f -q <tmp> HEAD` 取 HEAD 参照；**退出必清**（Go defer 复刻 py try/finally）。
+// ★ **生成前先清空输出目录**（防旧件残留看着一致）—— 见 `gnrRunCheckMissing` 的 `--outdir` 分支。
+var gnrChkMissingPathsDefault = []string{"scripts"}
+
+// gnrGitUnreadable —— py `_git` 的 `rc=None`（git 起不来 / OSError）在本件里的哨兵值。
+const gnrGitUnreadable = -1
+
+// gnrRcOrNone —— py `"%s" % rc` 的形态（None ⇒ "None"）。
+func gnrRcOrNone(rc int) string {
+	if rc == gnrGitUnreadable {
+		return "None"
+	}
+	return strconv.Itoa(rc)
+}
+
+// gnrPyStrBlank —— py `ln.strip() == ""`（py str.strip 剥的空白集含 \x1c-\x1f / \x85 / \xa0，
+// 比 Go `unicode.IsSpace` 更宽 ⇒ 显式补齐这几枚，✗ 不用裸 `strings.TrimSpace`）。
+func gnrPyStrBlank(s string) bool {
+	for _, r := range s {
+		if r == '	' || r == '\n' || r == '\v' || r == '\f' || r == '\r' || r == ' ' ||
+			r == 0x1c || r == 0x1d || r == 0x1e || r == 0x1f || r == 0x85 || r == 0xa0 || unicode.IsSpace(r) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// gnrGitLines —— py `[ln for ln in p.stdout.splitlines() if ln.strip()]`。
+func gnrGitLines(s string) []string {
+	out := []string{}
+	for _, ln := range gnrSplitLines(s) {
+		if !gnrPyStrBlank(ln) {
+			out = append(out, ln)
+		}
+	}
+	return out
+}
+
+// gnrGit —— py `_git(root, args)`：跑一条 git 命令。
+// 返回 (rc, out, errs)：rc=gnrGitUnreadable 表示「git 起不来（OSError）」；out = 非空行（保持 git 原序）。
+// ★ 行序决定者：本函数**不排序**（同 py）；三条列表各自在调用方 `sort.Strings`（等价 py `sorted`）。
+func gnrGit(root string, args ...string) (int, []string, string) {
+	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	var outb, errb bytes.Buffer
+	cmd.Stdout = &outb
+	cmd.Stderr = &errb
+	err := cmd.Run()
+	if err != nil {
+		if _, ok := err.(*exec.ExitError); !ok {
+			return gnrGitUnreadable, []string{}, err.Error() // 起不来（OSError 等价）
+		}
+		return cmd.ProcessState.ExitCode(), gnrGitLines(outb.String()), strings.TrimSpace(errb.String())
+	}
+	return 0, gnrGitLines(outb.String()), strings.TrimSpace(errb.String())
+}
+
+// gnrGitWorktreeKind —— py `git_worktree_kind(root)`：'yes' / 'no'（非 git 工作树）/ 'unreadable'。
+func gnrGitWorktreeKind(root string) string {
+	_, stErr := os.Stat(filepath.Join(root, ".git")) // py os.path.exists（跟随符号链接）
+	hasDotGit := stErr == nil
+	rc, _, _ := gnrGit(root, "rev-parse", "--is-inside-work-tree")
+	if rc == gnrGitUnreadable {
+		return "unreadable" // git 起不来
+	}
+	if rc == 0 {
+		return "yes"
+	}
+	if hasDotGit {
+		return "unreadable"
+	}
+	return "no"
+}
+
+// gnrWorktreeAdd —— py `_worktree_add(root)`：`git worktree add -f -q <tmp>/co HEAD`。
+// 返回 (工作树路径, 错误文案)；失败时路径为空串、并已清临时父目录。
+// ★ 自回收：只在**自己建的**临时目录上清理（建不起来这一支直接返回，不挂任何清理）。
+func gnrWorktreeAdd(root string) (string, string) {
+	tmp, err := os.MkdirTemp("", "gnr-chkmiss-")
+	if err != nil {
+		return "", "`git worktree add` 起不来 / 失败：临时目录建不了（" + err.Error() + "）"
+	}
+	wt := filepath.Join(tmp, "co")
+	rc, _, errs := gnrGit(root, "worktree", "add", "-f", "-q", wt, "HEAD")
+	if rc == gnrGitUnreadable || rc != 0 {
+		os.RemoveAll(tmp)
+		return "", "`git worktree add` 起不来 / 失败（rc=" + gnrRcOrNone(rc) + "）：" + errs
+	}
+	return wt, ""
+}
+
+// gnrWorktreeRemove —— py `_worktree_remove(root, wt)`：★ 退出必清（移除工作树 + 删临时父目录 · 幂等）。
+func gnrWorktreeRemove(root, wt string) {
+	gnrGit(root, "worktree", "remove", "--force", wt)
+	os.RemoveAll(filepath.Dir(wt))
+}
+
+// gnrChkRes —— py `worktree_three_way` 的读数结构。
+type gnrChkRes struct {
+	applicable       bool
+	unreadable       bool
+	reason           *string // None ⇒ nil
+	paths            []string
+	trackedModified  []string
+	untracked        []string
+	ignored          []string
+	red              bool
+	noData           bool
+	fileSetSize      int
+	headTrackedCount *int // None ⇒ nil
+	worktree         *string
+	worktreeCleaned  bool
+}
+
+// gnrSortedCopy —— py `sorted(list)` 的副本（✗ 不改原切片）。
+func gnrSortedCopy(l []string) []string {
+	out := append([]string{}, l...)
+	sort.Strings(out)
+	return out
+}
+
+// gnrWorktreeThreeWay —— 查缺档**判红**：三合并式（tracked 改动 ∥ untracked ∥ ignored）任一非空 ⇒ red=true。
+//
+//	· unreadable=True ⇒ 真源不可读 ⇒ 调用方退码 **2**；
+//	· noData=True     ⇒ **零执行探针**（空件集）⇒ 非绿、退码 **2**；
+//	· applicable=False ⇒ root 根本不是 git 工作树 ⇒ 三合并式不适用（不当绿也不当红）。
+//
+// ★ 隔离：在 HEAD 建一枚 worktree 当参照，**退出必清**；清理结果写进读数。
+func gnrWorktreeThreeWay(root string, paths []string) *gnrChkRes {
+	res := &gnrChkRes{
+		applicable:      true,
+		paths:           append([]string{}, paths...),
+		trackedModified: []string{},
+		untracked:       []string{},
+		ignored:         []string{},
+	}
+	kind := gnrGitWorktreeKind(root)
+	if kind == "no" {
+		res.applicable = false
+		first := "?"
+		if len(paths) > 0 {
+			first = paths[0]
+		}
+		s := "非 git 工作树（`" + first + "` 不受版本控制）⇒ 三合并式不适用"
+		res.reason = &s
+		return res
+	}
+	if kind == "unreadable" {
+		res.unreadable = true
+		s := "git 真源不可读（`.git` 在、但 `git rev-parse` 失败）"
+		res.reason = &s
+		return res
+	}
+	rel := []string{}
+	for _, p := range paths {
+		if p != "" {
+			rel = append(rel, p)
+		}
+	}
+	// ① tracked 有改动（--exit-code：0=干净 / 1=有改动；其余 = 判不了）
+	rc, out, errs := gnrGit(root, append([]string{"diff", "--name-only", "--exit-code", "HEAD", "--"}, rel...)...)
+	if rc == gnrGitUnreadable || (rc != 0 && rc != 1) {
+		res.unreadable = true
+		s := "`git diff --exit-code HEAD` rc=" + gnrRcOrNone(rc) + "（应为 0/1）：" + errs
+		res.reason = &s
+		return res
+	}
+	res.trackedModified = gnrSortedCopy(out)
+	// ② untracked（★ 优先 ls-files --others；③ ignored 同族）
+	rc, out, errs = gnrGit(root, append([]string{"ls-files", "--others", "--exclude-standard", "--"}, rel...)...)
+	if rc == gnrGitUnreadable || rc != 0 {
+		res.unreadable = true
+		s := "`git ls-files --others` rc=" + gnrRcOrNone(rc) + "：" + errs
+		res.reason = &s
+		return res
+	}
+	res.untracked = gnrSortedCopy(out)
+	rc, out, errs = gnrGit(root, append([]string{"ls-files", "--others", "--ignored", "--exclude-standard", "--"}, rel...)...)
+	if rc == gnrGitUnreadable || rc != 0 {
+		res.unreadable = true
+		s := "`git ls-files --others --ignored` rc=" + gnrRcOrNone(rc) + "：" + errs
+		res.reason = &s
+		return res
+	}
+	res.ignored = gnrSortedCopy(out)
+	// 文件集大小（判「零执行探针」：空件集 ⇒ no_data、非绿）
+	rc, out, _ = gnrGit(root, append([]string{"ls-files", "--"}, rel...)...)
+	tracked := []string{}
+	if rc == 0 {
+		tracked = out
+	}
+	seen := map[string]bool{}
+	for _, f := range tracked {
+		seen[f] = true
+	}
+	for _, f := range res.untracked {
+		seen[f] = true
+	}
+	res.fileSetSize = len(seen)
+	res.red = len(res.trackedModified) > 0 || len(res.untracked) > 0 || len(res.ignored) > 0
+	if res.fileSetSize == 0 && !res.red {
+		res.noData = true
+	}
+	// ★ 隔离：HEAD worktree 当参照 · **退出必清**（py try/finally ≡ Go defer）
+	wt, werr := gnrWorktreeAdd(root)
+	if wt == "" {
+		res.unreadable = true
+		res.reason = &werr
+		return res
+	}
+	res.worktree = &wt
+	defer func() {
+		gnrWorktreeRemove(root, wt)
+		res.worktreeCleaned = true
+	}()
+	wtrc, wout, _ := gnrGit(wt, append([]string{"ls-files", "--"}, rel...)...) // HEAD 参照件集（对照读数）
+	if wtrc == 0 {
+		n := len(wout)
+		res.headTrackedCount = &n
+	}
+	return res
+}
+
+// gnrChkMissingRC —— 查缺档退码：不适用/干净 ⇒ 0 · **红 ⇒ 1** · 判不了 / 空件集 ⇒ **2**（绝不 0）。
+func gnrChkMissingRC(res *gnrChkRes) int {
+	if !res.applicable {
+		return 0
+	}
+	if res.unreadable || res.noData {
+		return 2
+	}
+	if res.red {
+		return 1
+	}
+	return 0
+}
+
+// gnrStrPtrIface / gnrIntPtrIface —— 指针 → JSON 值（nil ⇒ untyped nil ⇒ null）。
+func gnrStrPtrIface(p *string) interface{} {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func gnrIntPtrIface(p *int) interface{} {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// gnrStrPtr / gnrIntPtrStr —— 指针 → 人面向 `%s`（nil ⇒ "None"）。
+func gnrStrPtr(p *string) string {
+	if p == nil {
+		return "None"
+	}
+	return *p
+}
+
+func gnrIntPtrStr(p *int) string {
+	if p == nil {
+		return "None"
+	}
+	return strconv.Itoa(*p)
+}
+
+// gnrJSortKeys —— py `json.dumps(..., sort_keys=True)` 的键序（按码位升序；ASCII 键 ⇒ 字节序等价）。
+func gnrJSortKeys(obj gnrJObj) gnrJObj {
+	out := append(gnrJObj{}, obj...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].k < out[j].k })
+	return out
+}
+
+// gnrRunCheckMissing —— py `run_check_missing()`：三合并式查缺档（只读 · 隔离工作树 · 生成前清空输出目录）。
+//
+//	退码：0 = 不适用/干净 · 1 = **红**（三合并式任一非空）· 2 = **判不了 / 空件集**（fail-closed）。
+//	★ 遍历序/键序决定者：三条列表各自 sorted；JSON 顶层键 = obj 插入序（stdout）／`gnrJSortKeys`（写盘件）。
+func gnrRunCheckMissing(stdout io.Writer, root string, paths []string, outdir string, asJSON bool) int {
+	sel := []string{}
+	for _, p := range paths {
+		if strings.TrimSpace(p) != "" {
+			sel = append(sel, strings.TrimSpace(p))
+		}
+	}
+	if len(sel) == 0 {
+		sel = append([]string{}, gnrChkMissingPathsDefault...)
+	}
+	res := gnrWorktreeThreeWay(root, sel)
+	rc := gnrChkMissingRC(res)
+	var outdirVal interface{}
+	if outdir != "" {
+		outdirVal = gnrAbs(outdir)
+	}
+	obj := gnrJObj{
+		{"schema", "zerg/gate-json/v1"},
+		{"tool", "check-newfile-registry.py"},
+		{"gate", "门76 查缺档（三合并式）"},
+		{"repo", root},
+		{"paths", sel},
+		{"rc", rc},
+		{"applicable", res.applicable},
+		{"red", res.red},
+		{"no_data", res.noData},
+		{"unreadable", res.unreadable},
+		{"reason", gnrStrPtrIface(res.reason)},
+		{"tracked_modified", res.trackedModified},
+		{"untracked", res.untracked},
+		{"ignored", res.ignored},
+		{"file_set_size", res.fileSetSize},
+		{"head_tracked_count", gnrIntPtrIface(res.headTrackedCount)},
+		{"worktree", gnrStrPtrIface(res.worktree)},
+		{"worktree_cleaned", res.worktreeCleaned},
+		{"outdir", outdirVal},
+	}
+	if outdir != "" {
+		// ★ 生成前先**清空输出目录**（防旧件残留看着一致）
+		absd := gnrAbs(outdir)
+		os.RemoveAll(absd)
+		os.MkdirAll(absd, 0o755)
+		var sb strings.Builder
+		gnrJSONValue(&sb, gnrJSortKeys(obj), 0)
+		sb.WriteString("\n")
+		os.WriteFile(filepath.Join(absd, "查缺档.json"), []byte(sb.String()), 0o644)
+		var tb strings.Builder
+		tb.WriteString("状态	路径\n")
+		for _, leg := range gnrChkLegs(res) {
+			for _, it := range leg.items {
+				tb.WriteString(leg.name + "	" + it + "\n")
+			}
+		}
+		os.WriteFile(filepath.Join(absd, "查缺档.tsv"), []byte(tb.String()), 0o644)
+	}
+	if asJSON {
+		var sb strings.Builder
+		gnrJSONValue(&sb, obj, 0)
+		sb.WriteString("\n")
+		fmt.Fprint(stdout, sb.String())
+		return rc
+	}
+	fmt.Fprintln(stdout, "门76 查缺档（三合并式 · 只读 · 隔离工作树）")
+	fmt.Fprintf(stdout, "  仓根：%s\n", root)
+	fmt.Fprintf(stdout, "  判据路径：%s\n", strings.Join(sel, ", "))
+	fmt.Fprintf(stdout, "  三合并式：① tracked 改动 %d · ② untracked %d · ③ ignored %d（任一非空即红）\n",
+		len(res.trackedModified), len(res.untracked), len(res.ignored))
+	for _, leg := range gnrChkLegs(res) {
+		for _, it := range leg.items {
+			fmt.Fprintf(stdout, "     ✗ %s %s\n", leg.name, it)
+		}
+	}
+	if !res.applicable {
+		fmt.Fprintf(stdout, "  ⇒ 三合并式**不适用**（非 git 工作树）⇒ 退码 %d\n", rc)
+		return rc
+	}
+	if res.unreadable {
+		fmt.Fprintf(stdout, "  ⇒ 判不了（真源不可读）：%s ⇒ **不给结论（rc=2）**\n", gnrStrPtr(res.reason))
+		return rc
+	}
+	if res.noData {
+		fmt.Fprint(stdout, "  ⇒ **零执行探针**（空件集，file_set_size=0）⇒ 无数据标志置位、**非绿（rc=2）**\n")
+		return rc
+	}
+	if res.red {
+		fmt.Fprint(stdout, "  ⇒ **红**：工作树相对 HEAD 有分歧（见上）⇒ rc=1\n")
+		return rc
+	}
+	fmt.Fprintf(stdout, "  ⇒ 判到了 —— 三合并式逐条 0 件（file_set_size=%d · HEAD 参照 %s 件 · 工作树已清 %s）\n",
+		res.fileSetSize, gnrIntPtrStr(res.headTrackedCount), gnrBoolZh(res.worktreeCleaned, "是", "否"))
+	return rc
+}
+
+// gnrChkLeg —— 三合并式的三条腿（py 的元组序列 · 保序）。
+type gnrChkLeg struct {
+	name  string
+	items []string
+}
+
+func gnrChkLegs(res *gnrChkRes) []gnrChkLeg {
+	return []gnrChkLeg{
+		{"tracked改动", res.trackedModified},
+		{"untracked", res.untracked},
+		{"ignored", res.ignored},
+	}
+}
+
 // ── 面②：现读载入判据件（★ 唯一解释器依赖面 · 见件头 ★★①）────────────────────
 type gnrDry struct {
 	hitsOK  bool
@@ -1198,12 +1618,130 @@ func gnrDefaultBaseline() string {
 	return filepath.Join(home, ".zerg", "newfile-registry-baseline.tsv")
 }
 
+// ── 面清单 / 面记录（**跑前先生成 expected_faces** · 缺面必须合成 · 禁静默跳过）────────
+// gnrExpectedFaces —— py `expected_faces()`：★ **跑前先生成** expected_faces 清单（唯一真源 = gnrFaces）。
+func gnrExpectedFaces() []string { return append([]string{}, gnrFaces...) }
+
+// gnrReasonFor —— py `_reason_for(state)`：五态 → 原因码（闭集见模块常量）。
+func gnrReasonFor(state string) string {
+	switch state {
+	case "PASS":
+		return gnrReasonOK
+	case "FAIL":
+		return gnrReasonMissingEntry
+	case "BLOCKED":
+		return gnrReasonSourceUnreadable
+	case "REPORT":
+		return gnrReasonReportOnly
+	}
+	return gnrReasonUnjudged
+}
+
+// gnrJLookup —— gnrJObj 里按 key 取 string 值（py `f in states` 的存在性 + 取值）。
+func gnrJLookup(obj gnrJObj, k string) (string, bool) {
+	for _, f := range obj {
+		if f.k == k {
+			if s, ok := f.v.(string); ok {
+				return s, true
+			}
+			return "", true
+		}
+	}
+	return "", false
+}
+
+// gnrJRecField —— 面记录（gnrJObj）里取某字段串值。
+func gnrJRecField(v interface{}, k string) string {
+	if o, ok := v.(gnrJObj); ok {
+		if s, ok2 := gnrJLookup(o, k); ok2 {
+			return s
+		}
+	}
+	return ""
+}
+
+// gnrJRecBool —— 面记录（gnrJObj）里取某字段 bool 值（缺 ⇒ false）。
+func gnrJRecBool(v interface{}, k string) bool {
+	if o, ok := v.(gnrJObj); ok {
+		for _, f := range o {
+			if f.k == k {
+				b, _ := f.v.(bool)
+				return b
+			}
+		}
+	}
+	return false
+}
+
+// gnrRecValue —— 面记录表（gnrJObj）里按面名取该面的记录（缺 ⇒ nil）。
+func gnrRecValue(recs gnrJObj, k string) interface{} {
+	for _, f := range recs {
+		if f.k == k {
+			return f.v
+		}
+	}
+	return nil
+}
+
+// gnrB2i —— bool → 0/1（py 自检里 `1 if cond else 0` 的 got 形态）。
+func gnrB2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// gnrFaceRecords —— py `face_records(res, states, faces)`：逐面**记录**（state / reason_code / decided）。
+//
+//	· host-bound 面（gnrHostBoundFaces）⇒ HOST-REQUIRED · SKIPPED-HOST-BOUND · decided=false（不计 pass/fail）；
+//	· 已产出记录的面 ⇒ 照 gnrBuildFaceStates 的态 + 原因码；
+//	· **未产出记录的面** ⇒ 合成 UNKNOWN · MISSING_FACE · decided=false（退码由 gnrVerdict 钉 2）。
+func gnrFaceRecords(res *gnrRes, states gnrJObj, faces []string) gnrJObj {
+	if faces == nil {
+		faces = gnrExpectedFaces()
+	}
+	if states == nil {
+		states = gnrBuildFaceStates(res)
+	}
+	out := gnrJObj{}
+	for _, f := range faces {
+		if gnrContains(gnrHostBoundFaces, f) {
+			out = append(out, gnrJField{f, gnrJObj{
+				{"state", "HOST-REQUIRED"}, {"reason_code", gnrReasonHostBound}, {"decided", false}}})
+			continue
+		}
+		if st, ok := gnrJLookup(states, f); ok {
+			decided := st == "PASS" || st == "FAIL" || st == "REPORT"
+			out = append(out, gnrJField{f, gnrJObj{
+				{"state", st}, {"reason_code", gnrReasonFor(st)}, {"decided", decided}}})
+			continue
+		}
+		out = append(out, gnrJField{f, gnrJObj{
+			{"state", "UNKNOWN"}, {"reason_code", gnrReasonMissingFace}, {"decided", false}}})
+	}
+	return out
+}
+
+// gnrMissingFaces —— py `missing_faces(res, faces)`：未产出记录的面（reason_code=MISSING_FACE）名单 · sorted。
+func gnrMissingFaces(res *gnrRes, faces []string) []string {
+	recs := gnrFaceRecords(res, nil, faces)
+	out := []string{}
+	for _, fld := range recs {
+		if gnrJRecField(fld.v, "reason_code") == gnrReasonMissingFace {
+			out = append(out, fld.k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // ── 出口判决（**唯一真源** · 人面向与机器面共用）────────────────────────────
 // gnrVerdict —— 返回 (rc, bad, unjudged)。0 = 判到了 · 1 = 缺登记（仅 --strict）· 2 = 不给结论。
 //
 //	与 `gnrRun` 的出口分支**同一套数**（`bad` / `unjudged` 只由 res 派生、无副作用）——
 //	改一处必须两处同源，禁各算一套（`--json` 短路不得改变退码）。
-func gnrVerdict(res *gnrRes, strict bool) (int, int, int) {
+//	★ **缺面（MISSING_FACE）⇒ 退码钉 2**（fail-closed：缺面不许当齐）。faces=nil ⇒ 用 gnrExpectedFaces()。
+func gnrVerdict(res *gnrRes, strict bool, faces []string) (int, int, int) {
 	if res.counts == nil {
 		return 2, 0, 0
 	}
@@ -1214,6 +1752,9 @@ func gnrVerdict(res *gnrRes, strict bool) (int, int, int) {
 		unjudged++
 	}
 	if unjudged > 0 || len(res.newFiles) == 0 {
+		return 2, bad, unjudged
+	}
+	if len(gnrMissingFaces(res, faces)) > 0 { // ★ 缺面 ⇒ 退码钉 2
 		return 2, bad, unjudged
 	}
 	if bad > 0 {
@@ -1228,7 +1769,7 @@ func gnrVerdict(res *gnrRes, strict bool) (int, int, int) {
 // gnrRun —— py `run()`：输出 + 退码。strict=阻断档。
 func gnrRun(stdout io.Writer, root string, newFiles []string, newSet bool, inv string, invSet bool, strict bool, baseline string, baselineSet bool) int {
 	res := gnrAudit(root, newFiles, newSet, inv, invSet, baseline)
-	rc, bad, unjudged := gnrVerdict(res, strict) // 出口判决唯一真源（同 `gnrRunJSON`）
+	rc, bad, unjudged := gnrVerdict(res, strict, nil) // 出口判决唯一真源（同 `gnrRunJSON`）
 	fmt.Fprintln(stdout, "门76 新件登记完整性（件级 × 六张登记表 · **只报告**）")
 	fmt.Fprintf(stdout, "  仓根：%s\n", root)
 	if res.ledgerCnt != nil {
@@ -1375,10 +1916,10 @@ func gnrSelfInList(list []string) string {
 	return "不在缺登记名单"
 }
 
-// ── 机器面（`--json`）：八面 × 五态（不改人面向一字）────────────────────────
+// ── 机器面（`--json`）：九面 × 五态（不改人面向一字）────────────────────────
 // ★ 输出行序的决定者：JSON 的键序 = 本件构造 gnrJObj 时的**插入序**（对齐 py
-// `json.dumps(..., sort_keys=False)` 的 dict 插入序）；`face_states` = `gnrFaces` 序（8 键）、
-// `counts` = `gnrFacesStates` 序（5 键）、顶层 = 本函数 `obj` 的写入序。`reported_faces` 走
+// `json.dumps(..., sort_keys=False)` 的 dict 插入序）；`face_states` = `gnrFaces` 序（9 键）、
+// `counts` = `gnrFacesStates` 序（6 键）、顶层 = 本函数 `obj` 的写入序。`reported_faces` 走
 // `sort.Strings`（py `sorted`，Unicode 码位序 ≡ UTF-8 字节序）。★ **零 Go map 迭代进输出**：
 // 所有 map 只做按键查值；要成列时先收进切片再 `sort`。
 type gnrJField struct {
@@ -1569,7 +2110,10 @@ func gnrFaceCount(res *gnrRes, name string) (int, bool) {
 	return 0, false
 }
 
-// gnrBuildFaceStates —— 八面 → 五态（PASS/FAIL/BLOCKED/REPORT/UNKNOWN）。口径见 `gnrFacesStates` 注释。
+// gnrBuildFaceStates —— ①–⑥ + 口径差栏 + 自指 → 五态（PASS/FAIL/BLOCKED/REPORT/UNKNOWN）。口径见 `gnrFacesStates` 注释。
+//
+//	★ **host-bound 面（⑧家目录批准件）不在这里出态** —— 由 `gnrFaceRecords` 统一给
+//	  `HOST-REQUIRED · SKIPPED-HOST-BOUND`（不计 pass/fail）；未产出记录的面由 `gnrFaceRecords` 合成缺面。
 func gnrBuildFaceStates(res *gnrRes) gnrJObj {
 	unknownAll := res.counts == nil
 	st := gnrJObj{}
@@ -1720,6 +2264,8 @@ func gnrVerdictText(res *gnrRes, rc int) string {
 }
 
 // gnrRunJSON —— py `run_json()`：`--json <断面>` 只出机器面 JSON（人面向 stdout 让位）+ 与报告档同源退码。
+// ★ 面清单 = `gnrExpectedFaces()`（跑前先生成）；逐面记录由 `gnrFaceRecords` 统一给
+// （面⑧ host-bound ⇒ HOST-REQUIRED · 不计 pass/fail；未产出记录的面 ⇒ MISSING_FACE 合成）。
 func gnrRunJSON(stdout, stderr io.Writer, root string, newFiles []string, newSet bool, inv string, invSet bool, strict bool, baseline, selector string) int {
 	sel := []string{}
 	for _, s := range strings.Split(selector, ",") {
@@ -1750,22 +2296,56 @@ func gnrRunJSON(stdout, stderr io.Writer, root string, newFiles []string, newSet
 		return 2
 	}
 	res := gnrAudit(root, newFiles, newSet, inv, invSet, baseline)
-	rc, _, _ := gnrVerdict(res, strict)
+	rc, _, _ := gnrVerdict(res, strict, nil)
+	faces := gnrExpectedFaces() // ★ 跑前先生成 expected_faces 清单
 	states := gnrBuildFaceStates(res)
-	cnt := map[string]int{}
-	for _, f := range states {
-		cnt[f.v.(string)]++
+	records := gnrFaceRecords(res, states, faces)
+	// counts：初值 = gnrFacesStates 序（6 键 · 全 0）；遇表外态则按 py dict 语义追加到末尾。
+	cntKeys := append([]string{}, gnrFacesStates...)
+	cntVals := map[string]int{}
+	for _, s := range cntKeys {
+		cntVals[s] = 0
+	}
+	for _, fld := range records {
+		st := gnrJRecField(fld.v, "state")
+		if _, ok := cntVals[st]; !ok {
+			cntKeys = append(cntKeys, st)
+			cntVals[st] = 0
+		}
+		cntVals[st]++
 	}
 	countsObj := gnrJObj{}
-	for _, s := range gnrFacesStates {
-		countsObj = append(countsObj, gnrJField{s, cnt[s]})
+	for _, s := range cntKeys {
+		countsObj = append(countsObj, gnrJField{s, cntVals[s]})
 	}
+	// missing / host_bound / reported —— 全部 sorted（输出行序决定者 = 这三处 sort）
+	missing := []string{}
+	hostBound := []string{}
 	reported := []string{}
-	for _, f := range states {
-		reported = append(reported, f.k)
+	for _, fld := range records {
+		rf := gnrJRecField(fld.v, "reason_code")
+		if rf == gnrReasonMissingFace {
+			missing = append(missing, fld.k)
+		} else {
+			reported = append(reported, fld.k)
+		}
+		if rf == gnrReasonHostBound {
+			hostBound = append(hostBound, fld.k)
+		}
 	}
+	sort.Strings(missing)
+	sort.Strings(hostBound)
 	sort.Strings(reported)
-	allGreen := rc == 0 && cnt["FAIL"] == 0 && cnt["BLOCKED"] == 0 && cnt["UNKNOWN"] == 0
+	// face_states = {f: records[f].state for f in faces}（键序 = gnrFaces 序 · ✗ 零 map 迭代）
+	faceStates := gnrJObj{}
+	recState := map[string]string{}
+	for _, fld := range records {
+		recState[fld.k] = gnrJRecField(fld.v, "state")
+	}
+	for _, f := range faces {
+		faceStates = append(faceStates, gnrJField{f, recState[f]})
+	}
+	allGreen := rc == 0 && cntVals["FAIL"] == 0 && cntVals["BLOCKED"] == 0 && cntVals["UNKNOWN"] == 0
 	obj := gnrJObj{
 		{"schema", "zerg/gate-json/v1"},
 		{"tool", "check-newfile-registry.py"},
@@ -1774,10 +2354,16 @@ func gnrRunJSON(stdout, stderr io.Writer, root string, newFiles []string, newSet
 		{"selector", sel},
 		{"strict", strict},
 		{"rc", rc},
-		{"expected_faces", gnrFaces},
+		{"expected_faces", faces},
 		{"reported_faces", reported},
-		{"face_states", states},
+		{"face_states", faceStates},
+		{"face_records", records},
 		{"counts", countsObj},
+		{"host_required_faces", hostBound},
+		{"host_required_count", len(hostBound)},
+		{"missing_faces", missing},
+		{"missing_count", len(missing)},
+		{"fully_exercised", len(missing) == 0 && len(hostBound) == 0},
 		{"all_green", allGreen},
 		{"verdict", gnrVerdictText(res, rc)},
 	}
@@ -1963,6 +2549,121 @@ func gnrSelfTest(stdout io.Writer) int {
 	run1("边界① · 基线不在盘 ⇒ 2（不替基线猜分母）", 2, nil, false, "", false, false, "", false, noProbe)
 	run1("边界② · 仅 basename 弱挂载 ⇒ 不判红（不计入六表缺登记）", 0, []string{probe}, true, "inv.tsv", true, true, "", false, weakOnly)
 
+	// ── 查缺档 / host-bound / 缺面（合成夹具 · 成对）──────────────────────────
+	addCheck := func(name string, want, got int, ok bool) {
+		checks = append(checks, gnrTestCase{name: name, want: want, got: got, ok: ok})
+	}
+	// (A) host-bound 面 + 缺面聚合（纯数据 · 不碰 git）
+	if tmpA, errA := os.MkdirTemp("", "gnr-selftest-"); errA == nil {
+		defer os.RemoveAll(tmpA)
+		gnrBuildFixture(nil, tmpA, probe, map[string]bool{"①": true, "②": true, "③": true, "⑤": true})
+		os.WriteFile(filepath.Join(tmpA, "inv.tsv"), []byte("件\n"+probe+"\n"), 0o644)
+		resA := gnrAudit(tmpA, []string{probe}, true, "inv.tsv", true, "")
+		recsA := gnrFaceRecords(resA, nil, nil)
+		f8 := gnrRecValue(recsA, "⑧家目录批准件")
+		st8 := gnrJRecField(f8, "state")
+		r8 := gnrJRecField(f8, "reason_code")
+		d8 := gnrJRecBool(f8, "decided")
+		addCheck("查缺档·面⑧ host-bound ⇒ state=HOST-REQUIRED", 1, gnrB2i(st8 == "HOST-REQUIRED"), st8 == "HOST-REQUIRED")
+		addCheck("查缺档·面⑧ reason_code=SKIPPED-HOST-BOUND", 1, gnrB2i(r8 == gnrReasonHostBound), r8 == gnrReasonHostBound)
+		addCheck("查缺档·面⑧ decided=false（不当绿也不当红）", 1, gnrB2i(!d8), !d8)
+		cntA := map[string]int{}
+		for _, fld := range recsA {
+			cntA[gnrJRecField(fld.v, "state")]++
+		}
+		addCheck("查缺档·HOST-REQUIRED 单列计数=1（不计入 PASS/FAIL）", 1,
+			gnrB2i(cntA["HOST-REQUIRED"] == 1 && cntA["FAIL"] == 0),
+			cntA["HOST-REQUIRED"] == 1 && cntA["FAIL"] == 0)
+		bogus := "⑨合成缺面"
+		recsMissing := gnrFaceRecords(resA, nil, append(gnrExpectedFaces(), bogus))
+		bm := gnrRecValue(recsMissing, bogus)
+		sm := gnrJRecField(bm, "state")
+		rm := gnrJRecField(bm, "reason_code")
+		dm := gnrJRecBool(bm, "decided")
+		addCheck("缺面·未产出记录的面 ⇒ 合成 UNKNOWN", 1, gnrB2i(sm == "UNKNOWN"), sm == "UNKNOWN")
+		addCheck("缺面·reason_code=MISSING_FACE", 1, gnrB2i(rm == gnrReasonMissingFace), rm == gnrReasonMissingFace)
+		addCheck("缺面·decided=false", 1, gnrB2i(!dm), !dm)
+		rcM, _, _ := gnrVerdict(resA, true, append(gnrExpectedFaces(), bogus))
+		addCheck("缺面·退码钉 2（缺面不许当齐）", 2, rcM, rcM == 2)
+		rcOK, _, _ := gnrVerdict(resA, true, nil)
+		addCheck("正控·无缺面 ⇒ 不因聚合器变 rc", 0, rcOK, rcOK == 0)
+		addCheck("正控·缺面注入 ⇒ 2 · 不注入 ⇒ 0（区分度）", 2, rcM, rcM == 2 && rcOK == 0)
+	}
+
+	// (B) 三合并式四负控（真 git 夹具 · 仓外）
+	gitFixture := func(root string) {
+		os.MkdirAll(filepath.Join(root, "scripts"), 0o755)
+		os.WriteFile(filepath.Join(root, "scripts", "a.sh"), []byte("#!/usr/bin/env bash\necho a\n"), 0o644)
+		env := append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+		for _, a := range [][]string{{"init", "-q"}, {"add", "-A"}, {"commit", "-q", "-m", "init"}} {
+			cmd := exec.Command("git", append([]string{"-C", root}, a...)...)
+			cmd.Env = env
+			cmd.Run()
+		}
+	}
+	// 负控① 未跟踪新件（不 git add）⇒ 红；并证「git diff 单用看不见它」
+	if tmpG, eG := os.MkdirTemp("", "gnr-selftest-"); eG == nil {
+		defer os.RemoveAll(tmpG)
+		gitFixture(tmpG)
+		os.WriteFile(filepath.Join(tmpG, "scripts", "new-probe.sh"), []byte("#!/usr/bin/env bash\necho new\n"), 0o644)
+		rU := gnrWorktreeThreeWay(tmpG, []string{"scripts"})
+		rcU := gnrChkMissingRC(rU)
+		addCheck("负控①·未跟踪新件（不 git add）⇒ 红 rc=1", 1, rcU,
+			rcU == 1 && len(rU.untracked) == 1 && rU.untracked[0] == "scripts/new-probe.sh")
+		drc, dout, _ := gnrGit(tmpG, "diff", "--name-only", "--exit-code", "HEAD", "--", "scripts")
+		addCheck("负控①·git diff 单用看不见 untracked（rc=0 · 洞真被 ② 补上）", 0, drc,
+			drc == 0 && len(dout) == 0)
+	}
+	// 负控② 被 .gitignore 命中的路径 ⇒ 红（ignored 捕获）· 绝不 rc=0
+	if tmpI, eI := os.MkdirTemp("", "gnr-selftest-"); eI == nil {
+		defer os.RemoveAll(tmpI)
+		gitFixture(tmpI)
+		os.WriteFile(filepath.Join(tmpI, ".gitignore"), []byte("scripts/ignored/\n"), 0o644)
+		os.MkdirAll(filepath.Join(tmpI, "scripts", "ignored"), 0o755)
+		os.WriteFile(filepath.Join(tmpI, "scripts", "ignored", "x.sh"), []byte("#!/usr/bin/env bash\necho x\n"), 0o644)
+		rI := gnrWorktreeThreeWay(tmpI, []string{"scripts"})
+		rcI := gnrChkMissingRC(rI)
+		addCheck("负控②·.gitignore 命中 ⇒ 红（ignored 捕获）· 绝不 rc=0", 1, rcI,
+			rcI == 1 && len(rI.ignored) == 1 && rI.ignored[0] == "scripts/ignored/x.sh")
+	}
+	// 负控③ 零执行探针（空件集）⇒ no_data 置位 · 非绿 rc=2
+	if tmpE, eE := os.MkdirTemp("", "gnr-selftest-"); eE == nil {
+		defer os.RemoveAll(tmpE)
+		gitFixture(tmpE)
+		rE := gnrWorktreeThreeWay(tmpE, []string{"scripts-nonexistent"})
+		rcE := gnrChkMissingRC(rE)
+		addCheck("负控③·空件集（零执行探针）⇒ no_data + rc=2", 2, rcE,
+			rcE == 2 && rE.noData && rE.fileSetSize == 0)
+	}
+	// 负控④ 真源不可读 ⇒ rc=2 · 绝不 rc=0
+	if tmpX, eX := os.MkdirTemp("", "gnr-selftest-"); eX == nil {
+		defer os.RemoveAll(tmpX)
+		os.WriteFile(filepath.Join(tmpX, ".git"), []byte("gitdir: /nonexistent-gnr-selftest\n"), 0o644)
+		rX := gnrWorktreeThreeWay(tmpX, []string{"scripts"})
+		rcX := gnrChkMissingRC(rX)
+		addCheck("负控④·真源不可读（.git 破损）⇒ rc=2 · 绝不 0", 2, rcX,
+			rcX == 2 && rX.unreadable)
+	}
+	// 隔离：worktree 退出必清 · 生成前清空输出目录
+	if tmpW, eW := os.MkdirTemp("", "gnr-selftest-"); eW == nil {
+		if outd, eO := os.MkdirTemp("", "gnr-selftest-out-"); eO == nil {
+			defer os.RemoveAll(tmpW)
+			defer os.RemoveAll(outd)
+			gitFixture(tmpW)
+			os.WriteFile(filepath.Join(outd, "旧件残留.txt"), []byte("stale\n"), 0o644)
+			rW := gnrWorktreeThreeWay(tmpW, []string{"scripts"})
+			_, lout, _ := gnrGit(tmpW, "worktree", "list")
+			addCheck("隔离·worktree 退出必清（list 仅 1 条 = 主树）", 1, len(lout),
+				rW.worktreeCleaned && len(lout) == 1)
+			rcW := gnrRunCheckMissing(io.Discard, tmpW, []string{"scripts"}, outd, false)
+			_, statErr := os.Stat(filepath.Join(outd, "旧件残留.txt"))
+			_, jsonErr := os.Stat(filepath.Join(outd, "查缺档.json"))
+			addCheck("隔离·干净夹具 ⇒ rc=0 · 生成前清空输出目录（旧件被清）", 0, rcW,
+				rcW == 0 && os.IsNotExist(statErr) && jsonErr == nil)
+		}
+	}
+
 	fmt.Fprintln(stdout, "── 自检（合成夹具 · 成对 · 不扫真仓）──")
 	bad := 0
 	for _, c := range checks {
@@ -2086,10 +2787,12 @@ func gnrDefaultRoot() string {
 const gnrUsage = "usage: check-newfile-registry.py [-h] [--repo REPO] [--baseline BASELINE]\n" +
 	"                                 [--dump-baseline DUMP_BASELINE]\n" +
 	"                                 [--inventory INVENTORY] [--new-file NEW_FILE]\n" +
-	"                                 [--strict] [--json SECTIONS] [--yes]\n" +
+	"                                 [--strict] [--check-missing] [--paths PATHS]\n" +
+	"                                 [--outdir OUTDIR] [--json SECTIONS] [--yes]\n" +
 	"                                 [--self-test]\n"
 
-// gnrHelp —— py `argparse --help` 的 stdout 逐字节内嵌（含末尾换行 · 新旗标 `--json SECTIONS` / `--yes`）。
+// gnrHelp —— py `argparse --help` 的 stdout 逐字节内嵌（含末尾换行 · 新旗标 `--check-missing` /
+// `--paths` / `--outdir` · 与旧旗标 `--json SECTIONS` / `--yes`）。
 // ★ 机械拦阻（✗ 不再靠人记住同步）：测件 `TestGnrHelpParityWithPy` 现跑 `/usr/bin/python3 <py 件> -h|--help|--zzz`
 // 与 `gnrHelp` 逐字节对拍（stdout+stderr+rc 三面）并钉住正文 sha256 ⇒ py 正文一改，该断言必红。
 const gnrHelp = gnrUsage +
@@ -2106,6 +2809,11 @@ const gnrHelp = gnrUsage +
 	"                        面④ 仓外台账 tsv（不给 ⇒ 面④ 判不了 · 需人签）\n" +
 	"  --new-file NEW_FILE   直接指分母（可重复 · 两态取证用）\n" +
 	"  --strict              阻断档：R1–R5 任一 > 0 ⇒ rc=1（默认报告档 rc=0）\n" +
+	"  --check-missing       查缺档（只读）：三合并式（tracked改动 ∥ untracked ∥\n" +
+	"                        ignored）**任一非空即红** · 隔离 HEAD 工作树（退出必清）· 退码 0/1/2\n" +
+	"  --paths PATHS         查缺档判据路径（逗号分隔 · 默认 scripts）\n" +
+	"  --outdir OUTDIR       查缺档报告落点：**生成前先清空该目录**（防旧件残留看着一致）· 只跟 `--check-missing`\n" +
+	"                        连用\n" +
 	"  --json SECTIONS       机器面 JSON（逗号分隔断面：faces = 六张登记表逐面状态；self = 自指那一段） ·\n" +
 	"                        给了就只出 JSON（人面向 stdout 让位）\n" +
 	"  --yes                 写面确认：只有 `--dump-baseline` 会写件，且**默认干跑不写**；带 `--yes`\n" +
@@ -2125,6 +2833,8 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 	dump, dumpSet := "", false
 	inv, invSet := "", false
 	jsonSel, jsonSet := "", false
+	paths, outdir := "", ""
+	checkMissing := false
 	yes := false
 	var newFiles []string
 	strict, selfTest, help := false, false, false
@@ -2144,6 +2854,24 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 			selfTest = true
 		case a == "--strict":
 			strict = true
+		case a == "--check-missing":
+			checkMissing = true
+		case a == "--paths":
+			v, ni, ok := need(i)
+			if !ok {
+				return gnrUsageErr(stderr, "argument --paths: expected one argument")
+			}
+			paths, i = v, ni
+		case strings.HasPrefix(a, "--paths="):
+			paths = a[len("--paths="):]
+		case a == "--outdir":
+			v, ni, ok := need(i)
+			if !ok {
+				return gnrUsageErr(stderr, "argument --outdir: expected one argument")
+			}
+			outdir, i = v, ni
+		case strings.HasPrefix(a, "--outdir="):
+			outdir = a[len("--outdir="):]
 		case a == "--yes":
 			yes = true
 		case a == "--repo":
@@ -2217,6 +2945,14 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprint(stderr, "⛔ 用法错（rc=2）：`--json` 只跟报告档连用（不与 `--dump-baseline` 同用）\n")
 		return 2
 	}
+	if outdir != "" && !checkMissing {
+		fmt.Fprint(stderr, "⛔ 用法错（rc=2）：`--outdir` 只跟 `--check-missing` 连用\n")
+		return 2
+	}
+	if checkMissing && dumpSet {
+		fmt.Fprint(stderr, "⛔ 用法错（rc=2）：`--check-missing` 不与 `--dump-baseline` 同用\n")
+		return 2
+	}
 	if selfTest {
 		return gnrSelfTest(stdout)
 	}
@@ -2224,6 +2960,32 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 		repo = gnrDefaultRoot()
 	}
 	root := gnrAbs(repo)
+	if checkMissing {
+		// `--check-missing` 的机器面断面只认 `chk`（非空且逐字）
+		csel := []string{}
+		for _, s := range strings.Split(jsonSel, ",") {
+			if t := strings.TrimSpace(s); t != "" {
+				csel = append(csel, t)
+			}
+		}
+		badSel := len(csel) == 0
+		for _, s := range csel {
+			if s != "chk" {
+				badSel = true
+			}
+		}
+		if jsonSet && badSel {
+			fmt.Fprintf(stderr, "⛔ 用法错（rc=2）：`--check-missing` 的 `--json` 只认断面 chk；不认：%s\n", jsonSel)
+			return 2
+		}
+		cpaths := []string{}
+		for _, p := range strings.Split(paths, ",") {
+			if t := strings.TrimSpace(p); t != "" {
+				cpaths = append(cpaths, t)
+			}
+		}
+		return gnrRunCheckMissing(stdout, root, cpaths, outdir, jsonSet)
+	}
 	if !baselineSet {
 		baseline = gnrDefaultBaseline()
 	}
