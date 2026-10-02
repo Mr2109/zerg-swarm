@@ -133,6 +133,28 @@ def load_excludes(path=PUBLISH_SH):
     return ex
 
 
+class ExcludesMismatch(Exception):
+    """EXCLUDES 真源解析**失配**（缺件 / `EXCLUDES=( … )` 块读不出 / 0 条活跃）—— 解析器口径与文件形态不符。
+
+    ★ `GAP-20260927-192`：`load_excludes` 对失配**静默返回 `[]`** ⇒ 调用方若只印「0 条」即假绿
+      （「清单没了所以全绿」是最难发现的一类假绿）。本异常是「失配 ⇒ 不给结论（rc=2）」的**唯一**信号，
+      四处取数口统一按它分流（口径照两份已装守卫的出口：`check-marks-coverage-parity.py:281-284`
+      与 `check-registry-vs-disk.py:220-221`）。"""
+
+
+def load_excludes_strict(path=PUBLISH_SH):
+    """`load_excludes` 的**失配守卫**版：失配 ⇒ 抛 `ExcludesMismatch`；否则返回非空列表。"""
+    if not os.path.exists(path):
+        raise ExcludesMismatch("EXCLUDES 真源缺件：%s" % path)
+    text = open(path, encoding="utf-8").read()
+    if not re.search(r"EXCLUDES=\((.*?)\n\)", text, re.S):
+        raise ExcludesMismatch("EXCLUDES 真源里解析不出 `EXCLUDES=( … )` 块：%s" % path)
+    ex = load_excludes(path)
+    if not ex:
+        raise ExcludesMismatch("EXCLUDES 解析出 0 条活跃条目（空转 = 假绿）：%s" % path)
+    return ex
+
+
 def excluded(rel, ex):
     if rel.endswith(NOISE_SUFFIX) or any(part in NOISE_DIRS for part in rel.split("/")):
         return True
@@ -314,7 +336,7 @@ def scan_commits(revs, repo, literals, regexes, isolated, entries, ex_list, blk,
 def _setup_repo(repo):
     """两档（串行/片）共用的读面：规则 · 排除项 · 白名单 —— 口径一字不改（与 main() 同源）。"""
     literals, regexes, isolated = load_rules()
-    ex_list = load_excludes()
+    ex_list = load_excludes_strict()      # ★ 失配 ⇒ 抛 ExcludesMismatch ⇒ 调用方按 rc=2（GAP-20260927-192）
     entries = load_whitelist(os.path.join(repo, "publish", "whitelist.txt") if os.path.exists(
         os.path.join(repo, "publish", "whitelist.txt")) else WHITELIST)
     blk = [(re.compile(rx), why) for rx, why in BLOCK]
@@ -339,7 +361,11 @@ def shard_worker(args):
     except Exception:
         print("✗ 分片参数读不出：%r" % (args.shard_spec,), file=sys.stderr)
         return 2
-    literals, regexes, isolated, ex_list, entries, blk, inf = _setup_repo(repo)
+    try:
+        literals, regexes, isolated, ex_list, entries, blk, inf = _setup_repo(repo)
+    except ExcludesMismatch as e:
+        print("✗ EXCLUDES 失配 ⇒ 判不了(2)：%s（GAP-20260927-192）" % e, file=sys.stderr)
+        return 2
     revs = _read_revs(repo, args.rng)
     if revs is None:
         print("✗ 分片取不到域（`git rev-list` 非零退出）⇒ 判不了(2)", file=sys.stderr)
@@ -459,7 +485,12 @@ def main():
         return 2
 
     literals, regexes, isolated = load_rules()
-    ex_list = load_excludes()
+    try:
+        ex_list = load_excludes_strict()
+    except ExcludesMismatch as e:
+        print("⛔ 判不了（rc=2）：%s —— 「清单没了所以全绿」是最难发现的一类假绿（GAP-20260927-192）"
+              % e, file=sys.stderr)
+        return 2
     print("排除项: %d 条（从 publish-public.sh 的 EXCLUDES 解析）+ 噪声后缀 %s" % (len(ex_list), "/".join(NOISE_SUFFIX)))
     print("替换规则: %d 条字面 + %d 条正则（扫描前先套用——审计的是『真会公开的形状』）" % (len(literals), len(regexes)))
     print("夹具隔离: %d 条 glob（命中件整段跳过替换 · §五 第三批）%s"

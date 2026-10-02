@@ -19,6 +19,11 @@
 #   R4 **现值进程逐条有落点**：ps 里每个自研件进程（命令行含 `bin/zerg-` 或 `bin/cocoon-`）
 #      都必须被某条「进程特征」覆盖（= 在声明面可查），或本身就是一条已登记的 ghost（= 进 reap 候选）；
 #      覆盖不上的 ⇒ rc=1（**未登记幽灵** —— 正是已红第 3 条的形态）。
+#      ★ 2026-10-02（`GAP-20260927-100` R4）：本规则分两侧 —— **R4a 作业面驱动**（以 `launchctl list`
+#      的 **pid 列**取现值：有 pid 的作业即现值，用 pid 去 ps 取**那一条**命令行，再对声明行「进程特征」
+#      做**词界锚** —— 抓「标签 ↔ pid ↔ 程序」不一致，现值驱动那一侧抓不到）＋ **R4b 现值驱动**（下面
+#      这条：ps 里自研件进程逐条有落点）。**禁切词**：本仓路径含空格（`00 项目`），`split()[3]` 会把
+#      argv[0] 截成 `<volume-path>`（实测）⇒ 锚一律走正则词界。
 #   R5 每条 ghost **必须写处置**（处置列含 `reap` 或 `待`）⇒ 否则 rc=1。
 #   R6 **空转 = 假覆盖**：ps 里一件自研件都扫不到 ⇒ rc=2（不当绿）。
 #
@@ -116,6 +121,34 @@ def parse_launchctl_labels(lines):
         lab = cells[2].strip()
         if lab:
             out.setdefault(lab, ln.strip())
+    return out
+
+
+def parse_launchctl_jobs(lines):
+    """`launchctl list` ⇒ {label: pid}（第 1 列 = PID；`-`/非数 ⇒ None = 未在跑）。
+    ★ 与 `parse_launchctl_labels` 同源同一次读数 —— 唯一区别是这里要 **pid**（`GAP-20260927-100` R4a）。"""
+    jobs = {}
+    for ln in lines:
+        cells = ln.split('\t')
+        if len(cells) < 3:
+            continue
+        lab = cells[2].strip()
+        if not lab:
+            continue
+        pid = cells[0].strip()
+        jobs.setdefault(lab, pid if pid.isdigit() else None)
+    return jobs
+
+
+def ps_pid_to_command(lines):
+    """`ps -eo pid,ppid,etime,command` ⇒ {pid: command 整串}（**禁切词**）。
+    ★ 只按空白切**前三个字段**（pid/ppid/etime），第 4 字段起整串留给命令 —— 本仓路径含空格
+      （`00 项目`），`split()[3]` 会把 argv[0] 截成 `<volume-path>`（实测 · `GAP-20260927-100` R4a）。"""
+    out = {}
+    for ln in lines:
+        parts = ln.split(None, 3)
+        if len(parts) >= 3 and parts[0].isdigit():
+            out.setdefault(parts[0], parts[3] if len(parts) >= 4 else '')
     return out
 
 
@@ -219,7 +252,27 @@ def check(root, decl_path=None, ps_path=None, launchctl_path=None, home=None):
             problems.append('FAIL R3 行 %d 的声明件不存在：%s ⇒ 声明悬空（%s 是盘上真源）'
                             % (r['line'], p, exp.replace(home, '~')))
 
-    # R4 现值进程逐条有落点
+    # R4a 作业面驱动（`GAP-20260927-100` R4 · **pid 唯一锚**）：以 `launchctl list` 的 **pid 列**为作业面
+    #   驱动 —— 有 pid 的作业即「现值」，用 pid（唯一、不认名字）去 ps 现读里取**那一条**命令行，再对
+    #   声明行的「进程特征」列做**词界锚**。抓的是「标签 ↔ pid ↔ 程序」三者不一致（R4b 那一侧抓不到）。
+    jobs = parse_launchctl_jobs(lc_lines)
+    pid_cmd = ps_pid_to_command(ps_lines)
+    for r in launchd_rows:
+        pid = jobs.get(r['name'])
+        if not pid:
+            continue                      # 未在跑（`-`/空）⇒ 无现值可锚；悬空/幽灵由 R2 管
+        cmd = pid_cmd.get(pid)
+        if cmd is None:
+            problems.append('FAIL R4 声明 %s 的作业 pid=%s 在 ps 现值里取不到命令行 ⇒ 锚不了'
+                            '（ps 与 launchctl 不同源）' % (r['name'], pid))
+            continue
+        hint = r['proc']
+        if hint and hint != '-' and not re.search(re.escape(hint) + r'(?=\s|$)', cmd):
+            problems.append('FAIL R4 声明 %s（第 %d 行）的作业 pid=%s 命令行里找不到声明的「进程特征」'
+                            '`%s` ⇒ 标签↔pid↔程序不一致（原始命令行：%s）'
+                            % (r['name'], r['line'], pid, hint, cmd.strip()[:100]))
+
+    # R4b 现值驱动：ps 里自研件进程逐条有落点
     covered = []
     for ln in live:
         # ★ 词界锚（`GAP-20260927-100` 面② · 禁子串猜）：声明行的「进程特征」必须作为**整词**出现在
@@ -312,6 +365,7 @@ def self_test():
     cases.append(('正控⑩ 闭集内标签但**已登记 ghost 行** ⇒ 不算幽灵（区分已知幽灵/未登记幽灵）', 0, 'ghost_reg'))
     cases.append(('负控⑪ 现值是 `bin/zerg-core-test`（≠ 声明的 `bin/zerg-core`）⇒ rc=1（**词界锚** · 杀子串假绿）', 1, 'sibling_name'))
     cases.append(('负控⑫ 闭集内新标签 `com.zerg.newthing`（声明无）⇒ rc=1（闭集内判得红；闭集外见正控⑨）', 1, 'newthing'))
+    cases.append(('负控⑬ 声明 com.zerg.core 的作业 pid 上跑的**不是**声明的程序（标签↔pid↔程序不一致 · R4a）⇒ rc=1', 1, 'pid_mismatch'))
 
     ok = True
     for name, want, mode in cases:
@@ -339,6 +393,12 @@ def self_test():
                             '  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n')
             elif mode == 'newthing':
                 kw['lc'] = GOOD_LC + '77777\t0\tcom.zerg.newthing\n'
+            elif mode == 'pid_mismatch':
+                # launchctl 说 com.zerg.core 的 pid=68939，而 ps 里 68939 跑的是 zerg-agentd ⇒ R4a 必红
+                # （R4b 仍绿：agentd 行被 agent-Mr2109 的 proc 覆盖 ⇒ 这一格单测 R4a 的牙）
+                kw['ps'] = ('  68939     1       56:36 /repo/bin/zerg-agentd\n'
+                            '  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n'
+                            '  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n')
             elif mode == 'empty_ps':
                 kw['ps'] = '    1     0  00:00 /sbin/launchd\n'
             dp, pp, lp, home = mk(d, **kw)
