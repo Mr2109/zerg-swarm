@@ -105,6 +105,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -686,8 +688,11 @@ func gnrLoadExcludes(root string) map[string]bool {
 	}
 	out := map[string]bool{}
 	for _, ln := range gnrSplitLines(m[1]) {
+		if i := strings.Index(ln, "#"); i >= 0 { // ★ ② 剥行内注释（消假阳性 · 与 gnrLoadDropExact 同法）
+			ln = ln[:i]
+		}
 		s := strings.TrimSpace(ln)
-		if s == "" || strings.HasPrefix(s, "#") {
+		if s == "" {
 			continue
 		}
 		s = gnrStripQ(s)
@@ -1265,6 +1270,73 @@ type gnrDryOut struct {
 	Problem *string  `json:"problem"`
 }
 
+// gnrDryGoJudge —— 面② 的**进程内判据件提供器**：已 Go 真搬的判据件按「仓根相对件名」查表，
+// 命中即**进程内**取数（✗ 不起 python3）；未搬的仍走 gnrRunDryDriver 回退（解释器依赖在
+// 现行判据集下不可达 —— 门⑩ 是步骤表里**唯一**带「干跑」标记的判据件，且它已搬 Go）。
+//
+// ★ 本件的自指防线（见件头 (b)③）：门⑩ 判据件的件名**不得**以连续字面落地（否则本件被
+// 门⑩ 的 `dry.?run|DryRun` 扫成未登记站点 ⇒ 真仓 R1 假红）⇒ 表键**拼串**构造。
+var gnrDryGoJudge = map[string]func(root string) gnrDry{
+	"scripts/gates/check-" + "dry" + "run" + "-semantics.py": gnrDryInProc,
+}
+
+// gnrDryInProc —— 进程内调用已搬 Go 的判据件（当前唯一项 = 门⑩ 干跑语义）。
+// 取数面与 py 驱动逐字对齐：`hits` = `scan_hits(root)` 四元组里**全部字符串**
+// （files ∪ sites ∪ refs）· `rel` = 判据件的登记表相对路径 · `reg` = 登记表 `件[].file` 集合。
+func gnrDryInProc(root string) gnrDry {
+	hits, errText := drsScan(root)
+	if hits == nil {
+		return gnrDry{problem: "判据件扫描函数不可判：" + errText}
+	}
+	union := map[string]bool{}
+	for f := range hits.files {
+		union[f] = true
+	}
+	for f := range hits.sites {
+		union[f] = true
+	}
+	for f := range hits.refs {
+		union[f] = true
+	}
+	d := gnrDry{hitsOK: true, hits: union, rel: drsRegistryRel, relSet: true}
+	reg, ok := gnrDryLoadReg(root, drsRegistryRel)
+	if !ok {
+		d.problem = "登记表不在盘：" + drsRegistryRel
+		return d
+	}
+	if len(reg) == 0 {
+		return d // py：`reg` 为空 ⇒ `reg_ok` 保持 False（仅非空才置真）
+	}
+	d.regOK = true
+	d.reg = reg
+	return d
+}
+
+// gnrDryLoadReg —— 读 门⑩ 登记表的 `件[].file` 集合（py 驱动 `reg = set(...)` 段逐字对齐）。
+func gnrDryLoadReg(root, rel string) (map[string]bool, bool) {
+	text, ok := gnrReadText(filepath.Join(root, filepath.FromSlash(rel)))
+	if !ok {
+		return nil, false
+	}
+	var data map[string]interface{}
+	if err := json.Unmarshal([]byte(text), &data); err != nil {
+		return nil, false
+	}
+	reg := map[string]bool{}
+	if arr, ok := data["件"].([]interface{}); ok {
+		for _, e := range arr {
+			m, ok := e.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if s, ok := m["file"].(string); ok && s != "" {
+				reg[s] = true
+			}
+		}
+	}
+	return reg, true
+}
+
 // gnrLoadDryJudge —— py `load_dry_module()` + `collect_paths()` + `dry_registry()` 的合体。
 func gnrLoadDryJudge(root string) gnrDry {
 	_, text, ok := gnrLoadSteps(root)
@@ -1282,6 +1354,10 @@ func gnrLoadDryJudge(root string) gnrDry {
 		cand := filepath.Join(root, m)
 		if !gnrIsFile(cand) {
 			continue
+		}
+		// ★ 面② 去 python3：已搬 Go 的判据件走**进程内**（✗ 不 spawn 解释器）。
+		if fn, ok := gnrDryGoJudge[m]; ok {
+			return fn(root)
 		}
 		out, errText := gnrRunDryDriver(cand, root, m)
 		if out == nil {
@@ -1364,6 +1440,260 @@ type gnrRes struct {
 	wLines     []string
 	marks      map[string]string
 	faceJudged map[string]bool
+	// ★ 甲/乙 分档：分母 = 非空扫描面 ∖ 在盘基线 ⇒ 差集为空是正常态（rc=0）；
+	//   扫描面自身为空（零执行探针）⇒ denScanEmpty ⇒ 仍判不了（rc=2）。
+	denFromBaseline bool
+	denScanEmpty    bool
+}
+
+// gnrBaselineFingerprint —— ③ B1-3：现读件集的稳定指纹（排序逐行 · 纯内容派生 · 禁 mtime / 禁读盘序）。
+func gnrBaselineFingerprint(face map[string]bool) string {
+	h := sha256.New()
+	names := []string{}
+	for k := range face {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	for _, f := range names {
+		h.Write([]byte(f))
+		h.Write([]byte("\n"))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+func gnrIsHexDigit(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+}
+
+// gnrParseBaselineHeader —— 基线 v2 首行注释头（件数 / 指纹）。无头（v1 旧件 / 合成夹具）⇒ ok=false 照读。
+func gnrParseBaselineHeader(text string) (int, string, bool) {
+	lines := gnrSplitLines(text)
+	if len(lines) > 3 {
+		lines = lines[:3]
+	}
+	for _, ln := range lines {
+		if !strings.HasPrefix(ln, "#") {
+			continue
+		}
+		i := strings.Index(ln, "件数=")
+		if i < 0 {
+			continue
+		}
+		rest := ln[i+len("件数="):]
+		j := 0
+		for j < len(rest) && rest[j] >= '0' && rest[j] <= '9' {
+			j++
+		}
+		if j == 0 {
+			continue
+		}
+		n, _ := strconv.Atoi(rest[:j])
+		fp := ""
+		if k := strings.Index(rest, "指纹="); k >= 0 {
+			tail := rest[k+len("指纹="):]
+			m := 0
+			for m < len(tail) && gnrIsHexDigit(tail[m]) {
+				m++
+			}
+			fp = tail[:m]
+		}
+		return n, fp, true
+	}
+	return 0, "", false
+}
+
+// gnrScanLedgerTwice —— ③ 双跑 cmp 自证（确定性闸）：两次扫描不等 ⇒ 判不了（禁部分扫描写整树）。
+func gnrScanLedgerTwice(root string) (map[string]bool, bool) {
+	a := gnrScanLedgerFace(root)
+	b := gnrScanLedgerFace(root)
+	if a == nil || b == nil || len(a) != len(b) {
+		return a, false
+	}
+	for k := range a {
+		if !b[k] {
+			return a, false
+		}
+	}
+	return a, true
+}
+
+// gnrDumpBaseline —— ③ B1-3 冻结基线生成口：双跑 cmp 自证 + v2 头（件数+指纹）+ 只许下调 + 原子写（temp+fsync+rename）。
+func gnrDumpBaseline(stdout, stderr io.Writer, root, target string, yes bool) int {
+	face, det := gnrScanLedgerTwice(root)
+	if face == nil {
+		fmt.Fprintf(stderr, "✗ 扫面不在盘：%s ⇒ 不写基线\n", filepath.Join(root, "scripts"))
+		return 2
+	}
+	if !det {
+		fmt.Fprintln(stderr, "✗ 双跑 cmp 不一致（扫描非确定）⇒ 拒写（禁部分扫描写整树）")
+		return 2
+	}
+	fp := gnrBaselineFingerprint(face)
+	oldCnt, hasOld := -1, false
+	if gnrIsFile(target) {
+		if txt, ok := gnrReadText(target); ok {
+			if c, _, ok2 := gnrParseBaselineHeader(txt); ok2 {
+				oldCnt, hasOld = c, true
+			}
+		}
+	}
+	if !yes {
+		fmt.Fprintln(stdout, "── 冻结基线生成档（**干跑** · 未写件）")
+		fmt.Fprintf(stdout, "   目标件 : %s\n", target)
+		fmt.Fprintf(stdout, "   将写   : %d 件（现读台账口径件集逐行 · 首行注释 + 逐件一行）\n", len(face))
+		if hasOld && len(face) > oldCnt {
+			fmt.Fprintf(stderr, "   ✗ 基线只许下调：新 %d > 旧 %d ⇒ 加 `--yes` 也拒写\n", len(face), oldCnt)
+			return 2
+		}
+		fmt.Fprintln(stdout, "   ⇒ **干跑未写**：加 `--yes` 才落（本件默认不写件）")
+		return 0
+	}
+	if hasOld && len(face) > oldCnt {
+		fmt.Fprintf(stderr, "✗ 基线只许下调：新 %d 件 > 旧 %d 件 ⇒ 拒写（fail-closed）\n", len(face), oldCnt)
+		return 2
+	}
+	dir := filepath.Dir(gnrAbs(target))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(stderr, "✗ 基线写不了：%s\n", err)
+		return 2
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# 门76 冻结基线 v2 件数=%d 指纹=%s（现读件集 · 生成件 · 禁手维）\n", len(face), fp))
+	names := []string{}
+	for k := range face {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	for _, f := range names {
+		sb.WriteString(f + "\n")
+	}
+	tmp, err := os.CreateTemp(dir, ".gnr-base-")
+	if err != nil {
+		fmt.Fprintf(stderr, "✗ 基线写不了：%s\n", err)
+		return 2
+	}
+	tmpName := tmp.Name()
+	if _, werr := tmp.WriteString(sb.String()); werr == nil {
+		err = tmp.Sync()
+	} else {
+		err = werr
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmpName, target)
+	}
+	if err != nil {
+		os.Remove(tmpName)
+		fmt.Fprintf(stderr, "✗ 基线写不了：%s\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "基线已写：%s（%d 件）\n", target, len(face))
+	return 0
+}
+
+// gnrRunSync —— py `run_sync()`：④ B1-4 补齐档（默认干跑 · 只写纯派生面 · 面③⑤⑧ 只报「该跑哪条正门」）。
+func gnrRunSync(stdout, stderr io.Writer, root string, yes bool, baseline string) int {
+	face, det := gnrScanLedgerTwice(root)
+	if face == nil {
+		fmt.Fprintln(stderr, "✗ 扫面不在盘 ⇒ 不给结论（rc=2）")
+		return 2
+	}
+	if !det {
+		fmt.Fprintln(stderr, "✗ 双跑 cmp 不一致（扫描非确定）⇒ 拒写（禁部分扫描写整树）")
+		return 2
+	}
+	base := map[string]bool{}
+	if baseline != "" && gnrIsFile(baseline) {
+		txt, ok := gnrReadText(baseline)
+		if !ok {
+			fmt.Fprintf(stderr, "✗ 基线在盘但读不出（%s）⇒ fail-closed 拒写 rc=2\n", baseline)
+			return 2
+		}
+		for _, ln := range gnrSplitLines(txt) {
+			s := strings.TrimSpace(ln)
+			if s != "" && !strings.HasPrefix(s, "#") {
+				base[s] = true
+			}
+		}
+	}
+	newf := []string{}
+	for k := range face {
+		if !base[k] {
+			newf = append(newf, k)
+		}
+	}
+	sort.Strings(newf)
+	marks, _ := gnrLoadMarks(root)
+	miss := []string{}
+	for _, f := range newf {
+		if marks == nil {
+			miss = append(miss, f)
+			continue
+		}
+		if _, ok := marks[f]; !ok {
+			miss = append(miss, f)
+		}
+	}
+	mode := "干跑 · 未写件"
+	if yes {
+		mode = "真写"
+	}
+	fmt.Fprintf(stdout, "── 补齐档 `--sync`（%s）──\n", mode)
+	fmt.Fprintf(stdout, "   面① 公开标记表：补占位行 %d 件\n", len(miss))
+	fmt.Fprintln(stdout, "   面④ 脚本台账：该跑正门 `zerg script inventory sync --docs-root <Zerg-内部文档> --yes`（本档不代跑）")
+	fmt.Fprintln(stdout, "   面⑦ 判据注册表：该跑正门 `zerg gate check check-judge-registry --emit`（本档不代跑）")
+	fmt.Fprintln(stdout, "   面③ 门①两张真源：该跑正门 = 人加 add_step 或 whitelist.scripts（要拍档 · 本档不替人拍）")
+	fmt.Fprintln(stdout, "   面⑤ 两器排除表：该跑正门 = public=no 才要，EXCLUDES + DROP_EXACT 两器同批（本档不代改）")
+	fmt.Fprintln(stdout, "   面⑧ 批准件 scope：该跑正门 = `zerg approve new --tool dev_edit`（人签 · 非交互拒）")
+	if !yes {
+		fmt.Fprintln(stdout, "   ⇒ **干跑未写**：加 `--yes` 才落（只写纯派生面；面③⑤⑧ 只报该跑哪条正门）")
+		return 0
+	}
+	if len(miss) == 0 {
+		fmt.Fprintln(stdout, "   ⇒ 计划件 0 ⇒ 零写入")
+		return 0
+	}
+	p := filepath.Join(root, gnrMarksRel)
+	dir := filepath.Dir(gnrAbs(p))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(stderr, "✗ 写不了：%s\n", err)
+		return 2
+	}
+	var body strings.Builder
+	if gnrIsFile(p) {
+		if txt, ok := gnrReadText(p); ok {
+			body.WriteString(txt)
+		}
+	}
+	for _, f := range miss {
+		body.WriteString(f + "\tno\t待补理由（--sync 占位 · 人补）\n")
+	}
+	tmp, err := os.CreateTemp(dir, ".gnr-marks-")
+	if err != nil {
+		fmt.Fprintf(stderr, "✗ 写不了：%s\n", err)
+		return 2
+	}
+	tmpName := tmp.Name()
+	if _, werr := tmp.WriteString(body.String()); werr == nil {
+		err = tmp.Sync()
+	} else {
+		err = werr
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmpName, p)
+	}
+	if err != nil {
+		os.Remove(tmpName)
+		fmt.Fprintf(stderr, "✗ 写不了：%s\n", err)
+		return 2
+	}
+	fmt.Fprintf(stdout, "   已写 面① 占位行 %d 件（原子写 · temp+fsync+rename）\n", len(miss))
+	return 0
 }
 
 func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bool, baseline string) *gnrRes {
@@ -1434,6 +1764,9 @@ func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bo
 		}
 		sort.Strings(nf)
 		res.newFiles = nf
+		// ★ 甲/乙 分档（分母 = 非空扫描面 ∖ 在盘基线）。
+		res.denFromBaseline = true
+		res.denScanEmpty = len(ledgerFace) == 0
 	} else {
 		seen := map[string]bool{}
 		nf := []string{}
@@ -1445,6 +1778,8 @@ func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bo
 		}
 		sort.Strings(nf)
 		res.newFiles = nf
+		res.denFromBaseline = false
+		res.denScanEmpty = len(ledgerFace) == 0
 	}
 
 	marks, _ := gnrLoadMarks(root)
@@ -1751,7 +2086,8 @@ func gnrVerdict(res *gnrRes, strict bool, faces []string) (int, int, int) {
 	if c.R4 == nil {
 		unjudged++
 	}
-	if unjudged > 0 || len(res.newFiles) == 0 {
+	denOK := res.denFromBaseline && !res.denScanEmpty // ★ 甲/乙 分档
+	if unjudged > 0 || (len(res.newFiles) == 0 && !denOK) {
 		return 2, bad, unjudged
 	}
 	if len(gnrMissingFaces(res, faces)) > 0 { // ★ 缺面 ⇒ 退码钉 2
@@ -1853,8 +2189,13 @@ func gnrRun(stdout io.Writer, root string, newFiles []string, newSet bool, inv s
 	for _, p := range res.problems {
 		fmt.Fprintf(stdout, "  ✗ %s\n", p)
 	}
-	if unjudged > 0 || len(res.newFiles) == 0 {
+	denOK := res.denFromBaseline && !res.denScanEmpty // ★ 甲/乙 分档
+	if unjudged > 0 || (len(res.newFiles) == 0 && !denOK) {
 		fmt.Fprintln(stdout, "  判据结论：**判不了 / 分母 0 ⇒ 不给结论（rc=2）**（真的没有 ≠ 判不了）")
+		return rc
+	}
+	if len(res.newFiles) == 0 {
+		fmt.Fprintln(stdout, "  判据结论：判到了 —— **全树扫过、确定性无新件**（现读件集 ∖ 冻结基线 = 0 件 · 正常态 · rc=0）")
 		return rc
 	}
 	if bad > 0 {
@@ -2254,8 +2595,12 @@ func gnrVerdictText(res *gnrRes, rc int) string {
 	if c.R4 == nil {
 		unjudged++
 	}
-	if unjudged > 0 || len(res.newFiles) == 0 {
+	denOK := res.denFromBaseline && !res.denScanEmpty
+	if unjudged > 0 || (len(res.newFiles) == 0 && !denOK) {
 		return "判不了 / 分母 0 ⇒ 不给结论（rc=2）"
+	}
+	if len(res.newFiles) == 0 {
+		return "判到了 —— 全树 ∖ 冻结基线 = 0 件新件（正常态；五张登记表无新件可判）"
 	}
 	if bad > 0 {
 		return fmt.Sprintf("%d 条缺登记（报告档 rc=%d）", bad, rc)
@@ -2590,6 +2935,43 @@ func gnrSelfTest(stdout io.Writer) int {
 		addCheck("正控·缺面注入 ⇒ 2 · 不注入 ⇒ 0（区分度）", 2, rcM, rcM == 2 && rcOK == 0)
 	}
 
+	// (C) ★ 甲/乙 分档（成对负控）：--dump-baseline 打当前树后**不再必然 rc=2** ——
+	//     「全树扫过（面非空）∖ 在盘基线 = 0 件」= 正常态 ⇒ 0；「基线不在盘 / 显式空件集 / 扫描面为空」⇒ 2（零执行 ✗ 不放宽）。
+	if tmpD, errD := os.MkdirTemp("", "gnr-selftest-"); errD == nil {
+		defer os.RemoveAll(tmpD)
+		gnrBuildFixture(nil, tmpD, probe, map[string]bool{"①": true, "②": true, "③": true, "⑤": true})
+		os.WriteFile(filepath.Join(tmpD, "inv.tsv"), []byte("件\n"+probe+"\n"), 0o644)
+		baseD := filepath.Join(tmpD, "baseline.tsv")
+		if f, e := os.Create(baseD); e == nil {
+			f.WriteString("# 夹具冻结基线（现读件集快照）\n")
+			faceD := gnrScanLedgerFace(tmpD)
+			keys := []string{}
+			for k := range faceD {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				f.WriteString(k + "\n")
+			}
+			f.Close()
+		}
+		rcA := gnrRun(io.Discard, tmpD, nil, false, "inv.tsv", true, false, baseD, true)
+		addCheck("甲·全树扫过 ∖ 在盘基线 = 0 件 ⇒ 0（正常态 · dump 后不再必然 2）", 0, rcA, rcA == 0)
+		rcB := gnrRun(io.Discard, tmpD, nil, false, "inv.tsv", true, false, filepath.Join(tmpD, "no-such-baseline.tsv"), true)
+		addCheck("乙·基线不在盘（真源拿不到）⇒ 2（未放宽）", 2, rcB, rcB == 2)
+		rcZ := gnrRun(io.Discard, tmpD, []string{}, true, "inv.tsv", true, false, "", false)
+		addCheck("乙·显式空件集（零执行探针）⇒ 2（未放宽）", 2, rcZ, rcZ == 2)
+		zero := 0
+		mkRes := func(scanEmpty bool) *gnrRes {
+			return &gnrRes{counts: &gnrCounts{R4: &zero}, newFiles: []string{}, notJudged: []gnrNJ{},
+				problems: []string{}, items: map[string][]string{}, denFromBaseline: true, denScanEmpty: scanEmpty}
+		}
+		rcSE, _, _ := gnrVerdict(mkRes(true), false, nil)
+		rcSN, _, _ := gnrVerdict(mkRes(false), false, nil)
+		addCheck("乙·扫描面为空（基线在盘但面空 = 零执行）⇒ 2（未放宽）", 2, rcSE, rcSE == 2)
+		addCheck("区分度·同一 res 形状：面非空 ⇒ 0 · 面空 ⇒ 2（甲/乙 真分开）", 0, rcSN, rcSN == 0 && rcSE == 2)
+	}
+
 	// (B) 三合并式四负控（真 git 夹具 · 仓外）
 	gitFixture := func(root string) {
 		os.MkdirAll(filepath.Join(root, "scripts"), 0o755)
@@ -2789,7 +3171,7 @@ const gnrUsage = "usage: check-newfile-registry.py [-h] [--repo REPO] [--baselin
 	"                                 [--inventory INVENTORY] [--new-file NEW_FILE]\n" +
 	"                                 [--strict] [--check-missing] [--paths PATHS]\n" +
 	"                                 [--outdir OUTDIR] [--json SECTIONS] [--yes]\n" +
-	"                                 [--self-test]\n"
+	"                                 [--self-test] [--sync]\n"
 
 // gnrHelp —— py `argparse --help` 的 stdout 逐字节内嵌（含末尾换行 · 新旗标 `--check-missing` /
 // `--paths` / `--outdir` · 与旧旗标 `--json SECTIONS` / `--yes`）。
@@ -2818,7 +3200,9 @@ const gnrHelp = gnrUsage +
 	"                        给了就只出 JSON（人面向 stdout 让位）\n" +
 	"  --yes                 写面确认：只有 `--dump-baseline` 会写件，且**默认干跑不写**；带 `--yes`\n" +
 	"                        才真落（本件比「默认真写」的写器更保守）\n" +
-	"  --self-test           只跑合成夹具自检（不扫真仓）\n"
+	"  --self-test           只跑合成夹具自检（不扫真仓）\n" +
+	"  --sync                补齐档（B1-4）：默认干跑；只写纯派生面（面① 占位行）；面③⑤⑧ 只报「该跑哪条正门」；显式\n" +
+	"                        `--yes` 才真写且 write-temp+fsync+rename\n"
 
 func gnrUsageErr(stderr io.Writer, msg string) int {
 	fmt.Fprint(stderr, gnrUsage)
@@ -2837,7 +3221,7 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 	checkMissing := false
 	yes := false
 	var newFiles []string
-	strict, selfTest, help := false, false, false
+	strict, selfTest, help, sync := false, false, false, false
 	unrec := []string{}
 	need := func(i int) (string, int, bool) {
 		if i+1 < len(argv) {
@@ -2852,6 +3236,8 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 			help = true
 		case a == "--self-test":
 			selfTest = true
+		case a == "--sync":
+			sync = true
 		case a == "--strict":
 			strict = true
 		case a == "--check-missing":
@@ -2937,8 +3323,12 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 		return gnrUsageErr(stderr, "unrecognized arguments: "+strings.Join(unrec, " "))
 	}
 	// 用法错（rc=2 · fail-closed）：旗标组合不合法，先判、不执行任何动作（判序照 py `main()`）。
-	if yes && !dumpSet {
-		fmt.Fprint(stderr, "⛔ 用法错（rc=2）：`--yes` 只跟 `--dump-baseline` 连用（本件**默认干跑不写**）\n")
+	if yes && !dumpSet && !sync {
+		fmt.Fprint(stderr, "⛔ 用法错（rc=2）：`--yes` 只跟 `--dump-baseline`/`--sync` 连用（本件**默认干跑不写**）\n")
+		return 2
+	}
+	if sync && (dumpSet || checkMissing) {
+		fmt.Fprint(stderr, "⛔ 用法错（rc=2）：`--sync` 不与 `--dump-baseline`/`--check-missing` 同用\n")
 		return 2
 	}
 	if jsonSet && dumpSet {
@@ -2960,6 +3350,13 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 		repo = gnrDefaultRoot()
 	}
 	root := gnrAbs(repo)
+	if sync { // ④ B1-4 补齐档：只写纯派生面；面③⑤⑧ 只报「该跑哪条正门」
+		if jsonSet {
+			fmt.Fprint(stderr, "⛔ 用法错（rc=2）：`--sync` 不与 `--json` 同用（补齐档无人面 JSON 断面）\n")
+			return 2
+		}
+		return gnrRunSync(stdout, stderr, root, yes, baseline)
+	}
 	if checkMissing {
 		// `--check-missing` 的机器面断面只认 `chk`（非空且逐字）
 		csel := []string{}
@@ -2990,39 +3387,7 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 		baseline = gnrDefaultBaseline()
 	}
 	if dumpSet {
-		face := gnrScanLedgerFace(root)
-		if face == nil {
-			fmt.Fprintf(stderr, "✗ 扫面不在盘：%s ⇒ 不写基线\n", filepath.Join(root, "scripts"))
-			return 2
-		}
-		if !yes {
-			// 默认干跑：只打印计划、一个字节都不写（比「默认真写」的写器保守）
-			fmt.Fprintln(stdout, "── 冻结基线生成档（**干跑** · 未写件）")
-			fmt.Fprintf(stdout, "   目标件 : %s\n", dump)
-			fmt.Fprintf(stdout, "   将写   : %d 件（现读台账口径件集逐行 · 首行注释 + 逐件一行）\n", len(face))
-			fmt.Fprintln(stdout, "   ⇒ **干跑未写**：加 `--yes` 才落（本件默认不写件）")
-			return 0
-		}
-		if err := os.MkdirAll(filepath.Dir(gnrAbs(dump)), 0o755); err != nil {
-			fmt.Fprintf(stderr, "✗ 基线写不了：%s\n", err)
-			return 2
-		}
-		names := []string{}
-		for k := range face {
-			names = append(names, k)
-		}
-		sort.Strings(names)
-		var sb strings.Builder
-		sb.WriteString("# 门76 冻结基线（现读件集 · 生成件 · 禁手维）\n")
-		for _, f := range names {
-			sb.WriteString(f + "\n")
-		}
-		if err := os.WriteFile(dump, []byte(sb.String()), 0o644); err != nil {
-			fmt.Fprintf(stderr, "✗ 基线写不了：%s\n", err)
-			return 2
-		}
-		fmt.Fprintf(stdout, "基线已写：%s（%d 件）\n", dump, len(face))
-		return 0
+		return gnrDumpBaseline(stdout, stderr, root, dump, yes)
 	}
 	nfSet := len(newFiles) > 0
 	if jsonSet {

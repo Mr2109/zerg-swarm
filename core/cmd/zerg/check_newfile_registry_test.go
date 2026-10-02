@@ -161,10 +161,15 @@ func TestCheckNewfileRegistryGatePort(t *testing.T) {
 	if rcD == rcDY && outD == outDY {
 		t.Fatalf("成对断言失败：干跑与真落同文 ⇒ 写面无牙")
 	}
-	// py 口子①（--dump-baseline 真落口 · 逐字保留）⇒ 打当前树后分母恒 0
-	rcAfter, outAfter, _ := gnrRunT(t, "--repo", fx, "--baseline", dump)
-	if rcAfter != 2 || !strings.Contains(outAfter, "分母（现读新件 ∖ 冻结基线）：0 件") {
-		t.Fatalf("py 口子①失守：生成口打当前树后应分母 0 ⇒ rc=2，得 rc=%d out=%s", rcAfter, outAfter)
+	// ★ 甲/乙 成对（新口径）：打当前树（面非空 ∖ 在盘基线 = 0 件）⇒ **甲态 rc=0**（正常态）；
+	//   基线不在盘 ⇒ **乙态 rc=2**（零执行 / 真源拿不到 ✗ 不放宽）。
+	rcAfter, outAfter, _ := gnrRunT(t, "--repo", fx, "--inventory", "inv.tsv", "--baseline", dump)
+	if rcAfter != 0 || !strings.Contains(outAfter, "全树扫过、确定性无新件") {
+		t.Fatalf("甲态失守：生成口打当前树后应分母 0 ⇒ rc=0（正常态），得 rc=%d out=%s", rcAfter, outAfter)
+	}
+	rcMiss, outMiss, _ := gnrRunT(t, "--repo", fx, "--inventory", "inv.tsv", "--baseline", filepath.Join(t.TempDir(), "no-such-base.tsv"))
+	if rcMiss != 2 || !strings.Contains(outMiss, "冻结基线不在盘") {
+		t.Fatalf("乙态失守：基线不在盘应 rc=2，得 rc=%d out=%s", rcMiss, outMiss)
 	}
 
 	// ── 读不了的件：公开标记表 chmod 000 ⇒ 面① 判不了 ⇒ rc=2（fail-closed）────
@@ -177,7 +182,7 @@ func TestCheckNewfileRegistryGatePort(t *testing.T) {
 
 	// ── 清单 / 自检 / 帮助 / 用法错 ─────────────────────────────────────
 	rcST, outST, _ := gnrRunT(t, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "自检结论: 全过（断言 25 条 · 失败 0）") {
+	if rcST != 0 || !strings.Contains(outST, "自检结论: 全过（断言 30 条 · 失败 0）") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%s", rcST, outST)
 	}
 	rcH, outH, _ := gnrRunT(t, "-h")
@@ -347,7 +352,7 @@ func TestCheckNewfileRegistryMachineFace(t *testing.T) {
 		t.Fatalf("--json 与 dump 同用失败：得 rc=%d err=%q", rcJD, errJD)
 	}
 	rcY, _, errY := gnrRunT(t, "--yes")
-	if rcY != 2 || !strings.Contains(errY, "只跟 `--dump-baseline` 连用") {
+	if rcY != 2 || !strings.Contains(errY, "只跟 `--dump-baseline`/`--sync` 连用") {
 		t.Fatalf("--yes 单独失败：得 rc=%d err=%q", rcY, errY)
 	}
 	// 成对：合法组合不被误杀
@@ -845,17 +850,17 @@ func gnrTRunPyHelp(t *testing.T, pyExe, pyFile string, args ...string) (int, str
 }
 
 // gnrHelpGoSha256 = sha256(gnrHelp) —— Go 现行帮助面正文（COLUMNS=80 · 见 gnrHelpBytes）。
-const gnrHelpGoSha256 = "737ac383eb2aeec0612d621aa4bb9e84d880604e162767a4e90c3bb76fb3715e"
+const gnrHelpGoSha256 = "8682a12780f9cf23788e7123f8b99679108e51d6e5b890902b3e803ccfa20867"
 
 // gnrHelpPySha256 = 同一正文 —— py 原件 `COLUMNS=80 /usr/bin/python3 <py 件> -h` 的 stdout 全串。
 // ★ 机械拦阻的核心：两者不等即红（py 正文一改 / Go 副本一改，都当场点名）。
 // 重生成正门（现读打印两值 · 不落任何件）：
 //
 //	GNR_REGEN_HELP_SHA=1 go test ./cmd/zerg -run '^TestGnrHelpParityWithPy$' -v
-const gnrHelpPySha256 = "737ac383eb2aeec0612d621aa4bb9e84d880604e162767a4e90c3bb76fb3715e"
+const gnrHelpPySha256 = "8682a12780f9cf23788e7123f8b99679108e51d6e5b890902b3e803ccfa20867"
 
 // gnrHelpBytes —— 帮助面正文字节数（2103 · 与 COLUMNS=80 的 py 现跑一致）。
-const gnrHelpBytes = 2103
+const gnrHelpBytes = 2338
 
 // TestGnrHelpParityWithPy —— ④ 机械拦阻：Go 的 help 输出 == py 的 --help 输出（stdout+stderr+rc 三面）。
 //

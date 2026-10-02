@@ -720,6 +720,13 @@
       "语义": "dryrun.v1",
       "零副作用判据": "本件不声明也不实现干跑档：`--dry-run` 只出现在件头注释里（描述 `check` 的写工具闸），不驱动任何行为。本件动作面要么只读（ls/show/find/results 读现成产物）要么原样转发给自举件 `scripts/gates/precommit-gates.sh`（run/self-test，退码逐字转出）；不删/不推/不改 git 状态，写面限于 `gate run` 完毕随件落一枚 freshness.json（真跑档的留痕，与干跑无涉）。",
       "备注": "登记依据 = 门⑩ R1 未登记件（命中是引文，不是第五套语义）。"
+    },
+    {
+     "file": "core/cmd/zerg/check_newfile_registry.go",
+     "类": "只读判据件 / 登记面生成器（本件用 `dry.?run` 一词作**被检字段名与登记表名**，不是另立一套语义）",
+     "语义": "dryrun.v1",
+     "零副作用判据": "默认只读：`--json faces,self` / `--check-missing` 只 `os.ReadFile` 现读五张登记表 ＋ `filepath.WalkDir` 只读列举 ＋ `git` 只取件名（不写索引）；`--self-test` 全跑在 `os.MkdirTemp` 的仓外夹具里且 `defer os.RemoveAll`。真写面只有两处、**都默认干跑**：`--dump-baseline`（不显式落盘只打印）与 `--sync`（默认干跑 · 显式 `--yes` 才真写 · 写面走 temp+fsync+rename 原子写）；两者缺 `--yes` 时零字节改动。",
+     "备注": "登记依据 = 门⑩ R1 未登记件：命中是 `dry.?run` 作被检字段名/登记表名（面② 干跑登记表），不是第五套 dry-run 语义。"
     }
-  ]
+]
 }
