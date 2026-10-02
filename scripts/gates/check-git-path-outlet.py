@@ -216,6 +216,47 @@ TEXT_ALLOW = (
                    " `core.quotepath=false` + `-z` · 同函数按 NUL 逐字切分 stdout = 证据）。"),
         "replacement": "无需改：真调用已合规；本行只是报错文本里的字面。",
     },
+    # ── 2026-10-02 · M2 py→Go 端口补齐（同族丙类误报 · 逐 (件,规则,锚)）────────────
+    #    下面五条与上面 py 侧三条**同族同因**：命中行是**消息串**（非 argv），
+    #    同函数/同件的真调用已合规（`-z` 或 `-C`+`-c core.quotepath=false`+`-z`）。
+    #    其中 ⑷⑸ 的文案对现实现已陈旧（实走文件系统现走 ⇒ 不跑 git），只登记、不改文案。
+    {
+        "path": "core/cmd/zerg/check_affected_map.go", "rule": "GPO-F1",
+        "anchor": ("fmt.Fprintf(stdout, \"[缺读数] " + GIT_TOK + " " + N_LSFILES + " 取不到：%s"),
+        "reason": ("消息串：`derr != nil` 分支里的报错文本；真取数走 `os.ReadDir` 文件系统现走"
+                   "（同函数 L944 注释逐字「✗ 不经 git」）⇒ 没有哪台机器会去跑这条 git 命令。"
+                   "该文案对现实现已陈旧，另批校正时本锚随之更新。"),
+        "replacement": "无需改：本行只是报错文本里的字面。",
+    },
+    {
+        "path": "core/cmd/zerg/check_dangling_refs.go", "rule": "GPO-F1",
+        "anchor": ("fmt.Fprintf(stderr, \"✗ " + GIT_TOK + " " + N_LSFILES + " rc=%d"),
+        "reason": ("消息串：Go 搬 py `check-dangling-refs.py` 的报错文本（py 侧同形已登记）；"
+                   "同函数真调用在 L1184 且已带 `-z`（随后按 NUL 逐字切分 stdout = 证据）。"),
+        "replacement": "无需改：真调用已合规；本行只是报错文本里的字面。",
+    },
+    {
+        "path": "core/cmd/zerg/check_gap_axis_reconcile.go", "rule": "GPO-F1",
+        "anchor": ("e = \"现读 " + GIT_TOK + " " + N_LSFILES + " 失败\""),
+        "reason": ("消息串：Go 搬 py `check-gap-axis-reconcile.py` 的兜底文本（py 侧同形已登记）；"
+                   "同件真调用在 L212 且三锚点齐（`-C` + `core.quotepath=false` + `-z`）。"),
+        "replacement": "无需改：真调用已合规；本行只是报错文本里的字面。",
+    },
+    {
+        "path": "core/cmd/zerg/who_references.go", "rule": "GPO-F1",
+        "anchor": ("fmt.Fprintf(stderr, \"✗ " + GIT_TOK + " " + N_LSFILES + " rc=%d"),
+        "reason": ("消息串：Go 搬 py `who-references.py` 的报错文本（py 侧同形已登记）；"
+                   "同函数真调用在 L533 且已带 `-z`（随后按 NUL 切分 stdout = 证据）。"),
+        "replacement": "无需改：真调用已合规；本行只是报错文本里的字面。",
+    },
+    {
+        "path": "scripts/gates/check-affected-map.py", "rule": "GPO-F1",
+        "anchor": ("print('[缺读数] " + GIT_TOK + " " + N_LSFILES + " 取不到：%s"),
+        "reason": ("消息串：`except` 分支里的报错文本；真取数走 `disk_files` 的 `os.walk`"
+                   "（同函数 L351-352 注释逐字「✗ 不经 git」）⇒ 本行非 argv。"
+                   "该文案对现实现已陈旧，另批校正时本锚随之更新。"),
+        "replacement": "无需改：本行只是报错文本里的字面。",
+    },
 )
 
 # ── 文字面掩蔽：行首即注释的行，**整行**不判（宁可漏报，不可把散文判成 argv）───────

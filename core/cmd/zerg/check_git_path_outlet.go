@@ -137,6 +137,40 @@ var gpoTextAllow = []gpoTextAllowEntry{
 		Reason:      "消息串：`ctx.get` 的第二实参 = **兜底文字**（戊 取数面拿不到时印给人看的报错文本），不是 argv —— 没有哪台机器会去跑它。同件真调用在 L143 且已带 `-z`（三锚点：`-C` + `" + gpoKeyLower + "=false` + `-z` · 同函数按 NUL 逐字切分 stdout = 证据）。",
 		Replacement: "无需改：真调用已合规；本行只是报错文本里的字面。",
 	},
+	// ── 2026-10-02 · M2 py→Go 端口补齐（与 py 侧 TEXT_ALLOW 逐字同族同因）───────────
+	//    这五条与上面 py 侧三条**同因**：命中行是**消息串**（非 argv），真调用已合规
+	//    （`-z` 或 `-C`+`-c core.quotepath=false`+`-z`）。⑷⑸ 文案对现实现已陈旧（实走
+	//    文件系统现走 ⇒ 不跑 git），只登记、不改文案。
+	{
+		Path: "core/cmd/zerg/check_affected_map.go", Rule: "GPO-F1",
+		Anchor:      "fmt.Fprintf(stdout, \"[缺读数] " + gpoGitTok + " " + gpoNLsFiles + " 取不到：%s",
+		Reason:      "消息串：`derr != nil` 分支里的报错文本；真取数走 `os.ReadDir` 文件系统现走（同函数 L944 注释逐字「✗ 不经 git」）⇒ 没有哪台机器会去跑这条 git 命令。该文案对现实现已陈旧，另批校正时本锚随之更新。",
+		Replacement: "无需改：本行只是报错文本里的字面。",
+	},
+	{
+		Path: "core/cmd/zerg/check_dangling_refs.go", Rule: "GPO-F1",
+		Anchor:      "fmt.Fprintf(stderr, \"✗ " + gpoGitTok + " " + gpoNLsFiles + " rc=%d",
+		Reason:      "消息串：Go 搬 py `check-dangling-refs.py` 的报错文本（py 侧同形已登记）；同函数真调用在 L1184 且已带 `-z`（随后按 NUL 逐字切分 stdout = 证据）。",
+		Replacement: "无需改：真调用已合规；本行只是报错文本里的字面。",
+	},
+	{
+		Path: "core/cmd/zerg/check_gap_axis_reconcile.go", Rule: "GPO-F1",
+		Anchor:      "e = \"现读 " + gpoGitTok + " " + gpoNLsFiles + " 失败\"",
+		Reason:      "消息串：Go 搬 py `check-gap-axis-reconcile.py` 的兜底文本（py 侧同形已登记）；同件真调用在 L212 且三锚点齐（`-C` + `" + gpoKeyLower + "=false` + `-z`）。",
+		Replacement: "无需改：真调用已合规；本行只是报错文本里的字面。",
+	},
+	{
+		Path: "core/cmd/zerg/who_references.go", Rule: "GPO-F1",
+		Anchor:      "fmt.Fprintf(stderr, \"✗ " + gpoGitTok + " " + gpoNLsFiles + " rc=%d",
+		Reason:      "消息串：Go 搬 py `who-references.py` 的报错文本（py 侧同形已登记）；同函数真调用在 L533 且已带 `-z`（随后按 NUL 切分 stdout = 证据）。",
+		Replacement: "无需改：真调用已合规；本行只是报错文本里的字面。",
+	},
+	{
+		Path: "scripts/gates/check-affected-map.py", Rule: "GPO-F1",
+		Anchor:      "print('[缺读数] " + gpoGitTok + " " + gpoNLsFiles + " 取不到：%s",
+		Reason:      "消息串：`except` 分支里的报错文本；真取数走 `disk_files` 的 `os.walk`（同函数 L351-352 注释逐字「✗ 不经 git」）⇒ 本行非 argv。该文案对现实现已陈旧，另批校正时本锚随之更新。",
+		Replacement: "无需改：本行只是报错文本里的字面。",
+	},
 }
 
 // ── 文字面掩蔽：行首即注释的行，整行不判 ────────────────────────────────────────
