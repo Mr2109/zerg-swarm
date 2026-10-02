@@ -8,6 +8,7 @@ package chat
 import (
 	"fmt"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/version"
 	"log"
 	"os"
 	"os/exec"
@@ -125,10 +126,10 @@ func compareVersion(a, b []int) int {
 // zergOverviewFull — 全景（精炼 ~800 字——架构 + 使用精简 + 变化 + 状态 + 文档 + 模块 + 工具）
 func zergOverviewFull() (string, error) {
 	verDir := latestVersionDir()
-	verName := "未知"
-	if verDir != "" {
-		verName = filepath.Base(verDir)
-	}
+	// ★ 当前版真源 = version.Tag（编译期常量）——**不**取扫盘结果的目录名：
+	// latestVersionDir() 只决定「读哪份文档档案」（发布件多在旧版 ⇒ 它常挑到上一版），
+	// 拿它的目录名当「当前版」会报错版本；版本名一律钉 version.Version 这一真源（2026-10-02 拍）。
+	verName := version.Tag
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("# 虫族系统（%s）\n", verName))
 
@@ -163,8 +164,10 @@ func zergOverviewFull() (string, error) {
 	// 文档入口（指针化——先读 INDEX 定向——doc_search 检索片段——不全文读）
 	b.WriteString("\n## 文档（查文档先读目录 INDEX.md 定向——doc_search 检索关键词）\n")
 	if verDir != "" {
+		// 版本名 = 真源常量；括注**实际挑中的档案目录**（选目录逻辑一字未动）——两者在
+		// 「当前版目录未建／只有旧版含发布件」时会不同，一并报出才不把档案版误读成当前版。
 		verBase := filepath.Base(verDir)
-		b.WriteString(fmt.Sprintf("  当前版 %s: INDEX.md（%d 份文档——先读它定位）→ 或 doc_search query=\"主题\"\n", verBase, len(globMd(verDir))))
+		b.WriteString(fmt.Sprintf("  当前版 %s（档案目录 %s）: INDEX.md（%d 份文档——先读它定位）→ 或 doc_search query=\"主题\"\n", version.Tag, verBase, len(globMd(verDir))))
 		b.WriteString("  总索引: docs/index-nav.md（版本史/常青/skills 导航）\n")
 		b.WriteString("  历史版: docs/项目文档/vX.Y.Z/（INDEX 标历史档案——查旧版走 doc_search scope=vX.Y.Z）\n")
 	} else {

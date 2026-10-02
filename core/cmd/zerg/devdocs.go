@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
@@ -37,14 +36,15 @@ import (
 // 本件按缺口二选一里的**删除**一支收口。为什么不选「接消费点」：本包**已签**判据 `devdocs_test.go:58`
 // 逐字钉住「当前版目录哪怕只有 2 篇（空壳）也认（人/真源说了算）」⇒ 在 `devDocsCurrentVersionDir()` 里
 // 加「篇数 < 3 ⇒ 退非 0」会**推翻那条已签判据**（而 `devdocs_test.go` 不在本单可改之列）。
-// 注：同批死件 `devDocsVersionKey` / `devDocsCompareVersion` / `devDocsCountMD` 不在本缺口点名范围，留待单独登记。
+// 同批死件 `devDocsVersionKey` / `devDocsCompareVersion` / `devDocsCountMD` 于 2026-10-02 同批删除
+//（全仓零引用 · 删后 `strconv` 导入一并摘除）。
 
 // devDocsBase —— 版本档案（`<项目文档>`）取源根：**唯一真源 = statepath.DocsBase()**。
 func devDocsBase() string { return statepath.DocsBase() }
 
 // devDocsCurrentVersionDir —— 当前版目录（**版本无关**：现算，源码里 0 个版本号字面量）。
 //
-//	pinVersion == ""  ⇒ 版本档案取源根下「版本号最大 + 非递归 md ≥3 篇」的那个 `v*` 目录；
+//	pinVersion == ""  ⇒ 钉到 `v<当前发布版>`（版本真源 = `version.Version`，**不**扫盘取「版本号最大」的那个目录）；
 //	pinVersion != ""  ⇒ 钉到 `v<pinVersion>`（显式旗标，兼容旧行为）；不存在 ⇒ 报出来（不给结论）。
 //
 // ★ 版本真源 = `version.Version`：未钉版时**钉到 `v<当前发布版>`**（读 `core/internal/version/version.go`
@@ -68,62 +68,4 @@ func devDocsCurrentVersionDir(pinVersion string) (dir, why string) {
 		return "", fmt.Sprintf("版本目录不在盘上（版本真源 v%s）：%s", pinned, p)
 	}
 	return p, ""
-}
-
-// devDocsVersionKey —— `v2.5.11` → `[2,5,11]`；`v2.6` → `[2,6]`；解不动 ⇒ nil（不当候选、也不乱比）。
-func devDocsVersionKey(name string) []int {
-	s := strings.TrimPrefix(strings.TrimSpace(name), "v")
-	if s == "" {
-		return nil
-	}
-	s = strings.SplitN(s, "-", 2)[0] // 容忍 `v2.5.7-xxx`
-	parts := strings.Split(s, ".")
-	key := make([]int, 0, len(parts))
-	for _, p := range parts {
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return nil
-		}
-		key = append(key, n)
-	}
-	return key
-}
-
-// devDocsCompareVersion —— 逐段比大小（缺段按 0 补：`2.6` 比 `2.5.11` 大，与 semver 口径同）。
-func devDocsCompareVersion(a, b []int) int {
-	n := len(a)
-	if len(b) > n {
-		n = len(b)
-	}
-	for i := 0; i < n; i++ {
-		ai, bi := 0, 0
-		if i < len(a) {
-			ai = a[i]
-		}
-		if i < len(b) {
-			bi = b[i]
-		}
-		if ai != bi {
-			return ai - bi
-		}
-	}
-	return 0
-}
-
-// devDocsCountMD —— 目录下**非递归**的 `*.md` 篇数（隐藏件不计 · 与 `AGENTS.md:52` 的「篇」同口径）。
-func devDocsCountMD(dir string) int {
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		return 0
-	}
-	n := 0
-	for _, e := range ents {
-		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		if strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
-			n++
-		}
-	}
-	return n
 }
