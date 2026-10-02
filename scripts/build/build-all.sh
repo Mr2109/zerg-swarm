@@ -16,8 +16,9 @@
 #   bash scripts/build/build-all.sh --only-compat              # 只出兼容层 bin/zerg-compat（回滚前置校验用）
 #   bash scripts/build/build-all.sh --only-agentd              # 只出子端 bin/zerg-agentd（**子端换件专用**）
 #   （--dist 以外的形态会另编茧壁 zerg-wall → bin/，见 scripts/build/build-wall.sh；它不进 dist 制品矩阵）
-#   ★ 2026-10-03（GAP-20261003-10）：本档另出**跨架构三件**（bin/zerg-agent-darwin-amd64 ·
-#     bin/zerg-agent-linux-amd64 · bin/zerg-agentd-linux-amd64），与其余件同一对签名函数产出。
+#   ★ 2026-10-03（GAP-20261003-10）：本档另出**跨架构两件**（bin/zerg-agentd-linux-amd64 ·
+#     bin/zerg-agentd-darwin-amd64 · 组件 agentd）。盘上另两枚旧件（bin/zerg-agent-darwin-amd64 ·
+#     bin/zerg-agent-linux-amd64，主包 = 旧模块名 zerg/agent/cmd/zerg-agent）无可重现来源 ⇒ GAP-20261003-11。
 #    ★ **--dist 的边界**（2026-09-21 · G4「打包不得换件」）：本档只写 `$OUT`（= dist/<版本>），
 #      bin/ 里那三件只落 bin/ 的件（`zerg-agentd` · `cocoon-docs-service` · `zerg-wall`）**一个都不产**，
 #      签名环节也**不碰 bin/**。三条实据（为什么不是偏好）：
@@ -215,9 +216,8 @@ sign_one() {  # sign_one <文件> —— 单件重签；identifier 按既有固�
     # 跨架构件（GAP-20261003-10）：名字按制品契约四段 `zerg-<组件>-<os>-<arch>`
     # （真源 core/internal/selfupdate/build.go:96 ArtifactName），但 identifier 必须与
     # **同组件本机件**一致 —— 同一组件两枚二进制不许两套身份。
-    zerg-agent-darwin-amd64)  ZID=com.zerg.agent ;;
-    zerg-agent-linux-amd64)   ZID=com.zerg.agent ;;
     zerg-agentd-linux-amd64)  ZID=com.zerg.agentd ;;
+    zerg-agentd-darwin-amd64) ZID=com.zerg.agentd ;;
     zerg-ui)     ZID=com.zerg.ui ;;
     zerg-wall)   ZID=com.zerg.wall ;;
     *)           ZID="com.zerg.$(basename "$b")" ;;
@@ -420,30 +420,32 @@ echo "→ 守护进程 zerg-agentd（agent 模块，注入 agent 自己的 versi
 (cd agent && GOFLAGS=-mod=mod GOSUMDB=off go build -trimpath -buildvcs=false -tags "$GOTAGS" \
    -ldflags "-s -w -X github.com/Mr2109/zerg-swarm/agent/internal/version.Version=${VERSION} -X github.com/Mr2109/zerg-swarm/agent/internal/version.Commit=${SHA} -X github.com/Mr2109/zerg-swarm/agent/internal/version.BuildTime=${BUILD_TIME}" \
    -o "${REPO_ROOT}/bin/zerg-agentd" ./cmd/zerg-agentd)
-# ── 跨架构三件（2026-10-03 · GAP-20261003-10）：供 linux 工作机 / 容器模式 ────────────────────
+# ── 跨架构两件（2026-10-03 · GAP-20261003-10 修 / GAP-20261003-11）：组件 agentd 的跨平台件 ──────
+# 组件 agentd = `agent/cmd/zerg-agentd`（子端服务：-host/-controller/-registry · HTTP :8100）。
+#   ★ **不是** `core/cmd/zerg-agent` —— 那是命令面 CLI（-task/-model/-workdir），另一件东西；
+#     两件的历史名撞族（都叫过 zerg-agent*）正是本账的一部分（见 GAP-20261003-11）。
 # 为什么可以随**本档**（非 --dist）一起产：文件头「--dist 的边界」第①条实据是「就地覆盖**正在跑**的件」，
-#   而这三件**本机跑不起来**（两枚 linux ELF + 一枚 macOS x86_64，本机 arm64）⇒ 不是运行件 ⇒ 那条不适用。
+#   而这两件**不是本机在跑的件**（linux ELF 本机跑不起来；darwin/x86_64 在 arm64 上虽可经 Rosetta 2
+#   运行，但不是 launchd 托管的在跑件）⇒ 那条不适用。
 # 为什么名字是四段：真源 core/internal/selfupdate/build.go:96 `ArtifactName(c,plat)="zerg-"+c+"-"+plat`。
-#   ★ 名字策略：**本机部署件（在跑的）用三段短名**（zerg-core/zerg-agent/zerg-agentd …）·
+#   ★ 名字策略：**本机部署件（在跑的）用三段短名**（zerg-agent/zerg-agentd …）·
 #     **跨架构 / 可分发件用四段契约名** —— 两条并存，别把在跑的那枚改成四段。
-# ★ 为什么**不产 darwin/amd64**（`zerg-agent-darwin-amd64`）：现依赖下编不出 ——
-#   `github.com/yalue/onnxruntime_go` 的 build constraints 不含 darwin/amd64（实测 rc=1：
-#   "build constraints exclude all Go files"）⇒ 该档技术上不可得（GAP-20261003-11 存证）。
-# ★ 两个组件在**不同模块根**、身份包路径也不同（core 用 core/internal/version · agent 用
-#   agent/internal/version）⇒ 不写统一循环，显式三条（照 scripts/sandbox/test-fleet-sandbox.sh:685
-#   那条交叉编译旗标组合写，它已被沙箱 9b 真跑验过）。
-AGENT_CORE_LDFLAGS="-s -w -X github.com/Mr2109/zerg-swarm/core/internal/version.Commit=${SHA}"
+# 为什么照 scripts/sandbox/test-fleet-sandbox.sh:685 那条写：交叉编译旗标组合（GOOS/GOARCH/
+#   CGO_ENABLED=0/GOTOOLCHAIN=local）在那里已被真跑验过（沙箱 9b 演练），不另创一份。
+# ★ 盘上另两枚旧件（bin/zerg-agent-darwin-amd64 · bin/zerg-agent-linux-amd64）：`go version -m`
+#   实读主包路径 = **zerg/agent/cmd/zerg-agent**（旧模块名 + 改名前的 cmd）⇒ 现树上无可重现来源
+#   ⇒ 由 GAP-20261003-11 处置，**不在本支产出**、也不该被当成「跨架构两件」。
 AGENT_SUB_LDFLAGS="-s -w -X github.com/Mr2109/zerg-swarm/agent/internal/version.Version=${VERSION} \
                   -X github.com/Mr2109/zerg-swarm/agent/internal/version.Commit=${SHA} \
                   -X github.com/Mr2109/zerg-swarm/agent/internal/version.BuildTime=${BUILD_TIME}"
-echo "→ 跨架构件 zerg-agent-linux-amd64（linux/amd64 · 同一组件）"
-(cd core && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-mod=mod GOSUMDB=off GOTOOLCHAIN=local \
-   go build -trimpath -buildvcs=false -tags "${GOTAGS}" -ldflags "${AGENT_CORE_LDFLAGS}" \
-   -o "${REPO_ROOT}/bin/zerg-agent-linux-amd64" ./cmd/zerg-agent)
-echo "→ 跨架构件 zerg-agentd-linux-amd64（linux/amd64 · 组件 agentd = agent/cmd/zerg-agentd）"
+echo "→ 跨架构件 zerg-agentd-linux-amd64（linux/amd64）"
 (cd agent && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-mod=mod GOSUMDB=off GOTOOLCHAIN=local \
    go build -trimpath -buildvcs=false -tags "${GOTAGS}" -ldflags "${AGENT_SUB_LDFLAGS}" \
    -o "${REPO_ROOT}/bin/zerg-agentd-linux-amd64" ./cmd/zerg-agentd)
+echo "→ 跨架构件 zerg-agentd-darwin-amd64（darwin/amd64 · 实测可编、Rosetta 2 可跑）"
+(cd agent && GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 GOFLAGS=-mod=mod GOSUMDB=off GOTOOLCHAIN=local \
+   go build -trimpath -buildvcs=false -tags "${GOTAGS}" -ldflags "${AGENT_SUB_LDFLAGS}" \
+   -o "${REPO_ROOT}/bin/zerg-agentd-darwin-amd64" ./cmd/zerg-agentd)
 
 # 文档虫茧的自带 Go 服务（`cocoon-docs-service`）——**独立仓** `zerg-cocoon/文档/service`。
 # 为什么由宿主构建链产出：茧侧 `DocsService::default_bin()` 按「**与宿主可执行文件同目录**」
@@ -496,7 +498,7 @@ if [ "$SIGN" = "1" ] && command -v codesign >/dev/null 2>&1; then
     # ★ 跨架构三件（GAP-20261003-10）与其余件**走同一对函数**（resolve_sign_identity + sign_one）
     #   —— 不另写一份签名代码。件不在场时 sign_one 自带 [ -f ] 守卫。
     SIGN_LIST+=("$REPO_ROOT"/bin/zerg-agentd "$REPO_ROOT"/bin/cocoon-docs-service "${REPO_ROOT}"/bin/zerg-wall \
-      "$REPO_ROOT"/bin/zerg-agent-darwin-amd64 "$REPO_ROOT"/bin/zerg-agent-linux-amd64 "$REPO_ROOT"/bin/zerg-agentd-linux-amd64)
+      "$REPO_ROOT"/bin/zerg-agentd-linux-amd64 "$REPO_ROOT"/bin/zerg-agentd-darwin-amd64)
   fi
   for b in "${SIGN_LIST[@]}"; do
     sign_one "$b"
