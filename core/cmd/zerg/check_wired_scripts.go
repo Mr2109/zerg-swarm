@@ -1281,10 +1281,10 @@ var cwsGates = []cwsGateT{
 	{"publish/mirror-public-lib.py", "release", "发布闸·镜像器库（跑 checker 的那半边）", "被 publish/mirror-public.sh / publish/parity-compare.py 调用（check-history-secrets.py / check-public-tree-private.py 的调用方）"},
 	{"publish/ci/ci.yml", "release", "发布闸·CI（公开仓推后闸）", "GitHub Actions：run: python3 scripts/... （check_version / check-gotoolchain / check-compat-manifest / check_docs / check-shell-unicode-vars）"},
 	{"publish/ci/release-agent.yml", "release", "发布闸·CI（Release 重切）", "GitHub Actions：python3 scripts/gates/check_version.py · scripts/evals/make-manifest.py"},
+	{"publish/mirror-acceptance.sh", "release", "发布闸·验收套件（推送前置）", "SKIP_BUILD=1 bash publish/mirror-acceptance.sh（`publish/mirror-public.sh` PUSH=1 与 `publish/mirror-cn.sh` 推送段前各一行；rc=1 拦截 · `GAP-20260927-138`）"},
 }
 
 var cwsNotGates = []cwsNotGateT{
-	{"publish/mirror-acceptance.sh", "B1 发布器验收套件（逐条能失败，属测试面）"},
 	{"scripts/build/publish-public.sh", "压平快照发布器 · 已弃用（Q5 待废弃；现役为 mirror-public.sh）"},
 	{"scripts/build/test-publish-parity.sh", "两器一致性测试（测试面）"},
 }

@@ -155,6 +155,10 @@ def docs_allowlist():
                     "source_mode": "-", "error": "发布侧谓词读不出（无 %s）" % fn}
     entries = hsec.load_whitelist(WHITELIST)
     excludes = hsec.load_excludes(PUBLISH_SH)
+    if not excludes:
+        return {"prefixes": FORMAL_FACE_PREFIXES, "exact": set(), "prov": {},
+                "source_mode": "-",
+                "error": "EXCLUDES 真源解析失配 / 0 条活跃（EXCLUDES=( … ) 块读不出或缺件）⇒ 不给结论 · GAP-20260927-192"}
     drop_exact = set(getattr(mlib, "DROP_EXACT", ()))
     drop_prefix = tuple(getattr(mlib, "DROP_PREFIX", ()))
     rels, mode = _published_sources()
@@ -324,7 +328,22 @@ def _self_test_body(base):
         rc3, out3 = _run(empty, all_rules)
         check("⑨ 空转（树内无 docs/）⇒ rc=2 不给结论", rc3 == 2, "rc=%d\n%s" % (rc3, out3[-400:]))
 
-    print("自检：%d 过 / %d 红（%d 条用例 = 1 判据面 + 1 清洁 + 2×%d 规则 + %d 正向断言）"
+    # ⑩ EXCLUDES 失配守卫（`GAP-20260927-192`）：真源在盘但解析不出活跃条目 ⇒ `docs_allowlist` 必须报 error
+    #    （成对：正控 = 真源正常时 ⑤ 已证 `exact ≥ 1` 且 error 空）
+    global PUBLISH_SH
+    _real_psh = PUBLISH_SH
+    _bad_psh = os.path.join(base, "publish-sh-broken.sh")
+    with open(_bad_psh, "w", encoding="utf-8") as _f:
+        _f.write("# 没有 EXCLUDES=( … ) 块\nEXCLUDES_OK=1\n")
+    try:
+        PUBLISH_SH = _bad_psh
+        _a2 = docs_allowlist()
+    finally:
+        PUBLISH_SH = _real_psh
+    check("⑩ EXCLUDES 真源解析失配（无 EXCLUDES 块）⇒ docs_allowlist 报 error ⇒ 调用方 rc=2",
+          bool(_a2["error"]), "error=%r" % _a2["error"])
+
+    print("自检：%d 过 / %d 红（%d 条用例 = 1 判据面 + 1 清洁 + 2×%d 规则 + %d 正向断言 + 1 EXCLUDES 守卫）"
           % (n_ok, n_bad, n_ok + n_bad, len(rules), 1 + (4 if ok5 else 0)))
     return 0 if n_bad == 0 else 1
 
