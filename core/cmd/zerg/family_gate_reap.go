@@ -68,6 +68,19 @@ type gateReapStat struct {
 	etime string
 }
 
+// gateReapIsGateCmd —— 命令行**是否真在跑**门脚本（而不只是提到过那个字串）。
+// ★ 缺口 `GAP-20261002-21`：原判据 `strings.Contains(cmd, gateReapScriptTag)` 把**任何**命令行里含该子串的进程都当门 —— 于是「调用它的那层壳」（argv 里就带着脚本路径，如 `bash -c 'echo "precommit-gates.sh" …'`）也被误认成门 ⇒ 真门跑的子进程被沿 ppid 判成**非根**。
+// 改判：命令行里必须有一个**空白切分后的词**逐字等于 `precommit-gates.sh`，或以 `/precommit-gates.sh` 结尾（即 `bash <path>/precommit-gates.sh …` / `<path>/precommit-gates.sh …` 这类**执行**形态）。带引号的引用（如 `"precommit-gates.sh"`）或子串命中（如 `xprecommit-gates.sh`）一律不算门。
+// ★ 不删也不弱化 `gateReapScriptTag` —— 仍是唯一真源常量，只是把「子串」收紧成「词」。★ 但**仅此一处收紧不足以**治本（见 `GAP-20261002-21`：真门跑时调用壳的 argv 本就带裸词脚本路径）⇒ 与 `family_gate_progress.go` 的多趟发现改动**同批**。
+func gateReapIsGateCmd(fields []string) bool {
+	for _, w := range fields {
+		if w == gateReapScriptTag || strings.HasSuffix(w, "/"+gateReapScriptTag) {
+			return true
+		}
+	}
+	return false
+}
+
 // gateReapScan —— 读进程表（`ps -Ao pid=,ppid=,pcpu=,etime=,command=`），只挑门进程。
 // 取不到 ⇒ 第二个返回值为假（调用方判「读不到不当没有」⇒ 不给结论）。
 func gateReapScan() (map[int]gateProc, bool) {
@@ -88,7 +101,7 @@ func gateReapScan() (map[int]gateProc, bool) {
 		}
 		cpu, _ := strconv.ParseFloat(f[2], 64)
 		cmd := strings.TrimSpace(ln[strings.Index(ln, f[4]):])
-		if !strings.Contains(cmd, gateReapScriptTag) {
+		if !gateReapIsGateCmd(f[4:]) {
 			continue
 		}
 		gp := gateProc{pid: pid, ppid: ppid, pcpu: cpu, etime: f[3], cmd: cmd}
