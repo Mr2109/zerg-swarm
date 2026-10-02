@@ -177,7 +177,7 @@ func TestCheckNewfileRegistryGatePort(t *testing.T) {
 
 	// ── 清单 / 自检 / 帮助 / 用法错 ─────────────────────────────────────
 	rcST, outST, _ := gnrRunT(t, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "自检结论: 全过（断言 8 条 · 失败 0）") {
+	if rcST != 0 || !strings.Contains(outST, "自检结论: 全过（断言 25 条 · 失败 0）") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%s", rcST, outST)
 	}
 	rcH, outH, _ := gnrRunT(t, "-h")
@@ -220,30 +220,59 @@ func TestCheckNewfileRegistryMachineFace(t *testing.T) {
 		t.Fatalf("--json 失败：输出不是合法 JSON：%v\nout=%s", err, out)
 	}
 	for _, k := range []string{"schema", "tool", "gate", "repo", "selector", "strict", "rc",
-		"expected_faces", "reported_faces", "face_states", "counts", "all_green", "verdict", "faces", "self"} {
+		"expected_faces", "reported_faces", "face_states", "face_records", "counts",
+		"host_required_faces", "host_required_count", "missing_faces", "missing_count",
+		"fully_exercised", "all_green", "verdict", "faces", "self"} {
 		if _, ok := obj[k]; !ok {
 			t.Fatalf("--json 失败：缺顶层键 %q", k)
 		}
 	}
-	if ef, _ := obj["expected_faces"].([]interface{}); len(ef) != 8 {
-		t.Fatalf("--json 失败：expected_faces 应 8 面，得 %v", obj["expected_faces"])
+	if ef, _ := obj["expected_faces"].([]interface{}); len(ef) != 9 {
+		t.Fatalf("--json 失败：expected_faces 应 9 面，得 %v", obj["expected_faces"])
 	}
 	fs, _ := obj["face_states"].(map[string]interface{})
-	if len(fs) != 8 {
-		t.Fatalf("--json 失败：face_states 应 8 键，得 %v", fs)
+	if len(fs) != 9 {
+		t.Fatalf("--json 失败：face_states 应 9 键，得 %v", fs)
 	}
 	cnt, _ := obj["counts"].(map[string]interface{})
-	for _, s := range []string{"PASS", "FAIL", "BLOCKED", "REPORT", "UNKNOWN"} {
+	for _, s := range []string{"PASS", "FAIL", "BLOCKED", "REPORT", "UNKNOWN", "HOST-REQUIRED"} {
 		if _, ok := cnt[s]; !ok {
-			t.Fatalf("--json 失败：counts 缺五态键 %q（得 %v）", s, cnt)
+			t.Fatalf("--json 失败：counts 缺六态键 %q（得 %v）", s, cnt)
 		}
+	}
+	// ★ 面⑧ host-bound：单列 HOST-REQUIRED · 不计 pass/fail · 暴露计数
+	fr, _ := obj["face_records"].(map[string]interface{})
+	if fr == nil || len(fr) != 9 {
+		t.Fatalf("--json 失败：face_records 应 9 面，得 %v", fr)
+	}
+	r8, _ := fr["⑧家目录批准件"].(map[string]interface{})
+	if r8 == nil || r8["state"] != "HOST-REQUIRED" || r8["reason_code"] != "SKIPPED-HOST-BOUND" || r8["decided"] != false {
+		t.Fatalf("--json 失败：面⑧ 记录应 HOST-REQUIRED/SKIPPED-HOST-BOUND/decided=false，得 %v", r8)
+	}
+	if hf, _ := obj["host_required_faces"].([]interface{}); len(hf) != 1 || hf[0] != "⑧家目录批准件" {
+		t.Fatalf("--json 失败：host_required_faces 应 [⑧家目录批准件]，得 %v", obj["host_required_faces"])
+	}
+	if obj["host_required_count"] != float64(1) {
+		t.Fatalf("--json 失败：host_required_count 应 1，得 %v", obj["host_required_count"])
+	}
+	if mf, _ := obj["missing_faces"].([]interface{}); len(mf) != 0 {
+		t.Fatalf("--json 失败：missing_faces 应空，得 %v", obj["missing_faces"])
+	}
+	if obj["missing_count"] != float64(0) {
+		t.Fatalf("--json 失败：missing_count 应 0，得 %v", obj["missing_count"])
+	}
+	// ★ fully_exercised = (missing==0 且 host_bound==0)；有 host-bound 面 ⇒ false
+	if obj["fully_exercised"] != false {
+		t.Fatalf("--json 失败：有 host-bound 面 ⇒ fully_exercised 应 false，得 %v", obj["fully_exercised"])
 	}
 	if obj["all_green"] != true {
 		t.Fatalf("--json 失败：全绿夹具应 all_green=true，得 %v", obj["all_green"])
 	}
 	// ★ 键序（输出行序的决定者 = 插入序，非 map 迭代）：钉顶层与 face_states 的插入序。
-	// 用 `"k":` 形态（带冒号）以区分「键」与 selector/数组里的同名字符串值。
-	order := []string{`"expected_faces":`, `"reported_faces":`, `"face_states":`, `"counts":`, `"all_green":`, `"verdict":`, `"faces":`, `"self":`}
+	// 用 `\"k\":` 形态（带冒号）以区分「键」与 selector/数组里的同名字符串值。
+	order := []string{`"expected_faces":`, `"reported_faces":`, `"face_states":`, `"face_records":`,
+		`"counts":`, `"host_required_faces":`, `"host_required_count":`, `"missing_faces":`,
+		`"missing_count":`, `"fully_exercised":`, `"all_green":`, `"verdict":`, `"faces":`, `"self":`}
 	last := -1
 	for _, k := range order {
 		i := strings.Index(out, k)
@@ -252,7 +281,8 @@ func TestCheckNewfileRegistryMachineFace(t *testing.T) {
 		}
 		last = i
 	}
-	fsOrder := []string{`"①公开标记表":`, `"②干跑登记":`, `"③门①两张真源":`, `"④脚本台账":`, `"⑤两器排除表":`, `"⑥失败文案面":`, `"口径差栏":`, `"自指":`}
+	fsOrder := []string{`"①公开标记表":`, `"②干跑登记":`, `"③门①两张真源":`, `"④脚本台账":`,
+		`"⑤两器排除表":`, `"⑥失败文案面":`, `"⑧家目录批准件":`, `"口径差栏":`, `"自指":`}
 	last = -1
 	for _, k := range fsOrder {
 		i := strings.Index(out, k)
@@ -324,6 +354,217 @@ func TestCheckNewfileRegistryMachineFace(t *testing.T) {
 	rcOK, _, errOK := gnrRunT(t, append(append([]string{}, base...), "--json", "faces,self")...)
 	if rcOK != 0 || errOK != "" {
 		t.Fatalf("成对失败：合法 --json 组合被误杀 rc=%d err=%q", rcOK, errOK)
+	}
+}
+
+// gnrMkGitFixture —— 造一棵**真 git 夹具**（含被跟踪件 scripts/a.sh 并提交）· 仓外 t.TempDir。
+func gnrMkGitFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scripts", "a.sh"), []byte("#!/usr/bin/env bash\necho a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com")
+	for _, a := range [][]string{{"init", "-q"}, {"add", "-A"}, {"commit", "-q", "-m", "init"}} {
+		cmd := exec.Command("git", append([]string{"-C", root}, a...)...)
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v 失败：%v\n%s", a, err, out)
+		}
+	}
+	return root
+}
+
+// TestCheckNewfileRegistryCheckMissing —— ③ 查缺档（三合并式 · 隔离工作树）
+// ＋ ④ 缺面合成 UNKNOWN 退码 2（直接单测聚合器 · 注入一枚不存在的面）。
+// ✗ 禁恒绿：每一格都配了成对负控（干净 ⟷ 红 ⟷ 判不了 三态各成对）。
+func TestCheckNewfileRegistryCheckMissing(t *testing.T) {
+	root := gnrMkGitFixture(t)
+
+	// ── ③① 干净工作树 ⇒ rc=0（三合并式逐条 0 件）─────────────────────────
+	rc0, out0, err0 := gnrRunT(t, "--check-missing", "--repo", root)
+	if rc0 != 0 || err0 != "" {
+		t.Fatalf("查缺档干净档失败：应 rc=0/stderr 空，得 rc=%d err=%q out=%s", rc0, err0, out0)
+	}
+	for _, want := range []string{"门76 查缺档（三合并式 · 只读 · 隔离工作树）",
+		"三合并式：① tracked 改动 0 · ② untracked 0 · ③ ignored 0", "三合并式逐条 0 件", "工作树已清 是"} {
+		if !strings.Contains(out0, want) {
+			t.Fatalf("查缺档干净档缺 %q\nout=%s", want, out0)
+		}
+	}
+
+	// ── ③② 未跟踪新件（不 git add）⇒ 红 rc=1（git diff 看不见它 ⇒ ② 那条腿补洞）──
+	if err := os.WriteFile(filepath.Join(root, "scripts", "new-probe.sh"), []byte("#!/usr/bin/env bash\necho new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rcU, outU, _ := gnrRunT(t, "--check-missing", "--repo", root)
+	if rcU != 1 || !strings.Contains(outU, "② untracked 1") ||
+		!strings.Contains(outU, "✗ untracked scripts/new-probe.sh") || !strings.Contains(outU, "⇒ **红**") {
+		t.Fatalf("查缺档未跟踪档失败：应 rc=1 且点名 untracked，得 rc=%d out=%s", rcU, outU)
+	}
+	if outU == out0 {
+		t.Fatalf("成对断言失败：干净档与红档正文逐字相同 ⇒ 判据无鉴别力")
+	}
+	if drc, dout, _ := gnrGit(root, "diff", "--name-only", "--exit-code", "HEAD", "--", "scripts"); drc != 0 || len(dout) != 0 {
+		t.Fatalf("① git diff 单用竟看见 untracked（洞没被 ② 补）：rc=%d out=%v", drc, dout)
+	}
+	os.Remove(filepath.Join(root, "scripts", "new-probe.sh"))
+
+	// ── ③③ .gitignore 命中 ⇒ 红（ignored 捕获）· 绝不 rc=0 ────────────────
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("scripts/ignored/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "scripts", "ignored"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scripts", "ignored", "x.sh"), []byte("#!/usr/bin/env bash\necho x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rcI, outI, _ := gnrRunT(t, "--check-missing", "--repo", root)
+	if rcI != 1 || !strings.Contains(outI, "③ ignored 1") {
+		t.Fatalf("查缺档 ignored 档失败：应 rc=1 且 ignored 1，得 rc=%d out=%s", rcI, outI)
+	}
+	os.RemoveAll(filepath.Join(root, "scripts", "ignored"))
+	os.Remove(filepath.Join(root, ".gitignore"))
+
+	// ── ③④ 零执行探针（空件集）⇒ rc=2 · 非绿 ────────────────────────────
+	rcE, outE, _ := gnrRunT(t, "--check-missing", "--repo", root, "--paths", "scripts-nonexistent")
+	if rcE != 2 || !strings.Contains(outE, "零执行探针") {
+		t.Fatalf("查缺档空件集档失败：应 rc=2，得 rc=%d out=%s", rcE, outE)
+	}
+	if rcE == rc0 {
+		t.Fatalf("成对断言失败：空件集 rc=2 与干净 rc=0 同码 ⇒ no_data 无牙")
+	}
+
+	// ── ③⑤ 非 git 工作树 ⇒ 不适用 rc=0 ─────────────────────────────────
+	rcN, outN, _ := gnrRunT(t, "--check-missing", "--repo", t.TempDir())
+	if rcN != 0 || !strings.Contains(outN, "三合并式**不适用**（非 git 工作树）") {
+		t.Fatalf("查缺档非 git 档失败：应 rc=0 且不适用，得 rc=%d out=%s", rcN, outN)
+	}
+
+	// ── ③⑥ 真源不可读（.git 破损）⇒ rc=2 ───────────────────────────────
+	broken := t.TempDir()
+	if err := os.WriteFile(filepath.Join(broken, ".git"), []byte("gitdir: /nonexistent-gnr\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rcX, outX, _ := gnrRunT(t, "--check-missing", "--repo", broken)
+	if rcX != 2 || !strings.Contains(outX, "真源不可读") {
+		t.Fatalf("查缺档真源不可读档失败：应 rc=2，得 rc=%d out=%s", rcX, outX)
+	}
+
+	// ── ③⑦ 隔离 + 生成前清空输出目录（--outdir · 报告件字节与 JSON 键）──────
+	outd := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outd, "旧件残留.txt"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rcO, outO, _ := gnrRunT(t, "--check-missing", "--repo", root, "--outdir", outd)
+	if rcO != 0 {
+		t.Fatalf("查缺档 --outdir 失败：应 rc=0，得 rc=%d out=%s", rcO, outO)
+	}
+	if _, err := os.Stat(filepath.Join(outd, "旧件残留.txt")); !os.IsNotExist(err) {
+		t.Fatalf("生成前未清空输出目录：旧件残留.txt 仍在（err=%v）", err)
+	}
+	for _, f := range []string{"查缺档.json", "查缺档.tsv"} {
+		if _, err := os.Stat(filepath.Join(outd, f)); err != nil {
+			t.Fatalf("查缺档 --outdir 未生成 %s：%v", f, err)
+		}
+	}
+	// 写盘件 JSON 是 sort_keys=True ⇒ 顶层键按码位升序（appl… 在 file… 前）
+	if raw, err := os.ReadFile(filepath.Join(outd, "查缺档.json")); err == nil {
+		s := string(raw)
+		if strings.Index(s, `"applicable":`) > strings.Index(s, `"file_set_size":`) {
+			t.Fatalf("写盘件未按 sort_keys=True 排序：applicable 应在 file_set_size 之前\n%s", s)
+		}
+	}
+	// worktree 退出必清：git worktree list 仅 1 条（主树）
+	if lrc, lout, _ := gnrGit(root, "worktree", "list"); lrc != 0 || len(lout) != 1 {
+		t.Fatalf("worktree 未清干净：rc=%d list=%v", lrc, lout)
+	}
+
+	// ── ③⑧ --json chk（机器面）＋ 用法错（逐字）─────────────────────────
+	rcJ, outJ, errJ := gnrRunT(t, "--check-missing", "--repo", root, "--json", "chk")
+	if rcJ != 0 || errJ != "" {
+		t.Fatalf("查缺档 --json chk 失败：应 rc=0/stderr 空，得 rc=%d err=%q", rcJ, errJ)
+	}
+	var cobj map[string]interface{}
+	if err := json.Unmarshal([]byte(outJ), &cobj); err != nil {
+		t.Fatalf("查缺档 --json chk 不是合法 JSON：%v\nout=%s", err, outJ)
+	}
+	for _, k := range []string{"schema", "tool", "gate", "repo", "paths", "rc", "applicable", "red",
+		"no_data", "unreadable", "reason", "tracked_modified", "untracked", "ignored",
+		"file_set_size", "head_tracked_count", "worktree", "worktree_cleaned", "outdir"} {
+		if _, ok := cobj[k]; !ok {
+			t.Fatalf("查缺档 --json 缺顶层键 %q", k)
+		}
+	}
+	if cobj["applicable"] != true || cobj["red"] != false || cobj["no_data"] != false || cobj["unreadable"] != false {
+		t.Fatalf("查缺档 --json 干净档四标志应 true/false/false/false，得 %v/%v/%v/%v",
+			cobj["applicable"], cobj["red"], cobj["no_data"], cobj["unreadable"])
+	}
+	// 用法错：断面只认 chk
+	rcJB, _, errJB := gnrRunT(t, "--check-missing", "--repo", root, "--json", "bogus")
+	if rcJB != 2 || !strings.Contains(errJB, "只认断面 chk；不认：bogus") {
+		t.Fatalf("查缺档 --json bogus 失败：得 rc=%d err=%q", rcJB, errJB)
+	}
+	// 用法错：--outdir 只跟 --check-missing
+	rcOD, _, errOD := gnrRunT(t, "--repo", root, "--outdir", t.TempDir())
+	if rcOD != 2 || !strings.Contains(errOD, "`--outdir` 只跟 `--check-missing` 连用") {
+		t.Fatalf("--outdir 单独失败：得 rc=%d err=%q", rcOD, errOD)
+	}
+	// 用法错：--check-missing 不与 --dump-baseline 同用
+	rcCD, _, errCD := gnrRunT(t, "--check-missing", "--repo", root, "--dump-baseline", filepath.Join(t.TempDir(), "b.tsv"))
+	if rcCD != 2 || !strings.Contains(errCD, "`--check-missing` 不与 `--dump-baseline` 同用") {
+		t.Fatalf("--check-missing 与 dump 同用失败：得 rc=%d err=%q", rcCD, errCD)
+	}
+	// 缺值：--paths / --outdir
+	if _, _, errP := gnrRunT(t, "--check-missing", "--paths"); !strings.Contains(errP, "argument --paths: expected one argument") {
+		t.Fatalf("--paths 缺值失败：err=%q", errP)
+	}
+	if _, _, errO := gnrRunT(t, "--check-missing", "--outdir"); !strings.Contains(errO, "argument --outdir: expected one argument") {
+		t.Fatalf("--outdir 缺值失败：err=%q", errO)
+	}
+
+	// ── ④ 缺面合成 UNKNOWN · 退码钉 2（直接单测聚合器 · 注入一枚不存在的面）──
+	fx := gnrMkFixture(t, map[string]bool{"①": true, "②": true, "③": true, "⑤": true})
+	gnrWriteInv(t, fx, "件\n"+gnrProbeRel+"\n")
+	resA := gnrAudit(fx, []string{gnrProbeRel}, true, "inv.tsv", true, "")
+	recs := gnrFaceRecords(resA, nil, nil)
+	r8 := gnrRecValue(recs, "⑧家目录批准件")
+	if s := gnrJRecField(r8, "state"); s != "HOST-REQUIRED" {
+		t.Fatalf("面⑧ state 应 HOST-REQUIRED，得 %q", s)
+	}
+	if s := gnrJRecField(r8, "reason_code"); s != "SKIPPED-HOST-BOUND" {
+		t.Fatalf("面⑧ reason_code 应 SKIPPED-HOST-BOUND，得 %q", s)
+	}
+	if gnrJRecBool(r8, "decided") {
+		t.Fatalf("面⑧ decided 应 false（既不当绿也不当红）")
+	}
+	// 注入缺面 ⇒ MISSING_FACE 合成 · 退码钉 2
+	bogusFace := "⑨合成缺面"
+	facesB := append(gnrExpectedFaces(), bogusFace)
+	recsB := gnrFaceRecords(resA, nil, facesB)
+	rb := gnrRecValue(recsB, bogusFace)
+	if s := gnrJRecField(rb, "state"); s != "UNKNOWN" {
+		t.Fatalf("缺面 state 应 UNKNOWN，得 %q", s)
+	}
+	if s := gnrJRecField(rb, "reason_code"); s != "MISSING_FACE" {
+		t.Fatalf("缺面 reason_code 应 MISSING_FACE，得 %q", s)
+	}
+	if gnrJRecBool(rb, "decided") {
+		t.Fatalf("缺面 decided 应 false")
+	}
+	if mf := gnrMissingFaces(resA, facesB); len(mf) != 1 || mf[0] != bogusFace {
+		t.Fatalf("missing_faces 应 [%s]，得 %v", bogusFace, mf)
+	}
+	if rcM, _, _ := gnrVerdict(resA, true, facesB); rcM != 2 {
+		t.Fatalf("缺面注入 ⇒ 退码应钉 2，得 rc=%d", rcM)
+	}
+	if rcOK, _, _ := gnrVerdict(resA, true, nil); rcOK != 0 {
+		t.Fatalf("正控·无缺面 ⇒ 不应因聚合器变 rc，得 rc=%d", rcOK)
 	}
 }
 
@@ -604,17 +845,17 @@ func gnrTRunPyHelp(t *testing.T, pyExe, pyFile string, args ...string) (int, str
 }
 
 // gnrHelpGoSha256 = sha256(gnrHelp) —— Go 现行帮助面正文（COLUMNS=80 · 见 gnrHelpBytes）。
-const gnrHelpGoSha256 = "1c5b2a6111ca7d2879b2e766771e2fad0f4e5601251aad022ba54390bec1e5fb"
+const gnrHelpGoSha256 = "737ac383eb2aeec0612d621aa4bb9e84d880604e162767a4e90c3bb76fb3715e"
 
 // gnrHelpPySha256 = 同一正文 —— py 原件 `COLUMNS=80 /usr/bin/python3 <py 件> -h` 的 stdout 全串。
 // ★ 机械拦阻的核心：两者不等即红（py 正文一改 / Go 副本一改，都当场点名）。
 // 重生成正门（现读打印两值 · 不落任何件）：
 //
 //	GNR_REGEN_HELP_SHA=1 go test ./cmd/zerg -run '^TestGnrHelpParityWithPy$' -v
-const gnrHelpPySha256 = "1c5b2a6111ca7d2879b2e766771e2fad0f4e5601251aad022ba54390bec1e5fb"
+const gnrHelpPySha256 = "737ac383eb2aeec0612d621aa4bb9e84d880604e162767a4e90c3bb76fb3715e"
 
-// gnrHelpBytes —— 帮助面正文字节数（1555 · 与 COLUMNS=80 的 py 现跑一致）。
-const gnrHelpBytes = 1555
+// gnrHelpBytes —— 帮助面正文字节数（2103 · 与 COLUMNS=80 的 py 现跑一致）。
+const gnrHelpBytes = 2103
 
 // TestGnrHelpParityWithPy —— ④ 机械拦阻：Go 的 help 输出 == py 的 --help 输出（stdout+stderr+rc 三面）。
 //
