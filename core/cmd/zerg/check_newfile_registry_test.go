@@ -10,9 +10,15 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -363,5 +369,325 @@ func TestGnrRefParity(t *testing.T) {
 		if c.RC != "" && strconv.Itoa(rc) != c.RC {
 			t.Errorf("[%s] 退码与 py 不一致：go=%d py=%s", c.Name, rc, c.RC)
 		}
+	}
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ③ 根定位（与 py `__file__` 同语义 · 与 cwd 无关）＋ ④ help 跨语言逐字对拍机械拦阻
+//    —— 对应主件件头 (a) 与未覆盖面①②。✗ 禁恒绿：以下每一格都配了成对负控。
+//
+// 退路声明（④ · 取舍照实写）：主路 = **运行时逐字对拍**（现跑 `/usr/bin/python3 <py 件> -h`，
+// 本仓测试环境恒有该解释器 —— 多个既有测件已依赖它）。若某机无 python3 ⇒ 退路 = **钉住 py 正文
+// sha256**（`gnrHelpPySha256` ⇔ `gnrHelpGoSha256` 互等断言）：仍能抳住「Go 副本漂了」，
+// 但「py 正文漂了而钉子没跟着刷」需靠**重生成正门**刷（`GNR_REGEN_HELP_SHA=1 go test …`）才可见。
+// 该退路必红条件：Go 帮助面字节/sha 一变、或两常量被改成不等 ⇒ 当场红。
+// ═════════════════════════════════════════════════════════════════════════════
+
+// gnrTSha256 —— 帮助面指纹（本测件内唯一）。
+func gnrTSha256(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+// gnrTRootMarkerFixture —— 造一棵「像仓根」的夹具（只放本件认根用的两处标记）。
+func gnrTRootMarkerFixture(t *testing.T) string {
+	t.Helper()
+	fx := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(fx, "scripts", "gates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fx, gnrStepsRel), []byte("# 夹具步表（只作仓根标记）\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return fx
+}
+
+// gnrRepoRootForTest —— 与本件源码同栖的仓根（独立于 gnrDefaultRoot 的推导 · 供期望值用）。
+func gnrRepoRootForTest(t *testing.T) string {
+	t.Helper()
+	_, f, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller 不可用")
+	}
+	d := filepath.Dir(f)
+	for i := 0; i < 12; i++ {
+		if gnrIsRootDir(d) {
+			return d
+		}
+		p := filepath.Dir(d)
+		if p == d {
+			break
+		}
+		d = p
+	}
+	t.Fatalf("从 %s 上溯找不到仓根标记", f)
+	return ""
+}
+
+// TestGnrRootMappingParity —— ③「两边文件住不同深度」的映射现读对拍：
+//
+//	py  REPO = dirname^3(<root>/scripts/gates/<件>.py) == <root>
+//	Go  gnrRootFromExe(<root>/bin/<名>)                == <root>（上溯两级）
+//
+// ★ 成对负控：无仓根标记的临时目录**不得**被认成仓根（测试二进制住临时目录时的防误判）。
+func TestGnrRootMappingParity(t *testing.T) {
+	fx := gnrTRootMarkerFixture(t)
+
+	pyRoot := filepath.Dir(filepath.Dir(filepath.Dir(
+		filepath.Join(fx, "scripts", "gates", "check-newfile-registry.py"))))
+	if pyRoot != fx {
+		t.Fatalf("py 映射不符：dirname^3 = %s 期望 %s", pyRoot, fx)
+	}
+	goRoot, ok := gnrRootFromExe(filepath.Join(fx, "bin", "zerg"))
+	if !ok || goRoot != fx {
+		t.Fatalf("go 映射不符：gnrRootFromExe(%s) = (%q,%v) 期望 (%s,true)",
+			filepath.Join(fx, "bin", "zerg"), goRoot, ok, fx)
+	}
+	if goRoot != pyRoot {
+		t.Fatalf("两侧根定位语义不同：go=%s py=%s", goRoot, pyRoot)
+	}
+
+	// 负控（防误判）：临时目录（无标记）⇒ ok=false
+	if r, ok := gnrRootFromExe(filepath.Join(t.TempDir(), "bin", "zerg.test")); ok {
+		t.Fatalf("负控失败：无仓根标记的临时目录被认成仓根 %s", r)
+	}
+	// 正控对照：同一「空目录」补上标记后转 ok ⇒ 判的是「标记」而非「路径形态」（负控有牙）
+	bare := t.TempDir()
+	if r, ok := gnrRootFromExe(filepath.Join(bare, "bin", "zerg")); ok {
+		t.Fatalf("正控前：空目录竟被判成仓根 %s", r)
+	}
+	if err := os.MkdirAll(filepath.Join(bare, "scripts", "gates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bare, gnrStepsRel), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := gnrRootFromExe(filepath.Join(bare, "bin", "zerg")); !ok || r != bare {
+		t.Fatalf("正控失败：补上标记后应判为仓根 %s，得 (%q,%v)", bare, r, ok)
+	}
+}
+
+// TestGnrCwdProbe —— 子进程探针：由 TestGnrDefaultRootIndependentOfCwd 以 `-test.run` 起，
+// cwd 由父进程设成不同目录 ⇒ 即「在非仓根 cwd 下跑 Go 入口」。直接把入口三面写到真实
+// stdout/stderr 并以入口退码退出（✗ 不经 testing 缓冲 ⇒ 子进程读数 = 入口读数 · 不受 -test.v 噪声干扰）。
+func TestGnrCwdProbe(t *testing.T) {
+	if os.Getenv("GNR_CWD_PROBE") != "1" {
+		t.Skip("仅由 TestGnrDefaultRootIndependentOfCwd 以子进程方式起（GNR_CWD_PROBE=1）")
+	}
+	rc := checkNewfileRegistryGateMain(os.Stdout, os.Stderr,
+		[]string{"--dump-baseline", os.Getenv("GNR_CWD_DUMP")})
+	os.Exit(rc)
+}
+
+// TestGnrDefaultRootIndependentOfCwd —— ③ 的验收负控：同一 Go 入口在「非仓根 cwd」与「仓根 cwd」下，
+// stdout / stderr / rc 三面**逐字相同**（同一条命令在任何目录同结果）；py 侧同格对照 + Go↔py 逐字。
+// 三档 cwd：临时目录（非仓根）· 仓根 · 仓根子目录 core/。
+func TestGnrDefaultRootIndependentOfCwd(t *testing.T) {
+	wantRoot := gnrRepoRootForTest(t)
+	if got := gnrDefaultRoot(); got != wantRoot {
+		t.Fatalf("默认根 = %q，期望仓根 %q", got, wantRoot)
+	}
+	if !gnrIsRootDir(gnrDefaultRoot()) {
+		t.Fatalf("默认根 %q 非仓根", gnrDefaultRoot())
+	}
+	for _, rel := range []string{"core/cmd/zerg/check_newfile_registry.go", gnrSelfRel} {
+		if _, err := os.Stat(filepath.Join(wantRoot, rel)); err != nil {
+			t.Fatalf("仓根 %s 下缺 %s：%v", wantRoot, rel, err)
+		}
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dump := filepath.Join(t.TempDir(), "probe-base.tsv")
+	runGo := func(dir string) (int, string, string) {
+		t.Helper()
+		cmd := exec.Command(exe, "-test.run", "^TestGnrCwdProbe$")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GNR_CWD_PROBE=1", "GNR_CWD_DUMP="+dump)
+		var ob, eb bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &ob, &eb
+		err := cmd.Run()
+		rc := 0
+		if err != nil {
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				rc = ee.ExitCode()
+			} else {
+				t.Fatalf("探针起不来 @%s：%v", dir, err)
+			}
+		}
+		return rc, ob.String(), eb.String()
+	}
+	nonRoot := t.TempDir()
+	rcA, outA, errA := runGo(nonRoot)
+	rcB, outB, errB := runGo(wantRoot)
+	rcC, outC, errC := runGo(filepath.Join(wantRoot, "core"))
+	if outA != outB || errA != errB || rcA != rcB {
+		t.Fatalf("非仓根 cwd 与仓根 cwd 结果不一致：\n[cwd=%s] rc=%d\n--stdout--\n%s\n--stderr--\n%s\n[cwd=%s] rc=%d\n--stdout--\n%s\n--stderr--\n%s",
+			nonRoot, rcA, outA, errA, wantRoot, rcB, outB, errB)
+	}
+	if outA != outC || errA != errC || rcA != rcC {
+		t.Fatalf("core/ cwd 与临时 cwd 结果不一致：rcA=%d rcC=%d", rcA, rcC)
+	}
+	// 该档真跑在仓根上（非「扫面不在盘」的 rc=2）⇒ 证上面三面同的是**真读数**
+	if rcA != 0 || !strings.Contains(outA, "冻结基线生成档") {
+		t.Fatalf("探针未在仓根上真跑：rc=%d stdout=%s stderr=%s", rcA, outA, errA)
+	}
+
+	// ── py 侧同格对照：py 默认根 = `__file__` 推导 ⇒ 异 cwd 同结果（并顺带与 Go 逐字比）──
+	pyExe := gnrTHelpPython()
+	if pyExe == "" {
+		t.Log("无 /usr/bin/python3 ⇒ py 侧同格对照跳过（Go 侧三档已证 · 见测件头退路声明）")
+		return
+	}
+	pyFile := filepath.Join(wantRoot, gnrSelfRel)
+	runPy := func(dir string) (int, string, string) {
+		t.Helper()
+		cmd := exec.Command(pyExe, pyFile, "--dump-baseline", dump)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "COLUMNS=80")
+		var ob, eb bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &ob, &eb
+		err := cmd.Run()
+		rc := 0
+		if err != nil {
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				rc = ee.ExitCode()
+			} else {
+				t.Fatalf("py 起不来 @%s：%v", dir, err)
+			}
+		}
+		return rc, ob.String(), eb.String()
+	}
+	prcA, poutA, perrA := runPy(nonRoot)
+	prcB, poutB, perrB := runPy(wantRoot)
+	if poutA != poutB || perrA != perrB || prcA != prcB {
+		t.Fatalf("py 异 cwd 结果不一致：rcA=%d rcB=%d outA=%q outB=%q", prcA, prcB, poutA, poutB)
+	}
+	// Go ↔ py 逐字（同一 cwd=仓根 · 默认根两侧同为仓根）
+	if outB != poutB || errB != perrB || rcB != prcB {
+		t.Fatalf("Go↔py 默认根读数不同：\n-- go rc=%d --\n%s\nstderr=%q\n-- py rc=%d --\n%s\nstderr=%q",
+			rcB, outB, errB, prcB, poutB, perrB)
+	}
+}
+
+// gnrTHelpPython —— 钉死的 py 解释器（GAP-20261001-61：✗ 不用 PATH 上的 python3）；
+// 无 /usr/bin/python3 ⇒ 返回空串（走钉 sha256 的退路）。
+func gnrTHelpPython() string {
+	p := "/usr/bin/python3"
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return ""
+}
+
+// gnrTRunPyHelp —— 现跑 py 件某档（COLUMNS=80 钉住折行），返回 rc/stdout/stderr 三面。
+func gnrTRunPyHelp(t *testing.T, pyExe, pyFile string, args ...string) (int, string, string) {
+	t.Helper()
+	cmd := exec.Command(pyExe, append([]string{pyFile}, args...)...)
+	cmd.Env = append(os.Environ(), "COLUMNS=80")
+	var ob, eb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &ob, &eb
+	err := cmd.Run()
+	rc := 0
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			rc = ee.ExitCode()
+		} else {
+			t.Fatalf("py 起不来：%v", err)
+		}
+	}
+	return rc, ob.String(), eb.String()
+}
+
+// gnrHelpGoSha256 = sha256(gnrHelp) —— Go 现行帮助面正文（COLUMNS=80 · 见 gnrHelpBytes）。
+const gnrHelpGoSha256 = "1c5b2a6111ca7d2879b2e766771e2fad0f4e5601251aad022ba54390bec1e5fb"
+
+// gnrHelpPySha256 = 同一正文 —— py 原件 `COLUMNS=80 /usr/bin/python3 <py 件> -h` 的 stdout 全串。
+// ★ 机械拦阻的核心：两者不等即红（py 正文一改 / Go 副本一改，都当场点名）。
+// 重生成正门（现读打印两值 · 不落任何件）：
+//
+//	GNR_REGEN_HELP_SHA=1 go test ./cmd/zerg -run '^TestGnrHelpParityWithPy$' -v
+const gnrHelpPySha256 = "1c5b2a6111ca7d2879b2e766771e2fad0f4e5601251aad022ba54390bec1e5fb"
+
+// gnrHelpBytes —— 帮助面正文字节数（1555 · 与 COLUMNS=80 的 py 现跑一致）。
+const gnrHelpBytes = 1555
+
+// TestGnrHelpParityWithPy —— ④ 机械拦阻：Go 的 help 输出 == py 的 --help 输出（stdout+stderr+rc 三面）。
+//
+//	① Go 侧三面 + 字节数 + sha256（钉 gnrHelpGoSha256）；
+//	② 两个 sha256 常量必须互等（py 面漂了而 Go 没跟 ⇒ 必红）；
+//	③ py 在场：现跑 `-h` / `--help` / `--zzz`，与 Go 逐字节对拍；
+//	④ py 缺席：退路 = 只校验①（并在日志声明）。
+func TestGnrHelpParityWithPy(t *testing.T) {
+	// ── ① Go 侧三面（-h 与 --help 同文）──────────────────────────────
+	goOut := map[string]string{}
+	for _, flag := range []string{"-h", "--help"} {
+		rc, out, errs := gnrRunT(t, flag)
+		if rc != 0 || errs != "" {
+			t.Fatalf("Go %s：rc=%d stderr=%q 期望 rc=0/空", flag, rc, errs)
+		}
+		if len(out) != gnrHelpBytes {
+			t.Fatalf("Go %s 字节数 = %d 期望 %d ⇒ Go 帮助面已漂", flag, len(out), gnrHelpBytes)
+		}
+		if got := gnrTSha256(out); got != gnrHelpGoSha256 {
+			t.Fatalf("Go %s 帮助面 sha256 = %s 期望 %s ⇒ Go 侧副本已漂（改 gnrHelp 后须同批刷新本常量）", flag, got, gnrHelpGoSha256)
+		}
+		goOut[flag] = out
+	}
+	if goOut["-h"] != goOut["--help"] {
+		t.Fatalf("-h 与 --help 输出不同（argparse 两侧应同文）")
+	}
+	// ── ② 两常量互等（py 正文漂了却没跟 Go ⇒ 必红）─────────────────────
+	if gnrHelpGoSha256 != gnrHelpPySha256 {
+		t.Fatalf("Go 帮助面 sha256 ≠ 钉住的 py 帮助面 sha256 ⇒ py 正文已改而 Go 副本未同批跟：go=%s py=%s",
+			gnrHelpGoSha256, gnrHelpPySha256)
+	}
+
+	// ── 重生成正门（现读打印 · 不落件）──────────────────────────────────
+	if os.Getenv("GNR_REGEN_HELP_SHA") == "1" {
+		pyExe := gnrTHelpPython()
+		if pyExe == "" {
+			t.Fatalf("无 /usr/bin/python3 ⇒ 无 py 侧现读值可回填")
+		}
+		pyFile := filepath.Join(gnrRepoRootForTest(t), gnrSelfRel)
+		_, out, _ := gnrTRunPyHelp(t, pyExe, pyFile, "-h")
+		fmt.Printf("GNR_HELP_REGEN go_sha256=%s py_sha256=%s bytes=%d\n", gnrHelpGoSha256, gnrTSha256(out), len(out))
+		return
+	}
+
+	// ── ③ py 在场：现跑三面逐字对拍 ─────────────────────────────────────
+	pyExe := gnrTHelpPython()
+	if pyExe == "" {
+		t.Log("无 /usr/bin/python3 ⇒ 只走钉 sha256 的退路（py 正文漂移需靠重生成正门刷 gnrHelpPySha256 才可见）")
+		return
+	}
+	pyFile := filepath.Join(gnrRepoRootForTest(t), gnrSelfRel)
+	if _, err := os.Stat(pyFile); err != nil {
+		t.Fatalf("py 件不在盘：%s（%v）", pyFile, err)
+	}
+	for _, flag := range []string{"-h", "--help"} {
+		prc, pout, perr := gnrTRunPyHelp(t, pyExe, pyFile, flag)
+		if prc != 0 || perr != "" {
+			t.Fatalf("py %s：rc=%d stderr=%q 期望 rc=0/空", flag, prc, perr)
+		}
+		if got := gnrTSha256(pout); got != gnrHelpPySha256 {
+			t.Fatalf("py %s 帮助面 sha256 = %s ≠ 钉住的 %s ⇒ py 正文已改：把 gnrHelp 改成现读正文并同批刷新本常量", flag, got, gnrHelpPySha256)
+		}
+		rc, gout, gerr := gnrRunT(t, flag)
+		if pout != gout || perr != gerr || prc != rc {
+			t.Fatalf("help 逐字对拍失败（%s）：\n-- go rc=%d --\n%s\nstderr=%q\n-- py rc=%d --\n%s\nstderr=%q",
+				flag, rc, gout, gerr, prc, pout, perr)
+		}
+	}
+	// 帮助面家族第三格（未知旗标 usage 正文 · 逐字保留）：stderr + rc
+	prc, pout, perr := gnrTRunPyHelp(t, pyExe, pyFile, "--zzz")
+	rc, gout, gerr := gnrRunT(t, "--zzz")
+	if pout != gout || perr != gerr || prc != rc {
+		t.Fatalf("未知旗标 usage 对拍失败：\n-- go rc=%d out=%q err=%q\n-- py rc=%d out=%q err=%q",
+			rc, gout, gerr, prc, pout, perr)
 	}
 }

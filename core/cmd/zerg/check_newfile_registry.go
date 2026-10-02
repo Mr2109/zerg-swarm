@@ -30,10 +30,11 @@
 // ★ 标准声明行（两条 · 逐条照实）
 //
 //	(a) **默认根定位差异**：py `REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))`
-//	    ⇒ 默认根 = **脚本所在目录的仓**（与 cwd 无关）；Go 入口**无 `__file__` 语境** ⇒ 本件默认从
-//	    **当前工作目录**上溯 ≤8 层找同时含 `scripts/gates/precommit-gates.sh` 与 `scripts` 的目录，
-//	    找不到回落 cwd。落在**同一真仓、cwd=仓根**时两者读数逐字相同（已对拍 甲 格）；但「脚本位置 ≠ cwd」
-//	    时**路径推导面不同** ⇒ 这一面**不属逐字对齐承诺**，对拍一律显式传 `--repo`。
+//	    ⇒ 默认根 = **脚本所在目录上溯三级**（件住 `<root>/scripts/gates/` · 与 cwd 无关）。Go **无 `__file__`
+//	    语境**，改用**同语义**的可执行文件位置：Go 二进制住 `<root>/bin/`（比 py 件**浅一层**）
+//	    ⇒ 映射 = `os.Executable()` 上溯**两级**（`gnrRootFromExe`）。回退两路（都先验仓根标记 · ✗ 不误判临时目录）：
+//	    ② `runtime.Caller(0)` 的**本件源码位置**上溯（测试二进制住临时目录时走这条）；③ cwd 上溯（前两路皆判不了
+//	    时的兜底 · 与旧行为同）。⇒ 「同一条命令在任何目录跑同结果」成立，这一面**属逐字对齐承诺**。
 //	(b) **自指检查（四形态逐条判）**：
 //	    ① 本件落在门76 **自己**的扫描面内？——**否**。本件的集合定义 = `scan_ledger_face(root)`，它只遍历
 //	       `<root>/scripts/**`；本件落 `core/cmd/zerg/check_newfile_registry.go` ⇒ **不在**该面内
@@ -53,7 +54,13 @@
 //	① **argparse 帮助 / usage 正文**（`-h/--help` · 未知旗标 · 缺值 · 位置参数）：本件落 rc=0 / 2 与 py 同，
 //	   且 `gnrUsage` / `gnrHelp` **逐字内嵌现读 py 正文**（含新旗标 `--json SECTIONS` / `--yes` 与两段
 //	   位置），但 argparse 的**自动折行算法**不逐字复刻（只按 py 现读输出**照抄换行位置**）。
-//	② **默认根定位**：见上 (a)。
+//	   ★ **这一面已由机械拦阻兜住**（✗ 不再靠人记住同步）：`check_newfile_registry_test.go` 的
+//	   `TestGnrHelpParityWithPy` 现跑 `/usr/bin/python3 <py 件> -h|--help|--zzz` 与 `gnrHelp` **逐字节**对拍
+//	   （stdout + stderr + rc 三面），并钉住 py 正文 sha256（无 python3 时的退路 · 见测件头）。
+//	② **默认根定位**：见上 (a)。★ 已改为**与 py 同语义**（exe 上溯两级 + 源码位置回退 ⇒ 与 cwd 无关）。
+//	   唯一残留差：正式制品用 `-trimpath` 构建 ⇒ `runtime.Caller` 的**源码回退面**失效，但**主路**
+//	   `os.Executable()` 不受 `-trimpath` 影响 ⇒ 正式制品仍逐字同；只有「exe 不在 `<root>/bin/` 且又走了
+//	   源码回退」这一组合下才会变（现役布局不触发）。
 //	③ **非 UTF-8 输入的字面替换粒度**：py `errors="replace"` 与 Go `strings.ToValidUTF8` 对**连续非法字节**
 //	   的 U+FFFD 分割粒度可能不同（真仓六张表皆合法 UTF-8 ⇒ 现读零影响）。
 //	④ **面② 的判据件载入例外**：py 在 `spec.loader.exec_module` / `scan_hits(root)` 抛异常时 = **未捕异常
@@ -105,6 +112,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -1979,19 +1987,91 @@ func gnrSelfTest(stdout io.Writer) int {
 }
 
 // ── 默认根（见件头 (a)）────────────────────────────────────────────────────
+// gnrIsRootDir —— 仓根标记：同时含 `scripts/` 目录与 `scripts/gates/precommit-gates.sh`
+// （与本件依赖的两处真源同源 ⇒ 只在**本件真能判**的树上认根 · ✗ 不把临时目录误当仓根）。
+func gnrIsRootDir(dir string) bool {
+	return gnrIsDir(filepath.Join(dir, "scripts")) &&
+		gnrIsFile(filepath.Join(dir, gnrStepsRel))
+}
+
+// gnrRootFromExe —— py `REPO` 的同语义映射（★ 两边文件住**不同深度**）：
+//
+//	py  REPO = dirname^3(abspath(__file__)) —— 件住 <root>/scripts/gates/<件>.py（三级）
+//	Go  bin/zerg 住 <root>/bin/zerg（两级）⇒ dirname^2(exe) == <root>
+//
+// 标记不在盘 ⇒ ok=false（**不得误判**：临时目录里的测试二进制会落到这条 ⇒ 交回退路）。
+func gnrRootFromExe(exe string) (string, bool) {
+	root := filepath.Dir(filepath.Dir(exe)) // <root>/bin/<名> ⇒ <root>
+	if gnrIsRootDir(root) {
+		return root, true
+	}
+	return "", false
+}
+
+// gnrSelfFileAbs —— 本件源码的绝对路径（编译期落进制品的 `__file__` 等价面）。
+// 在**包初始化时取一次**（此刻 cwd 仍是运行入口目录 · ✗ 不与后续 cwd 变化耦合）。
+//
+//	· `go test` / 本机 `go build`（无 `-trimpath`）⇒ 绝对路径；
+//	· 正式制品用 `-trimpath` 构建 ⇒ 相对路径（`runtime.Caller` 的已知行为）⇒ 该回退面失效；
+//	  正式制品的**主路**是 `gnrRootFromExe`（`-trimpath` 不影响 `os.Executable()`）⇒ 不受影响。
+var gnrSelfFileAbs = func() string {
+	if _, f, _, ok := runtime.Caller(0); ok {
+		if filepath.IsAbs(f) {
+			return f
+		}
+		if a, err := filepath.Abs(f); err == nil {
+			return a
+		}
+	}
+	return ""
+}()
+
+// gnrRootFromSource —— 回退①：测试二进制住临时目录 ⇒ exe 上溯不达仓根 ⇒ 从**本件源码所在目录**
+// 上溯找仓根标记（与 cwd 无关 ⇒ 仍满足「同一条命令在任何目录同结果」）。
+func gnrRootFromSource() (string, bool) {
+	if gnrSelfFileAbs == "" {
+		return "", false
+	}
+	d := filepath.Dir(gnrSelfFileAbs) // <root>/core/cmd/zerg
+	for i := 0; i < 8; i++ {
+		if gnrIsRootDir(d) {
+			return d, true
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	return "", false
+}
+
+// gnrDefaultRoot —— py `REPO`（与 cwd 无关）的 Go **同语义**实现。
+// 次序：① exe 上溯两级（正式制品 `bin/zerg` 走这条 · 与 py `__file__` 上溯三级同结果）；
+// ② 本件源码位置回退（测试二进制走这条）；③ cwd 上溯（前两路皆判不了时的兜底 · 与旧行为同）；
+// ④ 最后回落 cwd（判不了不猜 —— 与旧行为逐字同）。
 func gnrDefaultRoot() string {
+	if exe, err := os.Executable(); err == nil {
+		cands := []string{exe}
+		if resolved, e2 := filepath.EvalSymlinks(exe); e2 == nil && resolved != exe {
+			cands = append(cands, resolved)
+		}
+		for _, c := range cands {
+			if r, ok := gnrRootFromExe(c); ok {
+				return r
+			}
+		}
+	}
+	if r, ok := gnrRootFromSource(); ok {
+		return r
+	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return "."
 	}
-	start, err := filepath.Abs(wd)
-	if err != nil {
-		return wd
-	}
-	d := start
+	d := wd
 	for i := 0; i < 8; i++ {
-		if gnrIsDir(filepath.Join(d, "scripts")) &&
-			gnrIsFile(filepath.Join(d, gnrStepsRel)) {
+		if gnrIsRootDir(d) {
 			return d
 		}
 		parent := filepath.Dir(d)
@@ -2010,6 +2090,8 @@ const gnrUsage = "usage: check-newfile-registry.py [-h] [--repo REPO] [--baselin
 	"                                 [--self-test]\n"
 
 // gnrHelp —— py `argparse --help` 的 stdout 逐字节内嵌（含末尾换行 · 新旗标 `--json SECTIONS` / `--yes`）。
+// ★ 机械拦阻（✗ 不再靠人记住同步）：测件 `TestGnrHelpParityWithPy` 现跑 `/usr/bin/python3 <py 件> -h|--help|--zzz`
+// 与 `gnrHelp` 逐字节对拍（stdout+stderr+rc 三面）并钉住正文 sha256 ⇒ py 正文一改，该断言必红。
 const gnrHelp = gnrUsage +
 	"\n" +
 	"门76 新件登记完整性：件级 × 六张登记表（只报告 · 起手不接闸）\n" +
