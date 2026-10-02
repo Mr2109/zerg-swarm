@@ -29,7 +29,7 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 	at := time.Now()
 
 	// ① 落点（**版本无关**：不写任何版本号字面量）——
-	//    优先级：`--out <目录>` > `--docs-ver <X.Y.Z>`（显式钉版 = 兼容旧行为）> 版本档案目录里「版本号最大且 ≥3 篇」的那个。
+	//    优先级：`--out <目录>` > `--docs-ver <X.Y.Z>`（显式钉版 = 兼容旧行为）> 版本真源 `version.Version` 钉的 `v<当前发布版>`（**不**扫盘取「版本号最大」）。
 	outDir := ""
 	if v, ok := flagValue(inv.orig, "--out"); ok {
 		outDir = v
@@ -37,10 +37,10 @@ func cmdHelpExport(inv *invocation, stdout, stderr io.Writer) int {
 		d, why := devDocsCurrentVersionDir(strings.TrimSpace(inv.flagVal("--docs-ver")))
 		if why != "" {
 			fmt.Fprintf(stderr, "%s: 解析不到落点 —— %s\n", progName, why)
-			fmt.Fprintf(stderr, "（给 `--out <目录>` 或 `--docs-ver <X.Y.Z>` 钉一版；两种都不给时按「版本号最大且 ≥3 篇」现算）\n")
+			fmt.Fprintf(stderr, "（给 `--out <目录>` 或 `--docs-ver <X.Y.Z>` 钉一版；两种都不给时按版本真源 `version.Version` 钉到 `v<当前发布版>`）\n")
 			// ★ 2026-09-24（缺口 `Q-070` · 组3 §一 序52 · 波10 序83）：§4.1 K14 四件套的「下一步」那一件。
 			//   上面那句是**判据说明**（说缺什么），不是**可照抄的下一步**（说怎么改）—— 补一句能直接敲的。
-			fmt.Fprintf(stderr, "下一步：`%s help export --dry-run --out <已存在的目录>` 先核一遍（不给 --out 时本命令按「版本号最大且 ≥3 篇」现算落点，那条路今天走不通）\n", progName)
+			fmt.Fprintf(stderr, "下一步：`%s help export --dry-run --out <已存在的目录>` 先核一遍（不给 --out 时本命令按版本真源 `version.Version` 钉到 `v<当前发布版>`，那条路今天走不通）\n", progName)
 			return exitUsage
 		}
 		outDir = d
@@ -277,7 +277,7 @@ func renderHelpMarkdown(landing ...string) string {
 	//   「本版」那一行**一字不动**（scripts/docs/gen-cli-reference.py 逐字读它、且要求恰有两个 `**N**`），
 	//   新信息一律**另起行**追加（新行都不带 `**N**` 粗体计数，免得被那条正则多抓）。
 	if len(landing) > 0 && landing[0] != "" {
-		fmt.Fprintf(&b, "> 版本档案目录：`%s`（**版本无关**：取「版本号最大且非递归 md ≥3 篇」的版本目录 —— 本文件不含任何版本号字面量）\n",
+		fmt.Fprintf(&b, "> 版本档案目录：`%s`（**版本真源**：默认档 = `version.Version` 钉的 `v<当前发布版>` —— 本文件不含任何版本号字面量）\n",
 			filepath.Base(landing[0]))
 	}
 	fmt.Fprintf(&b, "> 生成时刻：`%s` · 组件版本：`%s`\n", time.Now().Format(time.RFC3339), version.Tag)
