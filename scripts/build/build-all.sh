@@ -171,14 +171,32 @@ resolve_sign_identity() {   # 只解析身份，不改文件；结果落 ZERG_SI
   [ "${SIGN:-1}" = "1" ] || return 0
   command -v codesign >/dev/null 2>&1 || return 0
   ZERG_SIGN_ID="${ZERG_SIGN_ID:-Zerg Local Signing}"
-  if security find-identity -p codesigning 2>/dev/null | grep -q "$ZERG_SIGN_ID" \
-     || codesign -s "$ZERG_SIGN_ID" --force /tmp/.zerg-sign-probe 2>/dev/null; then
+  # ★ GAP-20261003-07 修正（2026-10-03 · 含一次自我更正）：
+  #   病灶（成立的那一条）：原写法 `codesign -s … --force /tmp/.zerg-sign-probe` 签的是**一个不在盘的路径**
+  #     ⇒ codesign 报 No such file ⇒ 该兜底支**恒失败** ⇒ 一旦第一支不成立就**必然静默回落 adhoc**，
+  #     与「探针保底」的设计意图相反（后果：Identifier 变 ad-hoc、TCC 本地网络授权随每次重编失效）。
+  #     ⇒ 探针件必须先造出来（唯一名 · 精确清理）。
+  #   ★ 更正：同日我一度以为「断点① = `find-identity -p codesigning` 在身份 NOT_TRUSTED 时恒为空」——
+  #     **不成立**（现读用了错 policy 名 `codesign`，真名 `codesigning`）。实测旧逻辑第一支本来就过、
+  #     SIGN_MODE=stable ⇒ 本处**不是为了修降级**，只是为了把「兜底支真的兜得住」+「两态可分辨」补上。
+  #   两态提示：身份在钥匙串但不受信任（CSSMERR_TP_NOT_TRUSTED）时**不影响签名**，照常签稳定身份并提示一行。
+  local _probe="${TMPDIR:-/tmp}/.zerg-sign-probe.$$" _sig=""
+  if [ -n "${ZERG_SIGN_ID}" ]; then : > "$_probe" 2>/dev/null; fi
+  if [ -n "${ZERG_SIGN_ID}" ] && security find-identity 2>/dev/null | grep -q "$ZERG_SIGN_ID"; then
+    _sig="in-keychain-not-trusted"
+  elif [ -n "${ZERG_SIGN_ID}" ] && codesign -s "$ZERG_SIGN_ID" --force "$_probe" 2>/dev/null; then
+    _sig="probe-ok"
+  fi
+  if [ -n "${_sig}" ]; then
     SIGN_MODE="stable:$ZERG_SIGN_ID"
   else
     ZERG_SIGN_ID="-"; SIGN_MODE="adhoc"
   fi
+  rm -f "$_probe" 2>/dev/null
   if [ "$SIGN_MODE" = "adhoc" ]; then
     echo "   ⚠️  未找到签名身份「${ZERG_SIGN_ID}」，回退 ad-hoc（本机 TCC 授权会随重编失效）"
+  elif [ "${_sig}" = "in-keychain-not-trusted" ]; then
+    echo "   🔏 身份「${ZERG_SIGN_ID}」在钥匙串但**不受信任**（CSSMERR_TP_NOT_TRUSTED）—— 不影响签名，照常签稳定身份"
   fi
   return 0
 }
