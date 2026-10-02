@@ -193,7 +193,9 @@ func (s *MasterScheduler) handleReviewDoneLocked(reviewTask *Task) {
 		}
 	}
 	// 落盘（执行任务状态更新）
-	saveTasksLocked(s.queue, s.running, s.history)
+	if err := saveTasksLocked(s.queue, s.running, s.history); err != nil {
+		log.Printf("⚠️ 任务落盘失败: %v\n", err)
+	}
 }
 
 // shortReason 从复查报告提取短原因（前 200 字）

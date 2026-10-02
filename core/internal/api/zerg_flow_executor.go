@@ -1018,7 +1018,9 @@ func (s *MasterScheduler) finishTask(task *Task, err error) {
 			log.Printf("⏳ scheduler: task %s suspended on environment failure (waiting_retry): %v", task.ID, err)
 			s.waiting[task.ID] = task
 			// 持久化（重启不丢——恢复调度器继续处理）
-			saveTasksLocked(s.queue, s.running, s.history, s.waiting)
+			if err := saveTasksLocked(s.queue, s.running, s.history, s.waiting); err != nil {
+				log.Printf("⚠️ 任务落盘失败: %v\n", err)
+			}
 			s.dispatchLocked()
 			return
 		}

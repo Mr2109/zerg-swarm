@@ -226,7 +226,9 @@ func (s *MasterScheduler) recoverWaitingLocked() {
 	}
 	// 有恢复——持久化 + 派发
 	if len(s.queue) > 0 {
-		saveTasksLocked(s.queue, s.running, s.history, s.waiting)
+		if err := saveTasksLocked(s.queue, s.running, s.history, s.waiting); err != nil {
+			log.Printf("⚠️ 任务落盘失败: %v\n", err)
+		}
 		s.dispatchLocked()
 	}
 	s.mu.Unlock()
@@ -273,7 +275,9 @@ func (s *MasterScheduler) Submit(task *Task) {
 	heap.Push(&s.queue, task)
 	log.Printf("🔄 scheduler: task %s queued (%s — priority %d)", task.ID, task.Type, task.Priority)
 	// v2.5.5 持久化完整版: 任务提交即落盘（queued 任务重启恢复——不再丢——2026-08-20）
-	saveTasksLocked(s.queue, s.running, s.history)
+	if err := saveTasksLocked(s.queue, s.running, s.history); err != nil {
+		log.Printf("⚠️ 任务落盘失败: %v\n", err)
+	}
 	s.dispatchLocked()
 	s.mu.Unlock()
 	// ---- B 项③ 观测: 片放行入队（**锁外**——落盘 I/O 不进锁；非片任务零事件、零开销）----
@@ -547,7 +551,9 @@ func (s *MasterScheduler) runTask(task *Task) {
 			task.Status = "waiting_retry"
 			task.FailReason = fmt.Sprintf("model/backend unavailable (attempt %d — %v) — waiting for environment recovery to auto-retry", task.RetryCount, err)
 			s.waiting[task.ID] = task
-			saveTasksLocked(s.queue, s.running, s.history, s.waiting)
+			if err := saveTasksLocked(s.queue, s.running, s.history, s.waiting); err != nil {
+				log.Printf("⚠️ 任务落盘失败: %v\n", err)
+			}
 			log.Printf("⏳ scheduler: task %s backend unavailable — moved to wait queue (auto re-dispatch on recovery — attempt %d/3)", task.ID, task.RetryCount)
 			s.dispatchLocked()
 			return
@@ -573,7 +579,9 @@ func (s *MasterScheduler) runTask(task *Task) {
 		if task.Type == "review" {
 			s.handleReviewDoneLocked(task)
 			// 复查任务本身不进确定性验证（复查是判断——不是执行）
-			saveTasksLocked(s.queue, s.running, s.history)
+			if err := saveTasksLocked(s.queue, s.running, s.history); err != nil {
+				log.Printf("⚠️ 任务落盘失败: %v\n", err)
+			}
 			if task.IssuePath != "" {
 				updateIssueStatus(task.IssuePath, task.Status)
 			}
@@ -619,7 +627,9 @@ func (s *MasterScheduler) runTask(task *Task) {
 		}
 	}
 	// v2.5.5 P1-5 补: 任务状态落盘（重启后保留——UI 早上能看到所有任务）
-	saveTasksLocked(s.queue, s.running, s.history)
+	if err := saveTasksLocked(s.queue, s.running, s.history); err != nil {
+		log.Printf("⚠️ 任务落盘失败: %v\n", err)
+	}
 	// v2.5.5 P1-3: 更新任务单状态（任务单文件——idle_detector 建的任务区 *.md）
 	if task.IssuePath != "" {
 		updateIssueStatus(task.IssuePath, task.Status)
@@ -884,7 +894,9 @@ func (s *MasterScheduler) TerminateTask(taskID string) error {
 	// 之前只标 failed 不删 running → 调度器认为并发满 → 排队任务永不派发（任务队列卡死）
 	delete(s.running, taskID)
 	s.history[taskID] = t
-	saveTasksLocked(s.queue, s.running, s.history, s.waiting)
+	if err := saveTasksLocked(s.queue, s.running, s.history, s.waiting); err != nil {
+		log.Printf("⚠️ 任务落盘失败: %v\n", err)
+	}
 	s.dispatchLocked()
 	s.mu.Unlock()
 	// 杀 CA 进程（SIGKILL——强制终止——2026-08-22 Mr2109）
