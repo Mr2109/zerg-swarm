@@ -11,6 +11,7 @@ package api
 import (
 	"container/heap"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -77,7 +78,13 @@ type persistedTasks struct {
 
 // saveTasksLocked 保存任务状态（调用方持锁）
 // v2.5.6 故障自愈: 增加 waiting 参数（环境故障挂起任务——重启恢复继续等）
-func saveTasksLocked(queue TaskQueue, running map[string]*Task, history map[string]*Task, waiting ...map[string]*Task) {
+// GAP-20261003-13/-14 修复（2026-10-03）:
+//
+//	① 改为**返回 error** —— 原先 marshal/mkdir/write 三种失败全静默吞掉，调用方不知落盘成败，
+//	   内存已改而盘上仍旧值（静默分叉，无从察觉）。
+//	② 落盘改为**原子替换** —— 原先 os.WriteFile 直写目标路径：崩溃/断电会留下半文件或 0 字节；
+//	   现改为「同目录临时件写全 → fsync 文件 → rename 覆盖 → fsync 目录」。
+func saveTasksLocked(queue TaskQueue, running map[string]*Task, history map[string]*Task, waiting ...map[string]*Task) error {
 	// 完整版（2026-08-20）: history + queue + running 都存——重启不丢任何任务
 	data := persistedTasks{
 		SavedAt: time.Now(),
@@ -90,13 +97,10 @@ func saveTasksLocked(queue TaskQueue, running map[string]*Task, history map[stri
 		data.History[id] = t
 	}
 	// 队列（heap 遍历——按优先级序）
+	// 注: queue 是**切片头按值传**，此处的 Pop/Push 只作用于局部副本，调用方的 s.queue 全程未动。
 	for queue.Len() > 0 {
 		t := queue.Pop().(*Task)
 		data.Queue = append(data.Queue, t)
-	}
-	// 重新 push 回 heap（遍历会清空——恢复）
-	for _, t := range data.Queue {
-		queue.Push(t)
 	}
 	for id, t := range running {
 		data.Running[id] = t
@@ -109,28 +113,66 @@ func saveTasksLocked(queue TaskQueue, running map[string]*Task, history map[stri
 	}
 	buf, err := json.Marshal(data)
 	if err != nil {
-		return
+		return fmt.Errorf("任务持久化序列化失败: %w", err)
 	}
 	// 写只写新路径（统一状态目录）——旧 /tmp 路径永不写（2026-09-18）
 	dst := tasksWritePath()
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		log.Printf("⚠️ 任务持久化目录不可用（%s）: %v\n", dst, err)
-		return
+	dir := filepath.Dir(dst)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("任务持久化目录不可用（%s）: %w", dir, err)
 	}
-	if err := os.WriteFile(dst, buf, 0644); err != nil {
-		log.Printf("⚠️ 任务持久化写盘失败（%s）: %v\n", dst, err)
+	tmp, err := os.CreateTemp(dir, ".tasks-*.tmp")
+	if err != nil {
+		return fmt.Errorf("任务持久化临时件创建失败（%s）: %w", dir, err)
 	}
+	tmpName := tmp.Name()
+	fail := func(step string, e error) error {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("任务持久化%s失败（%s）: %w", step, tmpName, e)
+	}
+	if _, err := tmp.Write(buf); err != nil {
+		return fail("写入临时件", err)
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		return fail("设置权限", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fail("fsync", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("任务持久化关闭临时件失败（%s）: %w", tmpName, err)
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("任务持久化原子替换失败（%s → %s）: %w", tmpName, dst, err)
+	}
+	// 目录 fsync: 保证 rename 本身落盘（打不开目录不算失败——rename 已成功）
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }
 
 // loadPersistedHistory 加载历史任务 + 恢复排队（启动时调）
 func (s *MasterScheduler) loadPersistedHistory() {
 	// 读路径：新（统一状态目录）优先；新缺失 + 旧 /tmp 在 ⇒ 读旧一次（2026-09-18 迁移兼容）
-	buf, err := os.ReadFile(tasksReadPath())
+	// GAP-20261003-14 修复（2026-10-03）: 读失败**不许静默** —— 首次运行（件不存在）是正常路径，
+	// 其余（权限/IO）与**反序列化失败（半文件/截断）**一律响亮报出：原先 Unmarshal 失败静默 return
+	// ⇒ 盘上件一旦损坏就是整份 history+queue 无声全丢，无从察觉（文件保留不覆盖，待查）。
+	readPath := tasksReadPath()
+	buf, err := os.ReadFile(readPath)
 	if err != nil {
-		return // 首次运行——无历史
+		if !os.IsNotExist(err) {
+			log.Printf("⚠️ 任务持久化读盘失败（%s）: %v —— 本次不恢复任何任务（盘上件保留未动）\n", readPath, err)
+		}
+		return
 	}
 	var data persistedTasks
 	if err := json.Unmarshal(buf, &data); err != nil {
+		log.Printf("❌ 任务持久化文件损坏（%s · %d 字节）: %v —— 本次不恢复任何任务（件保留待查，未被覆盖）\n", readPath, len(buf), err)
 		return
 	}
 	s.mu.Lock()
