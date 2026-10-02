@@ -173,6 +173,30 @@ if [ "$MODE" = "build" ] || [ "$MODE" = "pack" ]; then
   cp -p "$DIST/zerg-agent-linux-amd64" "$REL/zerg-agent-linux-amd64"
   cp -p "$DIST/zerg-cli-linux-amd64"   "$REL/zerg-cli-linux-amd64"
 
+  # ── 签名（2026-10-03 · GAP-20261003-10 收尾）：与 build-all.sh **同一份**解析/施加面 ────────
+  # ★ 位置**必须在下面算 sha256 之前**：签名会改字节 ⇒ 先签后算，否则 manifest.json /
+  #   checksums.txt / 逐件 .sha256 记的都是签名前的值，而本脚本末尾那段校验会当场判红。
+  # 为什么发布件也要签：`publish/SECURITY.md` 的历史承认是「跨架构件无签名」—— 那不是设计，
+  #   是缺生产线（缺口的另一半见 GAP-20261003-09）。既然本机 codesign 能签 ELF
+  #   （实测形态 `size=159 hashes=1`，非空壳），就没有理由让可分发件裸奔。
+  # 开关：只认 `SIGN` 环境变量（0 = 跳过），与 build-all.sh 同一枚旋钮 —— ✗ 不新增命令行参数
+  #   （新增参数要动用法面与命令树对账，而这里不需要多一个旋钮）。
+  if [ "${SIGN:-1}" = "1" ] && command -v codesign >/dev/null 2>&1; then
+    if [ ! -f "$REPO_ROOT/scripts/build/lib-sign.sh" ]; then
+      echo "❌ 缺 scripts/build/lib-sign.sh（签名身份的公共件）⇒ 拒绝交出未签名的制品目录" >&2
+      exit 1
+    fi
+    # shellcheck source=scripts/build/lib-sign.sh
+    source "$REPO_ROOT/scripts/build/lib-sign.sh"
+    resolve_sign_identity
+    for _f in "$REL"/zerg-*; do
+      case "$_f" in *.sha256) continue ;; esac
+      sign_one "$_f"
+    done
+  else
+    echo "   ⚠️  跳过签名（SIGN=0 或本机无 codesign）—— 此时 SECURITY.md 的「无签名」口径成立"
+  fi
+
   for f in "$REL"/zerg-*; do
     case "$f" in *.sha256) continue ;; esac
     echo "$(sha_of "$f")  $(basename "$f")" > "$f.sha256"
