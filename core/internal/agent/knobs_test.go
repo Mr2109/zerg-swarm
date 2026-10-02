@@ -18,7 +18,7 @@ import (
 // knobsFiles — 扫描面：装有运行旋钮的件（相对 core/internal/agent 的路径；新增一件就加一行）。
 var knobsFiles = []string{
 	"scheduler.go", "worker.go", "walkbudget.go", "recovery.go", "docker_worker.go",
-	"../../gateway/gateway.go",
+	"../gateway/gateway.go",
 }
 
 // nonKnobConsts — 显式登记为「不是运行旋钮」的常量（枚举/静态定义/文案——改了不涉及运行调节）。
