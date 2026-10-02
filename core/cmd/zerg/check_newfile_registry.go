@@ -1,4 +1,4 @@
-// check_newfile_registry.go —— 门76 判据件 `scripts/gates/check-newfile-registry.py`（729 行）的 **Go 真搬**。
+// check_newfile_registry.go —— 门76 判据件 `scripts/gates/check-newfile-registry.py`（946 行 · 新版）的 **Go 真搬**。
 //
 // 为什么有这件（不是「顺手 Go 化」）：
 //
@@ -11,7 +11,7 @@
 // 选它 / 不选它的理由：
 //
 //	✓ 选：只读六张登记面 + 现读盘上件集（**读**登记面合规 · 禁的是**改**）· 输出**定序**
-//	  （所有集合处一律 `sorted`）· 退码 `0/1/2` 三档齐 · 729 行（行数适中）· **无人正在改**。
+//	  （所有集合处一律 `sorted`）· 退码 `0/1/2` 三档齐 · 行数适中 · **无人正在改**。
 //	✓ 外部树（仓外台账 tsv / 仓外冻结基线）按新口径走**显式入参旋钮**（`--inventory` / `--baseline`，
 //	  名照 py 同名旗标），缺省 = py 默认推导逐字同构（`--inventory` 缺省 = 同级 `Zerg-内部文档/项目文档/*/清单-脚本现状-*.tsv`
 //	  取 sorted 末件；该串**不含 `..` 段** ⇒ `filepath.Join` 与 `os.path.join` 逐字同，**不做串拼**）。
@@ -43,8 +43,7 @@
 //	    ③ 本件是否落在**他门**的扫描面内？——**是（门⑩）**：`scripts/gates/check-dryrun-semantics.py` 的
 //	       `SCAN_DIRS` 含 `core/`、`SCAN_EXTS` 含 `*.go`、模式 `dr[y]... run`（此处**故意拆写**）。
 //	       **处理**：本件全文**零处**出现该许可模式（判据件的件名/登记表名在本件里**一律不落字面** ——
-//	       面② 的判据件名由**步骤表现读**得出）⇒ 两态读数逐字相同（落仓前后 py 侧 `check-dryrun-semantics`
-//	       的 `现跑件` 计数同值，见回执）。
+//	       面② 的判据件名由**步骤表现读**得出）⇒ 两态读数逐字相同。
 //	    ④ 本件是否落在 `check-hardcoded-private-paths`（`SCAN_DIRS` 含 `core/`）面内？——**否**：本件零绝对
 //	       私有路径字面（家目录走 `os.UserHomeDir()`，✗ 不写 `/Users/...`）。
 //	    ⇒ 综合：自指 = **否**（唯一相邻面 = 门⑩，已按 ③ 处置并留证）。
@@ -52,7 +51,8 @@
 // 未覆盖面（✗ 不声称逐字对齐）：
 //
 //	① **argparse 帮助 / usage 正文**（`-h/--help` · 未知旗标 · 缺值 · 位置参数）：本件落 rc=0 / 2 与 py 同，
-//	   但**正文自定**（不逐字仿 argparse 的 usage 排版）。
+//	   且 `gnrUsage` / `gnrHelp` **逐字内嵌现读 py 正文**（含新旗标 `--json SECTIONS` / `--yes` 与两段
+//	   位置），但 argparse 的**自动折行算法**不逐字复刻（只按 py 现读输出**照抄换行位置**）。
 //	② **默认根定位**：见上 (a)。
 //	③ **非 UTF-8 输入的字面替换粒度**：py `errors="replace"` 与 Go `strings.ToValidUTF8` 对**连续非法字节**
 //	   的 U+FFFD 分割粒度可能不同（真仓六张表皆合法 UTF-8 ⇒ 现读零影响）。
@@ -72,7 +72,23 @@
 //	func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int
 //	  · argv   —— 与 py `sys.argv[1:]` 同形（不含程序名）
 //	  · 退码   —— 0 判到了（报告档；`--strict` 下 R1/R2/R3/R5 任一 > 0 ⇒ 1） / 2 不给结论
+//	      ★ rc=2 现读含两条**用法错**（照 py `main()` 判序）：`--yes` 不与 `--dump-baseline` 连用 ·
+//	        `--json` 与 `--dump-baseline` 同用 · `--json` 断面名不认 / 为空。
 //	  · 输出   —— stdout/stderr 与 py 逐字节对齐（见上「未覆盖面」）
+//
+// 默认干跑（写面最小 · 比业界写器保守）
+//
+//	本件默认**不写任何件**（只读报告 / 干跑）。唯一的写面 = `--dump-baseline`（生成冻结基线 · 仓外生成件），
+//	且**只有显式 `--yes` 才真落**：不带 `--yes` 时它只把计划（落点 + 将写件数）打到 stdout、
+//	**一个字节都不写**。这是本件与「默认真写」的写器（业界常见形态）**刻意不同**的保守面 ——
+//	目的是「先看计划、再显式确认落点」。（`--yes` 不与 `--dump-baseline` 连用 ⇒ 用法错 rc=2；其余旗标一律只读。）
+//
+// 机器面（`--json`）
+//
+//	`--json <断面>`：断面为逗号分隔、只认 `faces` 与 `self`；给了就**只出 JSON**（人面向 stdout 让位）。
+//	JSON 恒含：`expected_faces`（本件八面名）· `reported_faces`（本次实际报出的面）· `counts`（五态计数
+//	PASS/FAIL/BLOCKED/REPORT/UNKNOWN）· `all_green`（判到了且 0 条缺登记）；`faces` / `self` 断面分别加
+//	逐面详情与自指详情。断面名不认 / 为空 ⇒ 用法错 rc=2（不给结论）。`--json` 不与 `--dump-baseline` 同用 ⇒ 用法错 rc=2。
 //
 // 交回父代理入账（✗ 本件不自行修）：
 //
@@ -90,6 +106,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -124,6 +141,28 @@ var (
 	gnrExcludesCompiled = regexp.MustCompile(gnrExcludesRE)
 	gnrDropCompiled     = regexp.MustCompile(gnrDropRE)
 )
+
+// ── 机器面：门76 的**八面**（逐字对齐 py `FACES` · 顺序 = 打印顺序）────────────
+// 为什么是这八面：六张登记表（①–⑥）＋ 口径差栏（参照读数）＋ 自指（本门对自身的登记情形）。
+var gnrFaces = []string{
+	"①公开标记表",
+	"②干跑登记",
+	"③门①两张真源",
+	"④脚本台账",
+	"⑤两器排除表",
+	"⑥失败文案面",
+	"口径差栏",
+	"自指",
+}
+
+// 五态（`precommit-gates.sh` 的步骤级四档 PASS/FAIL/BLOCKED/REPORT ＋ 自报未知态 UNKNOWN）：
+//
+//	PASS    = 判到了且该面 0 条缺登记（R4/R6 = 无发现）
+//	FAIL    = 判到了且该面 > 0 条缺登记（R1/R2/R3/R5）
+//	BLOCKED = 该面自己的真源读不到 / 面判不了（面级不给结论）
+//	REPORT  = 只报不判的面（R4/R6 旁栏不进退码 · 口径差栏/自指 = 参照/自指读数）
+//	UNKNOWN = 整跑在**面级判读之前**就短路（分母级判不了：扫面不在盘 / 分母 0 / 基线不在盘）⇒ 该面结论未知
+var gnrFacesStates = []string{"PASS", "FAIL", "BLOCKED", "REPORT", "UNKNOWN"}
 
 // gnrDryDriverPy —— py `load_dry_module()` + `collect_paths()` + `dry_registry()` 的**逐字复刻驱动**。
 // argv：1=判据件绝对路径 · 2=仓根 · 3=步骤表里抽出的**仓根相对**判据件名（仅用于例外文案）。
@@ -343,8 +382,8 @@ func gnrContains(list []string, v string) bool {
 // ── 分母：两套现读口径 ─────────────────────────────────────────────────────
 // ★ 遍历/排序点交代：py `os.walk` 里**明写** `dirnames[:] = sorted(...)` 与 `for name in sorted(filenames)`，
 //
-//	所以**遍历序**是「目录名 sorted 的 DFS × 文件名单层 sorted」；但本函数**返回集合**，而**输出行序**
-//	的决定者是 `audit()` 里的 `sorted(ledger_face)` / `sorted(ledger_face - base)`（res["roster"] /
+//	所以**遍历序**是「目录名 sorted 的 DFS × 文件名单层 sorted」；但本函数**返回集合**，而**输出行序**的
+//	决定者是 `audit()` 里的 `sorted(ledger_face)` / `sorted(ledger_face - base)`（res["roster"] /
 //	new_files / 对差 三处）⇒ **遍历序不决定任何一行输出**。本件按 Go 侧 `f.ReadDir(-1)`（**原序**）
 //	收集进 map，序不进输出。✗ 不用 `os.ReadDir`（它会替我们排序、且与本函数无关）。
 func gnrScanLedgerFace(root string) map[string]bool {
@@ -503,7 +542,7 @@ func gnrAnyComp(rel string, comps map[string]bool) bool {
 
 // ── 六张表：逐张现读 ───────────────────────────────────────────────────────
 // gnrLoadMarks —— ① `公开标记.tsv` ⇒ {rel: public}；读不到 / 0 行 ⇒ nil。
-// ★ py dict 的**插入序**本件用 `ginrMarkKeys` 切片保序；本件对 marks **只做按键查值**（✗ 零 map 迭代）。
+// ★ py dict 的**插入序**本件用 `keys` 切片保序；本件对 marks **只做按键查值**（✗ 零 map 迭代）。
 func gnrLoadMarks(root string) (map[string]string, []string) {
 	p := filepath.Join(root, gnrMarksRel)
 	if !gnrIsFile(p) {
@@ -875,26 +914,28 @@ type gnrCounts struct {
 }
 
 type gnrRes struct {
-	counts    *gnrCounts
-	ledgerCnt *int
-	gate1Cnt  *int
-	diff      []string
-	diffSet   bool
-	problems  []string
-	notJudged []gnrNJ
-	roster    []string
-	newFiles  []string
-	items     map[string][]string
-	weak      []string
-	fourth    []string
-	dryNA     []string
-	dryHits   map[string]bool
-	dryHitsOK bool
-	ledPath   string
-	ledRows   *int
-	wording   *bool
-	wLines    []string
-	marks     map[string]string
+	counts     *gnrCounts
+	ledgerCnt  *int
+	gate1Cnt   *int
+	diff       []string
+	diffSet    bool
+	problems   []string
+	notJudged  []gnrNJ
+	roster     []string
+	newFiles   []string
+	items      map[string][]string
+	weak       []string
+	fourth     []string
+	dryNA      []string
+	dryHits    map[string]bool
+	dryReg     map[string]bool
+	dryHitsOK  bool
+	ledPath    string
+	ledRows    *int
+	wording    *bool
+	wLines     []string
+	marks      map[string]string
+	faceJudged map[string]bool
 }
 
 func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bool, baseline string) *gnrRes {
@@ -1004,6 +1045,16 @@ func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bo
 	drops := gnrLoadDropExact(root)
 	ledRows, ledPath, _ := gnrLoadLedgerRows(root, inv, invSet)
 	fixed, wLines, wordingOK := gnrLoadWording(root)
+
+	// 机器面：逐面「真源读到了没有」（面自身判不了 ⇒ BLOCKED；读到但整跑无结论 ⇒ UNKNOWN）
+	res.faceJudged = map[string]bool{
+		"①公开标记表":  marks != nil,
+		"②干跑登记":   dryHits != nil && dryReg != nil,
+		"③门①两张真源": stepLines != nil && wlItems != nil,
+		"④脚本台账":   ledRows != nil,
+		"⑤两器排除表":  excludes != nil && drops != nil,
+		"⑥失败文案面":  fixed != nil,
+	}
 
 	type faceCheck struct {
 		name string
@@ -1119,7 +1170,8 @@ func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bo
 	}
 	res.items["R4"], res.items["R5"] = r4, r5
 	res.weak, res.fourth, res.dryNA = weak, fourth, dryNA
-	res.dryHits, res.dryHitsOK = dryHits, dryHits != nil
+	res.dryHits, res.dryReg = dryHits, dryReg
+	res.dryHitsOK = dryHits != nil
 	if ledRows != nil {
 		m := len(ledRows)
 		res.ledRows = &m
@@ -1138,9 +1190,37 @@ func gnrDefaultBaseline() string {
 	return filepath.Join(home, ".zerg", "newfile-registry-baseline.tsv")
 }
 
+// ── 出口判决（**唯一真源** · 人面向与机器面共用）────────────────────────────
+// gnrVerdict —— 返回 (rc, bad, unjudged)。0 = 判到了 · 1 = 缺登记（仅 --strict）· 2 = 不给结论。
+//
+//	与 `gnrRun` 的出口分支**同一套数**（`bad` / `unjudged` 只由 res 派生、无副作用）——
+//	改一处必须两处同源，禁各算一套（`--json` 短路不得改变退码）。
+func gnrVerdict(res *gnrRes, strict bool) (int, int, int) {
+	if res.counts == nil {
+		return 2, 0, 0
+	}
+	c := res.counts
+	bad := c.R1 + c.R2 + c.R3 + c.R5 // R4 / R6 = 单列旁栏（写死边界：不进退码）
+	unjudged := len(res.notJudged) + len(res.problems)
+	if c.R4 == nil {
+		unjudged++
+	}
+	if unjudged > 0 || len(res.newFiles) == 0 {
+		return 2, bad, unjudged
+	}
+	if bad > 0 {
+		if strict {
+			return 1, bad, unjudged
+		}
+		return 0, bad, unjudged
+	}
+	return 0, bad, unjudged
+}
+
 // gnrRun —— py `run()`：输出 + 退码。strict=阻断档。
 func gnrRun(stdout io.Writer, root string, newFiles []string, newSet bool, inv string, invSet bool, strict bool, baseline string, baselineSet bool) int {
 	res := gnrAudit(root, newFiles, newSet, inv, invSet, baseline)
+	rc, bad, unjudged := gnrVerdict(res, strict) // 出口判决唯一真源（同 `gnrRunJSON`）
 	fmt.Fprintln(stdout, "门76 新件登记完整性（件级 × 六张登记表 · **只报告**）")
 	fmt.Fprintf(stdout, "  仓根：%s\n", root)
 	if res.ledgerCnt != nil {
@@ -1161,7 +1241,7 @@ func gnrRun(stdout io.Writer, root string, newFiles []string, newSet bool, inv s
 			fmt.Fprintf(stdout, "  ✗ %s\n", p)
 		}
 		fmt.Fprintln(stdout, "  判据结论：**判不了 ⇒ 不给结论（rc=2）**")
-		return 2
+		return rc
 	}
 	c := res.counts
 	fmt.Fprintf(stdout, "  分母（现读新件 ∖ 冻结基线）：%d 件\n", len(res.newFiles))
@@ -1224,25 +1304,16 @@ func gnrRun(stdout io.Writer, root string, newFiles []string, newSet bool, inv s
 	for _, p := range res.problems {
 		fmt.Fprintf(stdout, "  ✗ %s\n", p)
 	}
-	bad := c.R1 + c.R2 + c.R3 + c.R5
-	unjudged := len(res.notJudged) + len(res.problems)
-	if c.R4 == nil {
-		unjudged++
-	}
 	if unjudged > 0 || len(res.newFiles) == 0 {
 		fmt.Fprintln(stdout, "  判据结论：**判不了 / 分母 0 ⇒ 不给结论（rc=2）**（真的没有 ≠ 判不了）")
-		return 2
+		return rc
 	}
 	if bad > 0 {
-		rc := 0
-		if strict {
-			rc = 1
-		}
 		fmt.Fprintf(stdout, "  判据结论：**%d 条缺登记**（逐条点名如上）；报告档 rc=%d（只报告 · 不接闸）\n", bad, rc)
 		return rc
 	}
 	fmt.Fprintln(stdout, "  判据结论：判到了 —— 五张登记表逐面 **0 条缺登记**（面④/⑥ 见上）")
-	return 0
+	return rc
 }
 
 func gnrCountStr(p *int) string {
@@ -1294,6 +1365,425 @@ func gnrSelfInList(list []string) string {
 		return "缺登记"
 	}
 	return "不在缺登记名单"
+}
+
+// ── 机器面（`--json`）：八面 × 五态（不改人面向一字）────────────────────────
+// ★ 输出行序的决定者：JSON 的键序 = 本件构造 gnrJObj 时的**插入序**（对齐 py
+// `json.dumps(..., sort_keys=False)` 的 dict 插入序）；`face_states` = `gnrFaces` 序（8 键）、
+// `counts` = `gnrFacesStates` 序（5 键）、顶层 = 本函数 `obj` 的写入序。`reported_faces` 走
+// `sort.Strings`（py `sorted`，Unicode 码位序 ≡ UTF-8 字节序）。★ **零 Go map 迭代进输出**：
+// 所有 map 只做按键查值；要成列时先收进切片再 `sort`。
+type gnrJField struct {
+	k string
+	v interface{}
+}
+type gnrJObj []gnrJField
+
+func gnrIndent(n int) string { return strings.Repeat("  ", n) }
+
+// gnrJSONStr —— Python `json.dumps(ensure_ascii=False)` 的串转义（✗ 不转义非 ASCII / `/`）。
+func gnrJSONStr(sb *strings.Builder, s string) {
+	sb.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			sb.WriteString("\\\"")
+		case '\\':
+			sb.WriteString("\\\\")
+		case '\n':
+			sb.WriteString("\\n")
+		case '\r':
+			sb.WriteString("\\r")
+		case '\t':
+			sb.WriteString("\\t")
+		case '\b':
+			sb.WriteString("\\b")
+		case '\f':
+			sb.WriteString("\\f")
+		default:
+			if r < 0x20 {
+				sb.WriteString(fmt.Sprintf("\\u%04x", r))
+			} else {
+				sb.WriteRune(r)
+			}
+		}
+	}
+	sb.WriteByte('"')
+}
+
+// gnrJSONValue —— 复刻 `json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=False)` 的排版。
+//
+//	空 dict/列表 ⇒ `{}` / `[]`；非空 ⇒ 逐项换行 + 2 空格缩进；`nil`（Go 侧显式 nil 接口 / 无值）
+//	⇒ `null`；`[]string(nil)` ⇒ `null`（区分「键缺 ⇒ null」与「空表 ⇒ []」—— 与 py `None ⟷ []` 同）。
+func gnrJSONValue(sb *strings.Builder, v interface{}, ind int) {
+	switch x := v.(type) {
+	case nil:
+		sb.WriteString("null")
+	case bool:
+		if x {
+			sb.WriteString("true")
+		} else {
+			sb.WriteString("false")
+		}
+	case int:
+		sb.WriteString(strconv.Itoa(x))
+	case string:
+		gnrJSONStr(sb, x)
+	case []string:
+		if x == nil {
+			sb.WriteString("null")
+			return
+		}
+		sb.WriteString("[")
+		if len(x) == 0 {
+			sb.WriteString("]")
+			return
+		}
+		sb.WriteString("\n")
+		for i, s := range x {
+			sb.WriteString(gnrIndent(ind + 1))
+			gnrJSONStr(sb, s)
+			if i < len(x)-1 {
+				sb.WriteString(",")
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString(gnrIndent(ind))
+		sb.WriteString("]")
+	case gnrJObj:
+		if len(x) == 0 {
+			sb.WriteString("{}")
+			return
+		}
+		sb.WriteString("{\n")
+		for i, f := range x {
+			sb.WriteString(gnrIndent(ind + 1))
+			gnrJSONStr(sb, f.k)
+			sb.WriteString(": ")
+			gnrJSONValue(sb, f.v, ind+1)
+			if i < len(x)-1 {
+				sb.WriteString(",")
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString(gnrIndent(ind))
+		sb.WriteString("}")
+	default:
+		sb.WriteString("null")
+	}
+}
+
+func gnrJGet(obj gnrJObj, k string) string {
+	for _, f := range obj {
+		if f.k == k {
+			if s, ok := f.v.(string); ok {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func gnrIntOrNil(p *int) interface{} {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func gnrStrOrNil(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func gnrListOrNil(l []string) interface{} {
+	if l == nil {
+		return nil
+	}
+	return l
+}
+
+// gnrCntIface —— counts 里的某一个计数（缺失 / `None` ⇒ nil ⇒ JSON null）。
+func gnrCntIface(c *gnrCounts, which string) interface{} {
+	if c == nil {
+		return nil
+	}
+	switch which {
+	case "R1":
+		return c.R1
+	case "R2":
+		return c.R2
+	case "R3":
+		return c.R3
+	case "R4":
+		if c.R4 == nil {
+			return nil
+		}
+		return *c.R4
+	case "R5":
+		return c.R5
+	case "R6":
+		if c.R6 == nil {
+			return nil
+		}
+		return *c.R6
+	}
+	return nil
+}
+
+func gnrFaceCount(res *gnrRes, name string) (int, bool) {
+	c := res.counts
+	if c == nil {
+		return 0, false
+	}
+	switch name {
+	case "①公开标记表":
+		return c.R1, true
+	case "②干跑登记":
+		return c.R2, true
+	case "③门①两张真源":
+		return c.R3, true
+	case "④脚本台账":
+		if c.R4 == nil {
+			return 0, false
+		}
+		return *c.R4, true
+	case "⑤两器排除表":
+		return c.R5, true
+	case "⑥失败文案面":
+		if c.R6 == nil {
+			return 0, false
+		}
+		return *c.R6, true
+	}
+	return 0, false
+}
+
+// gnrBuildFaceStates —— 八面 → 五态（PASS/FAIL/BLOCKED/REPORT/UNKNOWN）。口径见 `gnrFacesStates` 注释。
+func gnrBuildFaceStates(res *gnrRes) gnrJObj {
+	unknownAll := res.counts == nil
+	st := gnrJObj{}
+	for _, name := range gnrFaces[:6] {
+		if unknownAll {
+			st = append(st, gnrJField{name, "UNKNOWN"})
+			continue
+		}
+		if !res.faceJudged[name] {
+			st = append(st, gnrJField{name, "BLOCKED"}) // 该面自己的真源读不到 / 面判不了
+			continue
+		}
+		n, _ := gnrFaceCount(res, name)
+		report := name == "④脚本台账" || name == "⑥失败文案面"
+		switch {
+		case report && n != 0:
+			st = append(st, gnrJField{name, "REPORT"}) // 旁栏不进退码：有发现记 REPORT
+		case n != 0:
+			st = append(st, gnrJField{name, "FAIL"})
+		default:
+			st = append(st, gnrJField{name, "PASS"})
+		}
+	}
+	// 参照读数 · 不并入判红；台账口径扫面缺 ⇒ 参照读数也判不了
+	if res.ledgerCnt == nil {
+		st = append(st, gnrJField{"口径差栏", "BLOCKED"})
+	} else {
+		st = append(st, gnrJField{"口径差栏", "REPORT"})
+	}
+	// 自指依赖分母/面③⑤ ⇒ 整跑短路时未知
+	if unknownAll {
+		st = append(st, gnrJField{"自指", "UNKNOWN"})
+	} else {
+		st = append(st, gnrJField{"自指", "REPORT"})
+	}
+	return st
+}
+
+func gnrDiffFace(res *gnrRes) interface{} {
+	if res.ledgerCnt == nil {
+		return nil
+	}
+	var diff interface{}
+	if res.diffSet {
+		if res.diff == nil {
+			diff = []string{}
+		} else {
+			diff = res.diff
+		}
+	}
+	return gnrJObj{
+		{"台账口径", *res.ledgerCnt},
+		{"门①候选面", gnrIntOrNil(res.gate1Cnt)},
+		{"对差", diff},
+	}
+}
+
+// gnrFaceDetail —— `--json faces` 断面：逐面详情（state / judged / 缺登记数 / 命中件名）。
+func gnrFaceDetail(res *gnrRes, st gnrJObj) gnrJObj {
+	c := res.counts
+	out := gnrJObj{}
+	add := func(name string, obj gnrJObj) {
+		obj = append(obj, gnrJField{"judged", res.faceJudged[name]})
+		obj = append(obj, gnrJField{"state", gnrJGet(st, name)})
+		out = append(out, gnrJField{name, obj})
+	}
+	add("①公开标记表", gnrJObj{
+		{"缺登记", gnrCntIface(c, "R1")},
+		{"items", gnrListOrNil(res.items["R1"])},
+	})
+	add("②干跑登记", gnrJObj{
+		{"缺登记", gnrCntIface(c, "R2")},
+		{"items", gnrListOrNil(res.items["R2"])},
+		{"不适用件", gnrListOrNil(res.dryNA)},
+	})
+	add("③门①两张真源", gnrJObj{
+		{"缺登记", gnrCntIface(c, "R3")},
+		{"items", gnrListOrNil(res.items["R3"])},
+		{"弱挂载", gnrListOrNil(res.weak)},
+		{"通用语法步兜住", gnrListOrNil(res.fourth)},
+	})
+	add("④脚本台账", gnrJObj{
+		{"缺登记", gnrCntIface(c, "R4")},
+		{"items", gnrListOrNil(res.items["R4"])},
+		{"台账路径", gnrStrOrNil(res.ledPath)},
+		{"台账行数", gnrIntOrNil(res.ledRows)},
+	})
+	add("⑤两器排除表", gnrJObj{
+		{"缺登记", gnrCntIface(c, "R5")},
+		{"items", gnrListOrNil(res.items["R5"])},
+	})
+	add("⑥失败文案面", gnrJObj{
+		{"未改文案", gnrCntIface(c, "R6")},
+		{"文案", gnrListOrNil(res.wLines)},
+	})
+	out = append(out, gnrJField{"口径差栏", gnrDiffFace(res)})
+	return out
+}
+
+// gnrSelfDetail —— `--json self` 断面：本门对自身八面的登记情形（逐字对齐人面向「★ 自指」那一行）。
+func gnrSelfDetail(res *gnrRes) gnrJObj {
+	face1 := "未登记"
+	if res.marks != nil {
+		if v, ok := res.marks[gnrSelfRel]; ok {
+			face1 = "已登记（public=" + v + "）"
+		}
+	}
+	face2 := "不适用（正文不在该口径的扫描面内）"
+	if res.dryHits != nil && res.dryHits[gnrSelfRel] {
+		face2 = "需登记"
+	}
+	face3 := "不在缺登记名单"
+	if gnrContains(res.items["R3"], gnrSelfRel) {
+		face3 = "缺登记"
+	}
+	face5 := "不在缺登记名单"
+	if gnrContains(res.items["R5"], gnrSelfRel) {
+		face5 = "缺登记"
+	}
+	return gnrJObj{
+		{"path", gnrSelfRel},
+		{"在分母内", gnrContains(res.newFiles, gnrSelfRel)},
+		{"面①", face1},
+		{"面②", face2},
+		{"面③", face3},
+		{"面⑤", face5},
+	}
+}
+
+// gnrVerdictText —— py `_verdict_text()`（仅机器面 `verdict` 字段用）。
+func gnrVerdictText(res *gnrRes, rc int) string {
+	if res.counts == nil {
+		return "判不了 ⇒ 不给结论（rc=2）"
+	}
+	c := res.counts
+	bad := c.R1 + c.R2 + c.R3 + c.R5
+	unjudged := len(res.notJudged) + len(res.problems)
+	if c.R4 == nil {
+		unjudged++
+	}
+	if unjudged > 0 || len(res.newFiles) == 0 {
+		return "判不了 / 分母 0 ⇒ 不给结论（rc=2）"
+	}
+	if bad > 0 {
+		return fmt.Sprintf("%d 条缺登记（报告档 rc=%d）", bad, rc)
+	}
+	return "判到了 —— 五张登记表逐面 0 条缺登记"
+}
+
+// gnrRunJSON —— py `run_json()`：`--json <断面>` 只出机器面 JSON（人面向 stdout 让位）+ 与报告档同源退码。
+func gnrRunJSON(stdout, stderr io.Writer, root string, newFiles []string, newSet bool, inv string, invSet bool, strict bool, baseline, selector string) int {
+	sel := []string{}
+	for _, s := range strings.Split(selector, ",") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			sel = append(sel, s)
+		}
+	}
+	unknown := []string{}
+	hasFaces, hasSelf := false, false
+	for _, s := range sel {
+		if s != "faces" && s != "self" {
+			unknown = append(unknown, s)
+		}
+		if s == "faces" {
+			hasFaces = true
+		}
+		if s == "self" {
+			hasSelf = true
+		}
+	}
+	if len(unknown) > 0 {
+		fmt.Fprintf(stderr, "⛔ 用法错（rc=2）：`--json` 只认断面 faces,self；不认：%s\n", strings.Join(unknown, ","))
+		return 2
+	}
+	if len(sel) == 0 {
+		fmt.Fprint(stderr, "⛔ 用法错（rc=2）：`--json` 需要断面（faces,self 任一）\n")
+		return 2
+	}
+	res := gnrAudit(root, newFiles, newSet, inv, invSet, baseline)
+	rc, _, _ := gnrVerdict(res, strict)
+	states := gnrBuildFaceStates(res)
+	cnt := map[string]int{}
+	for _, f := range states {
+		cnt[f.v.(string)]++
+	}
+	countsObj := gnrJObj{}
+	for _, s := range gnrFacesStates {
+		countsObj = append(countsObj, gnrJField{s, cnt[s]})
+	}
+	reported := []string{}
+	for _, f := range states {
+		reported = append(reported, f.k)
+	}
+	sort.Strings(reported)
+	allGreen := rc == 0 && cnt["FAIL"] == 0 && cnt["BLOCKED"] == 0 && cnt["UNKNOWN"] == 0
+	obj := gnrJObj{
+		{"schema", "zerg/gate-json/v1"},
+		{"tool", "check-newfile-registry.py"},
+		{"gate", "门76 新件登记完整性"},
+		{"repo", root},
+		{"selector", sel},
+		{"strict", strict},
+		{"rc", rc},
+		{"expected_faces", gnrFaces},
+		{"reported_faces", reported},
+		{"face_states", states},
+		{"counts", countsObj},
+		{"all_green", allGreen},
+		{"verdict", gnrVerdictText(res, rc)},
+	}
+	if hasFaces {
+		obj = append(obj, gnrJField{"faces", gnrFaceDetail(res, states)})
+	}
+	if hasSelf {
+		obj = append(obj, gnrJField{"self", gnrSelfDetail(res)})
+	}
+	var sb strings.Builder
+	gnrJSONValue(&sb, obj, 0)
+	sb.WriteString("\n")
+	fmt.Fprint(stdout, sb.String())
+	return rc
 }
 
 // ── 自检（合成夹具 · 成对 · 不扫真仓）──────────────────────────────────────
@@ -1516,24 +2006,29 @@ func gnrDefaultRoot() string {
 const gnrUsage = "usage: check-newfile-registry.py [-h] [--repo REPO] [--baseline BASELINE]\n" +
 	"                                 [--dump-baseline DUMP_BASELINE]\n" +
 	"                                 [--inventory INVENTORY] [--new-file NEW_FILE]\n" +
-	"                                 [--strict] [--self-test]\n"
+	"                                 [--strict] [--json SECTIONS] [--yes]\n" +
+	"                                 [--self-test]\n"
 
-// gnrHelp —— py `argparse --help` 的 stdout 逐字节内嵌（含末尾换行）。
-const gnrHelp = gnrUsage + `
-门76 新件登记完整性：件级 × 六张登记表（只报告 · 起手不接闸）
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --repo REPO           被查仓根（默认本仓）
-  --baseline BASELINE   冻结基线（仓外生成件 · --dump-baseline 生成）
-  --dump-baseline DUMP_BASELINE
-                        把现读件集写成基线（仓外路径）后退出
-  --inventory INVENTORY
-                        面④ 仓外台账 tsv（不给 ⇒ 面④ 判不了 · 需人签）
-  --new-file NEW_FILE   直接指分母（可重复 · 两态取证用）
-  --strict              阻断档：R1–R5 任一 > 0 ⇒ rc=1（默认报告档 rc=0）
-  --self-test           只跑合成夹具自检（不扫真仓）
-`
+// gnrHelp —— py `argparse --help` 的 stdout 逐字节内嵌（含末尾换行 · 新旗标 `--json SECTIONS` / `--yes`）。
+const gnrHelp = gnrUsage +
+	"\n" +
+	"门76 新件登记完整性：件级 × 六张登记表（只报告 · 起手不接闸）\n" +
+	"\n" +
+	"optional arguments:\n" +
+	"  -h, --help            show this help message and exit\n" +
+	"  --repo REPO           被查仓根（默认本仓）\n" +
+	"  --baseline BASELINE   冻结基线（仓外生成件 · --dump-baseline 生成）\n" +
+	"  --dump-baseline DUMP_BASELINE\n" +
+	"                        把现读件集写成基线（仓外路径）后退出；**默认干跑不写**，带 `--yes` 才真落\n" +
+	"  --inventory INVENTORY\n" +
+	"                        面④ 仓外台账 tsv（不给 ⇒ 面④ 判不了 · 需人签）\n" +
+	"  --new-file NEW_FILE   直接指分母（可重复 · 两态取证用）\n" +
+	"  --strict              阻断档：R1–R5 任一 > 0 ⇒ rc=1（默认报告档 rc=0）\n" +
+	"  --json SECTIONS       机器面 JSON（逗号分隔断面：faces = 六张登记表逐面状态；self = 自指那一段） ·\n" +
+	"                        给了就只出 JSON（人面向 stdout 让位）\n" +
+	"  --yes                 写面确认：只有 `--dump-baseline` 会写件，且**默认干跑不写**；带 `--yes`\n" +
+	"                        才真落（本件比「默认真写」的写器更保守）\n" +
+	"  --self-test           只跑合成夹具自检（不扫真仓）\n"
 
 func gnrUsageErr(stderr io.Writer, msg string) int {
 	fmt.Fprint(stderr, gnrUsage)
@@ -1547,6 +2042,8 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 	baseline, baselineSet := "", false
 	dump, dumpSet := "", false
 	inv, invSet := "", false
+	jsonSel, jsonSet := "", false
+	yes := false
 	var newFiles []string
 	strict, selfTest, help := false, false, false
 	unrec := []string{}
@@ -1565,6 +2062,8 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 			selfTest = true
 		case a == "--strict":
 			strict = true
+		case a == "--yes":
+			yes = true
 		case a == "--repo":
 			v, ni, ok := need(i)
 			if !ok {
@@ -1606,6 +2105,14 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 			i = ni
 		case strings.HasPrefix(a, "--new-file="):
 			newFiles = append(newFiles, a[len("--new-file="):])
+		case a == "--json":
+			v, ni, ok := need(i)
+			if !ok {
+				return gnrUsageErr(stderr, "argument --json: expected one argument")
+			}
+			jsonSel, jsonSet, i = v, true, ni
+		case strings.HasPrefix(a, "--json="):
+			jsonSel, jsonSet = a[len("--json="):], true
 		case strings.HasPrefix(a, "-") && a != "-":
 			unrec = append(unrec, a)
 		default:
@@ -1619,6 +2126,15 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 	if len(unrec) > 0 {
 		return gnrUsageErr(stderr, "unrecognized arguments: "+strings.Join(unrec, " "))
 	}
+	// 用法错（rc=2 · fail-closed）：旗标组合不合法，先判、不执行任何动作（判序照 py `main()`）。
+	if yes && !dumpSet {
+		fmt.Fprint(stderr, "⛔ 用法错（rc=2）：`--yes` 只跟 `--dump-baseline` 连用（本件**默认干跑不写**）\n")
+		return 2
+	}
+	if jsonSet && dumpSet {
+		fmt.Fprint(stderr, "⛔ 用法错（rc=2）：`--json` 只跟报告档连用（不与 `--dump-baseline` 同用）\n")
+		return 2
+	}
 	if selfTest {
 		return gnrSelfTest(stdout)
 	}
@@ -1626,11 +2142,22 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 		repo = gnrDefaultRoot()
 	}
 	root := gnrAbs(repo)
+	if !baselineSet {
+		baseline = gnrDefaultBaseline()
+	}
 	if dumpSet {
 		face := gnrScanLedgerFace(root)
 		if face == nil {
 			fmt.Fprintf(stderr, "✗ 扫面不在盘：%s ⇒ 不写基线\n", filepath.Join(root, "scripts"))
 			return 2
+		}
+		if !yes {
+			// 默认干跑：只打印计划、一个字节都不写（比「默认真写」的写器保守）
+			fmt.Fprintln(stdout, "── 冻结基线生成档（**干跑** · 未写件）")
+			fmt.Fprintf(stdout, "   目标件 : %s\n", dump)
+			fmt.Fprintf(stdout, "   将写   : %d 件（现读台账口径件集逐行 · 首行注释 + 逐件一行）\n", len(face))
+			fmt.Fprintln(stdout, "   ⇒ **干跑未写**：加 `--yes` 才落（本件默认不写件）")
+			return 0
 		}
 		if err := os.MkdirAll(filepath.Dir(gnrAbs(dump)), 0o755); err != nil {
 			fmt.Fprintf(stderr, "✗ 基线写不了：%s\n", err)
@@ -1653,9 +2180,9 @@ func checkNewfileRegistryGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stdout, "基线已写：%s（%d 件）\n", dump, len(face))
 		return 0
 	}
-	if !baselineSet {
-		baseline = gnrDefaultBaseline()
-	}
 	nfSet := len(newFiles) > 0
+	if jsonSet {
+		return gnrRunJSON(stdout, stderr, root, newFiles, nfSet, inv, invSet, strict, baseline, jsonSel)
+	}
 	return gnrRun(stdout, root, newFiles, nfSet, inv, invSet, strict, baseline, baselineSet)
 }
