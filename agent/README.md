@@ -1,4 +1,8 @@
-# zerg-agent — 虫族子端 Agent（CA）
+# zerg-agentd — 虫族子端 Agent（CA）
+
+> 名字沿革：本件在**早期**叫 `zerg-agent`，与命令面 CLI（`core/cmd/zerg-agent`）**撞名**；
+> 现名 **`zerg-agentd`**（制品名 `zerg-agentd-<os>-<arch>`）。★ 旧名 `zerg-agent-<os>-<arch>` 归属
+> **命令面 CLI**（见 `publish/ci/release-agent.yml`），**不是本件** —— 别再按旧名找子端件。
 
 集群的「另一半」：主控（`zerg-core`）负责调度，**子端 Agent 负责在每台工作机上真正把模型跑起来**。
 
@@ -14,9 +18,9 @@
 
 ```bash
 cd agent
-go build -o zerg-agent ./cmd/zerg-agent
+go build -o zerg-agentd ./cmd/zerg-agentd
 # 交叉编译示例（Linux 工作机）
-GOOS=linux GOARCH=amd64 go build -o zerg-agent-linux-amd64 ./cmd/zerg-agent
+GOOS=linux GOARCH=amd64 go build -o zerg-agentd-linux-amd64 ./cmd/zerg-agentd
 ```
 
 ## 运行
@@ -25,7 +29,8 @@ GOOS=linux GOARCH=amd64 go build -o zerg-agent-linux-amd64 ./cmd/zerg-agent
 # 令牌**不走 argv**（会进本机 `ps` 与 shell 历史 ✗）：本机跑读 600 档 `~/.zerg/token`；
 # 跨机由部署脚本入口写入 600 环境档（单元/plist 只引用它）——
 #   gateway/deploy_x3.sh --token-file <600档> / printf '%s\n' <令牌> | $0 --token-stdin …
-./zerg-agent \
+# 二进制名 zerg-agentd（本机件 bin/zerg-agentd；跨平台件 bin/zerg-agentd-<os>-<arch>）
+./zerg-agentd \
   --host 0.0.0.0 \
   --port 8100 \
   --machine <本机标识> \
@@ -71,7 +76,10 @@ example-35b-v2:
 
 ## 预编译二进制
 
-每个版本在 GitHub Releases 提供：`zerg-agent-<os>-<arch>`（darwin/linux × amd64/arm64）。
+每个版本提供：**子端** `zerg-agentd-<os>-<arch>`（darwin/linux × amd64/arm64）。
+
+> ★ 同一批制品里还有**命令面 CLI** `zerg-agent-<os>-<arch>`（组件名 `agent`，真源 `core/cmd/zerg-agent`）——
+> **两件同名族、不同物**：`agentd` 是常驻子端服务（本文件），`agent` 是任务执行的 CLI。
 
 ## 依赖
 
