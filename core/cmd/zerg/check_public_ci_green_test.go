@@ -354,9 +354,11 @@ func TestCICGJSONFaceShape(t *testing.T) {
 	}
 }
 
-// ── A 类（tempdir 泄漏）回归牙：`--self-test` 与门面直跑各跑一趟后，TMPDIR 下一级目录里
-// 前缀 zerg-ci-green- 的条数**增量必须为 0**（delta==0 · 不许 ≤0）。主件两处自清句
+// ── A 类（tempdir 泄漏）回归牙：`--self-test` 与门面直跑各跑一趟后，**本用例私有 TMPDIR**
+// 下一级目录里前缀 zerg-ci-green- 的条数**增量必须为 0**（delta==0 · 不许 ≤0）。主件两处自清句
 // `defer os.RemoveAll(tmp)`（check_public_ci_green.go:271 门面档 / :640 自检档）被删掉时本用例必红。
+// ★ GAP-20261003-16：本用例把 TMPDIR 指到自建空目录（私有面）⇒ 只数本用例自建目录，不再与
+// 同包兄弟用例 / 同机并发门跑（并发建删 `zerg-ci-green-*`）共享计数面 ⇒ 不再先红后绿。
 func cicgCountCiGreenTmpDirs(t *testing.T) int {
 	t.Helper()
 	ents, err := os.ReadDir(os.TempDir())
@@ -378,8 +380,12 @@ func TestCICGTempdirReclaimed(t *testing.T) {
 	}
 	cicgRepoRootOrSkip(t)
 	t.Setenv("ZERG_CICG_PYTHON", cicgTestPython)
+	// ★ GAP-20261003-16：私有计数面（TMPDIR 指到本用例自建空目录）⇒ 只数本用例自建目录。
+	// 断言未放宽（仍是 after!=before 即红）；主件删任一处自清句时私有面内必留目录 ⇒ 仍能抓真泄漏。
+	// （本包零 `t.Parallel()` ⇒ `t.Setenv` 安全。）
+	t.Setenv("TMPDIR", t.TempDir())
 
-	// 两处 `os.MkdirTemp(\"\", \"zerg-ci-green-\")`（门面档 :267 / 自检档 :636）逐档各跑一趟 ——
+	// 两处 `os.MkdirTemp("", "zerg-ci-green-")`（门面档 :267 / 自检档 :636）逐档各跑一趟 ——
 	// 两档都必须留下自清句；任一被删（tmp 泄漏）则 delta≠0 必红。
 	for _, argv := range [][]string{{"--self-test"}, {}} {
 		before := cicgCountCiGreenTmpDirs(t)

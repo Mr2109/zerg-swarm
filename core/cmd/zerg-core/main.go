@@ -341,6 +341,9 @@ func main() {
 	r.Post("/api/tasks/{id}/terminate", handlers.TaskTerminateHandler)
 	r.Post("/api/tasks/{id}/requeue", handlers.TaskRequeueHandler)
 	r.Delete("/api/tasks/{id}", handlers.TaskDeleteHandler)
+	// 2026-10-03 任务退场正门（设计-任务退场正门-v0.2 §4.1 / 任务清单 T-08）:
+	// 撤下排队/暂停任务（queued/paused → cancelled）——主控第 7 条改态路由
+	r.Post("/api/tasks/{id}/cancel", handlers.TaskCancelHandler)
 	// v2.5.5 资源信任度（2026-08-21 Mr2109）: 加载资源状态表
 	api.LoadResourceTrust()
 	// 存量工具注册为正式（一直在用的——不是新入库——Mr2109）

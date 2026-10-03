@@ -30,15 +30,65 @@ const (
 	PriorityExternal TaskPriority = 50 // 外部任务（服务——高优先级）
 )
 
+// 任务态字面量（**代码面全集——七态**）。
+// 2026-10-03 GAP-20261003-04 刀1（T-03）: ① 补登 waiting_retry（旧注释只列五态、过期）；
+// ② 新增终态 cancelled。终态由**派生谓词** IsTerminal 判（done|failed|cancelled）——不新增合并态。
+// 注: 持久化四分区的白名单与命令树登记面是另两面；三面交叉口径见设计 §O-23。
+const (
+	StatusQueued       = "queued"        // 排队中（可取消）
+	StatusRunning      = "running"       // 运行中（不可取消——先 terminate）
+	StatusPaused       = "paused"        // 已暂停（可取消）
+	StatusDone         = "done"          // 终态: 已完成
+	StatusFailed       = "failed"        // 终态: 失败
+	StatusWaitingRetry = "waiting_retry" // 等环境恢复（可恢复——非终态）
+	StatusCancelled    = "cancelled"     // 终态: 已撤（本刀新增）
+)
+
+// closedReasonSet 结案理由闭集（§11.5 定稿: 小闭集必填——superseded/obsolete/duplicate/abandoned + other 兜底）。
+// ★ 单一常量枚举（§11.5③）；落盘存字符串值不存序号（§11.5①）；读取端遇未知值原样保留、绝不 panic（§11.5②）。
+var closedReasonSet = []string{"superseded", "obsolete", "duplicate", "abandoned", "other"}
+
+// isClosedReason 判定结案理由是否在闭集内（CancelTask 的 ①校验 用它）。
+func isClosedReason(reason string) bool {
+	for _, r := range closedReasonSet {
+		if r == reason {
+			return true
+		}
+	}
+	return false
+}
+
+// 撤下/结案**结局闭集**（2026-10-03 GAP-20261003-04 刀1 · 设计 §11.2 幂等三成因）。
+//
+// ★ 铁律（§11.2 · §4.4）: **退码只回答「命令能不能执行」，不回答「业务属于哪种状态」** ——
+// 三种结局（真取消 / 已取消幂等重放 / 已是终态只打标）都返 nil（退码 0），靠本返回值区分。
+// 逐字对齐 §11.2 stdout 结构化字段: cancelled=true / already_cancelled=true / already_terminal=true。
+const (
+	CancelOutcomeCancelled        = "cancelled"         // 真取消: queued/paused → cancelled（§11.2 cancelled=true）
+	CancelOutcomeAlreadyCancelled = "already_cancelled" // 已 cancelled 幂等重放 no-op（§11.2 already_cancelled=true）
+	CancelOutcomeAlreadyTerminal  = "already_terminal"  // 已 done/failed 只打标、status 未变（§11.2 already_terminal=true + 原终态）
+)
+
+// closedByLocal 结案主体（单机单用户 ⇒ 恒为同一主体——§11.5「closed_by 可省或留 nullable 位」）。
+const closedByLocal = "local"
+
 // Task 总调度任务
 type Task struct {
 	ID          string       `json:"id"`                    // 任务 ID（唯一）
 	Description string       `json:"description"`           // 任务描述
 	Priority    TaskPriority `json:"priority"`              // 优先级（外部高/内部低）
 	Type        string       `json:"type"`                  // internal/external
-	Status      string       `json:"status"`                // queued/running/paused/done/failed
+	Status      string       `json:"status"`                // queued/running/paused/done/failed/waiting_retry/cancelled（终态 done/failed/cancelled——见 IsTerminal）
 	FailReason  string       `json:"fail_reason,omitempty"` // 失败原因（确定性验证/执行失败——UI 显示）
-	RefTaskID   string       `json:"ref_task_id,omitempty"` // 关联任务（复查任务 → 执行任务）
+	// ============ 正交标记面（2026-10-03 GAP-20261003-04 刀1 · T-06 · 设计 §O-9/§11.1）============
+	// 「态」与「结案标记」两层: 四条同生同灭——非空即已结案 · 清空即重开 · 覆盖式（非 write-once）。
+	// 对 done/failed/cancelled 打标【不动 status】；对 queued/paused 先由 CancelTask 改态为 cancelled 再打标。
+	// 单机单用户 ⇒ closed_by 恒 closedByLocal（§11.5「可省或留 nullable 位」）。
+	ClosedAt     *time.Time `json:"closed_at,omitempty"`     // 结案时间（RFC3339 · UTC · 带 Z）
+	ClosedBy     string     `json:"closed_by,omitempty"`     // 结案主体（单机单用户——恒 local）
+	ClosedReason string     `json:"closed_reason,omitempty"` // 结案理由（闭集: superseded/obsolete/duplicate/abandoned/other）
+	ClosedNote   string     `json:"closed_note,omitempty"`   // 结案备注（自由文本——可空）
+	RefTaskID    string     `json:"ref_task_id,omitempty"`   // 关联任务（复查任务 → 执行任务）
 	// v2.5.7 对话→任务集成: 来源对话/消息关联（UI"派任务"——记录任务从哪个对话发起）
 	ParentSessionID   string    `json:"parent_session_id,omitempty"`
 	ParentMessageID   string    `json:"parent_message_id,omitempty"`
@@ -368,19 +418,43 @@ func (s *MasterScheduler) pauseInternalsLocked() {
 	}
 }
 
-// dispatchLocked 派发循环（队列非空 + 并发未满 → 派发）
-// 调用方必须持有 s.mu
+// dispatchDecideProbe 测试探针（nil = 生产零开销）: dispatchDecideLocked 每次**进入**时触发。
+// 供 T-04/F-2「save 失败 ⇒ dispatch 未被调用」的成对读数直接观测派发决策函数是否被进入（禁放宽断言）。
+var dispatchDecideProbe func()
+
+// saveTasksForCancel 测试缝（默认 = 真原子写 saveTasksLocked）: CancelTask 的**唯一持久点**经它落盘，
+// 供 T-04/F-2 注入 save 失败（mock saveTasksLocked 返 error）。生产路径等价于直接调 saveTasksLocked。
+var saveTasksForCancel = saveTasksLocked
+
+// dispatchLocked 派发循环（队列非空 + 并发未满 → 派发）。
+// 调用方必须持有 s.mu。
+// 2026-10-03 GAP-20261003-04 刀1（设计 §11.4 六步）: 拆成「锁内纯内存决策 + 锁外真拉起」两半——
+// spawn 是慢 IO，必须在锁外（CERT LCK09-J: 持锁不做阻塞 IO）。
 func (s *MasterScheduler) dispatchLocked() {
-	for len(s.queue) > 0 && len(s.running) < s.maxConcurrent {
-		task := heap.Pop(&s.queue).(*Task)
-		if task.Status == "cancelled" {
-			continue
-		}
-		task.Status = "running"
-		s.running[task.ID] = task
-		log.Printf("🔄 scheduler: dispatching task %s (%s)", task.ID, task.Description)
+	for _, task := range s.dispatchDecideLocked() {
 		go s.runTask(task)
 	}
+}
+
+// dispatchDecideLocked 派发的**纯内存决策**（调用方持锁）: 弹出可派发任务 → 标 running →
+// 记入 running 容器 → 返回待拉起清单。**不 spawn**（§11.4 步骤⑤: 只占位）。
+// 已 cancelled 的件（若因任何路径余留在 queue）跳过不派发（旧有防线，保留——2026-09-04）。
+func (s *MasterScheduler) dispatchDecideLocked() []*Task {
+	if dispatchDecideProbe != nil {
+		dispatchDecideProbe()
+	}
+	var pending []*Task
+	for len(s.queue) > 0 && len(s.running) < s.maxConcurrent {
+		task := heap.Pop(&s.queue).(*Task)
+		if task.Status == StatusCancelled {
+			continue
+		}
+		task.Status = StatusRunning
+		s.running[task.ID] = task
+		log.Printf("🔄 scheduler: dispatching task %s (%s)", task.ID, task.Description)
+		pending = append(pending, task)
+	}
+	return pending
 }
 
 // caLogEnv — 派发 CA 任务时注入的日志根 env（v2.5.5 P1-2 修复: 日志写固定位置防 worktree merge 后丢失）。
@@ -881,6 +955,16 @@ func (s *MasterScheduler) PauseRunning(exceptID string) {
 }
 
 // TerminateTask 终止执行中任务（右键功能——2026-08-22 Mr2109——kill CA 进程——任务标 failed）
+//
+// ★ T-09 登记↔实现分叉（2026-10-03 现读，两面逐字对读）:
+//
+//	登记面 `zerg help dangerous` 对 `task terminate` 逐字写「任务状态置 **terminated**」
+//	  （core/cmd/zerg/main.go:1653）；而**实现**（本函数）写 `t.Status = "failed"`。两态名不一致。
+//
+// ★ 本刀**只回报、不改**: 对齐须改 main.go——那是【禁改三件】之一；且让实现真写 terminated
+//
+//	会多出一个代码面七态、持久化四分区、UI 27 处按态分支都不认的态（恢复/复活面直接踩空）。
+//	设计 §O-23① 已把此处另立一笔账（不混进本笔）。故此处保持 failed 不动。
 func (s *MasterScheduler) TerminateTask(taskID string) error {
 	s.mu.Lock()
 	t, ok := s.running[taskID]
@@ -928,11 +1012,111 @@ func (s *MasterScheduler) RequeueTask(taskID string) error {
 	t.FailReason = ""
 	s.queue = append(s.queue, t)
 	delete(s.running, taskID)
+	// 2026-10-03 GAP-20261003-04 刀1（T-10 · §O-7③）: 补一次 saveTasksLocked——
+	// 同件 TerminateTask 调了它而本函数漏调。「迁移」与「落盘」是两个可被漏调的独立步骤:
+	// 只改内存不落盘 ⇒ 重启后盘上仍是 running ⇒ 恢复分区把它标 failed，续作丢失。
+	if err := saveTasksLocked(s.queue, s.running, s.history, s.waiting); err != nil {
+		log.Printf("⚠️ 任务落盘失败: %v\n", err)
+	}
 	s.mu.Unlock()
 	// 杀旧 CA 进程（停止当前执行——任务重回队列等下次）
 	s.killTaskProcess(taskID)
 	log.Printf("🔁 task %s re-queued (user action)\n", taskID)
 	return nil
+}
+
+// CancelTask 取消/结案任务（2026-10-03 GAP-20261003-04 刀1 · T-04/T-05/T-06）。
+//
+// 两层语义（设计 §4.1 · §O-8 · §O-9）:
+//   - 「已取消」（状态迁移）: status ∈ {queued,paused} → cancelled，**且**打 closed_* 标记；
+//   - 「已销」（只打标）    : status ∈ {done,failed}        → **不动 status**，只打 closed_* 标记；
+//   - 已 cancelled（重复关）: 幂等 no-op，静默成功（§11.2「关已关的 ⇒ 静默成功」）。
+//
+// 六步顺序（设计 §11.4，**只有一个持久点**）——锁内 ①校验 ②改态 ③迁容器 ④saveTasksLocked
+// ⑤dispatch 只占位不 spawn；解锁后 ⑥真拉起。★ save 失败必须致命: 不带「内存已改、盘未落」继续派发。
+//
+// 守卫（T-05）: cancelled 只从 queued/paused 进；running 拒绝（在飞——先 terminate）；
+// waiting_retry 拒绝（等机器恢复）；done/failed 拒绝**覆写 status**（走正交面打标——§4.1
+// 「不是不给销案，而是不能覆写」；覆写会永久丢掉「到底成没成」）。
+//
+// 返回: outcome ∈ 三值闭集（CancelOutcomeCancelled / AlreadyCancelled / AlreadyTerminal——§11.2）；
+// 真失败返 error 且 outcome 为空（找不到 / running / waiting_retry / 理由不在闭集 / 落盘失败）。
+// ★ 退码只答「命令能否执行」: 三种成功结局**都返 nil**，状态差异走 outcome 返回值（§11.2 铁律）。
+func (s *MasterScheduler) CancelTask(taskID, reason, note string) (outcome string, err error) {
+	// ① 校验: 结案理由必须在闭集内（§11.5——闭集必填，落盘存字符串值）。
+	if !isClosedReason(reason) {
+		return "", fmt.Errorf("cancel task %s: 结案理由 %q 不在闭集 %v 内", taskID, reason, closedReasonSet)
+	}
+	s.mu.Lock()
+
+	// ---- ① 校验 + 定位（在 queue 里找——paused 件也留在 queue，只改 status）----
+	for i, t := range s.queue {
+		if t.ID != taskID {
+			continue
+		}
+		if t.Status != StatusQueued && t.Status != StatusPaused {
+			st := t.Status
+			s.mu.Unlock()
+			return "", fmt.Errorf("task %s status %s cannot be cancelled (only queued/paused tasks can be cancelled)", taskID, st)
+		}
+		// ② 改态
+		t.Status = StatusCancelled
+		// ③ 迁容器: 从 queue 摘出 → 落 history（血证 §2.6——只改态不摘容器 ⇒ 并发满 ⇒ 队列卡死）
+		s.queue = append(s.queue[:i], s.queue[i+1:]...)
+		heap.Init(&s.queue)
+		t.markClosed(reason, note)
+		s.history[taskID] = t
+		// ④ **唯一持久点**（commit point）
+		if err := saveTasksForCancel(s.queue, s.running, s.history, s.waiting); err != nil {
+			s.mu.Unlock()
+			return "", fmt.Errorf("取消任务 %s 落盘失败（**未派发下一个**——本次取消未提交）: %w", taskID, err)
+		}
+		// ⑤ 只占位不 spawn（锁内纯内存决策）
+		pending := s.dispatchDecideLocked()
+		s.mu.Unlock()
+		// ⑥ 解锁后真拉起（慢 IO 在锁外）
+		for _, next := range pending {
+			go s.runTask(next)
+		}
+		log.Printf("🚫 scheduler: task %s cancelled (reason=%s)\n", taskID, reason)
+		return CancelOutcomeCancelled, nil
+	}
+
+	// ---- 不在 queue: 依次排掉 running / waiting，再看 history ----
+	if _, ok := s.running[taskID]; ok {
+		s.mu.Unlock()
+		return "", fmt.Errorf("task %s is running (running tasks cannot be cancelled — terminate first)", taskID)
+	}
+	if _, ok := s.waiting[taskID]; ok {
+		s.mu.Unlock()
+		return "", fmt.Errorf("task %s is waiting for environment recovery (waiting_retry tasks cannot be cancelled)", taskID)
+	}
+	t, ok := s.history[taskID]
+	if !ok {
+		s.mu.Unlock()
+		return "", fmt.Errorf("task %s not found", taskID)
+	}
+	switch t.Status {
+	case StatusCancelled:
+		// 幂等: 关已关的 ⇒ 静默成功、无副作用（§11.2 · F-6）
+		s.mu.Unlock()
+		return CancelOutcomeAlreadyCancelled, nil
+	case StatusDone, StatusFailed:
+		// 「已销」: 只打正交标记，**不覆写 status**（§O-8/§O-9——覆写会永久丢掉「到底成没成」）
+		t.markClosed(reason, note)
+		if err := saveTasksForCancel(s.queue, s.running, s.history, s.waiting); err != nil {
+			s.mu.Unlock()
+			return "", fmt.Errorf("销案任务 %s 落盘失败: %w", taskID, err)
+		}
+		st := t.Status
+		s.mu.Unlock()
+		log.Printf("🗂️ scheduler: task %s closure marked (status=%s unchanged — 已销)\n", taskID, st)
+		return CancelOutcomeAlreadyTerminal, nil
+	default:
+		st := t.Status
+		s.mu.Unlock()
+		return "", fmt.Errorf("task %s status %s cannot be cancelled (only queued/paused tasks can be cancelled)", taskID, st)
+	}
 }
 
 // RunningCount 运行中任务数（空闲检测用——外部任务队列长度）
@@ -1095,6 +1279,41 @@ func tail(s string, n int) string {
 // String 便于打印
 func (t *Task) String() string {
 	return fmt.Sprintf("%s[%s/%s]", t.ID, t.Type, t.Status)
+}
+
+// IsTerminal 派生谓词 **is_terminal = done|failed|cancelled**（2026-10-03 GAP-20261003-04 刀1 · T-03）。
+// ★ 纯派生——不落盘、不作字段、不新增合并态（设计 §4.1「要退场总览用派生谓词，不新增合并态」）。
+// ★ 设计 §O-9 曾提「可升级为 … || closed_at != nil」——本仓不采纳此升级: 结案标记只对终态件
+//
+//	（done/failed/cancelled）打（CancelTask 守卫），故 closed_at 非空 ⟹ status 已终态，
+//	升级式恒等价于本条，加了反多一处可漂的分支。
+func (t *Task) IsTerminal() bool {
+	switch t.Status {
+	case StatusDone, StatusFailed, StatusCancelled:
+		return true
+	}
+	return false
+}
+
+// IsClosed 是否已结案（正交面）: closed_at 非空即已结案（T-06「非空即已结案」）。
+func (t *Task) IsClosed() bool { return t.ClosedAt != nil }
+
+// markClosed 打正交标记（**四条同生**——T-06）: 结案时间（UTC）/ 主体 / 理由 / 备注一并写入。
+// 「覆盖式非 write-once」（§11.1）: 重复调用即覆盖为最新一次结案。
+func (t *Task) markClosed(reason, note string) {
+	now := time.Now().UTC()
+	t.ClosedAt = &now
+	t.ClosedBy = closedByLocal
+	t.ClosedReason = reason
+	t.ClosedNote = note
+}
+
+// clearClosed 清正交标记（**四条同灭**——T-06「清空即重开」）。
+func (t *Task) clearClosed() {
+	t.ClosedAt = nil
+	t.ClosedBy = ""
+	t.ClosedReason = ""
+	t.ClosedNote = ""
 }
 
 // CleanupStaleWorktrees 启动清理残留任务 worktree（P1-5 治本）

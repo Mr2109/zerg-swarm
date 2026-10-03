@@ -196,6 +196,7 @@ func TestCheckZeroSideEffect_UnreadableFailClosed(t *testing.T) {
 }
 
 func TestCheckZeroSideEffect_NoTempdirLeak(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 	count := func() int {
 		ents, err := os.ReadDir(os.TempDir())
 		if err != nil {

@@ -181,6 +181,7 @@ func TestCheckDocSectionNumbersGatePort(t *testing.T) {
 	})
 
 	t.Run("自检_rc0_且夹具自回收", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 		base := cdsnTmpBase()
 		if base == "" {
 			base = os.TempDir()

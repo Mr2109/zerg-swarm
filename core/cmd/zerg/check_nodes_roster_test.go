@@ -174,8 +174,16 @@ func TestCheckNodesRoster_ListRules(t *testing.T) {
 	}
 }
 
-// TestCheckNodesRoster_TmpDirDeltaZero —— ⑧ A 类对齐：自检前后同前缀临时目录计数 delta=0。
+// TestCheckNodesRoster_TmpDirDeltaZero —— ⑧ A 类对齐：自检前后**本用例私有 TMPDIR** 内同前缀临时目录计数 delta=0。
+//
+// ★ GAP-20261003-16：旧写法扫的是**共享** `os.TempDir()`（TMPDIR=/var/tmp）⇒ 同包兄弟用例 / 同机并发门跑
+// 在 before/after 之间并发建删同类 `tmp*` 目录时，同一份代码会被踩成 delta=±1（先红后绿）。
+// 修法：把 TMPDIR 指到本用例自建的空目录（私有面）⇒ 只数本用例自建目录，不再与任何兄弟共享计数面。
+// 断言一字未放宽：仍是 `before != after` ⇒ 报「delta=%d」。负控：删自检档 `defer os.RemoveAll(d)`
+// 时，私有面内必留 `tmp*` ⇒ after=before+1 ⇒ 本用例必红（真泄漏仍抓得住）。
+// （本包零 `t.Parallel()` ⇒ `t.Setenv` 不会 panic。）
 func TestCheckNodesRoster_TmpDirDeltaZero(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // 私有计数面：本次用例独占
 	tmp := os.TempDir()
 	count := func() int {
 		ents, err := os.ReadDir(tmp)

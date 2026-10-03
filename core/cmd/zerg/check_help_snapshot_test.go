@@ -277,6 +277,7 @@ func hsSeltestTmpCount() int {
 }
 
 func TestHelpSnapshot_SelfCleanDeltaZero(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 	before := hsSeltestTmpCount()
 	if before < 0 {
 		t.Skipf("读不了 TMPDIR=%s", os.TempDir())

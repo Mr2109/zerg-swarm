@@ -213,6 +213,7 @@ func TestCacsHelp_GoldenSHA256(t *testing.T) {
 //
 //	窄牙负控（仓外副本删 `defer os.RemoveAll(tmp)`）应使本用例 FAIL —— 参见收尾实测。
 func TestCacsSelfTest_ReclaimsFixtureDir(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 	for _, a := range os.Args[1:] {
 		if a == "--no-self-test" || a == "--static-only" {
 			t.Skip("自检子进程：跳过（防递归）")

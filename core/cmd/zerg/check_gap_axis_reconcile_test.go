@@ -276,6 +276,7 @@ func TestGapAxisRecListRulesAndHelp(t *testing.T) {
 
 // 正控 + 回归牙：--self-test 全过，且**自检夹具零残留**（钉住 defer os.RemoveAll 这一止血动作）。
 func TestGapAxisRecSelfTestAndTempdirDelta(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 	before := gaaCountSelfTestDirs()
 	rc, out, _ := gaaTestCall("--self-test")
 	after := gaaCountSelfTestDirs()

@@ -172,6 +172,7 @@ func TestCheckTokenArgvGate_JSONShapes(t *testing.T) {
 
 // TestCheckTokenArgvGate_SelfTest —— 自检全过（rc=0）＋ 夹具自回收（TMPDIR 前后 delta=0）。
 func TestCheckTokenArgvGate_SelfTest(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 	before := ctaCountSelfTestDirs(t)
 	rc, out, _ := ctaTestRun("--self-test")
 	after := ctaCountSelfTestDirs(t)

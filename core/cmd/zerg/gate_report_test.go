@@ -479,6 +479,7 @@ func TestGateReportNonUTF8Output(t *testing.T) {
 // A 类自检夹具泄漏面：py 用 mkdtemp + finally rmtree（**本身回收**）⇒ 本件同法回收。
 // ★ 本用例有牙：删掉主件的 defer os.RemoveAll(tmp) ⇒ after = before+1 ⇒ FAIL 带行号。
 func TestGateReportSelfTestRecyclesTempDirs(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 	t.Setenv(grtTReexecEnv, "1")
 	before := grtTCountSelfTestDirs(t)
 	rc, out, errs := grtTRun("--self-test")

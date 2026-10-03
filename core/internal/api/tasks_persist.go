@@ -7,6 +7,9 @@ package api
 // 迁移兼容（首次）: 新路径不存在而旧 /tmp/zerg-tasks.json 存在 ⇒ **读旧一次**（不丢历史）；
 // **写只写新路径**；旧文件**不删、不改**。新路径已存在 ⇒ 旧路径完全不看。
 // 启动 → 加载回 history + 恢复排队任务（重启不丢——AutoCUT 反复丢问题治本）
+// 2026-10-03 GAP-20261003-04 刀1（T-07）: 恢复四分区（History/Queue/Running/Waiting）与两处 fail-closed
+// 白名单判据正确对待新终态 cancelled 与正交标记 closed_*（设计 §2.5 / §4.3 D）——可恢复集 ∩ 终态集 == 空集;
+// 非白名单项不再静默丢弃 ⇒ 保留进 history（未知态降级: 不 panic、不丢件、不复活）。
 
 import (
 	"container/heap"
@@ -156,6 +159,69 @@ func saveTasksLocked(queue TaskQueue, running map[string]*Task, history map[stri
 	return nil
 }
 
+// ============ 恢复面态分类（2026-10-03 GAP-20261003-04 刀1 · T-07 / T-19）============
+//
+// 设计 §2.5（恢复是四段逻辑）· §4.3 D（不变式: 可恢复集 ∩ 终态集 == 空集 · 三集覆盖全枚举）。
+// ★ 分类是恢复四分区的**唯一真源**: 分区决定「怎么恢复」，分类决定「该不该恢复、恢复去哪」。
+// ★ 覆盖代码面七态: 可恢复集 = {queued, paused, waiting_retry}、终态集 = {done, failed, cancelled}、
+//
+//	过渡集 = {running}，三者两两不交且并为全集; 认不出的串一律 classUnknown（fail-safe——绝不当成 queued）。
+type taskStatusClass int
+
+const (
+	classRecoverQueue taskStatusClass = iota // queued / paused —— 可恢复（重新入 queue）
+	classRecoverWait                         // waiting_retry —— 可恢复（回 waiting 继续等）
+	classTransitional                        // running —— 过渡态（重启无法续跑 ⇒ 标 failed 记录）
+	classTerminal                            // done / failed / cancelled —— 终态（原样保留、绝不派发）
+	classUnknown                             // 其余 —— 未知态（降级: 原样保留 + 告警、不 panic、不丢件）
+)
+
+// classifyTaskStatus 归类裸 status 串（fail-safe: 认不出 ⇒ classUnknown）。
+func classifyTaskStatus(s string) taskStatusClass {
+	switch s {
+	case StatusQueued, StatusPaused:
+		return classRecoverQueue
+	case StatusWaitingRetry:
+		return classRecoverWait
+	case StatusRunning:
+		return classTransitional
+	case StatusDone, StatusFailed, StatusCancelled:
+		return classTerminal
+	default:
+		return classUnknown
+	}
+}
+
+// parkUnrecovered 把「不从本分区恢复」的持久化项**保留进 history**（T-07「未知态降级不 panic、不丢件」）。
+// 用于 queue / waiting 分区的非白名单项与 running 分区项:
+//   - 终态（done/failed/cancelled）: 原样保留——**绝不覆写 status**（正交 closed_* 随 *Task 一并带过）;
+//   - 过渡态 running: 重启无法恢复执行 ⇒ 标 failed 记录（与 Running 分区同口径）;
+//   - 未知态 / 落错分区的可恢复态: 原样保留 + 响亮告警（不 panic、不丢件、**不跨分区重路由**）。
+//
+// ★ 只落 history、**绝不入 queue / waiting** ⇒ 不变式「可恢复集 ∩ 终态集 == 空集」不破、终态不复活、未知态不丢件。
+// ★ 与 history 分区同 id 去重（保先到者——避免同一件两处读回时互相覆盖）。
+func (s *MasterScheduler) parkUnrecovered(t *Task, from string) {
+	if t == nil {
+		return
+	}
+	if _, exists := s.history[t.ID]; exists {
+		return
+	}
+	switch classifyTaskStatus(t.Status) {
+	case classTerminal:
+		// 原样保留——不改 status（覆写会丢「到底成没成」/退场语义——§O-8 / T-05）。
+	case classTransitional:
+		t.Status = "failed"
+		t.FailReason = "主控重启——运行中任务中断（未完成）"
+		t.CompletedAt = time.Now()
+	case classRecoverQueue, classRecoverWait:
+		log.Printf("⚠️ 任务持久化恢复: %s 分区项 %s 状态 %q 属可恢复集却落在非对应分区 —— 保守保留进 history（不派发、不跨分区重路由）\n", from, t.ID, t.Status)
+	default: // classUnknown
+		log.Printf("⚠️ 任务持久化恢复: %s 分区项 %s 状态 %q 非已知态 —— 原样保留进 history（不派发、不丢件）\n", from, t.ID, t.Status)
+	}
+	s.history[t.ID] = t
+}
+
 // loadPersistedHistory 加载历史任务 + 恢复排队（启动时调）
 func (s *MasterScheduler) loadPersistedHistory() {
 	// 读路径：新（统一状态目录）优先；新缺失 + 旧 /tmp 在 ⇒ 读旧一次（2026-09-18 迁移兼容）
@@ -178,41 +244,63 @@ func (s *MasterScheduler) loadPersistedHistory() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, t := range data.History {
+		if t == nil {
+			continue // T-07: 降级不 panic（null 项跳过、不影响其它件）
+		}
 		if _, exists := s.history[id]; !exists {
 			// v2.5.6 2026-08-28: 重启时运行中任务无法恢复执行——标 failed（防 UI 残留 running 误导）
 			if t.Status == "running" {
 				t.Status = "failed"
 				t.FailReason = "重启中断（运行中任务无法恢复——重新触发）"
 			}
+			// T-07（设计 §4.3 B）: 未知态降级——不当作 queued、不 panic、不丢件; 原样保留 + 响亮告警。
+			if classifyTaskStatus(t.Status) == classUnknown {
+				log.Printf("⚠️ 任务持久化恢复: history 分区项 %s 状态 %q 非已知态 —— 原样保留（不派发、不丢件）\n", id, t.Status)
+			}
 			s.history[id] = t
 		}
 	}
 	// 恢复排队任务（重新入队——重启后继续执行——不停丢）
+	// ★ 白名单 fail-closed（设计 §2.5 / §4.1「Queue 分区白名单【不动】」——**判据未放宽**）:
+	//   只认 queued/paused ⇒ 终态 cancelled/done/failed 与未知态**天生不命中、绝不被重新派发**。
+	//   T-07: 非白名单项不再**静默丢弃** ⇒ 保留进 history（不丢件、不复活）。
 	restored := 0
 	for _, t := range data.Queue {
+		if t == nil {
+			continue // T-07: 降级不 panic
+		}
 		if t.Status == "queued" || t.Status == "paused" {
 			t.Status = "queued"
 			t.CreatedAt = time.Now() // 重启时间作为新创建（避免时长异常）
 			heap.Push(&s.queue, t)
 			restored++
+			continue
 		}
+		s.parkUnrecovered(t, "queue")
 	}
 	// 运行中任务（重启前在跑——无法恢复执行——标 failed 记录——防悬空）
-	for id, t := range data.Running {
-		if _, exists := s.history[id]; !exists {
-			t.Status = "failed"
-			t.FailReason = "主控重启——运行中任务中断（未完成）"
-			t.CompletedAt = time.Now()
-			s.history[id] = t
+	// ★ 设计 §2.5 原为「无条件标 failed」; 此处经 parkUnrecovered 加**终态/未知态守卫**（T-05/§O-8）——
+	//   cancelled/done/failed 若因任何路径余留在 Running 分区，**绝不覆写**（覆写会永久丢掉「到底成没成」、
+	//   退场语义与 closed_*）; 过渡态 running 仍标 failed。正常态（分区内只有 running）下与「无条件」等价。
+	for _, t := range data.Running {
+		if t == nil {
+			continue // T-07: 降级不 panic
 		}
+		s.parkUnrecovered(t, "running")
 	}
 	// v2.5.6 故障自愈: 恢复挂起任务（waiting_retry——重启后继续等环境恢复——不丢）
+	// ★ 白名单 fail-closed（判据未放宽）: 只认 waiting_retry; 非白名单项保留进 history（T-07 不丢件）。
 	waitingRestored := 0
 	for id, t := range data.Waiting {
+		if t == nil {
+			continue // T-07: 降级不 panic
+		}
 		if t.Status == "waiting_retry" {
 			s.waiting[id] = t
 			waitingRestored++
+			continue
 		}
+		s.parkUnrecovered(t, "waiting")
 	}
 	if len(data.History) > 0 || restored > 0 || waitingRestored > 0 {
 		log.Printf("📜 恢复任务: 历史 %d + 排队 %d + 挂起 %d（持久化完整版——重启不丢）\n", len(data.History), restored, waitingRestored)

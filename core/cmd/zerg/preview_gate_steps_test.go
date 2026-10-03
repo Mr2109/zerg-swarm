@@ -387,6 +387,7 @@ func TestPgsTemplate(t *testing.T) {
 
 // ── ⑨ 自检：全过 + 自回收（A 类 tempdir delta=0 牙）────────────────────────
 func TestPgsSelfTestSucceedsAndCleansTmp(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 	pre := pgsTestCountTmpDirs(t)
 	var buf bytes.Buffer
 	rc := pgsSelfTest(&buf)

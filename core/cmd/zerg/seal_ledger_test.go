@@ -267,6 +267,7 @@ func TestSealLedgerGatePort(t *testing.T) {
 
 	// ★ 牙：自检夹具必须回收（A 类 tempdir 泄漏的回归牙 · 前后同前缀增量 = 0）。
 	t.Run("负控13 自检夹具回收 delta=0", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 		const prefix = "seal-ledger-selftest."
 		before := slgCountPrefix(os.TempDir(), prefix)
 		if rc, _, _ := slgTEntry("--check"); rc != 0 {

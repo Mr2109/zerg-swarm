@@ -44,6 +44,7 @@ var routeTable = []routeEntry{
 	{Name: "task_retry", Desc: "重跑任务（failed→queued）", Method: "POST", Path: "/api/tasks/{id}/retry"},
 	{Name: "task_pause", Desc: "暂停/继续排队任务", Method: "POST", Path: "/api/tasks/{id}/pause"},
 	{Name: "task_move", Desc: "重排任务（置顶/上移/下移）", Method: "POST", Path: "/api/tasks/{id}/move"},
+	{Name: "task_cancel", Desc: "撤下排队/暂停任务（queued/paused→cancelled——任务退场正门；已终端/已取消走幂等打标）", Method: "POST", Path: "/api/tasks/{id}/cancel"},
 	{Name: "task_delete", Desc: "删除排队任务", Method: "DELETE", Path: "/api/tasks/{id}"},
 	// ── fleet 族（机群与模型）───────────────────────────────────────────
 	{Name: "list_models", Desc: "可用模型清单（含候选机器）", Method: "GET", Path: "/api/fleet/models"},

@@ -58,6 +58,7 @@ func TestCheckDanglingRefsGatePort(t *testing.T) {
 	})
 
 	t.Run("自回收_delta0", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 		before := cdrCountSelfTestDirs()
 		if before < 0 {
 			t.Skipf("TMPDIR 读不了 ⇒ 本格不适用")

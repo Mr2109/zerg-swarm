@@ -39,6 +39,31 @@ func cmdGateBench(inv *invocation, stdout, stderr io.Writer) int {
 			return rc
 		}
 	}
+	// ★ GAP-20261003-17（P1 · 正门阻断级）：字段名闭集也必须先于「真跑门禁」校验。
+	//   病：原实现只判 len(fields)==0（上一格）、不判名字 ⇒ 探针门58/门58′
+	//   （scripts/gates/check-fields-face-parity.py）以 `--json <假名>` + subprocess.run(timeout=15)
+	//   探本命令时：本命令过前置 ⇒ `--fast`/`--scope` 都未给 ⇒ runArgs=[] ⇒ 真跑
+	//   bash scripts/gates/precommit-gates.sh（默认全量档）⇒ 15s 到点，Python 的 timeout 只杀
+	//   直接子（本 zerg），不杀进程组 ⇒ 刚拉起的全量门跑孙进程重挂 ppid=1 继续跑满 ~15min，
+	//   且继承父趟锁 fd ⇒ 单实例锁被占、此后每趟 gate run / repo commit --fast 全被判
+	//   「别的根数>0」rc=2（文档正门当场失败）。修法：未知字段 ⇒ 当场按唯一真源
+	//   fieldListOf(inv.path) 印「合法字段: …」并 rc=2（与 selectJSONList→reportBadField
+	//   main.go:3505 逐字同形），门禁一步不跑。
+	if inv.jsonGiven && len(inv.fields) > 0 {
+		known := fieldListOf(inv.path)
+		for _, f := range inv.fields {
+			found := false
+			for _, k := range known {
+				if k == f {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return reportBadField(stderr, inv.path, f)
+			}
+		}
+	}
 	root := repoRoot()
 	if root == "" {
 		inv.setErr("usage", "repo_root_absent", "解析不到仓根")

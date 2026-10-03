@@ -189,6 +189,7 @@ func cdoCountSelftestTmpDirs(t *testing.T) int {
 }
 
 func TestCheckDocsOrphansLinksSelfTestNoTempLeak(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 	before := cdoCountSelftestTmpDirs(t)
 	rc, out, errb := cdoRun(t, "--self-test")
 	if rc != 0 || !strings.Contains(out, "自检 26 格 · 失败 0 格") {

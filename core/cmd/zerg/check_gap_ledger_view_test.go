@@ -233,6 +233,7 @@ func TestGapLedgerViewUnreadableSourcePinned(t *testing.T) {
 
 // 正控 + 回归牙：--self-test 全过，且**自检夹具零残留**（钉住 defer os.RemoveAll 这一止血动作）。
 func TestGapLedgerViewSelfTestAndTempdirDelta(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 	before := countGlvSelfTestDirs()
 	var buf strings.Builder
 	rc := gapLedgerViewGateMain(&buf, io.Discard, []string{"--self-test"})
