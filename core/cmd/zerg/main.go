@@ -930,6 +930,22 @@ func init() {
 			endpoint: "POST /api/tasks",
 			run:      cmdTaskSubmit,
 		},
+		// ---- 批 D · T-11…T-14/T-17：`task cancel`（D2 写面 · 任务退场正门 · **本版已开放**）----
+		// 与同族四条（`move/pause/resume/retry`）同形：D2 + `--confirm=<任务 id>` + `--yes`；
+		// 本版真跑：确认档齐就 POST `/api/tasks/{id}/cancel`（幂等三成因走 stdout 字段 · 单 id 绝不给 8）。
+		{
+			path:     []string{"task", "cancel"},
+			kind:     "TaskCancel",
+			summary:  "撤下排队/暂停任务（D2 写面 · `--reason` 闭集 5 值必填 · `--confirm=<任务 id>` 与 `--yes` **同时到**才执行 · **本版已开放**）",
+			usage:    "zerg task cancel <任务 id> --reason <superseded|obsolete|duplicate|abandoned|other> [--note <一句>] --confirm=<任务 id> [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"任务 id"},
+			fields:   []string{"id", "outcome", "cancelled", "already_cancelled", "already_terminal"},
+			danger:   &dangerSpec{dangerD2, "任务 id", "把该任务从 queue 摘出 → 置 status=cancelled → 落 history（可逆面：队列位次；**在飞的件本版不给撤** —— 先 terminate 另立账）；幂等三成因（cancelled / already_cancelled / already_terminal）走 stdout 字段、不走退码", "设计-任务退场正门-v0.2 §4.1/§11.2/§11.5 · 开工单 T-12/T-13/T-14/T-17", true},
+			opened:   true,
+			endpoint: "POST /api/tasks/{id}/cancel?reason=<闭集 5 值 必填>&note=<一句 可选>",
+			run:      cmdTaskCancel,
+		},
 		{
 			path:     []string{"task", "diff"},
 			kind:     "TaskDiff",
