@@ -908,6 +908,21 @@ func init() {
 			endpoint: "POST http://<host>:<engine_port>/v1/chat/completions（引擎由子端 `/eggs` 按**名字+端口**认准、`/status` 兜底；取不到 / 说不清是哪一枚 ⇒ blocked 或退 2）",
 			run:      cmdAgentBench,
 		},
+		// ---- 缺口 `GAP-20260927-195` · `agent` 族：`agent restart`（D3 · 已开放 · 照同族 `core restart` 形状）----
+		{
+			path:    []string{"agent", "restart"},
+			kind:    "AgentRestart",
+			summary: "重启子端进程（危险 D3 · 已开放：确认档齐就真执行 `launchctl kickstart -k`；**改令牌文件对运行中的子端无效，必须重启进程才重读令牌**；远端机走 ssh 属例外清单 ⇒ 退 8）",
+			usage:   "zerg agent restart <机器名> --confirm=<机器名> --yes [--dry-run] [--json <字段>]",
+			arity:   "any",
+			args:    []string{"机器名"},
+			fields:  []string{"machine", "host", "port", "branch", "readiness", "changed", "audit"},
+			danger: &dangerSpec{dangerD3, "机器名",
+				"重启该子端进程（**在跑的任务会被打断** · 起时/中断的连接都回不来）；治的是「改令牌文件对运行中的子端无效」",
+				"缺口 GAP-20260927-195 · 照同族已开放的 `core restart`（family_core_restart.go）形状", true},
+			opened: true,
+			run:    cmdAgentRestart,
+		},
 		{
 			path:    []string{"agent", "bootstrap"},
 			summary: "子端引导（危险 D3 · 本版未开放）",

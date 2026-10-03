@@ -75,6 +75,18 @@ def self_test():
         _st_chk(bad, "档① 正控：`${VAR}` 花括号写法 ⇒ rc=0", 0, *run(clean))
         _st_chk(bad, "档② 负控：`$VAR` 后紧跟非 ASCII ⇒ rc=1", 1, *run(dirty))
         _st_chk(bad, "档③ 用法错：不给文件（不静默空转）⇒ rc=2", 2, *run())
+        # 档④ 多命中改写（GAP-20261001-48）：**同一行两处** `$VAR` ⇒ 改写档须「一次性落盘」、不得偏移错位
+        dirty2 = os.path.join(tmp, "dirty2.sh")
+        with open(dirty2, "w", encoding="utf-8") as f:
+            f.write('echo "$A中$B文"\n')
+        pr = subprocess.run([sys.executable, SELF_PATH, dirty2],
+                            capture_output=True, text=True, cwd=tmp)
+        got2 = open(dirty2, encoding="utf-8").read()
+        _st_chk(bad, "档④ 多命中改写：两处 `$VAR` 一次落盘（rc=0）", 0, pr.returncode,
+                (pr.stdout or "") + (pr.stderr or ""))
+        if got2 != 'echo "${A}中${B}文"\n':
+            bad[0] += 1
+            print("  ✗ 档④ 改写内容错位（实得 %r）" % got2)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("── 自检：%s" % ("全过 ✓" if bad[0] == 0 else "**%d 档不过** ✗" % bad[0]))
@@ -116,10 +128,17 @@ for path in FILES:
     if not hits:
         continue
     if not CHECK:
-        out = bytearray(raw)
+        # ● GAP-20261001-48 修：原写法用 `masked` 的**固定偏移**去切**已变长**的 `out`（每处 +2 B）
+        #   ⇒ 多命中时偏移逐处错位、写出内容被切坏。改「先整体算出新串、再一次性落盘」：
+        #   单趟按**原串**偏移拼接（`raw` 与 `masked` 同长同布局，注释段只被换成空格、偏移不变）。
+        buf = bytearray()
+        last = 0
         for m in PAT.finditer(masked):
-            out[m.start():m.end()] = b"${" + m.group(1) + b"}"
-        new = bytes(out)
+            buf += raw[last:m.start()]
+            buf += b"${" + m.group(1) + b"}"
+            last = m.end()
+        buf += raw[last:]
+        new = bytes(buf)
         open(path, "wb").write(new)
     total += len(hits)
     print("  %-34s 修 %d 处: %s" % (path.split("/")[-1], len(hits),

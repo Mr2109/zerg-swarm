@@ -190,6 +190,11 @@ def judge(verdict, mount_text, path, mountpoint, min_files, sample, hdiutil_text
     if not is_link:
         verdict.red("A2", "已挂档但原路径**不是符号链接**（实体目录/件）⇒ 数据面与挂载面会同时成立两份，"
                           "读数不再唯一 ⇒ 红（判据 4）")
+    elif os.path.normpath(os.readlink(path)) != os.path.normpath(mountpoint):
+        # ● GAP-20261001-30① 修：A2 判词承诺「readlink == 挂载点」，原实现只判 is_link、**从不比对目标**
+        #   ⇒ 判词与实现不符（判据 4 已登记的那一面被架空）。此处补真比对（normpath 归一尾斜杠/冗余段）。
+        verdict.red("A2", "已挂档但原路径符号链接指向 %r ≠ 挂载点 %r ⇒ 判据 4「readlink == 挂载点」不成立 ⇒ 红"
+                    % (os.readlink(path), mountpoint))
     # 件面
     if os.path.isdir(path):
         n = count_files(path)

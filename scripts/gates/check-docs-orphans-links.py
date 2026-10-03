@@ -101,9 +101,11 @@ env 名（2026-10-01 统一 · 同族口径）
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import urllib.parse
@@ -515,6 +517,7 @@ def self_test(out) -> bool:
         out.write("  %s %s（期望 %s · 实得 %s）\n" % ("✓" if ok else "✗", name, want, got))
 
     tmp = tempfile.mkdtemp(prefix="coan-selftest-")
+    atexit.register(shutil.rmtree, tmp, ignore_errors=True)   # ● GAP-20261001-27：夹具自回收（原从不 RemoveAll ⇒ TMPDIR 残留）
     # 夹具①：断链 1 处 + 外链若干（外链一处都不许被数）
     t1 = os.path.join(tmp, "t1")
     os.makedirs(os.path.join(t1, "sub"), exist_ok=True)

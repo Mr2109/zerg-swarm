@@ -17,7 +17,7 @@
   ① 两段投影**有没有声明自己在投影**（段内必须写明真源路径）——没有声明 ⇒ rc=1（这才是「收」）；
   ② 声明了之后**值面是否逐字相同**（host/port/os/ssh/root/prefix/api/components 逐字段）。
 
-判据（A–F，逐条能独立变红）
+判据（A–G；A–F 与 G 的「闭集 / reported」支逐条能独立变红，G 的「true 须带 64hex 锚」支**降级为只报告**）
 --------------------------
   A. 名册可读且 `nodes:` 非空（否则 rc=2 不给结论 —— 真源不在，判不了）
   B. `gateway/fleet.yaml` 的 `fleet:` 段与 `updates:` 段**各自**带投影源声明（段内出现
@@ -25,12 +25,30 @@
   C. `fleet:` 键集 == 名册键集（**两向**）；每台 host/port/os 与名册逐字相同
   D. `updates.nodes[]`：name ∈ 名册；ssh/root/prefix/api/components 与名册逐字相同
   E. `models:` 段里每个 host ∈ 名册键（模型驻留在哪台 —— 第 4 处，顺带核）
-  F. 子端机器名旗标 ∈ 名册键：**盘上 plist**（`deploy/com.zerg.agent-Mr2109.plist`）与
-     **在跑的 `zerg-agentd`**（`ps` 读，只读）两处都核；没有在跑的进程 ⇒ 打印跳过（不是红）
+  F. **本机**子端机器名旗标 ∈ 名册键：**本机盘上 plist**（`deploy/com.zerg.agent-Mr2109.plist`）
+     与**本机在跑的 `zerg-agentd`**（`ps` 读，只读）两处都核；没有在跑的进程 ⇒ 打印跳过（不是红）。
+     ★ 读面 = 本机（local）—— 远端子端本机读不到，见「结论范围」。
+  G. `models:` 段里每条的 `verified` 是**闭集值**，「实测级」带**可核的内容锚**为**报告项**：
+       · `verified: true`（实测级）—— **必须**带 `sha256:`/`digest:`/`sha:` 之一，且值 = 64 位
+         十六进制；缺锚 / 锚格式不对 ⇒ **降级为只报告**（逐条列名，**不进 rc**）——
+         GAP-20261003-21：`verified` 的消费者 schema 是 bool ⇒ 该锚恒缺、原「rc=1 点名」恒红且修不了。
+         给了 `--verify-sha` 且该条 host 是本机、`file:` 在盘上 ⇒ 现算 sha256 逐字比对
+         （内容寻址真核）；本机读不到（远端 host / 件不在 / 未开开关）⇒ 该锚记为**声明级**。
+       · `verified: reported`（声明级）—— 必须带 `verified_where:`（∈ 名册键），表示「由哪台自报」。
+       · `verified: false` ⇒ 放过（就是「没实测」）；闭集外的取值 ⇒ rc=1 点名。
+       · 没写 `verified` 字段的条目 ⇒ 本判据不管（E 已核它的 host 在册）。
+
+结论范围（read_layer × verdict_scope —— 本门**只用本机读数**，故判词必须带层限）
+------------------------------------------------------------------------------
+  本门的全部读取面都是**本机**：本机盘上的 `gateway/fleet.yaml`、本机 `~/.zerg/contexts/`
+  名册、本机 `deploy/…plist`、本机 `ps -Ao command=`（`read_layer=local`）。⇒ 判词一律
+  `verdict_scope=本机`，并**逐台列出本门读不到、因而不给结论的远端节点**；★ 严禁把本机
+  读数冒称「机群级/全对」。远端节点的一致性须由**各机自己**跑本门回答（或该机自报 +
+  `verified: reported` + `verified_where`）。
 
 退码（与仓内既有门一致的三档）
 ------------------------------
-  0 = 全对（PASS）
+  0 = **本机层**全对（PASS · verdict_scope=本机）—— ★ 不表示远端节点也对（见「结论范围」）
   1 = 有漂移（FAIL）—— 逐条给「哪一处 · 哪个字段 · 现值 vs 名册值」
   2 = **不给结论**（缺件 / 解析不出 `nodes:` / `fleet.yaml` 不在 / 自检不过 / 空转假覆盖）
 
@@ -45,8 +63,12 @@
     python3 scripts/gates/check-nodes-roster.py --roster P      # 换名册路径（默认 ~/.zerg/contexts/default.yaml）
     python3 scripts/gates/check-nodes-roster.py --list-rules    # 打判据 / 路径来源 / 退码
     python3 scripts/gates/check-nodes-roster.py --self-test     # 只跑自检（合成夹具，不碰真目标）
+    python3 scripts/gates/check-nodes-roster.py --verify-sha    # 另对「本机可读的 verified: true」现算 sha256 真核
 """
 import argparse
+import contextlib
+import hashlib
+import io
 import os
 import re
 import subprocess
@@ -62,6 +84,16 @@ DEFAULT_ROSTER = os.path.join(os.path.expanduser("~"), ".zerg", "contexts", "def
 # 名册里参与「逐字比对」的字段（fleet: 段与 updates.nodes 段各自的字段集）
 FLEET_FIELDS = ("host", "port", "os")
 UPDATE_FIELDS = ("ssh", "root", "prefix", "api", "components")
+
+# ── 判据 G：`models:` 条目 `verified` 的闭集值与内容锚（GAP-20260927-167/-171）──
+#   `true`     = 实测级 —— 必须带 64 位十六进制内容锚（sha256/digest/sha）
+#   `reported` = 声明级 —— 必须带 verified_where（哪台自报，∈ 名册键）
+#   `false`    = 没实测（放过；真值是「未核」，不是「已核」）
+VERIFIED_VALUES = ("true", "false", "reported")
+ANCHOR_FIELDS = ("sha256", "digest", "sha")
+ANCHOR_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+# 本机回环寻址：`fleet:` 段里 host 落在这些值上的节点名 = 本机（read_layer=local 的身份源）
+LOCAL_HOSTS = ("127.0.0.1", "::1", "localhost")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -271,8 +303,8 @@ def load_roster(path):
     return nodes, None
 
 
-def check_fleet(fleet_path, nodes):
-    """→ (fails, checks) —— B/C/D/E 四条。"""
+def check_fleet(fleet_path, nodes, local_names=None, verify_sha=False):
+    """→ (fails, checks) —— B/C/D/E/G 五条。"""
     fails, checks = [], []
     if not os.path.isfile(fleet_path):
         return ["fleet.yaml 不在：%s" % fleet_path], checks
@@ -346,6 +378,11 @@ def check_fleet(fleet_path, nodes):
         checks.append("E models: 段出现 %d 个 host" % len(hosts))
         for h in sorted(hosts - set(nodes)):
             fails.append("E models: 里的 host `%s` 不在名册（模型驻留在哪台必须有条目）" % h)
+
+    # G. models: 段的 `verified` 闭集 + 「实测级必须有可核内容锚」
+    fg, cg = check_models_verified(lines, nodes, local_names or set(), verify_sha)
+    fails += fg
+    checks += cg
     return fails, checks
 
 
@@ -365,56 +402,224 @@ def running_agentd_machine():
     return None
 
 
+def sha256_file(path, chunk=1 << 20):
+    """现算件的 sha256（内容寻址真核用；只读）。"""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            b = f.read(chunk)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+
+def plist_machine(plist_path):
+    """→ (机器名 or None, 错误信息 or None)：读盘上 plist 的 `--machine` 旗标值（只读）。"""
+    if not os.path.isfile(plist_path):
+        return None, None
+    try:
+        import plistlib
+        with open(plist_path, "rb") as f:
+            args = plistlib.load(f).get("ProgramArguments") or []
+    except Exception as e:
+        return None, "plist 读不了（%s）：%s" % (plist_path, e)
+    for i, a in enumerate(args):
+        if a.endswith("machine") and i + 1 < len(args):
+            return args[i + 1], None
+    return None, None
+
+
+def derive_local_names(fleet_path, plist_path):
+    """→ (本机节点名集合, checks)。
+
+    真源：本门只读本机（read_layer=local）。「本机是哪台」由两处现读合并：
+      ① `fleet:` 段里 host 落回环（127.0.0.1 / ::1 / localhost）的节点名；
+      ② 本机盘上 plist 的 `--machine` 旗标值。
+    两处都读不到 ⇒ 空集（判词如实写「本机身份读不到」，一切远端条目按「本机读不到」处理）。
+    """
+    names, checks = set(), []
+    sec = None
+    try:
+        _raw, lines = read_lines(fleet_path)
+        sec = section_lines(lines, "fleet")
+    except Exception:
+        sec = None
+    if sec is not None:
+        for k, v in parse_block(sec).items():
+            if isinstance(v, dict) and str(v.get("host", "")).strip('"') in LOCAL_HOSTS:
+                names.add(k)
+    pm, _perr = plist_machine(plist_path)
+    if pm:
+        names.add(pm)
+    checks.append("结论层（read_layer=local）本机身份 = %s（fleet: 回环 host ∪ 本机 plist 机器名）"
+                  % (" · ".join(sorted(names)) if names else "**读不到**"))
+    return names, checks
+
+
+def models_entries(lines):
+    """→ [(模型名, 条目dict), ...]：把 `models:` 段展平成条目列表（flow / 块式都收）。
+
+    ★ 只用现成的极简解析器：flow 条目里的 `cmd: [...]`（方括号内逗号不被跟踪）会溢出成
+      无害的杂键；本判据只读 `verified` / `sha256|digest|sha` / `host` / `file` / `verified_where`
+      这几个**具名标量**，杂键不与之同名（真仓现读核过）。
+    """
+    sec = section_lines(lines, "models")
+    if sec is None:
+        return []
+    out = []
+    for name, v in parse_block(sec).items():
+        if isinstance(v, list):
+            for e in v:
+                if isinstance(e, dict):
+                    out.append((name, e))
+        elif isinstance(v, dict):
+            out.append((name, v))
+    return out
+
+
+def check_models_verified(lines, nodes, local_names, verify_sha=False):
+    """G：`models:` 条目的 `verified` 闭集 + 「实测级必须有可核内容锚」（GAP-…-167/-171）。
+
+    ★ 层级纪律：`verified: true` 是**实测级**声明。本门只会**本机**读数 ⇒
+        · host 是本机 且 件在盘上 且 开了 --verify-sha ⇒ 现算 sha256 逐字比对（真核）；
+        · host 非本机（或件读不到 / 未开开关）⇒ 本机**无法复算**，该锚一律记**声明级**，
+          绝不冒称「已核」；远端要「实测级」须由该机自己跑本门回答。
+    """
+    fails, checks = [], []
+    ents = models_entries(lines)
+    if not ents:
+        checks.append("G models: 段解析不出条目 ⇒ 跳过（E 仍核 host）")
+        return fails, checks
+    n_true = n_rep = n_ok = 0
+    n_nolabel = 0                 # ★ 降级（GAP-20261003-21）：无有效锚的 true —— **只报告 · 不进 rc**
+    for name, e in ents:
+        raw = str(e.get("verified", "")).strip().strip('"').lower()
+        if raw == "":
+            continue                      # 没写字段 ⇒ 本判据不管（不是「已核」也不是缺陷）
+        host = str(e.get("host", "")).strip('"')
+        tag = "%s（host=%s）" % (name, host or "?")
+        if raw not in VERIFIED_VALUES:
+            fails.append("G `%s` 的 verified 取值 `%s` 不在闭集 %s"
+                         % (tag, raw, "/".join(VERIFIED_VALUES)))
+            continue
+        if raw == "false":
+            continue
+        if raw == "true":
+            n_true += 1
+            anchor = ""
+            for f in ANCHOR_FIELDS:
+                if str(e.get(f, "")).strip().strip('"'):
+                    anchor = str(e.get(f, "")).strip().strip('"')
+                    break
+            if not anchor:
+                n_nolabel += 1
+                # ★ 降级（GAP-20261003-21）：消费者 schema 是 bool ⇒ 该锚恒缺、原 rc=1 恒红且修不了
+                #   ⇒ 改判**只报告**（逐条列名，让「无锚的 true」可见，但不作门红）。
+                checks.append("G（报告·降级 GAP-20261003-21）`%s` 写 verified: true（实测级）却**没有内容锚**"
+                              "（%s 之一，64 位十六进制）—— 只报告 · 不进 rc"
+                              % (tag, "/".join(ANCHOR_FIELDS)))
+                continue
+            if not ANCHOR_RE.match(anchor):
+                n_nolabel += 1
+                checks.append("G（报告·降级 GAP-20261003-21）`%s` 的锚不是 64 位十六进制：%r —— 只报告 · 不进 rc"
+                              % (tag, anchor))
+                continue
+            if host in local_names:
+                fpath = str(e.get("file", "")).strip().strip('"')
+                if not verify_sha:
+                    checks.append("G `%s` 锚在且格式对；本机未复算（开 --verify-sha 即可真核）" % tag)
+                elif not fpath:
+                    checks.append("G `%s` 锚在且格式对；条目无 file: ⇒ 本机无法复算，记**声明级**" % tag)
+                elif not os.path.isfile(fpath):
+                    checks.append("G `%s` 本机读不到件（%s）⇒ 锚记**声明级**，未复算" % (tag, fpath))
+                else:
+                    got = sha256_file(fpath)
+                    if got != anchor.lower():
+                        fails.append("G `%s` 的 sha256 与盘上件不符：条目=%s… 盘上=%s…"
+                                     % (tag, anchor.lower()[:12], got[:12]))
+                    else:
+                        n_ok += 1
+                        checks.append("G `%s` 锚**本机现算逐字相符**（%s…）" % (tag, anchor[:12]))
+            else:
+                checks.append("G `%s` 锚在且格式对；host 非本机 ⇒ 本机**无法复算**，记**声明级**" % tag)
+        elif raw == "reported":
+            n_rep += 1
+            where = str(e.get("verified_where", "")).strip().strip('"')
+            if not where:
+                fails.append("G `%s` 写 verified: reported（声明级）却缺 verified_where（哪台自报）"
+                             % tag)
+            elif where not in nodes:
+                fails.append("G `%s` 的 verified_where `%s` 不在名册" % (tag, where))
+            else:
+                checks.append("G `%s` 声明级（自报机=%s）" % (tag, where))
+    checks.insert(0, "G models: verified=true %d 条 · reported %d 条 · 本机现算相符 %d 条 · "
+                     "**无有效锚的 true %d 处（降级只报告 · 不进 rc）**"
+                  % (n_true, n_rep, n_ok, n_nolabel))
+    return fails, checks
+
+
 def check_subend(plist_path, nodes):
-    """F：盘上 plist 与在跑的 agentd 两处的机器名都要在名册里。"""
+    """F：**本机**盘上 plist 与**本机**在跑的 agentd 两处的机器名都要在名册里。
+
+    ★ 读面 = 本机（read_layer=local）：plist 是本机那一只、`ps` 是本机进程表 ⇒
+      判词一律带「本机」二字；**远端子端不在本判据的结论范围内**（本机读不到）。
+    """
     fails, checks = [], []
     val = None
-    if os.path.isfile(plist_path):
-        try:
-            import plistlib
-            with open(plist_path, "rb") as f:
-                args = plistlib.load(f).get("ProgramArguments") or []
-            for i, a in enumerate(args):
-                if a.endswith("machine") and i + 1 < len(args):
-                    val = args[i + 1]
-        except Exception as e:
-            fails.append("F plist 读不了（%s）：%s" % (plist_path, e))
+    if not os.path.isfile(plist_path):
+        checks.append("F 本机盘上 plist 不在（%s）⇒ 跳过该处" % plist_path)
     else:
-        checks.append("F 盘上 plist 不在（%s）⇒ 跳过该处" % plist_path)
+        val, perr = plist_machine(plist_path)
+        if perr:
+            fails.append("F %s" % perr)
+            val = None
     if val is not None:
-        checks.append("F 盘上 plist 机器名 = %s" % val)
+        checks.append("F 本机盘上 plist 机器名 = %s" % val)
         if val not in nodes:
             fails.append("F plist 的机器名 `%s` 不在名册（改机器名要先改名册）" % val)
     run = running_agentd_machine()
     if run is None:
-        checks.append("F 在跑的 zerg-agentd：没找到（跳过该处）")
+        checks.append("F 本机在跑的 zerg-agentd：没找到（跳过该处）")
     else:
-        checks.append("F 在跑的 zerg-agentd 机器名 = %s" % run)
+        checks.append("F 本机在跑的 zerg-agentd 机器名 = %s" % run)
         if run not in nodes:
-            fails.append("F 在跑的 zerg-agentd 机器名 `%s` 不在名册（子端自报和真源对不上）" % run)
+            fails.append("F 本机在跑的 zerg-agentd 机器名 `%s` 不在名册（子端自报和真源对不上）" % run)
     return fails, checks
 
 
-def run_checks(roster, fleet, plist, verbose=True):
+def run_checks(roster, fleet, plist, verbose=True, verify_sha=False):
     nodes, err = load_roster(roster)
     if err:
         print("⛔ 不给结论：%s" % err)
         return 2
     assert nodes is not None
     print("真源名册 = %s（节点 %d 个：%s）" % (roster, len(nodes), " · ".join(sorted(nodes))))
-    fails, checks = check_fleet(fleet, nodes)
+    local_names, lchecks = derive_local_names(fleet, plist)
+    fails, checks = check_fleet(fleet, nodes, local_names, verify_sha)
     f2, c2 = check_subend(plist, nodes)
     fails += f2
-    checks += c2
+    checks = lchecks + checks + c2
+    uncovered = sorted(set(nodes) - local_names)
+    local_str = " · ".join(sorted(local_names)) if local_names else "**本机身份读不到**"
+    uncov_str = " · ".join(uncovered) if uncovered else "无"
     if verbose:
         for c in checks:
             print("   · " + c)
+        print("   ↳ read_layer=local · verdict_scope=**本机**（%s）—— 本门只读本机盘上的"
+              "fleet.yaml / 名册 / plist / ps，**不用任何远端读数**" % local_str)
+        print("   ↳ 本门**不覆盖**远端节点（本机读不到 ⇒ 本门不给结论）：%s"
+              "（要它们的结论，须由各机自己跑本门回答）" % uncov_str)
     if fails:
-        print("✗ 名册与投影不一致：%d 处" % len(fails))
+        print("✗ **本机层**与名册有漂移：%d 处（verdict_scope=本机；远端不在结论内）" % len(fails))
         for f in fails:
             print("   ✗ " + f)
         return 1
-    print("✓ 三处旧来源与名册逐字一致（fleet: · updates.nodes · 子端机器名；models: 的 host 也各在册）")
+    print("✓ **本机层**（read_layer=local）与名册逐字一致：fleet: · updates.nodes · "
+          "models: host 各在册 · G verified 闭集（无锚 true 仅报告·GAP-20261003-21） · "
+          "本机子端名册（plist/本机在跑 agentd）")
+    print("   ↳ verdict_scope=**本机**（%s）—— 本门**不覆盖**远端：%s"
+          % (local_str, uncov_str))
     return 0
 
 
@@ -464,6 +669,23 @@ PLIST_FIX = """<?xml version="1.0" encoding="UTF-8"?>
 </dict></plist>
 """
 
+# 判据 G 夹具（`__HOST__` / `__FILE__` / `__VERIFIED__` 由 self_test 逐格代入）：
+#   models: 段**单条** + 两段投影源声明齐 + fleet: 有本机(Mr2109 回环)与远端(edge-node) ⇒ 只让 G 变。
+FLEET_VERIFIED_FIX = """# 夹具 fleet.yaml（判据 G）
+updates:
+  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:
+  check: true
+  nodes:
+    - { name: edge-node, ssh: g01@<worker-ip>, root: /home/<user>/zerg, prefix: /home/<user>/zerg/bin, api: "http://127.0.0.1:8580", components: "core,agentd" }
+models:
+  mG:
+    - { host: __HOST__, backend: llama-server, file: __FILE__, __VERIFIED__ }
+fleet:
+  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:
+  edge-node: { host: <worker-ip>, port: 8100, os: ubuntu }
+  Mr2109: { host: 127.0.0.1, port: 8100, os: macos }
+"""
+
 
 def self_test():
     """成对负控：每个夹具都断言**期望退码**，且成对（改一处 ⇒ 必红）。"""
@@ -497,14 +719,59 @@ def self_test():
         cases.append(("名册不在 ⇒ 2（不给结论）", os.path.join(d, "nope.yaml"), fleet, plist, 2))
         cases.append(("名册 nodes 空 ⇒ 2", w("r2.yaml", "nodes:\n"), fleet, plist, 2))
 
+        # ── 判据 G：verified 闭集 + 「实测级必须有可核内容锚」（GAP-…-167/-171 成对负控）──
+        wa = w("weights.bin", "zerg-verified-fixture\n")
+        ahash = sha256_file(wa)                    # 本机件真 sha256
+        bogus = "a" * 64                           # 格式对、内容不对的锚
+
+        def gfix(vline, host="Mr2109", fpath=None):
+            return (FLEET_VERIFIED_FIX
+                    .replace("__HOST__", host)
+                    .replace("__FILE__", fpath or "/nonexistent/none.gguf")
+                    .replace("__VERIFIED__", vline))
+
+        cases.append(("G true+锚+本机件相符+--verify-sha ⇒ 0", roster,
+                      w("g1.yaml", gfix("verified: true, sha256: %s" % ahash, "Mr2109", wa)), plist, 0, True))
+        cases.append(("G true+锚+本机件不符+--verify-sha ⇒ 1", roster,
+                      w("g2.yaml", gfix("verified: true, sha256: %s" % bogus, "Mr2109", wa)), plist, 1, True))
+        cases.append(("G true 无内容锚 ⇒ 0（降级：只报告·点名）", roster,
+                      w("g3.yaml", gfix("verified: true")), plist, 0))
+        cases.append(("G 锚格式非 64 位 ⇒ 0（降级：只报告）", roster,
+                      w("g4.yaml", gfix("verified: true, sha256: deadbeef")), plist, 0))
+        cases.append(("G true+锚+远端 host ⇒ 0（记声明级）", roster,
+                      w("g5.yaml", gfix("verified: true, sha256: %s" % bogus, "edge-node")), plist, 0))
+        cases.append(("G reported 缺 verified_where ⇒ 1", roster,
+                      w("g6.yaml", gfix("verified: reported")), plist, 1))
+        cases.append(("G reported+verified_where ∈ 名册 ⇒ 0", roster,
+                      w("g7.yaml", gfix("verified: reported, verified_where: edge-node")), plist, 0))
+        cases.append(("G 闭集外取值 ⇒ 1", roster,
+                      w("g8.yaml", gfix("verified: maybe")), plist, 1))
+
         bad = 0
-        for name, r, f, p, want in cases:
-            rc = run_checks(r, f, p, verbose=False)
+        for case in cases:
+            name, r, f, p, want = case[:5]
+            vsha = case[5] if len(case) > 5 else False
+            rc = run_checks(r, f, p, verbose=False, verify_sha=vsha)
             mark = "✓" if rc == want else "✗"
             if rc != want:
                 bad += 1
-            print("   %s %-40s 期望 rc=%d 实得 rc=%d" % (mark, name, want, rc))
-    print("自检结论：%s（%d 条，失败 %d）" % ("全过" if bad == 0 else "**不过**", len(cases), bad))
+            print("   %s %-48s 期望 rc=%d 实得 rc=%d" % (mark, name, want, rc))
+
+        # ── 判词层限成对负控：判词必须带 read_layer / verdict_scope 与「不覆盖远端」声明 ──
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            run_checks(roster, fleet, plist, verbose=True)
+        out = buf.getvalue()
+        for name, ok in (
+            ("判词含 read_layer=local", "read_layer=local" in out),
+            ("判词含 verdict_scope=**本机**", "verdict_scope=**本机**" in out),
+            ("判词含「不覆盖」远端声明", "不覆盖" in out),
+        ):
+            mark = "✓" if ok else "✗"
+            if not ok:
+                bad += 1
+            print("   %s %-48s %s" % (mark, name, "在" if ok else "**缺**"))
+    print("自检结论：%s（%d 条，失败 %d）" % ("全过" if bad == 0 else "**不过**", len(cases) + 3, bad))
     return 0 if bad == 0 else 2
 
 
@@ -538,6 +805,8 @@ def main():
     ap.add_argument("--plist", default=DEFAULT_PLIST)
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--list-rules", action="store_true")
+    ap.add_argument("--verify-sha", action="store_true",
+                    help="对本机可读的 verified: true 条目现算 sha256 真核（默认只查锚在不在/格式）")
     a = ap.parse_args()
     if a.list_rules:
         print(__doc__)
@@ -552,7 +821,7 @@ def main():
         print("⛔ 自检不过 ⇒ 拒绝核真目标", file=sys.stderr)
         return 2
     print("── 自检通过，开始核真目标 ──")
-    return run_checks(a.roster, a.fleet, a.plist)
+    return run_checks(a.roster, a.fleet, a.plist, verify_sha=a.verify_sha)
 
 
 if __name__ == "__main__":

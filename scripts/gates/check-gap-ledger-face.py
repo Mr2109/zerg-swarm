@@ -240,7 +240,7 @@ def run(root, docs_root, register, json_out):
             "schema": "zerg/v1", "kind": "GapLedgerFace", "tool": VERSION,
             "items": [{"face": f["id"], "label": f["label"], "ledger": f["ledger"],
                        "col": f["col"], "closed": list(f["closed"]),
-                       "headers": rd["headers"], "rows": rd["rows"],
+                       "headers": rd.get("headers", 0), "rows": rd.get("rows", 0),   # ● GAP-20261001-29：面缺席（no_ledger/no_header）时 rd 只有 path ⇒ 原 rd["headers"] 取 KeyError 崩 rc=1；改与正文分支同口径的 .get
                        "values": rd.get("values", {}), "state": st} for f, st, rd in reports],
             "meta": {"faces": len(FACES), "register": register or "",
                      "docs_root": os.path.join(root, "Zerg-内部文档")},

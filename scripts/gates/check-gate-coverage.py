@@ -36,8 +36,13 @@
      扫 `scripts/*.sh` · `scripts/*.py` · `scripts/` 下无后缀可执行件，逐个问「这个脚本
      在 `precommit-gates.sh` 里被点名了吗」，分三档（**三档之和恒等于候选总数**，计数自证）：
        ① **add_step 命令串里点名**（真被某步跑）—— 最强
-       ② **闸文件里被提到、但不在任何 add_step 命令串里**（注释里点名 / 尾部软门禁调用位 /
-          总控脚本自身）—— **弱挂载：形同「写在注释里的门」**，单列出来让人看见
+       ② **闸文件里被提到、但不在任何 add_step 命令串里**（**弱挂载**）—— 再拆两档
+          （★ `GAP-20260927-123`：名字「全文出现即算」= 静默洞，必须区分「真接线」与「只被提一下」）：
+          ②a **真接线**（弱挂载）：名字落在闸文件的**命令位**上（启动器 `python3`/`bash`/`${PY}`/`./`
+             + 路径 + 名，逐条与门③ `check-wired-scripts.py:38-41` 同口径）—— 它**真被闸体调用**，
+             只是不走 add_step 命令串；
+          ②b **只被提一下**：名字只在注释 / 文案 / 清单项里出现 —— **不算接线**（「写在注释里的门」）；
+             ★ ②b 里**新件**（不在 git 索引）也落 ④「新件未挂门」⇒ rc=1（治「名字被提一下即永久静默」）
        ③ **闸文件里查无此名** —— **棘轮命中数**，与 config `baseline` 比
      ★ **通用语法步的 glob 兜底不计入 ①②③**：`scripts/*.sh 语法（bash -n）` 与
        `scripts/*.py 语法（ast.parse）` 用通配覆盖全部 82 条 —— **语法过 ≠ 接了门**，
@@ -502,13 +507,99 @@ def name_re(name):
     return r
 
 
+# ── 「真接线」面（命令位调用）—— 与门③ `check-wired-scripts.py:38-41` 同口径 ──────────
+#   名字在闸文件里被提到 **不等于** 它接了线（缺口 `GAP-20260927-123` ①·治静默）。
+#   只有落在**命令位**上才算「真接线」；口径三条排除（逐字对齐门③）：
+#     ① 纯注释行（`#` 开头）—— 「注释里提过」不算；
+#     ② 纯清单项（整行就是一个路径字面量，如 `"scripts/gates/<名>",`）—— 名册/排除表里
+#        被点名也不算（「记录不能充作引用」）；
+#     ③ 不在命令位（只被 echo 文案 / 说明文字 / grep 模式串提到）—— **只被提一下**。
+#   启动器闭集 + 变量解释器（`${PY}` / `$PY` / `./`）；可带引号与路径前缀。
+_RUNNER_RE = (r"\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*"
+              r"|python3|python|bash|sh|zsh|dash|node|env|exec|time|nice|\./")
+_PATH_PREFIX = r"(?:[\w.${}/-]*/)"
+_CALL_CACHE = {}
+_BARE_ITEM_CACHE = {}
+
+
+def call_re(name):
+    """「命令位调用」正则：启动器 + （选项旗标）* + 路径 + 名（与门③ `call_re` 同口径）。
+
+    两种形态都收：带引号（`python3 \"$Z/scripts/gates/<名>\" \"$D\"`）· 不带引号；
+    名字后面必须是分隔符（空白 / 引号 / `;` / `&` / `|` / `)` / 行尾），防前缀误命中。
+    """
+    r = _CALL_CACHE.get(name)
+    if r is None:
+        n = re.escape(name)
+        head = r'(?:^|[\s"\'=(;|&])(?:' + _RUNNER_RE + r')\s+(?:-[^\s]+\s+)*'
+        r = re.compile(head + r'"' + _PATH_PREFIX + r'*' + n + r'"'
+                       + r'|' + head + _PATH_PREFIX + r'*' + n + r'(?=[\s"\';&|)]|$)')
+        _CALL_CACHE[name] = r
+    return r
+
+
+def bare_item_re(name):
+    """「纯清单项」正则：整行就是一个路径字面量 —— 被名册/排除表点名，不算接线。"""
+    r = _BARE_ITEM_CACHE.get(name)
+    if r is None:
+        r = re.compile(r'^["\']?(?:\./)?(?:scripts/)?(?:[A-Za-z0-9_.\-]+/)*'
+                       + re.escape(name) + r'["\']?,?$')
+        _BARE_ITEM_CACHE[name] = r
+    return r
+
+
+def wired_mention(name, gates_text):
+    """闸文件里有没有「真接线·命令位调用」形态（②a）？⇒ (True, 证据行) / (False, "")。"""
+    rx_call, rx_bare = call_re(name), bare_item_re(name)
+    for line in gates_text.splitlines():
+        if name not in line:
+            continue
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if rx_bare.match(s):
+            continue
+        if rx_call.search(line):
+            return True, s[:160]
+    return False, ""
+
+
+def text_mention(name, gates_text):
+    """闸文件里有没有「只被提一下」形态（②b）—— 非命令位的任意出现（含注释行）。"""
+    rx_bare, rx_call, rx = bare_item_re(name), call_re(name), name_re(name)
+    for line in gates_text.splitlines():
+        if name not in line:
+            continue
+        s = line.strip()
+        if not s or rx_bare.match(s):
+            continue
+        if s.startswith("#"):
+            if rx.search(line):
+                return True, s[:160]
+            continue
+        if rx_call.search(line):
+            continue
+        if rx.search(line):
+            return True, s[:160]
+    return False, ""
+
+
 def script_tier(rel, gates_text, cmds_text):
-    """① in_steps · ② mentioned · ③ unmentioned —— 三档之和恒等于候选总数（计数自证）。"""
+    """① in_steps · ②a wired · ②b mention · ③ unmentioned。
+
+    ★ **不再「闸文件全文出现即算」**（缺口 `GAP-20260927-123`）：② 拆成两档 ——
+      · **②a wired（真接线·弱挂载）**：名字落在闸文件的**命令位**上（启动器 + 路径 + 名），
+        即它**真被闸体调用**（只是不走 add_step 命令串）；
+      · **②b mention（只被提一下）**：名字只在注释 / 文案 / 清单项里出现 —— **不算接线**。
+    ★ 计数自证不变：① + ② + ③ ≡ 候选总数（其中 ② = ②a + ②b）。
+    """
     name = os.path.basename(rel)
     if name_re(name).search(cmds_text):
         return "in_steps"
-    if name_re(name).search(gates_text):
-        return "mentioned"
+    if wired_mention(name, gates_text)[0]:
+        return "wired"
+    if text_mention(name, gates_text)[0]:
+        return "mention"
     return "unmentioned"
 
 
@@ -597,6 +688,7 @@ def analyse(root, cfg, steps, gates_text, max_examples):
     tracked = tracked_files(root)                       # None = 判不了（非 git 仓）⇒ ③ 档非空时 rc=2
     b_items, b_red, b_wl = [], [], []
     buckets = {"in_steps": [], "mentioned": [], "unmentioned": []}
+    wired_items, mention_items, new_mention = [], [], []
     glob_note = []
     for rel, kind in cands:
         tier = script_tier(rel, gates_text, cmds_text)
@@ -607,8 +699,25 @@ def analyse(root, cfg, steps, gates_text, max_examples):
                 "whitelist_date": (wl["date"] if wl else None),
                 "new": False, "reason": ""}
         b_items.append(item)
-        buckets[tier].append(item)                      # 三档之和恒等于候选总数
-        if tier == "unmentioned":
+        if tier == "in_steps":
+            buckets["in_steps"].append(item)            # ① 真被某步跑（add_step 命令串）
+        elif tier in ("wired", "mention"):
+            buckets["mentioned"].append(item)           # ② = ②a wired + ②b mention（计数自证不变）
+            if tier == "wired":
+                wired_items.append(item)                # ②a 真接线（闸体命令位调用）
+                item["reason"] = "真接线·弱挂载（闸文件命令位调用 · 未走 add_step 命令串）"
+            else:
+                mention_items.append(item)              # ②b 只被提一下（注释/文案/清单项）
+                item["reason"] = "只被提一下（注释/文案/清单项 · **不算接线**）"
+                # ★ 治静默（`GAP-20260927-123` ①）：**只被提一下**的**新件**（不在 git 索引）
+                #   也属「新件未挂门」——旧口径里它落 ② ⇒ 既不进棘轮也不进 ④ ⇒ 永久静默。
+                if tracked is not None and rel not in tracked:
+                    item["new"] = True
+                    item["reason"] = ("新件只被提一下、未真接线（不在 git 索引 ⇒ 新建后没与"
+                                      "代码同批挂 add_step）")
+                    new_mention.append(item)
+        else:
+            buckets["unmentioned"].append(item)         # ③ 闸文件里查无此名 = 棘轮命中来源
             if wl:
                 b_wl.append(item)                       # 第二档白名单（不计入棘轮）
             else:
@@ -623,8 +732,9 @@ def analyse(root, cfg, steps, gates_text, max_examples):
         if item["glob"]:
             glob_note.append(item)
 
-    # ④ 新格（单列成格）：③ 档里「新件」那一条 —— 与存量债分开点名、分开判
-    new_ungated = [it for it in b_red if it["new"]]
+    # ④ 新格（单列成格）：「新件」那一条 —— 与存量债分开点名、分开判。
+    #   ★ 来源两处：③ 档里未挂门的新件 + **②b 只被提一下**的新件（治静默 · `GAP-20260927-123`）。
+    new_ungated = [it for it in b_red if it["new"]] + new_mention
     legacy_ungated = [it for it in b_red if not it["new"]]
 
     # ── 例外面计数（第二档：白名单）────────────────────────────────
@@ -645,6 +755,7 @@ def analyse(root, cfg, steps, gates_text, max_examples):
         "a": {"items": a_items, "covered": a_covered, "whitelisted": a_wl, "red": a_red},
         "b": {"cands": b_items, "counts": {k: len(v) for k, v in buckets.items()},
               "tier1": buckets["in_steps"], "tier2": buckets["mentioned"], "tier3": buckets["unmentioned"],
+              "tier2_wired": wired_items, "tier2_mention": mention_items,
               "hit": len(b_red), "hit_items": b_red,
               "new_ungated": new_ungated, "legacy_ungated": legacy_ungated,
               "git_tracked_known": tracked is not None,
@@ -679,11 +790,14 @@ def declares_out_of_scope(root, rel):
     return any(OOR_DECL in ln for ln in head.splitlines()[:DECL_SCAN_LINES])
 
 
-def _list(items, key, max_examples, indent="     ", mark_wl=False):
+def _list(items, key, max_examples, indent="     ", mark_wl=False, mark_reason=False):
     lines = []
     for it in items[:max_examples]:
-        extra = ("  ← 白名单豁免 %s（%s）" % (it["whitelist"], it.get("whitelist_date", ""))
-                 if mark_wl and it.get("whitelist") else "")
+        extra = ""
+        if mark_wl and it.get("whitelist"):
+            extra = "  ← 白名单豁免 %s（%s）" % (it["whitelist"], it.get("whitelist_date", ""))
+        elif mark_reason and it.get("reason"):
+            extra = "  ← %s" % it["reason"]
         lines.append("%s- %s%s" % (indent, it[key], extra))
     if len(items) > max_examples:
         lines.append("%s… 另 %d 条（--max-examples 调整）" % (indent, len(items) - max_examples))
@@ -726,7 +840,13 @@ def print_report(rep):
         print(ln)
     print("     ② 闸文件里被提到、但不在任何 add_step 命令串里（弱挂载 · 单列）：%d"
           % b["counts"]["mentioned"])
-    for ln in _list(b["tier2"], "script", rep["max_examples"]):
+    print("        · ②a **真接线**（闸体命令位调用 · 与门③同口径）：%d" % len(b["tier2_wired"]))
+    for ln in _list(b["tier2_wired"], "script", rep["max_examples"], indent="          "):
+        print(ln)
+    print("        · ②b **只被提一下**（注释/文案/清单项 · **不算接线** · `GAP-20260927-123`）：%d"
+          % len(b["tier2_mention"]))
+    for ln in _list(b["tier2_mention"], "script", rep["max_examples"], indent="          ",
+                    mark_reason=True):
         print(ln)
     print("     ③ 闸文件里查无此名：%d" % b["counts"]["unmentioned"])
     print("        · 其中白名单豁免（第二档 · 计数可见）：%d" % len(b["whitelisted"]))
@@ -852,6 +972,10 @@ def print_list_rules():
           % (" / ".join(DEFAULT_SCRIPT_GLOBS), DEFAULT_NOSUFFIX_DIR))
     print("   ① add_step 命令串里点名（真被某步跑） · ② 闸文件里被提到但不在任何 add_step 命令串里"
           "（弱挂载，单列） · ③ 闸文件查无此名 = 棘轮命中数")
+    print("   ★ ② 拆两档（`GAP-20260927-123`）：**②a 真接线** = 名字落在闸文件**命令位**上"
+          "（启动器 python3/bash/${PY}/./ + 路径 + 名；与门③ `check-wired-scripts.py` 同口径）；")
+    print("     **②b 只被提一下** = 只在注释 / 文案 / 清单项里出现 —— **不算接线**；②b 里"
+          "**新件**（不在 git 索引）落 ④「新件未挂门」⇒ rc=1（治静默）。")
     print("   ★ 计数自证：① + ② + ③ ≡ 候选总数")
     print("   ★ glob 兜底（scripts/*.sh|*.py 语法步）**不计入** ①②③ —— 语法过 ≠ 接了门")
     print("   ★ 命中数 > baseline ⇒ rc=1；≤ baseline ⇒ rc=0 但必须打印剩余数")
@@ -1123,8 +1247,55 @@ def self_test(sink=None, deep=None):
     check("⑭ 弱挂载档可分辨（② 单列，不并进 ①）", rc == 0 and "弱挂载" in out
           and "① add_step 命令串里点名：0" in out
           and "② 闸文件里被提到、但不在任何 add_step 命令串里（弱挂载 · 单列）：2" in out
-          and "② 闸文件里被提到、但不在任何 add_step 命令串里（弱挂载 · 单列）：2" in out
-          and "- scripts/ok.py\n" in out)
+          and "- scripts/ok.py" in out)
+    check("⑭ 且②b「只被提一下」单列（注释里的门不算接线）",
+          "②b **只被提一下**" in out and "②b **只被提一下**（注释/文案/清单项 · **不算接线** · `GAP-20260927-123`）：2" in out)
+
+    # ── ⑭b/⑭c ② 拆两档（真接线 vs 只被提一下）成对负控（`GAP-20260927-123`）────────────
+    #   判据面 = `script_tier` 的 ②a/②b 分类（命令位调用 = 真接线；注释/文案 = 只被提一下）。
+    #   ⑭b 正控：闸体里 `python3 scripts/side.py`（命令位、非 add_step）⇒ 判 ②a；
+    #   ⑭c 负控（同一夹具、只把命令位那行改成注释）⇒ 回 ②b（分类不是恒真）。
+    wiredfix = _fixture(base, "c-tier2-wired",
+                        steps=[("core", "go build ./..."), ("", "python3 scripts/ok.py")],
+                        scripts=("scripts/ok.py", "scripts/side.py"),
+                        gates_extra="if true; then python3 scripts/side.py; fi")
+    rc, out = _run(wiredfix)
+    check("⑭b 命令位调用（非 add_step）⇒ 判 ②a 真接线（旧口径只给一个 ②）",
+          rc == 0 and "②a **真接线**（闸体命令位调用 · 与门③同口径）：1" in out
+          and "②b **只被提一下**（注释/文案/清单项 · **不算接线** · `GAP-20260927-123`）：0" in out)
+    _write(os.path.join(wiredfix, "scripts", "gates", "precommit-gates.sh"),
+           open(os.path.join(wiredfix, "scripts", "gates", "precommit-gates.sh"),
+                encoding="utf-8").read().replace(
+                     "if true; then python3 scripts/side.py; fi",
+                     "# 只提到 scripts/side.py，不是命令位调用"))
+    rc, out = _run(wiredfix)
+    check("⑭c 负控（同一夹具 · 把那行改成注释）⇒ 回 ②b（分类不是恒真）",
+          rc == 0 and "②a **真接线**（闸体命令位调用 · 与门③同口径）：0" in out
+          and "②b **只被提一下**（注释/文案/清单项 · **不算接线** · `GAP-20260927-123`）：1" in out)
+
+    # ── ⑭d/⑭e 治静默：**只被提一下的新件**必须落 ④（rc=1）—— 成对负控 ──────────────
+    #   判据面 = 「②b 只被提一下 ∧ 不在 git 索引 ⇒ 新件未挂门」。旧口径里它落 ② ⇒ 永久静默
+    #   （既不进棘轮也不进 ④），这条正是 `GAP-20260927-123` ① 的洞。
+    mn = _fixture(base, "d-mention-new-ungated",
+                  steps=[("core", "go build ./..."), ("", "python3 scripts/ok.py")],
+                  scripts=("scripts/ok.py",))
+    _gitify(mn)                                   # 有索引 ⇒ 「新件 ⟷ 存量债」分得开
+    _write(os.path.join(mn, "scripts", "mentiononly.py"),
+           "#!/usr/bin/env python3\nprint('mention only fixture')\n")
+    gf = os.path.join(mn, "scripts", "gates", "precommit-gates.sh")
+    _write(gf, open(gf, encoding="utf-8").read().replace(
+        'main "$@"', '# 只提到 scripts/mentiononly.py，不接进任何一步\nmain "$@"'))
+    rc, out = _run(mn)
+    check("⑭d **只被提一下的新件** ⇒ rc=1 + 点名（旧口径落 ② ⇒ 永久静默/rc=0）",
+          rc == 1 and "新件只被提一下、未真接线" in out, "rc=%d" % rc)
+    #   负控（与 ⑭d 成对）：把它真接进 add_step ⇒ 落 ① ⇒ 回绿
+    _write(gf, open(gf, encoding="utf-8").read().replace(
+        '  add_step fixture "步骤 core"',
+        '  add_step fixture "步骤 mentiononly" rc "${REPO_ROOT}"'
+        ' "python3 scripts/mentiononly.py"\n'
+        '  add_step fixture "步骤 core"'))
+    rc, out = _run(mn)
+    check("⑭e 同批真接线（写进 add_step）⇒ 回绿（rc=0）—— 与 ⑭d 成对", rc == 0, "rc=%d" % rc)
 
     # ── 计数自证行真的在 ────────────────────────────────────────────────
     check("⑮ 报告含「计数自证」两条恒等式", "计数自证" in out2 and "① 1 + ② 1 + ③ 0 = 2（候选 2）" in out2)

@@ -274,11 +274,16 @@ def main(argv):
     ap.add_argument("--root", default=DEFAULT_ROOT, help="查的仓根（默认本仓根）")
     ap.add_argument("--kind", choices=["auto", "file", "dir", "prefix"], default="auto",
                     help="目标形态（默认 auto：按是否存在目录优先判 file/dir）")
-    ap.add_argument("--json", action="store_true", help="机器读面")
+    ap.add_argument("--json", action="store_true", help="机器读面（= 与 --json-only 同效 · GAP-20261001-22 修：原为死旗标）")
     ap.add_argument("--json-only", action="store_true", help="只 stdout 输出 JSON 本体")
     ap.add_argument("--dump", default="", help="把结果显式落盘（唯一被允许的写行为）")
     ap.add_argument("--self-test", action="store_true", help="跑成对负控（合成夹具）")
     args = ap.parse_args(argv)
+
+    # ● GAP-20261001-22 修：`--json` 原被 argparse 解析后**从不被读取**（死旗标 ⇒ 行为恒等于缺省 ·
+    #   假承诺）。凡声明过的旗标必须有实际效果 ⇒ 令 `--json` ≡ `--json-only`（同为机器读面）。
+    if args.json:
+        args.json_only = True
 
     if args.self_test:
         ok = selftest()

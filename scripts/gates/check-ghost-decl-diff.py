@@ -382,7 +382,9 @@ def list_rules():
     print("同源 S1：真源 = `deploy/服务声明.tsv`（声明侧唯一真源 · 与门⑧/`core daemon ls` 同一件）· 解析器 = 门⑧ 的 `parse_decl`")
     print("同源 S2：侧①条数 == `zerg doctor`「%s」条数（`T2` 判据③ · 逐字同值）" % DOCTOR_ITEM)
     print("写旗标闭集（%d 词 · 形态无关）：%s" % (len(WRITE_WORDS), " ".join(WRITE_WORDS)))
-    print("源码级牙词表：%s + `open(…,'w'|'a')` + git 写子命令字面" % " ".join(DESTRUCTIVE_TOKENS))
+    # ● GAP-20261001-46 修：原引用未定义常量 `DESTRUCTIVE_TOKENS` ⇒ `--list-rules` 恒 NameError 回溯 rc=1。
+    #   逐字改用本件**已定义**的源码级牙词表常量（AST 扫描真正读的那一份）。
+    print("源码级牙词表：%s + `open(…,'w'|'a')` + git 写子命令字面" % " ".join(DELETE_CALLS))
     print("退码：0 两侧已出+同源过 · 1 同源漂移/写面红 · 2 不给结论（缺件/取不到/空转/写旗标/自检不过）")
     return 0
 

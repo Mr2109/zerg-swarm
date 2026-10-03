@@ -196,6 +196,11 @@ var chatToolRegistry = []ChatToolMeta{
 
 	// ── 多模态（P4-48 第四批——1）──
 	{Name: "image_ocr", Category: "多模态", Keywords: []string{"ocr", "图片文字", "识别"}},
+	// ── GAP-20260927-174② 补齐（2026-10-03 · 候件）：这两名在 executeChatToolInner 的 case 与
+	// ChatExtraToolDefs schema 里都有，却漏在注册表 ⇒ tool_search/资源库发现不了（两表漂移）。
+	// 本块与 chat_tool_registry_l0_test.go 的 TestToolRegistryMatchesDispatch 同批落。
+	{Name: "port_services", Category: "系统管理", Keywords: []string{"端口", "服务", "监听", "lsof", "端口映射"}},
+	{Name: "tool_errors", Category: "系统", Keywords: []string{"工具错误", "错误统计", "报错", "失败统计"}},
 }
 
 // chatToolMetaByName — 工具名 → 元数据

@@ -307,6 +307,9 @@ var (
 	clicExitcodesRel = clicPyJoin("core", "cmd", "zerg", "exitcodes.go")
 	clicMainRel      = clicPyJoin("core", "cmd", "zerg", "main.go")
 	clicRegistryRel  = clicPyJoin("core", "internal", "contract", "registry.json")
+	// clicSelfRel = 本件在仓根下的相对路径。正式制品用 `-trimpath` 构建 ⇒
+	// runtime.Caller(0) 给的是模块路径形态的相对路径（os.ReadFile 解不出）⇒ 靠它退化。
+	clicSelfRel = clicPyJoin("core", "cmd", "zerg", "check_cli_contract.go")
 )
 
 var clicNodeFamilyRE = regexp.MustCompile(`\bzerg\s+node\s+[A-Za-z]`)
@@ -416,6 +419,52 @@ func clicReadFile(path string) (string, bool) {
 		return "", false
 	}
 	return string(b), true
+}
+
+// clicSelfSource 取本件源码文本 + 用于 R7 排除自身的盘上路径。
+// 先走 runtime.Caller(0)（开发/测试制品给绝对路径，可读）；正式制品 `-trimpath`
+// ⇒ 给的是 `github.com/Mr2109/zerg-swarm/core/cmd/zerg/check_cli_contract.go`
+// 这种模块路径形态的相对路径，os.ReadFile 解不出 ⇒ 退化为「仓根 + 固定相对路径」。
+// 两路都判不了才返回 ok=false（照样判红，不悄悄放行）。
+func clicSelfSource(root string) (src, abs string, ok bool) {
+	if p := clicSelfFile(); p != "" {
+		if s, r := clicReadFile(p); r {
+			return s, p, true
+		}
+	}
+	// 退化：按「仓根 + 固定相对路径」找。传入 root 在主路是真仓根；自检夹具树的
+	// root 是临时目录 ⇒ 再补一路与传入 root 无关的真仓根兜底。
+	roots := []string{root}
+	if er := clicSelfRepoRoot(); er != "" && er != root {
+		roots = append(roots, er)
+	}
+	for _, rt := range roots {
+		if rt == "" {
+			continue
+		}
+		p := clicPyJoin(rt, clicSelfRel)
+		if s, r := clicReadFile(p); r {
+			return s, p, true
+		}
+	}
+	return "", clicPyJoin(root, clicSelfRel), false
+}
+
+// clicSelfRepoRoot：与传入 root 无关的仓根兜底（自检夹具树的 root 不是真仓根）。
+// ① os.Executable() 上溯（正式制品住 <root>/bin/，`-trimpath` 不影响它）；
+// ② cwd 上溯。两路都找不到才回空串。
+func clicSelfRepoRoot() string {
+	if exe, err := os.Executable(); err == nil {
+		if r := clicFindRoot(clicPyDirname(exe)); r != "" {
+			return r
+		}
+	}
+	if wd, err := os.Getwd(); err == nil {
+		if r := clicFindRoot(wd); r != "" {
+			return r
+		}
+	}
+	return ""
 }
 
 func clicFindRoot(start string) string {
@@ -1926,7 +1975,8 @@ func clicCheck(root string, noRuntime bool) (int, []string) {
 	if !gatesNamed {
 		errs = append(errs, "T6 引用：契约登记表里**没有**任何条目的 gate 字段点名 check-cli-contract.py（引用面 = 0 ⇒ 本门挂在空气上）")
 	}
-	if selfSrc, ok := clicReadFile(clicSelfFile()); !ok || !strings.Contains(selfSrc, "M6 R7") {
+	selfSrc, selfPath, selfOK := clicSelfSource(root)
+	if !selfOK || !strings.Contains(selfSrc, "M6 R7") {
 		errs = append(errs, "T6 引用：本门头部没有引用 §九 M6 R7（本门不重写判据，只引用它）")
 	}
 
@@ -1938,7 +1988,7 @@ func clicCheck(root string, noRuntime bool) (int, []string) {
 			break
 		}
 	}
-	hits := clicNodeFamilyHits(root, clicSelfFile())
+	hits := clicNodeFamilyHits(root, selfPath)
 	for i, h := range hits {
 		if i >= 20 {
 			break

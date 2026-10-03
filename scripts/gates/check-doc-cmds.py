@@ -220,11 +220,13 @@ def parse_tree(root):
       「只是前缀」，`zerg dev propozal` 这类坏动作才不会被族名 `dev` 放行（见 `resolve_cmd`）。
     """
     src = read(os.path.join(root, MAIN_REL))
+    # ● GAP-20261001-32① 修：结束索引原暴露在 try 之外 ⇒ 起始标记在、结束标记不在时抛 ValueError 回溯 rc=1。
+    #   把 start/end 一并收进 try（任一取不到 ⇒ 返回 None ⇒ 不给结论 rc=2，与原「起始取不到」同档）。
     try:
         start = src.index('commands = []*command{')
+        end = src.index('\n\t}\n', start)
     except ValueError:
         return None
-    end = src.index('\n\t}\n', start)
     seg = src[start:end]
     out = {}
     for m in re.finditer(r'path:\s*\[\]string\{([^}]*)\}', seg):
@@ -473,10 +475,13 @@ def check(root, scopes):
 
 def self_test():
     """成对负控：好件绿 / 坏件红 / 空转 2 —— 先证明这台机器能把红判出来。"""
+    import atexit
+    import shutil
     import tempfile
     bad = []
     ran = []                     # 跑过的格数（末行「N 组」**自印**，不写死 —— 免得像 `Q-158` 那样过期）
     tmp = tempfile.mkdtemp(prefix="doc-cmds-selftest-")
+    atexit.register(shutil.rmtree, tmp, ignore_errors=True)   # ● GAP-20261001-32②：夹具自回收（原从不 RemoveAll）
     os.makedirs(os.path.join(tmp, "core", "cmd", "zerg"), exist_ok=True)
     os.makedirs(os.path.join(tmp, "scripts", "gates"), exist_ok=True)
     tree_src = (

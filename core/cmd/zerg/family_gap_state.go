@@ -192,8 +192,12 @@ func gapReceiptPrint(w io.Writer, receipt string) {
 //
 //	· 基线 = 本进程**读入那一刻**的整件字节（`led.Raw`）的 `sha256`；
 //	· 写前**现读**盘上那一件，现算 `sha256`；
-//	· 两者不符（或写前现读不到）⇒ 退 `concurrent_write`（调用方 `gapWriteFail` 译成**退码 2** ·
-//	  逐字点名两个 `sha16`）；
+//	· 两者不符 ⇒ 退 `concurrent_write`（调用方 `gapWriteFail` 译成**退码 2** · 逐字点名两个 `sha16`）；
+//	· 写前**现读不到** ⇒ 分两档（甲案 · 2026-10-03 拍定 · 缺口 `GAP-20260927-191` 修）：
+//	  **「件不在」**（`os.IsNotExist`）⇒ 视为**空账**：空账本来就该能写第一条（首次 `add` / 首次改态）
+//	  ⇒ **放行**；**「件在、但读不出来」**（损坏 / 无权限 · 非 `IsNotExist`）⇒ 拿不到「现在」这一格
+//	  ⇒ **拒写**（退 `concurrent_write` · 退码 2）。★ 这道闸的本意只是「**别覆盖别人的写**」——
+//	  盘上没有件，就没有可覆盖的对象；原先「读不到一律拒写」把**空账首写**误伤了。
 //	· 相符 ⇒ 放行，此后仍是原路（审计先落盘 → 整件重写 → 读回对拍）。
 //
 // 为什么捏在**这一处**：本族所有改态面（`set-state` / `note` / `note --retract` / `assign` /
@@ -207,6 +211,13 @@ func gapConcurGate(led gapLedger, cmdName string) (string, int, string) {
 	base := sha256Of(led.Raw)
 	now, err := os.ReadFile(led.Path)
 	if err != nil {
+		// ★ 甲案（缺口 `GAP-20260927-191` 修 · 2026-10-03 拍定）：
+		//   **账件不存在**（`os.IsNotExist`）⇒ 视为**空账** ⇒ **放行** —— 空账本来就该能写第一条
+		//   （首次 `add` / 首次改态那一发：测试夹具是新建空真源，首次写时文件还不存在 ⇒ 旧闸恒拒）。
+		//   只有「**存在但读不出来**」（损坏 / 无权限 · 非 `IsNotExist`）才拒写：那时拿不到「现在」这一格。
+		if os.IsNotExist(err) {
+			return "", exitOK, ""
+		}
 		return "concurrent_write", exitUsage,
 			fmt.Sprintf("写前**现读**不到账件（%v） ⇒ 拿不到「现在」这一格，拒写", err)
 	}

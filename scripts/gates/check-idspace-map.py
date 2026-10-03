@@ -103,7 +103,12 @@ def judge(doc_path):
     """⇒ (verdict, 报表 dict, 红列表 [ (行号, 判据, 原样说明) ]) · verdict ∈ ok/red/noconc。"""
     if not doc_path or not os.path.isfile(doc_path):
         return "noconc", {"why": "登记件不在盘：%s" % doc_path}, []
-    lines = open(doc_path, encoding="utf-8").read().splitlines()
+    # ● GAP-20261001-23② 修：登记件非 UTF-8 时原 open(encoding=utf-8) 抛 UnicodeDecodeError
+    #   （**非** OSError）⇒ 回溯 rc=1。读取失败一律「不给结论 rc=2」，不得以回溯冒充判据崩了。
+    try:
+        lines = open(doc_path, encoding="utf-8").read().splitlines()
+    except (OSError, UnicodeDecodeError) as e:
+        return "noconc", {"why": "登记件读不了（%s）" % e}, []
     m_start, map_rows = parse_table(lines, HDR_MAP, 6)
     if m_start is None:
         return "noconc", {"why": "映射表表头逐字句找不到"}, []
@@ -228,7 +233,11 @@ def self_test():
         case("⑩ 映射表空 ⇒ rc=2", "noconc", judge(p2)[0])
         # ⑪ 缺件 ⇒ 不给结论
         case("⑪ 登记件缺 ⇒ rc=2", "noconc", judge(os.path.join(d, "不在盘.md"))[0])
-        # ⑫ 真目标登记件在场且规模合理
+        # ⑫ 真目标（**仓外**登记件）—— ● GAP-20261001-23① 修：原 case 直接读仓外真件 ⇒ 自检不 hermetic，
+        #   目标树缺席时由 0 翻 1（恒红 · 非本机缺陷却报红）。缺树 ⇒ **不给结论 rc=2**，不翻红。
+        if not os.path.isfile(DEFAULT_DOC):
+            print("  ~ ⑫/⑫b/⑫c 跳过：真目标登记件不在盘（%s）⇒ 自检依赖仓外件、不可 hermetic 判定 ⇒ 不给结论" % DEFAULT_DOC)
+            return 2
         v, rep, reds = judge(DEFAULT_DOC)
         case("⑫ 真目标：登记件在场 + 六格全过", "ok", v, "行 %d · 红 %d" % (rep.get("rows", -1), len(reds)))
         case("⑫b 真目标映射表规模 ≥ 30 行", True, rep.get("rows", 0) >= 30, "行 %d" % rep.get("rows", -1))
