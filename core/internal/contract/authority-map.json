@@ -169,7 +169,9 @@
         "--model",
         "m-x",
         "--file",
-        "/models/m-x.gguf"
+        "/models/m-x.gguf",
+        "--confirm",
+        "m-x"
       ],
       "要同的词": "--yes",
       "真跑退码": 2

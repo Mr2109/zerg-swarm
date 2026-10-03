@@ -736,8 +736,10 @@ func killProcess(args map[string]any) (string, error) {
 		return fmt.Sprintf("已杀进程 %d", pid), nil
 	}
 	if name != "" {
-		out, err := exec.Command("sh", "-c", fmt.Sprintf("pkill -9 -x %s && echo killed || echo 未找到进程", name)).Output()
-		return string(out), err
+		if err := exec.Command("pkill", "-9", "-x", name).Run(); err != nil {
+			return "未找到进程", nil
+		}
+		return "killed", nil
 	}
 	return "", fmt.Errorf("参数 pid 或 name 至少一个")
 }
@@ -754,8 +756,13 @@ func startStopService(args map[string]any, start bool) (string, error) {
 	if svc == "zerg-core" || svc == "zerg-ui" {
 		return fmt.Sprintf("提示: 请在项目目录手动执行 ./bin/%s（后台进程管理由主控负责——对话工具不直接启停核心服务）", svc), nil
 	}
-	out, err := exec.Command("sh", "-c", fmt.Sprintf("launchctl %s %s 2>&1 || systemctl %s %s 2>&1", action, svc, action, svc)).Output()
-	return string(out), err
+	out, err := exec.Command("launchctl", action, svc).CombinedOutput()
+	if err == nil {
+		return string(out), nil
+	}
+	// launchctl 不可用时回退 systemctl（同样只走 argv，不经 shell 拼接）
+	out2, err2 := exec.Command("systemctl", action, svc).CombinedOutput()
+	return string(out) + string(out2), err2
 }
 
 func uptimeInfo() (string, error) {
@@ -775,9 +782,16 @@ func calcTool(args map[string]any) (string, error) {
 	if !safe.MatchString(expr) {
 		return "", fmt.Errorf("表达式含非法字符（仅支持数字+运算符）")
 	}
-	out, err := exec.Command("sh", "-c", fmt.Sprintf("echo '%s' | bc -l 2>/dev/null || python3 -c 'print(%s)'", expr, expr)).Output()
+	// 参数化：表达式经 stdin 交给 bc；不可用时回退 python3（argv 传参）——不再拼 shell 字符串
+	bc := exec.Command("bc", "-l")
+	bc.Stdin = strings.NewReader(expr + "\n")
+	out, err := bc.Output()
 	if err != nil {
-		return "", fmt.Errorf("计算失败: %v", err)
+		pyOut, pyErr := exec.Command("python3", "-c", "print("+expr+")").Output()
+		if pyErr != nil {
+			return "", fmt.Errorf("计算失败: %v", pyErr)
+		}
+		return strings.TrimSpace(string(pyOut)), nil
 	}
 	return strings.TrimSpace(string(out)), nil
 }

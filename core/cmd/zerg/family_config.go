@@ -325,7 +325,7 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 	bad := func(detail, msg string) int {
 		inv.setErr("usage", detail, msg)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
-		fmt.Fprintf(stderr, "  用法：zerg model add --model <模型名> --host <主机> --file <GGUF 路径> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run | --yes]\n")
+		fmt.Fprintf(stderr, "  用法：zerg model add --model <模型名> --host <主机> --file <GGUF 路径> --confirm <模型名> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run | --yes]\n")
 		fmt.Fprintf(stderr, "        （`--model` = `models:` 段的**键/块名** ⇒ 按它定位或新建那一块；`--host` = 该条 `host:` 的**字段值**＝这台模型跑在哪台机器）\n")
 		return exitUsage
 	}
@@ -364,11 +364,6 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	// `name`（`--model`）从本笔起是**块名**：`models:` 段的键就是要写/新建的那一块（见 `modelAddLocate`）。
 	// 它照旧不进条目的字段面（无 `name:` 键 —— 现册条靠 `host` + `file` 认），但**决定块定位与新增**。
-	if inv.confirmGiven && inv.confirm != name {
-		inv.setErr("usage", "confirm_mismatch", "`--confirm` 的值要与 `--model` 逐字相同（点名要加的是哪一枚）")
-		fmt.Fprintf(stderr, "%s: `--confirm=%s` 与 `--model %s` 不一致\n", progName, inv.confirm, name)
-		return exitUsage
-	}
 	// ── 名册件面 ──
 	path, perr := fleetYAMLPath(inv)
 	if perr != "" {
@@ -511,6 +506,25 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  生效     : 要主控读它 ⇒ `%s config reload --yes`（本命令**不碰主控**）\n", progName)
 		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
 		return exitOK
+	}
+	//
+	// ── 确认档（fail-closed · `GAP-20260927-87` 修面 · 2026-10-03）──
+	// 位置口径（干跑豁免 · 照同族先例 `guard.go:59`→`:68` · `family_task.go:495`→`:513` ·
+	// `family_publish_run.go:105`→`:131`）：`--dry-run` 已在上面短路返回 ⇒ 本块只对**真写**生效
+	// （干跑一个字节都不写、也**不要求** `--confirm`）。
+	// 改前：`if inv.confirmGiven && inv.confirm != name` —— **只在给了 `--confirm` 时才校验** ⇒
+	// 「从不要求」= 危险档（写名册件）与确认档**不是一一映射**（§九 M3 C1 / §4.1 K7）。
+	// 改后：缺 `--confirm` ⇒ 2（不执行）；值不逐字相同 ⇒ 2（给错值 = 拒绝，不是「当没给」）。
+	if !inv.confirmGiven {
+		inv.setErr("usage", "confirm_required", "写名册件要 `--confirm=<模型名>`（点名要加的是哪一枚）—— 缺确认 ⇒ 不执行（fail-closed）")
+		fmt.Fprintf(stderr, "%s: `model add` 会写名册件 ⇒ 缺 `--confirm=%s` ⇒ 不执行（fail-closed）\n", progName, name)
+		fmt.Fprintf(stderr, "        （`--confirm` 的值要与 `--model` 逐字相同 —— 危险档 ↔ 确认档一一映射 · §九 M3 C1）\n")
+		return exitUsage
+	}
+	if inv.confirm != name {
+		inv.setErr("usage", "confirm_mismatch", "`--confirm` 的值要与 `--model` 逐字相同（点名要加的是哪一枚）")
+		fmt.Fprintf(stderr, "%s: `--confirm=%s` 与 `--model %s` 不一致 ⇒ 不执行（给错值 = 拒绝，不是「当没给」）\n", progName, inv.confirm, name)
+		return exitUsage
 	}
 	if !inv.yes {
 		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")

@@ -15,10 +15,28 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LABEL="com.zerg.core"
+# label 单一真源：现读 deploy/服务声明.tsv（GAP-20260927-107 步④ · 禁第二份硬编码名单）。
+# 声明件取不到 ⇒ **硬失败**（不猜、不回落硬编码——回落就是又造一份名单）。
+LABEL="${ZERG_LABEL:-$(bash "$REPO_ROOT/scripts/svc/decl-label.sh" bin/zerg-core 2>/dev/null || true)}"
+[ -n "$LABEL" ] || { echo "❌ 取不到主控 label：声明件缺 bin/zerg-core 行（scripts/svc/decl-label.sh）" >&2; exit 2; }
 PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 UID_NUM="$(id -u)"
 DOMAIN="gui/${UID_NUM}"
+
+# ── 进程识别：**逐 PID 点名** · 禁子串/通配（GAP-20260927-119）──────────────────
+# 只认 argv[0] **整路径精确等于** $REPO_ROOT/bin/zerg-core 者（`$CORE_BIN` 后紧跟串尾或空白）；
+# 同族的 bin/zerg-core.bak-* / .new-* 因下一个字符是 `.` ⇒ **不命中**（禁子串误杀）。
+# 不吃 pgrep 的 -f 子串口径：`ps` 出 pid+完整 command，逐条 case 精确比对；排除本 shell 自身。
+CORE_BIN="$REPO_ROOT/bin/zerg-core"
+zerg_core_pids() {
+  local pid cmd self=$$
+  ps -eo pid=,command= | while read -r pid cmd; do
+    if [ "$pid" = "$self" ]; then continue; fi
+    case "$cmd" in
+      "$CORE_BIN"|"$CORE_BIN "*) printf '%s\n' "$pid" ;;
+    esac
+  done
+}
 
 status() {
   if launchctl print "${DOMAIN}/${LABEL}" >/dev/null 2>&1; then
@@ -27,7 +45,7 @@ status() {
   else
     echo "ℹ️ 主控未托管（launchd 里没有 ${LABEL}）"
   fi
-  pgrep -f "bin/zerg-core" >/dev/null 2>&1 && echo "   进程: PID $(pgrep -f 'bin/zerg-core' | head -1)" || echo "   进程: 无"
+  if [ -n "$(zerg_core_pids)" ]; then echo "   进程: PID $(zerg_core_pids | head -1)"; else echo "   进程: 无"; fi
   lsof -nP -iTCP:8580 -sTCP:LISTEN >/dev/null 2>&1 && echo "   端口: 8580 监听中" || echo "   端口: 8580 未监听"
 }
 
@@ -63,7 +81,8 @@ case "${1:-}" in
     ;;
   --stop)
     launchctl bootout "${DOMAIN}/${LABEL}" 2>/dev/null || true
-    pkill -f "bin/zerg-core" 2>/dev/null || true
+    # 收**裸启残留**：逐 PID 点名（禁 pkill 的 -f 子串 · GAP-20260927-119）——KeepAlive 归零由上面 bootout 负责
+    for _p in $(zerg_core_pids); do kill "$_p" 2>/dev/null || true; done
     echo "✓ 已停止并卸载托管（重启托管：bash scripts/build/start-zerg-core.sh）"
     exit 0
     ;;

@@ -15,6 +15,20 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOG="${ZERG_UI_LOG:-${ZERG_LOG_DIR:-/tmp}/zerg-ui.log}"
 BIN="$REPO_ROOT/bin/zerg-ui"
 
+# ── 进程识别：**逐 PID 点名** · 禁子串/通配（GAP-20260927-119）──────────────────
+# 只认 argv[0] **整路径精确等于** $BIN 者（`$BIN` 后紧跟串尾或空白）；同族的
+# bin/zerg-ui.bak-* / .new-* 因下一个字符是 `.` ⇒ **不命中**。旧口径按 `pgrep` 的 -f 子串抓，
+# 既误收 .bak/.new 件，又会抓到命令行里恰好含该字面的调用链壳。
+zerg_ui_pids() {
+  local pid cmd self=$$
+  ps -eo pid=,command= | while read -r pid cmd; do
+    if [ "$pid" = "$self" ]; then continue; fi
+    case "$cmd" in
+      "$BIN"|"$BIN "*) printf '%s\n' "$pid" ;;
+    esac
+  done
+}
+
 cd "$REPO_ROOT"
 if [ -f .env ]; then
   set -a
@@ -27,8 +41,8 @@ if [ ! -x "$BIN" ]; then
   exit 1
 fi
 
-if pgrep -f "bin/zerg-ui" >/dev/null 2>&1; then
-  echo "ℹ️ UI 已在运行（PID $(pgrep -f 'bin/zerg-ui' | head -1)）——不重复启动"
+if [ -n "$(zerg_ui_pids)" ]; then
+  echo "ℹ️ UI 已在运行（PID $(zerg_ui_pids | head -1)）——不重复启动"
   exit 0
 fi
 
@@ -55,7 +69,7 @@ os.execv(sys.argv[1], [sys.argv[1]])
 ' "$BIN" "$LOG" >/dev/null 2>&1 &
 
 sleep 4
-PID="$(pgrep -f 'bin/zerg-ui' | head -1 || true)"
+PID="$(zerg_ui_pids | head -1 || true)"
 if [ -n "$PID" ]; then
   PPID_="$(ps -o ppid= -p "$PID" | tr -d ' ')"
   echo "✅ UI 已启动（PID $PID · PPID $PPID_ · 日志 ${LOG}）"
