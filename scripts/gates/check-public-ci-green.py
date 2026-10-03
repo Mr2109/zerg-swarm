@@ -38,7 +38,8 @@
   0 = 分档行为对（dev 不拦 · public 拦）· 三条缺项照原样登记 · `R-25` 未引
   1 = **有命中**（档位行为错 / 三条缺项被写成已修 / `R-25` 权限出现）
   2 = **不给结论**：CI 件一件都读不到 / 分档真源件（`check-manifest-freshness-profile.py`）不在场 /
-      样张跑不出来 / 自检不过
+      样张 A 跑不出来 / **样张 B 清单件缺件**（`--manifest` 缺件，或 `dist/*/release/manifest.json`
+      一件都没有 —— 缺件不许静默当绿 · `GAP-20260927-128` 第②格）/ 自检不过
 
 用法
 ----
@@ -320,6 +321,7 @@ def main():
 
     scan = scan_ci(present)
     hits = []
+    no_conclusion = []   # rc=2「不给结论」的原因（★ GAP-20260927-128：缺件不许静默当绿）
 
     # ── K1 分档两态 ──────────────────────────────────────────────────────────
     print("")
@@ -358,7 +360,16 @@ def main():
         if dev_rc is None:
             print("     （分档真源跑不出来 ⇒ 交给 rc=2 那一路）")
     else:
-        print("   样张 B（真清单）：**没有可用的清单件** ⇒ 照实缺席（不当绿、也不当红）")
+        # ★ GAP-20260927-128 第②格：**缺清单件不给结论**。
+        #   旧行为「照实缺席（不当绿、也不当红）」实际落到 `rc = 1 if hits else 0`
+        #   ⇒ 无命中时 **rc=0（静默当绿）** ✗。缺件与「判过且判对」在机器面上必须分得开
+        #   ⇒ 并入「不给结论」rc=2（与同族分档件 check-manifest-freshness-profile.py
+        #   的「缺件不许静默放绿 / rc=2」同口径）。
+        why = ("点名清单件缺件：%s" % real) if real else \
+            "未给 --manifest · 且 dist/*/release/manifest.json 一件都没找到"
+        print("   样张 B（真清单）：**缺清单件** ⇒ %s" % why)
+        print("   ⇒ 缺件不给结论（rc=2）—— **不静默当绿** ✗")
+        no_conclusion.append(why)
 
     # ── K2 三条缺项照原样登记 ────────────────────────────────────────────────
     print("")
@@ -398,11 +409,18 @@ def main():
     rc = 1 if hits else 0
     if hits and (dev_rc is None and pub_rc is None and not os.path.isfile(PROFILE_GATE)):
         rc = 2
+    if no_conclusion:
+        # ★ 缺件不给结论：压过命中(1)与未命中(0) —— 「读不到」≠「判过且判对」
+        rc = 2
     print("")
     if hits:
         print("── 命中 ──")
         for h in hits:
             print("   ✗ " + h)
+    if no_conclusion:
+        print("── 不给结论（rc=2 · 缺件不许静默当绿）──")
+        for w in no_conclusion:
+            print("   ⛔ " + w)
     print("⇒ rc=%d" % rc)
 
     if a.json:

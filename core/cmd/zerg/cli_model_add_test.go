@@ -185,7 +185,7 @@ func TestModelAddListShapeWriteOneLineAdded(t *testing.T) {
 	_, path := fleetFixtureAt(t)
 	repoBefore := repoFleetSHA(t)
 	rc, out, errb := runCapture("model", "add", "--path", path, "--model", "probe-list",
-		"--host", "edge-node", "--file", "/models/new-x3.gguf", "--mem-gb", "18", "--ctx", "131072",
+		"--host", "edge-node", "--file", "/models/new-x3.gguf", "--confirm", "probe-list", "--mem-gb", "18", "--ctx", "131072",
 		"--arch", "qwen3", "--desc", "夹具新条", "--added", "2026-09-24", "--yes")
 	if rc != 0 {
 		t.Fatalf("真写 rc=%d（要 0）· stderr=%s", rc, errb)
@@ -242,7 +242,7 @@ func TestModelAddListShapeWriteOneLineAdded(t *testing.T) {
 func TestModelAddBareShapeExpandsToList(t *testing.T) {
 	_, path := fleetFixtureAt(t)
 	rc, out, errb := runCapture("model", "add", "--path", path, "--model", "probe-bare",
-		"--host", "Mr2109", "--file", "/models/new-bare-Mr2109.gguf", "--mem-gb", "18", "--yes")
+		"--host", "Mr2109", "--file", "/models/new-bare-Mr2109.gguf", "--confirm", "probe-bare", "--mem-gb", "18", "--yes")
 	if rc != 0 {
 		t.Fatalf("真写（裸映射形块）rc=%d（要 0）· stderr=%s", rc, errb)
 	}
@@ -309,7 +309,7 @@ func TestModelAddBareShapeExpandsToList(t *testing.T) {
 func TestModelAddNewBlockRealWriteTwoLinesAdded(t *testing.T) {
 	_, path := fleetFixtureAt(t)
 	rc, out, errb := runCapture("model", "add", "--path", path, "--model", "probe-fresh",
-		"--host", "edge-node", "--file", "/models/fresh.gguf", "--mem-gb", "17", "--ctx", "131072", "--yes")
+		"--host", "edge-node", "--file", "/models/fresh.gguf", "--confirm", "probe-fresh", "--mem-gb", "17", "--ctx", "131072", "--yes")
 	if rc != 0 {
 		t.Fatalf("真写（新建块）rc=%d（要 0）· stderr=%s", rc, errb)
 	}
@@ -374,7 +374,7 @@ func TestModelAddPreservesMissingTrailingNewline(t *testing.T) {
 	text := strings.TrimRight(fleetFixture, "\n")
 	p := writeFixture(t, text)
 	rc, _, errb := runCapture("model", "add", "--path", p, "--model", "probe-list", "--host", "edge-node",
-		"--file", "/models/tail.gguf", "--yes")
+		"--file", "/models/tail.gguf", "--confirm", "probe-list", "--yes")
 	if rc != 0 {
 		t.Fatalf("真写 rc=%d（要 0）· stderr=%s", rc, errb)
 	}
@@ -502,7 +502,7 @@ func TestModelAddRequiresYes(t *testing.T) {
 	_, path := fleetFixtureAt(t)
 	before := fileSHA(t, path)
 	rc, out, errb := runCapture("model", "add", "--path", path, "--model", "new-1", "--host", "Mr2109",
-		"--file", "/models/new-1.gguf")
+		"--file", "/models/new-1.gguf", "--confirm", "new-1")
 	if rc != 2 {
 		t.Fatalf("缺 --yes rc=%d（要 2）· stderr=%s", rc, errb)
 	}

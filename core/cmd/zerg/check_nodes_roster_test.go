@@ -40,7 +40,7 @@ func TestCheckNodesRoster_SelfTestAllPass(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("自检应 rc=0，实得 %d\n%s", rc, out)
 	}
-	if !strings.Contains(out, "自检结论：全过（10 条，失败 0）") {
+	if !strings.Contains(out, "自检结论：全过（21 条，失败 0）") {
 		t.Fatalf("自检结论行不符，实得尾部：\n%s", out)
 	}
 	// 十档里负控必须真红过（成对：少一台/host 漂/声明缺/ssh 漂/models 未登记/plist 未登记）
