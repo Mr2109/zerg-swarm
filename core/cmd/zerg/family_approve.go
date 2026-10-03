@@ -172,6 +172,46 @@ func stateDirOf() string {
 func operatorKeyPath() string { return filepath.Join(approveDir(), "operator.key") }
 func operatorPubPath() string { return filepath.Join(approveDir(), "operator.pub") }
 
+// ---- 状态目录点名（`GAP-20260927-199`）----
+//
+// 病征（缺口逐字）：`approve` 一族**静默**吃 `ZERG_STATE_DIR` —— 环境变量被毒化（指向 scratch）时
+// 命令照旧只报「没有这枚批准件」，**一个字都不提「状态目录被环境变量改了」**；`ls` 更静（空目录
+// 直接出「共 0 条」）⇒ 人带着毒化环境签件，新批准件落进 scratch、真闸看不到 = **假绿高危**。
+//
+// 落法（缺口题眼「状态目录必须被印出来 / 或拒吃 env」取**印出来**这一路）：把「状态目录 =
+// <绝对路径>（来源：…）」**印在 stderr**（人面看得见 · **零改 stdout 字节** ⇒ 矩阵
+// `want_stdout_bytes` / `ls` 表网格 / `show` 行序逐字不动）；来源那一格**点名环境变量**
+// `ZERG_STATE_DIR` ⇒ 毒化那一路不可能再「静默」。
+//
+// ★ 为什么**不**取「拒吃 env」那一半（✗ 不改「吃 env」这个行为本身）：本族上下（含各判据件夹具
+// `t.Setenv("ZERG_STATE_DIR", …)`、`stateDirOf` 的既有口径）都靠它隔离；拒吃 env 会把**落地夹具**
+// 与真仓隔离一起打掉（那才是真回归）。点名 = 最小面、可逆、只增。
+const approveStateDirEnv = "ZERG_STATE_DIR"
+
+// approveStateDirNote —— 状态目录那一行的正文（**唯一取值口**）：绝对路径 + 来源。
+func approveStateDirNote() string {
+	if strings.TrimSpace(os.Getenv(approveStateDirEnv)) != "" {
+		return fmt.Sprintf("%s —— **来自环境变量 %s**（不设它是 ~/.zerg/state）",
+			stateDirOf(), approveStateDirEnv)
+	}
+	return fmt.Sprintf("%s（默认：没设 %s）", stateDirOf(), approveStateDirEnv)
+}
+
+// printApproveStateDir —— 把状态目录**印出来**（缺口 `GAP-20260927-199`：不许静默吃 env）。
+//
+// 只写 stderr（✗ 不碰 stdout —— 矩阵 `want_stdout_bytes` / `ls` 网格 / `show` 行序一字不动）。
+// 环境变量被设 ⇒ 打**醒目档**（★ + 点名 env + 给出「落回默认位」的那一条），否则打**默认档**一行。
+func printApproveStateDir(stderr io.Writer) {
+	note := approveStateDirNote()
+	if strings.TrimSpace(os.Getenv(approveStateDirEnv)) != "" {
+		fmt.Fprintf(stderr, "%s: ★ 状态目录 = %s\n", progName, note)
+		fmt.Fprintf(stderr, "  批准件就找/落在这个目录 —— 要落回默认位：`env -u %s %s approve …`\n",
+			approveStateDirEnv, progName)
+		return
+	}
+	fmt.Fprintf(stderr, "%s: 状态目录 = %s\n", progName, note)
+}
+
 // cmdApprove —— `zerg approve <动作>`（动作 = ls / show / new / keygen，各是命令树里一条）。
 func cmdApprove(inv *invocation, stdout, stderr io.Writer) int {
 	action := ""
@@ -207,6 +247,9 @@ func cmdApproveLs(inv *invocation, stdout, stderr io.Writer) int {
 			return reportBadField(stderr, inv.path, bad)
 		}
 	}
+	// ★ `GAP-20260927-199`：把状态目录**印出来**（不许静默吃 `ZERG_STATE_DIR`）——只写 stderr：
+	// 空/毒化目录那一路（下面直接出「共 0 条」）也当场点名「找的是哪个状态目录、它从哪来」。
+	printApproveStateDir(stderr)
 	dir := approveDir()
 	ents, err := os.ReadDir(dir)
 	if err != nil && !os.IsNotExist(err) {
@@ -256,6 +299,9 @@ func cmdApproveShow(inv *invocation, stdout, stderr io.Writer) int {
 			return reportBadField(stderr, inv.path, bad)
 		}
 	}
+	// ★ `GAP-20260927-199`：把状态目录**印出来**（不许静默吃 `ZERG_STATE_DIR`）——「有件」与
+	// 「没件」两态都点名（下面「没有…批准件」那一行只印**件路径**，不点状态目录**及其来源**）。
+	printApproveStateDir(stderr)
 	p := filepath.Join(approveDir(), tool+".json")
 	b, err := os.ReadFile(p)
 	if err != nil {
@@ -499,6 +545,8 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		// 干跑那一态：只出**计划面** —— 一个字节都不写（不落件 · 不落审计 · 不动在册件 · 不读口令）。
 		// 这一态**不受终端判据约束**（它本来就不签）—— 两行照打，便于「AI 可提」那一半自证要签什么。
+		// ★ `GAP-20260927-199`：状态目录一起印（干跑那一态也点名「会落到哪个状态目录」）。
+		printApproveStateDir(stderr)
 		printSummary()
 		fmt.Fprintf(stderr, "（--dry-run：只出计划面 · **零副作用** —— 未签 · 未落件 · 未动在册件）\n")
 		return exitOK
@@ -533,6 +581,9 @@ func cmdApproveNew(inv *invocation, stdout, stderr io.Writer) int {
 			return reportBadField(stderr, inv.path, bad)
 		}
 	}
+	// ★ `GAP-20260927-199`：把状态目录**印出来**（不许静默吃 `ZERG_STATE_DIR`）——真签 / 拒执
+	// 两态都点名（非交互「模型路径」那一路也看得见「这枚件会落到哪个状态目录」）。
+	printApproveStateDir(stderr)
 	if !isTTYFile(os.Stdin) {
 		// 这一态**一个字节都不往 stdout 写**（矩阵 `approve/new#非终端不给签（模型路径）` 判据 = stdout 0 字节 ·
 		// 本仓铁律：拒绝那一态不产出任何「看起来像结果」的东西）。

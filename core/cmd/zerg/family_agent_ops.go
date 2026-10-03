@@ -42,6 +42,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -1423,4 +1424,299 @@ func agentOpsNames() []string {
 		}
 	}
 	return names
+}
+
+// ---- ⑤ `zerg agent restart <机>`（缺口 `GAP-20260927-195` · D3 族 · 执行体）----
+//
+// 病根（缺口逐字）：子端**启动时读一次令牌、之后只比内存里那一份**（`agent/cmd/zerg-agentd/main.go:173`
+// `resolveToken` ⇒ 冻结在 `server.go:86-97` 的 `Agent.token` 与 `heartbeat.go:65-68` 的 `Runner.token`；
+// **无 SIGHUP/USR1 重读面**）⇒ 改令牌文件对运行中的子端无效 ⇒ 轮换令牌后四台子端全部 401 掉线。
+// 当时的修法只能是**手敲** `launchctl kickstart -k gui/501/com.zerg.agent-Mr2109`（远端三台 kill + nohup）。
+// 本命令把「重启子端进程」收进命令面 —— 形状照同族已开放的 `core restart`（`family_core_restart.go`）：
+// 三态 + **审计先落盘**（写不进就不许动进程）+ 就绪绑**自己的读数**（子端 HTTP 面 200），✗ 不从 env 取命令串。
+//
+// ★ 本版的真跑动作**只有本机回环那一支**（`launchctl kickstart -k`）。远端机（host 非回环）要 ssh，
+// 属 §十五.4 例外清单 ⇒ **不给结论（退 8）**，由人拍板后另开。
+//
+// 退码：0 干跑 / 真跑且就绪 · 1 动作失败或没就绪 · 2 用法错（缺确认档 / 名册无名）·
+//       4 未认证 · 8 拿不到结论（远端机 / 审计落不下 / 就绪读不到）。
+
+const (
+	agentRestartLabelPrefix = "com.zerg.agent-"           // 子端 job 标签 = 前缀 + 机名（deploy/com.zerg.agent-<机>.plist）
+	agentRestartAuditRel    = "agent_restart_audit.jsonl" // <状态目录>/ 之下（单开一件，语义是「重启进程」）
+)
+
+// agentRestartFields `--json` 闭集。
+var agentRestartFields = []string{"machine", "host", "port", "branch", "readiness", "changed", "audit"}
+
+// agentRestartDisplay 人面表格的列。
+var agentRestartDisplay = []string{"machine", "branch", "readiness", "changed"}
+
+// ── 函数级接缝（测试/自测桩在进程内替换 ⇒ 判据能在「不真重启」的前提下端到端跑；缝只在 Go 里）──
+var (
+	agentRestartAction    = agentRestartKickstart
+	agentRestartSleep     = time.Sleep
+	agentRestartReadyWait = 20 * time.Second
+)
+
+func agentRestartDomain() string { return fmt.Sprintf("gui/%d", os.Getuid()) }
+
+func agentRestartLabel(machine string) string { return agentRestartLabelPrefix + machine }
+
+func agentRestartTarget(machine string) string {
+	return agentRestartDomain() + "/" + agentRestartLabel(machine)
+}
+
+func agentRestartAuditPath() string {
+	if d := strings.TrimSpace(os.Getenv("ZERG_AGENT_RESTART_AUDIT")); d != "" {
+		return d
+	}
+	return filepath.Join(stateDirOf(), agentRestartAuditRel)
+}
+
+// agentAddrIsLocal 判地址是不是本机回环（决定走哪一支）。
+func agentAddrIsLocal(a agentAddr) bool {
+	h := strings.ToLower(strings.TrimSpace(a.Host))
+	return h == "127.0.0.1" || h == "::1" || h == "localhost"
+}
+
+// agentRestartAuditLine 审计的一行（一行一事件 · 追加只写 · 失败即拒）。
+type agentRestartAuditLine struct {
+	At        string `json:"at"`
+	Event     string `json:"event"`
+	By        string `json:"by"`
+	Confirm   string `json:"confirm"`
+	Machine   string `json:"machine"`
+	Target    string `json:"target"`
+	Branch    string `json:"branch"`
+	Readiness string `json:"readiness,omitempty"`
+	RC        int    `json:"rc"`
+	AuditPath string `json:"audit_path"`
+	Note      string `json:"note,omitempty"`
+}
+
+func appendAgentRestartAudit(path string, line agentRestartAuditLine) error {
+	if path == "" {
+		return fmt.Errorf("审计落点解析不出来（HOME / ZERG_STATE_DIR 都取不到）")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	body, err := json.Marshal(line)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(body, '\n')); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
+// agentRestartKickstart —— `launchctl kickstart -k <域>/<标签>`（本机子端那一支）。
+func agentRestartKickstart(machine string) error {
+	cmd := exec.Command("launchctl", "kickstart", "-k", agentRestartTarget(machine))
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+// agentRestartReadyOnce 判一次子端就绪（HTTP 面：子端 /status 200）⇒ (就绪?, 判词, 终局退码)。
+func agentRestartReadyOnce(a agentAddr) (bool, string, int) {
+	status, _, err := agentChildDo(a, http.MethodGet, "/status", "", 5*time.Second)
+	if err != nil {
+		return false, fmt.Sprintf("子端 %s 还打不到（%v）", agentChildBase(a), err), 0
+	}
+	switch {
+	case status == http.StatusOK:
+		return true, fmt.Sprintf("子端重启后就绪：GET %s/status ⇒ HTTP 200", agentChildBase(a)), 0
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return false, fmt.Sprintf("子端在跑但令牌面回 HTTP %d（进程刚起 / 仍拿旧令牌 —— 再等）", status), 0
+	default:
+		return false, fmt.Sprintf("子端 GET /status ⇒ HTTP %d（还没就绪）", status), 0
+	}
+}
+
+func agentRestartWaitReady(a agentAddr) (bool, string, int) {
+	waited := time.Duration(0)
+	for {
+		ok, det, rc := agentRestartReadyOnce(a)
+		if ok {
+			return true, det, 0
+		}
+		if rc == exitBlocked {
+			return false, det, exitBlocked
+		}
+		if waited >= agentRestartReadyWait {
+			return false, det, exitFail
+		}
+		agentRestartSleep(2 * time.Second)
+		waited += 2 * time.Second
+	}
+}
+
+// agentRestartBranch 判将走哪一支：`local-launchctl`（本机回环 · 本版唯一自动真跑的那一支）/
+// `remote-ssh`（远端 · 本版不给结论 —— ssh 属 §十五.4 例外清单）。
+func agentRestartBranch(a agentAddr) string {
+	if agentAddrIsLocal(a) {
+		return "local-launchctl"
+	}
+	return "remote-ssh"
+}
+
+// agentRestartPlan 渲染计划件（--dry-run · 零副作用）。
+func agentRestartPlan(machine string, a agentAddr, stdout io.Writer) {
+	branch := agentRestartBranch(a)
+	fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态、**未写审计**）")
+	fmt.Fprintf(stdout, "  动作     : %s agent restart %s（重启该子端进程）\n", progName, machine)
+	fmt.Fprintf(stdout, "  危险档   : D3（不可逆：该子端在跑的任务会被打断）\n")
+	fmt.Fprintf(stdout, "  目标     : machine=%s host=%s port=%d\n", machine, a.Host, a.Port)
+	fmt.Fprintf(stdout, "  执行要   : --confirm=<%s> 与 --yes 同时到（`--confirm` 值须与机名逐字相同）\n", machine)
+	if branch == "local-launchctl" {
+		fmt.Fprintf(stdout, "  将走分支 : %s（本版唯一会自动真跑的那一支）\n", branch)
+		fmt.Fprintf(stdout, "  出口语句 : launchctl kickstart -k %s\n", agentRestartTarget(machine))
+	} else {
+		fmt.Fprintf(stdout, "  将走分支 : %s（远端 · 走 ssh 属 §十五.4 例外清单 ⇒ 本版**不给结论** 退 8，由人拍板后另开）\n", branch)
+	}
+	fmt.Fprintf(stdout, "  就绪判据 : 重启后轮询 %s/status ⇒ HTTP 200（最长 %v）\n", agentChildBase(a), agentRestartReadyWait)
+	fmt.Fprintf(stdout, "  可逆性   : 进程面可再跑一次本命令；但**进程重启不可撤销**（起时/在跑任务/中断的连接都回不来）\n")
+	fmt.Fprintf(stdout, "  来源     : 缺口 `GAP-20260927-195` · 照同族已开放的 `core restart`（family_core_restart.go）形状\n")
+}
+
+// cmdAgentRestart —— `zerg agent restart <机> --confirm=<机> --yes [--dry-run]`（D3 · 三态）。
+func cmdAgentRestart(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+		if rc := agentCheckFields(inv, stderr, agentRestartFields); rc != exitOK {
+			return rc
+		}
+	}
+	if len(inv.args) == 0 {
+		inv.setErr("usage", "missing_target", "缺机器名")
+		fmt.Fprintf(stderr, "%s: `agent restart` 要一台机器名（`%s agent ls` 看名册）\n", progName, progName)
+		return exitUsage
+	}
+	if len(inv.args) > 1 {
+		inv.setErr("usage", "too_many_targets", "多余位置参数（本档只吃一台机）")
+		fmt.Fprintf(stderr, "%s: `agent restart` 只吃**一台**机（多给的是 %q）\n", progName, inv.args[1])
+		return exitUsage
+	}
+	machine := strings.TrimSpace(inv.args[0])
+	a, rc := agentChildAddr(machine, stderr)
+	if rc != exitOK {
+		return rc
+	}
+	branch := agentRestartBranch(a)
+
+	// ① `--dry-run`：计划件 · 零副作用 —— 唯一返回 0 的那一态。
+	if inv.dryRun {
+		agentRestartPlan(machine, a, stdout)
+		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态、未写审计）")
+		return exitOK
+	}
+	// ② D3 确认档（fail-closed：缺就拒 · 从不提问）。
+	if !inv.confirmGiven {
+		msg := "`agent restart` 是 D3 档（不可逆：重启子端进程）——**缺确认 ⇒ 不执行**"
+		inv.setErr("usage", "confirm_required", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "要执行得给：--confirm=%s --yes\n", machine)
+		fmt.Fprintf(stderr, "先看计划件：%s agent restart %s --dry-run\n", progName, machine)
+		fmt.Fprintf(stderr, "error.kind=usage · detail=confirm_required · retryable=false · remedy=fix_usage\n")
+		return exitUsage
+	}
+	if inv.confirm != machine {
+		msg := fmt.Sprintf("确认值不匹配目标（--confirm 给的是 %q，目标是 %q）⇒ 不执行", inv.confirm, machine)
+		inv.setErr("usage", "confirm_mismatch", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "`--confirm` 的值必须与目标**逐字相同**（§4.1 K7）—— 给错值一律拒绝，不许「当没给」\n")
+		return exitUsage
+	}
+	if !inv.yes {
+		msg := "`agent restart` 是 D3 档 —— **缺 --yes ⇒ 不执行**"
+		inv.setErr("usage", "yes_required", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "确认档齐了才真跑：%s agent restart %s --confirm=%s --yes\n", progName, machine, machine)
+		return exitUsage
+	}
+	// ③ 远端那一支本版不给结论（ssh 属例外清单）。
+	if branch != "local-launchctl" {
+		msg := fmt.Sprintf("不给结论：%q 的 host=%s 不是本机回环 ⇒ 远端重启要走 ssh，属 §十五.4 例外清单 —— 本版只自动走本机 `launchctl kickstart -k` 那一支", machine, a.Host)
+		inv.setErr("blocked", "remote_restart_requires_ssh", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "先看计划件：%s agent restart %s --dry-run（③ 那一格写着将走哪一支）\n", progName, machine)
+		return exitBlocked
+	}
+	// ④ 审计先落盘（写不进就不许动进程）。
+	auditPath := agentRestartAuditPath()
+	by := strings.TrimSpace(inv.flagVal("--by"))
+	if by == "" {
+		by = strings.TrimSpace(os.Getenv("ZERG_BY"))
+	}
+	if by == "" {
+		by = "（未声明）"
+	}
+	base := agentRestartAuditLine{
+		By: by, Confirm: inv.confirm, Machine: machine, Target: agentRestartTarget(machine),
+		Branch: branch, AuditPath: auditPath,
+	}
+	pre := base
+	pre.At, pre.Event, pre.RC, pre.Note = time.Now().Format(time.RFC3339), "executed", 0, "动作前一行（进程还没动）"
+	if err := appendAgentRestartAudit(auditPath, pre); err != nil {
+		msg := fmt.Sprintf("审计落不下（%s）：%v ⇒ **未动进程**（不给结论 · 退码 8）", auditPath, err)
+		inv.setErr("blocked", "audit_unwritable", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		return exitBlocked
+	}
+	// ⑤ 执行动作（唯一一条）。
+	fmt.Fprintf(stderr, "%s: 执行 `launchctl kickstart -k %s`（审计 %s）\n", progName, agentRestartTarget(machine), auditPath)
+	if err := agentRestartAction(machine); err != nil {
+		line := base
+		line.At, line.Event, line.RC, line.Note = time.Now().Format(time.RFC3339), "failed", exitFail, err.Error()
+		if aerr := appendAgentRestartAudit(auditPath, line); aerr != nil {
+			fmt.Fprintf(stderr, "%s: ⚠ 失败那一行审计落不下：%v（判词照实打出来，不改判决）\n", progName, aerr)
+		}
+		msg := fmt.Sprintf("动作失败（launchctl kickstart -k %s）：%v ⇒ 退码 1", agentRestartTarget(machine), err)
+		inv.setErr("failed", "restart_action_failed", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		return exitFail
+	}
+	// ⑥ 就绪（HTTP 面 200）。
+	okReady, det, rrc := agentRestartWaitReady(a)
+	line := base
+	line.At = time.Now().Format(time.RFC3339)
+	switch {
+	case okReady:
+		line.Event, line.Readiness, line.RC = "readiness", "ok", exitOK
+	case rrc == exitBlocked:
+		line.Event, line.Readiness, line.RC = "readiness", "unknown", exitBlocked
+	default:
+		line.Event, line.Readiness, line.RC = "readiness", "failed", exitFail
+	}
+	if err := appendAgentRestartAudit(auditPath, line); err != nil {
+		fmt.Fprintf(stderr, "%s: ⚠ 就绪那一行审计落不下：%v（判词照实打出来，不改判决）\n", progName, err)
+	}
+	row := map[string]string{
+		"machine": machine, "host": a.Host, "port": strconv.Itoa(a.Port), "branch": branch,
+		"readiness": map[bool]string{true: "ok", false: "failed"}[okReady],
+		"changed":   map[bool]string{true: "true", false: "false"}[okReady],
+		"audit":     auditPath,
+	}
+	if !okReady {
+		if rrc == exitBlocked {
+			inv.setErr("blocked", "readiness_unjudgeable", det)
+			fmt.Fprintf(stderr, "%s: **就绪判不了**（拿不到就写拿不到，不许假绿）：%s ⇒ 退码 8\n", progName, det)
+			return exitBlocked
+		}
+		inv.setErr("failed", "readiness_failed", det)
+		fmt.Fprintf(stderr, "%s: **起来了但没就绪 ⇒ 退码 1**：%s\n", progName, det)
+	}
+	if okReady {
+		fmt.Fprintf(stderr, "%s: 重启后就绪 ✓ %s（审计 %s）\n", progName, det, auditPath)
+	}
+	return listCmd(inv, stdout, stderr, agentRestartDisplay, []map[string]string{agentFillRow(row, agentRestartFields)})
 }

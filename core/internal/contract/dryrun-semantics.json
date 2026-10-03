@@ -741,6 +741,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "本件**不写仓内任何件**：靶库由 ZERG_TARGET_ROOT 指定（缺省仓外 /var/tmp/zerg-judge-targets），构建产物与临时 PATH 目录都在仓外且跑完即删；`run` 无条件把 ZERG_STATE_DIR 隔离到靶自有临时目录（不碰真状态）。★ 唯一已知外溢：它调起的 zerg 子命令本身可能向仓内 scripts/gates/judge-run-ledger.jsonl 追加一行（那是被调对象的既有行为，另账 GAP-20261003-05），本件自身不写。",
    "备注": "登记依据 = 门76 面②（干跑登记）MISSING_ENTRY 现读（2026-10-03）。★ 该面适用性曾被网络卵判『不适用』，由门76 现读推翻。"
+  },
+  {
+   "file": "scripts/gates/check-gap-state-vs-artifact.py",
+   "类": "判据面：**字样引用**（不是干跑语义站点 —— 全件 `dry.?run|DryRun` 唯一命中 = 销案两态取证串里的一条 `zerg dev edit … --dry-run --json result` 实测样例（第 432 行 · 作被检数据）；本件本身**没有** `--dry-run` 档，档面只有 `--source` / `--cutoff` / `--expect-sha16` / `--expect-lines` / `--json` / `--list-rules` / `--self-test`）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "本件**纯只读**：默认档只读真源 jsonl（open(path,'rb')）＋ 只 os.Stat/os.listdir 判被点名件「在盘 / 已挂门」（读 precommit-gates.sh 亦只 open(...,'r')），**不写任何落地件**（--json/--source/--cutoff/--list-rules 四档都不写盘）；唯一写动作局限于 --self-test 在 tempfile.mkdtemp(prefix='gap-r5-selftest-') 的**仓外夹具**里造合成树（跑完即删），真目标档一个字节都不写。不落盘 · 不删 · 不推 · 不调服务 · 不改 git 状态。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**引文**（销案证据正文里那一条 `dev edit --dry-run` 实测样例命令），不是第五套语义 —— 同门先例 `check-help-shape.py` / `check-judge-registry.py` / `check-public-face-commands.py` 的「消费者 / 字样引用」处置。复核：`zerg gate run --step '门⑩ 干跑：dry-run 一套语义（站点逐件登记 + 零副作用判据）（阻断）' --only-step` ⇒ rc=0。"
   }
  ]
 }

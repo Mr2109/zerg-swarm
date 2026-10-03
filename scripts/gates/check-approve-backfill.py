@@ -644,11 +644,13 @@ def main():
                     help="刷新常量：**默认干跑不写**；带 `--yes` 才落（最小文本替换 + 先落仓外备份）")
     ap.add_argument("--yes", action="store_true", help="与 `--refresh-constant` 连用 = 真写（干跑默认不写）")
     ap.add_argument("--backup-dir", default=None,
-                    help="刷新时的备份落点（默认 `~/.zerg/state/gate-backups` · 落仓内 ⇒ 拒写）")
+                    help="刷新时的备份落点（**写档必须显式给** · 落仓内 ⇒ 拒写）")
+    ap.add_argument("--gate", default=None,
+                    help="刷新/取数的目标件（**写档必须显式给**；缺省仅用于只读档 = 本件自身）")
     args = ap.parse_args()
     repo = os.path.abspath(args.root)
     state = state_dir_of(args.state)
-    gate_path = os.path.abspath(__file__)
+    gate_path = os.path.abspath(args.gate) if args.gate else os.path.abspath(__file__)
     ticket = os.path.join(state, TICKET_REL)
     dev_sha = sha256_file(ticket) if os.path.exists(ticket) else None
 
@@ -663,6 +665,14 @@ def main():
         return emit_constant(gate_path, dev_sha)
     if args.refresh_constant:
         print(VERSION)
+        # ● GAP-20261001-56 修：写面通道须**显式且默认关闭** —— 目标件与备份目录都须为显式入参，
+        #   否则判据件可**自我改写**（`--gate` 缺省曾指向脚本自身），且备份会落进真实状态目录。
+        if args.yes and not args.gate:
+            print("⛔ 拒写（rc=2）：`--refresh-constant --yes` 必须显式给 `--gate <件>`（禁默认自我改写）", file=sys.stderr)
+            return 2
+        if args.yes and not args.backup_dir:
+            print("⛔ 拒写（rc=2）：`--refresh-constant --yes` 必须显式给 `--backup-dir <仓外目录>`（禁默认落状态目录）", file=sys.stderr)
+            return 2
         if not args.no_self_test and not self_test(repo, state):
             print("⛔ 自检不过 ⇒ **拒写**（rc=1）：先修自检再谈刷值")
             return 1

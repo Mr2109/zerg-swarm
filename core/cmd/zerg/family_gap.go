@@ -776,6 +776,21 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 	//   叠加语义 = **AND**，判据就压在下面同一个循环里（不另开第二遍筛选 ⇒ 与既有三枚同源同步）。
 	wantUnit := strings.TrimSpace(inv.flagVal("--unit"))
 	wantModule := strings.TrimSpace(inv.flagVal("--module"))
+	// ★ GAP-20260928-171（本枚）：收窄值**给了空值**不许当「不过滤」静默放行（旧行为：`--unit ""`
+	//   ⇒ rc=0 且「筛选后」== 全量 = 假收窄）；**尾斜杠**归一（`--unit core/cmd/zerg/` 旧行为恒 0 命中、
+	//   且不带任何提示）。两处都属「收窄面退化」，必须显式判、不许静默。
+	if inv.hasFlag("--unit") && wantUnit == "" {
+		inv.setErr("usage", "unit_empty", "--unit 给了空值")
+		fmt.Fprintf(stderr, "%s: `--unit` 要给一个**非空**值（裸给 / 给空值 ⇒ 用法错 2 —— 空值不是「不过滤」）\n", progName)
+		return exitUsage
+	}
+	if inv.hasFlag("--module") && wantModule == "" {
+		inv.setErr("usage", "module_empty", "--module 给了空值")
+		fmt.Fprintf(stderr, "%s: `--module` 要给一个**非空**值（裸给 / 给空值 ⇒ 用法错 2 —— 空值不是「不过滤」）\n", progName)
+		return exitUsage
+	}
+	wantUnit = strings.TrimRight(wantUnit, "/")
+	wantModule = strings.TrimRight(wantModule, "/")
 	rows, out := []map[string]string{}, []gapRecord{}
 	for _, r := range led.Recs {
 		if len(wantStates) > 0 && !gapIn(wantStates, r.State) {
@@ -1687,6 +1702,14 @@ func gapAddApply(inv *invocation, stdout, stderr io.Writer, in gapAddInput) int 
 		fmt.Fprintf(stderr, "%s: 真源这一行序列化不过：%v\n", progName, err)
 		return exitFail
 	}
+	// ★ GAP-20260928-191（本枚）：本写路**不**走唯一收口 `gapRewriteOne` ⇒ 乐观并发闸此前未覆盖它；
+	//   写入前一刻与读入基线对一次身份（闸加在「审计先落盘」**之前**）。
+	if d, rc, m := gapConcurGate(led, "add"); rc != exitOK {
+		inv.setErr("blocked", d, m)
+		fmt.Fprintf(stderr, "%s: **并发冲突** —— %s ⇒ 本次**拒写**（退码 %d）\n", progName, m, rc)
+		fmt.Fprintf(stderr, "  真源 : %s（一个字节未动 · 审计一行未落 —— 闸在「审计先落盘」**之前**）\n", led.Path)
+		return rc
+	}
 	afterRaw := append(append([]byte{}, led.Raw...), append(line, '\n')...)
 	audit := gapAuditLine{
 		At: time.Now().Format(time.RFC3339), Event: gapEventName, GapCmd: "add",
@@ -1993,6 +2016,13 @@ func cmdGapVerify(inv *invocation, stdout, stderr io.Writer) int {
 	for _, ln := range lines {
 		body = append(body, []byte(ln+"\n")...)
 	}
+	// ★ GAP-20260928-191（本枚）：本写路**不**走唯一收口 `gapRewriteOne` ⇒ 乐观并发闸此前未覆盖它。
+	if d, rc, m := gapConcurGate(led, "verify"); rc != exitOK {
+		inv.setErr("blocked", d, m)
+		fmt.Fprintf(stderr, "%s: **并发冲突** —— %s ⇒ 本次**拒写**（退码 %d）\n", progName, m, rc)
+		fmt.Fprintf(stderr, "  真源 : %s（一个字节未动 · 审计一行未落 —— 闸在「审计先落盘」**之前**）\n", led.Path)
+		return rc
+	}
 	for _, v := range vs {
 		audit := gapAuditLine{
 			At: time.Now().Format(time.RFC3339), Event: gapEventName, GapCmd: "verify",
@@ -2290,6 +2320,13 @@ func cmdGapBackfillUnit(inv *invocation, stdout, stderr io.Writer) int {
 		body = append(body, []byte(ln+"\n")...) // 未动的行**逐字节照原样** · 行序不变 · 末行换行不变
 	}
 	if need > 0 {
+		// ★ GAP-20260928-191（本枚）：本写路**不**走唯一收口 `gapRewriteOne` ⇒ 乐观并发闸此前未覆盖它。
+		if d, rc, m := gapConcurGate(led, "backfill-unit"); rc != exitOK {
+			inv.setErr("blocked", d, m)
+			fmt.Fprintf(stderr, "%s: **并发冲突** —— %s ⇒ 本次**拒写**（退码 %d）\n", progName, m, rc)
+			fmt.Fprintf(stderr, "  真源 : %s（一个字节未动 · 审计一行未落 —— 闸在「审计先落盘」**之前**）\n", led.Path)
+			return rc
+		}
 		audit := gapAuditLine{
 			At: time.Now().Format(time.RFC3339), Event: gapEventName, GapCmd: "backfill-unit",
 			GapID: "（整本账）", GapFP: "（不点名单条）",
@@ -5317,11 +5354,17 @@ func cmdGapRegress(inv *invocation, stdout, stderr io.Writer) int {
 	inv.metaAddStr("tier", "modification-traversing")
 
 	if inv.jsonGiven {
+		// ★ GAP-20260929-45（本枚）：`in_repo` 不再写死字面 `"true"` —— 由**清单面**（已跟踪件 · `gapTrackedFiles`）
+		//   判定取值；取不到清单（不在 git 仓 / git 起不来）⇒ 不给 `true`（读不到不许当「在册」）。
+		trackedSet := map[string]bool{}
+		for _, t := range gapTrackedFiles() {
+			trackedSet[t] = true
+		}
 		js := make([]map[string]string, 0, len(rows))
 		for _, row := range rows {
 			js = append(js, map[string]string{
 				"file":    row.File,
-				"in_repo": "true",
+				"in_repo": boolWord(trackedSet[row.File]),
 				"total":   strconv.Itoa(row.Total),
 				"ran":     strconv.Itoa(row.Ran),
 				"passed":  strconv.Itoa(row.Passed),

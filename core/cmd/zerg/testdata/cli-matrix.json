@@ -7878,6 +7878,57 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）"
+  },
+  {
+   "argv": [
+    "agent",
+    "restart",
+    "--nosuchflag-zz"
+   ],
+   "command": "agent restart",
+   "id": "agent/restart#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "agent",
+    "restart",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "agent restart",
+   "id": "agent/restart#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "agent",
+    "restart",
+    "x"
+   ],
+   "command": "agent restart",
+   "id": "agent/restart#缺 --confirm（D3）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D3 不可逆：缺确认 ⇒ fail-closed 2（§九 M3 C2 · §十二 P-014）"
+  },
+  {
+   "argv": [
+    "agent",
+    "restart",
+    "x",
+    "--confirm=不匹配-zz",
+    "--yes"
+   ],
+   "command": "agent restart",
+   "id": "agent/restart#--confirm 值不匹配",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "确认值必须与目标逐字相同 —— 给错值一律拒绝（§4.1 K7）"
   }
  ],
  "exemptions": [],
