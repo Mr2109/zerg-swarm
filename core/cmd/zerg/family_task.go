@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -419,4 +420,187 @@ func taskFamilyNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// ---- 写面：`task cancel`（D2 ＋ `--confirm=<任务 id>` ＋ `--yes` · 本版**已开放**）----
+
+// taskCancelReasons —— `--reason` 的闭集（5 值 · **逐字**对齐主控）。
+// 出处：`core/internal/api/master_scheduler.go` 的 `closedReasonSet`（5 值 · 顺序逐字相同）；
+// 设计-任务退场正门-v0.2 §11.5（小闭集必填 + `other` 兜底）。命令面**照它原样**列，不自造第二份闭集。
+var taskCancelReasons = []string{"superseded", "obsolete", "duplicate", "abandoned", "other"}
+
+// taskCancelReasonOK 判一个取值在不在闭集内（**大小写敏感 · 逐字相同**；不 trim、不猜）。
+func taskCancelReasonOK(v string) bool {
+	for _, r := range taskCancelReasons {
+		if r == v {
+			return true
+		}
+	}
+	return false
+}
+
+// taskCancelNotFound —— 从主控的 **400** 响应里认「任务不存在」这一档（T-14：不存在 ⇒ 退码 2）。
+// 主控这一档的码恒为 `TASK_CANCEL_FAILED`（与「在跑 / 等恢复 / 理由非法」同一个码，
+// `handlers.go` 的 `writeErrorCode(…, "TASK_CANCEL_FAILED", err.Error())`），唯一区分是 message 里的
+// `not found`（`master_scheduler.go` 的 `task %s not found`）⇒ **只认 error.message 那一个串**，
+// 不拿整份原文兜底（否则会把路由缺失的 `404 page not found` 误认成「任务不存在」）。
+func taskCancelNotFound(body string) bool {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		return false
+	}
+	e, ok := m["error"].(map[string]any)
+	if !ok {
+		return false
+	}
+	msg, _ := e["message"].(string)
+	return strings.Contains(strings.ToLower(msg), "not found")
+}
+
+// cmdTaskCancel —— `zerg task cancel <任务 id>`（D2 写面 · 本版**已开放**）。
+//
+// 三态：`--dry-run` 出计划件（零副作用 · rc=0）· 缺确认档 ⇒ 2（fail-closed）· 齐了才 POST。
+// 幂等三成因（T-14 · 设计 §11.2）：id 不存在 ⇒ 2（detail=`not_found`）· 已 `cancelled` ⇒ 0
+// （`already_cancelled`）· 已 `done`/`failed` ⇒ 0（`already_terminal`）· 可取消 ⇒ 0。
+// ★ 铁律：**状态差异走 stdout 结构化字段、不走退码**；★ **单 id 绝不给 8**（本函数不返回 exitBlocked）。
+// 与 `cmdTaskSubmit` 同形：互斥走**唯一**一处 `dryRunYesConflict`（本命令真判的互斥就这一条）；
+// 请求走 `postJSON`；主控失败码**逐字透传**不翻译。
+func cmdTaskCancel(inv *invocation, stdout, stderr io.Writer) int {
+	// ① 两道确认档自相矛盾（`--dry-run` 与 `--yes` 同给）⇒ 用法错 2（本命令唯一的互斥真判）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	// ② 目标：位置参数一个任务 id。
+	if len(inv.args) == 0 {
+		inv.setErr("usage", "missing_target", "缺任务 id")
+		fmt.Fprintf(stderr, "%s: `task cancel` 要一个任务 id（先 `zerg task ls`）\n", progName)
+		return exitUsage
+	}
+	id := inv.args[0]
+	// ③ 结案理由：必填 · 闭集 5 值 · 无默认值（缺 / 出闭集都逐字印闭集）。
+	reason := inv.flagVal("--reason")
+	if reason == "" {
+		inv.setErr("usage", "missing_reason", "缺 --reason（结案理由必填 · 闭集 5 值）")
+		fmt.Fprintf(stderr, "%s: `task cancel` 缺 `--reason <结案理由>`（小闭集必填 · 不给默认值 · 设计 §11.5）\n", progName)
+		fmt.Fprintf(stderr, "闭集（逐字）: %s\n", strings.Join(taskCancelReasons, " · "))
+		return exitUsage
+	}
+	if !taskCancelReasonOK(reason) {
+		inv.setErr("usage", "bad_reason", "结案理由不在闭集内")
+		fmt.Fprintf(stderr, "%s: `--reason` 的值 %q **不在闭集内** ⇒ 用法错 2（不给结论）\n", progName, reason)
+		fmt.Fprintf(stderr, "闭集（逐字）: %s\n", strings.Join(taskCancelReasons, " · "))
+		return exitUsage
+	}
+	// ④ `--dry-run`：只出计划件 · 零副作用 · rc=0（照同族 `cmdGuarded` 的档序：干跑先于确认档）。
+	if inv.dryRun {
+		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
+		fmt.Fprintf(stdout, "  动作     : %s task cancel\n", progName)
+		fmt.Fprintf(stdout, "  危险档   : %s（有影响但可逆 · 要 --confirm=<任务 id> 与 --yes）\n", dangerD2)
+		fmt.Fprintf(stdout, "  目标     : %s\n", id)
+		fmt.Fprintf(stdout, "  结案理由 : %s\n", reason)
+		if inv.hasFlag("--note") {
+			fmt.Fprintf(stdout, "  备注     : %s\n", inv.flagVal("--note"))
+		}
+		fmt.Fprintf(stdout, "  请求     : POST %s/api/tasks/%s/cancel?reason=%s\n", newClient().base, id, reason)
+		fmt.Fprintf(stdout, "  它会动   : 把该任务从 queue 摘出 → 置 status=cancelled → 落 history（可逆面：队列位次；在飞的件本版不给撤）\n")
+		fmt.Fprintf(stdout, "  结局字段 : cancelled / already_cancelled / already_terminal（三值互斥 · 走 stdout 不走退码 · T-14）\n")
+		fmt.Fprintf(stdout, "  来源     : 设计-任务退场正门-v0.2 §4.1/§11.2 · 开工单 T-11…T-14/T-17\n")
+		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
+		return exitOK
+	}
+	// ⑤ 危险档确认面（D2）：`--confirm=<任务 id>` 必带，且值必须与位置参数的任务 id **逐字相同**。
+	// 口径逐字照同族四条（`task move/pause/resume/retry` → `guard.go`）：缺 / 值不匹配 ⇒ 用法错 2（fail-closed）。
+	if !inv.confirmGiven || inv.confirm != id {
+		msg := fmt.Sprintf("确认值不匹配目标（--confirm 给的是 %q，目标是 %q）⇒ 不执行", inv.confirm, id)
+		if !inv.confirmGiven {
+			msg = fmt.Sprintf("`task cancel` 是 D2 档 —— **缺 --confirm=%s ⇒ 不执行**", id)
+		}
+		inv.setErr("usage", "confirm_mismatch", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "`--confirm` 的值必须与位置参数的任务 id **逐字相同**（§4.1 K7）—— 给错值一律拒绝，不许「当没给」\n")
+		return exitUsage
+	}
+	// ⑥ `--yes`（fail-closed：缺就拒 —— 与 `cmdTaskSubmit` 同一条）。
+	if !inv.yes {
+		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		fmt.Fprintf(stderr, "%s: `task cancel` 是 D2 档 —— **缺 --yes ⇒ 不执行**（§九 M3 C2 fail-closed）\n", progName)
+		fmt.Fprintf(stderr, "先看计划件：%s task cancel %s --reason %s --confirm=%s --dry-run\n", progName, id, reason, id)
+		return exitUsage
+	}
+	// ⑦ 真写：POST /api/tasks/{id}/cancel?reason=…[&note=…]（handler 从 query 取参）。
+	// ★ `--note` **无默认值**：未声明就不发这个键（「给过」与「没给」是两件事 —— 与 `--ttl` 同口径）。
+	q := url.Values{}
+	q.Set("reason", reason)
+	if inv.hasFlag("--note") {
+		q.Set("note", inv.flagVal("--note"))
+	}
+	reqPath := "/api/tasks/" + url.PathEscape(id) + "/cancel?" + q.Encode()
+	status, respBody, err := postJSON(newClient(), reqPath, "")
+	var he *httpError
+	if err != nil && asHTTP(err, &he) {
+		// 主控**回话了**（非 2xx）⇒ 不是「打不到」：走下面的分档。
+		status, respBody, err = he.status, he.body, nil
+	}
+	if err != nil {
+		inv.setErr("unreachable", "dial_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 撤下失败（打不到主控）：%v\n", progName, err)
+		return exitUnreachable
+	}
+	if status == 401 || status == 403 {
+		inv.setErr("unauthenticated", fmt.Sprintf("http_%d", status), "未认证")
+		fmt.Fprintf(stderr, "%s: 主控拒了这次撤下（http_%d）—— 看 `zerg help credentials`\n", progName, status)
+		return exitAuth
+	}
+	if status >= 400 {
+		code := errorCodeOf(respBody)
+		detail := code
+		// T-14：id 不存在 ⇒ 退码 2（detail=`not_found`）。**只在主控的 400 档**上认 ——
+		// 404 是「这条路由没接」（本版主控未重编/未重启时就是这样），与本档**不是一回事**，不许混。
+		if status == 400 && taskCancelNotFound(respBody) {
+			detail = "not_found"
+		}
+		inv.setErr("usage", detail, "主控拒绝撤下")
+		fmt.Fprintf(stderr, "%s: 主控拒绝撤下（http_%d）· code=%s\n", progName, status, orDash(code))
+		fmt.Fprintf(stderr, "主控原样响应: %s\n", strings.TrimSpace(respBody))
+		if detail == "not_found" {
+			fmt.Fprintf(stderr, "（任务 %q **不存在** ⇒ 退码 2 · detail=not_found · T-14）\n", id)
+		}
+		if status == 404 {
+			fmt.Fprintf(stderr, "⇒ 主控**没有这条路由**（`POST /api/tasks/{id}/cancel` 未接）—— 需重编 + 重启主控后才有（开工单刀 1 / 刀 7）\n")
+			fmt.Fprintf(stderr, "（此时**不给结论**：退码 2 · 不给 8 —— 单 id 绝不给 8 · T-14）\n")
+		}
+		return exitUsage
+	}
+	// ⑧ 成功（2xx）：三种结局都落这里，靠响应体的 outcome 派生三个互斥布尔（状态差异走 stdout）。
+	var resp jsonObj
+	_ = json.Unmarshal([]byte(respBody), &resp)
+	outcome := cell(resp["outcome"])
+	switch outcome {
+	case "cancelled", "already_cancelled", "already_terminal":
+	default:
+		// 2xx 却给不出三值闭集里的结局 —— 主控契约面坏了：不给结论，但**不**用 8（单 id 绝不给 8）。
+		inv.setErr("upstream_error", "bad_cancel_outcome", "主控回了 2xx 但 outcome 不在三值闭集")
+		fmt.Fprintf(stderr, "%s: 主控回了 2xx 但响应体里的 outcome=%q 不在三值闭集 ⇒ 不给结论（退码 1）\n", progName, outcome)
+		return exitFail
+	}
+	tid := cell(resp["task_id"])
+	if tid == "" {
+		tid = cell(resp["id"])
+	}
+	if tid == "" {
+		tid = id
+	}
+	row := map[string]string{
+		"id":                tid,
+		"outcome":           outcome,
+		"cancelled":         fmt.Sprintf("%t", outcome == "cancelled"),
+		"already_cancelled": fmt.Sprintf("%t", outcome == "already_cancelled"),
+		"already_terminal":  fmt.Sprintf("%t", outcome == "already_terminal"),
+	}
+	// meta.changed（§九 M4）：真撤 ⇒ true；两种幂等结局（no-op）⇒ false。
+	changed := outcome == "cancelled"
+	inv.changed = &changed
+	return listCmd(inv, stdout, stderr,
+		[]string{"id", "outcome", "cancelled", "already_cancelled", "already_terminal"},
+		[]map[string]string{row})
 }
