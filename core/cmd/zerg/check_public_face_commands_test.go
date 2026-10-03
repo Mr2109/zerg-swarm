@@ -288,6 +288,7 @@ func TestCpfcS11_机器面_counts键表逐字(t *testing.T) {
 //
 //	★ 删掉主件 `defer os.RemoveAll(base)` ⇒ 本用例立红。
 func TestCpfcS12_自检夹具自回收_delta0(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 	root := cpfcT_repoRoot(t)
 	old, _ := os.Getwd()
 	defer func() { _ = os.Chdir(old) }()

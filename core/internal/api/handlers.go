@@ -898,6 +898,29 @@ func (h *Handlers) TaskRetryHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "task_id": taskID, "status": "queued"})
 }
 
+// TaskCancelHandler 撤下任务（queued/paused→cancelled——任务退场正门——2026-10-03 Mr2109）
+// POST /api/tasks/{id}/cancel?reason=<闭集>&note=<一句>
+func (h *Handlers) TaskCancelHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	reason := r.URL.Query().Get("reason")
+	note := r.URL.Query().Get("note")
+	if h.Scheduler == nil {
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
+		return
+	}
+	outcome, err := h.Scheduler.CancelTask(taskID, reason, note)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "TASK_CANCEL_FAILED", err.Error())
+		return
+	}
+	// ★ 结局走成功体 JSON 字段（设计 §11.2 幂等三成因）——三种结局**都 200**，靠 outcome 区分:
+	//   cancelled（真撤: queued/paused→cancelled）/ already_cancelled（关已关的·幂等重放 no-op）
+	//   / already_terminal（已 done/failed: 只打标、status 一字未变）。
+	// ★ 退码（HTTP 状态）只答「命令能否执行」——状态差异一律走本字段，故不再写死的 status:"cancelled"
+	//   （旧写法对「已取消重放」「终态打标」两种结局都谎报 cancelled）。
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "task_id": taskID, "outcome": outcome})
+}
+
 // TaskMoveHandler 重排任务（置顶/置底/上移/下移——右键功能——2026-08-21 Mr2109）
 // POST /api/tasks/{id}/move?action=top|bottom|up|down
 func (h *Handlers) TaskMoveHandler(w http.ResponseWriter, r *http.Request) {

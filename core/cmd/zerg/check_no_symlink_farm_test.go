@@ -59,6 +59,7 @@ func cnsfMkdir(t *testing.T, parts ...string) string {
 // TestNoSymlinkFarmGate —— 成对负控总入口（定向跑：`-run '^TestNoSymlinkFarmGate$'`）。
 func TestNoSymlinkFarmGate(t *testing.T) {
 	t.Run("SelfTestRc0_AndSelfCleans", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 		tmpBefore, _ := filepath.Glob(filepath.Join(os.TempDir(), "zerg-nosymfarm-*"))
 		rc, _, _ := cnsfT(t, "--self-test")
 		if rc != 0 {

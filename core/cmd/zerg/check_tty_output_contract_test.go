@@ -279,6 +279,7 @@ func TestCheckTtyOutputContractGatePort(t *testing.T) {
 
 	// ── A 类自回收 ⑰：跑一发前后 TMPDIR 同前缀目录增量 = 0（删 defer os.RemoveAll 即红）────
 	t.Run("tempdir_delta_zero", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 		before := ctocCountTempDirs(t)
 		rc, _, _ := ctocTestRun("--target-cmd", `printf '{"a":1}\n'`)
 		if rc != 0 {

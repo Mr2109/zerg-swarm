@@ -54,6 +54,7 @@ func aglLogLine(batchKw, lit string) string {
 
 func TestAuditGoLogsGatePort(t *testing.T) {
 	t.Run("SelfTestRc0_AndSelfCleans", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 		before, _ := filepath.Glob(filepath.Join(os.TempDir(), "agl-selftest-*"))
 		rc, out, errs := aglT(t, "--self-test")
 		if rc != 0 {

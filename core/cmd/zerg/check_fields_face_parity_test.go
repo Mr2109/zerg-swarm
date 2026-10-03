@@ -347,6 +347,7 @@ func TestFFPSelfTest(t *testing.T) {
 		}
 	})
 	t.Run("自检自回收_delta0", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 		before := ffpCountSelftestDirs(t)
 		if rc, out, _ := ffpTestRun(t, "--self-test"); rc != 0 {
 			t.Fatalf("自检 rc=%d（%s）", rc, out)

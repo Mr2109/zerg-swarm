@@ -200,6 +200,7 @@ func TestCptsEntryListRulesAndErrors(t *testing.T) {
 
 // ⑦ A 类回归牙：clone 失败档**不许残留**临时树（把主件 `defer os.RemoveAll` 删掉 ⇒ 本格红）。
 func TestCptsEntryCloneFailureNoTempLeak(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 	pat := regexp.MustCompile(`^zerg-selfcheck-`)
 	count := func() int {
 		ents, err := os.ReadDir(os.TempDir())

@@ -243,6 +243,11 @@ func TestCliContractGate(t *testing.T) {
 	})
 
 	t.Run("SelfTest_Rc0_AndSelfCleans", func(t *testing.T) {
+		// ★ GAP-20261003-16：私有计数面（TMPDIR 指到本用例自建空目录）⇒ 只数本用例自建的
+		// `clicontract-*`，不再与同包兄弟用例 / 同机并发门跑（并发建删同类目录）共享面。
+		// 断言未放宽：仍是 `after-before != 0` 即红；主件删 `defer os.RemoveAll(tmp)` 时私有面内
+		// 必留 `clicontract-*` ⇒ 仍能抓住真泄漏。（本包零 `t.Parallel()` ⇒ `t.Setenv` 安全。）
+		t.Setenv("TMPDIR", t.TempDir())
 		before := cctTempCount(t)
 		rc, out, _ := cctRun(t, "--self-test")
 		after := cctTempCount(t)

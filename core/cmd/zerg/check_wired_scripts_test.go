@@ -79,6 +79,7 @@ func TestCheckWiredScriptsSelftestAllPass(t *testing.T) {
 
 // ★ A 类真口子的牙：自检自回收 ⇒ 同前缀 tempdir 残留 delta=0（哑化 RemoveAll ⇒ FAIL）。
 func TestCheckWiredScriptsSelftestTempdirDeltaZero(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 	pre := cwsCountSelftestDirs(t)
 	if _, rc := cwsRunT(t, "--self-test"); rc != 0 {
 		t.Fatalf("自检 rc=%d", rc)

@@ -139,6 +139,7 @@ func TestShellUnicodeVarsGate(t *testing.T) {
 	})
 
 	t.Run("SelfTestRc0_AndSelfCleans", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 		before := csuCountSelftestDirs(t)
 		rc, out, errs := csuT(t, "--self-test")
 		after := csuCountSelftestDirs(t)
