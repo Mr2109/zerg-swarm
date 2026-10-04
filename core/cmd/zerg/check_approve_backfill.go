@@ -90,6 +90,15 @@
 //	   （`明标不是布尔（(…,)）`）本入口只能近似 ⇒ 该路径在真仓/夹具/自检里**均不触发**（见回执「未覆盖面」）。
 //	⑨ 自检里的 `tempfile.mkdtemp(prefix=…)` ⟷ Go `os.MkdirTemp("", prefix)`：两者都读 `TMPDIR`；临时目录名
 //	   **不进 stdout**（夹具内 `scan()` 输出被捕获后只做 `in` 断言）⇒ 逐字对齐不受影响。
+//	⑩ **B5 登记常量的取数口（缺口 `GAP-20261004-09` 的治法 A）**：py 半判 B5 读的是**本件模块级常量**
+//	   `DEV_EDIT_SHA256`（值在 py 件第 79 行）；本入口改为**从同一件现读**（`cafbReadRegisteredConst`
+//	   读 `gatePath` = `--gate` / env `ZERG_BACKFILL_GATE` / 缺省 `cafbGateRel` 指向的
+//	   `scripts/gates/check-approve-backfill.py`）—— 与 `--refresh-constant` 的取数口/写入点同处。
+//	   ★ 两态结论一致；**唯一有意差**：py 的 scan 不受 `--gate` 影响（读模块常量），而本入口走 `gatePath`
+//	   ⇒ 唯「显式传一个**常量与之不同**的 `--gate`」时两态才可能不同（正常档：缺省，或对拍传同一件 ⇒ 无差）。
+//	   因此**多出一条 py 侧没有的 fail-closed 分支**：`gatePath` 读不到 / 常量行解不出 ⇒ rc=2「不出结论」
+//	   （✗ 不回落编译期快照 —— 那正是本缺口要治的分叉源）。正常档该件恒在场 ⇒ 未触发；
+//	   自检夹具为此**多写一份合成常量件**（py 夹具无需文件 —— 其常量是模块级；两态 stdout 仍逐字同）。
 package main
 
 import (
@@ -112,10 +121,15 @@ const cafbConstName = "DEV_EDIT_SHA256"
 const cafbMarkField = "signed_not_in_person"
 const cafbEvent = "approve_signed"
 
-// cafbDevEditSHA256 —— py 件内常量 `DEV_EDIT_SHA256` 的**逐字同值**（判据 B5 的登记值）。
-// ★ 该常量陈腐是**现读既有红**（真仓 B5 破 · rc=1）：本入口**不擅自跟值**（✗ 不改 py · ✗ 不接线），
-// 对拍时两态读同一份件内常量 ⇒ 逐字同结论。
-const cafbDevEditSHA256 = "0874578748059a8b46431d5e63b97bd23829247693fd5a9385ffd51be422ceeb"
+// cafbVersion 等件级常量见下；★ B5 的登记常量**不再冻在件里**（缺口 `GAP-20261004-09`）：
+//
+//	两入口分叉的根因就是 Go 侧编译期 `const` 与 py 件内常量**各自硬编** —— 人签重签后
+//	py 走 `--refresh-constant` 跟新值，而 Go 侧编译期快照不跟 ⇒ 门⑰ 步骤（py）rc=0 绿 /
+//	`zerg gate check`（Go inproc）rc=1「B5 破」，同一枚判据两个入口给出相反结论。
+//	治法（已拍 = 方案 A）：**Go 半判 B5 时读同一真源** —— 即与 `--refresh-constant` 的
+//	取数口/写入点**同一处**（`cafbGateRel` 指向的那件 `scripts/gates/check-approve-backfill.py`，
+//	其第 79 行就是 py 半判 B5 读的同一个 `DEV_EDIT_SHA256`）⇒ 单源、两入口永不脱钩。
+//	（本入口的 emit/refresh 通道本就以该件为默认目标 —— 见 main 的 `gatePath` 缺省。）
 
 // cafbTicketEight —— 批准件八格（B1 的判据常量 · 序即判据序）。
 var cafbTicketEight = []string{"tool", "approver", "approved_at", "scope", "note", "sig_alg", "key_id", "sig"}
@@ -127,6 +141,9 @@ var (
 	cafbTicketGoRel   = cafbPyJoin("core", "cmd", "zerg", "family_approve.go")
 	cafbTicketRel     = cafbPyJoin("approvals", "dev_edit.json")
 	cafbAuditFileName = "edit_audit.jsonl"
+	// cafbGateRel —— B5 登记常量的**单一真源件**：与 `--refresh-constant` 的取数口/写入点同处
+	// （`scripts/gates/check-approve-backfill.py`）。py 半的 B5 读的就是这一份件内常量 ⇒ 两入口不脱钩。
+	cafbGateRel = cafbPyJoin("scripts", "gates", "check-approve-backfill.py")
 )
 
 var (
@@ -374,6 +391,24 @@ func cafbFindConstant(src string) (string, int, int, int, bool) {
 	lit := src[m[4]:m[5]]
 	line := strings.Count(src[:m[0]], "\n") + 1
 	return lit, line, m[4], m[5], true
+}
+
+// cafbReadRegisteredConst —— 判 B5 时取**登记常量**：读 `gatePath` 指向的那件（= py 半那一份，
+// 见 `cafbGateRel` 注释），并用与 `--emit-constant`/`--refresh-constant` **同一套** `cafbFindConstant`
+// 解析。★ 与 py 半「读本件模块级 `DEV_EDIT_SHA256`」同一真源 ⇒ 两入口结论一致（`GAP-20261004-09`）。
+//
+//	取不到（件不在 / 常量行解不出）⇒ ok=false。调用方 `cafbScan` 据此 fail-closed（rc=2 不给结论），
+//	✗ 不回落编译期快照 —— 那正是本缺口要治的分叉源（见文件头「常量的单一真源」注）。
+func cafbReadRegisteredConst(gatePath string) (string, bool) {
+	src, err := cafbReadText(gatePath)
+	if err != nil {
+		return "", false
+	}
+	lit, _, _, _, ok := cafbFindConstant(src)
+	if !ok {
+		return "", false
+	}
+	return lit, true
 }
 
 // cafbParseTicketJSONTags —— py `parse_ticket_json_tags`：`(None,…)` ⟷ `ok=false`；命中但 0 串 ⇒ **空切片 + ok=true**。
@@ -653,7 +688,9 @@ func cafbReadAll(repo, state string) (*cafbReadings, string) {
 }
 
 // cafbJudgeAll —— py `judge_all`。返回 (问题行, (行数, 事件数, 补签数))。
-func cafbJudgeAll(r *cafbReadings) ([]string, [3]int) {
+// ★ `regConst` = B5 的**登记常量**（由 `cafbReadRegisteredConst` 从同一真源读出后传入；
+// ✗ 不再是件内编译期快照 —— 见 `GAP-20261004-09`）。
+func cafbJudgeAll(r *cafbReadings, regConst string) ([]string, [3]int) {
 	problems := []string{}
 	problems = append(problems, cafbJudgeTicketFields(r.ticketTags, r.ticketHave)...)
 	problems = append(problems, cafbJudgeAuditSide(r.auditTags, r.auditHave, r.ownFields)...)
@@ -673,7 +710,8 @@ func cafbJudgeAll(r *cafbReadings) ([]string, [3]int) {
 			bf, cafbMarkField, cafbEvent))
 	}
 	// ★ 缺口 `GAP-20260928-88`：红行**必须印出应有值**（判据一字不放宽 · 仍逐字比 sha256）。
-	if r.devSHA != cafbDevEditSHA256 {
+	// ★ 登记值 `regConst` 由同一真源现读（缺口 `GAP-20261004-09`），✗ 不是件内编译期快照。
+	if r.devSHA != regConst {
 		problems = append(problems, fmt.Sprintf("B5 破：在册 `dev_edit.json` 的 sha256 = %s ≠ 登记值（明标没进件 = 它一个字节不该动）· **应改为** %s = \"%s\" —— 正门刷值：`python3 scripts/gates/check-approve-backfill.py --refresh-constant`（先干跑）· 加 `--yes` 才落（只读看值：`--emit-constant`）",
 			r.devSHA, cafbConstName, r.devSHA))
 	}
@@ -865,6 +903,15 @@ func cafbSelfTest(stdout io.Writer, repo, state string) bool {
 		if err := os.WriteFile(cafbPyJoin(fxRepo, cafbTicketGoRel), []byte(goSrc), 0o644); err != nil {
 			return "", "", err
 		}
+		// ★ 合成 B5 真源件（`cafbGateRel`）：`cafbScan` 现读登记常量用（缺口 `GAP-20261004-09`）。
+		//   常量取**全 `2`**（≠ 合成在册件 `"{}\n"` 的 sha ⇒ B5 该判红，与 py 夹具同结论）。
+		if err := os.MkdirAll(cafbPyJoin(fxRepo, "scripts", "gates"), 0o755); err != nil {
+			return "", "", err
+		}
+		if err := os.WriteFile(cafbPyJoin(fxRepo, cafbGateRel),
+			[]byte("#!/usr/bin/env python3\n"+cafbConstName+" = \""+strings.Repeat("2", 64)+"\"\n"), 0o644); err != nil {
+			return "", "", err
+		}
 		if rows != nil {
 			var b strings.Builder
 			for _, r := range rows {
@@ -1032,9 +1079,11 @@ func cafbSelfTest(stdout io.Writer, repo, state string) bool {
 }
 
 // cafbRunFixture —— py `_run_fixture`：捕获 `scan()` 的 stdout 取 (输出, rc)。
+// ★ 夹具仓里同放一份 `cafbGateRel`（合成常量件）供 `scan` 现读 B5 的登记值 —— py 侧
+// 该常量是模块级常量、无需文件，故夹具形态不同，但两态**输出逐字同**（见 self_test 注释）。
 func cafbRunFixture(repo, state string) [2]interface{} {
 	var buf strings.Builder
-	rc := cafbScan(&buf, repo, state)
+	rc := cafbScan(&buf, repo, state, cafbPyJoin(repo, cafbGateRel))
 	return [2]interface{}{buf.String(), rc}
 }
 
@@ -1051,13 +1100,22 @@ func firstErr(errs ...error) error {
 // ── 主 ───────────────────────────────────────────────────────────────────────────
 
 // cafbScan —— py `scan`。
-func cafbScan(stdout io.Writer, repo, state string) int {
+// ★ `gatePath` = B5 登记常量的真源件（与 `--refresh-constant` 同处，见 `cafbGateRel`）。
+// py 侧该常量是**模块级常量**（其值就在 py 件里）⇒ 本入口从同一件现读，两入口结论一致
+// （缺口 `GAP-20261004-09`）。
+func cafbScan(stdout io.Writer, repo, state, gatePath string) int {
 	r, why := cafbReadAll(repo, state)
 	if r == nil {
 		fmt.Fprintf(stdout, "⛔ 未取数：%s ⇒ **不出结论**（rc=2）\n", why)
 		return 2
 	}
-	problems, counts := cafbJudgeAll(r)
+	// ★ B5 的登记值走**单一真源**（同一件现读）；取不到 ⇒ fail-closed（✗ 不回落编译期快照）。
+	regConst, ok := cafbReadRegisteredConst(gatePath)
+	if !ok {
+		fmt.Fprintf(stdout, "⛔ 未取数：登记常量件（%s）读不到 / 常量行解不出 ⇒ **不出结论**（rc=2）\n", gatePath)
+		return 2
+	}
+	problems, counts := cafbJudgeAll(r, regConst)
 	n, ev, bf := counts[0], counts[1], counts[2]
 	fmt.Fprintln(stdout, "── 读数（每处带口径）")
 	fmt.Fprintf(stdout, "   ① 件字段面（%s · `approvalTicketFile`）= %s\n", cafbTicketGoRel, strings.Join(r.ticketTags, ","))
@@ -1222,5 +1280,5 @@ func checkApproveBackfillGateMain(stdout, stderr io.Writer, argv []string) int {
 		return 0
 	}
 	fmt.Fprintf(stdout, "── 真目标：%s（状态目录 %s）\n", repo, state)
-	return cafbScan(stdout, repo, state)
+	return cafbScan(stdout, repo, state, gatePath)
 }
