@@ -106,11 +106,16 @@ type WorkersConfig struct {
 // 4. max_workers <= 0 → 回退默认值
 func LoadWorkersConfig(workDir string) WorkersConfig {
 	// 尝试读取配置文件
+	cfgPath := filepath.Join(workDir, workersConfigPath)
 	cfg, err := loadDeviceMaxWorkers(workDir)
 	if err != nil {
-		// 配置文件加载失败 → 用内置默认值
+		// 配置文件加载失败 → 用内置默认值（并**如实播报这次回退**）。
+		// 缺口 GAP-20260927-218：此前该回退**静默发生**，运维看不出「配置面从未生效」；
+		// 现在把「读的是哪个件 / 没读到」打出来，回退不再是隐形的。
+		log.Printf("[workers] 未读到 %s ⇒ 回退编译期 defaultDeviceMap：%v", cfgPath, err)
 		return WorkersConfig{MaxWorkers: resolveByHostname(defaultDeviceMap, defaultMaxWorkers)}
 	}
+	log.Printf("[workers] 读到 %s：devices=%d", cfgPath, len(cfg.Devices))
 
 	// 获取当前 hostname
 	hostname, err := os.Hostname()

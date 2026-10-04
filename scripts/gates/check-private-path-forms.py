@@ -60,7 +60,7 @@ v2.5.11 已经补了第三个字面量 `~/`（该件注释逐字留痕）；本�
 
 用法
 ----
-    python3 scripts/gates/check-private-path-forms.py [仓根] [--json] [--self-test] [--list-forms]
+    python3 scripts/gates/check-private-path-forms.py [仓根] [--json] [--self-test] [--list-forms] [--baseline] [--list-unclaimed-only]
 
 `--json`：机器读面。`--list-forms`：逐条列形态表（族号 / 认领正则 / 出处 / 门禁侧）。
 """
@@ -628,6 +628,10 @@ def main():
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--self-test", dest="self_test", action="store_true")
     ap.add_argument("--list-forms", dest="list_forms", action="store_true")
+    ap.add_argument("--baseline", dest="baseline", action="store_true",
+                    help="只读基线档：落当前命中快照供对拍，**不判** ⇒ rc 恒 0（GAP-20260926-153）")
+    ap.add_argument("--list-unclaimed-only", dest="list_unclaimed_only", action="store_true",
+                    help="只列**未被任何形态格认领**的规则/脱敏形态（只列不判 · rc=0）")
     a = ap.parse_args()
     root = a.root or os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -647,8 +651,35 @@ def main():
         print(f"⇒ {res['reason']}")
         return 2
 
+    if a.list_unclaimed_only:
+        # 缺口 `GAP-20260926-153`：只列**没被任何形态格认领**的那批（E2a 规则 / E2b 脱敏形态），
+        # 不看 rc —— 「未认领」本身就是这一步要看的读数。
+        unclaimed = [r for r in res["red"] if r.get("rule") in ("E2a", "E2b") and r.get("form") is None]
+        for r in unclaimed:
+            loc = f"{r['file']}:{r['line']}" if r.get("line") else (r.get("file") or "—")
+            print(f"  ? [{r['rule']}] {loc}  {r['raw']}")
+        print(f"⇒ 未被任何形态格认领：{len(unclaimed)} 条（只列不判 · rc=0）")
+        return 0
+
+    if a.baseline:
+        # 缺口 `GAP-20260926-153`：**只读基线档** —— 落当前命中/债务/实例/非形态的**快照**供对拍，
+        # 本档**不做判定** ⇒ rc 恒 0（与默认判档区分：判档才把 red 计成 rc=1）。
+        snap = {"schema": SCHEMA, "kind": "PrivatePathFormsBaseline",
+                "meta": dict(res["meta"], debt=res["debt"], instances=res["instances"],
+                             nonform=res["nonform"]),
+                "red": res["red"]}
+        print(json.dumps(snap, ensure_ascii=False, indent=2))
+        return 0
+
     if a.json:
+        # 缺口 `GAP-20260926-173`：`--json` 补**逐格四件套机器面**（每个形态格的
+        # id/name/claim/出处件+探针/门禁侧件+探针/debt）—— 先前只给人面三段。
+        form_tuples = [{"id": f["id"], "name": f["name"], "claim": f["claim"],
+                        "src_file": f["src_file"], "src_probe": f["src_probe"],
+                        "gate_file": f.get("gate_file"), "gate_probe": f.get("gate_probe"),
+                        "debt": f.get("debt")} for f in FORMS]
         print(json.dumps({"schema": SCHEMA, "kind": KIND, "items": res["red"],
+                          "form_tuples": form_tuples,
                           "meta": dict(res["meta"], debt=res["debt"], instances=res["instances"],
                                        nonform=res["nonform"])},
                          ensure_ascii=False, indent=2))

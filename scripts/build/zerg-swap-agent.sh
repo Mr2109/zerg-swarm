@@ -40,7 +40,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 BIN_REL="${ZERG_SWAP_BIN:-bin/zerg-agentd}"
-PLIST_LABEL="${ZERG_SWAP_LABEL:-com.zerg.agent-Mr2109}"
+DEF_LABEL="com.zerg.agent-Mr2109"   # 本机默认作业名（全件唯一机器名字面 · 缺口 GAP-20260925-21）
+PLIST_LABEL="${ZERG_SWAP_LABEL:-$DEF_LABEL}"
 DOMAIN="gui/$UID"
 PLIST="${ZERG_SWAP_PLIST:-$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist}"
 TOKEN_FILE="${ZERG_SWAP_TOKEN_FILE:-$HOME/.zerg/token}"
@@ -63,6 +64,16 @@ LOG="${ZERG_SWAP_LOG:-/tmp/zerg-swap-agent-$TS.log}"
 
 N_PASS=0; N_FAIL=0; N_BLOCK=0
 say() { echo "$@" | tee -a "$LOG"; }
+
+# ── 目标解析（纯函数 · 供 --self-test 夹具与主流程共用）──────────────────────────────
+#   口径（缺口 `GAP-20260925-21`）：作业名来源四档，优先级 = 显式 --label > --machine 推导
+#   > 环境 ZERG_SWAP_LABEL > 本机默认 com.zerg.agent-Mr2109。--machine 只在**没有**显式
+#   label / 环境 label 时生效（显式总赢）。
+resolve_label() {  # $1=--machine 值 $2=--label 值 $3=ZERG_SWAP_LABEL 值
+  if [ -n "$2" ]; then printf '%s' "$2"; return 0; fi
+  if [ -n "$1" ] && [ -z "$3" ]; then printf '%s' "com.zerg.agent-$1"; return 0; fi
+  printf '%s' "${3:-$DEF_LABEL}"
+}
 hr()  { say "──────────────────────────────────────────────"; }
 
 # ── 用法（--help 原文即下面这段；**退码与档位的唯一定义处**）──────────────────────
@@ -74,7 +85,20 @@ zerg-swap-agent.sh —— 子端（zerg-agentd）换件的受控流程 · **只�
   bash scripts/build/zerg-swap-agent.sh            只报告：逐闸出判决（**只读**，零副作用）
   bash scripts/build/zerg-swap-agent.sh --check    同上（显式写法）
   bash scripts/build/zerg-swap-agent.sh --help     本页
+  bash scripts/build/zerg-swap-agent.sh --self-test 自检（跑本件纯判据的夹具用例 · 不碰真件/服务/launchd）
   bash scripts/build/zerg-swap-agent.sh --swap     真换件 —— **本档未开放**，rc=2 且不执行任何动作
+  bash scripts/build/zerg-swap-agent.sh --machine <名> [--label <作业名>]   指定目标机 / 作业名
+
+目标（默认「本机」= 作业 com.zerg.agent-Mr2109 · 目标件 bin/zerg-agentd）：
+  --machine <名>     按机器名推导默认作业名（com.zerg.agent-<名>）与其 plist 路径；
+  --label <作业名>   直接点名 launchd 作业名（覆盖 --machine 与环境默认）。
+  ★ 环境旋钮（7 个 · 均以 `${VAR:-默认}` 覆盖）：
+    ZERG_SWAP_BIN（bin/zerg-agentd）· ZERG_SWAP_LABEL（com.zerg.agent-Mr2109）·
+    ZERG_SWAP_PLIST（~/Library/LaunchAgents/<label>.plist）· ZERG_SWAP_TOKEN_FILE（~/.zerg/token）·
+    ZERG_SWAP_READY_URL / ZERG_SWAP_STATUS_URL（http://127.0.0.1:8100/ready|/status）· ZERG_SWAP_LOG。
+  ★ 本件是「**本机作案**」的受控流程：--machine 改的是作业名/plist 路径，探针**默认仍打
+    127.0.0.1:8100**（本机子端）⇒ 给**远端**机器换件时，探针须显式给 ZERG_SWAP_READY_URL /
+    ZERG_SWAP_STATUS_URL（端口取自该机名册），否则闸④ 打的是本机、不是目标机。
 
 判的六闸（三闸形态 + 两前置闸；逐条对应 scripts/build/zerg-swap-core.sh）：
   闸 A 工作树半成品：`git status --porcelain core/ agent/ ui/ wall/` 的非未跟踪项计数必须 0（换件是从工作树编译的）
@@ -101,13 +125,26 @@ zerg-swap-agent.sh —— 子端（zerg-agentd）换件的受控流程 · **只�
 EOF
 }
 
-ACTION="check"
-case "${1:-}" in
-  ""|--check) ACTION="check" ;;
-  --swap)     ACTION="swap" ;;
-  --help|-h)  usage; exit 0 ;;
-  *) echo "✗ 未知参数: $1（用法见：bash scripts/build/zerg-swap-agent.sh --help）" >&2; exit 2 ;;
-esac
+ACTION=""
+ARG_MACHINE=""
+ARG_LABEL=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    ""|--check)  [ -z "$ACTION" ] && ACTION="check"; shift ;;
+    --swap)      ACTION="swap"; shift ;;
+    --help|-h)   usage; exit 0 ;;
+    --self-test) ACTION="selftest"; shift ;;
+    --machine)   [ $# -ge 2 ] || { echo "✗ --machine 缺取值（用法见：bash scripts/build/zerg-swap-agent.sh --help）" >&2; exit 2; }; ARG_MACHINE="$2"; shift 2 ;;
+    --machine=*) ARG_MACHINE="${1#*=}"; shift ;;
+    --label)     [ $# -ge 2 ] || { echo "✗ --label 缺取值（用法见：bash scripts/build/zerg-swap-agent.sh --help）" >&2; exit 2; }; ARG_LABEL="$2"; shift 2 ;;
+    --label=*)   ARG_LABEL="${1#*=}"; shift ;;
+    *) echo "✗ 未知参数: $1（用法见：bash scripts/build/zerg-swap-agent.sh --help）" >&2; exit 2 ;;
+  esac
+done
+[ -n "$ACTION" ] || ACTION="check"
+# 目标解析（缺口 GAP-20260925-21）：--machine/--label ⇒ 覆盖作业名与 plist 默认
+PLIST_LABEL="$(resolve_label "$ARG_MACHINE" "$ARG_LABEL" "${ZERG_SWAP_LABEL:-}")"
+PLIST="${ZERG_SWAP_PLIST:-$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist}"
 
 if [ "$ACTION" = "swap" ]; then
   echo "✗ zerg-swap-agent.sh：**真换件档未开放**（P13 拍板：先工装 · 先只报告）" >&2
@@ -115,6 +152,7 @@ if [ "$ACTION" = "swap" ]; then
   exit 2
 fi
 
+if [ "$ACTION" != "selftest" ]; then   # --self-test：跳过真目标流程，只跑下方纯函数夹具
 say "== 子端换件闸（只报告 · 只读）$TS =="
 say "日志：$LOG"
 say "目标件：$BIN_REL · 作业：$PLIST_LABEL"
@@ -189,6 +227,7 @@ else
   IDENT="$(python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print("%s · %s · %s · %s"%(d["version"],d["commit"],d["build_time"],d["builder_host"]))' "$BI")"
   judge "① 构建口径" PASS "构件身份齐：${IDENT}（造件入口 = scripts/build/build-all.sh）"
 fi
+fi
 
 # ── 两枚换件器共用的**只读判据**（条 10 · `序 121` ／ 条 17 · `Q-207`）──────────────────
 # `sign_three_cells`：换前验签的**取数档** —— `codesign -dvvv` 同档出 `Signature=` / `flags=` /
@@ -226,6 +265,38 @@ history_drop_ok() {  # $1 = 将要写的**留档落点**（仓内相对路径）
   echo "留档落点 ${1} 不在 bin/_history/ 之下（产出面根里平铺 *.bak-* ⇒ 判红）"
   return 1
 }
+
+# ── --self-test：本件**纯判据**的逻辑夹具（缺口 `GAP-20260926-195` · 不碰真件/服务/launchd）──
+#   只测本件自带的两枚纯函数（history_drop_ok / sign_three_cells），不进六闸真流程。
+if [ "$ACTION" = "selftest" ]; then
+  ST_PASS=0; ST_FAIL=0
+  st() {  # $1=用例名 $2=期望rc $3=实得rc
+    if [ "$2" = "$3" ]; then say "  [自检] $1 ⇒ PASS（rc=$3）"; ST_PASS=$((ST_PASS+1))
+    else say "  [自检] $1 ⇒ FAIL（期望 rc=$2 · 实得 rc=$3）"; ST_FAIL=$((ST_FAIL+1)); fi
+  }
+  say "== zerg-swap-agent.sh 自检（--self-test · 不碰真件/服务/launchd）$TS =="
+  history_drop_ok "bin/_history/zerg-agentd.prev" >/dev/null 2>&1; st "T1 留档落点合规（bin/_history/）" 0 $?
+  history_drop_ok "bin/zerg-agentd.bak-x" >/dev/null 2>&1; st "T2 落点平铺判红" 1 $?
+  sign_three_cells "/no/such/bin-zsa-$$" >/dev/null 2>&1; st "T3 件不存在⇒不给结论" 2 $?
+  FT="$(mktemp -t zsa-selftest 2>/dev/null || echo "/tmp/zsa-selftest-$$")"
+  cp /bin/echo "$FT" 2>/dev/null; codesign --force -s - "$FT" >/dev/null 2>&1
+  FT_OUT="$(codesign -dvvv "$FT" 2>&1 || true)"
+  case "$FT_OUT" in
+    *Signature=adhoc*) sign_three_cells "$FT" >/dev/null 2>&1; st "T4 adhoc 件判红" 1 $? ;;
+    *) say "  [自检] T4 adhoc 夹具建不起来 ⇒ FAIL（需 codesign 权限）"; ST_FAIL=$((ST_FAIL+1)) ;;
+  esac
+  rm -f "$FT"
+  if [ -e /bin/echo ]; then sign_three_cells /bin/echo >/dev/null 2>&1; st "T5 真签件放行" 0 $?
+  else say "  [自检] T5 缺 /bin/echo 夹具 ⇒ FAIL"; ST_FAIL=$((ST_FAIL+1)); fi
+  # T6–T9：目标解析纯函数（缺口 `GAP-20260925-21` · 四档优先级）
+  [ "$(resolve_label '' '' '')" = "$DEF_LABEL" ]; st "T6 默认作业名 = ${DEF_LABEL}" 0 $?
+  [ "$(resolve_label 'mini-node-2' '' '')" = "com.zerg.agent-mini2" ]; st "T7 --machine mini-node-2 推导作业名" 0 $?
+  [ "$(resolve_label 'mini-node-2' 'com.zerg.agent-x' '')" = "com.zerg.agent-x" ]; st "T8 --label 覆盖 --machine" 0 $?
+  [ "$(resolve_label 'mini-node-2' '' 'com.zerg.agent-env')" = "com.zerg.agent-env" ]; st "T9 环境 label 优先于 --machine" 0 $?
+  say "自检：$ST_PASS 过 / $ST_FAIL 红（共 $((ST_PASS+ST_FAIL)) 条）"
+  if [ "$ST_FAIL" -eq 0 ]; then exit 0; fi
+  exit 1
+fi
 
 hr; say "[闸②] 验签（取数档 = codesign -dvvv ⇒ Signature= / flags= / cdhash 三格同档；输出原样打印，不吞）"
 if [ ! -e "$BIN_REL" ]; then

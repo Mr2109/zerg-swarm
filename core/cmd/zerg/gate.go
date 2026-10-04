@@ -65,6 +65,23 @@ import (
 // 必须单独一次提交。故这里**只拼这一段常量**，别处不许再拼。
 const gateScriptRel = "scripts/gates/precommit-gates.sh"
 
+// gateLSRejectFlags —— 缺口 `GAP-20260927-53`（2026-10-04 · P1 仍缺 · 边界件本片收）：
+// `gate ls` 的**用法面**逐字是 `zerg gate ls`（`main.go` 登记 · **无旗标**），而脚本侧
+// `--list` 出口**不读任何筛选旗标** ⇒ 若命令面把尾参原样丢掉，`zerg gate ls --scope go`
+// 这类**筛选意图会被静默吞**（用户拿到全表还以为筛过）。
+//
+// 本文件开头那条铁律「**只转发、不翻译**」明令命令面**不许**自己实现筛选（= 另写一份
+// 步骤表）⇒ 唯一 fail-closed 的处置 = **有尾参即拒并给用法**（退用法码 `exitUsage`、
+// **不 exec 脚本**），与 `gate show` 缺步名那一支同规。无尾参 ⇒ 放行（原路径一字不动）。
+func gateLSRejectFlags(tail []string, stderr io.Writer) int {
+	if len(tail) == 0 {
+		return exitOK
+	}
+	fmt.Fprintf(stderr, "%s: `gate ls` 不接受旗标（用法逐字：`zerg gate ls`）—— 收到 %q\n", progName, tail)
+	fmt.Fprintf(stderr, "要筛步骤请用：`zerg gate find <片段>`（门件名 ⇒ 步名）或 `zerg gate run --step <步名>`。\n")
+	return exitUsage
+}
+
 func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	root := repoRoot()
 	if root == "" {
@@ -97,6 +114,11 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	var runSince time.Time
 	switch action {
 	case "ls":
+		// ★ 缺口 `GAP-20260927-53`（2026-10-04）：`gate ls` 的用法面无旗标，而 `--list` 出口不读筛选旗标
+		//   ⇒ 有尾参即 **fail-closed 拒执**（不 exec）。无尾参 ⇒ 原路径一字不动。判据与理由见 `gateLSRejectFlags`。
+		if rc := gateLSRejectFlags(tail, stderr); rc != exitOK {
+			return rc
+		}
 		args = []string{"--list"}
 	case "run":
 		// ★ 2026-10-04（T-PR-03·04 · 设计-门禁部分趟-v0.7 §三）：`--since [<全量趟目录>]` = **部分趟**的

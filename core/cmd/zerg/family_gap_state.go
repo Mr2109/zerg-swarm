@@ -539,12 +539,17 @@ func gapTwoStateJudge(inv *invocation, id, stateWant string) (pair string, exemp
 	if stateWant != gapStSolved {
 		return "不适用", false, nil
 	}
-	miss = gapTwoStateMissing(strings.TrimSpace(inv.flagVal("--before-read")),
-		strings.TrimSpace(inv.flagVal("--after-read")))
+	beforeRaw := strings.TrimSpace(inv.flagVal("--before-read"))
+	afterRaw := strings.TrimSpace(inv.flagVal("--after-read"))
+	miss = gapTwoStateMissing(beforeRaw, afterRaw)
 	if len(miss) == 0 {
 		return "齐", false, nil
 	}
-	return "缺", !gapTwoStateNewLedger(id), miss
+	// GAP-20260929-17：**区分「给了值但形态不符」与「真的一个字没给」** ——
+	// 任一段非空（= 给了值）却读不回来 ⇒ 属形态错，**不降级成存量豁免**（一律拒收，逐段点名）。
+	// 只有两段都空（= 真没给）时，存量账才走豁免分支。
+	malformed := beforeRaw != "" || afterRaw != ""
+	return "缺", !malformed && !gapTwoStateNewLedger(id), miss
 }
 
 // gapTwoStateMeta —— `--json` 同族信封面上的两格（本片新增：回显**两态是否齐**、**豁免与否**）。
@@ -687,15 +692,21 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	//    ⚠ 排在这一处：幂等「无变化」与 `--dry-run` 都在上面先行返回（预演不该被拦）；
 	//    闸只挡真写；预演由上面的提示行先告知会被拒。
 	//    真源在这之前只被读过 —— 拒收时**一个字节未改、审计一行未落**。
-	if stateWant == gapStSolved && gapTwoStateNewLedger(r.ID) && len(twoStateMiss) > 0 {
+	if stateWant == gapStSolved && !twoStateExempt && len(twoStateMiss) > 0 {
 		inv.setErr("usage", "two_state_missing", "销案缺两态读数（缺 "+strconv.Itoa(len(twoStateMiss))+" 段）")
-		fmt.Fprintf(stderr, "%s: `gap set-state` **销案拒收** —— %s（号内日期 %s ≥ %s ⇒ **新账**：拿不出两态读数就不给销）\n",
-			progName, r.ID, orDash(gapIDDate(r.ID)), gapTwoStateDateMin)
+		if gapTwoStateNewLedger(r.ID) {
+			fmt.Fprintf(stderr, "%s: `gap set-state` **销案拒收** —— %s（号内日期 %s ≥ %s ⇒ **新账**：拿不出两态读数就不给销）\n",
+				progName, r.ID, orDash(gapIDDate(r.ID)), gapTwoStateDateMin)
+		} else {
+			// GAP-20260929-17：存量账但**给了值却形态不符** ⇒ 同样拒收（不许静默降级成存量豁免）。
+			fmt.Fprintf(stderr, "%s: `gap set-state` **销案拒收** —— %s（存量账：`--before-read`/`--after-read` **给了值但形态不符** ⇒ 按 GAP-20260929-17 不降级成存量豁免）\n",
+				progName, r.ID)
+		}
 		for _, m := range twoStateMiss {
 			fmt.Fprintf(stderr, "    ✗ %s\n", m)
 		}
 		fmt.Fprintf(stderr, "  两态读数形态 : --before-read \"cmd=<命令> · rc=<真退码> · reading=<关键读数一行>\" · --after-read 同形（改前/改后**成对**）\n")
-		fmt.Fprintf(stderr, "  生效面       : 新账（号内日期 ≥ %s）强制 · 存量账豁免（设计稿 §11.5 两态对拍 · 表 `D6` · `M-33`）\n", gapTwoStateDateMin)
+		fmt.Fprintf(stderr, "  生效面       : 新账（号内日期 ≥ %s）强制 · 存量账豁免**仅当两段真没给**（给了值却形态不符 ⇒ 拒收 · GAP-20260929-17）（设计稿 §11.5 两态对拍 · 表 `D6` · `M-33`）\n", gapTwoStateDateMin)
 		fmt.Fprintf(stderr, "  真源         : %s（%d 行 · **本发一个字节未改**、审计一行未落 —— 闸在「审计先落盘」之前）\n",
 			led.Path, len(led.Lines))
 		gapTwoStateMeta(inv, "缺", false)

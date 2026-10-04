@@ -57,6 +57,13 @@ type WatchdogConfig struct {
 	// DeadFlatSamples 正文阶段（T14）：连续几次采样"无推进且 CPU 工时也不动"就**立刻判死**
 	// （提前判死，不必等窗口用满；默认 2 ⇒ 10 s）。这是"彻底停摆"的证据，与"忙但不推进"区分开。
 	DeadFlatSamples int
+	// EggMax 单卵时限（`GAP-20260926-201`）：本枚卵从起跑到判死的最长墙钟上界，默认 0 = 不设
+	// （与旧口径逐字一致，一键回退）。为什么需要它：`MaxWindows × Window` 只是"无输出"的
+	// 兜底（默认 5×90 s = 450 s），而**静默卡死**实测跑到 4964.87 s（≈82.7 min，期间只 3 次调用、
+	// 零写盘）—— 派单侧此前无"单卵时限"参数 ⇒ 只能靠助手按 12 分钟纪律人工中止。设了它以后，
+	// 到点即判卡住（判词 `stuck_no_progress` + 理由点名单卵时限），不再等满 5 个窗口。
+	// 环境旋钮 `ZERG_EGG_MAX_S`（秒，可小数，与 Window/Sample 同形）。
+	EggMax time.Duration
 }
 
 // watchdogConfigFromEnv 读环境变量。
@@ -67,7 +74,7 @@ type WatchdogConfig struct {
 // 按"先沙箱验证、再生产 drop-in 显式开"的纪律更稳。关着时行为与旧口径**逐字一致**（一键回退）。
 // 窗口/采样用**秒（可小数）**，便于沙箱压秒验证。
 func watchdogConfigFromEnv(get func(string) string) WatchdogConfig {
-	cfg := WatchdogConfig{Enabled: false, Window: 90 * time.Second, MaxWindows: 5, Sample: 5 * time.Second, DeadFlatSamples: 2}
+	cfg := WatchdogConfig{Enabled: false, Window: 90 * time.Second, MaxWindows: 5, Sample: 5 * time.Second, DeadFlatSamples: 2, EggMax: 0}
 	switch v := strings.ToLower(strings.TrimSpace(get("ZERG_WATCHDOG"))); v {
 	case "1", "true", "yes", "on":
 		cfg.Enabled = true
@@ -90,6 +97,11 @@ func watchdogConfigFromEnv(get func(string) string) WatchdogConfig {
 	if v := strings.TrimSpace(get("ZERG_WATCHDOG_DEAD_FLAT")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.DeadFlatSamples = n
+		}
+	}
+	if v := strings.TrimSpace(get("ZERG_EGG_MAX_S")); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			cfg.EggMax = time.Duration(f * float64(time.Second))
 		}
 	}
 	return cfg
@@ -156,7 +168,16 @@ func (w *Watchdog) Wait(done <-chan struct{}) (WatchdogVerdict, string) {
 		return WatchdogOK, ""
 	}
 
+	start := w.deps.now()
 	for window := 0; window < w.cfg.MaxWindows; window++ {
+		// 单卵时限（`GAP-20260926-201`）：本枚卵从起跑算起的墙钟上界，到点即判卡住 ——
+		// 不再等满 MaxWindows 个窗口（治"静默卡死跑到 4964.87 s"那一类）。EggMax=0 ⇒ 不设，逐字回退旧口径。
+		if w.cfg.EggMax > 0 && w.deps.now().Sub(start) >= w.cfg.EggMax {
+			w.obs.CPUUsecDelta = 0
+			w.obs.Verdict = WatchdogStuckNoProgress
+			w.obs.Reason = fmt.Sprintf("单卵时限到（约 %s）⇒ 判卡住（不再等满 %d 个窗口）", w.cfg.EggMax, w.cfg.MaxWindows)
+			return WatchdogStuckNoProgress, w.obs.Reason
+		}
 		// **输出优先**（先做一次非阻塞检查）：头若已经回来，就不再花这个窗口取证据 ——
 		// 否则 select 在两个就绪通道间随机选，可能"抢在 done 前"把已经正常的请求判死。
 		select {

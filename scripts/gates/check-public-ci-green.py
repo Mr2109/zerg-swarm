@@ -59,9 +59,23 @@ import glob
 import json
 import os
 import re
+import atexit
+import shutil
 import subprocess
 import sys
 import tempfile
+
+# 缺口 `GAP-20261001-66`（A 类暂存目录泄漏）：本件两处 `tempfile.mkdtemp` 从不回收 ⇒ 每跑一次留一个目录。
+#   此处统一用 `_tracked_mkdtemp`：建点 + `atexit` 回收（与 Go 侧 `defer os.RemoveAll` 同意）。
+#   约束：只清本脚本自己建的那些目录（零通配）；失败不改退码。
+_TMPDIRS = []
+
+
+def _tracked_mkdtemp(prefix):
+    d = tempfile.mkdtemp(prefix=prefix)
+    _TMPDIRS.append(d)
+    atexit.register(shutil.rmtree, d, ignore_errors=True)
+    return d
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -229,7 +243,7 @@ def self_test():
           any(w in " ".join(g["text"] for g in THREE_GAPS) for w in ("已修", "已引", "已出")), False)
 
     # K1：分档两态（现调真源 · 合成清单）
-    d = tempfile.mkdtemp(prefix="zerg-ci-green-")
+    d = _tracked_mkdtemp("zerg-ci-green-")
     mf = os.path.join(d, "manifest.json")
     open(mf, "w", encoding="utf-8").write(json.dumps(
         {"commit": "zzzzzzzzzzzz", "source_sha": "0" * 40, "dirty": True,
@@ -330,7 +344,7 @@ def main():
           % os.path.relpath(PROFILE_GATE, REPO_ROOT))
     dev_rc = dev_prof = pub_rc = pub_prof = None
     # 样张 A：合成清单（J1/J2 双命中）—— 分档的**机械证明**
-    d = tempfile.mkdtemp(prefix="zerg-ci-green-")
+    d = _tracked_mkdtemp("zerg-ci-green-")
     synth = os.path.join(d, "manifest.json")
     open(synth, "w", encoding="utf-8").write(json.dumps(
         {"commit": "zzzzzzzzzzzz", "source_sha": "0" * 40, "dirty": True,

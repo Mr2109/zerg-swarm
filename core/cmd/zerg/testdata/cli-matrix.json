@@ -7944,6 +7944,94 @@
    "want_rc": 2,
    "want_stdout_bytes": 296,
    "why": "`--out`（拆件落盘）与 `--json`（机读投影）**不许同给** ⇒ 用法错 2（判在任何 stdout 写入之前 · `family_gap_export.go:136-141`）· 给了 `--json` ⇒ 错误面包封走 stdout（本批起发射闸）：`error.kind=usage` · `error.detail=out_json_conflict`。★ 本 why 不记绝对字节数（逐字形态见 `want_stdout_bytes` 那一格 · 缺口 GAP-20260927-332）"
+  },
+  {
+   "argv": ["code", "diff", "--nosuchflag-zz"],
+   "command": "code diff",
+   "id": "code/diff#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 ⇒ 执行前判 · 退码 2 · stdout 0 字节（错误走 stderr）。现跑两遍一致（`zerg code diff --nosuchflag-zz`）。"
+  },
+  {
+   "argv": ["code", "diff", "--schema", "zerg/v9"],
+   "command": "code diff",
+   "id": "code/diff#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "不认的契约主号 ⇒ 拒绝静默降级（§九 M15）· 退码 2 · stdout 0 字节。现跑两遍一致（`zerg code diff --schema zerg/v9`）。"
+  },
+  {
+   "argv": ["model", "rm", "--nosuchflag-zz"],
+   "command": "model rm",
+   "id": "model/rm#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 ⇒ 执行前判 · 退码 2 · stdout 0 字节（错误走 stderr）。现跑两遍一致（`zerg model rm --nosuchflag-zz`）。"
+  },
+  {
+   "argv": ["model", "rm", "--schema", "zerg/v9"],
+   "command": "model rm",
+   "id": "model/rm#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "不认的契约主号 ⇒ 拒绝静默降级（§九 M15）· 退码 2 · stdout 0 字节。现跑两遍一致（`zerg model rm --schema zerg/v9`）。"
+  },
+  {
+   "argv": ["model", "rm", "--json"],
+   "command": "model rm",
+   "id": "model/rm#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 287,
+   "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）；D2 写面走「没有结果面、但错误面必须机器可读」那条（§九 M7）⇒ 287 字节是现跑包封字节数（本制品现跑两遍一致）。"
+  },
+  {
+   "argv": ["model", "set", "--nosuchflag-zz"],
+   "command": "model set",
+   "id": "model/set#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 ⇒ 执行前判 · 退码 2 · stdout 0 字节（错误走 stderr）。现跑两遍一致（`zerg model set --nosuchflag-zz`）。"
+  },
+  {
+   "argv": ["model", "set", "--schema", "zerg/v9"],
+   "command": "model set",
+   "id": "model/set#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "不认的契约主号 ⇒ 拒绝静默降级（§九 M15）· 退码 2 · stdout 0 字节。现跑两遍一致（`zerg model set --schema zerg/v9`）。"
+  },
+  {
+   "argv": ["model", "set", "--json"],
+   "command": "model set",
+   "id": "model/set#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 288,
+   "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）；D2 写面走「没有结果面、但错误面必须机器可读」那条（§九 M7）⇒ 288 字节是现跑包封字节数（本制品现跑两遍一致）。"
+  },
+  {
+   "argv": ["context", "set-port", "--nosuchflag-zz"],
+   "command": "context set-port",
+   "id": "context/set-port#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 ⇒ 执行前判 · 退码 2 · stdout 0 字节（错误走 stderr）。现跑两遍一致（`zerg context set-port --nosuchflag-zz`）。"
+  },
+  {
+   "argv": ["context", "set-port", "--schema", "zerg/v9"],
+   "command": "context set-port",
+   "id": "context/set-port#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "不认的契约主号 ⇒ 拒绝静默降级（§九 M15）· 退码 2 · stdout 0 字节。现跑两遍一致（`zerg context set-port --schema zerg/v9`）。"
+  },
+  {
+   "argv": ["context", "set-port", "--json"],
+   "command": "context set-port",
+   "id": "context/set-port#--json 不给字段",
+   "want_rc": 2,
+   "want_stdout_bytes": 287,
+   "why": "给了 --json 不给字段 ⇒ 2 + **错误面包封**（不空）；D2 写面走「没有结果面、但错误面必须机器可读」那条（§九 M7）⇒ 287 字节是现跑包封字节数（本制品现跑两遍一致）。"
   }
  ],
  "exemptions": [],

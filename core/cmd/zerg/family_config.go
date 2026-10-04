@@ -179,7 +179,7 @@ func snipHead(s string, n int) string {
 // （`core/internal/config/config.go:72`），真名册件的一级键（`Ternary-Bonsai-2-27B` /
 // `GLM-4.7-Flash` / `deepseek-v4-flash` / `DeepSeek-V4-Flash-Vision-Exp` …）也全是模型名。
 // 改前这里拿一级键当「在册主机」用（`fc.Models[s.Host]`）⇒ 传**真主机名**一律退 2、
-// 报「在册主机」时列出来的其实是模型名（两条现场记录：`--host edge-node`〔真主机〕⇒ 2；
+// 报「在册主机」时列出来的其实是模型名（两条现场记录：`--host <真主机名>`〔真主机〕⇒ 2；
 // `--host deepseek-v4-flash`〔在册模型〕⇒「没有 `deepseek-v4-flash:` 这一块」）。
 //
 // 本笔口径：**块按 `--model`（模型名）定位/新建**；`--host` 只作该条的 `host:` 字段值。
@@ -660,4 +660,788 @@ func cmdConfigReload(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stderr, "%s: 主控已重读名册（路由表更新 · 已加载模型不受影响 · **没重启**）\n", progName)
 	return listCmd(inv, stdout, stderr, []string{"status", "models", "added", "fleet_nodes", "fingerprint"}, []map[string]string{row})
+}
+
+// ---- `model rm` / `model set`（缺口账 `GAP-20260925-31` · 名册「改一条 / 删一条」两动作面）---------
+//
+// 病根（缺口 `GAP-20260925-31` 逐字）：名册件 `gateway/fleet.yaml` 此前只有 `model add`（纯追加）
+// 与 `model ls`（只读）—— 条目的 `file` / `verified` / `desc` 一旦写错，或要退役一条，
+// 只能手搓定点改文件（改完还得再跑一次 `config reload`），且「看不到自己改对没有」。
+// 本笔补的就是那两个动作面：`rm`（删一条）与 `set`（改一条）。
+//
+// 三条纪律与 `model add` **同一张表**（不新造）：
+//
+//	① 先校验后写、失败回滚：写 = 同目录临时件 + `rename`；写完读回再校；任一步不过 ⇒ 回滚 ⇒ 退 1。
+//	② 只碰名册件（`gateway/fleet.yaml`，可 `--path` / `--root` 指别处）；`--dry-run` 一个字节都不写。
+//	③ 形态表与 `model add` 逐字同源（两种正规形态都认：列表形 + 裸映射形；其余形态 ⇒ 不猜、不改）。
+//
+// 定位口径：`--model` = `models:` 段的**键/块名**；`--host` = 该条的 `host:` 字段值；
+// 同块同机多条时用 `--file` 点准那一条（不给而命中多条 ⇒ 退 2「请点名 --file」，**不猜**）。
+
+// modelEntryHit —— 定位到的「那一条」。
+type modelEntryHit struct {
+	Form     string // "list"（列表形块的条目行）· "bare"（裸映射单条 · 与块首同行）
+	KeyIdx   int    // 块首（`  <名>:`）那一行的下标
+	EntryIdx int    // 条目行的下标（bare 形 = KeyIdx）
+	Body     string // 条目正文（flow 形 `{ … }` 逐字）
+	Remain   int    // 本条之外，本块还剩几条
+}
+
+// modelFlowSplitTop —— 顶层逗号切分（引号内与 `[]`/`{}` 内的逗号不算分隔符）。
+// 名册条里 `file:` 路径可能含 `:`，`cmd:` 是列表（含逗号）—— 两者都要保住。
+func modelFlowSplitTop(s string) []string {
+	out := []string{}
+	var cur strings.Builder
+	depth, inq, esc := 0, false, false
+	for _, r := range s {
+		if inq {
+			cur.WriteRune(r)
+			if esc {
+				esc = false
+			} else if r == '\\' {
+				esc = true
+			} else if r == '"' {
+				inq = false
+			}
+			continue
+		}
+		switch r {
+		case '"':
+			inq = true
+			cur.WriteRune(r)
+		case '[', '{':
+			depth++
+			cur.WriteRune(r)
+		case ']', '}':
+			depth--
+			cur.WriteRune(r)
+		case ',':
+			if depth == 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+			} else {
+				cur.WriteRune(r)
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	out = append(out, cur.String())
+	return out
+}
+
+// modelFlowPairs —— 把 flow 形正文 `{ k: v, … }` 拆成**保序**的 (键, 值原样) 对。
+func modelFlowPairs(body string) ([][2]string, bool) {
+	s := strings.TrimSpace(body)
+	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
+		return nil, false
+	}
+	inner := strings.TrimSpace(s[1 : len(s)-1])
+	if inner == "" {
+		return [][2]string{}, true
+	}
+	pairs := [][2]string{}
+	for _, p := range modelFlowSplitTop(inner) {
+		k, v, ok := strings.Cut(p, ":")
+		if !ok {
+			return nil, false
+		}
+		pairs = append(pairs, [2]string{strings.TrimSpace(k), strings.TrimSpace(v)})
+	}
+	return pairs, true
+}
+
+// modelFlowField —— 取一个标量字段的值（去掉包裹的引号）；取不到返 false。
+func modelFlowField(body, key string) (string, bool) {
+	pairs, ok := modelFlowPairs(body)
+	if !ok {
+		return "", false
+	}
+	for _, p := range pairs {
+		if p[0] == key {
+			return strings.Trim(p[1], `"`), true
+		}
+	}
+	return "", false
+}
+
+// modelBlocksEnd —— `models:` 段的结束下标（下一个顶级键之前）。
+func modelBlocksEnd(lines []string, modelsAt int) int {
+	for i := modelsAt + 1; i < len(lines); i++ {
+		l := lines[i]
+		if l == "" || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "#") {
+			continue
+		}
+		return i
+	}
+	return len(lines)
+}
+
+// modelEntryLocate —— 按块名（`--model`）+ `host:`（可选 `file:`）定位那一条。
+// 命中 0 条 / 命中多条而没点名 `--file` / 认不出的形态 ⇒ 返错文本（调用方判用法错，**不猜**）。
+func modelEntryLocate(lines []string, name, host, file string) (modelEntryHit, string) {
+	h := modelEntryHit{KeyIdx: -1, EntryIdx: -1}
+	modelsAt := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, "models:") {
+			modelsAt = i
+			break
+		}
+	}
+	if modelsAt < 0 {
+		return h, "名册件里没有 `models:` 段"
+	}
+	secEnd := modelBlocksEnd(lines, modelsAt)
+	key := "  " + name + ":"
+	for i := modelsAt + 1; i < secEnd; i++ {
+		l := lines[i]
+		if !strings.HasPrefix(l, key) {
+			continue
+		}
+		rest := strings.TrimSpace(l[len(key):])
+		if rest != "" { // ── 裸映射形（单条 · 与块首同行）──
+			if !strings.HasPrefix(rest, "{") || !strings.HasSuffix(rest, "}") {
+				return h, fmt.Sprintf("`%s:` 这一块既不是列表形，也不是同行裸映射形（同行接的是 %q）⇒ 本命令不猜", name, snipHead(rest, 24))
+			}
+			eh, ok := modelFlowField(rest, "host")
+			if !ok {
+				return h, fmt.Sprintf("`%s:` 裸映射条里没有 `host:`（认不出属于哪台机）⇒ 不猜", name)
+			}
+			ef, _ := modelFlowField(rest, "file")
+			if eh != host || (file != "" && ef != file) {
+				return h, fmt.Sprintf("`%s:` 块（裸映射单条）里没有 `host: %s`%s 的条 ⇒ 无可办", name, host, fileClause(file))
+			}
+			h.Form, h.KeyIdx, h.EntryIdx, h.Body, h.Remain = "bare", i, i, rest, 0
+			return h, ""
+		}
+		// ── 列表形块 ──
+		entries := []int{}
+		for j := i + 1; j < secEnd; j++ {
+			lj := lines[j]
+			if strings.TrimSpace(lj) == "" {
+				break
+			}
+			if len(lj)-len(strings.TrimLeft(lj, " ")) <= 2 {
+				break
+			}
+			if strings.HasPrefix(strings.TrimLeft(lj, " \t"), "#") {
+				continue
+			}
+			if strings.HasPrefix(strings.TrimLeft(lj, " \t"), "-") {
+				entries = append(entries, j)
+			}
+		}
+		hits := []modelEntryHit{}
+		for _, j := range entries {
+			b := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[j]), "-"))
+			if !strings.HasPrefix(b, "{") || !strings.HasSuffix(b, "}") {
+				return h, fmt.Sprintf("`%s:` 块里第 %d 行是**多行条目**（`- ` 后不是同行 `{ … }`）⇒ 本命令不猜", name, j+1)
+			}
+			eh, ok := modelFlowField(b, "host")
+			if !ok {
+				return h, fmt.Sprintf("`%s:` 块里第 %d 行没有 `host:` ⇒ 认不出属于哪台机（不猜）", name, j+1)
+			}
+			ef, _ := modelFlowField(b, "file")
+			if eh == host && (file == "" || ef == file) {
+				hits = append(hits, modelEntryHit{Form: "list", KeyIdx: i, EntryIdx: j, Body: b, Remain: len(entries) - 1})
+			}
+		}
+		switch {
+		case len(hits) == 0:
+			return h, fmt.Sprintf("`%s:` 块里没有 `host: %s`%s 的条 ⇒ 无可办（不猜 · 不误碰同块的别的条）", name, host, fileClause(file))
+		case len(hits) > 1:
+			return h, fmt.Sprintf("`%s:` 块里 `host: %s` 命中 %d 条 ⇒ 请用 `--file <GGUF>` 点准那一条（**不猜**）", name, host, len(hits))
+		}
+		return hits[0], ""
+	}
+	return h, fmt.Sprintf("名册件里没有 `%s:` 这一块", name)
+}
+
+// fileClause —— 报文本里点出 `--file` 那一格（给了才写）。
+func fileClause(file string) string {
+	if file == "" {
+		return ""
+	}
+	return " / `file: " + file + "`"
+}
+
+// modelEntryRewriteLine —— 把条目行里的 flow 正文替换成 newBody（保留行首缩进 / `- ` / `键:`）。
+func modelEntryRewriteLine(line, newBody string) string {
+	if i := strings.Index(line, "{"); i >= 0 {
+		return line[:i] + newBody
+	}
+	return line
+}
+
+// modelEntryRender —— 把保序的 (键, 值原样) 对重新拼成 flow 正文 `{ k: v, … }`。
+func modelEntryRender(pairs [][2]string) string {
+	parts := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		parts = append(parts, p[0]+": "+p[1])
+	}
+	return "{ " + strings.Join(parts, ", ") + " }"
+}
+
+// modelSetKind —— 字段的取值域（**闭集** · 逐字对齐 `config.ModelCandidate` 的 yaml tag）。
+// 不在表里 ⇒ 退 2（不收无名键 —— 免得把名册写成主控解析器不认的样子）。
+func modelSetKind(key string) string {
+	switch key {
+	case "verified", "ssd", "thinking", "tool_support", "engine_impl_required":
+		return "bool"
+	case "mem_gb", "ctx_window", "max_tokens":
+		return "num"
+	case "name", "family", "host", "backend", "file", "arch", "architecture",
+		"mmproj", "moe", "template", "modality", "description", "added":
+		return "str"
+	case "cmd", "env":
+		return "list" // 列表值 ⇒ 本命令不收（要改它请整行手改 · 不猜）
+	}
+	return ""
+}
+
+// modelSetValueText —— 按字段取值域把 `--set` 的值渲染成 YAML 字面（返回渲染文本 + 是否合法）。
+func modelSetValueText(key, v string) (string, bool) {
+	switch modelSetKind(key) {
+	case "bool":
+		if v != "true" && v != "false" {
+			return "", false
+		}
+		return v, true
+	case "num":
+		if _, err := strconv.ParseFloat(v, 64); err != nil {
+			return "", false
+		}
+		return v, true
+	case "str":
+		return yamlStr(v), true
+	}
+	return "", false
+}
+
+// cmdModelRm —— `zerg model rm`：从名册件删一条（先校验后写 · 失败回滚 · 删空连块首行一起删）。
+func cmdModelRm(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	if inv.jsonGiven {
+		if rc := requireJSONFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+	}
+	name := strings.TrimSpace(inv.flagVal("--model"))
+	if name == "" {
+		name = strings.TrimSpace(inv.modelWant)
+	}
+	host := strings.TrimSpace(inv.flagVal("--host"))
+	file := strings.TrimSpace(inv.flagVal("--file"))
+	bad := func(detail, msg string) int {
+		inv.setErr("usage", detail, msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "  用法：zerg model rm --model <模型名> --host <主机> [--file <GGUF 路径>] --confirm <模型名> [--dry-run | --yes]\n")
+		fmt.Fprintf(stderr, "        （`--model` = `models:` 段的键/块名；`--host` = 该条 `host:`；同块同机多条时用 `--file` 点准再删）\n")
+		return exitUsage
+	}
+	if name == "" || host == "" {
+		miss := []string{}
+		if name == "" {
+			miss = append(miss, "--model")
+		}
+		if host == "" {
+			miss = append(miss, "--host")
+		}
+		return bad("missing_target", "缺 "+strings.Join(miss, " / ")+"（这两枚必给）")
+	}
+	if !identish(name) {
+		return bad("bad_value", "`--model` 要当 `models:` 段的键（块名）⇒ 只收标识符")
+	}
+	if !identish(host) {
+		return bad("bad_value", "`--host` 只收标识符")
+	}
+	path, perr := fleetYAMLPath(inv)
+	if perr != "" {
+		inv.setErr("blocked", "fleet_path_absent", perr)
+		fmt.Fprintf(stderr, "%s: %s ⇒ 不给结论（退码 8）\n", progName, perr)
+		return exitBlocked
+	}
+	rawBytes, err := os.ReadFile(path)
+	if err != nil {
+		inv.setErr("blocked", "fleet_unreadable", "名册件读不到")
+		fmt.Fprintf(stderr, "%s: 名册件读不到（%s）：%v ⇒ 不给结论（退码 8）\n", progName, path, err)
+		return exitBlocked
+	}
+	raw := string(rawBytes)
+	fc, err := loadFleet(path)
+	if err != nil {
+		inv.setErr("failed", "fleet_invalid", "名册件现档就解析不过（先修它，别在坏档上删）")
+		fmt.Fprintf(stderr, "%s: %s 现档就解析不过：%v ⇒ 判红（退码 1 · **不写**）\n", progName, path, err)
+		return exitFail
+	}
+	before := len(fc.Models[name])
+	if before == 0 {
+		return bad("model_block_absent", fmt.Sprintf("名册件里 `models:` 段没有 `%s:` 这一块 ⇒ 无可删", name))
+	}
+	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
+	hit, ierr := modelEntryLocate(lines, name, host, file)
+	if ierr != "" {
+		return bad("entry_not_found", ierr)
+	}
+	dropKey := hit.Form == "bare" || hit.Remain == 0
+	newLines := make([]string, 0, len(lines))
+	for i, l := range lines {
+		if i == hit.EntryIdx {
+			continue
+		}
+		if dropKey && i == hit.KeyIdx {
+			continue
+		}
+		newLines = append(newLines, l)
+	}
+	nl := "\n"
+	if !strings.HasSuffix(raw, "\n") {
+		nl = ""
+	}
+	newText := strings.Join(newLines, "\n") + nl
+	recheck, err := config.ParseFleetConfig([]byte(newText))
+	if err != nil {
+		inv.setErr("failed", "post_write_invalid", "改后文本解析不过（回滚档 · 不写）")
+		fmt.Fprintf(stderr, "%s: 改后文本解析不过（%v）⇒ 判红（退码 1 · **不写**）\n", progName, err)
+		return exitFail
+	}
+	after := len(recheck.Models[name])
+	if after != before-1 {
+		inv.setErr("failed", "post_write_mismatch", "改后条数不是 -1（回滚档 · 不写）")
+		fmt.Fprintf(stderr, "%s: `%s` 块改后条数 %d → %d（不是 -1）⇒ 判红（退码 1 · **不写**）\n", progName, name, before, after)
+		return exitFail
+	}
+	if inv.dryRun {
+		keyLineNote := fmt.Sprintf("第 %d 行（保留 —— 本块还剩 %d 条）", hit.KeyIdx+1, hit.Remain)
+		if dropKey {
+			keyLineNote = fmt.Sprintf("第 %d 行（**本块删空 ⇒ 连块首行一起删**）", hit.KeyIdx+1)
+		}
+		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
+		fmt.Fprintf(stdout, "  动作     : model rm（%s）\n", progName)
+		fmt.Fprintf(stdout, "  名册件   : %s\n", path)
+		fmt.Fprintf(stdout, "  块       : `models:` 的 `%s:` · 删这一条：host=%s%s\n", name, host, fileClause(file))
+		fmt.Fprintf(stdout, "  删的行   : 第 %d 行 —— %s\n", hit.EntryIdx+1, hit.Body)
+		fmt.Fprintf(stdout, "  块首行   : %s\n", keyLineNote)
+		fmt.Fprintf(stdout, "  校验     : ✔ 现档解析过（`%s` 下 %d 条）· ✔ 改后解析过（%d 条）\n", name, before, after)
+		fmt.Fprintf(stdout, "  授权判据 : 真写要 `--yes`（D2 档）—— 干跑与真跑**同一张表**：缺它 ⇒ 退码 2（**一个字节都不写**）\n")
+		fmt.Fprintf(stdout, "  生效     : 要主控读它 ⇒ `%s config reload --yes`（本命令**不碰主控**）\n", progName)
+		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
+		return exitOK
+	}
+	if !inv.confirmGiven {
+		inv.setErr("usage", "confirm_required", "删名册条要 `--confirm=<模型名>` —— 缺确认 ⇒ 不执行（fail-closed）")
+		fmt.Fprintf(stderr, "%s: `model rm` 会改名册件 ⇒ 缺 `--confirm=%s` ⇒ 不执行（fail-closed）\n", progName, name)
+		return exitUsage
+	}
+	if inv.confirm != name {
+		inv.setErr("usage", "confirm_mismatch", "`--confirm` 的值要与 `--model` 逐字相同")
+		fmt.Fprintf(stderr, "%s: `--confirm=%s` 与 `--model %s` 不一致 ⇒ 不执行（给错值 = 拒绝，不是「当没给」）\n", progName, inv.confirm, name)
+		return exitUsage
+	}
+	if !inv.yes {
+		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		fmt.Fprintf(stderr, "%s: 改名册是 D2 档 —— 缺 --yes ⇒ 不执行（先看计划件：加 `--dry-run`）\n", progName)
+		return exitUsage
+	}
+	if rc := writeFleetAtomic(path, raw, newText, stderr); rc != exitOK {
+		inv.setErr("failed", "write_failed", "写名册件失败（已回滚）")
+		return rc
+	}
+	row := map[string]string{"model": name, "host": host, "fleet": path,
+		"line": strconv.Itoa(hit.EntryIdx + 1), "block_removed": strconv.FormatBool(dropKey),
+		"remaining": strconv.Itoa(after)}
+	fmt.Fprintf(stderr, "%s: 名册已删（`%s:` 块 · 删第 %d 行 · 块内剩 %d 条）—— 要主控读它：`%s config reload --yes`\n",
+		progName, name, hit.EntryIdx+1, after, progName)
+	return listCmd(inv, stdout, stderr, []string{"model", "host", "fleet", "line", "block_removed", "remaining"}, []map[string]string{row})
+}
+
+// cmdModelSet —— `zerg model set`：改名册里某一条的字段（`--set k=v` · 保序原位改 · 先校验后写）。
+//
+// 只改**点准的那一条**（`--model` + `--host` + 可选 `--file`）；同条里其余字段**逐字保留**（保序重拼）。
+// 字段名走闭集（`modelSetKind`）；不在闭集 / 值域不合 / 是列表值 ⇒ 退 2（不猜、不写）。
+func cmdModelSet(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	if inv.jsonGiven {
+		if rc := requireJSONFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+	}
+	name := strings.TrimSpace(inv.flagVal("--model"))
+	if name == "" {
+		name = strings.TrimSpace(inv.modelWant)
+	}
+	host := strings.TrimSpace(inv.flagVal("--host"))
+	file := strings.TrimSpace(inv.flagVal("--file"))
+	bad := func(detail, msg string) int {
+		inv.setErr("usage", detail, msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "  用法：zerg model set --model <模型名> --host <主机> [--file <GGUF 路径>] --set k=v [--set k=v …] --confirm <模型名> [--dry-run | --yes]\n")
+		fmt.Fprintf(stderr, "        （只改点准的那一条 · 其余字段逐字保留；可改字段：host backend file mem_gb ctx_window max_tokens architecture arch template modality verified thinking tool_support ssd mmproj moe description added name family）\n")
+		return exitUsage
+	}
+	if name == "" || host == "" {
+		miss := []string{}
+		if name == "" {
+			miss = append(miss, "--model")
+		}
+		if host == "" {
+			miss = append(miss, "--host")
+		}
+		return bad("missing_target", "缺 "+strings.Join(miss, " / ")+"（这两枚必给）")
+	}
+	if !identish(name) || !identish(host) {
+		return bad("bad_value", "`--model` / `--host` 只收标识符")
+	}
+	if len(inv.setPairs) == 0 {
+		return bad("no_params", "一个 `--set` 都没给（要改什么就点它出来）")
+	}
+	// 先把 `--set` 全部校验成 (键, 渲染文本) 的保序表（**一件都没写之前处处 fail-closed**）。
+	sets := [][2]string{}
+	for _, kv := range inv.setPairs {
+		k, v, ok := strings.Cut(kv, "=")
+		k = strings.TrimSpace(k)
+		if !ok || k == "" {
+			return bad("bad_set_pair", fmt.Sprintf("`--set` 要 `键=值` 形态（给的是 %q）", kv))
+		}
+		txt, ok2 := modelSetValueText(k, v)
+		if !ok2 {
+			kind := modelSetKind(k)
+			switch kind {
+			case "":
+				return bad("bad_field", fmt.Sprintf("`--set %s=` 不是可改字段（闭集见用法行）—— 不收无名键", k))
+			case "list":
+				return bad("bad_field", fmt.Sprintf("`--set %s=` 是**列表值**（`cmd` / `env`）—— 本命令不收，请整行手改（不猜）", k))
+			case "bool":
+				return bad("bad_value", fmt.Sprintf("`--set %s=` 要 true / false（给的是 %q）", k, v))
+			default:
+				return bad("bad_value", fmt.Sprintf("`--set %s=` 要数值（给的是 %q）", k, v))
+			}
+		}
+		sets = append(sets, [2]string{k, txt})
+	}
+	path, perr := fleetYAMLPath(inv)
+	if perr != "" {
+		inv.setErr("blocked", "fleet_path_absent", perr)
+		fmt.Fprintf(stderr, "%s: %s ⇒ 不给结论（退码 8）\n", progName, perr)
+		return exitBlocked
+	}
+	rawBytes, err := os.ReadFile(path)
+	if err != nil {
+		inv.setErr("blocked", "fleet_unreadable", "名册件读不到")
+		fmt.Fprintf(stderr, "%s: 名册件读不到（%s）：%v ⇒ 不给结论（退码 8）\n", progName, path, err)
+		return exitBlocked
+	}
+	raw := string(rawBytes)
+	fc, err := loadFleet(path)
+	if err != nil {
+		inv.setErr("failed", "fleet_invalid", "名册件现档就解析不过（先修它，别在坏档上改）")
+		fmt.Fprintf(stderr, "%s: %s 现档就解析不过：%v ⇒ 判红（退码 1 · **不写**）\n", progName, path, err)
+		return exitFail
+	}
+	if len(fc.Models[name]) == 0 {
+		return bad("model_block_absent", fmt.Sprintf("名册件里 `models:` 段没有 `%s:` 这一块 ⇒ 无可改", name))
+	}
+	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
+	hit, ierr := modelEntryLocate(lines, name, host, file)
+	if ierr != "" {
+		return bad("entry_not_found", ierr)
+	}
+	pairs, ok := modelFlowPairs(hit.Body)
+	if !ok {
+		return bad("entry_shape_unknown", "点准的那一条不是同行 `{ … }` flow 形 ⇒ 本命令不猜（改它要动多行）")
+	}
+	// 保序原位改：命中的键改值；没命中的键**追加**在尾。
+	changed := []string{}
+	for _, s := range sets {
+		found := false
+		for i := range pairs {
+			if pairs[i][0] == s[0] {
+				pairs[i][1] = s[1]
+				found = true
+				break
+			}
+		}
+		if !found {
+			pairs = append(pairs, [2]string{s[0], s[1]})
+		}
+		changed = append(changed, s[0])
+	}
+	newBody := modelEntryRender(pairs)
+	newLine := modelEntryRewriteLine(lines[hit.EntryIdx], newBody)
+	newLines := append([]string{}, lines...)
+	newLines[hit.EntryIdx] = newLine
+	nl := "\n"
+	if !strings.HasSuffix(raw, "\n") {
+		nl = ""
+	}
+	newText := strings.Join(newLines, "\n") + nl
+	recheck, err := config.ParseFleetConfig([]byte(newText))
+	if err != nil {
+		inv.setErr("failed", "post_write_invalid", "改后文本解析不过（回滚档 · 不写）")
+		fmt.Fprintf(stderr, "%s: 改后文本解析不过（%v）⇒ 判红（退码 1 · **不写**）\n", progName, err)
+		return exitFail
+	}
+	if len(recheck.Models[name]) != len(fc.Models[name]) {
+		inv.setErr("failed", "post_write_mismatch", "改后条数变了（回滚档 · 不写）")
+		fmt.Fprintf(stderr, "%s: `%s` 块条数 %d → %d（**改字段不该动条数**）⇒ 判红（退码 1 · **不写**）\n", progName, name, len(fc.Models[name]), len(recheck.Models[name]))
+		return exitFail
+	}
+	if inv.dryRun {
+		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
+		fmt.Fprintf(stdout, "  动作     : model set（%s）\n", progName)
+		fmt.Fprintf(stdout, "  名册件   : %s\n", path)
+		fmt.Fprintf(stdout, "  块       : `models:` 的 `%s:` · 改这一条：host=%s%s\n", name, host, fileClause(file))
+		fmt.Fprintf(stdout, "  改的行   : 第 %d 行\n", hit.EntryIdx+1)
+		fmt.Fprintf(stdout, "  改前     : %s\n", hit.Body)
+		fmt.Fprintf(stdout, "  改后     : %s\n", newBody)
+		fmt.Fprintf(stdout, "  改的字段 : %s\n", strings.Join(changed, " / "))
+		fmt.Fprintf(stdout, "  校验     : ✔ 现档解析过（`%s` 下 %d 条）· ✔ 改后解析过（同条数）\n", name, len(fc.Models[name]))
+		fmt.Fprintf(stdout, "  授权判据 : 真写要 `--yes`（D2 档）—— 干跑与真跑**同一张表**：缺它 ⇒ 退码 2（**一个字节都不写**）\n")
+		fmt.Fprintf(stdout, "  生效     : 要主控读它 ⇒ `%s config reload --yes`（本命令**不碰主控**）\n", progName)
+		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
+		return exitOK
+	}
+	if !inv.confirmGiven {
+		inv.setErr("usage", "confirm_required", "改名册条要 `--confirm=<模型名>` —— 缺确认 ⇒ 不执行（fail-closed）")
+		fmt.Fprintf(stderr, "%s: `model set` 会改名册件 ⇒ 缺 `--confirm=%s` ⇒ 不执行（fail-closed）\n", progName, name)
+		return exitUsage
+	}
+	if inv.confirm != name {
+		inv.setErr("usage", "confirm_mismatch", "`--confirm` 的值要与 `--model` 逐字相同")
+		fmt.Fprintf(stderr, "%s: `--confirm=%s` 与 `--model %s` 不一致 ⇒ 不执行（给错值 = 拒绝，不是「当没给」）\n", progName, inv.confirm, name)
+		return exitUsage
+	}
+	if !inv.yes {
+		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		fmt.Fprintf(stderr, "%s: 改名册是 D2 档 —— 缺 --yes ⇒ 不执行（先看计划件：加 `--dry-run`）\n", progName)
+		return exitUsage
+	}
+	if rc := writeFleetAtomic(path, raw, newText, stderr); rc != exitOK {
+		inv.setErr("failed", "write_failed", "写名册件失败（已回滚）")
+		return rc
+	}
+	row := map[string]string{"model": name, "host": host, "fleet": path,
+		"line": strconv.Itoa(hit.EntryIdx + 1), "changed": strings.Join(changed, " / "), "entry": newBody}
+	fmt.Fprintf(stderr, "%s: 名册已改（`%s:` 块 · 第 %d 行 · 改了 %s）—— 要主控读它：`%s config reload --yes`\n",
+		progName, name, hit.EntryIdx+1, strings.Join(changed, " / "), progName)
+	return listCmd(inv, stdout, stderr, []string{"model", "host", "fleet", "line", "changed", "entry"}, []map[string]string{row})
+}
+
+// ---- `context set-port`（缺口账 `GAP-20260925-32` · 机器名册 `nodes:` 的第一条改面）------------------------
+//
+// 病根（缺口 `GAP-20260925-32` 逐字）：机器登记件 `~/.zerg/contexts/<档>.yaml` 的 `nodes:`（host/port/os/kind
+// 的**唯一真源**）此前**只有读面**（`zerg context ls` 只出档位名册、连 nodes 都不列）⇒ 当某台机被迫换端口
+// （实测 mini-node-1 的 8100 被无关服务占着、子端挪到 8101）时只能手搓改 YAML，且「看不出主控到底认没认这次改动」。
+//
+// 本笔只补**第一条改面** `set-port`（一次改一台机的 `port:`），口径照同族写面 `model add` / `model rm`
+// 的成熟做法：**先校验后写 · 同目录临时件 + rename（原子）· 写完读回逐字节再校 · 任一步不过 ⇒ 回滚**。
+//
+// 只改**现成的** `port:` 行（✗ 不新建字段、✗ 不带 `context add`/`rm` —— 那不属本笔，见账内 want_action）。
+
+// contextYAMLPath —— 解析档位件路径（`~/.zerg/contexts/<档>.yaml`；`--context` 缺省 `default`）。
+// 档名只收标识符 —— 挡住 `/` `..` 一类把路径带出 `contexts/` 的取值。
+func contextYAMLPath(inv *invocation) (string, string) {
+	name := strings.TrimSpace(inv.contextWant)
+	if name == "" {
+		name = "default"
+	}
+	if !identish(name) {
+		return "", fmt.Sprintf("档名 %q 只收标识符（挡路径穿越）", name)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", "取不到家目录：" + err.Error()
+	}
+	return filepath.Join(home, ".zerg", "contexts", name+".yaml"), ""
+}
+
+// writeContextAtomic —— 原子写 + 读回逐字节校验 + 失败回滚（与 `writeFleetAtomic` 同形，
+// 只是档位件不走 `config.LoadFleetConfig` —— 它是**另一份**格式，硬套会把好档判坏）。
+func writeContextAtomic(path, oldText, newText string, stderr io.Writer) int {
+	fi, err := os.Stat(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: 写前 stat 不过：%v（**未写**）\n", progName, err)
+		return exitBlocked
+	}
+	tmp := path + ".zerg-tmp"
+	if err := os.WriteFile(tmp, []byte(newText), fi.Mode().Perm()); err != nil {
+		fmt.Fprintf(stderr, "%s: 临时件写不过：%v（**未动原档**）\n", progName, err)
+		os.Remove(tmp)
+		return exitFail
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		fmt.Fprintf(stderr, "%s: rename 不过：%v ⇒ 回滚\n", progName, err)
+		os.Remove(tmp)
+		return exitFail
+	}
+	back, err := os.ReadFile(path)
+	if err != nil || string(back) != newText {
+		fmt.Fprintf(stderr, "%s: 读回校验不过（err=%v）⇒ **回滚**（把原文写回）\n", progName, err)
+		if werr := os.WriteFile(path, []byte(oldText), fi.Mode().Perm()); werr != nil {
+			fmt.Fprintf(stderr, "%s: !! 回滚也失败：%v —— 请人处理（原档长度 %d 字节）\n", progName, werr, len(oldText))
+			return exitFail
+		}
+		return exitFail
+	}
+	return exitOK
+}
+
+// cmdContextSetPort —— `zerg context set-port`：改机器名册里某台机的 `port:`（先校验后写 · 失败回滚）。
+func cmdContextSetPort(inv *invocation, stdout, stderr io.Writer) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	if inv.jsonGiven {
+		if rc := requireJSONFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+	}
+	bad := func(detail, msg string) int {
+		inv.setErr("usage", detail, msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "  用法：zerg context set-port --node <机器名> --port <端口> [--context <档名>] --confirm=<机器名> [--dry-run | --yes]\n")
+		fmt.Fprintf(stderr, "        （改的是机器名册真源 `~/.zerg/contexts/<档>.yaml` 里该节点**现成的** `port:` 行 —— host/port/os/kind 的唯一写入口；`--context` 缺省 default）\n")
+		return exitUsage
+	}
+	if len(inv.nodes) == 0 {
+		return bad("missing_target", "缺 `--node <机器名>`（改哪台机的端口）")
+	}
+	if len(inv.nodes) > 1 {
+		return bad("bad_value", "`--node` 只收一个机器名（本动作一次改一台）")
+	}
+	node := strings.TrimSpace(inv.nodes[0])
+	portTxt := strings.TrimSpace(inv.flagVal("--port"))
+	if node == "" || portTxt == "" {
+		miss := []string{}
+		if node == "" {
+			miss = append(miss, "--node")
+		}
+		if portTxt == "" {
+			miss = append(miss, "--port")
+		}
+		return bad("missing_target", "缺 "+strings.Join(miss, " / ")+"（这两枚必给）")
+	}
+	if !identish(node) {
+		return bad("bad_value", "`--node` 只收标识符（机器名是稳定 id，不许改）")
+	}
+	port, err := strconv.Atoi(portTxt)
+	if err != nil || port < 1 || port > 65535 {
+		return bad("bad_value", fmt.Sprintf("`--port` 要 1..65535 的整数（给的是 %q）", portTxt))
+	}
+	path, perr := contextYAMLPath(inv)
+	if perr != "" {
+		inv.setErr("blocked", "context_path_bad", perr)
+		fmt.Fprintf(stderr, "%s: %s ⇒ 不给结论（退码 8）\n", progName, perr)
+		return exitBlocked
+	}
+	rawBytes, err := os.ReadFile(path)
+	if err != nil {
+		inv.setErr("blocked", "context_unreadable", "档位件读不到")
+		fmt.Fprintf(stderr, "%s: 档位件读不到（%s）：%v ⇒ 不给结论（退码 8）\n", progName, path, err)
+		return exitBlocked
+	}
+	raw := string(rawBytes)
+	lines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
+	nodesAt := -1
+	for i, l := range lines {
+		if l == "nodes:" {
+			nodesAt = i
+			break
+		}
+	}
+	if nodesAt < 0 {
+		return bad("nodes_section_absent", "档位件里没有 `nodes:` 段")
+	}
+	secEnd := len(lines)
+	for i := nodesAt + 1; i < len(lines); i++ {
+		l := lines[i]
+		if l == "" || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "#") {
+			continue
+		}
+		secEnd = i
+		break
+	}
+	key := "  " + node + ":"
+	keyIdx := -1
+	for i := nodesAt + 1; i < secEnd; i++ {
+		if lines[i] == key {
+			keyIdx = i
+			break
+		}
+	}
+	if keyIdx < 0 {
+		return bad("node_absent", fmt.Sprintf("`nodes:` 段里没有 `%s:`（机器名是稳定 id ⇒ 只有已登记的名字可改；新登记一台另立项）", node))
+	}
+	portIdx := -1
+	for j := keyIdx + 1; j < secEnd; j++ {
+		l := lines[j]
+		if strings.TrimSpace(l) == "" || strings.HasPrefix(strings.TrimSpace(l), "#") {
+			continue
+		}
+		if len(l)-len(strings.TrimLeft(l, " ")) <= 2 {
+			break // 回到节点那一层 ⇒ 本节点到此
+		}
+		if strings.HasPrefix(strings.TrimSpace(l), "port:") {
+			portIdx = j
+			break
+		}
+	}
+	if portIdx < 0 {
+		return bad("port_line_absent", fmt.Sprintf("`%s:` 节点里没有 `port:` 行（本命令只改**现成的** port 行 —— 不给名册加它没有的键）", node))
+	}
+	oldLine := lines[portIdx]
+	newLine := "    port: " + strconv.Itoa(port)
+	if oldLine == newLine {
+		row := map[string]string{"node": node, "port": strconv.Itoa(port), "context": path, "changed": "false"}
+		fmt.Fprintf(stderr, "%s: `%s` 的 `port` 已经是 %d ⇒ **无变化**（未写）\n", progName, node, port)
+		return listCmd(inv, stdout, stderr, []string{"node", "port", "context", "changed"}, []map[string]string{row})
+	}
+	newLines := append([]string{}, lines...)
+	newLines[portIdx] = newLine
+	nl := "\n"
+	if !strings.HasSuffix(raw, "\n") {
+		nl = ""
+	}
+	newText := strings.Join(newLines, "\n") + nl
+	if inv.dryRun {
+		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
+		fmt.Fprintf(stdout, "  动作     : context set-port（%s）\n", progName)
+		fmt.Fprintf(stdout, "  档位件   : %s（机器名册真源 `nodes:`）\n", path)
+		fmt.Fprintf(stdout, "  节点     : `%s:`（第 %d 行）\n", node, keyIdx+1)
+		fmt.Fprintf(stdout, "  改的行   : 第 %d 行\n", portIdx+1)
+		fmt.Fprintf(stdout, "  改前     : %s\n", oldLine)
+		fmt.Fprintf(stdout, "  改后     : %s\n", newLine)
+		fmt.Fprintf(stdout, "  它会动   : 只此一件（%s）—— 写 = 同目录临时件 + rename（原子）；写完读回逐字节再校，任一步不过 ⇒ 回滚\n", path)
+		fmt.Fprintf(stdout, "  授权判据 : 真写要 `--confirm=%s` + `--yes`（D2 档）—— 干跑与真跑**同一张表**：缺它 ⇒ 退码 2（**一个字节都不写**）\n", node)
+		fmt.Fprintf(stdout, "  生效     : 主控是否认这次改动要另证（本命令**不碰主控**）；名册是声明面，可行与否由逐机探测回答\n")
+		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
+		return exitOK
+	}
+	if !inv.confirmGiven {
+		inv.setErr("usage", "confirm_required", "改机器名册要 `--confirm=<机器名>` —— 缺确认 ⇒ 不执行（fail-closed）")
+		fmt.Fprintf(stderr, "%s: `context set-port` 会改档位件 ⇒ 缺 `--confirm=%s` ⇒ 不执行（fail-closed）\n", progName, node)
+		return exitUsage
+	}
+	if inv.confirm != node {
+		inv.setErr("usage", "confirm_mismatch", "`--confirm` 的值要与 `--node` 逐字相同")
+		fmt.Fprintf(stderr, "%s: `--confirm=%s` 与 `--node %s` 不一致 ⇒ 不执行（给错值 = 拒绝，不是「当没给」）\n", progName, inv.confirm, node)
+		return exitUsage
+	}
+	if !inv.yes {
+		inv.setErr("usage", "yes_required", "D2 档缺 --yes ⇒ 不执行")
+		fmt.Fprintf(stderr, "%s: 改机器名册是 D2 档 —— 缺 --yes ⇒ 不执行（先看计划件：加 `--dry-run`）\n", progName)
+		return exitUsage
+	}
+	if rc := writeContextAtomic(path, raw, newText, stderr); rc != exitOK {
+		inv.setErr("failed", "write_failed", "写档位件失败（已回滚）")
+		return rc
+	}
+	row := map[string]string{"node": node, "port": strconv.Itoa(port), "context": path,
+		"line": strconv.Itoa(portIdx + 1), "changed": "true"}
+	fmt.Fprintf(stderr, "%s: 机器名册已改（`%s:` 的 `port` → %d · 第 %d 行 · 只此一件）\n", progName, node, port, portIdx+1)
+	return listCmd(inv, stdout, stderr, []string{"node", "port", "context", "line", "changed"}, []map[string]string{row})
 }

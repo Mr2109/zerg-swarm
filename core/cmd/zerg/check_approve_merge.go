@@ -19,7 +19,9 @@
 //	    故 py `run_cli` 子调用（cwd=REPO_ROOT）的夹具解析面可对齐）、`--root` 缺省取 cwd。⇒ 「脚本位置 ≠ cwd」
 //	    且 cwd 不在仓树内时路径推导面不同 ⇒ **✗ 不声称逐字对齐**；对拍一律（甲）显式传 `--fixtures`/`--root`、
 //	    （乙）令 cwd == 仓根。
-//	    ★ py 的 `--root` 是**死旗标**：main 里 `args.root` 解析后**从不被读取**（D 类真口子 · 交回入账）。
+//	    ★ py 的 `--root` 原为**死旗标**（`args.root` 解析后**从不被读取** · D 类真口子 `GAP-20261001-63`）；
+//	    py 现改：显式给 `--root` ⇒ 重钉模块级 `REPO_ROOT`（`run_cli` 子进程 cwd 随之生效）。本件同批跟：
+//	    显式 `--root` ⇒ 重钉 `apmRunCliRoot`，由 `apmRunCLI` 之前置可用性判消费（见下）⇒ 不再静默无效。
 //	(b) **自指检查**：本件**不落在**它自己扫描的面内 —— 本件只读 ① `~/.zerg/state/edit_audit.jsonl`
 //	    ② `<state>/approvals/*.json` ③ `--source` 人喂快照 ④ 夹具目录（`cases.json` + `sources/` + `view.bad-*.json`）。
 //	    这四处**都不含** `core/cmd/zerg/`，故本件自身不在其扫描面内。四形态自查：① 件内**无**任何
@@ -76,7 +78,9 @@
 //  10. `apmPyRepr` 只覆盖现实取值（单引号串 / `[]` / `{}` / bool / None / 数字）；含单引号又可省引号、
 //     或含非可打印 Unicode 的边界 repr 未逐字复刻。
 //  11. 本件 `subprocess.run` 面**以进程内复用入口**替代（py 真起子进程；rc/stdout/stderr 语义等价，
-//     但「子进程崩溃」一类路径不同）。
+//     但「子进程崩溃」一类路径不同）。★ 关联 `GAP-20261001-63`：py `--root` 重钉 `REPO_ROOT`
+//     （`run_cli` 子进程 cwd）；该 cwd 不可用时 py 抛 `FileNotFoundError`（rc=1 回溯）⇒ 本件转
+//     rc=2 fail-closed 具名文案（正文 / 退码与该崩溃档**不同文**，属本差异面）。
 package main
 
 import (
@@ -606,6 +610,25 @@ func apmPyDirname(p string) string {
 		return "/"
 	}
 	return p[:i]
+}
+
+// apmRunCliRoot —— 运行期仓库根覆盖（py 模块级 `REPO_ROOT` 的 Go 对应 · 缺口 `GAP-20261001-63`）。
+// py：显式 `--root` ⇒ `main` 重钉模块级 `REPO_ROOT`，其**唯一消费点** = `run_cli` 子进程 cwd
+// （`run_cli` 以 `cwd=REPO_ROOT` 起子进程；该根不是可用目录时 py 抛 `FileNotFoundError` ⇒ rc=1 回溯，C 类）。
+// Go 以「进程内复用入口」替代子进程（件头差异面 11）⇒ 无 cwd 面；本件把「`--root` 生效」落成
+// `run_cli` 替代入口的前置可用性判（不可用 ⇒ rc=2 fail-closed，见 `apmRunCLI`）—— 空 = 未显式给 `--root`
+// （逐字不改既有行为）。每次 `apmParseArgs` 入口自清，防跨调用污染（本包多件在进程内串跑测试）。
+var apmRunCliRoot = ""
+
+// apmRootArgGiven —— argv 里是否**显式**给了 `--root`（含 `--root=` 形）。与 py `main` 的
+// `any(a == "--root" or a.startswith("--root=") for a in argv)` 逐字同构。
+func apmRootArgGiven(argv []string) bool {
+	for _, a := range argv {
+		if a == "--root" || strings.HasPrefix(a, "--root=") {
+			return true
+		}
+	}
+	return false
 }
 
 // apmFindRepoRoot 从 cwd 上溯至最近的含 `scripts/gates/` 的目录。
@@ -1380,6 +1403,15 @@ func apmLoadManifest(fixdir string) (*apmOrderedMap, string) {
 
 // apmRunCLI —— 进程内复用入口替代 py 的真子进程（rc/stdout/stderr 语义等价）。
 func apmRunCLI(argv []string) (int, string, string) {
+	// py `run_cli` 以 `cwd=REPO_ROOT` 起子进程；显式 `--root` 换根而该 cwd 不可用（非目录）时
+	// py 抛 `FileNotFoundError`（C 类：最外层无兜底 ⇒ rc=1 回溯）。Go 走进程内入口（件头差异面 11）
+	// ⇒ 无子进程 cwd 崩溃面，照 C 类口径转 **rc=2 fail-closed + 具名文案**（写进件头未覆盖面 11）。
+	if apmRunCliRoot != "" {
+		if st, err := os.Stat(apmRunCliRoot); err != nil || !st.IsDir() {
+			return 2, "", "⛔ 不给结论：`--root` 指向的不是可用目录（" + apmRunCliRoot +
+				"）—— py 侧此处为子进程 cwd 不可用（rc=1 回溯），Go 转 rc=2 fail-closed"
+		}
+	}
 	var so, se bytes.Buffer
 	rc := checkApproveMergeGateMain(&so, &se, argv)
 	return rc, so.String(), se.String()
@@ -1920,6 +1952,7 @@ func apmArgparseErr(stderr io.Writer, msg string) {
 }
 
 func apmParseArgs(argv []string, stdout, stderr io.Writer) (*apmArgs, int, bool) {
+	apmRunCliRoot = "" // 自清：显式 `--root` 由 main 在解析后重钉（防跨调用污染）
 	a := &apmArgs{
 		root:     apmCwd(),
 		state:    apmPyJoin(apmExpandUser("~"), ".zerg", "state"),
@@ -2045,6 +2078,12 @@ func checkApproveMergeGateMain(stdout, stderr io.Writer, argv []string) int {
 	args, rc, done := apmParseArgs(argv, stdout, stderr)
 	if done {
 		return rc
+	}
+	// ── `--root` 生效（缺口 `GAP-20261001-63`）：原实现解析后**从不读取** ⇒ 静默无效（D 类真口子）──
+	//   显式给了 `--root` ⇒ 以它重钉 `apmRunCliRoot`（run_cli 替代入口的根随之生效）；
+	//   不给时逐字不改既有行为（默认路径未动）。
+	if apmRootArgGiven(argv) {
+		apmRunCliRoot = dcmdAbs(args.root)
 	}
 	fmt.Fprintln(stdout, apmVersion)
 	hostname, _ := os.Hostname()

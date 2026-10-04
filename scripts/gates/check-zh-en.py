@@ -14,7 +14,7 @@
   ④ 零输入即报错 —— 绝不静默空转（假绿）
   ⑤ 自带自证，且**断言用例条数** —— 用例被静默截断时不得打印"通过"
 
-用法：python3 scripts/gates/check-zh-en.py [--selftest]
+用法：python3 scripts/gates/check-zh-en.py [--selftest] [--json] [--paths] [--root <根1,根2…>]
 退出码：0 = 无命中；1 = 有命中；2 = 环境/输入异常（不静默）
 """
 import os
@@ -615,11 +615,35 @@ def selftest_fp():
     return ok
 
 
+def _hit_path(entry):
+    """从一条命中行 `"<件>:<行>  …"` 里取出件路径（`GAP-20260926-127` 机器读面用）。"""
+    m = re.match(r"^(.*?):\d+\b", entry)
+    return m.group(1) if m else entry.split(":", 1)[0]
+
+
 def main():
+    argv = sys.argv[1:]
     # ★ `Q-176` 第六批：准拼法 `--self-test`；旧拼法 `--selftest` 作别名（两个都认）
-    if "--self-test" in sys.argv or "--selftest" in sys.argv:
+    if "--self-test" in argv or "--selftest" in argv:
         return 0 if selftest() else 1
-    if not os.path.isdir("core") and not os.path.isdir("agent"):
+    # ── 机器读面（`GAP-20260926-127`）：`--json`（全量命中清单）/ `--paths`（全量件清单，一行一件）/
+    #    `--root <根1,根2…>`（换扫描根；缺省仍用本件写死的 `ROOTS`）。默认档（三枚都不给）逐字不变。──
+    global ROOTS
+    as_json = "--json" in argv
+    as_paths = "--paths" in argv
+    root_val = None
+    for i, a in enumerate(argv):
+        if a == "--root" and i + 1 < len(argv):
+            root_val = argv[i + 1]
+        elif a.startswith("--root="):
+            root_val = a.split("=", 1)[1]
+    if root_val is not None:
+        roots = [p.strip() for p in root_val.split(",") if p.strip()]
+        if not roots:
+            print("✗ --root 给的是空值 ⇒ 用法错 rc=2", file=sys.stderr)
+            return 2
+        ROOTS = roots
+    if root_val is None and not os.path.isdir("core") and not os.path.isdir("agent"):
         print("✗ 不在仓库根目录（core/ 与 agent/ 都不存在）——拒绝静默空转", file=sys.stderr)
         return 2
     MASK_UNCLOSED.clear()
@@ -664,6 +688,34 @@ def main():
         print("✗ 扫到 0 个文件——拒绝静默空转（假绿）", file=sys.stderr)
         return 2
     total = sum(len(hits[k]) for k in ("禁用词", "全角标点(代码区)", "旧角色词"))
+    # ── 机器读面分支（`GAP-20260926-127`）：**全量**（不截断）；默认人读面逐字不变 ──
+    if as_paths or as_json:
+        stale2, missing2 = registry_stale()
+        if missing2:
+            for m in sorted(set(missing2)):
+                print("✗ 登记表指向的件不在盘：%s —— 判不了「登记过期」，拒绝静默放过" % m, file=sys.stderr)
+            return 2
+        rc2 = 0 if (total == 0 and not stale2) else 1
+        if as_paths:
+            seen = []
+            for k in ("禁用词", "全角标点(代码区)", "旧角色词", "已登记假红(豁免)"):
+                for x in hits[k]:
+                    pp = _hit_path(x)
+                    if pp not in seen:
+                        seen.append(pp)
+            for pp in seen:
+                print(pp)
+            return rc2
+        import json as _json
+        print(_json.dumps({
+            "schema": "check-zh-en/1",
+            "files": files,
+            "total": total,
+            "rc": rc2,
+            "hits": hits,
+            "stale": [{"path": p, "sub": s, "why": w} for (p, s, w, _h) in stale2],
+        }, ensure_ascii=False))
+        return rc2
     print("扫描文件数 = %d（全角标点只扫无编译器兜底的文件；.go 仅扫术语/旧角色词）" % files)
     for k, v in hits.items():
         print("\n── %s：%d 处" % (k, len(v)))

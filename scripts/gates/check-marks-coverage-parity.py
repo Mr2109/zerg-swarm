@@ -13,7 +13,7 @@
      · `scripts/gates/gate-coverage.config.json` 的 `scan.script_globs` 是**显式列**：
        每域一对 `"scripts/<域>/*.sh"` + `"scripts/<域>/*.py"`，另加两条顶层 glob ⇒ 现读 **10** 个域。
      · 两处**逐域对拍**：`check-gate-coverage.py` 全文不引 `公开标记.tsv`（0 命中 ✓），
-       `check-public-marks.py` 的域面是**写死的 9 个域常量**（`DOMAINS`）——
+       `check-public-marks.py` 的域面**由 `_derive_domains()` 派生**（`DOMAINS`，不再写死）——
        ⇒ 「门扫了这个域、表里一件都没登记」（新域只加 globs）与「表登记了这个域、门不扫它」
        这两向**谁都不会红**，全靠人记着。
 
@@ -54,9 +54,9 @@
        （有效判定仍安全，故不入退码 —— 但两器清单必须逐条一致，漂移要看得见）。
 
 覆盖缺口（**只报数 · 不入退码**，今天 = 1 个域）
-   门侧域里**不在** `check-public-marks.py` 的 9 域面（`DOMAINS`）内的域：该域的件由本门的 R1 看得见，
+   门侧域里**不在** `check-public-marks.py` 派生的域面（`DOMAINS`）内的域：该域的件由本门的 R1 看得见，
    而「漏登记」（该门 B2）**看不见它** ⇒ 该域件的「表里有没有它」今天无人管。
-   ★ 本笔**只报**、不判红、**不改那份 9 域常量**（那是另一件判据的真源，改它 = 改判据 ⇒ 必须走拍板）。
+   ★ 本笔**只报**、不判红、**不改那份派生域面**（那是另一件判据的真源，改它 = 改判据 ⇒ 必须走拍板）。
 
 单一真源（一律复用，绝不另抄一份解析器）
    · 标记表解析 —— `check-public-marks.py` 的 `load_table` / `TableError`（表不合规 ⇒ rc=2，A 档口径）
@@ -107,10 +107,10 @@ TOP = ""      # 顶层 glob（`scripts/*.sh`）的「域」标记：顶层（无
 
 # ── 域豁免登记表（**例外表一档** · 逐条 reason + date；缺任一 ⇒ rc=2，不是红）────────────────────
 # 口径（写死在这里，不另抄一份）：只收 **`scripts/` 下的面外域** —— 即不在
-#   `check-public-marks.py` 的 9 域面（`DOMAINS`）内、由表**逐件**登记为 `public=no` 的旧工作目录。
+#   `check-public-marks.py` 的派生域面（`DOMAINS`）内、由表**逐件**登记为 `public=no` 的旧工作目录。
 #   为什么它们可以豁免 R1-b：门覆盖面（config 的 script_globs）定义的是「**过门禁的脚本**」那一批，
 #   面外域从来就不在门覆盖面里（`check-gate-coverage.py` 的硬排除同口径）⇒ 两边本就不同批是**设计**。
-#   ★ 面内域（9 域 + `dev`）**一律不许**登记进本表：它们必须与门侧域集逐域对齐（那正是 R1 的牙齿）。
+#   ★ 面内域（`DOMAINS` ＋ `dev`）**一律不许**登记进本表：它们必须与门侧域集逐域对齐（那正是 R1 的牙齿）。
 EXEMPT_DOMAINS = (
     {"domain": "exportnames",
      "reason": "面外域·分域前的工作目录（Go module，非门覆盖面）：表逐件登记 public=no，"
@@ -360,7 +360,7 @@ def run(root=REPO, table=None, config=None, max_examples=40, out=None, exempt=No
         out.write("  · 空指 glob（声明了覆盖面却一件都匹配不到 ⇒ 不计进 B）：%d 条　%s\n"
                   % (len(empty_globs), " · ".join(empty_globs)))
     if gap:
-        out.write("  · 覆盖缺口（**只报数 · 不入退码**）：门侧 %d 个域不在 `check-public-marks.py` 的 9 域面（DOMAINS）"
+        out.write("  · 覆盖缺口（**只报数 · 不入退码**）：门侧 %d 个域不在 `check-public-marks.py` 的派生域面（DOMAINS）"
                   "内 ⇒ 该域件的「漏登记」今天无人管：%s\n" % (len(gap), " · ".join(gap)))
     if r1_a:
         dump("R1-a 点名（门扫这个域、表里一件都没登记 ⇒ 补表 或 从 globs 撤掉该域 · 不许放宽本判据 ✗）",
@@ -633,7 +633,7 @@ def self_test():
           % (total, total - bad, WANT_CASES))
     assert total == WANT_CASES, "自证用例数必须为 %d，实际 %d" % (WANT_CASES, total)
     print("⇒ 自检 %s" % ("全过（rc=0）" if bad == 0 else "有 %d 条断言不过（rc=1）" % bad))
-    return EXIT_OK if bad == 0 else EXIT_FAIL
+    return EXIT_OK if bad == 0 else EXIT_BLOCKED   # GAP-20261001-44：自检未过 ⇒ rc=2（与件头退出码表 L77-78 一致；原退回 EXIT_FAIL=1 与判词相矛盾）
 
 
 # ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗ ──────────

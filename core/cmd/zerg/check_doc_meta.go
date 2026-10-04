@@ -1661,14 +1661,18 @@ func (t *cdmTally) bump(status string) {
 
 // cdmReport —— py `run_scan()` 的返回面。
 type cdmReport struct {
-	files      int
-	tally      cdmTally
-	frozen     cdmTally
-	perRule    map[[2]string]int
-	perRuleOrd [][2]string
-	examples   map[[2]string][]string
-	skippedOrd []string
-	skippedCnt map[string]int
+	files           int
+	tally           cdmTally
+	frozen          cdmTally
+	frozenPrefixOrd []string       // 实际命中前缀（按 cdmFrozenPrefix ++ cdmFrozenPrefixAlt 真源顺序）
+	frozenPrefixCnt map[string]int // 前缀 → 命中篇数（缺口 GAP-20260926-37）
+	repoHits        int            // 仓内前缀命中篇数（faces.repo）
+	altHits         int            // 仓外取源根前缀命中篇数（faces.outrepo）
+	perRule         map[[2]string]int
+	perRuleOrd      [][2]string
+	examples        map[[2]string][]string
+	skippedOrd      []string
+	skippedCnt      map[string]int
 }
 
 // cdmRunScan —— py `run_scan()`。
@@ -1679,17 +1683,25 @@ func cdmRunScan(root string, targets []string, schema *cdmJNode, missingMode str
 		return nil, cdmUndecidable{"扫描域为空（没有任何 " + strings.Join(cdmDocExt, "/") + " 文档）"}
 	}
 	rep := &cdmReport{
-		files:      len(files),
-		perRule:    map[[2]string]int{},
-		examples:   map[[2]string][]string{},
-		skippedCnt: map[string]int{},
+		files:           len(files),
+		frozenPrefixCnt: map[string]int{},
+		perRule:         map[[2]string]int{},
+		examples:        map[[2]string][]string{},
+		skippedCnt:      map[string]int{},
 	}
+	frozenAll := append(append([]string{}, cdmFrozenPrefix...), cdmFrozenPrefixAlt...)
 	for _, fe := range files {
 		isFrozen := false
-		for _, p := range append(append([]string{}, cdmFrozenPrefix...), cdmFrozenPrefixAlt...) {
+		matched := ""
+		for _, p := range frozenAll {
 			if strings.HasPrefix(fe.rel, p) {
 				isFrozen = true
+				matched = p
+				break
 			}
+		}
+		if matched != "" {
+			rep.frozenPrefixCnt[matched]++
 		}
 		res := cdmJudgeFile(fe.rel, fe.abs, schema, missingMode, today)
 		bucket := &rep.tally
@@ -1716,6 +1728,16 @@ func cdmRunScan(root string, targets []string, schema *cdmJNode, missingMode str
 			rep.examples[key] = append(rep.examples[key],
 				fmt.Sprintf("%s → %s: %s", fe.rel, it.loc, it.msg))
 		}
+	}
+	// 实际命中前缀（真源顺序）＋ 两张脸的命中篇数（缺口 GAP-20260926-37）。
+	for _, p := range frozenAll {
+		rep.frozenPrefixOrd = append(rep.frozenPrefixOrd, p)
+	}
+	for _, p := range cdmFrozenPrefix {
+		rep.repoHits += rep.frozenPrefixCnt[p]
+	}
+	for _, p := range cdmFrozenPrefixAlt {
+		rep.altHits += rep.frozenPrefixCnt[p]
 	}
 	return rep, nil
 }
@@ -2548,6 +2570,16 @@ func checkDocMetaGateMain(stdout, stderr io.Writer, argv []string) int {
 		frozen.set("ok", rep.frozen.ok).set("violation", rep.frozen.violation).set("warn", rep.frozen.warn).
 			set("blocked", rep.frozen.blocked).set("skipped", rep.frozen.skipped)
 		obj.set("frozen", frozen)
+		fpv := []interface{}{}
+		for _, p := range rep.frozenPrefixOrd {
+			if rep.frozenPrefixCnt[p] > 0 {
+				fpv = append(fpv, p)
+			}
+		}
+		obj.set("frozen_prefix", fpv)
+		faces := cdmJObjNew()
+		faces.set("repo", rep.repoHits).set("outrepo", rep.altHits)
+		obj.set("faces", faces)
 		skipped := cdmJObjNew()
 		for _, k := range rep.skippedOrd {
 			skipped.set(k, rep.skippedCnt[k])

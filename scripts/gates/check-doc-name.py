@@ -83,22 +83,46 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT_DEFAULT = os.path.dirname(os.path.dirname(HERE))
 
 
+def current_version(repo_root=REPO_ROOT_DEFAULT):
+    """当前发布版（带 `v` 前缀，如 `v2.5.13`）—— 读**唯一真源** `core/internal/version/version.go`
+    的 `const Version = "X.Y.Z"`（与门⑫ `check-doc-cmds.py` 同读法）。
+
+    为什么读真源、不硬编码（`GAP-20260926-211` 本件 · `GAP-20260926-209` 门⑫）：默认语料根
+    钉死版本号 ⇒ 换版即**静默过期**（本件现读曾钉 `v2.5.10`，而真源已到 `v2.5.13`、同级
+    `Zerg-内部文档/项目文档/` 已有 `v2.5.14`）⇒ 只能治好今天、下版同病必复发。
+    读不到真源 ⇒ 返回 **None**（调用方退 `rc=2` fail-closed，**不当绿** —— 与全件「读不到不给结论」同口径）。
+    """
+    p = os.path.join(repo_root, "core", "internal", "version", "version.go")
+    try:
+        src = open(p, encoding="utf-8").read()
+    except OSError:
+        return None
+    m = re.search(r'const\s+Version\s*=\s*"([^"]+)"', src)
+    return ("v" + m.group(1)) if m else None
+
+
 def devdocs_root(repo_root=REPO_ROOT_DEFAULT):
     """开发文档面根（D3① · 与门⑫ `check-doc-cmds.py` **同根同默认**）。
 
-    优先级：`ZERG_DEVDOCS_ROOT` > `<仓根 的上一级>/Zerg-内部文档/项目文档/v2.5.10`。
+    优先级：`ZERG_DEVDOCS_ROOT` > `<仓根 的上一级>/Zerg-内部文档/项目文档/<当前版>`，其中 `<当前版>`
+    由 `current_version()` 读**唯一真源** `core/internal/version/version.go` 现算
+    （`GAP-20260926-211`：曾钉死 `v2.5.10` ⇒ 换版静默过期）。版本真源读不到 ⇒ 返回 None
+    （调用方退 `rc=2` 不给结论，不当绿）。
     为什么是**仓外**路径：`Zerg-内部文档/` 与主仓并列（2026-09-19 分家）、且它不开源 ⇒ 不进公开树；
     D3 只把它当**被管对象**读，不搬进仓。根不在 ⇒ `rc=2` 不给结论（设计稿 §五：不许静默当绿）。
     """
     env = os.environ.get("ZERG_DEVDOCS_ROOT")
     if env:
         return os.path.abspath(env)
+    ver = current_version(repo_root)
+    if not ver:
+        return None
     # 同级根归一（GAP-20260927-82 批1）：接现成同级根旋钮 ZERG_DOCS_ALT
     # （与 core/internal/statepath.DocsAltRoot() 同根同默认）/ ZERG_DOCS
     # （同 scriptInvDocsRoot）> <仓根 的上一级>/Zerg-内部文档 —— 全族「读外部树」判据件共用一个取根规则。
     sibling = (os.environ.get("ZERG_DOCS_ALT") or os.environ.get("ZERG_DOCS")
                or os.path.join(os.path.dirname(os.path.abspath(repo_root)), "Zerg-内部文档"))
-    return os.path.abspath(os.path.join(sibling, "项目文档", "v2.5.10"))
+    return os.path.abspath(os.path.join(sibling, "项目文档", ver))
 
 
 # 扫描域排除名单：逐字照抄《清单-命名规范化》§0（EXCL / PRE / 隐藏项口径）
@@ -1018,6 +1042,11 @@ def main(argv):
         # ── D3① 换根：开发文档面带自己的默认根（与门⑫ 同根同默认），不借用主仓根。
         #    只在**没显式点名目标**时换根 —— 显式 `--target` 的口径一字未改（点名谁就判谁）。
         root = devdocs_root(root)
+        if root is None:
+            print("BLOCKED：版本真源读不到（core/internal/version/version.go 里没有 "
+                  "`const Version = \"…\"`）⇒ 现算不出默认语料根 ⇒ 不给结论")
+            print("  口径：读不到真源不当绿（设计稿 §五）。换根请设 ZERG_DEVDOCS_ROOT。")
+            return 2
         if not os.path.isdir(root):
             print("BLOCKED：开发文档面根不在 ⇒ 不给结论：%s" % root)
             print("  口径：仓外根不可达（设计稿 §五：不许静默当绿 ✗）。换根请设 ZERG_DEVDOCS_ROOT。")

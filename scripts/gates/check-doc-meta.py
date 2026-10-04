@@ -583,8 +583,16 @@ def run_scan(root, targets, schema, missing_mode, count_frozen, max_examples, to
     per_rule = {}
     examples = {}
     skipped_cls = {}
+    frozen_hits = {}
     for rel, ap in files:
-        is_frozen = any(rel.startswith(p) for p in FROZEN_PREFIX + FROZEN_PREFIX_ALT)
+        matched = ""
+        for p in FROZEN_PREFIX + FROZEN_PREFIX_ALT:
+            if rel.startswith(p):
+                matched = p
+                break
+        is_frozen = bool(matched)
+        if matched:
+            frozen_hits[matched] = frozen_hits.get(matched, 0) + 1
         res = judge_file(rel, ap, schema, missing_mode, today)
         bucket = frozen if (is_frozen and not count_frozen) else tally
         bucket[res["status"]] += 1
@@ -594,8 +602,16 @@ def run_scan(root, targets, schema, missing_mode, count_frozen, max_examples, to
             key = (rule, "frozen" if (is_frozen and not count_frozen) else "live")
             per_rule[key] = per_rule.get(key, 0) + 1
             examples.setdefault(key, []).append("%s → %s: %s" % (rel, loc, msg))
+    # ★ 缺口 GAP-20260926-37（2026-10-04）：--json 增两格口径 —— frozen_prefix（**现算**：
+    #   FROZEN_PREFIX + FROZEN_PREFIX_ALT 的**实际命中前缀**，按真源顺序）与 faces（冻结区判定
+    #   用的两张脸各自命中篇数：仓内前缀 / 仓外取源根前缀）。目的：调用方**不再** importlib 现载
+    #   常量（账里那句「口径只能读源码」就是被这个逼出来的）。
+    eff_prefix = [p for p in (FROZEN_PREFIX + FROZEN_PREFIX_ALT) if frozen_hits.get(p, 0) > 0]
+    faces = {"repo": sum(frozen_hits.get(p, 0) for p in FROZEN_PREFIX),
+             "outrepo": sum(frozen_hits.get(p, 0) for p in FROZEN_PREFIX_ALT)}
     return {"files": len(files), "tally": tally, "frozen": frozen, "per_rule": per_rule,
-            "examples": examples, "skipped_cls": skipped_cls}
+            "examples": examples, "skipped_cls": skipped_cls,
+            "frozen_prefix": eff_prefix, "faces": faces}
 
 
 def print_report(rep, args):
@@ -958,6 +974,7 @@ def main(argv):
         print(json.dumps({"rc": rc, "verdict": verdict, "scope": args.scope,
                           "missing_mode": args.missing, "files": rep["files"],
                           "tally": rep["tally"], "frozen": rep["frozen"],
+                          "frozen_prefix": rep["frozen_prefix"], "faces": rep["faces"],
                           "skipped": rep["skipped_cls"],
                           "per_rule": {"%s/%s" % k: v for k, v in sorted(rep["per_rule"].items())}},
                          ensure_ascii=False, indent=2))

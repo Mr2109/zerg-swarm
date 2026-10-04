@@ -177,9 +177,38 @@ func TestCheckDocFreshnessGatePort(t *testing.T) {
 		t.Fatalf("--list-rules 失败：得 rc=%d out=%q", rcL, outL)
 	}
 
-	// ── ⑬ --self-test 自身必须全过（防恒绿/恒红）⇒ rc=0 + 末行自印组数 ─────
+	// ── ⑬ --self-test 自身必须全过（防恒绿/恒红）⇒ rc=0 + 末行自印组数 ───────
 	rcST, outST, _ := cdfRunIn(t, good, "--self-test")
 	if rcST != 0 || !strings.Contains(outST, "self-test：40 条通过 / 0 条失败") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%q", rcST, outST)
+	}
+}
+
+// ── `--repo` 与 `--config` 配对（py `GAP-20260926-184` · 本笔 Go 新行为）──
+// 显式给 `--repo <仓外副本>` 而未给 `--config` ⇒ config 按该 repo 推同一相对落点。
+// 改前：config 仍按 cwd 解析（cwd=裸目录 ⇒ 「缺配置文件 rc=2」）。有牙：见下两格。
+func TestCheckDocFreshnessRepoConfigPairing(t *testing.T) {
+	fx := cdfBuild(t, map[string]string{"a.md": "[好](b.md)\n", "b.md": "# b\n"}, nil)
+	cdfWithSibling(t, fx) // 让仓外同级文档仓在盘（d1 正常判）
+	defer os.Unsetenv("ZERG_DEVDOCS_ROOT")
+	bare := t.TempDir() // cwd = 裸目录（无 scripts/docs/配置）
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	if err := os.Chdir(bare); err != nil {
+		t.Fatal(err)
+	}
+
+	// ① 正控：--repo 生效 ⇒ config 按该 repo 推出 ⇒ 语料在场 ⇒ rc=0（改前会「缺配置文件 rc=2」）
+	var out, errb bytes.Buffer
+	rc := checkDocFreshnessGateMain(&out, &errb, []string{"--repo", fx, "d1"})
+	if rc != 0 || !strings.Contains(out.String(), "rc=0 OK（全绿）") {
+		t.Fatalf("--repo/--config 配对失败：应 rc=0（config 按 --repo 解析），得 rc=%d out=%q err=%q",
+			rc, out.String(), errb.String())
+	}
+	// ② 成对负控：显式 `--config` 指向不存在的件 ⇒ 仍 rc=2「缺配置文件」（配对不掩盖真缺件）
+	var out2, err2 bytes.Buffer
+	rc2 := checkDocFreshnessGateMain(&out2, &err2, []string{"--repo", fx, "--config", filepath.Join(bare, "nope.json"), "d1"})
+	if rc2 != 2 || !strings.Contains(err2.String(), "缺配置文件") {
+		t.Fatalf("成对负控失败：显式缺 --config 应 rc=2「缺配置文件」，得 rc=%d err=%q", rc2, err2.String())
 	}
 }

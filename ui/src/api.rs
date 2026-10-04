@@ -2103,14 +2103,34 @@ pub fn migrate_persistent_state_once() {
 mod ui_dir_tests {
     use super::*;
 
-    fn tmp(name: &str) -> std::path::PathBuf {
+    /// 用例自建目录的**自动回收**句柄（缺口 `GAP-20261001-58`：本模块原为「只预清不清尾」
+    /// ⇒ 每次跑测在 /private/var/tmp 留一枚 `zerg-ui-state-test-*` 目录）。
+    struct TmpDir(std::path::PathBuf);
+    impl std::ops::Deref for TmpDir {
+        type Target = std::path::Path;
+        fn deref(&self) -> &std::path::Path {
+            self.0.as_path()
+        }
+    }
+    impl AsRef<std::path::Path> for TmpDir {
+        fn as_ref(&self) -> &std::path::Path {
+            self.0.as_path()
+        }
+    }
+    impl Drop for TmpDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn tmp(name: &str) -> TmpDir {
         let d = std::env::temp_dir().join(format!(
             "zerg-ui-state-test-{}-{}",
             std::process::id(),
             name
         ));
         let _ = std::fs::remove_dir_all(&d);
-        d
+        TmpDir(d)
     }
 
     #[test]

@@ -30,6 +30,10 @@ func gchFixture(t *testing.T, shell string, extra map[string]string) string {
 			t.Fatal(err)
 		}
 	}
+	// ★ 门80 扫描面（`GAP-20261001-75` 路A）：第二件（inproc 分发表）也在扫描面内 ⇒ 夹具须同时落它。
+	if err := os.WriteFile(filepath.Join(zdir, "gate_inproc_table.go"), []byte("package main\n// inproc 分发表（夹具）\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for rel, body := range extra {
 		p := filepath.Join(root, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -96,6 +100,16 @@ func TestCheckGateHealthGatePort(t *testing.T) {
 		gchGoodShell+"var p = \"scripts/gates/foo\"\n", nil))
 	if rcHard != 1 || !strings.Contains(outHard, "名件路径") {
 		t.Fatalf("负控④-写死名件路径 失败：得 rc=%d out=%q", rcHard, outHard)
+	}
+
+	// ── 负控⑥（门80 扫描面 · `GAP-20261001-75` 路A）：按名名单标记落在**第二件**
+	//    `gate_inproc_table.go`（而非壳件本体）⇒ 也必须被抓（证扫描面确实覆盖该件）。
+	rcShell2, outShell2, _ := gchRun(t, "--root", gchFixture(t, "", map[string]string{
+		"core/cmd/zerg/family_gate_check.go": gchGoodShell,
+		"core/cmd/zerg/gate_inproc_table.go": gchGoodShell + "var gateCheckDeny = 1\n",
+	}))
+	if rcShell2 != 1 || !strings.Contains(outShell2, "按名名单/特殊化标记") {
+		t.Fatalf("负控⑥-第二壳件扫描面 失败：得 rc=%d out=%q", rcShell2, outShell2)
 	}
 
 	// ── 负控⑤：注册表计数 ≠ 现读名录件数 ⇒ rc=1 ──────────────────────────

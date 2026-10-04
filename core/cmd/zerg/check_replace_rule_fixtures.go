@@ -117,7 +117,7 @@ const crrfIsoPrefix = "!夹具"
 const crrfFixtureSuffix = "_test.go"
 
 // crrfJSONFields —— 「机器面字段表」**唯一真源**（装包封与「不认的名 ⇒ rc=2」两处同读）。
-var crrfJSONFields = []string{"rules", "hits", "files", "fixtures", "files_dedup", "files_sum", "per_rule"}
+var crrfJSONFields = []string{"rules", "hits", "files", "fixtures", "files_dedup", "files_sum", "per_rule", "tier"}
 
 // crrfExcludeDirs —— 通用排除表（目录**名**成员判定；读表不打序）。
 var crrfExcludeDirs = map[string]bool{
@@ -161,6 +161,16 @@ type crrfHit struct {
 	ex     []crrfExample
 	total  int
 	detail []crrfDetailEntry
+}
+
+// crrfISO —— py `json_payload` 的 `iso` 入参（夹具隔离分档格的数据面）。
+// py 侧是 dict：`{"isolated": [...], "per_glob": [(glob, n), …], "dead": [...], "eaten": bool}`；
+// Go 用结构体（nil ⇒ 零值，逐格等价 py `iso or {}` 与 `.get(k, 默认值)`）。
+type crrfISO struct {
+	isolated []string
+	perGlob  []crrfIsoCount
+	dead     []string
+	eaten    bool
 }
 
 // ── py 语义薄壳 ─────────────────────────────────────────────────────────
@@ -842,7 +852,7 @@ func crrfJSONStrList(xs []string) string {
 
 // crrfJSONPayload —— py `json_payload`：键**固定序**（rules, fixtures, hits, files, files_dedup,
 // files_sum, per_rule）按 `want` 逐键决定在场；老四格一字不改（`files` 仍是去重集）。
-func crrfJSONPayload(want []string, nRules, nFixtures int, hits []crrfHit) string {
+func crrfJSONPayload(want []string, nRules, nFixtures int, hits []crrfHit, iso *crrfISO) string {
 	seen := map[string]bool{}
 	dedup := []string{}
 	for _, h := range hits {
@@ -906,6 +916,27 @@ func crrfJSONPayload(want []string, nRules, nFixtures int, hits []crrfHit) strin
 		}
 		parts = append(parts, crrfJSONStr("per_rule")+": ["+strings.Join(prs, ", ")+"]")
 	}
+	// 缺口 GAP-20260926-146（rrf-json-no-tier-cell）：夹具隔离分档格
+	if w["tier"] {
+		i := crrfISO{}
+		if iso != nil {
+			i = *iso
+		}
+		eaten := "false"
+		if i.eaten {
+			eaten = "true"
+		}
+		var per []string
+		for _, pc := range i.perGlob {
+			per = append(per, "{"+crrfJSONStr("glob")+": "+crrfJSONStr(pc.pat)+
+				", "+crrfJSONStr("files")+": "+strconv.Itoa(pc.n)+"}")
+		}
+		parts = append(parts, crrfJSONStr("tier")+": {"+
+			crrfJSONStr("isolated")+": "+crrfJSONStrList(i.isolated)+
+			", "+crrfJSONStr("per_glob")+": ["+strings.Join(per, ", ")+"]"+
+			", "+crrfJSONStr("dead")+": "+crrfJSONStrList(i.dead)+
+			", "+crrfJSONStr("eaten")+": "+eaten+"}")
+	}
 	return "{" + strings.Join(parts, ", ") + "}"
 }
 
@@ -959,7 +990,7 @@ const crrfHelp = crrfUsage + "\n" +
 	"  --max-examples MAX_EXAMPLES\n" +
 	"                        每条规则最多列几件（默认 5）\n" +
 	"  --json JSON           机器面字段（逗号分隔：rules,hits,files,fixtures,files_dedup,files\n" +
-	"                        _sum,per_rule；**不认的名 ⇒ 用法错 rc=2**）\n" +
+	"                        _sum,per_rule,tier；**不认的名 ⇒ 用法错 rc=2**）\n" +
 	"  --list-rules          打判据 / 扫描面 / 档位\n" +
 	"  --self-test           成对负控（合成夹具 · 不碰真目标）\n"
 
@@ -1105,7 +1136,9 @@ func crrfListRules() string {
 	p("退码：0 全绿 · 1 有命中 · 2 不给结论（规则表/白名单缺件 · 空转 · 自检不过 · **`--json` 字段名不认**）")
 	p("机器面：`--json <字段,逗号分隔>` —— 老四格 `rules,fixtures,hits,files`（`files` = **去重集**）" +
 		"+ 新三格 `files_dedup`（同值别名）/ `files_sum`（**未去重和**）/ `per_rule[]`（逐规则" +
-		"`{rule, files, hits, lines}` · `lines` = 逐条 `{件,行,原文}`）—— 只加字段，判据与退码不动；" +
+		"`{rule, files, hits, lines}` · `lines` = 逐条 `{件,行,原文}`）" +
+		"+ `tier`（夹具隔离分档 `{isolated, per_glob, dead, eaten}` · 缺口 GAP-20260926-146）" +
+		" —— 只加字段，判据与退码不动；" +
 		"**不认的字段名 ⇒ 用法错 `rc=2` ＋ 印字段表**（缺口 `Q-150`：打错的名与零命中必须分得开）")
 	return b.String()
 }
@@ -1262,6 +1295,21 @@ func crrfSelfTest(stdout io.Writer) int {
 	} else {
 		bad = append(bad, "per_rule")
 		P(fmt.Sprintf("   ✗ per_rule：%v", hitsM))
+	}
+	// 缺口 GAP-20260926-146：tier 分档格的成对负控
+	tierPayload := crrfJSONPayload([]string{"tier"}, 0, 0, nil, &crrfISO{
+		isolated: []string{"core/x/iso_test.go"},
+		perGlob:  []crrfIsoCount{{pat: "core/x/*_test.go", n: 1}, {pat: "nope/*_test.go", n: 0}},
+		dead:     []string{"nope/*_test.go"},
+		eaten:    false,
+	})
+	wantTier := `{"tier": {"isolated": ["core/x/iso_test.go"], "per_glob": [{"glob": "core/x/*_test.go", "files": 1}, {"glob": "nope/*_test.go", "files": 0}], "dead": ["nope/*_test.go"], "eaten": false}}`
+	if tierPayload == wantTier {
+		ok++
+		P("   OK tier 分档格：isolated / per_glob / dead / eaten 四格齐")
+	} else {
+		bad = append(bad, "tier")
+		P(fmt.Sprintf("   BAD tier：%s", tierPayload))
 	}
 	// 隔离体检
 	perI, deadI, e0 := crrfIsolationAudit([]string{"core/internal/demo/*_test.go", "nope/*_test.go"},
@@ -1467,7 +1515,7 @@ func checkReplaceRuleFixturesGateMain(stdout, stderr io.Writer, argv []string) i
 		fmt.Fprintf(stdout, "   夹具隔离：**0 条** glob —— 规则表里没有生效的 `!夹具` 条目"+
 			" ⇒ 隔离机制在场但**空转**，件面 %d 个夹具**全部在判据内**\n", scanned)
 	}
-	perIso, _, eatenIso := crrfIsolationAudit(isolated, isoFiles, scanned)
+	perIso, deadIso, eatenIso := crrfIsolationAudit(isolated, isoFiles, scanned)
 	for _, pc := range perIso {
 		mark := ""
 		if pc.n == 0 {
@@ -1500,7 +1548,8 @@ func checkReplaceRuleFixturesGateMain(stdout, stderr io.Writer, argv []string) i
 	}
 
 	if len(want) > 0 {
-		fmt.Fprintln(stdout, crrfJSONPayload(want, len(rules), len(fixtures), hits))
+		iso := &crrfISO{isolated: isoFiles, perGlob: perIso, dead: deadIso, eaten: eatenIso}
+		fmt.Fprintln(stdout, crrfJSONPayload(want, len(rules), len(fixtures), hits, iso))
 	}
 
 	if len(hits) == 0 {

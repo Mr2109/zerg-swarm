@@ -2911,6 +2911,22 @@ func cdfParseArgs(argv []string, stdout, stderr io.Writer) (*cdfArgs, int, bool)
 			return nil, cdfRCBlocked, true
 		}
 	}
+	// ── `--repo` 与 `--config` 配对（py `GAP-20260926-184`）───────────────────────
+	//   现病：只给 `--repo <仓外副本>`、不给 `--config` 时，config 仍按其它口径解析
+	//   ⇒ 拿 /tmp 副本跑时误报「缺配置文件」（看着像环境问题、实为参数语义分家）。
+	//   修：显式给了 `--repo` 而未给 `--config` ⇒ 按该 repo 推同一相对落点（不写死）。
+	repoGiven, configGiven := false, false
+	for _, x := range argv {
+		if x == "--repo" || strings.HasPrefix(x, "--repo=") {
+			repoGiven = true
+		}
+		if x == "--config" || strings.HasPrefix(x, "--config=") {
+			configGiven = true
+		}
+	}
+	if repoGiven && !configGiven {
+		a.config = cdfPyOsJoin(a.repo, "scripts/docs/doc-freshness.config.json")
+	}
 	return a, 0, false
 }
 

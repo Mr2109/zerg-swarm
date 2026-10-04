@@ -240,40 +240,22 @@ func publishSetMapEntries(lines []string) map[string]string {
 	return out
 }
 
-// publishSetPrivateFaceRules —— 私有面清单的**行口径**（逐条镜像
-// `check-public-tree-private.py:47-61 load_rules`）：跳空行与 `#` 注释 · `!` 开头 = 显式豁免
-// （去掉 `!` 再 strip，优先级最高）· 行尾 `/` = 目录 · 其余 = 单件（**精确匹配**）。
+// publishSetPrivateFaceRules —— 私有面清单的**行口径**薄壳。唯一实现已抽到共享件
+// `private_face_rules.go` 的 `parsePrivateFaceRules`（缺口 `GAP-20260927-414`：此前本件与
+// `check_public_tree_private.go` 的 `cptpLoadRules` 各镜像一份同型解析 ⇒ 真源一改两处各漂、
+// 双写风险）。保留本名与签名 = 既有调用点（本件 `publishSetLoadChain` · `check_publish_face_sync.go`）
+// 与既有判据件**一字不动**。
 //
-// ★ 为什么逐条镜像而不是「读一份自己写的表」：这份清单是**发布链的一条真源**（`mirror-public-lib.py:817`
-// 加载它），清单**语法**由那个解析器定义 —— 本件照抄它的行口径，才叫「同源」，不叫「第二份口径」。
+// strip 传 `strings.TrimSpace`（原口径 · 与原「本件自算」逐字同源）。
 func publishSetPrivateFaceRules(lines []string) (dirs, files, allowed []string) {
-	dirs, files, allowed = []string{}, []string{}, []string{}
-	for _, raw := range lines {
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		switch {
-		case strings.HasPrefix(line, "!"):
-			allowed = append(allowed, strings.TrimSpace(line[1:]))
-		case strings.HasSuffix(line, "/"):
-			dirs = append(dirs, line)
-		default:
-			files = append(files, line)
-		}
-	}
-	return dirs, files, allowed
+	return parsePrivateFaceRules(lines, strings.TrimSpace)
 }
 
-// publishSetPrivateAllowed —— `check-public-tree-private.py:64-65 is_allowed` 的逐条镜像：
-// `rel == a` 或（`a` 以 `/` 结尾且 `rel` 以 `a` 开头）。
+// publishSetPrivateAllowed —— 私有面清单的**豁免口径**薄壳。唯一实现已抽到共享件
+// `private_face_rules.go` 的 `privateFaceAllowed`（缺口 `GAP-20260927-414`）。保留本名与签名 =
+// 既有调用点（本件 `privateFaceHit` · `check_publish_face_sync.go`）**一字不动**。
 func publishSetPrivateAllowed(rel string, allowed []string) bool {
-	for _, a := range allowed {
-		if rel == a || (strings.HasSuffix(a, "/") && strings.HasPrefix(rel, a)) {
-			return true
-		}
-	}
-	return false
+	return privateFaceAllowed(rel, allowed)
 }
 
 // privateFaceHit —— `mirror-public-lib.py:862-871 private_face_hit` 的逐条镜像：

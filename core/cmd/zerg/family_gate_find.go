@@ -13,8 +13,9 @@
 // 只有第一处**按名字点名**：
 //
 //	① `precommit-gates.sh` 的 `add_step <scope> "<名>" <模式> "<目录>" "<命令>"` —— 命令串点名；
-//	② `all.sh:179` `for f in "${GATEDIR}"/*.py` —— **按通配收**：件在即跑得到，**名字一次都不出现**，
-//	   且**只收 `.py`** ⇒ 11 只 `.sh` 门在这一面完全不可见 ✗；
+//	② `all.sh` 收集面 `for f in "${GATEDIR}"/*.py "${GATEDIR}"/*.sh` —— **按通配收**：件在即跑得到，
+//	   **名字一次都不出现**；★ 现读 **`.py` 与 `.sh` 都收**（`GAP-20260927-65` 补 `.sh` 后），
+//	   行号由 `gateAllShFace` **读 all.sh 现算** —— ✗ 不再写死 `@179`（`GAP-20260928-111`：旧写死行号已漂到自检段）；
 //	③ `real-gates.sh` —— 一份**名录**（`--only <门名>` 的过滤面），且现盘门面收敛为 `*.py`；
 //	   名单外的件**默认档保守不进真跑面**（`skip-unclassified`：副作用未经实测 · `GAP-20260928-129`），
 //	   只有 `--only <名>` 显式点名那一支才真跑（**不是**「可跑」✗ —— `GAP-20260928-129`）。
@@ -375,13 +376,31 @@ func gateRealGatesUnlisted(base string) string {
 		"⇒ **保守不进真跑面**；只有 `--only " + base + "` 显式点名那一支才真跑"
 }
 
+// gateAllShFace —— all.sh 收集面的**现读**（缺口 `GAP-20260928-111` / `GAP-20260928-50`）：
+//
+//	读 `scripts/gates/all.sh` 找那只 `for f in "${GATEDIR}"/*…` 收集循环，取它的**行号**与是否含 `*.sh`。
+//	★ 旧形态把收集面**写死成 `@179`** ⇒ 行号一漂就指向自检段；且旧文硬说「只收 `.py`」
+//	而现读已含 `.sh` ⇒ `.sh` 门被印成「该面不收」＝**伪结论**。两处**同源现算**：行号与后缀面都出自这一处
+//	（两类行的结论不再相反 ✗）。读不到 ⇒ ok=false（调用方印「判不了」，不当一切正常）。
+func gateAllShFace(root string) (line int, collectsSh bool, ok bool) {
+	b, err := os.ReadFile(filepath.Join(root, "scripts", "gates", "all.sh"))
+	if err != nil {
+		return 0, false, false
+	}
+	for i, ln := range strings.Split(string(b), "\n") {
+		if strings.Contains(ln, "for f in") && strings.Contains(ln, `"${GATEDIR}"/*`) {
+			return i + 1, strings.Contains(ln, "*.sh"), true
+		}
+	}
+	return 0, false, false
+}
+
 // gateWiringNote —— 一件门件在**三处接线面**的现读结论（同夜补的第二半）：
 //
 //	precommit：`add_step` 的命令串里点到它的那几步（步名 + 出处行）；
-//	all.sh  ：收集面 = `${GATEDIR}/*.py` 的**通配**（现读 `scripts/gates/all.sh` 那段 `for f in …`)：
-//	          `.py` ⇒ 按通配收（**实际生效**）；`.sh` ⇒ **面态＝不适用**（`GAP-20260928-102`：
-//	          旧文案只说「不收 … 不可见」⇒ 读成「这件没接线」✗；现补一句显式的「对 .sh 件不生效」
-//	          ＋「该面不含它 ≠ 没接线」。**只加信息**：`.py` 路径的输出字节一字未动）；
+//	all.sh  ：收集面 = `for f in "${GATEDIR}"/*.py "${GATEDIR}"/*.sh`（行号由 `gateAllShFace` **现算**）
+//	          —— **`.py` 与 `.sh` 都按通配收**（`GAP-20260927-65` 补 `.sh` 后）；
+//	          ★ `GAP-20260928-50`：旧文案对 `.sh` 一律印「该面不收」而现读已收 ⇒ 两类行相反；现按同一处现读判；
 //	          ★ 后缀判按**门件文件名**（`gateWhatFileName`：从命令串里认那一概含 `gates/` 的件）
 //	          —— `GAP-20260928-113`：旧形态对整串取 `filepath.Base` ⇒ 步骤行的**带实参命令串**
 //	          （`…/check-x.py --scope devdocs`）后缀判不成立 ⇒ `.py` 门件被**误印成「该面不收」** ✗；
@@ -411,19 +430,20 @@ func gateWiringNote(root, what string, decls []gateStepDecl, unc []gateStepUncer
 		parts = append(parts, "precommit: 未点名（不在步骤表里）")
 	}
 
-	if strings.HasSuffix(base, ".py") {
-		parts = append(parts, "all.sh: 按通配收（`*.py` @179）")
-	} else if strings.HasSuffix(base, ".sh") {
-		// ★ 治法①（`GAP-20260928-102`）：`.sh` 门件在这一面**恒**不出现（收集面是 `*.py` 通配），
-		//   而旧文案只说「不收 … 不可见」⇒ 读起来像「这件没接线」✗。**只加信息**：把这一面的
-		//   **面态**（对该件**不适用**，不是「未接线」）显式写出来；`.py` 路径的字节**一字不动**
-		//   （两态判据②：同一枚 `.py` 门件跑同一条 ⇒ 既有字节逐字同）。
-		parts = append(parts, "all.sh: **不收**（`all.sh:179` 只收 `*.py` ⇒ 非 `.py` 件（含 `.sh` 门）在这一面不可见）"+
-			gateFaceNotApplicable("all.sh", ".sh")+
-			"（该面的收集面就是 `${GATEDIR}/*.py` 通配 · 现读 `all.sh`）"+
-			"—— 「该面不含它」≠「这件没接线」：`.sh` 门件的生效面看本格点名它的那一项")
+	// ★ GAP-20260928-111：行号**不写死** —— 读 all.sh 现算收集面那一行（旧写死 `@179` 已漂到自检段）。
+	// ★ GAP-20260928-50：`*.py`/`*.sh` **同源现读** —— 旧形态把 `.sh` 一律印成「该面不收」，
+	//   而现读收集面已含 `.sh`（`GAP-20260927-65`）⇒ **两类行结论相反**；此处按**同一处现读**判两后缀。
+	allshLine, allshSh, allshOK := gateAllShFace(root)
+	exts := "`*.py`"
+	if allshSh {
+		exts = "`*.py`+`*.sh`"
+	}
+	if allshOK && (strings.HasSuffix(base, ".py") || (strings.HasSuffix(base, ".sh") && allshSh)) {
+		parts = append(parts, fmt.Sprintf("all.sh: 按通配收（%s @%d）", exts, allshLine))
+	} else if allshOK {
+		parts = append(parts, fmt.Sprintf("all.sh: **不收**（`all.sh:%d` 只收 %s ⇒ 非目标后缀件在这一面不可见）", allshLine, exts))
 	} else {
-		parts = append(parts, "all.sh: **不收**（`all.sh:179` 只收 `*.py` ⇒ 非 `.py` 件（含 `.sh` 门）在这一面不可见）")
+		parts = append(parts, "all.sh: 读不到该件 ⇒ 判不了")
 	}
 
 	if rb, err := os.ReadFile(filepath.Join(root, "scripts", "gates", "real-gates.sh")); err == nil {

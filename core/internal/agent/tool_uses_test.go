@@ -83,6 +83,33 @@ func TestToolEventsAppend(t *testing.T) {
 	}
 }
 
+// TestToolVersionUnregisteredEmpty — GAP-20260927-174① 的聚焦判据：
+// 台账未登记项**不许**静默回落 v1.0.0（那会把「台账里没有」装扮成「台账里有、值 v1.0.0」= 拿台账当证据）。
+func TestToolVersionUnregisteredEmpty(t *testing.T) {
+	toolUseMu.Lock()
+	orig := toolVersions
+	toolVersions = map[string]string{"read": "v1.0.2"}
+	toolUseMu.Unlock()
+	defer func() {
+		toolUseMu.Lock()
+		toolVersions = orig
+		toolUseMu.Unlock()
+	}()
+
+	if got := ToolVersion("read"); got != "v1.0.2" {
+		t.Fatalf("已登记项应回台账原值：得 %q", got)
+	}
+	if got := ToolVersion("不存在的工具-xyz"); got != "" {
+		t.Fatalf("未登记项应回空串（不许静默回落 v1.0.0）：得 %q", got)
+	}
+	if v, ok := ToolVersionRegistered("不存在的工具-xyz"); ok || v != "" {
+		t.Fatalf("ToolVersionRegistered 未登记应返回 (\"\",false)：得 (%q,%v)", v, ok)
+	}
+	if v, ok := ToolVersionRegistered("read"); !ok || v != "v1.0.2" {
+		t.Fatalf("ToolVersionRegistered 已登记应返回 (v1.0.2,true)：得 (%q,%v)", v, ok)
+	}
+}
+
 // TestMain —— 2026-09-13：本包测试会经 exec.go 调 RecordToolUse，默认落在**真机**
 // `~/.zerg/state/tool_uses.json`（实测整包跑一次 glob/todo 计数各 +1，见 B7 复核记录）。
 // 测试不得污染真机状态 ⇒ 先尝试进程内改环境（若 statepath 是惰性读则足够），
