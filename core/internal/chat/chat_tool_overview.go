@@ -84,6 +84,37 @@ func latestVersionDir() string {
 	return fallback
 }
 
+// currentVersionDir — **现行**版目录（缺口 `GAP-20260927-121`）。
+//
+// 为什么：旧路只按版本号 glob `v*` + 发布件判据取「读哪份档案」，而「当前版」是**管理动作**（改目录名就换版）。
+// 本函数引入**去版本号的现行指针** `<base>/现行`：
+//
+//	· 指针是符号链接或目录 ⇒ 直接用它；
+//	· 指针是文本件（首行 = 目录名）⇒ 解得到在盘子目录则用它；
+//	· **缺指针 ⇒ 回退现读**（`latestVersionDir()`）—— 行为一字不改（向后兼容）。
+//
+// 这样换版只改一个指针、不用改代码；而未建指针的环境行为不变。
+func currentVersionDir() string {
+	base := zergDocsBase()
+	if base == "" {
+		return latestVersionDir()
+	}
+	ptr := filepath.Join(base, "现行")
+	if st, err := os.Stat(ptr); err == nil && st.IsDir() {
+		return ptr
+	}
+	if b, err := os.ReadFile(ptr); err == nil {
+		name := strings.TrimSpace(strings.SplitN(string(b), "\n", 2)[0])
+		if name != "" {
+			d := filepath.Join(base, name)
+			if st, e := os.Stat(d); e == nil && st.IsDir() {
+				return d
+			}
+		}
+	}
+	return latestVersionDir()
+}
+
 // releaseArtifactGlob — 「已发布版」的**最低证据**：目录里有发布件 = 使用指南。
 // 为什么不拿 `INDEX.md` 当判据：`v2.6` 那种两文件壳里也有 INDEX.md ⇒ 区分不出「在途设计稿」；
 // 而使用指南正是 `section=使用` 要读的件 ⇒ 判据与消费方同源（读得到的才算已发布版）。
@@ -125,7 +156,7 @@ func compareVersion(a, b []int) int {
 
 // zergOverviewFull — 全景（精炼 ~800 字——架构 + 使用精简 + 变化 + 状态 + 文档 + 模块 + 工具）
 func zergOverviewFull() (string, error) {
-	verDir := latestVersionDir()
+	verDir := currentVersionDir()
 	// ★ 当前版真源 = version.Tag（编译期常量）——**不**取扫盘结果的目录名：
 	// latestVersionDir() 只决定「读哪份文档档案」（发布件多在旧版 ⇒ 它常挑到上一版），
 	// 拿它的目录名当「当前版」会报错版本；版本名一律钉 version.Version 这一真源（2026-10-02 拍）。
@@ -248,7 +279,7 @@ func recentChanges(n int) string {
 
 // zergOverviewSection — 模块/使用下钻（动态映射——模块名匹配文档 + 代码目录 + 相关工具）
 func zergOverviewSection(sec string) (string, error) {
-	verDir := latestVersionDir()
+	verDir := currentVersionDir()
 	// 特殊 section: 使用/指南 → 使用指南文档
 	if sec == "使用" || sec == "指南" || sec == "usage" || sec == "使用虫族" {
 		if verDir != "" {

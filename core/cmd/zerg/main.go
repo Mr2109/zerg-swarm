@@ -1209,27 +1209,41 @@ func init() {
 			path:    []string{"code", "find"},
 			kind:    "CodeFind",
 			summary: "在码里找一处东西在哪（只读取证 · 手搓 grep/git grep 的替身 · **扫工作树**：含未跟踪件与被忽略目录，比 `git grep` 的索引面多一片（两个面各扫多少件，命令每跑一次自己报一行「扫了 N 件」—— **不在这里写死**，写了就会烂；差值由运行时的数说话）；跳过 >2MB 的件）",
-			usage:   "zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--limit <N>] [--count | --files-only] [--full] [--hidden] [--include-runtime] [--json <字段>]",
+			usage:   "zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--limit <N>] [-i|--ignore-case] [--after <N>|-A<N>] [--before <N>|-B<N>|-C<N>] [--kind <代码|注释>] [--timeout <秒>] [--count | --files-only] [--full] [--hidden] [--include-runtime] [--json <字段>]",
 			arity:   "any",
 			args:    []string{"正则（POSIX 语法）"},
 			// ★ `GAP-20260928-118`（2026-09-28 · 本枚）：字段表补上 `truncated` —— 截断位此前
 			// 只能从顶层包封读，字段面没有直读口（给 `truncated` 即报未知字段）。三档面（默认 /
 			// `--count` / `--files-only`）逐行都产出它（**跑级真值**：本跑真裁了 = true，没裁 = false）
 			// ⇒ 表与产出集同源；不给这一格时输出逐字节不变（`marshalObject` 只投影点名的格）。
-			fields:   []string{"path", "line", "text", "truncated"},
+			// ★ `GAP-20260929-29`（2026-10-04）：字段表再补上 `face`（工作树面 / 索引面）—— 与
+			// `meta.face` 同源（`codeFaceWorktree`）⇒ 条目面与包封面各有一个直读口；同样只在
+			// `--json` 那一态落键、不给这一格时输出逐字节不变。
+			fields:   []string{"path", "line", "text", "kind", "match", "truncated", "face"},
 			endpoint: "",
 			run:      cmdCodeFind,
 		},
 		{
 			path:     []string{"code", "show"},
 			kind:     "CodeShow",
-			summary:  "看源码里**某一行**长什么样（带 `件:行` · 只读取证 · 手搓 `sed -n` / `awk` 的替身）",
-			usage:    "zerg code show <件:行 | 件:起-止> [--ctx <N>] [--full] [--json <字段>]",
+			summary:  "看源码里**某一行**长什么样（带 `件:行` · 只读取证 · 手搓 `sed -n` / `awk` 的替身）· 纯件名 = **整件读**（缺口 `GAP-20261001-59` · 手搓 `read_file` 的正门）",
+			usage:    "zerg code show <件:行 | 件:起-止 | 件> [--ctx <N>] [--batch <件:行,…>] [--full] [--json <字段>]",
 			arity:    "any",
-			args:     []string{"件:行（件 = 仓相对路径 · 行 = 正整数）"},
+			args:     []string{"件:行（件 = 仓相对路径 · 行 = 正整数）· 纯件名 = 整件读"},
 			fields:   []string{"path", "line", "text", "target"},
 			endpoint: "",
 			run:      cmdCodeShow,
+		},
+		{
+			path:     []string{"code", "diff"},
+			kind:     "CodeDiff",
+			summary:  "按件与 HEAD 的差（只读 · 手搓 `git diff` 的替身；`--stat` 另附整段差异统计）",
+			usage:    "zerg code diff <件> [--stat] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"件（仓相对路径）"},
+			fields:   codeDiffFields,
+			endpoint: "",
+			run:      cmdCodeDiff,
 		},
 		{
 			path:     []string{"repo", "status"},
@@ -2247,6 +2261,58 @@ func init() {
 			endpoint: "",
 			run:      cmdModelAdd,
 		},
+
+		// ☆ 波3-A 命令面真修（缺口 `GAP-20260925-31`）：名册「删一条 / 改一条」两动作面。
+		//   定档理由（逐条读 `family_config.go:cmdModelRm` 得）：唯一写盘点是 `writeFleetAtomic`
+		//   （同目录临时件 + rename 原子写 · 写完读回再校 · 任一步不过 ⇒ 回滚），只动 `models:` 段里
+		//   点准的那一条 ⇒ 可逆（把删掉那行加回即原状）⇒ **D2**（`--yes` 即可），不是 D3。
+		//   三态面：`--dry-run` ⇒ 计划件走 stdout + rc=0 且一个字节都不落；缺 `--yes` ⇒ 计划件走 stderr
+		//   + rc=2（fail-closed）；`--dry-run` 与 `--yes` 同给 ⇒ 2（`guard.go:dryRunYesConflict`）。
+		{
+			path:     []string{"model", "rm"},
+			kind:     "ModelRm",
+			summary:  "从名册件（`gateway/fleet.yaml`）**先校验后写**删一条模型（`--dry-run` 先行 · 真写要 `--yes` · 写完读回再校 · 任一步不过 ⇒ 回滚）——按 `--model`（块名）+ `--host`（该条 `host:`）点准那一条；删空则连块首行一起删",
+			usage:    "zerg model rm --model <模型名> --host <主机> [--file <GGUF 路径>] --confirm <模型名> [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"模型名（--model：`models:` 段的键/块名）", "主机（--host：要删那条的 `host:`）"},
+			fields:   []string{"model", "host", "file", "fleet", "line", "block_removed", "remaining"},
+			danger:   &dangerSpec{dangerD2, "模型名（`--model`）", "从名册件 `gateway/fleet.yaml` 的 `models:` 段删一条（同目录临时件 + rename 原子写 · 写完读回再校 · 任一步不过 ⇒ 回滚；不碰主控运行态）；可逆：把删掉那一行加回即原状", "缺口账 GAP-20260925-31 · 同族写面先例 zerg model add（D2）· §九 M3 C1", true},
+			opened:   true,
+			endpoint: "",
+			run:      cmdModelRm,
+		},
+		{
+			path:     []string{"model", "set"},
+			kind:     "ModelSet",
+			summary:  "改名册件（`gateway/fleet.yaml`）里**点准的那一条**的字段（`--set k=v` · 保序原位改 · 其余字段逐字保留 · `--dry-run` 先行 · 真写要 `--yes` · 写完读回再校 · 任一步不过 ⇒ 回滚）——字段名闭集，无名键 / 列表值 / 值域不合 ⇒ 退 2（不猜）",
+			usage:    "zerg model set --model <模型名> --host <主机> [--file <GGUF 路径>] --set k=v [--set k=v …] --confirm <模型名> [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"模型名（--model：`models:` 段的键/块名）", "主机（--host：要改那条的 `host:`）"},
+			fields:   []string{"model", "host", "fleet", "line", "changed", "entry"},
+			danger:   &dangerSpec{dangerD2, "模型名（`--model`）", "改名册件 `gateway/fleet.yaml` 里点准的那一条的字段（同目录临时件 + rename 原子写 · 写完读回再校 · 任一步不过 ⇒ 回滚；不碰主控运行态）；可逆：把字段改回即原状", "缺口账 GAP-20260925-31 · 同族写面先例 zerg model add（D2）· §九 M3 C1", true},
+			opened:   true,
+			endpoint: "",
+			run:      cmdModelSet,
+		},
+
+		// ☆ 波3-A 命令面真修（缺口 `GAP-20260925-32`）：机器名册 `nodes:` 的第一条改面。
+		//   定档理由（`family_config.go:cmdContextSetPort` 现读）：只改 `~/.zerg/contexts/<档>.yaml`
+		//   里**现成的** `port:` 一行（临时件 + rename 原子写 · 写完读回逐字节再校 · 任一步不过 ⇒ 回滚）；
+		//   可逆（把端口改回即原状）⇒ **D2**（`--yes` 即可），不是 D3。
+		//   三态面：`--dry-run` ⇒ 计划件走 stdout + rc=0 且一个字节都不落；缺 `--confirm`/`--yes` ⇒ 2（fail-closed）。
+		{
+			path:     []string{"context", "set-port"},
+			kind:     "ContextSetPort",
+			summary:  "改机器名册（`~/.zerg/contexts/<档>.yaml` 的 `nodes:`）里某台机**现成的** `port:`（先校验后写 · `--dry-run` 先行 · 真写要 `--confirm=<机器名>` + `--yes` · 写完读回再校 · 任一步不过 ⇒ 回滚）—— host/port/os/kind 的唯一写入口",
+			usage:    "zerg context set-port --node <机器名> --port <端口> [--context <档名>] --confirm=<机器名> [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"机器名（--node：`nodes:` 段的一级键）", "端口（--port：1..65535）"},
+			fields:   []string{"node", "port", "context", "line", "changed"},
+			danger:   &dangerSpec{dangerD2, "机器名", "改机器名册 `~/.zerg/contexts/<档>.yaml` 里该节点现成的 `port:`（同目录临时件 + rename 原子写 · 写完读回再校 · 任一步不过 ⇒ 回滚；不碰主控运行态）；可逆：把端口改回即原状", "缺口账 GAP-20260925-32 · 同族写面先例 zerg model add（D2）· §九 M3 C1", true},
+			opened:   true,
+			endpoint: "",
+			run:      cmdContextSetPort,
+		},
 		// ★ `danger` 登记（**D2** · 2026-09-27）：本表项**真跑有副作用**，修前无 `danger` ⇒ `zerg help` 把它当安全档 ✗。
 		//   定档理由（逐条读 `family_config.go:cmdConfigReload` 得）：本件**零 os 落盘调用**（无 `os.WriteFile` /
 		//   `os.MkdirAll` / `os.Create` / `os.Rename` / `os.Remove`）—— 它的效果面是 **HTTP POST**
@@ -3196,6 +3262,41 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.kvSet(a, "true")
 		case a == "--stale":
 			inv.kvSet(a, "true")
+		// `code find` 的**短形**上下文/归一旗标（缺口 `GAP-20260927-250/252` · 本枚）：
+		//   `-i`（大小写归一 · 布尔）· `-A<N>`/`--after <N>`（后文）· `-B<N>`/`--before <N>`（前文）·
+		//   `-C<N>`（前后各 N，POSIX grep 惯用 · 与缺口症状逐字 `-A2`/`-C1` 同形）。
+		// 长形（`--after`/`--before`）走 `valueFlagName` 那一支；短形**不经过**本函数 ⇒ 在此另起 case。
+		// 写进 `inv.kv`（与 `--hidden`/`--count` 同一种形态）⇒ `foreignFlag` 看得见。`-C` 同时落
+		// `--after` 与 `--before` 两键（一处语义、同一份取值）。判在 `--help`/未知短形支**之前**。
+		case a == "-i" || a == "--ignore-case":
+			inv.kvSet("--ignore-case", "true")
+		case a == "-A" || a == "-B" || a == "-C":
+			v := ""
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				v = args[i]
+			}
+			switch a {
+			case "-A":
+				inv.kvSet("--after", v)
+			case "-B":
+				inv.kvSet("--before", v)
+			case "-C":
+				inv.kvSet("--after", v)
+				inv.kvSet("--before", v)
+			}
+		case len(a) > 2 && a[0] == '-' && a[1] == 'A' || len(a) > 2 && a[0] == '-' && a[1] == 'B' || len(a) > 2 && a[0] == '-' && a[1] == 'C':
+			// 紧贴值形态：`-A2` / `-B3` / `-C1`（含等号 `-A=2`）。
+			v := strings.TrimPrefix(a[2:], "=")
+			switch a[1] {
+			case 'A':
+				inv.kvSet("--after", v)
+			case 'B':
+				inv.kvSet("--before", v)
+			case 'C':
+				inv.kvSet("--after", v)
+				inv.kvSet("--before", v)
+			}
 		case a == "--help" || a == "-h":
 			inv.wantHelp = true
 		case a == "--version":
@@ -3293,7 +3394,8 @@ func valueFlagTakesNext(a string) bool {
 // valueFlagName 认「动作面旗标」的名字（**唯一真源**：解析与 `--k=v` 分派都读它）。
 func valueFlagName(a string) string {
 	switch a {
-	case "--desc", "--model", "--priority", "--slice-id", "--depends-on", "--acceptance", "--to", "--set":
+	case "--desc", "--model", "--priority", "--slice-id", "--depends-on", "--acceptance", "--to", "--set",
+		"--port":
 		return a
 	}
 	// 自开发面旗标（批 E · T-57 起）：一族共用一张名字表 —— 值照收，语义在各自命令里判。
@@ -3395,6 +3497,13 @@ func valueFlagName(a string) string {
 	case "--input":
 		return a
 	}
+	// 取证面旗标（缺口 `GAP-20260927-233` · 2026-10-04）：`code show --batch <件:行,…>` 批量取件:行。
+	// 与上面各排同一口径：值照收，语义在 `cmdCodeShowBatch` 里判（值与位置参数二选一、空项不收）。
+	// ★ 本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
+	switch a {
+	case "--batch":
+		return a
+	}
 	// 文档面旗标（缺口 `G-19` 同根：`--docs-ver <X.Y.Z>` 显式钉一版 = 兼容「钉死在某一版」的旧行为；
 	// 默认档才是版本无关。`help export` 与 `doc meta fill` 共用同一枚 —— 取源只有一处 `devdocs.go`）。
 	// ★ `A3` 的 `b` 案在这里续一枚 `--docs-root <Zerg-内部文档 根>`（设计稿 §二「落点白名单」第 2 条：
@@ -3460,8 +3569,12 @@ func valueFlagName(a string) string {
 	}
 	// 码面只读旗标（缺口面 P0-1 · 2026-09-21）：`code find` 的两枚收窄旗标。
 	// ★ 与上面 `--out` 同一条教训：用法串里写着的旗标必须真能被解析，否则命令等于不可用。
+	// ★ 缺口 `GAP-20260927-250/251`（本枚 · **只增**）：续 `--after`/`--before`（命中行上下文半径 ·
+	//   值 = 非负整数）与 `--kind <代码|注释>` 分流面。与上面各排同一口径 —— 值照收，语义在
+	//   `cmdCodeFind` 里判；★ 名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
+	//   短形 `-A`/`-B`/`-C` 与 `-i` 在 `parseInvocation` 里另起 case（短形不经过本函数）。
 	switch a {
-	case "--path", "--glob":
+	case "--path", "--glob", "--after", "--before", "--kind":
 		return a
 	}
 	// 按名找件旗标（`zerg find` · 2026-09-25 父代理补登）：实现件早已会读这三枚（family_find.go 走 flagVal），

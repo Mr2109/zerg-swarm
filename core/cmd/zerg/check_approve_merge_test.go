@@ -156,3 +156,19 @@ func TestApproveMerge_TwoStatesNotSameShape(t *testing.T) {
 		t.Fatalf("-h 应 rc=0 + usage · 实读 rc=%d", rcH)
 	}
 }
+
+// ⑤ `--root` 生效（py `GAP-20261001-63` · 本笔 Go 新行为 · 有牙）：显式 `--root <非目录>` ⇒
+// run_cli 替代入口前置可用性判 ⇒ **rc=2 fail-closed**；改前 `a.root` 是死旗标 ⇒ 静默忽略 ⇒ 自检照过 rc=0。
+func TestApproveMerge_RootFlagLive(t *testing.T) {
+	// 基线：不给 --root ⇒ 自检照跑，rc=0（证明本条只咬「显式 --root」那一档）
+	if rc, _, _ := apmTRun("--self-test"); rc != 0 {
+		t.Fatalf("基线失败：不给 --root 应 rc=0，得 rc=%d", rc)
+	}
+	rc, out, _ := apmTRun("--root", "/nonexistent-twin-root", "--self-test")
+	if rc != 2 {
+		t.Fatalf("--root 生效失败：非目录 root 应 rc=2（fail-closed），得 rc=%d", rc)
+	}
+	if !strings.Contains(out, "不过") {
+		t.Fatalf("--root 生效失败：自检应报「不过」（run_cli 前置判拦下），得 out=%.120q", out)
+	}
+}

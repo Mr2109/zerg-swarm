@@ -41,6 +41,22 @@ import sys
 # 每条形如 {"id": "...", "anchor": "<源码逐字>", "reason": "...", "source": "...", "gate": "..."}
 KNOB_ALLOW = []
 
+# ── 旋钮分档（缺口 `GAP-20260927-74` · 门本体由「只报告」改**分档**）────────────────────
+#   把三枚已知旋钮本体纳入分档，按「危害」分层（此前门只报「未登记」、不分档）：
+#     isolated     走自检夹具路（不碰真目标、不进真 rc 判定）⇒ 危害低，登记后可留；
+#     silent_off   静默关掉**真目标**的判据/元自检层 ⇒ 危害高（门在盘、看着绿，判据其实没跑）；
+#     unclassified 未分档（默认）⇒ 按 silent_off 同等待遇（保守，不给未分类旋钮留口子）。
+KNOB_TIERS = ("isolated", "silent_off", "unclassified")
+KNOB_TIER = {
+    "CHECK_DOC_NAME_META_OFF": "silent_off",  # 关 check-doc-name 的元自检层（该门在提交链里）
+    "ZERG_ALLSH_UNITTEST": "isolated",        # all.sh 走自检夹具路
+    "ZERG_ALLSH_NO_PERL": "isolated",         # all.sh 走无 perl 的夹具路
+}
+
+
+def knob_tier(name):
+    return KNOB_TIER.get(name, "unclassified")
+
 # 关自检型旋钮的「名字形态」（内容锚 = 变量名本身，不用行号）
 NAME_RE = re.compile(r"\b([A-Z][A-Z0-9_]*(?:UNITTEST|SELFTEST_OFF|SELFTEST|META_OFF|NO_PERL)[A-Z0-9_]*)\b")
 # 消费形态：getenv / environ.get / ${NAME:-} / [ -n "$NAME" ] / [ "$NAME" = ... ]
@@ -119,14 +135,19 @@ def run(root, as_json):
         print("BLOCKED —— 白名单条目不齐五件套：%s ⇒ rc=2" % ",".join(bad_allow), file=sys.stderr)
         return 2
     if as_json:
+        tier_counts = {t: 0 for t in KNOB_TIERS}
+        for _f, _l, n, _t in hits:
+            tier_counts[knob_tier(n)] += 1
         print(json.dumps({"rc": 1 if hits else 0, "knob_count": len(hits),
-                          "hits": [{"file": f, "line": l, "knob": n} for f, l, n, _ in hits]},
+                          "hits": [{"file": f, "line": l, "knob": n, "tier": knob_tier(n)}
+                                   for f, l, n, _ in hits],
+                          "tier_counts": tier_counts},
                          ensure_ascii=False))
     else:
         print("提交链「关自检旋钮」元门（GAP-20260927-74）")
         print("提交链上未登记的关自检型旋钮 = %d 条" % len(hits))
         for f, l, n, txt in hits:
-            print("  ✗ %s:%d 旋钮 %s ⇒ %s" % (f, l, n, txt))
+            print("  ✗ %s:%d 旋钮 %s [档 %s] ⇒ %s" % (f, l, n, knob_tier(n), txt))
         print("  口径：提交链上的门不接受关自检型旋钮；要保留须进 KNOB_ALLOW 五件套，")
         print("        或改成显式且打印的 --selftest-off 旗标（并在输出里申报）。")
     return 1 if hits else 0
@@ -163,10 +184,22 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="提交链「关自检旋钮」只读元门（GAP-20260927-74）")
     ap.add_argument("--root", default=os.environ.get("ZERG_ROOT", os.getcwd()))
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--by-tier", dest="by_tier", action="store_true", help="只按分档打计数（GAP-20260927-74）")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
     if args.self_test:
         return self_test()
+    if args.by_tier:
+        hits, pc = scan(args.root)
+        if not pc:
+            print("BLOCKED —— 缺 precommit-gates.sh（无法判定提交链）⇒ rc=2", file=sys.stderr)
+            return 2
+        cnt = {t: 0 for t in KNOB_TIERS}
+        for _f, _l, n, _t in hits:
+            cnt[knob_tier(n)] += 1
+        for t in KNOB_TIERS:
+            print("%-13s %d" % (t, cnt[t]))
+        return 1 if hits else 0
     return run(args.root, args.json)
 
 

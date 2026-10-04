@@ -97,12 +97,17 @@ import (
 
 // ── 常量真源（与 py 逐字对齐 · 名字前缀 `gch` 防包内同名）──────────────
 const (
-	gchProg        = "gate-check-health.py"
-	gchGoShellRel  = "core/cmd/zerg/family_gate_check.go"
-	gchRegistryRel = "scripts/gates/judge-registry.json"
-	gchRosterDir   = "scripts"
-	gchModuleRel   = "scripts/gates/check-judge-registry.py"
+	gchProg       = "gate-check-health.py"
+	gchGoShellRel = "core/cmd/zerg/family_gate_check.go"
+	// ★ 门80 扫描面（`GAP-20261001-75` 路A）：inproc 分发表件也须在扫描面内。
+	gchGoShellRelTbl = "core/cmd/zerg/gate_inproc_table.go"
+	gchRegistryRel   = "scripts/gates/judge-registry.json"
+	gchRosterDir     = "scripts"
+	gchModuleRel     = "scripts/gates/check-judge-registry.py"
 )
+
+// gchGoShellRels —— 门80 扫描面（壳逻辑 ＋ inproc 分发表 · `GAP-20261001-75` 路A）：逐件读、拼接后判一次。
+var gchGoShellRels = []string{gchGoShellRel, gchGoShellRelTbl}
 
 // gchMinTool —— py `MIN_TOOL`（唯二真源：bash 3.2 · python 3.9）。
 var gchMinTool = map[string][2]int{"bash": {3, 2}, "python": {3, 9}}
@@ -299,12 +304,17 @@ func gchRunHealth(root string) (int, gchReport) {
 			gchDots(pyV), gchDotsPair(gchMinTool["python"])))
 	}
 
-	goPath := filepath.Join(root, filepath.FromSlash(gchGoShellRel))
-	if !gchIsFile(goPath) {
-		rep.Problems = append(rep.Problems, fmt.Sprintf("壳件读不到：%s ⇒ 不给结论", gchGoShellRel))
-		return 2, rep
+	// ★ 扫描面可含多件：逐件读、缺一即「不给结论」，**拼接**后按整壳判一次。
+	var shellTexts []string
+	for _, rel := range gchGoShellRels {
+		goPath := filepath.Join(root, filepath.FromSlash(rel))
+		if !gchIsFile(goPath) {
+			rep.Problems = append(rep.Problems, fmt.Sprintf("壳件读不到：%s ⇒ 不给结论", rel))
+			return 2, rep
+		}
+		shellTexts = append(shellTexts, gchReadText(goPath))
 	}
-	rep.Problems = append(rep.Problems, gchCheckGoShell(gchReadText(goPath))...)
+	rep.Problems = append(rep.Problems, gchCheckGoShell(strings.Join(shellTexts, "\n"))...)
 
 	// 只报告格：注册表条数 ⟷ 现读名录件数
 	regPath := filepath.Join(root, filepath.FromSlash(gchRegistryRel))

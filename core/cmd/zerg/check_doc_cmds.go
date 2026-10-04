@@ -2,7 +2,8 @@
 // （v2.5.14 · M2 · **新口径靶：文仓/外部树依赖类** · 入口 `checkDocCmdsGateMain`）。
 //
 // 本件 = 门⑫「文档-命令一致性」（§九 M12 + §6.4 D3 · 开工单 T-51）的真搬：把**两棵语料**
-// （正式面 `docs/**` = 阻断档；开发文档面 `Zerg-内部文档/项目文档/v2.5.13/` = 只报告档 + baseline 棘轮）
+// （正式面 `docs/**` = 阻断档；开发文档面 `Zerg-内部文档/项目文档/<当前版>/` = 只报告档 + baseline 棘轮；
+// `<当前版>` 读唯一真源 `core/internal/version/version.go` 现算）
 // 里手写的 `zerg …` 示例，对照**命令树源码**（`core/cmd/zerg/main.go` 的 `path: []string{…}` 字面量）
 // 逐段收窄（最长前缀）判它拼不拼得到一条命令。验收判据 = 同 argv 跑两态（py 原件 ⟷ 本入口），
 // stdout / stderr / 退码 **三面逐字相同**（除下列**显式声明的**新口径差异面）。
@@ -14,7 +15,7 @@
 //	   （✗ 不造第三个互不认识的名字 —— 那正是 `GAP-20261001-01` 那个口子的来源）。py 对**仓根**
 //	   本身无旗标、无 env（起于 `__file__`）⇒ 见 (a) 的默认根差异面。
 //	② 缺省值 = py 默认推导**逐字同构**：`devdocs_root = env ZERG_DEVDOCS_ROOT or
-//	   pyJoin(sibling_docs_base(root), "项目文档", "v2.5.13")`；`sibling_docs_base(root) =
+//	   pyJoin(sibling_docs_base(root), "项目文档", <当前版>)`；`sibling_docs_base(root) =
 //	   abspath(env ZERG_DOCS_ALT or env ZERG_DOCS or pyJoin(pyDir(abspath(root)), "Zerg-内部文档"))`。
 //	   两串均**不含 `..` 段** ⇒ `filepath.Join` 的 normalizer 无机会吃掉东西，但本件仍走自实现
 //	   `dcmdJoin`（posixpath.join 语义）以逐字对齐 py 的打印串。
@@ -41,8 +42,10 @@
 //	      Go  `dcmdDefaultRepo()`（cwd 上溯找 `core/cmd/zerg/main.go`；回落 abspath(cwd)）
 //	      py  `sibling_docs_base(root) = abspath($ZERG_DOCS_ALT or $ZERG_DOCS or join(dirname(abspath(root)), "Zerg-内部文档"))`
 //	      Go  `dcmdSiblingDocsBase(root)`：同名同序逐字（空串 env 视同未设，同 py 的 `or` 短路）
-//	      py  `docs_root = $ZERG_DEVDOCS_ROOT or join(sibling_docs_base(root), "项目文档", "v2.5.13")`
-//	      Go  `dcmdEnvOr("ZERG_DEVDOCS_ROOT", dcmdJoin(dcmdSiblingDocsBase(root), "项目文档", "v2.5.13"))`
+//	      py  `docs_root = $ZERG_DEVDOCS_ROOT or join(sibling_docs_base(root), "项目文档", <当前版>)`
+//	          `<当前版>` = `current_version(root)` 读唯一真源 `core/internal/version/version.go` 现算
+//	      Go  `docsRoot = os.Getenv("ZERG_DEVDOCS_ROOT")`；空则 `dcmdJoin(dcmdSiblingDocsBase(root), "项目文档", <ver>)`，
+//	          `<ver>` 由 `dcmdCurrentVersion(root)` 同读真源现算（读不到 ⇒ 归 blocked / rc=2）
 //	    「脚本位置 == cwd 上溯根」时两者读数逐字相同（对拍甲/乙两环境已证）；否则**路径推导面不同**
 //	    ⇒ 不属逐字对齐承诺。
 //	(b) **自指检查（先真判 · 四形态逐条）**：
@@ -713,6 +716,24 @@ func dcmdHead(xs []string, n int) []string {
 	return xs
 }
 
+// dcmdCurrentVersion —— 当前发布版（带 `v` 前缀，如 `v2.5.13`）—— 读**唯一真源**
+// `core/internal/version/version.go` 的 `const Version = "X.Y.Z"`（与 py `current_version`
+// 逐字同构，与门① `check-doc-name.py` 同读法）。读不到真源 ⇒ ok=false
+// （调用方归 blocked / rc=2 fail-closed，**不当绿** —— 与全件「读不到不给结论」同口径）。
+func dcmdCurrentVersion(root string) (string, bool) {
+	p := dcmdJoin(root, "core", "internal", "version", "version.go")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", false
+	}
+	re := regexp.MustCompile(`const\s+Version\s*=\s*"([^"]+)"`)
+	m := re.FindStringSubmatch(string(b))
+	if m == nil {
+		return "", false
+	}
+	return "v" + m[1], true
+}
+
 func dcmdCheck(root string, scopes []string) (int, []string) {
 	dcmdReadFails = nil
 	blockedMsg := fmt.Sprintf("⛔ 不给结论：命令树读不出来（%s 缺件/空转）—— 判据不可判 ⇒ 不给结论", dcmdMainRel)
@@ -755,7 +776,19 @@ func dcmdCheck(root string, scopes []string) (int, []string) {
 			}
 			detailAll = append(detailAll, dcmdHead(details, 20)...)
 		} else {
-			docsRoot := dcmdEnvOr("ZERG_DEVDOCS_ROOT", dcmdJoin(dcmdSiblingDocsBase(root), "项目文档", "v2.5.13"))
+			docsRoot := os.Getenv("ZERG_DEVDOCS_ROOT")
+			if docsRoot == "" {
+				// 默认根：`<同级文档仓>/项目文档/<当前版>`，版本由**唯一真源**现算
+				// （py `GAP-20260926-209`：曾钉死 `v2.5.13` ⇒ 换版静默过期 ⇒ 同「先静默绿」一类病）。
+				ver, ok := dcmdCurrentVersion(root)
+				if !ok {
+					blocked = append(blocked, "⛔ 不给结论：版本真源读不到（core/internal/version/version.go 里"+
+						"没有 `const Version = \"…\"`）⇒ 现算不出 devdocs 默认根 "+
+						"—— 判据不可判（换根请设 `ZERG_DEVDOCS_ROOT`）")
+					continue
+				}
+				docsRoot = dcmdJoin(dcmdSiblingDocsBase(root), "项目文档", ver)
+			}
 			if dcmdDevdocsRootIsRepoRoot(docsRoot) {
 				// ★ 照 py 候件逐字补：根**形态误用**（把文档仓仓根当版本面根）⇒ 与「根不在盘」同档 rc=2。
 				blocked = append(blocked, fmt.Sprintf("⛔ 不给结论：devdocs 根**形态误用**（%s 下面还有 `项目文档/` ⇒ 这是"+

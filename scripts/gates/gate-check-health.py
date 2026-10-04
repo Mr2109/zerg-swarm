@@ -33,7 +33,11 @@ import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-GO_SHELL = "core/cmd/zerg/family_gate_check.go"
+# ★ 门80 扫描面（缺口 `GAP-20261001-75` 路A 的硬要求）：`zerg gate check` 转发壳的逻辑现**跨两件** ——
+#   壳逻辑 `family_gate_check.go`（名录/解释器/放行面）＋ inproc 分发表 `gate_inproc_table.go`（归位后）。
+#   表件此前不在扫描面 ⇒ 表随之逃过本门的「库类不特殊化 / 无按名名单」判据 = 判据盲区 ⇒ 现**两件同扫**。
+GO_SHELL = ("core/cmd/zerg/family_gate_check.go",
+            "core/cmd/zerg/gate_inproc_table.go")
 REGISTRY = "scripts/gates/judge-registry.json"
 MIN_TOOL = {"bash": (3, 2), "python": (3, 9)}
 # 按名名单 / 库类特殊化的形态标记（壳件里出现任一 ⇒ 红）。✗ 不把注释里的「库类」二字当命中。
@@ -118,10 +122,16 @@ def run_health(root, go_shell_rel=GO_SHELL, registry_rel=REGISTRY):
         rep["problems"].append("python %s 低于底线 %s" % (".".join(map(str, py_v)),
                                                           ".".join(map(str, MIN_TOOL["python"]))))
 
-    go_path = os.path.join(root, go_shell_rel)
-    if not os.path.isfile(go_path):
-        return 2, {**rep, "problems": rep["problems"] + ["壳件读不到：%s ⇒ 不给结论" % go_shell_rel]}
-    rep["problems"] += check_go_shell(_read(go_path))
+    # ★ 扫描面可含多件（门80 · `GAP-20261001-75` 路A）：逐件读、缺一即「不给结论」，**拼接**后判一次
+    #   （壳的属性是集合属性：解释器闭集 / 目录派生 / 无按名名单 / 无写死 `"scripts/…"` 均按整壳判）。
+    rels = (go_shell_rel,) if isinstance(go_shell_rel, str) else tuple(go_shell_rel)
+    texts = []
+    for rel in rels:
+        go_path = os.path.join(root, rel)
+        if not os.path.isfile(go_path):
+            return 2, {**rep, "problems": rep["problems"] + ["壳件读不到：%s ⇒ 不给结论" % rel]}
+        texts.append(_read(go_path))
+    rep["problems"] += check_go_shell("\n".join(texts))
 
     # 只报告格：注册表条数 ⟷ 现读名录件数
     reg_path = os.path.join(root, registry_rel)

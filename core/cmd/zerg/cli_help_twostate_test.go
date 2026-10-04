@@ -69,7 +69,7 @@ func TestCLIHelpTwoState_KnownCommandGetsOwnUsage(t *testing.T) {
 func TestCLIHelpTwoState_UnknownCommandIsUsageError(t *testing.T) {
 	for _, argv := range [][]string{
 		{"frobnicate", "--help"},
-		{"model", "rm", "--help"},
+		{"model", "zz-无此动作-zz", "--help"},
 	} {
 		rc, out, errb := helpRun(t, argv...)
 		if rc != 2 {

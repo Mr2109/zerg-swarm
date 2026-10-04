@@ -245,37 +245,28 @@ type cptpRules struct {
 
 // cptpLoadRules = py load_rules：逐行 strip；空行 / `#` 跳过；`!` 前缀 = 豁免；尾 `/` = 目录；
 // 其余 = 文件。
+//
+// ★ 行口径**已抽到共享件** `private_face_rules.go` 的 `parsePrivateFaceRules`（缺口
+// `GAP-20260927-414`：此前本件与 `family_publish_set.go` 的 `publishSetPrivateFaceRules` 各镜像
+// 一份同型解析 ⇒ 真源一改两处各漂）。本件仍**自己**做 py 语义的读件 / 换行归一 / strip
+// （`cptpPyStrip` —— 与 Go `strings.TrimSpace` 对 Unicode 空白覆盖面不同），只把「剥好之后怎么
+// 分三档」交给共享件（strip 函数由本件传入 ⇒ py 语义不丢）。
 func cptpLoadRules(path string) (cptpRules, error) {
 	var r cptpRules
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return r, err
 	}
-	for _, raw := range strings.Split(cptpNormalizeNewlines(string(b)), "\n") {
-		line := cptpPyStrip(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		switch {
-		case strings.HasPrefix(line, "!"):
-			r.allowed = append(r.allowed, cptpPyStrip(line[1:]))
-		case strings.HasSuffix(line, "/"):
-			r.dirs = append(r.dirs, line)
-		default:
-			r.files = append(r.files, line)
-		}
-	}
+	r.dirs, r.files, r.allowed = parsePrivateFaceRules(
+		strings.Split(cptpNormalizeNewlines(string(b)), "\n"), cptpPyStrip)
 	return r, nil
 }
 
-// cptpIsAllowed = py is_allowed。
+// cptpIsAllowed = py is_allowed。唯一实现已抽到共享件 `private_face_rules.go` 的
+// `privateFaceAllowed`（缺口 `GAP-20260927-414`）。保留本名与签名 = 既有调用点（本件 `cptpScan`
+// · `check_public_tree_private_test.go`）**一字不动**。
 func cptpIsAllowed(rel string, allowed []string) bool {
-	for _, a := range allowed {
-		if rel == a || (strings.HasSuffix(a, "/") && strings.HasPrefix(rel, a)) {
-			return true
-		}
-	}
-	return false
+	return privateFaceAllowed(rel, allowed)
 }
 
 type cptpHit struct {

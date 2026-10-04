@@ -77,10 +77,11 @@ func TestCodeShow_NeighborhoodAndUsage(t *testing.T) {
 		t.Errorf("件不在 ⇒ 退 1，得到 %d · stderr=%s", rc, errb)
 	}
 
-	// ── 负控③：缺参 / 没冒号 / 行号非正整数 / `--ctx` 坏 ⇒ 各退 2。
+	// ── 负控③：缺参 / 行号非正整数 / `--ctx` 坏 ⇒ 各退 2。
+	//   ★ 2026-10-04（缺口 `GAP-20261001-59`）：**「没冒号 ⇒ 2」这一格已废** —— 接受面扩到
+	//   「纯件名 = 整件读」（原 `{"code","show","aaa/ten.txt"}` 落此列 ⇒ 现在 rc=0）⇒ 改成正控⑦。
 	for _, argv := range [][]string{
 		{"code", "show"},
-		{"code", "show", "aaa/ten.txt"},
 		{"code", "show", "aaa/ten.txt:0"},
 		{"code", "show", "aaa/ten.txt:abc"},
 		{"code", "show", "aaa/ten.txt:5", "--ctx", "-1"},
@@ -89,6 +90,31 @@ func TestCodeShow_NeighborhoodAndUsage(t *testing.T) {
 		if rc != 2 {
 			t.Errorf("%v ⇒ 退 2，得到 %d · stderr=%s", argv, rc, errb)
 		}
+	}
+
+	// ── 正控⑦（缺口 `GAP-20261001-59` · 2026-10-04）：**纯件名 = 整件读**（Hermes 侧 `read_file` 的 CLI 正门）。
+	//   接受面前移那一格（上一块移除的 `aaa/ten.txt`）改由这里**正控 + 逐行**钉住新契约。
+	rc, out, errb = execCase(t, bin, root, "code", "show", "aaa/ten.txt")
+	if rc != 0 {
+		t.Errorf("纯件名整件读 ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(errb, "整件读") {
+		t.Errorf("整件读要在 stderr 抬头点明：%q", errb)
+	}
+	rc, out, errb = execCase(t, bin, root, "code", "show", "aaa/ten.txt", "--json", "path,line,text,target")
+	if rc != 0 {
+		t.Errorf("整件读 --json ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	var envFile struct {
+		Items []map[string]string `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(out), &envFile); err != nil {
+		t.Fatalf("整件读机器面不是 JSON：%v · out=%q", err, out)
+	}
+	if len(envFile.Items) != 10 {
+		t.Errorf("整件读应出 10 行，得到 %d 条", len(envFile.Items))
+	} else if envFile.Items[0]["line"] != "1" || envFile.Items[9]["line"] != "10" || envFile.Items[0]["target"] != "no" {
+		t.Errorf("整件读逐行三格不对：首=%v 末=%v", envFile.Items[0], envFile.Items[9])
 	}
 
 	// ── 负控④：件出仓 / 点的是目录 ⇒ 2（出仓按**路径段**判，不是字符串前缀）。

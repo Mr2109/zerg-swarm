@@ -57,6 +57,7 @@
   · `files_dedup` —— `files` 的**同值别名**（把「去重集 ↔ 去重和」这一对摆到同一命名面上）；
   · `files_sum`   —— **未去重和** = 逐条命中规则各自命中件数**相加**（「`64 + 7 = 71`」这类
                      **逐条相加**读法的机器面落点 —— 今天只能人眼抄再手算 ✗）；
+  · `tier`        —— **夹具隔离分档格**（缺口 `GAP-20260926-146`）：`{isolated, per_glob, dead, eaten}`；
   · `per_rule`    —— 逐规则一条 `{rule, files, hits, lines}`：`files` = 该规则命中的件（排序去重）、
                      `hits` = 该规则的命中**行数**、`lines` = 命中处**逐条 `{file, line, text}`**（`{件,行}` 真源）。
 
@@ -68,6 +69,7 @@
     python3 scripts/gates/check-replace-rule-fixtures.py --max-examples 5       # 每条规则最多列几处
     python3 scripts/gates/check-replace-rule-fixtures.py --json rules,hits,files
     python3 scripts/gates/check-replace-rule-fixtures.py --json files_sum,per_rule  # 去重和 + 逐规则 {件,行}
+    python3 scripts/gates/check-replace-rule-fixtures.py --json tier             # 夹具隔离分档（isolated/per_glob/dead/eaten）
     python3 scripts/gates/check-replace-rule-fixtures.py --list-rules
     python3 scripts/gates/check-replace-rule-fixtures.py --self-test            # 成对负控（合成夹具 · 不碰真目标）
 
@@ -92,7 +94,7 @@ WHITELIST_REL = os.path.join("publish", "whitelist.txt")
 
 # 机器面字段表（`--json` 认的名字）—— **唯一真源**：`json_payload` 装包封与
 # 「不认的名 ⇒ 用法错 `rc=2` ＋ 印本表」两处**同读这一处**（缺口 `Q-150`）。
-JSON_FIELDS = ["rules", "hits", "files", "fixtures", "files_dedup", "files_sum", "per_rule"]
+JSON_FIELDS = ["rules", "hits", "files", "fixtures", "files_dedup", "files_sum", "per_rule", "tier"]
 
 # 夹具隔离（§五 第三批）：`!夹具<TAB><路径 glob>` —— 命中 glob 的件**整段跳过替换规则**，
 # 因此它们**不进本件的件面**（规则不碰它们 ⇒ 拿规则去判它们就是自造红）。
@@ -254,7 +256,7 @@ def judge(rules, fixtures, max_examples=5):
     return hits, err
 
 
-def json_payload(want, n_rules, n_fixtures, hits):
+def json_payload(want, n_rules, n_fixtures, hits, iso=None):
     """按 `--json` 请求的字段名装机器面 ⇒ dict（缺口 `Q-143`：**只加字段、不动判据与退码** ✗）。
 
     老四格（`rules` / `fixtures` / `hits` / `files`）逐格语义**一字不改** —— 尤其 `files`
@@ -281,6 +283,15 @@ def json_payload(want, n_rules, n_fixtures, hits):
                             "lines": [{"file": rel, "line": ln, "text": txt}
                                       for rel in sorted(detail) for ln, txt in detail[rel]]}
                            for raw, fl, _ex, tot, detail in hits]
+    # 缺口 GAP-20260926-146（rrf-json-no-tier-cell）：夹具隔离分档格
+    if "tier" in want:
+        i = iso or {}
+        obj["tier"] = {
+            "isolated": list(i.get("isolated", [])),
+            "per_glob": [{"glob": g, "files": n} for g, n in i.get("per_glob", [])],
+            "dead": list(i.get("dead", [])),
+            "eaten": bool(i.get("eaten", False)),
+        }
     return obj
 
 
@@ -400,6 +411,20 @@ def self_test():
     else:
         bad.append("per_rule")
         print("   ✗ per_rule：%s" % _json.dumps(pr, ensure_ascii=False)[:200])
+    # 缺口 GAP-20260926-146：tier 分档格的成对负控
+    iso_payload = json_payload(["tier"], 0, 0, [],
+                               {"isolated": ["core/x/iso_test.go"],
+                                "per_glob": [("core/x/*_test.go", 1), ("nope/*_test.go", 0)],
+                                "dead": ["nope/*_test.go"], "eaten": False}).get("tier")
+    if iso_payload == {"isolated": ["core/x/iso_test.go"],
+                       "per_glob": [{"glob": "core/x/*_test.go", "files": 1},
+                                    {"glob": "nope/*_test.go", "files": 0}],
+                       "dead": ["nope/*_test.go"], "eaten": False}:
+        ok += 1
+        print("   OK tier 分档格：isolated / per_glob / dead / eaten 四格齐")
+    else:
+        bad.append("tier")
+        print("   BAD tier：%r" % (iso_payload,))
     # 夹具隔离的**可见性 / 防自伤**成对负控（本波）：逐条 glob 记件数 + 吃光整面必须拒判。
     per_i, dead_i, _e0 = isolation_audit(["core/internal/demo/*_test.go", "nope/*_test.go"],
                                          ["core/internal/demo/fixture_test.go"], 3)
@@ -460,7 +485,9 @@ def main():
         print("退码：0 全绿 · 1 有命中 · 2 不给结论（规则表/白名单缺件 · 空转 · 自检不过 · **`--json` 字段名不认**）")
         print("机器面：`--json <字段,逗号分隔>` —— 老四格 `rules,fixtures,hits,files`（`files` = **去重集**）"
               "+ 新三格 `files_dedup`（同值别名）/ `files_sum`（**未去重和**）/ `per_rule[]`（逐规则"
-              "`{rule, files, hits, lines}` · `lines` = 逐条 `{件,行,原文}`）—— 只加字段，判据与退码不动；"
+              "`{rule, files, hits, lines}` · `lines` = 逐条 `{件,行,原文}`）"
+              "+ `tier`（夹具隔离分档 `{isolated, per_glob, dead, eaten}` · 缺口 GAP-20260926-146）"
+              " —— 只加字段，判据与退码不动；"
               "**不认的字段名 ⇒ 用法错 `rc=2` ＋ 印字段表**（缺口 `Q-150`：打错的名与零命中必须分得开）")
         return 0
 
@@ -529,7 +556,9 @@ def main():
         return 2
 
     if want:
-        print(json.dumps(json_payload(want, len(rules), len(fixtures), hits), ensure_ascii=False))
+        iso = {"isolated": iso_files, "per_glob": [(g, n) for g, n in per_iso],
+               "dead": dead_iso, "eaten": eaten_iso}
+        print(json.dumps(json_payload(want, len(rules), len(fixtures), hits, iso), ensure_ascii=False))
 
     if not hits:
         print("⇒ 全绿（rc=0）：%d 条规则一条都没命中测试夹具" % len(rules))

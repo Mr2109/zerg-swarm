@@ -224,16 +224,20 @@ mod locale_tests {
             }
         }
         // 复刻 detect_locale 的 prefs 分支（不污染进程级 HOME）
+        let mut out = "en".to_string();
         if let Ok(raw) = std::fs::read_to_string(&f) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
                 if let Some(l) = v.get("locale").and_then(|x| x.as_str()) {
                     if ["zh-CN", "en"].contains(&l) {
-                        return l.to_string();
+                        out = l.to_string();
                     }
                 }
             }
         }
-        "en".to_string()
+        // 用例自建目录**尾部回收**（缺口 `GAP-20261001-58`：本件原为「只建不清尾」
+        // ⇒ 每次跑测在 /private/var/tmp 留一枚 `zerg-locale-test-*` 目录）。
+        let _ = std::fs::remove_dir_all(&dir);
+        out
     }
 
     #[test]

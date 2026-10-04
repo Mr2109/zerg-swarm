@@ -303,7 +303,7 @@ func Unresolved() (*UnresolvedLedger, error) {
 //
 // 口径（照 `SD1` 逐字）：动机源必须是一份**人的清单** —— 目标只能**承接**既有编号
 // （《待办-20260920.md》的 D/E/F/G 四族）；回指不上 ⇒ `exit 2`（**不新立码**）。
-// 消费者：`core/cmd/zerg` 的 `dev proposal new`（现读同一份嵌入清单）+ 门⑫ 的静态断言。
+// 消费者：`core/cmd/zerg` 的 `dev proposal new`（现读同一份嵌入清单）+ 门93（`scripts/gates/check-dev-targets.py`）的静态断言。
 func DevTargets() ([]string, error) {
 	var d struct {
 		Schema string   `json:"schema"`

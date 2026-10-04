@@ -20,6 +20,11 @@ import (
 	"github.com/Mr2109/zerg-swarm/core/internal/version"
 )
 
+// coreProcessStartedAt —— 主控进程**真启动时刻**（进程级：包初始化时取一次，此后不随请求变）。
+// 缺口 GAP-20260928-47：本字段原先写成 time.Now()（= 本次请求处理时刻）⇒ 「拿 started_at 判
+// 有没有重启过」恒判不了（每次读都在变）。改成进程启动时刻后，重启 ⇒ 该值与 pid 一起翻新。
+var coreProcessStartedAt = time.Now()
+
 // ControlHandlers 控制端点处理器。
 type ControlHandlers struct {
 	Token  string
@@ -218,7 +223,7 @@ func (h *ControlHandlers) CoreStatusHandler(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"ok":         true,
 		"pid":        pid,
-		"started_at": time.Now().Format(time.RFC3339),
+		"started_at": coreProcessStartedAt.Format(time.RFC3339),
 		// 版本**同源同值**（§九 M15 `T1`/`T2` · §十二 `P-078` 选 (i)）：与 `/api/capabilities`
 		// 的 `version` 用同**一个**真源（`version.Tag`）——原来这里硬编码过一枚第二版本号
 		// （一枚「组件名 + 版本主号」的硬编码字面量），那是「同一件东西两处口径」的典型

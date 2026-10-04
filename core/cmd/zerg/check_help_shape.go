@@ -1102,9 +1102,9 @@ type chsFaceBl struct {
 type chsBaselineSet map[string]chsFaceBl
 
 var chsBaseline = chsBaselineSet{
-	"help --all":     {HasLines: true, Lines: 319, HasBytes: true, Bytes: 195168},
-	"help":           {HasLines: true, Lines: 252, HasBytes: true, Bytes: 121842, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
-	"help dangerous": {HasLines: true, Lines: 69, HasBytes: true, Bytes: 20701, HasRows: true, Rows: 58, HasTail: true, Tail: "上表 58 条：**已开放 30 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 28 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。", ConfirmNotInUsage: []string{"agent reap", "itask start", "itask stop"}, ConfirmValueMismatch: [][]string{}},
+	"help --all":     {HasLines: true, Lines: 324, HasBytes: true, Bytes: 200458},
+	"help":           {HasLines: true, Lines: 254, HasBytes: true, Bytes: 123051, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	"help dangerous": {HasLines: true, Lines: 72, HasBytes: true, Bytes: 22055, HasRows: true, Rows: 61, HasTail: true, Tail: "上表 61 条：**已开放 33 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 28 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。", ConfirmNotInUsage: []string{"agent reap", "itask start", "itask stop"}, ConfirmValueMismatch: [][]string{}},
 	"help config":    {HasLines: true, Lines: 17, HasBytes: true, Bytes: 1392},
 }
 

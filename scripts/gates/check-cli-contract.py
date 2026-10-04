@@ -29,7 +29,7 @@
 #   python3 scripts/gates/check-cli-contract.py [仓库根]
 #   python3 scripts/gates/check-cli-contract.py --self-test          # 成对负控（4 正控 + 13 负控 + 1 空转
 #                                                                   # + 3 条 emit-matrix 合并/字节/幂等控 ·
-#                                                                   # 其中 `R-6` 逐格回放 4 条）
+#                                                                   # 其中 `R-6` 逐格回放 4 条 · T7 判不了一族 3 条）
 #   python3 scripts/gates/check-cli-contract.py --no-runtime         # **只给夹具用**：跳过 T4 的 go test
 #   python3 scripts/gates/check-cli-contract.py --emit-matrix [路径] # **增量合并**矩阵 —— 只刷新机器可派生
 #                                                                   # 列（want_rc / want_stdout_bytes=**字节**数），
@@ -427,7 +427,19 @@ def run_once(binz, argv):
     return p.returncode, len(p.stdout.encode('utf-8'))
 
 
-def live_verify(root, matrix_path=None):
+def resolve_bin(root, bin_path=None):
+    """缺口 `GAP-20260926-12`：制品路径可由外部指定（`--bin <路径>`）。
+
+    不给（`None`/空）⇒ 老口径：`<root>/bin/zerg`（逐字不变）。
+    给了 ⇒ 用**绝对化后**的该路径 —— 于是「仓外临时仓根 ＋ 本机真制品」两态可用，
+    不必为了跑门在临时仓根里再造一棵 `bin/`（✗ 不许碰真仓 `bin/`）。
+    """
+    if bin_path:
+        return os.path.abspath(bin_path)
+    return os.path.join(root, 'bin', 'zerg')
+
+
+def live_verify(root, matrix_path=None, bin_path=None):
     """§六 `R-6` 的**新负控档**：拿**冻结的**矩阵逐格现跑同一 `argv`（每格跑两遍）、核 `rc` 与 stdout **字节数**。
 
     为什么要它：`T1` 只判「命令树里的命令**有没有格**」、`T5` 只判「`blanks`」——
@@ -436,7 +448,7 @@ def live_verify(root, matrix_path=None):
 
     判据：0 = 逐格全合 · 1 = 有 mismatch（判词点名到格）· 2 = **不给结论**（矩阵不在盘 / 零格 / 找不到制品）。
     """
-    binz = os.path.join(root, 'bin', 'zerg')
+    binz = resolve_bin(root, bin_path)
     if not os.path.isfile(binz):
         return 2, ['⛔ 不给结论：找不到 bin/zerg —— 先用 `bash scripts/build/build-all.sh --only-cli` 出新制品']
     mpath = matrix_path or os.path.join(root, MATRIX_REL)
@@ -518,7 +530,7 @@ def step_name_candidates(binz):
     return names, ''
 
 
-def tier_cell_live(root, matrix):
+def tier_cell_live(root, matrix, bin_path=None):
     """T7：逐格现跑 `tiers.*.cells[]` 的 `argv`，核 **实测 rc == 该格 `want_rc`**（每格两遍）。
 
     为什么：`cases[]` 是 must-fail 矩阵（`want_rc == 0` 判红）⇒ 绿格（`want_rc == 0`）只能登记在
@@ -541,7 +553,7 @@ def tier_cell_live(root, matrix):
       标记的格、`want_rc != 0` 的格退 8）照旧判红、点名到格。★ 不许当空转口子：整块**一格都没判合**
       ⇒ 仍返 2 不给结论（判不了不许当绿，也不许让整块判据面被清空）。
     """
-    binz = os.path.join(root, 'bin', 'zerg')
+    binz = resolve_bin(root, bin_path)
     if not os.path.isfile(binz):
         return 2, ['⛔ 不给结论：找不到 bin/zerg —— T7 绿格现跑跑不起来（先用 '
                    '`bash scripts/build/build-all.sh --only-cli` 出**新**制品）'], [], {}
@@ -603,13 +615,13 @@ def tier_cell_live(root, matrix):
     return (0 if not bad else 1), head, bad, stat
 
 
-def emit_matrix(root, out_path=None, dry_run=False):
+def emit_matrix(root, out_path=None, dry_run=False, bin_path=None):
     """按命令树 + 现跑制品**增量合并**矩阵。
 
     既有格：只刷新机器可派生列（`want_rc` / `want_stdout_bytes`），其余列逐字保留、一个不删；
     新命令（命令树里有、矩阵里一格都没有）：按候选面追加候选格。
     """
-    binz = os.path.join(root, 'bin', 'zerg')
+    binz = resolve_bin(root, bin_path)
     if not os.path.isfile(binz):
         return 2, ['⛔ 不给结论：找不到 bin/zerg —— 先用 bash scripts/build/build-all.sh --only-cli 出新制品']
     tree = parse_tree(root)
@@ -691,7 +703,7 @@ def emit_matrix(root, out_path=None, dry_run=False):
         # ★ §六 `R-6`（2026-09-24 · 波6 序6 · 缺口 `G-72`）：重冻**写盘之后**拿**新账**逐格现跑一遍
         #   （每格两遍 · 核退码与 stdout 字节数）—— **只报不判**（重冻的 rc 语义不因它改）；
         #   要一个「判」的 rc 就走 `--verify-live`（同一条 `live_verify`）。
-        vrc, vlines = live_verify(root)
+        vrc, vlines = live_verify(root, bin_path=bin_path)
         lines.extend(vlines)
         if vrc != 0:
             lines.append('⚠ 重冻后的**新账**与现跑对不上（见上）—— 账与盘不一致就是「幽灵格」；'
@@ -824,7 +836,7 @@ def why_value_claims(cases):
     return errs, stat
 
 
-def check(root, no_runtime=False):
+def check(root, no_runtime=False, bin_path=None):
     """返回 (rc, 行列表)。rc：0 全过 · 1 有红 · 2 不给结论。"""
     lines = []
     errs = []
@@ -928,6 +940,25 @@ def check(root, no_runtime=False):
         if n not in legal:
             errs.append('T3 退码表：%s 里出现**裸数字**退出码 %d —— 它不在真源表里（该走具名常量）' % (f, n))
 
+    # ---- T5e `field_surface_greens` 键现读对拍（缺口 `GAP-20260927-315`）----
+    #   本键此前**全仓零读者**（双向证过）：登记了「K2 乙档绿格数」却没有任何判据核它 ⇒ 漂了也不红。
+    #   现读真值 = 矩阵 `tiers.field_surface.<…>.cells` 各块长度之和（`甲·开放` 无 cells 块 ⇒ 只数乙档）。
+    #   取不到 ⇒ **2 不给结论**（与同族 rc=2 口径一致）。
+    fsg = baseline.get('field_surface_greens')
+    if fsg is None:
+        return 2, ['⛔ 不给结论：baseline 缺 `field_surface_greens`（K2 乙档绿格计数的棘轮锚）—— 判不了']
+    fs_tier = (matrix.get('tiers') or {}).get('field_surface') or {}
+    fs_cells, got_fs = 0, False
+    if isinstance(fs_tier, dict):
+        for _v in fs_tier.values():
+            if isinstance(_v, dict) and isinstance(_v.get('cells'), list):
+                fs_cells += len(_v['cells']); got_fs = True
+    if not got_fs:
+        return 2, ['⛔ 不给结论：矩阵 `tiers.field_surface.*.cells` 读不到 ⇒ T5e 判不了（不许当绿）']
+    if fs_cells != int(fsg):
+        errs.append('T5e field_surface_greens：矩阵现读 %d 格 ≠ baseline 记的 %d —— '
+                    '该键此前零读者，现纳入对拍（棘轮只许**下调**）' % (fs_cells, int(fsg)))
+
     # ---- T5 空白 + baseline 棘轮 ----
     if len(blanks) > int(baseline['blanks']):
         errs.append('T5 棘轮：空白 %d 条 > baseline %d 条（棘轮只许**下调**；新增命令必须补 must-fail）'
@@ -988,7 +1019,7 @@ def check(root, no_runtime=False):
     #   `want_rc` 写错也不红）。判据面走**默认档**（不需要 `--verify-live`），矩阵漂了门就红。
     t7, t7_info = '（--no-runtime：夹具模式跳过）', []
     if not no_runtime:
-        rc7, head7, bad7, stat7 = tier_cell_live(root, matrix)
+        rc7, head7, bad7, stat7 = tier_cell_live(root, matrix, bin_path=bin_path)
         if rc7 == 2:
             return 2, head7
         t7 = head7[0]
@@ -1074,9 +1105,22 @@ GOOD_MATRIX = {
         {"id": "core/stop#缺 --confirm", "command": "core stop", "argv": ["core", "stop", "x"],
          "want_rc": 2, "want_stdout_bytes": 0, "why": "D3 缺确认 ⇒ 2"},
     ],
+    #   夹具随动（缺口 `GAP-20260927-315` 的 T5e 判据面）：T5e 以 `tiers.field_surface.*.cells` 各块
+    #   长度之和为**现读真值**对拍 `baseline['field_surface_greens']`；夹具不带 `tiers.field_surface`
+    #   ⇒ T5e 取不到面即 rc=2，**全部自检格一进门就被 T5e 顶掉**（19 格全红）。故夹具必须带该块，
+    #   形状照真源 `core/cmd/zerg/testdata/cli-matrix.json`（甲 · 开放字段面 0 格 ＋ 乙 · 闭集字段面 2 格）。
+    "tiers": {
+        "field_surface": {
+            "甲 · 开放字段面": {"cells": []},
+            "乙 · 闭集字段面": {"cells": [
+                {"id": "version#绿格甲", "argv": ["version"], "want_rc": 0, "why": "夹具绿格"},
+                {"id": "core/stop#绿格乙", "argv": ["core", "stop"], "want_rc": 0, "why": "夹具绿格"},
+            ]},
+        },
+    },
 }
 GOOD_BASELINE = {"id": "cli-contract-baseline.v1", "blanks": 0, "mustfail_cases": 2,
-                 "commands": 2,
+                 "commands": 2, "field_surface_greens": 2,
                  "note": "只许下调：本门落地时空白已清零 ⇒ 从此任何空白即红；`commands` 是 T5c 的**相等判**锚点（夹具树 = version + core stop 两条）"}
 GOOD_REGISTRY = {"schema": "zerg-contract-registry/1", "entries": [
     {"id": "S-g", "name": "命令面契约（本件）",
@@ -1323,6 +1367,45 @@ def self_test():
         if not any('找不到 bin/zerg' in l for l in lines):
             bad.append('⑳ R-6 负控：判词没有点名缺制品')
 
+        # ㉑-㉓ 缺口 `GAP-20260928-40`：T7（绿格现跑）「判不了」口径的**在册成对负控**（三条）。
+        #   夹具 bin/zerg：argv 首词 `blk` ⇒ 退 8（CLI 自陈不给结论）；`ok` ⇒ 退 0；其余 ⇒ 退 2。
+        #   ✗ 不新增退码、✗ 不改既有判据语义 —— 只把 T7 已实现的三态（判不了 / 判红 / 空转不给结论）
+        #   逐态钉上负控，防后续改动把它悄悄变成恒绿或误红（与既有 ⑰-⑳ R-6 一族同体例）。
+        t7r = fixture(os.path.join(tmp, 't7sd'))
+        os.makedirs(os.path.join(t7r, 'bin'), exist_ok=True)
+        with open(os.path.join(t7r, 'bin', 'zerg'), 'w', encoding='utf-8') as f:
+            f.write('#!/bin/sh\ncase "$1" in blk) exit 8 ;; ok) exit 0 ;; *) exit 2 ;; esac\n')
+        os.chmod(os.path.join(t7r, 'bin', 'zerg'), 0o755)
+        # 正路（②）：state_dependent 格两遍都退 8 ⇒ 判「判不了」（不计合、不判红）⇒ 整块仍 0
+        m7 = json.loads(json.dumps(GOOD_MATRIX))
+        m7['tiers'] = {'local': {'cells': [
+            {"id": "sd#blk", "argv": ["blk"], "want_rc": 0, "state_dependent": "要看那一趟门跑的结果台账"},
+            {"id": "ok#cell", "argv": ["ok"], "want_rc": 0},
+        ]}}
+        rc, lines, _bad7, stat7 = tier_cell_live(t7r, m7)
+        case('㉑ T7 判不了正路（state_dependent 两遍退 8 ⇒ 判不了、不判红 ⇒ 0）', 0, rc, '\n'.join(lines))
+        if stat7.get('blocked') != 1 or stat7.get('ok') != 1:
+            bad.append('㉑ T7 判不了正路：blocked=%r ok=%r（要 1 / 1）'
+                       % (stat7.get('blocked'), stat7.get('ok')))
+        # 负控（①）：声明了 state_dependent 而 want_rc≠0、退 8 ⇒ **必红并点名该格**（不是判不了）
+        m7b = json.loads(json.dumps(m7))
+        m7b['tiers']['local']['cells'] = [
+            {"id": "sd#wrong", "argv": ["blk"], "want_rc": 2, "state_dependent": "要看那一趟门跑的结果台账"},
+            {"id": "ok#cell", "argv": ["ok"], "want_rc": 0},
+        ]
+        rc, lines, bad7b, _stat7b = tier_cell_live(t7r, m7b)
+        case('㉒ T7 负控（state_dependent 而 want_rc≠0、退 8 ⇒ 1 判红）', 1, rc, '\n'.join(lines))
+        if not any('sd#wrong' in x for x in bad7b):
+            bad.append('㉒ T7 负控：判词没有点名 sd#wrong')
+        # 空转负控（③）：**全部格都判不了** ⇒ 2 不给结论（判不了不许当绿）
+        m7c = json.loads(json.dumps(m7))
+        m7c['tiers']['local']['cells'] = [
+            {"id": "sd#a", "argv": ["blk"], "want_rc": 0, "state_dependent": "要看那一趟门跑的结果台账"},
+            {"id": "sd#b", "argv": ["blk"], "want_rc": 0, "state_dependent": "要看那一趟门跑的结果台账"},
+        ]
+        rc, lines, _bad7c, _stat7c = tier_cell_live(t7r, m7c)
+        case('㉓ T7 空转负控（全部格判不了 ⇒ 2 不给结论）', 2, rc, '\n'.join(lines))
+
         print('自检结论: %s（失败 %d 条）' % ('全过' if not bad else '不过', len(bad)))
         for b in bad:
             print('✗ ' + b)
@@ -1357,6 +1440,9 @@ def main():
         return rc_q176
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument('root', nargs='?', default='.')
+    ap.add_argument('--bin', metavar='PATH', default=None,
+                    help='缺口 GAP-20260926-12：指定制品路径。不给 = <root>/bin/zerg；'
+                         '给了 = 用该路径（绝对化后）—— 仓外临时仓根复用本机真制品，免造 bin/')
     ap.add_argument('--self-test', action='store_true')
     ap.add_argument('--no-runtime', action='store_true',
                     help='**只给夹具用**：跳过 T4 的 go test（真目标不许带这个开关）')
@@ -1377,7 +1463,7 @@ def main():
         print('⛔ 不给结论：找不到仓根（从 %s 上溯找不到 %s）' % (a.root, MAIN_REL))
         return 2
     if a.verify_live:
-        rc, lines = live_verify(root)
+        rc, lines = live_verify(root, bin_path=a.bin)
         print('门⑪ · §六 `R-6` 逐格回放（仓根 %s）' % root)
         for l in lines:
             print('  ' + l)
@@ -1386,11 +1472,11 @@ def main():
                            '不给结论（rc=2）：缺件/零格 —— 不许当绿')))
         return rc
     if a.emit_matrix is not None:
-        rc, lines = emit_matrix(root, a.emit_matrix or None, dry_run=a.dry_run)
+        rc, lines = emit_matrix(root, a.emit_matrix or None, dry_run=a.dry_run, bin_path=a.bin)
         for l in lines:
             print('  ' + l)
         return rc
-    rc, lines = check(root, no_runtime=a.no_runtime)
+    rc, lines = check(root, no_runtime=a.no_runtime, bin_path=a.bin)
     print('门⑪ 命令面契约（§九 M17 T1–T6）· 仓根 %s' % root)
     for l in lines:
         print('  ' + l)

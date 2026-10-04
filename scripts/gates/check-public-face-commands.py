@@ -582,16 +582,22 @@ def main():
     ap.add_argument("--json", default=None, help="机器读面：逗号分隔 counts,hits,topics")
     ap.add_argument("--self-test", action="store_true", help="只跑自检（合成夹具 · 不碰真目标）")
     ap.add_argument("--no-self-test", action="store_true", help="跳过开跑前的自检")
+    ap.add_argument("--read-only-count", action="store_true",
+                    help="自检不过仍打印只读计数（**不给结论**：rc 仍退 2，只多一份机器可读计数；GAP-20260926-147）")
     a = ap.parse_args()
 
+    selftest_failed = False
     if not a.self_test and not a.no_self_test:
         src, out = self_test()
         print("── 开跑前自检（合成夹具 · 不碰真目标）──")
         for l in out:
             print(l)
         if src != 0:
-            print("⛔ 自检不过 ⇒ 拒绝跑真目标（门禁自己先能被证明「会红」）")
-            return 2
+            if not a.read_only_count:
+                print("⛔ 自检不过 ⇒ 拒绝跑真目标（门禁自己先能被证明「会红」）")
+                return 2
+            selftest_failed = True
+            print("⚠ 自检不过 ⇒ --read-only-count：只印只读计数，**不给结论**（rc 仍 = 2）")
     elif a.self_test:
         src, out = self_test()
         print("── 自检（合成夹具 · 不碰真目标）──")
@@ -620,6 +626,8 @@ def main():
     elif rc == 1:
         print("✗ 有红（rc=1）：例外须 0 · 逐条见上（处置只有两条：改页，或改命令面的用法串 —— "
               "不许放宽判据来凑绿 ✗）")
+    if selftest_failed:
+        return 2
     return rc
 
 

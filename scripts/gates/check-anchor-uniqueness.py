@@ -105,6 +105,23 @@ def resolve(root, docs, target):
     return "", "?"
 
 
+def current_version(root):
+    """现读版本真源 core/internal/version/version.go 的 const Version（取不到 ⇒ 空串）。"""
+    p = os.path.join(root, "core", "internal", "version", "version.go")
+    try:
+        with open(p, encoding="utf-8") as f:
+            m = re.search(r'Version\s*=\s*"([^"]+)"', f.read())
+        return m.group(1) if m else ""
+    except OSError:
+        return ""
+
+
+def register_version(register):
+    """登记件路径里的版本段（如 v2.5.12 ⇒ 2.5.12）。"""
+    m = re.search(r"v(\d+\.\d+\.\d+)", register)
+    return m.group(1) if m else ""
+
+
 def hits_of(path, text):
     """`grep -F` 语义：命中**行数** + 命中行号（判据吃「唯一」，行号只作导航报告）。"""
     with open(path, encoding="utf-8", errors="replace") as f:
@@ -168,11 +185,19 @@ def run(root, docs_root, register, json_out):
             reds.append({"anchor": a, "why": "锚号重号 %d 次（一个号指两处 ⇒ 号空间被污染）" % n,
                          "line": 0, "target": "-", "text": "-"})
 
+    # 缺口 `GAP-20260926-106`：登记过期告警（键失指 ⇒ 点名）。登记件路径里的版本段 ↔ 现读版本真源不符
+    #   ⇒ 内容锚可能已失指（只告警，不改退码：给后续人一个可读信号，而不是静默漂着）。
+    warnings = []
+    _regv, _cur = register_version(register), current_version(root)
+    if _regv and _cur and _regv != _cur:
+        warnings.append("登记件版本 v%s 与当前版 v%s 不符 ⇒ 疑**登记过期**"
+                        "（内容锚可能已失指；缺口 GAP-20260926-106）" % (_regv, _cur))
+
     if json_out:
         doc = {"schema": "zerg/v1", "kind": "AnchorUniqueness", "tool": VERSION,
                "items": uniques, "meta": {"anchors": len(rows), "unique": len(uniques),
                                           "reds": len(reds), "register": register},
-               "out_of_domain": reds, "problems": problems, "warnings": [], "truncated": False}
+               "out_of_domain": reds, "problems": problems, "warnings": warnings, "truncated": False}
         print(json.dumps(doc, ensure_ascii=False))
         if problems:
             return 2
@@ -182,6 +207,8 @@ def run(root, docs_root, register, json_out):
     print("  主仓根  : %s" % root)
     print("  文档仓根: %s" % docs)
     print("  登记件  : %s" % register)
+    for _w in warnings:
+        print("  ⚠ 告警：%s" % _w)
     if problems:
         print("⛔ 不给结论（rc=2）：")
         for p in problems:

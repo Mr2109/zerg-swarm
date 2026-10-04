@@ -4,10 +4,15 @@ package chat
 // 设计: Zerg-内部文档/项目文档/v2.5.8/设计-v2.5.8-文档体系-模型读取成本-20260903.md（2026-09-19 二次分家）
 // 核心: 关键词 → docs(项目文档+常青) 命中文件+片段（限长）——替代全文读——片段入上下文
 // 行为: 版本目录全扫（当前版命中优先排前）——每文件最多 2 命中行——总输出限长
+//
+// ★ GAP-20260927-115（**已落仓** · 与 chat_tool_overview.go 同口径）：本文件为「当前版钉 version.Tag 编译期
+//   真源」的补治——overview 早已把「当前版」钉 version.Tag，本件的 doc_search 原先按 latestVersionDir()
+//   扫出的目录名当「当前版」（发布件多在旧版 ⇒ 常挑到上一版 ⇒ 把上一版标成 ★当前版）。本笔只改该一处判定。
 
 import (
 	"fmt"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
+	"github.com/Mr2109/zerg-swarm/core/internal/version"
 	"os"
 	"path/filepath"
 	"sort"
@@ -44,7 +49,10 @@ func docSearch(args map[string]any, workDir string) (string, error) {
 		return "", fmt.Errorf("doc_search 取源根缺失，判据不可判（不给「无命中」）：%s；常青目录 %s 也不在盘上",
 			statepath.DocsBaseMissingNote(), evergreen)
 	}
-	cur := latestVersionDir() // 当前版目录（命中优先）
+	// ★ 缺口 GAP-20260927-115（与 chat_tool_overview.go:132 同口径）：文档检索面本就走全扫 roots
+	//   （版本目录不影响「读到哪些件」），故此处**只**把「当前版」这一**判定**钉到 version.Tag
+	//   编译期真源 —— ✗ 不取 latestVersionDir() 扫出的目录名（发布件多在旧版 ⇒ 会把上一版标成当前版）。
+	curBase := version.Tag // 当前版真源 = 编译期常量（形如 "v2.5.13"）——与 overview 一致
 
 	type hit struct {
 		path   string // 相对 docs 根的展示路径（含版本）
@@ -130,9 +138,8 @@ func docSearch(args map[string]any, workDir string) (string, error) {
 		}
 		rel := docSearchDisplayPath(fp)
 		h := &hit{path: rel, verKey: 1, lines: snippets}
-		curBase := filepath.Base(cur)
-		if cur != "" && strings.HasPrefix(rel, "项目文档"+string(filepath.Separator)+curBase) {
-			h.verKey = 0 // 当前版最优先
+		if strings.HasPrefix(rel, "项目文档"+string(filepath.Separator)+curBase) {
+			h.verKey = 0 // 当前版最优先（真源 = version.Tag）
 		} else if strings.HasPrefix(rel, "项目文档") {
 			h.verKey = 2 // 历史版最后
 		}

@@ -312,7 +312,11 @@ def local_broken_detail(root: str):
         return None, [], [], [], "根不在盘"
     files, _ = scan_tree(root)
     if not files:
-        return 0, [], [], [], "扫面 0 件 .md"
+        if NESTED_SEEN.get(root):
+            # 域内 0 件，但确有嵌套仓被剪（域外 · 别仓的件）⇒ 域内 0 件是实情，不是判不了（自检 ⑫）
+            return 0, [], [], [], "扫面 0 件 .md（仅域外嵌套仓件）"
+        # 真扫面 0 件 ⇒ 不给结论（与 not_in_nav 同档 · rc=2 · GAP-20260927-124）
+        return None, [], [], [], "扫面 0 件 .md"
     have = set(files)
     raw, hits, exempt = [], [], []
     unreadable = []                     # ● GAP-20261001-26 修：读不了的件逐条记下、不再一格 None 丢整树
@@ -671,6 +675,15 @@ def self_test(out) -> bool:
         BASE_OFFSET["publish/docs/README.md"] = _old
     case("⑰ 登记体检②：登记基准**不是目录** ⇒ 点名（基准指空）", True,
          bool(_st2) and "不是目录" in _st2[0])
+
+    # ── ⑱⑲ 空树（成对）：真扫面 0 件 = 判不了（与件头退码节 / not_in_nav 同档 · rc=2 · GAP-20260927-124）
+    t12e = os.path.join(tmp, "t12empty")
+    os.makedirs(t12e, exist_ok=True)
+    case("⑱ 空树（无 .md · 无嵌套仓）：local_broken_detail 判不了（None => rc=2），不是 0 件绿",
+         True, local_broken_detail(t12e)[0] is None)
+    with open(os.path.join(t12e, "a.md"), "w", encoding="utf-8") as f:
+        f.write("# a\n\n[bad](gone.md)\n")
+    case("⑲ 空树（成对）：有 .md 且真有断链 => 照报（件数 1）", 1, local_broken(t12e)[0])
 
     out.write("  自检 %d 格 · 失败 %d 格\n" % (total, failed))
     return failed == 0

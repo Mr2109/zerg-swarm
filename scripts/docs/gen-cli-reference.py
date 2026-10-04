@@ -60,6 +60,7 @@
 """
 import argparse
 import glob
+import json
 import os
 import re
 import shutil
@@ -121,6 +122,9 @@ L = {
             "其余四列（说明 / `--json` 字段 / 投影的远端端点 / 茧壁层级）逐字来自 `zerg help export`。",
             "单元格里的 `|` 按 markdown 规矩转义成 `\\|`（**唯一**的排版改写，未动任何字符）。",
         ],
+        "counts_note": "> **现读真源数**：命令树 **{total}** 条（开放命令 **{open}** 条 + 危险动作 "
+                       "**{danger}** 条）· 契约矩阵 **{matrix}** 格（must-fail {matrix}）· 空白 "
+                       "**{blanks}** · 豁免 **{exempt}**。",
         "h_open": "已开放（{n} 条）",
         "a_open": "已开放",
         "h_danger": "危险动作（{n} 条 · 已登记）",
@@ -201,6 +205,9 @@ L = {
             "A literal `|` inside a cell is escaped as `\\|` for markdown (the **only** typographic "
             "change; no character was altered).",
         ],
+        "counts_note": "> **Counts as read** — command tree **{total}** (open commands **{open}** + "
+                       "dangerous actions **{danger}**) · contract matrix **{matrix}** cases "
+                       "(must-fail {matrix}) · blank **{blanks}** · exempt **{exempt}**.",
         "h_open": "Open ({n})",
         "a_open": "已开放",
         "h_danger": "Dangerous actions ({n} · registered)",
@@ -525,6 +532,38 @@ def cells_for_table(lines, heading, cols, layer_col="茧壁层级"):
     return out
 
 
+# ── 计数行（缺口：旧实现把「现读真源数」当人写注记**逐字保留** ⇒ 计数烂在页里）──────────
+#   本器**现算**：命令树/开放/危险取自 `live_data`；契约矩阵三数读基线件与矩阵件。
+COUNTS_MARKERS = ("> **现读真源数**", "> **Counts as read**")
+
+
+def matrix_counts(root):
+    """契约矩阵计数（`cli-contract-baseline.json` + `cli-matrix.json`）→ (dict, err)。"""
+    bp = os.path.join(root, "scripts", "gates", "cli-contract-baseline.json")
+    mp = os.path.join(root, "core", "cmd", "zerg", "testdata", "cli-matrix.json")
+    try:
+        with open(bp, encoding="utf-8") as f:
+            b = json.load(f)
+        with open(mp, encoding="utf-8") as f:
+            m = json.load(f)
+    except (OSError, ValueError) as e:
+        return None, "契约矩阵计数读不出来（%s）—— 不猜，拒绝出页" % e
+    try:
+        return {"mustfail": int(b["mustfail_cases"]), "blanks": int(b["blanks"]),
+                "exempt": len(m.get("exemptions") or [])}, ""
+    except (KeyError, TypeError, ValueError) as e:
+        return None, "契约矩阵计数格读不出来（%s）—— 不猜，拒绝出页" % e
+
+
+def render_counts_note(loc, data):
+    """标记区首行「现读真源数」**现算**（计数不再是手写字面量）。"""
+    mc = data["matrix"]
+    return L[loc]["counts_note"].format(total=data["n_open"] + data["n_danger"],
+                                       open=data["n_open"], danger=data["n_danger"],
+                                       matrix=mc["mustfail"], blanks=mc["blanks"],
+                                       exempt=mc["exempt"])
+
+
 def live_data(root):
     """现跑取数 → (data, err)。err 非空 ⇒ rc=2 不给结论。"""
     binz = os.path.join(root, "bin", "zerg")
@@ -538,7 +577,7 @@ def live_data(root):
 
     tmp = tempfile.mkdtemp(prefix="zerg-cli-ref-")
     try:
-        rc, out, err = run(binz, ["help", "export", "--out", tmp])
+        rc, out, err = run(binz, ["help", "export", "--out", tmp, "--yes"])
         if rc != 0:
             return None, "`zerg help export --out` 退码 %d（%s）" % (rc, (err or out).strip()[:200])
         cands = sorted(glob.glob(os.path.join(tmp, "导出-命令面帮助-*.md")))
@@ -599,8 +638,12 @@ def live_data(root):
         return None, "这些命令在命令树里没有 usage 串（旗标列没法现算）：%s" % " / ".join(miss_usage)
 
     names_page = [r[0].strip("`").replace("zerg ", "") for r in open_rows + danger_rows]
+    mc, mc_err = matrix_counts(root)
+    if mc_err:
+        return None, mc_err
     return {
         "ident": ident, "counts": counts, "n_open": n_open, "n_danger": n_danger,
+        "matrix": mc,
         "open": open_rows, "danger": danger_rows, "exit": exit_rows,
         "exit_tail": tail_lines, "cfg": cfg_line, "usage": umap_all,
         "names_page": names_page, "names_tree": [p for p, _ in paths],
@@ -904,7 +947,17 @@ def inject_targets(root, data, targets, write):
         bi, ei = span
         lines = page.split("\n")
         body = "\n".join(lines[bi + 1:ei])
-        want = "\n".join(region_notes(body) + ["", render_list(loc, data, rel)])
+        # ★ 计数行**现算**（旧实现把它当人写注记逐字保留 ⇒ 计数会烂在页里）
+        notes, replaced = [], False
+        for l in region_notes(body):
+            if l.strip().startswith(COUNTS_MARKERS):
+                notes.append(render_counts_note(loc, data))
+                replaced = True
+            else:
+                notes.append(l)
+        if not replaced:
+            notes.insert(0, render_counts_note(loc, data))
+        want = "\n".join(notes + ["", render_list(loc, data, rel)])
         if not write:
             if body != want:
                 errs.append("drift：%s 的生成区与现跑不一致（改了命令面没重跑注入？"

@@ -1765,6 +1765,15 @@ def main():
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
+    # ── `--repo` 与 `--config` 配对（缺口 `GAP-20260926-184`）───────────────────────
+    #   现病：只给 `--repo <仓外副本>`、不给 `--config` 时，config 仍按**脚本自身位置**
+    #   解析（`DEFAULT_CONFIG` = <脚本所在仓>/scripts/docs/doc-freshness.config.json）
+    #   ⇒ 拿 /tmp 副本跑时误报「缺配置文件」（看着像环境问题、实为参数语义分家）。
+    #   修：显式给了 `--repo` 而未给 `--config` ⇒ 按该 repo 推同一相对落点（不写死）。
+    if (any(a == "--repo" or a.startswith("--repo=") for a in sys.argv[1:])
+            and not any(a == "--config" or a.startswith("--config=") for a in sys.argv[1:])):
+        args.config = os.path.join(args.repo, "scripts", "docs", "doc-freshness.config.json")
+
     if args.self_test:
         return cmd_self_test(args)
 

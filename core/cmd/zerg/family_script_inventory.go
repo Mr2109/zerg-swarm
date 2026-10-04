@@ -593,6 +593,8 @@ func cmdScriptInventorySync(inv *invocation, stdout, stderr io.Writer) int {
 	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
 		return rc
 	}
+	// ★ 先决（缺口 `GAP-20260926-75`）：下面这个「裸值/第二写路守卫」依赖 **parser 归一口径**
+	//   —— `inv.hasFlag` / `inv.flagVal` 读同一套归一结果；`parseInvocation` 对值旗标裸形的归一改了⇒ 本守卫的输入面随之改变（两处**同批**看）。
 	if denied := scriptInvDenyWriteFlags(inv); len(denied) > 0 {
 		inv.setErr("usage", "second_write_path", "本命令**不接受**逐条改旗标（一条命令写 = 没有第二条写路径）")
 		fmt.Fprintf(stderr, "%s: `script inventory sync` **不接受** %s —— 它是「逐条改」那类旗标"+

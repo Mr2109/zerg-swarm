@@ -25,7 +25,8 @@ import (
 
 // ---- model 族：单模型 / 适配器选项 --------------------------------------------------------
 
-// cmdModelShow —— `zerg model show <模型 id>`（只读）：从 `/api/fleet/models` 里挑一条。
+// cmdModelShow —— `zerg model show <模型 id>`（只读）：从 `/api/fleet/models` 里挑**全部命中该 id 的候选**
+// （多机同名逐条成行 —— 不再只留最后一条；单候选仍恰好 1 条）。
 func cmdModelShow(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) == 0 {
 		fmt.Fprintf(stderr, "%s: `model show` 要一个模型 id（先 `zerg model ls`）\n", progName)
@@ -39,7 +40,7 @@ func cmdModelShow(inv *invocation, stdout, stderr io.Writer) int {
 		return rc
 	}
 	fields := []string{"id", "host", "backend", "modality", "mem_gb", "file"}
-	var row map[string]string
+	rows := []map[string]string{}
 	ids := []string{}
 	for _, it := range asList(resp["models"]) {
 		o := asObj(it)
@@ -48,10 +49,10 @@ func cmdModelShow(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		ids = append(ids, cell(o["id"]))
 		if cell(o["id"]) == want {
-			row = project(o, fields)
+			rows = append(rows, project(o, fields))
 		}
 	}
-	if row == nil {
+	if len(rows) == 0 {
 		sort.Strings(ids)
 		fmt.Fprintf(stderr, "%s: 模型面里没有 %q\n", progName, want)
 		if s := nearestName(want, ids); s != "" {
@@ -60,7 +61,7 @@ func cmdModelShow(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("unsupported_on_node", "unknown_model", "模型面里没有这个 id")
 		return exitUsage
 	}
-	return listCmd(inv, stdout, stderr, fields, []map[string]string{row})
+	return listCmd(inv, stdout, stderr, fields, rows)
 }
 
 // cmdModelOpts —— `zerg model opts get|set <模型 id>`。

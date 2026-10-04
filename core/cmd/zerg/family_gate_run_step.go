@@ -416,6 +416,11 @@ var gateRunBoolFlags = []string{"--list", "--self-test", "--only-step", "--fast"
 func gateRunPrecheckFlags(tail []string, stderr io.Writer) int {
 	for i := 0; i < len(tail); i++ {
 		a := tail[i]
+		// 缺口 `GAP-20260927-03`：`--` 之后的段是**透传口** —— 原样交给门脚本、
+		//   不再做闭集校验（门脚本自有旗标无法经正门传 ⇒ `--` 是唯一放行口）。
+		if a == "--" {
+			break
+		}
 		if !strings.HasPrefix(a, "-") || a == "-" {
 			continue // 位置参数：自举件自重排，本函数不为它下结论
 		}

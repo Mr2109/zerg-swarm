@@ -210,6 +210,20 @@ func TestCheckReplaceRuleFixturesGatePort(t *testing.T) {
 			t.Fatalf("去重集 2 ≠ 未去重和 3 应分得开，out=%s", out)
 		}
 	})
+	// ── `--json tier`：夹具隔离分档 `{isolated, per_glob, dead, eaten}`（缺口 GAP-20260926-146）────
+	t.Run("json_tier_分档格", func(t *testing.T) {
+		root := crrfFx(t)
+		crrfW(t, filepath.Join(root, "publish", "whitelist.txt"), "core/\n")
+		crrfW(t, filepath.Join(root, "publish", "replace-rules.tsv"),
+			"regex:/srv/demo	<home>	合成\n!夹具	core/a/*_test.go	隔离\n")
+		crrfW(t, filepath.Join(root, "core", "a", "fixture_test.go"), "home := \"/srv/demo/x\"\n")
+		crrfW(t, filepath.Join(root, "core", "b", "other_test.go"), "ok := 1\n")
+		_, out, _ := crrfRun(t, "--root", root, "--json", "tier")
+		want := `{"tier": {"isolated": ["core/a/fixture_test.go"], "per_glob": [{"glob": "core/a/*_test.go", "files": 1}], "dead": [], "eaten": false}}`
+		if !strings.Contains(out, want) {
+			t.Fatalf("tier 分档格应逐字现四格，want=%s out=%s", want, out)
+		}
+	})
 
 	// ── B 类读失败（读不了的件）**已翻正**：登记 + 判红 rc=2（✗ 不再静默吞件）─────────
 	t.Run("读不了的件_登记判红_rc2", func(t *testing.T) {
@@ -244,7 +258,7 @@ func TestCheckReplaceRuleFixturesGatePort(t *testing.T) {
 		if rc != 0 || !strings.Contains(out, "自检结论: 全过") {
 			t.Fatalf("自检应 rc=0 全过，得 rc=%d out=%s", rc, out)
 		}
-		if !strings.Contains(out, "断言 14 条 · 失败 0 条") {
+		if !strings.Contains(out, "断言 15 条 · 失败 0 条") {
 			t.Fatalf("自检断言计数不符 out=%s", out)
 		}
 	})

@@ -104,7 +104,7 @@ tri-report 语义（§6.3 S6 的「起步 tri-report + baseline 棘轮」）
 用法：
   python3 scripts/gates/check-doc-cmds.py                      # 两棵都判（默认档）
   python3 scripts/gates/check-doc-cmds.py --scope formal       # 只判正式面
-  python3 scripts/gates/check-doc-cmds.py --scope devdocs      # 只判开发文档面（语料不在主仓 —— 走 ZERG_DEVDOCS_ROOT 或同级根 ZERG_DOCS_ALT/ZERG_DOCS，默认 ../Zerg-内部文档/项目文档/v2.5.13；取不到根 ⇒ rc=2）
+  python3 scripts/gates/check-doc-cmds.py --scope devdocs      # 只判开发文档面（语料不在主仓 —— 走 ZERG_DEVDOCS_ROOT 或同级根 ZERG_DOCS_ALT/ZERG_DOCS，默认 ../Zerg-内部文档/项目文档/<当前版>（读 core/internal/version/version.go 现算）；取不到根 ⇒ rc=2）
   python3 scripts/gates/check-doc-cmds.py --self-test          # 成对负控（好件/坏件/空转 + 旗标/主题 + 身份行/噪声 + 语料缺件四条分支，含 devdocs 根不在盘）；**组数以末行自印为准**（不写死）
 """
 import argparse
@@ -405,6 +405,24 @@ def devdocs_root_is_repo_root(p):
     return os.path.isdir(os.path.join(p, "项目文档"))
 
 
+def current_version(root):
+    """当前发布版（带 `v` 前缀，如 `v2.5.13`）—— 读**唯一真源** `core/internal/version/version.go`
+    的 `const Version = "X.Y.Z"`（与门① `check-doc-name.py` 同读法）。
+
+    为什么读真源、不硬编码（`GAP-20260926-209` 本件 · `GAP-20260926-211` 门①）：devdocs 默认
+    语料根钉死版本号 ⇒ 换版即**静默过期**（本件现读曾钉 `v2.5.13`，而同级 `Zerg-内部文档/项目文档/`
+    已有 `v2.5.14`）⇒ 只能治好今天、下版同病必复发。读不到真源 ⇒ 返回 **None**（调用方退 `rc=2`
+    fail-closed，**不当绿** —— 与全件「读不到不给结论」同口径）。
+    """
+    p = os.path.join(root, "core", "internal", "version", "version.go")
+    try:
+        src = open(p, encoding="utf-8").read()
+    except OSError:
+        return None
+    m = re.search(r'const\s+Version\s*=\s*"([^"]+)"', src)
+    return ("v" + m.group(1)) if m else None
+
+
 def check(root, scopes):
     if not os.path.isfile(os.path.join(root, MAIN_REL)):
         return RC_BLOCKED, ["⛔ 不给结论：命令树读不出来（%s 缺件/空转）—— 判据不可判 ⇒ 不给结论" % MAIN_REL]
@@ -435,8 +453,17 @@ def check(root, scopes):
             if n:
                 errs.append("formal（正式面 · **阻断**）：%d 处手写 `zerg …` 示例拼不到命令树（§九 M12）" % n)
         else:
-            docs_root = os.environ.get("ZERG_DEVDOCS_ROOT") or os.path.join(
-                sibling_docs_base(root), "项目文档", "v2.5.13")
+            docs_root = os.environ.get("ZERG_DEVDOCS_ROOT")
+            if not docs_root:
+                # 默认根：`<同级文档仓>/项目文档/<当前版>`，版本由**唯一真源**现算
+                # （`GAP-20260926-209`：曾钉死 `v2.5.13` ⇒ 换版静默过期 ⇒ 同「先静默绿」一类病）。
+                ver = current_version(root)
+                if not ver:
+                    blocked.append("⛔ 不给结论：版本真源读不到（core/internal/version/version.go 里"
+                                   "没有 `const Version = \"…\"`）⇒ 现算不出 devdocs 默认根 "
+                                   "—— 判据不可判（换根请设 `ZERG_DEVDOCS_ROOT`）")
+                    continue
+                docs_root = os.path.join(sibling_docs_base(root), "项目文档", ver)
             if devdocs_root_is_repo_root(docs_root):
                 blocked.append("⛔ 不给结论：devdocs 根**形态误用**（%s 下面还有 `项目文档/` ⇒ 这是"
                                "**文档仓仓根**、不是版本面根）—— 拿整仓根当面扫会把整棵树误判 ⇒ 判据不可判"

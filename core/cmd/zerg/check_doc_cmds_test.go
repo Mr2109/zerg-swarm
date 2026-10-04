@@ -270,3 +270,42 @@ func TestCheckDocCmdsProposalMarkTeeth(t *testing.T) {
 		t.Fatalf("提案体例回归牙（成对）：无判语应必计 ⇒ rc=1 且点名，得 rc=%d out=%q", rc2, out2)
 	}
 }
+
+// ── devdocs 默认根按「唯一真源 version.go」现算（本笔 Go 新行为 · py `GAP-20260926-209`）──
+// 改前 Go 钉死 `v2.5.13`（死版本号）；本笔改为读真源现算。有牙：钉 9.9.9 + 语料在 v9.9.9
+// ⇒ 走旧口径取不到根 ⇒ rc=2；读不到真源 ⇒ 归 blocked（rc=2 具名，不静默绿）。
+func TestCheckDocCmdsDevdocsVersionSource(t *testing.T) {
+	fx := dcmdFixture(t, nil)
+	verDir := filepath.Join(fx, "core", "internal", "version")
+	if err := os.MkdirAll(verDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	verFile := filepath.Join(verDir, "version.go")
+	if err := os.WriteFile(verFile, []byte("package version\n\nconst Version = \"9.9.9\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	alt := t.TempDir()
+	d := filepath.Join(alt, "项目文档", "v9.9.9")
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d, "good.md"), []byte("行内 `zerg version` 也过。\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ZERG_DOCS_ALT", alt)
+	os.Unsetenv("ZERG_DEVDOCS_ROOT")
+
+	// ① 正控：真源 9.9.9 ⇒ 默认根算成 v9.9.9 ⇒ 语料在场 ⇒ rc=0（旧口径会去 v2.5.13 ⇒ rc=2）
+	rc, out, _ := dcmdRunIn(t, fx, "--scope", "devdocs")
+	if rc != 0 || !strings.Contains(out, "devdocs（只报告档") {
+		t.Fatalf("版本真源现算失败：应把默认根算成 v9.9.9 ⇒ rc=0，得 rc=%d out=%q", rc, out)
+	}
+	// ② 成对（真源读不到）：删 version.go ⇒ 归 blocked（rc=2 具名「版本真源读不到」，不静默绿）
+	if err := os.Remove(verFile); err != nil {
+		t.Fatal(err)
+	}
+	rc2, out2, _ := dcmdRunIn(t, fx, "--scope", "devdocs")
+	if rc2 != 2 || !strings.Contains(out2, "版本真源读不到") {
+		t.Fatalf("真源缺失应 rc=2 且点名版本真源，得 rc=%d out=%q", rc2, out2)
+	}
+}

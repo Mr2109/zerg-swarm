@@ -170,6 +170,9 @@ func cmdPublishRun(inv *invocation, stdout, stderr io.Writer) int {
 	if out != "" {
 		scriptArgs = " --out " + out
 	}
+	// ★ ★ 先决（缺口 `GAP-20260926-75`）：下面这个「裸值守卫」依赖 **parser 归一口径** ——
+	//   `inv.hasFlag` / `inv.flagVal` 读的是同一套归一结果（`--out x` 与 `--out=x` 同形；缺值与“没给”分家）。
+	//   ★ 改动 `parseInvocation` / 值旗标裸形归一（缺口 `GAP-20260926-58` 那类）⇒ **本守卫的输入面随之改变**：两处必须**同批**看。
 	// ★ `--out` 旧状 = **收下即丢**（传 `args=nil` ⇒ 给 `--out <目录>` 仍落默认点，且 rc=0 不报错）。
 	// 现在两态都**不静默**：① 给了旗标没给值 ⇒ 退 2；② 指的落点**已存在且不是目录** ⇒ 退 2
 	// （底脚本会先 `rm -rf` 再 `mkdir` ⇒ 那个件会被**静默删掉** —— 不许吞）。

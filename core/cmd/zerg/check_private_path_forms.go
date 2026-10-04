@@ -154,6 +154,32 @@ var pvForms = []pvForm{
 		Debt: "现读（2026-09-26）：该条 tsv 规则是**家目录形态的 base64 编码变形**（解开 = `<家目录>/.config/zerg/token`，即**私有机密文件的路径**）—— `scripts/gates/**` 面**没有一件**把「家目录 / 凭据路径的**编码变形**」当枚举形态：`check-public-marks.py` 的 `PRIVATE_PATTERNS` 收的是**明文** `/Users/<user>/` · `/home/<user>/` 与令牌**字面**（`ghp_…` / `sk-…` / `AKIA…`），**不收 base64 编码形态** ⇒ 登记为**存量债**（本格逐跑打印）"},
 }
 
+// ── 「非形态」登记面（缺口 `GAP-20260926-152` · 与 py `NON_FORM_RULES`/`NON_FORM_FRAGMENTS` 逐格同构）──
+//
+//	一条模式逐字登记在此（带理由 + 日期）⇒ 视为「已辨识为**非形态**」⇒ 进 `nonform[]` 逐跑打印
+//	（不静默），**不当红**；未登记的仍是红（真形态负控照旧有牙）。★ 两表默认空 ⇒ 与旧版行为逐字同形。
+var pvNonFormRules = [][3]string{}
+var pvNonFormFragments = [][4]string{}
+
+// pvNonformOfRule / pvNonformOfFragment —— **逐字**比对（不吃归一化）；命中 ⇒ 返回登记条（未登记 ⇒ nil）。
+func pvNonformOfRule(key string) *[3]string {
+	for i := range pvNonFormRules {
+		if pvNonFormRules[i][0] == key {
+			return &pvNonFormRules[i]
+		}
+	}
+	return nil
+}
+
+func pvNonformOfFragment(origin, frag string) *[4]string {
+	for i := range pvNonFormFragments {
+		if pvNonFormFragments[i][0] == origin && pvNonFormFragments[i][1] == frag {
+			return &pvNonFormFragments[i]
+		}
+	}
+	return nil
+}
+
 // ── 判定结果携带体（json 键序与 py dict 逐字对齐）────────────────────────────────
 type pvRed struct {
 	Rule string  `json:"rule"`
@@ -177,15 +203,37 @@ type pvInst struct {
 	Why   string `json:"why"`
 }
 
+// pvNonform —— 「非形态」（已登记）项（= py E2a/E2b 的 `nonform[]` 项，**无 form 键**）。
+type pvNonform struct {
+	Rule string  `json:"rule"`
+	File *string `json:"file"`
+	Line *int    `json:"line"`
+	Raw  string  `json:"raw"`
+	Why  string  `json:"why"`
+}
+
+// pvFormTuple —— `--json` 的逐格四件套（= py `form_tuples[]` 项；gate_file/gate_probe/debt 缺 ⇒ null）。
+type pvFormTuple struct {
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Claim     string  `json:"claim"`
+	SrcFile   string  `json:"src_file"`
+	SrcProbe  string  `json:"src_probe"`
+	GateFile  *string `json:"gate_file"`
+	GateProbe *string `json:"gate_probe"`
+	Debt      *string `json:"debt"`
+}
+
 type pvMeta struct {
-	Rules          int      `json:"rules"`
-	Forms          int      `json:"forms"`
-	UnclaimedRules int      `json:"unclaimed_rules"`
-	OrphanForms    int      `json:"orphan_forms"`
-	DebtForms      int      `json:"debt_forms"`
-	InstanceLevel  int      `json:"instance_level"`
-	Debt           []pvDebt `json:"debt"`
-	Instances      []pvInst `json:"instances"`
+	Rules          int         `json:"rules"`
+	Forms          int         `json:"forms"`
+	UnclaimedRules int         `json:"unclaimed_rules"`
+	OrphanForms    int         `json:"orphan_forms"`
+	DebtForms      int         `json:"debt_forms"`
+	InstanceLevel  int         `json:"instance_level"`
+	Nonform        []pvNonform `json:"nonform"`
+	Debt           []pvDebt    `json:"debt"`
+	Instances      []pvInst    `json:"instances"`
 }
 
 type pvResult struct {
@@ -194,6 +242,7 @@ type pvResult struct {
 	Red       []pvRed
 	Debt      []pvDebt
 	Instances []pvInst
+	Nonform   []pvNonform
 	Meta      pvMeta
 }
 
@@ -296,12 +345,32 @@ func pvRedactorForms(root string) (string, []pvRForm, bool) {
 
 func pvStrPtr(s string) *string { return &s }
 
+// pvOptStr —— py `f.get("x")`：空串 ⇔ None（JSON null）。
+func pvOptStr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// pvLoc —— py `loc = f"{file}:{line}" if line else (file or "—")`。
+func pvLoc(file *string, line *int) string {
+	if line != nil && file != nil {
+		return fmt.Sprintf("%s:%d", *file, *line)
+	}
+	if file != nil {
+		return *file
+	}
+	return "—"
+}
+
 func pvRun(root string) pvResult {
 	res := pvResult{Rc: 0}
 	// 空切片（非 nil）—— 与 py `[]` 逐字对齐（`json.dumps([])` ⇒ `[]`，nil 会出 `null`）。
 	res.Red = []pvRed{}
 	res.Debt = []pvDebt{}
 	res.Instances = []pvInst{}
+	res.Nonform = []pvNonform{}
 	textRules, rules, rulesOK := pvRulesOf(root)
 	redactText, rforms, redactOK := pvRedactorForms(root)
 	if !rulesOK || !redactOK {
@@ -357,6 +426,12 @@ func pvRun(root string) pvResult {
 			}
 		}
 		if !hit {
+			if reg := pvNonformOfRule(pat); reg != nil {
+				ln := lineno
+				res.Nonform = append(res.Nonform, pvNonform{Rule: "E2a", File: pvStrPtr(pvReplaceRules), Line: &ln,
+					Raw: pat, Why: "**非形态**（已登记 · " + reg[2] + "）：" + reg[1]})
+				continue
+			}
 			unclaimed++
 			ln := lineno
 			res.Red = append(res.Red, pvRed{Rule: "E2a", File: pvStrPtr(pvReplaceRules), Line: &ln,
@@ -375,6 +450,12 @@ func pvRun(root string) pvResult {
 			}
 		}
 		if !hit {
+			if reg := pvNonformOfFragment(rf.Origin, rf.Frag); reg != nil {
+				res.Nonform = append(res.Nonform, pvNonform{Rule: "E2b", File: pvStrPtr(pvRedactGo), Line: nil,
+					Raw: rf.Origin + ": " + rf.Frag,
+					Why: "**非形态**（已登记 · " + reg[3] + "）：" + reg[2]})
+				continue
+			}
 			orphans++
 			res.Red = append(res.Red, pvRed{Rule: "E2b", File: pvStrPtr(pvRedactGo),
 				Raw: rf.Origin + ": " + rf.Frag, Why: "脱敏器枚举到的形态**没有形态格认领** ⇒ 门禁侧不知道要判它"})
@@ -416,7 +497,7 @@ func pvRun(root string) pvResult {
 	}
 	res.Meta = pvMeta{Rules: len(rules), Forms: len(pvForms), UnclaimedRules: unclaimed,
 		OrphanForms: orphans, DebtForms: len(res.Debt), InstanceLevel: len(res.Instances),
-		Debt: res.Debt, Instances: res.Instances}
+		Nonform: res.Nonform, Debt: res.Debt, Instances: res.Instances}
 	return res
 }
 
@@ -465,6 +546,8 @@ func privatePathFormsGateMain(stdout, stderr io.Writer, argv []string) int {
 	wantJSON := false
 	selfTest := false
 	listForms := false
+	baseline := false
+	listUnclaimedOnly := false
 	unknown := false
 	for _, a := range argv {
 		switch {
@@ -474,6 +557,10 @@ func privatePathFormsGateMain(stdout, stderr io.Writer, argv []string) int {
 			selfTest = true
 		case a == "--list-forms":
 			listForms = true
+		case a == "--baseline":
+			baseline = true
+		case a == "--list-unclaimed-only":
+			listUnclaimedOnly = true
 		case strings.HasPrefix(a, "-") && a != "-":
 			unknown = true
 		default:
@@ -486,7 +573,7 @@ func privatePathFormsGateMain(stdout, stderr io.Writer, argv []string) int {
 	}
 	if unknown {
 		// py argparse：未知旗标 ⇒ usage 到 stderr + rc=2（usage 正文**未覆盖**，见件尾）。
-		fmt.Fprintf(stderr, "usage: check-private-path-forms.py [-h] [--json] [--self-test] [--list-forms] [root]\n")
+		fmt.Fprintf(stderr, "usage: check-private-path-forms.py [-h] [--json] [--self-test] [--list-forms] [--baseline] [--list-unclaimed-only] [root]\n")
 		fmt.Fprintf(stderr, "check-private-path-forms.py: error: unrecognized arguments\n")
 		return 2
 	}
@@ -510,13 +597,52 @@ func privatePathFormsGateMain(stdout, stderr io.Writer, argv []string) int {
 		return 2
 	}
 
-	if wantJSON {
-		obj := struct {
+	if listUnclaimedOnly {
+		// 缺口 `GAP-20260926-153`：只列没被任何形态格认领的那批（E2a 规则 / E2b 脱敏形态）· 只列不判 ⇒ rc=0。
+		n := 0
+		for _, r := range res.Red {
+			if (r.Rule == "E2a" || r.Rule == "E2b") && r.Form == nil {
+				fmt.Fprintf(stdout, "  ? [%s] %s  %s\n", r.Rule, pvLoc(r.File, r.Line), r.Raw)
+				n++
+			}
+		}
+		fmt.Fprintf(stdout, "⇒ 未被任何形态格认领：%d 条（只列不判 · rc=0）\n", n)
+		return 0
+	}
+
+	if baseline {
+		// 缺口 `GAP-20260926-153`：只读基线档 —— 落当前命中/债务/实例/非形态快照供对拍，本档**不判** ⇒ rc 恒 0。
+		snap := struct {
 			Schema string  `json:"schema"`
 			Kind   string  `json:"kind"`
-			Items  []pvRed `json:"items"`
 			Meta   pvMeta  `json:"meta"`
-		}{Schema: pvSchema, Kind: pvKind, Items: res.Red, Meta: res.Meta}
+			Red    []pvRed `json:"red"`
+		}{Schema: pvSchema, Kind: "PrivatePathFormsBaseline", Meta: res.Meta, Red: res.Red}
+		enc := json.NewEncoder(stdout)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(snap)
+		return 0
+	}
+
+	if wantJSON {
+		// 缺口 `GAP-20260926-173`：`--json` 补**逐格四件套**机器面（每个形态格 id/name/claim/出处/门禁侧/debt）。
+		formTuples := make([]pvFormTuple, 0, len(pvForms))
+		for _, f := range pvForms {
+			formTuples = append(formTuples, pvFormTuple{
+				ID: f.ID, Name: f.Name, Claim: f.Claim,
+				SrcFile: f.SrcFile, SrcProbe: f.SrcProbe,
+				GateFile: pvOptStr(f.GateFile), GateProbe: pvOptStr(f.GateProbe),
+				Debt: pvOptStr(f.Debt),
+			})
+		}
+		obj := struct {
+			Schema     string        `json:"schema"`
+			Kind       string        `json:"kind"`
+			Items      []pvRed       `json:"items"`
+			FormTuples []pvFormTuple `json:"form_tuples"`
+			Meta       pvMeta        `json:"meta"`
+		}{Schema: pvSchema, Kind: pvKind, Items: res.Red, FormTuples: formTuples, Meta: res.Meta}
 		enc := json.NewEncoder(stdout)
 		enc.SetEscapeHTML(false)
 		enc.SetIndent("", "  ")
@@ -530,17 +656,15 @@ func privatePathFormsGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stdout, "  ⊘ [%s] %s —— **门禁侧不覆盖（存量债 · 逐条登记 · 照实打印）**\n", d.Form, d.Name)
 		fmt.Fprintf(stdout, "      %s\n", d.Reason)
 	}
+	for _, d := range res.Nonform {
+		fmt.Fprintf(stdout, "  ⊘【非形态 · 已登记】[%s] %s  %s\n", d.Rule, pvLoc(d.File, d.Line), d.Raw)
+		fmt.Fprintf(stdout, "      %s\n", d.Why)
+	}
 	for _, i := range res.Instances {
 		fmt.Fprintf(stdout, "  ⚠ E4 [%s] %s 的探针 `%s` 是**实例口径** —— %s\n", i.Form, i.File, i.Probe, i.Why)
 	}
 	for _, r := range res.Red {
-		loc := "—"
-		if r.Line != nil {
-			loc = fmt.Sprintf("%s:%d", *r.File, *r.Line)
-		} else if r.File != nil {
-			loc = *r.File
-		}
-		fmt.Fprintf(stdout, "  ✗ [%s] %s  %s\n", r.Rule, loc, r.Raw)
+		fmt.Fprintf(stdout, "  ✗ [%s] %s  %s\n", r.Rule, pvLoc(r.File, r.Line), r.Raw)
 		fmt.Fprintf(stdout, "      %s\n", r.Why)
 	}
 	if res.Rc == 0 {

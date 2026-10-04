@@ -774,6 +774,7 @@ def audit_only(path, roster):
 
 
 def main():
+    global REPO_ROOT  # `--root` 生效用（缺口 GAP-20261001-63）：仅显式给 --root 时重钉
     argv = list(sys.argv[1:])
     known = {"--self-test", "--no-self-test", "--json", "--fixtures", "--audit-view",
              "--source", "--machine", "--roster", "--roster-nodes", "--root", "--state", "-h", "--help"}
@@ -796,6 +797,12 @@ def main():
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--no-self-test", action="store_true")
     args = ap.parse_args(argv)
+
+    # ── `--root` 生效（缺口 `GAP-20261001-63`）：原实现解析后**从不读取** ⇒ 静默无效 ──
+    #   显式给了 `--root` ⇒ 以它重钉模块级 `REPO_ROOT`（run_cli 的 cwd 等随之生效）；
+    #   不给时 args.root == REPO_ROOT ⇒ 逐字不改既有行为（默认路径未动）。
+    if any(a == "--root" or a.startswith("--root=") for a in argv):
+        REPO_ROOT = os.path.abspath(args.root)
     print(VERSION)
     hostname = os.uname().nodename
     if args.audit_view:

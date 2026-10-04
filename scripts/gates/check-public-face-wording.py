@@ -86,7 +86,8 @@
       该处**逐条**登进白名单**并写清理由** —— 不许放宽判据来凑绿 ✗）。
   2 = **不给结论**：`publish/docs/` 不存在 / 扫面 0 件 / 根面缺件 / 件读不了 / `--self-test` 不过。
 
-★ 扫描面（**现读 = 24 件** · 件数复核**仍待拍** —— 本笔不动）：`publish/docs/**`（**16** 件 · 含 `design/` 2 件）+ 根面 **8** 件
+★ 扫描面（**扫面域已拍板**：`publish/docs/**` + 根面 8 件 —— `scripts/**` **不入面**（GAP-20260925-07）；
+  件数**以现跑为准**，不写死）：`publish/docs/**`（现读 16 件 · 含 `design/` 2 件）+ 根面 8 件
   （`LICENSE` · `NOTICE` · `THIRD_PARTY_LICENSES.md` · `CONTRIBUTING.md` · `SECURITY.md` ·
    `config.example.yaml` · `gitleaks.toml` · `install.sh`）。
 ★ 白名单的**钉法**：`(规则名, 件 glob, 行正则, 理由)`；glob 走 `fnmatch`、`*` 跨 `/`
