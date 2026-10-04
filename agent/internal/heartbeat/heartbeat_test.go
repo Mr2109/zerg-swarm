@@ -39,6 +39,17 @@ type fakeActive struct{ n int }
 
 func (a *fakeActive) ActiveRequests() int { return a.n }
 
+// fakeEngineLive 引擎实时态假来源（注入用 · GAP-20260925-45）。
+type fakeEngineLive struct{ states []backend.EngineLive }
+
+func (f *fakeEngineLive) EngineLiveStates() []backend.EngineLive { return f.states }
+
+// withEngineLive 给测试心跳器接上引擎实时态来源。
+func withEngineLive(r *Runner, src engineLiveSource) *Runner {
+	r.engineLive = src
+	return r
+}
+
 // newTestRunner 组装一个只走注入源的心跳器（不触网、不起进程）。
 // （第 7 参数 UnmanagedSource 已随 P4 退场清理删除——附录 C·C7。）
 func newTestRunner(b *fakeBackend, v vramSource, a ActiveCounter) *Runner {
@@ -204,7 +215,8 @@ func TestBuildBody_OldFieldsStillPresent(t *testing.T) {
 func TestBuildBody_JSON_OldReaderIgnoresNewFields(t *testing.T) {
 	b := baseBackend()
 	b.resident = []backend.ResidentDetail{{Alias: "m1", State: "ready", Managed: true, Source: "managed"}}
-	r := newTestRunner(b, fakeVram{used: 7.5, total: 24, known: true}, &fakeActive{n: 2})
+	r := withEngineLive(newTestRunner(b, fakeVram{used: 7.5, total: 24, known: true}, &fakeActive{n: 2}),
+		&fakeEngineLive{states: []backend.EngineLive{{EggID: "m1", State: "ready", Inflight: 2, Verdict: "ok"}}})
 
 	raw, err := json.Marshal(r.buildBody())
 	if err != nil {
@@ -233,5 +245,72 @@ func TestBuildBody_JSON_OldReaderIgnoresNewFields(t *testing.T) {
 	}
 	if !legacy.Healthy {
 		t.Fatal("healthy 应为 true")
+	}
+}
+
+// ── 引擎实时态（GAP-20260925-45）──────────────────────────────────
+// 为什么这四例：心跳要能带出「此刻在不在算 / 有没有输出 / 卡没卡」，且遵守
+// 「没有来源就不出现」的诚实纪律（空集合 ≠ 空数组撑场）。
+
+// TestBuildBody_EngineLive_CarriesStates —— 有来源 ⇒ engines[] 原样带上每枚引擎的实时事实。
+func TestBuildBody_EngineLive_CarriesStates(t *testing.T) {
+	src := &fakeEngineLive{states: []backend.EngineLive{
+		{EggID: "example-35b", State: "ready", PID: 4242, Inflight: 2, FailN: 1,
+			Verdict: "extended", LastOutputAgoS: 12.5, CPUUsecDelta: 900000, Reason: "窗口无输出但工时在涨"},
+		{EggID: "gemma-4-12B", State: "ready", PID: 4243, Inflight: 0, Verdict: "ok"},
+	}}
+	r := withEngineLive(newTestRunner(baseBackend(), fakeVram{known: false}, &fakeActive{}), src)
+	body := r.buildBody()
+
+	got, ok := body["engines"].([]backend.EngineLive)
+	if !ok {
+		t.Fatalf("有来源时 engines 应为 []backend.EngineLive，实得 %T", body["engines"])
+	}
+	if len(got) != 2 {
+		t.Fatalf("engines 应有 2 枚，实得 %d", len(got))
+	}
+	if got[0].Inflight != 2 || got[0].Verdict != "extended" || got[0].LastOutputAgoS != 12.5 || got[0].CPUUsecDelta != 900000 {
+		t.Fatalf("engines[0] 实时事实未如实带上: %+v", got[0])
+	}
+	if got[1].EggID != "gemma-4-12B" || got[1].Verdict != "ok" {
+		t.Fatalf("engines[1] 实时事实未如实带上: %+v", got[1])
+	}
+}
+
+// TestBuildBody_EngineLive_NoSourceAbsent —— 无来源 ⇒ engines 缺席（绝不写死空数组）。
+func TestBuildBody_EngineLive_NoSourceAbsent(t *testing.T) {
+	r := newTestRunner(baseBackend(), fakeVram{known: false}, &fakeActive{})
+	if _, ok := r.buildBody()["engines"]; ok {
+		t.Fatal("无引擎实时态来源时不得出现 engines（与 active_requests 同纪律）")
+	}
+}
+
+// TestBuildBody_EngineLive_EmptyAbsent —— 有来源但本端无托管引擎 ⇒ 仍缺席（空 ≠ 撑一个空数组）。
+func TestBuildBody_EngineLive_EmptyAbsent(t *testing.T) {
+	r := withEngineLive(newTestRunner(baseBackend(), fakeVram{known: false}, &fakeActive{}), &fakeEngineLive{})
+	if v, ok := r.buildBody()["engines"]; ok {
+		t.Fatalf("无托管引擎时 engines 应缺席（空集合 ≠ 空数组撑场），实得 %v", v)
+	}
+}
+
+// TestBuildBody_EngineLive_JSONRoundTrip —— engines[] 能序列化并原样解回（主控消费面同一形状）。
+func TestBuildBody_EngineLive_JSONRoundTrip(t *testing.T) {
+	src := &fakeEngineLive{states: []backend.EngineLive{
+		{EggID: "e1", State: "ready", PID: 7, Inflight: 1, Verdict: "stuck_cpu_stalled",
+			LastOutputAgoS: 91, CPUUsecDelta: 0, Reason: "工时一点不动"},
+	}}
+	r := withEngineLive(newTestRunner(baseBackend(), fakeVram{known: false}, &fakeActive{}), src)
+	raw, err := json.Marshal(r.buildBody())
+	if err != nil {
+		t.Fatalf("序列化失败: %v", err)
+	}
+	var back struct {
+		Engines []backend.EngineLive `json:"engines"`
+	}
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("engines 解析失败: %v", err)
+	}
+	if len(back.Engines) != 1 || back.Engines[0].EggID != "e1" || back.Engines[0].Verdict != "stuck_cpu_stalled" {
+		t.Fatalf("engines JSON 往返不全: %+v", back.Engines)
 	}
 }

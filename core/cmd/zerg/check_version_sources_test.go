@@ -118,12 +118,28 @@ func TestCheckVersionSourcesGatePort(t *testing.T) {
 
 	// ── 不给结论：活文档语料 0 个文件被扫到 ⇒ rc=2 ──────────────────────
 	rc2 := vstFixture(t, "9.9.9", "9.9.9", "9.9.9", vstFixVersion)
-	if err := os.RemoveAll(filepath.Join(rc2, "docs")); err != nil {
+	// ★ R6 收窄后：删整个 docs/ 会连带把「语料域根 docs」判成不在盘 ⇒ 改删唯一非排他语料件。
+	if err := os.Remove(filepath.Join(rc2, "docs", "zh", "活文档.md")); err != nil {
 		t.Fatal(err)
 	}
 	rcCorpus, outCorpus, _ := vstRun(t, rc2)
 	if rcCorpus != 2 || !strings.Contains(outCorpus, "空转") {
 		t.Fatalf("负控-空转 失败：得 rc=%d out=%q", rcCorpus, outCorpus)
+	}
+
+	// ── R6 运行时默认根（目录）点名覆盖：正控（好件报告含 R6 段）＋ 负控（默认根不在盘 ⇒ 红）──
+	if !strings.Contains(outGreen, "-- 运行时默认根（R6 · 点名覆盖：4 条）--") {
+		t.Fatalf("R6 正控失败：好件报告里没有运行时默认根段：out=%q", outGreen)
+	}
+	// 负控：抹掉一个运行时默认根（仓根标记目录 `ui`）⇒ R6 必红（不在盘且未登记迁出）。
+	// ★ 不选 `docs/项目文档`：它非盘会让 `docs_snapshot_root` 先走 rc=2 早退（R6 够不着）。
+	r6 := vstFixture(t, "9.9.9", "9.9.9", "9.9.9", vstFixVersion)
+	if err := os.RemoveAll(filepath.Join(r6, "ui")); err != nil {
+		t.Fatal(err)
+	}
+	rcR6, outR6, _ := vstRun(t, r6)
+	if rcR6 != 1 || !strings.Contains(outR6, "未登记迁出") || !strings.Contains(outR6, "R6") {
+		t.Fatalf("R6 负控失败：默认根不在盘且未登记迁出应 rc=1 含「未登记迁出」，得 rc=%d out=%q", rcR6, outR6)
 	}
 
 	// ── 成对：同一夹具 + --strict-docs（默认只报告 rc0 ↔ 加严 rc1）───────
@@ -158,7 +174,7 @@ func TestCheckVersionSourcesGatePort(t *testing.T) {
 
 	// ── --self-test 自身必须全过（防恒绿/恒红） ─────────────────────────
 	rcST, outST, _ := vstRun(t, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "结果: 通过（16/16 条断言通过）  rc=0") {
+	if rcST != 0 || !strings.Contains(outST, "结果: 通过（20/20 条断言通过）  rc=0") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%q", rcST, outST)
 	}
 

@@ -125,6 +125,7 @@ const (
 	grtDanglingUnRE     = `有 ([0-9]+) 处.*未登记`                 //:138（\d → [0-9]，见件头）
 	grtDanglingRegRE    = `已登记 ([0-9]+) 处`                    //:139
 	grtKeyLineCap       = 20                                  //:125
+	grtUnreadableReason = "已登记/未登记 计数读不出（人面文案变体且无机读面）⇒ 不给结论"  // GAP-20261005-30 第一刀
 	grtKeyLineWidth     = 200                                 //:119
 	grtStderrKeep       = 500                                 //:260
 	grtHumanStderrWidth = 160                                 //:307
@@ -823,10 +824,93 @@ func grtExtractKeyLines(stdout string, pat *regexp.Regexp) []string {
 	return lines
 }
 
+// grtObjStr 取对象**串**成员（非串/缺键 ⇒ false）。
+func grtObjStr(v *grtVal, key string) (string, bool) {
+	if v == nil || v.kind != 'o' {
+		return "", false
+	}
+	for _, kv := range v.obj {
+		if kv.K.kind == 's' && kv.K.s == key {
+			if kv.V.kind == 's' {
+				return kv.V.s, true
+			}
+			return "", false
+		}
+	}
+	return "", false
+}
+
+// grtObjInt 取对象**整数**成员（对应 py `type(x) is int` —— 布尔/浮点均算无）。
+func grtObjInt(v *grtVal, key string) (int, bool) {
+	if v == nil || v.kind != 'o' {
+		return 0, false
+	}
+	for _, kv := range v.obj {
+		if kv.K.kind == 's' && kv.K.s == key {
+			if kv.V.kind == 'n' {
+				n, err := strconv.Atoi(kv.V.raw)
+				if err != nil {
+					return 0, false
+				}
+				return n, true
+			}
+			return 0, false
+		}
+	}
+	return 0, false
+}
+
+// grtObjBool 取对象**布尔**成员（非布尔/缺键 ⇒ false）。
+func grtObjBool(v *grtVal, key string) (bool, bool) {
+	if v == nil || v.kind != 'o' {
+		return false, false
+	}
+	for _, kv := range v.obj {
+		if kv.K.kind == 's' && kv.K.s == key {
+			if kv.V.kind == 'b' {
+				return kv.V.b, true
+			}
+			return false, false
+		}
+	}
+	return false, false
+}
+
+// grtParseDanglingJSON 读 check-dangling-refs 的机读面（--json 一行 · schema=dangling-refs/1）。
+// 返回 (registered, hit, true)；hit 即「未登记」数（live+ledger）。GAP-20261005-30 第一刀。
+func grtParseDanglingJSON(stdout string) (int, int, bool) {
+	for _, ln := range grtPySplitLines(stdout) {
+		s := grtPyStrip(ln)
+		if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
+			continue
+		}
+		v, err := grtJSONParse(s)
+		if err != nil || v == nil || v.kind != 'o' {
+			continue
+		}
+		sc, ok := grtObjStr(v, "schema")
+		if !ok || sc != "dangling-refs/1" {
+			continue
+		}
+		reg, okR := grtObjInt(v, "registered")
+		hit, okH := grtObjInt(v, "hit")
+		if okR && okH {
+			return reg, hit, true
+		}
+	}
+	return 0, 0, false
+}
+
 // grtExtractRegisteredFalses 对 py :128-146。
 func grtExtractRegisteredFalses(stdout, gateName string) (bool, *grtVal) {
 	if !strings.Contains(gateName, grtRegistryGate) {
 		return false, nil
+	}
+	if reg, hit, ok := grtParseDanglingJSON(stdout); ok {
+		return reg > 0 && (hit == 0 || reg >= 5*hit), grtObjOf(
+			grtKVOf("unregistered", grtInt(hit)),
+			grtKVOf("registered", grtInt(reg)),
+		)
 	}
 	if !strings.Contains(stdout, "已登记") || !strings.Contains(stdout, "不计命中") {
 		return false, nil
@@ -848,7 +932,10 @@ func grtExtractRegisteredFalses(stdout, gateName string) (bool, *grtVal) {
 		}
 	}
 	if nUn < 0 || nReg < 0 {
-		return false, nil
+		return false, grtObjOf(
+			grtKVOf("unreadable", grtBool(true)),
+			grtKVOf("reason", grtS(grtUnreadableReason)),
+		)
 	}
 	flag := nReg > 0 && (nUn == 0 || nReg >= 5*nUn)
 	return flag, grtObjOf(
@@ -1194,7 +1281,11 @@ func gateReportMain(stdout, stderr io.Writer, argv []string) int {
 			anyNonzero = true
 			continue
 		}
-		rec := grtRunGate(gatePath, registryExtra, args.root)
+		perGate := registryExtra
+		if strings.Contains(g, grtRegistryGate) {
+			perGate = append(append([]string{}, registryExtra...), "--json")
+		}
+		rec := grtRunGate(gatePath, perGate, args.root)
 		pat, reErr := regexp.Compile(args.keyRegex) // 对 py :112 re.compile（★ C 类改 rc=2 fail-closed）
 		if reErr != nil {
 			fmt.Fprintf(stderr, "✗ --key-regex 不可编译（%v）⇒ 不给结论\n", reErr)
@@ -1202,6 +1293,13 @@ func gateReportMain(stdout, stderr io.Writer, argv []string) int {
 		}
 		keyLines := grtExtractKeyLines(rec.stdout, pat)
 		isFF, ff := grtExtractRegisteredFalses(rec.stdout, g)
+		if ff != nil && ff.kind == 'o' {
+			if un, ok := grtObjBool(ff, "unreadable"); ok && un {
+				reason, _ := grtObjStr(ff, "reason")
+				fmt.Fprintf(stderr, "✗ %s：%s ⇒ 拒给结论（rc=2）\n", g, reason)
+				return 2
+			}
+		}
 		rawJSON := grtFindRawJSON(rec.stdout)
 		results = append(results, &grtResult{
 			gate: g, rc: rec.rc, elapsed: rec.elapsed, errored: rec.errored,

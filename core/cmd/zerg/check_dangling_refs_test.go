@@ -3,8 +3,9 @@
 //
 // 口径（照 skill「成对负控 · ✗ 禁恒绿」）：
 //
-//	① **正控**：`--self-test` 必须绿（十格成对负控 —— 必红×2 / 豁免×1 / 拼接×1 / 前缀×1 /
-//	   无输入×1 / 登记表×1 / 整件豁免×1 / 前缀越界×1 / 缺语料×1）。
+//	① **正控**：`--self-test` 必须绿（十五格成对负控 —— 必红×2 / 豁免×1 / 拼接×1 / 前缀×1 /
+//	   无输入×1 / 登记表×1 / 整件豁免×1 / 前缀越界×1 / 缺语料×1 / 跨仓×1 / GAP悬空×1 /
+//	   GAP全在账×1 / GAP负控×1 / GAP账缺×1）。
 //	② **成对**：每一格判据都配一枚反例（哑化本件任一判据 ⇒ 本测试件必 FAIL）。
 //	③ **自回收**：`--self-test` 跑完，`TMPDIR` 里 `cdr-selftest-*` 目录数增量必须 = 0
 //	   （py 原件 `mkdtemp` 从不回收 = 真口子；本件自回收，此处把该性质钉成用例）。
@@ -39,7 +40,7 @@ func cdrCountSelfTestDirs() int {
 func cdrQ(s string) string { return "\"" + s + "\"" }
 
 func TestCheckDanglingRefsGatePort(t *testing.T) {
-	t.Run("自检十格绿", func(t *testing.T) {
+	t.Run("自检十五格绿", func(t *testing.T) {
 		var out, errb bytes.Buffer
 		rc := checkDanglingRefsGateMain(&out, &errb, []string{"--self-test"})
 		if rc != 0 {
@@ -50,7 +51,8 @@ func TestCheckDanglingRefsGatePort(t *testing.T) {
 		}
 		// 成对负控：十格的名必须都在（少跑即失效 —— py 有 `assert cases == 10`）。
 		for _, want := range []string{"[必红夹具]", "[必红夹具·有落点]", "[豁免夹具]", "[拼接夹具]",
-			"[前缀夹具]", "[无输入夹具]", "[登记表夹具]", "[整件豁免夹具]", "[前缀登记夹具]", "[缺语料夹具]"} {
+			"[前缀夹具]", "[无输入夹具]", "[登记表夹具]", "[整件豁免夹具]", "[前缀登记夹具]", "[缺语料夹具]",
+			"[跨仓夹具]", "[GAP悬空夹具]", "[GAP全在账夹具]", "[GAP负控夹具]", "[GAP账缺夹具]"} {
 			if !strings.Contains(out.String(), want) {
 				t.Fatalf("`--self-test` 少跑一格：缺 %s\n%s", want, out.String())
 			}
@@ -230,7 +232,7 @@ func TestCheckDanglingRefsGatePort(t *testing.T) {
 		if err := os.MkdirAll(empty, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if rc := cdrRealExitCode(empty, "", []string{}, true, &errb); rc != 2 {
+		if rc := cdrRealExitCode(empty, "", []string{}, true, nil, &errb); rc != 2 {
 			t.Fatalf("空树 rc=%d（期望 2 —— 拒绝静默空转）", rc)
 		}
 		_ = out
@@ -291,6 +293,29 @@ func TestCheckDanglingRefsGatePort(t *testing.T) {
 		}
 		if strings.Contains(out.String(), "BLOCKED") {
 			t.Fatalf("BLOCKED 头不该落 stdout（本件通道是 stderr）：%q", out.String())
+		}
+	})
+
+	// GAP 号引用类：分类复用本门 cdrClassify（成对负控 —— live 命中 / 数据字串例外面 / 夹具件 / 本件自身）。
+	t.Run("GAP号_分类", func(t *testing.T) {
+		ctx := &cdrCtx{root: "/nonexistent-root", registry: &cdrOM{}}
+		g := "GAP-" + "20260928-999"
+		if cls, _ := cdrClassify(ctx, "scripts/x.py", g, "# 见缺口 `"+g+"`"); cls != "live" {
+			t.Fatalf("GAP 注释引用未判 live：%s", cls)
+		}
+		if cls, _ := cdrClassify(ctx, "scripts/x.py", g, `fx = {"id": "`+g+`"}`); cls != "ledger" {
+			t.Fatalf("GAP 数据字串未判 ledger：%s", cls)
+		}
+		if !cdrIsGapTestContainer("scripts/x_test.go") || !cdrIsGapTestContainer("a/testdata/b.txt") ||
+			!cdrIsGapTestContainer("pkg/tests/c.py") || cdrIsGapTestContainer("scripts/x.go") {
+			t.Fatalf("cdrIsGapTestContainer 判定错")
+		}
+		if !cdrIsGapSelfFile(ctx, "scripts/gates/check-dangling-refs.py") ||
+			cdrIsGapSelfFile(ctx, "scripts/gates/g1.py") {
+			t.Fatalf("cdrIsGapSelfFile 判定错")
+		}
+		if !cdrGapRE.MatchString("GAP-" + "20261005-54") {
+			t.Fatalf("cdrGapRE 未匹配")
 		}
 	})
 }

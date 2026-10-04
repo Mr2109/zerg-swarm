@@ -151,7 +151,10 @@ func (h *Handlers) machineView(snap *store.FleetSnapshot, inputs []fitInput) Res
 	}
 	// 统一内存平台（显存即内存，§3.1）：如实标注——vram_known=false 但"装得下吗"仍可判定（按内存口径）
 	mv.VramUnified = snap.VramUnified
-	if snap.GpuPct > 0 {
+	// GPU 利用率：macOS（含 Apple Silicon）平台上该采样无意义（ioreg 恒 0）⇒ 整键不出现，
+	// ✗ 不把「不可得」印成假 0（GAP-20260925-34 剩面①）。判据 = 主控配置 fleet 段的 os。
+	// fail-open：配置缺机器 / os 空 ⇒ machineIsMacOS=false ⇒ 原口径（>0 才出）。
+	if snap.GpuPct > 0 && !h.machineIsMacOS(snap.Machine) {
 		gp := snap.GpuPct
 		mv.GpuPct = &gp
 	}

@@ -19,9 +19,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"errors"
@@ -104,6 +106,14 @@ func NewServer(agent *Agent) *Server {
 // Start 启动推理队列 worker 和 HTTP 服务器。
 func (s *Server) Start(host string, port int) error {
 	addr := fmt.Sprintf("%s:%d", host, port)
+	// GAP-20260925-28：跨协议族端口冲突检测（**只加检测＋响亮报错**，✗ 不动绑定行为）。
+	// 同一 host:port 若已被某一协议族（IPv4/IPv6）的**别的**监听者占用，本端再以
+	// net.Listen("tcp", …) 去绑，内核会**静默**把本端降级到另一协议族（实测 darwin：
+	// 占用方 hold IPv4 时本端 [::] 退化为 IPv6-only）⇒ 两边各占一族、互不知情，
+	// 探活连上「别人」却报 reachable=true（GAP-20260925-28 的假阳性）。✗ 不自动退让。
+	if msg := detectCrossFamilyPortConflict(host, port); msg != "" {
+		return fmt.Errorf("监听 %s 被拒：%s", addr, msg)
+	}
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("监听 %s 失败: %w", addr, err)
@@ -914,4 +924,90 @@ func writeInferError(w http.ResponseWriter, status int, errMsg string, loadErr e
 		resp["message"] = loadErr.Error()
 	}
 	writeJSON(w, status, resp)
+}
+
+// ── GAP-20260925-28：端口跨协议族冲突检测（只加检测＋响亮报错，✗ 不动绑定行为）────────
+//
+// 症状：同一 host:port 上，若已有**别的**监听者只占住某一个协议族（IPv4 或 IPv6），
+// 本端再以 net.Listen("tcp", addr) 去绑，内核会**静默**把本端降级到另一个协议族
+// （实测 darwin：外部进程 hold IPv4 时，本端 [::] 退化成 IPv6-only）⇒ 两边各占一族、
+// 互不知情；`zerg agent ping --direct` 的探活连上的是「别人」却仍报 reachable=true（假阳性）。
+//
+// 本函数把这种「静默抢占」变成「响亮报错」：启动前分别探两个协议族，**恰有一个已被占**
+// ⇒ 本端若继续绑只会与该进程各占一族 ⇒ 返回非空描述（含被占协议族 + 可得的占位进程）。
+// 两族都空（本端可独占双栈）或两族都被占（本端根本起不来 —— 交 net.Listen 的既有错误路）
+// ⇒ 返回 ""。✗ 不改绑定方式、✗ 不自动退让。
+func detectCrossFamilyPortConflict(host string, port int) string {
+	occupied := []string{}
+	for _, pr := range familyProbeAddrs(host, port) {
+		if familyOccupied(pr[0], pr[1]) {
+			occupied = append(occupied, pr[0])
+		}
+	}
+	if len(occupied) != 1 {
+		// 0 ⇒ 本端可独占双栈，无冲突；≥2 ⇒ 端口整体被占，交 net.Listen 的既有错误路。
+		return ""
+	}
+	owner := portListenersBrief(port)
+	return fmt.Sprintf("端口 %d 的 %s 已被**别的**监听者占用%s —— 本端若继续绑定只会与它各占一个协议族"+
+		"（探活会连上对方却报 reachable=true）⇒ 拒绝静默启动（✗ 不自动退让；先处理占位进程，"+
+		"或用 `zerg port ls %d` 现读属主）", port, occupied[0], owner, port)
+}
+
+// familyProbeAddrs 把监听口径 (host, port) 归一成要探的「协议族 → 地址」对。
+// 通配（空 / 0.0.0.0 / ::）⇒ 两族各探一个通配地址；具体地址 ⇒ 只探它自己那一族
+// （具体地址上的绑定本就只落一族，不存在跨族抢占面）。
+func familyProbeAddrs(host string, port int) [][2]string {
+	h := strings.TrimSpace(strings.Trim(host, "[]"))
+	switch h {
+	case "", "0.0.0.0", "::":
+		return [][2]string{
+			{"tcp4", fmt.Sprintf("0.0.0.0:%d", port)},
+			{"tcp6", fmt.Sprintf("[::]:%d", port)},
+		}
+	}
+	if strings.Contains(h, ":") {
+		return [][2]string{{"tcp6", fmt.Sprintf("[%s]:%d", h, port)}}
+	}
+	return [][2]string{{"tcp4", fmt.Sprintf("%s:%d", h, port)}}
+}
+
+// familyOccupied 探「该地址在该协议族上是否已被监听者占用」。
+// 只读：绑一次、立即关；EADDRINUSE ⇒ 已占；别的错误（如本机没开 IPv6）⇒ 判「未占」，
+// 不把它误报成冲突（fail-open 于**误报**方向 —— 宁可不报，也不制造假冲突）。
+func familyOccupied(network, addr string) bool {
+	ln, err := net.Listen(network, addr)
+	if err != nil {
+		return errors.Is(err, syscall.EADDRINUSE)
+	}
+	ln.Close()
+	return false
+}
+
+// portListenersBrief 现读某端口上的监听者（best-effort · lsof；取不到 ⇒ 明写「未自报」，
+// ✗ 不拿输入名顶替 —— 照 family_port.go 的现成口径）。
+func portListenersBrief(port int) string {
+	lsof, err := exec.LookPath("lsof")
+	if err != nil {
+		return "（占位进程未自报：本机无 lsof）"
+	}
+	out, err := exec.Command(lsof, "-nP", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN").Output()
+	if err != nil {
+		return "（占位进程未自报：lsof 读不到）"
+	}
+	names := []string{}
+	for i, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if i == 0 || strings.TrimSpace(ln) == "" {
+			continue // 表头 / 空行
+		}
+		f := strings.Fields(ln)
+		if len(f) < 2 {
+			continue
+		}
+		names = append(names, fmt.Sprintf("pid=%s(%s)", f[1], f[0]))
+	}
+	if len(names) == 0 {
+		return "（占位进程未自报：lsof 无匹配）"
+	}
+	return "（占位进程 " + strings.Join(names, " · ") + "）"
 }

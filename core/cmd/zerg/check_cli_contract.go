@@ -1566,15 +1566,30 @@ func clicEmitMatrix(root string, outPath *string) (int, []string) {
 		old = map[string]any{}
 	}
 	oldCases := clicCasesOf(old)
+	// ★ 内层 case 键序（缺口 `GAP-20261005-07` 残余 · 对齐 py `emit_matrix`）：
+	//   py 侧既有格走 `hit = dict(c)`（`json.load` **保件内插入序**）、新增格用**字面插入序**
+	//   （`id·command·argv·want_rc·want_stdout_bytes·why`）；Go 端若把每格写成 `map[string]any`，
+	//   `encoding/json` 会**按字典序排键** ⇒ 真源件在两序间翻烧饼（同内容不同字节、每次 emit 无故改字节）。
+	//   落法：既有格取**原始 JSON 原文**（键序 + 值逐字保留 · 只把两个派生列的数字就地换掉），
+	//   新增格按 py 字面序造原文 —— 两半序列化方式对齐。
+	var oldRawCases []string
+	if rawBytes, rerr := os.ReadFile(clicPyJoin(root, clicMatrixRel)); rerr == nil {
+		oldRawCases = clicRawCaseTexts(rawBytes)
+	}
 	var treePaths []string
 	for _, c := range tree {
 		treePaths = append(treePaths, c.path)
 	}
 	var cases []map[string]any
+	caseRaws := []json.RawMessage{}
 	refreshed, kept := 0, 0
 	var warned []string
-	for _, c := range oldCases {
+	for i, c := range oldCases {
 		hit := clicCopyMap(c)
+		rawCase := ""
+		if i < len(oldRawCases) {
+			rawCase = oldRawCases[i]
+		}
 		argv := clicStrSlice(clicMapList(c, "argv"))
 		if len(argv) == 0 {
 			warned = append(warned, fmt.Sprintf("保留原值（口令为空 ⇒ 跑不了）：%s", clicPyStr(clicMapGetOr(c, "id", "?"))))
@@ -1592,8 +1607,16 @@ func clicEmitMatrix(root string, outPath *string) (int, []string) {
 				}
 				hit["want_rc"] = d["want_rc"]
 				hit["want_stdout_bytes"] = d["want_stdout_bytes"]
+				if rawCase != "" {
+					rawCase = clicPatchCaseNum(rawCase, "want_rc", d["want_rc"])
+					rawCase = clicPatchCaseNum(rawCase, "want_stdout_bytes", d["want_stdout_bytes"])
+				}
 			}
 		}
+		if rawCase == "" {
+			rawCase = clicCaseFromMap(hit)
+		}
+		caseRaws = append(caseRaws, json.RawMessage(rawCase))
 		cases = append(cases, hit)
 		kept++
 	}
@@ -1624,23 +1647,30 @@ func clicEmitMatrix(root string, outPath *string) (int, []string) {
 				"id": id, "command": cmd.path, "argv": cand.argv,
 				"want_rc": d["want_rc"], "want_stdout_bytes": d["want_stdout_bytes"], "why": cand.why,
 			})
+			caseRaws = append(caseRaws, json.RawMessage(clicNewCaseRaw(id, cmd.path, cand.argv,
+				d["want_rc"], d["want_stdout_bytes"], cand.why)))
 			added++
 		}
 	}
-	doc := map[string]any{
-		"id":         clicMapGetOr(old, "id", nil),
-		"note":       clicMatrixNote,
-		"exemptions": clicMapGetOr(old, "exemptions", nil),
-		"cases":      clicCasesToAny(cases),
+	// ★ 顶层键序 = py `emit_matrix` 的 doc 字面量序（`id · note · exemptions · cases · tiers`）。
+	//   py 用 `json.dump(doc, …)`（**保插入序** · 非 sort_keys）⇒ Go 端**不许**用 `map[string]any`
+	//   （`encoding/json` 对 map **按字典序排键** ⇒ 产物顶层键序与真源分歧、每次 emit 都无故改字节）。
+	//   ★ 与仓内各「Go 真搬」同规（`check_affected_map.go`/`bench_summary.go` 等均复刻 py 插入序）。
+	//   `tiers` 只在真源有时带上（py：`if old.get('tiers')`），且**排在末位**。
+	doc := clicMatrixDoc{
+		ID:         clicMapGetOr(old, "id", nil),
+		Note:       clicMatrixNote,
+		Exemptions: clicMapGetOr(old, "exemptions", nil),
+		Cases:      caseRaws,
 	}
-	if doc["id"] == nil {
-		doc["id"] = "cli-contract.v1"
+	if doc.ID == nil {
+		doc.ID = "cli-contract.v1"
 	}
-	if doc["exemptions"] == nil {
-		doc["exemptions"] = []any{}
+	if doc.Exemptions == nil {
+		doc.Exemptions = []any{}
 	}
 	if t, ok := clicMapGet(old, "tiers"); ok && clicTruthy(t) {
-		doc["tiers"] = t
+		doc.Tiers = t
 	}
 	dst := clicPyJoin(root, clicMatrixRel)
 	if outPath != nil {
@@ -1714,6 +1744,19 @@ func clicTruthy(v any) bool {
 	return true
 }
 
+// clicMatrixDoc —— 矩阵顶层对象的**固定键序**（复刻 py `emit_matrix` 的 doc 字面量序）：
+//
+//	`id · note · exemptions · cases · tiers`。★ 用结构体而非 `map[string]any` 把序**定死** ——
+//	Go `encoding/json` 对 map **按字典序排键**，与 py `json.dump(…, sort_keys=False)` 的插入序分歧
+//	（分歧的后果：同内容不同字节 ⇒ 门报字节差、每次 emit 无故改字节的噪声）。
+type clicMatrixDoc struct {
+	ID         any `json:"id"`
+	Note       any `json:"note"`
+	Exemptions any `json:"exemptions"`
+	Cases      any `json:"cases"`
+	Tiers      any `json:"tiers,omitempty"`
+}
+
 func clicWriteJSON(path string, doc any) error {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -1741,6 +1784,116 @@ func clicCasesToAny(cs []map[string]any) []any {
 		out = append(out, c)
 	}
 	return out
+}
+
+// clicRawCaseTexts —— 从矩阵件**原始字节**里按序取出顶层 `cases[]` 每格的 JSON 原文
+// （键序 + 值逐字保留）。py 侧 `hit = dict(c)` 的等价物：既有格序列化序 = 件内现序。
+func clicRawCaseTexts(raw []byte) []string {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	t, err := dec.Token()
+	if err != nil {
+		return nil
+	}
+	if d, ok := t.(json.Delim); !ok || d != '{' {
+		return nil
+	}
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return nil
+		}
+		key, _ := kt.(string)
+		if key == "cases" {
+			at, err := dec.Token()
+			if err != nil {
+				return nil
+			}
+			if d, ok := at.(json.Delim); !ok || d != '[' {
+				return nil
+			}
+			var out []string
+			for dec.More() {
+				var rm json.RawMessage
+				if err := dec.Decode(&rm); err != nil {
+					return out
+				}
+				out = append(out, string(rm))
+			}
+			return out
+		}
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return nil
+		}
+	}
+	return nil
+}
+
+// clicPatchCaseNum —— 把一格 case 原文里 `"<key>":` 后面的数字就地换成 val（保键序、保其余值逐字）。
+// 键必须是**对象键**（后随 `:`）⇒ 与 `want_rc_public` 一类后缀键、以及字符串值里的同名字样都不冲突。
+func clicPatchCaseNum(raw, key string, val any) string {
+	n, ok := clicPyInt(val)
+	if !ok {
+		return raw
+	}
+	needle := "\"" + key + "\""
+	idx := strings.Index(raw, needle)
+	if idx < 0 {
+		return raw
+	}
+	j := idx + len(needle)
+	for j < len(raw) && (raw[j] == ' ' || raw[j] == '\t' || raw[j] == '\n' || raw[j] == '\r') {
+		j++
+	}
+	if j >= len(raw) || raw[j] != ':' {
+		return raw
+	}
+	j++
+	for j < len(raw) && (raw[j] == ' ' || raw[j] == '\t' || raw[j] == '\n' || raw[j] == '\r') {
+		j++
+	}
+	k := j
+	if k < len(raw) && (raw[k] == '-' || raw[k] == '+') {
+		k++
+	}
+	for k < len(raw) && raw[k] >= '0' && raw[k] <= '9' {
+		k++
+	}
+	if k == j {
+		return raw
+	}
+	return raw[:j] + strconv.Itoa(n) + raw[k:]
+}
+
+// clicCaseFromMap —— 兜底：原文取不到时按 map 序列化（既有行为 · 键序会排字典序）。
+func clicCaseFromMap(m map[string]any) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(m)
+	return strings.TrimRight(buf.String(), "\n")
+}
+
+// clicNewCaseRow —— 新增格的**字面插入序**（= py `emit_matrix` 那一句的字面序）。
+type clicNewCaseRow struct {
+	ID              string   `json:"id"`
+	Command         string   `json:"command"`
+	Argv            []string `json:"argv"`
+	WantRC          any      `json:"want_rc"`
+	WantStdoutBytes any      `json:"want_stdout_bytes"`
+	Why             string   `json:"why"`
+}
+
+// clicNewCaseRaw —— 按 py 字面序造新增格原文（`ensure_ascii=False` ⇒ 不转义 HTML / 非 ASCII）。
+func clicNewCaseRaw(id, command string, argv []string, rc, wb any, why string) string {
+	if argv == nil {
+		argv = []string{}
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(clicNewCaseRow{ID: id, Command: command, Argv: argv, WantRC: rc, WantStdoutBytes: wb, Why: why})
+	return strings.TrimRight(buf.String(), "\n")
 }
 
 func clicExemptionsOf(m map[string]any) []map[string]any {

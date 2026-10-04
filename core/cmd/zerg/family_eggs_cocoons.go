@@ -33,6 +33,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,10 +95,88 @@ var eggDisplay = []string{"host", "model", "state"}
 //	backend_port  子端 `/eggs` 报的 `port`（**逐字取自载荷键 `port`**）；没在跑 / 取不到 ⇒ 空
 //
 // 两格都是**纯追加**（旧字段一个没动、顺序没动）⇒ 闭集外沿只增不改。
-var eggFields = []string{"egg_id", "host", "model", "state", "declared", "backend_port", "backend", "mem_gb"}
+var eggFields = []string{"egg_id", "host", "model", "state", "declared", "backend_port", "backend", "mem_gb", eggFieldHasProfile}
 
 // eggRequired —— 「三格齐」机检用的字段表（少一格 ⇒ 红）。
 var eggRequired = []string{"host", "model", "state"}
+
+// eggFieldHasProfile —— `has_profile` 这一格的字段名（**逐字照子端 `/eggs` 载荷键** ——
+// 子端 `agent/internal/server/eggs_endpoint.go` 的那一枚布尔格；✗ 不另造词汇）。
+//
+// 缺口 `GAP-20261005-06` 的正题：507 拒孵有**两个因** —— ① 无实测档案（`agent/internal/backend/hatch_path.go`
+// 的 `no measured profile`）② 内存不足（同件 `insufficient memory`），而面上此前只认后一个 ⇒
+// 「名册声明了却**永不可孵**（本机无实测档案）」与「可孵而此刻未装」在 `egg ls` / `egg show` 的**机器面**
+// 上不可辨。子端 `/eggs` 已有该格（只覆盖**在管的卵**），主控侧零命中 ⇒ 本件把它透到投影的字段表。
+//
+// ★ 值域：`true` / `false`（照子端那一格的布尔渲染 —— 同一格不许两套词 ⇒ 判据②）。
+const eggFieldHasProfile = "has_profile"
+
+// eggProfileDir —— 本 CLI 读得到的**实测档案目录**（口径与子端 `monitor.EggProfileDir` /
+// 主控 `gateway.EggProfileDir` 逐字同源：`ZERG_EGG_PROFILE_DIR` 覆盖 · 缺省 `~/.zerg/egg-profiles`）。
+func eggProfileDir() string {
+	if d := strings.TrimSpace(os.Getenv("ZERG_EGG_PROFILE_DIR")); d != "" {
+		return d
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".zerg", "egg-profiles")
+}
+
+// eggProfileUsable —— 这枚卵（模型 id）在**本 CLI 读得到的档案目录**里有没有**可用**实测档案。
+//
+// 判据（照子端 `has_profile` 的语义 · 本缺口的依据件）：文件 `<dir>/<卵名>.yaml` 存在、且其
+// `calib_runs` ≥ 3（§8.4 标定铁律：反复三次取上界）。取不到 / 轮数不足 ⇒ false（如实，**绝不编造** true）。
+//
+// ★ 边界（照实说）：档案是**逐机**的（`monitor.EggProfile.Machine`「档案绑定机型，跨机不得互抄」），
+// 而本函数只读本 CLI 所在机的那枚目录 ⇒ 对**别的机**上那一行，本格只能反映「本机档案目录里有没有这一枚」。
+// 要把逐机那一位也钉死，得让子端在 `/eggs` 之外再开一条**逐卵档案面**（本件不动那条路 —— 如实登记）。
+func eggProfileUsable(model string) bool {
+	dir := eggProfileDir()
+	if dir == "" || strings.TrimSpace(model) == "" {
+		return false
+	}
+	b, ok := readEggProfileFile(dir, model)
+	if !ok {
+		return false
+	}
+	return eggProfileCalibRunsOK(string(b))
+}
+
+// readEggProfileFile —— 读 `<dir>/<卵名>.yaml`；精确名不中时按**大小写不敏感**兜底（照子端
+// `monitor` 那一族的同名兜底口径 —— 免得文件名大小写把「有档案」误读成「无档案」）。
+func readEggProfileFile(dir, model string) ([]byte, bool) {
+	if b, err := os.ReadFile(filepath.Join(dir, model+".yaml")); err == nil {
+		return b, true
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, false
+	}
+	for _, e := range ents {
+		if strings.EqualFold(strings.TrimSuffix(e.Name(), ".yaml"), model) {
+			if b, err := os.ReadFile(filepath.Join(dir, e.Name())); err == nil {
+				return b, true
+			}
+			break
+		}
+	}
+	return nil, false
+}
+
+// eggProfileCalibRunsOK —— 档案文本里的 `calib_runs` 是否 ≥ 3（只扫那一行 · 受控格式 · 忽略注释 · 坏值不采信）。
+func eggProfileCalibRunsOK(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "calib_runs:") {
+			if n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(t, "calib_runs:"))); err == nil && n >= 3 {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // egg_id 的分隔符：`<模型 id>@<主机>`（照 `svc@arg.service` 那一格的形状）。
 const eggSep = "@"
@@ -233,6 +313,12 @@ func projectEggs(c *client, inv *invocation, stderr io.Writer, only string) ([]m
 				fmt.Sprintf("%s：主控点名的机 %q 不在名册候选里（两处名册读数对不上）", id, host))
 		}
 	}
+	// ★ `GAP-20261005-06`：逐枚卵把「有没有可用实测档案」落进 `has_profile` 一格
+	//   （判据 = 本 CLI 读得到的档案目录里 `<卵名>.yaml` 存在且 `calib_runs` ≥ 3）。
+	hasProfile := map[string]bool{}
+	for _, id := range order {
+		hasProfile[id] = eggProfileUsable(id)
+	}
 	rows := []map[string]string{}
 	for _, id := range order {
 		for _, cd := range byModel[id] {
@@ -254,6 +340,9 @@ func projectEggs(c *client, inv *invocation, stderr io.Writer, only string) ([]m
 				// （`GAP-20260926-08`：不许把声明当真值）。
 				"declared":     state,
 				"backend_port": "",
+				// ★ `GAP-20261005-06`：`has_profile` —— 本 CLI 读得到的档案目录里这枚卵有没有
+				// **可用**实测档案。`false` ⇒ 507 的第一个因（无实测档案）⇒ 名册声明了也**永不可孵**。
+				eggFieldHasProfile: strconv.FormatBool(hasProfile[id]),
 			})
 		}
 	}

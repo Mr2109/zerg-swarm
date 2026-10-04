@@ -37,6 +37,12 @@
        · `verified: reported`（声明级）—— 必须带 `verified_where:`（∈ 名册键），表示「由哪台自报」。
        · `verified: false` ⇒ 放过（就是「没实测」）；闭集外的取值 ⇒ rc=1 点名。
        · 没写 `verified` 字段的条目 ⇒ 本判据不管（E 已核它的 host 在册）。
+  H. **拨号地址（`--controller`）由名册可推导**（`GAP-20260927-03`）：仓内每个子端 plist 的
+     `--controller` 值（`${VAR:-默认}` 变量形态取**默认值**）必须**能由名册推出来** ——
+       host 必须 ∈ 可推导集 = { 回环 `127.0.0.1`/`::1`/`localhost` } ∪ { `nodes:` 每台的 host }；
+       端口必须 == 名册顶层 `core:` 的端口。
+     host 落在名册**没有的网段**（如 `192.168.110.x`）或端口不符 ⇒ **rc=1**，**逐字点名 plist 路径与该值**
+     （换网/改 IP 时 plist 与名册各说各话的那种漂移）。plist 不在 / 无 `--controller` ⇒ 打印跳过（不是红）。
 
 结论范围（read_layer × verdict_scope —— 本门**只用本机读数**，故判词必须带层限）
 ------------------------------------------------------------------------------
@@ -64,6 +70,7 @@
     python3 scripts/gates/check-nodes-roster.py --list-rules    # 打判据 / 路径来源 / 退码
     python3 scripts/gates/check-nodes-roster.py --self-test     # 只跑自检（合成夹具，不碰真目标）
     python3 scripts/gates/check-nodes-roster.py --verify-sha    # 另对「本机可读的 verified: true」现算 sha256 真核
+python3 scripts/gates/check-nodes-roster.py --ctrl-plist P  # 换判据 H「拨号地址对账」要核的 plist（可重复）
 """
 import argparse
 import contextlib
@@ -94,6 +101,15 @@ ANCHOR_FIELDS = ("sha256", "digest", "sha")
 ANCHOR_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 # 本机回环寻址：`fleet:` 段里 host 落在这些值上的节点名 = 本机（read_layer=local 的身份源）
 LOCAL_HOSTS = ("127.0.0.1", "::1", "localhost")
+
+# ── 判据 H：仓内子端 plist 的拨号地址（`--controller`）**由名册可推导**（GAP-20260927-03）──
+#   默认要核的仓内件（可被 --ctrl-plist 覆盖）：两枚子端 plist。
+CONTROLLER_PLISTS = (
+    os.path.join(REPO_ROOT, "deploy", "com.zerg.agent-Mr2109.plist"),
+    os.path.join(REPO_ROOT, "gateway", "deploy", "com.x3gw.agent.mini.plist"),
+)
+CTRL_VAR_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*):-(.*)\}$", re.S)   # ${VAR:-默认}
+CTRL_URL_RE = re.compile(r"^(https?)://([^/:]+)(?::(\d+))?(/.*)?$")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -414,8 +430,13 @@ def sha256_file(path, chunk=1 << 20):
     return h.hexdigest()
 
 
-def plist_machine(plist_path):
-    """→ (机器名 or None, 错误信息 or None)：读盘上 plist 的 `--machine` 旗标值（只读）。"""
+def plist_program_argv(plist_path):
+    """→ (tokens, err)：plist 的『逻辑命令行』token 表（只读）。
+
+    ★ 两种形态都收：① 直给 argv 数组 —— 原样返回；② shell 包裹
+      （`ProgramArguments = [/bin/sh, -c, "<脚本串>", …]`，照 `deploy_mini.sh` / `zerg-swap-agent.sh`
+      的 `${VAR:-默认}` 壳形态）—— 用 shlex 把脚本串切成 token。
+    """
     if not os.path.isfile(plist_path):
         return None, None
     try:
@@ -424,10 +445,63 @@ def plist_machine(plist_path):
             args = plistlib.load(f).get("ProgramArguments") or []
     except Exception as e:
         return None, "plist 读不了（%s）：%s" % (plist_path, e)
-    for i, a in enumerate(args):
-        if a.endswith("machine") and i + 1 < len(args):
-            return args[i + 1], None
-    return None, None
+    args = [str(a) for a in args]
+    if len(args) >= 3 and os.path.basename(args[0]) in ("sh", "bash", "zsh") and args[1] == "-c":
+        import shlex
+        try:
+            return shlex.split(args[2]), None
+        except ValueError as e:
+            return None, "plist 脚本串切不开（%s）：%s" % (plist_path, e)
+    return args, None
+
+
+def find_flag_value(tokens, flag):
+    """命令行 `--flag <值>` / `--flag=<值>` 的取值（找不到 ⇒ None）。"""
+    if not tokens:
+        return None
+    for i, a in enumerate(tokens):
+        if a == flag and i + 1 < len(tokens):
+            return tokens[i + 1]
+        if a.startswith(flag + "="):
+            return a[len(flag) + 1:]
+    return None
+
+
+def plist_machine(plist_path):
+    """→ (机器名 or None, 错误信息 or None)：读 plist 的 `--machine` 旗标值（只读）。"""
+    tokens, err = plist_program_argv(plist_path)
+    if err:
+        return None, err
+    if tokens is None:
+        return None, None
+    val = find_flag_value(tokens, "--machine")
+    if val is None:                       # 兼容旧口径：任何以 machine 收尾的旗标
+        for i, a in enumerate(tokens):
+            if a.endswith("machine") and i + 1 < len(tokens):
+                val = tokens[i + 1]
+                break
+    return val, None
+
+
+def plist_controller(plist_path):
+    """→ (有效值 or None, 变量名 or None, 错误信息 or None)：读 `--controller` 的**有效值**（只读）。
+
+    `${VAR:-默认}` 变量形态 ⇒ 取**默认值**（= 未设该变量时真正拨出去的地址；照 `zerg-swap-agent.sh`
+    的 `${VAR:-默认}` 体例）；直给字面值 ⇒ 原样。
+    """
+    tokens, err = plist_program_argv(plist_path)
+    if err:
+        return None, None, err
+    if tokens is None:
+        return None, None, None
+    raw = find_flag_value(tokens, "--controller")
+    if raw is None:
+        return None, None, None
+    raw = raw.strip()
+    m = CTRL_VAR_RE.match(raw)
+    if m:
+        return m.group(2).strip(), m.group(1), None
+    return raw, None, None
 
 
 def derive_local_names(fleet_path, plist_path):
@@ -588,7 +662,73 @@ def check_subend(plist_path, nodes):
     return fails, checks
 
 
-def run_checks(roster, fleet, plist, verbose=True, verify_sha=False):
+def roster_core_port(lines):
+    """名册顶层 `core:` 的端口（读不到 ⇒ None）。"""
+    for l in lines:
+        m = re.match(r"^core\s*:\s*(\S+)\s*$", l)
+        if m:
+            u = unquote(m.group(1))
+            mm = re.search(r":(\d+)\s*$", u)
+            return int(mm.group(1)) if mm else None
+    return None
+
+
+def derivable_controller_hosts(nodes):
+    """名册能产出的拨号 host 集：回环 ∪ `nodes:` 里每台的 host。"""
+    hosts = set(LOCAL_HOSTS)
+    for ent in nodes.values():
+        if isinstance(ent, dict):
+            h = str(ent.get("host", "")).strip().strip('"')
+            if h:
+                hosts.add(h)
+    return hosts
+
+
+def check_controller(plist_paths, nodes, roster_lines):
+    """H：`--controller` **由名册可推导**（host ∈ 可推导集 · port == 名册 core 端口）。
+
+    推不出来 ⇒ 判红，**逐字点名 plist 路径与该值**（GAP-20260927-03）。
+    """
+    fails, checks = [], []
+    core_port = roster_core_port(roster_lines)
+    hosts = derivable_controller_hosts(nodes)
+    checks.append("H 拨号可推导集（回环 ∪ 名册 host）= %s · 名册 core 端口 = %s"
+                  % (" · ".join(sorted(hosts)), core_port if core_port is not None else "**读不到**"))
+    for p in plist_paths:
+        if not os.path.isfile(p):
+            checks.append("H 拨号对账：plist 不在（%s）⇒ 跳过该件" % p)
+            continue
+        val, var, err = plist_controller(p)
+        if err:
+            fails.append("H %s" % err)
+            continue
+        if val is None:
+            checks.append("H 拨号对账：%s 无 `--controller` ⇒ 跳过" % p)
+            continue
+        shown = "%s（变量 ${%s:-…} 的默认值）" % (p, var) if var else p
+        m = CTRL_URL_RE.match(val)
+        if not m:
+            fails.append("H %s 的 `--controller` 不是合法 http(s) 地址：%r" % (shown, val))
+            continue
+        host, port = m.group(2), m.group(3)
+        why = []
+        if host not in hosts:
+            why.append("host=%s 不在名册可推导集" % host)
+        if core_port is not None:
+            if port is None:
+                why.append("缺端口（名册 core 端口=%d）" % core_port)
+            elif int(port) != core_port:
+                why.append("port=%s ≠ 名册 core 端口=%d" % (port, core_port))
+        if why:
+            fails.append("H %s 的拨号地址推不出来：现值 %r —— %s（改 plist 或先把该地址登记进名册 nodes）"
+                         % (shown, val, "；".join(why)))
+        else:
+            checks.append("H 拨号对账 %s ⇒ 可推导（值 %r）" % (shown, val))
+    return fails, checks
+
+
+def run_checks(roster, fleet, plist, verbose=True, verify_sha=False,
+               ctrl_plists=None, ctrl_check=True):
     nodes, err = load_roster(roster)
     if err:
         print("⛔ 不给结论：%s" % err)
@@ -599,7 +739,18 @@ def run_checks(roster, fleet, plist, verbose=True, verify_sha=False):
     fails, checks = check_fleet(fleet, nodes, local_names, verify_sha)
     f2, c2 = check_subend(plist, nodes)
     fails += f2
-    checks = lchecks + checks + c2
+    # H 拨号地址（`--controller`）由名册可推导（GAP-20260927-03）—— 负控可哑化（ctrl_check=False）
+    if ctrl_check:
+        try:
+            _raw_r, roster_lines = read_lines(roster)
+        except Exception:
+            roster_lines = []
+        plist_list = list(ctrl_plists) if ctrl_plists is not None else list(CONTROLLER_PLISTS)
+        f3, c3 = check_controller(plist_list, nodes, roster_lines)
+        fails += f3
+    else:
+        c3 = ["H 拨号对账：断言哑化（ctrl_check=False · 负控用）⇒ 不报"]
+    checks = lchecks + checks + c2 + c3
     uncovered = sorted(set(nodes) - local_names)
     local_str = " · ".join(sorted(local_names)) if local_names else "**本机身份读不到**"
     uncov_str = " · ".join(uncovered) if uncovered else "无"
@@ -617,7 +768,7 @@ def run_checks(roster, fleet, plist, verbose=True, verify_sha=False):
         return 1
     print("✓ **本机层**（read_layer=local）与名册逐字一致：fleet: · updates.nodes · "
           "models: host 各在册 · G verified 闭集（无锚 true 仅报告·GAP-20261003-21） · "
-          "本机子端名册（plist/本机在跑 agentd）")
+          "本机子端名册（plist/本机在跑 agentd） · H 拨号地址由名册可推导")
     print("   ↳ verdict_scope=**本机**（%s）—— 本门**不覆盖**远端：%s"
           % (local_str, uncov_str))
     return 0
@@ -628,6 +779,7 @@ def run_checks(roster, fleet, plist, verbose=True, verify_sha=False):
 # ══════════════════════════════════════════════════════════════════════════
 ROSTER_FIX = """# 夹具名册
 context: default
+core: http://127.0.0.1:8580
 nodes:
   edge-node:
     host: <worker-ip>
@@ -665,6 +817,31 @@ PLIST_FIX = """<?xml version="1.0" encoding="UTF-8"?>
   <key>ProgramArguments</key><array>
     <string>/tmp/zerg-agentd</string>
     <string>--machine</string><string>Mr2109</string>
+  </array>
+</dict></plist>
+"""
+
+# 判据 H 夹具（拨号地址 · `__CTRL__` 由 self_test 代入）—— 变量形态（shell 包裹）与字面形态各一：
+PLIST_CTRL_VAR_FIX = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.x3gw.agent</string>
+  <key>ProgramArguments</key><array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>exec /usr/bin/python3 ~/agent/agent.py --controller "${ZERG_AGENT_CONTROLLER:-__CTRL__}" --machine mini-node-1</string>
+  </array>
+</dict></plist>
+"""
+
+PLIST_CTRL_LITERAL_FIX = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.x3gw.agent</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/bin/python3</string><string>~/agent/agent.py</string>
+    <string>--controller</string><string>__CTRL__</string>
+    <string>--machine</string><string>mini-node-1</string>
   </array>
 </dict></plist>
 """
@@ -719,6 +896,15 @@ def self_test():
         cases.append(("名册不在 ⇒ 2（不给结论）", os.path.join(d, "nope.yaml"), fleet, plist, 2))
         cases.append(("名册 nodes 空 ⇒ 2", w("r2.yaml", "nodes:\n"), fleet, plist, 2))
 
+        # ── 判据 H：拨号地址由名册可推导（GAP-20260927-03；成对负控）──
+        c_bad = w("ctrl_bad.plist", PLIST_CTRL_VAR_FIX.replace("__CTRL__", "http://<worker-host>:8580"))
+        c_ok = w("ctrl_ok.plist", PLIST_CTRL_VAR_FIX.replace("__CTRL__", "http://<worker-ip>:8580"))
+        c_port = w("ctrl_port.plist", PLIST_CTRL_LITERAL_FIX.replace("__CTRL__", "http://<worker-ip>:9"))
+        cases.append(("H 拨号 host 不在名册（变量默认值）⇒ 1", roster, fleet, plist, 1, None, (c_bad,)))
+        cases.append(("H 拨号可推导（变量默认值）⇒ 0", roster, fleet, plist, 0, None, (c_ok,)))
+        cases.append(("H 拨号端口 ≠ core 端口 ⇒ 1", roster, fleet, plist, 1, None, (c_port,)))
+        cases.append(("H 负控：断言哑化（同一 bad）⇒ 0（回不报）", roster, fleet, plist, 0, None, (c_bad,), False))
+
         # ── 判据 G：verified 闭集 + 「实测级必须有可核内容锚」（GAP-…-167/-171 成对负控）──
         wa = w("weights.bin", "zerg-verified-fixture\n")
         ahash = sha256_file(wa)                    # 本机件真 sha256
@@ -751,7 +937,10 @@ def self_test():
         for case in cases:
             name, r, f, p, want = case[:5]
             vsha = case[5] if len(case) > 5 else False
-            rc = run_checks(r, f, p, verbose=False, verify_sha=vsha)
+            ctrl = case[6] if len(case) > 6 else ()
+            cchk = case[7] if len(case) > 7 else True
+            rc = run_checks(r, f, p, verbose=False, verify_sha=vsha,
+                            ctrl_plists=ctrl, ctrl_check=cchk)
             mark = "✓" if rc == want else "✗"
             if rc != want:
                 bad += 1
@@ -760,7 +949,7 @@ def self_test():
         # ── 判词层限成对负控：判词必须带 read_layer / verdict_scope 与「不覆盖远端」声明 ──
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            run_checks(roster, fleet, plist, verbose=True)
+            run_checks(roster, fleet, plist, verbose=True, ctrl_plists=())
         out = buf.getvalue()
         for name, ok in (
             ("判词含 read_layer=local", "read_layer=local" in out),
@@ -807,6 +996,8 @@ def main():
     ap.add_argument("--list-rules", action="store_true")
     ap.add_argument("--verify-sha", action="store_true",
                     help="对本机可读的 verified: true 条目现算 sha256 真核（默认只查锚在不在/格式）")
+    ap.add_argument("--ctrl-plist", dest="ctrl_plists", action="append", metavar="P",
+                    help="判据 H 要核的 plist（可重复；默认 仓内 deploy/ 与 gateway/deploy/ 两件）")
     a = ap.parse_args()
     if a.list_rules:
         print(__doc__)
@@ -821,7 +1012,8 @@ def main():
         print("⛔ 自检不过 ⇒ 拒绝核真目标", file=sys.stderr)
         return 2
     print("── 自检通过，开始核真目标 ──")
-    return run_checks(a.roster, a.fleet, a.plist, verify_sha=a.verify_sha)
+    return run_checks(a.roster, a.fleet, a.plist, verify_sha=a.verify_sha,
+                      ctrl_plists=a.ctrl_plists)
 
 
 if __name__ == "__main__":

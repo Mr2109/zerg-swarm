@@ -14,7 +14,7 @@
 // 三条形状（照上面三条，不自造一处语义）：
 //
 //	`archive hash <件|目录>…`        一进程算一批件的 sha256 ⇒ 逐行 `sha256␣␣路径`，
-//	                                 与 `shasum -a 256` **逐字相同**（行数 = 件数 · **无表头**）
+//	                                 与 `shasum -a 256` **逐字相同**（行数 = 件数 · **无表头**；含反斜杠/换行的路径照 GNU 转义行约定加前导 `\`，见 `archiveHashLine`）
 //	`archive manifest <载荷> --out <袋>` 出三件套（`bagit.txt` + `manifest-sha256.txt` +
 //	                                 `tagmanifest-sha256.txt`，载荷进 `data/`）；
 //	                                 `--dry-run` 先出逐件清单 · 真写要 `--yes` · 失败回滚
@@ -43,6 +43,11 @@ const (
 	archiveTagmanifestName = "tagmanifest-sha256.txt"
 	archiveDataDir         = "data"
 )
+
+// archiveRequiredTagFiles —— 标签清单**必须覆盖**的必备件（RFC 8493 §2.1：标签清单必签 `bagit.txt`
+// 与载荷清单；本族只出一种载荷清单 `manifest-sha256.txt`）。**写面与判面共用这一份** ——
+// `writeBag` 照它写标签条，`cmdArchiveVerify` 照它断「必备条必在」，不自造第二套口径。
+var archiveRequiredTagFiles = []string{archiveBagitTxt, archiveManifestName}
 
 // bagitTxtBody —— `bagit.txt` 逐字（RFC 8493：两行，版本行 + 编码行）。
 const bagitTxtBody = "BagIt-Version: 0.97\nTag-File-Character-Encoding: UTF-8\n"
@@ -98,9 +103,21 @@ func archiveExpandTargets(args []string) ([]string, error) {
 }
 
 // ---- `archive hash` ------------------------------------------------------------------------
+// archiveHashLine —— 把一件渲染成 `archive hash` 的一行（`sha256␣␣路径`），并照 GNU coreutils /
+// `shasum` 的**转义行约定**渲染特殊字符：路径含反斜杠或换行时，**整行行首**加一个 `\`，
+// 且路径里 `\` 写成 `\\`、换行写成 `\n`（先转反斜杠，再转换行 —— 顺序反了会把新引入的
+// 反斜杠再翻倍）。常规路径**一字不动** ⇒ 与 `shasum -a 256` 逐字相同，且两种形态的整行都能直接喂 `shasum -c`。
+func archiveHashLine(digest, path string) string {
+	if !strings.ContainsAny(path, "\\\n") {
+		return digest + "  " + path
+	}
+	esc := strings.ReplaceAll(path, "\\", `\\`)
+	esc = strings.ReplaceAll(esc, "\n", `\n`)
+	return `\` + digest + "  " + esc
+}
 
 // cmdArchiveHash —— 一进程吃 N 件，出逐件 `sha256␣␣路径`（**无表头** ⇒ 行数 = 件数，
-// 与 `shasum -a 256` 逐字相同）。
+// 与 `shasum -a 256` 逐字相同：含反斜杠/换行的路径按 GNU 转义行约定渲染，见 `archiveHashLine`）。
 //
 // 退码：`0` 全算出来 · `2` 用法错（没给目标 / 路径不存在）· `8` 读不到（**不拿「读不到」当「没有」**）。
 func cmdArchiveHash(inv *invocation, stdout, stderr io.Writer) int {
@@ -142,9 +159,10 @@ func cmdArchiveHash(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.jsonGiven {
 		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
 	}
-	// 裸行面（人面 = 行式面，零装饰）：`sha256` + 两空格 + 路径 —— 与 `shasum -a 256` 逐字同。
+	// 裸行面（人面 = 行式面，零装饰）：`sha256` + 两空格 + 路径 —— 与 `shasum -a 256` 逐字同
+	// （含反斜杠/换行的路径按 GNU 转义行约定渲染，故本面整行可直接喂 `shasum -c`）。
 	for _, r := range rows {
-		fmt.Fprintf(stdout, "%s  %s\n", r["sha256"], r["path"])
+		fmt.Fprintln(stdout, archiveHashLine(r["sha256"], r["path"]))
 	}
 	fmt.Fprintf(stderr, "%s: 一进程算完 %d 件（逐行 `sha256␣␣路径` · 与 `shasum -a 256` 逐字同）\n",
 		progName, len(rows))
@@ -366,7 +384,7 @@ func writeBag(out, payload string, files, dirs, lines []string) error {
 		return err
 	}
 	tag := []string{}
-	for _, name := range []string{archiveBagitTxt, archiveManifestName} {
+	for _, name := range archiveRequiredTagFiles {
 		sum, _, err := sha256File(filepath.Join(out, name))
 		if err != nil {
 			return err
@@ -424,7 +442,8 @@ func archiveSplitManifestLine(line string) (digest, entry string, ok bool) {
 //
 //	① 清单里每一条：`<袋>/<entry>` 重算 == 清单 digest（缺件 / 不符 ⇒ 红）；
 //	② 盘上**多出未登记**的载荷件（清单里没有）⇒ 红 —— 这一半正是「**抹掉清单里任意一条 ⇒ 必红**」；
-//	③ `tagmanifest-sha256.txt` 覆盖 `bagit.txt` 与 `manifest-sha256.txt`（标签件也被签）。
+//	③ `tagmanifest-sha256.txt` 覆盖 `bagit.txt` 与 `manifest-sha256.txt`（标签件也被签），
+//	   且**必备条必在**（`bagit.txt` + `manifest-sha256.txt` 两条缺一 ⇒ 红 —— 清空/抹条不再漏检）。
 //
 // 退码：`0` 全对 · `1` 判红（逐条报）· `8` **判不了**（不是袋 / 清单读不到 —— 不把「判不了」当「过了」）。
 func cmdArchiveVerify(inv *invocation, stdout, stderr io.Writer) int {
@@ -510,6 +529,7 @@ func cmdArchiveVerify(inv *invocation, stdout, stderr io.Writer) int {
 		rows = append(rows, map[string]string{"entry": archiveTagmanifestName,
 			"want": "（这个件该在）", "got": "（读不到）", "verdict": "缺件"})
 	} else {
+		signed := map[string]bool{}
 		for _, line := range strings.Split(string(tagBytes), "\n") {
 			if strings.TrimSpace(line) == "" {
 				continue
@@ -521,6 +541,7 @@ func cmdArchiveVerify(inv *invocation, stdout, stderr io.Writer) int {
 					"want": "（本行不是 `sha256␣␣路径` 形状）", "got": "-", "verdict": "标签行不认"})
 				continue
 			}
+			signed[entry] = true
 			got, _, err := sha256File(filepath.Join(bag, filepath.FromSlash(entry)))
 			if err != nil || got != digest {
 				bad++
@@ -530,6 +551,16 @@ func cmdArchiveVerify(inv *invocation, stdout, stderr io.Writer) int {
 			}
 			rows = append(rows, map[string]string{"entry": entry, "want": digest, "got": got,
 				"verdict": "标签一致"})
+		}
+		// ★ 必备条存在断言（RFC 8493 §2.1）：标签清单**必须覆盖** `bagit.txt` 与 `manifest-sha256.txt`。
+		// 只校验「已写出的行」不够 —— 把标签清单清空、或只抹掉其中一条，曾让「一致改载荷 + 重写清单」
+		// 的真篡改完全不被检出（逐条见 GAP-20261005-25）。缺一条 ⇒ 响亮判红并点名缺的是哪一条。
+		for _, req := range archiveRequiredTagFiles {
+			if !signed[req] {
+				bad++
+				rows = append(rows, map[string]string{"entry": req,
+					"want": "（必备标签条 · 必须在 tagmanifest 里）", "got": "（缺）", "verdict": "缺必备条"})
+			}
 		}
 	}
 

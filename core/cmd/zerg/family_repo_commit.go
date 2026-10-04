@@ -266,6 +266,8 @@ func cmdRepoCommit(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	head, _ := gitRun(root, "rev-parse", "--short", "HEAD")
 	head = strings.TrimSpace(head)
+	// ★ 「轮 = 一笔提交」：一笔提交落一页回执（缺口 `GAP-20261005-16`）—— 只出声，不改判决。
+	writeCommitReceipt(message, head, "file", files, by, stderr)
 	row := map[string]string{
 		"head": head, "files": strings.Join(files, ","), "staged": strings.Join(staged, ","),
 		"gate_rc": "0", "commit": head, "message_path": msgPath, "log_dir": logDir,
@@ -824,6 +826,11 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 		}
 	}
 
+	// ★ 「轮 = 一笔提交」：一笔提交落一页回执（缺口 `GAP-20261005-16`）—— 只在本笔真落地时写。
+	if rc == exitOK {
+		writeCommitReceipt(message, head, "only", paths, by, stderr)
+	}
+
 	// ⑧ 被排除件那一片：**显式逐条**（不是「我们跳过了」；`N=0` 也写口径，不许沉默）
 	fmt.Fprintf(stderr, "%s: %s\n", progName, commitExcludedNote(excluded))
 	for _, e := range excluded {
@@ -926,4 +933,73 @@ func runGitCommitOnly(root, msgPath string, paths []string, stdout, stderr io.Wr
 		return exitFail
 	}
 	return exitOK
+}
+
+// ═══════════ 「轮 = 一笔提交」：提交链自动落一页回执（缺口 `GAP-20261005-16`）═══════════
+//
+// 病根：门⑬ 的 R5b 把「件级账最新主仓写轮 晚于 最新回执」判成 `rc=2`（不给结论 · BLOCKED），
+// 而回执的一页此前**没有自动调用者**（`zerg dev receipt new` 只能手工敲）⇒ 轮级账一旦停更，
+// 「最新写轮 ≤ 最新回执」这条不变式当场破，门⑬ 就锁在 BLOCKED。
+//
+// 本钩子把不变式补上：**一笔提交 ⇒ 自动落一页回执**（append-only · 一轮一页 · 不覆盖别人）。
+// 页内容**全部取真源**：题取 `--message` 首行 · 头取提交后的 HEAD · 件清单取本命令的点名件；
+// `evidence` 里落的是**本命令自己的真调用**（`zerg repo commit …`）—— 真命令面调用，不是伪串凑数
+// （过门⑬ H1/R4：首词 `repo` 在命令树里可解析）。
+//
+// ★ 挡位（两选一 · 按证据定 = **不阻断**）：与同件 `commit_audit` 落不下时的口径逐字一致
+// （「判决照旧 · 只出声」· 见 `auditCompensationLine` 那段），理由同：**升 fail-closed 会把
+// 「状态盘写不进」变成「提交做不了」**，而门⑬（**不在快速档**）才是这一格的牙 —— 回执缺了，
+// 门⑬ R5b 会在提交之后照实判 `rc=2`，不靠提交当时互相挡。
+func writeCommitReceipt(title, head, mode string, files []string, by string, stderr io.Writer) {
+	if strings.TrimSpace(head) == "" {
+		return // 拿不到 HEAD ⇒ 这一笔没落地 ⇒ 不落页（不造无头的轮）
+	}
+	dir := receiptDir()
+	if dir == "" {
+		fmt.Fprintf(stderr, "%s: ⚠ 回执落点解析不出来 ⇒ 本笔未落回执（门⑬ R5b 将据此判不给结论）\n", progName)
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(stderr, "%s: ⚠ 回执目录建不出来（%v）⇒ 本笔未落回执\n", progName, err)
+		return
+	}
+	// 轮次 id / 落点：与 `zerg dev receipt new` 同形（`R-` + 时间戳）；同一秒内两笔 ⇒ 加后缀，
+	// **绝不覆盖别人的页**（append-only · 一轮一页）。
+	rid := "R-" + time.Now().Format("20060102T150405")
+	path := filepath.Join(dir, rid+".json")
+	for n := 2; ; n++ {
+		if _, e := os.Stat(path); os.IsNotExist(e) {
+			break
+		}
+		rid = "R-" + time.Now().Format("20060102T150405") + "-" + fmt.Sprintf("%d", n)
+		path = filepath.Join(dir, rid+".json")
+	}
+	t := strings.TrimSpace(title)
+	if t == "" {
+		t = "（无题）"
+	}
+	flag := "--file"
+	if mode == "only" {
+		flag = "--only"
+	}
+	rec := receiptRecord{
+		RoundID:   rid,
+		TraceID:   newTraceID(),
+		What:      fmt.Sprintf("提交 %s（%s 模式）：%s", head, mode, t),
+		Next:      "续做入口：zerg context ls --resume（本轮改过仓内件，下一轮读这一页接上）",
+		Blockers:  []string{},
+		Evidence:  []string{fmt.Sprintf("zerg repo commit %s %s --message %q --yes", flag, strings.Join(files, " "), t)},
+		Commits:   []string{head},
+		CreatedAt: time.Now().Format(time.RFC3339),
+		Path:      path,
+	}
+	b, _ := json.MarshalIndent(rec, "", " ")
+	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+		fmt.Fprintf(stderr, "%s: ⚠ 回执落不下（%s）：%v —— 判决照旧（门⑬ R5b 将据此判不给结论）\n", progName, path, err)
+		if cerr := appendAuditCompensation(by, path, err); cerr == nil {
+			fmt.Fprintf(stderr, "%s: 已把「回执主落点失败」记一条补偿行到备用落点 %s\n", progName, fallbackAuditPath())
+		}
+		return
+	}
+	fmt.Fprintf(stderr, "%s: 已落一页回执 %s（轮级账 ⟷ 件级账 · 门⑬ R5b 覆盖自证）\n", progName, path)
 }

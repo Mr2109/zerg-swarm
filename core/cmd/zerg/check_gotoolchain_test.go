@@ -93,6 +93,13 @@ func TestCheckGotoolchainGatePort(t *testing.T) {
 		t.Fatalf("负控-无 go 指令 失败：得 rc=%d out=%q", rcNoGo, outNoGo)
 	}
 
+	// ── 空集守卫（GAP-20260927-108）：版本号 trip() 解析不出（`go 1`）⇒ rc=2（不给结论，≠ 绿） ──
+	rcUnparse, outUnparse, _ := gttRun(t, gttFixture(t,
+		"module core\n\ngo 1\n", "module agent\n\ngo 1\n"))
+	if rcUnparse != 2 || !strings.Contains(outUnparse, "不给结论（rc=2）") {
+		t.Fatalf("空集守卫-版本号不可解析 失败：得 rc=%d out=%q", rcUnparse, outUnparse)
+	}
+
 	// ── 不给结论（≠ 绿）：未知旗标 ⇒ rc=2（stderr 明说） ─────────────────
 	rcFlag, _, errFlag := gttRun(t, gttFixture(t,
 		"module core\n\ngo 1.22.0\n", "module agent\n\ngo 1.22.0\n"), "--no-such-flag")

@@ -118,6 +118,10 @@ func TestGateProgressInFlight(t *testing.T) {
 	if !strings.Contains(out, "还在跑") {
 		t.Errorf("要判出「还在跑」：\n%s", out)
 	}
+	// ★ GAP-20261005-14：真在跑趟 ⇒ 要印「正在跑：第 N 步」（正向对照：修不能把在跑趟也压哑）。
+	if !strings.Contains(out, "正在跑") {
+		t.Errorf("在跑趟要印「正在跑：第 N 步」（GAP-20261005-14 正向对照）：\n%s", out)
+	}
 	if !strings.Contains(out, "PASS 1") || !strings.Contains(out, "FAIL 1") {
 		t.Errorf("四数要照结果表数出来：\n%s", out)
 	}
@@ -143,6 +147,11 @@ func TestGateProgressFinished(t *testing.T) {
 	}
 	if !strings.Contains(out, "已收工") {
 		t.Errorf("要判出「已收工」：\n%s", out)
+	}
+	// ★ GAP-20261005-14 负控（有牙）：已收工趟**不许**印「正在跑」——改前 currentStep>0 恒成立 ⇒ 必印，
+	//   与同一屏的「已收工」自相矛盾。
+	if strings.Contains(out, "正在跑") {
+		t.Errorf("已收工趟不许印「正在跑」（GAP-20261005-14）：\n%s", out)
 	}
 	// 全 PASS 的已收工趟 ⇒ 退 0。
 	dir2 := t.TempDir()

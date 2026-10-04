@@ -67,6 +67,11 @@
 //	   ⇒ 这一面**可**逐字对齐（已对拍 C16）。
 //
 //	—— ①②③ 三面均**不在** M2-0 样板对拍输入集内；接线前须逐面补齐或显式剔除（④ 已覆盖）。
+//
+// ★ R9（缺口 `GAP-20260927-228`/`-229` · 与 py **同批**落 · M2 双实现件）：描述 ↔ 真源**列举对拍** ——
+// `truth_shape` 点名的顶层键集合 ⊇ 真源 JSON（`truth` 路径部分 · `.json`）的顶层键集合（去元数据键
+// `schema`/`id`/`note`/`not_in_public_face` 与一切 `_` 起头的键）；**漏列即红**，✗ 不依赖是否自称数字。
+// 非 `.json` / 非对象的真源件**不属本条面**（跳过，不判红）。
 package main
 
 import (
@@ -100,6 +105,13 @@ var ccrChangeClasses = []string{"A", "B"}
 
 // ccrJSONFields —— py `JSON_FIELDS`（**唯一真源**：印表与拒收同读这一处）。
 var ccrJSONFields = []string{"entries", "reds", "gate", "wired"}
+
+// ccrMetaTopKeys —— R9 元数据键（与 py `META_TOP_KEYS` 逐字对齐）：跨件通用的**自述 / 出处 / 落点标记**，
+// 不是「契约的键」，不许被要求点名；另加「一切 `_` 起头的键」（判据里另判）。
+var ccrMetaTopKeys = map[string]bool{"schema": true, "id": true, "note": true, "not_in_public_face": true}
+
+// ccrBacktickRE —— py `BACKTICK_RE`：R9 点名集抽取（`truth_shape` 里反引号包住的 token）。
+var ccrBacktickRE = regexp.MustCompile("`([^`]+)`")
 
 var (
 	// ID_RE = ^S-[a-z]$
@@ -367,6 +379,23 @@ func ccrCheck(root string, rootOK bool, registryPath string) (int, []string, ccr
 			reds = append(reds, fmt.Sprintf("R6 %s 的 `gate` 既不是路径型、也不含 `go test`：%s ⇒ 判不出「谁在读它」",
 				eidStr, ccrPyRepr(gate)))
 		}
+		// R9 —— ★ 描述 ↔ 真源列举对拍（GAP-20260927-228/-229）：truth_shape 点名的顶层键集合
+		//      ⊇ 真源 JSON 的顶层键集合（去元数据键）；漏列即红，✗ 不依赖是否自称数字。
+		r9path := ""
+		if tp != "" {
+			r9path = filepath.Join(root, tp)
+		}
+		miss, r9err := ccrR9Missing(r9path, ccrPyStr(ccrGet(e, "truth_shape", "")))
+		if r9err {
+			reds = append(reds, fmt.Sprintf("R9 %s 的真源 `%s` 解析失败 ⇒ truth_shape 点名集无法对拍（不给绿）", eidStr, tp))
+		} else if len(miss) > 0 {
+			parts := make([]string, len(miss))
+			for i, k := range miss {
+				parts[i] = "`" + k + "`"
+			}
+			reds = append(reds, fmt.Sprintf("R9 %s 的 `truth_shape` 漏点名真源顶层键 %d 个：%s",
+				eidStr, len(miss), strings.Join(parts, " / ")))
+		}
 	}
 
 	// ── R7 表自称的门在盘且就是本脚本 ────────────────────────────────────────
@@ -413,7 +442,8 @@ func ccrCheck(root string, rootOK bool, registryPath string) (int, []string, ccr
 		return 1, reds, info
 	}
 	lines := []string{
-		fmt.Sprintf("契约登记表 OK：%d 条条目 · 八字段齐 · id 唯一 · truth 件全在盘 · gate 面全可判（无门 0 条）", info.Entries),
+		fmt.Sprintf("契约登记表 OK：%d 条条目 · 八字段齐 · id 唯一 · truth 件全在盘 · gate 面全可判（无门 0 条）· "+
+			"truth_shape 点名齐（真源顶层键无漏列）", info.Entries),
 		fmt.Sprintf("表自称的门在盘：%s（= 本件）· Go 侧声明同一路径", info.Gate),
 	}
 	return 0, lines, info
@@ -503,6 +533,48 @@ func ccrPathPart(truth interface{}) string {
 // ccrGateTokens —— py `gate_tokens(gate)`：TOKEN_RE.findall(gate or "")。
 func ccrGateTokens(gate string) []string {
 	return ccrTokenRE.FindAllString(gate, -1)
+}
+
+// ccrR9Missing —— py `r9_missing(truth_abs, truth_shape)`：R9 **漏点名**的真源顶层键（排序后）⇒ (miss, err)。
+//
+//	err=true ⇒ 真源件在盘但**解析失败**（判红：点名集无法对拍，不许给绿）；
+//	非 .json / 不在盘 / 非 JSON 对象（数组 / 标量）⇒ 不属本条面 ⇒ (nil, false)。
+func ccrR9Missing(truthAbs, truthShape string) ([]string, bool) {
+	if !strings.HasSuffix(truthAbs, ".json") || !ccrIsFile(truthAbs) {
+		return nil, false
+	}
+	raw, err := os.ReadFile(truthAbs)
+	if err != nil {
+		return nil, true
+	}
+	var v interface{}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, true
+	}
+	obj, ok := v.(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	named := map[string]bool{}
+	for _, m := range ccrBacktickRE.FindAllStringSubmatch(truthShape, -1) {
+		tok := strings.TrimSpace(m[1])
+		if tok == "" {
+			continue
+		}
+		named[tok] = true
+		named[strings.TrimSpace(strings.SplitN(tok, ".", 2)[0])] = true
+	}
+	var miss []string
+	for k := range obj {
+		if ccrMetaTopKeys[k] || strings.HasPrefix(k, "_") {
+			continue
+		}
+		if !named[k] {
+			miss = append(miss, k)
+		}
+	}
+	sort.Strings(miss)
+	return miss, false
 }
 
 // ccrIsFile —— py `os.path.isfile`。
@@ -704,6 +776,38 @@ func ccrSelfTest(stdout io.Writer, root string, rootOK bool) int {
 	})
 	caseFn("⑧ 负控：schema 号不对 ⇒ rc=1", 1, rc, "schema", lines)
 
+	// ⑪ 负控 · R9：自建**迷你根**（锚点 / 表 / 真源 / 门件 / Go 声明）——
+	//     真源顶层键有 alpha/beta，而只点名 `alpha` ⇒ beta 漏列 ⇒ rc=1。
+	//     ✗ 不复用调用方的 root（py 跑真仓、Go 单测跑合成仓 ⇒ 不 hermetic）。
+	gr := "scripts/gates/check-contract-registry.py"
+	if r9root, e := os.MkdirTemp("", "zerg-cr-r9-"); e == nil {
+		w := func(rel, body string) {
+			p := filepath.Join(r9root, rel)
+			_ = os.MkdirAll(filepath.Dir(p), 0o755)
+			_ = os.WriteFile(p, []byte(body), 0o644)
+		}
+		w(filepath.Join("core", "internal", "version", "version.go"), "package version\n")
+		w(filepath.Join("core", "internal", "contract", "r9.json"), "{\"alpha\": 1, \"beta\": 2}\n")
+		w(gr, "# 夹具门件\n")
+		w(filepath.Join("core", "cmd", "zerg", "family_impact_contract.go"),
+			"package main\n\nconst impactContractRegistryGateRel = "+strconv.Quote(gr)+"\n")
+		regDoc := map[string]interface{}{
+			"schema": "zerg-contract-registry/1", "note": "真源见 `" + gr + "`", "authority": "夹具",
+			"entries": []interface{}{map[string]interface{}{
+				"id": "S-a", "name": "甲", "truth": "core/internal/contract/r9.json",
+				"truth_shape": "`alpha`", "version_field": "schema", "gate": gr,
+				"change_class": "A", "change_note": "x"}},
+		}
+		if b, me := json.Marshal(regDoc); me == nil {
+			w(filepath.Join("core", "internal", "contract", "registry.json"), string(b))
+		}
+		rc, lines, _ = ccrCheck(r9root, true, filepath.Join(r9root, "core", "internal", "contract", "registry.json"))
+		_ = os.RemoveAll(r9root)
+		caseFn("⑪ 负控：truth_shape 漏点名真源顶层键 ⇒ rc=1", 1, rc, "漏点名", lines)
+	} else {
+		bad = append(bad, "✗ ⑪ 负控：建迷你根失败："+e.Error())
+	}
+
 	// ⑨ 负控：表读不到 ⇒ rc=2
 	rc, lines, _ = ccrCheck(root, rootOK, filepath.Join(tmp, "根本没这份表.json"))
 	caseFn("⑨ 负控：表读不到 ⇒ rc=2（不给结论）", 2, rc, "不给结论", lines)
@@ -719,7 +823,7 @@ func ccrSelfTest(stdout io.Writer, root string, rootOK bool) int {
 		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "✓ 自检全过（%d 组：正控 1 + 负控 9 · 成对）\n", n)
+	fmt.Fprintf(stdout, "✓ 自检全过（%d 组：正控 1 + 负控 10 · 成对）\n", n)
 	return 0
 }
 

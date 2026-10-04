@@ -74,6 +74,17 @@ func cmdAgentShow(inv *invocation, stdout, stderr io.Writer) int {
 		"mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"}
 	row := project(o, fields)
 	row["machine"] = machine
+	// gpu_pct：macOS 机在主控投影层被剔除该键（平台线不可得，GAP-20260925-34 剩面①）
+	// ⇒ 缺席如实示 `n/a`，复用 gpu_used_gb 那条同族现成写法 —— ✗ 不把缺席印成空串。
+	if _, ok := o["gpu_pct"]; !ok {
+		row["gpu_pct"] = "n/a"
+	}
+	// gpu_used_gb：显存不可知（载荷 vram_known=false，源出心跳层「拿不到即 vram_known=false」）
+	// ⇒ 如实示 `n/a`，绝不把「缺席」印成真值 0（缺口 GAP-20260925-34 剩面②）。
+	// 口径沿用同族现成写法 `n/a`（family_net.go:「`n/a` 是一条答案，不是取不到」）—— ✗ 不自造词。
+	if known, _ := o["vram_known"].(bool); !known {
+		row["gpu_used_gb"] = "n/a"
+	}
 	// 「命令有什么能力」不另造词汇：字段名逐字取自载荷（§4.3 U2）。
 	return listCmd(inv, stdout, stderr, []string{"machine", "healthy", "code_version", "code_sha",
 		"cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb", "models", "model", "backend_state", "active_requests", "gpu_used_gb", "backend_rss_gb", "gpu_temp_c", "last_seen"},
@@ -87,7 +98,14 @@ func cmdAgentModels(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("usage", "missing_target", "缺机器名")
 		return exitUsage
 	}
-	machine := inv.args[0]
+	machine := strings.TrimSpace(inv.args[0])
+	// ★ 名册闸（缺口 GAP-20261005-11）：机器名不在名册里 ⇒ 不是错、是没有 ——
+	// 退 2 ＋ 逐字复用同族现成报话（agentChildAddr；与 agent engines/slots/reload/registry/bench 同一句串），
+	// ✗ 不自创文案。此闸把「没有这台机」（退 2）与「这台机存在但 0 个模型」（仍走下面 ⇒ 空表退 0）分开：
+	// 后者是空结论，不许并成一格。
+	if _, rc := agentChildAddr(machine, stderr); rc != exitOK {
+		return rc
+	}
 	c := newClient()
 	var resp jsonObj
 	if rc := fetchInv(inv, c, "/api/fleet/models", &resp, stderr); rc != exitOK {

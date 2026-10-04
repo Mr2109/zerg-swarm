@@ -103,7 +103,10 @@ const frpRules = "面① 用法串 = 命令树 usage:（非字面量按包内常
 	" 存量豁免表逐条带原因（棘轮 · 只许下调）；新增分家项 ⇒ rc=1。" +
 	"面④ 读者面（按命令 · 报告档 · 不进退码）= 某命令 usage 串里的旗标 ⇒ 该命令的实现件" +
 	"（定义其 run: 处理函数的包内 .go 件 · 先剥注释）必读它（字面 \"--F\" 或类型化字段 " +
-	"inv.<field>）—— 缺口账 `GAP-20260927-325`（全局「零读者」是错的判据）。"
+	"inv.<field>）—— 缺口账 `GAP-20260927-325`（全局「零读者」是错的判据）。" +
+	"面⑤ 反读面（按命令 · 报告档 · 不进退码）= 某命令实现按**取值**读了（`inv.flagVal`）某旗标 ⇒ " +
+	"该命令的 usage 串必列它（面④ 的另一向 —— 「实现读 ⇒ 用法必列」，缺口 `GAP-20261005-15`）；" +
+	"拒执守卫（同一函数里 `inv.flagVals`/`inv.hasFlag` 存在性检查）与别处已列 不计。"
 
 // ★ 取数标记字面 —— 按「自指检查 = 是 ⇒ 禁用反引号原串」，一律写成**解释型字符串**（双引号 + 转义）。
 const (
@@ -477,11 +480,142 @@ func frpReaderFace(root string) ([]frpNoReader, error) {
 	return out, nil
 }
 
+// ── 面⑤ 反读面（按命令 · 缺口账 `GAP-20261005-15`）────────────────────────────────
+// 与面④ 同一条判据的另一向：「某命令实现按**取值**读了（`inv.flagVal`）某旗标 ⇒ 该命令的 usage
+// 串必列它」（面④ = 「usage 有 ⇒ 实现必读」）。三处收窄（与 py `no_usage_face` 逐行同源）：
+// 可达函数闭包 / 取值读 / 拒执守卫（同函数里 `flagVals`/`hasFlag` 存在性检查）与别处已列 不计。
+// ★ 首版 = 报告档（不进退码）。缺口 `GAP-20261005-15`：`gap add` 读 `--state` 而用法串不列它。
+type frpNoUsage struct{ Path, Flag, Fn, Impl string }
+
+var (
+	// py `GREV_RDV_RE`
+	frpRevValRE = regexp.MustCompile(`inv\.flagVal\(\s*"(--[A-Za-z0-9-]+)"`)
+	// py `GREV_RDP_RE`
+	frpRevPresRE = regexp.MustCompile(`inv\.(?:flagVals|hasFlag)\(\s*"(--[A-Za-z0-9-]+)"`)
+	// py `GREV_CALL_RE`
+	frpRevCallRE = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+)
+
+// frpRevFuncBodies —— py `rev_func_bodies()`（函数名 → (件名, 函数体)；同名取首见 · 按件名升序）。
+func frpRevFuncBodies(srcs []frpSrc) map[string][2]string {
+	out := map[string][2]string{}
+	for _, s := range srcs {
+		ms := frpFuncDefRE.FindAllStringSubmatchIndex(s.Body, -1)
+		for i, m := range ms {
+			a := m[0]
+			b := len(s.Body)
+			if i+1 < len(ms) {
+				b = ms[i+1][0]
+			}
+			name := s.Body[m[2]:m[3]]
+			if _, dup := out[name]; !dup {
+				out[name] = [2]string{s.Name, s.Body[a:b]}
+			}
+		}
+	}
+	return out
+}
+
+// frpRevReach —— py `rev_reach()`（从 run 出发、在本包内的可达函数闭包 · 含 run 自己）。
+func frpRevReach(bodies map[string][2]string, run string) map[string]bool {
+	seen := map[string]bool{}
+	stack := []string{run}
+	for len(stack) > 0 {
+		f := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[f] {
+			continue
+		}
+		ent, ok := bodies[f]
+		if !ok {
+			continue
+		}
+		seen[f] = true
+		for _, c := range frpRevCallRE.FindAllStringSubmatch(ent[1], -1) {
+			if _, ok2 := bodies[c[1]]; ok2 && !seen[c[1]] {
+				stack = append(stack, c[1])
+			}
+		}
+	}
+	return seen
+}
+
+// frpNoUsageFace —— py `no_usage_face()`（面⑤ 反读面 · 报告档 · 不进退码）。
+func frpNoUsageFace(root string) ([]frpNoUsage, error) {
+	srcs, err := frpPkgSources(root)
+	if err != nil {
+		return nil, err
+	}
+	bodies := frpRevFuncBodies(srcs)
+	_, _, rows, _, err := frpParseFaces(root)
+	if err != nil {
+		return nil, err
+	}
+	out := []frpNoUsage{}
+	for _, r := range rows {
+		if r.Passthrough || r.Run == "" {
+			continue
+		}
+		seen := frpRevReach(bodies, r.Run)
+		documented := map[string]bool{}
+		for _, f := range frpFlagRE.FindAllString(r.Usage, -1) {
+			documented[f] = true
+		}
+		for _, o := range rows {
+			if seen[o.Run] && o.Usage != "" {
+				for _, f := range frpFlagRE.FindAllString(o.Usage, -1) {
+					documented[f] = true
+				}
+			}
+		}
+		names := make([]string, 0, len(seen))
+		for f := range seen {
+			names = append(names, f)
+		}
+		sort.Strings(names)
+		for _, f := range names {
+			body := bodies[f][1]
+			present := map[string]bool{}
+			for _, m := range frpRevPresRE.FindAllStringSubmatch(body, -1) {
+				present[m[1]] = true
+			}
+			gs := map[string]bool{}
+			for _, m := range frpRevValRE.FindAllStringSubmatch(body, -1) {
+				gs[m[1]] = true
+			}
+			glist := make([]string, 0, len(gs))
+			for g := range gs {
+				glist = append(glist, g)
+			}
+			sort.Strings(glist)
+			for _, g := range glist {
+				if frpGlobalOpts[g] || present[g] || documented[g] {
+					continue
+				}
+				out = append(out, frpNoUsage{r.Path, g, f, bodies[f][0]})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		if out[i].Flag != out[j].Flag {
+			return out[i].Flag < out[j].Flag
+		}
+		if out[i].Fn != out[j].Fn {
+			return out[i].Fn < out[j].Fn
+		}
+		return out[i].Impl < out[j].Impl
+	})
+	return out, nil
+}
+
 // frpCompute —— py `compute()`。
-func frpCompute(root string) ([]frpViol, []frpKey, []frpKey, []frpKey, frpCounts, []frpNoReader, error) {
+func frpCompute(root string) ([]frpViol, []frpKey, []frpKey, []frpKey, frpCounts, []frpNoReader, []frpNoUsage, error) {
 	V, D, rows, _, err := frpParseFaces(root)
 	if err != nil {
-		return nil, nil, nil, nil, frpCounts{}, nil, err
+		return nil, nil, nil, nil, frpCounts{}, nil, nil, err
 	}
 	known := map[string]bool{}
 	for _, f := range V {
@@ -608,9 +742,13 @@ func frpCompute(root string) ([]frpViol, []frpKey, []frpKey, []frpKey, frpCounts
 		UsageFlags: len(anyUse), Passthrough: pass}
 	noReader, err := frpReaderFace(root)
 	if err != nil {
-		return nil, nil, nil, nil, frpCounts{}, nil, err
+		return nil, nil, nil, nil, frpCounts{}, nil, nil, err
 	}
-	return viol, exemptUsed, stale, noReason, counts, noReader, nil
+	noUsage, err := frpNoUsageFace(root)
+	if err != nil {
+		return nil, nil, nil, nil, frpCounts{}, nil, nil, err
+	}
+	return viol, exemptUsed, stale, noReason, counts, noReader, noUsage, nil
 }
 
 func frpSortKeys(ks []frpKey) {
@@ -665,7 +803,7 @@ func frpJSONStr(s string) string {
 
 // frpReport —— py `report()`（末尾按需追加 json 一行）。
 func frpReport(viol []frpViol, exemptUsed []frpKey, stale []frpKey, noReason []frpKey,
-	counts frpCounts, root string, asJSON bool, noReader []frpNoReader) string {
+	counts frpCounts, root string, asJSON bool, noReader []frpNoReader, noUsage []frpNoUsage) string {
 	var lines []string
 	lines = append(lines, fmt.Sprintf("门73 旗标两处登记面对拍（用法串 ⟷ valueFlagName 名字表 + 实现件读者面）· v%s", frpVersion))
 	abs, err := filepath.Abs(root)
@@ -689,6 +827,11 @@ func frpReport(viol []frpViol, exemptUsed []frpKey, stale []frpKey, noReason []f
 	for _, nr := range noReader {
 		lines = append(lines, fmt.Sprintf("  · zerg %s · %s · 实现件 %s", strings.ReplaceAll(nr.Path, "/", " "), nr.Flag, nr.Impl))
 	}
+	// ── 面⑤ 反读面（按命令 · 报告档 · 缺口账 `GAP-20261005-15`）──
+	lines = append(lines, fmt.Sprintf("反读面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20261005-15`）：「某命令实现按取值读（`inv.flagVal`）了某旗标 ⇒ 该命令的 usage 串必列它」（面④ 的另一向；拒执守卫 / 别处已列 不计）——本命令实现读了而 usage 没列的 %d 项：", len(noUsage)))
+	for _, nu := range noUsage {
+		lines = append(lines, fmt.Sprintf("  · zerg %s · %s · 读者函数 %s（%s）", strings.ReplaceAll(nu.Path, "/", " "), nu.Flag, nu.Fn, nu.Impl))
+	}
 	lines = append(lines, fmt.Sprintf("存量豁免 %d 项（棘轮 · 逐条打印 · 不进退码）：", len(exemptUsed)))
 	frpSortKeys(exemptUsed)
 	for _, k := range exemptUsed {
@@ -708,12 +851,12 @@ func frpReport(viol []frpViol, exemptUsed []frpKey, stale []frpKey, noReason []f
 	}
 	out := strings.Join(lines, "\n")
 	if asJSON {
-		out += "\n" + frpJSONDoc(viol, exemptUsed, stale, noReason, counts, noReader)
+		out += "\n" + frpJSONDoc(viol, exemptUsed, stale, noReason, counts, noReader, noUsage)
 	}
 	return out
 }
 
-func frpJSONDoc(viol []frpViol, exemptUsed []frpKey, stale []frpKey, noReason []frpKey, counts frpCounts, noReader []frpNoReader) string {
+func frpJSONDoc(viol []frpViol, exemptUsed []frpKey, stale []frpKey, noReason []frpKey, counts frpCounts, noReader []frpNoReader, noUsage []frpNoUsage) string {
 	var b strings.Builder
 	b.WriteString("{\"gate\": \"flag-registry-parity\", \"version\": " + frpJSONStr(frpVersion) + ", \"violations\": [")
 	for i, v := range viol {
@@ -765,19 +908,27 @@ func frpJSONDoc(viol []frpViol, exemptUsed []frpKey, stale []frpKey, noReason []
 		b.WriteString("{\"command\": " + frpJSONStr(nr.Path) + ", \"flag\": " + frpJSONStr(nr.Flag) +
 			", \"impl\": " + frpJSONStr(nr.Impl) + "}")
 	}
+	b.WriteString("], \"no_usage\": [")
+	for i, nu := range noUsage {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString("{\"command\": " + frpJSONStr(nu.Path) + ", \"flag\": " + frpJSONStr(nu.Flag) +
+			", \"func\": " + frpJSONStr(nu.Fn) + ", \"impl\": " + frpJSONStr(nu.Impl) + "}")
+	}
 	b.WriteString("]}")
 	return b.String()
 }
 
 // frpRun —— py `run()`（Bail ⇒ 两行 + rc=2；否则 report + 退码行）。
 func frpRun(stdout io.Writer, root string, asJSON bool) int {
-	viol, exemptUsed, stale, noReason, counts, noReader, err := frpCompute(root)
+	viol, exemptUsed, stale, noReason, counts, noReader, noUsage, err := frpCompute(root)
 	if err != nil {
 		fmt.Fprintf(stdout, "门73 旗标两处登记面对拍：**判不了**（%s）⇒ rc=2 不给结论\n", err.Error())
 		fmt.Fprintf(stdout, "退码：%s\n", frpRCS)
 		return 2
 	}
-	fmt.Fprintln(stdout, frpReport(viol, exemptUsed, stale, noReason, counts, root, asJSON, noReader))
+	fmt.Fprintln(stdout, frpReport(viol, exemptUsed, stale, noReason, counts, root, asJSON, noReader, noUsage))
 	fmt.Fprintf(stdout, "退码：%s\n", frpRCS)
 	if len(viol) > 0 || len(noReason) > 0 {
 		return 1
@@ -865,7 +1016,7 @@ func frpSelfTest(stdout io.Writer) int {
 	defer os.RemoveAll(base)
 
 	runOn := func(root string) (string, []frpViol, string) {
-		v, _, _, _, _, _, err := frpCompute(root)
+		v, _, _, _, _, _, _, err := frpCompute(root)
 		if err != nil {
 			return "bail", nil, err.Error()
 		}
@@ -966,6 +1117,43 @@ func frpSelfTest(stdout io.Writer) int {
 	}
 	add("④读者面（正控）：实现件读全 ⇒ 该命令不再列缺读者", !stillThere, "")
 
+	// 面⑤ 反读面（按命令）· 成对负控：impl 按取值读但 usage 没列 ⇒ 列；usage 列了 ⇒ 不再列。
+	d = frpMkFixture(filepath.Join(base, "nousage_missing"))
+	pm = filepath.Join(d, frpPKGRel, "main.go")
+	t5 := strings.Replace(frpRead(pm),
+		"\t\t\tpassthrough: true,\n\t\t},\n\t}\n}",
+		"\t\t\tpassthrough: true,\n\t\t},\n"+
+			"\t\t{\n\t\t\tpath:  []string{\"probe\", \"x\"},\n"+
+			"\t\t\tusage: \"zerg probe x\",\n\t\t\trun:   cmdProbeNoUsage,\n\t\t},\n\t}\n}", 1)
+	t5 += "\nfunc cmdProbeNoUsage() { _ = inv.flagVal(\"--zz-read\") }\n"
+	_ = os.WriteFile(pm, []byte(t5), 0o644)
+	nu, _ := frpNoUsageFace(d)
+	hitNU := false
+	for _, x := range nu {
+		if x.Path == "probe/x" && x.Flag == "--zz-read" {
+			hitNU = true
+		}
+	}
+	add("⑤反读面（负控）：实现按取值读但 usage 没列 ⇒ 列出该命令", hitNU, "")
+
+	d = frpMkFixture(filepath.Join(base, "nousage_ok"))
+	pm = filepath.Join(d, frpPKGRel, "main.go")
+	t6 := strings.Replace(frpRead(pm),
+		"\t\t\tpassthrough: true,\n\t\t},\n\t}\n}",
+		"\t\t\tpassthrough: true,\n\t\t},\n"+
+			"\t\t{\n\t\t\tpath:  []string{\"probe\", \"x\"},\n"+
+			"\t\t\tusage: \"zerg probe x [--zz-read <值>]\",\n\t\t\trun:   cmdProbeNoUsage,\n\t\t},\n\t}\n}", 1)
+	t6 += "\nfunc cmdProbeNoUsage() { _ = inv.flagVal(\"--zz-read\") }\n"
+	_ = os.WriteFile(pm, []byte(t6), 0o644)
+	nu2, _ := frpNoUsageFace(d)
+	stillNU := false
+	for _, x := range nu2 {
+		if x.Path == "probe/x" {
+			stillNU = true
+		}
+	}
+	add("⑤反读面（正控）：usage 列了该旗标 ⇒ 该命令不再列", !stillNU, "")
+
 	bad := 0
 	for _, c := range checks {
 		if !c.ok {
@@ -1055,6 +1243,8 @@ func flagRegistryParityGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stdout, "存量豁免 %d 项：%s\n", len(frpEXEMPT), frpSortedExemptJoined())
 		fmt.Fprintln(stdout, "面④ 读者面（按命令 · 报告档 · 不进退码）：RULES 末句 —— "+
 			"「某命令 usage 串里的旗标 ⇒ 该命令的实现件必读」（缺口账 `GAP-20260927-325`）")
+		fmt.Fprintln(stdout, "面⑤ 反读面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20261005-15`）：RULES 末句 —— "+
+			"「某命令实现按取值读了某旗标 ⇒ 该命令的 usage 串必列它」（面④ 的另一向）")
 		return 0
 	}
 	root := "."

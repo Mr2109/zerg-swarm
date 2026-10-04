@@ -1652,6 +1652,30 @@ func cgcDumpJSON(w io.Writer, rep *cgcReport) {
 	_ = enc.Encode(rep.toJSONMap())
 }
 
+// cgcErrSchema / cgcCodeUnsupported —— `GAP-20260927-42` ②：缺件/不支持档的**结构化错误**封包。
+const (
+	cgcErrSchema       = "zerg/gate-coverage-error/1"
+	cgcCodeUnsupported = "UNSUPPORTED"
+)
+
+// cgcEmitUnsupportedJSON：`--json` 档的**结构化错误**（缺件/不支持 ⇒ rc=2）。
+// 机器面必须能区分「缺件（判不了）」与「零命中（rc=0）」—— 旧行为 stdout 0 字节，两者同形。
+// 字段与 py 逐字同构（map 键自动排序 ⇔ py sort_keys；SetEscapeHTML(false) ⇔ py ensure_ascii=False）。
+func cgcEmitUnsupportedJSON(stdout io.Writer, root, cfgPath, reason string) {
+	enc := json.NewEncoder(stdout)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(map[string]any{
+		"schema": cgcErrSchema,
+		"rc":     cgcRcBlocked,
+		"verdict": map[string]any{
+			"rc": cgcRcBlocked, "code": cgcCodeUnsupported, "reason": reason,
+		},
+		"root":   root,
+		"config": cfgPath,
+	})
+}
+
 // ── `_baseline_note` ↔ `baseline` 同源校验（`GAP-20260927-42` ①）───────────────────
 var cgcNoteRestateRe = regexp.MustCompile(`下调成\s*(\d+)`)
 
@@ -2273,10 +2297,17 @@ func cgcRunMain(stdout, stderr io.Writer, argv []string) int {
 	cfg, err := cgcLoadConfig(cfgPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "✗ 不给结论（rc=2）：%s\n", err)
+		if args.json {
+			cgcEmitUnsupportedJSON(stdout, root, cfgPath, err.Error())
+		}
 		return cgcRcBlocked
 	}
 	if !cgcIsDir(root) {
-		fmt.Fprintf(stderr, "✗ 不给结论（rc=2）：%s\n", fmt.Sprintf("仓根不存在：%s", root))
+		reason := fmt.Sprintf("仓根不存在：%s", root)
+		fmt.Fprintf(stderr, "✗ 不给结论（rc=2）：%s\n", reason)
+		if args.json {
+			cgcEmitUnsupportedJSON(stdout, root, cfgPath, reason)
+		}
 		return cgcRcBlocked
 	}
 	tmpdir, terr := os.MkdirTemp("", "gc-steps-")
@@ -2288,6 +2319,9 @@ func cgcRunMain(stdout, stderr io.Writer, argv []string) int {
 	steps, serr := cgcExtractSteps(root, tmpdir)
 	if serr != "" {
 		fmt.Fprintf(stderr, "✗ 不给结论（rc=2）：%s\n", serr)
+		if args.json {
+			cgcEmitUnsupportedJSON(stdout, root, cfgPath, serr)
+		}
 		return cgcRcBlocked
 	}
 	gatesText := ""

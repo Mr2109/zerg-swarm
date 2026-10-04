@@ -23,11 +23,32 @@
 //	   **只判语料树 `Zerg-内部文档` 取不到根**；归档树缺席照旧只报主仓落点。这一档本件零放宽、零加严。
 //	④ 取不到一律**不给结论**、✗ 不静默绿：语料树取不到根 ⇒ rc=2（逐条命中仍照原样打印，不藏）。
 //
-// 本单边界（照实）：本件**只落码、不接线** ——
+// v1.1.0 对齐（2026-10-05 · GAP-20261005-18）：把 py v1.1.0 新落的**跨仓判据面**逐字搬进本件 ——
+// 新增两类引文形态：`Zerg-内部文档` 前缀（RE_XDOCS · 显式带文仓名）与裸 `项目文档` 前缀（RE_XBARE ·
+// 隐式指文仓）；解析到**文仓根**（ctx.docsRoot）后不存在 ⇒ 悬空、存在 ⇒ 不报。此前本件只判裸 `docs`
+// ⇒ 门件的仓外/文仓引用无门看着、出处链静默断。配套：cdrLooksLikeXref / cdrRefExists（跨仓分支判
+// 文仓根；裸 `docs` 仍判主仓根 —— 现役口径一字未改）/ cdrTreeOf 的 cdrXrepoTreeOf 分支 /
+// cdrExtract 的「跨仓直书」态 / 自检第 ⑪ 格（跨仓成对负控：文仓里不存在 ⇒ 报 2 / 存在 ⇒ 报 0）/
+// --list-rules 覆盖与未覆盖两面 / cdrVersion 升 v1.1.0。
+//
+// v1.2.0 对齐（2026-10-05 · GAP-20261005-54）：把 py v1.2.0 新落的 **GAP 号引用类**逐字搬进本件 ——
+// 注释/文档里引的 `GAP-<8位日期>-<号>` 必须在**缺口账**（真源 <ZERG_STATE_DIR|~/.zerg/state>/
+// zerg-cli-gaps.jsonl · 可 `--ledger` 覆盖）内存在，不存在 ⇒ 引文悬空（逐字点名 件:行 · 引的号）。
+// 判定复用本门同一个 cdrClassify：只有 live 类算命中（rc=1）；ledger（夹具假号/机读件/数据字串/表格行）
+// 与已登记 = 例外面（照样逐条打印、不计命中）；例外面另含**测试夹具件**（*_test.* / testdata/ / tests?/ /
+// fixtures?/）与**判据件自身**（cdrGapSelfRel = py 件自身）。账取不到 ⇒ 本类**未判**（打印 ⛔ 与候选数、
+// **不翻**其余面的退码）。★ 本件自身（Go 搬体）的夹具假号按本件既有自扫纪律**拆开拼串**（同 docs/ 引用
+// 手法）⇒ 本件自身贡献 0 候选，py 侧只需豁免它自己那一件 ⇒ 两态逐字同。配套：cdrGapRE /
+// cdrGapTestContainerRE / cdrIsGapSelfFile / cdrGapLedgerPath / cdrLoadGapIds（仓外缺口账真源）/
+// cdrScan 的 GAP 袋 / 自检 ⑫⑬⑭⑮ 格（11 → 15 格）/ --ledger 旗标 / --list-rules 的 GAP 号引用类一节 /
+// cdrVersion 升 v1.2.0。
+//
+// 本单边界（照实）：本件**只落码、不接线命令行** ——
 //
 //	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
 //	· **不**删 `scripts/gates/check-dangling-refs.py` 原件（退场规则：**对拍通过后才**退场）；
-//	· 入口 `checkDanglingRefsGateMain` 目前**无调用点**（M2 的刻意状态）。
+//	· 入口 `checkDanglingRefsGateMain` 现读**已登记**进 `gate_inproc_table.go` 的 inproc 分发表
+//	  （`gateCheckGoEntry["check-dangling-refs"]`）；**未**进 `main.go` 命令树（M2 不接线主体）。
 //
 // ★★ 两条标准声明行：
 //
@@ -108,7 +129,7 @@ import (
 	"unicode/utf8"
 )
 
-const cdrVersion = "check-dangling-refs.py v1.0.0"
+const cdrVersion = "check-dangling-refs.py v1.2.0"
 
 // ── 扫描面（逐字复刻 py）────────────────────────────────────────────────────────────
 var cdrSkipDirs = []string{"vendor", "bin", "dist", "node_modules", "target", ".git", ".venv", "venv",
@@ -227,6 +248,17 @@ type cdrStats struct {
 	refsProseSkipped int
 	unreadable       []string
 	readFails        []string
+	gap              *cdrGapState
+}
+
+// cdrGapState —— GAP 号引用类的一次扫描状态（hits=命中 · exempt=例外面 · candidates=候选数 ·
+// judged=false ⇔ 缺口账取不到（本类未判）· unjudged=未判逐处）。
+type cdrGapState struct {
+	hits       []cdrHit
+	exempt     []cdrHit
+	candidates int
+	judged     bool
+	unjudged   []string
 }
 
 type cdrRef struct {
@@ -256,6 +288,7 @@ type cdrCtx struct {
 	archRoot string
 	files    []string
 	registry *cdrOM
+	gapIds   map[string]bool
 	baseIdx  map[string][]string
 	hasIdx   bool
 }
@@ -410,6 +443,9 @@ func (c *cdrCtx) baseIndex() map[string][]string {
 
 // ── 落点（三棵树）────────────────────────────────────────────────────────────────────
 func cdrTreeOf(ctx *cdrCtx, rel string) []string {
+	if strings.HasPrefix(rel, cdrXrepoPrefix) || strings.HasPrefix(rel, cdrXBarePrefix) {
+		return cdrXrepoTreeOf(ctx, rel)
+	}
 	out := []string{}
 	if cdrExists(cdrPyJoin(ctx.root, rel)) {
 		out = append(out, "主仓/"+rel)
@@ -588,6 +624,213 @@ func cdrSuggest(cls, ref string, where []string, note string) string {
 }
 
 // ── 引文形态判定 ─────────────────────────────────────────────────────────────────────
+// ── 跨仓引用（2026-10-05 · GAP-20261005-18 · 逐字对齐 py v1.1.0）──────────────────────
+// 两类形态：`Zerg-内部文档/`（显式带文仓名 · RE_XDOCS）与裸 `项目文档/`（隐式指文仓 · RE_XBARE）。
+// 判据同「裸 docs/…」：解析到**文仓根**（ctx.docsRoot）后不存在 ⇒ 悬空、存在 ⇒ 不报。
+// 前字符不是路径体才算引用（与 RE_DIRECT 同手法，避吞 `../项目文档/` 这类相对链）。
+const cdrXrepoPrefix = "Zerg-内部文档" + "/"
+const cdrXBarePrefix = "项目文档" + "/"
+
+// ── GAP 号引用类（2026-10-05 · GAP-20261005-54 · 逐字对齐 py v1.2.0）────────────────────
+// 注释/文档里引的 `GAP-<8位日期>-<号>` 必须在**缺口账**（真源 = 状态目录下的
+// `zerg-cli-gaps.jsonl`）里存在；不存在 ⇒ 引文悬空（逐字点名 件:行 · 引的号）。
+// 账是**仓外私有面**（`ZERG_STATE_DIR` > `~/.zerg/state`），可 `--ledger` 覆盖（夹具用）。
+// 复用本门既有 live/ledger 两类 ＋ 登记表口径：只有 `live` 类判为**命中**（rc=1）。
+// `\d` ⇒ `\p{Nd}`（对齐 py 的 Unicode 数字类）。
+var cdrGapRE = regexp.MustCompile(`GAP-\p{Nd}{8}-\p{Nd}+`)
+
+const cdrGapLedgerFile = "zerg-cli-gaps.jsonl"
+
+// cdrGapTestContainerRE —— 例外面·测试夹具件（`*_test.<ext>` / `testdata/` / `tests?/` / `fixtures?/`）。
+var cdrGapTestContainerRE = regexp.MustCompile(`(?:^|/)(?:testdata|tests?|fixtures?)/|_test\.(?:go|py|sh|ts|js)$`)
+
+// cdrGapSelfRel —— 判据件自身的仓内相对路径（py 原件：自检夹具里的假号命中自扫面 ⇒ 例外面）。
+const cdrGapSelfRel = "scripts/gates/check-dangling-refs.py"
+
+func cdrIsGapTestContainer(rel string) bool {
+	return cdrGapTestContainerRE.MatchString(rel)
+}
+
+// cdrIsGapSelfFile —— 本件（判据件自身）—— 它正文里的 GAP 号全是**自检夹具里的假号** ⇒ 例外面。
+// 逐字对齐 py `is_gap_self_file` 的第一道判（仓内相对路径 == py 件自身）。py 的第二道判按运行路径
+// （`realpath(__file__)`）在 Go 里无同构物（Go 无 `__file__` 语境）⇒ 本件省略；对拍夹具里 root 为临时树
+// ⇒ 该道判本就不命中，两态无差。★ 本件（Go 搬体）自身的夹具假号改由**拆开拼串**处置（见件头）。
+func cdrIsGapSelfFile(ctx *cdrCtx, rel string) bool {
+	return rel == cdrGapSelfRel
+}
+
+// cdrGapLedgerPath —— 缺口真源落点：`ZERG_STATE_DIR` > `~/.zerg/state`（与 CLI stateDirOf() 同口径）。
+func cdrGapLedgerPath() string {
+	env := os.Getenv("ZERG_STATE_DIR")
+	var base string
+	if env != "" {
+		base = env
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			home = os.Getenv("HOME")
+		}
+		base = cdrPyJoin(cdrPyJoin(home, ".zerg"), "state")
+	}
+	return cdrPyJoin(base, cdrGapLedgerFile)
+}
+
+// cdrLoadGapIds —— 读缺口账在册号集。→ (set, "") 或 **(nil, 原因)**（取不到 ⇒ 本类**不给结论**）。
+func cdrLoadGapIds(path string) (map[string]bool, string) {
+	if path == "" || !cdrExists(path) {
+		return nil, "不在盘：" + path
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "读不了 " + path + "：" + err.Error()
+	}
+	ids := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = cdrPyStrip(line)
+		if line == "" {
+			continue
+		}
+		o, perr := cdrJSONParse(line)
+		if perr != "" {
+			continue
+		}
+		om, ok := o.(*cdrOM)
+		if !ok {
+			continue
+		}
+		if v, ok := cdrOMGet(om, "id"); ok {
+			if s, ok := v.(string); ok && s != "" {
+				ids[s] = true
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil, "账里一个在册号都没有（空账 = 判不了）：" + path
+	}
+	return ids, ""
+}
+
+// cdrLooksLikeXref —— 跨仓引用是不是「引用形态」（比照 cdrLooksLikeRef，先剥跨仓前缀）。
+func cdrLooksLikeXref(ref string) bool {
+	if strings.HasSuffix(ref, "/") {
+		return true
+	}
+	body := ref
+	for _, pfx := range []string{cdrXrepoPrefix, cdrXBarePrefix} {
+		if strings.HasPrefix(body, pfx) {
+			body = body[len(pfx):]
+			break
+		}
+	}
+	var segs []string
+	for _, s := range strings.Split(body, "/") {
+		if s != "" {
+			segs = append(segs, s)
+		}
+	}
+	if len(segs) >= 2 {
+		return true
+	}
+	if len(segs) == 0 {
+		return false
+	}
+	return strings.ContainsAny(segs[0], "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+}
+
+// cdrXBarePrevOK —— 裸 `项目文档/` 的左后顾：前置字符**不是** `[A-Za-z0-9_\-./]` 且**不是** CJK
+// （`\u4e00-\u9fff`）才算引用（逐字对齐 py RE_XBARE 的 lookbehind）。
+func cdrXBarePrevOK(line string, i int) bool {
+	if i == 0 {
+		return true
+	}
+	r, _ := utf8.DecodeLastRuneInString(line[:i])
+	if r >= 0x4e00 && r <= 0x9fff {
+		return false
+	}
+	if r < 0x80 {
+		return !cdrDirLB(byte(r))
+	}
+	return true
+}
+
+// cdrRefExists —— 引用解析后的存在性：跨仓引用判**文仓根**；裸 `docs/…` 判**主仓根**
+// （现役口径一字不变）。
+func cdrRefExists(ctx *cdrCtx, ref string) bool {
+	if strings.HasPrefix(ref, cdrXrepoPrefix) {
+		if ctx.docsRoot == "" {
+			return false
+		}
+		return cdrExists(cdrPyJoin(ctx.docsRoot, strings.TrimRight(ref[len(cdrXrepoPrefix):], "/")))
+	}
+	if strings.HasPrefix(ref, cdrXBarePrefix) {
+		if ctx.docsRoot == "" {
+			return false
+		}
+		return cdrExists(cdrPyJoin(ctx.docsRoot, strings.TrimRight(ref, "/")))
+	}
+	return cdrExists(cdrPyJoin(ctx.root, strings.TrimRight(ref, "/")))
+}
+
+// cdrXrepoTreeOf —— 跨仓引用的落点：在**文仓树**（Zerg-内部文档；归档树按同名形）里找现落点。
+func cdrXrepoTreeOf(ctx *cdrCtx, rel string) []string {
+	out := []string{}
+	if strings.HasPrefix(rel, cdrXrepoPrefix) {
+		sub := rel[len(cdrXrepoPrefix):]
+		for _, pair := range [][2]string{{cdrDocsTreeName, ctx.docsRoot}, {cdrArchTreeName, ctx.archRoot}} {
+			name, tree := pair[0], pair[1]
+			if tree != "" && cdrIsDir(tree) && cdrExists(cdrPyJoin(tree, sub)) {
+				out = append(out, name+"/"+sub)
+			}
+		}
+		return out
+	}
+	if ctx.docsRoot != "" && cdrIsDir(ctx.docsRoot) && cdrExists(cdrPyJoin(ctx.docsRoot, rel)) {
+		return []string{cdrDocsTreeName + "/" + rel}
+	}
+	return []string{}
+}
+
+// cdrXRepoRefs —— 逐字复刻 py `extract()` 的 `for rx in (RE_XDOCS, RE_XBARE)` 两轮扫描：
+// 先 `Zerg-内部文档/`（RE_XDOCS 原序）再裸 `项目文档/`（RE_XBARE 原序）；散文误吞照样计数。
+func cdrXRepoRefs(line string, st *cdrStats) []cdrRef {
+	var out []cdrRef
+	for _, pfx := range []string{cdrXrepoPrefix, cdrXBarePrefix} {
+		n := len(line)
+		i := 0
+		for i < n {
+			if strings.HasPrefix(line[i:], pfx) {
+				ok := false
+				if pfx == cdrXrepoPrefix {
+					ok = i == 0 || !cdrDirLB(line[i-1])
+				} else {
+					ok = cdrXBarePrevOK(line, i)
+				}
+				if ok {
+					j := i + len(pfx)
+					for j < n {
+						r, sz := utf8.DecodeRuneInString(line[j:])
+						if !cdrIsPathChar(r) {
+							break
+						}
+						j += sz
+					}
+					ref := line[i:j]
+					if cdrLooksLikeXref(ref) {
+						out = append(out, cdrRef{ref, "跨仓直书", ""})
+					} else {
+						st.refsProseSkipped++
+					}
+					i = j
+					continue
+				}
+			}
+			_, sz := utf8.DecodeRuneInString(line[i:])
+			i += sz
+		}
+	}
+	return out
+}
+
 func cdrLooksLikeRef(ref string) bool {
 	if strings.HasSuffix(ref, "/") {
 		return true
@@ -726,6 +969,7 @@ func cdrExtract(line string, st *cdrStats) []cdrRef {
 	for range cdrConcatRE.FindAllStringIndex(line, -1) {
 		out = append(out, cdrRef{"docs", "字符串拼接", "前缀形态（后缀是变量 ⇒ 只判前缀目录）"})
 	}
+	out = append(out, cdrXRepoRefs(line, st)...)
 	return out
 }
 
@@ -756,6 +1000,7 @@ func cdrScan(ctx *cdrCtx) (*cdrStats, []cdrHit) {
 	st := &cdrStats{filesSeen: len(ctx.files)}
 	hits := []cdrHit{}
 	seen := map[string]bool{}
+	gap := &cdrGapState{judged: ctx.gapIds != nil}
 	files := append([]string{}, ctx.files...)
 	sort.Strings(files) // ★ 排序点①：py `sorted(ctx.files)` —— **输出行序的决定者**
 	for _, rel := range files {
@@ -812,7 +1057,7 @@ func cdrScan(ctx *cdrCtx) (*cdrStats, []cdrHit) {
 					continue
 				}
 				seen[key] = true
-				if cdrExists(cdrPyJoin(ctx.root, strings.TrimRight(ref, "/"))) {
+				if cdrRefExists(ctx, ref) {
 					continue
 				}
 				st.dangling++
@@ -826,8 +1071,43 @@ func cdrScan(ctx *cdrCtx) (*cdrStats, []cdrHit) {
 					note: note, cls: cls, why: why, where: where,
 					suggest: cdrSuggest(cls, ref, where, note), src: src})
 			}
+			for _, loc := range cdrGapRE.FindAllStringIndex(lineText, -1) {
+				gid := lineText[loc[0]:loc[1]]
+				gkey := fmt.Sprintf("%s\x00%d\x00GAP\x00%s", rel, ln, gid)
+				if seen[gkey] {
+					continue
+				}
+				seen[gkey] = true
+				gap.candidates++
+				if ctx.gapIds == nil {
+					gap.unjudged = append(gap.unjudged, fmt.Sprintf("%s:%d · %s", rel, ln, gid))
+					continue
+				}
+				if ctx.gapIds[gid] {
+					continue
+				}
+				cls, why := cdrClassify(ctx, rel, gid, lineText)
+				if cls == "live" && cdrIsGapSelfFile(ctx, rel) {
+					cls, why = "ledger", "本件（判据件自身）的自检夹具号 · 例外面"
+				} else if cls == "live" && cdrIsGapTestContainer(rel) {
+					cls, why = "ledger", "测试夹具件（*_test.*/testdata/tests）里故意造的假号"
+				}
+				gsrc := cdrPyStrip(lineText)
+				if len([]rune(gsrc)) > 160 {
+					gsrc = string([]rune(gsrc)[:160])
+				}
+				rec := cdrHit{file: rel, line: ln, ref: gid, path: gid, form: "GAP号", note: "",
+					cls: cls, why: why, where: []string{}, src: gsrc}
+				if cls == "live" {
+					rec.suggest = "引的号账内不存在 ⇒ 改指在册号，或先在账立案（GAP 号引用悬空）"
+					gap.hits = append(gap.hits, rec)
+				} else {
+					gap.exempt = append(gap.exempt, rec)
+				}
+			}
 		}
 	}
+	st.gap = gap
 	return st, hits
 }
 
@@ -940,17 +1220,17 @@ func cdrSelftest(stdout, stderr io.Writer) bool {
 	_ = os.MkdirAll(filepath.Join(docs, "01-设计"), 0o755)
 	_ = os.WriteFile(filepath.Join(docs, "01-设计", "设计-真件.md"), []byte("真源\n"), 0o644)
 
-	run := func(files []string, registry *cdrOM, root, d string) (*cdrStats, []cdrHit) {
+	run := func(files []string, registry *cdrOM, root, d string, gapIds map[string]bool) (*cdrStats, []cdrHit) {
 		if registry == nil {
 			registry = cdrEntriesOM(&[]any{})
 		}
-		ctx := &cdrCtx{root: root, docsRoot: d, archRoot: "", files: files, registry: registry}
+		ctx := &cdrCtx{root: root, docsRoot: d, archRoot: "", files: files, registry: registry, gapIds: gapIds}
 		return cdrScan(ctx)
 	}
 
 	// ① 必红：指向真不存在的路径 ⇒ 报出
 	f1 := cdrMkFile(repo, "scripts/x.py", "# 依据：docs"+"/01-设计/不存在.md\n")
-	_, hits := run([]string{f1}, nil, repo, docs)
+	_, hits := run([]string{f1}, nil, repo, docs, nil)
 	var got []cdrHit
 	for _, h := range hits {
 		if h.ref == "docs"+"/01-设计/不存在.md" {
@@ -971,7 +1251,7 @@ func cdrSelftest(stdout, stderr io.Writer) bool {
 
 	// ② 必红（活指路 → 真在 Zerg-内部文档）⇒ 报出 + 落点 + 建议改指
 	f2 := cdrMkFile(repo, "scripts/y.py", "# 真源：docs"+"/01-设计/设计-真件.md\n")
-	_, hits = run([]string{f2}, nil, repo, docs)
+	_, hits = run([]string{f2}, nil, repo, docs, nil)
 	got = nil
 	for _, h := range hits {
 		if h.path == "docs"+"/01-设计/设计-真件.md" {
@@ -990,7 +1270,7 @@ func cdrSelftest(stdout, stderr io.Writer) bool {
 
 	// ③ 豁免夹具：同一处写进登记表 ⇒ 标「已登记」且**不计命中**
 	reg := cdrEntriesOM(&[]any{cdrEntryOM(f2, "docs"+"/01-设计/设计-真件.md", "", "ledger", "自检夹具：有意保留", "2026-09-22")})
-	_, hits = run([]string{f2}, reg, repo, docs)
+	_, hits = run([]string{f2}, reg, repo, docs, nil)
 	got = nil
 	for _, h := range hits {
 		if h.path == "docs"+"/01-设计/设计-真件.md" {
@@ -1011,7 +1291,7 @@ func cdrSelftest(stdout, stderr io.Writer) bool {
 	f4 := cdrMkFile(repo, "core/z.go",
 		"\tissuesDir := filepath.Join(workDir, \"docs\", \"issues\")\n"+
 			"\tpath := path.Join(\"docs\", \"01-设计\", \"设计-真件.md\")\n")
-	_, hits = run([]string{f4}, nil, repo, docs)
+	_, hits = run([]string{f4}, nil, repo, docs, nil)
 	j1, j2 := 0, 0
 	for _, h := range hits {
 		if h.ref == "docs"+"/issues" && h.form == "filepath.Join" {
@@ -1030,7 +1310,7 @@ func cdrSelftest(stdout, stderr io.Writer) bool {
 	// ⑤ 前缀夹具：'docs/' + 变量 ⇒ 前缀目录在 ⇒ 不报
 	f5 := cdrMkFile(repo, "publish/z.py", "name = \"docs"+"/\" + base\n")
 	_ = os.MkdirAll(filepath.Join(repo, "docs"), 0o755)
-	_, hits = run([]string{f5}, nil, repo, docs)
+	_, hits = run([]string{f5}, nil, repo, docs, nil)
 	cases++
 	good = true
 	for _, h := range hits {
@@ -1044,7 +1324,7 @@ func cdrSelftest(stdout, stderr io.Writer) bool {
 	// ⑥ 无输入必须报错（不许静默空转 = 假绿）
 	empty := filepath.Join(tmp, "empty")
 	_ = os.MkdirAll(empty, 0o755)
-	rc := cdrRealExitCode(empty, "", []string{}, true, stderr)
+	rc := cdrRealExitCode(empty, "", []string{}, true, nil, stderr)
 	cases++
 	good = rc == 2
 	ok = ok && good
@@ -1072,7 +1352,7 @@ func cdrSelftest(stdout, stderr io.Writer) bool {
 	// ⑨ 前缀登记必须**真能**命中，且**不**越界
 	f9 := cdrMkFile(repo, "scripts/w.py", "x = \"docs"+"/项目文档/v2.5.9/x.md\"\ny = \"docs"+"/01-设计/a.md\"\n")
 	pre := cdrEntriesOM(&[]any{cdrEntryOM(f9, "", "docs"+"/项目文档/", "ledger", "前缀登记自检", "2026-09-22")})
-	_, hits = run([]string{f9}, pre, repo, docs)
+	_, hits = run([]string{f9}, pre, repo, docs, nil)
 	insideN, outsideN := 0, 0
 	insideCls, outsideCls := "—", "—"
 	for _, h := range hits {
@@ -1102,16 +1382,81 @@ func cdrSelftest(stdout, stderr io.Writer) bool {
 	fmt.Fprintf(stdout, "  %s [缺语料夹具] 语料树缺席报 %d 条 · 语料树在盘(归档缺席)报 %d 条（期望 1 / 0 ⇒ 缺根不给结论·在盘照旧）\n",
 		cdrMark(good), len(missBad), len(missArch))
 
-	if cases != 10 {
-		fmt.Fprintf(stdout, "  自检用例数必须为 10，实际 %d（少跑即失效）\n", cases)
+	// ⑪ 跨仓夹具（GAP-20261005-18）：`Zerg-内部文档` 前缀 / 裸 `项目文档` 前缀指向**文仓里不存在**的件 ⇒ 报出；
+	//    成对负控：同一处指向**文仓里存在**的件 ⇒ 不报（跨仓面只在「文仓根下不存在」时命中）。
+	f11 := cdrMkFile(repo, "scripts/gates/xref.py",
+		"# 真源：`Zerg-内部文档"+"/01-设计/不存在的旧文.md` 与 `项目文档"+"/不存在的账.md` 与 "+
+			"`Zerg-内部文档"+"/01-设计/设计-真件.md`\n")
+	_, hits = run([]string{f11}, nil, repo, docs, nil)
+	missN, presentN := 0, 0
+	for _, h := range hits {
+		if h.ref == "Zerg-内部文档"+"/01-设计/不存在的旧文.md" || h.ref == "项目文档"+"/不存在的账.md" {
+			missN++
+		}
+		if h.path == "Zerg-内部文档"+"/01-设计/设计-真件.md" {
+			presentN++
+		}
+	}
+	cases++
+	good = missN == 2 && presentN == 0
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [跨仓夹具] 文仓里不存在 ⇒ 报 %d 处 · 文仓里存在 ⇒ 报 %d 处（期望 2 / 0）\n",
+		cdrMark(good), missN, presentN)
+
+	// ⑫ GAP 号引用·悬空（档 · 成对负控之一）：注释里引的号账内不存在 ⇒ 命中（点名 件:行 · 引的号）
+	led := map[string]bool{"GAP-" + "20261005-54": true, "GAP-" + "20261005-60": true}
+	fg1 := cdrMkFile(repo, "scripts/gates/g1.py", "# 见缺口 `GAP-"+"20260928-999`（账内无）\n")
+	st, _ := run([]string{fg1}, nil, repo, docs, led)
+	gh := st.gap.hits
+	cases++
+	good = len(gh) == 1 && gh[0].ref == "GAP-"+"20260928-999" &&
+		gh[0].file == fg1 && gh[0].line == 1
+	ok = ok && good
+	gr1 := "—"
+	if len(gh) > 0 {
+		gr1 = gh[0].ref
+	}
+	fmt.Fprintf(stdout, "  %s [GAP悬空夹具] 命中 %d 处 · 号 = %s（期望 1 · GAP-"+"20260928-999）\n",
+		cdrMark(good), len(gh), gr1)
+
+	// ⑬ GAP 号引用·全在账 ⇒ 不报（成对负控之二：账内有的号不该报）
+	fg2 := cdrMkFile(repo, "scripts/gates/g2.py", "# 见缺口 `GAP-"+"20261005-54`（账内有）\n")
+	st, _ = run([]string{fg2}, nil, repo, docs, led)
+	cases++
+	good = len(st.gap.hits) == 0
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [GAP全在账夹具] 命中 %d 处（期望 0 —— 账内在册号不报）\n",
+		cdrMark(good), len(st.gap.hits))
+
+	// ⑭ GAP 号引用·负控（哑化）：同号写进**数据字串**（引号紧包）⇒ 例外面，不计命中也不哑报
+	fg3 := cdrMkFile(repo, "scripts/gates/g3.py", "fx = {\"id\": \"GAP-"+"20260928-777\"}\n")
+	st, _ = run([]string{fg3}, nil, repo, docs, led)
+	cases++
+	good = len(st.gap.hits) == 0 && len(st.gap.exempt) == 1
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [GAP负控夹具] 命中 %d · 例外面 %d（期望 0 / 1 —— 数据字串是例外面，不哑报）\n",
+		cdrMark(good), len(st.gap.hits), len(st.gap.exempt))
+
+	// ⑮ GAP 号引用·账取不到 ⇒ 未判（不翻退码 · 不静默成绿）
+	fg4 := cdrMkFile(repo, "scripts/gates/g4.py", "# 见缺口 `GAP-"+"20260928-888`\n")
+	st, _ = run([]string{fg4}, nil, repo, docs, nil)
+	cases++
+	good = len(st.gap.hits) == 0 && st.gap.candidates >= 1 &&
+		len(st.gap.unjudged) == 1 && !st.gap.judged
+	ok = ok && good
+	fmt.Fprintf(stdout, "  %s [GAP账缺夹具] 命中 %d · 未判 %d · judged=%s（期望 0 / ≥1 / False）\n",
+		cdrMark(good), len(st.gap.hits), len(st.gap.unjudged), cdrPyBool(st.gap.judged))
+
+	if cases != 15 {
+		fmt.Fprintf(stdout, "  自检用例数必须为 15，实际 %d（少跑即失效）\n", cases)
 		ok = false
 	}
 	verdict := "**失败** ✗"
 	if ok {
 		verdict = "通过 ✓"
 	}
-	fmt.Fprintf(stdout, "  自检：%s（10 格：必红×2 · 豁免×1 · 拼接×1 · 前缀×1 · 无输入×1 · 登记表×1 · 整件豁免×1 ·"+
-		" 前缀越界×1 · 缺语料×1）\n", verdict)
+	fmt.Fprintf(stdout, "  自检：%s（15 格：必红×2 · 豁免×1 · 拼接×1 · 前缀×1 · 无输入×1 · 登记表×1 · 整件豁免×1 ·"+
+		" 前缀越界×1 · 缺语料×1 · 跨仓×1 · GAP悬空×1 · GAP全在账×1 · GAP负控×1 · GAP账缺×1）\n", verdict)
 	return ok
 }
 
@@ -1146,7 +1491,7 @@ func cdrEntryOM(file, ref, pre, cls, reason, date string) *cdrOM {
 }
 
 // cdrRealExitCode —— 自检用的「跑真判据」入口：只取退码，不打长清单（逐字复刻 py real_exit_code）。
-func cdrRealExitCode(root, registryPath string, forceFiles []string, hasForce bool, stderr io.Writer) int {
+func cdrRealExitCode(root, registryPath string, forceFiles []string, hasForce bool, gapIds map[string]bool, stderr io.Writer) int {
 	var files []string
 	if !hasForce {
 		f, ok := cdrGitFiles(root, stderr)
@@ -1167,13 +1512,17 @@ func cdrRealExitCode(root, registryPath string, forceFiles []string, hasForce bo
 	}
 	parent := filepath.Dir(root)
 	ctx := &cdrCtx{root: root, docsRoot: filepath.Join(parent, cdrDocsTreeName),
-		archRoot: filepath.Join(parent, cdrArchTreeName), files: files, registry: reg}
+		archRoot: filepath.Join(parent, cdrArchTreeName), files: files, registry: reg, gapIds: gapIds}
 	st, hits := cdrScan(ctx)
 	if st.filesScanned == 0 {
 		fmt.Fprint(stderr, "✗ 扫到 0 个件 —— 拒绝静默空转（假绿）\n")
 		return 2
 	}
-	if len(hits) > 0 {
+	gapHits := 0
+	if st.gap != nil {
+		gapHits = len(st.gap.hits)
+	}
+	if len(hits) > 0 || gapHits > 0 {
 		return 1
 	}
 	return 0
@@ -1225,15 +1574,25 @@ var cdrRules = []string{
 	"     " + strings.Join(cdrLiveWords, " · "),
 	"  ⑧ 否则 ⇒ live（默认：正文/注释里的断指针，宁可多报 —— 本门只报告）",
 	"\n【已覆盖形态】直书 `docs" + "/…`（含反引号/注释/字符串/frontmatter）·",
-	"              `filepath.Join(\"docs\", …)` / `path.Join(…)` 拼接式 · .py 里 `\"docs" + "/\" + x` 前缀形态",
+	"              `filepath.Join(\"docs\", …)` / `path.Join(…)` 拼接式 · .py 里 `\"docs" + "/\" + x` 前缀形态 ·",
+	"              **跨仓直书** `Zerg-内部文档" + "/<rel>` 与裸 `项目文档" + "/<rel>`（2026-10-05 · GAP-20261005-18）",
 	"【未覆盖形态（明说 · 不假装全覆盖）】",
-	"  · URL / 跨仓引用（`https://…/docs" + "/…`、`别仓/docs" + "/…`）—— 首字符前还粘着东西，本门不判",
+	"  · 纯 URL（`https://…/docs" + "/…`）—— 不是仓内相对引用，本门不判",
 	"  · 变量拼进中段/后缀：`\"docs" + "/\" + lang + \"/x.md\"` —— 只判到前缀目录那一层",
 	"  · 运行期树：`filepath.Join(workDir, \"docs\", \"issues\")` 真身是 workDir 下的目录 ——",
 	"    报出来但按 ledger 判（要有意保留就登记），**不许按主仓同名树改**",
 	"  · 软链 / 大小写变体 / 非 UTF-8 件（记入 files_unreadable）· 未 `git add` 的新件",
 	"  · markdown 相对链接 `[](../x.md)` —— 属 `check-doc-freshness.py` D1，本门不重复",
-	"\n【退码】0 无命中（或全登记）· 1 有未登记悬空 · 2 不给结论（不在仓根/0 件/登记表不合格/同级语料树 Zerg-内部文档 取不到根/自检不过）",
+	"\n【GAP 号引用类（2026-10-05 · GAP-20261005-54）】",
+	"  判据：注释/文档里引的 `GAP-<8位日期>-<号>` 必须在**缺口账**里存在",
+	"        （真源 <ZERG_STATE_DIR|~/.zerg/state>/" + cdrGapLedgerFile + "；可 `--ledger` 覆盖）",
+	"  不存在 ⇒ 悬空（逐字点名 件:行 · 引的号）· 账取不到 ⇒ 本类未判（不给结论 · 但**不翻**其余面的退码）",
+	"  例外面（照样逐条打印 · 不计命中）：本件自身(自检夹具号) / 测试夹具件(*_test.* / testdata/ / tests/ 里的假号) /",
+	"                                    机读件(.json/.tsv/.csv/.txt) / 引号紧包的数据字串 / Markdown 表格行 /",
+	"                                    登记表命中（`ref`=号 或 `ref_prefix`）",
+	"  判定复用本门**同一个** `classify()`：只有 `live` 类算命中，`ledger`/`已登记` = 例外面",
+	"\n【退码】0 无命中（或全登记/全例外面）· 1 有未登记悬空（docs 路径类 ＋ GAP 号引用类）·",
+	"        2 不给结论（不在仓根/0 件/登记表不合格/同级语料树 Zerg-内部文档 取不到根/自检不过）",
 }
 
 func cdrPrintRules(stdout io.Writer) {
@@ -1249,6 +1608,7 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 		root = "."
 	}
 	registryPath := cdrPyJoin(root, cdrRegistryDefault)
+	ledgerPath := cdrGapLedgerPath()
 	showAll := false
 	liveOnly := false
 	jsonOut := false
@@ -1294,6 +1654,13 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 				return 2
 			}
 			registryPath, _ = filepath.Abs(argv[i])
+		case a == "--ledger":
+			i++
+			if i >= len(argv) {
+				fmt.Fprint(stderr, "✗ `--ledger` 尾缺值（py 此档抛 IndexError）⇒ 不给结论\n")
+				return 2
+			}
+			ledgerPath, _ = filepath.Abs(argv[i])
 		default:
 			fmt.Fprintf(stderr, "✗ 未知参数 %s（用法见 --list-rules）\n", cdrPyReprStr(a))
 			return 2
@@ -1321,6 +1688,8 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 		return 2
 	}
 
+	gapIds, gapProblem := cdrLoadGapIds(ledgerPath)
+
 	parent := filepath.Dir(root)
 	sibling := os.Getenv(cdrDocsAltEnv)
 	if sibling == "" {
@@ -1341,7 +1710,7 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 	if reg == nil {
 		reg = &cdrOM{}
 	}
-	ctx := &cdrCtx{root: root, docsRoot: docsRoot, archRoot: archRoot, files: files, registry: reg}
+	ctx := &cdrCtx{root: root, docsRoot: docsRoot, archRoot: archRoot, files: files, registry: reg, gapIds: gapIds}
 	st, hits := cdrScan(ctx)
 	if st.filesScanned == 0 {
 		fmt.Fprint(stderr, "✗ 扫到 0 个件 —— 拒绝静默空转（假绿）\n")
@@ -1390,6 +1759,11 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 	}
 	fmt.Fprintf(stdout, "扫描面：git ls-files %d 件 ⇒ 文本件 %d · 提取引用 %d 处（另滤掉散文误吞 %d 处）· 悬空 %d 处\n",
 		st.filesSeen, st.filesScanned, st.refs, st.refsProseSkipped, st.dangling)
+	gapLedgerState := "在"
+	if gapIds == nil {
+		gapLedgerState = "**取不到** ⇒ GAP 号引用类未判：" + gapProblem
+	}
+	fmt.Fprintf(stdout, "  缺口账（GAP 号存在性真源）：%s（%s）\n", ledgerPath, gapLedgerState)
 	if len(st.unreadable) > 0 {
 		show := st.unreadable
 		if len(show) > 3 {
@@ -1398,8 +1772,21 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stdout, "  ⚠ 非 UTF-8 / 读不了 %d 件（未覆盖形态之一）：%s\n",
 			len(st.unreadable), strings.Join(show, " · "))
 	}
-	fmt.Fprintf(stdout, "\n合计：悬空 %d 处 / %d 件 ⇒ **命中 %d 处**（live %d · ledger %d）· 已登记 %d 处（不计命中）\n",
+	fmt.Fprintf(stdout, "\n合计（docs/ 路径类）：悬空 %d 处 / %d 件 ⇒ **命中 %d 处**（live %d · ledger %d）· 已登记 %d 处（不计命中）\n",
 		st.dangling, filesHit, nLive+nLed, nLive, nLed, nReg)
+	gap := st.gap
+	if gap == nil {
+		gap = &cdrGapState{judged: gapIds != nil}
+	}
+	gHits, gExempt := gap.hits, gap.exempt
+	nGap := len(gHits)
+	if gap.judged {
+		fmt.Fprintf(stdout, "合计（GAP 号引用类）：候选 %d 处 ⇒ **命中 %d 处**（live）· 例外面 %d 处（不计命中）\n",
+			gap.candidates, len(gHits), len(gExempt))
+	} else {
+		fmt.Fprintf(stdout, "合计（GAP 号引用类）：候选 %d 处 ⇒ **未判**（缺口账取不到 ⇒ 本类不给结论）\n",
+			gap.candidates)
+	}
 
 	cap := 30
 	if showAll {
@@ -1442,7 +1829,43 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 		dump("已登记（有意保留 · 不计命中）", byReg)
 	}
 
-	fmt.Fprint(stdout, "\n未覆盖形态（明说，不假装全覆盖）：URL/跨仓引用 · 变量拼进中段或后缀 · 运行期路径树 · "+
+	if len(gHits) > 0 {
+		fmt.Fprintf(stdout, "\n── GAP 号引用命中（注释/文档引的号账内不存在 · 该改或先立案）：%d 处\n", len(gHits))
+		lim := cap
+		if len(gHits) < lim {
+			lim = len(gHits)
+		}
+		for _, h := range gHits[:lim] {
+			fmt.Fprintf(stdout, "   %s:%d · 引的号 `%s` · 【%s】%s · 建议：%s\n",
+				h.file, h.line, h.ref, h.cls, h.why, h.suggest)
+		}
+		if len(gHits) > cap {
+			fmt.Fprintf(stdout, "   …另 %d 处（--all 全打）\n", len(gHits)-cap)
+		}
+	}
+	if len(gExempt) > 0 && !liveOnly {
+		fmt.Fprintf(stdout, "\n── GAP 号引用例外面（夹具假号 / 机读件 / 快照 / 数据字串 · 不计命中）：%d 处\n", len(gExempt))
+		lim := cap
+		if len(gExempt) < lim {
+			lim = len(gExempt)
+		}
+		for _, h := range gExempt[:lim] {
+			fmt.Fprintf(stdout, "   %s:%d · 引的号 `%s` · 【%s】%s\n", h.file, h.line, h.ref, h.cls, h.why)
+		}
+		if len(gExempt) > cap {
+			fmt.Fprintf(stdout, "   …另 %d 处（--all 全打）\n", len(gExempt)-cap)
+		}
+	}
+	if len(gap.unjudged) > 0 {
+		show := gap.unjudged
+		if len(show) > 3 {
+			show = show[:3]
+		}
+		fmt.Fprintf(stdout, "\n⛔ GAP 号引用类**未判**（缺口账取不到：%s）—— 候选 %d 处（前几处：%s）\n",
+			gapProblem, len(gap.unjudged), strings.Join(show, " · "))
+	}
+
+	fmt.Fprint(stdout, "\n未覆盖形态（明说，不假装全覆盖）：纯 URL · 变量拼进中段或后缀 · 运行期路径树 · "+
 		"软链/大小写变体/非 UTF-8 件/未 git add 的新件 · markdown 相对链接（属 D1）\n")
 
 	if jsonOut {
@@ -1456,6 +1879,11 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 		o.set("registered", nReg)
 		o.set("hit", nLive+nLed)
 		o.set("registry", registryPath)
+		o.set("gap_judged", gap.judged)
+		o.set("gap_candidates", gap.candidates)
+		o.set("gap_hit", len(gHits))
+		o.set("gap_exempt", len(gExempt))
+		o.set("gap_ledger", ledgerPath)
 		fmt.Fprintln(stdout, cdrJSONEnc(o, false, 0))
 	}
 	if dumpPath != "" {
@@ -1482,12 +1910,19 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 		return 2
 	}
-	if nLive+nLed == 0 {
-		fmt.Fprint(stdout, "\n结论：无命中（或全在登记表里）⇒ rc=0\n")
+	nPath := nLive + nLed
+	if nPath == 0 && nGap == 0 {
+		fmt.Fprint(stdout, "\n结论：无命中（或全在登记表 / 例外面里）⇒ rc=0\n")
 		return 0
 	}
-	fmt.Fprintf(stdout, "\n结论：有 %d 处**未登记**的悬空引用 ⇒ rc=1（本步起步档 `tri-report` = 只报告、不阻断）\n",
-		nLive+nLed)
+	if nPath > 0 {
+		fmt.Fprintf(stdout, "\n结论：有 %d 处**未登记**的悬空引用（docs 路径类）⇒ rc=1（本步起步档 `tri-report` = 只报告、不阻断）\n",
+			nPath)
+	}
+	if nGap > 0 {
+		fmt.Fprintf(stdout, "\n结论：有 %d 处**未登记**的悬空引用（GAP 号引用类）⇒ rc=1（本步起步档 `tri-report` = 只报告、不阻断）\n",
+			nGap)
+	}
 	return 1
 }
 
@@ -1511,6 +1946,57 @@ func cdrStatsOM(st *cdrStats) *cdrOM {
 	o.set("refs_prose_skipped", st.refsProseSkipped)
 	if len(st.unreadable) > 0 {
 		o.set("files_unreadable", st.unreadable)
+	}
+	o.set("gap", cdrGapOM(st.gap))
+	return o
+}
+
+// cdrGapOM —— py `--dump` 里 `stats["gap"]` 的逐字同构（键序 = py dict 插入序）。
+func cdrGapOM(g *cdrGapState) *cdrOM {
+	o := &cdrOM{}
+	if g == nil {
+		o.set("hits", []any{})
+		o.set("exempt", []any{})
+		o.set("candidates", 0)
+		o.set("judged", false)
+		o.set("unjudged", []any{})
+		return o
+	}
+	hitsAny := []any{}
+	for _, h := range g.hits {
+		hitsAny = append(hitsAny, cdrGapRecOM(h))
+	}
+	exAny := []any{}
+	for _, h := range g.exempt {
+		exAny = append(exAny, cdrGapRecOM(h))
+	}
+	unAny := []any{}
+	for _, x := range g.unjudged {
+		unAny = append(unAny, x)
+	}
+	o.set("hits", hitsAny)
+	o.set("exempt", exAny)
+	o.set("candidates", g.candidates)
+	o.set("judged", g.judged)
+	o.set("unjudged", unAny)
+	return o
+}
+
+// cdrGapRecOM —— GAP 记录（live 才有 `suggest` 键 —— py 对 exempt 不落该键）。
+func cdrGapRecOM(h cdrHit) *cdrOM {
+	o := &cdrOM{}
+	o.set("file", h.file)
+	o.set("line", h.line)
+	o.set("ref", h.ref)
+	o.set("path", h.path)
+	o.set("form", h.form)
+	o.set("note", h.note)
+	o.set("cls", h.cls)
+	o.set("why", h.why)
+	o.set("where", h.where)
+	o.set("src", h.src)
+	if h.suggest != "" {
+		o.set("suggest", h.suggest)
 	}
 	return o
 }

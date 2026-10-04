@@ -860,7 +860,7 @@ func cafbSelfTest(stdout io.Writer, repo, state string) bool {
 		"⑥ 负控：**抹掉明标** ⇒ 判红（不可分不许蒙过去）",
 		"⑥ 负控失败：没明标还判绿")
 
-	// ── ★ 回归自测格（缺口 `GAP-20260928-217`）：**真判据面**不许哑化 ──
+	// ── ★ 回归自测格（缺口 `GAP-20260928-51`）：**真判据面**不许哑化 ──
 	//   拿一份按现读判据面形状造的合成夹具（仓外 `mkdtemp`：假 `family_approve.go` + 假 `edit_audit.jsonl`
 	//   + 假在册件）喂给**真判据面** `scan()`，断言它**真判红并逐字点名**。
 	fieldsGo := ""

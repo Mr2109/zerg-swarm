@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ---- 只读：单条任务的现状（`/api/tasks/{id}`）----
@@ -334,6 +335,22 @@ func cmdTaskSubmit(inv *invocation, stdout, stderr io.Writer) int {
 	return listCmd(inv, stdout, stderr, []string{"id", "status", "request"}, []map[string]string{row})
 }
 
+// ---- 写面独立超时（GAP-20261005-03）--------------------------------------------
+//
+// 「写面」的判定口径（现读定的）：**写面 = 经 sendJSON 发出的非 GET 请求（POST / PUT）** ——
+// sendJSON 是命令面**唯一**的写面出口（`postJSON` / `putJSON` 都转发到它）；读面 =
+// `getJSON` 与 `sendJSON(GET)`（`zerg model opts get` / `zerg core logs` 那两处）。
+// 依据：控制面 `forwardToNode` 打子端 `/load` 的超时是 60s（`core/internal/api/control.go:227`），
+// 而子端 `/load` **同步阻塞**到装载完成（21GB/35B 冷装 >45s · `GAP-20260925-44`）⇒
+// 客户端若与读面同用 10s（`client.go` 的 `hc`）会先超时退 12（unreachable）而真果已装成
+// （`GAP-20261005-03`：`zerg egg run … --yes` 客户端读数与真果不一致）。
+// ★ 只把**写面**抬到 60s；读面逐字保持 10s 快反馈（✗ 不许全局抬）。
+const writeFaceTimeout = 60 * time.Second
+
+// writeFaceClient —— 写面专用 `http.Client`（与读面的 `c.hc` 分开 · 互不影响）：
+// 只有 `sendJSON` 的**非 GET** 请求走它 ⇒ 读面不受影响（仍 10s）。
+var writeFaceClient = &http.Client{Timeout: writeFaceTimeout}
+
 // postJSON —— 写面出口（POST）；失败面把 http 状态与**原样响应体**一起带回来。
 func postJSON(c *client, path, body string) (int, string, error) {
 	return sendJSON(c, http.MethodPost, path, body)
@@ -341,6 +358,9 @@ func postJSON(c *client, path, body string) (int, string, error) {
 
 // sendJSON —— **两处写面出口共用的一处**（POST / PUT；body 为空则不带体）。
 // 失败面一律把 http 状态与**原样响应体**带回来（「逐字透传」要能拿到原文）。
+//
+// ★ 写面独立超时（`GAP-20261005-03`）：**非 GET** 走 `writeFaceClient`（60s）·
+// **GET** 走读面 `c.hc`（10s）—— 「写面」判定口径见本件上方 `writeFaceTimeout` 一节。
 func sendJSON(c *client, method, path, body string) (int, string, error) {
 	var rdr io.Reader
 	if body != "" {
@@ -356,7 +376,11 @@ func sendJSON(c *client, method, path, body string) (int, string, error) {
 	if c.token != "" {
 		req.Header.Set("X-Auth-Token", c.token)
 	}
-	resp, err := c.hc.Do(req)
+	hc := c.hc // 读面（GET）：快反馈，逐字保持 10s（`client.go` 的 hc）
+	if method != http.MethodGet {
+		hc = writeFaceClient // 写面（POST/PUT）：独立超时 60s（GAP-20261005-03）
+	}
+	resp, err := hc.Do(req)
 	if err != nil {
 		return 0, "", err
 	}
@@ -604,6 +628,193 @@ func cmdTaskCancel(inv *invocation, stdout, stderr io.Writer) int {
 	return listCmd(inv, stdout, stderr,
 		[]string{"id", "outcome", "cancelled", "already_cancelled", "already_terminal"},
 		[]map[string]string{row})
+}
+
+// ---- 写面：`task terminate`（D3 ＋ `--confirm=<任务 id>` ＋ `--yes` · 本版**已开放**）----
+//
+// 与同族 `task cancel`（D2）同形，只升一档危险级（D3：`--confirm` 与 `--yes` **同时到**才执行），
+// 并多一条 `--reason`（闭集 5 值必填 —— 杀任务必须留理由）。
+// ★ 核侧路由 `POST /api/tasks/{id}/terminate` 早已接（`zerg-core/main.go:344` → `TaskTerminateHandler`）
+//   ⇒ 本刀**只开命令面**、不动核侧（核侧 handler 现读不读 query，理由仍照发以示同源、待核侧接上读参）。
+
+// taskTerminateTerminalStatuses —— 核侧的**终态**闭集（`master_scheduler.go:44-47` 逐字）。
+// `already_terminal` 这一结局的判据（终态件无需强杀）；其余非 running 的态归 `not_running`。
+var taskTerminateTerminalStatuses = []string{"done", "failed", "cancelled"}
+
+// taskTerminateClassify —— 核侧按「不在跑」拒了之后，**再读一次**任务现状，把结局分成
+// `already_terminal`（已终态 · 无需终止）与 `not_running`（非终态不在跑 · 要撑它走 `task cancel`）。
+//
+// ★ 为什么命令面要补这一读（而 `task cancel` 不用）：核侧 `TerminateTask` 只对 **running** 成功，
+//
+//	对其余一切（不存在 / 排队 / 暂停 / 等恢复 / 已终态）**回同一条** `not running` 错
+//	（`master_scheduler.go:999`）⇒ 不补这一读，命令面就拿不到 T-14 要的结构化结局（三值出不来）。
+//
+// ★ 读回「任务不存在」⇒ 返回空 outcome（调用方按 T-14 给 rc 2 · detail=not_found）。
+// ★ 读不回（打不到 / 主控抖动）⇒ 空 outcome + detail=state_probe_failed（**不猜**、不退 8）。
+func taskTerminateClassify(c *client, id string) (outcome, detail string) {
+	var d jsonObj
+	err := c.getJSON("/api/tasks/"+url.PathEscape(id), &d)
+	if err != nil {
+		var he *httpError
+		if asHTTP(err, &he) && he.status == http.StatusNotFound {
+			return "", "not_found"
+		}
+		return "", "state_probe_failed"
+	}
+	st := cell(d["status"])
+	for _, t := range taskTerminateTerminalStatuses {
+		if st == t {
+			return "already_terminal", st
+		}
+	}
+	return "not_running", st
+}
+
+// cmdTaskTerminate —— `zerg task terminate <任务 id>`（D3 写面 · 本版**已开放**）。
+//
+// 三态（照同族 `task cancel`）：`--dry-run` 出计划件（零副作用 · rc=0）· 缺确认档 ⇒ 2（fail-closed）· 齐了才 POST。
+// 结局三值（T-14 · 只走 stdout、不走退码）：`terminated`（真杀）· `not_running`（非终态不在跑 —— 要撑它走
+// `task cancel`）· `already_terminal`（已终态 · 无需强杀）；三值互斥、皆 rc=0。
+// ★ 铁律：**状态差异走 stdout 结构化字段、不走退码**；★ **单 id 绝不给 8**（本函数不返回 exitBlocked）。
+func cmdTaskTerminate(inv *invocation, stdout, stderr io.Writer) int {
+	// ① 两道确认档自相矛盾（`--dry-run` 与 `--yes` 同给）⇒ 用法错 2（本命令唯一的互斥真判）。
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	// ② 目标：位置参数一个任务 id。
+	if len(inv.args) == 0 {
+		inv.setErr("usage", "missing_target", "缺任务 id")
+		fmt.Fprintf(stderr, "%s: `task terminate` 要一个任务 id（先 `%s task ls`）\n", progName, progName)
+		return exitUsage
+	}
+	id := inv.args[0]
+	// ③ 终止理由：必填 · 闭集 5 值 · 无默认值（缺 / 出闭集都逐字印闭集）。
+	// ★ 与 `task cancel` **共用同一份闭集**（`taskCancelReasons`）—— 不自造第二份（设计 §11.5 小闭集必填）。
+	reason := inv.flagVal("--reason")
+	if reason == "" {
+		inv.setErr("usage", "missing_reason", "缺 --reason（终止理由必填 · 闭集 5 值）")
+		fmt.Fprintf(stderr, "%s: `task terminate` 缺 `--reason <终止理由>`（小闭集必填 · 不给默认值 · 照同族 `task cancel`）\n", progName)
+		fmt.Fprintf(stderr, "闭集（逐字）: %s\n", strings.Join(taskCancelReasons, " · "))
+		return exitUsage
+	}
+	if !taskCancelReasonOK(reason) {
+		inv.setErr("usage", "bad_reason", "终止理由不在闭集内")
+		fmt.Fprintf(stderr, "%s: `--reason` 的值 %q **不在闭集内** ⇒ 用法错 2（不给结论）\n", progName, reason)
+		fmt.Fprintf(stderr, "闭集（逐字）: %s\n", strings.Join(taskCancelReasons, " · "))
+		return exitUsage
+	}
+	// ④ `--dry-run`：只出计划件 · 零副作用 · rc=0（照同族 `cmdTaskCancel` 的档序：干跑先于确认档）。
+	if inv.dryRun {
+		fmt.Fprintln(stdout, "计划件（--dry-run · 零副作用 —— 未执行、未改任何状态）")
+		fmt.Fprintf(stdout, "  动作     : %s task terminate\n", progName)
+		fmt.Fprintf(stdout, "  危险档   : %s（不可逆 · 要 --confirm=<任务 id> 与 --yes **同时到**）\n", dangerD3)
+		fmt.Fprintf(stdout, "  目标     : %s\n", id)
+		fmt.Fprintf(stdout, "  终止理由 : %s\n", reason)
+		if inv.hasFlag("--note") {
+			fmt.Fprintf(stdout, "  备注     : %s\n", inv.flagVal("--note"))
+		}
+		fmt.Fprintf(stdout, "  请求     : POST %s/api/tasks/%s/terminate?reason=%s\n", newClient().base, id, reason)
+		fmt.Fprintf(stdout, "  它会动   : 停该任务的 CA 侧执行（强杀）→ 迁移出 running → 置终态；已产出的工作树不自动回收\n")
+		fmt.Fprintf(stdout, "  结局字段 : terminated / not_running / already_terminal（三值互斥 · 走 stdout 不走退码 · T-14）\n")
+		fmt.Fprintf(stdout, "  来源     : 同族写面先例 `task cancel`（D2）· §三 D 族 · §4.1 K7 · §九 M3 C1/C4 · 开工单 T-44\n")
+		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
+		return exitOK
+	}
+	// ⑤ 危险档确认面（D3）：`--confirm=<任务 id>` 必带，且值必须与位置参数的任务 id **逐字相同**。
+	if !inv.confirmGiven {
+		msg := fmt.Sprintf("`task terminate` 是 D3 档（不可逆）——**缺确认 ⇒ 不执行**（缺 --confirm=%s）", id)
+		inv.setErr("usage", "confirm_required", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "要执行得给：--confirm=%s --yes\n", id)
+		fmt.Fprintf(stderr, "先看计划件：%s task terminate %s --reason %s --dry-run\n", progName, id, reason)
+		fmt.Fprintf(stderr, "error.kind=usage · detail=confirm_required · retryable=false · remedy=fix_usage\n")
+		return exitUsage
+	}
+	if inv.confirm != id {
+		msg := fmt.Sprintf("确认值不匹配目标（--confirm 给的是 %q，目标是 %q）⇒ 不执行", inv.confirm, id)
+		inv.setErr("usage", "confirm_mismatch", msg)
+		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+		fmt.Fprintf(stderr, "`--confirm` 的值必须与位置参数的任务 id **逐字相同**（§4.1 K7）—— 给错值一律拒绝，不许「当没给」\n")
+		return exitUsage
+	}
+	// ⑥ `--yes`（fail-closed：缺就拒 —— 与 `cmdTaskCancel` 同一条）。
+	if !inv.yes {
+		inv.setErr("usage", "yes_required", "D3 档缺 --yes ⇒ 不执行")
+		fmt.Fprintf(stderr, "%s: `task terminate` 是 D3 档 —— **缺 --yes ⇒ 不执行**（§九 M3 C2 fail-closed）\n", progName)
+		fmt.Fprintf(stderr, "确认档齐了才真跑：%s task terminate %s --reason %s --confirm=%s --yes\n", progName, id, reason, id)
+		return exitUsage
+	}
+	// ⑦ 真写：POST /api/tasks/{id}/terminate?reason=…[&note=…]（与 `task cancel` 同形）。
+	//   ★ 核侧 handler 现读**不读 query**（`handlers.go:1614`）—— 仍照发以示同源；等核侧接上读参（另立账）。
+	q := url.Values{}
+	q.Set("reason", reason)
+	if inv.hasFlag("--note") {
+		q.Set("note", inv.flagVal("--note"))
+	}
+	reqPath := "/api/tasks/" + url.PathEscape(id) + "/terminate?" + q.Encode()
+	status, respBody, err := postJSON(newClient(), reqPath, "")
+	var he *httpError
+	if err != nil && asHTTP(err, &he) {
+		status, respBody, err = he.status, he.body, nil
+	}
+	if err != nil {
+		inv.setErr("unreachable", "dial_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 终止失败（打不到主控）：%v\n", progName, err)
+		return exitUnreachable
+	}
+	if status == 401 || status == 403 {
+		inv.setErr("unauthenticated", fmt.Sprintf("http_%d", status), "未认证")
+		fmt.Fprintf(stderr, "%s: 主控拒了这次终止（http_%d）—— 看 `zerg help credentials`\n", progName, status)
+		return exitAuth
+	}
+	// ⑧ 成功（2xx）：核侧 `TerminateTask` 只对 running 成功 ⇒ 真杀 ⇒ outcome=terminated。
+	//   （核侧 2xx 响应体没有 outcome 字段 —— 与 `task cancel` 不同；这里由协议面派生三值。）
+	if status < 400 {
+		t := true
+		inv.changed = &t
+		return listCmd(inv, stdout, stderr,
+			[]string{"id", "outcome", "terminated", "not_running", "already_terminal"},
+			[]map[string]string{{
+				"id":               id,
+				"outcome":          "terminated",
+				"terminated":       "true",
+				"not_running":      "false",
+				"already_terminal": "false",
+			}})
+	}
+	// ⑨ 非 2xx 分档。
+	code := errorCodeOf(respBody)
+	if status == http.StatusNotFound {
+		// 404 = 「这条路由没接」（本版主控未重编/未重启时）—— 与本档不是一回事，不给结论（单 id 绝不给 8）。
+		inv.setErr("usage", "route_missing", "主控没有这条路由")
+		fmt.Fprintf(stderr, "%s: 主控拒绝终止（http_404）· code=%s\n", progName, orDash(code))
+		fmt.Fprintf(stderr, "主控原样响应: %s\n", strings.TrimSpace(respBody))
+		fmt.Fprintf(stderr, "⇒ 主控**没有这条路由**（`POST /api/tasks/{id}/terminate` 未接）—— 需重编 + 重启主控后才有\n")
+		fmt.Fprintf(stderr, "（此时**不给结论**：退码 2 · 不给 8 —— 单 id 绝不给 8 · T-14）\n")
+		return exitUsage
+	}
+	// 400（`TASK_TERMINATE_FAILED`）：核侧按「不在跑」拒 ⇒ **再读一次**现状把「已终态」与「非终态不在跑」分开。
+	outcome, detail := taskTerminateClassify(newClient(), id)
+	if outcome == "" {
+		inv.setErr("usage", detail, "主控拒绝终止且现状读不回")
+		fmt.Fprintf(stderr, "%s: 主控拒绝终止（http_%d）· code=%s · detail=%s\n", progName, status, orDash(code), detail)
+		fmt.Fprintf(stderr, "主控原样响应: %s\n", strings.TrimSpace(respBody))
+		if detail == "not_found" {
+			fmt.Fprintf(stderr, "（任务 %q **不存在** ⇒ 退码 2 · detail=not_found · T-14）\n", id)
+		}
+		return exitUsage
+	}
+	f := false
+	inv.changed = &f
+	return listCmd(inv, stdout, stderr,
+		[]string{"id", "outcome", "terminated", "not_running", "already_terminal"},
+		[]map[string]string{{
+			"id":               id,
+			"outcome":          outcome,
+			"terminated":       "false",
+			"not_running":      fmt.Sprintf("%t", outcome == "not_running"),
+			"already_terminal": fmt.Sprintf("%t", outcome == "already_terminal"),
+		}})
 }
 
 // ---- sched 族: 暂停派活 / 并发旋钮 / 调度器状态（缺口 GAP-20260927-210 · GAP-20260929-26）----

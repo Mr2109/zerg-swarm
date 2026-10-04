@@ -781,14 +781,25 @@ func (h *Handlers) ResourcesHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				if e.IsDir() {
 					// skill 目录（含 SKILL.md）才算技能——松散 .md 不列（CA 加载器只认目录）
-					if _, err := os.Stat(filepath.Join(dir, name, "SKILL.md")); err == nil {
-						items = append(items, map[string]interface{}{
+					skillPath := filepath.Join(dir, name, "SKILL.md")
+					if _, err := os.Stat(skillPath); err == nil {
+						item := map[string]interface{}{
 							"name":   name,
 							"trust":  resourceTrust.GetResourceStatus("skills", name),
 							"uses":   resourceTrust.GetResourceUses("skills", name),
 							"faults": resourceTrust.GetResourceFaults("skills", name),
 							"since":  resourceTrust.GetResourceSince("skills", name),
-						})
+						}
+						// GAP-20261005-27 乙案：desc 有真源（SKILL.md frontmatter 的
+						// `description:`，口径同 core/internal/agent/skill_manager.go 的
+						// parseFrontmatter）⇒ **有且非空才发这一键**；无真源（无 frontmatter /
+						// 无该行 / 空值）⇒ **缺键**（让 UI 自己留空，✗ 不发占位）。
+						// version：核心仓对技能无版本概念（SKILL.md 只解析 name/description）
+						// ⇒ ✗ 一律不补（✗ 禁伪造 v1.0.0 类）。
+						if desc := skillDescription(skillPath); desc != "" {
+							item["desc"] = desc
+						}
+						items = append(items, item)
 						seen[name] = true
 					}
 				}
@@ -987,6 +998,33 @@ func firstLine(s string) string {
 	return s
 }
 
+// skillDescription 取技能 SKILL.md 的 frontmatter `description`（GAP-20261005-27 乙案的真源）。
+//
+// 解析口径与 core/internal/agent/skill_manager.go 的 parseFrontmatter **同源一致**
+// （同一真源：`---\n` 起的 frontmatter、`description:` 行）；本处只取 description 一项
+// （name 由目录名给）。**无 SKILL.md / 无 frontmatter / 无该行 / 值为空 ⇒ 返回 ""**
+// ——调用方据此**不发 `desc` 键**（✗ 不造占位，让消费方自己留空）。
+func skillDescription(skillPath string) string {
+	data, err := os.ReadFile(skillPath)
+	if err != nil {
+		return ""
+	}
+	content := string(data)
+	if !strings.HasPrefix(content, "---\n") {
+		return ""
+	}
+	end := strings.Index(content, "\n---\n")
+	if end == -1 {
+		return ""
+	}
+	for _, line := range strings.Split(content[4:end], "\n") {
+		if strings.HasPrefix(line, "description:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "description:"))
+		}
+	}
+	return ""
+}
+
 // LogsHandler2 日志 API（v2.5.5 虫族UI: 主控/任务/机器日志）
 // GET /api/logs（主控日志 tail）+ GET /api/logs/task/{id} + GET /api/logs/agent/{machine}
 func (h *Handlers) LogsHandler2(w http.ResponseWriter, r *http.Request) {
@@ -1118,6 +1156,53 @@ func (h *Handlers) HeartbeatHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// statusMachineView 是 GET /api/fleet/status 里单台机器的**响应投影**（GAP-20260925-34 剩面①）。
+//
+// 为什么用投影而不是改 store 本体：快照是**共享指针**（同一台机被多个请求同时读），
+// 且 store.FleetSnapshot.GpuPct 是既有契约字段 —— 改它 = 动 store 本体 + 心跳契约（禁）。
+//
+// 投影口径（Mr2109 拍板 · 候选 (A)+(ii)）：平台属性判在「知道平台」的那一层 —— 主控用配置
+// fleet: 段的 os（h.Config.Fleet[机器].OS，由 scripts/gates/check-nodes-roster.py 逐字守护）
+// 判 macOS；macOS（含 Apple Silicon mini-node-1）上 gpu_pct 无意义（ioreg「Device Utilization %」
+// 恒在且恒 0）⇒ 剔除该键（✗ 不假造 0）。edge-node（ubuntu）一字不动 ⇒ 路由判据 GpuPct<90 零影响。
+//
+// GpuPct 覆盖内嵌快照的同名字段（encoding/json：浅层同名字段胜出）——指针 + omitempty ⇒
+// macOS 上整键不出现，其余平台原样透出真值。
+type statusMachineView struct {
+	*store.FleetSnapshot
+	GpuPct *float64 `json:"gpu_pct,omitempty"`
+}
+
+// machineIsMacOS 按主控配置的平台事实判定某台机是否 macOS（GAP-20260925-34 剩面①）。
+// ★ fail-open：配置缺该机器 / os 为空 ⇒ false（如实显原值，✗ 禁静默变 n/a）。
+func (h *Handlers) machineIsMacOS(machine string) bool {
+	if h == nil || h.Config == nil {
+		return false
+	}
+	node, ok := h.Config.Fleet[machine]
+	if !ok {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(node.OS), "macos")
+}
+
+// projectStatusMachines 把带版本裁决的快照副本翻成响应投影：macOS 机的 gpu_pct 整键不出现。
+func (h *Handlers) projectStatusMachines(snaps map[string]*store.FleetSnapshot) map[string]*statusMachineView {
+	out := make(map[string]*statusMachineView, len(snaps))
+	for name, snap := range snaps {
+		if snap == nil {
+			continue
+		}
+		v := &statusMachineView{FleetSnapshot: snap}
+		if !h.machineIsMacOS(name) {
+			gp := snap.GpuPct
+			v.GpuPct = &gp
+		}
+		out[name] = v
+	}
+	return out
+}
+
 // StatusHandler 处理 GET /api/fleet/status
 // 返回集群当前状态概览。
 func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -1164,7 +1249,7 @@ func (h *Handlers) StatusHandler(w http.ResponseWriter, r *http.Request) {
 		"total_mem_total_gb":     totalMemTotal,
 		"total_gpu_used_gb":      totalGPUUsed,
 		"total_active_requests":  totalActive,
-		"machines":               AnnotateVersionMismatch(fh.MasterCodeVersion, snapshots),
+		"machines":               h.projectStatusMachines(AnnotateVersionMismatch(fh.MasterCodeVersion, snapshots)),
 	}
 
 	writeJSON(w, http.StatusOK, response)

@@ -220,10 +220,95 @@ func cktDecode(b []byte) string {
 	return strings.ToValidUTF8(string(b), "\uFFFD")
 }
 
-// cktScan —— py `scan(root)`：回 (real, fixtures, ok)。ok=false ⇒ 扫描根取不到（退 2）。
-func cktScan(root string) (real, fixtures []cktHit, ok bool) {
+// cktCurlIsLive —— 判 `prefix`（某 curl 命中点**之前**的整段）走完后是否**不在引号字面量内**
+// （= 该 curl 落在可执行命令位）。逐字符走引号 / `$(…)` / 反引号态；GAP-20261005-05。
+func cktCurlIsLive(prefix string) bool {
+	var q rune
+	var stack []rune
+	r := []rune(prefix)
+	for i := 0; i < len(r); {
+		c := r[i]
+		if q == '\'' || q == '"' {
+			if c == '\\' && q == '"' {
+				i += 2
+				continue
+			}
+			if c == q {
+				q = 0
+				i++
+				continue
+			}
+			if q == '"' && c == '$' && i+1 < len(r) && r[i+1] == '(' {
+				stack = append(stack, q)
+				q = 0
+				i += 2
+				continue
+			}
+			if q == '"' && c == '`' {
+				stack = append(stack, q)
+				q = '`'
+				i++
+				continue
+			}
+			i++
+			continue
+		}
+		switch {
+		case c == '\\':
+			i += 2
+		case c == '\'':
+			q = '\''
+			i++
+		case c == '"':
+			q = '"'
+			i++
+		case c == '`':
+			if q == '`' {
+				if len(stack) > 0 {
+					q = stack[len(stack)-1]
+					stack = stack[:len(stack)-1]
+				} else {
+					q = 0
+				}
+			} else {
+				stack = append(stack, q)
+				q = '`'
+			}
+			i++
+		case c == '$' && i+1 < len(r) && r[i+1] == '(':
+			stack = append(stack, q)
+			q = 0
+			i += 2
+		case c == ')' && q == 0 && len(stack) > 0:
+			q = stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			i++
+		default:
+			i++
+		}
+	}
+	return q != '\'' && q != '"'
+}
+
+// cktLiveCurls —— 本行里位于**命令位**的 curl 命中数（引号字面量内的不算 · GAP-20261005-05）。
+func cktLiveCurls(line string) int {
+	n := 0
+	for _, idx := range cktCurl.FindAllStringSubmatchIndex(line, -1) {
+		curlStart := idx[0]
+		if len(idx) >= 4 && idx[2] >= 0 {
+			curlStart = idx[3] // 组1（前置分隔符）结束 = curl 起点（字节偏移）
+		}
+		if cktCurlIsLive(line[:curlStart]) {
+			n++
+		}
+	}
+	return n
+}
+
+// cktScan —— py `scan(root)`：回 (real, fixtures, scanned, ok)。ok=false ⇒ 扫描根取不到（退 2）。
+func cktScan(root string) (real, fixtures []cktHit, scanned int, ok bool) {
 	if !cktIsDir(root) {
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
 	var walk func(dir, rel string)
 	walk = func(dir, rel string) {
@@ -252,6 +337,7 @@ func cktScan(root string) (real, fixtures []cktHit, ok bool) {
 		sort.Strings(files) // ★ 文件：py 明写 sorted(filenames)
 		for _, name := range files {
 			p := filepath.Join(dir, name)
+			scanned++ // ★ 扫描面件数（空域守卫的分母）
 			relp := name
 			if rel != "" {
 				relp = rel + "/" + name
@@ -270,7 +356,12 @@ func cktScan(root string) (real, fixtures []cktHit, ok bool) {
 				}
 				s := strings.TrimSpace(ln)
 				isComment := strings.HasPrefix(s, "#")
-				looksReal := (!isPy) || cktPyHint.MatchString(ln)
+				// ★ .sh 里真调用必须落在**命令位**（引号字面量 / 声明串里的 curl 不算 · GAP-20261005-05）；
+				//   .py 里真调用要同行有 subprocess 之类，否则一律算夹具/字面量。
+				looksReal := cktPyHint.MatchString(ln)
+				if !isPy {
+					looksReal = cktLiveCurls(ln) > 0
+				}
 				h := cktHit{Rel: relp, Line: i + 1, Text: s}
 				if isComment || !looksReal {
 					fixtures = append(fixtures, h)
@@ -284,7 +375,7 @@ func cktScan(root string) (real, fixtures []cktHit, ok bool) {
 		}
 	}
 	walk(root, "")
-	return real, fixtures, true
+	return real, fixtures, scanned, true
 }
 
 // cktJoinRel —— 相对路径串（用 `/`，同 py `os.path.relpath` 的分隔符）。
@@ -364,9 +455,14 @@ func cktBuildJSON(root string, real, miss, fixtures []cktHit) string {
 // cktRun —— py `main()` 的判据主段（`scan` + 判红 + 两档输出）。
 func cktRun(stdout, stderr io.Writer, root string, jsonOut bool) int {
 	cktReadFails = nil
-	real, fixtures, ok := cktScan(root)
+	real, fixtures, scanned, ok := cktScan(root)
 	if !ok {
 		fmt.Fprintf(stderr, "BLOCKED —— 扫描根不存在或读不到：%s（rc=2 · 不给结论）\n", root)
+		return 2
+	}
+	// ★ 空集守卫（GAP-20260927-108）：空域 ⇒ fail-closed（扫描面 0 件 ⇒ rc=2，不许把「空转」当绿）
+	if scanned == 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 空域：%s 下扫到 0 个 .sh/.py 件 ⇒ rc=2（不给结论；空转 ≠ 绿）\n", root)
 		return 2
 	}
 	if len(cktReadFails) > 0 {
@@ -428,6 +524,10 @@ func cktSelfTest(stdout, stderr io.Writer) int {
 	_ = os.MkdirAll(badD, 0o755)
 	_ = os.WriteFile(filepath.Join(okD, "ok.sh"), []byte("curl -m 5 https://example.invalid/x\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(badD, "bad.sh"), []byte("curl https://example.invalid/x\n"), 0o644)
+	declD := filepath.Join(tmp, "decl")
+	_ = os.MkdirAll(declD, 0o755)
+	_ = os.WriteFile(filepath.Join(declD, "decl.sh"),
+		[]byte("add_step gates \"门62 curl 超时口径：真调用必须带 -m（只报告）\" tri-report \"${REPO_ROOT}\" \"python3 x.py\"\n"), 0o644)
 
 	// run —— py `run(*a)`：进程内复用入口，取 (rc, stdout+stderr)（打印文案逐字对齐）。
 	run := func(args ...string) (int, string) {
@@ -462,6 +562,8 @@ func cktSelfTest(stdout, stderr io.Writer) int {
 	chk("档② 负控：curl 真调用漏上界 ⇒ rc=1", 1, rc, out)
 	rc, out = run("--root", filepath.Join(tmp, "no-such"))
 	chk("档③ 缺件：`--root` 读不到 ⇒ rc=2（不给结论）", 2, rc, out)
+	rc, out = run("--root", declD)
+	chk("档④ 声明串（GAP-20261005-05）：`add_step … \"…curl…\"` 里的 curl 不算真调用 ⇒ rc=0", 0, rc, out)
 
 	if bad == 0 {
 		fmt.Fprint(stdout, "── 自检：全过 ✓\n")

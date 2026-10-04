@@ -82,6 +82,8 @@ func TestCheckHardcodedPrivatePathsGatePort(t *testing.T) {
 	// ⑧ 成对负控：跳过目录（`target` + 以 `.` 开头）⇒ rc=0
 	_ = mk("skipdir", "core/target/x.go", "package main\n\nvar p = \""+n+"/x\"\n")
 	_ = mk("skipdot", "core/.zerg/y.go", "package main\n\nvar p = \""+n+"/y\"\n")
+	// ★ 空集守卫（GAP-20260927-108）随动：扫描面需非空（全件计数），故补一枚正常件；跳过的仍是 target/.zerg
+	_ = mk("skipdir", "core/keep.go", "package main\n\nvar x = 1\n")
 	if rc, out, _ = hcppTestRun(filepath.Join(tmp, "skipdir"), filepath.Join(tmp, "skipdot")); rc != 0 {
 		t.Fatalf("负控-跳过目录失败：得 rc=%d out=%q", rc, out)
 	}
@@ -104,12 +106,12 @@ func TestCheckHardcodedPrivatePathsGatePort(t *testing.T) {
 		t.Fatalf("--strict 档失败：得 rc=%d out=%q", rc, out)
 	}
 
-	// ⑪ 空转：`core/`/`agent/`/`ui/src` 都不在（空树）⇒ py 现语义 = rc=0 + 「通过」
+	// ⑪ 空转：`core/`/`agent/`/`ui/src` 都不在（空树）⇒ ★ 空集守卫（GAP-20260927-108）：fail-closed rc=2
 	empty := filepath.Join(tmp, "empty")
 	if err := os.MkdirAll(empty, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if rc, out, _ = hcppTestRun(empty); rc != 0 || !strings.Contains(out, "结果: 通过——") {
+	if rc, out, _ = hcppTestRun(empty); rc != 2 || strings.Contains(out, "结果: 通过——") {
 		t.Fatalf("空转档失败：得 rc=%d out=%q", rc, out)
 	}
 

@@ -483,8 +483,171 @@ func gateCheckClassOf(absPath string) (cls, lvl string) {
 	return "read", ""
 }
 
-// gateCheckWritePlan —— 写工具 `--dry-run` 的计划件（零副作用 · 只打印 · ✗ 不 exec）。
-func gateCheckWritePlan(name, full, lvl string, rest []string) string {
+// gateCheckRebuildDirRel —— 「构建/发布入口」目录（相对仓根 · **逐段**给）—— **重编类属性真源之一**。
+// ✗ 不是名字名单、✗ 不是点名豁免表：门80 明令壳件里不许出现按名名单 / 写死名件路径；这里判的是
+// **目录角色** —— 凡落在这个入口目录下的件，跑它就是在真跑重编/发布。逐段给（✗ 不写真值串）。
+var gateCheckRebuildDirRel = []string{"scripts", "build"}
+
+// gateCheckRepoBinTok —— 「repo 根下 bin/ 生产制品」路径 token 的现读形态（可带 ./ 或 $REPO_ROOT/ 前缀）。
+// 必须以 bin/ 起 ⇒ ✗ 不误伤 /bin/bash · …/edge-node/bin/… · fakebin/… 这类非仓根 bin 路径。
+const gateCheckRepoBinTok = `(?:\$\{REPO_ROOT\}/|\$REPO_ROOT/|\./)?bin/[A-Za-z0-9._-]+`
+
+// gateCheckArtifactWriteREs —— 「写 repo bin/ 生产制品」的**写位形态**族（逐条对应
+// check-writer-guard.py 的写形态口径，但**落点面是本壳关心的产物目录 bin/**；那件**刻意不判产物面**，
+// 所以构建入口这类脚本在它那里看不见）。只在**非注释行**上判（注释/三引号块里的写法不是真动作）。
+var gateCheckArtifactWriteREs = []*regexp.Regexp{
+	regexp.MustCompile(`>>?\s*"?` + gateCheckRepoBinTok),
+	regexp.MustCompile(`(?:^|\s)-o[=\s]\s*"?` + gateCheckRepoBinTok),
+	regexp.MustCompile(`(?:^|[;&|]|\s)(?:cp|mv|install|rsync)\b[^;|]*\s"?` + gateCheckRepoBinTok),
+	regexp.MustCompile(`\btee\s+(?:-a\s+)?"?` + gateCheckRepoBinTok),
+	regexp.MustCompile(`\bof="?` + gateCheckRepoBinTok),
+}
+
+// gateCheckWritesRepoArtifact —— 现读件的**非注释行**里，有没有「写 repo bin/ 生产制品」的写位形态。
+// 行判口径与 check-writer-guard.py 同规（跳空行/注释行/三引号块）；只读文本、✗ 不 exec、✗ 不写盘。
+func gateCheckWritesRepoArtifact(absPath string) bool {
+	f, err := os.Open(absPath)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	inDoc := false
+	for sc.Scan() {
+		line := strings.TrimRight(sc.Text(), "\r")
+		tog := strings.Count(line, "\"\"\"") + strings.Count(line, "'''")
+		if inDoc {
+			if tog%2 == 1 {
+				inDoc = false
+			}
+			continue
+		}
+		if tog%2 == 1 {
+			inDoc = true
+		}
+		s := strings.TrimSpace(line)
+		if s == "" || strings.HasPrefix(s, "#") {
+			continue
+		}
+		for _, re := range gateCheckArtifactWriteREs {
+			if re.MatchString(line) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// gateCheckRebuildClass —— 现读该件是否属「重编类」（会真跑重编 / 覆盖 bin/ 生产制品）。**属性判 · ✗ 不靠名**：
+//
+//	① 目录角色：件落在构建/发布入口目录（gateCheckRebuildDirRel）下；
+//	② 行为属性：非注释行里现读到「写 repo bin/ 生产制品」的写位形态（gateCheckWritesRepoArtifact）。
+//
+// 命中任一 ⇒ 跑它会真跑重编 / 覆盖 bin/ 里的生产制品 ⇒ 本壳据此给它与写工具同档的确认盾（缺 --yes ⇒ 拒执）。
+// ✗ 不设点名豁免表（门80 明令）、✗ 不写死任何一个件名。
+func gateCheckRebuildClass(full, root string) (bool, string) {
+	entryDir := filepath.Join(root, filepath.Join(gateCheckRebuildDirRel...))
+	if rel, err := filepath.Rel(entryDir, full); err == nil && rel != ".." &&
+		!strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return true, "构建/发布入口目录（" + filepath.ToSlash(filepath.Join(gateCheckRebuildDirRel...)) + "）"
+	}
+	if gateCheckWritesRepoArtifact(full) {
+		return true, "非注释行里写 repo bin/ 生产制品（现读写位形态）"
+	}
+	return false, ""
+}
+
+// gateCheckSuiteRosterREs —— 「gate 名册目录」的**现读形态**族（**跑整套门类**属性真源之一）。逐条给，
+// ✗ 不写死任何一个件名：`${GATEDIR}` 是仓内名册（gate 层）目录的惯用 shell 变量名，`gates/*` 是直接对
+// 名册目录取通配的形态。名册目录 = 本壳可执行件所在的 gate 层（与名录目录派生同源，**不另立名单**）。
+var gateCheckSuiteRosterREs = []*regexp.Regexp{
+	regexp.MustCompile(`\$\{?GATEDIR\}?`),
+	regexp.MustCompile(`gates/\*`),
+}
+
+// gateCheckSuiteExecRE —— 「命令位上起一个 shell / 解释器」的现读形态（行首、空白、`;`/`&`/`|`/`(` 之后）。
+// ✗ 不匹配「引号里的字面说明」（如文档/夹具串里的 `bash …`）—— 引号不在这个起首集合里 ⇒ 字面说明天然不算真调用。
+var gateCheckSuiteExecRE = regexp.MustCompile(`(?:^|[\s;&|(])(?:bash|sh|zsh|exec|dash|perl|python3)\s`)
+
+// gateCheckSuiteVarBodyRE —— 「执行体由 shell 变量解析」的形态（`"${X}"`）：跑的不是写死的件名，而是
+// 现读解析出来的东西 —— 这正是「真跑整套门」与「只读读步骤表」的分界（名册件是目录派生 ⇒ 只能由变量接住）。
+var gateCheckSuiteVarBodyRE = regexp.MustCompile(`"\$\{[A-Za-z_][A-Za-z0-9_]*\}[^"]*"`)
+
+// gateCheckSuiteSelfRE —— 「自指」体（`BASH_SOURCE` / `$0`）：件起自己（如自检负控）≠ 跑整套门 ⇒ 排除。
+var gateCheckSuiteSelfRE = regexp.MustCompile(`BASH_SOURCE|\$0\b`)
+
+// gateCheckSuiteReadRE —— 「只读档」调用（`--list` / `--self-test` / `--selftest` / `--help`）：同行带这些 ⇒ 不判真跑。
+var gateCheckSuiteReadRE = regexp.MustCompile(`--list\b|--self-test\b|--selftest\b|--help\b`)
+
+// gateCheckSuiteStepCmdRE —— 「以 shell 起 `-c "<串>"` 真跑一条命令」的形态（整套门**执行器**的特征）。
+var gateCheckSuiteStepCmdRE = regexp.MustCompile(`(?:^|[\s;&|(])(?:bash|sh|zsh|dash)\s+-c\b`)
+
+// gateCheckSuiteClass —— 现读该件是否属「**跑整套门类**」（会真跑成套的 gate 步）。**属性判 · ✗ 不靠名**：
+//
+//	① **名册执行**：该件现读名册目录（gateCheckSuiteRosterREs），且**命令位**起 shell/解释器去跑一个由
+//	   变量解析的执行体（gateCheckSuiteVarBodyRE），且非自指、非同行只读档 —— 即「遍历名册 · 逐个真跑」；
+//	② **步命令执行**：以 `bash -c "<串>"` 真跑一条命令（gateCheckSuiteStepCmdRE）—— 整套门的**执行器**本体。
+//
+// 与「只读读步骤表」判据的分界：后者**把步骤表当文本读**（open + 解析 add_step），从不起命令位的解释器
+// 去跑名册件 ⇒ 两条属性都不命中（**误伤面 = 0**）。命中任一 ⇒ 跑它会真跑整套门 ⇒ 本壳据此给它与写工具
+// 同档的确认盾（缺 --yes ⇒ 拒执）。✗ 不设点名豁免表、✗ 不写死任何一个件名（门80 明令）。
+func gateCheckSuiteClass(absPath string) (bool, string) {
+	f, err := os.Open(absPath)
+	if err != nil {
+		return false, ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	inDoc := false
+	rosterSig := false
+	execVar := false
+	stepCmd := false
+	for sc.Scan() {
+		line := strings.TrimRight(sc.Text(), "\r")
+		tog := strings.Count(line, "\"\"\"") + strings.Count(line, "'''")
+		if inDoc {
+			if tog%2 == 1 {
+				inDoc = false
+			}
+			continue
+		}
+		if tog%2 == 1 {
+			inDoc = true
+		}
+		s := strings.TrimSpace(line)
+		if s == "" || strings.HasPrefix(s, "#") {
+			continue
+		}
+		readMode := gateCheckSuiteReadRE.MatchString(line)
+		if !stepCmd && !readMode && gateCheckSuiteStepCmdRE.MatchString(line) {
+			stepCmd = true
+		}
+		if !rosterSig {
+			for _, re := range gateCheckSuiteRosterREs {
+				if re.MatchString(line) {
+					rosterSig = true
+					break
+				}
+			}
+		}
+		if !execVar && !readMode && gateCheckSuiteExecRE.MatchString(line) &&
+			gateCheckSuiteVarBodyRE.MatchString(line) && !gateCheckSuiteSelfRE.MatchString(line) {
+			execVar = true
+		}
+	}
+	if rosterSig && execVar {
+		return true, "现读名册目录并命令位起解释器去跑一个由变量解析的执行体（遍历名册 · 逐个真跑）"
+	}
+	if stepCmd {
+		return true, "以 shell 起 -c 真跑步命令串（整套门执行器本体）"
+	}
+	return false, ""
+}
+
+// gateCheckWritePlan —— 危险档件（写工具 / 重编类）--dry-run 的计划件（零副作用 · 只打印 · ✗ 不 exec）。
+func gateCheckWritePlan(name, full, lvl, kind, why string, rest []string) string {
 	need := "--yes"
 	if lvl == dangerD3 {
 		need = fmt.Sprintf("--confirm=<%s> 与 --yes 同时到", name)
@@ -496,9 +659,17 @@ func gateCheckWritePlan(name, full, lvl string, rest []string) string {
 	fmt.Fprintf(&b, "  判据件   : %s\n", filepath.Base(full))
 	fmt.Fprintf(&b, "  执行要   : %s\n", need)
 	fmt.Fprintf(&b, "  子件参数 : %s\n", orDash(strings.Join(rest, " ")))
-	fmt.Fprintf(&b, "  它会动   : 该**写工具**会真改盘（换件 / 落临时副本 / 落锁）—— 只读件不受影响\n")
+	if kind == "重编类" {
+		fmt.Fprintf(&b, "  它会动   : 该**重编类**件会**真跑重编 / 覆盖 bin/ 里的生产制品**（属性判：%s）\n", why)
+		fmt.Fprintf(&b, "  来源     : 属性判（GAP-20261005-20）—— 构建/发布入口 或 非注释行写 repo bin/ · ✗ 非点名\n")
+	} else if kind == "整套门类" {
+		fmt.Fprintf(&b, "  它会动   : 该**整套门类**件会**真跑整套门 / 步**（遍历名册逐个真跑 或 shell 起 -c 跑步命令）（属性判：%s）\n", why)
+		fmt.Fprintf(&b, "  来源     : 属性判（GAP-20261005-20）—— 名册执行 或 步命令执行 · ✗ 非点名\n")
+	} else {
+		fmt.Fprintf(&b, "  它会动   : 该**写工具**会真改盘（换件 / 落临时副本 / 落锁）—— 只读件不受影响\n")
+		fmt.Fprintf(&b, "  来源     : 件头 `#zerg-class: write %s` · 同族先例 family_gate_matrix.go:12-15\n", lvl)
+	}
 	fmt.Fprintf(&b, "  留痕     : 一行一事件 · 追加只写 · **写失败即拒**（§九 M3 C5）\n")
-	fmt.Fprintf(&b, "  来源     : 件头 `#zerg-class: write %s` · 同族先例 family_gate_matrix.go:12-15\n", lvl)
 	return b.String()
 }
 
@@ -614,14 +785,34 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 	//   ★ 主人裁定「按 ② 落」= 只认「缺 `--yes`」才退 2（`--yes` 本身就是命令行上的确认盾）——
 	//   ✗ 不取「无 TTY 一律 2」（本壳**从不提问**，但 `--yes` 到了就放行）。
 	//   退码**零新占号**：全部落在既有「2 = 用法错」这一档（见 guard.go 的三态与 family_gate_matrix.go 先例）。
-	if cls, lvl := gateCheckClassOf(full); cls == "write" {
+	// ★ 本刀（GAP-20261005-20）：**重编类**（会真跑重编 / 覆盖 bin/ 生产制品）**并入同一道确认盾** ——
+	//   名录按目录派生 ⇒ 里面混着构建/发布入口脚本与「非注释行写 repo bin/」的件，它们在名录里与只读判据
+	//   长得一样、此前无护栏 ⇒ 缺 `--yes` 一律拒执并指路。**属性判 · ✗ 不靠名**（门80 明令壳件里不许出现
+	//   按名名单 / 写死名件路径）—— 属性真源见 gateCheckRebuildClass。
+	// ★ 本刀再半（GAP-20261005-20 另一半）：**整套门类**（会真跑整套门 / 步：遍历名册逐个真跑 或 shell 起 -c
+	//   跑步命令）**同样并入这道盾** —— 属性真源见 gateCheckSuiteClass（属性判 · ✗ 不靠名）。
+	cls, lvl := gateCheckClassOf(full)
+	rebuild, rebuildWhy := gateCheckRebuildClass(full, root)
+	suite, suiteWhy := gateCheckSuiteClass(full)
+	if cls == "write" || rebuild || suite {
+		// 无件头声明级的重编类 / 整套门类 ⇒ 取最轻的确认盾档 D2（`--yes` 即可 · ✗ 不是不可逆档）。
+		if (rebuild || suite) && lvl == "" {
+			lvl = dangerD2
+		}
+		kind, why := "写工具", ""
+		switch {
+		case rebuild:
+			kind, why = "重编类", rebuildWhy
+		case suite:
+			kind, why = "整套门类", suiteWhy
+		}
 		// ① `--dry-run` 与 `--yes` 同给 ⇒ 2（guard.go:295-306 的**唯一**共享判定 · 逐字同一口径）。
 		if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
 			return rc
 		}
 		// ② `--dry-run`：只出计划件、**不 exec**（本批唯一返回 0 的那一态 · 照 guard.go:58-63）。
 		if inv.dryRun {
-			fmt.Fprint(stdout, gateCheckWritePlan(name, full, lvl, rest))
+			fmt.Fprint(stdout, gateCheckWritePlan(name, full, lvl, kind, why, rest))
 			fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
 			return exitOK
 		}
@@ -646,9 +837,16 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 		}
 		// ⑤ 缺 `--yes`（含**一切非交互**档：脚本 / 管道 / agent —— 本壳从不提问）⇒ 2（fail-closed）。
 		if !inv.yes {
-			msg := fmt.Sprintf("`%s` 是**写工具**（%s 档）—— **缺 --yes ⇒ 不执行**（非交互一律 fail-closed：从不提问）", name, lvl)
+			msg := fmt.Sprintf("`%s` 是**%s**（%s 档）—— **缺 --yes ⇒ 不执行**（非交互一律 fail-closed：从不提问）", name, kind, lvl)
 			inv.setErr("usage", "yes_required", msg)
 			fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
+			if why != "" {
+				acts := "**真跑重编 / 覆盖 bin/ 里的生产制品**"
+				if kind == "整套门类" {
+					acts = "**真跑整套门 / 步**"
+				}
+				fmt.Fprintf(stderr, "%s: 属性判据 = %s ⇒ 它会%s；要真跑请走正门，✗ 别拿 `gate check` 当「探判据在不在」的工具（名录里它与只读判据同形）。\n", progName, why, acts)
+			}
 			fmt.Fprintf(stderr, "先看计划件：%s gate check %s --dry-run\n", progName, name)
 			fmt.Fprintf(stderr, "error.kind=usage · detail=yes_required · retryable=false · remedy=fix_usage\n")
 			return exitUsage

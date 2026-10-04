@@ -170,11 +170,12 @@ func TestCheckDocsMainFaces(t *testing.T) {
 			t.Fatalf("rc=%d\n%s", rc, out)
 		}
 	})
-	t.Run("空面_零件_rc0", func(t *testing.T) {
+	t.Run("空面_零件_rc2_空域守卫", func(t *testing.T) {
 		root := t.TempDir()
 		rc, out, _ := docsRun([]string{root})
-		if rc != 0 || !strings.Contains(out, "双语对: 0 对") {
-			t.Fatalf("rc=%d\n%s", rc, out)
+		// ★ 空集守卫（GAP-20260927-108）随动：空域（扫面 0 件）从旧「rc=0 + 满绿」改为 fail-closed rc=2
+		if rc != 2 || strings.Contains(out, "双语对: 0 对") {
+			t.Fatalf("rc=%d\\n%s", rc, out)
 		}
 	})
 	t.Run("未知旗标_rc2_不静默", func(t *testing.T) {

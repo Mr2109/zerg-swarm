@@ -1024,15 +1024,27 @@ func gateProgressList(inv *invocation, stdout, stderr io.Writer) int {
 
 // ── 输出面：人读（§3.2）──────────────────────────────────────────────────────────────────
 
+// gateProgressRunState —— GAP-20261005-14：全屏**唯一**的活性判定。
+// 「趟：」行与下面的「正在跑：」行**必须同用它**，✗ 不许各自判 info.alive
+// （否则一屏之内「已收工」与「正在跑」自相矛盾 —— 正是本缺口）。
+// ★ aliveKnown=false ⇒ 「判不出」：既不当「在跑」也不当「已收工」
+// （与 §3.8「进程树取不到 ⇒ 不给结论」、GAP-20261004-05「取不到 pid 不默认已收工」同口径）。
+func gateProgressRunState(info *gateProgressInfo) (string, bool) {
+	if info == nil || !info.aliveKnown {
+		return "**判不出**（进程面取不到）", false
+	}
+	if info.alive {
+		return "**还在跑**", true
+	}
+	return "已收工", false
+}
+
 func gateProgressEmitHuman(w io.Writer, info *gateProgressInfo, code int) {
 	if info == nil || !info.found {
 		fmt.Fprintf(w, "趟：（判不出：读不到那一趟 / 空趟）\n")
 		return
 	}
-	state := "**还在跑**"
-	if !info.alive {
-		state = "已收工"
-	}
+	state, running := gateProgressRunState(info)
 	fmt.Fprintf(w, "趟：%s（%s · 根 pid %d · 已 %s · 挑取依据：%s）\n",
 		info.runDir, state, info.rootPid, gateProgressDur(info.elapsedSecs), dashIfEmpty(info.pickReason))
 	originText := "判不了"
@@ -1056,7 +1068,9 @@ func gateProgressEmitHuman(w io.Writer, info *gateProgressInfo, code int) {
 		}
 		fmt.Fprintf(w, "步耗时：最慢 %d 步 —— %s\n", len(info.slowest), strings.Join(parts, " · "))
 	}
-	if info.currentStep > 0 {
+	// ★ 同上唯一判定：**只有判出在跑**（running）才印「正在跑」；已收工 / 判不出时本行**印都不印**。
+	//   GAP-20261005-14：改前只要 currentStep>0（已收工趟也恒 >0）就印「正在跑」，与上行「已收工」打架。
+	if running && info.currentStep > 0 {
 		cur := ""
 		if info.currentOK {
 			cur = fmt.Sprintf(" · 该步已 %ds", info.currentSecs)

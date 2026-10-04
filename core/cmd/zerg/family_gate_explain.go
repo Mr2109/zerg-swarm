@@ -87,9 +87,16 @@ func cmdGateExplain(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	decls, unc := parseAddStepsStrict(string(b))
 	reportUncertainSteps(stderr, unc)
+	// ★ 2026-10-05（缺口 `GAP-20261001-33` 剩余半）：步名匹配走 `normStepName`（**与权威面同源**）
+	//   —— 脚本自己的 `filter_step` 两侧一律去反斜杠（`want="${want//\\/}"` · `${STEP_NAME[i]//\\/}`），
+	//   而 `parseAddSteps`→`addStepUnescape` **只**还原 `\"` 与 `\\`（不还原 `\`` 与 `\$`）⇒ 两个串空间
+	//   不等时，`gate ls`/`--list` 打出的含反引号/美元符步名在命令面被**逐字判「找不到」退 2**。
+	//   归一后两侧同串空间：`--list` 形态与源文（带反斜杠）形态**都能**命中（对不含反斜杠的名字是恒等 ⇒
+	//   既有形态逐字节不变）。`normStepName` 与 `gate run --step` 共用同一函数（不另写第二份口径）。
 	hits := []gateStepDecl{}
+	wantKey := normStepName(want)
 	for _, d := range decls {
-		if d.Name == want {
+		if normStepName(d.Name) == wantKey {
 			hits = append(hits, d)
 		}
 	}
@@ -322,7 +329,10 @@ func gateStepIndex(root, name string) (int, bool) {
 			continue
 		}
 		idx++
-		if strings.Join(parts[2:], " ") == name {
+		// ★ 2026-10-05（缺口 `GAP-20261001-33`）：步名**归一后比** —— 脚本 `--list` 打出的名字是**运行期
+		//   形态（不带反斜杠）**，而调用方可能给**源文形态**（带反斜杠的 `\``/`\$`）⇒ 不归一会把在册步
+		//   误判成「`--list` 里没有这一行」（`log` 那一格错报）。与 `normStepName` 同一函数（权威面同源）。
+		if normStepName(strings.Join(parts[2:], " ")) == normStepName(name) {
 			return idx, true
 		}
 	}

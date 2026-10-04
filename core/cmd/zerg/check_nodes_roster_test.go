@@ -2,10 +2,10 @@
 //
 // 覆盖面（与件头「已对拍面 / 未覆盖面」对齐）：
 //
-//	① 自检十档全过（正控 rc=0）· ② 显式三路径表（全对 0 / 漂移 1 / 无声明 1 / 名册不在 2 / 空名册 2 /
+//	① 自检二十二档全过（正控 rc=0）· ② 显式三路径表（全对 0 / 漂移 1 / 无声明 1 / 名册不在 2 / 空名册 2 /
 //	plist 不在 0）· ③ `--json` 用法错 rc=2（Q-176 本门无机器读面）· ④ `-h` 帮助 rc=0 ·
 //	⑤ 未知旗标 rc=2（unrecognized）· ⑥ 缺值 rc=2（expected one argument）· ⑦ `--list-rules` rc=0 ·
-//	⑧ A 类对齐：自检后临时目录同前缀计数 delta=0 · ⑨ 漂移**点名到字段**（负控锚点：哑化后必红）。
+//	⑧ A 类对齐：自检后临时目录同前缀计数 delta=0 · ⑨ 漂移**点名到字段**（负控锚点：哑化后必红）· ⑩ 判据 H（拨号地址由名册可推导）：红逐字点名/绿/端口不符/哑化负控。
 package main
 
 import (
@@ -32,7 +32,7 @@ func cnrRunMain(argv ...string) (int, string, string) {
 	return rc, so.String(), se.String()
 }
 
-// TestCheckNodesRoster_SelfTestAllPass —— ① 自检十档（正控：全过 ⇒ rc=0）。
+// TestCheckNodesRoster_SelfTestAllPass —— ① 自检二十二档（正控：全过 ⇒ rc=0）。
 func TestCheckNodesRoster_SelfTestAllPass(t *testing.T) {
 	var so, se strings.Builder
 	rc := cnrSelfTest(&so, &se)
@@ -40,10 +40,10 @@ func TestCheckNodesRoster_SelfTestAllPass(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("自检应 rc=0，实得 %d\n%s", rc, out)
 	}
-	if !strings.Contains(out, "自检结论：全过（21 条，失败 0）") {
+	if !strings.Contains(out, "自检结论：全过（25 条，失败 0）") {
 		t.Fatalf("自检结论行不符，实得尾部：\n%s", out)
 	}
-	// 十档里负控必须真红过（成对：少一台/host 漂/声明缺/ssh 漂/models 未登记/plist 未登记）
+	// 二十二档里负控必须真红过（成对：少一台/host 漂/声明缺/ssh 漂/models 未登记/plist 未登记）
 	for _, want := range []string{"fleet: host 改一位 ⇒ 1", "updates 段声明删掉 ⇒ 1", "plist 机器名未登记 ⇒ 1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("自检输出缺档 %q", want)
@@ -230,5 +230,53 @@ func TestCheckNodesRoster_PyParsePrimitives(t *testing.T) {
 	}
 	if _, ok := cnrModelsHost("  hostname: edge-node"); ok {
 		t.Fatalf("`hostname:` 不应命中")
+	}
+}
+
+// TestCheckNodesRoster_ControllerJudgementH —— ⑩ 判据 H 定向：红逐字点名 / 绿 / 端口不符 / 哑化负控。
+//
+//	★ 夹具与句式逐字对齐 py 半：`scripts/gates/check-nodes-roster.py` 的 `check_controller()`（GAP-20260927-03）。
+func TestCheckNodesRoster_ControllerJudgementH(t *testing.T) {
+	d := t.TempDir()
+	roster := cnrWriteFixture(t, d, "roster.yaml", cnrRosterFix)
+	fleet := cnrWriteFixture(t, d, "fleet.yaml", cnrFleetFix)
+	plist := cnrWriteFixture(t, d, "a.plist", cnrPlistFix)
+	cBad := cnrWriteFixture(t, d, "ctrl_bad.plist",
+		strings.ReplaceAll(cnrPlistCtrlVarFix, "__CTRL__", "http://<worker-host>:8580"))
+	cOK := cnrWriteFixture(t, d, "ctrl_ok.plist",
+		strings.ReplaceAll(cnrPlistCtrlVarFix, "__CTRL__", "http://<worker-ip>:8580"))
+	cPort := cnrWriteFixture(t, d, "ctrl_port.plist",
+		strings.ReplaceAll(cnrPlistCtrlLiteralFix, "__CTRL__", "http://<worker-ip>:9"))
+
+	// 绿例：变量默认值可推导（host=<worker-ip> ∈ 名册 · port=8580 == 名册 core 端口）⇒ rc=0
+	if rc, out, _ := cnrRunMain("--roster", roster, "--fleet", fleet, "--plist", plist, "--ctrl-plist", cOK); rc != 0 {
+		t.Fatalf("H 绿例应 rc=0，实得 %d\n%s", rc, out)
+	}
+
+	// 红例一：host 不在名册可推导集（变量形态的默认值）⇒ rc=1 + 逐字点名（与 py 同句式）
+	rc, out, _ := cnrRunMain("--roster", roster, "--fleet", fleet, "--plist", plist, "--ctrl-plist", cBad)
+	if rc != 1 {
+		t.Fatalf("H 红例应 rc=1，实得 %d\n%s", rc, out)
+	}
+	wantBad := "H " + cBad + "（变量 ${ZERG_AGENT_CONTROLLER:-…} 的默认值） 的拨号地址推不出来：" +
+		"现值 'http://<worker-host>:8580' —— host=<worker-host> 不在名册可推导集" +
+		"（改 plist 或先把该地址登记进名册 nodes）"
+	if !strings.Contains(out, wantBad) {
+		t.Fatalf("H 红例未逐字点名：缺\n%q\n实得：\n%s", wantBad, out)
+	}
+
+	// 红例二：端口 ≠ 名册 core 端口（字面形态）⇒ rc=1
+	rc2, out2, _ := cnrRunMain("--roster", roster, "--fleet", fleet, "--plist", plist, "--ctrl-plist", cPort)
+	if rc2 != 1 || !strings.Contains(out2, "port=9 ≠ 名册 core 端口=8580") {
+		t.Fatalf("H 端口档应 rc=1 且点名端口：rc=%d\n%s", rc2, out2)
+	}
+
+	// 哑化负控：去掉 H 断言（ctrlCheck=false）⇒ 同一 bad 回不报（rc=0）
+	var so strings.Builder
+	if rc3 := cnrRunChecks(&so, roster, fleet, plist, true, false, []string{cBad}, false); rc3 != 0 {
+		t.Fatalf("H 哑化负控应 rc=0（回不报），实得 %d\n%s", rc3, so.String())
+	}
+	if !strings.Contains(so.String(), "断言哑化") {
+		t.Fatalf("哑化档未声明「断言哑化」：\n%s", so.String())
 	}
 }

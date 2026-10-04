@@ -12,7 +12,7 @@
 //
 //	✓ 选 `check_version.py`（121 行）：只读仓内两枚固定件 `ui/Cargo.toml` 与
 //	  `core/internal/version/version.go`（**无外部树依赖**）· 输出**定序**（固定三行 + 结论行，
-//	  无目录遍历）· 退码 `0/1/2` 三档齐（0 一致 / 1 不一致或解析失败 / 2 用法错）· **纯静态无写面**
+//	  无目录遍历）· 退码 `0/1/2` 三档齐（0 一致 / 1 不一致 / 2 不给结论（版本真源取不到 = 空域）或用法错）· **纯静态无写面**
 //	  （默认档一字不写；`--self-test` 只写 `os.MkdirTemp` 仓外临时树）· 121 行（**行数适中**）·
 //	  `git status` 现读**不含它**（无人正在改）· 不属已搬 11 枚。
 //	✗ 不选 `check-tool-version-sync.sh`（60 行 · bash）：非判据件形态、跑 `go` 子进程 ⇒ 非纯静态。
@@ -47,9 +47,10 @@
 // 未覆盖面（✗ 不声称逐字对齐）：
 //
 //	① py 用 argparse? —— **不用**（本件手搓 argv 解析）⇒ `-h/--help` **可**逐字对齐（落「未知旗标」档 rc=2）。
-//	② py `rust_version()` **不先查存在**：`ui/Cargo.toml` 缺失 / 是目录 / 非 UTF-8 ⇒ py **未捕获抛 traceback**
-//	   （进程退码 1、stdout 为空）。本件落「读不到」⇒ **stdout 同样为空**、退码 1，但 **stderr 正文不同**
-//	   （py 是 CPython traceback · 本件是「读不到」说明行）。此档**不在**逐字对齐承诺内。
+//	② py `rust_version()` **先查存在**（★ 空集守卫 GAP-20260927-108）：`ui/Cargo.toml` 缺失 ⇒ 返 `None`
+//	   ⇒ 主档「版本真源取不到」⇒ rc=2（不给结论）。本件同口径（`verExists` 缺失 ⇒ 返空串 ⇒ 同 rc=2）。
+//	   仍不覆盖：件是**目录** / 非 UTF-8 —— py `open(...)` 抛异常（进程退码 1、stdout 为空）；
+//	   本件落「读不到」⇒ **stdout 同样为空**、退码 1，但 **stderr 正文不同**。此档**不在**逐字对齐承诺内。
 //	③ py `--self-test` 用 `subprocess` **真跑自身进程**取真退出码；本件 `--self-test` **进程内**复用同一入口
 //	   取 rc（打印文案逐字对齐；差在实现手段，不在读数）。若 `sys.executable` 缺失则 py 自检报错、本件不受影响。
 //
@@ -108,7 +109,7 @@ func versionGateMain(stdout, stderr io.Writer, argv []string) int {
 	// py 先算 rust、再算 go（左到右）；rust 抛异常即整体退 1 且不打印任何 stdout（未覆盖面②）。
 	rv, rerr := verRustVersion(root)
 	if rerr != nil {
-		// py 在此抛 traceback（stdout 空 · 退码 1）；本件 stdout 同为空，stderr 正文不同（未覆盖面②）。
+		// py 在「件是目录 / 非 UTF-8」时抛 traceback（stdout 空 · 退码 1）；本件 stdout 同为空，stderr 正文不同。
 		fmt.Fprintf(stderr, "✗ 读不到 %s：%v ⇒ 判不了（py 原件此处抛 traceback · 退码 1）\n",
 			filepath.Join(root, "ui", "Cargo.toml"), rerr)
 		return 1
@@ -118,9 +119,12 @@ func versionGateMain(stdout, stderr io.Writer, argv []string) int {
 	fmt.Fprintf(stdout, "仓库根: %s\n", root)
 	fmt.Fprintf(stdout, "  ui/Cargo.toml version      = %s\n", verOrNone(rv))
 	fmt.Fprintf(stdout, "  core version.Version       = %s\n", verOrNone(gv))
-	if rv == "" || gv == "" {
-		fmt.Fprint(stdout, "\n结果: 失败——未能解析版本号（Cargo.toml 或 version.go 缺失/格式变化）\n")
-		return 1
+	// ★ 空集守卫（GAP-20260927-108）：域 = 「取到的版本真源」——
+	//   任一侧取不到（件缺失 / 无 version 行 ⇒ 空串）时**比较整块消失** ⇒ 不许当「一致」绿；
+	//   同族口径：**不存在 / 取不到 ⇒ 不给结论（rc=2）**，与「两处不一致」的真红（rc=1）分得开。
+	if rv == "" || gv == "" { // ★ 空集守卫（GAP-20260927-108）：版本真源取不到（空域）⇒ rc=2（不给结论）
+		fmt.Fprint(stdout, "\n结果: 不给结论（rc=2）—— 版本真源取不到（ui/Cargo.toml 或 core version.go 缺失/无 version 行）\n")
+		return 2
 	}
 	if rv != gv {
 		fmt.Fprint(stdout, "\n结果: 失败——版本号不一致（收版时两处必须同改）\n")
@@ -168,7 +172,11 @@ func verRepoRoot(arg string) string {
 // verRustVersion —— py `rust_version(root)`：读 `ui/Cargo.toml`，取首个 `^version = "…"`。
 // 文件存在但无匹配 ⇒ 空串（py 为 None）。读不到 ⇒ err（py 抛异常 —— 未覆盖面②）。
 func verRustVersion(root string) (string, error) {
-	b, err := os.ReadFile(filepath.Join(root, "ui", "Cargo.toml"))
+	p := filepath.Join(root, "ui", "Cargo.toml")
+	if !verExists(p) { // ★ 空集守卫（GAP-20260927-108）：件不存在 ⇒ 取不到（返空串），不报错 ⇒ 主档 rc=2
+		return "", nil
+	}
+	b, err := os.ReadFile(p)
 	if err != nil {
 		return "", err
 	}

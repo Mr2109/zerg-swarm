@@ -213,6 +213,15 @@ def main() -> int:
         print("✗ 不给结论（rc=2）：%s ⇒ **取不到 ≠ 零命中**（两态不许同形）；code=%s"
               % (err, CODE_TRACKED_UNKNOWN), file=sys.stderr)
         return EXIT_BLOCKED
+    # ★ 空清单（`GAP-20260927-108`）：**没输入可判** ⇒ ✗ 不许把「零告警」读成「新鲜」。
+    #   口径（2026-10-05 拍板）：**rc 契约一字不动**（本门是报告档：缺省退码恒 0、仅 `--strict` 拦）——
+    #   只把文案从「✓ 清单新鲜（无告警）」改成**明说「没输入可判」**；`--strict` 下空清单照旧**拦**（升 rc=1）。
+    #   判「空」= 四键（source_sha / dirty / commit / generated_at）**一个都不在**；非 dict ⇒ 不算空（走既有路径）。
+    if not warns and isinstance(mf, dict) and not any(
+            k in mf for k in ("source_sha", "dirty", "commit", "generated_at")):
+        print("⚠ 空清单：没输入可判 —— 本清单未携带任何判据字段"
+              "（source_sha / dirty / commit / generated_at 全缺）⇒ 不报「新鲜」")
+        return EXIT_FAIL if a.strict else rc
     if not warns:
         print("✓ 清单新鲜（无告警）")
         return rc

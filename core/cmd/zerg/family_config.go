@@ -99,7 +99,8 @@ type modelAddSpec struct {
 	Host, Backend, File, Arch, Desc, Mmproj, Added string
 	Ctx                                            int
 	MemGb                                          float64
-	HasCtx, HasMem, HasVerified                    bool
+	SizeBytes                                      int64
+	HasCtx, HasMem, HasVerified, HasSize           bool
 	Verified                                       bool
 }
 
@@ -112,6 +113,9 @@ func modelAddLine(indent int, s modelAddSpec) string {
 	}
 	if s.HasMem {
 		parts = append(parts, "mem_gb: "+strconv.FormatFloat(s.MemGb, 'f', -1, 64))
+	}
+	if s.HasSize {
+		parts = append(parts, "size_bytes: "+strconv.FormatInt(s.SizeBytes, 10))
 	}
 	if s.HasCtx {
 		parts = append(parts, "ctx_window: "+strconv.Itoa(s.Ctx))
@@ -325,7 +329,7 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 	bad := func(detail, msg string) int {
 		inv.setErr("usage", detail, msg)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
-		fmt.Fprintf(stderr, "  用法：zerg model add --model <模型名> --host <主机> --file <GGUF 路径> --confirm <模型名> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run | --yes]\n")
+		fmt.Fprintf(stderr, "  用法：zerg model add --model <模型名> --host <主机> --file <GGUF 路径> --confirm <模型名> [--backend …] [--mem-gb …] [--size-bytes …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run | --yes]\n")
 		fmt.Fprintf(stderr, "        （`--model` = `models:` 段的**键/块名** ⇒ 按它定位或新建那一块；`--host` = 该条 `host:` 的**字段值**＝这台模型跑在哪台机器）\n")
 		return exitUsage
 	}
@@ -361,6 +365,13 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 			return bad("bad_value", fmt.Sprintf("`--mem-gb` 要正数（给的是 %q）", mg))
 		}
 		s.MemGb, s.HasMem = f, true
+	}
+	if sb := strings.TrimSpace(inv.flagVal("--size-bytes")); sb != "" {
+		n, err := strconv.ParseInt(sb, 10, 64)
+		if err != nil || n <= 0 {
+			return bad("bad_value", fmt.Sprintf("`--size-bytes` 要正整数（给的是 %q）", sb))
+		}
+		s.SizeBytes, s.HasSize = n, true
 	}
 	// `name`（`--model`）从本笔起是**块名**：`models:` 段的键就是要写/新建的那一块（见 `modelAddLocate`）。
 	// 它照旧不进条目的字段面（无 `name:` 键 —— 现册条靠 `host` + `file` 认），但**决定块定位与新增**。
@@ -888,6 +899,9 @@ func modelSetKind(key string) string {
 	switch key {
 	case "verified", "ssd", "thinking", "tool_support", "engine_impl_required":
 		return "bool"
+	case "size_bytes":
+		// 字节数锚（正整数）—— 名册自带、由 check-model-size-anchor 只 stat 对拍。
+		return "int"
 	case "mem_gb", "ctx_window", "max_tokens":
 		return "num"
 	case "name", "family", "host", "backend", "file", "arch", "architecture",
@@ -912,6 +926,12 @@ func modelSetValueText(key, v string) (string, bool) {
 			return "", false
 		}
 		return v, true
+	case "int":
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			return "", false
+		}
+		return strconv.FormatInt(n, 10), true
 	case "str":
 		return yamlStr(v), true
 	}
@@ -1080,7 +1100,7 @@ func cmdModelSet(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("usage", detail, msg)
 		fmt.Fprintf(stderr, "%s: %s\n", progName, msg)
 		fmt.Fprintf(stderr, "  用法：zerg model set --model <模型名> --host <主机> [--file <GGUF 路径>] --set k=v [--set k=v …] --confirm <模型名> [--dry-run | --yes]\n")
-		fmt.Fprintf(stderr, "        （只改点准的那一条 · 其余字段逐字保留；可改字段：host backend file mem_gb ctx_window max_tokens architecture arch template modality verified thinking tool_support ssd mmproj moe description added name family）\n")
+		fmt.Fprintf(stderr, "        （只改点准的那一条 · 其余字段逐字保留；可改字段：host backend file mem_gb size_bytes ctx_window max_tokens architecture arch template modality verified thinking tool_support ssd mmproj moe description added name family）\n")
 		return exitUsage
 	}
 	if name == "" || host == "" {
@@ -1117,6 +1137,8 @@ func cmdModelSet(inv *invocation, stdout, stderr io.Writer) int {
 				return bad("bad_field", fmt.Sprintf("`--set %s=` 是**列表值**（`cmd` / `env`）—— 本命令不收，请整行手改（不猜）", k))
 			case "bool":
 				return bad("bad_value", fmt.Sprintf("`--set %s=` 要 true / false（给的是 %q）", k, v))
+			case "int":
+				return bad("bad_value", fmt.Sprintf("`--set %s=` 要正整数（字节数 · 给的是 %q）", k, v))
 			default:
 				return bad("bad_value", fmt.Sprintf("`--set %s=` 要数值（给的是 %q）", k, v))
 			}

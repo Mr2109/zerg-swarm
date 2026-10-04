@@ -125,6 +125,30 @@ def extract_key_lines(stdout, key_re):
     return lines[:20]  # 每门最多留 20 条关键行，别撑爆 JSON
 
 
+_UNREADABLE_REASON = "已登记/未登记 计数读不出（人面文案变体且无机读面）⇒ 不给结论"
+
+
+def _dangling_machine_face(stdout):
+    """读 check-dangling-refs 的机读面（--json 一行 · schema=dangling-refs/1）。
+
+    返回 (registered, hit) 或 None —— hit 即「未登记」数（live+ledger）。
+    GAP-20261005-30 第一刀：真源优先走机读面，人面只作退化路。
+    """
+    for ln in stdout.splitlines():
+        s = ln.strip()
+        if not (s.startswith("{") and s.endswith("}")):
+            continue
+        try:
+            o = json.loads(s)
+        except Exception:
+            continue
+        if isinstance(o, dict) and o.get("schema") == "dangling-refs/1":
+            reg, hit = o.get("registered"), o.get("hit")
+            if type(reg) is int and type(hit) is int:
+                return reg, hit
+    return None
+
+
 def extract_registered_falses(stdout, gate_name):
     """判断该门是否「已登记假红」：悬空引用门若命中几乎全在登记表里 = 假红。
 
@@ -133,6 +157,12 @@ def extract_registered_falses(stdout, gate_name):
     """
     if REGISTRY_GATE not in gate_name:
         return False, None
+    _mf = _dangling_machine_face(stdout)
+    if _mf is not None:
+        _reg, _hit = _mf
+        return (_reg > 0 and (_hit == 0 or _reg >= 5 * _hit)), {
+            "unregistered": _hit, "registered": _reg
+        }
     if "已登记" not in stdout or "不计命中" not in stdout:
         return False, None
     m_un = re.search(r"有 (\d+) 处.*未登记", stdout)
@@ -140,7 +170,7 @@ def extract_registered_falses(stdout, gate_name):
     n_un = int(m_un.group(1)) if m_un else None
     n_reg = int(m_reg.group(1)) if m_reg else None
     if n_un is None or n_reg is None:
-        return False, None
+        return False, {"unreadable": True, "reason": _UNREADABLE_REASON}
     return (n_reg > 0 and (n_un == 0 or n_reg >= 5 * n_un)), {
         "unregistered": n_un, "registered": n_reg
     }
@@ -240,9 +270,13 @@ def main(argv):
                             "registered_falses": False})
             any_nonzero = True
             continue
-        rec = run_gate(gate_path, registry_extra, args.root)
+        per_gate = registry_extra + (["--json"] if REGISTRY_GATE in g else [])
+        rec = run_gate(gate_path, per_gate, args.root)
         key_lines = extract_key_lines(rec["stdout"], args.key_regex)
         is_ff, ff = extract_registered_falses(rec["stdout"], g)
+        if isinstance(ff, dict) and ff.get("unreadable"):
+            print("✗ %s：%s ⇒ 拒给结论（rc=2）" % (g, ff.get("reason", "")), file=sys.stderr)
+            return 2
         # 该门自己的 JSON（若吐）原样收进 raw
         raw = None
         for ln in rec["stdout"].splitlines():

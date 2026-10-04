@@ -478,6 +478,11 @@ func cdocMain(argv []string, cwd string, stdout, stderr io.Writer) int {
 	}
 
 	files := cdocDocFiles(root)
+	// ★ 空集守卫（GAP-20260927-108）：空域 ⇒ fail-closed（扫面 0 件 ⇒ rc=2，不许把「空转」当绿）
+	if len(files) == 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 空域：%s 下扫到 0 个 *.md/*.markdown 文档件 ⇒ rc=2（不给结论；空转 ≠ 绿）\n", root)
+		return 2
+	}
 
 	type pair struct{ zh, en string }
 	var pairs []pair

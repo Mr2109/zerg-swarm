@@ -1029,9 +1029,10 @@ impl ChatView {
             if let Some(res) = done {
                 match res {
                     Ok(v) => {
-                        if let Some(arr) = v.as_array() {
-                            self.search_results = arr.clone();
-                        }
+                        // GAP-20261005-29: 后端 /api/chat/search 返回对象 {"results":[...]}
+                        // （不是顶层数组）——原 v.as_array() 恒 None ⇒ search_results 恒空、
+                        // 命中也不渲染。改取 results 键下的数组（空档 {"results":[]} 同形）。
+                        self.search_results = search_results_from(&v);
                     }
                     Err(e) => self.send_error = Some(t!("chat.err_search", err = e).to_string()),
                 }
@@ -1428,11 +1429,7 @@ impl ChatView {
                 } else {
                     title.clone()
                 };
-                let ts = s
-                    .get("updated_at")
-                    .and_then(|t| t.as_f64())
-                    .or_else(|| s.get("last_active").and_then(|t| t.as_f64()))
-                    .unwrap_or(0.0);
+                let ts = session_activity_ts(s);
                 let age = format_age(ts, now_secs);
                 let abs = format_abs_time(ts);
                 let running = streaming_now && is_active;
@@ -2963,6 +2960,37 @@ fn tool_calls_to_md(tc: &str) -> String {
     md
 }
 
+/// GAP-20261005-29: 解析 /api/chat/search 的响应。
+///
+/// 后端（core/internal/api/chat_handlers.go: Search）发的是对象 `{"results":[...]}`
+/// （空查询档同样发对象）。顶层数组形态仅为向后兼容保留（同 api.rs:1385 的模型列表读法）。
+/// 原实现直接 `v.as_array()` 只认顶层数组 ⇒ 对对象响应恒 None ⇒ 搜索结果恒空。
+fn search_results_from(v: &Value) -> Vec<Value> {
+    if let Some(a) = v.as_array() {
+        a.clone()
+    } else if let Some(rs) = v.get("results").and_then(|x| x.as_array()) {
+        rs.clone()
+    } else {
+        Vec::new()
+    }
+}
+
+/// GAP-20261005-28: 读会话行的「最后活动时间」（秒级时间戳）。
+///
+/// 后端 /api/chat/sessions 的 session 只发 last_activity_at
+/// （真源 core/internal/chat/chat_session.go 的 json tag last_activity_at），
+/// 既无 updated_at 也无 last_active（在跑主控 94/94 条实测）。
+/// 原实现在此读 updated_at、回退 last_active ⇒ 对现网响应恒 None ⇒ ts 恒 0
+/// ⇒ format_age / format_abs_time 对 0 直接返回空串 ⇒ 会话行时间列恒空。
+/// 现改为读真键 last_activity_at，旧两键保留为兼容支（上游若改回旧名仍可读）。
+fn session_activity_ts(s: &Value) -> f64 {
+    s.get("last_activity_at")
+        .and_then(|t| t.as_f64())
+        .or_else(|| s.get("updated_at").and_then(|t| t.as_f64()))
+        .or_else(|| s.get("last_active").and_then(|t| t.as_f64()))
+        .unwrap_or(0.0)
+}
+
 #[cfg(test)]
 mod recall_pointer_tests {
     use super::ChatView;
@@ -2992,6 +3020,142 @@ mod recall_pointer_tests {
         assert_eq!(
             ChatView::recall_pointer("session_search(session_id=, around_id=9)"),
             None
+        );
+    }
+}
+
+/// GAP-20261005-29: /api/chat/search 响应形状（两态对拍）。
+/// 后端真实形态是对象 `{"results":[...]}`；改前 UI 只认顶层数组 ⇒ 恒空。
+#[cfg(test)]
+mod search_response_shape_tests {
+    use super::search_results_from;
+    use serde_json::json;
+
+    /// 正控（改后态）：后端形态 `{"results":[...]}` ⇒ 取出结果行。
+    #[test]
+    fn results_key_yields_rows() {
+        let v = json!({"results": [
+            {"session_id": "s1", "content": "核对"},
+            {"session_id": "s2", "content": "核对账单"}
+        ]});
+        let rows = search_results_from(&v);
+        assert_eq!(rows.len(), 2, "results 键下的数组应被取出");
+        assert_eq!(
+            rows[0].get("session_id").and_then(|x| x.as_str()),
+            Some("s1")
+        );
+    }
+
+    /// 空档守卫：q 为空时后端发 `{"results":[]}` ⇒ 解析为空、不 panic。
+    #[test]
+    fn empty_results_is_empty() {
+        let v = json!({"results": []});
+        assert!(search_results_from(&v).is_empty());
+    }
+
+    /// 负控（哑化）：把读法改回顶层数组 `v.as_array()` ⇒ 对同一对象响应恒 None ⇒ 恒空。
+    #[test]
+    fn negative_control_top_level_only_is_empty() {
+        let v = json!({"results": [{"session_id": "s1", "content": "核对"}]});
+        assert!(v.as_array().is_none(), "响应是对象 ⇒ 顶层数组读法恒 None");
+    }
+
+    /// 兼容：若上游哪天改回顶层数组，旧读法仍成立。
+    #[test]
+    fn top_level_array_still_works() {
+        let v = json!([{"session_id": "s1", "content": "核对"}]);
+        assert_eq!(search_results_from(&v).len(), 1);
+    }
+}
+
+/// GAP-20261005-28: 会话行「最后活动时间」读键（两态对拍）。
+///
+/// 正控 = 后端真键 last_activity_at（在跑主控 94/94 条形态）⇒ 读出非空时间；
+/// 负控 = 哑化回旧两键（updated_at / last_active）⇒ 同一批样本逐条 0、时间列回空。
+#[cfg(test)]
+mod session_activity_ts_tests {
+    use super::{format_age, session_activity_ts};
+    use serde_json::json;
+
+    /// 后端逐条只带 last_activity_at 的样本（等价现网 94 条形态）。
+    fn backend_rows() -> Vec<serde_json::Value> {
+        vec![
+            json!({"id": "s1", "last_activity_at": 1_760_000_000.0}),
+            json!({"id": "s2", "last_activity_at": 1_760_000_060.0}),
+            json!({"id": "s3", "last_activity_at": 1_760_000_600.0}),
+        ]
+    }
+
+    /// 哑化对照：改前的旧读法（只认 updated_at / last_active）。
+    fn legacy_ts(s: &serde_json::Value) -> f64 {
+        s.get("updated_at")
+            .and_then(|t| t.as_f64())
+            .or_else(|| s.get("last_active").and_then(|t| t.as_f64()))
+            .unwrap_or(0.0)
+    }
+
+    /// 正控（改后态）：后端真键 ⇒ 逐条读出 > 0 的非空时间。
+    #[test]
+    fn backend_key_yields_time() {
+        for s in backend_rows() {
+            assert!(
+                session_activity_ts(&s) > 0.0,
+                "后端 last_activity_at 应被读出（改前恒 0）"
+            );
+        }
+    }
+
+    /// 负控（哑化）：换回旧读法 ⇒ 同一批后端样本全 0、format_age 回空串。
+    #[test]
+    fn negative_control_legacy_keys_all_empty() {
+        let now = 1_760_000_000_i64;
+        for s in backend_rows() {
+            let ts = legacy_ts(&s);
+            assert_eq!(ts, 0.0, "旧两键在现网样本上恒缺 ⇒ 恒 0");
+            assert_eq!(format_age(ts, now), "", "0 ⇒ 相对时间空串");
+        }
+    }
+
+    /// 端到端：真时间戳经 format_age 渲染出非空串（账要点「渲染出非空时间串」）。
+    #[test]
+    fn renders_nonempty_age() {
+        let now = 1_760_000_000_i64;
+        for s in backend_rows() {
+            assert!(
+                !format_age(session_activity_ts(&s), now).is_empty(),
+                "真时间戳应渲染出非空相对时间"
+            );
+        }
+    }
+
+    /// 兼容：旧两键若哪天出现，仍可读（保留兼容支）。
+    #[test]
+    fn legacy_keys_still_work() {
+        assert_eq!(
+            session_activity_ts(&json!({"id": "s1", "updated_at": 1_760_000_000.0})),
+            1_760_000_000.0
+        );
+        assert_eq!(
+            session_activity_ts(&json!({"id": "s2", "last_active": 1_760_000_000.0})),
+            1_760_000_000.0
+        );
+    }
+
+    /// 边界：0 / 负 / 未来时间戳经 format_age 不 panic、语义正确；缺字段 / 坏类型 ⇒ 0。
+    #[test]
+    fn format_age_boundaries() {
+        let now = 1_760_000_000_i64;
+        assert_eq!(format_age(0.0, now), "", "0 ⇒ 空");
+        assert_eq!(format_age(-5.0, now), "", "负 ⇒ 空");
+        let future = (now + 86_400) as f64;
+        assert!(
+            !format_age(future, now).is_empty(),
+            "未来 ⇒ 钳到刚刚、非空且不崩"
+        );
+        assert_eq!(session_activity_ts(&json!({"id": "s9"})), 0.0);
+        assert_eq!(
+            session_activity_ts(&json!({"id": "s9", "last_activity_at": "x"})),
+            0.0
         );
     }
 }

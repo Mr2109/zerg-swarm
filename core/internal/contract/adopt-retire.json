@@ -216,7 +216,7 @@
       "run"
     ],
     "接缝": "常驻 `health-check` / `proc-cleanup`（6h）是 `itask ls` 里的**两条具体任务**（`cooldown` 字段即周期）⇒ 周期与模式一律走 `itask interval` / `itask mode`（一处接口，16 类共用 · `P-046` 落点）",
-    "判据（本枚补）": "9 条端点字面 + 7 条命令路径逐条**现跑命中**（main.go 命令树 / family_itask.go），3 条写面命令必须走 `cmdGuarded`（危险 D2）；由 adopt_retire_test.go 机检，带负控。",
+    "判据（本枚补）": "9 条端点字面 + 7 条命令路径逐条**现跑命中**（main.go 命令树 / family_itask.go），3 条写面命令必须走**确认档门**（`cmdGuarded` 或自家 `*Guarded` · 危险 D2；2026-10-05：`stop` 已开放 ⇒ 走 `cmdItaskStopGuarded`）；由 adopt_retire_test.go 机检，带负控。",
     "mapping": [
       {
         "endpoint": "GET /api/internal-tasks",
@@ -256,7 +256,7 @@
       {
         "endpoint": "POST /api/internal-tasks/stop",
         "command": "stop",
-        "state": "危险 D2 · 只登记形状（本版未开放）"
+        "state": "危险 D2 · **已开放**（2026-10-05：`itask stop` 写**持久化**用户意图 `stopped=true` · `--dry-run` 计划面 · 缺 `--confirm=<本机名>`/`--yes` ⇒ 2 · 走自家确认档门 `cmdItaskStopGuarded`）"
       },
       {
         "endpoint": "POST /api/internal-tasks/{id}/run",
@@ -268,7 +268,7 @@
       "mode",
       "interval"
     ],
-    "对齐面（照实记）": "4 条只读端点在实现件（family_itask.go）里逐条有字面；3 条写面（start/stop/run）走 `cmdGuarded` 且危险档点名了自己的 POST 端点；2 条写面（mode/interval 的 POST）**只登记、未实现** ⇒ 命令树里不许出现 `itask mode set` / `itask interval set`（机检按这条负向断言）。"
+    "对齐面（照实记）": "4 条只读端点在实现件（family_itask.go）里逐条有字面；3 条写面（start/stop/run）走**确认档门**（`cmdGuarded` 或自家 `*Guarded`）且危险档点名了自己的 POST 端点（2026-10-05：`stop` 已开放 ⇒ 走 `cmdItaskStopGuarded`）；2 条写面（mode/interval 的 POST）**只登记、未实现** ⇒ 命令树里不许出现 `itask mode set` / `itask interval set`（机检按这条负向断言）。"
   },
   "egg_cocoon_criteria": {
     "立项": "任务单 `任务-命令面落地-20260920.md` 新增 **T-63**（本枚只立项 + 点名缺口，**不自己造判据**）",

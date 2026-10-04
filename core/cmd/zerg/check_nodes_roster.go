@@ -86,6 +86,7 @@ import (
 	"os/exec"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -94,20 +95,27 @@ import (
 // ─────────────────────────── py 出处的常量串（生成器注入 · 逐字节取自 py 原件）───────────────────────────
 
 // cnrDoc —— py 模块 `__doc__`（`--list-rules` 的首段输出）。
-const cnrDoc = "check-nodes-roster.py — 机器名册的**唯一真源核对**（契约 §九 M13 `Z2` / `P-069`）\n\n为什么存在\n----------\n「名册有三处并存、一个真源都没有」（`调研-M13` §4.1 实测）：`gateway/fleet.yaml` 的 `fleet:`\n（子端寻址）· 同文件的 `updates.nodes`（换件 ssh 目标）· 子端的机器名旗标（子端自报）。\n三处各自更新 ⇒ 任何「按名找到一台机器」的行为都建立在一张会漂的表上。\n\n定案（契约 §九 `Z2`）**名册真源唯一** = `~/.zerg/contexts/<档>.yaml` 的 `nodes:`；\n`fleet:` 与 `updates.nodes` 降为**投影源** —— 处置只给了两条路：① **由名册生成**，或\n② **被门禁逐项核对**。本门走 ②（①要动主控的配置加载面，属写面，不在本批）。\n\n⇒ **建而不收 = 又多一处**：只新建名册文件、不把三处旧来源绑到它，名册就只是第 4 份拷贝。\n本门就是那条「绑」——它同时判两件事：\n  ① 两段投影**有没有声明自己在投影**（段内必须写明真源路径）——没有声明 ⇒ rc=1（这才是「收」）；\n  ② 声明了之后**值面是否逐字相同**（host/port/os/ssh/root/prefix/api/components 逐字段）。\n\n判据（A–G；A–F 与 G 的「闭集 / reported」支逐条能独立变红，G 的「true 须带 64hex 锚」支**降级为只报告**）\n--------------------------\n  A. 名册可读且 `nodes:` 非空（否则 rc=2 不给结论 —— 真源不在，判不了）\n  B. `gateway/fleet.yaml` 的 `fleet:` 段与 `updates:` 段**各自**带投影源声明（段内出现\n     `~/.zerg/contexts/`）——「建而不收」的直接判据\n  C. `fleet:` 键集 == 名册键集（**两向**）；每台 host/port/os 与名册逐字相同\n  D. `updates.nodes[]`：name ∈ 名册；ssh/root/prefix/api/components 与名册逐字相同\n  E. `models:` 段里每个 host ∈ 名册键（模型驻留在哪台 —— 第 4 处，顺带核）\n  F. **本机**子端机器名旗标 ∈ 名册键：**本机盘上 plist**（`deploy/com.zerg.agent-Mr2109.plist`）\n     与**本机在跑的 `zerg-agentd`**（`ps` 读，只读）两处都核；没有在跑的进程 ⇒ 打印跳过（不是红）。\n     ★ 读面 = 本机（local）—— 远端子端本机读不到，见「结论范围」。\n  G. `models:` 段里每条的 `verified` 是**闭集值**，「实测级」带**可核的内容锚**为**报告项**：\n       · `verified: true`（实测级）—— **必须**带 `sha256:`/`digest:`/`sha:` 之一，且值 = 64 位\n         十六进制；缺锚 / 锚格式不对 ⇒ **降级为只报告**（逐条列名，**不进 rc**）——\n         GAP-20261003-21：`verified` 的消费者 schema 是 bool ⇒ 该锚恒缺、原「rc=1 点名」恒红且修不了。\n         给了 `--verify-sha` 且该条 host 是本机、`file:` 在盘上 ⇒ 现算 sha256 逐字比对\n         （内容寻址真核）；本机读不到（远端 host / 件不在 / 未开开关）⇒ 该锚记为**声明级**。\n       · `verified: reported`（声明级）—— 必须带 `verified_where:`（∈ 名册键），表示「由哪台自报」。\n       · `verified: false` ⇒ 放过（就是「没实测」）；闭集外的取值 ⇒ rc=1 点名。\n       · 没写 `verified` 字段的条目 ⇒ 本判据不管（E 已核它的 host 在册）。\n\n结论范围（read_layer × verdict_scope —— 本门**只用本机读数**，故判词必须带层限）\n------------------------------------------------------------------------------\n  本门的全部读取面都是**本机**：本机盘上的 `gateway/fleet.yaml`、本机 `~/.zerg/contexts/`\n  名册、本机 `deploy/…plist`、本机 `ps -Ao command=`（`read_layer=local`）。⇒ 判词一律\n  `verdict_scope=本机`，并**逐台列出本门读不到、因而不给结论的远端节点**；★ 严禁把本机\n  读数冒称「机群级/全对」。远端节点的一致性须由**各机自己**跑本门回答（或该机自报 +\n  `verified: reported` + `verified_where`）。\n\n退码（与仓内既有门一致的三档）\n------------------------------\n  0 = **本机层**全对（PASS · verdict_scope=本机）—— ★ 不表示远端节点也对（见「结论范围」）\n  1 = 有漂移（FAIL）—— 逐条给「哪一处 · 哪个字段 · 现值 vs 名册值」\n  2 = **不给结论**（缺件 / 解析不出 `nodes:` / `fleet.yaml` 不在 / 自检不过 / 空转假覆盖）\n\n★ 本机物件：名册住在 `~/.zerg/`（**不入任何仓**）⇒ 在没建名册的机器上本门**必然** rc=2\n  （「名册不在、判不了」是事实，不是「绿」）。所以它**不进提交闸的快速档**（`FAST_STEPS`）：\n  否则每台没建名册的机器**每次提交**都会被拦一格 —— 那不叫严格，是把闸废掉（同 `check-wired-scripts`\n  升档时的先例）。它挂在**默认（全量）档** 的 `gates` scope 里。\n\n用法\n----\n    python3 scripts/gates/check-nodes-roster.py                 # 核真目标（仓内 fleet.yaml + 本机名册）\n    python3 scripts/gates/check-nodes-roster.py --roster P      # 换名册路径（默认 ~/.zerg/contexts/default.yaml）\n    python3 scripts/gates/check-nodes-roster.py --list-rules    # 打判据 / 路径来源 / 退码\n    python3 scripts/gates/check-nodes-roster.py --self-test     # 只跑自检（合成夹具，不碰真目标）\n    python3 scripts/gates/check-nodes-roster.py --verify-sha    # 另对「本机可读的 verified: true」现算 sha256 真核\n"
+const cnrDoc = "check-nodes-roster.py — 机器名册的**唯一真源核对**（契约 §九 M13 `Z2` / `P-069`）\n\n为什么存在\n----------\n「名册有三处并存、一个真源都没有」（`调研-M13` §4.1 实测）：`gateway/fleet.yaml` 的 `fleet:`\n（子端寻址）· 同文件的 `updates.nodes`（换件 ssh 目标）· 子端的机器名旗标（子端自报）。\n三处各自更新 ⇒ 任何「按名找到一台机器」的行为都建立在一张会漂的表上。\n\n定案（契约 §九 `Z2`）**名册真源唯一** = `~/.zerg/contexts/<档>.yaml` 的 `nodes:`；\n`fleet:` 与 `updates.nodes` 降为**投影源** —— 处置只给了两条路：① **由名册生成**，或\n② **被门禁逐项核对**。本门走 ②（①要动主控的配置加载面，属写面，不在本批）。\n\n⇒ **建而不收 = 又多一处**：只新建名册文件、不把三处旧来源绑到它，名册就只是第 4 份拷贝。\n本门就是那条「绑」——它同时判两件事：\n  ① 两段投影**有没有声明自己在投影**（段内必须写明真源路径）——没有声明 ⇒ rc=1（这才是「收」）；\n  ② 声明了之后**值面是否逐字相同**（host/port/os/ssh/root/prefix/api/components 逐字段）。\n\n判据（A–G；A–F 与 G 的「闭集 / reported」支逐条能独立变红，G 的「true 须带 64hex 锚」支**降级为只报告**）\n--------------------------\n  A. 名册可读且 `nodes:` 非空（否则 rc=2 不给结论 —— 真源不在，判不了）\n  B. `gateway/fleet.yaml` 的 `fleet:` 段与 `updates:` 段**各自**带投影源声明（段内出现\n     `~/.zerg/contexts/`）——「建而不收」的直接判据\n  C. `fleet:` 键集 == 名册键集（**两向**）；每台 host/port/os 与名册逐字相同\n  D. `updates.nodes[]`：name ∈ 名册；ssh/root/prefix/api/components 与名册逐字相同\n  E. `models:` 段里每个 host ∈ 名册键（模型驻留在哪台 —— 第 4 处，顺带核）\n  F. **本机**子端机器名旗标 ∈ 名册键：**本机盘上 plist**（`deploy/com.zerg.agent-Mr2109.plist`）\n     与**本机在跑的 `zerg-agentd`**（`ps` 读，只读）两处都核；没有在跑的进程 ⇒ 打印跳过（不是红）。\n     ★ 读面 = 本机（local）—— 远端子端本机读不到，见「结论范围」。\n  G. `models:` 段里每条的 `verified` 是**闭集值**，「实测级」带**可核的内容锚**为**报告项**：\n       · `verified: true`（实测级）—— **必须**带 `sha256:`/`digest:`/`sha:` 之一，且值 = 64 位\n         十六进制；缺锚 / 锚格式不对 ⇒ **降级为只报告**（逐条列名，**不进 rc**）——\n         GAP-20261003-21：`verified` 的消费者 schema 是 bool ⇒ 该锚恒缺、原「rc=1 点名」恒红且修不了。\n         给了 `--verify-sha` 且该条 host 是本机、`file:` 在盘上 ⇒ 现算 sha256 逐字比对\n         （内容寻址真核）；本机读不到（远端 host / 件不在 / 未开开关）⇒ 该锚记为**声明级**。\n       · `verified: reported`（声明级）—— 必须带 `verified_where:`（∈ 名册键），表示「由哪台自报」。\n       · `verified: false` ⇒ 放过（就是「没实测」）；闭集外的取值 ⇒ rc=1 点名。\n       · 没写 `verified` 字段的条目 ⇒ 本判据不管（E 已核它的 host 在册）。\n  H. **拨号地址（`--controller`）由名册可推导**（`GAP-20260927-03`）：仓内每个子端 plist 的\n     `--controller` 值（`${VAR:-默认}` 变量形态取**默认值**）必须**能由名册推出来** ——\n       host 必须 ∈ 可推导集 = { 回环 `127.0.0.1`/`::1`/`localhost` } ∪ { `nodes:` 每台的 host }；\n       端口必须 == 名册顶层 `core:` 的端口。\n     host 落在名册**没有的网段**（如 `192.168.110.x`）或端口不符 ⇒ **rc=1**，**逐字点名 plist 路径与该值**\n     （换网/改 IP 时 plist 与名册各说各话的那种漂移）。plist 不在 / 无 `--controller` ⇒ 打印跳过（不是红）。\n\n结论范围（read_layer × verdict_scope —— 本门**只用本机读数**，故判词必须带层限）\n------------------------------------------------------------------------------\n  本门的全部读取面都是**本机**：本机盘上的 `gateway/fleet.yaml`、本机 `~/.zerg/contexts/`\n  名册、本机 `deploy/…plist`、本机 `ps -Ao command=`（`read_layer=local`）。⇒ 判词一律\n  `verdict_scope=本机`，并**逐台列出本门读不到、因而不给结论的远端节点**；★ 严禁把本机\n  读数冒称「机群级/全对」。远端节点的一致性须由**各机自己**跑本门回答（或该机自报 +\n  `verified: reported` + `verified_where`）。\n\n退码（与仓内既有门一致的三档）\n------------------------------\n  0 = **本机层**全对（PASS · verdict_scope=本机）—— ★ 不表示远端节点也对（见「结论范围」）\n  1 = 有漂移（FAIL）—— 逐条给「哪一处 · 哪个字段 · 现值 vs 名册值」\n  2 = **不给结论**（缺件 / 解析不出 `nodes:` / `fleet.yaml` 不在 / 自检不过 / 空转假覆盖）\n\n★ 本机物件：名册住在 `~/.zerg/`（**不入任何仓**）⇒ 在没建名册的机器上本门**必然** rc=2\n  （「名册不在、判不了」是事实，不是「绿」）。所以它**不进提交闸的快速档**（`FAST_STEPS`）：\n  否则每台没建名册的机器**每次提交**都会被拦一格 —— 那不叫严格，是把闸废掉（同 `check-wired-scripts`\n  升档时的先例）。它挂在**默认（全量）档** 的 `gates` scope 里。\n\n用法\n----\n    python3 scripts/gates/check-nodes-roster.py                 # 核真目标（仓内 fleet.yaml + 本机名册）\n    python3 scripts/gates/check-nodes-roster.py --roster P      # 换名册路径（默认 ~/.zerg/contexts/default.yaml）\n    python3 scripts/gates/check-nodes-roster.py --list-rules    # 打判据 / 路径来源 / 退码\n    python3 scripts/gates/check-nodes-roster.py --self-test     # 只跑自检（合成夹具，不碰真目标）\n    python3 scripts/gates/check-nodes-roster.py --verify-sha    # 另对「本机可读的 verified: true」现算 sha256 真核\npython3 scripts/gates/check-nodes-roster.py --ctrl-plist P  # 换判据 H「拨号地址对账」要核的 plist（可重复）\n"
 
 // cnrHelpText —— py argparse `-h/--help` 的 stdout **逐字**（Python 3.9 用 `optional arguments:`）。
-const cnrHelpText = "usage: check-nodes-roster.py [-h] [--roster ROSTER] [--fleet FLEET]\n                             [--plist PLIST] [--self-test] [--list-rules]\n                             [--verify-sha]\n\noptional arguments:\n  -h, --help       show this help message and exit\n  --roster ROSTER\n  --fleet FLEET\n  --plist PLIST\n  --self-test\n  --list-rules\n  --verify-sha     对本机可读的 verified: true 条目现算 sha256 真核（默认只查锚在不在/格式）\n"
+const cnrHelpText = "usage: check-nodes-roster.py [-h] [--roster ROSTER] [--fleet FLEET]\n                             [--plist PLIST] [--self-test] [--list-rules]\n                             [--verify-sha] [--ctrl-plist P]\n\noptional arguments:\n  -h, --help       show this help message and exit\n  --roster ROSTER\n  --fleet FLEET\n  --plist PLIST\n  --self-test\n  --list-rules\n  --verify-sha     对本机可读的 verified: true 条目现算 sha256 真核（默认只查锚在不在/格式）\n  --ctrl-plist P   判据 H 要核的 plist（可重复；默认 仓内 deploy/ 与 gateway/deploy/ 两件）\n"
 
 // cnrUsageLine —— argparse 出错时的 `usage:` 两行（与 help 首两行同）。
-const cnrUsageLine = "usage: check-nodes-roster.py [-h] [--roster ROSTER] [--fleet FLEET]\n                             [--plist PLIST] [--self-test] [--list-rules]\n                             [--verify-sha]\n"
+const cnrUsageLine = "usage: check-nodes-roster.py [-h] [--roster ROSTER] [--fleet FLEET]\n                             [--plist PLIST] [--self-test] [--list-rules]\n                             [--verify-sha] [--ctrl-plist P]\n"
 
 // cnrRosterFix / cnrFleetFix / cnrPlistFix —— py 自检夹具（逐字节取自 py 原件）。
-const cnrRosterFix = "# 夹具名册\ncontext: default\nnodes:\n  edge-node:\n    host: <worker-ip>\n    port: 8100\n    os: ubuntu\n    ssh: g01@<worker-ip>\n    root: /home/<user>/zerg\n    prefix: /home/<user>/zerg/bin\n    api: \"http://127.0.0.1:8580\"\n    components: \"core,agentd\"\n  Mr2109:\n    host: 127.0.0.1\n    port: 8100\n    os: macos\n"
+const cnrRosterFix = "# 夹具名册\ncontext: default\ncore: http://127.0.0.1:8580\nnodes:\n  edge-node:\n    host: <worker-ip>\n    port: 8100\n    os: ubuntu\n    ssh: g01@<worker-ip>\n    root: /home/<user>/zerg\n    prefix: /home/<user>/zerg/bin\n    api: \"http://127.0.0.1:8580\"\n    components: \"core,agentd\"\n  Mr2109:\n    host: 127.0.0.1\n    port: 8100\n    os: macos\n"
 
 const cnrFleetFix = "# 夹具 fleet.yaml\nupdates:\n  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n  check: true\n  nodes:\n    - { name: edge-node, ssh: g01@<worker-ip>, root: /home/<user>/zerg, prefix: /home/<user>/zerg/bin, api: \"http://127.0.0.1:8580\", components: \"core,agentd\" }\nmodels:\n  m1: { host: edge-node, backend: llama-server }\nfleet:\n  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n  edge-node: { host: <worker-ip>, port: 8100, os: ubuntu }\n  Mr2109: { host: 127.0.0.1, port: 8100, os: macos }\n"
 
 const cnrPlistFix = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n  <key>Label</key><string>com.zerg.agent-Mr2109</string>\n  <key>ProgramArguments</key><array>\n    <string>/tmp/zerg-agentd</string>\n    <string>--machine</string><string>Mr2109</string>\n  </array>\n</dict></plist>\n"
+
+// cnrPlistCtrlVarFix / cnrPlistCtrlLiteralFix —— py 判据 H 自检夹具（拨号地址 · `__CTRL__` 由 self_test 代入）；
+//
+//	变量形态（shell 包裹）与字面形态各一（逐字节取自 py 原件 PLIST_CTRL_VAR_FIX / PLIST_CTRL_LITERAL_FIX）。
+const cnrPlistCtrlVarFix = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n  <key>Label</key><string>com.x3gw.agent</string>\n  <key>ProgramArguments</key><array>\n    <string>/bin/sh</string>\n    <string>-c</string>\n    <string>exec /usr/bin/python3 ~/agent/agent.py --controller \"${ZERG_AGENT_CONTROLLER:-__CTRL__}\" --machine mini-node-1</string>\n  </array>\n</dict></plist>\n"
+
+const cnrPlistCtrlLiteralFix = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n  <key>Label</key><string>com.x3gw.agent</string>\n  <key>ProgramArguments</key><array>\n    <string>/usr/bin/python3</string><string>~/agent/agent.py</string>\n    <string>--controller</string><string>__CTRL__</string>\n    <string>--machine</string><string>mini-node-1</string>\n  </array>\n</dict></plist>\n"
 
 // cnrVerifiedValues / cnrAnchorFields / cnrAnchorRe / cnrLocalHosts —— 判据 G 的闭集与内容锚
 // （GAP-20260927-167/-171 · 逐字对齐 py 候件的 VERIFIED_VALUES / ANCHOR_FIELDS / ANCHOR_RE / LOCAL_HOSTS）。
@@ -117,6 +125,21 @@ var cnrAnchorRe = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 
 // cnrLocalHosts —— 本机回环寻址（fleet: 段里 host 落这些值 = 本机 · read_layer=local 的身份源）。
 var cnrLocalHosts = map[string]bool{"127.0.0.1": true, "::1": true, "localhost": true}
+
+// ── 判据 H：仓内子端 plist 的拨号地址（`--controller`）**由名册可推导**（GAP-20260927-03）──
+// cnrControllerPlists —— 判据 H 默认要核的仓内件（可被 --ctrl-plist 覆盖）：两枚子端 plist。
+func cnrControllerPlists() []string {
+	return []string{
+		cnrPyJoin(cnrRepoRoot(), "deploy", "com.zerg.agent-Mr2109.plist"),
+		cnrPyJoin(cnrRepoRoot(), "gateway", "deploy", "com.x3gw.agent.mini.plist"),
+	}
+}
+
+// cnrCtrlVarRe —— py `CTRL_VAR_RE`（`${VAR:-默认}` 变量形态 · re.S ⇒ `(?s)`）。
+var cnrCtrlVarRe = regexp.MustCompile(`(?s)^\$\{([A-Za-z_][A-Za-z0-9_]*):-(.*)\}$`)
+
+// cnrCtrlURLRe —— py `CTRL_URL_RE`（`^(https?)://([^/:]+)(?::(\d+))?(/.*)?$`）。
+var cnrCtrlURLRe = regexp.MustCompile(`^(https?)://([^/:]+)(?::(\d+))?(/.*)?$`)
 
 // cnrFleetVerifiedFix —— py 自检夹具 `FLEET_VERIFIED_FIX`（逐字节取自 py 原件）。
 const cnrFleetVerifiedFix = "# 夹具 fleet.yaml（判据 G）\nupdates:\n  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n  check: true\n  nodes:\n    - { name: edge-node, ssh: g01@<worker-ip>, root: /home/<user>/zerg, prefix: /home/<user>/zerg/bin, api: \"http://127.0.0.1:8580\", components: \"core,agentd\" }\nmodels:\n  mG:\n    - { host: __HOST__, backend: llama-server, file: __FILE__, __VERIFIED__ }\nfleet:\n  # 投影源：真源 = ~/.zerg/contexts/default.yaml 的 nodes:\n  edge-node: { host: <worker-ip>, port: 8100, os: ubuntu }\n  Mr2109: { host: 127.0.0.1, port: 8100, os: macos }\n"
@@ -679,16 +702,19 @@ func cnrSha256File(path string) string {
 
 // cnrPlistMachine —— py `plist_machine`：→ (机器名, 错误文案)。只读。
 func cnrPlistMachine(plistPath string) (string, string) {
-	if !cnrIsFile(plistPath) {
+	tokens, errMsg, _ := cnrPlistProgramArgv(plistPath)
+	if errMsg != "" {
+		return "", errMsg
+	}
+	if tokens == nil {
 		return "", ""
 	}
-	args, err := cnrPlistArgs(plistPath)
-	if err != nil {
-		return "", fmt.Sprintf("plist 读不了（%s）：%s", plistPath, err)
+	if v, ok := cnrFindFlagValue(tokens, "--machine"); ok {
+		return v, ""
 	}
-	for i, a := range args {
-		if cnrHasSuffix(a, "machine") && i+1 < len(args) {
-			return args[i+1], ""
+	for i, a := range tokens { // 兼容旧口径：任何以 machine 收尾的旗标
+		if cnrHasSuffix(a, "machine") && i+1 < len(tokens) {
+			return tokens[i+1], ""
 		}
 	}
 	return "", ""
@@ -1151,8 +1177,268 @@ func cnrCheckSubend(plistPath string, nodes map[string]cnrValue) ([]string, []st
 	return fails, checks
 }
 
+// ══════════════════════════ 判据 H：拨号地址（`--controller`）由名册可推导 ══════════════════════════
+
+// cnrShlexSplit —— py `shlex.split(script)` 的 posix 子集（空白分隔 · 引号剥除 · 反斜杠转义）。
+func cnrShlexSplit(s string) ([]string, error) {
+	var out []string
+	var buf []rune
+	inWord := false
+	quote := rune(0)
+	rs := []rune(s)
+	for i := 0; i < len(rs); i++ {
+		ch := rs[i]
+		if quote == '\'' {
+			if ch == '\'' {
+				quote = 0
+			} else {
+				buf = append(buf, ch)
+			}
+			continue
+		}
+		if quote == '"' {
+			if ch == '"' {
+				quote = 0
+				continue
+			}
+			if ch == '\\' && i+1 < len(rs) {
+				nx := rs[i+1]
+				if nx == '"' || nx == '\\' || nx == '$' || nx == '`' {
+					buf = append(buf, nx)
+					i++
+					continue
+				}
+				if nx == '\n' {
+					i++
+					continue
+				}
+				buf = append(buf, ch)
+				continue
+			}
+			buf = append(buf, ch)
+			continue
+		}
+		switch {
+		case ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n':
+			if inWord {
+				out = append(out, string(buf))
+				buf = nil
+				inWord = false
+			}
+		case ch == '\'' || ch == '"':
+			quote = ch
+			inWord = true
+		case ch == '\\' && i+1 < len(rs):
+			i++
+			buf = append(buf, rs[i])
+			inWord = true
+		default:
+			buf = append(buf, ch)
+			inWord = true
+		}
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("No closing quotation")
+	}
+	if inWord {
+		out = append(out, string(buf))
+	}
+	return out, nil
+}
+
+// cnrBaseName —— py `os.path.basename`（末段）。
+func cnrBaseName(p string) string {
+	if i := cnrLastIndexByte(p, '/'); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}
+
+// cnrPlistProgramArgv —— py `plist_program_argv`：→ (tokens, 错误文案, 件在否)。
+//
+//	★ 两种形态都收：① 直给 argv 数组 —— 原样返回；② `/bin/sh -c "<脚本串>"` 壳 —— shlex 切脚本串。
+func cnrPlistProgramArgv(plistPath string) ([]string, string, bool) {
+	if !cnrIsFile(plistPath) {
+		return nil, "", false
+	}
+	args, err := cnrPlistArgs(plistPath)
+	if err != nil {
+		return nil, fmt.Sprintf("plist 读不了（%s）：%s", plistPath, err), false
+	}
+	if len(args) >= 3 {
+		base := cnrBaseName(args[0])
+		if (base == "sh" || base == "bash" || base == "zsh") && args[1] == "-c" {
+			toks, serr := cnrShlexSplit(args[2])
+			if serr != nil {
+				return nil, fmt.Sprintf("plist 脚本串切不开（%s）：%s", plistPath, serr), false
+			}
+			return toks, "", true
+		}
+	}
+	return args, "", true
+}
+
+// cnrFindFlagValue —— py `find_flag_value`：命令行 `--flag <值>` / `--flag=<值>` 的取值。
+func cnrFindFlagValue(tokens []string, flag string) (string, bool) {
+	for i, a := range tokens {
+		if a == flag && i+1 < len(tokens) {
+			return tokens[i+1], true
+		}
+		if cnrHasPrefix(a, flag+"=") {
+			return a[len(flag)+1:], true
+		}
+	}
+	return "", false
+}
+
+// cnrPlistController —— py `plist_controller`：→ (有效值, 变量名, 错误文案, 有无值)。
+//
+//	`${VAR:-默认}` 变量形态 ⇒ 取**默认值**（= 未设该变量时真正拨出去的地址）；直给字面值 ⇒ 原样。
+func cnrPlistController(plistPath string) (string, string, string, bool) {
+	tokens, errMsg, _ := cnrPlistProgramArgv(plistPath)
+	if errMsg != "" {
+		return "", "", errMsg, false
+	}
+	if tokens == nil {
+		return "", "", "", false
+	}
+	raw, ok := cnrFindFlagValue(tokens, "--controller")
+	if !ok {
+		return "", "", "", false
+	}
+	raw = cnrPyStrip(raw)
+	if m := cnrCtrlVarRe.FindStringSubmatch(raw); m != nil {
+		return cnrPyStrip(m[2]), m[1], "", true
+	}
+	return raw, "", "", true
+}
+
+// cnrTrailingPort —— py `re.search(r":(\d+)\s*$", u)` 的手写复刻。
+func cnrTrailingPort(u string) (int, bool) {
+	t := cnrPyRstrip(u)
+	rs := []rune(t)
+	i := len(rs)
+	for i > 0 && rs[i-1] >= '0' && rs[i-1] <= '9' {
+		i--
+	}
+	if i == len(rs) || i == 0 || rs[i-1] != ':' {
+		return 0, false
+	}
+	n, err := strconv.Atoi(string(rs[i:]))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// cnrRosterCorePort —— py `roster_core_port`：名册顶层 `core:` 的端口（读不到 ⇒ false）。
+func cnrRosterCorePort(lines []string) (int, bool) {
+	for _, l := range lines {
+		if !cnrHasPrefix(l, "core") {
+			continue
+		}
+		rest := cnrSkipSpace(l[4:])
+		if len(rest) == 0 || rest[0] != ':' {
+			continue
+		}
+		rest = cnrSkipSpace(rest[1:])
+		rs := []rune(rest)
+		i := 0
+		for i < len(rs) && !cnrIsSpace(rs[i]) {
+			i++
+		}
+		if i == 0 {
+			continue
+		}
+		if cnrPyStrip(string(rs[i:])) != "" {
+			continue
+		}
+		return cnrTrailingPort(cnrUnquote(string(rs[:i])))
+	}
+	return 0, false
+}
+
+// cnrDerivableControllerHosts —— py `derivable_controller_hosts`：回环 ∪ 名册每台的 host。
+func cnrDerivableControllerHosts(nodes map[string]cnrValue) map[string]bool {
+	hosts := map[string]bool{}
+	for h := range cnrLocalHosts {
+		hosts[h] = true
+	}
+	for _, v := range nodes {
+		if m, ok := v.(map[string]cnrValue); ok {
+			h := cnrStripQuotes(cnrPyStrip(cnrToString(m["host"])))
+			if h != "" {
+				hosts[h] = true
+			}
+		}
+	}
+	return hosts
+}
+
+// cnrCheckController —— py `check_controller`（判据 H）。
+func cnrCheckController(plistPaths []string, nodes map[string]cnrValue, rosterLines []string) ([]string, []string) {
+	fails := []string{}
+	checks := []string{}
+	corePort, hasCore := cnrRosterCorePort(rosterLines)
+	hosts := cnrDerivableControllerHosts(nodes)
+	hs := make([]string, 0, len(hosts))
+	for h := range hosts {
+		hs = append(hs, h)
+	}
+	sort.Strings(hs)
+	coreStr := "**读不到**"
+	if hasCore {
+		coreStr = strconv.Itoa(corePort)
+	}
+	checks = append(checks, fmt.Sprintf("H 拨号可推导集（回环 ∪ 名册 host）= %s · 名册 core 端口 = %s",
+		cnrJoinStr(hs, " · "), coreStr))
+	for _, p := range plistPaths {
+		if !cnrIsFile(p) {
+			checks = append(checks, fmt.Sprintf("H 拨号对账：plist 不在（%s）⇒ 跳过该件", p))
+			continue
+		}
+		val, variable, errMsg, present := cnrPlistController(p)
+		if errMsg != "" {
+			fails = append(fails, "H "+errMsg)
+			continue
+		}
+		if !present {
+			checks = append(checks, fmt.Sprintf("H 拨号对账：%s 无 `--controller` ⇒ 跳过", p))
+			continue
+		}
+		shown := p
+		if variable != "" {
+			shown = fmt.Sprintf("%s（变量 ${%s:-…} 的默认值）", p, variable)
+		}
+		m := cnrCtrlURLRe.FindStringSubmatch(val)
+		if m == nil {
+			fails = append(fails, fmt.Sprintf("H %s 的 `--controller` 不是合法 http(s) 地址：%s", shown, cnrRepr(val)))
+			continue
+		}
+		host, port := m[2], m[3]
+		var why []string
+		if !hosts[host] {
+			why = append(why, fmt.Sprintf("host=%s 不在名册可推导集", host))
+		}
+		if hasCore {
+			if port == "" {
+				why = append(why, fmt.Sprintf("缺端口（名册 core 端口=%d）", corePort))
+			} else if pn, perr := strconv.Atoi(port); perr != nil || pn != corePort {
+				why = append(why, fmt.Sprintf("port=%s ≠ 名册 core 端口=%d", port, corePort))
+			}
+		}
+		if len(why) > 0 {
+			fails = append(fails, fmt.Sprintf("H %s 的拨号地址推不出来：现值 %s —— %s（改 plist 或先把该地址登记进名册 nodes）",
+				shown, cnrRepr(val), cnrJoinStr(why, "；")))
+		} else {
+			checks = append(checks, fmt.Sprintf("H 拨号对账 %s ⇒ 可推导（值 %s）", shown, cnrRepr(val)))
+		}
+	}
+	return fails, checks
+}
+
 // cnrRunChecks —— py `run_checks`。
-func cnrRunChecks(stdout io.Writer, roster, fleet, plist string, verbose bool, verifySha bool) int {
+func cnrRunChecks(stdout io.Writer, roster, fleet, plist string, verbose bool, verifySha bool, ctrlPlists []string, ctrlCheck bool) int {
 	nodes, errMsg := cnrLoadRoster(roster)
 	if errMsg != "" {
 		fmt.Fprintf(stdout, "⛔ 不给结论：%s\n", errMsg)
@@ -1168,10 +1454,28 @@ func cnrRunChecks(stdout io.Writer, roster, fleet, plist string, verbose bool, v
 	}
 	f2, c2 := cnrCheckSubend(plist, nodes)
 	fails = append(fails, f2...)
+	// H 拨号地址（`--controller`）由名册可推导（GAP-20260927-03）—— 负控可哑化（ctrlCheck=false）。
+	var c3 []string
+	if ctrlCheck {
+		_, rosterLines, rerr := cnrReadTextLines(roster)
+		if rerr != nil {
+			rosterLines = nil
+		}
+		plistList := ctrlPlists
+		if plistList == nil {
+			plistList = cnrControllerPlists()
+		}
+		f3, c3x := cnrCheckController(plistList, nodes, rosterLines)
+		fails = append(fails, f3...)
+		c3 = c3x
+	} else {
+		c3 = []string{"H 拨号对账：断言哑化（ctrl_check=False · 负控用）⇒ 不报"}
+	}
 	all := []string{}
 	all = append(all, lchecks...)
 	all = append(all, checks...)
 	all = append(all, c2...)
+	all = append(all, c3...)
 	checks = all
 	uncovered := []string{}
 	for k := range nodes {
@@ -1211,7 +1515,7 @@ func cnrRunChecks(stdout io.Writer, roster, fleet, plist string, verbose bool, v
 	}
 	fmt.Fprint(stdout, "✓ **本机层**（read_layer=local）与名册逐字一致：fleet: · updates.nodes · "+
 		"models: host 各在册 · G verified 闭集（无锚 true 仅报告·GAP-20261003-21） · "+
-		"本机子端名册（plist/本机在跑 agentd）\n")
+		"本机子端名册（plist/本机在跑 agentd） · H 拨号地址由名册可推导\n")
 	fmt.Fprintf(stdout, "   ↳ verdict_scope=**本机**（%s）—— 本门**不覆盖**远端：%s\n", localStr, uncovStr)
 	return 0
 }
@@ -1262,6 +1566,16 @@ func cnrSelfTest(stdout, stderr io.Writer) int {
 		{"名册 nodes 空 ⇒ 2", w("r2.yaml", "nodes:\n"), fleet, plist, 2, false},
 	}
 
+	// ── 判据 H：拨号地址由名册可推导（GAP-20260927-03；成对负控）──
+	cBad := w("ctrl_bad.plist", cnrReplaceAll(cnrPlistCtrlVarFix, "__CTRL__", "http://<worker-host>:8580"))
+	cOK := w("ctrl_ok.plist", cnrReplaceAll(cnrPlistCtrlVarFix, "__CTRL__", "http://<worker-ip>:8580"))
+	cPort := w("ctrl_port.plist", cnrReplaceAll(cnrPlistCtrlLiteralFix, "__CTRL__", "http://<worker-ip>:9"))
+	cases = append(cases,
+		kase{"H 拨号 host 不在名册（变量默认值）⇒ 1", roster, fleet, plist, 1, false},
+		kase{"H 拨号可推导（变量默认值）⇒ 0", roster, fleet, plist, 0, false},
+		kase{"H 拨号端口 ≠ core 端口 ⇒ 1", roster, fleet, plist, 1, false},
+		kase{"H 负控：断言哑化（同一 bad）⇒ 0（回不报）", roster, fleet, plist, 0, false})
+
 	// ── 判据 G：verified 闭集 + 「实测级必须有可核内容锚」（GAP-…-167/-171 成对负控）──
 	wa := w("weights.bin", "zerg-verified-fixture\n")
 	ahash := cnrSha256File(wa)  // 本机件真 sha256
@@ -1290,8 +1604,21 @@ func cnrSelfTest(stdout, stderr io.Writer) int {
 		kase{"G 闭集外取值 ⇒ 1", roster,
 			w("g8.yaml", gfix("verified: maybe", "Mr2109", nonexistent)), plist, 1, false})
 
+	hCtrl := map[string]struct {
+		ctrl []string
+		cchk bool
+	}{
+		"H 拨号 host 不在名册（变量默认值）⇒ 1":  {ctrl: []string{cBad}, cchk: true},
+		"H 拨号可推导（变量默认值）⇒ 0":         {ctrl: []string{cOK}, cchk: true},
+		"H 拨号端口 ≠ core 端口 ⇒ 1":      {ctrl: []string{cPort}, cchk: true},
+		"H 负控：断言哑化（同一 bad）⇒ 0（回不报）": {ctrl: []string{cBad}, cchk: false},
+	}
 	for _, c := range cases {
-		rc := cnrRunChecks(stdout, c.roster, c.fleet, c.plist, false, c.vsha)
+		ptrs, cchk := []string{}, true
+		if v, ok := hCtrl[c.name]; ok {
+			ptrs, cchk = v.ctrl, v.cchk
+		}
+		rc := cnrRunChecks(stdout, c.roster, c.fleet, c.plist, false, c.vsha, ptrs, cchk)
 		mark := "✓"
 		if rc != c.want {
 			mark = "✗"
@@ -1302,7 +1629,7 @@ func cnrSelfTest(stdout, stderr io.Writer) int {
 
 	// ── 判词层限成对负控：判词必须带 read_layer / verdict_scope 与「不覆盖远端」声明 ──
 	var vbuf strings.Builder
-	_ = cnrRunChecks(&vbuf, roster, fleet, plist, true, false)
+	_ = cnrRunChecks(&vbuf, roster, fleet, plist, true, false, []string{}, true)
 	vout := vbuf.String()
 	for _, kv := range []struct {
 		name string
@@ -1369,12 +1696,13 @@ func cnrRefuseJSON(stderr io.Writer, argv []string) (int, bool) {
 // ══════════════════════════ argparse 复刻（子集）══════════════════════════
 
 type cnrArgs struct {
-	roster    string
-	fleet     string
-	plist     string
-	selfTest  bool
-	listRules bool
-	verifySha bool
+	roster     string
+	fleet      string
+	plist      string
+	selfTest   bool
+	listRules  bool
+	verifySha  bool
+	ctrlPlists []string
 }
 
 var cnrOptSpecs = []struct {
@@ -1387,6 +1715,7 @@ var cnrOptSpecs = []struct {
 	{"--self-test", false},
 	{"--list-rules", false},
 	{"--verify-sha", false},
+	{"--ctrl-plist", true},
 	{"--help", false},
 }
 
@@ -1457,6 +1786,8 @@ func cnrParseArgs(argv []string) (cnrArgs, int, string) {
 					a.fleet = val
 				case "--plist":
 					a.plist = val
+				case "--ctrl-plist":
+					a.ctrlPlists = append(a.ctrlPlists, val)
 				}
 			} else {
 				if hasVal {
@@ -1516,7 +1847,7 @@ func checkNodesRosterGateMain(stdout, stderr io.Writer, argv []string) int {
 		return 2
 	}
 	fmt.Fprint(stdout, "── 自检通过，开始核真目标 ──\n")
-	return cnrRunChecks(stdout, a.roster, a.fleet, a.plist, true, a.verifySha)
+	return cnrRunChecks(stdout, a.roster, a.fleet, a.plist, true, a.verifySha, a.ctrlPlists, true)
 }
 
 // ══════════════════════════ 薄封装（件名前缀 · 便于并发路不撞名）══════════════════════════
@@ -1538,6 +1869,8 @@ func cnrHasPrefix(s, p string) bool { return strings.HasPrefix(s, p) }
 func cnrHasSuffix(s, suf string) bool { return strings.HasSuffix(s, suf) }
 
 func cnrIndexByte(s string, b byte) int { return strings.IndexByte(s, b) }
+
+func cnrLastIndexByte(s string, b byte) int { return strings.LastIndexByte(s, b) }
 
 func cnrPartition(s string, sep byte) (string, string, string) {
 	i := strings.IndexByte(s, sep)

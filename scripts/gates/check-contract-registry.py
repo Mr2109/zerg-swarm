@@ -17,6 +17,10 @@
 #   R7 表自称的门**在盘且就是本脚本**（`note` 点名的 `scripts/gates/*.py` ⇒ 必须等于本件；防「表说 A、跑的是 B」）
 #   R8 Go 侧声明与表**同一路径**（`core/cmd/zerg/family_impact_contract.go` 的 `impactContractRegistryGateRel`）——
 #      两处声明同一真源，任一处漂了都红
+#   R9 描述 ↔ 真源**列举对拍**：`truth_shape` 点名的顶层键集合 ⊇ 真源 JSON（`truth` 路径部分 · `.json`）的
+#      顶层键集合（去元数据键 `schema`/`id`/`note`/`not_in_public_face` 与一切 `_` 起头的键）—— **漏列即红**
+#      （缺口 `GAP-20260927-228`/`-229`：描述不自称数字时，只核「N 格 / N 键」那类数字断言抓不到「列举不全」；
+#       本条按**点名集合**对拍，✗ 不依赖是否自称数字；非 `.json` / 非对象的真源件**不属本条面**）
 #
 # 纪律：
 #   · 本门**只读**（不写表 / 不写状态目录 / 不落审计 / 不改件）；
@@ -45,6 +49,10 @@ REQUIRED_ENTRY_FIELDS = ["id", "name", "truth", "truth_shape",
                          "version_field", "gate", "change_class", "change_note"]
 CHANGE_CLASSES = ("A", "B")
 ID_RE = re.compile(r"^S-[a-z]$")
+# R9 元数据键：跨件通用的**自述 / 出处 / 落点标记** —— 它们不是「契约的键」，不许被要求点名。
+#   `schema` / `id` / `note` / `not_in_public_face` + 一切以 `_` 起头的键（`_出处` / `_一句话` / `_红线` …）。
+META_TOP_KEYS = frozenset(("schema", "id", "note", "not_in_public_face"))
+BACKTICK_RE = re.compile(r"`([^`]+)`")
 # 路径形状 token：带目录分隔或已知后缀的一段（表里现用的两种写法都在面内）。
 TOKEN_RE = re.compile(r"[A-Za-z0-9_./\u4e00-\u9fff-]*[A-Za-z0-9_/-]+\.(?:py|sh|go|json|md|ts|rs|toml)")
 ROOT_ANCHOR = os.path.join("core", "internal", "version", "version.go")
@@ -74,6 +82,34 @@ def path_part(truth):
 def gate_tokens(gate):
     """`gate` 面里的路径型 token（含 `·` 分隔的多道门）。"""
     return [t for t in TOKEN_RE.findall(gate or "") if t]
+
+
+def r9_missing(truth_abs, truth_shape):
+    """R9：`truth_shape` **漏点名**的真源顶层键（排序后）⇒ (miss, err)。
+
+    · `err=True` ＝ 真源件在盘但**解析失败** ⇒ 判红（点名集无法对拍，不许给绿）；
+    · 非 `.json` / 不在盘 / 非 JSON 对象（数组 / 标量）⇒ 不属本条面，返 ([], False)；
+    · 点名集 = `truth_shape` 里**反引号包住的 token** 及其「首个 `.` 之前」的顶层段
+      （如 `dirs.index` ⇒ 点名顶层键 `dirs`）；真源顶层键去元数据键后逐个比对。
+    """
+    if not truth_abs.endswith(".json") or not os.path.isfile(truth_abs):
+        return [], False
+    try:
+        with open(truth_abs, encoding="utf-8") as f:
+            doc = json.load(f)
+    except Exception:  # noqa: BLE001 —— 读不了/解析不了 ⇒ 不给绿（判红），不猜
+        return [], True
+    if not isinstance(doc, dict):
+        return [], False
+    truth_keys = {k for k in doc if k not in META_TOP_KEYS and not k.startswith("_")}
+    named = set()
+    for tok in BACKTICK_RE.findall(truth_shape or ""):
+        tok = tok.strip()
+        if not tok:
+            continue
+        named.add(tok)
+        named.add(tok.split(".")[0].strip())
+    return sorted(truth_keys - named), False
 
 
 def check(root, registry_path):
@@ -135,6 +171,14 @@ def check(root, registry_path):
                     reds.append("R6 %s 的 gate 件不在盘：%s" % (eid, t))
         elif "go test" not in gate:
             reds.append("R6 %s 的 `gate` 既不是路径型、也不含 `go test`：%r ⇒ 判不出「谁在读它」" % (eid, gate))
+        # R9 —— ★ 描述 ↔ 真源列举对拍（GAP-20260927-228/-229）：truth_shape 点名的顶层键集合
+        #      ⊇ 真源 JSON 的顶层键集合（去元数据键）；漏列即红，✗ 不依赖是否自称数字。
+        miss, r9err = r9_missing(os.path.join(root, tp) if tp else "", e.get("truth_shape", ""))
+        if r9err:
+            reds.append("R9 %s 的真源 `%s` 解析失败 ⇒ truth_shape 点名集无法对拍（不给绿）" % (eid, tp))
+        elif miss:
+            reds.append("R9 %s 的 `truth_shape` 漏点名真源顶层键 %d 个：%s"
+                        % (eid, len(miss), " / ".join("`%s`" % k for k in miss)))
 
     # ── R7 表自称的门在盘且就是本脚本 ────────────────────────────────────────
     note = str(doc.get("note", ""))
@@ -167,14 +211,14 @@ def check(root, registry_path):
     if reds:
         lines = reds
         return 1, lines, info
-    lines = ["契约登记表 OK：%d 条条目 · 八字段齐 · id 唯一 · truth 件全在盘 · gate 面全可判（无门 0 条）"
-             % info["entries"],
+    lines = ["契约登记表 OK：%d 条条目 · 八字段齐 · id 唯一 · truth 件全在盘 · gate 面全可判（无门 0 条）· "
+             "truth_shape 点名齐（真源顶层键无漏列）" % info["entries"],
              "表自称的门在盘：%s（= 本件）· Go 侧声明同一路径" % info["gate"]]
     return 0, lines, info
 
 
 def self_test(root):
-    """成对自检：1 组正控（真表）+ 7 组负控（逐条打坏 ⇒ 必须判红 / 不给结论）。"""
+    """成对自检：1 组正控（真表）+ 10 组负控（逐条打坏 ⇒ 必须判红 / 不给结论）。"""
     bad, n = [], 0
 
     def case(name, want_rc, got_rc, want_red=None, lines=None):
@@ -232,6 +276,32 @@ def self_test(root):
         rc, lines, _ = fixture("bad-schema.json", lambda d: d.update({"schema": "别的号"}))
         case("⑧ 负控：schema 号不对 ⇒ rc=1", 1, rc, "schema", lines)
 
+        # ⑪ 负控 · R9：自建**迷你根**（锚点 / 表 / 真源 / 门件 / Go 声明）——
+        #     真源顶层键有 alpha/beta，而只点名 `alpha` ⇒ beta 漏列 ⇒ rc=1。
+        #     ✗ 不复用调用方的 root（py 跑真仓、Go 单测跑合成仓，两边形态不同 ⇒ 不 hermetic）。
+        gr = "scripts/gates/check-contract-registry.py"
+        r9root = tempfile.mkdtemp(prefix="zerg-cr-r9-")
+        try:
+            def _w(rel, body):
+                p = os.path.join(r9root, rel)
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                with open(p, "w", encoding="utf-8") as fh:
+                    fh.write(body)
+            _w(os.path.join("core", "internal", "version", "version.go"), "package version\n")
+            _w(os.path.join("core", "internal", "contract", "r9.json"), '{"alpha": 1, "beta": 2}\n')
+            _w(gr, "# 夹具门件\n")
+            _w(os.path.join("core", "cmd", "zerg", "family_impact_contract.go"),
+               'package main\n\nconst impactContractRegistryGateRel = "%s"\n' % gr)
+            _w(os.path.join("core", "internal", "contract", "registry.json"), json.dumps({
+                "schema": "zerg-contract-registry/1", "note": "真源见 `%s`" % gr, "authority": "夹具",
+                "entries": [{"id": "S-a", "name": "甲", "truth": "core/internal/contract/r9.json",
+                             "truth_shape": "`alpha`", "version_field": "schema", "gate": gr,
+                             "change_class": "A", "change_note": "x"}]}, ensure_ascii=False))
+            rc, lines, _ = check(r9root, os.path.join(r9root, "core", "internal", "contract", "registry.json"))
+        finally:
+            shutil.rmtree(r9root, ignore_errors=True)
+        case("⑪ 负控：truth_shape 漏点名真源顶层键 ⇒ rc=1", 1, rc, "漏点名", lines)
+
         rc, lines, _ = check(root, os.path.join(tmp, "根本没这份表.json"))
         case("⑨ 负控：表读不到 ⇒ rc=2（不给结论）", 2, rc, "不给结论", lines)
 
@@ -245,7 +315,7 @@ def self_test(root):
         for b in bad:
             print("   " + b)
         return 1
-    print("✓ 自检全过（%d 组：正控 1 + 负控 9 · 成对）" % n)
+    print("✓ 自检全过（%d 组：正控 1 + 负控 10 · 成对）" % n)
     return 0
 
 

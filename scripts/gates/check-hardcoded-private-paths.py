@@ -121,8 +121,8 @@ def read_text(path):
 
 
 def scan(root):
-    """扫全部白名单目录，返回 (命中, 已登记) —— 每项是 (相对路径, 行号, 行内容)。"""
-    hits, exempt = [], []
+    """扫全部白名单目录，返回 (命中, 已登记, 扫描面件数) —— 每项是 (相对路径, 行号, 行内容)。"""
+    hits, exempt, scanned = [], [], 0
     for scan_dir in SCAN_DIRS:
         base = os.path.join(root, *scan_dir.split("/"))
         if not os.path.isdir(base):
@@ -133,6 +133,7 @@ def scan(root):
             )
             for fn in sorted(filenames):
                 rel = os.path.relpath(os.path.join(dirpath, fn), root).replace(os.sep, "/")
+                scanned += 1   # ★ 扫描面件数（空域守卫的分母：全件计入；豁免/二进制只是「不判命中」）
                 if is_test_file(rel):
                     continue
                 text = read_text(os.path.join(dirpath, fn))
@@ -160,7 +161,7 @@ def scan(root):
     else:
         # --strict 下登记项也进名单，但单独标出，方便看清「登记的是哪几行」
         exempt = [(rel, i, line, KNOWN_PENDING[rel][1]) for rel, i, line in hits if rel in KNOWN_PENDING]
-    return hits, exempt
+    return hits, exempt, scanned
 
 
 # ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
@@ -263,7 +264,12 @@ def main():
     print("扫描根: %s（跳过构建/运行态目录与二进制文件）" % "、".join(SCAN_DIRS))
     print("命中词: %s" % "、".join(NEEDLES))
 
-    hits, exempt = scan(root)
+    hits, exempt, scanned = scan(root)
+    # ★ 空集守卫（GAP-20260927-108）：空域 ⇒ fail-closed（扫描面 0 件 ⇒ rc=2，不许把「空转」当绿）
+    if not scanned:
+        print("BLOCKED —— 空域：扫描面（%s）下一件可扫源码都没取到 ⇒ rc=2（不给结论；空转 ≠ 绿）"
+              % "、".join(SCAN_DIRS), file=sys.stderr)
+        return 2
 
     for rel, i, line in hits:
         print("  ✗ %s:%d:%s" % (rel, i, line))

@@ -999,7 +999,7 @@ func (m *Manager) BackendRssGb() float64 {
 	var total float64
 	for _, sp := range m.procs {
 		if sp.proc != nil && sp.proc.Process != nil {
-			total += readMacOSRss(sp.proc.Process.Pid)
+			total += readProcessRssGb(sp.proc.Process.Pid)
 		}
 	}
 	return total

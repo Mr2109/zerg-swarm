@@ -1,4 +1,4 @@
-// check_affected_map.go —— 判据件 `scripts/gates/check-affected-map.py`（523 行）的 **Go 真搬**
+// check_affected_map.go —— 判据件 `scripts/gates/check-affected-map.py`（633 行 · 含 ③ 步面格）的 **Go 真搬**
 // （v2.5.14 · M2 一枚 · 入口 `checkAffectedMapGateMain` · 承接 GAP-20261001-13）。
 //
 // 为什么有这件：
@@ -17,7 +17,7 @@
 //	     缺读数 / 悬空声明一律 rc=**1**（件头第 20-23 行明文：`1 缺读数 / 悬空声明`）。
 //	     ⇒ 本件**逐字沿用 py 的 0/1/2 语义**，✗ **不**把「取不到」抬成 rc=2 —— 抬档＝改本门契约，
 //	     属「**原件真口子 / 口径差**」，按纪律**交回父代理入账**（见件尾「py 真口子」节），✗ 不自行修。
-//	  ③ **✗ 不静默绿**：所有「取不到」路径都非 0（rc=1）· `--check` 空表/坏件/缺键全 rc=1 ⇒ 无静默绿面。
+//	  ③ **✗ 不静默绿**：所有「取不到」路径都非 0（rc=1）· `--check` 空表/坏件/缺键全 rc=1 ⇒ 无静默绿面；**③ 步面格**（拍乙 · D9）另立一格：声明表 `faces` 命名步 ⟷ 步骤表（`add_step` 现读）「`D==N` ＋ 命名集合逐字相等」缺一即 **rc=3**（单列 · ✗ 不与悬空声明的 rc=1 混同）。
 //	  ④ **写面**（照实申报）：`--emit` 是**生成器**档，默认落 `<root>/scripts/gates/affected-map.json`
 //	     （也支持 `--out -` 落 stdout）。**判据档 `--check` 与默认档（无参）零写盘** —— 本件按原样搬
 //	     `--emit` 的写面，✗ 不偷偷去掉（去掉＝语义不全）；落仓/对拍一律用 `--out <仓外件>`。
@@ -94,6 +94,11 @@
 //	⑧ **`sorted` 键序**：py 按 Unicode 码点、Go `sort.Strings` 按 UTF-8 字节 —— 对合法 UTF-8 两序相同。
 //	⑨ **浮点数重序列化**：py `json.dumps(sort_keys=True)` 对 float 走 `repr`；本件按**原始字面**回写。
 //	   现读两份输入件（coverage / newcmd）**零浮点字面**（实测正则 `\d+\.\d+` 命中 0）⇒ 不触发。
+//	⑩ **C0 唯一真源的进程内形态**：py 的 ③ 步面格经 `importlib` 现载邻件 `affected-steps.py` 取
+//	   `c0_step_face()`；Go **无「运行时载入 .py」这条路**（同名逻辑在 Go 半是编译期代码）⇒ 本件把该函数
+//	   **逐字复刻**成 `afmC0StepFace`，并**复用**仓内已有的包级助手 `asSameSet`/`asFirst`/`asReprSlice`
+//	   （同一 `package main`）—— 「邻件不在盘」这条在 py 走 rc=2『C0 唯一真源取不到』，本件**无此态**
+//	   （真源已编译在内 · 恒走正常判）⇒ 该格为**口径差 · 单列**，不混进逐字对齐承诺。
 package main
 
 import (
@@ -1156,6 +1161,85 @@ func afmCheckMap(mp afmJV, filesOnDisk []string) (int, afmRep) {
 	return rc, rep
 }
 
+// ── 步面格（拍乙 · D9 步面接线）：**复甲① C0 唯一实现** ──────────────────────
+// ★ py 经 importlib 现载邻件 `affected-steps.py` 的 `c0_step_face()`（C0 唯一真源）；
+//   Go 无「运行时载入 .py」这条路 ⇒ 本件逐字复刻为 `afmC0StepFace`，并复用包级助手
+//   `asSameSet`/`asFirst`/`asReprSlice`（同 `package main` · 见件头未覆盖面⑩）。
+
+// afmDeclaredFaceNames —— py `declared_face_names(mp)`：`faces` 展平**去重**后的步名表。
+func afmDeclaredFaceNames(mp afmJV) []string {
+	named := []string{}
+	seen := map[string]bool{}
+	faces, ok := mp.get("faces")
+	if !ok || faces.kind != 'o' {
+		return named
+	}
+	faceKeys := make([]string, 0, len(faces.obj))
+	for _, p := range faces.obj {
+		faceKeys = append(faceKeys, p.k)
+	}
+	sort.Strings(faceKeys)
+	for _, fk := range faceKeys {
+		fv, _ := faces.get(fk)
+		if fv.kind != 'a' {
+			continue
+		}
+		for _, n := range fv.arr {
+			s := n.pyStr()
+			if !seen[s] {
+				seen[s] = true
+				named = append(named, s)
+			}
+		}
+	}
+	return named
+}
+
+// afmC0StepFace —— py `c0_step_face()`（**唯一真源**）：`D==N` ＋ 命名集合逐字相等。
+func afmC0StepFace(tableNames, faceNames []string) (bool, string) {
+	N, D := len(tableNames), len(faceNames)
+	tset := map[string]bool{}
+	for _, t := range tableNames {
+		tset[t] = true
+	}
+	dset := map[string]bool{}
+	for _, t := range faceNames {
+		dset[t] = true
+	}
+	if D != N {
+		return false, fmt.Sprintf("C0 未过：声明命名 %d 步 ≠ 步骤表 %d 步 ⇒ **有步未声明 = 静默漏选**", D, N)
+	}
+	if !asSameSet(dset, tset) {
+		miss := []string{}
+		for t := range tset {
+			if !dset[t] {
+				miss = append(miss, t)
+			}
+		}
+		ghost := []string{}
+		for t := range dset {
+			if !tset[t] {
+				ghost = append(ghost, t)
+			}
+		}
+		sort.Strings(miss)
+		sort.Strings(ghost)
+		return false, fmt.Sprintf("C0 未过：命名集合 ≠ 表集合（漏=%s · 幻影=%s）",
+			asReprSlice(asFirst(miss, 5)), asReprSlice(asFirst(ghost, 5)))
+	}
+	return true, fmt.Sprintf("C0 双向计数过：D==N==%d 且命名集合逐字相等（**没少声明**）", N)
+}
+
+// afmCheckStepFace —— py `check_step_face()`：0 步面齐 · 3 步面漂移。
+// （py 的 `mod is None ⇒ rc=2` 一支在 Go 无对应态 —— 真源已编译在内 · 见件头未覆盖面⑩。）
+func afmCheckStepFace(tableNames []string, mp afmJV) (int, string) {
+	ok, detail := afmC0StepFace(tableNames, afmDeclaredFaceNames(mp))
+	if ok {
+		return 0, detail
+	}
+	return 3, detail
+}
+
 // afmCmdCheck —— py `cmd_check`。
 func afmCmdCheck(stdout io.Writer, root, mapPath string) int {
 	if !afmIsFile(mapPath) {
@@ -1183,6 +1267,24 @@ func afmCmdCheck(stdout io.Writer, root, mapPath string) int {
 		return 1
 	}
 	rc, rep := afmCheckMap(mp, files)
+	// ★ 步面格（拍乙 · D9）：与件面格（① ②）**分列各算**（✗ 不混同一 rc）。
+	sfRC := 2
+	sfDetail := ""
+	if rawStep, terr := afmReadText(root, afmSrcStepTbl); terr != nil {
+		sfRC, sfDetail = 2, fmt.Sprintf("步骤表取不到：%s ⇒ 判不了", terr.Error())
+	} else if steps, ok := afmParseStepTable(rawStep); !ok {
+		sfRC, sfDetail = 2, "步骤表取不到：unterminated quoted string ⇒ 判不了"
+	} else {
+		tableNames := make([]string, 0, len(steps))
+		for _, s := range steps {
+			tableNames = append(tableNames, s.name)
+		}
+		if len(tableNames) == 0 {
+			sfRC, sfDetail = 2, "步骤表解析 0 步（空转 ⇒ 判不了）"
+		} else {
+			sfRC, sfDetail = afmCheckStepFace(tableNames, mp)
+		}
+	}
 	fmt.Fprintf(stdout, "声明表：%s\n", mapPath)
 	// py `mp.get(k)` 缺键 ⇒ None ⇒ `%s` 打 "None"（✗ 不是空串）。
 	sch, shh, fph := afmNull(), afmNull(), afmNull()
@@ -1213,8 +1315,22 @@ func afmCmdCheck(stdout io.Writer, root, mapPath string) int {
 	for _, x := range afmHead(rep.class2, 10) {
 		fmt.Fprintf(stdout, "      - %s\n", x)
 	}
-	fmt.Fprintf(stdout, "  rc=%d（0 读回成功 · 1 悬空声明/缺读数）\n", rc)
-	return rc
+	sfWord := "判不了"
+	if sfRC == 0 {
+		sfWord = "绿"
+	} else if sfRC == 3 {
+		sfWord = "红"
+	}
+	fmt.Fprintf(stdout, "  ③ 步面（件面＋步面 · D==N ＋ 逐字相等 · 复甲① C0 唯一实现）：%s · %s\n", sfWord, sfDetail)
+	// ★ 两格**分列各算**（✗ 不混同一 rc）：步面漂移 rc=3 · 悬空声明 rc=1 · 步面判不了 rc=2。
+	outRC := rc
+	if sfRC == 2 {
+		outRC = 2
+	} else if sfRC == 3 {
+		outRC = 3
+	}
+	fmt.Fprintf(stdout, "  rc=%d（0 读回成功 · 1 悬空声明/缺读数 · 3 步面漂移 · 2 判不了）\n", outRC)
+	return outRC
 }
 
 func afmHead(xs []string, n int) []string {
@@ -1224,7 +1340,7 @@ func afmHead(xs []string, n int) []string {
 	return xs
 }
 
-// ── 成对负控（py `self_test` · 6 控）──────────────────────────────────
+// ── 成对负控（py `self_test` · 10 控）──────────────────────────────────
 func afmSelfTest(stdout io.Writer) int {
 	fails := []string{}
 	tmp, err := os.MkdirTemp("", "affected-map-selftest-")
@@ -1280,6 +1396,65 @@ func afmSelfTest(stdout io.Writer) int {
 	if rc := afmCmdCheck(stdout, filepath.Dir(tmp), filepath.Join(tmp, "no-such-map.json")); rc != 1 {
 		fails = append(fails, fmt.Sprintf("⑥ 缺件期望 rc=1，实得 %d", rc))
 	}
+	// ⑦–⑩ 端到端（真起 afmCmdCheck · 走 ③ 步面格 · 复甲① C0 唯一实现）。
+	root := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(filepath.Join(root, "core"), 0o755); err != nil {
+		fails = append(fails, "⑦ 夹具 core 目录建不出："+err.Error())
+	}
+	if err := os.MkdirAll(filepath.Join(root, "scripts", "gates"), 0o755); err != nil {
+		fails = append(fails, "⑦ 夹具 scripts/gates 目录建不出："+err.Error())
+	}
+	_ = os.WriteFile(filepath.Join(root, "core", "a.go"), []byte("package main\n"), 0o644)
+	stepTbl := "DEFAULT_SCOPES=(\"go\")\n" +
+		"add_step go \"a-step\" rc \"${REPO_ROOT}/core\" \"go build ./...\"\n" +
+		"add_step gates \"b-step\" tri \"${REPO_ROOT}\" \"bash scripts/gates/x.sh\"\n" +
+		"add_step gates \"c-step\" tri \"${REPO_ROOT}\" \"bash scripts/gates/y.sh\"\n"
+	_ = os.WriteFile(filepath.Join(root, "scripts", "gates", "precommit-gates.sh"), []byte(stepTbl), 0o644)
+	covTxt := "{\"scan\":{\"script_globs\":[\"scripts/gates/*.py\"]}," +
+		"\"exclude\":{\"path_components\":[\".git\"],\"prefixes\":[]},\"whitelist\":{\"scripts\":[]}}"
+	_ = os.WriteFile(filepath.Join(root, "scripts", "gates", "gate-coverage.config.json"), []byte(covTxt), 0o644)
+
+	diskOK := afmArr(afmObj(afmKP{afmK("pattern"), afmStr("core/**")}, afmKP{afmK("kind"), afmStr("prefix")}))
+	facesOK := afmObj(
+		afmKP{afmK("core"), afmStrArr([]string{"a-step"})},
+		afmKP{afmK("repo"), afmStrArr([]string{"b-step", "c-step"})})
+	wmap := func(name string, files, faces afmJV) string {
+		mp := afmObj(
+			afmKP{afmK("schema"), afmStr("affected-map/1")},
+			afmKP{afmK("input_fingerprint"), afmStr(strings.Repeat("f", 64))},
+			afmKP{afmK("source_head"), afmStr("deadbeef")},
+			afmKP{afmK("files"), files},
+			afmKP{afmK("faces"), faces},
+		)
+		p := filepath.Join(tmp, name)
+		_ = os.WriteFile(p, []byte(afmDump(mp, 0, false, 0)), 0o644)
+		return p
+	}
+	q := func(mapPath string) int { return afmCmdCheck(io.Discard, root, mapPath) }
+	// ⑦ 正控：步面齐（D==N 且逐字相等）⇒ rc=0（③ 绿）。
+	if rc := q(wmap("m7.json", diskOK, facesOK)); rc != 0 {
+		fails = append(fails, fmt.Sprintf("⑦ 步面齐正控期望 rc=0，实得 %d", rc))
+	}
+	// ⑧ 负控：删 faces 一步（D≠N）⇒ rc=3（**步面格 · ≠ 悬空声明的 1**）。
+	if rc := q(wmap("m8.json", diskOK, afmObj(
+		afmKP{afmK("core"), afmStrArr([]string{"a-step"})},
+		afmKP{afmK("repo"), afmStrArr([]string{"b-step"})}))); rc != 3 {
+		fails = append(fails, fmt.Sprintf("⑧ 步面漂移(D≠N)期望 rc=3，实得 %d", rc))
+	}
+	// ⑨ 负控：D==N 但集合不等（换名）⇒ rc=3。
+	if rc := q(wmap("m9.json", diskOK, afmObj(
+		afmKP{afmK("core"), afmStrArr([]string{"a-step"})},
+		afmKP{afmK("repo"), afmStrArr([]string{"b-step", "zzz"})}))); rc != 3 {
+		fails = append(fails, fmt.Sprintf("⑨ 步面集合不等期望 rc=3，实得 %d", rc))
+	}
+	// ⑩ 负控：悬空声明 ⇒ rc=1（**≠ 步面漂移的 3** · 两格 rc 分列不混同 · 有牙）。
+	ghostLit := "scripts/gates/" + "ghost.py"
+	diskGhost := afmArr(
+		afmObj(afmKP{afmK("pattern"), afmStr("core/**")}, afmKP{afmK("kind"), afmStr("prefix")}),
+		afmObj(afmKP{afmK("pattern"), afmStr(ghostLit)}, afmKP{afmK("kind"), afmStr("literal")}))
+	if rc := q(wmap("m10.json", diskGhost, facesOK)); rc != 1 {
+		fails = append(fails, fmt.Sprintf("⑩ 悬空声明期望 rc=1（✗ 不与步面 3 混同），实得 %d", rc))
+	}
 	if len(fails) > 0 {
 		fmt.Fprintln(stdout, "自检不过：")
 		for _, x := range fails {
@@ -1287,7 +1462,7 @@ func afmSelfTest(stdout io.Writer) int {
 		}
 		return 2
 	}
-	fmt.Fprintln(stdout, "自检通过：6 控（正控 1 ＋ 负控 5）逐条对拍 ✓")
+	fmt.Fprintln(stdout, "自检通过：10 控（正控 2 ＋ 负控 8）逐条对拍 ✓")
 	return 0
 }
 

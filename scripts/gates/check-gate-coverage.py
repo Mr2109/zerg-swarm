@@ -161,6 +161,10 @@ GATES_REL = os.path.join("scripts", "gates", "precommit-gates.sh")
 
 EXIT_OK, EXIT_FAIL, EXIT_BLOCKED = 0, 1, 2
 
+# ★ 缺件/不支持档的**结构化错误**封包 schema（`GAP-20260927-42` ②）：`--json` 档下，机器面必须
+#   能区分「缺件（判不了 ⇒ rc=2）」与「零命中（rc=0）」—— 旧行为 stdout **0 字节**，两者同形。
+ERR_SCHEMA = "zerg/gate-coverage-error/1"
+
 # ── ④ 格指路的**分类真源**（唯一一处定义，见 `declares_out_of_scope`）──────────────
 #   「永远不该进步骤表」那一类件的既有真源**不是本门发明的**：
 #     · `scripts/gates/gate-coverage.config.json` 第二档白名单口径逐字 = 「只有「永远不该进
@@ -1573,6 +1577,16 @@ def main(argv):
         rep = analyse(root, cfg, steps, gates_text, args.max_examples)
     except Unsupported as exc:
         print("✗ 不给结论（rc=2）：%s" % exc, file=sys.stderr)
+        # ★ `GAP-20260927-42` ②：`--json` 档给**结构化错误**封包（stdout 只有一份可 json.loads 的 JSON）
+        #   ⇒「缺件（判不了）」与「零命中（rc=0）」在机器面可分；非 `--json` 档一字不动。
+        if args.json:
+            print(json.dumps({
+                "schema": ERR_SCHEMA,
+                "rc": EXIT_BLOCKED,
+                "verdict": {"rc": EXIT_BLOCKED, "code": "UNSUPPORTED", "reason": str(exc)},
+                "root": root,
+                "config": cfg_path,
+            }, ensure_ascii=False, indent=2, sort_keys=True))
         return EXIT_BLOCKED
 
     # ★ `_baseline_note` ↔ `baseline` 同源校验（`GAP-20260927-42` ①）：末次现值句必须 == baseline，

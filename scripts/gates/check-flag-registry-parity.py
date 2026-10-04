@@ -54,6 +54,17 @@
     python3 scripts/gates/check-flag-registry-parity.py --self-test  # 成对负控（合成夹具 · 不碰真目标）
 
 纪律：**只读**（不写仓、不写目标、不起进程）· 不联网 · 不 build（取数面全是盘上现读）。
+面④ 读者面（按命令 · 报告档）：见 RULES 末三段。
+面⑤ 反读面（按命令 · 2026-10-05 · 缺口 `GAP-20261005-15`）
+--------------------------------------------------
+面④ 只判「usage 有 ⇒ 实现必读」**一向**；反过来的「实现读了、usage 没列」照不到 ——
+`gap add` 的实现（`gapAddInputFromFlags`）读 `--state`，而它的用法串不列 `--state`：
+面④ 看不见它（usage 里没这枚）、面②「幽灵」也判不了（`--state` 在别的命令用法串里出现过）
+⇒ 使用者从用法发现不了这枚旗标；`已派` / `已立项` 由此多出一个**未登记写入口**（可绕过
+`gap assign` 的作业单 + `M-32` 占用预检）。本面把那条反向判据补上：**某命令实现按取值读了
+某旗标 ⇒ 该命令的 usage 串必列它**（口径三处收窄，见 `no_usage_face`）· 首版 = 报告档。
+
+纪律：**只读**（不写仓、不写目标、不起进程）· 不联网 · 不 build（取数面全是盘上现读）。
 同族骨架：`check-fields-face-parity.py`（同一条思路：命令树声明面 ⟷ 真身面逐名对拍）。
 """
 from __future__ import annotations
@@ -134,6 +145,9 @@ RULES = (
     "面④ 读者面（按命令 · 报告档 · 不进退码）= 某命令 usage 串里的旗标 ⇒ 该命令的实现件"
     "（定义其 run: 处理函数的包内 .go 件 · 先剥注释）必读它（字面 \"--F\" 或类型化字段 "
     "inv.<field>）—— 缺口账 `GAP-20260927-325`（全局「零读者」是错的判据）。"
+    "面⑤ 反读面（按命令 · 报告档 · 不进退码）= 某命令实现按**取值**读了（`inv.flagVal`）某旗标 ⇒ "
+    "该命令的 usage 串必列它（面④ 的另一向 —— 「实现读 ⇒ 用法必列」，缺口 `GAP-20261005-15`）；"
+    "拒执守卫（同一函数里 `inv.flagVals`/`inv.hasFlag` 存在性检查）与别处已列 不计。"
 )
 RCS = "0=对齐 · 1=有新的分家项（逐条点名）· 2=取数面拿不到（不给结论）"
 
@@ -280,9 +294,84 @@ def reader_face(root: str):
     return out
 
 
+# ── 面⑤ 反读面（按命令 · 缺口账 `GAP-20261005-15`）──────────────────────────────
+# 与面④ **同一条判据的另一向**：面④ = 「usage 有 ⇒ 实现必读」（照不到「实现读了、usage 没列」）；
+# 本面 = 「实现**按取值**读了 ⇒ usage 必列」。缺口 `GAP-20261005-15`：`gap add` 的实现
+# （`gapAddInputFromFlags`）读 `--state`，而它的用法串不列 `--state` ⇒ 面④ 照不到、
+# 面② 也不算「幽灵」（`--state` 在别的命令用法串里出现过）。
+# 取数口径（三处收窄 · 防误报；与面④ 同源不同向）：
+#   · 实现面 = 从该命令 `run:` 处理函数出发、在本包内**可达的函数闭包**（面④ 用「定义 run: 的
+#     那个件」粒度 —— 反向判会太粗：整件里读的旗标会全算到本命令头上）；
+#   · 「读」= `inv.flagVal`（**取值**读）；全局选项（`--json`/`--dry-run`/`--yes`/`--confirm`/
+#     `--help`）不计；
+#   · **拒执守卫不计**：同一函数里同时出现 `inv.flagVals` / `inv.hasFlag`（存在性检查）⇒ 那处是
+#     「本动作不收它 ⇒ 拒收」的守卫（`gap verify` / `gap note` / `gap assign` 都这样拒 `--state`），
+#     不算「读值」；
+#   · **别处已列不计**：可达闭包里若有某条命令的 usage 串已列该旗标（该旗标在归属命令上有户口）
+#     ⇒ 不算「本命令漏列」。
+# ★ 首版 = **报告档**（逐条列出 · **不进退码**）—— 与面④ 同一档（「先让它看得见，再让它拦得住」）。
+GREV_RDV_RE = re.compile(r'inv\.flagVal\(\s*"(--[A-Za-z0-9-]+)"')
+GREV_RDP_RE = re.compile(r'inv\.(?:flagVals|hasFlag)\(\s*"(--[A-Za-z0-9-]+)"')
+GREV_CALL_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
+
+def rev_func_bodies(srcs):
+    """→ {函数名: (件名, 函数体)}（同名取首见 —— 与面④ `func_file` 同口径）。"""
+    out = {}
+    for name in sorted(srcs):
+        body = srcs[name]
+        ms = list(FUNC_DEF_RE.finditer(body))
+        for i, m in enumerate(ms):
+            a = m.start()
+            b = ms[i + 1].start() if i + 1 < len(ms) else len(body)
+            out.setdefault(m.group(1), (name, body[a:b]))
+    return out
+
+
+def rev_reach(bodies, run):
+    """从 run 出发在本包内的可达函数闭包（含 run 自己）。"""
+    seen = set()
+    stack = [run]
+    while stack:
+        f = stack.pop()
+        if f in seen or f not in bodies:
+            continue
+        seen.add(f)
+        for c in GREV_CALL_RE.findall(bodies[f][1]):
+            if c in bodies and c not in seen:
+                stack.append(c)
+    return seen
+
+
+def no_usage_face(root: str):
+    """面⑤ 反读面（按命令）：→ [(path, flag, 读者函数, 实现件)] —— usage 串没列的「实现取值读」。
+    报告档（不进退码）。"""
+    srcs = pkg_sources(root)
+    bodies = rev_func_bodies(srcs)
+    _V, _D, rows, _c = parse_faces(root)
+    out = []
+    for r in rows:
+        if r.get("passthrough") or not r.get("run"):
+            continue
+        seen = rev_reach(bodies, r["run"])
+        documented = set(FLAG_RE.findall(r["usage"]))
+        for o in rows:
+            if o.get("run") in seen and o.get("usage"):
+                documented |= set(FLAG_RE.findall(o["usage"]))
+        for f in sorted(seen):
+            body = bodies[f][1]
+            present = set(GREV_RDP_RE.findall(body))
+            for g in sorted(set(GREV_RDV_RE.findall(body))):
+                if g in GLOBAL_OPTS or g in present or g in documented:
+                    continue
+                out.append((r["path"], g, f, bodies[f][0]))
+    out.sort()
+    return out
+
+
 def compute(root: str):
-    """→ (violations, exempt_hits, stale, counts, no_reader)：三条判据逐条算 + 存量表命中/失效
-    + 面④ 读者面（报告档）。"""
+    """→ (violations, exempt_hits, stale, counts, no_reader, no_usage)：三条判据逐条算 + 存量表
+    命中/失效 + 面④ 读者面（报告档）+ 面⑤ 反读面（报告档）。"""
     V, D, rows, _ = parse_faces(root)
     known = set(V) | D
 
@@ -334,10 +423,10 @@ def compute(root: str):
         "用法串旗标数": len(any_use),
         "透传命令": sorted(r["path"] for r in rows if r["passthrough"]),
     }
-    return viol, exempt_used, stale, no_reason, counts, reader_face(root)
+    return viol, exempt_used, stale, no_reason, counts, reader_face(root), no_usage_face(root)
 
 
-def report(viol, exempt_used, stale, no_reason, counts, root, as_json, no_reader=()):
+def report(viol, exempt_used, stale, no_reason, counts, root, as_json, no_reader=(), no_usage=()):
     lines = []
     lines.append("门73 旗标两处登记面对拍（用法串 ⟷ valueFlagName 名字表 + 实现件读者面）· v%s" % VERSION)
     lines.append("仓根：%s" % os.path.abspath(root))
@@ -355,6 +444,13 @@ def report(viol, exempt_used, stale, no_reason, counts, root, as_json, no_reader
                  % len(no_reader))
     for path, flag, impl in no_reader:
         lines.append("  · zerg %s · %s · 实现件 %s" % (path.replace("/", " "), flag, impl))
+    # ── 面⑤ 反读面（按命令 · 报告档 · 缺口账 `GAP-20261005-15`）──
+    lines.append("反读面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20261005-15`）："
+                 "「某命令实现按取值读（`inv.flagVal`）了某旗标 ⇒ 该命令的 usage 串必列它」"
+                 "（面④ 的另一向；拒执守卫 / 别处已列 不计）——本命令实现读了而 usage 没列的 %d 项："
+                 % len(no_usage))
+    for path, flag, fn, impl in no_usage:
+        lines.append("  · zerg %s · %s · 读者函数 %s（%s）" % (path.replace("/", " "), flag, fn, impl))
     lines.append("存量豁免 %d 项（棘轮 · 逐条打印 · 不进退码）：" % len(exempt_used))
     for key in sorted(exempt_used):
         lines.append("  ~ [%s] %s · %s" % (key[0], key[1], EXEMPT[key]))
@@ -376,18 +472,19 @@ def report(viol, exempt_used, stale, no_reason, counts, root, as_json, no_reader
             "exempt_without_reason": [{"face": k[0], "flag": k[1]} for k in no_reason],
             "counts": counts,
             "no_reader": [{"command": p, "flag": f, "impl": i} for p, f, i in no_reader],
+            "no_usage": [{"command": p, "flag": f, "func": fn, "impl": i} for p, f, fn, i in no_usage],
         }, ensure_ascii=False)
     return out
 
 
 def run(root: str, as_json: bool, stdout=sys.stdout):
     try:
-        viol, exempt_used, stale, no_reason, counts, no_reader = compute(root)
+        viol, exempt_used, stale, no_reason, counts, no_reader, no_usage = compute(root)
     except Bail as e:
         print("门73 旗标两处登记面对拍：**判不了**（%s）⇒ rc=2 不给结论" % e)
         print("退码：%s" % RCS)
         return 2
-    print(report(viol, exempt_used, stale, no_reason, counts, root, as_json, no_reader))
+    print(report(viol, exempt_used, stale, no_reason, counts, root, as_json, no_reader, no_usage))
     print("退码：%s" % RCS)
     return 1 if (viol or no_reason) else 0
 
@@ -466,7 +563,7 @@ def self_test() -> int:
 
     def run_on(root):
         try:
-            viol, ex, stale, nr, counts, no_reader = compute(root)
+            viol, ex, stale, nr, counts, no_reader, no_usage = compute(root)
         except Bail as e:
             return ("bail", str(e))
         return ("ok", viol)
@@ -543,6 +640,32 @@ def self_test() -> int:
         add("④读者面（正控）：实现件读全 ⇒ 该命令不再列缺读者",
             not any(p2 == "task/submit" for p2, _, _ in nr2), str(nr2))
 
+        # 面⑤ 反读面（按命令）· 成对负控：impl 按取值读但 usage 没列 ⇒ 列缺列；usage 列了 ⇒ 不再列。
+        d = _mk_fixture(os.path.join(base, "nousage_missing"))
+        pm = os.path.join(d, PKG_REL, "main.go")
+        t = open(pm, encoding="utf-8").read().replace(
+            '\t\t\tpassthrough: true,\n\t\t},\n\t}\n}',
+            '\t\t\tpassthrough: true,\n\t\t},\n'
+            '\t\t{\n\t\t\tpath:  []string{"probe", "x"},\n'
+            '\t\t\tusage: "zerg probe x",\n\t\t\trun:   cmdProbeNoUsage,\n\t\t},\n\t}\n}')
+        t += '\nfunc cmdProbeNoUsage() { _ = inv.flagVal("--zz-read") }\n'
+        open(pm, "w", encoding="utf-8").write(t)
+        nu = no_usage_face(d)
+        add("⑤反读面（负控）：实现按取值读但 usage 没列 ⇒ 列出该命令",
+            any(pp == "probe/x" and f2 == "--zz-read" for pp, f2, _fn, _im in nu), "")
+        d = _mk_fixture(os.path.join(base, "nousage_ok"))
+        pm = os.path.join(d, PKG_REL, "main.go")
+        t = open(pm, encoding="utf-8").read().replace(
+            '\t\t\tpassthrough: true,\n\t\t},\n\t}\n}',
+            '\t\t\tpassthrough: true,\n\t\t},\n'
+            '\t\t{\n\t\t\tpath:  []string{"probe", "x"},\n'
+            '\t\t\tusage: "zerg probe x [--zz-read <值>]",\n\t\t\trun:   cmdProbeNoUsage,\n\t\t},\n\t}\n}')
+        t += '\nfunc cmdProbeNoUsage() { _ = inv.flagVal("--zz-read") }\n'
+        open(pm, "w", encoding="utf-8").write(t)
+        nu2 = no_usage_face(d)
+        add("⑤反读面（正控）：usage 列了该旗标 ⇒ 该命令不再列",
+            not any(pp == "probe/x" for pp, _f, _fn, _im in nu2), "")
+
         bad = [c for c in checks if not c[1]]
         print("门73 自检（成对负控 · 合成夹具）：断言 %d 条 · 失败 %d 条" % (len(checks), len(bad)))
         for name, ok, detail in checks:
@@ -569,6 +692,8 @@ def main(argv=None) -> int:
         print("存量豁免 %d 项：%s" % (len(EXEMPT), " · ".join("%s/%s" % k for k in sorted(EXEMPT))))
         print("面④ 读者面（按命令 · 报告档 · 不进退码）：RULES 末句 —— "
               "「某命令 usage 串里的旗标 ⇒ 该命令的实现件必读」（缺口账 `GAP-20260927-325`）")
+        print("面⑤ 反读面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20261005-15`）：RULES 末句 —— "
+              "「某命令实现按取值读了某旗标 ⇒ 该命令的 usage 串必列它」（面④ 的另一向）")
         return 0
     return run(a.root_opt or a.root, a.json)
 

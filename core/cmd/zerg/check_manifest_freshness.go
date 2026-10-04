@@ -74,6 +74,27 @@ var mfJSONFields = []string{}
 // mfSelfRel —— 由 cwd 上溯定位仓根用的标记（同族 py 的仓内相对路径）。
 const mfSelfRel = "scripts/gates/check-manifest-freshness.py"
 
+// mfEmptyManifestMsg —— ★ 空清单（`{}` / 四键全缺）⇒ **没输入可判**：✗ 不许报「新鲜」。
+// ★ 口径（`GAP-20260927-108` · 2026-10-05 拍板）：**rc 契约一字不动**（本门是报告档：缺省退码恒 0、
+// 仅 `--strict` 拦）—— 只把文案从「✓ 清单新鲜（无告警）」改成**明说「没输入可判」**；`--strict` 下空清单照旧**拦**（升 rc=1）。
+// 逐字节须与 py `check-manifest-freshness.py` 的 `main()` 同串（对拍面）。
+const mfEmptyManifestMsg = "⚠ 空清单：没输入可判 —— 本清单未携带任何判据字段（source_sha / dirty / commit / generated_at 全缺）⇒ 不报「新鲜」"
+
+// mfIsEmptyManifest —— 清单里**有没有可判的输入**：非 dict ⇒ false（走既有属性错路径，不算「空」）；
+// dict ⇒ 四键（source_sha / dirty / commit / generated_at）**一个都不在**才算空。逐字对齐 py 的同一判定。
+func mfIsEmptyManifest(mf any) bool {
+	m, ok := mf.(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, k := range []string{"source_sha", "dirty", "commit", "generated_at"} {
+		if _, present := m[k]; present {
+			return false
+		}
+	}
+	return true
+}
+
 // ── Unsupported：判不了 ⇒ 一律 rc=2（不给结论），绝不猜。py `Unsupported(Exception)`。───────
 
 type mfUnsupported struct{ msg string }
@@ -418,6 +439,15 @@ func mfMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stderr, "✗ 不给结论（rc=2）：%s ⇒ **取不到 ≠ 零命中**（两态不许同形）；code=%s\n",
 			errMsg, mfCodeTrackedUnknown)
 		return mfExitBlocked
+	}
+	// ★ 空清单（`mfEmptyManifestMsg` 见件头）：**没输入可判** ⇒ ✗ 不许把「零告警」读成「新鲜」。
+	//   rc 契约一字不动（报告档）：缺省照落 rc（=mfExitOK）、`--strict` 下空清单**拦**（升 mfExitFail）。
+	if len(warns) == 0 && mfIsEmptyManifest(mf) {
+		fmt.Fprintln(stdout, mfEmptyManifestMsg)
+		if strict {
+			return mfExitFail
+		}
+		return rc
 	}
 	if len(warns) == 0 {
 		fmt.Fprintln(stdout, "✓ 清单新鲜（无告警）")

@@ -39,6 +39,47 @@ pub(crate) fn trust_display(code: &str) -> String {
     }
 }
 
+/// 资源库表格的一行 —— (名称, 版本, 状态码, 次数, 故障, 时间, 简介)。
+/// 元组顺序与 `build_resource_rows` 返回的字段一一对应（排序 / 渲染按下标取用）。
+pub(crate) type ResourceRow = (String, String, String, i64, i64, String, String);
+
+/// build_resource_rows —— 把 `/api/resources/*` 的 `items` 抽成表格行（纯函数，可测）。
+///
+/// ★ GAP-20261005-27：`version` 与 `desc` 是**后端当前根本不发的可缺字段**
+/// （`/api/resources/{skills,mcp}` 的每个 item 只发 name/trust/uses/faults/since，
+/// 见 core/internal/api/handlers.go）。缺字段一律**留空占位「-」**，
+/// ✗ **绝不回落伪造版本号 `v1.0.0`** —— 回落到一个不存在的版本 = 给用户看假信息。
+/// （技能侧核心仓没有 version 概念：SKILL.md frontmatter 只解析 name/description；
+/// MCP 配置也无版本字段。将来后端真发这两个字段，这里自然显真值。）
+pub(crate) fn build_resource_rows(items: &[serde_json::Value]) -> Vec<ResourceRow> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let name = item.get("name").and_then(|n| n.as_str())?.to_string();
+            Some((
+                name,
+                resource_field(item, "version"),
+                item.get("trust")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or(TRUST_CODE_UNKNOWN)
+                    .to_string(),
+                item.get("uses").and_then(|u| u.as_i64()).unwrap_or(0),
+                item.get("faults").and_then(|f| f.as_i64()).unwrap_or(0),
+                resource_field(item, "since"),
+                resource_field(item, "desc"),
+            ))
+        })
+        .collect()
+}
+
+/// 取可缺字段的字符串值：缺失 / 非字符串 / 空串 ⇒ 占位「-」（✗ 不回落任何伪造值）。
+fn resource_field(item: &serde_json::Value, key: &str) -> String {
+    match item.get(key).and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => s.to_string(),
+        _ => "-".to_string(),
+    }
+}
+
 pub struct ZergApp {
     // 连接状态
     online: bool,
@@ -1745,54 +1786,7 @@ impl ZergApp {
                                         }
                                     } else {
                                         // 工具/skill/mcp——表格（Mr2109 2026-08-21: 表格形式——状态/次数/故障/时间）
-                                        let mut rows: Vec<(
-                                            String,
-                                            String,
-                                            String,
-                                            i64,
-                                            i64,
-                                            String,
-                                            String,
-                                        )> = items
-                                            .iter()
-                                            .filter_map(|item| {
-                                                let name = item
-                                                    .get("name")
-                                                    .and_then(|n| n.as_str())?
-                                                    .to_string();
-                                                let version = item
-                                                    .get("version")
-                                                    .and_then(|v| v.as_str())
-                                                    .unwrap_or("v1.0.0")
-                                                    .to_string();
-                                                let trust = item
-                                                    .get("trust")
-                                                    .and_then(|t| t.as_str())
-                                                    .unwrap_or(TRUST_CODE_UNKNOWN)
-                                                    .to_string();
-                                                let uses = item
-                                                    .get("uses")
-                                                    .and_then(|u| u.as_i64())
-                                                    .unwrap_or(0);
-                                                let faults = item
-                                                    .get("faults")
-                                                    .and_then(|f| f.as_i64())
-                                                    .unwrap_or(0);
-                                                let since = item
-                                                    .get("since")
-                                                    .and_then(|s| s.as_str())
-                                                    .unwrap_or("-")
-                                                    .to_string();
-                                                let desc = item
-                                                    .get("desc")
-                                                    .and_then(|d| d.as_str())
-                                                    .unwrap_or("-")
-                                                    .to_string();
-                                                Some((
-                                                    name, version, trust, uses, faults, since, desc,
-                                                ))
-                                            })
-                                            .collect();
+                                        let mut rows = build_resource_rows(items);
                                         rows.sort_by(|a, b| {
                                             let ord = match self.res_sort_col {
                                                 1 => a.2.cmp(&b.2), // 状态
@@ -3721,5 +3715,83 @@ mod trust_code_tests {
                 assert!(yml.contains(&lit), "{} 缺显示键/值不对：{}", name, lit);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod resource_rows_tests {
+    //! GAP-20261005-27：资源库「技能 / MCP」表格的版本 / 简介列**不许自造假值**。
+    //!
+    //! 背景（双证）：`/api/resources/{skills,mcp}` 的每个 item 只发
+    //! name/trust/uses/faults/since —— 从无 `version` / `desc`
+    //! （core/internal/api/handlers.go）；而 UI 旧码把 version 缺省成 `v1.0.0`
+    //! ⇒ 每一行都显示一个**不存在的版本号**（假信息）。
+    //!
+    //! 四条判据：① 有字段 ⇒ 如实显真值；② 缺字段 ⇒ 留空「-」；
+    //! ③ 缺字段**绝不**回落 `v1.0.0`（负控：把回落改回去 ⇒ 本组必红）；④ 空串同缺。
+
+    use super::build_resource_rows;
+    use serde_json::json;
+
+    /// ① 有字段：后端真发了 version / desc ⇒ 原样显示（别把真值也吞掉）。
+    #[test]
+    fn present_fields_render_verbatim() {
+        let items = vec![json!({
+            "name": "demo",
+            "version": "v2.5.10",
+            "trust": "official",
+            "uses": 7,
+            "faults": 1,
+            "since": "2026-10-05",
+            "desc": "示例技能"
+        })];
+        let rows = build_resource_rows(&items);
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r.0, "demo");
+        assert_eq!(r.1, "v2.5.10", "有 version 就该原样显示");
+        assert_eq!(r.6, "示例技能", "有 desc 就该原样显示");
+    }
+
+    /// ② 缺字段（**正是后端现状**：只有 name/trust/uses/faults/since）⇒ 版本 / 简介留空占位；
+    /// ★ 负控：缺字段时**任何位置**都不许冒出伪造版本号 v1.0.0。
+    #[test]
+    fn missing_fields_render_placeholder_not_fabricated_version() {
+        let items = vec![json!({
+            "name": "demo",
+            "trust": "new",
+            "uses": 0,
+            "faults": 0,
+            "since": "-"
+        })];
+        let rows = build_resource_rows(&items);
+        let r = &rows[0];
+        assert_eq!(r.1, "-", "缺 version ⇒ 留空占位");
+        assert_eq!(r.6, "-", "缺 desc ⇒ 留空占位");
+        assert_ne!(
+            r.1, "v1.0.0",
+            "缺 version 回落 v1.0.0 = 给用户看假版本（GAP-20261005-27）"
+        );
+    }
+
+    /// ③ 生产段里 `v1.0.0` 这个伪造缺省必须**彻底消失** —— 不是「本用例路径不走到它」。
+    /// 切到第一个 `#[cfg(test)]` 之前，防本用例的 needle 被自己喂饱（同 trust_code_tests 口径）。
+    #[test]
+    fn no_fabricated_default_version_in_production_code() {
+        const APP: &str = include_str!("app.rs");
+        let prod = APP.split("#[cfg(test)]").next().unwrap_or(APP);
+        assert!(
+            !prod.contains("\"v1.0.0\""),
+            "生产段仍存在伪造的版本缺省 v1.0.0 —— 缺字段必须留空占位，✗ 不许自造版本号（GAP-20261005-27）"
+        );
+    }
+
+    /// ④ 空串 / 纯空白也当缺字段（后端偶尔发 "" 时不把空串当版本显示）。
+    #[test]
+    fn empty_string_is_treated_as_missing() {
+        let items = vec![json!({"name": "demo", "version": "", "desc": "   "})];
+        let rows = build_resource_rows(&items);
+        assert_eq!(rows[0].1, "-");
+        assert_eq!(rows[0].6, "-");
     }
 }

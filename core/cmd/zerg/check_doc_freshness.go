@@ -226,11 +226,13 @@ var cdfGates = map[string]cdfGate{
 		name:   "D4 · 生成式参考 drift",
 		inputs: "① 生成器清单（源 → 产物 → 重建命令 → 期望退出码）② 干净的临时目录 ③ git 只读权限（本实现用「临时目录重建 + 与提交物比对」，不需要 git 写）",
 		judge: "在临时目录重建（绝不就地生成）→ 与仓内提交物比对：不一致 ⇒ 红；" +
-			"归一化（去尾空格 + 丢易变行：时间戳/版本号/本机路径）后一致 ⇒ 黄（只有易变行）；报错必须带「跑哪条命令修」",
-		rc0: "产物 == 重建结果（含归一化后一致）",
-		rc1: "有 diff",
+			"归一化（去尾空格 + 丢易变行：时间戳/版本号/本机路径）后一致 ⇒ 黄（只有易变行）；报错必须带「跑哪条命令修」；" +
+			"★ 靶面界定（2026-10-05 拍板④）：产物**件内**带「人工接管标记」cdfHandMaintainedMarker ⇒ 该件已人工接管、" +
+			"生成器不拥有它 ⇒ **不逐字节比对**、只单列计数（非红非黄）；**无标记**的产物一律照判 ⇒ 真过时件仍红",
+		rc0: "产物 == 重建结果（含归一化后一致）· 或为件含接管标记的人工接管件（单列）",
+		rc1: "有 diff（且该件**无**接管标记）",
 		rc2: "缺生成器 / 产物不存在 / 0 个可比对（不给结论）",
-		fix: "照每条报错里给的命令重跑生成器（绝不手改生成物）",
+		fix: "照每条报错里给的命令重跑生成器（绝不手改生成物）；确需人工维护该件 ⇒ 在件内加一行 cdfHandMaintainedMarker（声明生成器不覆盖）并说明为何重生会删人工内容",
 	},
 }
 
@@ -1789,6 +1791,13 @@ func cdfGateD3(t *cdfTree, args *cdfArgs) *cdfResult {
 
 // ─────────────────────────── D4 ───────────────────────────
 
+// cdfHandMaintainedMarker —— ★ D4 靶面界定（2026-10-05 · 用户拍板④）：件内「人工接管标记」逐字句。
+//
+//	规则（**非点名豁免表**）：生成物件内带此句 ⇒ 该件已人工接管、生成器不拥有它 ⇒ D4 不逐字节比对、
+//	只单列计数；无此句的产物一律照判 ⇒ 真过时件仍红（自检哑化负控钉住）。与 py 侧
+//	`HAND_MAINTAINED_MARKER` 逐字同构（双实现件：py⟷Go 必须同值）。
+const cdfHandMaintainedMarker = "<!-- doc-freshness: hand-maintained -->"
+
 func cdfNormalizeLines(text string) []string {
 	out := []string{}
 	pats := []string{}
@@ -2065,6 +2074,18 @@ func cdfGateD4(t *cdfTree, args *cdfArgs) *cdfResult {
 				rebuilt = string(b)
 			}
 			committed := t.text(tg)
+			// ★ D4 靶面界定（拍板④）：件含「人工接管标记」⇒ 生成器不拥有该件 ⇒ 单列不判（非红）
+			hmm := cdfAnyStr(g, "hand_maintained_marker", "")
+			if hmm == "" {
+				hmm = cdfAnyStr(cfg, "hand_maintained_marker", cdfHandMaintainedMarker)
+			}
+			if hmm != "" && strings.Contains(committed, hmm) {
+				r.counted("人工接管·件含接管标记（单列·不判 drift）", 1)
+				r.add(tg, 0, gid, "单列·人工接管（生成器不覆盖 · 件含接管标记）",
+					fmt.Sprintf("件内置接管标记 %s ⇒ 该件已人工接管、生成器不拥有它，逐字节比对不适用（真过时且**无**标记的件仍红）",
+						cdfClip(hmm, 50)), dom)
+				continue
+			}
 			if committed == rebuilt {
 				r.counted("过·逐字节一致", 1)
 				continue
@@ -2669,6 +2690,39 @@ func cdfCmdSelfTest(w io.Writer, args *cdfArgs) int {
 	t = cdfNewTree(r3, c, "main", false, false, "")
 	res = cdfGateD4(t, args)
 	check("缺件（缺生成器）rc=2", res.rc() == 2, fmt.Sprintf("(%d, %v)", res.rc(), res.errors))
+	// ── ★ D4 靶面界定（2026-10-05 拍板④）：件含「人工接管标记」⇒ 生成器不覆盖（单列不判）；
+	//    无标记 ⇒ 照判（哑化负控：真过时件**必红**）。
+	r4m := filepath.Join(tmp, "d4manual")
+	cdfMkroot(map[string]string{"tools/gen.py": cdfSelftestGenerator,
+		"docs/v1/INDEX.md": cdfHandMaintainedMarker + "\n# v1 版本索引（手改过）\n\n| [a.md](a.md) |\n", "docs/v1/a.md": "x\n"}, r4m)
+	c = cdfBaseCfg(r4m)
+	c["d4"] = map[string]any{"generators": []any{map[string]any{"id": "g", "name": "自检生成器",
+		"cmd":  []any{"python3", "{REPO}/tools/gen.py", "{DIR}", "--out", "{OUT}"},
+		"mode": "out-flag", "output": "docs/v1/INDEX.md", "script": gen, "fix": "重跑 gen.py"}}}
+	t = cdfNewTree(r4m, c, "main", false, false, "")
+	res = cdfGateD4(t, args)
+	check("靶面界定·件含接管标记 ⇒ rc=0、**0 条红**、入单列「人工接管」",
+		res.rc() == 0 && len(res.reds()) == 0 && res.counts["人工接管·件含接管标记（单列·不判 drift）"] == 1,
+		fmt.Sprintf("(%d, %v, %v)", res.rc(), res.counts, cdfKinds(res.reds())))
+	_, over1 := res.counts["过·逐字节一致"]
+	check("靶面界定·接管件不误记「过」（与真·逐字节一致分开计数）", !over1, fmt.Sprintf("%v", res.counts))
+	r5m := filepath.Join(tmp, "d4manual_off")
+	cdfMkroot(map[string]string{"tools/gen.py": cdfSelftestGenerator,
+		"docs/v1/INDEX.md": "# v1 版本索引（手改过）\n\n| [a.md](a.md) |\n", "docs/v1/a.md": "x\n"}, r5m)
+	c = cdfBaseCfg(r5m)
+	c["d4"] = map[string]any{"generators": []any{map[string]any{"id": "g", "name": "自检生成器",
+		"cmd":  []any{"python3", "{REPO}/tools/gen.py", "{DIR}", "--out", "{OUT}"},
+		"mode": "out-flag", "output": "docs/v1/INDEX.md", "script": gen, "fix": "重跑 gen.py"}}}
+	t = cdfNewTree(r5m, c, "main", false, false, "")
+	res = cdfGateD4(t, args)
+	driftRed := false
+	for _, f := range res.reds() {
+		if f.kind == "红·drift" {
+			driftRed = true
+		}
+	}
+	check("哑化负控·去掉接管标记 ⇒ 同一个真过时件**必红** rc=1（界定不是放水）",
+		res.rc() == 1 && driftRed, fmt.Sprintf("(%d, %v, %v)", res.rc(), res.counts, cdfKinds(res.reds())))
 	check("三档 0/1/2 各就各位（D1 三格）", true, "")
 
 	rd := cdfMkroot(map[string]string{"总览.md": "# 总览\n\n见 [a](01-设计/a.md)\n",

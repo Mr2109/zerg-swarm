@@ -5,8 +5,8 @@
 //	① **不新立 `svc` 族**（§7.1 `P11` 的推荐）：服务脚本面走 `zerg core daemon ls`
 //	   （现跑覆盖 `scripts/svc/` 5 件）；构建面才叫 `build`。
 //	② **制品矩阵的真源是脚本**：`scripts/build/build-all.sh` 是「怎么造出这些件」的唯一入口，
-//	   本族**不复制**它的清单 —— `build ls` 只做**现读**（`bin/` 逐件 sha256 + `bin/build-info.json`
-//	   的身份行），并写明「清单真源 = 那个脚本」。
+//	  本族**不复制**它的清单 —— `build ls` 只做**现读**（`bin/` 逐件 sha256 + **逐件**身份
+//	  （读制品自身嵌入段 `commit`/`build_time`）＋ 整批版本（`bin/build-info.json`）），并写明「清单真源 = 那个脚本」。
 //	③ `build all` / `build release` 会**覆盖正在跑的制品**（主控/子端）⇒ 那是**换件档**
 //	   （不可逆动作的邻居）：本版**只登记形状、不执行**；判据「逐件同 sha」要**真跑一遍**才成立
 //	   ⇒ 记为待拍（跑一次 = 覆盖 `bin/zerg-core` 等在跑的件）。
@@ -14,6 +14,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -31,7 +32,8 @@ type buildArtifactRow struct {
 	row  map[string]string
 }
 
-// cmdBuildLs —— `zerg build ls`（只读本机面）：`bin/` 逐件 sha256 + 身份件里的版本信息。
+// cmdBuildLs —— `zerg build ls`（只读本机面）：`bin/` 逐件 sha256 + **逐件**身份（读制品自身嵌入段
+// `commit`/`build_time`）＋ 整批版本（`bin/build-info.json`）。
 //
 // 口径诚实说明：**这一条不等于「逐件同 sha」判据已经过** —— 它给的是**对拍用的现读值**；
 // 判据要的是「`zerg build all` 产出的件与 `build-all.sh` 逐件同 sha」，那要**跑一次**，
@@ -50,7 +52,9 @@ func cmdBuildLs(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `bin/` 读不到（%v）⇒ 不给结论（退码 8）\n", progName, err)
 		return exitBlocked
 	}
-	identity := buildIdentity(binDir)
+	// version = **整批聚合版本**（嵌入段不含 version —— 见 `buildIdentity` 注）；逐件的 code/built
+	// 在下面对每一件**各自现读**（✗ 不套同一份）。
+	version := buildIdentity(binDir)["version"]
 	rows := []map[string]string{}
 	for _, e := range ents {
 		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
@@ -67,14 +71,15 @@ func cmdBuildLs(inv *invocation, stdout, stderr io.Writer) int {
 		} else {
 			sum = "（非可执行件 · 不计入制品）"
 		}
+		code, built := artifactEmbeddedIdentity(p)
 		row := map[string]string{
 			"name":    e.Name(),
 			"sha256":  sum,
 			"bytes":   fmt.Sprintf("%d", fi.Size()),
 			"mtime":   fi.ModTime().Format("2006-01-02T15:04:05Z07:00"),
-			"version": identity["version"],
-			"code":    identity["code"],
-			"built":   identity["built"],
+			"version": version,
+			"code":    code,
+			"built":   built,
 		}
 		rows = append(rows, row)
 	}
@@ -85,11 +90,17 @@ func cmdBuildLs(inv *invocation, stdout, stderr io.Writer) int {
 		return exitBlocked
 	}
 	fmt.Fprintf(stderr, "%s: 制品矩阵的**真源是脚本** `scripts/build/build-all.sh`（本命令只现读 `bin/`，不复制清单）\n", progName)
-	fmt.Fprintf(stderr, "%s: 身份**读制品自身**（设计 §5 `O-12` 取（乙） · 2026-09-24 待拍清单终版 条 4/5）：嵌入段带 `commit=<sha>` / `build_time=<ts>`（`go version -m <件>` 可读 ⇒ **不执行该件**也读得到）⇒ 「逐件同 sha」判据不再需要（甲）档那条「跑一次 = 覆盖在跑的制品（换件档）」；读它**只读**（负控：制品 `sha256` 跑前跑后不变）\n", progName)
+	fmt.Fprintf(stderr, "%s: 身份**读制品自身**（设计 §5 `O-12` 取（乙） · 2026-09-24 待拍清单终版 条 4/5）：`code`/`built` 逐件读制品自身嵌入段 `commit=<sha>` / `build_time=<ts>`（`debug/buildinfo` 只读文件头 ⇒ **不执行该件**也读得到）⇒ 「逐件同 sha」判据不再需要（甲）档那条「跑一次 = 覆盖在跑的制品（换件档）」；读它**只读**（负控：制品 `sha256` 跑前跑后不变）。读不到嵌入段（非 Go 制品 / 无该二标签的老件）⇒ 如实示「（无嵌入标签）」（✗ 不回落成 `bin/build-info.json` 的同名值）；`version` 是**整批聚合**版本，仍取 `bin/build-info.json`（嵌入段不含 version）\n", progName)
 	return listCmd(inv, stdout, stderr, []string{"name", "sha256", "bytes", "version", "code", "built"}, rows)
 }
 
 // buildIdentity 读身份件（`bin/build-info.json`）——**只读**，取不到就留空（不猜版本）。
+//
+// ★ 2026-10-05（缺口 `GAP-20261005-24`）：本函数**只**供 `version` 用（整批聚合版本）。
+//
+//	`code`/`built` 已改由 `artifactEmbeddedIdentity` **逐件**读制品自身嵌入段 ——
+//	`build-info.json` 是**整批**的聚合描述（只有一个值），套到每件上会让老备份/异批次件「读错代」
+//	（拿它做「换件后验：在跑的件 == 盘上件」会读到错的代）。
 func buildIdentity(binDir string) map[string]string {
 	out := map[string]string{"version": "", "code": "", "built": ""}
 	b, err := os.ReadFile(filepath.Join(binDir, "build-info.json"))
@@ -131,6 +142,42 @@ func fileSHA256(p string) string {
 		return "（读失败）"
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// buildEmbeddedNone —— 读不到嵌入段时 `code`/`built` 的**如实**落点（✗ 不回落成同名值）。
+const buildEmbeddedNone = "（无嵌入标签）"
+
+// artifactEmbeddedIdentity 读**该件自身**的嵌入段身份（`-tags commit=<sha>,build_time=<ts>`）。
+//
+// 真源 = 制品自身（设计 §5 `O-12` 取（乙） · 缺口 `GAP-20261005-24`）：
+//   - 用 `debug/buildinfo` 读**文件头**（不执行该件 · 只读 · 制品 `sha256` 不变）；
+//   - 标签形态与 `go version -m <件>` 同源（`build\t-tags=commit=…,build_time=…`）；
+//   - 读不到（非 Go 制品 / 无该二标签的老件）⇒ 两格都如实示 `buildEmbeddedNone`
+//     （✗ **不回落成** `bin/build-info.json` 的同名值 —— 那正是本缺口「读错代」的病根）。
+func artifactEmbeddedIdentity(p string) (code, built string) {
+	code, built = buildEmbeddedNone, buildEmbeddedNone
+	bi, err := buildinfo.ReadFile(p)
+	if err != nil {
+		return code, built
+	}
+	for _, s := range bi.Settings {
+		if s.Key != "-tags" {
+			continue
+		}
+		for _, part := range strings.Split(s.Value, ",") {
+			kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+			if len(kv) != 2 {
+				continue
+			}
+			switch kv[0] {
+			case "commit":
+				code = kv[1]
+			case "build_time":
+				built = kv[1]
+			}
+		}
+	}
+	return code, built
 }
 
 // buildOnlyOpen —— 本版**唯一开放执行**的 `--only` 档：`cli`（只写 `bin/zerg` 一件）。
