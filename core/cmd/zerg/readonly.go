@@ -212,15 +212,26 @@ func cmdAgentLs(inv *invocation, stdout, stderr io.Writer) int {
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	fields := []string{"machine", "healthy", "code_version", "code_sha", "cpu_pct", "gpu_pct",
-		"mem_available_gb", "mem_total_gb", "models", "last_seen"}
+	// ★ 2026-10-05（缺口 `GAP-20261005-45`）：投影面 = **登记面**（`fieldListOf` 单一真源）。
+	//   改前这里硬编 10 格，而命令树登记 16 格（`model`/`backend_state`/`active_requests`/
+	//   `gpu_used_gb`/`backend_rss_gb`/`gpu_temp_c` 六格）⇒ `--json <那六格>`「公告却不产出」
+	//   （更早的制品里还有「退 2 且列在同一条合法字段里」的自相矛盾）。真源 = `/api/fleet/status`
+	//   的机器载荷（`store.FleetSnapshot` 逐键如实透出这 16 格）⇒ 投影补到登记面。
+	//   只落**载荷真有的**键：无值整键不出现（与出口 `marshalObjectRegistered` 同一条纪律）。
+	fields := fieldListOf(inv.path)
 	rows := []map[string]string{}
 	for _, n := range names {
 		o := asObj(ms[n])
 		if o == nil {
 			continue
 		}
-		rows = append(rows, project(o, fields))
+		row := make(map[string]string, len(fields))
+		for _, f := range fields {
+			if v, ok := o[f]; ok {
+				row[f] = cell(v)
+			}
+		}
+		rows = append(rows, row)
 	}
 	return listCmd(inv, stdout, stderr, []string{"machine", "healthy", "code_version", "code_sha",
 		"cpu_pct", "gpu_pct", "mem_available_gb", "mem_total_gb"}, rows)

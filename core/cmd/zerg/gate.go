@@ -53,11 +53,14 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -112,8 +115,15 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	freshFP, freshHead := "", ""
 	runOutdirArg := ""
 	var runSince time.Time
+	// ★ 缺口 `GAP-20261005-46`：默认面零命中的**追加指路**开关（命中 / 非 show 档 ⇒ 空 ⇒ 零副作用）。
+	showZeroHit := false
+	showZeroName := ""
+	var showZeroDecls []gateStepDecl
 	switch action {
 	case "ls":
+		if inv.jsonGiven {
+			return gateLsJSON(inv, stdout, stderr, root, script)
+		}
 		// ★ 缺口 `GAP-20260927-53`（2026-10-04）：`gate ls` 的用法面无旗标，而 `--list` 出口不读筛选旗标
 		//   ⇒ 有尾参即 **fail-closed 拒执**（不 exec）。无尾参 ⇒ 原路径一字不动。判据与理由见 `gateLSRejectFlags`。
 		if rc := gateLSRejectFlags(tail, stderr); rc != exitOK {
@@ -203,6 +213,19 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		if inv.jsonGiven {
 			return gateShowJSON(inv, stdout, stderr, root, script)
 		}
+		// ★ 缺口 `GAP-20261005-46`（2026-10-05）：默认面**零命中不再黑箱**。脚本 `--emit-cmd`
+		//   零命中时只印一行 `✗ 步骤名里没有匹配 … 的`（无候选、无指路），而**同一条命令**的
+		//   `--json` 面与 `gate explain` 都给了「最像的合法输入 + 候选」⇒ 默认面是这条命令唯一的
+		//   黑箱出口（`GAP-20260927-280` 只治了「歧义时列候选」那一半）。
+		//   处置（照 `gate explain` 方言 · 不另写一份口径）：命令面**执行前先判**这一步名会不会
+		//   零命中（逐字与子串都不中 —— 与脚本 `--emit-cmd` 的匹配口径同源）；会 ⇒ 脚本那一行
+		//   仍照跑照印（默认面**一字不改**），跑完**追加**候选与指路。命中（逐字或子串）⇒ 这一路
+		//   一个字节都不动，仍是 `--emit-cmd` 的直取口（`bash -c "$(…)"` 的既有用法不破）。
+		if len(tail) > 0 && strings.TrimSpace(tail[0]) != "" {
+			if decls, ok := gateShowReadDecls(script); ok && gateShowZeroHit(decls, tail[0]) {
+				showZeroHit, showZeroName, showZeroDecls = true, tail[0], decls
+			}
+		}
 		args = append([]string{"--emit-cmd"}, tail...)
 	case "find":
 		// 缺口 `GAP-20260927-07`：**门件名 ⇒ 步骤名** 的桥（`family_gate_find.go`）。
@@ -241,6 +264,10 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		if ee, ok := err.(*exec.ExitError); ok {
 			// 门新鲜度闸：跑完了（哪怕红/不给结论）也照样把**当时**的指纹落进那一趟的产物。
 			recordRunFreshness(root, runOutdirArg, runSince, freshFP, freshHead, stderr)
+			// ★ 缺口 `GAP-20261005-46`：零命中 ⇒ 脚本那一行已印，这里**追加**候选与指路。
+			if showZeroHit {
+				gateShowZeroHitHint(stderr, showZeroDecls, showZeroName)
+			}
 			// ★ 只转发、不翻译：脚本的**正码**原样返回（0/1/2/8… 逐字透传，不改写）。
 			code := ee.ExitCode()
 			// ★★ 缺口 `GAP-20261002-18`（2026-10-02）：**被信号打死**的子进程在 Go 里
@@ -258,6 +285,9 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 		return exitFail
 	}
 	recordRunFreshness(root, runOutdirArg, runSince, freshFP, freshHead, stderr)
+	if showZeroHit {
+		gateShowZeroHitHint(stderr, showZeroDecls, showZeroName)
+	}
 	return exitOK
 }
 
@@ -307,4 +337,98 @@ func recordRunFreshness(root, outdirArg string, since time.Time, fp, head string
 			}
 		}
 	}
+}
+
+// gateLsJSON —— [候选·未落地] `gate ls --json` 机器面：仍只跑脚本 `--list`（**不另写步骤表**），
+// 把脚本自己那一段「步骤清单」三列（scope/mode/名称）重新序列化成 JSON（G1-a 只转发）。
+func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) int {
+	c := exec.Command("bash", script, "--list")
+	c.Dir = root
+	var buf bytes.Buffer
+	c.Stdout = &buf
+	c.Stderr = stderr
+	if err := c.Run(); err != nil {
+		fmt.Fprintf(stderr, "%s: 跑不动 `--list`：%v\n", progName, err)
+		return exitFail
+	}
+	type row struct {
+		Scope string `json:"scope"`
+		Mode  string `json:"mode"`
+		Step  string `json:"step"`
+	}
+	rows := []row{}
+	total := 0
+	for _, ln := range strings.Split(buf.String(), "\n") {
+		t := strings.TrimSpace(ln)
+		if t == "" {
+			continue
+		}
+		if strings.HasPrefix(t, "共") {
+			fmt.Sscanf(t, "共 %d 步", &total)
+			continue
+		}
+		if strings.HasPrefix(t, "──") {
+			continue
+		}
+		f := strings.Fields(t)
+		if len(f) < 3 {
+			rows = append(rows, row{Step: t})
+			continue
+		}
+		rows = append(rows, row{Scope: f[0], Mode: f[1], Step: strings.Join(f[2:], " ")})
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(map[string]any{"total": total, "steps": rows}); err != nil {
+		fmt.Fprintf(stderr, "%s: 出 JSON 失败：%v\n", progName, err)
+		return exitFail
+	}
+	return exitOK
+}
+
+// gateShowReadDecls —— 现读门禁脚本、解析出所有 `add_step` 声明（**不打印**「解析不确定」——
+// 默认面是「只转发、不翻译」，脚本自己那一行才是它的输出；命令面只在零命中时**追加**指路）。
+// 读不到 / 解析不出 ⇒ ok=false ⇒ 不拦，交原路（与命中一样一个字节都不动）。
+func gateShowReadDecls(script string) ([]gateStepDecl, bool) {
+	src, err := os.ReadFile(script)
+	if err != nil {
+		return nil, false
+	}
+	decls, _ := parseAddStepsStrict(string(src))
+	return decls, true
+}
+
+// gateShowZeroHit —— 这一步名会不会在脚本 `--emit-cmd` 里**零命中**（逐字与子串都不中）。
+//
+// 与脚本 `--emit-cmd` 的匹配口径同源：先逐字（`STEP_NAME == 名`）、再子串（`STEP_NAME` 含名）；
+// 两侧一律走 `normStepName`（与 `gate explain`/`gate show --json` **同一函数** —— 不另写第二份口径）。
+// 只用来决定「要不要追加指路」；命中 ⇒ 返回 false，命令面**一个字节都不动**。
+func gateShowZeroHit(decls []gateStepDecl, name string) bool {
+	key := normStepName(name)
+	for _, d := range decls {
+		if normStepName(d.Name) == key {
+			return false // 逐字命中
+		}
+	}
+	for _, d := range decls {
+		if key != "" && strings.Contains(normStepName(d.Name), key) {
+			return false // 子串命中（脚本的 `*"${emit_cmd}"*` 回退）
+		}
+	}
+	return true
+}
+
+// gateShowZeroHitHint —— 默认面零命中的**追加指路**（照 `gate explain`/`gate show --json` 方言：
+// 「最像的合法输入 + 候选」来自**同一个** `nearestSteps`；再给一条去哪找全部步名的指路）。
+// 只在脚本已印出它那一行**之后**调用 ⇒ 默认面原有输出**一字不改**，这里只是**补**（负控：把本
+// 函数的调用去掉 ⇒ 输出即回到那个黑箱 —— 见 `TestGateShowZeroHitDefaultFaceGivesCandidates`）。
+func gateShowZeroHitHint(stderr io.Writer, decls []gateStepDecl, name string) {
+	fmt.Fprintf(stderr, "%s: ↑ 以上是脚本 `--emit-cmd` 自己的那一行；命令面照 `gate explain` 方言补指路（缺口 `GAP-20261005-46`）：\n", progName)
+	if s := nearestSteps(decls, name, 1); len(s) > 0 {
+		fmt.Fprintf(stderr, "最像的合法输入: %s\n", s[0])
+	}
+	for _, s := range nearestSteps(decls, name, 3) {
+		fmt.Fprintf(stderr, "  候选：%s\n", s)
+	}
+	fmt.Fprintf(stderr, "要列全部步名 ⇒ `zerg gate ls`；已知门件名 ⇒ `zerg gate find <门件名>` 反查步名\n")
 }

@@ -74,6 +74,8 @@ func TestCheckAffectedMapGatePort(t *testing.T) {
 	root := afmFix(t)
 	diskOK := `[{"pattern":"core/**","kind":"prefix"},` +
 		`{"pattern":"scripts/gates/check-gate-coverage.py","kind":"literal"}]`
+	// ★ 步面格（③）夹具：`faces` 命名步必须 ⟷ 夹具步骤表（afmFix 的 2 步）。
+	facesOK := `{"core":["core: build"],"repo":["门① 覆盖面"]}`
 
 	t.Run("正控:emit 落件 rc=0 且出 schema", func(t *testing.T) {
 		outMap := filepath.Join(root, "emitted.json")
@@ -94,7 +96,7 @@ func TestCheckAffectedMapGatePort(t *testing.T) {
 	})
 
 	t.Run("正控:声明齐 rc=0 且 both 计数在场", func(t *testing.T) {
-		mp := afmWriteMap(t, root, `{"schema":"affected-map/1","files":`+diskOK+`}`)
+		mp := afmWriteMap(t, root, `{"schema":"affected-map/1","files":`+diskOK+`,"faces":`+facesOK+`}`)
 		rc, so, _ := afmRun(t, "--check", "--root", root, "--map", mp)
 		if rc != 0 {
 			t.Fatalf("rc=%d 期望 0（%q）", rc, so)
@@ -106,7 +108,7 @@ func TestCheckAffectedMapGatePort(t *testing.T) {
 
 	t.Run("负控:悬空声明 rc=1 且点名叫出", func(t *testing.T) {
 		mp := afmWriteMap(t, root, `{"files":[{"pattern":"core/**","kind":"prefix"},`+
-			`{"pattern":"scripts/gates/ghost.py","kind":"literal"}]}`)
+			`{"pattern":"scripts/gates/ghost.py","kind":"literal"}],"faces":`+facesOK+`}`)
 		rc, so, _ := afmRun(t, "--check", "--root", root, "--map", mp)
 		if rc != 1 {
 			t.Fatalf("rc=%d 期望 1", rc)
@@ -160,7 +162,7 @@ func TestCheckAffectedMapGatePort(t *testing.T) {
 	})
 
 	t.Run("负控:未声明件不是红 rc=0", func(t *testing.T) {
-		mp := afmWriteMap(t, root, `{"files":[{"pattern":"core/**","kind":"prefix"}]}`)
+		mp := afmWriteMap(t, root, `{"files":[{"pattern":"core/**","kind":"prefix"}],"faces":`+facesOK+`}`)
 		rc, so, _ := afmRun(t, "--check", "--root", root, "--map", mp)
 		if rc != 0 {
 			t.Fatalf("rc=%d 期望 0（未声明是常态）", rc)
@@ -190,12 +192,45 @@ func TestCheckAffectedMapGatePort(t *testing.T) {
 		}
 	})
 
-	t.Run("--self-test rc=0 六控全过", func(t *testing.T) {
+	t.Run("正控:步面齐 rc=0 且 ③ 绿", func(t *testing.T) {
+		mp := afmWriteMap(t, root, `{"files":`+diskOK+`,"faces":`+facesOK+`}`)
+		rc, so, _ := afmRun(t, "--check", "--root", root, "--map", mp)
+		if rc != 0 {
+			t.Fatalf("rc=%d 期望 0（%q）", rc, so)
+		}
+		if !strings.Contains(so, "③ 步面") || !strings.Contains(so, "：绿 · ") {
+			t.Fatalf("③ 步面未判绿：%q", so)
+		}
+	})
+
+	t.Run("负控:步面漂移 D≠N rc=3（≠悬空声明的 1）", func(t *testing.T) {
+		mp := afmWriteMap(t, root, `{"files":`+diskOK+`,"faces":{"core":["core: build"]}}`)
+		rc, so, _ := afmRun(t, "--check", "--root", root, "--map", mp)
+		if rc != 3 {
+			t.Fatalf("rc=%d 期望 3（步面漂移）", rc)
+		}
+		if !strings.Contains(so, "静默漏选") {
+			t.Fatalf("未点名步面漂移：%q", so)
+		}
+	})
+
+	t.Run("负控:步面集合不等 rc=3", func(t *testing.T) {
+		mp := afmWriteMap(t, root, `{"files":`+diskOK+`,"faces":{"core":["core: build"],"repo":["zzz"]}}`)
+		rc, so, _ := afmRun(t, "--check", "--root", root, "--map", mp)
+		if rc != 3 {
+			t.Fatalf("rc=%d 期望 3（集合不等）", rc)
+		}
+		if !strings.Contains(so, "命名集合 ≠ 表集合") {
+			t.Fatalf("未点名集合不等：%q", so)
+		}
+	})
+
+	t.Run("--self-test rc=0 十控全过", func(t *testing.T) {
 		rc, so, _ := afmRun(t, "--self-test")
 		if rc != 0 {
 			t.Fatalf("self-test rc=%d 期望 0：%q", rc, so)
 		}
-		if !strings.Contains(so, "自检通过：6 控") {
+		if !strings.Contains(so, "自检通过：10 控") {
 			t.Fatalf("自检文案不对：%q", so)
 		}
 	})

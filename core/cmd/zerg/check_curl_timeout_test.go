@@ -85,6 +85,16 @@ func TestCheckCurlTimeoutGatePort(t *testing.T) {
 		}
 	})
 
+	t.Run("负控 声明串(add_step 步名)里的 curl ⇒ 夹具档 not 红", func(t *testing.T) {
+		_, s := cktTFix(t)
+		cktTWrite(t, filepath.Join(s, "decl.sh"),
+			"add_step gates \"门62 curl 超时口径：真调用必须带 -m（只报告）\" tri-report \"${REPO_ROOT}\" \"python3 x.py\"\n")
+		rc, out, _ := cktTEntry("--root", s)
+		if rc != 0 || !strings.Contains(out, "夹具/注释 1 行") || !strings.Contains(out, "[夹具/注释] decl.sh:1") {
+			t.Fatalf("声明串档失败：rc=%d out=%q", rc, out)
+		}
+	})
+
 	t.Run("负控 --max-time= 等号形 ⇒ 带界", func(t *testing.T) {
 		_, s := cktTFix(t)
 		cktTWrite(t, filepath.Join(s, "f.sh"), "curl --max-time=3 https://example.invalid/f\n")
@@ -129,10 +139,11 @@ func TestCheckCurlTimeoutGatePort(t *testing.T) {
 		}
 	})
 
-	t.Run("空面(0 件) ⇒ rc=0", func(t *testing.T) {
+	t.Run("空面(0 件) ⇒ rc=2（空域守卫 · GAP-20260927-108）", func(t *testing.T) {
 		_, s := cktTFix(t)
 		rc, out, _ := cktTEntry("--root", s)
-		if rc != 0 || !strings.Contains(out, "真调用 0 行") {
+		// ★ 随动：空域（扫面 0 件）从旧 rc=0 改为 fail-closed rc=2（BLOCKED · 空转 ≠ 绿）
+		if rc != 2 {
 			t.Fatalf("空面失败：rc=%d out=%q", rc, out)
 		}
 	})
@@ -147,10 +158,11 @@ func TestCheckCurlTimeoutGatePort(t *testing.T) {
 		}
 	})
 
-	t.Run("--json 空集面", func(t *testing.T) {
+	t.Run("--json 空集面 ⇒ rc=2（空域守卫）", func(t *testing.T) {
 		_, s := cktTFix(t)
 		rc, out, _ := cktTEntry("--root", s, "--json")
-		if rc != 0 || !strings.Contains(out, `"missing": []`) {
+		// ★ 随动：空域从旧「rc=0 + `"missing": []`」改为 fail-closed rc=2（空集面不再给结论）
+		if rc != 2 || strings.Contains(out, "CurlTimeoutScan") {
 			t.Fatalf("--json 空集失败：rc=%d out=%q", rc, out)
 		}
 	})

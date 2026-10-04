@@ -132,6 +132,135 @@ var vsVersionPointers = []string{"core/internal/version/version.go", "ui/Cargo.t
 
 var vsDocsRelCandidates = []string{"docs/项目文档", vsPyJoin("..", "Zerg-内部文档", "项目文档")}
 
+// ── R6 · 运行时默认根（目录）点名覆盖（py 同名段的逐字镜像）─────────────────────
+// 本门**运行时**要解析的默认根（目录）。名册 vsDefaultRootRoster 逐个点名「默认根常量/位点」；
+// 被点名的目录必须**在盘**，否则必须在 vsRelocatedRoots 里**登记迁出**（含理由 + 落点），落点也须在盘。
+// ✗ 禁静默兜底：既不在盘、又未登记 ⇒ rc=1。名册与 vsRuntimeDefaultRootConstants()（本门真源常量）
+//
+//	**双向闭合**：谁多谁少都红。
+const vsCorpusPrefix = "docs/" // = py CORPUS_DOCS_PREFIX（语料域根前缀）
+
+var vsRepoRootMarkers = []string{"core", "ui"} // repo_root() 的标记目录
+
+type vsDefRootEnt struct {
+	id, role  string
+	named     []string
+	fallbacks []string
+}
+
+var vsDefaultRootRoster = []vsDefRootEnt{
+	{"repo-root", "仓根探测（repo_root 同时要求这两个标记目录在盘）", []string{"core", "ui"}, nil},
+	{"corpus", "活文档语料域根（CORPUS_DOCS_PREFIX）", []string{"docs"}, nil},
+	{"snapshot", "快照取源根（DOCS_REL_CANDIDATES：仓内优先、仓外兜底）",
+		[]string{vsDocsRelCandidates[0]}, vsDocsRelCandidates[1:]},
+}
+
+type vsRelocEnt struct{ reason, landed string }
+
+// 迁出登记（名册式）：{被点名的默认根目录: (迁出理由, 落点——必须也在盘)}
+var vsRelocatedRoots = map[string]vsRelocEnt{
+	"docs/项目文档": {"2026-09-26「批3」项目文档整树分家至仓外同级目录（仓内零命中）", vsDocsRelCandidates[1]},
+}
+
+type vsDefEntry struct {
+	root, dir, state string
+	landed           string
+	hasLanded        bool
+}
+
+// vsRuntimeDefaultRootConstants —— 本门**真源常量**里的运行时默认根目录（名册的双向闭合对象）。
+func vsRuntimeDefaultRootConstants() []string {
+	var out []string
+	add := func(d string) {
+		for _, x := range out {
+			if x == d {
+				return
+			}
+		}
+		out = append(out, d)
+	}
+	for _, d := range vsRepoRootMarkers {
+		add(d)
+	}
+	add(strings.TrimSuffix(vsCorpusPrefix, "/"))
+	for _, d := range vsDocsRelCandidates {
+		add(d)
+	}
+	return out
+}
+
+// vsCheckDefaultRoots —— R6：运行时默认根（目录）点名覆盖。返回 (problems, blockers, entries)。
+func vsCheckDefaultRoots(root string, roster []vsDefRootEnt, relocated map[string]vsRelocEnt) ([]string, []string, []vsDefEntry) {
+	if roster == nil {
+		roster = vsDefaultRootRoster
+	}
+	if relocated == nil {
+		relocated = vsRelocatedRoots
+	}
+	var problems, blockers []string
+	var entries []vsDefEntry
+	var namedAll []string
+	for _, e := range roster {
+		for _, d := range append(append([]string{}, e.named...), e.fallbacks...) {
+			found := false
+			for _, x := range namedAll {
+				if x == d {
+					found = true
+				}
+			}
+			if !found {
+				namedAll = append(namedAll, d)
+			}
+		}
+	}
+	if len(roster) == 0 || len(namedAll) == 0 {
+		blockers = append(blockers, "空转：运行时默认根名册为空（判据不可判 ⇒ 不给结论）")
+		return problems, blockers, entries
+	}
+	consts := vsRuntimeDefaultRootConstants()
+	for _, d := range consts {
+		if !vsContains(namedAll, d) {
+			problems = append(problems, fmt.Sprintf("FAIL 名册漏点运行时默认根 %s（代码点名了它、名册里没有 ⇒ 名册式点名不成立）", d))
+		}
+	}
+	for _, d := range namedAll {
+		if !vsContains(consts, d) {
+			problems = append(problems, fmt.Sprintf("FAIL 名册点名了非真源常量 %s（凭空点名 ⇒ 名册与代码分叉）", d))
+		}
+	}
+	for _, e := range roster {
+		for _, d := range e.named {
+			ap := vsPyAbspath("", vsPyJoin(root, d))
+			if vsIsDir(ap) {
+				entries = append(entries, vsDefEntry{root: e.id, dir: d, state: "在盘"})
+				continue
+			}
+			reg, ok := relocated[d]
+			if !ok {
+				problems = append(problems, fmt.Sprintf("FAIL 默认根 %s 点名的目录 %s 既不在盘、又未登记迁出（静默兜底 ⇒ 未点名覆盖）", e.id, d))
+				entries = append(entries, vsDefEntry{root: e.id, dir: d, state: "不在盘·未登记"})
+				continue
+			}
+			lap := ""
+			if reg.landed != "" {
+				lap = vsPyAbspath("", vsPyJoin(root, reg.landed))
+			}
+			if reg.reason == "" || reg.landed == "" || !vsIsDir(lap) {
+				problems = append(problems, fmt.Sprintf("FAIL 默认根 %s 的 %s 已登记迁出，但落点 %s 不在盘（登记指向死人）", e.id, d, reg.landed))
+				entries = append(entries, vsDefEntry{root: e.id, dir: d, state: "登记·落点不在盘", landed: reg.landed, hasLanded: true})
+			} else {
+				entries = append(entries, vsDefEntry{root: e.id, dir: d, state: "登记迁出", landed: reg.landed, hasLanded: true})
+			}
+		}
+	}
+	for d := range relocated {
+		if !vsContains(namedAll, d) {
+			problems = append(problems, fmt.Sprintf("FAIL 迁出登记 %s 不在运行时默认根名册内（悬空登记）", d))
+		}
+	}
+	return problems, blockers, entries
+}
+
 const vsCorpusRootMD = true
 const vsMaxFileBytes = 2 * 1024 * 1024
 
@@ -142,7 +271,7 @@ var vsSkipDirNames = map[string]bool{
 
 // 静态文案（由生成器按 py 原件逐字填入 · 见构建脚本）。
 const vsDocText = "check-version-sources.py v1.0.0 —— 版本源一致性门禁（门② · 目标：阻断档）\n\n断言**四处版本源同版**（真源 = version.go；理由见仓根 VERSION 的指针文本）：\n  ① 仓根 VERSION                        —— **指针**：只断言「**无数值**」且「**文本指向真源**」\n  ② core/internal/version/version.go    —— `const Version = \"X\"`（**基准**）\n  ③ ui/Cargo.toml                       —— `[package] version = \"X\"`\n  ④ wall/Cargo.toml                     —— `[package] version = \"X\"`（茧壁 crate，升级比较要用）\n\n另**只报告**（**不进退码**）：**活文档里仍写着旧版本号字面量**的清单\n  · 旧版集合默认 = 「直接前驱版」= 快照目录里已知的 3 段版本号中 < 当前版的最大者\n    （★ 2026-09-19 二次分家批2：快照目录**取源根双认** = 仓内 `docs/项目文档` 优先、缺则仓外\n     `../Zerg-内部文档/项目文档`；两处都缺 ⇒ **rc=2 不给结论**，不给「没有历史版本可比」的假绿）\n  · 排除域（冻结/镜像/证据/Tool 目录）见 RULES 的 doc_excludes；命中逐条列 `文件:行`\n  · 命中**分两类**：`版本名/路径形态`（`v2.5.9`、`…/v2.5.9/…`、`变更-v2.5.9.md` —— 指的是旧版的名字，登记为主）\n    与 `裸数字形态`（`2.5.9 → 2.5.10`、`2.5.9 增补` 之类 —— 需人判读：可能是陈旧陈述、也可能是沿革陈述）\n  · ★ 本项**只报告**：不构成判决；判读由人做（要不要加严、门槛多少待拍板）。`--strict-docs` 可当场加严。\n\n退码（三档，与 scripts/gates/precommit-gates.sh 的 `tri` 模式同口径 —— 该脚本第 29 行起）：\n  0 全绿（成对判定：四处同版 + VERSION 无数值 + 指针指向真源）\n  1 有失败项（版本不一致 / VERSION 出现数值 / 指针不指真源 / `--strict-docs` 下的活文档命中）\n  2 **不给结论**（缺件 · 不可解析 · 空转 · 用法错）—— 空转不许当绿\n\n用法：\n  python3 scripts/gates/check-version-sources.py                    # 扫真仓（退出码见上）\n  python3 scripts/gates/check-version-sources.py [仓库根]           # 指定根（自检夹具就走这条）\n  python3 scripts/gates/check-version-sources.py --json             # 机器可读（stdout 只有 JSON）\n  python3 scripts/gates/check-version-sources.py --list-rules       # 规则表（判据 / 排除域 / 旧版集合 / 退码映射）\n  python3 scripts/gates/check-version-sources.py --self-test        # 成对负控自检（好件必绿 ↔ 每处改一个数必红）\n  python3 scripts/gates/check-version-sources.py --strict-docs      # 活文档命中 ⇒ 计入 rc=1（默认只报告）\n  python3 scripts/gates/check-version-sources.py --stale 2.5.9 --stale 2.5.8   # 手工指定旧版集合\n  python3 scripts/gates/check-version-sources.py --stale-all        # 旧版集合 = 全部已知 3 段历史版本\n\n硬纪律：**只读**（不写仓内任何路径；自检一律落 `tempfile.mkdtemp()` 的临时目录）· **不挂门禁**\n（挂接由父代理做：进 `scripts/gates/precommit-gates.sh` 的步骤表，模式 `tri` —— rc=2 记 BLOCKED、不计失败项）。\n"
-const vsRulesBlock1 = "\n[判据 · 阻断档]\n  R1 四处同版   core/internal/version/version.go 的 `const Version = \"X\"` = **基准**；\n               ui/Cargo.toml 与 wall/Cargo.toml 的 **[package] 段** version 必须等于基准；\n               不等 ⇒ rc=1，逐条打印 `文件:行 值 ≠ 基准`（不含基准自身）\n  R2 VERSION 无数值   仓根 VERSION 里出现任何 `X.Y.Z` 字面量 ⇒ rc=1（逐行点名）。\n               理由：VERSION 已**指针化**（真源是 version.go + Cargo.toml），写数字就是第二份真相\n  R3 VERSION 指真源   指针文本必须同时点名 `core/internal/version/version.go` 与 `ui/Cargo.toml`\n               （判据是**路径串**，不是措辞；缺一 ⇒ rc=1）\n  R4 缺件/不可解析   任一源缺失 · 不是 UTF-8 · version.go 无 `const Version` ·\n               Cargo.toml 的 [package] 段无 version · VERSION 是空文件 ⇒ rc=2（**不给结论**）\n  R5 空转防护   活文档语料 0 个文件被扫到（而旧版集合非空）⇒ rc=2（0 个可比对 ≠ 绿）\n\n[只报告 · 不进退出码]\n  D1 活文档旧版本号   语料域 = docs/**（走下方排除域）+ 仓根 *.md；\n               旧版集合默认 = 直接前驱版（`--stale X.Y.Z` 可指定 / `--stale-all` 收全部历史版）；\n               逐处分类：REF=版本名/路径形态（`v2.5.9`、`…/v2.5.9/`、`变更-v2.5.9.md`）·\n               BARE=裸数字形态（`2.5.9 → 2.5.10`、`2.5.9 增补`）—— 后者才是需人判读的候选；\n               命中只列清单。`--strict-docs` 可当场把命中计进 rc=1（加严开关，默认关）"
+const vsRulesBlock1 = "\n[判据 · 阻断档]\n  R1 四处同版   core/internal/version/version.go 的 `const Version = \"X\"` = **基准**；\n               ui/Cargo.toml 与 wall/Cargo.toml 的 **[package] 段** version 必须等于基准；\n               不等 ⇒ rc=1，逐条打印 `文件:行 值 ≠ 基准`（不含基准自身）\n  R2 VERSION 无数值   仓根 VERSION 里出现任何 `X.Y.Z` 字面量 ⇒ rc=1（逐行点名）。\n               理由：VERSION 已**指针化**（真源是 version.go + Cargo.toml），写数字就是第二份真相\n  R3 VERSION 指真源   指针文本必须同时点名 `core/internal/version/version.go` 与 `ui/Cargo.toml`\n               （判据是**路径串**，不是措辞；缺一 ⇒ rc=1）\n  R4 缺件/不可解析   任一源缺失 · 不是 UTF-8 · version.go 无 `const Version` ·\n               Cargo.toml 的 [package] 段无 version · VERSION 是空文件 ⇒ rc=2（**不给结论**）\n  R5 空转防护   活文档语料 0 个文件被扫到（而旧版集合非空）⇒ rc=2（0 个可比对 ≠ 绿）\n  R6 默认根点名  运行时默认根（仓根标记 core/ui · 语料域根 docs · 快照取源根 docs/项目文档）逐个点名：\n               被点名的目录必须在盘，否则必须登记迁出（RELOCATED_ROOTS：理由 + 落点在盘）。\n               名册与真源常量双向闭合；名册为空 ⇒ rc=2，未在盘且未登记 / 登记落点不在盘 / 悬空登记 ⇒ rc=1\n\n[只报告 · 不进退出码]\n  D1 活文档旧版本号   语料域 = docs/**（走下方排除域）+ 仓根 *.md；\n               旧版集合默认 = 直接前驱版（`--stale X.Y.Z` 可指定 / `--stale-all` 收全部历史版）；\n               逐处分类：REF=版本名/路径形态（`v2.5.9`、`…/v2.5.9/`、`变更-v2.5.9.md`）·\n               BARE=裸数字形态（`2.5.9 → 2.5.10`、`2.5.9 增补`）—— 后者才是需人判读的候选；\n               命中只列清单。`--strict-docs` 可当场把命中计进 rc=1（加严开关，默认关）"
 const vsRulesBlock2 = "\n[退码映射（三档；与 scripts/gates/precommit-gates.sh 的 tri 模式同口径）]\n  0  全绿            四处同版 + VERSION 无数值 + 指针指真源\n  1  有失败项        R1/R2/R3 任一红（或 --strict-docs 下的 D1 命中）\n  2  **不给结论**    R4/R5（缺件/不可解析/空转/用法错）—— BLOCKED 不许当绿\n  挂接口径：进 precommit-gates.sh 步骤表时用 `tri`（rc=2 记 BLOCKED、不计失败项）；\n  若哪一天 D1 要转阻断档，**改判定档位、不改判据**（门脚本一字不动）。"
 
 // ─────────────────────────── 路径语义（CPython posixpath 同构）───────────────────────────
@@ -965,10 +1094,11 @@ type vsResult struct {
 	problems     []string
 	blockers     []string
 	docs         *vsDocs
+	defEntries   []vsDefEntry
 	rc           int
 }
 
-func vsCheckSources(cwd, root string, staleSet []string, strictDocs bool) *vsResult {
+func vsCheckSources(cwd, root string, staleSet []string, strictDocs bool, roster []vsDefRootEnt, relocated map[string]vsRelocEnt) *vsResult {
 	var problems, blockers []string
 	var sources []vsSource
 
@@ -1097,6 +1227,11 @@ func vsCheckSources(cwd, root string, staleSet []string, strictDocs bool) *vsRes
 		}
 	}
 
+	// ⑥ R6 运行时默认根（目录）点名覆盖（阻断档：未点名覆盖 = rc=1；名册空 = rc=2）
+	drProblems, drBlockers, drEntries := vsCheckDefaultRoots(root, roster, relocated)
+	problems = append(problems, drProblems...)
+	blockers = append(blockers, drBlockers...)
+
 	rc := vsRCOK
 	if len(problems) > 0 {
 		rc = vsRCFail
@@ -1111,7 +1246,8 @@ func vsCheckSources(cwd, root string, staleSet []string, strictDocs bool) *vsRes
 	}
 	return &vsResult{
 		root: vsPyAbspath(cwd, root), canonical: canonical, hasCanonical: canonical != "",
-		sources: sources, problems: problems, blockers: blockers, docs: docs, rc: rc,
+		sources: sources, problems: problems, blockers: blockers, docs: docs,
+		defEntries: drEntries, rc: rc,
 	}
 }
 
@@ -1167,6 +1303,19 @@ func vsPrintReport(w io.Writer, res *vsResult, strictDocs bool) int {
 			extra = fmt.Sprintf("（%s）", s.note)
 		}
 		fmt.Fprintf(w, "  %s  %s %s %s%s\n", mark, vsPad(s.path+loc, 38), vsPad(val, 8), s.role, extra)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "-- 运行时默认根（R6 · 点名覆盖：%d 条）--\n", len(res.defEntries))
+	for _, e := range res.defEntries {
+		mark := "✗"
+		tail := e.state
+		if e.state == "在盘" {
+			mark = "✓"
+		} else if e.state == "登记迁出" {
+			mark = "✓"
+			tail = "登记迁出 ⇒ " + e.landed
+		}
+		fmt.Fprintf(w, "  %s  %s  %s\n", mark, e.dir, tail)
 	}
 	fmt.Fprintln(w)
 	if len(res.problems) > 0 {
@@ -1393,7 +1542,10 @@ func vsSelfTest() ([]vsCaseResult, int, int, string) {
 	}
 	rm := func(rel string) error { return os.Remove(vsPyJoin(base, rel)) }
 	run := func(strict bool, stale []string) *vsResult {
-		return vsCheckSources(base, base, stale, strict)
+		return vsCheckSources(base, base, stale, strict, nil, nil)
+	}
+	runR := func(strict bool, stale []string, roster []vsDefRootEnt, relocated map[string]vsRelocEnt) *vsResult {
+		return vsCheckSources(base, base, stale, strict, roster, relocated)
 	}
 
 	var specs []*vsCaseSpec
@@ -1464,7 +1616,7 @@ func vsSelfTest() ([]vsCaseResult, int, int, string) {
 	})
 	mk("负控⑬ 活文档语料 0 个文件被扫到 ⇒ rc=2（空转不许当绿）", 2, "空转", func() *vsResult {
 		_ = fresh()
-		_ = os.RemoveAll(vsPyJoin(base, "docs"))
+		_ = os.Remove(vsPyJoin(base, "docs", "zh", "活文档.md"))
 		return run(false, []string{"9.9.8"})
 	})
 	mk("成对⑭ 活文档写着旧版号 ⇒ 默认**只报告**（rc 仍 0，但清单里有它）", 0, "__DOC_HIT__", func() *vsResult {
@@ -1478,6 +1630,25 @@ func vsSelfTest() ([]vsCaseResult, int, int, string) {
 	mk("成对⑯ 冻结节/排除域里的旧版号**不入清单**（排除域生效）", 0, "__EXCLUDE_ONLY__", func() *vsResult {
 		_ = fresh()
 		return run(false, []string{"9.9.8"})
+	})
+
+	mk("负控⑰ R6：默认根目录不在盘且未登记迁出 ⇒ 必红（静默兜底未点名覆盖）", 1, "未登记迁出", func() *vsResult {
+		_ = fresh()
+		_ = os.RemoveAll(vsPyJoin(base, "docs", "项目文档"))
+		return runR(false, []string{"9.9.8"}, nil, map[string]vsRelocEnt{})
+	})
+	mk("负控⑱ R6：登记迁出但落点不在盘 ⇒ 必红（登记指向死人）", 1, "落点", func() *vsResult {
+		_ = fresh()
+		_ = os.RemoveAll(vsPyJoin(base, "docs", "项目文档"))
+		return runR(false, []string{"9.9.8"}, nil, map[string]vsRelocEnt{"docs/项目文档": {"迁出", "no-such-landed-dir"}})
+	})
+	mk("负控⑲ R6：名册漏点真源常量（快照根）⇒ 必红（名册式点名不成立）", 1, "名册漏点", func() *vsResult {
+		_ = fresh()
+		return runR(false, []string{"9.9.8"}, []vsDefRootEnt{{"repo-root", "r", []string{"core", "ui"}, nil}}, nil)
+	})
+	mk("负控⑳ R6：运行时默认根名册为空 ⇒ rc=2（空转不给结论）", 2, "空转", func() *vsResult {
+		_ = fresh()
+		return runR(false, []string{"9.9.8"}, []vsDefRootEnt{}, nil)
 	})
 
 	results := make([]vsCaseResult, 0, len(specs))
@@ -1577,7 +1748,13 @@ func vsRepoRoot(cwd string, arg *string) string {
 	}
 	d := vsPyAbspath(cwd, cwd)
 	for k := 0; k < 6; k++ {
-		if vsIsDir(vsPyJoin(d, "core")) && vsIsDir(vsPyJoin(d, "ui")) {
+		all := true
+		for _, m := range vsRepoRootMarkers {
+			if !vsIsDir(vsPyJoin(d, m)) {
+				all = false
+			}
+		}
+		if all {
 			return d
 		}
 		d = vsPyDirname(d)
@@ -1678,7 +1855,7 @@ func checkVersionSourcesGateMain(stdout, stderr io.Writer, argv []string) int {
 		return vsRCBlocked
 	}
 
-	res := vsCheckSources(cwd, root, stale, strictDocs)
+	res := vsCheckSources(cwd, root, stale, strictDocs, nil, nil)
 	if jsonOut {
 		obj := res.toJSON()
 		obj.set("stale_note", staleNote)
@@ -1911,6 +2088,22 @@ func (r *vsResult) toJSON() *vsJobj {
 		d.set("excluded_dirs", eo)
 		obj.set("docs", d)
 	}
+	drObj := &vsJobj{}
+	drEnt := make([]vsJval, 0, len(r.defEntries))
+	for _, e := range r.defEntries {
+		eo := &vsJobj{}
+		eo.set("root", e.root)
+		eo.set("dir", e.dir)
+		eo.set("state", e.state)
+		if e.hasLanded {
+			eo.set("landed", e.landed)
+		} else {
+			eo.set("landed", nil)
+		}
+		drEnt = append(drEnt, eo)
+	}
+	drObj.set("entries", drEnt)
+	obj.set("default_roots", drObj)
 	obj.set("rc", r.rc)
 	return obj
 }

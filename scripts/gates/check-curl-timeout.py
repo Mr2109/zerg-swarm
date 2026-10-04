@@ -7,7 +7,9 @@
     ⇒ 口径未写死 ⇒ **下一处照样会漏**（现读真调用里已漏 `1` 处）。
 
 本件只判**真调用**（判据现跑）：
-    · 真调用 = `.sh` 件里的 `curl `（整行注释 `#` 开头的**不算**）＋ `.py` 件里同行出现
+    · 真调用 = `.sh` 件里落在**命令位**的 `curl `（整行注释 `#` 开头的**不算**；**引号字面量 /
+      声明串里的 `curl` 不算** —— 例：`precommit-gates.sh` 的
+      `add_step … "门62 curl 超时口径…"` 步名串 · `GAP-20261005-05`）＋ `.py` 件里同行出现
       `subprocess` / `os.system` / `check_output` / `check_call` / `run(` 的那一类；
     · **夹具字面量 / 注释不算**（例：`check-public-tree-hazards.py` 的元组字面量、
       `check-public-marks.py` 的 `"#!/bin/sh\\ncurl …"` 夹具串、`zerg-upgrade.sh` 的注释）——
@@ -44,11 +46,86 @@ PY_HINT = re.compile(r"subprocess|os\.system|check_output|check_call|Popen|\.run
 CURL = re.compile(r"(^|[\s;|&(])curl\s")
 
 
+# ── 声明串 / 引号字面量识别（GAP-20261005-05）────────────────────────────────
+#   病象：`precommit-gates.sh:3295` 的 `add_step … "门62 curl 超时口径…"` —— `curl` 两字落在
+#   **引号字面量**（步名 / 声明串）里，被当成真 curl 调用 ⇒ 门恒 rc≥1。
+#   认法**按内容形式**（✗ 不绑行号）：逐字符走一遍引号 / 命令替换态，判该 curl 命中点是否
+#   位于**引号字面量内、且不在命令替换 `$(…)` / 反引号里**。⇒ `.sh` 行只有落在**命令位**的
+#   curl 才算真调用；整行 curl 全在字面量里 ⇒ 归「夹具/注释」档（只登记、不判红）。
+def _curl_is_live(line, pos):
+    """line[pos] 起是 curl：判它是否处于**可执行命令位**（✗ 不在引号字面量内）。
+    引号态 None(裸 / 命令替换内) / "'" / '"' / "`"；`$(…)` 与反引号按栈进出（替换内可执行）。"""
+    q = None
+    stack = []
+    i = 0
+    while i < pos:
+        c = line[i]
+        if q in ("'", '"'):
+            if c == "\\" and q == '"':
+                i += 2
+                continue
+            if c == q:
+                q = None
+                i += 1
+                continue
+            if q == '"' and c == "$" and i + 1 < len(line) and line[i + 1] == "(":
+                stack.append(q)
+                q = None
+                i += 2
+                continue
+            if q == '"' and c == "`":
+                stack.append(q)
+                q = "`"
+                i += 1
+                continue
+            i += 1
+            continue
+        if c == "\\":
+            i += 2
+            continue
+        if c == "'":
+            q = "'"
+            i += 1
+            continue
+        if c == '"':
+            q = '"'
+            i += 1
+            continue
+        if c == "`":
+            if q == "`":
+                q = stack.pop() if stack else None
+            else:
+                stack.append(q)
+                q = "`"
+            i += 1
+            continue
+        if c == "$" and i + 1 < len(line) and line[i + 1] == "(":
+            stack.append(q)
+            q = None
+            i += 2
+            continue
+        if c == ")" and stack and q is None:
+            q = stack.pop()
+            i += 1
+            continue
+        i += 1
+    return q not in ("'", '"')
+
+
+def _live_curls(line):
+    """本行里位于**命令位**的 curl 命中数（引号字面量内的不算）。"""
+    n = 0
+    for mt in CURL.finditer(line):
+        if _curl_is_live(line, mt.start() + len(mt.group(1))):
+            n += 1
+    return n
+
+
 def scan(root):
-    """回 (real, fixtures)：real 里每项 (相对路径, 行号, 行文本)；fixtures 同形。"""
-    real, fixtures = [], []
+    """回 (real, fixtures, scanned)：real 里每项 (相对路径, 行号, 行文本)；fixtures 同形；scanned = 扫描面件数。"""
+    real, fixtures, scanned = [], [], 0
     if not os.path.isdir(root):
-        return None, None
+        return None, None, 0
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in (".git", "node_modules", "__pycache__")]
         for fn in sorted(filenames):
@@ -59,6 +136,7 @@ def scan(root):
                 text = open(p, encoding="utf-8", errors="replace").read()
             except OSError:
                 continue
+            scanned += 1   # ★ 扫描面件数（空域守卫的分母）
             rel = os.path.relpath(p, root)
             for i, ln in enumerate(text.splitlines(), 1):
                 if not CURL.search(ln):
@@ -67,12 +145,13 @@ def scan(root):
                 is_comment = s.startswith("#")
                 is_py = fn.endswith(".py")
                 # .py 里真调用要同行有 subprocess 之类；否则一律算夹具/字面量
-                looks_real = (not is_py) or bool(PY_HINT.search(ln))
+                # ★ .sh 里真调用必须落在**命令位**（引号字面量 / 声明串里的 curl 不算 · GAP-20261005-05）
+                looks_real = bool(PY_HINT.search(ln)) if is_py else (_live_curls(ln) > 0)
                 if is_comment or not looks_real:
                     fixtures.append((rel, i, s))
                 else:
                     real.append((rel, i, s))
-    return real, fixtures
+    return real, fixtures, scanned
 
 
 def has_bound(line):
@@ -108,6 +187,11 @@ def self_test():
             f.write("curl -m 5 https://example.invalid/x\n")
         with open(os.path.join(bad_d, "bad.sh"), "w", encoding="utf-8") as f:
             f.write("curl https://example.invalid/x\n")
+        decl_d = os.path.join(tmp, "decl")
+        os.makedirs(decl_d)
+        with open(os.path.join(decl_d, "decl.sh"), "w", encoding="utf-8") as f:
+            f.write('add_step gates "门62 curl 超时口径：真调用必须带 -m（只报告）" '
+                    'tri-report "${REPO_ROOT}" "python3 x.py"\n')
 
         def run(*a):
             p = subprocess.run([sys.executable, SELF_PATH] + list(a),
@@ -117,6 +201,7 @@ def self_test():
         _st_chk(bad, "档① 正控：curl 真调用带 `-m` ⇒ rc=0", 0, *run("--root", ok_d))
         _st_chk(bad, "档② 负控：curl 真调用漏上界 ⇒ rc=1", 1, *run("--root", bad_d))
         _st_chk(bad, "档③ 缺件：`--root` 读不到 ⇒ rc=2（不给结论）", 2, *run("--root", os.path.join(tmp, "no-such")))
+        _st_chk(bad, "档④ 声明串（GAP-20261005-05）：`add_step … \"…curl…\"` 里的 curl 不算真调用 ⇒ rc=0", 0, *run("--root", decl_d))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("── 自检：%s" % ("全过 ✓" if bad[0] == 0 else "**%d 档不过** ✗" % bad[0]))
@@ -131,9 +216,13 @@ def main():
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
 
-    real, fixtures = scan(a.root)
+    real, fixtures, scanned = scan(a.root)
     if real is None:
         print("BLOCKED —— 扫描根不存在或读不到：%s（rc=2 · 不给结论）" % a.root, file=sys.stderr)
+        return 2
+    # ★ 空集守卫（GAP-20260927-108）：空域 ⇒ fail-closed（扫描面 0 件 ⇒ rc=2，不许把「空转」当绿）
+    if not scanned:
+        print("BLOCKED —— 空域：%s 下扫到 0 个 .sh/.py 件 ⇒ rc=2（不给结论；空转 ≠ 绿）" % a.root, file=sys.stderr)
         return 2
 
     miss = [(p, i, s) for (p, i, s) in real if not has_bound(s)]

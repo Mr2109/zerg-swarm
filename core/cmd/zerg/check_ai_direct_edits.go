@@ -24,6 +24,24 @@
 //	✗ 不选 `check-doc-section-numbers.py`（189 行）等 8 件 `doc-*`：**另一路在改**（`git status` 现读 M）⇒ 违反 M2 并行路铁律②（共享件）。
 //	✗ 不选 `check-anchor-uniqueness.py`（340 行）/ `check-compat-manifest.py`（449 行）/ `check-affected-map.py`（523 行）/ `check-exit-codes.py`（649 行）/ `check-build-tags.py`（863 行）：判据面**依赖同级外部树或输入物料**（案卷/清单 JSON 由调用方指定 · 可指向仓外）⇒ 不属 M2-0「无输入物料」，且部分**行数偏大**。
 //
+// ── ★ 本批新增 R5（缺口 `GAP-20260927-81` · 门⑬「既漏又假」的两半）──────────────────────
+//
+//	旧行为的两半：**假** = R1 只要 `evidence` 里出现**任意** `zerg <词>`（含**只读**调用）就放行
+//	⇒ 一次「手改后补一条含任意 zerg 调用的回执」即可绕绿（报绿而 H1 根本没判）；
+//	**漏** = 本门只扫**回执目录**一层 `.json`，**不读件级账**（`edit_audit.jsonl`）⇒ 回执账一旦断供
+//	（轮级账停在某天、件级账里主仓写轮仍天天在涨），本门照报「零直改纪律全过」—— 那个绿与今天的改动无关。
+//
+//	修法（两半同批 · 与 py 逐条对齐）= 把**件级账的主仓写轮行**（`event == "edit"` 且非 `sibling_repo`）
+//	当第二个判据源，只做**轮级/覆盖**对账（**不**做逐件匹配 —— 两账无公共键：件级 vs 轮级）：
+//
+//	· **R5a（假 · 写轮对账）**：每一「说动过仓」的页，其**轮窗**（前页回执之后、本页 `created_at` 之前）
+//	  内件级账必须有 ≥1 主仓写轮行；无 ⇒ 红。★ 页 `created_at` **早于件级账最早一行** ⇒ 本腿**不上判**
+//	  （件级账判不了它 —— 不许拿缺账当红）。
+//	· **R5b（漏 · 覆盖自证）**：件级账里最新主仓写轮**晚于**最新回执 ⇒ **rc=2 判不了**（不得报绿）。
+//
+//	对拍面（本次新增 · 仓外夹具两态逐字）：R5a 红格（单页早于件级账起点 ⇒ 不上判 · 两页且后页该窗零写轮 ⇒ 红）·
+//	R5b 空窗格（件级账最新写轮晚于最新回执 ⇒ 2）· sibling 行不上判格 · 空件级账格。
+//
 // ⚠ 本单边界（照实）：本件**只落码、不接线** ——
 //
 //	· **不**在 `core/cmd/zerg/main.go` 里注册任何命令（✗ 不进命令树 · ✗ 不改任何 `add_step`）；
@@ -92,20 +110,24 @@ import (
 // adeMatrixRel —— py `MATRIX_REL`（命令树投影相对仓根的路径）。
 const adeMatrixRel = "core/cmd/zerg/testdata/cli-matrix.json"
 
+// adeLedgerRel —— py `LEDGER_REL`（件级账相对**状态目录**的件名）。
+const adeLedgerRel = "edit_audit.jsonl"
+
 // adeProg —— py argparse 的 prog（= 原件基名，帮助/报错正文里逐字出现）。
 const adeProg = "check-ai-direct-edits.py"
 
 // adeUsageLine —— argparse 报错首行（含 `usage:`，逐字）。
-const adeUsageLine = "usage: check-ai-direct-edits.py [-h] [--root ROOT] [--dir DIR] [--self-test]\n"
+const adeUsageLine = "usage: check-ai-direct-edits.py [-h] [--root ROOT] [--dir DIR] [--ledger LEDGER] [--self-test]\n"
 
 // adeHelp —— `-h/--help` 正文（现读复刻 · 现读 py = `/usr/bin/python3` 3.9.6 ⇒ argparse 段标题 `optional arguments:`；
 // 换 Python 版本（≥3.10 段标题作 `options:` / 措辞）即不同 ⇒ 见件头未覆盖面④延伸）。
-const adeHelp = "usage: check-ai-direct-edits.py [-h] [--root ROOT] [--dir DIR] [--self-test]\n" +
+const adeHelp = "usage: check-ai-direct-edits.py [-h] [--root ROOT] [--dir DIR] [--ledger LEDGER] [--self-test]\n" +
 	"\n" +
 	"optional arguments:\n" +
 	"  -h, --help   show this help message and exit\n" +
 	"  --root ROOT\n" +
 	"  --dir DIR\n" +
+	"  --ledger LEDGER\n" +
 	"  --self-test\n"
 
 // adeREQ —— py `REQ`（R2 五格中的「必填四格」）。
@@ -116,6 +138,9 @@ var adeTraceRE = regexp.MustCompile(`^TR-[0-9a-f]{12}$`)
 
 // adeZergRE —— py `ZERG_RE = (?:^|[\s（(])zerg\s+([A-Za-z][A-Za-z0-9_-]*)`。
 var adeZergRE = regexp.MustCompile(`(?:^|[\s（(])zerg\s+([A-Za-z][A-Za-z0-9_-]*)`)
+
+// adeNoncmdRE —— py `ZERG_NONCMD_RE`（缺口 `GAP-20260927-59`：`zerg --help` / `-h` / 版本号一类非子命令调用）。
+var adeNoncmdRE = regexp.MustCompile(`(?:^|[\s（(])zerg\s+(?:--?[A-Za-z]|[0-9])`)
 
 // adeJSONFields —— py `JSON_FIELDS`（本门无机器读面 ⇒ 空 · **唯一真源**）。
 var adeJSONFields = []string{}
@@ -134,6 +159,19 @@ func adeDefaultDir() string {
 		home = ""
 	}
 	return filepath.Join(home, ".zerg", "state", "receipts")
+}
+
+// ── py `default_ledger()`（件级账默认落点：状态目录下一件 · 与回执账同根）──────
+
+func adeDefaultLedger() string {
+	if s := strings.TrimSpace(os.Getenv("ZERG_STATE_DIR")); s != "" {
+		return filepath.Join(s, adeLedgerRel)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	return filepath.Join(home, ".zerg", "state", adeLedgerRel)
 }
 
 // ── py `default root`（差异见件头声明行 (a)）────────────────────────────────
@@ -181,7 +219,45 @@ func adeLoadCommandTree(root string) (map[string]bool, string) {
 
 // ── py `check_dir(d, tree)` → (rc, lines) ───────────────────────────────────
 
-func adeCheckDir(d string, tree map[string]bool) (int, []string) {
+// adeLoadLedger —— py `load_ledger(path)`：件级账主仓写轮行时刻（升序）+ 读不出来的错误串。
+//
+// 真源 = `edit_audit.jsonl` 里 `event == "edit"` 且**非** `sibling_repo`（= 落主仓相对路径件）的行；
+// 只需 `at`（ISO-8601 · 同形 ⇒ 字典序即时序）。`at` 缺失的行跳过。err 非空 ⇒ 调用方按 rc=2 落（缺账不当绿）。
+func adeLoadLedger(path string) ([]string, string) {
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
+		return nil, fmt.Sprintf("件级账读不出来（%s）：件不存在", path)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Sprintf("件级账读不出来（%s）：%v", path, err)
+	}
+	var ats []string
+	for _, ln := range strings.Split(string(b), "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		var o map[string]any
+		if json.Unmarshal([]byte(ln), &o) != nil || o == nil {
+			continue
+		}
+		if adeGetStr(o, "event") != "edit" {
+			continue
+		}
+		if _, sib := o["sibling_repo"]; sib && adeTruthy(o, "sibling_repo") {
+			continue
+		}
+		a := strings.TrimSpace(adeGetStr(o, "at"))
+		if a != "" {
+			ats = append(ats, a)
+		}
+	}
+	sort.Strings(ats)
+	return ats, ""
+}
+
+func adeCheckDir(d string, tree map[string]bool, ledger []string) (int, []string) {
 	fi, err := os.Stat(d)
 	if err != nil || !fi.IsDir() {
 		return 2, []string{fmt.Sprintf("⛔ 不给结论：回执目录不存在（%s）—— 没有回执 ≠ 绿（§20.3 H3）", d)}
@@ -200,6 +276,12 @@ func adeCheckDir(d string, tree map[string]bool) (int, []string) {
 		return 2, []string{fmt.Sprintf("⛔ 不给结论：回执目录里 0 页（%s）—— 没有回执 ≠ 绿（§20.3 H3）", d)}
 	}
 	var errs []string
+	type adePage struct {
+		name string
+		ca   string
+		ncom int
+	}
+	var pages []adePage
 	for _, name := range ents {
 		p := filepath.Join(d, name)
 		raw, rerr := os.ReadFile(p)
@@ -242,7 +324,7 @@ func adeCheckDir(d string, tree map[string]bool) (int, []string) {
 		for _, m := range calls {
 			callNames = append(callNames, m[1])
 		}
-		if commits > 0 && len(callNames) == 0 {
+		if commits > 0 && len(callNames) == 0 && len(adeNoncmdRE.FindAllString(evtext, -1)) == 0 {
 			errs = append(errs, fmt.Sprintf("R1 **AI 直改**：%s 说动过仓（commits=%d 条）而证据里**没有任何 `zerg …` 调用** "+
 				"⇒ 门红（§20.3 H1：执行只能走命令面）", name, commits))
 		}
@@ -254,11 +336,88 @@ func adeCheckDir(d string, tree map[string]bool) (int, []string) {
 				}
 			}
 		}
+		pages = append(pages, adePage{name: name, ca: strings.TrimSpace(adeGetStr(r, "created_at")), ncom: commits})
+	}
+	// ── R5：回执账（轮级）⟷ 件级账（件级）双向对账（GAP-20260927-81 的两半）────────────
+	if len(ledger) > 0 {
+		firstAt := ledger[0]
+		stampSet := map[string]bool{}
+		for _, pg := range pages {
+			if pg.ca != "" {
+				stampSet[pg.ca] = true
+			}
+		}
+		var stamps []string
+		for s := range stampSet {
+			stamps = append(stamps, s)
+		}
+		sort.Strings(stamps)
+		// R5a（假）：说动过仓的页，其「轮窗」内件级账须有 ≥1 主仓写轮行。
+		for _, pg := range pages {
+			if pg.ncom <= 0 || pg.ca == "" {
+				continue
+			}
+			if pg.ca < firstAt {
+				continue // 该页早于件级账最早一行 ⇒ 件级账判不了它（不上判 · 不许拿缺账当红）
+			}
+			lo := ""
+			for _, k := range stamps {
+				if k < pg.ca {
+					lo = k
+				}
+			}
+			win := 0
+			for _, a := range ledger {
+				if (lo == "" || a > lo) && a <= pg.ca {
+					win++
+				}
+			}
+			if win == 0 {
+				loDisp := lo
+				if loDisp == "" {
+					loDisp = "件级账起点"
+				}
+				errs = append(errs, fmt.Sprintf("R5a **假绿绕行**：%s 说动过仓（commits=%d 条）而件级账在这一轮"+
+					"（%s 之后、%s 之前）**没有任何主仓写轮行** ⇒ 不是走命令面写的"+
+					"（§20.3 H1：执行只能走命令面）", pg.name, pg.ncom, loDisp, pg.ca))
+			}
+		}
 	}
 	if len(errs) > 0 {
 		return 1, errs
 	}
-	return 0, []string{fmt.Sprintf("回执 %d 页逐页过：H1 零直改 ✓ · H3 五格 ✓ · 件名 ✓ · 命令面调用可解析 ✓", len(ents))}
+	// R5b（漏）：件级账里最新主仓写轮晚于最新回执 ⇒ 回执账没覆盖 ⇒ 判不了（不得报绿）。
+	if len(ledger) > 0 {
+		newestAt := ledger[len(ledger)-1]
+		stampSet := map[string]bool{}
+		for _, pg := range pages {
+			if pg.ca != "" {
+				stampSet[pg.ca] = true
+			}
+		}
+		var stamps []string
+		for s := range stampSet {
+			stamps = append(stamps, s)
+		}
+		sort.Strings(stamps)
+		if len(stamps) > 0 && newestAt > stamps[len(stamps)-1] {
+			late := 0
+			for _, a := range ledger {
+				if a > stamps[len(stamps)-1] {
+					late++
+				}
+			}
+			return 2, []string{fmt.Sprintf("⛔ 不给结论（R5b 覆盖自证）：件级账里最新主仓写轮 %s **晚于**最新回执 %s —— "+
+				"有 %d 个主仓写轮没有任何回执覆盖 ⇒ 回执账断供，本门判不了"+
+				"（旧行为在这报绿＝假绿 · GAP-20260927-81）", newestAt, stamps[len(stamps)-1], late)}
+		}
+	}
+	lines := []string{fmt.Sprintf("回执 %d 页逐页过：H1 零直改 ✓ · H3 五格 ✓ · 件名 ✓ · 命令面调用可解析 ✓", len(ents))}
+	if len(ledger) > 0 {
+		lines = append(lines, fmt.Sprintf("R5 轮级账 ⟷ 件级账双向对账 ✓（主仓写轮 %d 行 · 最新 %s ≤ 最新回执）",
+			len(ledger), ledger[len(ledger)-1]))
+	}
+	return 0, lines
 }
 
 // adeGetStr —— py `str(r.get(k, ""))`（缺格 ⇒ ""；标量逐字复刻；容器见未覆盖面③）。
@@ -443,48 +602,123 @@ func adeSelfTest(stdout io.Writer) int {
 	}
 
 	// ① 空转：目录不存在 ⇒ 2
-	if rc, _ := adeCheckDir(filepath.Join(tmp, "nope"), nil); rc != 2 {
+	if rc, _ := adeCheckDir(filepath.Join(tmp, "nope"), nil, nil); rc != 2 {
 		fails = append(fails, fmt.Sprintf("自检① 目录不存在应 rc=2，实测 %d", rc))
 	}
 	// ② 空转：目录在但 0 页 ⇒ 2
-	if rc, _ := adeCheckDir(mkdir("empty"), nil); rc != 2 {
+	if rc, _ := adeCheckDir(mkdir("empty"), nil, nil); rc != 2 {
 		fails = append(fails, fmt.Sprintf("自检② 0 页应 rc=2，实测 %d", rc))
 	}
 	// ③ 正控：合规 ⇒ 0
 	okDir := mkdir("ok")
 	mk(okDir, "R-20260920T000001.json", good("R-20260920T000001", nil))
-	if rc, _ := adeCheckDir(okDir, map[string]bool{"gate": true}); rc != 0 {
+	if rc, _ := adeCheckDir(okDir, map[string]bool{"gate": true}, nil); rc != 0 {
 		fails = append(fails, fmt.Sprintf("自检③ 合规回执应 rc=0，实测 %d", rc))
 	}
 	// ④ 负控 R1：动过仓但证据里没有命令面调用 ⇒ 1
 	n1 := mkdir("n1")
 	mk(n1, "R-20260920T000002.json", good("R-20260920T000002", map[string]any{"evidence": []any{"vim core/x.go"}}))
-	if rc, _ := adeCheckDir(n1, map[string]bool{"gate": true}); rc != 1 {
+	if rc, _ := adeCheckDir(n1, map[string]bool{"gate": true}, nil); rc != 1 {
 		fails = append(fails, fmt.Sprintf("自检④ R1 应 rc=1（AI 直改），实测 %d", rc))
 	}
 	// ⑤ 负控 R1 不误判：没动仓（commits 空）⇒ 0
 	n2 := mkdir("n2")
 	mk(n2, "R-20260920T000003.json", good("R-20260920T000003", map[string]any{"commits": []any{}, "evidence": []any{"只读 grep"}}))
-	if rc, _ := adeCheckDir(n2, map[string]bool{"gate": true}); rc != 0 {
+	if rc, _ := adeCheckDir(n2, map[string]bool{"gate": true}, nil); rc != 0 {
 		fails = append(fails, fmt.Sprintf("自检⑤ 没动仓应 rc=0（不误判），实测 %d", rc))
 	}
 	// ⑥ 负控 R2：trace_id 形态坏 ⇒ 1
 	n3 := mkdir("n3")
 	mk(n3, "R-20260920T000004.json", good("R-20260920T000004", map[string]any{"trace_id": "trace-bad"}))
-	if rc, _ := adeCheckDir(n3, map[string]bool{"gate": true}); rc != 1 {
+	if rc, _ := adeCheckDir(n3, map[string]bool{"gate": true}, nil); rc != 1 {
 		fails = append(fails, fmt.Sprintf("自检⑥ R2 应 rc=1，实测 %d", rc))
 	}
 	// ⑦ 负控 R3：件名 ≠ round_id ⇒ 1
 	n4 := mkdir("n4")
 	mk(n4, "R-错的.json", good("R-20260920T000005", nil))
-	if rc, _ := adeCheckDir(n4, map[string]bool{"gate": true}); rc != 1 {
+	if rc, _ := adeCheckDir(n4, map[string]bool{"gate": true}, nil); rc != 1 {
 		fails = append(fails, fmt.Sprintf("自检⑦ R3 应 rc=1，实测 %d", rc))
 	}
 	// ⑧ 负控 R4：点名的命令面调用在命令树里解析不到 ⇒ 1
 	n5 := mkdir("n5")
 	mk(n5, "R-20260920T000006.json", good("R-20260920T000006", map[string]any{"evidence": []any{"zerg 绝无此命令"}}))
-	if rc, _ := adeCheckDir(n5, map[string]bool{"gate": true}); rc != 1 {
+	if rc, _ := adeCheckDir(n5, map[string]bool{"gate": true}, nil); rc != 1 {
 		fails = append(fails, fmt.Sprintf("自检⑧ R4 应 rc=1（幽灵调用），实测 %d", rc))
+	}
+	// ⑨ 负控 R1 不误判：`zerg --help`（非子命令调用）⇒ 0（GAP-20260927-59）
+	n6 := mkdir("n6")
+	mk(n6, "R-20260920T000007.json", good("R-20260920T000007", map[string]any{"evidence": []any{"zerg --help"}}))
+	if rc, _ := adeCheckDir(n6, map[string]bool{"gate": true}, nil); rc != 0 {
+		fails = append(fails, fmt.Sprintf("自检⑨ zerg --help 应 rc=0（非子命令调用 · 不误判），实测 %d", rc))
+	}
+	// ⑩ 负控 R1 不误判：`zerg 2.5.12+dirty`（版本号形态）⇒ 0（GAP-20260927-59）
+	n7 := mkdir("n7")
+	mk(n7, "R-20260920T000008.json", good("R-20260920T000008", map[string]any{"evidence": []any{"zerg 2.5.12+dirty"}}))
+	if rc, _ := adeCheckDir(n7, map[string]bool{"gate": true}, nil); rc != 0 {
+		fails = append(fails, fmt.Sprintf("自检⑩ zerg 版本号 应 rc=0（版本号形态 · 不误判），实测 %d", rc))
+	}
+	// 件级账夹具：`ats` 各写一条 `event=edit` 主仓写轮行；`sib` 非空写一条 sibling 行（不上判）。
+	led := func(path string, ats []string, sib string) string {
+		var b strings.Builder
+		for _, a := range ats {
+			b.WriteString(fmt.Sprintf("{\"at\":%q,\"event\":\"edit\",\"file\":\"core/x.go\",\"mode\":\"replace\"}\n", a))
+		}
+		if sib != "" {
+			b.WriteString(fmt.Sprintf("{\"at\":%q,\"event\":\"edit\",\"file\":\"docs/a.md\",\"sibling_repo\":\"Zerg-内部文档\"}\n", sib))
+		}
+		_ = os.WriteFile(path, []byte(b.String()), 0o644)
+		return path
+	}
+	ledAt := func(path string) []string {
+		ats, err := adeLoadLedger(path)
+		if err != "" {
+			fails = append(fails, "自检 件级账夹具读不出来："+err)
+		}
+		return ats
+	}
+	// ⑪ 负控 R5a（假绿绕行）：手改后补一条含**任意** zerg 调用的回执 ⇒ 1（GAP-20260927-81）
+	n8 := mkdir("n8")
+	mk(n8, "R-20260920T100000.json", good("R-20260920T100000", map[string]any{
+		"created_at": "2026-09-20T10:00:00+08:00", "evidence": []any{"zerg dev edit --proposal DEV-1"}}))
+	mk(n8, "R-20260920T120000.json", good("R-20260920T120000", map[string]any{
+		"created_at": "2026-09-20T12:00:00+08:00", "evidence": []any{"zerg gate ls"}}))
+	led8 := led(filepath.Join(tmp, "n8-ledger.jsonl"), []string{"2026-09-20T09:00:00+08:00"}, "")
+	if rc, _ := adeCheckDir(n8, map[string]bool{"gate": true, "dev": true}, ledAt(led8)); rc != 1 {
+		fails = append(fails, fmt.Sprintf("自检⑪ R5a 应 rc=1（手改补回执绕绿 · 假绿），实测 %d", rc))
+	}
+	// ⑫ 负控 R5b（覆盖自证）：件级账最新主仓写轮晚于最新回执 ⇒ 2（不是绿）
+	n9 := mkdir("n9")
+	mk(n9, "R-20260920T100100.json", good("R-20260920T100100", map[string]any{
+		"created_at": "2026-09-20T10:00:00+08:00", "evidence": []any{"zerg dev edit --proposal DEV-1"}}))
+	led9 := led(filepath.Join(tmp, "n9-ledger.jsonl"),
+		[]string{"2026-09-20T09:00:00+08:00", "2026-09-20T12:00:00+08:00"}, "")
+	if rc, _ := adeCheckDir(n9, map[string]bool{"gate": true, "dev": true}, ledAt(led9)); rc != 2 {
+		fails = append(fails, fmt.Sprintf("自检⑫ R5b 应 rc=2（覆盖自证 · 判不了），实测 %d", rc))
+	}
+	// ⑬ 正控 R5：写轮在轮窗内、且没有更晚的写轮 ⇒ 0
+	n10 := mkdir("n10")
+	mk(n10, "R-20260920T100200.json", good("R-20260920T100200", map[string]any{
+		"created_at": "2026-09-20T10:00:00+08:00", "evidence": []any{"zerg dev edit --proposal DEV-1"}}))
+	led10 := led(filepath.Join(tmp, "n10-ledger.jsonl"),
+		[]string{"2026-09-20T09:00:00+08:00"}, "2026-09-21T00:00:00+08:00")
+	if rc, _ := adeCheckDir(n10, map[string]bool{"gate": true, "dev": true}, ledAt(led10)); rc != 0 {
+		fails = append(fails, fmt.Sprintf("自检⑬ R5 正控应 rc=0（写轮在轮窗内 · sibling 行不上判），实测 %d", rc))
+	}
+	// ⑭ 负控 R5：回执早于件级账最早一行 ⇒ R5a 不上判、但 R5b 仍应 rc=2
+	n11 := mkdir("n11")
+	mk(n11, "R-20260919T235900.json", good("R-20260919T235900", map[string]any{
+		"created_at": "2026-09-19T23:59:00+08:00"}))
+	led11 := led(filepath.Join(tmp, "n11-ledger.jsonl"), []string{"2026-09-20T09:00:00+08:00"}, "")
+	if rc, _ := adeCheckDir(n11, map[string]bool{"gate": true}, ledAt(led11)); rc != 2 {
+		fails = append(fails, fmt.Sprintf("自检⑭ 回执早于件级账最早一行 ⇒ R5a 不上判、R5b 仍应 rc=2，实测 %d", rc))
+	}
+	// ⑮ 正控 R5：空件级账 + 页早于其起点 ⇒ 不上判 ⇒ 0
+	n12 := mkdir("n12")
+	mk(n12, "R-20260919T230000.json", good("R-20260919T230000", map[string]any{
+		"created_at": "2026-09-19T23:00:00+08:00"}))
+	led12 := led(filepath.Join(tmp, "n12-ledger.jsonl"), nil, "")
+	if rc, _ := adeCheckDir(n12, map[string]bool{"gate": true}, ledAt(led12)); rc != 0 {
+		fails = append(fails, fmt.Sprintf("自检⑮ 空件级账 + 页早于其起点 ⇒ 应 rc=0（不上判），实测 %d", rc))
 	}
 
 	if len(fails) > 0 {
@@ -494,7 +728,7 @@ func adeSelfTest(stdout io.Writer) int {
 		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "门⑬ 自检全过：1 正控 + 5 负控 + 2 空转（成对负控）")
+	fmt.Fprintln(stdout, "门⑬ 自检全过：3 正控 + 10 负控 + 2 空转（成对负控）")
 	return 0
 }
 
@@ -515,6 +749,7 @@ func aidirecteditsGateMain(stdout, stderr io.Writer, argv []string) int {
 	// ③ argparse：选项解析（`--root` / `--dir` / `--self-test`），未识别项收集后报错（rc=2）。
 	root := adeDefaultRoot()
 	dirArg := ""
+	ledgerArg := ""
 	selfTest := false
 	var unrecognized []string
 	for i := 0; i < len(argv); i++ {
@@ -540,6 +775,16 @@ func aidirecteditsGateMain(stdout, stderr io.Writer, argv []string) int {
 			dirArg = argv[i]
 		case strings.HasPrefix(a, "--dir="):
 			dirArg = a[len("--dir="):]
+		case a == "--ledger":
+			if i+1 >= len(argv) {
+				fmt.Fprint(stderr, adeUsageLine)
+				fmt.Fprintf(stderr, "%s: error: argument --ledger: expected one argument\n", adeProg)
+				return 2
+			}
+			i++
+			ledgerArg = argv[i]
+		case strings.HasPrefix(a, "--ledger="):
+			ledgerArg = a[len("--ledger="):]
 		case a == "--self-test":
 			selfTest = true
 		default:
@@ -564,7 +809,16 @@ func aidirecteditsGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stdout, "⛔ 不给结论：%s\n", terr)
 		return 2
 	}
-	rc, lines := adeCheckDir(d, tree)
+	lpath := ledgerArg
+	if lpath == "" {
+		lpath = adeDefaultLedger()
+	}
+	ats, lerr := adeLoadLedger(lpath)
+	if lerr != "" {
+		fmt.Fprintf(stdout, "⛔ 不给结论：%s\n", lerr)
+		return 2
+	}
+	rc, lines := adeCheckDir(d, tree, ats)
 	fmt.Fprintf(stdout, "门⑬ AI 直改纪律（§20.3 H1 · 回执 %s）· 仓根 %s\n", d, root)
 	for _, ln := range lines {
 		fmt.Fprintf(stdout, "  %s\n", ln)

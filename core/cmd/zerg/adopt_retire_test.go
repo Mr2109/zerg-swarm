@@ -361,8 +361,11 @@ func judgeARItask(root string, d arDoc, mainGo, familyItask string) []error {
 		if end > len(mainGo) {
 			end = len(mainGo)
 		}
-		if !strings.Contains(mainGo[i:end], "cmdGuarded") {
-			errs = append(errs, fmt.Errorf("判据⑥ 破：写面 `itask %s` 没走 cmdGuarded（危险档失守）", v))
+		if !strings.Contains(mainGo[i:end], "Guarded") {
+			// ★ 2026-10-05：`itask stop` 已开放（写**持久化**用户意图 `stopped=true`）⇒ 走自家门
+			//   `cmdItaskStopGuarded`；`start`/`run` 仍走通用守门 `cmdGuarded`。判据口径 = 「危险档
+			//   必须走**一个确认档门**（`cmdGuarded` 或自家 `*Guarded`）」，✗ 不再是「必须逐字 cmdGuarded」。
+			errs = append(errs, fmt.Errorf("判据⑥ 破：写面 `itask %s` 没走确认档门（`*Guarded` · 危险档失守）", v))
 		}
 	}
 	// ⑤ 未开放的写面（mode/interval 的 POST）：命令树里**不许**出现 `itask mode set` 这种子命令。
@@ -458,7 +461,7 @@ func TestAdoptRetireItaskCriteriaHold(t *testing.T) {
 		t.Errorf("判据⑥ 破（%d 处）：\n  %s", len(errs), joinErrs(errs))
 	} else {
 		t.Logf("判据⑥ ✓ `itask` 7 条命令路径逐条在命令树里 · 9 条端点逐条有命令映射" +
-			"（4 条只读在实现件里命中 · 3 条写面点名自己的 POST 端点且走 cmdGuarded · 2 条写面未开放且命令树里零 `set` 子命令）")
+			"（4 条只读在实现件里命中 · 3 条写面点名自己的 POST 端点且走确认档门 `*Guarded` · 2 条写面未开放且命令树里零 `set` 子命令）")
 	}
 }
 

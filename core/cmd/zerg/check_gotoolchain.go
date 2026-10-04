@@ -160,6 +160,29 @@ func gotoolchainGateMain(stdout, stderr io.Writer, argv []string) int {
 		return 1
 	}
 
+	// ★ 空集守卫（GAP-20260927-108）：域 = 「gttTrip 解析得出的版本号」——
+	//   取不到结果（gttTrip 返回 false，如 `go 1` 无点号 / `go 1.2.3.4` 多段）时，下方所有 gttTrip 比较会
+	//   **整块静默跳过** ⇒ 假绿（实证：两模块同写 `go 1` ⇒ 旧档 rc=0 且报「工具链 pin = go1」）。
+	//   ⇒ fail-closed：拿不到可解析版本号就不给结论（rc=2 · 说清是哪个值），✗ 不许当「比较通过」绿。
+	var unparsed []string
+	for _, kv := range [][2]string{
+		{"core/go", mods["core"]["go"]},
+		{"core/toolchain", mods["core"]["toolchain"]},
+		{"agent/go", mods["agent"]["go"]},
+		{"agent/toolchain", mods["agent"]["toolchain"]},
+	} {
+		if kv[1] != "" {
+			if _, _, _, ok := gttTrip(kv[1]); !ok {
+				unparsed = append(unparsed, kv[0]+"="+kv[1])
+			}
+		}
+	}
+	if len(unparsed) > 0 { // ★ 空集守卫（GAP-20260927-108）：版本号取不到可解析结果 ⇒ rc=2（不给结论）
+		fmt.Fprintf(stdout, "\n结果: 不给结论（rc=2）—— 版本号取不到可解析结果（trip() 为 None ⇒ 比较会静默跳过）：%s\n",
+			strings.Join(unparsed, "、"))
+		return 2
+	}
+
 	// pin = core 的 toolchain（若有）否则 core 的 go 指令
 	pin := mods["core"]["toolchain"]
 	if pin == "" {
@@ -369,7 +392,7 @@ func gttLastLine(out string) string {
 // 差异（见件头未覆盖面④）：py 用 subprocess 真跑自身取 rc；本件进程内复用入口取 rc（打印文案逐字对齐）。
 func gttSelfTest(stdout io.Writer) int {
 	bad := 0
-	fmt.Fprintln(stdout, "── check-gotoolchain.py --self-test 三档（正控 0 · 负控 1 · 用法错 2）")
+	fmt.Fprintln(stdout, "── check-gotoolchain.py --self-test 四档（正控 0 · 负控 1 · 空域 2 · 用法错 2）")
 	tmp, err := os.MkdirTemp("", "gotoolchain-selftest-")
 	if err != nil {
 		tmp = os.TempDir()
@@ -415,6 +438,10 @@ func gttSelfTest(stdout io.Writer) int {
 		"module agent\n\ngo 1.23.0\n\ntoolchain go1.23.0\n")
 	rc, out = run(diverge)
 	chk("档②′ 成对负控：两模块 toolchain 不同值（单一真源被破坏）", 1, rc, out)
+
+	nogo := mk("nogo", "module core\n\ngo 1\n", "module agent\n\ngo 1\n")
+	rc, out = run(nogo)
+	chk("档②″ 空域负控：版本号 trip() 取不到（`go 1`）⇒ rc=2（空集守卫 · GAP-20260927-108）", 2, rc, out)
 
 	rc, out = run(clean, "--no-such-flag")
 	chk("档③ 用法错：未知旗标（机器面缺/输入错 ≠ 零命中）", 2, rc, out)

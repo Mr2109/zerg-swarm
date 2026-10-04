@@ -91,6 +91,59 @@ func pathWithinDir(dir, p string) bool {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
+// codeRepoRoot —— `code` 族的仓根（缺口 `GAP-20260928-05`：守卫按 **cwd** 拦手搓形态、把正门
+// `code show` / `code find` 当替身，而这两条过去一律把根解析到**主仓** ⇒ 在**并排仓**
+// （如 `Zerg-内部文档`）里 `code show <相对件>` 退 1「件不在」、`code find … --path <相对目录>` 退 2
+// —— 守卫仓无关、替身主仓绑定 = 帮助/行为不一致）。
+//
+// 口径（判据全走**路径段** · 与 `pathWithinDir` 同源）：
+//
+//	· `ZERG_REPO` 显式给了 ⇒ **无条件采信**（与 `repoRoot()` 同一档，✗ 不被下面两条盖掉）；
+//	· cwd 落在**另一棵**仓（最近的含 `.git` 的祖先，且与 `repoRoot()` 互不嵌套）⇒ 用 cwd 那一棵
+//	  （并排仓：`…/Zerg` 与 `…/Zerg-内部文档` 互不为前缀）；
+//	· 其余（cwd 在主仓内 / 在主仓的子模块里 / 不在任何仓里 / 主仓解析不到）一律回落 `repoRoot()`
+//	  ⇒ **主仓侧行为逐字不变** —— 在主仓任意层跑，两棵本就是同一棵。
+//
+// 只读族专用：本件 6 处只读子命令（`find` / `show` / `callers` / `denom-recount` / `git-two-way` /
+// `audit-readings`）统一走它 —— 换根只换「读哪棵树」，不产生任何写。
+func codeRepoRoot() string {
+	if v := os.Getenv("ZERG_REPO"); v != "" {
+		return v
+	}
+	root := repoRoot()
+	wd, err := os.Getwd()
+	if err != nil {
+		return root
+	}
+	w := codeGitRoot(wd)
+	if root == "" {
+		return w
+	}
+	if w == "" || w == root {
+		return root
+	}
+	if pathWithinDir(root, w) || pathWithinDir(w, root) {
+		return root
+	}
+	return w
+}
+
+// codeGitRoot —— 从 dir 上溯找最近的含 `.git` 的祖先（`.git` 是**目录或文件**都算：链式工作树
+// 的 `.git` 是文件）。只用来**认并排仓**，✗ 不替代 `isRepoRoot()`（后者认的是 zerg 仓根判据件
+// `core/internal/version/version.go`；主仓子模块那种嵌套仓靠上面「互不嵌套」那条挡掉）。
+func codeGitRoot(dir string) string {
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
 func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) == 0 || strings.TrimSpace(inv.args[0]) == "" {
 		inv.setErr("usage", "missing_pattern", "缺正则")
@@ -113,7 +166,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	if ignoreCase {
 		re, _ = regexp.Compile("(?i)" + pat)
 	}
-	root := repoRoot()
+	root := codeRepoRoot()
 	if root == "" {
 		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
 		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 扫不了码（不给结论 · 退码 8）\n", progName)
@@ -621,7 +674,7 @@ func cmdCodeShow(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		ctx = n
 	}
-	root := repoRoot()
+	root := codeRepoRoot()
 	if root == "" {
 		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
 		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 读不了码（不给结论 · 退码 8）\n", progName)
@@ -1148,7 +1201,7 @@ func cmdCodeCallers(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 		return exitUsage
 	}
-	root := repoRoot()
+	root := codeRepoRoot()
 	if root == "" {
 		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
 		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 查不了调用点（不给结论 · 退码 8）\n", progName)
@@ -1309,7 +1362,7 @@ func cmdCodeDenomRecount(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 		return exitUsage
 	}
-	root := repoRoot()
+	root := codeRepoRoot()
 	if root == "" {
 		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
 		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 不给结论（退码 8）\n", progName)
@@ -1424,7 +1477,7 @@ func cmdCodeGitTwoWay(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 		return exitUsage
 	}
-	root := repoRoot()
+	root := codeRepoRoot()
 	if root == "" {
 		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
 		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 不给结论（退码 8）\n", progName)
@@ -1531,7 +1584,7 @@ func cmdCodeAuditReadings(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 		return exitUsage
 	}
-	root := repoRoot()
+	root := codeRepoRoot()
 	if root == "" {
 		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
 		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 读不了码（不给结论 · 退码 8）\n", progName)

@@ -104,6 +104,15 @@ func TestCheckContractRegistryGatePort(t *testing.T) {
 		t.Fatalf("负控-R2 失败：得 rc=%d out=%q", rcMiss, outMiss)
 	}
 
+	// ── 负控 · R9 truth_shape 漏点名真源顶层键 ───────────────────────────
+	// S-a 的 truth（a.json）改写成带 2 个非元数据顶层键，而 truth_shape="x" 一个都没点名 ⇒ 必红。
+	rootR9 := ccrTestRoot(t, good, ccrTestSelfRel)
+	ccrTestWrite(t, filepath.Join(rootR9, "core", "internal", "contract", "a.json"), `{"alpha":1,"beta":2}`)
+	rc9, out9, _ := ccrTestRun(t, "--root", rootR9)
+	if rc9 != 1 || !strings.Contains(out9, "漏点名") || !strings.Contains(out9, "alpha") || !strings.Contains(out9, "beta") {
+		t.Fatalf("负控-R9 失败：得 rc=%d out=%q", rc9, out9)
+	}
+
 	// ── 空转（≠ 绿）：entries 空 ⇒ rc=1（不当绿） ────────────────────────
 	rcEmpty, outEmpty, _ := ccrTestRun(t, "--root",
 		ccrTestRoot(t, `{"schema":"zerg-contract-registry/1","note":"x","authority":"x","entries":[]}`, ccrTestSelfRel))
@@ -135,9 +144,9 @@ func TestCheckContractRegistryGatePort(t *testing.T) {
 		t.Fatalf("--json 机器面失败：得 rc=%d out=%q", rcJOK, outJOK)
 	}
 
-	// ── --self-test 十组自身必须全过（防恒绿/恒红） ──────────────────────
+	// ── --self-test 十一组自身必须全过（防恒绿/恒红） ──────────────────────
 	rcST, outST, _ := ccrTestRun(t, "--root", root, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "自检全过（10 组") {
+	if rcST != 0 || !strings.Contains(outST, "自检全过（11 组") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%q", rcST, outST)
 	}
 }

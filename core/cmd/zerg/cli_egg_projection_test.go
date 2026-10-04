@@ -15,6 +15,8 @@ package main_test
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -34,6 +36,9 @@ const eggStatusJSON = `{"machines":{
 
 func runEggCmd(t *testing.T, argv ...string) (int, string, string) {
 	t.Helper()
+	// 实测档案目录指到本用例的临时目录 ⇒ 判据件**绝不碰**真实 `~/.zerg/egg-profiles`
+	// （`GAP-20261005-06` 的 has_profile 读点）。
+	eggProfileDirFor(t)
 	var out, errb bytes.Buffer
 	rc := zerg.RunForTest(argv, &out, &errb)
 	return rc, out.String(), errb.String()
@@ -374,6 +379,92 @@ func TestEggShowTargets(t *testing.T) {
 }
 
 // `--json` 面：字段名逐字（三格 + egg_id），且三格在机器面上一个不少。
+// eggProfileDirs 每条用例一枚实测档案目录。★ 为什么要有它：`t.TempDir()` **每次调用返不同目录**
+// （实测 `001`/`002`/`003`）⇒ 不能拿它当「同用例恒同」的键；这里按用例名缓存一次，
+// `runEggCmd` 与用例本体拿到的就是**同一枚**（并把 `ZERG_EGG_PROFILE_DIR` 指过去 ⇒ 判据件绝不碰真实 `~/.zerg`）。
+var eggProfileDirs = map[string]string{}
+
+// eggProfileDirFor 取本用例的实测档案目录并把 `ZERG_EGG_PROFILE_DIR` 指到它。
+func eggProfileDirFor(t *testing.T) string {
+	t.Helper()
+	dir, ok := eggProfileDirs[t.Name()]
+	if !ok {
+		dir = t.TempDir()
+		eggProfileDirs[t.Name()] = dir
+		t.Cleanup(func() { delete(eggProfileDirs, t.Name()) }) // 同一条用例重跑（-count>1）也不复用已回收的目录
+	}
+	t.Setenv("ZERG_EGG_PROFILE_DIR", dir)
+	return dir
+}
+
+// writeEggProfileFixture 落一枚**够标定轮数**的实测档案（`calib_runs: 3` ⇒ `has_profile` 为真）。
+func writeEggProfileFixture(t *testing.T, dir, model string) {
+	t.Helper()
+	body := "schema_version: 1\nmachine: Mr2109\nmeasured_at: 2026-09-16T04:58:55Z\ncalib_runs: 3\n" +
+		"weight_size_gb: 19.71\npeak_gtt_gb: 25.842\npeak_mem_gb: 25.121\n"
+	if err := os.WriteFile(filepath.Join(dir, model+".yaml"), []byte(body), 0o644); err != nil {
+		t.Fatalf("落实测档案 %s 失败: %v", model, err)
+	}
+}
+
+// ★ `GAP-20261005-06`（本判据件的新牙）：`has_profile` 必须在**机器面**上透出来 ——
+// 507 拒孵有**两个因**（无实测档案 / 内存不足），而面上此前只认后一个 ⇒「名册声明了却**永不可孵**」
+// 与「可孵而此刻未装」不可辨。两态：Egg-A 有档 ⇒ `true`；Egg-B 无档 ⇒ `false`。
+//
+// 改前该格**不存在**：`--json ...,has_profile` 被字段表拒（未知字段 ⇒ 退 2）。
+func TestEggHasProfileDisclosesUnhatchable(t *testing.T) {
+	srv := newSyntheticMaster(t, map[string]string{
+		"/api/fleet/models": eggFleetJSON,
+		"/api/fleet/status": eggStatusJSON,
+		"/api/models/Egg-A": `{"name":"Egg-A","host":"Mr2109","status":"已加载"}`,
+		"/api/models/Egg-B": `{"name":"Egg-B","host":"Mr2109","status":"未加载"}`,
+	})
+	defer srv.Close()
+	eggStubOnMS01(t)
+	dir := eggProfileDirFor(t)
+	writeEggProfileFixture(t, dir, "Egg-A") // 只给 Egg-A 落档；Egg-B 无档 ⇒ 永不可孵那一态
+
+	// ① 清单面：每枚卵的 `has_profile` 都要出得来，且两态逐字分开。
+	rc, stdout, stderr := runEggCmd(t, "egg", "ls", "--json", "egg_id,host,model,has_profile")
+	if rc != 0 {
+		t.Fatalf("egg ls --json ...,has_profile 退码 = %d（要 0）· stderr=%s", rc, stderr)
+	}
+	var doc struct {
+		Items []map[string]string `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("--json 输出不是合法对象：%v · stdout=%s", err, stdout)
+	}
+	got := map[string]string{}
+	for _, it := range doc.Items {
+		got[it["host"]+"\t"+it["model"]] = it["has_profile"]
+	}
+	for _, k := range []string{"Mr2109\tEgg-A", "Mr2109\tEgg-B", "edge-node\tEgg-B"} {
+		if got[k] == "" {
+			t.Errorf("`has_profile` 那一格缺格：%s（%v）", k, got)
+		}
+	}
+	if got["Mr2109\tEgg-A"] != "true" {
+		t.Errorf("有实测档案的卵 ⇒ has_profile=true，实得 %q（%v）", got["Mr2109\tEgg-A"], got)
+	}
+	if got["Mr2109\tEgg-B"] != "false" || got["edge-node\tEgg-B"] != "false" {
+		t.Errorf("无实测档案的卵 ⇒ has_profile=false（永不可孵那一态），实得 %v", got)
+	}
+
+	// ② 单枚面（本缺口的症状形态）：无档 ⇒ 逐字 false；有档 ⇒ 逐字 true。
+	rc, stdout, stderr = runEggCmd(t, "egg", "show", "Egg-B@Mr2109", "--json", "egg_id,model,has_profile")
+	if rc != 0 {
+		t.Fatalf("egg show Egg-B@Mr2109 退码 = %d（要 0）· stderr=%s", rc, stderr)
+	}
+	if !strings.Contains(stdout, `"has_profile":"false"`) {
+		t.Errorf("无档卵的单枚面要逐字给 has_profile=false：%q", stdout)
+	}
+	rc, stdout, stderr = runEggCmd(t, "egg", "show", "Egg-A@Mr2109", "--json", "egg_id,model,has_profile")
+	if rc != 0 || !strings.Contains(stdout, `"has_profile":"true"`) {
+		t.Errorf("有档卵的单枚面要逐字给 has_profile=true：rc=%d · %q · stderr=%s", rc, stdout, stderr)
+	}
+}
+
 func TestEggLsJSONFields(t *testing.T) {
 	srv := newSyntheticMaster(t, map[string]string{
 		"/api/fleet/models": eggFleetJSON,

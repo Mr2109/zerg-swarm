@@ -76,7 +76,7 @@ LEGACY_SIX = ["before_sha256", "after_sha256", "before_bytes", "after_bytes", "a
 #   key_id `8b69ad95939df5cf`；审计行在 `<状态目录>/edit_audit.jsonl`）。**任何时候重签了该件，走本件自己的正门
 #   刷新通道把它跟到新值**（先 `--emit-constant` 看应有值，再 `--refresh-constant` 干跑，最后带 `--yes` 落）——
 #   不然门⑰ 会以「B5 破」恒红；**禁**手改本行（那是缺口 `GAP-20260928-88` 记的那条坏路）。
-DEV_EDIT_SHA256 = "c75b84ee3c1eb4bdf24d93ea46543d24abd0b775bf2ba8a46a543d309ac6ce17"
+DEV_EDIT_SHA256 = "6131d5af3baa8583d623b3be264a451a2546f0ecbb3662e93a19ca1c1180ad03"
 
 # ── 常量刷新的取数口（emit / refresh / 自检同读这一处 · 单一真源）────────────────────
 CONST_NAME = "DEV_EDIT_SHA256"
@@ -420,7 +420,7 @@ def self_test(repo, state):
     v_no, e_no = mark_of(json.dumps({"event": EVENT}))
     check(v_no is None and e_no is not None, "⑥ 负控：**抹掉明标** ⇒ 判红（不可分不许蒙过去）",
           "⑥ 负控失败：没明标还判绿")
-    # ── ★ 回归自测格（缺口 `GAP-20260928-217` · 2026-09-28 补）：**真判据面**不许哑化 ──
+    # ── ★ 回归自测格（缺口 `GAP-20260928-51` · 2026-09-28 补）：**真判据面**不许哑化 ──
     #   病灶（今天已治，本格是牙齿）：本自测此前只喂**判定口零件**（`judge_ticket_fields` /
     #   `judge_audit_side` / `mark_of` 三个纯函数 + 常量 `TICKET_EIGHT`），**真判据面
     #   `read_all()` / `parse_*()` / `judge_event_count()` / `judge_all()` / `scan()`

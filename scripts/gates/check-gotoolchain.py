@@ -108,7 +108,7 @@ def self_test():
         return d
 
     try:
-        print("── check-gotoolchain.py --self-test 三档（正控 0 · 负控 1 · 用法错 2）")
+        print("── check-gotoolchain.py --self-test 四档（正控 0 · 负控 1 · 空域 2 · 用法错 2）")
         clean = fixture("clean", "module core\n\ngo 1.22.0\n", "module agent\n\ngo 1.22.0\n")
         rc, out = run(clean)
         chk("档① 正控：两模块同值（core 的 go 指令为 pin）", 0, rc, out)
@@ -122,6 +122,10 @@ def self_test():
                           "module agent\n\ngo 1.23.0\n\ntoolchain go1.23.0\n")
         rc, out = run(diverge)
         chk("档②′ 成对负控：两模块 toolchain 不同值（单一真源被破坏）", 1, rc, out)
+
+        nogo = fixture("nogo", "module core\n\ngo 1\n", "module agent\n\ngo 1\n")
+        rc, out = run(nogo)
+        chk("档②″ 空域负控：版本号 trip() 取不到（`go 1`）⇒ rc=2（空集守卫 · GAP-20260927-108）", 2, rc, out)
 
         rc, out = run(clean, "--no-such-flag")
         chk("档③ 用法错：未知旗标（机器面缺/输入错 ≠ 零命中）", 2, rc, out)
@@ -167,6 +171,20 @@ def main():
             print("  - %s" % f)
         print("\n结果: 失败")
         return 1
+
+    # ★ 空集守卫（GAP-20260927-108）：域 = 「trip() 解析得出的版本号」——
+    #   取不到结果（trip() 为 None，如 `go 1` 无点号 / `go 1.2.3.4` 多段）时，下方所有 trip() 比较会
+    #   **整块静默跳过** ⇒ 假绿（实证 2026-10-05：两模块同写 `go 1` ⇒ 旧档 rc=0 且报「工具链 pin = go1」）。
+    #   ⇒ fail-closed：拿不到可解析版本号就不给结论（rc=2 · 说清是哪个值），✗ 不许当「比较通过」绿。
+    _vers = (("core/go", mods["core"]["go"]),
+             ("core/toolchain", mods["core"]["toolchain"]),
+             ("agent/go", mods["agent"]["go"]),
+             ("agent/toolchain", mods["agent"]["toolchain"]))
+    _unparsed = ["%s=%s" % (k, v) for k, v in _vers if v and trip(v) is None]
+    if _unparsed:  # ★ 空集守卫（GAP-20260927-108）：版本号取不到可解析结果 ⇒ rc=2（不给结论）
+        print("\n结果: 不给结论（rc=2）—— 版本号取不到可解析结果（trip() 为 None ⇒ 比较会静默跳过）：%s"
+              % "、".join(_unparsed))
+        return 2
 
     # pin = core 的 toolchain（若有）否则 core 的 go 指令
     pin = mods["core"]["toolchain"] or mods["core"]["go"]

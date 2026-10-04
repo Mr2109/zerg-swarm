@@ -128,6 +128,19 @@ func TestCheckManifestFreshnessGatePort(t *testing.T) {
 	if w, err := mfDiagnose(map[string]any{"source_sha": "ffffffffffffffff"}, root, 999999, time.Now().UTC()); err != nil || !mfAnyContains(w, "另一棵树") {
 		t.Fatalf("source_sha 不等于分支头应报：w=%v err=%v", w, err)
 	}
+
+	// ⑧ 空清单 `{}`（`GAP-20260927-108`）：**没输入可判** ⇒ ✗ 不许报「新鲜」；rc 契约不变（缺省 0 · --strict 拦 1）
+	pe := mfTestWriteManifest(t, map[string]any{})
+	if rc, so, _ := mfTestRun([]string{pe, "--repo", root, "--max-age-hours", "999999"}); rc != 0 || !strings.Contains(so, "没输入可判") || strings.Contains(so, "清单新鲜") {
+		t.Fatalf("空清单缺省档应 rc=0 + 「没输入可判」且 ✗ 不报「新鲜」：rc=%d so=%q", rc, so)
+	}
+	if rc, so, _ := mfTestRun([]string{pe, "--repo", root, "--max-age-hours", "999999", "--strict"}); rc != 1 || !strings.Contains(so, "没输入可判") {
+		t.Fatalf("空清单 --strict 档应拦（rc=1）：rc=%d so=%q", rc, so)
+	}
+	// ⑧′ 成对：**非空**但零告警的真清单 ⇒ 照旧报「✓ 清单新鲜」（证 ⑧ 不是把「新鲜」整体删掉）
+	if rc, so, _ := mfTestRun([]string{p, "--repo", root, "--max-age-hours", "999999"}); rc != 0 || so != "✓ 清单新鲜（无告警）\n" {
+		t.Fatalf("真清单应照旧报「✓ 清单新鲜（无告警）」（与 ⑧ 成对）：rc=%d so=%q", rc, so)
+	}
 }
 
 // ── 定靶对拍：同一夹具喂 py 真身与 Go 真搬，逐格比 rc / stdout（--json 那格另比 stderr）──────
@@ -176,6 +189,10 @@ func TestCheckManifestFreshnessDifferential(t *testing.T) {
 			return []string{mfPath, "--repo", root, "--max-age-hours", "720"}
 		}},
 		{name: "缺_generated_at", mf: map[string]any{"commit": head, "source_sha": head, "dirty": false}, args: repoArgs},
+		{name: "空清单_没输入可判", mf: map[string]any{}, args: repoArgs},
+		{name: "空清单_strict_拦", mf: map[string]any{}, args: func(mfPath, root string) []string {
+			return append(repoArgs(mfPath, root), "--strict")
+		}},
 		{name: "用法错_无参", mf: nil, args: func(mfPath, root string) []string { return []string{"--repo", root} }},
 		{name: "用法错_件不存在", mf: nil, args: func(mfPath, root string) []string { return []string{mfPath, "--repo", root} }},
 		{name: "无机器读面_json", mf: nil, args: func(mfPath, root string) []string { return []string{"--json"} }, compareStderr: true},

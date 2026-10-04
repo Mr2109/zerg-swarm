@@ -560,7 +560,15 @@ func askInfer(r askRoute, prompt string, inv *invocation) (string, error) {
 	}
 	b, _ := json.Marshal(body)
 	hc := &http.Client{Timeout: 120 * time.Second}
-	resp, err := hc.Post(statepath.GatewayBaseURL()+"/v1/chat/completions", "application/json", bytes.NewReader(b))
+	req, err := http.NewRequest(http.MethodPost, statepath.GatewayBaseURL()+"/v1/chat/completions", bytes.NewReader(b))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// 令牌从真源取（env ZERG_TOKEN > ~/.zerg/token —— 全命令面唯一入口 credentials.go resolveToken），
+	// 用本仓唯一真源 header X-Auth-Token（§九 M2 C10）—— 与 client.go/子端面同形，不新造口径。
+	req.Header.Set("X-Auth-Token", resolveToken())
+	resp, err := hc.Do(req)
 	if err != nil {
 		return "", err
 	}

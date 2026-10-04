@@ -59,13 +59,13 @@ func TestCheckVersionGatePort(t *testing.T) {
 		t.Fatalf("成对断言失败：正控 rc=%d 与负控 rc=%d 同码 ⇒ 无鉴别力", rcGreen, rcRed)
 	}
 
-	// ── 负控（必然判红）：version.go 缺失 ⇒ 未能解析 ⇒ rc=1 ─────────────
+	// ── 空集守卫（GAP-20260927-108）：version.go 缺失 ⇒ 版本真源取不到 ⇒ rc=2（不给结论）──
 	rcNoGo, outNoGo, _ := verRun(t, verFixture(t, "2.5.13", "", false))
-	if rcNoGo != 1 || !strings.Contains(outNoGo, "未能解析版本号") {
-		t.Fatalf("负控-缺 version.go 失败：得 rc=%d out=%q", rcNoGo, outNoGo)
+	if rcNoGo != 2 || !strings.Contains(outNoGo, "不给结论（rc=2）") {
+		t.Fatalf("空集守卫-缺 version.go 失败：得 rc=%d out=%q", rcNoGo, outNoGo)
 	}
 
-	// ── 负控：Cargo.toml 存在但无 version 行 ⇒ 两侧皆 None ⇒ 未能解析 ⇒ rc=1 ──
+	// ── 空集守卫（GAP-20260927-108）：Cargo.toml 存在但无 version 行 ⇒ 两侧皆空 ⇒ rc=2 ──
 	rootNoVer := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(rootNoVer, "ui"), 0o755); err != nil {
 		t.Fatal(err)
@@ -74,14 +74,14 @@ func TestCheckVersionGatePort(t *testing.T) {
 		t.Fatal(err)
 	}
 	rcNone, outNone, _ := verRun(t, rootNoVer)
-	if rcNone != 1 || !strings.Contains(outNone, "= None") {
-		t.Fatalf("负控-无 version 行 失败：得 rc=%d out=%q", rcNone, outNone)
+	if rcNone != 2 || !strings.Contains(outNone, "= None") {
+		t.Fatalf("空集守卫-无 version 行 失败：得 rc=%d out=%q", rcNone, outNone)
 	}
 
-	// ── 取不到输入：根路径不存在 ⇒ rc=1（stdout 空 · 与 py traceback 档同码） ──
-	rcNoRoot, outNoRoot, errNoRoot := verRun(t, filepath.Join(t.TempDir(), "nope"))
-	if rcNoRoot != 1 || outNoRoot != "" || !strings.Contains(errNoRoot, "读不到") {
-		t.Fatalf("取不到输入失败：得 rc=%d stdout=%q stderr=%q", rcNoRoot, outNoRoot, errNoRoot)
+	// ── 取不到输入：根路径不存在 ⇒ 两件皆缺 ⇒ rc=2（不给结论 · 与 py 同口径） ──
+	rcNoRoot, outNoRoot, _ := verRun(t, filepath.Join(t.TempDir(), "nope"))
+	if rcNoRoot != 2 || !strings.Contains(outNoRoot, "= None") {
+		t.Fatalf("取不到输入失败：得 rc=%d out=%q", rcNoRoot, outNoRoot)
 	}
 
 	// ── 不给结论（≠ 绿）：未知旗标 ⇒ rc=2（stderr 明说） ─────────────────

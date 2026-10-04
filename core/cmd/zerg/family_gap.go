@@ -21,7 +21,11 @@
 //	   （「没给 `--dry-run` 也没给 `--yes` ⇒ 计划件走 stderr、不执行、退 2」），也是 `H-5`
 //	   要本族矩阵格**只进退码面**（`want_stdout_bytes` 一律 `0`）能成立的前提。
 //	⑤ **审计先落盘**（取 `dev edit` 那一侧，**不取** `approve` 那一侧）：审计写不进 ⇒ **真源一个字节不写** ⇒ 8。
-//	⑥ **人面不许直接写 `state`**（防呆④ / `H-10`）：`add` 收到机器态（`已解` / `回归`）⇒ 拒收 2；
+//	⑥ **人面不许直接写【机器态】`state`**（防呆④ / `H-10`）：`add` 收到机器态（`已解` / `回归`）⇒ 拒收 2；
+//	   收到【派单态】`已派` 同样拒收 2（派单必须走 `gap assign` 的作业单六栏 + `M-32` 占用预检，
+//	   `gap add` 没有那六栏 ⇒ 直写即**绕过作业单**）；可直写的只剩 `仍缺`（缺省）/ `已立项` / `不做`
+//	   （缺口 `GAP-20261005-15` 收紧了 `H-10` 的口径 —— 原口径「人只能给 `已派`/`已立项`/`不做`」写在
+//	   `gap assign` 落地**之前**，派单态自此归 `assign`）；★ `已立项` 仍是**只能**从这里写的一态。
 //	   `verify` 根本不收 `--state`（不在它的形状里）。
 //
 // 退码（一律引现有表 `exitcodes.go` · 本族**不取新号**）：
@@ -81,12 +85,17 @@ const gapLsRowCap = 200
 //	  ↔ 契约 ↔ 矩阵，属**成片改动** ⇒ 留**批二**、**不半落** ✗。本笔**只增注释、零行为变更** ✓
 //	  （`gapNextID` 的取号算法与 `gap add` 的落点**一个字未动** ✗）。
 
-// 状态四值（人面可写）/ 两个**机器态**（只由 `verify` 跑判据转，防呆④）。
+// 状态常量：人的口径面（`仍缺` / `已解` / `不做`）+ 排期态 `已立项`（`已派` 见同包 `gapStAssigned`）
+// + 两个**机器态**（只由 `verify` 跑判据转，防呆④）。
 const (
 	gapStOpen    = "仍缺"
 	gapStSolved  = "已解"
 	gapStRegress = "回归"
 	gapStWontDo  = "不做"
+	// gapStPlanned —— 排期态「已立项」（方向已定、实现未见）。
+	// ★ 它**只**由 `gap add --state 已立项` 直写：`gap set-state` 的闭集不含排期态、
+	//   `gap assign` 落的恒为 `gapStAssigned`（`已派`）⇒ 别把这枚也当旁路关掉（关掉它 = 该态无路可写）。
+	gapStPlanned = "已立项"
 )
 
 // ★ `--impact` 是**「面」不是「类」**（2026-09-24 · 块A `C-A11`（设计 `v1.2` §2 序11）· 缺口 `G-95` ·
@@ -99,9 +108,16 @@ const (
 //	★ 真做第二维 = 闭集 + 矩阵 + 公开面 + 逐条判据四件成套，属**成片改动** ⇒ 不半落 ✗。
 
 // 闭集（设计稿 §二）：状态六值 · 影响面六值 · 优先三值。
+//
+//	★ gapStateHuman —— 「**人面可直写**」的状态闭集（缺口 `GAP-20261005-15` 的落点）。
+//	  为什么是三值而不是四值（此前含 `已派`）：`已派` 是**派单态**，正路是 `gap assign`
+//	  （作业单六栏 + `M-32` 占用预检）；`gap add` 没有那六栏 ⇒ 允许它直写 = **绕过作业单**
+//	  （缺口 `GAP-20261005-15` 逐字点名这条旁路）⇒ 从本闭集**移出**，收到即拒收 2 并指路 `gap assign`。
+//	  不含 `已解` / `回归`：机器态（防呆④：只由 `gap verify` 跑判据转）。
+//	  `已立项` 仍在本闭集里 —— 它是**只能**由 `gap add --state` 写的一态（别处没有任何写路）。
 var (
 	gapStateClosed  = []string{"仍缺", "已派", "已立项", "已解", "回归", "不做"}
-	gapStateHuman   = []string{"仍缺", "已派", "已立项", "不做"}
+	gapStateHuman   = []string{gapStOpen, gapStPlanned, gapStWontDo}
 	gapImpactClosed = []string{"命令面", "门禁面", "文档面", "公开面", "换件面", "归档面"}
 	gapPrioClosed   = []string{"P0", "P1", "P2"}
 )
@@ -735,6 +751,19 @@ func gapLsLedgerSHA16(path string) string {
 	return hex.EncodeToString(h[:])[:16]
 }
 
+// gapLsLedgerSHA16Bytes —— 一段真源**字节**的账本身份（`sha256` 前 16）—— 给 T0 快照用（✗ 不是现读）。
+// 取法与 `gapLsLedgerSHA16` **同一套**（`crypto/sha256` + `encoding/hex`），只是喂的是已经在内存里的
+// `led.Raw` ⇒ 拿到的是「**我分析的那一份账**」的身份，而不是退出前再读一次的。
+func gapLsLedgerSHA16Bytes(b []byte) string {
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])[:16]
+}
+
+// gapLsBetweenReads —— **仅供机检**的一次性钩子：在「T0 读入账」与「退出前重读」之间被调用一次，
+// 用来在确定性夹具里模拟「两次读数之间真源被**外部**改过」（默认 nil ⇒ 什么都不做）。
+// 生产路径恒为 nil ⇒ 行为面一字节不受影响。口径与同族 `gapRereadBetweenReads` **同一套**。
+var gapLsBetweenReads func()
+
 // gapLsQueryText —— `meta.query` 的回显（**现读收窄入参** · 序 = state / prio / impact / unit / module）。
 // 未给的旗标**不写那一格** ⇒ 无收窄时逐字 `{}`（缺席 ≠ 假值）。
 func gapLsQueryText(states []string, prio, impact, unit, module string) string {
@@ -764,12 +793,22 @@ func gapLsQueryText(states []string, prio, impact, unit, module string) string {
 // gapLsMetaAdd —— 机器面信封字段的**唯一写入口**（只走 `metaAdd*` 既有口子 ⇒ 顶层六键不动）。
 // `total` = 真命中总数 · `hits` = 本次返回条数 —— **两枚分开写**（规格③：命中数与总数必须是两个字段；
 // 既有 `meta.count` 语义与取值**一字未动**，那是老调用方的格）。
-func gapLsMetaAdd(inv *invocation, states []string, prio, impact, unit, module string, total, hits int, ledgerPath string) {
+// ★ 本枚（缺口 `GAP-20261005-44` 同形面）：既有五格 `total` / `hits` / `query` / `query_ts` / `ledger_sha16`
+// **语义与取值一字未动**（`ledger_sha16` 仍是现读那一枚，只是这一次现读由调用方传进来、与下面
+// `readback_sha16` 同一份 ⇒ 不再各读一次），另**加四格**做**外写自发现**：`snapshot_sha16`
+// （T0 快照 —— 我分析的那份账的身份）/ `snapshot_lines`（那份账的行数）/ `readback_sha16`（退出前重读）/
+// `external_write_detected`（两 sha16 是否不符）。✗ 只加格、✗ 不进退出码。
+func gapLsMetaAdd(inv *invocation, states []string, prio, impact, unit, module string, total, hits int,
+	snapSHA16 string, snapLines int, readbackSHA16 string, extWrite bool) {
 	inv.metaAddJSON("total", strconv.Itoa(total))
 	inv.metaAddJSON("hits", strconv.Itoa(hits))
 	inv.metaAddJSON("query", gapLsQueryText(states, prio, impact, unit, module))
 	inv.metaAddStr("query_ts", gapNow())
-	inv.metaAddStr("ledger_sha16", gapLsLedgerSHA16(ledgerPath))
+	inv.metaAddStr("ledger_sha16", readbackSHA16)
+	inv.metaAddStr("snapshot_sha16", snapSHA16)
+	inv.metaAddJSON("snapshot_lines", strconv.Itoa(snapLines))
+	inv.metaAddStr("readback_sha16", readbackSHA16)
+	inv.metaAddJSON("external_write_detected", strconv.FormatBool(extWrite))
 }
 
 func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
@@ -932,6 +971,18 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 		hits, cut = gapLsRowCap, true
 		out, rows = out[:hits], rows[:hits]
 	}
+	// ★ 外写自发现（缺口 `GAP-20261005-44` 同形面 · 与同族 `gap reread` 同一套口径）：上面一切读数都
+	//   基于 T0 读入的 `led`；旧版把 `meta.ledger_sha16` 在写 meta 那一刻现读一次（T1）⇒「我分析的账」与
+	//   「印出去的 sha」**不互校**，两次读数之间的外部写入**不可见**。治：① T0 快照 = `led.Raw` 的 sha16
+	//   ＋ 行数；② 退出前**再读一次**；③ 不符 ⇒ 机读格 `external_write_detected=true` ＋ 两 sha16（人面
+	//   在异常时同步加一行告警）。✗ 不动本面既有输出语义、✗ 不进退出码（只报告）。
+	gapLsSnapSHA16 := gapLsLedgerSHA16Bytes(led.Raw)
+	gapLsSnapLines := len(led.Lines)
+	if gapLsBetweenReads != nil {
+		gapLsBetweenReads() // 机检钩子：模拟外部写入（生产恒 nil）
+	}
+	gapLsReadbackSHA16 := gapLsLedgerSHA16(led.Path)
+	gapLsExtWrite := gapLsReadbackSHA16 != gapLsSnapSHA16
 	if len(out) == 0 {
 		inv.changed = boolPtr(false)
 		inv.setErr("failed", "no_match", "零命中")
@@ -942,7 +993,8 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 		if narrowed {
 			fmt.Fprintf(stderr, "%s: 0 命中 —— 收窄值回显：--unit %q · --module %q（退码 1 · 「没有」不是绿）\n",
 				progName, wantUnit, wantModule)
-			gapLsMetaAdd(inv, wantStates, wantPrio, wantImpact, wantUnit, wantModule, 0, 0, led.Path)
+			gapLsMetaAdd(inv, wantStates, wantPrio, wantImpact, wantUnit, wantModule, 0, 0,
+				gapLsSnapSHA16, gapLsSnapLines, gapLsReadbackSHA16, gapLsExtWrite)
 			// ★ 机器面（规格②「机器面 `items` 空数组 + `total=0`」）：本面**自己出包封**。
 			//   为什么必须自己出：失败路径上的兜底包封（`main.go:250` 的 `emitErrEnvelope`）**不带
 			//   `meta` 子键** ⇒ 那一路拿不到 `total`/`hits`/`query`。这里走 `emitEnvelopeWith`
@@ -956,7 +1008,8 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	inv.changed = boolPtr(false)
 	if narrowed {
-		gapLsMetaAdd(inv, wantStates, wantPrio, wantImpact, wantUnit, wantModule, total, hits, led.Path)
+		gapLsMetaAdd(inv, wantStates, wantPrio, wantImpact, wantUnit, wantModule, total, hits,
+			gapLsSnapSHA16, gapLsSnapLines, gapLsReadbackSHA16, gapLsExtWrite)
 	}
 	if cut {
 		inv.markTruncated()
@@ -1012,6 +1065,10 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 			row += "  " + pad(truncateDisplay(strings.Join(gapNotesVisible(r), " ⏎ "), notew), notew)
 		}
 		fmt.Fprintln(stdout, row)
+	}
+	if gapLsExtWrite {
+		fmt.Fprintf(stdout, "  ⚠ 外写自发现：两次读数之间真源被**外部**改过（上面读数一律基于快照那一份 · snapshot_sha16=%s · readback_sha16=%s）\n",
+			gapLsSnapSHA16, gapLsReadbackSHA16)
 	}
 	return exitOK
 }
@@ -1241,7 +1298,7 @@ func gapShowByFile(inv *invocation, led gapLedger, stdout, stderr io.Writer, fil
 		}
 	}
 	if inv.jsonGiven {
-		return selectJSONList(stdout, stderr, inv, inv.path, gapShowFields, rows)
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
 	}
 
 	fmt.Fprintf(stdout, "件: %s（在仓里 · 轴面 unit 精确等值 %d 条（另有 %d 条正文里提到但未归入该件））\n",
@@ -1331,7 +1388,7 @@ func cmdGapShow(inv *invocation, stdout, stderr io.Writer) int {
 
 	// ⑤ 机器面：照拄同族单条面（`selectJSON` ⇒ `items` 里一条 · I3 恒数组）
 	if inv.jsonGiven {
-		return selectJSON(stdout, stderr, inv, inv.path, gapShowFields, gapShowRow(r))
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, gapShowRow(r))
 	}
 
 	// ⑥ 人面：**完整正文不截断**（本面存在的理由 —— `ls` 那一行只印摘要前 40 显示宽）
@@ -1721,8 +1778,10 @@ func gapAddUsageConfirm(inv *invocation, stderr io.Writer, in gapAddInput, sympt
 	}
 	if !gapIn(gapStateHuman, stateWant) {
 		inv.setErr("usage", "state_human_forbidden", "人面不许直接写 state")
-		fmt.Fprintf(stderr, "%s: 人面不许直接写 `state`（防呆④ / `H-10`）—— 收到 %q 一律拒收 2\n", progName, stateWant)
-		fmt.Fprintf(stderr, "  人面只许：%s（`已解` / `回归` 是**机器态**：只由 `zerg gap verify` 跑判据转）\n", gapClosedText(gapStateHuman))
+		fmt.Fprintf(stderr, "%s: `--state %s` 不在 `gap add` 的可直写闭集里 —— 只认 %s\n",
+			progName, stateWant, gapClosedText(gapStateHuman))
+		fmt.Fprintf(stderr, "  `已解` / `回归` 是**机器态**：只由 `zerg gap verify` 跑判据转（防呆④ / `H-10`）\n")
+		fmt.Fprintf(stderr, "  `已派` 是**派单态**：走 `zerg gap assign <id> --egg <卵号> …`（作业单六栏 + `M-32` 占用预检）\n")
 		return gapRecord{}, exitUsage
 	}
 	// ★ 缺口 `GAP-20260927-259`（本枚）：`--evidence` 是**别面**的旗标（`set-state` / `receipt apply`
@@ -1841,6 +1900,13 @@ func gapAddApply(inv *invocation, stdout, stderr io.Writer, in gapAddInput) int 
 		fmt.Fprintln(stdout, "  审计     : 计划写一行 `event=gap_ledger_written`（这一态**不写**）")
 		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未追加真源、未写审计）\n")
 		return exitOK
+	}
+
+	// ★ 本枚（缺口账 `GAP-20261005-26`）：**字段面前置判定** —— 把 `--json` 字段名校验从出口
+	//    `selectJSON`（真写**之后**）前移到第一个真写动作之前：坏字段 ⇒ 同 kind 同 detail 同退码，
+	//    而真源**一个字节不落、审计一行不落**（改前「先写后校」⇒ 写得成也退得了 2）。
+	if rc := gapFrontJSONFields(inv, stderr, gapAddFields); rc != exitOK {
+		return rc
 	}
 
 	// ⑦ 真写：**审计先落盘**（审计写不进 ⇒ 真源一行都不写 ⇒ 8）
@@ -2125,6 +2191,13 @@ func cmdGapVerify(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stderr, "（--dry-run：只跑判据、只印判决 · 零副作用 —— 未改 `state`、未写 `solved_evidence`、未写审计）\n")
 		return exitOK
+	}
+
+	// ★ 本枚（缺口账 `GAP-20261005-26`）：**字段面前置判定** —— 把 `--json` 字段名校验从出口
+	//    `selectJSON`（真写**之后**）前移到第一个真写动作之前：坏字段 ⇒ 同 kind 同 detail 同退码，
+	//    而真源**一个字节不落、审计一行不落**（改前「先写后校」⇒ 写得成也退得了 2）。
+	if rc := gapFrontJSONFields(inv, stderr, gapVerifyFields); rc != exitOK {
+		return rc
 	}
 
 	// ⑥ `--yes`：真改 —— ① 算出新件 ② **审计先落盘** ③ 写真源 ④ 读回对拍
@@ -2424,7 +2497,7 @@ func cmdGapBackfillUnit(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.dryRun {
 		inv.changed = boolPtr(false)
 		if inv.jsonGiven {
-			return selectJSON(stdout, stderr, inv, inv.path, gapBackfillFields, map[string]string{
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
 				"total": strconv.Itoa(total), "extractable": strconv.Itoa(auto),
 				"fallback": strconv.Itoa(hand), "need_change": strconv.Itoa(need),
 				"changed_rows": "0",
@@ -2433,6 +2506,13 @@ func cmdGapBackfillUnit(inv *invocation, stdout, stderr io.Writer) int {
 		gapBackfillReadout(stdout, led, total, auto, hand, need, tracked)
 		fmt.Fprintf(stderr, "（--dry-run：只读 · 零副作用 —— 未改真源、未写审计）\n")
 		return exitOK
+	}
+
+	// ★ 本枚（缺口账 `GAP-20261005-42`）：**字段面前置判定** —— 把 `--json` 字段名校验从出口
+	//    `selectJSON`（真写**之后**）前移到第一个真写动作之前：坏字段 ⇒ 同 kind 同 detail 同退码，
+	//    而真源**一个字节不落、审计一行不落**（改前：出口把常量字段表当投影 ⇒ 未知字段**静默接受**）。
+	if rc := gapFrontJSONFields(inv, stderr, gapBackfillFields); rc != exitOK {
+		return rc
 	}
 
 	// ⑥ `--yes`：真写 —— ① 外科式造新件 ② 审计先落盘 ③ 写真源 ④ 读回对拍
@@ -2503,7 +2583,7 @@ func cmdGapBackfillUnit(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	inv.changed = boolPtr(need > 0)
 	if inv.jsonGiven {
-		return selectJSON(stdout, stderr, inv, inv.path, gapBackfillFields, map[string]string{
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
 			"total": strconv.Itoa(total), "extractable": strconv.Itoa(auto),
 			"fallback": strconv.Itoa(hand), "need_change": strconv.Itoa(need),
 			"changed_rows": strconv.Itoa(need),
@@ -3917,6 +3997,13 @@ func cmdGapIdeaAdd(inv *invocation, stdout, stderr io.Writer) int {
 		return exitOK
 	}
 
+	// ★ 本枚（缺口账 `GAP-20261005-26`）：**字段面前置判定** —— 把 `--json` 字段名校验从出口
+	//    `selectJSON`（真写**之后**）前移到第一个真写动作之前：坏字段 ⇒ 同 kind 同 detail 同退码，
+	//    而真源**一个字节不落、审计一行不落**（改前「先写后校」⇒ 写得成也退得了 2）。
+	if rc := gapFrontJSONFields(inv, stderr, gapIdeaFields); rc != exitOK {
+		return rc
+	}
+
 	// ④ 真写：先七日归档（超期条搬入归档件 + 主池回写未归档那批），再追加新候选。
 	if nArch > 0 {
 		if err := gapPoolAppendLines(gapPoolArchivePath(time.Now().Format("20060102")), archLines); err != nil {
@@ -4214,7 +4301,7 @@ func cmdGapIdeaShow(inv *invocation, stdout, stderr io.Writer) int {
 		"gate_step": c.GateStep, "log_path": c.LogPath, "rc": gapIdeaRCText(c),
 	}
 	if inv.jsonGiven {
-		return selectJSON(stdout, stderr, inv, inv.path, gapIdeaShowFields, row)
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, row)
 	}
 	ageText := "（落池时刻解析不出）"
 	if age != "" {
@@ -4277,6 +4364,13 @@ func cmdGapIdeaPromote(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "  下一步 : `pending` 之外不改池行 —— %s\n", gapIdeaNotPendingNext(c))
 		return exitUsage
 	}
+	// ★ 本枚（缺口账 `GAP-20261005-42`）：**字段面前置判定** —— 把 `--json` 字段名校验从出口
+	//    `selectJSON`（真写**之后**）前移到第一个真写动作之前：坏字段 ⇒ 同 kind 同 detail 同退码，
+	//    真源/池件**一个字节不落、审计一行不落**（改前：出口把常量字段表当投影 ⇒ 未知字段**静默接受**）。
+	if rc := gapFrontJSONFields(inv, stderr, gapIdeaPromoteFields); rc != exitOK {
+		return rc
+	}
+
 	// ② 入参 = 池件那一格 `raw` 当 `--symptom`，其余六必填走本命令旗标 —— 校验与落账**全交给 `gapAddApply`**。
 	in.Symptom = c.Raw
 	out := &gapAddOut{}
@@ -4296,6 +4390,25 @@ func cmdGapIdeaPromote(inv *invocation, stdout, stderr io.Writer) int {
 		return ledRC
 	}
 	if inv.dryRun {
+		inv.changed = boolPtr(false)
+		if inv.jsonGiven {
+			// ★ GAP-20261005-47（本枚）：干跑档此前**整条吞掉 `--json`**（只回人面一行、不出包封），
+			//   与 `gap add --dry-run --json` / 同族 `gap idea discard --dry-run --json` 口径不一致。
+			//   治法 = 照 discard 那条出口同口径出包封（字段面 = `inv.fields`，与真跑出口同一份字段表）。
+			//   取值 = **计划态**：幂等命中（`out.ID` 非空 ⇒ 真源已有同一条）⇒ `merged`；否则新增 ⇒ `promoted`。
+			planned, gapID := "promoted", c.GapID
+			if out.ID != "" {
+				gapID = out.ID
+				if !out.Landed {
+					planned = "merged"
+				}
+			}
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
+				"cid": c.CID, "source": c.Source, "status": planned, "gap_id": gapID,
+				"fp": c.FP, "ledger_lines": strconv.Itoa(gapLedgerLineCount(gapLedgerPath())),
+				"pool_total": strconv.Itoa(len(pb.Cands)),
+			})
+		}
 		fmt.Fprintf(stdout, "（--dry-run：池行**一个字未动** —— %s 仍 status=%s；真跑才置 `promoted`（新增）/`merged`（并入既有）+ 记 `gap_id`）\n", c.CID, c.Status)
 		return exitOK
 	}
@@ -4321,7 +4434,7 @@ func cmdGapIdeaPromote(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	poolTotal := len(pb.Cands) - nArch
 	if jsonWanted {
-		return selectJSON(stdout, stderr, inv, inv.path, gapIdeaPromoteFields, map[string]string{
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
 			"cid": c.CID, "source": c.Source, "status": c.Status, "gap_id": c.GapID, "fp": c.FP,
 			"ledger_lines": strconv.Itoa(gapLedgerLineCount(gapLedgerPath())), "pool_total": strconv.Itoa(poolTotal),
 		})
@@ -4381,7 +4494,7 @@ func cmdGapIdeaDiscard(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.dryRun {
 		inv.changed = boolPtr(false)
 		if inv.jsonGiven {
-			return selectJSON(stdout, stderr, inv, inv.path, gapIdeaDiscardFields, map[string]string{
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
 				"cid": nb.CID, "source": nb.Source, "status": nb.Status, "fp": nb.FP,
 				"pool_total": strconv.Itoa(len(pb.Cands)),
 			})
@@ -4392,6 +4505,13 @@ func cmdGapIdeaDiscard(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 池件一个字节未写）\n")
 		return exitOK
 	}
+	// ★ 本枚（缺口账 `GAP-20261005-42`）：**字段面前置判定** —— 把 `--json` 字段名校验从出口
+	//    `selectJSON`（真写**之后**）前移到第一个真写动作之前：坏字段 ⇒ 同 kind 同 detail 同退码，
+	//    池件**一个字节不落、真源一字不碰**（改前：出口把常量字段表当投影 ⇒ 未知字段**静默接受**）。
+	if rc := gapFrontJSONFields(inv, stderr, gapIdeaDiscardFields); rc != exitOK {
+		return rc
+	}
+
 	// ★ 缺口 `GAP-20260928-176`（本枚 · **非 add 侧 sweep**）：本面也是「非 add 写面」⇒ 同一趟七日归档
 	//   一并跑（钉住本行不归档）；无超期条时落盘与 `gapPoolRewriteRow` 逐字节相同。
 	nArch, werr := gapPoolSweepRewrite(pb, time.Now(), idx, nb)
@@ -4403,7 +4523,7 @@ func cmdGapIdeaDiscard(inv *invocation, stdout, stderr io.Writer) int {
 	poolTotal := len(pb.Cands) - nArch
 	inv.changed = boolPtr(true)
 	if inv.jsonGiven {
-		return selectJSON(stdout, stderr, inv, inv.path, gapIdeaDiscardFields, map[string]string{
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, map[string]string{
 			"cid": nb.CID, "source": nb.Source, "status": nb.Status, "fp": nb.FP,
 			"pool_total": strconv.Itoa(poolTotal),
 		})
@@ -4473,7 +4593,7 @@ func cmdGapIdeaStats(inv *invocation, stdout, stderr io.Writer) int {
 		"count": strconv.Itoa(prom), "share": rate,
 	})
 	if inv.jsonGiven {
-		return selectJSONList(stdout, stderr, inv, inv.path, gapIdeaStatsFields, rows)
+		return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, rows)
 	}
 	fmt.Fprintf(stdout, "候选池 %s · %d 条（设计稿 §4 判据 1：候选→入账转换率 + 来源分布）\n", pb.Path, total)
 	fmt.Fprintf(stdout, "  状态分布 : ")
@@ -5518,6 +5638,13 @@ func cmdGapReceiptApply(inv *invocation, stdout, stderr io.Writer) int {
 		}
 		return exitUsage
 	}
+	// ★ 本枚（缺口账 `GAP-20261005-26`）：**字段面前置判定** —— 把 `--json` 字段名校验从出口
+	//    `selectJSON`（真写**之后**）前移到第一个真写动作之前：坏字段 ⇒ 同 kind 同 detail 同退码，
+	//    而真源**一个字节不落、审计一行不落**（改前「先写后校」⇒ 写得成也退得了 2）。
+	if rc := gapFrontJSONFields(inv, stderr, gapReceiptApplyFields); rc != exitOK {
+		return rc
+	}
+
 	// 真写：逐条 `已派` → `已解`（**走现有改态路径** `gapRewriteOne` · 不另开写路）
 	solved := 0
 	lines := []string{}
@@ -5532,7 +5659,12 @@ func cmdGapReceiptApply(inv *invocation, stdout, stderr io.Writer) int {
 		r := led.Recs[idx]
 		before := r.State
 		r.State = gapStSolved
-		r.SolvedAt = gapNow()
+		// ★ 同单条 `set-state` / `verify` 那一格（见 `family_gap_state.go` 与上面 `verify` 路）：
+		//   `solved_at` 只在**真变入终态**时取 —— 已是 `已解` 的条再走 `receipt apply`
+		//   一律**继承旧值**、不重写（`state` 是现态、`solved_at` 是历史时刻，历史不抹也不改）。
+		if before != gapStSolved {
+			r.SolvedAt = gapNow()
+		}
 		r.Evidence = evidence
 		detail, wrc, msg := gapRewriteOne(inv, led, idx, r, "receipt", before, gapStSolved)
 		if wrc != exitOK {
@@ -5675,6 +5807,11 @@ func gapRegressStatesJSON(states []int) string {
 	}
 	return "{" + strings.Join(parts, ",") + "}"
 }
+
+// gapRegressBetweenReads —— **仅供机检**的一次性钩子：在「T0 读入账」与「退出前重读」之间被调用一次，
+// 用来在确定性夹具里模拟「两次读数之间真源被**外部**改过」（默认 nil ⇒ 什么都不做）。
+// 生产路径恒为 nil ⇒ 行为面一字节不受影响。口径与同族 `gapLsBetweenReads` / `gapRereadBetweenReads` 同一套。
+var gapRegressBetweenReads func()
 
 // cmdGapRegress —— `zerg gap regress <件…>`：只跑被点名件名下账的判据（分层巡检 · 只读）。
 func cmdGapRegress(inv *invocation, stdout, stderr io.Writer) int {
@@ -5823,6 +5960,19 @@ func cmdGapRegress(inv *invocation, stdout, stderr io.Writer) int {
 		rows = append(rows, row)
 	}
 
+	// ★ **外写自发现**（缺口 `GAP-20261005-44` 同形面 · 与同族 `gap ls` / `gap reread` 同一套口径）：
+	//   上面一切读数都基于 T0 读入的 `led`；旧版把 `meta.ledger_sha16` 在写 meta 那一刻现读一次（T1）⇒
+	//   「我分析的账」与「印出去的 sha」**不互校**，两次读数之间的外部写入**不可见**。治：① T0 快照 =
+	//   `led.Raw` 的 sha16 ＋ 行数；② 退出前**再读一次**；③ 不符 ⇒ 机读格 `external_write_detected=true` ＋
+	//   两 sha16（人面在异常时同步加一行告警）。✗ 不动本面既有输出语义、✗ 不进退出码（只报告）。
+	gapRegressSnapSHA16 := gapLsLedgerSHA16Bytes(led.Raw)
+	gapRegressSnapLines := len(led.Lines)
+	if gapRegressBetweenReads != nil {
+		gapRegressBetweenReads() // 机检钩子：模拟外部写入（生产恒 nil）
+	}
+	gapRegressReadbackSHA16 := gapLsLedgerSHA16(led.Path)
+	gapRegressExtWrite := gapRegressReadbackSHA16 != gapRegressSnapSHA16
+
 	// ⑤ 机器面信封（只走 `metaAdd*` 既有口子 ⇒ 顶层六键不动）
 	inv.changed = boolPtr(false)
 	inv.metaAddJSON("total", strconv.Itoa(matchTotal))
@@ -5830,7 +5980,14 @@ func cmdGapRegress(inv *invocation, stdout, stderr io.Writer) int {
 	inv.metaAddJSON("limit", strconv.Itoa(limit))
 	inv.metaAddStr("query", gapRegressQueryText(files, limit, inv.dryRun))
 	inv.metaAddStr("query_ts", gapNow())
-	inv.metaAddStr("ledger_sha16", gapLsLedgerSHA16(led.Path))
+	// ★ 既有格 `ledger_sha16` 语义一字未动（仍是现读那一枚）—— 只是这一次现读由**退出前重读**（`readback`）
+	//   给出，与下面 `readback_sha16` 同一份 ⇒ 不再各读一次。
+	inv.metaAddStr("ledger_sha16", gapRegressReadbackSHA16)
+	// ★ 加四格做外写自发现（✗ 只加格、✗ 不进退出码）。
+	inv.metaAddStr("snapshot_sha16", gapRegressSnapSHA16)
+	inv.metaAddJSON("snapshot_lines", strconv.Itoa(gapRegressSnapLines))
+	inv.metaAddStr("readback_sha16", gapRegressReadbackSHA16)
+	inv.metaAddJSON("external_write_detected", strconv.FormatBool(gapRegressExtWrite))
 	inv.metaAddStr("claim", gapRegressClaim)
 	inv.metaAddStr("tier", "modification-traversing")
 
@@ -5856,7 +6013,7 @@ func cmdGapRegress(inv *invocation, stdout, stderr io.Writer) int {
 				"states":  gapRegressStatesJSON(row.States),
 			})
 		}
-		if rc := selectJSONList(stdout, stderr, inv, inv.path, gapRegressFields, js); rc != exitOK {
+		if rc := selectJSONList(stdout, stderr, inv, inv.path, inv.fields, js); rc != exitOK {
 			return rc
 		}
 		if anyFail {
@@ -5895,6 +6052,11 @@ func cmdGapRegress(inv *invocation, stdout, stderr io.Writer) int {
 		if row.Skipped > 0 {
 			fmt.Fprintf(stdout, "    （另有 %d 条被 `--limit %d` 截掉 ⇒ 记「未跑」· 这不是「通过」）\n", row.Skipped, limit)
 		}
+	}
+	// ★ 外写自发现：**仅异常时**加一行告警（正常态人面逐字节不变）。口径与同族 `gap ls` / `gap reread` 同一套。
+	if gapRegressExtWrite {
+		fmt.Fprintf(stdout, "  ⚠ 外写自发现：两次读数之间真源被**外部**改过（上面读数一律基于快照那一份 · snapshot_sha16=%s · readback_sha16=%s）\n",
+			gapRegressSnapSHA16, gapRegressReadbackSHA16)
 	}
 	fmt.Fprintf(stdout, "表尾声称：%s\n", gapRegressClaim)
 	if anyFail {

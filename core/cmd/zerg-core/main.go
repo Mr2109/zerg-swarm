@@ -619,12 +619,15 @@ func validateModels(cfg *config.FleetConfig) {
 		if len(candidates) == 0 {
 			continue
 		}
-		res := config.Validate(name, candidates[0])
-		if res.HasFatal() {
-			fatalCount++
-			slog.Warn("model config validation failed", "model", name, "errors", len(res.Errors))
-		} else if len(res.Warnings) > 0 {
-			warnCount++
+		// GAP-20260927-186：以前只判 candidates[0]（4 条里 3 条不被判）——逐候选判全。
+		for ci, cand := range candidates {
+			res := config.Validate(name, cand)
+			if res.HasFatal() {
+				fatalCount++
+				slog.Warn("model config validation failed", "model", name, "candidate", ci, "errors", len(res.Errors))
+			} else if len(res.Warnings) > 0 {
+				warnCount++
+			}
 		}
 	}
 	if fatalCount > 0 {

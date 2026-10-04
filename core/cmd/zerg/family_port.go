@@ -56,7 +56,7 @@ func cmdPortLs(inv *invocation, stdout, stderr io.Writer) int {
 		ports = []struct {
 			name string
 			port int
-		}{{"（指名）", n}}
+		}{{"指名", n}}
 	}
 	if _, err := exec.LookPath("lsof"); err != nil {
 		inv.setErr("blocked", "lsof_absent", "lsof 不在")

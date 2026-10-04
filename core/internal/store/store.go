@@ -45,6 +45,9 @@ type HeartbeatRequest struct {
 	Resident []resources.ResidentEntry `json:"resident,omitempty"`
 	// 未托管但占着端口的进程（覆盖实测 E2；Q6：只标注，不接管不杀）
 	Unmanaged []resources.UnmanagedProcess `json:"unmanaged,omitempty"`
+	// 引擎实时态（GAP-20260925-45）：子端上报的每枚引擎在飞/看门狗判词/输出停滞等实时事实。
+	// 缺省 = 该机器未上报（旧读者忽略），非空时原样透传。
+	Engines []EngineLive `json:"engines,omitempty"`
 }
 
 // HeartbeatResponse 心跳响应。
@@ -100,6 +103,9 @@ type FleetSnapshot struct {
 	Resident []resources.ResidentEntry `json:"resident,omitempty"`
 	// 未托管但占着端口的进程（E2；只读上报，不接管不杀）
 	Unmanaged []resources.UnmanagedProcess `json:"unmanaged,omitempty"`
+	// 引擎实时态（GAP-20260925-45）：心跳带上来的每枚引擎实时事实（在算否/输出停滞/判词）。
+	// 缺省 = 该机器未上报 —— 与「上报了空表」不是一回事（缺就缺，不猜）。
+	Engines []EngineLive `json:"engines,omitempty"`
 }
 
 // TaskRequest 任务请求。
@@ -170,6 +176,7 @@ func (s *Store) ReceiveHeartbeat(req HeartbeatRequest) *HeartbeatResponse {
 	snap.VramFreeGb = req.VramFreeGb
 	snap.Resident = req.Resident
 	snap.Unmanaged = req.Unmanaged
+	snap.Engines = req.Engines // 引擎实时态（GAP-20260925-45）：逐条透传
 	snap.LastSeen = time.Now()
 
 	return &HeartbeatResponse{

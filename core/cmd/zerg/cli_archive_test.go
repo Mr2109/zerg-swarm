@@ -229,3 +229,117 @@ func TestArchiveVerifyNotABagGivesUp(t *testing.T) {
 		t.Errorf("路径不存在时 hash 的 rc=%d（要 2 —— 用法错，不静默跳过）", rc)
 	}
 }
+
+// TestArchiveHashEscapesSpecialChars —— 判据① 的转义半（GAP-20261005-26 落定「甲·实现补转义」）：
+// 路径含反斜杠 / 换行时，整行**行首**加 `\`，且路径里 `\` ⇒ `\\`、换行 ⇒ `\n`
+// （GNU coreutils / `shasum` 的转义行约定）⇒ 输出可直接喂 `shasum -c`。
+// 成对负控：同一夹具里放常规件，断言它**没有**前导反斜杠（证明转义只落在该落的行上，不是恒加）。
+func TestArchiveHashEscapesSpecialChars(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "载荷")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("建夹具失败：%v", err)
+	}
+	bodies := map[string]string{
+		"a\\b.txt":      "backslash\n",
+		"new\nline.txt": "newline\n",
+		"plain.txt":     "plain\n",
+	}
+	names := []string{}
+	for name, body := range bodies {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("写夹具失败：%v", err)
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	rc, out, errb := runCapture("archive", "hash", dir)
+	if rc != 0 {
+		t.Fatalf("archive hash rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != len(names) {
+		t.Fatalf("输出行数 %d ≠ 件数 %d", len(lines), len(names))
+	}
+	// 逐行按 GNU 转义行约定现造期望串，再断言命令面输出与它逐字相同。
+	want := map[string]bool{}
+	for _, name := range names {
+		p := filepath.Join(dir, name)
+		d := sha256OfFile(t, p)
+		if strings.ContainsAny(p, "\\\n") {
+			esc := strings.ReplaceAll(p, "\\", "\\\\")
+			esc = strings.ReplaceAll(esc, "\n", "\\n")
+			want["\\"+d+"  "+esc] = true
+		} else {
+			want[d+"  "+p] = true
+		}
+	}
+	for _, l := range lines {
+		if !want[l] {
+			t.Errorf("行不符合 GNU/shasum 转义行约定：%q", l)
+		}
+	}
+	// 负控：常规件那一行**不得**有前导反斜杠（否则说明「恒加」，与 shasum 不符）。
+	plainLine := sha256OfFile(t, filepath.Join(dir, "plain.txt")) + "  " + filepath.Join(dir, "plain.txt")
+	found := false
+	for _, l := range lines {
+		if l == plainLine {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("常规路径那行没有一字不动（要求与 shasum 逐字相同）：缺 %q", plainLine)
+	}
+}
+
+// TestArchiveVerifyTagmanifestRequiredEntries —— 负控补件（GAP-20261005-25 的自陈剩面）：
+// RFC 8493 §2.1 要求 `tagmanifest-sha256.txt` **必须覆盖** `bagit.txt` 与载荷清单。
+// 把标签清单**清成 0 字节**、或**只抹掉 manifest-sha256.txt 那一行**（bagit.txt 那行仍在）时，
+// verify 必判红 rc=1；还原后回正控 rc=0（证明上面那两条红不是恒红装置）。
+func TestArchiveVerifyTagmanifestRequiredEntries(t *testing.T) {
+	dir, _ := archiveFixture(t, 6)
+	bag := filepath.Join(t.TempDir(), "袋")
+	if rc, _, errb := runCapture("archive", "manifest", dir, "--out", bag, "--yes"); rc != 0 {
+		t.Fatalf("真写 rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+	tagPath := filepath.Join(bag, "tagmanifest-sha256.txt")
+	orig, err := os.ReadFile(tagPath)
+	if err != nil {
+		t.Fatalf("读标签清单失败：%v", err)
+	}
+	if rc, _, errb := runCapture("archive", "verify", bag); rc != 0 {
+		t.Fatalf("完好的袋 verify rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+	// 负控①：标签清单清成 0 字节 ⇒ 两条必备条全缺 ⇒ 判红。
+	if err := os.WriteFile(tagPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("清空标签清单失败：%v", err)
+	}
+	if rc, _, errb := runCapture("archive", "verify", bag); rc != 1 {
+		t.Errorf("清空 tagmanifest 后 verify rc=%d（要 1）· stderr=%s", rc, errb)
+	}
+	// 负控②：只抹掉 manifest-sha256.txt 那一行（bagit.txt 那行仍在）⇒ 判红。
+	origLines := strings.Split(strings.TrimRight(string(orig), "\n"), "\n")
+	kept := []string{}
+	for _, l := range origLines {
+		if strings.HasSuffix(strings.TrimSpace(l), "manifest-sha256.txt") {
+			continue
+		}
+		kept = append(kept, l)
+	}
+	if len(kept) == len(origLines) {
+		t.Fatalf("标签清单里没有 manifest-sha256.txt 那行（夹具形态变了？）：%q", string(orig))
+	}
+	if err := os.WriteFile(tagPath, []byte(strings.Join(kept, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("抹条失败：%v", err)
+	}
+	if rc, _, errb := runCapture("archive", "verify", bag); rc != 1 {
+		t.Errorf("抹掉 tagmanifest 的 manifest 条后 verify rc=%d（要 1）· stderr=%s", rc, errb)
+	}
+	// 还原 ⇒ 回正控 0。
+	if err := os.WriteFile(tagPath, orig, 0o644); err != nil {
+		t.Fatalf("还原标签清单失败：%v", err)
+	}
+	if rc, _, errb := runCapture("archive", "verify", bag); rc != 0 {
+		t.Errorf("还原 tagmanifest 后 verify rc=%d（要 0）· stderr=%s", rc, errb)
+	}
+}

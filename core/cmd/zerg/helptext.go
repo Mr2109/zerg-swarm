@@ -96,6 +96,13 @@ func helpText(all bool) string {
 	b.WriteString("\n危险动作（三态）:\n")
 	b.WriteString("  --dry-run（零副作用）· --confirm=<目标>（值必须匹配目标）· --yes（只对第二危险档）\n")
 	b.WriteString("\n见 'zerg help exit-codes' / 'zerg help config' / 'zerg help dangerous'。\n")
+	// ★ 族级面指路（缺口 `GAP-20260927-402` · 2026-10-05）：主帮助（**不带 `--all`**）此前不列族名清单
+	//   （清单只在 `--all` 末尾，见 `main.go` 那段）。此处给**裸 help** 只加**一行指路** —— 不是族级段本体
+	//   （段头 `族级面（` 只许在 `--all` 末尾，`check-help-shape` 的 S1 边界钉着这一点）⇒ 本行以「族级面：」起头（≠「族级面（」）。
+	//   且该行**不以「  zerg 」开头** ⇒ 不动两条条数等式（`cli_help_all_test.go` ⑤）；**`--all` 一字节不动**（它自有族名清单）。
+	if !all {
+		b.WriteString("族级面：逐族 `zerg help <族名>` 出该族全部动作（族名清单 ⇒ `zerg help --all`）。\n")
+	}
 	// §九 M2 `C2`/`C4`（契约 §八）：令牌**永不进 argv / 永不入库** —— 这句必须在主帮助里
 	// （判据：`zerg help` 里能查到这句话，而不是只藏在 `help credentials` 里）。
 	b.WriteString("凭据：令牌**永不进 argv、永不入库**（优先级链 env:ZERG_TOKEN > ~/.zerg/token；\n")

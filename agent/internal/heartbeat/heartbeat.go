@@ -45,6 +45,15 @@ type ActiveCounter interface {
 	ActiveRequests() int
 }
 
+// engineLiveSource 引擎实时态来源（由 backend.Manager 实现）。
+//
+// 与 ActiveCounter/vramSource 同纪律：**没有来源就不出现**该字段，绝不写死空数组。
+// GAP-20260925-45：主控此前只能看到子端自报的 healthy/backend_state，看不到
+// 「此刻在不在算 / 有没有输出 / 卡没卡」；本来源把每枚引擎的实时事实带进心跳。
+type engineLiveSource interface {
+	EngineLiveStates() []backend.EngineLive
+}
+
 // Runner 心跳上报器。
 type Runner struct {
 	controller string
@@ -54,6 +63,7 @@ type Runner struct {
 	sampler    *monitor.Sampler
 	vram       vramSource
 	active     ActiveCounter
+	engineLive engineLiveSource
 	startedAt  time.Time
 	interval   time.Duration
 	stopCh     chan struct{}
@@ -63,7 +73,7 @@ type Runner struct {
 // NewRunner 创建心跳上报器。
 //   - active：提供真实在飞请求计数（nil 则该字段不出现，绝不写死 0）。
 func NewRunner(controller, token, machine string, mgr *backend.Manager, smp *monitor.Sampler, active ActiveCounter) *Runner {
-	return &Runner{
+	r := &Runner{
 		controller: controller,
 		token:      token,
 		machine:    machine,
@@ -82,6 +92,12 @@ func NewRunner(controller, token, machine string, mgr *backend.Manager, smp *mon
 			},
 		},
 	}
+	// 引擎实时态来源：backend.Manager 实现该接口 ⇒ 接线；否则该块缺席（不写死）。
+	// （NewRunner 签名不动 —— 调用方 agentd 属主 agent/cmd/zerg-agentd/main.go。）
+	if ls, ok := any(mgr).(engineLiveSource); ok {
+		r.engineLive = ls
+	}
+	return r
 }
 
 // Start 启动心跳循环。
@@ -161,6 +177,7 @@ func (r *Runner) send() {
 //   - gpu_used_gb：真实显存（拿得到才出现）；配套 vram_known/vram_used_gb/vram_total_gb/vram_free_gb。
 //   - resident[]：驻留明细（托管项 managed=true；探测到的未托管项 managed=false）。
 //   - unmanaged[]：未托管但占着端口的进程（只读上报，不接管不杀）。
+//   - engines[]：引擎实时态（在算否/输出停滞/看门狗判词；有来源才出现）。
 func (r *Runner) buildBody() map[string]interface{} {
 	body := map[string]interface{}{
 		"machine":          r.machine,
@@ -213,6 +230,15 @@ func (r *Runner) buildBody() map[string]interface{} {
 	resident := r.backend.ResidentDetail()
 	if len(resident) > 0 {
 		body["resident"] = resident
+	}
+
+	// engines[]：引擎实时态（GAP-20260925-45）—— 每枚托管引擎的在飞计数 + 看门狗判词/
+	// 输出停滞/工时增量。主控据此区分「挂住（stuck_*）」与「只是慢（有输出/工时在涨）」。
+	// 无来源、或本端无托管引擎 ⇒ 该块缺席（与 active_requests 同纪律：**绝不写死空数组**）。
+	if r.engineLive != nil {
+		if live := r.engineLive.EngineLiveStates(); len(live) > 0 {
+			body["engines"] = live
+		}
 	}
 
 	return body

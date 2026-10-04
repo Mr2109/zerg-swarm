@@ -486,10 +486,11 @@ func emitErrIfJSON(inv *invocation, stdout io.Writer, cmd *command, rc int) {
 // 未做**，不拿散文猜一个 n 填进去 ✗。
 //
 // 判错的代价仍是**单向**的（只有真声明了位置参数的命令被误判成「不收」才会误退 2）：
-// 现读反查过全部命令的「读 `inv.args` 的 handler ↔ 是否声明位置参数」，只剩 6 条不一致，
-// 其中 5 条**自己就拒**（`api help` / `script inventory sync` / `itask start` / `itask stop` /
-// `core reload`），第 6 条（`gateway breakers` 的 target）在危险档 ⇒ 本函数**不覆盖它们**
+// 现读反查过全部命令的「读 `inv.args` 的 handler ↔ 是否声明位置参数」，只剩 5 条不一致，
+// 其中 4 条**自己就拒**（`api help` / `script inventory sync` / `itask start` /
+// `core reload`），第 5 条（`gateway breakers` 的 target）在危险档 ⇒ 本函数**不覆盖它们**
 // （`cmd.danger != nil` 一律不判 · 见 `run` 里那三条边界）。
+// ★ 2026-10-05：`itask stop` 已开放写面（`cmdItaskStopGuarded` · 不再读 `inv.args`）⇒ 从上表移出。
 func declaresNoPositional(cmd *command) bool {
 	if cmd == nil {
 		return false
@@ -668,7 +669,8 @@ func init() {
 		{
 			path:        []string{"gate", "ls"},
 			summary:     "门禁步骤表（逐行等于脚本 --list；薄壳不另写一份）",
-			usage:       "zerg gate ls",
+			usage:       "zerg gate ls [--json <字段>]",
+			fields:      []string{"total", "scope", "mode", "step"},
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdGate,
@@ -791,6 +793,7 @@ func init() {
 		},
 		{
 			path:     []string{"gate", "reap"},
+			danger:   &dangerSpec{dangerD3, "（陈旧/卡死门跑根）", "逐枚 pid 发 SIGTERM→SIGKILL 终止陈旧/卡死门跑根**及其门谱系** ＋ 追加审计 reap-audit.jsonl（真在飞的门跑绝不碰）", "GAP-20261005-35 · 同族先例 agent reap（D3）· gate 族写工具件走 gate check D3", false},
 			kind:     "GateReap",
 			summary:  "回收**陈旧/卡死门跑根**（只收祖链已断或死趟残儿的根**及其门谱系**；真在飞的门跑绝不碰）· 每个收回动作入审计",
 			usage:    "zerg gate reap --stale [--dry-run | --yes] [--json <字段>]",
@@ -864,6 +867,7 @@ func init() {
 			usage:    "zerg task show <任务 id> [--follow] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"任务 id"},
+			fields:   []string{"id", "status", "model", "machine", "priority", "created_at", "description"},
 			endpoint: "GET /api/tasks",
 			run:      cmdTaskShow,
 		},
@@ -886,7 +890,7 @@ func init() {
 			usage:    "zerg agent models <机器名> [--json <字段>]",
 			arity:    "any",
 			args:     []string{"机器名"},
-			fields:   []string{"id", "host", "backend", "modality", "mem_gb", "file"},
+			fields:   []string{"id", "host", "backend", "modality", "mem_gb", "file", "declared", "subend"},
 			endpoint: "GET /api/fleet/models",
 			run:      cmdAgentModels,
 		},
@@ -915,6 +919,7 @@ func init() {
 		// ---- 缺口 `GAP-20260925-50` ②③④ · `agent` 族第二组（2026-09-26）----
 		{
 			path:     []string{"agent", "reload"},
+			danger:   &dangerSpec{dangerD2, "机器名", "让子端热重载（`POST http://<host>:<port>/infer/reload` · 改子端在跑引擎态 · 必带 `X-Auth-Token`）", "GAP-20261005-38 · 同族先例 core reload（D2）· itask stop（D2）", false},
 			kind:     "AgentReload",
 			summary:  "子端热重载（`POST http://<host>:<port>/infer/reload` · **必带 `X-Auth-Token`**（不带就回 unauthorized）；子端那三格原样透传）",
 			usage:    "zerg agent reload <机器名> [--json <字段>]",
@@ -926,6 +931,7 @@ func init() {
 		},
 		{
 			path:     []string{"agent", "registry"},
+			danger:   &dangerSpec{dangerD3, "机器名", "改那台子端盘上的注册表件（`--add`：先校验 → `--dry-run` → `--yes` 才写 → 留 `.bak-registry-add-<日期>` → 写完读回再校，不过即回滚）；`--list` 只读", "GAP-20261005-37 · 同族先例 agent restart（D3）· agent load/unload 已挂危险档", false},
 			kind:     "AgentRegistry",
 			summary:  "改/看那台子端的注册表（`--list` 只读；`--add` 先校验 → `--dry-run` 先行 → `--yes` 才写 → 留 `.bak-registry-add-<日期>` → 写完读回再校，不过即回滚）",
 			usage:    "zerg agent registry <机器名> [--list] [--add <模型名> --file <GGUF> --ctx <N> --mem-gb <N>] [--dry-run | --yes] [--json <字段>]",
@@ -1000,6 +1006,7 @@ func init() {
 		// ---- 批 D · T-44 `task` 族全动作面（§三 D 族 · 12 个动作名一个不差）----
 		{
 			path:     []string{"task", "submit"},
+			danger:   &dangerSpec{dangerD2, "（提交主题）", "把任务入队（`POST /api/tasks` · 改控制面队列态 · 占机器与模型槽）", "GAP-20261005-40 · 同族先例 task cancel（D2）· §三 D 族", false},
 			kind:     "TaskSubmit",
 			summary:  "提交任务（D2 写面 · 全旗标 ⇒ API 请求体逐条对上）",
 			usage:    "zerg task submit --desc <描述> [--model <模型>] [--priority <n>] [--slice-id <片>] [--depends-on <片>]… [--acceptance <判据>]… [--dry-run | --yes]",
@@ -1080,12 +1087,13 @@ func init() {
 		},
 		{
 			path:     []string{"model", "opts"},
+			danger:   &dangerSpec{dangerD2, "模型 id", "改适配器参数（`set` 实时生效并**持久化**：`PUT /api/models/{name}/adapter-opts`；`get` 只读）", "GAP-20261005-40 · 同族先例 model add / model set（D2）· §三 E 族", false},
 			kind:     "ModelOpts",
 			summary:  "适配器参数（get 只读 / set 实时生效要 --yes）",
 			usage:    "zerg model opts get <模型 id> [--json <字段>] | zerg model opts set <模型 id> --set k=v… [--dry-run | --yes]",
 			arity:    "any",
 			args:     []string{"动作（get|set）", "模型 id"},
-			fields:   []string{"model", "schema", "note"},
+			fields:   []string{"model", "schema", "note", "updated", "result"},
 			endpoint: "GET|PUT /api/models/{name}/adapter-opts",
 			run:      cmdModelOpts,
 		},
@@ -1162,7 +1170,7 @@ func init() {
 			usage:    "zerg resource ls [<类型>] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"类型（可省）"},
-			fields:   []string{"machine", "mem_known", "mem_total_gb", "mem_available_gb", "vram_known", "gpu_pct", "backend_state", "fit"},
+			fields:   []string{"machine", "mem_known", "mem_total_gb", "mem_available_gb", "vram_known", "vram_total_gb", "vram_used_gb", "vram_free_gb", "gpu_pct", "backend_state", "fit"},
 			endpoint: "GET /api/resources/ledger | /api/resources/{type}",
 			run:      cmdResourceLs,
 		},
@@ -1171,7 +1179,7 @@ func init() {
 			kind:     "Resource",
 			summary:  "资源账本（投影 /api/resources/ledger）",
 			usage:    "zerg resource ledger [--json <字段>]",
-			fields:   []string{"machine", "mem_known", "mem_total_gb", "mem_available_gb", "vram_known", "gpu_pct", "backend_state", "fit"},
+			fields:   []string{"machine", "mem_known", "mem_total_gb", "mem_available_gb", "vram_known", "vram_total_gb", "vram_used_gb", "vram_free_gb", "gpu_pct", "backend_state", "fit"},
 			endpoint: "GET /api/resources/ledger",
 			run:      cmdResourceLedger,
 		},
@@ -1534,6 +1542,7 @@ func init() {
 		},
 		{
 			path:    []string{"publish", "run"},
+			danger:  &dangerSpec{dangerD3, "主机名", "出公开镜像树（本地 dist/<版本>/release · 白名单+排除项+脱敏 · 不出网、不推送 · 底层 scripts/build/publish-public.sh）", "GAP-20261005-39 · family_publish_run.go:275 自印「危险档：D3」· §17.2", true},
 			kind:    "PublishRun",
 			summary: "出公开镜像树（**本地** dist/<版本>/release · 白名单+排除项+脱敏 · 不出网、不推送）",
 			usage:   "zerg publish run [--dry-run | --confirm=<主机名> --yes]",
@@ -1618,6 +1627,7 @@ func init() {
 		// 写面两枚：**同一个执行门**（三态：--dry-run 计划件 / 缺 --yes ⇒ 2 / 齐了才发）
 		{
 			path:    []string{"resource", "pin"},
+			danger:  &dangerSpec{dangerD2, "资源 id", "钉住资源（改资源不可回收标记 · 控制面 `POST /api/resources/pin`）—— 可逆：`resource unpin` 即回原态", "GAP-20261005-38 · 同族先例 task cancel（D2）· §三 H 族", false},
 			kind:    "ResourcePin",
 			summary: "钉住资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2）",
 			usage:   "zerg resource pin <资源 id> [--dry-run | --yes]",
@@ -1627,6 +1637,7 @@ func init() {
 		},
 		{
 			path:    []string{"resource", "unpin"},
+			danger:  &dangerSpec{dangerD2, "资源 id", "解钉资源（去掉不可回收标记 · `POST /api/resources/unpin`）—— 可逆：再 `resource pin` 即回原态", "GAP-20261005-38 · 同族先例 task cancel（D2）· §三 H 族", false},
 			kind:    "ResourceUnpin",
 			summary: "解钉资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2）",
 			usage:   "zerg resource unpin <资源 id> [--dry-run | --yes]",
@@ -1636,6 +1647,7 @@ func init() {
 		},
 		{
 			path:    []string{"gateway", "breakers"},
+			danger:  &dangerSpec{dangerD2, "（网关开关）", "网关断路开关（`--reset` 重置熔断 ⇒ 重新放流量 · `POST /api/gateway/breakers/reset`）", "GAP-20261005-38 · 同族先例 core reload（D2）· §三 C 族", false},
 			kind:    "GatewayBreakers",
 			summary: "网关断路开关（D2 写面 · `--reset` 要 `--yes`）",
 			usage:   "zerg gateway breakers [--reset] [--dry-run | --yes]",
@@ -1682,6 +1694,7 @@ func init() {
 		},
 		{
 			path:     []string{"egg", "run"},
+			danger:   &dangerSpec{dangerD2, "卵 id", "把该卵的模型**装到**那台机上（控制面 `POST /api/control/load` · 占内存/显存槽 · 单槽机串行）—— 可逆：`egg stop` 即回原态", "GAP-20261005-38 · 同族先例 model start / agent load（D2）", false},
 			kind:     "EggRun",
 			summary:  "把卵的模型**装到**那台机上（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/control/load`）",
 			usage:    "zerg egg run <卵 id> [--machine <机>] [--dry-run | --yes] [--json <字段>]",
@@ -1693,6 +1706,7 @@ func init() {
 		},
 		{
 			path:     []string{"egg", "stop"},
+			danger:   &dangerSpec{dangerD2, "卵 id", "把那台机上的该模型**卸掉**（控制面 `POST /api/control/unload` · **在跑任务受影响**）", "GAP-20261005-38 · 同族先例 model stop / agent unload", false},
 			kind:     "EggStop",
 			summary:  "卸载一枚卵 —— 把那台机上的该模型**卸掉**（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/control/unload`）",
 			usage:    "zerg egg stop <卵 id> [--machine <机>] [--dry-run | --yes] [--json <字段>]",
@@ -1747,11 +1761,15 @@ func init() {
 			run:     cmdGuarded,
 		},
 		{
-			path:    []string{"itask", "stop"},
-			summary: "停内部任务引擎（危险 D2 · 本版未开放）",
-			usage:   "zerg itask stop --yes [--dry-run]",
-			danger:  &dangerSpec{dangerD2, "（群级：开关不分机）", "让内部任务引擎停下（在跑的进化任务会跑到当前一轮为止）", "§7.1 P8 · §5.1 POST /api/internal-tasks/stop · 开工单 T-49", true},
-			run:     cmdGuarded,
+			path:     []string{"itask", "stop"},
+			kind:     "InternalTaskStop",
+			summary:  "停内部任务引擎（D2 写面 · `--dry-run` 零副作用 · 缺 `--confirm=<本机名>`/`--yes` ⇒ 2 · 写**持久化**的用户意图 `stopped=true`）",
+			usage:    "zerg itask stop [--dry-run | --confirm=<本机名> --yes] [--json <字段>]",
+			fields:   []string{"message", "state"},
+			danger:   &dangerSpec{dangerD2, "本机名", "让内部任务引擎停下（把**持久化**的用户意图 `stopped` 置 true —— 周期/空闲触发都**不再起新的**内部任务；**在跑的这一轮不动**）—— 可逆：再起引擎即回原态", "§7.1 P8 · §5.1 POST /api/internal-tasks/stop · 开工单 T-49 · 同族写面先例 `sched pause`（D2 + --confirm + --yes）", true},
+			opened:   true,
+			endpoint: "POST /api/internal-tasks/stop",
+			run:      cmdItaskStopGuarded,
 		},
 		{
 			path:    []string{"itask", "run"},
@@ -1785,29 +1803,36 @@ func init() {
 		},
 		{
 			path:    []string{"build", "all"},
+			danger:  &dangerSpec{dangerD3, "主机名", "重编制品（自举档 `--only cli` 只写 bin/zerg 一件；**换件档会覆盖 bin/ 里的在跑制品** · 底层 scripts/build/build-all.sh）", "GAP-20261005-39 · family_build.go:279 自印「危险档：D3」· §17.2 ③ 建环", true},
 			summary: "重编制品（**自举档已开放**：`--only cli` 只写 bin/zerg 一件；换件档/发布档仍未开放）",
 			usage:   "zerg build all [--only cli] [--dry-run | --confirm=<主机名> --yes]",
 			run:     cmdBuildPassthrough,
 		},
 		{
 			path:    []string{"build", "release"},
+			danger:  &dangerSpec{dangerD3, "主机名", "打包发布件（清单档 `--manifest-only` 只写 dist/<版本>/release/；**换件档真跑未开放** · 底层 scripts/build/build-all.sh）", "GAP-20261005-39 · family_build.go:279 自印「危险档：D3」· §17.2 ③ 建环", true},
 			summary: "打包发布件（**计划面已开放**：`--dry-run` 出计划件；**清单档 `--manifest-only` 已开放** —— 只重写 `dist/<版本>/release/` 的清单与逐件 sha256，不编译、不重打包、不碰在跑件；换件档真跑本版未开放 · 拒执退码 2）",
 			usage:   "zerg build release [--manifest-only] [--dry-run | --confirm=<主机名> --yes]",
 			refuses: true, // 真跑拒执（**换件档**）：`cmdBuildPassthrough` 的 `openForExec` 只对 `build all --only cli` 与 `build release --manifest-only`（缺口 `Q-226` · 只写 `dist/<版本>/release/` 一个目录）为真 ⇒ 其余非 dry-run 一律 `not_opened` 退 2
 			run:     cmdBuildPassthrough,
 		},
-		// ---- 危险动作：**只登记形状，不开放执行**（§6.2 批 1 零写操作）----
-		// 每条都过 cmdGuarded：`--dry-run` 出计划件（退码 0）；真跑一律拒执（退码 2 = 不给结论）。
+		// ---- 危险动作：**未开放的那批只登记形状，不开放执行**（§6.2 批 1 零写操作）；
+		// ★ 例外（本刀）：`task terminate` 本版**已开放**（D3 写面 —— 确认档齐就真执行，见下条）。----
+		// 未开放的那批每条都过 cmdGuarded：`--dry-run` 出计划件（退码 0）；真跑一律拒执（退码 2 = 不给结论）。
 		{
 			path:    []string{"task", "terminate"},
-			summary: "终止任务（危险 D3 · 本版未开放）",
-			usage:   "zerg task terminate <任务 id> --confirm=<任务 id> --yes [--expect=<旧值>] [--dry-run]",
+			kind:    "TaskTerminate",
+			summary: "强杀在跑的任务（D3 写面 · `--reason` 闭集 5 值必填 · `--confirm=<任务 id>` 与 `--yes` **同时到**才执行 · **本版已开放**）",
+			usage:   "zerg task terminate <任务 id> --reason <superseded|obsolete|duplicate|abandoned|other> [--note <一句>] --confirm=<任务 id> [--dry-run | --yes] [--json <字段>]",
 			arity:   "any",
 			args:    []string{"任务 id"},
+			fields:  []string{"id", "outcome", "terminated", "not_running", "already_terminal"},
 			danger: &dangerSpec{dangerD3, "任务 id",
 				"终止该任务的执行（CA 侧停 + 任务状态置 terminated）· 已产出的工作树不自动回收",
 				"§三 D 族 · §4.1 K7 · §九 M3 C1/C4 · 开工单 T-44", true},
-			run: cmdGuarded,
+			opened:   true,
+			endpoint: "POST /api/tasks/{id}/terminate?reason=<闭集 5 值 必填>&note=<一句 可选>",
+			run:      cmdTaskTerminate,
 		},
 		{
 			path:    []string{"task", "rm"},
@@ -1866,35 +1891,41 @@ func init() {
 		{
 			path:     []string{"sched", "pause"},
 			kind:     "SchedPause",
-			summary:  "暂停派活（不再起新的任务；**在跑的不动** —— 要停在跑的走 task terminate）",
-			usage:    "zerg sched pause [--json <字段>]",
+			summary:  "暂停派活（D2 写面 · `--dry-run` 零副作用 · 缺 `--confirm=<本机名>`/`--yes` ⇒ 2 · **在跑的不动** —— 要停在跑的走 task terminate）",
+			usage:    "zerg sched pause [--dry-run | --confirm=<本机名> --yes] [--json <字段>]",
 			arity:    "none",
 			args:     []string{"（不收位置参数）"},
 			fields:   []string{"kind", "id", "status", "concurrency", "queued", "waiting_retry"},
+			danger:   &dangerSpec{dangerD2, "本机名", "暂停派活（不再起新的任务；**在跑的不动** —— 要停在跑的走 `task terminate`）—— 可逆：`sched resume` 即回原态", "缺口 GAP-20261005-10 · 同族写面先例 `task cancel`（D2 + --confirm + --yes）· §九 M3 C1", true},
+			opened:   true,
 			endpoint: "POST /api/sched/pause",
-			run:      cmdSchedPause,
+			run:      cmdSchedPauseGuarded,
 		},
 		{
 			path:     []string{"sched", "resume"},
 			kind:     "SchedResume",
-			summary:  "恢复派活（回到设定并发并立即派发积压）",
-			usage:    "zerg sched resume [--json <字段>]",
+			summary:  "恢复派活（D2 写面 · `--dry-run` 零副作用 · 缺 `--confirm=<本机名>`/`--yes` ⇒ 2 · 回到设定并发并立即派发积压）",
+			usage:    "zerg sched resume [--dry-run | --confirm=<本机名> --yes] [--json <字段>]",
 			arity:    "none",
 			args:     []string{"（不收位置参数）"},
 			fields:   []string{"kind", "id", "status", "concurrency", "queued", "waiting_retry"},
+			danger:   &dangerSpec{dangerD2, "本机名", "恢复派活（回到设定并发并立即派发积压）—— 可逆：`sched pause` 即回原态", "缺口 GAP-20261005-10 · 同族写面先例 `task cancel`（D2 + --confirm + --yes）· §九 M3 C1", true},
+			opened:   true,
 			endpoint: "POST /api/sched/resume",
-			run:      cmdSchedResume,
+			run:      cmdSchedResumeGuarded,
 		},
 		{
 			path:     []string{"sched", "set"},
 			kind:     "SchedSet",
-			summary:  "设并发上限（显式旋钮 · 非负整数 N 走位置参数）",
-			usage:    "zerg sched set <N> [--json <字段>]",
+			summary:  "设并发上限（D2 写面 · `--dry-run` 零副作用 · 缺 `--confirm=<本机名>`/`--yes` ⇒ 2 · 非负整数 N 走位置参数）",
+			usage:    "zerg sched set <N> [--dry-run | --confirm=<本机名> --yes] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"并发上限 N（非负整数）"},
 			fields:   []string{"kind", "id", "status", "concurrency", "queued", "waiting_retry"},
+			danger:   &dangerSpec{dangerD2, "本机名", "把调度器并发上限设成 N（显式旋钮）—— 可逆：再 `sched set <旧 N>` 即回原态", "缺口 GAP-20261005-10 · 同族写面先例 `task cancel`（D2 + --confirm + --yes）· §九 M3 C1", true},
+			opened:   true,
 			endpoint: "POST /api/sched/set?max=<N>",
-			run:      cmdSchedSet,
+			run:      cmdSchedSetGuarded,
 		},
 		{
 			path:    []string{"agent", "unload"},
@@ -2073,6 +2104,7 @@ func init() {
 		},
 		{
 			path:     []string{"approve", "keygen"},
+			danger:   &dangerSpec{dangerD3, "旧 key_id", "生成操作员密钥对：私钥（口令加密）＋ 公钥落盘；**换钥路**归档并 os.Remove 旧钥（旧件全废 · 不可逆）", "GAP-20261005-36 · 同族先例 approve new（D3）· §九 M18 C4②", false},
 			kind:     "ApprovalKeygen",
 			summary:  "生成**操作员密钥**（人在终端上设口令；私钥口令加密落盘，公钥给消费者验签）",
 			usage:    "zerg approve keygen --by <人名>",
@@ -2398,7 +2430,7 @@ func init() {
 			path:     []string{"model", "add"},
 			kind:     "ModelAdd",
 			summary:  "往名册件（`gateway/fleet.yaml`）**先校验后写**加一条模型（`--dry-run` 先行 · 真写要 `--yes` · 写完读回再校 · 任一步不过 ⇒ 回滚 · 不覆盖别人的条）——**块按 `--model`（模型名）定位/新建**（列表形与裸映射形都认）· `--host` 只作该条的 `host:` 字段值",
-			usage:    "zerg model add --model <模型名> --host <主机> --file <GGUF 路径> --confirm <模型名> [--backend …] [--mem-gb …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run | --yes] [--json <字段>]",
+			usage:    "zerg model add --model <模型名> --host <主机> --file <GGUF 路径> --confirm <模型名> [--backend …] [--mem-gb …] [--size-bytes …] [--ctx …] [--arch …] [--desc …] [--mmproj …] [--added 日期] [--verified] [--dry-run | --yes] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"模型名（--model：`models:` 段的键 / 块名 ⇒ 按它定位或新建那一块）", "主机（--host：该条 `host:` 的字段值 ＝ 这台模型跑在哪台机器）", "GGUF 路径（--file）"},
 			fields:   []string{"model", "host", "file", "fleet", "line", "added"},
@@ -2562,13 +2594,13 @@ func init() {
 			endpoint: "",
 			run:      cmdGapReceiptApply,
 		},
-		// ★ `gap show` —— **单条取全文**（2026-09-28 · 缺口账 `GAP-20260926-15` + 同族 `GAP-20260928-243`）：
+		// ★ `gap show` —— **单条取全文**（2026-09-28 · 缺口账 `GAP-20260926-15` + 同族 `GAP-20260927-243`）：
 		//   只读面（不登记 `danger` ⇒ 按只读幂等档列）· 点名面复用同族 `gapTargetOne`（**账内没有这个 id ⇒ 2**，
 		//   与 `set-state` / `note` 同一口径）· 读不到真源 ⇒ 8。实现件 = `family_gap.go:cmdGapShow`。
 		{
 			path:     []string{"gap", "show"},
 			kind:     "GapShow",
-			summary:  "取一条缺口的**完整正文**（只读面 · 一字不截）：正文 / 手搓记录 / 复现 / 判据 / 已解证据 / 口径注全量出 —— `gap ls` 那一行只印摘要前 40 显示宽、`--json` 全量直出又会被读方截断（缺口账 `GAP-20260928-243`）· 账内没有这个 id ⇒ 用法错 2（同族口径 · 不跨族抄 `dev proposal show` 的 1）· 读不到真源 ⇒ 8",
+			summary:  "取一条缺口的**完整正文**（只读面 · 一字不截）：正文 / 手搓记录 / 复现 / 判据 / 已解证据 / 口径注全量出 —— `gap ls` 那一行只印摘要前 40 显示宽、`--json` 全量直出又会被读方截断（缺口账 `GAP-20260927-243`）· 账内没有这个 id ⇒ 用法错 2（同族口径 · 不跨族抄 `dev proposal show` 的 1）· 读不到真源 ⇒ 8",
 			usage:    "zerg gap show <GAP id|件路径> [--json <字段>]（位置参数给一条件路径 = 按件反查：该件在账里被点到的条目逐条列出 · 件不在仓里 ⇒ 2 · 仓根取不到 ⇒ 8）",
 			arity:    "any",
 			args:     []string{"缺口 id（**恰好一条** —— 本面只取一条）"},
@@ -2580,7 +2612,7 @@ func init() {
 			path:     []string{"gap", "add"},
 			kind:     "GapAdd",
 			summary:  "记一条缺口（写面 · 留证据）：**手搓记录 + 验证命令是两件必填**（防呆⑤）· 同 fp 同内容 ⇒ 幂等命中 0 · 同 fp 内容不同 ⇒ `14` · 审计进 `edit_audit.jsonl`（写不进就不写真源）",
-			usage:    "zerg gap add --symptom <一句> --handmade <命令原样> --impact <六值之一> --want-family <族> --want-action <动作> [--want-argv <段>…] [--prio P0|P1|P2] --repro-cmd <命令> --verify-cmd <命令> [--depends-on <fp>…] [--by <谁>] [--dry-run] [--yes] [--json <字段>]",
+			usage:    "zerg gap add --symptom <一句> --handmade <命令原样> --impact <六值之一> --want-family <族> --want-action <动作> [--want-argv <段>…] [--prio P0|P1|P2] [--state <仍缺|已立项|不做>] --repro-cmd <命令> --verify-cmd <命令> [--depends-on <fp>…] [--by <谁>] [--dry-run] [--yes] [--json <字段>]",
 			arity:    "none",
 			args:     []string{"（无位置参数：全部走旗标）"},
 			fields:   gapAddFields,
@@ -2651,6 +2683,29 @@ func init() {
 			fields:   gapRegressFields,
 			endpoint: "",
 			run:      cmdGapRegress,
+		},
+		// ★ 本枚（缺口账 `GAP-20260927-248`）：`gap reread <GAP id>…|--all` —— **判据复跑**（只读面）。
+		//   病（`GAP-20260927-248` 逐字）：`solved_evidence` 是**一次性文本**（"现有 75 条非空"）而非
+		//   **可重放结果** ⇒ 「已解」条目**是否已回归**机器判不出（只能靠 `gap verify` 现跑，而它自己
+		//   又不设防 —— 见 `GAP-20260927-247`）。治法 = 重跑 `solved_evidence` 里的**带键标读数**
+		//   （`cmd=<命令> · rc=<真退码> · reading=<关键读数一行>`），与记下的 `rc` / `reading` 逐条对拍：
+		//   rc 变 ⇒ `reading_stale`；rc 一致再看 `件:行` 引用的**行内容**（✗ 不判绝对行号 —— 行号会漂）。
+		//   ★ 口径（只报告 · 不对拍不进退出码 —— 免得存量陈旧把它变成恒红）：四条读数闭集
+		//   `ok` / `reading_stale` / `not_rereadable` / `skipped`；**安全铁律** = 取值命令落在**危险档**
+		//   （写面）/ 含 shell 元字符 / 解析不出 / 是本命令自己（自递归）⇒ **一律不执行**（判不准就丢
+		//   `not_rereadable`）。★ 只读动作 ⇒ **不挂危险档**（本面只报告 · 一字节都不写真源、不写审计）。
+		//   退码：0（含有 `reading_stale`）· 2 用法错（缺目标 / `--all` 与 id 同给 / `--limit` 非非负整数 /
+		//   `--json` 不给字段 / 账内没有该 id）· 8 真源读不到。实现件 = `family_gap_reread.go:cmdGapReread`。
+		{
+			path:     []string{"gap", "reread"},
+			kind:     "GapReread",
+			summary:  "缺口账**判据复跑**（只读面 · 一字不写真源、不写审计、不改任何 `state`）：重跑 `solved_evidence` 里的**带键标读数**（`cmd=<命令> · rc=<真退码> · reading=<关键读数一行>`）并与记下的 `rc` / `reading` 对拍 —— rc 变 ⇒ `reading_stale`；rc 一致再看 `件:行` 引用的**行内容**（✗ 不判绝对行号 —— 行号会漂）· 四条读数闭集 `ok` / `reading_stale` / `not_rereadable` / `skipped` · **安全铁律**：取值命令落在**危险档**（写面）/ 含 shell 元字符 / 解析不出 / 是本命令自己（自递归）⇒ **一律不执行**（判不准就记 `not_rereadable`）· 表尾声称「**只报告** —— `reading_stale` / `not_rereadable` **均不进退出码**」（免得存量陈旧读数把它变成恒红）· 缺目标 / `--all` 与 id 同给 / `--limit` 非非负整数 / `--json` 不给字段 / 账内没有该 id ⇒ 2；读不到真源 ⇒ 8",
+			usage:    "zerg gap reread [<GAP id>…] [--all] [--limit <N>] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"缺口 id（**一条或多条**；与 `--all` 不许同给）"},
+			fields:   gapRereadFields,
+			endpoint: "",
+			run:      cmdGapReread,
 		},
 		{
 			path:     []string{"gap", "export"},
@@ -2813,7 +2868,7 @@ func init() {
 			path:     []string{"gap", "idea", "promote"},
 			kind:     "GapIdeaPromote",
 			summary:  "池内一条候选 ⇒ **正式账**（写面 · `--dry-run` 恒 0 · 缺 `--yes` fail-closed 2）：**复用 `gap add` 的既有校验与落账路径**（`gapAddApply` —— 六必填 / `impact` 六值闭集 / 人面禁写 `state` / 判据命令树解析 / 同 fp 幂等与 `14` / 审计先落盘 / 读回对拍，一条不绕 · 设计稿 §11.3 黑体）· 只有 `status=pending` 可提升（其余 ⇒ 2 并点名当前 status）· 提升后池行**不删**：`status=promoted` + 记 `gap_id`（先落账、后改池行）",
-			usage:    "zerg gap idea promote <cid> --handmade <命令原样> --impact <六值之一> --want-family <族> --want-action <动作> [--want-argv <段>…] [--prio P0|P1|P2] --repro-cmd <命令> --verify-cmd <命令> [--dry-run | --yes] [--json <字段>]",
+			usage:    "zerg gap idea promote <cid> --handmade <命令原样> --impact <六值之一> --want-family <族> --want-action <动作> [--want-argv <段>…] [--prio P0|P1|P2] [--state <仍缺|已立项|不做>] --repro-cmd <命令> --verify-cmd <命令> [--dry-run | --yes] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"候选 id（**恰好一条**）；其余六必填与本族 `gap add` 逐字同款（症状取自池件那一格 `raw`）"},
 			fields:   gapIdeaPromoteFields,
@@ -3649,7 +3704,7 @@ func valueFlagName(a string) string {
 	// 名册面旗标（波① `T1a` · `Q-099`：`model add` 往 `gateway/fleet.yaml` 写一条）。
 	// 与上面几排同一口径：值照收，语义在各自命令里判（`model add` 逐个校验）。
 	switch a {
-	case "--host", "--backend", "--ctx", "--mem-gb", "--arch", "--mmproj", "--added":
+	case "--host", "--backend", "--ctx", "--mem-gb", "--size-bytes", "--arch", "--mmproj", "--added":
 		return a
 	}
 	// 融合面旗标（§十八.3 四件 · 批 E · T-59）：`ask` 的能力路由与 `plan`/`apply` 的落点。
@@ -3930,6 +3985,34 @@ func marshalObject(fields []string, row map[string]string) (obj string, bad stri
 	}
 	b.WriteString("}")
 	return b.String(), ""
+}
+
+// marshalObjectRegistered 按「用户给的字段序」拼一个 JSON 对象；字段**已在登记面**但**本行缺值** ⇒
+// 该键**整键略去**（✗ 不落 `0`/空串）。与 `marshalObject` 的分工：后者是 `dev edit` 干跑口的
+// 「本档必不产出 ⇒ 写前拒」探针（`family_dev_edit.go:676`），**缺键即 bad**（写面前置不许放宽）——
+// 两者不同语义，故不得合并或改后者；本函数只服务 `emitSelected` 这条 `--json` 出口
+// （「在册缺值」是**合法结果**，只有**不在册**的音由 `emitSelected` 的白名单校验拦下）。
+func marshalObjectRegistered(fields []string, row map[string]string) string {
+	var b strings.Builder
+	b.WriteString("{")
+	n := 0
+	for _, f := range fields {
+		v, ok := row[f]
+		if !ok {
+			continue // 在册但本行缺值 ⇒ 整键略去（✗ 不落 0）
+		}
+		if n > 0 {
+			b.WriteString(",")
+		}
+		k, _ := json.Marshal(f)
+		val, _ := json.Marshal(v)
+		b.Write(k)
+		b.WriteString(":")
+		b.Write(val)
+		n++
+	}
+	b.WriteString("}")
+	return b.String()
 }
 
 func reportBadField(stderr io.Writer, path []string, bad string) int {
@@ -4239,22 +4322,28 @@ func emitSelected(stdout, stderr io.Writer, inv *invocation, path []string, fiel
 	if cmd == nil {
 		return exitUsage
 	}
+	// ★ 2026-10-05（`GAP-20260926-11`）：**收受端按已登记白名单核 → 缺值整键略去**。
+	//   改前收受端只认「逐行键」—— 请求的字段只要在**任一行**缺键即**整单 fail-closed 退 2**
+	//   ⇒ 字段就算已登在命令表 `fields:` 里也照样报「未知字段」（实测 `resource ledger --json gpu_pct`
+	//   因四台账本里有一台机的行没有它而退 2）。⇒ 收受口径改为「**登记即认**」：
+	//   ① 真未知字段（不在 `cmd.fields` 里，如 `cpu_pct`）⇒ 仍退 2（`reportBadField` 逐字同）；
+	//   ② 在册字段但**本行缺值** ⇒ 该键**整键略去**（✗ 绝不落 `0`/空串 —— 与 API 的 `omitempty` 同一条铁律）。
+	//   与同族既有前置校验（`family_impact.go` 的 `fieldListOf` 逐名核）同一条口径；无字段表的命令（如 `help`）不受影响。
+	if len(cmd.fields) > 0 {
+		registered := make(map[string]bool, len(cmd.fields))
+		for _, f := range cmd.fields {
+			registered[f] = true
+		}
+		for _, f := range fields {
+			if !registered[f] {
+				inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
+				return reportBadField(stderr, path, f)
+			}
+		}
+	}
 	objs := make([]string, 0, len(rows))
 	for _, row := range rows {
-		obj, bad := marshalObject(fields, row)
-		if bad != "" {
-			// ★ 2026-09-28：`--json <未知字段>` 的失败面 `error.detail` 原**恒缺**。
-			//   病灶：`reportBadField` 只写 stderr、**不调 `setErr`** ⇒ 走到 `emitErrIfJSON` 时
-			//   `inv.err == nil`，包封退化成兜底那一格（`main.go:286`：kind 由真退码派生、
-			//   message 写「（命令未报出 kind，按退码兜底）」）—— 机器面拿不到**真因**，
-			//   AI 自愈只剩退码（与 `requireFields` 的 `GAP-20260927-360` 逐字同病）。
-			//   治法与 `main.go:2740` 那处**同一条口子、同 kind**（`errors.go:138` 的 `setErr`：
-			//   谁先报谁为准 · 不打第二枪），只补上 detail 的赋值 —— 点名那个未知字段。
-			//   人面一字不动：下面 `reportBadField` 照旧写 stderr，退码仍由它回（`exitUsage` = 2）。
-			inv.setErr("usage", "json_field_unknown:"+bad, fmt.Sprintf("未知字段 %q", bad))
-			return reportBadField(stderr, path, bad)
-		}
-		objs = append(objs, obj)
+		objs = append(objs, marshalObjectRegistered(fields, row))
 	}
 	emitEnvelopeWith(stdout, cmd, "["+strings.Join(objs, ",")+"]", len(rows), inv)
 	return exitOK

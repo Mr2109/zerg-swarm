@@ -97,7 +97,8 @@ def in_commit_chain(precommit_src, name):
 
 
 def scan(root):
-    """回 (hits, precommit_present)。hits = [(file, line, name, consume)] 未登记旋钮。"""
+    """回 (hits, precommit_present, chain_files)。hits = [(file, line, name, consume)] 未登记旋钮；
+    chain_files = 现读判定「在提交链」的件数（= 判据实际作用域 · 供空集守卫）。"""
     precommit = os.path.join(root, "scripts/gates/precommit-gates.sh")
     pc_src = None
     if os.path.isfile(precommit):
@@ -107,11 +108,15 @@ def scan(root):
             pc_src = None
     allowed = {e["id"] for e in KNOB_ALLOW} | {e["anchor"] for e in KNOB_ALLOW}
     hits = []
+    chain_files = 0
     for path, name in iter_files(root):
+        if not in_commit_chain(pc_src, name):
+            continue  # 非提交链件不判（本件只管提交链上的门）
         try:
             src = open(path, "r", encoding="utf-8").read().splitlines()
         except OSError:
             continue
+        chain_files += 1
         for i, line in enumerate(src, 1):
             nm = None
             for cr in CONSUME_RES:
@@ -126,18 +131,21 @@ def scan(root):
                 continue
             if not NAME_RE.match(nm) and not re.search(r"(UNITTEST|SELFTEST|META_OFF|NO_PERL)", nm):
                 continue
-            if not in_commit_chain(pc_src, name):
-                continue  # 非提交链件不判（本件只管提交链上的门）
             if nm in allowed:
                 continue
             hits.append((name, i, nm, line.strip()[:120]))
-    return hits, pc_src is not None
+    return hits, pc_src is not None, chain_files
 
 
 def run(root, as_json):
-    hits, pc = scan(root)
+    hits, pc, chain_files = scan(root)
     if not pc:
         print("BLOCKED —— 缺 `scripts/gates/precommit-gates.sh`（无法判定提交链）⇒ rc=2", file=sys.stderr)
+        return 2
+    # ★ 空集守卫（GAP-20260927-108）：空域 ⇒ fail-closed（提交链上 0 件门件 ⇒ rc=2，不许把「空转」当绿）
+    if not chain_files:
+        print("BLOCKED —— 空域：precommit-gates.sh 未点名任何被扫门件（提交链上 0 件 · 取不到输入）⇒ "
+              "rc=2 不给结论（空转 ≠ 无未登记旋钮）", file=sys.stderr)
         return 2
     # 白名单五件套完整性
     bad_allow = []
@@ -177,7 +185,7 @@ def self_test():
             'add_step docs "门x" tri "$R" "python3 scripts/gates/check-doc-name.py"\n')
         open(os.path.join(td, "scripts/gates/check-doc-name.py"), "w").write(
             'meta = os.environ.get("CHECK_DOC_NAME_META_OFF") != "1"\n')
-        hits, pc = scan(td)
+        hits, pc, _chain = scan(td)
         if not pc or [h[2] for h in hits] != ["CHECK_DOC_NAME_META_OFF"]:
             print("  ✗ 正控失败：期望命中 CHECK_DOC_NAME_META_OFF，实得 %r" % (hits,))
             ok = False
@@ -189,7 +197,14 @@ def self_test():
         if scan(td)[0]:
             print("  ✗ 负控失败：非提交链件不该判")
             ok = False
-    print("自检 %s（3 格）" % ("PASS" if ok else "FAIL"))
+        # 负控′：precommit 在盘但不点名任何被扫件 ⇒ 提交链 0 件（空域）⇒ rc=2（空集守卫 · GAP-20260927-108）
+        if scan(td)[2] != 0:
+            print("  ✗ 负控失败：应得提交链 0 件（空域）")
+            ok = False
+        if run(td, False) != 2:
+            print("  ✗ 负控失败：空域（提交链 0 件）应回 2（空集守卫）")
+            ok = False
+    print("自检 %s（4 格）" % ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
 
 
@@ -203,9 +218,12 @@ def main(argv=None):
     if args.self_test:
         return self_test()
     if args.by_tier:
-        hits, pc = scan(args.root)
+        hits, pc, chain_files = scan(args.root)
         if not pc:
             print("BLOCKED —— 缺 precommit-gates.sh（无法判定提交链）⇒ rc=2", file=sys.stderr)
+            return 2
+        if not chain_files:  # ★ 空集守卫（GAP-20260927-108）：空域 ⇒ fail-closed
+            print("BLOCKED —— 空域：提交链上 0 件门件（取不到输入）⇒ rc=2", file=sys.stderr)
             return 2
         cnt = {t: 0 for t in KNOB_TIERS}
         for _f, _l, n, _t in hits:

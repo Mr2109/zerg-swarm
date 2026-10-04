@@ -8,7 +8,7 @@
   2. core/internal/version/version.go  const Version = "X.Y.Z"  （Go 侧：横幅 / capabilities / openapi）
 
 用法：python3 scripts/gates/check_version.py [仓库根]
-退出码：0 一致 / 1 不一致或解析失败
+退出码：0 一致 / 1 不一致 / 2 **不给结论**（版本真源取不到 = 空域）或用法错
 """
 import os
 import re
@@ -31,6 +31,8 @@ def repo_root(arg=None):
 
 def rust_version(root):
     p = os.path.join(root, "ui", "Cargo.toml")
+    if not os.path.exists(p):   # ★ 空集守卫（GAP-20260927-108）：件不存在 ⇒ 取不到（返 None），不抛 traceback
+        return None
     m = re.search(r'^version\s*=\s*"([^"]+)"', open(p, encoding="utf-8").read(), re.M)
     return m.group(1) if m else None
 
@@ -107,9 +109,12 @@ def main():
     print("仓库根: %s" % root)
     print("  ui/Cargo.toml version      = %s" % r)
     print("  core version.Version       = %s" % g)
-    if not r or not g:
-        print("\n结果: 失败——未能解析版本号（Cargo.toml 或 version.go 缺失/格式变化）")
-        return 1
+    # ★ 空集守卫（GAP-20260927-108）：域 = 「取到的版本真源」——
+    #   任一侧取不到（件缺失 / 无 version 行 / 解析不出 ⇒ None）时**比较整块消失** ⇒ 不许当「一致」绿；
+    #   同族口径：**不存在 / 取不到 ⇒ 不给结论（rc=2）**，与「两处不一致」的真红（rc=1）分得开。
+    if r is None or g is None:  # ★ 空集守卫（GAP-20260927-108）：版本真源取不到（空域）⇒ rc=2（不给结论）
+        print("\n结果: 不给结论（rc=2）—— 版本真源取不到（ui/Cargo.toml 或 core version.go 缺失/无 version 行）")
+        return 2
     if r != g:
         print("\n结果: 失败——版本号不一致（收版时两处必须同改）")
         return 1

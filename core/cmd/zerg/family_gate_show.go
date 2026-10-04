@@ -91,9 +91,13 @@ func gateShowJSON(inv *invocation, stdout, stderr io.Writer, root, script string
 		return exitBlocked
 	}
 	decls := parseAddSteps(string(src))
+	// ★ 2026-10-05（缺口 `GAP-20261001-33` 剩余半 · 与 `gate explain` 同一处口径）：步名匹配走
+	//   `normStepName`（与权威面 `filter_step` 同源：两侧一律去反斜杠）⇒ `gate ls`/`--list` 打出的
+	//   含反引号/美元符步名在 `--json` 面不再被逐字判「找不到」；对不含反斜杠的名字是恒等。
 	hits := []gateStepDecl{}
+	nameKey := normStepName(name)
 	for _, d := range decls {
-		if d.Name == name {
+		if normStepName(d.Name) == nameKey {
 			hits = append(hits, d)
 		}
 	}

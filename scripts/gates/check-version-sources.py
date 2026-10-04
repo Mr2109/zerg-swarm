@@ -155,6 +155,84 @@ def version_key(v):
 DOCS_REL_CANDIDATES = ("docs/项目文档", os.path.join("..", "Zerg-内部文档", "项目文档"))
 
 
+# ── R6 · 运行时默认根（目录）点名覆盖 ─────────────────────────────────────────
+# 本门**运行时**要解析的默认根（目录）。名册 `DEFAULT_ROOT_ROSTER` 逐个点名「默认根常量/位点」；
+# 被点名的目录必须**在盘**，否则必须在 `RELOCATED_ROOTS` 里**登记迁出**（含理由 + 落点），落点也须在盘。
+# ✗ 禁静默兜底：既不在盘、又未登记 ⇒ rc=1（点名覆盖没做到）。
+# ★ 名册与 `runtime_default_root_constants()`（= 本门真源常量：仓根标记 + 语料域根 + 快照候选）
+#   **双向闭合**：谁多谁少都红 ⇒ 新默认根不进名册、或名册凭空点名，都会当场红（名册式点名不成立）。
+REPO_ROOT_MARKERS = ("core", "ui")   # repo_root() 的标记目录（改名/搬走 ⇒ 仓根探测静默回落 cwd）
+DEFAULT_ROOT_ROSTER = [
+    ("repo-root", "仓根探测（repo_root 同时要求这两个标记目录在盘）", list(REPO_ROOT_MARKERS), []),
+    ("corpus", "活文档语料域根（CORPUS_DOCS_PREFIX）", [CORPUS_DOCS_PREFIX.rstrip("/")], []),
+    ("snapshot", "快照取源根（DOCS_REL_CANDIDATES：仓内优先、仓外兜底）",
+     [DOCS_REL_CANDIDATES[0]], list(DOCS_REL_CANDIDATES[1:])),
+]
+# 迁出登记（名册式）：{被点名的默认根目录: (迁出理由, 落点——必须也在盘)}
+RELOCATED_ROOTS = {
+    "docs/项目文档": ("2026-09-26「批3」项目文档整树分家至仓外同级目录（仓内零命中）",
+                    DOCS_REL_CANDIDATES[1]),
+}
+
+
+def runtime_default_root_constants():
+    """本门**真源常量**里的运行时默认根目录（名册的双向闭合对象）。"""
+    out = []
+    for d in list(REPO_ROOT_MARKERS) + [CORPUS_DOCS_PREFIX.rstrip("/")] + list(DOCS_REL_CANDIDATES):
+        if d not in out:
+            out.append(d)
+    return out
+
+
+def check_default_roots(root, roster=None, relocated=None):
+    """R6：运行时默认根（目录）点名覆盖。返回 (problems, blockers, entries)。
+
+    entries 逐条记 {root, dir, state, landed} —— 每个被点名目录的处置（在盘 / 登记迁出 / ✗）。
+    """
+    roster = DEFAULT_ROOT_ROSTER if roster is None else roster
+    relocated = RELOCATED_ROOTS if relocated is None else relocated
+    problems, blockers, entries = [], [], []
+    named_all = []
+    for _rid, _role, named, fallbacks in roster:
+        for d in list(named) + list(fallbacks):
+            if d not in named_all:
+                named_all.append(d)
+    if not roster or not named_all:
+        blockers.append("空转：运行时默认根名册为空（判据不可判 ⇒ 不给结论）")
+        return problems, blockers, entries
+    consts = runtime_default_root_constants()
+    for d in consts:
+        if d not in named_all:
+            problems.append("FAIL 名册漏点运行时默认根 %s（代码点名了它、名册里没有 ⇒ 名册式点名不成立）" % d)
+    for d in named_all:
+        if d not in consts:
+            problems.append("FAIL 名册点名了非真源常量 %s（凭空点名 ⇒ 名册与代码分叉）" % d)
+    for rid, _role, named, _fb in roster:
+        for d in named:
+            ap = os.path.abspath(os.path.join(root, d))
+            if os.path.isdir(ap):
+                entries.append({"root": rid, "dir": d, "state": "在盘", "landed": None})
+                continue
+            reg = relocated.get(d)
+            if reg is None:
+                problems.append("FAIL 默认根 %s 点名的目录 %s 既不在盘、又未登记迁出（静默兜底 ⇒ 未点名覆盖）"
+                                % (rid, d))
+                entries.append({"root": rid, "dir": d, "state": "不在盘·未登记", "landed": None})
+                continue
+            reason, landed = reg
+            lap = os.path.abspath(os.path.join(root, landed)) if landed else None
+            if not reason or not landed or not os.path.isdir(lap):
+                problems.append("FAIL 默认根 %s 的 %s 已登记迁出，但落点 %s 不在盘（登记指向死人）"
+                                % (rid, d, landed))
+                entries.append({"root": rid, "dir": d, "state": "登记·落点不在盘", "landed": landed})
+            else:
+                entries.append({"root": rid, "dir": d, "state": "登记迁出", "landed": landed})
+    for d in relocated:
+        if d not in named_all:
+            problems.append("FAIL 迁出登记 %s 不在运行时默认根名册内（悬空登记）" % d)
+    return problems, blockers, entries
+
+
 def docs_snapshot_root(root):
     """返回 (绝对路径, 来源说明)；两处都缺 ⇒ (None, 说明)。"""
     for rel in DOCS_REL_CANDIDATES:
@@ -295,8 +373,8 @@ def scan_live_docs(root, stale_set, canonical):
 
 # ─────────────────────────── 四处版本源断言（阻断档）───────────────────────────
 
-def check_sources(root, stale_set=None, strict_docs=False):
-    """跑一遍全部判据。返回 dict（含 rc / sources / problems / blockers / docs）。"""
+def check_sources(root, stale_set=None, strict_docs=False, roots_roster=None, relocated=None):
+    """跑一遍全部判据。返回 dict（含 rc / sources / problems / blockers / docs / default_roots）。"""
     problems, blockers = [], []
     sources = []
 
@@ -385,6 +463,11 @@ def check_sources(root, stale_set=None, strict_docs=False):
             problems.append("FAIL --strict-docs：活文档里仍有 %d 处旧版本号（%d 个文件）"
                             % (t["hits"], t["hit_files"]))
 
+    # ⑥ R6 运行时默认根（目录）点名覆盖（阻断档：未点名覆盖 = rc=1；名册空 = rc=2）
+    dr_problems, dr_blockers, dr_entries = check_default_roots(root, roots_roster, relocated)
+    problems.extend(dr_problems)
+    blockers.extend(dr_blockers)
+
     rc = RC_OK
     if problems:
         rc = RC_FAIL
@@ -392,7 +475,9 @@ def check_sources(root, stale_set=None, strict_docs=False):
         rc = RC_BLOCKED
     return {"tool": TOOL, "tool_version": TOOL_VERSION, "root": os.path.abspath(root),
             "canonical": canonical, "sources": sources,
-            "problems": problems, "blockers": blockers, "docs": docs, "rc": rc}
+            "problems": problems, "blockers": blockers, "docs": docs,
+            "default_roots": {"entries": dr_entries},
+            "rc": rc}
 
 
 # ─────────────────────────── 输出 ───────────────────────────
@@ -408,6 +493,19 @@ def print_report(res, strict_docs):
         loc = ":%s" % s["line"] if s["line"] else ""
         extra = ("（%s）" % s["note"]) if s.get("note") else ""
         print("  %s  %-38s %-8s %s%s" % (mark, s["path"] + loc, val, s["role"], extra))
+    print()
+    _dr = res.get("default_roots") or {"entries": []}
+    _ents = _dr["entries"]
+    print("-- 运行时默认根（R6 · 点名覆盖：%d 条）--" % len(_ents))
+    for e in _ents:
+        _st = e["state"]
+        if _st == "在盘":
+            _tail = "在盘"
+        elif _st == "登记迁出":
+            _tail = "登记迁出 ⇒ %s" % e["landed"]
+        else:
+            _tail = _st
+        print("  %s  %s  %s" % ("✓" if _st in ("在盘", "登记迁出") else "✗", e["dir"], _tail))
     print()
     if res["problems"]:
         print("问题（%d 条）：" % len(res["problems"]))
@@ -464,6 +562,9 @@ def print_rules(res_extra=None):
   R4 缺件/不可解析   任一源缺失 · 不是 UTF-8 · version.go 无 `const Version` ·
                Cargo.toml 的 [package] 段无 version · VERSION 是空文件 ⇒ rc=2（**不给结论**）
   R5 空转防护   活文档语料 0 个文件被扫到（而旧版集合非空）⇒ rc=2（0 个可比对 ≠ 绿）
+  R6 默认根点名  运行时默认根（仓根标记 core/ui · 语料域根 docs · 快照取源根 docs/项目文档）逐个点名：
+               被点名的目录必须在盘，否则必须登记迁出（RELOCATED_ROOTS：理由 + 落点在盘）。
+               名册与真源常量双向闭合；名册为空 ⇒ rc=2，未在盘且未登记 / 登记落点不在盘 / 悬空登记 ⇒ rc=1
 
 [只报告 · 不进退出码]
   D1 活文档旧版本号   语料域 = docs/**（走下方排除域）+ 仓根 *.md；
@@ -627,7 +728,9 @@ def self_test():
 
     def c_empty_corpus():
         fresh()
-        shutil.rmtree(os.path.join(base, "docs"))
+        # ★ R6 收窄后：删整个 `docs/` 会连带把「语料域根 docs」判成不在盘 ⇒ 改删**唯一非排他语料件**
+        #   （`docs/zh/活文档.md`），`docs` 目录仍在盘 ⇒ 只触发本格的「语料 0 件 ⇒ 空转」原意。
+        os.remove(os.path.join(base, "docs", "zh", "活文档.md"))
         return run(stale_set=["9.9.8"])
     cases.append((u"负控⑬ 活文档语料 0 个文件被扫到 ⇒ rc=2（空转不许当绿）",
                   2, c_empty_corpus, u"空转"))
@@ -650,6 +753,33 @@ def self_test():
         return run(stale_set=["9.9.8"])
     cases.append((u"成对⑯ 冻结节/排除域里的旧版号**不入清单**（排除域生效）",
                   0, c_excluded, u"__EXCLUDE_ONLY__"))
+
+    # ── R6：运行时默认根（目录）点名覆盖（成对负控）
+    def c_r6_unreg():
+        fresh()
+        shutil.rmtree(os.path.join(base, "docs", "项目文档"))
+        return run(stale_set=["9.9.8"], relocated={})
+    cases.append((u"负控⑰ R6：默认根目录不在盘且未登记迁出 ⇒ 必红（静默兜底未点名覆盖）",
+                  1, c_r6_unreg, u"未登记迁出"))
+
+    def c_r6_dead_landed():
+        fresh()
+        shutil.rmtree(os.path.join(base, "docs", "项目文档"))
+        return run(stale_set=["9.9.8"], relocated={u"docs/项目文档": (u"迁出", u"no-such-landed-dir")})
+    cases.append((u"负控⑱ R6：登记迁出但落点不在盘 ⇒ 必红（登记指向死人）",
+                  1, c_r6_dead_landed, u"落点"))
+
+    def c_r6_roster_miss():
+        fresh()
+        return run(stale_set=["9.9.8"], roots_roster=[("repo-root", u"r", ["core", "ui"], [])])
+    cases.append((u"负控⑲ R6：名册漏点真源常量（快照根）⇒ 必红（名册式点名不成立）",
+                  1, c_r6_roster_miss, u"名册漏点"))
+
+    def c_r6_empty():
+        fresh()
+        return run(stale_set=["9.9.8"], roots_roster=[])
+    cases.append((u"负控⑳ R6：运行时默认根名册为空 ⇒ rc=2（空转不给结论）",
+                  2, c_r6_empty, u"空转"))
 
     # 跑
     n_pass = 0
@@ -731,7 +861,7 @@ def repo_root(arg=None):
         return os.path.abspath(arg)
     d = os.path.abspath(os.path.dirname(__file__))
     for _ in range(6):
-        if os.path.isdir(os.path.join(d, "core")) and os.path.isdir(os.path.join(d, "ui")):
+        if all(os.path.isdir(os.path.join(d, m)) for m in REPO_ROOT_MARKERS):
             return d
         d = os.path.dirname(d)
     return os.getcwd()

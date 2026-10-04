@@ -179,7 +179,7 @@ func TestCheckDocFreshnessGatePort(t *testing.T) {
 
 	// ── ⑬ --self-test 自身必须全过（防恒绿/恒红）⇒ rc=0 + 末行自印组数 ───────
 	rcST, outST, _ := cdfRunIn(t, good, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "self-test：40 条通过 / 0 条失败") {
+	if rcST != 0 || !strings.Contains(outST, "self-test：43 条通过 / 0 条失败") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%q", rcST, outST)
 	}
 }

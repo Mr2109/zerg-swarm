@@ -64,12 +64,13 @@ TOKEN_FILE="${ZERG_TOKEN_FILE:-$HOME/.zerg/token}"
 # 值经 **stdin** 交给 curl（`-H @-`）⇒ 命令行上永不出现令牌的**字面值**、也不出现**变量展开**
 # （目标机 `ps`/进程表里取不到实参令牌）；读法沿用旧口径：`$TOKEN_FILE`（默认 `~/.zerg/token`，600）。
 # 缺件/读不到 ⇒ 退「不带该头」的形态（与旧行为等价：服务端回 401，判据照旧判红/判 BLOCKED）。
+# ★ 超时兜底（check-curl-timeout 口径）：本转发壳自带 -m 30 —— 不依赖调用方记得传；调用方给的 -m 覆盖它（curl 后者胜）。
 TOKEN_FILE="${TOKEN_FILE:-$HOME/.zerg/token}"
 curl_tok() {  # curl_tok <curl 参数…>
   if [ -r "$TOKEN_FILE" ]; then
-    printf 'X-Auth-Token: %s\n' "$(cat "$TOKEN_FILE" 2>/dev/null || true)" | curl -H @- "$@"
+    printf 'X-Auth-Token: %s\n' "$(cat "$TOKEN_FILE" 2>/dev/null || true)" | curl -m 30 -H @- "$@"
   else
-    curl "$@"
+    curl -m 30 "$@"
   fi
 }
 CONTROLLER_URL="${ZERG_SETUP_CONTROLLER:-http://127.0.0.1:8580}"

@@ -264,7 +264,8 @@ func TestGateCheckLockContentionIsBlocked(t *testing.T) {
 	}
 }
 
-// ⑥ 进程内 Go 表完整性：项数 == 107，且**每项 key 都能在现读名录里找到**（名字 ⇒ 件 不断裂）。
+// ⑥ 进程内 Go 表完整性：项数 == 108，且**每项 key 都能在现读名录里找到**（名字 ⇒ 件 不断裂）。
+// ★ 棘轮口径：本数 == 全包 *GateMain 入口数（现读两者同为 108）。门111 check-fleet-loadable 的 Go 真搬件（check_fleet_loadable.go）入 gate_inproc_table.go 后 107→108 ⇒ 期望随动（✗ 非凑绿）。
 func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	byName, dupes, err := gateCheckRoster(root)
@@ -274,8 +275,8 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	if len(dupes) != 0 {
 		t.Fatalf("真实名录有同名多件 ⇒ 前置不成立：%v", dupes)
 	}
-	if got := len(gateCheckGoEntry); got != 107 {
-		t.Fatalf("进程内 Go 表项数要 == 107，得到 %d", got)
+	if got := len(gateCheckGoEntry); got != 108 {
+		t.Fatalf("进程内 Go 表项数要 == 108，得到 %d", got)
 	}
 	missing := []string{}
 	for name := range gateCheckGoEntry {
@@ -447,5 +448,182 @@ func TestGateCheckNameMissFallsThroughToExec(t *testing.T) {
 	}
 	if !strings.Contains(errb2, "不在册") {
 		t.Errorf("要逐字说「不在册」：%q", errb2)
+	}
+}
+
+// ⑪ ★ GAP-20261005-20 · **重编类护栏**（属性判）：落在构建/发布入口目录 或 非注释行写 repo bin/ 的件
+//
+//	⇒ 与写工具同档，缺 `--yes` 拒执（退 2 · **不 exec**）；给 `--yes` ⇒ 照跑（成对负控，证护栏是唯一拦点）。
+func TestGateCheckRebuildClassGuard(t *testing.T) {
+	root := t.TempDir()
+	// 重编类夹具：落在构建/发布入口目录，且**非注释行**含「写 repo bin/」写位形态（在 `if false` 里 ⇒ 不真跑）。
+	gctWrite(t, root, "scripts/build/build-all.sh",
+		"#!/usr/bin/env bash\n"+
+			"echo gct-rebuild-fixture\n"+
+			"if false; then\n"+
+			"  go build -o \"${REPO_ROOT}/bin/gct-artifact\" ./cmd/x\n"+
+			"fi\n")
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+
+	// 成对负控（护栏的另一半）：给 `--yes` ⇒ 重编类件**照跑**（证它不是「永远拒执」）。
+	invYes := gctInv("build-all", "--yes")
+	invYes.yes = true // 进程内测试里 `--yes` 由全局解析置位（✗ 不靠 orig 反解）
+	rcYes, outYes, errbYes := gctRun(invYes, root)
+	if rcYes != 0 || !strings.Contains(outYes, "gct-rebuild-fixture") {
+		t.Fatalf("给 --yes ⇒ 重编类件照跑（成对负控）：rc=%d out=%q stderr=%q", rcYes, outYes, errbYes)
+	}
+
+	// 改后语义（有护栏）：缺 `--yes` ⇒ 拒执（退 2）· **不 exec**（夹具的 echo 不出现）。
+	rc, out, errb := gctRun(gctInv("build-all"), root)
+	if rc != exitUsage {
+		t.Fatalf("重编类缺 --yes ⇒ 退 %d，得到 %d · stderr=%s", exitUsage, rc, errb)
+	}
+	if strings.Contains(out, "gct-rebuild-fixture") {
+		t.Errorf("缺 --yes ⇒ **不 exec**，夹具不该跑：out=%q", out)
+	}
+	if !strings.Contains(errb, "重编类") || !strings.Contains(errb, "--yes") {
+		t.Errorf("要明说「重编类」并指 --yes：%q", errb)
+	}
+}
+
+// ⑫ ★ 属性判**不是靠名**：件既不在构建目录、名字也不含 build/all —— 仅凭「非注释行写 repo bin/」就该判危险档。
+func TestGateCheckRebuildClassByContentNotName(t *testing.T) {
+	root := t.TempDir()
+	gctWrite(t, root, "scripts/gates/whatever.sh",
+		"#!/usr/bin/env bash\n"+
+			"echo gct-content-fixture\n"+
+			"if false; then printf x > bin/zerg-core; fi\n")
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+	rc, out, errb := gctRun(gctInv("whatever"), root)
+	if rc != exitUsage {
+		t.Fatalf("非注释行写 bin/ ⇒ 判重编类缺 --yes 退 %d，得到 %d · stderr=%s", exitUsage, rc, errb)
+	}
+	if strings.Contains(out, "gct-content-fixture") {
+		t.Errorf("缺 --yes ⇒ 不 exec：out=%q", out)
+	}
+}
+
+// ⑬ ★ 不回归：**只读判据**（读 bin/、注释里提构建目录）⇒ 不受影响，照跑退 0（✗ 不把日常只读判据全变危险档）。
+func TestGateCheckReadOnlyJudgeUnaffected(t *testing.T) {
+	root := t.TempDir()
+	gctWrite(t, root, "scripts/readonly-judge.py",
+		"import sys\n"+
+			"# 只是**读**：下面这两处都不是写位形态\n"+
+			"#   open('bin/zerg','r')  · grep scripts/build/build-all.sh\n"+
+			"print('readonly-ok')\n")
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+	rc, out, errb := gctRun(gctInv("readonly-judge"), root) // ✗ 不给 --yes
+	if rc != 0 {
+		t.Fatalf("只读判据 ⇒ 照跑退 0（不受护栏影响），得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "readonly-ok") {
+		t.Errorf("只读判据 stdout 应透传：%q", out)
+	}
+}
+
+// ⑭ ★ 目录角色属性：落在构建/发布入口目录下的件（即便正文没有写位形态）⇒ 仍判重编类。
+func TestGateCheckRebuildDirRole(t *testing.T) {
+	root := t.TempDir()
+	gctWrite(t, root, "scripts/build/plain-helper.sh", "#!/usr/bin/env bash\necho plain\n")
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+	rc, _, errb := gctRun(gctInv("plain-helper"), root)
+	if rc != exitUsage {
+		t.Fatalf("构建目录角色 ⇒ 判重编类缺 --yes 退 %d，得到 %d · stderr=%s", exitUsage, rc, errb)
+	}
+}
+
+// ⑮ ★ GAP-20261005-20 另一半 · **整套门类护栏**（属性判）：会**真跑整套门/步**的件（遍历名册逐个真跑）
+//
+//	⇒ 与写工具同档，缺 `--yes` 拒执（退 2 · **不 exec**）；给 `--yes` ⇒ 照跑（成对负控，证护栏是唯一拦点）。
+func TestGateCheckSuiteClassGuard(t *testing.T) {
+	root := t.TempDir()
+	// 整套门夹具：现读名册目录（`${GATEDIR}`）并**命令位**起解释器跑一个变量执行体（在 `if false` 里 ⇒ 不真跑）。
+	gctWrite(t, root, "scripts/gates/suite-runner.sh",
+		"#!/usr/bin/env bash\n"+
+			"echo gct-suite-fixture\n"+
+			"GATEDIR=\"${REPO_ROOT}/scripts/gates\"\n"+
+			"if false; then\n"+
+			"  bash \"${GATEDIR}/some-gate.py\"\n"+
+			"fi\n")
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+
+	// 成对负控：给 `--yes` ⇒ 整套门类件**照跑**（证它不是「永远拒执」）。
+	invYes := gctInv("suite-runner", "--yes")
+	invYes.yes = true
+	rcYes, outYes, errbYes := gctRun(invYes, root)
+	if rcYes != 0 || !strings.Contains(outYes, "gct-suite-fixture") {
+		t.Fatalf("给 --yes ⇒ 整套门类件照跑（成对负控）：rc=%d out=%q stderr=%q", rcYes, outYes, errbYes)
+	}
+
+	// 改后语义（有护栏）：缺 `--yes` ⇒ 拒执（退 2）· **不 exec**（夹具的 echo 不出现）。
+	rc, out, errb := gctRun(gctInv("suite-runner"), root)
+	if rc != exitUsage {
+		t.Fatalf("整套门类缺 --yes ⇒ 退 %d，得到 %d · stderr=%s", exitUsage, rc, errb)
+	}
+	if strings.Contains(out, "gct-suite-fixture") {
+		t.Errorf("缺 --yes ⇒ **不 exec**，夹具不该跑：out=%q", out)
+	}
+	if !strings.Contains(errb, "整套门") || !strings.Contains(errb, "--yes") {
+		t.Errorf("要明说「整套门类」并指 --yes：%q", errb)
+	}
+}
+
+// ⑯ ★ 属性判**不是靠名**：件名字既不含 all 也不含 real-gates —— 仅凭「现读名册 + 命令位跑变量执行体」就该判危险档。
+func TestGateCheckSuiteClassByContentNotName(t *testing.T) {
+	root := t.TempDir()
+	gctWrite(t, root, "scripts/gates/zzz-whatever.sh",
+		"#!/usr/bin/env bash\n"+
+			"echo gct-suite-content\n"+
+			"GATEDIR=\"${REPO_ROOT}/scripts/gates\"\n"+
+			"if false; then exec \"${GATEDIR}/g.py\"; fi\n")
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+	rc, out, errb := gctRun(gctInv("zzz-whatever"), root)
+	if rc != exitUsage {
+		t.Fatalf("名册执行属性 ⇒ 判整套门类缺 --yes 退 %d，得到 %d · stderr=%s", exitUsage, rc, errb)
+	}
+	if strings.Contains(out, "gct-suite-content") {
+		t.Errorf("缺 --yes ⇒ 不 exec：out=%q", out)
+	}
+}
+
+// ⑰ ★ 步命令执行属性（shell 起 `-c`）：整套门**执行器**本体 ⇒ 同档拒执。
+func TestGateCheckSuiteStepCmdGuard(t *testing.T) {
+	root := t.TempDir()
+	gctWrite(t, root, "scripts/gates/exec-body.sh",
+		"#!/usr/bin/env bash\n"+
+			"echo gct-stepcmd-fixture\n"+
+			"if false; then bash -c \"${cmd}\"; fi\n")
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+	rc, out, errb := gctRun(gctInv("exec-body"), root)
+	if rc != exitUsage {
+		t.Fatalf("步命令执行属性 ⇒ 判整套门类缺 --yes 退 %d，得到 %d · stderr=%s", exitUsage, rc, errb)
+	}
+	if strings.Contains(out, "gct-stepcmd-fixture") {
+		t.Errorf("缺 --yes ⇒ 不 exec：out=%q", out)
+	}
+}
+
+// ⑱ ★ 不回归：「只读读步骤表」的判据（把步骤表当文本读 · 带只读档起名册件）⇒ 不受影响，照跑退 0。
+func TestGateCheckStepTableReadersUnaffected(t *testing.T) {
+	root := t.TempDir()
+	// 读步骤表（合成步表 + open 解析）—— 从不起命令位解释器 ⇒ 两条属性都不命中。
+	gctWrite(t, root, "scripts/gates/reader-judge.py",
+		"# 只读：把步表当文本读（不 exec）\n"+
+			"txt = open('scripts/gates/step-table.sh').read()\n"+
+			"print('reader-ok')\n")
+	gctWrite(t, root, "scripts/gates/step-table.sh",
+		"#!/usr/bin/env bash\n# add_step go \"x\" tri \"${REPO_ROOT}\" \"echo x\"\n")
+	// 名册件**带只读档**（`--self-test`）⇒ 同行有只读档 ⇒ 不判真跑。
+	gctWrite(t, root, "scripts/gates/selfonly.sh",
+		"#!/usr/bin/env bash\n"+
+			"GATEDIR=\"${REPO_ROOT}/scripts/gates\"\n"+
+			"if false; then bash \"${GATEDIR}/g.py\" --self-test; fi\n"+
+			"echo selfonly-ok\n")
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+	for _, name := range []string{"reader-judge", "selfonly"} {
+		rc, _, errb := gctRun(gctInv(name), root)
+		if rc != 0 {
+			t.Fatalf("只读判据 %q ⇒ 照跑退 0（不受护栏影响），得到 %d · stderr=%s", name, rc, errb)
+		}
 	}
 }

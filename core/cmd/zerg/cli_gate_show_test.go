@@ -293,3 +293,56 @@ func treeFingerprint(t *testing.T, root string) string {
 	sum := sha256.Sum256([]byte(strings.Join(entries, "\n")))
 	return hex.EncodeToString(sum[:])
 }
+
+// TestGateShowZeroHitDefaultFaceGivesCandidates —— ★ 缺口 `GAP-20261005-46`（2026-10-05 · P2）：
+// `zerg gate show <零命中名>` 的**默认面**不再黑箱。
+//
+// 病（上一路实测）：默认面零命中时只印脚本那一行 `✗ 步骤名里没有匹配 X 的`（无候选、无指路），
+// 而**同一条命令**的 `--json` 面与 `gate explain` 都给了「最像的合法输入 + 候选」⇒ 默认面是这条
+// 命令唯一的黑箱出口（`GAP-20260927-280` 只治了「歧义时列候选」那一半）。
+//
+// 一条用例钉三态（走**合成门禁脚本** · 不碰真门禁、不跑任何步骤）：
+//
+//	① 改后（默认面零命中）：rc=2 · stdout 0 字节 · **脚本那一行仍在**（默认面一字不改）
+//	   ＋ 追加「最像的合法输入 + 候选 + 指路（gate ls / gate find）」；
+//	② 正控（不回归）：默认面喂**真步名** ⇒ 输出 == 脚本 `--emit-cmd` 逐字节（命中 ⇒ 一个字节不动）；
+//	③ 负控（哑化 · overlay）：把命令面那两处追加调用去掉 ⇒ 本用例的那几条断言**必红**（回黑箱）。
+//	   ③ 由 `-overlay` 喂哑化件实证（见 `TestGateShowDefaultFaceIsVerbatimEmitCmd` 同族口径）。
+func TestGateShowZeroHitDefaultFaceGivesCandidates(t *testing.T) {
+	root := showRepo(t)
+	rc, out, errb := runZergRepo(t, root, "gate", "show", "__nope__")
+	if rc != 2 {
+		t.Fatalf("零命中默认面 ⇒ 退 2（脚本定的码 · 命令面不翻译），得到 %d · stderr=%s", rc, errb)
+	}
+	if out != "" {
+		t.Errorf("零命中默认面 stdout 必须 0 字节（黑箱口不许被塞东西）：%q", out)
+	}
+	// ① 脚本那一行仍照印（默认面一字不改 —— 命令面只**补**）。
+	if !strings.Contains(errb, "步骤名里没有匹配 __nope__ 的") {
+		t.Errorf("脚本自己那一行必须仍在（默认面一字不改）：%q", errb)
+	}
+	// ① 追加：照 gate explain 方言的「最像的合法输入 + 候选」。
+	if !strings.Contains(errb, "最像的合法输入: ") {
+		t.Errorf("零命中要给「最像的合法输入」（与 gate explain/--json 同方言）：%q", errb)
+	}
+	if !strings.Contains(errb, "  候选：") {
+		t.Errorf("零命中要给「候选」：%q", errb)
+	}
+	// ① 指路：gate ls / gate find。
+	if !strings.Contains(errb, "zerg gate ls") || !strings.Contains(errb, "zerg gate find") {
+		t.Errorf("零命中要给指路（gate ls / gate find）：%q", errb)
+	}
+	// ② 正控（同一用例内）：真步名的默认面 == 脚本 `--emit-cmd` 逐字节（命中 ⇒ 一个字节不动）。
+	for _, name := range []string{"合成步", "gofmt -l core"} {
+		direct, err := exec.Command("bash",
+			filepath.Join(root, "scripts", "gates", "precommit-gates.sh"), "--emit-cmd", name).Output()
+		if err != nil {
+			t.Fatalf("脚本直跑 --emit-cmd %q 失败：%v", name, err)
+		}
+		rc2, out2, errb2 := runZergRepo(t, root, "gate", "show", name)
+		if rc2 != 0 || out2 != string(direct) || errb2 != "" {
+			t.Errorf("正控（真步名 %q）默认面被动过：rc=%d out=%q err=%q（脚本直跑=%q）",
+				name, rc2, out2, errb2, string(direct))
+		}
+	}
+}

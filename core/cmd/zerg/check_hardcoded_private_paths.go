@@ -191,7 +191,7 @@ type hcppHit struct {
 }
 
 // hcppWalk：按 py `os.walk(topdown=True)` 的**确定序**递归 —— 先逐件（字典序），再逐子目录（字典序）。
-func hcppWalk(root, dir string, hits *[]hcppHit) {
+func hcppWalk(root, dir string, hits *[]hcppHit, scanned *int) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -213,6 +213,7 @@ func hcppWalk(root, dir string, hits *[]hcppHit) {
 			continue
 		}
 		rel = filepath.ToSlash(rel)
+		(*scanned)++ // ★ 扫描面件数（空域守卫的分母：全件计入；豁免/二进制只是「不判命中」）
 		if hcppIsTestFile(rel) {
 			continue
 		}
@@ -244,22 +245,23 @@ func hcppWalk(root, dir string, hits *[]hcppHit) {
 		}
 	}
 	for _, d := range subdirs {
-		hcppWalk(root, d, hits)
+		hcppWalk(root, d, hits, scanned)
 	}
 }
 
-// hcppScan：扫全部白名单目录，返回命中（每项 = 相对路径 · 行号 · 行内容）。
-func hcppScan(root string, strict bool) []hcppHit {
+// hcppScan：扫全部白名单目录，返回 (命中, 扫描面件数)。
+func hcppScan(root string, strict bool) ([]hcppHit, int) {
 	var hits []hcppHit
+	scanned := 0
 	for _, sd := range hcppScanDirs {
 		base := filepath.Join(append([]string{root}, strings.Split(sd, "/")...)...)
 		if !hcppIsDir(base) {
 			continue
 		}
-		hcppWalk(root, base, &hits)
+		hcppWalk(root, base, &hits, &scanned)
 	}
 	_ = strict // KNOWN_PENDING 现读为空 ⇒ 两支同值（见件头未覆盖面⑤）
-	return hits
+	return hits, scanned
 }
 
 // hcppRepoRoot：显式参数 → abspath；否则从 cwd 逐级上溯（≤6 层）找带 `core/` 与 `ui/` 的目录；再否则 cwd。
@@ -439,7 +441,13 @@ func hardcodedPrivatePathsGateMain(stdout, stderr io.Writer, argv []string) int 
 	fmt.Fprintf(stdout, "扫描根: %s（跳过构建/运行态目录与二进制文件）\n", strings.Join(hcppScanDirs, "、"))
 	fmt.Fprintf(stdout, "命中词: %s\n", strings.Join(hcppNeedles(), "、"))
 
-	hits := hcppScan(root, strict)
+	hits, scanned := hcppScan(root, strict)
+	// ★ 空集守卫（GAP-20260927-108）：空域 ⇒ fail-closed（扫描面 0 件 ⇒ rc=2，不许把「空转」当绿）
+	if scanned == 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 空域：扫描面（%s）下一件可扫源码都没取到 ⇒ rc=2（不给结论；空转 ≠ 绿）\n",
+			strings.Join(hcppScanDirs, "、"))
+		return 2
+	}
 
 	for _, h := range hits {
 		fmt.Fprintf(stdout, "  ✗ %s:%d:%s\n", h.rel, h.line, h.text)

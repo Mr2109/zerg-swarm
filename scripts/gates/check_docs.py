@@ -119,6 +119,11 @@ def main():
     root = os.path.abspath(args[0]) if args else find_repo_root()
     strict = "--strict" in sys.argv
     files = doc_files(root)
+    # ★ 空集守卫（GAP-20260927-108）：空域 ⇒ fail-closed（扫面 0 件 ⇒ rc=2，不许把「空转」当绿）
+    if not files:
+        print("BLOCKED —— 空域：%s 下扫到 0 个 *.md/*.markdown 文档件 ⇒ rc=2（不给结论；空转 ≠ 绿）" % root,
+              file=sys.stderr)
+        return 2
     errs, warns = [], []
 
     # G1 配对

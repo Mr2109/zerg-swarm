@@ -25,6 +25,7 @@ func adeFix(t *testing.T, receipts map[string]map[string]any) (string, string) {
 	matrix := map[string]any{"cases": []any{
 		map[string]any{"command": "gate run --fast"},
 		map[string]any{"command": "gate ls"},
+		map[string]any{"command": "dev edit"},
 	}}
 	mb, _ := json.Marshal(matrix)
 	if err := os.WriteFile(filepath.Join(td, "cli-matrix.json"), mb, 0o644); err != nil {
@@ -42,7 +43,27 @@ func adeFix(t *testing.T, receipts map[string]map[string]any) (string, string) {
 			}
 		}
 	}
+	// 件级账夹具（R5 上了判 ⇒ 夹具**必须**自带一件，✗ 不许落到默认状态目录 —— 否则测试不 hermetic）。
+	if err := os.WriteFile(filepath.Join(root, "ledger.jsonl"),
+		[]byte("{\"at\":\"2026-09-19T00:00:00+08:00\",\"event\":\"edit\",\"file\":\"core/x.go\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return root, rd
+}
+
+// adeWriteLedger —— 覆写夹具件级账（R5 各格用；一行一条 JSONL，空串跳过）。
+func adeWriteLedger(t *testing.T, root string, rows []string) {
+	t.Helper()
+	var b strings.Builder
+	for _, r := range rows {
+		if r == "" {
+			continue
+		}
+		b.WriteString(r + "\n")
+	}
+	if err := os.WriteFile(filepath.Join(root, "ledger.jsonl"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // adeGood —— 合规回执模板（与 py `_good()` 同形）。
@@ -59,6 +80,22 @@ func adeGood(rid string, kw map[string]any) map[string]any {
 
 func adeRun(t *testing.T, argv ...string) (int, string, string) {
 	t.Helper()
+	// R5 上了判 ⇒ 夹具一律自带件级账：没显式给 `--ledger` 时按 `--root` 补一件（✗ 不许落到默认状态目录 —— 否则测试不 hermetic）。
+	hasLedger := false
+	for _, a := range argv {
+		if a == "--ledger" || strings.HasPrefix(a, "--ledger=") {
+			hasLedger = true
+		}
+	}
+	if !hasLedger {
+		root := "."
+		for i, a := range argv {
+			if a == "--root" && i+1 < len(argv) {
+				root = argv[i+1]
+			}
+		}
+		argv = append(argv, "--ledger", filepath.Join(root, "ledger.jsonl"))
+	}
 	var out, errb bytes.Buffer
 	rc := aidirecteditsGateMain(&out, &errb, argv)
 	return rc, out.String(), errb.String()
@@ -152,6 +189,72 @@ func TestCheckAiDirectEditsGatePort(t *testing.T) {
 		t.Fatalf("取不到输入失败：得 rc=%d out=%q", rcMiss, outMiss)
 	}
 
+	// ── R5a（假绿绕行 · GAP-20260927-81）：手改后补一条含任意 zerg 调用的回执 ⇒ rc=1 ──
+	rootR5a, rdR5a := adeFix(t, map[string]map[string]any{
+		"R-20260920T100000.json": adeGood("R-20260920T100000", map[string]any{
+			"created_at": "2026-09-20T10:00:00+08:00", "evidence": []any{"zerg dev edit --proposal DEV-1"}}),
+		"R-20260920T120000.json": adeGood("R-20260920T120000", map[string]any{
+			"created_at": "2026-09-20T12:00:00+08:00", "evidence": []any{"zerg gate ls"}}),
+	})
+	adeWriteLedger(t, rootR5a, []string{`{"at":"2026-09-20T09:00:00+08:00","event":"edit","file":"core/x.go"}`})
+	rcR5a, outR5a, _ := adeRun(t, "--root", rootR5a, "--dir", rdR5a)
+	if rcR5a != 1 || !strings.Contains(outR5a, "R5a") {
+		t.Fatalf("负控-R5a 失败：得 rc=%d out=%q", rcR5a, outR5a)
+	}
+	if rcR5a == rcGreen {
+		t.Fatalf("成对断言失败：R5a rc=%d 与正控 rc=%d 同码 ⇒ 假绿绕行未被拦", rcR5a, rcGreen)
+	}
+
+	// ── R5b（覆盖自证 · 漏）：件级账最新写轮晚于最新回执 ⇒ rc=2（不是绿）──────────
+	rootR5b, rdR5b := adeFix(t, map[string]map[string]any{
+		"R-20260920T100100.json": adeGood("R-20260920T100100", map[string]any{
+			"created_at": "2026-09-20T10:00:00+08:00", "evidence": []any{"zerg dev edit --proposal DEV-1"}}),
+	})
+	adeWriteLedger(t, rootR5b, []string{
+		`{"at":"2026-09-20T09:00:00+08:00","event":"edit","file":"core/x.go"}`,
+		`{"at":"2026-09-20T12:00:00+08:00","event":"edit","file":"core/y.go"}`,
+	})
+	rcR5b, outR5b, _ := adeRun(t, "--root", rootR5b, "--dir", rdR5b)
+	if rcR5b != 2 || !strings.Contains(outR5b, "R5b") {
+		t.Fatalf("负控-R5b 失败：得 rc=%d out=%q", rcR5b, outR5b)
+	}
+
+	// ── R5 正控：写轮在轮窗内 + sibling 行不上判 ⇒ rc=0 ────────────────────
+	rootR5g, rdR5g := adeFix(t, map[string]map[string]any{
+		"R-20260920T100200.json": adeGood("R-20260920T100200", map[string]any{
+			"created_at": "2026-09-20T10:00:00+08:00", "evidence": []any{"zerg dev edit --proposal DEV-1"}}),
+	})
+	adeWriteLedger(t, rootR5g, []string{
+		`{"at":"2026-09-20T09:00:00+08:00","event":"edit","file":"core/x.go"}`,
+		`{"at":"2026-09-21T00:00:00+08:00","event":"edit","file":"docs/a.md","sibling_repo":"Zerg-内部文档"}`,
+	})
+	rcR5g, outR5g, _ := adeRun(t, "--root", rootR5g, "--dir", rdR5g)
+	if rcR5g != 0 || !strings.Contains(outR5g, "R5 轮级账 ⟷ 件级账双向对账 ✓") {
+		t.Fatalf("R5 正控失败：得 rc=%d out=%q", rcR5g, outR5g)
+	}
+
+	// ── R5 不误判：回执早于件级账最早一行 ⇒ R5a 不上判，但 R5b 仍 rc=2（真仓首件即此态）──
+	rootR5s, rdR5s := adeFix(t, map[string]map[string]any{
+		"R-20260919T235900.json": adeGood("R-20260919T235900", map[string]any{
+			"created_at": "2026-09-19T23:59:00+08:00"}),
+	})
+	adeWriteLedger(t, rootR5s, []string{`{"at":"2026-09-20T09:00:00+08:00","event":"edit","file":"core/x.go"}`})
+	rcR5s, outR5s, _ := adeRun(t, "--root", rootR5s, "--dir", rdR5s)
+	if rcR5s != 2 || strings.Contains(outR5s, "R5a") {
+		t.Fatalf("R5 不上判格失败：得 rc=%d out=%q（应 rc=2 且无 R5a）", rcR5s, outR5s)
+	}
+
+	// ── R5 不上判 + 空件级账 ⇒ rc=0（空账不算「更晚的写轮」）────────────────
+	rootR5e, rdR5e := adeFix(t, map[string]map[string]any{
+		"R-20260919T230000.json": adeGood("R-20260919T230000", map[string]any{
+			"created_at": "2026-09-19T23:00:00+08:00"}),
+	})
+	adeWriteLedger(t, rootR5e, nil)
+	rcR5e, outR5e, _ := adeRun(t, "--root", rootR5e, "--dir", rdR5e)
+	if rcR5e != 0 {
+		t.Fatalf("空件级账格失败：得 rc=%d out=%q（应 0）", rcR5e, outR5e)
+	}
+
 	// ── 多页定序：两页坏件 ⇒ 逐条按件名字典序（R-…009 先于 R-…010） ──────
 	root8, rd8 := adeFix(t, map[string]map[string]any{
 		"R-20260920T000010.json": adeGood("R-20260920T000010",
@@ -184,13 +287,13 @@ func TestCheckAiDirectEditsGatePort(t *testing.T) {
 
 	// ── `-h/--help` ⇒ rc=0 且出 usage（与 py argparse 逐字档） ───────────
 	rcH, outH, _ := adeRun(t, "-h")
-	if rcH != 0 || !strings.Contains(outH, "usage: check-ai-direct-edits.py [-h] [--root ROOT] [--dir DIR] [--self-test]") {
+	if rcH != 0 || !strings.Contains(outH, "usage: check-ai-direct-edits.py [-h] [--root ROOT] [--dir DIR] [--ledger LEDGER] [--self-test]") {
 		t.Fatalf("-h 失败：得 rc=%d out=%q", rcH, outH)
 	}
 
-	// ── --self-test 三档 1 正控 + 5 负控 + 2 空转自身必须全过（防恒绿/恒红） ─
+	// ── --self-test 三档 3 正控 + 10 负控 + 2 空转自身必须全过（防恒绿/恒红） ─
 	rcST, outST, _ := adeRun(t, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "门⑬ 自检全过") {
+	if rcST != 0 || !strings.Contains(outST, "门⑬ 自检全过：3 正控 + 10 负控 + 2 空转（成对负控）") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%q", rcST, outST)
 	}
 }

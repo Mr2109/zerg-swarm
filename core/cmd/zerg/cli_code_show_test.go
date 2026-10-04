@@ -8,6 +8,8 @@ package main_test
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -180,5 +182,77 @@ func TestCodeShow_WindowClampsAtFileEdges(t *testing.T) {
 	}
 	if rc, _, _ = execCase(t, bin, root, "code", "show", "aaa/three.txt:4"); rc != 2 {
 		t.Errorf("末行 +1 ⇒ 退 2，得到 %d", rc)
+	}
+}
+
+// execCaseAt —— 起真二进制、**指定 cwd**、且显式剔掉 `ZERG_REPO` / `ZERG_REPO_ROOT`
+// （探「根解析认 cwd」那条路；`execCase` 钉的是显式优先那一档，两者成对）。
+func execCaseAt(t *testing.T, bin, dir string, argv ...string) (int, string, string) {
+	t.Helper()
+	cmd := exec.Command(bin, argv...)
+	env := make([]string, 0, len(os.Environ()))
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "ZERG_REPO=") || strings.HasPrefix(kv, "ZERG_REPO_ROOT=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	cmd.Env = env
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader("")
+	var out, errb strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	rc := 0
+	if err := cmd.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			rc = ee.ExitCode()
+		} else {
+			t.Fatalf("起不了 bin/zerg：%v", err)
+		}
+	}
+	return rc, out.String(), errb.String()
+}
+
+// TestCodeShow_FindSiblingRepoCwd —— 缺口 `GAP-20260928-05` 的真二进制判据：`code show` / `code find`
+// 的根解析**认 cwd 的并排仓**（守卫按 cwd 拦手搓形态、把正门当替身 ⇒ 替身必须跟着 cwd 走）。
+//
+// 成对三态（② 是正控 —— 只有「换根」真生效才可能绿）：
+//
+//	① cwd = 一棵**没有 `.git`** 的临时目录 ⇒ 不是并排仓 ⇒ 根回落主仓 ⇒ 退 1「件不在」；
+//	② 同目录放上 `.git` ⇒ 根切到它 ⇒ 同一条命令退 0 且读到那一行；
+//	③ 同一条 cwd 下 `code find … --path <相对目录>` 也退 0（缺口点名的另一条替身同样认 cwd）。
+//
+// ⇒ 去掉修复（`codeRepoRoot` 落回 `repoRoot()`）时 ② 必塌回 ① 的退 1（这就是这颗牙）。
+func TestCodeShow_FindSiblingRepoCwd(t *testing.T) {
+	bin := zergBinary(t)
+	sib := t.TempDir()
+	mustWrite(t, filepath.Join(sib, "aaa", "ten.txt"), "LINE_a\nLINE_b\nneedle_c\nLINE_d\nLINE_e\n")
+
+	// ① 无 `.git` ⇒ 根回落主仓 ⇒ 件不在（退 1）。
+	rc, _, errb := execCaseAt(t, bin, sib, "code", "show", "aaa/ten.txt:3")
+	if rc != 1 {
+		t.Fatalf("cwd 无 `.git` ⇒ 应回落主仓退 1，得到 %d · stderr=%s", rc, errb)
+	}
+
+	// ② 放上 `.git`（目录形态即够 —— 本判据只认「最近的含 .git 的祖先」）⇒ 根切到并排仓。
+	if err := os.Mkdir(filepath.Join(sib, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rc, out, errb := execCaseAt(t, bin, sib, "code", "show", "aaa/ten.txt:3")
+	if rc != 0 {
+		t.Fatalf("并排仓 cwd（有 `.git`）⇒ 根应切到它并退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "needle_c") {
+		t.Errorf("没从并排仓读到那一行：%q", out)
+	}
+
+	// ③ 缺口点名的另一条替身 `code find` 在同一条 cwd 下也认它。
+	rc, out, errb = execCaseAt(t, bin, sib, "code", "find", "needle", "--path", "aaa", "--json", "path")
+	if rc != 0 {
+		t.Fatalf("`code find` 在同一条 cwd 下应退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "aaa/ten.txt") {
+		t.Errorf("`code find` 没扫到并排仓那件：%q", out)
 	}
 }

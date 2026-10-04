@@ -27,9 +27,8 @@
 用法：
     python3 scripts/gates/check-registry-key-unique.py [--root <dir>] [--json] [--self-test]
 
-★ 接线状态：**未接线**（缺口 `GAP-20260926-175` · 本轮为仓外候件落地 · 接线=
-  动步骤表 `precommit-gates.sh` ＋ `FAST_STEPS` ＋ 冻结计数 ＋ 公开标记表/两器排除，
-  属独立一笔，须由持重编权并获接线授权的一路落）。本件自身 `--self-test` 已实跑 rc=0。
+★ 接线状态：**已挂门106**（`scripts/gates/precommit-gates.sh` 的 `add_step` · tri-report 只报告档）·
+  2026-10-05 现读更正 —— 原「未接线 / 仓外候件」措辞已过期（接线早已落）。本件自身 `--self-test` 已实跑 rc=0。
 """
 import argparse
 import json
@@ -75,9 +74,10 @@ def key_field(entries):
 
 
 def scan(root):
-    """回 (dups, skipped, bad)。dups=[(file, topkey, field, value, count)]；
-    skipped=[(file, topkey)]；bad=[(file, err)]。"""
-    dups, skipped, bad = [], [], []
+    """回 (dups, skipped, bad, scanned)。dups=[(file, topkey, field, value, count)]；
+    skipped=[(file, topkey)]；bad=[(file, err)]；
+    scanned = 现读的登记件（*.json）件数（= 扫面取到的输入 · 供空集守卫）。"""
+    dups, skipped, bad, scanned = [], [], [], 0
     for sub in SCAN_DIRS:
         d = os.path.join(root, sub)
         if not os.path.isdir(d):
@@ -85,6 +85,7 @@ def scan(root):
         for name in sorted(os.listdir(d)):
             if not name.endswith(".json"):
                 continue
+            scanned += 1
             fpath = os.path.join(d, name)
             obj, err = load_json(fpath)
             if err:
@@ -105,7 +106,7 @@ def scan(root):
                 for val, cnt in sorted(seen.items()):
                     if cnt >= 2:
                         dups.append((os.path.join(sub, name), topkey, field, val, cnt))
-    return dups, skipped, bad
+    return dups, skipped, bad, scanned
 
 
 def run(root, as_json):
@@ -118,7 +119,16 @@ def run(root, as_json):
             print("BLOCKED —— 扫面根不存在（缺 scripts/gates 与 core/internal/contract）⇒ rc=2，不给结论",
                   file=sys.stderr)
         return 2
-    dups, skipped, bad = scan(root)
+    dups, skipped, bad, scanned = scan(root)
+    # ★ 空集守卫（GAP-20260927-108）：空域 ⇒ fail-closed（扫面 0 件登记件 ⇒ rc=2，不许把「空转」当绿）
+    if not scanned:
+        if as_json:
+            print(json.dumps({"rc": 2, "error": "空域：%s 下 0 个 *.json 登记件（取不到输入 ⇒ 空转 ≠ 零重复）"
+                              % "、".join(SCAN_DIRS)}, ensure_ascii=False))
+        else:
+            print("BLOCKED —— 空域：扫面（%s）下 0 个 *.json 登记件（取不到输入）⇒ rc=2 不给结论（空转 ≠ 零重复）"
+                  % "、".join(SCAN_DIRS), file=sys.stderr)
+        return 2
     if bad:
         if as_json:
             print(json.dumps({"rc": 2, "bad": [{"file": f, "err": e} for f, e in bad]},
@@ -159,7 +169,7 @@ def self_test():
         open(os.path.join(td, "scripts/gates/x-registry.json"), "w", encoding="utf-8").write(json.dumps(
             {"schema": "s", "entries": [{"id": "a", "p": 1}, {"id": "b"}, {"id": "a"}]},
             ensure_ascii=False))
-        dups, skipped, bad = scan(td)
+        dups, skipped, bad, _scanned = scan(td)
         if bad or len(dups) != 1 or dups[0][3] != "a" or dups[0][4] != 2:
             print("  ✗ 正控失败：期望 a 出现 2 次，实得 %r / bad=%r" % (dups, bad))
             ok = False
@@ -183,7 +193,17 @@ def self_test():
         if run(td, False) != 2:
             print("  ✗ 负控失败：非法 JSON 应回 2")
             ok = False
-    print("自检 %s（4 格）" % ("PASS" if ok else "FAIL"))
+        # 负控四：空域（扫面 0 件 *.json 登记件）⇒ rc=2（空集守卫 · GAP-20260927-108）
+        empty_root = os.path.join(td, "empty-root")
+        os.makedirs(os.path.join(empty_root, "scripts/gates"))
+        os.makedirs(os.path.join(empty_root, "core/internal/contract"))
+        if scan(empty_root)[3] != 0:
+            print("  ✗ 负控失败：空域应得 0 件登记件")
+            ok = False
+        if run(empty_root, False) != 2:
+            print("  ✗ 负控失败：空域（0 件登记件）应回 2（空集守卫）")
+            ok = False
+    print("自检 %s（5 格）" % ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
 
 
