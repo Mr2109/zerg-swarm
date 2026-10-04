@@ -111,6 +111,7 @@ func cmdGateBench(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 建不了日志目录（%v）\n", progName, err)
 		return exitFail
 	}
+	defer os.RemoveAll(logDir) // ★ 自回收（缺口 `GAP-20261001-58`：本目录是**内部诊断日志**、不进任何输出契约 ⇒ 函数返回即清，TMPDIR 前后 delta=0；只在自建成功这一支挂，失败支已 return 无目录可删）
 	fmt.Fprintf(stderr, "%s: 门禁身份 %s（%d 字节 · 现算）· 档位 %s · 重复 %d 趟\n",
 		progName, idSHA[:16]+"…", idBytes, label, repeat)
 

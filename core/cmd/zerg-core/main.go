@@ -193,6 +193,9 @@ func main() {
 
 	// 控制端点（加载/卸载/退出主控）
 	ctrl := api.NewControlHandlers(cfg.Auth.Token, cfg) // 3a：本机角色退役
+	// GAP-20260925-42：让控制面与主控同源 —— `POST /api/config/reload` 换掉
+	//   handlers.Config 的那一刻，孵卵/卸载面即看到新条目（此前 ctrl 持构造时快照 ⇒ 404）。
+	ctrl.SetConfigSource(func() *config.FleetConfig { return handlers.Config })
 	r.Post("/api/control/load", ctrl.LoadHandler)
 	r.Post("/api/control/unload", ctrl.UnloadHandler)
 	r.Post("/api/control/stop", ctrl.StopHandler)

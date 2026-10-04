@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -110,9 +111,76 @@ func TestCheckFlagRegistryParityGatePort(t *testing.T) {
 		t.Fatalf("-h 失败：得 rc=%d out=%q", rcHelp, outHelp)
 	}
 
-	// ── `--self-test` 十格自身必须全过（防恒绿/恒红） ─────────────────────
+	// ── `--self-test` 十二格自身必须全过（防恒绿/恒红） ───────────────────
 	rcST, outST, _ := frpRunEntry(t, "--self-test")
 	if rcST != 0 || !strings.Contains(outST, "失败 0 条") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%q", rcST, outST)
+	}
+	// ── 面④ 读者面（按命令 · 缺口账 `GAP-20260927-325`）在报告里可见（报告档 · 不进退码） ──
+	if !strings.Contains(outST, "④读者面") {
+		t.Fatalf("--self-test 输出里没有读者面两格：%q", outST)
+	}
+}
+
+// frpFindRepoRoot —— 从 cwd 上溯找仓根（判据：`scripts/gates/check-flag-registry-parity.py` 在盘）。
+func frpFindRepoRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := wd
+	for i := 0; i < 8; i++ {
+		if _, err := os.Stat(filepath.Join(d, "scripts", "gates", "check-flag-registry-parity.py")); err == nil {
+			return d
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	t.Fatalf("上溯找不到仓根（从 %s）", wd)
+	return ""
+}
+
+// TestFlagRegistryParityGoPyDifferential —— **Go 半 ⟷ py 半 逐字节对拍**（缺口账 `GAP-20260927-325`
+// 的「只改一边 ⇒ 对拍必须 FAIL」那道保险）。四态：`--self-test` / `--list-rules` / `-h` / 未知旗标。
+// 解释器钉 `/usr/bin/python3`（argparse 帮助正文随解释器大版本变 —— 见 `GAP-20261002-07`）。
+// ★ 本测试**不需要真仓**（`--self-test` 走合成夹具；`--list-rules`/`-h` 是常量面）⇒ 两半搬同一份输入。
+func TestFlagRegistryParityGoPyDifferential(t *testing.T) {
+	root := frpFindRepoRoot(t)
+	py := filepath.Join(root, "scripts", "gates", "check-flag-registry-parity.py")
+	python := "/usr/bin/python3"
+	if _, err := os.Stat(python); err != nil {
+		t.Fatalf("钉住的解释器不在盘：%s（对拍要有确定输入面，不许换解释器）", python)
+	}
+	// ★ 真跑面（带 `--root` 夹具）：**读者面（面④）只在这一路出现** ⇒ 不加它 ⇒ 对拍治不到新腿。
+	fx := frpMkFixture(filepath.Join(t.TempDir(), "diffroot"))
+	cases := [][]string{{"--self-test"}, {"--list-rules"}, {"-h"}, {"--no-such-flag"},
+		{"--root", fx}, {"--root", fx, "--json"}}
+	for _, argv := range cases {
+		var gOut, gErr bytes.Buffer
+		grc := flagRegistryParityGateMain(&gOut, &gErr, argv)
+
+		cmd := exec.Command(python, append([]string{py}, argv...)...)
+		var pOut, pErr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &pOut, &pErr
+		err := cmd.Run()
+		prc := 0
+		if ee, ok := err.(*exec.ExitError); ok {
+			prc = ee.ExitCode()
+		} else if err != nil {
+			t.Fatalf("py 半起不来 argv=%v：%v", argv, err)
+		}
+		if grc != prc {
+			t.Errorf("对拍 FAIL（rc）argv=%v：go=%d py=%d", argv, grc, prc)
+		}
+		if gOut.String() != pOut.String() {
+			t.Errorf("对拍 FAIL（stdout）argv=%v：\n--go--\n%s\n--py--\n%s", argv, gOut.String(), pOut.String())
+		}
+		if gErr.String() != pErr.String() {
+			t.Errorf("对拍 FAIL（stderr）argv=%v：\n--go--\n%s\n--py--\n%s", argv, gErr.String(), pErr.String())
+		}
 	}
 }

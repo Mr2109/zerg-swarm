@@ -52,13 +52,13 @@ func loadDeviceMaxWorkers(workDir string) (*DeviceAwareConfig, error) {
 	return &cfg, nil
 }
 
-// resolveByDevice — 按 hostname 匹配设备配置，返回 max_workers
-func resolveByDevice(devices []DeviceConfig, hostname string, fallback map[string]int, defaultVal int) int {
+// resolveByDevice — 按 hostname 匹配设备配置，返回 (max_workers, 是否文件显式给值)（GAP-20260927-298）
+func resolveByDevice(devices []DeviceConfig, hostname string, fallback map[string]int, defaultVal int) (int, bool) {
 	// 精确匹配
 	for _, d := range devices {
 		if strings.EqualFold(d.Hostname, hostname) {
 			if d.MaxWorkers != nil {
-				return *d.MaxWorkers
+				return *d.MaxWorkers, true
 			}
 		}
 	}
@@ -67,12 +67,12 @@ func resolveByDevice(devices []DeviceConfig, hostname string, fallback map[strin
 		if strings.Contains(strings.ToLower(hostname), strings.ToLower(d.Hostname)) ||
 			strings.Contains(strings.ToLower(d.Hostname), strings.ToLower(hostname)) {
 			if d.MaxWorkers != nil {
-				return *d.MaxWorkers
+				return *d.MaxWorkers, true
 			}
 		}
 	}
 	// 回退到内置默认值
-	return resolveByHostname(fallback, defaultVal)
+	return resolveByHostname(fallback, defaultVal), false
 }
 
 // resolveByHostname — 用内置默认映射解析 max_workers

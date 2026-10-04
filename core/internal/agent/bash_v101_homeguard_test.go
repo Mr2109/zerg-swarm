@@ -70,8 +70,16 @@ func TestBashRmTargetGuard_allowsSafeDeletions(t *testing.T) {
 			t.Errorf("不应拦截: %q → %v", c, err)
 		}
 	}
-	// 引用自身文件路径(非家目录)也必须放行
-	self := filepath.Join(os.TempDir(), "zerg-homeguard-selfcheck")
+	// 引用自身文件路径(非家目录)也必须放行。
+	// 缺口 GAP-20260928-63（真修点 · 本件）：本断言的**前提**是「TMPDIR 在家目录外」——
+	// TMPDIR 一旦指到家目录内（如长期存在的 <home>/.hermes/cache/scratch/…），家目录守卫
+	// **按设计**拒绝 rm ⇒ 这里会**假红**（与源码无关，本夜已实际把人带偏一次）。⇒ 先判前提：
+	// 不满足就**判不了**（Skip + 逐字提示），不把它报成红 —— 正是本缺口 want ①「不给结论而不是红」。
+	tmp := os.TempDir()
+	if home != "" && (tmp == home || strings.HasPrefix(tmp, home+string(os.PathSeparator))) {
+		t.Skipf("本测试要求 TMPDIR 在家目录外；当前 TMPDIR=%s 落在家目录内 ⇒ 判不了（不给结论），不是红（缺口 GAP-20260928-63）", tmp)
+	}
+	self := filepath.Join(tmp, "zerg-homeguard-selfcheck")
 	os.WriteFile(self, []byte("x"), 0o644)
 	defer os.Remove(self)
 	if err := bashRmTargetGuard("rm -f " + self); err != nil {

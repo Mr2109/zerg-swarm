@@ -434,6 +434,11 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	row := map[string]string{
 		"proposal": proposalID, "file": fileRel, "mode": mode,
 		"before_sha256": shortSHA(beforeSHA), "after_sha256": shortSHA(afterSHA),
+		// ★ GAP-20260927-239：**回执直出全 64 位 sha256** —— 两枚短 sha（16 位）只够判「变了没」，
+		//   定点复核（对拍某一份候件 / 核回滚点）还得另跑一次哈希工具。这里把全 64 位放在**内部行键**
+		//   （`_full` 后缀 · **不进 `devEditFields`** ⇒ `--json` 点名不到它 = 契约面一字不动 ✗），
+		//   只由下面的人面（计划面 `emitDevEditPlan` / 真写面 stderr）直接打出来。
+		"before_sha256_full": beforeSHA, "after_sha256_full": afterSHA,
 		"before_bytes": fmt.Sprintf("%d", len(before)), "after_bytes": fmt.Sprintf("%d", len(after)),
 		"audit_path": auditPath, "out_path": outPath, "syntax": syntaxJudg,
 	}
@@ -484,6 +489,15 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		//   `approvalScopeCovers` **同源**（读同一枚批准件 · 不另算）；只在这一支（干跑）落，真写档
 		//   一字不加（真写档给出这些名字 ⇒ 写前拒 · 见 `devEditDryRunOnlyFields`）。
 		row["approval_scope_hit"] = appr.ScopeHit
+		// ★ GAP-20260927-441（2026-10-04 本枚）：**批准面外**这一档 —— 批准件在盘（读得动）但
+		//   `devEditLoadApproval` 判「不算批准」（范围不含本件 / 未签名 / 工具不符 / 件读不动）时，
+		//   干跑此前只在 `批准件` 那一行的括号里提示「（不算批准）」却仍**退 0** ⇒ 干跑绿 ≠ 可落
+		//   （同一输入真写退 2）。这里把它标进 row：计划面直出「本件不在批准面」一整行，下面再把
+		//   判决**升级为可判定的退码**（退 2 · 与「钩子必拦 / 缺确认档」同档 · 不新立码）。
+		//   ★ 「无件」一档（`!appr.Present`）**不在此列** —— 那是「先看后签」的正路，仍退 0。
+		if appr.Present && !appr.OK {
+			row["approval_outside"] = "本件**不在批准面**（批准件在盘但不算批准）：" + appr.Judg
+		}
 		// ★ `GAP-20260928-155`（2026-09-28 · 本枚）：**差异正文进机器面** —— 人面那一块
 		//   （`emitDevEditDiffBody`）已可用，可机器面此前只有行号面 + `±N` ⇒ 脚本切不出「到底改了什么」。
 		//   两格都取自**同一趟对齐 / 同一处 hunk 边界**（上面那句 `devEditDiffBodyOf(align)` 的 `bodyDiff`）
@@ -497,6 +511,17 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		//   ★ 两格只在**干跑档**填（真写档一格不给 ⇒ 写前拒 · 见 `devEditDryRunOnlyFields`）。
 		row["diff_body"] = strings.Join(bodyDiff.Lines, "\n")
 		row["diff_body_truncated"] = devEditDiffBodyTruncFlag(bodyDiff)
+		// ★ GAP-20260928-160（残留第三处）：**截断 / 粗档进 `warnings[]`** —— 此前这两档只在
+		//   `diff_body_truncated` 这一格里自报（脚本不点名那一格就看不见「正文没给全」⇒ 把截断读成完整）。
+		//   口径与「影响面摘要读不到」那几条同款：**是事实才报**（未截断 / 逐行无差 ⇒ 一条不报，不装）。
+		if bodyDiff.More > 0 {
+			inv.warnf("差异正文**截断**：只给了前 %d 条，还有 %d 条未列（正文面预算 %d 字节 —— 只给前面这些，不说成完整 ✗）；要全量差异请在本机对这两版跑 `diff -u`",
+				len(bodyDiff.Lines), bodyDiff.More, devEditDiffBodyBudget)
+		}
+		if bodyDiff.Coarse {
+			inv.warnf("差异正文**粗档不给**（老行×新行 超预算 %d 格 ⇒ 逐行对齐无精确值 ⇒ 正文一格不给）—— `diff_body` 为空**不是「没有差异」**，别读成「没改动」",
+				devEditDiffCellBudget)
+		}
 		// ★ 2026-09-29（`GAP-20260927-261` · 本枚）：**红契约进机器面**。上面那个
 		//   `impactDryRunSummaryOf` 已经把层行算好（`summary.Layers` —— 人面那三行也是从它出的）
 		//   ⇒ 这里**不另跑一遍、不解析散文** ✗，只把同一趟层行里的**闭集字段 `red`** 抽出来。
@@ -546,6 +571,17 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		row["result"] = "planned"
 		if rc := emitDevEditPlan(stdout, stderr, row, prop, beforeMissing, inv, false, hook, lineDiff, bodyDiff); rc != exitOK {
 			return rc
+		}
+		// ★ GAP-20260927-441：**批准面外 ⇒ 干跑不给放行判决**（退 2 · 与「钩子必拦」同档 · 不新立码）。
+		//   件与审计一个字节不动（只改判决），但要落本件必须先扩 scope —— 逐字给人下一步。
+		if appr.Present && !appr.OK {
+			inv.setErr("usage", "approval_outside", "干跑：批准件不含本次要改的件 ⇒ 真写会被拒")
+			fmt.Fprintf(stderr, "%s: **本件不在批准面 ⇒ 干跑退 2**（批准件在盘但不算批准）：%s\n", progName, appr.Judg)
+			fmt.Fprintf(stderr, "%s: 目标件一个字节未动：%s（审计也未落 —— 没写就不记账）\n", progName, outPath)
+			fmt.Fprintf(stderr, "%s: 要落本件先扩 scope：%s approve new --tool %s --scope %s --by <人名> --note <理由>\n",
+				progName, progName, devEditApprovalTool, fileRel)
+			fmt.Fprintf(stderr, "error.kind=usage · detail=approval_outside · retryable=false · remedy=fix_usage\n")
+			return exitUsage
 		}
 		// 钩子判决「必拦」⇒ **这一步没通过钩子**：干跑不给放行判决（退码 2 · 与既有的
 		//「缺确认档 ⇒ 2」同一档，不新立码）。**真写前置一字未动** ⇒ 这一条**只落在干跑上**
@@ -744,6 +780,9 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	// ★ 逐行 diff（缺口 #1）：真写这一档同样给「改了哪几行」——走 **stderr**（人面），
 	// stdout 那一行（逐字四格记录）**一个字节不动** ✗（脚本按位切它）。
 	emitDevEditLineDiff(stderr, "", lineDiff)
+	// ★ GAP-20260927-239：真写这一档也把**全 64 位 sha256** 打到 stderr 人面（stdout 四格**一个字节不动** ✗
+	//   —— 脚本按位切它）；`before`/`after` 就在手（同一趟 sha256Of，不重读盘、不另算）。
+	fmt.Fprintf(stderr, "%s: 前后 sha256（全 64 位）: %s → %s\n", progName, beforeSHA, afterSHA)
 	fmt.Fprintf(stderr, "%s: 已改 %s（提案 %s · 审计 %s）\n", progName, outPath, proposalID, auditPath)
 	// ★ GAP-20260927-410：`dev edit` 只写源码、不触发重编 ⇒ Go 件改完与 `bin/` 制品分离
 	//   （新行为在进程内真跑得了、`./bin/zerg` 却还是旧的）。此处**只出声、不改退码**（零行为改动）：
@@ -873,6 +912,11 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 	fmt.Fprintf(stdout, "  目标件   : %s%s\n", row["file"], ifStr(beforeMissing, "（**新建**：写前不存在）", ""))
 	fmt.Fprintf(stdout, "  内容来源 : %s（mode=%s）\n", ifStr(row["mode"] == "from", "--from <件>", "--replace <件>"), row["mode"])
 	fmt.Fprintf(stdout, "  前后 sha : %s → %s\n", row["before_sha256"], row["after_sha256"])
+	// ★ GAP-20260927-239：**全 64 位 sha256 直出回执** —— 上面那行是 16 位短 sha（够判「变了没」），
+	//   定点复核（对拍候件 / 核回滚点）要的 64 位在此一次给全，省掉「另跑一次哈希工具」。
+	if f := row["before_sha256_full"]; f != "" {
+		fmt.Fprintf(stdout, "  前后 sha256（全 64）: %s → %s\n", f, row["after_sha256_full"])
+	}
 	fmt.Fprintf(stdout, "  前后字节 : %s → %s\n", row["before_bytes"], row["after_bytes"])
 	emitDevEditLineDiff(stdout, "  ", lineDiff)
 	// ★ `GAP-20260928-133`：**差异正文面**（干跑档独有 —— 真写档不走本函数；`--json` 面不掺人面正文）。
@@ -881,6 +925,9 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 	}
 	fmt.Fprintf(stdout, "  审计落点 : %s（一行一事件 · 追加只写 · **写不进审计就不改件**）\n", row["audit_path"])
 	fmt.Fprintf(stdout, "  批准件   : %s —— %s\n", row["approval_path"], row["approval"])
+	if g := row["approval_outside"]; g != "" {
+		fmt.Fprintf(stdout, "  批准面   : %s\n", g)
+	}
 	fmt.Fprintf(stdout, "  语法自检 : %s%s\n", row["syntax"], ifStr(row["syntax"] == "不过", " —— **真写会被拒**（`.py`=ast.parse / `.sh`=bash -n / `.json`·`.yaml`=Go 侧解析；先改内容）", ""))
 	fmt.Fprintf(stdout, "  影响面钩子: %s（类=%s · §4.3 分档 —— 判据见 stderr 的 `impact_hook` 那两行）\n", hook.Tier, hook.Class)
 	fmt.Fprintf(stdout, "  回滚路径 : %s（提案的退点件 —— **退建议见 stderr 那一块**：判据 = 回到 before_sha256；`git revert` 不算退点）\n", orDash(prop.Rollback))
@@ -888,6 +935,8 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 		fmt.Fprintf(stdout, "  未执行   : D3 档确认不齐 —— 要 `--confirm=%s --yes` 同时到（fail-closed：从不提问）\n", planHost())
 	} else if hook.Tier == impactHookTierBlock {
 		fmt.Fprintf(stdout, "  未执行   : 钩子判决「必拦」（类=%s）⇒ 干跑退 2 · **真写前置一字未动**（差口见 stderr 那一块）\n", hook.Class)
+	} else if row["approval_outside"] != "" {
+		fmt.Fprintf(stdout, "  未执行   : 本件**不在批准面**（批准件在盘但不含本件）⇒ 干跑退 2 · **真写前置一字未动**（先扩 scope 再落）\n")
 	}
 	if inv.jsonGiven {
 		// ★ 2026-09-27（本枚）：投影表传 `inv.fields`（**用户点名的那几个**）而不是 `devEditFields` ——
@@ -914,6 +963,9 @@ type devEditApproval struct {
 	OK   bool
 	Judg string // 判决（拒因逐字给出 —— 错误文案要给下一步 · K14）
 	Appr string // 批准人（验过时才有）
+	// ★ GAP-20260927-441（2026-10-04 本枚）：**批准件在不在盘** —— 「无件」与「件在盘但不算批准」
+	//   是两档：前者是「先看后签」正路（干跑仍放行）；后者是**批准面外**（干跑要拦 —— 见 cmdDevEdit）。
+	Present bool
 	// ★ GAP-20260927-339（2026-10-04 本枚）：`approval_scope_hit` 这一格的取值 —— 批准件的
 	//   `scope` **覆不覆盖**本次要改的件（与 `dev edit` 真写闸那一枚 `approvalScopeCovers`
 	//   **同源**，不另算一套判据）。三态（`--json` 里直读 · 脚本据此切「该不该先扩 scope」）：
@@ -945,6 +997,7 @@ func devEditLoadApproval(inv *invocation, fileRel string) devEditApproval {
 		a.Judg = "无件（真写要一枚人签批准件）"
 		return a
 	}
+	a.Present = true // 件读得动 = 「在盘」；判不算批准是另一档（GAP-20260927-441）
 	var tk approvalTicketFile
 	if err := json.Unmarshal(b, &tk); err != nil {
 		a.Judg = "件读不动（不算批准）：" + err.Error()

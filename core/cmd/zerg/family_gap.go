@@ -132,6 +132,14 @@ type gapRecord struct {
 	VerifyTier string `json:"verify_tier,omitempty"`
 	SolvedAt   string `json:"solved_at,omitempty"`
 	Evidence   string `json:"solved_evidence,omitempty"`
+	// SolvedKind —— 「**销案 ≠ 修**」的机制化（缺口账 `GAP-20260927-249`）：`已解` 此前把
+	// 「**实现完成**」与「**销案**（存量 / 账滞后 / 前提不成立）」两义压进同一格 ⇒ 已解计数
+	// **系统性高估交付量**。本格记**这一类**（闭集三值 `实现` / `销案` / `前提不成立`），由
+	// `zerg gap set-state … --state 已解 --solved-kind <…>` 在真写那一刻填（见 `family_gap_state.go`）。
+	// ★ 兼容：老账**没有这一格** ⇒ 读面缺省作 `未分类`（`gapSolvedKindOf`）；★ **禁改存量行**
+	//   （只在 `set-state` 新写时填）。`omitempty` ⇒ 没填过的行**逐字节不变**（整件重写那一支同此，
+	//   与 `last_verify_rc` / `verify_tier` 那两格同一条纪律）。
+	SolvedKind string `json:"solved_kind,omitempty"`
 	// Notes —— **口径/上下文注**（`zerg gap note` 追加 · 2026-09-26）。落点取定：真源那一行上
 	// **新增一格**（`notes`），一条注 = 一格字符串 `<时刻> · <谁>：<文本>`。
 	// 为什么另开一格而不是塞进 `solved_evidence`：后者是**状态那一维**的证据（由 `verify` 或
@@ -637,7 +645,7 @@ func gapPlanBlock(w io.Writer, title, ledgerPath string, lines int, rec gapRecor
 // 命名与取值口一律照拄同族 `gapShowFields`（`gapShowRow`）—— 不自创第二套。
 var gapListFields = []string{"id", "prio", "impact", "state", "want", "summary",
 	"want_family", "want_action", "want_argv", "symptom", "handmade", "repro_cmd",
-	"fp", "verify_cmd", "found_at", "last_verified_at", "solved_at", "notes", "notes_void", "void_notes",
+	"fp", "verify_cmd", "found_at", "last_verified_at", "solved_at", "solved_kind", "notes", "notes_void", "void_notes",
 	// ★ 本枚（缺口账 `GAP-20260929-38` ① / `GAP-20260929-42` ①）：`--unit`/`--module` 在 `gap ls` 里
 	//   是**收窄轴**（筛得到），而 `--json` 吐不出这两格 ⇒「筛得到吐不出」= 盘点类作业被迫直读真源。
 	//   补两格：取值口与 `gap show`（`gapShowRow`）**同名同源**（件面 `unit` · 模块面 `module`）。
@@ -851,6 +859,9 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 			"found_at":         r.FoundAt,
 			"last_verified_at": r.Verified,
 			"solved_at":        r.SolvedAt,
+			// ★ 本枚（缺口账 `GAP-20260927-249`）：`solved_kind` —— `已解` 的分栏（`实现` / `销案` /
+			//   `前提不成立`；老账缺省 `未分类`，见 `gapSolvedKindOf`）。取值口与 `gap show` 同源。
+			"solved_kind": gapSolvedKindOf(r),
 			// `notes` —— 口径注那一格的**只读回吐**（`zerg gap note` 写的；多条按 `⏎` 连起来，
 			// 与 `verify` 那一路的 `solved_evidence` 同一种收法）。读面**只回吐、不改**。
 			// ★ 2026-09-28：已作废的注**默认不显示**（`gapNotesVisible`）——
@@ -935,6 +946,11 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 	} else {
 		fmt.Fprintf(stdout, "账内 %d 条（筛选后 %d 条）\n", len(led.Recs), len(out))
 	}
+	// ★ 本枚（缺口账 `GAP-20260927-249`）：**报数分栏** —— 筛后那一批里 `已解` 的行按 `solved_kind`
+	//   数出「实现 N / 销案 N / …」。只在**筛后有 ≥1 条 `已解`** 时印 ⇒ 零已解的老查询输出**逐字节不变**。
+	if line, ok := gapSolvedKindSplitLine(out); ok {
+		fmt.Fprintln(stdout, line)
+	}
 	if anyNote {
 		fmt.Fprintf(stdout, "  %s  %s  %s  %s  %s  %s  %s\n", pad("id", idw), pad("prio", priow), pad("impact", imw), pad("state", stw), pad("want", wantw), "摘要", pad("注", notew))
 	} else {
@@ -977,7 +993,7 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 // 面比 `gap ls`（`gapListFields`）宽：单条面的职责就是「把这一条的正文 / 判据 / 证据一字不截地取出来」。
 var gapShowFields = []string{"id", "fp", "prio", "impact", "state", "want", "want_family", "want_action",
 	"want_argv", "symptom", "handmade", "repro_cmd", "verify_cmd", "depends_on",
-	"found_at", "last_verified_at", "solved_at", "solved_evidence", "notes", "notes_void", "void_notes",
+	"found_at", "last_verified_at", "solved_at", "solved_kind", "solved_evidence", "notes", "notes_void", "void_notes",
 	// ★ 本枚（同期 `gap ls` 那一枚 · `GAP-20260929-38` ①）：补 `unit`/`module` 两格（件面 / 模块面）。
 	"unit", "module"}
 
@@ -1015,6 +1031,8 @@ func gapShowRow(r gapRecord) map[string]string {
 		"repro_cmd": r.ReproCmd, "verify_cmd": r.VerifyCmd,
 		"depends_on": strings.Join(r.DependsOn, " "),
 		"found_at":   r.FoundAt, "last_verified_at": r.Verified, "solved_at": r.SolvedAt,
+		// ★ 本枚（缺口账 `GAP-20260927-249`）：`solved_kind`（与 `gap ls` 那一格同名同源）。
+		"solved_kind":     gapSolvedKindOf(r),
 		"solved_evidence": r.Evidence,
 		"notes":           strings.Join(gapNotesVisible(r), " ⏎ "),
 		"void_notes":      gapVoidNotesText(r),
@@ -1284,6 +1302,11 @@ func cmdGapShow(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "  上次核   : %s\n", gapShowText(r.Verified))
 	fmt.Fprintf(stdout, "  已解时刻 : %s\n", gapShowText(r.SolvedAt))
 	fmt.Fprintf(stdout, "  已解证据 : %s\n", gapShowText(r.Evidence))
+	// ★ 本枚（缺口账 `GAP-20260927-249`）：`已解` 的行多印一行**分类**（实现 / 销案 / 前提不成立 /
+	//   未分类）—— 只在 `state=已解` 时印 ⇒ 非已解行的输出逐字节不变。
+	if r.State == gapStSolved {
+		fmt.Fprintf(stdout, "  已解分类 : %s（solved_kind · 缺口账 `GAP-20260927-249`）\n", gapSolvedKindOf(r))
+	}
 	vis := gapNotesVisible(r)
 	fmt.Fprintf(stdout, "  口径注   : 真源里 %d 条（未作废 %d 条 · 作废标记 %d 条）\n",
 		len(r.Notes), len(vis), len(r.Voids))
@@ -1577,8 +1600,24 @@ func cmdGapAdd(inv *invocation, stdout, stderr io.Writer) int {
 	return gapAddApply(inv, stdout, stderr, gapAddInputFromFlags(inv))
 }
 
-// gapAddApply —— **`gap add` 的唯一落账实现**（`promote` 复用同一条，不另开路径）。
-func gapAddApply(inv *invocation, stdout, stderr io.Writer, in gapAddInput) int {
+// gapAddUsageConfirm —— `gap add` / `gap idea promote` **共用的「执行前判」单点**（★ `GAP-20260928-175`）。
+//
+// 三件一路判完，**全部在任何盘面 / 池面动作之前**：
+//
+//	① 用法面：`--json` 字段 · 必填旗标 · `--impact` / `--prio` / `--state` 三闭集 ·
+//	   `--evidence` 形状外拒收 · `--verify-cmd` 可解析；
+//	② 组装待落行 `gapRecord`（含 `unit` / `fp` —— `--yes` 档的计划件要印它）；
+//	③ D2 确认档：非 `--dry-run` 且缺 `--yes` ⇒ 计划件走 stderr、退用法错 2。
+//
+// 返回 `(rec, exitOK)` ⇒ 全过、`rec` 可直接落账；否则 `(rec, 该用法错的退码)`。
+//
+// ★ 为什么单拎成函数（缺口题眼）：候选池出口面 `gap idea promote` 此前把**池存在性检查**
+// `gapReadPoolOrDie`（退 8）排在用法面之前 ⇒ 池不在盘时，`缺 --yes` / `缺必填` 这些用法错被退 8
+// **抢先吞掉**。正解 = 池面命令**先调用本函数**（用法 / D2 过不去就照原样退 2），过了再读池；
+// 判据**只有这一份**（✗ 不另抄一份进池面命令里）。
+//
+// symptomFromPool=true（`promote`：症状取自池行、不走 `--symptom` 旗标）⇒ 不把 `--symptom` 记进必填。
+func gapAddUsageConfirm(inv *invocation, stderr io.Writer, in gapAddInput, symptomFromPool bool) (gapRecord, int) {
 	symptom, handmade, impact := in.Symptom, in.Handmade, in.Impact
 	wantFam, wantAct, wantArgv := in.WantFam, in.WantAct, in.WantArgv
 	prio, reproCmd, verifyCmd := in.Prio, in.ReproCmd, in.VerifyCmd
@@ -1589,14 +1628,19 @@ func gapAddApply(inv *invocation, stdout, stderr io.Writer, in gapAddInput) int 
 		inv.setErr("usage", "json_fields_required", "--json 不给字段")
 		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2 · 设计稿 §二.2）\n", progName)
 		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(in.Fields, ","))
-		return exitUsage
+		return gapRecord{}, exitUsage
 	}
-	missing := []string{}
-	for _, m := range []struct{ name, val string }{
-		{"--symptom", symptom}, {"--handmade", handmade}, {"--impact", impact},
+	reqs := []struct{ name, val string }{
+		{"--handmade", handmade}, {"--impact", impact},
 		{"--want-family", wantFam}, {"--want-action", wantAct},
 		{"--repro-cmd", reproCmd}, {"--verify-cmd", verifyCmd},
-	} {
+	}
+	// `--symptom` 只在 `gap add` 的必填面里（`promote` 症状取自池行 ⇒ symptomFromPool 跳过）。
+	if !symptomFromPool {
+		reqs = append([]struct{ name, val string }{{"--symptom", symptom}}, reqs...)
+	}
+	missing := []string{}
+	for _, m := range reqs {
 		if m.val == "" {
 			missing = append(missing, m.name)
 		}
@@ -1607,12 +1651,12 @@ func gapAddApply(inv *invocation, stdout, stderr io.Writer, in gapAddInput) int 
 		fmt.Fprintf(stderr, "防呆⑤：**手搓记录（--handmade）与验证命令（--verify-cmd）是两件必填** —— 缺一 ⇒ 拒收 2，不许「先收下回头补」\n")
 		fmt.Fprintf(stderr, "用法：zerg gap add --symptom <一句> --handmade <命令原样> --impact <%s> --want-family <族> --want-action <动作> --repro-cmd <命令> --verify-cmd <命令>\n",
 			strings.Join(gapImpactClosed, "|"))
-		return exitUsage
+		return gapRecord{}, exitUsage
 	}
 	if !gapIn(gapImpactClosed, impact) {
 		inv.setErr("usage", "bad_impact", "impact 值不在六值闭集里")
 		fmt.Fprintf(stderr, "%s: `--impact %s` 不在闭集里 —— 只认 %s\n", progName, impact, gapClosedText(gapImpactClosed))
-		return exitUsage
+		return gapRecord{}, exitUsage
 	}
 	if prio == "" {
 		prio = "P1" // 未标 ⇒ 中档（设计稿未钉；本件取定，见件头）
@@ -1620,7 +1664,7 @@ func gapAddApply(inv *invocation, stdout, stderr io.Writer, in gapAddInput) int 
 	if !gapIn(gapPrioClosed, prio) {
 		inv.setErr("usage", "bad_prio", "prio 值不在三值闭集里")
 		fmt.Fprintf(stderr, "%s: `--prio %s` 不在闭集里 —— 只认 %s\n", progName, prio, gapClosedText(gapPrioClosed))
-		return exitUsage
+		return gapRecord{}, exitUsage
 	}
 	if stateWant == "" {
 		stateWant = gapStOpen
@@ -1629,15 +1673,27 @@ func gapAddApply(inv *invocation, stdout, stderr io.Writer, in gapAddInput) int 
 		inv.setErr("usage", "state_human_forbidden", "人面不许直接写 state")
 		fmt.Fprintf(stderr, "%s: 人面不许直接写 `state`（防呆④ / `H-10`）—— 收到 %q 一律拒收 2\n", progName, stateWant)
 		fmt.Fprintf(stderr, "  人面只许：%s（`已解` / `回归` 是**机器态**：只由 `zerg gap verify` 跑判据转）\n", gapClosedText(gapStateHuman))
-		return exitUsage
+		return gapRecord{}, exitUsage
+	}
+	// ★ 缺口 `GAP-20260927-259`（本枚）：`--evidence` 是**别面**的旗标（`set-state` / `receipt apply`
+	//   收它），而 `gap add` 的账行**没有**独立证据格 ⇒ 此前它是**静默被吞**（rc=0 真落一行、
+	//   证据一个字没进账、无回执无警告 —— 比「明确拒收」更坏）。本族纪律：形状外的一律**收到即拒 2**
+	//   （同 `set-state` 拒 `--text` 那一条）—— 把「静默吞旗标」换成「显式拒收」，
+	//   ✗ 不造一个只写在用法里、解析面不认的假旗标；证据面的独立格另账（本枚只堵静默）。
+	if inv.hasFlag("--evidence") {
+		inv.setErr("usage", "evidence_not_in_shape", "--evidence 不在 gap add 的形状里")
+		fmt.Fprintf(stderr, "%s: `gap add` 不收 `--evidence %s`（本族账行没有独立证据格 ⇒ 现读证据写进 `--symptom` 正文；改态留证走 `zerg gap set-state --evidence` / `zerg gap note --text`）\n",
+			progName, strings.TrimSpace(inv.flagVal("--evidence")))
+		return gapRecord{}, exitUsage
 	}
 	if _, why := gapJudgeArgv(verifyCmd); why != "" {
 		inv.setErr("usage", "verify_cmd_unresolved", why)
 		fmt.Fprintf(stderr, "%s: `--verify-cmd` 解析不到命令树：%s\n", progName, why)
 		fmt.Fprintf(stderr, "  v1.3 §七 规矩 2：判据必须能在命令树里解析到（解析面 = 命令树，门⑪ `T1` 保证它与矩阵 `command` 列同尺）\n")
-		return exitUsage
+		return gapRecord{}, exitUsage
 	}
 
+	// ② 组装待落行（`unit` / `fp` 在这里算好 —— `--yes` 档的计划件要印它）
 	rec := gapRecord{
 		Symptom: symptom, Handmade: handmade, Impact: impact, Prio: prio, State: stateWant,
 		WantFam: wantFam, WantAct: wantAct, WantArgv: wantArgv,
@@ -1647,15 +1703,26 @@ func gapAddApply(inv *invocation, stdout, stderr io.Writer, in gapAddInput) int 
 	rec.FP = gapFingerprint(rec)
 	planPath := gapLedgerPath()
 
-	// ② 缺 `--yes`（且非 `--dry-run`）：fail-closed **rc=2**，计划件走 stderr（见件头 ④）。
+	// ③ 缺 `--yes`（且非 `--dry-run`）：fail-closed **rc=2**，计划件走 stderr（见件头 ④）。
 	//    ⚠ 判在**读真源之前**：确认档不齐 ⇒ 一行都不读、一行都不写（从不提问、也不替人猜）。
 	if !inv.dryRun && !inv.yes {
 		gapPlanBlock(stderr, "缺 `--yes`（D2 档）", planPath, -1, rec, false)
 		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
 		fmt.Fprintf(stderr, "  ⚠ `--yes` 是**命令行确认档**，不是 `approve` 件（不产生 `approver` / `approval` 两格 —— 与 `H-10`「不要人签」不冲突）\n")
 		inv.setErr("usage", "yes_required", "缺 --yes")
-		return exitUsage
+		return rec, exitUsage
 	}
+	return rec, exitOK
+}
+
+// gapAddApply —— **`gap add` 的唯一落账实现**（`promote` 复用同一条，不另开路径）。
+func gapAddApply(inv *invocation, stdout, stderr io.Writer, in gapAddInput) int {
+	// ① 用法面 ＋ ② 组装待落行 ＋ ③ D2 确认档 —— **单点**（`gapAddUsageConfirm` · 与池出口面 `promote` 共用同一份判据）。
+	rec, rc := gapAddUsageConfirm(inv, stderr, in, false)
+	if rc != exitOK {
+		return rc
+	}
+	planPath := gapLedgerPath()
 
 	// ③ 读真源（`add` 侧：件不在 = 首次创建，**不算 8**；读不到 / 解读不了 ⇒ 8 · `Q-138` 两因分档）
 	led, err := readGapLedger()
@@ -2607,8 +2674,8 @@ func (b gapStatusBucket) Net() int { return b.Open - b.Closed }
 // gapStatusQueryText —— `meta.query` 与人面「查询元」那一行的回显（**现读收窄入参**）。
 // 前半段**逐字复用** `gapLsQueryText`（三枚闭集旗标的同一种序与同一种「缺席 ≠ 假值」语义），
 // 本面只续 `by` / `top` 两格 —— 不另造第二套 query 拼装（同源才不会两处走岔）。
-func gapStatusQueryText(states []string, prio, impact, by string, top int) string {
-	base := gapLsQueryText(states, prio, impact, "", "")
+func gapStatusQueryText(states []string, prio, impact, unit, module, by string, top int) string {
+	base := gapLsQueryText(states, prio, impact, unit, module)
 	extra := `"by":` + jstr(by) + `,"top":` + strconv.Itoa(top)
 	if base == "{}" {
 		return "{" + extra + "}"
@@ -2691,11 +2758,11 @@ func (f gapStatusFamReconcile) JSON() string {
 //	**不成立**（桶键不是件）⇒ 不冒充；改出本面自己的**守恒式两数 + 总账**
 //	（`tier_reconcile` 含 `buckets_sum` / `ledger_total` / `diff` / `ok` / `out_of_set`）
 //	+ 顶层一格 `ledger_total`。**只有 tier 这一支**多出这两键 ⇒ `unit` / `module` 两态一字不变。
-func gapStatusMetaAdd(inv *invocation, states []string, prio, impact, by string, top, total, hits int,
+func gapStatusMetaAdd(inv *invocation, states []string, prio, impact, unit, module, by string, top, total, hits int,
 	rec gapStatusReconcile, tierRec gapStatusTierReconcile, famRec gapStatusFamReconcile, ledgerPath string) {
 	inv.metaAddJSON("total", strconv.Itoa(total))
 	inv.metaAddJSON("hits", strconv.Itoa(hits))
-	inv.metaAddJSON("query", gapStatusQueryText(states, prio, impact, by, top))
+	inv.metaAddJSON("query", gapStatusQueryText(states, prio, impact, unit, module, by, top))
 	inv.metaAddStr("query_ts", gapNow())
 	inv.metaAddStr("ledger_sha16", gapLsLedgerSHA16(ledgerPath))
 	inv.metaAddStr("by", by)
@@ -2765,6 +2832,24 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: `--impact %s` 不在闭集里 —— 只认 %s\n", progName, im, gapClosedText(gapImpactClosed))
 		return exitUsage
 	}
+	// ★ GAP-20260929-39（本枚）：`--unit` / `--module` 两轴收窄此前在本面**静默忽略** —— 两枚是**全族共用**
+	//   的旗标（`gap ls` / `gap plan` 用），本面既收下它们、又不读 ⇒ 传了照样按全账打桶（实战：本意筛
+	//   `scripts/gates`，拿到的却是全账按件前 20 桶 = 假收窄）。治法**逐字照拄 `gap ls`**（family_gap.go
+	//   的 cmdGapLs 那一段 · 同一条口径、同一个错因 kind、同一句判词）：自由值 + 两形态命中（`gapLsUnitHit` / `gapLsModuleHit`）+ 空值不许当「不过滤」静默放行 + 尾斜杠归一。✗ 不另造第二套收窄判据。
+	wantUnit := strings.TrimSpace(inv.flagVal("--unit"))
+	wantModule := strings.TrimSpace(inv.flagVal("--module"))
+	if inv.hasFlag("--unit") && wantUnit == "" {
+		inv.setErr("usage", "unit_empty", "--unit 给了空值")
+		fmt.Fprintf(stderr, "%s: `--unit` 要给一个**非空**值（裸给 / 给空值 ⇒ 用法错 2 —— 空值不是「不过滤」）\n", progName)
+		return exitUsage
+	}
+	if inv.hasFlag("--module") && wantModule == "" {
+		inv.setErr("usage", "module_empty", "--module 给了空值")
+		fmt.Fprintf(stderr, "%s: `--module` 要给一个**非空**值（裸给 / 给空值 ⇒ 用法错 2 —— 空值不是「不过滤」）\n", progName)
+		return exitUsage
+	}
+	wantUnit = strings.TrimRight(wantUnit, "/")
+	wantModule = strings.TrimRight(wantModule, "/")
 
 	// ② 读真源（读不到 ⇒ 8 · 不许当绿）—— 与 `gap ls` **逐字同一套收法**（两枚机器可辨 reason）。
 	led, err := readGapLedger()
@@ -2839,6 +2924,12 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 				continue
 			}
 			if wantImpact != "" && r.Impact != wantImpact {
+				continue
+			}
+			if wantUnit != "" && !gapLsUnitHit(r, wantUnit) {
+				continue
+			}
+			if wantModule != "" && !gapLsModuleHit(r, wantModule) {
 				continue
 			}
 			popTotal++
@@ -2951,6 +3042,12 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 		if wantImpact != "" && r.Impact != wantImpact {
 			continue
 		}
+		if wantUnit != "" && !gapLsUnitHit(r, wantUnit) {
+			continue
+		}
+		if wantModule != "" && !gapLsModuleHit(r, wantModule) {
+			continue
+		}
 		popTotal++
 		if r.State == gapStOpen {
 			popOpen++
@@ -3048,7 +3145,7 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 	//   · 右边**现读总账条数** —— 由 `gapLedger` 读盘时自己数的行数（`len(led.Recs)`）。
 	//   收窄时右边改成筛选循环自己累加出来的 `popTotal`（**同口径才可比**），并把「全账条数」
 	//   一并摆在表尾 —— 收窄读数 ≠ 全账，这一点在行内点名，不让两数互当。
-	hasNarrow := len(wantStates) > 0 || wantPrio != "" || wantImpact != ""
+	hasNarrow := len(wantStates) > 0 || wantPrio != "" || wantImpact != "" || wantUnit != "" || wantModule != ""
 	tierRec := gapStatusTierReconcile{
 		Ledger:   len(led.Recs),
 		Total:    popTotal,
@@ -3089,14 +3186,14 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("failed", "no_match", "零命中")
 		fmt.Fprintf(stderr, "零命中：账内 %d 条 · 与筛选条件相符 0 条（退码 1 —— 「没有」不是「失败」，也不是绿）\n", len(led.Recs))
 		if inv.jsonGiven {
-			gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, by, top, 0, 0, rec, tierRec, famRec, led.Path)
+			gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, wantUnit, wantModule, by, top, 0, 0, rec, tierRec, famRec, led.Path)
 			emitEnvelopeWith(stdout, find(inv.path), "[]", 0, inv)
 		}
 		return exitFail
 	}
 
 	inv.changed = boolPtr(false)
-	gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, by, top, total, hits, rec, tierRec, famRec, led.Path)
+	gapStatusMetaAdd(inv, wantStates, wantPrio, wantImpact, wantUnit, wantModule, by, top, total, hits, rec, tierRec, famRec, led.Path)
 	if clampedTop {
 		inv.warnf("--top 越界（>%d）⇒ 已收到一页硬顶 %d", gapLsRowCap, gapLsRowCap)
 		fmt.Fprintf(stderr, "%s: ⚠ `--top` 超过一页硬顶 %d ⇒ 已收到 %d（与 `gap ls` / `find` / `code find` 同一个数）\n",
@@ -3156,7 +3253,7 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 			len(led.Recs), popTotal, total, hits)
 		fmt.Fprintf(stdout, "排序：无 —— 三桶按**闭集固定序**（有效 → 占位 → 无 · 判据有效性递减）出，两个时刻逐行可比\n")
 		fmt.Fprintf(stdout, "查询元：query_ts=%s · ledger_sha16=%s · 收窄回显=%s\n",
-			gapNow(), gapLsLedgerSHA16(led.Path), gapStatusQueryText(wantStates, wantPrio, wantImpact, by, top))
+			gapNow(), gapLsLedgerSHA16(led.Path), gapStatusQueryText(wantStates, wantPrio, wantImpact, wantUnit, wantModule, by, top))
 		kw := displayWidth("分级(tier)")
 		for _, b := range bs {
 			kw = maxInt(kw, displayWidth(b.Key))
@@ -3226,7 +3323,7 @@ func cmdGapStatus(inv *invocation, stdout, stderr io.Writer) int {
 		by, len(led.Recs), popTotal, total, hits)
 	fmt.Fprintf(stdout, "排序键：① 未闭 降序  ② 近邻量化 P0/P1/P2 降序（先 P0 · 再 P1 · 再 P2）\n")
 	fmt.Fprintf(stdout, "查询元：query_ts=%s · ledger_sha16=%s · 收窄回显=%s\n",
-		gapNow(), gapLsLedgerSHA16(led.Path), gapStatusQueryText(wantStates, wantPrio, wantImpact, by, top))
+		gapNow(), gapLsLedgerSHA16(led.Path), gapStatusQueryText(wantStates, wantPrio, wantImpact, wantUnit, wantModule, by, top))
 	fmt.Fprintf(stdout, "  %s  %s  %s  %s  %s\n",
 		pad(colName, kw), pad("未闭", 4), pad("已解", 4), pad("净", 4), "近邻(P0/P1/P2)")
 	for _, b := range bs[:hits] {
@@ -3909,11 +4006,13 @@ func cmdGapIdeaShow(inv *invocation, stdout, stderr io.Writer) int {
 
 // cmdGapIdeaPromote —— `zerg gap idea promote <cid>`：池内一条 ⇒ **正式账**（设计稿 §11.3：复用 `gap add`）。
 func cmdGapIdeaPromote(inv *invocation, stdout, stderr io.Writer) int {
-	if inv.jsonGiven && len(inv.fields) == 0 {
-		inv.setErr("usage", "json_fields_required", "--json 不给字段")
-		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
-		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapIdeaPromoteFields, ","))
-		return exitUsage
+	// ★ GAP-20260928-175：用法面 + D2 确认档**前移到池读取之前**（单点 = `gapAddUsageConfirm`，
+	//   与 `gap add` 共用同一份判据 —— 池不在盘时也先报用法错 2，不再被退码 8 抢先吞掉）。
+	//   症状取自池行 ⇒ symptomFromPool=true（本步不把 `--symptom` 记进必填）。
+	in := gapAddInputFromFlags(inv)
+	in.Fields = gapIdeaPromoteFields
+	if _, rc := gapAddUsageConfirm(inv, stderr, in, true); rc != exitOK {
+		return rc
 	}
 	pb, rc, ok := gapReadPoolOrDie(inv, stderr)
 	if !ok {
@@ -3933,9 +4032,7 @@ func cmdGapIdeaPromote(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	// ② 入参 = 池件那一格 `raw` 当 `--symptom`，其余六必填走本命令旗标 —— 校验与落账**全交给 `gapAddApply`**。
-	in := gapAddInputFromFlags(inv)
 	in.Symptom = c.Raw
-	in.Fields = gapIdeaPromoteFields
 	out := &gapAddOut{}
 	in.Out = out
 	// `--json` 的包封由本命令出口发（字段表是 promote 的）；落账那一层只做「不给人面」。
@@ -3990,6 +4087,16 @@ func cmdGapIdeaDiscard(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapIdeaDiscardFields, ","))
 		return exitUsage
 	}
+	// ★ GAP-20260928-175：D2 确认档**前移到池读取之前**（先判用法、再碰目标）—— 此前池不在盘时，
+	//   缺 `--yes` 被池存在性检查（退码 8）抢先吞掉。本档只判旗标、与池内容无关 ⇒ 单点判在这里。
+	if !inv.dryRun && !inv.yes {
+		inv.setErr("usage", "yes_required", "缺 --yes")
+		fmt.Fprintf(stderr, "%s: 缺 `--yes`（D2 档 · 本族写面口径）—— 池件一个字节不写\n", progName)
+		fmt.Fprintf(stderr, "  池件     : %s\n", gapPoolPath())
+		fmt.Fprintf(stderr, "  将置     : status=expired（**池行不删** · 真源 `%s` **一字不动**）\n", gapLedgerPath())
+		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
+		return exitUsage
+	}
 	pb, rc, ok := gapReadPoolOrDie(inv, stderr)
 	if !ok {
 		return rc
@@ -4003,16 +4110,6 @@ func cmdGapIdeaDiscard(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("usage", "cand_not_pending", "当前 status 不是 pending")
 		fmt.Fprintf(stderr, "%s: %s 当前 status = %s ⇒ **只 `pending` 可作废**（拒收 · 用法错 2）\n", progName, c.CID, c.Status)
 		fmt.Fprintf(stderr, "  `status` 四值：%s（设计稿 §11.3 逐字）\n", gapClosedText(gapIdeaStatusClosed))
-		return exitUsage
-	}
-	// 缺 `--yes`（且非 `--dry-run`）：fail-closed rc=2，池件一个字节不写（同族写面口径）。
-	if !inv.dryRun && !inv.yes {
-		fmt.Fprintf(stderr, "%s: 缺 `--yes`（D2 档 · 本族写面口径）—— 池件一个字节不写\n", progName)
-		fmt.Fprintf(stderr, "  池件     : %s（%d 条）\n", pb.Path, len(pb.Cands))
-		fmt.Fprintf(stderr, "  候选     : %s · source=%s · status=%s\n", c.CID, c.Source, c.Status)
-		fmt.Fprintf(stderr, "  将置     : status=expired（**池行不删** · 真源 `%s` **一字不动**）\n", gapLedgerPath())
-		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
-		inv.setErr("usage", "yes_required", "缺 --yes")
 		return exitUsage
 	}
 	nb := c
@@ -5116,6 +5213,7 @@ func cmdGapReceiptApply(inv *invocation, stdout, stderr io.Writer) int {
 	// 真写：逐条 `已派` → `已解`（**走现有改态路径** `gapRewriteOne` · 不另开写路）
 	solved := 0
 	lines := []string{}
+	receipts := []string{}
 	seen := map[string]bool{}
 	for _, id := range rec.ClosedIDs {
 		if seen[id] {
@@ -5132,6 +5230,12 @@ func cmdGapReceiptApply(inv *invocation, stdout, stderr io.Writer) int {
 		if wrc != exitOK {
 			gapWriteFail(inv, stderr, detail, msg, "receipt")
 			return wrc
+		}
+		// ★ 缺口 `GAP-20260929-01`（本枚）：本面同走唯一写路 `gapRewriteOne`，却把写路回的
+		//   「账写回执行」（`msg`）**丢掉**了 ⇒ 与 `set-state`/`note` 不同，调用方拿不到「这一发
+		//   到底碰没碰真账」的定点读数。这里把逐条的写回执行**收下来、发回去**（人面照印）。
+		if strings.TrimSpace(msg) != "" {
+			receipts = append(receipts, fmt.Sprintf("%s %s", id, strings.TrimSpace(msg)))
 		}
 		solved++
 		lines = append(lines, fmt.Sprintf("%s  %s → %s", id, before, gapStSolved))
@@ -5158,6 +5262,12 @@ func cmdGapReceiptApply(inv *invocation, stdout, stderr io.Writer) int {
 		solved, led.Path, solved, solved)
 	fmt.Fprintf(stdout, "  证据     : %s（逐条落进各条的 `solved_evidence`）\n", evidence)
 	fmt.Fprintf(stdout, "  出口判据 : `closed_ids` 全落 `已解`（现读 %d / %d）\n", solved, len(rec.ClosedIDs))
+	if len(receipts) > 0 {
+		fmt.Fprintf(stdout, "  账写回执行（逐条 · 唯一写路 `gapRewriteOne`）:\n")
+		for _, rcpt := range receipts {
+			fmt.Fprintf(stdout, "    %s\n", rcpt)
+		}
+	}
 	return exitOK
 }
 

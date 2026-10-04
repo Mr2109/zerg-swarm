@@ -78,7 +78,7 @@ func gateShowJSON(inv *invocation, stdout, stderr io.Writer, root, script string
 		if !gateShowFieldLegal(f) {
 			// `error.kind` 是 AI 自愈的入口（门⑤ 的闭集）⇒ 用法错这一档要**自己**报 usage，
 			// 别让它走「命令没报出 kind ⇒ 按退码兜底」那条兜底路（实读会变成 failed/rc=1，与退码 2 打架）。
-			inv.setErr("usage", "unknown_field", "字段不在闭集四格里")
+			inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
 			return reportBadField(stderr, inv.path, f)
 		}
 	}

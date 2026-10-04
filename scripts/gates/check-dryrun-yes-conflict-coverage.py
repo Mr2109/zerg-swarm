@@ -37,7 +37,7 @@ import re
 import sys
 import tempfile
 
-VERSION = "0.1.0（候件 · 未接线 · 缺口 GAP-20260927-392/374/389）"
+VERSION = "0.1.0（已接线 · 门98 · tri-report 只报告 · 缺口 GAP-20260927-392/374/389）"
 
 SCAN_REL = os.path.join("core", "cmd", "zerg")
 READS_RE = re.compile(r"\binv\.dryRun\b")

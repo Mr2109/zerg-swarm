@@ -282,6 +282,26 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	f.Close()
 
+	// ★ GAP-20260928-65（写盘后回读校验这一半）：**写成功 ≠ 写对了** —— 落盘是「先 Marshal 再 Write」，
+	//   短写 / 被别的写者截断 / 文件系统异常都会让盘上件与内存里的 `rec` 不是同一份，而此前一路退 0
+	//   （静默残废：提案件留着、内容却残缺，谁都不报）。⇒ 写完立刻**逐字节回读对拍**：盘上件必须
+	//   **逐字等于**刚写出去的那一份（`body` + 行尾 `\n`，与上面 `f.Write` 的同一份字节）；
+	//   不等 ⇒ 退 8（不给结论、**不报成功** —— 与 §九 M3 C5「写不进就不许执行」同一口径）。
+	//   ✗ 本节**不**做「反引号 / `$` 防呆」那一半：那要判「shell 有没有在参数进 CLI 之前先吃掉片段」，
+	//   而那块**不可在进程内观测**（真值已丢在 shell 里）⇒ 另一半须落在帮助面（`main.go` 的 usage ·
+	//   本单禁碰 ⇒ 停手报，不假装做了）。
+	expected := string(body) + "\n"
+	if back, rerr := os.ReadFile(rec.Path); rerr != nil {
+		inv.setErr("failed", "proposal_readback_unreadable", rerr.Error())
+		fmt.Fprintf(stderr, "%s: 提案件写完却读不回来 %s：%v（写失败即拒 · 不报成功）\n", progName, rec.Path, rerr)
+		return exitFail
+	} else if string(back) != expected {
+		inv.setErr("failed", "proposal_readback_mismatch", "回读与写入的字节不一致")
+		fmt.Fprintf(stderr, "%s: 提案件**回读对拍不一致**（盘上 %d 字节 ≠ 写入 %d 字节）—— 件可能被截断 / 并发改写 ⇒ 报失败、不报成功\n",
+			progName, len(back), len(expected))
+		return exitFail
+	}
+
 	if inv.jsonGiven {
 		if rc := requireFields(inv, stderr); rc != exitOK {
 			return rc

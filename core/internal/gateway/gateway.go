@@ -1593,22 +1593,17 @@ func (g *Gateway) anyMachineAlive() bool {
 }
 
 // defaultAgentPort 是子端 agent 的默认 HTTP 端口（fleet.yaml 未给端口时的回退，与既有口径一致）。
-const defaultAgentPort = 8100
+const defaultAgentPort = config.DefaultAgentPort
 
 // fleetNode 解析一个 fleet 节点：机器名 → (IP, 端口)。
 // 地址一律来自 fleet.yaml 的 fleet 段（配置即事实源）；缺配置/端口时回退机器名 + 默认端口
 // （与既有 pickRoute 内的同口径逻辑一致——批 3 把它提成方法，供让位路径复用，避免硬编码 IP）。
 func (g *Gateway) fleetNode(host string) (string, int) {
+	var fleet map[string]config.FleetNode
 	if g.config != nil {
-		if node, ok := g.config.Fleet[host]; ok && node.Host != "" {
-			port := node.Port
-			if port <= 0 {
-				port = defaultAgentPort
-			}
-			return node.Host, port
-		}
+		fleet = g.config.Fleet
 	}
-	return host, defaultAgentPort
+	return config.NodeAddr(fleet, host)
 }
 
 // agentURLFor 拼子端 agent 的 HTTP 地址（如 /unload）——地址只从配置来，绝不写死 IP。

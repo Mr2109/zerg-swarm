@@ -30,6 +30,13 @@ type ControlHandlers struct {
 	Token  string
 	Fleet  map[string]config.FleetNode
 	Models map[string][]config.ModelCandidate
+
+	// cfgSource —— 缺口 GAP-20260925-42：构造时 Fleet/Models 是**值拷贝**，而
+	//   `POST /api/config/reload` 只把主控的 `Handlers.Config` 指向**新对象**
+	//   （handlers.go ReloadConfigHandler: `h.Config = newCfg`）⇒ 本处理器永远看不到
+	//   reload 后的新条目（`model add` 写册 + reload 报 ok，孵卵面照样 404）。
+	//   非 nil 时每次请求**现读**当前配置（与其余 API 面同源）；nil 时退回构造时快照（向后兼容）。
+	cfgSource func() *config.FleetConfig
 }
 
 // NewControlHandlers 创建控制处理器。
@@ -38,6 +45,27 @@ func NewControlHandlers(token string, cfg *config.FleetConfig) *ControlHandlers 
 		Token:  token,
 		Fleet:  cfg.Fleet,
 		Models: cfg.Models,
+	}
+}
+
+// SetConfigSource 注入口（缺口 GAP-20260925-42）：让本处理器与主控的 `Handlers.Config`
+// 同源 —— 装配处传入 `func() *config.FleetConfig { return handlers.Config }`。此后
+// `config reload` 换掉 `Handlers.Config` 的**同一刻**，本处理器即看到新条目。
+func (h *ControlHandlers) SetConfigSource(fn func() *config.FleetConfig) {
+	h.cfgSource = fn
+}
+
+// currentConfig 现读当前配置：有注入口用注入口（reload 后同步），否则用构造时快照。
+func (h *ControlHandlers) currentConfig() *config.FleetConfig {
+	if h.cfgSource != nil {
+		if c := h.cfgSource(); c != nil {
+			return c
+		}
+	}
+	return &config.FleetConfig{
+		Auth:   config.AuthConfig{Token: h.Token},
+		Fleet:  h.Fleet,
+		Models: h.Models,
 	}
 }
 
@@ -62,8 +90,9 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 从路由表找该模型在该机器的候选
-	candidates, ok := h.Models[req.Model]
+	// 从路由表找该模型在该机器的候选（现读配置：reload 后与主控同源）
+	cfg := h.currentConfig()
+	candidates, ok := cfg.Models[req.Model]
 	if !ok {
 		writeErrorCode(w, http.StatusNotFound, "MODEL_NOT_FOUND", fmt.Sprintf("未知模型: %s", req.Model))
 		return
@@ -80,7 +109,7 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 		//   同回 MODEL_NOT_DEPLOYED + 原样回填请求里的 machine 串（调用方传来未展开的 `${USER}` 时，
 		//   报错里机器名就是字面量 `${USER}`，既看不出是哪台机、也分不清「机器名写错」与「该机确无
 		//   部署」）；后者再**列出该模型实际有部署的机器**，让调用方能一眼改对。code/status 不变。
-		if _, ok := h.Fleet[req.Machine]; !ok && req.Machine != "local" {
+		if _, ok := cfg.Fleet[req.Machine]; !ok && req.Machine != "local" {
 			writeErrorCode(w, http.StatusNotFound, "MACHINE_NOT_FOUND",
 				fmt.Sprintf("机器 %s 不存在（名册里没有这台机）—— 这**不是**「该机没部署此模型」", req.Machine))
 			return
@@ -104,7 +133,7 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 远程子端：转发 /load
-	node, ok := h.Fleet[req.Machine]
+	node, ok := cfg.Fleet[req.Machine]
 	if !ok {
 		writeErrorCode(w, http.StatusNotFound, "MACHINE_NOT_FOUND", fmt.Sprintf("未知机器: %s", req.Machine))
 		return
@@ -145,7 +174,8 @@ func (h *ControlHandlers) UnloadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	node, ok := h.Fleet[req.Machine]
+	cfg := h.currentConfig()
+	node, ok := cfg.Fleet[req.Machine]
 	if !ok {
 		writeErrorCode(w, http.StatusNotFound, "MACHINE_NOT_FOUND", fmt.Sprintf("未知机器: %s", req.Machine))
 		return
@@ -209,7 +239,7 @@ func forwardToNode(token string, node config.FleetNode, path string, body []byte
 
 // forward 控制面自用：委托给包级 forwardToNode（保持既有调用点不变）。
 func (h *ControlHandlers) forward(node config.FleetNode, path string, body []byte) (int, []byte, error) {
-	return forwardToNode(h.Token, node, path, body)
+	return forwardToNode(h.currentConfig().Auth.Token, node, path, body)
 }
 
 // CoreStatusHandler 处理 GET /api/core/status——主控自身状态。

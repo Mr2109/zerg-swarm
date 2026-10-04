@@ -170,6 +170,9 @@ func cmdGapExport(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "## 缺口真源导出（**只列未闭**） · %s\n\n", time.Now().Format("2006-01-02"))
 	fmt.Fprintf(stdout, "> 生成件：由 `zerg gap export` 从真源 `%s` 生成 —— **不许手改** ✗（手改会被门禁判红）。\n", led.Path)
 	fmt.Fprintf(stdout, "> 真源条数 **%d** · 未闭 **%d** · 已闭 **%d**（其中「不做」**%d**）\n", len(led.Recs), len(open), closedCount, noDecideCount)
+	// ★ 本枚（缺口账 `GAP-20260927-249`）：**已解分栏** —— 已闭里「已解」的那一批按 `solved_kind`
+	//   分开数（实现 / 销案 / 前提不成立 / 未分类）⇒ 汇报层不再把「销案」读成「交付」。
+	fmt.Fprintf(stdout, "> 已解分栏（solved_kind）：%s\n", gapSolvedKindCountsText(led.Recs))
 	faces := make([]string, 0, len(gapImpactClosed))
 	for _, im := range gapImpactClosed {
 		faces = append(faces, fmt.Sprintf("%s %d", im, perImpact[im]))
@@ -366,6 +369,8 @@ func gapExportWriteFiles(inv *invocation, stdout, stderr io.Writer, led gapLedge
 	fmt.Fprintf(&idx, "> 生成件：由 `zerg gap export --out` 从真源 `%s` 生成 —— **不许手改** ✗（手改会被门禁判红）。\n", led.Path)
 	fmt.Fprintf(&idx, "> 真源条数 **%d** · 未闭 **%d** · 已闭 **%d**（其中「不做」**%d**）\n",
 		len(led.Recs), len(open), closedCount, noDecideCount)
+	// ★ 本枚（缺口账 `GAP-20260927-249`）：**已解分栏**（与 stdout 件头同一处口径）。
+	fmt.Fprintf(&idx, "> 已解分栏（solved_kind）：%s\n", gapSolvedKindCountsText(led.Recs))
 	faces := make([]string, 0, len(gapImpactClosed))
 	for _, im := range gapImpactClosed {
 		faces = append(faces, fmt.Sprintf("%s %d", im, perImpact[im]))

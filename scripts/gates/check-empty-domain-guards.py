@@ -32,8 +32,8 @@
     python3 scripts/gates/check-empty-domain-guards.py --self-test
     python3 scripts/gates/check-empty-domain-guards.py --emit-baseline     # 现读缺守卫数（只打印）
 
-★ 接线状态：本件为**仓外候件**（GAP-20260927-108），**未挂进任何门步** ——
-  接线与 baseline 首测冻结由后续单独一笔做，避免撞件。
+★ 接线状态：**已挂门90**（add_step gates · tri-report 只报告档）· baseline 首测 22 已冻结 ——
+  2026-10-04 现读更正：原「仓外候件 / 未挂进任何门步」措辞已过期（接线早已落）。
 """
 import argparse
 import json

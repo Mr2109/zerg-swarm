@@ -87,6 +87,13 @@ def devdocs_root(repo_root=REPO_ROOT_DEFAULT):
                or os.path.join(os.path.dirname(os.path.abspath(repo_root)), "Zerg-内部文档"))
     return os.path.abspath(os.path.join(sibling, "项目文档", "v2.5.10"))
 
+
+def _env_knobs():
+    """关键取根旋钮的**实解析值**（未设 = ∅）—— 步日志自证「扫的哪棵树」（缺口 GAP-20260927-287）。"""
+    return tuple(os.environ.get(k) or "∅"
+                 for k in ("ZERG_DEVDOCS_ROOT", "ZERG_DOCS_ALT", "ZERG_DOCS"))
+
+
 DOC_EXT = (".md", ".markdown", ".mdx")
 
 # 扫描排除名单（逐字照抄《清单-命名规范化》§0 的 EXCL/PRE 口径，便于两份报告对账）
@@ -584,6 +591,7 @@ def run_scan(root, targets, schema, missing_mode, count_frozen, max_examples, to
     examples = {}
     skipped_cls = {}
     frozen_hits = {}
+    violations = []
     for rel, ap in files:
         matched = ""
         for p in FROZEN_PREFIX + FROZEN_PREFIX_ALT:
@@ -596,6 +604,8 @@ def run_scan(root, targets, schema, missing_mode, count_frozen, max_examples, to
         res = judge_file(rel, ap, schema, missing_mode, today)
         bucket = frozen if (is_frozen and not count_frozen) else tally
         bucket[res["status"]] += 1
+        if res["status"] == "violation" and not (is_frozen and not count_frozen):
+            violations.append(rel)
         if res["status"] == "skipped":
             skipped_cls[res["cls"]] = skipped_cls.get(res["cls"], 0) + 1
         for rule, loc, msg in res["items"]:
@@ -611,7 +621,7 @@ def run_scan(root, targets, schema, missing_mode, count_frozen, max_examples, to
              "outrepo": sum(frozen_hits.get(p, 0) for p in FROZEN_PREFIX_ALT)}
     return {"files": len(files), "tally": tally, "frozen": frozen, "per_rule": per_rule,
             "examples": examples, "skipped_cls": skipped_cls,
-            "frozen_prefix": eff_prefix, "faces": faces}
+            "frozen_prefix": eff_prefix, "faces": faces, "violations": violations}
 
 
 def print_report(rep, args):
@@ -976,9 +986,14 @@ def main(argv):
                           "tally": rep["tally"], "frozen": rep["frozen"],
                           "frozen_prefix": rep["frozen_prefix"], "faces": rep["faces"],
                           "skipped": rep["skipped_cls"],
-                          "per_rule": {"%s/%s" % k: v for k, v in sorted(rep["per_rule"].items())}},
+                          "per_rule": {"%s/%s" % k: v for k, v in sorted(rep["per_rule"].items())},
+                          "violations": rep["violations"]},
                          ensure_ascii=False, indent=2))
         return rc
+    _knobs = _env_knobs()
+    print("  根与旋钮（实解析）：repo_root=%s · scan_root=%s · "
+          "ZERG_DEVDOCS_ROOT=%s · ZERG_DOCS_ALT=%s · ZERG_DOCS=%s"
+          % (repo, root, _knobs[0], _knobs[1], _knobs[2]))
     print("check-doc-meta —— schema=%s（scope=%s · missing=%s）"
           % (os.path.relpath(schema_path, root) if schema_path.startswith(root) else schema_path,
              args.scope, args.missing))

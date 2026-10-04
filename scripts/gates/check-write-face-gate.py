@@ -28,7 +28,7 @@
 用法：
     python3 scripts/gates/check-write-face-gate.py [--root <dir>] [--json] [--self-test]
 
-★ 接线状态：本件为**仓外候件**（`/var/tmp/zerg-wave23/p0/`），未挂门步 —— 首版 `tri-report`。
+★ 接线状态：**已挂门100**（tri-report 只报告档）· 2026-10-04 现读更正（原「仓外候件 / 未挂门步」已过期）。
 """
 import argparse
 import json

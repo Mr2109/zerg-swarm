@@ -51,14 +51,22 @@ func createTestIssue(t *testing.T, workDir, name, priority, status string) strin
 	return path
 }
 
-// createTestWorkersConfig — 创建 workers.yaml 配置
+// createTestWorkersConfig — 创建 workers.yaml 配置（**真源形态**：devices: 列表 + hostname 精确命中本机）
 func createTestWorkersConfig(t *testing.T, workDir string, maxWorkers int) {
 	t.Helper()
 	configDir := filepath.Join(workDir, "config")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("创建 config 目录失败: %v", err)
 	}
-	content := fmt.Sprintf("max_workers: %d\n", maxWorkers)
+	// ★ 必须写成 `devices:` 列表 + hostname（DeviceAwareConfig 只解析这一层）。
+	//   此前写顶层 `max_workers: N`，被解析器忽略（resolveByDevice 收不到该设备），值根本不生效 ——
+	//   之所以还拿到 2，是靠 GAP-20260927-298 旧「缺省回退非正抬升」偶合到 defaultMaxWorkers。
+	//   2026-10-04 拍板「0 永不抬升」后该偶合消失 ⇒ 这里写成真源形态，让传入值真正生效。
+	hn, err := os.Hostname()
+	if err != nil {
+		t.Fatalf("os.Hostname 失败: %v", err)
+	}
+	content := fmt.Sprintf("devices:\n  - hostname: %q\n    max_workers: %d\n", hn, maxWorkers)
 	path := filepath.Join(configDir, "workers.yaml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("写入 workers.yaml 失败: %v", err)

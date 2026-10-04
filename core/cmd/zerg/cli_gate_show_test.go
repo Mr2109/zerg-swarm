@@ -152,8 +152,13 @@ func TestGateShowJSON_BadFieldListsLegalFour(t *testing.T) {
 	if !strings.Contains(errb, "scope,mode,criterion,log") {
 		t.Errorf("stderr 要列出四格合法字段（自描述面）：%q", errb)
 	}
-	if strings.Contains(out, "nosuchfield-zz") {
-		t.Errorf("用法错那一档 stdout 不许出半份包封：%q", out)
+	// ★ GAP-20260928-23（同批：`gate show` 的 `--json` 未知字段 `error.detail` 补字段名，与同族
+	//   `gate results`/`gate explain` 一族同句）。旧断言（逐字留史 · ✗ 不删）：「用法错那一档 stdout
+	//   不许出半份包封」= 断言包封里**不含**坏字段名（旧实现落 detail=`unknown_field` 不带字段名）。
+	//   改后：`error.detail` 必须带字段名（`json_field_unknown:<字段>`）⇒ 翻转成**正向**断言（仍有牙：
+	//   实现退回不带字段名 ⇒ 本格立红）。
+	if !strings.Contains(out, "json_field_unknown:nosuchfield-zz") {
+		t.Errorf("未知字段的 error.detail 要带字段名（json_field_unknown:<字段> · 缺口 GAP-20260928-23）：%q", out)
 	}
 	// `error.kind` 是 AI 自愈的入口：用法错必须是 usage（不许落到「按退码兜底」那条路 ——
 	// 实读会变成 kind=failed/exit_code=1，与 rc=2 自相矛盾）。

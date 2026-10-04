@@ -1,6 +1,6 @@
 // check_newcmd_followup.go —— M2 真搬：`scripts/gates/check-newcmd-followup.py`（门78 新命令随动总账）
 //
-// 本件是**只读聚合判据**：以冻结的 path 全集为基线，把新增 path 的九个面逐面打印「齐 / 缺 / 不适用」，
+// 本件是**只读聚合判据**：以冻结的 path 全集为基线，把新增 path 的十一个面逐面打印「齐 / 缺 / 不适用」，
 // 缺任一即 rc=1 并点名；解析漏读 / 基线不合规 / 前置缺件 / 空转 ⇒ rc=2（不给结论）。
 //
 // 出厂声明 (a) 默认根定位差异：
@@ -41,18 +41,27 @@
 //	  普查过的其余 JSON 取值点 null 时 py **本就不崩**（有默认值/相等比较兜住）⇒ 逐字保留既有行为：
 //	  `baseline.schema/::count/::head` · `cli-contract-baseline.{commands,mustfail_cases}` · case 级
 //	  `command/id/why` 与数组元素级 null。（`want_rc: null` 归件头已自陈的「`int()` 不可转」档，见上一条。）
+//	· 面⑩/面⑪ 取数面（本版补 · 缺口 `GAP-20261003-18`）：本件现跑兄弟判据件（`check-help-shape.py` /
+//	  `check-public-face-commands.py`）取数 —— 解释器走 **PATH 上的 `python3`**（py 用 `sys.executable`）；
+//	  「跑不起来」那一支的 `why` 正文**不逐字复刻**（py 印 `Command … timed out after 180 seconds` /
+//	  `[Errno …]` 一类，本件印 Go 的 ctx/exec 错误串）⇒ 只保「rc=None ⇒ 不适用」这一档**语义方向**。
+//	  「取数面不在场（件相对路径）」那一支逐字同。★ 该两条腿依赖运行期 `python3` 在场（与 py 半同）；不在场
+//	  ⇒ 该面「不适用」（不误红）。
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -72,9 +81,17 @@ var (
 	cnfExitcodesRel     = cnfPyJoin("core", "cmd", "zerg", "exitcodes.go")
 	cnfNamespacesRel    = cnfPyJoin("core", "internal", "contract", "exitcode-namespaces.json")
 	cnfDocsRels         = []string{cnfPyJoin("docs", "zh", "参考-命令行.md"), cnfPyJoin("docs", "en", "参考-命令行.md")}
+	// 面⑩ / 面⑪ 取数面（缺口 `GAP-20261003-18`）——两个**只读**兄弟判据件的件路径（照 py `FACE_PROBE_*`）。
+	cnfHelpShapeRel = cnfPyJoin("scripts", "gates", "check-help-shape.py")
+	cnfCpfcRel      = cnfPyJoin("scripts", "gates", "check-public-face-commands.py")
 )
 
 const cnfSchema = "newcmd-followup-baseline/1"
+
+// 面⑩/面⑪ 取数面：现跑兄弟判据件的超时（照 py `FACE_PROBE_TIMEOUT = 180`）与解释器。
+// ★ py 用 `sys.executable`；Go 体无该语境 ⇒ 走 PATH 上的 `python3`（见件头「未覆盖面」）。
+const cnfFaceProbeTimeout = 180
+const cnfPythonExe = "python3"
 
 // py `\s`（str）= 显式 Unicode 空白类：\t\n\v\f\r + 空格 + \x1c-\x1f + \x85 + \xa0 + …
 // ★ 与 Go RE2 默认 ASCII `\s` 不同 ⇒ 逐处展开。
@@ -937,6 +954,68 @@ func cnfLoadDocs(root string) []interface{} {
 	return out
 }
 
+// ── 面⑩ / 面⑪ 取数面（缺口 `GAP-20261003-18` · lane 补面）───────────────────────
+// 与 py 半（`probe_help_shape_baseline` / `probe_cpfc_counts`）逐字同构：现跑仓内两个
+// **只读**兄弟判据件，把它们的判决当本门的面。
+// ★ 取数面不在场（件缺）/ 跑不起来（异常 / 超时）⇒ rc=nil ⇒ 调用方按「不适用」处置
+//   （**不误红**）；只有件真跑并判红（rc=1）才算「缺」。
+
+// cnfLastJSONLine = py `_last_json_line`：取 stdout 里**最后一行** `{…}` JSON。
+func cnfLastJSONLine(text string) interface{} {
+	var obj interface{}
+	for _, line := range cnfSplitlines(text) {
+		s := cnfStrip(line)
+		if strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}") {
+			var v interface{}
+			if err := json.Unmarshal([]byte(s), &v); err == nil {
+				obj = v
+			}
+		}
+	}
+	return obj
+}
+
+// cnfProbeGate = py `_probe_gate`：现跑仓内兄弟判据件（**只读**）⇒ (rc | nil, json | nil, why)。
+// 取数面不在场 / 跑不起来 ⇒ rc=nil（调用方按「不适用」处置 · 不误红）。
+func cnfProbeGate(root, rel string, argv []string) (*int, interface{}, string) {
+	fp := cnfPyJoin(root, rel)
+	if !cnfIsFile(fp) {
+		return nil, nil, fmt.Sprintf("取数面不在场（%s）", rel)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cnfFaceProbeTimeout)*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, cnfPythonExe, append([]string{fp}, argv...)...)
+	cmd.Stdin = nil // py 的 stdin=subprocess.DEVNULL
+	var outb, errb strings.Builder
+	cmd.Stdout = &outb
+	cmd.Stderr = &errb
+	err := cmd.Run()
+	if err != nil {
+		if ctx.Err() != nil {
+			// 超时/取消 ⇒ 取数面跑不起来（py 的 TimeoutExpired 档）
+			return nil, nil, fmt.Sprintf("跑不起来（%s）", ctx.Err())
+		}
+		if ee, ok := err.(*exec.ExitError); ok {
+			rc := ee.ExitCode()
+			return &rc, cnfLastJSONLine(outb.String()), ""
+		}
+		// exec 层跑不起来（解释器找不到 / 件不可执行）⇒ 取数面跑不起来（py 的 OSError 档）
+		return nil, nil, fmt.Sprintf("跑不起来（%s）", err)
+	}
+	rc := 0
+	return &rc, cnfLastJSONLine(outb.String()), ""
+}
+
+// cnfProbeHelpShapeBaseline = py `probe_help_shape_baseline`（面⑩ · 门69 口径）。
+func cnfProbeHelpShapeBaseline(root string) (*int, interface{}, string) {
+	return cnfProbeGate(root, cnfHelpShapeRel, []string{"--repo-root", root, "--json"})
+}
+
+// cnfProbeCpfcCounts = py `probe_cpfc_counts`（面⑪ · Cpfc 口径）。
+func cnfProbeCpfcCounts(root string) (*int, interface{}, string) {
+	return cnfProbeGate(root, cnfCpfcRel, []string{"--root", root, "--json", "counts"})
+}
+
 func cnfImplLiterals(root string, impls []string, res []*regexp.Regexp) map[string]bool {
 	out := map[string]bool{}
 	for _, f := range impls {
@@ -1405,14 +1484,60 @@ func cnfAnalyse(root string, maxExamples int, stderr io.Writer) (int, []string) 
 		bad++
 	}
 
+	// ── 面⑩ 门69 help 面冻结常量（BASELINE 六格 · 现读对拍 · 阻断 · 缺口 `GAP-20261003-18`）──
+	// ── 面⑪ 公开面命令 counts 键表（Cpfc · 现读对拍 · 阻断 · 同上）─────────────────────
+	// ★ 全局各一格（不按 path 计）—— 新命令一落地即须随动，故只在「有新增」时取数。
+	if len(newPaths) > 0 {
+		hrc, _, hwhy := cnfProbeHelpShapeBaseline(root)
+		add(fmt.Sprintf("── 面⑩ 门69 help 面冻结常量（BASELINE 六格 · 现读对拍）：%s", cnfFaceWord(hrc)))
+		if hrc == nil {
+			add(fmt.Sprintf("   不适用：%s ⇒ **不判**（取数面不在场不是「缺」）", hwhy))
+		} else if *hrc == 0 {
+			add("   门69 rc=0：`help --all`/`help`/`help dangerous` 的 lines/bytes 六格 ⟷ 现读一致 ⇒ 齐")
+		} else if *hrc == 1 {
+			add("   门69 rc=1 ⇒ **缺**：新命令改了 help 面却没按 `--emit-baseline` 刷新 `BASELINE` 六格" +
+				"（真身 py ＋ Go 镜像两处同批刷）")
+			bad++
+		} else {
+			add(fmt.Sprintf("   门69 rc=%d：不给结论 ⇒ 不适用（不误红）", *hrc))
+		}
+
+		crc, cobj, cwhy := cnfProbeCpfcCounts(root)
+		add(fmt.Sprintf("── 面⑪ 公开面命令 counts 键表（Cpfc · 现读对拍）：%s", cnfFaceWord(crc)))
+		if crc == nil {
+			add(fmt.Sprintf("   不适用：%s ⇒ **不判**", cwhy))
+		} else {
+			cntVal, _, _ := cnfDictGet(cobj, "counts")
+			if cnt, ok := cntVal.(map[string]interface{}); ok {
+				keys := make([]string, 0, len(cnt))
+				for k := range cnt {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				add(fmt.Sprintf("   counts 键表 = %s（六键）", strings.Join(keys, "、")))
+			}
+			if *crc == 0 {
+				add("   Cpfc rc=0：公开面命令页 ⟷ 命令树一致 ⇒ 齐")
+			} else if *crc == 1 {
+				add("   门⑪ Cpfc 组会红 ⇒ **缺**：公开面命令页未与新命令对齐" +
+					"（core go test 的 CpfcS01/S11/S12）")
+				bad++
+			} else {
+				add(fmt.Sprintf("   Cpfc rc=%d：不给结论 ⇒ 不适用（不误红）", *crc))
+			}
+		}
+	} else {
+		add("── 面⑩/面⑪：新增 0 条 ⇒ 无需随动（不跑取数面：门69 `BASELINE` / Cpfc counts）")
+	}
+
 	if len(newPaths) == 0 {
-		add(fmt.Sprintf("新增 0 条 ⇒ 九面无需随动（本读数可分辨「没跑」：上有现读 %d 条 / %d 处 path 形态与两面扫描件数行）", nPaths, mForms))
+		add(fmt.Sprintf("新增 0 条 ⇒ 十一面无需随动（本读数可分辨「没跑」：上有现读 %d 条 / %d 处 path 形态与两面扫描件数行）", nPaths, mForms))
 	}
 	if bad > 0 {
 		add(fmt.Sprintf("⇒ rc=1：以上 %d 处「缺」逐条点名（缺任一面即红）", bad))
 		return 1, L
 	}
-	add(fmt.Sprintf("⇒ rc=0：新增 path 逐面齐（面①–⑨）/ 计数齐 / 解析自证齐（%d 条 ⟷ %d 处）", nPaths, mForms))
+	add(fmt.Sprintf("⇒ rc=0：新增 path 逐面齐（面①–⑪）/ 计数齐 / 解析自证齐（%d 条 ⟷ %d 处）", nPaths, mForms))
 	return 0, L
 }
 
@@ -1421,6 +1546,20 @@ func cnfTick(b bool) string {
 		return "✓"
 	}
 	return "✗"
+}
+
+// cnfFaceWord = py 面⑩/面⑪ 标题里的档词：None ⇒ 不适用；0 ⇒ 齐；1 ⇒ 缺；其余 ⇒ 不适用。
+func cnfFaceWord(rc *int) string {
+	if rc == nil {
+		return "不适用"
+	}
+	if *rc == 0 {
+		return "齐"
+	}
+	if *rc == 1 {
+		return "缺"
+	}
+	return "不适用"
 }
 
 func cnfSortedDiff(a, b map[string]bool) []string {
@@ -1641,6 +1780,10 @@ var (
 	cnfSelfSetErr  = "\nfunc x(){ set" + "Err(\"ghost_kind\", 1, \"x\") }\n"
 	cnfSelfExit99  = "\nfunc y(){ os." + "Exit(99) }\n"
 	cnfSelfExit14  = "\nfunc y(){ os." + "Exit(14) }\n"
+	// 面⑩/面⑪ 取数面自检用的**仓外合成 stub**（逐字同 py 侧那一串 · `sys.exit` 拼串落）
+	cnfSelfHelpShapeStub = "import sys\nprint(\"{\\\"gate\\\": \\\"stub\\\"}\")\nsys." + "exit(1)\n"
+	cnfSelfHelpShapeOK   = "import sys\nprint(\"{\\\"gate\\\": \\\"stub\\\"}\")\nsys." + "exit(0)\n"
+	cnfSelfCpfcCountsOK  = "import sys\nprint(\"{\\\"counts\\\": {\\\"commands\\\": 3}}\")\nsys." + "exit(0)\n"
 )
 
 func cnfMiniRoot(dst string, nExtraCmd, extraHasMatrix, countDrift bool, extraUsage string, extraFlags []string) {
@@ -1742,6 +1885,23 @@ func cnfMiniRoot(dst string, nExtraCmd, extraHasMatrix, countDrift bool, extraUs
 func cnfAnyContains(lines []string, sub string) bool {
 	for _, l := range lines {
 		if strings.Contains(l, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// cnfAnyContainsAll = py `any(all(s in x for s in subs) for x in lines)`（同一行须含全部子串）。
+func cnfAnyContainsAll(lines []string, subs ...string) bool {
+	for _, l := range lines {
+		all := true
+		for _, s := range subs {
+			if !strings.Contains(l, s) {
+				all = false
+				break
+			}
+		}
+		if all {
 			return true
 		}
 	}
@@ -1884,6 +2044,34 @@ func cnfSelfTest(stdout io.Writer) int {
 		fails = append(fails, fmt.Sprintf("⑮ 门⑨ 退码齐期望 rc=0，实得 %d", rc))
 	}
 
+	p := cnfPyJoin(tmp, "p")
+	cnfMiniRoot(p, true, true, false, "zerg nu", nil)
+	if rc, lines := cnfAnalyse(p, 20, disc); rc != 0 {
+		fails = append(fails, fmt.Sprintf("⑯ 取数面不在场期望 rc=0（不适用不是「缺」），实得 %d", rc))
+	} else if !cnfAnyContainsAll(lines, "面⑩", "不适用") || !cnfAnyContainsAll(lines, "面⑪", "不适用") {
+		fails = append(fails, "⑯ 未把面⑩/面⑪ 打成「不适用」")
+	}
+
+	q := cnfPyJoin(tmp, "q")
+	cnfMiniRoot(q, true, true, false, "zerg nu", nil)
+	_ = os.MkdirAll(cnfPyJoin(q, "scripts", "gates"), 0o755)
+	cnfWrite(cnfPyJoin(q, cnfHelpShapeRel), cnfSelfHelpShapeStub)
+	if rc, lines := cnfAnalyse(q, 20, disc); rc != 1 {
+		fails = append(fails, fmt.Sprintf("⑰ 门69 取数面判红期望 rc=1，实得 %d", rc))
+	} else if !cnfAnyContainsAll(lines, "面⑩", "缺") {
+		fails = append(fails, "⑰ 未点名面⑩ 缺")
+	}
+
+	r := cnfPyJoin(tmp, "r")
+	cnfMiniRoot(r, true, true, false, "zerg nu", nil)
+	cnfWrite(cnfPyJoin(r, cnfHelpShapeRel), cnfSelfHelpShapeOK)
+	cnfWrite(cnfPyJoin(r, cnfCpfcRel), cnfSelfCpfcCountsOK)
+	if rc, lines := cnfAnalyse(r, 20, disc); rc != 0 {
+		fails = append(fails, fmt.Sprintf("⑱ 取数面判绿期望 rc=0，实得 %d", rc))
+	} else if !cnfAnyContainsAll(lines, "面⑩", "齐") || !cnfAnyContainsAll(lines, "面⑪", "齐") {
+		fails = append(fails, "⑱ 未把面⑩/面⑪ 打成「齐」")
+	}
+
 	if len(fails) > 0 {
 		fmt.Fprintln(stdout, "自检不过：")
 		for _, x := range fails {
@@ -1891,7 +2079,7 @@ func cnfSelfTest(stdout io.Writer) int {
 		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "自检通过：15 控（正控 4 + 负控 11）逐条对拍 ✓")
+	fmt.Fprintln(stdout, "自检通过：18 控（含面⑩/面⑪ 不适用·齐·缺 三态）逐条对拍 ✓")
 	return 0
 }
 

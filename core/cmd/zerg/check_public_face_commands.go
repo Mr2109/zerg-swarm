@@ -1057,26 +1057,28 @@ const cpfcProg = "check-public-face-commands.py"
 
 const cpfcUsageLine = "usage: " + cpfcProg + " [-h] [--root ROOT] [--zerg ZERG]\n" +
 	"                                     [--json JSON] [--self-test]\n" +
-	"                                     [--no-self-test]\n"
+	"                                     [--no-self-test] [--read-only-count]\n"
 
 const cpfcHelpText = cpfcUsageLine +
 	"\n" +
 	"公开面命令名抽取器 + 反向探针（`T-14` · `V10`）\n" +
 	"\n" +
 	"optional arguments:\n" +
-	"  -h, --help      show this help message and exit\n" +
-	"  --root ROOT     判据树根（默认仓根）\n" +
-	"  --zerg ZERG     真源二进制（默认 <root>/bin/zerg）\n" +
-	"  --json JSON     机器读面：逗号分隔 counts,hits,topics\n" +
-	"  --self-test     只跑自检（合成夹具 · 不碰真目标）\n" +
-	"  --no-self-test  跳过开跑前的自检\n"
+	"  -h, --help         show this help message and exit\n" +
+	"  --root ROOT        判据树根（默认仓根）\n" +
+	"  --zerg ZERG        真源二进制（默认 <root>/bin/zerg）\n" +
+	"  --json JSON        机器读面：逗号分隔 counts,hits,topics\n" +
+	"  --self-test        只跑自检（合成夹具 · 不碰真目标）\n" +
+	"  --no-self-test     跳过开跑前的自检\n" +
+	"  --read-only-count  自检不过仍打印只读计数（**不给结论**：rc 仍退 2，只多一份机器可读计数；GAP-20260926-147）\n"
 
 type cpfcArgs struct {
-	root       string
-	zerg       string
-	json       string
-	selfTest   bool
-	noSelfTest bool
+	root          string
+	zerg          string
+	json          string
+	selfTest      bool
+	noSelfTest    bool
+	readOnlyCount bool
 }
 
 func cpfcArgError(stderr io.Writer, msg string) int {
@@ -1125,14 +1127,17 @@ func cpfcParseArgs(stdout, stderr io.Writer, argv []string) (cpfcArgs, int, bool
 				case "--json":
 					a.json = val
 				}
-			case "--self-test", "--no-self-test":
+			case "--self-test", "--no-self-test", "--read-only-count":
 				if hasVal {
 					return a, cpfcArgError(stderr, "argument "+name+": ignored explicit argument '"+val+"'"), true
 				}
-				if name == "--self-test" {
+				switch name {
+				case "--self-test":
 					a.selfTest = true
-				} else {
+				case "--no-self-test":
 					a.noSelfTest = true
+				default:
+					a.readOnlyCount = true
 				}
 			default:
 				extras = append(extras, x)
@@ -1235,6 +1240,7 @@ func checkPublicFaceCommandsGateMain(stdout, stderr io.Writer, argv []string) in
 	if done {
 		return rc
 	}
+	selftestFailed := false
 	if !a.selfTest && !a.noSelfTest {
 		src, out := cpfcSelfTest()
 		fmt.Fprintln(stdout, "── 开跑前自检（合成夹具 · 不碰真目标）──")
@@ -1242,8 +1248,12 @@ func checkPublicFaceCommandsGateMain(stdout, stderr io.Writer, argv []string) in
 			fmt.Fprintln(stdout, l)
 		}
 		if src != 0 {
-			fmt.Fprintln(stdout, "⛔ 自检不过 ⇒ 拒绝跑真目标（门禁自己先能被证明「会红」）")
-			return 2
+			if !a.readOnlyCount {
+				fmt.Fprintln(stdout, "⛔ 自检不过 ⇒ 拒绝跑真目标（门禁自己先能被证明「会红」）")
+				return 2
+			}
+			selftestFailed = true
+			fmt.Fprintln(stdout, "⚠ 自检不过 ⇒ --read-only-count：只印只读计数，**不给结论**（rc 仍 = 2）")
 		}
 	} else if a.selfTest {
 		src, out := cpfcSelfTest()
@@ -1273,6 +1283,9 @@ func checkPublicFaceCommandsGateMain(stdout, stderr io.Writer, argv []string) in
 	} else if r == 1 {
 		fmt.Fprintln(stdout, "✗ 有红（rc=1）：例外须 0 · 逐条见上（处置只有两条：改页，或改命令面的用法串 —— "+
 			"不许放宽判据来凑绿 ✗）")
+	}
+	if selftestFailed {
+		return 2
 	}
 	return r
 }
