@@ -39,6 +39,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -119,7 +121,7 @@ func gateResults(inv *invocation, stdout, stderr io.Writer, root string) int {
 	if dir == "" {
 		var ok bool
 		var ferr error
-		dir, scanned, ok, ferr = gateResultsFindLast()
+		dir, scanned, ok, ferr = gateFindLiveRun()
 		if ferr != nil {
 			// laneEX：扫「最近一趟」时**读盘读不动**（临时目录读不到 / 候选结果表点不动）
 			// ⇒ **不吞**（先例 `family_repo.go:155`：`git status` 跑不动 ⇒ 不给结论 8）——
@@ -253,45 +255,248 @@ func gateResults(inv *invocation, stdout, stderr io.Writer, root string) int {
 	return exitOK
 }
 
-// gateResultsFindLast —— 最近一趟的日志目录：扫 `<TMPDIR>` 下所有 `zerg-gates-*`，取 `results.tsv`
-// 的 mtime 最新的那一份。返回（目录 · 扫过几份 · 找没找到 · 读盘错）。
+// ── 趟根发现（GAP-20261004-05：只扫一个根 ⇒ 看不见别的 TMPDIR 下的趟）──────────────────────────
+
+// gateRunRootsEnv —— 趟根「加宽面」的**注入缝**（测试/夹具用 · 生产不设）。
 //
-// laneEX：扫的这一路上**两个 `err` 都不吞**（先例 `family_repo.go:155`：跑不动 ⇒ 不给结论 8）：
+// 设了（含空串）⇒ 用它的值（`:` 分隔的多根）**替换**系统默认加宽面（`/tmp` ＋ macOS `/var/folders/**/T`）；
+// 不设 ⇒ 用系统默认加宽面。★ 主根（本进程 `os.TempDir()`）**不受它影响** —— 那一条恒扫。
+const gateRunRootsEnv = "ZERG_GATE_RUN_ROOTS"
+
+// gateTempRoots —— 要扫的**全部趟根**（去重 · 稳定序）。
 //
-//	① 临时目录 `ReadDir` 报错 ⇒ 连「有没有那一趟」都看不见 ⇒ **逐字带上去**（原来一并吐成
-//	  「没有一份带 results.tsv 的」—— 把「看不见」说成了「没有」，成因被吞）；
-//	② 候选目录的 `results.tsv` `Stat` 报错：**只有「不存在」才算「不是一趟」**（跑了半趟/已清走），
-//	  其余成因（权限/IO）**不许静默跳过** —— 跳过 = 拿**更旧**那一趟冒充「最近一趟」，
-//	  于是「那一趟红了」被报成更旧那趟的绿（本命令退码判的是读，人不看 stderr 就看不出来）。
-func gateResultsFindLast() (string, int, bool, error) {
-	base := os.TempDir()
-	ents, err := os.ReadDir(base)
-	if err != nil {
-		return "", 0, false, fmt.Errorf("读不到临时目录 %s：%w", base, err)
+// 病（现读 2026-10-04 · `GAP-20261004-05`）：「趟」是**门进程**用它**自己的** `$TMPDIR` 建的
+// （脚本 `--outdir` 缺省式 = `${TMPDIR:-/tmp}/zerg-gates-$(date +%Y%m%d-%H%M%S)`）⇒ 查询进程的
+// `$TMPDIR` 与门进程的不一样时（实测：查询侧 `TMPDIR=~/.hermes/cache/laneB-tmp`、门侧 macOS 默认
+// `/var/folders/<x>/<y>/T`），只认一个根就**看不见**真在跑的那一趟 ⇒ 有活趟却判「无活趟」。
+func gateTempRoots() []string {
+	out, seen := []string{}, map[string]bool{}
+	add := func(d string) {
+		d = strings.TrimSpace(d)
+		if d == "" || seen[d] {
+			return
+		}
+		seen[d] = true
+		out = append(out, d)
 	}
-	best, scanned := "", 0
+	add(os.TempDir())                               // 主根：本进程 `$TMPDIR`（测试置它 ⇒ 隔离）
+	if v, ok := os.LookupEnv(gateRunRootsEnv); ok { // 注入缝：给了（含空串）⇒ 换掉默认加宽面
+		for _, d := range strings.Split(v, ":") {
+			add(d)
+		}
+	} else {
+		add("/tmp")
+		for _, d := range gateVarFoldersTempRoots() {
+			add(d)
+		}
+	}
+	return out
+}
+
+// gateVarFoldersTempRoots —— macOS 每用户临时根 `/var/folders/<xx>/<yyy…>/T`（可多个），稳定序。
+// 非 macOS / 该树不可读 ⇒ 返回空（这是**加宽**扫面、不是硬依赖，故不报错）。
+func gateVarFoldersTempRoots() []string {
+	lvl1, err := os.ReadDir("/var/folders")
+	if err != nil {
+		return nil
+	}
+	out := []string{}
+	for _, a := range lvl1 {
+		if !a.IsDir() {
+			continue
+		}
+		pa := filepath.Join("/var/folders", a.Name())
+		lvl2, err := os.ReadDir(pa)
+		if err != nil {
+			continue
+		}
+		for _, b := range lvl2 {
+			if !b.IsDir() {
+				continue
+			}
+			t := filepath.Join(pa, b.Name(), "T")
+			if st, err := os.Stat(t); err == nil && st.IsDir() {
+				out = append(out, t)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// gateRunDirsAll —— 全部趟根下的 `zerg-gates-*` 目录（去重 · 稳定序）。
+//
+// 读盘错误的口径**保持**原 `gateResultsFindLast` 的承诺（「不吞」）：
+//   - 主根（`os.TempDir()`）读不动 ⇒ 原样带上去（连「有没有那一趟」都看不见）；
+//   - 加宽根不在盘上（如非 macOS 无 `/var/folders`）或读不动 ⇒ 跳过 —— 加宽面读不动不把
+//     「主根明明读得到」升成整体判不出。
+func gateRunDirsAll() ([]string, error) {
+	roots := gateTempRoots()
+	dirs, seen := []string{}, map[string]bool{}
+	for i, root := range roots {
+		ents, err := os.ReadDir(root)
+		if err != nil {
+			if i == 0 && !os.IsNotExist(err) {
+				return nil, fmt.Errorf("读不到临时根 %s：%w", root, err)
+			}
+			continue
+		}
+		for _, e := range ents {
+			if !e.IsDir() || !strings.HasPrefix(e.Name(), gateRunPrefix) {
+				continue
+			}
+			p := filepath.Join(root, e.Name())
+			if seen[p] {
+				continue
+			}
+			seen[p] = true
+			dirs = append(dirs, p)
+		}
+	}
+	sort.Strings(dirs)
+	return dirs, nil
+}
+
+// gateRunCandidate —— 一趟「真有 `results.tsv`」的候选（结果表 mtime 用于挑最新）。
+type gateRunCandidate struct {
+	dir string
+	t   time.Time
+}
+
+// gateRunCandidates —— 全部趟根下的候选趟，按结果表 mtime **降序**（最新在前）。
+// 错误口径同 `gateRunDirsAll` ＋ 原有「候选结果表点不动 ⇒ 不静默跳过」（跳过 = 拿更旧那趟冒充最新）。
+func gateRunCandidates() ([]gateRunCandidate, error) {
+	dirs, err := gateRunDirsAll()
+	if err != nil {
+		return nil, err
+	}
+	cands := []gateRunCandidate{}
+	for _, p := range dirs {
+		st, err := os.Stat(filepath.Join(p, gateResultsTSV))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("点不动候选结果表 %s：%w", filepath.Join(p, gateResultsTSV), err)
+		}
+		cands = append(cands, gateRunCandidate{dir: p, t: st.ModTime()})
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].t.After(cands[j].t) })
+	return cands, nil
+}
+
+// gateRootNewestCandidate —— 某一根下最新的候选趟（有 `results.tsv` 的 `zerg-gates-*`，按结果表 mtime）。
+func gateRootNewestCandidate(root string) (string, bool) {
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return "", false
+	}
+	best := ""
 	var bestT time.Time
 	for _, e := range ents {
 		if !e.IsDir() || !strings.HasPrefix(e.Name(), gateRunPrefix) {
 			continue
 		}
-		p := filepath.Join(base, e.Name())
+		p := filepath.Join(root, e.Name())
 		st, err := os.Stat(filepath.Join(p, gateResultsTSV))
 		if err != nil {
-			if os.IsNotExist(err) {
-				continue // 没有结果表 ⇒ 不是「一趟」（跑了半趟/已清走），不算候选
-			}
-			return "", scanned, false, fmt.Errorf("点不动候选结果表 %s：%w", filepath.Join(p, gateResultsTSV), err)
+			continue
 		}
-		scanned++
 		if best == "" || st.ModTime().After(bestT) {
 			best, bestT = p, st.ModTime()
 		}
 	}
-	if best == "" {
-		return "", scanned, false, nil
+	return best, best != ""
+}
+
+// gateHolderPid —— 从实例锁正文取 `pid:`（无 ⇒ 0）。
+func gateHolderPid(body string) int {
+	for _, ln := range strings.Split(body, "\n") {
+		k, v, ok := strings.Cut(ln, ":")
+		if ok && strings.TrimSpace(k) == "pid" {
+			n, _ := strconv.Atoi(strings.TrimSpace(v))
+			return n
+		}
 	}
-	return best, scanned, true, nil
+	return 0
+}
+
+// gateRootLiveHolder —— 这一趟所在的根里有没有**活的**单实例持锁者（门进程）。
+//
+// 门脚本把持锁者落在 `${TMPDIR}/zerg-gate-instance/gate-run.lock`，趟目录也在**同一个** `$TMPDIR` 下
+// ⇒ 由趟目录反推根、读它的锁：锁里的 pid 是活门进程，且**这一趟是该根下最新候选** ⇒ 这一趟就是活的。
+// （门进程命令行没带 `--outdir` 时 —— 脚本默认命名档 —— 这是**唯一**能把活门跑对上趟目录的信号。）
+func gateRootLiveHolder(dir string, gate map[int]gateProc) (int, bool) {
+	root := filepath.Dir(dir)
+	if newest, ok := gateRootNewestCandidate(root); !ok || newest != dir {
+		return 0, false
+	}
+	b, err := os.ReadFile(filepath.Join(root, "zerg-gate-instance", gateInstanceLockFile))
+	if err != nil {
+		return 0, false
+	}
+	pid := gateHolderPid(string(b))
+	if pid <= 0 {
+		return 0, false
+	}
+	if _, live := gate[pid]; !live {
+		return 0, false
+	}
+	return pid, true
+}
+
+// gateRunDirIsLive —— 这一趟是不是「活」的：门进程命令行点名它（`--outdir` / 目录串），
+// 或它的根里有活的持锁者且它是该根下最新候选。
+func gateRunDirIsLive(dir string, gate map[int]gateProc) bool {
+	if _, ok := gateProgressProcForDir(gate, dir); ok {
+		return true
+	}
+	_, ok := gateRootLiveHolder(dir, gate)
+	return ok
+}
+
+// gateResultsFindLast —— 最近一趟的日志目录：扫**全部趟根**下所有 `zerg-gates-*`，取 `results.tsv`
+// 的 mtime 最新的那一份。返回（目录 · 扫过几份 · 找没找到 · 读盘错）。
+//
+// laneEX：扫的这一路上**两个 `err` 都不吞**（先例 `family_repo.go:155`：跑不动 ⇒ 不给结论 8）：
+//
+//	① 主临时根 `ReadDir` 报错 ⇒ 连「有没有那一趟」都看不见 ⇒ **逐字带上去**（原来一并吐成
+//	  「没有一份带 results.tsv 的」—— 把「看不见」说成了「没有」，成因被吞）；
+//	② 候选目录的 `results.tsv` `Stat` 报错：**只有「不存在」才算「不是一趟」**（跑了半趟/已清走），
+//	  其余成因（权限/IO）**不许静默跳过** —— 跳过 = 拿**更旧**那一趟冒充「最近一趟」，
+//	  于是「那一趟红了」被报成更旧那趟的绿（本命令退码判的是读，人不看 stderr 就看不出来）。
+func gateResultsFindLast() (string, int, bool, error) {
+	cands, err := gateRunCandidates()
+	if err != nil {
+		return "", 0, false, err
+	}
+	if len(cands) == 0 {
+		return "", 0, false, nil
+	}
+	return cands[0].dir, len(cands), true, nil
+}
+
+// gateFindLiveRun —— 【优选有活趟】在**全部趟根**里挑一趟「活」的（见 `gateRunDirIsLive`，按结果表
+// mtime 降序先撞先得）；一趟活的都没有 ⇒ 退回 `gateResultsFindLast`（最新写入）。
+//
+// 为什么要有这一条：真在跑的那趟可能正卡在一个长步里（只写它自己的 `NN-*.log`、暂不动 `results.tsv`）
+// ⇒ 单看「结果表最新」可能被**另一个根**里刚收工的一趟顶掉；故「活」优先于「新」。
+func gateFindLiveRun() (string, int, bool, error) {
+	cands, err := gateRunCandidates()
+	if err != nil {
+		return "", 0, false, err
+	}
+	if len(cands) == 0 {
+		return "", 0, false, nil
+	}
+	if gate, ok := gateReapScan(); ok {
+		for _, c := range cands {
+			if gateRunDirIsLive(c.dir, gate) {
+				return c.dir, len(cands), true, nil
+			}
+		}
+	}
+	return cands[0].dir, len(cands), true, nil
 }
 
 // gateResultsReadTSV —— 读结果表：返回（可判的行 · 认不出的行号 · 读文件错）。

@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // gateResultsTSVName —— 结果表文件名（逐字取自脚本 `results=${outdir}/results.tsv`）。
@@ -251,6 +252,7 @@ func TestGateResultsStatesAndUnknownStatus(t *testing.T) {
 func TestGateResultsLastPicksNewest(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("TMPDIR", base)
+	t.Setenv("ZERG_GATE_RUN_ROOTS", "") // 隔离：只扫本用例这一根，别去碰真机 /var/folders（GAP-20261004-05）
 	old := filepath.Join(base, "zerg-gates-20260101-000000")
 	uns := filepath.Join(base, "zerg-gates-20260202-000000") // 没有 results.tsv ⇒ 不是「一趟」
 	newer := filepath.Join(base, "zerg-gates-20260303-000000")
@@ -309,5 +311,47 @@ func TestGateResultsIsReadOnly(t *testing.T) {
 	}
 	if after := treeFingerprint(t, dir); after != before {
 		t.Errorf("只读面跑完那一趟变了（不删不改任何日志那一条破了）：\n前=%s\n后=%s", before, after)
+	}
+}
+
+// ⑧ 跨趟根（GAP-20261004-05）：`--last` 要扫**全部趟根**，不只本进程 `$TMPDIR` 那一个 —— 门进程用
+// **它自己的** `$TMPDIR` 建趟（macOS 默认 `/var/folders/**/T` 一类），只认一个根就看不见它（病灶：
+// 有活趟却判「无活趟」）。
+// 负控有牙：把加宽根去掉（回落单根）⇒ 只会看见 base 那趟（本用例里 base 为空 ⇒ 退 8）；本用例断言取到 other 那趟。
+func TestGateResultsLastScansAllRunRoots(t *testing.T) {
+	base, other := t.TempDir(), t.TempDir()
+	t.Setenv("TMPDIR", base)               // 主根：本进程 `$TMPDIR`
+	t.Setenv("ZERG_GATE_RUN_ROOTS", other) // 加宽根：另一支 TMPDIR（模拟门进程的根）
+	mk := func(root, name string) string {
+		d := filepath.Join(root, name)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	newer := mk(other, "zerg-gates-20260303-000000") // 加宽根里一趟（较新）
+	older := mk(base, "zerg-gates-20260101-000000")  // 主根里一趟（较旧）
+	writeTSV := func(dir, status string) {
+		if err := os.WriteFile(filepath.Join(dir, gateResultsTSVName),
+			[]byte(status+"\t"+filepath.Base(dir)+"\t0\t0s\t/tmp/x.log\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTSV(newer, "FAIL")
+	writeTSV(older, "PASS")
+	// 让主根那趟**更旧**、加宽根那趟**更新**（挑最新跨根才对）。
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(older, gateResultsTSVName), old, old); err != nil {
+		t.Fatal(err)
+	}
+	rc, out, errb := runZergRepo(t, resultsRepo(t), "gate", "results", "--last")
+	if rc != 0 {
+		t.Fatalf("`--last` ⇒ 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "zerg-gates-20260303-000000") {
+		t.Errorf("`--last` 要扫到「加宽趟根」里那趟最新的（20260303）—— 只扫一个根就会漏：\n%s", out)
+	}
+	if !strings.Contains(out, "FAIL 1") {
+		t.Errorf("取到的应当是那份 FAIL 的：\n%s", out)
 	}
 }

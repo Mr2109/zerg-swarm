@@ -11,8 +11,9 @@
 //	   **绝不另写一份**。★ `family_gate_reap.go` 是**禁改件** ⇒ 「抽公共函数」以**同 package 直接调用**达成。
 //	③ 进程树**一次** `ps -axo`（§十.3 / §十.9）：身份键 `(pid, start_time=lstart)`；**限定整趟进程组**
 //	   内找最长路径的叶子当 deepest；**深度上限 8**，到顶报「更深层未展开」。
-//	④ **挑趟口径**（缺口 `GAP-20261002-17`）：`--last` 与正门 `gate results --last` **同口径** —— 复用
-//	   `gateResultsFindLast`（按 `results.tsv` **mtime 最新**挑），**绝不按目录名倒序**；并在「趟：」行明示依据。
+//	④ **挑趟口径**（缺口 `GAP-20261002-17` ＋ `GAP-20261004-05`）：`--last` 与正门 `gate results --last`
+//	   **同口径** —— 复用 `gateFindLiveRun`（扫**全部**趟根 · **优选活趟**，否则按 `results.tsv` **mtime
+//	   最新**挑），**绝不按目录名倒序**；并在「趟：」行明示依据。
 //	⑤ **判活口径**（缺口 `GAP-20261002-16`）：`progress` 是**单快照** ⇒ **只判第 3 层（日志 mtime 推进）＋
 //	   pcpu>0**、**不装三层**（§十.2）；**完整三层取或**只在**有时间窗口**的 `gate wait` 落（见 gateWaitAdvancing）。
 //
@@ -219,31 +220,24 @@ func gateProgressReadHolder() gateProgressHolder {
 
 // ── 趟目录发现（§十.9：优先 holder/当前趟指针，退而 readdir 按名倒序 —— 名含时间戳 ⇒ 倒序=最新）──
 
-// gateProgressListDirs —— `zerg-gates-*` 目录名（**只 readdir，不 per-entry stat**），按名**倒序**。
+// gateProgressListDirs —— **全部趟根**下的 `zerg-gates-*` 目录（只 readdir，不 per-entry stat），按名**倒序**。
 func gateProgressListDirs() ([]string, error) {
-	base := os.TempDir()
-	ents, err := os.ReadDir(base)
+	dirs, err := gateRunDirsAll()
 	if err != nil {
 		return nil, err
 	}
-	names := []string{}
-	for _, e := range ents {
-		if e.IsDir() && strings.HasPrefix(e.Name(), gateRunPrefix) {
-			names = append(names, filepath.Join(base, e.Name()))
-		}
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(names)))
-	return names, nil
+	sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
+	return dirs, nil
 }
 
-// gateProgressNewestRun —— 最新一趟（**按 `results.tsv` 的 mtime 最新挑**）。
+// gateProgressNewestRun —— 最新一趟（**优选有活趟**；没有活的 ⇒ 按 `results.tsv` 的 mtime 最新挑）。
 //
-// ★ 缺口 `GAP-20261002-17`：**口径与正门 `zerg gate results --last` 逐字相同** —— 直接复用其
-// `gateResultsFindLast`（扫全部 `zerg-gates-*`、取 `results.tsv` mtime 最新那一份），
-// **绝不按目录名字面倒序挑**（名字倒序 ≠ 写入顺序：实测会挑中陈年目录，并把它的 `steps_total`
-// 报成一个不属于本版脚本的数）。单一真源，不另写一份。
+// ★ 缺口 `GAP-20261002-17` ＋ `GAP-20261004-05`：**口径与正门 `zerg gate results --last` 逐字相同** ——
+// 直接复用其 `gateFindLiveRun`（扫**全部**趟根下所有 `zerg-gates-*`、**优选活趟**，否则取 `results.tsv`
+// mtime 最新那一份），**绝不按目录名字面倒序挑**（名字倒序 ≠ 写入顺序：实测会挑中陈年目录，并把它的
+// `steps_total` 报成一个不属于本版脚本的数）。单一真源，不另写一份。
 func gateProgressNewestRun() (string, bool, error) {
-	d, _, ok, err := gateResultsFindLast()
+	d, _, ok, err := gateFindLiveRun()
 	return d, ok, err
 }
 
@@ -538,6 +532,17 @@ func gateProgressCollect(dir, root string, silentN, slowN int) (*gateProgressInf
 			}
 		}
 	}
+	// ★ 缺口 `GAP-20261004-05`：门进程命令行没带 `--outdir`（脚本默认命名档）、且它的持锁者不在
+	//   **本查询进程**的根里时，上面两条都认不出「这一趟有活门跑」⇒ 会误判「已收工 · 根 pid 0」
+	//   （实测：活趟 `/var/folders/…/T/zerg-gates-…` 报「已收工 · 根 pid 0」而同一屏又印「最后活动
+	//   距今 0 秒」＝自相矛盾）。⇒ 补一条**根级**判活：这一趟的根里有活的单实例持锁者、且它是该根
+	//   下最新候选（扫**全部趟根**，不只本进程那一个）。
+	if gateOK && !info.alive {
+		if pid, ok := gateRootLiveHolder(dir, gate); ok {
+			info.alive, info.rootPid = true, pid
+			info.originKind, info.origin = "machine", "zerg gate run"
+		}
+	}
 	if !info.alive {
 		info.finished = true // 趟目录在、产物读到、无活进程 ⇒ 已收工（§3.9 退化为 results 视图）
 	}
@@ -637,7 +642,7 @@ func cmdGateProgress(inv *invocation, stdout, stderr io.Writer) int {
 	case dir != "":
 		pick = "由 `--dir` 点名"
 	case inv.last:
-		pick = "按最新写入挑（`results.tsv` mtime 最新 · 与 `gate results --last` 同口径）"
+		pick = "优选活趟、否则按最新写入挑（全趟根 · 与 `gate results --last` 同口径）"
 	}
 	if resolved == "" && len(multi) > 1 {
 		// §3.7.1：多趟活 = 病症。**打印候选清单 + 非零退 2**，绝不弹提示、绝不读 stdin（§十.4）。
@@ -657,7 +662,7 @@ func cmdGateProgress(inv *invocation, stdout, stderr io.Writer) int {
 	if resolved == "" {
 		resolved, _, _ = gateProgressNewestRun() // 无活趟 ⇒ 退最近一趟（§3.1）
 		if pick == "" {
-			pick = "无活趟 ⇒ 按最新写入退最近一趟（与 `gate results --last` 同口径）"
+			pick = "无活趟 ⇒ 按最新写入退最近一趟（全趟根 · 与 `gate results --last` 同口径）"
 		}
 	}
 
@@ -733,7 +738,7 @@ func cmdGateWait(inv *invocation, stdout, stderr io.Writer) int {
 				pick = "有活进程的趟"
 			} else {
 				resolved, _, _ = gateProgressNewestRun()
-				pick = "无活趟 ⇒ 按最新写入退最近一趟（与 `gate results --last` 同口径）"
+				pick = "无活趟 ⇒ 按最新写入退最近一趟（全趟根 · 与 `gate results --last` 同口径）"
 			}
 		} else {
 			pick = "由 `--dir` 点名"
@@ -910,8 +915,8 @@ func gateProgressResolveDir(inv *invocation, dir string, stderr io.Writer) (stri
 		return dir, nil, exitOK
 	}
 	if inv.last {
-		// ★ GAP-20261002-17：`gateProgressNewestRun` 现与正门 `gate results --last` **同口径**
-		// （按 `results.tsv` mtime 最新挑 —— 不是按目录名倒序）。
+		// ★ GAP-20261002-17 ＋ GAP-20261004-05：`gateProgressNewestRun` 现与正门 `gate results --last`
+		// **同口径**（扫全部趟根 · 优选活趟，否则按 `results.tsv` mtime 最新挑 —— 不是按目录名倒序）。
 		d, ok, err := gateProgressNewestRun()
 		if err != nil {
 			inv.setErr("blocked", "gates_unreadable", "临时目录读不到")
