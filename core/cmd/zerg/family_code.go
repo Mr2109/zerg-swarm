@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -923,7 +924,7 @@ const codeShowFileRowCap = 2000
 
 // codeTextCell —— `code find` / `code show` 的行文本格（缺口 `GAP-20260927-09` · 2026-09-27）。
 //
-// 病根（父代理现场实测）：`zerg code show gateway/fleet.yaml:115` 出到 `…mmproj: "~/zerg-models/O…`
+// 病根（父代理现场实测）：`zerg code show gateway/fleet.yaml:115` 出到 `…mmproj: "/Users/<user>/zerg-models/O…`
 // 就断了，而**这一格同时喂人面与机器面**（`listCmd` 同一份 rows）⇒ 长行尾巴在**两面上一起消失** ✗，
 // 取证时只能退回手搓 `read_file` ✗ —— 「能走 CLI 就走」在长行上正好走不通。
 //
@@ -1114,4 +1115,553 @@ func codeFaceMismatchNote(word string, worktreeHits, indexHits int) string {
 	return fmt.Sprintf(
 		"⚠ 两面不一致：词 %q 在**工作树面**(%d 条)与**索引面**(%d 条)答案不同 —— 差因是「面」，不是「有没有」；未跟踪件只在工作树面（%s）内 ⇒ 判影响请用 `zerg code find`",
 		word, worktreeHits, indexHits, codeFaceWorktree)
+}
+
+// -------- E 族 R5 四枚新面（缺口 GAP-20260927-235/236/237 · GAP-20260928-30）----------------
+//
+// 本节把「码面」的**只读诊断/复算**四档落进实现件。★ 四枚只用**位置参数**与**已在册的全局
+// 旗标**（`--path`/`--glob`/`--limit`/`--json`/`--full`），**不新开解析分叉、不动 main.go 的
+// 名字表**；命令树登记（main.go 那张 `commands = []*command{…}` 表）由父代理**串行**落
+// —— 本件只落实现件（登记片段见回执）。行为面须重编后可见。
+
+// cmdCodeCallers —— `zerg code callers <函数名>`（缺口 `GAP-20260927-237` · P1 · 只读）。
+//
+// 病（缺口逐字）：包装函数到**全部调用点**的反查只能靠全仓搜加人工。
+// 面：`path/line/role/text`，`role` ∈ {`call`（调用点）,`def`（定义行）}。
+// 退码：`0` 有命中 · `1` 零命中（**不是错，是「没有」**）· `2` 用法错（缺名 / 出仓 / 坏 glob/limit）· `8` 仓根/面读不到。
+//
+// 旗标名 `--func`（缺口逐字点名）：与位置参数**两收**（给了 --func 优先）；`--func` 若要真能被
+// 解析还须在 main.go 名字表登记（未登记时用位置参数形态即可 —— 与命令树一并落）。
+func cmdCodeCallers(inv *invocation, stdout, stderr io.Writer) int {
+	name := strings.TrimSpace(inv.flagVal("--func"))
+	if name == "" && len(inv.args) > 0 {
+		name = strings.TrimSpace(inv.args[0])
+	}
+	if name == "" {
+		inv.setErr("usage", "missing_func", "缺函数名")
+		fmt.Fprintf(stderr, "%s: `code callers` 要给函数名（例：%s code callers requireFields 或 %s code callers --func requireFields）⇒ 退码 2\n", progName, progName, progName)
+		fmt.Fprintf(stderr, "用法：%s code callers <函数名> [--path <目录或单件>] [--glob <模式>] [--limit <N>] [--json <字段>]\n", progName)
+		return exitUsage
+	}
+	if bad := foreignFlag(inv, "--func", "--path", "--glob", "--limit", "--full", "--timeout"); bad != "" {
+		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, bad)
+		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+		return exitUsage
+	}
+	root := repoRoot()
+	if root == "" {
+		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
+		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 查不了调用点（不给结论 · 退码 8）\n", progName)
+		return exitBlocked
+	}
+	base := root
+	if sub := strings.TrimSpace(inv.flagVal("--path")); sub != "" {
+		if filepath.IsAbs(sub) {
+			base = filepath.Clean(filepath.FromSlash(sub))
+		} else {
+			base = filepath.Join(root, filepath.FromSlash(sub))
+			if !pathWithinDir(root, base) {
+				inv.setErr("usage", "path_outside_repo", "--path 出仓")
+				fmt.Fprintf(stderr, "%s: --path 出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, sub, root)
+				return exitUsage
+			}
+		}
+		if st, serr := os.Stat(base); serr != nil || (!st.IsDir() && !st.Mode().IsRegular()) {
+			inv.setErr("usage", "path_not_dir", "--path 既不是件也不是目录")
+			fmt.Fprintf(stderr, "%s: --path 指的既不是件也不是目录：%s ⇒ 退码 2\n", progName, sub)
+			return exitUsage
+		}
+	}
+	glob := strings.TrimSpace(inv.flagVal("--glob"))
+	if glob != "" {
+		if _, gerr := filepath.Match(glob, ""); gerr != nil {
+			inv.setErr("usage", "bad_glob", "--glob 模式非法")
+			fmt.Fprintf(stderr, "%s: --glob 模式非法（模式 %q）：%v ⇒ 退码 2\n", progName, glob, gerr)
+			return exitUsage
+		}
+	}
+	rowCap := codeFindRowCap
+	if lim := strings.TrimSpace(inv.flagVal("--limit")); lim != "" {
+		n, lerr := strconv.Atoi(lim)
+		if lerr != nil || n <= 0 {
+			inv.setErr("usage", "bad_limit", "--limit 非法")
+			fmt.Fprintf(stderr, "%s: --limit 必须是正整数（得到 %q）⇒ 退码 2\n", progName, lim)
+			return exitUsage
+		}
+		rowCap = n
+	}
+	// 定义行形态：`func <名>(` 或 `func (recv) <名>(`；调用行形态：`<名>(`（词边界）。
+	defRe := regexp.MustCompile(`^\s*func\s*(\([^)]*\)\s*)?` + regexp.QuoteMeta(name) + `\s*\(`)
+	callRe := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\s*\(`)
+	rows := []map[string]string{}
+	hits, scanned, skippedBig := 0, 0, 0
+	walkErr := filepath.Walk(base, func(p string, info os.FileInfo, werr error) error {
+		if werr != nil {
+			return nil // 只读面：读不动的子树跳过（与 `cmdCodeFind` 同判）
+		}
+		if info.IsDir() {
+			dotDir := strings.HasPrefix(info.Name(), ".") && !codeScanKeepDots[info.Name()]
+			if codeScanSkipDirs[info.Name()] || dotDir {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if codeScanSkipFile(root, p) {
+			return nil
+		}
+		if glob != "" {
+			if ok, _ := filepath.Match(glob, filepath.Base(p)); !ok {
+				return nil
+			}
+		}
+		if info.Size() > codeFindMaxFileBytes {
+			skippedBig++
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil || !utf8.Valid(b) {
+			return nil
+		}
+		scanned++
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			rel = p
+		}
+		rel = filepath.ToSlash(rel)
+		for i, ln := range strings.Split(string(b), "\n") {
+			if !callRe.MatchString(ln) {
+				continue
+			}
+			hits++
+			if len(rows) >= rowCap {
+				continue
+			}
+			role := "call"
+			if defRe.MatchString(ln) {
+				role = "def"
+			}
+			rows = append(rows, map[string]string{
+				"path": rel,
+				"line": strconv.Itoa(i + 1),
+				"role": role,
+				"text": codeTextCell(inv, ln),
+			})
+		}
+		return nil
+	})
+	if walkErr != nil {
+		inv.setErr("blocked", "walk_failed", "扫不动")
+		fmt.Fprintf(stderr, "%s: 扫不动（%v）⇒ 不给结论（退码 8）\n", progName, walkErr)
+		return exitBlocked
+	}
+	fmt.Fprintf(stderr, "%s: 扫了 %d 件 · 命中 %d 条", progName, scanned, hits)
+	if hits > len(rows) {
+		fmt.Fprintf(stderr, "（本页只列前 %d 条 —— 收窄：--path / --glob / --limit）", len(rows))
+	}
+	if skippedBig > 0 {
+		fmt.Fprintf(stderr, " · 跳过 >%dMB 的件 %d 个", codeFindMaxFileBytes>>20, skippedBig)
+	}
+	fmt.Fprintln(stderr)
+	if hits == 0 {
+		inv.setErr("failed", "no_match", "没有调用点")
+		fmt.Fprintf(stderr, "%s: 没找到 %q 的调用点 —— 这不是错，是「没有」（退码 1）\n", progName, name)
+		return exitFail
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i]["path"] != rows[j]["path"] {
+			return rows[i]["path"] < rows[j]["path"]
+		}
+		return atoiSafe(rows[i]["line"]) < atoiSafe(rows[j]["line"])
+	})
+	return listCmd(inv, stdout, stderr, []string{"path", "line", "role", "text"}, rows)
+}
+
+// codeDenomRecountParse —— 读一份「件清单」：一行一件（去空白；空行与 `#` 开头忽略）。
+func codeDenomRecountParse(p string) ([]string, error) {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, ln := range strings.Split(string(b), "\n") {
+		t := strings.TrimSpace(ln)
+		if t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+// cmdCodeDenomRecount —— `zerg code denom-recount <左件> <右件>`（缺口 `GAP-20260927-236` · P1 · 只读）。
+//
+// 病（缺口逐字）：文件计数出现 873/874 差 1 时，无正门能**定点名**那 1 件。
+// 面：两份件清单（一行一件）的**对称差** —— `path/side`，`side` ∈ {`只在左`,`只在右`}。
+// 退码：`0` 两清单**同集**（差 0）· `1` 有差（已定点名差的件）· `2` 用法错 · `8` 清单读不到。
+func cmdCodeDenomRecount(inv *invocation, stdout, stderr io.Writer) int {
+	if len(inv.args) < 2 || strings.TrimSpace(inv.args[0]) == "" || strings.TrimSpace(inv.args[1]) == "" {
+		inv.setErr("usage", "missing_lists", "缺两份件清单")
+		fmt.Fprintf(stderr, "%s: `code denom-recount` 要给两份件清单（一行一件）：%s code denom-recount <左件> <右件> ⇒ 退码 2\n", progName, progName)
+		return exitUsage
+	}
+	if bad := foreignFlag(inv, "--timeout"); bad != "" {
+		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, bad)
+		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+		return exitUsage
+	}
+	root := repoRoot()
+	if root == "" {
+		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
+		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 不给结论（退码 8）\n", progName)
+		return exitBlocked
+	}
+	resolve := func(rel string) (string, bool) {
+		clean := filepath.Clean(filepath.FromSlash(rel))
+		if filepath.IsAbs(clean) {
+			return clean, true // 显式绝对路径 = 另一根（例：仓外台账）
+		}
+		abs := filepath.Join(root, clean)
+		return abs, pathWithinDir(root, abs)
+	}
+	la, ok := resolve(strings.TrimSpace(inv.args[0]))
+	if !ok {
+		inv.setErr("usage", "path_outside_repo", "左清单出仓")
+		fmt.Fprintf(stderr, "%s: 左清单出仓了（%s）⇒ 退码 2\n", progName, inv.args[0])
+		return exitUsage
+	}
+	ra, ok := resolve(strings.TrimSpace(inv.args[1]))
+	if !ok {
+		inv.setErr("usage", "path_outside_repo", "右清单出仓")
+		fmt.Fprintf(stderr, "%s: 右清单出仓了（%s）⇒ 退码 2\n", progName, inv.args[1])
+		return exitUsage
+	}
+	lLines, lerr := codeDenomRecountParse(la)
+	if lerr != nil {
+		inv.setErr("blocked", "list_unreadable", "左清单读不到")
+		fmt.Fprintf(stderr, "%s: 左清单读不到（%v）⇒ 不给结论（退码 8）\n", progName, lerr)
+		return exitBlocked
+	}
+	rLines, rerr := codeDenomRecountParse(ra)
+	if rerr != nil {
+		inv.setErr("blocked", "list_unreadable", "右清单读不到")
+		fmt.Fprintf(stderr, "%s: 右清单读不到（%v）⇒ 不给结论（退码 8）\n", progName, rerr)
+		return exitBlocked
+	}
+	ls := map[string]bool{}
+	for _, x := range lLines {
+		ls[x] = true
+	}
+	rs := map[string]bool{}
+	for _, x := range rLines {
+		rs[x] = true
+	}
+	onlyL, onlyR := []string{}, []string{}
+	for x := range ls {
+		if !rs[x] {
+			onlyL = append(onlyL, x)
+		}
+	}
+	for x := range rs {
+		if !ls[x] {
+			onlyR = append(onlyR, x)
+		}
+	}
+	sort.Strings(onlyL)
+	sort.Strings(onlyR)
+	fmt.Fprintf(stderr, "%s: 左 %d 件 · 右 %d 件 · 只在左 %d · 只在右 %d\n", progName, len(lLines), len(rLines), len(onlyL), len(onlyR))
+	if len(onlyL) == 0 && len(onlyR) == 0 {
+		fmt.Fprintf(stderr, "%s: 两清单**同集**（差 0）—— 复算一致（退码 0）\n", progName)
+		return exitOK
+	}
+	rows := []map[string]string{}
+	for _, x := range onlyL {
+		rows = append(rows, map[string]string{"path": x, "side": "只在左"})
+	}
+	for _, x := range onlyR {
+		rows = append(rows, map[string]string{"path": x, "side": "只在右"})
+	}
+	rc := listCmd(inv, stdout, stderr, []string{"path", "side"}, rows)
+	if rc == exitOK {
+		rc = exitFail // 有差 ⇒ 1（形如 `diff`：相等才 0）
+	}
+	return rc
+}
+
+// codeGitRun —— 跑一次 git（`-C <root>` + args），返回逐行 stdout（去尾空行）。
+func codeGitRun(root string, args []string) ([]string, error) {
+	full := append([]string{"-C", root}, args...)
+	cmd := exec.Command("git", full...)
+	var out strings.Builder
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
+	s := strings.TrimRight(out.String(), "\n")
+	if s == "" {
+		return []string{}, nil
+	}
+	return strings.Split(s, "\n"), nil
+}
+
+// cmdCodeGitTwoWay —— `zerg code git-two-way <全局选项> -- <git 参数…>`（缺口 `GAP-20260927-235` · P1 · 只读）。
+//
+// 病（缺口逐字）：无正门做「同一 git 命令带或不带某全局选项两版对比」的诊断复算（现有 `code find`
+// 是词法面复算、非此诊断）⇒ 每次都要手搓脚本直调 git。
+//
+// 口径：第一位置参数 = **全局选项**（`k=v` 走 `git -c k=v …`；以 `-` 开头的开关原样前置）；
+// 其余 = **git 参数**（含 git 自身的旗标时，写在 `--` 之后以防被本仓解析器当 zerg 旗标）。
+// 面：两跑（无选项 / 带选项）的**差行**：`side/text`，`side` ∈ {`只在无选项`,`只在带选项`}。
+// 退码：`0` 两跑一致 · `1` 有差 · `2` 用法错（缺选项/缺 git 参数）· `8` git 不可用 / 仓根读不到。
+func cmdCodeGitTwoWay(inv *invocation, stdout, stderr io.Writer) int {
+	if len(inv.args) < 2 {
+		inv.setErr("usage", "missing_git_args", "缺全局选项或 git 参数")
+		fmt.Fprintf(stderr, "%s: `code git-two-way` 要给「全局选项」+「git 参数」（后者建议写在 `--` 之后）⇒ 退码 2\n", progName)
+		fmt.Fprintf(stderr, "用法：%s code git-two-way <k=v 或 -开关> -- <git 参数…>（例：%s code git-two-way core.quotePath=false -- ls-files)\n", progName, progName)
+		return exitUsage
+	}
+	if bad := foreignFlag(inv, "--timeout"); bad != "" {
+		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, bad)
+		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+		return exitUsage
+	}
+	root := repoRoot()
+	if root == "" {
+		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
+		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 不给结论（退码 8）\n", progName)
+		return exitBlocked
+	}
+	opt := strings.TrimSpace(inv.args[0])
+	gitArgs := inv.args[1:]
+	withArgs := []string{}
+	if strings.HasPrefix(opt, "-") {
+		withArgs = append(withArgs, opt)
+	} else {
+		withArgs = append(withArgs, "-c", opt)
+	}
+	withArgs = append(withArgs, gitArgs...)
+	plain, perr := codeGitRun(root, gitArgs)
+	if perr != nil {
+		inv.setErr("blocked", "git_unavailable", "git 跑不动")
+		fmt.Fprintf(stderr, "%s: git 跑不动（%v）⇒ 不给结论（退码 8）\n", progName, perr)
+		return exitBlocked
+	}
+	with, werr := codeGitRun(root, withArgs)
+	if werr != nil {
+		inv.setErr("blocked", "git_unavailable", "git 跑不动")
+		fmt.Fprintf(stderr, "%s: 带选项(%s)那一跑跑不动（%v）⇒ 不给结论（退码 8）\n", progName, opt, werr)
+		return exitBlocked
+	}
+	pset, wset := map[string]bool{}, map[string]bool{}
+	for _, l := range plain {
+		pset[l] = true
+	}
+	for _, l := range with {
+		wset[l] = true
+	}
+	onlyP, onlyW := []string{}, []string{}
+	for _, l := range plain {
+		if !wset[l] {
+			onlyP = append(onlyP, l)
+		}
+	}
+	for _, l := range with {
+		if !pset[l] {
+			onlyW = append(onlyW, l)
+		}
+	}
+	fmt.Fprintf(stderr, "%s: 无选项 %d 行 · 带选项(%s) %d 行 · 只在无选项 %d · 只在带选项 %d\n", progName, len(plain), opt, len(with), len(onlyP), len(onlyW))
+	if len(onlyP) == 0 && len(onlyW) == 0 {
+		fmt.Fprintf(stderr, "%s: 两跑**一致** —— 该选项对这一跑无差（退码 0）\n", progName)
+		return exitOK
+	}
+	rows := []map[string]string{}
+	for _, l := range onlyP {
+		rows = append(rows, map[string]string{"side": "只在无选项", "text": truncateDisplay(l, 200)})
+	}
+	for _, l := range onlyW {
+		rows = append(rows, map[string]string{"side": "只在带选项", "text": truncateDisplay(l, 200)})
+	}
+	rc := listCmd(inv, stdout, stderr, []string{"side", "text"}, rows)
+	if rc == exitOK {
+		rc = exitFail
+	}
+	return rc
+}
+
+// codeReadingHint —— 一条「注释读数 → 真源取法」提示（缺口 `GAP-20260928-30`）。
+type codeReadingHint struct {
+	Keyword string // 读数所在行的关键词（用于把读数与真源取法配上）
+	Source  string // 该读数的真源取法（怎么现读复算）
+}
+
+// codeReadingNumberRe —— 注释里「读数」的形态：一个**独立**整数（前后不被字母/数字/`./:/_#§-`
+// 邻接）⇒ 排掉日期 `2026-09-29`、版本 `v1.2`、行参 `:53`、`§十一`、`#2`、`0x1f` 一类假阳骨架。
+var codeReadingNumberRe = regexp.MustCompile(`(?:^|[^0-9A-Za-z._:/#§-])([0-9]+)(?:[^0-9A-Za-z._:/#§-]|$)`)
+
+// codeAuditReadingHints —— 通用「真源取法」提示表（family_h.go 那一份由 `familyHCodeReadingHints` 续）。
+func codeAuditReadingHints() []codeReadingHint {
+	return append([]codeReadingHint{
+		{"件", "现跑 `zerg script ls --json path` 数 items（收件口径 scriptInvScan）"},
+		{"处", "现跑 `zerg code find <关键词>` 数命中条数"},
+		{"行", "现跑 `zerg code show <件>` 读整件行数"},
+		{"门", "现跑 `zerg gate list` 数门数（真源 `scripts/gates/`）"},
+		{"排除面", "现读 `family_script_inventory.go` 的 `scriptInvExcludeDirs` 键数"},
+	}, familyHCodeReadingHints()...)
+}
+
+// cmdCodeAuditReadings —— `zerg code audit-readings --path <件或目录>`（缺口 `GAP-20260928-30` · P2 · 只读）。
+//
+// 病（缺口逐字）：「注释里的时点读数」在机器上完全不可见 —— 门看不见注释 ⇒ 静默腐；同形病已在
+// `family_h.go`/`check-*.py` 等连烂 3 轮，每轮靠人肉扫描器才扫得出。
+//
+// ★ 口径（**只列候选 · 不下判断**）：本命令列出注释行里的**独立整数**（读数）+ 该读数的「真源取法」
+// 提示（按关键词配），**绝不**判「烂了 / 没过期」—— 缺口明说「本类判据须先设计 —— 纯启发式扫描
+// 会有假阳，别造恒绿/易误报的空转闸」；判断留给后续判据。
+// 面：`path/line/reading/hint/text`（`reading` = 读数原文整串）。
+// 退码：`0` 列完候选（含 0 条）· `1` 该面没有注释读数（**不是错，是「没有」**）· `2` 用法错（缺 --path / 坏 glob）· `8` 面读不到。
+func cmdCodeAuditReadings(inv *invocation, stdout, stderr io.Writer) int {
+	sub := strings.TrimSpace(inv.flagVal("--path"))
+	if sub == "" {
+		inv.setErr("usage", "missing_path", "缺 --path")
+		fmt.Fprintf(stderr, "%s: `code audit-readings` 要给 --path <件或目录>（例：%s code audit-readings --path core/cmd/zerg/family_h.go）⇒ 退码 2\n", progName, progName)
+		return exitUsage
+	}
+	if bad := foreignFlag(inv, "--path", "--glob", "--limit", "--full", "--timeout"); bad != "" {
+		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, bad)
+		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
+		return exitUsage
+	}
+	root := repoRoot()
+	if root == "" {
+		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
+		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 读不了码（不给结论 · 退码 8）\n", progName)
+		return exitBlocked
+	}
+	base := root
+	if filepath.IsAbs(sub) {
+		base = filepath.Clean(filepath.FromSlash(sub))
+	} else {
+		base = filepath.Join(root, filepath.FromSlash(sub))
+		if !pathWithinDir(root, base) {
+			inv.setErr("usage", "path_outside_repo", "--path 出仓")
+			fmt.Fprintf(stderr, "%s: --path 出仓了（%s 不在 %s 下）⇒ 退码 2\n", progName, sub, root)
+			return exitUsage
+		}
+	}
+	if st, serr := os.Stat(base); serr != nil || (!st.IsDir() && !st.Mode().IsRegular()) {
+		inv.setErr("usage", "path_not_dir", "--path 既不是件也不是目录")
+		fmt.Fprintf(stderr, "%s: --path 指的既不是件也不是目录：%s ⇒ 退码 2\n", progName, sub)
+		return exitUsage
+	}
+	glob := strings.TrimSpace(inv.flagVal("--glob"))
+	if glob != "" {
+		if _, gerr := filepath.Match(glob, ""); gerr != nil {
+			inv.setErr("usage", "bad_glob", "--glob 模式非法")
+			fmt.Fprintf(stderr, "%s: --glob 模式非法（模式 %q）：%v ⇒ 退码 2\n", progName, glob, gerr)
+			return exitUsage
+		}
+	}
+	rowCap := codeFindRowCap
+	if lim := strings.TrimSpace(inv.flagVal("--limit")); lim != "" {
+		n, lerr := strconv.Atoi(lim)
+		if lerr != nil || n <= 0 {
+			inv.setErr("usage", "bad_limit", "--limit 非法")
+			fmt.Fprintf(stderr, "%s: --limit 必须是正整数（得到 %q）⇒ 退码 2\n", progName, lim)
+			return exitUsage
+		}
+		rowCap = n
+	}
+	hints := codeAuditReadingHints()
+	rows := []map[string]string{}
+	scanned, skippedBig, readings := 0, 0, 0
+	walkErr := filepath.Walk(base, func(p string, info os.FileInfo, werr error) error {
+		if werr != nil {
+			return nil
+		}
+		if info.IsDir() {
+			dotDir := strings.HasPrefix(info.Name(), ".") && !codeScanKeepDots[info.Name()]
+			if codeScanSkipDirs[info.Name()] || dotDir {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if codeScanSkipFile(root, p) {
+			return nil
+		}
+		if glob != "" {
+			if ok, _ := filepath.Match(glob, filepath.Base(p)); !ok {
+				return nil
+			}
+		}
+		if info.Size() > codeFindMaxFileBytes {
+			skippedBig++
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil || !utf8.Valid(b) {
+			return nil
+		}
+		scanned++
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil {
+			rel = p
+		}
+		rel = filepath.ToSlash(rel)
+		for i, ln := range strings.Split(string(b), "\n") {
+			if codeLineKind(ln) != "comment" {
+				continue
+			}
+			nums := codeReadingNumberRe.FindAllStringSubmatch(ln, -1)
+			if len(nums) == 0 {
+				continue
+			}
+			hint := ""
+			for _, h := range hints {
+				if strings.Contains(ln, h.Keyword) {
+					hint = h.Keyword + " ⇒ " + h.Source
+					break
+				}
+			}
+			for _, m := range nums {
+				readings++
+				if len(rows) >= rowCap {
+					continue
+				}
+				rows = append(rows, map[string]string{
+					"path":    rel,
+					"line":    strconv.Itoa(i + 1),
+					"reading": m[1],
+					"hint":    hint,
+					"text":    codeTextCell(inv, ln),
+				})
+			}
+		}
+		return nil
+	})
+	if walkErr != nil {
+		inv.setErr("blocked", "walk_failed", "扫不动")
+		fmt.Fprintf(stderr, "%s: 扫不动（%v）⇒ 不给结论（退码 8）\n", progName, walkErr)
+		return exitBlocked
+	}
+	fmt.Fprintf(stderr, "%s: 扫了 %d 件 · 注释读数候选 %d 条", progName, scanned, readings)
+	if readings > len(rows) {
+		fmt.Fprintf(stderr, "（本页只列前 %d 条 —— 收窄：--path / --glob / --limit）", len(rows))
+	}
+	if skippedBig > 0 {
+		fmt.Fprintf(stderr, " · 跳过 >%dMB 的件 %d 个", codeFindMaxFileBytes>>20, skippedBig)
+	}
+	fmt.Fprintln(stderr)
+	fmt.Fprintf(stderr, "（只列候选 · **不下「烂了/没过期」的判断** —— 判断须先设计（缺口 GAP-20260928-30），防假阳）\n")
+	if readings == 0 {
+		inv.setErr("failed", "no_match", "没有注释读数")
+		fmt.Fprintf(stderr, "%s: 该面没有注释读数 —— 这不是错，是「没有」（退码 1）\n", progName)
+		return exitFail
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i]["path"] != rows[j]["path"] {
+			return rows[i]["path"] < rows[j]["path"]
+		}
+		return atoiSafe(rows[i]["line"]) < atoiSafe(rows[j]["line"])
+	})
+	return listCmd(inv, stdout, stderr, []string{"path", "line", "reading", "hint", "text"}, rows)
 }

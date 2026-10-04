@@ -14,6 +14,9 @@
 //	缺 `--yes` ⇒ 计划件走 stderr + 2；`--dry-run` 与 `--yes` 同给 ⇒ 2（先过门、后落盘）
 //	★ 无 `--out` 时本命令是纯读面，这两枚确认档**被静默忽略**（不判、不报未知旗标）。
 //
+//	★ 2026-10-04（缺口 `GAP-20260927-388`）：格级可选列 `stdout_bytes_unpinned`（只钉 rc、不钉字节）——
+//	  时点变的态（stdout 随账本/时间涨落）也能入格；标了它的格字节列印「（不判）」，判定口同规跳过字节比较。
+//
 // ★ 真源只有一处：`core/cmd/zerg/testdata/cli-matrix.json`（本命令**只读它**，不重算、
 // 不重新生成 —— 生成/合并是 `check-cli-contract.py --emit-matrix` 的活，命令面不抢）。
 package main
@@ -35,7 +38,13 @@ type cliMatrixCase struct {
 	Argv            []string `json:"argv"`
 	WantRC          int      `json:"want_rc"`
 	WantStdoutBytes int      `json:"want_stdout_bytes"`
-	Why             string   `json:"why"`
+	// ★ 2026-10-04（缺口 `GAP-20260927-388`）：`stdout_bytes_unpinned: true` = **只钉 rc、不钉字节**。
+	//   有些态的 stdout 含**随时点变的正文**（同一 `argv` 两次读数都不同 —— 例：`gap export --dry-run`
+	//   的计划件随账本涨落）⇒ 字节数冻不成常量、这类格过去**整格无法入账**（表达能力有缺口）。
+	//   标了它 ⇒ 字节列一律印「（不判）」，判定口（`cli_matrix_test.go` 的 `judgeCase`）
+	//   **同规跳过字节比较**（只核 `want_rc`）。缺省 `false` ⇒ 既有形态一字不动。
+	StdoutBytesUnpinned bool   `json:"stdout_bytes_unpinned"`
+	Why                 string `json:"why"`
 }
 
 // ★ 2026-09-23（设计-CI适配-v1.1 §十三 `M2` · 波A `A1`）：矩阵**加了两条可选列**
@@ -79,11 +88,17 @@ func cmdGateMatrix(inv *invocation, stdout, stderr io.Writer) int {
 		if c.WantRC != 0 {
 			nonzero++
 		}
+		// ★ `stdout_bytes_unpinned`（缺口 `GAP-20260927-388`）：只钉 rc ⇒ 字节列印「（不判）」，
+		//   不把那个冻不住的数当成判据面（判定口同规跳过 —— 见本件头部那一段）。
+		bytesCol := strconv.Itoa(c.WantStdoutBytes)
+		if c.StdoutBytesUnpinned {
+			bytesCol = "（不判）"
+		}
 		rows = append(rows, map[string]string{
 			"command": c.Command,
 			"case":    c.ID,
 			"want_rc": strconv.Itoa(c.WantRC),
-			"bytes":   strconv.Itoa(c.WantStdoutBytes),
+			"bytes":   bytesCol,
 			"why":     c.Why,
 			"argv":    strings.Join(c.Argv, " "),
 		})

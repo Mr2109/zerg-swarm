@@ -56,6 +56,10 @@ func loadDeviceMaxWorkers(workDir string) (*DeviceAwareConfig, error) {
 func resolveByDevice(devices []DeviceConfig, hostname string, fallback map[string]int, defaultVal int) (int, bool) {
 	// 精确匹配
 	for _, d := range devices {
+		// ★ GAP-20260927-299：空串两侧都不参与匹配（EqualFold("","") 恒真 ⇒ 空条目误命中任意主机）
+		if d.Hostname == "" || hostname == "" {
+			continue
+		}
 		if strings.EqualFold(d.Hostname, hostname) {
 			if d.MaxWorkers != nil {
 				return *d.MaxWorkers, true
@@ -63,7 +67,13 @@ func resolveByDevice(devices []DeviceConfig, hostname string, fallback map[strin
 		}
 	}
 	// 模糊匹配：hostname 包含设备名 或 设备名包含 hostname
+	// ★ GAP-20260927-299 / -298：空串会让 strings.Contains(x, "") 恒真 ⇒ 误命中任意主机/设备
+	//   （yaml 空 hostname 条目，或 os.Hostname() 取失败而 hostname="" 的错误分支）——
+	//   名实不符：自述「回退默认」却漏出别机的值（含 0=暂停）。匹配前断言两侧都非空。
 	for _, d := range devices {
+		if d.Hostname == "" || hostname == "" {
+			continue
+		}
 		if strings.Contains(strings.ToLower(hostname), strings.ToLower(d.Hostname)) ||
 			strings.Contains(strings.ToLower(d.Hostname), strings.ToLower(hostname)) {
 			if d.MaxWorkers != nil {
@@ -85,8 +95,11 @@ func resolveByHostname(deviceMap map[string]int, defaultVal int) int {
 	if w, ok := deviceMap[strings.ToLower(hostname)]; ok {
 		return w
 	}
-	// 模糊匹配
+	// 模糊匹配（两侧都须非空：Contains(x, "") 恒真，空键会当万能匹配 —— GAP-20260927-298/299）
 	for k, v := range deviceMap {
+		if k == "" || hostname == "" {
+			continue
+		}
 		if strings.Contains(strings.ToLower(hostname), k) || strings.Contains(k, strings.ToLower(hostname)) {
 			return v
 		}
@@ -101,11 +114,18 @@ func GetDeviceName(devices []DeviceConfig) string {
 		return "unknown"
 	}
 	for _, d := range devices {
+		// 空串不参与匹配（GAP-20260927-299）
+		if d.Hostname == "" || hostname == "" {
+			continue
+		}
 		if strings.EqualFold(d.Hostname, hostname) {
 			return d.Hostname
 		}
 	}
 	for _, d := range devices {
+		if d.Hostname == "" || hostname == "" {
+			continue
+		}
 		if strings.Contains(strings.ToLower(hostname), strings.ToLower(d.Hostname)) {
 			return d.Hostname
 		}

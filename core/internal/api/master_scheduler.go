@@ -13,10 +13,13 @@ import (
 	"fmt"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -119,7 +122,14 @@ type Task struct {
 	Lead         *string       `json:"lead,omitempty"`          // Lead（负责的模型）: 声明了就必须非空白（空白 ⇒ 拒）
 	Members      []SliceMember `json:"members,omitempty"`       // 分工方案: 每个成员干什么（非空 ⇒ 必须过「等确认闸」）
 	PlanApproved *bool         `json:"plan_approved,omitempty"` // 等确认闸: nil=没写（=未确认 ⇒ 拒）；&false 显式未确认 ⇒ 拒；&true ⇒ 放
-	cmd          *exec.Cmd     // 运行中的 CA 进程（打断发信号用——非导出）
+	// ============ R7 缺口 GAP-20260929-26: 领取 / 心跳（claim / heartbeat）============
+	// 「谁、何时、从队里把这条取走跑」的现读面: 派发（dispatchDecideLocked）即写入。
+	// 空 = 尚未被领取（旧件零值 ⇒ 序列化形态不变）。心跳在 runTask 起跑时刷新，
+	// 供 ReclaimDeadLetters 判「进程已丢 + 心跳超时」的死信。
+	ClaimedAt   *time.Time `json:"claimed_at,omitempty"`   // 领取时刻（派发即写）
+	ClaimedBy   string     `json:"claimed_by,omitempty"`   // 领取者（本机主控单槽 ⇒ "local"）
+	HeartbeatAt *time.Time `json:"heartbeat_at,omitempty"` // 最近心跳（起跑/存活期刷新）
+	cmd         *exec.Cmd  // 运行中的 CA 进程（打断发信号用——非导出）
 }
 
 // TaskQueue 优先级队列（container/heap）
@@ -144,7 +154,9 @@ type MasterScheduler struct {
 	running        map[string]*Task      // 运行中任务
 	history        map[string]*Task      // v2.5.5 虫族UI: 已完成/失败任务历史（UI 列表显示——不丢）
 	waiting        map[string]*Task      // v2.5.6 故障自愈: 环境故障挂起任务（waiting_retry——机器恢复自动重派）
-	maxConcurrent  int                   // 最大并发（单槽——1 个任务在跑）
+	maxConcurrent  int                   // 最大并发（**有效值** —— paused 时为 0；见 applySchedLocked）
+	configuredMax  int                   // 用户设定的并发上限（持久化真源 —— pause 不改它）
+	dispatchPaused bool                  // 暂停派活（一等开关 · 持久化 —— 与 maxConcurrent=0 等价但记住原值）
 	agentCmd       string                // CA 启动命令（zerg-agent 路径）
 	agentEnv       []string              // CA 环境变量（网关地址/token）
 	taskDirForCall string                // v2.5.6: 当前 zerg 流程任务目录（write_file 工具写文件用）
@@ -177,6 +189,7 @@ func NewMasterScheduler(agentCmd string, maxConcurrent int, store ...StoreReader
 		history:       make(map[string]*Task), // v2.5.5 虫族UI: 任务历史
 		waiting:       make(map[string]*Task), // v2.5.6 故障自愈: 环境故障挂起任务
 		maxConcurrent: maxConcurrent,
+		configuredMax: maxConcurrent,
 		agentCmd:      agentCmd,
 	}
 	if len(store) > 0 {
@@ -205,6 +218,8 @@ func (s *MasterScheduler) Start() {
 		return
 	}
 	s.started = true
+	// R7 GAP-20260927-210 ②: 载入持久化的并发上限/暂停位（首跑无件 ⇒ 保持构造参数给的默认）。
+	s.loadSchedConfigLocked()
 	restored := s.queue.Len()
 	s.dispatchLocked()
 	s.mu.Unlock()
@@ -223,6 +238,9 @@ func (s *MasterScheduler) startRecoveryLoop() {
 		defer ticker.Stop()
 		for range ticker.C {
 			s.recoverWaitingLocked()
+			// R7 GAP-20260929-26 ③: 死信回收 —— 先给存活进程刷心跳，再收「进程已丢 + 心跳超时」的件。
+			s.heartbeatSweep()
+			s.ReclaimDeadLetters()
 		}
 	}()
 }
@@ -444,12 +462,18 @@ func (s *MasterScheduler) dispatchDecideLocked() []*Task {
 		dispatchDecideProbe()
 	}
 	var pending []*Task
+	now := time.Now()
 	for len(s.queue) > 0 && len(s.running) < s.maxConcurrent {
 		task := heap.Pop(&s.queue).(*Task)
 		if task.Status == StatusCancelled {
 			continue
 		}
 		task.Status = StatusRunning
+		// R7 GAP-20260929-26 ①: 领取面 —— 派发即盖「谁/何时取走 + 心跳起算」。
+		claimAt := now
+		task.ClaimedAt = &claimAt
+		task.ClaimedBy = "local"
+		task.HeartbeatAt = &claimAt
 		s.running[task.ID] = task
 		log.Printf("🔄 scheduler: dispatching task %s (%s)", task.ID, task.Description)
 		pending = append(pending, task)
@@ -474,6 +498,8 @@ func caLogEnv() string { return "ZERG_LOG_DIR=" + statepath.CAEventLogRoot() }
 // v2.5.5 T2 worktree: 内部任务用 git worktree 隔离开发（独立目录——merge 回 main——任务 git 底座）
 // v2.5.6 新流程: task.Flow=="zerg" → 程序定量驱动（状态机——内部调模型——不 spawn CA）
 func (s *MasterScheduler) runTask(task *Task) {
+	// R7 GAP-20260929-26 ①: 领到即刷心跳（claim/heartbeat 现读面）。
+	s.touchHeartbeat(task.ID)
 	// v2.5.6 新流程（程序定量驱动 Agent——不 spawn CA——状态机驱动）
 	if task.Flow == "zerg" {
 		s.runZergFlow(task)
@@ -1131,6 +1157,390 @@ func (s *MasterScheduler) QueueLen() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.queue)
+}
+
+// ============ R7 · 调度器控制面: 暂停派活 / 并发旋钮 / 状态 / 死信回收 ============
+// 缺口 GAP-20260927-210（P0 · 暂停派活一等入口 + maxConcurrent 持久化）与
+// GAP-20260929-26（P1 · claim/心跳面 + 并发旋钮 + 死信回队）的**服务端落地**。
+// 口径（三条硬线）:
+//  ① 「暂停派活」与「终止在跑」是**两件事** —— 暂停只把**有效并发**置 0（不再起新的），
+//     已在跑的进程一动不动；要停在跑的走既有 TerminateTask。
+//  ② 并发上限（configuredMax）与暂停位（dispatchPaused）**都持久化**到统一状态目录的
+//     zerg-sched.json —— 重启后 `zerg sched show` 读到的还是上次设的值（不靠人记）。
+//  ③ 有效并发 = paused ? 0 : configuredMax —— 单一派生点 applySchedLocked，别处不重算。
+
+// schedStateFileName 调度器配置持久化文件名（统一状态目录下）。
+const schedStateFileName = "zerg-sched.json"
+
+// schedConfigFile 测试隔离（照 tasksFile 体例）: 非空 ⇒ 用它；空 ⇒ 走 statepath 状态目录。
+var schedConfigFile = ""
+
+// schedConfigPath 调度器配置读写路径。
+func schedConfigPath() string {
+	if p := strings.TrimSpace(schedConfigFile); p != "" {
+		return p
+	}
+	return statepath.File(schedStateFileName)
+}
+
+// persistedSched 调度器配置落盘结构（只存「用户设定」的两个旋钮 —— 不含运行态计数）。
+type persistedSched struct {
+	SavedAt        time.Time `json:"saved_at"`
+	MaxConcurrent  int       `json:"max_concurrent"`  // 用户设定的并发上限
+	DispatchPaused bool      `json:"dispatch_paused"` // 是否暂停派活
+}
+
+// applySchedLocked 由 configuredMax/dispatchPaused 派生**有效** maxConcurrent（调用方持锁）。
+func (s *MasterScheduler) applySchedLocked() {
+	if s.dispatchPaused {
+		s.maxConcurrent = 0
+		return
+	}
+	s.maxConcurrent = s.configuredMax
+}
+
+// saveSchedConfigLocked 原子写调度器配置（调用方持锁）—— 同 tasks_persist.go 的落盘纪律
+// （同目录临时件 → fsync → rename → fsync 目录；失败返回 error，不静默吞）。
+func (s *MasterScheduler) saveSchedConfigLocked() error {
+	data := persistedSched{SavedAt: time.Now(), MaxConcurrent: s.configuredMax, DispatchPaused: s.dispatchPaused}
+	buf, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("调度器配置序列化失败: %w", err)
+	}
+	dst := schedConfigPath()
+	dir := filepath.Dir(dst)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("调度器配置目录不可用（%s）: %w", dir, err)
+	}
+	tmp, err := os.CreateTemp(dir, ".sched-*.tmp")
+	if err != nil {
+		return fmt.Errorf("调度器配置临时件创建失败（%s）: %w", dir, err)
+	}
+	tmpName := tmp.Name()
+	fail := func(step string, e error) error {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("调度器配置%s失败（%s）: %w", step, tmpName, e)
+	}
+	if _, err := tmp.Write(buf); err != nil {
+		return fail("写入临时件", err)
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		return fail("设置权限", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fail("fsync", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("调度器配置关闭临时件失败（%s）: %w", tmpName, err)
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("调度器配置原子替换失败（%s → %s）: %w", tmpName, dst, err)
+	}
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
+}
+
+// loadSchedConfigLocked 读调度器配置并应用（调用方持锁 —— 由 Start 调一次）。
+// 件不存在（首跑）⇒ 保持构造参数给的默认（与改动前逐字同行为）；件损坏/非法值 ⇒ 响亮报 + 用默认。
+func (s *MasterScheduler) loadSchedConfigLocked() {
+	readPath := schedConfigPath()
+	buf, err := os.ReadFile(readPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("⚠️ 调度器配置读盘失败（%s）: %v —— 用构造参数的默认并发 %d", readPath, err, s.configuredMax)
+		}
+		s.applySchedLocked()
+		return
+	}
+	var data persistedSched
+	if err := json.Unmarshal(buf, &data); err != nil {
+		log.Printf("❌ 调度器配置件损坏（%s · %d 字节）: %v —— 用构造参数的默认并发 %d", readPath, len(buf), err, s.configuredMax)
+		s.applySchedLocked()
+		return
+	}
+	if data.MaxConcurrent < 0 {
+		log.Printf("⚠️ 调度器配置并发为负（%d）—— 忽略、用默认 %d", data.MaxConcurrent, s.configuredMax)
+		s.applySchedLocked()
+		return
+	}
+	s.configuredMax = data.MaxConcurrent
+	s.dispatchPaused = data.DispatchPaused
+	s.applySchedLocked()
+	pausedWord := "运行中"
+	if s.dispatchPaused {
+		pausedWord = "已暂停"
+	}
+	log.Printf("⚙️ 调度器配置已加载（%s）: 并发上限 %d · 派活%s · 有效并发 %d", readPath, s.configuredMax, pausedWord, s.maxConcurrent)
+}
+
+// SchedClaim 一条在跑任务的领取面（claim/heartbeat 现读行）。
+type SchedClaim struct {
+	ID          string `json:"id"`
+	Status      string `json:"status"`
+	Model       string `json:"model"`
+	ClaimedAt   string `json:"claimed_at"`
+	ClaimedBy   string `json:"claimed_by"`
+	HeartbeatAt string `json:"heartbeat_at"`
+}
+
+// SchedState 调度器状态快照（只读面 —— GAP-20260927-210 ② · GAP-20260929-26 ①）。
+type SchedState struct {
+	MaxConcurrent  int          `json:"max_concurrent"`  // 用户设定的并发上限
+	EffectiveMax   int          `json:"effective_max"`   // 有效并发（paused ⇒ 0）
+	DispatchPaused bool         `json:"dispatch_paused"` // 是否已暂停派活
+	Running        int          `json:"running"`         // 在跑条数
+	Queued         int          `json:"queued"`          // 队列条数
+	WaitingRetry   int          `json:"waiting_retry"`   // 等环境恢复条数
+	Claimed        []SchedClaim `json:"claimed"`         // 在跑条目的领取面
+}
+
+// SchedState 取调度器状态快照（只读 · 加锁一拍）。
+func (s *MasterScheduler) SchedState() SchedState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := SchedState{
+		MaxConcurrent:  s.configuredMax,
+		EffectiveMax:   s.maxConcurrent,
+		DispatchPaused: s.dispatchPaused,
+		Running:        len(s.running),
+		Queued:         len(s.queue),
+		WaitingRetry:   len(s.waiting),
+		Claimed:        []SchedClaim{},
+	}
+	for id, t := range s.running {
+		c := SchedClaim{ID: id, Status: t.Status, Model: t.Model, ClaimedBy: t.ClaimedBy}
+		if t.ClaimedAt != nil {
+			c.ClaimedAt = t.ClaimedAt.UTC().Format(time.RFC3339)
+		}
+		if t.HeartbeatAt != nil {
+			c.HeartbeatAt = t.HeartbeatAt.UTC().Format(time.RFC3339)
+		}
+		st.Claimed = append(st.Claimed, c)
+	}
+	sort.Slice(st.Claimed, func(i, j int) bool { return st.Claimed[i].ID < st.Claimed[j].ID })
+	return st
+}
+
+// PauseDispatch 暂停派活（一等入口 —— 缺口 GAP-20260927-210 ①）。
+// 只把**有效并发**置 0（不再起新的）；在跑的进程一动不动（要停在跑的 ⇒ TerminateTask）。
+// 持久化: 写 configuredMax/dispatchPaused ⇒ 重启后仍是暂停态。
+func (s *MasterScheduler) PauseDispatch() error {
+	s.mu.Lock()
+	s.dispatchPaused = true
+	s.applySchedLocked()
+	if err := s.saveSchedConfigLocked(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
+	log.Printf("⏸️ scheduler: dispatch paused (configured max=%d — running tasks untouched)", s.configuredMax)
+	return nil
+}
+
+// ResumeDispatch 恢复派活（回到用户设定的并发上限并立即派发积压）。
+func (s *MasterScheduler) ResumeDispatch() error {
+	s.mu.Lock()
+	s.dispatchPaused = false
+	s.applySchedLocked()
+	if err := s.saveSchedConfigLocked(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.dispatchLocked()
+	s.mu.Unlock()
+	log.Printf("▶️ scheduler: dispatch resumed (effective max=%d)", s.maxConcurrent)
+	return nil
+}
+
+// SetMaxConcurrent 设并发上限（显式旋钮 —— 缺口 GAP-20260929-26 ②；非负整数）。
+// 不解除暂停（只改记住的上限）；未暂停时立即按新上限派发。
+func (s *MasterScheduler) SetMaxConcurrent(n int) error {
+	if n < 0 {
+		return fmt.Errorf("并发上限要非负整数（给的是 %d）", n)
+	}
+	s.mu.Lock()
+	s.configuredMax = n
+	s.applySchedLocked()
+	if err := s.saveSchedConfigLocked(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	if !s.dispatchPaused {
+		s.dispatchLocked()
+	}
+	s.mu.Unlock()
+	log.Printf("⚙️ scheduler: max concurrency set to %d (paused=%t)", n, s.dispatchPaused)
+	return nil
+}
+
+// deadLetterTimeout 心跳超时（超过它无刷新且进程已丢 ⇒ 判死信 —— 缺口 GAP-20260929-26 ③）。
+const deadLetterTimeout = 10 * time.Minute
+
+// touchHeartbeat 刷新一条在跑任务的心跳（runTask 起跑调）。
+func (s *MasterScheduler) touchHeartbeat(taskID string) {
+	s.mu.Lock()
+	if t, ok := s.running[taskID]; ok {
+		now := time.Now()
+		t.HeartbeatAt = &now
+		if t.ClaimedAt == nil {
+			t.ClaimedAt = &now
+		}
+		if t.ClaimedBy == "" {
+			t.ClaimedBy = "local"
+		}
+	}
+	s.mu.Unlock()
+}
+
+// heartbeatSweep 给「进程仍活着」的在跑任务刷心跳（自加锁）。
+// 依据 = CA 进程存活（cmd.Process 非空且 ProcessState 未置 ⇒ 未回收）。flow=zerg 是进程内
+// 状态机（无外部进程可探）⇒ 不计入死信判定（保守：不据心跳收它）。返回刷新的条数。
+func (s *MasterScheduler) heartbeatSweep() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	alive := 0
+	for _, t := range s.running {
+		if t.Flow == "zerg" {
+			continue
+		}
+		if t.cmd != nil && t.cmd.Process != nil && t.cmd.ProcessState == nil {
+			hb := now
+			t.HeartbeatAt = &hb
+			alive++
+		}
+	}
+	return alive
+}
+
+// ReclaimDeadLetters 死信回收（缺口 GAP-20260929-26 ③）—— 扫在跑任务里
+// 「非 zerg-flow · 进程已丢 · 心跳距上次刷新超过 deadLetterTimeout」的件:
+// 尝试 ≤3 次 ⇒ 回队重派；超过 ⇒ 标 failed 落因。返回被处理的 id 清单（空 = 无死信）。
+// 调用方无需持锁。★ 存活进程的心跳由 heartbeatSweep 持续刷新 ⇒ 长任务不会被误收。
+func (s *MasterScheduler) ReclaimDeadLetters() []string {
+	return s.reclaimDeadLettersAfter(deadLetterTimeout)
+}
+
+func (s *MasterScheduler) reclaimDeadLettersAfter(timeout time.Duration) []string {
+	s.mu.Lock()
+	now := time.Now()
+	var dead []*Task
+	for _, t := range s.running {
+		if t.Flow == "zerg" {
+			continue // 进程内状态机 —— 无外部进程、不据心跳收（保守）
+		}
+		if t.cmd != nil && t.cmd.Process != nil && t.cmd.ProcessState == nil {
+			continue // 进程仍活 ⇒ 不是死信
+		}
+		hb := t.HeartbeatAt
+		if hb == nil {
+			hb = t.ClaimedAt
+		}
+		if hb == nil {
+			continue // 无心跳面（旧件）—— 不据此判死
+		}
+		if now.Sub(*hb) > timeout {
+			dead = append(dead, t)
+		}
+	}
+	if len(dead) == 0 {
+		s.mu.Unlock()
+		return nil
+	}
+	ids := make([]string, 0, len(dead))
+	for _, t := range dead {
+		if t.cmd != nil && t.cmd.Process != nil {
+			_ = t.cmd.Process.Kill() // 进程句柄还在（已退出未回收）—— 补一刀，防僵尸
+		}
+		delete(s.running, t.ID)
+		t.ClaimedAt = nil
+		t.ClaimedBy = ""
+		t.HeartbeatAt = nil
+		t.cmd = nil
+		t.RetryCount++
+		if t.RetryCount > 3 {
+			t.Status = StatusFailed
+			t.FailReason = fmt.Sprintf("死信：心跳超时 %s 无刷新且进程已丢（已重派 %d 次）—— 标 failed 待查", timeout, t.RetryCount)
+			t.CompletedAt = now
+			s.history[t.ID] = t
+			log.Printf("☠️ scheduler: task %s dead-letter → failed (%s no heartbeat, process gone, retries %d)", t.ID, timeout, t.RetryCount)
+		} else {
+			t.Status = StatusQueued
+			t.FailReason = fmt.Sprintf("死信回收：心跳超时 %s 且进程已丢 —— 回队重派（attempt %d/3）", timeout, t.RetryCount)
+			heap.Push(&s.queue, t)
+			log.Printf("♻️ scheduler: task %s dead-letter reclaim → re-queued (%s no heartbeat, attempt %d/3)", t.ID, timeout, t.RetryCount)
+		}
+		ids = append(ids, t.ID)
+	}
+	if err := saveTasksLocked(s.queue, s.running, s.history, s.waiting); err != nil {
+		log.Printf("⚠️ 任务落盘失败: %v\n", err)
+	}
+	s.dispatchLocked()
+	s.mu.Unlock()
+	return ids
+}
+
+// ---- HTTP 处理器（本件与 handlers.go 同包；R7 排他锁不许碰 handlers.go，
+//      故 sched 面处理器定义在此；路由登记由父代理串行落 core/cmd/zerg-core/main.go）----
+
+// SchedStateHandler GET /api/sched —— 调度器状态（只读）。
+func (h *Handlers) SchedStateHandler(w http.ResponseWriter, r *http.Request) {
+	if h.Scheduler == nil {
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
+		return
+	}
+	writeJSON(w, http.StatusOK, h.Scheduler.SchedState())
+}
+
+// SchedPauseHandler POST /api/sched/pause —— 暂停派活。
+func (h *Handlers) SchedPauseHandler(w http.ResponseWriter, r *http.Request) {
+	if h.Scheduler == nil {
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
+		return
+	}
+	if err := h.Scheduler.PauseDispatch(); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "SCHED_PAUSE_FAILED", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, h.Scheduler.SchedState())
+}
+
+// SchedResumeHandler POST /api/sched/resume —— 恢复派活。
+func (h *Handlers) SchedResumeHandler(w http.ResponseWriter, r *http.Request) {
+	if h.Scheduler == nil {
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
+		return
+	}
+	if err := h.Scheduler.ResumeDispatch(); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "SCHED_RESUME_FAILED", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, h.Scheduler.SchedState())
+}
+
+// SchedSetHandler POST /api/sched/set?max=<N> —— 设并发上限。
+func (h *Handlers) SchedSetHandler(w http.ResponseWriter, r *http.Request) {
+	maxStr := strings.TrimSpace(r.URL.Query().Get("max"))
+	n, err := strconv.Atoi(maxStr)
+	if maxStr == "" || err != nil || n < 0 {
+		writeErrorCode(w, http.StatusBadRequest, "BAD_MAX", "max 要非负整数（query: ?max=<N>）")
+		return
+	}
+	if h.Scheduler == nil {
+		writeErrorCode(w, http.StatusServiceUnavailable, "SCHEDULER_NOT_STARTED", "总调度器未启动")
+		return
+	}
+	if err := h.Scheduler.SetMaxConcurrent(n); err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "SCHED_SET_FAILED", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, h.Scheduler.SchedState())
 }
 
 // PauseTask 暂停/继续排队任务（queued→paused / paused→queued——2026-08-21 Mr2109右键功能）

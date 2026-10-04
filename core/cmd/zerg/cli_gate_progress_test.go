@@ -395,3 +395,31 @@ func TestGateProgressDirLiveViaRootLock(t *testing.T) {
 		t.Errorf("root_pid 要指出活门进程（%d）：\n%s", cmd.Process.Pid, out)
 	}
 }
+
+// ★ 缺口 `GAP-20261004-07`：进度分母要数**本趟真会跑的步**（＝脚本 `--list` 的真步数）——
+// `self_test()` 里那批 `add_step self "自检-…"` 只在 `--self-test` 档才 add，**不算进分母**。
+// 负控有牙：夹具脚本三条声明（2 真步 + 1 self）⇒ `steps_total` 必须是 2（改前会数成 3）。
+func TestGateProgressStepsTotalExcludesSelfFixtures(t *testing.T) {
+	gpIsolateEnv(t)
+	body := "add_step go \"门甲\" tri \"${t}\" \"true\"\n" +
+		"add_step go \"门乙\" rc \"${t}\" \"true\"\n" +
+		"add_step self \"自检-必过-1\" rc \"${t}\" \"true\"\n"
+	repo := syntheticRepo(t, body)
+	dir := t.TempDir()
+	gpWriteTSV(t, dir, [][5]string{{"PASS", "a", "0", "1s", ""}})
+	rc, out, errb := runZergRepo(t, repo, "gate", "progress", "--dir", dir, "--json", "steps_total,steps_done")
+	if rc != 0 {
+		t.Fatalf("退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("`--json` 至少两行：%q", out)
+	}
+	var rec map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(lines[1]), &rec); err != nil {
+		t.Fatalf("第二条不是 JSON：%v · %q", err, lines[1])
+	}
+	if got := string(rec["steps_total"]); got != "2" {
+		t.Errorf("分母要数非 self 的真步（2），实得 %s（`add_step self` 的自检夹具步不算）", got)
+	}
+}

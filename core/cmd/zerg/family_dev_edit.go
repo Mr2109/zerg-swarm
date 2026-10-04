@@ -928,6 +928,13 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 	if g := row["approval_outside"]; g != "" {
 		fmt.Fprintf(stdout, "  批准面   : %s\n", g)
 	}
+	// ★ GAP-20260928-105（本枚）：**批准面说明块** —— 干跑（零副作用）就是 `dev edit` 的
+	//   **只读自查口**：「这一枚批准件从哪来 · 怎么续期 · scope 闭集怎么扩」此前**没有任何 CLI 面**
+	//   写出来 ⇒ 换机器 / 新会话撞退 2 时使用者不知从哪起手、也无从自查。与拒执面
+	//   `devEditRequireApproval` **共用同一处**（不另写第二份口径）。
+	for _, ln := range devEditApprovalHowto(row["approval_path"], row["file"]) {
+		fmt.Fprintf(stdout, "  %s\n", ln)
+	}
 	fmt.Fprintf(stdout, "  语法自检 : %s%s\n", row["syntax"], ifStr(row["syntax"] == "不过", " —— **真写会被拒**（`.py`=ast.parse / `.sh`=bash -n / `.json`·`.yaml`=Go 侧解析；先改内容）", ""))
 	fmt.Fprintf(stdout, "  影响面钩子: %s（类=%s · §4.3 分档 —— 判据见 stderr 的 `impact_hook` 那两行）\n", hook.Tier, hook.Class)
 	fmt.Fprintf(stdout, "  回滚路径 : %s（提案的退点件 —— **退建议见 stderr 那一块**：判据 = 回到 before_sha256；`git revert` 不算退点）\n", orDash(prop.Rollback))
@@ -1049,6 +1056,25 @@ func approvalScopeCovers(scope, fileRel string) bool {
 	return false
 }
 
+// devEditApprovalHowto —— 「这一枚批准件从哪来 · 怎么续期 · scope 闭集怎么扩 · 怎么自查」的
+// **只读说明块**（GAP-20260928-105）。病灶（缺口逐字）：真写前置是一枚人签批准件
+// （`<状态目录>/approvals/dev_edit.json`），却**没有任何 CLI 面**说明它从哪来、怎么续期、
+// scope 闭集怎么扩 ⇒ 换机器 / 新会话必撞退 2，使用者**无从自查**。
+// 本块把四步给全，并由 ① 干跑计划面（`--dry-run` · 零副作用）与 ② 真写拒执面**共用同一处**
+// （不另写第二份口径）—— 干跑就是本命令的**只读自查口**；路径 / 件名由调用方传现读值。
+func devEditApprovalHowto(path, fileRel string) []string {
+	return []string{
+		"批准面·从哪来 : " + progName + " approve new --tool " + devEditApprovalTool +
+			" --by <人名> --note <理由> --scope <范围>   （**人签**：要人在终端上敲口令；非交互会话一律拒）",
+		"批准面·续期/扩scope : " + progName + " approve new **同名不覆盖** —— 先 `cp -p` 备份旧件、`mv` 到仓外让位，" +
+			"再签一枚新 `scope` = 旧 scope **∪ 本次要加的件**（必须是**超集** · 只增不减）；换 scope 只能重签（`approve` 族无 revoke/覆盖）",
+		"批准面·scope闭集 : 只认三档 —— `*`（全部）· 逐字同路径 · 以 `/` 结尾的**目录前缀**（例 `core/cmd/zerg/`）；" +
+			"本次改件 " + fileRel + " 必须落在其内，否则真写退 2",
+		"批准面·自查 : " + progName + " approve show " + devEditApprovalTool + "（全貌+验签判决 · 只读）· " +
+			progName + " approve ls（列全部）· 本命令 `--dry-run`（计划面直出本件的批准判决 · 零副作用）· 落点 " + path,
+	}
+}
+
 // devEditRequireApproval —— 真写的那道闸：不齐 ⇒ 退 2（并把「下一步」给人 —— 怎么签那枚件）。
 func devEditRequireApproval(inv *invocation, a devEditApproval, fileRel string, stderr io.Writer) int {
 	if a.OK {
@@ -1061,6 +1087,11 @@ func devEditRequireApproval(inv *invocation, a devEditApproval, fileRel string, 
 	fmt.Fprintf(stderr, "  判决      ：%s\n", a.Judg)
 	fmt.Fprintf(stderr, "  下一步（**批准要人亲自在终端上敲**，模型够不着）：%s approve new --tool %s --scope %s --by <人名> --note <理由>\n",
 		progName, devEditApprovalTool, fileRel)
+	// ★ GAP-20260928-105（本枚）：把**批准面说明块**也给全（从哪来 / 续期换 scope / scope 闭集 /
+	//   自查）—— 与干跑计划面**同一处**（`devEditApprovalHowto` · 不另写第二份）。
+	for _, ln := range devEditApprovalHowto(a.Path, fileRel) {
+		fmt.Fprintf(stderr, "  %s\n", ln)
+	}
 	return exitUsage
 }
 

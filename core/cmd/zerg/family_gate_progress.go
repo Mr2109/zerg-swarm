@@ -242,6 +242,12 @@ func gateProgressNewestRun() (string, bool, error) {
 }
 
 // gateProgressStepTable —— 步表来源（脚本 sha 前 16 位 ＋ 步数：**现读**，不硬编码 158 · §3.3 G9）。
+// ★ 缺口 `GAP-20261004-07`（分母与 `zerg gate ls` 同源）：分母要数的是**本趟真会跑的步** ——
+// `parseAddSteps` 会把脚本里**全部** `add_step` 声明都算进来，其中 `self_test()` 里的 47 条
+// `add_step self "自检-…"` 是**只在 `--self-test` 档才 add** 的自检夹具步，默认全量趟不跑它们。
+// 现读铁证：全表 236 条 ＝ 189 真步 ＋ 47 self 夹具，而 `zerg gate ls`（＝脚本 `--list`）现印
+// 「共 189 步」⇒ 拿 236 当分母，进度恒报 N/236（单步趟也报 1/236），与本趟实跑行数永远对不上。
+// ⇒ 只数 **scope ≠ self** 的那些（＝脚本 `--list` 的真步数）。
 func gateProgressStepTable(root string) (count int, sha string, ok bool) {
 	if root == "" {
 		return 0, "", false
@@ -251,7 +257,13 @@ func gateProgressStepTable(root string) (count int, sha string, ok bool) {
 		return 0, "", false
 	}
 	sum := sha256.Sum256(b)
-	return len(parseAddSteps(string(b))), hex.EncodeToString(sum[:])[:16], true
+	for _, d := range parseAddSteps(string(b)) {
+		if d.Scope == "self" { // self_test() 里的自检夹具步：不在默认全量趟里
+			continue
+		}
+		count++
+	}
+	return count, hex.EncodeToString(sum[:])[:16], true
 }
 
 // gateProgressStepLogs —— 该趟日志件：最大步号 / 当前步名 / 最新 mtime / 件数。目录不可读 ⇒ ok=false。
