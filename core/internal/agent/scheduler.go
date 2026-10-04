@@ -101,9 +101,9 @@ type WorkersConfig struct {
 
 // LoadWorkersConfig — 加载 workers.yaml 配置（v2.5.2 设备感知版）
 // 1. 尝试读取 config/workers.yaml
-// 2. 文件不存在 → 按 hostname 匹配内置默认值（mini-node-1=1/EDGE-NODE=3/local=2）
+// 2. 文件不存在 → 按 hostname 匹配内置默认值（mini-node-1=1/EDGE-NODE=3/Mr2109=0暂停/mini-node-2=1）
 // 3. 解析失败 → 回退到内置默认值
-// 4. max_workers <= 0 → 回退默认值
+// 4. 0 一律=暂停（文件显式 0、或缺省回退到内置 0，都原样 0·永不抬升）；抬升只留给真·非法值（负数）（GAP-20260927-298 · 2026-10-04 拍板）
 func LoadWorkersConfig(workDir string) WorkersConfig {
 	// 尝试读取配置文件
 	cfgPath := filepath.Join(workDir, workersConfigPath)
@@ -123,9 +123,12 @@ func LoadWorkersConfig(workDir string) WorkersConfig {
 		hostname = ""
 	}
 
-	// 按 hostname 匹配设备配置
-	mw := resolveByDevice(cfg.Devices, hostname, defaultDeviceMap, defaultMaxWorkers)
-	if mw <= 0 {
+	// 按 hostname 匹配设备配置（GAP-20260927-298 · 2026-10-04 拍板）：
+	//   0 一律=暂停（文件显式 0、或缺省回退到内置 0，都原样 0 —— 永不抬升）；
+	//   抬升只留给真·非法值（负数）；解析失败已在上面分支回退。
+	mw, _ := resolveByDevice(cfg.Devices, hostname, defaultDeviceMap, defaultMaxWorkers)
+	if mw < 0 {
+		log.Printf("[workers] max_workers=%d 为非法值（负数）⇒ 抬升为 defaultMaxWorkers=%d", mw, defaultMaxWorkers)
 		return WorkersConfig{MaxWorkers: defaultMaxWorkers}
 	}
 	return WorkersConfig{MaxWorkers: mw}

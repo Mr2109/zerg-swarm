@@ -66,6 +66,28 @@ type FleetNode struct {
 	Kind string `yaml:"kind"`
 }
 
+// DefaultAgentPort 是子端 agent 的默认 HTTP 端口（fleet.yaml 的 fleet 段未给 port 时的回退口径）。
+const DefaultAgentPort = 8100
+
+// NodeAddr 按机器名取地址（纯函数）：机器名 → (IP, 端口)。
+//
+// 地址一律来自 fleet.yaml 的 fleet 段（配置即事实源）；名册缺该机器、或该机器未给 host 时，
+// 回退机器名本身 + DefaultAgentPort（与既有 gateway.fleetNode 口径逐字一致）。
+//
+// GAP-20260926-71：取址口径此前只作为 gateway 包的私有方法存在（fleetNode/agentURLFor），
+// config/agent/chat 三包都够不着 ⇒ 各处只能写死地址。本函数把口径提到 config 包，
+// 三包（含 gateway.fleetNode）共用同一真源，杜绝第二份口径。
+func NodeAddr(fleet map[string]FleetNode, host string) (string, int) {
+	if node, ok := fleet[host]; ok && node.Host != "" {
+		port := node.Port
+		if port <= 0 {
+			port = DefaultAgentPort
+		}
+		return node.Host, port
+	}
+	return host, DefaultAgentPort
+}
+
 // AuthConfig 认证配置。
 type AuthConfig struct {
 	Token string `yaml:"token"`

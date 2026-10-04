@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""check-public-marks-tracked-parity.py —— GAP-20260927-408 的**对拍腿**（仓外候件 · 只读）。
+"""check-public-marks-tracked-parity.py —— GAP-20260927-408 的**对拍腿**（**已挂门94** · tri-report 只报告 · 只读）。
 
 病灶（账内逐字）：`scripts/公开标记.tsv` 里「跟踪状态」类**时点读数**无人对拍、静默过期
 （`:229 仍写「本件现读未跟踪」而该件已跟踪`）。

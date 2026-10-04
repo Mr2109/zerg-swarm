@@ -172,7 +172,7 @@ func sampleGpuTemp() float64 {
 
 // sampleGpuPct 采样 GPU 使用率 %（B4 v2）。
 //   - Linux（AMD ROCm）: rocm-smi --showuse，解析 GPU use（%）
-//   - macOS（Apple Silicon）: ioreg gpu-perf-tgt-utilization（无需 root）
+//   - macOS: ioreg PerformanceStatistics["Device Utilization %"]（真实占用，无需 root）
 func sampleGpuPct() float64 {
 	out, err := exec.Command("rocm-smi", "--showuse").Output()
 	if err != nil {
@@ -202,28 +202,54 @@ func sampleGpuPct() float64 {
 	return -1
 }
 
-// sampleMacOSGpuPct macOS Apple Silicon GPU 利用率（ioreg gpu-perf-tgt-utilization——无需 root）。
+// sampleMacOSGpuPct macOS（Apple Silicon / Intel）GPU **真实**利用率 %（无需 root）。
+//
+// 缺口 GAP-20260925-34（真修点 · 本函数）：原实现读 ioreg 的 `gpu-perf-tgt-utilization`，
+// 那是 GPU 性能**目标档位**（机台固有的寄存器值，不随负载变）⇒ `zerg agent ls/show`
+// 的 `gpu_pct` 每台机恒为一个常数（Mr2109 实测恒 70=0x46、mini 恒 85），拿它判
+// 「此刻有没有在算」必得假绿（永远像在忙）。正解 = 读 IOAccelerator 的
+// PerformanceStatistics["Device Utilization %"]（真实 GPU 占用；同一份 ioreg 里就有）。
+// 取不到该键 ⇒ 返回 -1（"无数据"，不冒充常数）。
 func sampleMacOSGpuPct() float64 {
-	out, err := exec.Command("ioreg", "-l").Output()
+	out, err := exec.Command("/usr/sbin/ioreg", "-r", "-d", "1", "-k", "PerformanceStatistics").Output()
 	if err != nil {
 		return -1
 	}
+	best := -1.0
 	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, "gpu-perf-tgt-utilization") {
-			start := strings.Index(line, "<")
-			end := strings.Index(line, ">")
-			if start >= 0 && end > start {
-				hexStr := strings.ReplaceAll(line[start+1:end], " ", "")
-				if len(hexStr) >= 2 {
-					val, err := strconv.ParseInt(hexStr[:2], 16, 32)
-					if err == nil {
-						return float64(val)
-					}
-				}
-			}
+		v, ok := parseDeviceUtilization(line)
+		if !ok {
+			continue
+		}
+		if v > best {
+			best = v // 多张 GPU 时取最忙的那张（单卡机无差别）
 		}
 	}
-	return -1
+	return best
+}
+
+// parseDeviceUtilization 从一行 ioreg 的 PerformanceStatistics 里取 "Device Utilization %"。
+// 形如: "PerformanceStatistics" = {…,"Device Utilization %"=37,…}（值是不带符号的整数）。
+// 命中返回 (值, true)；无该键/值非数字返回 (0, false)。
+func parseDeviceUtilization(line string) (float64, bool) {
+	const key = `"Device Utilization %"=`
+	i := strings.Index(line, key)
+	if i < 0 {
+		return 0, false
+	}
+	rest := line[i+len(key):]
+	j := 0
+	for j < len(rest) && rest[j] >= '0' && rest[j] <= '9' {
+		j++
+	}
+	if j == 0 {
+		return 0, false
+	}
+	v, err := strconv.Atoi(rest[:j])
+	if err != nil {
+		return 0, false
+	}
+	return float64(v), true
 }
 
 // readLinuxGpuTemp 通过 rocm-smi 读取 AMD GPU 温度（°C）。

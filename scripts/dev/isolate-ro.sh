@@ -9,8 +9,10 @@
 #
 # 三个子命令
 # --------
-#   new    <真仓>   [--dst <目录>] [--include <glob>]… [--exclude <路径>]… [--all]
-#                   [--reject-symlinks] [--no-manifest] [--quiet]
+#   new    <真仓>   [--dst <目录>] [--include <glob>]… [--only <件路径>]… [--exclude <路径>]… [--all]
+#                   [--reject-symlinks] [--no-manifest] [--quiet] [--list]
+#       ★ `--only <件路径>`：**单件直取** —— 只取该一个件（父目录骨架 + 清单，别的一件不取）；可多次（`GAP-20260926-47`）。
+#       ★ `--list`：**预演** —— 先列会取哪些件 + 件数 + 字节，**一个字节不写**（`GAP-20260926-47` · 零写盘）。
 #       在 `${TMPDIR:-/tmp}` 下硬拷贝出一棵**可随意读写**的工作树；缺省排除重件
 #       （`.git` / `bin` / `data` / `dist` / `node_modules` / `vendor` / `ui/target` / `wall/target` / `zerg-wt` …）。
 #       ★ 缺省排除是**根锚定**写法（rsync `--exclude=/<名>`）⇒ 名单里的**相对路径**（如 `ui/target`）
@@ -88,8 +90,33 @@ hash_of() {
 human_bytes() { awk -v b="$1" 'BEGIN{ split("B KB MB GB TB",u," "); i=1; while (b>=1024 && i<5){ b/=1024; i++ } printf "%.1f %s", b, u[i] }'; }
 
 # ── new ──────────────────────────────────────────────────────────────────
-SRC_RAW=""; DST=""; REJECT=0; WANT_MANIFEST=1; QUIET=0; ALL=0
-INCLUDES=(); USER_EXCLUDES=()
+list_preview() {  # <real> —— 预演：列会取的件 + 件数 + 字节（rsync -an · 零写盘 · GAP-20260926-47）
+  local real="$1" line rsync_bin
+  rsync_bin="$(command -v rsync || true)"
+  if [ -z "${rsync_bin}" ]; then
+    warn "  ✗ 缺 rsync ⇒ --list 判不了（rc=2）：不猜、不放宽"
+    exit 2
+  fi
+  local filters=()
+  while IFS= read -r line; do filters+=("$line"); done < <(build_filters)
+  say "== 预演（--list · 零写盘）=="
+  say "· 真仓：${real}"
+  [ "${#INCLUDES[@]}" -eq 0 ] || say "· 白名单：${INCLUDES[*]}"
+  say "· 生效过滤器（现读 · include 在前 exclude 收尾）："
+  for line in "${filters[@]}"; do say "    ${line}"; done
+  # ★ 目标 = **绝不存在的路径** + rsync `-n` ⇒ 既不建它、也不写任何件（真仓字节/sha/mtime 逐位不变）
+  local out; out="$("${rsync_bin}" -an --out-format=$'%l\t%n' "${filters[@]}" "${real}/" "${TMPBASE}/__isolate_ro_list_never__$$/" 2>/dev/null)"
+  local n b
+  n="$(printf '%s\n' "${out}" | awk -F'\t' 'NF>=2 && $2 !~ /\/$/{c++} END{print c+0}')"
+  b="$(printf '%s\n' "${out}" | awk -F'\t' 'NF>=2 && $2 !~ /\/$/{s+=$1} END{print s+0}')"
+  say "· 会取件数：${n} · 字节：${b}（$(human_bytes "${b}")）"
+  printf '%s\n' "${out}" | awk -F'\t' 'NF>=2 && $2 !~ /\/$/{print "    "$2}'
+  say "（预演结束 —— 未写任何件；去掉 --list 才真拷贝）"
+  exit 0
+}
+
+SRC_RAW=""; DST=""; REJECT=0; WANT_MANIFEST=1; QUIET=0; ALL=0; LIST=0
+INCLUDES=(); USER_EXCLUDES=(); ONLY=()
 
 build_filters() {  # 打印 rsync 过滤器行（顺序即优先级：include 在前，`--exclude=*` 收尾）
   local g p acc d
@@ -227,6 +254,18 @@ cmd_new() {
   local real_repo; real_repo="$(resolved_path "${src_arg}")"
   [ -n "${real_repo}" ] || real_repo="${src_arg}"
 
+  # ★ `GAP-20260926-47`：--only 单件直取（进 include 机具；逐条验在真仓里）
+  if [ "${#ONLY[@]}" -ne 0 ]; then
+    local _o
+    for _o in "${ONLY[@]}"; do
+      [ -f "${real_repo}/${_o}" ] || die 2 "判不了：--only 指的不是真仓里的件 —— ${_o}"
+      INCLUDES+=("${_o}")
+    done
+  fi
+
+  # ★ `GAP-20260926-47`：--list 预演（零写盘 ⇒ 在任何「建目录/拷贝」之前返回）
+  if [ "${LIST}" -eq 1 ]; then list_preview "${real_repo}"; fi
+
   if [ -z "${DST}" ]; then
     DST="$(mktemp -d "${TMPBASE}/${DEFAULT_NAME}.XXXXXX")" || die 2 "判不了：mktemp -d 失败"
     # ★ **不挂 EXIT trap**：副本要活过本脚本退出（它就是给人「随便读写」的那棵树）；
@@ -296,6 +335,7 @@ cmd_verify() {
   while IFS= read -r rel; do
     [ -n "${rel}" ] || continue
     total=$((total+1))
+    ch=""   # ★ `GAP-20260927-78`：每轮重置副本侧读数（否则 --no-manifest 档 ch 残留上一件 ⇒ 假红）
     if [ -f "${manifest}" ]; then
       ch="$(awk -F'\t' -v r="${rel}" '$1==r{print $2; exit}' "${manifest}")"
     fi
@@ -353,6 +393,15 @@ run_self_test() {
   chk "正控：verify ⇒ rc=0（真仓未被改）" "[ ${rc} -eq 0 ]" "rc=${rc}"
   chk "正控：真仓那件 sha256 未变（删的是副本）" "[ \"\$(shasum -a 256 < '${fix}/real/core/cmd/zerg/testdata/cli-matrix.json' | awk '{print \$1}')\" = '${real_sha_before}' ]" ""
 
+  # ── --no-manifest 档（GAP-20260927-78）：无清单 ⇒ verify 现算副本侧 sha，不得假红 ──
+  out="$(bash "${SELF}" new "${fix}/real" --dst "${tmp}/tree-nomani" --no-manifest 2>&1)"; rc=$?
+  chk "无清单档：new --no-manifest ⇒ rc=0" "[ ${rc} -eq 0 ]" "rc=${rc}"
+  chk "无清单档：副本里没有 ISOLATED.manifest.tsv" "[ ! -f '${tmp}/tree-nomani/ISOLATED.manifest.tsv' ]" ""
+  out="$(bash "${SELF}" verify "${tmp}/tree-nomani" "${fix}/real" 2>&1)"; rc=$?
+  printf '%s\n' "${out}" > "${tmp}/nomani-verify.log"
+  chk "无清单档：verify ⇒ rc=0（现算副本侧 sha · 不假红）" "[ ${rc} -eq 0 ]" "rc=${rc}"
+  chk "无清单档：对拍读数「不一致 == 0」" "grep -q '不一致：0' '${tmp}/nomani-verify.log'" ""
+
   # ── 负控 A：真仓被改一个字节（模拟误删/误改）⇒ verify 必须 rc=1 且点名 ──
   local real_backup; cp -p "${fix}/real/scripts/dev/keep.sh" "${tmp}/keep.bak"
   printf 'SOMEONE-TOUCHED-THE-REAL-REPO\n' > "${fix}/real/scripts/dev/keep.sh"
@@ -399,6 +448,21 @@ run_self_test() {
   chk "包含性：点名「真仓内」" "grep -q '真仓内' '${tmp}/neg-dst.log'" ""
   chk "包含性：拒写后真仓里没被建出 inside/（未产生副作用）" "[ ! -e '${fix}/real/inside' ]" ""
 
+  # ── 增补（GAP-20260926-47）：--list 零写盘 · --only 单件直取 ──
+  local real_n_before; real_n_before="$(find "${fix}/real" -type f | wc -l | tr -d ' ')"
+  out="$(bash "${SELF}" new "${fix}/real" --only 'scripts/dev/keep.sh' --dst "${tmp}/tree-only" 2>&1)"; rc=$?
+  printf '%s\n' "${out}" > "${tmp}/only.log"
+  chk "--only 单件：rc=0" "[ ${rc} -eq 0 ]" "rc=${rc}"
+  chk "--only 单件：副本里只有那件 + 清单" "[ \"\$(cd '${tmp}/tree-only' && find . -type f ! -name 'ISOLATED.md' ! -name 'ISOLATED.manifest.tsv' | sed 's|^\./||' | tr '\n' ' ')\" = 'scripts/dev/keep.sh ' ]" ""
+  chk "--only 单件：件数 1" "grep -q '件数：1' '${tmp}/only.log'" ""
+  out="$(bash "${SELF}" new "${fix}/real" --only 'no/such/file.txt' --dst "${tmp}/tree-only2" 2>&1)"; rc=$?
+  chk "--only 指非件 ⇒ rc=2" "[ ${rc} -eq 2 ]" "rc=${rc}"
+  out="$(bash "${SELF}" new "${fix}/real" --list 2>&1)"; rc=$?
+  printf '%s\n' "${out}" > "${tmp}/list.log"
+  chk "--list：rc=0" "[ ${rc} -eq 0 ]" "rc=${rc}"
+  chk "--list：印「预演」且件数=2（现算：cli-matrix.json + keep.sh）" "grep -q '预演' '${tmp}/list.log' && grep -q '会取件数：2' '${tmp}/list.log'" ""
+  chk "--list：零写盘（真仓件数跑前跑后不变）" "[ \"\$(find '${fix}/real' -type f | wc -l | tr -d ' ')\" = '${real_n_before}' ]" ""
+
   say "── 自检结论：$([ ${bad} -eq 0 ] && echo 全过 || echo "**不过**（${bad} 条）") ──"
   [ "${bad}" -eq 0 ] && exit 0 || exit 2
 }
@@ -422,6 +486,9 @@ while [ $# -gt 0 ]; do
     --no-manifest) WANT_MANIFEST=0; shift ;;
     --all) ALL=1; shift ;;
     --quiet) QUIET=1; shift ;;
+    --only) [ $# -ge 2 ] || die 2 "用法错：--only 缺实参"; ONLY+=("$2"); shift 2 ;;
+    --only=*) ONLY+=("${1#--only=}"); shift ;;
+    --list) LIST=1; shift ;;
     -*) die 2 "用法错：未知旗标 $1（见 --help）" ;;
     *)
       if [ "${CMD}" = "new" ] && [ -z "${SRC_RAW}" ]; then SRC_RAW="$1"

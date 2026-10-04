@@ -66,12 +66,87 @@ import (
 // ⇒ 2026-09-27 起收进闭集（原注「`不做` 另有其面」已不成立，逐字改掉）。
 var gapStateSettable = []string{gapStOpen, gapStSolved, gapStWontDo}
 
+// gapSolvedKindClosed —— `已解` 的**分栏闭集**（缺口账 `GAP-20260927-249` · 「销案 ≠ 修」的机制化）：
+// 「**实现完成**」与「**销案**（存量 / 账滞后 / 前提不成立）」此前压进同一个 `state=已解` ⇒ 已解计数
+// **看不出哪些是真修的**。本闭集给 `--solved-kind` 三值：`实现` / `销案` / `前提不成立`。
+var gapSolvedKindClosed = []string{"实现", "销案", "前提不成立"}
+
+// gapSolvedKindUnclassified —— 老账（本格之前写的行）的**缺省读法**。★ **禁改存量行** —— 存量行没有
+// `solved_kind` 格时，读面一律作 `未分类`（不写盘）。它与「真的一格都没有」同义。
+const gapSolvedKindUnclassified = "未分类"
+
+// gapSolvedKindOf —— 账行的 `solved_kind`（空串 ⇒ `未分类`）。`gap ls` / `gap show` / `set-state`
+// 三处**同一取值口**（不自创第二套）。
+func gapSolvedKindOf(r gapRecord) string {
+	if strings.TrimSpace(r.SolvedKind) == "" {
+		return gapSolvedKindUnclassified
+	}
+	return r.SolvedKind
+}
+
+// gapSolvedKindSplitLine —— `gap ls` 人面的**报数分栏**（缺口账 `GAP-20260927-249`）：把筛后那一批里
+// `state=已解` 的行按 `solved_kind` 数成「实现 N · 销案 N · 前提不成立 N · 未分类 N」。
+// 返回 `(行, true)`；**筛后一条 `已解` 都没有 ⇒ `("", false)`**（老查询输出逐字节不变）。
+// 只印**非零**栏（零栏不占位）：栏序固定照 `gapSolvedKindClosed`，`未分类` 收尾。
+func gapSolvedKindSplitLine(out []gapRecord) (string, bool) {
+	n := map[string]int{}
+	total := 0
+	for _, r := range out {
+		if r.State != gapStSolved {
+			continue
+		}
+		n[gapSolvedKindOf(r)]++
+		total++
+	}
+	if total == 0 {
+		return "", false
+	}
+	parts := []string{}
+	for _, k := range gapSolvedKindClosed {
+		if n[k] > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", k, n[k]))
+		}
+	}
+	if n[gapSolvedKindUnclassified] > 0 {
+		parts = append(parts, fmt.Sprintf("%s %d", gapSolvedKindUnclassified, n[gapSolvedKindUnclassified]))
+	}
+	return fmt.Sprintf("  已解分栏（solved_kind）：%s（已解 %d 条）", strings.Join(parts, " · "), total), true
+}
+
+// gapSolvedKindCountsText —— `recs` 里 `state=已解` 的行按 `solved_kind` 的计数文本
+// （`实现 N · 销案 N · 前提不成立 N · 未分类 N` · 只印非零栏）。`gap export` 件头用（缺口账
+// `GAP-20260927-249`）。一条已解都没有 ⇒ `（无已解）`。
+func gapSolvedKindCountsText(recs []gapRecord) string {
+	n := map[string]int{}
+	total := 0
+	for _, r := range recs {
+		if r.State != gapStSolved {
+			continue
+		}
+		n[gapSolvedKindOf(r)]++
+		total++
+	}
+	if total == 0 {
+		return "（无已解）"
+	}
+	parts := []string{}
+	for _, k := range gapSolvedKindClosed {
+		if n[k] > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", k, n[k]))
+		}
+	}
+	if n[gapSolvedKindUnclassified] > 0 {
+		parts = append(parts, fmt.Sprintf("%s %d", gapSolvedKindUnclassified, n[gapSolvedKindUnclassified]))
+	}
+	return strings.Join(parts, " · ")
+}
+
 // gapNoteSep —— 一条注的形态：`<时刻> · <谁>：<文本>`（时刻那一格**不参与幂等比对**）。
 const gapNoteSep = "："
 
 // gapSetStateFields / gapNoteFields —— `--json` 可取字段（与命令树里的 `fields` 同一份口径）。
 // ★ 批4 第四片（2026-09-28）：销案两态对拍 ⇒ `--json` 多两格（`two_state` 齐/缺/不适用 · `exempt` 豁免与否）。
-var gapSetStateFields = []string{"id", "fp", "state", "changed", "two_state", "exempt"}
+var gapSetStateFields = []string{"id", "fp", "state", "solved_kind", "changed", "two_state", "exempt"}
 var gapNoteFields = []string{"id", "fp", "notes", "changed"}
 
 // gapIDsOf —— 位置参数里的 id 集（空串丢掉；与 `verify` 同一条收法）。
@@ -571,6 +646,8 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	stateWant := strings.TrimSpace(inv.flagVal("--state"))
 	evidence := strings.TrimSpace(inv.flagVal("--evidence"))
+	// ★ 本枚（缺口账 `GAP-20260927-249`）：「销案 ≠ 修」的**分栏** —— `--state 已解` 时给这一类。
+	solvedKind := strings.TrimSpace(inv.flagVal("--solved-kind"))
 
 	// ① 用法面（在任何盘面动作之前 —— 与 `add` / `verify` 同一条位置）
 	if inv.jsonGiven && len(inv.fields) == 0 {
@@ -603,6 +680,25 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	if evidence == "" {
 		inv.setErr("usage", "missing_required", "缺 --evidence")
 		fmt.Fprintf(stderr, "%s: `gap set-state` 缺必填旗标：--evidence（**改态必留一句证据** —— 与 `add` 的「留证据」同一条纪律）\n", progName)
+		return exitUsage
+	}
+	// ★ 本枚（缺口账 `GAP-20260927-249`）：`--solved-kind` 的三道用法闸（裸给 / 闭集外 / 只对已解）。
+	if inv.hasFlag("--solved-kind") && solvedKind == "" {
+		inv.setErr("usage", "solved_kind_missing_value", "--solved-kind 没给值")
+		fmt.Fprintf(stderr, "%s: `--solved-kind` 要给一个值（只认 %s）—— 裸给不降级（用法错 2）\n",
+			progName, gapClosedText(gapSolvedKindClosed))
+		return exitUsage
+	}
+	if solvedKind != "" && !gapIn(gapSolvedKindClosed, solvedKind) {
+		inv.setErr("usage", "bad_solved_kind", "solved_kind 值不在闭集里")
+		fmt.Fprintf(stderr, "%s: `--solved-kind %s` 不在闭集里 —— 只认 %s\n",
+			progName, solvedKind, gapClosedText(gapSolvedKindClosed))
+		return exitUsage
+	}
+	if solvedKind != "" && stateWant != gapStSolved {
+		inv.setErr("usage", "solved_kind_only_for_solved", "--solved-kind 只对 --state 已解 有效")
+		fmt.Fprintf(stderr, "%s: `--solved-kind` 只对 `--state %s` 有效（本发 --state %s）—— 改别的态不带它\n",
+			progName, gapStSolved, stateWant)
 		return exitUsage
 	}
 
@@ -639,6 +735,20 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	r := led.Recs[idx]
 
+	// ④★★★ 本枚（缺口账 `GAP-20260927-249`）：**销案分栏**取值 —— 改到 `已解` 时落这一类。
+	//   取定：给了 `--solved-kind` ⇒ 用它；没给而该行**已有** kind ⇒ **保留旧值**（幂等向）；
+	//   没给且该行**没有** kind（老账首改）⇒ 落 `未分类`（与「一格都没有」同义，不报错）。
+	//   ★ 改到**非** `已解` 的态 ⇒ 本格**一个字节不动**（`r.SolvedKind` 原样带回）。
+	kindWant := r.SolvedKind
+	if stateWant == gapStSolved {
+		switch {
+		case solvedKind != "":
+			kindWant = solvedKind
+		case strings.TrimSpace(r.SolvedKind) == "":
+			kindWant = gapSolvedKindUnclassified
+		}
+	}
+
 	// ④★ 批4 第四片：两态读数**取值**（只在改到 `已解` 时有语义；其余状态 ⇒ 「不适用」· 一个字都不多打）。
 	twoStatePair, twoStateExempt, twoStateMiss := gapTwoStateJudge(inv, r.ID, stateWant)
 
@@ -651,13 +761,13 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 		landed = gapTwoStateLanded(evidence, inv.flagVal("--before-read"), inv.flagVal("--after-read"))
 	}
 
-	// ⑤ 幂等：状态**与**证据都逐字已在位 ⇒ 「无变化」（0 · 不写真源、不写审计）
-	if r.State == stateWant && r.Evidence == landed {
+	// ⑤ 幂等：状态**与**证据（改到 `已解` 时另加 `solved_kind`）都逐字已在位 ⇒ 「无变化」（0）。
+	if r.State == stateWant && r.Evidence == landed && (stateWant != gapStSolved || gapSolvedKindOf(r) == kindWant) {
 		inv.changed = boolPtr(false)
 		if inv.jsonGiven {
 			gapTwoStateMeta(inv, twoStatePair, twoStateExempt)
 			return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
-				map[string]string{"id": r.ID, "fp": r.FP, "state": r.State, "changed": "false",
+				map[string]string{"id": r.ID, "fp": r.FP, "state": r.State, "solved_kind": gapSolvedKindOf(r), "changed": "false",
 					"two_state": twoStatePair, "exempt": boolWord(twoStateExempt)})
 		}
 		fmt.Fprintf(stdout, "无变化 %s · state=%s（同 id 同态同证据 ⇒ 幂等命中：不写真源、不写审计）\n", r.ID, r.State)
@@ -670,13 +780,17 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 			inv.changed = boolPtr(false)
 			gapTwoStateMeta(inv, twoStatePair, twoStateExempt)
 			return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
-				map[string]string{"id": r.ID, "fp": r.FP, "state": stateWant, "changed": "false",
+				map[string]string{"id": r.ID, "fp": r.FP, "state": stateWant, "solved_kind": kindWant, "changed": "false",
 					"two_state": twoStatePair, "exempt": boolWord(twoStateExempt)})
+		}
+		plan2 := "evidence     : " + evidence
+		if stateWant == gapStSolved {
+			plan2 += fmt.Sprintf("\n    solved_kind  : %s → %s", gapSolvedKindOf(r), kindWant)
 		}
 		gapStatePlanBlock(stdout, "--dry-run", "set-state", led.Path, len(led.Lines),
 			r.ID, r.FP, r.State, stateWant,
 			fmt.Sprintf("solved_at    : %s", gapSolvedAtPlan(r.State, stateWant)),
-			"evidence     : "+evidence)
+			plan2)
 		if twoStateExempt {
 			gapTwoStateExemptLine(stdout)
 		}
@@ -719,6 +833,9 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	before := r.State
 	r.State = stateWant
 	r.Evidence = landed
+	if stateWant == gapStSolved {
+		r.SolvedKind = kindWant
+	}
 	if stateWant == gapStSolved || stateWant == gapStWontDo {
 		r.SolvedAt = gapNow()
 	}
@@ -731,12 +848,15 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.jsonGiven {
 		gapTwoStateMeta(inv, twoStatePair, twoStateExempt)
 		return selectJSON(stdout, stderr, inv, inv.path, inv.fields,
-			map[string]string{"id": r.ID, "fp": r.FP, "state": r.State, "changed": boolWord(before != stateWant || led.Recs[idx].Evidence != landed),
+			map[string]string{"id": r.ID, "fp": r.FP, "state": r.State, "solved_kind": gapSolvedKindOf(r), "changed": boolWord(before != stateWant || led.Recs[idx].Evidence != landed),
 				"two_state": twoStatePair, "exempt": boolWord(twoStateExempt)})
 	}
 	fmt.Fprintf(stdout, "已改态 %s · state %s → %s（真源 %d 行不变 · 只重写目标那一行 · 审计已落 1 行）\n",
 		r.ID, before, r.State, len(led.Lines))
 	fmt.Fprintf(stdout, "  solved_evidence : %s\n", r.Evidence)
+	if stateWant == gapStSolved {
+		fmt.Fprintf(stdout, "  solved_kind     : %s（销案分栏 · 缺口账 `GAP-20260927-249`）\n", gapSolvedKindOf(r))
+	}
 	if twoStatePair == "齐" {
 		fmt.Fprintf(stdout, "  两态·改前    : %s\n", strings.TrimSpace(inv.flagVal("--before-read")))
 		fmt.Fprintf(stdout, "  两态·改后    : %s\n", strings.TrimSpace(inv.flagVal("--after-read")))

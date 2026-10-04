@@ -90,7 +90,7 @@ func TestResolveByHostname(t *testing.T) {
 func TestResolveByDevice_NonMatchingHostname(t *testing.T) {
 	nine := 9
 	devices := []DeviceConfig{{Hostname: "zzz-not-this-box", MaxWorkers: &nine}}
-	if v := resolveByDevice(devices, "qqq-other-sample", map[string]int{}, 2); v != 2 {
+	if v, _ := resolveByDevice(devices, "qqq-other-sample", map[string]int{}, 2); v != 2 {
 		t.Fatalf("不该匹配的主机名应回退 defaultVal==2（不得取设备值 9），实际 %d", v)
 	}
 }
@@ -102,7 +102,7 @@ func TestResolveByDevice_NonMatchingHostname(t *testing.T) {
 func TestResolveByDevice_EmptyHostname_MatchesAnyHost_BugPinned(t *testing.T) {
 	nine := 9
 	devices := []DeviceConfig{{Hostname: "", MaxWorkers: &nine}}
-	v := resolveByDevice(devices, "qqq-other-sample", map[string]int{}, 2)
+	v, _ := resolveByDevice(devices, "qqq-other-sample", map[string]int{}, 2)
 	if v != 9 {
 		t.Fatalf("空 hostname 条目现行为应命中任意主机（既存缺陷值 9）——行为已变，复核 workers_config.go:56-76；实际 %d", v)
 	}
@@ -115,4 +115,108 @@ func TestValidateWorkersConfig_RejectsEmptyHostname(t *testing.T) {
 	if len(issues) == 0 {
 		t.Fatal("空 hostname 条目必须被 ValidateWorkersConfig 标记（workers_config.go:120-122），实际无 issue")
 	}
+}
+
+// ─── GAP-20260927-298：文件显式 0=暂停 vs 缺省回退抬升 ─────────────
+
+// TestResolveByDevice_ExplicitVsFallback — 钉住 (max_workers, 是否文件显式给值) 语义：
+// 显式 0 ⇒ (0,true)（暂停·调用方不得抬升）；无匹配 ⇒ (defaultVal,false)（真·缺省路径）。
+func TestResolveByDevice_ExplicitVsFallback(t *testing.T) {
+	zero := 0
+	five := 5
+	// 文件显式 0（暂停）⇒ (0,true)，不得被当成「未设」
+	if v, explicit := resolveByDevice([]DeviceConfig{{Hostname: "host-a", MaxWorkers: &zero}}, "host-a", map[string]int{}, 2); v != 0 || !explicit {
+		t.Fatalf("文件显式 max_workers:0 应 (0,true)，实际 (%d,%v)", v, explicit)
+	}
+	// 文件显式正值 ⇒ (v,true)
+	if v, explicit := resolveByDevice([]DeviceConfig{{Hostname: "host-b", MaxWorkers: &five}}, "host-b", map[string]int{}, 2); v != 5 || !explicit {
+		t.Fatalf("文件显式 max_workers:5 应 (5,true)，实际 (%d,%v)", v, explicit)
+	}
+	// 无匹配 ⇒ 回退 defaultVal、explicit=false（真·缺省路径）
+	if v, explicit := resolveByDevice([]DeviceConfig{{Hostname: "host-c", MaxWorkers: &five}}, "zzz-none", map[string]int{}, 2); v != 2 || explicit {
+		t.Fatalf("无匹配应回退 defaultVal (2,false)，实际 (%d,%v)", v, explicit)
+	}
+}
+
+// TestLoadWorkersConfig_FileExplicitZeroIsPause — GAP-20260927-298 主断言：
+// 文件里本机显式 max_workers:0 = 暂停 ⇒ 必须原样 0，不得被旧 mw<=0 夹取抬成 defaultMaxWorkers。
+func TestLoadWorkersConfig_FileExplicitZeroIsPause(t *testing.T) {
+	workDir := t.TempDir()
+	cfgDir := filepath.Join(workDir, "config")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hn, err := os.Hostname()
+	if err != nil {
+		t.Fatalf("os.Hostname 失败: %v", err)
+	}
+	// 本机显式 0（暂停）
+	yaml := "devices:\n  - hostname: \"" + hn + "\"\n    max_workers: 0\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "workers.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := LoadWorkersConfig(workDir)
+	if cfg.MaxWorkers != 0 {
+		t.Fatalf("文件显式 max_workers:0（暂停）应原样 ==0，不得抬升；实际 %d（旧 mw<=0 夹取会抬成 %d）", cfg.MaxWorkers, defaultMaxWorkers)
+	}
+	t.Logf("文件显式 0 生效 max_workers=%d（暂停）", cfg.MaxWorkers)
+}
+
+// TestLoadWorkersConfig_NilValueFallsBackAndLifts — 真·缺省路径：回退内置默认真值，0 不抬升（拍板 2026-10-04）。
+// （函数名沿用旧名以免删顶层符号；语义已按 GAP-20260927-298 拍板翻转：）
+// 文件里本机条目存在但未给 max_workers（nil）⇒ 回退内置默认；回退到 0（暂停）必须保持 0，不得抬成
+// defaultMaxWorkers；抬升只属于真·非法值（负数）。
+func TestLoadWorkersConfig_NilValueFallsBackAndLifts(t *testing.T) {
+	workDir := t.TempDir()
+	cfgDir := filepath.Join(workDir, "config")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hn, err := os.Hostname()
+	if err != nil {
+		t.Fatalf("os.Hostname 失败: %v", err)
+	}
+	// hostname 匹配本机但不给 max_workers（nil ⇒ 非显式）
+	yaml := "devices:\n  - hostname: \"" + hn + "\"\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "workers.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := LoadWorkersConfig(workDir)
+	builtin := resolveByHostname(defaultDeviceMap, defaultMaxWorkers)
+	want := builtin
+	if builtin < 0 {
+		want = defaultMaxWorkers // 仅真·非法值（负数）抬升；0 不抬升
+	}
+	if cfg.MaxWorkers != want {
+		t.Fatalf("文件未给值应走缺省路径：回退 %d ⇒ 应原样 ==%d（0 不抬升），实际 %d", builtin, want, cfg.MaxWorkers)
+	}
+	if builtin == 0 && cfg.MaxWorkers != 0 {
+		t.Fatalf("回退内置 0 必须保持 0（暂停·不抬升），实际 %d", cfg.MaxWorkers)
+	}
+	t.Logf("缺省回退=%d ⇒ max_workers=%d（0 不抬升）", builtin, cfg.MaxWorkers)
+}
+
+// TestLoadWorkersConfig_FilePresentHostAbsent_ZeroNotLifted — GAP-20260927-298 拍板（2026-10-04）：
+// 「表在、但该机无条目」⇒ 回退内置默认；回退到 0（暂停）必须保持 0，绝不抬升。
+// 哑化（把 mw<=0 的抬升还原）⇒ 本用例在回退 0 的机器上红。
+func TestLoadWorkersConfig_FilePresentHostAbsent_ZeroNotLifted(t *testing.T) {
+	workDir := t.TempDir()
+	cfgDir := filepath.Join(workDir, "config")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 表里**只有别的机器**，本机无条目 ⇒ 走缺省回退路径（不得命中任何设备）
+	yaml := "devices:\n  - hostname: \"zzz-absent-host-xyz\"\n    max_workers: 9\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "workers.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := LoadWorkersConfig(workDir)
+	builtin := resolveByHostname(defaultDeviceMap, defaultMaxWorkers)
+	if cfg.MaxWorkers != builtin {
+		t.Fatalf("表在但本机无条目应回退内置默认 ==%d（不抬升），实际 %d", builtin, cfg.MaxWorkers)
+	}
+	if builtin == 0 && cfg.MaxWorkers != 0 {
+		t.Fatalf("回退内置 0 必须保持 0（暂停·绝不抬升），实际 %d", cfg.MaxWorkers)
+	}
+	t.Logf("表在/本机无条目 ⇒ 回退=%d，max_workers=%d（0 不抬升）", builtin, cfg.MaxWorkers)
 }

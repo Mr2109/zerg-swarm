@@ -204,6 +204,8 @@ def check_items_named(items):
 
 
 def self_test(out) -> bool:
+    import shutil
+
     total, failed = 0, 0
 
     def case(name, want, got):
@@ -215,48 +217,51 @@ def self_test(out) -> bool:
         out.write("  %s %s（期望 %s · 实得 %s）\n" % ("✓" if ok else "✗", name, want, got))
 
     tmp = tempfile.mkdtemp(prefix="hsnap-selftest-")
-    good = os.path.join(tmp, "导出-命令面帮助-20260924.md")
-    with open(good, "w", encoding="utf-8") as f:
-        f.write("# 导出：命令面帮助（自动生成 · 勿手改）\n\n## 一、命令清单\n\n"
-                "| 命令 | 说明 |\n|---|---|\n"
-                "| `zerg agent ls` | 子端清单 |\n"
-                "| `zerg gap ls` | 缺口账 |\n")
-    rows, why = snapshot_rows(good)
-    case("① 快照行抽得出来（两条）", ["agent ls", "gap ls"], rows)
-    case("① 快照不在盘 ⇒ 判不了", True, "不在盘" in snapshot_rows(os.path.join(tmp, "nope.md"))[1])
-    live = ["agent ls ｜ 茧壁:node ｜ 子端清单", "gap ls ｜ 茧壁:host ｜ 缺口账"]
-    case("② 逐行：抽得出（前缀 `  zerg `）", ["agent ls", "gap ls"],
-         [m.group(1).strip() for m in (RUNTIME_RE.match(l) for l in
-                                       ["  zerg agent ls ｜ 茧壁:node ｜ 子端清单",
-                                        "  zerg gap ls ｜ 茧壁:host ｜ 缺口账"]) if m])
-    ok, bad = compare_lines(rows, live)
-    case("② 逐行：不同 ⇒ 判红（快照说的是哪些行）", False, ok)
-    case("② 逐行：判词点名到第 1 行", True, any("第 1 行" in b for b in bad))
-    ok2, bad2 = compare_lines(rows, rows)
-    case("② 逐行：同名同序 ⇒ 合", True, ok2)
-    case("② 逐行：条数不等 ⇒ 判红", False, compare_lines(rows, rows + ["extra"])[0])
-    case("③ items 逐条含命令名 ⇒ 合", [], check_items_named(
-        [{"command": "zerg a", "commands": "9"}, {"command": "zerg b", "commands": "9"}]))
-    case("③ items 缺命令名 ⇒ 判红", True, bool(check_items_named([{"commands": "9"}])))
-    case("③ items 丢了摘要格 ⇒ 判红", True, bool(check_items_named([{"command": "zerg a"}])))
-    case("③ items 零条 ⇒ 判红（不许当绿）", True, bool(check_items_named([])))
-    # ── A 档（`GAP-20261001-47` · 拆档）：只读落盘制品、不起子进程 ──────────────────
-    art = os.path.join(tmp, "artifact")
-    os.makedirs(art)
-    with open(os.path.join(art, ARTIFACT_HUMAN), "w", encoding="utf-8") as f:
-        f.write("  zerg agent ls ｜ 茧壁:node ｜ 子端清单\n"
-                "  zerg gap ls ｜ 茧壁:host ｜ 缺口账\n")
-    with open(os.path.join(art, ARTIFACT_JSON), "w", encoding="utf-8") as f:
-        f.write('{"schema":"zerg-gate/v1","items":[{"command":"zerg agent ls","commands":"9"}]}\n')
-    frows, _ = runtime_rows_from_file(os.path.join(art, ARTIFACT_HUMAN))
-    case("A 档 ①制品逐条清单读得出（与现跑同正则）", ["agent ls", "gap ls"], frows)
-    fitems, _ = runtime_json_rows_from_file(os.path.join(art, ARTIFACT_JSON))
-    case("A 档 ②制品机器面 items 读得出", ["zerg agent ls"], [(it.get("command") or "") for it in (fitems or [])])
-    case("A 档 ③制品不在盘 ⇒ 判不了（不许当空清单）", True,
-         "不在盘" in runtime_rows_from_file(os.path.join(art, "nope.txt"))[1])
-    case("A 档 ④制品里没有清单行 ⇒ 判不了", True,
-         runtime_rows_from_file(os.path.join(art, ARTIFACT_JSON))[1] != "")
-    out.write("  自检 %d 格 · 失败 %d 格\n" % (total, failed))
+    try:
+        good = os.path.join(tmp, "导出-命令面帮助-20260924.md")
+        with open(good, "w", encoding="utf-8") as f:
+            f.write("# 导出：命令面帮助（自动生成 · 勿手改）\n\n## 一、命令清单\n\n"
+                    "| 命令 | 说明 |\n|---|---|\n"
+                    "| `zerg agent ls` | 子端清单 |\n"
+                    "| `zerg gap ls` | 缺口账 |\n")
+        rows, why = snapshot_rows(good)
+        case("① 快照行抽得出来（两条）", ["agent ls", "gap ls"], rows)
+        case("① 快照不在盘 ⇒ 判不了", True, "不在盘" in snapshot_rows(os.path.join(tmp, "nope.md"))[1])
+        live = ["agent ls ｜ 茧壁:node ｜ 子端清单", "gap ls ｜ 茧壁:host ｜ 缺口账"]
+        case("② 逐行：抽得出（前缀 `  zerg `）", ["agent ls", "gap ls"],
+             [m.group(1).strip() for m in (RUNTIME_RE.match(l) for l in
+                                           ["  zerg agent ls ｜ 茧壁:node ｜ 子端清单",
+                                            "  zerg gap ls ｜ 茧壁:host ｜ 缺口账"]) if m])
+        ok, bad = compare_lines(rows, live)
+        case("② 逐行：不同 ⇒ 判红（快照说的是哪些行）", False, ok)
+        case("② 逐行：判词点名到第 1 行", True, any("第 1 行" in b for b in bad))
+        ok2, bad2 = compare_lines(rows, rows)
+        case("② 逐行：同名同序 ⇒ 合", True, ok2)
+        case("② 逐行：条数不等 ⇒ 判红", False, compare_lines(rows, rows + ["extra"])[0])
+        case("③ items 逐条含命令名 ⇒ 合", [], check_items_named(
+            [{"command": "zerg a", "commands": "9"}, {"command": "zerg b", "commands": "9"}]))
+        case("③ items 缺命令名 ⇒ 判红", True, bool(check_items_named([{"commands": "9"}])))
+        case("③ items 丢了摘要格 ⇒ 判红", True, bool(check_items_named([{"command": "zerg a"}])))
+        case("③ items 零条 ⇒ 判红（不许当绿）", True, bool(check_items_named([])))
+        # ── A 档（`GAP-20261001-47` · 拆档）：只读落盘制品、不起子进程 ──────────────────
+        art = os.path.join(tmp, "artifact")
+        os.makedirs(art)
+        with open(os.path.join(art, ARTIFACT_HUMAN), "w", encoding="utf-8") as f:
+            f.write("  zerg agent ls ｜ 茧壁:node ｜ 子端清单\n"
+                    "  zerg gap ls ｜ 茧壁:host ｜ 缺口账\n")
+        with open(os.path.join(art, ARTIFACT_JSON), "w", encoding="utf-8") as f:
+            f.write('{"schema":"zerg-gate/v1","items":[{"command":"zerg agent ls","commands":"9"}]}\n')
+        frows, _ = runtime_rows_from_file(os.path.join(art, ARTIFACT_HUMAN))
+        case("A 档 ①制品逐条清单读得出（与现跑同正则）", ["agent ls", "gap ls"], frows)
+        fitems, _ = runtime_json_rows_from_file(os.path.join(art, ARTIFACT_JSON))
+        case("A 档 ②制品机器面 items 读得出", ["zerg agent ls"], [(it.get("command") or "") for it in (fitems or [])])
+        case("A 档 ③制品不在盘 ⇒ 判不了（不许当空清单）", True,
+             "不在盘" in runtime_rows_from_file(os.path.join(art, "nope.txt"))[1])
+        case("A 档 ④制品里没有清单行 ⇒ 判不了", True,
+             runtime_rows_from_file(os.path.join(art, ARTIFACT_JSON))[1] != "")
+        out.write("  自检 %d 格 · 失败 %d 格\n" % (total, failed))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     return failed == 0
 
 

@@ -174,3 +174,102 @@ func TestGapStateFacesSetStateAndNote(t *testing.T) {
 		t.Errorf("审计写不进却动了真源（审计先落盘那一条破了）")
 	}
 }
+
+// TestGapSolvedKindPartition —— 缺口账 `GAP-20260927-249`（「销案 ≠ 修」的机制化）的成对机检。
+//
+// 钉住的格（逐格缺一即失败）：
+//
+//	① 真写：`--state 已解 --solved-kind 销案` ⇒ rc=0 且账行 `solved_kind=销案`
+//	② 缺省：`--state 已解` 不带 `--solved-kind` ⇒ 账行 `solved_kind=未分类`（老账/未分类）
+//	③ 闭集：`--solved-kind 乱` ⇒ 2
+//	④ 裸给：`--solved-kind`（缺值）⇒ 2（不许静默降级）
+//	⑤ 只对已解：`--state 仍缺 --solved-kind 销案` ⇒ 2
+//	⑥ 报数分栏：`gap ls` 人面印「已解分栏（solved_kind）：…」且 `--json` 带 `solved_kind` 格
+//	⑦ 幂等：同 id 同态同证据同 kind ⇒ 0「无变化」且不写盘
+func TestGapSolvedKindPartition(t *testing.T) {
+	_, ledger, audit := gapEnv(t)
+	if rc, _, errb := gapRun(t, append(gapAddArgv("手搓：销案与实现压一个态", "销案分栏靶子"), "--yes")...); rc != 0 {
+		t.Fatalf("造靶子失败：rc=%d stderr=%q", rc, errb)
+	}
+	// 造第二条（拿它的 GAP id；add 的 stdout 回执行）
+	rc, out, errb := gapRun(t, append(gapAddArgv("手搓：第二条靶子", "缺省分栏靶子"), "--yes")...)
+	if rc != 0 {
+		t.Fatalf("造第二条失败：rc=%d stderr=%q", rc, errb)
+	}
+	id2 := gapIDOf(t, out)
+
+	// 取两条 id：从真源逐行解析（与同族 `gapRecOf` 同源口径）。
+	ids := []string{}
+	for _, ln := range gapReadLines(t, ledger) {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(ln), &m); err != nil {
+			t.Fatalf("真源某行不是 JSON：%v", err)
+		}
+		if s, _ := m["id"].(string); s != "" {
+			ids = append(ids, s)
+		}
+	}
+	if len(ids) != 2 {
+		t.Fatalf("靶子条数不对：%v", ids)
+	}
+	id1 := ids[0]
+
+	brA := "cmd=zerg gap ls --state 仍缺 · rc=1 · reading=改前列于仍缺"
+	brB := "cmd=zerg gap ls --state 已解 · rc=0 · reading=改后列于已解"
+
+	// ③ 闭集外 ⇒ 2
+	if rc, _, e := gapRun(t, "gap", "set-state", id1, "--state", "已解", "--evidence", "e", "--solved-kind", "乱", "--yes"); rc != 2 {
+		t.Errorf("`--solved-kind 乱` 要 2，得到 %d · %s", rc, e)
+	}
+	// ④ 裸给 ⇒ 2
+	if rc, _, _ := gapRun(t, "gap", "set-state", id1, "--state", "已解", "--evidence", "e", "--solved-kind", "--yes"); rc != 2 {
+		t.Errorf("裸给 --solved-kind 要 2，得到 %d", rc)
+	}
+	// ⑤ 只对已解 ⇒ 2
+	if rc, _, _ := gapRun(t, "gap", "set-state", id1, "--state", "仍缺", "--evidence", "e", "--solved-kind", "销案", "--yes"); rc != 2 {
+		t.Errorf("`--state 仍缺 --solved-kind` 要 2，得到 %d", rc)
+	}
+
+	// ① 真写：销案
+	if rc, _, e := gapRun(t, "gap", "set-state", id1, "--state", "已解", "--evidence", "这一条是销案（前提不成立）", "--solved-kind", "销案",
+		"--before-read", brA, "--after-read", brB, "--yes"); rc != 0 {
+		t.Fatalf("销案真跑要 0，得到 %d · %s", rc, e)
+	}
+	if r := gapRecOf(t, ledger, id1); r["solved_kind"] != "销案" {
+		t.Errorf("① solved_kind 要 销案，得到 %v", r["solved_kind"])
+	}
+
+	// ② 缺省 ⇒ 未分类
+	if rc, _, e := gapRun(t, "gap", "set-state", id2, "--state", "已解", "--evidence", "这一条真修了（没给分栏）",
+		"--before-read", brA, "--after-read", brB, "--yes"); rc != 0 {
+		t.Fatalf("缺省真跑要 0，得到 %d · %s", rc, e)
+	}
+	if r := gapRecOf(t, ledger, id2); r["solved_kind"] != "未分类" {
+		t.Errorf("② 缺省 solved_kind 要 未分类，得到 %v", r["solved_kind"])
+	}
+
+	// ⑥ 报数分栏（人面）
+	rc, out, errb = gapRun(t, "gap", "ls", "--state", "已解")
+	if rc != 0 {
+		t.Fatalf("gap ls --state 已解 要 0，得到 %d · %s", rc, errb)
+	}
+	if !strings.Contains(out, "已解分栏（solved_kind）：") || !strings.Contains(out, "销案 1") || !strings.Contains(out, "未分类 1") {
+		t.Errorf("⑥ gap ls 人面没印分栏：%q", out)
+	}
+	// ⑥ 机器面
+	rc, out, _ = gapRun(t, "gap", "ls", "--state", "已解", "--json", "id,solved_kind")
+	if rc != 0 || !strings.Contains(out, "\"solved_kind\":\"销案\"") || !strings.Contains(out, "\"solved_kind\":\"未分类\"") {
+		t.Errorf("⑥ gap ls --json 缺 solved_kind：rc=%d out=%q", rc, out)
+	}
+
+	// ⑦ 幂等：同 id 同态同证据同 kind ⇒ 0 且不写盘
+	sha1, na1 := sha256Of(t, ledger), len(gapAuditLines(t, audit))
+	rc, out, _ = gapRun(t, "gap", "set-state", id1, "--state", "已解", "--evidence", "这一条是销案（前提不成立）", "--solved-kind", "销案",
+		"--before-read", brA, "--after-read", brB, "--yes")
+	if rc != 0 || !strings.Contains(out, "无变化") {
+		t.Errorf("⑦ 同态同证据同 kind 要 0「无变化」，得到 rc=%d out=%q", rc, out)
+	}
+	if sha256Of(t, ledger) != sha1 || len(gapAuditLines(t, audit)) != na1 {
+		t.Errorf("⑦ 幂等命中却写了盘")
+	}
+}

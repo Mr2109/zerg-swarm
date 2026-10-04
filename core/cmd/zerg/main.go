@@ -258,12 +258,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 		s := nearest(inv.path[0])
 		nodeName := strings.Join(inv.path, " ")
 		// ★ 缺口 `GAP-20260925-27` / `GAP-20260927-400` / `GAP-20260928-144`：`<族名|中间节点> --help`
-		//   要的是「首行判词分家」（族名不是「真的未知命令」）。★ 但**这一格须人签才能改文案** ——
-		//   `cli_help_twostate_test.go:213-232` 逐字断言两态**不许改**（首行逐字 `未知命令`），
-		//   `GAP-20260927-400` 账里也写明「cli_help_twostate_test.go:213-232 逐字断言两态不许改 ⇒ 改文案须人签」。
-		//   ⇒ 本枚**只保留 rc=2 + 首行逐字 `未知命令`**（两态一字不动 · 分家一事留待拍板后另落）。
+		//   要的是「首行判词分家」（族名不是「真的未知命令」）。
+		//   ★ 2026-10-04（Mr2109 授权 · 本枚）：**已落** —— 首词是真族名/中间节点（`isNode`）⇒ 首行换一句
+		//   区分判词（**不再说「未知命令」**）；**真未知命令**（首词非族名）照旧逐字 `未知命令`。
+		//   **rc 仍 = 2**（两态 rc 语义一字不动）；同一节点 `X` 与 `X --help` 首行仍**逐字相同**（同一句）。
+		//   落点纪律：`cli_help_twostate_test.go` 的「真未知命令」格（`frobnicate`）一字不动；族名/节点那一格
+		//   改成断言分家后的首行 + 两态首行相同（同批测试件）。
 		isNode := len(inv.path) > 0 && (s == inv.path[0] || strings.HasPrefix(s, inv.path[0]+" "))
-		fmt.Fprintf(stderr, "%s: 未知命令 %q\n", progName, nodeName)
+		if isNode {
+			fmt.Fprintf(stderr, "%s: %q 是族名/中间节点 —— 不是一个可执行动作（这一态不吃 `--help` · 族级/该节点帮助见下行）\n",
+				progName, nodeName)
+		} else {
+			fmt.Fprintf(stderr, "%s: 未知命令 %q\n", progName, nodeName)
+		}
 		if s != "" {
 			fmt.Fprintf(stderr, "最像的合法输入: %s %s\n", progName, s)
 		}
@@ -2525,7 +2532,7 @@ func init() {
 			path:     []string{"gap", "set-state"},
 			kind:     "GapSetState",
 			summary:  "改一条缺口的状态（写面 · 留证据）：`--state` 只认**三值闭集**（`仍缺` / `已解` / `不做`）—— 闭集外 ⇒ 2 并逐字印闭集 · 转 `已解` 写 `solved_at` + `solved_evidence` · **销案两态对拍**（批4 第四片 · 设计稿 §11.5 · 表 `D6`）：改到 `已解` 时**新账**（缺口号内日期 ≥ `2026-09-28`）**必须**带改前/改后两条读数（`--before-read` / `--after-read` · 每条形如 `cmd=<命令> · rc=<真退码> · reading=<关键读数一行>`）—— 缺哪一段就退 2 并**逐段点名**（改前读数 / 改后读数）· **存量账**（号内日期 < 阈值）豁免但**不静默**：表尾逐字印「本发为存量豁免（未带两态对拍）」· 改**非** `已解` 的状态 ⇒ 本闸不适用（行为逐字不变）· 同 id 同态同证据 ⇒ 「无变化」0（不写）· 审计进 `edit_audit.jsonl`（写不进就不写真源）",
-			usage:    "zerg gap set-state <GAP id> --state <仍缺|已解|不做> --evidence <一句话> [--before-read <cmd=… · rc=… · reading=…>] [--after-read <cmd=… · rc=… · reading=…>] [--by <谁>] [--dry-run | --yes] [--json <字段>]",
+			usage:    "zerg gap set-state <GAP id> --state <仍缺|已解|不做> --evidence <一句话> [--solved-kind <实现|销案|前提不成立>] [--before-read <cmd=… · rc=… · reading=…>] [--after-read <cmd=… · rc=… · reading=…>] [--by <谁>] [--dry-run | --yes] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"缺口 id（**恰好一条** —— 本动作不做批量改态）"},
 			fields:   gapSetStateFields,
@@ -3405,7 +3412,11 @@ func valueFlagName(a string) string {
 	switch a {
 	case "--title", "--target", "--goal", "--evidence", "--rollback", "--by",
 		"--criterion", "--candidate", "--state",
-		"--dir", "--expect":
+		"--dir", "--expect",
+		// ★ 本枚（缺口账 `GAP-20260927-249`）：`--solved-kind` —— `gap set-state` 的**销案分栏**
+		//   （`实现` / `销案` / `前提不成立`）。与上面各排同一口径：值照收，语义在 `cmdGapSetState`
+		//   里判（★ 本排是名字表「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用）。
+		"--solved-kind":
 		return a
 	}
 	// 受控写面与提交面旗标（D3b 第二/三步 · 2026-09-21）：受控写入的件名、提交信息、

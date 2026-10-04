@@ -72,3 +72,46 @@ func TestLoadFleetConfig(t *testing.T) {
 		t.Error("example-35b 未找到")
 	}
 }
+
+// TestNodeAddr —— GAP-20260926-71：取址口径提为 config 纯函数后，机器名→(IP,端口) 的
+// 真源行为（含缺配置 / 缺 host 的回退与默认端口）必须逐条成立；私有真表在盘上时再与
+// fleet.yaml 的 fleet 段逐字对拍。哑化 NodeAddr（忽略 fleet）即本用例红。
+func TestNodeAddr(t *testing.T) {
+	fleet := map[string]FleetNode{
+		"edge-node":    {Host: "<worker-ip>", Port: 8100},
+		"mini-node-1": {Host: "<worker-ip>"}, // 未给端口 → 回退默认端口
+		"bare":  {},                 // 未给 host → 回退机器名
+	}
+	cases := []struct {
+		host     string
+		wantIP   string
+		wantPort int
+	}{
+		{"edge-node", "<worker-ip>", 8100},
+		{"mini-node-1", "<worker-ip>", DefaultAgentPort},
+		{"bare", "bare", DefaultAgentPort},
+		{"missing", "missing", DefaultAgentPort},
+	}
+	for _, c := range cases {
+		ip, port := NodeAddr(fleet, c.host)
+		if ip != c.wantIP || port != c.wantPort {
+			t.Errorf("NodeAddr(%q) = (%q,%d)，want (%q,%d)", c.host, ip, port, c.wantIP, c.wantPort)
+		}
+	}
+	// nil map：不得 panic，走回退支。
+	if ip, port := NodeAddr(nil, "edge-node"); ip != "edge-node" || port != DefaultAgentPort {
+		t.Errorf("NodeAddr(nil,edge-node) = (%q,%d)，want (edge-node,%d)", ip, port, DefaultAgentPort)
+	}
+	// 真源对拍（仅私有真表形态）。
+	if p := fleetPath(t); p != "" && filepath.Base(p) == "fleet.yaml" {
+		cfg, err := LoadFleetConfig(p)
+		if err != nil {
+			t.Fatalf("加载 %s: %v", p, err)
+		}
+		if node, ok := cfg.Fleet["edge-node"]; ok && node.Host != "" {
+			if ip, port := NodeAddr(cfg.Fleet, "edge-node"); ip != node.Host || port != node.Port {
+				t.Errorf("edge-node 与真源不符：NodeAddr=(%q,%d) fleet.yaml=(%q,%d)", ip, port, node.Host, node.Port)
+			}
+		}
+	}
+}

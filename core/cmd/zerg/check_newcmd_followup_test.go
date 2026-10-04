@@ -1,6 +1,6 @@
 // check_newcmd_followup_test.go —— 成对负控（本件与 check_newcmd_followup.go 同批）
 //
-// 牙口说明：下列子用例逐条钉住九个面 / 三档退码 / 遍历序。任意一条被**哑化**
+// 牙口说明：下列子用例逐条钉住十一个面 / 三档退码 / 遍历序。任意一条被**哑化**
 // （例：把面判定恒置「齐」、把 rc=2 档改成 rc=0、把实现件排序读法换成 readdir 原序），
 // 对应子用例立刻 FAIL 并给出**行号**（见回执的哑化实证）。
 package main
@@ -117,6 +117,38 @@ func TestCnfFaces_正控与负控成对(t *testing.T) {
 		rc, out, _ := cnfT(t, d)
 		if rc != 1 || !strings.Contains(out, "面③ cli-contract-baseline 计数：缺") {
 			t.Fatalf("期望 rc=1 且点名面③ 实得 rc=%d\n%s", rc, out)
+		}
+	})
+
+	t.Run("⑪负控_面⑩门69取数面判红", func(t *testing.T) {
+		d := t.TempDir()
+		cnfMiniRoot(d, true, true, false, "zerg nu", nil)
+		cnfWrite(cnfPyJoin(d, cnfHelpShapeRel), cnfSelfHelpShapeStub)
+		rc, out, _ := cnfT(t, d)
+		if rc != 1 || !strings.Contains(out, "面⑩ 门69 help 面冻结常量（BASELINE 六格 · 现读对拍）：缺") {
+			t.Fatalf("期望 rc=1 且点名面⑩ 缺 实得 rc=%d\n%s", rc, out)
+		}
+	})
+
+	t.Run("⑫正控半边_面⑩⑪取数面判绿", func(t *testing.T) {
+		d := t.TempDir()
+		cnfMiniRoot(d, true, true, false, "zerg nu", nil)
+		cnfWrite(cnfPyJoin(d, cnfHelpShapeRel), cnfSelfHelpShapeOK)
+		cnfWrite(cnfPyJoin(d, cnfCpfcRel), cnfSelfCpfcCountsOK)
+		rc, out, _ := cnfT(t, d)
+		if rc != 0 || !strings.Contains(out, "面⑩ 门69 help 面冻结常量（BASELINE 六格 · 现读对拍）：齐") ||
+			!strings.Contains(out, "面⑪ 公开面命令 counts 键表（Cpfc · 现读对拍）：齐") {
+			t.Fatalf("期望 rc=0 且面⑩/面⑪ 齐 实得 rc=%d\n%s", rc, out)
+		}
+	})
+
+	t.Run("⑬负控_面⑩⑪取数面不在场_不适用不误红", func(t *testing.T) {
+		d := t.TempDir()
+		cnfMiniRoot(d, true, true, false, "zerg nu", nil)
+		rc, out, _ := cnfT(t, d)
+		if rc != 0 || !strings.Contains(out, "面⑩ 门69 help 面冻结常量（BASELINE 六格 · 现读对拍）：不适用") ||
+			!strings.Contains(out, "面⑪ 公开面命令 counts 键表（Cpfc · 现读对拍）：不适用") {
+			t.Fatalf("期望 rc=0 且面⑩/面⑪ 不适用 实得 rc=%d\n%s", rc, out)
 		}
 	})
 }
@@ -273,10 +305,10 @@ func TestCnfFaces_显式null档(t *testing.T) {
 	})
 }
 
-func TestCnfFaces_自检15控全过(t *testing.T) {
+func TestCnfFaces_自检18控全过(t *testing.T) {
 	var out, errb bytes.Buffer
 	rc := checkNewcmdFollowupGateMain(&out, &errb, []string{"--self-test"})
-	if rc != 0 || !strings.Contains(out.String(), "自检通过：15 控") {
+	if rc != 0 || !strings.Contains(out.String(), "自检通过：18 控") {
 		t.Fatalf("自检期望 rc=0 实得 %d\n%s%s", rc, out.String(), errb.String())
 	}
 }

@@ -399,6 +399,20 @@ func cdmDevdocsRoot(repoRoot string) string {
 	return cdmAbs(cdmPyJoin(sibling, "项目文档", "v2.5.10"))
 }
 
+// cdmEnvKnobs —— py `_env_knobs()`：关键取根旋钮的**实解析值**（未设 = ∅）。
+// 供步日志自证「扫的哪棵树」（缺口 GAP-20260927-287）；三值同名同序照搬 py。
+func cdmEnvKnobs() [3]string {
+	var out [3]string
+	for i, k := range []string{"ZERG_DEVDOCS_ROOT", "ZERG_DOCS_ALT", "ZERG_DOCS"} {
+		if v := os.Getenv(k); v != "" {
+			out[i] = v
+		} else {
+			out[i] = "∅"
+		}
+	}
+	return out
+}
+
 // cdmIsDir / cdmIsFile / cdmExists —— `os.path.isdir/isfile/exists`（跟随符号链接）。
 func cdmIsDir(p string) bool {
 	st, err := os.Stat(p)
@@ -1673,6 +1687,7 @@ type cdmReport struct {
 	examples        map[[2]string][]string
 	skippedOrd      []string
 	skippedCnt      map[string]int
+	violations      []string // 违规（非冻结）件名清单（缺口 GAP-20260927-283）
 }
 
 // cdmRunScan —— py `run_scan()`。
@@ -1709,6 +1724,9 @@ func cdmRunScan(root string, targets []string, schema *cdmJNode, missingMode str
 			bucket = &rep.frozen
 		}
 		bucket.bump(res.status)
+		if res.status == "violation" && !(isFrozen && !countFrozen) {
+			rep.violations = append(rep.violations, fe.rel)
+		}
 		if res.status == "skipped" {
 			if _, ok := rep.skippedCnt[res.cls]; !ok {
 				rep.skippedOrd = append(rep.skippedOrd, res.cls)
@@ -2597,6 +2615,11 @@ func checkDocMetaGateMain(stdout, stderr io.Writer, argv []string) int {
 			perRule.set(k[0]+"/"+k[1], rep.perRule[k])
 		}
 		obj.set("per_rule", perRule)
+		viol := []interface{}{}
+		for _, v := range rep.violations {
+			viol = append(viol, v)
+		}
+		obj.set("violations", viol)
 		var b strings.Builder
 		cdmDumpJSON(obj, 0, &b)
 		b.WriteString("\n")
@@ -2607,6 +2630,10 @@ func checkDocMetaGateMain(stdout, stderr io.Writer, argv []string) int {
 	if strings.HasPrefix(schemaPath, root) {
 		schemaShown = cdmRelPath(schemaPath, root)
 	}
+	knobs := cdmEnvKnobs()
+	fmt.Fprintf(stdout, "  根与旋钮（实解析）：repo_root=%s · scan_root=%s · "+
+		"ZERG_DEVDOCS_ROOT=%s · ZERG_DOCS_ALT=%s · ZERG_DOCS=%s\n",
+		repo, root, knobs[0], knobs[1], knobs[2])
 	fmt.Fprintf(stdout, "check-doc-meta —— schema=%s（scope=%s · missing=%s）\n",
 		schemaShown, args.scope, args.missing)
 	fmt.Fprint(stdout, cdmJoinLines(cdmReportBody(rep, args.missing, args.maxExamples)))

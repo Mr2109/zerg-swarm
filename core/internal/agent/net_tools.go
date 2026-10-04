@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/Mr2109/zerg-swarm/core/internal/config"
 	"github.com/Mr2109/zerg-swarm/core/internal/statepath"
 	"io"
 	"log"
@@ -336,14 +337,39 @@ func buildSiteOp(domains []string) string {
 }
 
 // llmRewriteQuery — LLM query 重写（EDGE-NODE 9001 example-35b-v2——失败 fallback 规则——可选）
-// 通道: ssh g01@<worker-ip> → curl 127.0.0.1:9001/v1/chat/completions（llama-server 绑定 127.0.0.1——需 EDGE-NODE 本机调）
+// 通道: ssh g01@<EDGE-NODE IP> → curl 127.0.0.1:9001/v1/chat/completions（llama-server 绑定 127.0.0.1——需 EDGE-NODE 本机调）
+// 取址: EDGE-NODE 的 IP 由 fleet.yaml 的 fleet 段解析（config.NodeAddr——GAP-20260926-71），不再写死。
+// 端口: 9001 是 EDGE-NODE 本机 llama-server 端口（不是 fleet 段字段，故留字面值）。
+const x3RewritePort = 9001
+
+// sshTargetFor 把机器名编成 ssh 目标（g01@<IP>）——IP 来自 fleet 真源（config.NodeAddr）。
+// 名册缺该机器时 NodeAddr 回退机器名本身（与 gateway.fleetNode 同口径）。
+func sshTargetFor(host string, fleet map[string]config.FleetNode) string {
+	ip, _ := config.NodeAddr(fleet, host)
+	return "g01@" + ip
+}
+
+// x3SSHTarget 取 EDGE-NODE 的 ssh 目标（g01@<IP>）——IP 来自 fleet.yaml 真源（config.NodeAddr）。
+func x3SSHTarget() (string, error) {
+	fleetYAML := filepath.Join(statepath.WorkspaceRoot(), "gateway", "fleet.yaml")
+	cfg, err := config.LoadFleetConfig(fleetYAML)
+	if err != nil {
+		return "", fmt.Errorf("读 fleet.yaml 失败(%s): %w", fleetYAML, err)
+	}
+	return sshTargetFor("edge-node", cfg.Fleet), nil
+}
+
 func llmRewriteQuery(q string) (string, error) {
 	// 2026-09-03 实测修: example-35b-v2 思考模型——原提示词弱(max_tokens 60 全被 reasoning 吃——content 漏出分析文本"user wants me to..."——当改写词用了)
 	// 强约束提示词 + max_tokens 200(reasoning 留空间) + 结果校验(>60字=分析漏出——error→fallback 规则层)
 	prompt := "改写搜索词。规则: 1.直接输出改写后的搜索词(一行,40字内) 2.禁止任何分析/解释/翻译/思考过程 3.保留核心术语 4.中文词间加空格分词。原词: " + q + "\n\n改写结果:"
 	payload := fmt.Sprintf(`{"model":"example-35b-v2","messages":[{"role":"user","content":%q}],"max_tokens":200,"stream":false}`, prompt)
-	cmd := exec.Command("ssh", "-o", "ConnectTimeout=3", "-o", "StrictHostKeyChecking=no", "g01@<worker-ip>",
-		"curl -s -m 10 http://127.0.0.1:9001/v1/chat/completions -H 'Content-Type: application/json' -d '"+payload+"'")
+	sshTarget, err := x3SSHTarget()
+	if err != nil {
+		return "", fmt.Errorf("LLM 重写不可用: %w", err)
+	}
+	cmd := exec.Command("ssh", "-o", "ConnectTimeout=3", "-o", "StrictHostKeyChecking=no", sshTarget,
+		fmt.Sprintf("curl -s -m 10 http://127.0.0.1:%d/v1/chat/completions -H 'Content-Type: application/json' -d '%s'", x3RewritePort, payload))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

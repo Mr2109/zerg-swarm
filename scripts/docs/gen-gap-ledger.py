@@ -388,6 +388,7 @@ def qid_check_mode(a):
 # ═════════════════════════════════════ 自检（合成夹具 · 不碰真源/真账/真文档仓）════════════════
 def self_test():
     """测**纯函数**（版本线挑选 · 日期取读 · qid 校验）—— 不跑真导出器、不碰真文档仓。"""
+    import shutil
     import tempfile
     ok = True
 
@@ -398,46 +399,49 @@ def self_test():
         print("  %s %s（got=%r · want=%r）" % ("✓" if good else "✗", name, got, want))
 
     tmp = tempfile.mkdtemp(prefix="gap-ledger-selftest-")
-    docs = os.path.join(tmp, DOCS_DIRNAME)
-    for rel in ("v2.5.12/缺口总账-20260923.md", "v2.5.9/缺口总账-20260901.md",
-                "v2.5.13/缺口总账-20260925.md", "v2.5.12/承接自-v2.5.11/缺口总账-20260922.md"):
-        p = os.path.join(docs, LEDGER_DIR, rel)
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
-            f.write("# x\n")
-    #   版本线 `v2.5.9` 不能因**字符串比**压过 `v2.5.13`；豁免件（承接自）不算候选
-    case("版本线挑选（v2.5.13 > v2.5.9 · 豁免件不算）", pick_version_dir(docs), "v2.5.13")
-    case("落点形状", os.path.relpath(target_path(docs, "v2.5.13", "20260926"), docs),
-         os.path.join(LEDGER_DIR, "v2.5.13", "缺口总账-20260926.md"))
-    case("日期取读（首行称日期）", export_date("## 缺口真源导出（**只列未闭**） · 2026-09-26\n"),
-         "20260926")
-    case("日期取读（取不到 ⇒ None · 不给结论）", export_date("## 无日期行\n"), None)
-    case("空文档仓 ⇒ 版本线判不出", pick_version_dir(os.path.join(tmp, "没有此目录")), None)
+    try:
+        docs = os.path.join(tmp, DOCS_DIRNAME)
+        for rel in ("v2.5.12/缺口总账-20260923.md", "v2.5.9/缺口总账-20260901.md",
+                    "v2.5.13/缺口总账-20260925.md", "v2.5.12/承接自-v2.5.11/缺口总账-20260922.md"):
+            p = os.path.join(docs, LEDGER_DIR, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w", encoding="utf-8") as f:
+                f.write("# x\n")
+        #   版本线 `v2.5.9` 不能因**字符串比**压过 `v2.5.13`；豁免件（承接自）不算候选
+        case("版本线挑选（v2.5.13 > v2.5.9 · 豁免件不算）", pick_version_dir(docs), "v2.5.13")
+        case("落点形状", os.path.relpath(target_path(docs, "v2.5.13", "20260926"), docs),
+             os.path.join(LEDGER_DIR, "v2.5.13", "缺口总账-20260926.md"))
+        case("日期取读（首行称日期）", export_date("## 缺口真源导出（**只列未闭**） · 2026-09-26\n"),
+             "20260926")
+        case("日期取读（取不到 ⇒ None · 不给结论）", export_date("## 无日期行\n"), None)
+        case("空文档仓 ⇒ 版本线判不出", pick_version_dir(os.path.join(tmp, "没有此目录")), None)
 
-    # ── qid 面：成对（未启用不红 / 合法过 / 形态坏红 / 重号红）────────────────────────
-    rows_none = [{"id": "GAP-20260101-1"}, {"id": "GAP-20260101-2"}]
-    q = qid_validate(rows_none)
-    case("qid 未启用 ⇒ enabled=False · rc=None（不判红）", (q["enabled"], q["rc"]), (False, None))
-    rows_ok = [{"id": "a", "qid": "Q-001"}, {"id": "b", "qid": "Q-002"}, {"id": "c"}]
-    q = qid_validate(rows_ok)
-    case("qid 合法 ⇒ rc=0 · 计 2/3", (q["enabled"], q["rc"], q["with_qid"]), (True, 0, 2))
-    rows_bad = [{"id": "a", "qid": "Q1"}, {"id": "b", "qid": "q-002"}]
-    q = qid_validate(rows_bad)
-    case("qid 形态非法 ⇒ rc=1 · 两处点名", (q["rc"], q["bad_format"]),
-         (1, [("a", "Q1"), ("b", "q-002")]))
-    rows_dup = [{"id": "a", "qid": "Q-007"}, {"id": "b", "qid": "Q-007"}]
-    q = qid_validate(rows_dup)
-    case("qid 重号 ⇒ rc=1 · 点名 Q-007×2", (q["rc"], q["dup"]), (1, [("Q-007", ["a", "b"])]))
+        # ── qid 面：成对（未启用不红 / 合法过 / 形态坏红 / 重号红）────────────────────────
+        rows_none = [{"id": "GAP-20260101-1"}, {"id": "GAP-20260101-2"}]
+        q = qid_validate(rows_none)
+        case("qid 未启用 ⇒ enabled=False · rc=None（不判红）", (q["enabled"], q["rc"]), (False, None))
+        rows_ok = [{"id": "a", "qid": "Q-001"}, {"id": "b", "qid": "Q-002"}, {"id": "c"}]
+        q = qid_validate(rows_ok)
+        case("qid 合法 ⇒ rc=0 · 计 2/3", (q["enabled"], q["rc"], q["with_qid"]), (True, 0, 2))
+        rows_bad = [{"id": "a", "qid": "Q1"}, {"id": "b", "qid": "q-002"}]
+        q = qid_validate(rows_bad)
+        case("qid 形态非法 ⇒ rc=1 · 两处点名", (q["rc"], q["bad_format"]),
+             (1, [("a", "Q1"), ("b", "q-002")]))
+        rows_dup = [{"id": "a", "qid": "Q-007"}, {"id": "b", "qid": "Q-007"}]
+        q = qid_validate(rows_dup)
+        case("qid 重号 ⇒ rc=1 · 点名 Q-007×2", (q["rc"], q["dup"]), (1, [("Q-007", ["a", "b"])]))
 
-    # ── 负控：真源读不到（含非 JSON 行）⇒ (None, 说明) ───────────────────────────────
-    bad = os.path.join(tmp, "坏真源.jsonl")
-    with open(bad, "w", encoding="utf-8") as f:
-        f.write('{"id":"x"}\n不是 json\n')
-    rows, err = read_source_rows(bad)
-    case("非 JSON 行 ⇒ 不给结论（rows=None · 有说明）",
-         (rows is None, bool(err and "不给结论" in err)), (True, True))
-    rows2, err2 = read_source_rows(os.path.join(tmp, "没有此件.jsonl"))
-    case("真源不存在 ⇒ 不给结论", (rows2 is None, bool(err2)), (True, True))
+        # ── 负控：真源读不到（含非 JSON 行）⇒ (None, 说明) ───────────────────────────────
+        bad = os.path.join(tmp, "坏真源.jsonl")
+        with open(bad, "w", encoding="utf-8") as f:
+            f.write('{"id":"x"}\n不是 json\n')
+        rows, err = read_source_rows(bad)
+        case("非 JSON 行 ⇒ 不给结论（rows=None · 有说明）",
+             (rows is None, bool(err and "不给结论" in err)), (True, True))
+        rows2, err2 = read_source_rows(os.path.join(tmp, "没有此件.jsonl"))
+        case("真源不存在 ⇒ 不给结论", (rows2 is None, bool(err2)), (True, True))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
     print("自检结论: " + ("全过" if ok else "**有断言失败**"))
     return 0 if ok else 1

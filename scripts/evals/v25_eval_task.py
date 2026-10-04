@@ -16,9 +16,11 @@ os.makedirs(WORK, exist_ok=True)
 
 
 def run_agent(task, workdir, max_turns=15):
+    # GAP-20260927-183：argv 直调（shell=False）—— 外部可控值（task/workdir）不进 shell
     r = subprocess.run(
-        f'cd f"{REPO}/core" && go run ./cmd/zerg-agent -task "{task}" -model example-35b -workdir {workdir} -max-turns {max_turns} 2>&1',
-        shell=True, capture_output=True, text=True, timeout=300, errors="replace")
+        ["go", "run", "./cmd/zerg-agent", "-task", task, "-model", "example-35b",
+         "-workdir", workdir, "-max-turns", str(max_turns)],
+        cwd=os.path.join(REPO, "core"), capture_output=True, text=True, timeout=300, errors="replace")
     return r.stdout + r.stderr
 
 

@@ -66,10 +66,14 @@ func TestCLIHelpTwoState_KnownCommandGetsOwnUsage(t *testing.T) {
 }
 
 // TestCLIHelpTwoState_UnknownCommandIsUsageError —— 反控：不在册命令的 `--help` ⇒ 退 2 + 首行「未知命令」。
+// ★ GAP-20260927-400（2026-10-04 · 本批）：首词是真族名的节点（族名/中间节点）**首行分家**（不再说
+//
+//	「未知命令」）⇒ 原「未知命令」格里两个样本按**真值**分家：「非族名」（`frobnicate`）留在「未知命令」格；
+//	「真族名的节点」（`model` / `model zz-无此动作-zz`）移到下面的节点格（仍退 2 · 仍 stdout 0 字节）。
 func TestCLIHelpTwoState_UnknownCommandIsUsageError(t *testing.T) {
+	// 甲·真未知命令（首词**不是**族名）⇒ 首行逐字「未知命令」（一字不动）。
 	for _, argv := range [][]string{
 		{"frobnicate", "--help"},
-		{"model", "zz-无此动作-zz", "--help"},
 	} {
 		rc, out, errb := helpRun(t, argv...)
 		if rc != 2 {
@@ -80,6 +84,23 @@ func TestCLIHelpTwoState_UnknownCommandIsUsageError(t *testing.T) {
 		}
 		if !strings.HasPrefix(helpFirstLine(errb), "zerg: 未知命令") {
 			t.Errorf("`zerg %v` ⇒ stderr 首行应为「未知命令」，得到 %q", argv, helpFirstLine(errb))
+		}
+	}
+	// 乙·节点（首词是**真族名**）⇒ 首行**分家**（不再说「未知命令」）· 仍 rc=2 · 仍 stdout 0 字节。
+	for _, argv := range [][]string{
+		{"model", "--help"},
+		{"model", "zz-无此动作-zz", "--help"},
+	} {
+		rc, out, errb := helpRun(t, argv...)
+		if rc != 2 {
+			t.Errorf("`zerg %v` ⇒ 节点 --help 仍应退 2，得到 %d · stderr=%q", argv, rc, errb)
+		}
+		if out != "" {
+			t.Errorf("`zerg %v` ⇒ 不许往 stdout 打任何东西，得到 %q", argv, out)
+		}
+		if strings.HasPrefix(helpFirstLine(errb), "zerg: 未知命令") {
+			t.Errorf("`zerg %v` ⇒ 首词是真族名的节点，首行**不该**是「未知命令」（GAP-20260927-400）：%q",
+				argv, helpFirstLine(errb))
 		}
 	}
 }
@@ -212,13 +233,29 @@ func TestCLIQ149_FamilyHelpHasExit(t *testing.T) {
 
 // TestCLIQ149_NegativeControl_TwoStatesAndPrecedenceUntouched —— 成对负控三条（`Q-149` 的边界）：
 //
-//	① `zerg <族> --help` 的**两态一字不动**（族名仍不在册 ⇒ 退 2 · 首行 `未知命令`）；
+//	① `zerg <族> --help` 首行**分家**（GAP-20260927-400）：族名不是「真的未知命令」⇒ 首行不再说
+//	   「未知命令」，但**同一节点两态首行逐字相同**（`model` 与 `model --help` 同一句）· rc 仍 2；
 //	② **主题表先判**：`version` 既是族名又是主题名 ⇒ 主题面赢（`help version` 出的仍是专题）；
 //	③ 族名认不出 ⇒ 仍走「未知帮助主题」（退 2 · 不新增第三种错误形状）。
 func TestCLIQ149_NegativeControl_TwoStatesAndPrecedenceUntouched(t *testing.T) {
-	rc, _, errb := helpRun(t, "model", "--help")
-	if rc != 2 || !strings.HasPrefix(helpFirstLine(errb), "zerg: 未知命令") {
-		t.Errorf("`zerg model --help` 的两态不许被改（仍退 2 + 首行 `未知命令`），得到 rc=%d · stderr=%q", rc, errb)
+	// ★ GAP-20260927-400：族名 `model` 的 `--help` 首行**分家**（换掉原来那条**测错的样本** ——
+	//   它把一条**真族名**绑死在「未知命令」上）。改后口径：rc 仍 2 · 首行**不再以「未知命令」起头** ·
+	//   且 `model` 与 `model --help` 两态首行**逐字相同**（同一句）。**真未知命令**那一格另补样本覆盖。
+	rcA, _, errA := helpRun(t, "model")
+	rcB, _, errB := helpRun(t, "model", "--help")
+	if rcA != 2 || rcB != 2 {
+		t.Errorf("`zerg model`(rc=%d) 与 `zerg model --help`(rc=%d) 应同为 2", rcA, rcB)
+	}
+	if helpFirstLine(errA) != helpFirstLine(errB) {
+		t.Errorf("族名两态首行要逐字相同：%q vs %q", helpFirstLine(errA), helpFirstLine(errB))
+	}
+	if strings.HasPrefix(helpFirstLine(errA), "zerg: 未知命令") {
+		t.Errorf("`zerg model --help` 首行不该说「未知命令」（GAP-20260927-400），得到 %q", helpFirstLine(errA))
+	}
+	// 另补一个**非族名**样本覆盖「未知命令」那一格（真未知命令首行逐字仍冻）。
+	rcN, _, errN := helpRun(t, "frobnicate", "--help")
+	if rcN != 2 || !strings.HasPrefix(helpFirstLine(errN), "zerg: 未知命令") {
+		t.Errorf("真未知命令 `zerg frobnicate --help` 首行仍应逐字「未知命令」，得到 rc=%d · stderr=%q", rcN, errN)
 	}
 	rc, out, errb := helpRun(t, "help", "version")
 	if rc != 0 || strings.Contains(out, "族级用法") {

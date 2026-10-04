@@ -22,10 +22,12 @@ def check(name, ok, detail=""):
 
 
 def run_agent(task, workdir, max_turns=8, tools=""):
-    tflag = f" -tools {tools}" if tools else ""
-    r = subprocess.run(
-        f'cd core && go run ./cmd/zerg-agent -task "{task}" -model {MODEL} -workdir {workdir} -max-turns {max_turns}{tflag} 2>&1',
-        shell=True, capture_output=True, text=True, timeout=300, errors="replace")
+    # GAP-20260927-183：argv 直调（shell=False）—— 外部可控值（task/workdir/tools）不进 shell
+    argv = ["go", "run", "./cmd/zerg-agent", "-task", task, "-model", MODEL,
+            "-workdir", workdir, "-max-turns", str(max_turns)]
+    if tools:
+        argv += ["-tools", tools]
+    r = subprocess.run(argv, cwd=CORE, capture_output=True, text=True, timeout=300, errors="replace")
     return r.stdout + r.stderr
 
 

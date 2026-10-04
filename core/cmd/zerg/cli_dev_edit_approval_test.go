@@ -377,3 +377,50 @@ func TestDevEdit_SiblingRepoFlagGate(t *testing.T) {
 		t.Errorf("审计要回读「同级仓名 + 它的根」：%+v（想要 repo=Zerg-内部文档 root=%s）", line, sib)
 	}
 }
+
+// TestDevEdit_DryRunRefusesOutsideApprovalScope —— 判据⑥（`GAP-20260927-441` · 2026-10-04 本枚）：
+// **干跑不许对「批准面外」假绿** —— 批准件在盘、真签名、工具名对，但 `scope` 不含本次要改的件时：
+//
+//	① 干跑**退 2**（把「不算批准」从括号提示升级为**可判定的退码** · 与「钩子必拦」同档 · 不新立码）；
+//	② 计划面（stdout）与 stderr 都**明写**「本件不在批准面」；
+//	③ 件一个字节不动、审计不落（零副作用一字不动 —— 变的只是判决不再是放行）。
+//
+// 成对负控（✗ 禁恒绿）：同一件把 `scope` 改成覆盖本件 ⇒ 干跑仍退 0（有区分度）。
+// ★「无件」那一档**不在此列**（「先看后签」的正路）—— 由 `TestDevEdit_DryRunNeedsNoApprovalButShowsIt` 钉住。
+func TestDevEdit_DryRunRefusesOutsideApprovalScope(t *testing.T) {
+	repo, target := synthRepoForEdit(t)
+	prop, state := t.TempDir(), t.TempDir()
+	writeEditProposal(t, prop, "DEV-9004", target)
+	sign := writeOperatorKey(t, state)
+	from := filepath.Join(t.TempDir(), "new.go")
+	mustWrite(t, from, "package main\n\n// 批准面外：干跑不许假绿\n")
+
+	// 批准件：真签名、工具名 dev_edit、但 scope 只批「另一个目录」⇒ 不含 target（批准面外那一档）。
+	mustWrite(t, filepath.Join(state, "approvals", "dev_edit.json"),
+		string(sign("dev_edit", "core/别的目录/", "张三", "2026-10-04T00:00:00+08:00", "批的是别处"))+"\n")
+	before, _ := os.ReadFile(filepath.Join(repo, target))
+
+	rc, out, errb := runDevEdit(t, repo, prop, state, "--proposal", "DEV-9004", "--file", target,
+		"--from", from, "--dry-run")
+	if rc != 2 {
+		t.Fatalf("批准面外 ⇒ 干跑退 2（可判定的退码），得到 %d · stdout=%s · stderr=%s", rc, out, errb)
+	}
+	if !strings.Contains(out, "不在批准面") || !strings.Contains(errb, "不在批准面") {
+		t.Errorf("计划面与 stderr 都要明写「本件不在批准面」：stdout=%q stderr=%q", out, errb)
+	}
+	if after, _ := os.ReadFile(filepath.Join(repo, target)); string(after) != string(before) {
+		t.Errorf("干跑零副作用：件一个字节不许动：%q", after)
+	}
+	if _, err := os.Stat(filepath.Join(state, "edit_audit.jsonl")); err == nil {
+		t.Errorf("干跑不许落审计（没写就不记账）")
+	}
+
+	// 成对负控：scope 覆盖本件 ⇒ 干跑退 0（证明 ① 不是「一律拒」）。
+	mustWrite(t, filepath.Join(state, "approvals", "dev_edit.json"),
+		string(sign("dev_edit", target, "张三", "2026-10-04T00:00:00+08:00", "放行这一件"))+"\n")
+	rc, _, errb = runDevEdit(t, repo, prop, state, "--proposal", "DEV-9004", "--file", target,
+		"--from", from, "--dry-run")
+	if rc != 0 {
+		t.Fatalf("批准面覆盖本件 ⇒ 干跑退 0，得到 %d · stderr=%s", rc, errb)
+	}
+}
