@@ -44,7 +44,10 @@ import (
 //	· `verify` 收的是**门禁结果表**（一步一日志的既有产物）—— 判据真源仍是门禁步骤表，它**不新立判据**（§17.4 接缝第 5 行逐字）。
 //	⇒ 「读事实走既有族」这条没收；闭集本身随 §17.4 的条目**同批**刷新（棘轮，不许悄悄长大）。
 var devFamilyClosure = []string{"dev proposal", "dev release", "dev rollback", "dev receipt",
-	"dev build", "dev test", "dev verify", "dev edit"}
+	"dev build", "dev test", "dev verify", "dev edit",
+	// ★ GAP-20260927-377（P0 · 本枚随动）：`dev check --syntax`（类型面只读正门）落地 ⇒ 闭集**同批**长大
+	//   （棘轮：闭集本身随 §17.4 的条目/SD 同批刷新 —— 这里手工补，不许悄悄漏）。
+	"dev check"}
 
 // snapshotDir 给一棵目录树拍逐文件 sha256 快照（相对路径排序 ⇒ 可比对「逐字节不变」）。
 func snapshotDir(t *testing.T, root string) string {
@@ -392,5 +395,85 @@ func TestDevProposalHarnessHasTeeth(t *testing.T) {
 	// 正控：相同快照 ⇒ 不报（不误判）
 	if errs := proposalJudge(proposalLive{CwdBefore: "a\t1\n", CwdAfter: "a\t1\n"}); len(errs) != 0 {
 		t.Errorf("正控失败：相同快照被判红：%v", errs)
+	}
+}
+
+// ---- ★ GAP-20260927-266：判据的**行断言形态** `<件>:<行> 含 <串>`（本枚）----
+
+// proposalLineOf 现读某件里含 needle 的那一行的行号（测试自锚 —— 不写死行号，改代码后仍成立）。
+func proposalLineOf(t *testing.T, rel, needle string) int {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 上溯找仓根（判据：有 core/internal/version/version.go）—— 不赌测试 cwd 恰好是包目录。
+	root := wd
+	for {
+		if _, err := os.Stat(filepath.Join(root, "core", "internal", "version", "version.go")); err == nil {
+			break
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			t.Fatalf("从 %s 上溯找不到仓根", wd)
+		}
+		root = parent
+	}
+	b, err := os.ReadFile(filepath.Join(root, rel))
+	if err != nil {
+		t.Fatalf("读 %s 失败：%v", rel, err)
+	}
+	for i, ln := range strings.Split(string(b), "\n") {
+		if strings.Contains(ln, needle) {
+			return i + 1
+		}
+	}
+	t.Fatalf("%s 里找不到 %q（测试自锚失败）", rel, needle)
+	return 0
+}
+
+// TestDevProposalCriterionAcceptsLineAssertion —— 判据可以写成**行断言** `<件>:<行> 含 <串>`：
+// 钉到具体一行才有牙（目录级搜索**改前也命中** = 无牙 · GAP-20260927-266）。
+// 三态都判：成立 ⇒ new/check 均 0；不成立 ⇒ check 必须红（这一格就是「判据有牙」的证明）。
+func TestDevProposalCriterionAcceptsLineAssertion(t *testing.T) {
+	proposalEvidenceDir(t)
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		t.Fatalf("回指清单读不出来：%v", err)
+	}
+	t.Setenv("ZERG_PROPOSAL_DIR", t.TempDir())
+	base := []string{"--title", "行断言", "--target", "待办:" + ids[0], "--goal", "g",
+		"--evidence", "GAP-20260927-254", "--rollback", "r"}
+
+	target := "core/cmd/zerg/family_dev.go"
+	ln := proposalLineOf(t, target, "func criterionRunnable")
+
+	// 正控：**成立**的行断言 ⇒ new 0，check 0。
+	critOK := fmt.Sprintf("%s:%d 含 criterionRunnable", target, ln)
+	if rc, out, errb := runProposalNew(t, append(append([]string{}, base...), "--criterion", critOK)...); rc != 0 {
+		t.Fatalf("行断言判据 ⇒ new rc=%d（要 0）· stderr=%s", rc, errb)
+	} else if strings.TrimSpace(out) == "" {
+		t.Errorf("成功时 stdout 要给提案 id")
+	}
+	var out, errb strings.Builder
+	if rc := zerg.RunForTest([]string{"dev", "proposal", "check"}, &out, &errb); rc != 0 {
+		t.Errorf("成立的行断言 ⇒ check rc=%d（要 0）· stderr=%s", rc, errb.String())
+	}
+
+	// 负控：**不成立**的行断言 ⇒ new 仍 0（形态合法即可提），但 check 必须红（判据未达 · 无牙即红）。
+	critBad := fmt.Sprintf("%s:%d 含 zzz_not_present_zzz_266", target, ln)
+	if rc, _, errb2 := runProposalNew(t, append(append([]string{}, base...), "--criterion", critBad)...); rc != 0 {
+		t.Fatalf("不成立的行断言 ⇒ new rc=%d（要 0 · 形态合法即可提）· stderr=%s", rc, errb2)
+	}
+	out.Reset()
+	errb.Reset()
+	if rc := zerg.RunForTest([]string{"dev", "proposal", "check"}, &out, &errb); rc == 0 {
+		t.Errorf("不成立的行断言 ⇒ check rc=%d（要 2 · 不给结论）· stderr=%s", rc, errb.String())
+	}
+
+	// 负控②：绝对路径的件名 ⇒ 拒（形态只认仓内相对路径）。
+	critAbs := "/etc/passwd:1 含 root"
+	if rc, _, errb3 := runProposalNew(t, append(append([]string{}, base...), "--criterion", critAbs)...); rc != 2 || !strings.Contains(errb3, "绝对路径") {
+		t.Errorf("绝对路径的行断言 ⇒ rc=%d（要 2 · 点名「绝对路径」）· stderr=%s", rc, errb3)
 	}
 }

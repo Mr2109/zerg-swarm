@@ -47,7 +47,8 @@ type servicesEgg struct {
 	// （主控据此派活儿 ⇒ 客户端 503/0 token）。两者放在同一张卡片上，读的人一眼看得出矛盾。
 	UnitState string `json:"unit_state,omitempty"`
 	Port      int    `json:"port,omitempty"`
-	Inflight  int    `json:"inflight"` // P2 在飞引用计数（唯一真源）
+	PID       int    `json:"pid,omitempty"` // 引擎进程 pid（0 = 无进程句柄 ⇒ 缺席，不编）；`zerg agent engines` 的 pid 列
+	Inflight  int    `json:"inflight"`      // P2 在飞引用计数（唯一真源）
 	// Watchdog 活性看门狗判词/理由/窗口/工时增量（设计-活性看门狗 §6）；缺席 = 本卵没被看过。
 	Watchdog      *backend.WatchdogObservation `json:"watchdog,omitempty"`
 	IdleArmedS    *float64                     `json:"idle_armed_remaining_s"`   // null = 不在空窗计时中
@@ -92,6 +93,7 @@ func eggEntries(obs []backend.EggObservation, attrib map[int]monitor.ProcAttrib,
 			Model:             o.Model,
 			State:             o.State,
 			Port:              o.Port,
+			PID:               o.PID,
 			Inflight:          o.Inflight,
 			Watchdog:          o.Watchdog,
 			IdleArmedS:        o.IdleArmedRemainS,

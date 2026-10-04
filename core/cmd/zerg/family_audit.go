@@ -186,7 +186,10 @@ func cmdAuditCover(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %s 下没有 .git ⇒ 这不是一个 git 工作树（不给结论 · 退码 8）\n", progName, root)
 		return exitBlocked
 	}
-	porcelain, err := gitRun(root, "status", "--porcelain=v1", "--branch", "--untracked-files=normal")
+	// ★ 2026-10-04（缺口 `GAP-20260927-77`）：本命令自陈「**纯只读** · 不改仓内状态」（见件头与上面那道写旗标闸），
+	//   而 `git status` 不带 `--no-optional-locks` 会**刷新并写回 `.git/index`**（stat 过期件在场时实测必写）⇒
+	//   改走同族 `gitRunNoLock`（一个可选锁都不取）：命令面的「只读」才是真的。
+	porcelain, err := gitRunNoLock(root, "status", "--porcelain=v1", "--branch", "--untracked-files=normal")
 	if err != nil {
 		inv.setErr("blocked", "git_status_failed", err.Error())
 		fmt.Fprintf(stderr, "%s: `git status` 跑不动 ⇒ 不给结论（退码 8）：%v\n", progName, err)

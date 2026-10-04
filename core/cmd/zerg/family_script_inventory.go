@@ -731,6 +731,118 @@ func cmdScriptInventorySync(inv *invocation, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
+// cmdScriptInventoryVerify —— `zerg script inventory verify`：**只读**核对台账与现跑（缺口 `GAP-20260928-12`）。
+//
+// 缺口原话：`script inventory` 只有写面 `sync`，台账两列（有--help / 有--json）是否仍与件正文一致
+// **没有任何 CLI 只读口**（无 `ls|show|verify`）。本命令补这一条只读口 —— **不写件、不落审计、不建备份**：
+//
+//	· 复用 `scriptInvBuildPlan`（与 `sync` **同一份**差异算法 ⇒ 不另立第二套口径），只取它的只读段；
+//	· 差异三项（新增 / 消失 / 格值变化）任一非空，或声明行与现跑重算不等 ⇒ `rc=1`（台账过期 · 逐条点名）；
+//	· 全一致 ⇒ `rc=0`（台账新鲜）；
+//	· 仓根 / 文档仓根 / 台账读不到 ⇒ `rc=8`/`2`（照 `sync` 的同一张三态表 · 「读不到」不许当「没有」）。
+//
+// ★ 与 `sync` 的分家（判据面）：`sync` 是唯一**写**面（D2 · `--yes` fail-closed）；本命令**只读**，
+// 收 `--dry-run`/`--yes` 即拒（它不做计划、不写任何东西 —— 要看计划件用 `sync --dry-run`）。
+func cmdScriptInventoryVerify(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.dryRun || inv.yes {
+		inv.setErr("usage", "verify_is_readonly", "只读命令不收 --dry-run/--yes")
+		fmt.Fprintf(stderr, "%s: `script inventory verify` 是**只读**面 —— 不接受 `--dry-run`/`--yes`"+
+			"（要看计划件用 `%s script inventory sync --dry-run`；要写台账用 `sync --yes`）\n", progName, progName)
+		return exitUsage
+	}
+	if len(inv.args) > 0 {
+		inv.setErr("usage", "no_positional", "本命令不吃位置参数")
+		fmt.Fprintf(stderr, "%s: `script inventory verify` 不吃位置参数（收到 %q）\n", progName, inv.args[0])
+		return exitUsage
+	}
+	root := repoRoot()
+	if root == "" {
+		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
+		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 扫不了 `scripts/` 面（不给结论 · 退码 8）\n", progName)
+		return exitBlocked
+	}
+	docsRoot, docsSrc := scriptInvDocsRoot(inv, root)
+	if docsRoot == "" {
+		inv.setErr("blocked", "docs_root_absent", "文档仓根取不到")
+		fmt.Fprintf(stderr, "%s: 文档仓根取不到（`--docs-root` / `ZERG_DOCS` / 主仓上一级 `Zerg-内部文档` 三条都空）⇒ 不给结论\n", progName)
+		return exitBlocked
+	}
+	target := filepath.Join(docsRoot, scriptInvLedgerRel)
+	p, err := scriptInvBuildPlan(root, target)
+	if err != nil {
+		inv.setErr("usage", "ledger_unreadable", err.Error())
+		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+		fmt.Fprintf(stderr, "落点白名单只有一件：`<文档仓根>/%s`（本命令只读它，不新建第二份）\n", scriptInvLedgerRel)
+		return exitUsage
+	}
+	if len(p.Live) == 0 {
+		inv.setErr("blocked", "scan_empty", "`scripts/` 面 0 件 ⇒ 不给结论")
+		fmt.Fprintf(stderr, "%s: 扫 `scripts/` 面 0 件 ⇒ 空转不给结论（退码 2）—— 「扫不到」不是「台账是空的」\n", progName)
+		return exitUsage
+	}
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+	}
+	inSync := len(p.Added) == 0 && len(p.Removed) == 0 && len(p.Changed) == 0 && p.OldDecl == p.NewDecl
+	result := "stale"
+	if inSync {
+		result = "in_sync"
+	}
+	// 人面：给了 --json ⇒ 走 stderr（stdout 只留六键包封）—— 与 `sync` 的机器面分家同一条口径。
+	human := stdout
+	if inv.jsonGiven {
+		human = stderr
+	}
+	fmt.Fprintf(human, "台账 %s（文档仓根 %s）\n", target, docsSrc)
+	fmt.Fprintf(human, "现跑：件数 %d · 新增 %d 件 / 消失 %d 件 / 未变 %d 件 / 格值变化 %d 行 %d 格\n",
+		len(p.Live), len(p.Added), len(p.Removed), p.Unchanged, len(p.Changed), scriptInvChangedTotal(p.Changed))
+	for _, a := range p.Added {
+		fmt.Fprintf(human, "  + %s\n", a)
+	}
+	for _, r := range p.Removed {
+		fmt.Fprintf(human, "  - %s\n", r)
+	}
+	for _, c := range p.Changed {
+		fmt.Fprintf(human, "  ~ %s  %s\n", c.Path, strings.Join(c.Cells, " · "))
+	}
+	fmt.Fprintf(human, "声明行（台账）：%s\n", p.OldDecl)
+	fmt.Fprintf(human, "声明行（现跑）：%s\n", p.NewDecl)
+	if inSync {
+		fmt.Fprintf(human, "⇒ 台账两列（有--help / 有--json）与件正文一致 —— 无新增 / 消失 / 格值变化\n")
+	} else {
+		fmt.Fprintf(human, "⇒ 台账**过期**：与现跑不一致（上列逐条点名）—— 看 `%s script inventory sync --dry-run`，"+
+			"`--yes` 才写\n", progName)
+	}
+	if inv.jsonGiven {
+		return scriptInvVerifyEmitJSON(inv, stdout, stderr, p, result, inSync)
+	}
+	if inSync {
+		return exitOK
+	}
+	return exitFail
+}
+
+// scriptInvVerifyEmitJSON —— 只读核对面的机器面（六键包封由 `selectJSONList` 出 · 字段表在 main.go 登记）。
+func scriptInvVerifyEmitJSON(inv *invocation, stdout, stderr io.Writer, p *scriptInvPlan, result string, inSync bool) int {
+	row := map[string]string{
+		"result":             result,
+		"target":             p.Target,
+		"rows_live":          strconv.Itoa(len(p.Live)),
+		"rows_added":         strconv.Itoa(len(p.Added)),
+		"rows_removed":       strconv.Itoa(len(p.Removed)),
+		"rows_unchanged":     strconv.Itoa(p.Unchanged),
+		"rows_changed":       strconv.Itoa(len(p.Changed)),
+		"rows_changed_named": scriptInvChangedNamed(p.Changed),
+		"rows_changed_cells": scriptInvChangedCells(p.Changed),
+		"declared_line":      p.OldDecl,
+		"declared_line_live": p.NewDecl,
+		"in_sync":            strconv.FormatBool(inSync),
+	}
+	return selectJSONList(stdout, stderr, inv, inv.path, inv.fields, []map[string]string{row})
+}
+
 func scriptInvShort(sha string) string {
 	if len(sha) > 12 {
 		return sha[:12]

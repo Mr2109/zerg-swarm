@@ -3,6 +3,7 @@ package store
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -306,4 +307,39 @@ func (s *Store) MachineCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.snapshots)
+}
+
+// Forget 从运行态名册里删除一台机器（GAP-20260925-29：名册此前**只有读取面**，
+// 无删除/清理动作 ⇒ 换件/探针过程留下的无效条目（probe / tuntest / …）只能等
+// 主控重启才消失，既不干净也无法自证）。
+//
+// 返回值 = 本次是否确有条目被删（false = 本就不在册 —— 与「删成功」区分，调用方
+// 据此决定是否记审计行；**不是错误**，幂等）。
+func (s *Store) Forget(machine string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.snapshots[machine]; !ok {
+		return false
+	}
+	delete(s.snapshots, machine)
+	return true
+}
+
+// StaleMachines 返回「过期」机器名：最后心跳早于 now-ttl 者（GAP-20260925-29 ②：
+// 名册**连过期机制都没有** —— 挂着的条目不会自证 stale，只能靠人眼看 LastSeen）。
+//
+// 只报告、不删 —— 是否清理（Forget）由调用方按策略决定；本函数无副作用。
+// 结果按机器名排序 ⇒ 同一状态多次读逐字相同（可复现，便于对拍）。
+func (s *Store) StaleMachines(ttl time.Duration, now time.Time) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cutoff := now.Add(-ttl)
+	var out []string
+	for name, snap := range s.snapshots {
+		if snap.LastSeen.Before(cutoff) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

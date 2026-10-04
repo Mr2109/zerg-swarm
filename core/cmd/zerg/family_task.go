@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -603,4 +604,131 @@ func cmdTaskCancel(inv *invocation, stdout, stderr io.Writer) int {
 	return listCmd(inv, stdout, stderr,
 		[]string{"id", "outcome", "cancelled", "already_cancelled", "already_terminal"},
 		[]map[string]string{row})
+}
+
+// ---- sched 族: 暂停派活 / 并发旋钮 / 调度器状态（缺口 GAP-20260927-210 · GAP-20260929-26）----
+//
+// 三条纪律：
+//  ① `show` 是**只读**面（GET /api/sched）—— 调度器状态 + 在跑条目的领取/心跳面；
+//  ② `pause`/`resume` 是「暂停**派活**」一等入口（≠ 终止在跑: 要停在跑的走 `task terminate`）；
+//  ③ `set <N>` 给并发度一枚显式旋钮（N 走位置参数，免再往 main.go 的名字表加旗标）。
+// ★ 命令面只做出口: 数值口径、持久化、派生有效并发全在服务端（master_scheduler.go）。
+
+// schedStateRows 把一份调度器状态载荷摊成摘要行 + 领取行（单一表格 + 单一 --json）。
+func schedStateRows(resp jsonObj) []map[string]string {
+	paused := cell(resp["dispatch_paused"]) == "true"
+	status := "running"
+	if paused {
+		status = "paused"
+	}
+	rows := []map[string]string{{
+		"kind":          "scheduler",
+		"id":            "（调度器）",
+		"status":        status,
+		"model":         "",
+		"concurrency":   cell(resp["effective_max"]) + "/" + cell(resp["max_concurrent"]),
+		"queued":        cell(resp["queued"]),
+		"waiting_retry": cell(resp["waiting_retry"]),
+		"claimed_by":    "",
+		"claimed_at":    "",
+		"heartbeat_at":  "",
+	}}
+	for _, it := range asList(resp["claimed"]) {
+		o := asObj(it)
+		if o == nil {
+			continue
+		}
+		r := project(o, []string{"id", "status", "model", "claimed_by", "claimed_at", "heartbeat_at"})
+		r["kind"] = "claimed"
+		r["concurrency"] = ""
+		r["queued"] = ""
+		r["waiting_retry"] = ""
+		rows = append(rows, r)
+	}
+	return rows
+}
+
+// renderSchedState 渲染一份调度器状态载荷（show / pause / resume / set 共用出口）。
+func renderSchedState(inv *invocation, stdout, stderr io.Writer, resp jsonObj) int {
+	return listCmd(inv, stdout, stderr,
+		[]string{"kind", "id", "status", "model", "concurrency", "queued", "waiting_retry",
+			"claimed_by", "claimed_at", "heartbeat_at"},
+		schedStateRows(resp))
+}
+
+// schedGet 取调度器状态（GET /api/sched）。
+func schedGet(inv *invocation, stdout, stderr io.Writer) int {
+	c := newClient()
+	var resp jsonObj
+	if rc := fetchInv(inv, c, "/api/sched", &resp, stderr); rc != exitOK {
+		return rc
+	}
+	return renderSchedState(inv, stdout, stderr, resp)
+}
+
+// schedPost 打一发 sched 写面（pause/resume/set 共用）—— 失败面把 http 状态与主控原文一起带回来。
+func schedPost(inv *invocation, stdout, stderr io.Writer, path string) int {
+	status, body, err := postJSON(newClient(), path, "")
+	var he *httpError
+	if err != nil && asHTTP(err, &he) {
+		status, body, err = he.status, he.body, nil
+	}
+	if err != nil {
+		inv.setErr("unreachable", "dial_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 打不到主控：%v\n", progName, err)
+		return exitUnreachable
+	}
+	if status == 401 || status == 403 {
+		inv.setErr("unauthenticated", fmt.Sprintf("http_%d", status), "未认证")
+		fmt.Fprintf(stderr, "%s: 主控拒了这次调度变更（http_%d）—— 看 `zerg help credentials`\n", progName, status)
+		return exitAuth
+	}
+	if status >= 400 {
+		code := errorCodeOf(body)
+		inv.setErr("usage", code, "主控拒绝调度变更")
+		fmt.Fprintf(stderr, "%s: 主控拒绝调度变更（http_%d）· code=%s\n", progName, status, orDash(code))
+		fmt.Fprintf(stderr, "主控原样响应: %s\n", strings.TrimSpace(body))
+		if status == 404 {
+			fmt.Fprintf(stderr, "⇒ 主控**没有这条路由**（`POST %s` 未接）—— 需重编 + 重启主控后才有\n", path)
+		}
+		return exitUsage
+	}
+	var resp jsonObj
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		inv.setErr("upstream_error", "bad_sched_payload", err.Error())
+		fmt.Fprintf(stderr, "%s: 主控回了 2xx 但响应体不是对象 ⇒ 不给结论（退码 1）\n", progName)
+		return exitFail
+	}
+	return renderSchedState(inv, stdout, stderr, resp)
+}
+
+// cmdSchedShow —— `zerg sched show`: 只读调度器状态（缺口 GAP-20260927-210 ② / GAP-20260929-26 ①）。
+func cmdSchedShow(inv *invocation, stdout, stderr io.Writer) int {
+	return schedGet(inv, stdout, stderr)
+}
+
+// cmdSchedPause —— `zerg sched pause`: 暂停派活（不再起新的；在跑的不动）。
+func cmdSchedPause(inv *invocation, stdout, stderr io.Writer) int {
+	return schedPost(inv, stdout, stderr, "/api/sched/pause")
+}
+
+// cmdSchedResume —— `zerg sched resume`: 恢复派活（回到设定并发并立即派发积压）。
+func cmdSchedResume(inv *invocation, stdout, stderr io.Writer) int {
+	return schedPost(inv, stdout, stderr, "/api/sched/resume")
+}
+
+// cmdSchedSet —— `zerg sched set <N>`: 设并发上限（显式旋钮 —— 缺口 GAP-20260929-26 ②）。
+func cmdSchedSet(inv *invocation, stdout, stderr io.Writer) int {
+	if len(inv.args) == 0 {
+		inv.setErr("usage", "missing_target", "缺并发上限 N")
+		fmt.Fprintf(stderr, "%s: `sched set` 要一个非负整数 N（如 `%s sched set 2`）\n", progName, progName)
+		return exitUsage
+	}
+	n := strings.TrimSpace(inv.args[0])
+	if _, err := strconv.Atoi(n); err != nil {
+		inv.setErr("usage", "bad_flag_value", "并发上限要非负整数")
+		fmt.Fprintf(stderr, "%s: `sched set` 的 N 要非负整数（给的是 %q）\n", progName, inv.args[0])
+		return exitUsage
+	}
+	return schedPost(inv, stdout, stderr, "/api/sched/set?max="+url.QueryEscape(n))
 }

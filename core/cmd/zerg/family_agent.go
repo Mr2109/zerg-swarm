@@ -13,10 +13,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // ---- 族名闭合（P-038）----
@@ -226,4 +230,286 @@ func cmdAgentProbe(inv *invocation, stdout, stderr io.Writer) int {
 	return listCmd(inv, stdout, stderr,
 		[]string{"machine", "healthy", "code_version", "code_sha", "last_seen", "via", "direct_gate"},
 		[]map[string]string{row})
+}
+
+// ---- ⑥ `zerg agent engines <机>`（缺口 `GAP-20260927-04` · F 族 · 只读）----
+//
+// 病根（缺口逐字）：`zerg agent bench` 对同机多枚引擎要求 `--model` 点名（不点名 ⇒ 退 2），
+// 但**没有任何一格先告诉你那台机上在跑什么** —— 只能先 `zerg egg ls` 或手搓
+// `curl 子端/eggs` 才找得到模型名，多机时还要在几台之间来回拼。
+//
+// 本命令把「认准之前先看清有什么」这**一步**单独开出来：数据走**现成**子端通道
+// （`/eggs` 优先、`/status` 兜底 —— 与 `agent bench` 同一份回据，不另开一条路），
+// 把每枚**在跑**（`port>0`）引擎的 模型 id · 状态 · pid · 端口 · managed 列成一张表。
+// 取不到 ⇒ `blocked` 退 8；子端答得到但**没有在跑的** ⇒ 空结论退 0（不编、也不误报前置不在）。
+//
+// ★ 已跑时长（`uptime`）：子端 `/eggs` 今天**不跟踪**引擎启动时刻 ⇒ 本格如实**缺席**（空串），
+//
+//	**不**拿别的时间戳凑一个假值；要填满它需子端端点补 `started_at`（归 `GAP-20260927-202` 端点面）。
+var agentEnginesFields = []string{"machine", "model", "state", "unit_state", "pid", "port", "uptime", "managed", "via"}
+
+var agentEnginesDisplay = []string{"machine", "model", "state", "pid", "port", "uptime", "managed"}
+
+// agentEngineFact 子端 `/eggs` 回据里的一枚**在跑**引擎（只读投影，不做判定）。
+type agentEngineFact struct {
+	Model     string
+	State     string
+	UnitState string
+	Port      int
+	PID       int
+	Uptime    string // 子端未跟踪启动时刻 ⇒ 恒空（缺席不编）
+	Managed   bool
+	Via       string
+}
+
+func cmdAgentEngines(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+		if rc := agentCheckFields(inv, stderr, agentEnginesFields); rc != exitOK {
+			return rc
+		}
+	}
+	if len(inv.args) == 0 {
+		inv.setErr("usage", "missing_target", "缺机器名")
+		fmt.Fprintf(stderr, "%s: `agent engines` 要一台机器名（`%s agent ls` 看名册）\n", progName, progName)
+		return exitUsage
+	}
+	if len(inv.args) > 1 {
+		inv.setErr("usage", "too_many_targets", "多余位置参数（本档只吃一台机）")
+		fmt.Fprintf(stderr, "%s: `agent engines` 只吃**一台**机（多给的是 %q）\n", progName, inv.args[1])
+		return exitUsage
+	}
+	machine := strings.TrimSpace(inv.args[0])
+	a, rc := agentChildAddr(machine, stderr)
+	if rc != exitOK {
+		return rc
+	}
+	facts, rc := agentEngineFacts(inv, a, stderr)
+	if rc != exitOK {
+		return rc
+	}
+	rows := make([]map[string]string, 0, len(facts))
+	for _, f := range facts {
+		model := f.Model
+		if model == "" {
+			model = "<子端未自报模型名>"
+		}
+		rows = append(rows, agentFillRow(map[string]string{
+			"machine": machine, "model": model, "state": f.State, "unit_state": f.UnitState,
+			"pid": strconv.Itoa(f.PID), "port": strconv.Itoa(f.Port), "uptime": f.Uptime,
+			"managed": strconv.FormatBool(f.Managed), "via": f.Via,
+		}, agentEnginesFields))
+	}
+	if len(rows) == 0 {
+		fmt.Fprintf(stderr, "%s: 子端 %s 报**没有在跑的引擎**（`/eggs` 里 `port>0` 的条目 0 条、`/status.port=0`）—— 这是**空结论**（退码 0），不是取不到\n",
+			progName, machine)
+		fmt.Fprintf(stderr, "要测某枚：`%s agent bench %s --model <名>`；注册表清单：`%s agent registry %s --list`\n",
+			progName, machine, progName, machine)
+	} else {
+		fmt.Fprintf(stderr, "%s: agent engines %s · 子端回据（%s）里**在跑**的引擎 %d 枚\n", progName, machine, facts[0].Via, len(rows))
+		fmt.Fprintf(stderr, "口径：pid/端口/状态取自子端回据；**已跑时长这一格子端今天不跟踪引擎启动时刻 ⇒ 如实缺席**（不拿别的时间戳凑）\n")
+	}
+	return listCmd(inv, stdout, stderr, agentEnginesDisplay, rows)
+}
+
+// agentEngineFacts 问子端要**在跑**（`port>0`）的每一枚引擎（`/eggs` 优先、`/status` 兜底）——
+// 与 `agent bench` 的 `agentRunningEggs` 同一份回据，只多带 pid / unit_state / managed 几格
+// （bench 只关心「测哪一枚」，本命令要「看清有什么」）。
+//
+// 两处都问不到 ⇒ `blocked` 退 8（取不到就说取不到，**不编**端口）；
+// `/eggs` 已给回据却没有在跑的条目 ⇒ 兜底问 `/status`，仍没有 ⇒ `[]` + 0（**空结论**，不是 blocked）。
+func agentEngineFacts(inv *invocation, a agentAddr, stderr io.Writer) ([]agentEngineFact, int) {
+	var eggs jsonObj
+	status, body, err := agentChildDo(a, http.MethodGet, "/eggs", "", 15*time.Second)
+	if err != nil {
+		return nil, agentChildUnreachable(inv, a, "/eggs", err, stderr)
+	}
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return nil, agentChildAuthFail(inv, a, "/eggs", status, stderr)
+	}
+	gotEggs := false
+	if status == http.StatusOK {
+		if err := json.Unmarshal([]byte(body), &eggs); err != nil {
+			fmt.Fprintf(stderr, "%s: 子端 /eggs 的响应不是合法 JSON（%v）—— 退一步问 /status\n", progName, err)
+			eggs = nil
+		} else {
+			gotEggs = true
+		}
+	}
+	facts := []agentEngineFact{}
+	if eggs != nil {
+		for _, it := range asList(eggs["eggs"]) {
+			o := asObj(it)
+			if o == nil {
+				continue
+			}
+			port, _ := strconv.Atoi(cell(o["port"]))
+			if port <= 0 {
+				continue // 只列**在跑**的（与 bench 同口径：`port>0`）
+			}
+			managed := o["managed"] == nil || cell(o["managed"]) == "true"
+			pid, _ := strconv.Atoi(cell(o["pid"]))
+			facts = append(facts, agentEngineFact{
+				Model: cell(o["model"]), State: cell(o["state"]), UnitState: cell(o["unit_state"]),
+				Port: port, PID: pid, Managed: managed, Via: "/eggs",
+			})
+		}
+	}
+	if len(facts) > 0 {
+		return facts, exitOK
+	}
+	// `/eggs` 没有在跑的条目 ⇒ `/status` 兜底（子端自报的当前引擎端口）。
+	var st jsonObj
+	status, body, err = agentChildDo(a, http.MethodGet, "/status", "", 15*time.Second)
+	if err != nil {
+		if gotEggs {
+			return facts, exitOK // `/eggs` 已是回据（只是没有在跑的）⇒ 空结论成立，不因 /status 打不到翻成 blocked
+		}
+		return nil, agentChildUnreachable(inv, a, "/status", err, stderr)
+	}
+	if status != http.StatusOK {
+		if gotEggs {
+			return facts, exitOK
+		}
+		inv.setErr("upstream_error", fmt.Sprintf("http_%d", status), "子端 /status 没回 200")
+		fmt.Fprintf(stderr, "%s: 子端 /status ⇒ HTTP %d ⇒ 端口问不出来（退码 8）\n", progName, status)
+		return nil, exitBlocked
+	}
+	if err := json.Unmarshal([]byte(body), &st); err != nil {
+		if gotEggs {
+			return facts, exitOK
+		}
+		inv.setErr("blocked", "status_unparseable", "子端 /status 的响应不是合法 JSON")
+		fmt.Fprintf(stderr, "%s: 子端 /status 的响应不是合法 JSON（%v）⇒ 端口问不出来（退码 8）\n", progName, err)
+		return nil, exitBlocked
+	}
+	if port, _ := strconv.Atoi(cell(st["port"])); port > 0 {
+		pid, _ := strconv.Atoi(cell(st["pid"]))
+		return []agentEngineFact{{
+			Model: cell(st["model"]), State: cell(st["backend_state"]),
+			Port: port, PID: pid, Managed: true, Via: "/status",
+		}}, exitOK
+	}
+	return facts, exitOK // 两处一致：没有在跑的引擎
+}
+
+// ---- ⑦ `zerg agent slots <机>`（缺口 `GAP-20260927-202` ② · F 族 · 只读）----
+//
+// 病根（缺口逐字，互证主控任务队列 `[Q-195]`）：**「谁占了几号槽、跑什么」只能手搓
+// `curl http://<机>:9400/props` 与 `/slots`** —— 主控 `active_requests>0` 却答不出谁在请求。
+// 本命令把这一层读数收进正门：先认准该机**在跑的引擎**（子端 `/eggs` —— 与 `agent bench` 同通道），
+// 再直连**引擎本人**的 `/slots`（`/props` 取 `total_slots`）把槽位摆出来。
+//
+// 只读纪律：不换装载、不写引擎、不绕过主控改状态。字段名**逐字取自引擎回据**（§4.3 U2）；
+// 引擎不吃 `/slots` 或形状认不出（非 JSON 数组）⇒ `blocked` 退 8 + 原样贴回据，**不给结论**。
+var agentSlotsFields = []string{"machine", "model", "engine_port", "slot_id", "slot_state", "n_ctx", "prompt_chars", "slots_total", "via"}
+
+var agentSlotsDisplay = []string{"machine", "model", "engine_port", "slot_id", "slot_state", "n_ctx", "prompt_chars", "slots_total"}
+
+func cmdAgentSlots(inv *invocation, stdout, stderr io.Writer) int {
+	if inv.jsonGiven {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+		if rc := agentCheckFields(inv, stderr, agentSlotsFields); rc != exitOK {
+			return rc
+		}
+	}
+	if len(inv.args) == 0 {
+		inv.setErr("usage", "missing_target", "缺机器名")
+		fmt.Fprintf(stderr, "%s: `agent slots` 要一台机器名（`%s agent ls` 看名册）\n", progName, progName)
+		return exitUsage
+	}
+	if len(inv.args) > 1 {
+		inv.setErr("usage", "too_many_targets", "多余位置参数（本档只吃一台机）")
+		fmt.Fprintf(stderr, "%s: `agent slots` 只吃**一台**机（多给的是 %q）\n", progName, inv.args[1])
+		return exitUsage
+	}
+	machine := strings.TrimSpace(inv.args[0])
+	a, rc := agentChildAddr(machine, stderr)
+	if rc != exitOK {
+		return rc
+	}
+	// 认准在跑的那一枚引擎（多枚在跑而没点名 ⇒ 退 2 要你点名 —— 与 `agent bench` 同一纪律）。
+	engine, rc := agentEnginePick(inv, machine, a, strings.TrimSpace(inv.modelWant), stderr)
+	if rc != exitOK {
+		return rc
+	}
+	eng := agentAddr{Host: engine.Host, Port: engine.Port}
+	model := engine.Model
+	if model == "" {
+		model = machine + "（子端未自报模型名）"
+	}
+	slotsStatus, slotsBody, err := agentChildDo(eng, http.MethodGet, "/slots", "", 15*time.Second)
+	if err != nil {
+		inv.setErr("blocked", "engine_unreachable", fmt.Sprintf("引擎 %d 的 /slots 打不到", engine.Port))
+		fmt.Fprintf(stderr, "%s: 打不到引擎 %s/slots（地址取自子端回据）⇒ **不给结论**（退码 8）\n",
+			progName, agentChildBase(eng))
+		fmt.Fprintf(stderr, "原因: %v\n", err)
+		fmt.Fprintf(stderr, "error.kind=blocked · detail=engine_unreachable · retryable=true · remedy=fix_precondition\n")
+		return exitBlocked
+	}
+	if slotsStatus != http.StatusOK {
+		inv.setErr("blocked", fmt.Sprintf("engine_slots_http_%d", slotsStatus), "引擎没回 200（/slots）")
+		fmt.Fprintf(stderr, "%s: GET %s/slots ⇒ HTTP %d\n", progName, agentChildBase(eng), slotsStatus)
+		fmt.Fprintf(stderr, "引擎原样响应: %s\n", strings.TrimSpace(slotsBody))
+		fmt.Fprintf(stderr, "⇒ **不给结论**（退码 8）：本命令不猜槽位形状，引擎不吃 /slots 就如实说\n")
+		fmt.Fprintf(stderr, "error.kind=blocked · detail=engine_slots_http_%d · retryable=true · remedy=fix_precondition\n", slotsStatus)
+		return exitBlocked
+	}
+	// `/props` 的 total_slots（引擎自报；取不到 ⇒ 空，不编）。
+	propsTotal := ""
+	if ps, pb, err := agentChildDo(eng, http.MethodGet, "/props", "", 10*time.Second); err == nil && ps == http.StatusOK {
+		var p jsonObj
+		if json.Unmarshal([]byte(pb), &p) == nil {
+			propsTotal = cell(p["total_slots"])
+		}
+	}
+	rows, rc := agentSlotRowsFromPayload(machine, model, engine.Port, slotsBody, propsTotal, engine.Via)
+	if rc != exitOK {
+		inv.setErr("blocked", "slots_shape_undecided", "引擎 /slots 回据不是 JSON 数组（形状认不出）")
+		fmt.Fprintf(stderr, "%s: 引擎 /slots 的回据形状认不出（顶层不是 JSON 数组）⇒ **不给结论**（退码 8）\n", progName)
+		fmt.Fprintf(stderr, "引擎原样响应: %s\n", agentSnippet(strings.TrimSpace(slotsBody), 400))
+		fmt.Fprintf(stderr, "error.kind=blocked · detail=slots_shape_undecided · retryable=false · remedy=inspect_receipt\n")
+		return rc
+	}
+	fmt.Fprintf(stderr, "%s: agent slots %s · 引擎 %s（子端回据 %s 认准）· 槽位 %d 个 · total_slots=%s\n",
+		progName, machine, agentChildBase(eng), engine.Via, len(rows), orDash(propsTotal))
+	fmt.Fprintf(stderr, "口径：字段名**逐字取自引擎回据**（/slots 的 id/state/n_ctx/prompt）；缺的格缺席 —— 不同引擎实现形状可不同\n")
+	return listCmd(inv, stdout, stderr, agentSlotsDisplay, rows)
+}
+
+// agentSlotRowsFromPayload 把引擎 `/slots` 回据投影成表格行（纯函数：便于用回据原文钉判据，不真打引擎）。
+//
+// 顶层必须是 **JSON 数组**（llama.cpp 等引擎的 /slots 形状）；不是数组 ⇒ 退 8（形状未定案，**不编字段**）。
+// 每槽取 id / state / n_ctx / prompt（prompt 只报**字符数**，不把整段提示词刷屏）。
+func agentSlotRowsFromPayload(machine, model string, enginePort int, slotsBody, propsTotal, via string) ([]map[string]string, int) {
+	var arr []any
+	if err := json.Unmarshal([]byte(slotsBody), &arr); err != nil {
+		return nil, exitBlocked
+	}
+	rows := make([]map[string]string, 0, len(arr))
+	for i, it := range arr {
+		o := asObj(it)
+		if o == nil {
+			continue
+		}
+		id := cell(o["id"])
+		if id == "" {
+			id = strconv.Itoa(i) // 引擎没自报 id ⇒ 用它在数组里的位置（**标出来**，不假装是引擎给的）
+		}
+		prompt := cell(o["prompt"])
+		rows = append(rows, agentFillRow(map[string]string{
+			"machine": machine, "model": model, "engine_port": strconv.Itoa(enginePort),
+			"slot_id": id, "slot_state": cell(o["state"]), "n_ctx": cell(o["n_ctx"]),
+			"prompt_chars": strconv.Itoa(len([]rune(prompt))), "slots_total": propsTotal, "via": via,
+		}, agentSlotsFields))
+	}
+	if len(rows) == 0 && len(arr) > 0 {
+		// 数组里全是非对象（形状认不出）⇒ 不给结论。
+		return nil, exitBlocked
+	}
+	return rows, exitOK // 空数组是合法结论（引擎报了 0 个槽）⇒ 退 0、空表
 }

@@ -424,3 +424,39 @@ func TestDevEdit_DryRunRefusesOutsideApprovalScope(t *testing.T) {
 		t.Fatalf("批准面覆盖本件 ⇒ 干跑退 0，得到 %d · stderr=%s", rc, errb)
 	}
 }
+
+// TestDevEdit_ApprovalFaceSelfCheckGivesHowto —— ★ GAP-20260928-105（本枚）：批准面的**只读自查口**。
+// 病灶（缺口逐字）：没有任何 CLI 面说明批准件从哪来 / 怎么续期 / scope 闭集怎么扩
+// ⇒ 换机器 / 新会话撞退 2 时使用者**无从自查**。本判据钉两处（**同一块 · 两处同源**）：
+//
+//	① 干跑计划面（只读 · 零副作用）出「从哪来 / 续期扩scope / scope闭集 / 自查」四行；
+//	② 真写拒执面（无件那一档）也出同一块 + 逐字拒因。
+func TestDevEdit_ApprovalFaceSelfCheckGivesHowto(t *testing.T) {
+	repo, target := synthRepoForEdit(t)
+	prop, state := t.TempDir(), t.TempDir()
+	writeEditProposal(t, prop, "DEV-9005", target)
+	from := filepath.Join(t.TempDir(), "new.go")
+	mustWrite(t, from, "package main\n\n// 自查面\n")
+
+	// ① 干跑（只读）：无件也在计划面出自己的批准面说明块。
+	rc, out, errb := runDevEdit(t, repo, prop, state, "--proposal", "DEV-9005", "--file", target,
+		"--from", from, "--dry-run")
+	if rc != 0 {
+		t.Fatalf("干跑 ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	for _, want := range []string{"批准面·从哪来", "续期/扩scope", "scope闭集", "批准面·自查", "approve new --tool dev_edit"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("干跑计划面缺批准面说明 %q：%q", want, out)
+		}
+	}
+
+	// ② 真写拒执（无批准件）：同一块也出（两处同源）。
+	rc, _, errb = runDevEdit(t, repo, prop, state, "--proposal", "DEV-9005", "--file", target,
+		"--from", from, "--confirm="+hostnameOf(t), "--yes")
+	if rc != 2 {
+		t.Fatalf("无批准件真写 ⇒ 退 2，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(errb, "真写要一枚人签批准件") || !strings.Contains(errb, "批准面·从哪来") {
+		t.Errorf("拒执面要给拒因 + 批准面说明块：%q", errb)
+	}
+}

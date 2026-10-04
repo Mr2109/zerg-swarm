@@ -165,3 +165,55 @@ func TestLastSeen(t *testing.T) {
 		t.Fatal("LastSeen 应更新")
 	}
 }
+
+// TestForget GAP-20260925-29：名册删除面（幂等 + 只删点名那条）。
+func TestForget(t *testing.T) {
+	s := NewStore()
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "edge-node"})
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "probe"})
+	if !s.Forget("probe") {
+		t.Fatal("在册条目应删成功（返回 true）")
+	}
+	if s.GetSnapshot("probe") != nil {
+		t.Fatal("Forget 后该条目应消失")
+	}
+	if s.GetSnapshot("edge-node") == nil {
+		t.Fatal("Forget 不得波及其他机器")
+	}
+	if s.Forget("probe") {
+		t.Fatal("不在册条目再删应返回 false（幂等，不是错误）")
+	}
+	if s.MachineCount() != 1 {
+		t.Fatalf("删除后机器数应为 1，实得 %d", s.MachineCount())
+	}
+}
+
+// TestStaleMachines GAP-20260925-29：过期判据（只报告不删 · 按名排序）。
+func TestStaleMachines(t *testing.T) {
+	s := NewStore()
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "fresh"})
+	s.ReceiveHeartbeat(HeartbeatRequest{Machine: "old"})
+	// 把 old 的最后心跳人为推旧
+	s.mu.Lock()
+	s.snapshots["old"].LastSeen = time.Now().Add(-time.Hour)
+	s.mu.Unlock()
+
+	ttl := 10 * time.Minute
+	now := time.Now()
+	stale := s.StaleMachines(ttl, now)
+	if len(stale) != 1 || stale[0] != "old" {
+		t.Fatalf("应只报 old 一台，实得 %v", stale)
+	}
+	// 只报告不删：快照仍在
+	if s.GetSnapshot("old") == nil {
+		t.Fatal("StaleMachines 不得删除条目（只报告）")
+	}
+	// 排序稳定：两次读逐字相同
+	if got := s.StaleMachines(ttl, now); len(got) != 1 || got[0] != "old" {
+		t.Fatalf("排序应稳定，实得 %v", got)
+	}
+	// ttl 放大到覆盖所有 ⇒ 空
+	if got := s.StaleMachines(2*time.Hour, now); len(got) != 0 {
+		t.Fatalf("ttl 覆盖全部时应为空，实得 %v", got)
+	}
+}

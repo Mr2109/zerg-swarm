@@ -39,7 +39,11 @@ type matrixCase struct {
 	Argv            []string `json:"argv"`
 	WantRC          int      `json:"want_rc"`
 	WantStdoutBytes int      `json:"want_stdout_bytes"`
-	Why             string   `json:"why"`
+	// ★ 2026-10-04（缺口 `GAP-20260927-388`）：`stdout_bytes_unpinned: true` = **只钉 rc、不钉字节**
+	//   （时点变的态：同一 argv 两次读数都不同 ⇒ 字节数冻不成常量）。标了它 ⇒ `judgeCase` 跳过字节
+	//   比较、**只核 `want_rc`**（`family_gate_matrix.go` 的字节列同规印「（不判）」）。缺省 false ⇒ 逐字不变。
+	StdoutBytesUnpinned bool   `json:"stdout_bytes_unpinned"`
+	Why                 string `json:"why"`
 	// ── 公开面档（两档矩阵 · 设计-CI适配-v1.1 §十三 `M2`）─────────────────────────────
 	// 为什么需要分档：**同一格被两棵树要求不同值**。公开树缺三样本机有的东西 ——
 	//   · `bin/`（`publish/whitelist.txt` 不含它）⇒ `build ls` 先撞缺件退 8；
@@ -201,7 +205,10 @@ func judgeCase(c matrixCase, rc, stdoutBytes int) error {
 	if rc != c.WantRC {
 		return fmt.Errorf("退码 %d ≠ 期望 %d", rc, c.WantRC)
 	}
-	if stdoutBytes != c.WantStdoutBytes {
+	// ★ 2026-10-04（缺口 `GAP-20260927-388`）：标了 `stdout_bytes_unpinned` 的格**只钉 rc、不钉字节**
+	//   —— 它的 stdout 是时点变的（同一 argv 两次读数都不同），拿字节数当判据会变成一颗随仓内容
+	//   自爆的地雷。只核退码；未标的格照旧逐字节比（既有形态一字不动）。
+	if !c.StdoutBytesUnpinned && stdoutBytes != c.WantStdoutBytes {
 		return fmt.Errorf("stdout %d 字节 ≠ 期望 %d 字节", stdoutBytes, c.WantStdoutBytes)
 	}
 	return nil
@@ -344,6 +351,29 @@ func TestCLIContractHarnessNegativeControl(t *testing.T) {
 	wrong2.WantStdoutBytes = c.WantStdoutBytes + 1
 	if err := judgeCase(wrong2, rc, outBytes); err == nil {
 		t.Error("负控失败：stdout 字节数改错后**没有**报错")
+	}
+}
+
+// TestCLIContractUnpinnedBytesCapability —— 缺口 `GAP-20260927-388` 的**成对判据**：
+// `stdout_bytes_unpinned: true` = 只钉 rc、不钉字节。本格证明这条能力**真进了判决**（不是死 schema）：
+//
+//	① 正控：标了它 ⇒ 字节数无论多少都判过（rc 对）；
+//	② 负控：标了它 ⇒ rc 错**仍必红**（「不钉字节」≠「不判 rc」）；
+//	③ 对照：**没标**它 ⇒ 字节不符照旧必红（证明跳过由 marker 触发、不是全局放宽 —— 既有断言未被掏空）。
+//
+// 合成格（不落矩阵）：能力面用合成件验，避免为「造一个时点变态」去放宽任何真实格的断言。
+func TestCLIContractUnpinnedBytesCapability(t *testing.T) {
+	base := matrixCase{ID: "synth#unpinned", WantRC: 2, WantStdoutBytes: 0, StdoutBytesUnpinned: true}
+	if err := judgeCase(base, 2, 999999); err != nil {
+		t.Errorf("正控失败：标了 stdout_bytes_unpinned 却因字节数不符判红（%v）—— 能力没进判决", err)
+	}
+	if err := judgeCase(base, 0, 0); err == nil {
+		t.Error("负控失败：标了 stdout_bytes_unpinned 后 rc 错**也**不报错 ——「不钉字节」被误读成「不判 rc」")
+	}
+	strict := base
+	strict.StdoutBytesUnpinned = false
+	if err := judgeCase(strict, 2, 999999); err == nil {
+		t.Error("对照失败：**没标**标记的格字节不符却判过了 —— 跳过被做成了全局放宽（既有断言被掏空）")
 	}
 }
 

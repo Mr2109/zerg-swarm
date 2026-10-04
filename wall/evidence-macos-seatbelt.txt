@@ -1,7 +1,7 @@
 === 环境 ===
 macOS：26.5.1（arm64）
 茧壁：zerg-wall 2.5.13（rc=0）
-茧壁制品 sha256（wall/target/debug/zerg-wall）：c2e5f3ec6ed03b82169a4d278d150b427a8cfd81a566254ca4235884ce030bd3
+茧壁制品 sha256（wall/target/debug/zerg-wall · 建构产物 · 易变：复跑因重编而变）：c2e5f3ec6ed03b82169a4d278d150b427a8cfd81a566254ca4235884ce030bd3
 源码 sha256（wall/src/platform/macos.rs）：6568cd605c7d0eeeac5dde323581a38f2b3566095db0eedd60d260adace68620
 源码 sha256（wall/src/platform/mod.rs）：4af7ab5deb140386890f69c6ad4e544deda28706490e1297fbcfba75985752bb
 源码 sha256（wall/src/platform/linux.rs）：535e759cd60e5f3b362a572459ce031ac0c0c5f3ed78ea025ab7ff5bdcffd6c2
@@ -10,7 +10,7 @@ macOS：26.5.1（arm64）
 源码 sha256（wall/src/main.rs）：6f98c79fc44de5fc94a81d585da9bb4893520488b30804d68216fc2c5cdaa935
 源码 sha256（wall/tests/plan_macos.rs）：48afa364913bc4c6dbb19b112c5b7b0affb1bf423e4a60835215a2696e15cd04
 源码 sha256（wall/tests/macos_seatbelt.rs）：d6ffba79837e97caf4d52efb2e6d645ac5d49da7acfa37988973ec0412d092dd
-源码 sha256（scripts/wall/wall-macos-evidence.py）：456d95c7b6a734f0576ed5163d83da9d59f94d0c878f6b16c9d9ee6025c412b9
+源码 sha256（scripts/wall/wall-macos-evidence.py）：d1bb26fc13b9b4d66a543f8ff24153a4fe93c23f0fac590b1935bf4a26ea9e58
 源码 sha256（scripts/wall/wall-macos-mutate.py）：ba7fc9fd31fbd86843cf0768d69eb291b0bca1939c6c7cb0746be20e1e6a524f
 源码 sha256（scripts/sandbox-probes/writeout-probe.py）：4cbf47a85d9542e4ac1a8af761e345cc67e1c3c7734a6db0d09d8c0194ff274b
 生成时的 HEAD（本批的父提交；回执与它证据的改动同批提交）：786888a1d1abca3eab777efb8b2108cd9b357c56

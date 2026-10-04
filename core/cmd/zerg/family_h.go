@@ -364,3 +364,17 @@ func cmdHazardWrite(inv *invocation, stdout, stderr io.Writer) int {
 	return listCmd(inv, stdout, stderr, []string{"command", "status", "request", "result"},
 		[]map[string]string{row})
 }
+
+// familyHCodeReadingHints —— 本件（family_h.go）自身注释里的绝对读数 → 真源取法（缺口 `GAP-20260928-30`）。
+//
+// 为什么它在 family_h.go 而不并进 family_code.go：缺口逐字点名「同形病在 `family_h.go` …
+// 已连烂 3 轮」—— 本件注释里的读数（「排除面 13 项」「写面…枚」一类）若烂了，门看不见注释 ⇒
+// 静默腐。把**本件自己**这些读数的真源取法登记在**本件**（就近维护、改了读数就能顺手改取法），
+// 由 `zerg code audit-readings` 读出去（与 family_code.go 的通用提示表合并 · 见 `codeAuditReadingHints`）。
+func familyHCodeReadingHints() []codeReadingHint {
+	return []codeReadingHint{
+		{"排除面", "现读 `family_script_inventory.go` 的 `scriptInvExcludeDirs` 键数（本件『排除面 13 项』须与它相符）"},
+		{"写面", "现读 `family_h.go` 的 `hazardWrites()` 条数"},
+		{"无后缀", "现读 `family_script_inventory.go` 的 `scriptInvTakesSuffixless` 常量"},
+	}
+}

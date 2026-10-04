@@ -1183,7 +1183,15 @@ func agentEnginePick(inv *invocation, machine string, a agentAddr, want string, 
 	inv.setErr("usage", "engine_ambiguous", fmt.Sprintf("子端有 %d 枚引擎在跑、没点名测哪一枚", len(eggs)))
 	fmt.Fprintf(stderr, "%s: 子端 %s 有 **%d 枚**引擎在跑：%s\n", progName, machine, len(eggs), agentEngineList(eggs))
 	fmt.Fprintf(stderr, "⇒ 退码 2：**指名道姓**再测（本命令不替你挑「碰巧第一个」—— 测错对象比测不到更坏 · `GAP-20260925-49`）\n")
-	fmt.Fprintf(stderr, "例: %s agent bench %s --model %s\n", progName, machine, eggs[0].Model)
+	// ★ 补一行可照抄的下一步（`GAP-20260927-04`）：先 `agent engines` 看清在跑什么，再点名那一枚。
+	//   旧版直接拼 `eggs[0].Model` —— 它空时那行就成了没用的 `--model`（照抄不了）。
+	for _, e := range eggs {
+		if e.Model != "" {
+			fmt.Fprintf(stderr, "例: %s agent bench %s --model %s\n", progName, machine, e.Model)
+			break
+		}
+	}
+	fmt.Fprintf(stderr, "先看清在跑什么：%s agent engines %s\n", progName, machine)
 	return agentRunningEgg{}, exitUsage
 }
 

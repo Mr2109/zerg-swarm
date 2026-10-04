@@ -27,8 +27,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/contract"
 )
@@ -518,10 +520,25 @@ func proposalRow(r proposalRecord) map[string]string {
 //	② 首词不是 `zerg` —— 判据的裁决权在地基，别的工具/人话都不算；
 //	③ 命令词解析不到命令树里，或落在**本版未开放的危险档**上（跑不到一个绿 ⇒ 不算可机检；
 //	   要拿危险档当判据就写它的 `--dry-run` 那一态 —— 那一态永远跑得动、且零副作用）。
+//
+// ★ 第四种收（本枚 · GAP-20260927-266）：**行断言形态** `<件>:<行> 含 <串>`（含 `包含` / 否定 `不含`）
+//
+//	—— 见下一条分支与 `criterionLineAssert`。它不走命令树（不是 `zerg …`），但同样是「可机检」：
+//	把判据钉到具体一行（改前那一行不含该串）⇒ 判据才有牙 —— 目录级搜索**改前也命中** = 判据无牙。
 func criterionRunnable(spec string) (string, string) {
 	s := strings.TrimSpace(spec)
 	if s == "" {
 		return "", "缺判据（--criterion）—— 判据为空 ⇒ 提案**不给结论**（§17.3 铁律②：判据/证据为空不算判据）"
+	}
+	// ★ GAP-20260927-266：**行断言形态**先认（它不是 `zerg …` 命令，别掉进下面「首词不是 zerg」那条）。
+	if file, ln, _, _, ok := criterionLineAssert(s); ok {
+		switch {
+		case filepath.IsAbs(file) || strings.HasPrefix(file, "/"):
+			return "", fmt.Sprintf("行断言里的件 %q 是绝对路径 —— 要**仓内相对路径**（形态：`<件>:<行> 含 <串>`）", file)
+		case strings.Contains(file, ".."):
+			return "", fmt.Sprintf("行断言里的件 %q 有 `..` —— 不许越出仓根（形态：`<件>:<行> 含 <串>`）", file)
+		}
+		return fmt.Sprintf("行断言 %s:%d", file, ln), ""
 	}
 	fields := strings.Fields(s)
 	prog := fields[0]
@@ -581,6 +598,78 @@ func criterionState(spec string) string {
 	return "可跑"
 }
 
+// criterionLineAssert —— 判据的**行断言形态**解析（GAP-20260927-266 · 本枚）：
+// `<件>:<行> 含 <串>`（分隔词收 `含` / `包含` · 否定收 `不含`）。
+//
+// 为什么需要它（缺口逐字）：`--criterion` 此前只收命令面，验一件改动只能写成**目录级搜索**
+// （`zerg code find <正则>`）—— 而同一标识符往往在别处已有 ⇒ **改前也命中** ⇒ 判据恒绿、无牙。
+// 钉到 `<件>:<行>` 上（改前那一行不含该串）⇒ 判据才有牙。
+//
+// 只做**形状**解析：件名的绝对路径 / `..` 由调用方（criterionRunnable）另判；行号 ≥1；串 = 分隔词
+// **之后整段**（可含空格、非空）。ok=false ⇒ 不是行断言形态，调用方照旧走命令面那条路。
+func criterionLineAssert(spec string) (file string, line int, sub string, negate bool, ok bool) {
+	s := strings.TrimSpace(spec)
+	i := strings.IndexFunc(s, unicode.IsSpace)
+	if i < 0 {
+		return "", 0, "", false, false
+	}
+	loc, rest := s[:i], strings.TrimSpace(s[i:])
+	j := strings.LastIndex(loc, ":")
+	if j <= 0 || j == len(loc)-1 {
+		return "", 0, "", false, false
+	}
+	n, err := strconv.Atoi(loc[j+1:])
+	if err != nil || n < 1 {
+		return "", 0, "", false, false
+	}
+	k := strings.IndexFunc(rest, unicode.IsSpace)
+	if k < 0 {
+		return "", 0, "", false, false
+	}
+	kw, tail := rest[:k], strings.TrimSpace(rest[k:])
+	if tail == "" {
+		return "", 0, "", false, false
+	}
+	switch kw {
+	case "含", "包含":
+		negate = false
+	case "不含":
+		negate = true
+	default:
+		return "", 0, "", false, false
+	}
+	return loc[:j], n, tail, negate, true
+}
+
+// criterionAssertVerdict —— 行断言的**当前读数**（三态 · 只读）：成立 / 不成立 / 判不了（读不到）。
+// `判不了` 覆盖：不是行断言 / 仓根解析不到 / 件读不到 / 行号越界 —— 一律**不当成立**
+// （本仓铁律：读不到 ≠ 通过 · `GAP-20260927-266` 的机器面）。
+func criterionAssertVerdict(spec, root string) string {
+	file, line, sub, negate, ok := criterionLineAssert(spec)
+	if !ok {
+		return "判不了（不是行断言形态）"
+	}
+	if root == "" {
+		return "判不了（仓根解析不到）"
+	}
+	b, err := os.ReadFile(filepath.Join(root, file))
+	if err != nil {
+		return "判不了（件读不到：" + file + "）"
+	}
+	lines := strings.Split(string(b), "\n")
+	if line > len(lines) {
+		return fmt.Sprintf("判不了（%s 只有 %d 行，断言指 %d 行）", file, len(lines), line)
+	}
+	got := strings.Contains(lines[line-1], sub)
+	if negate {
+		got = !got
+	}
+	if got {
+		return "成立"
+	}
+	return "不成立"
+}
+
 // declaredFilesWhy —— 提案声明的件（`--file`）的形状校验：**仓内相对路径**，不许绝对路径 / `..`。
 // 它是 `zerg dev edit` 的作用域真源（越界写 ⇒ 2），所以形状必须在**提出时**就判死。
 func declaredFilesWhy(files []string) string {
@@ -621,7 +710,10 @@ func cmdDevProposalCheck(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "%s\n", legalTargetsLine())
 	rows := []map[string]string{}
 	bad := 0
+	assertBad := 0
 	seen := 0
+	anyAssert := false
+	root := repoRoot()
 	for _, r := range recs {
 		if only != "" && r.ID != only {
 			continue
@@ -632,10 +724,20 @@ func cmdDevProposalCheck(inv *invocation, stdout, stderr io.Writer) int {
 		if st != "可跑" {
 			bad++
 		}
+		// ★ GAP-20260927-266（本枚）：行断言形态 —— 判据的**当前读数**也判（成立 / 不成立 / 判不了）。
+		//   不成立或判不了 ⇒ 一样不给结论（退码 2）—— 这一格就是「判据有没有牙」的机器面。
+		assertVerdict := ""
+		if _, _, _, _, isA := criterionLineAssert(r.Criterion); isA {
+			anyAssert = true
+			assertVerdict = criterionAssertVerdict(r.Criterion, root)
+			if st == "可跑" && assertVerdict != "成立" {
+				assertBad++
+			}
+		}
 		rows = append(rows, map[string]string{
 			"id": r.ID, "target": r.Target, "state": r.State,
 			"criterion": r.Criterion, "criterion_state": st, "why": why,
-			"files": strings.Join(r.Files, ","),
+			"files": strings.Join(r.Files, ","), "assert": assertVerdict,
 		})
 	}
 	if seen == 0 {
@@ -650,8 +752,12 @@ func cmdDevProposalCheck(inv *invocation, stdout, stderr io.Writer) int {
 			"--rollback <退点> --criterion '%s gate run --fast'\n", progName, progName)
 		return exitUsage
 	}
-	rc := listCmd(inv, stdout, stderr,
-		[]string{"id", "target", "state", "criterion_state", "criterion", "files", "why"}, rows)
+	disp := []string{"id", "target", "state", "criterion_state", "criterion", "files", "why"}
+	if anyAssert {
+		// 有行断言才多印一列（纯命令面判据的行**逐字节不变** —— 列数不因本枚而变）。
+		disp = append(disp, "assert")
+	}
+	rc := listCmd(inv, stdout, stderr, disp, rows)
 	if rc != exitOK {
 		return rc
 	}
@@ -660,6 +766,15 @@ func cmdDevProposalCheck(inv *invocation, stdout, stderr io.Writer) int {
 			fmt.Sprintf("%d 件提案的判据缺 / 跑不动", bad))
 		fmt.Fprintf(stderr, "%s: %d/%d 件提案的判据**不可机检** ⇒ 不给结论（退码 2）：判据必须是一条本版跑得动的 `%s …`\n",
 			progName, bad, seen, progName)
+		return exitUsage
+	}
+	if assertBad > 0 {
+		// ★ GAP-20260927-266：行断言**改前就成立 / 判不了** ⇒ 判据无牙 / 未达 ⇒ 一样不给结论。
+		inv.setErr("usage", "criterion_assertion_unmet",
+			fmt.Sprintf("%d 件提案的行断言当前不成立 / 判不了", assertBad))
+		fmt.Fprintf(stderr, "%s: %d/%d 件提案的**行断言**当前不成立 → 判据未达（不给结论 · 退码 2）："+
+			"行断言要**改后成立**（改前就成立 = 判据无牙）；判不了（件读不到 / 行越界）**一样红**（读不到 ≠ 通过）\n",
+			progName, assertBad, seen)
 		return exitUsage
 	}
 	fmt.Fprintf(stderr, "%s: %d 件提案的判据全部**可机检**（每条都能敲一次拿到退码）\n", progName, seen)

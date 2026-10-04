@@ -264,7 +264,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		//   **rc 仍 = 2**（两态 rc 语义一字不动）；同一节点 `X` 与 `X --help` 首行仍**逐字相同**（同一句）。
 		//   落点纪律：`cli_help_twostate_test.go` 的「真未知命令」格（`frobnicate`）一字不动；族名/节点那一格
 		//   改成断言分家后的首行 + 两态首行相同（同批测试件）。
-		isNode := len(inv.path) > 0 && (s == inv.path[0] || strings.HasPrefix(s, inv.path[0]+" "))
+		// ★ 修：判据从「拿 nearest 的回串反推」改成**直查命令树**（`isFamilyNode`）——
+		//   nearest 按登记序取**第一个**前缀命中，族名与另一条共享前缀的命令并存时会先撞上
+		//   **别的**名字（`doc` 撞 `doctor`、`gateway` 撞 `gate`）⇒ 原来的回串判据把它们判成
+		//   假 ⇒ 两族首行错成「未知命令」。直查命令树：存在一条命令首段 == 首词 ⇒ 就是族名/中间节点。
+		isNode := len(inv.path) > 0 && isFamilyNode(inv.path[0])
 		if isNode {
 			fmt.Fprintf(stderr, "%s: %q 是族名/中间节点 —— 不是一个可执行动作（这一态不吃 `--help` · 族级/该节点帮助见下行）\n",
 				progName, nodeName)
@@ -942,6 +946,31 @@ func init() {
 			endpoint: "POST http://<host>:<engine_port>/v1/chat/completions（引擎由子端 `/eggs` 按**名字+端口**认准、`/status` 兜底；取不到 / 说不清是哪一枚 ⇒ blocked 或退 2）",
 			run:      cmdAgentBench,
 		},
+		// ---- R6 · 缺口 `GAP-20260927-04` / `GAP-20260927-202`② · `agent` 族：`engines` / `slots` ----
+		// 实现件已落（`family_agent.go`：`cmdAgentEngines`/`cmdAgentSlots` + 两个字段表）⇒ 本处只做命令树登记。
+		// ★ 新命令 ⇒ 同批随动：cli-matrix must-fail 格 ＋ cli-contract-baseline ＋ 门69 两半。
+		{
+			path:     []string{"agent", "engines"},
+			kind:     "AgentEngines",
+			summary:  "一步看该机在跑哪些引擎（投影子端 /eggs：model · state · pid · port · managed；`/status` 兜底）—— 多机时不必来回 `egg ls` 或手搓 curl",
+			usage:    "zerg agent engines <机器名> [--json <字段>]",
+			arity:    "any",
+			args:     []string{"机器名"},
+			fields:   agentEnginesFields,
+			endpoint: "GET http://<host>:<port>/eggs（子端回据 · /status 兜底；取不到 ⇒ blocked 退 8，不编）",
+			run:      cmdAgentEngines,
+		},
+		{
+			path:     []string{"agent", "slots"},
+			kind:     "AgentSlots",
+			summary:  "该机在跑引擎的槽位占用（直连引擎 /slots 摆槽位、/props 取 total_slots；引擎由子端 /eggs 认准）—— 「谁占了几号槽」的命令面读数",
+			usage:    "zerg agent slots <机器名> [--model <名>] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"机器名"},
+			fields:   agentSlotsFields,
+			endpoint: "GET http://<host>:<engine_port>/slots（+ /props 的 total_slots；非 JSON 数组 ⇒ blocked 退 8）",
+			run:      cmdAgentSlots,
+		},
 		// ---- 缺口 `GAP-20260927-195` · `agent` 族：`agent restart`（D3 · 已开放 · 照同族 `core restart` 形状）----
 		{
 			path:    []string{"agent", "restart"},
@@ -1251,6 +1280,53 @@ func init() {
 			fields:   codeDiffFields,
 			endpoint: "",
 			run:      cmdCodeDiff,
+		},
+		// ---- 码面 R5 四枚（缺口 `GAP-20260927-235/236/237` · `GAP-20260928-30` · 2026-10-04）----
+		// 实现件已落（`family_code.go` / `family_h.go`）⇒ 本处只做**命令树登记**（同一批 code 族）。
+		// ★ 新命令 ⇒ 同批随动：cli-matrix must-fail 格 ＋ cli-contract-baseline ＋ 门69 两半（详见收口单）。
+		{
+			path:     []string{"code", "callers"},
+			kind:     "CodeCallers",
+			summary:  "反查一个函数的**全部调用点**（只读 · 手搓全仓搜的替身 · 缺口 GAP-20260927-237）· role=def 标定义行",
+			usage:    "zerg code callers <函数名> [--func <函数名>] [--path <目录或单件>] [--glob <模式>] [--limit <N>] [--full] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"函数名（与 --func 两收 · 后者优先）"},
+			fields:   []string{"path", "line", "role", "text"},
+			endpoint: "",
+			run:      cmdCodeCallers,
+		},
+		{
+			path:     []string{"code", "denom-recount"},
+			kind:     "CodeDenomRecount",
+			summary:  "两份件清单的**对称差**（只读 · 「计数差 1」时定点名那 1 件 · 缺口 GAP-20260927-236）",
+			usage:    "zerg code denom-recount <左件> <右件> [--json <字段>]",
+			arity:    "any",
+			args:     []string{"左清单件（一行一件）", "右清单件"},
+			fields:   []string{"path", "side"},
+			endpoint: "",
+			run:      cmdCodeDenomRecount,
+		},
+		{
+			path:     []string{"code", "git-two-way"},
+			kind:     "CodeGitTwoWay",
+			summary:  "同一 git 命令**带/不带**某全局选项两版对比（只读诊断 · 缺口 GAP-20260927-235）",
+			usage:    "zerg code git-two-way <k=v 或 -开关> -- <git 参数…> [--json <字段>]",
+			arity:    "any",
+			args:     []string{"全局选项", "git 参数（写在 -- 之后，防被当 zerg 旗标）"},
+			fields:   []string{"side", "text"},
+			endpoint: "",
+			run:      cmdCodeGitTwoWay,
+		},
+		{
+			path:     []string{"code", "audit-readings"},
+			kind:     "CodeAuditReadings",
+			summary:  "列出注释里的**绝对读数** + 真源取法（只读 · **只列候选不下判断** · 缺口 GAP-20260928-30）",
+			usage:    "zerg code audit-readings --path <件或目录> [--glob <模式>] [--limit <N>] [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（不收位置参数：件/目录由 --path 给）"},
+			fields:   []string{"path", "line", "reading", "hint", "text"},
+			endpoint: "",
+			run:      cmdCodeAuditReadings,
 		},
 		{
 			path:     []string{"repo", "status"},
@@ -1771,6 +1847,55 @@ func init() {
 			danger:  &dangerSpec{dangerD2, "任务 id", "把 failed 任务置回 queued（会再占一次机器与模型槽）", "§三 D 族 · §6.3 S5", true},
 			run:     cmdGuarded,
 		},
+		// ---- 面 G · R7 · 新族 `sched`（暂停派活 / 并发旋钮 / 调度器状态）----
+		// 缺口 GAP-20260927-210（P0）+ GAP-20260929-26（P1）。show 只读；pause/resume/set 改调度器
+		// 状态（可逆面：再 resume/set 回去即可）。实现件已落：family_task.go（命令面）+
+		// core/internal/api/master_scheduler.go（服务端 /api/sched* 四处理器）。
+		// ★ 新顶层族 ⇒ 同批随动：cli-matrix must-fail 格 ＋ cli-contract-baseline ＋ 门69 两半。
+		{
+			path:     []string{"sched", "show"},
+			kind:     "SchedShow",
+			summary:  "调度器状态（只读 · 并发 x/y · 队列 n · 在跑领取/心跳面）",
+			usage:    "zerg sched show [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（不收位置参数）"},
+			fields:   []string{"kind", "id", "status", "model", "concurrency", "queued", "waiting_retry", "claimed_by", "claimed_at", "heartbeat_at"},
+			endpoint: "GET /api/sched",
+			run:      cmdSchedShow,
+		},
+		{
+			path:     []string{"sched", "pause"},
+			kind:     "SchedPause",
+			summary:  "暂停派活（不再起新的任务；**在跑的不动** —— 要停在跑的走 task terminate）",
+			usage:    "zerg sched pause [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（不收位置参数）"},
+			fields:   []string{"kind", "id", "status", "concurrency", "queued", "waiting_retry"},
+			endpoint: "POST /api/sched/pause",
+			run:      cmdSchedPause,
+		},
+		{
+			path:     []string{"sched", "resume"},
+			kind:     "SchedResume",
+			summary:  "恢复派活（回到设定并发并立即派发积压）",
+			usage:    "zerg sched resume [--json <字段>]",
+			arity:    "none",
+			args:     []string{"（不收位置参数）"},
+			fields:   []string{"kind", "id", "status", "concurrency", "queued", "waiting_retry"},
+			endpoint: "POST /api/sched/resume",
+			run:      cmdSchedResume,
+		},
+		{
+			path:     []string{"sched", "set"},
+			kind:     "SchedSet",
+			summary:  "设并发上限（显式旋钮 · 非负整数 N 走位置参数）",
+			usage:    "zerg sched set <N> [--json <字段>]",
+			arity:    "any",
+			args:     []string{"并发上限 N（非负整数）"},
+			fields:   []string{"kind", "id", "status", "concurrency", "queued", "waiting_retry"},
+			endpoint: "POST /api/sched/set?max=<N>",
+			run:      cmdSchedSet,
+		},
 		{
 			path:    []string{"agent", "unload"},
 			summary: "卸载子端上的模型（危险 D3 · 本版未开放）",
@@ -1971,6 +2096,20 @@ func init() {
 			opened:   true,
 			endpoint: "",
 			run:      cmdDevEdit,
+		},
+		// ---- R3 · 缺口 `GAP-20260927-377`（P0）· `dev check --syntax`（类型面只读正门）----
+		// 实现件已落（`family_dev_check.go`：`cmdDevCheck` + `devCheckFields`）⇒ 本处只做命令树登记。
+		// 只读（零制品 · 制品丢 /dev/null · 不进危险档清单）；无 `--dry-run` ⇒ 干跑语义那一面不适用。
+		// ★ 新命令 ⇒ 同批随动：cli-matrix must-fail 格 ＋ cli-contract-baseline ＋ 门69 两半 ＋ 旗标名表。
+		{
+			path:    []string{"dev", "check"},
+			kind:    "DevCheck",
+			summary: "类型面只读正门：真跑一次编译/go vet（制品丢 /dev/null · 零制品）—— 施工卵禁跑 go build|vet 时的编译器背书（GAP-20260927-377）",
+			usage:   "zerg dev check --syntax [--file <仓内相对 .go 件>]… | [--pkg <包>]… [--vet] [--json <字段>]",
+			arity:   "none",
+			args:    []string{"（不收位置参数 —— 目标一律走 `--file` / `--pkg`）"},
+			fields:  devCheckFields,
+			run:     cmdDevCheck,
 		},
 		// ---- §17.4 第 2/3/5 条：候选区（批 E · T-58 · 真源 core/internal/contract/dev-candidate.json）----
 		// 次序（§17.7 逐字「先有判据、再有自动化」）落成机检：build / test 找不到该候选的验收证据单 ⇒ 退码 2。
@@ -2353,7 +2492,7 @@ func init() {
 			path:     []string{"gap", "ls"},
 			kind:     "GapList",
 			summary:  "缺口账（只读面：不写真源、不写审计）· 可按状态/优先级/影响面收窄 · 账内闭集外的值 ⇒ 判红并**点名到行**",
-			usage:    "zerg gap ls [--state <仍缺|已派|已立项|已解|回归|不做>…] [--prio P0|P1|P2] [--impact <命令面|门禁面|文档面|公开面|换件面|归档面>] [--unit <件路径|目录前缀>] [--module <模块前缀>] [--json <字段>]",
+			usage:    "zerg gap ls [--state <仍缺|已派|已立项|已解|回归|不做>…] [--prio P0|P1|P2] [--impact <命令面|门禁面|文档面|公开面|换件面|归档面>] [--unit <件路径|目录前缀>] [--module <模块前缀>] [--grep <关键词>] [--json <字段>]",
 			fields:   gapListFields,
 			endpoint: "",
 			run:      cmdGapLs,
@@ -2386,7 +2525,7 @@ func init() {
 			path:     []string{"gap", "plan"},
 			kind:     "GapPlan",
 			summary:  "作业单**六件**（只读面 · 一字不写真源、不写审计）：把一件（或一模块）的未闭账变成可直接丢给子代理的派单骨架 —— ① 该桶全部未闭（按 prio 排序 P0→P1→P2 · 同 prio 按缺口号 · `--top` 一页硬顶）② 出口判据 = 该桶未闭归零（回显现读未闭数）③ 建议允许面（该桶涉及的件清单）④ 禁碰面（建议值 + 理由）⑤ 占用状态（桶内 `已派` 条逐条点名卵号 · 判据 2 `M-32`）⑥ 派单模板骨架（目标/允许面/禁碰面/出口判据/时限 · 无占位符）· 选择器 = 第一个位置参数（件路径或模块目录前缀）或 `--unit`/`--module`；`--module` 声明按模块面算（前导匹配 `gapLsModuleHit`）· **零未闭 ≠ 空件**（桶内有条目而 `仍缺==0` ⇒ 真报未闭 0、退码 0）；选择器零命中 ⇒ 1；缺选择器/`--top` 非正整数 ⇒ 2；读不到真源 ⇒ 8",
-			usage:    "zerg gap plan <件路径|模块目录前缀> [--module <模块前缀>] [--unit <件路径|目录前缀>] [--top <N>] [--json <字段>]",
+			usage:    "zerg gap plan <件路径|模块目录前缀> [--module <模块前缀>] [--unit <件路径|目录前缀>] [--top <N>] [--allow-drifted] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"选择器（件路径或模块目录前缀 · **恰好一个** —— 与 `gap ls --unit/--module` 同口径，含「无件」闭集取值）"},
 			fields:   gapPlanFields,
@@ -2565,7 +2704,7 @@ func init() {
 			path:     []string{"gap", "note"},
 			kind:     "GapNote",
 			summary:  "给一条缺口追加一条**口径/上下文注**（写面）：落真源那一行的 `notes` 数组（`<时刻> · <谁>：<文本>`）· **不改 `state`**（形状里根本没有 `--state` ⇒ 收到即拒 2）· 同 by 同 text 已在位 ⇒ 「无变化」0（不写）· 审计进 `edit_audit.jsonl`（写不进就不写真源）· `--retract <n|指纹>` 给已落的注打**作废标记**（`notes_void` 追加 · **禁真删**：原文逐字节留在 `notes` 里 · 读面默认不显示作废项 · `--json void_notes` 带原文出来）",
-			usage:    "zerg gap note <GAP id> [--text <一句话> | --retract <n|指纹>] [--by <谁>] [--dry-run | --yes] [--json <字段>]",
+			usage:    "zerg gap note <GAP id> [--text <一句话> | --retract <n|指纹> | --supersede <n>] [--by <谁>] [--dry-run | --yes] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"缺口 id（**恰好一条**）"},
 			fields:   gapNoteFields,
@@ -2645,7 +2784,7 @@ func init() {
 			path:     []string{"gap", "idea", "add"},
 			kind:     "GapIdeaAdd",
 			summary:  "人随手记 ⇒ **落候选池**（写面 · `--dry-run` 恒 0 · 缺 `--yes` fail-closed 2）：落一行 `<状态目录>/zerg-cli-gap-candidates.jsonl`（`cid`/`source`/`raw`/`created_at`/`ttl_days=7`/`status=pending`/`fp`）· **真源一字不动**（`gap add` 仍是唯一入账）· 同 source 同 fp ⇒ 幂等 0 · 顺带做**七日归档**（落池超七天的条目搬入同目录 `…archive-<日期>.jsonl` · 只搬超期条）· `--source` 缺省 `human`，闭集外 ⇒ 2 并点名闭集",
-			usage:    "zerg gap idea add --symptom <一句> [--source <guard|gate|egg|human>] [--unit <件路径>] [--dry-run | --yes] [--json <字段>]",
+			usage:    "zerg gap idea add --symptom <一句> [--source <guard|gate|egg|human>] [--unit <件路径>] [--gate-step <步>] [--log-path <件>] [--rc <N>] [--dry-run | --yes] [--json <字段>]",
 			arity:    "none",
 			args:     []string{"（无位置参数：全部走旗标）"},
 			fields:   gapIdeaFields,
@@ -2798,6 +2937,23 @@ func nearest(word string) string {
 		return same[0]
 	}
 	return ""
+}
+
+// isFamilyNode —— 首词是不是命令树里的**真族名/中间节点**（直查命令树，✗ 不依赖 `nearest` 的回串）。
+//
+// 为什么单开一条（缺口 `GAP-20260927-400` 的真 bug）：`nearest` 是「最像的合法输入」——它按
+// 命令树**登记序**取第一个前缀命中（`HasPrefix(head,word) || HasPrefix(word,head)`），而族名与
+// 另一条共享前缀的命令并存时，先命中的可能是**别的**名字（`doc` 撞早登记的 `doctor`、`gateway`
+// 撞早登记的 `gate`）。若拿它的回串反推「首词是不是族名」（旧判据
+// `s == inv.path[0] || HasPrefix(s, inv.path[0]+" ")`），两族会被判成**假** ⇒ 首行错成「未知命令」。
+// 判据直查命令树：**存在一条命令，其首段 == word** ⇒ word 就是族名/中间节点（命令树下有它的孩子）。
+func isFamilyNode(word string) bool {
+	for _, c := range commands {
+		if len(c.path) > 0 && c.path[0] == word {
+			return true
+		}
+	}
+	return false
 }
 
 // childActions —— 某节点（族名或中间节点）下的**直接**动作名（命令树现算 · 只读）。
@@ -3269,6 +3425,20 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.kvSet(a, "true")
 		case a == "--stale":
 			inv.kvSet(a, "true")
+		// ★ R1 登记（2026-10-04 · 缺口 `GAP-20260929-20`/`-12`）：`gap plan` 的 `--allow-drifted`
+		//   —— 「现读状态」列对**漂移行**默认拒处理，`--allow-drifted` 才放行并留痕。语义是
+		//   布尔档 ⇒ 与 `--aging`/`--stale` 同一种形态（写进 `inv.kv` ⇒ `foreignFlag` 看得见）；
+		//   ★ 必须在下面「未知旗标」兜底**之前**上户口，否则派单里写着它会一律退 2「未知旗标」。
+		case a == "--allow-drifted":
+			inv.kvSet(a, "true")
+		// ★ R1 登记（2026-10-04 · 缺口 `GAP-20260927-377` · R3）：`dev check --syntax` 的
+		//   两枚**布尔**旗标 —— `--syntax`（本命令的语义档）与 `--vet`（跑 go vet 而非 go build）。
+		//   与 `--aging`/`--stale`/`--allow-drifted` 同一种形态（写进 `inv.kv` ⇒ `foreignFlag` 看得见）；
+		//   ★ 必须在下面「未知旗标」兜底**之前**上户口，否则派单里写着它们会一律退 2「未知旗标」。
+		case a == "--syntax":
+			inv.kvSet(a, "true")
+		case a == "--vet":
+			inv.kvSet(a, "true")
 		// `code find` 的**短形**上下文/归一旗标（缺口 `GAP-20260927-250/252` · 本枚）：
 		//   `-i`（大小写归一 · 布尔）· `-A<N>`/`--after <N>`（后文）· `-B<N>`/`--before <N>`（前文）·
 		//   `-C<N>`（前后各 N，POSIX grep 惯用 · 与缺口症状逐字 `-A2`/`-C1` 同形）。
@@ -3588,6 +3758,13 @@ func valueFlagName(a string) string {
 	case "--path", "--glob", "--after", "--before", "--kind":
 		return a
 	}
+	// 码面 R5 第一枚新旗标（缺口 `GAP-20260927-237`）：`code callers --func <函数名>` 的反查入口。
+	// 同上面各排同一口径 —— 值照收，语义在 `cmdCodeCallers` 里判（与位置参数两收、后者优先）。
+	// ★ 名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用。
+	switch a {
+	case "--func":
+		return a
+	}
 	// 按名找件旗标（`zerg find` · 2026-09-25 父代理补登）：实现件早已会读这三枚（family_find.go 走 flagVal），
 	// 只差在名字表上户口 —— 此前用法串写着 `--limit/--type/--root` 却一律退 2「未知旗标」= 命令等于不可用。
 	switch a {
@@ -3614,7 +3791,7 @@ func valueFlagName(a string) string {
 		// ★ 批1 第三片：`gap ls` 两轴收窄 —— `--unit <件路径|目录前缀>` / `--module <模块前缀>`。
 		//   名字表是本仓「唯一真源」⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用（同族先例：
 		//   `--allow-cross-root` 那一排的注释逐字同病）。用法串与本表**必须同改**（门判据乙）。
-		"--unit", "--module",
+		"--unit", "--module", "--grep",
 		// ★ 批1 第四片：`gap status` 排行面 —— `--top <N>`（一页桶数 · 缺省 20 · 上限同 `gapLsRowCap`）。
 		//   `--by <unit|module>` **已在上面「自开发面」那一排**（与 `dev proposal` 等共用一张名字表）⇒
 		//   本排只续 `--top` 这一枚新名字（一族共用一张名字表 · **不重开同名旗标**）。
@@ -3629,7 +3806,15 @@ func valueFlagName(a string) string {
 		//   （改前 / 改后成对 · 值 = 同族 `k=v · k=v` 逐格串）。名字表是本仓「唯一真源」
 		//   ⇒ 不登记就一律退 2「未知旗标」= 新旗标等于不可用（同族先例逐字同上）。
 		"--before-read", "--after-read",
-		"--source":
+		"--source",
+		// ★ R1 登记（2026-10-04 · 各路停摆等 main.go 的登记面）：三枚值旗标 —
+		//   `--gate-step`/`--log-path`/`--rc`（`gap idea add` 的候选池**门来源三格** · 缺口
+		//   `GAP-20260928-178`：门来源的「触发子」要能按门聚合 ⇒ 池行带结构化三格）；
+		//   `--supersede <n>`（`gap note` 的**替代注** · 缺口 `GAP-20260928-58`：现只 `--retract`
+		//   作废、不能给替代 ⇒ 救场要两步）。同上面各排同一口径 —— 值照收，语义在各自
+		//   `family_gap*.go` 里判（读者由 R2 同批落）。★ 名字表是本仓「唯一真源」⇒ 不登记就
+		//   一律退 2「未知旗标」= 新旗标等于不可用（同族先例逐字同上）。用法串与本表**必须同改**（门73）。
+		"--gate-step", "--log-path", "--rc", "--supersede":
 		return a
 	}
 	return ""

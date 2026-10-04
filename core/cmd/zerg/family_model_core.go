@@ -34,12 +34,35 @@ func cmdModelShow(inv *invocation, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	want := inv.args[0]
+	fields := []string{"id", "host", "backend", "modality", "mem_gb", "file"}
+	// ★ 缺口 `GAP-20260926-231` ②（2026-10-04 · 本枚）：**字段面前置判定** —— 把 `--json`
+	//   的字段名校验从「fetch 之后 → `listCmd`→`selectJSONList`→`marshalObject` 逐行查 row
+	//   缺键」前移到**取数之前**（与 `family_code.go` 的 `GAP-20260928-141` 同款 · 与本族
+	//   「用法面先判、零副作用」一致）。改前给一枚坏字段会**先打一圈主控**：主控打不到时退
+	//   `12 UNREACHABLE`（把「字段名写错」这个**用法错盖掉**），主控在时白跑一次往返。
+	//   命中非法 ⇒ 与 fetch 之后那条**同 kind 同 detail 同退码**（`json_field_unknown` ·
+	//   `reportBadField` 逐字同文案）；一个字段都不给 ⇒ 走既有 `requireFields`（同 kind/detail）。
+	//   合法形态 ⇒ 不进这一块（行为一个字节不变）。
+	if inv.jsonGiven {
+		if len(inv.fields) == 0 {
+			return requireFields(inv, stderr)
+		}
+		allowed := map[string]bool{}
+		for _, f := range fields {
+			allowed[f] = true
+		}
+		for _, f := range inv.fields {
+			if !allowed[f] {
+				inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
+				return reportBadField(stderr, inv.path, f)
+			}
+		}
+	}
 	c := newClient()
 	var resp jsonObj
 	if rc := fetchInv(inv, c, "/api/fleet/models", &resp, stderr); rc != exitOK {
 		return rc
 	}
-	fields := []string{"id", "host", "backend", "modality", "mem_gb", "file"}
 	rows := []map[string]string{}
 	ids := []string{}
 	for _, it := range asList(resp["models"]) {
@@ -276,6 +299,10 @@ func coreDaemonLaunchdState() (map[string][2]string, string) {
 	return out, ""
 }
 
+// coreDaemonLsFields —— `core daemon ls` 的显示/接收字段（**唯一真源**：显示面与下面 `--json`
+// 前置判定同用一份；`pid`/`exit`/`loaded` 是 `--declared` 的只增三格）。
+var coreDaemonLsFields = []string{"name", "script", "declared", "note", "pid", "exit", "loaded"}
+
 // cmdCoreDaemonLs —— `zerg core daemon ls [--declared]`（只读 · 本机面）：`scripts/svc/` 逐件 + 声明面。
 //
 // 为什么并进 `core` 而不新立 `svc` 族（§7.1 `P11` 的推荐口径）：服务族与构建族共用
@@ -289,6 +316,26 @@ func coreDaemonLaunchdState() (map[string][2]string, string) {
 //	② `--declared` 并给**幽灵段**：条数与 `zerg doctor` 的「回收候选（幽灵服务）」**同源同值**
 //	   （同一个 `ghostProcesses()`）—— 「看得出幽灵」不必先跑 `doctor`。
 func cmdCoreDaemonLs(inv *invocation, stdout, stderr io.Writer) int {
+	// ★ 缺口 `GAP-20260926-231` ②（2026-10-04 · 本枚）：**字段面前置判定** —— 同 `cmdModelShow`
+	//   （与 `family_code.go` 的 `GAP-20260928-141` 同款）。改前坏字段要**先扫完 scripts/svc/**
+	//   并过仓根/声明面前置才报，且 `scripts/svc/` 不在场时会被 `8 BLOCKED` 盖掉用法错。
+	//   命中非法 ⇒ 与 `listCmd` 那条**同 kind 同 detail 同退码**（`json_field_unknown` ·
+	//   `reportBadField` 逐字同文案）；一个字段都不给 ⇒ 既有 `requireFields`；合法形态 ⇒ 不进。
+	if inv.jsonGiven {
+		if len(inv.fields) == 0 {
+			return requireFields(inv, stderr)
+		}
+		allowed := map[string]bool{}
+		for _, f := range coreDaemonLsFields {
+			allowed[f] = true
+		}
+		for _, f := range inv.fields {
+			if !allowed[f] {
+				inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
+				return reportBadField(stderr, inv.path, f)
+			}
+		}
+	}
 	root := repoRoot()
 	if root == "" {
 		inv.setErr("blocked", "repo_root_absent", "解析不到仓根")
@@ -363,7 +410,7 @@ func cmdCoreDaemonLs(inv *invocation, stdout, stderr io.Writer) int {
 	if inv.declared {
 		fmt.Fprintf(stderr, "%s: 幽灵条数 %d（与 doctor 的「回收候选（幽灵服务）」同源同值）· 只读：没杀、没停、没改任何进程\n", progName, ghostCount)
 	}
-	return listCmd(inv, stdout, stderr, []string{"name", "script", "declared", "note", "pid", "exit", "loaded"}, rows)
+	return listCmd(inv, stdout, stderr, coreDaemonLsFields, rows)
 }
 
 // firstLine 取一段文本的首行（错误回显用）。

@@ -845,7 +845,9 @@ func driftChangedFiles(root, art string) []string {
 		addPaths(out)
 	}
 	// porcelain 每行 `XY <路径>`（状态码两列 + 一个空格）⇒ 第 4 字节起是路径。
-	if out, err := runGitRO(root, "status", "--porcelain"); err == nil {
+	// ★ 2026-10-04（缺口 `GAP-20260927-77`）：drift 是只读面 —— `git status` 不带 `--no-optional-locks`
+	//   会刷新并写回 `.git/index`（stat 过期件在场时）⇒ 走同族 `runGitRONoLock`，连索引刷新都不做。
+	if out, err := runGitRONoLock(root, "status", "--porcelain"); err == nil {
 		for _, ln := range strings.Split(out, "\n") {
 			if len(ln) > 3 {
 				seen[strings.TrimSpace(ln[3:])] = true

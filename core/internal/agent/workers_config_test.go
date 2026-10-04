@@ -95,16 +95,15 @@ func TestResolveByDevice_NonMatchingHostname(t *testing.T) {
 	}
 }
 
-// (b) 空 hostname 条目：现实现会命中任意主机（workers_config.go:67-68 的
-// strings.Contains(host, "")==true）⇒ 本条钉死既存行为（真值 9）。
-// 若要「空 hostname 不得匹配」，必须改 workers_config.go（禁区·需拍板）；
-// 届时本条须同步改为断言回退值 2。
+// (b) 空 hostname 条目：GAP-20260927-299 已修（2026-10-04）——字符串匹配前断言两侧非空
+// ⇒ 空条目不再命中任意主机，回退 defaultVal。本条随之翻转为断言「回退 2」。
+// （函数名沿用旧名以免删顶层符号；语义已按 299 修法翻转。）
 func TestResolveByDevice_EmptyHostname_MatchesAnyHost_BugPinned(t *testing.T) {
 	nine := 9
 	devices := []DeviceConfig{{Hostname: "", MaxWorkers: &nine}}
 	v, _ := resolveByDevice(devices, "qqq-other-sample", map[string]int{}, 2)
-	if v != 9 {
-		t.Fatalf("空 hostname 条目现行为应命中任意主机（既存缺陷值 9）——行为已变，复核 workers_config.go:56-76；实际 %d", v)
+	if v != 2 {
+		t.Fatalf("空 hostname 条目必须回退 defaultVal==2（GAP-20260927-299 已修：空串不参与匹配），实际 %d", v)
 	}
 }
 
