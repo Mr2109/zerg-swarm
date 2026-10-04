@@ -5,7 +5,9 @@ package chat
 //
 // 钉住三条契约（各自可变异自证）：
 //   D1 **仓内优先**：仓内与仓外取源根同时有版本目录 ⇒ zerg_overview 取仓内那份；
-//   D2 **缺则仓外**：仓内缺、仓外有 ⇒ latestVersionDir() 与 doc_search **都真的读到仓外那份**
+//   D2 **缺则仓外**：仓内缺、仓外有 ⇒ latestVersionDir() 与 doc_search **都真的读到仓外那份**；
+//      ★「当前版」真源 = version.Tag（不按「扫盘取最大」定当前版——AGENTS.md「版本档案」条 +
+//      chat_tool_docsearch.go 的 GAP-20260927-115），故夹具带一枚「更高版本号的非当前版」负控
 //      （变异：把 zergDocsBase() 改回「只认仓内 docs/项目文档」⇒ 必红）；
 //   D3 **缺件不静默**：两处取源根都不在盘上 ⇒ zerg_overview 的全景要点名两个候选根、
 //      doc_search 要**报缺件错**而不是回「无命中」
@@ -16,6 +18,7 @@ package chat
 // 也不依赖真机 Zerg-内部文档 在不在盘上（用例结论只由夹具决定）。
 
 import (
+	"github.com/Mr2109/zerg-swarm/core/internal/version"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,13 +94,19 @@ func TestDocsRoot_D1_RepoRootWinsWhenBothPresent(t *testing.T) {
 }
 
 // D2 缺则仓外：仓内缺 ⇒ zerg_overview 与 doc_search 都必须真的读到仓外那份。
-// 变异：zergDocsBase() 改回「只认仓内 docs/项目文档」⇒ 下面两条断言全红。
+// ★「当前版」真源 = version.Tag（AGENTS.md「版本档案」条 + chat_tool_docsearch.go 的 GAP-20260927-115），
+// 不按「扫盘取最大」定当前版：旧断言把夹具版 v9.9.9 当「当前版」= 旧口径，与真源冲突（今晚 docsearch
+// 落 GAP-115 后此处必红）⇒ 夹具改以 version.Tag 为当前版，并另造一枚更高版本号的已发布目录作负控：
+// 旧口径（取 latestVersionDir 目录名当当前版）会把 v9.9.9 标成 ★当前版 ⇒ 本用例必红；真源口径则
+// version.Tag 标 ★当前版、v9.9.9 标 ⏳历史。
+// 变异：zergDocsBase() 改回「只认仓内 docs/项目文档」⇒ 下面断言全红。
 func TestDocsRoot_D2_FallsBackToAltRoot(t *testing.T) {
-	repo, alt := isolateDocsRoots(t) // 仓内**没有** docs/项目文档
-	altDir := writeDocsFixture(t, alt, "v9.9.9", "ALT-ONLY-MARKER-d2", 3)
+	repo, alt := isolateDocsRoots(t)                               // 仓内**没有** docs/项目文档
+	writeDocsFixture(t, alt, version.Tag, "ALT-ONLY-MARKER-d2", 3) // 真源当前版
+	high := writeDocsFixture(t, alt, "v9.9.9", "ALT-ONLY-MARKER-d2", 3)
 
-	if got := latestVersionDir(); got != altDir {
-		t.Fatalf("仓内缺 ⇒ 应取仓外 %s，实得 %q（只认仓内 = 读点静默失效）", altDir, got)
+	if got := latestVersionDir(); got != high {
+		t.Fatalf("仓内缺 ⇒ 应取仓外最高已发布版 %s，实得 %q（只认仓内 = 读点静默失效）", high, got)
 	}
 	out, err := docSearch(map[string]any{"query": "ALT-ONLY-MARKER-d2"}, "")
 	if err != nil {
@@ -106,11 +115,14 @@ func TestDocsRoot_D2_FallsBackToAltRoot(t *testing.T) {
 	if !strings.Contains(out, "ALT-ONLY-MARKER-d2") {
 		t.Fatalf("doc_search 未在仓外取源根命中（实得 %q）；仓根=%s 仓外根=%s", out, repo, alt)
 	}
-	if !strings.Contains(out, filepath.Join("项目文档", "v9.9.9")) {
-		t.Fatalf("展示路径应形如 项目文档/v9.9.9/…（排序键与「当前版」判定依赖它）: %q", out)
+	if !strings.Contains(out, filepath.Join("项目文档", version.Tag)) {
+		t.Fatalf("展示路径应形如 项目文档/%s/…（排序键与「当前版」判定依赖它）: %q", version.Tag, out)
 	}
-	if !strings.Contains(out, "★当前版") {
-		t.Fatalf("仓外取源根下的最新版应被标 ★当前版（路径前缀判定失效即此处红）: %q", out)
+	if !strings.Contains(out, filepath.Join("项目文档", version.Tag, "doc0.md")+" ★当前版") {
+		t.Fatalf("真源 version.Tag 版的件应被标 ★当前版（前缀判定失效/误按扫盘取大即此处红）: %q", out)
+	}
+	if !strings.Contains(out, filepath.Join("项目文档", "v9.9.9", "doc0.md")+" ⏳历史") {
+		t.Fatalf("负控：更高版本号的非当前版应标 ⏳历史（旧口径会把它误标成 ★当前版）: %q", out)
 	}
 }
 

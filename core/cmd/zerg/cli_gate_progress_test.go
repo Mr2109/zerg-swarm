@@ -95,6 +95,7 @@ func gpIsolateEnv(t *testing.T) string {
 	t.Helper()
 	base := t.TempDir()
 	t.Setenv("TMPDIR", base)
+	t.Setenv("ZERG_GATE_RUN_ROOTS", "") // 隔离：只扫本用例这一根，别去碰真机 /var/folders（GAP-20261004-05）
 	t.Setenv("ZERG_GATE_LOCK_DIR", filepath.Join(base, "lock"))
 	return base
 }
@@ -322,5 +323,75 @@ func TestGateProgressPickRejectedNonTTY(t *testing.T) {
 	// RunForTest 的 stdout 是 bytes.Buffer ⇒ 非 TTY。
 	if rc, _, errb := runZergRepo(t, repo, "gate", "progress", "--dir", dir, "--pick"); rc != 2 || strings.TrimSpace(errb) == "" || !strings.Contains(errb, "--pick") {
 		t.Errorf("非 TTY 下 `--pick` ⇒ 退 2 ＋ stderr 点名该档拒绝理由（--pick 需 TTY），得到 %d · stderr=%q", rc, errb)
+	}
+}
+
+// ＋ 跨趟根（GAP-20261004-05）：`gate progress --last` 也要扫全部趟根（与 `gate results --last` 同源）。
+// 负控有牙：回落单根 ⇒ base 为空 ⇒ 一枚候选都没有 ⇒ 退 8；本用例断言取到 other 那趟。
+func TestGateProgressLastScansAllRunRoots(t *testing.T) {
+	base, other := t.TempDir(), t.TempDir()
+	t.Setenv("TMPDIR", base)
+	t.Setenv("ZERG_GATE_RUN_ROOTS", other)
+	repo := syntheticRepo(t, "sleep 60\n")
+	d := filepath.Join(other, "zerg-gates-20260303-000000")
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gpWriteTSV(t, d, [][5]string{{"PASS", "a", "0", "1s", ""}})
+	// 收工态（无活进程 · 压旧 mtime）⇒ 「已收工」+ 退 0。
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(d, "results.tsv"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	rc, out, errb := runZergRepo(t, repo, "gate", "progress", "--last")
+	if rc != 0 {
+		t.Fatalf("`--last` ⇒ 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "zerg-gates-20260303-000000") {
+		t.Errorf("`gate progress --last` 要扫到「加宽趟根」里那趟 —— 只扫一个根就会漏：\n%s", out)
+	}
+}
+
+// ＋ 活体样本：门进程命令行**不带 `--outdir`**（脚本默认命名档）时，`--dir <活趟>` 不许误判
+// 「已收工 · 根 pid 0」（GAP-20261004-05 · 追加症状）。判活靠**根级持锁者**：
+// 趟目录的根里有活的单实例持锁者、且这一趟是该根下最新候选 ⇒ 这一趟「还在跑」，root_pid = 持锁者 pid。
+func TestGateProgressDirLiveViaRootLock(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("TMPDIR", base) // 私有根：别去读真机持锁者
+	t.Setenv("ZERG_GATE_RUN_ROOTS", "")
+	t.Setenv("ZERG_GATE_LOCK_DIR", filepath.Join(base, "lock"))
+	repo := syntheticRepo(t, "sleep 60\n") // 假门脚本
+	root := t.TempDir()
+	dir := filepath.Join(root, "zerg-gates-20261004-172712")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gpWriteTSV(t, dir, [][5]string{{"PASS", "a", "0", "1s", ""}, {"PASS", "b", "0", "2s", ""}})
+	// 起假门：命令行**不带 --outdir**（复刻脚本默认命名档的形态）。
+	script := filepath.Join(repo, "scripts", "gates", "precommit-gates.sh")
+	cmd := exec.Command("bash", script)
+	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("起假门进程失败：%v", err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
+	// 写「这一趟所在的根」里的单实例持锁者（门脚本的默认落点）。
+	lockDir := filepath.Join(root, "zerg-gate-instance")
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lockDir, "gate-run.lock"),
+		[]byte("pid: "+gpItoa(cmd.Process.Pid)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rc, out, errb := runZergRepo(t, repo, "gate", "progress", "--dir", dir)
+	if rc != 0 {
+		t.Fatalf("活趟读成功 ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "还在跑") {
+		t.Errorf("命令行不带 --outdir 的活趟要判「还在跑」（根里有活持锁者）—— 不许误判「已收工」：\n%s", out)
+	}
+	if !strings.Contains(out, "根 pid "+gpItoa(cmd.Process.Pid)) {
+		t.Errorf("root_pid 要指出活门进程（%d）：\n%s", cmd.Process.Pid, out)
 	}
 }

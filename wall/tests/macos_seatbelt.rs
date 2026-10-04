@@ -173,12 +173,29 @@ fn field(v: &json::Value, key: &str) -> String {
         .to_string()
 }
 
-/// 判别目标（出网那一格）：默认与历史回执一致，可用 `PROBE_EGRESS_HOST/PORT` 覆盖。
-fn egress_target() -> (String, String) {
-    (
-        std::env::var("PROBE_EGRESS_HOST").unwrap_or_else(|_| "1.1.1.1".to_string()),
-        std::env::var("PROBE_EGRESS_PORT").unwrap_or_else(|_| "443".to_string()),
-    )
+/// 出网判别目标的**候选表**：首选与历史回执一致（`1.1.1.1:443`）；后两枚兜底
+/// 「公网 IP 直连被拦、域名可达」的网络（实测：`1.1.1.1` / `8.8.8.8` / `223.5.5.5` 直连 timeout，
+/// 而 `www.baidu.com` / `github.com` 直连 OPEN）。环境变量 `PROBE_EGRESS_HOST/PORT` 给定时**只用给定值**。
+/// 选靶在**基线**上做（见 `macos_four_states_match_the_measured_receipt`）：取第一枚基线可达者；
+/// 都不达 ⇒ 退回首选、由 ① 的基线断言按原话硬失败（**不许**把「没有区分度」洗成绿）。
+const EGRESS_CANDIDATES: &[(&str, &str)] = &[
+    ("1.1.1.1", "443"),
+    ("www.baidu.com", "443"),
+    ("github.com", "443"),
+];
+
+/// 出网判别目标的候选序列（环境变量优先、给定时不再兜底）。
+fn egress_targets() -> Vec<(String, String)> {
+    match std::env::var("PROBE_EGRESS_HOST") {
+        Ok(h) => vec![(
+            h,
+            std::env::var("PROBE_EGRESS_PORT").unwrap_or_else(|_| "443".to_string()),
+        )],
+        Err(_) => EGRESS_CANDIDATES
+            .iter()
+            .map(|(h, p)| (h.to_string(), p.to_string()))
+            .collect(),
+    }
 }
 
 /// **四态**：空间内 unix socket / loopback / 写空间内 —— 封闭态必须全部照常可用（**不许**「一封到底」），
@@ -186,14 +203,36 @@ fn egress_target() -> (String, String) {
 #[test]
 fn macos_four_states_match_the_measured_receipt() {
     let space = Space::new("four");
-    let (host, port) = egress_target();
+
+    // 选靶：候选表里取**基线可达**（egress=OPEN）的第一枚；环境变量给定时只用它。
+    // 都不达 ⇒ 退回**首选**（1.1.1.1）的结果，让 ① 的基线断言按原话硬失败。
+    let mut first: Option<(String, String, i32, String)> = None;
+    let mut chosen: Option<(String, String, i32, String)> = None;
+    for (host, port) in egress_targets() {
+        let extra: Vec<(&str, String)> = vec![
+            ("PROBE_EGRESS_HOST", host.clone()),
+            ("PROBE_EGRESS_PORT", port.clone()),
+        ];
+        let (rc, out) = run_baseline("miniprobe.py", &space, &extra);
+        let open = rc == 0
+            && json::parse(out.trim())
+                .map(|v| field(&v, "egress") == "OPEN")
+                .unwrap_or(false);
+        let res = (host, port, rc, out);
+        if first.is_none() {
+            first = Some(res.clone());
+        }
+        if open && chosen.is_none() {
+            chosen = Some(res);
+        }
+    }
+    let (host, port, base_rc, base_out) = chosen.or(first).expect("候选表非空（至少一枚）");
     let extra: Vec<(&str, String)> = vec![
         ("PROBE_EGRESS_HOST", host.clone()),
         ("PROBE_EGRESS_PORT", port.clone()),
     ];
 
     // ① 基线（无封闭）：同一靶子、同一判别目标
-    let (base_rc, base_out) = run_baseline("miniprobe.py", &space, &extra);
     assert_eq!(base_rc, 0, "基线探针应 rc=0；输出={base_out}");
     let base = json::parse(base_out.trim()).expect("基线输出是 JSON");
     let base_egress = field(&base, "egress");
