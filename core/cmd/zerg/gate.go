@@ -41,6 +41,13 @@
 //	  的 `gateRunStepShowLog` · 缺口 `GAP-20260928-28`）：把那一步自己的日志正文**原样**打到 stdout
 //	  （真源仍是脚本的 `results.tsv` 第 5 列）；缺 `--step` 时同 `--json` 退 2。
 //
+//	· ★ 2026-10-04（T-PR-03·04 · 设计-门禁部分趟-v0.7 §三 · 落点 `gate_run_partial.go`）：
+//	  `gate run --since [<全量趟目录>]` = **部分趟**的**唯一显式入口**（部分趟必须显式 · 默认全量）。
+//	  选步/改动件集/判定链全部在该件；它是命令面自己的旗标，**不改任何脚本退码**。三处转全量
+//	  （undeclared → 五真源 → `|R|/N>=0.60`）命中即**转全量**（此时去掉 `--since` 按原全量路径走）。
+//	  **缺 `--since` 时本支一个字节都不动**（默认全量的既有形态照旧）。⚠ 退码 3 的**登记**与
+//	  freshness 随件属待拍（表乙 T-PR-15/T-PR-20），不在本处。
+//
 // 为什么**除这四处**不做 `--json`：其余三条的输出**就是**脚本的输出（逐行相同）；再包一层 JSON
 // 等于在命令面里另写一份步骤表 —— `G1-a` 明令禁止。
 package main
@@ -92,6 +99,23 @@ func cmdGate(inv *invocation, stdout, stderr io.Writer) int {
 	case "ls":
 		args = []string{"--list"}
 	case "run":
+		// ★ 2026-10-04（T-PR-03·04 · 设计-门禁部分趟-v0.7 §三）：`--since [<全量趟目录>]` = **部分趟**的
+		//   唯一显式入口（`gate_run_partial.go`）。判在**一切下游拦截之前**（叠并拒绝的 rc=2 归它）。
+		//   handled=false ⇒「转全量」：去掉 `--since` 后按**原全量路径**继续（下面那些拦截与透传一字不改）；
+		//   handled=true  ⇒ 已就地处置（部分趟台账 + 退码，或用法/基线/对齐的 rc=2）。
+		//   缺 `--since` 时本支一字不动 —— 默认全量的既有形态逐字照旧。
+		if gatePartialSinceGiven(tail) {
+			if rc, handled := gateRunPartial(inv, stdout, stderr, root, script, tail); handled {
+				return rc
+			}
+			tail = gatePartialStripSince(tail)
+			// ★ D8（T-PR-13）：转全量那一路也要把 `partial.json`（含五真源 `triggers`）落在
+			//   **同一趟目录** —— `gateRunPartial` 已把该目录定好（`gatePartialTakeFullOutdir`）；
+			//   此处**仅在未给 `--outdir`** 时补进 tail（给了就以用户那个为准，不重复注入）。
+			if d := gatePartialTakeFullOutdir(); d != "" && gateRunOutdirArg(tail) == "" {
+				tail = append(tail, "--outdir", d)
+			}
+		}
 		// 单步档的**机器面**（`--json <字段>`）走命令面（`family_gate_run_step.go`）：
 		// 执行照样交给脚本（步骤表的唯一真源），命令面只做「执行前判 + 契约形状的包封」。
 		// 其余一律原样透传 —— 本条分支是 `gate.go` 开头那句「只转发、不翻译」的**唯一例外**，
@@ -236,7 +260,29 @@ func recordRunFreshness(root, outdirArg string, since time.Time, fp, head string
 			progName, dir, gateResultsTSV)
 		return
 	}
+	// ★ D10（T-PR-15·已拍 α）：写手按「目录里有没有 `results-partial.tsv`」**分派** ——
+	//   全量走原 `writeGateFreshness`（**一字不动**）；部分趟走新 `writeGateFreshnessPartial`
+	//   （含 `based_on` 基线四格）。α 随件落趟目录、非仓内 ⇒ 天然不进 `worktreeFingerprint`。
+	if _, perr := os.Stat(filepath.Join(dir, gateResultsPartialTSV)); perr == nil {
+		if err := writeGateFreshnessPartial(dir, root, fp, head, gatePartialBasedOnSnapshot()); err != nil {
+			fmt.Fprintf(stderr, "%s: ⚠ 门新鲜度闸：部分趟指纹随件落不下去（%v）⇒ 这一趟没记指纹（退码不变）\n", progName, err)
+		}
+		return
+	}
 	if err := writeGateFreshness(dir, root, fp, head); err != nil {
 		fmt.Fprintf(stderr, "%s: ⚠ 门新鲜度闸：指纹随件落不下去（%v）⇒ 这一趟没记指纹（退码不变）\n", progName, err)
+	}
+	// ★ D12（T-PR-17）：全量趟**全绿才**覆盖写 `last-green.json` —— **红不覆盖**；
+	//   「全绿」取**本机制口径**（`FAIL==0 && BLOCKED==0 && REPORT==0` · 与 P2 一致）。
+	if rows, _, rerr := gateResultsReadTSV(filepath.Join(dir, gateResultsTSV)); rerr == nil {
+		counts := map[string]int{}
+		for _, r := range rows {
+			counts[r.Status]++
+		}
+		if gateRunAllGreen(counts) {
+			if werr := writeGateLastGreen(root, dir, head, fp, len(rows), 0); werr != nil {
+				fmt.Fprintf(stderr, "%s: ⚠ 最近全绿件 last-green.json 落不下去（%v）—— 退码不变\n", progName, werr)
+			}
+		}
 	}
 }

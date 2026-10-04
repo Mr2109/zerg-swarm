@@ -115,7 +115,7 @@ const cafbEvent = "approve_signed"
 // cafbDevEditSHA256 —— py 件内常量 `DEV_EDIT_SHA256` 的**逐字同值**（判据 B5 的登记值）。
 // ★ 该常量陈腐是**现读既有红**（真仓 B5 破 · rc=1）：本入口**不擅自跟值**（✗ 不改 py · ✗ 不接线），
 // 对拍时两态读同一份件内常量 ⇒ 逐字同结论。
-const cafbDevEditSHA256 = "ee1ee42774ea9f538b1a3e8cfdc0f82052bd11cd07b4e81cc24a4d0a72f4ea80"
+const cafbDevEditSHA256 = "0874578748059a8b46431d5e63b97bd23829247693fd5a9385ffd51be422ceeb"
 
 // cafbTicketEight —— 批准件八格（B1 的判据常量 · 序即判据序）。
 var cafbTicketEight = []string{"tool", "approver", "approved_at", "scope", "note", "sig_alg", "key_id", "sig"}

@@ -738,13 +738,35 @@ func doctorDriftItem() map[string]string {
 			"advice": "确认仓根是真的 git 工作树（`git -C <仓根> rev-parse HEAD`）"}, art, "")
 	}
 	if head == art || strings.HasPrefix(head, art) || strings.HasPrefix(art, head) {
+		// ★ 两种过期成因要分开报（缺口 GAP-20260927-411）：id 相同**不等于**「未过期」——
+		//   制品编的那笔（= 源码 HEAD）之后，工作树可能还有**未提交改动**；那批改动没进制品 ⇒
+		//   制品相对当前工作树仍是旧的。此前这里一律 PASS「未过期」，而另一种写法（把真差异印成
+		//   `制品 X ≠ 源码 HEAD X`）在两侧 id 相同时与判词自相矛盾 ⇒ 两种成因在出口同形、只能靠人读。
+		//   现在：id 相同且工作树干净 ⇒ PASS；id 相同但工作树有未提交改动 ⇒ REPORT 明说「id 相同、
+		//   只是源码之后改过 N 件」—— 与下面 id **不等** 的「≠」分支措辞不再混淆。
+		if files := driftChangedFiles(root, art); len(files) > 0 {
+			const maxShow = 5
+			shown := files
+			suffix := ""
+			if len(shown) > maxShow {
+				shown = shown[:maxShow]
+				suffix = fmt.Sprintf(" 等 %d 件", len(files))
+			}
+			return driftIDs(map[string]string{
+				"name": "源码/制品对拍", "verdict": "REPORT",
+				"detail": "**过期**：制品 id **相同**（" + driftShort(art) + " == 源码 HEAD " + driftShort(head) +
+					"），但源码之后工作树改过 " + strconv.Itoa(len(files)) + " 件（未提交改动 · 制品不含）⇒ 制品过期：" +
+					strings.Join(shown, " · ") + suffix,
+				"advice": "重编走正门：`zerg build all --only cli`（不重编则 `./bin/zerg` 不含工作树里的未提交改动）"}, art, head)
+		}
 		return driftIDs(map[string]string{
 			"name": "源码/制品对拍", "verdict": "PASS",
 			"detail": "未过期：制品 " + driftShort(art) + " == 源码 HEAD " + driftShort(head),
 			"advice": ""}, art, head)
 	}
 	pa, ph := driftPair(art, head)
-	detail := "**过期**：制品 " + pa + " ≠ 源码 HEAD " + ph
+	// id **不等** 分支：措辞点明「id 不等」，与上面「id 相同、但有未提交改动」那档分开（GAP-20260927-411）。
+	detail := "**过期**：制品 id 与源码 HEAD **不等**（制品 " + pa + " ≠ 源码 HEAD " + ph + "）"
 	if files := driftChangedFiles(root, art); len(files) == 0 {
 		detail += "（git 面没列出改动件 —— 制品那笔可能不在本仓历史里）"
 	} else {

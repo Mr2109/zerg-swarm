@@ -70,6 +70,9 @@ CMD_RE = re.compile(r'path:\s*\[\]string\{([^}]*)\}')
 PATH_SEG_RE = re.compile(r'"([^"]+)"')
 DANGER_RE = re.compile(r'danger:\s*&dangerSpec\{(dangerD[23])')
 FIELDS_RE = re.compile(r'fields:\s*\[\]string\{([^}]*)\}')
+# `fields: <标识符>`（拼接变量形态 · 缺口 GAP-20260928-159）：字段表是拼接出来的（如 `devEditFields`，
+# 定义在 `family_dev_edit.go`）⇒ 只认 main.go 里的字面量会把这类命令读成「没有字段表」= 字段面凭空消失。
+FIELDS_IDENT_RE = re.compile(r'fields:\s*([A-Za-z_][A-Za-z0-9_]*)\s*,')
 ENDPOINT_RE = re.compile(r'endpoint:\s*"([^"]*)"')
 PASSTHROUGH_RE = re.compile(r'passthrough:\s*true')
 ROW_RE = re.compile(r'\{\s*(\d+)\s*,\s*"([^"]+)"\s*,\s*"([^"]*)"')
@@ -94,9 +97,49 @@ def read(path):
         return f.read()
 
 
+def package_sources(root):
+    """`core/cmd/zerg` 包内全部非测试 .go 源（拼接）—— 供 `fields: <标识符>` 跨件解析（GAP-20260928-159）。"""
+    pkg = os.path.dirname(os.path.join(root, MAIN_REL))
+    try:
+        names = sorted(os.listdir(pkg))
+    except OSError:
+        return ''
+    out = []
+    for n in names:
+        if n.endswith('.go') and not n.endswith('_test.go'):
+            try:
+                out.append(read(os.path.join(pkg, n)))
+            except OSError:
+                pass
+    return '\n'.join(out)
+
+
+def _src_ident_has_fields(pkg_src, ident, depth=0):
+    """拼接变量的字段表：标识符定义里出现任一 `[]string{…}`（含 append 出来的）⇒ 有字段面。
+    （缺口 GAP-20260928-159 · 递归 ≤ 3 层，够 `devEditFields` 那一族用。）"""
+    if depth > 3:
+        return False
+    for mt in re.finditer(r'\b%s\b\s*=\s*([^\n]*)' % re.escape(ident), pkg_src):
+        if '[]string{' in mt.group(1):
+            return True
+        for ref in re.findall(r'\b([A-Za-z_][A-Za-z0-9_]*)\b', mt.group(1)):
+            if ref != ident and _src_ident_has_fields(pkg_src, ref, depth + 1):
+                return True
+    return False
+
+
+def block_has_fields(pkg_src, block):
+    """本命令块有没有字段表：字面量 `[]string{…}` 或拼接变量（缺口 GAP-20260928-159）。"""
+    if FIELDS_RE.search(block):
+        return True
+    mt = FIELDS_IDENT_RE.search(block)
+    return bool(mt and _src_ident_has_fields(pkg_src, mt.group(1)))
+
+
 def parse_tree(root):
     """命令树 → [(path, shape)]；shape = dict(danger, fields, net, passthrough)。"""
     src = read(os.path.join(root, MAIN_REL))
+    pkg_src = package_sources(root)
     try:
         start = src.index('commands = []*command{')
     except ValueError:
@@ -113,7 +156,7 @@ def parse_tree(root):
         ep = ENDPOINT_RE.search(block)
         out.append((' '.join(parts), {
             'danger': m2.group(1) if (m2 := DANGER_RE.search(block)) else '',
-            'fields': bool(FIELDS_RE.search(block)),
+            'fields': block_has_fields(pkg_src, block),
             'net': bool(ep and ep.group(1).strip()),
             'passthrough': bool(PASSTHROUGH_RE.search(block)),
         }))
@@ -560,7 +603,7 @@ def tier_cell_live(root, matrix):
     return (0 if not bad else 1), head, bad, stat
 
 
-def emit_matrix(root, out_path=None):
+def emit_matrix(root, out_path=None, dry_run=False):
     """按命令树 + 现跑制品**增量合并**矩阵。
 
     既有格：只刷新机器可派生列（`want_rc` / `want_stdout_bytes`），其余列逐字保留、一个不删；
@@ -623,12 +666,14 @@ def emit_matrix(root, out_path=None):
     if old.get('tiers'):
         doc['tiers'] = old['tiers']
     dst = out_path or os.path.join(root, MATRIX_REL)
-    with open(dst, 'w', encoding='utf-8') as f:
-        json.dump(doc, f, ensure_ascii=False, indent=1)
-        f.write('\n')
+    if not dry_run:
+        with open(dst, 'w', encoding='utf-8') as f:
+            json.dump(doc, f, ensure_ascii=False, indent=1)
+            f.write('\n')
     have = set(c.get('command', '') for c in cases)
     ghosts = sorted(set(c.get('command', '') for c in cases) - set(tree_paths))
-    lines = ['矩阵已**增量合并**（不是整表重写）：%s' % dst,
+    lines = [('矩阵**干跑 · 未落盘**（--dry-run · 缺口 GAP-20260927-372）：计划写 %s' % dst)
+             if dry_run else ('矩阵已**增量合并**（不是整表重写）：%s' % dst),
              '命令树 %d 条 · 格 %d → %d（既有 %d 格逐字保留 · 其中派生列刷新 %d 格 · 新命令追加 %d 格）'
              % (len(tree_paths), len(old_cases), len(cases), kept, refreshed, added),
              '有格的命令 %d 条 · 空白 %d 条 · 豁免 %d 条'
@@ -642,7 +687,7 @@ def emit_matrix(root, out_path=None):
     if not old_cases:
         lines.append('⚠ 既有矩阵为空 ⇒ 本次是按候选面**新建**（不是合并）：手写格无处可保，'
                      '且命令树里没有 must-fail 新面的命令会成空白（T1/T5 会判）')
-    if out_path is None:
+    if out_path is None and not dry_run:
         # ★ §六 `R-6`（2026-09-24 · 波6 序6 · 缺口 `G-72`）：重冻**写盘之后**拿**新账**逐格现跑一遍
         #   （每格两遍 · 核退码与 stdout 字节数）—— **只报不判**（重冻的 rc 语义不因它改）；
         #   要一个「判」的 rc 就走 `--verify-live`（同一条 `live_verify`）。
@@ -1318,6 +1363,9 @@ def main():
     ap.add_argument('--emit-matrix', metavar='PATH', nargs='?', const='',
                     help='按命令树 + 现跑 bin/zerg **重生成** must-fail 矩阵（先用 '
                          '`bash scripts/build/build-all.sh --only-cli` 出新制品）')
+    ap.add_argument('--dry-run', action='store_true',
+                    help='**只判定 · 不落任何产物**（缺口 GAP-20260927-372）：与 --emit-matrix 同给时只报将要合并的'
+                         '增量、**不写**矩阵件；不给 --emit-matrix 时 = 只读判定（同裸跑）')
     ap.add_argument('--verify-live', action='store_true',
                     help='§六 R-6：拿冻结的矩阵逐格现跑同一 argv（每格两遍）、核 rc 与 stdout 字节数 '
                          '—— 抓「多余格 / 幽灵格」（0 全合 / 1 mismatch / 2 不给结论）')
@@ -1338,7 +1386,7 @@ def main():
                            '不给结论（rc=2）：缺件/零格 —— 不许当绿')))
         return rc
     if a.emit_matrix is not None:
-        rc, lines = emit_matrix(root, a.emit_matrix or None)
+        rc, lines = emit_matrix(root, a.emit_matrix or None, dry_run=a.dry_run)
         for l in lines:
             print('  ' + l)
         return rc

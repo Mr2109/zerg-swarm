@@ -20,7 +20,7 @@
 
 用法：
   python3 scripts/gates/check-doc-freshness.py --list-rules            # 规则表 + 全部名单（白名单/排除/引用域/夹具/拒绝域）
-  python3 scripts/gates/check-doc-freshness.py --self-test             # 好件/坏件/缺件 三格 × 四条 + T-40 计数对拍 = 28 断言
+  python3 scripts/gates/check-doc-freshness.py --self-test             # 好件/坏件/缺件 三格 × 四条 + T-40 计数对拍（断言条数见自检末行现读，本注不写死）
   python3 scripts/gates/check-doc-freshness.py d1 [d2 d3 d4] [--scope main|wide|mirror|devdocs] [--report /tmp/r.json]
   python3 scripts/gates/check-doc-freshness.py all                     # 四条都跑；退出码取最严重（1 优先于 2）
 
@@ -33,7 +33,7 @@ D3① · `--scope devdocs`（2026-09-21 · 换根）
   两条口径（都由 `Tree._walk` 实现）：① `base_roots` 与 `corpus` 都取**整棵给定根**
   （Zerg-内部文档 没有主仓那套 `docs/` 白名单）；② 根不在 ⇒ `rc=2` **不给结论**（设计稿 §五）。
 
-硬纪律（本路）：**只读**（不写仓内任何路径）· **不挂门禁**（挂接由父代理做）· 重建产物一律落 `$TMPDIR`。
+硬纪律（本路）：**只读**（不写仓内任何路径）· **门禁挂接见 `precommit-gates.sh`**（本注不再写「不挂」，2026-10-04 现读已挂）· 重建产物一律落 `$TMPDIR`。
 """
 import argparse
 import datetime
@@ -1302,6 +1302,14 @@ def print_result(r, args, elapsed):
     head = "%s  → rc=%d %s   (语料 %d 篇 / 解析域 %d 文件 / %.2fs)" % (
         GATES[r.gate]["name"], rc, RC_NAME[rc], len(r.tree.corpus), len(r.tree.files), elapsed)
     print(head)
+    # ── 缺口 GAP-20260927-164：凡报告里的数 ⇒ 同屏标**面**（哪个语料面 · 哪条命令 · 哪个 scope），
+    #    同名异面的数不得互证（本门「行号越界」是 `docs/**.md` 文档语料面，≠ `scripts/gates/` 件:行 面）。
+    _corpus = r.tree.cfg.get("corpus") or []
+    print("  面：文档语料 `%s`（%d 篇 md）· 命令 `check-doc-freshness.py %s` · scope=%s"
+          % (" · ".join(_corpus) if _corpus else "—", len(r.tree.corpus),
+             " ".join(args.gates) if args.gates else "all", args.scope))
+    print("  ★ 面注：本门「行号越界」= `docs/**.md` **文档语料**面的计数 —— 与"
+          "「`scripts/gates/` 面 件:行 上限（门67 · check-lineref-limit.py）」是**两个面**，不互证、不混看。")
     if r.errors:
         for e in r.errors:
             print("  ⛔ 不给结论：%s" % e)
@@ -1310,7 +1318,9 @@ def print_result(r, args, elapsed):
             print("  · 判不了（单列计数，不当结论）：%s" % n)
     keys = sorted(r.counts.items(), key=lambda kv: (-kv[1], kv[0]))
     if keys:
-        print("  计数：" + " · ".join("%s=%d" % (k, v) for k, v in keys))
+        print("  计数：" + " · ".join(
+            ("%s=%d［面=docs/**.md 文档语料］" % (k, v)) if k == "红·行号越界" else ("%s=%d" % (k, v))
+            for k, v in keys))
     doms = {}
     for f in r.findings:
         doms[f["domain"]] = doms.get(f["domain"], 0) + 1

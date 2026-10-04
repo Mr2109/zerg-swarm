@@ -9,6 +9,7 @@
 
 import argparse
 import json
+import os
 import sys
 import threading
 import time
@@ -118,13 +119,27 @@ class MockController:
         return msgs
 
 
+def _resolve_token(token_file: str, token_stdin: bool) -> str:
+    """令牌装载（缺口 GAP-20260926-85）：**不走 argv** —— `--token-stdin` 从 stdin 读、
+    `--token-file` 读 600 档，否则环境变量 `ZERG_AUTH_TOKEN`（测试默认 `test-token`）。
+    值只在进程内存里、绝不进命令行实参，也不回显。"""
+    if token_stdin:
+        return sys.stdin.read().strip()
+    if token_file:
+        with open(token_file, encoding="utf-8") as f:
+            return f.read().strip()
+    return os.environ.get("ZERG_AUTH_TOKEN", "test-token")
+
+
 def main():
     p = argparse.ArgumentParser(description="mock 主控（测试用）")
     p.add_argument("--port", type=int, default=18581)
-    p.add_argument("--token", default="test-token")
+    p.add_argument("--token-file", default="", help="令牌 600 档文件（令牌**不走 argv**）")
+    p.add_argument("--token-stdin", action="store_true", help="从 stdin 读令牌（令牌**不走 argv**）")
     args = p.parse_args()
-    ctrl = MockController(token=args.token, port=args.port).start()
-    print(f"mock controller listening on :{args.port} token={args.token}")
+    token = _resolve_token(args.token_file, args.token_stdin)
+    ctrl = MockController(token=token, port=args.port).start()
+    print(f"mock controller listening on :{args.port}（令牌来源：--token-file/--token-stdin/环境变量，**不回显值**）")
     try:
         while True:
             time.sleep(1)

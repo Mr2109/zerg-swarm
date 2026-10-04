@@ -70,7 +70,15 @@
 //	**直接 return**（丢掉该树此前已收的全部 hits）⇒ 一棵树里**任一 `.md` 读不了**，那一树的红明细
 //	全丢、且**该格整格判不了**（rc=2），而非「跳过该件继续判」。**本件 Go 侧已修（B 类真口子）**：
 //	读失败 ⇒ 登记（相对路径 + err 正文）+ 入口 `checkDocsOrphansLinksGateMain` 补判红（stderr BLOCKED
-//	头 + 逐件点名）⇒ rc=2；py 侧原样不动（另行入册）。
+//	头 + 逐件点名）⇒ rc=2。
+//
+// ★ 2026-10-04 同步（候选 · GAP-20261001-26）：py 候件把 `local_broken_detail` 改成「读不了的件逐条记下、
+//
+//	不再一格 None 丢整树」—— 判不了态仍返已收的 hits/exempt/stale，理由标注「读不了 N 件」；调用方在
+//	n is None 分支补印命中 / 假红明细。**本件 Go 侧已逐处同步**（`coanLocalBrokenDetail` 同语义、调用方
+//	同位置补印）。既有 B 类登记面（stderr BLOCKED 头 + 逐件点名）**保留**（Go-only 分叉）⇒ 该档
+//	stdout 与 py 候件逐字同、stderr 多一段 BLOCKED；导出树 / 第二棵树整棵读不了时，本件的 B 类早退
+//	还会先于「结论」段返回（py 则会印一段「结论：不给结论」）—— 该差为**既有分叉**，非本次同步引入。
 //
 // 未覆盖面（✗ 不声称逐字对齐）：
 //
@@ -543,6 +551,8 @@ func coanLocalBrokenDetail(root string) (int, bool, []coanHit, []coanHit, []stri
 	raw := []coanHit{}
 	hits := []coanHit{}
 	exempt := []coanHit{}
+	// ● GAP-20261001-26 修（照 py 候件逐处同步）：读不了的件逐条记下、不再一格 nil 丢整树。
+	unreadable := []string{}
 	rels := make([]string, 0, len(files))
 	for k := range files {
 		rels = append(rels, k)
@@ -551,7 +561,8 @@ func coanLocalBrokenDetail(root string) (int, bool, []coanHit, []coanHit, []stri
 	for _, rel := range rels {
 		text := files[rel]
 		if text == nil {
-			return 0, false, nil, nil, nil, "件读不了：" + rel
+			unreadable = append(unreadable, rel)
+			continue
 		}
 		for _, lk := range coanLinksOf(*text) {
 			lineno := lk[0].(int)
@@ -581,7 +592,18 @@ func coanLocalBrokenDetail(root string) (int, bool, []coanHit, []coanHit, []stri
 	for _, h := range hits {
 		seen[h.File] = true
 	}
-	return len(seen), true, hits, exempt, stale, ""
+	n := len(seen)
+	if len(unreadable) > 0 {
+		// ● GAP-20261001-26 修：判不了态照返**已收明细**（hits/exempt/stale），why 单独标注「读不了 N 件」；
+		//   ok=false（= py n=None）仍走「不给结论 rc=2」出口 ⇒ 只补证据面、不放宽判据（读不了 ≠ 零件）。
+		tail := unreadable
+		if len(tail) > 8 {
+			tail = tail[:8]
+		}
+		return 0, false, hits, exempt, stale,
+			fmt.Sprintf("件读不了 %d 件：%s", len(unreadable), strings.Join(tail, " · "))
+	}
+	return n, true, hits, exempt, stale, ""
 }
 
 // ── 二格：孤儿（域 = 一棵树整棵）──────────────────────────────────────────────────────
@@ -1426,6 +1448,29 @@ func checkDocsOrphansLinksGateMain(stdout, stderr io.Writer, argv []string) int 
 		brStale = append(brStale, stale...)
 		if !ok {
 			fmt.Fprintf(stdout, "  ⛔ 本地断链 · %s：判不了（%s）\n", labels[idx], why)
+			// ● GAP-20261001-26 修（照 py 候件逐处同步）：判不了 ≠ 无红 —— 本树别处已收的红明细 /
+			//   假红明细照印，不因一格读不了而丢弃（只补证据面、不放宽判据）。
+			for k, h := range hits {
+				if k >= a.MaxExamples {
+					break
+				}
+				fmt.Fprintf(stdout, "      %s:%d  [%s] ⇒ %s（指不到）\n", h.File, h.Line, h.Raw, h.Resolved)
+			}
+			brAll = append(brAll, hits...)
+			if len(exempt) > 0 { // 已登记假红**逐条印出落点**（看得见，不是静默放行）
+				seen := map[string]bool{}
+				for _, h := range hits {
+					seen[h.File] = true
+				}
+				fmt.Fprintf(stdout, "      ⊕ 已登记假红（基准偏移 · 已逐条复核 · 不计入上面 %d 处）：\n", len(seen))
+				for k, h := range exempt {
+					if k >= a.MaxExamples {
+						break
+					}
+					fmt.Fprintf(stdout, "          %s:%d  [%s] ⟸ %s\n", h.File, h.Line, h.Raw,
+						coanOffsetOK(h.File, h.Raw, roots[idx], map[string]bool{}))
+				}
+			}
 			if idx == 0 {
 				bad = 1
 			} else {

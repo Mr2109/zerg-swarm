@@ -2,7 +2,7 @@
 //
 // ✗ 禁恒绿：本件同时钉住「必然判绿」「必然出红明细 rc=1」「不给结论 rc=2（三档）」
 // 与**新口径退 2 边界**（只判「都取不到」：根缺席 ⇒ rc=2；只剩根一棵 ⇒ 照判 rc=0）四态，
-// 并钉住 py 真口子（读不了的件静默跳过）的**现状牙**。
+// 并钉住 B 类读失败（读不了的件）已**翻正**为「登记 + 判红 rc=2」（✗ 不再静默吞件）。
 // 用例名：TestCheckLinerefLimitGatePort（定向：go test -run TestCheckLinerefLimitGatePort ./cmd/zerg）。
 package main
 
@@ -173,11 +173,11 @@ func TestCheckLinerefLimitGatePort(t *testing.T) {
 		}
 	})
 
-	// ── ★ py 真口子（B 类读失败静默）的**现状牙**：读不了的件 ⇒ 整件被吞 ────────
-	//    该件里有一条**本可判越界**的引用（:99 引 3 行件）；py 原件 `except OSError: continue`
-	//    把它整件跳过 ⇒ rc 仍是 0。本用例钉住「逐字照搬」的现状：若改成 fail-closed/报红，
-	//    本用例当场红（提醒同步口径差）。
-	t.Run("真口子_读不了的件静默跳过", func(t *testing.T) {
+	// ── ★ B 类读失败（读不了的件）**已翻正**：登记 + 判红 rc=2（✗ 不再静默吞件）────
+	//    该件里有一条**本可判越界**的引用（:99 引 3 行件）；新口径不再把它整件跳过，
+	//    而是登记相对路径 + BLOCKED rc=2（体例照 check_token_argv.go）。本用例钉住新态：
+	//    谁把它改回「静默吞件 ⇒ rc=0」，本用例当场红。
+	t.Run("读不了的件_登记判红_rc2", func(t *testing.T) {
 		root, docs := clrlFx(t)
 		clrlW(t, filepath.Join(root, "wall", "Cargo.lock"), "l1\nl2\nl3\n")
 		clrlW(t, filepath.Join(root, "scripts", "gates", "ok.md"), "见 wall/Cargo.lock:3\n")
@@ -188,14 +188,14 @@ func TestCheckLinerefLimitGatePort(t *testing.T) {
 		}
 		defer os.Chmod(locked, 0o644)
 		if _, err := os.ReadFile(locked); err == nil {
-			t.Skip("本机该件仍可读（例如以 root 跑）⇒ 静默跳过面不可复现")
+			t.Skip("本机该件仍可读（例如以 root 跑）⇒ 读失败面不可复现")
 		}
-		rc, out, _ := clrlRun(t, "--root", root, "--docs-root", docs, "--verbose")
-		if rc != 0 {
-			t.Fatalf("真口子现状不符：读不了的件被吞 ⇒ rc 应仍 0，得 rc=%d out=%s", rc, out)
+		rc, _, errs := clrlRun(t, "--root", root, "--docs-root", docs, "--verbose")
+		if rc != 2 {
+			t.Fatalf("读不了的件应 rc=2（不给结论），得 rc=%d err=%s", rc, errs)
 		}
-		if strings.Contains(out, "locked.md") {
-			t.Fatalf("真口子现状不符：读不了的件不该出现在明细里 out=%s", out)
+		if !strings.Contains(errs, "locked.md") {
+			t.Fatalf("读不了的件应被逐件点名，stderr=%q", errs)
 		}
 	})
 

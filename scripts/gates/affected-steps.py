@@ -62,6 +62,30 @@ def load_map(path):
         return json.load(f)
 
 
+def c0_step_face(table_names, face_names):
+    """C0 双向计数 ＋ 集合逐字相等 —— **唯一真源**（「步面 D==N 且逐字相等」这一格的单一定义处）。
+
+    ★ 调用方（**两处共用本函数 · ✗ 不得另写第二份「逐字相等」**）：
+      · 本件 `analyse()` 的 C0 步（甲① 只报告档）；
+      · 门84 `scripts/gates/check-affected-map.py --check` 的「③ 步面」格（拍乙 · 由 importlib 现载本件取用）。
+
+    参数：
+      table_names —— 步骤表步名表（本件取 `--list` 自报；门84 取 `add_step` 现读；两者同源自报 · 同值）；
+      face_names  —— 声明表 `faces` 展平**去重**后的步名表（顺序无关：本函数只比**集合**与**计数**）。
+    返回 (ok: bool, detail: str)。
+    """
+    N, D = len(table_names), len(face_names)
+    tset, dset = set(table_names), set(face_names)
+    if D != N:
+        return False, ("C0 未过：声明命名 %d 步 ≠ 步骤表 %d 步 ⇒ **有步未声明 = 静默漏选**" % (D, N))
+    if dset != tset:
+        miss = sorted(tset - dset)
+        ghost = sorted(dset - tset)
+        return False, ("C0 未过：命名集合 ≠ 表集合（漏=%s · 幻影=%s）"
+                       % (miss[:5], ghost[:5]))
+    return True, ("C0 双向计数过：D==N==%d 且命名集合逐字相等（**没少声明**）" % N)
+
+
 def entry_matches(entry, rel):
     pat = entry.get('pattern', '')
     kind = entry.get('kind')
@@ -123,17 +147,11 @@ def analyse(list_path, map_path, changed_path):
     D = len(named)
     add("步骤表（--list 自报）步数 N=%d · 声明表命名步数 D=%d（来源 %s @ %s）"
         % (N, D, map_path, str(mp.get('source_head'))[:16]))
-    # C0 双向计数 + 集合逐字相等
-    tset, dset = set(table), set(named)
-    if D != N:
-        return 2, L + ["[不给结论] C0 未过：声明命名 %d 步 ≠ 步骤表 %d 步 ⇒ **有步未声明 = 静默漏选** ⇒ rc=2"
-                       % (D, N)]
-    if dset != tset:
-        miss = sorted(tset - dset)
-        ghost = sorted(dset - tset)
-        return 2, L + ["[不给结论] C0 未过：命名集合 ≠ 表集合（漏=%s · 幻影=%s）⇒ rc=2"
-                       % (miss[:5], ghost[:5])]
-    add("C0 双向计数过：D==N==%d 且命名集合逐字相等（**没少声明**）" % N)
+    # C0 双向计数 + 集合逐字相等（**唯一真源** = `c0_step_face()` · 门84 `--check` 的「步面」格同调本函数）
+    ok, detail = c0_step_face(table, named)
+    if not ok:
+        return 2, L + ["[不给结论] %s ⇒ rc=2" % detail]
+    add(detail)
     # C1 解析自证
     n_entries = 0
     for e in (mp.get('files') or []):

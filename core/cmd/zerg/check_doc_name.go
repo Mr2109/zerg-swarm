@@ -659,9 +659,20 @@ func cdnJudgeName(rel, kind string) []cdnHit {
 	stem, _ := cdnSplitext(base)
 	hits := []cdnHit{}
 	add := func(rule, msg string) {
-		sev := "FAIL"
-		if kind != "file" {
-			sev = "WARN"
+		// 档位（缺口 GAP-20260927-63 / GAP-20260926-165）：**件面**取 RULES 声明档
+		// （N5/N7 声明 WARN ⇒ 件面命中不再落 FAIL 进 rc）；**目录面一律 WARN**（结构级 ·
+		// 只登记不改 —— 守住本件 `cdnListRules` 印的档位口径与《清单》§5 ④）。与 py 孪生件
+		// `scripts/gates/check-doc-name.py` 的 `RULE_SEV` 选取逐条同义（✗ 不许只改一侧：
+		// 双实现件语义分叉 ⇒ 对拍件当场红）。
+		sev := "WARN"
+		if kind == "file" {
+			sev = "FAIL"
+			for _, r := range cdnRules {
+				if r.rid == rule {
+					sev = r.sev
+					break
+				}
+			}
 		}
 		row := cdnExemptRowFor(rel, rule, kind, nil, stem, base)
 		hits = append(hits, cdnHit{rule, sev, msg, row})

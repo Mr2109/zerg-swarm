@@ -472,12 +472,14 @@ func clrlFixtureCallIn(text, prev string) bool {
 	return false
 }
 
-func clrlAnalyze(face []clrlFace, root, docsRoot string) ([]clrlRow, clrlStats) {
+func clrlAnalyze(face []clrlFace, root, docsRoot string) ([]clrlRow, clrlStats, []string) {
 	rows := []clrlRow{}
+	var unreadable []string
 	for _, fe := range face {
 		lines, ok := clrlTextLines(fe.Full)
 		if !ok {
-			// ★ 照搬 py `:135` `except OSError: continue`（B 类读失败静默 · 交回入账）
+			// ★ B 类读失败 ⇒ 登记 + 判红（✗ 不再静默跳过）· 体例照同包已治件 check_token_argv.go。
+			unreadable = append(unreadable, clrlPyJoin(clrlScanDirRel, fe.Name))
 			continue
 		}
 		for i, text := range lines {
@@ -540,7 +542,7 @@ func clrlAnalyze(face []clrlFace, root, docsRoot string) ([]clrlRow, clrlStats) 
 		}
 	}
 	st.Conserved = (st.Judged + st.Unjudged) == st.Total
-	return rows, st
+	return rows, st, unreadable
 }
 
 // ── 机器面（Python json.dumps(..., ensure_ascii=False, indent=1) 逐字）───────────────
@@ -825,7 +827,8 @@ func clrlSelfTest(stdout io.Writer) int {
 		return p
 	}
 	scan := func() ([]clrlRow, clrlStats) {
-		return clrlAnalyze(clrlScanFace(gdir), root, docs)
+		rows, st, _ := clrlAnalyze(clrlScanFace(gdir), root, docs)
+		return rows, st
 	}
 	pick := func(rows []clrlRow, suffix string) []clrlRow {
 		var out []clrlRow
@@ -960,8 +963,15 @@ func checkLinerefLimitGateMain(stdout, stderr io.Writer, argv []string) int {
 		fmt.Fprintf(stdout, "不给结论：扫描面 %s 下 0 件（rc=2）\n", clrlScanDirRel)
 		return 2
 	}
-	rows, st := clrlAnalyze(face, root, docsRoot)
+	rows, st, unreadable := clrlAnalyze(face, root, docsRoot)
 
+	if len(unreadable) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 扫描面件读不了 %d 件（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论 · 读不到不许当健康）：\n", len(unreadable))
+		for _, u := range unreadable {
+			fmt.Fprintf(stderr, "  ── %s\n", u)
+		}
+		return 2
+	}
 	if st.Total == 0 {
 		fmt.Fprintf(stdout, "不给结论：扫描面 %d 件里引用 0 处（rc=2）\n", len(face))
 		return 2

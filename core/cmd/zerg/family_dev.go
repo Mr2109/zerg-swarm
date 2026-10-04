@@ -182,6 +182,8 @@ func cmdDevProposalNew(inv *invocation, stdout, stderr io.Writer) int {
 		if s := nearestTarget(rec.Target); s != "" {
 			fmt.Fprintf(stderr, "最像的既有编号: %s\n", s)
 		}
+		// ★ GAP-20260927-336：撞 rc=2 的那一刻**当场列出全闭集** —— 不必再出仓手抠那个 json。
+		fmt.Fprintf(stderr, "%s\n", legalTargetsLine())
 		return exitUsage
 	}
 	rec.Target = canon
@@ -368,6 +370,13 @@ func cmdDevProposalShow(inv *invocation, stdout, stderr io.Writer) int {
 			return selectJSON(stdout, stderr, inv, inv.path, proposalFields, proposalRow(r))
 		}
 		fmt.Fprintf(stdout, "提案 id  : %s\n", r.ID)
+		// ★ GAP-20260928-156（2026-10-04 本枚）：**空声明**在读回面**顶到最前**（回显而非警示）。
+		//   病灶（缺口逐字）：空声明提案「提得成（废号照旧产生）」，而**读回面**（`show`）看完只当寻常件
+		//   回显 ⇒ 读者看不出它其实**用不了**（`dev edit` 对任何件都拒）。`new` 的回执已有警告（同批），
+		//   此处把同一件事搬到 show 面**最前**：声明件为空 ⇒ 紧接着 id 顶一行，一眼看见。
+		if len(r.Files) == 0 {
+			fmt.Fprintf(stdout, "★ 警告   : 本提案**声明件为空** —— 提得成、但**用不了**：`dev edit --proposal %s --file <件>` 对**任何**件都拒执（**越界写被拒** · 退码 2）；请重提一枚带 `--file` 的（旧号作废）\n", r.ID)
+		}
 		fmt.Fprintf(stdout, "  标题   : %s\n", r.Title)
 		fmt.Fprintf(stdout, "  目标   : %s（回指既有编号 · §17.6 SD1）\n", r.Target)
 		fmt.Fprintf(stdout, "  要点   : %s\n", r.Goal)
@@ -515,8 +524,15 @@ func criterionRunnable(spec string) (string, string) {
 			continue
 		}
 		if c.danger != nil && !hasDryRunFlag(fields) {
+			// ★ GAP-20261001-40：拒执时**给出替代只读判据名**（不逼人退到无意义值）。
+			//   `gate check <判据名>` 的只读等价档 = 它的 `--dry-run` 那一态（永远跑得动、零副作用）；
+			//   其余危险档命令一律给「单步只读门跑 / 族级帮助」两条现成只读面。
+			alt := "或换一条**只读**判据（例：`" + progName + " gate run --step '<步名>' --only-step` · `" + progName + " help <族>`）"
+			if strings.Join(c.path, " ") == "gate check" {
+				alt = "或换它的**只读等价档**：`" + progName + " gate check <判据名> --dry-run`（那一态永远跑得动 · 零副作用）"
+			}
 			return "", fmt.Sprintf("判据里的 `%s` 在本版是**危险档、真跑未开放**（跑不到一个绿）——"+
-				" 要拿它当判据，写成它的 `--dry-run` 那一态", strings.Join(c.path, " "))
+				" 要拿它当判据，写成它的 `--dry-run` 那一态；%s", strings.Join(c.path, " "), alt)
 		}
 		return strings.Join(c.path, " "), ""
 	}
@@ -580,6 +596,9 @@ func cmdDevProposalCheck(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: 读不了提案目录 %s：%v ⇒ 不给结论（退码 8）\n", progName, dir, err)
 		return exitBlocked
 	}
+	// ★ GAP-20260927-336：本只读面顺带把**合法 target 闭集**列出来（成功/空转两态都印；退码一字不动）
+	//   —— check 是唯一一个不新动作就能到的「提案族只读面」。
+	fmt.Fprintf(stderr, "%s\n", legalTargetsLine())
 	rows := []map[string]string{}
 	bad := 0
 	seen := 0
@@ -655,6 +674,27 @@ func canonTarget(s string) (string, string) {
 		}
 	}
 	return "", fmt.Sprintf("目标 %q 回指不上既有编号（待办 D/E/F/G 族 %d 条）", s, len(ids))
+}
+
+// legalTargetsLine —— ★ GAP-20260927-336（2026-10-04 本枚）：**合法 target 闭集**的一行只读读数。
+//
+// 病灶（缺口逐字）：`dev proposal new --target` 此前**没有只读面**列出合法 target 闭集 —— 闭集只活在
+// `core/internal/contract/dev-targets.json`，传一个不在闭集里的编号只撞 rc=2，而报错只给**一枚**最像的
+// （`nearestTarget`）⇒ 调用方要看全闭集只能**去仓外手抠**那个 json。`dev proposal check` 列的是**已有提案**
+// 的 target（拿空目录时一条都没有）= 循环，帮不上。
+//
+// 落法（**不新旗标、不新动作** —— 边界：新旗标/新动作要动 `main.go` 命令树/解析面，本片禁区）：
+// 把闭集**接出来**成一枚共享只读读数，喂两处现成的只读面 —— ① `dev proposal new` 的 target 拒收路径
+// （撞 rc=2 的那一刻当场把全闭集列出来，不必再出仓）· ② `dev proposal check` 的 stderr（成功面也能读）。
+// 取值**只此一处**（`contract.DevTargets()` —— 与 `canonTarget`/`nearestTarget` 同源，禁抄第二份）。
+func legalTargetsLine() string {
+	ids, err := contract.DevTargets()
+	if err != nil || len(ids) == 0 {
+		// 读不到 ⇒ **不给结论**（不当成「没有 target 可选」—— 本仓铁律：读不到 ≠ 没有）。
+		return "合法 target 闭集：**读不到**（core/internal/contract/dev-targets.json）⇒ 判不了，不冒充「没有」"
+	}
+	return fmt.Sprintf("合法 target 闭集（D/E/F/G 族 · 逐条真源 core/internal/contract/dev-targets.json · %d 条）：%s",
+		len(ids), strings.Join(ids, " · "))
 }
 
 // nearestTarget 给一个「最像的既有编号」（K14 四件套：错误文案要给下一步）。

@@ -82,3 +82,9 @@ scripts/gates/_history/
 #   换台机器/换目录就会漏成「未跟踪 + 未忽略」；且忽略 ≠ 有备份，须配单独备份策略（见 GAP 正文「护数据」）。
 #   登记层忽略；不改任何物理件。如改判为「迁出仓外」，删本行即可（零随动）。
 /private/
+
+# ★ 2026-10-04 追加（门新鲜度 · D12 治法②）：seal 模块运行期落点（`last-green.json`）——
+#   `core/cmd/zerg/gate_freshness.go` 的 `lastGreenRel` 落 `scripts/gates/seal/.runtime/last-green.json`，
+#   它是「记着指纹的件」；未 ignore ⇒ 每跑一趟门就脏一个未跟踪件（固定点未治）。
+#   → 登记层忽略该子目录；与同族运行期落点 `scripts/gates/_history/`（上方）同规。
+scripts/gates/seal/.runtime/

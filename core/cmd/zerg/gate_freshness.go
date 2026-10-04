@@ -85,6 +85,12 @@ func worktreeFingerprint(root string) (string, string, error) {
 		if n == sealLedgerDefaultRel {
 			continue
 		}
+		// ★ D12（T-PR-17）· 固定点治法②：`last-green.json` 与章账**同坑同治** —— 它是「记着指纹的件」，
+		//   若进指纹即「内容含指纹、指纹含内容」的固定点（每写一次全绿件、整树指纹就变、刚盖的章全 stale）。
+		//   治法② = 落 **git-ignored 子目录**（`scripts/gates/seal/.runtime/`）＋此处**精确排除**（双保险）。
+		if n == lastGreenRel {
+			continue
+		}
 		names = append(names, n)
 	}
 	// ★ 口径②（2026-09-29 修 · 血证）：`ls-files --cached --others` 是**两段拼接**（先 tracked 段、
@@ -452,4 +458,123 @@ func bestNote(dir string) string {
 		return ""
 	}
 	return "；最接近的一趟 " + dir
+}
+
+// ── D10（T-PR-15 · 已拍 α）· 部分趟「新鲜度随件」接口 α ─────────────────────────
+//
+// 病：`writeGateFreshness` 硬前提「目录里已有 `results.tsv`」⇒ 部分趟（只写
+// `results-partial.tsv`）写不进 `freshness.json`。口径（**已拍 α**）：另发一枚随件
+// `freshness-partial.json`（形状 ⊆ `freshness.json` 并加 `based_on` 基线四格）；写手按
+// 「目录里有没有 `results-partial.tsv`」分派（落点见 `gate.go` 的 `recordRunFreshness`）——
+// **全量写手 `writeGateFreshness` 一字不动**。α 随件落趟目录（`<TMPDIR>` 下）⇒ 非仓内、非 tracked
+// ⇒ **天然不进 `worktreeFingerprint`**（若当仓内件写就会踩 §13.2 那类「写件进指纹」的固定点，
+// 与 D12 的 `last-green.json` 同坑）—— 此处显式声明该口径。
+const gateFreshnessPartialFile = "freshness-partial.json"
+
+// gateFreshnessPartialRecord —— α 随件：⊆ `freshness.json` 三格 ＋ `based_on` 基线四格。
+type gateFreshnessPartialRecord struct {
+	Head        string             `json:"head"`
+	Fingerprint string             `json:"worktree_fp"`
+	At          string             `json:"at"`
+	BasedOn     gatePartialBasedOn `json:"based_on"`
+}
+
+// writeGateFreshnessPartial —— 部分趟那一路：硬前提放宽为「认 `results.tsv` **或** `results-partial.tsv`」；
+// 只写这一枚随件；写不下去**不改**任何退码。
+func writeGateFreshnessPartial(dir, root, fp, head string, on gatePartialBasedOn) error {
+	if dir == "" || fp == "" {
+		return fmt.Errorf("没有可写的趟目录或指纹为空")
+	}
+	if _, err := os.Stat(filepath.Join(dir, gateResultsTSV)); err != nil {
+		if _, err2 := os.Stat(filepath.Join(dir, gateResultsPartialTSV)); err2 != nil {
+			return fmt.Errorf("目录里既没有 %s 也没有 %s ⇒ 不是一趟", gateResultsTSV, gateResultsPartialTSV)
+		}
+	}
+	rec := gateFreshnessPartialRecord{
+		Head: head, Fingerprint: fp, At: time.Now().Format(time.RFC3339), BasedOn: on,
+	}
+	body, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, gateFreshnessPartialFile), append(body, '\n'), 0o644)
+}
+
+// readGateFreshnessPartial —— 只读随件（读不到 ⇒ err；D19 的「同基线最近快照」选择要用）。
+func readGateFreshnessPartial(dir string) (gateFreshnessPartialRecord, error) {
+	var rec gateFreshnessPartialRecord
+	b, err := os.ReadFile(filepath.Join(dir, gateFreshnessPartialFile))
+	if err != nil {
+		return rec, err
+	}
+	if err := json.Unmarshal(b, &rec); err != nil {
+		return rec, err
+	}
+	return rec, nil
+}
+
+// ── D12（T-PR-17）· `last-green.json`：最近一趟全绿持久化 ＋ 固定点治法② ─────────────
+//
+// 落点（**治法②**）：**git-ignored 子目录** `scripts/gates/seal/.runtime/` ＋ `worktreeFingerprint`
+// 里**精确排除**（双保险 —— 与章账 `sealLedgerDefaultRel` 同坑同治）。为什么必须治：
+// 「记着指纹的件」若进指纹 ⇒ 每写一次整树指纹就变、刚盖的章全 stale ⇒ 固定点不可达。
+// ★ 「全绿」取**本机制口径**（与 P2 一致）：`FAIL==0 && BLOCKED==0 && REPORT==0`
+//
+//	—— 与旧退码口径（`gateResultsExitCode`：REPORT 不影响退码）**不同**，此处按已拍取严。
+//
+// ★ 写纪律：**全绿才写、红不覆盖** —— 只在全绿成立时覆盖写；非全绿一律不动已存的那一枚。
+const lastGreenRel = "scripts/gates/seal/.runtime/last-green.json"
+
+type gateLastGreenRecord struct {
+	Schema       string `json:"schema"`
+	Dir          string `json:"dir"`
+	Head         string `json:"head"`
+	Fingerprint  string `json:"worktree_fp"`
+	At           string `json:"at"`
+	ResultsMtime string `json:"results_mtime"`
+	Steps        int    `json:"steps"`
+	Exit         int    `json:"exit"`
+}
+
+// gateRunAllGreen —— 本机制口径的「全绿」：FAIL / BLOCKED / REPORT 三者皆 0。
+func gateRunAllGreen(counts map[string]int) bool {
+	return counts["FAIL"] == 0 && counts["BLOCKED"] == 0 && counts["REPORT"] == 0
+}
+
+// writeGateLastGreen —— **全绿才写**（调用方只在全绿时调；红不覆盖）；写不下去只出 err（不改退码）。
+func writeGateLastGreen(root, dir, head, fp string, steps, exit int) error {
+	if root == "" || dir == "" {
+		return fmt.Errorf("没有可写的仓根或趟目录")
+	}
+	st, err := os.Stat(filepath.Join(dir, gateResultsTSV))
+	if err != nil {
+		return fmt.Errorf("目录里没有 %s ⇒ 不是一趟全量", gateResultsTSV)
+	}
+	rec := gateLastGreenRecord{
+		Schema: "gate-last-green/1", Dir: dir, Head: head, Fingerprint: fp,
+		At: time.Now().Format(time.RFC3339), ResultsMtime: st.ModTime().Format(time.RFC3339),
+		Steps: steps, Exit: exit,
+	}
+	body, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	p := filepath.Join(root, lastGreenRel)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(p, append(body, '\n'), 0o644)
+}
+
+// readGateLastGreen —— 只读（读不到 ⇒ err；部分趟引用上趟全绿时**优先读**它 —— §13.2 读面）。
+func readGateLastGreen(root string) (gateLastGreenRecord, error) {
+	var rec gateLastGreenRecord
+	b, err := os.ReadFile(filepath.Join(root, lastGreenRel))
+	if err != nil {
+		return rec, err
+	}
+	if err := json.Unmarshal(b, &rec); err != nil {
+		return rec, err
+	}
+	return rec, nil
 }

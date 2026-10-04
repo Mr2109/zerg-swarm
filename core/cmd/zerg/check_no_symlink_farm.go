@@ -767,7 +767,9 @@ type cnsfTarget struct {
 func cnsfScanFile(path string, prefixes []string, rel string) ([]cnsfHit, []cnsfNote) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, nil // B 类：读失败静默（逐字照搬 py `except OSError: return [], []`）
+		// B 类真口子：py `except OSError: return [], []` 的静默面 —— 本件保留此「空返回」语义，但调用方
+		//   `cnsfScanStatic` 已在调用前 `os.Open` 预读检测 + 登记 `unreadable` ⇒ 汇总后 rc=2（不再静默）。
+		return nil, nil
 	}
 	src := strings.ToValidUTF8(string(raw), "\uFFFD") // errors="replace"（替粒度差见未覆盖面）
 	lines := cnsfSplitLines(src)
@@ -998,9 +1000,10 @@ func cnsfWalk(root string, filter func(dirpath string, dirs []string) []string,
 }
 
 // cnsfScanStatic —— py `scan_static`（静态档 A）。★ 目录序 = scandir 原序；同目录文件序 = `sorted(filenames)`。
-func cnsfScanStatic(root string, prefixes []string, strictLinks bool, maxExamples int) ([]cnsfHit, []cnsfNote, int) {
+func cnsfScanStatic(root string, prefixes []string, strictLinks bool, maxExamples int) ([]cnsfHit, []cnsfNote, int, []string) {
 	var hits []cnsfHit
 	var notes []cnsfNote
+	var unreadable []string
 	nfiles := 0
 	root = cnsfPyAbspath(root)
 	excl := map[string]bool{}
@@ -1029,7 +1032,18 @@ func cnsfScanStatic(root string, prefixes []string, strictLinks bool, maxExample
 				continue
 			}
 			nfiles++
-			h, n := cnsfScanFile(p, prefixes, cnsfPyRelpath(p, root))
+			rel := cnsfPyRelpath(p, root)
+			// ★ B 类真口子修（原 py `except OSError: return [], []` 静默 · ✗ 不再静默）：候选脚本件
+			//   读不了（权限 / 竞态 / IsADirectory）⇒ 登记（相对路径 + 原因），汇总后按 rc=2 不给结论。
+			//   体例照同包已治件 check_token_argv.go / check_curl_timeout.go（登记 + 判红 + rc=2）。
+			if fh, oerr := os.Open(p); oerr != nil {
+				unreadable = append(unreadable, rel+"（"+oerr.Error()+"）")
+				continue
+			} else if cerr := fh.Close(); cerr != nil {
+				unreadable = append(unreadable, rel+"（"+cerr.Error()+"）")
+				continue
+			}
+			h, n := cnsfScanFile(p, prefixes, rel)
 			hits = append(hits, h...)
 			notes = append(notes, n...)
 		}
@@ -1050,7 +1064,7 @@ func cnsfScanStatic(root string, prefixes []string, strictLinks bool, maxExample
 		}
 		notes = nil
 	}
-	return hits, notes, nfiles
+	return hits, notes, nfiles, unreadable
 }
 
 // cnsfScanFarm —— py `scan_farm`（B 档 · 现读农场目录）。
@@ -1393,7 +1407,7 @@ func cnsfMain(stdout, stderr io.Writer, argv []string) (int, *cnsfPayload) {
 	}
 	prefixes = uniq
 
-	hits, notes, nfiles := cnsfScanStatic(root, prefixes, a.strictLinks, a.maxExamples)
+	hits, notes, nfiles, unreadable := cnsfScanStatic(root, prefixes, a.strictLinks, a.maxExamples)
 	var fhits []cnsfHit
 	nlinks := 0
 	if a.farm != "" {
@@ -1407,6 +1421,14 @@ func cnsfMain(stdout, stderr io.Writer, argv []string) (int, *cnsfPayload) {
 
 	if nfiles == 0 {
 		fmt.Fprintf(stderr, "✗ 空转：%s 下 0 个候选脚本件 ⇒ 判不了（rc=2；假覆盖不算绿）\n", root)
+		return cnsfExitBlocked, nil
+	}
+
+	if len(unreadable) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 候选脚本件读不到 %d 件（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论 · 读不到不许当健康）：\n", len(unreadable))
+		for _, u := range unreadable {
+			fmt.Fprintf(stderr, "   ✗ %s\n", u)
+		}
 		return cnsfExitBlocked, nil
 	}
 

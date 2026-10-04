@@ -163,7 +163,7 @@ func TestCheckDocCmdsGatePort(t *testing.T) {
 
 	// ── ⑬ --self-test 自身必须全过（防恒绿/恒红）⇒ rc=0 + 末行自印组数 ────────
 	rcST, outST, _ := dcmdRunIn(t, good, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "自检全过（23 组") {
+	if rcST != 0 || !strings.Contains(outST, "自检全过（26 组") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%q", rcST, outST)
 	}
 }
@@ -193,5 +193,80 @@ func TestCheckDocCmdsReadFailTeeth(t *testing.T) {
 	}
 	if !strings.Contains(errb, "locked.md") {
 		t.Fatalf("读失败回归牙：未逐件点名锁死件 locked.md，得 stderr=%q", errb)
+	}
+}
+
+// ── GAP-20261001-32③ 回归牙（本单同步引入的新行为 · 照 py 候件 P3B 同步）：语料域一件 .md 读不了 ⇒
+// ①进 rc 通道（rc=2）且 stdout 带「N 篇读不了」的 blocked 文案；
+// ②读不了 ≠ 零命中：同域的真坏明细照旧点名；
+// ③成对反控：去掉锁死件 ⇒ 好件 rc=0 / 坏件 rc=1 且无 blocked 文案（✗ 禁恒红）。
+// 哑化主件 dcmdJudge 的 `nUnread` 计数 / 调用点的 blocked 合并 ⇒ 本用例必红。
+func TestCheckDocCmdsUnreadableBlocked(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 绕过权限位 ⇒ chmod 000 不挡读，本用例无鉴别力")
+	}
+	const blocked = "⛔ 不给结论：formal 语料有 1 篇读不了（读不了 ≠ 零命中）—— 判据不可判"
+
+	// ① 只有读不了件 ⇒ rc=2 + blocked 文案
+	root := dcmdFixture(t, map[string]string{
+		"good.md":   "跑这个：\n```sh\nzerg version\n```\n",
+		"locked.md": "跑这个：\n```sh\nzerg version\n```\n",
+	})
+	if err := os.Chmod(filepath.Join(root, "docs", "locked.md"), 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(filepath.Join(root, "docs", "locked.md"), 0o644)
+	rc, out, _ := dcmdRunIn(t, root, "--scope", "formal")
+	if rc != 2 || !strings.Contains(out, blocked) {
+		t.Fatalf("读不了回归牙：应 rc=2 且 stdout 带 blocked 文案，得 rc=%d out=%q", rc, out)
+	}
+
+	// ② 读不了 + 真坏：明细仍在（读不了 ≠ 零命中）
+	root2 := dcmdFixture(t, map[string]string{
+		"bad.md":    "```sh\nzerg dev propozal list\n```\n",
+		"locked.md": "x\n",
+	})
+	if err := os.Chmod(filepath.Join(root2, "docs", "locked.md"), 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(filepath.Join(root2, "docs", "locked.md"), 0o644)
+	rc2, out2, _ := dcmdRunIn(t, root2, "--scope", "formal")
+	if rc2 != 2 || !strings.Contains(out2, "propozal") || !strings.Contains(out2, blocked) {
+		t.Fatalf("读不了回归牙：读不了 ≠ 零命中 ⇒ 真坏明细须仍在且带 blocked，得 rc=%d out=%q", rc2, out2)
+	}
+
+	// ③ 成对反控（不得恒红）：无锁死件 ⇒ 好件 0 / 坏件 1，且无「读不了」/blocked 文案
+	good := dcmdFixture(t, map[string]string{"good.md": "跑这个：\n```sh\nzerg version\n```\n"})
+	rcG, outG, _ := dcmdRunIn(t, good, "--scope", "formal")
+	if rcG != 0 || strings.Contains(outG, "读不了") || strings.Contains(outG, blocked) {
+		t.Fatalf("成对反控失败：好件应 rc=0 且无「读不了」，得 rc=%d out=%q", rcG, outG)
+	}
+	bad := dcmdFixture(t, map[string]string{"bad.md": "```sh\nzerg dev propozal list\n```\n"})
+	rcB, outB, _ := dcmdRunIn(t, bad, "--scope", "formal")
+	if rcB != 1 || strings.Contains(outB, "读不了") || strings.Contains(outB, blocked) {
+		t.Fatalf("成对反控失败：坏件应 rc=1 且无「读不了」，得 rc=%d out=%q", rcB, outB)
+	}
+}
+
+// ── 未建提案书写体例回归牙（本单同步 · 照 py `bde233fb` 的 ⑳㉑㉒ · 识别跳过第三类）──
+// 判语引出的 `zerg <名>`（账里的提案名）⇒ **不计**（rc=0）且第三类计数认出；
+// 同一条命令写成**普通示例**（无判语）⇒ **必计**（rc=1 并点名）。哑化主件 `dcmdExtract` 的
+// proposal 分支 / `dcmdProposalMark` ⇒ ① 必红（rc 翻 1 或第三类计数为 0）。
+func TestCheckDocCmdsProposalMarkTeeth(t *testing.T) {
+	// ① 判语（想要）引出 ⇒ 不计 ⇒ rc=0，且「识别跳过」行**认出来了**（第三类计数 = 1）
+	r1 := dcmdFixture(t, map[string]string{"good.md": "未建提案：想要 `zerg pipelinedefect` 收成正门。\n"})
+	rc1, out1, _ := dcmdRunIn(t, r1, "--scope", "formal")
+	if rc1 != 0 {
+		t.Fatalf("提案体例回归牙：判语引出的 `zerg <名>` 应不计 ⇒ rc=0，得 rc=%d out=%q", rc1, out1)
+	}
+	if !strings.Contains(out1, "未建提案体例（判语引出的 `zerg <名>`）1 段") {
+		t.Fatalf("提案体例回归牙：第三类计数未认出（应见「…）1 段」），得 out=%q", out1)
+	}
+
+	// ② 成对反控（✗ 禁恒绿）：同一条命令**无判语** ⇒ 必计 ⇒ rc=1 且点名
+	r2 := dcmdFixture(t, map[string]string{"good.md": "用法：`zerg pipelinedefect` 可直接跑。\n"})
+	rc2, out2, _ := dcmdRunIn(t, r2, "--scope", "formal")
+	if rc2 != 1 || !strings.Contains(out2, "pipelinedefect") {
+		t.Fatalf("提案体例回归牙（成对）：无判语应必计 ⇒ rc=1 且点名，得 rc=%d out=%q", rc2, out2)
 	}
 }

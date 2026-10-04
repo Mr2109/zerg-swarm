@@ -227,3 +227,41 @@ func TestCheckDocsOrphansLinksReadFailTeeth(t *testing.T) {
 		t.Fatalf("读失败回归牙：未逐件点名锁死件 locked.md，得 stderr=%q", errb)
 	}
 }
+
+// ── GAP-20261001-26 回归牙（本单同步引入的新行为 · 照 py 候件 P3B 同步）：树里一件 .md 读不了 ⇒
+// ①该格判不了（rc=2）**但**该树已收的红明细照印（不因一格读不了而丢整树）；
+// ②成对反控：同一夹具去掉锁死件 ⇒ 非红、按正常「N 件」打印（✗ 禁恒红）。
+// 哑化主件 coanLocalBrokenDetail 的「unreadable 逐条记下 + 判不了态返 hits」⇒ 本用例必红。
+func TestCheckDocsOrphansLinksUnreadableKeepsEvidence(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 绕过权限位 ⇒ chmod 000 不挡读，本用例无鉴别力")
+	}
+	// ① 一棵树里既有真断链（x.md）、又有一件读不了（locked.md）
+	repo, docs, pub := cdoFixture(t, "broken")
+	locked := filepath.Join(repo, "locked.md")
+	cdoWrite(t, locked, "# locked\n")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(locked, 0o644)
+	rc, out, _ := cdoRun(t, "--repo-root", repo, "--docs-root", docs, "--tree", pub)
+	if rc != 2 {
+		t.Fatalf("读不了回归牙：锁死件在树 ⇒ 应 rc=2（判不了），得 rc=%d", rc)
+	}
+	if !strings.Contains(out, "本地断链 · 主仓：判不了（件读不了 1 件：locked.md）") {
+		t.Fatalf("读不了回归牙：判不了文案未带「件读不了 N 件」，得 out=%s", out)
+	}
+	if !strings.Contains(out, "x.md:3  [nope.md] ⇒ nope.md（指不到）") {
+		t.Fatalf("读不了回归牙：判不了态丢了该树已收的红明细（x.md 断链未印），得 out=%s", out)
+	}
+
+	// ② 成对反控：同一夹具去掉锁死件 ⇒ 非红、按「N 件」打印（不得恒红）
+	repo2, docs2, pub2 := cdoFixture(t, "broken")
+	rc2, out2, _ := cdoRun(t, "--repo-root", repo2, "--docs-root", docs2, "--tree", pub2)
+	if rc2 != 0 || !strings.Contains(out2, "本地断链 · 主仓：1 件") {
+		t.Fatalf("成对反控失败：无锁死件应 rc=0 且「主仓：1 件」，得 rc=%d out=%s", rc2, out2)
+	}
+	if strings.Contains(out2, "件读不了") {
+		t.Fatalf("成对反控失败：无锁死件却出现「件读不了」文案，得 out=%s", out2)
+	}
+}

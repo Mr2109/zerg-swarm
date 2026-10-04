@@ -201,7 +201,7 @@ def _scan_sed_args(args, lineno):
 
 
 def _tokenize(line):
-    """把一行 shell 切成 token —— **字符级状态机**（引号 / 转义 / 命令替换 / 元字符），不用正则兜。
+    r"""把一行 shell 切成 token —— **字符级状态机**（引号 / 转义 / 命令替换 / 元字符），不用正则兜。
 
     为什么不用 `shlex.split` 一行了事：`N=$(grep -o '--x' "$F" | wc -l)` 这种行里 `grep`
     被 `$(` 粘在 `N=` 上 ⇒ `shlex` 切出来的 token 是 `N=$(grep`，`basename` 对不上 `grep`

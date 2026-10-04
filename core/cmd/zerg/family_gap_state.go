@@ -760,6 +760,16 @@ func cmdGapNote(inv *invocation, stdout, stderr io.Writer) int {
 	// ★ 2026-09-28（缺口账 `GAP-20260926-233`）：`--retract <n|指纹>` = **作废**一条已落的注。
 	//   纪律：**禁真删任何注** —— 被作废那条**原样留在 `notes` 里**，只往 `notes_void` 追加标记。
 	retract := strings.TrimSpace(inv.flagVal("--retract"))
+	// ★ 本枚（缺口账 `GAP-20260929-27`）：`--retract` **给了旗标却不给值** ⇒ 不许静默降级成普通注。
+	//   旧行为：裸 `--retract` + `--text` ⇒ `flagVal` 得空串 ⇒ 落到「写注」那一支 ⇒ rc=0 且当真注落库
+	//   （调用方以为在撤回，实际在追加注）。这里把「**裸给（形态不符）**」与「**真的一个字没给**」分家：
+	//   裸给 ⇒ 用法错 2 逐字点名（后者仍走「缺 --text」那一支）。
+	if inv.hasFlag("--retract") && retract == "" {
+		inv.setErr("usage", "retract_missing_value", "--retract 没给值")
+		fmt.Fprintf(stderr, "%s: `--retract` 要给一个值（序号 / 注指纹）—— 裸给**不降级**成普通注（用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "  作废：zerg gap note <GAP id> --retract <n|指纹> [--by <谁>] [--dry-run | --yes]\n")
+		return exitUsage
+	}
 
 	// ① 用法面（在任何盘面动作之前）
 	if inv.jsonGiven && len(inv.fields) == 0 {
@@ -1048,7 +1058,9 @@ const gapAssignMarker = "派单登记 "
 var gapAssignFields = []string{"id", "fp", "state", "egg", "allow", "forbid", "occupies",
 	"criterion", "deadline", "receipt", "changed"}
 var gapAssignListFields = []string{"id", "state", "egg", "allow", "forbid", "occupies",
-	"criterion", "deadline", "receipt", "assigned_at", "unit", "module"}
+	"criterion", "deadline", "receipt", "assigned_at", "unit", "module",
+	// ★ 本枚（缺口账 `GAP-20260928-186`）：逐行 aging / overdue_days（超时读数进机器面）。
+	"aging", "overdue_days"}
 
 // gapAssignForm —— 作业单六栏的机器面（栏序照设计稿 · ① 允许面 ② 禁碰面 ③ 占用件 ④ 出口判据 ⑤ 时限）。
 type gapAssignForm struct {
@@ -1307,6 +1319,23 @@ func cmdGapAssign(inv *invocation, stdout, stderr io.Writer) int {
 			progName, tok, who)
 		fmt.Fprintf(stderr, "  看在飞 : `zerg gap assign ls`（本动作**不发**）\n")
 		return exitUsage
+	}
+
+	// ⑧b 占用件存在性自查（缺口账 `GAP-20260928-182`）：`--occupies` 逐条对 `git ls-files` 现读校验。
+	//   口径取「**告警不阻断**」：占用件可能是尚待创建的件（且本族 `occupies` 也见过占位取值），
+	//   拒收会误伤 ⇒ 只把对不上的逐条点名到 stderr（**不改退码、不写盘、不阻断**）。
+	//   取不到清单（不在 git 仓 / git 起不来 ⇒ `gapTrackedFiles()` 空）⇒ **不报**（「读不到」不当「都没有」）。
+	if tracked := gapTrackedFiles(); len(tracked) > 0 {
+		set := make(map[string]bool, len(tracked))
+		for _, t := range tracked {
+			set[t] = true
+		}
+		for _, occ := range gapAssignOccupies(f.Occupies) {
+			if !set[occ] {
+				fmt.Fprintf(stderr, "%s: ⚠ 占用件 `%s` 不在入库清单里（`git ls-files` %d 件）—— `--occupies` 逐条现读校验（缺口账 `GAP-20260928-182`）\n",
+					progName, occ, len(tracked))
+			}
+		}
 	}
 
 	by := gapByOf(inv)

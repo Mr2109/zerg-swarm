@@ -414,3 +414,81 @@ func TestGateRunStep_LogBodyIsInFieldContract(t *testing.T) {
 		t.Errorf("字段表里必须有 log_body（合同面不许静默缩边）：%q", line)
 	}
 }
+
+// ── ⑦ 不给 `--outdir` 时：**同秒两次运行不共享目录** + **本轮没落表读不回** ──
+//
+// 缺口 `GAP-20260927-433`（GAP-20260927-432 源码面已修 · 判据面为空）：旧形态按**秒级**时间戳
+// 自建日志目录 + `MkdirAll` **复用同名目录** ⇒ 同一秒内两次运行共用同一处 results.tsv，后一次
+// 会把前一次的判决读成自己的（陈旧判决回读 ⇒ 脚本这一轮没落表时「不许当绿」被旧表绕开）。
+// 修法已落（`family_gate_run_step.go` 改 `os.MkdirTemp` 原子新建 · 名字带**纳秒** + 随机后缀）；
+// 本条补**在册负控**，钉住「刚修的行为不许被静默回退」。
+//
+// stepGateScriptNoTable —— 认识 `--step`/`--outdir`，但**不落 results.tsv**（验读不回那一档）。
+const stepGateScriptNoTable = `case "$*" in *--json*) exit 2 ;; esac
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --outdir) out="$2"; shift 2 ;;
+    --step) shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "${out}"
+echo "合成报告（无结果表）"
+exit 0
+`
+
+// gateRunStepOutdir —— 从单步档 `--json outdir` 的包封里取那一格。
+func gateRunStepOutdir(t *testing.T, tag, out string) string {
+	t.Helper()
+	var env struct {
+		Items []map[string]string `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil || len(env.Items) != 1 {
+		t.Fatalf("%s：要一行包封：%v · %q", tag, err, out)
+	}
+	return env.Items[0]["outdir"]
+}
+
+// ⑦① 同秒两次运行 ⇒ `outdir` **必不同**（否则就是陈旧判决回读的那条路）。
+func TestGateRunStep_NoOutdirIsDistinctPerCall(t *testing.T) {
+	// 私有 TMPDIR：本测试真起两条门跑（各原子新建一处目录），确保不往共享 TMPDIR 里漏。
+	t.Setenv("TMPDIR", t.TempDir())
+	bin := zergBinary(t)
+	root := stepRepo(t, stepGateScript)
+
+	_, o1, _ := execCase(t, bin, root, "gate", "run", "--step", "合成步", "--json", "outdir")
+	_, o2, _ := execCase(t, bin, root, "gate", "run", "--step", "合成步", "--json", "outdir")
+	d1, d2 := gateRunStepOutdir(t, "第一次运行", o1), gateRunStepOutdir(t, "第二次运行", o2)
+	if d1 == "" || d2 == "" {
+		t.Fatalf("不给 --outdir ⇒ 命令面要自建并把 outdir 报出来，不许为空：%q / %q", d1, d2)
+	}
+	if d1 == d2 {
+		t.Errorf("同一秒内两次运行**共用**了日志目录（%q）⇒ 陈旧判决回读（缺口 `GAP-20260927-432/433`）：两次必须各建一处", d1)
+	}
+}
+
+// ⑦② 本轮**没落结果表** ⇒ 判决与正文一律「读不到」（不许拿任何旧表当自己的）。
+func TestGateRunStep_NoOutdirWithoutResultsTableReadsBackNothing(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	bin := zergBinary(t)
+	root := stepRepo(t, stepGateScriptNoTable)
+
+	rc, out, _ := execCase(t, bin, root, "gate", "run", "--step", "合成步", "--json", "verdict,rc,log,log_body")
+	if rc != 0 {
+		t.Fatalf("合成脚本退 0 ⇒ 命令面退 0（只转发、不翻译），得到 %d", rc)
+	}
+	var env struct {
+		Items []map[string]string `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil || len(env.Items) != 1 {
+		t.Fatalf("要一行包封：%v · %q", err, out)
+	}
+	row := env.Items[0]
+	if !strings.HasPrefix(row["verdict"], "（读不到") {
+		t.Errorf("本轮没落结果表 ⇒ verdict 必须「（读不到…）」（不许当绿）：%+v", row)
+	}
+	if row["log_body"] != "（读不到：脚本没落结果表）" {
+		t.Errorf("本轮没落表 ⇒ log_body 走初值那一枚字面量：%+v", row)
+	}
+}

@@ -12,6 +12,7 @@
 
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -30,7 +31,18 @@ def _zerg_token():
         return ""
 
 
-DEFAULT_TOKEN = _zerg_token()
+def _load_token(token_file: str = "") -> str:
+    """令牌装载（缺口 GAP-20260926-85）：一律**不走 argv** —— 显式给 `--token-file` 则读该 600 档，
+    否则按环境变量（`ZERG_AUTH_TOKEN`/`ZERG_API_TOKEN`）→ `~/.zerg/token` 的既有顺序。
+    ★ 值只在**进程内存**里，绝不出现在命令行实参（进程表可见 ✗）。"""
+    if token_file:
+        try:
+            with open(os.path.expanduser(token_file), encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError as e:
+            print(f"读令牌文件失败：{token_file}: {e}", file=sys.stderr)
+            sys.exit(2)
+    return _zerg_token()
 
 
 def api_get(base: str, token: str, path: str, params: dict) -> dict:
@@ -89,7 +101,7 @@ def _print_rows(rows, chain: bool = False):
 def main(argv=None):
     p = argparse.ArgumentParser(description="Fleet 日志查询工具（调主控 :8580）")
     p.add_argument("--controller", default=DEFAULT_CONTROLLER, help=f"主控地址（默认 {DEFAULT_CONTROLLER}）")
-    p.add_argument("--token", default=DEFAULT_TOKEN, help="共享 Token")
+    p.add_argument("--token-file", default="", help="共享 Token 的 600 档文件（令牌**不走 argv**；不给则读环境变量 / ~/.zerg/token）")
 
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -113,8 +125,9 @@ def main(argv=None):
     s.set_defaults(func=cmd_stats)
 
     args = p.parse_args(argv)
+    token = _load_token(args.token_file)
     try:
-        args.func(args, args.controller.rstrip("/"), args.token)
+        args.func(args, args.controller.rstrip("/"), token)
     except urllib.error.HTTPError as e:
         print(f"API 错误 {e.code}: {e.read().decode('utf-8', errors='replace')}", file=sys.stderr)
         return 1

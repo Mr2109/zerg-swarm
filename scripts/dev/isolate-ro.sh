@@ -12,7 +12,10 @@
 #   new    <真仓>   [--dst <目录>] [--include <glob>]… [--exclude <路径>]… [--all]
 #                   [--reject-symlinks] [--no-manifest] [--quiet]
 #       在 `${TMPDIR:-/tmp}` 下硬拷贝出一棵**可随意读写**的工作树；缺省排除重件
-#       （`.git` / `bin` / `data` / `dist` / `node_modules` / `vendor` / `ui/target` / `zerg-wt` …）。
+#       （`.git` / `bin` / `data` / `dist` / `node_modules` / `vendor` / `ui/target` / `wall/target` / `zerg-wt` …）。
+#       ★ 缺省排除是**根锚定**写法（rsync `--exclude=/<名>`）⇒ 名单里的**相对路径**（如 `ui/target`）
+#         按仓根逐条锚定；脚本开头会**逐行印出生效的排除清单**（清面必须可见 · `GAP-20260927-96`）。
+#       ★ 旗标接受 `--exclude <值>` 与 `--exclude=<值>` **两种写法**（同 `--include`/`--dst`/`--max-examples`）。
 #       ★ 源路径本身是**符号链接** ⇒ 打印一行说明后**按它解析到的真身硬拷贝**（`--reject-symlinks` ⇒ 直接拒绝）。
 #       ★ 副本里任何**指向副本之外**（含指回真仓）的符号链接，一律**换成硬拷贝**（`--reject-symlinks` ⇒ 拒绝并点名）。
 #       ★ 拷贝完在副本根写 `ISOLATED.md`（「这是副本，删无妨；真仓是 …」）+ `ISOLATED.manifest.tsv`（逐件 sha256）。
@@ -52,7 +55,9 @@ TMPBASE="${TMPDIR:-/tmp}"
 TMPBASE="${TMPBASE%/}"
 
 # 缺省排除（重件 / 构建产物 / 运行期数据）—— 通配语义见 docstring
-DEFAULT_EXCLUDES=(.git .zerg bin data dist node_modules vendor zerg-wt __pycache__ .venv venv htmlcov .cargo target .build _history)
+DEFAULT_EXCLUDES=(.git .zerg bin data dist node_modules vendor zerg-wt __pycache__ .venv venv htmlcov .cargo target ui/target wall/target .build _history)
+# ★ `ui/target` / `wall/target` 是**相对仓根**的路径：带 `/` 的 rsync 模式按仓根锚定（`--exclude=/ui/target` 命中 `ui/target`）。
+#   旧版只排 `target`（仓根的 `<根>/target`）⇒ 把 `ui/target`(29G) / `wall/target` 整棵拷进来（`GAP-20260927-96`）。
 DEFAULT_NAME="isolate-ro"
 
 usage() { sed -n '2,42p' "${SELF}" | sed 's/^# \{0,1\}//'; }
@@ -228,6 +233,11 @@ cmd_new() {
     #   收尾由使用者自己 `rm -rf <副本>`（见收尾行打印）。
   else
     DST="$(abs_path "${DST}")"
+    # ★ `GAP-20260927-93`：`--dst` 包含性校验 —— 拒收**落在真仓内**的路径（副本不许写进真仓）。
+    local rr_abs; rr_abs="$(resolved_path "${real_repo}")"; [ -n "${rr_abs}" ] || rr_abs="${real_repo}"
+    case "$(resolved_path "${DST}")/" in
+      "${rr_abs}"/*) die 2 "拒绝：--dst 落在真仓内（${DST} ⊂ ${real_repo}）—— 副本必须建在真仓之外" ;;
+    esac
     [ -e "${DST}" ] || mkdir -p "${DST}" || die 2 "判不了：建不出 --dst —— ${DST}"
   fi
 
@@ -235,6 +245,9 @@ cmd_new() {
   say "· 真仓：${real_repo}"
   say "· 副本：${DST}"
   [ "${#INCLUDES[@]}" -eq 0 ] || say "· 白名单 --include：${INCLUDES[*]}"
+  # ★ `GAP-20260927-96`：清面必须可见 —— 逐行印**实际生效**的排除行（取自 build_filters，不另抄第二份）
+  say "· 生效排除（rsync 过滤器 · 现读实际生效）："
+  build_filters | while IFS= read -r _flt; do case "${_flt}" in --exclude=*) say "    ${_flt}" ;; esac; done
   copy_tree "${real_repo}" "${DST}"; local rc=$?
   if [ "${rc}" -eq 2 ]; then exit 2; fi
   [ "${rc}" -eq 0 ] || die 1 "拷贝失败（rsync/tar rc=${rc}）—— 副本可能不完整，别拿它当基线"
@@ -370,6 +383,22 @@ run_self_test() {
   out="$(bash "${SELF}" bogus 2>&1)"; rc=$?
   chk "用法错：未知子命令 ⇒ rc=2" "[ ${rc} -eq 2 ]" "rc=${rc}"
 
+  # ── 增补（GAP-20260927-96 / 93）：等号写法 · --dst 包含性 · 生效排除可见 · 缺省排除含 ui/target ──
+  mkdir -p "${fix}/real/ui/target" "${fix}/real/wall/target"
+  printf 'big\n' > "${fix}/real/ui/target/artifact.bin"
+  printf 'big\n' > "${fix}/real/wall/target/artifact.bin"
+  out="$(bash "${SELF}" new "${fix}/real" --dst "${tmp}/tree-eq" --exclude=bin 2>&1)"; rc=$?
+  printf '%s\n' "${out}" > "${tmp}/new-eq.log"
+  chk "等号写法：--exclude=bin 被接受（旧版报「未知旗标」rc=2）" "[ ${rc} -eq 0 ]" "rc=${rc}"
+  chk "生效排除清单可见（脚本开头逐行印 --exclude=…）" "grep -q -- '--exclude=' '${tmp}/new-eq.log'" ""
+  chk "缺省排除含 ui/target（29G 不再被整棵拷进来）" "[ ! -e '${tmp}/tree-eq/ui/target' ]" ""
+  chk "缺省排除含 wall/target" "[ ! -e '${tmp}/tree-eq/wall/target' ]" ""
+  out="$(bash "${SELF}" new "${fix}/real" --dst "${fix}/real/inside" 2>&1)"; rc=$?
+  printf '%s\n' "${out}" > "${tmp}/neg-dst.log"
+  chk "包含性：--dst 落在真仓内 ⇒ rc=2（副本不许写进真仓 · GAP-20260927-93）" "[ ${rc} -eq 2 ]" "rc=${rc}"
+  chk "包含性：点名「真仓内」" "grep -q '真仓内' '${tmp}/neg-dst.log'" ""
+  chk "包含性：拒写后真仓里没被建出 inside/（未产生副作用）" "[ ! -e '${fix}/real/inside' ]" ""
+
   say "── 自检结论：$([ ${bad} -eq 0 ] && echo 全过 || echo "**不过**（${bad} 条）") ──"
   [ "${bad}" -eq 0 ] && exit 0 || exit 2
 }
@@ -382,9 +411,13 @@ while [ $# -gt 0 ]; do
     --self-test) run_self_test ;;
     -h|--help) usage; exit 0 ;;
     --dst) [ $# -ge 2 ] || die 2 "用法错：--dst 缺实参"; DST="$2"; shift 2 ;;
+    --dst=*) DST="${1#--dst=}"; shift ;;
     --include) [ $# -ge 2 ] || die 2 "用法错：--include 缺实参"; INCLUDES+=("$2"); shift 2 ;;
+    --include=*) INCLUDES+=("${1#--include=}"); shift ;;
     --exclude) [ $# -ge 2 ] || die 2 "用法错：--exclude 缺实参"; USER_EXCLUDES+=("$2"); shift 2 ;;
+    --exclude=*) USER_EXCLUDES+=("${1#--exclude=}"); shift ;;
     --max-examples) [ $# -ge 2 ] || die 2 "用法错：--max-examples 缺实参"; MAX_EXAMPLES="$2"; shift 2 ;;
+    --max-examples=*) MAX_EXAMPLES="${1#--max-examples=}"; shift ;;
     --reject-symlinks) REJECT=1; shift ;;
     --no-manifest) WANT_MANIFEST=0; shift ;;
     --all) ALL=1; shift ;;

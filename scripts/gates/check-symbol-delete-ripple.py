@@ -295,6 +295,14 @@ def main():
     src, how = resolve_plan_source(a)
     explicit = bool(a.plan) or bool(os.environ.get("ZERG_R28_PLAN"))
     print("门㉜ 删前波纹门（`R28` · 分档版）· 单的来源：%s（%s）" % (src, how))
+    # ★ 缺口 `GAP-20260927-70`（同族 · 本门此前对该变量**静默取用**）：默认落点走 `ZERG_STATE_DIR`
+    #   ⇒ 别会话把它留在环境里指向沙箱时，本门读的是**沙箱**状态目录下的单。照
+    #   `check-trustroot-witness.py` 的同形警示：未显式给单而环境变量赢 ⇒ 逐字声明这是沙箱读数。
+    #   （走 `print(file=sys.stderr)`：本件判据 8 用 ast 静态扫源码、**禁任何写动作调用**，`print` 不在集合里。）
+    if not explicit and os.environ.get("ZERG_STATE_DIR"):
+        print("  ★★ 单的落点是**环境变量 `ZERG_STATE_DIR` 给的**（%s）⇒ 本读数是**沙箱**读数，"
+              "**不是**真状态目录 `~/.zerg/state`（闸里不设这个变量；要读真源请显式 `--plan`）"
+              % os.environ["ZERG_STATE_DIR"], file=sys.stderr)
     if src == "-":
         text = sys.stdin.read()
     else:

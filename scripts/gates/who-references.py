@@ -24,7 +24,7 @@
     python3 scripts/gates/who-references.py <路径> --json-only           # 只 stdout 输出 JSON 本体
     python3 scripts/gates/who-references.py <路径> --kind file|dir|prefix # 目标形态（默认 auto）
     python3 scripts/gates/who-references.py <路径> --dump /tmp/wr.json   # 显式落盘（唯一被允许的写）
-    python3 scripts/gates/who-references.py --root <仓根>               # 换查的仓（默认本仓根）
+    python3 scripts/gates/who-references.py <路径> --root <仓根>        # 换查的仓（默认本仓根；<路径> 必给，缺参 rc=2）
     python3 scripts/gates/who-references.py --self-test                 # 成对负控（合成夹具 · 不碰真目标）
 
 退码：0 无待办（该路径零引用 / 或所有引用都指向仍存在的真目标）/ 1 有待办（存在引用指向
@@ -296,12 +296,6 @@ def main(argv):
             if not args.json_only:
                 print("✗ %s：写意图一律拒 ⇒ rc=2 且一个字节不写" % f, file=sys.stderr)
             return 2
-
-    if args.self_test:
-        ok = selftest()
-        print("自检：%s（3 格：真目标 rc=0 · 归档目标 rc=1 · 不存在路径 rc=2）"
-              % ("通过 ✓" if ok else "**失败** ✗"))
-        return 0 if ok else 1
 
     root = os.path.abspath(args.root)
     if not os.path.isdir(os.path.join(root, "scripts", "gates")):

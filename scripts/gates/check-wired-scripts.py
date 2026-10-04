@@ -883,7 +883,8 @@ def list_rules():
         L.append("  · %-36s %s" % (p, why))
     L.append("")
     L.append("扫描面与排除域：")
-    L.append("  · 候选 = scripts/ 顶层（glob `scripts/*`，**不递归**；子目录如 scripts/exportnames/ 打印进排除域）")
+    L.append("  · 候选 = scripts/ 顶层 `scripts/<件>` + 域一层 `scripts/<域>/<件>`（域 = 除 %s 外的子目录）"
+             "；排除域如 scripts/exportnames/ 只打印不进候选面" % " · ".join(EXCL_SUBDIRS))
     L.append("  · 引用面 = git 索引里的已跟踪文件（`git ls-files`）；未跟踪件不在判据内")
     L.append("  · 排除 ① 本门自指 %s（否则我自己的名单会把零引用写成有引用）" % " · ".join(SELF_FILES))
     L.append("  · 排除 ② 记录面 glob：%s —— 「记录不能充作引用」" % " · ".join(RECORD_SURFACES))

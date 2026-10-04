@@ -31,9 +31,19 @@
     python3 scripts/gates/check-help-snapshot.py                     # 现跑 + 最新快照对拍
     python3 scripts/gates/check-help-snapshot.py --snapshot FILE     # 钉一份快照
     python3 scripts/gates/check-help-snapshot.py --docs-root DIR     # 换文档仓根（默认同级 Zerg-内部文档）
+    python3 scripts/gates/check-help-snapshot.py --runtime-artifact DIR  # A 档：现跑取数改「读落盘制品」（不起 bin/zerg 子进程）
     python3 scripts/gates/check-help-snapshot.py --json              # 末尾追加机器面一行
     python3 scripts/gates/check-help-snapshot.py --list-rules        # 打判据 / 两半定义
     python3 scripts/gates/check-help-snapshot.py --self-test         # 只跑自检（合成夹具，不碰真目标）
+
+`--runtime-artifact DIR`（缺口 `GAP-20261001-47` · A 档 · 拆档）
+------------------------------------------------
+判据**不得依赖运行期制品**：给本档时，两个取数口改读 `DIR` 里两份**落盘制品**（由**正门**先行
+生成 · 不另起子进程 —— 本档**只读文件**）：
+    · `DIR/help-export-dry-run.txt`        —— `zerg help export --dry-run` 的输出
+    · `DIR/help-export-json-commands.txt`  —— `zerg help export --json commands --dry-run` 的输出
+⇒ 判据结论**逐字可复现**（只由这两份件的内容决定，与 HEAD 处编译制品解耦）。
+缺该档时行为**一字不动**（仍现跑 `bin/zerg` —— B 档口径）。
 """
 
 from __future__ import annotations
@@ -81,6 +91,49 @@ def runtime_json_rows(binz: str):
     objs = [l for l in p.stdout.splitlines() if l.strip().startswith("{")]
     if not objs:
         return None, "现跑没有机器面那一行 JSON"
+    try:
+        return (json.loads(objs[-1]).get("items") or []), ""
+    except ValueError as e:
+        return None, "机器面 JSON 读不回来（%s）" % e
+
+
+# ── A 档：只读**落盘制品**（`GAP-20261001-47` · 拆档）────────────────────────────────────────
+# 与上面两个 `runtime_*` 的**唯一**不同：不吃子进程，只读一件文件 ⇒ 结论逐字可复现。
+ARTIFACT_HUMAN = "help-export-dry-run.txt"
+ARTIFACT_JSON = "help-export-json-commands.txt"
+
+
+def runtime_rows_from_file(path: str):
+    """读**落盘制品**（`help export --dry-run` 的输出先落一件）⇒ (逐条清单行 | None, 理由)。
+
+    A 档取数口：判据**只吃文件**、不起子进程 ⇒ 结论与 HEAD 处编译制品解耦（`GAP-20261001-47`）。
+    抽行口径与 `runtime_rows` **逐字同一正则**（`RUNTIME_RE`）—— 两档不许分家。
+    """
+    if not os.path.isfile(path):
+        return None, "现跑制品不在盘：%s（先落一份 `help export --dry-run` 输出再判）" % path
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        return None, "现跑制品读不了（%s）" % e
+    rows = [m.group(1).strip() for m in (RUNTIME_RE.match(l) for l in text.splitlines()) if m]
+    if not rows:
+        return None, "制品里一行 `zerg …` 清单都没有（制品不对 / 输出格式改了？）"
+    return rows, ""
+
+
+def runtime_json_rows_from_file(path: str):
+    """读**落盘制品**的机器面那一行 JSON（`--json commands`）⇒ (items | None, 理由)。"""
+    if not os.path.isfile(path):
+        return None, "现跑制品不在盘：%s（先落一份 `help export --json commands --dry-run` 输出）" % path
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        return None, "现跑制品读不了（%s）" % e
+    objs = [l for l in text.splitlines() if l.strip().startswith("{")]
+    if not objs:
+        return None, "制品里没有机器面那一行 JSON"
     try:
         return (json.loads(objs[-1]).get("items") or []), ""
     except ValueError as e:
@@ -187,6 +240,22 @@ def self_test(out) -> bool:
     case("③ items 缺命令名 ⇒ 判红", True, bool(check_items_named([{"commands": "9"}])))
     case("③ items 丢了摘要格 ⇒ 判红", True, bool(check_items_named([{"command": "zerg a"}])))
     case("③ items 零条 ⇒ 判红（不许当绿）", True, bool(check_items_named([])))
+    # ── A 档（`GAP-20261001-47` · 拆档）：只读落盘制品、不起子进程 ──────────────────
+    art = os.path.join(tmp, "artifact")
+    os.makedirs(art)
+    with open(os.path.join(art, ARTIFACT_HUMAN), "w", encoding="utf-8") as f:
+        f.write("  zerg agent ls ｜ 茧壁:node ｜ 子端清单\n"
+                "  zerg gap ls ｜ 茧壁:host ｜ 缺口账\n")
+    with open(os.path.join(art, ARTIFACT_JSON), "w", encoding="utf-8") as f:
+        f.write('{"schema":"zerg-gate/v1","items":[{"command":"zerg agent ls","commands":"9"}]}\n')
+    frows, _ = runtime_rows_from_file(os.path.join(art, ARTIFACT_HUMAN))
+    case("A 档 ①制品逐条清单读得出（与现跑同正则）", ["agent ls", "gap ls"], frows)
+    fitems, _ = runtime_json_rows_from_file(os.path.join(art, ARTIFACT_JSON))
+    case("A 档 ②制品机器面 items 读得出", ["zerg agent ls"], [(it.get("command") or "") for it in (fitems or [])])
+    case("A 档 ③制品不在盘 ⇒ 判不了（不许当空清单）", True,
+         "不在盘" in runtime_rows_from_file(os.path.join(art, "nope.txt"))[1])
+    case("A 档 ④制品里没有清单行 ⇒ 判不了", True,
+         runtime_rows_from_file(os.path.join(art, ARTIFACT_JSON))[1] != "")
     out.write("  自检 %d 格 · 失败 %d 格\n" % (total, failed))
     return failed == 0
 
@@ -202,6 +271,9 @@ LIST_RULES = """判据（两半 · 波6 序70）
 ----------------------
   · 只对拍**命令名**那一列（说明 / 字段面 / 端点 / 层级的逐字对拍不在本格）
   · 快照取「文档仓里 mtime 最新的那一份」；要钉版用 `--snapshot`
+  · `--runtime-artifact DIR`（A 档 · 缺口 `GAP-20261001-47`）：两取数口改读**落盘制品**
+    （`help-export-dry-run.txt` / `help-export-json-commands.txt`）⇒ 结论逐字可复现、与编译制品解耦；
+    **谁生成制品**（正门）待拍 —— 本档只落「读」半边，**不新造第二条写路径** ✗
   · 本件**不挂门**（只单跑）—— 挂门那一半 = 另一条（不在本笔）
 
 退码
@@ -217,6 +289,8 @@ def main() -> int:
     ap.add_argument("--repo-root", default=repo_default)
     ap.add_argument("--docs-root", default=None, help="文档仓根（默认 = 同级 Zerg-内部文档）")
     ap.add_argument("--snapshot", default=None, help="钉一份快照（默认 = 文档仓里 mtime 最新的那份）")
+    ap.add_argument("--runtime-artifact", default=None,
+                    help="A 档：现跑取数改「读落盘制品目录」（不起 bin/zerg 子进程 · 缺口 GAP-20261001-47）")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--list-rules", action="store_true")
     ap.add_argument("--self-test", action="store_true")
@@ -234,8 +308,15 @@ def main() -> int:
     sys.stdout.write("帮助成文快照 ↔ 运行期逐行对拍（波6 序70）· v%s\n" % VERSION)
     sys.stdout.write("  判据见 `--list-rules`：① items 逐条含命令名 · ② 快照 ⟷ 现跑 逐行\n")
 
-    items, jwhy = runtime_json_rows(binz)
-    live, lwhy = runtime_rows(binz)
+    if a.runtime_artifact:
+        # A 档（`GAP-20261001-47` · 拆档）：只读落盘制品 · **不起子进程** ⇒ 结论逐字可复现
+        # （与 HEAD 处编译制品解耦）。缺该档 ⇒ 行为一字不动（B 档：现跑 bin/zerg）。
+        sys.stdout.write("  取数档 = A 档（只读落盘制品 %s）—— 不起 bin/zerg 子进程\n" % a.runtime_artifact)
+        items, jwhy = runtime_json_rows_from_file(os.path.join(a.runtime_artifact, ARTIFACT_JSON))
+        live, lwhy = runtime_rows_from_file(os.path.join(a.runtime_artifact, ARTIFACT_HUMAN))
+    else:
+        items, jwhy = runtime_json_rows(binz)
+        live, lwhy = runtime_rows(binz)
     if live is None:
         sys.stdout.write("⛔ 不给结论（rc=2）：%s\n" % lwhy)
         return 2
@@ -273,6 +354,7 @@ def main() -> int:
             "items_total": len(items) if items is not None else None,
             "items_named": None if items is None else not item_bad,
             "line_by_line": ok, "bad": bad, "mode": "judge",
+            "fetch_mode": "artifact" if a.runtime_artifact else "live",
         }, ensure_ascii=False) + "\n")
     return 0 if not bad else 1
 

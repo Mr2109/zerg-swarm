@@ -65,13 +65,22 @@ def gen_index(dirpath: str) -> str:
             continue
         files.append((group_of(fn), fn))
     ver = os.path.basename(os.path.normpath(dirpath))
-    # 当前版 = 同级 v* 目录中版本号最大者
+    # 当前版 = 同级 v* 目录中「版本号最大、且 ≥3 篇」者（口径对齐主仓 AGENTS.md:52）
+    #   ★ GAP-20260927-99：原判据只看「版本号最大」⇒ 会把只有 1 篇的**空壳**目录标成当前版。
+    #     对齐 AGENTS.md:52「取版本号最大、且 ≥3 篇的目录；<3 篇 = 空壳（同 core 侧 zerg_overview 的
+    #     守卫，v2.6 就是这种）」⇒ 先按 ≥3 篇（非 INDEX.md 的 .md 计）过滤，再取版本号最大者。
     parent = os.path.dirname(os.path.normpath(dirpath))
     cur = False
     if parent and os.path.isdir(parent):
         try:
-            vs = [d for d in os.listdir(parent) if os.path.isdir(os.path.join(parent, d)) and re.match(r"^v\d+\.\d+", d)]
-            vs_key = [tuple(int(x) for x in re.findall(r"\d+", v)[:3]) for v in vs if re.match(r"^v\d+\.\d+\.\d+$", v)]
+            def _live_md_count(d: str) -> int:
+                # 空壳守卫：目录内真实 .md（剔 SKIP）不足 3 篇 ⇒ 视为空壳，不参与「当前版」竞选
+                p = os.path.join(parent, d)
+                return sum(1 for fn in os.listdir(p) if fn.endswith(".md") and fn not in SKIP)
+            vs = [d for d in os.listdir(parent)
+                  if os.path.isdir(os.path.join(parent, d)) and re.match(r"^v\d+\.\d+\.\d+$", d)]
+            vs = [v for v in vs if _live_md_count(v) >= 3]
+            vs_key = [tuple(int(x) for x in re.findall(r"\d+", v)[:3]) for v in vs]
             cur = tuple(int(x) for x in re.findall(r"\d+", ver)[:3]) == max(vs_key) if vs_key else False
         except Exception:
             cur = False

@@ -36,6 +36,7 @@ const (
 	exitOK          = 0
 	exitFail        = 1   // 一般失败
 	exitUsage       = 2   // 用法错 / 不给结论
+	exitPartial     = 3   // 部分趟（只跑子集且子集全绿 · 不覆盖全量）
 	exitAuth        = 4   // 未认证（403 与它并码、kind 分家）
 	exitBlocked     = 8   // 有 BLOCKED
 	exitResource    = 10  // 资源不足
@@ -254,19 +255,35 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return rc
 		}
 		// §4.1 K14 四件套：自报是谁 · 下一步 · 最像的合法输入 · 上下文定位。
-		fmt.Fprintf(stderr, "%s: 未知命令 %q\n", progName, strings.Join(inv.path, " "))
 		s := nearest(inv.path[0])
+		nodeName := strings.Join(inv.path, " ")
+		// ★ 缺口 `GAP-20260925-27` / `GAP-20260927-400` / `GAP-20260928-144`：`<族名|中间节点> --help`
+		//   要的是「首行判词分家」（族名不是「真的未知命令」）。★ 但**这一格须人签才能改文案** ——
+		//   `cli_help_twostate_test.go:213-232` 逐字断言两态**不许改**（首行逐字 `未知命令`），
+		//   `GAP-20260927-400` 账里也写明「cli_help_twostate_test.go:213-232 逐字断言两态不许改 ⇒ 改文案须人签」。
+		//   ⇒ 本枚**只保留 rc=2 + 首行逐字 `未知命令`**（两态一字不动 · 分家一事留待拍板后另落）。
+		isNode := len(inv.path) > 0 && (s == inv.path[0] || strings.HasPrefix(s, inv.path[0]+" "))
+		fmt.Fprintf(stderr, "%s: 未知命令 %q\n", progName, nodeName)
 		if s != "" {
 			fmt.Fprintf(stderr, "最像的合法输入: %s %s\n", progName, s)
 		}
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
 		// 2026-09-27（缺口 `-23` · Mr2109 拍板选项②）：族名不吃 `--help`（`zerg gate --help` 退 2）⇒
-		//   在「未知命令」块**首行之后**补一行**族级帮助**正门指引（**只进 stderr** · 不动既有两态语义）。
-		// 2026-09-27（缺口 `GAP-20260927-40` · 修正）：**只有 `inv.path[0]` 确实是真族名时才打** ——
+		//   在块内补一行**族级帮助**正门指引（**只进 stderr** · 不动既有两态语义）。
+		// 2026-09-27（缺口 `GAP-20260927-40` · 修正）：**只有首词确实是真族名时才打** ——
 		//   判据 = `nearest` 给的最像命令首词与它相同（敲错字时 nearest 指向的是**别的族** ⇒ 不打，
 		//   免得把用户指到一条不存在的正门：`zerg eggs` 曾打出 `zerg help eggs`）。
-		if len(inv.path) > 0 && (s == inv.path[0] || strings.HasPrefix(s, inv.path[0]+" ")) {
+		if isNode {
 			fmt.Fprintf(stderr, "族级帮助: `%s help %s`\n", progName, inv.path[0])
+			// ★ 缺口 `GAP-20260926-138`（中间节点缺 help 面）：`zerg script inventory --help` 此前
+			//   只回一句 `未知命令 "script inventory"` ⇒ 这一层有哪些动作读不出来（只有全路径 `sync` 有）。
+			//   现读命令树**现算**该节点下的**直接动作**逐条列出（同源 · 命令树长一条这条跟着长）
+			//   （只进 stderr · rc 不变 —— 仍退 2）。★ 只在 `--help` 那一态加（无 `--help` 的面一字不动）。
+			if inv.wantHelp {
+				if kids := childActions(inv.path); len(kids) > 0 {
+					fmt.Fprintf(stderr, "该节点下的动作: %s\n", strings.Join(kids, " · "))
+				}
+			}
 		}
 		return exitUsage
 	}
@@ -295,9 +312,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	//   `--top` 会从「未知旗标 2」**退化成静默吞**（硬约束⑤：既有命令的退码与输出**一字不动**）。
 	//   治法与形状**逐字照拄**同一处 dispatch 面的既有拒收路：把不归本命令的那一枚**补回 `inv.unknown`**
 	//   ⇒ 由下面那条**同一条**判词 + 同一个退码 2 收口（不另写一句判词 · 不另取一个码）。
-	//   判据 = 「给过 `--top`」且「本命令不是 `gap status`」（`cmd.path` 是 `resolve` 出来的**规范路径**）。
+	// ★ 缺口 `GAP-20260928-185`（2026-10-04 · 本枚）：判据从**逐命令硬枚举**（`cmd.path` 写死
+	//   `gap status`/`gap plan` 两条）改成**数据驱动** —— 「本命令的 usage 串里写没写 `--top`」
+	//   （`usageDeclaresFlag`；usage 是命令树里**同源**的声明面）⇒ 后续任何用 `--top` 的命令
+	//   只要在 usage 里写上它即归它，不必再改这一处。既有两条命令 usage 里本就有 `--top`
+	//   ⇒ 行为与退码**一字不动**（`gap status --top 3` 仍 rc=0 · `gap ls --top 3` 仍 rc=2）。
 	//   `--by` 不在此列：它**早已**在名字表上（与 `dev proposal` / `gap add` 共用）⇒ 既有行为不变。
-	if inv.hasFlag("--top") && !(len(cmd.path) == 2 && cmd.path[0] == "gap" && (cmd.path[1] == "status" || cmd.path[1] == "plan")) {
+	if inv.hasFlag("--top") && !usageDeclaresFlag(cmd, "--top") {
 		inv.unknown = append(inv.unknown, "--top")
 	}
 	if len(inv.unknown) > 0 && !cmd.passthrough {
@@ -534,11 +555,17 @@ func init() {
 		},
 		{
 			path:    []string{"help"},
-			summary: "帮助（主题见 `zerg help <主题>`；表在 topics.go）",
-			usage:   "zerg help [<主题>]",
+			summary: "帮助（主题见 `zerg help <主题>`；表在 topics.go）· `--json` 给族名清单机器面（族名 + 每族动作数）",
+			usage:   "zerg help [<主题>] [--all] [--json <字段>]",
 			arity:   "any",
 			args:    []string{"主题（可省）"},
-			run:     cmdHelp,
+			// ★ 缺口 `GAP-20260927-290` / `GAP-20260927-403`：`help` 此前**无 `--json` 面**
+			//   （`zerg help --all --json` ⇒ rc=2「没有 --json 字段表（它是说明面）」）⇒ 族名清单只能人读。
+			//   本枚给它一档机器面：字段表两格（`family` / `actions`），产出面在 `cmdHelp` 的 `--json` 分支
+			//   （`emitHelpFamilies` · 现算自命令树）。★ 必须写成 `[]string{…}` **字面量**（契约脚本的
+			//   `FIELDS_RE` 只认字面量；抽成变量 = 该条被判「没有字段表」）。
+			fields: []string{"family", "actions"},
+			run:    cmdHelp,
 		},
 		// ---- 批 A · S2 只读面（§6.2 最小可验证集）：全程零写操作 ----
 		{
@@ -1182,7 +1209,7 @@ func init() {
 			path:    []string{"code", "find"},
 			kind:    "CodeFind",
 			summary: "在码里找一处东西在哪（只读取证 · 手搓 grep/git grep 的替身 · **扫工作树**：含未跟踪件与被忽略目录，比 `git grep` 的索引面多一片（两个面各扫多少件，命令每跑一次自己报一行「扫了 N 件」—— **不在这里写死**，写了就会烂；差值由运行时的数说话）；跳过 >2MB 的件）",
-			usage:   "zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--limit <N>] [--count | --files-only] [--full] [--json <字段>]",
+			usage:   "zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--limit <N>] [--count | --files-only] [--full] [--hidden] [--include-runtime] [--json <字段>]",
 			arity:   "any",
 			args:    []string{"正则（POSIX 语法）"},
 			// ★ `GAP-20260928-118`（2026-09-28 · 本枚）：字段表补上 `truncated` —— 截断位此前
@@ -1391,7 +1418,7 @@ func init() {
 			kind: "PublishSet",
 			// ★ 字段表必须写成 `[]string{…}` **字面量** —— 与上面 `net probe` / `publish tree has`
 			//   两条**同一条纪律**（契约脚本的 `FIELDS_RE` 只认字面量；抽成变量 = 该条被读成「没有字段表」）。
-			summary:  "「这件会不会发 + 哪一层拦的」**只读**读数（**免树** · 逐层现读判定链真源件复算 · 链真源读不到 ⇒ 8 · **不给结论**）",
+			summary:  "「这件会不会发 + 哪一层拦的」**只读**读数（**免树** · 逐层现读判定链真源件复算 · 链真源读不到 ⇒ 8 · **不给结论**）· ★ **身份格 `caliber`（口径）不是可选投影格**：`--json` 里**必须点名**它，缺 ⇒ 2 `identity_cells_required`（缺口 `GAP-20260927-415`）",
 			usage:    "zerg publish set <仓内路径>… [--json <字段>]",
 			arity:    "any",
 			args:     []string{"仓内路径（相对仓根 —— 形状不合口径 ⇒ 2）"},
@@ -1855,7 +1882,7 @@ func init() {
 			path:     []string{"dev", "proposal"},
 			kind:     "Proposal",
 			summary:  "提案件通道：只产可审查物（new|list|show|check）· 目标必须回指既有编号 · **判据必须可机检** · 「提 ≠ 批」两对字段（subject/approver）",
-			usage:    "zerg dev proposal new --title <题（必填）> --target <待办编号（必填 · 只收 D/E/F/G 族编号 · 逐条闭集真源 core/internal/contract/dev-targets.json）> --goal <目标（必填）> --evidence <出处（必填 · 至少一条）> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态；不是这一种形态的在提案这一步不拒，到退建议那一步才判不可退）> --criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--by <提出者>] [--file <要改的件>]… [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human]",
+			usage:    "zerg dev proposal new --title <题（必填）> --target <待办编号（必填 · 只收 D/E/F/G 族编号 · 逐条闭集真源 core/internal/contract/dev-targets.json）> --goal <目标（必填）> --evidence <出处（必填 · 至少一条）> --rollback <退点件（必填 · 仓外整件路径 —— 退建议照它核 sha256 取改前态；不是这一种形态的在提案这一步不拒，到退建议那一步才判不可退）> --criterion <判据（必填 · 一条首词是 zerg、本版真跑得动的命令）> [--by <提出者>] [--file <要改的件（仓内相对路径 —— 与 --rollback 收的**仓外**整件路径是两套口径 · 别混）>]… [--subject <提出者>] [--subject-kind human|ai|egg|ci] [--egg-id <卵 id>] [--approver <批准者>] [--approver-kind human]",
 			arity:    "any",
 			args:     []string{"动作：new | list | show | check", "提案 id（show/check 才要）"},
 			fields:   proposalFields,
@@ -1914,7 +1941,7 @@ func init() {
 			path:    []string{"dev", "edit"},
 			kind:    "DevEdit",
 			summary: "受控写入：只改**提案声明过**的件（越界写 ⇒ 2）· 默认干跑 · 一行一事件的审计（写不进审计就不改件）",
-			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件>) [--by <谁>] [--allow-cross-root <理由>] [--allow-sibling-repo <名>] [--dry-run | --confirm=<本机名> --yes] （真写前置：一枚**人签批准件** <状态目录>/approvals/dev_edit.json —— 无件 / 手写件 / 它的 scope 不含本件 ⇒ 一律拒（退 2）；--dry-run 那一态不需要它）" + devEditDryRunOnlyNote,
+			usage:   "zerg dev edit --proposal <提案 id> --file <仓内相对路径> (--from <件> | --replace <件：补丁 JSON 数组 [{\"old\":…,\"new\":…}] —— 逐格精确替换 · 每格 old 必须在目标件里**恰好命中 1 次**（0 次或多次 ⇒ 拒执 2）>) [--by <谁>] [--allow-cross-root <理由>] [--allow-sibling-repo <名>] [--dry-run | --confirm=<本机名> --yes] （真写前置：一枚**人签批准件** <状态目录>/approvals/dev_edit.json —— 由 `zerg approve new --tool dev_edit` 签出 · `zerg approve ls` 可查现状；无件 / 手写件 / 它的 scope 不含本件 ⇒ 一律拒（退 2）；--dry-run 那一态不需要它）" + devEditDryRunOnlyNote,
 			arity:   "any",
 			args:    []string{"提案 id（--proposal）", "要改的件（--file · 必须在提案的 files[] 里）"},
 			fields:  devEditFields,
@@ -2700,6 +2727,57 @@ func nearest(word string) string {
 	return ""
 }
 
+// childActions —— 某节点（族名或中间节点）下的**直接**动作名（命令树现算 · 只读）。
+// 供「族名/中间节点不吃 --help」那一块的 stderr 指路用（缺口 `GAP-20260926-138`）。
+func childActions(prefix []string) []string {
+	if len(prefix) == 0 {
+		return nil
+	}
+	head := strings.Join(prefix, " ")
+	var out []string
+	for _, c := range catalog() {
+		if len(c.path) != len(prefix)+1 {
+			continue
+		}
+		if strings.Join(c.path[:len(prefix)], " ") == head {
+			out = append(out, c.path[len(prefix)])
+		}
+	}
+	return out
+}
+
+// usageDeclaresFlag —— 该命令的 usage 串里写没写这枚旗标（数据驱动旗标的**同源**声明面）。
+// 供 `--top` 收口用（缺口 `GAP-20260928-185`：把逐命令硬枚举改成按 usage 声明统一收 —— usage 是
+// 命令树里「这条命令认哪些旗标」的**同一个**声明面，与 `cmdUsageHelp` 渲染的面同源）。
+func usageDeclaresFlag(c *command, flag string) bool {
+	if c == nil {
+		return false
+	}
+	return strings.Contains(c.usage, flag)
+}
+
+// emitHelpFamilies —— `help --json` 的机器面：逐族一行（`family` = 族名 · `actions` = 该族动作数）。
+// 现算自命令树（`catalog()` · 名字序稳定 ⇒ 一个数都不写死）；总族数进包封 `meta.count`
+// （缺口 `GAP-20260927-290` 的「条数可机读」）。字段投影走 `inv.fields`（`requireFields` 已确保非空）。
+func emitHelpFamilies(inv *invocation, stdout, stderr io.Writer) int {
+	var order []string
+	cnt := map[string]int{}
+	for _, c := range catalog() {
+		if len(c.path) == 0 {
+			continue
+		}
+		if _, ok := cnt[c.path[0]]; !ok {
+			order = append(order, c.path[0])
+		}
+		cnt[c.path[0]]++
+	}
+	rows := make([]map[string]string, 0, len(order))
+	for _, f := range order {
+		rows = append(rows, map[string]string{"family": f, "actions": strconv.Itoa(cnt[f])})
+	}
+	return selectJSONList(stdout, stderr, inv, []string{"help"}, inv.fields, rows)
+}
+
 func catalog() []*command {
 	out := make([]*command, len(commands))
 	copy(out, commands)
@@ -3087,6 +3165,18 @@ func parseInvocation(args []string) (*invocation, error) {
 		// 不会从「未知旗标 2」悄悄退化成「静默吞」（缺口 `GAP-20260927-16` 那一类）。
 		// ★ 必须在下面那条「未知旗标」兜底**之前**上户口，否则派单里写着它们会一律退 2。
 		case a == "--count" || a == "--files-only":
+			inv.kvSet(a, "true")
+		// `code find` 的两枚**放行**旗标（缺口 `GAP-20260927-66` 的 `--hidden` · `GAP-20260927-72` 的
+		// `--include-runtime` · 本枚）：`--hidden`（**点项放行** —— 默认跳过 `.` 开头的件/目录）与
+		// `--include-runtime`（**运行期目录整档放行**）。与上一块 `--count`/`--files-only` 逐字同一种
+		// 形态：写进 `inv.kv`（`kvSet`）⇒ `foreignFlag` 看得见（`cmdCodeFind` 已在读 `inv.hasFlag`）；
+		// ★ 此前**解析面没上户口** ⇒ 用法串/实现件都当它俩存在、解析器却一律退 2「未知旗标」= 两枚
+		//   等于不可用（`GAP-20260929-13`）。照 `--count` 那条：必须在下面「未知旗标」兜底**之前**。
+		//   ★ 两枚**各写一条** `case`（行为逐字不变）：门73 的取数面按 `case a == "--x"` 逐条现读，
+		//   写成 `--hidden || --include-runtime` 时它只读得到前者（同 `--aging`/`--stale` 那条教训）。
+		case a == "--hidden":
+			inv.kvSet(a, "true")
+		case a == "--include-runtime":
 			inv.kvSet(a, "true")
 		// `ask` 的 `--no-fallback`（缺口 `GAP-20260928-127` 的 ⑥ · 本枚）：用法串写**裸形**、语义本就是
 		// **布尔档** ⇒ 从「按取值收」的名字表移到布尔这一面（与上一块逐字同一种形态：写进 `inv.kv`、
@@ -4134,6 +4224,16 @@ func renderFamilyHelp(family string, stdout io.Writer) (int, bool) {
 }
 
 func cmdHelp(inv *invocation, stdout, stderr io.Writer) int {
+	// ★ 缺口 `GAP-20260927-290` / `GAP-20260927-403`：`help` 的 `--json` 机器面（族名清单 + 每族动作数）。
+	//   此前 `zerg help --all --json` ⇒ rc=2「没有 --json 字段表（它是说明面）」⇒ 机器/UI 无法枚举族名清单。
+	//   产出面**现算自命令树**（`catalog()` · 名字序稳定）⇒ 命令树长一族这条跟着长（一个数都不写死）。
+	//   只在**不给主题**（族级清单）那一态开这一档 ⇒ 主题面（`help <主题>`）行为一字不动。
+	if inv.jsonGiven && len(inv.args) == 0 {
+		if rc := requireFields(inv, stderr); rc != exitOK {
+			return rc
+		}
+		return emitHelpFamilies(inv, stdout, stderr)
+	}
 	if len(inv.args) > 0 {
 		// 主题表在 `topics.go`（**唯一真源**：分派与「可用主题」列清单同一处）。
 		// ★ 2026-09-24（缺口 `Q-149`）：主题表**先判**（表里有的名字一字不动）；表里没有 ⇒ 再看

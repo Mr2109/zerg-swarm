@@ -170,10 +170,11 @@ def scan(root):
         exempt_shapes = {shape for (f, shape) in EXEMPT_QS if rel == f}
         done = set()
 
-        def rec(i, tag, why_soft, soft=False, comment=False):
-            """按「在不在判红面 + 是不是注释 + 是不是只登记形态」定红档还是登记档"""
+        def rec(i, tag, why_soft, soft=False, comment=False, force_judge=False):
+            """按「在不在判红面 + 是不是注释 + 是不是只登记形态」定红档还是登记档。
+            `force_judge=True` ⇒ 越过 on_face（缺口 GAP-20260927-33：`.md` 面对 `--token <值>` 也判红）。"""
             done.add(i)
-            if on_face and i not in xmlc and not comment and not soft:
+            if (on_face or force_judge) and i not in xmlc and not comment and not soft:
                 judged.append((rel, i, tag))
             else:
                 registered.append((rel, i, tag,
@@ -205,7 +206,13 @@ def scan(root):
                 rec(i, hard, "非判红面", comment=comment)
                 continue
             if OPT_JUDGE.search(ln):
-                rec(i, "UNIT-OPT-ARGV", "非判红面", comment=comment)
+                # ★ `.md` 面（缺口 GAP-20260927-33）：`--token <值>` 形态**参与判红** —— 此前 `.md` 只
+                #   登记不判红 ⇒ 文档（如 agent/README.md）里「令牌进 argv」的示例无门覆盖。其余非判红面
+                #   仍只登记；`.md` 里的注释行 / `<占位>` 值照旧不判红（OPT_JUDGE 的 VALUE 已排除占位）。
+                if suf == ".md":
+                    rec(i, "MD-TOKEN-ARGV", "非判红面", comment=comment, force_judge=True)
+                else:
+                    rec(i, "UNIT-OPT-ARGV", "非判红面", comment=comment)
             elif OPT_MENTION.search(ln):
                 # 裸选项提及（`--token <占位>` · 本件自己的 CLI 收 `--token`）：**只登记，不判红** ✗
                 rec(i, "OPT-MENTION", "非判红面", soft=True, comment=comment)
@@ -293,6 +300,8 @@ NEG_CASES = [
      '#!/usr/bin/env bash\nsshpass -p \'Passw0rd!\' ssh root@<cluster-ip> true\n', "PW-SSHPASS-ARGV"),
     ("⑤", "sshpass -p 纯变量（命令行展开）", "neg7-sshpass-pure-variable", "probe.sh",
      '#!/usr/bin/env bash\nSP="sshpass -p $PASS"\n$SP ssh root@<cluster-ip> true\n', "PW-SSHPASS-VAR"),
+    ("③'", ".md 面「--token <值>」（文档示例 · GAP-20260927-33）", "neg8-md-token-opt", "guide.md",
+     '# 用法\n去跑 `agentd --token 9f3c1d7a5b2e4f60` 吧\n', "MD-TOKEN-ARGV"),
 ]
 
 # 正控夹具：(用例名, 文件名, 正文, 期望登记 ≥ N)
@@ -325,6 +334,10 @@ def self_test():
             sub = os.path.join(d, name)
             os.makedirs(sub)
             open(os.path.join(sub, fn), "w", encoding="utf-8").write(body)
+            if fn.endswith(".md"):
+                # `.md` 面已参与判红（GAP-20260927-33），但 `n_face` 计数只认脚本/单元面 ⇒ 补一件**占位脚本**，
+                # 使「判红面件数 > 0」成立、门不停在 rc=2；占位件自身不含任何令牌形态，不干扰断言。
+                open(os.path.join(sub, "_face.sh"), "w", encoding="utf-8").write("#!/usr/bin/env bash\n")
             rc, data = render(sub)
             judged = data[0] if data else []
             got = judged[0][2] if judged else "-"

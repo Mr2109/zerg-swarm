@@ -516,8 +516,8 @@
    "file": "core/cmd/zerg/family_publish_run.go",
    "类": "命令面三态（`publish run --dry-run` 的计划件 · 与 family_build.go **同一套**语义；`publish preflight` 本身只读）",
    "语义": "dryrun.v1",
-   "零副作用判据": "`zerg publish run --dry-run` ⇒ 退 0 · stdout **只有计划件**（现跑**恰 9 行** · 计划件内**含 `走哪一路` 那一行**，逐字：「本入口走：压平快照器（已弃用 · **非公开面真源**）；真源 = `publish/mirror-public.sh`（规则指纹/全树模式长在它身上）」）· stdout **多任何一行都算破约**（不是「差不多就行」）+ stderr **恰一行**「（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）」· 「它会动」那行写**落点口径**（默认落点 = 底脚本自己的 `/tmp/zerg-public-<时间戳>`；给了 `--out <目录>` ⇒「它会调」那行**原样透传** ` --out <目录>`）· 计划件里不写实值（无时间戳/无绝对实路径）⇒ 同一条跑两遍 stdout **逐字一致**（现跑：`diff` 两遍 stdout/stderr 皆同）· **不调 scripts/build/publish-public.sh**（现跑对拍：dry-run 前后 `git status --porcelain` 逐字不变、`/tmp/zerg-public-*` 目录集逐字不变＝不新落一件）· 缺 `--confirm`/`--yes` 的真跑一律拒执（退 2）；`publish preflight` 只读预检、不写盘",
-   "备注": "Q-223（2026-09-25）：发布流水线接进 CLI 时**复用**既有一套语义，不新造（第五套语义会被门⑩ 判红）。2026-09-26 三修后**照现行为对齐**（收窄，不是放宽）：计划件新增 `走哪一路` 一行（与真跑执行前 stderr 那一行共用同一份逐字文字 `publishRunPathNotice`）⇒ 本条判据由「stdout 只有计划件」细化为「恰 9 行 · 含该行 · 多一行即破约」；同时对拍基线由已过时的 `dist/` 改为实落点口径（`/tmp/zerg-public-<时间戳>`）。"
+   "零副作用判据": "`zerg publish run --dry-run` ⇒ 退 0 · stdout **只有计划件**（现跑**恰 14 行** · 计划件内**含 `走哪一路` 那一行**，逐字：「本入口走：压平快照器（已弃用 · **非公开面真源**）；真源 = `publish/mirror-public.sh`（规则指纹/全树模式长在它身上）」）· stdout **多任何一行都算破约**（不是「差不多就行」）+ stderr **恰一行**「（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）」· 「它会动」那行写**落点口径**（默认落点 = 底脚本自己的 `/tmp/zerg-public-<时间戳>`；给了 `--out <目录>` ⇒「它会调」那行**原样透传** ` --out <目录>`）· 计划件里不写实值（无时间戳/无绝对实路径）⇒ 同一条跑两遍 stdout **逐字一致**（现跑：`diff` 两遍 stdout/stderr 皆同）· **不调 scripts/build/publish-public.sh**（现跑对拍：dry-run 前后 `git status --porcelain` 逐字不变、`/tmp/zerg-public-*` 目录集逐字不变＝不新落一件）· 缺 `--confirm`/`--yes` 的真跑一律拒执（退 2）；`publish preflight` 只读预检、不写盘",
+   "备注": "Q-223（2026-09-25）：发布流水线接进 CLI 时**复用**既有一套语义，不新造（第五套语义会被门⑩ 判红）。2026-09-26 三修后**照现行为对齐**（收窄，不是放宽）：计划件新增 `走哪一路` 一行（与真跑执行前 stderr 那一行共用同一份逐字文字 `publishRunPathNotice`）⇒ 本条判据由「stdout 只有计划件」细化为「恰 14 行 · 含该行 · 多一行即破约」；同时对拍基线由已过时的 `dist/` 改为实落点口径（`/tmp/zerg-public-<时间戳>`）。2026-10-04（GAP-20260926-21）：`--dry-run` 改为**先跑真源只读预演**（`publish/mirror-public-lib.py --list-only` · 零写盘/零联网/零推送）再把真数字搬进计划件 ⇒ stdout 由 9 行增至 **14 行**（仍只计划件 · 多一行仍算破约）⇒ 本条判据的行数随动为「恰 14 行」。"
   },
   {
    "file": "core/cmd/zerg/family_gap_state.go",
@@ -748,6 +748,34 @@
    "语义": "dryrun.v1",
    "零副作用判据": "本件**纯只读**：默认档只读真源 jsonl（open(path,'rb')）＋ 只 os.Stat/os.listdir 判被点名件「在盘 / 已挂门」（读 precommit-gates.sh 亦只 open(...,'r')），**不写任何落地件**（--json/--source/--cutoff/--list-rules 四档都不写盘）；唯一写动作局限于 --self-test 在 tempfile.mkdtemp(prefix='gap-r5-selftest-') 的**仓外夹具**里造合成树（跑完即删），真目标档一个字节都不写。不落盘 · 不删 · 不推 · 不调服务 · 不改 git 状态。",
    "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**引文**（销案证据正文里那一条 `dev edit --dry-run` 实测样例命令），不是第五套语义 —— 同门先例 `check-help-shape.py` / `check-judge-registry.py` / `check-public-face-commands.py` 的「消费者 / 字样引用」处置。复核：`zerg gate run --step '门⑩ 干跑：dry-run 一套语义（站点逐件登记 + 零副作用判据）（阻断）' --only-step` ⇒ rc=0。"
+  },
+  {
+   "file": "scripts/gates/check-cli-contract.py",
+   "类": "真 dry-run 站点：矩阵导出 `emit_matrix(root, out_path, dry_run=)` —— 干跑只出计划、不落盘",
+   "语义": "dryrun.v1",
+   "零副作用判据": "dry_run=True ⇒ 只把「计划写 <dst>」打印到 stdout、一个字节不写；dry_run=False 才**增量合并**落盘。全程不改 git 状态、不 exec 被测命令。",
+   "备注": "门⑩ R1 现读点名（2026-10-04 wave23 尾批补登记）。"
+  },
+  {
+   "file": "scripts/gates/check-dryrun-yes-conflict-coverage.py",
+   "类": "只读聚合门（判据面）：`--dry-run` 与 `--yes` 同给判定的覆盖反查 —— 本件用 dry-run 一词作**被检字段名**，不是第五套语义",
+   "语义": "dryrun.v1",
+   "零副作用判据": "全程只读：只扫 core/cmd/zerg/*.go 文本、不写盘 / 不改状态 / 不 exec 被测命令；唯一写动作局限于 `--self-test` 落 tempfile 合成夹具（跑完即删），真目标档一个字节都不写。",
+   "备注": "同 check-newcmd-followup.py 先例（只读门用 dry-run 作被检字段名）。门98。"
+  },
+  {
+   "file": "core/cmd/zerg/family_impact_matrix.go",
+   "类": "引用件（消费者）：反查「某个 argv token」（如 `--dry-run`）命中的矩阵格 id —— 只把 `--dry-run` 当**被检 token**，非语义站点",
+   "语义": "dryrun.v1",
+   "零副作用判据": "只读遍历矩阵定义与 argv、不写盘 / 不改状态 / 不 exec；纯查询，零副作用。",
+   "备注": "GAP-20260928-366 影响面点名矩阵格（2026-10-04 新件）。"
+  },
+  {
+   "file": "core/cmd/zerg/family_impact_matrix_test.go",
+   "类": "引用件（测试夹具）：用 `--dry-run` argv 造 must-fail 格（want_rc=2）—— 测试面，非语义站点",
+   "语义": "dryrun.v1",
+   "零副作用判据": "测试夹具只构造 argv 与期望值、调纯函数判据；不写盘 / 不改状态 / 不 exec 真命令。",
+   "备注": "上件伴生测试（2026-10-04 新件）。"
   }
  ]
 }

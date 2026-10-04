@@ -33,6 +33,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RULES_FILE = os.path.join(REPO, "publish", "replace-rules.tsv")
@@ -73,6 +74,27 @@ BINARY_SUFFIX = (".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".gz", ".tgz",
                  ".dylib", ".so", ".a", ".o", ".ttf", ".ttc", ".otf", ".woff", ".woff2",
                  ".mp3", ".mp4", ".mov", ".webp", ".ico", ".icns", ".lock")
 MAX_BLOB = 2 * 1024 * 1024
+
+
+# ★ 归一化面（缺口 `GAP-20260925-38`）：`BLOCK` / `INFO` 判定前先把「等价形态」折回可匹配的原文形态。
+#   三种变形此前**都绕得过**（只按原样正则 `search()`；实测全仓 `nfkc`/`casefold`/`fullwidth`/`unicodedata`
+#   命中 0）—— 公开历史里它们存活很久而门禁一声不响。三种：
+#     ① 全角/兼容同形字（`／Users／ｆｕｚｚ０１`）—— NFKC 折回 `~`
+#     ② 源码里的转义写法（`/Users/fuzz\u200b01` 实际是 6 个 ASCII 字符、不是零宽字符）—— 解 `\uXXXX`/`\xNN`
+#     ③ 零宽/不可见字符插字（真 `U+200B`）—— 去零宽字符
+#   只用于**匹配**：命中后报出的 sample 取自归一化串（仍经 `mask()` 打码）；判定口径与退码一字未改。
+ZERO_WIDTH_RE = re.compile("[\u200b\u200c\u200d\u200e\u200f\u2060\ufeff\u00ad]")
+
+
+def normalize_forms(s):
+    """把等价形态折回可匹配的原文形态（供 `BLOCK` / `INFO` 判定）。非字符串原样返回。"""
+    if not isinstance(s, str):
+        return s
+    s = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), s)   # ② `\uXXXX`
+    s = re.sub(r"\\x([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), s)   # ② `\xNN`
+    s = unicodedata.normalize("NFKC", s)                                        # ① 全角 / 兼容折叠
+    s = ZERO_WIDTH_RE.sub("", s)                                                # ③ 去零宽 / 不可见
+    return s
 
 
 def sh(args, cwd=REPO, binary=False):
@@ -280,7 +302,7 @@ def scan_commits(revs, repo, literals, regexes, isolated, entries, ex_list, blk,
         # ① 提交信息本身也会被镜像 ⇒ 一起审
         msg = apply_rules(sh(["git", "log", "-1", "--format=%B", sha], cwd=repo), literals, regexes)
         for rx, why in blk:
-            m = rx.search(msg)
+            m = rx.search(normalize_forms(msg))
             if m:
                 hits.append({"commit": sha[:10], "path": "<commit-message>", "why": why,
                              "match": mask(m.group(0))})
@@ -310,15 +332,16 @@ def scan_commits(revs, repo, literals, regexes, isolated, entries, ex_list, blk,
                     cache[(osha, iso)] = ("skip", None, None)
                     continue
                 text = apply_rules(text, literals, regexes, isolated, rel)  # 关键：先变换，再扫描（夹具隔离件原样通过）
+                mtext = normalize_forms(text)   # ★ 缺口 `GAP-20260925-38`：折回全角/转义/零宽三种等价形态后再判
                 verdict = ("clean", None, None)
                 for rx, why in blk:
-                    m = rx.search(text)
+                    m = rx.search(mtext)
                     if m:
                         verdict = ("block", why, mask(m.group(0)))
                         break
                 else:
                     for rx, why in inf:
-                        if rx.search(text):
+                        if rx.search(mtext):
                             verdict = ("info", why, None)
                             break
                 cache[(osha, iso)] = verdict
@@ -587,7 +610,7 @@ def main():
 #   ③ 退码：见文件头「退码」那一段（真跑的 1 是「判红」；自检的 1 只在 `--self-test` 这一档出）。
 SELF_PATH = os.path.abspath(__file__)
 _TMPDIRS = []
-WANT_CASES = 14                    # 自证用例条数（**写死**：少跑一格即断言失败；⑬⑭ = 中文名件回归）
+WANT_CASES = 17                    # 自证用例条数（**写死**：少跑一格即断言失败；⑬⑭ = 中文名件回归；⑮⑯⑰ = 等价形态 · 缺口 GAP-20260925-38）
 
 # 夹具里的敏感文本一律**拼装写**：本门自己就在扫这些形状，源码里不留完整形态（免得本件被自己
 # 的口径或别的门当成泄露；`publish/replace-rules.tsv` 也无从命中这些片段）。
@@ -603,6 +626,14 @@ _FIX_PEM_FILE = 'k2 = "%s"\n' % _FIX_PEM
 _FIX_HOME_FILE = 'HOME_HINT = "%s"\n' % _FIX_HOME
 _FIX_GOOD = "def main():\n    return 0\n"
 _FIX_WL = "src/\n"                                  # 夹具仓自己的白名单（本门读 `<repo>/publish/whitelist.txt`）
+# ★ 等价形态夹具（缺口 `GAP-20260925-38`）：三种「绕得过」的变形各一格 —— 判据取 `BLOCK` 表。
+#   ★ 口径要点：`publish/replace-rules.tsv` **已枚举**少数几种字面变体（`／Users／ｆｕｚｚ０１` ·
+#     `/Users/fuzz\u200b01` 转义/正则两形 —— 见该表 22–25 行）⇒ 要证明「归一化面」的牙齿，
+#     夹具必须取**规则未枚举**的变体（同族换位/换字），否则会在规则层就被改写成合成名。
+#   一律**拼装写**（本件源码里不留完整形态，也不留会命中别的门的形态）。
+_FIX_FW = "\uff0f\uff35\uff53\uff45\uff52\uff53\uff0f\uff4d\uff53\uff10\uff11"   # 全角 ／Ｕｓｅｒｓ／ｍｓ０１（规则只枚举了 ASCII Users 那形）
+_FIX_ZW = "10.0." + "\u200b" + "0.5"                                             # 零宽空格 U+200B 插在地址中（规则未枚举）
+_FIX_ESC = "10.0." + "\\u200b" + "0.5"                                           # 源码里的转义写法（6 个 ASCII 字符 · 规则未枚举）
 
 
 def _write(path, text):
@@ -792,6 +823,27 @@ def self_test():
          naive_esc and cjk_rel not in naive,
          "转义形态 %s · 原样名 %s（期望：有转义 / 无原样）"
          % ("在" if naive_esc else "不在", "在" if cjk_rel in naive else "不在"))
+
+    # ── 等价形态格（缺口 `GAP-20260925-38`）：三种「绕得过」的变形 —— 判据 `BLOCK` 的 `~`。
+    #   修前这三格**都是假绿**（只按原样正则匹配 ⇒ 全角/零宽/转义三形态一律 rc=0 溜过）；
+    #   谁把 `normalize_forms()` 从判据面拿掉，这三格立刻变红。──
+    print("[判据] 等价形态·全角同形字：`／Users／ｆｕｚｚ０１` 经 NFKC 折回 `~` ⇒ 判红")
+    fw = _mk_fixture_repo(d, "fullwidth", {"src/fw.py": 'H = "%s"\n' % _FIX_FW})
+    rc, text = _run_cli(fw)
+    case("⑮全角同形", "白名单内全角路径形 ⇒ rc=1 且点名「用户家目录路径」",
+         rc == 1 and "用户家目录路径" in text, "rc=%d（期望 1）" % rc)
+
+    print("[判据] 等价形态·零宽插字：地址中插真 `U+200B` ⇒ 去零宽后判红")
+    zw = _mk_fixture_repo(d, "zerowidth", {"src/zw.py": 'H = "%s"\n' % _FIX_ZW})
+    rc, text = _run_cli(zw)
+    case("⑯零宽插字", "白名单内零宽插字地址形 ⇒ rc=1 且点名「内网地址 10.0.0.x」",
+         rc == 1 and "内网地址 10.0.0.x" in text, "rc=%d（期望 1）" % rc)
+
+    print("[判据] 等价形态·转义写法：源码里的 `10.0.\\u200b0.5`（6 个 ASCII 字符）⇒ 解转义后判红")
+    esc = _mk_fixture_repo(d, "escaped", {"src/esc.py": 'H = "%s"\n' % _FIX_ESC})
+    rc, text = _run_cli(esc)
+    case("⑰转义写法", "白名单内 `\\uXXXX` 转义地址形 ⇒ rc=1 且点名「内网地址 10.0.0.x」",
+         rc == 1 and "内网地址 10.0.0.x" in text, "rc=%d（期望 1）" % rc)
 
     print("[真目标] 现读真仓**结构**（**不跑全历史** —— 实测 3m55s，见文件头）⇒ 结构断言 ＋ 计数照实报")
     revs = len(sh(["git", "rev-list", "--all"]).split())

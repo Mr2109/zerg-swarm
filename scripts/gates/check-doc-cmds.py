@@ -322,12 +322,14 @@ def collect_md(root, rel_dir):
 
 
 def judge_md(files, tree, stats=None):
-    """→ (阻断命中数, 报告命中数, 明细行)。formal 的命中 = 阻断；devdocs 的命中 = 只报告。"""
+    """→ (阻断命中数, 报告命中数, 明细行, 读不了件数)。formal 的命中 = 阻断；devdocs 的命中 = 只报告。"""
     n_block, n_report, details = 0, 0, []
+    n_unread = 0                          # ● GAP-20261001-32③ 修：读不了的件计数 ⇒ 调用方归 blocked（进 rc 通道）
     for rel, ap in files:
         try:
             text = read(ap)
         except OSError as e:
+            n_unread += 1
             details.append("读不了 %s：%s" % (rel, e))
             continue
         for lineno, words in extract_zerg_segments(text, stats):
@@ -342,16 +344,18 @@ def judge_md(files, tree, stats=None):
                            % (rel, lineno, " ".join(words[:2])))
             if n == 0:
                 pass
-    return n_block, n_report, details
+    return n_block, n_report, details, n_unread
 
 
 def judge(files, tree, blocking, stats=None):
     n = 0
     details = []
+    n_unread = 0                          # ● GAP-20261001-32③ 修：读不了的件计数 ⇒ 调用方归 blocked（进 rc 通道）
     for rel, ap in files:
         try:
             text = read(ap)
         except OSError as e:
+            n_unread += 1
             details.append("读不了 %s：%s" % (rel, e))
             continue
         for lineno, words in extract_zerg_segments(text, stats):
@@ -369,8 +373,8 @@ def judge(files, tree, blocking, stats=None):
             n += 1
             details.append("%s:%d → `zerg %s` 不在命令树（最长前缀判据）" % (rel, lineno, " ".join(words[:2])))
     if blocking:
-        return n, 0, details
-    return 0, n, details
+        return n, 0, details, n_unread
+    return 0, n, details, n_unread
 
 
 def load_baseline(root):
@@ -424,7 +428,9 @@ def check(root, scopes):
             if not files:
                 blocked.append("⛔ 不给结论：formal 扫到 0 篇（空转 = 假绿）—— 判据不可判")
                 continue
-            n, _, details = judge(files, tree, blocking=True, stats=stats)
+            n, _, details, n_unread = judge(files, tree, blocking=True, stats=stats)
+            if n_unread:
+                blocked.append("⛔ 不给结论：formal 语料有 %d 篇读不了（读不了 ≠ 零命中）—— 判据不可判" % n_unread)
             formal_hits += n
             if n:
                 errs.append("formal（正式面 · **阻断**）：%d 处手写 `zerg …` 示例拼不到命令树（§九 M12）" % n)
@@ -447,7 +453,9 @@ def check(root, scopes):
             if not files:
                 blocked.append("⛔ 不给结论：devdocs 扫到 0 篇（空转 = 假绿）—— 判据不可判")
                 continue
-            _, r, details = judge(files, tree, blocking=False, stats=stats)
+            _, r, details, n_unread = judge(files, tree, blocking=False, stats=stats)
+            if n_unread:
+                blocked.append("⛔ 不给结论：devdocs 语料有 %d 篇读不了（读不了 ≠ 零命中）—— 判据不可判" % n_unread)
             devdocs_hits += r
             lines.append("devdocs（只报告档 · §6.3 S6 起步）：命中 %d 处（baseline %d）"
                          % (r, int(baseline["devdocs_report_hits"])))

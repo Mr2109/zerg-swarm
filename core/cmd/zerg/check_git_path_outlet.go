@@ -171,6 +171,15 @@ var gpoTextAllow = []gpoTextAllowEntry{
 		Reason:      "消息串：`except` 分支里的报错文本；真取数走 `disk_files` 的 `os.walk`（同函数 L351-352 注释逐字「✗ 不经 git」）⇒ 本行非 argv。该文案对现实现已陈旧，另批校正时本锚随之更新。",
 		Replacement: "无需改：本行只是报错文本里的字面。",
 	},
+	// ── 2026-10-04 · 门⑦/门68 收口：`precommit-gates.sh` 的**步骤名文字面**（非 argv）──
+	//    命中行是 `add_step … "<步骤名>" …` 里印给人看的**步骤名**；真取数走被点名的
+	//    `check-public-marks-tracked-parity.py`（该件自带取件名现读对拍，见门94）。
+	{
+		Path: "scripts/gates/precommit-gates.sh", Rule: "GPO-F1",
+		Anchor:      "门94 公开标记表时点对拍：理由列「未跟踪」↔ " + gpoGitTok + " " + gpoNLsFiles + " 现读",
+		Reason:      "步骤名文字面：`add_step` 印给用户看的**步骤名**（引号内的常量），不是 argv —— 没有哪台机器会去跑它；真取数走被点名的 `check-public-marks-tracked-parity.py`（该件自带 " + gpoGitTok + " " + gpoNLsFiles + " 现读对拍）。",
+		Replacement: "无需改：真调用在 check-public-marks-tracked-parity.py；本行只是步骤名里的字面。",
+	},
 }
 
 // ── 文字面掩蔽：行首即注释的行，整行不判 ────────────────────────────────────────

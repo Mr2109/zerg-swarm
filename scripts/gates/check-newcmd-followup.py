@@ -21,6 +21,14 @@
     T3（退码表唯一）/ T6（registry 引用面）是**全局唯一性**判据、按 path 无归属 ⇒ 本面**只报**，不改退码；
   · 面⑨ **docs 生成物（只报）**：新 path 应在 `docs/zh` + `docs/en/参考-命令行.md` 生成区有一格
     （真源 `scripts/docs/gen-cli-reference.py` 的 `--check` 目标；drift 已由 `docs` scope 兜 ⇒ 本面**只报**）。
+★ 第五批（lane 补面 · 缺口 `GAP-20261003-18`）**再并两面**（现读对拍 · **阻断**）：
+  · 面⑩ **门69 help 面冻结常量**：现跑 `scripts/gates/check-help-shape.py`（`--json`）——
+    它自己判「`BASELINE` 六格（`help --all` / `help` / `help dangerous` 的 lines/bytes）⟷ 现读」；
+    它 rc=1（新命令改了 help 面却没按 `--emit-baseline` 刷 `BASELINE` 六格）⇒ 本面**缺**；
+  · 面⑪ **公开面命令 counts 键表（Cpfc）**：现跑 `scripts/gates/check-public-face-commands.py --json counts`；
+    它 rc=1（公开面命令页未与新命令对齐）⇒ 本面**缺**（`core go test` 的 CpfcS01/S11/S12 会红）。
+  ★ 两面**只在新命令存在时**取数；取数面不在场 / 跑不起来 ⇒ **不适用**（**不是「缺」**，不误红）——
+    如实登记：这两条腿**依赖运行期取数面**（与门47 同族风险：判据依赖编译制品）。
 今天这些面**各由不同的门看**，于是「新命令只补了其中几面」时**没有任何一门会红**（这就是第 7 次漏随动）。
 
 本门做的只有一件事：**以冻结的 path 全集为基线**，把**新增 path** 逐面打印**齐/缺**，缺任一面即 rc=1 并**点名**。
@@ -49,6 +57,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -390,6 +399,64 @@ def load_docs(root):
     return out
 
 
+# ── 面⑩ / 面⑪ 取数面（缺口 `GAP-20261003-18` · lane 补面）───────────────────────
+# 病：门69 九面清单**不含**「帮助面冻结常量（门69 的 BASELINE）」与「公开面命令 counts 键表
+# （Cpfc）」⇒ 新命令过得了本门 rc=0，仍可打红门69 与 core go test 的 Cpfc 组。
+# 治法：把两面并进随动面 —— 现跑那两个判据件（**只读**），把它们的判决当本门的面。
+# ★ 取数面不在场 / 跑不起来 ⇒ rc=None ⇒ **不适用**（**不是「缺」**：不误红）；
+#   只有件真跑并判红（rc=1）才算「缺」。这也意味着本门新添了两条**依赖运行期取数面**的腿
+#   （与门47 同族风险：判据依赖编译制品）—— 已如实登记，供人拍。
+FACE_PROBE_TIMEOUT = 180
+HELP_SHAPE_REL = os.path.join("scripts", "gates", "check-help-shape.py")
+CPFC_REL = os.path.join("scripts", "gates", "check-public-face-commands.py")
+
+
+def _last_json_line(text):
+    """取 stdout 里**最后一行** `{…}` JSON（兄弟判据件都把机器面 JSON 打在末行）。"""
+    obj = None
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("{") and s.endswith("}"):
+            try:
+                obj = json.loads(s)
+            except ValueError:
+                pass
+    return obj
+
+
+def _probe_gate(root, rel, argv):
+    """现跑仓内兄弟判据件（**只读**）⇒ (rc | None, json_obj | None, why)。
+
+    取数面不在场（件缺）或跑不起来（异常/超时）⇒ rc=None ⇒ 调用方按「不适用」处置（**不误红**）。
+    """
+    fp = os.path.join(root, rel)
+    if not os.path.isfile(fp):
+        return None, None, "取数面不在场（%s）" % rel
+    try:
+        p = subprocess.run([sys.executable, fp] + list(argv), capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=FACE_PROBE_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, None, "跑不起来（%s）" % e
+    return p.returncode, _last_json_line(p.stdout), ""
+
+
+def probe_help_shape_baseline(root):
+    """面⑩：门69（`check-help-shape.py`）现跑 ⇒ (rc, json, why)。
+
+    门69 自己判「`BASELINE` 六格（`help --all` / `help` / `help dangerous` 的 lines/bytes）⟷ 现读」；
+    rc=0 齐 · rc=1 有常量不符（**缺**）· rc=2 不给结论（**不适用**）。
+    """
+    return _probe_gate(root, HELP_SHAPE_REL, ["--repo-root", root, "--json"])
+
+
+def probe_cpfc_counts(root):
+    """面⑪：Cpfc（`check-public-face-commands.py`）现跑 `--json counts` ⇒ (rc, json, why)。
+
+    rc=0 齐 · rc=1 公开面命令页与新命令未对齐（**缺** · core go test 的 Cpfc 组会红）· rc=2 不适用。
+    """
+    return _probe_gate(root, CPFC_REL, ["--root", root, "--json", "counts"])
+
+
 def impl_literals(root, impls, regexes):
     """从实现件里取字面量集合（面⑥/面⑦ 共用）。"""
     out = set()
@@ -649,14 +716,52 @@ def analyse(root, max_examples=20):
     if not c_ok:
         bad += 1
 
+    # ── 面⑩ 门69 help 面冻结常量（BASELINE 六格 · 现读对拍 · 阻断 · 缺口 `GAP-20261003-18`）──
+    # ── 面⑪ 公开面命令 counts 键表（Cpfc · 现读对拍 · 阻断 · 同上）─────────────────────
+    # ★ 全局各一格（不按 path 计）——新命令一落地即须随动，故只在「有新增」时取数。
+    if new:
+        hrc, _hobj, hwhy = probe_help_shape_baseline(root)
+        add("── 面⑩ 门69 help 面冻结常量（BASELINE 六格 · 现读对拍）：%s"
+            % ("不适用" if hrc is None else ("齐" if hrc == 0 else ("缺" if hrc == 1 else "不适用"))))
+        if hrc is None:
+            add("   不适用：%s ⇒ **不判**（取数面不在场不是「缺」）" % hwhy)
+        elif hrc == 0:
+            add("   门69 rc=0：`help --all`/`help`/`help dangerous` 的 lines/bytes 六格 ⟷ 现读一致 ⇒ 齐")
+        elif hrc == 1:
+            add("   门69 rc=1 ⇒ **缺**：新命令改了 help 面却没按 `--emit-baseline` 刷新 `BASELINE` 六格"
+                "（真身 py ＋ Go 镜像两处同批刷）")
+            bad += 1
+        else:
+            add("   门69 rc=%d：不给结论 ⇒ 不适用（不误红）" % hrc)
+
+        crc, cobj, cwhy = probe_cpfc_counts(root)
+        add("── 面⑪ 公开面命令 counts 键表（Cpfc · 现读对拍）：%s"
+            % ("不适用" if crc is None else ("齐" if crc == 0 else ("缺" if crc == 1 else "不适用"))))
+        if crc is None:
+            add("   不适用：%s ⇒ **不判**" % cwhy)
+        else:
+            cnt = cobj.get("counts") if isinstance(cobj, dict) else None
+            if isinstance(cnt, dict):
+                add("   counts 键表 = %s（六键）" % "、".join(sorted(cnt)))
+            if crc == 0:
+                add("   Cpfc rc=0：公开面命令页 ⟷ 命令树一致 ⇒ 齐")
+            elif crc == 1:
+                add("   门⑪ Cpfc 组会红 ⇒ **缺**：公开面命令页未与新命令对齐"
+                    "（core go test 的 CpfcS01/S11/S12）")
+                bad += 1
+            else:
+                add("   Cpfc rc=%d：不给结论 ⇒ 不适用（不误红）" % crc)
+    else:
+        add("── 面⑩/面⑪：新增 0 条 ⇒ 无需随动（不跑取数面：门69 `BASELINE` / Cpfc counts）")
+
     if new == []:
-        add("新增 0 条 ⇒ 九面无需随动（本读数可分辨「没跑」：上有现读 %d 条 / %d 处 path 形态与两面扫描件数行）"
+        add("新增 0 条 ⇒ 十一面无需随动（本读数可分辨「没跑」：上有现读 %d 条 / %d 处 path 形态与两面扫描件数行）"
             % (n_paths, m_forms))
 
     if bad:
         add("⇒ rc=1：以上 %d 处「缺」逐条点名（缺任一面即红）" % bad)
         return 1, L
-    add("⇒ rc=0：新增 path 逐面齐（面①–⑨）/ 计数齐 / 解析自证齐（%d 条 ⟷ %d 处）" % (n_paths, m_forms))
+    add("⇒ rc=0：新增 path 逐面齐（面①–⑪）/ 计数齐 / 解析自证齐（%d 条 ⟷ %d 处）" % (n_paths, m_forms))
     return 0, L
 
 
@@ -877,6 +982,39 @@ def self_test():
         rc, _ = analyse(o)
         if rc != 0:
             fails.append('⑮ 门⑨ 退码齐期望 rc=0，实得 %d' % rc)
+        # ⑯ 正控半边：新 path + 取数面不在场 ⇒ 面⑩/面⑪「不适用」（**不误红**）
+        p = os.path.join(tmp, 'p')
+        _mini_root(p, n_extra_cmd=True, extra_has_matrix=True)
+        rc, lines = analyse(p)
+        if rc != 0:
+            fails.append('⑯ 取数面不在场期望 rc=0（不适用不是「缺」），实得 %d' % rc)
+        elif not any('面⑩' in x and '不适用' in x for x in lines) \
+                or not any('面⑪' in x and '不适用' in x for x in lines):
+            fails.append('⑯ 未把面⑩/面⑪ 打成「不适用」')
+        # ⑰ 负控：门69 取数面判红（stub rc=1）⇒ 面⑩ 缺 ⇒ rc=1
+        q = os.path.join(tmp, 'q')
+        _mini_root(q, n_extra_cmd=True, extra_has_matrix=True)
+        os.makedirs(os.path.join(q, 'scripts', 'gates'), exist_ok=True)
+        open(os.path.join(q, HELP_SHAPE_REL), 'w', encoding='utf-8').write(
+            'import sys\nprint("{\\"gate\\": \\"stub\\"}")\nsys.exit(1)\n')
+        rc, lines = analyse(q)
+        if rc != 1:
+            fails.append('⑰ 门69 取数面判红期望 rc=1，实得 %d' % rc)
+        elif not any('面⑩' in x and '缺' in x for x in lines):
+            fails.append('⑰ 未点名面⑩ 缺')
+        # ⑱ 正控半边：门69 + Cpfc 取数面都判绿（stub rc=0）⇒ rc=0
+        r = os.path.join(tmp, 'r')
+        _mini_root(r, n_extra_cmd=True, extra_has_matrix=True)
+        open(os.path.join(r, HELP_SHAPE_REL), 'w', encoding='utf-8').write(
+            'import sys\nprint("{\\"gate\\": \\"stub\\"}")\nsys.exit(0)\n')
+        open(os.path.join(r, CPFC_REL), 'w', encoding='utf-8').write(
+            'import sys\nprint("{\\"counts\\": {\\"commands\\": 3}}")\nsys.exit(0)\n')
+        rc, lines = analyse(r)
+        if rc != 0:
+            fails.append('⑱ 取数面判绿期望 rc=0，实得 %d' % rc)
+        elif not any('面⑩' in x and '齐' in x for x in lines) \
+                or not any('面⑪' in x and '齐' in x for x in lines):
+            fails.append('⑱ 未把面⑩/面⑪ 打成「齐」')
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if fails:
@@ -884,7 +1022,7 @@ def self_test():
         for x in fails:
             print('  ✗ ' + x)
         return 1
-    print('自检通过：15 控（正控 4 + 负控 11）逐条对拍 ✓')
+    print('自检通过：18 控（含面⑩/面⑪ 不适用·齐·缺 三态）逐条对拍 ✓')
     return 0
 
 

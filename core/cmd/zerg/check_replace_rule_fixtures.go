@@ -648,23 +648,24 @@ func crrfWhitelistPrefixes(path string) ([]string, bool) {
 }
 
 // crrfCollectFixtures —— py `collect_fixtures`（T1–T6）。
-func crrfCollectFixtures(root string, prefixes, isolated []string) ([]crrfFixture, []string, int) {
+func crrfCollectFixtures(root string, prefixes, isolated []string) ([]crrfFixture, []string, int, []string) {
 	var hits []crrfFixture
 	var isoFiles []string
+	var unreadable []string
 	scanned := 0
 	for _, pre := range prefixes { // T1 前缀入参序
 		base := crrfPyJoin(root, strings.TrimSuffix(pre, "/"))
 		if !crrfIsDir(base) {
 			continue
 		}
-		crrfWalkInto(&hits, &isoFiles, &scanned, root, base, isolated)
+		crrfWalkInto(&hits, &isoFiles, &scanned, &unreadable, root, base, isolated)
 	}
 	sort.Strings(isoFiles) // T6 显式 sorted()
-	return hits, isoFiles, scanned
+	return hits, isoFiles, scanned, unreadable
 }
 
 // crrfWalkInto —— 一层 + 递归（T2 遍历序 / T3 Stat 分类 / T4 排除目录名）。
-func crrfWalkInto(hits *[]crrfFixture, isoFiles *[]string, scanned *int, root, dir string, isolated []string) {
+func crrfWalkInto(hits *[]crrfFixture, isoFiles *[]string, scanned *int, unreadable *[]string, root, dir string, isolated []string) {
 	f, err := os.Open(dir)
 	if err != nil {
 		return
@@ -702,14 +703,16 @@ func crrfWalkInto(hits *[]crrfFixture, isoFiles *[]string, scanned *int, root, d
 		}
 		text, rerr := crrfReadText(full)
 		if rerr != nil {
-			continue // ★ py `except OSError: continue`（B 类读失败静默 · 逐字保留 · 见件头口子①）
+			// ★ B 类读失败 ⇒ 登记 + 判红（✗ 不再静默跳过）· 体例照同包已治件 check_token_argv.go。
+			*unreadable = append(*unreadable, rel)
+			continue
 		}
 		for i, ln := range crrfSplitLines(text) {
 			*hits = append(*hits, crrfFixture{rel: rel, lineno: i + 1, line: ln})
 		}
 	}
 	for _, d := range subdirs { // T2 子目录原序递归
-		crrfWalkInto(hits, isoFiles, scanned, root, crrfJoin(dir, d), isolated)
+		crrfWalkInto(hits, isoFiles, scanned, unreadable, root, crrfJoin(dir, d), isolated)
 	}
 }
 
@@ -1426,7 +1429,14 @@ func checkReplaceRuleFixturesGateMain(stdout, stderr io.Writer, argv []string) i
 		return 2
 	}
 
-	fixtures, isoFiles, scanned := crrfCollectFixtures(root, prefixes, isolated)
+	fixtures, isoFiles, scanned, unreadable := crrfCollectFixtures(root, prefixes, isolated)
+	if len(unreadable) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 夹具件读不了 %d 件（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论 · 读不到不许当健康）：\n", len(unreadable))
+		for _, u := range unreadable {
+			fmt.Fprintf(stderr, "  ── %s\n", u)
+		}
+		return 2
+	}
 	fmt.Fprintln(stdout, "── 替换规则级机检：命中件不许是测试夹具（§十三 M8）──")
 	fmt.Fprintf(stdout, "   树：%s\n", root)
 	relRules := rulesPath

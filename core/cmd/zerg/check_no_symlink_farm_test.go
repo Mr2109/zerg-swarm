@@ -13,7 +13,7 @@
 //	A1Question_Cmdsub_Strict    · 命令替换前缀 ⇒ 点名 A1?（rc=0）；`--strict-links` ⇒ rc=1
 //	FarmB_Rc1_And_NoneRc0       · `--farm` 现读链接指回真仓 ⇒ rc=1；不给 `--farm` ⇒ rc=0 且「B 档跳过」
 //	JSONShape_FarmNullVsString  · `--json` 的 `farm` 键：缺省 `null` ⟷ 给了则字符串；`items`/`reports` 空 = `[]`
-//	UnreadableSilent_BClass     · 读不了的件（chmod 000）⇒ py 现状**静默跳过**（钉住 B 类真口子）
+//	UnreadableRed_BClass        · 读不了的件（chmod 000）⇒ 登记 + 判红 + rc=2（B 类真口子已治 · 不再静默）
 //	WalkFollowsSymlinkDirs      · ★ 铁律：符号链接**目录**按 py `entry.is_dir()`（跟随）归 dirnames、且不下钻
 //	                               （✗ 若用 Go `DirEntry.IsDir()` 的 Lstat 语义则归 files ⇒ 判反）
 //	TraversalOrder_SortedFiles  · 同目录文件序 = `sorted(filenames)`（码点序）· 跨目录 = scandir 原序
@@ -194,7 +194,7 @@ func TestNoSymlinkFarmGate(t *testing.T) {
 		}
 	})
 
-	t.Run("UnreadableSilent_BClass", func(t *testing.T) {
+	t.Run("UnreadableRed_BClass", func(t *testing.T) {
 		d := t.TempDir()
 		p := cnsfWrite(t, d, "secret.sh", "rm -rf /nope\n")
 		if err := os.Chmod(p, 0o000); err != nil {
@@ -204,13 +204,13 @@ func TestNoSymlinkFarmGate(t *testing.T) {
 		if _, err := os.ReadFile(p); err == nil {
 			t.Skip("当前用户可读（多为 root）⇒ 无法钉住 B 类")
 		}
-		rc, out, _ := cnsfT(t, "--root", d, "--no-self-test")
-		// py 现状：读不了的件**静默跳过**（既不进红也不进报告）⇒ 分母仍计 1 件 ⇒ rc=0。
-		if rc != 0 || !strings.Contains(out, "候选 1 件") {
-			t.Fatalf("rc=%d out=%q，期望 rc=0 且候选 1 件（B 类静默）", rc, out)
+		rc, out, errs := cnsfT(t, "--root", d, "--no-self-test")
+		// ★ B 类真口子已治：读不了的候选脚本件 ⇒ 登记 + 判红 + rc=2（✗ 不再静默当绿）。
+		if rc != 2 {
+			t.Fatalf("rc=%d，期望 2（B 类读失败 ⇒ 不给结论）out=%q err=%q", rc, out, errs)
 		}
-		if strings.Contains(out, "[A3]") || strings.Contains(out, "[A2]") {
-			t.Fatalf("读不了的件不应产出命中：%q", out)
+		if !strings.Contains(errs, "BLOCKED") || !strings.Contains(errs, "secret.sh") {
+			t.Fatalf("stderr 未逐件点名读不了的件：%q", errs)
 		}
 	})
 

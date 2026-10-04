@@ -6,6 +6,11 @@
 #   `PPID=1`，那是 launchd 收养的正常形态）⇒ 判据只能是「**声明的对象集**与**实际的进程集**的差集」。
 #   今天只能靠人肉 `ps`/`lsof` 撞见 —— 本门把它变成每次提交都跑一遍的机器判据。
 #
+# ★ 层限（GAP-20260927-168）：本门只判**本机层**声明的行（`layer=host`）—— 读的是**本机** `launchctl`/`ps`。
+#   声明树（`deploy/服务声明.tsv`）的 `layer` 列标明每行属哪一层；非本机层（如 `node:edge-node`）的行
+#   **不由本门判**（只计数 · 各层自记）⇒ 防「本机声明树一致」被读成「全机群服务声明一致」。
+#   缺 `layer` 列（旧 7 列件）⇒ 全部按 `host` 解析，并出一条注记（建议补列）。
+#
 # 六条规则（任一不通过 ⇒ 见下方退出码）：
 #   R1 声明树可解析且非空（`deploy/服务声明.tsv`；缺件 / 解析不出行 / 无 launchd 行 ⇒ **rc=2 不给结论**）。
 #   R2 **按名字集对拍**：`launchctl list` 的 `com.zerg.` 标签集 ⇄ 声明树 `kind=launchd` 的 `name` 集，
@@ -29,7 +34,7 @@
 #
 # 用法：
 #   python3 scripts/gates/check-service-declaration.py            # 真目标（本机现值）
-#   python3 scripts/gates/check-service-declaration.py --self-test # 成对负控（1 正 + 5 反 + 1 空转）
+#   python3 scripts/gates/check-service-declaration.py --self-test # 成对负控（18 格：正控 6 + 负控 10 + 不给结论 2 · 含 1 格真命令行退码）
 #
 # 取证夹具（自检用；也便于在别的机器上复跑）：
 #   ZERG_SVCDECL_DECL     声明树路径（默认 <仓根>/deploy/服务声明.tsv）
@@ -90,7 +95,9 @@ def parse_decl(path):
             rows.append({'line': ln, 'kind': kind, 'name': cells[1].strip(),
                          'decl': cells[2].strip(), 'prog': cells[3].strip(),
                          'proc': cells[4].strip(), 'owner': cells[5].strip(),
-                         'disposition': cells[6].strip()})
+                         'disposition': cells[6].strip(),
+                         # ★ 层限（GAP-20260927-168）：第 8 列 = layer（缺 ⇒ 空串 · 用时空串按 host 解析）
+                         'layer': cells[7].strip() if len(cells) >= 8 else ''})
     return rows, problems
 
 
@@ -186,8 +193,20 @@ def check(root, decl_path=None, ps_path=None, launchctl_path=None, home=None):
         return 2, list(perr), [], ''
     problems.extend(perr)
 
-    launchd_rows = [r for r in rows if r['kind'] == 'launchd']
-    ghost_rows = [r for r in rows if r['kind'] == 'ghost']
+    # ★ 层限（GAP-20260927-168）：本门只判**本机层**（`layer=host`）的行；非本机层行只计数、不由本门判。
+    saw_layer_col = any(r.get('layer') for r in rows)
+    host_rows = [r for r in rows if (r.get('layer') or 'host') == 'host']
+    off_rows = [r for r in rows if (r.get('layer') or 'host') != 'host']
+    launchd_rows = [r for r in host_rows if r['kind'] == 'launchd']
+    ghost_rows = [r for r in host_rows if r['kind'] == 'ghost']
+
+    # R0 层限自述（防「本机声明树一致」被读成「全机群服务声明一致」）
+    if not saw_layer_col:
+        notes.append('层限：声明树无 `layer` 列（旧 7 列件）⇒ 全部按 `host`（本机层）解析；'
+                     '建议按 GAP-20260927-168 补 `layer` 列（标清每行属哪一层）')
+    else:
+        notes.append('R0 层限：本门判面 = `layer=host`（**本机层**）· 本层 %d 行 · 非本层 %d 行'
+                     '（非本层**不由本门判** · 各层自记）' % (len(host_rows), len(off_rows)))
 
     # R1 空转/不可判
     if not launchd_rows:
@@ -278,7 +297,7 @@ def check(root, decl_path=None, ps_path=None, launchctl_path=None, home=None):
         # ★ 词界锚（`GAP-20260927-100` 面② · 禁子串猜）：声明行的「进程特征」必须作为**整词**出现在
         #   现值命令行里（后随空白或行尾）⇒ `bin/zerg-core` 不再被 `bin/zerg-core-test` 子串假绿。
         #   ✗ 不用 split()[3]：本仓路径含空格（`00 项目`）切词会把 argv[0] 截断 ⇒ 只用正则词界。
-        hit = [r for r in rows if r['proc'] and r['proc'] != '-'
+        hit = [r for r in host_rows if r['proc'] and r['proc'] != '-'
                and re.search(re.escape(r['proc']) + r'(?=\s|$)', ln)]
         if hit:
             covered.append((ln, hit[0]))
@@ -315,10 +334,10 @@ def print_report(root, rc, problems, notes, modes, decl_path):
 # ─────────────────────────── 自检（成对负控）───────────────────────────
 GOOD_DECL = (
     '# 夹具声明树\n'
-    'kind\tname\t声明件\t程序\t进程特征\t归属\t处置\n'
-    'launchd\tcom.zerg.core\t~/Library/LaunchAgents/com.zerg.core.plist\t/bin/bash scripts/svc/zerg-core-daemon.sh\tbin/zerg-core\t主控\t-\n'
-    'launchd\tcom.zerg.agent-Mr2109\t~/Library/LaunchAgents/com.zerg.agent-Mr2109.plist\tbin/zerg-agentd --machine Mr2109\tbin/zerg-agentd\t子端\t-\n'
-    'ghost\tcocoon-docs-service\t-\tbin/cocoon-docs-service -port 8610\tbin/cocoon-docs-service\t文档茧\t进 reap 候选 · 待 Mr2109 拍\n'
+    'kind\tname\t声明件\t程序\t进程特征\t归属\t处置\tlayer\n'
+    'launchd\tcom.zerg.core\t~/Library/LaunchAgents/com.zerg.core.plist\t/bin/bash scripts/svc/zerg-core-daemon.sh\tbin/zerg-core\t主控\t-\thost\n'
+    'launchd\tcom.zerg.agent-Mr2109\t~/Library/LaunchAgents/com.zerg.agent-Mr2109.plist\tbin/zerg-agentd --machine Mr2109\tbin/zerg-agentd\t子端\t-\thost\n'
+    'ghost\tcocoon-docs-service\t-\tbin/cocoon-docs-service -port 8610\tbin/cocoon-docs-service\t文档茧\t进 reap 候选 · 待 Mr2109 拍\thost\n'
 )
 GOOD_PS = (
     '  68939     1       56:36 /repo/bin/zerg-core\n'
@@ -366,6 +385,11 @@ def self_test():
     cases.append(('负控⑪ 现值是 `bin/zerg-core-test`（≠ 声明的 `bin/zerg-core`）⇒ rc=1（**词界锚** · 杀子串假绿）', 1, 'sibling_name'))
     cases.append(('负控⑫ 闭集内新标签 `com.zerg.newthing`（声明无）⇒ rc=1（闭集内判得红；闭集外见正控⑨）', 1, 'newthing'))
     cases.append(('负控⑬ 声明 com.zerg.core 的作业 pid 上跑的**不是**声明的程序（标签↔pid↔程序不一致 · R4a）⇒ rc=1', 1, 'pid_mismatch'))
+    cases.append(('负控⑭ 作业数不等（声明 2 条 launchd · launchctl 仅 1 行 ⇒ B∖A 悬空）⇒ rc=1', 1, 'count_less'))
+    cases.append(('负控⑮ 瞬态工人（launchctl 有 pid · ps 已无此 pid ⇒ R4a 锚不了）⇒ rc=1', 1, 'transient'))
+    cases.append(('正控⑯ 含字面 shell 包装（/bin/sh -c exec …）⇒ 词界锚仍命中 ⇒ rc=0', 0, 'shell_wrap'))
+    cases.append(('正控⑰ 真命令行退码：子进程跑本件·好件夹具 ⇒ 进程 rc=0', 0, 'cli'))
+    cases.append(('正控⑱ 非本层行（`layer=node:edge-node`：声明无同名标签、plist 也不在盘）⇒ **不由本门判** ⇒ rc=0（**层限** · GAP-20260927-168）', 0, 'offlayer'))
 
     ok = True
     for name, want, mode in cases:
@@ -399,12 +423,39 @@ def self_test():
                 kw['ps'] = ('  68939     1       56:36 /repo/bin/zerg-agentd\n'
                             '  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n'
                             '  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n')
+            elif mode == 'count_less':
+                kw['lc'] = '68939\t0\tcom.zerg.core\n'
+            elif mode == 'transient':
+                # launchctl 仍有 agent-Mr2109 的 pid=14149，但 ps 里那一条已经消失（瞬态工人）
+                kw['ps'] = ('  68939     1       56:36 /repo/bin/zerg-core\n'
+                            '  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n')
+            elif mode == 'shell_wrap':
+                # 命令行含字面 shell 包装（argv[0]=/bin/sh · -c 脚本）⇒ 禁切词/词界锚仍须命中
+                kw['ps'] = ('  68939     1       56:36 /bin/sh -c exec bin/zerg-core\n'
+                            '  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n'
+                            '  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n')
+            elif mode == 'offlayer':
+                # ★ 层限（GAP-20260927-168）：追加一条**非本机层**（layer=node:edge-node）launchd 行 ——
+                #   name 在 launchctl 里没有（若判则 B∖A 红）、plist 也不在盘（若判则 R3 红）。
+                #   本门只判 layer=host ⇒ 该行**不由本门判** ⇒ rc 必为 0（层限的牙）。
+                kw['decl'] = GOOD_DECL + ('launchd\tx3-agent.service\t/home/<user>/edge-node-agent.service\t'
+                                          '/home/<user>/zerg/bin/zerg-agentd\tbin/zerg-agentd\t节点(edge-node)\t-\tnode:edge-node\n')
             elif mode == 'empty_ps':
                 kw['ps'] = '    1     0  00:00 /sbin/launchd\n'
             dp, pp, lp, home = mk(d, **kw)
             if mode == 'no_decl':
                 dp = os.path.join(d, '不存在.tsv')
-            rc, problems, notes, _ = check(d, decl_path=dp, ps_path=pp, launchctl_path=lp, home=home)
+            if mode == 'cli':
+                # ⑰ **真命令行退码**：起子进程跑本件（走 main()/argparse/print_report 全链），
+                #    读**进程** rc —— 夹具经 env 通道喂入（与真机取证同一条路）。
+                os.makedirs(os.path.join(d, 'core', 'cmd', 'zerg'), exist_ok=True)
+                env = {**os.environ, 'ZERG_SVCDECL_DECL': dp, 'ZERG_SVCDECL_PS': pp,
+                       'ZERG_SVCDECL_LAUNCHCTL': lp, 'ZERG_SVCDECL_HOME': home}
+                proc = subprocess.run([sys.executable, os.path.abspath(__file__), d],
+                                      env=env, capture_output=True, text=True)
+                rc, problems = proc.returncode, []
+            else:
+                rc, problems, notes, _ = check(d, decl_path=dp, ps_path=pp, launchctl_path=lp, home=home)
             flag = '✓' if rc == want else '✗'
             print('  %s %s（rc=%d）' % (flag, name, rc))
             if mode == 'swapped':                      # 点名断言：两侧名字都必须逐字出现
