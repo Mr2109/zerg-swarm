@@ -25,6 +25,7 @@
   （本来 ~20s）拖成分钟级。**判据与真跑退码一字未改**（只加 `--self-test` 这一档）。
 """
 import argparse
+import base64
 import fnmatch
 import json
 import os
@@ -77,13 +78,47 @@ MAX_BLOB = 2 * 1024 * 1024
 
 
 # ★ 归一化面（缺口 `GAP-20260925-38`）：`BLOCK` / `INFO` 判定前先把「等价形态」折回可匹配的原文形态。
-#   三种变形此前**都绕得过**（只按原样正则 `search()`；实测全仓 `nfkc`/`casefold`/`fullwidth`/`unicodedata`
-#   命中 0）—— 公开历史里它们存活很久而门禁一声不响。三种：
+#   四种变形此前**都绕得过**（只按原样正则 `search()`；实测全仓 `nfkc`/`casefold`/`fullwidth`/`unicodedata`
+#   命中 0）—— 公开历史里它们存活很久而门禁一声不响。四种：
 #     ① 全角/兼容同形字（`／Users／ｆｕｚｚ０１`）—— NFKC 折回 `~`
 #     ② 源码里的转义写法（`/Users/fuzz\u200b01` 实际是 6 个 ASCII 字符、不是零宽字符）—— 解 `\uXXXX`/`\xNN`
 #     ③ 零宽/不可见字符插字（真 `U+200B`）—— 去零宽字符
+#     ④ base64 载荷（私径 / 令牌整体 base64 编码藏进文件）—— 逐段试解后把解码文本追加进判据文本
 #   只用于**匹配**：命中后报出的 sample 取自归一化串（仍经 `mask()` 打码）；判定口径与退码一字未改。
 ZERO_WIDTH_RE = re.compile("[\u200b\u200c\u200d\u200e\u200f\u2060\ufeff\u00ad]")
+
+
+# ④ base64 载荷（缺口 `GAP-20260925-38` · 第四变形）：把私径 / 令牌整体 base64 编码后藏进文件，原先按原样
+#   正则匹配**一律绕得过**。治法＝逐段试解、把「解出来全是可打印 ASCII 且 ≥8 字节」的载荷追加进判据文本
+#   （只追加解码结果、原文一字不动 —— 判定口径与退码不变）。短串（<16 字符）与随机二进制一律丢，避免噪声。
+B64_RE = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}")
+B64_MAX_TOKENS = 4096        # 单个 blob 试解段数上限（防大件上无界解码拉爆墙钟）
+B64_MAX_RUN = 8192           # 单个候选段长度上限（超长多半是二进制 / 哈希串）
+
+
+def _b64_payloads(s):
+    """抽出像 base64 载荷的段并解码：只留「≥8 字节且解出全为可打印 ASCII / TAB / LF / CR」者。"""
+    out, seen = [], set()
+    for i, m in enumerate(B64_RE.finditer(s)):
+        if i >= B64_MAX_TOKENS:
+            break
+        tok = m.group(0)
+        if len(tok) > B64_MAX_RUN:
+            continue
+        try:
+            raw = base64.b64decode(tok + "=" * (-len(tok) % 4), validate=True)
+        except Exception:
+            continue
+        if len(raw) < 8 or not all(32 <= b < 127 or b in (9, 10, 13) for b in raw):
+            continue
+        try:
+            dec = raw.decode("ascii")
+        except Exception:
+            continue
+        if dec and dec not in seen:
+            seen.add(dec)
+            out.append(dec)
+    return out
 
 
 def normalize_forms(s):
@@ -94,6 +129,9 @@ def normalize_forms(s):
     s = re.sub(r"\\x([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), s)   # ② `\xNN`
     s = unicodedata.normalize("NFKC", s)                                        # ① 全角 / 兼容折叠
     s = ZERO_WIDTH_RE.sub("", s)                                                # ③ 去零宽 / 不可见
+    exp = _b64_payloads(s)                                                      # ④ base64 载荷（追加解码结果）
+    if exp:
+        s = s + "\n" + "\n".join(exp)
     return s
 
 
@@ -610,7 +648,7 @@ def main():
 #   ③ 退码：见文件头「退码」那一段（真跑的 1 是「判红」；自检的 1 只在 `--self-test` 这一档出）。
 SELF_PATH = os.path.abspath(__file__)
 _TMPDIRS = []
-WANT_CASES = 17                    # 自证用例条数（**写死**：少跑一格即断言失败；⑬⑭ = 中文名件回归；⑮⑯⑰ = 等价形态 · 缺口 GAP-20260925-38）
+WANT_CASES = 19                    # 自证用例条数（**写死**：少跑一格即断言失败；⑬⑭ = 中文名件回归；⑮⑯⑰⑱⑲ = 等价形态 · 缺口 GAP-20260925-38）
 
 # 夹具里的敏感文本一律**拼装写**：本门自己就在扫这些形状，源码里不留完整形态（免得本件被自己
 # 的口径或别的门当成泄露；`publish/replace-rules.tsv` 也无从命中这些片段）。
@@ -634,6 +672,9 @@ _FIX_WL = "src/\n"                                  # 夹具仓自己的白名�
 _FIX_FW = "\uff0f\uff35\uff53\uff45\uff52\uff53\uff0f\uff4d\uff53\uff10\uff11"   # 全角 ／Ｕｓｅｒｓ／ｍｓ０１（规则只枚举了 ASCII Users 那形）
 _FIX_ZW = "10.0." + "\u200b" + "0.5"                                             # 零宽空格 U+200B 插在地址中（规则未枚举）
 _FIX_ESC = "10.0." + "\\u200b" + "0.5"                                           # 源码里的转义写法（6 个 ASCII 字符 · 规则未枚举）
+
+
+_FIX_B64 = base64.b64encode(("10.0." + "0.5" + ":port").encode()).decode()   # base64 载荷（第四变形 · 规则未枚举）
 
 
 def _write(path, text):
@@ -827,7 +868,7 @@ def self_test():
     # ── 等价形态格（缺口 `GAP-20260925-38`）：三种「绕得过」的变形 —— 判据 `BLOCK` 的 `~`。
     #   修前这三格**都是假绿**（只按原样正则匹配 ⇒ 全角/零宽/转义三形态一律 rc=0 溜过）；
     #   谁把 `normalize_forms()` 从判据面拿掉，这三格立刻变红。──
-    print("[判据] 等价形态·全角同形字：`／Users／ｆｕｚｚ０１` 经 NFKC 折回 `~` ⇒ 判红")
+    print("[判据] 等价形态·全角同形字：`／Users／ｆｕｚｚ０１` 经 NFKC 折回 `/Users/ms" "01` ⇒ 判红")
     fw = _mk_fixture_repo(d, "fullwidth", {"src/fw.py": 'H = "%s"\n' % _FIX_FW})
     rc, text = _run_cli(fw)
     case("⑮全角同形", "白名单内全角路径形 ⇒ rc=1 且点名「用户家目录路径」",
@@ -844,6 +885,17 @@ def self_test():
     rc, text = _run_cli(esc)
     case("⑰转义写法", "白名单内 `\\uXXXX` 转义地址形 ⇒ rc=1 且点名「内网地址 10.0.0.x」",
          rc == 1 and "内网地址 10.0.0.x" in text, "rc=%d（期望 1）" % rc)
+
+    print("[判据] 等价形态·base64 载荷：base64 编码的 `10.0.0" ".5:port` ⇒ 解码后判红")
+    b64 = _mk_fixture_repo(d, "b64", {"src/b64.py": 'H = "%s"\n' % _FIX_B64})
+    rc, text = _run_cli(b64)
+    case("⑱base64", "白名单内 base64 载荷（解出内网地址形）⇒ rc=1 且点名「内网地址 10.0.0.x」",
+         rc == 1 and "内网地址 10.0.0.x" in text, "rc=%d（期望 1）" % rc)
+
+    print("[防空绿档] 把 base64 面弄哑（`_b64_payloads` 恒空）⇒ ⑱ 那棵必红的树退回 rc=0（该真源不是恒红）")
+    rc_mute_b64, _ = _with_swapped("_b64_payloads", lambda s: [], b64)
+    case("⑲防空绿", "哑化 base64 面 ⇒ ⑱ 那棵**必红**的树退回 rc=0（判红侧不是恒红）",
+         rc_mute_b64 == 0, "rc=%d（期望 0）" % rc_mute_b64)
 
     print("[真目标] 现读真仓**结构**（**不跑全历史** —— 实测 3m55s，见文件头）⇒ 结构断言 ＋ 计数照实报")
     revs = len(sh(["git", "rev-list", "--all"]).split())

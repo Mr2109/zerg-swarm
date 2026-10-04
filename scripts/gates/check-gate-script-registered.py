@@ -48,6 +48,10 @@ def run(root, as_json):
     if gs is None:
         print("⛔ 不给结论（rc=2）：门件目录不在盘：%s" % os.path.join(root, GATES_DIR), file=sys.stderr)
         return 2
+    if not gs:  # ★ 空集守卫（GAP-20260927-108）：空域 ⇒ fail-closed（✗ 不许静默当「全登记」）
+        print("⛔ 不给结论（rc=2）：空域 —— %s 下 0 个 .py/.sh 门件（取不到输入 ⇒ 空域 ≠ 全登记）"
+              % os.path.join(root, GATES_DIR), file=sys.stderr)
+        return 2
     reg = registered(root)
     if reg is None:
         print("⛔ 不给结论（rc=2）：标记表读不到：%s" % os.path.join(root, MARKS_REL), file=sys.stderr)
@@ -81,7 +85,14 @@ def self_test():
         os.remove(os.path.join(td, MARKS_REL))
         if run(td, False) != 2:
             print("  ✗ 负控失败：标记表缺 ⇒ rc=2"); ok = False
-    print("自检 %s（3 格）" % ("PASS" if ok else "FAIL"))
+        # 空域负控：目录在盘但 0 门件 ⇒ rc=2（空域 ≠ 全登记）
+        os.remove(os.path.join(td, GATES_DIR, "check-a.py"))
+        os.remove(os.path.join(td, GATES_DIR, "check-b.sh"))
+        with open(os.path.join(td, MARKS_REL), "w", encoding="utf-8") as f:
+            f.write("scripts/gates/check-a.py\tno\tB 类\n")
+        if run(td, False) != 2:
+            print("  ✗ 空域负控失败：0 门件应 rc=2"); ok = False
+    print("自检 %s（4 格）" % ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
 
 

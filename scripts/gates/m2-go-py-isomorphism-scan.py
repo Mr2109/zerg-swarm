@@ -119,6 +119,9 @@ def main() -> int:
     if err:
         sys.stderr.write("%s: %s ⇒ 不给结论（退码 2）\n" % (VERSION, err))
         return 2
+    if not rows:  # ★ 空集守卫（GAP-20260927-108）：空域 ⇒ fail-closed（✗ 不许当「0 件 = 扫描完成」绿）
+        sys.stderr.write("%s: 空域 —— core/cmd/zerg 下 0 个非测试 .go（取不到输入）⇒ 不给结论（退码 2）\n" % VERSION)
+        return 2
     if a.json:
         print(json.dumps({"schema": "zerg/m2-go-py-isomorphism/v1", "rows": rows}, ensure_ascii=False))
         return 0

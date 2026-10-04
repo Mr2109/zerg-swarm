@@ -21,11 +21,15 @@
 // ② 默认根定位（见 a）· ③ 非 UTF-8 文本 decode 粒度（py 按非法序列 / Go 按非法字节 run）·
 // ④ 正则语义差（py `\s`/`\d`/`\w` Unicode ⟷ Go RE2 ASCII；RE2 无反向引用/环视，本件未用到）·
 // ⑤ 并行档实现手段（py 起子进程 ⟷ Go 同进程 goroutine；结论面与 stdout 逐字一致）·
-// ⑥ C 类兜底（py 裸 sys.exit ⟷ 本件 fail-closed rc=2）· ⑦ blob 遍历序走 git 输出序（两态同源）。
+// ⑥ C 类兜底（py 裸 sys.exit ⟷ 本件 fail-closed rc=2）· ⑦ blob 遍历序走 git 输出序（两态同源）·
+// ⑧ NFKC 粒度：py 用真 NFKC（全等价类），本件零依赖纪律下用**全角/兼容折叠近似**（覆盖全角同形字与
+//
+//	表意空格；非全角等价类不折叠 ⇒ 极端形态两侧可能不同，✗ 不声称逐字对齐）。
 package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -46,7 +50,7 @@ const (
 	chsecProg     = "check-history-secrets.py"
 	chsecIsoPrefx = "!夹具"
 	chsecMaxBlob  = 2 * 1024 * 1024
-	chsecWantCase = 14 // 自证用例条数（写死：少跑一格即断言失败）
+	chsecWantCase = 19 // 自证用例条数（写死：少跑一格即断言失败；⑮⑯⑰⑱⑲ = 等价形态 · 缺口 GAP-20260925-38）
 )
 
 type chsecPatSpec struct{ pat, why string }
@@ -492,6 +496,94 @@ func chsecMask(s string) string {
 	return s
 }
 
+// ── 归一化面（缺口 GAP-20260925-38 · 与 py `normalize_forms` 同口径）─────────────────────────
+//
+// py 用真 NFKC；本件按**零依赖纪律**用「全角↔半角折叠」近似（见文件头未覆盖面 ⑧），覆盖实测绕过形态：
+//
+//	① 全角/兼容同形字（／Users／ｆｕｚｚ０１）② 源码里的 `\uXXXX` / `\xNN` 转义 ③ 零宽/不可见字符（U+200B…）
+//	④ base64 载荷（私径/令牌整体 base64 编码藏进文件）—— 逐段试解后把解码文本追加进判据文本。
+//
+// 只用于**匹配**：命中后报出的 sample 取自归一化串（仍经 chsecMask 打码）；判定口径与退码一字未改。
+var chsecXRe = regexp.MustCompile(`\\x([0-9a-fA-F]{2})`)
+var chsecZeroWidthRe = regexp.MustCompile(`[\x{200b}\x{200c}\x{200d}\x{200e}\x{200f}\x{2060}\x{feff}\x{00ad}]`)
+var chsecB64Re = regexp.MustCompile(`[A-Za-z0-9+/]{16,}={0,2}`)
+
+const (
+	chsecB64MaxTokens = 4096 // 单个 blob 试解段数上限（防大件上无界解码拉爆墙钟）
+	chsecB64MaxRun    = 8192 // 单个候选段长度上限（超长多半是二进制 / 哈希串）
+)
+
+func chsecHexToRune(h string) string {
+	n, err := strconv.ParseInt(h, 16, 32)
+	if err != nil {
+		return ""
+	}
+	return string(rune(n))
+}
+
+// chsecFoldWidth：NFKC 近似的全角/兼容折叠（只折全角 ASCII 与表意空格）—— 零依赖纪律。
+func chsecFoldWidth(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 0xFF01 && r <= 0xFF5E:
+			return r - 0xFEE0
+		case r == 0x3000:
+			return ' '
+		}
+		return r
+	}, s)
+}
+
+// chsecB64Payloads：抽出像 base64 载荷的段并解码；只留「≥8 字节且解出全为可打印 ASCII / TAB / LF / CR」者。
+func chsecB64Payloads(s string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for i, tok := range chsecB64Re.FindAllString(s, -1) {
+		if i >= chsecB64MaxTokens {
+			break
+		}
+		if len(tok) > chsecB64MaxRun {
+			continue
+		}
+		pad := (4 - len(tok)%4) % 4
+		raw, err := base64.StdEncoding.DecodeString(tok + strings.Repeat("=", pad))
+		if err != nil {
+			continue
+		}
+		if len(raw) < 8 {
+			continue
+		}
+		ok := true
+		for _, b := range raw {
+			if !((b >= 32 && b < 127) || b == 9 || b == 10 || b == 13) {
+				ok = false
+				break
+			}
+		}
+		if !ok {
+			continue
+		}
+		dec := string(raw)
+		if dec != "" && !seen[dec] {
+			seen[dec] = true
+			out = append(out, dec)
+		}
+	}
+	return out
+}
+
+// chsecNormalizeForms：与 py `normalize_forms` 同口径（步骤顺序一致）。
+func chsecNormalizeForms(s string) string {
+	s = chsecURe.ReplaceAllStringFunc(s, func(m string) string { return chsecHexToRune(m[2:]) })
+	s = chsecXRe.ReplaceAllStringFunc(s, func(m string) string { return chsecHexToRune(m[2:]) })
+	s = chsecFoldWidth(s)
+	s = chsecZeroWidthRe.ReplaceAllString(s, "")
+	if exp := chsecB64PayloadsFn(s); len(exp) > 0 {
+		s = s + "\n" + strings.Join(exp, "\n")
+	}
+	return s
+}
+
 // ── 扫描核（串行档与并行片共用同一份判据）────────────────────────────────────────────────
 
 type chsecCompiled struct {
@@ -534,6 +626,7 @@ func chsecKey(osha string, iso bool) string {
 var (
 	chsecPublishedPathFn = chsecPublishedPath
 	chsecLoadRulesFn     = chsecLoadRules
+	chsecB64PayloadsFn   = chsecB64Payloads // ④ base64 面（缺口 GAP-20260925-38）· 防空绿档要换的真源
 )
 
 func chsecMin(a, b int) int {
@@ -592,7 +685,7 @@ func chsecScanCommits(revs []string, repo string, lits []chsecLit, regexes []chs
 	for local, sha := range revs {
 		idx := baseIdx + local + 1
 		// ① 提交信息本身也会被镜像 ⇒ 一起审
-		msg := chsecApplyRules(chsecShText([]string{"git", "log", "-1", "--format=%B", sha}, repo), lits, regexes, nil, "")
+		msg := chsecNormalizeForms(chsecApplyRules(chsecShText([]string{"git", "log", "-1", "--format=%B", sha}, repo), lits, regexes, nil, ""))
 		for _, c := range blk {
 			if m := c.rx.FindString(msg); m != "" {
 				hits = append(hits, chsecHit{chsecSHA10(sha), "<commit-message>", c.why, chsecMask(m)})
@@ -632,7 +725,7 @@ func chsecScanCommits(revs []string, repo string, lits []chsecLit, regexes []chs
 					cache[key] = chsecVerdict{kind: "skip"}
 					continue
 				}
-				text := chsecApplyRules(string(blob), lits, regexes, isolated, rel)
+				text := chsecNormalizeForms(chsecApplyRules(string(blob), lits, regexes, isolated, rel))
 				verdict = chsecVerdict{kind: "clean"}
 				blocked := false
 				for _, c := range blk {
@@ -1270,6 +1363,11 @@ var (
 	chsecFixPEM   = "-----BEGIN " + "RSA PRIVATE KEY-----"
 	chsecFixSlack = "xoxb-" + strings.Repeat("0", 12)
 	chsecFixHome  = "/Users/" + "ms" + "01"
+	// ★ 等价形态夹具（缺口 GAP-20260925-38 · 四种「绕得过」的变形）：一律**拼装/转义写**，源码里不留完整形态。
+	chsecFixFW  = "\uFF0F\uFF35\uFF53\uFF45\uFF52\uFF53\uFF0F\uFF4D\uFF53\uFF10\uFF11"      // 全角 ／Ｕｓｅｒｓ／ｍｓ０１（规则只枚举 ASCII 形）
+	chsecFixZW  = "10.0." + "\u200b" + "0.5"                                                // 真 U+200B 插在地址中（规则未枚举）
+	chsecFixESC = "10.0." + "\\u200b" + "0.5"                                               // 源码里的转义写法（6 个 ASCII 字符 · 规则未枚举）
+	chsecFixB64 = base64.StdEncoding.EncodeToString([]byte("10.0." + "0" + ".5" + ":port")) // base64 载荷（第四变形）
 )
 
 var (
@@ -1478,6 +1576,39 @@ func chsecSelfTest(stdout, stderr io.Writer) int {
 	caseFn("⑭牙齿", "默认 quotePath 下列表里是转义形态、原样名不在（不是恒绿摆设）",
 		naiveEsc && !strings.Contains(naive, cjkRel),
 		fmt.Sprintf("转义形态 %s · 原样名 %s（期望：有转义 / 无原样）", inDisp(naiveEsc), inDisp(strings.Contains(naive, cjkRel))))
+
+	fmt.Fprint(stdout, "[判据] 等价形态·全角同形字：`／Users／ｆｕｚｚ０１` 经折叠回 `/Users/ms"+"01` ⇒ 判红\n")
+	fw := chsecMkFixtureRepo(d, "fullwidth", []chsecFixtureFile{{"src/fw.py", `H = "` + chsecFixFW + `"` + "\n"}}, "夹具：初始提交", chsecFixWL)
+	rc, text = chsecRunCLI(fw)
+	caseFn("⑮全角同形", "白名单内全角路径形 ⇒ rc=1 且点名「用户家目录路径」",
+		rc == 1 && strings.Contains(text, "用户家目录路径"), fmt.Sprintf("rc=%d（期望 1）", rc))
+
+	fmt.Fprint(stdout, "[判据] 等价形态·零宽插字：地址中插真 `U+200B` ⇒ 去零宽后判红\n")
+	zw := chsecMkFixtureRepo(d, "zerowidth", []chsecFixtureFile{{"src/zw.py", `H = "` + chsecFixZW + `"` + "\n"}}, "夹具：初始提交", chsecFixWL)
+	rc, text = chsecRunCLI(zw)
+	caseFn("⑯零宽插字", "白名单内零宽插字地址形 ⇒ rc=1 且点名「内网地址 10.0.0.x」",
+		rc == 1 && strings.Contains(text, "内网地址 10.0.0.x"), fmt.Sprintf("rc=%d（期望 1）", rc))
+
+	fmt.Fprint(stdout, "[判据] 等价形态·转义写法：源码里的 `10.0.\\u200b0.5`（6 个 ASCII 字符）⇒ 解转义后判红\n")
+	esc := chsecMkFixtureRepo(d, "escaped", []chsecFixtureFile{{"src/esc.py", `H = "` + chsecFixESC + `"` + "\n"}}, "夹具：初始提交", chsecFixWL)
+	rc, text = chsecRunCLI(esc)
+	caseFn("⑰转义写法", "白名单内 `\\uXXXX` 转义地址形 ⇒ rc=1 且点名「内网地址 10.0.0.x」",
+		rc == 1 && strings.Contains(text, "内网地址 10.0.0.x"), fmt.Sprintf("rc=%d（期望 1）", rc))
+
+	fmt.Fprint(stdout, "[判据] 等价形态·base64 载荷：base64 编码的 `10.0.0"+".5:port` ⇒ 解码后判红\n")
+	b64 := chsecMkFixtureRepo(d, "b64", []chsecFixtureFile{{"src/b64.py", `H = "` + chsecFixB64 + `"` + "\n"}}, "夹具：初始提交", chsecFixWL)
+	rc, text = chsecRunCLI(b64)
+	caseFn("⑱base64", "白名单内 base64 载荷（解出内网地址形）⇒ rc=1 且点名「内网地址 10.0.0.x」",
+		rc == 1 && strings.Contains(text, "内网地址 10.0.0.x"), fmt.Sprintf("rc=%d（期望 1）", rc))
+
+	savedB64 := chsecB64PayloadsFn
+	rcMuteB64, _ := func() (int, string) {
+		chsecB64PayloadsFn = func(string) []string { return []string{} }
+		defer func() { chsecB64PayloadsFn = savedB64 }()
+		return chsecRunCLI(b64)
+	}()
+	caseFn("⑲防空绿", "哑化 base64 面（chsecB64PayloadsFn 恒空）⇒ ⑱ 那棵**必红**的树退回 rc=0（判红侧不是恒红）",
+		rcMuteB64 == 0, fmt.Sprintf("rc=%d（期望 0）", rcMuteB64))
 
 	fmt.Fprint(stdout, "[真目标] 现读真仓**结构**（**不跑全历史** —— 实测 3m55s，见文件头）⇒ 结构断言 ＋ 计数照实报\n")
 	root := chsecRepoRoot()

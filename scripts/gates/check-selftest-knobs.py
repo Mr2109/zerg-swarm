@@ -39,7 +39,20 @@ import sys
 
 # 五件套白名单：目前为空 ⇒ 现读即红（这正是缺口要的：先点名、再逐条接线或改写）。
 # 每条形如 {"id": "...", "anchor": "<源码逐字>", "reason": "...", "source": "...", "gate": "..."}
-KNOB_ALLOW = []
+KNOB_ALLOW = [
+    {"id": "ZERG_ALLSH_UNITTEST", "anchor": "\"ZERG_ALLSH_UNITTEST\": {\"readers\": \"all.sh\"",
+     "reason": "门109 check-env-knobs.py 的旋钮登记表**逐字点名**本旋钮（只登记、不消费）⇒ 本门 NAME_RE 兜底把「提及」当「消费」误报；登记它消掉误报，✗ 不改本门判据",
+     "source": "GAP-20260927-439", "gate": "门99 check-selftest-knobs.py"},
+    {"id": "ZERG_ALLSH_NO_PERL", "anchor": "\"ZERG_ALLSH_NO_PERL\": {\"readers\": \"all.sh\"",
+     "reason": "门109 check-env-knobs.py 的旋钮登记表**逐字点名**本旋钮（只登记、不消费）⇒ 本门 NAME_RE 兜底把「提及」当「消费」误报；登记它消掉误报，✗ 不改本门判据",
+     "source": "GAP-20260927-439", "gate": "门99 check-selftest-knobs.py"},
+    {"id": "ZERG_GATES_SELFTEST_DEPTH", "anchor": "\"ZERG_GATES_SELFTEST_DEPTH\": {\"readers\": \"precommit-gates.sh\"",
+     "reason": "门109 check-env-knobs.py 的旋钮登记表**逐字点名**本旋钮（只登记、不消费）⇒ 本门 NAME_RE 兜底把「提及」当「消费」误报；登记它消掉误报，✗ 不改本门判据",
+     "source": "GAP-20260927-439", "gate": "门99 check-selftest-knobs.py"},
+    {"id": "ZERG_REAL_GATES_UNITTEST", "anchor": "\"ZERG_REAL_GATES_UNITTEST\": {\"readers\": \"real-gates.sh\"",
+     "reason": "门109 check-env-knobs.py 的旋钮登记表**逐字点名**本旋钮（只登记、不消费）⇒ 本门 NAME_RE 兜底把「提及」当「消费」误报；登记它消掉误报，✗ 不改本门判据",
+     "source": "GAP-20260927-439", "gate": "门99 check-selftest-knobs.py"},
+]
 
 # ── 旋钮分档（缺口 `GAP-20260927-74` · 门本体由「只报告」改**分档**）────────────────────
 #   把三枚已知旋钮本体纳入分档，按「危害」分层（此前门只报「未登记」、不分档）：
