@@ -1,4 +1,5 @@
 # 工具目录（TOOLS）
+<!-- doc-freshness: hand-maintained -->
 
 [English](TOOLS.en.md) | **中文**
 
