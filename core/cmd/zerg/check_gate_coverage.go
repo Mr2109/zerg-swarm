@@ -193,6 +193,8 @@ type cgcReport struct {
 	nosuffix          []string
 	baseline          int
 	baselineNote      string
+	noteDrift         bool
+	noteDriftDetail   string
 	stale             [][4]string
 	wlCounts          map[string]int
 	excludeComponents []string
@@ -1634,6 +1636,7 @@ func (r *cgcReport) toJSONMap() map[string]any {
 			"git_tracked_known": r.gitTrackedKnown, "whitelisted": bWL, "glob_only": globOnly,
 			"nosuffix": nosuffix, "empty": r.bEmpty},
 		"baseline": r.baseline, "baseline_note": r.baselineNote,
+		"note_drift":      map[string]any{"ok": r.noteDrift, "detail": r.noteDriftDetail},
 		"stale_whitelist": stale, "wl_counts": r.wlCounts,
 		"exclude_components": r.excludeComponents, "exclude_prefixes": r.excludePrefixes,
 		"max_examples": r.maxExamples, "certify": r.certify,
@@ -1647,6 +1650,32 @@ func cgcDumpJSON(w io.Writer, rep *cgcReport) {
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(rep.toJSONMap())
+}
+
+// ── `_baseline_note` ↔ `baseline` 同源校验（`GAP-20260927-42` ①）───────────────────
+var cgcNoteRestateRe = regexp.MustCompile(`下调成\s*(\d+)`)
+
+// cgcBaselineNoteDrift：`_baseline_note` 的**末次现值句**必须 == baseline（否则 note 说一套、
+// baseline 是另一套 ⇒ 人读报告按错数算余量）。返回 (ok, detail)；无「下调成 N」重述句 ⇒ ok。
+func cgcBaselineNoteDrift(baseline int, note string) (bool, string) {
+	m := cgcNoteRestateRe.FindAllStringSubmatch(note, -1)
+	if len(m) == 0 {
+		return true, "note 无现值重述句（不判）"
+	}
+	got, err := strconv.Atoi(m[len(m)-1][1])
+	if err != nil {
+		return true, "note 现值句解析失败（不判）"
+	}
+	if got == baseline {
+		return true, fmt.Sprintf("note 现值句 %d == baseline %d", got, baseline)
+	}
+	return false, fmt.Sprintf("note 现值句 %d ≠ baseline %d（%+d）", got, baseline, got-baseline)
+}
+
+// cgcNoteDriftOK：自检用（只要 ok 那一半）。
+func cgcNoteDriftOK(baseline int, note string) bool {
+	ok, _ := cgcBaselineNoteDrift(baseline, note)
+	return ok
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -2037,6 +2066,13 @@ func cgcSelfTest(sink io.Writer, deep bool) bool {
 		check("㉒ 且 stdout 不落人读规则表", !strings.Contains(string(outE), "规则表"), "")
 	}
 
+	check("㉓a note 末次现值句 == baseline ⇒ 不漂（正控）",
+		cgcNoteDriftOK(55, "…本行由 68 下调成 56、再下调成 55。"), "")
+	check("㉓b note 末次现值句 ≠ baseline ⇒ **必漂**（负控 · 与 ㉓a 成对）",
+		!cgcNoteDriftOK(55, "…本行由 68 下调成 56。"), "")
+	check("㉓c note 无现值重述句 ⇒ 不误红（只认可机读「下调成 N」形态）",
+		cgcNoteDriftOK(55, "只有散文、无重述句"), "")
+
 	fmt.Fprintln(sink, "── check-gate-coverage 自检（成对负控 · 真命令行 + 真退出码）──")
 	bad := 0
 	for _, c := range cases {
@@ -2260,6 +2296,10 @@ func cgcRunMain(stdout, stderr io.Writer, argv []string) int {
 	}
 	rep := cgcAnalyse(root, cfg, steps, gatesText, args.maxExamples, cwd)
 
+	// ★ `_baseline_note` ↔ `baseline` 同源校验（`GAP-20260927-42` ①）：末次现值句必须 == baseline，
+	//   否则人读报告说一套、`baseline` 是另一套 ⇒ 读者按错数算余量。红档并入 rc=1（不是 rc=2）。
+	rep.noteDrift, rep.noteDriftDetail = cgcBaselineNoteDrift(rep.baseline, rep.baselineNote)
+
 	nRedA := len(rep.aRed)
 	nOverB := rep.bHit - rep.baseline
 	nNewB := len(rep.bNewUngated)
@@ -2284,14 +2324,18 @@ func cgcRunMain(stdout, stderr io.Writer, argv []string) int {
 		rep.verdictReason = fmt.Sprintf("判不了：仓根不是 git 仓 / git 不可用 ⇒ ③ 档 %d 条分不开"+
 			"「新件 / 存量债」⇒ 不给结论", len(rep.bHitItems))
 		rep.rc = cgcRcBlocked
-	case nRedA > 0 || nOverB > 0 || nNewB > 0:
+	case nRedA > 0 || nOverB > 0 || nNewB > 0 || !rep.noteDrift:
 		over := nOverB
 		if over < 0 {
 			over = 0
 		}
+		drift := 0
+		if !rep.noteDrift {
+			drift = 1
+		}
 		rep.verdictCode = "RED"
 		rep.verdictReason = fmt.Sprintf("A 未收进 %d 条；B 棘轮命中 %d > 基线 %d（超 %d）；"+
-			"新件未挂门 %d 条", nRedA, rep.bHit, rep.baseline, over, nNewB)
+			"新件未挂门 %d 条；_baseline_note 漂移 %d 条", nRedA, rep.bHit, rep.baseline, over, nNewB, drift)
 		rep.rc = cgcRcFail
 	default:
 		rep.verdictCode = "OK"
@@ -2315,6 +2359,11 @@ func cgcRunMain(stdout, stderr io.Writer, argv []string) int {
 		}
 		fmt.Fprintf(stdout, "   A 未收进：%d 条 · B 棘轮命中 %d / 基线 %d（超 %d）· ④ 新件未挂门 %d 条\n",
 			nRedA, rep.bHit, rep.baseline, over, nNewB)
+		nd := "不漂"
+		if !rep.noteDrift {
+			nd = "**漂移**（note 与 baseline 不同源）"
+		}
+		fmt.Fprintf(stdout, "   _baseline_note：%s（%s）\n", nd, rep.noteDriftDetail)
 		switch rep.rc {
 		case cgcRcBlocked:
 			fmt.Fprintf(stderr, "   ⇒ **不给结论（rc=2）**：%s\n", rep.verdictReason)

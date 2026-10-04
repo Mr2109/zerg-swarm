@@ -146,8 +146,12 @@ def run(root, as_json=False):
         print("BLOCKED —— 扫描根不存在或读不到：%s（rc=2 · 不给结论）" % root, file=sys.stderr)
         return 2
 
+    files = scan_files(root)
+    if not files:  # ★ 空集守卫（GAP-20260927-108）：空域 ⇒ fail-closed（✗ 不许当「无标注 ⇒ 不判」绿）
+        print("BLOCKED —— 空域：%s 下 0 个 .sh/.py（取不到输入）⇒ rc=2 不给结论" % root, file=sys.stderr)
+        return 2
     anns, cache, blocked = [], {}, []
-    for p in scan_files(root):
+    for p in files:
         if os.path.abspath(p) == SELF_PATH:
             continue  # ★ 自排除：本件自身（docstring 语法示例 + 自检夹具示例串都落在此）——
             #  同 check-cli-contract.py `node_family_hits` 口径（`abspath(full) == me ⇒ skip`）。

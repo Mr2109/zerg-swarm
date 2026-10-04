@@ -109,6 +109,11 @@ def self_test(out) -> bool:
     cases.append(("③ b.go/c.go 真产者不入缺", set(covered) == {"b.go", "c.go"}))
     cases.append(("④ 测试件被排除", all(r["file"] != "d_test.go" for r in rows)))
     cases.append(("⑤ 冻结名单豁免", judge(rows, read_only=["a.go"])[2] == ["a.go"]))
+    # ⑥ 空域负控（GAP-20260927-108）：0 件读 inv.dryRun ⇒ 应产者为空（main 里 ⇒ rc=2，✗ 不许当全绿）
+    empty = tempfile.mkdtemp(prefix="drcov-empty-")
+    os.makedirs(os.path.join(empty, SCAN_REL))
+    rows_e, err_e = scan(empty)
+    cases.append(("⑥ 空域：0 应产者（空域 ≠ 全绿）", err_e == "" and rows_e == []))
     for name, good in cases:
         total += 1
         out.write("  %s %s\n" % ("✓" if good else "✗", name))
@@ -133,6 +138,10 @@ def main() -> int:
     rows, err = scan(root)
     if err:
         sys.stderr.write("%s: %s ⇒ 不给结论（退码 2）\n" % (VERSION, err))
+        return 2
+    if not rows:  # ★ 空集守卫（GAP-20260927-108）：空域（0 应产者）⇒ fail-closed（✗ 不许判「全绿」）
+        sys.stderr.write("%s: 空域 —— %s 下 0 件读 `inv.dryRun`（取不到输入 ⇒ 空域 ≠ 全绿）⇒ 不给结论（退码 2）\n"
+                         % (VERSION, SCAN_REL))
         return 2
     missing, covered, exempt = judge(rows)
     if a.emit_baseline:

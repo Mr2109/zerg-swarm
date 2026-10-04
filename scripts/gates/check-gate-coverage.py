@@ -670,6 +670,29 @@ def counts_certify(a_covered, a_wl, a_red, a_items, b_counts, cands):
             and sum(b_counts.values()) == len(cands))
 
 
+def baseline_note_restated(note):
+    """从 `_baseline_note` 取**末次现值句**声称的现值（`下调成 <N>` 的最后一个 N）。
+    取不到 ⇒ None（本门只认这一种可机读的重述形态，✗ 不猜别的写法）。"""
+    hits = re.findall(r"下调成\s*(\d+)", note or "")
+    return int(hits[-1]) if hits else None
+
+
+def baseline_note_drift(baseline, note):
+    """`_baseline_note` 的末次现值句必须 == `baseline`（同源 · `GAP-20260927-42`）。
+
+    ★ 为什么要这条（旧洞）：`_baseline_note` 有多个消费点（人读报告 / `--json` / 文档引它当
+      出处 / 契约注册表），但**全仓零处做 note 与 baseline 的同值校验** —— 唯一写入口
+      `baseline-ratchet.py --write` 只改 `"baseline": <数字>`、自检还逐字节断言「只改那一个
+      数字」⇒ note 落后一次下调也**没有任何门会响**。本函数就是那颗牙。
+    返回 (ok, detail)。★ note 无「下调成 N」重述句 ⇒ 视为无重述（ok，不误红）。"""
+    got = baseline_note_restated(note)
+    if got is None:
+        return True, "note 无现值重述句（不判）"
+    if got == baseline:
+        return True, "note 现值句 %d == baseline %d" % (got, baseline)
+    return False, "note 现值句 %d ≠ baseline %d（%+d）" % (got, baseline, got - baseline)
+
+
 def analyse(root, cfg, steps, gates_text, max_examples):
     cmds_text = "\n".join(s[4] for s in steps)
 
@@ -1463,6 +1486,15 @@ def self_test(sink=None, deep=None):
         check("㉒ `--json --list-rules` 互斥 ⇒ rc=2", rcE == 2, "rc=%d" % rcE)
         check("㉒ 且 stdout 不落人读规则表", "规则表" not in outE.decode("utf-8", "replace"))
 
+    # ── ㉓ `_baseline_note` ↔ `baseline` 同源（`GAP-20260927-42` ①）成对负控 ────────────
+    #   判据面 = `baseline_note_drift`（真跑路径与这里**同一份**口径）⇒ 置假 = 置假真判据。
+    check("㉓a note 末次现值句 == baseline ⇒ 不漂（正控）",
+          baseline_note_drift(55, "…本行由 68 下调成 56、再下调成 55。")[0] is True)
+    check("㉓b note 末次现值句 ≠ baseline ⇒ **必漂**（负控 · 与 ㉓a 成对）",
+          baseline_note_drift(55, "…本行由 68 下调成 56。")[0] is False)
+    check("㉓c note 无现值重述句 ⇒ 不误红（只认可机读「下调成 N」形态）",
+          baseline_note_drift(55, "只有散文、无重述句")[0] is True)
+
     print("── check-gate-coverage 自检（成对负控 · 真命令行 + 真退出码）──", file=sink)
     bad = 0
     for desc, ok, extra in cases:
@@ -1543,6 +1575,11 @@ def main(argv):
         print("✗ 不给结论（rc=2）：%s" % exc, file=sys.stderr)
         return EXIT_BLOCKED
 
+    # ★ `_baseline_note` ↔ `baseline` 同源校验（`GAP-20260927-42` ①）：末次现值句必须 == baseline，
+    #   否则人读报告说一套、`baseline` 是另一套 ⇒ 读者按错数算余量。红档并入 rc=1（不是 rc=2）。
+    _note_ok, _note_why = baseline_note_drift(rep["baseline"], rep["baseline_note"])
+    rep["note_drift"] = {"ok": _note_ok, "detail": _note_why}
+
     # ── 退出码（优先级 2 > 1 > 0）—— **先算结论，再输出**（--json 的 stdout 必须是纯 JSON）──
     a, b = rep["a"], rep["b"]
     n_red_a = len(a["red"])
@@ -1569,11 +1606,12 @@ def main(argv):
                                     "「新件 / 存量债」⇒ 不给结论"
                                     % len(b["hit_items"])}
         rep["rc"] = EXIT_BLOCKED
-    elif n_red_a or n_over_b > 0 or n_new_b > 0:
+    elif n_red_a or n_over_b > 0 or n_new_b > 0 or not _note_ok:
         rep["verdict"] = {"rc": EXIT_FAIL, "code": "RED",
                           "reason": "A 未收进 %d 条；B 棘轮命中 %d > 基线 %d（超 %d）；"
-                                    "新件未挂门 %d 条"
-                                    % (n_red_a, b["hit"], rep["baseline"], max(n_over_b, 0), n_new_b)}
+                                    "新件未挂门 %d 条；_baseline_note 漂移 %d 条"
+                                    % (n_red_a, b["hit"], rep["baseline"], max(n_over_b, 0), n_new_b,
+                                       0 if _note_ok else 1)}
         rep["rc"] = EXIT_FAIL
     else:
         rep["verdict"] = {"rc": EXIT_OK, "code": "OK",
@@ -1591,6 +1629,8 @@ def main(argv):
         print("== 结论 ==")
         print("   A 未收进：%d 条 · B 棘轮命中 %d / 基线 %d（超 %d）· ④ 新件未挂门 %d 条"
               % (n_red_a, b["hit"], rep["baseline"], max(n_over_b, 0), n_new_b))
+        print("   _baseline_note：%s（%s）"
+              % ("不漂" if _note_ok else "**漂移**（note 与 baseline 不同源）", _note_why))
         if rep["rc"] == EXIT_BLOCKED:
             print("   ⇒ **不给结论（rc=2）**：%s" % rep["verdict"]["reason"], file=sys.stderr)
         elif rep["rc"] == EXIT_FAIL:

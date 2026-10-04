@@ -83,6 +83,14 @@ GUARD_RE = re.compile(
     r"|空域|空集"
     r"|(?:len|count)\s*\([^)\n]*\)\s*[<>]=?\s*\d"
     r"|(?:件数|域计数|count|total|items?|files?|n)\s*>=\s*\d"
+    # ★ 扩识别口径（GAP-20260927-108 收口）：认「空集 / 取不到 ⇒ fail-closed」这一族的**守卫子句** ——
+    #   ① `== 0`（域计数为 0）· ② `is None`（取不到）· ③ `not os.path.isdir/isfile/exists(…)`（扫描输入不存在），
+    #   且这一条件**同一子句内**紧跟 fail-closed 判决（return 2 / rc=2 / 不给结论 / BLOCKED / 空转 /
+    #   fail-closed / 未取数 / sys.exit(2)）。
+    #   ✗ 不认「裸 ==0 / 裸 is None / 裸 not isdir」—— 那是与守卫无关的比较（放宽口径 = 把真缺守卫的件洗成绿）。
+    r"|(?:==\s*0\b|\bis\s+None\b|not\s+os\.path\.(?:isdir|isfile|exists)\s*\()"
+    r"[\s\S]{0,200}?"
+    r"(?:return\s+2\b|rc\s*=?\s*2\b|不给结论|BLOCKED|空转|fail[- ]?closed|未取数|sys\.exit\(\s*2)"
 )
 # 附报告档（✗ 不判红）：subprocess 调用与 returncode 检查
 SUBPROC_RE = re.compile(r"subprocess\.(?:run|Popen)\s*\(")
