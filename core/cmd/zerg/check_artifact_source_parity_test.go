@@ -244,9 +244,9 @@ func TestAsp_PyPathSemantics(t *testing.T) {
 	}
 }
 
-// TestAsp_BClassSilentSkip —— ★ 钉住 py 的 B 类真口子（读不了 ⇒ **静默**少判 · 逐字照搬）：
-// `.go` 件读不了时**跳过 embed 扫描**（`except OSError: pass`）⇒ 它点到的资产被静默漏判，
-// 分母不守恒于「判不了」。日后谁把该口子修成红，本用例立刻 FAIL（＝给口子留了把牙）。
+// TestAsp_BClassSilentSkip —— ★ B 类读失败（读不了 ⇒ 静默少判）**已翻正**为：登记 + 判红 rc=2。
+// 旧态：`.go` 件读不了时**跳过 embed 扫描**（`except OSError: pass`）⇒ 它点到的资产被静默漏判。
+// 新态：读不了的件登记进 BLOCKED 明细 ⇒ rc=2（不给结论）。谁改回静默少判，本用例立刻 FAIL。
 func TestAsp_BClassSilentSkip(t *testing.T) {
 	r, h := aspNewRepo(t, "bclass")
 	a := aspFakeArtifact(r, "bin-art", aspFirst16(h), "2026-09-28T10:00:00Z", false)
@@ -270,9 +270,9 @@ func TestAsp_BClassSilentSkip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Chmod(emb, 0o644) }()
-	rcAfter, _, _ := aspRunEntry("--root", r, "--artifact", a)
-	if rcAfter != 0 {
-		t.Fatalf("B 类口子形态变了：读不了的 `.go` 件本应**静默**跳过 embed 扫描（资产随之漏判 · rc 1→0），得到 %d", rcAfter)
+	rcAfter, outAfter, _ := aspRunEntry("--root", r, "--artifact", a)
+	if rcAfter != 2 {
+		t.Fatalf("读不了的 `.go` 件应 登记 + 判红 rc=2（不变红即口子仍在），得到 %d\n%s", rcAfter, outAfter)
 	}
 }
 

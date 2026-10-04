@@ -171,7 +171,7 @@ func cmdAgentPing(inv *invocation, stdout, stderr io.Writer) int {
 	conn, err := net.DialTimeout("tcp", hostPort, 2*time.Second)
 	via := "direct"
 	if err != nil {
-		fmt.Fprintf(stderr, "%s: via=%s（直连，未经主控 · F-2 例外）—— 打不到 %s: %v\n", progName, via, hostPort, err)
+		fmt.Fprintf(stderr, "%s: via=%s（直连，未经主控 · F-2 例外）—— 打不到 %s: %v%s\n", progName, via, hostPort, err, dialErrHint(hostPort, err.Error()))
 		inv.setErr("unreachable", "dial_failed", err.Error())
 		return exitUnreachable
 	}

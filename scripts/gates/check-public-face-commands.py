@@ -330,6 +330,7 @@ def judge(root, zerg=None, self_exempt=True):
     topics = {}
     help_usage = {}                                     # path -> 现跑 `--help` 用法串（懒 · 只对帮助面缺用法串的命令）
     unjudged = []
+    unparsed = []                                     # 抽不出命令路径的串（GAP-20260927-86）
 
     def flag_face(path):
         """该命令的**用法串**（旗标真源）：帮助面有 ⇒ 用它；没有（现读 = 38 条危险命令）⇒
@@ -362,13 +363,19 @@ def judge(root, zerg=None, self_exempt=True):
                 break
             segs.append(t)
         path = " ".join(segs)
+        # ★ `GAP-20260927-86`：首词是 `-`/`[` 的串（R1 守卫只认 `<`）⇒ `segs` 为空 ⇒ `path` 得**空串**（非 None）。
+        #   旧实现：空 path 直落 :371 的 `parts[0]` ⇒ **IndexError 崩**，而崩溃与「有红」同退码 rc=1 ⇒ 调用方分不开。
+        #   此处**登记为「判不了」并 continue**（照本门 `_path_of:126` 的 `or None` 归口 + `:241/:295` 的「判不了 ⇒ rc=2」先例）。
+        if not path:
+            unparsed.append("%s `zerg %s`" % (rel, body))
+            continue
         used = sorted({f.split("=")[0] for f in FLAG.findall(body)})
         # R2 主题面：`zerg help <主题>` —— 第二段是主题数据（topics.go），不是命令路径。
         #    先判整条路径（`help export` 是真命令），只有**不在树里**时才按主题判、并按**真跑**验存在性。
         topic = None
         if path not in tree:
             parts = path.split()
-            if parts[0] == "help" and len(parts) > 1 and not parts[1].startswith(("-", "<")):
+            if parts and parts[0] == "help" and len(parts) > 1 and not parts[1].startswith(("-", "<")):
                 topic, path = parts[1], "help"
         if path in tree:
             if topic is not None:
@@ -406,6 +413,7 @@ def judge(root, zerg=None, self_exempt=True):
     data["topics"] = topics
     data["help_usage"] = help_usage
     data["unjudged"] = unjudged
+    data["unparsed"] = unparsed
     lines.append("   · 扫到 `` `zerg …` `` 串 **%d** 个（其中通用式行 %d · 族/子族引用 %d · 主题面 %d 个主题）"
                  % (data["spans"], data["generic"], data["group_ref"], len(topics)))
     if help_usage:
@@ -419,6 +427,14 @@ def judge(root, zerg=None, self_exempt=True):
         #   优先级 2 > 1 > 0（与仓内其余门同口径）。
         lines.append("⇒ **不给结论（rc=2）**：%d 处旗标**未判**（用法串两处都取不到）——"
                      "「取不到」≠ 全绿" % len(unjudged))
+        return 2, lines, data
+    # ★ `GAP-20260927-86`：抽不出命令路径的串（首词 `-`/`[`）= **判不了** ⇒ 按三档 2 收口，
+    #   优先级 2 > 1 > 0（与「未判旗标」同口径）：判不了优先于有红，崩溃与「有红」在退码上必须分得开。
+    if unparsed:
+        lines.append("   · **判不了**（抽不出命令路径的串）**%d** 处：%s"
+                     % (len(unparsed), " · ".join(unparsed[:4])))
+        lines.append("⇒ **不给结论（rc=2）**：%d 处 `zerg …` 串抽不出路径（首词 `-`/`[` · 判不了优先于有红）"
+                     % len(unparsed))
         return 2, lines, data
     data["hits"] = hits
     if hits:
@@ -515,6 +531,13 @@ def self_test():
         check(rc in (0, 1) and d8["spans"] > 0,
               "格 8 真树现跑：rc=%d · 扫到 %d 串 · 例外 %d 处（照实：本格只证「判得动」，不要求 0）"
               % (rc, d8["spans"], len(d8["hits"])))
+        # 格 9 判不了负控（GAP-20260927-86）：页里塞首词为 `-`/`[` 的串 ⇒ 旧版 IndexError 崩（与有红同退码 rc=1）。
+        #   改后必须 **rc=2** 且 data 里记 unparsed（判不了优先于有红），不崩。
+        r9 = make_fixture(base, clean_exceptions=True, extra=("见 `zerg -x 形态`。", "见 `zerg [对象] ls`。"))
+        rc, out, d9 = judge(r9, zerg=real)
+        check(rc == 2 and len(d9.get("unparsed", [])) >= 1,
+              "格 9 判不了负控（串首词 `-`/`[` ⇒ 抽不出路径）⇒ rc=2 + data.unparsed 非空（实测 rc=%d · unparsed=%d）"
+              % (rc, len(d9.get("unparsed", []))))
     finally:
         shutil.rmtree(base, ignore_errors=True)
     if all(ok):

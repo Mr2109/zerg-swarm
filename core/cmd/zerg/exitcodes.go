@@ -30,10 +30,15 @@ type exitcodeRow struct {
 // ★ `130` 人打断（Ctrl-C）由「已挂号」转**启用**（2026-09-30 · 标注与事实对齐）：本 CLI
 // 主动捕获 SIGINT 并退 `130`（落点 `main.go` 的 `exitInterrupted` + `os.Exit(exitInterrupted)`）
 // ⇒ 它**早已是启用行为**，此前误挂在「已挂号、尚未启用」段（`kind` = `interrupted`）。
+//
+// ★ `3` 部分趟（`partial_ok`）—— D15 / 《设计-门禁部分趟-v0.7-20261004》§五 拍板启用：
+// **只跑子集且子集全绿** ⇒ **不覆盖全量**（在 0/1/2 之外 ⇒ 任何「判色」都不会把它误读成全量绿）；
+// **不可重试**。登记面（`namespaces[cli].table` ＋ `collisions[3]` 改判）同批落，见 `exitcode-namespaces.json`。
 var exitcodeTable = []exitcodeRow{
 	{0, "ok", "成功", "—"},
 	{1, "failed", "一般失败（跑到了、没成功）", "看 error.kind；默认不可重试"},
 	{2, "usage", "用法错 / **不给结论**", "改用法后可重试；「不给结论」不许当失败计"},
+	{3, "partial_ok", "部分趟·只跑子集且子集全绿·不覆盖全量", "不可重试"},
 	{4, "unauthenticated", "未认证（缺令牌 / 令牌不对；`403` 与它并码 · kind 分家）", "换凭据后可重试"},
 	{8, "blocked", "有 BLOCKED（「读不到」不许当健康）", "补齐前置后可重试"},
 	{10, "insufficient_resource", "资源不足（`507` 的对面：卸掉占用者后可重试）", "等待 / 卸占用者后可重试"},

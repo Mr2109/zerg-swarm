@@ -51,6 +51,20 @@ import re
 import subprocess
 import sys
 
+# ── vendor/ 出局（GAP-20260927-147 · 2026-10-04 现读）：为什么本闸不把 vendor 的 `eval` 当「随件出去」──
+#   现读三条（命令行现取 · 禁手写）：
+#     · `git ls-files -s vendor/` ⇒ **2 条 gitlink**（mode 160000）：`vendor/rtk` · `vendor/searxng`；
+#     · `publish/whitelist.txt`（发布面唯一真源 = **allow-list**，`rsync --files-from` 导出）里 `vendor` **0 命中**；
+#     · `scripts/build/publish-public.sh` 的 `EXCLUDES=( … )`（白名单内排除项）里 `vendor` **0 命中**。
+#   ⇒ vendor 既**不在白名单**（进不去）也不在 EXCLUDES（不是「白名单内被排」）——**结构性不进产物树**。
+#   故 `vendor/searxng/utils/lib.sh:400/469` 与 `vendor/rtk/scripts/benchmark.sh:44/635` 的那两处 `eval`
+#   （「执行位 + 仓外输入」形态）**不随件出去**；本闸的判面（危险路径 / 令牌形态）**不涉及 vendor**。
+#   ★ 本闸**不改扫描面**（DANGER_PATH / TOKEN_FORM 一条都不动）。
+#   ★ 负控自检格（见 `selftest()` 的 `cases_vendor`）：
+#       v1 = vendor 现读的两处 `eval` 件**不是**本闸判据形态 ⇒ 本闸对它**保持沉默是对的**（不误报）；
+#       v2 = **有牙**：若哪天 vendor 进了白名单、且里面有危险物（如 `.jsonl`），本闸的**路径判据照抓**
+#            —— 证明判面不因 vendor 而失明（不是「vendor 一律不看」，是「vendor 的结构性出局经现读坐实」）。
+
 # ── 判据 A：危险路径（存在性；按仓库根相对路径匹配）────────────────
 DANGER_PATH = [
     (r"(^|/)\.zerg/",              "运行期任务日志/状态目录"),
@@ -137,6 +151,15 @@ def selftest():
         ("src/main.go", False, "正常源码"),
         ("ui/target/debug/x", True, "构建产物"),
     ]
+    # ── ★ 负控自检格（GAP-20260927-147 · vendor 出局）：钉死「vendor 结构性出局」这条现读结论 ──
+    #   v1：vendor 现读的两处 `eval` 件（searxng lib.sh / rtk benchmark.sh）**不是**本闸的判据形态
+    #       ⇒ 本闸对它**保持沉默是对的**（不误报）。v2：**有牙** —— 若 vendor 进了产物树且含危险物
+    #       （`.jsonl`），路径判据**照抓**，证明判面不因 vendor 而失明。
+    cases_vendor = [
+        ("vendor/searxng/utils/lib.sh", False, "v1 vendor 出局：lib.sh 的 eval 非本闸判据形态（不误报）"),
+        ("vendor/rtk/scripts/benchmark.sh", False, "v1 vendor 出局：benchmark.sh 的 eval 非本闸判据形态（不误报）"),
+        ("vendor/searxng/events.jsonl", True, "v2 有牙：vendor 若含危险物，路径判据照抓（判面不因 vendor 失明）"),
+    ]
     cases_form = [
         ("Authorization: " + B + "a1b2c3d4e5f6g7h8i9j0k1l2", True, "真 bearer 值"),
         ("Authorization: " + B + "<token>", False, "占位写法（正当）"),
@@ -156,6 +179,11 @@ def selftest():
     ]
     bad = 0
     for text, want, why in cases_path:
+        got = any(rx.search(text) for rx, _ in PATH_RES)
+        ok = (got == want)
+        bad += (not ok)
+        print("   %s want=%-5s got=%-5s | %s" % ("✓" if ok else "✗", want, got, why))
+    for text, want, why in cases_vendor:
         got = any(rx.search(text) for rx, _ in PATH_RES)
         ok = (got == want)
         bad += (not ok)
@@ -287,7 +315,7 @@ def selftest():
     finally:
         _shutil.rmtree(_fx2_root, ignore_errors=True)
     print("   自测: %s（%d 格）" % ("全过" if bad == 0 else "%d 条失败" % bad,
-                                   len(cases_path) + len(cases_form) + len(cases_tree) + n_extra))
+                                   len(cases_path) + len(cases_vendor) + len(cases_form) + len(cases_tree) + n_extra))
     return bad == 0
 
 

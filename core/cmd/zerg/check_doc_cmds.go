@@ -71,6 +71,23 @@
 //	   （非 fail-closed）。**本件 Go 侧已修（B 类真口子 · 与 py 有意分叉）**：读失败 ⇒ 登记（相对路径 +
 //	   err 正文）+ 入口 `checkDocCmdsGateMain` 补判红（stderr BLOCKED 头 + 逐件点名）⇒ rc=2（不再静默少判）。
 //
+// ★ 2026-10-04 同步（候选 · GAP-20261001-32③）：py 候件给 `judge()` / `judge_md()` 各增 `n_unread` 计数并
+//
+//	作第 4 返回值，两调用点非零即把「读不了 N 篇（读不了 ≠ 零命中）」并入 blocked ⇒ 进 rc 通道（rc=2）。
+//	**本件 Go 侧已逐处同步**：`dcmdJudge` 加第 4 返回值 `nUnread`；两调用点并入同一段 blocked 文案。
+//	既有 B 类登记面（stderr BLOCKED 头 + 逐件点名）**保留**（Go-only 分叉）；入口改为**先印 stdout 人读面、
+//	再落 stderr BLOCKED** —— 否则那条新增的 blocked 文案会被 B 类早退整个吞掉（= 同步落空）。
+//	`judge_md` 本件不搬（py 内死函数 · 无调用点 ⇒ 行为无影响）。
+//
+// ★ 2026-10-04 同步②（候选 · py⟷Go 全等追平）：py `bde233fb` 的**未建提案书写体例**（识别跳过**第三类**）逐处补入 ——
+//
+//	① 新增 `dcmdProposalMark` 闭集（15 判语 · 紧贴 `zerg` 之前才认 · 逐字复刻 py PROPOSAL_MARK）；
+//	② `dcmdExtract` 行内分支改走 `FindAllStringSubmatchIndex`，命中判语 ⇒ 记 `proposal` 计数 + 丢该段；
+//	③ 「识别跳过」行补第三类计数（原文串逐字：`三类都是`，✗ 不是旧 `此二类`）⇒ 每格 stdout 由差 30
+//	   字符转为逐字同；④ 自检成对负控补 ⑳㉑㉒ 三组（自检网格 23 组 ⇒ 26 组，与 py 逐格对齐）。
+//	⑤ 另补 py `devdocs_root_is_repo_root`（`GAP-20260927-83` · 原 Go 未搬）：devdocs 根**形态误用**
+//	   同「根不在盘」档 rc=2。
+//
 // 未覆盖面（✗ 不声称逐字对齐）：
 //
 //	① argparse **长选项前缀缩写**（如 `--selft` ⇒ `--self-test`）本件不实现。
@@ -146,10 +163,14 @@ var (
 	dcmdFlagWord    = regexp.MustCompile("^[\\[\\(]*-{1,2}[A-Za-z]")
 	dcmdIdentitySeg = regexp.MustCompile("`?zerg\\s+(?:[0-9]+\\.[0-9]+[0-9A-Za-z.+\\-]*\\s+)?[0-9a-fA-F]{7,64}(?:\\+dirty)?\\s+[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:]{5,8}Z?[^`]*`?")
 	dcmdVersionTok  = regexp.MustCompile("^[0-9]+(?:\\.[0-9]+)+[0-9A-Za-z.+\\-]*$")
-	dcmdFenceSeg    = regexp.MustCompile("^zerg(\\s+\\S.*)?$")
-	dcmdPathLit     = regexp.MustCompile("path:\\s*\\[\\]string\\{([^}]*)\\}")
-	dcmdQuoted      = regexp.MustCompile(`"([^"]+)"`)
-	dcmdIDSkipRE    = regexp.MustCompile("身份行 / 版本串形态\\s*([0-9]+)\\s*段")
+	// dcmdProposalMark —— 未建提案书写体例（2026-10-02 · 分诊批1 · bde233fb · 逐字复刻 py PROPOSAL_MARK）：
+	//   只认**紧贴 `zerg` 之前、只隔空白的判语**（`建议收编 \`zerg X\`` 这种中间有别的词的**不认**）。
+	dcmdProposalMark = regexp.MustCompile("(?:想要|建议|须|未建|待建|待拍|候选|规划|新面|不建|尚未建|已拍未建|拟建|应建|提出)\\s*$")
+	dcmdFenceSeg     = regexp.MustCompile("^zerg(\\s+\\S.*)?$")
+	dcmdPathLit      = regexp.MustCompile("path:\\s*\\[\\]string\\{([^}]*)\\}")
+	dcmdQuoted       = regexp.MustCompile(`"([^"]+)"`)
+	dcmdIDSkipRE     = regexp.MustCompile("身份行 / 版本串形态\\s*([0-9]+)\\s*段")
+	dcmdPropSkipRE   = regexp.MustCompile("未建提案体例[^0-9]*([0-9]+)\\s*段")
 )
 
 // dcmdHit —— 一段抽出的 `zerg …`（行号 + 命令词）。
@@ -466,8 +487,19 @@ func dcmdExtract(text string, stats map[string]int) []dcmdHit {
 				}
 			}
 		} else {
-			for _, m := range dcmdZergInline.FindAllStringSubmatch(line, -1) {
-				kind, words := dcmdSegmentWords(m[1])
+			for _, m := range dcmdZergInline.FindAllStringSubmatchIndex(line, -1) {
+				// 未建提案书写体例：`zerg <名>` 紧跟在判语之后 ⇒ 那是**账体例里的提案名**、
+				//   不是命令示例 ⇒ 不计（见件头「未建提案书写体例」）。与身份行同法：**认出来才丢**。
+				if dcmdProposalMark.MatchString(line[:m[0]]) {
+					dcmdCountSkip(stats, "proposal")
+					hits = append(hits, dcmdHit{lineno, nil})
+					continue
+				}
+				seg := ""
+				if m[2] >= 0 {
+					seg = line[m[2]:m[3]]
+				}
+				kind, words := dcmdSegmentWords(seg)
 				dcmdCountSkip(stats, kind)
 				hits = append(hits, dcmdHit{lineno, words})
 			}
@@ -593,14 +625,16 @@ func dcmdResolveCmd(words []string, tree map[string]bool) int {
 
 // ══ 判据主体 ═════════════════════════════════════════════════════════════════════════════
 
-func dcmdJudge(files []dcmdFile, tree map[string]bool, blocking bool, stats map[string]int) (int, int, []string) {
+func dcmdJudge(files []dcmdFile, tree map[string]bool, blocking bool, stats map[string]int) (int, int, []string, int) {
 	n := 0
+	nUnread := 0 // ● GAP-20261001-32③ 修（照 py 候件逐处同步）：读不了的件计数 ⇒ 调用方归 blocked（进 rc 通道）
 	details := []string{}
 	for _, f := range files {
 		b, err := os.ReadFile(f.abs)
 		if err != nil {
 			// ★ B 类真口子修（原 py `except OSError` 静默 · ✗ 不再静默）：登记 + 判红 + rc=2。
 			dcmdReadFails = append(dcmdReadFails, fmt.Sprintf("%s（%v）", f.rel, err))
+			nUnread++
 			details = append(details, fmt.Sprintf("读不了 %s：%s", f.rel, err))
 			continue
 		}
@@ -621,9 +655,9 @@ func dcmdJudge(files []dcmdFile, tree map[string]bool, blocking bool, stats map[
 		}
 	}
 	if blocking {
-		return n, 0, details
+		return n, 0, details, nUnread
 	}
-	return 0, n, details
+	return 0, n, details, nUnread
 }
 
 func dcmdLoadBaseline(root string) (int, bool) {
@@ -665,6 +699,13 @@ func dcmdSiblingDocsBase(root string) string {
 	return dcmdJoin(dcmdDir(dcmdAbs(root)), "Zerg-内部文档")
 }
 
+// dcmdDevdocsRootIsRepoRoot —— 根形态误用探测器（GAP-20260927-83 · 照 py `devdocs_root_is_repo_root` 逐字）：
+// 把**文档仓仓根**当版本面根传进来时，它下面一定有 `项目文档/`（版本目录的父）⇒ 判为形态误用。
+func dcmdDevdocsRootIsRepoRoot(p string) bool {
+	st, err := os.Stat(dcmdJoin(p, "项目文档"))
+	return err == nil && st.IsDir()
+}
+
 func dcmdHead(xs []string, n int) []string {
 	if len(xs) > n {
 		return xs[:n]
@@ -703,7 +744,11 @@ func dcmdCheck(root string, scopes []string) (int, []string) {
 				blocked = append(blocked, "⛔ 不给结论：formal 扫到 0 篇（空转 = 假绿）—— 判据不可判")
 				continue
 			}
-			n, _, details := dcmdJudge(files, tree, true, stats)
+			n, _, details, nUnread := dcmdJudge(files, tree, true, stats)
+			if nUnread > 0 {
+				// ● GAP-20261001-32③ 修（照 py 候件逐处同步）：读不了 ≠ 零命中 ⇒ 归 blocked（rc=2）。
+				blocked = append(blocked, fmt.Sprintf("⛔ 不给结论：formal 语料有 %d 篇读不了（读不了 ≠ 零命中）—— 判据不可判", nUnread))
+			}
 			formalHits += n
 			if n > 0 {
 				errs = append(errs, fmt.Sprintf("formal（正式面 · **阻断**）：%d 处手写 `zerg …` 示例拼不到命令树（§九 M12）", n))
@@ -711,6 +756,13 @@ func dcmdCheck(root string, scopes []string) (int, []string) {
 			detailAll = append(detailAll, dcmdHead(details, 20)...)
 		} else {
 			docsRoot := dcmdEnvOr("ZERG_DEVDOCS_ROOT", dcmdJoin(dcmdSiblingDocsBase(root), "项目文档", "v2.5.13"))
+			if dcmdDevdocsRootIsRepoRoot(docsRoot) {
+				// ★ 照 py 候件逐字补：根**形态误用**（把文档仓仓根当版本面根）⇒ 与「根不在盘」同档 rc=2。
+				blocked = append(blocked, fmt.Sprintf("⛔ 不给结论：devdocs 根**形态误用**（%s 下面还有 `项目文档/` ⇒ 这是"+
+					"**文档仓仓根**、不是版本面根）—— 拿整仓根当面扫会把整棵树误判 ⇒ 判据不可判"+
+					"（`GAP-20260927-83`）：请设 `ZERG_DEVDOCS_ROOT=<...>/项目文档/vX.Y.Z`", docsRoot))
+				continue
+			}
 			files, ok := dcmdCollectMD(dcmdDir(docsRoot), dcmdBase(docsRoot))
 			if !ok {
 				blocked = append(blocked, fmt.Sprintf("⛔ 不给结论：devdocs 根整棵不在盘（%s · 语料域缺件）—— 判据不可判（换根请设 `ZERG_DEVDOCS_ROOT` 或同级根 `ZERG_DOCS_ALT`/`ZERG_DOCS`）", docsRoot))
@@ -720,7 +772,11 @@ func dcmdCheck(root string, scopes []string) (int, []string) {
 				blocked = append(blocked, "⛔ 不给结论：devdocs 扫到 0 篇（空转 = 假绿）—— 判据不可判")
 				continue
 			}
-			_, r, details := dcmdJudge(files, tree, false, stats)
+			_, r, details, nUnread := dcmdJudge(files, tree, false, stats)
+			if nUnread > 0 {
+				// ● GAP-20261001-32③ 修（照 py 候件逐处同步）：读不了 ≠ 零命中 ⇒ 归 blocked（rc=2）。
+				blocked = append(blocked, fmt.Sprintf("⛔ 不给结论：devdocs 语料有 %d 篇读不了（读不了 ≠ 零命中）—— 判据不可判", nUnread))
+			}
 			devdocsHits += r
 			lines = append(lines, fmt.Sprintf("devdocs（只报告档 · §6.3 S6 起步）：命中 %d 处（baseline %d）", r, baseline))
 			detailAll = append(detailAll, dcmdHead(details, 20)...)
@@ -732,8 +788,9 @@ func dcmdCheck(root string, scopes []string) (int, []string) {
 	lines = append(lines, fmt.Sprintf("命令树 %d 条（L1+L2）· formal 命中 %d（阻断档）· devdocs 命中 %d（只报告档）",
 		len(tree), formalHits, devdocsHits))
 	lines = append(lines, fmt.Sprintf("识别跳过（**不计入**上面两个数）：身份行 / 版本串形态 %d 段 · 非命令噪声 %d 段"+
-		" —— ★ 此二类是**认出来了**才丢（≠ 修前那种「抽不出词 ⇒ 静默」）",
-		stats["identity_lines"]+stats["identity"], stats["noise"]))
+		" · 未建提案体例（判语引出的 `zerg <名>`）%d 段"+
+		" —— ★ 三类都是**认出来了**才丢（≠ 修前那种「抽不出词 ⇒ 静默」）",
+		stats["identity_lines"]+stats["identity"], stats["noise"], stats["proposal"]))
 	for _, d := range detailAll {
 		lines = append(lines, "  "+d)
 	}
@@ -876,24 +933,33 @@ func checkDocCmdsGateMain(stdout, stderr io.Writer, argv []string) int {
 		scopes = []string{"formal", "devdocs"}
 	}
 	jc, lines := dcmdCheck(root, scopes)
-	if len(dcmdReadFails) > 0 {
-		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(dcmdReadFails))
-		for _, u := range dcmdReadFails {
-			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
-		}
-		return dcmdRCBlocked
-	}
+	// ★ 2026-10-04 同步（候选 · GAP-20261001-32③）：先把 stdout 人读面印全（含 py 新增的「读不了 ⇒ blocked」
+	//   文案），再落 B 类登记面的 stderr BLOCKED（Go-only 分叉）—— 改前这里在印 stdout 之前就早退，
+	//   会把 py 侧新增的那条 blocked 文案整个吞掉（= 同步落空）。
 	fmt.Fprintf(stdout, "门⑫ 文档-命令一致性（§九 M12 · §6.4 D3 · 开工单 T-51）· 仓根 %s\n", root)
 	for _, l := range lines {
 		fmt.Fprintf(stdout, "  %s\n", l)
 	}
-	switch jc {
+	verdict := jc
+	if len(dcmdReadFails) > 0 {
+		// B 类登记面响 ⇒ 出口一律 rc=2（与下面 return dcmdRCBlocked 同源），stdout 判词同步，✗ 不许
+		// 出现「stdout 印 rc=0 而进程 rc=2」的自相矛盾（dir 级读失败与 judge 级 nUnread 可不同源）。
+		verdict = dcmdRCBlocked
+	}
+	switch verdict {
 	case dcmdRCOK:
 		fmt.Fprint(stdout, "⇒ 全过（rc=0）\n")
 	case dcmdRCFail:
 		fmt.Fprint(stdout, "⇒ 判红（rc=1）：逐条看上面的命中\n")
 	default:
 		fmt.Fprint(stdout, "⇒ 不给结论（rc=2）：缺件/空转 —— **不许当绿**\n")
+	}
+	if len(dcmdReadFails) > 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 有 %d 件读不到（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 不给结论）：\n", len(dcmdReadFails))
+		for _, u := range dcmdReadFails {
+			fmt.Fprintf(stderr, "  [读失败] %s\n", u)
+		}
+		return dcmdRCBlocked
 	}
 	return jc
 }
@@ -943,6 +1009,16 @@ func dcmdSelfTest(stdout io.Writer) int {
 	idSkips := func(lines []string) int {
 		for _, l := range lines {
 			if m := dcmdIDSkipRE.FindStringSubmatch(l); m != nil {
+				n, _ := strconv.Atoi(m[1])
+				return n
+			}
+		}
+		return -1
+	}
+	// propSkips —— 读「未建提案体例 … N 段」那行的计数（认出来了才丢的**证据** ⇒ ≥1 才算认过）。
+	propSkips := func(lines []string) int {
+		for _, l := range lines {
+			if m := dcmdPropSkipRE.FindStringSubmatch(l); m != nil {
 				n, _ := strconv.Atoi(m[1])
 				return n
 			}
@@ -1072,6 +1148,35 @@ func dcmdSelfTest(stdout io.Writer) int {
 	}
 	if !has(lines, "propozal") {
 		bad = append(bad, "⑭ 负控：判词里没有坏命令名")
+	}
+
+	// ── 未建提案书写体例（2026-10-02 · 分诊批1 · bde233fb · 口径治本）──────────────────────────
+	//  缺口账/设计稿用「判语 + `zerg <名>`」记录**尚未建**的面（`想要 `zerg <slug>`` 一类）——
+	//  那个 `<名>` 是**账里的提案名**，不是**命令示例** ⇒ **不计**（否则门把「记录提案」判成
+	//  「引用了不存在的命令」）。三条成对负控（缺一不可）：① 判语引出 ⇒ **不计**；
+	//  ② **同一条命令**写成普通示例（无判语）⇒ **必计**；③ 真命令示例 + 拼错 ⇒ **必计并点名**。
+	// ⑳ 负控：判语（想要）引出的 `zerg <名>` ⇒ 不计 ⇒ rc=0，且**认出来了**（提案体例计数 ≥1）
+	writeFile(dcmdJoin(docs, "good.md"), "未建提案：想要 `zerg pipelinedefect` 收成正门。\n")
+	rc, lines = dcmdCheck(tmp, []string{"formal"})
+	caseFn("⑳ 负控（判语引出的 `zerg <名>` ⇒ 不计 · rc=0）", 0, rc)
+	if propSkips(lines) < 1 {
+		bad = append(bad, "⑳ 负控：提案体例没被**认出来**（计数 = 0）—— 换个词就会两态摇摆")
+	}
+
+	// ㉑ 正控（成对）：**同一条命令**（`pipelinedefect`）写成**普通示例**（无判语）⇒ **必计** ⇒ rc=1
+	writeFile(dcmdJoin(docs, "good.md"), "用法：`zerg pipelinedefect` 可直接跑。\n")
+	rc, lines = dcmdCheck(tmp, []string{"formal"})
+	caseFn("㉑ 正控（同一条命令无判语 ⇒ 必计 · rc=1）", 1, rc)
+	if !has(lines, "pipelinedefect") {
+		bad = append(bad, "㉑ 正控：判词里没有该命令名（判据被放宽了）")
+	}
+
+	// ㉒ 负控（成对）：真命令示例**拼错**（`dev propozal`，真命令是 `dev proposal`）⇒ **必计并点名**
+	writeFile(dcmdJoin(docs, "good.md"), "```sh\nzerg dev propozal list\n```\n")
+	rc, lines = dcmdCheck(tmp, []string{"formal"})
+	caseFn("㉒ 负控（真命令拼错 ⇒ 必计并点名 · rc=1）", 1, rc)
+	if !has(lines, "propozal") {
+		bad = append(bad, "㉒ 负控：判词里没有拼错的真命令名")
 	}
 
 	// ⑮b 成对负控：formal 语料在且好件 ⇒ 0

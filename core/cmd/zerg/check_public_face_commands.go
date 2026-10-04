@@ -533,6 +533,7 @@ type cpfcData struct {
 	topics     map[string]int
 	helpUsage  map[string]string
 	unjudged   []string
+	unparsed   []string
 	hasTreeTot bool
 }
 
@@ -671,6 +672,7 @@ func cpfcJudge(root, zerg string, selfExempt bool) (int, []string, *cpfcData) {
 	topics := map[string]int{}
 	helpUsage := map[string]string{}
 	var unjudged []string
+	var unparsed []string // ★ GAP-20260927-86：抽不出命令路径的串（首词 `-`/`[`）
 
 	flagFace := func(path string) (string, bool) {
 		if u, ok := usage[path]; ok {
@@ -713,6 +715,12 @@ func cpfcJudge(root, zerg string, selfExempt bool) (int, []string, *cpfcData) {
 			segs = append(segs, t)
 		}
 		path := strings.Join(segs, " ")
+		// ★ GAP-20260927-86：首词是 `-`/`[` 的串（R1 守卫只认 `<`）⇒ segs 为空 ⇒ path 得空串（非 None）。
+		//   登记为「判不了」并 continue（照本门 flagFace 的 `or None` 归口 + 「判不了 ⇒ rc=2」先例）。
+		if path == "" {
+			unparsed = append(unparsed, fmt.Sprintf("%s `zerg %s`", rel, body))
+			continue
+		}
 		usedSet := map[string]bool{}
 		for _, f := range cpfcFlagRE.FindAllString(body, -1) {
 			usedSet[strings.SplitN(f, "=", 2)[0]] = true
@@ -789,6 +797,7 @@ func cpfcJudge(root, zerg string, selfExempt bool) (int, []string, *cpfcData) {
 	data.topics = topics
 	data.helpUsage = helpUsage
 	data.unjudged = unjudged
+	data.unparsed = unparsed
 	lines = append(lines, fmt.Sprintf("   · 扫到 `` `zerg …` `` 串 **%d** 个（其中通用式行 %d · 族/子族引用 %d · 主题面 %d 个主题）",
 		data.spans, data.generic, data.groupRef, len(topics)))
 	if len(helpUsage) > 0 {
@@ -798,6 +807,19 @@ func cpfcJudge(root, zerg string, selfExempt bool) (int, []string, *cpfcData) {
 	if len(unjudged) > 0 {
 		lines = append(lines, fmt.Sprintf("   · **未判**旗标 **%d** 处（该命令的用法串两处都取不到 ⇒ 照实登记、不当绿）"+
 			"：%s", len(unjudged), strings.Join(cpfcFirstN(unjudged, 4), " · ")))
+		// ★ GAP-20260927-95：这一档原只打印「不当绿」、退码仍落 `if hits` 之后的 0 ⇒
+		//   同屏「不当绿」紧跟「全绿 rc=0」。「未判」= 取不到真源 = 判不了 ⇒ 按三档 2 收口（2 > 1 > 0）。
+		lines = append(lines, fmt.Sprintf("⇒ **不给结论（rc=2）**：%d 处旗标**未判**（用法串两处都取不到）——"+
+			"「取不到」≠ 全绿", len(unjudged)))
+		return 2, lines, data
+	}
+	// ★ GAP-20260927-86：抽不出命令路径的串（首词 `-`/`[`）= 判不了 ⇒ 按三档 2 收口（2 > 1 > 0）。
+	if len(unparsed) > 0 {
+		lines = append(lines, fmt.Sprintf("   · **判不了**（抽不出命令路径的串）**%d** 处：%s",
+			len(unparsed), strings.Join(cpfcFirstN(unparsed, 4), " · ")))
+		lines = append(lines, fmt.Sprintf("⇒ **不给结论（rc=2）**：%d 处 `zerg …` 串抽不出路径（首词 `-`/`[` · 判不了优先于有红）",
+			len(unparsed)))
+		return 2, lines, data
 	}
 	data.hits = hits
 	if len(hits) > 0 {
@@ -927,6 +949,14 @@ func cpfcSelfTest() (int, []string) {
 	check((rc == 0 || rc == 1) && d8.spans > 0,
 		fmt.Sprintf("格 8 真树现跑：rc=%d · 扫到 %d 串 · 例外 %d 处（照实：本格只证「判得动」，不要求 0）",
 			rc, d8.spans, len(d8.hits)))
+
+	// 格 9 判不了负控（GAP-20260927-86）：页里塞首词为 `-`/`[` 的串 ⇒ 旧版 IndexError 崩（与有红同退码 rc=1）。
+	//   改后必须 rc=2 且 data 里记 unparsed（判不了优先于有红），不崩。
+	r9, _ := cpfcMakeFixture(base, nil, []string{"见 `zerg -x 形态`。", "见 `zerg [对象] ls`。"}, true, false)
+	rc, _, d9 := cpfcJudge(r9, real, true)
+	check(rc == 2 && len(d9.unparsed) >= 1,
+		fmt.Sprintf("格 9 判不了负控（串首词 `-`/`[` ⇒ 抽不出路径）⇒ rc=2 + data.unparsed 非空（实测 rc=%d · unparsed=%d）",
+			rc, len(d9.unparsed)))
 
 	if cpfcAllTrue(ok) {
 		lines = append(lines, fmt.Sprintf("   ⇒ 自检全过（%d 格）", len(ok)))

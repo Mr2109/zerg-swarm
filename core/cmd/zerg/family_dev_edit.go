@@ -7,7 +7,7 @@
 //	   `--proposal <id>` 必给，`--file` 必须在那件提案的 `files[]` 里 ⇒ 没声明过的件**写不进去**（退码 2）。
 //	   提案本身就是那次写的「可审查物 + 回滚路径（`rollback_ref`）」。
 //	② **默认干跑**（§九 M3 `C4` 三态的第一态）：不带旗标 = `--dry-run`，只出计划件、零副作用；
-//	   真写要 D3 档齐 —— `--confirm=<主机名>`（值必须与主机名逐字相同）+ `--yes`。
+//	   真写要 D3 档齐 —— `--confirm=<本机名>`（值必须与主机名逐字相同）+ `--yes`。
 //	③ **逐条审计**（§九 M3 `C5`：一行一事件 · 追加只写 · **写失败即拒**）：审计行**先落盘**，
 //	   落不下就不改件（「写不进日志就不许执行」）。审计记：谁 / 何时 / 改哪件 / 前后 sha256 / 字节数。
 //	④ **可回滚**（§17.3 铁律③③）：件在 git 工作树里 ⇒ 回滚路径 = 提案的 `rollback_ref`（件级回滚见 `dev rollback`）。
@@ -98,7 +98,7 @@ var devEditFieldsShared = []string{"proposal", "file", "mode", "result", "before
 // 人面那一行**同源**（同一趟 `Layers` · 同一个抽取函数 `impactRedContractIDs` —— 禁二次算 ✗）。
 var devEditDryRunOnlyFields = []string{"approver", "rollback_verdict", "rollback_tier",
 	"rollback_cmd", "rollback_why", "diff_body", "diff_body_truncated",
-	"red_contracts", "contract_hits"}
+	"red_contracts", "contract_hits", "approval_scope_hit"}
 
 // devEditFields —— `--json` 面的全部字段（K1：机器面先定 · 两片拼接 = **唯一**定义处）。
 var devEditFields = append(append([]string{}, devEditFieldsShared...), devEditDryRunOnlyFields...)
@@ -221,7 +221,7 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	// ★ 同给判定（`GAP-20260927-376` · `--dry-run` 与确认档**同给**）：`--dry-run`（只出计划件）与
 	//   `--yes`（真写）**同给** = 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）。
 	//   修前：本命令走下面那条合并判定 `inv.dryRun || !(inv.confirmGiven && inv.yes)` ⇒ `inv.dryRun`
-	//   一真就进干跑支、**退 0**（零写入、审计也不落）—— 人给了 `--confirm=<主机名> --yes` 以为写了，
+	//	   一真就进干跑支、**退 0**（零写入、审计也不落）—— 人给了 `--confirm=<本机名> --yes` 以为写了，
 	//   实际一个字节没落：真写与计划件**退码不可区分、输出同形**（靠 sha256 回读才发现）。
 	//   ★ 判定走**共享**那一处（`guard.go` 的 `dryRunYesConflict` —— `D3b` 反向对齐（2026-09-27）的
 	//   **唯一共享判定**，全树 19 条真判「同给 ⇒ 2」命令同一口径）⇒ **不另写第二套**（禁同一口径两处实现 ✗）。
@@ -479,6 +479,11 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		// 这里补上**同一枚批准件**读出的批准人（与上面「批准件」那一格同源 · 不另算）。
 		// ★ **真写档一字不动** ✗（本单要求：真写档机器面逐字不变 ⇒ 只在这一支里补）。
 		row["approver"] = appr.Appr
+		// ★ GAP-20260927-339（2026-10-04 本枚）：`approval_scope_hit` 这一格 —— 干跑档机器面
+		//   直读「批准件 scope 覆不覆盖本次改件」（`yes`/`no`/`（… 判不了）`）。取值与真写闸那一枚
+		//   `approvalScopeCovers` **同源**（读同一枚批准件 · 不另算）；只在这一支（干跑）落，真写档
+		//   一字不加（真写档给出这些名字 ⇒ 写前拒 · 见 `devEditDryRunOnlyFields`）。
+		row["approval_scope_hit"] = appr.ScopeHit
 		// ★ `GAP-20260928-155`（2026-09-28 · 本枚）：**差异正文进机器面** —— 人面那一块
 		//   （`emitDevEditDiffBody`）已可用，可机器面此前只有行号面 + `±N` ⇒ 脚本切不出「到底改了什么」。
 		//   两格都取自**同一趟对齐 / 同一处 hunk 边界**（上面那句 `devEditDiffBodyOf(align)` 的 `bodyDiff`）
@@ -556,8 +561,8 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 		return exitOK
 	}
 	if !devEditHostAccept(inv.confirm) {
-		inv.setErr("usage", "confirm_mismatch", "确认值不匹配主机名")
-		fmt.Fprintf(stderr, "%s: 确认值不匹配目标（--confirm 给的是 %q，本机主机名是 %q）⇒ 不执行\n",
+		inv.setErr("usage", "confirm_mismatch", "确认值不匹配本机名")
+		fmt.Fprintf(stderr, "%s: 确认值不匹配目标（--confirm 给的是 %q，本机名是 %q）⇒ 不执行\n",
 			progName, inv.confirm, planHost())
 		return exitUsage
 	}
@@ -740,6 +745,13 @@ func cmdDevEdit(inv *invocation, stdout, stderr io.Writer) int {
 	// stdout 那一行（逐字四格记录）**一个字节不动** ✗（脚本按位切它）。
 	emitDevEditLineDiff(stderr, "", lineDiff)
 	fmt.Fprintf(stderr, "%s: 已改 %s（提案 %s · 审计 %s）\n", progName, outPath, proposalID, auditPath)
+	// ★ GAP-20260927-410：`dev edit` 只写源码、不触发重编 ⇒ Go 件改完与 `bin/` 制品分离
+	//   （新行为在进程内真跑得了、`./bin/zerg` 却还是旧的）。此处**只出声、不改退码**（零行为改动）：
+	//   点名「制品可能已过期」，把「源码 ↔ 制品」对拍可读面的最小一格补上。
+	if strings.HasSuffix(fileRel, ".go") {
+		fmt.Fprintf(stderr, "%s: ★ 制品对拍：本件是 Go 源码 —— `dev edit` 只写源码、不触发重编 ⇒ `bin/%s` 可能仍是旧制品（新行为要重编后才在 `./bin/%s` 生效）\n",
+			progName, progName, progName)
+	}
 	fmt.Fprintf(stderr, "回滚路径：提案 %s 的退点 = %s（件级回滚见 `%s dev rollback`）\n", proposalID, orDash(prop.Rollback), progName)
 	return exitOK
 }
@@ -887,7 +899,7 @@ func emitDevEditPlan(stdout, stderr io.Writer, row map[string]string, prop *prop
 		}
 	}
 	if blocked {
-		fmt.Fprintf(stderr, "%s: `dev edit` 是 D3 档（改仓内件）——**缺 `--confirm=<主机名>` 或 `--yes` ⇒ 不执行**（退码 2）\n", progName)
+		fmt.Fprintf(stderr, "%s: `dev edit` 是 D3 档（改仓内件）——**缺 `--confirm=<本机名>` 或 `--yes` ⇒ 不执行**（退码 2）\n", progName)
 		return exitOK
 	}
 	fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未写任何文件）")
@@ -902,6 +914,14 @@ type devEditApproval struct {
 	OK   bool
 	Judg string // 判决（拒因逐字给出 —— 错误文案要给下一步 · K14）
 	Appr string // 批准人（验过时才有）
+	// ★ GAP-20260927-339（2026-10-04 本枚）：`approval_scope_hit` 这一格的取值 —— 批准件的
+	//   `scope` **覆不覆盖**本次要改的件（与 `dev edit` 真写闸那一枚 `approvalScopeCovers`
+	//   **同源**，不另算一套判据）。三态（`--json` 里直读 · 脚本据此切「该不该先扩 scope」）：
+	//     `yes` ⇒ 覆盖（真写这一格没问题）· `no` ⇒ 不覆盖（真写会被拒 —— 要先重签扩 scope）·
+	//     `（… 判不了）` ⇒ 件读不到 / 读不动（**判不了 ≠ 没覆盖** · 本仓铁律：读不到不当没有）。
+	//   病灶（缺口逐字）：干跑档此前只有一句人话判决（`approval`），脚本切不出「范围命中没有」——
+	//   只能人读 `approval` 那句散文里有没有「范围」两字。
+	ScopeHit string
 }
 
 // devEditApprovalTool —— 本命令向人要的那枚批准件的工具名（件名 = `<状态目录>/approvals/<工具名>.json`）。
@@ -919,7 +939,7 @@ func devEditLoadApproval(inv *invocation, fileRel string) devEditApproval {
 	if path == "" {
 		path = filepath.Join(approveDir(), wantTool+".json")
 	}
-	a := devEditApproval{Path: path}
+	a := devEditApproval{Path: path, ScopeHit: "（无件 —— 判不了）"}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		a.Judg = "无件（真写要一枚人签批准件）"
@@ -928,7 +948,15 @@ func devEditLoadApproval(inv *invocation, fileRel string) devEditApproval {
 	var tk approvalTicketFile
 	if err := json.Unmarshal(b, &tk); err != nil {
 		a.Judg = "件读不动（不算批准）：" + err.Error()
+		a.ScopeHit = "（件读不动 —— 判不了）"
 		return a
+	}
+	// ★ GAP-20260927-339：范围命中这一格在**验签之前**就能算（它只看 scope 与件名，与签名无关）；
+	//   件读得动 ⇒ 算出来（yes/no）；读不动 ⇒ 保持「判不了」。与真写闸同源（同一枚 `approvalScopeCovers`）。
+	if approvalScopeCovers(tk.Scope, fileRel) {
+		a.ScopeHit = "yes"
+	} else {
+		a.ScopeHit = "no"
 	}
 	if st := verifyTicketState(tk); st != "验过" {
 		a.Judg = st // 「无签名（不算批准）」= 手写件那一格，逐字转出，不润色

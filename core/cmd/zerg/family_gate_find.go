@@ -51,7 +51,14 @@ var gateFindFields = []string{"name", "scope", "mode", "verdict", "cmd", "log", 
 	//   消费者拿不到「命中不唯一」这个信号，会把超集读成一条结论。
 	//   治法：**只加信息**（这两格由 `gateFindHitFace` 一处算、逐行同值）—— 不改退码（现 rc=0
 	//   有现有消费者）、不改前九格的字节与顺序、不改任何既有函数行为。
-	"hits", "unique"}
+	"hits", "unique",
+	// ★ 治 GAP-20260928-49：机器可读面再加两格 —— 「解析不确定」读数（`uncertain` / `uncertain_lines`）。
+	//   病（现读）：不确定性只在**人读面**（stderr 的 `reportUncertainSteps`）自报，`--json` 的
+	//   items 里一个字都没有 ⇒ 机读侧（子代理 / 门）仍可能把「已解析条数」当全量、把「读不出」
+	//   当「未点名」，同族纪律「读不到不许当健康」在**机器面**上无落点。
+	//   治法：**只加信息**（两格由 `gateFindStampUncertain` 一处算、逐行同值）—— 与 `hits`/`unique`
+	//   同规：不改退码（现 rc=0 有现有消费者）、不改前十一格的字节与顺序、不改任何既有函数行为。
+	"uncertain", "uncertain_lines"}
 
 // cmdGateFind —— `zerg gate find <片段> [--json <字段>]`。
 //
@@ -170,6 +177,8 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 	// ★ 2026-09-28（缺口 `GAP-20260928-145`）：机器可读面逐行盖「命中计数 + 唯一性标记」两格。
 	//   口径只有一处（`gateFindHitFace`）—— 表/JSON 两条路都走 `listCmd`，故两处**同时**有这两格。
 	gateFindStampHits(rows)
+	// ★ 治 GAP-20260928-49：把「解析不确定」读数也盖进机器面（与 hits/unique 同规 · 逐行同值）。
+	gateFindStampUncertain(rows, unc)
 	fmt.Fprintf(stderr, "%s: 片段 %q 命中 %d 行（现读 add_step 行 %d 条 · 三处接线面 = precommit / all.sh / real-gates.sh）\n",
 		progName, probe, len(rows), len(decls))
 	if _, u := gateFindHitFace(len(rows)); u == gateFindUniqueNo {
@@ -208,6 +217,35 @@ func gateFindStampHits(rows []map[string]string) {
 	for _, r := range rows {
 		r["hits"] = hits
 		r["unique"] = unique
+	}
+}
+
+// gateFindStampUncertain —— 「解析不确定」读数在机器面上的**唯一**盖法（`GAP-20260928-49`）。
+//
+// 病（现读）：读不出的 `add_step` 声明只经 `reportUncertainSteps` 报到**进程 stderr**（人读面），
+// `gate find --json` 的 `items` 里没有对应格 ⇒ 机读侧（子代理 / 门）拿到的 items 看不出
+// 「还有 N 条声明没读出来」，会把「已解析条数」当全量、把「读不出」当「未点名」。
+// 同族纪律「读不到不许当健康」在**机器面**上没有落点。
+//
+// 治法（**只加信息** · 与 `hits`/`unique` 同规）：逐行同值盖两格 ——
+//
+//	`uncertain`       = `no`（无读不出的声明行）/ `yes`（有）
+//	`uncertain_lines` = 空串 / 行号清单（形如 `L1958 · L2973`）
+//
+// 退码、前十一格的字节与顺序、任何既有函数行为**一字不动**。
+func gateFindStampUncertain(rows []map[string]string, unc []gateStepUncertain) {
+	val, lines := "no", ""
+	if len(unc) > 0 {
+		val = "yes"
+		ls := make([]int, 0, len(unc))
+		for _, u := range unc {
+			ls = append(ls, u.Line)
+		}
+		lines = joinLines(ls)
+	}
+	for _, r := range rows {
+		r["uncertain"] = val
+		r["uncertain_lines"] = lines
 	}
 }
 

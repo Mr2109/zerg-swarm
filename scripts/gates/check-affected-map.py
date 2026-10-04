@@ -6,7 +6,11 @@
 口径照 `go mod tidy` / `pre-commit check-hooks-apply`：
   ① 「盘上有件但表里没声」＝ 声明覆盖不到的输入（**设计允许的常态** ⇒ 报告，不当红；
      按已拍「未声明件默认每轮都跑」处置）；
-  ② 「表里有件盘上无」＝ 悬空声明（声明指向不存在的件 ⇒ **红** ・ fail-closed）。
+  ② 「表里有件盘上无」＝ 悬空声明（声明指向不存在的件 ⇒ **红** ・ fail-closed）；
+  ③ ★ **步面格（拍乙 · D9 步面接线）**：声明表 `faces` 逐字命名的步集合 ⟷ 步骤表（`add_step` 现读）
+     步集合，「`D==N` ＋ 命名集合逐字相等」缺一即红 —— 治「门84 只判件面、判不出步面漂移」那个缝
+     （见设计稿 §七-(b) / §六负控①）。★ 本格**复甲① `affected-steps.py` 的 C0 唯一实现**
+     （`c0_step_face()` · 由 importlib 现载邻件取用），✗ **不另写第二份「逐字相等」**（违唯一真源即红）。
 
 声明表（本单新件 `scripts/gates/affected-map.json`）**由本件 `--emit` 现读生成**，
 来源三处（逐条现读 · ✗ 不手敲）：
@@ -17,14 +21,16 @@
   C. `scripts/gates/newcmd-paths-baseline.json`：命令树 path 全集 ⇒ 命令面真源件（`core/cmd/zerg/main.go` ·
      `core/cmd/zerg/testdata/cli-matrix.json` · `scripts/gates/cli-contract-baseline.json`）与读它的门步。
 
-退码（两值 · fail-closed，照派单）：
-  0  读回成功（两类差集照实报出）
+退码（三值 ＋ **步面单列一格** · fail-closed，照派单 ＋ 拍乙）：
+  0  读回成功（① ② 两类差集皆空 · ③ 步面 `D==N` 且逐字相等）
   1  缺读数 / 悬空声明（声明件不在 · git 读数取不到 · `表里有件盘上无` 非空 · 空表无鉴别力）
-  2  用法错 / `--self-test` 不过
+  2  判不了（用法错 / `--self-test` 不过 / 步骤表或 C0 唯一真源取不到）
+  3  **步面漂移**（拍乙 · 单列一格）：声明表 `faces` 命名步 ≠ 步骤表（`D≠N` 或命名集合不等）
+     ★ 与「悬空声明」的 rc=1 **分列两格**（✗ 不混同一 rc）；`tri` 档下 3 与 1 同判 FAIL（阻断）。
 
 子命令
   python3 check-affected-map.py --emit [--out <件>]     现读生成声明表（默认写 scripts/gates/affected-map.json）
-  python3 check-affected-map.py --check [--map <件>]    双向差集机检
+  python3 check-affected-map.py --check [--map <件>]    双向差集 ＋ 步面逐字相等机检
   python3 check-affected-map.py --self-test             成对负控（rc 0 通过 / 2 不过）
 """
 import argparse
@@ -401,6 +407,51 @@ def check_map(mp, files_on_disk):
     return rc, rep
 
 
+# ── 步面格（拍乙 · D9 步面接线）：**复甲① C0 唯一实现** ──────────────────────
+def _load_affected_steps():
+    """importlib 现载**邻件** `scripts/gates/affected-steps.py`（C0 唯一真源 · ✗ 不另写第二份「逐字相等」）。
+    取不到 ⇒ None（调用方按「判不了」rc=2 fail-closed）。"""
+    import importlib.util
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'affected-steps.py')
+    if not os.path.isfile(p):
+        return None
+    spec = importlib.util.spec_from_file_location('_affected_steps_c0', p)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    prev = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True          # ✗ 不在仓内 scripts/gates 落 .pyc 副产物
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.dont_write_bytecode = prev
+    return mod
+
+
+def declared_face_names(mp):
+    """声明表 `faces` 展平**去重**后的步名表（门84 侧取法 · 与甲① `analyse()` 逐字同构）。"""
+    faces = mp.get('faces') or {}
+    named, seen = [], set()
+    for f in sorted(faces):
+        for n in faces[f]:
+            if n not in seen:
+                seen.add(n)
+                named.append(n)
+    return named
+
+
+def check_step_face(table_names, mp):
+    """步面格（拍乙）：`faces` 命名步集合 ⟷ 步骤表步集合 的「`D==N` ＋ 逐字相等」。
+    ★ 复甲① `affected-steps.py` 的 C0 唯一实现（`c0_step_face()`）—— ✗ 本件不写第二份判据。
+    返回 (rc, detail)：0 步面齐（绿）· 3 步面漂移（红 · **单列一格** · ✗ 不与悬空声明的 rc=1 混）·
+    2 判不了（C0 真源取不到 ⇒ fail-closed）。"""
+    mod = _load_affected_steps()
+    if mod is None:
+        return 2, 'C0 唯一真源取不到（邻件 affected-steps.py 不在）⇒ 判不了'
+    ok, detail = mod.c0_step_face(list(table_names), declared_face_names(mp))
+    return (0, detail) if ok else (3, detail)
+
+
 def cmd_check(root, map_path):
     if not os.path.isfile(map_path):
         print('[缺读数] 声明表不在：%s ⇒ rc=1（fail-closed）' % map_path)
@@ -418,6 +469,15 @@ def cmd_check(root, map_path):
         print('[缺读数] git ls-files 取不到：%s ⇒ rc=1（fail-closed）' % e)
         return 1
     rc, rep = check_map(mp, files_on_disk)
+    # ★ 步面格（拍乙）：先算 —— 与件面格（① ②）**分列各算**（✗ 不混同一 rc）
+    try:
+        table_names = [s['name'] for s in parse_step_table(read_text(root, SRC_STEP_TABLE))]
+        if not table_names:
+            sf_rc, sf_detail = 2, '步骤表解析 0 步（空转 ⇒ 判不了）'
+        else:
+            sf_rc, sf_detail = check_step_face(table_names, mp)
+    except Exception as e:
+        sf_rc, sf_detail = 2, '步骤表取不到：%s ⇒ 判不了' % e
     print('声明表：%s' % map_path)
     print('  schema=%s · source_head=%s · 指纹=%s' % (
         mp.get('schema'), mp.get('source_head'), str(mp.get('input_fingerprint'))[:16]))
@@ -431,8 +491,13 @@ def cmd_check(root, map_path):
     print('  ② 表里有件盘上无（悬空声明 ⇒ 红）：%d 条' % len(rep['class2']))
     for x in rep['class2'][:10]:
         print('      - %s' % x)
-    print('  rc=%d（0 读回成功 · 1 悬空声明/缺读数）' % rc)
-    return rc
+    sf_word = '绿' if sf_rc == 0 else ('红' if sf_rc == 3 else '判不了')
+    print('  ③ 步面（件面＋步面 · D==N ＋ 逐字相等 · 复甲① C0 唯一实现）：%s · %s'
+          % (sf_word, sf_detail))
+    # ★ 两格**分列各算**（✗ 不混同一 rc）：步面漂移 rc=3 · 悬空声明 rc=1 · 步面判不了 rc=2
+    out_rc = 2 if sf_rc == 2 else (3 if sf_rc == 3 else rc)
+    print('  rc=%d（0 读回成功 · 1 悬空声明/缺读数 · 3 步面漂移 · 2 判不了）' % out_rc)
+    return out_rc
 
 
 # ── 成对负控 ───────────────────────────────────────────────────────────
@@ -477,6 +542,51 @@ def self_test():
         rc = cmd_check(os.path.dirname(tmp), os.path.join(tmp, 'no-such-map.json'))
         if rc != 1:
             fails.append('⑥ 缺件期望 rc=1，实得 %d' % rc)
+        # ⑦–⑩ 端到端（真起 cmd_check · 走 importlib 载邻件 C0 唯一实现 · 走 ③ 步面格）
+        import contextlib as _ctx
+        import io as _io
+
+        def _q(map_path):
+            with _ctx.redirect_stdout(_io.StringIO()):
+                return cmd_check(root, map_path)
+
+        root = os.path.join(tmp, 'repo')
+        os.makedirs(os.path.join(root, 'core'))
+        os.makedirs(os.path.join(root, 'scripts', 'gates'))
+        with open(os.path.join(root, 'core', 'a.go'), 'w', encoding='utf-8') as f:
+            f.write('package main\n')
+        with open(os.path.join(root, 'scripts', 'gates', 'precommit-gates.sh'), 'w', encoding='utf-8') as f:
+            f.write('DEFAULT_SCOPES=("go")\n'
+                    'add_step go "a-step" rc "${REPO_ROOT}/core" "go build ./..."\n'
+                    'add_step gates "b-step" tri "${REPO_ROOT}" "python3 scripts/gates/x.py"\n'
+                    'add_step gates "c-step" tri "${REPO_ROOT}" "python3 scripts/gates/y.py"\n')
+        with open(os.path.join(root, 'scripts', 'gates', 'gate-coverage.config.json'), 'w', encoding='utf-8') as f:
+            f.write('{"scan":{"script_globs":["scripts/gates/*.py"]},'
+                    '"exclude":{"path_components":[".git"],"prefixes":[]},"whitelist":{"scripts":[]}}')
+        disk_ok = [{'pattern': 'core/**', 'kind': 'prefix'}]
+        faces_ok = {'core': ['a-step'], 'repo': ['b-step', 'c-step']}
+
+        def _wmap(name, files, faces):
+            p = os.path.join(tmp, name)
+            with open(p, 'w', encoding='utf-8') as f:
+                json.dump({'schema': 'affected-map/1', 'input_fingerprint': 'f' * 64,
+                           'source_head': 'deadbeef', 'files': files, 'faces': faces}, f)
+            return p
+
+        # ⑦ 正控：步面齐（D==N 且逐字相等）⇒ rc=0（③ 绿）
+        if _q(_wmap('m7.json', disk_ok, faces_ok)) != 0:
+            fails.append('⑦ 步面齐正控期望 rc=0')
+        # ⑧ 负控：删 faces 一步（D≠N）⇒ rc=3（**步面格 · ≠ 悬空声明的 1**）
+        if _q(_wmap('m8.json', disk_ok, {'core': ['a-step'], 'repo': ['b-step']})) != 3:
+            fails.append('⑧ 步面漂移(D≠N)期望 rc=3')
+        # ⑨ 负控：D==N 但集合不等（换名）⇒ rc=3
+        if _q(_wmap('m9.json', disk_ok, {'core': ['a-step'], 'repo': ['b-step', 'zzz']})) != 3:
+            fails.append('⑨ 步面集合不等期望 rc=3')
+        # ⑩ 负控：悬空声明 ⇒ rc=1（**≠ 步面漂移的 3** · 两格 rc 分列不混同 · 有牙）
+        if _q(_wmap('m10.json',
+                    disk_ok + [{'pattern': 'scripts/gates/ghost.py', 'kind': 'literal'}],
+                    faces_ok)) != 1:
+            fails.append('⑩ 悬空声明期望 rc=1（✗ 不与步面 3 混同）')
     finally:
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
@@ -485,7 +595,7 @@ def self_test():
         for x in fails:
             print('  ✗ ' + x)
         return 2
-    print('自检通过：6 控（正控 1 ＋ 负控 5）逐条对拍 ✓')
+    print('自检通过：10 控（正控 2 ＋ 负控 8）逐条对拍 ✓')
     return 0
 
 

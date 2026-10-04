@@ -71,7 +71,21 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if candidate == nil {
-		writeErrorCode(w, http.StatusNotFound, "MODEL_NOT_DEPLOYED", fmt.Sprintf("模型 %s 在机器 %s 无部署", req.Model, req.Machine))
+		// 缺口 GAP-20260925-48：把「机器名不存在」与「该机没部署此模型」分成**两档**报 —— 此前二者
+		//   同回 MODEL_NOT_DEPLOYED + 原样回填请求里的 machine 串（调用方传来未展开的 `${USER}` 时，
+		//   报错里机器名就是字面量 `${USER}`，既看不出是哪台机、也分不清「机器名写错」与「该机确无
+		//   部署」）；后者再**列出该模型实际有部署的机器**，让调用方能一眼改对。code/status 不变。
+		if _, ok := h.Fleet[req.Machine]; !ok && req.Machine != "local" {
+			writeErrorCode(w, http.StatusNotFound, "MACHINE_NOT_FOUND",
+				fmt.Sprintf("机器 %s 不存在（名册里没有这台机）—— 这**不是**「该机没部署此模型」", req.Machine))
+			return
+		}
+		hosts := make([]string, 0, len(candidates))
+		for i := range candidates {
+			hosts = append(hosts, candidates[i].Host)
+		}
+		writeErrorCode(w, http.StatusNotFound, "MODEL_NOT_DEPLOYED",
+			fmt.Sprintf("模型 %s 在机器 %s 无部署；该模型实际有部署的机器：%s", req.Model, req.Machine, strings.Join(hosts, " / ")))
 		return
 	}
 

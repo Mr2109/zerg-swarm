@@ -1,7 +1,7 @@
 // check_replace_rule_fixtures_test.go —— Go 真搬的**成对负控**定向单测（M2 · 替换规则夹具族）。
 //
 // ✗ 禁恒绿：本件同时钉住「必然判绿 rc=0」「必然出红明细 rc=1（逐条点名）」「不给结论 rc=2（多档）」
-// 与 py 真口子的**现状牙**（B 类读失败静默：读不了的件被 `scanned` 计入却不产命中行），
+// 并钉住 B 类读失败（读不了的件）已**翻正**为「登记 + 判红 rc=2」（✗ 不再静默吞件），
 // 并钉住 `--json` 的**空值三形态**（`[]` 在场 / 键不在场）。
 //
 // ★ 本件自身落 `core/` 且以 `_test.go` 结尾 ⇒ **在本门扫描面内**（自指②）⇒ 正文**零私有面字面量**
@@ -211,8 +211,8 @@ func TestCheckReplaceRuleFixturesGatePort(t *testing.T) {
 		}
 	})
 
-	// ── py 真口子的**现状牙**（B 类读失败静默）：读不了的 `*_test.go` 仍被计入件面，但不产命中行 ──
-	t.Run("口子_读不了的件静默", func(t *testing.T) {
+	// ── B 类读失败（读不了的件）**已翻正**：登记 + 判红 rc=2（✗ 不再静默吞件）─────────
+	t.Run("读不了的件_登记判红_rc2", func(t *testing.T) {
 		if os.Geteuid() == 0 {
 			t.Skip("root 无视权限位 ⇒ 本用例不适用")
 		}
@@ -225,16 +225,16 @@ func TestCheckReplaceRuleFixturesGatePort(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer os.Chmod(bad, 0o644)
+		if _, err := os.ReadFile(bad); err == nil {
+			t.Skip("本机该件仍可读 ⇒ 读失败面不可复现")
+		}
 		crrfW(t, filepath.Join(root, "core", "a", "hit_test.go"), "home := \"/srv/demo/x\"\n")
-		rc, out, _ := crrfRun(t, "--root", root)
-		if rc != 1 {
-			t.Fatalf("应 rc=1（另一件命中），得 rc=%d out=%s", rc, out)
+		rc, _, errs := crrfRun(t, "--root", root)
+		if rc != 2 {
+			t.Fatalf("读不了的件应 rc=2（不给结论），得 rc=%d err=%s", rc, errs)
 		}
-		if strings.Contains(out, "core/unread/bad_test.go") {
-			t.Fatalf("读不了的件本应静默跳过（py 现状），却出现在正文：out=%s", out)
-		}
-		if !strings.Contains(out, "core/a/hit_test.go:1:") {
-			t.Fatalf("可读件的命中仍须点名 out=%s", out)
+		if !strings.Contains(errs, "core/unread/bad_test.go") {
+			t.Fatalf("读不了的件应被逐件点名，stderr=%q", errs)
 		}
 	})
 

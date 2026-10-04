@@ -175,6 +175,9 @@ RULES = [
      "《清单》§5 ⑤（机械插 `-` 需人审）"),
 ]
 
+# RULE_SEV —— 规则号 → 声明档（GAP-20260927-63）：judge_name().add() 取此表，不再只看对象类型。
+RULE_SEV = {r[0]: r[1] for r in RULES}
+
 # ── A 档：《清单-命名规范化》已登记的「不改」条目 **15 条**（行数；可达 10 · 见下方「共用键」注）──
 #   ★ 2026-09-19 开发文档分家：原 22 条里的 A17（`docs/issues/tmp-产物清单-20260914.md`）与
 #     A18（`docs/调研/协作骨架v2.0-核验-20260918/` 等两条目录）**对象已整树迁出仓** ⇒
@@ -497,7 +500,13 @@ def judge_name(rel, kind):
     hits = []
 
     def add(rule, msg):
-        sev = "FAIL" if kind == "file" else "WARN"
+        # 档位按 RULES 声明取（缺口 GAP-20260927-63 / GAP-20260926-165）：此前只看对象类型
+        # （件面一律 FAIL、目录面一律 WARN）⇒ N5/N7 这类**声明 WARN** 的规则在件面也落 FAIL
+        # 进 rc（实测 N7 声明 WARN 却 23 处全落 FAIL，占 142 的 16.2%）。取声明档后 N5/N7 的
+        # 件面命中不再计入 FAIL ⇒ 142→119，而 rc 仍 1（口径≠凑绿）。
+        # ★ 只对**件面**取声明档：**目录面一律 WARN**（结构级 · 只登记不改 —— 见本件
+        #   `--list-rules` 的档位口径与《清单》§5 ④；自检格③「目录名命中只告警」钉的正是这条）。
+        sev = "WARN" if kind != "file" else (RULE_SEV.get(rule) or "FAIL")
         row = exempt_row_for(rel, rule, kind, stem=stem, base=base)
         hits.append((rule, sev, msg, row))
 

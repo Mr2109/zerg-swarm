@@ -26,10 +26,10 @@
 //	④ 内建负控：判定口是**纯函数** `dangerOpenedProblems`，正控（真命令树）与负控（合成夹具）都调它 ——
 //	   合成夹具必须被判红（判据不是恒绿）。
 //
-// 数：★ 本件**不记任何绝对条数**（件头读数会烂、且改数字=明年还会烂）——
-// 危险档总条数 / 已开放 / 未开放三格一律由 `zerg help dangerous` 现读，本件只判**形状**；下面那串 runner
-// 分布 =
-// `cmdGuarded` 25 · `cmdAgentReap` 1 · `cmdDevBuild` 1 · `cmdDevTest` 1 · `cmdGapExport` 1（**修前这一枚就是脱钩的那条**）。
+// 数：★ 本件**不记任何绝对条数**（件头读数会烂、且改数字=明年还会烂 ——
+// 缺口 `GAP-20260927-357`）——危险档总条数 / 已开放 / 未开放三格一律由
+// `zerg help dangerous` 现读，本件只判**形状**；闭集各 runner 的在用与否由
+// `refusingRunnersLiveness` 现读命令树判定，**不在件头写死分布条数**。
 package main
 
 import (

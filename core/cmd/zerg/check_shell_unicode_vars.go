@@ -185,21 +185,21 @@ func csuMaskComments(b []byte) []byte {
 	return keep
 }
 
-// csuRewrite —— py 改写档的 `out[m.start():m.end()] = b"${"+name+b"}"` **逐字照搬**。
-// ★★ 此处置**故意**用**掩码串偏移**去切**在长变短的 `out`** ⇒ 与 py 同形（多命中时**同款错位**）。
-// **✗ 不自行修** —— 这是 py **真口子**（见件头「现读硬伤清单」· 交回入账）；修了＝两态失配。
+// csuRewrite —— py 改写档（GAP-20261001-48 修后）**逐字照搬**：
+// ★ py 原写法用 masked 的**固定偏移**去切**已变长的 out**（每处 +2 B）⇒ 多命中时偏移逐处错位、
+//
+//	写出内容被切坏。py 已改成「单趟按**原串**偏移拼接（`raw` 与 `masked` 同长同布局）、一次性落盘」。
+//	本件照此：用**原始 raw** 配运行 `last` 拼接，✗ 不用「逐处 splice 进旧 out」的错位写法。
 func csuRewrite(raw []byte, ms []csuHit) []byte {
-	out := make([]byte, len(raw))
-	copy(out, raw)
+	buf := make([]byte, 0, len(raw))
+	last := 0
 	for _, m := range ms {
-		repl := []byte("${" + m.name + "}")
-		next := make([]byte, 0, len(out)+2)
-		next = append(next, out[:m.start]...)
-		next = append(next, repl...)
-		next = append(next, out[m.end:]...)
-		out = next
+		buf = append(buf, raw[last:m.start]...)
+		buf = append(buf, []byte("${"+m.name+"}")...)
+		last = m.end
 	}
-	return out
+	buf = append(buf, raw[last:]...)
+	return buf
 }
 
 // csuUniqueSorted —— py `sorted({h.decode() for h in hits})`：去重后**码点序**（名只含 ASCII ⇒ 字节序同）。
@@ -310,6 +310,16 @@ func csuSelfTest(stdout io.Writer) int {
 	rc3, out3 := csuRunOne()
 	csuChk(stdout, &bad, "档③ 用法错：不给文件（不静默空转）⇒ rc=2", 2, rc3, out3)
 
+	// 档④ 多命中改写（GAP-20261001-48）：同一行两处 `$VAR` ⇒ 改写档须「一次性落盘」、不得偏移错位。
+	dirty2 := filepath.Join(tmp, "dirty2.sh")
+	_ = os.WriteFile(dirty2, []byte("echo \"$A中$B文\"\n"), 0o644)
+	rc4, out4 := csuRunOne(dirty2)
+	csuChk(stdout, &bad, "档④ 多命中改写：两处 `$VAR` 一次落盘（rc=0）", 0, rc4, out4)
+	if got2, e := os.ReadFile(dirty2); e != nil || string(got2) != "echo \"${A}中${B}文\"\n" {
+		bad++
+		fmt.Fprintf(stdout, "  ✗ 档④ 改写内容错位（实得 %q）\n", string(got2))
+	}
+
 	if bad == 0 {
 		fmt.Fprintln(stdout, "── 自检：全过 ✓")
 		return 0
@@ -348,12 +358,9 @@ func checkShellUnicodeVarsGateMain(stdout, stderr io.Writer, argv []string) int 
 	for _, path := range files {
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			// py 只捕 `FileNotFoundError`（含空串路径）⇒ 缺件**静默跳过**（逐字沿用）。
-			if os.IsNotExist(err) {
-				continue
-			}
-			// C 类：py 无最外层兜底 ⇒ 目录 / 权限 ⇒ 未捕异常 = 回溯 rc=1。本件**fail-closed rc=2**（✗ 不静默绿）。
-			fmt.Fprintf(stderr, "⛔ 不给结论（rc=2）：读不了 %s（%v）—— py 原件此档未捕异常 ⇒ 回溯 rc=1，本件按新口径 fail-closed\n", path, err)
+			// ★ B 类读失败 ⇒ 登记 + 判红（✗ 不再静默跳过）：缺件与读不了一并进 rc 通道。
+			//   体例照同包已治件 check_token_argv.go（登记 + BLOCKED rc=2）。
+			fmt.Fprintf(stderr, "⛔ 不给结论（rc=2）：读不了 %s（%v）—— B 类读失败不许当健康\n", path, err)
 			return 2
 		}
 		masked := csuMaskComments(raw)

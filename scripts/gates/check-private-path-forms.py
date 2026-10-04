@@ -29,6 +29,14 @@ v2.5.11 已经补了第三个字面量 `~/`（该件注释逐字留痕）；本�
     `!夹具` 隔离行）的 pattern 必须被**至少一格**的**认领正则**命中；否则 ⇒ 红（**枚举不全**）。
   - E2b **脱敏器 → 形态**：从 `core/internal/obs/redact/redact.go` 的 `hasHomePath`（`Contains`
     字面量）与 `reHomeDir`（正则顶层分支）**现读抽出**的每个形态，必须被至少一格认领；否则 ⇒ 红。
+  - ★ **E2a/E2b 判红前先问一句「它是不是已登记的『非形态』」**（缺口 `GAP-20260926-152`）：
+    E2a/E2b 原先把**任何**未被形态格认领的规则 / 脱敏器形态都判红，**分不清**「真泄漏形态
+    未登记」（该红）与「公开示例值 / 规则模式未登记」（不该红）⇒ 要么放过真形态、要么对公开
+    示例误红。治法（照本门 E3「覆盖 or 登记」**同范式**）：给 E2a/E2b 补一条**登记腿** ——
+    逐字登记在 `NON_FORM_RULES` / `NON_FORM_FRAGMENTS`（带理由 + 日期）里的模式 ⇒ 进 `nonform[]`
+    **逐跑打印**（不静默）、**不当红**；**未登记**的仍是红（`真形态` 负控照旧有牙）。
+    ★ 两表**默认空** ⇒ 与旧行为**逐字同形**（未登记 ⇒ 照旧红）；只增「可登记」这一口子，
+    不改任何既有判据（既有 16 格自检全过）。
 - **E3 覆盖 or 登记**：形态表每格的「门禁侧」列，要么点名一个**在盘**的判据件且该件里
   `grep -F` 命中该格的**探针字面**；要么逐字写「不覆盖 + 理由 + 日期」。两样都没有 ⇒ **红**
   （点名「空指」或「无覆盖且无理由」）。
@@ -192,6 +200,36 @@ FORMS = [
               "登记为**存量债**（本格逐跑打印）"),
 ]
 
+# ── 「非形态」登记面（缺口 `GAP-20260926-152` · 2026-10-04）────────────────────────────────
+#   病灶（账内逐字）：E2a/E2b 把**任何**未被形态格认领的 `replace-rules.tsv` 规则 / 脱敏器形态
+#   判红 ⇒ **分不清**「真泄漏形态未登记」（该红）与「公开示例值 / 规则模式未登记」（不该红）。
+#   治法：照本门 E3「覆盖 or 登记」**同范式**，给 E2a/E2b 补一条**登记腿** —— 一条模式若逐字
+#   登记在此（带理由 + 日期），即视为「已辨识为**非形态**」⇒ 进 `nonform[]` 逐跑打印（不静默），
+#   **不当红**；未登记的仍是红（`真形态` 负控照旧有牙，见自检 ⑪/⑮）。
+#   ★ 登记**必须**逐字点明「为何这不是泄漏形态」——不许写成「不覆盖」了事（那是 E3 的债务格口径，
+#     不是本表的口径：本表是「已判定它**不是**泄漏形态」，E3 债务是「该覆盖而门禁侧还没覆盖」）。
+#   ★ 两表**默认空** ⇒ 行为与旧版**逐字同形**。
+NON_FORM_RULES = [
+    # (pattern 逐字, 理由 逐字, 日期)
+]
+NON_FORM_FRAGMENTS = [
+    # (origin 逐字, frag 逐字, 理由 逐字, 日期)
+]
+
+
+def _nonform_of(kind, key):
+    """该 key 是否已登记为「非形态」⇒ 返回登记条 `(…, reason, date)`；未登记 ⇒ `None`。
+
+    `kind`：`"rule"`（查 `NON_FORM_RULES`，比对 pattern）/ `"fragment"`（查 `NON_FORM_FRAGMENTS`，
+    比对 origin+frag）。**逐字**比对（不吃归一化 —— 登记就是要「点名到那一行」）。
+    """
+    if kind == "rule":
+        return next((r for r in NON_FORM_RULES if r[0] == key), None)
+    if kind == "fragment":
+        return next((r for r in NON_FORM_FRAGMENTS if (r[0], r[1]) == tuple(key)), None)
+    return None
+
+
 # 门禁侧探针含「具体用户名 / 主机名」的判据（E4 只打不红）
 INSTANCE_RE = re.compile(r"/(?:Users|home)/[A-Za-z]")
 
@@ -209,7 +247,7 @@ def grep_F_count(text, probe):
 
 
 def claim_hit(claim, text):
-    """认领正则判一次 —— **归一化后**再判一遍（真源里 `\.`/`\\` 是**转义写法**，
+    r"""认领正则判一次 —— **归一化后**再判一遍（真源里 `\.`/`\\` 是**转义写法**，
     形态格写的是**语义形态**；不归一化就会把「同一形态的两种写法」判成两回事）。"""
     if re.search(claim, text):
         return True
@@ -270,15 +308,15 @@ def redactor_forms(root):
 
 
 def run(root):
-    res = {"rc": 0, "red": [], "debt": [], "instances": [], "meta": {}}
+    res = {"rc": 0, "red": [], "debt": [], "nonform": [], "instances": [], "meta": {}}
     text_rules, rules = rules_of(root)
     redact_text, rforms = redactor_forms(root)
     if text_rules is None or redact_text is None:
         missing = [f for f, t in ((REPLACE_RULES, text_rules), (REDACT_GO, redact_text)) if t is None]
-        return {"rc": 2, "reason": f"真源件不在盘：{missing}（不给结论）", "red": [], "debt": [], "instances": [], "meta": {}}
+        return {"rc": 2, "reason": f"真源件不在盘：{missing}（不给结论）", "red": [], "debt": [], "nonform": [], "instances": [], "meta": {}}
     if not rules:
         return {"rc": 2, "reason": f"{REPLACE_RULES} 里 0 条替换规则（空转 ⇒ 不给结论）",
-                "red": [], "debt": [], "instances": [], "meta": {}}
+                "red": [], "debt": [], "nonform": [], "instances": [], "meta": {}}
 
     # ── E1 出处可核（逐格 · 命中必须恰好 1 次）──────────────────────────────────────
     for f in FORMS:
@@ -292,20 +330,31 @@ def run(root):
             res["red"].append(dict(rule="E1", form=f["id"], file=f["src_file"], line=None, raw=f["src_probe"],
                                    why=f"出处逐字句在该件里命中 {c} 次（必须恰好 1 次）⇒ 出处不许手写记忆"))
 
-    # ── E2a 规则 → 形态 ──────────────────────────────────────────────────────────
+    # ── E2a 规则 → 形态（★ `GAP-20260926-152`：判红前先问「是不是已登记的非形态」）──────────
     unclaimed = []
     for lineno, pat in rules:
         hit = [f["id"] for f in FORMS if claim_hit(f["claim"], pat)]
         if not hit:
+            reg = _nonform_of("rule", pat)
+            if reg is not None:
+                res["nonform"].append(dict(rule="E2a", file=REPLACE_RULES, line=lineno, raw=pat,
+                                           why="**非形态**（已登记 · %s）：%s" % (reg[2], reg[1])))
+                continue
             unclaimed.append((lineno, pat))
             res["red"].append(dict(rule="E2a", form=None, file=REPLACE_RULES, line=lineno, raw=pat,
                                    why="替换规则**没有任何形态格认领** ⇒ 形态枚举不全（换台机器/换个实例就整段漏）"))
 
-    # ── E2b 脱敏器 → 形态 ────────────────────────────────────────────────────────
+    # ── E2b 脱敏器 → 形态（★ 同上：判红前先问「是不是已登记的非形态」）──────────────────────
     orphan_forms = []
     for origin, frag in rforms:
         hit = [f["id"] for f in FORMS if claim_hit(f["claim"], frag)]
         if not hit:
+            reg = _nonform_of("fragment", (origin, frag))
+            if reg is not None:
+                res["nonform"].append(dict(rule="E2b", file=REDACT_GO, line=None,
+                                           raw=f"{origin}: {frag}",
+                                           why="**非形态**（已登记 · %s）：%s" % (reg[3], reg[2])))
+                continue
             orphan_forms.append((origin, frag))
             res["red"].append(dict(rule="E2b", form=None, file=REDACT_GO, line=None, raw=f"{origin}: {frag}",
                                    why="脱敏器枚举到的形态**没有形态格认领** ⇒ 门禁侧不知道要判它"))
@@ -336,7 +385,8 @@ def run(root):
     res["rc"] = 1 if res["red"] else 0
     res["meta"] = {"rules": len(rules), "forms": len(FORMS),
                    "unclaimed_rules": len(unclaimed), "orphan_forms": len(orphan_forms),
-                   "debt_forms": len(res["debt"]), "instance_level": len(res["instances"])}
+                   "debt_forms": len(res["debt"]), "instance_level": len(res["instances"]),
+                   "nonform": len(res["nonform"])}
     return res
 
 
@@ -413,22 +463,29 @@ def _forms_copy():
     return copy.deepcopy(FORMS)
 
 
-def _run_with(td, forms, rules=None):
-    """在夹具上跑 run()，但把形态表换成传入的那一份（**不改盘上真件**）。
+def _run_with(td, forms, rules=None, non_form_rules=None, non_form_fragments=None):
+    """在夹具上跑 run()，但把形态表 / 非形态登记表换成传入的那一份（**不改盘上真件**）。
 
     ★ `rules` 给了就**真的落到夹具盘上**（2026-09-26 修：此前形参收下却**不写**⇒ ④/④b 其实跑在
     旧夹具上 = **空转的负控**，格名说「同夹具」而夹具没变 ⇒ 判据没被测到）。
+    ★ `non_form_rules` / `non_form_fragments` 给了就换上（`GAP-20260926-152` 的登记腿自检用）。
     """
-    global FORMS
+    global FORMS, NON_FORM_RULES, NON_FORM_FRAGMENTS
     saved = FORMS
+    saved_nf, saved_nff = NON_FORM_RULES, NON_FORM_FRAGMENTS
     try:
         if rules is not None:
             with open(os.path.join(td, REPLACE_RULES), "w", encoding="utf-8") as fh:
                 fh.write("\n".join(rules) + "\n")
         FORMS = forms
+        if non_form_rules is not None:
+            NON_FORM_RULES = non_form_rules
+        if non_form_fragments is not None:
+            NON_FORM_FRAGMENTS = non_form_fragments
         return run(td)
     finally:
         FORMS = saved
+        NON_FORM_RULES, NON_FORM_FRAGMENTS = saved_nf, saved_nff
 
 
 def self_test(root):
@@ -544,6 +601,22 @@ def self_test(root):
         check("⑬b 同上 ⇒ E3 **点名**到 F-16",
               1 if any(d["rule"] == "E3" and d["form"] == "F-16" for d in r13["red"]) else 0, 1)
 
+        # ⑭ 非形态登记（E2a · `GAP-20260926-152`）：注入一条**公开示例**规则 + **逐字登记**它
+        #    ⇒ 不红、进 `nonform[]`（逐跑打印 · 不静默）= 「门分得清真形态 vs 非形态」。
+        _mk(td, RULES_BASE, REDACT_BASE)
+        rules14 = RULES_BASE + ["example-35b-v9\texample-35b-v9\t公开示例（非泄漏形态）"]
+        r14 = _run_with(td, _forms_copy(), rules=rules14,
+                        non_form_rules=[("example-35b-v9", "公开示例值（非私有泄漏形态）", "2026-10-04")])
+        check("⑭ 非形态登记：公开示例规则 + 逐字登记 ⇒ rc=0", r14["rc"], 0)
+        check("⑭b 同上 ⇒ 该规则进 `nonform[]`（逐跑打印 · 不静默）",
+              1 if any(x["raw"] == "example-35b-v9" for x in r14["nonform"]) else 0, 1)
+
+        # ⑮ must-fail：**同一条规则不登记** ⇒ rc=1（须登记才放行 —— 登记腿不是把红都洗掉）
+        r15 = _run_with(td, _forms_copy(), rules=rules14, non_form_rules=[])
+        check("⑮ must-fail：同规则不登记 ⇒ rc=1（真形态负控照旧有牙）", r15["rc"], 1)
+        check("⑮b 同上 ⇒ E2a **点名**该行原文",
+              1 if any(d["rule"] == "E2a" and "example-35b-v9" in d["raw"] for d in r15["red"]) else 0, 1)
+
     print("\n".join(lines))
     print(f"自检结论: {'全过' if bad == 0 else '有失败'}（断言 {ok + bad} 条 · 失败 {bad} 条）")
     return 0 if bad == 0 else 2
@@ -576,7 +649,8 @@ def main():
 
     if a.json:
         print(json.dumps({"schema": SCHEMA, "kind": KIND, "items": res["red"],
-                          "meta": dict(res["meta"], debt=res["debt"], instances=res["instances"])},
+                          "meta": dict(res["meta"], debt=res["debt"], instances=res["instances"],
+                                       nonform=res["nonform"])},
                          ensure_ascii=False, indent=2))
         return res["rc"]
 
@@ -585,6 +659,10 @@ def main():
     for d in res["debt"]:
         print(f"  ⊘ [{d['form']}] {d['name']} —— **门禁侧不覆盖（存量债 · 逐条登记 · 照实打印）**")
         print(f"      {d['reason']}")
+    for d in res["nonform"]:
+        loc = f"{d['file']}:{d['line']}" if d.get("line") else (d["file"] or "—")
+        print(f"  ⊘【非形态 · 已登记】[{d['rule']}] {loc}  {d['raw']}")
+        print(f"      {d['why']}")
     for i in res["instances"]:
         print(f"  ⚠ E4 [{i['form']}] {i['file']} 的探针 `{i['probe']}` 是**实例口径** —— {i['why']}")
     for r in res["red"]:

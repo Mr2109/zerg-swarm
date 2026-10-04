@@ -684,10 +684,12 @@ type aspFileMT struct {
 }
 
 // aspWalkPy 复刻 os.walk(topdown=True, followlinks=False) 的产出序 + py 的剪枝。
-func aspWalkPy(top string, visit func(string, []string)) {
+func aspWalkPy(top string, unreadable *[]string, visit func(string, []string)) {
 	f, err := os.Open(top)
 	if err != nil {
-		return // os.walk onerror=None ⇒ 读不了的目录静默跳过（B 类目录面 · 逐字照搬）
+		// ★ B 类读失败 ⇒ 登记 + 判红（✗ 不再静默跳过）· 体例照同包已治件 check_token_argv.go。
+		*unreadable = append(*unreadable, top)
+		return
 	}
 	ents, err := f.ReadDir(-1)
 	_ = f.Close()
@@ -716,21 +718,22 @@ func aspWalkPy(top string, visit func(string, []string)) {
 		if strings.HasPrefix(d, ".") || strings.HasPrefix(d, "_") {
 			continue
 		}
-		aspWalkPy(aspPyJoin(top, d), visit)
+		aspWalkPy(aspPyJoin(top, d), unreadable, visit)
 	}
 }
 
 // aspCollectInputFace 对应 py `collect_input_face` ⇒ (face, embed 件数, 扫描面件数)。
-func aspCollectInputFace(root string) ([]aspFileMT, int, int) {
+func aspCollectInputFace(root string) ([]aspFileMT, int, int, []string) {
 	var files []string
 	var embeds []string
+	var unreadable []string
 	for _, rel := range aspInputRoots {
 		base := aspPyJoin(root, rel)
 		fi, err := os.Stat(base)
 		if err != nil || !fi.IsDir() {
 			continue
 		}
-		aspWalkPy(base, func(dirpath string, fnames []string) {
+		aspWalkPy(base, &unreadable, func(dirpath string, fnames []string) {
 			for _, fn := range fnames {
 				if strings.HasPrefix(fn, ".") || strings.HasPrefix(fn, "_") {
 					continue
@@ -743,7 +746,9 @@ func aspCollectInputFace(root string) ([]aspFileMT, int, int) {
 					files = append(files, p)
 					data, rerr := os.ReadFile(p)
 					if rerr != nil {
-						continue // B 类：读失败静默（py `except OSError: pass` · 逐字照搬）
+						// ★ B 类读失败 ⇒ 登记 + 判红（✗ 不再静默跳过）。
+						unreadable = append(unreadable, aspPyRelpath("", p, root))
+						continue
 					}
 					for _, line := range aspIterLines(string(data)) {
 						m := aspEmbedRE.FindStringSubmatch(line)
@@ -778,15 +783,18 @@ func aspCollectInputFace(root string) ([]aspFileMT, int, int) {
 	sort.Strings(paths)
 	var face []aspFileMT
 	for _, p := range paths {
-		if fi, err := os.Stat(p); err == nil { // B 类：os.stat 失败静默跳过
+		if fi, err := os.Stat(p); err == nil {
 			face = append(face, aspFileMT{path: p, mt: aspMtimeFloat(fi)})
+		} else {
+			// ★ B 类读失败 ⇒ 登记 + 判红（✗ 不再静默跳过）。
+			unreadable = append(unreadable, aspPyRelpath("", p, root))
 		}
 	}
 	emb := map[string]bool{}
 	for _, p := range embeds {
 		emb[p] = true
 	}
-	return face, len(emb), len(paths)
+	return face, len(emb), len(paths), unreadable
 }
 
 func aspMtimeFloat(fi os.FileInfo) float64 {
@@ -868,7 +876,19 @@ func aspJudge(root, art string) (int, []string, aspDict) {
 	lines = append(lines, fmt.Sprintf("  源码侧 %s：HEAD %s（短 %s）· 工作树未提交 %d 件",
 		root, headFull, headShort, dirtyCount))
 
-	face, embedN, _ := aspCollectInputFace(root)
+	face, embedN, _, unreadable := aspCollectInputFace(root)
+	if len(unreadable) > 0 {
+		lines = append(lines, fmt.Sprintf("  ✗ 2 不给结论：制品输入面件读不了 %d 件（B 类读失败 ⇒ 登记 + 判红 · rc=2 · 读不到不许当健康）", len(unreadable)))
+		for i, u := range unreadable {
+			if i >= 20 {
+				lines = append(lines, fmt.Sprintf("    · …另 %d 件", len(unreadable)-20))
+				break
+			}
+			lines = append(lines, fmt.Sprintf("    · %s", u))
+		}
+		add("reason", "input face unreadable")
+		return aspRCBlocked, lines, data
+	}
 	if len(face) == 0 {
 		lines = append(lines, fmt.Sprintf("  ✗ 2 不给结论：制品输入面空转（%s 下 0 件可读 —— 空转不许当绿）",
 			aspPyListJoin(aspInputRoots, " / ")))

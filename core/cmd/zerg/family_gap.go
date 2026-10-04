@@ -405,9 +405,28 @@ func gapWriteFaceWhy(cmdStr string) string {
 	if hasDryRunFlag(fields) {
 		return ""
 	}
+	// ★ 缺口 GAP-20260927-340（危险档判定不看子参数）：`--help` / `--version` 是**只读子参数**
+	//   —— 带它们的形态只打印帮助/版本、零写盘（`<写命令> --help` 的只读意图明确）。
+	//   ⇒ 与 `--dry-run` 同档放行（不落写面）；判据是「子参数里有只读档即不判写面」。
+	if hasHelpOrVersionFlag(fields) {
+		return ""
+	}
 	return fmt.Sprintf("判据 %q 落在**写面**（危险档 %s · 它会动：%s）且没带 `--dry-run` —— "+
 		"写命令在进程内真跑会**真写盘**，跑它看 rc 也拿不到关于缺口的结论 ⇒ 不执行、不给结论（退码 8）",
 		strings.Join(fields, " "), cmd.danger.Level, cmd.danger.Effect)
+}
+
+// hasHelpOrVersionFlag —— 判据 argv 里有没有 `--help` / `-h` / `--version` 这类**只读子参数**。
+// 缺口 `GAP-20260927-340`：危险档判定此前只看整条命令是否落危险档、不看子参数，
+// 于是 `<写命令> --help` 被误判成写面。只读子参数 ⇒ 不落写面。
+func hasHelpOrVersionFlag(fields []string) bool {
+	for _, f := range fields {
+		switch f {
+		case "--help", "-h", "--version":
+			return true
+		}
+	}
+	return false
 }
 
 // gapCapWriter —— 判据输出**有界**收集（只留一小段当证据；不把被判命令的整段输出吃进内存）。
@@ -618,7 +637,11 @@ func gapPlanBlock(w io.Writer, title, ledgerPath string, lines int, rec gapRecor
 // 命名与取值口一律照拄同族 `gapShowFields`（`gapShowRow`）—— 不自创第二套。
 var gapListFields = []string{"id", "prio", "impact", "state", "want", "summary",
 	"want_family", "want_action", "want_argv", "symptom", "handmade", "repro_cmd",
-	"fp", "verify_cmd", "found_at", "last_verified_at", "solved_at", "notes", "notes_void", "void_notes"}
+	"fp", "verify_cmd", "found_at", "last_verified_at", "solved_at", "notes", "notes_void", "void_notes",
+	// ★ 本枚（缺口账 `GAP-20260929-38` ① / `GAP-20260929-42` ①）：`--unit`/`--module` 在 `gap ls` 里
+	//   是**收窄轴**（筛得到），而 `--json` 吐不出这两格 ⇒「筛得到吐不出」= 盘点类作业被迫直读真源。
+	//   补两格：取值口与 `gap show`（`gapShowRow`）**同名同源**（件面 `unit` · 模块面 `module`）。
+	"unit", "module"}
 
 // ── 批1 第三片：`gap ls` 两轴收窄（`--unit` / `--module`）与机器面信封 ─────────────────────────────
 //
@@ -835,6 +858,9 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 			"notes":      strings.Join(gapNotesVisible(r), " ⏎ "),
 			"void_notes": gapVoidNotesText(r),
 			"notes_void": fmt.Sprintf("%d", len(r.Voids)),
+			// ★ 本枚（缺口账 `GAP-20260929-38` ①）：`--unit`/`--module` 筛得到却吐不出 ⇒ 补两格。
+			"unit":   r.Unit,
+			"module": r.Module,
 		})
 	}
 	// ★ 批1 第三片（本枚）：**一页硬顶 + 截断自报**（口径见 `gapLsRowCap` 顶上那一段）。
@@ -951,7 +977,9 @@ func cmdGapLs(inv *invocation, stdout, stderr io.Writer) int {
 // 面比 `gap ls`（`gapListFields`）宽：单条面的职责就是「把这一条的正文 / 判据 / 证据一字不截地取出来」。
 var gapShowFields = []string{"id", "fp", "prio", "impact", "state", "want", "want_family", "want_action",
 	"want_argv", "symptom", "handmade", "repro_cmd", "verify_cmd", "depends_on",
-	"found_at", "last_verified_at", "solved_at", "solved_evidence", "notes", "notes_void", "void_notes"}
+	"found_at", "last_verified_at", "solved_at", "solved_evidence", "notes", "notes_void", "void_notes",
+	// ★ 本枚（同期 `gap ls` 那一枚 · `GAP-20260929-38` ①）：补 `unit`/`module` 两格（件面 / 模块面）。
+	"unit", "module"}
 
 // gapOutOfRangeOne —— 单条版的账内闭集自查（与 `cmdGapLs` 那段**同一条判据** · 同一种判词）。
 // 为什么另开一条而不动 `ls` 那段：本单只许**新增**，`ls` 的实现一个字节不动（硬约束⑤）。
@@ -991,6 +1019,9 @@ func gapShowRow(r gapRecord) map[string]string {
 		"notes":           strings.Join(gapNotesVisible(r), " ⏎ "),
 		"void_notes":      gapVoidNotesText(r),
 		"notes_void":      fmt.Sprintf("%d", len(r.Voids)),
+		// ★ 本枚（缺口账 `GAP-20260929-38` ①）：补 `unit`/`module`（与 `gapPlanFields` 同名同源）。
+		"unit":   r.Unit,
+		"module": r.Module,
 	}
 }
 
@@ -3416,7 +3447,10 @@ func gapPoolCountText(pb gapPool) string {
 }
 
 var gapIdeaFields = []string{"cid", "source", "raw", "unit", "created_at", "ttl_days", "status", "fp",
-	"pool_before", "pool_after", "archived", "ledger_lines"}
+	"pool_before", "pool_after", "archived", "ledger_lines",
+	// ★ 本枚（缺口账 `GAP-20260928-177`）：`inserted` = 本次**是否真新增**一池行（true/false 布尔面），
+	//   让程序化区分「新增 / 幂等已存在」不必再靠 `pool_before`×`pool_after` 前后差硬推。
+	"inserted"}
 
 var gapIdeaListFields = []string{"cid", "source", "raw", "unit", "created_at", "ttl_days", "status", "fp", "age_days"}
 
@@ -3603,6 +3637,7 @@ func cmdGapIdeaAdd(inv *invocation, stdout, stderr io.Writer) int {
 					"created_at": c.CreatedAt, "ttl_days": strconv.Itoa(c.TTLDays), "status": c.Status, "fp": c.FP,
 					"pool_before": strconv.Itoa(before), "pool_after": strconv.Itoa(before),
 					"archived": "0", "ledger_lines": strconv.Itoa(gapLedgerLineCount(gapLedgerPath())),
+					"inserted": "false",
 				})
 			}
 			fmt.Fprintf(stdout, "已在池 %s · fp=%s（幂等命中：同 source 同 fp ⇒ 0 且不新增行 · 设计稿 §3.A3）\n", c.CID, shortSHA(c.FP))
@@ -3622,6 +3657,7 @@ func cmdGapIdeaAdd(inv *invocation, stdout, stderr io.Writer) int {
 				"created_at": cand.CreatedAt, "ttl_days": strconv.Itoa(cand.TTLDays), "status": cand.Status, "fp": cand.FP,
 				"pool_before": strconv.Itoa(before), "pool_after": strconv.Itoa(len(keepLines) + 1),
 				"archived": strconv.Itoa(nArch), "ledger_lines": strconv.Itoa(ledgerLines),
+				"inserted": "false",
 			})
 		}
 		fmt.Fprintf(stdout, "（--dry-run 计划件 · 零副作用）\n")
@@ -3665,6 +3701,7 @@ func cmdGapIdeaAdd(inv *invocation, stdout, stderr io.Writer) int {
 			"created_at": cand.CreatedAt, "ttl_days": strconv.Itoa(cand.TTLDays), "status": cand.Status, "fp": cand.FP,
 			"pool_before": strconv.Itoa(before), "pool_after": strconv.Itoa(after),
 			"archived": strconv.Itoa(nArch), "ledger_lines": strconv.Itoa(ledgerLines),
+			"inserted": "true",
 		})
 	}
 	fmt.Fprintf(stdout, "已落池 %s · source=%s · status=pending · fp=%s\n", cand.CID, cand.Source, shortSHA(cand.FP))
@@ -4199,6 +4236,20 @@ func gapAssignAgingText(f gapAssignForm, now time.Time) string {
 	}
 }
 
+// gapAssignOverdueDays —— 逐行超时读数（机器面一格 · 缺口账 `GAP-20260928-186`）：
+// `unknown`（时限不明 · **不当零**）/ `0`（未超时）/ 超出去的天数（截断到整日）。取值口与
+// `gapAssignAgingText` 同源（同一 `gapAssignOverdue`）⇒ 人面与机器面不会两套算。
+func gapAssignOverdueDays(f gapAssignForm, now time.Time) string {
+	d, known, late := gapAssignOverdue(f, now)
+	if !known {
+		return "unknown"
+	}
+	if !late {
+		return "0"
+	}
+	return strconv.Itoa(int(d.Hours() / 24))
+}
+
 // gapAssignReconcileLine —— 对账口径行的**唯一**拼装口（人面表尾与 `meta.reconcile` **逐字同源**）。
 // 判据 2「自派」的读数行：在飞卵数只存在于助手平台面 ⇒ **只报告不自动断言**。
 func gapAssignReconcileLine(n int) string {
@@ -4333,6 +4384,8 @@ func cmdGapAssignLs(inv *invocation, stdout, stderr io.Writer) int {
 			"forbid": a.f.Forbid, "occupies": a.f.Occupies, "criterion": a.f.Criterion,
 			"deadline": a.f.Deadline, "receipt": a.f.Receipt, "assigned_at": a.at,
 			"unit": a.r.Unit, "module": a.r.Module,
+			// ★ 本枚（缺口账 `GAP-20260928-186`）：超时读数此前只在人面 / 信封面 —— 补逐行机器格。
+			"aging": gapAssignAgingText(a.f, now), "overdue_days": gapAssignOverdueDays(a.f, now),
 		})
 	}
 	if inv.jsonGiven {

@@ -130,6 +130,7 @@
 ----
     python3 scripts/gates/check-help-shape.py
     python3 scripts/gates/check-help-shape.py --repo-root DIR --bin FILE --matrix FILE
+    python3 scripts/gates/check-help-shape.py --faces-dir DIR    # A 档：四面改「读落盘制品」·不起 bin/zerg 子进程（缺口 GAP-20261001-47）
     python3 scripts/gates/check-help-shape.py --emit-baseline   # 现跑打印常量新值（只读）
     python3 scripts/gates/check-help-shape.py --json
     python3 scripts/gates/check-help-shape.py --list-rules
@@ -145,6 +146,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 VERSION = "1.3.0"
 
@@ -188,8 +190,8 @@ FAMILY_PER_LINE = 8
 #          2) last：`./bin/zerg help | tail -n 1`（逐字）
 #   刷新：本件 `--emit-baseline` 现跑打印，照抄。
 BASELINE = {
-    "help --all": {"lines": 319, "bytes": 168174},
-    "help": {"lines": 252, "bytes": 110196,
+    "help --all": {"lines": 319, "bytes": 195168},
+    "help": {"lines": 252, "bytes": 121842,
              "last": "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
     # ★ 危险档面（S4 · 2026-09-27 补）：**现跑取数** · 禁手写 ——
     #   取法 = `./bin/zerg help dangerous | wc -l -c`（lines/bytes）· 逐条行数（`rows`）·
@@ -221,6 +223,30 @@ def run_face(binz: str, argv):
     if not p.stdout.strip():
         return None, "现跑 `%s` 零输出" % " ".join(argv)
     return p.stdout, ""
+
+
+# ── A 档取数口（缺口 `GAP-20261001-47` · 拆档）：读**落盘的 help 面制品**、不起子进程 ──
+# 与 `run_face` 的**唯一**不同：判据只吃文件 ⇒ 结论逐字可复现（与 HEAD 处编译制品解耦）。
+FACE_ARTIFACT_FILES = {
+    "help --all": "help-all.txt",
+    "help": "help.txt",
+    "help dangerous": "help-dangerous.txt",
+    "help config": "help-config.txt",
+}
+
+
+def read_face_file(path: str):
+    """读一件落盘的 help 面制品 ⇒ (文本 | None, 理由)。空件 ⇒ 判不了（空 ≠ 合法帮助面）。"""
+    if not os.path.isfile(path):
+        return None, "help 面制品不在盘：%s" % path
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        return None, "help 面制品读不了（%s）" % e
+    if not text.strip():
+        return None, "help 面制品零输出：%s" % path
+    return text, ""
 
 
 def matrix_commands(path: str):
@@ -699,6 +725,24 @@ def self_test(out) -> bool:
     case("对界：命令树多一族 ⇒ 必红", True,
          judge(all_t, bare_t, dang_t, FIX_CMDS + ["zzz ls"], bl))
 
+    # ── A 档取数口（`GAP-20261001-47` · 拆档）：读落盘 help 面制品 ──────────────────
+    _d = tempfile.mkdtemp(prefix="hshape-artifact-")
+    _art = os.path.join(_d, "help.txt")
+    with open(_art, "w", encoding="utf-8") as f:
+        f.write("zerg —— 夹具\n")
+    _empty = os.path.join(_d, "empty.txt")
+    open(_empty, "w").close()
+    _art_cases = (
+        ("A 档①制品读得出", read_face_file(_art)[0] == "zerg —— 夹具\n"),
+        ("A 档②制品不在盘 ⇒ 判不了（不许当空面）", read_face_file(os.path.join(_d, "nope.txt"))[1] != ""),
+        ("A 档③制品零输出 ⇒ 判不了", read_face_file(_empty)[1] != ""),
+    )
+    total += len(_art_cases)
+    for _n, _ok in _art_cases:
+        if not _ok:
+            failed += 1
+        out.write("  %s %s\n" % ("✓" if _ok else "✗", _n))
+
     out.write("  自检 %d 格 · 失败 %d 格\n" % (total, failed))
     return failed == 0
 
@@ -744,6 +788,9 @@ def main() -> int:
     ap.add_argument("--repo-root", default=repo_default)
     ap.add_argument("--bin", default=None)
     ap.add_argument("--matrix", default=None)
+    ap.add_argument("--faces-dir", default=None,
+                    help="A 档：四个 help 面改「读落盘制品目录」"
+                         "（help-all.txt/help.txt/help-dangerous.txt/help-config.txt · 缺口 GAP-20261001-47）")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--emit-baseline", action="store_true")
     ap.add_argument("--list-rules", action="store_true")
@@ -767,11 +814,17 @@ def main() -> int:
     faces = {}
     for face, argv in (("help --all", ["help", "--all"]), ("help", ["help"]),
                        ("help dangerous", ["help", "dangerous"]), ("help config", ["help", "config"])):
-        text, why = run_face(binz, argv)
+        if a.faces_dir:
+            # A 档（`GAP-20261001-47` · 拆档）：只读落盘 help 面制品 · 不起子进程。
+            text, why = read_face_file(os.path.join(a.faces_dir, FACE_ARTIFACT_FILES[face]))
+        else:
+            text, why = run_face(binz, argv)
         if text is None:
             sys.stdout.write("⛔ 不给结论（rc=2）：%s\n" % why)
             return 2
         faces[face] = text
+    if a.faces_dir:
+        sys.stdout.write("  取数档 = A 档（只读 help 面制品 %s）—— 不起 bin/zerg 子进程\n" % a.faces_dir)
 
     if a.emit_baseline:
         for face, text in faces.items():

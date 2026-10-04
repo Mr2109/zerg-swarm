@@ -59,6 +59,20 @@ type EggProfile struct {
 	// SuggestedIdleUnloadS 建议空闲阈值（秒）：喂给卵声明的 idle_unload_s 口径（Q21）。
 	SuggestedIdleUnloadS int `yaml:"suggested_idle_unload_s"`
 
+	// Ctx 标定时的上下文长度（tokens）——缺口 GAP-20260925-41：65536 与 131072 两次标定的档案
+	// 除数值外无法区分 ⇒ 闸门按档案判内存预算时不知该模型在何 ctx 下可跑
+	//（mini-node-2 在 128K 必 `00 Compute error`，在 64K 正常）。
+	// 0 = 未申报（兼容老档案，不据此判拒 —— 与 gpu_mem_kind / cache_gb 同一条兼容纪律）。
+	Ctx int `yaml:"ctx,omitempty"`
+
+	// CacheGb 缓存配额（GB）——卵声明的专家/提示缓存容量（如 `--ssd-streaming-cache-experts 80GB`）。
+	//
+	// 缺口 GAP-20260926-19：注册表里的现读值与档案 recipe 里写的值会**各自漂**（实例：recipe 写
+	// 80GB、注册表现值 32GB）而无人察 —— 缓存配额此前只活在注册表 cmd 里、不进实测档案 ⇒ 标定漂移
+	// 不可机读。把缓存配额也纳入档案 ⇒ 两处口径可对拍，漂移不再只活在注释里。
+	// 0 = 未申报（**兼容老档案**，不据此判拒 —— 与 gpu_mem_kind 同一条兼容纪律）。
+	CacheGb float64 `yaml:"cache_gb,omitempty"`
+
 	// ═══ 溯源元数据（实测档案必须可追溯，否则退化成"又一份声明"） ═══
 
 	// SchemaVersion 档案格式版本（与 registry.EggSchemaVersionCurrent 协同；当前 1）。
@@ -122,6 +136,14 @@ func (p EggProfile) Validate() error {
 	if p.GpuMemKind != "" && p.GpuMemKind != GpuMemKindGTT && p.GpuMemKind != GpuMemKindWired {
 		return fmt.Errorf("实测档案 gpu_mem_kind=%q 不是合法值（合法：%q / %q）",
 			p.GpuMemKind, GpuMemKindGTT, GpuMemKindWired)
+	}
+	// 缓存配额（缺口 GAP-20260926-19）：0 = 未申报（兼容老档案，不判拒）；申报了就必须非负。
+	if p.CacheGb < 0 {
+		return fmt.Errorf("实测档案 cache_gb=%v 非法（须 ≥0；0 = 未申报）", p.CacheGb)
+	}
+	// ctx（缺口 GAP-20260925-41）：0 = 未申报（兼容老档案，不判拒）；申报了必须非负。
+	if p.Ctx < 0 {
+		return fmt.Errorf("实测档案 ctx=%d 非法（须 ≥0；0 = 未申报）", p.Ctx)
 	}
 	if p.Machine == "" {
 		return fmt.Errorf("实测档案缺 machine（档案绑定机型，跨机不得互抄）")

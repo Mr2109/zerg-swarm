@@ -144,6 +144,18 @@ func systemProxyOf(raw string) (string, bool) {
 	return "", false
 }
 
+// dialErrHint 给拨号失败补一句「形态引导」（缺口 GAP-20260925-18）：
+//
+//	裸 IPv6（不带方括号）会被 net.Dial 判成 `too many colons`，报错里只有一个术语、没有下一步 ⇒
+//	调用者往往对着同一个错误反复试。命中该形态时逐字给出正确写法（带方括号的 `[地址]:端口`）。
+//	只在**确系该形态**时补话（其余错误原样、不添油加醋）。
+func dialErrHint(addr, detail string) string {
+	if strings.Contains(detail, "too many colons") {
+		return "（`" + addr + "` 看着像**裸 IPv6** —— 要写成**带方括号**的 `[地址]:端口`，如 `[fe80::1%en0]:8100`）"
+	}
+	return ""
+}
+
 // dialProbe 探一次 TCP（**只连不发**：连上就关 ⇒ 零写、零副作用、不取正文）。
 //
 // 探测对象 = **代理自己**，不是外网：本命令要答的是「本机那条出网路通不通」，
@@ -184,7 +196,7 @@ func cmdNetProbe(inv *invocation, stdout, stderr io.Writer) int {
 			reach = "yes"
 		} else {
 			reach = "no"
-			fmt.Fprintf(stderr, "%s: 代理 %s 配着、**探不到**（%s）\n", progName, addr, detail)
+			fmt.Fprintf(stderr, "%s: 代理 %s 配着、**探不到**（%s）%s\n", progName, addr, detail, dialErrHint(addr, detail))
 		}
 	default:
 		fmt.Fprintf(stderr, "%s: 本机没配代理（源：%s）⇒ 直连档：那一格没有代理可探（`n/a` 是一条答案，不是取不到）\n",

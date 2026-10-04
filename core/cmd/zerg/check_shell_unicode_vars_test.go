@@ -7,13 +7,13 @@
 //	CleanRc0               · `${VAR}` 花括号写法 ⇒ rc=0「命中 0 处」
 //	DirtyRc1_Stdout        · `$VAR` 紧跟非 ASCII ⇒ rc=1 + 逐行命中（**钉死列宽 34**）
 //	CommentMasked_NoHit    · 整行注释里的 `$VAR中` ⇒ **不许红**（防假红 · py 掩码）
-//	MissingSkippedRc0      · 缺件 ⇒ 静默跳过（py `except FileNotFoundError: continue`）
+//	MissingFailClosedRc2   · 缺件 ⇒ **fail-closed rc=2**（B 类读失败 · 登记点名「读不了」）
 //	OrderPreserved         · 多件 ⇒ 输出行序 = **位置参原序**（非排序）
 //	MultipleVarsSorted     · 同件多名 ⇒ 行内名序 = **码点序**
 //	JSONRefusedRc2         · `--json` ⇒ rc=2（本门无机器读面 Q-176）
 //	SelfTestRc0_AndSelfCleans · `--self-test` ⇒ rc=0 且**临时目录自回收 delta=0**（A 类）
 //	FixModeRewritesSingle  · 非 `--check` ⇒ 就地改写（单命中）
-//	FixModeMultiHit_SameCorruptionAsPy · ★ 多命中 ⇒ **与 py 同款错位**（钉住真口子 · 见下）
+//	FixModeMultiHit_RewritesBoth · ★ 多命中 ⇒ **与 py 现读同构**（正向钉住 · GAP-20261001-48 已修）
 //	DirFailClosedRc2       · 位置参给目录 ⇒ **fail-closed rc=2**（C 类口径差）
 //	UnreadableFailClosedRc2· 读不了的件（chmod 000）⇒ **fail-closed rc=2**（C 类）
 //	LexerEdges             · `$1` / `$中文` / `${VAR}` 非命中；`$A$B中` ⇒ 只命 `B`
@@ -92,11 +92,11 @@ func TestShellUnicodeVarsGate(t *testing.T) {
 		}
 	})
 
-	t.Run("MissingSkippedRc0", func(t *testing.T) {
+	t.Run("MissingFailClosedRc2", func(t *testing.T) {
 		d := t.TempDir()
-		rc, out, _ := csuT(t, "--check", filepath.Join(d, "nope.sh"))
-		if rc != 0 || out != "命中 0 处\n" {
-			t.Fatalf("缺件未静默跳过：rc=%d out=%q", rc, out)
+		rc, out, errs := csuT(t, "--check", filepath.Join(d, "nope.sh"))
+		if rc != 2 || out != "" || !strings.Contains(errs, "读不了") {
+			t.Fatalf("缺件应 fail-closed rc=2 且点名读不了：rc=%d out=%q err=%q", rc, out, errs)
 		}
 	})
 
@@ -173,9 +173,14 @@ func TestShellUnicodeVarsGate(t *testing.T) {
 		}
 	})
 
-	// ★★ 真口子钉成用例：py 改写档用**掩码串偏移**切**已变长的 out** ⇒ 多命中**错位**。
-	// 本件**逐字照搬**（✗ 不修）。谁修了口子，本用例立刻红 ⇒ 给口子留把牙。
-	t.Run("FixModeMultiHit_SameCorruptionAsPy", func(t *testing.T) {
+	// ★★ 正向断言（GAP-20261001-48 修后）：多命中改写档须「按**原串**偏移单趟拼接、一次性落盘」，
+	// 本件与 py **现读**输出逐字同构（py 早已修 —— 其 `--self-test` 档④ 断言正确产物 `echo "${A}中${B}文"`）。
+	// 输入 `echo "$A中$B中"` ⇒ 两处命中 A、B ⇒ 期望 `echo "${A}中${B}中"`（两处各改一处、无错位残字节）。
+	// ── 历史（旧口径 · 已废 · 保留备查）───────────────────────────────────────────
+	// 旧用例名 `FixModeMultiHit_SameCorruptionAsPy`，逐字钉死 GAP-20261001-48 **修前**的错位产物：
+	//   want := "echo \"${A}\xE4${B}$B\xE4\xB8\xAD\"\n" // ← 旧 py/Go 错位原样（\xE4 = 「中」首字节被切）
+	// 其注释曾写「谁修了口子，本用例立刻红」——即**反向**钉住真口子。★ 现读 py 已修 ⇒ 钉错误的肠线随之作废，改钉**正确**产物（Go == py 现读）。
+	t.Run("FixModeMultiHit_RewritesBoth", func(t *testing.T) {
 		d := t.TempDir()
 		f := csuFixture(t, d, "two.sh", "echo \"$A中$B中\"\n")
 		rc, _, _ := csuT(t, f)
@@ -183,9 +188,9 @@ func TestShellUnicodeVarsGate(t *testing.T) {
 			t.Fatalf("rc=%d，期望 0", rc)
 		}
 		got, _ := os.ReadFile(f)
-		want := "echo \"${A}\xE4${B}$B\xE4\xB8\xAD\"\n" // ← py 实测原样（错位）
+		want := "echo \"${A}中${B}中\"\n" // ← py 现读原样（两处各改一处、无错位）
 		if string(got) != want {
-			t.Fatalf("多命中改写与 py 不同构：\n got=%q\nwant=%q", got, want)
+			t.Fatalf("多命中改写与 py 现读不同构：\n got=%q\nwant=%q", got, want)
 		}
 	})
 

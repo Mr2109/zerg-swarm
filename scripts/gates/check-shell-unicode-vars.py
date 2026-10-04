@@ -12,8 +12,8 @@ import sys
 import tempfile
 
 # 用法：
-#   python3 scripts/gates/check-shell-unicode-vars.py --check scripts/*.sh   # 只报，命中即 exit 1（门禁用）
-#   python3 scripts/gates/check-shell-unicode-vars.py scripts/*.sh           # 就地修（$VAR → ${VAR}）
+#   python3 scripts/gates/check-shell-unicode-vars.py scripts/*.sh           # 只报（缺省=只读），命中即 exit 1（门禁用）
+#   python3 scripts/gates/check-shell-unicode-vars.py --write scripts/*.sh   # 就地修（$VAR → ${VAR}；写档必须显式）
 # ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
 #    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
 #    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
@@ -96,12 +96,15 @@ def self_test():
 if "--self-test" in sys.argv[1:] or "--selftest" in sys.argv[1:]:
     sys.exit(self_test())
 
-CHECK = "--check" in sys.argv[1:]
-FILES = [a for a in sys.argv[1:] if a != "--check"]
+# 缺省即**只读/干跑**，写档必须显式 `--write`（缺口 GAP-20260927-93）：此前不带 `--check`
+# 就**就地重写** scripts/**/*.sh —— 一次误敲即改全树。`--check` 仍收（= 只读的显式写法）。
+WRITE = "--write" in sys.argv[1:]
+CHECK = not WRITE
+FILES = [a for a in sys.argv[1:] if a not in ("--check", "--write")]
 if not FILES:
     print("✗ 必须显式传入要扫描的脚本（例如 scripts/*.sh）。\n"
                      "  无参数时不静默空转——这正是本工具此前的漏报根因（$VAR后接全角标点未被发现）。\n"
-                     "  用法: python3 scripts/gates/check-shell-unicode-vars.py [--check] scripts/*.sh publish/*.sh", file=sys.stderr)
+                     "  用法: python3 scripts/gates/check-shell-unicode-vars.py [--check|--write] scripts/*.sh publish/*.sh（缺省/--check=只读；--write=就地修）", file=sys.stderr)
     sys.exit(2)
 
 # $VAR（不含 ${...} 形式、不含 $1 等位置参数）后面紧跟一个 >=0x80 的字节
@@ -127,7 +130,7 @@ for path in FILES:
     hits = PAT.findall(masked)
     if not hits:
         continue
-    if not CHECK:
+    if WRITE:
         # ● GAP-20261001-48 修：原写法用 `masked` 的**固定偏移**去切**已变长**的 `out`（每处 +2 B）
         #   ⇒ 多命中时偏移逐处错位、写出内容被切坏。改「先整体算出新串、再一次性落盘」：
         #   单趟按**原串**偏移拼接（`raw` 与 `masked` 同长同布局，注释段只被换成空格、偏移不变）。

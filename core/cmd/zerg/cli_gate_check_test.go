@@ -22,6 +22,11 @@ import (
 	"time"
 )
 
+// gctTestPyExe —— 起判据件子进程用的解释器**钉死**（缺口 `GAP-20261001-61`：✗ 不用 PATH 上的裸
+//
+//	`python3`；同 `cicgTestPython` / `ccatTestPyExe` / `tsmPython` 一律 `/usr/bin/python3`）。
+const gctTestPyExe = "/usr/bin/python3"
+
 // gctWrite 往合成仓根写一件（自动建目录）。
 func gctWrite(t *testing.T, root, rel, body string) string {
 	t.Helper()
@@ -206,7 +211,11 @@ func TestGateCheckLockContentionIsBlocked(t *testing.T) {
 	t.Setenv("ZERG_GATE_LOCK_DIR", lockDir)
 
 	// 起**真第二个进程**持同名锁（内部 `--_selftest-hold` 真持锁数秒）。
-	holder := exec.Command("python3", tool, "--name", "lockprobe", "--slots", "2", "--wait", "0",
+	// 解释器钉死（缺口 `GAP-20261001-61`）：✗ 不用 PATH 上的裸 python3；不在盘则跳过（前置不成立）。
+	if _, err := os.Stat(gctTestPyExe); err != nil {
+		t.Skipf("%s 不在盘 ⇒ 跳过（GAP-20261001-61：钉解释器）", gctTestPyExe)
+	}
+	holder := exec.Command(gctTestPyExe, tool, "--name", "lockprobe", "--slots", "2", "--wait", "0",
 		"--_selftest-hold", "8")
 	holder.Env = os.Environ()
 	pipe, err := holder.StdoutPipe()

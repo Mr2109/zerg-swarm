@@ -75,7 +75,9 @@ func cpfcT_zergArg(t *testing.T) string {
 	return z
 }
 
-// ── 1. 正控 + 成对负控（py `self_test` 的八格在 Go 侧真跑）──────────────────────
+// ── 1. 正控 + 成对负控（py `self_test` 的九格在 Go 侧真跑）──────────────────────
+// ★ 2026-10-04：py 自检本会话新增「格 9 判不了负控（GAP-20260927-86）」⇒ 期望 8 格是除旧读数，
+// 改 9（判据真源 = py `self_test()` 的 9 个 `check(...)` 调用 · Go 真搬件已逐格跟）。
 func TestCpfcS01_自检全过_成对负控八格(t *testing.T) {
 	root := cpfcT_repoRoot(t)
 	old, _ := os.Getwd()
@@ -90,11 +92,11 @@ func TestCpfcS01_自检全过_成对负控八格(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("--self-test 应 rc=0，得 %d\n%s", rc, out)
 	}
-	if !strings.Contains(out, "⇒ 自检全过（8 格）") {
-		t.Fatalf("应打出「⇒ 自检全过（8 格）」\n%s", out)
+	if !strings.Contains(out, "⇒ 自检全过（9 格）") {
+		t.Fatalf("应打出「⇒ 自检全过（9 格）」\n%s", out)
 	}
-	if n := strings.Count(out, "   ✓ "); n != 8 {
-		t.Fatalf("自检应实跑 8 格全 ✓（成对负控格缺失），得 %d\n%s", n, out)
+	if n := strings.Count(out, "   ✓ "); n != 9 {
+		t.Fatalf("自检应实跑 9 格全 ✓（成对负控格缺失），得 %d\n%s", n, out)
 	}
 }
 

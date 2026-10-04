@@ -40,7 +40,6 @@ import re
 import sys
 import tempfile
 
-TOOL = 'check-exit-codes'
 MARKER = '退码唯一真源 = zerg help exit-codes'
 SITES_REL = 'core/internal/contract/exitcode-namespaces.json'
 TABLE_REL = os.path.join('core', 'cmd', 'zerg', 'exitcodes.go')
@@ -434,8 +433,6 @@ var exitcodeReserved = []exitcodeRow{
 \t{130, "interrupted", "人打断", "—"},
 }
 '''
-GOOD_GATE_LINE = '# 退出码：0 全绿 · 1 有失败项 · 2 **不给结论**\n'
-GOOD_MSG = '示例说明。\n'
 GOOD_DECL = (
     '# 退码唯一真源 = zerg help exit-codes（契约 §三）—— 本件是组件自有码空间\n'
     'const (\n\texitOK = 0\n\texitUsage = 2\n)\n'

@@ -315,10 +315,12 @@ def local_broken_detail(root: str):
         return 0, [], [], [], "扫面 0 件 .md"
     have = set(files)
     raw, hits, exempt = [], [], []
+    unreadable = []                     # ● GAP-20261001-26 修：读不了的件逐条记下、不再一格 None 丢整树
     for rel in sorted(files):
         text = files[rel]
         if text is None:
-            return None, [], [], [], "件读不了：%s" % rel
+            unreadable.append(rel)
+            continue
         for lineno, rawtgt in links_of(text):
             why = is_external(rawtgt)
             if why:
@@ -339,7 +341,12 @@ def local_broken_detail(root: str):
             else:
                 hits.append(rec)
     stale = offset_registry_check(root, files, raw)
-    return len({h["file"] for h in hits}), hits, exempt, stale, ""
+    n = len({h["file"] for h in hits})
+    if unreadable:
+        # ● GAP-20261001-26 修：判不了态照返**已收明细**（hits/exempt/stale），`why` 单独标注「读不了 N 件」；
+        #   `n=None` 仍走「不给结论 rc=2」出口 ⇒ 只补证据面、不放宽判据（读不了 ≠ 零件）。
+        return None, hits, exempt, stale, "件读不了 %d 件：%s" % (len(unreadable), " · ".join(unreadable[:8]))
+    return n, hits, exempt, stale, ""
 
 
 def local_broken(root: str):
@@ -721,6 +728,17 @@ def main() -> int:
         br_stale.extend(stale)
         if n is None:
             sys.stdout.write("  ⛔ 本地断链 · %s：判不了（%s）\n" % (label, why))
+            # ● GAP-20261001-26 修：判不了 ≠ 无红 —— 本树别处已收的红明细/假红明细照印，不因一格读不了而丢弃
+            for h in hits[: a.max_examples]:
+                sys.stdout.write("      %s:%d  [%s] ⇒ %s（指不到）\n"
+                                 % (h["file"], h["line"], h["raw"], h["resolved"]))
+            br_all.extend(hits)
+            if exempt:   # 已登记假红**逐条印出落点**（看得见，不是静默放行）
+                sys.stdout.write("      ⊕ 已登记假红（基准偏移 · 已逐条复核 · 不计入上面 %d 处）：\n"
+                                 % len({h["file"] for h in hits}))
+                for h in exempt[: a.max_examples]:
+                    sys.stdout.write("          %s:%d  [%s] ⟸ %s\n"
+                                     % (h["file"], h["line"], h["raw"], offset_ok(h["file"], h["raw"], root, set())))
             if label == "主仓":
                 bad = 1
             else:   # 第二棵树 = 本格域的必需一半 ⇒ 缺件 ≠ 绿（2026-10-01 收口）

@@ -34,8 +34,22 @@ import (
 // DS4 模型名（fleet.yaml 注册名）
 const ds4ModelName = "deepseek-v4-flash"
 
-// ds4MemGB DS4 内存需求（模型 81G + 上下文余量——fleet.yaml mem_gb: 86）
+// ds4MemGB DS4 内存需求（模型 81G + 上下文余量）—— **仅作兜底**：真源 = fleet.yaml
+// 的 `mem_gb`（`config.ModelCandidate.MemGb`），由 ds4RouteMemGB() 实读（批 4 去硬编码）。
+// 名册缺档时用本值 + 记日志（不静默）。
 const ds4MemGB = 86
+
+// ds4RouteMemGB 实读 DS4 内存需求（fleet.yaml `mem_gb`）—— 不再把 86 写死在路由逻辑里。
+// 缺档（名册没登记 DS4 / mem_gb<=0）⇒ 记日志 + 用 ds4MemGB 保守兜底（两态都不静默）。
+func (g *Gateway) ds4RouteMemGB() float64 {
+	if g.config != nil {
+		if cands := g.config.Models[ds4ModelName]; len(cands) > 0 && cands[0].MemGb > 0 {
+			return cands[0].MemGb
+		}
+	}
+	log.Printf("⚠️ DS4 mem_gb 不可得（fleet.yaml 未登记 %s 或不含 mem_gb）— 用兜底 %.0fG", ds4ModelName, float64(ds4MemGB))
+	return float64(ds4MemGB)
+}
 
 // ds4State DS4 状态（路由三分支用）
 type ds4State int
@@ -78,8 +92,9 @@ func (g *Gateway) ensureDS4Room() bool {
 		return true
 	}
 	// EDGE-NODE 有其他模型占用（或内存不够）——需要让位
-	if snap.Model != nil || snap.MemAvailableGb < ds4MemGB {
-		needGb := ds4MemGB - snap.MemAvailableGb
+	want := g.ds4RouteMemGB()
+	if snap.Model != nil || snap.MemAvailableGb < want {
+		needGb := want - snap.MemAvailableGb
 		if needGb < 0 {
 			needGb = 0
 		}
@@ -241,7 +256,7 @@ func (g *Gateway) ds4RouteDecision() (forceLocal bool, reason string) {
 		snap := g.snapshotFor("edge-node")
 		needGb := x3UsedGb(snap)
 		if needGb <= 0 {
-			needGb = ds4MemGB // 快照缺总量/可用时的保守口径：腾出 DS4 所需
+			needGb = g.ds4RouteMemGB() // 快照缺总量/可用时的保守口径：腾出 DS4 所需
 		}
 		g.yieldX3To(snap, needGb, "ds4-idle")
 		return false, "DS4 闲置——已让位（EDGE-NODE 跑其他模型）"

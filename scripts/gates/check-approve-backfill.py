@@ -76,7 +76,7 @@ LEGACY_SIX = ["before_sha256", "after_sha256", "before_bytes", "after_bytes", "a
 #   key_id `8b69ad95939df5cf`；审计行在 `<状态目录>/edit_audit.jsonl`）。**任何时候重签了该件，走本件自己的正门
 #   刷新通道把它跟到新值**（先 `--emit-constant` 看应有值，再 `--refresh-constant` 干跑，最后带 `--yes` 落）——
 #   不然门⑰ 会以「B5 破」恒红；**禁**手改本行（那是缺口 `GAP-20260928-88` 记的那条坏路）。
-DEV_EDIT_SHA256 = "15083c8d5b90f158d316828da28ce126d03073d24ccc3e66b3a91ddcb218f931"
+DEV_EDIT_SHA256 = "0874578748059a8b46431d5e63b97bd23829247693fd5a9385ffd51be422ceeb"
 
 # ── 常量刷新的取数口（emit / refresh / 自检同读这一处 · 单一真源）────────────────────
 CONST_NAME = "DEV_EDIT_SHA256"
@@ -318,6 +318,18 @@ def state_dir_of(given=None):
     if env:
         return os.path.abspath(env)
     return os.path.join(os.path.expanduser("~"), ".zerg", "state")
+
+
+def warn_if_sandbox_state(given, stream):
+    """★ 缺口 `GAP-20260927-70`：本门此前对环境变量 `ZERG_STATE_DIR` **静默取用** —— 当别会话把它
+    留在环境里指向沙箱目录时，本门读的是**沙箱**状态目录、退码被计成红（头号假红源）。
+    照同目录 `check-trustroot-witness.py` 的**同形**警示：`--state` 未显式给而环境变量赢 ⇒ 逐字声明
+    这是沙箱读数、不是真状态目录 `~/.zerg/state`。（写 `stderr`：本门 `--emit-constant` 的 stdout 是
+    机器面，不许掺诊断行。）"""
+    if given is None and os.environ.get("ZERG_STATE_DIR"):
+        print("★★ 状态目录是**环境变量 `ZERG_STATE_DIR` 给的**（%s）⇒ 本读数是**沙箱**读数，"
+              "**不是**真状态目录 `~/.zerg/state`（闸里不设这个变量；要读真源请显式 `--state`）"
+              % os.environ["ZERG_STATE_DIR"], file=stream)
 
 
 def read_all(repo, state):
@@ -650,6 +662,7 @@ def main():
     args = ap.parse_args()
     repo = os.path.abspath(args.root)
     state = state_dir_of(args.state)
+    warn_if_sandbox_state(args.state, sys.stderr)
     gate_path = os.path.abspath(args.gate) if args.gate else os.path.abspath(__file__)
     ticket = os.path.join(state, TICKET_REL)
     dev_sha = sha256_file(ticket) if os.path.exists(ticket) else None

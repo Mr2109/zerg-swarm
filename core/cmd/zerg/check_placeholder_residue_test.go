@@ -8,7 +8,7 @@
 //	④ **用法三态**（代 null/缺键面 · 本件无 JSON 入参）：缺省 / 空串 / 显式第二位置参数。
 //	⑤ **词法同构钉格**：`PyJoin` / `PyNormpath`（双前导斜杠）/ `PyDirname` 各一枚。
 //	⑥ **码点面钉格**：定义列判据按**码点**判邻位（中文前缀不得劈半）。
-//	⑦ **两环境对拍**（乙 · 仅当 py 原件与 python3 在盘）：仓外夹具 ＋ **每夹具自放 py 副本**。
+//	⑦ **两环境对拍**（乙 · 仅当 py 原件与**钉死**的 `/usr/bin/python3` 在盘）：仓外夹具 ＋ **每夹具自放 py 副本**。
 package main
 
 import (
@@ -19,6 +19,12 @@ import (
 	"strings"
 	"testing"
 )
+
+// cprTestPyExe —— 对拍用的解释器**钉死**（缺口 `GAP-20261001-61`：✗ 不用 PATH 上的裸 `python3`）。
+//
+//	PATH 一漂（3.9 的 `optional arguments:` ⟷ 3.14 的 `options:`）对拍即恒红，且与实现无关；
+//	⇒ 与同族件同规（`cicgTestPython` / `ccatTestPyExe` / `cacsPyExe` / `tsmPython` 一律 `/usr/bin/python3`）。
+const cprTestPyExe = "/usr/bin/python3"
 
 // cprPhTest —— 占位符形态（拼接构造 ⇒ 源码里不落整串 · 本件落在自己扫描面内）。
 func cprPhTest() string { return "<volume-" + "path>" }
@@ -211,15 +217,15 @@ func TestPlaceholderResidueParityWithPy(t *testing.T) {
 	if _, err := os.Stat(pySrc); err != nil {
 		t.Skip("py 原件不在盘 ⇒ 跳过对拍")
 	}
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 不在 PATH ⇒ 跳过对拍")
+	if _, err := os.Stat(cprTestPyExe); err != nil {
+		t.Skipf("%s 不在盘 ⇒ 跳过对拍（GAP-20261001-61：钉解释器，✗ 不掉进 PATH 上的裸 python3）", cprTestPyExe)
 	}
 	ph := cprPhTest()
 	d := cprFixture(t, "parity", "配置在 "+ph+" 中文字目录/示例.json 里\n", true, true)
 	pyCopy := filepath.Join(d, "scripts", "gates", "check-placeholder-residue.py")
 
 	runPy := func(prog string, argv ...string) (int, string, string) {
-		cmd := exec.Command("python3", append([]string{prog}, argv...)...)
+		cmd := exec.Command(cprTestPyExe, append([]string{prog}, argv...)...)
 		cmd.Env = cprTestEnv()
 		cmd.Dir = d
 		var so, se bytes.Buffer

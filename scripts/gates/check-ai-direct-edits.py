@@ -39,6 +39,11 @@ REQ = ["round_id", "trace_id", "what", "next"]
 TRACE_RE = re.compile(r"^TR-[0-9a-f]{12}$")
 # 命令面调用 = 一行的开头或标点之后出现 `zerg <段>`
 ZERG_RE = re.compile(r"(?:^|[\s（(])zerg\s+([A-Za-z][A-Za-z0-9_-]*)")
+# ★ 缺口 `GAP-20260927-59`：抽词器此前把 `zerg --help` / `zerg -h` / `zerg <版本号>+dirty`
+#   一律抽成空序列 ⇒ R1 把「走了命令面（只是没有子命令）」误判成「AI 直改」= 假红。
+#   正解：显式认这些非子命令调用形态（旗标 / 版本号），它们满足 R1（走了命令面）但
+#   不进 R4（不拿旗标/版本号去命令树里解析）。
+ZERG_NONCMD_RE = re.compile(r"(?:^|[\s（(])zerg\s+(?:--?[A-Za-z]|[0-9])")
 
 
 def default_dir():
@@ -107,7 +112,8 @@ def check_dir(d, tree):
             commits = [commits]
         # R1 H1：动过仓 ⇒ 必须有一条命令面调用
         calls = ZERG_RE.findall(evtext)
-        if commits and not calls:
+        noncmd = ZERG_NONCMD_RE.findall(evtext)   # zerg --help|-h|<版本号> 等非子命令调用
+        if commits and not calls and not noncmd:
             errs.append("R1 **AI 直改**：%s 说动过仓（commits=%d 条）而证据里**没有任何 `zerg …` 调用** "
                         "⇒ 门红（§20.3 H1：执行只能走命令面）" % (name, len(commits)))
         # R4 点名的命令面调用必须真在命令树里
@@ -193,6 +199,20 @@ def self_test(root):
         rc, _ = check_dir(n5, {"gate"})
         if rc != 1:
             fails.append("自检⑧ R4 应 rc=1（幽灵调用），实测 %d" % rc)
+        # ⑨ 负控 R1 不误判：`zerg --help`（非子命令调用）⇒ 0（GAP-20260927-59）
+        n6 = os.path.join(t, "n6")
+        os.makedirs(n6)
+        _mk(n6, "R-20260920T000007.json", _good("R-20260920T000007", evidence=["zerg --help"]))
+        rc, _ = check_dir(n6, {"gate"})
+        if rc != 0:
+            fails.append("自检⑨ zerg --help 应 rc=0（非子命令调用 · 不误判），实测 %d" % rc)
+        # ⑩ 负控 R1 不误判：`zerg 2.5.12+dirty`（版本号形态）⇒ 0（GAP-20260927-59）
+        n7 = os.path.join(t, "n7")
+        os.makedirs(n7)
+        _mk(n7, "R-20260920T000008.json", _good("R-20260920T000008", evidence=["zerg 2.5.12+dirty"]))
+        rc, _ = check_dir(n7, {"gate"})
+        if rc != 0:
+            fails.append("自检⑩ zerg 版本号 应 rc=0（版本号形态 · 不误判），实测 %d" % rc)
     finally:
         shutil.rmtree(t, ignore_errors=True)
     if fails:
@@ -200,7 +220,7 @@ def self_test(root):
         for f in fails:
             print("  ✗ " + f)
         return 1
-    print("门⑬ 自检全过：1 正控 + 5 负控 + 2 空转（成对负控）")
+    print("门⑬ 自检全过：1 正控 + 7 负控 + 2 空转（成对负控）")
     return 0
 
 
