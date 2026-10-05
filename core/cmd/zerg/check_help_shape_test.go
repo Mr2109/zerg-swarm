@@ -32,7 +32,24 @@ const chsSelfTestGolden = "── 自检（合成夹具 · 不碰真目标）─
 
 const chsListRulesGolden = "判据（三条 · 现算 + 对界 · 缺口 GAP-20260927-401）\n-----------------------------------------------\n  S1 族级段（闭集相等）：现跑 `help --all` 末尾段 token ⟷ 命令树（`cli-matrix.json` 的\n     `cases[].command` 首段）· 段头在 · 括注族数 == 现算族数 · 双向差集空 · 裸 `help` 不带段\n  S2 条数与行数：rows(--all) == rows(help) + rows(help dangerous) ·\n     族级段行数 == 1 + ceil(族数/8)（段头之前必须是空行）；两个面的 lines/bytes == 冻结常量\n     （现跑取数 · --emit-baseline 刷）\n  S3 末行：`--all` 末行 == 由族名清单现算重建的那一行；裸 `help` 末行 == 冻结读数（逐字）\n  S4 危险档面（`help dangerous` · 2026-09-27 补 · 缺口 GAP-20260927-418）：\n     S4a 表尾计数（`上表 N 条：已开放 X / 未开放 Y` ⇒ N == X + Y == 逐条行数）·\n     S4b 逐条行尾标记出现次数 == 表尾 X / Y ·\n     S4c 逐条行形状闭集（`zerg <路径>  D2|D3  --dry-run · [--confirm=<目标> · ]--yes  …  ← 标记`）·\n     S4d 逐条 `--confirm=<目标>` 的核心名 ⟷ 该命令在 `help --all` 的用法串（现算脱钩集合 == 冻结名单）·\n     S4f 两面**同印** `--confirm=` 的值须**逐字相等**（现算值冲突集合 == 冻结名单 · 现读空集 —— 独立一条腿：\n         S4d 只判「名字在不在用法串里」⇒ 值冲突但名字集合不变时 S4d 看不见）·\n     S4e 该面的 lines / bytes / 条数 / 表尾逐字 == 冻结读数（现跑取数 · --emit-baseline 刷）\n  S5 配置主题面（`help config` · 2026-09-27 补 · 缺口 GAP-20260927-440）：\n     S5a 同面交叉：优先级链行现算的级名表 == 逐级说明 `N. **名字**` 的名字表（同序逐字 · 两边剥反引号）·\n         编号必须 `1..N` 连号无重复 · 链行恰好 1 条 ·\n     S5b 同源跨面：`help config` 的链行**逐字等于**裸 `help` 的那一行（同源 = `helptext.go` 的\n         `configPriorityLine` 常量 —— 分家 = 有人抄了第二份）·\n     S5c 该面的 lines / bytes == 冻结读数（现跑取数 · --emit-baseline 刷）\n\n不假装覆盖（照实登记）\n----------------------\n  · 只判**形状**（段 / 条数 / 行数 / 末行）；段的**说明文字**逐字、危险档判词、层级列不在本格\n  · 两态 rc 语义（`zerg <族> --help` 退 2 等）**不在本件**（那是 `cli_help_twostate_test.go` 的面，禁碰）\n  · `help config` 只判**形状/结构**：链 ⟷ 逐级说明同序 · 同源链行逐字 · lines/bytes 常量；\n    「凭据」那批条目的**文字**与主题表 `topics.go` 的 `Brief` 串同源不同源**不在本格**\n    （要另开一处读 Go 源的口径 —— 本单不开第三份口径）\n  · 建件时本件**未挂门**（挂门 + `scripts/公开标记.tsv` + `dryrun-semantics.json` 三处登记是随动口）\n"
 
-const chsHelpGolden = "usage: check-help-shape.py [-h] [--repo-root REPO_ROOT] [--bin BIN]\n                           [--matrix MATRIX] [--json] [--emit-baseline]\n                           [--list-rules] [--self-test]\n\n`help` 面的形状判据（族级段 / 条数 / 末行）\n\noptional arguments:\n  -h, --help            show this help message and exit\n  --repo-root REPO_ROOT\n  --bin BIN\n  --matrix MATRIX\n  --json\n  --emit-baseline\n  --list-rules\n  --self-test\n"
+const chsHelpGolden = "usage: check-help-shape.py [-h] [--repo-root REPO_ROOT] [--bin BIN]\n" +
+	"                           [--matrix MATRIX] [--faces-dir FACES_DIR] [--json]\n" +
+	"                           [--emit-baseline] [--list-rules] [--self-test]\n" +
+	"\n" +
+	"`help` 面的形状判据（族级段 / 条数 / 末行）\n" +
+	"\n" +
+	"optional arguments:\n" +
+	"  -h, --help            show this help message and exit\n" +
+	"  --repo-root REPO_ROOT\n" +
+	"  --bin BIN\n" +
+	"  --matrix MATRIX\n" +
+	"  --faces-dir FACES_DIR\n" +
+	"                        A 档：四个 help 面改「读落盘制品目录」（help-all.txt/help.txt/help-\n" +
+	"                        dangerous.txt/help-config.txt · 缺口 GAP-20261001-47）\n" +
+	"  --json\n" +
+	"  --emit-baseline\n" +
+	"  --list-rules\n" +
+	"  --self-test\n"
 
 // ── ① 自检 golden + 退码 ───────────────────────────────────────────────
 func TestCheckHelpShape_SelfTestGolden(t *testing.T) {

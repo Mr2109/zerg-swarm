@@ -1,7 +1,7 @@
 // check_archive_mount_test.go —— `check_archive_mount.go` 的**成对负控**单测（M2 · 承接 GAP-20261001-13）。
 //
 // 口径：**成对负控**（✗ 禁恒绿）—— 同一套判据，正控（好夹具）⇒ rc=0；负控（可写档 / 实体目录 /
-// 未挂空目录 / 件数 0 / 样本读不到 / 两处读数打架 / 空转 / 旋钮指空树根）⇒ 各自 rc=1 / rc=2 并**逐条点名**；
+// 未挂空目录 / 件数 0 / 样本读不到 / 两处读数打架 / 空转 / 旋钮指空树根 / 仓根取不到）⇒ 各自 rc=1 / rc=2 并**逐条点名**；
 // 真话负控（把负控那处补回）⇒ 回绿 rc=0。**只去掉判据本身**会 FAIL（哑化验证见交付读数 · 仓外副本）。
 //
 // 本件**不碰真归档区**：全部夹具造在 `t.TempDir()` 里；真仓现读一格只在默认根在盘时才跑。
@@ -163,6 +163,19 @@ func TestCheckArchiveMountGatePort(t *testing.T) {
 	if rc, out, _ := camRun("--path", filepath.Join(t.TempDir(), "不在盘"), "--no-hdiutil"); rc != 2 ||
 		!strings.Contains(out, "在盘上取不到") {
 		t.Fatalf("负控⑧（旋钮指空树根）失败：期望 rc=2，实得 rc=%d out=%q", rc, out)
+	}
+
+	// ⑫′ 负控：仓根 `--root` 取不到（不存在 / 不是目录）⇒ 空集守卫 rc=2 不给结论（stderr BLOCKED · stdout 无门头）
+	if rc, out, errb := camRun("--root", filepath.Join(t.TempDir(), "无此根"), "--mount-table", noLine, "--no-hdiutil"); rc != 2 ||
+		strings.Contains(out, "门㉛") || !strings.Contains(errb, "BLOCKED —— 空域 / 取不到输入：仓根") {
+		t.Fatalf("负控⑨（仓根取不到）失败：期望 rc=2 · stderr BLOCKED · stdout 无门头，实得 rc=%d out=%q err=%q", rc, out, errb)
+	}
+	// ⑫″ 真话负控（成对回绿）：仓根在盘（显式 `--root` = 真目录）⇒ 守卫不触发、照常判（未挂断链 rc=0）
+	dang := filepath.Join(t.TempDir(), "悬空链")
+	_ = os.Symlink(filepath.Join(t.TempDir(), "gone"), dang)
+	if rc, out, _ := camRun("--root", t.TempDir(), "--path", dang, "--mount-table", noLine, "--no-hdiutil"); rc != 0 ||
+		!strings.Contains(out, "门㉛ 归档挂载档") {
+		t.Fatalf("成对回绿（仓根在盘）失败：期望 rc=0，实得 rc=%d out=%q", rc, out)
 	}
 
 	// ⑬ --self-test（合成夹具 · 13 格）⇒ rc=0 全过

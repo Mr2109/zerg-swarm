@@ -47,6 +47,14 @@
 //	  · `set-state`：「状态**与**证据都逐字相同」才算无变化；**状态同而证据不同** ⇒ 真写
 //	    （状态没动、口径变了 ⇒ 仍是一次有信息的写入 · `changed=true`）。
 //	  · `note`：目标条里已有**同 by 同 text** 的一条（时刻那一格**不比** —— 它每次都不同）⇒ 无变化。
+// ★ 本件另含两条**排期态**写面（缺口 `GAP-20261005-61` · 乙案 · 2026-10-05 · 三段链）：
+//
+//	⒢ `zerg gap project <GAP id> --evidence …`    —— **立项待拍**（源 {`仍缺`, `不做`} → 目标恒 `已立项`）
+//	   `zerg gap unproject <GAP id> --evidence …` —— **撤立项**（源 {`已立项`} → 目标恒 `仍缺` · 三段链回退面）
+//	   两动作**都不收 `--state`**（与 `assign` 同一条「各锁一个目标态」的纪律）。★ `已立项` 是**排期态**
+//	   ⇒ 本件仍**不**把它并进 `gapStateSettable`（`set-state` / `bulk set-state` 的三值闭集与 usage
+//	   **一字不动** ✗ —— 甲案已否，见设计稿 §2.3 / §7.1）。
+
 package main
 
 import (
@@ -57,6 +65,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -212,19 +221,48 @@ func gapFindIdx(led gapLedger, id string) int {
 // 返回 `(detail, rc, msg)`：`rc==0` 即真写成功（`detail` 为空 · `msg` = **账写回执行**，由调用方在**人面**打到 stdout；见 `gapLedgerReceipt`）。
 // **未动的行逐字节照原样写回**（`led.Lines` 是原文，不是重序列化）—— 与 `verify` 同一条口径。
 func gapRewriteOne(inv *invocation, led gapLedger, idx int, rec gapRecord, cmdName, before, after string) (string, int, string) {
-	// ⓪ **乐观并发闸**（批4 第七片 · 设计稿 §三十五 `O-14`「改态的并发保护」）：
-	//    写前**现读**账件身份，与本进程读入那一刻的基线不符 ⇒ **当场拒写**（退 2 · 点名两个 sha16）。
-	//    它排在「审计先落盘」**之前** ⇒ 拒写那一次真源一个字节不落、审计一行不落。
-	if d, rc, m := gapConcurGate(led, cmdName); rc != exitOK {
-		return d, rc, m
+	// ⓪ **账写排他锁 + 锁内现读重放**（缺口 `GAP-20261005-66` · 本笔）：
+	//    把「读 → 闸 → 审计 → 写 → 读回」**整段**串行化 —— 内核 `flock(LOCK_EX)` 独占，
+	//    锁件 `<真源>.lock` 落**状态目录**（✗ 不落仓内 · 与真源同生共死）。
+	//
+	//   病（本笔修 · 实测）：改态 = 「读整件 → 改一行 → 乐观闸现读比对 → 审计先落盘（一次 fsync）
+	//   → 整件重写」。闸与重写**非原子**（中间恰夹着那次 fsync）⇒ 两个写者都能过闸、后写整件覆盖
+	//   先写 ⇒ **静默丢更新**（仓外夹具 8 路 × 12 轮：96 发 / 81 `rc=0` / 实落 12 / 净丢 69）。
+	//
+	//   治：锁一取到就**现读**盘上真源为新基线（「读」被包进锁），本发的整条记录按 **id 重放**到
+	//   新基线上（未动的行逐字节取新基线原文）—— ✗ 不是拿旧基线整件覆盖 ⇒ 别的写者已落的更新
+	//   不被覆盖（零丢更新）；同一 id 在两次读之间被别人改过 ⇒ 仍按**原口径拒写**（退 2）。
+	//   ★ 取不到锁 / 现读不出 ⇒ 按原口径退 2 / 8 且**不给结论**（✗ 不静默继续）。
+	lk, lerr := gapLedgerLock(led.Path)
+	if lerr != nil {
+		return "ledger_locked", exitUsage,
+			fmt.Sprintf("账写排他锁取不到（%v） ⇒ 拿不到独占写权，本次拒写", lerr)
+	}
+	defer gapLedgerUnlock(lk)
+
+	// ① 锁内**现读**（拿到锁这一刻盘上的真源 = 新基线）。
+	fresh, ferr := readGapLedger()
+	if ferr != nil {
+		return "ledger_unreadable", exitBlocked, ferr.Error()
+	}
+	// ② 锁内**闸**（原乐观闸的本意：写前对一次身份 —— 现在它排在整个锁区里，「对身份」与「重写」
+	//    之间再无别人可插）+ 按 id **重放**本发到新基线上。
+	tidx := gapFindIdx(fresh, rec.ID)
+	if tidx < 0 {
+		return "concurrent_write", exitUsage,
+			fmt.Sprintf("锁内现读：目标 id %s 不在账内（`%s`） ⇒ 本次拒写", rec.ID, cmdName)
+	}
+	if idx >= 0 && idx < len(led.Recs) && !gapRecJSONEqual(led.Recs[idx], fresh.Recs[tidx]) {
+		return "concurrent_write", exitUsage,
+			fmt.Sprintf("同一 id %s 在「本进程读入」与「锁内现读」之间被别人改过 ⇒ 本次拒写（重跑一次即好）", rec.ID)
 	}
 	enc, err := json.Marshal(rec)
 	if err != nil {
 		return "ledger_encode_failed", exitFail, err.Error()
 	}
-	lines := make([]string, 0, len(led.Lines))
-	for i, raw := range led.Lines {
-		if i == idx {
+	lines := make([]string, 0, len(fresh.Lines))
+	for i, raw := range fresh.Lines {
+		if i == tidx {
 			lines = append(lines, string(enc))
 			continue
 		}
@@ -237,8 +275,8 @@ func gapRewriteOne(inv *invocation, led gapLedger, idx int, rec gapRecord, cmdNa
 	audit := gapAuditLine{
 		At: time.Now().Format(time.RFC3339), Event: gapEventName, GapCmd: cmdName,
 		GapID: rec.ID, GapFP: rec.FP, GapStateBefore: before, GapStateAfter: after,
-		GapLedgerPath: led.Path, GapBeforeSHA: sha256Of(led.Raw), GapAfterSHA: sha256Of(body),
-		GapBeforeLines: len(led.Lines), GapAfterLines: len(lines),
+		GapLedgerPath: fresh.Path, GapBeforeSHA: sha256Of(fresh.Raw), GapAfterSHA: sha256Of(body),
+		GapBeforeLines: len(fresh.Lines), GapAfterLines: len(lines),
 		By: gapByOf(inv), Confirm: "--yes",
 	}
 	// ★ 账写回执（设计稿 `设计-流程规则程序化-v1.0-20260928.md` §2.2 `A3` · §4 第 3 件）：真写真写
@@ -257,6 +295,51 @@ func gapRewriteOne(inv *invocation, led gapLedger, idx int, rec gapRecord, cmdNa
 		return "ledger_readback_mismatch", exitBlocked, "写回读对不上"
 	}
 	return "", exitOK, receipt
+}
+
+// ── 账写排他锁（缺口 `GAP-20261005-66`）────────────────────────────────────────────
+//
+// 锁原语照同仓先例 `core/internal/agent/tool_uses.go` 的 flock 用法（`O_CREATE|O_RDWR` 开件 +
+// `syscall.Flock(LOCK_EX)` 阻塞独占）—— **不新造第五套**。锁件 = `<真源>.lock`（落**状态目录** ·
+// 与真源同目录/同生共死），**不是**锁真源本身：真源走「临时件 + rename」原子替换 ⇒ rename 之后
+// 是**另一个 inode**，锁真源会让并发的两发各锁各的 inode、锁形同虚设。锁件常驻不删（跟先例一致）。
+
+// gapLedgerLockPath —— 账写锁件落点（与真源**同目录** · 状态目录下 · ✗ 不落仓内）。
+func gapLedgerLockPath(ledgerPath string) string { return ledgerPath + ".lock" }
+
+// gapLedgerLock —— 取「账写排他锁」（内核 `flock(LOCK_EX)` · **阻塞**等到独占）。取到 ⇒ 返持锁的
+// `*os.File`（调用方 defer `gapLedgerUnlock`）；取不到（开件失败 / flock 出错）⇒ 返 err（fail-closed）。
+func gapLedgerLock(ledgerPath string) (*os.File, error) {
+	lockPath := gapLedgerLockPath(ledgerPath)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// gapLedgerUnlock —— 释放账写排他锁（解锁 + 关件 —— 关件时内核兜底再释放一次）。
+func gapLedgerUnlock(f *os.File) {
+	if f == nil {
+		return
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_ = f.Close()
+}
+
+// gapRecJSONEqual —— 两条账记录按**规范 JSON** 逐字节相等？（判「同一 id 在两次读之间被别人改过」）。
+// `gapRecord` 带切片字段（`Notes`/`Voids`）⇒ 不能用 `==`，故比序列化字节。
+func gapRecJSONEqual(a, b gapRecord) bool {
+	ab, ea := json.Marshal(a)
+	bb, eb := json.Marshal(b)
+	return ea == nil && eb == nil && string(ab) == string(bb)
 }
 
 // ── 账写回执（设计稿 `设计-流程规则程序化-v1.0-20260928.md` §2.2 `A3` · §4 第 3 件）──────────
@@ -702,7 +785,7 @@ func cmdGapSetState(inv *invocation, stdout, stderr io.Writer) int {
 	if stateWant == "" {
 		inv.setErr("usage", "missing_required", "缺 --state")
 		fmt.Fprintf(stderr, "%s: `gap set-state` 缺必填旗标：--state\n", progName)
-		fmt.Fprintf(stderr, "用法：zerg gap set-state <GAP id> --state <%s> --evidence <一句话> [--by <谁>] [--dry-run | --yes]\n",
+		fmt.Fprintf(stderr, "用法：zerg gap set-state <GAP id> --state <%s> --evidence <一句话> [--solved-kind <实现|销案|前提不成立>] [--before-read <cmd=… · rc=… · reading=…>] [--after-read <cmd=… · rc=… · reading=…>] [--by <谁>] [--dry-run | --yes]\n",
 			strings.Join(gapStateSettable, "|"))
 		return exitUsage
 	}
@@ -1000,7 +1083,7 @@ func cmdGapNote(inv *invocation, stdout, stderr io.Writer) int {
 	if text == "" && retract == "" && supersede == "" {
 		inv.setErr("usage", "missing_required", "缺 --text")
 		fmt.Fprintf(stderr, "%s: `gap note` 缺必填旗标：--text（或 `--retract <n|指纹>` / `--supersede <n|指纹>`）\n", progName)
-		fmt.Fprintf(stderr, "用法：zerg gap note <GAP id> --text <一句话> [--by <谁>] [--dry-run | --yes]\n")
+		fmt.Fprintf(stderr, "用法：zerg gap note <GAP id> --text <一句话> [--retract <n|指纹>] [--by <谁>] [--dry-run | --yes]\n")
 		fmt.Fprintf(stderr, "   或：zerg gap note <GAP id> --retract <n|指纹> [--by <谁>] [--dry-run | --yes]（作废一注 · 不删原文）\n")
 		fmt.Fprintf(stderr, "   或：zerg gap note <GAP id> --supersede <n|指纹> --text <新文> [--by <谁>] [--dry-run | --yes]（作废旧注 + 落新注）\n")
 		return exitUsage
@@ -1329,6 +1412,16 @@ func gapWriteFail(inv *invocation, stderr io.Writer, detail, msg, cmdName string
 		fmt.Fprintf(stderr, "  %s\n", msg)
 		fmt.Fprintf(stderr, "  真源     : %s（一个字节未动 · 审计一行未落 —— 闸在「审计先落盘」**之前**）\n", gapLedgerPath())
 		fmt.Fprintf(stderr, "  下一步   : **重跑一次即可**（重跑以盘上现状为新基线）—— **不要手改账件**（手改正是这条闸要挡的形态）\n")
+	case "ledger_locked":
+		inv.setErr("usage", detail, msg)
+		fmt.Fprintf(stderr, "%s: **账写排他锁取不到** ⇒ 拿不到独占写权，本次**拒写**（退码 2 · 不给结论）\n", progName)
+		fmt.Fprintf(stderr, "  %s\n", msg)
+		fmt.Fprintf(stderr, "  真源     : %s（一个字节未动 · 审计一行未落 —— 锁排在「读」之前）\n", gapLedgerPath())
+		fmt.Fprintf(stderr, "  下一步   : 看锁件能否建/可写（`%s`）—— **不要手改账件**\n", gapLedgerLockPath(gapLedgerPath()))
+	case "ledger_unreadable":
+		inv.setErr("blocked", detail, msg)
+		fmt.Fprintf(stderr, "%s: 锁内**现读**真源读不出来 ⇒ **不给结论**（退码 8 · 真源一个字节不改）：%v\n", progName, msg)
+		fmt.Fprintf(stderr, "  真源     : %s\n", gapLedgerPath())
 	case "audit_unwritable":
 		inv.setErr("blocked", detail, msg)
 		fmt.Fprintf(stderr, "%s: 审计写不进 ⇒ **真源一个字节不改**（审计先落盘 · 退码 8）：%v\n", progName, msg)
@@ -1371,8 +1464,10 @@ func boolWord(b bool) string {
 // gapStAssigned —— 派单落的那一格（`已派` · 本片**首次真启用**：现读 0 条）。
 const gapStAssigned = "已派"
 
-// gapAssignFrom —— 「可派状态」闭集（默认只 `仍缺`：`已派` ⇒ 已在飞 · `已解` ⇒ 已闭环 · `不做` ⇒ 已拍死）。
-var gapAssignFrom = []string{gapStOpen}
+// gapAssignFrom —— 「可派状态」闭集（`仍缺` / `已立项` —— 三段链 `仍缺 → 已立项(立项待拍) → 已派(派单)`
+// · 缺口 `GAP-20261005-61` §3）：`已立项` = 立项待拍 ⇒ **可派**；`已派` ⇒ 已在飞 · `已解` ⇒ 已闭环 ·
+// `回归` ⇒ 机器态 · `不做` ⇒ 已拍死 ⇒ 均不可派。
+var gapAssignFrom = []string{gapStOpen, gapStPlanned}
 
 // gapAssignMarker —— 派单登记那一行的**机读标记**（读面按它筛出作业单登记 · 不改 `notes` 的形状）。
 const gapAssignMarker = "派单登记 "
@@ -1769,6 +1864,183 @@ func gapAssignPlanBlock(w io.Writer, title string, led gapLedger, r gapRecord, f
 	fmt.Fprintf(w, "    登记那一行   : %s\n", line)
 	fmt.Fprintf(w, "    receipt      : %s\n", f.Receipt)
 	fmt.Fprintf(w, "  审计     : 计划写一行 `event=%s` + `gap_cmd=assign`（这一态**不写**）\n", gapEventName)
+}
+
+// ── ⒢ `zerg gap project <GAP id> --evidence …` / `unproject`（立项登记 · 缺口 `GAP-20261005-61`）──────
+//
+// 设计出处（唯一真源 · `~/.zerg/state/设计-gap立项正门-20261005.md` §2 乙案 · §3 三段链 · §7 U1）：
+//
+//	`仍缺 ──project──▶ 已立项（立项待拍） ──assign──▶ 已派（派单）`
+//
+// 语义：`project` 源 = {`仍缺`, `不做`} → 目标**恒** `已立项`；`unproject` 源 = {`已立项`} → 目标**恒**
+// `仍缺`（三段链的回退面 —— §7 U1）。两动作**都不收 `--state`**：目标态由动作名唯一确定 —— 与
+// `assign`（源 {`仍缺`, `已立项`} → 目标恒 `已派`）同一条「各锁一个目标态」的纪律（甲案「扩
+// `gapStateSettable`」已否 ⇒ 本件**不扩** `set-state` / `bulk` 的闭集，那两条一字不动 ✗）。
+//
+// 三条纪律（与同族写面逐字同款）：① 只走唯一收口 `gapRewriteOne`（审计先落盘 → 整件重写 → 读回对拍）；
+// ② 缺 `--yes` fail-closed `2`（D2 档）· `--dry-run` 零副作用恒 `0`；③ `--evidence` 必填（改态留证）。
+// ★ **转入 `已立项` 不取 `solved_at`**（`已立项` 非终态 —— §5 面1）· `solved_kind` 原样带回（`state` 非
+// `已解` ⇒ 读面恒回「未分类」）。
+//
+// 退码（一律引现有表 `exitcodes.go` · 本族**不取新号**）：`0` 真写或幂等「无变化」· `2` 用法错（缺
+// id / id 多于一条 / 缺 `--evidence` / 收到 `--state` / **源态不在源闭集** / 点名点在账外）· `8` 真源
+// 读不到 / 不在盘上 / 审计写不进 / 真源写不进 / 写回读不对拍。
+
+// gapProjectFrom —— `project` 的源闭集（{`仍缺`, `不做`} → 目标恒 `已立项`）。
+var gapProjectFrom = []string{gapStOpen, gapStWontDo}
+
+// gapUnprojectFrom —— `unproject` 的源闭集（{`已立项`} → 目标恒 `仍缺`）= 三段链回退面（§7 U1）。
+var gapUnprojectFrom = []string{gapStPlanned}
+
+// gapProjectFields —— `gap project` / `gap unproject` 的 `--json <字段>` 产出集（写面与读面同一份口径）。
+var gapProjectFields = []string{"id", "fp", "state", "evidence", "changed", "solved_at"}
+
+// cmdGapProject —— `zerg gap project <GAP id> --evidence …`：立项待拍（源 {仍缺, 不做} → 目标恒 已立项）。
+func cmdGapProject(inv *invocation, stdout, stderr io.Writer) int {
+	return gapProjectRun(inv, stdout, stderr, "project", gapStPlanned, gapProjectFrom)
+}
+
+// cmdGapUnproject —— `zerg gap unproject <GAP id> --evidence …`：撤立项（源 {已立项} → 目标恒 仍缺）。
+func cmdGapUnproject(inv *invocation, stdout, stderr io.Writer) int {
+	return gapProjectRun(inv, stdout, stderr, "unproject", gapStOpen, gapUnprojectFrom)
+}
+
+// gapProjectRun —— `project` / `unproject` 的**共用实现**（两动作只差「目标态」与「源闭集」两格）。
+func gapProjectRun(inv *invocation, stdout, stderr io.Writer, cmdName, target string, from []string) int {
+	if rc := dryRunYesConflict(inv, stderr); rc != exitOK {
+		return rc
+	}
+	evidence := strings.TrimSpace(inv.flagVal("--evidence"))
+
+	// ① 用法面（在任何盘面动作之前 —— 与 `set-state` / `assign` 同一条位置）
+	if inv.jsonGiven && len(inv.fields) == 0 {
+		inv.setErr("usage", "json_fields_required", "--json 不给字段")
+		fmt.Fprintf(stderr, "%s: `--json` 要给逗号分隔的字段（本族口径 = 用法错 2）\n", progName)
+		fmt.Fprintf(stderr, "可选字段: %s\n", strings.Join(gapProjectFields, ","))
+		return exitUsage
+	}
+	if len(inv.flagVals("--state")) > 0 {
+		v := strings.TrimSpace(inv.flagVal("--state"))
+		inv.setErr("usage", "state_not_in_shape", "--state 不在 "+cmdName+" 的形状里")
+		fmt.Fprintf(stderr, "%s: `gap %s` 不收 `--state %s` —— 本动作落的态**恒为 `%s`**（目标态由动作名唯一确定）\n",
+			progName, cmdName, v, target)
+		return exitUsage
+	}
+	if evidence == "" {
+		inv.setErr("usage", "missing_required", "缺 --evidence")
+		fmt.Fprintf(stderr, "%s: `gap %s` 缺必填旗标：--evidence（**改态必留一句证据**）\n", progName, cmdName)
+		fmt.Fprintf(stderr, "用法：zerg gap %s <GAP id> --evidence <一句话> [--by <谁>] [--dry-run | --yes] [--json <字段>]\n", cmdName)
+		return exitUsage
+	}
+
+	// ② 缺 `--yes`（且非 `--dry-run`）：fail-closed **rc=2**，计划件走 stderr（判在读真源之前）。
+	if !inv.dryRun && !inv.yes {
+		ids := gapIDsOf(inv)
+		id := "（未给：缺必填）"
+		if len(ids) == 1 {
+			id = ids[0]
+		}
+		gapStatePlanBlock(stderr, "缺 `--yes`（D2 档）", cmdName, gapLedgerPath(), -1,
+			id, "", "（未读）", target,
+			"evidence     : "+evidence, "")
+		fmt.Fprintf(stderr, "  未执行   : 缺 `--yes` ⇒ 不执行（fail-closed：从不提问）\n")
+		fmt.Fprintf(stderr, "  ⚠ `--yes` 是**命令行确认档**，不是 `approve` 件（不产生 `approver` / `approval` 两格）\n")
+		inv.setErr("usage", "yes_required", "缺 --yes")
+		return exitUsage
+	}
+
+	// ③ 读真源（`--dry-run` 与 `--yes` 都要它：读不到 ⇒ 8）
+	led, rc := gapReadLedgerOrDie(inv, stderr)
+	if rc != exitOK {
+		return rc
+	}
+
+	// ④ 点名（恰好一条 · 账内没有 ⇒ 2）
+	idx, rc := gapTargetOne(inv, led, stderr, cmdName)
+	if rc != exitOK {
+		return rc
+	}
+	r := led.Recs[idx]
+
+	// ⑤ 幂等：已是目标态**且**证据逐字相同 ⇒ 「无变化」（不写真源、不写审计）
+	if r.State == target && r.Evidence == evidence {
+		inv.changed = boolPtr(false)
+		if inv.jsonGiven {
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields, gapProjectRow(r, "false"))
+		}
+		fmt.Fprintf(stdout, "无变化 %s · state=%s（同 id 同态同证据 ⇒ 幂等命中：不写真源、不写审计）\n", r.ID, r.State)
+		return exitOK
+	}
+
+	// ⑥ 源闭集预检：源态不在 `from` ⇒ 2 并点名当前 state + 逐字印闭集
+	if !gapIn(from, r.State) {
+		inv.setErr("usage", "state_not_"+cmdName, "当前 state 不在源闭集里")
+		fmt.Fprintf(stderr, "%s: `%s` 当前 state = **%s** ⇒ 不可 `%s`（本动作源闭集 = %s）\n",
+			progName, r.ID, r.State, cmdName, gapClosedText(from))
+		fmt.Fprintf(stderr, "  为什么：`已解` / `回归` ⇒ 已闭环 / 机器态 · 已是 `%s` ⇒ 幂等命中（同态同证据不写）\n", target)
+		return exitUsage
+	}
+
+	// ⑦ `--dry-run`：只出计划件（stdout · rc=0 · 零副作用）
+	if inv.dryRun {
+		inv.changed = boolPtr(false)
+		if inv.jsonGiven {
+			return selectJSON(stdout, stderr, inv, inv.path, inv.fields, gapProjectRow(r, "false"))
+		}
+		gapStatePlanBlock(stdout, "--dry-run", cmdName, led.Path, len(led.Lines),
+			r.ID, r.FP, r.State, target,
+			"evidence     : "+evidence,
+			"solved_at    : 不取（`"+target+"` 非终态 ⇒ 本动作不碰 solved_at / solved_kind）")
+		fmt.Fprintf(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未改真源、未写审计）\n")
+		return exitOK
+	}
+
+	// ⑧ **字段面前置判定**（把 `--json` 坏字段挡在真写之前 —— 同族 `GAP-20261005-26` 口径）
+	if rc := gapFrontJSONFields(inv, stderr, gapProjectFields); rc != exitOK {
+		return rc
+	}
+
+	// ⑨ 真写：`state` → target + `solved_evidence` = evidence（**不碰** `solved_at` / `solved_kind`）
+	before := r.State
+	r.State = target
+	r.Evidence = evidence
+	detail, wrc, msg := gapRewriteOne(inv, led, idx, r, cmdName, before, target)
+	if wrc != exitOK {
+		gapWriteFail(inv, stderr, detail, msg, cmdName)
+		return wrc
+	}
+	// 写后读回自证：`state` 与 `solved_evidence` 都在（读回对拍外再点一次名）
+	back, err := readGapLedger()
+	if err != nil {
+		inv.setErr("failed", "readback_failed", err.Error())
+		fmt.Fprintf(stderr, "%s: 写后读回真源失败（退码 1）：%v\n", progName, err)
+		return exitFail
+	}
+	bidx := gapFindIdx(back, r.ID)
+	if bidx < 0 || back.Recs[bidx].State != target || back.Recs[bidx].Evidence != evidence {
+		inv.setErr("failed", "readback_mismatch", "写后读回与要写的不一致")
+		fmt.Fprintf(stderr, "%s: 写后读回不一致（退码 1）：state=%s\n", progName, r.ID)
+		return exitFail
+	}
+	inv.changed = boolPtr(true)
+	if inv.jsonGiven {
+		return selectJSON(stdout, stderr, inv, inv.path, inv.fields, gapProjectRow(back.Recs[bidx], "true"))
+	}
+	label := map[string]string{"project": "立项", "unproject": "撤立项"}[cmdName]
+	fmt.Fprintf(stdout, "已%s %s · state %s → %s（真源 %d 行不变 · 只重写目标那一行 · 审计已落 1 行）\n",
+		label, r.ID, before, target, len(led.Lines))
+	fmt.Fprintf(stdout, "  evidence  : %s\n", evidence)
+	fmt.Fprintf(stdout, "  solved_at : %s（本动作不碰 —— `%s` 非终态）\n", back.Recs[bidx].SolvedAt, target)
+	gapReceiptPrint(stdout, msg)
+	return exitOK
+}
+
+// gapProjectRow —— `--json` 那一行的逐格取值（写面与读面共用一份口径 · `solved_at` 只读回显）。
+func gapProjectRow(r gapRecord, changed string) map[string]string {
+	return map[string]string{
+		"id": r.ID, "fp": r.FP, "state": r.State, "evidence": r.Evidence,
+		"changed": changed, "solved_at": r.SolvedAt,
+	}
 }
 
 // ── ⒡ `zerg gap bulk set-state <清单件> --state <…>`（族级批量改态 · 批3 第五片 · 2026-09-28）──────

@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,9 +140,10 @@ func TestCheckDocFreshnessGatePort(t *testing.T) {
 		t.Fatalf("缺配置失败：得 rc=%d stderr=%q", rcCfg, errCfg)
 	}
 
-	// ── ⑦ Q-176：本门无机器读面 ⇒ --json 拒收 rc=2（stderr 明说）───────────
+	// ── ⑦ Q-176：本门无 `--json` 读面 ⇒ 拒收 rc=2（stderr 明说 + 指向 --list-items）──
 	rcJSON, _, errJSON := cdfRunIn(t, good, "--json")
-	if rcJSON != 2 || !strings.Contains(errJSON, "本门无机器读面") || !strings.Contains(errJSON, "字段表：无") {
+	if rcJSON != 2 || !strings.Contains(errJSON, "本门无 `--json` 读面") ||
+		!strings.Contains(errJSON, "字段表：无") || !strings.Contains(errJSON, "`--list-items`") {
 		t.Fatalf("--json 拒收失败：得 rc=%d stderr=%q", rcJSON, errJSON)
 	}
 
@@ -179,7 +181,7 @@ func TestCheckDocFreshnessGatePort(t *testing.T) {
 
 	// ── ⑬ --self-test 自身必须全过（防恒绿/恒红）⇒ rc=0 + 末行自印组数 ───────
 	rcST, outST, _ := cdfRunIn(t, good, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "self-test：43 条通过 / 0 条失败") {
+	if rcST != 0 || !strings.Contains(outST, "self-test：45 条通过 / 0 条失败") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%q", rcST, outST)
 	}
 }
@@ -210,5 +212,110 @@ func TestCheckDocFreshnessRepoConfigPairing(t *testing.T) {
 	rc2 := checkDocFreshnessGateMain(&out2, &err2, []string{"--repo", fx, "--config", filepath.Join(bare, "nope.json"), "d1"})
 	if rc2 != 2 || !strings.Contains(err2.String(), "缺配置文件") {
 		t.Fatalf("成对负控失败：显式缺 --config 应 rc=2「缺配置文件」，得 rc=%d err=%q", rc2, err2.String())
+	}
+}
+
+// ── GAP-20260926-178：`--list-items` 逐条目机器面（TSV · 与人读面同源 · 与 --json 分开）
+// ── GAP-20260926-136：豁免表「登记过期（dead entry）」告警（只报 · 不进退码 · 逐条点名）
+func TestCheckDocFreshnessListItemsAndDeadEntry(t *testing.T) {
+	// 夹具：D2 两条红（行号越界 + 文件不存在）⇒ findings == 2
+	fx := cdfBuild(t, map[string]string{"a.md": "见 `core/x.py:99` 与 `core/nope.py:1`。\n"},
+		map[string]string{"core/x.py": "l1\nl2\nl3\n"})
+	cdfWithSibling(t, fx)
+	defer os.Unsetenv("ZERG_DEVDOCS_ROOT")
+
+	// ① --list-items：只出 TSV（表头 + 逐条）；人读面须被抑制
+	rcLI, outLI, _ := cdfRunIn(t, fx, "d2", "--list-items")
+	lines := strings.Split(strings.TrimSuffix(outLI, "\n"), "\n")
+	if rcLI != 1 || len(lines) == 0 || lines[0] != "gate	file	line	target	kind	domain	detail" {
+		t.Fatalf("--list-items 失败：应 rc=1 且首行 TSV 表头，得 rc=%d out=%q", rcLI, outLI)
+	}
+	if len(lines) != 3 {
+		t.Fatalf("--list-items 应出 1 表头 + 2 findings 行，得 %d 行：%q", len(lines), outLI)
+	}
+	if strings.Contains(outLI, "语料 ") || strings.Contains(outLI, "总耗时 ") {
+		t.Fatalf("--list-items 应只出 TSV（人读面须抑制），得 out=%q", outLI)
+	}
+	// 成对：不给该档时人读面照出（证明「抑制」是给档才做，不是恒抑制）
+	_, outPlain, _ := cdfRunIn(t, fx, "d2")
+	if !strings.Contains(outPlain, "语料 ") || !strings.Contains(outPlain, "总耗时 ") {
+		t.Fatalf("不带 --list-items 应出人读面（成对负控），得 out=%q", outPlain)
+	}
+
+	// ② 豁免表登记过期：两条死豁免（宿主不在盘 + 键 0 次）⇒ 逐条点名，且 rc 不受它影响
+	al := cdfBuild(t, map[string]string{"a.md": "[好](b.md)\n", "b.md": "# b\n"}, nil)
+	cdfWithSibling(t, al)
+	// 覆盖配置：加两条死豁免（idx0 宿主不在盘 · idx1 键 0 次）
+	if err := os.WriteFile(filepath.Join(al, "scripts", "docs", "doc-freshness.config.json"),
+		[]byte(`{"corpus":["docs"],"base_roots":["","docs"],"hard_exclude":[".git"],"mirror_paths":[],`+
+			`"frozen_paths":[],"third_party_paths":[],"engine_data_paths":[],"fixture_paths":[],`+
+			`"external_domain_paths":[],"d2":{"resolve_package_relative":true},`+
+			`"d3":{"slug_profile":"github","spec_doc":"docs/设计.md"},"d4":{"generators":[]},"refuse_domain":[],`+
+			`"allowlist":[{"gate":"d1","file_glob":"docs/nope.md","target":"x","reason":"r","date":"2026-01-01"},`+
+			`{"gate":"d1","file_glob":"docs/a.md","target":"core/none.py:1","reason":"r","date":"2026-01-01"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rcDE, outDE, _ := cdfRunIn(t, al, "d1")
+	if !strings.Contains(outDE, "⚠ 豁免表登记过期（dead entry）= 2 条") ||
+		!strings.Contains(outDE, "allowlist[0]") || !strings.Contains(outDE, "allowlist[1]") {
+		t.Fatalf("dead entry 告警失败（应 2 条逐条点名）：得 rc=%d out=%q", rcDE, outDE)
+	}
+	if rcDE != 0 {
+		t.Fatalf("dead entry 只报 · 不进退码：应 rc=0，得 rc=%d out=%q", rcDE, outDE)
+	}
+}
+
+// ── GAP-20261001-50：`--report` 真落盘（改前 cdfWriteReport2 恒 `return nil` ⇒ 静默不落盘）。
+// 成对：正控（真写盘 + py 同形键序/空形）↔ 负控（写盘目录不存在 ⇒ 与 py 同 rc=1 · 不落盘 · 不打「总耗时」）。
+func TestCheckDocFreshnessReport(t *testing.T) {
+	fx := cdfBuild(t, map[string]string{"a.md": "[好](b.md)\n", "b.md": "# b\n"}, nil)
+	cdfWithSibling(t, fx)
+	defer os.Unsetenv("ZERG_DEVDOCS_ROOT")
+
+	rep := filepath.Join(t.TempDir(), "rep.json")
+	rc, out, errs := cdfRunIn(t, fx, "d1", "--report", rep)
+	if rc != 0 || !strings.Contains(out, "报告落盘：") {
+		t.Fatalf("--report 正控失败：应 rc=0 且打「报告落盘」，得 rc=%d out=%q err=%q", rc, out, errs)
+	}
+	blob, err := os.ReadFile(rep)
+	if err != nil {
+		t.Fatalf("--report 应落盘，读回失败：%v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(blob, &doc); err != nil {
+		t.Fatalf("--report 产物不是合法 JSON：%v\n%s", err, blob)
+	}
+	for _, k := range []string{"script", "version", "generated_at", "repo", "scope", "elapsed_ms_total", "index", "gates"} {
+		if _, ok := doc[k]; !ok {
+			t.Fatalf("--report 缺顶层键 %q：%s", k, blob)
+		}
+	}
+	// 键序 = py dict 插入序（顶层 `script` 必为首键）；缩进 1 空格；无尾随换行
+	if !strings.HasPrefix(string(blob), "{\n \"script\": \"check-doc-freshness.py\",\n") {
+		t.Fatalf("--report 顶层键序/缩进不符 py：%s", blob)
+	}
+	if blob[len(blob)-1] != '}' {
+		t.Fatalf("--report 结尾应为 '}'（py json.dump 无尾随换行）：%q", blob[len(blob)-4:])
+	}
+	if !strings.Contains(string(blob), "\"counts\": {\n    \"语料篇数\": 2,") ||
+		!strings.Contains(string(blob), "\"errors\": [],") ||
+		!strings.Contains(string(blob), "\"findings\": []") {
+		t.Fatalf("--report 同形/键序不符 py：%s", blob)
+	}
+
+	// 成对负控：写盘目录不存在 ⇒ 与 py 同（rc=1 · 不落盘 · **不**打「总耗时」）
+	badPath := filepath.Join(t.TempDir(), "nodir", "x.json")
+	rcBad, outBad, errBad := cdfRunIn(t, fx, "d1", "--report", badPath)
+	if rcBad != 1 {
+		t.Fatalf("--report 负控应 rc=1（对齐 py 未捕获异常退出码），得 rc=%d out=%q err=%q", rcBad, outBad, errBad)
+	}
+	if strings.Contains(outBad, "总耗时") {
+		t.Fatalf("--report 落盘失败应**不**打「总耗时」（对齐 py），得 out=%q", outBad)
+	}
+	if _, err := os.Stat(badPath); err == nil {
+		t.Fatalf("--report 负控不应落盘：%s", badPath)
+	}
+	if !strings.Contains(errBad, "报告落盘失败") {
+		t.Fatalf("--report 负控应给失败档：err=%q", errBad)
 	}
 }

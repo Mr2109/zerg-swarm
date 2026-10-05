@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -271,5 +272,74 @@ func TestGapSolvedKindPartition(t *testing.T) {
 	}
 	if sha256Of(t, ledger) != sha1 || len(gapAuditLines(t, audit)) != na1 {
 		t.Errorf("⑦ 幂等命中却写了盘")
+	}
+}
+
+// TestGapStateConcurrentWritesNoLostUpdate —— 缺口 `GAP-20261005-66` 的回归：
+// 多路**不同 id** 的改态并发跑 ⇒ 「账中实落数 == 报 rc=0 的条数」（零静默丢更新），且 N 路应**全落**。
+//
+// 病（修前）：改态 = 读整件 → 改一行 → 乐观闸现读比对 → 审计先落盘（一次 fsync）→ 整件重写；
+// 闸与重写**非原子**（中间恰夹着那次 fsync）⇒ 两写者都能过闸、后写整件覆盖先写 = **静默丢更新**。
+// 治：账写排他锁（`flock(LOCK_EX)`）包住「锁内现读 + 按 id 重放」⇒ 每发都落到锁内新基线上。
+// 本用例的判据就是那一句：**报 rc=0 的每一条都真在账里**（rc=0 却不在账 = 静默丢更新 ⇒ 判红）。
+func TestGapStateConcurrentWritesNoLostUpdate(t *testing.T) {
+	_, ledger, _ := gapEnv(t)
+	const n = 8
+	// 造 N 条**不同 id** 的账行（夹具合成 —— 与仓外 `race_repro.sh` 同形）。
+	var b strings.Builder
+	for k := 1; k <= n; k++ {
+		rec := map[string]any{
+			"id": fmt.Sprintf("GAP-20260101-%04d", k), "fp": fmt.Sprintf("%064d", k),
+			"symptom": "并发夹具行", "handmade": "(夹具)", "impact": "命令面", "prio": "P1",
+			"state": "仍缺", "want_family": "gap", "want_action": "ls",
+			"repro_cmd": "zerg gap ls", "verify_cmd": "zerg gap ls",
+			"found_at": "2026-01-01T00:00:00+08:00", "unit": "无件(命令面)", "module": "无件", "unit_source": "hand",
+		}
+		line, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatalf("夹具行序列化失败：%v", err)
+		}
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(ledger, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("写夹具真源失败：%v", err)
+	}
+
+	// N 路并发改态（各改**不同** id ⇒ 修后应全落）。
+	rcs := make([]int, n)
+	var wg sync.WaitGroup
+	for k := 0; k < n; k++ {
+		wg.Add(1)
+		go func(k int) {
+			defer wg.Done()
+			id := fmt.Sprintf("GAP-20260101-%04d", k+1)
+			rcs[k], _, _ = gapRun(t, "gap", "set-state", id, "--state", "不做", "--evidence", "并发夹具", "--yes")
+		}(k)
+	}
+	wg.Wait()
+
+	// 判据：报 rc=0 的条数 == 账中实落 `state=不做` 的条数（零丢更新）。
+	rc0 := 0
+	for _, rc := range rcs {
+		if rc == 0 {
+			rc0++
+		}
+	}
+	present := 0
+	for _, ln := range gapReadLines(t, ledger) {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(ln), &m); err != nil {
+			t.Fatalf("真源某行不是 JSON：%v", err)
+		}
+		if m["state"] == "不做" {
+			present++
+		}
+	}
+	if present != rc0 {
+		t.Errorf("**静默丢更新**：报 rc=0 的 %d 条，账中实落 %d 条（差 %d 条 rc=0 却不在账）", rc0, present, rc0-present)
+	}
+	if rc0 != n {
+		t.Errorf("N 路**不同 id** 应全落（修后口径）：rc=0 只 %d / %d（rc 表=%v）", rc0, n, rcs)
 	}
 }

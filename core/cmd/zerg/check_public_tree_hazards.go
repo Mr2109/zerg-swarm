@@ -1,5 +1,13 @@
 // check_public_tree_hazards.go —— 判据件
-// `scripts/gates/check-public-tree-hazards.py`（414 行 · sha16 db8aea7683337e4d）的 **Go 真搬**（M2 批 · 甲案口径 · 公开面）。
+// `scripts/gates/check-public-tree-hazards.py`（563 行 · sha16 3b616b2b8620cfca）的 **Go 真搬**（M2 批 · 甲案口径 · 公开面）。
+//
+// 追平补搬（2026-10-05）：相对首搬（源 py 414 行 · sha16 db8aea7683337e4d）补齐三段 ——
+//
+//	· GAP-20260926-155：登记 / 豁免面（EXCLUDE_REGISTRY 默认空 · registry_hit/partition_registered 纯函数）
+//	  只在**审计档**（--all）生效（在册项照旧打印、不计判红）；**发布档绝不因本表放行**。
+//	· GAP-20260927-147：vendor 负控 3 格（cases_vendor）—— vendor 结构性出局经现读坐实。
+//	· GAP-20260927-114：域取不到 ⇒ rc=2（scan_paths/scan_forms 的 rev-list 退码非零 ⇒ 不给结论）。
+//	自检格数 30 → 41。
 //
 // 本件做什么（= py `__main__` 内联主逻辑）：
 //
@@ -118,6 +126,51 @@ const (
 	cphB = "Bearer "
 )
 
+// ── 登记 / 豁免面（缺口 GAP-20260926-155）────────────────────────────────────
+// 病：本门无登记面 —— 审计档（--all）扫全史对象时会命中一批「已判为发布面排除的件」
+// （经发布机制结构性排除、不进产物树的私有开发件：publish-public.sh 的 EXCLUDES ·
+// mirror-public-lib.py 的 DROP_EXACT · 公开标记.tsv 三处各自维护）。本门当时只能把这批命中
+// 与真隐患**同形**报出，靠人逐条去读那三张表才能闭环 ⇒ 机器上分不出「在册排除」与「真隐患」。
+// 治法（照 check-private-path-forms.py 的 NON_FORM_* 登记腿同范式）：本门自带一张登记表
+// —— 每条 = (正则, 理由)，命中者进「在册[]」（照旧打印、不静默）、不计入判红；**未登记的
+// 命中照旧判红**（登记不是整体静音）。表**默认空 ⇒ 与旧行为逐字同形**。
+// ★★ 只在审计档（--all）生效：发布档（产物树）**绝不**因本表放行 —— 「已判为发布面排除的件」
+//
+//	若出现在产物树里，正是排除机制失效的真缺陷，一律判红（与 tree_class 前置判据同向）。
+//
+// ★ 条目卫生：**零命中即死条目**（下次审计档跑若某条正则 0 命中 ⇒ 应删），登记时写清理由 +
+//
+//	它在三张排除表里的哪一处被排除。
+var cphExcludeRegistry = []cphRule{} // 登记表：每条 = (正则, 理由)；默认空 ⇒ 与旧行为逐字同形
+
+// cphRegistryHit —— ⇒（命中理由, true）；无命中 ⇒（"", false）。
+// **纯函数**（registry 可注入 ⇒ 自测喂夹具登记表）。
+func cphRegistryHit(path string, registry []cphRule) (string, bool) {
+	for _, r := range registry {
+		if r.rx.MatchString(path) {
+			return r.why, true
+		}
+	}
+	return "", false
+}
+
+// cphPartitionRegistered —— 把命中列表拆成（在册（发布面排除）, 未登记（真命中））。
+// 在册项 = [path, 原命中理由, 登记理由]；未登记项逐字照旧 = [path, 理由]。
+// ★ 只在**审计档**（--all）用（见 cphExcludeRegistry 段注释：发布档绝不豁免）。
+// 默认空登记表 ⇒（[], hits）（与旧行为逐字同形）。
+func cphPartitionRegistered(hits [][2]string, registry []cphRule) (inreg [][3]string, real [][2]string) {
+	inreg = [][3]string{}
+	real = [][2]string{}
+	for _, item := range hits {
+		if why, ok := cphRegistryHit(item[0], registry); ok {
+			inreg = append(inreg, [3]string{item[0], item[1], why})
+		} else {
+			real = append(real, item)
+		}
+	}
+	return inreg, real
+}
+
 // ── 前置判据（缺口 Q-177）：传入目录是不是「公开产物树」──────────────────────
 const (
 	cphSnapshotSubject  = "Zerg Swarm (虫族) — 公开快照" // 压平提交首行（publish-public.sh）
@@ -222,6 +275,17 @@ func cphCasesPath() []cphPathCase {
 	}
 }
 
+// cphCasesVendor —— 负控自检格（缺口 GAP-20260927-147 · vendor 出局）：钉死「vendor 结构性出局」。
+// v1：vendor 现读的两处 eval 件（searxng lib.sh / rtk benchmark.sh）不是本闸判据形态 ⇒ 保持沉默是对的（不误报）。
+// v2：有牙 —— 若 vendor 进了产物树且含危险物（.jsonl），路径判据照抓（判面不因 vendor 失明）。
+func cphCasesVendor() []cphPathCase {
+	return []cphPathCase{
+		{"vendor/searxng/utils/lib.sh", false, "v1 vendor 出局：lib.sh 的 eval 非本闸判据形态（不误报）"},
+		{"vendor/rtk/scripts/benchmark.sh", false, "v1 vendor 出局：benchmark.sh 的 eval 非本闸判据形态（不误报）"},
+		{"vendor/searxng/events.jsonl", true, "v2 有牙：vendor 若含危险物，路径判据照抓（判面不因 vendor 失明）"},
+	}
+}
+
 func cphCasesForm() []cphPathCase {
 	return []cphPathCase{
 		{"Authorization: " + cphB + "a1b2c3d4e5f6g7h8i9j0k1l2", true, "真 bearer 值"},
@@ -241,6 +305,36 @@ func cphCasesTree() []cphTreeCase {
 		{cphIntPtr(1), cphSnapshotSubject, "正文无第二道信号", false, "缺 GitOrigin-RevId ⇒ 判不了"},
 		{cphIntPtr(1332), cphSnapshotSubject, cphSnapshotBodyMark + " abc", false, "私有权威仓（多提交）⇒ 判不了"},
 		{nil, cphSnapshotSubject, cphSnapshotBodyMark + " abc", false, "读不到提交数 ⇒ 判不了"},
+	}
+}
+
+// cphRegCase —— 登记面自检格（缺口 GAP-20260926-155 · 成对负控）。
+type cphRegCase struct {
+	path    string
+	wantHit bool
+	wantWhy *string
+	why     string
+}
+
+func cphStrPtr(s string) *string { return &s }
+
+// cphRegFixture —— 夹具登记表（可注入 ⇒ 不读本件真表 cphExcludeRegistry）。
+func cphRegFixture() []cphRule {
+	return []cphRule{
+		{regexp.MustCompile(`^scripts/gates/check-public-tree-hazards\.py$`), "本门自身（发布面排除）"},
+		{regexp.MustCompile(`^scripts/build/publish-preflight\.sh$`), "发布脚本（发布面排除）"},
+	}
+}
+
+func cphCasesReg() []cphRegCase {
+	return []cphRegCase{
+		{"scripts/gates/check-public-tree-hazards.py", true, cphStrPtr("本门自身（发布面排除）"),
+			"在册正控：登记表命中 ⇒ 审计档分进在册"},
+		{"scripts/build/publish-preflight.sh", true, cphStrPtr("发布脚本（发布面排除）"), "在册正控二：第二条"},
+		{"scripts/gates/check-public-tree-private.py", false, nil,
+			"负控：未登记的件**不**被豁免（登记不是整体静音）"},
+		{"scripts/gates/check-public-tree-hazards.py.bak", false, nil,
+			"锚定负控：近似名不误中（正则 `$` 锚）"},
 	}
 }
 
@@ -367,10 +461,10 @@ func cphSelftestCJK(stdout io.Writer) (extra, bad int) {
 func cphSelftestScan(stdout io.Writer) (extra, bad int) {
 	fxRoot, err := os.MkdirTemp("", "hazards-selftest-scan-")
 	if err != nil {
-		for _, lbl := range []string{"scan-paths-catches-hazard", "scan-forms-catches-hazard"} {
+		for _, lbl := range []string{"scan-paths-catches-hazard", "scan-forms-catches-hazard", "registry-ledger-teeth"} {
 			fmt.Fprintf(stdout, "   ✗ %-32s | 夹具建不起来（%s）⇒ 不许静默绿\n", lbl, err)
 		}
-		return 2, 2
+		return 3, 3
 	}
 	defer os.RemoveAll(fxRoot)
 
@@ -380,10 +474,10 @@ func cphSelftestScan(stdout io.Writer) (extra, bad int) {
 	gitEnv := cphGitEnv()
 
 	fail := func(e error) (int, int) {
-		for _, lbl := range []string{"scan-paths-catches-hazard", "scan-forms-catches-hazard"} {
+		for _, lbl := range []string{"scan-paths-catches-hazard", "scan-forms-catches-hazard", "registry-ledger-teeth"} {
 			fmt.Fprintf(stdout, "   ✗ %-32s | 夹具建不起来（%s）⇒ 不许静默绿\n", lbl, e)
 		}
-		return 2, 2
+		return 3, 3
 	}
 	if e := os.MkdirAll(cphPyJoin(fxRepo, ".zerg", "logs"), 0o755); e != nil {
 		return fail(e)
@@ -404,7 +498,7 @@ func cphSelftestScan(stdout io.Writer) (extra, bad int) {
 		}
 	}
 
-	ph := cphScanPaths(fxRepo, false)
+	ph, _ := cphScanPaths(fxRepo, false)
 	phNamed := false
 	for _, h := range ph {
 		if h[0] == dangerPath {
@@ -426,7 +520,7 @@ func cphSelftestScan(stdout io.Writer) (extra, bad int) {
 		fmt.Fprintf(stdout, "   %s %-32s | %s\n", cphMark(c.ok), "scan-paths-catches-hazard", c.why)
 	}
 
-	fh := cphScanForms(fxRepo, "HEAD", false)
+	fh, _ := cphScanForms(fxRepo, "HEAD", false)
 	fhNamed := false
 	for _, h := range fh {
 		if strings.Contains(h[0], dangerPath) {
@@ -447,6 +541,37 @@ func cphSelftestScan(stdout io.Writer) (extra, bad int) {
 		extra++
 		fmt.Fprintf(stdout, "   %s %-32s | %s\n", cphMark(c.ok), "scan-forms-catches-hazard", c.why)
 	}
+	// 格⑤（GAP-20260926-155 登记面 · 成对负控）：真**扫描输出**上，登记表把命中拆成
+	//      「在册 / 真命中」；并证明**默认空表 ⇒ 一个都不豁免**（发布档不受影响另见主入口）。
+	regFx := []cphRule{{regexp.MustCompile(`^\.zerg/logs/events\.jsonl$`), "夹具：判为发布面排除"}}
+	inreg, real := cphPartitionRegistered(ph, regFx)
+	noex, noexReal := cphPartitionRegistered(ph, []cphRule{})
+	inregPaths := []string{}
+	inregAllNamed := len(inreg) >= 1
+	for _, h := range inreg {
+		inregPaths = append(inregPaths, h[0])
+		if h[0] != dangerPath {
+			inregAllNamed = false
+		}
+	}
+	checks5 := []struct {
+		ok  bool
+		why string
+	}{
+		{inregAllNamed, fmt.Sprintf("登记表命中真扫描输出 ⇒ 拆进在册（现读 %d 项 · %s）",
+			len(inreg), cphPyReprStrList(inregPaths))},
+		{len(real) == 0, fmt.Sprintf("登记的那件不再进真命中（现读 %d 项在册 / %d 项命中）",
+			len(inreg), len(real))},
+		{len(noex) == 0 && len(noexReal) == len(ph),
+			"**默认空登记表 ⇒ 0 项豁免**（负控 · 与旧行为逐字同形）"},
+	}
+	for _, c := range checks5 {
+		if !c.ok {
+			bad++
+		}
+		extra++
+		fmt.Fprintf(stdout, "   %s %-32s | %s\n", cphMark(c.ok), "registry-ledger-teeth", c.why)
+	}
 	return extra, bad
 }
 
@@ -455,6 +580,20 @@ func cphSelftest(stdout io.Writer) bool {
 	bad := 0
 
 	for _, c := range cphCasesPath() {
+		got := false
+		for _, rx := range cphDangerPath {
+			if rx.rx.MatchString(c.text) {
+				got = true
+				break
+			}
+		}
+		ok := got == c.want
+		if !ok {
+			bad++
+		}
+		fmt.Fprintf(stdout, "   %s want=%-5s got=%-5s | %s\n", cphMark(ok), cphTF(c.want), cphTF(got), c.why)
+	}
+	for _, c := range cphCasesVendor() {
 		got := false
 		for _, rx := range cphDangerPath {
 			if rx.rx.MatchString(c.text) {
@@ -492,6 +631,39 @@ func cphSelftest(stdout io.Writer) bool {
 	}
 
 	extra := 0
+	// ── ★ 登记 / 豁免面自检（缺口 GAP-20260926-155）：成对负控 ──
+	//   病：本门无登记面 ⇒「已判为发布面排除的件」只能靠人读三张排除表才能闭环，机器上分不出
+	//   「在册排除」与「真隐患」。治法 = 登记表 cphExcludeRegistry（默认空 ⇒ 与旧行为逐字同形）
+	//   + 只读分区腿 cphPartitionRegistered()。本组格钉死它 **真在起作用、且不当整体静音**。
+	regFx := cphRegFixture()
+	for _, c := range cphCasesReg() {
+		gotWhy, gotHit := cphRegistryHit(c.path, regFx)
+		gotStr := "None"
+		if gotHit {
+			gotStr = gotWhy
+		}
+		wantStr := "None"
+		if c.wantWhy != nil {
+			wantStr = *c.wantWhy
+		}
+		ok := (gotHit == c.wantHit) && (gotStr == wantStr)
+		if !ok {
+			bad++
+		}
+		extra++
+		fmt.Fprintf(stdout, "   %s want=%-5s got=%-5s | %s\n", cphMark(ok), cphTF(c.wantHit), gotStr, c.why)
+	}
+	// 空表不变式：**默认空登记表 ⇒ 一个都不豁免**（与旧行为逐字同形 · 负控）
+	emptyInreg, emptyReal := cphPartitionRegistered(
+		[][2]string{{"a/b.jsonl", "日志"}, {"x.log", "日志"}}, []cphRule{})
+	emptyOK := len(emptyInreg) == 0 && len(emptyReal) == 2
+	if !emptyOK {
+		bad++
+	}
+	extra++
+	fmt.Fprintf(stdout, "   %s %-32s | %s\n", cphMark(emptyOK), "empty-registry-noop",
+		"空登记表 ⇒ 0 项在册、原命中全数保留（与旧行为同形）")
+
 	e1, b1 := cphSelftestCJK(stdout)
 	extra += e1
 	bad += b1
@@ -499,7 +671,7 @@ func cphSelftest(stdout io.Writer) bool {
 	extra += e2
 	bad += b2
 
-	total := len(cphCasesPath()) + len(cphCasesForm()) + len(cphCasesTree()) + extra
+	total := len(cphCasesPath()) + len(cphCasesVendor()) + len(cphCasesForm()) + len(cphCasesTree()) + extra
 	verdict := "全过"
 	if bad != 0 {
 		verdict = fmt.Sprintf("%d 条失败", bad)
@@ -523,12 +695,17 @@ func cphAllPaths(gitdir, commit string) []string {
 	return res
 }
 
-// cphScanPaths —— 危险路径判据。
-func cphScanPaths(gitdir string, commitsAll bool) [][2]string {
+// cphScanPaths —— 危险路径判据。⇒（命中列表, ok）；**取不到域 ⇒ ok=false**
+// （GAP-20260927-114：审计档 rev-list 退码非零 ⇒ py 返 None ⇒ 调用侧 rc=2，不与「零命中」同形）。
+func cphScanPaths(gitdir string, commitsAll bool) ([][2]string, bool) {
 	hits := [][2]string{}
 	if commitsAll {
-		out := cphGitCapture([]string{"git", "-C", gitdir, "-c", "core.quotepath=false",
-			"rev-list", "--objects", "--all"}).stdout
+		r := cphGitCapture([]string{"git", "-C", gitdir, "-c", "core.quotepath=false",
+			"rev-list", "--objects", "--all"})
+		if r.rc != 0 {
+			return nil, false
+		}
+		out := r.stdout
 		set := map[string]bool{}
 		for _, ln := range strings.Split(out, "\n") {
 			if strings.Contains(ln, " ") {
@@ -556,14 +733,18 @@ func cphScanPaths(gitdir string, commitsAll bool) [][2]string {
 			}
 		}
 	}
-	return hits
+	return hits, true
 }
 
-// cphScanForms —— 令牌形态判据。
-func cphScanForms(gitdir, commit string, commitsAll bool) [][2]string {
+// cphScanForms —— 令牌形态判据。⇒（命中列表, ok）；**取不到域 ⇒ ok=false**（GAP-20260927-114）。
+func cphScanForms(gitdir, commit string, commitsAll bool) ([][2]string, bool) {
 	hits := [][2]string{}
 	if commitsAll {
-		out := cphGitCapture([]string{"git", "-C", gitdir, "rev-list", "main"}).stdout
+		r := cphGitCapture([]string{"git", "-C", gitdir, "rev-list", "main"})
+		if r.rc != 0 {
+			return nil, false
+		}
+		out := r.stdout
 		commits := strings.Fields(out)
 		pat := cphTokenForm[0].rx.String() + "|" + cphTokenForm[1].rx.String()
 		seen := map[string]bool{}
@@ -592,7 +773,7 @@ func cphScanForms(gitdir, commit string, commitsAll bool) [][2]string {
 			}
 		}
 	}
-	return hits
+	return hits, true
 }
 
 // ── JSON 拒收（缺口 Q-176）：本门**无机器读面** ⇒ 给了 `--json` 不许沉默 ───────
@@ -695,16 +876,36 @@ func checkPublicTreeHazardsGateMain(stdout, stderr io.Writer, argv []string) int
 		fmt.Fprintf(stdout, "档位: 发布档（`%s` mode=%s）—— %s\n", target, mode, why)
 	}
 
-	ph := cphScanPaths(target, commitsAll)
+	ph, phOK := cphScanPaths(target, commitsAll)
 	formCommit := mode
 	if commitsAll {
 		formCommit = "main"
 	}
-	fh := cphScanForms(target, formCommit, commitsAll)
+	fh, fhOK := cphScanForms(target, formCommit, commitsAll)
+	if !phOK || !fhOK {
+		// GAP-20260927-114：「域取不到」与「零命中」不许同形（rc=2 fail-closed）。
+		fmt.Fprint(stderr, "⛔ 不给结论（rc=2）：域取不到（`git rev-list` 非零退出）——「取不到」与「零命中」不许同形（GAP-20260927-114）\n")
+		return 2
+	}
+	// 登记 / 豁免面（缺口 GAP-20260926-155）：**只审计档** —— 把「已判为发布面排除的件」从判红面
+	// 分出在册（照旧打印、不静默）；发布档绝不因本表放行（见 cphExcludeRegistry 段注释）。
+	inreg := [][3]string{}
+	if commitsAll {
+		irP, realP := cphPartitionRegistered(ph, cphExcludeRegistry)
+		ph = realP
+		irF, realF := cphPartitionRegistered(fh, cphExcludeRegistry)
+		fh = realF
+		inreg = append(inreg, irP...)
+		inreg = append(inreg, irF...)
+	}
 	total := len(ph) + len(fh)
 
 	if total == 0 {
-		fmt.Fprintf(stdout, "结果: 通过——未发现危险路径与令牌形态（扫 %s mode=%s）\n", target, mode)
+		tail := ""
+		if len(inreg) > 0 {
+			tail = fmt.Sprintf("（登记面另有 %d 项在册 · 发布面排除）", len(inreg))
+		}
+		fmt.Fprintf(stdout, "结果: 通过——未发现危险路径与令牌形态（扫 %s mode=%s）%s\n", target, mode, tail)
 		return 0
 	}
 
@@ -716,12 +917,26 @@ func checkPublicTreeHazardsGateMain(stdout, stderr io.Writer, argv []string) int
 	for _, h := range cphFirst15(fh) {
 		fmt.Fprintf(stdout, "   形态 %s   ← %s\n", h[0], h[1])
 	}
+	if len(inreg) > 0 {
+		fmt.Fprintf(stdout, "登记面（审计档 · 已判为发布面排除的件）：%d 项在册（不判红 · 照旧打印）\n", len(inreg))
+		for _, h := range cphFirst15x3(inreg) {
+			fmt.Fprintf(stdout, "   在册 %s   ← 命中「%s」· 在册理由：%s\n", h[0], h[1], h[2])
+		}
+	}
 	return 1
 }
 
 // ── 私有助手 ─────────────────────────────────────────────────────────────────
 
 func cphFirst15(h [][2]string) [][2]string {
+	if len(h) > 15 {
+		return h[:15]
+	}
+	return h
+}
+
+// cphFirst15x3 —— 在册三项组的 py `inreg[:15]` 同构。
+func cphFirst15x3(h [][3]string) [][3]string {
 	if len(h) > 15 {
 		return h[:15]
 	}

@@ -420,6 +420,31 @@ func chsRunFace(binz string, argv []string) (string, string) {
 	return stdout, ""
 }
 
+// ── A 档取数口（缺口 `GAP-20261001-47` · 拆档）：读**落盘的 help 面制品**、不起子进程 ──
+// 与 `chsRunFace` 的**唯一**不同：判据只吃文件 ⇒ 结论逐字可复现（与 HEAD 处编译制品解耦）。
+var chsFaceArtifactFiles = map[string]string{
+	"help --all":     "help-all.txt",
+	"help":           "help.txt",
+	"help dangerous": "help-dangerous.txt",
+	"help config":    "help-config.txt",
+}
+
+// chsReadFaceFile —— py `read_face_file(path)`：读一件落盘的 help 面制品 ⇒ (文本 | "", 理由)。空件 ⇒ 判不了（空 ≠ 合法帮助面）。
+func chsReadFaceFile(path string) (string, string) {
+	if !chsIsFile(path) {
+		return "", "help 面制品不在盘：" + path
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", "help 面制品读不了（" + chsOSErrStr(path, err) + "）"
+	}
+	text := chsFoldNewlines(string(raw))
+	if chsPyTrim(text) == "" {
+		return "", "help 面制品零输出：" + path
+	}
+	return text, ""
+}
+
 // chsJSONErrStr —— py `json.decoder.JSONDecodeError` 的 str 逐字复刻（msg: line L column C (char N)）。
 func chsJSONErrStr(raw []byte, _ error) string {
 	return chsPyJSONErr(raw)
@@ -1102,9 +1127,9 @@ type chsFaceBl struct {
 type chsBaselineSet map[string]chsFaceBl
 
 var chsBaseline = chsBaselineSet{
-	"help --all":     {HasLines: true, Lines: 331, HasBytes: true, Bytes: 216763},
-	"help":           {HasLines: true, Lines: 245, HasBytes: true, Bytes: 119054, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
-	"help dangerous": {HasLines: true, Lines: 89, HasBytes: true, Bytes: 27419, HasRows: true, Rows: 78, HasTail: true, Tail: "上表 78 条：**已开放 38 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 40 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。", ConfirmNotInUsage: []string{"agent reap", "itask start"}, ConfirmValueMismatch: [][]string{}},
+	"help --all":     {HasLines: true, Lines: 333, HasBytes: true, Bytes: 220023},
+	"help":           {HasLines: true, Lines: 245, HasBytes: true, Bytes: 119296, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	"help dangerous": {HasLines: true, Lines: 91, HasBytes: true, Bytes: 28575, HasRows: true, Rows: 80, HasTail: true, Tail: "上表 80 条：**已开放 40 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 40 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。", ConfirmNotInUsage: []string{"agent reap", "itask start"}, ConfirmValueMismatch: [][]string{}},
 	"help config":    {HasLines: true, Lines: 17, HasBytes: true, Bytes: 1392},
 }
 
@@ -1614,8 +1639,8 @@ func chsSelfTest(out io.Writer) bool {
 // ── argparse 复刻（`-h/--help` · 长旗标前缀匹配 · `=` 取值 · 缺值报话 · 未知旗标）──
 
 const chsUsageText = "usage: check-help-shape.py [-h] [--repo-root REPO_ROOT] [--bin BIN]\n" +
-	"                           [--matrix MATRIX] [--json] [--emit-baseline]\n" +
-	"                           [--list-rules] [--self-test]\n"
+	"                           [--matrix MATRIX] [--faces-dir FACES_DIR] [--json]\n" +
+	"                           [--emit-baseline] [--list-rules] [--self-test]\n"
 
 const chsHelpText = chsUsageText + "\n" +
 	"`help` 面的形状判据（族级段 / 条数 / 末行）\n" +
@@ -1625,31 +1650,36 @@ const chsHelpText = chsUsageText + "\n" +
 	"  --repo-root REPO_ROOT\n" +
 	"  --bin BIN\n" +
 	"  --matrix MATRIX\n" +
+	"  --faces-dir FACES_DIR\n" +
+	"                        A 档：四个 help 面改「读落盘制品目录」（help-all.txt/help.txt/help-\n" +
+	"                        dangerous.txt/help-config.txt · 缺口 GAP-20261001-47）\n" +
 	"  --json\n" +
 	"  --emit-baseline\n" +
 	"  --list-rules\n" +
 	"  --self-test\n"
 
 type chsArgs struct {
-	repoRoot   string
-	repoSet    bool
-	binVal     string
-	binSet     bool
-	matrix     string
-	matrixSet  bool
-	json       bool
-	emitBase   bool
-	listRules  bool
-	selfTest   bool
-	help       bool
-	badArg     string
-	missingVal string
+	repoRoot    string
+	repoSet     bool
+	binVal      string
+	binSet      bool
+	matrix      string
+	matrixSet   bool
+	facesDir    string
+	facesDirSet bool
+	json        bool
+	emitBase    bool
+	listRules   bool
+	selfTest    bool
+	help        bool
+	badArg      string
+	missingVal  string
 }
 
 func chsParseArgs(argv []string) chsArgs {
 	var a chsArgs
-	longs := []string{"--repo-root", "--bin", "--matrix", "--json", "--emit-baseline", "--list-rules", "--self-test", "--help"}
-	takesVal := map[string]bool{"--repo-root": true, "--bin": true, "--matrix": true}
+	longs := []string{"--repo-root", "--bin", "--matrix", "--faces-dir", "--json", "--emit-baseline", "--list-rules", "--self-test", "--help"}
+	takesVal := map[string]bool{"--repo-root": true, "--bin": true, "--matrix": true, "--faces-dir": true}
 	for i := 0; i < len(argv); i++ {
 		s := argv[i]
 		if s == "-h" || s == "--help" {
@@ -1711,6 +1741,8 @@ func chsParseArgs(argv []string) chsArgs {
 				a.binVal, a.binSet = val, true
 			case "--matrix":
 				a.matrix, a.matrixSet = val, true
+			case "--faces-dir":
+				a.facesDir, a.facesDirSet = val, true
 			}
 			continue
 		}
@@ -1809,12 +1841,21 @@ func checkHelpShapeGateMain(stdout, stderr io.Writer, argv []string) int {
 	argvs := [][]string{{"help", "--all"}, {"help"}, {"help", "dangerous"}, {"help", "config"}}
 	faces := map[string]string{}
 	for i, face := range order {
-		text, why := chsRunFace(binz, argvs[i])
+		var text, why string
+		if a.facesDir != "" {
+			// A 档（`GAP-20261001-47` · 拆档）：只读落盘 help 面制品 · 不起子进程。
+			text, why = chsReadFaceFile(chsPyJoin(a.facesDir, chsFaceArtifactFiles[face]))
+		} else {
+			text, why = chsRunFace(binz, argvs[i])
+		}
 		if text == "" {
 			fmt.Fprintf(stdout, "⛔ 不给结论（rc=2）：%s\n", why)
 			return 2
 		}
 		faces[face] = text
+	}
+	if a.facesDir != "" {
+		fmt.Fprintf(stdout, "  取数档 = A 档（只读 help 面制品 %s）—— 不起 bin/zerg 子进程\n", a.facesDir)
 	}
 
 	if a.emitBase {

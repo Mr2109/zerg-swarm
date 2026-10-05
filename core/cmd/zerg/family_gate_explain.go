@@ -323,16 +323,17 @@ func gateStepIndex(root, name string) (int, bool) {
 		if strings.HasPrefix(t, "共 ") {
 			break
 		}
-		// 行形如 `scope 模式 名称`（空白分隔）——名称可能含空格，故剥掉前两个字段再比。
-		parts := strings.Fields(t)
-		if len(parts) < 3 {
+		// 行形如 `scope 模式 名称` —— 名称**取原文、不折叠内部空白**（切法复用 `impactStepListLineRe`：
+		//   本仓有步名含连续两个 ASCII 空格，折叠会把它折成**另一个名字** · 缺口 `GAP-20261005-49`）。
+		m := impactStepListLineRe.FindStringSubmatch(t)
+		if m == nil {
 			continue
 		}
 		idx++
 		// ★ 2026-10-05（缺口 `GAP-20261001-33`）：步名**归一后比** —— 脚本 `--list` 打出的名字是**运行期
 		//   形态（不带反斜杠）**，而调用方可能给**源文形态**（带反斜杠的 `\``/`\$`）⇒ 不归一会把在册步
 		//   误判成「`--list` 里没有这一行」（`log` 那一格错报）。与 `normStepName` 同一函数（权威面同源）。
-		if normStepName(strings.Join(parts[2:], " ")) == normStepName(name) {
+		if normStepName(m[3]) == normStepName(name) {
 			return idx, true
 		}
 	}

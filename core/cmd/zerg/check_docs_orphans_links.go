@@ -542,7 +542,13 @@ func coanLocalBrokenDetail(root string) (int, bool, []coanHit, []coanHit, []stri
 	}
 	files, _, _ := coanScanTree(root)
 	if len(files) == 0 {
-		return 0, true, nil, nil, nil, "扫面 0 件 .md"
+		// ★ 空树成对判（py `local_broken_detail` 逐字搬）：域内 0 件但确有嵌套仓被剪 ⇒
+		//   0 件是实情（照判 0）；真扫面 0 件 ⇒ **判不了**（ok=false ⇒ 入口 rc=2）——
+		//   ✗ 绝不读成「0 件 = 干净」（本件头 (b)/退码节的自违面，本单补正）。
+		if len(coanNestedSeen[root]) > 0 {
+			return 0, true, nil, nil, nil, "扫面 0 件 .md（仅域外嵌套仓件）"
+		}
+		return 0, false, nil, nil, nil, "扫面 0 件 .md"
 	}
 	have := map[string]bool{}
 	for k := range files {
@@ -1112,6 +1118,16 @@ func coanSelfTest(out io.Writer) bool {
 	coanBaseOffset["publish/docs/README.md"] = old
 	caseFn("⑰ 登记体检②：登记基准**不是目录** ⇒ 点名（基准指空）", "True",
 		coanPyBool(len(st2) > 0 && strings.Contains(st2[0], "不是目录")))
+
+	// ── ⑱⑲ 空树（成对）：真扫面 0 件 = 判不了（与件头退码节 / not_in_nav 同档 · rc=2 · GAP-20260927-124）
+	t12e := filepath.Join(tmp, "t12empty")
+	_ = os.MkdirAll(t12e, 0o755)
+	_, ok12e, _, _, _, _ := coanLocalBrokenDetail(t12e)
+	caseFn("⑱ 空树（无 .md · 无嵌套仓）：local_broken_detail 判不了（None => rc=2），不是 0 件绿",
+		"True", coanPyBool(!ok12e))
+	write(filepath.Join(t12e, "a.md"), "# a\n\n[bad](gone.md)\n")
+	n12e, _, _, _, _, _ := coanLocalBrokenDetail(t12e)
+	caseFn("⑲ 空树（成对）：有 .md 且真有断链 => 照报（件数 1）", "1", strconv.Itoa(n12e))
 
 	fmt.Fprintf(out, "  自检 %d 格 · 失败 %d 格\n", total, failed)
 	return failed == 0

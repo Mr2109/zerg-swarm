@@ -493,10 +493,27 @@ def self_test():
         return 2, lines
     base = tempfile.mkdtemp(prefix="pfcmds-st-")
     try:
-        # 格 1 正控：真页（修掉现读例外）⇒ 0 例外
-        r1 = make_fixture(base, clean_exceptions=True)
-        rc, out, _d = judge(r1, zerg=real)
-        check(rc == 0, "格 1 正控（真页 + 现读例外串改写）⇒ rc=0（实测 rc=%d）" % rc)
+        # 格 1 正控（`GAP-20260927-11`）：**合成页** —— 绑「机制」不绑「世界」。
+        #   旧形态拿**真页副本**当输入、只靠一处写死的例外串（`:4xx` 的 `replace`）清洗 ⇒
+        #   真世界一旦冒出**任何新例外**（页里多一条 `zerg <命令> <不存在的旗标>`），格 1 必红
+        #   ⇒ 自检不过 ⇒ 门**拒绝进真目标判别**（fail-closed 自锁）⇒「门红」与「真目标到底
+        #   几处例外」**脱钩**，人看不到真读数。
+        #   新形态：页内容由**现读命令树**生成（逐条 `zerg <path>`、不含任何旗标引用）⇒
+        #   方向 A 逐条有格、方向 B 零例外 —— rc 恒 0，与世界漂移无关（drift-immune）。
+        #   真页的实判仍由格 8（`rc in (0,1)` · 漂移免疫形态）承担，本格不再重复它的面。
+        #   （`clean_exceptions` 一处例外串清洗保留：格 2–5 仍在用 ⇒ 别顺手删。）
+        _u1, _d1, _n1 = parse_tree(real)
+        tree1 = sorted(set(_u1) | set(_d1))
+        if not tree1:
+            check(False, "格 1 正控前置：现读命令树解析为空 ⇒ 建不起合成页（不给结论）")
+        else:
+            _body = ("<!-- ===== 生成区 BEGIN · 合成夹具（GAP-20260927-11）===== -->\n"
+                     + "\n".join("命令 `zerg %s`。" % c for c in tree1)
+                     + "\n<!-- ===== 生成区 END ===== -->\n")
+            r1 = make_fixture(base, pages={os.path.basename(p): _body for p in PAGES}, stub=True)
+            rc, out, _d = judge(r1, zerg=real)
+            check(rc == 0, "格 1 正控（合成页：命令树 %d 条逐条有格 + 零例外）⇒ rc=0（实测 rc=%d）"
+                           % (len(tree1), rc))
         # 格 2 负控（判据②的「从页里删一格 ⇒ 红」）
         r2 = make_fixture(base, clean_exceptions=True, drop_rows=("zerg version",))
         rc, out, d2 = judge(r2, zerg=real)

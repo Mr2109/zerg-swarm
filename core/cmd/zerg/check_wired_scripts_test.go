@@ -45,10 +45,19 @@ func cwsBaseFixture(t *testing.T) string {
 	d := t.TempDir()
 	cwsWrite(t, filepath.Join(d, "scripts/gates/precommit-gates.sh"),
 		"#!/usr/bin/env bash\nset -u\npython3 scripts/check-alpha.py --scope x\n")
+	// ★ 闸清单必须**全部在位**（GAP-20260927-154 起：缺一条即 rc=2、不给结论）—— 否则这些
+	//   用例会被「闸缺件」档先一步拦下，测不到它们本想测的那条判据（与 py 自检 ok 夹具同口径）。
+	cwsWrite(t, filepath.Join(d, "scripts/build/publish-preflight.sh"), "#!/usr/bin/env bash\n")
+	cwsWrite(t, filepath.Join(d, "publish/mirror-public.sh"), "#!/usr/bin/env bash\n")
+	cwsWrite(t, filepath.Join(d, "publish/mirror-public-lib.py"), "# lib\n")
+	cwsWrite(t, filepath.Join(d, "publish/ci/ci.yml"), "name: ci\n")
+	cwsWrite(t, filepath.Join(d, "publish/ci/release-agent.yml"), "name: rel\n")
+	cwsWrite(t, filepath.Join(d, "publish/mirror-acceptance.sh"), "#!/usr/bin/env bash\n")
 	cwsWrite(t, filepath.Join(d, "scripts/check-alpha.py"), "# ck\n")
 	cwsWrite(t, filepath.Join(d, "scripts/helper.py"), "# zero-ref\n")
 	cwsWrite(t, filepath.Join(d, "scripts/run-gates.sh"),
-		"#!/usr/bin/env bash\nbash scripts/gates/precommit-gates.sh\n")
+		"#!/usr/bin/env bash\nbash scripts/gates/precommit-gates.sh\n"+
+			"bash scripts/build/publish-preflight.sh /tmp/out\n")
 	cwsWrite(t, filepath.Join(d, "Makefile"), "check:\n	bash scripts/run-gates.sh\n")
 	cwsWrite(t, filepath.Join(d, "docs/项目文档/v9.9/债务台账-20990101.md"), "helper.py 是零引用\n")
 	return d
@@ -72,8 +81,8 @@ func TestCheckWiredScriptsSelftestAllPass(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("自检 rc=%d 期望 0\n输出：%s", rc, out)
 	}
-	if !strings.Contains(out, "19/19 通过") {
-		t.Fatalf("自检未 19/19 全过：\n%s", out)
+	if !strings.Contains(out, "34/34 通过") {
+		t.Fatalf("自检未 34/34 全过：\n%s", out)
 	}
 }
 
@@ -165,7 +174,9 @@ func TestCheckWiredScriptsAssertionACallIsWiring(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("rc=%d\n%s", rc, out)
 	}
-	if !strings.Contains(out, "A 命中 0") || strings.Contains(out, "check-epsilon.py") {
+	// ★ 断言 C 起，UNSTATED 会逐件打印 `check-epsilon.py` 名 ⇒ 负断言改为「断言 A 无命中表」
+	//   （`0 处` 只出现在断言 A 的未挂表里）+ 已挂计数，✗ 不再卡「名不出现」。
+	if !strings.Contains(out, "A 命中 0") || !strings.Contains(out, "已挂门脚本 2 只") || strings.Contains(out, "0 处") {
 		t.Fatalf("命令位调用未被认作接线：\n%s", out)
 	}
 }

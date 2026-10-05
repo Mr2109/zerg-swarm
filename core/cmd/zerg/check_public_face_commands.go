@@ -836,7 +836,7 @@ func cpfcJudge(root, zerg string, selfExempt bool) (int, []string, *cpfcData) {
 
 // ── 合成夹具自检（成对负控 · 不碰真目标）────────────────────────────────────────
 
-func cpfcMakeFixture(base string, dropRows, extra []string, cleanExceptions, stub bool) (string, bool) {
+func cpfcMakeFixture(base string, dropRows, extra []string, cleanExceptions, stub bool, pages map[string]string) (string, bool) {
 	root, err := os.MkdirTemp(base, "pfcmds-")
 	if err != nil {
 		return "", false
@@ -879,6 +879,9 @@ func cpfcMakeFixture(base string, dropRows, extra []string, cleanExceptions, stu
 		}
 		_ = os.WriteFile(pg, []byte(text), 0o644)
 	}
+	for name, body := range pages {
+		_ = os.WriteFile(cpfcPyJoin(root, cpfcFaceDir, name), []byte(body), 0o644)
+	}
 	return root, true
 }
 
@@ -905,35 +908,71 @@ func cpfcSelfTest() (int, []string) {
 	}
 	defer os.RemoveAll(base)
 
-	r1, f1 := cpfcMakeFixture(base, nil, nil, true, false)
-	if !f1 {
-		lines = append(lines, "   ✗ 前置缺件：真页读不了 ⇒ 自检不给结论")
-		return 2, lines
+	// 格 1 正控（`GAP-20260927-11`）：**合成页** —— 绑「机制」不绑「世界」。
+	//   旧形态拿**真页副本**当输入、只靠一处写死的例外串（py `:4xx` 的 `replace`）清洗 ⇒
+	//   真世界一旦冒出**任何新例外**（页里多一条 `zerg <命令> <不存在的旗标>`），格 1 必红
+	//   ⇒ 自检不过 ⇒ 门**拒绝进真目标判别**（fail-closed 自锁）⇒「门红」与「真目标到底
+	//   几处例外」**脱钩**，人看不到真读数。
+	//   新形态：页内容由**现读命令树**生成（逐条 `zerg <path>`、不含任何旗标引用）⇒
+	//   方向 A 逐条有格、方向 B 零例外 —— rc 恒 0，与世界漂移无关（drift-immune）。
+	//   真页的实判仍由格 8（`rc in (0,1)` · 漂移免疫形态）承担，本格不再重复它的面。
+	//   （`cleanExceptions` 一处例外串清洗保留：格 2–5 仍在用 ⇒ 别顺手删。）
+	u1, d1, _ := cpfcParseTree(real)
+	set1 := map[string]struct{}{}
+	for k := range u1 {
+		set1[k] = struct{}{}
 	}
-	rc, _, _ := cpfcJudge(r1, real, true)
-	check(rc == 0, fmt.Sprintf("格 1 正控（真页 + 现读例外串改写）⇒ rc=0（实测 rc=%d）", rc))
+	for k := range d1 {
+		set1[k] = struct{}{}
+	}
+	var tree1 []string
+	for k := range set1 {
+		tree1 = append(tree1, k)
+	}
+	sort.Strings(tree1)
+	if len(tree1) == 0 {
+		check(false, "格 1 正控前置：现读命令树解析为空 ⇒ 建不起合成页（不给结论）")
+	} else {
+		var body strings.Builder
+		body.WriteString("<!-- ===== 生成区 BEGIN · 合成夹具（GAP-20260927-11）===== -->\n")
+		for i, c := range tree1 {
+			if i > 0 {
+				body.WriteString("\n")
+			}
+			body.WriteString("命令 `zerg " + c + "`。")
+		}
+		body.WriteString("\n<!-- ===== 生成区 END ===== -->\n")
+		pages := map[string]string{}
+		for _, p := range cpfcPages {
+			pages[cpfcPyBase(p)] = body.String()
+		}
+		r1, _ := cpfcMakeFixture(base, nil, nil, false, true, pages)
+		rc, _, _ := cpfcJudge(r1, real, true)
+		check(rc == 0, fmt.Sprintf("格 1 正控（合成页：命令树 %d 条逐条有格 + 零例外）⇒ rc=0（实测 rc=%d）",
+			len(tree1), rc))
+	}
 
-	r2, _ := cpfcMakeFixture(base, []string{"zerg version"}, nil, true, false)
+	r2, _ := cpfcMakeFixture(base, []string{"zerg version"}, nil, true, false, nil)
 	rc, _, d2 := cpfcJudge(r2, real, true)
 	check(rc == 1 && cpfcHasCode(d2, "undocumented-command"),
 		fmt.Sprintf("格 2 负控（页里删掉 `zerg version` 那一格）⇒ rc=1 + `undocumented-command`（实测 rc=%d）", rc))
 
-	r3, _ := cpfcMakeFixture(base, nil, []string{"见 `zerg frobnicate --xyz`。"}, true, false)
+	r3, _ := cpfcMakeFixture(base, nil, []string{"见 `zerg frobnicate --xyz`。"}, true, false, nil)
 	rc, _, d3 := cpfcJudge(r3, real, true)
 	check(rc == 1 && cpfcHasCode(d3, "nonexistent-command-documented"),
 		fmt.Sprintf("格 3 负控（页里塞 `zerg frobnicate`）⇒ rc=1 + `nonexistent-command-documented`（实测 rc=%d）", rc))
 
-	r4, _ := cpfcMakeFixture(base, nil, []string{"见 `zerg version --frob`。"}, true, false)
+	r4, _ := cpfcMakeFixture(base, nil, []string{"见 `zerg version --frob`。"}, true, false, nil)
 	rc, _, d4 := cpfcJudge(r4, real, true)
 	check(rc == 1 && cpfcHasCode(d4, "nonexistent-parameter-documented"),
 		fmt.Sprintf("格 4 负控（真命令 + 假旗标 `--frob`）⇒ rc=1 + `nonexistent-parameter-documented`（实测 rc=%d）", rc))
 
-	r5, _ := cpfcMakeFixture(base, nil, []string{"见 `zerg help frobnicate`。"}, true, false)
+	r5, _ := cpfcMakeFixture(base, nil, []string{"见 `zerg help frobnicate`。"}, true, false, nil)
 	rc, _, d5 := cpfcJudge(r5, real, true)
 	check(rc == 1 && cpfcHasCode(d5, "nonexistent-help-topic"),
 		fmt.Sprintf("格 5 负控（假主题 `zerg help frobnicate`）⇒ rc=1 + `nonexistent-help-topic`（实测 rc=%d）", rc))
 
-	r6, _ := cpfcMakeFixture(base, nil, nil, false, true)
+	r6, _ := cpfcMakeFixture(base, nil, nil, false, true, nil)
 	rc, _, _ = cpfcJudge(r6, real, true)
 	check(rc == 2, fmt.Sprintf("格 6 空转负控（公开面 0 个 `zerg …` 串）⇒ rc=2（实测 rc=%d）", rc))
 
@@ -952,7 +991,7 @@ func cpfcSelfTest() (int, []string) {
 
 	// 格 9 判不了负控（GAP-20260927-86）：页里塞首词为 `-`/`[` 的串 ⇒ 旧版 IndexError 崩（与有红同退码 rc=1）。
 	//   改后必须 rc=2 且 data 里记 unparsed（判不了优先于有红），不崩。
-	r9, _ := cpfcMakeFixture(base, nil, []string{"见 `zerg -x 形态`。", "见 `zerg [对象] ls`。"}, true, false)
+	r9, _ := cpfcMakeFixture(base, nil, []string{"见 `zerg -x 形态`。", "见 `zerg [对象] ls`。"}, true, false, nil)
 	rc, _, d9 := cpfcJudge(r9, real, true)
 	check(rc == 2 && len(d9.unparsed) >= 1,
 		fmt.Sprintf("格 9 判不了负控（串首词 `-`/`[` ⇒ 抽不出路径）⇒ rc=2 + data.unparsed 非空（实测 rc=%d · unparsed=%d）",

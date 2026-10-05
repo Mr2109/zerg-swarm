@@ -85,7 +85,8 @@ func TestUnsubstitutedPlaceholdersGatePort(t *testing.T) {
 		t.Fatalf("成对半边①-句面加一处：期望 rc=1，实得 %d\nstdout=%q", rc, out)
 	}
 
-	// ⑥ 空转：判面 0 件 ⇒ 走「⛔ 判不了」分支（**照 py 实测**：judge 返 1、report 丢弃该 rc ⇒ 进程 rc=0）
+	// ⑥ 空转：判面 0 件 ⇒ 走「⛔ 判不了」分支；★ 两值制 ⇒ 真出口 `upReport` 按红记
+	//    （rc=1，不再折成 0 的假绿 · `GAP-20260927-95` 与 py 现件对齐）
 	empty := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(empty, "docs"), 0o777); err != nil {
 		t.Fatal(err)
@@ -94,10 +95,11 @@ func TestUnsubstitutedPlaceholdersGatePort(t *testing.T) {
 		t.Fatal(err)
 	}
 	rc, out, _ = upRunGate("--root", empty)
-	if rc != 0 {
-		t.Fatalf("空转-空判面：照 py 实测期望 rc=0（report 丢弃 judge 的 1），实得 %d\nstdout=%q", rc, out)
+	if rc != 1 {
+		t.Fatalf("空转-空判面：期望 rc=1（两值制 · 判不了按红记），实得 %d\nstdout=%q", rc, out)
 	}
 	upMustContain(t, "空转-判不了行", out, "⛔ 判不了：扫面 **0 件**")
+	upMustContain(t, "空转-判不了按红", out, "⛔ 命中 0 处，但**判据不可判**")
 
 	// ⑦ 取不到输入：根不存在 ⇒ rc 1 + 「找不到仓根」
 	rc, out, _ = upRunGate("--root", filepath.Join(root, "no-such-root"))
@@ -132,10 +134,10 @@ func TestUnsubstitutedPlaceholdersGatePort(t *testing.T) {
 		t.Fatalf("-h：期望 rc=0 且正文逐字=upHelp()，实得 rc=%d stdout=%q", rc, out)
 	}
 
-	// ⑫ `--self-test` ⇒ rc 0 + 全过（格 1–7 断言 + 格 8 真树现跑）
+	// ⑫ `--self-test` ⇒ rc 0 + 全过（格 1–7 + 5b/9 断言 + 格 8 真树现跑）
 	rc, out, _ = upRunGate("--self-test")
 	if rc != 0 {
 		t.Fatalf("--self-test：期望 rc=0，实得 %d\nstdout=%q", rc, out)
 	}
-	upMustContain(t, "--self-test-结论", out, "⇒ 自检全过（断言 11 格 · 失败 0 格）")
+	upMustContain(t, "--self-test-结论", out, "⇒ 自检全过（断言 13 格 · 失败 0 格）")
 }

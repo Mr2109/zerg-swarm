@@ -247,9 +247,9 @@ func TestCheckLinerefLimitGatePort(t *testing.T) {
 	})
 
 	// ── 自检 / 帮助 / 用法错 ────────────────────────────────────────────────
-	t.Run("自检8格", func(t *testing.T) {
+	t.Run("自检10格", func(t *testing.T) {
 		rc, out, _ := clrlRun(t, "--self-test")
-		if rc != 0 || !strings.Contains(out, "自检 8 格 · 失败 0 格") {
+		if rc != 0 || !strings.Contains(out, "自检 10 格 · 失败 0 格") {
 			t.Fatalf("自检失败：rc=%d out=%s", rc, out)
 		}
 	})

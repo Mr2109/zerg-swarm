@@ -148,7 +148,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) == 0 || strings.TrimSpace(inv.args[0]) == "" {
 		inv.setErr("usage", "missing_pattern", "缺正则")
 		fmt.Fprintf(stderr, "%s: `code find` 要给正则（例：zerg code find 'func cmdGate' --path core/cmd/zerg）\n", progName)
-		fmt.Fprintf(stderr, "用法：zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--full] [--json <字段>]\n")
+		fmt.Fprintf(stderr, "用法：zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--full] [-i|--ignore-case] [--after <N>] [--before <N>] [--kind <代码|注释>] [--timeout <秒>] [--hidden] [--include-runtime] [--json <字段>]\n")
 		return exitUsage
 	}
 	pat := inv.args[0]
@@ -298,7 +298,7 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	if aggFilesOnly && aggCount {
 		inv.setErr("usage", "agg_flags_conflict", "--count 与 --files-only 同给")
 		fmt.Fprintf(stderr, "%s: --count 与 --files-only 是**两枚互斥的聚合档**（同给 = 自相矛盾 · 只给一枚）⇒ 退码 2\n", progName)
-		fmt.Fprintf(stderr, "用法：zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--limit <N>] [--count | --files-only] [--full] [--json <字段>]\n")
+		fmt.Fprintf(stderr, "用法：zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--limit <N>] [--count | --files-only] [--full] [-i|--ignore-case] [--after <N>] [--before <N>] [--kind <代码|注释>] [--timeout <秒>] [--hidden] [--include-runtime] [--json <字段>]\n")
 		return exitUsage
 	}
 
@@ -660,7 +660,7 @@ func cmdCodeShow(inv *invocation, stdout, stderr io.Writer) int {
 		if len(inv.args) == 0 || strings.TrimSpace(inv.args[0]) == "" {
 			inv.setErr("usage", "missing_target", "缺 <件:行>")
 			fmt.Fprintf(stderr, "%s: `code show` 要给 <件:行>（例：zerg code show core/cmd/zerg/main.go:100）或纯件名整件读\n", progName)
-			fmt.Fprintf(stderr, "用法：zerg code show <件:行 | 件:起-止 | 件> [--ctx <N>] [--batch <件:行,…>] [--json <字段>]\n")
+			fmt.Fprintf(stderr, "用法：zerg code show <件:行 | 件:起-止 | 件> [--ctx <N>] [--batch <件:行,…>] [--full] [--json <字段>]\n")
 			return exitUsage
 		}
 	}
@@ -1422,9 +1422,9 @@ func cmdCodeDenomRecount(inv *invocation, stdout, stderr io.Writer) int {
 	sort.Strings(onlyL)
 	sort.Strings(onlyR)
 	fmt.Fprintf(stderr, "%s: 左 %d 件 · 右 %d 件 · 只在左 %d · 只在右 %d\n", progName, len(lLines), len(rLines), len(onlyL), len(onlyR))
-	if len(onlyL) == 0 && len(onlyR) == 0 {
+	equal := len(onlyL) == 0 && len(onlyR) == 0
+	if equal {
 		fmt.Fprintf(stderr, "%s: 两清单**同集**（差 0）—— 复算一致（退码 0）\n", progName)
-		return exitOK
 	}
 	rows := []map[string]string{}
 	for _, x := range onlyL {
@@ -1433,8 +1433,12 @@ func cmdCodeDenomRecount(inv *invocation, stdout, stderr io.Writer) int {
 	for _, x := range onlyR {
 		rows = append(rows, map[string]string{"path": x, "side": "只在右"})
 	}
+	// ★ 2026-10-05（缺口 `GAP-20261005-63`）：equal 支**也走同一 `listCmd`**（`rows` 空集）——
+	//   改前 equal 支在 `listCmd` 之前 `return exitOK` ⇒ `--json` 整支被吞（不校字段名、不出包封、
+	//   stdout 0 字节，`--json bogus` 亦静默 rc=0），与「有差」支两套口径。现两支同源：字段名照
+	//   `emitSelected` 登记面核（未知字段 ⇒ rc=2）· 合法字段 ⇒ 出包封（equal 支 `items:[]`）。
 	rc := listCmd(inv, stdout, stderr, []string{"path", "side"}, rows)
-	if rc == exitOK {
+	if rc == exitOK && !equal {
 		rc = exitFail // 有差 ⇒ 1（形如 `diff`：相等才 0）
 	}
 	return rc
@@ -1523,9 +1527,9 @@ func cmdCodeGitTwoWay(inv *invocation, stdout, stderr io.Writer) int {
 		}
 	}
 	fmt.Fprintf(stderr, "%s: 无选项 %d 行 · 带选项(%s) %d 行 · 只在无选项 %d · 只在带选项 %d\n", progName, len(plain), opt, len(with), len(onlyP), len(onlyW))
-	if len(onlyP) == 0 && len(onlyW) == 0 {
+	equal := len(onlyP) == 0 && len(onlyW) == 0
+	if equal {
 		fmt.Fprintf(stderr, "%s: 两跑**一致** —— 该选项对这一跑无差（退码 0）\n", progName)
-		return exitOK
 	}
 	rows := []map[string]string{}
 	for _, l := range onlyP {
@@ -1534,8 +1538,10 @@ func cmdCodeGitTwoWay(inv *invocation, stdout, stderr io.Writer) int {
 	for _, l := range onlyW {
 		rows = append(rows, map[string]string{"side": "只在带选项", "text": truncateDisplay(l, 200)})
 	}
+	// ★ 2026-10-05（缺口 `GAP-20261005-63`）：同 `cmdCodeDenomRecount` —— equal 支也走同一 `listCmd`，
+	//   `--json` 不因「两跑一致」被整支吞（校字段名 + 出包封，equal 支 `items:[]`）。
 	rc := listCmd(inv, stdout, stderr, []string{"side", "text"}, rows)
-	if rc == exitOK {
+	if rc == exitOK && !equal {
 		rc = exitFail
 	}
 	return rc

@@ -148,6 +148,9 @@ RULES = (
     "面⑤ 反读面（按命令 · 报告档 · 不进退码）= 某命令实现按**取值**读了（`inv.flagVal`）某旗标 ⇒ "
     "该命令的 usage 串必列它（面④ 的另一向 —— 「实现读 ⇒ 用法必列」，缺口 `GAP-20261005-15`）；"
     "拒执守卫（同一函数里 `inv.flagVals`/`inv.hasFlag` 存在性检查）与别处已列 不计。"
+    "面⑥ 运行期用法行面（按命令 · 报告档 · 不进退码）= 件内运行期 stderr 用法行的旗标集 ⟷ "
+    "面① 命令树同命令用法串旗标集（双向对拍 · 全局选项不计 · 命令需精确同名）—— 差集非空逐条列"
+    "（缺口 `GAP-20260928-183`）。"
 )
 RCS = "0=对齐 · 1=有新的分家项（逐条点名）· 2=取数面拿不到（不给结论）"
 
@@ -369,6 +372,69 @@ def no_usage_face(root: str):
     return out
 
 
+# ── 面⑥ 运行期用法行面（按命令 · 缺口账 `GAP-20260928-183`）──────────────────────────
+# 面① 只扫命令树 usage（`main.go` 的 `usage:`）；命令族件里打到 stderr 的**运行期用法行**
+# （`用法：zerg <命令> …` · 本族现读 ~20 条）不在任何面内 ⇒ 「同一枚旗标命令树列了、
+# 运行期用法行漏列（或反之）」这类**文案漂移**判不了红 —— 本片 `gap plan` 命令树列
+# `--unit`/`--allow-drifted`、运行期用法行两枚都漏，当时靠人手补第二处才发现。本面把那条
+# 对拍补上：
+#   · 取数 = 包内全部 `.go`（剥注释）里 `用法：` + `zerg` 起的字面（**相邻字符串先并**：
+#     `"…" + "…"` 那种续行也算同一行）；
+#   · 对拍 = 按「`zerg` 之后的小写命令词」解出命令路径，去面① 命令树里找**同名命令**（精确），
+#     与该命令用法串的旗标集**双向**比（全局选项不计）；差集非空 ⇒ 逐条列；
+#   · 命令词在命令树里没有同名命令（如 `dev proposal new` 的树只有 `dev/proposal`）
+#     ⇒ 本面**不判**，单列「未对上」一栏（如实说，不猜、不硬套）。
+#   · 带 `%s`/`%d` 的洞只跳洞取值，旗标名仍是字面 ⇒ 照取。
+# ★ 首版 = **报告档**（逐条列出 · **不进退码**）—— 与面④/⑤ 同档（先让它看得见）。
+RT_USAGE_RE = re.compile(r'用法：zerg((?:[^"\\]|\\.)*)')
+RT_JOIN_RE = re.compile(r'"\s*\+\s*"')
+RT_TOK_RE = re.compile(r'^\s*([a-z][a-z0-9-]*(?:\s+[a-z][a-z0-9-]*)*)')
+
+
+def rt_usage_lines(root: str):
+    """面⑥ 取数：→ [(件, 命令 token 串, 旗标集)] —— 包内全部件（剥注释 + 并相邻字符串）里的
+    「运行期 stderr 用法行」字面。"""
+    srcs = pkg_sources(root)
+    out = []
+    for name in sorted(srcs):
+        body = RT_JOIN_RE.sub("", srcs[name])
+        for m in RT_USAGE_RE.finditer(body):
+            txt = m.group(1)
+            mt = RT_TOK_RE.match(txt)
+            if not mt:
+                continue
+            out.append((name, "/".join(mt.group(1).split()), set(FLAG_RE.findall(txt))))
+    return out
+
+
+def runtime_usage_face(root: str):
+    """面⑥ 运行期用法行面（按命令）：→ (drift, unmatched)。
+    drift = [(命令, 树有·运行期无 sorted, 运行期有·树无 sorted)]（差集非空 · 按命令聚合）；
+    unmatched = [命令]（运行期用法行的命令在命令树里没有同名命令 ⇒ 本面不判）。报告档。"""
+    _V, _D, rows, _c = parse_faces(root)
+    agg, order = {}, []
+    for _n, tok, flags in rt_usage_lines(root):
+        if tok not in agg:
+            agg[tok] = set()
+            order.append(tok)
+        agg[tok] |= (flags - set(GLOBAL_OPTS))
+    drift, unmatched = [], []
+    for tok in sorted(agg):
+        rows_here = [r for r in rows if r["path"] == tok]
+        if not rows_here:
+            unmatched.append(tok)
+            continue
+        tf = set()
+        for r in rows_here:
+            tf |= set(FLAG_RE.findall(r["usage"]))
+        tf -= set(GLOBAL_OPTS)
+        rt = agg[tok]
+        to, ro = sorted(tf - rt), sorted(rt - tf)
+        if to or ro:
+            drift.append((tok, to, ro))
+    return drift, unmatched
+
+
 def compute(root: str):
     """→ (violations, exempt_hits, stale, counts, no_reader, no_usage)：三条判据逐条算 + 存量表
     命中/失效 + 面④ 读者面（报告档）+ 面⑤ 反读面（报告档）。"""
@@ -423,10 +489,13 @@ def compute(root: str):
         "用法串旗标数": len(any_use),
         "透传命令": sorted(r["path"] for r in rows if r["passthrough"]),
     }
-    return viol, exempt_used, stale, no_reason, counts, reader_face(root), no_usage_face(root)
+    rt_drift, rt_unmatched = runtime_usage_face(root)
+    return (viol, exempt_used, stale, no_reason, counts, reader_face(root),
+            no_usage_face(root), rt_drift, rt_unmatched)
 
 
-def report(viol, exempt_used, stale, no_reason, counts, root, as_json, no_reader=(), no_usage=()):
+def report(viol, exempt_used, stale, no_reason, counts, root, as_json, no_reader=(),
+           no_usage=(), rt_drift=(), rt_unmatched=()):
     lines = []
     lines.append("门73 旗标两处登记面对拍（用法串 ⟷ valueFlagName 名字表 + 实现件读者面）· v%s" % VERSION)
     lines.append("仓根：%s" % os.path.abspath(root))
@@ -451,6 +520,20 @@ def report(viol, exempt_used, stale, no_reason, counts, root, as_json, no_reader
                  % len(no_usage))
     for path, flag, fn, impl in no_usage:
         lines.append("  · zerg %s · %s · 读者函数 %s（%s）" % (path.replace("/", " "), flag, fn, impl))
+    # ── 面⑥ 运行期用法行面（按命令 · 报告档 · 缺口账 `GAP-20260928-183`）──
+    lines.append("运行期用法行面（按命令 · 报告档 · 不进退码 · 缺口 `GAP-20260928-183`）："
+                 "「件内运行期 stderr 用法行的旗标集 ⟷ 面① 命令树同命令用法串旗标集（双向对拍 · "
+                 "全局选项不计 · 命令精确同名）」—— 差集非空的 %d 项：" % len(rt_drift))
+    for cmd, to, ro in rt_drift:
+        parts = []
+        if to:
+            parts.append("树有·运行期无 %s" % to)
+        if ro:
+            parts.append("运行期有·树无 %s" % ro)
+        lines.append("  · zerg %s · %s" % (cmd.replace("/", " "), " · ".join(parts)))
+    if rt_unmatched:
+        lines.append("  （另有 %d 条运行期用法行的命令在命令树里没有同名命令 ⇒ 本面不判：%s）"
+                     % (len(rt_unmatched), " · ".join("zerg " + u.replace("/", " ") for u in rt_unmatched)))
     lines.append("存量豁免 %d 项（棘轮 · 逐条打印 · 不进退码）：" % len(exempt_used))
     for key in sorted(exempt_used):
         lines.append("  ~ [%s] %s · %s" % (key[0], key[1], EXEMPT[key]))
@@ -473,18 +556,22 @@ def report(viol, exempt_used, stale, no_reason, counts, root, as_json, no_reader
             "counts": counts,
             "no_reader": [{"command": p, "flag": f, "impl": i} for p, f, i in no_reader],
             "no_usage": [{"command": p, "flag": f, "func": fn, "impl": i} for p, f, fn, i in no_usage],
+            "runtime_drift": [{"command": c, "tree_only": to, "runtime_only": ro} for c, to, ro in rt_drift],
+            "runtime_unmatched": list(rt_unmatched),
         }, ensure_ascii=False)
     return out
 
 
 def run(root: str, as_json: bool, stdout=sys.stdout):
     try:
-        viol, exempt_used, stale, no_reason, counts, no_reader, no_usage = compute(root)
+        (viol, exempt_used, stale, no_reason, counts, no_reader, no_usage,
+         rt_drift, rt_unmatched) = compute(root)
     except Bail as e:
         print("门73 旗标两处登记面对拍：**判不了**（%s）⇒ rc=2 不给结论" % e)
         print("退码：%s" % RCS)
         return 2
-    print(report(viol, exempt_used, stale, no_reason, counts, root, as_json, no_reader, no_usage))
+    print(report(viol, exempt_used, stale, no_reason, counts, root, as_json, no_reader,
+                 no_usage, rt_drift, rt_unmatched))
     print("退码：%s" % RCS)
     return 1 if (viol or no_reason) else 0
 
@@ -563,7 +650,7 @@ def self_test() -> int:
 
     def run_on(root):
         try:
-            viol, ex, stale, nr, counts, no_reader, no_usage = compute(root)
+            viol, ex, stale, nr, counts, no_reader, no_usage, rt_drift, rt_un = compute(root)
         except Bail as e:
             return ("bail", str(e))
         return ("ok", viol)
@@ -666,6 +753,35 @@ def self_test() -> int:
         add("⑤反读面（正控）：usage 列了该旗标 ⇒ 该命令不再列",
             not any(pp == "probe/x" for pp, _f, _fn, _im in nu2), "")
 
+        # 面⑥ 运行期用法行面（按命令）· 成对负控：运行期用法行漏列命令树旗标 ⇒ 列；列全 ⇒ 不再列。
+        rt_anchor = ('\t\t\tpassthrough: true,\n\t\t},\n\t}\n}',
+                     '\t\t\tpassthrough: true,\n\t\t},\n'
+                     '\t\t{\n\t\t\tpath:  []string{"probe", "x"},\n'
+                     '\t\t\tusage: "zerg probe x [--zz-a <v>] [--zz-b <v>]",\n\t\t\trun:   cmdProbeRT,\n\t\t},\n\t}\n}')
+
+        def _rt_fixture(sub, rt_line):
+            d = _mk_fixture(os.path.join(base, sub))
+            pm = os.path.join(d, PKG_REL, "main.go")
+            s = open(pm, encoding="utf-8").read().replace(rt_anchor[0], rt_anchor[1])
+            s = s.replace('case "--desc", "--slice-id":',
+                          'case "--desc", "--slice-id", "--zz-a", "--zz-b":')
+            open(pm, "w", encoding="utf-8").write(s)
+            pp = os.path.join(d, PKG_REL, "family_probe.go")
+            open(pp, "w", encoding="utf-8").write(open(pp, encoding="utf-8").read() +
+                '\nfunc cmdProbeRT(inv *invocation, stdout, stderr io.Writer) int {\n'
+                '\tfmt.Fprintln(stderr, "' + rt_line + '")\n\treturn 0\n}\n')
+            return d
+
+        d = _rt_fixture("rt_missing", "\u7528\u6cd5\uff1azerg probe x [--zz-a <v>]")
+        _v, _e, _s, _n, _c, _nr, _nu, dr, _un = compute(d)
+        add("⑥运行期用法行面（负控）：运行期用法行漏列命令树旗标（--zz-b）⇒ 点名该命令",
+            any(c == "probe/x" and "--zz-b" in to for c, to, _ro in dr), str(dr))
+
+        d = _rt_fixture("rt_ok", "\u7528\u6cd5\uff1azerg probe x [--zz-a <v>] [--zz-b <v>]")
+        _v2, _e2, _s2, _n2, _c2, _nr2, _nu2, dr2, _un2 = compute(d)
+        add("⑥运行期用法行面（正控）：运行期用法行把命令树旗标列全 ⇒ 该命令不再列",
+            not any(c == "probe/x" for c, _to, _ro in dr2), str(dr2))
+
         bad = [c for c in checks if not c[1]]
         print("门73 自检（成对负控 · 合成夹具）：断言 %d 条 · 失败 %d 条" % (len(checks), len(bad)))
         for name, ok, detail in checks:
@@ -694,6 +810,8 @@ def main(argv=None) -> int:
               "「某命令 usage 串里的旗标 ⇒ 该命令的实现件必读」（缺口账 `GAP-20260927-325`）")
         print("面⑤ 反读面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20261005-15`）：RULES 末句 —— "
               "「某命令实现按取值读了某旗标 ⇒ 该命令的 usage 串必列它」（面④ 的另一向）")
+        print("面⑥ 运行期用法行面（按命令 · 报告档 · 不进退码 · 缺口账 `GAP-20260928-183`）："
+              "件内运行期 stderr 用法行的旗标集 ⟷ 面① 命令树同命令用法串旗标集（双向对拍）")
         return 0
     return run(a.root_opt or a.root, a.json)
 

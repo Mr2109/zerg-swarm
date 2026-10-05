@@ -553,9 +553,9 @@ func ctaScanFile(res *ctaResult, dir, relDir, name string) {
 	}
 	done := map[int]bool{}
 
-	rec := func(i int, tag, whySoft string, soft, comment bool) {
+	rec := func(i int, tag, whySoft string, soft, comment, forceJudge bool) {
 		done[i] = true
-		if onFace && !xmlc[i] && !comment && !soft {
+		if (onFace || forceJudge) && !xmlc[i] && !comment && !soft {
 			res.Judged = append(res.Judged, ctaHit{rel, i, tag})
 		} else {
 			w := whySoft
@@ -572,7 +572,7 @@ func ctaScanFile(res *ctaResult, dir, relDir, name string) {
 			for _, m := range rx.FindAllStringIndex(text, -1) {
 				i := ctaLineOf(text, m[0])
 				if !done[i] {
-					rec(i, "PLIST-OPT-ARGV", "非判红面", false, false)
+					rec(i, "PLIST-OPT-ARGV", "非判红面", false, false, false)
 				}
 			}
 		}
@@ -595,14 +595,21 @@ func ctaScanFile(res *ctaResult, dir, relDir, name string) {
 			hard = ctaPwHit(ln)
 		}
 		if hard != "" {
-			rec(i, hard, "非判红面", false, comment)
+			rec(i, hard, "非判红面", false, comment, false)
 			continue
 		}
 		if ctaOptJudge(ln) {
-			rec(i, "UNIT-OPT-ARGV", "非判红面", false, comment)
+			// ★ `.md` 面（缺口 GAP-20260927-33）：令牌选项 + 实值形态在 `.md` 面**也参与判红** ——
+			//   此前 `.md` 只登记、不判红 ⇒ 文档（如 agent/README.md）里「令牌进 argv」的示例无门覆盖。
+			//   其余非判红面仍只登记；`.md` 里的注释行 / `<占位>` 值照旧不判红（ctaOptJudge 的值类已排除占位）。
+			if suf == ".md" {
+				rec(i, "MD-TOKEN-ARGV", "非判红面", false, comment, true)
+			} else {
+				rec(i, "UNIT-OPT-ARGV", "非判红面", false, comment, false)
+			}
 		} else if ctaOptMention(ln) {
 			// 裸选项提及（令牌选项 + 占位值 · 本件自己的 CLI 也收该选项）：**只登记，不判红** ✗
-			rec(i, "OPT-MENTION", "非判红面", true, comment)
+			rec(i, "OPT-MENTION", "非判红面", true, comment, false)
 		}
 	}
 }
@@ -775,6 +782,8 @@ func ctaNegCases() []ctaNegCase {
 			"#!/usr/bin/env bash\nssh" + "pass -p 'Passw0rd!' ssh root@<cluster-ip> true\n", "PW-SSHPASS-ARGV"},
 		{"⑤", "ssh" + "pass -p 纯变量（命令行展开）", "neg7-sshpass-pure-variable", "probe.sh",
 			"#!/usr/bin/env bash\nSP=\"ssh" + "pass -p $PASS\"\n$SP ssh root@<cluster-ip> true\n", "PW-SSHPASS-VAR"},
+		{"③'", ".md 面「--tok" + "en <值>」（文档示例 · GAP-20260927-33）", "neg8-md-token-opt", "guide.md",
+			"# 用法\n去跑 `agentd --tok" + "en 9f3c1d7a5b2e4f60` 吧\n", "MD-TOKEN-ARGV"},
 	}
 }
 
@@ -814,6 +823,11 @@ func ctaSelfTest(stdout, stderr io.Writer) int {
 		sub := ctaPyJoin(d, c.name)
 		_ = os.MkdirAll(sub, 0o755)
 		_ = os.WriteFile(ctaPyJoin(sub, c.fn), []byte(c.body), 0o644)
+		if strings.HasSuffix(c.fn, ".md") {
+			// `.md` 面已参与判红（GAP-20260927-33），但 `n_face` 计数只认脚本/单元面 ⇒ 补一件**占位脚本**，
+			// 使「判红面件数 > 0」成立、门不停在 rc=2；占位件自身不含任何令牌形态，不干扰断言。
+			_ = os.WriteFile(ctaPyJoin(sub, "_face.sh"), []byte("#!/usr/bin/env bash\n"), 0o644)
+		}
 		res, rc := ctaRender(stdout, stderr, sub)
 		var judged []ctaHit
 		if res != nil {

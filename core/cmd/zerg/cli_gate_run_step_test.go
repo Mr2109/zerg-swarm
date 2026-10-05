@@ -13,9 +13,12 @@ package main_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -490,5 +493,111 @@ func TestGateRunStep_NoOutdirWithoutResultsTableReadsBackNothing(t *testing.T) {
 	}
 	if row["log_body"] != "（读不到：脚本没落结果表）" {
 		t.Errorf("本轮没落表 ⇒ log_body 走初值那一枚字面量：%+v", row)
+	}
+}
+
+// ── ⑧ 缺口 `GAP-20260927-276`：`gate run --step X -- <只读旗标>` 的**显式透传门** ──
+//
+// 病：`gate run --step` 带不了脚本自有旗标（除哨兵认识的那几枚）—— `--self-test`/`--json`/
+// `--root` 这类**只读**旗标经命令面传不下去 ⇒ rc=2 拒执（且与 `gate run --help` 的「参数: 脚本
+// 旗标（原样透传）」措辞不符）。治法 = 开一条**显式**透传门 `--`：`--` 之后按**只读白名单**逐字
+// 附到那一步的命令串（复用 `--verify-live` 那条直跑路径），逐字列举 · ✗ 不得通配。口径：
+//
+//	① 无 `--` ⇒ 未知旗标照旧 rc=2（本组③钉住 —— 默认档一个字节不改）；
+//	② `--` 之后**只读**旗标 ⇒ 逐字附到那一步的命令串上（本组①正控）；
+//	③ `--` 之后**写面/危险档**旗标 ⇒ 仍逐字拒执 rc=2 且**不 exec**（本组②负控）。
+//
+// ★ 本组为什么**从源码现编**（`zergBinaryFromSource`）而不走 `bin/zerg`：本单硬约束禁重编
+//   `bin/zerg`（行为面待重编）⇒ 走旧制品会把「本面未落制品」误读成「本面不存在」。现编只落
+//   临时目录、不碰 `bin/zerg`（先例：`check_approve_tier.go` 的探针也现编 `./cmd/zerg`）。
+
+var (
+	srcBinOnce sync.Once
+	srcBinPath string
+	srcBinErr  error
+)
+
+// zergBinaryFromSource —— 从**当前源码**现编一份 CLI 到临时目录（不碰 `bin/zerg`）。
+func zergBinaryFromSource(t *testing.T) string {
+	t.Helper()
+	srcBinOnce.Do(func() {
+		d, err := os.MkdirTemp("", "zerg-276-bin-")
+		if err != nil {
+			srcBinErr = err
+			return
+		}
+		out := filepath.Join(d, "zerg")
+		cmd := exec.Command("go", "build", "-buildvcs=false", "-o", out, "./cmd/zerg")
+		cmd.Dir = filepath.Join("..", "..") // core/
+		var eb strings.Builder
+		cmd.Stderr = &eb
+		if err := cmd.Run(); err != nil {
+			srcBinErr = fmt.Errorf("go build ./cmd/zerg: %v · %s", err, eb.String())
+			return
+		}
+		srcBinPath = out
+	})
+	if srcBinErr != nil {
+		t.Skipf("从源码现编 CLI 失败（本格跳过，不算行为面证据）：%v", srcBinErr)
+	}
+	return srcBinPath
+}
+
+// stepScriptBody —— 合成「被跑步骤」的命令脚本：打印收到的 argv；含 `--self-test` ⇒ 打哨兵。
+const stepScriptBody = `#!/usr/bin/env bash
+echo "STEP-ARGV: $*"
+case " $* " in
+  *" --self-test "*) echo "SELFTEST-OK" ;;
+esac
+exit 0
+`
+
+// stepRepoWithScript —— 合成仓：`合成步` 的命令串 = `bash scripts/gates/synthetic-step.sh`
+// （纯 argv ⇒ 走单步命令串透传路径），脚本落在仓内可跑。
+func stepRepoWithScript(t *testing.T) string {
+	t.Helper()
+	root := syntheticRepo(t, "add_step gates \"合成步\" tri \"${REPO_ROOT}\" \"bash scripts/gates/synthetic-step.sh\"\n")
+	p := filepath.Join(root, "scripts", "gates", "synthetic-step.sh")
+	mustWrite(t, p, stepScriptBody)
+	if err := os.Chmod(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// ⑧① 正控：`-- <只读旗标>` 逐字透给那一步的命令串（脚本真收到那枚旗标）。
+func TestGateRunStep_DashPassthroughReadonlyFlag(t *testing.T) {
+	bin := zergBinaryFromSource(t)
+	root := stepRepoWithScript(t)
+	rc, out, errb := execCase(t, bin, root, "gate", "run", "--step", "合成步", "--", "--self-test")
+	if rc != 0 {
+		t.Fatalf("`-- --self-test`（只读）⇒ 透传成功退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "STEP-ARGV: --self-test") {
+		t.Errorf("那一步的脚本必须**逐字**收到 `--self-test`：%q", out)
+	}
+	if !strings.Contains(out, "SELFTEST-OK") {
+		t.Errorf("只读旗标要真作用到脚本上（不是只回显）：%q", out)
+	}
+}
+
+// ⑧② 负控：`-- <写面/危险档旗标>` 仍拒执（rc=2 + 理由明确）且**脚本一次都没被调用**；
+// 同格再钉「无 `--` 的未知旗标仍 rc=2」（默认档一个字节不改）。
+func TestGateRunStep_DashPassthroughRejectsWriteFlag(t *testing.T) {
+	bin := zergBinaryFromSource(t)
+	root := stepRepoWithScript(t)
+	rc, out, errb := execCase(t, bin, root, "gate", "run", "--step", "合成步", "--", "--apply")
+	if rc != 2 {
+		t.Fatalf("`-- --apply`（写面）⇒ 必须仍 rc=2 拒执，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(errb, "非只读旗标: --apply") {
+		t.Errorf("负控理由要点名那枚旗标：%q", errb)
+	}
+	if strings.Contains(out, "STEP-ARGV") {
+		t.Errorf("拒执必须在 exec 之前 ⇒ 脚本不许被跑：%q", out)
+	}
+	rc, _, errb = execCase(t, bin, root, "gate", "run", "--step", "合成步", "--frobnicate")
+	if rc != 2 || !strings.Contains(errb, "未知参数: --frobnicate") {
+		t.Errorf("默认档：无 `--` 的未知旗标仍须 rc=2「未知参数」，得到 rc=%d · stderr=%q", rc, errb)
 	}
 }

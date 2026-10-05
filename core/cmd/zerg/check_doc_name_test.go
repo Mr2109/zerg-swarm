@@ -147,6 +147,13 @@ func TestCheckDocNameGatePort_Parity(t *testing.T) {
 	fx := filepath.Dir(bad)
 	fxempty := t.TempDir()
 
+	// N7 形态分类夹具（GAP-20260926-166/213d）：词形态照告警 + single + 版本标记（收窄不告警）
+	n7 := filepath.Join(fx, "n7")
+	cdnWrite(t, filepath.Join(n7, "docs", "模块Agent说明.md"), "# x\n") // (file, CJK→LAT, word)
+	cdnWrite(t, filepath.Join(n7, "docs", "Agent模块.md"), "# x\n")   // (file, LAT→CJK, word)
+	cdnWrite(t, filepath.Join(n7, "docs", "模块A说明.md"), "# x\n")     // (file, CJK→LAT, single)
+	cdnWrite(t, filepath.Join(n7, "docs", "设计-模块v2.1.md"), "# x\n") // version ⇒ 收窄，无 N7
+
 	// 为 devdocs 默认根负控准备：unset 三个换根 env ⇒ 同级根不存在 ⇒ rc=2
 	devUnset := []string{"ZERG_DEVDOCS_ROOT=", "ZERG_DOCS_ALT=", "ZERG_DOCS="}
 
@@ -164,6 +171,12 @@ func TestCheckDocNameGatePort_Parity(t *testing.T) {
 		{"scope docs 缺面", []string{"--repo-root", fxempty, "--scope", "docs", "--no-self-test"}, nil},
 		{"devdocs 根不在", []string{"--repo-root", fx, "--scope", "devdocs", "--no-self-test"}, devUnset},
 		{"json 夹具坏件", []string{"--repo-root", fx, "--target", bad, "--json", "--no-self-test"}, nil},
+		{"夹具好件 --list-exempt --hits", []string{"--repo-root", good, "--target", good, "--list-exempt", "--hits", "--no-self-test"}, nil},
+		{"夹具坏件 --summary", []string{"--repo-root", fx, "--target", bad, "--summary", "--no-self-test"}, nil},
+		{"夹具坏件 --n7-shapes", []string{"--repo-root", fx, "--target", bad, "--n7-shapes", "--no-self-test"}, nil},
+		{"夹具坏件 --exclude-prefix", []string{"--repo-root", fx, "--target", bad, "--exclude-prefix", "bad/docs/01-设计/", "--no-self-test"}, nil},
+		{"N7 形态分类 + 收窄", []string{"--repo-root", fx, "--target", n7, "--n7-shapes", "--no-self-test"}, nil},
+		{"真仓 --summary", []string{"--repo-root", repo, "--scope", "repo", "--summary", "--no-self-test"}, nil},
 	}
 
 	baseEnv := os.Environ()

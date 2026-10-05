@@ -364,7 +364,7 @@ func TestCVDCheckBaseRevDeadBlocks(t *testing.T) {
 // 成对自检（正控 2 + 负控 11）在**仓外合成仓**上必须全过：13 组一组不许塌。
 func TestCVDSelfTestOnSynthRepo(t *testing.T) {
 	dir := cvdTRepo(t)
-	out, rc := cvdTCapture(t, func() int { return cvdSelfTest(dir, true) })
+	out, rc := cvdTCapture(t, func() int { return cvdSelfTest(os.Stdout, dir, true) })
 	if rc != 0 {
 		t.Fatalf("自检应返回 0，得到 %d\n%s", rc, out)
 	}

@@ -182,7 +182,7 @@ func TestCheckNewfileRegistryGatePort(t *testing.T) {
 
 	// ── 清单 / 自检 / 帮助 / 用法错 ─────────────────────────────────────
 	rcST, outST, _ := gnrRunT(t, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "自检结论: 全过（断言 38 条 · 失败 0）") {
+	if rcST != 0 || !strings.Contains(outST, "自检结论: 全过（断言 48 条 · 失败 0）") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%s", rcST, outST)
 	}
 	rcH, outH, _ := gnrRunT(t, "-h")

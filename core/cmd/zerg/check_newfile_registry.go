@@ -108,6 +108,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -118,6 +119,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
 )
@@ -319,6 +321,24 @@ func gnrReadText(p string) (string, bool) {
 		return "", false
 	}
 	return strings.ToValidUTF8(string(b), "\uFFFD"), true
+}
+
+// gnrPyErrText —— py `str(OSError)` 的近似（用于「基线在盘但读不出」那格 · 逐字对齐 errno 正文）。
+//
+//	CPython：`[Errno 13] Permission denied: '<path>'`（首字母大写 · 单引号路径）。
+//	Go os.ReadFile 返回 *PathError ⇒ 取其 syscall.Errno（`permission denied`）首字母大写即与 C `strerror` 同串。
+func gnrPyErrText(err error, path string) string {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		msg := errno.Error()
+		if msg != "" {
+			r := []rune(msg)
+			r[0] = unicode.ToUpper(r[0])
+			msg = string(r)
+		}
+		return fmt.Sprintf("[Errno %d] %s: '%s'", int(errno), msg, path)
+	}
+	return err.Error()
 }
 
 // gnrSplitLines —— py `str.splitlines()` 的换行集（✗ 不是 `strings.Split(s, "\n")`）。
@@ -1846,12 +1866,24 @@ func gnrAudit(root string, newFiles []string, newSet bool, inv string, invSet bo
 			return res
 		}
 		base := map[string]bool{}
-		txt, _ := gnrReadText(baseline)
+		btxt, berr := os.ReadFile(baseline)
+		if berr != nil { // ★ ① 基线在盘但读不出 ⇒ fail-closed（py 未捕获 OSError 曾静默绿）
+			res.problems = append(res.problems, fmt.Sprintf(
+				"分母判不了：冻结基线在盘但读不出（%s：%s）⇒ fail-closed 不给结论（rc=2）", baseline, gnrPyErrText(berr, baseline)))
+			return res
+		}
+		txt := strings.ToValidUTF8(string(btxt), "\uFFFD")
+		bcnt, _, bHasHdr := gnrParseBaselineHeader(txt) // ★ ③ B1-3：v2 头（件数+指纹）
 		for _, ln := range gnrSplitLines(txt) {
 			s := strings.TrimSpace(ln)
 			if s != "" && !strings.HasPrefix(s, "#") {
 				base[s] = true
 			}
+		}
+		if bHasHdr && len(ledgerFace) < bcnt { // ★ ③ 过期即红（件在减少 ⇒ 基线已不描述本树）
+			res.problems = append(res.problems, fmt.Sprintf(
+				"基线过期（v2 头声明 %d 件 ⟷ 现读扫面 %d 件 ⇒ 件在减少）⇒ 判红 rc=2；先跑 `--dump-baseline <仓外路径> --yes` 重打",
+				bcnt, len(ledgerFace)))
 		}
 		nf := []string{}
 		for k := range ledgerFace {
@@ -2225,7 +2257,7 @@ func gnrVerdict(res *gnrRes, strict bool, faces []string) (int, int, int) {
 func gnrRun(stdout io.Writer, root string, newFiles []string, newSet bool, inv string, invSet bool, strict bool, baseline string, baselineSet bool) int {
 	res := gnrAudit(root, newFiles, newSet, inv, invSet, baseline)
 	rc, bad, unjudged := gnrVerdict(res, strict, nil) // 出口判决唯一真源（同 `gnrRunJSON`）
-	fmt.Fprintln(stdout, "门76 新件登记完整性（件级 × 六张登记表 · **只报告**）")
+	fmt.Fprintln(stdout, "门76 新件登记完整性（件级 × 六张登记表 ＋ .sh 门面清册 · **只报告**）")
 	fmt.Fprintf(stdout, "  仓根：%s\n", root)
 	if res.ledgerCnt != nil {
 		fmt.Fprintf(stdout, "  口径差栏：台账口径 %s 件 · 门①候选面 %s 件 · 对差 %s 件（参照读数 · 不并入判红）\n",
@@ -3094,43 +3126,6 @@ func gnrSelfTest(stdout io.Writer) int {
 		addCheck("正控·缺面注入 ⇒ 2 · 不注入 ⇒ 0（区分度）", 2, rcM, rcM == 2 && rcOK == 0)
 	}
 
-	// (C) ★ 甲/乙 分档（成对负控）：--dump-baseline 打当前树后**不再必然 rc=2** ——
-	//     「全树扫过（面非空）∖ 在盘基线 = 0 件」= 正常态 ⇒ 0；「基线不在盘 / 显式空件集 / 扫描面为空」⇒ 2（零执行 ✗ 不放宽）。
-	if tmpD, errD := os.MkdirTemp("", "gnr-selftest-"); errD == nil {
-		defer os.RemoveAll(tmpD)
-		gnrBuildFixture(nil, tmpD, probe, map[string]bool{"①": true, "②": true, "③": true, "⑤": true})
-		os.WriteFile(filepath.Join(tmpD, "inv.tsv"), []byte("件\n"+probe+"\n"), 0o644)
-		baseD := filepath.Join(tmpD, "baseline.tsv")
-		if f, e := os.Create(baseD); e == nil {
-			f.WriteString("# 夹具冻结基线（现读件集快照）\n")
-			faceD := gnrScanLedgerFace(tmpD)
-			keys := []string{}
-			for k := range faceD {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				f.WriteString(k + "\n")
-			}
-			f.Close()
-		}
-		rcA := gnrRun(io.Discard, tmpD, nil, false, "inv.tsv", true, false, baseD, true)
-		addCheck("甲·全树扫过 ∖ 在盘基线 = 0 件 ⇒ 0（正常态 · dump 后不再必然 2）", 0, rcA, rcA == 0)
-		rcB := gnrRun(io.Discard, tmpD, nil, false, "inv.tsv", true, false, filepath.Join(tmpD, "no-such-baseline.tsv"), true)
-		addCheck("乙·基线不在盘（真源拿不到）⇒ 2（未放宽）", 2, rcB, rcB == 2)
-		rcZ := gnrRun(io.Discard, tmpD, []string{}, true, "inv.tsv", true, false, "", false)
-		addCheck("乙·显式空件集（零执行探针）⇒ 2（未放宽）", 2, rcZ, rcZ == 2)
-		zero := 0
-		mkRes := func(scanEmpty bool) *gnrRes {
-			return &gnrRes{counts: &gnrCounts{R4: &zero}, newFiles: []string{}, notJudged: []gnrNJ{},
-				problems: []string{}, items: map[string][]string{}, denFromBaseline: true, denScanEmpty: scanEmpty}
-		}
-		rcSE, _, _ := gnrVerdict(mkRes(true), false, nil)
-		rcSN, _, _ := gnrVerdict(mkRes(false), false, nil)
-		addCheck("乙·扫描面为空（基线在盘但面空 = 零执行）⇒ 2（未放宽）", 2, rcSE, rcSE == 2)
-		addCheck("区分度·同一 res 形状：面非空 ⇒ 0 · 面空 ⇒ 2（甲/乙 真分开）", 0, rcSN, rcSN == 0 && rcSE == 2)
-	}
-
 	// (B) 三合并式四负控（真 git 夹具 · 仓外）
 	gitFixture := func(root string) {
 		os.MkdirAll(filepath.Join(root, "scripts"), 0o755)
@@ -3203,6 +3198,147 @@ func gnrSelfTest(stdout io.Writer) int {
 			addCheck("隔离·干净夹具 ⇒ rc=0 · 生成前清空输出目录（旧件被清）", 0, rcW,
 				rcW == 0 && os.IsNotExist(statErr) && jsonErr == nil)
 		}
+	}
+
+	// (C) ★ 甲/乙 分档（成对负控）：--dump-baseline 打当前树后**不再必然 rc=2** ——
+	//     「全树扫过（面非空）∖ 在盘基线 = 0 件」= 正常态 ⇒ 0；「基线不在盘 / 显式空件集 / 扫描面为空」⇒ 2（零执行 ✗ 不放宽）。
+	if tmpD, errD := os.MkdirTemp("", "gnr-selftest-"); errD == nil {
+		defer os.RemoveAll(tmpD)
+		gnrBuildFixture(nil, tmpD, probe, map[string]bool{"①": true, "②": true, "③": true, "⑤": true})
+		os.WriteFile(filepath.Join(tmpD, "inv.tsv"), []byte("件\n"+probe+"\n"), 0o644)
+		baseD := filepath.Join(tmpD, "baseline.tsv")
+		if f, e := os.Create(baseD); e == nil {
+			f.WriteString("# 夹具冻结基线（现读件集快照）\n")
+			faceD := gnrScanLedgerFace(tmpD)
+			keys := []string{}
+			for k := range faceD {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				f.WriteString(k + "\n")
+			}
+			f.Close()
+		}
+		rcA := gnrRun(io.Discard, tmpD, nil, false, "inv.tsv", true, false, baseD, true)
+		addCheck("甲·全树扫过 ∖ 在盘基线 = 0 件 ⇒ 0（正常态 · dump 后不再必然 2）", 0, rcA, rcA == 0)
+		rcB := gnrRun(io.Discard, tmpD, nil, false, "inv.tsv", true, false, filepath.Join(tmpD, "no-such-baseline.tsv"), true)
+		addCheck("乙·基线不在盘（真源拿不到）⇒ 2（未放宽）", 2, rcB, rcB == 2)
+		rcZ := gnrRun(io.Discard, tmpD, []string{}, true, "inv.tsv", true, false, "", false)
+		addCheck("乙·显式空件集（零执行探针）⇒ 2（未放宽）", 2, rcZ, rcZ == 2)
+		zero := 0
+		mkRes := func(scanEmpty bool) *gnrRes {
+			return &gnrRes{counts: &gnrCounts{R4: &zero}, newFiles: []string{}, notJudged: []gnrNJ{},
+				problems: []string{}, items: map[string][]string{}, denFromBaseline: true, denScanEmpty: scanEmpty}
+		}
+		rcSE, _, _ := gnrVerdict(mkRes(true), false, nil)
+		rcSN, _, _ := gnrVerdict(mkRes(false), false, nil)
+		addCheck("乙·扫描面为空（基线在盘但面空 = 零执行）⇒ 2（未放宽）", 2, rcSE, rcSE == 2)
+		addCheck("区分度·同一 res 形状：面非空 ⇒ 0 · 面空 ⇒ 2（甲/乙 真分开）", 0, rcSN, rcSN == 0 && rcSE == 2)
+	}
+
+	// (D) ★ B1-5 成对负控（本片新增：① OSError 在盘但读不出 · ② 行内注释 · ③ 基线 v2 过期/只许下调/指纹读回 · ④ --sync 两态）
+	if tmpS, errS := os.MkdirTemp("", "gnr-selftest-"); errS == nil {
+		defer os.RemoveAll(tmpS)
+		gnrBuildFixture(nil, tmpS, probe, map[string]bool{"①": true, "②": true, "③": true, "⑤": true})
+		os.WriteFile(filepath.Join(tmpS, "inv.tsv"), []byte("件\n"+probe+"\n"), 0o644)
+		nScan := len(gnrScanLedgerFace(tmpS))
+
+		// ① 基线在盘但读不出（chmod 000）⇒ 2 fail-closed ⟷ 同件可读 ⇒ 0（成对）
+		baseRO := filepath.Join(tmpS, "base-ro.tsv")
+		os.WriteFile(baseRO, []byte(fmt.Sprintf("# 门76 冻结基线 v2 件数=%d 指纹=deadbeefdeadbeef\n", nScan)), 0o644)
+		os.Chmod(baseRO, 0)
+		rcRO := gnrRun(io.Discard, tmpS, nil, false, "inv.tsv", true, false, baseRO, true)
+		addCheck("B1-5·① 基线在盘但读不出（chmod 000）⇒ 2（fail-closed · 未捕获 OSError 曾静默绿）", 2, rcRO, rcRO == 2)
+		os.Chmod(baseRO, 0o644)
+		rcROk := gnrRun(io.Discard, tmpS, nil, false, "inv.tsv", true, false, baseRO, true)
+		addCheck("B1-5·① 成对正控：同基线可读且件数吻合 ⇒ 0（读得出 ⇒ 判得了）", 0, rcROk, rcROk == 0)
+
+		// ② load_excludes 剥行内注释（消假阳性）
+		if tmpL, errL := os.MkdirTemp("", "gnr-selftest-"); errL == nil {
+			os.MkdirAll(filepath.Join(tmpL, filepath.Dir(gnrPubRel)), 0o755)
+			os.WriteFile(filepath.Join(tmpL, gnrPubRel),
+				[]byte("EXCLUDES=(\n  \"a.sh\"   # 行内注释\n  \"b.sh\"\n)\n"), 0o644)
+			exL := gnrLoadExcludes(tmpL)
+			os.RemoveAll(tmpL)
+			okL := len(exL) == 2 && exL["a.sh"] && exL["b.sh"]
+			addCheck("B1-5·② load_excludes 剥行内注释 ⇒ {a.sh,b.sh}（消假阳性）", 1, gnrB2i(okL), okL)
+		}
+		// ② 成对负控：原样不剥 ⇒ 注释尾混入件名（假阳性 · 证明本修必要）
+		if tmpL2, errL2 := os.MkdirTemp("", "gnr-selftest-"); errL2 == nil {
+			os.MkdirAll(filepath.Join(tmpL2, filepath.Dir(gnrPubRel)), 0o755)
+			os.WriteFile(filepath.Join(tmpL2, gnrPubRel),
+				[]byte("EXCLUDES=(\n  \"a.sh\"   # 行内注释\n  \"b.sh\"\n)\n"), 0o644)
+			naive := map[string]bool{}
+			if txt2, okT := gnrReadText(filepath.Join(tmpL2, gnrPubRel)); okT {
+				if i := strings.Index(txt2, "EXCLUDES=("); i >= 0 {
+					rest := txt2[i+len("EXCLUDES=("):]
+					if j := strings.Index(rest, ")"); j >= 0 {
+						for _, q := range strings.Split(rest[:j], "\n") {
+							s := strings.TrimSpace(q)
+							if s == "" || strings.HasPrefix(s, "#") {
+								continue
+							}
+							naive[gnrStripQ(s)] = true
+						}
+					}
+				}
+			}
+			os.RemoveAll(tmpL2)
+			anyHash := false
+			for x := range naive {
+				if strings.Contains(x, "#") {
+					anyHash = true
+				}
+			}
+			addCheck("B1-5·② 负控：原样不剥注释 ⇒ 注释尾混入件名（假阳性 · 证明本修必要）", 1, gnrB2i(anyHash), anyHash)
+		}
+
+		// ③ 基线 v2 过期即红（声明件数 > 现读扫面）
+		baseEX := filepath.Join(tmpS, "base-expired.tsv")
+		os.WriteFile(baseEX, []byte(fmt.Sprintf("# 门76 冻结基线 v2 件数=%d 指纹=0000000000000000\n", nScan+100)), 0o644)
+		rcEX := gnrRun(io.Discard, tmpS, nil, false, "inv.tsv", true, false, baseEX, true)
+		addCheck(fmt.Sprintf("B1-5·③ 基线 v2 过期（声明 %d > 现读 %d）⇒ 2（过期即红）", nScan+100, nScan), 2, rcEX, rcEX == 2)
+
+		// ③ 基线 v2 头（件数+指纹）可解析读回 + dump 只许下调拒写
+		baseSmall := filepath.Join(tmpS, "base-small.tsv")
+		os.WriteFile(baseSmall, []byte("# 门76 冻结基线 v2 件数=1 指纹=1111111111111111\n"), 0o644)
+		if txtS, okS := gnrReadText(baseSmall); okS {
+			cS, fS, _ := gnrParseBaselineHeader(txtS)
+			okHdr := cS == 1 && fS == "1111111111111111"
+			addCheck("B1-5·③ 基线 v2 头（件数/指纹）读回一致", 1, gnrB2i(okHdr), okHdr)
+		}
+		rcDown2 := gnrDumpBaseline(io.Discard, io.Discard, tmpS, baseSmall, false)
+		addCheck(fmt.Sprintf("B1-5·③ 基线只许下调（旧 1 < 现读 %d）⇒ 干跑即拒写 2", nScan), 2, rcDown2, rcDown2 == 2)
+
+		// ④ --sync 干跑零写入 ⟷ --yes 真写（成对 · 原子写 · 无残留）
+		marksP := filepath.Join(tmpS, gnrMarksRel)
+		shaFile := func(p string) string {
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return ""
+			}
+			h := sha256.Sum256(b)
+			return hex.EncodeToString(h[:])
+		}
+		sha0 := shaFile(marksP)
+		baseS := filepath.Join(tmpS, "base-sync.tsv")
+		os.WriteFile(baseS, []byte(fmt.Sprintf("# 门76 冻结基线 v2 件数=%d 指纹=cafecafecafecafe\n", nScan)), 0o644)
+		rcSD := gnrRunSync(io.Discard, io.Discard, tmpS, false, baseS)
+		sha1 := shaFile(marksP)
+		addCheck("B1-5·④ `--sync` 干跑 ⇒ 0 且零写入（marks 表 sha 逐字同）", 0, rcSD, rcSD == 0 && sha0 == sha1)
+		rcSY := gnrRunSync(io.Discard, io.Discard, tmpS, true, baseS)
+		sha2 := shaFile(marksP)
+		addCheck("B1-5·④ `--sync --yes` ⇒ 0 且真写（marks 表 sha 变 · 与干跑成对）", 0, rcSY, rcSY == 0 && sha0 != sha2)
+		resid := 0
+		if ents, errR := os.ReadDir(tmpS); errR == nil {
+			for _, e := range ents {
+				if strings.HasPrefix(e.Name(), ".gnr-marks-") {
+					resid++
+				}
+			}
+		}
+		addCheck("B1-5·④ 原子写无残留临时件（temp+fsync+rename）", 0, resid, resid == 0)
 	}
 
 	// (E) ★ 面⑨ `.sh` 门面清册 成对正负控（盘上 scripts/gates/*.sh ⇄ real-gates.sh 的 SH_GATES 双向差集）

@@ -157,7 +157,7 @@ func TestCheckDocsOrphansLinksGatePort(t *testing.T) {
 		t.Fatalf("--list-rules 失败：得 rc=%d", rcLR)
 	}
 	rcST, outST, _ := cdoRun(t, "--self-test")
-	if rcST != 0 || !strings.Contains(outST, "自检 26 格 · 失败 0 格") {
+	if rcST != 0 || !strings.Contains(outST, "自检 28 格 · 失败 0 格") {
 		t.Fatalf("--self-test 失败：得 rc=%d out=%s", rcST, outST)
 	}
 	rcH, outH, _ := cdoRun(t, "-h")
@@ -192,7 +192,7 @@ func TestCheckDocsOrphansLinksSelfTestNoTempLeak(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
 	before := cdoCountSelftestTmpDirs(t)
 	rc, out, errb := cdoRun(t, "--self-test")
-	if rc != 0 || !strings.Contains(out, "自检 26 格 · 失败 0 格") {
+	if rc != 0 || !strings.Contains(out, "自检 28 格 · 失败 0 格") {
 		t.Fatalf("自检未过：rc=%d stderr=%q out=%s", rc, errb, out)
 	}
 	after := cdoCountSelftestTmpDirs(t)

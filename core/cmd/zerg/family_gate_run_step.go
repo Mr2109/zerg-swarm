@@ -4,7 +4,7 @@
 // 为什么要有它：D3 当时的实测是「定位一件事只能整档跑」—— `--scope devdocs` 4 步、默认档 60 步，
 // 改一道门要等整档；单门自检只能手搓 `python3 scripts/gates/check-error-kinds.py --self-test`（17 行）。
 //
-// 本件只补四格，执行面一个字都没搬进来：
+// 本件只补五格，执行面一个字都没搬进来：
 //
 //	① **步名逐字校验**（执行前判）：真源 = 脚本自己的 `add_step` 行（`parseAddSteps`，与 `gate explain`
 //	   同一份解析）。未知名 ⇒ 退 2 并给「最像的合法输入」（K14 第三件 · 与 `agent` 族**同一方言**）；
@@ -15,6 +15,10 @@
 //	④ `--step <步名> --show-log`：单步档**步内读数**的手敲正门（缺口 `GAP-20260928-28`）—— 真跑那一步
 //	   后，把**那一步自己的**日志正文（真源 = 脚本的 `results.tsv` 第 5 列）**原样**打到 stdout
 //	   （见件末 `gateRunStepShowLog`）。
+//	⑤ `--step <步名> -- <只读旗标>…`：**显式**透传门（缺口 `GAP-20260927-276`）—— `--` 之后的
+//	   旗标逐枚核**只读白名单**（`gateRunStepReadonlyFlags` · 逐字列举 · ✗ 不得通配），命中者与 ③
+//	   同一条路径**逐字附到那一步的命令串**上；不在表内（写面/危险档，如 `--apply`）⇒ 仍退 2 拒执
+//	   （见 `gateRunStepPassthroughFlags`）。无 `--` 时一个字节不改（未知旗标照旧退 2）。
 //
 // 为什么不把执行也搬进来（`gate.go` 的「只转发、不翻译」）：步骤表住在脚本里，**唯一真源**在那边——
 // 命令面自己再跑一遍就等于另写一份步骤表（`G1-a` 明令禁止）。所以执行永远是
@@ -256,10 +260,73 @@ func gateRunStepJSON(inv *invocation, stdout, stderr io.Writer, root, script str
 //	  档位后缀，而 `gate ls` 的名字列是带后缀的全名）；多义 ⇒ 退 2 逐个列，不猜。
 const gateLiveVerifyFlag = "--verify-live"
 
-// gateRunWantsLiveVerify —— 这一发 tail 里有没有只读复核旗标。
+// gateRunStepReadonlyFlags —— `--` 之后**允许逐字透传给那一步命令串**的**只读**旗标白名单
+// （★ 缺口 `GAP-20260927-276` · 逐字列举 · ✗ 不得通配）。
+//
+// 安全口径（默认档一个字节不改）：无 `--` 时未知旗标照旧由 `gateRunPrecheckFlags` rc=2 拒执；
+// **只有显式 `--`** 才开这条透传门，且**只放只读面** —— 写面/危险档旗标（如 `--apply`/`--write`/
+// `--emit`/`--fix`/`--yes`）不在表内 ⇒ 仍逐字拒执 rc=2，绝不因透传把写面/危险档命令变成可跑。
+// 表内各枚均为「只看/只报/自检/只读复核」语义（值与元数据来源见各枚注释）。
+var gateRunStepReadonlyFlags = []string{
+	"--self-test",       // 门脚本自检（只读 · 无副作用 · 缺口判据）
+	"--verify-live",     // 单步只读复核（既有正门 · 见本件 `gateRunStepLiveVerify`）
+	"--list-items",      // 列条目（只读）
+	"--json",            // 机器读面字段选择（只读；值是字段名，如 `counts,hits`）
+	"--root",            // 只读判据树根（值是路径）
+	"--zerg",            // 只读真源二进制（值是路径）
+	"--no-self-test",    // 跳过自检（只读 · `check-public-face-commands.py` 面）
+	"--read-only-count", // 只打印只读计数（只读 · 缺口 `GAP-20260926-147` 面）
+}
+
+// gateRunStepIsReadonly —— `a` 是不是表内那一枚只读旗标（逐字，无通配）。
+func gateRunStepIsReadonly(a string) bool {
+	for _, f := range gateRunStepReadonlyFlags {
+		if a == f {
+			return true
+		}
+	}
+	return false
+}
+
+// gateRunStepPassthroughFlags —— 决定要逐字附到**这一步命令串**上的旗标集（缺口 `GAP-20260927-276`）：
+//
+//	· tail 里有 `--` ⇒ 取 `--` 之后的**全部** token；逐枚核只读白名单（旗标 token 必须命中；
+//	  值 token 随前一枚命中旗标逐字带走）；不中 ⇒ 逐字判词 + 退 2（**不 exec**）。
+//	· 无 `--`（= 旧 `--verify-live` 形态）⇒ 就那一枚 `--verify-live`（既有形态一字节不改）。
+func gateRunStepPassthroughFlags(tail []string, stderr io.Writer) ([]string, int) {
+	dash := -1
+	for i, a := range tail {
+		if a == "--" {
+			dash = i
+			break
+		}
+	}
+	if dash < 0 {
+		return []string{gateLiveVerifyFlag}, exitOK
+	}
+	post := append([]string(nil), tail[dash+1:]...)
+	for _, a := range post {
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			continue // 值 token：随前一枚（白名单内）旗标逐字带走
+		}
+		if !gateRunStepIsReadonly(a) {
+			fmt.Fprintf(stderr, "✗ 非只读旗标: %s（`--` 之后只许**只读**旗标逐字透传给这一步；写面/危险档仍拒执）⇒ 退码 2\n", a)
+			fmt.Fprintf(stderr, "  只读白名单（逐字 · 不得通配）: %s\n", strings.Join(gateRunStepReadonlyFlags, " "))
+			return nil, exitUsage
+		}
+	}
+	return post, exitOK
+}
+
+// gateRunWantsLiveVerify —— 这一发 tail 里有没有「走单步命令串透传」的信号旗标。
+//
+// ★ 缺口 `GAP-20260927-276` 起两枚都归它：① 既有的只读复核旗标 `--verify-live`；
+// ② `--`（**显式**透传门 —— `--` 之后按只读白名单附到那一步的命令串上）。
+// 为什么并进同一枚函数：调用点在 `gate.go` 的 `run` 支（`gate.go` 本单禁改），
+// 两枚信号要触发的正是**同一条**单步命令串透传路径（`gateRunStepLiveVerify`）。
 func gateRunWantsLiveVerify(tail []string) bool {
 	for _, a := range tail {
-		if a == gateLiveVerifyFlag {
+		if a == gateLiveVerifyFlag || a == "--" {
 			return true
 		}
 	}
@@ -333,6 +400,13 @@ func gateRunStepLiveVerify(inv *invocation, stdout, stderr io.Writer, root, scri
 		inv.setErr("usage", "step_absent", "步名缺失/不存在/歧义")
 		return rc
 	}
+	// ★ 缺口 `GAP-20260927-276`：`--` 之后按**只读白名单**取要逐字附到这条命令串上的旗标集
+	//   （无 `--` ⇒ 旧形态 `--verify-live`）。不中白名单（写面/危险档）⇒ 逐字判词 + 退 2（不 exec）。
+	passthrough, prc := gateRunStepPassthroughFlags(tail, stderr)
+	if prc != exitOK {
+		inv.setErr("usage", "step_flag_not_readonly", "`--` 之后只许只读旗标透传给这一步")
+		return prc
+	}
 	cmdStr := strings.TrimSpace(d.Cmd)
 	if cmdStr == "" {
 		inv.setErr("usage", "step_cmd_absent", "这一步的命令串是空的")
@@ -356,9 +430,9 @@ func gateRunStepLiveVerify(inv *invocation, stdout, stderr io.Writer, root, scri
 		return lrc
 	}
 	defer lock.release()
-	argv := append(strings.Fields(cmdStr), gateLiveVerifyFlag)
+	argv := append(strings.Fields(cmdStr), passthrough...)
 	fmt.Fprintf(stderr, "%s: 只读复核 —— 把 `%s` 逐字透传给这一步（%s）的命令串：%s\n",
-		progName, gateLiveVerifyFlag, d.Name, strings.Join(argv, " "))
+		progName, strings.Join(passthrough, "` `"), d.Name, strings.Join(argv, " "))
 	cmd := armChildGroup(exec.Command(argv[0], argv[1:]...))
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "ZERG_GATE_LOCK_HELD=1")

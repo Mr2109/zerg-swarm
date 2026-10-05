@@ -224,6 +224,53 @@ func TestAskModelOrNodeNotFoundIsUsageExit(t *testing.T) {
 	}
 }
 
+// TestAskPinnedEmptyCapabilityIsNotHardFilter —— GAP-20260925-30：
+// 点名档（`--model`/`--node`）在**未给 `--capability`** 时，能力面的「接线硬筛」**不得**否决
+// 显式点名的目标 ——「空/未登记能力」= 未知 ≠ 不匹配、「没能力」≠「不能跑」（点名 = 用户已定目标，
+// 不该被证据面二次否决）。两态 + 两条负控：
+//
+//	① 点名未登记目标 + 未给 `--capability` ⇒ rc=0（本题症状消失）；
+//	② 点名 + 给了 `--capability` 但目标接不上能力面 ⇒ 仍 rc=1（真不匹配不许放行）；
+//	③ 未点名档（默认路由）⇒ 未登记能力的行照旧不收（行为不变 · 防呆保留）。
+//
+// 负控：把 `askFilter` 里那条放宽改回去（`!linked` 无条件丢行）⇒ ① 必红。
+func TestAskPinnedEmptyCapabilityIsNotHardFilter(t *testing.T) {
+	srv := newSyntheticMaster(t, map[string]string{
+		"/api/fleet/models": `{"count":2,"models":[` +
+			`{"id":"unlinked-model","host":"mini-node-1","backend":"llama-server","mem_gb":20},` +
+			`{"id":"linked-model","host":"mini-node-1","backend":"llama-server","mem_gb":21,"registry_id":"linked-model-q4"}]}`,
+		"/api/models/registry": `{"count":1,"records":[{"id":"linked-model-q4","fleet_id":"linked-model","capabilities":[{"name":"text","value":true,"source":"probed","evidence":"probe.text.v1"}]}]}`,
+	})
+	defer srv.Close()
+
+	// ① 点名未登记能力的目标 + 未给 `--capability` ⇒ rc=0（空能力不是硬筛）。
+	rc, out, errb := fusionRun(t, "ask", "你好", "--model", "unlinked-model", "--dry-run")
+	if rc != 0 {
+		t.Fatalf("点名未登记目标 + 未给 --capability ⇒ 退码 %d（要 0）· stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "unlinked-model") || !strings.Contains(out, "零副作用") {
+		t.Errorf("dry-run 路线没点名被 pin 的未登记目标：%q", out)
+	}
+
+	// ② 点名 + 给了 `--capability` 但目标接不上能力面 ⇒ 仍拒（真不匹配不许放行）。
+	rc, _, errb = fusionRun(t, "ask", "你好", "--capability", "text", "--model", "unlinked-model", "--dry-run")
+	if rc != 1 || !strings.Contains(errb, "no_registry_link") {
+		t.Errorf("真不匹配（--capability text · 接不上面）⇒ 要 rc=1 + no_registry_link，实测 rc=%d stderr=%q", rc, errb)
+	}
+
+	// ③ 未点名档（默认路由）⇒ 未登记能力行照旧不是候选（行为不变 · 防呆保留）。
+	rc, out, errb = fusionRun(t, "ask", "你好", "--dry-run")
+	if rc != 0 {
+		t.Fatalf("默认档 ⇒ 退码 %d（要 0）· stderr=%s", rc, errb)
+	}
+	if strings.Contains(out, "unlinked-model") {
+		t.Errorf("未点名档不该收未登记能力的行（默认路由行为应不变）：%q", out)
+	}
+	if !strings.Contains(out, "linked-model") {
+		t.Errorf("未点名档应收到有证据的行：%q", out)
+	}
+}
+
 // ---- 判据⑤ / 判据③④：plan 零副作用 · apply 四层 -------------------------------------------
 
 // TestPlanIsZeroSideEffect —— 判据⑤：`plan` 只写**那一件**，工作目录逐字节不变。

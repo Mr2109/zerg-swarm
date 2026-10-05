@@ -313,7 +313,8 @@ def build_map(root):
         'source_head': git_head(root),
         'input_fingerprint': fp,
         '_fingerprint_note': ('入键 = 步表文本 ＋ 每个按名点到脚本件的 sha256 ＋ gate-coverage.config.json '
-                              '＋ newcmd-paths-baseline.json ＋ git HEAD（不对称口径：宁多入不可少入）。'
+                              '＋ newcmd-paths-baseline.json（**内容相对** · ✗ 不含 git HEAD ⇒ 无冻结点自指 · '
+                              '只有被管辖输入变才过期）。'
                               '取不到 ⇒ 下游 affected-steps.py 报「不给结论」rc=2。'),
         'faces': {f: sorted(faces[f]) for f in sorted(faces)},
         'files': entries,
@@ -348,8 +349,8 @@ def fingerprint(root, steps, cov, newcmd):
                     h.update(hashlib.sha256(f.read()).digest())
     h.update(json.dumps(cov, sort_keys=True, ensure_ascii=False).encode('utf-8'))
     h.update(json.dumps(newcmd, sort_keys=True, ensure_ascii=False).encode('utf-8'))
-    head = git_head(root)
-    h.update((head or '').encode('utf-8'))
+    # ★ GAP-20261005-51 甲案：入键**不含 git HEAD** —— 否则「emit 时压 HEAD、emit 后一提交 HEAD 即变」
+    #   ⇒ 冻结点自指、任一提交必过期、无不动点（口径见 _fingerprint_note）。
     return h.hexdigest()
 
 

@@ -120,6 +120,10 @@ func TestCheckFlagRegistryParityGatePort(t *testing.T) {
 	if !strings.Contains(outST, "④读者面") {
 		t.Fatalf("--self-test 输出里没有读者面两格：%q", outST)
 	}
+	// ── 面⑥ 运行期用法行面（按命令 · 缺口账 `GAP-20260928-183`）在报告里可见（报告档 · 不进退码） ──
+	if !strings.Contains(outST, "⑥运行期用法行面") {
+		t.Fatalf("--self-test 输出里没有运行期用法行面两格：%q", outST)
+	}
 }
 
 // frpFindRepoRoot —— 从 cwd 上溯找仓根（判据：`scripts/gates/check-flag-registry-parity.py` 在盘）。

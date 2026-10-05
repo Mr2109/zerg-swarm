@@ -103,7 +103,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -113,6 +112,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -124,10 +125,21 @@ var ffpMainRel = ffpPyJoin("core", "cmd", "zerg", "main.go")
 
 const (
 	ffpLegalFieldsPrefix = "合法字段:"
+	// 腿②「公告 == 可选」：一枚字段被判**选不出**时制品逐字打的标记（`zerg: 未知字段 "<f>"`）。
+	ffpUnknownFieldMark  = "未知字段"
 	ffpBogus             = "zzz-nonexistent-zz"
 	ffpPerCmdTimeout     = 15
 	ffpMinCoveredDefault = 29
+	// ★ 腿② 棘轮（`--min-selectable`）：今天能逐枚打靶的**格数**下限（只许上调、永不下调）。
+	ffpMinSelectableDefault = 92
 )
+
+// ffpNotProbedPrefixes —— 腿②「会起整套门 / 长任务 / 阻塞」⇒ **不打靶**白名单（自伤洞：孤儿门跑占闸 ·
+// `GAP-20261002-11` / `-20261003-17`）。判据 = **宁少打不可误跑**。★ `gate bench`：探针 argv 恒为
+// `<bin> <path…> --json <field>`、永不带 `--fast`/`--scope` ⇒ 打到它时必是**默认全量档** ⇒ 整条排除。
+var ffpNotProbedPrefixes = []string{"gate bench", "gate run", "gate wait", "gap reread"}
+
+const ffpNotProbedReason = "会起整套门 / 长任务 / 阻塞 ⇒ 不打靶（宁少打不可误跑 · 自伤洞 GAP-20261002-11）"
 
 // ffpSpaceCls —— py `\s` 的 Unicode 展开（与 `str.isspace()` 同集 · 29 个码点）。
 // ★ 必须是「一个字符类」，✗ 不是 0/1 个字符 —— 用法见 ffpReCmd / ffpReFields。
@@ -516,30 +528,63 @@ type ffpMism struct {
 	runtimeExtra  []string
 }
 
+// ffpKillGroup —— 杀**整棵**探针子树（自伤洞：孤儿门跑占闸 · `GAP-20261002-11`）。
+// `Setpgid` ⇒ 子进程自成进程组、`pgid == 子 pid` ⇒ `Kill(-pgid, sig)` 一次收**整组**
+// （✗ 只杀直接子 ⇒ 孙趟门跑 reparent 到 pid 1 继续跑、还继承锁 fd）。
+func ffpKillGroup(pgid int, sig syscall.Signal) {
+	_ = syscall.Kill(-pgid, sig)
+}
+
+// ffpRunProbe —— 起一枚探针子进程 ⇒ (rc, stdout, stderr, timedOut, startErr)。（自伤洞两刀之一 · 纵深）
+// ★ `Setpgid`（= py 的 `start_new_session=True`）＋ 超时杀**整组**：先 SIGTERM、宽限 2s 再 SIGKILL
+// （✗ 不用 exec.CommandContext —— 它只杀**直接子**，孙进程成孤儿并继承父趟锁 fd）。
+func ffpRunProbe(binpath string, args []string, timeout time.Duration) (int, string, string, bool, error) {
+	var outb, errb bytes.Buffer
+	cmd := exec.Command(binpath, args...)
+	cmd.Stdout = &outb
+	cmd.Stderr = &errb // Stdin 留 nil ⇒ 子进程读空设备（= py 的 DEVNULL）
+	// ★ 独立进程组（= os.setsid）：超时才能收整棵子树；✗ 不用 CommandContext（只杀直接子）。
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if e := cmd.Start(); e != nil {
+		return 0, "", "", false, e
+	}
+	pgid := cmd.Process.Pid
+	var to atomic.Bool
+	timer := time.AfterFunc(timeout, func() {
+		to.Store(true)
+		ffpKillGroup(pgid, syscall.SIGTERM)
+		time.AfterFunc(2*time.Second, func() { ffpKillGroup(pgid, syscall.SIGKILL) })
+		_ = cmd.Process.Kill() // 兜底（直接子；整组那两刀在上一行）
+	})
+	werr := cmd.Wait()
+	timer.Stop()
+	if to.Load() {
+		return 0, outb.String(), errb.String(), true, nil
+	}
+	rc := 0
+	if werr != nil {
+		var ee *exec.ExitError
+		if errors.As(werr, &ee) {
+			rc = ee.ExitCode()
+		} else {
+			return 0, "", "", false, werr
+		}
+	}
+	return rc, outb.String(), errb.String(), false, nil
+}
+
 // ffpRuntimeFace —— py `runtime_face`。got=false ⇒ py 返回 None（why 非空）。
 func ffpRuntimeFace(binpath, path string, timeout time.Duration, timeoutRepr string) (flds []string, got bool, why string) {
 	args := append([]string{}, ffpPySplit(path)...)
 	args = append(args, "--json", ffpBogus)
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, binpath, args...)
-	var outb, errb bytes.Buffer
-	cmd.Stdout = &outb
-	cmd.Stderr = &errb // Stdin 留 nil ⇒ 子进程读空设备（= py 的 DEVNULL）
-	runErr := cmd.Run()
-	if ctx.Err() == context.DeadlineExceeded {
+	rc, _, errStr, timedOut, startErr := ffpRunProbe(binpath, args, timeout)
+	if startErr != nil {
+		return nil, false, "跑不起来：" + startErr.Error() // 正文口径差见未覆盖面 ④
+	}
+	if timedOut {
 		return nil, false, "超时（>" + timeoutRepr + "s ⇒ 不算对拍面）"
 	}
-	exitCode := 0
-	if runErr != nil {
-		var ee *exec.ExitError
-		if errors.As(runErr, &ee) {
-			exitCode = ee.ExitCode()
-		} else {
-			return nil, false, "跑不起来：" + runErr.Error() // 正文口径差见未覆盖面 ④
-		}
-	}
-	for _, line := range ffpSplitLines(errb.String()) {
+	for _, line := range ffpSplitLines(errStr) {
 		if strings.HasPrefix(ffpPyStrip(line), ffpLegalFieldsPrefix) {
 			idx := strings.Index(line, ":")
 			if idx < 0 {
@@ -554,7 +599,67 @@ func ffpRuntimeFace(binpath, path string, timeout time.Duration, timeoutRepr str
 			return out, true, ""
 		}
 	}
-	return nil, false, "无字段表（rc=" + strconv.Itoa(exitCode) + " ⇒ 前置校验先于字段面 / 要活服务）"
+	return nil, false, "无字段表（rc=" + strconv.Itoa(rc) + " ⇒ 前置校验先于字段面 / 要活服务）"
+}
+
+// ffpLegalFieldsOf —— py `legal_fields_of`：stderr 里 `合法字段: a,b,c` ⇒ 真身闭集（无 ⇒ nil）。
+func ffpLegalFieldsOf(err string) []string {
+	for _, line := range ffpSplitLines(err) {
+		if strings.HasPrefix(ffpPyStrip(line), ffpLegalFieldsPrefix) {
+			idx := strings.Index(line, ":")
+			if idx < 0 {
+				continue
+			}
+			out := []string{}
+			for _, s := range strings.Split(line[idx+1:], ",") {
+				if t := ffpPyStrip(s); t != "" {
+					out = append(out, t)
+				}
+			}
+			return out
+		}
+	}
+	return nil
+}
+
+// ffpClassifyField —— py `classify_field`：腿②「公告 == 可选」的三档（ok / rejected / contradiction）。
+// `rc` 只为与 py 同签名（本档判据只看报话，不看 rc —— 「rc 非 0」不等于「字段被拒」）。
+func ffpClassifyField(rc int, err, field string) string {
+	_ = rc
+	legal := ffpLegalFieldsOf(err)
+	if !strings.Contains(err, ffpUnknownFieldMark+" \""+field+"\"") {
+		return "ok"
+	}
+	for _, f := range legal {
+		if f == field {
+			return "contradiction"
+		}
+	}
+	return "rejected"
+}
+
+// ffpProbeExcluded —— 腿② 不打靶白名单（自伤洞：孤儿门跑占闸 · `GAP-20261002-11` / `-20261003-17`）。
+// true ⇒ 该命令**一格不打靶**（记 `not_probed` + 为何），✗ 不让探针把它真跑起来。
+func ffpProbeExcluded(path string) bool {
+	for _, p := range ffpNotProbedPrefixes {
+		if path == p || strings.HasPrefix(path, p+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// ffpSelectableProbe —— py `selectable_probe`：现跑一枚 `--json <field>`（只触字段面 · ✗ 不落写路径）。
+// ★ 调用方须先用 `ffpProbeExcluded()` 把「会起整套门 / 长任务 / 阻塞」的命令挡在**打靶面外**。
+// got=false ⇒ 超时 / 跑不起来（不算打靶格）。
+func ffpSelectableProbe(binpath, path, field string, timeout time.Duration) (verdict string, got bool) {
+	args := append([]string{}, ffpPySplit(path)...)
+	args = append(args, "--json", field)
+	rc, _, errStr, timedOut, startErr := ffpRunProbe(binpath, args, timeout)
+	if startErr != nil || timedOut {
+		return "", false
+	}
+	return ffpClassifyField(rc, errStr, field), true
 }
 
 // ffpCompare —— py `compare(decl, real)`：集合差（逐名 · 各自 sorted）。
@@ -583,6 +688,24 @@ func ffpCompare(decl, real []string) (extra, missing []string) {
 	return extra, missing
 }
 
+type ffpSelCell struct {
+	path  string
+	field string
+}
+
+type ffpSelUnreach struct {
+	path   string
+	field  string
+	reason string
+}
+
+// ffpSelNotProbe —— 腿② 不打靶白名单命中格（记 `not_probed` + 为何 · 自伤洞 `GAP-20261002-11`）。
+type ffpSelNotProbe struct {
+	path   string
+	field  string
+	reason string
+}
+
 type ffpResult struct {
 	errorMsg      string
 	fatal         bool
@@ -592,27 +715,46 @@ type ffpResult struct {
 	matched       []string
 	mismatched    []ffpMism
 	notComparable []ffpNope
+	// ── 腿②「公告 == 可选」（本枚加）────────────────────────────────────────────
+	selCovered    int
+	minSelectable int
+	selMatched    []string
+	selRejected   []ffpSelCell
+	selContra     []ffpSelCell
+	selUnreach    []ffpSelUnreach
+	// ★ 不打靶白名单命中格（自伤洞 · `GAP-20261002-11`）：会起整套门 / 长任务 / 阻塞 ⇒ 一格不打靶。
+	selNotProbed []ffpSelNotProbe
 }
 
-// ffpRun —— py `run(root, binpath, min_covered, timeout)`。
-func ffpRun(root, binpath string, minCovered int, timeout time.Duration, timeoutRepr string) (int, ffpResult) {
+// ffpRun —— py `run(root, binpath, min_covered, timeout, min_selectable)`。
+func ffpRun(root, binpath string, minCovered int, timeout time.Duration, timeoutRepr string,
+	minSelectable int) (int, ffpResult) {
 	decl, none, fatal := ffpDeclaredFaces(root)
 	if fatal {
-		return 1, ffpResult{fatal: true, minCovered: minCovered}
+		return 1, ffpResult{fatal: true, minCovered: minCovered, minSelectable: minSelectable}
 	}
 	if none {
-		return 2, ffpResult{errorMsg: "读不到命令树（" + ffpMainRel + "）⇒ 判不了", minCovered: minCovered}
+		return 2, ffpResult{errorMsg: "读不到命令树（" + ffpMainRel + "）⇒ 判不了",
+			minCovered: minCovered, minSelectable: minSelectable}
 	}
 	if _, err := os.Stat(binpath); err != nil { // py os.path.exists：跟随符号链接 ⇒ os.Stat
-		return 2, ffpResult{errorMsg: "缺制品 " + binpath + " ⇒ 判不了（不许拿声明自己跟自己比）", minCovered: minCovered}
+		return 2, ffpResult{errorMsg: "缺制品 " + binpath + " ⇒ 判不了（不许拿声明自己跟自己比）",
+			minCovered: minCovered, minSelectable: minSelectable}
 	}
 	ok := []string{}
 	mism := []ffpMism{}
 	nope := []ffpNope{}
 	covered := 0
+	selOK := []string{}
+	selRej := []ffpSelCell{}
+	selCon := []ffpSelCell{}
+	selUnr := []ffpSelUnreach{}
+	selNp := []ffpSelNotProbe{}
+	selCovered := 0
 	for _, f := range decl {
 		real, got, why := ffpRuntimeFace(binpath, f.path, timeout, timeoutRepr)
 		if !got {
+			// 真身表取不到 ⇒ 字段面这一格**够不着** ⇒ 腿② 这一条整条不打靶（已在 `nope` 逐条点名）。
 			nope = append(nope, ffpNope{path: f.path, reason: why})
 			continue
 		}
@@ -623,16 +765,50 @@ func ffpRun(root, binpath string, minCovered int, timeout time.Duration, timeout
 		} else {
 			ok = append(ok, f.path)
 		}
+		// ★ 腿② 不打靶白名单（自伤洞两刀之一 · 治本）：会起整套门的命令**一格不打靶** ⇒ 记 `not_probed`。
+		if ffpProbeExcluded(f.path) {
+			for _, fld := range f.fields {
+				selNp = append(selNp, ffpSelNotProbe{path: f.path, field: fld, reason: ffpNotProbedReason})
+			}
+			continue
+		}
+		// ── 腿②「公告 == 可选」：对**两集无差**的命令逐枚跑登记的每一格 ──────────────
+		good := true
+		for _, fld := range f.fields {
+			verdict, got2 := ffpSelectableProbe(binpath, f.path, fld, timeout)
+			if !got2 {
+				selUnr = append(selUnr, ffpSelUnreach{path: f.path, field: fld,
+					reason: "超时（>" + timeoutRepr + "s ⇒ 不算打靶格）"})
+				good = false
+				continue
+			}
+			selCovered++
+			if verdict == "ok" {
+				continue
+			}
+			good = false
+			if verdict == "contradiction" {
+				selCon = append(selCon, ffpSelCell{path: f.path, field: fld})
+			} else {
+				selRej = append(selRej, ffpSelCell{path: f.path, field: fld})
+			}
+		}
+		if good && len(f.fields) > 0 {
+			selOK = append(selOK, f.path)
+		}
 	}
 	rc := 0
-	if len(mism) > 0 {
+	if len(mism) > 0 || len(selRej) > 0 || len(selCon) > 0 {
 		rc = 1
-	} else if covered < minCovered {
-		rc = 2
+	} else if covered < minCovered || selCovered < minSelectable {
+		rc = 2 // 覆盖不够 = 空转（「配置没了所以全绿」那一类假绿）
 	}
 	return rc, ffpResult{
 		declared: len(decl), covered: covered, minCovered: minCovered,
 		matched: ok, mismatched: mism, notComparable: nope,
+		selCovered: selCovered, minSelectable: minSelectable,
+		selMatched: selOK, selRejected: selRej, selContra: selCon, selUnreach: selUnr,
+		selNotProbed: selNp,
 	}
 }
 
@@ -675,6 +851,17 @@ func ffpSelfTest(stdout io.Writer) int {
 	e, m = ffpCompare([]string{"b", "a"}, []string{"a", "b"})
 	chk("负控④：仅顺序不同 ⇒ 无差（不比序）", len(e) == 0 && len(m) == 0, "")
 
+	// ── 腿②「公告 == 可选」（本枚加）：成对负控（纯函数 · 合成 stderr · 不碰真目标）────────
+	chk("腿②正控：rc=0 ⇒ ok", ffpClassifyField(0, "", "model") == "ok", "")
+	chk("腿②负控⑦：rc=2 报话非「未知字段 model」（卡在位置参数/活服务）⇒ ok",
+		ffpClassifyField(2, "zerg: `agent bench` 要一台机器名（`zerg agent ls` 看名册）\n", "model") == "ok", "")
+	chk("腿②负控⑧：「未知字段 model」且同消息清单不含 model ⇒ rejected",
+		ffpClassifyField(2, "zerg: "+ffpUnknownFieldMark+" \"model\"\n"+ffpLegalFieldsPrefix+" host,state\n", "model") == "rejected", "")
+	chk("腿②负控⑨（公告≠可选 ⇒ 必红）：rc=2「未知字段 model」却把 model 列进同条清单 ⇒ contradiction",
+		ffpClassifyField(2, "zerg: "+ffpUnknownFieldMark+" \"model\"\n"+ffpLegalFieldsPrefix+" host,model,state\n", "model") == "contradiction", "")
+	chk("腿②负控⑩：「未知字段 other」不牵累本格 model ⇒ ok",
+		ffpClassifyField(2, "zerg: "+ffpUnknownFieldMark+" \"other\"\n"+ffpLegalFieldsPrefix+" host,model\n", "model") == "ok", "")
+
 	// 解析面：合成命令树 ⇒ 抓得到 path ＋ 声明名单（✗ 不是 bool）。
 	tmp, err := os.MkdirTemp("", "check-fields-face-parity-selftest-")
 	if err != nil {
@@ -699,7 +886,82 @@ func ffpSelfTest(stdout io.Writer) int {
 		_ = os.RemoveAll(tmp) // ★ 自回收（py 的 tempfile.TemporaryDirectory 也回收 ⇒ delta=0）
 	}
 
-	rc, _ := ffpRun("/nonexistent-zerg-root-zz", "/nonexistent-bin-zz", 1, 2*time.Second, "2")
+	// ★★ 腿② 端到端成对负控：合成制品（假 `bin/zerg`）⇒ 真跑 ffpRun，成对判绿/红。
+	if tmp2, err2 := os.MkdirTemp("", "check-fields-face-parity-selftest-"); err2 == nil {
+		_ = os.MkdirAll(ffpPyJoin(tmp2, "core", "cmd", "zerg"), 0o755)
+		body := "	commands = []*command{\n" +
+			"		{path: []string{\"zz\", \"ffp\"}, fields: []string{\"model\", \"host\"}},\n	}\n"
+		_ = os.WriteFile(ffpPyJoin(tmp2, ffpMainRel), []byte(body), 0o644)
+		mk := func(lines string) string {
+			p := ffpPyJoin(tmp2, "fakerz")
+			_ = os.WriteFile(p, []byte("#!/bin/sh\n"+lines+"\n"), 0o755)
+			return p
+		}
+		// 绿档：坏名报「未知字段 + 清单」；登记的两格都退 0 ⇒ 声明==公告 且 公告==可选。
+		green := mk("f=\"\"\nfor a in \"$@\"; do f=\"$a\"; done\n" +
+			"if [ \"$f\" = \"" + ffpBogus + "\" ]; then\n" +
+			"  printf '%s\\n' \"zerg: " + ffpUnknownFieldMark + " \\\"" + ffpBogus + "\\\"\" \"" +
+			ffpLegalFieldsPrefix + " host,model\" >&2\n  exit 2\nfi\nexit 0")
+		rcG, _ := ffpRun(tmp2, green, 1, 2*time.Second, "2", 1)
+		chk("腿②端到端正控：假制品全接受 ⇒ rc=0", rcG == 0, "rc="+strconv.Itoa(rcG))
+		// ★ 红档（成对）：对登记格打「未知字段 <f>」**却**把 f 列进同条清单 = 「公告 ≠ 可选」⇒ 必红。
+		red := mk("f=\"\"\nfor a in \"$@\"; do f=\"$a\"; done\n" +
+			"printf '%s\\n' \"zerg: " + ffpUnknownFieldMark + " \\\"$f\\\"\" \"" +
+			ffpLegalFieldsPrefix + " host,model\" >&2\nexit 2")
+		rcR, resR := ffpRun(tmp2, red, 1, 2*time.Second, "2", 1)
+		hit := false
+		for _, c := range resR.selContra {
+			if c.path == "zz ffp" && c.field == "model" {
+				hit = true
+			}
+		}
+		chk("腿②端到端负控（公告≠可选 ⇒ 必红）：rc=1 且逐格点名", rcR == 1 && hit, "rc="+strconv.Itoa(rcR))
+		_ = os.RemoveAll(tmp2) // ★ 自回收
+	}
+
+	// ★ 腿② 不打靶白名单（自伤洞两刀之一 · 治本）：会起整套门的目标 ⇒ 记 not_probed 且**零执行**（假制品留痕缺席）。
+	if tmp3, err3 := os.MkdirTemp("", "check-fields-face-parity-selftest-"); err3 == nil {
+		_ = os.MkdirAll(ffpPyJoin(tmp3, "core", "cmd", "zerg"), 0o755)
+		body := "\tcommands = []*command{\n" +
+			"\t\t{path: []string{\"gate\", \"bench\"}, fields: []string{\"log\", \"rc\"}},\n" +
+			"\t\t{path: []string{\"zz\", \"show\"}, fields: []string{\"alpha\"}},\n\t}\n"
+		_ = os.WriteFile(ffpPyJoin(tmp3, ffpMainRel), []byte(body), 0o644)
+		heavy := ffpPyJoin(tmp3, "HEAVY_RAN")
+		normal := ffpPyJoin(tmp3, "NORMAL_RAN")
+		script := "#!/bin/sh\ncase \"$*\" in\n" +
+			"  'gate bench --json " + ffpBogus + "') echo \"" + ffpLegalFieldsPrefix + " log,rc\" >&2; exit 2;;\n" +
+			"  'zz show --json " + ffpBogus + "') echo \"" + ffpLegalFieldsPrefix + " alpha\" >&2; exit 2;;\n" +
+			"  'gate bench --json '*) : > '" + heavy + "'; exit 0;;\n" +
+			"  'zz show --json alpha') : > '" + normal + "'; exit 0;;\n" +
+			"  *) exit 0;;\nesac\n"
+		bin := ffpPyJoin(tmp3, "fakerz")
+		_ = os.WriteFile(bin, []byte(script), 0o755)
+		rcNP, resNP := ffpRun(tmp3, bin, 2, 3*time.Second, "3", 1)
+		npHit := []string{}
+		for _, c := range resNP.selNotProbed {
+			if c.path == "gate bench" {
+				npHit = append(npHit, c.field)
+			}
+		}
+		sort.Strings(npHit)
+		_, heavyErr := os.Stat(heavy)
+		_, normalErr := os.Stat(normal)
+		chk("腿②不打靶（自伤洞治本）：会起整套门的目标（gate bench）记 not_probed 且**零执行**",
+			os.IsNotExist(heavyErr) && eqs(npHit, []string{"log", "rc"}),
+			"rc="+strconv.Itoa(rcNP)+" np_hit="+ffpPyListRepr(npHit)+" heavy_ran="+strconv.FormatBool(heavyErr == nil))
+		matched := false
+		for _, m := range resNP.selMatched {
+			if m == "zz show" {
+				matched = true
+			}
+		}
+		chk("腿②不打靶对照：正常命令（zz show）照打靶（假制品真被跑到）",
+			normalErr == nil && matched,
+			"matched="+strconv.FormatBool(matched)+" normal_ran="+strconv.FormatBool(normalErr == nil))
+		_ = os.RemoveAll(tmp3) // ★ 自回收
+	}
+
+	rc, _ := ffpRun("/nonexistent-zerg-root-zz", "/nonexistent-bin-zz", 1, 2*time.Second, "2", 1)
 	chk("负控⑤：读不到命令树 ⇒ rc=2", rc == 2, "rc="+strconv.Itoa(rc))
 
 	if ok {
@@ -734,6 +996,7 @@ type ffpArgs struct {
 	selfTest, json, help bool
 	root, bin            string
 	minCovered           int
+	minSelectable        int
 	timeout              float64
 	timeoutSet           bool
 }
@@ -742,6 +1005,7 @@ func ffpUsageHead() string {
 	ind := strings.Repeat(" ", len("usage: ")+len(ffpProg)+1)
 	return "usage: " + ffpProg + " [-h] [--self-test] [--json] [--bin BIN]\n" +
 		ind + "[--min-covered MIN_COVERED]\n" +
+		ind + "[--min-selectable MIN_SELECTABLE]\n" +
 		ind + "[--timeout TIMEOUT]\n" +
 		ind + "[root]\n"
 }
@@ -757,6 +1021,7 @@ func ffpHelpText() string {
 		"  --json\n" +
 		"  --bin BIN\n" +
 		"  --min-covered MIN_COVERED\n" +
+		"  --min-selectable MIN_SELECTABLE\n" +
 		"  --timeout TIMEOUT\n"
 }
 
@@ -768,7 +1033,7 @@ func ffpArgErr(stderr io.Writer, msg string) int {
 
 // ffpResolveOpt —— argparse 长选项解析：精确优先，否则唯一前缀（本表无歧义前缀）。
 func ffpResolveOpt(body string) (string, bool) {
-	longs := []string{"--help", "--self-test", "--json", "--bin", "--min-covered", "--timeout"}
+	longs := []string{"--help", "--self-test", "--json", "--bin", "--min-covered", "--min-selectable", "--timeout"}
 	full := "--" + body
 	for _, o := range longs {
 		if o == full {
@@ -790,7 +1055,8 @@ func ffpResolveOpt(body string) (string, bool) {
 }
 
 func ffpParseArgs(stdout, stderr io.Writer, argv []string) (ffpArgs, int) {
-	a := ffpArgs{minCovered: ffpMinCoveredDefault, timeout: float64(ffpPerCmdTimeout)}
+	a := ffpArgs{minCovered: ffpMinCoveredDefault, minSelectable: ffpMinSelectableDefault,
+		timeout: float64(ffpPerCmdTimeout)}
 	unknown := []string{}
 	pos := []string{}
 	// valueOf：`--opt=值` 或「下一枚」。
@@ -834,7 +1100,7 @@ func ffpParseArgs(stdout, stderr io.Writer, argv []string) (ffpArgs, int) {
 			a.selfTest = true
 		case "--json":
 			a.json = true
-		case "--bin", "--min-covered", "--timeout":
+		case "--bin", "--min-covered", "--min-selectable", "--timeout":
 			v, ni, okv := valueOf(i, eq)
 			if !okv {
 				return a, ffpArgErr(stderr, "argument "+name+": expected one argument")
@@ -849,6 +1115,12 @@ func ffpParseArgs(stdout, stderr io.Writer, argv []string) (ffpArgs, int) {
 					return a, ffpArgErr(stderr, "argument --min-covered: invalid int value: '"+v+"'")
 				}
 				a.minCovered = n
+			case "--min-selectable":
+				n, cerr := strconv.Atoi(strings.TrimSpace(v))
+				if cerr != nil {
+					return a, ffpArgErr(stderr, "argument --min-selectable: invalid int value: '"+v+"'")
+				}
+				a.minSelectable = n
 			case "--timeout":
 				f, ferr := strconv.ParseFloat(strings.TrimSpace(v), 64)
 				if ferr != nil {
@@ -906,7 +1178,7 @@ func checkFieldsFaceParityGateMain(stdout, stderr io.Writer, argv []string) int 
 		timeoutRepr = ffpPyFloatRepr(a.timeout)
 	}
 	timeout := time.Duration(a.timeout * float64(time.Second))
-	rc, res := ffpRun(root, binpath, a.minCovered, timeout, timeoutRepr)
+	rc, res := ffpRun(root, binpath, a.minCovered, timeout, timeoutRepr, a.minSelectable)
 
 	if res.fatal {
 		// py 此档抛未捕 UnicodeDecodeError ⇒ 回溯 + rc=1；本件 rc 同、正文不同（未覆盖面 ③）。
@@ -933,10 +1205,12 @@ func checkFieldsFaceParityGateMain(stdout, stderr io.Writer, argv []string) int 
 		fmt.Fprintln(stdout, "✗ "+res.errorMsg)
 		return rc
 	}
-	fmt.Fprintln(stdout, "== 命令级 `fields` ⟷ 面级 `--json` 键集 对拍（缺口 `Q-178`）==")
+	fmt.Fprintln(stdout, "== 命令级 `fields` ⟷ 面级 `--json` 键集 对拍（缺口 `Q-178`）· 公告 == 可选（`GAP-20261005-45`）==")
 	fmt.Fprintf(stdout, "   声明侧（%s）：%d 条带字段表的命令\n", ffpMainRel, res.declared)
 	fmt.Fprintf(stdout, "   真身侧（现跑 `--json %s` ⇒ `合法字段:` 表）：可对拍 %d 条 · 不可对拍 %d 条\n",
 		ffpBogus, res.covered, len(res.notComparable))
+	fmt.Fprintf(stdout, "   可选侧（逐枚跑登记字段 `--json <f>` · %d 条命令可断言）：可打靶 %d 格 · 不打靶 %d 格 · 棘轮 %d\n",
+		res.covered, res.selCovered, len(res.selNotProbed), res.minSelectable)
 	for _, x := range res.notComparable {
 		fmt.Fprintf(stdout, "   ○ 不给静默：%s —— %s\n", x.path, x.reason)
 	}
@@ -944,16 +1218,35 @@ func checkFieldsFaceParityGateMain(stdout, stderr io.Writer, argv []string) int 
 		fmt.Fprintf(stdout, "   ✗ %s：声明多 %s · 真身多 %s\n",
 			x.path, ffpPyListRepr(x.declaredExtra), ffpPyListRepr(x.runtimeExtra))
 	}
+	for _, x := range res.selRejected {
+		fmt.Fprintf(stdout, "   ✗ 登记却选不出：%s --json %s\n", x.path, x.field)
+	}
+	for _, x := range res.selContra {
+		fmt.Fprintf(stdout, "   ✗ 自相矛盾（同条清单列了却被判未知）：%s --json %s\n", x.path, x.field)
+	}
+	for _, x := range res.selUnreach {
+		fmt.Fprintf(stdout, "   ○ 打靶格够不着：%s --json %s —— %s\n", x.path, x.field, x.reason)
+	}
+	for _, x := range res.selNotProbed {
+		fmt.Fprintf(stdout, "   ○ 不打靶（会起整套门 / 长任务）：%s --json %s —— %s\n", x.path, x.field, x.reason)
+	}
 	fmt.Fprintln(stdout, "== 结论 ==")
 	switch {
 	case len(res.mismatched) > 0:
 		fmt.Fprintf(stdout, "   ⇒ 红（rc=1）：声明集 ⟷ 真身集有逐名差异（%d 条）\n", len(res.mismatched))
+	case len(res.selContra) > 0:
+		fmt.Fprintf(stdout, "   ⇒ 红（rc=1）：有「公告 ≠ 可选」的自相矛盾（%d 格）\n", len(res.selContra))
+	case len(res.selRejected) > 0:
+		fmt.Fprintf(stdout, "   ⇒ 红（rc=1）：有「登记却选不出」的格（%d 格）\n", len(res.selRejected))
 	case res.covered < res.minCovered:
 		fmt.Fprintf(stdout, "   ⇒ 判不了（rc=2）：可对拍 %d < 棘轮 %d（**只许上调** —— 覆盖掉了就是空转）\n",
 			res.covered, res.minCovered)
+	case res.selCovered < res.minSelectable:
+		fmt.Fprintf(stdout, "   ⇒ 判不了（rc=2）：可打靶 %d 格 < 棘轮 %d（**只许上调** —— 覆盖掉了就是空转）\n",
+			res.selCovered, res.minSelectable)
 	default:
-		fmt.Fprintf(stdout, "   ⇒ 绿（rc=0）：%d 条逐名相等 · 可对拍 %d ≥ 棘轮 %d\n",
-			len(res.matched), res.covered, res.minCovered)
+		fmt.Fprintf(stdout, "   ⇒ 绿（rc=0）：%d 条逐名相等 · 可对拍 %d ≥ 棘轮 %d ｜ 公告 == 可选：可打靶 %d 格 ≥ 棘轮 %d\n",
+			len(res.matched), res.covered, res.minCovered, res.selCovered, res.minSelectable)
 	}
 	return rc
 }
@@ -978,6 +1271,33 @@ func ffpJSONItem(res ffpResult) ffpJV {
 			ffpKP{ffpK("reason"), ffpStr(x.reason)},
 		))
 	}
+	// 腿②「公告 == 可选」：拒格 / 自相矛盾格（各 `path`+`field`）· 够不着的格（另带 `reason`）。
+	selCellArr := func(cells []ffpSelCell) ffpJV {
+		out := []ffpJV{}
+		for _, x := range cells {
+			out = append(out, ffpObj(
+				ffpKP{ffpK("path"), ffpStr(x.path)},
+				ffpKP{ffpK("field"), ffpStr(x.field)},
+			))
+		}
+		return ffpJV{kind: 'a', arr: out}
+	}
+	selUnr := []ffpJV{}
+	for _, x := range res.selUnreach {
+		selUnr = append(selUnr, ffpObj(
+			ffpKP{ffpK("path"), ffpStr(x.path)},
+			ffpKP{ffpK("field"), ffpStr(x.field)},
+			ffpKP{ffpK("reason"), ffpStr(x.reason)},
+		))
+	}
+	selNpArr := []ffpJV{}
+	for _, x := range res.selNotProbed {
+		selNpArr = append(selNpArr, ffpObj(
+			ffpKP{ffpK("path"), ffpStr(x.path)},
+			ffpKP{ffpK("field"), ffpStr(x.field)},
+			ffpKP{ffpK("reason"), ffpStr(x.reason)},
+		))
+	}
 	return ffpObj(
 		ffpKP{ffpK("declared"), ffpInt(res.declared)},
 		ffpKP{ffpK("covered"), ffpInt(res.covered)},
@@ -985,5 +1305,12 @@ func ffpJSONItem(res ffpResult) ffpJV {
 		ffpKP{ffpK("matched"), ffpStrArr(res.matched)},
 		ffpKP{ffpK("mismatched"), ffpJV{kind: 'a', arr: items}},
 		ffpKP{ffpK("not_comparable"), ffpJV{kind: 'a', arr: nopes}},
+		ffpKP{ffpK("selectable_covered"), ffpInt(res.selCovered)},
+		ffpKP{ffpK("min_selectable"), ffpInt(res.minSelectable)},
+		ffpKP{ffpK("selectable_matched"), ffpStrArr(res.selMatched)},
+		ffpKP{ffpK("selectable_rejected"), selCellArr(res.selRejected)},
+		ffpKP{ffpK("selectable_contradiction"), selCellArr(res.selContra)},
+		ffpKP{ffpK("selectable_unreachable"), ffpJV{kind: 'a', arr: selUnr}},
+		ffpKP{ffpK("selectable_not_probed"), ffpJV{kind: 'a', arr: selNpArr}},
 	)
 }

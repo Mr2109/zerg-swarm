@@ -991,8 +991,31 @@ func clicDeriveColumns(binz string, argv []string) (map[string]any, string) {
 
 // ── live_verify（§六 R-6）────────────────────────────────────────────────────
 
+// clicResolveBin —— py `resolve_bin(root, bin_path)`（缺口 `GAP-20260926-12`）：
+//
+//	不给（""）⇒ 老口径 `<root>/bin/zerg`（逐字不变）；给了 ⇒ 用**绝对化后**的该路径
+//	（于是「仓外临时仓根 ＋ 本机真制品」两态可用，✗ 不许碰真仓 `bin/`）。
+func clicResolveBin(root, binPath string) string {
+	if binPath != "" {
+		if strings.HasPrefix(binPath, "/") {
+			return binPath
+		}
+		wd, err := os.Getwd()
+		if err != nil {
+			return binPath
+		}
+		return clicPyJoin(wd, binPath)
+	}
+	return clicPyJoin(root, "bin", "zerg")
+}
+
+// clicLiveVerify —— 保原签名（测试件/既有调用点）· 转发 `clicLiveVerifyBin`（binPath=""）。
 func clicLiveVerify(root string, matrixPath *string) (int, []string) {
-	binz := clicPyJoin(root, "bin", "zerg")
+	return clicLiveVerifyBin(root, matrixPath, "")
+}
+
+func clicLiveVerifyBin(root string, matrixPath *string, binPath string) (int, []string) {
+	binz := clicResolveBin(root, binPath)
 	if fi, err := os.Stat(binz); err != nil || fi.IsDir() {
 		return 2, []string{"⛔ 不给结论：找不到 bin/zerg —— 先用 `bash scripts/build/build-all.sh --only-cli` 出新制品"}
 	}
@@ -1261,8 +1284,8 @@ func clicPythonSplitN(s string, maxsplit int) []string {
 	return out
 }
 
-func clicTierCellLive(root string, matrixRaw []byte) (int, []string, []string, map[string]any) {
-	binz := clicPyJoin(root, "bin", "zerg")
+func clicTierCellLive(root string, matrixRaw []byte, binPath string) (int, []string, []string, map[string]any) {
+	binz := clicResolveBin(root, binPath)
 	if fi, err := os.Stat(binz); err != nil || fi.IsDir() {
 		return 2, []string{"⛔ 不给结论：找不到 bin/zerg —— T7 绿格现跑跑不起来（先用 `bash scripts/build/build-all.sh --only-cli` 出**新**制品）"}, nil, map[string]any{}
 	}
@@ -1545,7 +1568,13 @@ func clicWhyValueClaims(cases []map[string]any) ([]string, map[string]any) {
 // ── emit_matrix（增量合并）──────────────────────────────────────────────────
 
 func clicEmitMatrix(root string, outPath *string) (int, []string) {
-	binz := clicPyJoin(root, "bin", "zerg")
+	return clicEmitMatrixOpt(root, outPath, false, "")
+}
+
+// clicEmitMatrixOpt —— py `emit_matrix(root, out_path, dry_run, bin_path)`：
+// dryRun=true ⇒ 只报计划、**不写**矩阵件（缺口 `GAP-20260927-372`）；binPath ⇒ 现跑取数口用的制品。
+func clicEmitMatrixOpt(root string, outPath *string, dryRun bool, binPath string) (int, []string) {
+	binz := clicResolveBin(root, binPath)
 	if fi, err := os.Stat(binz); err != nil || fi.IsDir() {
 		return 2, []string{"⛔ 不给结论：找不到 bin/zerg —— 先用 bash scripts/build/build-all.sh --only-cli 出新制品"}
 	}
@@ -1676,8 +1705,10 @@ func clicEmitMatrix(root string, outPath *string) (int, []string) {
 	if outPath != nil {
 		dst = *outPath
 	}
-	if err := clicWriteJSON(dst, doc); err != nil {
-		return 2, []string{fmt.Sprintf("⛔ 不给结论：矩阵写不出去（%s）", err)}
+	if !dryRun {
+		if err := clicWriteJSON(dst, doc); err != nil {
+			return 2, []string{fmt.Sprintf("⛔ 不给结论：矩阵写不出去（%s）", err)}
+		}
 	}
 	have := map[string]bool{}
 	for _, c := range cases {
@@ -1700,8 +1731,12 @@ func clicEmitMatrix(root string, outPath *string) (int, []string) {
 			nBlank++
 		}
 	}
+	mline := fmt.Sprintf("矩阵已**增量合并**（不是整表重写）：%s", dst)
+	if dryRun {
+		mline = fmt.Sprintf("矩阵**干跑 · 未落盘**（--dry-run · 缺口 GAP-20260927-372）：计划写 %s", dst)
+	}
 	lines := []string{
-		fmt.Sprintf("矩阵已**增量合并**（不是整表重写）：%s", dst),
+		mline,
 		fmt.Sprintf("命令树 %d 条 · 格 %d → %d（既有 %d 格逐字保留 · 其中派生列刷新 %d 格 · 新命令追加 %d 格）",
 			len(treePaths), len(oldCases), len(cases), kept, refreshed, added),
 		fmt.Sprintf("有格的命令 %d 条 · 空白 %d 条 · 豁免 %d 条", len(have), nBlank, len(clicExemptionsOf(old))),
@@ -1718,8 +1753,8 @@ func clicEmitMatrix(root string, outPath *string) (int, []string) {
 	if len(oldCases) == 0 {
 		lines = append(lines, "⚠ 既有矩阵为空 ⇒ 本次是按候选面**新建**（不是合并）：手写格无处可保，且命令树里没有 must-fail 新面的命令会成空白（T1/T5 会判）")
 	}
-	if outPath == nil {
-		vrc, vlines := clicLiveVerify(root, nil)
+	if outPath == nil && !dryRun {
+		vrc, vlines := clicLiveVerifyBin(root, nil, binPath)
 		lines = append(lines, vlines...)
 		if vrc != 0 {
 			lines = append(lines, fmt.Sprintf("⚠ 重冻后的**新账**与现跑对不上（见上）—— 账与盘不一致就是「幽灵格」；要判红请单跑 `--verify-live`（本次 rc=%d）", vrc))
@@ -1917,6 +1952,11 @@ func clicCopyMap(m map[string]any) map[string]any {
 // ── check（主体）─────────────────────────────────────────────────────────────
 
 func clicCheck(root string, noRuntime bool) (int, []string) {
+	return clicCheckBin(root, noRuntime, "")
+}
+
+// clicCheckBin —— binPath ≠ "" ⇒ 现跑取数口用该制品（py `check(root, no_runtime, bin_path)`）。
+func clicCheckBin(root string, noRuntime bool, binPath string) (int, []string) {
 	var errs []string
 
 	tree := clicParseTree(root)
@@ -2184,7 +2224,7 @@ func clicCheck(root string, noRuntime bool) (int, []string) {
 	var t7Info []string
 	if !noRuntime {
 		raw, _ := clicReadFile(clicPyJoin(root, clicMatrixRel))
-		rc7, head7, bad7, stat7 := clicTierCellLive(root, []byte(raw))
+		rc7, head7, bad7, stat7 := clicTierCellLive(root, []byte(raw), binPath)
 		if rc7 == 2 {
 			return 2, head7
 		}
@@ -2760,17 +2800,21 @@ func clicRefuseJSON(argv []string, stderr io.Writer) *int {
 
 type clicArgs struct {
 	root       string
+	bin        string
+	binSet     bool
 	selfTest   bool
 	noRuntime  bool
 	emitMatrix *string
+	dryRun     bool
 	verifyLive bool
 }
 
 const clicProg = "check-cli-contract.py"
 
 func clicUsage() string {
-	return "usage: " + clicProg + " [-h] [--self-test] [--no-runtime]\n" +
-		"                             [--emit-matrix [PATH]] [--verify-live]\n" +
+	return "usage: " + clicProg + " [-h] [--bin PATH] [--self-test] [--no-runtime]\n" +
+		"                             [--emit-matrix [PATH]] [--dry-run]\n" +
+		"                             [--verify-live]\n" +
 		"                             [root]\n"
 }
 
@@ -2781,9 +2825,11 @@ func clicHelp() string {
 		"\n" +
 		"options:\n" +
 		"  -h, --help            show this help message and exit\n" +
+		"  --bin PATH            缺口 GAP-20260926-12：指定制品路径。不给 = <root>/bin/zerg；给了 = 用该路径（绝对化后）—— 仓外临时仓根复用本机真制品，免造 bin/\n" +
 		"  --self-test\n" +
 		"  --no-runtime          **只给夹具用**：跳过 T4 的 go test（真目标不许带这个开关）\n" +
 		"  --emit-matrix [PATH]  按命令树 + 现跑 bin/zerg **重生成** must-fail 矩阵（先用 `bash scripts/build/build-all.sh --only-cli` 出新制品）\n" +
+		"  --dry-run             **只判定 · 不落任何产物**（缺口 GAP-20260927-372）：与 --emit-matrix 同给时只报将要合并的增量、**不写**矩阵件；不给 --emit-matrix 时 = 只读判定（同裸跑）\n" +
 		"  --verify-live         §六 R-6：拿冻结的矩阵逐格现跑同一 argv（每格两遍）、核 rc 与 stdout 字节数 —— 抓「多余格 / 幽灵格」（0 全合 / 1 mismatch / 2 不给结论）\n"
 }
 
@@ -2808,6 +2854,19 @@ func clicParseArgs(argv []string, stdout, stderr io.Writer) (clicArgs, *int) {
 			a.selfTest = true
 		case x == "--no-runtime":
 			a.noRuntime = true
+		case x == "--dry-run":
+			a.dryRun = true
+		case x == "--bin":
+			if i+1 < len(argv) && !strings.HasPrefix(argv[i+1], "-") {
+				a.bin = argv[i+1]
+				a.binSet = true
+				i++
+			} else {
+				return fail("argument --bin: expected one argument")
+			}
+		case strings.HasPrefix(x, "--bin="):
+			a.bin = strings.TrimPrefix(x, "--bin=")
+			a.binSet = true
 		case x == "--verify-live":
 			a.verifyLive = true
 		case x == "--emit-matrix":
@@ -2855,7 +2914,7 @@ func cliContractGateMain(stdout, stderr io.Writer, argv []string) int {
 		return 2
 	}
 	if a.verifyLive {
-		rc, lines := clicLiveVerify(root, nil)
+		rc, lines := clicLiveVerifyBin(root, nil, a.bin)
 		fmt.Fprintf(stdout, "门⑪ · §六 `R-6` 逐格回放（仓根 %s）\n", root)
 		for _, l := range lines {
 			fmt.Fprintf(stdout, "  %s\n", l)
@@ -2878,13 +2937,13 @@ func cliContractGateMain(stdout, stderr io.Writer, argv []string) int {
 			v := *a.emitMatrix
 			op = &v
 		}
-		rc, lines := clicEmitMatrix(root, op)
+		rc, lines := clicEmitMatrixOpt(root, op, a.dryRun, a.bin)
 		for _, l := range lines {
 			fmt.Fprintf(stdout, "  %s\n", l)
 		}
 		return rc
 	}
-	rc, lines := clicCheck(root, a.noRuntime)
+	rc, lines := clicCheckBin(root, a.noRuntime, a.bin)
 	fmt.Fprintf(stdout, "门⑪ 命令面契约（§九 M17 T1–T6）· 仓根 %s\n", root)
 	for _, l := range lines {
 		fmt.Fprintf(stdout, "  %s\n", l)

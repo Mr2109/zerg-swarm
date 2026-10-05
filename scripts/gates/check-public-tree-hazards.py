@@ -37,6 +37,12 @@
     本就留着发布机制自己的脚本与运行期日志 ⇒ 默认调用**恒红**，真红与「判错了树」在机器上同形。
   · 发布档要先过**前置判据**（`tree_class`：单提交 + 快照提交信息）；判不出 ⇒ `rc=2`。
 
+登记 / 豁免面（缺口 `GAP-20260926-155`）:
+  · 审计档（`--all`）另把命中分成「**在册（已判为发布面排除）**」与「未登记（真命中）」两栏
+    —— 在册项**照旧打印**、不计入判红；登记表 = `EXCLUDE_REGISTRY`（本件内 · 默认空 ⇒ 旧行为）。
+  · **发布档绝不因本表放行**：产物树里出现危险物一律判红（「发布面排除」的件若进产物树，
+    正是排除机制失效的真缺陷）。
+
 模式语义（重要）：
   · **发布闸用 HEAD**（或指定 commit）—— 判的是「即将发布的这棵树」里有没有危险物；
     危险物一旦进了末树，闸即红，发布被拦在推送之前。
@@ -90,6 +96,22 @@ TOKEN_FORM = [
 PATH_RES = [(re.compile(rx), why) for rx, why in DANGER_PATH]
 FORM_RES = [(re.compile(rx), why) for rx, why in TOKEN_FORM]
 
+# ── 登记 / 豁免面（缺口 `GAP-20260926-155`）─────────────────────────────
+#   病（2026-09-26 定性笔 ⑪①）：本门**无登记面** —— 审计档（`--all`）扫全史对象时，会命中
+#     一批「**已判为发布面排除**的件」（经发布机制结构性排除、不进产物树的私有开发件：
+#     `scripts/build/publish-public.sh` 的 `EXCLUDES` · `publish/mirror-public-lib.py` 的
+#     `DROP_EXACT` · `scripts/公开标记.tsv` 三处各自维护）。本门当时只能把这批命中与真隐患
+#     **同形**报出，靠人逐条去读那三张表才能闭环 ⇒ 机器上分不出「在册排除」与「真隐患」。
+#   治法（照 `check-private-path-forms.py` 的 `NON_FORM_*` 登记腿同范式）：本门自带一张
+#     **登记表** —— 每条 = (正则, 理由)，命中者进 `在册[]`（**照旧打印、不静默**）、不计入判红；
+#     **未登记的命中照旧判红**（登记不是整体静音）。表**默认空 ⇒ 与旧行为逐字同形**。
+#   ★★ 只在**审计档**（`--all`）生效：发布档（产物树）**绝不**因本表放行 —— 「已判为发布面
+#     排除的件」若出现在产物树里，正是排除机制失效的真缺陷，一律判红（与 `tree_class` 前置
+#     判据同向：发布面只认产物树自己）。
+#   ★ 条目卫生：**零命中即死条目**（下次审计档跑若某条正则 0 命中 ⇒ 应删），登记时写清
+#     理由 + 它在三张排除表里的哪一处被排除。
+EXCLUDE_REGISTRY = []   # 例：[(r"^scripts/build/publish-preflight\.sh$", "发布脚本（发布面排除 · EXCLUDES）"), …]
+
 # 拼接构造自测串，避免本文件出现完整可命中的形态
 T = "x3gw-"
 B = "Bearer "
@@ -136,6 +158,32 @@ def probe_product_tree(gitdir):
     cnt = subprocess.run(["git", "-C", gitdir, "rev-list", "--count", "HEAD"],
                          capture_output=True, text=True).stdout.strip()
     return tree_class(int(cnt) if cnt.isdigit() else None, subject, body)
+
+
+# ── 登记面函数（缺口 `GAP-20260926-155`）────────────────────────────────
+def registry_hit(path, registry=None):
+    """⇒ 命中的登记理由串；无命中 ⇒ `None`。
+    **纯函数**（`registry` 可注入 ⇒ 自测喂夹具登记表）；默认读本件真表 `EXCLUDE_REGISTRY`。"""
+    regs = EXCLUDE_REGISTRY if registry is None else registry
+    for rx, why in regs:
+        if re.search(rx, path):
+            return why
+    return None
+
+
+def partition_registered(hits, registry=None):
+    """把命中列表拆成 `(在册（发布面排除）, 未登记（真命中）)`。
+    在册项 = `(path, 原命中理由, 登记理由)`；未登记项逐字照旧（`(path, 理由)`）。
+    ★ **只在审计档**（`--all`）用（见 `EXCLUDE_REGISTRY` 段注释：发布档绝不豁免）。
+    默认空登记表 ⇒ `( [], hits )`（与旧行为逐字同形）。"""
+    inreg, real = [], []
+    for item in hits:
+        why = registry_hit(item[0], registry)
+        if why is None:
+            real.append(item)
+        else:
+            inreg.append((item[0], item[1], why))
+    return inreg, real
 
 
 def selftest():
@@ -198,6 +246,38 @@ def selftest():
         ok = (got == want)
         bad += (not ok)
         print("   %s want=%-5s got=%-5s | %s" % ("✓" if ok else "✗", want, got, why))
+    n_extra = 0
+    # ── ★ 登记 / 豁免面自检（缺口 `GAP-20260926-155`）：成对负控 ──
+    #   病：本门无登记面 ⇒「已判为发布面排除的件」只能靠人读三张排除表才能闭环，机器上分不出
+    #   「在册排除」与「真隐患」。治法 = 登记表 `EXCLUDE_REGISTRY`（默认空 ⇒ 与旧行为逐字同形）
+    #   + 只读分区腿 `partition_registered()`。本组格钉死它 **真在起作用、且不当整体静音**。
+    _reg_fixture = [
+        (r"^scripts/gates/check-public-tree-hazards\.py$", "本门自身（发布面排除）"),
+        (r"^scripts/build/publish-preflight\.sh$", "发布脚本（发布面排除）"),
+    ]
+    cases_reg = [
+        ("scripts/gates/check-public-tree-hazards.py", True, "本门自身（发布面排除）",
+         "在册正控：登记表命中 ⇒ 审计档分进在册"),
+        ("scripts/build/publish-preflight.sh", True, "发布脚本（发布面排除）", "在册正控二：第二条"),
+        ("scripts/gates/check-public-tree-private.py", False, None,
+         "负控：未登记的件**不**被豁免（登记不是整体静音）"),
+        ("scripts/gates/check-public-tree-hazards.py.bak", False, None,
+         "锚定负控：近似名不误中（正则 `$` 锚）"),
+    ]
+    for path, want_hit, want_why, why in cases_reg:
+        got = registry_hit(path, _reg_fixture)
+        ok = ((got is not None) == want_hit) and (got == want_why)
+        bad += (not ok)
+        n_extra += 1
+        print("   %s want=%-5s got=%-5s | %s" % ("✓" if ok else "✗", want_hit, got, why))
+    # 空表不变式：**默认空登记表 ⇒ 一个都不豁免**（与旧行为逐字同形 · 负控）
+    _empty_inreg, _empty_real = partition_registered(
+        [("a/b.jsonl", "日志"), ("x.log", "日志")], [])
+    _empty_ok = (_empty_inreg == [] and len(_empty_real) == 2)
+    bad += (not _empty_ok)
+    n_extra += 1
+    print("   %s %-32s | %s" % ("✓" if _empty_ok else "✗", "empty-registry-noop",
+                                "空登记表 ⇒ 0 项在册、原命中全数保留（与旧行为同形）"))
     # ── ★ 回归自测格（缺口 `GAP-20260927-216` · 2026-09-27 补）：**非 ASCII（CJK）件名**不许失明 ──
     #   病灶（今天已修，本格是牙齿）：`git ls-tree --name-only` 默认 `core.quotePath=true`，把
     #   非 ASCII 件名输出成 `"子目录/\344\270\255…"`（**首尾双引号 + 反斜杠八进制**）⇒ 拿它去
@@ -209,7 +289,6 @@ def selftest():
     import os as _os
     import shutil as _shutil
     import tempfile as _tempfile
-    n_extra = 0
     _fx_root = _tempfile.mkdtemp(prefix="hazards-selftest-cjk-")
     _fx_repo = _os.path.join(_fx_root, "repo")
     _cjk_rel = _os.path.join("子目录", "中文名件.md")
@@ -306,9 +385,27 @@ def selftest():
             bad += (not _ok)
             n_extra += 1
             print("   %s %-32s | %s" % ("✓" if _ok else "✗", "scan-forms-catches-hazard", _why))
+        # 格⑤（GAP-20260926-155 登记面 · 成对负控）：**真扫描输出**上，登记表把命中拆成
+        #      「在册 / 真命中」；并证明**默认空表 ⇒ 一个都不豁免**（发布档不受影响另见 `__main__`）。
+        _reg_fx = [(r"^\.zerg/logs/events\.jsonl$", "夹具：判为发布面排除")]
+        _inreg, _real = partition_registered(_ph, _reg_fx)
+        _noex, _noex_real = partition_registered(_ph, [])
+        _case5 = [
+            (len(_inreg) >= 1 and all(p == _danger_path for p, _, _ in _inreg),
+             "登记表命中真扫描输出 ⇒ 拆进在册（现读 %d 项 · %r）"
+             % (len(_inreg), [p for p, _, _ in _inreg])),
+            (_real == [], "登记的那件不再进真命中（现读 %d 项在册 / %d 项命中）"
+             % (len(_inreg), len(_real))),
+            (_noex == [] and len(_noex_real) == len(_ph),
+             "**默认空登记表 ⇒ 0 项豁免**（负控 · 与旧行为逐字同形）"),
+        ]
+        for _ok, _why in _case5:
+            bad += (not _ok)
+            n_extra += 1
+            print("   %s %-32s | %s" % ("✓" if _ok else "✗", "registry-ledger-teeth", _why))
     except (OSError, subprocess.SubprocessError) as exc:
         # 建不起夹具（无 git / 临时目录不可写）⇒ **红**：缺语料不许静默绿
-        for _lbl in ("scan-paths-catches-hazard", "scan-forms-catches-hazard"):
+        for _lbl in ("scan-paths-catches-hazard", "scan-forms-catches-hazard", "registry-ledger-teeth"):
             bad += 1
             n_extra += 1
             print("   ✗ %-32s | 夹具建不起来（%s）⇒ 不许静默绿" % (_lbl, exc))
@@ -440,10 +537,18 @@ if __name__ == "__main__":
         print("⛔ 不给结论（rc=2）：域取不到（`git rev-list` 非零退出）——"
               "「取不到」与「零命中」不许同形（GAP-20260927-114）", file=sys.stderr)
         sys.exit(2)
+    inreg = []
+    if commits_all:
+        # 登记 / 豁免面（缺口 `GAP-20260926-155`）：**只审计档** —— 把「已判为发布面排除的件」
+        # 从判红面分出在册（照旧打印、不静默）；发布档绝不因本表放行（见 `EXCLUDE_REGISTRY` 段）。
+        _ir_p, ph = partition_registered(ph)
+        _ir_f, fh = partition_registered(fh)
+        inreg = _ir_p + _ir_f
     total = len(ph) + len(fh)
 
     if total == 0:
-        print("结果: 通过——未发现危险路径与令牌形态（扫 %s mode=%s）" % (target, mode))
+        _tail = ("（登记面另有 %d 项在册 · 发布面排除）" % len(inreg)) if inreg else ""
+        print("结果: 通过——未发现危险路径与令牌形态（扫 %s mode=%s）%s" % (target, mode, _tail))
         sys.exit(0)
 
     print("结果: 不通过——危险路径 %d 项、令牌形态 %d 项（%s mode=%s）：" % (len(ph), len(fh), target, mode))
@@ -451,4 +556,8 @@ if __name__ == "__main__":
         print("   路径 %s   ← %s" % (p, why))
     for p, why in fh[:15]:
         print("   形态 %s   ← %s" % (p, why))
+    if inreg:
+        print("登记面（审计档 · 已判为发布面排除的件）：%d 项在册（不判红 · 照旧打印）" % len(inreg))
+        for p, why, regwhy in inreg[:15]:
+            print("   在册 %s   ← 命中「%s」· 在册理由：%s" % (p, why, regwhy))
     sys.exit(1)

@@ -60,6 +60,10 @@ func TestCheckTokenArgvGate_NegCases(t *testing.T) {
 		t.Run("负控_"+c.tag+"_"+c.name, func(t *testing.T) {
 			sub := filepath.Join(t.TempDir(), "fx")
 			ctaTestWrite(t, sub, c.fn, c.body)
+			if strings.HasSuffix(c.fn, ".md") {
+				// `.md` 面已参与判红（GAP-20260927-33），但 `n_face` 只认脚本/单元面 ⇒ 补占位脚本免停 rc=2。
+				ctaTestWrite(t, sub, "_face.sh", "#!/usr/bin/env bash\n")
+			}
 			rc, out, _ := ctaTestRun("--root", sub)
 			if rc != 1 {
 				t.Fatalf("负控未判红：rc=%d want 1\n%s", rc, out)
