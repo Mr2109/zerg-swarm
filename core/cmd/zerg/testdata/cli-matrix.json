@@ -8409,6 +8409,187 @@
    "want_rc": 2,
    "want_stdout_bytes": 274,
    "why": "没有字段表的说明面 ⇒ 2（与 K2 甲档归一后的 2 同码、**错因不同**：这里根本没有字段表）"
+  },
+  {
+   "argv": [
+    "gate",
+    "run",
+    "--step",
+    "gofmt -l core",
+    "--",
+    "--apply"
+   ],
+   "command": "gate run",
+   "id": "gate/run#-- 之后写面旗标仍拒执（--apply · 不 exec）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "缺口 `GAP-20260927-276`：`--` 之后逐枚核**只读白名单**（`gateRunStepReadonlyFlags` · 逐字列举 · 不得通配）；写面/危险档旗标（`--apply`）不在表内 ⇒ 仍 rc=2 逐字拒执（`✗ 非只读旗标: --apply`）· **被包的脚本一次都不 exec**（判在 `gateRunStepPassthroughFlags`，早于命令串构造与 exec）· 默认档一个字节不改（无 `--` 的未知旗标照旧 rc=2）· stdout 0 字节（判词走 stderr）。★ 读数口径：本格 `want_rc` / `want_stdout_bytes` 由**现读源码**派生（`gate run` 本单禁跑）—— 门⑪ `R-6` 逐格现跑回放与 `--emit-matrix` 归**收口重编窗口**。"
+  },
+  {
+   "argv": [
+    "gap",
+    "project",
+    "--nosuchflag-zz"
+   ],
+   "command": "gap project",
+   "id": "gap/project#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（读数由仓外现构建制品现跑两遍派生：rc=2 · stdout 0 字节）"
+  },
+  {
+   "argv": [
+    "gap",
+    "project",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "gap project",
+   "id": "gap/project#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判（读数现跑两遍：rc=2 · stdout 0 字节）"
+  },
+  {
+   "argv": [
+    "gap",
+    "project",
+    "x",
+    "--evidence",
+    "e"
+   ],
+   "command": "gap project",
+   "id": "gap/project#缺 --yes（D2）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）· 计划件走 stderr（读数现跑两遍：rc=2 · stdout 0 字节）"
+  },
+  {
+   "argv": [
+    "gap",
+    "project",
+    "x"
+   ],
+   "command": "gap project",
+   "id": "gap/project#缺 --evidence（必填）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--evidence` **必填**（改态留证 · 缺口 GAP-20261005-61 设计稿 §2 乙案）：缺它 ⇒ 用法错 2 并逐字问证据（读数现跑两遍：rc=2 · stdout 0 字节）"
+  },
+  {
+   "argv": [
+    "gap",
+    "project",
+    "x",
+    "--state",
+    "已解",
+    "--evidence",
+    "e"
+   ],
+   "command": "gap project",
+   "id": "gap/project#收到 --state（本动作不收）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "本动作**不收 `--state`**（目标态由动作名唯一确定 · 甲案「扩 set-state 闭集」已否）：收到即拒 2（读数现跑两遍：rc=2 · stdout 0 字节）"
+  },
+  {
+   "argv": [
+    "gap",
+    "project",
+    "x",
+    "--evidence",
+    "e",
+    "--dry-run",
+    "--yes"
+   ],
+   "command": "gap project",
+   "id": "gap/project#--dry-run 与 --yes 同给",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go`）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数"
+  },
+  {
+   "argv": [
+    "gap",
+    "unproject",
+    "--nosuchflag-zz"
+   ],
+   "command": "gap unproject",
+   "id": "gap/unproject#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标（读数由仓外现构建制品现跑两遍派生：rc=2 · stdout 0 字节）"
+  },
+  {
+   "argv": [
+    "gap",
+    "unproject",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "gap unproject",
+   "id": "gap/unproject#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判（读数现跑两遍：rc=2 · stdout 0 字节）"
+  },
+  {
+   "argv": [
+    "gap",
+    "unproject",
+    "x",
+    "--evidence",
+    "e"
+   ],
+   "command": "gap unproject",
+   "id": "gap/unproject#缺 --yes（D2）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "D2 缺 --yes ⇒ fail-closed 2（§九 M3 C2）· 计划件走 stderr（读数现跑两遍：rc=2 · stdout 0 字节）"
+  },
+  {
+   "argv": [
+    "gap",
+    "unproject",
+    "x"
+   ],
+   "command": "gap unproject",
+   "id": "gap/unproject#缺 --evidence（必填）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "`--evidence` **必填**（改态留证 · 缺口 GAP-20261005-61 设计稿 §2 乙案）：缺它 ⇒ 用法错 2 并逐字问证据（读数现跑两遍：rc=2 · stdout 0 字节）"
+  },
+  {
+   "argv": [
+    "gap",
+    "unproject",
+    "x",
+    "--state",
+    "已解",
+    "--evidence",
+    "e"
+   ],
+   "command": "gap unproject",
+   "id": "gap/unproject#收到 --state（本动作不收）",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "本动作**不收 `--state`**（目标态由动作名唯一确定 · 甲案「扩 set-state 闭集」已否）：收到即拒 2（读数现跑两遍：rc=2 · stdout 0 字节）"
+  },
+  {
+   "argv": [
+    "gap",
+    "unproject",
+    "x",
+    "--evidence",
+    "e",
+    "--dry-run",
+    "--yes"
+   ],
+   "command": "gap unproject",
+   "id": "gap/unproject#--dry-run 与 --yes 同给",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go`）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数"
   }
  ],
  "tiers": {
