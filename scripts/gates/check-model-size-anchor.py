@@ -39,8 +39,10 @@ GAP-20260927-178 / -186 / -193：`gateway/fleet.yaml` 的每条模型候选可�
     E①' 反向：真源 `fleet_ids` 必落在 fleet.yaml 模型册里（不引不存在的行）。
     E② **棘轮**：**带 registry_id 的行数不得低于** `REGISTRY_WIRING_RATCHET`
         （接线只许升不许降 —— 现读只有一部分行接了线，一上硬判「全接」必红）。
-  ★ 棘轮现读（2026-10-05 逐字）= **5**：`/api/fleet/models` = 30 行（逐候选展开），其中带
-    `registry_id` 的 5 行 = gemma-4-26B×2 + example-26b-review×1 + example-35b-v2×2。
+  ★ 棘轮现读（2026-10-05 逐字 · 收口重编+重启主控后）= **17**：`/api/fleet/models` = 30 行（逐候选展开），
+    其中带 `registry_id` 的 17 行 = 真源 7 条 entries 逐条展开：gemma-4-26B×2 + example-26b-review×1 +
+    example-35b-v2×2 + example-35b-v2-1.5-9b×3 + example-35b×2 + Qwen3.8-27B×2 + Ternary-Bonsai-2-27B×3 +
+    Nemotron-3.5-Lightning×2（原 5 行 ⇒ 收口重编+重启主控后接线上 live）。
   ★ registry 记录目录读不到 ⇒ E① **判不了**（不给结论）· E② 仍判（棘轮只吃 fleet.yaml+真源）。
   ★ 本门**只读**：读 fleet.yaml / 真源 json / manifests 目录列举 —— 不起子进程、不写盘、不联网。
 
@@ -79,10 +81,14 @@ DEFAULT_FLEET = os.path.join(REPO_ROOT, "gateway", "fleet.yaml")
 DEFAULT_IDMAP = os.path.join(REPO_ROOT, "core", "internal", "contract", "model-id-map.json")
 
 # 判据 E② 的棘轮：带 registry_id 的 fleet 行数**下限**（只许升不许降）。
-# ★ 逐字现读（2026-10-05）= 5（/api/fleet/models 30 行里带 registry_id 的 5 行）。
+# ★ 逐字现读（2026-10-05 · 收口重编+重启主控后）= 17（/api/fleet/models 30 行里带
+#   registry_id 的 17 行 = 真源 model-id-map.json 7 条 entries 逐条展开：gemma-4-26B×2 +
+#   example-26b-review×1 + example-35b-v2×2 + example-35b-v2-1.5-9b×3 + example-35b×2 +
+#   Qwen3.8-27B×2 + Ternary-Bonsai-2-27B×3 + Nemotron-3.5-Lightning×2）。
 #   现读只有一部分行接了线 ⇒ 一上来就要求「全行必带 registry_id」必红；故取现读数当棘轮，
 #   只机检「不得回退」。真源新增条目令行数上升时，须同批上调本值（写明是哪一批）。
-REGISTRY_WIRING_RATCHET = 5
+#   ★ 上调沿革：5（DEV-1627 首版）→ 17（DEV-1663/1664 名册接线落 live 后 · GAP-20261005-67）。
+REGISTRY_WIRING_RATCHET = 17
 
 
 # ── 极简 YAML 读取（只解 models: 段的 flow-map / block-map，不引第三方库）──
@@ -361,7 +367,7 @@ LIST_RULES = """check-model-size-anchor.py 判据 / 路径来源 / 退码
   C  本机读不到的锚 ⇒ 只报告「跳过」（不给结论、不算红）
   D  无锚 ⇒ rc=2（空转假覆盖）；有锚但本机一条都核不到 ⇒ rc=2
   E  fleet 行 ⟷ registry 记录接线（棘轮）：① 已带 registry_id 的行 ⇒ registry_id ∈ 记录 id 集（硬判）；
-     ①' 真源 fleet_ids ⊆ fleet.yaml 模型册；② 带 registry_id 的行数 ≥ 棘轮（现读 5 · 只许升不许降）
+     ①' 真源 fleet_ids ⊆ fleet.yaml 模型册；② 带 registry_id 的行数 ≥ 棘轮（现读 17 · 只许升不许降）
   路径：gateway/fleet.yaml（--fleet 可覆盖）· core/internal/contract/model-id-map.json（--idmap）·
        ~/.zerg/models/manifests（--registry-dir 或 ZERG_MODELS_DIR）
   退码：0 本机层全对＋接线全过 · 1 有漂移/非整数锚/接线缺陷 · 2 不给结论
@@ -405,7 +411,7 @@ def _wiring_self_test(fails):
     registry_dir_note = ""
 
     # ── 主入口层（进程退码）：把两条成对负控钉在 main() 真吃的那个退码上 ──
-    #    ★ 夹具造 5 行都映射到 R1 且锚都对 ⇒ 正控 anchor_rc=0、E①过、E②过(5==棘轮) ⇒ 进程 rc=0；
+    #    ★ 夹具造 17 行都映射到 R1 且锚都对 ⇒ 正控 anchor_rc=0、E①过、E②过(17==棘轮) ⇒ 进程 rc=0；
     #      再由「假 registry_id / 行数少 1」两条负控验证 leg_rc 真被 main() 并进进程退码。
     import io as _io
     import contextlib as _ctx
@@ -441,9 +447,9 @@ def _wiring_self_test(fails):
                 fails.append("proc/%s：期望进程 rc=%d 实得 rc=%d" % (label, want, rc))
             print("  [%s] proc/%-20s 期望 rc=%d 实得 rc=%d" % (status, label, want, rc))
 
-        proc("good(5行=棘轮)", 5, "R1", 0)
-        proc("false-registry-id", 5, "R2", 1)   # 负控①：假 registry_id ⇒ **进程**必红
-        proc("ratchet-short(4<5)", 4, "R1", 1)  # 负控②：棘轮不变、行数少 1 ⇒ **进程**必红
+        proc("good(17行=棘轮)", 17, "R1", 0)
+        proc("false-registry-id", 17, "R2", 1)   # 负控①：假 registry_id ⇒ **进程**必红
+        proc("ratchet-short(16<17)", 16, "R1", 1)  # 负控②：棘轮不变、行数少 1 ⇒ **进程**必红
 
 
 def self_test():
