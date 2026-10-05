@@ -21,6 +21,7 @@
 用法：
   python3 scripts/gates/check-doc-freshness.py --list-rules            # 规则表 + 全部名单（白名单/排除/引用域/夹具/拒绝域）
   python3 scripts/gates/check-doc-freshness.py --self-test             # 好件/坏件/缺件 三格 × 四条 + T-40 计数对拍（断言条数见自检末行现读，本注不写死）
+  python3 scripts/gates/check-doc-freshness.py --list-items            # 机器面：逐条 TSV（gate/file/line/target/kind/domain/detail）
   python3 scripts/gates/check-doc-freshness.py d1 [d2 d3 d4] [--scope main|wide|mirror|devdocs] [--report /tmp/r.json]
   python3 scripts/gates/check-doc-freshness.py all                     # 四条都跑；退出码取最严重（1 优先于 2）
 
@@ -36,8 +37,10 @@ D3① · `--scope devdocs`（2026-09-21 · 换根）
 硬纪律（本路）：**只读**（不写仓内任何路径）· **门禁挂接见 `precommit-gates.sh`**（本注不再写「不挂」，2026-10-04 现读已挂）· 重建产物一律落 `$TMPDIR`。
 """
 import argparse
+import contextlib
 import datetime
 import fnmatch
+import io
 import json
 import os
 import posixpath
@@ -363,6 +366,27 @@ def allowlist_errors(cfg):
         if not (e.get("date") or "").strip():
             errs.append("allowlist[%d] 缺 date" % i)
     return errs
+
+
+def allowlist_dead_entries(cfg, tree):
+    """豁免表「登记过期」自检（缺口 GAP-20260926-136 · want `zerg doc-freshness-allowlist-dead-entry`）。
+
+    一条豁免要么**宿主不在盘**（`file_glob` 在解析域里零命中），要么**键出现 0 次**
+    （`target` 这个精确 token 在宿主正文里逐字找不到）⇒ 它今天一个东西都没豁免到
+    （死条目留着 = 假覆盖）⇒ **必须报出**（只报 · 不改判据 · 不进退码 · 不许静默）。
+    """
+    out = []
+    for i, e in enumerate(cfg.get("allowlist", [])):
+        glob = e.get("file_glob", "*")
+        hosts = [f for f in tree.files if fnmatch.fnmatch(f, glob)]
+        if not hosts:
+            out.append((i, e, "宿主不在盘（file_glob %r 在解析域零命中）" % glob))
+            continue
+        tgt = e.get("target", "")
+        if tgt and not any(tgt in tree.text(h) for h in hosts):
+            out.append((i, e, "键出现 0 次（target %r 在宿主 %s 里找不到）"
+                        % (tgt, "、".join(hosts[:3]))))
+    return out
 
 
 # ─────────────────────────── 链接抽取（D1/D3 共用） ───────────────────────────
@@ -1384,6 +1408,23 @@ def write_report(path, results, args, elapsed_total, tree):
     print("\n报告落盘：%s（%d 字节）" % (path, os.path.getsize(path)))
 
 
+def emit_list_items(results):
+    """逐条目机器面（缺口 GAP-20260926-178 · want `zerg docfreshness-no-machine-face`）。
+
+    TSV：表头 `gate\tfile\tline\ttarget\tkind\tdomain\tdetail` 一行 + 逐条一行
+    （确定性排序）。与人读面**同源**（都读 `r.findings`），✗ 不另造一份。返回条目数。
+    """
+    print("gate\tfile\tline\ttarget\tkind\tdomain\tdetail")
+    rows = []
+    for g, (r, _el) in results.items():
+        for f in r.findings:
+            rows.append((g, f["file"], f["line"], f["target"], f["kind"], f["domain"], f["detail"]))
+    rows.sort(key=lambda t: tuple(str(x) for x in t))
+    for row in rows:
+        print("\t".join(str(x).replace("\t", " ").replace("\n", " ") for x in row))
+    return len(rows)
+
+
 # ─────────────────────────── --list-rules ───────────────────────────
 
 def cmd_list_rules(cfg, tree, args):
@@ -1432,6 +1473,10 @@ def cmd_list_rules(cfg, tree, args):
     for e in al:
         print("  · [%s] %s  ↦ 目标 %r\n      理由：%s  · 登记日：%s"
               % (e.get("gate", "*"), e.get("file_glob", "*"), e.get("target", ""), e.get("reason", ""), e.get("date", "")))
+    if tree is not None and os.path.abspath(tree.repo) == os.path.abspath(tree.main_repo):
+        _dead = allowlist_dead_entries(cfg, tree)
+        print("  · 登记过期（dead entry · 缺口 GAP-20260926-136）：%d 条%s"
+              % (len(_dead), ("  ← " + "、".join("allowlist[%d]" % d[0] for d in _dead)) if _dead else ""))
     print("\n【拒绝域（明确判不了 / 不判的）】")
     for line in cfg.get("refuse_domain", []):
         print("  · %s" % line)
@@ -1751,6 +1796,34 @@ def cmd_self_test(args):
     check("负控：两个根都找不到的脚本 ⇒ 仍报「缺脚本」",
           any("缺脚本" in str(k) for k in res2.counts), dict(res2.counts))
 
+    # ---------- 豁免表「登记过期」（缺口 GAP-20260926-136）----------
+    print("[豁免表] 登记过期（dead entry）自检")
+    ral = os.path.join(tmp, "allowdead")
+    _mkroot({"docs/a.md": "见 `字不丢`。\n"}, ral)
+    cal = base_cfg(ral)
+    cal["allowlist"] = [
+        {"gate": "d1", "file_glob": "docs/nope.md", "target": "x", "reason": "r", "date": "2026-01-01"},
+        {"gate": "d2", "file_glob": "docs/a.md", "target": "core/none.py:1", "reason": "r", "date": "2026-01-01"},
+        {"gate": "d1", "file_glob": "docs/a.md", "target": "字不丢", "reason": "r", "date": "2026-01-01"},
+    ]
+    _dead = allowlist_dead_entries(cal, Tree(ral, cal))
+    check("登记过期·宿主不在盘 + 键出现 0 次 ⇒ 恰报 2 条（活条目不误报）",
+          len(_dead) == 2 and [d[0] for d in _dead] == [0, 1], [d[2] for d in _dead])
+
+    # ---------- 机器面 --list-items（缺口 GAP-20260926-178）----------
+    print("[机器面] --list-items（逐条 TSV）")
+    rli = os.path.join(tmp, "listitems")
+    _mkroot({"docs/a.md": "见 `core/x.py:99` 与 `core/nope.py:1`。\n", "core/x.py": "l1\nl2\nl3\n"}, rli)
+    rres = gate_d2(Tree(rli, base_cfg(rli)), args)
+    _buf = io.StringIO()
+    with contextlib.redirect_stdout(_buf):
+        _n = emit_list_items({"d2": (rres, 0.0)})
+    _lines = _buf.getvalue().splitlines()
+    check("机器面·表头逐字 + 行数 == 1 + findings 数（与人读面同源）",
+          _lines[0] == "gate\tfile\tline\ttarget\tkind\tdomain\tdetail"
+          and len(_lines) == 1 + len(rres.findings) and _n == len(rres.findings),
+          (_lines[:2], _n, len(rres.findings)))
+
     print("\nself-test：%d 条通过 / %d 条失败" % (n_ok, len(fails)))
     if fails:
         for f in fails:
@@ -1776,15 +1849,19 @@ JSON_FIELDS = []          # 本门机器读面字段表（**唯一真源**：印
 
 
 def refuse_json_without_machine_face(argv=None):
-    """给了 `--json` 而本门**无机器读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。"""
+    """给了 `--json` 而本门**无 `--json` 读面** ⇒ 逐字说明后返 `rc=2`；没给 ⇒ `None`（原路照走）。
+
+    ★ 逐条目机器面走 `--list-items`（TSV · 缺口 GAP-20260926-178）—— 与 `--json` 面是两件事：
+    本函数只拒 `--json`，不再声称「本门只出人读面」（那会在有 `--list-items` 后自相矛盾）。
+    """
     argv = list(sys.argv[1:] if argv is None else argv)
     hit = [x for x in argv if x == "--json" or x.startswith("--json=")]
     if not hit:
         return None
-    print("⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）"
+    print("⛔ 本门无 `--json` 读面：%s 在本门**未实现**（缺口 Q-176）"
                      % " · ".join("`%s`" % h for h in hit), file=sys.stderr)
-    print("   字段表：%s" % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS
-                                          else "无（本门只出人读面）"), file=sys.stderr)
+    print("   字段表：%s（本门 `--json` 无字段面）· 逐条目机器面走 `--list-items`（TSV · 缺口 GAP-20260926-178）"
+          % (" · ".join("`%s`" % f for f in JSON_FIELDS) if JSON_FIELDS else "无"), file=sys.stderr)
     print("⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形", file=sys.stderr)
     return 2
 
@@ -1808,6 +1885,8 @@ def main():
     ap.add_argument("--report", default=None, help="结果 JSON 落盘路径（建议 /tmp/…，勿写仓内）")
     ap.add_argument("--print-limit", type=int, default=40)
     ap.add_argument("--list-rules", action="store_true")
+    ap.add_argument("--list-items", action="store_true",
+                    help="机器面：逐条打印条目（TSV · 表头 gate<tab>file<tab>line<tab>target<tab>kind<tab>domain<tab>detail）")
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
@@ -1878,19 +1957,37 @@ def main():
 
     t0 = time.perf_counter()
     tree = build_tree(args, cfg)
-    print("语料 %d 篇 md · 解析域 %d 文件 · 基准集 %d 根 · scope=%s · 索引 %.0fms"
-          % (len(tree.corpus), len(tree.files), len(tree.cfg["base_roots"]), args.scope, tree.t_build * 1000))
-    print("（只读；重建产物一律落 $TMPDIR=%s）" % tempfile.gettempdir())
+    if not args.list_items:
+        print("语料 %d 篇 md · 解析域 %d 文件 · 基准集 %d 根 · scope=%s · 索引 %.0fms"
+              % (len(tree.corpus), len(tree.files), len(tree.cfg["base_roots"]), args.scope, tree.t_build * 1000))
+        print("（只读；重建产物一律落 $TMPDIR=%s）" % tempfile.gettempdir())
+    # ── 豁免表「登记过期」告警（缺口 GAP-20260926-136）：死条目**不许静默** ────────────
+    #   ★ 只在**主树**面判：allowlist 的 file_glob 是**仓内相对路径**，换根档（devdocs）下
+    #   那批条目「宿主不在盘」是**预期**（它们登记的是主仓的件）⇒ 换根档不判，免得假报。
+    _on_main_tree = os.path.abspath(tree.repo) == os.path.abspath(tree.main_repo)
+    _dead = allowlist_dead_entries(cfg, tree) if _on_main_tree else []
+    if _dead:
+        _wout = sys.stderr if args.list_items else sys.stdout
+        print("⚠ 豁免表登记过期（dead entry）= %d 条 —— 死条目留着 = 假覆盖，请删/改述"
+              "（缺口 GAP-20260926-136）：" % len(_dead), file=_wout)
+        for _i, _e, _why in _dead:
+            print("  · allowlist[%d] [%s] %s ↦ %r：%s"
+                  % (_i, _e.get("gate", "*"), _e.get("file_glob", "*"), _e.get("target", ""), _why),
+                  file=_wout)
     results = {}
-    print("")
+    if not args.list_items:
+        print("")
     for g in gates:
         s = time.perf_counter()
         r = {"d1": gate_d1, "d2": gate_d2, "d3": gate_d3, "d4": gate_d4}[g](tree, args)
         el = time.perf_counter() - s
         results[g] = (r, el)
-        print_result(r, args, el)
-        print("")
+        if not args.list_items:
+            print_result(r, args, el)
+            print("")
     elapsed = time.perf_counter() - t0
+    if args.list_items:
+        emit_list_items(results)          # 机器面：逐条 TSV（缺口 GAP-20260926-178）
     if args.report:
         write_report(args.report, results, args, elapsed, tree)
     rc = RC_OK
@@ -1898,7 +1995,8 @@ def main():
         rc = RC_FAIL
     elif any(r.rc() == RC_BLOCKED for r, _e in results.values()):
         rc = RC_BLOCKED
-    print("总耗时 %.2fs · 合计 rc=%d %s（口径：1 优先于 2；BLOCKED 会阻塞提交但不许当绿）" % (elapsed, rc, RC_NAME[rc]))
+    if not args.list_items:
+        print("总耗时 %.2fs · 合计 rc=%d %s（口径：1 优先于 2；BLOCKED 会阻塞提交但不许当绿）" % (elapsed, rc, RC_NAME[rc]))
     return rc
 
 

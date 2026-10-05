@@ -339,9 +339,52 @@ func recordRunFreshness(root, outdirArg string, since time.Time, fp, head string
 	}
 }
 
-// gateLsJSON —— [候选·未落地] `gate ls --json` 机器面：仍只跑脚本 `--list`（**不另写步骤表**），
+// gateLsFields —— `gate ls --json` 的**闭集四格**（与 `main.go` 登记 `fields:` 逐字同源：
+// `total`/`scope`/`mode`/`step`）。未知字段 ⇒ 2 + stderr 列这四格（同族出口 `reportBadField`）。
+var gateLsFields = []string{"total", "scope", "mode", "step"}
+
+// gateLsFieldLegal —— 字段是否在闭集四格内（与 `gateShowFieldLegal` 同形 · 不另写第二份口径）。
+func gateLsFieldLegal(f string) bool {
+	for _, ok := range gateLsFields {
+		if f == ok {
+			return true
+		}
+	}
+	return false
+}
+
+// gateLsJSON —— `gate ls --json [<字段>]` 机器面：仍只跑脚本 `--list`（**不另写步骤表**），
 // 把脚本自己那一段「步骤清单」三列（scope/mode/名称）重新序列化成 JSON（G1-a 只转发）。
+//
+// ★ 缺口 `GAP-20261005-65`（2026-10-05 · 本片）：改前 `--json <字段>` 的**实参被整枚吞掉** ——
+// 既不按字段投影、也不校名（`--json zzz` 与裸 `--json` 逐字节相同、静默 rc=0 = fail-open，
+// 同族 `gate show`/`gate find` 一律 rc=2 + 「合法字段:」）。本处补两截：
+//
+//	① **执行前校名**：按闭集 `{total,scope,mode,step}` 逐枚核，闭集外 ⇒ `2` ＋ **复用同族出口**
+//	   `reportBadField`（打「未知字段 + 合法字段: …」· ✗ 不新造第五套判词/退码）；
+//	② **投影**：只出点到的格子（序即用户给的序）。
+//
+// 投影口径（本轮只做【硬面】＋ 顶层/行级的直投影）：
+//
+//	· `total`              = 顶层那一格（脚本 `--list` 末行的「共 N 步」）；
+//	· `scope`/`mode`/`step` = 每一行的三格 —— 点名即投影（`steps` 容器**保留**、行内只留点到的键）。
+//
+// ★ **未定（待人拍板 · 本轮 ✗ 不自行定）**：`steps` 容器是否拍平成顶层数组（如 `"step":[…]`）·
+// `steps` 本身是否应登记为可选字段 · 容器是否要改包封形状。⇒ 现行只做「点名即投影」这一层。
+// ★ 裸 `--json`（不给字段）= 闭集全量：与改前**逐字节相同**（默认面一字不动）。
 func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) int {
+	// ① 字段面（**执行前判** —— 在 exec 脚本之前）：闭集外 ⇒ 2 + 同族出口。
+	fields := inv.fields
+	if len(fields) == 0 {
+		fields = gateLsFields
+	}
+	for _, f := range fields {
+		if !gateLsFieldLegal(f) {
+			inv.setErr("usage", "json_field_unknown:"+f, fmt.Sprintf("未知字段 %q", f))
+			return reportBadField(stderr, inv.path, f)
+		}
+	}
+
 	c := exec.Command("bash", script, "--list")
 	c.Dir = root
 	var buf bytes.Buffer
@@ -370,16 +413,61 @@ func gateLsJSON(inv *invocation, stdout, stderr io.Writer, root, script string) 
 		if strings.HasPrefix(t, "──") {
 			continue
 		}
-		f := strings.Fields(t)
-		if len(f) < 3 {
-			rows = append(rows, row{Step: t})
+		// ★ 2026-10-05（缺口 `GAP-20261005-49`）：步名**取原文、不折叠空白** —— 本仓有步名含连续两个
+		//   ASCII 空格（`core: linux  build ./...`），而 `strings.Fields`＋`Join` 会把它折成单空格 ⇒
+		//   机器面读出**另一个名字**（与默认面 `--list` 的逐字形态不符；折后形拿去调 `--emit-cmd`/`gate show`
+		//   一律零命中）。行形与切法**复用** `impactStepListLineRe`（`--list` 清单列的唯一切法 · ✗ 不另造第二套）。
+		if m := impactStepListLineRe.FindStringSubmatch(t); m != nil {
+			rows = append(rows, row{Scope: m[1], Mode: m[2], Step: m[3]})
 			continue
 		}
-		rows = append(rows, row{Scope: f[0], Mode: f[1], Step: strings.Join(f[2:], " ")})
+		rows = append(rows, row{Step: t})
 	}
-	enc := json.NewEncoder(stdout)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(map[string]any{"total": total, "steps": rows}); err != nil {
+	// 裸 `--json`（不给字段）= 闭集全量：与改前**逐字节相同**（默认面一字不动）。
+	if len(inv.fields) == 0 {
+		enc := json.NewEncoder(stdout)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(map[string]any{"total": total, "steps": rows}); err != nil {
+			fmt.Fprintf(stderr, "%s: 出 JSON 失败：%v\n", progName, err)
+			return exitFail
+		}
+		return exitOK
+	}
+
+	// ② 点名档：只出点到的几格（顶层 `total` + 行级 `scope`/`mode`/`step` · 序即用户给的序）。
+	wantTotal := false
+	rowKeys := []string{}
+	for _, f := range fields {
+		switch f {
+		case "total":
+			wantTotal = true
+		case "scope", "mode", "step":
+			rowKeys = append(rowKeys, f)
+		}
+	}
+	var b strings.Builder
+	b.WriteString("{")
+	n := 0
+	if wantTotal {
+		fmt.Fprintf(&b, "\"total\":%d", total)
+		n++
+	}
+	if len(rowKeys) > 0 {
+		if n > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString("\"steps\":[")
+		for i, r := range rows {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			obj, _ := marshalObject(rowKeys, map[string]string{"scope": r.Scope, "mode": r.Mode, "step": r.Step})
+			b.WriteString(obj)
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}\n")
+	if _, err := io.WriteString(stdout, b.String()); err != nil {
 		fmt.Fprintf(stderr, "%s: 出 JSON 失败：%v\n", progName, err)
 		return exitFail
 	}

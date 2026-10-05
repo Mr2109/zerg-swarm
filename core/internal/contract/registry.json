@@ -151,7 +151,7 @@
       "id": "S-o",
       "name": "授权三态映射表（`Q-021` · 命令面三态 ↔ 控制层三态）",
       "truth": "core/internal/contract/authority-map.json",
-      "truth_shape": "json：`命令面闭集`（三枚：`--dry-run` 干跑 / `--confirm=<目标>` 确认 / `--yes` 写旗标）+ `控制层闭集`（三枚：`allow` / `block` / `require_approval`）+ `映射`（**两侧都只许用闭集里的值** · 三枚控制层值必须都有人用；行数以真源 `core/internal/contract/authority-map.json` 现读为准 —— 契约件不自称条数）+ `_两档不变量` + `同判据例`（干跑/真跑逐条现跑）+ `无对应_说明`（逐字说明「无对应」是显式空表、不是漏项）+ `无对应`（空表：命令面八格旗标子集逐条都有对应）",
+      "truth_shape": "json：`命令面闭集`（三枚：`--dry-run` 干跑 / `--confirm=<目标>` 确认 / `--yes` 写旗标）+ `控制层闭集`（三枚：`allow` / `block` / `require_approval`）+ `映射`（**两侧都只许用闭集里的值** · 三枚控制层值必须都有人用；行数以真源 `core/internal/contract/authority-map.json` 现读为准 —— 契约件不自称条数）+ `_两档不变量` + `同判据例`（干跑/真跑逐条现跑）+ `无对应_说明`（逐字说明「无对应」是显式空表、不是漏项）+ `无对应`（空表：命令面八格旗标子集逐条都有对应）+ `授权类闭集`（三枚：`D2` / `D3` / `无闸`）+ `写面登记`（**写面命令**点名自己的授权类；照门100（`scripts/gates/check-write-face-gate.py`）现读「未声明/未白名单」逐条登记，`理由` 里逐字写「无闸」）+ `写面登记_说明`（照「无对应」一格体例：授权类取 `授权类闭集`，「无闸」一档须显式进白名单；✗ 不洗白成已授权）",
       "version_field": "`schema` = `zerg/authority-map/v1`（加一枚枚举值 ⇒ 主号动 + 同批改本表与命令面）",
       "gate": "（由 core: go test 覆盖 —— core/cmd/zerg/cli_authority_map_test.go：两侧闭集非空且各三枚 · 映射只用闭集值 · 三枚控制层值都有人用 · **干跑与真跑逐条点名同一个词** · **成对负控**三份改坏的表必须判红）",
       "change_class": "B",

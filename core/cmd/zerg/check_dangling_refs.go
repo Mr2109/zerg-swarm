@@ -43,6 +43,16 @@
 // cdrScan 的 GAP 袋 / 自检 ⑫⑬⑭⑮ 格（11 → 15 格）/ --ledger 旗标 / --list-rules 的 GAP 号引用类一节 /
 // cdrVersion 升 v1.2.0。
 //
+// v1.3.0 对齐（批-09 · GAP-20260926-111/112/114）：把 py v1.3.0 的三处逐字搬进本件 ——
+//
+//	① `--group-by src,tgt,form,cls`（GAP-20260926-111）＝把**逐处清单**换成**按维度聚合**
+//	   （cdrGroupDims / cdrDimValue ＋ 入口里那一段聚合；聚合面 = docs 路径类 ＋ GAP 号类全清单）。
+//	② `--prefix-candidates`（GAP-20260926-112）＝**未登记的 ledger 命中**按（件 · 目录前缀）聚成
+//	   registry entry **草稿**（cdrDirPrefix / cdrPrefixCandidates · 经 cdrJSONEnc 出 JSON）。
+//	③ 判据面修正（GAP-20260926-114）＝ cdrScan 里 `note` 以「拼接首段=变量」开头的**运行期路径**
+//	   改判 `ledger`（原判 `live` 与本门 cdrSuggest 自相矛盾）＋ 自检第 ④ 格加判类**成对负控**。
+//	⇒ 两旗标**默认关**（默认档一字未改）；cdrVersion 升 v1.3.0。
+//
 // 本单边界（照实）：本件**只落码、不接线命令行** ——
 //
 //	· **不**在 `core/cmd/zerg/main.go` 里注册命令（✗ 不进命令树 · ✗ 不改 `add_step`）；
@@ -125,11 +135,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
 
-const cdrVersion = "check-dangling-refs.py v1.2.0"
+const cdrVersion = "check-dangling-refs.py v1.3.0"
 
 // ── 扫描面（逐字复刻 py）────────────────────────────────────────────────────────────
 var cdrSkipDirs = []string{"vendor", "bin", "dist", "node_modules", "target", ".git", ".venv", "venv",
@@ -996,6 +1007,101 @@ func cdrReadText(path string) (string, bool, string) {
 }
 
 // ── 扫描 ─────────────────────────────────────────────────────────────────────────────
+// ── 聚合 / 前缀候选（v1.3.0 · GAP-20260926-111/112；默认关 ⇒ 默认档零行为变更）──────────
+// cdrGroupDims —— `--group-by` 维度闭集（与 py GROUP_DIMS 逐字同）。
+var cdrGroupDims = []string{"src", "tgt", "form", "cls"}
+
+// cdrDimValue —— 聚合维度取值（与 py `_dim_value` 逐字同）。
+func cdrDimValue(h cdrHit, dim string) string {
+	switch dim {
+	case "src":
+		if i := strings.IndexByte(h.file, '/'); i >= 0 {
+			return h.file[:i]
+		}
+		return "(根级件)"
+	case "tgt":
+		if h.form == "GAP号" {
+			return "(GAP号)"
+		}
+		p := h.path
+		for _, pfx := range []string{"docs" + "/", cdrXrepoPrefix, cdrXBarePrefix} {
+			if strings.HasPrefix(p, pfx) {
+				p = p[len(pfx):]
+				break
+			}
+		}
+		for _, s := range strings.Split(p, "/") {
+			if s != "" {
+				return s
+			}
+		}
+		return "(空)"
+	case "form":
+		return h.form
+	}
+	return h.cls
+}
+
+// cdrDirPrefix —— 引文的目录前缀（可登记 `ref_prefix` 候选）：最后一段之前 + `/`；单段 ⇒ ""。
+func cdrDirPrefix(ref string) string {
+	r := strings.TrimRight(ref, "/")
+	i := strings.LastIndexByte(r, '/')
+	if i < 0 {
+		return ""
+	}
+	return r[:i+1]
+}
+
+// cdrPrefixCandidates —— 未登记的 ledger 命中 ⇒ registry entry 草稿（按 件·目录前缀 聚合 · 排序确定）。
+func cdrPrefixCandidates(hits []cdrHit) []any {
+	keys := []string{}
+	groups := map[string][]string{}
+	for _, h := range hits {
+		if h.cls != "ledger" {
+			continue
+		}
+		pre := cdrDirPrefix(h.path)
+		if pre == "" {
+			continue
+		}
+		k := h.file + "\x00" + pre
+		if _, ok := groups[k]; !ok {
+			keys = append(keys, k)
+		}
+		groups[k] = append(groups[k], h.path)
+	}
+	sort.Strings(keys)
+	today := time.Now().Format("2006-01-02")
+	out := []any{}
+	for _, k := range keys {
+		items := groups[k]
+		sep := strings.IndexByte(k, 0)
+		file, pre := k[:sep], k[sep+1:]
+		uniq := map[string]bool{}
+		samples := []string{}
+		for _, p := range items {
+			if !uniq[p] {
+				uniq[p] = true
+				samples = append(samples, p)
+			}
+		}
+		sort.Strings(samples)
+		if len(samples) > 3 {
+			samples = samples[:3]
+		}
+		o := &cdrOM{}
+		o.set("file", file)
+		o.set("ref_prefix", pre)
+		o.set("class", "ledger")
+		o.set("reason", fmt.Sprintf("候选：%d 处（--prefix-candidates 生成 · 需人工补理由）", len(items)))
+		o.set("date", today)
+		o.set("count", len(items))
+		o.set("samples", strings.Join(samples, " · "))
+		out = append(out, o)
+	}
+	return out
+}
+
 func cdrScan(ctx *cdrCtx) (*cdrStats, []cdrHit) {
 	st := &cdrStats{filesSeen: len(ctx.files)}
 	hits := []cdrHit{}
@@ -1062,6 +1168,10 @@ func cdrScan(ctx *cdrCtx) (*cdrStats, []cdrHit) {
 				}
 				st.dangling++
 				cls, why := cdrClassify(ctx, rel, ref, lineText)
+				if cls == "live" && strings.HasPrefix(note, "拼接首段=变量") {
+					// 运行期树（拼接首段是变量）⇒ ledger（与 py v1.3.0 逐字同 · GAP-20260926-114）
+					cls, why = "ledger", "运行期路径（拼接首段是变量 · 运行期根 ≠ 仓根）⇒ 记运行时事实，不改"
+				}
 				where := cdrTreeOf(ctx, ref)
 				src := cdrPyStrip(lineText)
 				if len([]rune(src)) > 160 {
@@ -1293,19 +1403,31 @@ func cdrSelftest(stdout, stderr io.Writer) bool {
 			"\tpath := path.Join(\"docs\", \"01-设计\", \"设计-真件.md\")\n")
 	_, hits = run([]string{f4}, nil, repo, docs, nil)
 	j1, j2 := 0, 0
+	j1cls, j2cls := "", ""
 	for _, h := range hits {
 		if h.ref == "docs"+"/issues" && h.form == "filepath.Join" {
 			j1++
+			j1cls = h.cls
 		}
 		if h.path == "docs"+"/01-设计/设计-真件.md" && h.form == "filepath.Join" {
 			j2++
+			j2cls = h.cls
 		}
 	}
 	cases++
-	good = j1 == 1 && j2 == 1
+	// 判类成对负控（`GAP-20260926-114`）：**运行期路径**（拼接首段=变量）⇒ ledger（不算命中）；
+	// **字面量**拼接 ⇒ live。两条同场 ⇒ 断言的是「判类看的是运行期性，不是拼接形态」。
+	good = j1 == 1 && j2 == 1 && j1cls == "ledger" && j2cls == "live"
 	ok = ok && good
-	fmt.Fprintf(stdout, "  %s [拼接夹具] filepath.Join 认出 %d 处 · path.Join 认出 %d 处（期望各 1）\n",
-		cdrMark(good), j1, j2)
+	if j1cls == "" {
+		j1cls = "—"
+	}
+	if j2cls == "" {
+		j2cls = "—"
+	}
+	fmt.Fprintf(stdout, "  %s [拼接夹具] filepath.Join 认出 %d 处(运行期⇒%s) · path.Join 认出 %d 处(字面量⇒%s)"+
+		"（期望 1/1 · ledger/live）\n",
+		cdrMark(good), j1, j1cls, j2, j2cls)
 
 	// ⑤ 前缀夹具：'docs/' + 变量 ⇒ 前缀目录在 ⇒ 不报
 	f5 := cdrMkFile(repo, "publish/z.py", "name = \"docs"+"/\" + base\n")
@@ -1613,6 +1735,8 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 	liveOnly := false
 	jsonOut := false
 	dumpPath := ""
+	groupBy := []string{}
+	prefixCands := false
 
 	i := 0
 	for i < len(argv) {
@@ -1632,6 +1756,19 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 			liveOnly = true
 		case a == "--json":
 			jsonOut = true
+		case a == "--group-by":
+			i++
+			if i >= len(argv) {
+				fmt.Fprint(stderr, "✗ `--group-by` 尾缺值（py 此档抛 IndexError）⇒ 不给结论\n")
+				return 2
+			}
+			for _, d := range strings.Split(argv[i], ",") {
+				if d != "" {
+					groupBy = append(groupBy, d)
+				}
+			}
+		case a == "--prefix-candidates":
+			prefixCands = true
 		case a == "--dump":
 			i++
 			if i >= len(argv) {
@@ -1666,6 +1803,13 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 			return 2
 		}
 		i++
+	}
+
+	for _, d := range groupBy {
+		if !cdrStrIn(cdrGroupDims, d) {
+			fmt.Fprintf(stderr, "✗ --group-by 维度不认识：%s（闭集：src|tgt|form|cls）\n", cdrPyReprStr(d))
+			return 2
+		}
 	}
 
 	if !cdrIsDir(cdrPyJoin(root, "docs")) && !cdrIsDir(cdrPyJoin(root, "core")) {
@@ -1819,17 +1963,50 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 	}
 
-	if nLive > 0 {
+	if len(groupBy) > 0 {
+		// `--group-by`：逐处清单换成**按维度聚合**（聚合面 = docs 路径类 ＋ GAP 号类全清单）。
+		allh := []cdrHit{}
+		allh = append(allh, hits...)
+		allh = append(allh, gHits...)
+		allh = append(allh, gExempt...)
+		fmt.Fprintf(stdout, "\n── 聚合（--group-by=%s）：共 %d 处（docs 路径类 %d + GAP 号类 %d）\n",
+			strings.Join(groupBy, ","), len(allh), len(hits), len(gHits)+len(gExempt))
+		for _, dim := range groupBy {
+			cnt := map[string]int{}
+			for _, h := range allh {
+				cnt[cdrDimValue(h, dim)]++
+			}
+			type cdrKv struct {
+				v string
+				n int
+			}
+			rows := []cdrKv{}
+			for v, n := range cnt {
+				rows = append(rows, cdrKv{v, n})
+			}
+			sort.Slice(rows, func(a, b int) bool {
+				if rows[a].n != rows[b].n {
+					return rows[a].n > rows[b].n
+				}
+				return rows[a].v < rows[b].v
+			})
+			fmt.Fprintf(stdout, "  【%s】\n", dim)
+			for _, r := range rows {
+				fmt.Fprintf(stdout, "     %s ⇒ %d 处\n", r.v, r.n)
+			}
+		}
+	}
+	if nLive > 0 && len(groupBy) == 0 {
 		dump("live 命中（活指路 · 该改）", byLive)
 	}
-	if nLed > 0 && !liveOnly {
+	if nLed > 0 && !liveOnly && len(groupBy) == 0 {
 		dump("ledger 命中（机读清单/基线台账 · 记当时路径 ⇒ 登记，不改）", byLed)
 	}
-	if nReg > 0 && !liveOnly {
+	if nReg > 0 && !liveOnly && len(groupBy) == 0 {
 		dump("已登记（有意保留 · 不计命中）", byReg)
 	}
 
-	if len(gHits) > 0 {
+	if len(gHits) > 0 && len(groupBy) == 0 {
 		fmt.Fprintf(stdout, "\n── GAP 号引用命中（注释/文档引的号账内不存在 · 该改或先立案）：%d 处\n", len(gHits))
 		lim := cap
 		if len(gHits) < lim {
@@ -1843,7 +2020,7 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 			fmt.Fprintf(stdout, "   …另 %d 处（--all 全打）\n", len(gHits)-cap)
 		}
 	}
-	if len(gExempt) > 0 && !liveOnly {
+	if len(gExempt) > 0 && !liveOnly && len(groupBy) == 0 {
 		fmt.Fprintf(stdout, "\n── GAP 号引用例外面（夹具假号 / 机读件 / 快照 / 数据字串 · 不计命中）：%d 处\n", len(gExempt))
 		lim := cap
 		if len(gExempt) < lim {
@@ -1863,6 +2040,13 @@ func checkDanglingRefsGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 		fmt.Fprintf(stdout, "\n⛔ GAP 号引用类**未判**（缺口账取不到：%s）—— 候选 %d 处（前几处：%s）\n",
 			gapProblem, len(gap.unjudged), strings.Join(show, " · "))
+	}
+
+	if prefixCands {
+		cands := cdrPrefixCandidates(hits)
+		fmt.Fprintf(stdout, "\n── 可登记前缀候选（未登记的 ledger 命中 · `--prefix-candidates`）：%d 条"+
+			"（草稿 ⇒ `ref_prefix` 可直接粘进退 `entries`，`reason`/`date` 需人工补全）\n", len(cands))
+		fmt.Fprintln(stdout, cdrJSONEnc(cands, true, 0))
 	}
 
 	fmt.Fprint(stdout, "\n未覆盖形态（明说，不假装全覆盖）：纯 URL · 变量拼进中段或后缀 · 运行期路径树 · "+

@@ -38,6 +38,16 @@ import os
 import re
 import sys
 
+# ── 规范空集守卫（Python 版 · 复用 `check-empty-domain-guards.py:57-69` 同口径 · ✗ 不新造第五套）──
+def require_domain(items, *, what, min_count=1, rc=2):
+    """空集守卫：扫描面取不到输入（空域）时 fail-closed。回 0 = 域非空；回非 0（默认 2）= BLOCKED。"""
+    n = items if isinstance(items, int) else len(items)
+    if n < min_count:
+        print("BLOCKED —— 空域 / 取不到输入：%s（现读 %d < 写死下限 %d）⇒ rc=%d 不给结论"
+              % (what, n, min_count, rc), file=sys.stderr)
+        return rc
+    return 0
+
 REPO_PREFIXES = ("scripts/", "core/", "agent/", "ui/", "docs/", "publish/",
                  "mcp/", "gateway/", "tools/", "wall/", "shared/", "dist/")
 FILE_EXT = (".py", ".sh", ".go", ".md", ".json", ".jsonl", ".tsv", ".csv",
@@ -225,7 +235,7 @@ def analyze(root, dirs, tables=None):
                                      "why": "记录即已修（无对盘字段）：`%s`" % raw.strip()[:60]})
 
     meta = {"root": root, "scan_dirs": list(dirs), "surfaces": sorted(set(surfaces)),
-            "findings": len(findings)}
+            "scanned": len(files), "findings": len(findings)}
     return findings, meta
 
 
@@ -349,6 +359,10 @@ def main(argv):
         return 2
     dirs = a.scan_dir or ["scripts", "core/cmd/zerg"]
     findings, meta = analyze(root, dirs, a.tables)
+    # ★ 空集守卫（同款空域残留 · 复用 require_domain 同口径）：扫描面 0 件（空域 / 错目录）
+    #   ⇒ 0 记录面候选 ≠ 「没有记录面」⇒ 判不了 ⇒ rc=2 **不给结论**（✗ 不许把空转当绿）。
+    if require_domain(meta["scanned"], what="扫描面 %s 下的文本件" % " · ".join(dirs)) != 0:
+        return 2
     report(findings, meta, a.json)
     return 1 if findings else 0
 

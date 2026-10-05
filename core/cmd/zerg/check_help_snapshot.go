@@ -322,6 +322,75 @@ func hsRuntimeJSONRows(binz string) ([]interface{}, bool, string) {
 	return nil, true, "机器面 `items` 不是数组（py 于此裸回溯 ⇒ fail-closed）"
 }
 
+// ── A 档：只读**落盘制品**（py `ARTIFACT_HUMAN` / `ARTIFACT_JSON` · 缺口 `GAP-20261001-47` 拆档）──
+// 与 `hsRuntimeRows` / `hsRuntimeJSONRows` 的**唯一**不同：不吃子进程、只读一件文件 ⇒ 结论逐字可复现。
+const hsArtifactHuman = "help-export-dry-run.txt"
+const hsArtifactJSON = "help-export-json-commands.txt"
+
+// hsRuntimeRowsFromFile —— py `runtime_rows_from_file()`：读**落盘制品** ⇒ (逐条清单行 | None, 理由)。
+//
+//	抽行口径与 `hsRuntimeRows` 逐字同一正则（`hsRuntimeRE`）—— 两档不许分家。
+//	✗ 非法 UTF-8：py `open(encoding="utf-8").read()` 裸回溯（UnicodeDecodeError ⇒ rc=1）⇒ 本件走哨兵。
+func hsRuntimeRowsFromFile(path string) ([]string, string) {
+	if !hsIsFile(path) {
+		return nil, "现跑制品不在盘：" + path + "（先落一份 `help export --dry-run` 输出再判）"
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "现跑制品读不了（" + hsOSErrorStr(err, path) + "）"
+	}
+	if !utf8.Valid(raw) {
+		return nil, hsDecodeSentinel + path
+	}
+	var rows []string
+	for _, l := range hsSplitLines(hsFoldNewlines(string(raw))) {
+		if m := hsRuntimeRE.FindStringSubmatch(l); m != nil {
+			rows = append(rows, hsPyTrim(m[1]))
+		}
+	}
+	if len(rows) == 0 {
+		return nil, "制品里一行 `zerg …` 清单都没有（制品不对 / 输出格式改了？）"
+	}
+	return rows, ""
+}
+
+// hsRuntimeJSONRowsFromFile —— py `runtime_json_rows_from_file()`：读**落盘制品**的机器面那一行 JSON ⇒ (items, 是否取不到, 理由)。
+func hsRuntimeJSONRowsFromFile(path string) ([]interface{}, bool, string) {
+	if !hsIsFile(path) {
+		return nil, true, "现跑制品不在盘：" + path + "（先落一份 `help export --json commands --dry-run` 输出）"
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, true, "现跑制品读不了（" + hsOSErrorStr(err, path) + "）"
+	}
+	if !utf8.Valid(raw) {
+		return nil, true, hsDecodeSentinel + path
+	}
+	var objs []string
+	for _, l := range hsSplitLines(hsFoldNewlines(string(raw))) {
+		if strings.HasPrefix(hsPyTrim(l), "{") {
+			objs = append(objs, l)
+		}
+	}
+	if len(objs) == 0 {
+		return nil, true, "制品里没有机器面那一行 JSON"
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(objs[len(objs)-1]), &m); err != nil {
+		return nil, true, fmt.Sprintf("机器面 JSON 读不回来（%s）", err.Error())
+	}
+	val := m["items"]
+	if val == nil { // 缺键 或 显式 null —— py 两态都成 []
+		return []interface{}{}, false, ""
+	}
+	if arr, isArr := val.([]interface{}); isArr {
+		return arr, false, ""
+	}
+	// 非数组且非空：py 于 check_items_named 处裸回溯（`it.get` 打在 str/float 上 ⇒ AttributeError）。
+	// 甲案口径：py 裸回溯 ⇒ fail-closed（取不到）· 口径差列入未覆盖面。
+	return nil, true, "机器面 `items` 不是数组（py 于此裸回溯 ⇒ fail-closed）"
+}
+
 // hsSnapshotRows —— py `snapshot_rows()`：快照 §一 表行 ⇒ (命令名行 | None, 理由)。
 func hsSnapshotRows(path string) ([]string, string) {
 	if !hsIsFile(path) {
@@ -583,16 +652,18 @@ func hsSelfTest(out io.Writer) bool {
 
 // ── 参数解析（py argparse 的已覆盖面）────────────────────────────────────────────
 type hsArgs struct {
-	repoRoot  string
-	repoSet   bool
-	docsRoot  string
-	docsSet   bool
-	snapshot  string
-	snapSet   bool
-	json      bool
-	listRules bool
-	selfTest  bool
-	badArg    string // 未知旗标 / 缺值 ⇒ 用法错 rc=2
+	repoRoot        string
+	repoSet         bool
+	docsRoot        string
+	docsSet         bool
+	snapshot        string
+	snapSet         bool
+	runtimeArtifact string
+	runtimeSet      bool
+	json            bool
+	listRules       bool
+	selfTest        bool
+	badArg          string // 未知旗标 / 缺值 ⇒ 用法错 rc=2
 }
 
 func hsParseArgs(argv []string) hsArgs {
@@ -631,6 +702,12 @@ func hsParseArgs(argv []string) hsArgs {
 		case s == "--snapshot" || strings.HasPrefix(s, "--snapshot="):
 			if v, ok := val(); ok {
 				a.snapshot, a.snapSet = v, true
+			} else {
+				a.badArg = s
+			}
+		case s == "--runtime-artifact" || strings.HasPrefix(s, "--runtime-artifact="):
+			if v, ok := val(); ok {
+				a.runtimeArtifact, a.runtimeSet = v, true
 			} else {
 				a.badArg = s
 			}
@@ -707,7 +784,7 @@ func hsJSONDumpsBad(bad []string) string {
 func checkHelpSnapshotGateMain(stdout, stderr io.Writer, argv []string) int {
 	a := hsParseArgs(argv)
 	if a.badArg != "" {
-		fmt.Fprintf(stderr, "usage: check-help-snapshot [--repo-root DIR] [--docs-root DIR] [--snapshot FILE] [--json] [--list-rules] [--self-test]\n")
+		fmt.Fprintf(stderr, "usage: check-help-snapshot [--repo-root DIR] [--docs-root DIR] [--snapshot FILE] [--runtime-artifact DIR] [--json] [--list-rules] [--self-test]\n")
 		fmt.Fprintf(stderr, "check-help-snapshot: error: 未知参数 %s（本入口只保「未知项 ⇒ 退码 2」 · 帮助正文不列）\n", a.badArg)
 		return 2
 	}
@@ -735,8 +812,26 @@ func checkHelpSnapshotGateMain(stdout, stderr io.Writer, argv []string) int {
 	fmt.Fprintf(stdout, "帮助成文快照 ↔ 运行期逐行对拍（波6 序70）· v%s\n", hsVersion)
 	fmt.Fprint(stdout, "  判据见 `--list-rules`：① items 逐条含命令名 · ② 快照 ⟷ 现跑 逐行\n")
 
-	items, itemsNone, jwhy := hsRuntimeJSONRows(binz)
-	live, lwhy := hsRuntimeRows(binz)
+	var items []interface{}
+	var itemsNone bool
+	var jwhy, lwhy string
+	var live []string
+	if a.runtimeArtifact != "" {
+		// A 档（`GAP-20261001-47` · 拆档）：只读落盘制品 · **不起子进程** ⇒ 结论逐字可复现
+		// （与 HEAD 处编译制品解耦）。缺该档 ⇒ 行为一字不动（B 档：现跑 bin/zerg）。
+		fmt.Fprintf(stdout, "  取数档 = A 档（只读落盘制品 %s）—— 不起 bin/zerg 子进程\n", a.runtimeArtifact)
+		items, itemsNone, jwhy = hsRuntimeJSONRowsFromFile(hsPyJoin(a.runtimeArtifact, hsArtifactJSON))
+		live, lwhy = hsRuntimeRowsFromFile(hsPyJoin(a.runtimeArtifact, hsArtifactHuman))
+	} else {
+		items, itemsNone, jwhy = hsRuntimeJSONRows(binz)
+		live, lwhy = hsRuntimeRows(binz)
+	}
+	if strings.HasPrefix(jwhy, hsDecodeSentinel) || strings.HasPrefix(lwhy, hsDecodeSentinel) {
+		// py 裸回溯面（rc=1 · stderr 走声明文案 · stdout 只剩已写下的前言 + A 档行）
+		fmt.Fprintf(stderr, "UnicodeDecodeError: 'utf-8' codec can't decode byte 0x?? in position ??: invalid start byte\n")
+		fmt.Fprintln(stderr, "  （py 原件在此裸回溯 ⇒ 退码 1；本入口对齐退码与 stdout，stderr 文案为声明式）")
+		return 1
+	}
 	if live == nil {
 		fmt.Fprintf(stdout, "⛔ 不给结论（rc=2）：%s\n", lwhy)
 		return 2
@@ -798,11 +893,15 @@ func checkHelpSnapshotGateMain(stdout, stderr io.Writer, argv []string) int {
 				itemsNamed = "false"
 			}
 		}
+		fetchModeTail := ""
+		if a.runtimeArtifact != "" {
+			fetchModeTail = `, "fetch_mode": "artifact"`
+		}
 		fmt.Fprintf(stdout, `{"schema": "zerg-gate/v1", "gate": "check-help-snapshot", "version": %s, `+
 			`"snapshot": %s, "snapshot_rows": %d, "live_rows": %d, "items_total": %s, `+
-			`"items_named": %s, "line_by_line": %s, "bad": %s, "mode": "judge"}`+"\n",
+			`"items_named": %s, "line_by_line": %s, "bad": %s, "mode": "judge"%s}`+"\n",
 			hsJSONDumpsString(hsVersion), hsJSONDumpsString(snapPath), len(snap), len(live),
-			itemsTotal, itemsNamed, hsJSONBool(ok), hsJSONDumpsBad(bad))
+			itemsTotal, itemsNamed, hsJSONBool(ok), hsJSONDumpsBad(bad), fetchModeTail)
 	}
 	if len(bad) > 0 {
 		return 1

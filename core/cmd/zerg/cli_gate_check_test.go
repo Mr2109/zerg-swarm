@@ -264,8 +264,8 @@ func TestGateCheckLockContentionIsBlocked(t *testing.T) {
 	}
 }
 
-// ⑥ 进程内 Go 表完整性：项数 == 108，且**每项 key 都能在现读名录里找到**（名字 ⇒ 件 不断裂）。
-// ★ 棘轮口径：本数 == 全包 *GateMain 入口数（现读两者同为 108）。门111 check-fleet-loadable 的 Go 真搬件（check_fleet_loadable.go）入 gate_inproc_table.go 后 107→108 ⇒ 期望随动（✗ 非凑绿）。
+// ⑥ 进程内 Go 表完整性：项数 == 111，且**每项 key 都能在现读名录里找到**（名字 ⇒ 件 不断裂）。
+// ★ 棘轮口径：本数 == 表内真搬入口数（现读 111）。门111 check-fleet-loadable 的 Go 真搬件（check_fleet_loadable.go）入 gate_inproc_table.go 后 107→108 ⇒ 期望随动（✗ 非凑绿）。★ 2026-10-05 接线 check-manifest-freshness（mfMain）⇒ 108→109。★ 2026-10-05 同批接线 check-contract-version-diff（cvdMain）· check-wallclock-ratchet（checkWallclockRatchetMain）⇒ 109→111。
 func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	byName, dupes, err := gateCheckRoster(root)
@@ -275,8 +275,8 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	if len(dupes) != 0 {
 		t.Fatalf("真实名录有同名多件 ⇒ 前置不成立：%v", dupes)
 	}
-	if got := len(gateCheckGoEntry); got != 108 {
-		t.Fatalf("进程内 Go 表项数要 == 108，得到 %d", got)
+	if got := len(gateCheckGoEntry); got != 111 {
+		t.Fatalf("进程内 Go 表项数要 == 111，得到 %d", got)
 	}
 	missing := []string{}
 	for name := range gateCheckGoEntry {

@@ -13,10 +13,12 @@
 //	  · **无外部树依赖**（py 不吃「根」概念，只吃**显式文件路径列表**）⇒ 本件**保真**：入参即 py `sys.argv[1:]` 同形；
 //	    本批新口径的「外部树走显式入参旋钮」在此**退化为**「显式文件路径位置参」，无第二旋钮可加（见 (a)）。
 //	  · 退码 `0/1/2` 三档齐 · 行数适中（128 行）· `git status` 现读**不含它**（无人正在改）。
-//	  · ⚠ **写面**：默认档（不给 `--check`）会**就地**把 `$VAR` 改成 `${VAR}`。门禁步一律走 `--check`
-//	    （**只读**）。两侧**逐字照搬**（含 fix 档），见「现读硬伤清单」。★ 同族两枚已落 Go 件
+//	  · ⚠ **写面（现读口径 · GAP-20260927-93）**：py **缺省即只读**，写档必须显式 `--write`（`--check` = 只读的显式写法）。
+//	    本件逐字对齐：`--write` 才 `os.WriteFile`，缺省 / `--check` 只报不改。★ 同族两枚已落 Go 件
 //	    （`check_gotoolchain.go:19` / `check_registry_vs_disk.go:23`）**旧口径**曾以「默认档带写面」为由不选本件；
 //	    本批**新口径**（父代理点名「Shell Unicode 变量族」）改判为**可选** ⇒ 点名该两处**陈旧排除**、**不认领**（✗ 禁改已落旧件）。
+//	  · ⚠ **空集守卫（现读口径）**：py `require_domain([p for p in FILES if os.path.isfile(p)], …)` ⇒ 位置参**一只都
+//	    不在盘** = 空域 ⇒ stderr `BLOCKED …` + rc=2（✗ 不许静默返回「命中 0 处」＝假绿）；混入真件即不触发。
 //	  · ⚠ **已知线索（现读硬伤 · C 类）**：py **无最外层兜底**（裸 `sys.exit`，`main` 内任何未捕异常 = 回溯 + rc=1）。
 //	    实测：位置参给**目录**（`IsADirectoryError`）/ **读不了的件**（`PermissionError`）⇒ py **rc=1 崩溃**；
 //	    缺件（`FileNotFoundError`）⇒ **被捕获 `continue`**（静默跳过、不影响退码）。本件按新口径对「非缺件读失败」
@@ -34,7 +36,7 @@
 //
 //	func checkShellUnicodeVarsGateMain(stdout, stderr io.Writer, argv []string) int
 //	  · argv  —— 与 py `sys.argv[1:]` 同形（不含程序名）
-//	  · 退码  —— 0 无命中（或非 `--check` 档）· 1 `--check` 且有命中 · 2 `--json`（本门无机器读面 Q-176）/ 无位置参 / 非缺件读失败（fail-closed）
+//	  · 退码  —— 0 无命中（或 `--write` 档）· 1 只读档且有命中 · 2 `--json`（本门无机器读面 Q-176）/ 无位置参 / 空域（全缺件）/ 非缺件读失败（fail-closed）
 //	  · 输出  —— stdout/stderr 与 py 逐字节对齐（见「已对拍面 / 未覆盖面」）
 //
 // ═══════════════════ 遍历序 / 排序点（本批第一标准）—— 逐点交代 ═══════════════════
@@ -116,7 +118,7 @@ const csuSelfHeader = "── check-shell-unicode" + "-vars.py --self-test 三�
 // csuUsage —— py 无位置参时的 stderr 正文（逐字节照搬 · 件名同样拆串拼）。
 const csuUsage = "✗ 必须显式传入要扫描的脚本（例如 scripts/*.sh）。\n" +
 	"  无参数时不静默空转——这正是本工具此前的漏报根因（$VAR后接全角标点未被发现）。\n" +
-	"  用法: python3 scripts/gates/check-shell-unicode" + "-vars.py [--check] scripts/*.sh publish/*.sh\n"
+	"  用法: python3 scripts/gates/check-shell-unicode" + "-vars.py [--check|--write] scripts/*.sh publish/*.sh（缺省/--check=只读；--write=就地修）\n"
 
 // csuHit —— py 正则的一处命中：`$VAR` 的字节区间 + 变量名。
 type csuHit struct {
@@ -245,6 +247,19 @@ func csuRefuseJSON(stderr io.Writer, argv []string) int {
 	return 2
 }
 
+// csuReadableCount —— py `len([p for p in FILES if os.path.isfile(p)])` 逐字同构：
+//
+//	仅**常规件**（`os.Stat` 跟随符号链接 · `Mode().IsRegular()`）计入 ⇒ 目录 / 缺件 / 悬空链均不算「可取数」。
+func csuReadableCount(files []string) int {
+	n := 0
+	for _, p := range files {
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+			n++
+		}
+	}
+	return n
+}
+
 // csuBasename —— py `path.split("/")[-1]`（✗ 不用 filepath.Base：尾斜杠语义不同）。
 func csuBasename(p string) string {
 	if i := strings.LastIndex(p, "/"); i >= 0 {
@@ -313,7 +328,7 @@ func csuSelfTest(stdout io.Writer) int {
 	// 档④ 多命中改写（GAP-20261001-48）：同一行两处 `$VAR` ⇒ 改写档须「一次性落盘」、不得偏移错位。
 	dirty2 := filepath.Join(tmp, "dirty2.sh")
 	_ = os.WriteFile(dirty2, []byte("echo \"$A中$B文\"\n"), 0o644)
-	rc4, out4 := csuRunOne(dirty2)
+	rc4, out4 := csuRunOne("--write", dirty2)
 	csuChk(stdout, &bad, "档④ 多命中改写：两处 `$VAR` 一次落盘（rc=0）", 0, rc4, out4)
 	if got2, e := os.ReadFile(dirty2); e != nil || string(got2) != "echo \"${A}中${B}文\"\n" {
 		bad++
@@ -340,11 +355,18 @@ func checkShellUnicodeVarsGateMain(stdout, stderr io.Writer, argv []string) int 
 		}
 	}
 
-	check := false
+	// py（GAP-20260927-93 修后）缺省即**只读**，写档必须显式 `--write`：
+	//   WRITE = "--write" in argv · CHECK = not WRITE · FILES = argv 去 `--check`/`--write`（保序过滤）。
+	write := false
+	for _, a := range argv {
+		if a == "--write" {
+			write = true
+		}
+	}
+	check := !write
 	files := make([]string, 0, len(argv))
 	for _, a := range argv {
-		if a == "--check" {
-			check = true
+		if a == "--check" || a == "--write" {
 			continue
 		}
 		files = append(files, a)
@@ -353,12 +375,24 @@ func checkShellUnicodeVarsGateMain(stdout, stderr io.Writer, argv []string) int 
 		fmt.Fprint(stderr, csuUsage)
 		return 2
 	}
+	// ★ 空集守卫（py `require_domain(_readable, …)` 逐字同构）：位置参**一只都不在盘**
+	//   （glob 未展开 / 路径笔误）⇒ 取数面 0 件 = 空域 ⇒ rc=2（✗ 不许静默返回「命中 0 处」＝假绿）。
+	//   负控：真件（哪怕 0 命中）⇒ 域非空、照常 rc=0；多参里只要有真件即不触发。
+	if csuReadableCount(files) == 0 {
+		fmt.Fprintf(stderr, "BLOCKED —— 空域 / 取不到输入：要扫描的脚本件（实参 %d 只）（现读 0 < 写死下限 1）⇒ rc=2 不给结论\n", len(files))
+		return 2
+	}
 
 	total := 0
 	for _, path := range files {
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			// ★ B 类读失败 ⇒ 登记 + 判红（✗ 不再静默跳过）：缺件与读不了一并进 rc 通道。
+			if os.IsNotExist(err) {
+				// py `except FileNotFoundError: continue` —— 缺件**静默跳过**、不影响退码
+				//   （域非空由上面的空集守卫保证）。
+				continue
+			}
+			// ★ 非缺件读失败（目录 / 读不了的件）⇒ fail-closed rc=2（C 类口径差 · 见未覆盖面①）：
 			//   体例照同包已治件 check_token_argv.go（登记 + BLOCKED rc=2）。
 			fmt.Fprintf(stderr, "⛔ 不给结论（rc=2）：读不了 %s（%v）—— B 类读失败不许当健康\n", path, err)
 			return 2

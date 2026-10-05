@@ -419,12 +419,9 @@ func upTruncRunes(s string, n int) string {
 	return string(r[:n])
 }
 
-// upReport —— py `report(root, rc, files, hits, quiet=False)` 逐字。
-//
-//	★ 照实：py 侧**丢弃** `judge` 给的 rc（`return 1 if hits else 0`）——
-//	  「扫面 0 件 / 件读不了」两态 judge 返 1，经 report 后 rc 仍**回落 0**（正文自相矛盾）。
-//	  本件**逐字照搬该行为**（对拍第一优先：先搬得一样，口径问题另单提）。故形参 rc 不参与判决。
-func upReport(w io.Writer, root string, _ int, files []string, hits []upHit, quiet bool) int {
+// upReport —— py `report(root, rc, files, hits, quiet=False)` 逐字（**含 `GAP-20260927-95` 的常态**：
+// 命中 0 处但判据不可判 ⇒ **退码以判据结论 rc 为准**、✗ 不再折成 0 的假绿；本单按 py 现件对齐）。
+func upReport(w io.Writer, root string, rc int, files []string, hits []upHit, quiet bool) int {
 	if !quiet {
 		fmt.Fprintln(w, "── 判据「未代入占位符 = 0」（产物句面）· 块C §六④ / `Q-166` ──")
 		fmt.Fprintf(w, "   判据树 / 仓根：%s\n", root)
@@ -450,6 +447,14 @@ func upReport(w io.Writer, root string, _ int, files []string, hits []upHit, qui
 			fmt.Fprintf(w, "⇒ **不通过（rc=1）**：产物里 %d 处未代入的命名花括号占位\n", len(hits))
 		}
 		return 1
+	}
+	if rc != 0 {
+		// ★ GAP-20260927-95 活证：无命中时**退码以判据结论为准**（rc=1 = 判不了 ⇒ 两值制按红记）。
+		if !quiet {
+			fmt.Fprintln(w, "   ⛔ 命中 0 处，但**判据不可判**（扫面 0 件 / 件读不了）⇒ 两值制按红记")
+			fmt.Fprintf(w, "⇒ **不通过（rc=%d）**：判据不可判 ≠ 零命中\n", rc)
+		}
+		return rc
 	}
 	if !quiet {
 		fmt.Fprintln(w, "   ✓ 命中 **0 处**（本判据两值：0 / 1 ⇒ 不给「没结论」档）")
@@ -543,20 +548,33 @@ func upSelfTest(w io.Writer) int {
 	rc4b, _, _ := upJudge(d4, w)
 	check("格 4b 成对（同一件句面加一处 ⇒ rc=1 · 代码区那条仍然不算）", rc4b, 1)
 	// 格 5 空转负控：扫面 0 件 ⇒ 1（两值制 ⇒ 不给「没结论」档）
+	// ★ `GAP-20260927-95`：这几格走**真出口 `upReport`**（别再只断言内部 `upJudge` ——
+	//   旧版 judge 已返 1，但 report 把 rc 折成 0 ⇒ 断言 judge 恒绿、真退码假绿）。
 	d5 := fixture("empty", map[string]string{"docs/zh/空.md": ""})
 	_ = os.Remove(filepath.Join(d5, "docs", "zh", "空.md"))
-	rc5, _, _ := upJudge(d5, w)
-	check("格 5 空转负控（扫面 0 件 ⇒ rc=1 · 两值制不给「没结论」档）", rc5, 1)
-	// 格 6 缺根 ⇒ 1（同上口径）
-	rc6, _, _ := upJudge(filepath.Join(t, "no-such"), w)
-	check("格 6 缺根负控（找不到仓根 ⇒ rc=1）", rc6, 1)
-	// 格 7 读不了件 ⇒ 1（用 `chmod 000` 造读不了的 .md 件）
+	rc5, f5, h5 := upJudge(d5, w)
+	check("格 5 空转负控（扫面 0 件 ⇒ rc=1 · 走 report 真出口）", upReport(w, d5, rc5, f5, h5, true), 1)
+	// 格 5b 成对（区分度）：同口径补回一件干净产物 ⇒ report 真返 0
+	_ = os.WriteFile(filepath.Join(d5, "docs", "zh", "空.md"),
+		[]byte("# 参考\n\n命令 `zerg help` 只读。\n"), 0o644)
+	rc5b, f5b, h5b := upJudge(d5, w)
+	check("格 5b 成对（同一夹具补回好件 ⇒ rc=0）", upReport(w, d5, rc5b, f5b, h5b, true), 0)
+	// 格 6 缺根 ⇒ 1（同上口径 · 走 report 真出口）
+	miss := filepath.Join(t, "no-such")
+	rc6, f6, h6 := upJudge(miss, w)
+	check("格 6 缺根负控（找不到仓根 ⇒ rc=1）", upReport(w, miss, rc6, f6, h6, true), 1)
+	// 格 7 读不了件 ⇒ 1（用 `chmod 000` 造读不了的 .md 件 · 走 report 真出口）
 	d7 := fixture("unreadable", map[string]string{"docs/zh/好.md": "干净\n", "docs/zh/坏.md": "读不了\n"})
 	p7 := filepath.Join(d7, "docs", "zh", "坏.md")
 	_ = os.Chmod(p7, 0)
-	rc7, _, _ := upJudge(d7, w)
-	check("格 7 读不了负控（件读不了 ⇒ rc=1）", rc7, 1)
+	rc7, f7, h7 := upJudge(d7, w)
+	check("格 7 读不了负控（件读不了 ⇒ rc=1）", upReport(w, d7, rc7, f7, h7, true), 1)
 	_ = os.Chmod(p7, 0o644)
+	// ★ 格 9 端到端（`GAP-20260927-95`：自检至少一格必须取**真命令行退码**，不许只断言内部函数）
+	d9 := fixture("empty_e2e", map[string]string{"docs/zh/空.md": ""})
+	_ = os.Remove(filepath.Join(d9, "docs", "zh", "空.md"))
+	rc9 := unsubstitutedPlaceholdersGateMain(io.Discard, io.Discard, []string{"--root", d9})
+	check("格 9 端到端（子进程真退码 · 空转 ⇒ 1）", rc9, 1)
 	// 格 8 真树现跑：只证「判得动」（照实打印现值 · 不要求 0）
 	if cwd, err := os.Getwd(); err == nil {
 		if root := upFindRoot(cwd); root != "" {

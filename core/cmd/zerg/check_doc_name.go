@@ -58,6 +58,9 @@ var (
 	cdnCJK      = regexp.MustCompile("[\u4e00-\u9fff]")
 	cdnLAT      = regexp.MustCompile(`[A-Za-z]`)
 	cdnSegRe    = regexp.MustCompile(`[-_.\s]`)
+	// cdnVerMark —— GAP-20260926-166：拉丁侧「版本标记」（`v`+数字，如 `模块v2.1` 切段后 `模块v2`）。
+	// py 用 `re.match(r"^[vV]\d+$", run)`；run ⊆ ASCII 字母数字 ⇒ `\d` 与 `[0-9]` 等价。
+	cdnVerMark = regexp.MustCompile(`^[vV][0-9]+$`)
 )
 
 // 扫描域排除名单：逐字照抄《清单-命名规范化》§0。
@@ -588,9 +591,10 @@ func cdnInExclDirs(name string) bool {
 	return cdnContains(cdnExclDirs, name)
 }
 
-func cdnWalk(root string, targets []string) []cdnEntry {
+func cdnWalk(root string, targets []string, extraExcl []string) []cdnEntry {
 	out := []cdnEntry{}
 	seen := map[string]bool{}
+	exclPrefix := append(append([]string{}, cdnExclPrefix...), extraExcl...) // GAP-20260926-213c：--exclude-prefix 运行时追加（未登记）
 	add := func(rel, kind, ap string) {
 		if rel == "" || rel == "." || seen[rel] {
 			return
@@ -611,7 +615,7 @@ func cdnWalk(root string, targets []string) []cdnEntry {
 		if rel != "." {
 			relp = rel + "/"
 		}
-		if relp != "" && cdnHasPrefixAny(relp, cdnExclPrefix) {
+		if relp != "" && cdnHasPrefixAny(relp, exclPrefix) {
 			return
 		}
 		dirs, files := []string{}, []string{}
@@ -662,9 +666,14 @@ func cdnWalk(root string, targets []string) []cdnEntry {
 
 // ── 判据 ──────────────────────────────────────────────────────────────────────
 
+// cdnN7Shape —— N7 命中的「形态」（GAP-20260926-213d）：对象件/目录 × 方向 × 拉丁形态。
+// py 用元组 (kind, direction, latin) 当 dict 键 ⇒ Go 用可比较 struct 复刻。
+type cdnN7Shape struct{ kind, direction, latin string }
+
 type cdnHit struct {
 	rule, sev, msg string
 	row            *cdnRow
+	shape          *cdnN7Shape // 仅 N7 非 nil；其余规则恒 nil
 }
 
 func cdnSearchDate(stem string) string {
@@ -679,11 +688,66 @@ func cdnSearchDate(stem string) string {
 	return ""
 }
 
+// ── N7 形态分析原语（GAP-20260926-166 / 213d · 与 py `_latin_run` / `_latin_run_kind` 同构）──
+
+func cdnIsCJK(r rune) bool { return r >= 0x4e00 && r <= 0x9fff }
+
+func cdnIsLat(r rune) bool {
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
+}
+
+// cdnIsAsciiAlnum —— py 的 `c.isascii() and c.isalnum()`：仅 ASCII 字母/数字。
+func cdnIsAsciiAlnum(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
+}
+
+// cdnLatinRun —— 取 seg 里与相邻点 i（对左下标）相接的那段 ASCII 拉丁/数字连续串。
+// LAT 在左 ⇒ 向左扩到串首；LAT 在右 ⇒ 从 i+1 起向右扩（与 py `_latin_run` 同构）。
+func cdnLatinRun(seg string, i int) string {
+	rs := []rune(seg)
+	j := i
+	if !cdnIsLat(rs[i]) {
+		j = i + 1
+	}
+	s := j
+	for s-1 >= 0 && cdnIsAsciiAlnum(rs[s-1]) {
+		s--
+	}
+	k := j + 1
+	for k < len(rs) && cdnIsAsciiAlnum(rs[k]) {
+		k++
+	}
+	return string(rs[s:k])
+}
+
+// cdnIsVersionMarkerRun —— GAP-20260926-166：拉丁侧是版本标记（v+数字，如 `模块v2`）⇒ 不算假红。
+func cdnIsVersionMarkerRun(seg string, i int) bool {
+	return cdnVerMark.MatchString(cdnLatinRun(seg, i))
+}
+
+// cdnLatinRunKind —— 拉丁侧形态分类（GAP-20260926-213d）：version / single / word。
+func cdnLatinRunKind(seg string, i int) string {
+	run := cdnLatinRun(seg, i)
+	if cdnVerMark.MatchString(run) {
+		return "version"
+	}
+	letters := 0
+	for _, c := range run {
+		if cdnIsLat(c) {
+			letters++
+		}
+	}
+	if letters == 1 {
+		return "single"
+	}
+	return "word"
+}
+
 func cdnJudgeName(rel, kind string) []cdnHit {
 	base := cdnBase(rel)
 	stem, _ := cdnSplitext(base)
 	hits := []cdnHit{}
-	add := func(rule, msg string) {
+	add := func(rule, msg string, shape *cdnN7Shape) {
 		// 档位（缺口 GAP-20260927-63 / GAP-20260926-165）：**件面**取 RULES 声明档
 		// （N5/N7 声明 WARN ⇒ 件面命中不再落 FAIL 进 rc）；**目录面一律 WARN**（结构级 ·
 		// 只登记不改 —— 守住本件 `cdnListRules` 印的档位口径与《清单》§5 ④）。与 py 孪生件
@@ -700,10 +764,10 @@ func cdnJudgeName(rel, kind string) []cdnHit {
 			}
 		}
 		row := cdnExemptRowFor(rel, rule, kind, nil, stem, base)
-		hits = append(hits, cdnHit{rule, sev, msg, row})
+		hits = append(hits, cdnHit{rule, sev, msg, row, shape})
 	}
 	if cdnCapsStem.MatchString(stem) {
-		add("N1", fmt.Sprintf("词干 %s 全为大写拉丁字母", cdnPyRepr(stem)))
+		add("N1", fmt.Sprintf("词干 %s 全为大写拉丁字母", cdnPyRepr(stem)), nil)
 	}
 	badSet := map[rune]bool{}
 	for _, c := range base {
@@ -721,13 +785,13 @@ func cdnJudgeName(rel, kind string) []cdnHit {
 		for _, c := range rs {
 			us = append(us, fmt.Sprintf("U+%04X", c))
 		}
-		add("N2", "名称含 "+strings.Join(us, " / "))
+		add("N2", "名称含 "+strings.Join(us, " / "), nil)
 	}
 	if md := cdnSearchDate(stem); md != "" {
-		add("N3", fmt.Sprintf("词干含日期后缀 %s ⇒ 日期应移入 frontmatter `updated_at`", cdnPyRepr(md)))
+		add("N3", fmt.Sprintf("词干含日期后缀 %s ⇒ 日期应移入 frontmatter `updated_at`", cdnPyRepr(md)), nil)
 	}
 	if cdnVerMid.MatchString(stem) && !cdnVerTail.MatchString(stem) {
-		add("N4", fmt.Sprintf("版本段 %s 不在尾位 ⇒ 应移到尾部（`名-…-vX.Y[-YYYYMMDD]`）", cdnPyRepr(cdnVerMid.FindString(stem))))
+		add("N4", fmt.Sprintf("版本段 %s 不在尾位 ⇒ 应移到尾部（`名-…-vX.Y[-YYYYMMDD]`）", cdnPyRepr(cdnVerMid.FindString(stem))), nil)
 	}
 	segs := []string{}
 	for _, s := range cdnSegRe.Split(stem, -1) {
@@ -740,9 +804,20 @@ func cdnJudgeName(rel, kind string) []cdnHit {
 		rs := []rune(seg)
 		for i := 0; i+1 < len(rs); i++ {
 			a, b := rs[i], rs[i+1]
-			if (cdnCJK.MatchString(string(a)) && cdnLAT.MatchString(string(b))) ||
-				(cdnLAT.MatchString(string(a)) && cdnCJK.MatchString(string(b))) {
-				add("N7", fmt.Sprintf("段 %s 内汉字与拉丁字母直接相邻（%s%s）", cdnPyRepr(seg), string(a), string(b)))
+			cjkLat := cdnIsCJK(a) && cdnIsLat(b)
+			latCjk := cdnIsLat(a) && cdnIsCJK(b)
+			if cjkLat || latCjk {
+				// GAP-20260926-166：拉丁侧是**版本标记**（`v`+数字，如 `模块v2.1` 切段后 `模块v2`）
+				// ⇒ 不算「中英紧邻需人审」的假红，跳过（版本段由 N3/N4 管）。
+				if cdnIsVersionMarkerRun(seg, i) {
+					continue
+				}
+				dir := "LAT→CJK"
+				if cjkLat {
+					dir = "CJK→LAT"
+				}
+				shape := cdnN7Shape{kind, dir, cdnLatinRunKind(seg, i)}
+				add("N7", fmt.Sprintf("段 %s 内汉字与拉丁字母直接相邻（%s%s）", cdnPyRepr(seg), string(a), string(b)), &shape)
 				joined = true
 				break
 			}
@@ -904,10 +979,11 @@ type cdnReport struct {
 	frozen        map[string]int
 	perRuleLive   map[string]int
 	perRuleFrozen map[string]int
+	n7Shapes      map[cdnN7Shape]int // GAP-20260926-213d：仅 wantShapes 时非 nil
 }
 
-func cdnRun(root string, targets []string, countFrozen bool) (*cdnReport, string) {
-	entries := cdnWalk(root, targets)
+func cdnRun(root string, targets []string, countFrozen bool, extraExcl []string, wantShapes bool) (*cdnReport, string) {
+	entries := cdnWalk(root, targets, extraExcl)
 	if len(entries) == 0 {
 		return nil, "扫描域为空（一个文件/目录都没有）"
 	}
@@ -921,6 +997,10 @@ func cdnRun(root string, targets []string, countFrozen bool) (*cdnReport, string
 	if !hasFile {
 		return nil, "扫描域里没有任何文件（只有目录名 ⇒ 判不了）"
 	}
+	var n7Shapes map[cdnN7Shape]int
+	if wantShapes {
+		n7Shapes = map[cdnN7Shape]int{}
+	}
 	rep := &cdnReport{
 		entries:       len(entries),
 		perRule:       map[string]int{},
@@ -929,6 +1009,7 @@ func cdnRun(root string, targets []string, countFrozen bool) (*cdnReport, string
 		frozen:        map[string]int{"FAIL": 0, "WARN": 0},
 		perRuleLive:   map[string]int{},
 		perRuleFrozen: map[string]int{},
+		n7Shapes:      n7Shapes,
 	}
 	incExempt := func(id string) {
 		for i := range rep.exemptHits {
@@ -945,6 +1026,9 @@ func cdnRun(root string, targets []string, countFrozen bool) (*cdnReport, string
 		fr := isFrozen(e.rel)
 		for _, h := range cdnJudgeName(e.rel, e.kind) {
 			rep.perRule[h.rule]++
+			if h.shape != nil && rep.n7Shapes != nil {
+				rep.n7Shapes[*h.shape]++
+			}
 			if h.row != nil {
 				incExempt(h.row.id)
 				continue
@@ -1059,6 +1143,87 @@ func cdnPrintReport(w io.Writer, rep *cdnReport, maxExamples int) {
 	}
 }
 
+// cdnPrintSummary —— GAP-20260926-213b：一屏摘要（逐规则命中 + 豁免 / 误报率）。
+// 误报率口径 = 已豁免命中 ÷ 命中总数（与 py `print_summary` 逐字同构）。
+func cdnPrintSummary(w io.Writer, rep *cdnReport) {
+	total := 0
+	for _, v := range rep.perRule {
+		total += v
+	}
+	exempt := 0
+	for _, kv := range rep.exemptHits {
+		exempt += kv.v
+	}
+	rate := 0.0
+	if total != 0 {
+		rate = float64(exempt) / float64(total) * 100.0
+	}
+	fmt.Fprintln(w, "check-doc-name 摘要（一屏 · 命中全貌 + 豁免/误报率）")
+	fmt.Fprintf(w, "  扫描域：%d 个文件/目录\n", rep.entries)
+	fmt.Fprintf(w, "  命中总数：%d（可改面 不合规 %d · 告警 %d ｜ 冻结区 不合规 %d · 告警 %d）\n",
+		total, rep.live["FAIL"], rep.live["WARN"], rep.frozen["FAIL"], rep.frozen["WARN"])
+	if len(rep.perRule) == 0 {
+		fmt.Fprintln(w, "  逐规则命中：无")
+	} else {
+		keys := []string{}
+		for k := range rep.perRule {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := []string{}
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s×%d", k, rep.perRule[k]))
+		}
+		fmt.Fprintln(w, "  逐规则命中："+strings.Join(parts, " · "))
+	}
+	fmt.Fprintf(w, "  豁免命中：%d（误报率 = 豁免 ÷ 命中总数 = %.1f%%）\n", exempt, rate)
+	if len(rep.exemptHits) > 0 {
+		kvs := append([]cdnKV{}, rep.exemptHits...)
+		sort.Slice(kvs, func(i, j int) bool { return kvs[i].k < kvs[j].k })
+		parts := []string{}
+		for _, kv := range kvs {
+			parts = append(parts, fmt.Sprintf("%s×%d", kv.k, kv.v))
+		}
+		fmt.Fprintln(w, "    豁免明细："+strings.Join(parts, " · "))
+	}
+}
+
+// cdnPrintN7Shapes —— GAP-20260926-213d：N7 命中形态分类（对象件/目录 × 方向 × 拉丁形态）。
+// py 排序键 = (-count, (kind, direction, latin)) ⇒ 本件按 count 降序、同数按三元组升序。
+func cdnPrintN7Shapes(w io.Writer, rep *cdnReport) {
+	fmt.Fprintln(w, "N7 命中形态分类（对象 × 方向 × 拉丁形态）")
+	if len(rep.n7Shapes) == 0 {
+		fmt.Fprintln(w, "  无 N7 命中")
+		return
+	}
+	type item struct {
+		s cdnN7Shape
+		n int
+	}
+	items := []item{}
+	for s, n := range rep.n7Shapes {
+		items = append(items, item{s, n})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].n != items[j].n {
+			return items[i].n > items[j].n
+		}
+		a, b := items[i].s, items[j].s
+		if a.kind != b.kind {
+			return a.kind < b.kind
+		}
+		if a.direction != b.direction {
+			return a.direction < b.direction
+		}
+		return a.latin < b.latin
+	})
+	for _, it := range items {
+		fmt.Fprintf(w, "  %-6s %-10s %-8s ×%d\n", it.s.kind, it.s.direction, it.s.latin, it.n)
+	}
+	fmt.Fprintln(w, "  口径：方向 CJK→LAT（汉字在前）/ LAT→CJK（拉丁在前）；"+
+		"拉丁形态 version（v+数字 · GAP-166 已收窄不告警）/ single（单字母）/ word（≥2 字母）")
+}
+
 func cdnDecide(rep *cdnReport) (int, string) {
 	if rep.live["FAIL"] > 0 {
 		return 1, fmt.Sprintf("FAIL：%d 个不合规命中（只报告不改）", rep.live["FAIL"])
@@ -1082,29 +1247,81 @@ func cdnListRules(w io.Writer) {
 	fmt.Fprintln(w, "  退码：0 全绿 · 1 有不合规项 · 2 不给结论（优先级 2>1>0）。")
 }
 
-func cdnListExempt(w io.Writer) int {
+// cdnHitSuffix —— --hits 的逐行后缀（GAP-20260926-189）。hasHits=false ⇒ 不打印（默认口径不变）。
+func cdnHitSuffix(hasHits bool, hits map[string]int, rid string) string {
+	if !hasHits {
+		return ""
+	}
+	n := hits[rid]
+	if n == 0 {
+		return " · 命中 ×0（不可达/未命中）"
+	}
+	return fmt.Sprintf(" · 命中 ×%d", n)
+}
+
+// cdnKVMap —— []cdnKV → map（供 --hits 逐行查）。
+func cdnKVMap(kvs []cdnKV) map[string]int {
+	m := map[string]int{}
+	for _, kv := range kvs {
+		m[kv.k] = kv.v
+	}
+	return m
+}
+
+// cdnCollectExemptHits —— --list-exempt --hits：跑一遍扫描拿逐行命中数（GAP-20260926-189）。
+// 只读分析面：跑不通（缺件 / 空域）⇒ 返回 nil（逐行显示 ×0），不抛错（与 py `_collect_exempt_hits` 同构）。
+func cdnCollectExemptHits(a *cdnArgs) []cdnKV {
+	root := cdnAbs(a.repoRoot)
+	raw := append(append([]string{}, a.targets...), a.target...)
+	targets := []string{}
+	for _, x := range raw {
+		targets = append(targets, cdnAbs(x))
+	}
+	if len(targets) == 0 {
+		targets = []string{root}
+	}
+	existing := []string{}
+	for _, t := range targets {
+		if _, err := os.Stat(t); err == nil {
+			existing = append(existing, t)
+		}
+	}
+	if len(existing) == 0 {
+		return nil
+	}
+	rep, rerr := cdnRun(root, existing, a.countFrozen, a.excludePrefix, false)
+	if rerr != "" {
+		return nil
+	}
+	return rep.exemptHits
+}
+
+func cdnListExempt(w io.Writer, hasHits bool, hits map[string]int) int {
 	fmt.Fprintln(w, "例外表（四档 · 逐条给理由与出处）")
 	fmt.Fprintf(w, "A 档 · 《清单-命名规范化》已登记的「不改」条目：%d 条（期望 %d）\n", len(cdnExemptA), cdnExemptExpected["A"])
 	for _, row := range cdnExemptA {
-		fmt.Fprintf(w, "  %s [%s] 类型 %s · TSV 第 %d 行 · 形态 %s\n", row.id, strings.Join(row.rules, "+"), row.typ, row.rowNum, row.kind)
+		fmt.Fprintf(w, "  %s [%s] 类型 %s · TSV 第 %d 行 · 形态 %s%s\n", row.id, strings.Join(row.rules, "+"), row.typ, row.rowNum, row.kind, cdnHitSuffix(hasHits, hits, row.id))
 		fmt.Fprintf(w, "      对象：%s\n", row.objFlat)
 		fmt.Fprintf(w, "      理由：%s\n", row.reason)
 		fmt.Fprintf(w, "      出处：%s\n", row.src)
 	}
 	fmt.Fprintf(w, "B 档 · 规则级规范豁免：%d 条（期望 %d）\n", len(cdnExemptB), cdnExemptExpected["B"])
 	for _, row := range cdnExemptB {
-		fmt.Fprintf(w, "  %s [%s] 形态 %s\n      对象：%s\n      理由：%s\n", row.id, strings.Join(row.rules, "+"), row.kind, row.objFlat, row.reason)
+		fmt.Fprintf(w, "  %s [%s] 形态 %s%s\n      对象：%s\n      理由：%s\n", row.id, strings.Join(row.rules, "+"), row.kind, cdnHitSuffix(hasHits, hits, row.id), row.objFlat, row.reason)
 	}
 	fmt.Fprintf(w, "C 档 · 新增登记（C01–C03 待批准 · C04 已拍 2026-09-18 · C05–C07 第二波任务书登记 2026-09-18 · "+
 		"C08 2026-09-22（门⑮ 主仓悬空引用）登记 · C09 2026-09-24（波11 序125 `W-43` hook git 环境）登记）："+
 		"%d 条（期望 %d）\n", len(cdnExemptC), cdnExemptExpected["C"])
 	for _, row := range cdnExemptC {
-		fmt.Fprintf(w, "  %s [%s] 形态 %s\n      对象：%s\n      理由：%s\n", row.id, strings.Join(row.rules, "+"), row.kind, row.objFlat, row.reason)
+		fmt.Fprintf(w, "  %s [%s] 形态 %s%s\n      对象：%s\n      理由：%s\n", row.id, strings.Join(row.rules, "+"), row.kind, cdnHitSuffix(hasHits, hits, row.id), row.objFlat, row.reason)
 	}
 	fmt.Fprintf(w, "D 档 · 本轮 A 路拍板登记（登记不改）：%d 条（期望 %d）\n", len(cdnExemptD), cdnExemptExpected["D"])
 	for _, row := range cdnExemptD {
-		fmt.Fprintf(w, "  %s [%s] 形态 %s\n      对象：%s\n      理由：%s\n      出处：%s\n",
-			row.id, strings.Join(row.rules, "+"), row.kind, row.objFlat, row.reason, row.src)
+		fmt.Fprintf(w, "  %s [%s] 形态 %s%s\n      对象：%s\n      理由：%s\n      出处：%s\n",
+			row.id, strings.Join(row.rules, "+"), row.kind, cdnHitSuffix(hasHits, hits, row.id), row.objFlat, row.reason, row.src)
+	}
+	if hasHits {
+		fmt.Fprintln(w, "★ 逐行命中数为本次扫描现读（--hits）；×0 且注「不可达」= 共用键后行（见 A 档共用键注）。")
 	}
 	return 0
 }
@@ -1271,6 +1488,10 @@ func cdnSelfTest(meta bool) (bool, []string) {
 	pairs := cdnPyJoin(tmp, "pairs")
 	cdnWriteFile(cdnPyJoin(pairs, "docs", "01-设计", "机读对.md"), "# x\n")
 	cdnWriteFile(cdnPyJoin(pairs, "docs", "01-设计", "机读对.tsv"), "x\n")
+	// GAP-20260926-166 / 213d：N7 成对负控 —— 版本标记紧邻（收窄后不告警）vs 词形态（照告警）
+	n7dir := cdnPyJoin(tmp, "n7")
+	cdnWriteFile(cdnPyJoin(n7dir, "docs", "设计-模块v2.1.md"), "# x\n") // 段 `模块v2` ⇒ 版本标记 ⇒ 不告警
+	cdnWriteFile(cdnPyJoin(n7dir, "docs", "模块Agent说明.md"), "# x\n") // 段 `模块Agent` ⇒ 词形态 ⇒ 照告警
 	goodpair := cdnPyJoin(tmp, "goodpair")
 	for _, gf := range cdnGoodFiles {
 		cdnWriteFile(cdnPyJoin(goodpair, gf[0]), gf[1])
@@ -1399,8 +1620,21 @@ func cdnSelfTest(meta bool) (bool, []string) {
 	envKV := [2]string{"ZERG_DEVDOCS_ROOT", cdnPyJoin(tmp, "no-such-Zerg-内部文档")}
 	ok = ok && caseFn("D3① devdocs 根不在 ⇒ BLOCKED（仓外不可达不许当绿）", 2,
 		[]string{"--repo-root", tmp, "--scope", "devdocs"}, []string{"不给结论", "开发文档面根不在"}, nil, &envKV)
+	// ⑭ 批-06（GAP-189/213/166）新旋钮成对自证（互不依赖，各自一条）：
+	ok = ok && caseFn("--list-exempt --hits 逐行给命中数", 0,
+		[]string{"--repo-root", good, "--target", good, "--list-exempt", "--hits"}, []string{"命中 ×"}, nil, nil)
+	ok = ok && caseFn("--summary 一屏摘要（含误报率）", 0,
+		[]string{"--target", good, "--repo-root", good, "--summary"}, []string{"摘要", "误报率"}, nil, nil)
+	ok = ok && caseFn("--exclude-prefix 临时排除生效（N6 消失）", 1,
+		[]string{"--target", bad, "--exclude-prefix", "bad/docs/01-设计/"}, []string{"临时排除"}, []string{"N6"}, nil)
+	ok = ok && caseFn("--n7-shapes N7 形态分类输出", 1,
+		[]string{"--target", bad, "--n7-shapes"}, []string{"N7 命中形态分类"}, nil, nil)
+	ok = ok && caseFn("N7 收窄：版本标记紧邻不告警", 0,
+		[]string{"--target", cdnPyJoin(n7dir, "docs", "设计-模块v2.1.md")}, nil, []string{"N7"}, nil)
+	ok = ok && caseFn("N7 收窄后有牙：词形态照告警", 0,
+		[]string{"--target", cdnPyJoin(n7dir, "docs", "模块Agent说明.md")}, []string{"N7", "告警"}, nil, nil)
 
-	expected := 1 + 5 + 1 + len(cdnBadDirs) + len(cdnBadPairs) + 1 + 1 + 2 + 2 + 1 + 1 + 4 + 1
+	expected := 1 + 5 + 1 + len(cdnBadDirs) + len(cdnBadPairs) + 1 + 1 + 2 + 2 + 1 + 1 + 4 + 1 + 6
 	got := 0
 	for _, ln := range lines {
 		if strings.HasPrefix(ln, "✓") || strings.HasPrefix(ln, "✗") {
@@ -1419,18 +1653,22 @@ func cdnSelfTest(meta bool) (bool, []string) {
 // ── 参数与入口 ────────────────────────────────────────────────────────────────
 
 type cdnArgs struct {
-	targets     []string
-	target      []string
-	repoRoot    string
-	maxExamples int
-	countFrozen bool
-	scope       string
-	jsonOut     bool
-	listRules   bool
-	listExempt  bool
-	selfTest    bool
-	noSelfTest  bool
-	help        bool
+	targets       []string
+	target        []string
+	repoRoot      string
+	maxExamples   int
+	countFrozen   bool
+	scope         string
+	jsonOut       bool
+	listRules     bool
+	listExempt    bool
+	selfTest      bool
+	noSelfTest    bool
+	help          bool
+	summary       bool     // GAP-20260926-213b
+	hits          bool     // GAP-20260926-189
+	n7Shapes      bool     // GAP-20260926-213d
+	excludePrefix []string // GAP-20260926-213c（可重复 · 未登记）
 }
 
 func cdnParseArgs(argv []string) (*cdnArgs, string) {
@@ -1491,6 +1729,18 @@ func cdnParseArgs(argv []string) (*cdnArgs, string) {
 				a.scope = v
 			case "--count-frozen":
 				a.countFrozen = true
+			case "--summary":
+				a.summary = true
+			case "--hits":
+				a.hits = true
+			case "--n7-shapes":
+				a.n7Shapes = true
+			case "--exclude-prefix":
+				v, e := takeVal(name, val, hasVal, &i)
+				if e != "" {
+					return nil, e
+				}
+				a.excludePrefix = append(a.excludePrefix, v)
 			case "--json":
 				a.jsonOut = true
 			case "--list-rules":
@@ -1519,8 +1769,9 @@ func cdnParseArgs(argv []string) (*cdnArgs, string) {
 
 func cdnPrintHelp(w io.Writer) {
 	fmt.Fprintln(w, "usage: check-doc-name [-h] [--target TARGET] [--repo-root REPO_ROOT] [--max-examples N]")
-	fmt.Fprintln(w, "                       [--count-frozen] [--scope {repo,docs,devdocs}] [--json]")
-	fmt.Fprintln(w, "                       [--list-rules] [--list-exempt] [--self-test] [--no-self-test]")
+	fmt.Fprintln(w, "                       [--count-frozen] [--summary] [--hits] [--n7-shapes]")
+	fmt.Fprintln(w, "                       [--exclude-prefix EXCLUDE_PREFIX] [--scope {repo,docs,devdocs}]")
+	fmt.Fprintln(w, "                       [--json] [--list-rules] [--list-exempt] [--self-test] [--no-self-test]")
 	fmt.Fprintln(w, "                       [targets ...]")
 	fmt.Fprintln(w, "命名规范化门（只报告不改）—— Go 真搬；正文见 py 原件件头。")
 }
@@ -1559,7 +1810,10 @@ func checkDocNameGateMain(stdout, stderr io.Writer, argv []string) int {
 		return 0
 	}
 	if a.listExempt {
-		return cdnListExempt(stdout)
+		if a.hits {
+			return cdnListExempt(stdout, true, cdnKVMap(cdnCollectExemptHits(a)))
+		}
+		return cdnListExempt(stdout, false, nil)
 	}
 	meta := os.Getenv("CHECK_DOC_NAME_META_OFF") != "1"
 	if a.selfTest {
@@ -1642,7 +1896,7 @@ func checkDocNameGateMain(stdout, stderr io.Writer, argv []string) int {
 			return 2
 		}
 	}
-	rep, rerr := cdnRun(root, targets, a.countFrozen)
+	rep, rerr := cdnRun(root, targets, a.countFrozen, a.excludePrefix, a.n7Shapes)
 	if rerr != "" {
 		fmt.Fprintf(stdout, "BLOCKED：%s ⇒ 不给结论\n", rerr)
 		return 2
@@ -1652,8 +1906,23 @@ func checkDocNameGateMain(stdout, stderr io.Writer, argv []string) int {
 		cdnPrintJSON(stdout, rc, verdict, rep)
 		return rc
 	}
+	if len(a.excludePrefix) > 0 {
+		fmt.Fprintf(stdout, "★ 临时排除（--exclude-prefix · **未登记** · 仅本次分析生效）：%s\n",
+			strings.Join(a.excludePrefix, ", "))
+	}
+	if a.summary {
+		cdnPrintSummary(stdout, rep)
+		if a.n7Shapes {
+			cdnPrintN7Shapes(stdout, rep)
+		}
+		fmt.Fprintln(stdout, verdict)
+		return rc
+	}
 	fmt.Fprintln(stdout, "check-doc-name —— 《清单-命名规范化》七类判据的可执行版（只报告不改）")
 	cdnPrintReport(stdout, rep, a.maxExamples)
+	if a.n7Shapes {
+		cdnPrintN7Shapes(stdout, rep)
+	}
 	fmt.Fprintln(stdout, verdict)
 	return rc
 }

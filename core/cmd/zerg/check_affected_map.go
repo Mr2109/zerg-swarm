@@ -670,9 +670,8 @@ func afmFingerprint(root string, steps []afmStep, cov, newcmd afmJV) string {
 	}
 	buf = append(buf, []byte(afmDump(cov, 0, true, 0))...)
 	buf = append(buf, []byte(afmDump(newcmd, 0, true, 0))...)
-	if head, ok := afmGitHead(root); ok {
-		buf = append(buf, []byte(head)...)
-	}
+	// ★ GAP-20261005-51 甲案：入键**不含 git HEAD** —— 否则「emit 时压 HEAD、emit 后一提交 HEAD 即变」
+	//   ⇒ 冻结点自指、任一提交必过期、无不动点（与 py check-affected-map.py:340-353 同步）。
 	return afmHex(afmSHA256(buf))
 }
 
@@ -907,7 +906,7 @@ func afmBuildMap(root string) (afmJV, bool) {
 		afmKP{afmK("source_head"), head},
 		afmKP{afmK("input_fingerprint"), afmStr(afmFingerprint(root, steps, cov, newcmd))},
 		afmKP{afmK("_fingerprint_note"), afmStr("入键 = 步表文本 ＋ 每个按名点到脚本件的 sha256 ＋ gate-coverage.config.json " +
-			"＋ newcmd-paths-baseline.json ＋ git HEAD（不对称口径：宁多入不可少入）。" +
+			"＋ newcmd-paths-baseline.json（内容相对 · ✗ 不含 git HEAD ⇒ 无冻结点自指 · 只有被管辖输入变才过期）。" +
 			"取不到 ⇒ 下游 affected-steps.py 报「不给结论」rc=2。")},
 		afmKP{afmK("faces"), afmObj(faceOut...)},
 		afmKP{afmK("files"), afmArr(entries...)},

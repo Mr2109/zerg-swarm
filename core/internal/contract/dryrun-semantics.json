@@ -55,6 +55,13 @@
    "备注": "归并前的第 1 套：语义与 dryrun.v1 一致（只报告不落盘）"
   },
   {
+   "file": "core/cmd/zerg/check_cli_contract.go",
+   "类": "命令面判据门（Go 真搬 · py 同源）：本件 `--emit-matrix` 的干跑档 —— 只报将要合并的增量 · **不写**矩阵件",
+   "语义": "dryrun.v1",
+   "零副作用判据": "`zerg gate check check-cli-contract --emit-matrix --dry-run` ⇒ 退码 0 · stdout 出「矩阵**干跑 · 未落盘**（--dry-run · 缺口 `GAP-20260927-372`）：计划写 <落点>」＋增量行 · 落点 `core/cmd/zerg/testdata/cli-matrix.json` 跑前跑后 `sha256` **逐字同**（2026-10-05 现读 `50647352…` → `50647352…`；成对负控 = 不带 `--dry-run` 的 `--emit-matrix` 跑完该件 `sha256` 必变）。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（2026-10-05 收口批：本件被改入 `dryRun` 形参 ⇒ 进扫描面）。它是 `--emit-matrix` 那一套语义的干跑档，**不另立语义**。"
+  },
+  {
    "file": "core/cmd/zerg/export.go",
    "类": "命令面导出物（两档：默认真写一件 · 只读档 `--dry-run` 零副作用）",
    "语义": "dryrun.v1",

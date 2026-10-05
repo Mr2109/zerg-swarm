@@ -149,7 +149,7 @@ func TestFFPEmptyForms(t *testing.T) {
 		}
 		root := ffpTestTree(t, ffpTMainGood)
 		ffpTestBin(t, root, ffpTBinGood())
-		rc, out, _ := ffpTestRun(t, root, "--min-covered", "2", "--json")
+		rc, out, _ := ffpTestRun(t, root, "--min-covered", "2", "--min-selectable", "2", "--json")
 		if rc != 0 {
 			t.Fatalf("正控 rc=%d，期望 0（out=%s）", rc, out)
 		}
@@ -249,7 +249,7 @@ func TestFFPArtifactFace(t *testing.T) {
 	t.Run("传绝对路径_rc0", func(t *testing.T) {
 		root := ffpTestTree(t, ffpTMainGood)
 		abs := ffpTestBin(t, root, ffpTBinGood())
-		rc, out, _ := ffpTestRun(t, root, "--bin", abs, "--min-covered", "2")
+		rc, out, _ := ffpTestRun(t, root, "--bin", abs, "--min-covered", "2", "--min-selectable", "2")
 		if rc != 0 {
 			t.Fatalf("绝对路径 rc=%d（out=%s）", rc, out)
 		}
@@ -315,9 +315,16 @@ func TestFFPArgs(t *testing.T) {
 	t.Run("唯一前缀缩写_rc2_棘轮不够", func(t *testing.T) {
 		root := ffpTestTree(t, ffpTMainGood)
 		ffpTestBin(t, root, ffpTBinGood())
-		rc, out, _ := ffpTestRun(t, root, "--min", "29")
+		rc, out, _ := ffpTestRun(t, root, "--min-cov", "29")
 		if rc != 2 || !strings.Contains(out, "棘轮 29") {
 			t.Fatalf("前缀缩写 rc=%d out=%s", rc, out)
+		}
+	})
+	t.Run("前缀歧义_rc2_min不再唯一", func(t *testing.T) {
+		// 本枚加 `--min-selectable` ⇒ `--min` 前缀**不再唯一**（argparse 同语义：报 unrecognized）
+		rc, _, errs := ffpTestRun(t, "--min", "29")
+		if rc != 2 || !strings.Contains(errs, "unrecognized arguments: --min") {
+			t.Fatalf("前缀歧义 rc=%d err=%q", rc, errs)
 		}
 	})
 }
@@ -437,6 +444,57 @@ func TestFFPPathSemantics(t *testing.T) {
 	t.Run("universalNewlines_折rn与裸r", func(t *testing.T) {
 		if got := ffpUniversalNewlines("a\r\nb\rc"); got != "a\nb\nc" {
 			t.Fatalf("universalNewlines = %q", got)
+		}
+	})
+}
+
+// ── T9 腿②「公告 == 可选」：分类面四档 + run 面成对负控（本枚加 · `GAP-20261005-45`）───
+
+func TestFFPSelectableLeg(t *testing.T) {
+	t.Run("分类面_四档", func(t *testing.T) {
+		if got := ffpClassifyField(0, "", "model"); got != "ok" {
+			t.Fatalf("rc=0 ⇒ %q，期望 ok", got)
+		}
+		if got := ffpClassifyField(2, "zerg: `agent bench` 要一台机器名\n", "model"); got != "ok" {
+			t.Fatalf("报话非未知字段 ⇒ %q，期望 ok", got)
+		}
+		unk := "zerg: " + ffpUnknownFieldMark + " \"model\"\n" + ffpLegalFieldsPrefix + " host,state\n"
+		if got := ffpClassifyField(2, unk, "model"); got != "rejected" {
+			t.Fatalf("未知字段且同条清单不含 ⇒ %q，期望 rejected", got)
+		}
+		con := "zerg: " + ffpUnknownFieldMark + " \"model\"\n" + ffpLegalFieldsPrefix + " host,model,state\n"
+		if got := ffpClassifyField(2, con, "model"); got != "contradiction" {
+			t.Fatalf("未知字段却同条列出 ⇒ %q，期望 contradiction（公告≠可选）", got)
+		}
+	})
+	t.Run("run面_成对_绿与红", func(t *testing.T) {
+		mainBody := "package main\nvar commands = []*command{\n" +
+			"	{path: []string{\"zz\", \"ffp\"}, fields: []string{\"model\", \"host\"}, run: x},\n" +
+			"	}\n"
+		root := ffpTestTree(t, mainBody)
+		// 合成制品：坏名报「未知字段 + 清单」；两格按档回话（✗ 不碰真目标）。
+		selBin := func(hostLine, modelLine string) string {
+			return "#!/bin/sh\ncase \"$*\" in\n" +
+				"\"zz ffp --json " + ffpBogus + "\") echo \"" + ffpLegalFieldsPrefix + " host,model\" >&2; exit 2;;\n" +
+				"\"zz ffp --json host\") " + hostLine + ";;\n" +
+				"\"zz ffp --json model\") " + modelLine + ";;\n" +
+				"*) exit 0;;\nesac\n"
+		}
+		contra := func(who string) string {
+			return "echo 'zerg: " + ffpUnknownFieldMark + " \"" + who + "\"' >&2; echo \"" +
+				ffpLegalFieldsPrefix + " host,model\" >&2; exit 2"
+		}
+		// 正控：两格都退 0 ⇒ 声明==公告 且 公告==可选 ⇒ rc=0
+		ffpTestBin(t, root, selBin("exit 0", "exit 0"))
+		rc, out, _ := ffpTestRun(t, root, "--min-covered", "1", "--min-selectable", "1")
+		if rc != 0 {
+			t.Fatalf("腿②正控 rc=%d，期望 0（out=%s）", rc, out)
+		}
+		// ★ 负控（成对 · 「公告 ≠ 可选」⇒ 必红）：`model` 被判未知**却**列进同条清单
+		ffpTestBin(t, root, selBin("exit 0", contra("model")))
+		rc, out, _ = ffpTestRun(t, root, "--min-covered", "1", "--min-selectable", "1")
+		if rc != 1 || !strings.Contains(out, "自相矛盾") || !strings.Contains(out, "zz ffp --json model") {
+			t.Fatalf("腿②负控 rc=%d，期望 1 且逐格点名（out=%s）", rc, out)
 		}
 	})
 }

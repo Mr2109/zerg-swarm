@@ -593,6 +593,41 @@ def text_mention(name, gates_text):
     return False, ""
 
 
+_ZERG_GATE_CACHE = {}
+
+
+def zerg_gate_re(stem):
+    """`zerg gate check <件名去扩展名>` 命令位形（`GAP-20261001-74`）。
+
+    ★ 光把 `zerg` 加进 `_RUNNER_RE` **不解**：`gate check` 两词夹在启动器与名之间 ⇒
+      现有 `call_re` 结构上吃不进 ⇒ 另写专用规则（`gate check` 不是旗标）。
+    """
+    r = _ZERG_GATE_CACHE.get(stem)
+    if r is None:
+        head = r'(?:^|[\s"\'=(;|&])(?:[^\s]*/)?zerg\s+gate\s+check\s+(?:[^\s]*/)*'
+        r = re.compile(head + re.escape(stem) + r'(?=[\s"\';|)&]|$)')
+        _ZERG_GATE_CACHE[stem] = r
+    return r
+
+
+def zerg_name_covers(base, cmds_text):
+    """命令串里有没有 `zerg gate check <base 去扩展名>` 形态（① in_steps 的等价档）。
+
+    `GAP-20261001-74`：接线改造后命令形从 `python3 …/check-x.py` 变成
+    `zerg gate check check-x` ⇒ 用**去扩展名**比较；否则 basename（含 `.py`）永不在
+    命令串里 ⇒ 该件假掉 ③ 档（自指死结）。
+    """
+    stem = os.path.splitext(base)[0]
+    if not stem:
+        return False
+    for line in cmds_text.splitlines():
+        if stem not in line:
+            continue
+        if zerg_gate_re(stem).search(line):
+            return True
+    return False
+
+
 def script_tier(rel, gates_text, cmds_text):
     """① in_steps · ②a wired · ②b mention · ③ unmentioned。
 
@@ -603,7 +638,7 @@ def script_tier(rel, gates_text, cmds_text):
     ★ 计数自证不变：① + ② + ③ ≡ 候选总数（其中 ② = ②a + ②b）。
     """
     name = os.path.basename(rel)
-    if name_re(name).search(cmds_text):
+    if name_re(name).search(cmds_text) or zerg_name_covers(name, cmds_text):
         return "in_steps"
     if wired_mention(name, gates_text)[0]:
         return "wired"
@@ -1304,6 +1339,25 @@ def self_test(sink=None, deep=None):
     check("⑭c 负控（同一夹具 · 把那行改成注释）⇒ 回 ②b（分类不是恒真）",
           rc == 0 and "②a **真接线**（闸体命令位调用 · 与门③同口径）：0" in out
           and "②b **只被提一下**（注释/文案/清单项 · **不算接线** · `GAP-20260927-123`）：1" in out)
+
+    # ── ⑭f/⑭g ① 的 `zerg gate check <去扩展名>` 等价档（`GAP-20261001-74`）─────────────
+    #   判据面 = `script_tier` 的 ① in_steps：命令串 `zerg gate check check-x` 里 basename
+    #   （含 `.py`）不在 ⇒ 旧口径掉 ③；等价档按**去扩展名**判 ⇒ 回 ①。
+    #   ⑭f 正控：命令位 `zerg gate check check-x` ⇒ ① 命中 1、rc=0。
+    zfix = _fixture(base, "z-zerg-insteps",
+                    steps=[("core", "go build ./..."), ("", "zerg gate check check-x")],
+                    scripts=("scripts/check-x.py",))
+    rc, out = _run(zfix)
+    check("⑭f `zerg gate check <去扩展名>` 命令位 ⇒ 判 ① in_steps 等价档（GAP-20261001-74）",
+          rc == 0 and "① add_step 命令串里点名：1" in out, "rc=%d" % rc)
+    #   ⑭g 负控（与 ⑭f 成对 · 方向性）：缺 `gate` 子命令（`zerg check check-x`）⇒ 不认 ⇒ 落 ③、rc=1
+    nfix = _fixture(base, "z-zerg-nosubcmd",
+                    steps=[("core", "go build ./..."), ("", "zerg check check-x")],
+                    scripts=("scripts/check-x.py",))
+    _gitify(nfix)                                 # 有索引 ⇒ 「新件 ⟷ 存量债」分得开（否则 rc=2「判不了」）
+    rc, out = _run(nfix)
+    check("⑭g 负控：`zerg check check-x`（缺 gate）⇒ 不判 ①（防「只加 zerg 就放行」）",
+          rc == 1 and "① add_step 命令串里点名：0" in out, "rc=%d" % rc)
 
     # ── ⑭d/⑭e 治静默：**只被提一下的新件**必须落 ④（rc=1）—— 成对负控 ──────────────
     #   判据面 = 「②b 只被提一下 ∧ 不在 git 索引 ⇒ 新件未挂门」。旧口径里它落 ② ⇒ 永久静默

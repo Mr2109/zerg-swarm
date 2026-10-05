@@ -325,3 +325,47 @@ func cpfcT_countTempPrefix(t *testing.T, prefix string) int {
 	}
 	return n
 }
+
+// ── 13. 格 1 漂移免疫牙（`GAP-20260927-11`）：真页 +1 条新例外 ⇒ 自检仍 rc=0 ──────
+//
+//	★ 哑化回退旧形态（格 1 = 真页副本 + 写死例外串清洗）⇒ 新例外把格 1 带红 ⇒ 本用例立红。
+func TestCpfcS13_格1漂移免疫_新例外不带红自检(t *testing.T) {
+	repo := cpfcT_repoRoot(t)
+	z := cpfcT_zergArg(t)
+	drift := t.TempDir()
+	for _, d := range []string{"core/cmd/zerg", "bin", cpfcFaceDir} {
+		if err := os.MkdirAll(cpfcPyJoin(drift, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cpfcT_write(t, cpfcPyJoin(drift, "core", "cmd", "zerg", "main.go"), "package main\n")
+	zb, err := os.ReadFile(z)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cpfcPyJoin(drift, "bin", "zerg"), zb, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 每页在**生成区内**注入一条新例外（真命令 + 假旗标）
+	inj := "见 `zerg context ls --frobx`。\n"
+	const endMark = "<!-- ===== 生成区 END"
+	for _, rel := range cpfcPages {
+		raw := cpfcT_read(t, cpfcPyJoin(repo, rel))
+		if !strings.Contains(raw, endMark) {
+			t.Fatalf("真页缺生成区 END 标记：%s", rel)
+		}
+		cpfcT_write(t, cpfcPyJoin(drift, rel), strings.Replace(raw, endMark, inj+endMark, 1))
+	}
+	old, _ := os.Getwd()
+	defer func() { _ = os.Chdir(old) }()
+	if err := os.Chdir(drift); err != nil {
+		t.Fatal(err)
+	}
+	rc, out, _ := cpfcT_run([]string{"--self-test"})
+	if rc != 0 {
+		t.Fatalf("漂移树（真页 +1 条新例外）⇒ 自检应漂移免疫 rc=0，得 %d\n%s", rc, out)
+	}
+	if !strings.Contains(out, "格 1 正控（合成页：命令树") {
+		t.Fatalf("格 1 应为合成页形态\n%s", out)
+	}
+}

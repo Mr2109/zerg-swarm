@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -38,6 +40,8 @@ func gapRereadInvocation(argv []string) *invocation {
 			}
 		case a == "--all":
 			inv.all = true
+		case a == "--include-open":
+			inv.kvSet("--include-open", "true")
 		case a == "--limit":
 			if i+1 < len(argv) {
 				i++
@@ -310,4 +314,130 @@ func gapRereadHexIn(line, key string) string {
 		return ""
 	}
 	return s[:16]
+}
+
+func gapRereadOpenFixtureRec(id, verify string) map[string]any {
+	r := gapRereadFixtureRec(id, "仍缺", "")
+	r["verify_cmd"] = verify
+	return r
+}
+
+// gapRereadParseConserved —— 从人面「未闭守恒」那一行取 (未闭总数, 已跑, 拒跑, 截断)。
+func gapRereadParseConserved(t *testing.T, out string) (tot, ran, ref, tr int) {
+	t.Helper()
+	re := regexp.MustCompile(`未闭总数 (\d+) == 已跑 (\d+) \+ 拒跑 (\d+) \+ 截断 (\d+)`)
+	m := re.FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("人面缺「未闭守恒」行：%q", out)
+	}
+	for i, p := range []*int{&tot, &ran, &ref, &tr} {
+		n, err := strconv.Atoi(m[i+1])
+		if err != nil {
+			t.Fatalf("守恒数解析失败：%v", err)
+		}
+		*p = n
+	}
+	return
+}
+
+// TestGapRereadIncludeOpen —— `--include-open`（未闭条 verify_cmd 判活面 · 缺口 `GAP-20261005-60` 剩面）。
+//
+//	① 默认档（不给旗标）**不出现**未闭判活面（默认行为一字不变）
+//	② `--include-open` 把未闭条 verify_cmd 纳入同一套读数：可跑 ⇒ ok；元字符 / 占位 / 自递归 / 空 / 解析不出 ⇒ not_rereadable（**不执行**）
+//	③ 表尾**守恒自校**：未闭总数 == 已跑 + 拒跑 + 截断（可跑条目数少 ⇒ 截断 > 0）
+//	④ 只报告：rc 恒 0（not_rereadable / 截断 均不进退出码）
+func TestGapRereadIncludeOpen(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ZERG_STATE_DIR", dir)
+
+	recs := []map[string]any{
+		gapRereadFixtureRec("GAP-20261005-01", "已解",
+			"销案两态对拍 · 改后{cmd=zerg gap ls --state 不做 · rc=1 · reading=零 不做} · 散文=夹具"),
+		gapRereadOpenFixtureRec("GAP-20261005-11", "zerg gap ls --state 不做"), // 可跑 ⇒ ok
+		gapRereadOpenFixtureRec("GAP-20261005-12", "zerg gap ls | wc -l"),    // 管道 ⇒ 拒跑
+		gapRereadOpenFixtureRec("GAP-20261005-13", "zerg gap ls; echo x"),    // 分号 ⇒ 拒跑
+		gapRereadOpenFixtureRec("GAP-20261005-14", "zerg gap ls 占位"),         // 占位串 ⇒ 拒跑
+		gapRereadOpenFixtureRec("GAP-20261005-15", "zerg gap reread --all"),  // 自递归 ⇒ 拒跑
+		gapRereadOpenFixtureRec("GAP-20261005-16", "zerg nosuchcmd --x"),     // 解析不出 ⇒ 拒跑
+		gapRereadOpenFixtureRec("GAP-20261005-17", ""),                       // 空 ⇒ 拒跑
+	}
+	ledger := gapRereadWriteLedger(t, dir, recs)
+	sha0 := gapRereadFileSHA(t, ledger)
+
+	// ① 默认档（不给旗标）：不出现未闭判活面
+	rc, out, errb := gapRereadRun(t, "--all")
+	if rc != 0 {
+		t.Fatalf("默认档要 rc=0，得到 %d · stderr=%q", rc, errb)
+	}
+	for _, bad := range []string{"未闭判活", "未闭守恒", "open_total"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("默认档**不许**出现未闭判活面（%q）：%q", bad, out)
+		}
+	}
+
+	// ② 全量 --include-open：7 条未闭条（1 可跑 + 6 拒跑）
+	rc, out, errb = gapRereadRun(t, "--all", "--include-open")
+	if rc != 0 {
+		t.Fatalf("--include-open 要 rc=0（只报告），得到 %d · stderr=%q", rc, errb)
+	}
+	if !strings.Contains(out, "未闭判活") {
+		t.Fatalf("要给未闭判活面：%q", out)
+	}
+	if !strings.Contains(out, "[ok]") {
+		t.Errorf("可跑的未闭条要记 ok：%q", out)
+	}
+	for _, want := range []string{"元字符", "占位", "自递归", "命令树里没有", "空命令"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("未闭判活的拒跑理由里要出现 %q：%q", want, out)
+		}
+	}
+	if n := strings.Count(out, "["+gapRereadNoRun+"]"); n < 6 {
+		t.Errorf("未闭条里 6 条拒跑要各落 [%s]（实得 %d）：%q", gapRereadNoRun, n, out)
+	}
+
+	// ③ 守恒：未闭总数 == 已跑 + 拒跑 + 截断（全量 ⇒ 截断 0）
+	tot, ran, ref, tr := gapRereadParseConserved(t, out)
+	if tot != ran+ref+tr {
+		t.Errorf("守恒式不成立：%d != %d + %d + %d", tot, ran, ref, tr)
+	} else if tot != 7 || ran != 1 || ref != 6 || tr != 0 {
+		t.Errorf("未闭读数应为 7=1+6+0，实得 %d=%d+%d+%d", tot, ran, ref, tr)
+	}
+
+	// ③ 截断：--limit 2 ⇒ 截断 > 0，且守恒仍成立
+	rc, out, errb = gapRereadRun(t, "--all", "--include-open", "--limit", "2")
+	if rc != 0 {
+		t.Fatalf("--include-open --limit 2 要 rc=0，得到 %d · stderr=%q", rc, errb)
+	}
+	tot, ran, ref, tr = gapRereadParseConserved(t, out)
+	if tot != ran+ref+tr {
+		t.Errorf("截断档守恒式不成立：%d != %d + %d + %d", tot, ran, ref, tr)
+	} else if tr <= 0 {
+		t.Errorf("--limit 2 下截断应 > 0（未闭 7 > 2），实得截断=%d", tr)
+	}
+
+	// ④ 只读：本面一字节都不写真源
+	if got := gapRereadFileSHA(t, ledger); got != sha0 {
+		t.Errorf("本面必须只读（真源 sha 变了）：%s → %s", sha0, got)
+	}
+	// ⑤ 缺目标仍走既有用法错（不受本旗标影响）
+	if rc, _, _ := gapRereadRun(t, "--include-open"); rc != 2 {
+		t.Errorf("缺目标 + --include-open ⇒ 2，得到 %d", rc)
+	}
+}
+
+// TestGapRereadRuntimeUsageLine —— 运行期用法行列 `--include-open`（门73 面⑥ 对拍面 · 缺口 `GAP-20260928-183`）。
+// 缺目标 ⇒ 退 2，并在 stderr 打出与本命令命令树 `usage:` 同形的运行期用法行（含 `--include-open` · `--limit` · `--json`）。
+func TestGapRereadRuntimeUsageLine(t *testing.T) {
+	rc, _, errb := gapRereadRun(t)
+	if rc != 2 {
+		t.Fatalf("缺目标 ⇒ 2，得到 %d", rc)
+	}
+	if !strings.Contains(errb, "用法：zerg gap reread") {
+		t.Errorf("运行期用法行要以 `用法：zerg gap reread` 起（门73 面⑥ 取数面）：%q", errb)
+	}
+	for _, f := range []string{"--all", "--include-open", "--limit", "--json"} {
+		if !strings.Contains(errb, f) {
+			t.Errorf("运行期用法行要列 %q：%q", f, errb)
+		}
+	}
 }

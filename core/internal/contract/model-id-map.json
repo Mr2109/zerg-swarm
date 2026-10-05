@@ -17,6 +17,41 @@
       "fleet_ids": ["example-35b-v2"],
       "weights": "example-35b-v2-Q4_K_M.gguf",
       "evidence": "snapshot(registry_id) 的 weights 建材名 = example-35b-v2-Q4_K_M.gguf；fleet.yaml 的 example-35b-v2（Mr2109, edge-node）两条候选的 file basename 逐字相同 ⇒ 同一份权重。"
+    },
+    {
+      "registry_id": "example-35b-v2-1-5-9b-q5-k-m",
+      "registry_name": "example-35b-v2-1.5-9B",
+      "fleet_ids": ["example-35b-v2-1.5-9b"],
+      "weights": "example-35b-v2-1.5-9B-Q5_K_M.gguf",
+      "evidence": "2026-10-05 zerg-model probe --store 落的 record（version=sha256-97ed0e03a5fb）的 weights 建材名 = example-35b-v2-1.5-9B-Q5_K_M.gguf；fleet.yaml 的 example-35b-v2-1.5-9b（Mr2109）候选的 file basename 逐字相同 ⇒ 同一份权重（mini-node-1/mini-node-2 同名行未探，不入本条）。"
+    },
+    {
+      "registry_id": "example-35b-v2-1-0-35b-q4-k-m",
+      "registry_name": "example-35b",
+      "fleet_ids": ["example-35b"],
+      "weights": "example-35b-Q4_K_M.gguf",
+      "evidence": "2026-10-05 zerg-model probe --store 落的 record（version=sha256-e8c2bb3dd46f）的 weights 建材名 = example-35b-Q4_K_M.gguf；fleet.yaml 的 example-35b（Mr2109）候选的 file basename 逐字相同 ⇒ 同一份权重（edge-node 同名行未探，不入本条）。"
+    },
+    {
+      "registry_id": "qwen3-8-27b-q4-k-m-vcruz305",
+      "registry_name": "Qwen3.8-27B",
+      "fleet_ids": ["Qwen3.8-27B"],
+      "weights": "Qwen3.8-27B-Q4_K_M-vcruz305.gguf",
+      "evidence": "2026-10-05 zerg-model probe --store 落的 record（version=sha256-d95e89e2085b）的 weights 建材名 = Qwen3.8-27B-Q4_K_M-vcruz305.gguf；fleet.yaml 的 Qwen3.8-27B（Mr2109）候选的 file basename 逐字相同 ⇒ 同一份权重（edge-node 同名行未探，不入本条）。"
+    },
+    {
+      "registry_id": "ternary-bonsai-2-27b-ptq1-0",
+      "registry_name": "Ternary-Bonsai-2-27B",
+      "fleet_ids": ["Ternary-Bonsai-2-27B"],
+      "weights": "Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+      "evidence": "2026-10-05 zerg-model probe --store 落的 record（version=sha256-175508418b42 · 路径在外部卷 <volume-path>）的 weights 建材名 = Ternary-Bonsai-2-27B-PTQ1_0.gguf；fleet.yaml 的 Ternary-Bonsai-2-27B（Mr2109 · <volume-path>）候选的 file basename 逐字相同 ⇒ 同一份权重。★ 该 record 的 name 字段是 GGUF 里的垃圾值 Hf（另记待修）。"
+    },
+    {
+      "registry_id": "nemotron-3-5-lightning-q4-0-ggmlorg",
+      "registry_name": "Nemotron-3.5-Lightning",
+      "fleet_ids": ["Nemotron-3.5-Lightning"],
+      "weights": "Nemotron-3.5-Lightning-Q4_0-ggmlorg.gguf",
+      "evidence": "2026-10-05 zerg-model probe --store 落的 record（version=sha256-c63f24ecada9）的 weights 建材名 = Nemotron-3.5-Lightning-Q4_0-ggmlorg.gguf；fleet.yaml 的 Nemotron-3.5-Lightning（Mr2109）候选的 file basename 逐字相同 ⇒ 同一份权重（edge-node 同名行未探，不入本条）。"
     }
   ]
 }

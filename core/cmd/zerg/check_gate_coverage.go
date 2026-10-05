@@ -182,6 +182,8 @@ type cgcReport struct {
 	bCounts           map[string]int
 	bTier1            []cgcBItem
 	bTier2            []cgcBItem
+	bTier2Wired       []cgcBItem
+	bTier2Mention     []cgcBItem
 	bTier3            []cgcBItem
 	bHit              int
 	bHitItems         []cgcBItem
@@ -1057,13 +1059,128 @@ func cgcNameHit(name, text string) bool {
 	return false
 }
 
+// ── ②a/②b 拆分（`GAP-20260927-123` · 与 py 的 wired_mention/text_mention 同口径）──────
+const cgcRunnerRe = `\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|python3|python|bash|sh|zsh|dash|node|env|exec|time|nice|\./`
+
+const cgcPathPrefix = `(?:[\w.${}/-]*/)`
+
+func cgcCallRe(name string) *regexp.Regexp {
+	head := `(?:^|[\s"'=(;|&])(?:` + cgcRunnerRe + `)\s+(?:-[^\s]+\s+)*`
+	n := regexp.QuoteMeta(name)
+	return regexp.MustCompile(head + `"` + cgcPathPrefix + `*` + n + `"` +
+		`|` + head + cgcPathPrefix + `*` + n + `(?:[\s"';|)&]|$)`)
+}
+
+func cgcBareItemRe(name string) *regexp.Regexp {
+	return regexp.MustCompile(`^["']?(?:\./)?(?:scripts/)?(?:[A-Za-z0-9_.\-]+/)*` +
+		regexp.QuoteMeta(name) + `["']?,?$`)
+}
+
+func cgcSplitlines(s string) []string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	if strings.HasSuffix(s, "\n") {
+		s = s[:len(s)-1]
+	}
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
+}
+
+func cgcStrip(s string) string { return strings.TrimFunc(s, cgcPyIsSpace) }
+
+func cgcTrunc160(s string) string {
+	r := []rune(s)
+	if len(r) <= 160 {
+		return s
+	}
+	return string(r[:160])
+}
+
+// cgcWiredMention —— 闸文件里有没有「真接线·命令位调用」形态（②a）？⇒ (true, 证据行)。
+func cgcWiredMention(name, gatesText string) (bool, string) {
+	call, bare := cgcCallRe(name), cgcBareItemRe(name)
+	for _, line := range cgcSplitlines(gatesText) {
+		if !strings.Contains(line, name) {
+			continue
+		}
+		s := cgcStrip(line)
+		if s == "" || strings.HasPrefix(s, "#") {
+			continue
+		}
+		if bare.MatchString(s) {
+			continue
+		}
+		if call.FindStringIndex(line) != nil {
+			return true, cgcTrunc160(s)
+		}
+	}
+	return false, ""
+}
+
+// cgcTextMention —— 闸文件里有没有「只被提一下」形态（②b）—— 非命令位的任意出现（含注释行）。
+func cgcTextMention(name, gatesText string) (bool, string) {
+	bare, call := cgcBareItemRe(name), cgcCallRe(name)
+	for _, line := range cgcSplitlines(gatesText) {
+		if !strings.Contains(line, name) {
+			continue
+		}
+		s := cgcStrip(line)
+		if s == "" || bare.MatchString(s) {
+			continue
+		}
+		if strings.HasPrefix(s, "#") {
+			if cgcNameHit(name, line) {
+				return true, cgcTrunc160(s)
+			}
+			continue
+		}
+		if call.FindStringIndex(line) != nil {
+			continue
+		}
+		if cgcNameHit(name, line) {
+			return true, cgcTrunc160(s)
+		}
+	}
+	return false, ""
+}
+
+// cgcZergGateRe / cgcZergNameCovers —— `zerg gate check <件名去扩展名>` 命令位形（`GAP-20261001-74`）。
+//
+//	★ 光把 `zerg` 加进 cgcRunnerRe **不解**：`gate check` 两词夹在启动器与名之间 ⇒ 另写专用规则。
+func cgcZergGateRe(stem string) *regexp.Regexp {
+	head := `(?:^|[\s"'=(;|&])(?:[^\s]*/)?zerg\s+gate\s+check\s+(?:[^\s]*/)*`
+	return regexp.MustCompile(head + regexp.QuoteMeta(stem) + `(?:[\s"';|)&]|$)`)
+}
+
+func cgcZergNameCovers(base, cmdsText string) bool {
+	stem, _ := cgcPySplitExt(base)
+	if stem == "" {
+		return false
+	}
+	rx := cgcZergGateRe(stem)
+	for _, line := range cgcSplitlines(cmdsText) {
+		if !strings.Contains(line, stem) {
+			continue
+		}
+		if rx.FindStringIndex(line) != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func cgcScriptTier(rel, gatesText, cmdsText string) string {
 	name := filepath.Base(rel)
-	if cgcNameHit(name, cmdsText) {
+	if cgcNameHit(name, cmdsText) || cgcZergNameCovers(name, cmdsText) {
 		return "in_steps"
 	}
-	if cgcNameHit(name, gatesText) {
-		return "mentioned"
+	if w, _ := cgcWiredMention(name, gatesText); w {
+		return "wired"
+	}
+	if m, _ := cgcTextMention(name, gatesText); m {
+		return "mention"
 	}
 	return "unmentioned"
 }
@@ -1148,6 +1265,7 @@ func cgcAnalyse(root string, cfg *cgcConfig, steps []cgcStep, gatesText string, 
 	tracked := cgcTrackedFiles(root)
 	var bItems, bRed, bWL []cgcBItem
 	buckets := map[string][]cgcBItem{"in_steps": {}, "mentioned": {}, "unmentioned": {}}
+	var wiredItems, mentionItems, newMention []cgcBItem
 	var globNote []cgcBItem
 	for _, c := range cands {
 		tier := cgcScriptTier(c.Script, gatesText, cmdsText)
@@ -1160,12 +1278,24 @@ func cgcAnalyse(root string, cfg *cgcConfig, steps []cgcStep, gatesText string, 
 		}
 		// ★ py 里 buckets / bRed / glob_note 三处共享**同一个 dict 对象** ⇒ `item["new"]` /
 		//   `item["reason"]` 的赋值对三处同时可见。Go 是值语义，故**先**把 New/Reason 定好，
-		//   再向四列 append，逐字复刻「共享对象」的可观测结果。
+		//   再向各列 append，逐字复刻「共享对象」的可观测结果。
+		//   ★ ② 拆两档（`GAP-20260927-123`）：②a wired（闸文件命令位）／②b mention（只被提一下）。
 		isRed := false
-		if tier == "unmentioned" {
-			if wl != nil {
-				// 白名单档：new/reason 保持默认 false/""（py 亦然）
-			} else {
+		switch tier {
+		case "in_steps":
+			// ①（add_step 命令串里点名）
+		case "wired":
+			item.Reason = "真接线·弱挂载（闸文件命令位调用 · 未走 add_step 命令串）"
+		case "mention":
+			item.Reason = "只被提一下（注释/文案/清单项 · **不算接线**）"
+			// ★ 治静默：②b 里的**新件**（不在 git 索引）也落 ④ 新件未挂门。
+			if tracked != nil && !tracked[c.Script] {
+				item.New = true
+				item.Reason = "新件只被提一下、未真接线（不在 git 索引 ⇒ 新建后没与代码同批挂 add_step）"
+				newMention = append(newMention, item)
+			}
+		default: // unmentioned（③ 棘轮命中来源）
+			if wl == nil {
 				isRed = true
 				item.New = tracked != nil && !tracked[c.Script]
 				if item.New {
@@ -1176,7 +1306,20 @@ func cgcAnalyse(root string, cfg *cgcConfig, steps []cgcStep, gatesText string, 
 			}
 		}
 		bItems = append(bItems, item)
-		buckets[tier] = append(buckets[tier], item)
+		switch tier {
+		case "in_steps":
+			buckets["in_steps"] = append(buckets["in_steps"], item)
+		case "wired", "mention":
+			buckets["mentioned"] = append(buckets["mentioned"], item) // ② = ②a + ②b（计数自证不变）
+		default:
+			buckets["unmentioned"] = append(buckets["unmentioned"], item)
+		}
+		if tier == "wired" {
+			wiredItems = append(wiredItems, item)
+		}
+		if tier == "mention" {
+			mentionItems = append(mentionItems, item)
+		}
 		if isRed {
 			bRed = append(bRed, item)
 		} else if tier == "unmentioned" && wl != nil {
@@ -1194,6 +1337,7 @@ func cgcAnalyse(root string, cfg *cgcConfig, steps []cgcStep, gatesText string, 
 			legacyUngated = append(legacyUngated, it)
 		}
 	}
+	newUngated = append(newUngated, newMention...)
 
 	var stale [][4]string
 	bucketsWL := []struct {
@@ -1227,6 +1371,8 @@ func cgcAnalyse(root string, cfg *cgcConfig, steps []cgcStep, gatesText string, 
 		bCounts:           map[string]int{"in_steps": len(buckets["in_steps"]), "mentioned": len(buckets["mentioned"]), "unmentioned": len(buckets["unmentioned"])},
 		bTier1:            buckets["in_steps"],
 		bTier2:            buckets["mentioned"],
+		bTier2Wired:       wiredItems,
+		bTier2Mention:     mentionItems,
 		bTier3:            buckets["unmentioned"],
 		bHit:              len(bRed),
 		bHitItems:         bRed,
@@ -1293,6 +1439,19 @@ func cgcListLines(items []string, maxExamples int, indent string, markWL []strin
 	return lines
 }
 
+// cgcBMarksReason —— ②b 列表的「← reason」列（对齐 py `_list(..., mark_reason=True)`）。
+func cgcBMarksReason(items []cgcBItem) []string {
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		if it.Reason != "" {
+			out = append(out, "  ← "+it.Reason)
+		} else {
+			out = append(out, "")
+		}
+	}
+	return out
+}
+
 func cgcIntMin(a, b int) int {
 	if a < b {
 		return a
@@ -1349,7 +1508,14 @@ func cgcPrintReport(w io.Writer, rep *cgcReport) {
 		Fprintln(ln)
 	}
 	Fprintf("     ② 闸文件里被提到、但不在任何 add_step 命令串里（弱挂载 · 单列）：%d\n", b.bCounts["mentioned"])
-	for _, ln := range cgcListLines(cgcBKeys(b.bTier2), rep.maxExamples, "     ", nil) {
+	Fprintf("        · ②a **真接线**（闸体命令位调用 · 与门③同口径）：%d\n", len(b.bTier2Wired))
+	for _, ln := range cgcListLines(cgcBKeys(b.bTier2Wired), rep.maxExamples, "          ", nil) {
+		Fprintln(ln)
+	}
+	Fprintf("        · ②b **只被提一下**（注释/文案/清单项 · **不算接线** · `GAP-20260927-123`）：%d\n",
+		len(b.bTier2Mention))
+	for _, ln := range cgcListLines(cgcBKeys(b.bTier2Mention), rep.maxExamples, "          ",
+		cgcBMarksReason(b.bTier2Mention)) {
 		Fprintln(ln)
 	}
 	Fprintf("     ③ 闸文件里查无此名：%d\n", b.bCounts["unmentioned"])
@@ -1617,6 +1783,7 @@ func (r *cgcReport) toJSONMap() map[string]any {
 	}
 	cands := convB(r.bItems)
 	t1, t2, t3 := convB(r.bTier1), convB(r.bTier2), convB(r.bTier3)
+	t2w, t2m := convB(r.bTier2Wired), convB(r.bTier2Mention)
 	hitItems, newUng, legacyUng := convB(r.bHitItems), convB(r.bNewUngated), convB(r.bLegacyUngated)
 	bWL, globOnly := convB(r.bWL), convB(r.globOnly)
 	nosuffix := make([]any, 0, len(r.nosuffix))
@@ -1632,6 +1799,7 @@ func (r *cgcReport) toJSONMap() map[string]any {
 		"a": map[string]any{"items": aItems, "covered": aCovered, "whitelisted": aWL,
 			"red": aRed, "empty": r.aEmpty},
 		"b": map[string]any{"cands": cands, "counts": r.bCounts, "tier1": t1, "tier2": t2, "tier3": t3,
+			"tier2_wired": t2w, "tier2_mention": t2m,
 			"hit": r.bHit, "hit_items": hitItems, "new_ungated": newUng, "legacy_ungated": legacyUng,
 			"git_tracked_known": r.gitTrackedKnown, "whitelisted": bWL, "glob_only": globOnly,
 			"nosuffix": nosuffix, "empty": r.bEmpty},
@@ -1861,6 +2029,25 @@ func cgcSelfTest(sink io.Writer, deep bool) bool {
 	check(hit2+"（rc=0）", rc2 == 0, fmt.Sprintf("rc=%d", rc2))
 	check(hit2+"（A 红数 0）", strings.Contains(out2, "未收进且不在白名单 = 红：0"), "")
 
+	// ── ③b ② 拆两档（`GAP-20260927-123`）：命令位调用 ⇒ ②a ／ 注释里只提一下 ⇒ ②b ─────────
+	wfix := cgcFixture(base, "tier2-wired", cgcFixOpts{
+		steps:      [][2]string{{"core", "go build ./..."}, {"", "python3 scripts/ok.py"}},
+		scripts:    []string{"scripts/ok.py", "scripts/side.py"},
+		gatesExtra: "if true; then python3 scripts/side.py; fi"})
+	rcw, outw := cgcRunCapture([]string{"--no-self-test", "--root", wfix})
+	check("③b 命令位调用（非 add_step）⇒ 判 ②a 真接线（旧口径只给一个 ②）",
+		rcw == 0 && strings.Contains(outw, "②a **真接线**（闸体命令位调用 · 与门③同口径）：1") &&
+			strings.Contains(outw, "②b **只被提一下**（注释/文案/清单项 · **不算接线** · `GAP-20260927-123`）：0"),
+		fmt.Sprintf("rc=%d", rcw))
+
+	// ── ③c ① 的 `zerg gate check <去扩展名>` 等价档（`GAP-20261001-74`）──────────────
+	zfix := cgcFixture(base, "zerg-insteps", cgcFixOpts{
+		steps:   [][2]string{{"core", "go build ./..."}, {"", "zerg gate check check-x"}},
+		scripts: []string{"scripts/check-x.py"}})
+	rcz, outz := cgcRunCapture([]string{"--no-self-test", "--root", zfix})
+	check("③c `zerg gate check <去扩展名>` 命令位 ⇒ 判 ① in_steps 等价档（GAP-20261001-74）",
+		rcz == 0 && strings.Contains(outz, "① add_step 命令串里点名：1"), fmt.Sprintf("rc=%d", rcz))
+
 	okWL := map[string]any{"build_dirs": []any{}, "scripts": []any{
 		map[string]any{"path": "scripts/ok.py", "reason": "夹具占位", "date": "2026-09-18"}}}
 	ratOK := cgcFixture(base, "b-ratchet-ok", cgcFixOpts{
@@ -1964,7 +2151,7 @@ func cgcSelfTest(sink io.Writer, deep bool) bool {
 	check("⑭ 弱挂载档可分辨（② 单列，不并进 ①）", rc == 0 && strings.Contains(out, "弱挂载") &&
 		strings.Contains(out, "① add_step 命令串里点名：0") &&
 		strings.Contains(out, "② 闸文件里被提到、但不在任何 add_step 命令串里（弱挂载 · 单列）：2") &&
-		strings.Contains(out, "- scripts/ok.py\n"), "")
+		strings.Contains(out, "- scripts/ok.py"), "")
 
 	check("⑮ 报告含「计数自证」两条恒等式",
 		strings.Contains(out2, "计数自证") && strings.Contains(out2, "① 1 + ② 1 + ③ 0 = 2（候选 2）"), "")

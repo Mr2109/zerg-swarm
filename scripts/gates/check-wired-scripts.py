@@ -592,7 +592,21 @@ def call_re(name):
     n = re.escape(name)
     head = r'(?:^|[\s"\'=(;|&])(?:' + RUNNER_RE + r')\s+(?:-[^\s]+\s+)*'
     return re.compile(head + r'"' + PATH_PREFIX + r'*' + n + r'"'
-                      + r'|' + head + PATH_PREFIX + r'*' + n + r'(?=[\s"\';&|)]|$)')
+                      + r'|' + head + PATH_PREFIX + r'*' + n + r'(?=[\s"\';|)]|$)')
+
+# ── 「zerg 子命令」接线形：`zerg gate check <判据名>`（`GAP-20261001-74`）─────────────
+#   ★ 光把 `zerg` 加进 RUNNER_RE **不解**：call_re 的 head 是「启动器 + 旗标* + 路径前缀 + 名」，
+#     而 `zerg` 与判据名之间夹着 `gate check` **两个词（非旗标）** ⇒ 现有正则结构上吃不进
+#     ⇒ 另写专用规则（闭集语义 = 启动器；`gate check` 不是旗标、不能塞进旗标位）。
+#   ★ 判据名 = 件名**去扩展名**（与 family_gate_check.go / gate_inproc_table.go 的键同口径）。
+ZERG_GATE_RE = r"(?:[^\s]*/)?zerg\s+gate\s+check\s+(?:[^\s]*/)*"
+
+def zerg_gate_re(name):
+    """`zerg gate check <件名去扩展名>` 命令位形：启动器 `zerg`（可带路径前缀）＋ `gate check`
+    ＋ 路径前缀 ＋ 去扩展名判据名 ＋ 边界（名后可接旗标 / 分隔符 / 行尾）。"""
+    stem = os.path.splitext(name)[0]
+    head = r'(?:^|[\s"\'=(;|&])'
+    return re.compile(head + ZERG_GATE_RE + re.escape(stem) + r'(?=[\s"\';|)&]|$)')
 
 def wiring_hit(root, gate_path, name):
     """在闸文件里找「真接线形态」；返回 (行号, 行内容) 或 None。
@@ -608,15 +622,18 @@ def wiring_hit(root, gate_path, name):
         return None
     rx = bare_item_re(name)
     rx_call = call_re(name)
+    rx_zerg = zerg_gate_re(name)
+    stem = os.path.splitext(name)[0]
     for i, line in enumerate(t.splitlines(), 1):
-        if name not in line:
+        # ★ 预筛放宽：`zerg gate check` 形里名字**不带扩展名**（行里无 `name`、只有去扩展名 stem）
+        if name not in line and stem not in line:
             continue
         s = line.strip()
         if not s or s.startswith("#"):
             continue
         if rx.match(s):
             continue
-        if not rx_call.search(line):
+        if not (rx_call.search(line) or rx_zerg.search(line)):
             continue
         return (i, s)
     return None
@@ -646,6 +663,56 @@ def judge_a(root, cands):
         else:
             hits.append(c)
     return hits, wired, n_gate_present, missing_gates
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 断言 C：件头自述三态（**显式 token** · 首版 UNSTATED-only）
+#   ★ ✗ 不解析自然语言：件头现读里 `不挂死`（=不卡住）/`只报告档起步`（历史档位）/`未挂`（描述历史）
+#     都曾字面碰撞（见设计稿 §1.6）⇒ 任何「按词面抽」的判据都会把 `不挂死` 读成「未接线」。
+#     显式 token 把「语义」搬出判据、搬进件头作者的手；判据只做**逐字枚举**（闭集＞自由文本）。
+#   ★ 形（写死）：行首（可带缩进）`#` ＋ 空白 ＋ `zerg-wire:` ＋ 空白 ＋ <WIRED|UNWIRED|UNSTATED>；
+#     位置：件头**前 40 行内**、**全件唯一**（0 个 / ≥2 个 ⇒ 判 UNSTATED，不猜）。
+#   ★ 首版 UNSTATED-only：`UNSTATED` **只打印+计数、不进 rc**（≈ 门① 基线棘轮先例，不锁死提交闸）；
+#     只有**失真**（`WIRED`×真未挂 ／ `UNWIRED`×真已挂）才计 `hits_c`，其 rc 同断言 A/B 受
+#     `--strict-report` 门控 ⇒ **默认档不因新增面而转红**（现读全仓 0 token ⇒ hits_c 恒 0）。
+# ─────────────────────────────────────────────────────────────────────────────
+WIRE_MARK = "zerg-wire:"
+WIRE_HEAD_LINES = 40
+_WIRE_TOKEN_RE = re.compile(r'^\s*#\s*zerg-wire:\s*(WIRED|UNWIRED|UNSTATED)\b')
+
+def read_wire_token(root, relpath):
+    """读件头前 `WIRE_HEAD_LINES` 行内**唯一**的显式 token。返回 (state, note)。"""
+    t = read_text(os.path.join(root, relpath))
+    if t is None:
+        return "UNSTATED", "读不到件"
+    vals = []
+    for line in t.splitlines()[:WIRE_HEAD_LINES]:
+        m = _WIRE_TOKEN_RE.match(line)
+        if m:
+            vals.append(m.group(1))
+    if len(vals) == 1:
+        return vals[0], ""
+    if not vals:
+        return "UNSTATED", "件头前 %d 行无 token" % WIRE_HEAD_LINES
+    return "UNSTATED", "件头 token 多重（%s）⇒ 不猜" % "/".join(vals)
+
+def judge_c(root, cands, wired_names):
+    """断言 C：件头自述三态 × 真接线。返回 (hits, rows, counts)。
+
+    rows=[(name, declared, wired, note)]；counts = 三态计数。
+    hits = **失真**（WIRED×未挂 ／ UNWIRED×已挂）；`UNSTATED` 一律不进 hits（首版不判红）。
+    """
+    hits, rows = [], []
+    counts = {"WIRED": 0, "UNWIRED": 0, "UNSTATED": 0}
+    for c in cands:
+        declared, note = read_wire_token(root, c["path"])
+        counts[declared] = counts.get(declared, 0) + 1
+        wired = c["name"] in wired_names
+        rows.append((c["name"], declared, wired, note))
+        if declared == "WIRED" and not wired:
+            hits.append((c["name"], "WIRED", "自称已接线，但闸清单命令位里找不到它"))
+        elif declared == "UNWIRED" and wired:
+            hits.append((c["name"], "UNWIRED", "自称未接线，但闸清单里已按名调用它"))
+    return hits, rows, counts
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 断言 B：零引用件必须登记白名单
@@ -730,7 +797,7 @@ def header(root, files, mode, n_scan):
     return head, dirty
 
 def report(root, opts, files, mode, a_cands, b_cands, hits_a, wired_a, n_gate_present, missing_gates,
-           zero, unreg, reg, stale, doc_only, rows, wl, errs):
+           zero, unreg, reg, stale, doc_only, rows, wl, errs, hits_c, c_rows, c_counts):
     out = []
     ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     head, dirty = header(root, files, mode, len(files))
@@ -801,6 +868,27 @@ def report(root, opts, files, mode, a_cands, b_cands, hits_a, wired_a, n_gate_pr
         if len(doc_only) > 12:
             out.append("    …另有 %d 只同为「仅文档点名」（口径相同，为控篇幅不逐条打印）" % (len(doc_only) - 12))
 
+    # ── 断言 C：件头自述三态（首版 UNSTATED-only）────────────────────────────────
+    out.append("")
+    cw = c_counts.get("WIRED", 0)
+    cu = c_counts.get("UNWIRED", 0)
+    cn = c_counts.get("UNSTATED", 0)
+    out.append("【断言 C】件头自述三态（`# zerg-wire: WIRED|UNWIRED|UNSTATED` · 行首 · 件头前 %d 行 · 全件唯一）"
+               "—— WIRED %d · UNWIRED %d · **UNSTATED %d**" % (WIRE_HEAD_LINES, cw, cu, cn))
+    out.append("   ★ 首版 UNSTATED-only：UNSTATED 只打印+计数、**不判红**；真接线 = 命中闸清单命令位（同断言 A）")
+    out.append("   ★ 失真（WIRED×未挂 ／ UNWIRED×已挂）计 hits_c，rc 同 A/B 受 --strict-report 门控（默认档不因此转红）")
+    if hits_c:
+        out.append("  ✗ 失真 %d 只（自称 ≠ 真接线）：" % len(hits_c))
+        for name, declared, why in hits_c:
+            out.append("    %s  自述=%s · %s" % (pad(name, 30), declared, why))
+    else:
+        out.append("  ✓ 无失真（已自述 %d 只均与真接线一致）" % (cw + cu))
+    if cn:
+        out.append("  · UNSTATED %d 只（不判红；逐件打印）：" % cn)
+        for name, _d, _w, note in c_rows:
+            if _d == "UNSTATED":
+                out.append("    %s  %s" % (pad(name, 30), note))
+
     # 排除域（现读；项目口径：先出「哪些域没有任何门看着」再谈新门）
     out.append("")
     out.append("【排除域】不在本门判据里（现读，非记忆）")
@@ -832,7 +920,7 @@ def report(root, opts, files, mode, a_cands, b_cands, hits_a, wired_a, n_gate_pr
             out.append("  ✗ %s" % e)
 
     out.append("")
-    hit_n = len(hits_a) + len(unreg)
+    hit_n = len(hits_a) + len(unreg) + len(hits_c)
     out.append("【口径】引用 = 脚本名在引用面文件里出现；引用面 = 已跟踪文本文件 − 自指 2 件 − 记录面"
                "（现行债务台账，glob %s）− 候选自身。" % " · ".join(RECORD_SURFACES))
     out.append("        「记录不能充作引用」：台账点名不让死件复活（否则写下这条债就把债抹掉了）。")
@@ -841,7 +929,7 @@ def report(root, opts, files, mode, a_cands, b_cands, hits_a, wired_a, n_gate_pr
     out.append("        不算接线的三类：纯注释行 · 纯清单项（`\"scripts/<…>/<名>\"`，**含被排除表/白名单点名**）"
                "· 只被文案/说明/grep 模式串提到。")
     out.append("")
-    out.append("【结论】A 命中 %d · B 未登记 %d · 配置错 %d" % (len(hits_a), len(unreg), len(errs)))
+    out.append("【结论】A 命中 %d · B 未登记 %d · C 失真 %d · 配置错 %d" % (len(hits_a), len(unreg), len(hits_c), len(errs)))
     if errs:
         out.append("        rc=2（缺件/配置错/空转 ⇒ 不给结论，不许静默）")
     elif opts.strict_report and hit_n:
@@ -1114,7 +1202,7 @@ def selftest():
             'echo "   ⑧c ── 已接线（按名调用 check-epsilon.py）"\n',
     }))
     run_case("⑮ 正控：命令位调用（引号 + 变量前缀）⇒ 已挂（A 命中 0）",
-             f_call, wl_ok, [], 0, ["A 命中 0"], ["check-epsilon.py"], results)
+             f_call, wl_ok, [], 0, ["A 命中 0", "已挂门脚本 3 只"], ["0 处"], results)
 
     # ⑯ 负控 A4：只在**文案**里被提到（0 次命令位调用）⇒ 仍算未挂
     f_echo = _fixture(base, "neg-a-echo", dict(ok_files, **{
@@ -1155,6 +1243,96 @@ def selftest():
     #   正控（成对 · 反向）：同夹具 + --strict-report ⇒ 该「未登记」必须升为 rc=1（牙真的在）
     run_case("⑲' 同上 + --strict-report ⇒ rc=1（记录类引用不成牙）",
              f_mark, wl_ok, ["--strict-report"], 1, ["rc=1"], [], results)
+
+    # ── ⑳/㉑ `zerg gate check <判据名>` 接线形（`GAP-20261001-74` · 与 zerg_gate_re 成对）──
+    #   ★ 光加 zerg 入 RUNNER_RE 不解：`gate check` 两词夹在启动器与名之间 ⇒ 必须专用规则。
+    #   ⑳ 正控：去扩展名形 `zerg gate check check-eta`（命令位）⇒ 已挂（A 命中 0）。
+    f_zg = _fixture(base, "pos-zerg", dict(ok_files, **{
+        "scripts/gates/check-eta.py": "# ck\n",
+        "scripts/gates/precommit-gates.sh": GATE_A +
+            'add_step g "门X" tri "$R" "zerg gate check check-eta"\n',
+        # 让 check-eta.py 有「代码侧引用」（免得它落 断言 B 零引用件、污染本格 must_not）
+        "scripts/run-gates.sh": "#!/usr/bin/env bash\n"
+                                "bash scripts/gates/precommit-gates.sh\n"
+                                "bash scripts/build/publish-preflight.sh /tmp/out\n"
+                                "python3 scripts/gates/check-eta.py\n",
+    }))
+    run_case("⑳ 正控：`zerg gate check check-eta` 命令位 ⇒ 已挂（A 命中 0）",
+             f_zg, wl_ok, [], 0, ["A 命中 0", "已挂门脚本 3 只"], ["0 处"], results)
+    #   ㉑ 负控（与 ⑳ 成对 · 方向性）：`zerg check check-eta`（缺 `gate` 子命令）⇒ 不命中
+    f_ng = _fixture(base, "neg-zerg-subcmd", dict(ok_files, **{
+        "scripts/gates/check-eta.py": "# ck\n",
+        "scripts/gates/precommit-gates.sh": GATE_A +
+            'add_step g "门X" tri "$R" "zerg check check-eta"\n',
+        "scripts/run-gates.sh": "#!/usr/bin/env bash\n"
+                                "bash scripts/gates/precommit-gates.sh\n"
+                                "bash scripts/build/publish-preflight.sh /tmp/out\n"
+                                "python3 scripts/gates/check-eta.py\n",
+    }))
+    run_case("㉑ 负控：`zerg check check-eta`（缺 gate 子命令）⇒ 仍算未挂（防「只加 zerg 就放行」）",
+             f_ng, wl_ok, [], 0, ["check-eta.py", "A 命中 1"], [], results)
+
+    # ── 断言 C：件头自述三态（首版 UNSTATED-only · 显式 token `# zerg-wire:`）成对负控 ──
+    #   ★ token 形写死：行首 `#` ＋ `zerg-wire:` ＋ <WIRED|UNWIRED|UNSTATED>；件头前 40 行、全件唯一。
+    #   C1（= M2 方向）：件头 `WIRED` 但闸里查无此件 ⇒ **失真**（默认档只报，--strict-report 下 rc=1）。
+    f_c1 = _fixture(base, "c-wired-notwired", dict(ok_files, **{
+        "scripts/gates/check-iota.py": "# zerg-wire: WIRED\n# ck\n",
+        "scripts/run-gates.sh": "#!/usr/bin/env bash\n"
+                                "bash scripts/gates/precommit-gates.sh\n"
+                                "bash scripts/build/publish-preflight.sh /tmp/out\n"
+                                "python3 scripts/gates/check-iota.py\n",
+    }))
+    run_case("C1 负控（M2 方向）：件头 WIRED 但闸清单查无此件 ⇒ 报失真（默认档 rc=0 不转红）",
+             f_c1, wl_ok, [], 0, ["失真 1", "check-iota.py"], [], results)
+    run_case("C1' 同上 + --strict-report ⇒ rc=1（失真成牙）",
+             f_c1, wl_ok, ["--strict-report"], 1, ["rc=1"], [], results)
+
+    #   C2（= M1 方向 · 与 C1 反向）：件头 `UNWIRED` 但闸里**已**按名调用 ⇒ **失真**（A 命中 0，
+    #     这正是断言 C 独有、断言 A 结构上抓不到的一档）。
+    f_c2 = _fixture(base, "c-unwired-butwired", dict(ok_files, **{
+        "scripts/gates/check-kappa.py": "# zerg-wire: UNWIRED\n# ck\n",
+        "scripts/gates/precommit-gates.sh": GATE_A + "python3 scripts/gates/check-kappa.py\n",
+    }))
+    run_case("C2 负控（M1 方向）：件头 UNWIRED 但闸里已按名调用 ⇒ 报失真（A 命中 0 · 默认档 rc=0）",
+             f_c2, wl_ok, [], 0, ["失真 1", "check-kappa.py", "A 命中 0"], [], results)
+    run_case("C2' 同上 + --strict-report ⇒ rc=1",
+             f_c2, wl_ok, ["--strict-report"], 1, ["rc=1"], [], results)
+
+    #   C3（= M3）：件头**无** token ⇒ 只计入 UNSTATED、**不判红**（默认档与 --strict-report 均 rc=0）。
+    #     件**已**接线（闸里按名调用、A 命中 0）—— 这样 --strict-report 下 rc 只由 C 决定，才测得准。
+    f_c3 = _fixture(base, "c-unstated", dict(ok_files, **{
+        "scripts/gates/check-lambda.py": "# ck\n",
+        "scripts/gates/precommit-gates.sh": GATE_A + "python3 scripts/gates/check-lambda.py\n",
+    }))
+    run_case("C3 正控（M3）：件头无 token ⇒ 只计入 UNSTATED，不判红（默认档 rc=0）",
+             f_c3, wl_ok, [], 0, ["UNSTATED 3", "check-lambda.py", "无失真"], [], results)
+    run_case("C3' 同上 + --strict-report ⇒ 仍 rc=0（UNSTATED 不锁门）",
+             f_c3, wl_ok, ["--strict-report"], 0, ["rc=0"], [], results)
+
+    #   C4（= M4 歧义）：件头两行 token（WIRED + UNWIRED）⇒ 判 UNSTATED 并打印（✗ 不猜）。
+    f_c4 = _fixture(base, "c-ambiguous", dict(ok_files, **{
+        "scripts/gates/check-mu.py": "# zerg-wire: WIRED\n# zerg-wire: UNWIRED\n# ck\n",
+        "scripts/run-gates.sh": "#!/usr/bin/env bash\n"
+                                "bash scripts/gates/precommit-gates.sh\n"
+                                "bash scripts/build/publish-preflight.sh /tmp/out\n"
+                                "python3 scripts/gates/check-mu.py\n",
+    }))
+    run_case("C4 负控（M4 歧义）：件头两行 token ⇒ 判 UNSTATED 并打印（✗ 不猜 · 失真 0）",
+             f_c4, wl_ok, [], 0, ["token 多重", "check-mu.py", "无失真"], [], results)
+
+    #   C5（= M5 词面碰撞回归）：件头含自然语言 `不挂死` / `只报告档起步` 但**无** token ⇒ UNSTATED
+    #     （专治设计稿 §1.6 噪声：按词面抽会把 `不挂死` 读成「未接线」）。
+    f_c5 = _fixture(base, "c-collision", dict(ok_files, **{
+        "scripts/gates/check-nu.py": "# ck\n"
+                                     "# 本件不挂死：无器件即立即失败、不卡住\n"
+                                     "# 起步只报告档起步（历史档位，与「未接线」无关）\n",
+        "scripts/run-gates.sh": "#!/usr/bin/env bash\n"
+                                "bash scripts/gates/precommit-gates.sh\n"
+                                "bash scripts/build/publish-preflight.sh /tmp/out\n"
+                                "python3 scripts/gates/check-nu.py\n",
+    }))
+    run_case("C5 负控（M5 词面碰撞回归）：件头含 `不挂死`/`只报告档起步` 但无 token ⇒ UNSTATED（✗ 不被读成 UNWIRED）",
+             f_c5, wl_ok, [], 0, ["UNSTATED 3", "check-nu.py"], ["UNWIRED 1"], results)
 
     npass = sum(1 for _lbl, _ok, _w in results if _ok)
     print("门③ --self-test（成对负控 · 真命令行 + 真退出码）：%d/%d 通过" % (npass, len(results)))
@@ -1236,11 +1414,15 @@ def main(argv=None):
     errs, wl_names = validate_whitelist(root, {c["name"] for c in b_cands}, wl)
     zero, unreg, reg, stale, doc_only, rows = judge_b(root, files, b_cands, wl_names)
 
+    wired_names = {c["name"] for (c, _g, _ev) in wired_a}
+    hits_c, c_rows, c_counts = judge_c(root, a_cands, wired_names)
+
     print(report(root, opts, files, mode, a_cands, b_cands, hits_a, wired_a, n_gate_present,
-                 missing_gates, zero, unreg, reg, stale, doc_only, rows, wl, errs))
+                 missing_gates, zero, unreg, reg, stale, doc_only, rows, wl, errs,
+                 hits_c, c_rows, c_counts))
     if errs:
         return 2
-    if opts.strict_report and (hits_a or unreg):
+    if opts.strict_report and (hits_a or unreg or hits_c):
         return 1
     return 0
 

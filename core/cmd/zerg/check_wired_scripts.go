@@ -216,7 +216,8 @@ func cwsRun(stdout io.Writer, opts cwsOpts) int {
 		fmt.Fprintln(stdout, "FATAL: 引用面 0 个文件（空转）⇒ rc=2")
 		return 2
 	}
-	cands := cwsBuildCandidates(root, files)
+	candFiles := cwsCandidateFiles(root, files, mode)
+	cands := cwsBuildCandidates(root, candFiles)
 	if len(cands) == 0 {
 		fmt.Fprintln(stdout, "FATAL: scripts/ 顶层脚本候选 0 只（空转 ⇒ 不给结论）⇒ rc=2")
 		return 2
@@ -256,8 +257,9 @@ func cwsRun(stdout io.Writer, opts cwsOpts) int {
 	}
 
 	hitsA, nWired, nGatePresent, missingGates := cwsJudgeA(root, aCands)
-	if nGatePresent == 0 {
-		fmt.Fprintf(stdout, "FATAL: 闸清单 %d 个**一个都不在位**（判据无依据 ⇒ 不给结论）⇒ rc=2\n", len(cwsGates))
+	// ★ GAP-20260927-154：缺一条即不给结论（旧口径「全缺才 rc=2」⇒ 改名/搬走 1~5 条恒绿）
+	if len(missingGates) > 0 {
+		fmt.Fprintf(stdout, "FATAL: 闸清单有 %d 个**缺件**（判据无依据 ⇒ 不给结论）⇒ rc=2\n", len(missingGates))
 		for _, g := range missingGates {
 			fmt.Fprintf(stdout, "  缺：%s\n", g)
 		}
@@ -271,12 +273,21 @@ func cwsRun(stdout io.Writer, opts cwsOpts) int {
 	errs, wlNames := cwsValidateWhitelist(candNames, wl)
 	zero, unreg, reg, stale, docOnly, rows := cwsJudgeB(root, files, cands, wlNames)
 
+	wiredNames := map[string]bool{}
+	for _, c := range aCands {
+		if cwsCandidateWired(root, c) {
+			wiredNames[c.name] = true
+		}
+	}
+	hitsC, cRows, cCounts := cwsJudgeC(root, aCands, wiredNames)
+
 	fmt.Fprintln(stdout, cwsReport(root, opts, files, mode, aCands, cands, hitsA, nWired, nGatePresent,
-		missingGates, zero, unreg, reg, stale, docOnly, rows, wl, errs))
+		missingGates, zero, unreg, reg, stale, docOnly, rows, wl, errs,
+		hitsC, cRows, cCounts))
 	if len(errs) > 0 {
 		return 2
 	}
-	if opts.strictReport && (len(hitsA) > 0 || len(unreg) > 0) {
+	if opts.strictReport && (len(hitsA) > 0 || len(unreg) > 0 || len(hitsC) > 0) {
 		return 1
 	}
 	return 0
@@ -822,15 +833,64 @@ func cwsCallRe(name string) *regexp.Regexp {
 		`|` + head + cwsPathPrefix + `*` + n + `(?:[\s"';|)&]|$)`)
 }
 
+// cwsZergGateRe —— `zerg gate check <判据名>` 接线形（`GAP-20261001-74`）。
+//
+//	★ 光把 `zerg` 加进 cwsRunnerRe **不解**：`gate check` 两词夹在启动器与判据名之间 ⇒ 另写专用
+//	  规则（`gate check` 不是旗标）。判据名 = 件名**去扩展名**（与 gate_inproc_table.go 的键同口径）。
+const cwsZergGatePrefix = `(?:[^\s]*/)?zerg\s+gate\s+check\s+(?:[^\s]*/)*`
+
+func cwsZergGateRe(name string) *regexp.Regexp {
+	stem, _ := cwsSplitext(name)
+	head := `(?:^|[\s"'=(;|&])`
+	return regexp.MustCompile(head + cwsZergGatePrefix + regexp.QuoteMeta(stem) + `(?:[\s"';|)&]|$)`)
+}
+
+// cwsCandidateFiles —— 候选面（可换 fs）`GAP-20260927-159/169`：git 档下 = 索引件 ∪ 未跟踪未忽略件；
+// 非 git 档原样返回。**引用面（files）一字不动**（在途件里的字面引用会把零引用死件洗白 = 松判）。
+func cwsCandidateFiles(root string, files []string, mode string) []string {
+	if !strings.HasPrefix(mode, "git") {
+		return files
+	}
+	out, ok := cwsGitOut(root, []string{"ls-files", "--others", "--exclude-standard", "-z"})
+	if !ok {
+		return files
+	}
+	var extra []string
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			extra = append(extra, p)
+		}
+	}
+	if len(extra) == 0 {
+		return files
+	}
+	set := map[string]bool{}
+	for _, p := range files {
+		set[p] = true
+	}
+	for _, p := range extra {
+		set[p] = true
+	}
+	all := make([]string, 0, len(set))
+	for p := range set {
+		all = append(all, p)
+	}
+	sort.Strings(all)
+	return all
+}
+
 func cwsWiringHit(root, gatePath, name string) (int, string, bool) {
 	t, ok := cwsReadText(cwsPyJoin(root, gatePath))
 	if !ok {
 		return 0, "", false
 	}
+	stem, _ := cwsSplitext(name)
 	bare := cwsBareItemRe(name)
 	call := cwsCallRe(name)
+	zerg := cwsZergGateRe(name)
 	for i, line := range cwsSplitLines(t) {
-		if !strings.Contains(line, name) {
+		// ★ 预筛放宽：`zerg gate check` 形里名字**不带扩展名**（行里无 name、有去扩展名 stem）
+		if !strings.Contains(line, name) && !strings.Contains(line, stem) {
 			continue
 		}
 		s := cwsPyStrip(line)
@@ -840,7 +900,7 @@ func cwsWiringHit(root, gatePath, name string) (int, string, bool) {
 		if bare.MatchString(s) {
 			continue
 		}
-		if call.FindStringIndex(line) == nil {
+		if call.FindStringIndex(line) == nil && zerg.FindStringIndex(line) == nil {
 			continue
 		}
 		return i + 1, s, true
@@ -875,6 +935,88 @@ func cwsJudgeA(root string, cands []cwsCand) (hits []cwsCand, nWired, nGatePrese
 		}
 	}
 	return hits, nWired, nGatePresent, missingGates
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 断言 C：件头自述三态（**显式 token** · 首版 UNSTATED-only）
+//
+//	★ ✗ 不解析自然语言：件头现读里 `不挂死`（=不卡住）/`只报告档起步`（历史档位）/`未挂`（描述历史）
+//	  都曾字面碰撞（见设计稿 §1.6）⇒ 任何「按词面抽」的判据都会把 `不挂死` 读成「未接线」。
+//	  显式 token 把「语义」搬出判据、搬进件头作者的手；判据只做**逐字枚举**（闭集＞自由文本）。
+//	★ 形（写死）：行首（可带缩进）`#` ＋ 空白 ＋ `zerg-wire:` ＋ 空白 ＋ <WIRED|UNWIRED|UNSTATED>；
+//	  位置：件头**前 40 行内**、**全件唯一**（0 个 / ≥2 个 ⇒ 判 UNSTATED，不猜）。
+//	★ 首版 UNSTATED-only：`UNSTATED` **只打印+计数、不进 rc**（≈ 门① 基线棘轮先例，不锁死提交闸）；
+//	  只有**失真**（`WIRED`×真未挂 ／ `UNWIRED`×真已挂）才计 `hitsC`，其 rc 同断言 A/B 受
+//	  `--strict-report` 门控 ⇒ **默认档不因新增面而转红**（现读全仓 0 token ⇒ hitsC 恒 0）。
+//
+// ─────────────────────────────────────────────────────────────────────────────
+const cwsWireMark = "zerg-wire:"
+const cwsWireHeadLines = 40
+
+var cwsWireTokenRe = regexp.MustCompile(`^\s*#\s*zerg-wire:\s*(WIRED|UNWIRED|UNSTATED)\b`)
+
+// cwsReadWireToken 读件头前 cwsWireHeadLines 行内**唯一**的显式 token。返回 (state, note)。
+func cwsReadWireToken(root, relpath string) (string, string) {
+	t, ok := cwsReadText(cwsPyJoin(root, relpath))
+	if !ok {
+		return "UNSTATED", "读不到件"
+	}
+	lines := cwsSplitLines(t)
+	if len(lines) > cwsWireHeadLines {
+		lines = lines[:cwsWireHeadLines]
+	}
+	var vals []string
+	for _, line := range lines {
+		if m := cwsWireTokenRe.FindStringSubmatch(line); m != nil {
+			vals = append(vals, m[1])
+		}
+	}
+	if len(vals) == 1 {
+		return vals[0], ""
+	}
+	if len(vals) == 0 {
+		return "UNSTATED", fmt.Sprintf("件头前 %d 行无 token", cwsWireHeadLines)
+	}
+	return "UNSTATED", fmt.Sprintf("件头 token 多重（%s）⇒ 不猜", strings.Join(vals, "/"))
+}
+
+// cwsCandidateWired —— 真接线判定（与 cwsJudgeA 同口径）：闸自身 ／ 命中任一闸命令位。
+func cwsCandidateWired(root string, c cwsCand) bool {
+	if cwsIsGateFile(c.path) {
+		return true
+	}
+	for _, g := range cwsGates {
+		if _, _, ok := cwsWiringHit(root, g.path, c.name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+type cwsWireHit struct{ name, declared, why string }
+
+type cwsWireRow struct {
+	name, declared string
+	wired          bool
+	note           string
+}
+
+// cwsJudgeC 断言 C：件头自述三态 × 真接线。hits = **失真**（WIRED×未挂 ／ UNWIRED×已挂）；
+// `UNSTATED` 一律不进 hits（首版不判红）。
+func cwsJudgeC(root string, cands []cwsCand, wiredNames map[string]bool) (hits []cwsWireHit, rows []cwsWireRow, counts map[string]int) {
+	counts = map[string]int{"WIRED": 0, "UNWIRED": 0, "UNSTATED": 0}
+	for _, c := range cands {
+		declared, note := cwsReadWireToken(root, c.path)
+		counts[declared]++
+		wired := wiredNames[c.name]
+		rows = append(rows, cwsWireRow{c.name, declared, wired, note})
+		if declared == "WIRED" && !wired {
+			hits = append(hits, cwsWireHit{c.name, "WIRED", "自称已接线，但闸清单命令位里找不到它"})
+		} else if declared == "UNWIRED" && wired {
+			hits = append(hits, cwsWireHit{c.name, "UNWIRED", "自称未接线，但闸清单里已按名调用它"})
+		}
+	}
+	return hits, rows, counts
 }
 
 // ── 断言 B：零引用件必须登记白名单 ─────────────────────────────────────────────
@@ -997,7 +1139,8 @@ func cwsHeader(root string) (string, string) {
 
 func cwsReport(root string, opts cwsOpts, files []string, mode string, aCands, bCands []cwsCand,
 	hitsA []cwsCand, nWired, nGatePresent int, missingGates []string,
-	zero, unreg, reg, stale, docOnly, rows []cwsRow, wl []cwsWLEntry, errs []string) string {
+	zero, unreg, reg, stale, docOnly, rows []cwsRow, wl []cwsWLEntry, errs []string,
+	hitsC []cwsWireHit, cRows []cwsWireRow, cCounts map[string]int) string {
 	var out []string
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	head, dirty := cwsHeader(root)
@@ -1130,6 +1273,31 @@ func cwsReport(root string, opts cwsOpts, files []string, mode string, aCands, b
 		}
 	}
 
+	// ── 断言 C：件头自述三态（首版 UNSTATED-only）────────────────────────────────
+	out = append(out, "")
+	cw := cCounts["WIRED"]
+	cu := cCounts["UNWIRED"]
+	cn := cCounts["UNSTATED"]
+	out = append(out, fmt.Sprintf("【断言 C】件头自述三态（`# zerg-wire: WIRED|UNWIRED|UNSTATED` · 行首 · 件头前 %d 行 · 全件唯一）—— WIRED %d · UNWIRED %d · **UNSTATED %d**", cwsWireHeadLines, cw, cu, cn))
+	out = append(out, "   ★ 首版 UNSTATED-only：UNSTATED 只打印+计数、**不判红**；真接线 = 命中闸清单命令位（同断言 A）")
+	out = append(out, "   ★ 失真（WIRED×未挂 ／ UNWIRED×已挂）计 hits_c，rc 同 A/B 受 --strict-report 门控（默认档不因此转红）")
+	if len(hitsC) > 0 {
+		out = append(out, fmt.Sprintf("  ✗ 失真 %d 只（自称 ≠ 真接线）：", len(hitsC)))
+		for _, h := range hitsC {
+			out = append(out, fmt.Sprintf("    %s  自述=%s · %s", cwsPad(h.name, 30), h.declared, h.why))
+		}
+	} else {
+		out = append(out, fmt.Sprintf("  ✓ 无失真（已自述 %d 只均与真接线一致）", cw+cu))
+	}
+	if cn > 0 {
+		out = append(out, fmt.Sprintf("  · UNSTATED %d 只（不判红；逐件打印）：", cn))
+		for _, r := range cRows {
+			if r.declared == "UNSTATED" {
+				out = append(out, fmt.Sprintf("    %s  %s", cwsPad(r.name, 30), r.note))
+			}
+		}
+	}
+
 	out = append(out, "")
 	out = append(out, "【排除域】不在本门判据里（现读，非记忆）")
 	deepSet := map[string]bool{}
@@ -1201,14 +1369,14 @@ func cwsReport(root string, opts cwsOpts, files []string, mode string, aCands, b
 	}
 
 	out = append(out, "")
-	hitN := len(hitsA) + len(unreg)
+	hitN := len(hitsA) + len(unreg) + len(hitsC)
 	out = append(out, fmt.Sprintf("【口径】引用 = 脚本名在引用面文件里出现；引用面 = 已跟踪文本文件 − 自指 2 件 − 记录面（现行债务台账，glob %s）− 候选自身。",
 		strings.Join(cwsRecordSurfaces, " · ")))
 	out = append(out, "        「记录不能充作引用」：台账点名不让死件复活（否则写下这条债就把债抹掉了）。")
 	out = append(out, "        「在闸里」= **命令位调用**（真接线面）：名字紧跟解释器/启动器（`python3`/`bash`/`${PY}`/`./`…），中间只允许选项旗标。")
 	out = append(out, "        不算接线的三类：纯注释行 · 纯清单项（`\"scripts/<…>/<名>\"`，**含被排除表/白名单点名**）· 只被文案/说明/grep 模式串提到。")
 	out = append(out, "")
-	out = append(out, fmt.Sprintf("【结论】A 命中 %d · B 未登记 %d · 配置错 %d", len(hitsA), len(unreg), len(errs)))
+	out = append(out, fmt.Sprintf("【结论】A 命中 %d · B 未登记 %d · C 失真 %d · 配置错 %d", len(hitsA), len(unreg), len(hitsC), len(errs)))
 	if len(errs) > 0 {
 		out = append(out, "        rc=2（缺件/配置错/空转 ⇒ 不给结论，不许静默）")
 	} else if opts.strictReport && hitN > 0 {
@@ -1296,6 +1464,10 @@ var cwsSelfFiles = []string{
 
 var cwsRecordSurfaces = []string{
 	"docs/项目文档/*/债务台账-*",
+	//   ★ `GAP-20260927-139`（记录面不得充作引用）：`scripts/公开标记.tsv` 点名了全部候选脚本、
+	//     却 0 处命令位调用 ⇒ 旧口径把它算作「代码侧引用」⇒「未登记」档结构上永不红。本条把这张
+	//     记录类表接进记录面（与 py `RECORD_SURFACES` 同口径）。
+	"scripts/公开标记.tsv",
 }
 
 var cwsWhitelist = []cwsWLEntry{
@@ -1496,6 +1668,16 @@ func cwsCloneFiles(m map[string]string, over map[string]string) map[string]strin
 	return out
 }
 
+func cwsGitInitAdd(dir string) {
+	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Stdout = io.Discard
+		cmd.Stderr = io.Discard
+		_ = cmd.Run()
+	}
+}
+
 func cwsRunCase(label, fixture string, wl []map[string]string, extra []string,
 	expectRc int, must, mustNot []string, results *[]cwsCaseRes) string {
 	argv := []string{"--root", fixture, "--no-self-test"}
@@ -1545,6 +1727,12 @@ func cwsSelftest(stdout io.Writer) int {
 			"bash scripts/gates/precommit-gates.sh\n" +
 			"bash scripts/build/publish-preflight.sh /tmp/out\n",
 		"Makefile": "check:\n\tbash scripts/run-gates.sh\n",
+		// 闸清单里每一条都必须「在位」（GitHub 发布闸也补上，与 py ok_files 同口径）
+		"publish/mirror-public.sh":        "#!/usr/bin/env bash\n",
+		"publish/mirror-public-lib.py":    "# lib\n",
+		"publish/ci/ci.yml":               "name: ci\n",
+		"publish/ci/release-agent.yml":    "name: rel\n",
+		"publish/mirror-acceptance.sh":    "#!/usr/bin/env bash\n",
 		"docs/项目文档/v9.9/债务台账-20990101.md": "helper.py 是零引用\n",
 	}
 	fOK := cwsFixture(base, "ok", okFiles)
@@ -1599,6 +1787,19 @@ func cwsSelftest(stdout io.Writer) int {
 	cwsRunCase("⑩ 缺件：闸清单一个都不在位 ⇒ rc=2（不给结论）", fNoGate, []map[string]string{}, nil, 2,
 		[]string{"不给结论", "rc=2"}, nil, &results)
 
+	// ⑩b 负控（与 ⑩ 成对 · GAP-20260927-154）：闸清单**只缺一条**（非全缺）⇒ 也必须 rc=2。
+	//   旧口径 nGatePresent == 0 ⇒ 缺 1~5 条恒绿（改名/搬走一条闸即静默）⇒ 这条正是它的牙。
+	fPartial := cwsFixture(base, "one-gate-missing", map[string]string{
+		"scripts/gates/precommit-gates.sh":   cwsGateA,
+		"scripts/build/publish-preflight.sh": cwsGateB,
+		"publish/mirror-public.sh":           "#!/usr/bin/env bash\n",
+		"publish/mirror-public-lib.py":       "# lib\n",
+		"publish/ci/ci.yml":                  "name: ci\n",
+		"scripts/check-solo.py":              "# ck\n",
+	})
+	cwsRunCase("⑩b 闸清单只缺 1 条（非全缺）⇒ 必 rc=2 并点名缺件", fPartial, []map[string]string{}, nil, 2,
+		[]string{"不给结论", "缺件", "release-agent.yml"}, nil, &results)
+
 	fDecl := cwsFixture(base, "decl", cwsCloneFiles(okFiles, map[string]string{
 		"scripts/tool-x.sh": "#!/usr/bin/env bash\necho x\n",
 		"scripts/tool-x.md": "# tool-x — 本门说明书\n\n写盘门。\n",
@@ -1644,7 +1845,7 @@ func cwsSelftest(stdout io.Writer) int {
 			"python3 \"$Z/scripts/gates/check-epsilon.py\" \"$D\" > \"$D/x.log\" 2>&1\n" +
 			"echo \"   ⑧c ── 已接线（按名调用 check-epsilon.py）\"\n"}))
 	cwsRunCase("⑮ 正控：命令位调用（引号 + 变量前缀）⇒ 已挂（A 命中 0）",
-		fCall, wlOK, nil, 0, []string{"A 命中 0"}, []string{"check-epsilon.py"}, &results)
+		fCall, wlOK, nil, 0, []string{"A 命中 0", "已挂门脚本 3 只"}, []string{"0 处"}, &results)
 
 	fEcho := cwsFixture(base, "neg-a-echo", cwsCloneFiles(okFiles, map[string]string{
 		"scripts/gates/check-zeta.py": "# ck\n",
@@ -1652,6 +1853,112 @@ func cwsSelftest(stdout io.Writer) int {
 			"echo \"   ⑧d 成对闸 ── 按名调用 check-zeta.py · 明细 /tmp/x.log\"\n"}))
 	cwsRunCase("⑯ 负控 A4: 只在文案里被提到（0 次命令位调用）⇒ 仍算未挂",
 		fEcho, wlOK, nil, 0, []string{"check-zeta.py", "A 命中 1"}, nil, &results)
+
+	// ── ⑰/⑱ 候选面换 fs、引用面不换（`GAP-20260927-159/169`）成对负控 ────────────────
+	//   ⑰ 正控：git 夹具 + 一个**未跟踪**的新 check- 脚本 ⇒ 必进候选面并被断言 A 报出。
+	fUnt := cwsFixture(base, "untracked-cand", cwsCloneFiles(okFiles, nil))
+	cwsGitInitAdd(fUnt)
+	os.WriteFile(cwsPyJoin(fUnt, "scripts", "check-untracked.py"), []byte("# ck（未跟踪新件）\n"), 0o644)
+	cwsRunCase("⑰ 未跟踪的新门脚本必进候选面（候选面换 fs · 索引只分档）",
+		fUnt, wlOK, nil, 0, []string{"check-untracked.py", "A 命中 1"}, []string{"A 命中 0"}, &results)
+	//   ⑱ 单元负控（与 ⑰ 成对 · 方向性）：非 git 档原样返回（换面只写在候选面这一半）。
+	cs18 := cwsCandidateFiles(base, []string{"a.py"}, "文件系统遍历（非 git 目录）")
+	ok18 := len(cs18) == 1 && cs18[0] == "a.py"
+	results = append(results, cwsCaseRes{"⑱ candidate 面非 git 档原样返回（换面只在候选面这一半）", ok18, ""})
+
+	// ── ⑲/⑲' 记录类表不得充作引用（`GAP-20260927-139`）成对负控 ─────────────────────
+	fMark := cwsFixture(base, "neg-record-marks", cwsCloneFiles(okFiles, map[string]string{
+		"scripts/check-omega.py": "# ck\n",
+		"scripts/公开标记.tsv":       "scripts/check-omega.py	public=no\n",
+	}))
+	cwsRunCase("⑲ 只被记录类表（公开标记.tsv）点名 ⇒ 仍判「未登记」（记录不能充作引用）",
+		fMark, wlOK, nil, 0, []string{"check-omega.py", "未登记 1"}, []string{"未登记 0"}, &results)
+	cwsRunCase("⑲' 同上 + --strict-report ⇒ rc=1（记录类引用不成牙）",
+		fMark, wlOK, []string{"--strict-report"}, 1, []string{"rc=1"}, nil, &results)
+
+	// ── ⑳/㉑ `zerg gate check <判据名>` 接线形（`GAP-20261001-74` · 与 cwsZergGateRe 成对）──
+	zrgRef := "#!/usr/bin/env bash\n" +
+		"bash scripts/gates/precommit-gates.sh\n" +
+		"bash scripts/build/publish-preflight.sh /tmp/out\n" +
+		"python3 scripts/check-eta.py\n"
+	fZG := cwsFixture(base, "pos-zerg", cwsCloneFiles(okFiles, map[string]string{
+		"scripts/check-eta.py": "# ck\n",
+		"scripts/gates/precommit-gates.sh": cwsGateA +
+			"add_step g \"门X\" tri \"$R\" \"zerg gate check check-eta\"\n",
+		"scripts/run-gates.sh": zrgRef,
+	}))
+	cwsRunCase("⑳ 正控：`zerg gate check check-eta` 命令位 ⇒ 已挂（A 命中 0）",
+		fZG, wlOK, nil, 0, []string{"A 命中 0", "已挂门脚本 3 只"}, []string{"0 处"}, &results)
+	fNG := cwsFixture(base, "neg-zerg-subcmd", cwsCloneFiles(okFiles, map[string]string{
+		"scripts/check-eta.py": "# ck\n",
+		"scripts/gates/precommit-gates.sh": cwsGateA +
+			"add_step g \"门X\" tri \"$R\" \"zerg check check-eta\"\n",
+		"scripts/run-gates.sh": zrgRef,
+	}))
+	cwsRunCase("㉑ 负控：`zerg check check-eta`（缺 gate 子命令）⇒ 仍算未挂",
+		fNG, wlOK, nil, 0, []string{"check-eta.py", "A 命中 1"}, nil, &results)
+
+	// ── 断言 C：件头自述三态（首版 UNSTATED-only · 显式 token `# zerg-wire:`）成对负控 ──
+	//   ★ token 形写死：行首 `#` ＋ `zerg-wire:` ＋ <WIRED|UNWIRED|UNSTATED>；件头前 40 行、全件唯一。
+	//   C1（= M2 方向）：件头 `WIRED` 但闸里查无此件 ⇒ **失真**（默认档只报，--strict-report 下 rc=1）。
+	fC1 := cwsFixture(base, "c-wired-notwired", cwsCloneFiles(okFiles, map[string]string{
+		"scripts/gates/check-iota.py": "# zerg-wire: WIRED\n# ck\n",
+		"scripts/run-gates.sh": "#!/usr/bin/env bash\n" +
+			"bash scripts/gates/precommit-gates.sh\n" +
+			"bash scripts/build/publish-preflight.sh /tmp/out\n" +
+			"python3 scripts/gates/check-iota.py\n",
+	}))
+	cwsRunCase("C1 负控（M2 方向）：件头 WIRED 但闸清单查无此件 ⇒ 报失真（默认档 rc=0 不转红）",
+		fC1, wlOK, nil, 0, []string{"失真 1", "check-iota.py"}, nil, &results)
+	cwsRunCase("C1' 同上 + --strict-report ⇒ rc=1（失真成牙）",
+		fC1, wlOK, []string{"--strict-report"}, 1, []string{"rc=1"}, nil, &results)
+
+	//   C2（= M1 方向 · 与 C1 反向）：件头 `UNWIRED` 但闸里**已**按名调用 ⇒ **失真**（A 命中 0，
+	//     这正是断言 C 独有、断言 A 结构上抓不到的一档）。
+	fC2 := cwsFixture(base, "c-unwired-butwired", cwsCloneFiles(okFiles, map[string]string{
+		"scripts/gates/check-kappa.py":     "# zerg-wire: UNWIRED\n# ck\n",
+		"scripts/gates/precommit-gates.sh": cwsGateA + "python3 scripts/gates/check-kappa.py\n",
+	}))
+	cwsRunCase("C2 负控（M1 方向）：件头 UNWIRED 但闸里已按名调用 ⇒ 报失真（A 命中 0 · 默认档 rc=0）",
+		fC2, wlOK, nil, 0, []string{"失真 1", "check-kappa.py", "A 命中 0"}, nil, &results)
+	cwsRunCase("C2' 同上 + --strict-report ⇒ rc=1",
+		fC2, wlOK, []string{"--strict-report"}, 1, []string{"rc=1"}, nil, &results)
+
+	//   C3（= M3）：件头**无** token ⇒ 只计入 UNSTATED、**不判红**（默认档与 --strict-report 均 rc=0）。
+	//     件**已**接线（闸里按名调用、A 命中 0）—— 这样 --strict-report 下 rc 只由 C 决定，才测得准。
+	fC3 := cwsFixture(base, "c-unstated", cwsCloneFiles(okFiles, map[string]string{
+		"scripts/gates/check-lambda.py":    "# ck\n",
+		"scripts/gates/precommit-gates.sh": cwsGateA + "python3 scripts/gates/check-lambda.py\n",
+	}))
+	cwsRunCase("C3 正控（M3）：件头无 token ⇒ 只计入 UNSTATED，不判红（默认档 rc=0）",
+		fC3, wlOK, nil, 0, []string{"UNSTATED 3", "check-lambda.py", "无失真"}, nil, &results)
+	cwsRunCase("C3' 同上 + --strict-report ⇒ 仍 rc=0（UNSTATED 不锁门）",
+		fC3, wlOK, []string{"--strict-report"}, 0, []string{"rc=0"}, nil, &results)
+
+	//   C4（= M4 歧义）：件头两行 token（WIRED + UNWIRED）⇒ 判 UNSTATED 并打印（✗ 不猜）。
+	fC4 := cwsFixture(base, "c-ambiguous", cwsCloneFiles(okFiles, map[string]string{
+		"scripts/gates/check-mu.py": "# zerg-wire: WIRED\n# zerg-wire: UNWIRED\n# ck\n",
+		"scripts/run-gates.sh": "#!/usr/bin/env bash\n" +
+			"bash scripts/gates/precommit-gates.sh\n" +
+			"bash scripts/build/publish-preflight.sh /tmp/out\n" +
+			"python3 scripts/gates/check-mu.py\n",
+	}))
+	cwsRunCase("C4 负控（M4 歧义）：件头两行 token ⇒ 判 UNSTATED 并打印（✗ 不猜 · 失真 0）",
+		fC4, wlOK, nil, 0, []string{"token 多重", "check-mu.py", "无失真"}, nil, &results)
+
+	//   C5（= M5 词面碰撞回归）：件头含自然语言 `不挂死` / `只报告档起步` 但**无** token ⇒ UNSTATED
+	//     （专治设计稿 §1.6 噪声：按词面抽会把 `不挂死` 读成「未接线」）。
+	fC5 := cwsFixture(base, "c-collision", cwsCloneFiles(okFiles, map[string]string{
+		"scripts/gates/check-nu.py": "# ck\n" +
+			"# 本件不挂死：无器件即立即失败、不卡住\n" +
+			"# 起步只报告档起步（历史档位，与「未接线」无关）\n",
+		"scripts/run-gates.sh": "#!/usr/bin/env bash\n" +
+			"bash scripts/gates/precommit-gates.sh\n" +
+			"bash scripts/build/publish-preflight.sh /tmp/out\n" +
+			"python3 scripts/gates/check-nu.py\n",
+	}))
+	cwsRunCase("C5 负控（M5 词面碰撞回归）：件头含 `不挂死`/`只报告档起步` 但无 token ⇒ UNSTATED（✗ 不被读成 UNWIRED）",
+		fC5, wlOK, nil, 0, []string{"UNSTATED 3", "check-nu.py"}, []string{"UNWIRED 1"}, &results)
 
 	npass := 0
 	for _, r := range results {

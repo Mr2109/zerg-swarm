@@ -20,7 +20,8 @@ package main
 // 纪律：本件只读（不写 registry.json、不落快照件、不写状态目录；`--out` 只在你点名时才写）·
 // 自带 `--self-test`（成对：正控 2 组 + 负控 11 组）· 缺读数一律 rc=2。
 //
-// 未接线：本件不挂进 main.go 的派发面（真搬阶段只落件）。
+// 接线：本件已挂 `gateCheckGoEntry["check-contract-version-diff"]`（`zerg gate check` 走 inproc）；
+// ✗ 不进 main.go 命令树（M2 不接线主体）。
 
 import (
 	"bytes"
@@ -30,6 +31,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -531,7 +533,7 @@ func cvdFinish(info *cvdInfo, lines []string, old, new map[string]any, newPath s
 
 // ── 自检（成对：正控 2 组 + 负控 11 组） ────────────────────────────────────
 
-func cvdSelfTest(root string, rootOK bool) int {
+func cvdSelfTest(stdout io.Writer, root string, rootOK bool) int {
 	bad := []string{}
 	n := 0
 
@@ -550,7 +552,7 @@ func cvdSelfTest(root string, rootOK bool) int {
 	}
 	tmp, err := os.MkdirTemp("", "zerg-cvd-selftest-")
 	if err != nil {
-		fmt.Printf("✗ 自检前置：临时目录建不了（%s）\n", cvdPyErrText(err))
+		fmt.Fprintf(stdout, "✗ 自检前置：临时目录建不了（%s）\n", cvdPyErrText(err))
 		return 1
 	}
 	defer os.RemoveAll(tmp)
@@ -667,18 +669,18 @@ func cvdSelfTest(root string, rootOK bool) int {
 	cvdCase("⑫ 负控：目标仓里查无该件 ⇒ rc=2（新版件读不到）", 2, rc, "不给结论", lines)
 
 	// ⑬ 正控：真跑墙钟（原型 0.062s 档 · 只印数，不设阈值当门）
-	fmt.Printf("   · 真目标墙钟：%d ms（差异行 %d · 旧 %d / 新 %d · verdict=%s）\n",
+	fmt.Fprintf(stdout, "   · 真目标墙钟：%d ms（差异行 %d · 旧 %d / 新 %d · verdict=%s）\n",
 		infoReal.ElapsedMS, infoReal.DiffLines, infoReal.OldEntries, infoReal.NewEntries, infoReal.Verdict)
 	n++
 
 	if len(bad) > 0 {
-		fmt.Printf("✗ 自检失败（%d 组断言未过 / 共 %d 组）：\n", len(bad), n)
+		fmt.Fprintf(stdout, "✗ 自检失败（%d 组断言未过 / 共 %d 组）：\n", len(bad), n)
 		for _, b := range bad {
-			fmt.Println("   " + b)
+			fmt.Fprintln(stdout, "   "+b)
 		}
 		return 1
 	}
-	fmt.Printf("✓ 自检全过（%d 组：正控 2 + 负控 11 · 成对）\n", n)
+	fmt.Fprintf(stdout, "✓ 自检全过（%d 组：正控 2 + 负控 11 · 成对）\n", n)
 	return 0
 }
 
@@ -816,10 +818,11 @@ func cvdJSONValue(info cvdInfo, f string) (any, bool) {
 
 // ── 入口 ────────────────────────────────────────────────────────────────────
 
-// cvdMain 是本件的入口（**未接线** —— 不挂进 main.go 的派发面）。
-func cvdMain(argv []string) int {
+// cvdMain 是本件的入口（已挂 `gateCheckGoEntry["check-contract-version-diff"]` ⇒ 走 inproc；
+// ✗ 不进 `main.go` 命令树 —— M2 不接线主体）。
+func cvdMain(stdout, stderr io.Writer, argv []string) int {
 	fs := flag.NewFlagSet("check-contract-version-diff", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	fs.SetOutput(stderr)
 	var rootF, regF, baseF, oldF, newF, jsonF, outF string
 	var selfF bool
 	fs.StringVar(&rootF, "root", "", "仓库根（默认自动定位：找 "+cvdRootAnchor+"）")
@@ -858,12 +861,12 @@ func cvdMain(argv []string) int {
 			if len(unknown) > 0 {
 				u = strings.Join(unknown, ",")
 			}
-			fmt.Fprintf(os.Stderr, "✗ `--json` 字段表外：%s（可选字段：%s）\n", u, strings.Join(cvdJSONFields, ","))
+			fmt.Fprintf(stderr, "✗ `--json` 字段表外：%s（可选字段：%s）\n", u, strings.Join(cvdJSONFields, ","))
 			return 2
 		}
 	}
 	if (oldF != "") != (newF != "") {
-		fmt.Fprintln(os.Stderr, "✗ `--old-file` 与 `--new-file` 必须成对（夹具档两侧都要给）")
+		fmt.Fprintln(stderr, "✗ `--old-file` 与 `--new-file` 必须成对（夹具档两侧都要给）")
 		return 2
 	}
 
@@ -877,8 +880,8 @@ func cvdMain(argv []string) int {
 	root, rootOK := cvdFindRoot(src)
 
 	if haveSelf {
-		fmt.Print("门 · 契约「版本间对拍」（旧版 ↔ 新版 registry.json · R5/G-27）· 自检档（真表只读 + 合成夹具 · 不碰真目标）\n")
-		return cvdSelfTest(root, rootOK)
+		fmt.Fprint(stdout, "门 · 契约「版本间对拍」（旧版 ↔ 新版 registry.json · R5/G-27）· 自检档（真表只读 + 合成夹具 · 不碰真目标）\n")
+		return cvdSelfTest(stdout, root, rootOK)
 	}
 
 	reg := regF
@@ -902,7 +905,7 @@ func cvdMain(argv []string) int {
 				obj[f] = v
 			}
 		}
-		fmt.Println(cvdPyDump(obj, "", 0))
+		fmt.Fprintln(stdout, cvdPyDump(obj, "", 0))
 		return rc
 	}
 
@@ -910,21 +913,21 @@ func cvdMain(argv []string) int {
 	if rootOK {
 		rootDisp = root
 	}
-	fmt.Printf("门 · 契约「版本间对拍」（旧版 ↔ 新版 registry.json · R5/G-27）· 仓根 %s\n", rootDisp)
+	fmt.Fprintf(stdout, "门 · 契约「版本间对拍」（旧版 ↔ 新版 registry.json · R5/G-27）· 仓根 %s\n", rootDisp)
 	nvp := newF
 	if nvp == "" {
 		nvp = reg
 	}
-	fmt.Printf("  新版件：%s\n", nvp)
+	fmt.Fprintf(stdout, "  新版件：%s\n", nvp)
 	if oldF != "" {
-		fmt.Printf("  旧件（夹具）：%s\n", oldF)
+		fmt.Fprintf(stdout, "  旧件（夹具）：%s\n", oldF)
 	}
 	for _, l := range lines {
-		fmt.Println("  " + l)
+		fmt.Fprintln(stdout, "  "+l)
 	}
 	word := map[string]string{"unchanged": "无变更", "changed": "有差异（报告档 · 不是判红）",
 		"blocked": "不给结论"}[info.Verdict]
-	fmt.Printf("⇒ %s（rc=%d · 墙钟 %d ms）\n", word, rc, info.ElapsedMS)
+	fmt.Fprintf(stdout, "⇒ %s（rc=%d · 墙钟 %d ms）\n", word, rc, info.ElapsedMS)
 
 	if outF != "" {
 		regSHA := ""
@@ -945,9 +948,9 @@ func cvdMain(argv []string) int {
 			{K: "lines", V: lines},
 		}
 		if err := os.WriteFile(outF, []byte(cvdPyDump(obj, " ", 0)), 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "  ⛔ 结果件写不了（%s）—— 对拍结论照上（退码不变）\n", cvdPyErrText(err))
+			fmt.Fprintf(stderr, "  ⛔ 结果件写不了（%s）—— 对拍结论照上（退码不变）\n", cvdPyErrText(err))
 		} else {
-			fmt.Printf("  结果件已写：%s\n", outF)
+			fmt.Fprintf(stdout, "  结果件已写：%s\n", outF)
 		}
 	}
 	return rc

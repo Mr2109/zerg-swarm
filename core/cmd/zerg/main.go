@@ -332,6 +332,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if inv.hasFlag("--top") && !usageDeclaresFlag(cmd, "--top") {
 		inv.unknown = append(inv.unknown, "--top")
 	}
+	// ★ 同一条数据驱动收口（缺口账 `GAP-20261005-60` 剩面 · 2026-10-05）：`--include-open` 在解析面
+	//   刚上户口（`parseInvocation` 专用 case）⇒ **全族共用**；若不在此收口，别族（usage 未列它的命令）
+	//   真给 `--include-open` 会从「未知旗标 2」退化成**静默吞**（硬约束⑤：既有命令的退码与输出一字不动）。
+	//   形状逐字照拄上面 `--top` 那条：把不归本命令的那一枚**补回 `inv.unknown`** ⇒ 由下面**同一条**
+	//   判词 + 同一个退码 2 收口（不另写判词 · 不另取码）。`gap reread` 的 usage 已列它 ⇒ 行为逐字不变。
+	if inv.hasFlag("--include-open") && !usageDeclaresFlag(cmd, "--include-open") {
+		inv.unknown = append(inv.unknown, "--include-open")
+	}
 	if len(inv.unknown) > 0 && !cmd.passthrough {
 		fmt.Fprintf(stderr, "%s: 未知旗标 %q\n", progName, inv.unknown[0])
 		fmt.Fprintf(stderr, "See '%s --help'。\n", progName)
@@ -678,7 +686,7 @@ func init() {
 		{
 			path:        []string{"gate", "run"},
 			summary:     "跑门禁（旗标逐字透传；退码原样转出，不翻译；`--step` 只跑一道门）",
-			usage:       "zerg gate run [--scope <s> | --fast] [--outdir <目录>] … | zerg gate run --step <步名> [--self-test] [--only-step] [--json <字段>] [--verify-live] [--show-log]",
+			usage:       "zerg gate run [--scope <s> | --fast] [--outdir <目录>] … | zerg gate run --step <步名> [--self-test] [--only-step] [--json <字段>] [--verify-live] [--show-log] [-- <只读旗标>…]",
 			arity:       "any",
 			args:        []string{"脚本旗标（原样透传）"},
 			fields:      gateRunStepFields,
@@ -2209,7 +2217,7 @@ func init() {
 			path:     []string{"ask"},
 			kind:     "Ask",
 			summary:  "问一次推理、**不落任务队列**（`task submit` 的对偶）· 能力筛是硬筛",
-			usage:    "zerg ask <提示> [--capability 名]… [--prefer 名]… [--model 名] [--node 名]… [--min-ctx n] [--min-mem-gb n] [--no-fallback] [--dry-run] [--timeout 时长] [--json <字段>]",
+			usage:    "zerg ask <提示> [--capability 名]… [--prefer 名]… [--model 名] [--node 名]… [--min-ctx n] [--min-mem-gb n] [--dry-run] [--timeout 时长] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"提示（一句话）"},
 			fields:   askFields,
@@ -2696,11 +2704,15 @@ func init() {
 		//   `not_rereadable`）。★ 只读动作 ⇒ **不挂危险档**（本面只报告 · 一字节都不写真源、不写审计）。
 		//   退码：0（含有 `reading_stale`）· 2 用法错（缺目标 / `--all` 与 id 同给 / `--limit` 非非负整数 /
 		//   `--json` 不给字段 / 账内没有该 id）· 8 真源读不到。实现件 = `family_gap_reread.go:cmdGapReread`。
+		//   ★ 2026-10-05（缺口账 `GAP-20261005-60` 剩面 · 本枚）：新增 `--include-open` —— 把**未闭**
+		//   （`state == 仍缺`）条目的 `verify_cmd` 纳入同一套判活读数（可跑 ⇒ ok；元字符 / 占位 / 自递归 /
+		//   空 / 解析不出 ⇒ not_rereadable · **不执行**）；解析面在 `parseInvocation` 专用 case 上户口，
+		//   dispatch 面按 usage 声明收口（与 `--top` 同形：别族给它会仍退 2，不静默吞）。
 		{
 			path:     []string{"gap", "reread"},
 			kind:     "GapReread",
-			summary:  "缺口账**判据复跑**（只读面 · 一字不写真源、不写审计、不改任何 `state`）：重跑 `solved_evidence` 里的**带键标读数**（`cmd=<命令> · rc=<真退码> · reading=<关键读数一行>`）并与记下的 `rc` / `reading` 对拍 —— rc 变 ⇒ `reading_stale`；rc 一致再看 `件:行` 引用的**行内容**（✗ 不判绝对行号 —— 行号会漂）· 四条读数闭集 `ok` / `reading_stale` / `not_rereadable` / `skipped` · **安全铁律**：取值命令落在**危险档**（写面）/ 含 shell 元字符 / 解析不出 / 是本命令自己（自递归）⇒ **一律不执行**（判不准就记 `not_rereadable`）· 表尾声称「**只报告** —— `reading_stale` / `not_rereadable` **均不进退出码**」（免得存量陈旧读数把它变成恒红）· 缺目标 / `--all` 与 id 同给 / `--limit` 非非负整数 / `--json` 不给字段 / 账内没有该 id ⇒ 2；读不到真源 ⇒ 8",
-			usage:    "zerg gap reread [<GAP id>…] [--all] [--limit <N>] [--json <字段>]",
+			summary:  "缺口账**判据复跑**（只读面 · 一字不写真源、不写审计、不改任何 `state`）：重跑 `solved_evidence` 里的**带键标读数**（`cmd=<命令> · rc=<真退码> · reading=<关键读数一行>`）并与记下的 `rc` / `reading` 对拍 —— rc 变 ⇒ `reading_stale`；rc 一致再看 `件:行` 引用的**行内容**（✗ 不判绝对行号 —— 行号会漂）· 四条读数闭集 `ok` / `reading_stale` / `not_rereadable` / `skipped` · **安全铁律**：取值命令落在**危险档**（写面）/ 含 shell 元字符 / 解析不出 / 是本命令自己（自递归）⇒ **一律不执行**（判不准就记 `not_rereadable`）· 表尾声称「**只报告** —— `reading_stale` / `not_rereadable` **均不进退出码**」（免得存量陈旧读数把它变成恒红）· `--include-open` 把**未闭**条（`state == 仍缺`）的 `verify_cmd` 纳入同一套判活（可跑 ⇒ ok；元字符 / 占位 / 自递归 / 空 / 解析不出 ⇒ `not_rereadable` · **不执行**）· 缺目标 / `--all` 与 id 同给 / `--limit` 非非负整数 / `--json` 不给字段 / 账内没有该 id ⇒ 2；读不到真源 ⇒ 8",
+			usage:    "zerg gap reread [<GAP id>…] [--all] [--include-open] [--limit <N>] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"缺口 id（**一条或多条**；与 `--all` 不许同给）"},
 			fields:   gapRereadFields,
@@ -2778,7 +2790,7 @@ func init() {
 		{
 			path:     []string{"gap", "assign"},
 			kind:     "GapAssign",
-			summary:  "派单登记（写面 · `--dry-run` 恒 0 · 缺 `--yes` fail-closed 2）：把该条 `state` 改 **`已派`**（走现有改态路径 `gapRewriteOne` · 不另开写路）并在 `notes` 末尾追加**一行机读登记**（`派单登记 egg=… · receipt=… · allow=… · forbid=… · occupies=… · criterion=… · deadline=…`）· **作业单六栏缺栏拒发**（① `--allow` 允许面 ② `--forbid` 禁碰面 ③ `--occupies` 占用件 ④ `--criterion` 出口判据 ⑤ `--deadline` 时限 ⑥ 该条全文 —— 缺一栏 ⇒ 2 并点名缺哪栏）· 预检「可派状态」= 默认只 `仍缺`（非此 ⇒ 2 并点名当前 state）· `M-32` 占用预检（同件已被另一 `已派` 占住 ⇒ 2）· 同卵号登记已在位 ⇒ 「无变化」0",
+			summary:  "派单登记（写面 · `--dry-run` 恒 0 · 缺 `--yes` fail-closed 2）：把该条 `state` 改 **`已派`**（走现有改态路径 `gapRewriteOne` · 不另开写路）并在 `notes` 末尾追加**一行机读登记**（`派单登记 egg=… · receipt=… · allow=… · forbid=… · occupies=… · criterion=… · deadline=…`）· **作业单六栏缺栏拒发**（① `--allow` 允许面 ② `--forbid` 禁碰面 ③ `--occupies` 占用件 ④ `--criterion` 出口判据 ⑤ `--deadline` 时限 ⑥ 该条全文 —— 缺一栏 ⇒ 2 并点名缺哪栏）· 预检「可派状态」= `仍缺` / `已立项`（非此 ⇒ 2 并点名当前 state）· `M-32` 占用预检（同件已被另一 `已派` 占住 ⇒ 2）· 同卵号登记已在位 ⇒ 「无变化」0",
 			usage:    "zerg gap assign <GAP id> --egg <卵号> --allow <件清单> --forbid <面> --occupies <件|无> --criterion <出口判据> --deadline <绝对日期> [--receipt <回执绝对路径>] [--by <谁>] [--dry-run | --yes] [--json <字段>]",
 			arity:    "any",
 			args:     []string{"缺口 id（**恰好一条** —— 一次只派一条 · 本动作不做批量）"},
@@ -2799,6 +2811,36 @@ func init() {
 			opened:   true,
 			endpoint: "",
 			run:      cmdGapAssignLs,
+		},
+		// ★ 三段链中段（2026-10-05 · 缺口账 `GAP-20261005-61` · 设计稿 `~/.zerg/state/设计-gap立项正门-20261005.md` §2 乙案 / §3 / §7 U1）：
+		//   `仍缺 ──project──▶ 已立项（立项待拍） ──assign──▶ 已派（派单）`。甲案「扩 `set-state` / `bulk`
+		//   的 `gapStateSettable` 闭集」已否 ⇒ 本面**只增两条动作**，`set-state` / `bulk` 一字不动 ✗。
+		//   实现件 = `family_gap_state.go:cmdGapProject` / `cmdGapUnproject`（共用 `gapProjectRun`）。
+		{
+			path:     []string{"gap", "project"},
+			kind:     "GapProject",
+			summary:  "立项待拍（写面 · 三段链中段）：源 {`仍缺`, `不做`} → 目标**恒** `已立项`（**不收 `--state`** —— 目标态由动作名唯一确定，甲案「扩 set-state 闭集」已否）· `--evidence` **必填**（改态留证）· 转入 `已立项` **不取 `solved_at`**（非终态）· 同 id 同态同证据 ⇒ 「无变化」0（不写）· `--dry-run` 恒 0 零副作用 · 缺 `--yes` fail-closed 2 · 审计进 `edit_audit.jsonl`（写不进就不写真源）",
+			usage:    "zerg gap project <GAP id> --evidence <一句话> [--by <谁>] [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"缺口 id（**恰好一条** —— 本动作不做批量）"},
+			fields:   gapProjectFields,
+			danger:   &dangerSpec{dangerD2, "缺口 id", "改真源里的 `state`（→ `已立项`）+ `solved_evidence`（**不碰** `solved_at` / `solved_kind`）+ 审计一行（可逆：照审计那一格回写）；源态不在源闭集 / 收到 `--state` / 缺 `--evidence` ⇒ 2（一个字节都不写）", "缺口账 `GAP-20261005-61` · 设计稿 `设计-gap立项正门-20261005.md` §2 乙案 / §3 三段链 / §7 U1 · 同族写面先例 `gap set-state`（`H-10`：`--yes` 是命令行确认档，不是批准件）", false},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapProject,
+		},
+		{
+			path:     []string{"gap", "unproject"},
+			kind:     "GapUnproject",
+			summary:  "撤立项（写面 · 三段链回退面 §7 U1）：源 {`已立项`} → 目标**恒** `仍缺`（**不收 `--state`**）· `--evidence` **必填** · 非 `已立项` 条 ⇒ 按源闭集拒执 2（逐字印当前 state + 源闭集）· 同 id 同态同证据 ⇒ 「无变化」0 · `--dry-run` 恒 0 零副作用 · 缺 `--yes` fail-closed 2 · 审计进 `edit_audit.jsonl`（写不进就不写真源）",
+			usage:    "zerg gap unproject <GAP id> --evidence <一句话> [--by <谁>] [--dry-run | --yes] [--json <字段>]",
+			arity:    "any",
+			args:     []string{"缺口 id（**恰好一条** —— 本动作不做批量）"},
+			fields:   gapProjectFields,
+			danger:   &dangerSpec{dangerD2, "缺口 id", "改真源里的 `state`（→ `仍缺`）+ `solved_evidence`（**不碰** `solved_at` / `solved_kind`）+ 审计一行（可逆：照审计那一格回写）；源态非 `已立项` / 收到 `--state` / 缺 `--evidence` ⇒ 2（一个字节都不写）", "缺口账 `GAP-20261005-61` · 设计稿 `设计-gap立项正门-20261005.md` §2 乙案 / §7 U1（三段链回退面）· 同族写面先例 `gap set-state`（`H-10`：`--yes` 是命令行确认档，不是批准件）", false},
+			opened:   true,
+			endpoint: "",
+			run:      cmdGapUnproject,
 		},
 		// ★ `gap backfill-unit` —— **存量回填三键**（2026-09-28 · 批1 第二片）：第一片只把 `unit` / `module` /
 		//   `unit_source` 落进**新落行**（`gap add`），存量 891 条账里没有 ⇒ 件面 / 模块分类在存量面上**无数据**。
@@ -3462,13 +3504,11 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.kvSet(a, "true")
 		case a == "--include-runtime":
 			inv.kvSet(a, "true")
-		// `ask` 的 `--no-fallback`（缺口 `GAP-20260928-127` 的 ⑥ · 本枚）：用法串写**裸形**、语义本就是
-		// **布尔档** ⇒ 从「按取值收」的名字表移到布尔这一面（与上一块逐字同一种形态：写进 `inv.kv`、
-		// `foreignFlag` 看得见）。裸形与 `--k=v` 两态都收 ⇒ 行为逐字不变。
-		case a == "--no-fallback":
-			inv.kvSet(a, "true")
-		case strings.HasPrefix(a, "--no-fallback="):
-			inv.kvSet("--no-fallback", strings.TrimPrefix(a, "--no-fallback="))
+		// ★ 2026-10-05（缺口 `GAP-20261005-68`）：`ask` 的 `--no-fallback` **已摘牌**（从命令树移除）——
+		//   它此前在命令树登记（用法串 + 本处解析 case）却在**全库零消费者**（`cmdAsk` 从不读
+		//   `inv.kv("--no-fallback")`，也无全局消费面）⇒ 真跑静默 rc=0、毫无作用，属「有登记无实现」。
+		//   （`GAP-20260928-127` ⑥ 此前只治了它的**形态**「取值 ⇒ 布尔」，没治「登记面 ⟷ 实现面」不对齐。）
+		//   摘牌后真给该旗标 ⇒ 落下面「未知旗标」兜底 ⇒ 退 2（负控 = `zerg ask ping --no-fallback` 应 rc=2）。
 		// ★ 批3 第三片（2026-09-28）：`gap assign ls` 的两枚**布尔**面旗标 —— `--aging`（按超时限程度
 		//   降序 · 时限算不出的单列「时限不明」）/ `--stale`（只列超时限未收的派单）。与上一块
 		//   `--count`/`--files-only` 逐字同一种形态：写进 `inv.kv`（`kvSet`）⇒ `foreignFlag` 看得见；
@@ -3533,6 +3573,14 @@ func parseInvocation(args []string) (*invocation, error) {
 			inv.wantHelp = true
 		case a == "--version":
 			inv.wantVersion = true
+		// ★ 户口登记（2026-10-05 · 缺口账 `GAP-20261005-60` 剩面）：`gap reread --include-open`
+		//   —— 把**未闭**（`state == 仍缺`）条目的 `verify_cmd` 纳入同一套只读判活读数。语义是**布尔档**
+		//   ⇒ 与 `--count`/`--hidden` 逐字同一种形态：写进 `inv.kv`（`kvSet`）⇒ `foreignFlag` 看得见；
+		//   `cmdGapReread` 已用 `inv.hasFlag("--include-open")` 读它。
+		//   ★ 必须在下面「未知旗标」兜底**之前**上户口，否则 `gap reread --include-open` 一律退 2
+		//   （用法串 / 实现件都当它存在、CLI 解析面却恒拒 = 与 GAP-20260929-13 同形）。
+		case a == "--include-open":
+			inv.kvSet(a, "true")
 		case strings.HasPrefix(a, "-") && a != "-":
 			// 未知旗标：**先记下**（透传型命令要把它逐字交给脚本）；非透传命令在 dispatch 里硬判。
 			inv.unknown = append(inv.unknown, a)
@@ -3719,6 +3767,7 @@ func valueFlagName(a string) string {
 	//   它的语义本就是**布尔档**（用法串只写裸形 `[--no-fallback]`），按「取值」收进本表
 	//   是**形态不统一**（门73 判据丙）。现在与 `--count`/`--files-only` 同一种形态
 	//   （解析面布尔 case + 写进 `inv.kv`）⇒ 两处登记面**同名同形态**。
+	//   ★ 2026-10-05（缺口 `GAP-20261005-68`）：`--no-fallback` 已**整体摘牌**（命令树用法串 + 解析面 case 双处移除）—— 本段仅记历史形态；真给该旗标今退 2「未知旗标」。
 	// 事件面旗标（§九 M1 · `W11` · 缺口 `GAP-20260928-128` · 本枚）：`zerg watch` 的用法串写着
 	//   `[--exit-on <kind>]`（跟到某个事件就退），而本表此前**没有**它 ⇒ 照用法串真给就退 2
 	//   「未知旗标」= **承诺与解析面不符**。本排只补「认得」这一件（§九 M1 `W11` 的语义仍归

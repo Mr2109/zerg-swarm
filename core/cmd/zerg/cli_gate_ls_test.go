@@ -1,0 +1,120 @@
+// cli_gate_ls_test.go —— `zerg gate ls --json [<字段>]` 的**字段面**判据（缺口 `GAP-20261005-65`）。
+//
+// 病（改前 · 现读）：`--json <字段>` 的**实参被整枚吞掉** —— 既不校名也不投影：
+// `gate ls --json zzz` 与裸 `--json` 逐字节相同、静默 `rc=0`（fail-open，同族 `gate show`/`gate find`
+// 一律 `rc=2` + 「合法字段: …」）。
+//
+// 钉三件（全走**合成门禁脚本** · 不碰真门禁、不跑任何步骤）：
+//
+//	① `--json <闭集外>` ⇒ `rc=2` + stderr 逐字「未知字段 + 合法字段: total,scope,mode,step」（同族出口
+//	   `reportBadField` 的原话 · 复用不新造）；
+//	② `--json total` ⇒ 只出顶层那一格；`--json scope,mode` ⇒ 行内只留点名的键、且不点名 `total` 就不出它；
+//	③ 负控：裸 `--json`（不给字段）= 闭集全量 `{steps,total}`，一个字节不改。
+//
+// 为什么落在进程内（不是真二进制那一层）：`bin/zerg` 是按批重建的制品，本批**不重建**（换件另走七步）
+// ⇒ 新面的棘轮必须落进程内（与 `cli_gate_show_test.go` 同规）。
+package main_test
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+// lsGateScript —— 合成门禁脚本：只认 `--list`（两行清单 + 「共 2 步」），其余参数一律 rc=2。
+const lsGateScript = `case "${1:-}" in
+  --list)
+    echo "── 步骤清单（scope 模式 名称）──"
+    echo "  go    empty  gofmt -l core"
+    echo "  gates tri    合成步"
+    echo "共 2 步"
+    exit 0 ;;
+esac
+printf '✗ 未知参数: %s\n' "${1:-}" >&2
+exit 2
+`
+
+func lsRepo(t *testing.T) string {
+	t.Helper()
+	return syntheticRepo(t, lsGateScript)
+}
+
+// ① 缺口复现：闭集外的字段**不许被吞** —— rc=2 + 同族出口的「合法字段:」清单。
+func TestGateLsJSON_BadFieldRejected(t *testing.T) {
+	root := lsRepo(t)
+	rc, _, errb := runZergRepo(t, root, "gate", "ls", "--json", "zzz")
+	if rc != 2 {
+		t.Fatalf("`gate ls --json zzz` ⇒ 退 2（同族 gate show/find），得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(errb, "未知字段") || !strings.Contains(errb, "合法字段: total,scope,mode,step") {
+		t.Errorf("stderr 要「未知字段 + 合法字段: total,scope,mode,step」：%q", errb)
+	}
+}
+
+// ②a `--json total` ⇒ 只出顶层那一格（闭集里的顶层键）。
+func TestGateLsJSON_TotalProjects(t *testing.T) {
+	root := lsRepo(t)
+	rc, out, errb := runZergRepo(t, root, "gate", "ls", "--json", "total")
+	if rc != 0 {
+		t.Fatalf("`gate ls --json total` ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	var doc map[string]int
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("`--json total` 要是一个 {\"total\":N} 对象：%v · %q", err, out)
+	}
+	if doc["total"] != 2 {
+		t.Errorf("total = %d（合成清单 2 步）· %q", doc["total"], out)
+	}
+	if strings.Contains(out, "steps") {
+		t.Errorf("只点名 total ⇒ 不许出 steps：%q", out)
+	}
+}
+
+// ②b `--json scope,mode` ⇒ 行内只留点名的键；没点名 total ⇒ 不出 total。
+func TestGateLsJSON_NestedSubsetProjects(t *testing.T) {
+	root := lsRepo(t)
+	rc, out, errb := runZergRepo(t, root, "gate", "ls", "--json", "scope,mode")
+	if rc != 0 {
+		t.Fatalf("`gate ls --json scope,mode` ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	var doc struct {
+		Total *int                     `json:"total"`
+		Steps []map[string]interface{} `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("解不动：%v · %q", err, out)
+	}
+	if doc.Total != nil {
+		t.Errorf("没点名 total ⇒ 不许出 total：%q", out)
+	}
+	if len(doc.Steps) != 2 {
+		t.Fatalf("steps 行数 = %d（要 2）· %q", len(doc.Steps), out)
+	}
+	for i, r := range doc.Steps {
+		if len(r) != 2 || r["scope"] == nil || r["mode"] == nil {
+			t.Errorf("第 %d 行 = %+v（只许 scope/mode 两键）", i, r)
+		}
+		if _, ok := r["step"]; ok {
+			t.Errorf("第 %d 行不该有 step 键：%+v", i, r)
+		}
+	}
+}
+
+// ③ 负控：裸 `--json`（不给字段）= 闭集全量 `{steps,total}` —— 默认面一字不改。
+func TestGateLsJSON_BareIsFullFace(t *testing.T) {
+	root := lsRepo(t)
+	rc, bare, errb := runZergRepo(t, root, "gate", "ls", "--json")
+	if rc != 0 {
+		t.Fatalf("裸 `--json` ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	var doc struct {
+		Total int                      `json:"total"`
+		Steps []map[string]interface{} `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(bare), &doc); err != nil {
+		t.Fatalf("裸 `--json` 要出 {steps,total}：%v · %q", err, bare)
+	}
+	if doc.Total != 2 || len(doc.Steps) != 2 {
+		t.Errorf("裸面 total=%d steps=%d（要 2/2）· %q", doc.Total, len(doc.Steps), bare)
+	}
+}

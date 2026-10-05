@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""check-dangling-refs.py v1.2.0 —— 悬空引用（`docs/…` 与跨仓 `Zerg-内部文档/…`·`项目文档/…` 指向不存在）
+"""check-dangling-refs.py v1.3.0 —— 悬空引用（`docs/…` 与跨仓 `Zerg-内部文档/…`·`项目文档/…` 指向不存在）
 ＋ GAP 号引用（注释/文档引的 `GAP-号` 不在缺口账内）
 
 为什么存在（2026-09-22 · 2.5.11 第 3 项 · D 档）
@@ -56,6 +56,21 @@
   · GAP 号引用类：账内**在册与否**取不到真源时**不判**（未判 · 不翻退码）；`--ledger` 覆盖仅供自检/夹具；
     **面半边**（引的号进不进「对面」）**无稳健机检** ⇒ 本门**不做**（见 `GAP-20261005-54`）
 
+★ v1.3.0（批-09 · `GAP-20260926-111/112/114`）
+----------------------------------------------
+  · `--group-by src,tgt,form,cls`（GAP-20260926-111）：把**逐处清单**换成**按维度聚合**
+    （源件域 `src` / 目标域 `tgt` / 形态 `form` / 判类 `cls`，逗号可多选；聚合面 = docs 路径类
+    ＋ GAP 号类**全清单**）。此前分类只能靠**仓外自建脚本**。默认关 ⇒ **默认档一字未改**。
+  · `--prefix-candidates`（GAP-20260926-112）：把**未登记的 `ledger` 命中**按（件 · 目录前缀）
+    聚成**可登记的 registry entry 草稿**（JSON 数组 · `ref_prefix` = 该引文的目录前缀）。
+    草稿的 `reason` / `date` **需人工补全**（本门只给候选，不代写理由 —— 登记表缺 reason ⇒ rc=2）。
+    默认关 ⇒ 默认档一字未改。
+  · **判据面修正**（GAP-20260926-114）：`filepath.Join(<变量>, "docs", …)` 这类**运行期路径**
+    （`note` = 拼接首段=变量）**改判 `ledger`**。原判 `live` 与本门自己的 `suggest()` **自相矛盾**
+    （suggest 打「运行期路径 ⇒ 不改只报」，`classify()` 却判 live 算命中）⇒ 误报类 FP-A。
+    修正后**命中总数不变**（命中 = live + ledger），只动 **live / ledger 分栏**。
+    配套：自检第 ④ 格加断言（运行期 ⇒ `ledger` · 字面量 ⇒ `live` 成对负控）。
+
 退码（三档 · 与仓内既有门一致）
 --------------------------------
   0 = 无命中（或命中全在登记表里）
@@ -84,16 +99,19 @@
     python3 scripts/gates/check-dangling-refs.py --json          # 末尾追加机器面一行
     python3 scripts/gates/check-dangling-refs.py --root DIR --registry F   # 对夹具跑（自检内部用）
     python3 scripts/gates/check-dangling-refs.py --ledger FILE    # 覆盖缺口账（夹具/自检用）
+    python3 scripts/gates/check-dangling-refs.py --group-by src,tgt,form,cls  # 按维度聚合（替逐处清单）
+    python3 scripts/gates/check-dangling-refs.py --prefix-candidates         # 打可登记前缀候选草稿
     python3 scripts/gates/check-dangling-refs.py --list-rules    # 打判据 / 两类定义 / 覆盖与未覆盖
     python3 scripts/gates/check-dangling-refs.py --self-test     # 只跑自检（合成夹具，不碰真目标）
 """
+import datetime
 import json
 import os
 import re
 import subprocess
 import sys
 
-VERSION = "check-dangling-refs.py v1.2.0"
+VERSION = "check-dangling-refs.py v1.3.0"
 
 # ── 扫描面 ───────────────────────────────────────────────────────────────────
 SKIP_DIRS = ("vendor", "bin", "dist", "node_modules", "target", ".git", ".venv", "venv",
@@ -374,6 +392,60 @@ def xrepo_tree_of(ctx, rel):
     return []
 
 
+# ── 聚合 / 前缀候选（v1.3.0 · GAP-20260926-111/112；默认关 ⇒ 默认档零行为变更）──────
+GROUP_DIMS = ("src", "tgt", "form", "cls")
+
+
+def _dim_value(h, dim):
+    """聚合维度取值（`--group-by`）。取值面**逐字确定**（两半逐字同）。"""
+    if dim == "src":
+        f = h["file"]
+        return f.split("/")[0] if "/" in f else "(根级件)"
+    if dim == "tgt":
+        if h["form"] == "GAP号":
+            return "(GAP号)"
+        p = h["path"]
+        for pfx in ("docs/", XREPO_PREFIX, XBARE_PREFIX):
+            if p.startswith(pfx):
+                p = p[len(pfx):]
+                break
+        segs = [s for s in p.split("/") if s]
+        return segs[0] if segs else "(空)"
+    if dim == "form":
+        return h["form"]
+    return h["cls"]
+
+
+def _dir_prefix(ref):
+    """引文的**目录前缀**（可登记 `ref_prefix` 候选）：最后一段之前 + `/`；单段 ⇒ 空（不可前缀化）。"""
+    r = ref.rstrip("/")
+    if "/" not in r:
+        return ""
+    return r[:r.rfind("/") + 1]
+
+
+def prefix_candidates(hits, today=None):
+    """未登记的 `ledger` 命中 ⇒ registry entry 草稿（按 件·目录前缀 聚合 · 排序确定）。"""
+    groups = {}
+    for h in hits:
+        if h["cls"] != "ledger":
+            continue
+        pre = _dir_prefix(h["path"])
+        if not pre:
+            continue
+        groups.setdefault((h["file"], pre), []).append(h["path"])
+    date = today or datetime.date.today().isoformat()
+    out = []
+    for key in sorted(groups):
+        f, pre = key
+        items = groups[key]
+        samples = sorted(set(items))[:3]
+        out.append({"file": f, "ref_prefix": pre, "class": "ledger",
+                    "reason": "候选：%d 处（--prefix-candidates 生成 · 需人工补理由）" % len(items),
+                    "date": date, "count": len(items), "samples": " · ".join(samples)})
+    return out
+
+
 def extract(line, stats):
     """从一行里抽引文 → [(ref, 形态, 说明)]。"""
     out = []
@@ -461,6 +533,11 @@ def scan(ctx):
                     continue  # 落点存在 ⇒ 不悬空（跨仓引用判文仓根 · 裸 docs/… 判主仓根）
                 stats["dangling"] += 1
                 cls, why = classify(ctx, rel, ref, line_text)
+                if cls == "live" and note.startswith("拼接首段=变量"):
+                    # 运行期树（拼接首段是变量）⇒ 引文记的是「运行期在 <变量> 下」这一**事实**，
+                    # 与主仓同名树无关 ⇒ ledger。原判 live 与本门 suggest() 自相矛盾
+                    # （suggest 打「不改只报」，judge 却算命中）⇒ `GAP-20260926-114`。
+                    cls, why = "ledger", "运行期路径（拼接首段是变量 · 运行期根 ≠ 仓根）⇒ 记运行时事实，不改"
                 where = tree_of(ctx, ref)
                 hits.append({"file": rel, "line": ln, "ref": shown, "path": ref, "form": form,
                              "note": note, "cls": cls, "why": why, "where": where,
@@ -622,10 +699,14 @@ def selftest():
     j1 = [h for h in hits if h["ref"] == "docs/issues" and h["form"] == "filepath.Join"]
     j2 = [h for h in hits if h["path"] == "docs/01-设计/设计-真件.md" and h["form"] == "filepath.Join"]
     cases += 1
-    good = len(j1) == 1 and len(j2) == 1
+    # 判类成对负控（`GAP-20260926-114`）：**运行期路径**（拼接首段=变量）⇒ ledger（不算命中）；
+    # **字面量**拼接 ⇒ live。两条同场 ⇒ 断言的是「判类看的是运行期性，不是拼接形态」。
+    good = len(j1) == 1 and len(j2) == 1 and j1[0]["cls"] == "ledger" and j2[0]["cls"] == "live"
     ok = ok and good
-    print("  %s [拼接夹具] filepath.Join 认出 %s 处 · path.Join 认出 %s 处（期望各 1）"
-          % ("✓" if good else "✗", len(j1), len(j2)))
+    print("  %s [拼接夹具] filepath.Join 认出 %s 处(运行期⇒%s) · path.Join 认出 %s 处(字面量⇒%s)"
+          "（期望 1/1 · ledger/live）"
+          % ("✓" if good else "✗", len(j1), j1[0]["cls"] if j1 else "—",
+             len(j2), j2[0]["cls"] if j2 else "—"))
 
     # ⑤ 前缀夹具：'docs/' + 变量 ⇒ 前缀目录在 ⇒ 不报（只判到前缀）
     f5 = _mkfile(repo, "publish/z.py", 'name = "docs/" + base\n')
@@ -840,6 +921,8 @@ def main(argv):
     live_only = False
     json_out = False
     dump_path = ""
+    group_by = []
+    prefix_cands = False
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -854,6 +937,11 @@ def main(argv):
             live_only = True
         elif a == "--json":
             json_out = True
+        elif a == "--group-by":
+            i += 1
+            group_by = [d for d in argv[i].split(",") if d]
+        elif a == "--prefix-candidates":
+            prefix_cands = True
         elif a == "--dump":
             i += 1
             dump_path = os.path.abspath(argv[i])
@@ -871,6 +959,11 @@ def main(argv):
             print("✗ 未知参数 %r（用法见 --list-rules）" % a, file=sys.stderr)
             return 2
         i += 1
+
+    for d in group_by:
+        if d not in GROUP_DIMS:
+            print("✗ --group-by 维度不认识：%r（闭集：src|tgt|form|cls）" % d, file=sys.stderr)
+            return 2
 
     if not os.path.isdir(os.path.join(root, "docs")) and not os.path.isdir(os.path.join(root, "core")):
         print("✗ 不在仓根（`docs/` 与 `core/` 都不存在）：%s ⇒ 拒绝静默空转" % root, file=sys.stderr)
@@ -954,21 +1047,34 @@ def main(argv):
         if len(rows) > cap:
             print("   …另 %d 处（--all 全打）" % (len(rows) - cap))
 
-    if n_live:
+    if group_by:
+        # `--group-by`：逐处清单换成**按维度聚合**（聚合面 = docs 路径类 ＋ GAP 号类全清单）。
+        allh = list(hits) + list(g_hits) + list(g_exempt)
+        print("\n── 聚合（--group-by=%s）：共 %d 处（docs 路径类 %d + GAP 号类 %d）"
+              % (",".join(group_by), len(allh), len(hits), len(g_hits) + len(g_exempt)))
+        for dim in group_by:
+            cnt = {}
+            for h in allh:
+                v = _dim_value(h, dim)
+                cnt[v] = cnt.get(v, 0) + 1
+            print("  【%s】" % dim)
+            for v, n in sorted(cnt.items(), key=lambda kv: (-kv[1], kv[0])):
+                print("     %s ⇒ %d 处" % (v, n))
+    if n_live and not group_by:
         dump("live 命中（活指路 · 该改）", by["live"])
-    if n_led and not live_only:
+    if n_led and not live_only and not group_by:
         dump("ledger 命中（机读清单/基线台账 · 记当时路径 ⇒ 登记，不改）", by["ledger"])
-    if n_reg and not live_only:
+    if n_reg and not live_only and not group_by:
         dump("已登记（有意保留 · 不计命中）", by["已登记"])
 
-    if g_hits:
+    if g_hits and not group_by:
         print("\n── GAP 号引用命中（注释/文档引的号账内不存在 · 该改或先立案）：%d 处" % len(g_hits))
         for h in g_hits[:cap]:
             print("   %s:%d · 引的号 `%s` · 【%s】%s · 建议：%s"
                   % (h["file"], h["line"], h["ref"], h["cls"], h["why"], h["suggest"]))
         if len(g_hits) > cap:
             print("   …另 %d 处（--all 全打）" % (len(g_hits) - cap))
-    if g_exempt and not live_only:
+    if g_exempt and not live_only and not group_by:
         print("\n── GAP 号引用例外面（夹具假号 / 机读件 / 快照 / 数据字串 · 不计命中）：%d 处" % len(g_exempt))
         for h in g_exempt[:cap]:
             print("   %s:%d · 引的号 `%s` · 【%s】%s" % (h["file"], h["line"], h["ref"], h["cls"], h["why"]))
@@ -977,6 +1083,12 @@ def main(argv):
     if gap["unjudged"]:
         print("\n⛔ GAP 号引用类**未判**（缺口账取不到：%s）—— 候选 %d 处（前几处：%s）"
               % (gap_problem, len(gap["unjudged"]), " · ".join(gap["unjudged"][:3])))
+
+    if prefix_cands:
+        cands = prefix_candidates(hits)
+        print("\n── 可登记前缀候选（未登记的 ledger 命中 · `--prefix-candidates`）：%d 条"
+              "（草稿 ⇒ `ref_prefix` 可直接粘进退 `entries`，`reason`/`date` 需人工补全）" % len(cands))
+        print(json.dumps(cands, ensure_ascii=False, indent=1))
 
     print("\n未覆盖形态（明说，不假装全覆盖）：纯 URL · 变量拼进中段或后缀 · 运行期路径树 · "
           "软链/大小写变体/非 UTF-8 件/未 git add 的新件 · markdown 相对链接（属 D1）")

@@ -55,10 +55,12 @@ func gapRun(t *testing.T, argv ...string) (int, string, string) {
 }
 
 // gapAddArgv 一条**形状合法**的 `add`（各测试自换 `--handmade` / `--symptom` 造不同内容）。
+// ★ `--repro-cmd` / `--verify-cmd` 都取**非样板值** —— 写侧样板值闸 `GAP-20260927-246`
+// 会拒收 `zerg task ls` / `zerg gap ls` 一类通用命令闭集，故形如 `zerg gap ls` 的占位不再合法。
 func gapAddArgv(handmade, symptom string, extra ...string) []string {
 	a := []string{"gap", "add", "--symptom", symptom, "--handmade", handmade,
 		"--impact", "命令面", "--want-family", "gap", "--want-action", "ls",
-		"--repro-cmd", "zerg gap ls", "--verify-cmd", "zerg version --json name"}
+		"--repro-cmd", "zerg gap verify-one --dry-run", "--verify-cmd", "zerg version --json name"}
 	return append(a, extra...)
 }
 
@@ -317,6 +319,51 @@ func TestGapFamily_RequiredAndJudgeRuler(t *testing.T) {
 	}
 	if rc, _, _ := gapRun(t, "gap", "verify", "--all", "--state", "已解", "--yes"); rc != 2 {
 		t.Errorf("verify 收 --state ⇒ 2，得到 %d", rc)
+	}
+}
+
+// ── 判据 ⑩ 写侧样板值闸（缺口 GAP-20260927-246 靶心 ＋ GAP-20260926-55 写侧拒绝）──────────────
+//
+// 两态（拒收）：`--verify-cmd` / `--repro-cmd` 填通用命令闭集（`zerg task ls` / `zerg gap ls`）
+// ⇒ rc=2、点名「样板值」、真源不动。负控（放行）：真判据（`zerg gate check … --dry-run` ＋
+// 非样板 repro）⇒ rc=0 能进。判的是**进程退码**与其自己那档的拒绝理由（✗ 不卡死整句汉字）。
+func TestGapFamily_BoilerplateRejected(t *testing.T) {
+	_, ledger, _ := gapEnv(t)
+
+	base := func(repro, verify string) []string {
+		return []string{"gap", "add", "--symptom", "样板值闸夹具", "--handmade", "手搓 h",
+			"--impact", "命令面", "--want-family", "gap", "--want-action", "ls",
+			"--repro-cmd", repro, "--verify-cmd", verify, "--yes"}
+	}
+
+	// 态①：`--verify-cmd` 样板值（`zerg task ls` ⇒ 通用命令闭集）⇒ 2 并点名「样板值」
+	rc, _, errb := gapRun(t, base("go test ./... -run X", "zerg task ls")...)
+	if rc != 2 {
+		t.Errorf("--verify-cmd 样板值 ⇒ 2，得到 %d · %s", rc, errb)
+	}
+	if !strings.Contains(errb, "样板值") || !strings.Contains(errb, "--verify-cmd") {
+		t.Errorf("拒收判词要点名「样板值」与 --verify-cmd，得到 %q", errb)
+	}
+	// 态①′：`--repro-cmd` 样板值（`zerg gap ls` ⇒ 通用命令闭集）⇒ 2 并点名「样板值」
+	rc, _, errb = gapRun(t, base("zerg gap ls", "zerg version --json name")...)
+	if rc != 2 {
+		t.Errorf("--repro-cmd 样板值 ⇒ 2，得到 %d · %s", rc, errb)
+	}
+	if !strings.Contains(errb, "样板值") || !strings.Contains(errb, "--repro-cmd") {
+		t.Errorf("拒收判词要点名「样板值」与 --repro-cmd，得到 %q", errb)
+	}
+	// 两态都在任何盘面动作之前拒 —— 真源一个字节都不许建
+	if _, err := os.Stat(ledger); !os.IsNotExist(err) {
+		t.Errorf("样板值拒收不许动真源（%v）", err)
+	}
+
+	// 负控：真判据放行 ⇒ 0 能进（非样板 verify ＋ 非样板 repro）
+	rc, out, errb := gapRun(t, base("go test ./... -run X", "zerg gate check check-verify-cmd-real --dry-run")...)
+	if rc != 0 {
+		t.Fatalf("真判据要放行 ⇒ 0，得到 %d · %s · %s", rc, out, errb)
+	}
+	if n := len(gapReadLines(t, ledger)); n != 1 {
+		t.Errorf("真判据要落 1 行，得到 %d", n)
 	}
 }
 

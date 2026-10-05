@@ -545,6 +545,27 @@ func clrlAnalyze(face []clrlFace, root, docsRoot string) ([]clrlRow, clrlStats, 
 	return rows, st, unreadable
 }
 
+// clrlEvaluate —— py `evaluate(root, docs_root)` 逐字（自检用例取 rc 的口 · 与门 main 同判据三档：
+// 面空 ⇒ 2 / 引用 0 处或守恒破 ⇒ 2 / 有越界 ⇒ 1 / 否则 ⇒ 0）。py `main()` 与该自检共用这一处
+// ⇒ 自检断言的就是门真吃的那个 rc（✗ 不另写一份判据）。
+func clrlEvaluate(root, docsRoot string) (int, []clrlFace, []clrlRow, *clrlStats) {
+	gatesDir := clrlPyJoin(root, clrlScanDirRel)
+	face := clrlScanFace(gatesDir)
+	if len(face) == 0 {
+		return 2, face, nil, nil
+	}
+	rows, st, _ := clrlAnalyze(face, root, docsRoot)
+	if st.Total == 0 || !st.Conserved {
+		return 2, face, rows, &st
+	}
+	for _, r := range rows {
+		if r.Over {
+			return 1, face, rows, &st
+		}
+	}
+	return 0, face, rows, &st
+}
+
 // ── 机器面（Python json.dumps(..., ensure_ascii=False, indent=1) 逐字）───────────────
 type clrlOM struct {
 	keys []string
@@ -754,7 +775,7 @@ func clrlParse(stdout, stderr io.Writer, argv []string) (clrlArgs, int) {
 	return a, -1
 }
 
-// ── 自检（8 格 · py `self_test` 逐字搬）────────────────────────────────────────────────
+// ── 自检（10 格 · py `self_test` 逐字搬）────────────────────────────────────────────────
 
 func clrlCompactAny(v any) string {
 	switch x := v.(type) {
@@ -790,6 +811,41 @@ func clrlStatsJSON(st clrlStats) string {
 	o.set("over", st.Over)
 	o.set("conserved", st.Conserved)
 	return clrlCompactOM(o)
+}
+
+// clrlStatsJSONRC —— py `json.dumps({"rc": rc, **st}, ensure_ascii=False)` 逐字（键序：rc 在前）。
+func clrlStatsJSONRC(rc int, st clrlStats) string {
+	o := &clrlOM{}
+	o.set("rc", rc)
+	o.set("total", st.Total)
+	o.set("judged", st.Judged)
+	o.set("unjudged", st.Unjudged)
+	o.set("over", st.Over)
+	o.set("conserved", st.Conserved)
+	return clrlCompactOM(o)
+}
+
+// clrlRowsArr —— py `[(r["kind"], r["over"]) …]` 经 json 后 = `[["kind", bool], …]`。
+func clrlRowsArr(rows []clrlRow) string {
+	parts := make([]string, 0, len(rows))
+	for _, r := range rows {
+		ov := "false"
+		if r.Over {
+			ov = "true"
+		}
+		parts = append(parts, "["+clrlPyQuote(r.Kind)+", "+ov+"]")
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// clrlRowsJSON —— py `json.dumps({"rows": [(r.kind, r.over) …]}, ensure_ascii=False)` 逐字。
+func clrlRowsJSON(rows []clrlRow) string {
+	return "{\"rows\": " + clrlRowsArr(rows) + "}"
+}
+
+// clrlRowsRCJSON —— py `json.dumps({"rc": rc, "rows": [...]}, ensure_ascii=False)` 逐字。
+func clrlRowsRCJSON(rc int, rows []clrlRow) string {
+	return "{\"rc\": " + strconv.Itoa(rc) + ", \"rows\": " + clrlRowsArr(rows) + "}"
 }
 
 func clrlSelfTest(stdout io.Writer) int {
@@ -839,15 +895,20 @@ func clrlSelfTest(stdout io.Writer) int {
 		}
 		return out
 	}
+	// rcOf —— py `rc_of()`：门判定唯一真源 `evaluate(root, docs)[0]`（✗ 不另写一份判据）。
+	rcOf := func() int {
+		rc, _, _, _ := clrlEvaluate(root, docs)
+		return rc
+	}
 
-	// NC1 正控：可判且不越界 ⇒ rc=0，且分母守恒
+	// NC1 正控：可判且不越界 ⇒ **真退码 rc=0**，且分母守恒
 	mk("wall/Cargo.lock", "l1\nl2\nl3\nl4\nl5\nl6\nl7\n")
 	mk("scripts/gates/ok.md", "见 wall/Cargo.lock:7\n")
 	_, st := scan()
-	caseOf("NC1 正控：可判不越界 ⇒ rc=0 且守恒",
-		st.Judged == 1 && st.Over == 0 && st.Conserved, clrlStatsJSON(st))
+	caseOf("NC1 正控：可判不越界 ⇒ 真退码 rc=0 且守恒",
+		rcOf() == 0 && st.Conserved && st.Judged == 1 && st.Over == 0, clrlStatsJSONRC(rcOf(), st))
 
-	// NC2 越界负控：行号止 > 件行数 ⇒ 越界，且点名唯一
+	// NC2 越界负控：行号止 > 件行数 ⇒ 越界，**真退码 rc=1**，且点名唯一
 	mk("scripts/gates/bad.md", "见 wall/Cargo.lock:8\n")
 	rows, st := scan()
 	var overs []clrlRow
@@ -856,16 +917,16 @@ func clrlSelfTest(stdout io.Writer) int {
 			overs = append(overs, r)
 		}
 	}
-	caseOf("NC2 越界负控：:8 引 7 行件 ⇒ 越界且恰 1 处",
-		len(overs) == 1 && strings.HasSuffix(overs[0].RefFile, "bad.md"), clrlStatsJSON(st))
+	caseOf("NC2 越界负控：:8 引 7 行件 ⇒ 恰 1 处 + 真退码 rc=1",
+		len(overs) == 1 && strings.HasSuffix(overs[0].RefFile, "bad.md") && rcOf() == 1, clrlStatsJSONRC(rcOf(), st))
 	os.Remove(filepath.Join(gdir, "bad.md"))
 
-	// NC3 落点改名 ⇒ 必须落「判不了」，且总数守恒、不许消失
+	// NC3 落点改名 ⇒ 必须落「判不了」，且总数守恒、不许消失；**判不了不改变退码（rc=0）**
 	mk("scripts/gates/gone.md", "见 wall/Cargo-nope.lock:3\n")
 	rows, st = scan()
 	gone := pick(rows, "gone.md")
-	caseOf("NC3 改名 ⇒ 落判不了且总数守恒（不许消失）",
-		len(gone) == 1 && gone[0].Kind == "missing" && st.Conserved, clrlStatsJSON(st))
+	caseOf("NC3 改名 ⇒ 落判不了且总数守恒（不许消失）· 真退码 rc=0",
+		len(gone) == 1 && gone[0].Kind == "missing" && st.Conserved && rcOf() == 0, clrlStatsJSONRC(rcOf(), st))
 	os.Remove(filepath.Join(gdir, "gone.md"))
 
 	// NC4 孪生反向格：同名两解行数不同 ⇒ 不许判
@@ -874,8 +935,8 @@ func clrlSelfTest(stdout io.Writer) int {
 	mk("scripts/gates/twin.md", "见 gem.md:3\n")
 	rows, st = scan()
 	twin := pick(rows, "twin.md")
-	caseOf("NC4 孪生反向格：同名行数不同 ⇒ 不许判",
-		len(twin) == 1 && twin[0].Kind == "ambiguous", clrlStatsJSON(st))
+	caseOf("NC4 孪生反向格：同名行数不同 ⇒ 不许判（ambiguous）· 真退码 rc=0",
+		len(twin) == 1 && twin[0].Kind == "ambiguous" && rcOf() == 0, clrlStatsJSONRC(rcOf(), st))
 	// 同名行数全同 ⇒ 判
 	mk("b/gem.md", "l1\nl2\nl3\n")
 	rows, st = scan()
@@ -899,23 +960,32 @@ func clrlSelfTest(stdout io.Writer) int {
 		"_mk(root, docs, \"x.md\", \"见 wall/Cargo.lock:99\\\\n\")\n")
 	rows, st = scan()
 	fx := pick(rows, "fx.md")
-	fxDetail := "["
-	for i, r := range fx {
-		if i > 0 {
-			fxDetail += ", "
-		}
-		fxDetail += "('" + r.Kind + "', " + strconv.FormatBool(r.Over) + ")"
-	}
-	fxDetail += "]"
 	caseOf("NC7 样张档：夹具行里的引用 ⇒ 落 sample、不许越界",
-		len(fx) == 1 && fx[0].Kind == "sample" && !fx[0].Over, fxDetail)
+		len(fx) == 1 && fx[0].Kind == "sample" && !fx[0].Over, clrlRowsJSON(fx))
 	os.Remove(filepath.Join(gdir, "fx.md"))
 
-	// NC6 空转 rc=2
+	// NC8 样张「两条件」反向格：**无夹具调用**的行内 `\n` 尾引用 ⇒ 仍判（不许被引号洗掉）
+	mk("scripts/gates/quote.md", "note = \"见 wall/Cargo.lock:99\\n\"\n")
+	rows, st = scan()
+	q := pick(rows, "quote.md")
+	caseOf("NC8 两条件反向格：无夹具调用的引号引用 ⇒ 仍判（over · 不许当样张）· 真退码 rc=1",
+		len(q) == 1 && q[0].Kind == "found" && q[0].Over && rcOf() == 1, clrlRowsRCJSON(rcOf(), q))
+	os.Remove(filepath.Join(gdir, "quote.md"))
+
+	// NC9 假阳护栏·仓外件：带目录但仓内/文档仓皆无 ⇒ 只登记（missing），不进判据、不许红
+	mk("scripts/gates/outer.md", "见 /nonexistent-zzz-qa/outside/x.md:5\n")
+	rows, st = scan()
+	outer := pick(rows, "outer.md")
+	caseOf("NC9 假阳护栏·仓外件 ⇒ 只登记（missing）· 真退码 rc=0",
+		len(outer) == 1 && outer[0].Kind == "missing" && rcOf() == 0, clrlStatsJSONRC(rcOf(), st))
+	os.Remove(filepath.Join(gdir, "outer.md"))
+
+	// NC6 空转 ⇒ **真退码 rc=2**（面内引用 0 处）
 	os.Remove(filepath.Join(gdir, "ok.md"))
 	mk("scripts/gates/empty.md", "无引用的普通一行\n")
 	_, st = scan()
-	caseOf("NC6 空转 ⇒ rc=2（面内引用 0 处）", st.Total == 0, clrlStatsJSON(st))
+	caseOf("NC6 空转 ⇒ 真退码 rc=2（面内引用 0 处）",
+		st.Total == 0 && rcOf() == 2, clrlStatsJSONRC(rcOf(), st))
 
 	bad := 0
 	for _, r := range results {

@@ -202,7 +202,7 @@ type askRoute struct {
 
 // cmdAsk —— `zerg ask <提示> [--capability 名]… [--prefer 名]… [--model 名] [--node 名]…
 //
-//	[--min-ctx n] [--min-mem-gb n] [--no-fallback] [--dry-run] [--timeout 时长] [--json 字段]
+//	[--min-ctx n] [--min-mem-gb n] [--dry-run] [--timeout 时长] [--json 字段]
 //
 // 退码：能力名**不在词表** ⇒ `2`；**在词表但无候选** ⇒ `1`（**不新增码**）。
 // `--dry-run` = 只算路线、**零副作用**（不推理、不占槽、不发请求）。
@@ -243,7 +243,7 @@ func cmdAsk(inv *invocation, stdout, stderr io.Writer) int {
 	prompt := strings.TrimSpace(strings.Join(inv.args, " "))
 	if prompt == "" {
 		inv.setErr("usage", "missing_prompt", "缺提示（`zerg ask <提示>`）")
-		fmt.Fprintf(stderr, "%s: `zerg ask` 缺提示 —— 用法：zerg ask <提示> [--capability 名]… [--dry-run]\n", progName)
+		fmt.Fprintf(stderr, "%s: `zerg ask` 缺提示 —— 用法：zerg ask <提示> [--capability 名]… [--prefer 名]… [--model 名] [--node 名]… [--min-ctx n] [--min-mem-gb n] [--timeout 时长] [--dry-run]\n", progName)
 		return exitUsage
 	}
 
@@ -459,37 +459,44 @@ func askFilter(fleet, reg jsonObj, caps []string, inv *invocation) ([]askRoute, 
 			}
 		}
 		screen.pinned++
-		// 能力筛是**硬**筛：没有 registry_id（接不上能力面）或没证过该能力 ⇒ 不是候选。
-		rec, ok := byRegistry[registryID]
-		if !ok || registryID == "" {
+		// ★GAP-20260925-30：点名档（`--model`/`--node`）在**未给 `--capability`** 时，能力面的
+		//   「接线硬筛」**不得**否决用户显式点名的目标 ——「空/未登记能力」= 未知 ≠ 不匹配、
+		//   「没能力」≠「不能跑」（现读 25/30 fleet 行 `registry_id` 空 ⇒ 这批目标此前永不可 pin ✗）。
+		//   未点名档保留既有「按证据收窄」语义（默认路由**行为不变**）；给了 `--capability` 的档
+		//   硬筛**一字不动**（接不上面 / 没证过 ⇒ 都不是候选 —— 防呆保留）。
+		rec, linked := byRegistry[registryID]
+		if registryID == "" {
+			linked = false
+		}
+		if !linked && (len(caps) > 0 || !askPinned(inv)) {
 			screen.noLink++
 			continue
 		}
-		if minCtx > 0 {
+		proven := map[string]bool{}
+		if linked {
+			for _, cit := range asList(rec["capabilities"]) {
+				co := asObj(cit)
+				if co == nil {
+					continue
+				}
+				name, _ := co["name"].(string)
+				val, _ := co["value"].(bool)
+				if name != "" && val {
+					proven[name] = true
+				}
+			}
+		}
+		// `--min-ctx` 只对**接上了名册**的行有效（`context_window` 只在名册里有）—— 与既有语义一致。
+		if linked && minCtx > 0 {
 			if v, ok := rec["context_window"].(float64); !ok || int(v) < minCtx {
 				continue
 			}
 		}
-		proven := map[string]bool{}
-		for _, cit := range asList(rec["capabilities"]) {
-			co := asObj(cit)
-			if co == nil {
-				continue
-			}
-			name, _ := co["name"].(string)
-			val, _ := co["value"].(bool)
-			if name != "" && val {
-				proven[name] = true
-			}
-		}
-		hit := []string{}
 		pass := true
 		for _, want := range caps {
-			if proven[want] {
-				hit = append(hit, want)
-				continue
+			if !proven[want] {
+				pass = false
 			}
-			pass = false
 		}
 		if !pass {
 			screen.unproven++
@@ -613,7 +620,7 @@ func cmdPlan(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	if len(args) < 2 {
 		inv.setErr("usage", "missing_action", "缺「族 动作」")
-		fmt.Fprintf(stderr, "%s: 用法：zerg plan <族> <动作> <对象…> [--node 名]… [--expect 旧值] [--out <件>]\n", progName)
+		fmt.Fprintf(stderr, "%s: 用法：zerg plan <族> <动作> <对象…> [--node 名]… [--expect 旧值] [--target-ref <编号>] [--out <件>]\n", progName)
 		fmt.Fprintf(stderr, "可用的「族.动作」：%s\n", strings.Join(ip.Actions, " / "))
 		return exitUsage
 	}

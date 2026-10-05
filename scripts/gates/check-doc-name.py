@@ -58,6 +58,10 @@
     python3 scripts/gates/check-doc-name.py --json
     python3 scripts/gates/check-doc-name.py --list-rules
     python3 scripts/gates/check-doc-name.py --list-exempt
+    python3 scripts/gates/check-doc-name.py --list-exempt --hits    # 逐行给命中数（共用键可达/不可达一眼见 · GAP-189）
+    python3 scripts/gates/check-doc-name.py --summary               # 一屏摘要（逐规则命中 + 豁免/误报率 · GAP-213b）
+    python3 scripts/gates/check-doc-name.py --n7-shapes             # N7 命中形态分类（方向 × 拉丁形态 × 件/目录 · GAP-213d）
+    python3 scripts/gates/check-doc-name.py --exclude-prefix DIR/   # 临时按目录前缀排除（**未登记** · 分析用 · GAP-213c）
     python3 scripts/gates/check-doc-name.py --self-test         # 成对负控三层（好件必绿 / 坏件必红 / 缺件必 rc=2
                                                          #   + 元自检：自检未过 ⇒ rc=2 且拒绝扫真目标）
     python3 scripts/gates/check-doc-name.py --no-self-test ...  # 内部子进程用（防递归）
@@ -482,10 +486,11 @@ def pair_ext_exempt(stem, exts):
 
 
 # ── 扫描 ──────────────────────────────────────────────────────────────
-def walk(root, targets):
+def walk(root, targets, extra_excl=()):
     """返回 [(rel, kind, abs_or_None)]；kind = file|dir。点文件一律跳过（同《清单》§0 隐藏项口径）。"""
     out = []
     seen = set()
+    excl_prefix = EXCL_PREFIX + tuple(extra_excl)   # GAP-20260926-213c：--exclude-prefix 运行时追加（未登记）
 
     def add(rel, kind, ap):
         if rel in seen or rel in ("", "."):
@@ -503,7 +508,7 @@ def walk(root, targets):
         for dp, dns, fns in os.walk(t):
             rel = os.path.relpath(dp, root).replace(os.sep, "/")
             relp = "" if rel == "." else rel + "/"
-            if relp and any(relp.startswith(p) for p in EXCL_PREFIX):
+            if relp and any(relp.startswith(p) for p in excl_prefix):
                 dns[:] = []
                 continue
             dns[:] = [d for d in dns if d not in EXCL_DIRS and not d.startswith(".")]
@@ -517,13 +522,48 @@ def walk(root, targets):
     return out
 
 
+def _latin_run(seg, i):
+    """N7 分析用：取 seg 里与相邻点 `i`（对左下标）相接的那段**ASCII 拉丁/数字连续串**。
+
+    LAT 在左 ⇒ 向左扩到串首；LAT 在右 ⇒ 从 i+1 起向右扩。仅吃 ASCII（`isascii()`），
+    否则 `str.isalnum()` 会把汉字也算进来。
+    """
+    j = i if LAT.match(seg[i]) else i + 1
+    s = j
+    while s - 1 >= 0 and seg[s - 1].isascii() and seg[s - 1].isalnum():
+        s -= 1
+    k = j + 1
+    while k < len(seg) and seg[k].isascii() and seg[k].isalnum():
+        k += 1
+    return seg[s:k]
+
+
+def _is_version_marker_run(seg, i):
+    """GAP-20260926-166：拉丁侧是**版本标记**（`v`+数字，如 `模块v2.1` 切段后 `模块v2`）
+    ⇒ 不是「中英紧邻需人审」的假红，跳过（版本段由 N3/N4 管）。"""
+    return bool(re.match(r"^[vV]\d+$", _latin_run(seg, i)))
+
+
+def _latin_run_kind(seg, i):
+    """拉丁侧形态分类（GAP-20260926-213d）：version（v+数字）/ single（单字母）/ word（≥2 字母）。"""
+    run = _latin_run(seg, i)
+    if re.match(r"^[vV]\d+$", run):
+        return "version"
+    letters = [c for c in run if c.isalpha()]
+    return "single" if len(letters) == 1 else "word"
+
+
 def judge_name(rel, kind):
-    """返回 [(rule, 档, 说明)]；档 = FAIL|WARN。目录命中一律 WARN（结构级）。"""
+    """返回 [(rule, 档, 说明, 豁免行, 形态)]；档 = FAIL|WARN。目录命中一律 WARN（结构级）。
+
+    第 5 元「形态」只 N7 非 None（= (件/目录, 方向, 拉丁形态)），供 `--n7-shapes` 分类
+    （GAP-20260926-213d）；其余规则恒 None。
+    """
     base = os.path.basename(rel)
     stem = os.path.splitext(base)[0]
     hits = []
 
-    def add(rule, msg):
+    def add(rule, msg, shape=None):
         # 档位按 RULES 声明取（缺口 GAP-20260927-63 / GAP-20260926-165）：此前只看对象类型
         # （件面一律 FAIL、目录面一律 WARN）⇒ N5/N7 这类**声明 WARN** 的规则在件面也落 FAIL
         # 进 rc（实测 N7 声明 WARN 却 23 处全落 FAIL，占 142 的 16.2%）。取声明档后 N5/N7 的
@@ -532,7 +572,7 @@ def judge_name(rel, kind):
         #   `--list-rules` 的档位口径与《清单》§5 ④；自检格③「目录名命中只告警」钉的正是这条）。
         sev = "WARN" if kind != "file" else (RULE_SEV.get(rule) or "FAIL")
         row = exempt_row_for(rel, rule, kind, stem=stem, base=base)
-        hits.append((rule, sev, msg, row))
+        hits.append((rule, sev, msg, row, shape))
 
     if CAPS_STEM.match(stem):
         add("N1", "词干 %r 全为大写拉丁字母" % stem)
@@ -550,8 +590,15 @@ def judge_name(rel, kind):
         joined = False
         for i in range(len(seg) - 1):
             a, b = seg[i], seg[i + 1]
-            if (CJK.match(a) and LAT.match(b)) or (LAT.match(a) and CJK.match(b)):
-                add("N7", "段 %r 内汉字与拉丁字母直接相邻（%s%s）" % (seg, a, b))
+            cjk_lat = CJK.match(a) and LAT.match(b)
+            lat_cjk = LAT.match(a) and CJK.match(b)
+            if cjk_lat or lat_cjk:
+                # GAP-20260926-166：拉丁侧是**版本标记**（`v`+数字，如 `模块v2.1` 切段后 `模块v2`）
+                # ⇒ 不算「中英紧邻需人审」的假红，跳过（版本段由 N3/N4 管）。
+                if _is_version_marker_run(seg, i):
+                    continue
+                add("N7", "段 %r 内汉字与拉丁字母直接相邻（%s%s）" % (seg, a, b),
+                    (kind, "CJK→LAT" if cjk_lat else "LAT→CJK", _latin_run_kind(seg, i)))
                 joined = True
                 break
         if joined:
@@ -612,8 +659,8 @@ def judge_prefix_mix(entries):
 
 
 # ── 报告 ─────────────────────────────────────────────────────────────
-def run(root, targets, count_frozen=False):
-    entries = walk(root, targets)
+def run(root, targets, count_frozen=False, extra_excl=(), want_shapes=False):
+    entries = walk(root, targets, extra_excl)
     if not entries:
         raise RuntimeError("扫描域为空（一个文件/目录都没有）")
     if not any(k == "file" for _r, k, _a in entries):
@@ -623,12 +670,15 @@ def run(root, targets, count_frozen=False):
     per_rule_frozen = {}
     examples = {}
     exempt_hits = {}
+    n7_shapes = {} if want_shapes else None      # GAP-20260926-213d：N7 命中形态分类
     frozen = {"FAIL": 0, "WARN": 0}
     live = {"FAIL": 0, "WARN": 0}
     for rel, kind, _ap in entries:
         is_frozen = any(rel.startswith(p) for p in FROZEN_PREFIX)
-        for rule, sev, msg, row in judge_name(rel, kind):
+        for rule, sev, msg, row, shape in judge_name(rel, kind):
             per_rule[rule] = per_rule.get(rule, 0) + 1
+            if shape is not None and n7_shapes is not None:
+                n7_shapes[shape] = n7_shapes.get(shape, 0) + 1
             if row is not None:
                 exempt_hits[row["id"]] = exempt_hits.get(row["id"], 0) + 1
             else:
@@ -666,7 +716,8 @@ def run(root, targets, count_frozen=False):
             per_rule_live[k] = per_rule_live.get(k, 0) + v
     return {"entries": len(entries), "per_rule": per_rule, "examples": examples,
             "exempt_hits": exempt_hits, "live": live, "frozen": frozen,
-            "per_rule_live": per_rule_live, "per_rule_frozen": per_rule_frozen}
+            "per_rule_live": per_rule_live, "per_rule_frozen": per_rule_frozen,
+            "n7_shapes": n7_shapes}
 
 
 def print_report(rep, args):
@@ -691,6 +742,41 @@ def print_report(rep, args):
     print("  豁免命中（逐条可查 · --list-exempt）："
           + (" · ".join("%s×%d" % (k, v) for k, v in sorted(rep["exempt_hits"].items()))
              if rep["exempt_hits"] else "无"))
+
+
+def print_summary(rep):
+    """GAP-20260926-213b：一屏摘要（逐规则命中 + 豁免 / 误报率）。
+
+    误报率口径 = **已豁免命中 ÷ 命中总数**（豁免 = 本门判「可接受 / 假红」的那部分；
+    冻结区不进 rc，与 `--count-frozen` 无关）。
+    """
+    total = sum(rep["per_rule"].values())
+    exempt = sum(rep["exempt_hits"].values())
+    rate = (exempt / total * 100.0) if total else 0.0
+    print("check-doc-name 摘要（一屏 · 命中全貌 + 豁免/误报率）")
+    print("  扫描域：%d 个文件/目录" % rep["entries"])
+    print("  命中总数：%d（可改面 不合规 %d · 告警 %d ｜ 冻结区 不合规 %d · 告警 %d）"
+          % (total, rep["live"]["FAIL"], rep["live"]["WARN"],
+             rep["frozen"]["FAIL"], rep["frozen"]["WARN"]))
+    print("  逐规则命中：%s"
+          % (" · ".join("%s×%d" % (r, rep["per_rule"][r]) for r in sorted(rep["per_rule"])) or "无"))
+    print("  豁免命中：%d（误报率 = 豁免 ÷ 命中总数 = %.1f%%）" % (exempt, rate))
+    if rep["exempt_hits"]:
+        print("    豁免明细：%s"
+              % " · ".join("%s×%d" % (k, v) for k, v in sorted(rep["exempt_hits"].items())))
+
+
+def print_n7_shapes(rep):
+    """GAP-20260926-213d：N7 命中**形态分类**（对象件/目录 × 方向 × 拉丁形态）输出。"""
+    print("N7 命中形态分类（对象 × 方向 × 拉丁形态）")
+    shape = rep.get("n7_shapes") or {}
+    if not shape:
+        print("  无 N7 命中")
+        return
+    for (kind, direction, latin), n in sorted(shape.items(), key=lambda kv: (-kv[1], kv[0])):
+        print("  %-6s %-10s %-8s ×%d" % (kind, direction, latin, n))
+    print("  口径：方向 CJK→LAT（汉字在前）/ LAT→CJK（拉丁在前）；"
+          "拉丁形态 version（v+数字 · GAP-166 已收窄不告警）/ single（单字母）/ word（≥2 字母）")
 
 
 def decide(rep):
@@ -718,27 +804,56 @@ def _flat(p):
     return str(p)
 
 
-def list_exempt():
+def _hit_suffix(hits, rid):
+    """--hits 的逐行后缀（GAP-20260926-189）。hits=None ⇒ 不打印（默认口径一律不变）。"""
+    if hits is None:
+        return ""
+    n = hits.get(rid, 0)
+    return " · 命中 ×%d%s" % (n, "" if n else "（不可达/未命中）")
+
+
+def _collect_exempt_hits(args):
+    """--list-exempt --hits：跑一遍扫描拿**逐行命中数**（GAP-20260926-189）。
+
+    只读分析面：跑不通（缺件 / 空域）⇒ 返回 {}（逐行显示 ×0），**不抛错** ——
+    `--list-exempt` 的本职仍是「列登记」，命中数是附加信息。
+    """
+    root = os.path.abspath(args.repo_root)
+    targets = [os.path.abspath(x) for x in (list(args.targets) + list(args.target))]
+    if not targets:
+        targets = [root]
+    targets = [t for t in targets if os.path.exists(t)]
+    if not targets:
+        return {}
+    try:
+        rep = run(root, targets, args.count_frozen, extra_excl=tuple(args.exclude_prefix))
+    except RuntimeError:
+        return {}
+    return rep["exempt_hits"]
+
+
+def list_exempt(hits=None):
     print("例外表（四档 · 逐条给理由与出处）")
     print("A 档 · 《清单-命名规范化》已登记的「不改」条目：%d 条（期望 %d）"
           % (len(EXEMPT_A), EXEMPT_A_EXPECTED))
     for row in EXEMPT_A:
-        print("  %s [%s] 类型 %s · TSV 第 %d 行 · 形态 %s" % (row["id"], "+".join(row["rules"]),
-                                                          row["type"], row["row"], row["kind"]))
+        print("  %s [%s] 类型 %s · TSV 第 %d 行 · 形态 %s%s" % (row["id"], "+".join(row["rules"]),
+                                                          row["type"], row["row"], row["kind"],
+                                                          _hit_suffix(hits, row["id"])))
         print("      对象：%s" % " , ".join(_flat(p) for p in row["paths"]))
         print("      理由：%s" % row["reason"])
         print("      出处：%s" % row["src"])
     print("B 档 · 规则级规范豁免：%d 条（期望 %d）" % (len(EXEMPT_B), EXEMPT_B_EXPECTED))
     for row in EXEMPT_B:
-        print("  %s [%s] 形态 %s\n      对象：%s\n      理由：%s"
-              % (row["id"], "+".join(row["rules"]), row["kind"],
+        print("  %s [%s] 形态 %s%s\n      对象：%s\n      理由：%s"
+              % (row["id"], "+".join(row["rules"]), row["kind"], _hit_suffix(hits, row["id"]),
                  " , ".join(_flat(p) for p in row["paths"]), row["reason"]))
     print("C 档 · 新增登记（C01–C03 待批准 · C04 已拍 2026-09-18 · C05–C07 第二波任务书登记 2026-09-18 · "
           "C08 2026-09-22（门⑮ 主仓悬空引用）登记 · C09 2026-09-24（波11 序125 `W-43` hook git 环境）登记）："
           "%d 条（期望 %d）" % (len(EXEMPT_C), EXEMPT_C_EXPECTED))
     for row in EXEMPT_C:
-        print("  %s [%s] 形态 %s\n      对象：%s\n      理由：%s"
-              % (row["id"], "+".join(row["rules"]), row["kind"],
+        print("  %s [%s] 形态 %s%s\n      对象：%s\n      理由：%s"
+              % (row["id"], "+".join(row["rules"]), row["kind"], _hit_suffix(hits, row["id"]),
                  " , ".join(_flat(p) for p in row["paths"]), row["reason"]))
     print("D 档 · 本轮 A 路拍板登记（登记不改）：%d 条（期望 %d）"
           % (len(EXEMPT_D), EXEMPT_D_EXPECTED))
@@ -746,8 +861,11 @@ def list_exempt():
         obj = " , ".join(_flat(p) for p in row["paths"])
         if row["kind"] == "prefix_name":
             obj += " + 基名 " + row["name"]
-        print("  %s [%s] 形态 %s\n      对象：%s\n      理由：%s\n      出处：%s"
-              % (row["id"], "+".join(row["rules"]), row["kind"], obj, row["reason"], row["src"]))
+        print("  %s [%s] 形态 %s%s\n      对象：%s\n      理由：%s\n      出处：%s"
+              % (row["id"], "+".join(row["rules"]), row["kind"], _hit_suffix(hits, row["id"]),
+                 obj, row["reason"], row["src"]))
+    if hits is not None:
+        print("★ 逐行命中数为本次扫描现读（--hits）；×0 且注「不可达」= 共用键后行（见 A 档共用键注）。")
     return 0
 
 
@@ -832,6 +950,10 @@ def _self_test_body(script_path, tmp, meta=True):
     pairs = os.path.join(tmp, "pairs")
     _write(os.path.join(pairs, "docs", "01-设计", "机读对.md"), "# x\n")
     _write(os.path.join(pairs, "docs", "01-设计", "机读对.tsv"), "x\n")
+    # GAP-20260926-166 / 213d：N7 成对负控 —— 版本标记紧邻（收窄后不告警）vs 词形态（照告警）
+    n7dir = os.path.join(tmp, "n7")
+    _write(os.path.join(n7dir, "docs", "设计-模块v2.1.md"), "# x\n")   # 段 `模块v2` ⇒ 版本标记 ⇒ 不告警
+    _write(os.path.join(n7dir, "docs", "模块Agent说明.md"), "# x\n")    # 段 `模块Agent` ⇒ 词形态 ⇒ 照告警
     # ⑨ 同一棵**好件树**，只多一条**未登记**的同基名对（N6 判据必须有牙）
     goodpair = os.path.join(tmp, "goodpair")
     for rel, text in GOOD_FILES.items():
@@ -947,6 +1069,24 @@ def _self_test_body(script_path, tmp, meta=True):
                ["--repo-root", tmp, "--scope", "devdocs"],
                must_contain=["不给结论", "开发文档面根不在"],
                env=dict(os.environ, ZERG_DEVDOCS_ROOT=os.path.join(tmp, "no-such-Zerg-内部文档")))
+    # ⑭ 批-06（GAP-189/213/166）新旋钮**成对自证**（互不依赖，各自一条）：
+    ok &= case("--list-exempt --hits 逐行给命中数", 0,
+               ["--repo-root", good, "--target", good, "--list-exempt", "--hits"],
+               must_contain=["命中 ×"])
+    ok &= case("--summary 一屏摘要（含误报率）", 0,
+               ["--target", good, "--repo-root", good, "--summary"],
+               must_contain=["摘要", "误报率"])
+    ok &= case("--exclude-prefix 临时排除生效（N6 消失）", 1,
+               ["--target", bad, "--exclude-prefix", "bad/docs/01-设计/"],
+               must_contain=["临时排除"], must_not_contain=["N6"])
+    ok &= case("--n7-shapes N7 形态分类输出", 1,
+               ["--target", bad, "--n7-shapes"], must_contain=["N7 命中形态分类"])
+    ok &= case("N7 收窄：版本标记紧邻不告警", 0,
+               ["--target", os.path.join(n7dir, "docs", "设计-模块v2.1.md")],
+               must_not_contain=["N7"])
+    ok &= case("N7 收窄后有牙：词形态照告警", 0,
+               ["--target", os.path.join(n7dir, "docs", "模块Agent说明.md")],
+               must_contain=["N7", "告警"])
     # ⑫ **元自检**：把「好件必绿」的期望改成不可能达成 ⇒ 自检未过 ⇒ rc=2 且**拒绝扫真目标**
     if meta:
         needle = '("好件必绿（含允许对 edit-assert）", 0,'
@@ -982,6 +1122,7 @@ def _self_test_body(script_path, tmp, meta=True):
                 + 1                                 # ⑧ 只报告不改
                 + 4                                 # ⑨ N6 有牙 · ⑩ --scope ×2 · ⑪ 用法错
                 + 1                                 # ⑬ D3① devdocs 根不在 ⇒ rc=2（换根负控）
+                + 6                                 # ⑭ 批-06 新旋钮/收窄 ×6（--hits/--summary/--exclude-prefix/--n7-shapes + N7 收窄成对 ×2）
                 + (1 if meta else 0))               # ⑫ 元自检（注入副本）
     got = sum(1 for ln in lines if ln[:1] in ("✓", "✗"))
     lines.append("自检用例：期望 %d 条 · 实跑 %d 条" % (expected, got))
@@ -999,6 +1140,15 @@ def main(argv):
     ap.add_argument("--repo-root", default=REPO_ROOT_DEFAULT)
     ap.add_argument("--max-examples", type=int, default=5)
     ap.add_argument("--count-frozen", action="store_true", help="把冻结区计入退码")
+    ap.add_argument("--summary", action="store_true",
+                    help="一屏摘要：逐规则命中 + 豁免/误报率（GAP-20260926-213b）")
+    ap.add_argument("--hits", action="store_true",
+                    help="与 --list-exempt 同用：逐行给命中数（GAP-20260926-189）")
+    ap.add_argument("--n7-shapes", action="store_true",
+                    help="N7 命中形态分类输出（GAP-20260926-213d）")
+    ap.add_argument("--exclude-prefix", action="append", default=[],
+                    help="临时按目录前缀排除（可重复 · **未登记** · 分析用，不写任何登记表；"
+                         "GAP-20260926-213c）")
     ap.add_argument("--scope", choices=["repo", "docs", "devdocs"], default=None,
                     help="repo = 仓根（同《清单》§0 口径，默认）· docs = <仓根>/docs · "
                          "devdocs = **开发文档面**（D3① 换根：Zerg-内部文档，根见 devdocs_root()）"
@@ -1020,7 +1170,8 @@ def main(argv):
         list_rules()
         return 0
     if args.list_exempt:
-        return list_exempt()
+        hits = _collect_exempt_hits(args) if args.hits else None
+        return list_exempt(hits)
     meta = os.environ.get("CHECK_DOC_NAME_META_OFF") != "1"
     if args.self_test:
         ok, lines = self_test(os.path.abspath(__file__), meta=meta)
@@ -1085,7 +1236,8 @@ def main(argv):
             print("BLOCKED：目标不存在 ⇒ 不给结论：%s" % t)
             return 2
     try:
-        rep = run(root, targets, args.count_frozen)
+        rep = run(root, targets, args.count_frozen,
+                  extra_excl=tuple(args.exclude_prefix), want_shapes=args.n7_shapes)
     except RuntimeError as e:
         print("BLOCKED：%s ⇒ 不给结论" % e)
         return 2
@@ -1099,8 +1251,19 @@ def main(argv):
                           "per_rule_frozen": dict(sorted(rep["per_rule_frozen"].items()))},
                          ensure_ascii=False, indent=2))
         return rc
+    if args.exclude_prefix:
+        print("★ 临时排除（--exclude-prefix · **未登记** · 仅本次分析生效）：%s"
+              % ", ".join(args.exclude_prefix))
+    if args.summary:
+        print_summary(rep)
+        if args.n7_shapes:
+            print_n7_shapes(rep)
+        print(verdict)
+        return rc
     print("check-doc-name —— 《清单-命名规范化》七类判据的可执行版（只报告不改）")
     print_report(rep, args)
+    if args.n7_shapes:
+        print_n7_shapes(rep)
     print(verdict)
     return rc
 

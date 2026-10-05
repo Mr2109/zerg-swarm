@@ -63,7 +63,7 @@
   缺席分支：**旋钮显式指的**归档树根在盘上完全取不到（连符号链接都没有）⇒ rc=2 **不给结论**；
   **默认档（无旋钮）不判这一档** —— 未挂**断链**（符号链接在、目标 = 挂载点不在）是常态（A3 核心格）。
 
-退码：0 全绿 · 1 红（A1–A5 任一）· 2 **不给结论**（挂载表 0 行 / 两处读数打架 / 旋钮显式指的归档树根取不到 / `--self-test` 不过）
+退码：0 全绿 · 1 红（A1–A5 任一）· 2 **不给结论**（仓根 `--root` 取不到 / 挂载表 0 行 / 两处读数打架 / 旋钮显式指的归档树根取不到 / `--self-test` 不过）
 
 红线：**本门只读** —— 不挂载、不卸载、不写任何件、不 `chmod`、不删（归档区一个字节都不碰）。
      「挂/摘」只有一个入口：`bash scripts/svc/archive-mount.sh on|off|status`（按需 · 不信手挂）。
@@ -82,6 +82,16 @@ DEFAULT_MOUNTPOINT = "/Volumes/ZERG-ARCHIVE"
 DEFAULT_ARCHIVE_NAME = "Zerg-归档"      # 原路径的**名字**（三处硬编码就用这个字符串 · 名字一动三处全穿）
 DEFAULT_SAMPLE = "版次索引.md"
 DEFAULT_MIN_FILES = 38                  # 本机现读基线（设计稿 §三 3.2 表：38 件 + 5 目录 = 43 项）
+
+# ── 规范空集守卫（Python 版 · 复用 `check-empty-domain-guards.py:57-69` 同口径 · ✗ 不新造第五套）──
+def require_domain(items, *, what, min_count=1, rc=2):
+    """空集守卫：扫描面取不到输入（空域）时 fail-closed。回 0 = 域非空；回非 0（默认 2）= BLOCKED。"""
+    n = items if isinstance(items, int) else len(items)
+    if n < min_count:
+        print("BLOCKED —— 空域 / 取不到输入：%s（现读 %d < 写死下限 %d）⇒ rc=%d 不给结论"
+              % (what, n, min_count, rc), file=sys.stderr)
+        return rc
+    return 0
 
 RULES = [
     ("A1", "挂载行（按挂载点路径取）必须含 `read-only`", "判据 1 · 负控 ⑤⑦"),
@@ -396,6 +406,12 @@ def main():
     # 取根体例（与批1/批2 同口径 · ✗ 不造新名）：`--path` 旗标 > env `ZERG_ARCHIVE_ROOT`（**现读在册唯一名**）
     # > 默认 `<仓根同级>/Zerg-归档`（默认值逐字不变 ⇒ **无旋钮档零行为变更**）。
     root = a.root or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    # ★ 空集守卫（同款空域残留 · 复用 require_domain 同口径）：仓根取不到（`--root` 不存在 / 不是目录）
+    #   ⇒ 归档树根由它派生、判不了 ⇒ rc=2 **不给结论**（✗ 不当 0 —— 上一路现读：`--root` 不存在 ⇒ 全绿）。
+    #   负控：默认档（无 `--root`）派生出的仓根恒在盘 ⇒ 不触发；正常根 + 未挂档仍按 A3 判绿（不动 A 档判据）。
+    if require_domain([root] if os.path.isdir(root) else [],
+                      what="仓根 %s（归档树根由它派生）" % root) != 0:
+        return EXIT_NOCONCL
     explicit_arch = a.path or (os.environ.get("ZERG_ARCHIVE_ROOT") or "")
     path = explicit_arch or os.path.join(os.path.dirname(os.path.abspath(root)), DEFAULT_ARCHIVE_NAME)
     # 缺席分支（批3 收口 · 同族「取不到根 ⇒ 不给结论」体例）：**旋钮显式指的**归档树根若在盘上完全取不到

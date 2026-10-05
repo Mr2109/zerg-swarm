@@ -24,16 +24,21 @@
 
 用法
   python3 check-stale-frozen.py [--root <仓根>] [--json <字段>]
-退出码：0 只报告 · 2 用法错 / 仓根取不到（fail-closed）
+  python3 check-stale-frozen.py --self-test        # 只跑自检（合成夹具 · 不碰真目标）
+退出码：0 只报告 · 2 用法错 / 仓根取不到 / 自检不过（fail-closed）
 """
 import argparse
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ROOT = os.path.dirname(os.path.dirname(HERE))  # scripts/gates/ -> <仓根>
@@ -108,7 +113,7 @@ def probe_judge_registry(root):
 # ── ② affected-map.json ────────────────────────────────────────────────
 def probe_affected_map(root):
     rel = "scripts/gates/affected-map.json"
-    f = face(rel, "input_fingerprint（入键=步表文本＋点名件 sha256＋config＋newcmd＋HEAD）· source_head",
+    f = face(rel, "input_fingerprint（入键=步表文本＋点名件 sha256＋config＋newcmd · 内容相对 · ✗ 不含 HEAD）· source_head（仅溯源标注）",
              REFRESH["affected-map"])
     p = os.path.join(root, rel)
     try:
@@ -131,9 +136,10 @@ def probe_affected_map(root):
     f["现读"] = "input_fingerprint=%s · source_head=%s" % (str(live_fp)[:16], live_head)
     if mp.get("input_fingerprint") != live_fp:
         _stale(f, "input_fingerprint", str(mp.get("input_fingerprint"))[:16], str(live_fp)[:16],
-               "步表/点名件/config/HEAD 任一变 ⇒ 过期 ⇒ affected-steps 报不给结论")
-    if mp.get("source_head") != live_head:
-        _stale(f, "source_head", mp.get("source_head"), live_head, "HEAD 变 ⇒ 过期")
+               "步表/点名件/config 任一变 ⇒ 过期 ⇒ affected-steps 报不给结论")
+    # ★ GAP-20261005-51 甲案：删 source_head 的过期比较 —— source_head 字段**保留**（只作溯源标注），
+    #   不再当过期判据（否则「emit 时压 HEAD、emit 后一提交 HEAD 即变」⇒ 恒过期、无不动点）。
+    #   过期口径改成**内容相对**：只有被管辖输入（步表文本 ＋ 点名件 sha256 ＋ 两 config）变才红。
     return f
 
 
@@ -353,11 +359,138 @@ def render(faces, out):
     return n_stale, n_face_stale
 
 
+# ── 自检（合成夹具 · 不碰真目标）──────────────────────────────────────
+# 照同批两枚（check-model-size-anchor.py 的 self_test / check-fleet-loadable.py 的
+# run_self_test）体例：夹具一律落 tempfile.mkdtemp()（✗ 不写仓内、不碰真目标）。
+# ★ 负控落在「门真吃的那个退码」上：本件唯一进退码处是 main() 的「仓根取不到 ⇒ rc=2」，
+#   空转格直接断言 main() 的进程退码（✗ 不只断言内部分析函数的读数）。
+_SELFTEST_TSV_HEAD = "件\t面\t理由\n"
+
+
+def _selftest_write(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def _selftest_fixture(frozen_sha=None):
+    """造一个**仓外**合成仓根：三处纯 IO 冻结点（judge-registry / real-gates.sh /
+    公开标记.tsv）自洽。frozen_sha=None ⇒ judge-registry 的 sha256 冻成现读（一致）；
+    给定值 ⇒ 冻成该值（可造「冻结值 ≠ 现读」的负控）。返回仓根路径（调用方负责删）。"""
+    root = tempfile.mkdtemp(prefix="stale-frozen-selftest-")
+    gdir = os.path.join(root, "scripts", "gates")
+    xpy = os.path.join(gdir, "x.py")
+    _selftest_write(xpy, "print(2)\n")
+    frozen = sha256_file(xpy) if frozen_sha is None else frozen_sha
+    reg = {"schema": "judge-registry/1", "count": 1, "dupes": [], "entries": [
+        {"id": "x", "name": "x", "path": "scripts/gates/x.py", "cwd": ".", "interp": "python3",
+         "sha256": frozen, "tool_version": "python3/3.9",
+         "cache_key": "%s|python3/3.9" % frozen}]}
+    _selftest_write(os.path.join(gdir, "judge-registry.json"), json.dumps(reg))
+    _selftest_write(os.path.join(gdir, "real-gates.sh"),
+                    "SH_GATES=(x)\n\nSH_TABLE=\"$(cat <<'EOF'\n"
+                    "x\tg_x\nEOF\n)\"\n")
+    _selftest_write(os.path.join(root, "scripts", "公开标记.tsv"),
+                    _SELFTEST_TSV_HEAD
+                    + "scripts/gates/judge-registry.json\tpublic\tx\n"
+                    + "scripts/gates/real-gates.sh\tpublic\tx\n"
+                    + "scripts/gates/x.py\tpublic\tx\n")
+    return root
+
+
+def _selftest_capture(argv):
+    """跑 main(argv)，返回 (rc, stdout_text)；stderr 一并吞掉（空转格的 ⛔ 别污染读数）。"""
+    buf, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+        rc = main(argv)
+    return rc, buf.getvalue()
+
+
+def self_test():
+    fails = []
+
+    def face_of(faces, name):
+        return next((f for f in faces if f["件"] == name), None)
+
+    def expect(label, root, name, want_status, want_stale):
+        f = face_of(collect(root), name)
+        if f is None:
+            fails.append("%s：找不到面 %s" % (label, name))
+        elif f["状态"] != want_status or f["过期数"] != want_stale:
+            fails.append("%s：面 %s 期望「%s · 过期 %d」实得「%s · 过期 %d」"
+                         % (label, name, want_status, want_stale, f["状态"], f["过期数"]))
+
+    # ① 正控：三处冻结点自洽 ⇒ 各面「一致 · 过期 0」
+    root = _selftest_fixture()
+    try:
+        expect("正控", root, "scripts/gates/judge-registry.json", "一致", 0)
+        expect("正控", root, "scripts/gates/real-gates.sh", "一致", 0)
+        expect("正控", root, "scripts/公开标记.tsv", "一致", 0)
+        # ② 形状：人面／--json 两态（同一仓根 · 只差一旗标）
+        rc_h, out_h = _selftest_capture(["--root", root])
+        if rc_h != 0:
+            fails.append("形状·人面：期望 rc=0 实得 rc=%d" % rc_h)
+        if "合计：冻结面" not in out_h:
+            fails.append("形状·人面：输出缺「合计：冻结面」行")
+        rc_j, out_j = _selftest_capture(["--root", root, "--json"])
+        if rc_j != 0:
+            fails.append("形状·--json：期望 rc=0 实得 rc=%d" % rc_j)
+        else:
+            payload = None
+            for line in out_j.splitlines():
+                if line.startswith("{"):
+                    try:
+                        payload = json.loads(line)
+                    except ValueError as e:
+                        fails.append("形状·--json：payload 解析失败（%s）" % e)
+            if payload is None:
+                fails.append("形状·--json：无 JSON 行")
+            elif payload.get("mode") != "report-only" or payload.get("rc") != 0 \
+                    or "faces" not in payload:
+                fails.append("形状·--json：payload 形状不对（缺 mode=report-only / rc=0 / faces）")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    # ③ 成对负控：冻错 sha256 ⇒ 必须报过期；写回现读 ⇒ 必回绿
+    root = _selftest_fixture(frozen_sha="0" * 64)
+    try:
+        expect("负控·冻错", root, "scripts/gates/judge-registry.json", "过期", 1)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    root = _selftest_fixture()  # 现读改回（冻成正确 sha）⇒ 必回绿
+    try:
+        expect("负控·回绿", root, "scripts/gates/judge-registry.json", "一致", 0)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+    # ④ 空转：仓根取不到 ⇒ rc=2（不静默绿）—— 断言的是 main() 的**进程退码**
+    empty = tempfile.mkdtemp(prefix="stale-frozen-empty-")
+    try:
+        for label, bad in (("空转·根不存在", os.path.join(empty, "no-such-root")),
+                           ("空转·无 scripts/gates", empty)):
+            rc, _ = _selftest_capture(["--root", bad])
+            if rc != 2:
+                fails.append("%s：期望 rc=2（不静默绿）实得 rc=%d" % (label, rc))
+    finally:
+        shutil.rmtree(empty, ignore_errors=True)
+
+    if fails:
+        print("✗ check-stale-frozen 自检不过（%d 条）：" % len(fails))
+        for f in fails:
+            print("  - " + f)
+        return 2
+    print("✓ check-stale-frozen 自检全过（正控 3 面 · 负控成对 · 空转 2 格 · 形状 2 态）")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("--root", default=DEFAULT_ROOT, help="仓根（默认由本件位置上溯两级的仓根）")
     ap.add_argument("--json", metavar="字段", nargs="?", const="", help="机器面（逗号分隔字段；缺省全量）")
+    ap.add_argument("--self-test", action="store_true", help="只跑自检（合成夹具 · 不碰真目标）")
     a = ap.parse_args(argv)
+    if a.self_test:
+        return self_test()
     root = os.path.abspath(a.root)
     if not os.path.isdir(os.path.join(root, "scripts", "gates")):
         print("⛔ 用法错（rc=2）：仓根取不到 scripts/gates/（--root=%s）" % root, file=sys.stderr)

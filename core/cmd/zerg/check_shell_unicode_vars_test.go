@@ -7,14 +7,16 @@
 //	CleanRc0               · `${VAR}` 花括号写法 ⇒ rc=0「命中 0 处」
 //	DirtyRc1_Stdout        · `$VAR` 紧跟非 ASCII ⇒ rc=1 + 逐行命中（**钉死列宽 34**）
 //	CommentMasked_NoHit    · 整行注释里的 `$VAR中` ⇒ **不许红**（防假红 · py 掩码）
-//	MissingFailClosedRc2   · 缺件 ⇒ **fail-closed rc=2**（B 类读失败 · 登记点名「读不了」）
+//	MissingFailClosedRc2   · 全缺件 ⇒ **空域 fail-closed rc=2**（stderr `BLOCKED …` · 与 py `require_domain` 逐字同）
+//	MixedPresentMissing_SkipsMissing · 真件 + 缺件混 ⇒ 缺件**静默跳过**（rc 随真件命中，不因缺件翻红）
 //	OrderPreserved         · 多件 ⇒ 输出行序 = **位置参原序**（非排序）
 //	MultipleVarsSorted     · 同件多名 ⇒ 行内名序 = **码点序**
 //	JSONRefusedRc2         · `--json` ⇒ rc=2（本门无机器读面 Q-176）
 //	SelfTestRc0_AndSelfCleans · `--self-test` ⇒ rc=0 且**临时目录自回收 delta=0**（A 类）
-//	FixModeRewritesSingle  · 非 `--check` ⇒ 就地改写（单命中）
+//	DefaultReadOnly_NoWrite· 缺省（无 `--check`/`--write`）⇒ 只读**不写盘**（GAP-20260927-93 · 文件字节不变）
+//	FixModeRewritesSingle  · `--write` ⇒ 就地改写（单命中）
 //	FixModeMultiHit_RewritesBoth · ★ 多命中 ⇒ **与 py 现读同构**（正向钉住 · GAP-20261001-48 已修）
-//	DirFailClosedRc2       · 位置参给目录 ⇒ **fail-closed rc=2**（C 类口径差）
+//	DirFailClosedRc2       · 位置参给目录 ⇒ **空域 fail-closed rc=2**（stderr `BLOCKED …` · 与 py `isfile` 判定同）
 //	UnreadableFailClosedRc2· 读不了的件（chmod 000）⇒ **fail-closed rc=2**（C 类）
 //	LexerEdges             · `$1` / `$中文` / `${VAR}` 非命中；`$A$B中` ⇒ 只命 `B`
 //	JoinFixtureParity      · 坐实 `filepath.Join` ⟷ `os.path.join` 三语义差**不触发**（本件唯一 join 点）
@@ -95,8 +97,19 @@ func TestShellUnicodeVarsGate(t *testing.T) {
 	t.Run("MissingFailClosedRc2", func(t *testing.T) {
 		d := t.TempDir()
 		rc, out, errs := csuT(t, "--check", filepath.Join(d, "nope.sh"))
-		if rc != 2 || out != "" || !strings.Contains(errs, "读不了") {
-			t.Fatalf("缺件应 fail-closed rc=2 且点名读不了：rc=%d out=%q err=%q", rc, out, errs)
+		if rc != 2 || out != "" || !strings.Contains(errs, "BLOCKED —— 空域 / 取不到输入：要扫描的脚本件（实参 1 只）") {
+			t.Fatalf("全缺件应空域 fail-closed rc=2 + BLOCKED：rc=%d out=%q err=%q", rc, out, errs)
+		}
+	})
+
+	// ★ 成对（all-missing vs any-missing）：真件 + 缺件混入 ⇒ 缺件**静默跳过**、域非空 ⇒ 不触发空集守卫。
+	//   旧 Go 曾「任一缺件 ⇒ rc=2」（比 py 严）⇒ 本用例钉住「按 py 现件：只有**全缺件**才 rc=2」。
+	t.Run("MixedPresentMissing_SkipsMissing", func(t *testing.T) {
+		d := t.TempDir()
+		good := csuFixture(t, d, "good.sh", "echo \"${VAR}中文\"\n")
+		rc, out, errs := csuT(t, "--check", good, filepath.Join(d, "nope.sh"))
+		if rc != 0 || out != "命中 0 处\n" || errs != "" {
+			t.Fatalf("真件+缺件混应跳过缺件、rc=0：rc=%d out=%q err=%q", rc, out, errs)
 		}
 	})
 
@@ -160,7 +173,7 @@ func TestShellUnicodeVarsGate(t *testing.T) {
 	t.Run("FixModeRewritesSingle", func(t *testing.T) {
 		d := t.TempDir()
 		f := csuFixture(t, d, "fix.sh", "echo \"$VAR中文\"\n")
-		rc, out, _ := csuT(t, f) // ★ 不给 --check ⇒ 就地改写
+		rc, out, _ := csuT(t, "--write", f) // ★ --write ⇒ 就地改写（缺省已改只读）
 		if rc != 0 {
 			t.Fatalf("rc=%d，期望 0", rc)
 		}
@@ -183,7 +196,7 @@ func TestShellUnicodeVarsGate(t *testing.T) {
 	t.Run("FixModeMultiHit_RewritesBoth", func(t *testing.T) {
 		d := t.TempDir()
 		f := csuFixture(t, d, "two.sh", "echo \"$A中$B中\"\n")
-		rc, _, _ := csuT(t, f)
+		rc, _, _ := csuT(t, "--write", f)
 		if rc != 0 {
 			t.Fatalf("rc=%d，期望 0", rc)
 		}
@@ -194,6 +207,21 @@ func TestShellUnicodeVarsGate(t *testing.T) {
 		}
 	})
 
+	// ★★ 默认档不写盘（GAP-20260927-93）：缺省（无 `--check`/`--write`）⇒ 只读；命中 ⇒ rc=1、「命中」结语、文件**字节不变**。
+	t.Run("DefaultReadOnly_NoWrite", func(t *testing.T) {
+		d := t.TempDir()
+		f := csuFixture(t, d, "ro.sh", "echo \"$VAR中文\"\n")
+		before, _ := os.ReadFile(f)
+		rc, out, errs := csuT(t, f) // ★ 不给任何档旗 ⇒ py 缺省 = 只读
+		if rc != 1 || errs != "" || !strings.Contains(out, "命中 1 处") {
+			t.Fatalf("缺省应只读 rc=1 + 命中结语：rc=%d out=%q err=%q", rc, out, errs)
+		}
+		after, _ := os.ReadFile(f)
+		if string(after) != string(before) {
+			t.Fatalf("缺省档**写盘了**（应只读）：before=%q after=%q", before, after)
+		}
+	})
+
 	t.Run("DirFailClosedRc2", func(t *testing.T) {
 		d := t.TempDir()
 		sub := filepath.Join(d, "adir")
@@ -201,11 +229,8 @@ func TestShellUnicodeVarsGate(t *testing.T) {
 			t.Fatalf("建目录失败: %v", err)
 		}
 		rc, out, errs := csuT(t, "--check", sub)
-		if rc != 2 {
-			t.Fatalf("rc=%d，期望 2（C 类 fail-closed）", rc)
-		}
-		if out != "" || !strings.Contains(errs, "读不了") {
-			t.Fatalf("fail-closed 正文不符：out=%q err=%q", out, errs)
+		if rc != 2 || out != "" || !strings.Contains(errs, "BLOCKED —— 空域 / 取不到输入：要扫描的脚本件（实参 1 只）") {
+			t.Fatalf("目录作位置参应空域 fail-closed rc=2 + BLOCKED：rc=%d out=%q err=%q", rc, out, errs)
 		}
 	})
 

@@ -11,9 +11,20 @@ import subprocess
 import sys
 import tempfile
 
+# ── 规范空集守卫（Python 版 · 复用 `check-empty-domain-guards.py:57-69` 同口径 · ✗ 不新造第五套）──
+def require_domain(items, *, what, min_count=1, rc=2):
+    """空集守卫：扫描面取不到输入（空域）时 fail-closed。回 0 = 域非空；回非 0（默认 2）= BLOCKED。"""
+    n = items if isinstance(items, int) else len(items)
+    if n < min_count:
+        print("BLOCKED —— 空域 / 取不到输入：%s（现读 %d < 写死下限 %d）⇒ rc=%d 不给结论"
+              % (what, n, min_count, rc), file=sys.stderr)
+        return rc
+    return 0
+
 # 用法：
 #   python3 scripts/gates/check-shell-unicode-vars.py scripts/*.sh           # 只报（缺省=只读），命中即 exit 1（门禁用）
 #   python3 scripts/gates/check-shell-unicode-vars.py --write scripts/*.sh   # 就地修（$VAR → ${VAR}；写档必须显式）
+#   python3 scripts/gates/check-shell-unicode-vars.py --check nope.sh        # ✗ 一只都不在盘 ⇒ 空域 rc=2（不许静默绿）
 # ── 缺口 `Q-176`（门禁面 · 统一口）：本门**没有**机器读面 ⇒ 给了 `--json` **不许沉默** ✗
 #    口径：逐字明说「本门无机器读面」**＋印字段表**（一个字段都没有 ⇒ 也要明说「字段表：无」），
 #    退码 = **用法错 `rc=2`**（「机器面缺」与「零命中」两态在机器面上必须分得开）。
@@ -79,7 +90,7 @@ def self_test():
         dirty2 = os.path.join(tmp, "dirty2.sh")
         with open(dirty2, "w", encoding="utf-8") as f:
             f.write('echo "$A中$B文"\n')
-        pr = subprocess.run([sys.executable, SELF_PATH, dirty2],
+        pr = subprocess.run([sys.executable, SELF_PATH, "--write", dirty2],
                             capture_output=True, text=True, cwd=tmp)
         got2 = open(dirty2, encoding="utf-8").read()
         _st_chk(bad, "档④ 多命中改写：两处 `$VAR` 一次落盘（rc=0）", 0, pr.returncode,
@@ -105,6 +116,13 @@ if not FILES:
     print("✗ 必须显式传入要扫描的脚本（例如 scripts/*.sh）。\n"
                      "  无参数时不静默空转——这正是本工具此前的漏报根因（$VAR后接全角标点未被发现）。\n"
                      "  用法: python3 scripts/gates/check-shell-unicode-vars.py [--check|--write] scripts/*.sh publish/*.sh（缺省/--check=只读；--write=就地修）", file=sys.stderr)
+    sys.exit(2)
+
+# ★ 空集守卫（同款空域残留 · 复用 require_domain 同口径）：位置参**一只都不在盘**（glob 未展开 /
+#   路径笔误）⇒ 取数面 0 件 = 空域 ⇒ rc=2（✗ 不许静默返回「命中 0 处」＝假绿；上一路现读：传不存在件 ⇒ rc=0）。
+#   负控：真件（哪怕 0 命中）⇒ 域非空、照常 rc=0；多参里只要有真件即不触发（保住混入未展开通配符的现役用法）。
+_readable = [p for p in FILES if os.path.isfile(p)]
+if require_domain(_readable, what="要扫描的脚本件（实参 %d 只）" % len(FILES)) != 0:
     sys.exit(2)
 
 # $VAR（不含 ${...} 形式、不含 $1 等位置参数）后面紧跟一个 >=0x80 的字节

@@ -10,7 +10,7 @@
 //
 //	✗ 不靠掩码（另在本件内证明 py 连跑两发 ts 会变）。
 //
-// ✗ 本件不接线、不注册命令、不删 py 原件（M2 边界）。
+// ✗ 不进 main.go 命令树、不注册命令、不删 py 原件（M2 边界；已挂 gateCheckGoEntry["check-wallclock-ratchet"] ⇒ 走 inproc）。
 package main
 
 import (
@@ -413,4 +413,29 @@ func TestCheckWallclockRatchetNegativeControls(t *testing.T) {
 			t.Fatalf("--now 未落进产物：%s", a)
 		}
 	})
+}
+
+// TestCheckWallclockRatchetDefaultHereNotCwd —— 默认 HERE（✗ 不设 ZERG_WALLCLOCK_HERE）必须由
+// `repoRoot()` 推 `<仓根>/scripts/gates`，✗ 不落 cwd。
+// ★ 判据有牙（GAP-20261005-20 同族）：接线（入 `gateCheckGoEntry`）但 HERE 仍落 cwd 时，
+// inproc 档 cwd = 仓根 ⇒ 读 `<仓根>/wallclock-baseline.json` 缺件 ⇒ rc=2，本用例当场 FAIL。
+func TestCheckWallclockRatchetDefaultHereNotCwd(t *testing.T) {
+	t.Setenv("ZERG_WALLCLOCK_HERE", "")
+	t.Setenv("ZERG_REPO", "")
+	root := repoRoot()
+	if root == "" {
+		t.Skip("本机定位不到仓根 ⇒ 本件不适用（不给结论）")
+	}
+	base := filepath.Join(root, "scripts", "gates", "wallclock-baseline.json")
+	if _, err := os.Stat(base); err != nil {
+		t.Skipf("真基线件不在（%s）⇒ 本件不适用：%v", base, err)
+	}
+	var out, errb bytes.Buffer
+	rc := checkWallclockRatchetMain(&out, &errb, []string{"--measured", "1.0"})
+	if rc == 2 || strings.Contains(errb.String(), "缺基线件") {
+		t.Fatalf("默认 HERE 落错（疑似 cwd=仓根 ⇒ 读不到 scripts/gates/）：rc=%d err=%q", rc, errb.String())
+	}
+	if rc != 0 && rc != 1 {
+		t.Fatalf("默认 HERE 应读真基线 ⇒ rc∈{0,1}，得到 %d err=%q", rc, errb.String())
+	}
 }

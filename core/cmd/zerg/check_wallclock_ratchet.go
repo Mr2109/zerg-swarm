@@ -2,11 +2,11 @@
 // **Go 真搬**（M2 · 墙钟棘轮族 · 四档：日常 / 核章 / 中 / 盖章 · 只许下降）。
 //
 // 为什么有这件：M2 真搬 —— 把 scripts/gates 下的独立判据件落成 core/cmd/zerg 的 Go 入口，与 py 原件
-// **两态逐字对拍**（rc / stdout / stderr 三面逐字节 + 写面产物字节）。本件**只落码、不接线**：
+// **两态逐字对拍**（rc / stdout / stderr 三面逐字节 + 写面产物字节）。本件已挂
+// `gateCheckGoEntry["check-wallclock-ratchet"]`（`zerg gate check` 走 inproc）：
 //
 //	· ✗ 不在 main.go 注册任何命令（✗ 不进命令树 · ✗ 不改 add_step）；
 //	· ✗ 不删 py 原件（退场规则：对拍通过后才退场 · 逐件点名）；
-//	· 入口目前**无调用点**（M2 刻意状态）。
 //
 // 入口签名（与 py 的 main() 对齐）：
 //
@@ -31,12 +31,12 @@
 // ★ Go-only 注入旋钮（与 py 不可合同 ⇒ 单列点名，只在 Go 侧传）：
 //
 //	· --now <ISO> / env ZERG_NOW       —— 钉死写入通道的「当前时刻」（py 无此旗标 / env）；
-//	· env ZERG_WALLCLOCK_HERE <目录>   —— 钉死 HERE（py 由 __file__ 推导；Go 无此语境 ⇒ 缺省 cwd）。
+//	· env ZERG_WALLCLOCK_HERE <目录>   —— 钉死 HERE（py 由 __file__ 推导；Go 无此语境 ⇒ 由 repoRoot() 推 <仓根>/scripts/gates）。
 //
 // 未覆盖面（逐条）：
 //
 //	① argparse -h 正文：逐字复刻 /usr/bin/python3 3.9.6 的 argparse 输出（段名 optional arguments:），换版本不跟；
-//	② 默认 HERE 定位：py = dirname(abspath(__file__))；Go 无 __file__ ⇒ 缺省 cwd（env 可钉）。「脚本位置 ≠ cwd」时不保证；
+//	② 默认 HERE 定位：py = dirname(abspath(__file__))；Go 无 __file__ ⇒ 由 repoRoot() 推 <仓根>/scripts/gates（✗ 不再落 cwd）。残差：可执行文件既不在仓内、cwd 也不在仓内时 repoRoot() 取不到 ⇒ 回落 cwd；
 //	③ py 未捕异常（基线件坏 JSON / 非 UTF-8 / 台账行非对象 / 写盘 OSError）⇒ traceback rc=1；本件一律 fail-closed rc=2，正文不同；
 //	④ 浮点 py repr 与 Go 在指数 ∈ [16,20] 的写法差（本件值域为秒 ⇒ 不触发，仍列）；
 //	⑤ JSON 数字非规范写法（1e3 / 24.7630 形态）在 str() 与 dump 往返时的形态差（夹具用规范写法 ⇒ 不触发）；
@@ -556,10 +556,16 @@ func cwrOSErrText(err error, path string) string {
 	return err.Error()
 }
 
-// cwrHere —— 资源根。py = dirname(abspath(__file__))；Go 无 __file__ ⇒ 缺省 cwd（env ZERG_WALLCLOCK_HERE 可钉）。
+// cwrHere —— 资源根。py = dirname(abspath(__file__)) = `<仓根>/scripts/gates`。
+// Go 无 __file__ ⇒ 由 `repoRoot()`（ZERG_REPO → 可执行文件目录上溯 → cwd 上溯，锚 = core/internal/version/version.go）
+// 推 `<仓根>/scripts/gates` —— ✗ 不依赖 cwd（inproc 档 cwd = 仓根 ⇒ 旧口径会落仓根、读不到 scripts/gates/ 下的基线件）。
+// env ZERG_WALLCLOCK_HERE 仍在**最前**（可选覆盖，✗ 非必需项）。
 func cwrHere() string {
 	if v := os.Getenv("ZERG_WALLCLOCK_HERE"); v != "" {
 		return v
+	}
+	if r := repoRoot(); r != "" {
+		return cwrJoin(r, "scripts/gates")
 	}
 	wd, err := os.Getwd()
 	if err != nil {

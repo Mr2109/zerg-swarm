@@ -1,4 +1,4 @@
-// check_archive_mount.go —— 判据件 `scripts/gates/check-archive-mount.py`（442 行）的 **Go 真搬**
+// check_archive_mount.go —— 判据件 `scripts/gates/check-archive-mount.py`（463 行）的 **Go 真搬**
 // （v2.5.14 · M2 一枚 · 入口 `checkArchiveMountGateMain` · 承接 GAP-20261001-13）。
 //
 // 为什么有这件：
@@ -18,7 +18,8 @@
 //	  ② **退 2 边界**：py 只在「**旋钮显式指的**归档树根在盘上完全取不到」一档给 rc=2；默认档（无旋钮）
 //	     不判这一档（未挂**断链**是常态 = 本门 A3 核心格要判的形态）。本件**逐字沿用** ⇒ 只有「都取不到」
 //	     才退 2，✗ 禁「任一取不到」——后者会让真仓默认档恒红（`../Zerg-归档` 现读就是断链）。
-//	  ③ **取不到一律 rc=2，✗ 不静默绿**：挂载表读不到 / 0 行、两处读数打架、旋钮指空的树根 —— 三档全 2。
+//	  ③ **取不到一律 rc=2，✗ 不静默绿**：仓根 `--root` 取不到 / 不是目录、挂载表读不到 / 0 行、两处读数打架、
+//	     旋钮指空的树根 —— 四档全 2（仓根档走空集守卫，stderr `BLOCKED …` 与 py `require_domain` 逐字同）。
 //
 // 本单边界（照实）：本件**只落码、不接线** ——
 //
@@ -779,6 +780,13 @@ func checkArchiveMountGateMain(stdout, stderr io.Writer, argv []string) int {
 	root := a.Root
 	if root == "" {
 		root = camDefaultRoot()
+	}
+	// ★ 空集守卫（py `require_domain([root] if os.path.isdir(root) else [], …)` 逐字同构 · 同款空域残留）：
+	//   仓根取不到（`--root` 不存在 / 不是目录）⇒ 归档树根由它派生、判不了 ⇒ rc=2 **不给结论**（✗ 不当 0）。
+	//   负控：默认档（无 `--root`）派生出的仓根恒在盘 ⇒ 不触发；正常根 + 未挂档仍按 A3 判绿（不动 A 档判据）。
+	if !camIsDir(root) {
+		fmt.Fprintf(stderr, "BLOCKED —— 空域 / 取不到输入：仓根 %s（归档树根由它派生）（现读 0 < 写死下限 1）⇒ rc=2 不给结论\n", root)
+		return 2
 	}
 	explicitArch := a.Path
 	if explicitArch == "" {

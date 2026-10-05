@@ -203,6 +203,11 @@ def run(root, baseline, as_json=False, emit_baseline=False):
         print("BLOCKED —— 扫描根不存在或读不到：%s（rc=2 · 不给结论）" % root, file=sys.stderr)
         return 2
 
+    # ★ 空集守卫（本门自身 · 复用本件定义的 require_domain · GAP-20260927-108 收口）：
+    #   扫描面 0 件（空域）⇒ 判不了「缺守卫几条」⇒ ✗ 不许把「空转」当绿（本件自己先守此线）。
+    if require_domain(scanned, what="扫面根 %s 下的 .py 件" % root, min_count=1) != 0:
+        return 2
+
     live = len(unguarded)
     if emit_baseline:
         print(live)
@@ -261,7 +266,7 @@ def _st_chk(bad, label, want, rc, out):
 def self_test():
     """六档：守卫正控/负控 · 元门正控/负控 · 缺语料 · 登记表（登记与结构不符）。"""
     bad = [0]
-    print("── check-empty-domain-guards.py --self-test 六档（正控 0 · 负控 1/2 · 缺语料 2 · 登记 1）")
+    print("── check-empty-domain-guards.py --self-test 七档（正控 0 · 负控 1/2 · 缺语料/空域 2 · 登记 1）")
     tmp = tempfile.mkdtemp(prefix="emptydomain-selftest-")
     try:
         # ① 守卫正控：有件 ⇒ 0
@@ -311,6 +316,11 @@ def self_test():
         _st_chk(bad, "档④ 元门负控：扫面型件缺守卫 ⇒ rc=1（点名）", 1, *run("--root", d_bad, "--baseline", "0"))
         _st_chk(bad, "档⑤ 缺语料：`--root` 不存在 ⇒ rc=2（不给结论）", 2,
                 *run("--root", os.path.join(tmp, "no-such-root")))
+        # ⑤′ 空域（GAP-20260927-108 收口 · 本门自身守此线）：`--root` 是**空目录**（存在但 0 件）⇒ rc=2（空转 ≠ 绿）
+        d_empty = os.path.join(tmp, "empty-root")
+        os.makedirs(d_empty, exist_ok=True)
+        _st_chk(bad, "档⑤′ 空域：`--root` 空目录（0 件）⇒ rc=2（空转 ≠ 绿）", 2,
+                *run("--root", d_empty, "--baseline", "0"))
         rc6, out6 = run("--root", d_stale, "--baseline", "0")
         _st_chk(bad, "档⑥ 登记表：登记项现读为扫面型 ⇒ rc=1（登记与结构不符 · 未被豁免扫面）", 1, rc6, out6)
         _st_chk(bad, "档⑥′ 登记表：报话明说「非扫面型 · 已人工复核」且点名「登记与结构不符」", 0,

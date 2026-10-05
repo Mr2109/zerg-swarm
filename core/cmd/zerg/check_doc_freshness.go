@@ -47,15 +47,18 @@
 //
 //	① argparse **长选项前缀缩写**（`--selft` ⇒ `--self-test`）不实现。
 //	② `-h/--help` 正文：本件**照 argparse 形自拟**，与 py 的 argparse 版本相关（见对拍 `-h` 格）。
-//	③ `--report` 落盘 JSON 含 `generated_at`（now()）· `elapsed_ms*`（计时）⇒ **本就非逐字可比**；
-//	   本件实现但**不属逐字对齐承诺**。
+//	③ `--report` 落盘 JSON（真搬 py `write_report` · GAP-20261001-50）：整档含 `generated_at`（now()）·
+//	   `elapsed_ms_total` / `index.index_build_ms` / `gates[*].elapsed_ms`（计时）⇒ **整档本就非逐字可比**。
+//	   对拍口径 = 把这 4 个不可复现字段的**值**按同型归一后 **逐字节同**（键序/缩进/转义/数字格式全对齐）；
+//	   即本件实现该面，但**整档**不属逐字对齐承诺 —— 逐字只对「归一后」成立。失败档文案见 ⑦。
 //	④ ★ **正则语义差**：py `\s`/`\S`/`\d`/`\w`/`\b` 是 **Unicode 语义**，Go RE2 默认 **ASCII**。
 //	   本件按新口径：`\d`→`\p{Nd}`；`\s`/`\S` 展开为**显式 Unicode 空白类**（`cdfUniSpaceCls`）；
 //	   `\b` 仍按 RE2 ASCII 词界（**如实标为未覆盖**，真仓读数已证零命中该形态）。
 //	⑤ `unicodedata.normalize("NFC", s)`：Go 标准库无 NFC（仓内无 `golang.org/x/text`）⇒
 //	   本件 `nfc = 恒等`（**如实标为未覆盖**：真仓 slug 用例全为预组合码位 ⇒ 读数一致）。
 //	⑥ `urllib.parse.unquote`：本件自实现 percent 解码（近似：无效 `%XX` 原样保留）。
-//	⑦ 读文件失败正文 / OSError 串：正文自定，不属对齐。
+//	⑦ 读文件失败正文 / OSError 串：正文自定，不属对齐（含 ③ 的 `--report` 落盘失败：py 打 Python traceback，
+//	   本件打 `⛔ 报告落盘失败：<路径>（<err>）`；两者只对齐**退码 1** 与「不打总耗时」）。
 //
 // `--evidence GAP-20261001-13`（在册 M2 承接 · 语义对口：want_family=gate / want_action=check）。
 package main
@@ -66,6 +69,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -763,6 +767,52 @@ func cdfAllowlistErrors(cfg map[string]any) []string {
 	return errs
 }
 
+// cdfDeadEntry —— 豁免表「登记过期」一条（缺口 GAP-20260926-136）。
+// 一条豁免要么**宿主不在盘**（`file_glob` 在解析域里零命中），要么**键出现 0 次**
+// （`target` 这个精确 token 在宿主正文里逐字找不到）⇒ 它今天一个东西都没豁免到
+// （死条目留着 = 假覆盖）⇒ 必须报出（只报 · 不改判据 · 不进退码 · 不许静默）。
+type cdfDeadEntry struct {
+	idx int
+	e   map[string]any
+	why string
+}
+
+func cdfAllowlistDeadEntries(cfg map[string]any, t *cdfTree) []cdfDeadEntry {
+	out := []cdfDeadEntry{}
+	for i, e := range cdfSubList(cfg, "allowlist") {
+		glob := cdfAnyStr(e, "file_glob", "*")
+		hosts := []string{}
+		for _, f := range t.files {
+			if cdfFnmatch(f, glob) {
+				hosts = append(hosts, f)
+			}
+		}
+		if len(hosts) == 0 {
+			out = append(out, cdfDeadEntry{i, e, fmt.Sprintf("宿主不在盘（file_glob %s 在解析域零命中）", cdfPyRepr(glob))})
+			continue
+		}
+		tgt := cdfAnyStr(e, "target", "")
+		if tgt != "" {
+			found := false
+			for _, h := range hosts {
+				if strings.Contains(t.text(h), tgt) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				h3 := hosts
+				if len(h3) > 3 {
+					h3 = h3[:3]
+				}
+				out = append(out, cdfDeadEntry{i, e, fmt.Sprintf("键出现 0 次（target %s 在宿主 %s 里找不到）",
+					cdfPyRepr(tgt), strings.Join(h3, "、"))})
+			}
+		}
+	}
+	return out
+}
+
 // ─────────────────────────── 链接抽取（D1/D3 共用）───────────────────────────
 
 type cdfLink struct {
@@ -1072,6 +1122,10 @@ func (r *cdfResult) add(file string, line int, target, kind, detail, domain stri
 }
 
 func (r *cdfResult) counted(key string, n int) {
+	// 键序 = **首次出现序**（对齐 py dict 插入序 ⇒ write_report 的 counts 键序逐字同）。
+	if _, ok := r.counts[key]; !ok {
+		r.order = append(r.order, key)
+	}
 	r.counts[key] += n
 }
 
@@ -2150,6 +2204,7 @@ type cdfArgs struct {
 	report      string
 	printLimit  int
 	listRules   bool
+	listItems   bool
 	selfTest    bool
 	verbose     bool
 }
@@ -2158,6 +2213,21 @@ func cdfPrintResult(w io.Writer, r *cdfResult, args *cdfArgs, elapsed float64) i
 	rc := r.rc()
 	fmt.Fprintf(w, "%s  → rc=%d %s   (语料 %d 篇 / 解析域 %d 文件 / %.2fs)\n",
 		cdfGates[r.gate].name, rc, cdfRCName[rc], len(r.tree.corpus), len(r.tree.files), elapsed)
+	// ── 缺口 GAP-20260927-164：凡报告里的数 ⇒ 同屏标**面**（哪个语料面 · 哪条命令 · 哪个 scope），
+	//    同名异面的数不得互证（本门「行号越界」是 `docs/**.md` 文档语料面，≠ `scripts/gates/` 件:行 面）。
+	_corpus := cdfStrList(r.tree.cfg, "corpus")
+	corpusStr := "—"
+	if len(_corpus) > 0 {
+		corpusStr = strings.Join(_corpus, " · ")
+	}
+	gateStr := "all"
+	if len(args.gates) > 0 {
+		gateStr = strings.Join(args.gates, " ")
+	}
+	fmt.Fprintf(w, "  面：文档语料 `%s`（%d 篇 md）· 命令 `check-doc-freshness.py %s` · scope=%s\n",
+		corpusStr, len(r.tree.corpus), gateStr, args.scope)
+	fmt.Fprintf(w, "  ★ 面注：本门「行号越界」= `docs/**.md` **文档语料**面的计数 —— 与"+
+		"「`scripts/gates/` 面 件:行 上限（门67 · check-lineref-limit.py）」是**两个面**，不互证、不混看。\n")
 	if len(r.errors) > 0 {
 		for _, e := range r.errors {
 			fmt.Fprintf(w, "  ⛔ 不给结论：%s\n", e)
@@ -2181,7 +2251,11 @@ func cdfPrintResult(w io.Writer, r *cdfResult, args *cdfArgs, elapsed float64) i
 	if len(keys) > 0 {
 		parts := []string{}
 		for _, k := range keys {
-			parts = append(parts, fmt.Sprintf("%s=%d", k, r.counts[k]))
+			if k == "红·行号越界" {
+				parts = append(parts, fmt.Sprintf("%s=%d［面=docs/**.md 文档语料］", k, r.counts[k]))
+			} else {
+				parts = append(parts, fmt.Sprintf("%s=%d", k, r.counts[k]))
+			}
 		}
 		fmt.Fprintf(w, "  计数：%s\n", strings.Join(parts, " · "))
 	}
@@ -2227,6 +2301,35 @@ func cdfPrintResult(w io.Writer, r *cdfResult, args *cdfArgs, elapsed float64) i
 		fmt.Fprintf(w, "  ⚠ …还有 %d 条黄（歧义/大小写，只入清单）\n", len(yel)-ylim)
 	}
 	return rc
+}
+
+// cdfEmitListItems —— 逐条目机器面（缺口 GAP-20260926-178 · want `zerg docfreshness-no-machine-face`）。
+// TSV：表头 gate<tab>file<tab>line<tab>target<tab>kind<tab>domain<tab>detail 一行 + 逐条一行
+// （确定性排序）。与人读面**同源**（都读 r.findings），✗ 不另造一份。返回条目数。
+func cdfEmitListItems(w io.Writer, results []cdfResPair) int {
+	fmt.Fprintf(w, "gate	file	line	target	kind	domain	detail\n")
+	rows := [][7]string{}
+	for _, rp := range results {
+		for _, f := range rp.r.findings {
+			rows = append(rows, [7]string{rp.g, f.file, strconv.Itoa(f.line), f.target, f.kind, f.domain, f.detail})
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		for k := 0; k < 7; k++ {
+			if rows[i][k] != rows[j][k] {
+				return rows[i][k] < rows[j][k]
+			}
+		}
+		return false
+	})
+	for _, row := range rows {
+		cols := make([]string, 7)
+		for k, x := range row {
+			cols[k] = strings.ReplaceAll(strings.ReplaceAll(x, "	", " "), "\n", " ")
+		}
+		fmt.Fprintf(w, "%s\n", strings.Join(cols, "	"))
+	}
+	return len(rows)
 }
 
 // ══════════════════════════ 第二部分：sha1 / 名单 / 自检 / 入口 ══════════════════════════
@@ -2373,6 +2476,18 @@ func cdfCmdListRules(w io.Writer, cfg map[string]any, t *cdfTree, args *cdfArgs)
 		fmt.Fprintf(w, "  · [%s] %s  ↦ 目标 %s\n      理由：%s  · 登记日：%s\n",
 			cdfAnyStr(e, "gate", "*"), cdfAnyStr(e, "file_glob", "*"), cdfPyRepr(cdfAnyStr(e, "target", "")),
 			cdfAnyStr(e, "reason", ""), cdfAnyStr(e, "date", ""))
+	}
+	if t != nil && dcmdAbs(t.repo) == dcmdAbs(t.mainRepo) {
+		dead := cdfAllowlistDeadEntries(cfg, t)
+		suffix := ""
+		if len(dead) > 0 {
+			ids := []string{}
+			for _, d := range dead {
+				ids = append(ids, fmt.Sprintf("allowlist[%d]", d.idx))
+			}
+			suffix = "  ← " + strings.Join(ids, "、")
+		}
+		fmt.Fprintf(w, "  · 登记过期（dead entry · 缺口 GAP-20260926-136）：%d 条%s\n", len(dead), suffix)
 	}
 	fmt.Fprintf(w, "\n【拒绝域（明确判不了 / 不判的）】\n")
 	for _, line := range cdfStrList(cfg, "refuse_domain") {
@@ -2773,6 +2888,37 @@ func cdfCmdSelfTest(w io.Writer, args *cdfArgs) int {
 	}
 	check("负控：两个根都找不到的脚本 ⇒ 仍报「缺脚本」", hasMissScript, fmt.Sprintf("%v", res2b.counts))
 
+	// ---------- 豁免表「登记过期」（缺口 GAP-20260926-136）----------
+	fmt.Fprintf(w, "[豁免表] 登记过期（dead entry）自检\n")
+	ral := filepath.Join(tmp, "allowdead")
+	cdfMkroot(map[string]string{"docs/a.md": "见 `字不丢`。\n"}, ral)
+	cal := cdfBaseCfg(ral)
+	cal["allowlist"] = []any{
+		map[string]any{"gate": "d1", "file_glob": "docs/nope.md", "target": "x", "reason": "r", "date": "2026-01-01"},
+		map[string]any{"gate": "d2", "file_glob": "docs/a.md", "target": "core/none.py:1", "reason": "r", "date": "2026-01-01"},
+		map[string]any{"gate": "d1", "file_glob": "docs/a.md", "target": "字不丢", "reason": "r", "date": "2026-01-01"},
+	}
+	deadSave := cdfAllowlistDeadEntries(cal, cdfNewTree(ral, cal, "main", false, false, ""))
+	deadWhys := []string{}
+	for _, d := range deadSave {
+		deadWhys = append(deadWhys, d.why)
+	}
+	deadIdxOK := len(deadSave) == 2 && deadSave[0].idx == 0 && deadSave[1].idx == 1
+	check("登记过期·宿主不在盘 + 键出现 0 次 ⇒ 恰报 2 条（活条目不误报）", deadIdxOK, fmt.Sprintf("%v", deadWhys))
+
+	// ---------- 机器面 --list-items（缺口 GAP-20260926-178）----------
+	fmt.Fprintf(w, "[机器面] --list-items（逐条 TSV）\n")
+	rli := filepath.Join(tmp, "listitems")
+	cdfMkroot(map[string]string{"docs/a.md": "见 `core/x.py:99` 与 `core/nope.py:1`。\n", "core/x.py": "l1\nl2\nl3\n"}, rli)
+	rres := cdfGateD2(cdfNewTree(rli, cdfBaseCfg(rli), "main", false, false, ""), args)
+	var liBuf strings.Builder
+	liN := cdfEmitListItems(&liBuf, []cdfResPair{{g: "d2", r: rres, el: 0.0}})
+	liLines := strings.Split(strings.TrimSuffix(liBuf.String(), "\n"), "\n")
+	liOK := len(liLines) > 0 && liLines[0] == "gate	file	line	target	kind	domain	detail" &&
+		len(liLines) == 1+len(rres.findings) && liN == len(rres.findings)
+	check("机器面·表头逐字 + 行数 == 1 + findings 数（与人读面同源）", liOK,
+		fmt.Sprintf("(%v, %d, %d)", liLines, liN, len(rres.findings)))
+
 	fmt.Fprintf(w, "\nself-test：%d 条通过 / %d 条失败\n", nOK, len(fails))
 	if len(fails) > 0 {
 		for _, f := range fails {
@@ -2819,15 +2965,15 @@ func cdfRefuseJSON(argv []string, stderr io.Writer) (int, bool) {
 	if len(hits) == 0 {
 		return 0, false
 	}
-	fmt.Fprintf(stderr, "⛔ 本门无机器读面：%s 在本门**未实现**（缺口 Q-176）\n", strings.Join(hits, " · "))
+	fmt.Fprintf(stderr, "⛔ 本门无 `--json` 读面：%s 在本门**未实现**（缺口 Q-176）\n", strings.Join(hits, " · "))
 	if len(cdfJSONFields) == 0 {
-		fmt.Fprintf(stderr, "   字段表：%s\n", "无（本门只出人读面）")
+		fmt.Fprintf(stderr, "   字段表：%s（本门 `--json` 无字段面）· 逐条目机器面走 `--list-items`（TSV · 缺口 GAP-20260926-178）\n", "无")
 	} else {
 		q := []string{}
 		for _, f := range cdfJSONFields {
 			q = append(q, "`"+f+"`")
 		}
-		fmt.Fprintf(stderr, "   字段表：%s\n", strings.Join(q, " · "))
+		fmt.Fprintf(stderr, "   字段表：%s（本门 `--json` 无字段面）· 逐条目机器面走 `--list-items`（TSV · 缺口 GAP-20260926-178）\n", strings.Join(q, " · "))
 	}
 	fmt.Fprintf(stderr, "⇒ 用法错（rc=2）：**机器面缺 ≠ 零命中** —— 两态不许同形\n")
 	return cdfRCBlocked, true
@@ -2838,7 +2984,7 @@ const cdfUsageLine = `usage: check-doc-freshness.py [-h] [--repo REPO] [--config
                               [--strict-all] [--slug-profile {github,docv1.2}]
                               [--no-whitelist] [--report REPORT]
                               [--print-limit PRINT_LIMIT] [--list-rules]
-                              [--self-test] [--verbose]
+                              [--list-items] [--self-test] [--verbose]
                               [gates ...]`
 
 func cdfArgErr(stderr io.Writer, msg string) {
@@ -2956,6 +3102,8 @@ func cdfParseArgs(argv []string, stdout, stderr io.Writer) (*cdfArgs, int, bool)
 			a.noWhitelist = true
 		case "--list-rules":
 			a.listRules = true
+		case "--list-items":
+			a.listItems = true
 		case "--self-test":
 			a.selfTest = true
 		case "--verbose":
@@ -2999,7 +3147,7 @@ const cdfHelpText = `usage: check-doc-freshness.py [-h] [--repo REPO] [--config 
                               [--strict-all] [--slug-profile {github,docv1.2}]
                               [--no-whitelist] [--report REPORT]
                               [--print-limit PRINT_LIMIT] [--list-rules]
-                              [--self-test] [--verbose]
+                              [--list-items] [--self-test] [--verbose]
                               [gates ...]
 
 W3 四条新鲜度门禁 D1–D4（只读 · 只报不改）
@@ -3022,6 +3170,8 @@ optional arguments:
   --report REPORT       结果 JSON 落盘路径（建议 /tmp/…，勿写仓内）
   --print-limit PRINT_LIMIT
   --list-rules
+  --list-items          机器面：逐条打印条目（TSV · 表头 gate<tab>file<tab>line<tab>target<
+                        tab>kind<tab>domain<tab>detail）
   --self-test
   --verbose
 `
@@ -3111,11 +3261,35 @@ func checkDocFreshnessGateMain(stdout, stderr io.Writer, argv []string) int {
 
 	t0 := time.Now()
 	tree := cdfBuildTree(args, cfg)
-	fmt.Fprintf(stdout, "语料 %d 篇 md · 解析域 %d 文件 · 基准集 %d 根 · scope=%s · 索引 %.0fms\n",
-		len(tree.corpus), len(tree.files), len(cdfStrList(tree.cfg, "base_roots")), args.scope, tree.tBuild*1000)
-	fmt.Fprintf(stdout, "（只读；重建产物一律落 $TMPDIR=%s）\n", cdfTempDir())
+	if !args.listItems {
+		fmt.Fprintf(stdout, "语料 %d 篇 md · 解析域 %d 文件 · 基准集 %d 根 · scope=%s · 索引 %.0fms\n",
+			len(tree.corpus), len(tree.files), len(cdfStrList(tree.cfg, "base_roots")), args.scope, tree.tBuild*1000)
+		fmt.Fprintf(stdout, "（只读；重建产物一律落 $TMPDIR=%s）\n", cdfTempDir())
+	}
+	// ── 豁免表「登记过期」告警（缺口 GAP-20260926-136）：死条目**不许静默** ────────────
+	//   ★ 只在**主树**面判：allowlist 的 file_glob 是**仓内相对路径**，换根档（devdocs）下
+	//   那批条目「宿主不在盘」是**预期**（它们登记的是主仓的件）⇒ 换根档不判，免得假报。
+	onMainTree := dcmdAbs(tree.repo) == dcmdAbs(tree.mainRepo)
+	dead := []cdfDeadEntry{}
+	if onMainTree {
+		dead = cdfAllowlistDeadEntries(cfg, tree)
+	}
+	if len(dead) > 0 {
+		wout := stdout
+		if args.listItems {
+			wout = stderr
+		}
+		fmt.Fprintf(wout, "⚠ 豁免表登记过期（dead entry）= %d 条 —— 死条目留着 = 假覆盖，请删/改述（缺口 GAP-20260926-136）：\n", len(dead))
+		for _, d := range dead {
+			fmt.Fprintf(wout, "  · allowlist[%d] [%s] %s ↦ %s：%s\n",
+				d.idx, cdfAnyStr(d.e, "gate", "*"), cdfAnyStr(d.e, "file_glob", "*"),
+				cdfPyRepr(cdfAnyStr(d.e, "target", "")), d.why)
+		}
+	}
 	results := []cdfResPair{}
-	fmt.Fprintf(stdout, "\n")
+	if !args.listItems {
+		fmt.Fprintf(stdout, "\n")
+	}
 	for _, g := range gates {
 		s := time.Now()
 		var r *cdfResult
@@ -3131,12 +3305,21 @@ func checkDocFreshnessGateMain(stdout, stderr io.Writer, argv []string) int {
 		}
 		el := time.Since(s).Seconds()
 		results = append(results, cdfResPair{g, r, el})
-		cdfPrintResult(stdout, r, args, el)
-		fmt.Fprintf(stdout, "\n")
+		if !args.listItems {
+			cdfPrintResult(stdout, r, args, el)
+			fmt.Fprintf(stdout, "\n")
+		}
 	}
 	elapsed := time.Since(t0).Seconds()
+	if args.listItems {
+		cdfEmitListItems(stdout, results)
+	}
 	if args.report != "" {
-		_ = cdfWriteReport2(args.report, results, args, elapsed, tree)
+		// GAP-20261001-50：真搬 py `write_report` ⇒ **真落盘**（改前恒 return nil ⇒ 静默不落盘）。
+		// 失败与 py 同口径：**不**打印「总耗时」、退码 1（py 侧是未捕获异常 ⇒ 退出码 1）。
+		if rc := cdfWriteReport2(args.report, results, args, elapsed, tree, stdout, stderr); rc != cdfRCOK {
+			return rc
+		}
 	}
 	rcFinal := cdfRCOK
 	anyFail, anyBlocked := false, false
@@ -3152,7 +3335,9 @@ func checkDocFreshnessGateMain(stdout, stderr io.Writer, argv []string) int {
 	} else if anyBlocked {
 		rcFinal = cdfRCBlocked
 	}
-	fmt.Fprintf(stdout, "总耗时 %.2fs · 合计 rc=%d %s（口径：1 优先于 2；BLOCKED 会阻塞提交但不许当绿）\n", elapsed, rcFinal, cdfRCName[rcFinal])
+	if !args.listItems {
+		fmt.Fprintf(stdout, "总耗时 %.2fs · 合计 rc=%d %s（口径：1 优先于 2；BLOCKED 会阻塞提交但不许当绿）\n", elapsed, rcFinal, cdfRCName[rcFinal])
+	}
 	return rcFinal
 }
 
@@ -3174,15 +3359,185 @@ func cdfBuildTree(args *cdfArgs, cfg map[string]any) *cdfTree {
 	return t
 }
 
-// cdfWriteReport2 —— 与 cdfWriteReport 同形（用具体类型）。
+// cdfResPair —— 一门的结果 + 耗时（报告与逐条机器面共用）。
 type cdfResPair struct {
 	g  string
 	r  *cdfResult
 	el float64
 }
 
-func cdfWriteReport2(path string, results []cdfResPair, args *cdfArgs, elapsedTotal float64, t *cdfTree) error {
-	return nil
+// cdfWriteReport2 —— 真搬 py `write_report`（缺口 GAP-20261001-50：`--report` 落盘 JSON 结果档；
+// 改前恒 `return nil` ⇒ 静默不落盘、不打「报告落盘」行）。
+//
+// 与 py 同形（逐字节口径见件头未覆盖面 ③）：
+//   - 缩进恒 1 空格（`json.dump(..., ensure_ascii=False, indent=1)`）· 保非 ASCII · 无尾随换行；
+//   - 键序照 py **dict 插入序**：顶层 `script/version/generated_at/repo/scope/elapsed_ms_total/index/gates` ·
+//     `index` 三键 · 每门 `name/rc/rc_name/elapsed_ms/counts/errors/findings` · `counts` = **首次出现序**；
+//   - findings 键序 `file/line/target/kind/detail/domain`（≠ Go struct 声明序 ⇒ 手排）；
+//   - 数字按 py `round(x, 1)`（恒 1 位小数，`0.0` 不写成 `0`）；字符串转义照 py（`"`/`\`/控制符，非 ASCII 原样）。
+//
+// 成功：打印 py 原文「报告落盘：<路径>（<字节> 字节）」（前置空行）⇒ 退 0。
+// 失败（目录不存在 / 无权限）：与 py **同口径** —— **不**打印「总耗时」· 退 1
+//
+//	（py 侧是 `open()` 未捕获异常 ⇒ 退出码 1；py 打 Python traceback，本件打 Go 档自定错误行）。
+func cdfWriteReport2(path string, results []cdfResPair, args *cdfArgs, elapsedTotal float64, t *cdfTree, stdout, stderr io.Writer) int {
+	var b strings.Builder
+	b.WriteString("{\n")
+	fmt.Fprintf(&b, " \"script\": %s,\n", cdfJSONStr(cdfProg))
+	fmt.Fprintf(&b, " \"version\": %s,\n", cdfJSONStr(cdfVersion))
+	fmt.Fprintf(&b, " \"generated_at\": %s,\n", cdfJSONStr(cdfNowISO()))
+	fmt.Fprintf(&b, " \"repo\": %s,\n", cdfJSONStr(t.repo))
+	fmt.Fprintf(&b, " \"scope\": %s,\n", cdfJSONStr(args.scope))
+	fmt.Fprintf(&b, " \"elapsed_ms_total\": %s,\n", cdfPyRound1(elapsedTotal*1000))
+	b.WriteString(" \"index\": {\n")
+	fmt.Fprintf(&b, "  \"corpus_md\": %d,\n", len(t.corpus))
+	fmt.Fprintf(&b, "  \"resolved_files\": %d,\n", len(t.files))
+	fmt.Fprintf(&b, "  \"index_build_ms\": %s\n", cdfPyRound1(t.tBuild*1000))
+	b.WriteString(" },\n")
+	b.WriteString(" \"gates\": {\n")
+	for gi, rp := range results {
+		rc := rp.r.rc()
+		fmt.Fprintf(&b, "  %s: {\n", cdfJSONStr(rp.g))
+		fmt.Fprintf(&b, "   \"name\": %s,\n", cdfJSONStr(cdfGates[rp.g].name))
+		fmt.Fprintf(&b, "   \"rc\": %d,\n", rc)
+		fmt.Fprintf(&b, "   \"rc_name\": %s,\n", cdfJSONStr(cdfRCName[rc]))
+		fmt.Fprintf(&b, "   \"elapsed_ms\": %s,\n", cdfPyRound1(rp.el*1000))
+		cdfWriteJSONCounts(&b, rp.r)
+		cdfWriteJSONStrArray(&b, "errors", rp.r.errors)
+		b.WriteString(",\n")
+		cdfWriteJSONFindings(&b, rp.r.findings)
+		b.WriteString("\n")
+		if gi == len(results)-1 {
+			b.WriteString("  }\n")
+		} else {
+			b.WriteString("  },\n")
+		}
+	}
+	b.WriteString(" }\n}")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		fmt.Fprintf(stderr, "⛔ 报告落盘失败：%s（%v）\n", path, err)
+		return cdfRCFail
+	}
+	if fi, err := os.Stat(path); err == nil {
+		fmt.Fprintf(stdout, "\n报告落盘：%s（%d 字节）\n", path, fi.Size())
+	} else {
+		fmt.Fprintf(stdout, "\n报告落盘：%s\n", path)
+	}
+	return cdfRCOK
+}
+
+// cdfNowISO —— py `datetime.datetime.now().astimezone().isoformat(timespec="seconds")` 同形（本机偏移）。
+func cdfNowISO() string { return time.Now().Format("2006-01-02T15:04:05-07:00") }
+
+// cdfPyRound1 —— py `round(x, 1)` 的**同形文本**：恒 1 位小数（`0.0` 不写 `0`）。
+func cdfPyRound1(v float64) string {
+	return strconv.FormatFloat(math.Round(v*10)/10, 'f', 1, 64)
+}
+
+// cdfJSONStr —— py `json.dumps(s, ensure_ascii=False)` 的**字符串转义**同形：
+// 只转 `"` `\` 与 < 0x20 控制符（`\n\r	\b\f` 短路 + 其余 `\u00xx` 小写）；非 ASCII / `/` / `<>&` 一律原样。
+func cdfJSONStr(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString("\\\"")
+		case '\\':
+			b.WriteString("\\\\")
+		case '\n':
+			b.WriteString("\\n")
+		case '\r':
+			b.WriteString("\\r")
+		case '	':
+			b.WriteString("\\t")
+		case '\b':
+			b.WriteString("\\b")
+		case '\f':
+			b.WriteString("\\f")
+		default:
+			if r < 0x20 {
+				fmt.Fprintf(&b, "\\u%04x", r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// cdfWriteJSONCounts —— `   "counts": {...},`（键序 = 首次出现序；空 ⇒ `{}`）。
+func cdfWriteJSONCounts(b *strings.Builder, r *cdfResult) {
+	keys := append([]string{}, r.order...)
+	if len(keys) != len(r.counts) { // 兜底：order 未覆盖的键（理论不发生）按字典序补尾，保证不丢键
+		seen := map[string]bool{}
+		for _, k := range keys {
+			seen[k] = true
+		}
+		extra := []string{}
+		for k := range r.counts {
+			if !seen[k] {
+				extra = append(extra, k)
+			}
+		}
+		sort.Strings(extra)
+		keys = append(keys, extra...)
+	}
+	if len(keys) == 0 {
+		b.WriteString("   \"counts\": {},\n")
+		return
+	}
+	b.WriteString("   \"counts\": {\n")
+	for j, k := range keys {
+		sep := ","
+		if j == len(keys)-1 {
+			sep = ""
+		}
+		fmt.Fprintf(b, "    %s: %d%s\n", cdfJSONStr(k), r.counts[k], sep)
+	}
+	b.WriteString("   },\n")
+}
+
+// cdfWriteJSONStrArray —— `   "<key>": ["…"]`（空 ⇒ `[]`；**不**含尾随换行，由调用方补 `,`）。
+func cdfWriteJSONStrArray(b *strings.Builder, key string, items []string) {
+	if len(items) == 0 {
+		fmt.Fprintf(b, "   %s: []", cdfJSONStr(key))
+		return
+	}
+	fmt.Fprintf(b, "   %s: [\n", cdfJSONStr(key))
+	for j, s := range items {
+		sep := ","
+		if j == len(items)-1 {
+			sep = ""
+		}
+		fmt.Fprintf(b, "    %s%s\n", cdfJSONStr(s), sep)
+	}
+	b.WriteString("   ]")
+}
+
+// cdfWriteJSONFindings —— `   "findings": [...]`（空 ⇒ `[]`；键序照 py：file/line/target/kind/detail/domain）。
+func cdfWriteJSONFindings(b *strings.Builder, fs []cdfFinding) {
+	if len(fs) == 0 {
+		b.WriteString("   \"findings\": []")
+		return
+	}
+	b.WriteString("   \"findings\": [\n")
+	for j, f := range fs {
+		b.WriteString("    {\n")
+		fmt.Fprintf(b, "     \"file\": %s,\n", cdfJSONStr(f.file))
+		fmt.Fprintf(b, "     \"line\": %d,\n", f.line)
+		fmt.Fprintf(b, "     \"target\": %s,\n", cdfJSONStr(f.target))
+		fmt.Fprintf(b, "     \"kind\": %s,\n", cdfJSONStr(f.kind))
+		fmt.Fprintf(b, "     \"detail\": %s,\n", cdfJSONStr(f.detail))
+		fmt.Fprintf(b, "     \"domain\": %s\n", cdfJSONStr(f.domain))
+		if j == len(fs)-1 {
+			b.WriteString("    }\n")
+		} else {
+			b.WriteString("    },\n")
+		}
+	}
+	b.WriteString("   ]")
 }
 
 var _ = bufio.NewReader
