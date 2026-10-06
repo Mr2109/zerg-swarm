@@ -1115,3 +1115,25 @@ func eggCocoonNames() []string {
 	}
 	return names
 }
+
+// ---- A12 归名（决-13）：`cocoon pack|info|verify|xfer` —— 卵的单文件封装（`*.egg`）工具 ----------------
+//
+// 真搬体 = `zerg_egg.go`（`scripts/edge-node/zerg-egg.py` 的 Go 真搬 · DEV-1798）；本函数只做**入口 ＋ 转发**：
+// 把族动作名（`inv.path[1]` = pack/info/verify/xfer）＋ 其后的一切（位置参数与旗标逐字）原样交给
+// `zergEggGateMain`，连退码也不改写（M2 真搬体与 py 原身逐字对齐）。✗ 不重写 `zerg_egg.go` 里任何一段。
+//
+// ★ 为什么归「虫茧」不归「虫卵」（决-13）：`egg` 已被【虫卵（沙箱/容器）投影面】占用
+// （`egg ls/show/run/stop`）；虫茧本就是「可装卸的箱子」，单文件包是它的载体。
+//
+// 递不到真搬体不算一档（真搬体在进程内、必到）⇒ 本函数**不新增退码面**（族动作名由 `inv.path` 决定）。
+func cmdCocoonEgg(inv *invocation, stdout, stderr io.Writer) int {
+	sub := ""
+	if len(inv.path) > 1 {
+		sub = inv.path[1]
+	}
+	tail := []string{}
+	if len(inv.orig) > len(inv.path) {
+		tail = inv.orig[len(inv.path):]
+	}
+	return zergEggGateMain(stdout, stderr, append([]string{sub}, tail...))
+}

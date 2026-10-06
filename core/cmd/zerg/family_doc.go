@@ -404,3 +404,33 @@ func appendDocMetaAudit(path string, line docMetaAuditLine) error {
 	}
 	return f.Sync()
 }
+
+// ── S7 · 5 键归口（doc 族扩容）：三件独立工具的命令面**转发壳**（= A18 / gen-tools-md / index-gen）──────
+//
+// 归口件：`~/.zerg/state/②类-5键-CLI工具子命令归口-20261007.md`。三件的底层唯一实现 = 各自 Go 真搬体
+// （`kb_docs_sync.go` / `gen_tools_md.go` / `doc_index_gen.go`）；本处只做**入口 ＋ 转发**：把该动作之后的一切
+// （位置参数与旗标逐字）原样交给对应 `*GateMain`，连退码也不改写（M2 真搬体与 py 原身逐字对齐）。
+// ✗ 不重写真搬体里任何一段。体例照 A12 的 `cmdCocoonEgg`（只转发、不翻译）。
+
+// docToolTail —— 取命令名之后的一切（= py `sys.argv[1:]` 的形状 · argv 不含程序名）。
+func docToolTail(inv *invocation) []string {
+	if len(inv.orig) > len(inv.path) {
+		return inv.orig[len(inv.path):]
+	}
+	return nil
+}
+
+// cmdDocKbSync —— `zerg doc kb-sync` 转发壳（= A18）。
+func cmdDocKbSync(inv *invocation, stdout, stderr io.Writer) int {
+	return kbDocsSyncGateMain(stdout, stderr, docToolTail(inv))
+}
+
+// cmdDocGenToolsMd —— `zerg doc gen-tools-md` 转发壳。
+func cmdDocGenToolsMd(inv *invocation, stdout, stderr io.Writer) int {
+	return genToolsMdGateMain(stdout, stderr, docToolTail(inv))
+}
+
+// cmdDocIndexGen —— `zerg doc index-gen` 转发壳。
+func cmdDocIndexGen(inv *invocation, stdout, stderr io.Writer) int {
+	return docIndexGenGateMain(stdout, stderr, docToolTail(inv))
+}

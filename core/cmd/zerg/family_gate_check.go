@@ -583,11 +583,46 @@ var gateCheckSuiteReadRE = regexp.MustCompile(`--list\b|--self-test\b|--selftest
 // gateCheckSuiteStepCmdRE —— 「以 shell 起 `-c "<串>"` 真跑一条命令」的形态（整套门**执行器**的特征）。
 var gateCheckSuiteStepCmdRE = regexp.MustCompile(`(?:^|[\s;&|(])(?:bash|sh|zsh|dash)\s+-c\b`)
 
+// gateCheckStripQuoted —— 去掉行内**被引号包住的区间**（单/双引号 · 认反斜杠转义 · 逐字节扫），只留
+// 「命令骨架」文本。判「真起 shell 跑一条命令」时用：`bash|sh|zsh|dash` 这个**调用关键字**与它的 `-c`
+// 必然落在引号**外**（引号里的是它要跑的**参数**）；⇒ 凡 `bash -c` 出现在引号**内**，那它只是**数据 /
+// 人读说明串**（典型：`print("… sh -c '<目标>' …")` 这类文案），不是真调用 ⇒ 不算。
+func gateCheckStripQuoted(line string) string {
+	var b strings.Builder
+	var q byte // 0 = 不在引号内；否则 = 当前引号字符
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if c == '\\' && i+1 < len(line) {
+			if q == 0 {
+				b.WriteByte(c)
+			}
+			i++
+			if q == 0 {
+				b.WriteByte(line[i])
+			}
+			continue
+		}
+		if q == 0 {
+			if c == '"' || c == '\'' {
+				q = c
+				continue
+			}
+			b.WriteByte(c)
+			continue
+		}
+		if c == q {
+			q = 0
+		}
+	}
+	return b.String()
+}
+
 // gateCheckSuiteClass —— 现读该件是否属「**跑整套门类**」（会真跑成套的 gate 步）。**属性判 · ✗ 不靠名**：
 //
 //	① **名册执行**：该件现读名册目录（gateCheckSuiteRosterREs），且**命令位**起 shell/解释器去跑一个由
 //	   变量解析的执行体（gateCheckSuiteVarBodyRE），且非自指、非同行只读档 —— 即「遍历名册 · 逐个真跑」；
-//	② **步命令执行**：以 `bash -c "<串>"` 真跑一条命令（gateCheckSuiteStepCmdRE）—— 整套门的**执行器**本体。
+//	② **步命令执行**：以 `bash -c "<串>"` 真跑一条命令（gateCheckSuiteStepCmdRE · **只在引号外**判：先经
+//	   gateCheckStripQuoted 剥掉引号区间 ⇒ 人读说明串里的 `sh -c` 不算）—— 整套门的**执行器**本体。
 //
 // 与「只读读步骤表」判据的分界：后者**把步骤表当文本读**（open + 解析 add_step），从不起命令位的解释器
 // 去跑名册件 ⇒ 两条属性都不命中（**误伤面 = 0**）。命中任一 ⇒ 跑它会真跑整套门 ⇒ 本壳据此给它与写工具
@@ -621,7 +656,7 @@ func gateCheckSuiteClass(absPath string) (bool, string) {
 			continue
 		}
 		readMode := gateCheckSuiteReadRE.MatchString(line)
-		if !stepCmd && !readMode && gateCheckSuiteStepCmdRE.MatchString(line) {
+		if !stepCmd && !readMode && gateCheckSuiteStepCmdRE.MatchString(gateCheckStripQuoted(line)) {
 			stepCmd = true
 		}
 		if !rosterSig {

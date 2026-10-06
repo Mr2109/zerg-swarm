@@ -120,7 +120,7 @@ The full configuration reference is [docs/CONFIGURATION.en.md](docs/CONFIGURATIO
 | Controller / agent | Go, version **pinned by `core/go.mod`** (to build). No runtime dependencies (SQLite via a pure-Go driver) |
 | Desktop UI | Rust stable (to build); runs on macOS 14+ / Linux |
 | Model backend | [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-server` (recommended) or any OpenAI-compatible engine |
-| Web search (optional) | Your own [searxng](https://github.com/searxng/searxng) (AGPL, **not distributed with this repo**) — see `scripts/install-searxng.sh` |
+| Web search (optional) | Your own [searxng](https://github.com/searxng/searxng) (AGPL, **not distributed with this repo**) |
 | Command-output compression (optional) | [rtk](https://github.com/rtk-ai/rtk) (Apache-2.0) — **degrades gracefully if missing**, or disable with `ZERG_RTK=0` |
 
 ## Documentation

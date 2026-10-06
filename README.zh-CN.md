@@ -114,7 +114,7 @@ zerg-core update --check   # 先问一句（6 小时缓存，无副作用）
 | 主控 / 子端 | Go，版本由 **`core/go.mod` 钉住**（构建）。运行时无额外依赖（SQLite 走纯 Go 驱动） |
 | 桌面 UI | Rust stable（构建）；运行支持 macOS 14+ / Linux |
 | 模型后端 | [llama.cpp](https://github.com/ggml-org/llama.cpp) 的 `llama-server`（推荐）或其他 OpenAI 兼容引擎 |
-| 联网搜索（可选） | 自建 [searxng](https://github.com/searxng/searxng)（AGPL，**不随本仓库分发**）——见 `scripts/install-searxng.sh` |
+| 联网搜索（可选） | 自建 [searxng](https://github.com/searxng/searxng)（AGPL，**不随本仓库分发**） |
 | 命令输出压缩（可选） | [rtk](https://github.com/rtk-ai/rtk)（Apache-2.0）——**缺装自动降级**，也可 `ZERG_RTK=0` 关闭 |
 
 ## 文档

@@ -21,7 +21,7 @@
 #      ★ 已登记 `kind=ghost` 的件**不算幽灵**（那是人签设计：现值有·声明无的**已登记**幽灵）⇒
 #        只有「**未登记**幽灵」判红；R2 必须把这两态逐条分开（点名时各自标注）。
 #   R3 每条 launchd 声明的「声明件」（`~/…` 形态）在盘上真存在 ⇒ 否则 rc=1。
-#   R4 **现值进程逐条有落点**：ps 里每个自研件进程（命令行含 `bin/zerg-` 或 `bin/cocoon-`）
+#   R4 **现值进程逐条有落点**：ps 里每个自研件/外置件进程（命令行含 `bin/zerg-` 或 `bin/cocoon-` 或 `searx.webapp`）
 #      都必须被某条「进程特征」覆盖（= 在声明面可查），或本身就是一条已登记的 ghost（= 进 reap 候选）；
 #      覆盖不上的 ⇒ rc=1（**未登记幽灵** —— 正是已红第 3 条的形态）。
 #      ★ 2026-10-02（`GAP-20260927-100` R4）：本规则分两侧 —— **R4a 作业面驱动**（以 `launchctl list`
@@ -34,7 +34,7 @@
 #
 # 用法：
 #   python3 scripts/gates/check-service-declaration.py            # 真目标（本机现值）
-#   python3 scripts/gates/check-service-declaration.py --self-test # 成对负控（18 格：正控 6 + 负控 10 + 不给结论 2 · 含 1 格真命令行退码）
+#   python3 scripts/gates/check-service-declaration.py --self-test # 成对负控（20 格：正控 7 + 负控 11 + 不给结论 2 · 含 1 格真命令行退码）
 #
 # 取证夹具（自检用；也便于在别的机器上复跑）：
 #   ZERG_SVCDECL_DECL     声明树路径（默认 <仓根>/deploy/服务声明.tsv）
@@ -50,8 +50,10 @@ import tempfile
 
 TOOL = 'check-service-declaration'
 KINDS = ('launchd', 'ghost')
-# 自研件的进程特征前缀（仓根相对）——两种都算「本仓的件」
-PROC_HINTS = ('bin/zerg-', 'bin/cocoon-')
+# 自研件 / 外置件的进程特征（仓根相对 或 外置件命令行锚）——两类都算「本仓的件」
+# ★ 2026-10-07（A2 收尾）：+ `searx.webapp` —— 外置 searxng（launchd `com.zerg.searxng`）进程
+#   命令行 `… -m searx.webapp` 的锚；并入后 R4b **覆盖**它（未登记 ⇒ 红）。与 Go 真搬件同批。
+PROC_HINTS = ('bin/zerg-', 'bin/cocoon-', 'searx.webapp')
 # ★ 标签命名空间闭集（`L1` 口径 · 唯一一处）：为什么是**显式闭集**而不是 `'zerg' in label` 这类子串猜 ——
 #   ① 子串猜会吞外来件（`com.example.zerg-probe` 被读成「本仓的件」⇒ 点到错人）；
 #   ② 子串猜判不出「排除」（闭集判得出：闭集外的行属**未覆盖形态**，逐条打印而**不进集合**）；
@@ -390,6 +392,8 @@ def self_test():
     cases.append(('正控⑯ 含字面 shell 包装（/bin/sh -c exec …）⇒ 词界锚仍命中 ⇒ rc=0', 0, 'shell_wrap'))
     cases.append(('正控⑰ 真命令行退码：子进程跑本件·好件夹具 ⇒ 进程 rc=0', 0, 'cli'))
     cases.append(('正控⑱ 非本层行（`layer=node:edge-node`：声明无同名标签、plist 也不在盘）⇒ **不由本门判** ⇒ rc=0（**层限** · GAP-20260927-168）', 0, 'offlayer'))
+    cases.append(('正控⑲ searxng 外置进程（`searx.webapp`）有落点 ⇒ rc=0（R4b 覆盖 · hint 的牙）', 0, 'searxng_ok'))
+    cases.append(('负控⑳ searxng 进程在 ps 里但声明面无落点 ⇒ rc=1（R4b 未登记幽灵 · 去掉该 hint 即看不见）', 1, 'searxng_leak'))
 
     ok = True
     for name, want, mode in cases:
@@ -442,6 +446,16 @@ def self_test():
                                           '/home/<user>/zerg/bin/zerg-agentd\tbin/zerg-agentd\t节点(edge-node)\t-\tnode:edge-node\n')
             elif mode == 'empty_ps':
                 kw['ps'] = '    1     0  00:00 /sbin/launchd\n'
+            elif mode == 'searxng_ok':
+                # 外置 searxng：ps 命令行 `… -m searx.webapp` 被声明面 proc=searx.webapp 覆盖 ⇒ R4b 有落点 ⇒ 全绿
+                kw['decl'] = GOOD_DECL + ('launchd\tcom.zerg.searxng\t~/Library/LaunchAgents/com.zerg.searxng.plist\t'
+                                          '~/zerg-searxng/src/.venv/bin/python -m searx.webapp\tsearx.webapp\t主控\t-\thost\n')
+                kw['ps'] = GOOD_PS + '  59975     1       11:25 ~/zerg-searxng/src/.venv/bin/python -m searx.webapp\n'
+                kw['lc'] = GOOD_LC + '59975\t0\tcom.zerg.searxng\n'
+                kw['plists'] = ('com.zerg.core.plist', 'com.zerg.agent-Mr2109.plist', 'com.zerg.searxng.plist')
+            elif mode == 'searxng_leak':
+                # 现值有 searxng 进程、声明面无落点 ⇒ R4b 必红；去掉 `searx.webapp` hint ⇒ 该行不可见 ⇒ 假绿（本格的牙）
+                kw['ps'] = GOOD_PS + '  59975     1       11:25 ~/zerg-searxng/src/.venv/bin/python -m searx.webapp\n'
             dp, pp, lp, home = mk(d, **kw)
             if mode == 'no_decl':
                 dp = os.path.join(d, '不存在.tsv')

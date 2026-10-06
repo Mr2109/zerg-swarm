@@ -114,6 +114,11 @@ const crrfProg = "check-replace-rule-fixtures.py"
 const crrfRulesRel = "publish/replace-rules.tsv"
 const crrfWhitelistRel = "publish/whitelist.txt"
 const crrfIsoPrefix = "!夹具"
+
+// crrfExemptMark —— 正向豁免标记（拍板落定-20261006 B2 · 开工单 A-09）：规则说明栏（第 3 格）
+// 带此标记 ⇒ 该规则「历史兜底·有意保留」，正向「该替换的都在」**零命中不判红**（✗ 不删规则；
+// 反向判定不受影响）。与 py `EXEMPT_MARK` 逐字同。
+const crrfExemptMark = "【历史兜底·有意保留】"
 const crrfFixtureSuffix = "_test.go"
 
 // crrfJSONFields —— 「机器面字段表」**唯一真源**（装包封与「不认的名 ⇒ rc=2」两处同读）。
@@ -822,6 +827,9 @@ func crrfCompileRuleBlob(pat string) (*regexp.Regexp, error) {
 func crrfForwardGaps(rules []crrfRule, blob string) []crrfRule {
 	var gaps []crrfRule
 	for _, rule := range rules {
+		if strings.Contains(rule.note, crrfExemptMark) { // 正向豁免：历史兜底·有意保留（拍板落定-20261006 B2）
+			continue
+		}
 		hit := false
 		if rule.isRe {
 			if re, err := crrfCompileRuleBlob(rule.pat); err == nil {
@@ -1485,6 +1493,21 @@ func crrfSelfTest(stdout io.Writer) int {
 		P(fmt.Sprintf("   ✗ 双侧互不顶替：反向 %d/%d · 正向缺侧 %d/%d",
 			len(fixHits), len(fixClean), len(gapNone), len(gapHit)))
 	}
+	// 正向豁免（拍板落定-20261006 B2）：标「历史兜底·有意保留」的零命中规则 ⇒ 不判红；
+	// 去掉标记的同一条 ⇒ 必被点名（哑化豁免 ⇒ 必红）。★ 豁免只作用于正向，不误伤活跃规则。
+	rOn := crrfRule{raw: "（合成）regex:绝不出现的串-zz\t<none>\t测试" + crrfExemptMark, isRe: true,
+		pat: "绝不出现的串-zz", rep: "<none>", note: "测试" + crrfExemptMark}
+	rOff := crrfRule{raw: "（合成）regex:绝不出现的串-zz\t<none>\t测试", isRe: true,
+		pat: "绝不出现的串-zz", rep: "<none>", note: "测试"}
+	gOn := crrfForwardGaps([]crrfRule{rOn}, blob)
+	gOff := crrfForwardGaps([]crrfRule{rOff}, blob)
+	if len(gOn) == 0 && len(gOff) == 1 {
+		ok++
+		P("   ✓ 正向豁免：标「历史兜底·有意保留」的零命中规则**不**判红（有意保留）· 去掉标记 ⇒ 必被点名（哑化豁免 ⇒ 必红）")
+	} else {
+		bad = append(bad, "正向豁免")
+		P(fmt.Sprintf("   ✗ 正向豁免：标记侧缺侧 %d · 未标侧缺侧 %d", len(gOn), len(gOff)))
+	}
 	concl := "全过"
 	if len(bad) > 0 {
 		concl = "**不过**"
@@ -1659,6 +1682,15 @@ func checkReplaceRuleFixturesGateMain(stdout, stderr io.Writer, argv []string) i
 	}
 	fmt.Fprintf(stdout, "   规则面：%s ⇒ **%d 条**规则（%d 条正则 · %d 条字面量%s）\n",
 		relRules, len(rules), nRe, nLit, extraSuffix)
+	nExempt := 0
+	for _, r := range rules {
+		if strings.Contains(r.note, crrfExemptMark) {
+			nExempt++
+		}
+	}
+	if nExempt > 0 {
+		fmt.Fprintf(stdout, "   正向豁免：%d 条规则标「历史兜底·有意保留」⇒ 零命中不判红（拍板落定-20261006 B2）\n", nExempt)
+	}
 	if len(isolated) > 0 {
 		fmt.Fprintf(stdout, "   夹具隔离：%d 条 glob（%s）⇒ 排除 **%d 个** `*_test.go` 出件面\n",
 			len(isolated), strings.Join(isolated, " · "), len(isoFiles))

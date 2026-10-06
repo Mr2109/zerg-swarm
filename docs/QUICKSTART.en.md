@@ -157,7 +157,7 @@ Both are **three-state**: `--dry-run` (zero side effects) · `--confirm=<target>
 | The UI shows "controller offline" | Wrong endpoint (`ZERG_API_BASE`) or wrong token |
 | Agent is online but model loading fails | Wrong weight path / not enough VRAM; check the agent log and the `llama-server` output on that machine |
 | `ls/git/go…` commands report `rtk: command not found` | Legacy issue from older versions, now degrades automatically; you can also disable it explicitly with `ZERG_RTK=0` |
-| `web_search` is unavailable | Requires a self-hosted searxng, see `scripts/install-searxng.sh` (AGPL component, not distributed with the repo) |
+| `web_search` is unavailable | Requires a self-hosted searxng (AGPL component, not distributed with the repo) |
 
 See [FAQ.en.md](FAQ.en.md) for more.
 

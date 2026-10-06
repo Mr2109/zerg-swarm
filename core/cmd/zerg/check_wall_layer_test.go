@@ -105,6 +105,19 @@ func TestCheckWallLayerGatePort(t *testing.T) {
 			t.Fatalf("负控-R2 未点名：%q", out)
 		}
 	})
+	// ③b 负控 R2（闭集外的命令层）：命令树出现 `layer: "target"`（非 space、亦非闭集）⇒ rc=1
+	//    （本格 = 真仓那次「孤立字面量被 R2 咬住」所对应的判据分支；哑化「闭集外判」必 FAIL）。
+	t.Run("负控-R2-闭集外命令层", func(t *testing.T) {
+		src := strings.Replace(wlTestGoodSrc, `layer: "host"`, `layer: "target"`, 1)
+		d := wlTestTree(t, src, "wall/plan.json", `{"argv": ["ok"]}`, nil)
+		rc, out, _ := wlTestRun(d)
+		if rc != 1 {
+			t.Fatalf("负控-R2-闭集外 失败：得 rc=%d out=%q", rc, out)
+		}
+		if !strings.Contains(out, "✗ R1/R2 命令树里出现闭集外的层级 'target'\n") {
+			t.Fatalf("负控-R2-闭集外 未逐字点名：%q", out)
+		}
+	})
 
 	// ④ 负控 R3：plan 的 argv 出现命令面件 ⇒ rc=1（哑化 argv 判据必 FAIL）。
 	t.Run("负控-R3-argv命令面", func(t *testing.T) {

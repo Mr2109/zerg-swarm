@@ -115,7 +115,7 @@ POST /api/tasks
 | 运行日志 | `/tmp/zerg-*.log` | `ZERG_LOG_DIR` |
 | UI 偏好 | `~/.zerg-ui-prefs.json` | — |
 
-> HTTP 服务的端口、路径、外部数据位置（知识库、searxng、媒体目录）**全部**可通过环境变量覆盖，见 [CONFIGURATION.zh-CN.md](CONFIGURATION.zh-CN.md)。
+> HTTP 服务的端口、路径、外部数据位置（知识库、媒体目录）与外部服务（searxng `:8888`）**全部**可通过环境变量覆盖，见 [CONFIGURATION.zh-CN.md](CONFIGURATION.zh-CN.md)。
 
 ---
 

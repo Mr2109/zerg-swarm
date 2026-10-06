@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """searx_search.py — 虫族 Agent web_search 的 searxng 桥（v1.0.2——2026-09-02 升级）
 直接调 searx 引擎（Hermes 同款思路——不走 HTTP 服务）
+★ 已作废（2026-10-07 Mr2109 拍：新口径＝走服务端口）—— 原行保留不删；订正来源：拍板落定-所有稿-20261007.md 决-05
 用法: python3 searx_search.py "查询词" [max_results] [lang] [time_range]
   lang: all/zh/zh-CN/en/...（ISO 639-1 或 babel locale）
   time_range: day/week/month/year（空=不限）

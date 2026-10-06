@@ -9,7 +9,7 @@
 | [ds4-server](https://github.com/ggml-org/llama.cpp) | MIT | 另一推理后端 | 否 |
 | [egui / eframe](https://github.com/emilk/egui) | MIT 或 Apache-2.0 | 桌面 UI | 是（作为 crates 依赖） |
 | [rtk](https://github.com/rtk-ai/rtk) | Apache-2.0 | 可选的命令输出压缩包装（`ZERG_RTK=0` 可关） | **否**（`brew install rtk` 或跳过——缺装时自动降级） |
-| [searxng](https://github.com/searxng/searxng) | **AGPL-3.0** | 联网搜索（`web_search`） | **否**（用户自建；见 `scripts/install-searxng.sh`） |
+| [searxng](https://github.com/searxng/searxng) | **AGPL-3.0** | 联网搜索（`web_search`） | **否**（用户自建） |
 | [SQLite](https://sqlite.org)（`modernc.org/sqlite` 纯 Go 驱动） | Public Domain / BSD-style | 对话与知识库存储 | 是（作为 Go module 依赖） |
 | RapidOCR / ONNX Runtime | Apache-2.0 | 截图 OCR 可选路径 | 否 |
 | LLMLingua-2 (ONNX 权重) | MIT | 可选压缩模型 | 否（`ZERG_COMPRESS_MODELS` 指向自备权重） |

@@ -8590,6 +8590,174 @@
    "want_rc": 2,
    "want_stdout_bytes": 0,
    "why": "「`--dry-run`（只出计划件）与 `--yes`（真写）**同给**」= 两道确认档自相矛盾 ⇒ 用法错 2（不给结论）：唯一共享判定 `dryRunYesConflict`（`core/cmd/zerg/guard.go`）· 本格现跑两遍 rc/stdout 逐字同值（rc=2 · stdout 0 字节）· ★ 本 why 不记绝对字节数"
+  },
+  {
+   "argv": [
+    "script",
+    "retire",
+    "--nosuchflag-zz"
+   ],
+   "command": "script retire",
+   "id": "script/retire#未知旗标",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "未知旗标 = 用法错（§4.1 K14 四件套）· 执行前判，不碰任何目标"
+  },
+  {
+   "argv": [
+    "script",
+    "retire",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "script retire",
+   "id": "script/retire#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "cocoon",
+    "pack",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "cocoon pack",
+   "id": "cocoon/pack#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "cocoon",
+    "info",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "cocoon info",
+   "id": "cocoon/info#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "cocoon",
+    "verify",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "cocoon verify",
+   "id": "cocoon/verify#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "cocoon",
+    "xfer",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "cocoon xfer",
+   "id": "cocoon/xfer#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "swap",
+    "core",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "swap core",
+   "id": "swap/core#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "swap",
+    "agent",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "swap agent",
+   "id": "swap/agent#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "swap",
+    "ui",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "swap ui",
+   "id": "swap/ui#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "doc",
+    "kb-sync",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "doc kb-sync",
+   "id": "doc/kb-sync#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "doc",
+    "gen-tools-md",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "doc gen-tools-md",
+   "id": "doc/gen-tools-md#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "doc",
+    "index-gen",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "doc index-gen",
+   "id": "doc/index-gen#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "ui",
+    "i18n-audit",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "ui i18n-audit",
+   "id": "ui/i18n-audit#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
   }
  ],
  "tiers": {

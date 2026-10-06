@@ -35,6 +35,7 @@ set -a; . ./.env; set +a          # 让当前 shell 及子进程拿到
 | 主控 API | `8580` | `ZERG_PORT` | — |
 | 网关（OpenAI 兼容） | `8082` | `ZERG_GATEWAY_PORT` | — |
 | 子端 HTTP | `8100` | `ZERG_AGENT_PORT` | `--port` |
+| searxng 服务（`web_search` 外部依赖） | `8888` | `ZERG_SEARXNG_URL` | — |
 | 子端监听地址 | `127.0.0.1` | — | `--host`（跨机部署用 `0.0.0.0`） |
 
 UI 侧指向主控/网关：
@@ -72,7 +73,7 @@ UI 侧指向主控/网关：
 
 | 变量 | 说明 |
 |---|---|
-| `ZERG_SEARXNG_PY` / `ZERG_SEARXNG_SETTINGS` / `ZERG_SEARXNG_SRC` | 自建 searxng 的解释器 / 设置文件 / 源码目录（默认找 `<工作区>/vendor/searxng/...`，再退到 `PATH` 里的 `python3`） |
+| `ZERG_SEARXNG_URL` | 自建 searxng 服务地址（默认 `http://127.0.0.1:8888`） |
 | `ZERG_RTK` | `0` = 关闭 rtk 命令包装。**未安装 rtk 时自动降级**，无需设置 |
 | `ZERG_EXAMPLE_TEMPLATE` | 某些模型需外部 chat template 覆盖内嵌旧模板时的文件路径（也支持登记表字段，见 [MODELS.md](MODELS.zh-CN.md)） |
 | `ZERG_AUTOCUT_DIR` / `ZERG_MUSIC_DIR` / `ZERG_DRP_FILE` | 影音工具链的可选目录/工程文件 |

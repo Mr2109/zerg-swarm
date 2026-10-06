@@ -6,6 +6,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
@@ -35,9 +36,117 @@ type SearxngResponse struct {
 	Results []SearchResult `json:"results"`
 }
 
+// ─── A-06（2026-10-07）：searx 桥子进程的超时闸 ＋ 空结果 fail-closed ───
+//
+// searxBridgeTimeout — searx 桥（Python 子进程）执行上限。
+// 取值：与**同件** WebFetch 的网络抓取口径一致（`&http.Client{Timeout: 10 * time.Second}`）——
+// 桥同为网络检索，故取同件先例 10s（✗ 不自创大数字）。
+// 形态：包级变量（非编译期常量，故不入 knobs.go 常量表；同 `searchCacheFile` 一族）——
+// 测试可注入小值做超时负控/隔离，生产默认取先例值。
+var searxBridgeTimeout = 10 * time.Second
+
+// searxBridgePython — 桥解释器路径。空 ⇒ 走 searxngPython()（ZERG_SEARXNG_PY → vendor → PATH，
+// 生产默认）；非空 ⇒ 直接使用（**仅供测试注入仓外夹具假桥**——与 ZERG_SEARXNG_PY 同语义但走
+// 包内变量，测试无需 export ZERG_*，也不改生产行为）。
+var searxBridgePython string
+
+// searxPython — 解析桥解释器：测试注入优先，否则回落 searxngPython()。
+func searxPython() string {
+	if p := strings.TrimSpace(searxBridgePython); p != "" {
+		return p
+	}
+	return searxngPython()
+}
+
+// ─── A2 步3（2026-10-07）：默认走 Go HTTP 客户端直连 searxng 服务 ＋ legacy 桥回退旋钮 ───
+//
+// 接线：`webSearchBridge` / `WebSearch` 默认改走 `searx_client.go` 的 `SearxClient`（HTTP 直连
+// `ZERG_SEARXNG_URL`，默认 http://127.0.0.1:8888），不再起 Python 子进程。★ 老桥 `searx_search.py`
+// 与两处 `exec.Command` 仍在（回退旋钮用）——本单**不删**（撤桥/归档另批）。
+// 两态可分：服务在跑 ⇒ 正常返回；服务不在（连不上 / 非 200 / 坏 JSON）⇒ 带具名原因 error（✗ 不静默空）。
+
+// searxLegacyBridgeEnv — 回退旋钮的环境变量名（A2 步3）。置 1/true/yes/on ⇒ 回旧 Python 桥。
+const searxLegacyBridgeEnv = "ZERG_SEARX_LEGACY_BRIDGE"
+
+// searxLegacyBridgeEnabled — 解析回退旋钮：置 1/true/yes/on ⇒ 回旧桥；其余（含未置/空）⇒ **默认新路**。
+// ★ ✗ 默认走旧桥（默认恒落 false 支）。
+func searxLegacyBridgeEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(searxLegacyBridgeEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// searxBridgeClientOverride — 测试注入的服务端客户端（非空 ⇒ 直接用；生产默认 nil ⇒ NewSearxClient()）。
+// 形态对齐 searxBridgePython：包内变量注入（✗ 不 export ZERG_*），测试隔离、不改生产行为。
+var searxBridgeClientOverride *SearxClient
+
+// searxClientForBridge — 取本路径用的客户端：测试注入优先，否则生产默认（env 取址 · 10s 超时 · 重试 1）。
+func searxClientForBridge() *SearxClient {
+	if c := searxBridgeClientOverride; c != nil {
+		return c
+	}
+	return NewSearxClient()
+}
+
+// searxQueryService — 走 Go HTTP 客户端直连 searxng 服务（A2 步3 默认路）。
+//
+// 超时（保留 A-06 语义）：`searxBridgeTimeout`（10s）到点即 fail-closed —— 服务挂起不答也**不永久阻塞**。
+// 错误面（保留 A-06 fail-closed 语义 ＋ 两态可分）：连不上 / 非 200 / 坏 JSON ⇒「服务不可达」error；
+// 服务可达但空结果 ⇒「空结果」error（两者文案可分，✗ 不静默回「（无搜索结果）」）。
+func searxQueryService(query string, limit int, lang string, timeRange string) ([]SearxResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), searxBridgeTimeout)
+	defer cancel()
+	res, err := searxClientForBridge().Search(ctx, SearxQuery{
+		Query: query, Limit: limit, Lang: lang, TimeRange: timeRange,
+	})
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("searxng 服务超时（%s 内未应答；fail-closed）: %w", searxBridgeTimeout, err)
+		}
+		return nil, fmt.Errorf("searxng 服务不可达/查询失败（服务不在 · ✗ 不静默空）: %w", err)
+	}
+	if len(res) == 0 {
+		// fail-closed（保留 A-06 语义）：服务可达但空结果 ⇒ 带具名原因上报，✗ 不静默回「（无搜索结果）」。
+		return nil, fmt.Errorf("searxng 空结果（服务可达但无结果/引擎全失败；fail-closed 拒绝静默「无搜索结果」）")
+	}
+	return res, nil
+}
+
+// searxSearchViaService — WebSearch（v1 文本形态）走服务直连：查询 ⇒ 文本格式化。
+func searxSearchViaService(query string, limit int, lang string, timeRange string) (string, error) {
+	res, err := searxQueryService(query, limit, lang, timeRange)
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	for i, r := range res {
+		if i >= limit {
+			break
+		}
+		fmt.Fprintf(&sb, "%d. %s\n   %s\n   %s\n\n", i+1, r.Title, r.URL, truncate(r.Content, 300))
+	}
+	return sb.String(), nil
+}
+
 // WebSearch — 调 searxng 搜索（v2.5：直接调 Python 桥——不走 HTTP 服务）
+// ★ 已作废（2026-10-07 Mr2109 拍：新口径＝走服务端口）—— 原行保留不删；订正来源：拍板落定-所有稿-20261007.md 决-05
 // 复用 Hermes 同款 searx 引擎（searxng-src 库——内存调引擎）
 func WebSearch(query string, limit int) (string, error) {
+	if limit <= 0 || limit > 10 {
+		limit = 5
+	}
+	// A2 步3：默认走 Go 客户端直连服务；回退旋钮（ZERG_SEARX_LEGACY_BRIDGE）开启才回旧 Python 桥。
+	if !searxLegacyBridgeEnabled() {
+		return searxSearchViaService(query, limit, "all", "")
+	}
+	return webSearchLegacy(query, limit)
+}
+
+// webSearchLegacy — 旧 Python 桥路径（searx_search.py 子进程）。
+// A2 步3 起**不再是默认路**：仅回退旋钮开启时走到（✗ 本单不删——撤桥/归档另批）。
+func webSearchLegacy(query string, limit int) (string, error) {
 	if limit <= 0 || limit > 10 {
 		limit = 5
 	}
@@ -45,9 +154,12 @@ func WebSearch(query string, limit int) (string, error) {
 	_, file, _, _ := runtime.Caller(0)
 	scriptDir := filepath.Dir(file)
 	script := filepath.Join(scriptDir, "searx_search.py")
-	venvPy := searxngPython()
+	venvPy := searxPython()
 
-	cmd := exec.Command(venvPy, script, query, fmt.Sprintf("%d", limit))
+	// 超时闸（A-06）：桥是外部子进程——不设上限会挂起；到点即 fail-closed。
+	ctx, cancel := context.WithTimeout(context.Background(), searxBridgeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, venvPy, script, query, fmt.Sprintf("%d", limit))
 	cmd.Env = append(os.Environ(), "SEARXNG_SETTINGS_PATH="+searxngSettings())
 	// 清除 PYTHONPATH（防 Hermes venv 污染——脚本内也处理）
 	cmd.Env = removeEnv(cmd.Env, "PYTHONPATH")
@@ -56,6 +168,9 @@ func WebSearch(query string, limit int) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("searx 桥超时（%s 内未应答）: %w (stderr: %s)", searxBridgeTimeout, err, truncate(stderr.String(), 200))
+		}
 		return "", fmt.Errorf("searx 桥执行失败: %v (stderr: %s)", err, truncate(stderr.String(), 200))
 	}
 
@@ -75,7 +190,9 @@ func WebSearch(query string, limit int) (string, error) {
 	}
 
 	if len(sr.Results) == 0 {
-		return "（无搜索结果）", nil
+		// fail-closed（A-06）：桥在「服务不可达 / 引擎全失败」与「真无结果」下都回 {"results": []}
+		// ——静默回「（无搜索结果）」＝ 把「服务挂」伪装成成功（fail-open）。故空结果一律带具名原因上报。
+		return "", fmt.Errorf("searx 桥空结果（服务不可达或引擎全失败；fail-closed 拒绝静默「无搜索结果」）")
 	}
 
 	var sb strings.Builder
@@ -238,26 +355,62 @@ type searchBridgeResult struct {
 	Formatted string
 }
 
-// webSearchBridge — 调 searx 桥（v1.0.1: lang/time_range 参数 + score）
+// webSearchBridge — 搜索入口（v1.0.1: lang/time_range 参数 + score）。
+// A2 步3 起默认走 **Go HTTP 客户端直连 searxng 服务**（HTTP 8888）；回退旋钮开启时回旧 Python 桥。
 func webSearchBridge(query string, limit int, lang string, timeRange string) (*searchBridgeResult, error) {
+	if lang == "" {
+		lang = "all"
+	}
+	if searxLegacyBridgeEnabled() {
+		return webSearchBridgeLegacy(query, limit, lang, timeRange)
+	}
+	res, err := searxQueryService(query, limit, lang, timeRange)
+	if err != nil {
+		return nil, err
+	}
+	var sb strings.Builder
+	var out []SearchResult
+	for i, r := range res {
+		// 质量过滤: score 太低的结果丢弃（Tavily 建议 score<0.5 过滤——searxng score 尺度不同——0.1 以下弃）
+		if r.Score < 0.1 && r.Score != 0 {
+			continue
+		}
+		fmt.Fprintf(&sb, "%d. %s\n   %s\n   %s\n\n", i+1, r.Title, r.URL, truncate(r.Content, 300))
+		out = append(out, SearchResult{Title: r.Title, URL: r.URL, Content: r.Content})
+	}
+	if len(out) == 0 {
+		// fail-closed（保留 A-06 语义）：服务可达但结果全被 score 质量过滤（<0.1）⇒ 空集，✗ 不静默。
+		return nil, fmt.Errorf("searxng 结果全被质量过滤（score 全部 < 0.1，空集；fail-closed）")
+	}
+	return &searchBridgeResult{Results: out, Formatted: sb.String()}, nil
+}
+
+// webSearchBridgeLegacy — 旧 Python 桥路径（v2 形态）。★ 仅回退旋钮开启时走到（✗ 本单不删）。
+func webSearchBridgeLegacy(query string, limit int, lang string, timeRange string) (*searchBridgeResult, error) {
 	if lang == "" {
 		lang = "all"
 	}
 	_, file, _, _ := runtime.Caller(0)
 	scriptDir := filepath.Dir(file)
 	script := filepath.Join(scriptDir, "searx_search.py")
-	venvPy := searxngPython()
+	venvPy := searxPython()
 	args := []string{script, query, fmt.Sprintf("%d", limit), lang}
 	if timeRange != "" {
 		args = append(args, timeRange)
 	}
-	cmd := exec.Command(venvPy, args...)
+	// 超时闸（A-06）：同 WebSearch——外部子进程不设上限会挂起；到点即 fail-closed。
+	ctx, cancel := context.WithTimeout(context.Background(), searxBridgeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, venvPy, args...)
 	cmd.Env = append(os.Environ(), "SEARXNG_SETTINGS_PATH="+searxngSettings())
 	cmd.Env = removeEnv(cmd.Env, "PYTHONPATH")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("searx 桥超时（%s 内未应答）: %w (stderr: %s)", searxBridgeTimeout, err, truncate(stderr.String(), 200))
+		}
 		return nil, fmt.Errorf("searx 桥执行失败: %v (stderr: %s)", err, truncate(stderr.String(), 200))
 	}
 	var sr struct {
@@ -276,7 +429,8 @@ func webSearchBridge(query string, limit int, lang string, timeRange string) (*s
 		return nil, fmt.Errorf("searx 桥错误: %s", sr.Error)
 	}
 	if len(sr.Results) == 0 {
-		return &searchBridgeResult{Formatted: "（无搜索结果）"}, nil
+		// fail-closed（A-06）：同 WebSearch——空结果＝服务不可达/引擎全失败，✗ 不静默回「无搜索结果」。
+		return nil, fmt.Errorf("searx 桥空结果（服务不可达或引擎全失败；fail-closed 拒绝静默「无搜索结果」）")
 	}
 	var sb strings.Builder
 	var res []SearchResult
@@ -289,7 +443,8 @@ func webSearchBridge(query string, limit int, lang string, timeRange string) (*s
 		res = append(res, SearchResult{Title: r.Title, URL: r.URL, Content: r.Content})
 	}
 	if len(res) == 0 {
-		return &searchBridgeResult{Formatted: "（无搜索结果）"}, nil
+		// fail-closed（A-06）：桥回了结果但全被 score 质量过滤（<0.1）⇒ 同样是空集，✗ 不静默。
+		return nil, fmt.Errorf("searx 桥结果全被质量过滤（score 全部 < 0.1，空集；fail-closed）")
 	}
 	return &searchBridgeResult{Results: res, Formatted: sb.String()}, nil
 }
@@ -508,7 +663,7 @@ func LoadSearchCache() {
 
 // ─── 2026-09-11 B 批（可移植性）：searxng 由用户自建，路径不再硬编码 ───
 // 优先级：ZERG_SEARXNG_PY / ZERG_SEARXNG_SETTINGS → <工作区>/vendor/searxng/... → PATH 中的 python3
-// （vendor/searxng 是 AGPL 第三方组件，不随仓库分发；安装见 scripts/install-searxng.sh）
+// （vendor/searxng 是 AGPL 第三方组件，不随仓库分发；用户自建）
 
 func searxngPython() string {
 	if v := strings.TrimSpace(os.Getenv("ZERG_SEARXNG_PY")); v != "" {

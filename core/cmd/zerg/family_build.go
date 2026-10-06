@@ -277,7 +277,7 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 			return exitOK
 		}
 		fmt.Fprintf(stdout, "  危险档   : D3（换件档：会覆盖 `bin/` 里的在跑制品）\n")
-		fmt.Fprintf(stdout, "  它会调   : bash %s %s\n", script, strings.Join(scriptArgs, " "))
+		fmt.Fprintf(stdout, "  它会调   : %s\n", buildCallShow(script, scriptArgs))
 		fmt.Fprintf(stdout, "  它会动   : %s\n", effect)
 		fmt.Fprintf(stdout, "  执行要   : --confirm=<主机名> 与 --yes 同时到\n")
 		if openForExec {
@@ -345,11 +345,22 @@ func cmdBuildPassthrough(inv *invocation, stdout, stderr io.Writer) int {
 	if action == "release" && inv.manifestOnly {
 		execNote = "只写 `dist/<版本>/release/` 的清单与逐件 sha256 —— 不碰 `bin/` 里的在跑件"
 	}
-	fmt.Fprintf(stderr, "%s: %s执行 —— bash %s %s（%s）\n", progName, gateLevel, script, strings.Join(scriptArgs, " "), execNote)
-	cmd := armChildGroup(exec.Command("bash", append([]string{filepath.Join(root, script)}, scriptArgs...)...))
+	// ★ 批-6 第三步（调用点接线 · 决-08 旧环护栏）：`build all` 的正门指到**源码在仓的 Go 构建器**
+	//   （现编现跑 `cd scripts/build && go run ./cmd/zerg-build-all …`）—— 环内引导器 = Go 工具链 ＋
+	//   仓内构建器源码，✗ 不 exec 刚产出的 `bin/*` ⇒ 「改命令面 ⇒ 编不出命令面」这条死锁当场解开。
+	//   `build release`（发布链 / `--manifest-only`）**另批接**：仍走 `bash scripts/build/pack-release.sh …`。
+	cmdName, cmdDir := "bash", root
+	cmdArgs := append([]string{filepath.Join(root, script)}, scriptArgs...)
+	if script != "scripts/build/pack-release.sh" {
+		cmdName = "go"
+		cmdArgs = append([]string{"run", "./cmd/zerg-build-all"}, scriptArgs...)
+		cmdDir = filepath.Join(root, "scripts", "build")
+	}
+	fmt.Fprintf(stderr, "%s: %s执行 —— %s（%s）\n", progName, gateLevel, buildCallShow(script, scriptArgs), execNote)
+	cmd := armChildGroup(exec.Command(cmdName, cmdArgs...))
 	runningChild = cmd
 	defer func() { runningChild = nil }()
-	cmd.Dir = root
+	cmd.Dir = cmdDir
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -372,4 +383,18 @@ func onlyNote(only string) string {
 		return ""
 	}
 	return " --only " + only
+}
+
+// buildCallShow —— 「正门 ↔ 构建器」接线（批-6 第三步）的**展示串**：与 cmdBuildPassthrough 真正
+// exec 的形态**同源**（同一处判定），两处不许各写各的。
+//
+//	build all     ⇒ `cd scripts/build && go run ./cmd/zerg-build-all …`（源码在仓 · 现编现跑）
+//	build release ⇒ `bash scripts/build/pack-release.sh …`（发布链另批接线）
+//
+// ★ 旧环护栏（决-08）：展示串里出现的是**构建器源码路径**，✗ 不是刚产出的 `bin/*`。
+func buildCallShow(script string, args []string) string {
+	if script == "scripts/build/pack-release.sh" {
+		return "bash " + script + " " + strings.Join(args, " ")
+	}
+	return "cd scripts/build && go run ./cmd/zerg-build-all " + strings.Join(args, " ")
 }

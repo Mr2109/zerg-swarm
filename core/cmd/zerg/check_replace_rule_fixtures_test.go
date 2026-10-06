@@ -292,6 +292,59 @@ func TestCheckReplaceRuleFixturesGatePort(t *testing.T) {
 		}
 	})
 
+	// ── 正向豁免（拍板落定-20261006 B2 · 开工单 A-09）：标「历史兜底·有意保留」的规则零命中不判红 ──
+	t.Run("正向豁免_标记规则不判红_未标仍点名", func(t *testing.T) {
+		root := crrfFx(t)
+		crrfW(t, filepath.Join(root, "publish", "whitelist.txt"), "core/\n")
+		crrfW(t, filepath.Join(root, "publish", "replace-rules.tsv"),
+			"regex:绝不出现的串-aa\t<dead>\t合成【历史兜底·有意保留】\n"+
+				"regex:绝不出现的串-bb\t<dead2>\t合成\n")
+		crrfW(t, filepath.Join(root, "core", "a", "clean_test.go"), "x := 1\n")
+		crrfW(t, filepath.Join(root, "core", "a", "impl.go"), "y := 2\n")
+		rc, out, _ := crrfRun(t, "--root", root)
+		if rc != 1 {
+			t.Fatalf("未标零命中规则仍在 ⇒ 应 rc=1，得 rc=%d out=%s", rc, out)
+		}
+		if !strings.Contains(out, "正向豁免：1 条规则标「历史兜底·有意保留」") {
+			t.Fatalf("应报 1 条正向豁免（可见性），out=%s", out)
+		}
+		if !strings.Contains(out, "正向缺侧：**1 条**规则") {
+			t.Fatalf("仅未标的那条应缺侧，out=%s", out)
+		}
+		if strings.Contains(out, "绝不出现的串-aa") {
+			t.Fatalf("标记者不得被点名（豁免失效），out=%s", out)
+		}
+		if !strings.Contains(out, "绝不出现的串-bb") {
+			t.Fatalf("未标者必须被点名，out=%s", out)
+		}
+	})
+	t.Run("正向豁免_全标记_rc0", func(t *testing.T) {
+		root := crrfFx(t)
+		crrfW(t, filepath.Join(root, "publish", "whitelist.txt"), "core/\n")
+		crrfW(t, filepath.Join(root, "publish", "replace-rules.tsv"),
+			"regex:绝不出现的串-aa\t<dead>\t合成【历史兜底·有意保留】\n")
+		crrfW(t, filepath.Join(root, "core", "a", "clean_test.go"), "x := 1\n")
+		crrfW(t, filepath.Join(root, "core", "a", "impl.go"), "y := 2\n")
+		rc, out, _ := crrfRun(t, "--root", root)
+		if rc != 0 || !strings.Contains(out, "双侧全绿（rc=0）") {
+			t.Fatalf("唯一死规则已豁免 ⇒ 应 rc=0，得 rc=%d out=%s", rc, out)
+		}
+	})
+	t.Run("正向豁免_哑化豁免_必红", func(t *testing.T) {
+		root := crrfFx(t)
+		crrfW(t, filepath.Join(root, "publish", "whitelist.txt"), "core/\n")
+		// 同一条规则 —— 去掉标记 ⇒ 零命中必被点名（哑化豁免面 ⇒ 带行号的红）
+		crrfW(t, filepath.Join(root, "publish", "replace-rules.tsv"),
+			"regex:绝不出现的串-aa\t<dead>\t合成\n")
+		crrfW(t, filepath.Join(root, "core", "a", "clean_test.go"), "x := 1\n")
+		crrfW(t, filepath.Join(root, "core", "a", "impl.go"), "y := 2\n")
+		rc, out, _ := crrfRun(t, "--root", root)
+		if rc != 1 || !strings.Contains(out, "正向缺侧：**1 条**规则") ||
+			!strings.Contains(out, "绝不出现的串-aa") {
+			t.Fatalf("哑化豁免 ⇒ 应 rc=1 逐条点名，得 rc=%d out=%s", rc, out)
+		}
+	})
+
 	// ── B 类读失败（读不了的件）**已翻正**：登记 + 判红 rc=2（✗ 不再静默吞件）─────────
 	t.Run("读不了的件_登记判红_rc2", func(t *testing.T) {
 		if os.Geteuid() == 0 {
@@ -325,7 +378,7 @@ func TestCheckReplaceRuleFixturesGatePort(t *testing.T) {
 		if rc != 0 || !strings.Contains(out, "自检结论: 全过") {
 			t.Fatalf("自检应 rc=0 全过，得 rc=%d out=%s", rc, out)
 		}
-		if !strings.Contains(out, "断言 17 条 · 失败 0 条") {
+		if !strings.Contains(out, "断言 18 条 · 失败 0 条") {
 			t.Fatalf("自检断言计数不符 out=%s", out)
 		}
 	})

@@ -36,6 +36,7 @@ Core and agents **refuse to start** when the token is missing (this avoids the i
 | Core API | `8580` | `ZERG_PORT` | — |
 | Gateway (OpenAI-compatible) | `8082` | `ZERG_GATEWAY_PORT` | — |
 | Agent HTTP | `8100` | `ZERG_AGENT_PORT` | `--port` |
+| searxng service (`web_search` external dependency) | `8888` | `ZERG_SEARXNG_URL` | — |
 | Agent listen address | `127.0.0.1` | — | `--host` (use `0.0.0.0` for cross-machine deployment) |
 
 The UI points at core / gateway:
@@ -73,7 +74,7 @@ The UI points at core / gateway:
 
 | Variable | Description |
 |---|---|
-| `ZERG_SEARXNG_PY` / `ZERG_SEARXNG_SETTINGS` / `ZERG_SEARXNG_SRC` | Interpreter / settings file / source directory for a self-hosted searxng (by default it looks under `<工作区>/vendor/searxng/...`, then falls back to `python3` on `PATH`) |
+| `ZERG_SEARXNG_URL` | Address of a self-hosted searxng service (default `http://127.0.0.1:8888`) |
 | `ZERG_RTK` | `0` = disable the rtk command wrapper. **Degrades automatically when rtk is not installed**, so no setting is needed |
 | `ZERG_EXAMPLE_TEMPLATE` | File path used when a model needs an external chat template to override a stale embedded one (also available as a registry field, see [MODELS.en.md](MODELS.en.md)) |
 | `ZERG_AUTOCUT_DIR` / `ZERG_MUSIC_DIR` / `ZERG_DRP_FILE` | Optional directories / project files for the media toolchain |
