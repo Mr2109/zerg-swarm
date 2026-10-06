@@ -10,6 +10,9 @@
 // 追加动作掐掉 ⇒ 「负控:未登记幽灵」当场 FAIL（带行号）；② 把主件 `csdWordAnchor` 换成子串包含
 // （`strings.Contains`）⇒ 「负控:词界锚 兄弟名不假绿」与「负控:R4a 标签↔pid↔程序不一致」两格 FAIL
 // （`bin/zerg-core` 是 `bin/zerg-core-test` 的子串 ⇒ 假绿、rc 由 1 变 0）。
+// ③ 2026-10-07（A2 收尾）：把 `searx.webapp` 从 `csdProcHints` 去掉 ⇒ 「负控:searxng 进程无落点」一格
+//
+//	rc 由 1 变 0（假绿）⇒ 该用例 FAIL ⇒ 证 `searx.webapp` 是 R4b 覆盖 searxng 的牙。
 package main
 
 import (
@@ -272,7 +275,7 @@ func TestCheckServiceDeclarationGatePort(t *testing.T) {
 		}
 	})
 
-	t.Run("--self-test rc=0 十八格全过", func(t *testing.T) {
+	t.Run("--self-test rc=0 二十格全过", func(t *testing.T) {
 		rc, so, se := csdRun(t, "--self-test")
 		if rc != 0 {
 			t.Fatalf("self-test rc=%d 期望 0（stderr=%q）", rc, se)
@@ -280,8 +283,8 @@ func TestCheckServiceDeclarationGatePort(t *testing.T) {
 		if !strings.Contains(so, "自检结论: 全过") {
 			t.Fatalf("自检结论不对：%q", so)
 		}
-		if n := strings.Count(so, "（rc="); n != 18 {
-			t.Fatalf("自检格数 = %d 期望 18：%q", n, so)
+		if n := strings.Count(so, "（rc="); n != 20 {
+			t.Fatalf("自检格数 = %d 期望 20：%q", n, so)
 		}
 		if !strings.Contains(so, "✓ 点名断言（`A∖B` + `B∖A` 两侧逐字出现）") {
 			t.Fatalf("点名断言行不对：%q", so)
@@ -405,6 +408,37 @@ func TestCheckServiceDeclarationGatePort(t *testing.T) {
 		rc, so, _ := csdRun(t, root)
 		if rc != 0 {
 			t.Fatalf("rc=%d 期望 0（词界锚对行尾命中）：%q", rc, so)
+		}
+	})
+
+	t.Run("正控:searxng 外置进程有落点 rc=0（R4b 覆盖）", func(t *testing.T) {
+		root := csdTestRoot(t)
+		decl := csdGoodDecl + "launchd\tcom.zerg.searxng\t~/Library/LaunchAgents/com.zerg.searxng.plist\t" +
+			"~/zerg-searxng/src/.venv/bin/python -m searx.webapp\tsearx.webapp\t主控\t-\thost\n"
+		ps := csdGoodPS + "  59975     1       11:25 ~/zerg-searxng/src/.venv/bin/python -m searx.webapp\n"
+		dp, pp, lp, home := csdWriteFixture(root, decl, ps, csdGoodLC+"59975\t0\tcom.zerg.searxng\n",
+			[]string{"com.zerg.core.plist", "com.zerg.agent-Mr2109.plist", "com.zerg.searxng.plist"})
+		csdSetEnv(t, dp, pp, lp, home)
+		rc, so, _ := csdRun(t, root)
+		if rc != 0 {
+			t.Fatalf("rc=%d 期望 0（searxng 进程被声明面覆盖）: %q", rc, so)
+		}
+		if !strings.Contains(so, "⇒ 全绿（rc=0）") {
+			t.Fatalf("未走全绿档：%q", so)
+		}
+	})
+
+	t.Run("负控:searxng 进程无落点 rc=1（R4b · searx.webapp 是 hint 的牙）", func(t *testing.T) {
+		root := csdTestRoot(t)
+		ps := csdGoodPS + "  59975     1       11:25 ~/zerg-searxng/src/.venv/bin/python -m searx.webapp\n"
+		dp, pp, lp, home := csdWriteFixture(root, csdGoodDecl, ps, csdGoodLC, goodPlists)
+		csdSetEnv(t, dp, pp, lp, home)
+		rc, so, _ := csdRun(t, root)
+		if rc != 1 {
+			t.Fatalf("rc=%d 期望 1（去掉 searx.webapp hint 会假绿成 0）", rc)
+		}
+		if !strings.Contains(so, "FAIL R4 现值进程没有落点") || !strings.Contains(so, "searx.webapp") {
+			t.Fatalf("R4b 未点名 searxng 进程行：%q", so)
 		}
 	})
 

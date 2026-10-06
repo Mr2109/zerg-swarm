@@ -27,7 +27,7 @@ Setting `mem_gb` lower than reality makes scheduling over-optimistic — err on 
 Yes. When it isn't installed the system degrades automatically (commands are no longer prefixed); you can also turn it off explicitly with `ZERG_RTK=0`.
 
 **Q: `web_search` reports an error?**
-It depends on a self-hosted searxng (an AGPL component, **not distributed with the repo**). Install it with `scripts/install-searxng.sh`, then
+It depends on a self-hosted searxng (an AGPL component, **not distributed with the repo**). Stand one up, then
 point `ZERG_SEARXNG_PY`/`ZERG_SEARXNG_SETTINGS` at it; without it the web-search tool is unavailable and the rest of the functionality is unaffected.
 
 ---

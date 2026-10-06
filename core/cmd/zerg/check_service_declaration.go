@@ -87,8 +87,10 @@ const (
 )
 
 var (
-	csdKinds             = []string{"launchd", "ghost"}
-	csdProcHints         = []string{"bin/zerg-", "bin/cocoon-"}
+	csdKinds = []string{"launchd", "ghost"}
+	// csdProcHints —— 自研件 / 外置件的进程特征锚（与 py `PROC_HINTS` 逐条同源）：
+	//   + `searx.webapp`（2026-10-07 A2 收尾）—— 外置 searxng 进程命令行 `… -m searx.webapp` 的锚。
+	csdProcHints         = []string{"bin/zerg-", "bin/cocoon-", "searx.webapp"}
 	csdZergLabelPrefixes = []string{"com.zerg."}
 
 	// csdJSONFields —— 本门机器读面字段表（py 侧 = 空 ⇒ 无机器读面；此处同形保留为唯一真源）。
@@ -782,7 +784,7 @@ type csdSelfTestCase struct {
 	mode string
 }
 
-// csdSelfTest —— py `self_test`：18 格（正控 6 + 负控 10 + 不给结论 2 · 含 1 格真命令行退码），
+// csdSelfTest —— py `self_test`：20 格（正控 7 + 负控 11 + 不给结论 2 · 含 1 格真命令行退码），
 // 逐格断言 rc 与点名面（GAP-20260927-100 R4a/词界锚 · GAP-20260927-168 层限）。
 func csdSelfTest(out io.Writer) int {
 	cases := []csdSelfTestCase{
@@ -804,6 +806,8 @@ func csdSelfTest(out io.Writer) int {
 		{"正控⑯ 含字面 shell 包装（/bin/sh -c exec …）⇒ 词界锚仍命中 ⇒ rc=0", 0, "shell_wrap"},
 		{"正控⑰ 真命令行退码：子进程跑本件·好件夹具 ⇒ 进程 rc=0", 0, "cli"},
 		{"正控⑱ 非本层行（`layer=node:edge-node`：声明无同名标签、plist 也不在盘）⇒ **不由本门判** ⇒ rc=0（**层限** · GAP-20260927-168）", 0, "offlayer"},
+		{"正控⑲ searxng 外置进程（`searx.webapp`）有落点 ⇒ rc=0（R4b 覆盖 · hint 的牙）", 0, "searxng_ok"},
+		{"负控⑳ searxng 进程在 ps 里但声明面无落点 ⇒ rc=1（R4b 未登记幽灵 · 去掉该 hint 即看不见）", 1, "searxng_leak"},
 	}
 	ok := true
 	for _, c := range cases {
@@ -861,6 +865,17 @@ func csdSelfTest(out io.Writer) int {
 			//   本门只判 layer=host ⇒ 该行**不由本门判** ⇒ rc 必为 0（层限的牙）。
 			decl = csdGoodDecl + "launchd	edge-node-agent.service	/home/<user>/edge-node-agent.service	" +
 				"/home/<user>/zerg/bin/zerg-agentd	bin/zerg-agentd	节点(edge-node)	-	node:edge-node\n"
+		case "searxng_ok":
+			// 外置 searxng：ps 命令行 `… -m searx.webapp` 被声明面 proc=searx.webapp 覆盖 ⇒ R4b 有落点 ⇒ 全绿
+			decl = csdGoodDecl + "launchd\tcom.zerg.searxng\t~/Library/LaunchAgents/com.zerg.searxng.plist\t" +
+				"~/zerg-searxng/src/.venv/bin/python -m searx.webapp\tsearx.webapp\t主控\t-\thost\n"
+			ps = csdGoodPS + "  59975     1       11:25 ~/zerg-searxng/src/.venv/bin/python -m searx.webapp\n"
+			lc = csdGoodLC + "59975\t0\tcom.zerg.searxng\n"
+			plists = []string{"com.zerg.core.plist", "com.zerg.agent-Mr2109.plist", "com.zerg.searxng.plist"}
+		case "searxng_leak":
+			// 现值有 searxng 进程、声明面无落点 ⇒ R4b 必红（仅因 `searx.webapp` 在 hint 里才可见；
+			// 去掉该 hint ⇒ 这一格 rc=0 假绿 = 本格的牙）。
+			ps = csdGoodPS + "  59975     1       11:25 ~/zerg-searxng/src/.venv/bin/python -m searx.webapp\n"
 		}
 		dp, pp, lp, home := csdWriteFixture(d, decl, ps, lc, plists)
 		if c.mode == "no_decl" {

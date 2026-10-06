@@ -155,7 +155,7 @@ curl -s -X POST -H "X-Auth-Token: $ZERG_AUTH_TOKEN" -H 'Content-Type: applicatio
 | UI 显示"主控离线" | 端点不对（`ZERG_API_BASE`）或令牌不对 |
 | 子端在线但模型加载失败 | 权重路径/显存不足；看子端日志与自己那台机器的 `llama-server` 输出 |
 | `ls/git/go…` 命令报 `rtk: command not found` | 旧版遗留问题，现已自动降级；也可 `ZERG_RTK=0` 显式关闭 |
-| `web_search` 不可用 | 需要自建 searxng，见 `scripts/install-searxng.sh`（AGPL 组件，不随仓库分发） |
+| `web_search` 不可用 | 需要自建 searxng（AGPL 组件，不随仓库分发） |
 
 更多见 [FAQ.zh-CN.md](FAQ.zh-CN.md)。
 

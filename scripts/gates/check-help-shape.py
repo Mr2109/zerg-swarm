@@ -190,8 +190,8 @@ FAMILY_PER_LINE = 8
 #          2) last：`./bin/zerg help | tail -n 1`（逐字）
 #   刷新：本件 `--emit-baseline` 现跑打印，照抄。
 BASELINE = {
-    "help --all": {"lines": 333, "bytes": 220023},
-    "help": {"lines": 245, "bytes": 119296,
+    "help --all": {"lines": 353, "bytes": 232788},
+    "help": {"lines": 261, "bytes": 127202,
              "last": "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
     # ★ 危险档面（S4 · 2026-09-27 补）：**现跑取数** · 禁手写 ——
     #   取法 = `./bin/zerg help dangerous | wc -l -c`（lines/bytes）· 逐条行数（`rows`）·
@@ -202,8 +202,8 @@ BASELINE = {
     #          `danger_confirm_both_faces` 格 = 现跑自报的「两面同印 `--confirm=` 的 N 条值」），
     #          全部逐字相等；照实冻结、现跑取数）。
     #   刷新 = `--emit-baseline`（现跑打印 · 照抄 · 别手写）。
-    "help dangerous": {"lines": 91, "bytes": 28967, "rows": 80,
-                       "tail": '上表 80 条：**已开放 54 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 26 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。',
+    "help dangerous": {"lines": 95, "bytes": 30718, "rows": 84,
+                       "tail": '上表 84 条：**已开放 58 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 26 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。',
                        "confirm_not_in_usage": ["agent reap", "itask start"],
                        "confirm_value_mismatch": []},
     # ★ 配置主题面（S5 · 2026-09-27 补 · 缺口 `GAP-20260927-440`）：**现跑取数** · 禁手写 ——
@@ -387,7 +387,10 @@ def cfg_levels(text: str):
 
 def rebuilt_last_family_line(fams):
     """族名清单末行的**现算重建**（每 8 族一行，取最后一块）。"""
-    chunk = fams[(len(fams) // FAMILY_PER_LINE) * FAMILY_PER_LINE:]
+    if not fams:
+        return "  "
+    start = ((len(fams) - 1) // FAMILY_PER_LINE) * FAMILY_PER_LINE
+    chunk = fams[start:]
     return "  " + " · ".join(chunk)
 
 

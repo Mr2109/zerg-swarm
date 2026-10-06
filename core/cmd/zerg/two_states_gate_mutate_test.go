@@ -11,6 +11,9 @@
 //	· ★ 缺省档**只读**：不传 `--overlay` 时目标件 sha 逐字节不变、报「未搬」、退 2（判不了 ≠ 绿）。
 //	· ★ 仓内件拒写：overlay 自身含 `.git` ⇒ rc=2 拒在仓内改件。
 //	· 真子进程面（钉 `/usr/bin/python3`）：`tsmCompiles` 对好件判过 / 对坏件判不过；茧壁缺位 ⇒ tsmRunGate 退 2。
+//	· ★ 重入形态的牙：夹具驱动必须以**真子命令形态**起（`gate check <键>` 前置）—— 去掉前缀即红
+//	  （复制出的 `zerg` 二进制按 `args[0]` 派发、直跑 `--overlay …` 落「未知旗标」rc=2）。
+//	· ★ ⑲ 新搬格的牙：`--only <拼错 id>` ⇒ rc=2 且逐字点名「未知的变异 id」· 不报绿（拼错 ≠ 全绿）。
 package main
 
 import (
@@ -79,7 +82,7 @@ func tsmTestFixture(t *testing.T, drop, dup string) string {
 	return fix
 }
 
-func TestTwoStatesMutateGateApplyMutationExactlyOnce(t *testing.T) {
+func TestTsmApplyMutationExactlyOnce(t *testing.T) {
 	text := "a\n" + tsmMutations[0].anchor + "b\n"
 	if msg, newText, ok := tsmApplyMutation(text, tsmMutations[0].anchor, "X\n"); !ok || msg != "" || newText != "a\nX\nb\n" {
 		t.Fatalf("恰一次应成功：msg=%q ok=%v text=%q", msg, ok, newText)
@@ -93,7 +96,7 @@ func TestTwoStatesMutateGateApplyMutationExactlyOnce(t *testing.T) {
 	}
 }
 
-func TestTwoStatesMutateGatePyJoinThreeSemantics(t *testing.T) {
+func TestTsmPyJoinThreeSemantics(t *testing.T) {
 	cases := [][4]string{
 		{"a", "../b", "", "a/../b/"},
 		{"repo", "/abs", "", "/abs/"},
@@ -108,7 +111,7 @@ func TestTwoStatesMutateGatePyJoinThreeSemantics(t *testing.T) {
 	}
 }
 
-func TestTwoStatesMutateGateFixtureGateAnchorsAndTokens(t *testing.T) {
+func TestTsmFixtureGateAnchorsAndTokens(t *testing.T) {
 	src := tsmFixtureGateSrc(nil, "", "")
 	for _, m := range tsmMutations {
 		if n := strings.Count(src, m.anchor); n != 1 {
@@ -128,7 +131,7 @@ func TestTwoStatesMutateGateFixtureGateAnchorsAndTokens(t *testing.T) {
 	}
 }
 
-func TestTwoStatesMutateGateDriveRedRestoreRerunGreen(t *testing.T) {
+func TestTsmDriveRedRestoreRerunGreen(t *testing.T) {
 	tsmTestInjectMirror(t)
 	fix := tsmTestFixture(t, "", "")
 	target := tsmFixtureTarget(fix)
@@ -154,7 +157,7 @@ func TestTwoStatesMutateGateDriveRedRestoreRerunGreen(t *testing.T) {
 }
 
 // ★ 成对负控：镜子对变异无感 ⇒ 必须判红（否则「变异后必须红」这条判据是死的）。
-func TestTwoStatesMutateGateMirrorBlindIsJudgedRed(t *testing.T) {
+func TestTsmMirrorBlindIsJudgedRed(t *testing.T) {
 	tsmTestInjectMirror(t)
 	tsmRunGateFn = func(string) (int, string) { return 0, "夹具：镜子恒绿" }
 	fix := tsmTestFixture(t, "", "")
@@ -172,7 +175,7 @@ func TestTwoStatesMutateGateMirrorBlindIsJudgedRed(t *testing.T) {
 }
 
 // ★ 还原校验的牙：还原不落地 ⇒ rc=2 且点名「还原后 sha 不一致」。
-func TestTwoStatesMutateGateRestoreSkippedIsCaught(t *testing.T) {
+func TestTsmRestoreSkippedIsCaught(t *testing.T) {
 	tsmTestInjectMirror(t)
 	tsmSkipRestor = true
 	tsmRunGateFn = func(string) (int, string) { return 0, "夹具：镜子恒绿（此格只考还原校验）" }
@@ -188,7 +191,7 @@ func TestTwoStatesMutateGateRestoreSkippedIsCaught(t *testing.T) {
 }
 
 // ★ 缺省档只读：不传 --overlay ⇒ 绝不写仓内件、报「未搬」、退 2。
-func TestTwoStatesMutateGateDefaultIsReadOnly(t *testing.T) {
+func TestTsmDefaultIsReadOnly(t *testing.T) {
 	tsmTestInjectMirror(t)
 	fix := tsmTestFixture(t, "", "")
 	t.Chdir(fix)
@@ -209,7 +212,7 @@ func TestTwoStatesMutateGateDefaultIsReadOnly(t *testing.T) {
 }
 
 // ★ 仓内件拒写：overlay 自身含 `.git` ⇒ 拒在仓内改件。
-func TestTwoStatesMutateGateRefusesRepoWithGit(t *testing.T) {
+func TestTsmRefusesRepoWithGit(t *testing.T) {
 	tsmTestInjectMirror(t)
 	fix := tsmTestFixture(t, "", "")
 	if err := os.MkdirAll(filepath.Join(fix, ".git"), 0o755); err != nil {
@@ -231,7 +234,7 @@ func TestTwoStatesMutateGateRefusesRepoWithGit(t *testing.T) {
 	}
 }
 
-func TestTwoStatesMutateGatePairGuardHalfIsNotGreen(t *testing.T) {
+func TestTsmPairGuardHalfIsNotGreen(t *testing.T) {
 	tsmTestInjectMirror(t)
 	fix := tsmTestFixture(t, "", "")
 	t.Chdir(fix)
@@ -240,13 +243,14 @@ func TestTwoStatesMutateGatePairGuardHalfIsNotGreen(t *testing.T) {
 	if rc != tsmExitHard || !strings.Contains(out, "缺半即判不了") {
 		t.Fatalf("--pair-guard --only G1 应 rc=2 且点名「缺半即判不了」，实 rc=%d\n%s", rc, out)
 	}
-	rc2, out2, _ := tsmTestRunEntry(t, "--pair-guard", "--only", "G9")
-	if rc2 != tsmExitHard || !strings.Contains(out2, "只跑 0/3 条") {
-		t.Fatalf("--only 不存在的 id ⇒ 0 条应 rc=2，实 rc=%d\n%s", rc2, out2)
+	rc2, _, err2 := tsmTestRunEntry(t, "--pair-guard", "--only", "G9")
+	// ★ 与 py 同序：`--only` 在册校验排在 pair-guard **之前**（py :171-174 < :191）⇒ 拼错 id 走「未知的变异 id」。
+	if rc2 != tsmExitHard || !strings.Contains(err2, "未知的变异 id") {
+		t.Fatalf("--pair-guard --only G9（不在册）应 rc=2 且点名「未知的变异 id」于 stderr，实 rc=%d stderr=%q", rc2, err2)
 	}
 }
 
-func TestTwoStatesMutateGateRealCompilesAndWallShortCircuit(t *testing.T) {
+func TestTsmRealCompilesAndWallShortCircuit(t *testing.T) {
 	d := t.TempDir()
 	good := filepath.Join(d, "good.py")
 	bad := filepath.Join(d, "bad.py")
@@ -268,7 +272,7 @@ func TestTwoStatesMutateGateRealCompilesAndWallShortCircuit(t *testing.T) {
 	}
 }
 
-func TestTwoStatesMutateGateParseArgsUnknownFlag(t *testing.T) {
+func TestTsmParseArgsUnknownFlag(t *testing.T) {
 	rc, _, errb := tsmTestRunEntry(t, "--nope")
 	if rc != tsmExitHard || !strings.Contains(errb, "unrecognized arguments: --nope") {
 		t.Fatalf("未知旗标应 rc=2 且错误进 stderr，实 rc=%d stderr=%q", rc, errb)
@@ -276,5 +280,54 @@ func TestTwoStatesMutateGateParseArgsUnknownFlag(t *testing.T) {
 	rc2, out2, _ := tsmTestRunEntry(t, "--help")
 	if rc2 != tsmExitOK || !strings.Contains(out2, "usage:") {
 		t.Fatalf("--help 应 rc=0 且打 usage，实 rc=%d", rc2)
+	}
+}
+
+// ★ ⑲ 新搬格的回归牙：`--only <拼错的 id>` ⇒ rc=2 且逐字点名「未知的变异 id」· 不报绿。
+// 哑化主入口的 `--only` 在册校验（py :168-174）⇒ 本用例 FAIL（`t.Fatalf` 带本行号）。
+// 校验排在根/目标解析**之前** ⇒ 本用例不落盘、不碰仓。
+func TestTsmOnlyTypoIsNotGreen(t *testing.T) {
+	rc, out, errb := tsmTestRunEntry(t, "--only", "ZZ")
+	if rc != tsmExitHard {
+		t.Fatalf("拼错 id 应 rc=2（判不了 ≠ 全绿），实 rc=%d\nstdout=%s\nstderr=%s", rc, out, errb)
+	}
+	if !strings.Contains(errb, "未知的变异 id") {
+		t.Fatalf("应逐字点名「未知的变异 id」于 stderr，实 stderr=%q", errb)
+	}
+	if strings.Contains(out, "变异验证全绿") {
+		t.Fatalf("拼错 id 不得报绿\nstdout=%s", out)
+	}
+	// 成对向（纯成员判定，不落盘）：在册 id 不得被判「未知」。
+	if !tsmOnlyInRoster("G1") || tsmOnlyInRoster("ZZ") {
+		t.Fatalf("在册判定错：G1=%v（应 true）· ZZ=%v（应 false）", tsmOnlyInRoster("G1"), tsmOnlyInRoster("ZZ"))
+	}
+}
+
+// ★ 重入形态的回归牙：夹具驱动必须以**真子命令形态**起（`gate check <键>` 前置 ＋ `--overlay <fix>`）。
+// 去掉 `gate check <键>` 前缀 ⇒ 复制出的 `zerg` 二进制按 `args[0]` 派发、直跑 `--overlay …` 落
+// 「未知旗标」rc=2 ⇒ 本用例（探针回显 argv）FAIL 带行号。
+func TestTsmFixtureDriverUsesSubcommandShape(t *testing.T) {
+	fix := t.TempDir()
+	dir := filepath.Join(fix, "scripts", "gates")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	probe := filepath.Join(dir, "two-states-gate-mutate.py") // 探针壳（回显 argv）· 与主件 tsmMutDriverRel 同名
+	if err := os.WriteFile(probe, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rc, out := tsmRunFixtureDriver(fix, "", "--only", "G1")
+	if rc != tsmExitOK {
+		t.Fatalf("探针应 rc=0，实 rc=%d out=%q", rc, out)
+	}
+	got := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	want := []string{"gate", "check", "two-states-gate-mutate", "--overlay", fix, "--only", "G1"}
+	if len(got) != len(want) {
+		t.Fatalf("argv 段数不对：\n got=%q\nwant=%q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("argv[%d]=%q（应 %q）· 全 argv=%q", i, got[i], want[i], got)
+		}
 	}
 }

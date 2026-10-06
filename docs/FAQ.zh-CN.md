@@ -26,7 +26,7 @@
 能。未安装时自动降级（不再给命令加前缀）；也可 `ZERG_RTK=0` 显式关闭。
 
 **Q：`web_search` 报错？**
-它依赖自建 searxng（AGPL 组件，**不随仓库分发**）。用 `scripts/install-searxng.sh` 装好后，
+它依赖自建 searxng（AGPL 组件，**不随仓库分发**）。自建起服务后，
 用 `ZERG_SEARXNG_PY`/`ZERG_SEARXNG_SETTINGS` 指向它；不装则联网搜索工具不可用，其余功能不受影响。
 
 ---

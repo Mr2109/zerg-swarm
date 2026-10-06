@@ -1,5 +1,5 @@
-// two_states_gate_mutate.go —— 判据件 `scripts/gates/two-states-gate-mutate.py`（635 行 · 甲案 C 类第 7 枚
-// · py 现值 sha16 = 6690adac42886f7a）的 **Go 真搬**。
+// two_states_gate_mutate.go —— 判据件 `scripts/gates/two-states-gate-mutate.py`（674 行 · 甲案 C 类第 7 枚
+// · py 现值 sha16 = ae378c7928843669）的 **Go 真搬**。
 //
 // 本件做什么（py 逐行现读后落）：判据 7 门禁（`scripts/sandbox-probes/verify-two-states.py --self-test --wall
 // <茧壁>`）的**变异验证** —— 三条变异（G1 茧壁路线静默回落 / G2 路线起不来当全被拦 / G3 `claim_egress` 不再
@@ -88,8 +88,21 @@ const tsmWallRel = "wall/target/debug/zerg-wall"
 // tsmPython —— 钉死解释器（GAP-20261001-61）：py 用 `sys.executable`，对拍台对 py 一律用 /usr/bin/python3。
 const tsmPython = "/usr/bin/python3"
 
-// tsmMutDriverRel —— py `_MUT_DRIVER_REL`（:266 · 自检把「本件」硬拷贝进夹具的落点）。
-const tsmMutDriverRel = "scripts/gates/two-states-gate-mutate"
+// tsmMutDriverRel —— py `_MUT_DRIVER_REL`（:294 · 自检把「本件」硬拷贝进夹具的落点）。py 的落点＝
+// `scripts/gates/two-states-gate-mutate.py`（`basename(SELF_PATH)` 带 `.py`）；Go 的「本件」是可执的 `zerg`
+// 二进制（无后缀），而夹具里经 `gate check <键>` **重入**复用 ⇒ 落点必须带 `.py`：判据名录
+// （`family_gate_check.go` 的 `gateCheckRoster`）只收 `.py`/`.sh` 与「无后缀＋可识别 shebang」活门，
+// 无后缀的 Mach-O 两侧都不认 ⇒ 该键解析不到（不在册 ⇒ rc=2）⇒ 落点与 py 逐字同形。
+const tsmMutDriverRel = "scripts/gates/two-states-gate-mutate.py"
+
+// tsmFixVersionRel / tsmFixGateScriptRel —— 夹具**仓根判据件** ＋ **门禁最小入口**。夹具里的「本件」是
+// `zerg` 二进制、经 `gate check` 重入 ⇒ CLI 侧要解析仓根（锚 `core/internal/version/version.go`，见 root.go）
+// 且 `gate check` 要门禁最小入口（`scripts/gates/precommit-gates.sh` 自举件、缺即 rc=2）。两件只落**仓外
+// 夹具树**（`$TMPDIR`），真仓一字不动。
+const tsmFixVersionRel = "core/internal/version/version.go"
+const tsmFixGateScriptRel = "scripts/gates/precommit-gates.sh"
+const tsmFixVersionSrc = "package version\n"
+const tsmFixGateScriptSrc = "#!/bin/sh\nexit 0\n"
 
 // tsmFixWallRel —— py `_FIX_WALL_REL`（:267）。
 const tsmFixWallRel = "wall/target/debug/zerg-wall"
@@ -100,8 +113,8 @@ const tsmFixWallStub = "#!/bin/sh\nexit 0\n"
 // tsmDropLine —— py `_DROP_LINE`（:269）。
 const tsmDropLine = "    pass  # 夹具：把 G1 那段摘掉（锚点命中 0 次 · 正文仍可编译）\n"
 
-// tsmWantCases —— py `WANT_CASES`（:265 · 写死：少跑一格即断言失败）。
-const tsmWantCases = 18
+// tsmWantCases —— py `WANT_CASES`（:293 · 写死：少跑一格即断言失败）。
+const tsmWantCases = 19
 
 // tsmMutation —— py `MUTATIONS` 的元素（:62-87）。`anchor` 在目标件里必须**恰好命中一次**。
 type tsmMutation struct {
@@ -564,8 +577,13 @@ func tsmReverseStr(s string) string {
 	return string(r)
 }
 
-// tsmFixtureTarget —— py `_fixture_target()`（:366-367）。
+// tsmFixtureTarget —— py `_fixture_target()`（:394-395）。
+// ★ 空夹具 ⇒ 返回空串（**fail-closed**）：夹具搭不起来时若回落到相对路径，会落进**真仓**
+// （血证：夹具建点失败那一路曾把 `<真仓>/scripts/sandbox-probes/verify-two-states.py` 删掉又清空）。
 func tsmFixtureTarget(fix string) string {
+	if fix == "" {
+		return ""
+	}
 	return filepath.Join(fix, "scripts", "sandbox-probes", "verify-two-states.py")
 }
 
@@ -605,6 +623,20 @@ func tsmMkFixture(base, driver, name, drop, dup string) (string, string) {
 	}
 	if e := tsmCopyFile(driver, filepath.Join(fix, tsmMutDriverRel)); e != "" {
 		return "", e
+	}
+	_ = os.Chmod(filepath.Join(fix, tsmMutDriverRel), 0o755)
+	// ★ 夹具里的「本件」是 `zerg` 二进制、经 `gate check <键>` 重入 ⇒ CLI 侧要仓根判据件与门禁最小入口。
+	if e := os.MkdirAll(filepath.Dir(filepath.Join(fix, tsmFixVersionRel)), 0o755); e != nil {
+		return "", e.Error()
+	}
+	if e := tsmWriteText(filepath.Join(fix, tsmFixVersionRel), tsmFixVersionSrc); e != "" {
+		return "", e
+	}
+	if e := tsmWriteText(filepath.Join(fix, tsmFixGateScriptRel), tsmFixGateScriptSrc); e != "" {
+		return "", e
+	}
+	if e := os.Chmod(filepath.Join(fix, tsmFixGateScriptRel), 0o755); e != nil {
+		return "", e.Error()
 	}
 	if e := tsmWriteFixtureGate(fix, nil, drop, dup); e != "" {
 		return "", e
@@ -683,6 +715,25 @@ func tsmParseArgs(argv []string) (tsmArgs, string, bool) {
 	return a, "", false
 }
 
+// tsmOnlyInRoster —— py `args.only not in {m["id"] for m in MUTATIONS}` 的成员判定（在册 id 集合）。
+func tsmOnlyInRoster(id string) bool {
+	for _, m := range tsmMutations {
+		if m.id == id {
+			return true
+		}
+	}
+	return false
+}
+
+// tsmMutationIDsCSV —— py `",".join(m["id"] for m in MUTATIONS)`（在册 id 按序逗号拼接）。
+func tsmMutationIDsCSV() string {
+	ids := make([]string, 0, len(tsmMutations))
+	for _, m := range tsmMutations {
+		ids = append(ids, m.id)
+	}
+	return strings.Join(ids, ",")
+}
+
 // twoStatesMutateGateMain —— 入口（与 py `main()` 逐字对齐；唯一分歧 = 缺省档只读 · 见件头）。
 func twoStatesMutateGateMain(stdout, stderr io.Writer, argv []string) int {
 	if v := os.Getenv("ZERG_ZTS_MUT_MUTE"); v != "" {
@@ -698,9 +749,18 @@ func twoStatesMutateGateMain(stdout, stderr io.Writer, argv []string) int {
 		return tsmExitHard
 	}
 
+	// ★ 缺口 `GAP-20260926-181`：`--only <拼错的 id>`（如 `--only ZZ`）此前**一格不跑**却打进
+	//   「变异验证全绿」并 rc=0 ⇒ 拼错 id 与真跑成功**同形**（假绿）。判据：`--only` 非空时必须命中
+	//   在册 id，否则**判不了**（退码 2）—— 拼错 id ≠ 全绿。（逐字对 py :168-174）
+	if a.only != "" && !tsmOnlyInRoster(a.only) {
+		fmt.Fprintf(stderr, "!! [--only 校验] 未知的变异 id %s（在册：%s）⇒ 判不了（退码 2）—— 拼错 id ≠ 全绿\n",
+			tsmPyReprStr(a.only), tsmMutationIDsCSV())
+		return tsmExitHard
+	}
+
 	if a.selftest {
 		fmt.Fprint(stdout, "── two-states-gate-mutate.py 自证（成对正负控 + 防空绿档 · 仓外夹具硬拷贝 · 真退出码）\n")
-		return tsmSelfTest(stdout)
+		return tsmSelfTest(stdout, stderr)
 	}
 
 	root := tsmDeriveRoot(tsmCwd())
@@ -1019,10 +1079,18 @@ func tsmDriverPath() string {
 	return ""
 }
 
-// tsmRunFixtureDriver —— py `_run_fixture_driver()`（:391-395）：跑夹具里的**硬拷贝驱动**。
-// ★ Go 侧多传 `--overlay <fix>`（旋钮面与 py 不可合同 ⇒ 单列点名），其余输出逐字对齐。
+// tsmRunFixtureDriver —— py `_run_fixture_driver()`（:423-427）：跑夹具里的**硬拷贝驱动**。
+// ★ Go 侧重入必须走**真子命令形态**：夹具里的「本件」是 `zerg` 二进制，而 `zerg` 按 `args[0]` 派发
+// （`main.go:77` `run(os.Args[1:], …)`、✗ 不认 `argv[0]`）⇒ 直跑 `--overlay …` 落「未知旗标」rc=2
+// （18 格全 rc=2 的真因）。故 argv 首段带上 `gate check <键>`（照已落件先例 `check_approve_closedset.go`
+// 的 `cacsSpawnSelf` 注入点 ＋ 路由写法）。夹具树须有仓根判据件与门禁最小入口（见 `tsmMkFixture`）。
+// ★ 另多传 `--overlay <fix>`（旋钮面与 py 不可合同 ⇒ 单列点名），其余输出逐字对齐。
 func tsmRunFixtureDriver(fix string, mute string, extra ...string) (int, string) {
-	argv := append([]string{"--overlay", fix}, extra...)
+	if fix == "" {
+		// 夹具搭不起来 ⇒ **fail-closed 停手**：✗ 不许拿相对路径在真仓里跑（见 tsmFixtureTarget 注释）。
+		return tsmExitHard, ""
+	}
+	argv := append([]string{"gate", "check", "two-states-gate-mutate", "--overlay", fix}, extra...)
 	cmd := exec.Command(filepath.Join(fix, tsmMutDriverRel), argv...)
 	cmd.Dir = fix
 	if mute != "" {
@@ -1032,9 +1100,10 @@ func tsmRunFixtureDriver(fix string, mute string, extra ...string) (int, string)
 	return tsmExecCode(err), tsmDecodeReplace(out)
 }
 
-// tsmSelfTest —— py `self_test()`（:441-631）逐字同构：成对正负控 + 退码钳 + 防空绿 + 真目标只读结构。
-// 唯一新增 = 末段一行 Go 只读声明（见件尾未覆盖面第 ② 条）。
-func tsmSelfTest(stdout io.Writer) int {
+// tsmSelfTest —— py `self_test()`（:477-670）逐字同构：成对正负控 + 退码钳 + 防空绿 + 真目标只读结构。
+// ★ 夹具里的「本件」是 `zerg` 二进制，重入走 `gate check two-states-gate-mutate --overlay <fix>`（真子命令
+// 形态 · 见 `tsmRunFixtureDriver`）⇒ 夹具树带仓根判据件与门禁最小入口（见 `tsmMkFixture`）。
+func tsmSelfTest(stdout, stderr io.Writer) int {
 	d, err := os.MkdirTemp("", "zts-mut-selftest-")
 	if err != nil {
 		fmt.Fprintf(stdout, "!! 建仓外自检根失败：%s\n", err.Error())
@@ -1160,7 +1229,7 @@ func tsmSelfTest(stdout io.Writer) int {
 	s12b, _ := tsmShaStr(t12)
 	written := s12b != s12
 	_ = tsmWriteText(t12, src12)
-	caseFn("⑫防空绿", "弄哑「还原校验」（还原不落地）⇒ 驱动必 rc=2 且点名「还原后 sha 不一致」",
+	caseFn("⑫防空绿", "弄哑「还原」（`iw.restore` 不落地）⇒ 驱动必 rc=2 且点名「还原后 sha 不一致」",
 		rc == 2 && strings.Contains(out, "还原后 sha 不一致") && written,
 		fmt.Sprintf("rc=%d（期望 2）· 变异确实留在盘上 %s", rc, tsmBoolWord(written)))
 
@@ -1233,14 +1302,18 @@ func tsmSelfTest(stdout io.Writer) int {
 	caseFn("⑱只增自证", "不带 `--pair-guard` 时 `--only G1` 仍 rc=0 —— 既有 `--only` 语义一字未改（本档只增）",
 		rcOld == 0 && strings.Contains(outOld, "变异验证全绿"), fmt.Sprintf("rc=%d（期望 0 · 既有语义不动）", rcOld))
 
+	rcTypo, outTypo := tsmRunFixtureDriver(fix, "", "--only", "ZZ")
+	caseFn("⑲负控", "`--only ZZ`（拼错的 id）⇒ rc=2 且逐字点名「未知的变异 id」· 不报绿（拼错 ≠ 全绿 · 缺口 GAP-20260926-181）",
+		rcTypo == 2 && strings.Contains(outTypo, "未知的变异 id") && !strings.Contains(outTypo, "变异验证全绿"),
+		fmt.Sprintf("rc=%d（期望 2）· 逐字 %s", rcTypo, tsmYesNo(strings.Contains(outTypo, "未知的变异 id"))))
+
 	fmt.Fprint(stdout, "  ⚠ 照实记（只报 · 不当绿）：本件**真跑**会真改仓（改坏 → `finally` 还原）且要求\n")
 	fmt.Fprint(stdout, "     `wall/target/debug/zerg-wall` 在位 ⇒ 只挂在 `real-gates.sh` 的 `build` 档；\n")
 	fmt.Fprint(stdout, "     本批只补自检面（判据与真跑退码一字未改）。\n")
-	fmt.Fprint(stdout, "     ★ Go 实搬（本件）：缺省档**只读**（不碰真目标）⇒ 改仓内件档仅在显式 `--overlay <仓外树>` 下走；"+
-		"本自检全程只读、夹具全在仓外。\n")
 
 	fmt.Fprintf(stdout, "  自证用例：%d 条 · 断言条数 %d（少跑一格即失效）\n", total, tsmWantCases)
 	if total != tsmWantCases {
+		fmt.Fprintf(stderr, "✗ 判不了：自检用例数对不上（应 %d，实跑 %d）⇒ rc=2（不许当绿）\n", tsmWantCases, total)
 		return tsmExitHard
 	}
 	if bad == 0 {

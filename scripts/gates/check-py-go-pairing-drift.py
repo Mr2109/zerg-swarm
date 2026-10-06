@@ -4,19 +4,20 @@
 
 病（承 `zerg-gate-cli-pitfalls` 的「py↔Go 双实现面：只改半件 ＝ 假绿」）：
   `core/cmd/zerg/gate_inproc_table.go` 把一批判据登记成**已真搬 Go · 可在进程内跑**；
-  每枚键在 `scripts/gates/<键>.py` 还留着一份 py 真身。`zerg gate check <键>` 走 **Go inproc**，
+  每枚键在**判据注册表**里还指着一份 py/sh 真身（★ 决-10：真身路径查 `scripts/gates/judge-registry.json`
+  的 `entries[].path`，✗ 不硬拼旧口径路径 —— 真身分布在 scripts/evals·svc·docs·sandbox-probes…）。`zerg gate check <键>` 走 **Go inproc**，
   而步骤表那一步走 **py** —— 两个入口同源吗？**没有谁保证**。枚举三口径（py 件 / Go 件 /
   inproc 键）可现读；「两半都在 ＝ 风险面」在百量级 ⇒ 分叉是架构面，不是偶发。
 
 治法（本门 · **对拍而不是读源码猜**）：
   对 `gate_inproc_table.go` 的**每条 inproc 键**，拿**同一 argv**跑两态 ——
     态① `bin/zerg gate check <键> <argv…>`（Go 进程内 · 壳 cwd=仓根 · 壳设 ZERG_REPO*）
-    态② `python3 scripts/gates/<键>.py <argv…>`（py 真身 · cwd=仓根）
+    态② `python3|bash <注册表真身路径> <argv…>`（真身 · cwd=仓根 · 解释器取注册表 interp）
   ⇒ 断言 **stdout / stderr / 退码**三面逐字同（已声明非确定面**掩码**：时间戳 · 耗时 · 临时目录 · pid）。
   ★ 差集进 **只许下降的棘轮**（`py-go-pairing-drift.ratchet.json` 的 `known` 集）：
      现读差集 ⊆ 棘轮 ⇒ 不涨；出现**棘轮里没有**的键 ⇒ 差集涨了 ⇒ `--strict` 判红。
   另出两张点名表（**键 ⇕ 件** 的双向差集）：
-    表A「A 有键 · B 无件」= inproc 键在册、而 `scripts/gates/<键>.py` 不在盘 ⇒ 真分叉（`--strict` 判红）
+    表A「A 有键 · B 无真身」= inproc 键在册、而判据注册表里无该键真身 ⇒ 真分叉（`--strict` 判红）
     表B「B 有件 · A 无键」= py 真身在盘、而未进 inproc 表 ⇒ **半接线/未搬**（常态 · 只报告）
 
 ★ 为什么是**两态对拍**而不是读源码：分叉可以「今天两边同值」时静默存在（版本真源恰等于被钉死的值）；
@@ -33,8 +34,38 @@
       （空域 ≠ 全绿 · 零执行探针一律不给结论）· `--self-test` 用例数对不上也退 2
 
 掩码（已声明的**非确定面** · 逐字口径见 `MASK_RULES`）
-  时间戳 `YYYY-MM-DD[ T]HH:MM:SS` · 耗时 `<数>s` / `<数> 秒` · 临时目录 `/var/folders/…` `/tmp/…`
-  `…/T/…` · `pid=<数>` · `tempdir=<串>`。掩码**只抹这些面**；其余逐字比。
+  时间戳 `YYYY-MM-DD[ T]HH:MM:SS` · 耗时 `<数>s` / `<数> 秒` / **`<数>ms`（毫秒墙钟）** · 临时目录
+  `/var/folders/…` `/tmp/…` `…/T/…` · `pid=<数>` · `tempdir=<串>` ·
+  **夹具 mkdtemp 随机后缀 `fx-<类>-<后缀>`** · **夹具 git 对象哈希（7–64 位十六进制）**。
+  掩码**只抹这些面**；其余逐字比。
+  ★ 本批（批-2.1）新增三类非确定面，**逐键点名**其成因而**不是** py⟷Go 实现分叉（三键改后即从差集消失）：
+    · `check-build-tags` ：仓外夹具目录名 `[fx-one-side-<随机后缀>]` —— py `mkdtemp` 出**字母数字**、
+      Go `MkdirTemp` 出**纯数字**（py 连跑两发即异）；掩掉后缀后两态逐字同。
+    · `check-contract-version-diff` ：自检档的**真目标墙钟** `NN ms` —— 两态各自耗时天然不同；
+      旧掩码只认 `s`/`秒` ⇒ `ms` 漏网；掩掉后两态逐字同。
+    · `check-multirepo-summary` ：仓外夹具仓的 **git HEAD / index 哈希**（每次现造夹具都不同）；
+      掩掉 7–64 位十六进制串后两态逐字同。
+  ★ 本批（批-2.1-续 · 2026-10-07）新增两条**掩码面** ＋ 一条**启动口径**（同属「门比声明松」的面 ·
+    **逐键点名**其成因而**不是** py⟷Go 实现分叉；三键改后即从差集消失）：
+    · `writeout-probe`（**回溯帧面**）：py `os.environ[<键>]` 缺键 ⇒ **裸回溯**，其帧落在**解释器面**
+      且随解释器版本/安装位置漂（3.14 `File "<frozen os>", line 709, in __getitem__` ⟷ 系统
+      `/usr/bin/python3` 3.9 `…/lib/python3.9/os.py", line 679, in __getitem__`）⇒ 逐字复刻＝把某版
+      解释器行号**写死进仓件**（换环境必红）。MASK_RULES 新增三条：① **帧行**
+      （`File "…", line N…` / `File "<frozen …>", line N…`）⇒ 固定占位符 `<TRACE_FRAME>`；
+      ② **回溯脚手架**（`Traceback (most recent call last):` 头行 ＋ 其下缩进的帧/源码/`^^^` caret 行）
+      ⇒ **折叠掉**（★ 只掩帧行**不足**：`^^^` caret 行 **py≥3.11 才有** ⇒ 不折叠则 py 自身跨版本即异，
+      而 Go 半无对应行）；③ Go 半回溯的**具名文案尾注**（`（py 真身裸回溯…）` · 声明正文不复刻）⇒ 掩掉。
+      ⇒ 两侧都只剩末行「**异常类名：正文**」，该行**逐字比**（改一字仍判异 · 见自检⑯）。
+    · `gen-gap-ledger`（**解释器告警面**）：py 真身 `scripts/docs/gen-gap-ledger.py:29`（模块 docstring）
+      写有 `"\\d"` ⇒ **CPython ≥3.12 编译该源文件时**向 stderr 打 `SyntaxWarning: … invalid escape
+      sequence …`（≤3.11 静默；3.12/3.13/3.14 正文还不一样），程序自身从不产它 ⇒ Go 半无对应行。
+      MASK_RULES 新增一条：`: SyntaxWarning: ` 行 ＋ 紧随的缩进**源码回显行** ⇒ 掩掉（掩成空 · 见自检⑰）。
+    · `writer-lock`（**写工具档启动口径 · 非掩码**）：真身件头 `#zerg-class: write D2` ⇒ 壳体
+      `core/cmd/zerg/family_gate_check.go:817–891` 的**写工具危险档闸**令态① 缺 `--yes` 时 fail-closed
+      退 2（`yes_required` · 不执行），而态②（裸真身）照跑 ⇒ **结构性判差**（✗ 与 Go 入口无关）。
+      治法：`probe()` 对**写类键**（`is_write_class()` 现读真身**件头**声明）在**键名之后**补**壳级**
+      `--yes`（壳 `gateCheckStripShellFlags` 在 exec 前**消费**、✗ 不透传子件）⇒ 两态同。
+      ★ 非写类键 ✗ 不带 `--yes`（**成对负控** · 见自检⑲/⑳）。
 
 用法
     python3 scripts/gates/check-py-go-pairing-drift.py                    # 报告档 · 真目标
@@ -58,6 +89,9 @@ import tempfile
 VERSION = "0.1.0（防波门 · 缺口承 zerg-gate-cli-pitfalls「双实现面只改半件＝假绿」）"
 INPROC_REL = os.path.join("core", "cmd", "zerg", "gate_inproc_table.go")
 GATES_REL = os.path.join("scripts", "gates")
+# ★ 决-10：B 侧真身路径的**单一真源** = 判据注册表（`entries[].path` 本就带真身路径）。
+#   防波门 ✗ 不再硬拼 scripts/gates/<键>.py（真身在 scripts/evals·svc·docs·sandbox-probes… 各面）。
+REGISTRY_REL = os.path.join("scripts", "gates", "judge-registry.json")
 RATCHET_REL = os.path.join("scripts", "gates", "py-go-pairing-drift.ratchet.json")
 SCHEMA = "zerg/py-go-pairing-drift/v1"
 DEFAULT_ARGV = ["--self-test"]
@@ -66,9 +100,12 @@ PROBE_TIMEOUT = 120          # 单侧单键秒级上限（超时 ⇒ 该键「�
 # inproc 表里的条目形态：`\t"<键>":   <Go 函数名>,`（★ 只认这一形态 · 表件里其余行不吃）
 KEY_RE = re.compile(r'^\t"([^"]+)"\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*$')
 
-# ★ 已声明的**非确定面**（掩码口径 · 只抹这些 · 其余逐字比）
+# ★ 已声明的**非确定面**（掩码口径 · 只抹这些 · 其余逐字比 · 只增不改）
 MASK_RULES = [
     (re.compile(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?"), "<TS>"),
+    # ★新增（批-2.1）：毫秒墙钟 —— 旧表只认 `s`/`秒` ⇒ `check-contract-version-diff` 的 `NN ms` 漏网。
+    #   必须排在 `s\b` 那条**之前**（`ms` 以 `m` 开头、`s\b` 那条本不匹配它，前置只为口径清晰）。
+    (re.compile(r"\d+(?:\.\d+)?\s*ms\b"), "<DUR>"),
     (re.compile(r"\d+(?:\.\d+)?\s*s\b"), "<DUR>"),
     (re.compile(r"\d+(?:\.\d+)?\s*秒"), "<DUR>"),
     (re.compile(r"/var/folders/[^\s\"']+"), "<TMP>"),
@@ -76,6 +113,32 @@ MASK_RULES = [
     (re.compile(r"/private/[^\s\"']+"), "<TMP>"),
     (re.compile(r"pid[=:]\s*\d+"), "pid=<PID>"),
     (re.compile(r"tempdir[=:]\s*\S+"), "tempdir=<TMP>"),
+    # ★新增（批-2.1）夹具目录 mkdtemp 随机后缀：`fx-<类>-<后缀>`（py 字母数字 ⟷ Go 纯数字）。
+    #   保留 `<类>` 段（两侧同名）· 只抹后缀 ⇒ `check-build-tags` 的 `[fx-one-side-…]` 归一。
+    #   排在十六进制掩码**之前**（后缀可能恰是纯十六进制串，先整体归一免得被当哈希）。
+    (re.compile(r"(fx-[a-z]+(?:-[a-z]+)*-)[A-Za-z0-9_]+"), r"\1<FX>"),
+    # ★新增（批-2.1）夹具 git 对象哈希：7–64 位十六进制且**至少含一个 a–f**（排除纯十进制计数）。
+    #   ⇒ `check-multirepo-summary` 的 8 位短 sha / 40 位 HEAD / index 哈希归一。
+    (re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}\b"), "<SHA>"),
+    # ★新增（批-2.1）py 裸回溯的**帧行**：`File "<路径>"` / `File "<frozen os>"` ＋ `, line N[, in fn]`。
+    #   成因（`writeout-probe` 键）：py `os.environ[<键>]` 缺键 ⇒ 裸回溯，其帧落在**解释器面**且随
+    #   解释器版本/安装路径漂（3.14 `File "<frozen os>", line 709, in __getitem__` ⟷ 系统
+    #   /usr/bin/python3 3.9 `…/lib/python3.9/os.py", line 679, in __getitem__`）⇒ 逐字复刻＝把某版
+    #   解释器的行号/路径**写死进仓件**（换环境必红）⇒ 掩成固定占位符。★ 只掩**帧行本身**。
+    (re.compile(r'(?m)^[ \t]*File "[^"]*", line \d+(?:, in [^\n]*)?[ \t]*$'), "<TRACE_FRAME>"),
+    # ★新增（批-2.1）回溯**脚手架**（`Traceback (most recent call last):` 头行 ＋ 其下缩进的
+    #   帧行/源码行/`^^^` caret 行）—— caret 行 **py≥3.11 才有**（3.9 无）⇒ 不折叠则 py 自身跨版本即异；
+    #   Go 半无对应行 ⇒ 整块折叠掉，**只留末行「异常类名：正文」**（该行两侧逐字比 · ✗ 不被掩）。
+    #   上一条已把帧行归一为 `<TRACE_FRAME>` ⇒ 本条同时吞占位符行。
+    (re.compile(r'(?m)^Traceback \(most recent call last\):[ \t]*\r?\n(?:[ \t][^\n]*\r?\n|<TRACE_FRAME>[ \t]*\r?\n)*'), ""),
+    # ★新增（批-2.1）Go 半回溯的「具名文案」尾注（声明 py 回溯正文不可复刻）—— py 侧无此注
+    #   ⇒ 掩掉，令两侧都只剩「异常类名：正文」。★ 只掩这条**声明式尾注**，✗ 不掩异常类名/正文本身。
+    (re.compile(r'（py 真身裸回溯[^\n]*）'), ""),
+    # ★新增（批-2.1）CPython ≥3.12 编译源文件时的 `SyntaxWarning`（`gen-gap-ledger` 键 · py 真身 :29
+    #   的模块 docstring 里 `"\d"`）＋ **紧随其后的源码回显行** —— 该告警由**解释器**打印、程序自身从不产它；
+    #   ≤3.11 静默、3.12/3.13/3.14 正文还不一样 ⇒ Go 半无对应行 ⇒ 掩掉（掩成空串）。★ 只认
+    #   `: SyntaxWarning: ` 这一行 ＋ 紧随的缩进回显行，✗ 不碰其它告警/异常面。
+    (re.compile(r'(?m)^[^\n]*: SyntaxWarning: [^\n]*\r?\n(?:[ \t][^\n]*\r?\n)?'), ""),
 ]
 
 
@@ -83,6 +146,30 @@ def mask(text: str) -> str:
     for rx, rep in MASK_RULES:
         text = rx.sub(rep, text)
     return text
+
+
+# ★ 批-2.1（写工具档）：真身件头 `#zerg-class: write D0|D2|D3` 声明（真源 = 件自己那一行 ·
+#   与 `check-writer-guard.py:59` / `family_gate_check.go:465` 同串）。只现读前 80 行（同族口径）。
+WRITE_CLASS_RE = re.compile(r"^#\s*zerg-class:\s*write\s+(?:D0|D2|D3)\s*$")
+WRITE_CLASS_HEAD_LINES = 80
+
+
+def is_write_class(root: str, rel: str) -> bool:
+    """真身件头是否声明 `#zerg-class: write`（⇒ 态① 须补壳级 `--yes`）。取不到 ⇒ 当非写类（✗ 不误加 `--yes`）。"""
+    p = os.path.join(root, rel)
+    try:
+        f = open(p, encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    try:
+        for i, ln in enumerate(f):
+            if i >= WRITE_CLASS_HEAD_LINES:
+                break
+            if WRITE_CLASS_RE.match(ln.rstrip("\n").rstrip("\r")):
+                return True
+    finally:
+        f.close()
+    return False
 
 
 def read_inproc_keys(root: str):
@@ -104,15 +191,61 @@ def read_inproc_keys(root: str):
     return out, ""
 
 
-def scan_py_stems(root: str):
+def load_registry(root: str):
+    """⇒ ({名: (相对件路径, 解释器)}, "")；注册表取不到 ⇒ (None, 说明)。
+
+    ★ 决-10：B 侧真身路径**查现成的判据注册表**（`entries[].path`），✗ 不新造第二张对照表。
+    """
+    p = os.path.join(root, REGISTRY_REL)
+    if not os.path.isfile(p):
+        return None, "判据注册表不在盘：%s" % REGISTRY_REL
+    try:
+        d = json.loads(open(p, encoding="utf-8").read())
+    except Exception as e:  # noqa: BLE001
+        return None, "判据注册表解析不上：%s" % e
+    entries = d.get("entries")
+    if not isinstance(entries, list):
+        return None, "判据注册表缺 entries 列表"
+    out = {}
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        name = e.get("name") or e.get("id")
+        rel = e.get("path")
+        if not name or not rel:
+            continue
+        interp = e.get("interp") or ("bash" if rel.endswith(".sh") else "python3")
+        out[name] = (rel, interp)
+    if not out:
+        return None, "判据注册表解析出 0 条（空域 ≠ 全绿）"
+    return out, ""
+
+
+def scan_gates_fallback(root: str):
+    """注册表取不到时的**回落**：只扫 scripts/gates 的 .py（旧口径 · 保自检夹具同形）。⇒ (map, "")。"""
     d = os.path.join(root, GATES_REL)
     if not os.path.isdir(d):
         return None, "门件目录读不到：%s" % GATES_REL
-    stems = set()
+    out = {}
     for name in os.listdir(d):
         if name.endswith(".py"):
-            stems.add(name[:-3])
-    return stems, ""
+            out[name[:-3]] = (os.path.join("scripts", "gates", name), "python3")
+    return out, ""
+
+
+def resolve_realbodies(root: str):
+    """B 侧真身 ⇒ ({名: (相对件路径, 解释器)}, 来源)。
+
+    ★ 决-10：**优先查判据注册表**（真身路径的单一真源）；注册表取不到 ⇒ 回落旧口径
+    （扫 scripts/gates 的 .py）。两条都取不到 ⇒ (None, 说明)。
+    """
+    rb, err = load_registry(root)
+    if rb is not None:
+        return rb, "registry"
+    rb2, err2 = scan_gates_fallback(root)
+    if rb2 is None:
+        return None, "realbody 取不到：注册表(%s) · 目录扫描(%s)" % (err, err2)
+    return rb2, "gates"
 
 
 def load_ratchet(root: str, argv_list):
@@ -144,10 +277,21 @@ def run_side(argv, cwd, timeout=PROBE_TIMEOUT):
         return None, "", "%s" % e, True
 
 
-def probe(root, key, argv_list, zerg_bin, py_bin):
-    """两态对拍一条键。⇒ dict(kind, ...)；kind ∈ same/diff/unresolved。"""
-    side_a = [zerg_bin, "gate", "check", key] + list(argv_list)
-    side_b = [py_bin, os.path.join(root, GATES_REL, key + ".py")] + list(argv_list)
+def probe(root, key, argv_list, zerg_bin, py_bin, realbody):
+    """两态对拍一条键。⇒ dict(kind, ...)；kind ∈ same/diff/unresolved。
+
+    ★ 决-10：态② 真身路径/解释器取自判据注册表（realbody = (相对件路径, 解释器)）。
+    ★ 批-2.1（写工具档）：真身若声明 `#zerg-class: write`，态①（壳）须在**键名之后**补壳级 `--yes`
+      （`family_gate_check.go` 的写工具危险档闸 `:817–891`；`gateCheckStripShellFlags` 在 exec 前
+      **消费** `--yes`、✗ 不透传子件）⇒ 否则态① 恒退 2（`yes_required`）而态② 照跑 ⇒ 结构性判差。
+    """
+    rel, interp = realbody
+    side_a = [zerg_bin, "gate", "check", key]
+    if is_write_class(root, rel):
+        side_a += ["--yes"]  # ★ 紧贴键名（派单：`--yes` 缀在子件参数之后会引 CLI 一行告警）
+    side_a += list(argv_list)
+    interp_bin = py_bin if interp == "python3" else interp
+    side_b = [interp_bin, os.path.join(root, rel)] + list(argv_list)
     rca, outa, erra, toa = run_side(side_a, root)
     rcb, outb, errb, tob = run_side(side_b, root)
     if toa or tob or rca is None or rcb is None:
@@ -168,9 +312,9 @@ def evaluate(root, argv_list, zerg_bin=None, py_bin=None, timeout=PROBE_TIMEOUT,
     keys, err = read_inproc_keys(root)
     if keys is None:
         return None, err
-    py_stems, err = scan_py_stems(root)
-    if py_stems is None:
-        return None, err
+    realbodies, rb_src = resolve_realbodies(root)
+    if realbodies is None:
+        return None, rb_src
     if require_ratchet:
         known, err = load_ratchet(root, argv_list)
         if known is None:
@@ -185,16 +329,16 @@ def evaluate(root, argv_list, zerg_bin=None, py_bin=None, timeout=PROBE_TIMEOUT,
     if only:
         key_names = [k for k in key_names if k in set(only)]
     key_set = set(k for k, _ in keys)
-    # 表A：A 有键 · B 无件
-    table_a = [k for k in key_names if k not in py_stems]
-    # 表B：B 有件 · A 无键
-    table_b = sorted(s for s in py_stems if s not in key_set)
+    # 表A：A 有键 · B 无真身（★ 决-10：B 侧真身由判据注册表判在不在）
+    table_a = [k for k in key_names if k not in realbodies]
+    # 表B：B 有真身 · A 无键
+    table_b = sorted(s for s in realbodies if s not in key_set)
     results = {}
     same, diff, unresolved = [], [], []
     for k in key_names:
-        if k not in py_stems:
+        if k not in realbodies:
             continue  # 表A 已点名 · 无件可对拍
-        r = probe(root, k, argv_list, zerg_bin, py_bin)
+        r = probe(root, k, argv_list, zerg_bin, py_bin, realbodies[k])
         results[k] = r
         if r["kind"] == "same":
             same.append(k)
@@ -207,7 +351,8 @@ def evaluate(root, argv_list, zerg_bin=None, py_bin=None, timeout=PROBE_TIMEOUT,
     ratchet_shrank = sorted(known - diff_set)
     return {
         "schema": SCHEMA, "root": root, "probe_argv": list(argv_list),
-        "keys_total": len(key_names), "py_stems_total": len(py_stems),
+        "keys_total": len(key_names), "py_stems_total": len(realbodies),
+        "realbody_source": rb_src,
         "probed": len(same) + len(diff) + len(unresolved),
         "same": sorted(same), "diff": sorted(diff), "unresolved": sorted(unresolved),
         "table_a_key_no_file": sorted(table_a),
@@ -221,7 +366,7 @@ def evaluate(root, argv_list, zerg_bin=None, py_bin=None, timeout=PROBE_TIMEOUT,
 
 def render(rep, strict):
     out = []
-    out.append("── py⟷Go 双实现两态对拍（inproc 键 ⇕ scripts/gates/<键>.py）──")
+    out.append("── py⟷Go 双实现两态对拍（inproc 键 ⇕ 判据注册表真身路径）──")
     out.append("  两态 argv：%s" % (" ".join(rep["probe_argv"]) or "（空）"))
     out.append("  inproc 键 %d 条 · py 真身 %d 条 · 已对拍 %d 条（同 %d · 差 %d · 不判 %d）"
                % (rep["keys_total"], rep["py_stems_total"], rep["probed"],
@@ -248,12 +393,12 @@ def render(rep, strict):
         out.append("  ✓ 棘轮降了（棘轮里有、现读已不合）：%s" % " ".join(rep["ratchet_shrank"]))
     out.append("  表A「A 有键 · B 无件」%d 条：" % len(rep["table_a_key_no_file"]))
     for k in rep["table_a_key_no_file"]:
-        out.append("    ✗ %s（inproc 在册 · scripts/gates/%s.py 不在盘）" % (k, k))
+        out.append("    ✗ %s（inproc 在册 · 判据注册表里无真身路径）" % k)
     if not rep["table_a_key_no_file"]:
-        out.append("    （空 · 每枚 inproc 键都有 py 真身）")
+        out.append("    （空 · 每枚 inproc 键都在注册表里有真身）")
     out.append("  表B「B 有件 · A 无键」%d 条（半接线/未搬 · 只报告）：" % len(rep["table_b_file_no_key"]))
     for s in rep["table_b_file_no_key"]:
-        out.append("    · scripts/gates/%s.py" % s)
+        out.append("    · %s" % s)
     verdict = "判红档" if strict else "报告档"
     greens = (not rep["table_a_key_no_file"]) and (not rep["ratchet_grew"])
     out.append("  ⇒ %s：%s" % (verdict, "全绿" if greens else
@@ -315,7 +460,7 @@ def main(argv=None):
 # ══════════════════════════════════════════════════════════════════
 # 自检面（--self-test）：成对正负控 · 仓外夹具 · 不碰真目标
 # ══════════════════════════════════════════════════════════════════
-WANT_CASES = 12
+WANT_CASES = 20  # ★ 决-10 后 14；★ 批-2.1-续（回溯帧面/SyntaxWarning/写工具档 `--yes`）各加成对 2 格 ⇒ 20。
 _TMP = []
 
 
@@ -380,6 +525,15 @@ def _bump_side(fix, side, key, to):
 def _write_side(fix, side, key, body):
     rel = os.path.join("go", key + ".py") if side == "go" else os.path.join(GATES_REL, key + ".py")
     open(os.path.join(fix, rel), "w", encoding="utf-8").write(body)
+
+
+def _write_registry(fix, entries):
+    """写一枚**仓外夹具注册表**（★ 决-10 的 B 侧真身单一真源）。entries = [(名, 相对件路径, 解释器)]。"""
+    body = {"schema": "judge-registry/1", "roster_dir": "scripts",
+            "entries": [{"id": n, "name": n, "path": pp, "interp": i} for n, pp, i in entries]}
+    os.makedirs(os.path.dirname(os.path.join(fix, REGISTRY_REL)), exist_ok=True)
+    open(os.path.join(fix, REGISTRY_REL), "w", encoding="utf-8").write(
+        json.dumps(body, ensure_ascii=False))
 
 
 def _run_inproc(argv):
@@ -506,6 +660,103 @@ def self_test():
     rc, out = _run_inproc(["--root", f8, "--argv="])
     case("⑫退码钳", "棘轮 probe_argv(--self-test) ≠ 本次 argv(空) ⇒ rc=2（不可比）",
          rc == 2, "rc=%d" % rc)
+
+    # ⑬正控（决-10）：B 侧真身在 scripts/evals（不在 gates 面）· 注册表给路径 ⇒ 表A 空 · 两态走注册表路径
+    f9 = _mk_fixture(d, keys=("k-reg",), py_missing=("k-reg",))
+    os.makedirs(os.path.join(f9, "scripts", "evals"))
+    shutil.copy(os.path.join(f9, "go", "k-reg.py"), os.path.join(f9, "scripts", "evals", "k-reg.py"))
+    _write_registry(f9, [("k-reg", "scripts/evals/k-reg.py", "python3")])
+    rep, err = _ev(f9)
+    rc, out = _run_inproc(["--root", f9, "--strict"])
+    case("⑬正控", "决-10：真身在 scripts/evals（不在 gates 面）· 注册表给路径 ⇒ 表A 空 · 两态对拍走注册表路径 rc=0",
+         err == "" and rep["table_a_key_no_file"] == [] and rep["diff"] == [] and rc == 0,
+         "表A=%s diff=%s rc=%d" % (rep["table_a_key_no_file"] if rep else None,
+                                   rep["diff"] if rep else None, rc))
+
+    # ⑭负控（决-10）：注册表在盘但缺该键 ⇒ 表A 点名 · strict rc=1（与⑧表A 面成对 · 走注册表面）
+    f10 = _mk_fixture(d, keys=("k-reg2",), py_missing=("k-reg2",))
+    os.makedirs(os.path.join(f10, "scripts", "evals"))
+    _write_registry(f10, [("k-other", "scripts/evals/k-other.py", "python3")])
+    rep, err = _ev(f10)
+    rc, out = _run_inproc(["--root", f10, "--strict"])
+    case("⑭负控", "决-10：注册表在盘但无 k-reg2 ⇒ 表A 点名 · strict rc=1",
+         err == "" and rep["table_a_key_no_file"] == ["k-reg2"] and rc == 1 and "k-reg2" in out,
+         "表A=%s rc=%d" % (rep["table_a_key_no_file"] if rep else None, rc))
+
+    # ⑮正控（回溯帧面 · 批-2.1-续）：py 侧整段裸回溯 ⟷ Go 侧一行「异常类名：正文（具名文案）」⇒ 掩后同
+    f11 = _mk_fixture(d, keys=("k-tb",))
+    go_tb = r'''import sys
+sys.stderr.write("KeyError: 'K'（py 真身裸回溯 rc=1 · 回溯帧落在解释器面 ⇒ 正文不复刻）\n")
+sys.exit(1)
+'''
+    open(os.path.join(f11, "go", "k-tb.py"), "w", encoding="utf-8").write(go_tb)
+    py_tb = r'''import sys
+sys.stderr.write("Traceback (most recent call last):\n  File \"/x/os.py\", line 679, in __getitem__\n    w = os.environ[\"PROBE_DIR\"]\n        ~~~~~~~~~~^^^^^^^^^^^^^\n  File \"<frozen os>\", line 709, in __getitem__\nKeyError: 'K'\n")
+sys.exit(1)
+'''
+    open(os.path.join(f11, GATES_REL, "k-tb.py"), "w", encoding="utf-8").write(py_tb)
+    rep, err = _ev(f11)
+    case("⑮正控", "回溯帧面：py 整段裸回溯 ⟷ Go 一行具名文案 ⇒ 掩码后判**同**",
+         err == "" and rep["diff"] == [], "diff=%s" % (rep["diff"] if rep else None))
+
+    # ⑯负控（成对 · 回溯帧面）：Go 侧「异常类名：正文」改一字 ⇒ 仍判异（掩码 ✗ 不掩正文）
+    open(os.path.join(f11, "go", "k-tb.py"), "w", encoding="utf-8").write(
+        go_tb.replace("'K'", "'M'"))
+    rep, err = _ev(f11)
+    case("⑯负控", "与⑮成对：异常正文 K→M ⇒ 仍判异（真差不得被掩）",
+         err == "" and rep["diff"] == ["k-tb"], "diff=%s" % (rep["diff"] if rep else None))
+
+    # ⑰正控（解释器告警面）：py 侧 SyntaxWarning 行＋源回显行 ⟷ Go 侧 stderr 空 ⇒ 掩后同
+    f12 = _mk_fixture(d, keys=("k-warn",))
+    open(os.path.join(f12, "go", "k-warn.py"), "w", encoding="utf-8").write("import sys\nsys.exit(0)\n")
+    warn_ok = r'''import sys
+sys.stderr.write('/x/gen-gap-ledger.py:29: SyntaxWarning: "\\d" is an invalid escape sequence.\n  GN_ID_RE = re.compile("^Q-\\d+$")\n')
+sys.exit(0)
+'''
+    open(os.path.join(f12, GATES_REL, "k-warn.py"), "w", encoding="utf-8").write(warn_ok)
+    rep, err = _ev(f12)
+    case("⑰正控", "解释器告警面：py SyntaxWarning 行＋源回显行 ⟷ Go 空 ⇒ 掩码后判**同**",
+         err == "" and rep["diff"] == [], "diff=%s" % (rep["diff"] if rep else None))
+
+    # ⑱负控（成对 · 告警面）：告警/回显行之外**另加一行真差** ⇒ 仍判异
+    open(os.path.join(f12, GATES_REL, "k-warn.py"), "w", encoding="utf-8").write(r'''import sys
+sys.stderr.write('/x/gen-gap-ledger.py:29: SyntaxWarning: bad\n  src line\nREAL-DIFF-LINE\n')
+sys.exit(0)
+''')
+    rep, err = _ev(f12)
+    case("⑱负控", "与⑰成对：告警行外另加一行真差 ⇒ 仍判异（掩码 ✗ 不吞真差）",
+         err == "" and rep["diff"] == ["k-warn"], "diff=%s" % (rep["diff"] if rep else None))
+
+    # ⑲正控（写工具档启动口径）：写类件 ⇒ `is_write_class` True · side_a 在**键名后**补壳级 `--yes`
+    f13 = _mk_fixture(d, keys=("k-w",))
+    open(os.path.join(f13, "scripts", "gates", "k-w.sh"), "w", encoding="utf-8").write(
+        "#!/bin/sh\n#zerg-class: write D2\necho OUT-k-w\n")
+    _seen = []
+    _orig_rs = globals()["run_side"]
+    globals()["run_side"] = (lambda argv, cwd, timeout=None: _seen.append(list(argv)) or (0, "", "", False))
+    try:
+        probe(f13, "k-w", ["--self-test"], "/bin/zerg", "python3", ("scripts/gates/k-w.sh", "bash"))
+    finally:
+        globals()["run_side"] = _orig_rs
+    case("⑲正控", "写工具档：件头 `#zerg-class: write D2` ⇒ is_write_class True · side_a 键名后带 --yes",
+         is_write_class(f13, "scripts/gates/k-w.sh") is True and _seen
+         and _seen[0][:5] == ["/bin/zerg", "gate", "check", "k-w", "--yes"],
+         "is_write_class=%r side_a=%s" % (is_write_class(f13, "scripts/gates/k-w.sh"),
+                                          _seen[0] if _seen else None))
+
+    # ⑳负控（成对）：非写类件 ⇒ is_write_class False · side_a ✗ 不带 --yes（不许放宽）
+    open(os.path.join(f13, "scripts", "gates", "k-plain.sh"), "w", encoding="utf-8").write(
+        "#!/bin/sh\necho hi\n")
+    _seen.clear()
+    globals()["run_side"] = (lambda argv, cwd, timeout=None: _seen.append(list(argv)) or (0, "", "", False))
+    try:
+        probe(f13, "k-plain", ["--self-test"], "/bin/zerg", "python3", ("scripts/gates/k-plain.sh", "bash"))
+    finally:
+        globals()["run_side"] = _orig_rs
+    case("⑳负控", "与⑲成对：非写类件 ⇒ is_write_class False · side_a ✗ 不带 --yes",
+         is_write_class(f13, "scripts/gates/k-plain.sh") is False and _seen and "--yes" not in _seen[0],
+         "is_write_class=%r side_a=%s" % (is_write_class(f13, "scripts/gates/k-plain.sh"),
+                                          _seen[0] if _seen else None))
 
     print("  自证用例：%d 条 · 断言条数写死 %d（少跑一格即失效）" % (total, WANT_CASES))
     if total != WANT_CASES:

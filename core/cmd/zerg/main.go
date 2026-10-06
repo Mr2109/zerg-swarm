@@ -1235,6 +1235,33 @@ func init() {
 			endpoint: "",
 			run:      cmdScriptInventorySync,
 		},
+		// ---- 退场正门（设计稿 `设计-退场正门-retire-20261006.md` ＋ 拍板 决-01/02/03/09 · 2026-10-07）----
+		// 定位：**只管登记面退场**，✗ **不代管物理删除**（`git rm`）——真删交 git 历史＋提案审计（决-01）。
+		// 真源**沿用** `core/internal/contract/adopt-retire.json` 的 `retire_ledger`（✗ 不另起第二真源 · 决-02）；
+		// 目标件闭集 = **自研面全体 py/sh（全仓 − `vendor/**` − `tools/ocr/venv/**`）**（决-12 · ★ 描述串与 `scriptRetireClosedSetDesc` 同源）；
+		// 例外类 = **逐条登记名册 ＋ 理由 ＋ 保留代价栏**（同真源 `retire_exceptions` · 决-09）。
+		// 危险档 D2（与 `inventory sync` 同档）：`--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面进审计
+		//   （审计先落盘 → `cp -p` 备份真源 → 原子写 → 写后读回，复查不过逐字节写回）。
+		// 退码：0 成功 · 1 拒绝（例外类 / 目标不在闭集）· 2 用法错／不给结论（缺 `--yes`／缺 `--evidence`／
+		//   目标不在盘／真源取不到）· 14 冲突（已有同 `object` 条目）。实现在 `family_script_retire.go`。
+		{
+			path: []string{"script", "retire"},
+			kind: "ScriptRetire",
+			summary: "退场正门（**只管登记面** · ✗ 不代管 `git rm`）：把一件自研面 py/sh 登记进 `retire_ledger`" +
+				"（D2 写面 · `--dry-run` 零副作用 · 缺 `--yes` ⇒ 2 · 写面进审计）；例外类件 / 目标不在闭集 ⇒ 1；" +
+				"目标不在盘 / 真源取不到 ⇒ 2；已有同 `object` 条目 ⇒ 14",
+			usage: "zerg script retire <件> [--dry-run | --yes] [--evidence <出处>]… [--by <谁>] [--json <字段>]",
+			arity: "any",
+			args:  []string{"件（仓内相对路径 · " + scriptRetireClosedSetDesc + "）"},
+			fields: []string{"result", "object", "state", "closed_set", "in_exceptions",
+				"ledger_entries_before", "ledger_entries_after", "ledger_before_sha256", "ledger_after_sha256", "audit_path"},
+			danger: &dangerSpec{dangerD2, "登记面（`retire_ledger`）",
+				"把一件自研面件登记为「已登记退场」（可逆：写前 `cp -p` 备份 + 写后读回，复查不过逐字节写回）；**只登记 · ✗ 不代管 `git rm`**（真删交 git 历史＋提案审计）",
+				"设计-退场正门-retire-20261006.md §一/§二/§三 · 拍板落定-所有稿-20261007.md 决-01/02/03/09", true},
+			opened:   true,
+			endpoint: "",
+			run:      cmdScriptRetire,
+		},
 		// ---- 缺口面 P0（缺口-命令面-20260921 §十一 · 2026-09-21）：今天手搓最多的一类先补上 ----
 		// ── 缺口面 · `zerg find`（按名找件 · 2026-09-25 · 手搓 find 的替身）────────────
 		{
@@ -1469,6 +1496,20 @@ func init() {
 			endpoint: "",
 			run:      cmdI18n,
 		},
+		// ── S7 · 5 键归口（ui 族扩容）：`check-i18n`/`i18n-audit` 两件独立脚本收成命令面 ────────────
+		// 归口件：`~/.zerg/state/②类-5键-CLI工具子命令归口-20261007.md`（② 类接线 · 5 键 · CLI 工具子命令）。
+		// 底层唯一实现 = `i18n_audit.go`（`ui/scripts/i18n_audit.py` 的 Go 真搬体）；命令面**只做入口 ＋ 转发**
+		// （连退码也不改写）—— ✗ 不重写真搬体里任何一段。纯分析工具 · 无自动调用者 ⇒ 排末。
+		{
+			path:        []string{"ui", "i18n-audit"},
+			summary:     "i18n 中文字面量审计（纯分析工具 · 落点走 `ZERG_I18N_AUDIT_OUT` · 底层 = `i18n_audit.go` 真搬体 · 命令面只转发不翻译）",
+			usage:       "zerg ui i18n-audit [classify|keys|all]",
+			arity:       "any",
+			args:        []string{"模式（classify/keys/all · 缺省 all · 旗标逐字来自真搬体 · 原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdI18nAudit,
+		},
 		// ── 缺口面 P0 之外 · `zerg doc meta fill`（批量回填文件头 · 2026-09-21）──────────────
 		//   病灶原样（开工记录 D3 §三）：③ 那 63 篇的抬头是**一次性 `/tmp` 脚本**回填的 ——
 		//   命令面**没有「批量改字段」这条路**。本条目就是那次脚本的命令面等价物。
@@ -1486,6 +1527,40 @@ func init() {
 			// `opened`: 真跑已开放（`--yes` 就回填文件头；审计先落盘 + 回读对拍 sha256）。
 			opened: true,
 			run:    cmdDocMeta,
+		},
+		// ── S7 · 5 键归口（doc 族扩容）：3 件独立工具收成命令面（`kb-docs-sync`=A18 · `gen-tools-md` · `doc-index-gen`）──
+		// 归口件：`~/.zerg/state/②类-5键-CLI工具子命令归口-20261007.md`。三件底层唯一实现 = 各自 Go 真搬体
+		// （`kb_docs_sync.go` / `gen_tools_md.go` / `doc_index_gen.go`）；命令面**只做入口 ＋ 转发**（连退码也不改写）
+		// —— ✗ 不重写真搬体里任何一段。`gen-tools-md`/`index-gen` 被门 `check-doc-freshness` 真跑。
+		{
+			path:        []string{"doc", "kb-sync"},
+			summary:     "KB 文档同步（核验入库后把候选标记进 kb registry · 底层 = `kb_docs_sync.go` 真搬体 · 命令面只转发不翻译 · = A18）",
+			usage:       "zerg doc kb-sync [--mark <file|全部>] [--help]",
+			arity:       "any",
+			args:        []string{"旗标逐字来自 tools/kb_docs_sync.py 的真搬体 · 原样透传"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdDocKbSync,
+		},
+		{
+			path:        []string{"doc", "gen-tools-md"},
+			summary:     "生成 TOOLS 文档（publish/docs/TOOLS.*.md · 被门 `check-doc-freshness` 真跑 · 底层 = `gen_tools_md.go` 真搬体）",
+			usage:       "zerg doc gen-tools-md [--help]",
+			arity:       "any",
+			args:        []string{"旗标逐字来自 tools/gen_tools_md.py 的真搬体 · 原样透传"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdDocGenToolsMd,
+		},
+		{
+			path:        []string{"doc", "index-gen"},
+			summary:     "生成某版本目录的 `INDEX.md`（被门 `check-doc-freshness` 真跑 · 底层 = `doc_index_gen.go` 真搬体）",
+			usage:       "zerg doc index-gen <版本目录> [--out <INDEX.md>] [--help]",
+			arity:       "any",
+			args:        []string{"版本目录", "旗标逐字来自 tools/doc_index_gen.py 的真搬体 · 原样透传"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdDocIndexGen,
 		},
 		{
 			path:     []string{"port", "ls"},
@@ -1711,6 +1786,51 @@ func init() {
 			args:    []string{"茧名"},
 			refuses: true, // 真跑拒执（`cmdCocoonOpen` 非 dry-run 一律 `not_opened` 退 2 —— 起常驻服务本版未开放）
 			run:     cmdCocoonOpen,
+		},
+		// ---- A 档 批 1（换件面）· A12：卵的**单文件封装**（`*.egg`）工具 —— 从「虫卵」归名到「虫茧」（决-13）----
+		// 依据：`~/.zerg/state/拍板落定-所有稿-20261007.md` 决-13（Mr2109「拍 按你推荐」）。
+		// 底层唯一实现 = `core/cmd/zerg/zerg_egg.go`（`scripts/edge-node/zerg-egg.py` 的 Go 真搬体 · DEV-1798）——
+		// 命令面**只做入口 ＋ 转发**（连退码也不改写；✗ 不重写 `zerg_egg.go` 里任何一段）。
+		// ★ 族名口径：`egg` 已被【虫卵（沙箱/容器）投影面】占用（`egg ls/show/run/stop`）⇒ 本工具归「虫茧」名下（✗ 不叫 `egg pack`）。
+		{
+			path:        []string{"cocoon", "pack"},
+			summary:     "把一棵源目录打成单文件卵包（`*.egg` · 底层 = `zerg_egg.go` 真搬体 · 命令面只转发不翻译）",
+			usage:       "zerg cocoon pack <源目录> <输出.egg> [--align <n>] [--chunk-size <n>] [--self-test]",
+			arity:       "any",
+			args:        []string{"源目录", "输出 .egg 件（旗标逐字来自 scripts/edge-node/zerg-egg.py 的真搬体 · 原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdCocoonEgg,
+		},
+		{
+			path:        []string{"cocoon", "info"},
+			summary:     "读一枚卵包的索引（magic/align/段数/逐段 sha256 · 底层 = `zerg_egg.go` 真搬体）",
+			usage:       "zerg cocoon info <卵包.egg>",
+			arity:       "any",
+			args:        []string{"卵包 .egg 件（旗标逐字来自真搬体 · 原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdCocoonEgg,
+		},
+		{
+			path:        []string{"cocoon", "verify"},
+			summary:     "校验一枚卵包（头块/对齐/逐段 sha256 · 可选重建到目录 · 底层 = `zerg_egg.go` 真搬体）",
+			usage:       "zerg cocoon verify <卵包.egg> [--rebuild-into <目录>]",
+			arity:       "any",
+			args:        []string{"卵包 .egg 件（旗标逐字来自真搬体 · 原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdCocoonEgg,
+		},
+		{
+			path:        []string{"cocoon", "xfer"},
+			summary:     "按块可续传地把一枚卵包拷到目标（中断可续 · 坏块自愈 · 底层 = `zerg_egg.go` 真搬体）",
+			usage:       "zerg cocoon xfer <源.egg> <目标.egg> [--chunk-size <n>]",
+			arity:       "any",
+			args:        []string{"源 .egg 件", "目标 .egg 件（旗标逐字来自真搬体 · 原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdCocoonEgg,
 		},
 		{
 			path:     []string{"egg", "run"},
@@ -2295,6 +2415,60 @@ func init() {
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdIsolateRO,
+		},
+		// ---- A 档 批 1（换件面）· A1：主控换件的 **CLI 正门**（`zerg swap core` · 新族 `swap` · 壳转账）----
+		// 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 1 · A1（★事故面：把最险的手工换件口收进受控正门）。
+		// 底层唯一实现 = `scripts/build/zerg-swap-core.sh`（2026-09-16 事故后固化：三道门禁 ＋ 两道前置闸；
+		// 真换生产 `bin/zerg-core` 并重启 launchd ⇒ **动生产 `bin/` ⇒ 冻结面**）。命令面**不重写脚本任何一段**
+		// （只转发、不翻译；门禁全在脚本侧），递不到脚本退 8（不给结论）。
+		// ★ 安全线：本族动作真跑会动生产 `bin/` ⇒ ✗ 不在本单真跑（验收只用 `--help`/未知参数/`--self-test-rollback`）。
+		{
+			path:        []string{"swap", "core"},
+			danger:      &dangerSpec{dangerD3, "换件目标", "真换生产件（会动生产 `bin/` 并重启 launchd / UI 进程 —— 不可逆动作的邻居）—— 底层脚本当前**只报告档**（真换件 `--swap` 一律 rc=2 零副作用）", "GAP-20261005-39 · 同族先例 core restart / agent restart（D3）· A档批1 换件面（A2/A3 回执 §四 待 S6 补）", false},
+			opened:      true,
+			summary:     "主控换件（★事故面 · 底层只调 scripts/build/zerg-swap-core.sh —— 命令面不重写逻辑）",
+			usage:       "zerg swap core [--help | --self-test-rollback]",
+			arity:       "any",
+			args:        []string{"旗标与退码逐字来自 scripts/build/zerg-swap-core.sh（原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdSwapCore,
+		},
+		// ---- A 档 批 1（换件面）· A2：子端换件的 **CLI 正门**（`zerg swap agent` · 族 `swap` 扩 action · 壳转账）----
+		// 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 1 · A2。
+		// 底层唯一实现 = `scripts/build/zerg-swap-agent.sh`（只报告档：真跑 `git status`/`codesign`/`launchctl`/`curl`
+		// 探针；真换件档未开放 ⇒ `--swap` 一律 rc=2 零副作用）。命令面**不重写脚本任何一段**（只转发、不翻译；
+		// 六闸判决全在脚本侧），递不到脚本退 8（不给结论）。
+		// ★ 安全线：本族动作归换件面 ⇒ ✗ 不在本单真跑（验收只用 `--help`/未知参数）。
+		{
+			path:        []string{"swap", "agent"},
+			danger:      &dangerSpec{dangerD3, "换件目标", "真换生产件（会动生产 `bin/` 并重启 launchd / UI 进程 —— 不可逆动作的邻居）—— 底层脚本当前**只报告档**（真换件 `--swap` 一律 rc=2 零副作用）", "GAP-20261005-39 · 同族先例 core restart / agent restart（D3）· A档批1 换件面（A2/A3 回执 §四 待 S6 补）", false},
+			opened:      true,
+			summary:     "子端换件（底层只调 scripts/build/zerg-swap-agent.sh —— 只报告档；命令面不重写逻辑）",
+			usage:       "zerg swap agent [--check | --help | --self-test | --machine <名> [--label <作业名>]]",
+			arity:       "any",
+			args:        []string{"旗标与退码逐字来自 scripts/build/zerg-swap-agent.sh（原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdSwapAgent,
+		},
+		// ---- A 档 批 1（换件面）· A3：桌面 UI 换件的 **CLI 正门**（`zerg swap ui` · 族 `swap` 扩 action · 壳转账）----
+		// 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 1 · A3。
+		// 底层唯一实现 = `scripts/build/zerg-swap-ui.sh`（只报告档：真跑 `git status`/`codesign`/进程 inode 对拍；
+		// 真换件档未开放 ⇒ `--swap` 一律 rc=2 零副作用）。命令面**不重写脚本任何一段**（只转发、不翻译；
+		// 六闸判决全在脚本侧），递不到脚本退 8（不给结论）。
+		// ★ 安全线：本族动作归换件面 ⇒ ✗ 不在本单真跑（验收只用 `--help`/未知参数）。
+		{
+			path:        []string{"swap", "ui"},
+			danger:      &dangerSpec{dangerD3, "换件目标", "真换生产件（会动生产 `bin/` 并重启 launchd / UI 进程 —— 不可逆动作的邻居）—— 底层脚本当前**只报告档**（真换件 `--swap` 一律 rc=2 零副作用）", "GAP-20261005-39 · 同族先例 core restart / agent restart（D3）· A档批1 换件面（A2/A3 回执 §四 待 S6 补）", false},
+			opened:      true,
+			summary:     "桌面 UI 换件（底层只调 scripts/build/zerg-swap-ui.sh —— 只报告档；命令面不重写逻辑）",
+			usage:       "zerg swap ui [--check | --help]",
+			arity:       "any",
+			args:        []string{"旗标与退码逐字来自 scripts/build/zerg-swap-ui.sh（原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdSwapUI,
 		},
 		// ---- T-56 余项 · 标定族 `calib`（`scripts/calib/` 3 件 ⇒ ① 收编 · DEV-0010 · 2026-09-21）----
 		{

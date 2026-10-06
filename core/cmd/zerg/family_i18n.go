@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 )
 
@@ -52,26 +51,16 @@ func cmdI18n(inv *invocation, stdout, stderr io.Writer) int {
 		return exitBlocked
 	}
 
-	// 真跑门禁：stdout/stderr 原样透传（薄壳不翻译），退码照面报不改写。
-	// ★ 薄壳只转发、不翻译：脚本退多少，本命令就退多少（§九 M11 `G1-a`）。
-	// 无 --json：stdout/stderr 原样透传；带 --json：脚本输出收进缓冲（人读表格不许混进机器面），随后出六键包封。
-	cmd := exec.Command("python3", script)
-	cmd.Dir = root
+	// 真跑门禁：后端 = Go 真搬体 `ci18Run`（= `checkI18nGateMain` 的实现体 · 与 py `ui/scripts/check-i18n.py` 的
+	// M2 真搬逐字对齐）。★ **只换执行核**：根仍走 `repoRoot()`（与脚本路径同源 · ✗ 不改宽语义），stdout/stderr
+	// 透传与退码口径**一字不动**（脚本退多少 ⇒ 命令面退多少 · §九 M11 `G1-a`）。
+	// 无 --json：stdout/stderr 原样透传；带 --json：输出收进缓冲（人读表格不许混进机器面），随后出六键包封。
 	var buf bytes.Buffer
+	runOut, runErrW := io.Writer(stdout), io.Writer(stderr)
 	if inv.jsonGiven {
-		cmd.Stdout, cmd.Stderr = &buf, &buf
-	} else {
-		cmd.Stdout, cmd.Stderr = stdout, stderr
+		runOut, runErrW = &buf, &buf
 	}
-	runErr := cmd.Run()
-	rc := 0
-	if runErr != nil {
-		if ee, ok := runErr.(*exec.ExitError); ok {
-			rc = ee.ExitCode()
-		} else {
-			rc = 1
-		}
-	}
+	rc := ci18Run(root, runOut, runErrW, nil)
 	if rc != 0 {
 		fmt.Fprintf(stderr, "%s: 门禁失败（脚本退 %d）—— 白名单超差，修红再看\n", progName, rc)
 	} else {
@@ -90,4 +79,17 @@ func cmdI18n(inv *invocation, stdout, stderr io.Writer) int {
 		}
 	}
 	return rc
+}
+
+// ── S7 · 5 键归口（ui 族扩容）：`zerg ui i18n-audit` 的**转发壳** ─────────────────────────────────
+//
+// 归口件：`~/.zerg/state/②类-5键-CLI工具子命令归口-20261007.md`。底层唯一实现 = `i18n_audit.go`
+// （`ui/scripts/i18n_audit.py` 的 Go 真搬体）；本处只做**入口 ＋ 转发**：把动作名之后的一切（模式位置参数
+// 与旗标逐字）原样交给 `i18nAuditGateMain`，连退码也不改写。✗ 不重写真搬体里任何一段。
+func cmdI18nAudit(inv *invocation, stdout, stderr io.Writer) int {
+	tail := []string{}
+	if len(inv.orig) > len(inv.path) {
+		tail = inv.orig[len(inv.path):]
+	}
+	return i18nAuditGateMain(stdout, stderr, tail)
 }

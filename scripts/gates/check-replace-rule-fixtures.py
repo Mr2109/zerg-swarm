@@ -121,6 +121,10 @@ JSON_FIELDS = ["rules", "hits", "files", "fixtures", "files_dedup", "files_sum",
 # 有票可查（规则表里逐条登记）+ 三处消费者同口径（镜像器 / 后备压平器 / 本件）。
 ISO_PREFIX = "!夹具"
 
+# 正向豁免标记（拍板落定-20261006 B2 · 开工单 A-09）：规则说明栏（第 3 格）带此标记 ⇒ 该规则
+# 「历史兜底·有意保留」，正向「该替换的都在」**零命中不判红**（✗ 不删规则；反向判定不受影响）。
+EXEMPT_MARK = "【历史兜底·有意保留】"
+
 # 正向面（「该替换的」）**自指排除**（缺口 `GAP-20260925-16`）：规则表自身既在真树里（`publish/`
 # 在白名单内）、又是规则的定义 ⇒ 把它算进目标面，每条规则都会命中自己那一行 ⇒ 判据**永真** ✗。
 TARGET_SELF_EXCLUDE = {RULES_REL}
@@ -325,6 +329,8 @@ def judge_forward(rules, blob):
     gaps = []
     for rule in rules:
         _raw, is_re, pat, _rep, _note = rule
+        if EXEMPT_MARK in _note:          # 正向豁免：历史兜底·有意保留（拍板落定-20261006 B2）
+            continue
         if is_re:
             hit = re.search(pat, blob, re.MULTILINE) is not None
         else:
@@ -556,6 +562,20 @@ def self_test():
         bad.append("双侧互不顶替")
         print("   ✗ 双侧互不顶替：反向 %d/%d · 正向缺侧 %r/%r"
               % (len(_fix_hits), len(_fix_clean), _gap_none, _gap_hit))
+    # 正向豁免（拍板落定-20261006 B2）：标「历史兜底·有意保留」的零命中规则 ⇒ 不判红；
+    # 去掉标记的同一条 ⇒ 必被点名（哑化豁免 ⇒ 必红）。★ 豁免只作用于正向，不误伤活跃规则。
+    _r_on = ("（合成）regex:绝不出现的串-zz\t<none>\t测试" + EXEMPT_MARK, True,
+             "绝不出现的串-zz", "<none>", "测试" + EXEMPT_MARK)
+    _r_off = ("（合成）regex:绝不出现的串-zz\t<none>\t测试", True,
+              "绝不出现的串-zz", "<none>", "测试")
+    _g_on = judge_forward([_r_on], _blob)
+    _g_off = judge_forward([_r_off], _blob)
+    if not _g_on and len(_g_off) == 1:
+        ok += 1
+        print("   ✓ 正向豁免：标「历史兜底·有意保留」的零命中规则**不**判红（有意保留）· 去掉标记 ⇒ 必被点名（哑化豁免 ⇒ 必红）")
+    else:
+        bad.append("正向豁免")
+        print("   ✗ 正向豁免：标记侧缺侧 %d · 未标侧缺侧 %d" % (len(_g_on), len(_g_off)))
     print("自检结论: %s（断言 %d 条 · 失败 %d 条）"
           % ("全过" if not bad else "**不过**", ok + len(bad), len(bad)))
     return 0 if not bad else 2
@@ -642,6 +662,9 @@ def main():
           % (os.path.relpath(rules_path, root) if rules_path.startswith(root) else rules_path,
              len(rules), sum(1 for r in rules if r[1]), sum(1 for r in rules if not r[1]),
              " · 含命令行合成规则 %d 条" % len(args.extra_rule) if args.extra_rule else ""))
+    n_exempt = sum(1 for r in rules if EXEMPT_MARK in r[4])
+    if n_exempt:
+        print("   正向豁免：%d 条规则标「历史兜底·有意保留」⇒ 零命中不判红（拍板落定-20261006 B2）" % n_exempt)
     if isolated:
         print("   夹具隔离：%d 条 glob（%s）⇒ 排除 **%d 个** `*_test.go` 出件面"
               % (len(isolated), " · ".join(isolated), len(iso_files)))

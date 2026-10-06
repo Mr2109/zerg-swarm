@@ -116,7 +116,7 @@ Safety design (`core/internal/agent`):
 | Runtime logs | `/tmp/zerg-*.log` | `ZERG_LOG_DIR` |
 | UI preferences | `~/.zerg-ui-prefs.json` | — |
 
-> The ports, paths, and external data locations (knowledge base, searxng, media directories) of the HTTP services **can all** be overridden through environment variables; see [CONFIGURATION.en.md](CONFIGURATION.en.md).
+> The ports, paths, and external data locations (knowledge base, media directories) — plus the external service (searxng `:8888`) — of the HTTP services **can all** be overridden through environment variables; see [CONFIGURATION.en.md](CONFIGURATION.en.md).
 
 ---
 

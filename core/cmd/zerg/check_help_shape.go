@@ -1027,7 +1027,10 @@ func chsCfgLevels(text string) [][2]interface{} {
 
 // chsRebuiltLastFamilyLine —— py `rebuilt_last_family_line`：族名清单末行的现算重建。
 func chsRebuiltLastFamilyLine(fams []string) string {
-	start := (len(fams) / chsFamilyPerLine) * chsFamilyPerLine
+	if len(fams) == 0 {
+		return "  "
+	}
+	start := ((len(fams) - 1) / chsFamilyPerLine) * chsFamilyPerLine
 	if start > len(fams) {
 		start = len(fams)
 	}
@@ -1133,9 +1136,9 @@ type chsFaceBl struct {
 type chsBaselineSet map[string]chsFaceBl
 
 var chsBaseline = chsBaselineSet{
-	"help --all":     {HasLines: true, Lines: 333, HasBytes: true, Bytes: 220023},
-	"help":           {HasLines: true, Lines: 245, HasBytes: true, Bytes: 119296, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
-	"help dangerous": {HasLines: true, Lines: 91, HasBytes: true, Bytes: 28967, HasRows: true, Rows: 80, HasTail: true, Tail: "上表 80 条：**已开放 54 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 26 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。", ConfirmNotInUsage: []string{"agent reap", "itask start"}, ConfirmValueMismatch: [][]string{}},
+	"help --all":     {HasLines: true, Lines: 353, HasBytes: true, Bytes: 232788},
+	"help":           {HasLines: true, Lines: 261, HasBytes: true, Bytes: 127202, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
+	"help dangerous": {HasLines: true, Lines: 95, HasBytes: true, Bytes: 30718, HasRows: true, Rows: 84, HasTail: true, Tail: "上表 84 条：**已开放 58 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 26 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。", ConfirmNotInUsage: []string{"agent reap", "itask start"}, ConfirmValueMismatch: [][]string{}},
 	"help config":    {HasLines: true, Lines: 17, HasBytes: true, Bytes: 1392},
 }
 

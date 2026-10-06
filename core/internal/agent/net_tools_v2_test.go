@@ -83,13 +83,18 @@ func TestV2CacheMulti(t *testing.T) {
 	}
 }
 
-// 6. 无结果查询（边界）
+// 6. 无结果查询（边界）—— A-06（2026-10-07）起空结果 fail-closed：桥把「服务不可达」与
+// 「真无结果」都回 {"results": []}（无法区分）⇒ 一律带具名原因报 error，✗ 不静默「（无搜索结果）」。
 func TestV2NoResult(t *testing.T) {
 	testutil.RequireEnv(t, "ZERG_TEST_NET", "searx 桥（Python 依赖 + 外网）")
 	t0 := time.Now()
 	r, err := WebSearchV2(SearchParams{Query: "zzzqqqxxxyyy 不存在的关键词", Limit: 3})
 	if err != nil {
-		t.Fatalf("失败: %v", err)
+		if !strings.Contains(err.Error(), "空结果") {
+			t.Fatalf("空结果 fail-closed 的错误未带具名原因「空结果」: %v", err)
+		}
+		t.Logf("⑥无结果 耗时 %.1fs → fail-closed error: %v", time.Since(t0).Seconds(), err)
+		return
 	}
 	t.Logf("⑥无结果 耗时 %.1fs → %q", time.Since(t0).Seconds(), r)
 }
