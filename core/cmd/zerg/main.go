@@ -509,16 +509,19 @@ func declaresNoPositional(cmd *command) bool {
 // ---- 命令树（真源：帮助文本、markdown 导出、别名解析都从这里出，不许旁写一份）----
 
 type command struct {
-	path     []string
-	summary  string
-	usage    string
-	fields   []string // --json 可取的全部字段（不给字段时 stderr 列的就是它）
-	args     []string // 位置参数的说明（帮助里逐条列出 · **只给人读** · 不再当判据口）
-	arity    string   // 位置参数元数（声明式 · `R-7`）：闭集 none/exact(n)/min(n)/max(n)/any；本版只用 none/any（空串视作 none）
-	endpoint string   // 它投影的远端端点（本机命令为空）；T-08 的三面同源对账用
-	kind     string   // 包封里的 kind（§九 M6 I2：与命令一一对应 · 单数 CamelCase）
-	danger   *dangerSpec
-	idem     *idemSpec // M4 幂等四字段（没显式写的在 seedIdem 里按规则派生）
+	path    []string
+	summary string
+	usage   string
+	fields  []string // --json 可取的全部字段（不给字段时 stderr 列的就是它）
+	// optFields —— `--json` **可选**字段层（登在出口白名单里、点得出来，但**不进** `fields`
+	// 那一份文档/帮助导出面字段表 —— 与 `approveOptionalFields` 同口径：冻结表不动、可选只增）。
+	optFields []string
+	args      []string // 位置参数的说明（帮助里逐条列出 · **只给人读** · 不再当判据口）
+	arity     string   // 位置参数元数（声明式 · `R-7`）：闭集 none/exact(n)/min(n)/max(n)/any；本版只用 none/any（空串视作 none）
+	endpoint  string   // 它投影的远端端点（本机命令为空）；T-08 的三面同源对账用
+	kind      string   // 包封里的 kind（§九 M6 I2：与命令一一对应 · 单数 CamelCase）
+	danger    *dangerSpec
+	idem      *idemSpec // M4 幂等四字段（没显式写的在 seedIdem 里按规则派生）
 	// 群级只读（§十二 P-066）：没有目标时「读全群」是允许的；**其余命令无目标 ⇒ exit 2**。
 	groupReadOnly bool
 	// 茧壁层级标记（§九 M10 `X1`：闭集 host/node/space；没显式写的按族派生）
@@ -802,6 +805,7 @@ func init() {
 		{
 			path:     []string{"gate", "reap"},
 			danger:   &dangerSpec{dangerD3, "（陈旧/卡死门跑根）", "逐枚 pid 发 SIGTERM→SIGKILL 终止陈旧/卡死门跑根**及其门谱系** ＋ 追加审计 reap-audit.jsonl（真在飞的门跑绝不碰）", "GAP-20261005-35 · 同族先例 agent reap（D3）· gate 族写工具件走 gate check D3", false},
+			opened:   true,
 			kind:     "GateReap",
 			summary:  "回收**陈旧/卡死门跑根**（只收祖链已断或死趟残儿的根**及其门谱系**；真在飞的门跑绝不碰）· 每个收回动作入审计",
 			usage:    "zerg gate reap --stale [--dry-run | --yes] [--json <字段>]",
@@ -928,6 +932,7 @@ func init() {
 		{
 			path:     []string{"agent", "reload"},
 			danger:   &dangerSpec{dangerD2, "机器名", "让子端热重载（`POST http://<host>:<port>/infer/reload` · 改子端在跑引擎态 · 必带 `X-Auth-Token`）", "GAP-20261005-38 · 同族先例 core reload（D2）· itask stop（D2）", false},
+			opened:   true,
 			kind:     "AgentReload",
 			summary:  "子端热重载（`POST http://<host>:<port>/infer/reload` · **必带 `X-Auth-Token`**（不带就回 unauthorized）；子端那三格原样透传）",
 			usage:    "zerg agent reload <机器名> [--json <字段>]",
@@ -940,6 +945,7 @@ func init() {
 		{
 			path:     []string{"agent", "registry"},
 			danger:   &dangerSpec{dangerD3, "机器名", "改那台子端盘上的注册表件（`--add`：先校验 → `--dry-run` → `--yes` 才写 → 留 `.bak-registry-add-<日期>` → 写完读回再校，不过即回滚）；`--list` 只读", "GAP-20261005-37 · 同族先例 agent restart（D3）· agent load/unload 已挂危险档", false},
+			opened:   true,
 			kind:     "AgentRegistry",
 			summary:  "改/看那台子端的注册表（`--list` 只读；`--add` 先校验 → `--dry-run` 先行 → `--yes` 才写 → 留 `.bak-registry-add-<日期>` → 写完读回再校，不过即回滚）",
 			usage:    "zerg agent registry <机器名> [--list] [--add <模型名> --file <GGUF> --ctx <N> --mem-gb <N>] [--dry-run | --yes] [--json <字段>]",
@@ -1015,6 +1021,7 @@ func init() {
 		{
 			path:     []string{"task", "submit"},
 			danger:   &dangerSpec{dangerD2, "（提交主题）", "把任务入队（`POST /api/tasks` · 改控制面队列态 · 占机器与模型槽）", "GAP-20261005-40 · 同族先例 task cancel（D2）· §三 D 族", false},
+			opened:   true,
 			kind:     "TaskSubmit",
 			summary:  "提交任务（D2 写面 · 全旗标 ⇒ API 请求体逐条对上）",
 			usage:    "zerg task submit --desc <描述> [--model <模型>] [--priority <n>] [--slice-id <片>] [--depends-on <片>]… [--acceptance <判据>]… [--dry-run | --yes]",
@@ -1096,6 +1103,7 @@ func init() {
 		{
 			path:     []string{"model", "opts"},
 			danger:   &dangerSpec{dangerD2, "模型 id", "改适配器参数（`set` 实时生效并**持久化**：`PUT /api/models/{name}/adapter-opts`；`get` 只读）", "GAP-20261005-40 · 同族先例 model add / model set（D2）· §三 E 族", false},
+			opened:   true,
 			kind:     "ModelOpts",
 			summary:  "适配器参数（get 只读 / set 实时生效要 --yes）",
 			usage:    "zerg model opts get <模型 id> [--json <字段>] | zerg model opts set <模型 id> --set k=v… [--dry-run | --yes]",
@@ -1551,6 +1559,7 @@ func init() {
 		{
 			path:    []string{"publish", "run"},
 			danger:  &dangerSpec{dangerD3, "主机名", "出公开镜像树（本地 dist/<版本>/release · 白名单+排除项+脱敏 · 不出网、不推送 · 底层 scripts/build/publish-public.sh）", "GAP-20261005-39 · family_publish_run.go:275 自印「危险档：D3」· §17.2", true},
+			opened:  true,
 			kind:    "PublishRun",
 			summary: "出公开镜像树（**本地** dist/<版本>/release · 白名单+排除项+脱敏 · 不出网、不推送）",
 			usage:   "zerg publish run [--dry-run | --confirm=<主机名> --yes]",
@@ -1636,6 +1645,7 @@ func init() {
 		{
 			path:    []string{"resource", "pin"},
 			danger:  &dangerSpec{dangerD2, "资源 id", "钉住资源（改资源不可回收标记 · 控制面 `POST /api/resources/pin`）—— 可逆：`resource unpin` 即回原态", "GAP-20261005-38 · 同族先例 task cancel（D2）· §三 H 族", false},
+			opened:  true,
 			kind:    "ResourcePin",
 			summary: "钉住资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2）",
 			usage:   "zerg resource pin <资源 id> [--dry-run | --yes]",
@@ -1646,6 +1656,7 @@ func init() {
 		{
 			path:    []string{"resource", "unpin"},
 			danger:  &dangerSpec{dangerD2, "资源 id", "解钉资源（去掉不可回收标记 · `POST /api/resources/unpin`）—— 可逆：再 `resource pin` 即回原态", "GAP-20261005-38 · 同族先例 task cancel（D2）· §三 H 族", false},
+			opened:  true,
 			kind:    "ResourceUnpin",
 			summary: "解钉资源（D2 写面 · --dry-run 零副作用 · 缺 --yes ⇒ 2）",
 			usage:   "zerg resource unpin <资源 id> [--dry-run | --yes]",
@@ -1656,6 +1667,7 @@ func init() {
 		{
 			path:    []string{"gateway", "breakers"},
 			danger:  &dangerSpec{dangerD2, "（网关开关）", "网关断路开关（`--reset` 重置熔断 ⇒ 重新放流量 · `POST /api/gateway/breakers/reset`）", "GAP-20261005-38 · 同族先例 core reload（D2）· §三 C 族", false},
+			opened:  true,
 			kind:    "GatewayBreakers",
 			summary: "网关断路开关（D2 写面 · `--reset` 要 `--yes`）",
 			usage:   "zerg gateway breakers [--reset] [--dry-run | --yes]",
@@ -1703,6 +1715,7 @@ func init() {
 		{
 			path:     []string{"egg", "run"},
 			danger:   &dangerSpec{dangerD2, "卵 id", "把该卵的模型**装到**那台机上（控制面 `POST /api/control/load` · 占内存/显存槽 · 单槽机串行）—— 可逆：`egg stop` 即回原态", "GAP-20261005-38 · 同族先例 model start / agent load（D2）", false},
+			opened:   true,
 			kind:     "EggRun",
 			summary:  "把卵的模型**装到**那台机上（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/control/load`）",
 			usage:    "zerg egg run <卵 id> [--machine <机>] [--dry-run | --yes] [--json <字段>]",
@@ -1715,6 +1728,7 @@ func init() {
 		{
 			path:     []string{"egg", "stop"},
 			danger:   &dangerSpec{dangerD2, "卵 id", "把那台机上的该模型**卸掉**（控制面 `POST /api/control/unload` · **在跑任务受影响**）", "GAP-20261005-38 · 同族先例 model stop / agent unload", false},
+			opened:   true,
 			kind:     "EggStop",
 			summary:  "卸载一枚卵 —— 把那台机上的该模型**卸掉**（D2 写面：`--dry-run` 先行出计划件 · 真跑要 `--yes` · 内部 = 控制面 `POST /api/control/unload`）",
 			usage:    "zerg egg stop <卵 id> [--machine <机>] [--dry-run | --yes] [--json <字段>]",
@@ -1812,6 +1826,7 @@ func init() {
 		{
 			path:    []string{"build", "all"},
 			danger:  &dangerSpec{dangerD3, "主机名", "重编制品（自举档 `--only cli` 只写 bin/zerg 一件；**换件档会覆盖 bin/ 里的在跑制品** · 底层 scripts/build/build-all.sh）", "GAP-20261005-39 · family_build.go:279 自印「危险档：D3」· §17.2 ③ 建环", true},
+			opened:  true,
 			summary: "重编制品（**自举档已开放**：`--only cli` 只写 bin/zerg 一件；换件档/发布档仍未开放）",
 			usage:   "zerg build all [--only cli] [--dry-run | --confirm=<主机名> --yes]",
 			run:     cmdBuildPassthrough,
@@ -1819,6 +1834,7 @@ func init() {
 		{
 			path:    []string{"build", "release"},
 			danger:  &dangerSpec{dangerD3, "主机名", "打包发布件（清单档 `--manifest-only` 只写 dist/<版本>/release/；**换件档真跑未开放** · 底层 scripts/build/build-all.sh）", "GAP-20261005-39 · family_build.go:279 自印「危险档：D3」· §17.2 ③ 建环", true},
+			opened:  true,
 			summary: "打包发布件（**计划面已开放**：`--dry-run` 出计划件；**清单档 `--manifest-only` 已开放** —— 只重写 `dist/<版本>/release/` 的清单与逐件 sha256，不编译、不重打包、不碰在跑件；换件档真跑本版未开放 · 拒执退码 2）",
 			usage:   "zerg build release [--manifest-only] [--dry-run | --confirm=<主机名> --yes]",
 			refuses: true, // 真跑拒执（**换件档**）：`cmdBuildPassthrough` 的 `openForExec` 只对 `build all --only cli` 与 `build release --manifest-only`（缺口 `Q-226` · 只写 `dist/<版本>/release/` 一个目录）为真 ⇒ 其余非 dry-run 一律 `not_opened` 退 2
@@ -2077,24 +2093,26 @@ func init() {
 		// ---- D3b 第四步（2026-09-21）：**人批通道**（`zerg approve` 一族 · §九 M18 `C4`②）----
 		// 人签批准件 = `require_approval` 的逃生门；模型写得出件的字节，**写不出那枚签名**（口令只在人手里）。
 		{
-			path:     []string{"approve", "ls"},
-			kind:     "Approval",
-			summary:  "列人签批准件（逐件带上**验签判决**：验过 / 无签名 / 签名坏 —— 后两者不算批准）",
-			usage:    "zerg approve ls [--json <字段>]",
-			fields:   approveFields,
-			endpoint: "",
-			run:      cmdApprove,
+			path:      []string{"approve", "ls"},
+			kind:      "Approval",
+			summary:   "列人签批准件（逐件带上**验签判决**：验过 / 无签名 / 签名坏 —— 后两者不算批准）",
+			usage:     "zerg approve ls [--json <字段>]",
+			fields:    approveFields,
+			optFields: approveOptionalFields,
+			endpoint:  "",
+			run:       cmdApprove,
 		},
 		{
-			path:     []string{"approve", "show"},
-			kind:     "ApprovalShow",
-			summary:  "看一枚批准件的全貌 + 验签判决（消费者只认「验过」那一档）",
-			usage:    "zerg approve show <工具名> [--json <字段>]",
-			arity:    "any",
-			args:     []string{"工具名"},
-			fields:   approveFields,
-			endpoint: "",
-			run:      cmdApprove,
+			path:      []string{"approve", "show"},
+			kind:      "ApprovalShow",
+			summary:   "看一枚批准件的全貌 + 验签判决（消费者只认「验过」那一档）",
+			usage:     "zerg approve show <工具名> [--json <字段>]",
+			arity:     "any",
+			args:      []string{"工具名"},
+			fields:    approveFields,
+			optFields: approveOptionalFields,
+			endpoint:  "",
+			run:       cmdApprove,
 		},
 		{
 			path:    []string{"approve", "new"},
@@ -2113,6 +2131,7 @@ func init() {
 		{
 			path:     []string{"approve", "keygen"},
 			danger:   &dangerSpec{dangerD3, "旧 key_id", "生成操作员密钥对：私钥（口令加密）＋ 公钥落盘；**换钥路**归档并 os.Remove 旧钥（旧件全废 · 不可逆）", "GAP-20261005-36 · 同族先例 approve new（D3）· §九 M18 C4②", false},
+			opened:   true,
 			kind:     "ApprovalKeygen",
 			summary:  "生成**操作员密钥**（人在终端上设口令；私钥口令加密落盘，公钥给消费者验签）",
 			usage:    "zerg approve keygen --by <人名>",
@@ -4379,8 +4398,13 @@ func emitSelected(stdout, stderr io.Writer, inv *invocation, path []string, fiel
 	//   ② 在册字段但**本行缺值** ⇒ 该键**整键略去**（✗ 绝不落 `0`/空串 —— 与 API 的 `omitempty` 同一条铁律）。
 	//   与同族既有前置校验（`family_impact.go` 的 `fieldListOf` 逐名核）同一条口径；无字段表的命令（如 `help`）不受影响。
 	if len(cmd.fields) > 0 {
-		registered := make(map[string]bool, len(cmd.fields))
+		registered := make(map[string]bool, len(cmd.fields)+len(cmd.optFields))
 		for _, f := range cmd.fields {
+			registered[f] = true
+		}
+		// ★ 可选字段层（`cmd.optFields`）：登在**出口白名单**里、点得出来；但**不进** `cmd.fields`
+		//   （那一份是文档/帮助导出面的冻结字段表 —— 可选字段是只增的第二层，`approveOptionalFields` 即它）。
+		for _, f := range cmd.optFields {
 			registered[f] = true
 		}
 		for _, f := range fields {

@@ -123,6 +123,12 @@ const ffpProg = "check-fields-face-parity.py"
 // ffpMainRel —— py `MAIN_REL = os.path.join("core", "cmd", "zerg", "main.go")`（运行期拼，✗ 不写整串）。
 var ffpMainRel = ffpPyJoin("core", "cmd", "zerg", "main.go")
 
+// ffpPkgRel —— py `PKG_REL = os.path.join("core","cmd","zerg")`（运行期拼）。
+var ffpPkgRel = ffpPyJoin("core", "cmd", "zerg")
+
+// ffpIdentDepthMax —— py `IDENT_DEPTH_MAX = 4`（递归展开深度上限）。
+const ffpIdentDepthMax = 4
+
 const (
 	ffpLegalFieldsPrefix = "合法字段:"
 	// 腿②「公告 == 可选」：一枚字段被判**选不出**时制品逐字打的标记（`zerg: 未知字段 "<f>"`）。
@@ -149,6 +155,14 @@ var (
 	ffpReCmd     = regexp.MustCompile(`path:` + ffpSpaceCls + `*\[\]string\{([^}]*)\}`)
 	ffpReFields  = regexp.MustCompile(`fields:` + ffpSpaceCls + `*\[\]string\{([^}]*)\}`)
 	ffpRePathSeg = regexp.MustCompile(`"([^"]+)"`)
+	// 拼接变量形态（缺口 GAP-20260928-159）：`fields: <标识符>` ⇒ 跨件解析该标识符的名字集。
+	ffpReFieldsIdent = regexp.MustCompile(`fields:` + ffpSpaceCls + `*([A-Za-z_][A-Za-z0-9_]*)` + ffpSpaceCls + `*,`)
+	// `[]string{…}` 里那批字面量 / 裸标识符。
+	ffpReStrLit      = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
+	ffpReIdent       = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\b`)
+	ffpReIdentLit    = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\b` + ffpSpaceCls + `*=` + ffpSpaceCls + `*\[\]string\{([^{}]*)\}`)
+	ffpReIdentAppend = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\b` + ffpSpaceCls + `*=` + ffpSpaceCls + `*append` + ffpSpaceCls + `*\(([^\n]*)`)
+	ffpReEllipsis    = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\.\.`)
 )
 
 // ── py 路径语义家族（自写 · ✗ 不用 path/filepath.Join|Abs|Dir）─────────────────────────
@@ -466,6 +480,128 @@ func ffpReadTextMode(path string) (string, int) {
 	return ffpUniversalNewlines(string(b)), 0
 }
 
+// ffpPkgSources —— py `package_sources(root)`：`core/cmd/zerg` 包内全部非测试 .go（按名排序后以 `\n` 连接）。
+func ffpPkgSources(root string) string {
+	dir := ffpPyJoin(root, ffpPkgRel)
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	names := []string{}
+	for _, e := range ents {
+		n := e.Name()
+		if strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	out := []string{}
+	for _, n := range names {
+		b, err := os.ReadFile(ffpPyJoin(dir, n))
+		if err != nil {
+			continue
+		}
+		out = append(out, string(b))
+	}
+	return strings.Join(out, "\n")
+}
+
+// ffpStripComments —— py `_strip_comments`：逐行取首个 `//` 之前那段。
+func ffpStripComments(src string) string {
+	ls := strings.Split(src, "\n")
+	for i, ln := range ls {
+		if j := strings.Index(ln, "//"); j >= 0 {
+			ls[i] = ln[:j]
+		}
+	}
+	return strings.Join(ls, "\n")
+}
+
+// ffpIdentDefs —— py `_ident_defs(pkg_src)` ⇒ (lit, refs)。同名 Go 标识符不另立真源。
+func ffpIdentDefs(pkgSrc string) (map[string][][]string, map[string][][]string) {
+	code := ffpStripComments(pkgSrc)
+	lit := map[string][][]string{}
+	refs := map[string][][]string{}
+	for _, m := range ffpReIdentLit.FindAllStringSubmatch(code, -1) {
+		ident, body := m[1], m[2]
+		names := []string{}
+		for _, sm := range ffpReStrLit.FindAllStringSubmatch(body, -1) {
+			names = append(names, sm[1])
+		}
+		stripped := ffpReStrLit.ReplaceAllString(body, " ")
+		for _, ref := range ffpReIdent.FindAllStringSubmatch(stripped, -1) {
+			rx := regexp.MustCompile(`\b` + regexp.QuoteMeta(ref[1]) + `\b` + ffpSpaceCls + `*=` + ffpSpaceCls + `*"((?:[^"\\]|\\.)*)"`)
+			if sm := rx.FindStringSubmatch(code); sm != nil {
+				names = append(names, sm[1])
+			}
+		}
+		lit[ident] = append(lit[ident], names)
+	}
+	for _, m := range ffpReIdentAppend.FindAllStringSubmatch(code, -1) {
+		ident, expr := m[1], m[2]
+		ids := []string{}
+		for _, r := range ffpReEllipsis.FindAllStringSubmatch(expr, -1) {
+			if r[1] != ident {
+				ids = append(ids, r[1])
+			}
+		}
+		if len(ids) > 0 {
+			refs[ident] = append(refs[ident], ids)
+		}
+	}
+	return lit, refs
+}
+
+// ffpResolveIdentNames —— py `_resolve_ident_names`：拼接变量的字段表 ⇒ 名字集（递归展开 · 环保护 · 深度上限）。
+func ffpResolveIdentNames(lit, refs map[string][][]string, ident string,
+	memo map[string]map[string]bool, depth int) map[string]bool {
+	if v, ok := memo[ident]; ok {
+		return v
+	}
+	if depth > ffpIdentDepthMax {
+		return map[string]bool{}
+	}
+	memo[ident] = map[string]bool{} // 环保护：解析途中再遇到自己 ⇒ 取空（不递归）
+	names := map[string]bool{}
+	for _, ns := range lit[ident] {
+		for _, n := range ns {
+			names[n] = true
+		}
+	}
+	for _, ids := range refs[ident] {
+		for _, ref := range ids {
+			if ref == ident {
+				continue
+			}
+			if _, ok := lit[ref]; ok {
+				for n := range ffpResolveIdentNames(lit, refs, ref, memo, depth+1) {
+					names[n] = true
+				}
+			} else if _, ok := refs[ref]; ok {
+				for n := range ffpResolveIdentNames(lit, refs, ref, memo, depth+1) {
+					names[n] = true
+				}
+			}
+		}
+	}
+	memo[ident] = names
+	return names
+}
+
+// ffpSortedUniq —— py `sorted(set(names))`。
+func ffpSortedUniq(names []string) []string {
+	seen := map[string]bool{}
+	uniq := []string{}
+	for _, n := range names {
+		if !seen[n] {
+			seen[n] = true
+			uniq = append(uniq, n)
+		}
+	}
+	sort.Strings(uniq)
+	return uniq
+}
+
 // ffpDeclaredFaces —— py `declared_faces(root)`。
 // none=true ⇒ py 返回 None（读不到 / 块找不到）；fatal=true ⇒ py 抛未捕异常（解码失败 ⇒ rc=1）。
 func ffpDeclaredFaces(root string) (faces []ffpFace, none, fatal bool) {
@@ -476,6 +612,9 @@ func ffpDeclaredFaces(root string) (faces []ffpFace, none, fatal bool) {
 	if kind == 2 {
 		return nil, false, true
 	}
+	pkgSrc := ffpPkgSources(root)
+	identLit, identRefs := ffpIdentDefs(pkgSrc)
+	memo := map[string]map[string]bool{}
 	start := strings.Index(src, "commands = []*command{")
 	if start < 0 {
 		return nil, true, false
@@ -500,17 +639,28 @@ func ffpDeclaredFaces(root string) (faces []ffpFace, none, fatal bool) {
 		if i+1 < len(ms) {
 			nxt = ms[i+1][0]
 		}
-		region := seg[m[1]:nxt]
-		fm := ffpReFields.FindStringSubmatchIndex(region)
-		if fm == nil {
-			continue
-		}
-		sub := region[fm[2]:fm[3]]
+		window := seg[m[1]:nxt]
+		has := false
 		flds := []string{}
-		for _, pm := range ffpRePathSeg.FindAllStringSubmatch(sub, -1) {
-			flds = append(flds, ffpPyStrip(pm[1]))
+		if fm := ffpReFields.FindStringSubmatchIndex(window); fm != nil {
+			has = true
+			sub := window[fm[2]:fm[3]]
+			for _, pm := range ffpRePathSeg.FindAllStringSubmatch(sub, -1) {
+				flds = append(flds, ffpPyStrip(pm[1]))
+			}
+		} else if im := ffpReFieldsIdent.FindStringSubmatch(window); im != nil {
+			// 标识符解析不到名字（没定义 / 展开为空）⇒ 本门不把它当「有字段面」条目。
+			got := ffpResolveIdentNames(identLit, identRefs, im[1], memo, 0)
+			if len(got) > 0 {
+				has = true
+				for k := range got {
+					flds = append(flds, k)
+				}
+			}
 		}
-		out = append(out, ffpFace{path: strings.Join(parts, " "), fields: flds})
+		if has {
+			out = append(out, ffpFace{path: strings.Join(parts, " "), fields: ffpSortedUniq(flds)})
+		}
 	}
 	return out, false, false
 }
@@ -865,15 +1015,32 @@ func ffpSelfTest(stdout io.Writer) int {
 	// 解析面：合成命令树 ⇒ 抓得到 path ＋ 声明名单（✗ 不是 bool）。
 	tmp, err := os.MkdirTemp("", "check-fields-face-parity-selftest-")
 	if err != nil {
-		chk("解析面：合成树 ⇒ 名单逐字（不是 bool）", false, err.Error())
+		chk("解析面：字面量 ⇒ 名单逐字（不是 bool）", false, err.Error())
 	} else {
 		_ = os.MkdirAll(ffpPyJoin(tmp, "core", "cmd", "zerg"), 0o755)
 		body := "\tcommands = []*command{\n" +
-			"\t\t{path: []string{\"zz\", \"ls\"}, fields: []string{\"name\", \"verdict\"}}, run: x},\n\t}\n"
-		werr := os.WriteFile(ffpPyJoin(tmp, ffpMainRel), []byte(body), 0o644)
+			"\t\t{path: []string{\"zz\", \"ls\"}, fields: []string{\"name\", \"verdict\"}},\n" +
+			"\t\t{path: []string{\"zz\", \"ed\"}, fields: zzFields, run: x},\n" +
+			"\t\t{path: []string{\"zz\", \"cf\"}, fields: zzConst, run: x},\n" +
+			"\t}\n"
+		_ = os.WriteFile(ffpPyJoin(tmp, ffpMainRel), []byte(body), 0o644)
+		defs := "package main\n\n" +
+			"var zzA = []string{\n\t\"alpha\", \"beta\",\n}\n\n" +
+			"var zzB = []string{\"gamma\",\n\t\"delta\"}\n\n" +
+			"var zzNoise = []string{\"--not-a-field\"}\n\n" +
+			"var zzFields = append(append([]string{}, zzA...), zzB...)\n\n" +
+			"var zzConst = []string{\"kappa\", zzConstField}\n\n" +
+			"const zzConstField = \"has_profile\"\n"
+		_ = os.WriteFile(ffpPyJoin(tmp, "core", "cmd", "zerg", "zz_defs.go"), []byte(defs), 0o644)
 		got, none, fatal := ffpDeclaredFaces(tmp)
-		cond := werr == nil && !none && !fatal && len(got) == 1 &&
-			got[0].path == "zz ls" && eqs(got[0].fields, []string{"name", "verdict"})
+		has := func(path string, fs ...string) bool {
+			for _, g := range got {
+				if g.path == path && eqs(g.fields, fs) {
+					return true
+				}
+			}
+			return false
+		}
 		rep := "["
 		for i, g := range got {
 			if i > 0 {
@@ -882,7 +1049,21 @@ func ffpSelfTest(stdout io.Writer) int {
 			rep += "(" + ffpPyRepr(g.path) + ", " + ffpPyListRepr(g.fields) + ")"
 		}
 		rep += "]"
-		chk("解析面：合成树 ⇒ 名单逐字（不是 bool）", cond, rep)
+		okbase := !none && !fatal
+		chk("解析面：字面量 ⇒ 名单逐字（不是 bool）", okbase && has("zz ls", "name", "verdict"), rep)
+		chk("解析面：拼接变量 `fields: zzFields` ⇒ 跨件展开名集（多行字面量 · 缺口 GAP-20260928-159）",
+			okbase && has("zz ed", "alpha", "beta", "delta", "gamma"), rep)
+		chk("解析面：`[]string{…, <常量标识符>}` 的裸标识符 ⇒ 按字符串标量取值（缺口 GAP-20261005-45）",
+			okbase && has("zz cf", "has_profile", "kappa"), rep)
+		noNoise := true
+		for _, g := range got {
+			for _, f := range g.fields {
+				if f == "--not-a-field" {
+					noNoise = false
+				}
+			}
+		}
+		chk("解析面：未被子表引用的 zzNoise 不被误收（不啃无关标识符）", okbase && noNoise, rep)
 		_ = os.RemoveAll(tmp) // ★ 自回收（py 的 tempfile.TemporaryDirectory 也回收 ⇒ delta=0）
 	}
 
@@ -903,7 +1084,7 @@ func ffpSelfTest(stdout io.Writer) int {
 			"  printf '%s\\n' \"zerg: " + ffpUnknownFieldMark + " \\\"" + ffpBogus + "\\\"\" \"" +
 			ffpLegalFieldsPrefix + " host,model\" >&2\n  exit 2\nfi\nexit 0")
 		rcG, _ := ffpRun(tmp2, green, 1, 2*time.Second, "2", 1)
-		chk("腿②端到端正控：假制品全接受 ⇒ rc=0", rcG == 0, "rc="+strconv.Itoa(rcG))
+		chk("腿②端到端正控：假制品全接受 ⇒ run() rc=0", rcG == 0, "rc="+strconv.Itoa(rcG))
 		// ★ 红档（成对）：对登记格打「未知字段 <f>」**却**把 f 列进同条清单 = 「公告 ≠ 可选」⇒ 必红。
 		red := mk("f=\"\"\nfor a in \"$@\"; do f=\"$a\"; done\n" +
 			"printf '%s\\n' \"zerg: " + ffpUnknownFieldMark + " \\\"$f\\\"\" \"" +
@@ -915,7 +1096,7 @@ func ffpSelfTest(stdout io.Writer) int {
 				hit = true
 			}
 		}
-		chk("腿②端到端负控（公告≠可选 ⇒ 必红）：rc=1 且逐格点名", rcR == 1 && hit, "rc="+strconv.Itoa(rcR))
+		chk("腿②端到端负控（公告≠可选 ⇒ 必红）：run() rc=1 且逐格点名", rcR == 1 && hit, "rc="+strconv.Itoa(rcR))
 		_ = os.RemoveAll(tmp2) // ★ 自回收
 	}
 
@@ -959,6 +1140,25 @@ func ffpSelfTest(stdout io.Writer) int {
 			normalErr == nil && matched,
 			"matched="+strconv.FormatBool(matched)+" normal_ran="+strconv.FormatBool(normalErr == nil))
 		_ = os.RemoveAll(tmp3) // ★ 自回收
+	}
+
+	// 负控⑥：拼接变量未定义 ⇒ 不当「有字段表」（不出假红、也不静默漏判成空名单）。
+	if tmp6, err6 := os.MkdirTemp("", "check-fields-face-parity-selftest-"); err6 == nil {
+		_ = os.MkdirAll(ffpPyJoin(tmp6, "core", "cmd", "zerg"), 0o755)
+		body := "\tcommands = []*command{\n" +
+			"\t\t{path: []string{\"zz\", \"gh\"}, fields: zzGhost, run: x},\n\t}\n"
+		_ = os.WriteFile(ffpPyJoin(tmp6, ffpMainRel), []byte(body), 0o644)
+		g6, none6, fatal6 := ffpDeclaredFaces(tmp6)
+		rep6 := "["
+		for i, g := range g6 {
+			if i > 0 {
+				rep6 += ", "
+			}
+			rep6 += "(" + ffpPyRepr(g.path) + ", " + ffpPyListRepr(g.fields) + ")"
+		}
+		rep6 += "]"
+		chk("负控⑥：标识符未定义 ⇒ 不进声明面", !none6 && !fatal6 && len(g6) == 0, rep6)
+		_ = os.RemoveAll(tmp6)
 	}
 
 	rc, _ := ffpRun("/nonexistent-zerg-root-zz", "/nonexistent-bin-zz", 1, 2*time.Second, "2", 1)

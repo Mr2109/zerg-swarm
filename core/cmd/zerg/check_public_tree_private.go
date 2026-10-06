@@ -609,12 +609,22 @@ func cptpPublishedSources(cwd, repo, overlayDir string) ([]string, string) {
 
 // cptpDocsAllowlist = py docs_allowlist：现读「公开树 docs/ 下合法集」。
 func cptpDocsAllowlist(cwd, repo string) cptpAllow {
+	return cptpDocsAllowlistWith(cwd, repo, "")
+}
+
+// cptpDocsAllowlistWith = py `docs_allowlist()`（`publishShOverride` ≠ "" ⇒ 取代 publish-public.sh 路径 ·
+//
+//	等价 py 自检 ⑩ 里临时改全局 `PUBLISH_SH`）。
+func cptpDocsAllowlistWith(cwd, repo, publishShOverride string) cptpAllow {
 	base := cptpAllow{prefixes: cptpFormalFacePrefixes, exact: map[string]bool{},
 		prov: map[string]string{}, sourceMode: "-"}
 	mk := func(rel string) string { return cptpPyJoin(repo, rel) }
 	mirrorLib := mk("publish/mirror-public-lib.py")
 	whitelist := mk("publish/whitelist.txt")
 	publishSh := mk("scripts/build/publish-public.sh")
+	if publishShOverride != "" { // 自检 ⑩ 注入（py 改全局 PUBLISH_SH 的同构面）
+		publishSh = publishShOverride
+	}
 	historySecrets := mk("scripts/gates/check-history-secrets.py")
 	overlayDir := mk("publish/docs")
 	for _, p := range []string{mirrorLib, whitelist, publishSh, historySecrets} {
@@ -642,6 +652,11 @@ func cptpDocsAllowlist(cwd, repo string) cptpAllow {
 	}
 	entries := cptpLoadWhitelist(whitelist)
 	excludes := cptpLoadExcludes(publishSh)
+	if len(excludes) == 0 { // ★ 对齐 py `docs_allowlist` L158-161（GAP-20260927-192）：
+		//   EXCLUDES 块读不出 / 缺件 ⇒ 0 条活跃 ⇒ **不给结论**（fail-closed · Go 半此前无此守卫）。
+		base.err = "EXCLUDES 真源解析失配 / 0 条活跃（EXCLUDES=( … ) 块读不出或缺件）⇒ 不给结论 · GAP-20260927-192"
+		return base
+	}
 	dropExact := cptpParseStrSet(ms, "DROP_EXACT")
 	dropPrefix := cptpParseStrTuple(ms, "DROP_PREFIX")
 	mapExact := cptpParseStrMap(ms, "MAP_EXACT")
@@ -1154,11 +1169,19 @@ func cptpSelfTestBody(stdout io.Writer, repo, base string) int {
 		check("⑨ 空转（树内无 docs/）⇒ rc=2 不给结论", rc3 == 2, fmt.Sprintf("rc=%d\n%s", rc3, cptpPyTail(out3, 400)))
 	}
 
+	// ⑩ EXCLUDES 失配守卫（`GAP-20260927-192` · 对齐 py 自检 ⑩）：真源在盘但解析不出活跃条目
+	//   ⇒ `docs_allowlist` 必须报 error（成对：正控 = 真源正常时 ⑤ 已证 `exact ≥ 1` 且 error 空）。
+	badPsh := cptpPyJoin(base, "publish-sh-broken.sh")
+	_ = os.WriteFile(badPsh, []byte("# 没有 EXCLUDES=( … ) 块\nEXCLUDES_OK=1\n"), 0o644)
+	a2 := cptpDocsAllowlistWith(cwd, repo, badPsh)
+	check("⑩ EXCLUDES 真源解析失配（无 EXCLUDES 块）⇒ docs_allowlist 报 error ⇒ 调用方 rc=2",
+		a2.err != "", fmt.Sprintf("error=%s", a2.err))
+
 	extra := 1
 	if ok5 {
 		extra = 5
 	}
-	fmt.Fprintf(stdout, "自检：%d 过 / %d 红（%d 条用例 = 1 判据面 + 1 清洁 + 2×%d 规则 + %d 正向断言）\n",
+	fmt.Fprintf(stdout, "自检：%d 过 / %d 红（%d 条用例 = 1 判据面 + 1 清洁 + 2×%d 规则 + %d 正向断言 + 1 EXCLUDES 守卫）\n",
 		nOK, nBad, nOK+nBad, len(rules), extra)
 	if nBad == 0 {
 		return 0

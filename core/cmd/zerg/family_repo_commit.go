@@ -540,6 +540,34 @@ func containsLine(lines []string, want string) bool {
 	return false
 }
 
+// readGateResultsStatuses 读门禁结果表 `<outdir>/results.tsv` 的**状态列**。
+//
+// 列序（真源 = `scripts/gates/precommit-gates.sh:run_step` 的落行格式）：`状态\t步名\trc\t秒\t日志`。
+// ⇒ 回 map[步名]状态（PASS/FAIL/BLOCKED/REPORT）。读不到 / 0 行 ⇒ `(nil, err)` —— 调用方
+// **fail-closed**（`GAP-20260927-132` ④：不许拿「读不到」当豁免依据）。
+// ★ 它是替代「对整段门禁输出做子串包含」的那一处取数面：豁免判据只认**状态列**，✗ 不认自由文本。
+func readGateResultsStatuses(path string) (map[string]string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, ln := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		f := strings.Split(ln, "\t")
+		if len(f) < 2 {
+			continue
+		}
+		out[f[1]] = f[0]
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("结果表 0 行")
+	}
+	return out, nil
+}
+
 // repoCommitOnly —— `repo commit --only <路径…> --message <题> [--waive <步名> --reason <…>] [--dry-run] [--yes]`。
 func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, message string, waive []string, reason string) int {
 	// ⓪ 多余位置参数 ⇒ 拒执（**fail-closed**）。现读缺口：`--only a.go b.go c.go` 里 `--only` 只吃**一枚**值
@@ -705,15 +733,46 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 	}
 	fmt.Fprint(stderr, gtOut)
 	if gtRC != exitOK {
+		// ★ `GAP-20260927-132` ④（2026-10-06）：豁免的**成立判据**改读 `<logDir>/results.tsv` 的**状态列**
+		//   —— 旧形态是对整段门禁输出做**子串包含**（点任一步名即可豁免整趟，且 FAIL / BLOCKED 一视同仁）。
+		//   三条口径：① 点名的步必须在**结果表状态列**里出现（✗ 不认自由文本）；
+		//     ② **只许豁免 FAIL**（点名到 PASS/REPORT ⇒ 不成立）；③ **禁豁免 BLOCKED** ——
+		//     结果表里**只要还有任何 BLOCKED 步**，本次一律不豁免（「不给结论」≠ 红 ⇒ 不许一键洗掉）。
+		//   结果表读不到 / 0 行 ⇒ **fail-closed**：不许拿「读不到」当豁免依据。
 		waivedOK := len(waive) > 0 && reason != ""
-		missing := []string{}
-		for _, w := range waive {
-			if !strings.Contains(gtOut, w) {
-				missing = append(missing, w)
+		missing := []string{} // 点名了、结果表里没有（或那一行不是 FAIL）的步
+		banned := []string{}  // 点名到 BLOCKED（禁豁免）的步
+		hasBlocked := false   // 结果表里是否还有任何 BLOCKED 步
+		statusPath := filepath.Join(logDir, "results.tsv")
+		statuses, sErr := readGateResultsStatuses(statusPath)
+		if sErr != nil || len(statuses) == 0 {
+			why := "结果表 0 行"
+			if sErr != nil {
+				why = sErr.Error()
 			}
-		}
-		if len(missing) > 0 {
+			fmt.Fprintf(stderr, "%s: `--waive` **判不了**：读不到结果表 %s（%s）⇒ 不许豁免（fail-closed）\n",
+				progName, statusPath, why)
 			waivedOK = false
+		} else {
+			for _, st := range statuses {
+				if st == "BLOCKED" {
+					hasBlocked = true
+				}
+			}
+			for _, w := range waive {
+				st, ok := statuses[w]
+				switch {
+				case !ok:
+					missing = append(missing, w)
+				case st == "BLOCKED":
+					banned = append(banned, w)
+				case st != "FAIL":
+					missing = append(missing, w+"（结果表状态="+st+"）")
+				}
+			}
+			if len(missing) > 0 || len(banned) > 0 || hasBlocked {
+				waivedOK = false
+			}
 		}
 		if waivedOK {
 			// **带审计的显式例外**（`Q-104` 已拍）：照实记账、照实打印，**不换出口**（仍然不是 `--no-verify`）。
@@ -748,7 +807,13 @@ func repoCommitOnly(inv *invocation, stdout, stderr io.Writer, paths []string, m
 			}
 			fmt.Fprintf(stderr, "%s: **快速档没过（rc=%d）⇒ 不提交**（索引面与工作树逐字未动 · 日志 %s）\n", progName, gtRC, logDir)
 			if len(missing) > 0 {
-				fmt.Fprintf(stderr, "  `--waive` 点名的 %s **不在**这一次的报面上 ⇒ 例外旗标不生效（豁免不许挂在空气上）\n", strings.Join(missing, " · "))
+				fmt.Fprintf(stderr, "  `--waive` 点名的 %s **不在**这一次的**结果表状态列**上（或那一行不是 FAIL）⇒ 例外旗标不生效（豁免不许挂在空气上）\n", strings.Join(missing, " · "))
+			}
+			if len(banned) > 0 {
+				fmt.Fprintf(stderr, "  `--waive` 点名的 %s 在结果表里是 **BLOCKED（不给结论）** ⇒ **禁豁免**（只许豁免 FAIL）\n", strings.Join(banned, " · "))
+			}
+			if hasBlocked {
+				fmt.Fprintf(stderr, "  结果表里还有 **BLOCKED（不给结论）** 的步 ⇒ 本次一律**不豁免**（不给结论 ≠ 红 ⇒ 不许一键洗掉整趟）\n")
 			}
 			fmt.Fprintf(stderr, "  归因：步名逐字见上面门禁原样输出 · 日志目录 %s · 复核命令 `bash scripts/gates/precommit-gates.sh --fast --outdir %s`\n", logDir, logDir)
 			fmt.Fprintf(stderr, "  合法出口三个：① 等并行写者收工后重跑 ② 按日志逐条复核 ③ 确需人签例外 ⇒ `--waive <步名> --reason <…> --yes`（**进审计**）\n")

@@ -277,7 +277,11 @@ func jlkRunChild(args []string, base string) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(exe, args...)
+	// ★ 必须带 inproc 路由前缀（`gate check judge-lock`）：`bin/zerg` 的 argv 首段是子命令，
+	//   直接把本门旗标喂给制品会被当未知命令 ⇒ 子进程恒退 2（自检正控 / 负控 A 两格假红）。
+	//   py 无这一层（它是 `python3 <件> <argv>`）⇒ Go 半须自带，否则与 py 现件分叉。
+	argv := append([]string{"gate", "check", "judge-lock"}, args...)
+	cmd := exec.Command(exe, argv...)
 	cmd.Env = jlkSetEnv("ZERG_GATE_LOCK_DIR", base)
 	return cmd, nil
 }

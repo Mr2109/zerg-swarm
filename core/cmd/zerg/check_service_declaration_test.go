@@ -6,8 +6,10 @@
 // 空转 / 缺件 ⇒ rc=1 或 2）成对，**空值三态逐态各一格**（取不到 · 显式空集合 · 缺键各成格，
 // 并各自断言「不出现对方文案」）。帮助面把 py 3.9.6 `-h` 的 sha256 钉成 golden 逐字比。
 //
-// 有牙实证（仓外副本哑化 ⇒ 本件用例 FAIL）见交付回执：把主件里「未登记幽灵」那条 problem 的
-// 追加动作掐掉 ⇒ 「负控:未登记幽灵」当场 FAIL（带行号）。
+// 有牙实证（仓外副本哑化 ⇒ 本件用例 FAIL）见交付回执：① 把主件里「未登记幽灵」那条 problem 的
+// 追加动作掐掉 ⇒ 「负控:未登记幽灵」当场 FAIL（带行号）；② 把主件 `csdWordAnchor` 换成子串包含
+// （`strings.Contains`）⇒ 「负控:词界锚 兄弟名不假绿」与「负控:R4a 标签↔pid↔程序不一致」两格 FAIL
+// （`bin/zerg-core` 是 `bin/zerg-core-test` 的子串 ⇒ 假绿、rc 由 1 变 0）。
 package main
 
 import (
@@ -270,7 +272,7 @@ func TestCheckServiceDeclarationGatePort(t *testing.T) {
 		}
 	})
 
-	t.Run("--self-test rc=0 十格全过", func(t *testing.T) {
+	t.Run("--self-test rc=0 十八格全过", func(t *testing.T) {
 		rc, so, se := csdRun(t, "--self-test")
 		if rc != 0 {
 			t.Fatalf("self-test rc=%d 期望 0（stderr=%q）", rc, se)
@@ -278,8 +280,8 @@ func TestCheckServiceDeclarationGatePort(t *testing.T) {
 		if !strings.Contains(so, "自检结论: 全过") {
 			t.Fatalf("自检结论不对：%q", so)
 		}
-		if n := strings.Count(so, "（rc="); n != 10 {
-			t.Fatalf("自检格数 = %d 期望 10：%q", n, so)
+		if n := strings.Count(so, "（rc="); n != 18 {
+			t.Fatalf("自检格数 = %d 期望 18：%q", n, so)
 		}
 		if !strings.Contains(so, "✓ 点名断言（`A∖B` + `B∖A` 两侧逐字出现）") {
 			t.Fatalf("点名断言行不对：%q", so)
@@ -337,6 +339,115 @@ func TestCheckServiceDeclarationGatePort(t *testing.T) {
 		}
 		if !strings.Contains(se, "`--json=out`") {
 			t.Fatalf("未逐字回显旗标：%q", se)
+		}
+	})
+
+	// ── R4a / 词界锚 / 层限（GAP-20260927-100 · GAP-20260927-168）· 带牙面 ─────────────────────
+	// ★ 牙齿：把主件 `csdWordAnchor` 哑化成子串包含（`strings.Contains`）⇒ 下面「词界锚」与「R4a 兄弟名」
+	//   两格必 FAIL（`bin/zerg-core` 是 `bin/zerg-core-test` 的子串 ⇒ 假绿、rc 由 1 变 0）。
+	t.Run("负控:词界锚 兄弟名不假绿 rc=1（R4a+R4b）", func(t *testing.T) {
+		root := csdTestRoot(t)
+		badPS := "  68939     1       56:36 /repo/bin/zerg-core-test\n" +
+			"  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n" +
+			"  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n"
+		dp, pp, lp, home := csdWriteFixture(root, csdGoodDecl, badPS, csdGoodLC, goodPlists)
+		csdSetEnv(t, dp, pp, lp, home)
+		rc, so, _ := csdRun(t, root)
+		if rc != 1 {
+			t.Fatalf("rc=%d 期望 1（子串锚会假绿成 0）", rc)
+		}
+		if !strings.Contains(so, "标签↔pid↔程序不一致") {
+			t.Fatalf("R4a 未判「标签↔pid↔程序不一致」：%q", so)
+		}
+		if !strings.Contains(so, "FAIL R4 现值进程没有落点") {
+			t.Fatalf("R4b 未判未落点：%q", so)
+		}
+	})
+
+	t.Run("负控:R4a 标签↔pid↔程序不一致 rc=1", func(t *testing.T) {
+		root := csdTestRoot(t)
+		badPS := "  68939     1       56:36 /repo/bin/zerg-agentd\n" + // com.zerg.core 的 pid 上跑别件
+			"  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n" +
+			"  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n"
+		dp, pp, lp, home := csdWriteFixture(root, csdGoodDecl, badPS, csdGoodLC, goodPlists)
+		csdSetEnv(t, dp, pp, lp, home)
+		rc, so, _ := csdRun(t, root)
+		if rc != 1 {
+			t.Fatalf("rc=%d 期望 1", rc)
+		}
+		if !strings.Contains(so, "FAIL R4 声明 com.zerg.core（第 3 行）的作业 pid=68939") {
+			t.Fatalf("R4a 未逐条点名：%q", so)
+		}
+	})
+
+	t.Run("负控:R4a 瞬态工人（ps 已无该 pid）rc=1", func(t *testing.T) {
+		root := csdTestRoot(t)
+		badPS := "  68939     1       56:36 /repo/bin/zerg-core\n" +
+			"  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n" // 14149 消失
+		dp, pp, lp, home := csdWriteFixture(root, csdGoodDecl, badPS, csdGoodLC, goodPlists)
+		csdSetEnv(t, dp, pp, lp, home)
+		rc, so, _ := csdRun(t, root)
+		if rc != 1 {
+			t.Fatalf("rc=%d 期望 1", rc)
+		}
+		if !strings.Contains(so, "在 ps 现值里取不到命令行 ⇒ 锚不了") {
+			t.Fatalf("R4a 未判瞬态：%q", so)
+		}
+	})
+
+	t.Run("正控:词界锚 shell 包装仍命中 rc=0", func(t *testing.T) {
+		root := csdTestRoot(t)
+		shPS := "  68939     1       56:36 /bin/sh -c exec bin/zerg-core\n" +
+			"  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n" +
+			"  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n"
+		dp, pp, lp, home := csdWriteFixture(root, csdGoodDecl, shPS, csdGoodLC, goodPlists)
+		csdSetEnv(t, dp, pp, lp, home)
+		rc, so, _ := csdRun(t, root)
+		if rc != 0 {
+			t.Fatalf("rc=%d 期望 0（词界锚对行尾命中）：%q", rc, so)
+		}
+	})
+
+	t.Run("正控:R0 层限注记在场（8 列 host）rc=0", func(t *testing.T) {
+		root := csdTestRoot(t)
+		dp, pp, lp, home := csdWriteFixture(root, csdGoodDecl, csdGoodPS, csdGoodLC, goodPlists)
+		csdSetEnv(t, dp, pp, lp, home)
+		rc, so, _ := csdRun(t, root)
+		if rc != 0 {
+			t.Fatalf("rc=%d 期望 0", rc)
+		}
+		if !strings.Contains(so, "R0 层限：本门判面 = `layer=host`（**本机层**）· 本层 3 行 · 非本层 0 行") {
+			t.Fatalf("R0 层限注记不对：%q", so)
+		}
+	})
+
+	t.Run("正控:层限 非本层行不由本门判 rc=0", func(t *testing.T) {
+		root := csdTestRoot(t)
+		decl := csdGoodDecl + "launchd	edge-node-agent.service	/home/<user>/edge-node-agent.service	" +
+			"/home/<user>/zerg/bin/zerg-agentd	bin/zerg-agentd	节点(edge-node)	-	node:edge-node\n"
+		dp, pp, lp, home := csdWriteFixture(root, decl, csdGoodPS, csdGoodLC, goodPlists)
+		csdSetEnv(t, dp, pp, lp, home)
+		rc, so, _ := csdRun(t, root)
+		if rc != 0 {
+			t.Fatalf("rc=%d 期望 0（非本层行不由本门判）", rc)
+		}
+		if !strings.Contains(so, "本层 3 行 · 非本层 1 行") {
+			t.Fatalf("层计数不对：%q", so)
+		}
+	})
+
+	t.Run("负控:无 layer 列（旧 7 列件）出补列注记", func(t *testing.T) {
+		root := csdTestRoot(t)
+		old7 := strings.ReplaceAll(csdGoodDecl, "	layer\n", "\n")
+		old7 = strings.ReplaceAll(old7, "	host\n", "\n")
+		dp, pp, lp, home := csdWriteFixture(root, old7, csdGoodPS, csdGoodLC, goodPlists)
+		csdSetEnv(t, dp, pp, lp, home)
+		rc, so, _ := csdRun(t, root)
+		if rc != 0 {
+			t.Fatalf("rc=%d 期望 0", rc)
+		}
+		if !strings.Contains(so, "层限：声明树无 `layer` 列（旧 7 列件）") {
+			t.Fatalf("缺 `layer` 列未出补列注记：%q", so)
 		}
 	})
 }

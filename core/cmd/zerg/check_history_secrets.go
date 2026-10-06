@@ -1577,7 +1577,7 @@ func chsecSelfTest(stdout, stderr io.Writer) int {
 		naiveEsc && !strings.Contains(naive, cjkRel),
 		fmt.Sprintf("转义形态 %s · 原样名 %s（期望：有转义 / 无原样）", inDisp(naiveEsc), inDisp(strings.Contains(naive, cjkRel))))
 
-	fmt.Fprint(stdout, "[判据] 等价形态·全角同形字：`／Users／ｆｕｚｚ０１` 经折叠回 `/Users/ms"+"01` ⇒ 判红\n")
+	fmt.Fprint(stdout, "[判据] 等价形态·全角同形字：`／Users／ｆｕｚｚ０１` 经 NFKC 折回 `/Users/ms"+"01` ⇒ 判红\n")
 	fw := chsecMkFixtureRepo(d, "fullwidth", []chsecFixtureFile{{"src/fw.py", `H = "` + chsecFixFW + `"` + "\n"}}, "夹具：初始提交", chsecFixWL)
 	rc, text = chsecRunCLI(fw)
 	caseFn("⑮全角同形", "白名单内全角路径形 ⇒ rc=1 且点名「用户家目录路径」",
@@ -1601,13 +1601,14 @@ func chsecSelfTest(stdout, stderr io.Writer) int {
 	caseFn("⑱base64", "白名单内 base64 载荷（解出内网地址形）⇒ rc=1 且点名「内网地址 10.0.0.x」",
 		rc == 1 && strings.Contains(text, "内网地址 10.0.0.x"), fmt.Sprintf("rc=%d（期望 1）", rc))
 
+	fmt.Fprint(stdout, "[防空绿档] 把 base64 面弄哑（`_b64_payloads` 恒空）⇒ ⑱ 那棵必红的树退回 rc=0（该真源不是恒红）\n")
 	savedB64 := chsecB64PayloadsFn
 	rcMuteB64, _ := func() (int, string) {
 		chsecB64PayloadsFn = func(string) []string { return []string{} }
 		defer func() { chsecB64PayloadsFn = savedB64 }()
 		return chsecRunCLI(b64)
 	}()
-	caseFn("⑲防空绿", "哑化 base64 面（chsecB64PayloadsFn 恒空）⇒ ⑱ 那棵**必红**的树退回 rc=0（判红侧不是恒红）",
+	caseFn("⑲防空绿", "哑化 base64 面 ⇒ ⑱ 那棵**必红**的树退回 rc=0（判红侧不是恒红）",
 		rcMuteB64 == 0, fmt.Sprintf("rc=%d（期望 0）", rcMuteB64))
 
 	fmt.Fprint(stdout, "[真目标] 现读真仓**结构**（**不跑全历史** —— 实测 3m55s，见文件头）⇒ 结构断言 ＋ 计数照实报\n")

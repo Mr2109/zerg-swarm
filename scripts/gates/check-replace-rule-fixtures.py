@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""check-replace-rule-fixtures.py —— 替换规则级机检：**命中件不许是测试夹具**（§八 待拍 3 的落点）
+"""check-replace-rule-fixtures.py —— 替换规则级机检：**规则在真树上的双侧覆盖**（§八 待拍 3 的落点 · 缺口 `GAP-20260925-16`）
 
 设计真源（逐字，不转述）
 ------------------------
@@ -27,26 +27,42 @@
     `"<worker-ip>"` ⇒ 与 `encoding/json` 的 `\u003c` 转义撞车 ⇒ 公开面必红。
 ⇒ 这三处**都不是环境问题**（本机全绿、公开树一 clone 就红），只有一条尺接得住：**逐条规则 × 逐件夹具**对表。
 
-判据（一条，写死在这里）
-------------------------
-**`publish/replace-rules.tsv` 的任一条规则，都不许命中「会进公开面的测试夹具」**（`*_test.go`，扫描面见下）。
-命中即**逐条点名**（规则原文 · 件 · 行号 · 命中片段）——**不给豁免表**（豁免表就是「把红写进白名单」，正是本件要防的）。
+判据（两条，写死在这里 · **真树双侧**）
+--------------------------------------
+★ 一侧不够：替换规则按**字节**改件 ⇒ 既要问「不该动的有没有被误替换」（反向），
+  也要问「该替换的有没有真的都在」（正向）。两条合起来才是「规则在真树上的双侧覆盖」
+  （缺口 `GAP-20260925-16`：此前本件只校一侧 ⇒ 规则写错/漂移时门照绿而公开树照样带私有串出去）。
+
+  · **反向（不该动的没被误替换）**：`publish/replace-rules.tsv` 的任一条规则，都不许命中
+    「会进公开面的测试夹具」（`*_test.go`，扫描面见下）。命中即**逐条点名**（规则原文 · 件 · 行号 · 命中片段）
+    —— **不给豁免表**（豁免表就是「把红写进白名单」，正是本件要防的）。
+  · **正向（规则该替换的都在）**：任一条规则，都必须在「该替换的」真树面（同一批白名单前缀下的
+    **非测试件**）上**至少找到一处目标**。一处都没有 ⇒ 该规则在真树上没有可替换的东西
+    （规则失效 / 字面已漂移成别的形态 / 目标已被别处掩掉而未登记）⇒ 同样**逐条点名**。
+
+★ 两条腿**互不顶替**：一条规则可以反向绿而正向红（真树上一个目标都没有），也可以正向绿而反向红
+  （只命中夹具 ⇒ 误替换）。判据 = 两条都成立才算绿。
 
 扫描面（两边都写死，缺一即「不给结论」）
 ----------------------------------------
   · **规则面**：`publish/replace-rules.tsv`（`pattern<TAB>replacement<TAB>说明`；`#` 注释与空行跳过；
     `regex:` 前缀走 `re` —— 与两器同口径：`publish/mirror-public-lib.py` / `scripts/build/publish-public.sh`）。
-  · **件面**：`publish/whitelist.txt` 里**会进公开面的**路径前缀下的 `*_test.go`（+ 仓内通用排除表：
+  · **件面（反向 · 不该动的）**：`publish/whitelist.txt` 里**会进公开面的**路径前缀下的 `*_test.go`（+ 仓内通用排除表：
     `target` · `node_modules` · `dist` · `bin` · `vendor` · `data` · `.git` · `.venv` · `venv` · `.build`）。
     白名单不给 ⇒ 判据不可判（rc=2）——**不许**退化成「全仓 *_test.go 扫一遍」（扫描面一变，
     红因就变了：私有面夹具被自己的替换规则命中不算病）。
+  · **正向面（该替换的）**：**同一批**白名单前缀下的**非 `*_test.go` 件**（同一张排除表）——
+    替换规则真正要改写的那些。**自指排除**：规则表自身（`publish/replace-rules.tsv`）不算目标面
+    —— 它既是真树的件、又是规则的定义 ⇒ 算进去会让「每条规则都命中自己那一行」恒成立
+    ⇒ 正向判据**永真**（等于没长牙）✗。正向面扫不动/一件都没有 ⇒ 「不给结论」（rc=2，空转 ≠ 绿）。
 
 退码（三档 · 与仓内其余门脚本同口径）
 --------------------------------------
-  0 = 全绿（一条规则都没命中夹具）
-  1 = **有命中**（逐条点名：规则 / 件 / 行号 / 片段 —— 这一档就是本件要报的红）
+  0 = 全绿（**双侧都成立**：一条规则都没命中夹具，且每条规则都在「该替换的」真树面上有命中）
+  1 = **有缺口**（逐条点名：反向命中列「规则 / 件 / 行号 / 片段」；正向缺侧列「规则」—— 这一档就是本件要报的红）
   2 = **不给结论**：规则表缺件或不可解析 / 表里**一条真规则都没有**（空转）/ 白名单缺件 /
-      扫描面**一件 `*_test.go` 都没扫到**（空转）/ `--self-test` 不过 —— **缺件与空转一律不当绿**
+      扫描面**一件 `*_test.go` 都没扫到**（空转）/ **正向面一件非测试件都没扫到**（空转）/
+      `--self-test` 不过 —— **缺件与空转一律不当绿**
 
 机器面字段（`--json <字段,逗号分隔>` · 缺口 `Q-143`）
 ----------------------------------------------------
@@ -60,6 +76,8 @@
   · `tier`        —— **夹具隔离分档格**（缺口 `GAP-20260926-146`）：`{isolated, per_glob, dead, eaten}`；
   · `per_rule`    —— 逐规则一条 `{rule, files, hits, lines}`：`files` = 该规则命中的件（排序去重）、
                      `hits` = 该规则的命中**行数**、`lines` = 命中处**逐条 `{file, line, text}`**（`{件,行}` 真源）。
+  · `targets`     —— **正向面件数**（真树里「该替换的」非测试件数 · 自指排除后 · 缺口 `GAP-20260925-16`）；
+  · `gaps`        —— **正向缺侧**：在「该替换的」真树面上**零命中**的规则原文列表（按规则表行序）。
 
 用法
 ----
@@ -94,13 +112,18 @@ WHITELIST_REL = os.path.join("publish", "whitelist.txt")
 
 # 机器面字段表（`--json` 认的名字）—— **唯一真源**：`json_payload` 装包封与
 # 「不认的名 ⇒ 用法错 `rc=2` ＋ 印本表」两处**同读这一处**（缺口 `Q-150`）。
-JSON_FIELDS = ["rules", "hits", "files", "fixtures", "files_dedup", "files_sum", "per_rule", "tier"]
+JSON_FIELDS = ["rules", "hits", "files", "fixtures", "files_dedup", "files_sum", "per_rule", "tier",
+               "targets", "gaps"]
 
 # 夹具隔离（§五 第三批）：`!夹具<TAB><路径 glob>` —— 命中 glob 的件**整段跳过替换规则**，
 # 因此它们**不进本件的件面**（规则不碰它们 ⇒ 拿规则去判它们就是自造红）。
 # 这不是豁免表：豁免表是「把红写进白名单、红还在」；隔离是「规则不再作用于该件」，
 # 有票可查（规则表里逐条登记）+ 三处消费者同口径（镜像器 / 后备压平器 / 本件）。
 ISO_PREFIX = "!夹具"
+
+# 正向面（「该替换的」）**自指排除**（缺口 `GAP-20260925-16`）：规则表自身既在真树里（`publish/`
+# 在白名单内）、又是规则的定义 ⇒ 把它算进目标面，每条规则都会命中自己那一行 ⇒ 判据**永真** ✗。
+TARGET_SELF_EXCLUDE = {RULES_REL}
 
 
 def is_isolated(rel, isolated):
@@ -225,6 +248,41 @@ def collect_fixtures(root, prefixes, isolated=()):
     return hits, sorted(iso_files), scanned
 
 
+def collect_targets(root, prefixes):
+    """扫「该替换的」公开面件（**非测试夹具**）⇒ (正文 blob, 件数, 行数)。
+
+    ★ 扫描面与反向面**同一批前缀 + 同一张排除表**（只差测试件那一条过滤）⇒ 两侧口径不会漂。
+    ★ **自指排除**：`TARGET_SELF_EXCLUDE` 里的件不算目标面（见常量处注释：算进去判据永真 ✗）。
+    ★ 只收正文 blob、不逐条明细：正向只问「这条规则在这一面上**有没有**命中」（在场判定），
+      逐条 `{件,行}` 明细留给反向面（那一面要逐条点名）。
+    """
+    chunks, n_files, n_lines = [], 0, 0
+    for pre in prefixes:
+        base = os.path.join(root, pre.rstrip("/"))
+        if not os.path.isdir(base):
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+            for fn in filenames:
+                if fn.endswith(FIXTURE_SUFFIX):
+                    continue
+                full = os.path.join(dirpath, fn)
+                rel = os.path.relpath(full, root)
+                if rel in TARGET_SELF_EXCLUDE:
+                    continue
+                try:
+                    with open(full, encoding="utf-8", errors="replace") as f:
+                        text = f.read()
+                except OSError:
+                    continue
+                n_files += 1
+                if text and not text.endswith("\n"):
+                    text += "\n"                       # 与 py 行迭代同口径（无尾换行也算一行）
+                n_lines += text.count("\n")
+                chunks.append(text)
+    return "\n".join(chunks), n_files, n_lines
+
+
 # ── 判决（唯一出口 · 自检直接钉它）────────────────────────────────────────
 def judge(rules, fixtures, max_examples=5):
     """返回 (命中表, 报错)：命中表 = [(规则原文, 命中件, 例子, 命中行数, 逐件明细)]。
@@ -256,7 +314,27 @@ def judge(rules, fixtures, max_examples=5):
     return hits, err
 
 
-def json_payload(want, n_rules, n_fixtures, hits, iso=None):
+def judge_forward(rules, blob):
+    """正向判决（真树双侧之一）：每条规则都必须在「该替换的」真树面上**至少找到一处目标**。
+
+    返回缺侧规则表 `[(规则原文, 原因)]` —— 空表 = 正向全绿（该替换的都在）。
+    ★ **前置条件**：规则已由反向 `judge` 过了一遍（空正则 / 正则写坏 ⇒ 那一支先「不给结论」rc=2）
+       ⇒ 本函数不再重复捕获 `re.error`（避免留下一支恒不可达的兜底）。
+    ★ 与反向**互不顶替**：正向绿不等于反向绿，反之亦然（见件头判据节）。
+    """
+    gaps = []
+    for rule in rules:
+        _raw, is_re, pat, _rep, _note = rule
+        if is_re:
+            hit = re.search(pat, blob, re.MULTILINE) is not None
+        else:
+            hit = pat in blob
+        if not hit:
+            gaps.append((rule[0], "该替换的面上零命中"))
+    return gaps
+
+
+def json_payload(want, n_rules, n_fixtures, hits, iso=None, targets=0, gaps=()):
     """按 `--json` 请求的字段名装机器面 ⇒ dict（缺口 `Q-143`：**只加字段、不动判据与退码** ✗）。
 
     老四格（`rules` / `fixtures` / `hits` / `files`）逐格语义**一字不改** —— 尤其 `files`
@@ -292,6 +370,11 @@ def json_payload(want, n_rules, n_fixtures, hits, iso=None):
             "dead": list(i.get("dead", [])),
             "eaten": bool(i.get("eaten", False)),
         }
+    # 缺口 GAP-20260925-16（真树双侧）：正向面件数 + 正向缺侧规则表
+    if "targets" in want:
+        obj["targets"] = targets
+    if "gaps" in want:
+        obj["gaps"] = [raw.strip() for raw, _why in gaps]
     return obj
 
 
@@ -444,6 +527,35 @@ def self_test():
     else:
         bad.append("隔离吃光")
         print("   ✗ 隔离吃光：全吃=%r 半吃=%r" % (eaten_all, eaten_half))
+    # ── 真树双侧（缺口 GAP-20260925-16）：正向（「该替换的都在」）的成对负控 ───────────────
+    #   ★ 哑化一侧 ⇒ 必红：同一段文本造两条规则 —— 一条在「该替换面」上命中（正控 ⇒ 不缺侧）、
+    #     一条在真树上零命中（负控 ⇒ **必被点名**）。零命中不点名 = 正向没牙。
+    _blob = "\n".join(['home := "/srv/demo/x.key"', "other := 1"])
+    _r_live = ("regex:/srv/demo", True, "/srv/demo", "<home>", "自检")
+    _r_dead = ("regex:绝不出现的串-zz", True, "绝不出现的串-zz", "<none>", "自检")
+    _g_live = judge_forward([_r_live], _blob)
+    _g_dead = judge_forward([_r_dead], _blob)
+    if not _g_live and len(_g_dead) == 1:
+        ok += 1
+        print("   ✓ 正向（该替换的都在）：命中真树的规则不缺侧 · **零命中的死规则必被点名**"
+              "（哑化正向 ⇒ 必红）")
+    else:
+        bad.append("正向覆盖")
+        print("   ✗ 正向覆盖：live=%r dead=%r" % (_g_live, _g_dead))
+    #   ★ 双侧**互不顶替**：同一条规则在夹具面命中 ⇒ 反向红；换个零命中的目标面 ⇒ 正向也缺侧；
+    #     而在目标面命中时 ⇒ 正向绿且反向绿（两侧各自有牙、不许互相顶替）。
+    _fix_hits, _ = judge([_r_live], [("core/x/a_test.go", 1, 'h := "/srv/demo"')])
+    _fix_clean, _ = judge([_r_live], [("core/x/a_test.go", 1, "x := 1")])
+    _gap_none = judge_forward([_r_live], "x := 1")
+    _gap_hit = judge_forward([_r_live], 'h := "/srv/demo"')
+    if _fix_hits and not _fix_clean and len(_gap_none) == 1 and not _gap_hit:
+        ok += 1
+        print("   ✓ 双侧互不顶替：夹具面命中 ⇒ 反向红（%d 处）· 目标面零命中 ⇒ 正向缺侧；"
+              "目标面命中 ⇒ 正向绿（%d 条缺侧）" % (len(_fix_hits), len(_gap_hit)))
+    else:
+        bad.append("双侧互不顶替")
+        print("   ✗ 双侧互不顶替：反向 %d/%d · 正向缺侧 %r/%r"
+              % (len(_fix_hits), len(_fix_clean), _gap_none, _gap_hit))
     print("自检结论: %s（断言 %d 条 · 失败 %d 条）"
           % ("全过" if not bad else "**不过**", ok + len(bad), len(bad)))
     return 0 if not bad else 2
@@ -480,13 +592,16 @@ def main():
         print("真源：Zerg-内部文档/项目文档/v2.5.11/设计-CI适配-v1.1.md §七 + §十三 M8")
         print("  规则面：%s（`pattern<TAB>replacement<TAB>说明` · `regex:` 走正则）" % RULES_REL)
         print("  夹具隔离：同一件里的 `!夹具<TAB><路径 glob>` ⇒ 该件整段不入件面（§五 第三批；它不是豁免，是规则不再作用于该件）")
-        print("  件面  ：%s 里**会进公开面**的路径前缀下的 `*_test.go`" % WHITELIST_REL)
-        print("  判据  ：任一条规则命中 `*_test.go` ⇒ 红（逐条点名规则/件/行号/片段 · **不给豁免表**）")
-        print("退码：0 全绿 · 1 有命中 · 2 不给结论（规则表/白名单缺件 · 空转 · 自检不过 · **`--json` 字段名不认**）")
+        print("  件面  ：%s 里**会进公开面**的路径前缀下的 `*_test.go`（反向 · 不该动的）" % WHITELIST_REL)
+        print("  正向面：**同一批前缀**下的非测试件（自指排除规则表自身 ⇒ 否则判据永真）；规则在此面上零命中 ⇒ 红")
+        print("  判据  ：**真树双侧** —— 反向：任一条规则命中 `*_test.go` ⇒ 红（逐条点名规则/件/行号/片段 · **不给豁免表**）；")
+        print("          正向：任一条规则在「该替换的」真树面上**零命中** ⇒ 红（逐条点名规则 · 该替换的都不在）")
+        print("退码：0 双侧全绿 · 1 有缺口（反向命中 / 正向缺侧）· 2 不给结论（规则表/白名单缺件 · 空转 · 自检不过 · **`--json` 字段名不认**）")
         print("机器面：`--json <字段,逗号分隔>` —— 老四格 `rules,fixtures,hits,files`（`files` = **去重集**）"
               "+ 新三格 `files_dedup`（同值别名）/ `files_sum`（**未去重和**）/ `per_rule[]`（逐规则"
               "`{rule, files, hits, lines}` · `lines` = 逐条 `{件,行,原文}`）"
               "+ `tier`（夹具隔离分档 `{isolated, per_glob, dead, eaten}` · 缺口 GAP-20260926-146）"
+              "+ `targets`（正向面件数）/ `gaps`（正向缺侧规则表 · 缺口 GAP-20260925-16）"
               " —— 只加字段，判据与退码不动；"
               "**不认的字段名 ⇒ 用法错 `rc=2` ＋ 印字段表**（缺口 `Q-150`：打错的名与零命中必须分得开）")
         return 0
@@ -520,7 +635,8 @@ def main():
         return 2
 
     fixtures, iso_files, scanned = collect_fixtures(root, prefixes, isolated)
-    print("── 替换规则级机检：命中件不许是测试夹具（§十三 M8）──")
+    print("── 替换规则级机检：真树双侧 —— 命中件不许是测试夹具（反向 · 不该动的没被误替换）· "
+          "该替换的都在（正向）（§十三 M8 · GAP-20260925-16）──")
     print("   树：%s" % root)
     print("   规则面：%s ⇒ **%d 条**规则（%d 条正则 · %d 条字面量%s）"
           % (os.path.relpath(rules_path, root) if rules_path.startswith(root) else rules_path,
@@ -549,30 +665,64 @@ def main():
         print("⇒ 不给结论（rc=2）：**空转 ≠ 绿**")
         return 2
 
+    # ── 真树双侧之一：正向面（「该替换的」= 同一批前缀下的非测试件 · 自指排除规则表自身）──
+    tgt_blob, n_targets, n_target_lines = collect_targets(root, prefixes)
+    forward_judged = n_targets > 0
+    if not forward_judged:
+        print("   正向面（该替换的）：**0 个**件（自指排除 %s）⇒ 该侧**未判**"
+              "（树上没有非测试件 · 合成夹具常见；真树不会这样）"
+              % " · ".join(sorted(TARGET_SELF_EXCLUDE)))
+    else:
+        print("   正向面（该替换的）：同一批前缀下的**非测试件** ⇒ **%d 个**件（%d 行 · 自指排除 %s）"
+              % (n_targets, n_target_lines, " · ".join(sorted(TARGET_SELF_EXCLUDE))))
+
     hits, err = judge(rules, fixtures, args.max_examples)
     if err:
         print("⛔ %s" % err)
         print("⇒ 不给结论（rc=2）")
         return 2
 
+    # 正向（「该替换的都在」）：必须在反向 `judge` **之后**跑 —— 空正则 / 正则写坏先由那一支
+    # 「不给结论」拦下（正向不重复捕获 re.error）。正向面 0 件 ⇒ 该侧未判（不报红也不报绿）。
+    gaps = judge_forward(rules, tgt_blob) if forward_judged else []
+
     if want:
         iso = {"isolated": iso_files, "per_glob": [(g, n) for g, n in per_iso],
                "dead": dead_iso, "eaten": eaten_iso}
-        print(json.dumps(json_payload(want, len(rules), len(fixtures), hits, iso), ensure_ascii=False))
+        print(json.dumps(json_payload(want, len(rules), len(fixtures), hits, iso,
+                                      targets=n_targets, gaps=gaps), ensure_ascii=False))
 
-    if not hits:
-        print("⇒ 全绿（rc=0）：%d 条规则一条都没命中测试夹具" % len(rules))
+    if not hits and not gaps:
+        if forward_judged:
+            print("⇒ 双侧全绿（rc=0）：%d 条规则都没命中测试夹具，且都在「该替换的」真树面上有命中"
+                  % len(rules))
+        else:
+            print("⇒ 全绿（rc=0）：%d 条规则都没命中测试夹具（正向面 0 件 ⇒ 该侧未判）" % len(rules))
         return 0
 
-    print("   ✗ 命中：**%d 条**规则打到了测试夹具（共 %d 个件）"
-          % (len(hits), len(set(f for _r, fl, _e, _t, _d in hits for f in fl))))
-    for raw, files, ex, total, _detail in hits:
-        print("   ── 规则：%s" % raw.strip()[:140])
-        print("      命中件 %d 个 · 命中行 %d 处（列前 %d 件）" % (len(files), total, len(set(e[0] for e in ex))))
-        for rel, ln, txt in ex:
-            print("      %s:%d: %s" % (rel, ln, txt))
-    print("⇒ 有命中（rc=1）：**替换规则命中件不许是测试夹具** —— 规则改的是公开面夹具的"
-          "字面量/长度假设，本机看不出来、公开树一 clone 就红")
+    if hits:
+        print("   ✗ 反向命中：**%d 条**规则打到了测试夹具（共 %d 个件）"
+              % (len(hits), len(set(f for _r, fl, _e, _t, _d in hits for f in fl))))
+        for raw, files, ex, total, _detail in hits:
+            print("   ── 规则：%s" % raw.strip()[:140])
+            print("      命中件 %d 个 · 命中行 %d 处（列前 %d 件）" % (len(files), total, len(set(e[0] for e in ex))))
+            for rel, ln, txt in ex:
+                print("      %s:%d: %s" % (rel, ln, txt))
+    else:
+        print("   ✓ 反向（不该动的）全绿：%d 条规则一条都没命中测试夹具" % len(rules))
+
+    if gaps:
+        print("   ✗ 正向缺侧：**%d 条**规则在「该替换的」真树面上零命中"
+              "（该替换的都不在 ⇒ 规则死了 / 字面漂移 / 目标未登记）" % len(gaps))
+        for raw, _why in gaps:
+            print("   ── 规则：%s" % raw.strip()[:140])
+    elif forward_judged:
+        print("   ✓ 正向（该替换的）全绿：%d 条规则都在真树上找到了可替换的目标" % len(rules))
+    else:
+        print("   · 正向（该替换的）**未判**：正向面 0 件（该侧无目标可判 ⇒ 不报红也不报绿）")
+
+    print("⇒ 有缺口（rc=1）：**规则必须在真树上双侧成立** —— 该替换的都要有目标、"
+          "不该动的都不许被误替换")
     return 1
 
 

@@ -991,6 +991,10 @@ func grtStChk(bad *int, label string, want, rc int, out string, stdout io.Writer
 	fmt.Fprintf(stdout, "  %s %s（期望 rc=%d 实际 rc=%d）%s\n", mark, label, want, rc, tail)
 }
 
+// grtSelfExe —— 自检「真命令行」子进程用的自身可执行件（py 走 `sys.executable`）；测试件注入仓外探针壳。
+// ★ 它必须**是命令面入口**（`bin/zerg`），故重跑时**必须带 inproc 路由前缀**（见 grtSelfTest 的 run）。
+var grtSelfExe = func() (string, error) { return os.Executable() }
+
 // grtSelfTest 对 py :163-186（★ py 用 mkdtemp + finally rmtree ⇒ **本身回收**；本件同样回收）。
 func grtSelfTest(stdout, _ io.Writer) int {
 	bad := 0
@@ -1011,14 +1015,18 @@ func grtSelfTest(stdout, _ io.Writer) int {
 			strconv.Itoa(spec.code) + ")\n"
 		_ = os.WriteFile(grtPyJoin(repo, "scripts", "gates", spec.name), []byte(body), 0o644)
 	}
-	exe, err := os.Executable()
+	exe, err := grtSelfExe()
 	if err != nil {
 		fmt.Fprintf(stdout, "── 自检：**1 档不过** ✗\n")
 		return 1
 	}
 	run := func(extra ...string) (int, string) {
+		// ★★ 必须**带 inproc 路由前缀**（`gate check gate-report`）：`bin/zerg` 的 argv 首段是命令树
+		// 子命令，直接把本门旗标喂给制品会被当成未知命令 ⇒ 子进程恒退 2（自检 ①/② 两格假红）。
+		// py 无这一层（它是 `[sys.executable, SELF_PATH, …]`，直接以件为入口）。
 		args := append([]string{"--root", repo}, extra...)
-		cmd := exec.Command(exe, args...) // 对 py :176（[sys.executable, SELF_PATH, ...]）
+		argv := append([]string{"gate", "check", "gate-report"}, args...)
+		cmd := exec.Command(exe, argv...) // 对 py :176（[sys.executable, SELF_PATH, ...]）
 		cmd.Dir = tmp                     // 对 py :177 cwd=tmp
 		var ob, eb bytes.Buffer
 		cmd.Stdout = &ob

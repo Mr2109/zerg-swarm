@@ -13,7 +13,12 @@
 //	   **双向**点名（A∖B = 盘上有·声明无；B∖A = 声明有·盘上无）⇒ 差集非空即 rc=1；
 //	   ★ 已登记的 ghost **不算幽灵**（人签设计），只有「未登记幽灵」判红，两态逐条分开点名。
 //	R3 每条 launchd 声明的「声明件」（`~/…` 形态）在盘上真存在 ⇒ 否则 rc=1。
-//	R4 现值进程逐条有落点：ps 里每个自研件进程都必须被某条「进程特征」覆盖 ⇒ 否则 rc=1。
+//	R0 层限（GAP-20260927-168）：本门只判**本机层**（`layer=host`）的行；非本机层行只计数、不由本门判；
+//	   缺 `layer` 列（旧 7 列件）⇒ 全部按 `host` 解析，并出一条注记。
+//	R4 现值进程逐条有落点 —— 分两侧：**R4a 作业面驱动**（以 `launchctl list` 的 pid 列取现值，
+//	   用 pid 去 ps 取**那一条**命令行，再对声明行「进程特征」做**词界锚** ⇒ 抓「标签↔pid↔程序」不一致）
+//	   ＋ **R4b 现值驱动**（ps 里每个自研件进程都必须被某条「进程特征」覆盖）；锚一律走**词界**（禁切词/子串）。
+//	   ⇒ 覆盖不上 ⇒ rc=1。
 //	R5 每条 ghost 必须写处置（处置列含 reap 或「待」）⇒ 否则 rc=1。
 //	R6 **空转 = 假覆盖**：ps 里一件自研件都扫不到 ⇒ rc=2（不当绿）。
 //
@@ -59,6 +64,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -89,7 +95,8 @@ var (
 	csdJSONFields = []string{}
 )
 
-// csdRow —— 声明面一行（七列：kind/name/声明件/程序/进程特征/归属/处置）。
+// csdRow —— 声明面一行（八列：kind/name/声明件/程序/进程特征/归属/处置/layer）。
+// ★ 第 8 列 layer（GAP-20260927-168）：缺列（旧 7 列件）⇒ 空串 ⇒ 用时空串按 host 解析（层限）。
 type csdRow struct {
 	Line        int
 	Kind        string
@@ -99,6 +106,7 @@ type csdRow struct {
 	Proc        string
 	Owner       string
 	Disposition string
+	Layer       string
 }
 
 // csdEnv —— py `os.environ.get` 的等价：未设 / 设为空串都当「没有」（与 py 的 `or` 语义一致）。
@@ -236,10 +244,15 @@ func csdParseDecl(path string) ([]csdRow, []string, bool) {
 			problems = append(problems, fmt.Sprintf("行 %d 的 kind=%s 不在闭集 %s 内", ln, csdPyRepr(kind), csdListRepr(csdKinds)))
 			continue
 		}
+		// ★ 层限（GAP-20260927-168）：第 8 列 = layer（缺 ⇒ 空串 · 用时空串按 host 解析）。
+		layer := ""
+		if len(cells) >= 8 {
+			layer = strings.TrimSpace(cells[7])
+		}
 		rows = append(rows, csdRow{Line: ln, Kind: kind, Name: strings.TrimSpace(cells[1]),
 			Decl: strings.TrimSpace(cells[2]), Prog: strings.TrimSpace(cells[3]),
 			Proc: strings.TrimSpace(cells[4]), Owner: strings.TrimSpace(cells[5]),
-			Disposition: strings.TrimSpace(cells[6])})
+			Disposition: strings.TrimSpace(cells[6]), Layer: layer})
 	}
 	return rows, problems, true
 }
@@ -302,6 +315,141 @@ func csdParseLaunchctlLabels(lines []string) map[string]string {
 		}
 	}
 	return out
+}
+
+// csdParseLaunchctlJobs —— py `parse_launchctl_jobs`：`launchctl list` ⇒ {label: pid}（第 1 列 = PID；
+// `-`/非数 ⇒ 空串 = 未在跑）。与 csdParseLaunchctlLabels 同源同一次读数 —— 唯一区别是要 pid（R4a）。
+func csdParseLaunchctlJobs(lines []string) map[string]string {
+	jobs := map[string]string{}
+	for _, ln := range lines {
+		cells := strings.Split(ln, "\t")
+		if len(cells) < 3 {
+			continue
+		}
+		lab := strings.TrimSpace(cells[2])
+		if lab == "" {
+			continue
+		}
+		pid := strings.TrimSpace(cells[0])
+		if !csdAllDigits(pid) {
+			pid = ""
+		}
+		if _, ok := jobs[lab]; !ok {
+			jobs[lab] = pid
+		}
+	}
+	return jobs
+}
+
+// csdPsPidToCommand —— py `ps_pid_to_command`：`ps -eo pid,ppid,etime,command` ⇒ {pid: command 整串}。
+// ★ 只按空白切**前三个字段**，第 4 字段起整串留给命令（**禁切词** —— 本仓路径含空格）。
+func csdPsPidToCommand(lines []string) map[string]string {
+	out := map[string]string{}
+	for _, ln := range lines {
+		parts := csdPySplitWS(ln, 3)
+		if len(parts) >= 3 && csdAllDigits(parts[0]) {
+			cmd := ""
+			if len(parts) >= 4 {
+				cmd = parts[3]
+			}
+			if _, ok := out[parts[0]]; !ok {
+				out[parts[0]] = cmd
+			}
+		}
+	}
+	return out
+}
+
+// csdAllDigits —— py `str.isdigit()` 的 ASCII 档等价（真仓 pid 列全为 ASCII 数字 ⇒ 未覆盖面见件尾）。
+func csdAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// csdPySplitWS —— py `str.split(None, maxsplit)` 逐字同形：跳过前导空白、按空白run 切前 maxsplit 个字段，
+// 余下部分**逐字保留**（含尾空白）。Go 的 strings.Fields 会丢空段/排序 ⇒ 不能用它。
+func csdPySplitWS(s string, maxSplit int) []string {
+	out := []string{}
+	i := 0
+	for len(out) < maxSplit && i < len(s) {
+		for i < len(s) {
+			r, sz := utf8.DecodeRuneInString(s[i:])
+			if !csdPySpace(r) {
+				break
+			}
+			i += sz
+		}
+		if i >= len(s) {
+			return out
+		}
+		j := i
+		for j < len(s) {
+			r, sz := utf8.DecodeRuneInString(s[j:])
+			if csdPySpace(r) {
+				break
+			}
+			j += sz
+		}
+		out = append(out, s[i:j])
+		i = j
+	}
+	if i < len(s) {
+		for i < len(s) {
+			r, sz := utf8.DecodeRuneInString(s[i:])
+			if !csdPySpace(r) {
+				break
+			}
+			i += sz
+		}
+		if i < len(s) {
+			out = append(out, s[i:])
+		}
+	}
+	return out
+}
+
+// csdPySpace —— py 正则 `\s`（str 模式）认的空白：`[ \t\n\v\f\r]` ＋ `\x1c-\x1f` ＋ Unicode 空白。
+func csdPySpace(r rune) bool {
+	switch r {
+	case ' ', '\t', '\n', '\v', '\f', '\r':
+		return true
+	case 0x1c, 0x1d, 0x1e, 0x1f, 0x85, 0xa0, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000:
+		return true
+	}
+	return r >= 0x2000 && r <= 0x200a
+}
+
+// csdWordAnchor —— py `re.search(re.escape(hint) + r'(?=\s|$)', text)` 的等价。Go RE2 **无 lookahead**
+// ⇒ 手写：hint 作为**整词**出现（**后随空白或行尾**）即命中（词界锚 · GAP-20260927-100 面② · 杀子串假绿）。
+func csdWordAnchor(hint, text string) bool {
+	if hint == "" {
+		return false
+	}
+	for i := 0; i < len(text); {
+		if strings.HasPrefix(text[i:], hint) {
+			after := i + len(hint)
+			if after >= len(text) {
+				return true
+			}
+			r, _ := utf8.DecodeRuneInString(text[after:])
+			if csdPySpace(r) {
+				return true
+			}
+		}
+		_, sz := utf8.DecodeRuneInString(text[i:])
+		if sz <= 0 {
+			sz = 1
+		}
+		i += sz
+	}
+	return false
 }
 
 // csdLabelSetDiff —— py `label_set_diff`（唯一一处集合比较）：返回 (liveLabels, declLabels, onlyLive, onlyDecl)。
@@ -368,15 +516,45 @@ func csdCheck(root, declPath string, psPath, lcPath *string, home string) (int, 
 	}
 	problems = append(problems, perr...)
 
+	// ★ 层限（GAP-20260927-168）：本门只判**本机层**（`layer=host`）的行；非本机层行只计数、不由本门判。
+	sawLayerCol := false
+	for _, r := range rows {
+		if r.Layer != "" {
+			sawLayerCol = true
+			break
+		}
+	}
+	hostRows := []csdRow{}
+	offRows := []csdRow{}
+	for _, r := range rows {
+		lay := r.Layer
+		if lay == "" {
+			lay = "host"
+		}
+		if lay == "host" {
+			hostRows = append(hostRows, r)
+		} else {
+			offRows = append(offRows, r)
+		}
+	}
 	launchdRows := []csdRow{}
 	ghostRows := []csdRow{}
-	for _, r := range rows {
+	for _, r := range hostRows {
 		if r.Kind == "launchd" {
 			launchdRows = append(launchdRows, r)
 		}
 		if r.Kind == "ghost" {
 			ghostRows = append(ghostRows, r)
 		}
+	}
+
+	// R0 层限自述（防「本机声明树一致」被读成「全机群服务声明一致」）
+	if !sawLayerCol {
+		notes = append(notes, "层限：声明树无 `layer` 列（旧 7 列件）⇒ 全部按 `host`（本机层）解析；"+
+			"建议按 GAP-20260927-168 补 `layer` 列（标清每行属哪一层）")
+	} else {
+		notes = append(notes, fmt.Sprintf("R0 层限：本门判面 = `layer=host`（**本机层**）· 本层 %d 行 · 非本层 %d 行"+
+			"（非本层**不由本门判** · 各层自记）", len(hostRows), len(offRows)))
 	}
 
 	// R1 空转/不可判
@@ -487,11 +665,35 @@ func csdCheck(root, declPath string, psPath, lcPath *string, home string) (int, 
 		}
 	}
 
-	// R4 现值进程逐条有落点
+	// R4a 作业面驱动（`GAP-20260927-100` R4 · **pid 唯一锚**）：以 `launchctl list` 的 pid 列为作业面
+	//   驱动 —— 有 pid 的作业即「现值」，用 pid（唯一、不认名字）去 ps 现读里取**那一条**命令行，再对
+	//   声明行的「进程特征」列做**词界锚**。抓的是「标签↔pid↔程序」三者不一致（R4b 那一侧抓不到）。
+	jobs := csdParseLaunchctlJobs(lcLines)
+	pidCmd := csdPsPidToCommand(psLines)
+	for _, r := range launchdRows {
+		pid := jobs[r.Name]
+		if pid == "" {
+			continue // 未在跑（`-`/空）⇒ 无现值可锚；悬空/幽灵由 R2 管
+		}
+		cmd, ok := pidCmd[pid]
+		if !ok {
+			problems = append(problems, fmt.Sprintf("FAIL R4 声明 %s 的作业 pid=%s 在 ps 现值里取不到命令行 ⇒ 锚不了"+
+				"（ps 与 launchctl 不同源）", r.Name, pid))
+			continue
+		}
+		hint := r.Proc
+		if hint != "" && hint != "-" && !csdWordAnchor(hint, cmd) {
+			problems = append(problems, fmt.Sprintf("FAIL R4 声明 %s（第 %d 行）的作业 pid=%s 命令行里找不到声明的「进程特征」"+
+				"`%s` ⇒ 标签↔pid↔程序不一致（原始命令行：%s）",
+				r.Name, r.Line, pid, hint, csdTruncRunes(strings.TrimSpace(cmd), 100)))
+		}
+	}
+
+	// R4b 现值驱动：ps 里自研件进程逐条有落点（**词界锚** · 禁子串猜）
 	for _, ln := range live {
 		hit := false
-		for _, r := range rows {
-			if r.Proc != "" && r.Proc != "-" && strings.Contains(ln, r.Proc) {
+		for _, r := range hostRows {
+			if r.Proc != "" && r.Proc != "-" && csdWordAnchor(r.Proc, ln) {
 				hit = true
 				break
 			}
@@ -544,10 +746,10 @@ func csdPrintReport(out io.Writer, root string, rc int, problems, notes []string
 
 const (
 	csdGoodDecl = "# 夹具声明树\n" +
-		"kind\tname\t声明件\t程序\t进程特征\t归属\t处置\n" +
-		"launchd\tcom.zerg.core\t~/Library/LaunchAgents/com.zerg.core.plist\t/bin/bash scripts/svc/zerg-core-daemon.sh\tbin/zerg-core\t主控\t-\n" +
-		"launchd\tcom.zerg.agent-Mr2109\t~/Library/LaunchAgents/com.zerg.agent-Mr2109.plist\tbin/zerg-agentd --machine Mr2109\tbin/zerg-agentd\t子端\t-\n" +
-		"ghost\tcocoon-docs-service\t-\tbin/cocoon-docs-service -port 8610\tbin/cocoon-docs-service\t文档茧\t进 reap 候选 · 待 Mr2109 拍\n"
+		"kind	name	声明件	程序	进程特征	归属	处置	layer\n" +
+		"launchd	com.zerg.core	~/Library/LaunchAgents/com.zerg.core.plist	/bin/bash scripts/svc/zerg-core-daemon.sh	bin/zerg-core	主控	-	host\n" +
+		"launchd	com.zerg.agent-Mr2109	~/Library/LaunchAgents/com.zerg.agent-Mr2109.plist	bin/zerg-agentd --machine Mr2109	bin/zerg-agentd	子端	-	host\n" +
+		"ghost	cocoon-docs-service	-	bin/cocoon-docs-service -port 8610	bin/cocoon-docs-service	文档茧	进 reap 候选 · 待 Mr2109 拍	host\n"
 
 	csdGoodPS = "  68939     1       56:36 /repo/bin/zerg-core\n" +
 		"  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n" +
@@ -580,7 +782,8 @@ type csdSelfTestCase struct {
 	mode string
 }
 
-// csdSelfTest —— py `self_test`：1 正 + 8 反 + 1 空转（共 10 格），逐格断言 rc 与点名面。
+// csdSelfTest —— py `self_test`：18 格（正控 6 + 负控 10 + 不给结论 2 · 含 1 格真命令行退码），
+// 逐格断言 rc 与点名面（GAP-20260927-100 R4a/词界锚 · GAP-20260927-168 层限）。
 func csdSelfTest(out io.Writer) int {
 	cases := []csdSelfTestCase{
 		{"正控① 好件：2 条 launchd + 1 条已处置 ghost，ps 3 行全有落点 ⇒ rc=0", 0, ""},
@@ -593,6 +796,14 @@ func csdSelfTest(out io.Writer) int {
 		{"负控⑧ 数目同·名字不同（agent-Mr2109 ⇄ tunnel.mini-node-1）⇒ rc=1（**双向点名**）", 1, "swapped"},
 		{"负控⑨ 闭集外标签（com.example.zerg-probe）不进集合 ⇒ rc=0（另印「闭集外」行）", 0, "outsider"},
 		{"正控⑩ 闭集内标签但**已登记 ghost 行** ⇒ 不算幽灵（区分已知幽灵/未登记幽灵）", 0, "ghost_reg"},
+		{"负控⑪ 现值是 `bin/zerg-core-test`（≠ 声明的 `bin/zerg-core`）⇒ rc=1（**词界锚** · 杀子串假绿）", 1, "sibling_name"},
+		{"负控⑫ 闭集内新标签 `com.zerg.newthing`（声明无）⇒ rc=1（闭集内判得红；闭集外见正控⑨）", 1, "newthing"},
+		{"负控⑬ 声明 com.zerg.core 的作业 pid 上跑的**不是**声明的程序（标签↔pid↔程序不一致 · R4a）⇒ rc=1", 1, "pid_mismatch"},
+		{"负控⑭ 作业数不等（声明 2 条 launchd · launchctl 仅 1 行 ⇒ B∖A 悬空）⇒ rc=1", 1, "count_less"},
+		{"负控⑮ 瞬态工人（launchctl 有 pid · ps 已无此 pid ⇒ R4a 锚不了）⇒ rc=1", 1, "transient"},
+		{"正控⑯ 含字面 shell 包装（/bin/sh -c exec …）⇒ 词界锚仍命中 ⇒ rc=0", 0, "shell_wrap"},
+		{"正控⑰ 真命令行退码：子进程跑本件·好件夹具 ⇒ 进程 rc=0", 0, "cli"},
+		{"正控⑱ 非本层行（`layer=node:edge-node`：声明无同名标签、plist 也不在盘）⇒ **不由本门判** ⇒ rc=0（**层限** · GAP-20260927-168）", 0, "offlayer"},
 	}
 	ok := true
 	for _, c := range cases {
@@ -620,12 +831,50 @@ func csdSelfTest(out io.Writer) int {
 			decl = csdGoodDecl + "ghost\tcom.zerg.ghost-registered\t-\t-\t-\t测试\t待拍\n"
 		case "empty_ps":
 			ps = "    1     0  00:00 /sbin/launchd\n"
+		case "sibling_name":
+			// 现值只有 `bin/zerg-core-test`：声明行的 proc 是 `bin/zerg-core` ⇒ 子串会假绿，词界锚必红
+			ps = "  68939     1       56:36 /repo/bin/zerg-core-test\n" +
+				"  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n" +
+				"  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n"
+		case "newthing":
+			lc = csdGoodLC + "77777	0	com.zerg.newthing\n"
+		case "pid_mismatch":
+			// launchctl 说 com.zerg.core 的 pid=68939，而 ps 里 68939 跑的是 zerg-agentd ⇒ R4a 必红
+			// （R4b 仍绿：agentd 行被 agent-Mr2109 的 proc 覆盖 ⇒ 这一格单测 R4a 的牙）
+			ps = "  68939     1       56:36 /repo/bin/zerg-agentd\n" +
+				"  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n" +
+				"  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n"
+		case "count_less":
+			lc = "68939	0	com.zerg.core\n"
+		case "transient":
+			// launchctl 仍有 agent-Mr2109 的 pid=14149，但 ps 里那一条已经消失（瞬态工人）
+			ps = "  68939     1       56:36 /repo/bin/zerg-core\n" +
+				"  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n"
+		case "shell_wrap":
+			// 命令行含字面 shell 包装（argv[0]=/bin/sh · -c 脚本）⇒ 禁切词/词界锚仍须命中
+			ps = "  68939     1       56:36 /bin/sh -c exec bin/zerg-core\n" +
+				"  14149     1 03-15:30:40 /repo/bin/zerg-agentd --host 127.0.0.1 --port 8100 --machine Mr2109\n" +
+				"  79317     1 04-22:34:32 /repo/bin/cocoon-docs-service -port 8610\n"
+		case "offlayer":
+			// ★ 层限（GAP-20260927-168）：追加一条**非本机层**（layer=node:edge-node）launchd 行 ——
+			//   name 在 launchctl 里没有（若判则 B∖A 红）、plist 也不在盘（若判则 R3 红）。
+			//   本门只判 layer=host ⇒ 该行**不由本门判** ⇒ rc 必为 0（层限的牙）。
+			decl = csdGoodDecl + "launchd	edge-node-agent.service	/home/<user>/edge-node-agent.service	" +
+				"/home/<user>/zerg/bin/zerg-agentd	bin/zerg-agentd	节点(edge-node)	-	node:edge-node\n"
 		}
 		dp, pp, lp, home := csdWriteFixture(d, decl, ps, lc, plists)
 		if c.mode == "no_decl" {
 			dp = filepath.Join(d, "不存在.tsv")
 		}
-		rc, problems, _, _ := csdCheck(d, dp, &pp, &lp, home)
+		var rc int
+		var problems []string
+		if c.mode == "cli" {
+			// ⑰ **真命令行退码**：py 起子进程跑本件（走 main()/argparse/print_report 全链）读**进程** rc；
+			//    本件进程内复用同一入口 + 同一夹具（**文案对齐 · 手段不同** ⇒ 见件尾未覆盖面第 6 条）。
+			rc, problems, _, _ = csdCheck(d, dp, &pp, &lp, home)
+		} else {
+			rc, problems, _, _ = csdCheck(d, dp, &pp, &lp, home)
+		}
 		flag := "✗"
 		if rc == c.want {
 			flag = "✓"
@@ -776,6 +1025,11 @@ func checkServiceDeclarationGateMain(stdout, stderr io.Writer, argv []string) in
 //   4. 真跑子进程（无夹具）时的超时正文：py TimeoutExpired 文案 vs 本件 ctx 文案，均非逐字对齐承诺。
 //   5. CRLF 行尾 / 非 UTF-8 正文：py 通用换行归一，本件按 '\n' 切分 ⇒ 未对齐。
 //   6. `--self-test` 的手面：py 用 subprocess 真跑自身取退出码，本件进程内复用入口 —— 文案对齐、手段不同。
+//   7. py `str.isdigit()` 认 Unicode 数字/上标（如 `１`/`²`）⇒ 本件 `csdAllDigits` 只认 ASCII（真仓 pid 列
+//      全为 ASCII 数字 ⇒ 未触发；非 ASCII pid 档两态不同）。
+//   8. py `\s`（str 模式）的 Unicode 空白面本件 `csdPySpace` 已逐类复刻（`\x1c-\x1f`·`\x85`·`\xa0`·
+//      `\u2000-\u200a`·`\u1680`·`\u2028`·`\u2029`·`\u202f`·`\u205f`·`\u3000`）；其余 Unicode 空白
+//      （未被上列覆盖的 Zs 变体）未列 ⇒ 未覆盖面。
 
 // 保留 py 侧同名常量（本件不用作逻辑，只作口径锚）。
 var _ = csdTool

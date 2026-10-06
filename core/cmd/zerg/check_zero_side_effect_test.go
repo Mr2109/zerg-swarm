@@ -29,6 +29,10 @@ func TestCheckZeroSideEffect_SelfTestGreen(t *testing.T) {
 	if strings.Contains(out, "✗") {
 		t.Errorf("自检里有失败断言：\n%s", out)
 	}
+	// 回归牙（M2 战线①对齐批-3）：⑫ 自检 case 名必须与 py 现件逐字同（哑化 ⇒ 本行 FAIL）。
+	if want := "⑫ 负控（源码级牙）：合成源码含 `shutil.rmtree(` ⇒ 命中"; !strings.Contains(out, want) {
+		t.Errorf("自检 ⑫ case 名与 py 现件不逐字同（对拍门113 会报 stdout 异）：缺 %q", want)
+	}
 }
 
 func TestCheckZeroSideEffect_HelpVersionListRules(t *testing.T) {

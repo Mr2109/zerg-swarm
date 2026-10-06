@@ -233,3 +233,38 @@ func tailStr(s string, n int) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// TestCheckDocName_MetaSelfCheckRefuses —— 回归牙（M2 战线①对齐批-3）：
+// ⑫ 元自检 —— 自检未过 ⇒ main 必须**拒扫真目标**（rc=2 · 首行=拒扫抬头 · 末行非结论行）。
+// 哑化 main 的注入分支 / 去掉拒扫抬头 ⇒ 本用例 FAIL（带行号）。
+func TestCheckDocName_MetaSelfCheckRefuses(t *testing.T) {
+	t.Setenv("CHECK_DOC_NAME_META_FORCE_FAIL", "1")
+	d := t.TempDir()
+	var out, errb bytes.Buffer
+	rc := checkDocNameGateMain(&out, &errb, []string{"--repo-root", d, "--target", d})
+	if rc != 2 {
+		t.Fatalf("自检未过 ⇒ 该退 2（拒扫真目标），实得 %d\nout=%q", rc, out.String())
+	}
+	var ol []string
+	for _, l := range strings.Split(out.String(), "\n") {
+		if strings.TrimSpace(l) != "" {
+			ol = append(ol, l)
+		}
+	}
+	if len(ol) == 0 || ol[0] != "自检未过 ⇒ 拒绝扫真目标（rc=2 不给结论）" {
+		t.Errorf("首行该是拒扫抬头，实得 %q", ol)
+	}
+	if n := len(ol); n > 0 && (strings.HasPrefix(ol[n-1], "OK：") || strings.HasPrefix(ol[n-1], "FAIL：")) {
+		t.Errorf("末行不该是结论行：%q", ol[n-1])
+	}
+
+	// 同牙另一半（对齐 py 现件）：`--self-test` 清单必须含 ⑫ 元自检格、断言数 30（哑化该格 ⇒ FAIL）。
+	var o2, e2 bytes.Buffer
+	if rc2 := checkDocNameGateMain(&o2, &e2, []string{"--self-test"}); rc2 != 0 {
+		t.Fatalf("--self-test 该退 0，实得 %d\n%s", rc2, o2.String())
+	}
+	if !strings.Contains(o2.String(), "✓ 自检未过 ⇒ rc=2 且拒绝扫真目标（元自检 · 注入副本）") ||
+		!strings.Contains(o2.String(), "自检用例：期望 30 条 · 实跑 30 条") {
+		t.Errorf("自检清单缺 ⑫ 元自检格 / 断言数不为 30：\n%s", o2.String())
+	}
+}

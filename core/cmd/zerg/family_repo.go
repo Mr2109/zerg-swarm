@@ -246,6 +246,14 @@ func repoStatusOne(root string, inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "在仓内跑，或设 ZERG_REPO=<仓根>\n")
 		return exitBlocked
 	}
+	// ★ 缺口 `GAP-20261006-08`：解析出的根若是**公开树物料化快照** ⇒ **不静默收**。
+	//   快照也带 `.git` 与仓根判据件（见 `root.go` 的 `isMaterializedPublicTree_r42`）⇒ 单靠下面那道
+	//   「没有 .git」守卫拦不住它 ⇒ 这里逐字点名 + 不给结论（退码 8）。
+	if isMaterializedPublicTree_r42(root) {
+		inv.setErr("blocked", "materialized_public_tree", "解析出的仓根是公开树物料化快照（不是 zerg 真仓）")
+		fmt.Fprintf(stderr, "%s: %s 是**公开树物料化快照**（发布链产物 · 带 .git 与仓根判据件）⇒ 不是 zerg 真仓根 ⇒ 不给结论（退码 8）\n", progName, root)
+		return exitBlocked
+	}
 	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
 		inv.setErr("blocked", "not_a_git_repo", "仓根下没有 .git")
 		fmt.Fprintf(stderr, "%s: %s 下没有 .git ⇒ 这不是一个 git 工作树（不给结论 · 退码 8）\n", progName, root)

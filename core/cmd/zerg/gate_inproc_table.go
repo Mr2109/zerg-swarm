@@ -115,6 +115,8 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"check-zh-en":                           checkZhEnGateMain,
 	"check_docs":                            checkDocsGateMain,
 	"check_version":                         versionGateMain,
+	"gate-check-health":                     gateCheckHealthMain,
+	"gate-report":                           gateReportMain,
 	"input-fingerprint":                     inputFingerprintGateMain,
 	"judge-lock":                            judgeLockGateMain,
 	"preview-gate-steps":                    pgsGateMain,

@@ -445,6 +445,12 @@ func chsReadFaceFile(path string) (string, string) {
 	return text, ""
 }
 
+// chsArtCase —— A 档自检小格：读件 + 断言（py `read_face_file(...)[0]/[1]` 取值形态）。
+func chsArtCase(read func() (string, string), ok func(text, why string) bool) bool {
+	text, why := read()
+	return ok(text, why)
+}
+
 // chsJSONErrStr —— py `json.decoder.JSONDecodeError` 的 str 逐字复刻（msg: line L column C (char N)）。
 func chsJSONErrStr(raw []byte, _ error) string {
 	return chsPyJSONErr(raw)
@@ -1129,7 +1135,7 @@ type chsBaselineSet map[string]chsFaceBl
 var chsBaseline = chsBaselineSet{
 	"help --all":     {HasLines: true, Lines: 333, HasBytes: true, Bytes: 220023},
 	"help":           {HasLines: true, Lines: 245, HasBytes: true, Bytes: 119296, HasLast: true, Last: "      非交互用 `--token-stdin`；详见 `zerg help credentials`）。"},
-	"help dangerous": {HasLines: true, Lines: 91, HasBytes: true, Bytes: 28575, HasRows: true, Rows: 80, HasTail: true, Tail: "上表 80 条：**已开放 40 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 40 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。", ConfirmNotInUsage: []string{"agent reap", "itask start"}, ConfirmValueMismatch: [][]string{}},
+	"help dangerous": {HasLines: true, Lines: 91, HasBytes: true, Bytes: 28967, HasRows: true, Rows: 80, HasTail: true, Tail: "上表 80 条：**已开放 54 条**（确认档齐就真执行 —— 逐条见上行标记）；**未开放 26 条**（真跑一律**拒执**、退码 2 = 不给结论，只有 `--dry-run` 出计划件 = 退码 0）。", ConfirmNotInUsage: []string{"agent reap", "itask start"}, ConfirmValueMismatch: [][]string{}},
 	"help config":    {HasLines: true, Lines: 17, HasBytes: true, Bytes: 1392},
 }
 
@@ -1575,7 +1581,7 @@ func chsCase(out io.Writer, total, failed *int, name string, wantRed bool, bad [
 	}
 }
 
-// chsSelfTest —— py `self_test(out)` 的复刻（20 格 · 正控 + 负控 + 对界）。
+// chsSelfTest —— py `self_test(out)` 的复刻（23 格 · 正控 + 负控 + 对界 + A 档取数口）。
 func chsSelfTest(out io.Writer) bool {
 	total, failed := 0, 0
 	allT, bareT, dangT, cfgT := chsFixTexts()
@@ -1631,6 +1637,37 @@ func chsSelfTest(out io.Writer) bool {
 	c(18, true, chsJudge(strings.ReplaceAll(allT, "watch", "watchx"), bareT, dangT, chsFixCmds, bl, nil), "", "")
 	cmdsMore := append(append([]string{}, chsFixCmds...), "zzz ls")
 	c(19, true, chsJudge(allT, bareT, dangT, cmdsMore, bl, nil), "", "")
+
+	// ── A 档取数口（`GAP-20261001-47` · 拆档）：读落盘 help 面制品 ──────────────
+	artDir, aerr := os.MkdirTemp("", "hshape-artifact-")
+	if aerr != nil {
+		artDir = os.TempDir()
+	} else {
+		defer os.RemoveAll(artDir)
+	}
+	art := chsPyJoin(artDir, "help.txt")
+	_ = os.WriteFile(art, []byte("zerg —— 夹具\n"), 0o644)
+	emptyArt := chsPyJoin(artDir, "empty.txt")
+	_ = os.WriteFile(emptyArt, []byte(""), 0o644)
+	artCases := []struct {
+		name string
+		ok   bool
+	}{
+		{"A 档①制品读得出", chsArtCase(func() (string, string) { return chsReadFaceFile(art) }, func(t, w string) bool { return t == "zerg —— 夹具\n" })},
+		{"A 档②制品不在盘 ⇒ 判不了（不许当空面）", chsArtCase(func() (string, string) { return chsReadFaceFile(chsPyJoin(artDir, "nope.txt")) }, func(t, w string) bool { return w != "" })},
+		{"A 档③制品零输出 ⇒ 判不了", chsArtCase(func() (string, string) { return chsReadFaceFile(emptyArt) }, func(t, w string) bool { return w != "" })},
+	}
+	total += len(artCases)
+	for _, ac := range artCases {
+		if !ac.ok {
+			failed++
+		}
+		mark := "✓"
+		if !ac.ok {
+			mark = "✗"
+		}
+		fmt.Fprintf(out, "  %s %s\n", mark, ac.name)
+	}
 
 	fmt.Fprintf(out, "  自检 %d 格 · 失败 %d 格\n", total, failed)
 	return failed == 0

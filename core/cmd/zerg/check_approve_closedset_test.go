@@ -219,6 +219,7 @@ func TestCacsSelfTest_ReclaimsFixtureDir(t *testing.T) {
 			t.Skip("自检子进程：跳过（防递归）")
 		}
 	}
+	cacsUseProbe(t) // ★ 测试二进制不是 CLI 入口 ⇒ 把「自身可执行件」换仓外探针壳（照 judge_lock_test.go 口径）
 	root := caciFindRepoRoot()
 	if !caciExists(caciPyJoin(root, cacsRegistryRel)) {
 		t.Skipf("契约不在（%s）⇒ 本格跳过（吃真仓物料）", caciPyJoin(root, cacsRegistryRel))
@@ -232,6 +233,10 @@ func TestCacsSelfTest_ReclaimsFixtureDir(t *testing.T) {
 	}
 	if !strings.Contains(sink.String(), "自检：") {
 		t.Fatalf("自检应打汇总行，实得：%q", sink.String())
+	}
+	// ★ 回归牙（真命令行面）：⑬/⑭ 走**真子进程**；缺 inproc 路由前缀 ⇒ 两格恒 ✗（py 侧走 python3 无此层）。
+	if !strings.Contains(sink.String(), "✓ ⑬") || !strings.Contains(sink.String(), "✓ ⑭") {
+		t.Fatalf("真命令行两面未过（自检子进程未带 inproc 路由？）：\n%s", sink.String())
 	}
 }
 
@@ -313,6 +318,53 @@ func TestCacsScan_StaticOnlyGreen(t *testing.T) {
 	if !strings.Contains(out.String(), "⇒ 全绿（rc=0）") {
 		t.Fatalf("全绿档文案缺失：\n%s", out.String())
 	}
+}
+
+// ── 探针壳（测试二进制不是 CLI 入口 ⇒ 把 argv 转回 TestCacsHelperProcess 再直调本门入口）──
+
+func cacsShQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func cacsChildArgs() []string {
+	for i, a := range os.Args {
+		if a == "--" {
+			return os.Args[i+1:]
+		}
+	}
+	return nil
+}
+
+// TestCacsHelperProcess —— 探针壳的落点。仅当 argv 里带 `--` 分界（即被探针壳调起）时才当 CLI 入口。
+func TestCacsHelperProcess(t *testing.T) {
+	args := cacsChildArgs()
+	if args == nil {
+		return
+	}
+	// 探针壳收到的 argv 必须带 inproc 路由前缀（`gate check <键>`）—— 缺前缀 = 主件的重跑面破形
+	// （`bin/zerg` 会把本门旗标当未知命令 ⇒ 子进程退 2）⇒ 这里**不**兜底，让牙当场红。
+	if !(len(args) >= 3 && args[0] == "gate" && args[1] == "check" && args[2] == "check-approve-closedset") {
+		io.WriteString(os.Stderr, "探针壳：argv 缺 inproc 路由前缀（gate check check-approve-closedset）⇒ 重跑面破形\n")
+		os.Exit(2)
+	}
+	os.Exit(checkApproveClosedsetGateMain(os.Stdout, os.Stderr, args[3:]))
+}
+
+// cacsUseProbe —— 把「自身可执行件」换成仓外探针壳（主件默认档一字未改）。
+func cacsUseProbe(t *testing.T) {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	script := filepath.Join(t.TempDir(), "cacs-probe.sh")
+	body := "#!/bin/sh\nexec " + cacsShQuote(exe) + " '-test.run=^TestCacsHelperProcess$' -- \"$@\"\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatalf("写探针壳: %v", err)
+	}
+	old := cacsSelfExe
+	cacsSelfExe = func() (string, error) { return script, nil }
+	t.Cleanup(func() { cacsSelfExe = old })
 }
 
 var _ = io.Discard

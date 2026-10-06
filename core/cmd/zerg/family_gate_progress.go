@@ -168,7 +168,7 @@ func gateProgressProcForDir(gate map[int]gateProc, dir string) (int, bool) {
 		if gp.cmd == "" {
 			continue
 		}
-		if strings.Contains(gp.cmd, dir) || (base != "" && strings.Contains(gp.cmd, base)) {
+		if strings.Contains(gp.cmd, dir) || (base != "" && strings.HasPrefix(base, gateRunPrefix) && strings.Contains(gp.cmd, base)) {
 			return pid, true
 		}
 		if d := gateProgressOutdirFromCmd(gp.cmd); d != "" && d == dir {

@@ -518,14 +518,21 @@ func cacsSelfTest(stdout io.Writer, root, devdocs string) bool {
 	return bad == 0
 }
 
+// cacsSelfExe —— 自检「真命令行」子进程用的自身可执行件（py 走 `sys.executable`）；测试件注入仓外探针壳。
+var cacsSelfExe = func() (string, error) { return os.Executable() }
+
 // cacsSpawnSelf：以自身可执行体再跑一次本门（等价 py 的 `sys.executable + __file__` 再 spawn）。
+//
+// ★ 必须**带 inproc 路由前缀**（`gate check <键>`）：`bin/zerg` 的 argv 首段是子命令，直接把本门旗标
+// 喂给制品会被当成未知命令 ⇒ 子进程恒退 2（自检 ⑬/⑭ 两格假红）。py 无这一层（它是 `python3 <件> <argv>`）。
 func cacsSpawnSelf(args []string) (int, string) {
-	exe, err := os.Executable()
+	exe, err := cacsSelfExe()
 	if err != nil || exe == "" {
 		return exitBlocked, "" // ★ 子进程**起不来**（非 ExitError）⇒ 读不到 ⇒ 归 `exitBlocked`(8「有 BLOCKED · 读不到不许当健康」)；
 		// 原先裸写 127（shell 惯例）不在命令面真源表里 ⇒ 门⑪ T3 报（GAP-20261002-08）。
 	}
-	cmd := exec.Command(exe, args...)
+	argv := append([]string{"gate", "check", "check-approve-closedset"}, args...)
+	cmd := exec.Command(exe, argv...)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf

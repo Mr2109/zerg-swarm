@@ -202,3 +202,64 @@ func TestCheckSliceGatePort(t *testing.T) {
 		t.Fatalf("R4 守卫失败：无改写建议的命中必须拒判（InternalError），实未 panic")
 	}
 }
+
+// TestCheckSliceSelfTestAlign —— 战线① 对齐回归牙：自证面逐字对拍 py 现件。
+// 牙在哪：① joinOrNo 空值恰「无」（回退成 joinOr ⇒ 变「(无)」→ 红）；② (a)/(c)/(d) 明细行捕获（不捕获 ⇒ 红）；
+// ③ (f) 把探针件拷进仿真仓后走到缺件闸（不拷 ⇒ 先撞「探针集文件不存在」→ 缺件路径不出现 → 红）。
+func TestCheckSliceSelfTestAlign(t *testing.T) {
+	if joinOrNo(nil, "·") != "无" {
+		t.Fatalf("joinOrNo 空值应「无」：得 %q", joinOrNo(nil, "·"))
+	}
+	if joinOr(nil, "·") != "(无)" {
+		t.Fatalf("joinOr 空值应「(无)」：得 %q", joinOr(nil, "·"))
+	}
+	if joinOrNo([]string{"a", "b"}, "·") != "a·b" {
+		t.Fatalf("joinOrNo 非空拼接错：得 %q", joinOrNo([]string{"a", "b"}, "·"))
+	}
+	// 自证依赖 cwd = 真仓根（入口 `csRepoRoot = csDefaultRepoRoot()` 按 cwd 推）⇒ 夹具先把 cwd 挪到真仓根，
+	// 跑完还原（真仓根是真目录、不会被清 ⇒ 无「cwd 停在已删目录」之虞）。
+	root := csFindRepoRootForTest(t)
+	oldwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir 真仓根失败：%v", err)
+	}
+	defer func() { _ = os.Chdir(oldwd) }()
+	rc, out, errs := csRun(t, "--self-test")
+	if rc != 0 {
+		t.Fatalf("自证应 rc=0，得 rc=%d err=%q out尾=%q", rc, errs, csTailStr(out, 400))
+	}
+	for _, want := range []string{
+		"结论：共 1 片 · 合法 1",
+		"缺：无",
+		"多（未标注）：无",
+		"缺件路径：../Zerg-内部文档",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("自证输出缺 %q（自证面未对齐 py 现件）", want)
+		}
+	}
+}
+
+func csFindRepoRootForTest(t *testing.T) string {
+	t.Helper()
+	wd, _ := os.Getwd()
+	for d := wd; ; {
+		if _, err := os.Stat(filepath.Join(d, "scripts", "gates", "slice-probes.json")); err == nil {
+			return d
+		}
+		nd := filepath.Dir(d)
+		if nd == d {
+			break
+		}
+		d = nd
+	}
+	t.Skip("找不到真仓根（无 scripts/gates/slice-probes.json）⇒ 跳过自证面牙")
+	return ""
+}
+
+func csTailStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
+}

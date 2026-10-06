@@ -117,12 +117,28 @@ const crrfIsoPrefix = "!夹具"
 const crrfFixtureSuffix = "_test.go"
 
 // crrfJSONFields —— 「机器面字段表」**唯一真源**（装包封与「不认的名 ⇒ rc=2」两处同读）。
-var crrfJSONFields = []string{"rules", "hits", "files", "fixtures", "files_dedup", "files_sum", "per_rule", "tier"}
+var crrfJSONFields = []string{"rules", "hits", "files", "fixtures", "files_dedup", "files_sum", "per_rule", "tier",
+	"targets", "gaps"}
 
 // crrfExcludeDirs —— 通用排除表（目录**名**成员判定；读表不打序）。
 var crrfExcludeDirs = map[string]bool{
 	"target": true, "node_modules": true, "dist": true, "bin": true, "vendor": true,
 	"data": true, ".git": true, ".venv": true, "venv": true, ".build": true, "_history": true,
+}
+
+// crrfTargetSelfExclude —— 正向面（「该替换的」）**自指排除**（缺口 GAP-20260925-16）：规则表
+// 自身既在真树里（`publish/` 在白名单内）、又是规则的定义 ⇒ 算进目标面会让「每条规则都命中
+// 自己那一行」恒成立 ⇒ 正向判据**永真**（等于没长牙）✗。
+var crrfTargetSelfExclude = map[string]bool{crrfRulesRel: true}
+
+// crrfSortedTargetSelfExclude —— 打印用的**排序**清单（py `" · ".join(sorted(TARGET_SELF_EXCLUDE))`）。
+func crrfSortedTargetSelfExclude() string {
+	xs := make([]string, 0, len(crrfTargetSelfExclude))
+	for k := range crrfTargetSelfExclude {
+		xs = append(xs, k)
+	}
+	sort.Strings(xs)
+	return strings.Join(xs, " · ")
 }
 
 type crrfRule struct {
@@ -728,6 +744,99 @@ func crrfWalkInto(hits *[]crrfFixture, isoFiles *[]string, scanned *int, unreada
 
 // ── 判决（唯一出口 · 自检直接钉它）────────────────────────────────────────
 
+// crrfCollectTargets —— py `collect_targets`：扫「该替换的」公开面件（**非测试夹具**）⇒
+// (正文 blob, 件数, 行数)。扫描面与反向面**同一批前缀 ＋ 同一张排除表**（只差测试件那一条过滤）；
+// `crrfTargetSelfExclude` 里的件不算目标面。只收正文 blob（正向只问在场），逐条明细留给反向面。
+func crrfCollectTargets(root string, prefixes []string) (string, int, int) {
+	var chunks []string
+	nFiles, nLines := 0, 0
+	for _, pre := range prefixes { // T1 前缀入参序
+		base := crrfPyJoin(root, strings.TrimSuffix(pre, "/"))
+		if !crrfIsDir(base) {
+			continue
+		}
+		crrfWalkTargets(&chunks, &nFiles, &nLines, root, base)
+	}
+	return strings.Join(chunks, "\n"), nFiles, nLines
+}
+
+// crrfWalkTargets —— 一层 + 递归（遍历序同 crrfWalkInto：T2 readdir 原序 / T3 Stat 分类 / T4 排除目录名）。
+func crrfWalkTargets(chunks *[]string, nFiles, nLines *int, root, dir string) {
+	f, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	ents, err := f.ReadDir(-1)
+	_ = f.Close()
+	if err != nil {
+		return
+	}
+	var subdirs, files []string
+	for _, e := range ents {
+		name := e.Name()
+		full := crrfJoin(dir, name)
+		st, serr := os.Stat(full)
+		if serr == nil && st.IsDir() {
+			if !crrfExcludeDirs[name] && !crrfIsSymlink(full) {
+				subdirs = append(subdirs, name)
+			}
+			continue
+		}
+		if !strings.HasSuffix(name, crrfFixtureSuffix) {
+			files = append(files, name)
+		}
+	}
+	for _, name := range files {
+		full := crrfJoin(dir, name)
+		rel := crrfRelPath(full, root)
+		if crrfTargetSelfExclude[rel] {
+			continue
+		}
+		text, rerr := crrfReadText(full)
+		if rerr != nil {
+			continue // 与 py 同口径（读不了的目标件静默略过；正向只问在场、不逐条点名）
+		}
+		*nFiles++
+		if text != "" && !strings.HasSuffix(text, "\n") {
+			text += "\n" // 与 py 行迭代同口径（无尾换行也算一行）
+		}
+		*nLines += strings.Count(text, "\n")
+		*chunks = append(*chunks, text)
+	}
+	for _, d := range subdirs {
+		crrfWalkTargets(chunks, nFiles, nLines, root, crrfJoin(dir, d))
+	}
+}
+
+// crrfCompileRuleBlob —— 正向面在**整块** blob 上做在场判定 ⇒ 加 `(?m)` 对齐 py 的 `re.MULTILINE`
+// （`^`/`$` 认行界；现役规则表里没有用 `^`/`$` 的条目，这一层只为不出隐藏分叉）。
+func crrfCompileRuleBlob(pat string) (*regexp.Regexp, error) {
+	return regexp.Compile("(?m)" + crrfPyRegexToGo(pat))
+}
+
+// crrfForwardGaps —— py `judge_forward`：正向判决（真树双侧之一）—— 每条规则都必须在
+// 「该替换的」真树面上**至少找到一处目标**；零命中 ⇒ 缺侧点名（返回该规则）。
+// ★ 前置条件：规则已由反向 `crrfJudge` 过了一遍（空正则 / 正则写坏先「不给结论」rc=2）
+//
+//	⇒ 这里不重复捕获编译错（避免留下一支恒不可达的兜底）。
+func crrfForwardGaps(rules []crrfRule, blob string) []crrfRule {
+	var gaps []crrfRule
+	for _, rule := range rules {
+		hit := false
+		if rule.isRe {
+			if re, err := crrfCompileRuleBlob(rule.pat); err == nil {
+				hit = re.MatchString(blob)
+			}
+		} else {
+			hit = strings.Contains(blob, rule.pat)
+		}
+		if !hit {
+			gaps = append(gaps, rule)
+		}
+	}
+	return gaps
+}
+
 // crrfJudge —— py `judge`（返回 (命中表, 报错)；报错非空 ⇒ 整表作废 = 返回空命中表）。
 func crrfJudge(rules []crrfRule, fixtures []crrfFixture, maxExamples int) ([]crrfHit, string) {
 	var hits []crrfHit
@@ -851,8 +960,8 @@ func crrfJSONStrList(xs []string) string {
 }
 
 // crrfJSONPayload —— py `json_payload`：键**固定序**（rules, fixtures, hits, files, files_dedup,
-// files_sum, per_rule）按 `want` 逐键决定在场；老四格一字不改（`files` 仍是去重集）。
-func crrfJSONPayload(want []string, nRules, nFixtures int, hits []crrfHit, iso *crrfISO) string {
+// files_sum, per_rule, tier, targets, gaps）按 `want` 逐键决定在场；老四格一字不改（`files` 仍是去重集）。
+func crrfJSONPayload(want []string, nRules, nFixtures int, hits []crrfHit, iso *crrfISO, targets int, gaps []crrfRule) string {
 	seen := map[string]bool{}
 	dedup := []string{}
 	for _, h := range hits {
@@ -937,6 +1046,17 @@ func crrfJSONPayload(want []string, nRules, nFixtures int, hits []crrfHit, iso *
 			", "+crrfJSONStr("dead")+": "+crrfJSONStrList(i.dead)+
 			", "+crrfJSONStr("eaten")+": "+eaten+"}")
 	}
+	// 缺口 GAP-20260925-16（真树双侧）：正向面件数 + 正向缺侧规则表
+	if w["targets"] {
+		parts = append(parts, crrfJSONStr("targets")+": "+strconv.Itoa(targets))
+	}
+	if w["gaps"] {
+		gapsRaw := make([]string, 0, len(gaps))
+		for _, g := range gaps {
+			gapsRaw = append(gapsRaw, crrfPyStrip(g.raw))
+		}
+		parts = append(parts, crrfJSONStr("gaps")+": "+crrfJSONStrList(gapsRaw))
+	}
 	return "{" + strings.Join(parts, ", ") + "}"
 }
 
@@ -990,7 +1110,7 @@ const crrfHelp = crrfUsage + "\n" +
 	"  --max-examples MAX_EXAMPLES\n" +
 	"                        每条规则最多列几件（默认 5）\n" +
 	"  --json JSON           机器面字段（逗号分隔：rules,hits,files,fixtures,files_dedup,files\n" +
-	"                        _sum,per_rule,tier；**不认的名 ⇒ 用法错 rc=2**）\n" +
+	"                        _sum,per_rule,tier,targets,gaps；**不认的名 ⇒ 用法错 rc=2**）\n" +
 	"  --list-rules          打判据 / 扫描面 / 档位\n" +
 	"  --self-test           成对负控（合成夹具 · 不碰真目标）\n"
 
@@ -1131,13 +1251,16 @@ func crrfListRules() string {
 	p("真源：Zerg-内部文档/项目文档/v2.5.11/设计-CI适配-v1.1.md §七 + §十三 M8")
 	p(fmt.Sprintf("  规则面：%s（`pattern<TAB>replacement<TAB>说明` · `regex:` 走正则）", crrfRulesRel))
 	p("  夹具隔离：同一件里的 `!夹具<TAB><路径 glob>` ⇒ 该件整段不入件面（§五 第三批；它不是豁免，是规则不再作用于该件）")
-	p(fmt.Sprintf("  件面  ：%s 里**会进公开面**的路径前缀下的 `*_test.go`", crrfWhitelistRel))
-	p("  判据  ：任一条规则命中 `*_test.go` ⇒ 红（逐条点名规则/件/行号/片段 · **不给豁免表**）")
-	p("退码：0 全绿 · 1 有命中 · 2 不给结论（规则表/白名单缺件 · 空转 · 自检不过 · **`--json` 字段名不认**）")
+	p(fmt.Sprintf("  件面  ：%s 里**会进公开面**的路径前缀下的 `*_test.go`（反向 · 不该动的）", crrfWhitelistRel))
+	p("  正向面：**同一批前缀**下的非测试件（自指排除规则表自身 ⇒ 否则判据永真）；规则在此面上零命中 ⇒ 红")
+	p("  判据  ：**真树双侧** —— 反向：任一条规则命中 `*_test.go` ⇒ 红（逐条点名规则/件/行号/片段 · **不给豁免表**）；")
+	p("          正向：任一条规则在「该替换的」真树面上**零命中** ⇒ 红（逐条点名规则 · 该替换的都不在）")
+	p("退码：0 双侧全绿 · 1 有缺口（反向命中 / 正向缺侧）· 2 不给结论（规则表/白名单缺件 · 空转 · 自检不过 · **`--json` 字段名不认**）")
 	p("机器面：`--json <字段,逗号分隔>` —— 老四格 `rules,fixtures,hits,files`（`files` = **去重集**）" +
 		"+ 新三格 `files_dedup`（同值别名）/ `files_sum`（**未去重和**）/ `per_rule[]`（逐规则" +
 		"`{rule, files, hits, lines}` · `lines` = 逐条 `{件,行,原文}`）" +
 		"+ `tier`（夹具隔离分档 `{isolated, per_glob, dead, eaten}` · 缺口 GAP-20260926-146）" +
+		"+ `targets`（正向面件数）/ `gaps`（正向缺侧规则表 · 缺口 GAP-20260925-16）" +
 		" —— 只加字段，判据与退码不动；" +
 		"**不认的字段名 ⇒ 用法错 `rc=2` ＋ 印字段表**（缺口 `Q-150`：打错的名与零命中必须分得开）")
 	return b.String()
@@ -1302,7 +1425,7 @@ func crrfSelfTest(stdout io.Writer) int {
 		perGlob:  []crrfIsoCount{{pat: "core/x/*_test.go", n: 1}, {pat: "nope/*_test.go", n: 0}},
 		dead:     []string{"nope/*_test.go"},
 		eaten:    false,
-	})
+	}, 0, nil)
 	wantTier := `{"tier": {"isolated": ["core/x/iso_test.go"], "per_glob": [{"glob": "core/x/*_test.go", "files": 1}, {"glob": "nope/*_test.go", "files": 0}], "dead": ["nope/*_test.go"], "eaten": false}}`
 	if tierPayload == wantTier {
 		ok++
@@ -1331,6 +1454,36 @@ func crrfSelfTest(stdout io.Writer) int {
 	} else {
 		bad = append(bad, "隔离吃光")
 		P(fmt.Sprintf("   ✗ 隔离吃光：全吃=%s 半吃=%s", crrfPyBool(eatenAll), crrfPyBool(eatenHalf)))
+	}
+	// ── 真树双侧（缺口 GAP-20260925-16）：正向（「该替换的都在」）的成对负控 ───────────
+	//   ★ 哑化一侧 ⇒ 必红：同一段文本造两条规则 —— 一条在「该替换面」上命中（正控 ⇒ 不缺侧）、
+	//     一条在真树上零命中（负控 ⇒ **必被点名**）。零命中不点名 = 正向没牙。
+	blob := strings.Join([]string{`home := "/srv/demo/x.key"`, "other := 1"}, "\n")
+	rLive := crrfRule{raw: "regex:/srv/demo", isRe: true, pat: "/srv/demo", rep: "<home>", note: "自检"}
+	rDead := crrfRule{raw: "regex:绝不出现的串-zz", isRe: true, pat: "绝不出现的串-zz", rep: "<none>", note: "自检"}
+	gLive := crrfForwardGaps([]crrfRule{rLive}, blob)
+	gDead := crrfForwardGaps([]crrfRule{rDead}, blob)
+	if len(gLive) == 0 && len(gDead) == 1 {
+		ok++
+		P("   ✓ 正向（该替换的都在）：命中真树的规则不缺侧 · **零命中的死规则必被点名**（哑化正向 ⇒ 必红）")
+	} else {
+		bad = append(bad, "正向覆盖")
+		P(fmt.Sprintf("   ✗ 正向覆盖：live=%d dead=%d", len(gLive), len(gDead)))
+	}
+	//   ★ 双侧**互不顶替**：同一条规则在夹具面命中 ⇒ 反向红；换个零命中的目标面 ⇒ 正向也缺侧；
+	//     而在目标面命中时 ⇒ 正向绿（两侧各自有牙、不许互相顶替）。
+	fixHits, _ := crrfJudge([]crrfRule{rLive}, []crrfFixture{{rel: "core/x/a_test.go", lineno: 1, line: `h := "/srv/demo"`}}, 5)
+	fixClean, _ := crrfJudge([]crrfRule{rLive}, []crrfFixture{{rel: "core/x/a_test.go", lineno: 1, line: "x := 1"}}, 5)
+	gapNone := crrfForwardGaps([]crrfRule{rLive}, "x := 1")
+	gapHit := crrfForwardGaps([]crrfRule{rLive}, `h := "/srv/demo"`)
+	if len(fixHits) > 0 && len(fixClean) == 0 && len(gapNone) == 1 && len(gapHit) == 0 {
+		ok++
+		P(fmt.Sprintf("   ✓ 双侧互不顶替：夹具面命中 ⇒ 反向红（%d 处）· 目标面零命中 ⇒ 正向缺侧；"+
+			"目标面命中 ⇒ 正向绿（%d 条缺侧）", len(fixHits), len(gapHit)))
+	} else {
+		bad = append(bad, "双侧互不顶替")
+		P(fmt.Sprintf("   ✗ 双侧互不顶替：反向 %d/%d · 正向缺侧 %d/%d",
+			len(fixHits), len(fixClean), len(gapNone), len(gapHit)))
 	}
 	concl := "全过"
 	if len(bad) > 0 {
@@ -1485,7 +1638,8 @@ func checkReplaceRuleFixturesGateMain(stdout, stderr io.Writer, argv []string) i
 		}
 		return 2
 	}
-	fmt.Fprintln(stdout, "── 替换规则级机检：命中件不许是测试夹具（§十三 M8）──")
+	fmt.Fprint(stdout, "── 替换规则级机检：真树双侧 —— 命中件不许是测试夹具（反向 · 不该动的没被误替换）· "+
+		"该替换的都在（正向）（§十三 M8 · GAP-20260925-16）──\n")
 	fmt.Fprintf(stdout, "   树：%s\n", root)
 	relRules := rulesPath
 	if strings.HasPrefix(rulesPath, root) {
@@ -1540,6 +1694,17 @@ func checkReplaceRuleFixturesGateMain(stdout, stderr io.Writer, argv []string) i
 		return 2
 	}
 
+	// ── 真树双侧之一：正向面（「该替换的」= 同一批前缀下的非测试件 · 自指排除规则表自身）──
+	tgtBlob, nTargets, nTargetLines := crrfCollectTargets(root, prefixes)
+	forwardJudged := nTargets > 0
+	if !forwardJudged {
+		fmt.Fprintf(stdout, "   正向面（该替换的）：**0 个**件（自指排除 %s）⇒ 该侧**未判**"+
+			"（树上没有非测试件 · 合成夹具常见；真树不会这样）\n", crrfSortedTargetSelfExclude())
+	} else {
+		fmt.Fprintf(stdout, "   正向面（该替换的）：同一批前缀下的**非测试件** ⇒ **%d 个**件（%d 行 · 自指排除 %s）\n",
+			nTargets, nTargetLines, crrfSortedTargetSelfExclude())
+	}
+
 	hits, jerr := crrfJudge(rules, fixtures, args.maxExamples)
 	if jerr != "" {
 		fmt.Fprintf(stdout, "⛔ %s\n", jerr)
@@ -1547,36 +1712,64 @@ func checkReplaceRuleFixturesGateMain(stdout, stderr io.Writer, argv []string) i
 		return 2
 	}
 
-	if len(want) > 0 {
-		iso := &crrfISO{isolated: isoFiles, perGlob: perIso, dead: deadIso, eaten: eatenIso}
-		fmt.Fprintln(stdout, crrfJSONPayload(want, len(rules), len(fixtures), hits, iso))
+	// 正向（「该替换的都在」）：必须在反向 `crrfJudge` **之后**跑 —— 空正则 / 正则写坏先由那一支
+	// 「不给结论」拦下（正向不重复捕获编译错）。正向面 0 件 ⇒ 该侧未判（不报红也不报绿）。
+	var gaps []crrfRule
+	if forwardJudged {
+		gaps = crrfForwardGaps(rules, tgtBlob)
 	}
 
-	if len(hits) == 0 {
-		fmt.Fprintf(stdout, "⇒ 全绿（rc=0）：%d 条规则一条都没命中测试夹具\n", len(rules))
+	if len(want) > 0 {
+		iso := &crrfISO{isolated: isoFiles, perGlob: perIso, dead: deadIso, eaten: eatenIso}
+		fmt.Fprintln(stdout, crrfJSONPayload(want, len(rules), len(fixtures), hits, iso, nTargets, gaps))
+	}
+
+	if len(hits) == 0 && len(gaps) == 0 {
+		if forwardJudged {
+			fmt.Fprintf(stdout, "⇒ 双侧全绿（rc=0）：%d 条规则都没命中测试夹具，且都在「该替换的」真树面上有命中\n", len(rules))
+		} else {
+			fmt.Fprintf(stdout, "⇒ 全绿（rc=0）：%d 条规则都没命中测试夹具（正向面 0 件 ⇒ 该侧未判）\n", len(rules))
+		}
 		return 0
 	}
 
-	hdistinct := map[string]bool{}
-	for _, h := range hits {
-		for _, f := range h.files {
-			hdistinct[f] = true
+	if len(hits) > 0 {
+		hdistinct := map[string]bool{}
+		for _, h := range hits {
+			for _, f := range h.files {
+				hdistinct[f] = true
+			}
 		}
+		fmt.Fprintf(stdout, "   ✗ 反向命中：**%d 条**规则打到了测试夹具（共 %d 个件）\n", len(hits), len(hdistinct))
+		for _, h := range hits {
+			fmt.Fprintf(stdout, "   ── 规则：%s\n", crrfRuneCut(crrfPyStrip(h.raw), 140))
+			exFiles := map[string]bool{}
+			for _, e := range h.ex {
+				exFiles[e.rel] = true
+			}
+			fmt.Fprintf(stdout, "      命中件 %d 个 · 命中行 %d 处（列前 %d 件）\n", len(h.files), h.total, len(exFiles))
+			for _, e := range h.ex {
+				fmt.Fprintf(stdout, "      %s:%d: %s\n", e.rel, e.ln, e.txt)
+			}
+		}
+	} else {
+		fmt.Fprintf(stdout, "   ✓ 反向（不该动的）全绿：%d 条规则一条都没命中测试夹具\n", len(rules))
 	}
-	fmt.Fprintf(stdout, "   ✗ 命中：**%d 条**规则打到了测试夹具（共 %d 个件）\n", len(hits), len(hdistinct))
-	for _, h := range hits {
-		fmt.Fprintf(stdout, "   ── 规则：%s\n", crrfRuneCut(crrfPyStrip(h.raw), 140))
-		exFiles := map[string]bool{}
-		for _, e := range h.ex {
-			exFiles[e.rel] = true
+
+	if len(gaps) > 0 {
+		fmt.Fprintf(stdout, "   ✗ 正向缺侧：**%d 条**规则在「该替换的」真树面上零命中"+
+			"（该替换的都不在 ⇒ 规则死了 / 字面漂移 / 目标未登记）\n", len(gaps))
+		for _, g := range gaps {
+			fmt.Fprintf(stdout, "   ── 规则：%s\n", crrfRuneCut(crrfPyStrip(g.raw), 140))
 		}
-		fmt.Fprintf(stdout, "      命中件 %d 个 · 命中行 %d 处（列前 %d 件）\n", len(h.files), h.total, len(exFiles))
-		for _, e := range h.ex {
-			fmt.Fprintf(stdout, "      %s:%d: %s\n", e.rel, e.ln, e.txt)
-		}
+	} else if forwardJudged {
+		fmt.Fprintf(stdout, "   ✓ 正向（该替换的）全绿：%d 条规则都在真树上找到了可替换的目标\n", len(rules))
+	} else {
+		fmt.Fprint(stdout, "   · 正向（该替换的）**未判**：正向面 0 件（该侧无目标可判 ⇒ 不报红也不报绿）\n")
 	}
-	fmt.Fprint(stdout, "⇒ 有命中（rc=1）：**替换规则命中件不许是测试夹具** —— 规则改的是公开面夹具的"+
-		"字面量/长度假设，本机看不出来、公开树一 clone 就红\n")
+
+	fmt.Fprint(stdout, "⇒ 有缺口（rc=1）：**规则必须在真树上双侧成立** —— 该替换的都要有目标、"+
+		"不该动的都不许被误替换\n")
 	return 1
 }
 

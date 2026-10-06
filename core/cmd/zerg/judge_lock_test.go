@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,7 +75,13 @@ func TestJlkHelperProcess(t *testing.T) {
 	if args == nil {
 		return
 	}
-	os.Exit(judgeLockGateMain(os.Stdout, os.Stderr, args))
+	// ★ 回归牙（真命令行面）：探针壳收到的 argv 必须带 inproc 路由前缀（`gate check judge-lock`）——
+	//   缺前缀 = 主件重跑面破形（`bin/zerg` 会把本门旗标当未知命令 ⇒ 子进程退 2）⇒ 这里**不**兜底，让牙当场红。
+	if !(len(args) >= 3 && args[0] == "gate" && args[1] == "check" && args[2] == "judge-lock") {
+		io.WriteString(os.Stderr, "探针壳：argv 缺 inproc 路由前缀（gate check judge-lock）⇒ 重跑面破形\n")
+		os.Exit(2)
+	}
+	os.Exit(judgeLockGateMain(os.Stdout, os.Stderr, args[3:]))
 }
 
 func jlkUseProbe(t *testing.T) {

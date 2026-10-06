@@ -482,7 +482,7 @@ func pvRun(root string) pvResult {
 			}
 		} else {
 			if f.Debt == "" {
-				res.Red = append(res.Red, pvRed{Rule: "E3", File: nil, Raw: "",
+				res.Red = append(res.Red, pvRed{Rule: "E3", Form: pvStrPtr(f.ID), File: nil, Raw: "",
 					Why: "门禁侧空且**没写理由 + 日期** ⇒ 不许这么放过（要绿必须登记）"})
 			} else {
 				res.Debt = append(res.Debt, pvDebt{Form: f.ID, Name: f.Name, Reason: f.Debt})
@@ -540,6 +540,359 @@ func pvListForms(w io.Writer) int {
 	return 0
 }
 
+// ── 自检夹具（= py `self_test()` 的 RULES_BASE / REDACT_BASE，逐字同构）─────────────
+//
+//	★ 两行含 `check-hardcoded-private-paths.py` 的 NEEDLES 原串（私有卷 / 家目录实例）⇒
+//	  必须**拼串**（复用 `pvVolRepoPrefix` / `pvUsersName`），✗ 不留连续原串 —— 否则本件把
+//	  那枚门判红（自指消解 · 与件头 (b) 同法）。
+var pvSelfRulesBase = []string{
+	"# 合成替换规则（自检夹具）",
+	"Mr2109\tMr2109\t称谓",
+	"<host>\t<host>",
+	"regex:" + pvVolRepoPrefix + "/Zerg\t<repo>",
+	"regex:/Volumes/(AHZ|BXC)\t<volume-path>",
+	pvUsersName + "\t~",
+	"<controller-host>\t<worker-host>",
+	"regex:192\\.168\\.\\d{1,3}\\.\\d{1,3}\t<worker-ip>",
+	"regex:\\b10\\.0\\.\\d{1,3}\\.\\d{1,3}\\b\t<cluster-ip>",
+	"regex:Copyright \\d{4} The Zerg Swarm Authors\tCopyright 2026 The Zerg Swarm Authors",
+	"示例虫茧\t示例虫茧",
+	"example-8b-quant\texample-8b-quant",
+	"Mr2109\tMr2109\t裸用户名",
+	"example-moe-36b\texample-moe-36b",
+	"example-35b-v2\texample-35b-v2",
+	"example-35b\texample-35b",
+	"ExampleAdapter\tExampleAdapter",
+	"EXAMPLE_TEMPLATE\tEXAMPLE_TEMPLATE",
+	"example-35b-v2-\texample-35b-v2-",
+	"example-35b-v2\texample-35b-v2",
+	"L1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4=\tL1VzZXJzL2Z1enowMS8uY29uZmlnL3plcmcvdG9rZW4=",
+	"Zerg-内部文档\tZerg-内部文档",
+	"!夹具\tcore/internal/obs/redact/*_test.go",
+}
+
+var pvSelfRedactBase = []string{
+	"package redact",
+	"func hasHomePath(s string) bool {",
+	"\treturn strings.Contains(s, \"/Users/\") || strings.Contains(s, \"/home/\") || strings.Contains(s, \"~/\")",
+	"}",
+	"// 分流，是为了**不留第二份 reHomeDir 的副本**（两份规则 = 下一次漂移的种子）；它不做 `$` 展开，",
+	"var (\treHomeDir = regexp.MustCompile(`~/|/(?:Users|home)/[A-Za-z0-9._-]+`)\n)",
+}
+
+// pvSelfStubHeader / pvSelfFakeGate —— 合成件头（逐字 = py `_mk`；fake-gate 的 NEEDLES 行拼串避原串）。
+const pvSelfStubHeader = "# 合成门禁侧件（自检夹具 · 只为 E3 的探针命中）\n"
+
+var pvSelfFakeGate = "# 合成判据件（自检夹具）\nNEEDLES = (\"" + pvUsersName + "\", \"" + pvVolName + "\")\n"
+
+// pvPyRepr —— py `repr(str)` 的单引号形态（本件探针均无引号；覆盖 `\` / `\n` / `\t` 三个高发面）。
+func pvPyRepr(s string) string {
+	body := strings.ReplaceAll(s, "\\", "\\\\")
+	body = strings.ReplaceAll(body, "\n", "\\n")
+	body = strings.ReplaceAll(body, "\t", "\\t")
+	return "'" + body + "'"
+}
+
+// pvSelfMk —— 合成夹具仓（= py `_mk`）：真源两件 + **形态表点名的每个门禁侧件**（各写入自己的探针字面）。
+// 为什么门禁侧件也要合成：E3 判的是「该件在盘 **且** 探针字面命中」；夹具里不放它们，红的会是「空指」
+// 而不是被测的那条判据 ⇒ 自检测不到真东西。
+func pvSelfMk(td string, rulesLines, redactLines []string, forms []pvForm) error {
+	write := func(rel, body string) error {
+		dst := filepath.Join(td, rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(dst, []byte(body), 0o644)
+	}
+	if err := write(pvReplaceRules, strings.Join(rulesLines, "\n")+"\n"); err != nil {
+		return err
+	}
+	if err := write(pvRedactGo, strings.Join(redactLines, "\n")+"\n"); err != nil {
+		return err
+	}
+	stubs := map[string][]string{}
+	for _, f := range forms {
+		if f.GateFile != "" && f.GateProbe != "" {
+			stubs[f.GateFile] = append(stubs[f.GateFile], f.GateProbe)
+		}
+	}
+	for gf, gps := range stubs {
+		var b strings.Builder
+		b.WriteString(pvSelfStubHeader)
+		for _, gp := range gps {
+			b.WriteString("NEEDLE = " + pvPyRepr(gp) + "\n")
+		}
+		if err := write(gf, b.String()); err != nil {
+			return err
+		}
+	}
+	return write("scripts/gates/fake-gate.py", pvSelfFakeGate)
+}
+
+// pvFormsCopy —— `[]pvForm` 值拷贝（= py `_forms_copy()`）。
+func pvFormsCopy() []pvForm {
+	out := make([]pvForm, len(pvForms))
+	copy(out, pvForms)
+	return out
+}
+
+// pvFormsExcept —— 删掉指定 id 的格（= py `[f for f in _forms_copy() if f["id"] != id]`）。
+func pvFormsExcept(id string) []pvForm {
+	out := make([]pvForm, 0, len(pvForms))
+	for _, f := range pvForms {
+		if f.ID != id {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// pvSelfAppend —— `base + [extra]`（不改 base 底层数组）。
+func pvSelfAppend(base []string, extra string) []string {
+	out := make([]string, 0, len(base)+1)
+	out = append(out, base...)
+	out = append(out, extra)
+	return out
+}
+
+// pvBoolToInt —— `1 if cond else 0`。
+func pvBoolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// pvSelfRunWith —— 在夹具上跑 `pvRun`，但把形态表 / 非形态登记表换成传入的那一份（**不改盘上真件**）。
+//
+//	`rules` 非 nil 就**真的落到夹具盘上**（= py `_run_with` 的同名语义）；跑完 save/restore 三个表。
+func pvSelfRunWith(td string, forms []pvForm, rules []string, nonFormRules *[][3]string, nonFormFrags *[][4]string) pvResult {
+	savedForms := pvForms
+	savedNFR := pvNonFormRules
+	savedNFF := pvNonFormFragments
+	defer func() {
+		pvForms = savedForms
+		pvNonFormRules = savedNFR
+		pvNonFormFragments = savedNFF
+	}()
+	if rules != nil {
+		p := filepath.Join(td, pvReplaceRules)
+		_ = os.WriteFile(p, []byte(strings.Join(rules, "\n")+"\n"), 0o644)
+	}
+	pvForms = forms
+	if nonFormRules != nil {
+		pvNonFormRules = *nonFormRules
+	}
+	if nonFormFrags != nil {
+		pvNonFormFragments = *nonFormFrags
+	}
+	return pvRun(td)
+}
+
+// pvSelfTest —— = py `self_test()`：合成夹具 · 24 断言 · 成对负控。
+//
+//	夹具全落**仓外**临时目录（`defer os.RemoveAll` 回收）；形态表按 py `_run_with` 的 save/restore
+//	语义临时替换（自检单线程独占 ⇒ 无并发面）。输出 = py 逐字节同构：24 行 ✓/✗ + 结论行。
+func pvSelfTest(stdout io.Writer) int {
+	ok, bad := 0, 0
+	var lines []string
+	check := func(name string, got, want int) {
+		good := got == want
+		if good {
+			ok++
+		} else {
+			bad++
+		}
+		mark := "✗"
+		if good {
+			mark = "✓"
+		}
+		lines = append(lines, fmt.Sprintf("  %s %s（期望 rc=%d · 现跑 rc=%d）", mark, name, want, got))
+	}
+	td, err := os.MkdirTemp("", "w15-forms-")
+	if err != nil {
+		fmt.Fprintf(stdout, "自检结论: 有失败（断言 1 条 · 失败 1 条）\n")
+		return 2
+	}
+	defer os.RemoveAll(td) // ★ 建点成功那一支才回收（✗ 不无条件删 TMPDIR）
+
+	_ = pvSelfMk(td, pvSelfRulesBase, pvSelfRedactBase, pvForms)
+
+	// ① 正控：形态齐 ⇒ rc=0
+	r1 := pvSelfRunWith(td, pvFormsCopy(), nil, nil, nil)
+	check("① 正控：规则面 + 脱敏器面全被形态格认领 ⇒ rc=0", r1.Rc, 0)
+
+	// ② must-fail：加一条 `~/…` 规则、并**删掉波浪号那一格** ⇒ rc=1（**这正是原病**）
+	r2 := pvSelfRunWith(td, pvFormsExcept("F-02"), nil, nil, nil)
+	check("② must-fail：`~/…` 形态无格（删 F-02）⇒ rc=1", r2.Rc, 1)
+	named2 := false
+	for _, d := range r2.Red {
+		if d.Rule == "E2b" || d.Rule == "E2a" {
+			named2 = true
+		}
+	}
+	check("②b 同上 ⇒ **点名**到「形态无格」（不是笼统红）", pvBoolToInt(named2), 1)
+
+	// ③ 成对回绿：把 F-02 补回 ⇒ rc=0
+	r3 := pvSelfRunWith(td, pvFormsCopy(), nil, nil, nil)
+	check("③ 成对：把 F-02 补回 ⇒ 回绿 rc=0", r3.Rc, 0)
+
+	// ④ must-fail：`$HOME` 形态被认领的格**删掉** ⇒ rc=1（脱敏器逐字声明不做 `$` 展开）
+	rules4 := pvSelfAppend(pvSelfRulesBase, "$HOME/key\t<home>")
+	r4 := pvSelfRunWith(td, pvFormsCopy(), rules4, nil, nil)
+	check("④ must-fail：`$HOME` 规则 + 有格认领 ⇒ 仍 rc=0（有格即算枚举到）", r4.Rc, 0)
+	_ = pvSelfMk(td, rules4, pvSelfRedactBase, pvForms)
+	r4b := pvSelfRunWith(td, pvFormsExcept("F-03"), nil, nil, nil)
+	check("④b must-fail：同夹具把 F-03 也删掉 ⇒ rc=1", r4b.Rc, 1)
+	_ = pvSelfMk(td, pvSelfRulesBase, pvSelfRedactBase, pvForms)
+
+	// ⑤ 成对回绿 + 不静默：F-03 = 「不覆盖 + 理由」⇒ rc=0 且**逐条打印**该格
+	r5 := pvSelfRunWith(td, pvFormsCopy(), nil, nil, nil)
+	check("⑤ 成对：`$HOME` 格走「不覆盖 + 理由」⇒ rc=0", r5.Rc, 0)
+	nd5 := 0
+	for _, d := range r5.Debt {
+		if d.Form == "F-03" {
+			nd5++
+		}
+	}
+	check("⑤b 同上 ⇒ 该格进 `debt[]`（**逐跑打印**，不静默）", nd5, 1)
+
+	// ⑥ must-fail：门禁侧空 + 无理由 ⇒ rc=1
+	f6 := pvFormsCopy()
+	for i := range f6 {
+		if f6[i].ID == "F-04" {
+			f6[i].GateFile = ""
+			f6[i].Debt = ""
+		}
+	}
+	r6 := pvSelfRunWith(td, f6, nil, nil, nil)
+	check("⑥ must-fail：门禁侧空且**无理由** ⇒ rc=1", r6.Rc, 1)
+
+	// ⑦ 真话负控：门禁侧点一件**不在盘**的判据件 ⇒ rc=1（空指）
+	f7 := pvFormsCopy()
+	for i := range f7 {
+		if f7[i].ID == "F-06" {
+			f7[i].GateFile = "scripts/gates/nonexistent-gate.py"
+		}
+	}
+	r7 := pvSelfRunWith(td, f7, nil, nil, nil)
+	check("⑦ 真话负控：门禁侧点名**不在盘**的件 ⇒ rc=1（空指）", r7.Rc, 1)
+	named7 := false
+	for _, d := range r7.Red {
+		if strings.Contains(d.Why, "空指") {
+			named7 = true
+		}
+	}
+	check("⑦b 同上 ⇒ 理由逐字含「空指」", pvBoolToInt(named7), 1)
+
+	// ⑧ 真话负控：出处句改成**真源里命不中**的字面 ⇒ rc=1（出处不许手写记忆）
+	f8 := pvFormsCopy()
+	for i := range f8 {
+		if f8[i].ID == "F-08" {
+			f8[i].SrcProbe = "这一句在真源件里不存在"
+		}
+	}
+	r8 := pvSelfRunWith(td, f8, nil, nil, nil)
+	check("⑧ 真话负控：出处句 `grep -F` 0 命中 ⇒ rc=1", r8.Rc, 1)
+
+	// ⑨ E4 实例口径：门禁侧探针写死具体用户名 ⇒ 进 instances[]（只打不红）
+	r9 := pvSelfRunWith(td, pvFormsCopy(), nil, nil, nil)
+	check("⑨ E4 只打不红：实例口径探针进 `instances[]` 且 rc 不变",
+		pvBoolToInt(r9.Meta.InstanceLevel >= 1 && r9.Rc == 0), 1)
+
+	// ⑩ 空转 / 缺件 ⇒ rc=2（不给结论 ⇒ 不许当绿）
+	empty := filepath.Join(td, "empty")
+	_ = os.MkdirAll(empty, 0o755)
+	r10 := pvSelfRunWith(empty, pvFormsCopy(), nil, nil, nil)
+	check("⑩ 缺真源件（空转）⇒ rc=2（不给结论 · 不许当绿）", r10.Rc, 2)
+
+	// ⑪ 真话负控（**成对**）：注入一条**真形态**、表里任何格都不认领 ⇒ rc=1 且**点名**该行原文
+	_ = pvSelfMk(td, pvSelfRulesBase, pvSelfRedactBase, pvForms)
+	rules11 := pvSelfAppend(pvSelfRulesBase, "A72109\tMr2109\tGitee 镜像账号（真形态 · 表里无格）")
+	r11 := pvSelfRunWith(td, pvFormsCopy(), rules11, nil, nil)
+	check("⑪ 真话负控：注入**真形态**未被任何格认领 ⇒ rc=1", r11.Rc, 1)
+	named11 := false
+	for _, d := range r11.Red {
+		if d.Rule == "E2a" && strings.Contains(d.Raw, "A72109") {
+			named11 = true
+		}
+	}
+	check("⑪b 同上 ⇒ E2a **点名**该行原文（不是笼统红）", pvBoolToInt(named11), 1)
+
+	// ⑫ 真话负控：把某格**认领正则弄哑** ⇒ 它本该认领的那处必报（认领是不是**真在生效**）
+	_ = pvSelfMk(td, pvSelfRulesBase, pvSelfRedactBase, pvForms)
+	f12 := pvFormsCopy()
+	for i := range f12 {
+		if f12[i].ID == "F-13" {
+			f12[i].Claim = "ZZZ-弄哑的认领正则"
+		}
+	}
+	r12 := pvSelfRunWith(td, f12, nil, nil, nil)
+	check("⑫ 真话负控：F-13 认领正则弄哑 ⇒ rc=1", r12.Rc, 1)
+	named12 := false
+	for _, d := range r12.Red {
+		if d.Rule == "E2a" && strings.Contains(d.Raw, "Zerg-内部文档") {
+			named12 = true
+		}
+	}
+	check("⑫b 同上 ⇒ 报出 `Zerg-内部文档` 那行（E2a 点名）", pvBoolToInt(named12), 1)
+
+	// ⑬ 真话负控：把某**登记债务**改回**未登记**（门禁侧空 + 无理由）⇒ 必报
+	_ = pvSelfMk(td, pvSelfRulesBase, pvSelfRedactBase, pvForms)
+	f13 := pvFormsCopy()
+	for i := range f13 {
+		if f13[i].ID == "F-16" {
+			f13[i].Debt = ""
+		}
+	}
+	r13 := pvSelfRunWith(td, f13, nil, nil, nil)
+	check("⑬ 真话负控：债务格改回**未登记**（gate 空 + 无理由）⇒ rc=1", r13.Rc, 1)
+	named13 := false
+	for _, d := range r13.Red {
+		if d.Rule == "E3" && d.Form != nil && *d.Form == "F-16" {
+			named13 = true
+		}
+	}
+	check("⑬b 同上 ⇒ E3 **点名**到 F-16", pvBoolToInt(named13), 1)
+
+	// ⑭ 非形态登记（E2a · `GAP-20260926-152`）：注入一条**公开示例**规则 + **逐字登记**它 ⇒ 不红、进 nonform[]
+	_ = pvSelfMk(td, pvSelfRulesBase, pvSelfRedactBase, pvForms)
+	rules14 := pvSelfAppend(pvSelfRulesBase, "example-35b-v9\texample-35b-v9\t公开示例（非泄漏形态）")
+	nf14 := [][3]string{{"example-35b-v9", "公开示例值（非私有泄漏形态）", "2026-10-04"}}
+	r14 := pvSelfRunWith(td, pvFormsCopy(), rules14, &nf14, nil)
+	check("⑭ 非形态登记：公开示例规则 + 逐字登记 ⇒ rc=0", r14.Rc, 0)
+	named14 := false
+	for _, x := range r14.Nonform {
+		if x.Raw == "example-35b-v9" {
+			named14 = true
+		}
+	}
+	check("⑭b 同上 ⇒ 该规则进 `nonform[]`（逐跑打印 · 不静默）", pvBoolToInt(named14), 1)
+
+	// ⑮ must-fail：**同一条规则不登记** ⇒ rc=1（须登记才放行 —— 登记腿不是把红都洗掉）
+	nf15 := [][3]string{}
+	r15 := pvSelfRunWith(td, pvFormsCopy(), rules14, &nf15, nil)
+	check("⑮ must-fail：同规则不登记 ⇒ rc=1（真形态负控照旧有牙）", r15.Rc, 1)
+	named15 := false
+	for _, d := range r15.Red {
+		if d.Rule == "E2a" && strings.Contains(d.Raw, "example-35b-v9") {
+			named15 = true
+		}
+	}
+	check("⑮b 同上 ⇒ E2a **点名**该行原文", pvBoolToInt(named15), 1)
+
+	fmt.Fprintf(stdout, "%s\n", strings.Join(lines, "\n"))
+	concl := "全过"
+	if bad != 0 {
+		concl = "有失败"
+	}
+	fmt.Fprintf(stdout, "自检结论: %s（断言 %d 条 · 失败 %d 条）\n", concl, ok+bad, bad)
+	if bad == 0 {
+		return 0
+	}
+	return 2
+}
+
 // privatePathFormsGateMain —— 入口（= py `main()`）。
 func privatePathFormsGateMain(stdout, stderr io.Writer, argv []string) int {
 	root := ""
@@ -586,9 +939,8 @@ func privatePathFormsGateMain(stdout, stderr io.Writer, argv []string) int {
 		return pvListForms(stdout)
 	}
 	if selfTest {
-		// py 的 `--self-test`（合成夹具 · 13 断言）**未搬**（见件尾「未覆盖面」③）。
-		fmt.Fprintf(stderr, "⛔ Go 真搬件：`--self-test` 未搬（M2-0 样板只对拍主路径 / --json / --list-forms）\n")
-		return 2
+		// = py `self_test()`（合成夹具 · 24 断言 · 成对负控）。
+		return pvSelfTest(stdout)
 	}
 
 	res := pvRun(root)

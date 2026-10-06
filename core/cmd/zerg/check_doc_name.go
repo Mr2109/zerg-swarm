@@ -20,8 +20,8 @@
 //	② 未知参数 / 非法 `--scope`：py argparse 打 usage 到 stderr 后 rc=2 ⟷ 本件打简短 usage 到 stderr、rc=2
 //	   ⇒ **stderr 正文不逐字对齐**（stdout / rc 对齐）。
 //	③ `--self-test` 的**元自检（⑫ 注入副本）**：py 把自身源码改写后起子进程验「自检未过 ⇒ 拒绝扫真目标」；
-//	   本件无「注入源码副本」语境 ⇒ 未搬该格（其余自检格逐条搬）。默认档（未给 `--self-test`）自检成功**零输出**，
-//	   故默认档 stdout 与 py 逐字相同；显式 `--self-test` 清单少 1 行（元自检），列入未覆盖面。
+//	  本件无「注入源码副本」语境 ⇒ 以**同义注入**（Go-only 环境旋钮 `CHECK_DOC_NAME_META_FORCE_FAIL=1`）顶替，
+//	  并与 py 同法断言（rc=2 · 首行=拒扫抬头 · 末行非结论行）。该旋钮为 Go-only 面，列入未覆盖面。
 //	④ 目录遍历序：本件走 `os.ReadDir` 读面 + 末尾**全局 `sort` 定序**（py 亦末尾 `out.sort()`）⇒ 输出行序由该
 //	   全局排序决定，非 readdir 原序；`judge_same_stem` 的 `members[0]` 亦取全局排序后首件（见 cdnWalk 注）。
 //	⑤ py 正则 `\s`（N7 分段 / `re.split`）为 Unicode 语义 ⟷ Go RE2 `\s` 为 ASCII ⇒ 词干夹 Unicode 空白
@@ -1634,7 +1634,55 @@ func cdnSelfTest(meta bool) (bool, []string) {
 	ok = ok && caseFn("N7 收窄后有牙：词形态照告警", 0,
 		[]string{"--target", cdnPyJoin(n7dir, "docs", "模块Agent说明.md")}, []string{"N7", "告警"}, nil, nil)
 
+	// ⑫ **元自检**（对拍 py：自检未过 ⇒ main 必须拒扫真目标）—— py 用「注入源码副本」+ 子进程；
+	//   本件用 Go-only 旋钮 `CHECK_DOC_NAME_META_FORCE_FAIL=1` 顶替（同义注入 · 见件头③），
+	//   断言口径与 py 逐字同：rc=2 · **首行**就是拒扫抬头 · 末行不是结论行。
+	if meta {
+		oldOff, hadOff := os.LookupEnv("CHECK_DOC_NAME_META_OFF")
+		oldFF, hadFF := os.LookupEnv("CHECK_DOC_NAME_META_FORCE_FAIL")
+		_ = os.Setenv("CHECK_DOC_NAME_META_OFF", "1")
+		_ = os.Setenv("CHECK_DOC_NAME_META_FORCE_FAIL", "1")
+		var buf bytes.Buffer
+		rcm := checkDocNameGateMain(&buf, io.Discard, []string{"--repo-root", tmp, "--target", good})
+		if hadOff {
+			_ = os.Setenv("CHECK_DOC_NAME_META_OFF", oldOff)
+		} else {
+			_ = os.Unsetenv("CHECK_DOC_NAME_META_OFF")
+		}
+		if hadFF {
+			_ = os.Setenv("CHECK_DOC_NAME_META_FORCE_FAIL", oldFF)
+		} else {
+			_ = os.Unsetenv("CHECK_DOC_NAME_META_FORCE_FAIL")
+		}
+		var ol []string
+		for _, l := range strings.Split(buf.String(), "\n") {
+			if strings.TrimSpace(l) != "" {
+				ol = append(ol, l)
+			}
+		}
+		metaOK := rcm == 2 && len(ol) > 0 &&
+			ol[0] == "自检未过 ⇒ 拒绝扫真目标（rc=2 不给结论）" &&
+			!strings.HasPrefix(ol[len(ol)-1], "OK：") &&
+			!strings.HasPrefix(ol[len(ol)-1], "FAIL：")
+		mark := "✓"
+		if !metaOK {
+			mark = "✗"
+		}
+		lines = append(lines, fmt.Sprintf("%s 自检未过 ⇒ rc=2 且拒绝扫真目标（元自检 · 注入副本）", mark))
+		if !metaOK {
+			tail := ol
+			if len(tail) > 3 {
+				tail = tail[len(tail)-3:]
+			}
+			lines = append(lines, fmt.Sprintf("    注入副本 rc=%d 尾：%v", rcm, tail))
+		}
+		ok = ok && metaOK
+	}
+
 	expected := 1 + 5 + 1 + len(cdnBadDirs) + len(cdnBadPairs) + 1 + 1 + 2 + 2 + 1 + 1 + 4 + 1 + 6
+	if meta {
+		expected++ // ⑫ 元自检（注入副本）
+	}
 	got := 0
 	for _, ln := range lines {
 		if strings.HasPrefix(ln, "✓") || strings.HasPrefix(ln, "✗") {
@@ -1830,6 +1878,10 @@ func checkDocNameGateMain(stdout, stderr io.Writer, argv []string) int {
 	}
 	if !a.noSelfTest {
 		ok, lines := cdnSelfTest(meta)
+		// Go-only 注入旋钮（顶替 py 的「注入源码副本」· 见件头③）：强制自检未过，供元自检格用。
+		if os.Getenv("CHECK_DOC_NAME_META_FORCE_FAIL") == "1" {
+			ok = false
+		}
 		if !ok {
 			fmt.Fprintln(stdout, "自检未过 ⇒ 拒绝扫真目标（rc=2 不给结论）")
 			for _, ln := range lines {

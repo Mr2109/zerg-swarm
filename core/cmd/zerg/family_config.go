@@ -514,7 +514,7 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  它会动   : 只此一件（%s）—— 写 = 同目录临时件 + rename（原子）；写完读回再校，任一步不过 ⇒ 回滚\n", path)
 		// `Q-021`（波① `T3`）**两档同一张授权表**：干跑要把**真跑要什么**写明（否则两档判据分叉）。
 		fmt.Fprintf(stdout, "  授权判据 : 真写要 `--yes`（D2 档）—— 干跑与真跑**同一张表**：缺它 ⇒ 退码 2（**一个字节都不写**）\n")
-		fmt.Fprintf(stdout, "  生效     : 要主控读它 ⇒ `%s config reload --yes`（本命令**不碰主控**）\n", progName)
+		fmt.Fprintf(stdout, "  生效     : 写后**即**打 `POST /api/config/reload` + **现读校验路由**（只读面 `GET /api/fleet/models` 认了才算数 · GAP-20260925-42）—— 仅当写的是主控现读件 `<仓根>/gateway/fleet.yaml`；`--path`/`--root` 指的别件不联动\n")
 		fmt.Fprintln(stderr, "（--dry-run：只出计划件 · 零副作用 —— 未执行、未改任何状态）")
 		return exitOK
 	}
@@ -547,10 +547,120 @@ func cmdModelAdd(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("failed", "write_failed", "写名册件失败（已回滚）")
 		return rc
 	}
+	// ── 缺口 GAP-20260925-42：写名册与路由生效**并成一步** ──────────────────────────────────
+	// 改前：本命令只写名册，把「生效」推给下一条 `config reload --yes`，且**单凭它报的 ok**
+	//   就当生效（`config reload` 侧同样只打请求、不看路由表）⇒「写进名册 + reload 报 ok，
+	//   主控路由表仍不认该模型（孵卵接口回 404 未知模型）」正是本账症状。
+	// 改后（Mr2109 拍）：写后**即**打 `POST /api/config/reload`，再用**只读面**
+	//   `GET /api/fleet/models` **现读校验**路由表确已认这一条（模型名 × 主机）；不通过 ⇒
+	//   **回滚名册** + rc≠0 并把「谁没认」点名（不再单一信任 reload 的 ok）。
+	// ★ 只在写的是**主控现读的那份名册**（默认 `<仓根>/gateway/fleet.yaml`）时联动；`--path` /
+	//   `--root` 指的别件 ⇒ 主控读的不是它，联动无意义（跳过并如实说明）。
+	if rc := linkRosterToCore(inv, path, name, s.Host, s.File, raw, newText, stderr); rc != exitOK {
+		return rc
+	}
 	row := map[string]string{"model": name, "host": s.Host, "file": s.File,
 		"fleet": path, "line": strconv.Itoa(pl.Entry), "added": s.Added}
-	fmt.Fprintf(stderr, "%s: 名册已写（`%s:` 块 · 新条第 %d 行 · 只此一件）—— 要主控读它：`%s config reload --yes`\n", progName, name, pl.Entry, progName)
+	fmt.Fprintf(stderr, "%s: 名册已写（`%s:` 块 · 新条第 %d 行 · 只此一件）—— 生效走写后即 reload + 现读校验（GAP-20260925-42 · 本命令已办）\n", progName, name, pl.Entry)
 	return listCmd(inv, stdout, stderr, []string{"model", "host", "file", "fleet", "line"}, []map[string]string{row})
+}
+
+// coreRosterPath —— 主控**现读**的那份名册件的路径（`<仓根>/gateway/fleet.yaml` —— 主控的
+// `ConfigPath` 指的就是它）。仓根解析不到 ⇒ 空串（调用方据此跳过联动 —— 不猜）。
+func coreRosterPath() string {
+	r := repoRoot()
+	if r == "" {
+		return ""
+	}
+	return filepath.Join(r, "gateway", "fleet.yaml")
+}
+
+// linkRosterToCore —— 缺口 GAP-20260925-42 的联动：写后即 reload + **现读校验路由**；不认即回滚 + rc≠0。
+//
+// 退码：0 —— 生效已证（路由表现读认了它）· 或 非主控现读件（不联动）；
+//
+//	2 —— 主控打不到 / 只读面 `/api/fleet/models` 读不到 ⇒ **路由未校验**（名册已写是事实、
+//	    **不误回滚**，但结论面是「**不给结论**」—— 房规：取不到 ⇒ rc=2；✗ 不得 rc=0＋警告）；
+//	1 —— 写后 reload 被主控拒 / reload 报 ok 而**现读路由表不认** ⇒ **已回滚**名册（回到写前那份）。
+func linkRosterToCore(inv *invocation, path, name, host, file, oldText, newText string, stderr io.Writer) int {
+	cp := coreRosterPath()
+	if cp == "" {
+		fmt.Fprintf(stderr, "%s: 解析不到仓根 ⇒ 不联动主控 reload / 路由校验（名册已写 · GAP-20260925-42）\n", progName)
+		return exitOK
+	}
+	if filepath.Clean(path) != filepath.Clean(cp) {
+		fmt.Fprintf(stderr, "%s: 名册件 `%s` **不是主控现读件**（`%s`）⇒ 不联动 reload / 路由校验（名册已写 · GAP-20260925-42）\n",
+			progName, path, cp)
+		return exitOK
+	}
+	c := newClient()
+	// ① 写后**即** reload（不再把「生效」推给下一条命令）。
+	status, respBody, err := sendJSON(c, "POST", "/api/config/reload", "")
+	if err != nil {
+		// 主控打不到 ≠ 路由不认：名册已写且自洽 ⇒ 不误回滚（**名册已写是事实，照实写清**）；
+		// 但**结论面必须是不给结论** —— 房规：取不到 ⇒ rc=2（✗ 不得 rc=0＋警告 ＝ 静默绿；
+		// 缺口 `GAP-20260925-42` 口径裁定 · 2026-10-06）。
+		inv.warnf("名册已写，但主控打不到（%v）⇒ **未**校验路由是否认它（不是「不认」，是「没核」）", err)
+		inv.setErr("usage", "route_unverified",
+			"名册已写，但主控打不到 ⇒ 路由未校验（没核 ≠ 不认）⇒ 不给结论")
+		fmt.Fprintf(stderr, "%s: 名册已写（`%s:` 块）· 主控打不到（%v）⇒ **路由未校验**（不是不认，是没核）⇒ **不给结论（退码 2）**（复核：`%s gateway models`）\n",
+			progName, name, err, progName)
+		return exitUsage
+	}
+	if status >= 400 {
+		code := errorCodeOf(respBody)
+		rollbackRoster(path, newText, oldText, c, stderr)
+		inv.setErr("failed", orDash(code), "主控拒绝了这次热加载（名册已回滚到写前那份）")
+		fmt.Fprintf(stderr, "%s: 写后 reload 被主控拒（http_%d · code=%s）⇒ **回滚名册**（回到写前那份）· rc≠0\n",
+			progName, status, orDash(code))
+		fmt.Fprintf(stderr, "主控原样响应: %s\n", strings.TrimSpace(respBody))
+		return exitFail
+	}
+	// ② **现读校验**（不再单一信任 reload 的 ok）：直接读只读面 `/api/fleet/models` 核准这一条。
+	var fleet struct {
+		Models []struct {
+			ID   string `json:"id"`
+			Host string `json:"host"`
+			File string `json:"file"`
+		} `json:"models"`
+		Count int `json:"count"`
+	}
+	if err := c.getJSON("/api/fleet/models", &fleet); err != nil {
+		// 同 ①：读不到只读面 ⇒ 没核 ⇒ **不给结论（退码 2）**（✗ 不得 rc=0＋警告）。
+		inv.warnf("reload 已 ok，但只读面 `/api/fleet/models` 读不到（%v）⇒ **未**校验路由", err)
+		inv.setErr("usage", "route_unverified",
+			"reload 已 ok，但只读面读不到 ⇒ 路由未校验（没核 ≠ 不认）⇒ 不给结论")
+		fmt.Fprintf(stderr, "%s: reload 已 ok，但只读面 `/api/fleet/models` 读不到（%v）⇒ **路由未校验**（不是不认，是没核）⇒ **不给结论（退码 2）**（复核：`%s gateway models`）\n",
+			progName, err, progName)
+		return exitUsage
+	}
+	for _, m := range fleet.Models {
+		if m.ID == name && m.Host == host && (file == "" || m.File == file) {
+			fmt.Fprintf(stderr, "%s: 名册已写 · reload 已发 · **现读路由表已认**该条（`%s` @ `%s` · 只读面 `/api/fleet/models` 共 %d 条 · GAP-20260925-42）\n",
+				progName, name, host, len(fleet.Models))
+			return exitOK
+		}
+	}
+	// ③ reload 报 ok 而路由表**不认** ⇒ 回滚名册（并让主控也退回写前那份）+ rc≠0。
+	rollbackRoster(path, newText, oldText, c, stderr)
+	inv.setErr("failed", "route_not_recognized",
+		"写册 + reload 均 ok，但现读路由表不认该模型（已回滚名册）")
+	fmt.Fprintf(stderr, "%s: ✗ **reload 报 ok 而现读路由表不认** `%s`（host=%s）—— 路由表共 %d 条模型、无此配对 ⇒ **回滚名册** + rc≠0\n",
+		progName, name, host, len(fleet.Models))
+	fmt.Fprintf(stderr, "  （这就是「不再单一信任 reload 的 ok」：真查只读面 `/api/fleet/models` 才算数；复核：`%s gateway models`）\n", progName)
+	return exitFail
+}
+
+// rollbackRoster —— 把名册从 newText 原子写回 oldText，并**再 reload 一次**让主控也退回写前那份。
+func rollbackRoster(path, newText, oldText string, c *client, stderr io.Writer) {
+	if rc := writeFleetAtomic(path, newText, oldText, stderr); rc != exitOK {
+		fmt.Fprintf(stderr, "%s: !! 回滚名册失败 —— 请人处理（件 %s）\n", progName, path)
+		return
+	}
+	if _, _, err := sendJSON(c, "POST", "/api/config/reload", ""); err != nil {
+		fmt.Fprintf(stderr, "%s: 回滚后再 reload 打不到主控（%v）—— 主控路由表可能仍含刚回滚的那条（复核：`%s gateway models`）\n",
+			progName, err, progName)
+	}
 }
 
 // writeFleetAtomic —— 原子写 + 读回校验 + 失败回滚。退码：0 成功 · 1 写不过（已回滚）· 8 读不回。

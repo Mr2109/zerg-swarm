@@ -84,6 +84,15 @@ func TestCheckWiredScriptsSelftestAllPass(t *testing.T) {
 	if !strings.Contains(out, "34/34 通过") {
 		t.Fatalf("自检未 34/34 全过：\n%s", out)
 	}
+	// ★ 回归牙（py⟷Go 两态对拍面）：case 名必须逐字跟 py 现件（落后 = 防波门 check-py-go-pairing-drift 点红）。
+	for _, want := range []string{
+		"⑱ candidate_files 非 git 档原样返回（换面只在候选面这一半）",
+		"㉑ 负控：`zerg check check-eta`（缺 gate 子命令）⇒ 仍算未挂（防「只加 zerg 就放行」）",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("自检 case 名落后于 py（缺 %q）：\n%s", want, out)
+		}
+	}
 }
 
 // ★ A 类真口子的牙：自检自回收 ⇒ 同前缀 tempdir 残留 delta=0（哑化 RemoveAll ⇒ FAIL）。

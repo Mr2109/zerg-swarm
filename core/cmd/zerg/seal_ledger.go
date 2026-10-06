@@ -1267,8 +1267,15 @@ func slgUsageText() string {
 
 const slgUsageDieMsg = "✗ 用法：`--seal <趟目录> [--write --reason <一句>]` ｜ `--verify` ｜ `--check`（三选一）"
 
-func slgUsageErr(stderr io.Writer, what string) int {
-	fmt.Fprintf(stderr, "用法错（rc=2）：%s（argparse 面正文不同 · 见未覆盖面①）\n", what)
+// slgArgparseUsage —— argparse 的**短用法**正文（未知参数 / 缺值时先印它 · 逐字对拍 py argparse：
+// `-h` 帮助面之外的这条）。宽 78 折行、续行缩进 22 空格 —— 与 py `print_usage` 输出逐字节同。
+const slgArgparseUsage = "usage: seal-ledger.py [-h] [--seal SEAL] [--verify] [--check]\n" +
+	"                      [--ledger LEDGER] [--write] [--reason REASON]\n" +
+	"                      [--json JSON]\n"
+
+// slgUsageErr —— argparse 口径的用法错正文：短用法 + `<prog>: error: <msg>`（rc=2）。
+func slgUsageErr(stderr io.Writer, msg string) int {
+	fmt.Fprint(stderr, slgArgparseUsage+"seal-ledger.py: error: "+msg+"\n")
 	return slgBLOCKEDRC
 }
 
@@ -1289,7 +1296,7 @@ func sealLedgerGateMain(stdout, stderr io.Writer, argv []string) int {
 			help = true
 		case a == "--seal":
 			if i+1 >= len(argv) {
-				return slgUsageErr(stderr, "`--seal` 缺值")
+				return slgUsageErr(stderr, "argument --seal: expected one argument")
 			}
 			i++
 			sealVal, hasSeal = argv[i], true
@@ -1297,7 +1304,7 @@ func sealLedgerGateMain(stdout, stderr io.Writer, argv []string) int {
 			sealVal, hasSeal = a[len("--seal="):], true
 		case a == "--ledger":
 			if i+1 >= len(argv) {
-				return slgUsageErr(stderr, "`--ledger` 缺值")
+				return slgUsageErr(stderr, "argument --ledger: expected one argument")
 			}
 			i++
 			ledger, hasLedger = argv[i], true
@@ -1305,7 +1312,7 @@ func sealLedgerGateMain(stdout, stderr io.Writer, argv []string) int {
 			ledger, hasLedger = a[len("--ledger="):], true
 		case a == "--reason":
 			if i+1 >= len(argv) {
-				return slgUsageErr(stderr, "`--reason` 缺值")
+				return slgUsageErr(stderr, "argument --reason: expected one argument")
 			}
 			i++
 			reason = argv[i]
@@ -1313,7 +1320,7 @@ func sealLedgerGateMain(stdout, stderr io.Writer, argv []string) int {
 			reason = a[len("--reason="):]
 		case a == "--json":
 			if i+1 >= len(argv) {
-				return slgUsageErr(stderr, "`--json` 缺值")
+				return slgUsageErr(stderr, "argument --json: expected one argument")
 			}
 			i++
 			jsonVal, hasJSON = argv[i], true
@@ -1321,7 +1328,7 @@ func sealLedgerGateMain(stdout, stderr io.Writer, argv []string) int {
 			jsonVal, hasJSON = a[len("--json="):], true
 		case a == "--now":
 			if i+1 >= len(argv) {
-				return slgUsageErr(stderr, "`--now` 缺值")
+				return slgUsageErr(stderr, "argument --now: expected one argument")
 			}
 			i++
 			nowOverride = argv[i]
@@ -1334,7 +1341,7 @@ func sealLedgerGateMain(stdout, stderr io.Writer, argv []string) int {
 		case a == "--write":
 			write = true
 		default:
-			return slgUsageErr(stderr, "未知旗标 / 参数 "+a)
+			return slgUsageErr(stderr, "unrecognized arguments: "+a)
 		}
 	}
 	if help {
