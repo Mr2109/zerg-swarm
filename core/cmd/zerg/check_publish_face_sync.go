@@ -891,7 +891,10 @@ func cpfsParseArgs(stderr io.Writer, argv []string) (cpfsArgs, int) {
 	a := cpfsArgs{repo: cpfsRepoRoot()}
 	prog := "check-publish-face-sync.py"
 	i := 0
-	if len(argv) > 0 {
+	// ★ 对齐 py（`sys.argv[1:]`）：inproc 档 `gateCheckRunInproc` 传的是**键后那串**（✗ 无 prog 元素）
+	//   ⇒ 只有「首元素不是旗标」时才当 prog 跳过。此前无条件吃 argv[0] ⇒ `--self-test` 被当 prog 吞掉
+	//   ⇒ 自检档不早退、直落真目标（rc 1≠0 · 与 py 现件分叉）。
+	if len(argv) > 0 && !strings.HasPrefix(argv[0], "-") {
 		prog = filepath.Base(argv[0])
 		i = 1
 	}

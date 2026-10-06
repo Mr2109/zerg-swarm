@@ -335,6 +335,18 @@ func TestSealLedgerGateUsageFlags(t *testing.T) {
 	if rc, out, _ := slgTEntry("-h"); rc != 0 || !strings.Contains(out, "usage:") {
 		t.Fatalf("-h 期望 rc=0 + usage，得 rc=%d out=%q", rc, out)
 	}
+	// ★ 回归牙（战线① 对齐）：未知参数 ⇒ **argparse 口径正文**（短用法 + `seal-ledger.py: error:`），
+	//   逐字对拍 py 现件；把 `slgUsageErr` 改回中文「用法错」文案即红（带行号）。
+	{
+		rc, _, errs := slgTEntry("--self-test")
+		wantPrefix := "usage: seal-ledger.py [-h] [--seal SEAL] [--verify] [--check]\n" +
+			"                      [--ledger LEDGER] [--write] [--reason REASON]\n" +
+			"                      [--json JSON]\n"
+		if rc != 2 || !strings.HasPrefix(errs, wantPrefix) ||
+			!strings.HasSuffix(errs, "seal-ledger.py: error: unrecognized arguments: --self-test\n") {
+			t.Fatalf("负控14 未知参数应出 argparse 口径正文：rc=%d err=%q", rc, errs)
+		}
+	}
 	// --verify 有真动作 ⇒ 章账空时 rc=2（不许塌陷成 0）。
 	if rc, _, _ := slgTEntry("--verify", "--ledger", filepath.Join(t.TempDir(), "none.jsonl")); rc != 2 {
 		t.Fatalf("--verify 空账期望 rc=2，得 %d", rc)

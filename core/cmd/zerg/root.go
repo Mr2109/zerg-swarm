@@ -9,7 +9,8 @@
 // 是**无条件采信**的 —— 设了就**换掉仓根**，不校验它是不是仓根（也不回退到下面两条推导路）。
 // 指到非仓根时下游表现**不一致**（2026-09-27 按件现读）：`gate run` / `gate ls` 硬错 → rc=2
 // （门禁最小入口不在）；`repo status` / `repo commit` 硬错 → rc=8（所指位置下没有 .git）；
-// `doctor` 把所指位置报成「仓库根 **PASS**」—— 毒化面在**报绿**这一侧。
+// `doctor` 对**非仓根**（无仓根判据件）已报 BLOCKED（缺口 `GAP-20260927-436`）；而**公开树物料化快照**
+// 因带同一枚判据件曾被误报「仓库根 **PASS**」⇒ 由 `isRepoRoot` 的**快照识别**收口（缺口 `GAP-20261006-08`）。
 // ⇒ **写面 / 门禁动作请显式 `env -u ZERG_REPO`**。脚本侧同族旋钮：`ZERG_REPO_ROOT`（`scripts/gates/`
 // 下 6 处 `REPO_ROOT` 覆盖；与命令面这两枚**不是同一个名字、也无单一真源**）。
 package main
@@ -52,7 +53,39 @@ func findRoot(dir string) string {
 	}
 }
 
+// isRepoRoot 判 dir 是不是 **zerg 真仓根**（不是「找得到仓根判据件」就算了）。
+//
+// 判据**两条都要**成立：
+//
+//	① 仓根判据件在：`<dir>/core/internal/version/version.go`；
+//	② **不是公开树物料化快照** —— 发布链把公开树摊平后 `git init` 出来的产物，它**也**带同一枚
+//	   version.go、也**有** `.git`，只按 ① 判会把它当仓根（静默换源；缺口 `GAP-20261006-08`：
+//	   `ZERG_REPO` 指快照 ⇒ `repo status` 收为仓根 · `doctor` 报「仓库根 PASS」）。
+//
+// ② 的认法（真源现读定案 · `scripts/build/publish-public.sh` §2/§6「套用发布专属文件」段）：
+// 快照根上那几件**只由发布链种下、真仓根没有** —— 出现**任一** ⇒ 判快照：
+//
+//	· `install.sh`                ← 来自 `publish/install.sh`
+//	· `.gitleaks.toml`            ← 来自 `publish/gitleaks.toml`
+//	· `gateway/fleet.example.yaml` ← 由私有的 `gateway/fleet.yaml` **改名**而来
+//
+// ★ 只认**根**相对路径（真仓里的 `publish/install.sh` 一类不受影响）。
+func isMaterializedPublicTree_r42(dir string) bool {
+	for _, rel := range []string{
+		"install.sh",
+		".gitleaks.toml",
+		filepath.Join("gateway", "fleet.example.yaml"),
+	} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func isRepoRoot(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "core", "internal", "version", "version.go"))
-	return err == nil
+	if _, err := os.Stat(filepath.Join(dir, "core", "internal", "version", "version.go")); err != nil {
+		return false
+	}
+	return !isMaterializedPublicTree_r42(dir)
 }

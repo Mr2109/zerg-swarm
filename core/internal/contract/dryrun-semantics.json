@@ -648,7 +648,7 @@
    "file": "core/cmd/zerg/check_help_shape.go",
    "类": "判据面：字样引用（不是干跑语义站点 —— `--dry-run` 在本件只作被检文本里的旗标名字面出现：危险档行形状正则、夹具危险行、冻结表尾文本；本件没有 `--dry-run` 档）",
    "语义": "dryrun.v1",
-   "零副作用判据": "本件默认只读：取数只跑 `bin/zerg help --all`/`help`/`help dangerous`/`help config` 四个只读档 ＋ 只读矩阵件 `core/cmd/zerg/testdata/cli-matrix.json`；不写盘/不删/不推/不 exec 除四面 help 外的任何命令。`--self-test` 是纯内存合成夹具（20 格）；`--emit-baseline` 只 print 常量新值，不写盘。",
+   "零副作用判据": "本件默认只读：取数只跑 `bin/zerg help --all`/`help`/`help dangerous`/`help config` 四个只读档 ＋ 只读矩阵件 `core/cmd/zerg/testdata/cli-matrix.json`；不写盘/不删/不推/不 exec 除四面 help 外的任何命令。`--self-test` 是纯内存合成夹具（23 格）；`--emit-baseline` 只 print 常量新值，不写盘。",
    "备注": "登记依据 = 门⑩ R1 未登记件：命中处全是 `help dangerous` 文本里的旗标名字面，同一套语义的引用侧，不另立语义。"
   },
   {
@@ -823,6 +823,13 @@
    "语义": "dryrun.v1",
    "零副作用判据": "本件是**消费者 / 对拍件**：现跑把 `gap regress --dry-run [--json]` 当**数据**调用，判「干跑只列命令 ⇒ 零副作用」（跑前跑后真源 sha256 逐字比）。它自己不写真件：用例跑在 `t.TempDir()` 的夹具账上；不落盘 / 不删 / 不推 / 不造目录 / 不改 git 状态。",
    "备注": "登记依据 = 门⑩ `R1`（现跑命中即红）。同 `cli_gap_state_test.go` / `cli_route_test.go` 的「判据件 / 消费者」处置 —— 它不声明语义，只是**判**那一档。"
+  },
+  {
+   "file": "scripts/gates/check-write-face-gate.py",
+   "类": "只读判据门（命令面写面「声明↔实现」两面判 · 本件 `--dry-run` 只作 `--self-test` 夹具串里的被检 usage 字面，不是第五套语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "全程只读：真目标档只 `open()` 现读 `core/cmd/zerg/*.go` 与 `core/internal/contract/authority-map.json`，不写盘 / 不改状态 / 不 exec 被测命令；唯一写动作局限于 `--self-test` 在 `tempfile.TemporaryDirectory()` 的**仓外夹具**里造合成 main.go 与登记表（跑完即删），真目标档一个字节都不写。",
+   "备注": "登记依据 = 门⑩ `R1 未登记件`（本件 `--self-test` 夹具串里的 usage 字面「zerg help export [--out <目录>] [--dry-run]」含 `--dry-run` ⇒ 进扫描面）。它是同一套语义的被检字面，不另立语义 —— 同门先例 `scripts/gates/check-newcmd-followup.py` / `check-flag-registry-parity.py` 的「字样引用 / 判据面」处置。"
   }
  ]
 }

@@ -86,7 +86,11 @@ const hsSelfTestGolden = "── 自检（合成夹具 · 不碰真目标）─�
 	"  ✓ ③ items 缺命令名 ⇒ 判红（期望 True · 实得 True）\n" +
 	"  ✓ ③ items 丢了摘要格 ⇒ 判红（期望 True · 实得 True）\n" +
 	"  ✓ ③ items 零条 ⇒ 判红（不许当绿）（期望 True · 实得 True）\n" +
-	"  自检 11 格 · 失败 0 格\n"
+	"  ✓ A 档 ①制品逐条清单读得出（与现跑同正则）（期望 ['agent ls', 'gap ls'] · 实得 ['agent ls', 'gap ls']）\n" +
+	"  ✓ A 档 ②制品机器面 items 读得出（期望 ['zerg agent ls'] · 实得 ['zerg agent ls']）\n" +
+	"  ✓ A 档 ③制品不在盘 ⇒ 判不了（不许当空清单）（期望 True · 实得 True）\n" +
+	"  ✓ A 档 ④制品里没有清单行 ⇒ 判不了（期望 True · 实得 True）\n" +
+	"  自检 15 格 · 失败 0 格\n"
 
 // ── 正控 / 分道 ①：全合 ⇒ rc=0（逐字 stdout）────────────────────────────────
 func TestHelpSnapshot_Green(t *testing.T) {

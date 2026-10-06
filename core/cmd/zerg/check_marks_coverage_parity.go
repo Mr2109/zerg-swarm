@@ -522,11 +522,315 @@ func mkcpCheckExempt(entries []mkcpExempt) ([]string, map[string]int) {
 	return bad, doms
 }
 
-// mkcpSelfTest —— **未覆盖面**：py 原件的 `--self-test`（18 条自证用例 · 仓外夹具）在 Go 版
-// **尚未搬**（本枚时限内只落判据主体面）。此处 fail-closed 返 rc=2 并逐字说明，✗ 不静默绿。
-// ⇒ 对拍表里 `--self-test` 一格为**已知口径差**（不是逐字对齐承诺内的格），见交付⑤。
+// ══════════════════════════════════════════════════════════════════════════════
+// 自检（py `self_test` L492 逐格同构 · 四档 18 格 · 仓外夹具 · 进程内跑真入口）
+//   · py 走子进程跑真命令行（`_run`）；Go 进程内调 `mkcpRun`（**同一入口**）—— stdout/stderr
+//     **拼接序**（stdout 在前）与 py `_run` 的 `proc.stdout + proc.stderr` 逐字同。
+//   · 夹具全落**仓外**临时目录（`os.MkdirTemp`），跑完 `defer os.RemoveAll` 自回收（A 类：不泄漏）。
+// ══════════════════════════════════════════════════════════════════════════════
+
+const mkcpSelfWantCases = 18
+
+const mkcpSelfTableHead = "文件	public	理由\n"
+
+// 夹具侧甲：最小旧器（只提供 EXCLUDES 数组；解析器是 check-history-secrets.py 的 load_excludes）
+const mkcpSelfPublishShHead = "#!/usr/bin/env bash\n" +
+	"# 夹具：最小旧器（只提供 EXCLUDES 数组；解析器是 check-history-secrets.py 的 load_excludes）\n" +
+	"EXCLUDES=(\n"
+
+// 夹具侧乙：最小镜像器（只提供本门读的两个名字）
+const mkcpSelfMirrorLibHead = "# 夹具：最小镜像器（只提供本门读的两个名字）\n" +
+	"DROP_PREFIX = ()\nDROP_EXACT = {"
+
+// mkcpSelfTmpDirs —— 自检建出的全部临时根（跑完逐个 RemoveAll，✗ 不泄漏）。
+var mkcpSelfTmpDirs []string
+
+func mkcpSelfMkroot(base, name string) string {
+	d, err := os.MkdirTemp(base, name+"-")
+	if err != nil {
+		return ""
+	}
+	mkcpSelfTmpDirs = append(mkcpSelfTmpDirs, d)
+	return d
+}
+
+func mkcpSelfWrite(path, text string) {
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	_ = os.WriteFile(path, []byte(text), 0o644)
+}
+
+// mkcpSelfRun —— 进程内跑真入口（等价 py `_run` 的子进程档）；⇒ (rc, stdout+stderr)。
+func mkcpSelfRun(root string) (int, string) {
+	var so, se bytes.Buffer
+	old := stderrW
+	stderrW = &se
+	rc := mkcpRun(&so, mkcpAbsPath(root), "", "", 40)
+	stderrW = old
+	return rc, so.String() + se.String()
+}
+
+// mkcpSelfFixture —— py `_fixture` L444 同构：造一棵最小树（表 + config + 两器排除表 + 白名单 + 盘上件）。
+func mkcpSelfFixture(base, name string, tsvRows []string, globs, files, excludes, dropExact []string, whitelist string, git bool, add []string) string {
+	root := mkcpSelfMkroot(base, name)
+	if root == "" {
+		return ""
+	}
+	mkcpSelfWrite(filepath.Join(root, mkcpTableRel), mkcpSelfTableHead+strings.Join(tsvRows, ""))
+	var cb strings.Builder
+	cb.WriteString(`{"schema":"gate-coverage/1","baseline":0,"scan":{"script_globs":[`)
+	for i, g := range globs {
+		if i > 0 {
+			cb.WriteByte(',')
+		}
+		b, _ := json.Marshal(g)
+		cb.Write(b)
+	}
+	cb.WriteString(`]},"whitelist":{"build_dirs":[],"scripts":[]}}`)
+	mkcpSelfWrite(filepath.Join(root, mkcpConfigRel), cb.String())
+	var exb strings.Builder
+	for _, e := range excludes {
+		exb.WriteString("  \"" + e + "\"\n")
+	}
+	mkcpSelfWrite(filepath.Join(root, mkcpPublishShRel), mkcpSelfPublishShHead+exb.String()+")\n")
+	var db strings.Builder
+	for i, d := range dropExact {
+		if i > 0 {
+			db.WriteString(", ")
+		}
+		db.WriteString("\"" + d + "\"")
+	}
+	mkcpSelfWrite(filepath.Join(root, mkcpMirrorLibRel), mkcpSelfMirrorLibHead+db.String()+"}\n")
+	mkcpSelfWrite(filepath.Join(root, mkcpWhitelistRel), whitelist)
+	for _, rel := range files {
+		mkcpSelfWrite(filepath.Join(root, rel), "#!/usr/bin/env python3\nprint('fixture')\n")
+	}
+	if git {
+		c := exec.Command("git", "init", "-q")
+		c.Dir = root
+		_ = c.Run()
+		for _, rel := range add {
+			a := exec.Command("git", "add", "-f", rel)
+			a.Dir = root
+			_ = a.Run()
+		}
+	}
+	return root
+}
+
+// mkcpSelfTest —— py `self_test`(L492) 逐格同构：正控 ＋ 逐档负控 ＋ 防空绿 ＋ 退码 0-1-2 钳 ＋ 真目标。
 func mkcpSelfTest(stdout, stderr io.Writer) int {
-	fmt.Fprintln(stderr, "✗ 不给结论（rc=2）：本件 Go 版**未搬** `--self-test` 面（18 条自证用例）—— 未覆盖面，✗ 不静默绿")
+	d := mkcpSelfMkroot("", "mcp-selftest")
+	if d == "" {
+		fmt.Fprintln(stderr, "✗ 不给结论（rc=2）：自检夹具根建不出来")
+		return 2
+	}
+	defer func() {
+		for _, t := range mkcpSelfTmpDirs {
+			_ = os.RemoveAll(t)
+		}
+		mkcpSelfTmpDirs = nil
+	}()
+
+	bad, total := 0, 0
+	caseF := func(tag, desc string, wantRC int, wantText []string, root string) (int, string) {
+		total++
+		rc, text := mkcpSelfRun(root)
+		var miss []string
+		for _, s := range wantText {
+			if !strings.Contains(text, s) {
+				miss = append(miss, s)
+			}
+		}
+		ok := rc == wantRC && len(miss) == 0
+		if !ok {
+			bad++
+		}
+		mark := "✓"
+		if !ok {
+			mark = "✗"
+		}
+		ms := "无"
+		if len(miss) > 0 {
+			ms = mkcpPyListRepr(miss)
+		}
+		fmt.Fprintf(stdout, "  %s %s %s\n       rc=%d（期望 %d）· 缺字样 %s\n", mark, tag, desc, rc, wantRC, ms)
+		return rc, text
+	}
+
+	fmt.Fprintln(stdout, "── 自检（合成夹具 · 仓外临时目录 · 不碰真目标）──")
+
+	baseExcludes := []string{"scripts/gates/excluded.py", "scripts/exportnames/plug.py"}
+	devRow := "scripts/dev/lone.py	no	B 类：合成夹具（dev 域）\n"
+	devGlobs := []string{"scripts/dev/*.sh", "scripts/dev/*.py"}
+	baseFiles := []string{"scripts/build/kept.py", "scripts/gates/excluded.py", "scripts/exportnames/plug.py"}
+	baseGlobs := []string{"scripts/*.sh", "scripts/*.py", "scripts/build/*.sh", "scripts/build/*.py", "scripts/gates/*.sh", "scripts/gates/*.py"}
+	baseTSV := "scripts/build/kept.py	yes	A 类：合成夹具（构建链）\n" +
+		"scripts/gates/excluded.py	no	B 类：合成夹具（门禁）\n" +
+		"scripts/exportnames/plug.py	no	面外域·合成夹具（豁免登记表里那一个）\n"
+
+	cat := func(a, b []string) []string {
+		out := make([]string, 0, len(a)+len(b))
+		out = append(out, a...)
+		out = append(out, b...)
+		return out
+	}
+	type fxo struct {
+		tsv                          []string
+		globs, files, exc, drop, add []string
+		noGit                        bool
+	}
+	fx := func(name string, o fxo) string {
+		tsv := o.tsv
+		if tsv == nil {
+			tsv = []string{baseTSV}
+		}
+		globs := o.globs
+		if globs == nil {
+			globs = baseGlobs
+		}
+		files := o.files
+		if files == nil {
+			files = baseFiles
+		}
+		exc := o.exc
+		if exc == nil {
+			exc = baseExcludes
+		}
+		drop := o.drop
+		if drop == nil {
+			drop = baseExcludes
+		}
+		add := o.add
+		if add == nil {
+			add = files
+		}
+		return mkcpSelfFixture(d, name, tsv, globs, files, exc, drop, "scripts/\n", !o.noGit, add)
+	}
+
+	fmt.Fprintln(stdout, "[正控] 域两侧对齐 + 面外域走登记豁免 + 已跟踪 no 件两侧都收 ⇒ rc=0")
+	good := fx("good", fxo{})
+	caseF("正控①", "两侧域对齐（豁免域 exportnames 单侧出现）⇒ 绿", 0,
+		[]string{"R1-a 门扫的域、表里一件都没登记：0 个", "R1-b 表登记的多余域（未登记豁免）：0 个",
+			"R2-a 已跟踪且缺侧甲（= 判据⑥ 会红的那批的预演）：0 件", "全绿（rc=0）"}, good)
+
+	fmt.Fprintln(stdout, "[逐档负控] 每型一个用例 ⇒ 必须 rc=1 且**逐字点名**")
+	caseF("R1-a", "门侧多一个域（dev）而表里 0 行 ⇒ 红且点名 `dev` + 两侧现值", 1,
+		[]string{"R1-a 门扫的域、表里一件都没登记：1 个",
+			"dev  ← `script_globs` 有 `scripts/dev/*.sh|*.py`（实测 1 件），`公开标记.tsv` 里 0 行",
+			"违规 1 处（rc=1）"},
+		fx("r1a", fxo{globs: cat(baseGlobs, devGlobs), files: cat(baseFiles, []string{"scripts/dev/lone.py"}), exc: cat(baseExcludes, []string{"scripts/dev/lone.py"})}))
+	caseF("成对①", "把 dev 补进表 + 收进两器 ⇒ 回绿（与 R1-a 成对 · 证明不是恒红）", 0,
+		[]string{"R1-a 门扫的域、表里一件都没登记：0 个", "全绿（rc=0）"},
+		fx("r1a-fixed", fxo{tsv: []string{baseTSV + devRow}, globs: cat(baseGlobs, devGlobs), files: cat(baseFiles, []string{"scripts/dev/lone.py"}), exc: cat(baseExcludes, []string{"scripts/dev/lone.py"})}))
+	caseF("R1-b", "表侧多一个域（zzz）且不在登记豁免表 ⇒ 红且点名 `zzz` + 表行数", 1,
+		[]string{"R1-b 表登记的多余域（未登记豁免）：1 个", "zzz  ← 表里 1 行 `scripts/zzz/…`，`script_globs` 里 0 条"},
+		fx("r1b", fxo{tsv: []string{baseTSV + "scripts/zzz/other.py	no	B 类：合成夹具（zzz 域）\n"}, files: cat(baseFiles, []string{"scripts/zzz/other.py"}), exc: cat(baseExcludes, []string{"scripts/zzz/other.py"})}))
+	caseF("R2-a", "已跟踪的 no 件两器都缺（缺侧甲 + 侧乙）⇒ 红且点名件 + 缺哪一侧", 1,
+		[]string{"R2-a 已跟踪且缺侧甲（= 判据⑥ 会红的那批的预演）：1 件",
+			"scripts/gates/excluded.py（表第 3 行）· 缺侧甲 + 侧乙（两器都会发它）"},
+		fx("r2a", fxo{exc: []string{"scripts/exportnames/plug.py"}, drop: []string{"scripts/exportnames/plug.py"}}))
+	caseF("成对②", "同一棵树把该件收进侧甲 ⇒ 回绿（与 R2-a 成对）", 0,
+		[]string{"R2-a 已跟踪且缺侧甲（= 判据⑥ 会红的那批的预演）：0 件", "全绿（rc=0）"}, fx("r2a-fixed", fxo{}))
+
+	fmt.Fprintln(stdout, "[防空绿档] 必须「构造就能复现」，且改正后必须退回绿（证明判据有牙齿、不是恒红/恒绿）")
+	caseF("防空绿①", "未跟踪件 + 两器都缺 ⇒ 点名预警（入库那一刻判据⑥ 才红的那一格）", 0,
+		[]string{"R2-b 入库前预警点名", "scripts/dev/lone.py（表第 5 行）· 缺侧甲 + 侧乙（两器都会发它）",
+			"⇒ 入库那一刻判据⑥ 报「表说 no、链上却仍会发」",
+			"R2-b 未在索引且缺排除（**入库前预警** · 不入退码）：1 件"},
+		fx("r2b-untracked", fxo{tsv: []string{baseTSV + devRow}, globs: cat(baseGlobs, devGlobs), files: cat(baseFiles, []string{"scripts/dev/lone.py"}), add: baseFiles}))
+	caseF("防空绿②", "同一棵树把该件收进两器 ⇒ 预警消失（证明预警不是恒亮）", 0,
+		[]string{"R2-b 未在索引且缺排除（**入库前预警** · 不入退码）：0 件"},
+		fx("r2b-fixed", fxo{tsv: []string{baseTSV + devRow}, globs: cat(baseGlobs, devGlobs), files: cat(baseFiles, []string{"scripts/dev/lone.py"}), add: baseFiles, exc: cat(baseExcludes, []string{"scripts/dev/lone.py"}), drop: cat(baseExcludes, []string{"scripts/dev/lone.py"})}))
+	caseF("防空绿③", "两侧清单漂移（侧甲有、侧乙无）⇒ 点名漂移（只报 · 不入退码）", 0,
+		[]string{"R2-c 两器清单漂移（只在一侧 · 不入退码）：1 件", "只在一侧：侧甲有、侧乙无", "全绿（rc=0）"},
+		fx("r2c-drift", fxo{drop: []string{"scripts/exportnames/plug.py"}}))
+
+	fmt.Fprintln(stdout, "[退码 0-1-2 钳] 缺件 / 空转 / 豁免条目不齐 / 非 git 树 ⇒ 一律 rc=2（判不了 ≠ 绿）")
+	noTbl := fx("no-table", fxo{})
+	_ = os.Remove(filepath.Join(noTbl, mkcpTableRel))
+	caseF("钳①", "标记表缺件 ⇒ rc=2", 2, []string{"不给结论"}, noTbl)
+	noCfg := fx("no-config", fxo{})
+	_ = os.Remove(filepath.Join(noCfg, mkcpConfigRel))
+	caseF("钳②", "config 缺件 ⇒ rc=2", 2, []string{"config 不在"}, noCfg)
+	caseF("钳③", "侧甲解析为空 ⇒ rc=2（清单没了所以全绿 = 假绿）", 2, []string{"解析不出任何 EXCLUDES"}, fx("empty-side", fxo{exc: []string{}}))
+	caseF("钳④", "script_globs 为空 ⇒ rc=2（空转）", 2, []string{"scan.script_globs 不是非空列表"}, fx("bad-globs", fxo{globs: []string{}}))
+	caseF("钳⑤", "非 git 树（跟踪面读不到）⇒ rc=2（缺件 ≠ 绿）", 2, []string{"git ls-files 失败"}, fx("no-git", fxo{noGit: true}))
+	caseF("钳⑥", "表里一条 `public=no` 都没有 ⇒ rc=2（R2 无区分度）", 2, []string{"一条 `public=no` 都没有"},
+		fx("no-no-row", fxo{tsv: []string{"scripts/build/kept.py	yes	A 类：合成夹具\n"}}))
+
+	// 钳⑦ ×2：豁免条目缺 date / 缺 reason ⇒ rc=2（**进程内**调 run：豁免表是模块级真源）
+	savedEx := mkcpExemptDomains
+	for _, c := range []struct {
+		label string
+		ent   mkcpExempt
+	}{
+		{"缺 date", mkcpExempt{"exportnames", "夹具", ""}},
+		{"缺 reason", mkcpExempt{"exportnames", "", "2026-09-26"}},
+	} {
+		mkcpExemptDomains = []mkcpExempt{c.ent}
+		var ebuf bytes.Buffer
+		old := stderrW
+		stderrW = &ebuf
+		rcIn := mkcpRun(io.Discard, mkcpAbsPath(good), "", "", 40)
+		stderrW = old
+		mkcpExemptDomains = savedEx
+		got := ebuf.String()
+		total++
+		ok := rcIn == 2 && strings.Contains(got, "域豁免登记表不合规") && strings.Contains(got, c.label)
+		if !ok {
+			bad++
+		}
+		mark := "✓"
+		if !ok {
+			mark = "✗"
+		}
+		fmt.Fprintf(stdout, "  %s 钳⑦ · 豁免条目%s ⇒ rc=2 且点名（判不了 ≠ 绿）· rc=%d\n", mark, c.label, rcIn)
+	}
+
+	fmt.Fprintln(stdout, "[真目标] 现读仓内（本件推得的仓根）⇒ 结构断言（rc ∈ {0,1} · 表侧域 > 0 · 门侧域 > 0）＋ 计数照实报")
+	total++
+	repo := mkcpRepoRoot()
+	rcReal, textReal := mkcpSelfRun(repo)
+	okReal := (rcReal == 0 || rcReal == 1) && strings.Contains(textReal, "R1-a 门扫的域、表里一件都没登记")
+	if !okReal {
+		bad++
+	}
+	sumLine := "（没有合计行）"
+	for _, ln := range strings.Split(textReal, "\n") {
+		if strings.HasPrefix(ln, "合计：") {
+			sumLine = ln
+			break
+		}
+	}
+	markReal := "✓"
+	if !okReal {
+		markReal = "✗"
+	}
+	fmt.Fprintf(stdout, "  %s 真目标 %s ⇒ rc=%d · %s\n", markReal, repo, rcReal, sumLine)
+	for _, ln := range strings.Split(textReal, "\n") {
+		s := strings.TrimSpace(ln)
+		if strings.HasPrefix(s, "✗ R1-") || strings.HasPrefix(s, "✗ R2-") || strings.HasPrefix(s, "· R2-b") ||
+			strings.HasPrefix(s, "· R2-c") || strings.HasPrefix(s, "· 覆盖缺口") || strings.HasPrefix(s, "   ← ") {
+			fmt.Fprintf(stdout, "     %s\n", s)
+		}
+	}
+	if rcReal == 1 {
+		fmt.Fprintln(stdout, "     ★ 真目标现红：逐条见上 —— 本门**不改别人件来凑绿**（改判据/改表都要走拍板）")
+	}
+
+	fmt.Fprintf(stdout, "  自证用例：%d 条 · 通过 %d 条（断言用例条数 %d，少跑即失效）\n", total, total-bad, mkcpSelfWantCases)
+	if total != mkcpSelfWantCases {
+		fmt.Fprintf(stderr, "AssertionError: 自证用例数必须为 %d，实际 %d\n", mkcpSelfWantCases, total)
+		return 2
+	}
+	res := fmt.Sprintf("有 %d 条断言不过（rc=1）", bad)
+	if bad == 0 {
+		res = "全过（rc=0）"
+	}
+	fmt.Fprintf(stdout, "⇒ 自检 %s\n", res)
+	if bad == 0 {
+		return 0
+	}
 	return 2
 }
 
@@ -943,15 +1247,14 @@ type mkcpArgs struct {
 }
 
 func mkcpParseArgs(stdout, stderr io.Writer, argv []string) (mkcpArgs, int) {
-	repo := mkcpRepoRoot()
-	a := mkcpArgs{root: repo, maxExamples: 40}
+	// ★ argv **不含程序名**（inproc 档 `gateCheckRunInproc`(family_gate_check.go:244) 逐字传 rest；
+	//   同名口径见 `checkPublicMarksGateMain`「argv 不含程序名」）。旧版按 py `sys.argv` 口径吃掉
+	//   argv[0] ⇒ 经 `gate check` 时**首枚真旗标被当程序名丢掉**（`--self-test` 永到不了自检、
+	//   真目标照跑 ⇒ rc 随工作树漂；`--root`/`-h` 同理全废）—— 本刀修此 no-op。
+	a := mkcpArgs{root: mkcpRepoRoot(), maxExamples: 40}
 	prog := "check-marks-coverage-parity.py"
-	i := 0
-	if len(argv) > 0 {
-		prog = filepath.Base(argv[0])
-		i = 1
-	}
 	a.prog = prog
+	i := 0
 	var unknown []string
 	need := func(name string, j int) (string, bool) {
 		if j+1 >= len(argv) {

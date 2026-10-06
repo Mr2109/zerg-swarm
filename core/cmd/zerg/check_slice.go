@@ -2473,6 +2473,15 @@ func joinOr(xs []string, sep string) string {
 	return strings.Join(xs, sep)
 }
 
+// joinOrNo —— py 里 `'·'.join(xs) or '无'` 的同构（空 ⇒ **「无」**，不是 `(无)`）。
+// 用于自证 `[进程内] …缺/多` 与「出仓引用根/缺件」两处（py 该两处空值恰为「无」）。
+func joinOrNo(xs []string, sep string) string {
+	if len(xs) == 0 {
+		return "无"
+	}
+	return strings.Join(xs, sep)
+}
+
 func printListRules(stdout io.Writer, opts *optsT, calib map[string]string) int {
 	printRegistration(stdout, opts, calib, false)
 	fmt.Fprintln(stdout, "── R0–R13 逐条（§3.4 逐字摘要 · 成本 · 本检查器实施口径）──")
@@ -3302,8 +3311,8 @@ func runSelftest(stdout, stderr io.Writer, opts *optsT, calib map[string]string)
 	// (a)
 	pa := byname["template-正例"]
 	fa := writeSlice("a-正例.json", jget(pa, "slice"))
-	rcA, _ := runIn(nil, []string{"--check", fa, "-q"})
-	checks = append(checks, chkT{"(a) 模板正例 ⇒ 期望 rc=0", rcA == 0, rcA, ""})
+	rcA, outA := runIn(nil, []string{"--check", fa, "-q"})
+	checks = append(checks, chkT{"(a) 模板正例 ⇒ 期望 rc=0", rcA == 0, rcA, outA})
 	// (b)
 	pb := byname["template-反例"]
 	fb := writeSlice("b-反例.json", jget(pb, "slice"))
@@ -3333,32 +3342,37 @@ func runSelftest(stdout, stderr io.Writer, opts *optsT, calib map[string]string)
 	}
 	okB := rcB == 1 && len(missingR) == 0
 	checks = append(checks, chkT{fmt.Sprintf("(b) 模板反例 ⇒ 期望 rc=1 且命中模板标注的违规 R（%s）", strings.Join(want, "·")), okB, rcB,
-		outB + fmt.Sprintf("\n[进程内] 实命中 R：%s；缺：%s；多（未标注）：%s", strings.Join(gotRules, "·"), joinOr(missingR, "·"), joinOr(extraR, "·"))})
+		outB + fmt.Sprintf("\n[进程内] 实命中 R：%s；缺：%s；多（未标注）：%s", strings.Join(gotRules, "·"), joinOrNo(missingR, "·"), joinOrNo(extraR, "·"))})
 	// (c)
 	badSliceObj := &jv{kind: 'o', obj: append([]jpair{}, jget(pb, "slice").obj...)}
 	badSliceObj.obj = append(badSliceObj.obj, jpair{"r14_new_rule", &jv{kind: 's', s: "自造的规则键（不存在于 R0–R13）"}})
 	fc := writeSlice("c-未知规则键.json", badSliceObj)
-	rcC1, _ := runIn(nil, []string{"--check", fc, "-q"})
-	checks = append(checks, chkT{"(c1) 片里出现未知字段/规则键 ⇒ 期望 rc=2（strict：未知键＝错误）", rcC1 == 2, rcC1, ""})
-	rcC2, _ := runIn(nil, []string{"--check", fa, "--disable-rule", "R99"})
-	checks = append(checks, chkT{"(c2) --disable-rule R99（未知规则键）⇒ 期望 rc=2", rcC2 == 2, rcC2, ""})
-	rcC3, _ := runIn(nil, []string{"--check", fa, "--disable-rule", "R7"})
-	checks = append(checks, chkT{"(c3) --disable-rule R7（已知规则但**未登记**禁用）⇒ 期望 rc=2", rcC3 == 2, rcC3, ""})
+	rcC1, outC1 := runIn(nil, []string{"--check", fc, "-q"})
+	checks = append(checks, chkT{"(c1) 片里出现未知字段/规则键 ⇒ 期望 rc=2（strict：未知键＝错误）", rcC1 == 2, rcC1, outC1})
+	rcC2, outC2 := runIn(nil, []string{"--check", fa, "--disable-rule", "R99"})
+	checks = append(checks, chkT{"(c2) --disable-rule R99（未知规则键）⇒ 期望 rc=2", rcC2 == 2, rcC2, outC2})
+	rcC3, outC3 := runIn(nil, []string{"--check", fa, "--disable-rule", "R7"})
+	checks = append(checks, chkT{"(c3) --disable-rule R7（已知规则但**未登记**禁用）⇒ 期望 rc=2", rcC3 == 2, rcC3, outC3})
 	// (d)
 	pd := byname["真隐患-缺期望输出"]
 	fd := writeSlice("d-真隐患.json", jget(pd, "slice"))
-	rcD, _ := runIn(nil, []string{"--check", fd, "-q"})
-	checks = append(checks, chkT{"(d) 真隐患（criteria 缺期望输出）⇒ 期望 rc=1", rcD == 1, rcD, ""})
+	rcD, outD := runIn(nil, []string{"--check", fd, "-q"})
+	checks = append(checks, chkT{"(d) 真隐患（criteria 缺期望输出）⇒ 期望 rc=1", rcD == 1, rcD, outD})
 	// (e)
 	common, info, missing := probeExternalRoots(probes, csRepoRoot)
 	rcE, outE := runIn(nil, []string{"--probe"})
 	okE := rcE == 0 && len(missing) == 0
 	checks = append(checks, chkT{fmt.Sprintf("(e) 前置缺件闸·正：探针公共根可达（%s）⇒ 闸放行、--probe 照判 rc=0", csOrDash(common)), okE, rcE,
-		outE + fmt.Sprintf("\n[进程内] 出仓引用根：%s；缺件：%s", joinOr(sortedKeys(info), " · "), joinOr(missing, " · "))})
+		outE + fmt.Sprintf("\n[进程内] 出仓引用根：%s；缺件：%s", joinOrNo(sortedKeys(info), " · "), joinOrNo(missing, " · "))})
 	// (f) 仿真公开树：进程内以 --repo-root 指向无同级 Zerg-内部文档 的夹具根
 	simRepo := filepath.Join(tmp, "sim-public", "repo")
 	_ = os.MkdirAll(filepath.Join(simRepo, "scripts", "gates"), 0o755)
 	saved := csRepoRoot
+	// py (f) 把 PROBE_PATH 拷进仿真仓 `scripts/gates/`（py 由 `__file__` 推探针路径）；本件探针路径
+	// 按 `csRepoRoot` 解 ⇒ 同样把探针件拷进仿真仓，探针集才在（否则先撞「探针集文件不存在」而到不了缺件闸）。
+	if b, err := os.ReadFile(csProbePath()); err == nil {
+		_ = os.WriteFile(filepath.Join(simRepo, "scripts", "gates", "slice-probes.json"), b, 0o644)
+	}
 	rcF, outF := runIn(nil, []string{"--probe", "--repo-root", simRepo})
 	csRepoRoot = saved
 	okF := rcF == 2 && strings.Contains(outF, "缺件路径") && strings.Contains(outF, "../Zerg-内部文档")

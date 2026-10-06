@@ -58,6 +58,7 @@
 
 audit 台账（append-only · `scripts/gates/baseline-audit.jsonl`）
 ----------------------------------------------------------------
+★ **本件「台账」= `scripts/gates/baseline-audit.jsonl` =【权威台账】**（`seq` 连号 = append-only 硬证据 · 值链/件链只提示不改判）—— 与 `check-gate-coverage.md` 里那份「债务台账」（叙事面 · 只作旁证）**同名不同面 ⇒ 勿互证**（口径已拍 · GAP-20260927-156）。
 一行一条 JSON（compact · 一行一记录，逐行可 `json.loads`）：
 
   {"seq":1,"ts":"…+08:00","kind":"write|anchor","name":"gate-coverage.baseline",

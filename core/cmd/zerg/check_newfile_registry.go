@@ -3308,7 +3308,9 @@ func gnrSelfTest(stdout io.Writer) int {
 			okHdr := cS == 1 && fS == "1111111111111111"
 			addCheck("B1-5·③ 基线 v2 头（件数/指纹）读回一致", 1, gnrB2i(okHdr), okHdr)
 		}
-		rcDown2 := gnrDumpBaseline(io.Discard, io.Discard, tmpS, baseSmall, false)
+		// ★ 对齐 py `_quiet`（只吞 stdout · stderr 漏到真 stderr）：干跑拒写的 stderr 判词
+		//   必须进进程 stderr（此前喂 io.Discard ⇒ 与 py 分叉）。
+		rcDown2 := gnrDumpBaseline(io.Discard, os.Stderr, tmpS, baseSmall, false)
 		addCheck(fmt.Sprintf("B1-5·③ 基线只许下调（旧 1 < 现读 %d）⇒ 干跑即拒写 2", nScan), 2, rcDown2, rcDown2 == 2)
 
 		// ④ --sync 干跑零写入 ⟷ --yes 真写（成对 · 原子写 · 无残留）

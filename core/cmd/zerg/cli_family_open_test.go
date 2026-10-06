@@ -14,8 +14,9 @@
 //		① 正控（不变）：对命令树里**每一个**族 —— 首行三档计数之和 == 该族成员数；且
 //		   「已开放」== 该族 `openedForRun` 为真的条数 · 「拒执」== 声明了 `refuses` 的非危险档条数 ·
 //		   「危险档」== `danger != nil` 的条数（三档**各归各的**，一个都不许重复计）。
-//		② 对界（重写）：`egg run` / `egg stop` 是**已开放**的写档 —— 声明无 `refuses`、`danger == nil`、
-//		   `openedForRun` 为真；`help egg` 首行现报「动作 7 · 已开放 4 · 拒执 0 · 危险档 3」（与现算逐格相等）。
+//		② 对界（2026-10-06 重写 · `GAP-20261005-38`）：`egg run` / `egg stop` 现读是**危险档 D2**
+//		   （卵写面按控制面 `POST /api/control/load|unload` 登记为 D2 · 落自 230ed340）；`help egg`
+//		   首行现报「动作 7 · 已开放 2 · 拒执 0 · 危险档 5」（与现算逐格相等）。
 //		③ 成对负控（**改成动态找对象**，不硬套某一条）：命令树里仍有「非危险档 + 真跑拒执」的命令
 //		   （`cocoon open` / 发布档 / `apply`）⇒ 拿**修前的口径**（`danger == nil` 即算「已开放」）重算
 //		   **它那一族** ⇒ 条数必与现报的「已开放」档**不等**（若相等 ⇒ 这条判据在修前也给绿 ⇒ 空转）。
@@ -119,32 +120,33 @@ func TestFamilyOpenCounts_ThreeTiersAreExclusive(t *testing.T) {
 		judged, len(shadowed), strings.Join(shadowed, " · "))
 }
 
-// TestFamilyOpenCounts_EggWriteFaceIsOpen —— ② 对界（2026-09-26 重写）：
-// `egg run` / `egg stop` 是**已开放**的写档（真跑执行装载/卸载），不再落「拒执」档。
+// TestFamilyOpenCounts_EggWriteFaceIsOpen —— ② 对界（2026-10-06 重写 · `GAP-20261005-38`）：
+// `egg run` / `egg stop` 现读是**危险档 D2**（卵写面按控制面 `POST /api/control/load|unload`
+// 登记为 D2 · 落自 230ed340）⇒ 旧判据的落点变了，随动重写（✗ 不硬套旧期望）。
 //
-// 旧文（已作废，逐字留此免得下一个人以为它还在）：「`egg run` 落「拒执」档、**不在**「已开放」档里
-// —— 它真跑退 8（写面本波不做）」。
+// 旧文（已作废，逐字留此免得下一个人以为它还在）：「`egg run` / `egg stop` 是**已开放**的写档
+// （真跑执行装载/卸载），不再落「拒执」档 —— 声明无 `refuses`、`danger == nil`、`openedForRun` 为真」。
+// ★ 本判据只钉**危险档级别 D2** 与三档计数；登记 `opened`（危险档「已开放」标记）是
+// `TestDangerOpenedFace` 那一族的面，本处不重复钉。
 func TestFamilyOpenCounts_EggWriteFaceIsOpen(t *testing.T) {
 	for _, p := range [][]string{{"egg", "run"}, {"egg", "stop"}} {
 		c := find(p)
 		if c == nil {
 			t.Fatalf("命令树里找不到 `%s`（判据不可判）", strings.Join(p, " "))
 		}
-		if c.danger != nil {
-			t.Fatalf("`%s` 现读是危险档（%s）⇒ 本条的落点变了，判据要重写（不硬套）",
+		if c.danger == nil {
+			t.Errorf("`%s` 现读不是危险档 ⇒ 落点又变了（要 D2 · 见 `GAP-20261005-38`）", strings.Join(p, " "))
+			continue
+		}
+		if c.danger.Level != dangerD2 {
+			t.Errorf("`%s` 的危险档级别 = %s（要 D2 —— 可逆写面按 `--yes`）",
 				strings.Join(p, " "), c.danger.Level)
 		}
-		if c.refuses {
-			t.Errorf("`%s` 现读仍声明 `refuses` —— 写面已开出（真跑执行装载/卸载）⇒ 该标记必须撤掉"+
-				"（否则「已开放」那一档把它漏掉，首行计数与实际不符）", strings.Join(p, " "))
-		}
-		if !openedForRun(c) {
-			t.Errorf("`%s` 真跑执行 ⇒ 口径 `openedForRun` 必须是 true（写档算「已开放」）", strings.Join(p, " "))
-		}
 	}
+	// 三档计数：本族 7 条 = `ls`/`show`（已开放）＋ `run`/`stop`/`pin`/`unpin`/`retire`（危险档）· 拒执 0。
 	open, refused, danger := familyHelpCountsForTest("egg")
-	if open != 4 || refused != 0 || danger != 3 {
-		t.Errorf("`egg` 族现算「已开放 %d · 拒执 %d · 危险档 %d」（要 4 / 0 / 3：`ls`+`show`+`run`+`stop` 已开放 · `pin`+`unpin`+`retire` 危险档）",
+	if open != 2 || refused != 0 || danger != 5 {
+		t.Errorf("`egg` 族现算「已开放 %d · 拒执 %d · 危险档 %d」（要 2 / 0 / 5：`ls`+`show` 已开放 · `run`+`stop`+`pin`+`unpin`+`retire` 危险档）",
 			open, refused, danger)
 	}
 	line := helpFirstLineForTest(t, "egg")
@@ -152,12 +154,9 @@ func TestFamilyOpenCounts_EggWriteFaceIsOpen(t *testing.T) {
 	if m == nil {
 		t.Fatalf("`zerg help egg` 首行形状不认：%q", line)
 	}
-	if m[3] != "4" || m[4] != "0" || m[5] != "3" {
-		t.Errorf("`zerg help egg` 首行报「已开放 %s · 拒执 %s · 危险档 %s」（要 4 / 0 / 3）—— 「报数走唯一真源 `openedForRun`」这一条现读不成立：%q",
+	if m[3] != "2" || m[4] != "0" || m[5] != "5" {
+		t.Errorf("`zerg help egg` 首行报「已开放 %s · 拒执 %s · 危险档 %s」（要 2 / 0 / 5）—— 「报数走唯一真源 `openedForRun`」这一条现读不成立：%q",
 			m[3], m[4], m[5], line)
-	}
-	if _, refusedNow, _ := familyHelpCountsForTest("egg"); refusedNow != 0 {
-		t.Errorf("`egg` 族的「拒执」档现算 %d 条（要 0 —— 写档开出后本族没有真跑拒执的命令了）", refusedNow)
 	}
 }
 

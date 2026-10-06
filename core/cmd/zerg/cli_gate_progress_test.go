@@ -432,3 +432,49 @@ func TestGateProgressStepsTotalExcludesSelfFixtures(t *testing.T) {
 		t.Errorf("分母要数非 self 的真步（2），实得 %s（`add_step self` 的自检夹具步不算）", got)
 	}
 }
+
+// ＋ 趟子串误匹配：查询趟目录名的**尾段**（如 `003`）被当成「属于这一趟」的判据时，一条**无关门进程**
+// （cmd 恰含该尾段、但 `--outdir` 指别处、也不含整条 `dir`）会把**已收工**的趟误判成「还在跑」。
+// 判活只认三条：cmd 含整条 `dir` ／ `--outdir` 与 `dir` 相等 ／ 尾段本身是 `zerg-gates-` 前缀的趟名。
+// 负控有牙：收窄前 `strings.Contains(gp.cmd, base)`（base=003）命中 ⇒ 误判「还在跑」；收窄后判「已收工」。
+func TestGateProgressTripBaseNotMisMatched(t *testing.T) {
+	gpIsolateEnv(t)
+	repo := syntheticRepo(t, "sleep 60\n")
+	// 这一趟目录名尾段是纯数字 `003`（**不是** `zerg-gates-` 前缀的趟名）· 已收工（压旧 mtime）。
+	dir := filepath.Join(t.TempDir(), "003")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gpWriteTSV(t, dir, [][5]string{{"PASS", "a", "0", "1s", ""}})
+	old := time.Now().Add(-30 * time.Minute)
+	if err := os.Chtimes(filepath.Join(dir, "results.tsv"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	// 起一条**与本趟无关**的真门进程：cmd 含尾段 `003`（在 `--outdir` 里）、但既不含整条 `dir`，outdir 也不等于 `dir`。
+	script := filepath.Join(repo, "scripts", "gates", "precommit-gates.sh")
+	other := filepath.Join(t.TempDir(), "003")
+	cmd := exec.Command("bash", script, "--outdir", other)
+	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("起无关门进程失败：%v", err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		o, _ := exec.Command("ps", "-o", "pid=", "-p", gpItoa(cmd.Process.Pid)).Output()
+		if strings.TrimSpace(string(o)) != "" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	rc, out, errb := runZergRepo(t, repo, "gate", "progress", "--dir", dir)
+	if rc != 0 {
+		t.Fatalf("已收工全绿 ⇒ 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if strings.Contains(out, "还在跑") {
+		t.Errorf("无关门进程 cmd 恰含尾段 `003` ⇒ 不许把本趟误判「还在跑」（趟子串误匹配）：\n%s", out)
+	}
+	if !strings.Contains(out, "已收工") {
+		t.Errorf("本趟无归属活进程 ⇒ 要判「已收工」：\n%s", out)
+	}
+}

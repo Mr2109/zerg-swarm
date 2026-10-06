@@ -225,6 +225,73 @@ func TestCheckReplaceRuleFixturesGatePort(t *testing.T) {
 		}
 	})
 
+	// ── 真树双侧（缺口 GAP-20260925-16）：正向「该替换的都在」在**入口**上的两态 ──────────
+	t.Run("正向_规则在真树面零命中_rc1点名", func(t *testing.T) {
+		root := crrfFx(t)
+		crrfW(t, filepath.Join(root, "publish", "whitelist.txt"), "core/\n")
+		crrfW(t, filepath.Join(root, "publish", "replace-rules.tsv"), "regex:/srv/demo	<home>	合成\n")
+		crrfW(t, filepath.Join(root, "core", "a", "clean_test.go"), "x := 1\n") // 反向：规则不命中夹具
+		crrfW(t, filepath.Join(root, "core", "a", "impl.go"), "y := 2\n")       // 正向：该替换面上零命中
+		rc, out, _ := crrfRun(t, "--root", root)
+		if rc != 1 {
+			t.Fatalf("正向缺侧应 rc=1，得 rc=%d out=%s", rc, out)
+		}
+		if !strings.Contains(out, "正向缺侧：**1 条**规则") || !strings.Contains(out, "反向（不该动的）全绿") {
+			t.Fatalf("正向缺侧应逐条点名且反向全绿，out=%s", out)
+		}
+	})
+	t.Run("正向_双侧全绿_rc0", func(t *testing.T) {
+		root := crrfFx(t)
+		crrfW(t, filepath.Join(root, "publish", "whitelist.txt"), "core/\n")
+		crrfW(t, filepath.Join(root, "publish", "replace-rules.tsv"), "regex:/srv/demo	<home>	合成\n")
+		crrfW(t, filepath.Join(root, "core", "a", "clean_test.go"), "x := 1\n")
+		crrfW(t, filepath.Join(root, "core", "a", "impl.go"), "home := \"/srv/demo\"\n")
+		rc, out, _ := crrfRun(t, "--root", root)
+		if rc != 0 || !strings.Contains(out, "双侧全绿（rc=0）") {
+			t.Fatalf("双侧都成立应 rc=0，得 rc=%d out=%s", rc, out)
+		}
+		if !strings.Contains(out, "正向面（该替换的）：同一批前缀下的**非测试件** ⇒ **1 个**件") {
+			t.Fatalf("应报正向面判到 1 件，out=%s", out)
+		}
+	})
+	t.Run("正向_自指排除_规则表不充目标面", func(t *testing.T) {
+		root := crrfFx(t)
+		crrfW(t, filepath.Join(root, "publish", "whitelist.txt"), "publish/\n")
+		crrfW(t, filepath.Join(root, "publish", "replace-rules.tsv"), "regex:/srv/demo	<home>	合成\n")
+		crrfW(t, filepath.Join(root, "publish", "other.go"), "y := 2\n")
+		crrfW(t, filepath.Join(root, "publish", "x_test.go"), "x := 1\n")
+		rc, out, _ := crrfRun(t, "--root", root)
+		if rc != 1 {
+			t.Fatalf("规则表须被自指排除（否则每条规则命中自己那行 = 永真）⇒ 应 rc=1，得 rc=%d out=%s", rc, out)
+		}
+	})
+	t.Run("正向_面0件_未判_rc0", func(t *testing.T) {
+		root := crrfFx(t)
+		crrfW(t, filepath.Join(root, "publish", "whitelist.txt"), "core/\n")
+		crrfW(t, filepath.Join(root, "publish", "replace-rules.tsv"), "regex:/srv/demo	<home>	合成\n")
+		crrfW(t, filepath.Join(root, "core", "a", "clean_test.go"), "x := 1\n")
+		rc, out, _ := crrfRun(t, "--root", root)
+		if rc != 0 || !strings.Contains(out, "该侧**未判**") {
+			t.Fatalf("正向面 0 件应明写未判且 rc=0，得 rc=%d out=%s", rc, out)
+		}
+	})
+	t.Run("json_正向两格", func(t *testing.T) {
+		root := crrfFx(t)
+		crrfW(t, filepath.Join(root, "publish", "whitelist.txt"), "core/\n")
+		crrfW(t, filepath.Join(root, "publish", "replace-rules.tsv"), "regex:/srv/demo\t<home>\t合成\n")
+		crrfW(t, filepath.Join(root, "core", "a", "clean_test.go"), "x := 1\n")
+		crrfW(t, filepath.Join(root, "core", "a", "impl.go"), "y := 2\n")
+		rc, out, _ := crrfRun(t, "--root", root, "--json", "targets,gaps")
+		if rc != 1 {
+			t.Fatalf("应 rc=1，得 rc=%d out=%s", rc, out)
+		}
+		escTab := string([]byte{0x5c, 't'}) // `\t` 两字符（反斜杠 + t · JSON 转义后的形态）
+		if !strings.Contains(out, `"targets": 1`) ||
+			!strings.Contains(out, `"gaps": ["regex:/srv/demo`+escTab+`<home>`+escTab+`合成"]`) {
+			t.Fatalf("targets/gaps 两格应逐字在场（含 \\t 转义），out=%s", out)
+		}
+	})
+
 	// ── B 类读失败（读不了的件）**已翻正**：登记 + 判红 rc=2（✗ 不再静默吞件）─────────
 	t.Run("读不了的件_登记判红_rc2", func(t *testing.T) {
 		if os.Geteuid() == 0 {
@@ -258,13 +325,13 @@ func TestCheckReplaceRuleFixturesGatePort(t *testing.T) {
 		if rc != 0 || !strings.Contains(out, "自检结论: 全过") {
 			t.Fatalf("自检应 rc=0 全过，得 rc=%d out=%s", rc, out)
 		}
-		if !strings.Contains(out, "断言 15 条 · 失败 0 条") {
+		if !strings.Contains(out, "断言 17 条 · 失败 0 条") {
 			t.Fatalf("自检断言计数不符 out=%s", out)
 		}
 	})
 	t.Run("档位_rc0", func(t *testing.T) {
 		rc, out, _ := crrfRun(t, "--list-rules")
-		if rc != 0 || !strings.Contains(out, "退码：0 全绿 · 1 有命中 · 2 不给结论") {
+		if rc != 0 || !strings.Contains(out, "退码：0 双侧全绿 · 1 有缺口（反向命中 / 正向缺侧）· 2 不给结论") {
 			t.Fatalf("档位面应 rc=0 且逐字含退码行，得 rc=%d out=%s", rc, out)
 		}
 	})

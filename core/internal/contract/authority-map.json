@@ -216,6 +216,37 @@
       "理由": "无闸 —— 门100 现读「写面但 usage 未声明写旗标且无 danger（缺白名单）」：本命令会写盘却既无 danger 档、`usage` 也无写旗标 ⇒ 属未白名单，无闸",
       "出处": "GAP-20260927-90 · 门100 现读"
     }
+,
+    {
+      "命令": "dev proposal",
+      "授权类": "无闸",
+      "理由": "无闸 —— `dev proposal new` 会写提案件（`family_dev.go` 的 `cmdDevProposalNew`：`os.MkdirAll`(:261) + `os.OpenFile`(:273)），而 `catalog()` 无 danger 档、`usage` 也无 `--yes`/`--confirm`/`--out` ⇒ 声明面无闸（未声明）",
+      "出处": "GAP-20260927-90 · 门100 现读 · 写点 family_dev.go:261/:273"
+    },
+    {
+      "命令": "dev receipt",
+      "授权类": "无闸",
+      "理由": "无闸 —— `dev receipt new` 会写回执件（`family_receipt.go` 的 `cmdReceiptNew`：`os.MkdirAll`(:135) + `os.WriteFile`(:142)），而 `catalog()` 无 danger 档、`usage` 亦无写旗标 ⇒ 声明面无闸（未声明）",
+      "出处": "GAP-20260927-90 · 门100 现读 · 写点 family_receipt.go:135/:142"
+    },
+    {
+      "命令": "isolate-ro",
+      "授权类": "无闸",
+      "理由": "无闸 —— `isolate-ro new` 经 `exec.Command(bash <隔离脚本>)` 转出写面（`family_isolate_ro.go:82`；写只落在副本目录），而 `catalog()` 无 danger 档、`usage` 无写旗标 ⇒ 声明面无闸（未声明）",
+      "出处": "GAP-20260927-90 · 门100 现读 · 写面 exec 转出 family_isolate_ro.go:82"
+    },
+    {
+      "命令": "gate run",
+      "授权类": "无闸",
+      "理由": "无闸 —— `gate run` 经 `exec.Command(bash precommit-gates.sh)` 转出写面（`gate.go:255`，会写趟目录/台账），而 `catalog()` 无 danger 档、`usage` 无写旗标 ⇒ 声明面无闸（未声明）",
+      "出处": "GAP-20260927-90 · 门100 现读 · 写面 exec 转出 gate.go:255"
+    },
+    {
+      "命令": "gate bench",
+      "授权类": "无闸",
+      "理由": "无闸 —— `gate bench` 建临时日志目录并 `exec.Command(bash <门脚本>)`（`family_gate_bench.go`：`os.MkdirTemp`(:108) / `os.Create`(:123) / `exec`(:129)；临时日志 defer 自回收），而 `catalog()` 无 danger 档、`usage` 无写旗标 ⇒ 声明面无闸（未声明）",
+      "出处": "GAP-20260927-90 · 门100 现读 · 写面 family_gate_bench.go:123/:129"
+    }
   ],
   "写面登记_说明": "本表照「无对应」一格体例：**写面登记** = 每一处会写盘的命令面点名自己的**授权类**；授权类取 `授权类闭集`（`D2`/`D3`/`无闸`）。**无闸**一档 = 该写面没有闸（既无 danger 档、`usage` 也无写旗标）⇒ 必须显式进白名单、`理由` 里逐字写「无闸」（✗ 不许把「未声明/未白名单」写成「已授权」= 洗白）。本批只登记门100 现读「未声明/未白名单」的 4 条；已登记 danger 且 `usage` 已声明旗标的写面由 `catalog()` 的 `dangerSpec` 登记、本表不重复列。",
   "无对应_说明": "`无对应` 一格**显式写出**（不是漏项）：命令面八个旗标子集（∅ / `--dry-run` / `--confirm` / `--yes` / `--confirm+--yes` / `--dry-run+--yes` / `--dry-run+--confirm` / `--dry-run+--confirm+--yes`）**逐条都有对应** ⇒ 本表 `无对应` 为空表；哪天真出现「该格没有对应」的格子，写进 `无对应` 并在 `理由` 里逐字带上「无对应」（判据见 `cli_authority_map_test.go` 的 `TestAuthorityMapGridCompleteness`）。",

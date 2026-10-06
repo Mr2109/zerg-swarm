@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Mr2109/zerg-swarm/core/internal/config"
@@ -37,6 +39,15 @@ type ControlHandlers struct {
 	//   reload 后的新条目（`model add` 写册 + reload 报 ok，孵卵面照样 404）。
 	//   非 nil 时每次请求**现读**当前配置（与其余 API 面同源）；nil 时退回构造时快照（向后兼容）。
 	cfgSource func() *config.FleetConfig
+
+	// loadMu / loadTasks / loadOrder —— 装载任务登记表（缺口 GAP-20260925-44）。
+	//   `POST /api/control/load` 是**异步受理**：请求一受理即回 `accepted + task_id`，真正的装载在
+	//   后台 goroutine 里跑；本表就是那张**只读查询面**的底账（`GET /api/core/status` 的
+	//   `load_tasks`）。phase 三态：accepted（已受理·后台装载中）/ ok（装载返回成功）/
+	//   failed（装载失败，带原因）⇒ 调用方能区分「还在冷装」与「起不来」（「**已受理 ≠ 已完成**」）。
+	loadMu    sync.Mutex
+	loadTasks map[string]*loadTaskRec
+	loadOrder []string
 }
 
 // NewControlHandlers 创建控制处理器。
@@ -67,6 +78,186 @@ func (h *ControlHandlers) currentConfig() *config.FleetConfig {
 		Fleet:  h.Fleet,
 		Models: h.Models,
 	}
+}
+
+// ── 装载任务（缺口 GAP-20260925-44）─────────────────────────────────────────────────────────
+//
+// `POST /api/control/load` 是**异步受理**：请求一受理即回 `accepted + task_id`，真正的装载在
+// 后台 goroutine 里跑。本区就是那张**只读查询面**的底账 —— `GET /api/core/status` 的
+// `load_tasks`（最近 N 枚）读出 `phase`：accepted（已受理·后台装载中）/ ok（装载返回成功）/
+// failed（装载失败，带原因）⇒ 调用方能区分「还在冷装」与「起不来」。
+const (
+	phaseAccepted = "accepted"
+	phaseOK       = "ok"
+	phaseFailed   = "failed"
+	// loadTasksKept —— 只读面保留的最近任务枚数（够复盘，不无限涨）。
+	loadTasksKept = 64
+	// loadDispatchTimeout —— 后台装载转发的超时：**必须 >= 子端装载截止（120s）+ 余量**，
+	//   否则又回到改前「主控先放弃（60s）、子端仍在装（120s）」的错配（本账父代理补记）。
+	loadDispatchTimeout = 300 * time.Second
+)
+
+// loadTaskRec —— 一枚装载任务（内部态 · `startedAt` 用 time.Time 好算 elapsed）。
+type loadTaskRec struct {
+	id         string
+	machine    string
+	model      string
+	phase      string
+	startedAt  time.Time
+	finishedAt time.Time
+	backend    string
+	port       int
+	errMsg     string
+}
+
+// loadTaskSeq —— 任务号序号（进程级原子计数，与纳秒时间一起保证唯一）。
+var loadTaskSeq uint64
+
+// newLoadTaskID —— 造一枚任务号（形状：`load-<纳秒>-<序号>-<机>-<模型>`）。
+func newLoadTaskID(machine, model string) string {
+	n := atomic.AddUint64(&loadTaskSeq, 1)
+	return fmt.Sprintf("load-%d-%d-%s-%s", time.Now().UnixNano(), n, machine, model)
+}
+
+// addLoadTask 登记一枚新任务（**受理**那一刻调用）。
+func (h *ControlHandlers) addLoadTask(t *loadTaskRec) {
+	h.loadMu.Lock()
+	defer h.loadMu.Unlock()
+	if h.loadTasks == nil {
+		h.loadTasks = map[string]*loadTaskRec{}
+	}
+	h.loadTasks[t.id] = t
+	h.loadOrder = append(h.loadOrder, t.id)
+	if len(h.loadOrder) > loadTasksKept {
+		dropped := h.loadOrder[0]
+		h.loadOrder = h.loadOrder[1:]
+		delete(h.loadTasks, dropped)
+	}
+}
+
+// finishLoadTask 结算一枚任务（**后台装载返回**时调用）。
+func (h *ControlHandlers) finishLoadTask(id, phase, errMsg, backend string, port int) {
+	h.loadMu.Lock()
+	defer h.loadMu.Unlock()
+	t := h.loadTasks[id]
+	if t == nil {
+		return
+	}
+	t.phase = phase
+	t.errMsg = errMsg
+	t.backend = backend
+	t.port = port
+	t.finishedAt = time.Now()
+}
+
+// snapshotLoadTasks 只读快照（最近 loadTasksKept 枚 · 供 `GET /api/core/status`）。
+func (h *ControlHandlers) snapshotLoadTasks() []map[string]interface{} {
+	h.loadMu.Lock()
+	defer h.loadMu.Unlock()
+	out := make([]map[string]interface{}, 0, len(h.loadOrder))
+	now := time.Now()
+	for _, id := range h.loadOrder {
+		t := h.loadTasks[id]
+		if t == nil {
+			continue
+		}
+		end := now
+		if !t.finishedAt.IsZero() {
+			end = t.finishedAt
+		}
+		row := map[string]interface{}{
+			"task_id":    t.id,
+			"machine":    t.machine,
+			"model":      t.model,
+			"phase":      t.phase,
+			"started_at": t.startedAt.Format(time.RFC3339),
+			"elapsed_s":  end.Sub(t.startedAt).Seconds(),
+		}
+		if !t.finishedAt.IsZero() {
+			row["finished_at"] = t.finishedAt.Format(time.RFC3339)
+		}
+		if t.backend != "" {
+			row["backend"] = t.backend
+		}
+		if t.port != 0 {
+			row["port"] = t.port
+		}
+		if t.errMsg != "" {
+			row["error"] = t.errMsg
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// loadAcceptWindow —— 「短窗」：请求受理后，主控在这个窗口内等一次**已可判定**的结果 ——
+//
+//	结果到了就**当场据实回**（成功只增不改地补 accepted…；失败原样透传且**不**回 accepted ⇒ 负控）；
+//	窗口内没到（冷装/慢装）⇒ 回「已受理 + 任务号」，结果留后台结算 —— 这才是「保持异步」。
+//	取 2s：够覆盖「未知/拒装/已驻留复用」这类**同步可判定**的返回，又远短于冷装（实测 >45s）。
+var loadAcceptWindow = 2 * time.Second
+
+// loadResult —— 一次后台装载转发的结果。
+type loadResult struct {
+	status   int
+	respBody []byte
+	err      error
+}
+
+// loadBodyFailed —— 子端响应体自称失败（`ok:false`）。
+func loadBodyFailed(b []byte) bool {
+	var m map[string]interface{}
+	if json.Unmarshal(b, &m) != nil {
+		return false
+	}
+	okv, has := m["ok"]
+	return has && okv == false
+}
+
+// loadAcceptedBody —— 受理面的响应体（**只增不改**）：子端原体（若已有）逐键保留，再补
+//
+//	ok / accepted / task_id / started_at / machine / model / note。
+func loadAcceptedBody(machine, model, taskID string, started time.Time, subend map[string]interface{}) map[string]interface{} {
+	out := map[string]interface{}{}
+	for k, v := range subend { // 子端原体逐键保留（零破坏）
+		out[k] = v
+	}
+	out["ok"] = true // `ok` 原样保留（语义收紧为「已受理」）
+	out["accepted"] = true
+	out["task_id"] = taskID
+	out["started_at"] = started.Format(time.RFC3339)
+	out["machine"] = machine
+	out["model"] = model
+	out["note"] = "已受理 ≠ 已完成：装载在后台进行，用 GET /api/core/status 的 load_tasks 查 phase（accepted|ok|failed）"
+	return out
+}
+
+// dispatchLoad —— 后台装载：把 `/load` 转发给子端，并把**真结果**结算进任务表（供只读面查）。
+// 它的整段都可能慢（冷装 >45s）⇒ 主控只在「短窗」内等它，超窗即走「已受理 + 任务号」那条路。
+func (h *ControlHandlers) dispatchLoad(node config.FleetNode, machine, model string, body []byte, taskID string) loadResult {
+	status, respBody, err := forwardToNodeTimeout(h.currentConfig().Auth.Token, node, "/load", body, loadDispatchTimeout)
+	r := loadResult{status: status, respBody: respBody, err: err}
+	phase, errMsg, backend, port := phaseOK, "", "", 0
+	switch {
+	case err != nil:
+		phase, errMsg = phaseFailed, err.Error()
+	case status >= 400:
+		phase, errMsg = phaseFailed, fmt.Sprintf("子端拒装（http_%d）：%s", status, strings.TrimSpace(string(respBody)))
+	case loadBodyFailed(respBody):
+		phase, errMsg = phaseFailed, strings.TrimSpace(string(respBody))
+	default:
+		var m map[string]interface{}
+		if json.Unmarshal(respBody, &m) == nil {
+			if b, ok := m["backend"].(string); ok {
+				backend = b
+			}
+			if p, ok := m["port"].(float64); ok {
+				port = int(p)
+			}
+		}
+	}
+	h.finishLoadTask(taskID, phase, errMsg, backend, port)
+	return r
 }
 
 // LoadHandler 处理 POST /api/control/load
@@ -132,19 +323,56 @@ func (h *ControlHandlers) LoadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 远程子端：转发 /load
+	// 远程子端：**受理**装载请求（缺口 GAP-20260925-44 —— 保持异步，回「已受理 + 任务号」）。
 	node, ok := cfg.Fleet[req.Machine]
 	if !ok {
 		writeErrorCode(w, http.StatusNotFound, "MACHINE_NOT_FOUND", fmt.Sprintf("未知机器: %s", req.Machine))
 		return
 	}
+	// 改前：主控**同步**转发 `/load` 并把子端响应体原样回出去 —— 调用方看到 `{"ok":true,…}`
+	//   无从区分「引擎还在冷装」与「引擎起不来」（本账症状）；且主控转发超时 60s 短于子端装载
+	//   截止 120s ⇒ 冷装 >60s 时主控先回 502 FORWARD_FAILED，而子端仍在装。
+	// 改后（Mr2109 拍：**保持异步**）：请求一受理即回「已受理 + 任务号」，真正的装载在后台跑
+	//   （超时放宽到 >= 子端截止）；只读查询面 = `GET /api/core/status` 的 `load_tasks`。
+	// ★ 响应**只增不改**：`ok` 保留（语义收紧为「已受理」），新增 accepted / task_id / started_at /
+	//   machine / model / note；子端原体（backend/port…）异步下即时不可得，装载完成后由
+	//   `load_tasks` 那一枚任务补齐。
+	// ★ 负控：**受理前**的前置拒执一字未动（未知模型 404 MODEL_NOT_FOUND · 未部署
+	//   MODEL_NOT_DEPLOYED · 机器不存在 MACHINE_NOT_FOUND · 本机已退役 410 · 体坏 400）⇒
+	//   这些路径**不**出 `accepted`（装载失败 = 未受理，不得回 accepted）。
 	body, _ := json.Marshal(map[string]string{"model": req.Model})
-	status, respBody, err := h.forward(node, "/load", body)
-	if err != nil {
-		writeErrorCode(w, http.StatusBadGateway, "FORWARD_FAILED", fmt.Sprintf("转发到 %s 失败: %v", req.Machine, err))
+	taskID := newLoadTaskID(req.Machine, req.Model)
+	started := time.Now()
+	h.addLoadTask(&loadTaskRec{
+		id: taskID, machine: req.Machine, model: req.Model,
+		phase: phaseAccepted, startedAt: started,
+	})
+	// 后台装载（**保持异步**）：请求一受理即开跑；主控只在「短窗」内等一次**已可判定**的结果 ——
+	// 结果到了就当场据实回（成功补 accepted…；失败原样透传且**不**回 accepted ⇒ 负控）。
+	resCh := make(chan loadResult, 1)
+	go func() { resCh <- h.dispatchLoad(node, req.Machine, req.Model, body, taskID) }()
+	var res loadResult
+	select {
+	case res = <-resCh:
+		// 短窗内已有结果 ⇒ 走下面据实回（异步只在「结果没到」时才需要）。
+	case <-time.After(loadAcceptWindow):
+		// 装载仍在跑（冷装/慢装）⇒ 「已受理 + 任务号」；结果留后台结算，用只读面查。
+		writeJSON(w, http.StatusOK, loadAcceptedBody(req.Machine, req.Model, taskID, started, nil))
 		return
 	}
-	writeJSON(w, status, json.RawMessage(respBody))
+	if res.err != nil {
+		// 负控：打不到子端 = 装载**未受理** ⇒ **不**回 accepted（原样报 502 FORWARD_FAILED）。
+		writeErrorCode(w, http.StatusBadGateway, "FORWARD_FAILED", fmt.Sprintf("转发到 %s 失败: %v", req.Machine, res.err))
+		return
+	}
+	if res.status >= 400 || loadBodyFailed(res.respBody) {
+		// 负控：子端**同步拒装**（http ≥400 / ok:false）⇒ 原样透传，**不**回 accepted。
+		writeJSON(w, res.status, json.RawMessage(res.respBody))
+		return
+	}
+	var subend map[string]interface{}
+	_ = json.Unmarshal(res.respBody, &subend)
+	writeJSON(w, http.StatusOK, loadAcceptedBody(req.Machine, req.Model, taskID, started, subend))
 }
 
 // UnloadHandler 处理 POST /api/control/unload
@@ -208,6 +436,12 @@ func (h *ControlHandlers) StopHandler(w http.ResponseWriter, r *http.Request) {
 // 3c（2026-09-16）：从 ControlHandlers.forward 抽出为**包级函数**，供 Handlers 复用
 // （步2：handlers 的"手动启动/停止模型"要从"主控自己起引擎"改成"转发到目标子端" ⇒ 同一实现，不复制）。
 func forwardToNode(token string, node config.FleetNode, path string, body []byte) (int, []byte, error) {
+	return forwardToNodeTimeout(token, node, path, body, 60*time.Second)
+}
+
+// forwardToNodeTimeout —— forwardToNode 的可配超时版（缺口 GAP-20260925-44：后台装载那条路
+// 要用 >= 子端装载截止（120s）的超时，不能再吃 60s 的默认档 —— 否则主控先放弃、子端仍在装）。
+func forwardToNodeTimeout(token string, node config.FleetNode, path string, body []byte, timeout time.Duration) (int, []byte, error) {
 	url := fmt.Sprintf("http://%s:%d%s", node.Host, node.Port, path)
 	var reader io.Reader
 	if body != nil {
@@ -224,7 +458,7 @@ func forwardToNode(token string, node config.FleetNode, path string, body []byte
 	// 这次控制操作就是一条独立的链，不该硬塞进某个会话的链里。
 	tracectx.Propagate(req.Header, nil, "", tracectx.ReplayMarked())
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, nil, err
@@ -261,6 +495,10 @@ func (h *ControlHandlers) CoreStatusHandler(w http.ResponseWriter, r *http.Reque
 		// （判据就是 `grep -n` 那枚字符串 **0 命中** —— 连注释里都不留，否则判据假红）。
 		// ★ 旧字段**不删**（键名一个没改，旧消费者零改动）。
 		"version": version.Tag,
+		// ★ 缺口 GAP-20260925-44：只读查询面 —— 装载任务登记表（最近 N 枚 · phase
+		//   accepted|ok|failed）。复用**既有**面 `GET /api/core/status`（不新开路由、不碰任何
+		//   `main.go`）；`POST /api/control/load` 回的 `task_id` 可在这里查到它的进展。
+		"load_tasks": h.snapshotLoadTasks(),
 		// 3c：原 "local_backend" 字段（LocalBackend 状态）已删 —— 本机角色退役，引擎由子端托管。
 	})
 }

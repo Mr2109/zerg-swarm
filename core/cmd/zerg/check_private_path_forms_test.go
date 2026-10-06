@@ -156,3 +156,59 @@ func mustAbs(t *testing.T, p string) string {
 	}
 	return a
 }
+
+// ppfSelfGolden —— py 原件 `--self-test` 的**逐字节**输出（24 行 + 结论行 · 真原件跑一次取得并钉版）。
+// 主件 `pvSelfTest` 的任何一个断言只要偏一格（got/want/文案/行序），本串即不等 ⇒ 用例必红（有牙）。
+const ppfSelfGolden = "  ✓ ① 正控：规则面 + 脱敏器面全被形态格认领 ⇒ rc=0（期望 rc=0 · 现跑 rc=0）\n  ✓ ② must-fail：`~/…` 形态无格（删 F-02）⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ②b 同上 ⇒ **点名**到「形态无格」（不是笼统红）（期望 rc=1 · 现跑 rc=1）\n  ✓ ③ 成对：把 F-02 补回 ⇒ 回绿 rc=0（期望 rc=0 · 现跑 rc=0）\n  ✓ ④ must-fail：`$HOME` 规则 + 有格认领 ⇒ 仍 rc=0（有格即算枚举到）（期望 rc=0 · 现跑 rc=0）\n  ✓ ④b must-fail：同夹具把 F-03 也删掉 ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑤ 成对：`$HOME` 格走「不覆盖 + 理由」⇒ rc=0（期望 rc=0 · 现跑 rc=0）\n  ✓ ⑤b 同上 ⇒ 该格进 `debt[]`（**逐跑打印**，不静默）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑥ must-fail：门禁侧空且**无理由** ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑦ 真话负控：门禁侧点名**不在盘**的件 ⇒ rc=1（空指）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑦b 同上 ⇒ 理由逐字含「空指」（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑧ 真话负控：出处句 `grep -F` 0 命中 ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑨ E4 只打不红：实例口径探针进 `instances[]` 且 rc 不变（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑩ 缺真源件（空转）⇒ rc=2（不给结论 · 不许当绿）（期望 rc=2 · 现跑 rc=2）\n  ✓ ⑪ 真话负控：注入**真形态**未被任何格认领 ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑪b 同上 ⇒ E2a **点名**该行原文（不是笼统红）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑫ 真话负控：F-13 认领正则弄哑 ⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑫b 同上 ⇒ 报出 `Zerg-内部文档` 那行（E2a 点名）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑬ 真话负控：债务格改回**未登记**（gate 空 + 无理由）⇒ rc=1（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑬b 同上 ⇒ E3 **点名**到 F-16（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑭ 非形态登记：公开示例规则 + 逐字登记 ⇒ rc=0（期望 rc=0 · 现跑 rc=0）\n  ✓ ⑭b 同上 ⇒ 该规则进 `nonform[]`（逐跑打印 · 不静默）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑮ must-fail：同规则不登记 ⇒ rc=1（真形态负控照旧有牙）（期望 rc=1 · 现跑 rc=1）\n  ✓ ⑮b 同上 ⇒ E2a **点名**该行原文（期望 rc=1 · 现跑 rc=1）\n自检结论: 全过（断言 24 条 · 失败 0 条）\n"
+
+// ppfCountW15 —— 数某目录里 `w15-forms-` 前缀的条目（自检夹具回收牙用）。
+func ppfCountW15(dir string) int {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), "w15-forms-") {
+			n++
+		}
+	}
+	return n
+}
+
+// TestPrivatePathFormsSelfTestParity —— `--self-test` 与 py 原件逐字节同 + rc=0（真实 24 断言全过）。
+func TestPrivatePathFormsSelfTestParity(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	rc, out, errb := ppfRun("--self-test")
+	if rc != 0 {
+		t.Fatalf("--self-test 期望 rc=0，实得 rc=%d stderr=%q", rc, errb)
+	}
+	if out != ppfSelfGolden {
+		t.Fatalf("--self-test 输出与 py 原件不逐字节同\n--- got ---\n%q\n--- want ---\n%q", out, ppfSelfGolden)
+	}
+}
+
+// TestPrivatePathFormsSelfTestWired —— 接线牙：✗ 不许退回「未搬」桩（旧桩 rc=2 且 stderr 含「未搬」）。
+func TestPrivatePathFormsSelfTestWired(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	rc, out, errb := ppfRun("--self-test")
+	if strings.Contains(errb, "未搬") {
+		t.Fatalf("--self-test 仍是「未搬」桩：stderr=%q", errb)
+	}
+	if rc != 0 || !strings.Contains(out, "自检结论: 全过（断言 24 条 · 失败 0 条）") {
+		t.Fatalf("--self-test 未真跑：rc=%d out=%q", rc, out)
+	}
+}
+
+// TestPrivatePathFormsSelfTestNoTempLeak —— 回收牙：主件 `defer os.RemoveAll(td)` 若被回退 ⇒ 本用例必红。
+func TestPrivatePathFormsSelfTestNoTempLeak(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	before := ppfCountW15(tmp)
+	if rc, _, _ := ppfRun("--self-test"); rc != 0 {
+		t.Fatalf("--self-test rc=%d", rc)
+	}
+	if after := ppfCountW15(tmp); after != before {
+		t.Fatalf("自检夹具未回收：跑前 %d 个 w15-forms-* / 跑后 %d 个（defer os.RemoveAll 被回退？）", before, after)
+	}
+}

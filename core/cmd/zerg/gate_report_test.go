@@ -14,7 +14,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -25,20 +27,56 @@ import (
 // 全串 sha256（1005 字节）。两侧同值 ⇒ 本件帮助面与 argparse 逐字同构。
 const grtTHelpSha256 = "48607dcbf24fb15fe5a3af0090da8025d0b1f67fc87e005e7874903a31c52bb2"
 
-// grtTReexecEnv：`go test` 二进制被 --self-test 再起时，用它把子进程切回 CLI 语义
-// （★ 拼串而非直落整串：避开「魔法串连续字面落地」的自指形态）。
-const grtTReexecEnv = "GRTREE" + "XEC_PROBE"
+// ── 子进程壳（`go test` 二进制不是 CLI 入口 ⇒ 把 argv 转回 TestGrtHelperProcess 再直调本门入口）──
+// ★ 主件自检以 `grtSelfExe()` 起真子进程重跑本门；测试二进制不是命令面入口 ⇒ 换成仓外探针壳，
+// 探针壳把命令行转回测试二进制里的 TestGrtHelperProcess（在该进程内直调 gateReportMain）。
+// 照 judge_lock_test.go / check_approve_closedset_test.go 的探针壳体例；主件默认档一字未改。
 
 const grtTHelpBytes = 1005
 
-// grtTReexecInit —— `go test` 二进制被 --self-test 再起时切回 CLI 语义。
-// ★ 用 init 而✗ 不用 TestMain：本包**已有他件定义 TestMain**
-// （core/cmd/zerg/check_public_tree_private_test.go:15）⇒ 再定义即 redeclared（共享件禁改）。
-// init 同样先于 testing 的旗标解析与 m.Run 执行，故子进程能按 CLI 口径跑。
-func init() {
-	if os.Getenv(grtTReexecEnv) == "1" {
-		os.Exit(gateReportMain(os.Stdout, os.Stderr, os.Args[1:]))
+func grtTShQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func grtTChildArgs() []string {
+	for i, a := range os.Args {
+		if a == "--" {
+			return os.Args[i+1:]
+		}
 	}
+	return nil
+}
+
+// TestGrtHelperProcess —— 探针壳的落点。仅当 argv 里带 `--` 分界（即被探针壳调起）时才当 CLI 入口。
+func TestGrtHelperProcess(t *testing.T) {
+	args := grtTChildArgs()
+	if args == nil {
+		return
+	}
+	// ★ 探针壳收到的 argv 必须带 inproc 路由前缀（`gate check gate-report`）—— 缺前缀 = 主件的重跑面
+	// 破形（`bin/zerg` 会把本门旗标当未知命令 ⇒ 子进程退 2）⇒ 这里**不**兜底，让牙当场红。
+	if !(len(args) >= 3 && args[0] == "gate" && args[1] == "check" && args[2] == "gate-report") {
+		io.WriteString(os.Stderr, "探针壳：argv 缺 inproc 路由前缀（gate check gate-report）⇒ 重跑面破形\n")
+		os.Exit(2)
+	}
+	os.Exit(gateReportMain(os.Stdout, os.Stderr, args[3:]))
+}
+
+// grtTUseProbe —— 把「自身可执行件」换成仓外探针壳（主件默认档一字未改）。
+func grtTUseProbe(t *testing.T) {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	script := filepath.Join(t.TempDir(), "grt-probe.sh")
+	body := "#!/bin/sh\nexec " + grtTShQuote(exe) + " '-test.run=^TestGrtHelperProcess$' -- \"$@\"\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatalf("写探针壳: %v", err)
+	}
+	old := grtSelfExe
+	grtSelfExe = func() (string, error) { return script, nil }
+	t.Cleanup(func() { grtSelfExe = old })
 }
 
 func grtTRun(args ...string) (int, string, string) {
@@ -480,7 +518,7 @@ func TestGateReportNonUTF8Output(t *testing.T) {
 // ★ 本用例有牙：删掉主件的 defer os.RemoveAll(tmp) ⇒ after = before+1 ⇒ FAIL 带行号。
 func TestGateReportSelfTestRecyclesTempDirs(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir()) // GAP-20261003-16：私有计数面（只数本用例自建 tmp 目录）
-	t.Setenv(grtTReexecEnv, "1")
+	grtTUseProbe(t)                 // ★ 测试二进制不是 CLI 入口 ⇒ 自身可执行件换仓外探针壳
 	before := grtTCountSelfTestDirs(t)
 	rc, out, errs := grtTRun("--self-test")
 	after := grtTCountSelfTestDirs(t)
@@ -496,7 +534,7 @@ func TestGateReportSelfTestRecyclesTempDirs(t *testing.T) {
 }
 
 func TestGateReportSelfTestThreeGears(t *testing.T) {
-	t.Setenv(grtTReexecEnv, "1")
+	grtTUseProbe(t) // ★ 测试二进制不是 CLI 入口 ⇒ 自身可执行件换仓外探针壳
 	rc, out, _ := grtTRun("--self-test")
 	if rc != 0 {
 		t.Fatalf("rc=%d", rc)
@@ -509,6 +547,23 @@ func TestGateReportSelfTestThreeGears(t *testing.T) {
 	rc, out, _ = grtTRun("--selftest")
 	if rc != 0 || !strings.Contains(out, "三档") {
 		t.Fatalf("--selftest 别名档 rc=%d out=%q", rc, out)
+	}
+}
+
+// ★ 回归牙（真命令行面）：自检三档走**真子进程**（探针壳 → 测试二进制 TestGrtHelperProcess）；
+// 主件缺 inproc 路由前缀（`gate check gate-report`）⇒ 探针壳收到的 argv 首段不是 `gate` ⇒ 当场退 2
+// ⇒ ①② 两档恒 ✗ ⇒ 本用例必红。（py 侧走 `[sys.executable, SELF_PATH, …]` 直接以件为入口，无这一层。）
+func TestGateReportSelfTestRoutePrefixTooth(t *testing.T) {
+	grtTUseProbe(t)
+	rc, out, errs := grtTRun("--self-test")
+	if rc != 0 {
+		t.Fatalf("自检 rc=%d 期望 0（主件缺 inproc 路由前缀？）stderr=%q\n%s", rc, errs, out)
+	}
+	if !strings.Contains(out, "✓ 档① 正控") || !strings.Contains(out, "✓ 档② 负控") {
+		t.Fatalf("①② 两档未 ✓（探针壳收到的 argv 少了 inproc 路由前缀？）：\n%s", out)
+	}
+	if !strings.Contains(out, "全过 ✓") {
+		t.Fatalf("自检未全过（缺 inproc 路由前缀？）：\n%s", out)
 	}
 }
 

@@ -577,7 +577,7 @@ const hsListRules = `判据（两半 · 波6 序70）
   0 = 两半都合 · 1 = 判红（逐行不一致 / 逐条缺名 / 条数不等）· 2 = 不给结论（缺制品 / 缺快照 / 零行）
 `
 
-// hsSelfTest —— py `self_test()`：11 格（1 正控性质 + 2 判红性质 + 逐行/条数 + items 四态）。
+// hsSelfTest —— py `self_test()`：15 格（1 正控性质 + 2 判红性质 + 逐行/条数 + items 四态 + A 档四态）。
 //
 //	★ 泄漏修复落点：py 原件用 `tempfile.mkdtemp(prefix=...)` 且**全件 0 处回收** ⇒ 每跑一枚自检
 //	  就在 TMPDIR 堆下一枚同名临时目录。本件**自带 `defer os.RemoveAll`** ⇒ 跑测前后计数不变。
@@ -645,6 +645,30 @@ func hsSelfTest(out io.Writer) bool {
 	casef("③ items 缺命令名 ⇒ 判红", true, len(hsCheckItemsNamed([]interface{}{map[string]interface{}{"commands": "9"}})) > 0)
 	casef("③ items 丢了摘要格 ⇒ 判红", true, len(hsCheckItemsNamed([]interface{}{map[string]interface{}{"command": "zerg a"}})) > 0)
 	casef("③ items 零条 ⇒ 判红（不许当绿）", true, len(hsCheckItemsNamed([]interface{}{})) > 0)
+
+	// ── A 档（`GAP-20261001-47` · 拆档）：只读落盘制品、不起子进程 ──────────────
+	art := hsPyJoin(tmp, "artifact")
+	_ = os.MkdirAll(art, 0o755)
+	_ = os.WriteFile(hsPyJoin(art, hsArtifactHuman),
+		[]byte("  zerg agent ls ｜ 茧壁:node ｜ 子端清单\n  zerg gap ls ｜ 茧壁:host ｜ 缺口账\n"), 0o644)
+	_ = os.WriteFile(hsPyJoin(art, hsArtifactJSON),
+		[]byte("{\"schema\":\"zerg-gate/v1\",\"items\":[{\"command\":\"zerg agent ls\",\"commands\":\"9\"}]}\n"), 0o644)
+	frows, _ := hsRuntimeRowsFromFile(hsPyJoin(art, hsArtifactHuman))
+	casef("A 档 ①制品逐条清单读得出（与现跑同正则）", []string{"agent ls", "gap ls"}, frows)
+	fitems, _, _ := hsRuntimeJSONRowsFromFile(hsPyJoin(art, hsArtifactJSON))
+	fcmds := []string{}
+	for _, it := range fitems {
+		if m, isMap := it.(map[string]interface{}); isMap {
+			if c, _ := m["command"].(string); c != "" {
+				fcmds = append(fcmds, c)
+			}
+		}
+	}
+	casef("A 档 ②制品机器面 items 读得出", []string{"zerg agent ls"}, fcmds)
+	_, w3 := hsRuntimeRowsFromFile(hsPyJoin(art, "nope.txt"))
+	casef("A 档 ③制品不在盘 ⇒ 判不了（不许当空清单）", true, strings.Contains(w3, "不在盘"))
+	_, w4 := hsRuntimeRowsFromFile(hsPyJoin(art, hsArtifactJSON))
+	casef("A 档 ④制品里没有清单行 ⇒ 判不了", true, w4 != "")
 
 	fmt.Fprintf(out, "  自检 %d 格 · 失败 %d 格\n", total, failed)
 	return failed == 0

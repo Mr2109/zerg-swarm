@@ -135,6 +135,61 @@ func TestFFPDeclaredFacesParse(t *testing.T) {
 			t.Fatalf("空字段表应为空集，实得 %v", faces[0].fields)
 		}
 	})
+	// ★ 回归牙（缺口 GAP-20260928-159 / GAP-20261005-45）：拼接变量跨件展开 · 裸标识符常量取值 ·
+	//   未被子表引用的噪声表不误收。旧「只读 main.go、只认单行 []string{…}」的解析器在这两格必 FAIL。
+	t.Run("解析面_拼接变量_裸标识符_不误收噪声", func(t *testing.T) {
+		root := ffpTestTree(t, "package main\nvar commands = []*command{\n"+
+			"\t{path: []string{\"zz\", \"ed\"}, fields: zzFields, run: x},\n"+
+			"\t{path: []string{\"zz\", \"cf\"}, fields: zzConst, run: x},\n"+
+			"\t}\n")
+		defs := "package main\n\n" +
+			"var zzA = []string{\n\t\"alpha\", \"beta\",\n}\n\n" +
+			"var zzB = []string{\"gamma\",\n\t\"delta\"}\n\n" +
+			"var zzNoise = []string{\"--not-a-field\"}\n\n" +
+			"var zzFields = append(append([]string{}, zzA...), zzB...)\n\n" +
+			"var zzConst = []string{\"kappa\", zzConstField}\n\n" +
+			"const zzConstField = \"has_profile\"\n"
+		if err := os.WriteFile(ffpPyJoin(root, "core", "cmd", "zerg", "zz_defs.go"), []byte(defs), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		faces, none, fatal := ffpDeclaredFaces(root)
+		if none || fatal {
+			t.Fatalf("declaredFaces 失败：none=%v fatal=%v", none, fatal)
+		}
+		has := func(path, want string) bool {
+			for _, f := range faces {
+				if f.path == path && strings.Join(f.fields, ",") == want {
+					return true
+				}
+			}
+			return false
+		}
+		if !has("zz ed", "alpha,beta,delta,gamma") {
+			t.Fatalf("拼接变量 `fields: zzFields` 跨件展开错（期望 alpha,beta,delta,gamma）：%v", faces)
+		}
+		if !has("zz cf", "has_profile,kappa") {
+			t.Fatalf("裸标识符常量未按字符串标量取值（期望 has_profile,kappa）：%v", faces)
+		}
+		for _, f := range faces {
+			for _, n := range f.fields {
+				if n == "--not-a-field" {
+					t.Fatalf("未被子表引用的 zzNoise 被误收：%v", faces)
+				}
+			}
+		}
+	})
+	t.Run("解析面_标识符未定义_不进声明面", func(t *testing.T) {
+		root := ffpTestTree(t, "package main\nvar commands = []*command{\n"+
+			"\t{path: []string{\"zz\", \"gh\"}, fields: zzGhost, run: x},\n"+
+			"\t}\n")
+		faces, none, fatal := ffpDeclaredFaces(root)
+		if none || fatal {
+			t.Fatalf("declaredFaces 失败：none=%v fatal=%v", none, fatal)
+		}
+		if len(faces) != 0 {
+			t.Fatalf("标识符未定义应不进声明面（既不假红也不静默当空名单），实得 %v", faces)
+		}
+	})
 }
 
 // ── T3 空值三形态（`[]` · 缺键 · `null`）─────────────────────────────────────
@@ -344,7 +399,9 @@ func TestFFPSelfTest(t *testing.T) {
 			"负控②：声明少一名 ⇒ 点名 runtime_extra=['b']",
 			"负控③：同数不同名 ⇒ 两边都点名",
 			"负控④：仅顺序不同 ⇒ 无差（不比序）",
-			"解析面：合成树 ⇒ 名单逐字（不是 bool）",
+			"解析面：字面量 ⇒ 名单逐字（不是 bool）",
+			"解析面：拼接变量 `fields: zzFields` ⇒ 跨件展开名集（多行字面量 · 缺口 GAP-20260928-159）",
+			"负控⑥：标识符未定义 ⇒ 不进声明面",
 			"负控⑤：读不到命令树 ⇒ rc=2",
 			"── 全过 ──",
 		} {

@@ -130,7 +130,7 @@
 //	真仓缺省两件（显式 `--root` · py 走真仓原件绝对路径）· `--json`（真仓）· `--list-rules` ·
 //	`--piece bin/zerg`（单件替换）· `--piece` 传**绝对路径** · `--piece` 不存在的路径（缺件 ⇒ 2）·
 //	`--piece ""`（空段 join 语义）· `--piece ../` 形态（吃 `..` 语义）· 件集为空（缺 `--piece` ⇒ 默认）·
-//	`--self-test`（成对负控 9 断言 · ＋2 自回收牙 · GAP-20261003-01）· `--json --self-test` · 读不了的件（目录 / 无读权限）·
+//	`--self-test`（成对负控 7 断言 · 对拍 py 现件；＋2 自回收成对牙已移入 `_test.go` · GAP-20261003-01）· `--json --self-test` · 读不了的件（目录 / 无读权限）·
 //	`--root //x/y`（normpath 双前导斜杠）· `--no-self-test`。
 //
 // 未覆盖面（✗ 不声称逐字对齐）：
@@ -779,22 +779,8 @@ func csidSelfTest(stdout io.Writer, verbose bool) (int, []string) {
 		fmt.Fprint(stdout, "  ✓ G1+G2+G3 合成字段面（`a.out` + linker-signed + `Signature=adhoc`）⇒ 三格全红\n")
 	}
 
-	// 自回收成对格（★ GAP-20261003-01 的回归牙）：同一函数 · 同一根 · 成对两态 ——
-	//   格A 干净临时根 ⇒ csidSelfCheck==nil（必判通过）；格B 同一根预置一个 `zerg-sigident-x` ⇒ csidSelfCheck!=nil（必判不通过）。
-	//   ★ 两态取在**同一根**上，故「不过」不是因为根不存在，而是因为**残留被识出** —— 恰是旧 `after-before==0` 断言
-	//     （预置残留恒让 before==after ⇒ delta==0）**漏判**的那条病。
-	pairRoot, err := os.MkdirTemp("", "zerg-csid-pair-")
-	if err != nil {
-		fails = append(fails, "自回收成对格 造根失败："+err.Error())
-		return n, fails
-	}
-	defer func() { _ = os.RemoveAll(pairRoot) }()
-	assertEq("自回收 格A 干净临时根 ⇒ 必判通过（csidSelfCheck==nil）", csidSelfCheck(pairRoot) == nil, true)
-	if err := os.Mkdir(csidPyJoin(pairRoot, "zerg-sigident-x"), 0o755); err != nil {
-		fails = append(fails, "自回收成对格 预置残留失败："+err.Error())
-		return n, fails
-	}
-	assertEq("自回收 格B 同根预置残留 ⇒ 必判不通过（csidSelfCheck!=nil）", csidSelfCheck(pairRoot) != nil, true)
+	// 自回收成对格（★ GAP-20261003-01 的回归牙）已移出 `--self-test`（对齐 py 现件 7 断言 ⇒ 门113 两态 stdout 逐字同），
+	// 改落在 check_signature_identity_test.go 的 TestCheckSignatureIdentity_SelfRecyclePair（同两态断言 · 哑化即 FAIL）。
 	return n, fails
 }
 

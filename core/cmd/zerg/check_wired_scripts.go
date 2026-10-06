@@ -1864,7 +1864,7 @@ func cwsSelftest(stdout io.Writer) int {
 	//   ⑱ 单元负控（与 ⑰ 成对 · 方向性）：非 git 档原样返回（换面只写在候选面这一半）。
 	cs18 := cwsCandidateFiles(base, []string{"a.py"}, "文件系统遍历（非 git 目录）")
 	ok18 := len(cs18) == 1 && cs18[0] == "a.py"
-	results = append(results, cwsCaseRes{"⑱ candidate 面非 git 档原样返回（换面只在候选面这一半）", ok18, ""})
+	results = append(results, cwsCaseRes{"⑱ candidate_files 非 git 档原样返回（换面只在候选面这一半）", ok18, ""})
 
 	// ── ⑲/⑲' 记录类表不得充作引用（`GAP-20260927-139`）成对负控 ─────────────────────
 	fMark := cwsFixture(base, "neg-record-marks", cwsCloneFiles(okFiles, map[string]string{
@@ -1895,7 +1895,7 @@ func cwsSelftest(stdout io.Writer) int {
 			"add_step g \"门X\" tri \"$R\" \"zerg check check-eta\"\n",
 		"scripts/run-gates.sh": zrgRef,
 	}))
-	cwsRunCase("㉑ 负控：`zerg check check-eta`（缺 gate 子命令）⇒ 仍算未挂",
+	cwsRunCase("㉑ 负控：`zerg check check-eta`（缺 gate 子命令）⇒ 仍算未挂（防「只加 zerg 就放行」）",
 		fNG, wlOK, nil, 0, []string{"check-eta.py", "A 命中 1"}, nil, &results)
 
 	// ── 断言 C：件头自述三态（首版 UNSTATED-only · 显式 token `# zerg-wire:`）成对负控 ──

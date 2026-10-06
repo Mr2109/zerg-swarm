@@ -14,9 +14,13 @@
 本件为**元门**（结构断言 + 成对自检 + baseline 棘轮只许下调），做四件事：
     ① 提供**规范空集守卫** `require_domain()`（Python 版）与 `BASH_GUARD_SNIPPET`（Bash 版）——
        空域 ⇒ 打印 BLOCKED 并回 rc=2；有件 ⇒ 回 rc=0。（现读 `code find require_domain` 由此命中。）
-    ② **结构断言**：扫 `scripts/gates/*.py`，凡**扫面型**件（含 os.walk/scandir/listdir/glob/rglob）
-       必须在判绿前带「域计数 >= 写死下限」类断言（`require_domain(` / `空域|空集` /
-       `len(...) >= N` / `<计数> >= N`）⇒ 缺守卫者**逐条点名 rc=1**。
+    ② **结构断言（域级 · GAP-20260927-108 首刀）**：扫 `scripts/gates/*.py`，凡**扫面型**件
+       （含 os.walk/scandir/listdir/glob/rglob）必须在**判定出口前**带**域级空集守卫** ——
+       ① `require_domain(<被扫集合>, …)` · ② 空集检查子句（`if not <集合>:` / `len(<集合>) <op> N` /
+       `<集合> == 0`）**且其块内** fail-closed · ③ `空域|空集` **且近旁** fail-closed。
+       ★ **✗ 不认文件级命中**：件里任一处 `len(x) >= N` / `is None` / `not isdir` 一律**不算守卫**
+       （旧口径 `GUARD_RE` 是文件级 —— 实测 `check-build-tags.py:310` 的无关 `len(parts) >= 3`
+       把 `:553 if not targets: return` 这个真洞洗成绿）⇒ 缺守卫者**逐条点名 rc=1**。
     ③ **baseline 棘轮**：现读缺守卫件数 <= BASELINE 才绿（**只许下调**；下调 = 补齐守卫）。
        绿档也照实打印「剩余 N 条」（✗ 不许悄悄绿 —— 同门① 的口径）。
     ④ **非扫面型 · 已人工复核（登记表 · ✗ 不扩本门扫面）**：6 门**结构上**不含
@@ -32,15 +36,19 @@
     · **登记与结构不符**（`NON_SCAN_REVIEWED` 里的件现读含扫面调用）⇒ rc=1（登记过期可见）；
     · **缺语料 / 扫描根读不到 ⇒ rc=2 不给结论**（✗ 空域不许当绿 —— 本件自己先守此线）；
     · **只读**：不写任何文件（`--emit-baseline` 只把现读数打到 stdout，✗ 不写盘）；
-    · 结构断言是**启发式**：白名单 / baseline 是它唯一的人工降噪口（免误报当红）。
+    · 结构断言是**域级启发式**（守卫＝空集检查＋出口前 fail-closed）：白名单 / baseline 是它的人工降噪口。
 
 用法：
     python3 scripts/gates/check-empty-domain-guards.py [--root <目录>] [--baseline N] [--json]
     python3 scripts/gates/check-empty-domain-guards.py --self-test
     python3 scripts/gates/check-empty-domain-guards.py --emit-baseline     # 现读缺守卫数（只打印）
 
-★ 接线状态：**已挂门90**（add_step gates · tri-report 只报告档）· baseline 棘轮已随真值下调至 **0**
-  （2026-10-05 现读 scripts/gates：扫面型 141 件 · 缺守卫 0 条）——
+★ 接线状态：**已挂门90**（add_step gates · tri-report 只报告档）。
+  2026-10-06 首刀（GAP-20260927-108 · 本波）：`GUARD_RE`（文件级）⇒ **域级**（空集检查＋判定出口前
+  fail-closed）＋成对负控（档④′ 无关 `len(x) >= 3` · 档④″ 空集检查未 fail-closed）⇒
+  现读真基线 **14**（旧读数 0 = 文件级假阳不可信态；`--emit-baseline` 现算 · ✗ 不用 0）。
+  ★ 随动面（本文件外 · 另路/父代）：`precommit-gates.sh:3507` 门90 步名「缺 0 ≤基线 0」、
+  `judge-registry.json` 缓存键（`--emit`）须随动。
   2026-10-04 现读更正：原「仓外候件 / 未挂进任何门步」措辞已过期（接线早已落）。
   2026-10-05 收口：补 ④ 非扫面型 · 已人工复核登记表（6 门）· ✗ 不扩本门扫面。
 """
@@ -86,39 +94,92 @@ require_domain() {  # require_domain <计数> <写死下限> <说明>
 SCAN_RE = re.compile(
     r"os\.walk\s*\(|os\.scandir\s*\(|os\.listdir\s*\(|glob\.glob\s*\(|\.rglob\s*\(|\.glob\s*\("
 )
-# 空集守卫：判绿前必有「域计数 >= 写死下限」类断言
-GUARD_RE = re.compile(
-    r"require_domain\s*\("
-    r"|空域|空集"
-    r"|(?:len|count)\s*\([^)\n]*\)\s*[<>]=?\s*\d"
-    r"|(?:件数|域计数|count|total|items?|files?|n)\s*>=\s*\d"
-    # ★ 扩识别口径（GAP-20260927-108 收口）：认「空集 / 取不到 ⇒ fail-closed」这一族的**守卫子句** ——
-    #   ① `== 0`（域计数为 0）· ② `is None`（取不到）· ③ `not os.path.isdir/isfile/exists(…)`（扫描输入不存在），
-    #   且这一条件**同一子句内**紧跟 fail-closed 判决（return 2 / rc=2 / 不给结论 / BLOCKED / 空转 /
-    #   fail-closed / 未取数 / sys.exit(2)）。
-    #   ✗ 不认「裸 ==0 / 裸 is None / 裸 not isdir」—— 那是与守卫无关的比较（放宽口径 = 把真缺守卫的件洗成绿）。
-    r"|(?:==\s*0\b|\bis\s+None\b|not\s+os\.path\.(?:isdir|isfile|exists)\s*\()"
-    r"[\s\S]{0,200}?"
-    r"(?:return\s+2\b|rc\s*=?\s*2\b|不给结论|BLOCKED|空转|fail[- ]?closed|未取数|sys\.exit\(\s*2)"
-    # ★★ 二次扩识别口径（2026-10-04 收口 GAP-20260927-108 尾批 · 去 4 条启发式假报）：
-    #   再认「**空集判定 ＋ 强 fail-closed 判决**」这一族 —— ④ `if not <集合变量>:`（扫面/解析出的集合为空）
-    #   同一子句内紧跟**强判决**：`判不了` / `找不到` / `缺失` / `不存在` / `raise <XxxBail|Error|Exception>(` /
-    #   `"rc": 2`（字典形态）。据此覆盖 rc=1 两值制定式（check-compat-manifest / check-unsubstituted-placeholders）、
-    #   `raise Bail` fail-closed（check-flag-registry-parity）、`{"rc": 2}` 空转档（check-parser-discipline）。
-    #   ✗ 本支**刻意不含**裸 `BLOCKED` / 裸 `rc=2`：那会把「只查某个前置件在不在、不数空域」的件
-    #   （如 check-selftest-knobs 的 `if not pc:`、check-registry-key-unique 的 isdir 前置）也洗成绿 ——
-    #   负控（现读 6 条里真缺的 2 条）必须仍被点名。
-    r"|if\s+not\s+[A-Za-z_][A-Za-z0-9_]*\s*:[\s\S]{0,200}?"
-    r"(?:判不了|找不到|缺失|不存在|raise\s+\w*(?:Bail|Error|Exception)\b|rc[\"']?\s*:\s*2\b)"
+# 域级空集守卫（GAP-20260927-108 首刀）—— ✗ 不认「文件级」命中：
+#   件里任何一处 `len(x) >= N` / `is None` / `not os.path.isdir` 一律**不算守卫**
+#   （那是与「被扫集合是否为空」脱钩的普通比较 —— 本门旧口径的病根）。
+#   只认三族，且**每一族都必须落「判定出口前」**：
+#     ① `require_domain(<被扫集合>, …)` 调用（✗ 排除 `def require_domain(` 本体行）；
+#     ② **空集检查子句**：`if not <集合>:` / `if not len(<集合>):` /
+#        `if len(<集合>) <op> N:`（op ∈ {<,<=,==}） / `if <集合> == 0:`；
+#     ③ `空域` / `空集` 概念词。
+#   ★ 「在判定出口前」＝ fail-closed 判决（rc=2 / 不给结论 / BLOCKED / 退码 2 / 空转 /
+#     未取数 / EXIT_NOCONCL / EXIT_BLOCKED / RC_BLOCKED / sys.exit(2) / 判不了 / 找不到）
+#     必须落在**该子句自己的缩进块里**（② 族）或**近旁 240 字内**（③ 族）；
+#     ✗ 不认「同件别处恰好有个 return 2」（那是文件级假阳 · 实测 `check-build-tags.py` 的
+#       `:310 len(parts) >= 3` 曾把 `:553 if not targets: return` 这个真洞洗成绿）。
+REQUIRE_DOMAIN_RE = re.compile(r"require_domain\s*\(")
+EMPTY_WORD_RE = re.compile(r"空域|空集")
+DEF_TAIL_RE = re.compile(r"def\s+$")
+FAILCLOSED_RE = re.compile(
+    r"return\s+2\b|rc\s*=?\s*2\b|不给结论|BLOCKED|空转|fail[- ]?closed|未取数|"
+    r"sys\.exit\(\s*2|退码\s*2|EXIT_NOCONCL|EXIT_BLOCKED|RC_BLOCKED|判不了|找不到"
 )
+# 空集检查子句（② 族）：捕获那个「集合表达式」（含 下标 / 属性：`res["scanned"]` / `self.x`）
+_CE = r"([A-Za-z_][\w.]*(?:\[[^\]\n]*\])?)"
+GUARD_EMPTY_RES = (
+    re.compile(r"if\s+not\s+" + _CE + r"\s*:"),
+    re.compile(r"if\s+not\s+len\s*\(\s*" + _CE + r"\s*\)\s*:"),
+    re.compile(r"if\s+len\s*\(\s*" + _CE + r"\s*\)\s*(?:<|<=|==)\s*\d+\s*:"),
+    re.compile(r"if\s+" + _CE + r"\s*==\s*0\b\s*:"),
+)
+
+
+def _clause_block_failclosed(text, colon_idx, if_indent, span=2000):
+    """`if …:` 的**直接块**（到下一个缩进 <= if_indent 的非空行止）**本级**有无 fail-closed。
+
+    ★ 只认**直接块本级**（缩进 == 块首缩进）的 fail-closed 判决 ——
+      ✗ 不认嵌套子 `if` 里的 `return 2`（那不是「这个空集检查」的判定出口；
+        否则 `if not args['no_self']:` ⇒ 内层 `if rc != 0: return 2` 会把无关件洗成绿）。
+    """
+    lines = text[colon_idx:colon_idx + span].split("\n")
+    block = []  # [(indent, text)]
+    for j, ln in enumerate(lines):
+        if j == 0:
+            if ln.strip():
+                block.append((if_indent + 1, ln))
+            continue
+        if ln.strip() == "":
+            continue
+        ind = len(ln) - len(ln.lstrip(" \t"))
+        if ind <= if_indent:
+            break
+        block.append((ind, ln))
+    if not block:
+        return False
+    direct = min(ind for ind, _ in block)
+    seg = "\n".join(t for ind, t in block if ind == direct)
+    if FAILCLOSED_RE.search(seg):
+        return True
+    # 多行**字典空转档**：`return {\n "rc": 2, …}`（`"rc": 2` 只出现在 fail-closed 空转档里）
+    whole = "\n".join(t for _, t in block)
+    return bool(re.search(r"[\"']rc[\"']?\s*:\s*2\b", whole))
+
+
+def has_domain_guard(text):
+    """回 True ⇔ 件里含**域级空集守卫**（三族之一，且落「判定出口前」）。"""
+    for m in REQUIRE_DOMAIN_RE.finditer(text):
+        if not DEF_TAIL_RE.search(text[:m.start()]):  # ✗ 排除 `def require_domain(` 本体
+            return True
+    for m in EMPTY_WORD_RE.finditer(text):
+        if FAILCLOSED_RE.search(text[m.start():m.start() + 240]):
+            return True
+    for rx in GUARD_EMPTY_RES:
+        for m in rx.finditer(text):
+            line_start = text.rfind("\n", 0, m.start()) + 1
+            if_indent = len(text[line_start:m.start()]) - len(text[line_start:m.start()].lstrip(" \t"))
+            colon = text.find(":", m.end() - 1)
+            if colon != -1 and _clause_block_failclosed(text, colon + 1, if_indent):
+                return True
+    return False
+
 # 附报告档（✗ 不判红）：subprocess 调用与 returncode 检查
 SUBPROC_RE = re.compile(r"subprocess\.(?:run|Popen)\s*\(")
 RCCHECK_RE = re.compile(r"returncode|check\s*=\s*True")
 
 EXTS = (".py",)
 # ★ baseline 棘轮（只许下调）：现读缺守卫件数，首测值见下方常量
-BASELINE = 0  # 棘轮随真值下调（2026-10-05 现读 scripts/gates：扫面型 141 件 · 缺守卫 0 条）
-              # ✗ 只许下调（补齐守卫即下调）；上调 = 放宽口径 ⇒ 须走拍板。空域候选见 --baseline 0 现读名单。
+BASELINE = 14  # 棘轮：2026-10-06 域级口径首刀后 `--emit-baseline` 现算真值（旧 0 = 文件级假阳不可信态）。
+               # ✗ 只许下调（补齐守卫即下调）；上调 = 放宽口径 ⇒ 须走拍板。空域候选见 --baseline 0 现读名单。
 SELF_PATH = os.path.abspath(__file__)
 
 # ── ④ 非扫面型 · 已人工复核（登记表 · ✗ 不扩本门扫面 · GAP-20260927-108 尾批）──────────
@@ -170,7 +231,7 @@ def structural_scan(root):
         except OSError:
             continue
         scanned += 1
-        if SCAN_RE.search(text) and not GUARD_RE.search(text):
+        if SCAN_RE.search(text) and not has_domain_guard(text):
             unguarded.append(os.path.relpath(p, root))
         if SUBPROC_RE.search(text) and not RCCHECK_RE.search(text):
             subproc_unchecked += 1
@@ -230,7 +291,7 @@ def run(root, baseline, as_json=False, emit_baseline=False):
           % (scanned, live, baseline, subproc_unchecked))
     if unguarded:
         for f in unguarded:
-            print("  ✗ %s —— 扫面型但无「域计数 >= 写死下限」类守卫（空域会静默 rc=0）" % f)
+            print("  ✗ %s —— 扫面型但无「域级空集守卫」（空集检查＋出口前 fail-closed · 空域会静默 rc=0）" % f)
     # ── ④ 非扫面型 · 已人工复核（登记表 · 逐条印出 · ✗ 不计入上面「缺守卫」数）──
     print("非扫面型 · 已人工复核 %d 门（✗ 不在本门扫面范围：结构性不含 os.walk/scandir/listdir/glob "
           "⇒ SCAN_RE 0 命中；空域风险由件内各自 fail-closed 处理，**不计入上面「缺守卫」数**）："
@@ -266,7 +327,7 @@ def _st_chk(bad, label, want, rc, out):
 def self_test():
     """六档：守卫正控/负控 · 元门正控/负控 · 缺语料 · 登记表（登记与结构不符）。"""
     bad = [0]
-    print("── check-empty-domain-guards.py --self-test 七档（正控 0 · 负控 1/2 · 缺语料/空域 2 · 登记 1）")
+    print("── check-empty-domain-guards.py --self-test 九档（正控 0 · 负控 1/2 · 缺语料/空域 2 · 登记 1）")
     tmp = tempfile.mkdtemp(prefix="emptydomain-selftest-")
     try:
         # ① 守卫正控：有件 ⇒ 0
@@ -314,6 +375,27 @@ def self_test():
 
         _st_chk(bad, "档③ 元门正控：扫面型件带守卫 ⇒ rc=0", 0, *run("--root", d_ok, "--baseline", "0"))
         _st_chk(bad, "档④ 元门负控：扫面型件缺守卫 ⇒ rc=1（点名）", 1, *run("--root", d_bad, "--baseline", "0"))
+        # ④′ 域级负控：扫面型 + **只**有无关于 `len(x) >= 3` ⇒ rc=1（不靠无关比较洗绿 · 病根标本）
+        d_unrel = put("unrel", "unrelated_len.py",
+                      "import os\n"
+                      "def main():\n"
+                      "    found = []\n"
+                      "    for dp, _d, fs in os.walk('.'):\n        found += fs\n"
+                      "    parts = 'a_b_c'.split('_')\n"
+                      "    if len(parts) >= 3:\n        return 0\n"
+                      "    return 0\n")
+        _st_chk(bad, "档④′ 域级负控：扫面型 + 只含无关 `len(x) >= 3` ⇒ rc=1（不靠无关比较洗绿）", 1,
+                *run("--root", d_unrel, "--baseline", "0"))
+        # ④″ 域级负控：扫面型 + 有空集检查但**未 fail-closed**（`if not found: return 0`）⇒ rc=1
+        d_nofc = put("nofc", "empty_no_fc.py",
+                     "import os\n"
+                     "def main():\n"
+                     "    found = []\n"
+                     "    for dp, _d, fs in os.walk('.'):\n        found += fs\n"
+                     "    if not found:\n        return 0\n"
+                     "    return 0\n")
+        _st_chk(bad, "档④″ 域级负控：扫面型 + 空集检查但未 fail-closed（`if not found: return 0`）⇒ rc=1", 1,
+                *run("--root", d_nofc, "--baseline", "0"))
         _st_chk(bad, "档⑤ 缺语料：`--root` 不存在 ⇒ rc=2（不给结论）", 2,
                 *run("--root", os.path.join(tmp, "no-such-root")))
         # ⑤′ 空域（GAP-20260927-108 收口 · 本门自身守此线）：`--root` 是**空目录**（存在但 0 件）⇒ rc=2（空转 ≠ 绿）

@@ -111,7 +111,7 @@ exec 3>&1
 dump() {
   local i=0
   while [ "$i" -lt "${#STEP_NAME[@]}" ]; do
-    printf '%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\0' \
       "${STEP_SCOPE[$i]}" "${STEP_NAME[$i]}" "${STEP_MODE[$i]}" "${STEP_DIR[$i]}" "${STEP_CMD[$i]}" >&3
     i=$((i+1))
   done
@@ -497,11 +497,13 @@ func cgcExtractSteps(root, tmpdir string) ([]cgcStep, string) {
 			rc, tail)
 	}
 	var steps []cgcStep
-	for _, line := range strings.Split(out, "\n") {
-		if strings.Count(line, "\t") < 4 {
+	// ★ 记录用 NUL 分隔（`GAP-20260927-127`，与 py `extract_steps` 逐字同）：命令串里可能含**换行**
+	//   （多行 add_step）⇒ 用 `\n` 作分隔会把一条记录切成几行、只取到首行（脚本名在第 2 行 ⇒ 误判 ② 弱挂载）。
+	for _, rec := range strings.Split(out, "\x00") {
+		if strings.Count(rec, "	") < 4 {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 5)
+		parts := strings.SplitN(rec, "	", 5)
 		if strings.HasPrefix(parts[1], "自检-") {
 			continue
 		}
@@ -2029,25 +2031,6 @@ func cgcSelfTest(sink io.Writer, deep bool) bool {
 	check(hit2+"（rc=0）", rc2 == 0, fmt.Sprintf("rc=%d", rc2))
 	check(hit2+"（A 红数 0）", strings.Contains(out2, "未收进且不在白名单 = 红：0"), "")
 
-	// ── ③b ② 拆两档（`GAP-20260927-123`）：命令位调用 ⇒ ②a ／ 注释里只提一下 ⇒ ②b ─────────
-	wfix := cgcFixture(base, "tier2-wired", cgcFixOpts{
-		steps:      [][2]string{{"core", "go build ./..."}, {"", "python3 scripts/ok.py"}},
-		scripts:    []string{"scripts/ok.py", "scripts/side.py"},
-		gatesExtra: "if true; then python3 scripts/side.py; fi"})
-	rcw, outw := cgcRunCapture([]string{"--no-self-test", "--root", wfix})
-	check("③b 命令位调用（非 add_step）⇒ 判 ②a 真接线（旧口径只给一个 ②）",
-		rcw == 0 && strings.Contains(outw, "②a **真接线**（闸体命令位调用 · 与门③同口径）：1") &&
-			strings.Contains(outw, "②b **只被提一下**（注释/文案/清单项 · **不算接线** · `GAP-20260927-123`）：0"),
-		fmt.Sprintf("rc=%d", rcw))
-
-	// ── ③c ① 的 `zerg gate check <去扩展名>` 等价档（`GAP-20261001-74`）──────────────
-	zfix := cgcFixture(base, "zerg-insteps", cgcFixOpts{
-		steps:   [][2]string{{"core", "go build ./..."}, {"", "zerg gate check check-x"}},
-		scripts: []string{"scripts/check-x.py"}})
-	rcz, outz := cgcRunCapture([]string{"--no-self-test", "--root", zfix})
-	check("③c `zerg gate check <去扩展名>` 命令位 ⇒ 判 ① in_steps 等价档（GAP-20261001-74）",
-		rcz == 0 && strings.Contains(outz, "① add_step 命令串里点名：1"), fmt.Sprintf("rc=%d", rcz))
-
 	okWL := map[string]any{"build_dirs": []any{}, "scripts": []any{
 		map[string]any{"path": "scripts/ok.py", "reason": "夹具占位", "date": "2026-09-18"}}}
 	ratOK := cgcFixture(base, "b-ratchet-ok", cgcFixOpts{
@@ -2152,6 +2135,77 @@ func cgcSelfTest(sink io.Writer, deep bool) bool {
 		strings.Contains(out, "① add_step 命令串里点名：0") &&
 		strings.Contains(out, "② 闸文件里被提到、但不在任何 add_step 命令串里（弱挂载 · 单列）：2") &&
 		strings.Contains(out, "- scripts/ok.py"), "")
+	check("⑭ 且②b「只被提一下」单列（注释里的门不算接线）",
+		strings.Contains(out, "②b **只被提一下**") &&
+			strings.Contains(out, "②b **只被提一下**（注释/文案/清单项 · **不算接线** · `GAP-20260927-123`）：2"), "")
+
+	// ── ⑭b/⑭c ② 拆两档（真接线 vs 只被提一下）成对负控（`GAP-20260927-123`）────────────
+	//   判据面 = `script_tier` 的 ②a/②b 分类（命令位调用 = 真接线；注释/文案 = 只被提一下）。
+	//   ⑭b 正控：闸体里 `python3 scripts/side.py`（命令位、非 add_step）⇒ 判 ②a；
+	//   ⑭c 负控（同一夹具、只把命令位那行改成注释）⇒ 回 ②b（分类不是恒真）。
+	wfix := cgcFixture(base, "c-tier2-wired", cgcFixOpts{
+		steps:      [][2]string{{"core", "go build ./..."}, {"", "python3 scripts/ok.py"}},
+		scripts:    []string{"scripts/ok.py", "scripts/side.py"},
+		gatesExtra: "if true; then python3 scripts/side.py; fi"})
+	rcw, outw := cgcRunCapture([]string{"--no-self-test", "--root", wfix})
+	check("⑭b 命令位调用（非 add_step）⇒ 判 ②a 真接线（旧口径只给一个 ②）",
+		rcw == 0 && strings.Contains(outw, "②a **真接线**（闸体命令位调用 · 与门③同口径）：1") &&
+			strings.Contains(outw, "②b **只被提一下**（注释/文案/清单项 · **不算接线** · `GAP-20260927-123`）：0"),
+		fmt.Sprintf("rc=%d", rcw))
+	if b, e := os.ReadFile(cgcPyJoin(wfix, "scripts", "gates", "precommit-gates.sh")); e == nil {
+		mod := strings.Replace(string(b), "if true; then python3 scripts/side.py; fi",
+			"# 只提到 scripts/side.py，不是命令位调用", 1)
+		cgcWriteFile(cgcPyJoin(wfix, "scripts", "gates", "precommit-gates.sh"), mod)
+	}
+	rcw2, outw2 := cgcRunCapture([]string{"--no-self-test", "--root", wfix})
+	check("⑭c 负控（同一夹具 · 把那行改成注释）⇒ 回 ②b（分类不是恒真）",
+		rcw2 == 0 && strings.Contains(outw2, "②a **真接线**（闸体命令位调用 · 与门③同口径）：0") &&
+			strings.Contains(outw2, "②b **只被提一下**（注释/文案/清单项 · **不算接线** · `GAP-20260927-123`）：1"),
+		fmt.Sprintf("rc=%d", rcw2))
+
+	// ── ⑭f/⑭g ① 的 `zerg gate check <去扩展名>` 等价档（`GAP-20261001-74`）─────────────
+	//   ⑭f 正控：命令位 `zerg gate check check-x` ⇒ ① 命中 1、rc=0。
+	zfix := cgcFixture(base, "z-zerg-insteps", cgcFixOpts{
+		steps:   [][2]string{{"core", "go build ./..."}, {"", "zerg gate check check-x"}},
+		scripts: []string{"scripts/check-x.py"}})
+	rcz, outz := cgcRunCapture([]string{"--no-self-test", "--root", zfix})
+	check("⑭f `zerg gate check <去扩展名>` 命令位 ⇒ 判 ① in_steps 等价档（GAP-20261001-74）",
+		rcz == 0 && strings.Contains(outz, "① add_step 命令串里点名：1"), fmt.Sprintf("rc=%d", rcz))
+	//   ⑭g 负控（与 ⑭f 成对 · 方向性）：缺 `gate` 子命令（`zerg check check-x`）⇒ 不认 ⇒ 落 ③、rc=1
+	zfix2 := cgcFixture(base, "z-zerg-nosubcmd", cgcFixOpts{
+		steps:   [][2]string{{"core", "go build ./..."}, {"", "zerg check check-x"}},
+		scripts: []string{"scripts/check-x.py"}})
+	cgcGitify(zfix2) // 有索引 ⇒ 「新件 ⟷ 存量债」分得开（否则 rc=2「判不了」）
+	rcg, outg := cgcRunCapture([]string{"--no-self-test", "--root", zfix2})
+	check("⑭g 负控：`zerg check check-x`（缺 gate）⇒ 不判 ①（防「只加 zerg 就放行」）",
+		rcg == 1 && strings.Contains(outg, "① add_step 命令串里点名：0"), fmt.Sprintf("rc=%d", rcg))
+
+	// ── ⑭d/⑭e 治静默：**只被提一下的新件**必须落 ④（rc=1）—— 成对负控 ──────────────
+	//   判据面 = 「②b 只被提一下 ∧ 不在 git 索引 ⇒ 新件未挂门」。旧口径里它落 ② ⇒ 永久静默。
+	mfix := cgcFixture(base, "d-mention-new-ungated", cgcFixOpts{
+		steps:   [][2]string{{"core", "go build ./..."}, {"", "python3 scripts/ok.py"}},
+		scripts: []string{"scripts/ok.py"}})
+	cgcGitify(mfix) // 有索引 ⇒ 「新件 ⟷ 存量债」分得开
+	cgcWriteFile(cgcPyJoin(mfix, "scripts", "mentiononly.py"),
+		"#!/usr/bin/env python3\nprint('mention only fixture')\n")
+	gmf := cgcPyJoin(mfix, "scripts", "gates", "precommit-gates.sh")
+	if b, e := os.ReadFile(gmf); e == nil {
+		mod := strings.Replace(string(b), `main "$@"`,
+			"# 只提到 scripts/mentiononly.py，不接进任何一步\n"+`main "$@"`, 1)
+		cgcWriteFile(gmf, mod)
+	}
+	rcm, outm := cgcRunCapture([]string{"--no-self-test", "--root", mfix})
+	check("⑭d **只被提一下的新件** ⇒ rc=1 + 点名（旧口径落 ② ⇒ 永久静默/rc=0）",
+		rcm == 1 && strings.Contains(outm, "新件只被提一下、未真接线"), fmt.Sprintf("rc=%d", rcm))
+	//   负控（与 ⑭d 成对）：把它真接进 add_step ⇒ 落 ① ⇒ 回绿
+	if b, e := os.ReadFile(gmf); e == nil {
+		mod := strings.Replace(string(b), `  add_step fixture "步骤 core"`,
+			"  add_step fixture \"步骤 mentiononly\" rc \"${REPO_ROOT}\" \"python3 scripts/mentiononly.py\"\n"+
+				`  add_step fixture "步骤 core"`, 1)
+		cgcWriteFile(gmf, mod)
+	}
+	rce, _ := cgcRunCapture([]string{"--no-self-test", "--root", mfix})
+	check("⑭e 同批真接线（写进 add_step）⇒ 回绿（rc=0）—— 与 ⑭d 成对", rce == 0, fmt.Sprintf("rc=%d", rce))
 
 	check("⑮ 报告含「计数自证」两条恒等式",
 		strings.Contains(out2, "计数自证") && strings.Contains(out2, "① 1 + ② 1 + ③ 0 = 2（候选 2）"), "")
@@ -2203,6 +2257,17 @@ func cgcSelfTest(sink io.Writer, deep bool) bool {
 	check("⑰ 同批挂门（写进 add_step）⇒ 回绿（rc=0）—— 与 ⑯ 成对", rc == 0, fmt.Sprintf("rc=%d", rc))
 	check("⑰ 且新格归零", strings.Contains(out,
 		"④ **新件未挂门**（本门开张后新建、且没与代码同批挂 add_step）= **0**"), "")
+
+	// ── ⑰b 多行 add_step 命令：脚本名在第 2 行 ⇒ 必判 ①（`GAP-20260927-127` 成对负控）──────
+	//   判据面 = 步骤抽取器：记录改 NUL 分隔 ⇒ 多行命令原样进 cmds_text。
+	mlfix := cgcFixture(base, "multiline-step", cgcFixOpts{
+		steps:   [][2]string{{"core", "go build ./..."}, {"", "true\npython3 scripts/multiline.py"}},
+		scripts: []string{"scripts/multiline.py"}})
+	rcml, outml := cgcRunCapture([]string{"--no-self-test", "--root", mlfix})
+	check("⑰b 多行 add_step（脚本名在第 2 行）⇒ 判 ①（不被首行截断）", rcml == 0, fmt.Sprintf("rc=%d", rcml))
+	check("⑰b 且 ① 档点名 1 条", strings.Contains(outml, "① add_step 命令串里点名：1"), "")
+	check("⑰b 且 ② 档为 0（旧口径会把这条切成弱挂载）",
+		strings.Contains(outml, "② 闸文件里被提到、但不在任何 add_step 命令串里（弱挂载 · 单列）：0"), "")
 
 	oorFix := cgcFixture(base, "c-new-ungated-oor", cgcFixOpts{
 		steps:   [][2]string{{"core", "go build ./..."}, {"", "python3 scripts/ok.py"}},
