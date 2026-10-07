@@ -330,6 +330,56 @@
       "object": "scripts/253/docker_worker_test.go",
       "state": "已删（2026-09-20）",
       "evidence": "主仓 d52a9c7d"
+    },
+    {
+      "object": "scripts/gates/check-build-selfclean.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同：inproc(./bin/zerg gate check check-build-selfclean)=rc0/295B/0B ⟷ 直跑 py(python3.14.7 scripts/gates/check-build-selfclean.py)=rc0/295B/0B（diff stdout/stderr 皆 IDENTICAL） · Go 后继件 core/cmd/zerg/check_build_selfclean.go@c5c750d2878c842e；引用普查 zerg code find 'check-build-selfclean'=19 条（登记面 6 处同批处置）：旧不变量放宽 DEV-1828 cli_gate_check_test.go@46bf84385e0dc343"
+    },
+    {
+      "object": "scripts/gates/check-gap-closure-drift.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同：CLI rc=1/stdout=21774B/err=0B 与 py(3.14.7) rc=1/stdout=21774B/err=0B 逐字同；Go后继件 check_gap_closure_drift.go@ba7a6dc2c79dbd6e；引用普查：gate find 命中2行(precommit@3647 命令位)。"
+    },
+    {
+      "object": "scripts/gates/check-gate-point-output.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同：CLI rc=0/stdout=1490B/err=0B 与 py(3.14.7) rc=0/stdout=1490B/err=0B 逐字同；Go后继件 check_gate_point_output.go@730aad9deb197c75；引用普查：gate find 命中2行(precommit@2714 命令位)。"
+    },
+    {
+      "object": "scripts/gates/check-gate-script-registered.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同：CLI rc=0/stdout=141B/err=0B 与 py(3.14.7) rc=0/stdout=141B/err=0B 逐字同；Go后继件 check_gate_script_registered.go@57d6c5cc10f2a743；引用普查：gate find 命中2行(precommit@2715 命令位)。"
+    },
+    {
+      "object": "scripts/gates/check-mainrepo-md.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同：CLI(./bin/zerg gate check check-mainrepo-md) rc=0/stdout=362B/err=0B ⟷ py(3.14.7 scripts/gates/check-mainrepo-md.py) rc=0/stdout=362B/err=0B（diff stdout/stderr 皆 IDENTICAL）；Go后继件 core/cmd/zerg/check_mainrepo_md.go@281092e270020690；引用普查：gate find 命中2行(precommit@3680 命令位)。"
+    },
+    {
+      "object": "scripts/gates/check-mkdir-temp-cleanup.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同：CLI(./bin/zerg gate check check-mkdir-temp-cleanup) rc=1/stdout=128B/err=470B ⟷ py(3.14.7 scripts/gates/check-mkdir-temp-cleanup.py) rc=1/stdout=128B/err=470B（diff stdout/stderr 皆 IDENTICAL；rc=1 为 tri-report 载荷 T3 9 处告警，非退场所致）；Go后继件 core/cmd/zerg/check_mkdir_temp_cleanup.go@837c978db996212e；引用普查：gate find 命中2行(precommit@3602 命令位)。"
+    },
+    {
+      "object": "scripts/gates/check-record-not-evidence.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同：CLI(./bin/zerg gate check check-record-not-evidence) rc=1/stdout=3022B/err=0B ⟷ py(3.14.7 scripts/gates/check-record-not-evidence.py) rc=1/stdout=3022B/err=0B（diff stdout/stderr 皆 IDENTICAL；rc=1 为 tri-report 载荷，非退场所致）；Go后继件 core/cmd/zerg/check_record_not_evidence.go@c9aef72affb4eca6；引用普查：gate find 命中2行(precommit@3548 命令位)。"
+    },
+    {
+      "object": "scripts/gates/check-step-switch.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（rc=0/0 · stdout/stderr 逐字同）＋ Go 后继件 core/cmd/zerg/check_step_switch.go@357f659a7a636508 ＋ 引用普查 8 件 17 命中（旁引 0）"
+    },
+    {
+      "object": "scripts/gates/m2-go-py-isomorphism-scan.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态 rc=0/0 同 · stderr 逐字同 · stdout 差 1 格（check_gap_state_vs_artifact.go regex_unexpanded Go=43 ⟷ py=42 · 根因 Go RE2 \\b=ASCII vs py \\b=Unicode-aware · 存量口径差非退场引入）＋ Go 后继件 core/cmd/zerg/m2_go_py_isomorphism_scan.go@91d6468bab570bf0 ＋ 引用普查 9 件 19 命中"
+    },
+    {
+      "object": "scripts/gates/check-stepcount-drift.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（rc=0/0 · stdout/stderr 逐字同：FAST_STEPS=41 · 规范计数 1 处 · 不一致 0 处 · 泛化计数 225 条）＋ Go 后继件 core/cmd/zerg/check_stepcount_drift.go@df98d286e07e8e84 ＋ 引用普查 9 件 19 命中（旁引 1 = core/cmd/zerg/check_step_switch.go:19 注释面 · 已摘）"
     }
   ],
     "retire_exceptions": [

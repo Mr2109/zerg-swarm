@@ -219,10 +219,28 @@ func judgeARPending(d arDoc) []error {
 }
 
 // judgeARRetireLedger —— 判据④：③ 台账与盘上现状一致（台账不腐）。
+//
+// ★ 2026-10-07 随动（退役试点 #1 · `check-build-selfclean.py`）—— 两处去掉硬钉常量 / 纳入正门那一档：
+//
+//	① 条数**现读真源**（✗ 不硬钉 3）：退场正门 `zerg script retire` 每退一件就往 `retire_ledger`
+//	   追加一条（`family_script_retire.go:595`）⇒ 台账随退场**正常增长**；硬钉「== 3」会把每一次
+//	   正当退场误判成红。改为：台账**非空** ＋ 已知删除面（`arDeletedPaths` 三件）逐件在册。
+//	② state 闭集**以代码为准**补一档：正门写进 ledger 的 state 是 `scriptRetireStateWord`
+//	   ＝「已登记退场（<日期>）」（`family_script_retire.go:58/590`），与历史两档「已删」「待删」并列为合法。
 func judgeARRetireLedger(root string, d arDoc) []error {
 	var errs []error
-	if len(d.RetireLedger) != 3 {
-		errs = append(errs, fmt.Errorf("判据④ 破：③ 应 3 件（`scripts/253/` 三件 —— 2026-09-21 改判后 compressor_demo 归 ② 保留为内部），台账有 %d 件", len(d.RetireLedger)))
+	// ① 条数现读真源（✗ 不硬钉常量）：台账非空 ＋ 已知删除面逐件在册。
+	if len(d.RetireLedger) == 0 {
+		errs = append(errs, errors.New("判据④ 破：③ 台账为空（`scripts/253/` 三件已删，台账不许空）"))
+	}
+	inLedger := map[string]bool{}
+	for _, e := range d.RetireLedger {
+		inLedger[strings.TrimSpace(e.Object)] = true
+	}
+	for _, p := range arDeletedPaths {
+		if !inLedger[p] {
+			errs = append(errs, fmt.Errorf("判据④ 破：已知删除面 %s 不在台账里（删了就得有档）", p))
+		}
 	}
 	for _, e := range d.RetireLedger {
 		if strings.TrimSpace(e.Evidence) == "" {
@@ -238,8 +256,12 @@ func judgeARRetireLedger(root string, d arDoc) []error {
 			if err != nil {
 				errs = append(errs, fmt.Errorf("判据④ 破：台账写「待删」但盘上已经不在：%s（删了就要改台账）", e.Object))
 			}
+		case strings.Contains(e.State, "已登记退场"):
+			// ② 正门那一档：`zerg script retire` 只做**登记面**退场（决-01 · ✗ 不代管 `git rm`）⇒
+			//   真删交 git 历史＋收口批 ⇒ 登记之后件可能已删、也可能尚未删。这一档**不**以「在盘/不在盘」
+			//   断言（两种都是正门语义内的合法态）；只认它是正门会写进 ledger 的合法取值。
 		default:
-			errs = append(errs, fmt.Errorf("判据④ 破：%s 的 state = %q 既不是「已删」也不是「待删」", e.Object, e.State))
+			errs = append(errs, fmt.Errorf("判据④ 破：%s 的 state = %q 不在闭集 {已删|待删|已登记退场}", e.Object, e.State))
 		}
 	}
 	return errs
@@ -440,7 +462,7 @@ func TestAdoptRetireLedgerMatchesDisk(t *testing.T) {
 	if errs := judgeARRetireLedger(root, d); len(errs) > 0 {
 		t.Errorf("判据④ 破（%d 处）：\n  %s", len(errs), joinErrs(errs))
 	} else {
-		t.Logf("判据④ ✓ ③ 台账 3 件与盘上一致（`scripts/253/` 三件均已删、不在盘；compressor_demo 已改判 ② ⇒ 不在退役台账）")
+		t.Logf("判据④ ✓ ③ 台账 %d 件与盘上一致（`scripts/253/` 三件均已删、不在盘；compressor_demo 已改判 ② ⇒ 不在退役台账；正门退场件 state=已登记退场 亦入闭集）", len(d.RetireLedger))
 	}
 }
 
