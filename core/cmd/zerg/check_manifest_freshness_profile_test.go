@@ -18,6 +18,8 @@ import (
 )
 
 // mfpTestRepoRoot —— 由 cwd 上溯找同族 py 原件所在仓根（与入口缺省推导同一枚标记）。
+// ★ 退役稳态（B轨 · 2026-10-07）：认「自指 py **或** `cmfRootMarkerRel`（退役稳态标记）」⇒
+// 自指 py 退役后仍能定位真仓根（与 `cmfTestRepoRoot` 同口径 · 复用同一枚标记，✗ 不新造第二套）。
 func mfpTestRepoRoot(t *testing.T) string {
 	t.Helper()
 	d, err := os.Getwd()
@@ -26,7 +28,7 @@ func mfpTestRepoRoot(t *testing.T) string {
 	}
 	cur := d
 	for i := 0; i < 32; i++ {
-		if mfpFileExists(filepath.Join(cur, mfpSelfRel)) {
+		if mfpFileExists(filepath.Join(cur, mfpSelfRel)) || mfpFileExists(filepath.Join(cur, cmfRootMarkerRel)) {
 			return cur
 		}
 		p := filepath.Dir(cur)
@@ -35,7 +37,7 @@ func mfpTestRepoRoot(t *testing.T) string {
 		}
 		cur = p
 	}
-	t.Fatalf("找不到同族 py 原件所在仓根（由 %s 上溯）", d)
+	t.Fatalf("找不到同族标记所在仓根（由 %s 上溯）", d)
 	return ""
 }
 
@@ -55,7 +57,17 @@ func mfpTestFixture(t *testing.T, withNeighbor bool) (string, string) {
 		}
 		b, err := os.ReadFile(filepath.Join(src, "scripts", "gates", name))
 		if err != nil {
-			t.Fatalf("缺同族 py 原件 %s：%v", name, err)
+			if name == "check-manifest-freshness.py" {
+				// 邻件（真源）退役容忍（缺口 `GAP-20261007-16`）：真源 py 退役（不在盘）∧ 其 Go 半在盘
+				// ⇒ 夹具无真源对象 ⇒ 容忍跳过（同族 Skip 口径）；两半皆不在盘（真消失）⇒ fail-closed。
+				if mfpFileExists(filepath.Join(src, "core", "cmd", "zerg", "check_manifest_freshness.go")) {
+					t.Skipf("退役态：邻件真源 %s 已退场（其 Go 半 core/cmd/zerg/check_manifest_freshness.go 在盘）⇒ 需真源的夹具无对象，容忍跳过", name)
+				}
+				t.Fatalf("邻件真源与 Go 半皆不在盘 ⇒ fail-closed：%v", err)
+			}
+			// 自指 py（本件被判件 · `check-manifest-freshness-profile.py`）退役：Go 半在进程内自证 ⇒
+			// 夹具不拷它即可（入口根推导由 cwd 回落夹具根 · `mfpResolveRoot`）。
+			continue
 		}
 		if err := os.WriteFile(filepath.Join(g, name), b, 0o644); err != nil {
 			t.Fatal(err)

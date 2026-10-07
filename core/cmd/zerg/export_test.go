@@ -1674,10 +1674,21 @@ func ImpactBackfillSourceForTest() (string, error) {
 	return string(b), err
 }
 
+// impactSlotRetiredSampleForTest —— 尺 `scripts/gates/check-slice.py` 第 7 行的**内化样本**（逐字）：
+// 现成混淆矩阵槽自陈的那条门槛（判据⑤ 与「不自设阈值」两格引的就是它）。退役态（尺 py 不在盘 ∧
+// 其 Go 半在盘）改引它 —— 与 `impactCalibScriptRetired` 同一退役判据，✗ 不另造第二套。
+// 在盘态由 `TestImpactSlotLineRetiredTolerant` 守「内化样本 == 真身第 7 行」（漂了即红）。
+const impactSlotRetiredSampleForTest = "探针集跑混淆矩阵（§3.5 质量门槛：假绿 = 0 · 假红 ≤ 10%）。"
+
 // ImpactSlotLineForTest 现成混淆矩阵槽那一行（**逐字**）—— 判据⑤ 与「不自设阈值」两格都引它。
+// ★ 退役容忍（缺口 `GAP-20261007-16`）：尺 py 退役（不在盘）∧ 其 Go 半在盘 ⇒ 回落**内化样本**
+// （逐字不变）；两半皆不在盘（真消失）⇒ 返回 error（fail-closed · ✗ 不静默当「零命中」）。
 func ImpactSlotLineForTest(root string) (string, error) {
 	b, err := os.ReadFile(filepath.Join(root, "scripts", "gates", "check-slice.py"))
 	if err != nil {
+		if impactCalibScriptRetired(root) {
+			return impactSlotRetiredSampleForTest, nil
+		}
 		return "", err
 	}
 	lines := strings.Split(string(b), "\n")

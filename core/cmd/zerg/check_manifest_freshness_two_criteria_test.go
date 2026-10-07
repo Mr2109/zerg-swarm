@@ -64,7 +64,14 @@ func cmfTestFixture(t *testing.T, withTruth bool) string {
 	if withTruth {
 		b, err := os.ReadFile(filepath.Join(src, "scripts", "gates", "check-manifest-freshness.py"))
 		if err != nil {
-			t.Fatalf("缺真源原件 check-manifest-freshness.py：%v", err)
+			// 真源（邻件）退役容忍（缺口 `GAP-20261007-16`）：真源 py 退役（不在盘）∧ 其 Go 半在盘 ⇒
+			// 夹具无真源对象 ⇒ 容忍跳过（与同族 `TestCheckManifestFreshnessDifferential` 的 Skip 同口径 ·
+			// ✗ 不 fail-closed）。
+			if cmfFileExists(filepath.Join(src, "core", "cmd", "zerg", "check_manifest_freshness.go")) {
+				t.Skipf("退役态：真源 %s 已退场（其 Go 半 core/cmd/zerg/check_manifest_freshness.go 在盘）⇒ 需真源的夹具无对象，容忍跳过", cmfTruthRelPath)
+			}
+			// 两半皆不在盘（真消失）⇒ fail-closed（缺件 ≠ 绿）。
+			t.Fatalf("真源原件与 Go 半皆不在盘 ⇒ fail-closed：%v", err)
 		}
 		if err := os.WriteFile(filepath.Join(g, "check-manifest-freshness.py"), b, 0o644); err != nil {
 			t.Fatal(err)

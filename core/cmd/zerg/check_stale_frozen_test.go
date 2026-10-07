@@ -197,3 +197,40 @@ func TestCsfBridgeAffectedMapRetiredFallback(t *testing.T) {
 		t.Fatalf("兄弟件在盘时该走 importlib 桥（成对负控：空壳 py 应让桥报错）")
 	}
 }
+
+// TestCsfBridgeHelpShapeRetiredFallback —— 2026-10-07 退役批：兄弟件
+// `scripts/gates/check-help-shape.py` 退役（不在盘）⇒ `csfBridge("help_shape")` 回落**同判据的
+// Go 半** `chsBaseline`（✗ 不因缺 py 而「取不到 ⇒ 不给结论」fail-closed）。
+// ★ 成对：兄弟件在盘（哪怕是个空壳）⇒ 仍走 importlib 那条桥（单一真源不变）。
+// ★ 哑化负控：抽掉 csfBridge 里 `if op == "help_shape"` 那段 ⇒ 本用例 FAIL（带行号）。
+func TestCsfBridgeHelpShapeRetiredFallback(t *testing.T) {
+	root := t.TempDir() // 仓外空夹具 · 其中**无** check-help-shape.py
+	if _, err := os.Stat(filepath.Join(root, "scripts", "gates", "check-help-shape.py")); err == nil {
+		t.Fatal("前置不成立：夹具里竟有 check-help-shape.py")
+	}
+	res, errStr := csfBridge(root, "help_shape", io.Discard)
+	if errStr != "" {
+		t.Fatalf("退役态该回落 Go 半 chsBaseline（✗ 不 fail-closed）：%q", errStr)
+	}
+	bl, _ := res["baseline"].(map[string]any)
+	if len(bl) == 0 {
+		t.Fatalf("回落读数缺 baseline：%v", res)
+	}
+	for _, k := range []string{"help --all", "help", "help dangerous", "help config"} {
+		m, _ := bl[k].(map[string]any)
+		if m == nil || m["lines"] == nil || m["bytes"] == nil {
+			t.Errorf("回落 baseline 缺 %q 的 lines/bytes：%v", k, bl[k])
+		}
+	}
+	// 成对负控：把（空壳）兄弟件放回盘 ⇒ 仍走 importlib 桥（空壳 ⇒ 桥必报错 ⇒ 证明在盘时走 py 那把）。
+	py := filepath.Join(root, "scripts", "gates", "check-help-shape.py")
+	if err := os.MkdirAll(filepath.Dir(py), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(py, []byte("raise SystemExit('stub')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, e2 := csfBridge(root, "help_shape", io.Discard); e2 == "" {
+		t.Fatalf("兄弟件在盘时该走 importlib 桥（成对负控：空壳 py 应让桥报错）")
+	}
+}

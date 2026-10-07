@@ -93,9 +93,13 @@ var arDeletedPaths = []string{
 	"scripts/253/docker_worker_test.go",
 }
 
-var arExclusionFiles = []struct{ path, linePrefix, list string }{
-	{"scripts/gates/check-wired-scripts.py", "EXCL_SUBDIRS", "253"},
-	{"scripts/gates/check-gate-coverage.py", "NOSUFFIX_EXCL", "253"},
+// ★ 退役容忍（2026-10-07 退役批 · 判据⑤ 硬耦合解）：名单件（py 半）退役 ⇒ 不再读它；其「排除域
+//
+//	名单」由**同判据的 Go 半**（goHalf · 同包）承载 ⇒ Go 半在盘即视为一件合法退场，本格不过问。
+//	两半皆不在盘 ⇒ fail-closed（台账撒谎：名单件凭空消失）。py 在盘时旧路逐字不变。
+var arExclusionFiles = []struct{ path, linePrefix, list, goHalf string }{
+	{"scripts/gates/check-wired-scripts.py", "EXCL_SUBDIRS", "253", "core/cmd/zerg/check_wired_scripts.go"},
+	{"scripts/gates/check-gate-coverage.py", "NOSUFFIX_EXCL", "253", "core/cmd/zerg/check_gate_coverage.go"},
 }
 
 // ── 判定口（纯函数 · 负控喂合成件） ────────────────────────────────────────────
@@ -281,6 +285,14 @@ func judgeARExclusions(root string) []error {
 	for _, f := range arExclusionFiles {
 		b, err := os.ReadFile(filepath.Join(root, f.path))
 		if err != nil {
+			// ★ 退役容忍（2026-10-07 退役批）：名单件（py 半）退役（不在盘）∧ 其 Go 半在盘
+			//   ⇒ 名单已随件入 Go 半（或不再是判据对象）⇒ 本格不过问（✗ 不判「读不到」）。
+			//   两半皆不在盘 ⇒ 照旧 fail-closed（名单件凭空消失 = 台账撒谎）。
+			if os.IsNotExist(err) {
+				if _, gerr := os.Stat(filepath.Join(root, f.goHalf)); gerr == nil {
+					continue
+				}
+			}
 			errs = append(errs, fmt.Errorf("判据⑤ 破：名单件读不到：%s（%v）", f.path, err))
 			continue
 		}
@@ -472,6 +484,35 @@ func TestAdoptRetireExclusionsClean(t *testing.T) {
 		t.Errorf("判据⑤ 破（%d 处）：\n  %s", len(errs), joinErrs(errs))
 	} else {
 		t.Logf("判据⑤ ✓ `scripts/253/` 三件不在盘上 · 两处排除域名单（EXCL_SUBDIRS / NOSUFFIX_EXCL）里零 `253`")
+	}
+}
+
+// TestAdoptRetireExclusionsRetiredTolerant —— 判据⑤ 的**退役容忍**（2026-10-07 退役批）。
+//
+//	① 退役态：名单件 py 半不在盘 ∧ 其 Go 半在盘 ⇒ 该格不过问（0 处）；
+//	② fail-closed：两半皆不在盘 ⇒ 逐件点名（len(arExclusionFiles) 处）。
+//	★ 哑化负控：抽掉 judgeARExclusions 里「退役容忍」那段（`if os.IsNotExist(err)` …）
+//	  ⇒ ① 格当场 FAIL（判词「判据⑤ 破：名单件读不到」）。
+//	★ 夹具全在仓外（t.TempDir）：只造 goHalf 或全空 ⇒ ✗ 不碰真仓任何件。
+func TestAdoptRetireExclusionsRetiredTolerant(t *testing.T) {
+	// ① 退役容忍态：只放 Go 半，py 半缺席。
+	rootA := t.TempDir()
+	for _, f := range arExclusionFiles {
+		p := filepath.Join(rootA, filepath.FromSlash(f.goHalf))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("package main\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if errs := judgeARExclusions(rootA); len(errs) != 0 {
+		t.Errorf("退役容忍态该 0 处（py 退役 ∧ Go 半在盘 ⇒ 不过问），得到 %d 处：\n  %s", len(errs), joinErrs(errs))
+	}
+	// ② fail-closed：两半皆不在盘 ⇒ 逐件点名。
+	rootB := t.TempDir()
+	if errs := judgeARExclusions(rootB); len(errs) != len(arExclusionFiles) {
+		t.Errorf("两半皆缺席该逐件点名 %d 处，得到 %d 处：\n  %s", len(arExclusionFiles), len(errs), joinErrs(errs))
 	}
 }
 

@@ -179,3 +179,33 @@ func TestCwgMissingLedger(t *testing.T) {
 		t.Fatalf("stderr 不符: %q", errs)
 	}
 }
+
+// ⑧ 默认根：cwgDefaultRoot（无 --root 时）须落在含 `scripts/gates/` 的仓根上，✗ 不是它的父目录
+// （旧 os.Executable 上溯三级从 bin/ 出发会多退一级 ⇒ 扫父目录）。成对负控：探针置于中间层时不得误收。
+func TestCwgDefaultRootIsRepoRoot(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.Abs(filepath.Join(wd, "..", "..", "..")) // core/cmd/zerg -> 仓根
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(filepath.Join(want, "scripts", "gates")); err != nil || !fi.IsDir() {
+		t.Skipf("非真仓语境（无 scripts/gates）：%v", err)
+	}
+	got := cwgDefaultRoot()
+	if got != want {
+		t.Fatalf("cwgDefaultRoot=%q want %q（仓根）", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(got, "scripts", "gates")); err != nil {
+		t.Fatalf("默认根下无 scripts/gates：%v", err)
+	}
+	// 负控：仓根的父目录下没有 scripts/gates ⇒ 不得把默认根推到那一级
+	parent := filepath.Dir(got)
+	if parent != got {
+		if _, err := os.Stat(filepath.Join(parent, "scripts", "gates")); err == nil {
+			t.Fatalf("父目录 %q 亦含 scripts/gates ⇒ 默认根无鉴别力", parent)
+		}
+	}
+}

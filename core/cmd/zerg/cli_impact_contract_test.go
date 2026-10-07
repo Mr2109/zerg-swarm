@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -79,6 +80,76 @@ func contractRealRoot(t *testing.T) string {
 		t.Fatalf("仓根解析不了：%v", err)
 	}
 	return root
+}
+
+// contractGitEnv 剥掉门 / 钩子可能泄进子进程的 git 面（`GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` …）——
+// 合成仓用例的硬前提：带着**主仓**的 `GIT_DIR` 去 `git add -A`，会把临时件加进主仓的索引。
+// 与门脚本自家的处置**逐字同口径**（`precommit-gates.sh` 里自建夹具仓用的
+// `env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE git …`）。
+func contractGitEnv() []string {
+	env := []string{}
+	for _, kv := range os.Environ() {
+		name := kv
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			name = kv[:i]
+		}
+		switch name {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+			"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES":
+			continue
+		}
+		env = append(env, kv)
+	}
+	return env
+}
+
+// contractGitRun 在 dir 里跑一条 git（合成仓夹具专用）——身份 / 签名 / 钩子 / 默认分支一律就地给死
+// （✗ 不读也不写用户或全局配置）；stdout 去掉尾换行返回。
+func contractGitRun(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	base := []string{
+		"-c", "user.name=zerg-fixture", "-c", "user.email=zerg-fixture@example.invalid",
+		"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "init.defaultBranch=main",
+	}
+	cmd := exec.Command("git", append(base, args...)...)
+	cmd.Dir = dir
+	cmd.Env = contractGitEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("合成 git 仓夹具：`git %v` 跑不动：%v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// contractGitFixtureRoot 造一棵**确定性合成 git 仓**（三笔线性历史），给判据③ 的正控用：
+//
+//	① 根提交（一枚无关件）—— 基线那一笔的**父**（设计 §二① 要「及其父」）；
+//	② 落 `core/internal/contract/registry.json` —— **基线那一笔**（`git log -1 --format=%H -- <件>`）；
+//	③ 再动那枚无关件 —— **HEAD 不再是 `registry.json` 的最后一笔** ⇒ 基线 rev ≠ head_sha。
+//
+// 为什么这一格不能拿真仓当正控：真仓的 HEAD 是否恰是「`registry.json` 的最后一笔」**随提交拓扑漂**
+// （见下方那个用例里的说明）⇒ 不可稳定复现；本夹具把「两枚指纹不是同一枚」做成**硬条件**，
+// 且三枚指纹（head/rev/parent）各自都可用这三笔的 sha256 现读复算。
+func contractGitFixtureRoot(t *testing.T, registry string) (root, parent, base, head string) {
+	t.Helper()
+	root = t.TempDir()
+	contractGitRun(t, root, "init", "-q")
+	commit := func(rel, body, msg string) string {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("合成 git 仓夹具：目录造不出来：%v", err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatalf("合成 git 仓夹具：件写不出来：%v", err)
+		}
+		contractGitRun(t, root, "add", "-A")
+		contractGitRun(t, root, "commit", "-q", "-m", msg)
+		return contractGitRun(t, root, "rev-parse", "HEAD")
+	}
+	parent = commit("README.md", "① 根提交\n", "① 根提交")
+	base = commit("core/internal/contract/registry.json", registry, "② 落 registry.json（基线那一笔）")
+	head = commit("README.md", "③ 无关一笔（HEAD 不再是 registry.json 的最后一笔）\n", "③ 无关一笔")
+	return root, parent, base, head
 }
 
 // contractJSONLineOf 从块文本里摘出机读行并解开（解不开 ⇒ 直接判失败）。
@@ -270,16 +341,32 @@ func TestImpactContract_SnapshotCaliberFingerprintsAndReadOnlySource(t *testing.
 	if want := strings.Join(zerg.ImpactContractSixFieldsForTest(), "` / `"); !strings.Contains(real.Block, want) {
 		t.Errorf("判据③（比什么）：6 字段该逐字列出来（`%s`）", want)
 	}
-	// 两枚指纹（真仓上）：都在 · 且**基线 rev ≠ head_sha**（取成同一枚 = 比了个空）。
+	// 两枚指纹（真仓上）：都在 · 且**基线那一枚逐字落块**。
 	if real.Head == "" || real.Rev == "" || real.Parent == "" || real.FpReason != "" {
 		t.Fatalf("判据③（正控）：真仓该给两枚指纹，实得 head=%q · rev=%q · parent=%q · reason=%q",
 			real.Head, real.Rev, real.Parent, real.FpReason)
 	}
-	if real.Rev == real.Head {
-		t.Errorf("判据③（正控）：基线 rev 与 `head_sha` 取成同一枚（%s）⇒ 这一比是空的", real.Head)
-	}
 	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(real.Rev) || !strings.Contains(real.Block, "基线 rev="+real.Rev) {
 		t.Errorf("判据③：基线那一枚指纹该逐字落块（rev=%q）", real.Rev)
+	}
+	// ★ 「基线 rev ≠ head_sha（取成同一枚 = 比了个空）」**不是**本系统的硬不变量：
+	//   基线的取法 = `git log -1 --format=%H -- core/internal/contract/registry.json`（设计 §二①）
+	//   = **上一次改动该件的提交**；而本仓的 `registry.json` 是随动面（常被提交动到）⇒ 只要 HEAD
+	//   恰是那一笔，`rev` 与 `head_sha` 就**本就同一枚** —— 那是**合法仓态**（设计 §二①：
+	//   「没比」与「没差异」是两件事），不是实现缺陷。⇒ 真仓上只判「都在 ＋ 逐字落块」这两格
+	//   （它们随仓态恒可真）；「不是同一枚」这一格的牙改由下面这枚**确定性三笔历史**的合成 git 仓
+	//   坐实（基线那一笔 ≠ HEAD，且三枚指纹各自都可用那三笔的 sha 现读复算）。
+	fxRoot, fxParent, fxBase, fxHead := contractGitFixtureRoot(t, contractFixtureRegistry)
+	fx := zerg.ImpactContractFaceForTest(fxRoot)
+	if fx.Head != fxHead || fx.Rev != fxBase || fx.Parent != fxParent || fx.FpReason != "" {
+		t.Fatalf("判据③（合成 git 仓 · 正控）：三笔线性历史该给 head=%s · rev=%s · parent=%s，实得 head=%q · rev=%q · parent=%q · reason=%q",
+			fxHead, fxBase, fxParent, fx.Head, fx.Rev, fx.Parent, fx.FpReason)
+	}
+	if fx.Rev == fx.Head {
+		t.Errorf("判据③（合成 git 仓 · 正控）：基线 rev 与 `head_sha` 取成同一枚（%s）⇒ 这一比是空的", fx.Head)
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(fx.Rev) || !strings.Contains(fx.Block, "基线 rev="+fx.Rev) {
+		t.Errorf("判据③（合成 git 仓 · 正控）：基线那一枚指纹该逐字落块（rev=%q）", fx.Rev)
 	}
 	// `R43` 那一格（任务单 §三 B2 前置依赖点名 · 本件只点名不派实现）：块里必须出现那道门的路径。
 	if !strings.Contains(real.Block, zerg.ImpactContractRegistryGateRelForTest()) {

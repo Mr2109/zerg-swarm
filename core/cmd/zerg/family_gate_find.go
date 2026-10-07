@@ -9,7 +9,7 @@
 // （`scripts/gates/check-*.py`）—— 两者之间**没有一格把桥搭起来** ⇒ 想从门件名问出「这一步叫什么、
 // 跑什么命令、什么档位、日志落哪」只能手搓 `grep add_step` ✗。
 //
-// ★ 补第二半（同夜 · 同一个缺口的另一半）：**接线面不止一条** —— 一件门件「跑得到」在本仓有三处面，
+// ★ 补第二半（同夜 · 同一个缺口的另一半）：**接线面不止一条** —— 一件门件「跑得到」在本仓有多处面，
 // 只有第一处**按名字点名**：
 //
 //	① `precommit-gates.sh` 的 `add_step <scope> "<名>" <模式> "<目录>" "<命令>"` —— 命令串点名；
@@ -22,14 +22,14 @@
 //
 // ⇒ 只知道①，会把「门⑫根本没进 precommit（却跑得到）」误读成「这门不存在」✗。故本命令出**两种行**：
 //
-//	**步骤行**（片段命中步名/命令串）：八格 + 第九格 `wiring` 给出它在三处面的接线位置；
+//	**步骤行**（片段命中步名/命令串）：八格 + 第九格 `wiring` 给出它在各接线面的位置；
 //	**门件行**（片段命中 `scripts/gates/` 下的真件名，但没有任何 `add_step` 点名它）：一行说明
 //	「在哪跑得到、在哪跑不到」—— 这就是「零命中」与「不存在」的分别 ✓。
 //
 // 九格与 `gate explain` 的关系（**同源，不另写一份**）：`scope`/`mode`/`verdict`/`log`/`source` 全部
 // 从同一份 `add_step` 声明与同一组 helper（`parseAddSteps` / `gateShowModeCell` / `gateModeVerdict` /
 // `gateStepLogNote`）读 —— 判据与日志路径在本仓只有**一处**口径（两处各写一份必然漂 · `G1-a`）。
-// 第八格 `next` 是**可照抄的下一步**，第九格 `wiring` 是三处接线面的**现读**结论（读脚本得的，不是猜的）。
+// 第八格 `next` 是**可照抄的下一步**，第九格 `wiring` 是各接线面的**现读**结论（读脚本得的，不是猜的）。
 //
 // 退码：0 有命中 · 1 零命中 · 2 用法错（缺片段）· 8 不给结论（门禁脚本或 `scripts/gates/` 目录读不到）。
 // 全程**只读**：只读脚本与件名，不跑任何步骤、不写任何件。
@@ -180,7 +180,7 @@ func cmdGateFind(inv *invocation, stdout, stderr io.Writer, root, script string)
 	gateFindStampHits(rows)
 	// ★ 治 GAP-20260928-49：把「解析不确定」读数也盖进机器面（与 hits/unique 同规 · 逐行同值）。
 	gateFindStampUncertain(rows, unc)
-	fmt.Fprintf(stderr, "%s: 片段 %q 命中 %d 行（现读 add_step 行 %d 条 · 三处接线面 = precommit / all.sh / real-gates.sh）\n",
+	fmt.Fprintf(stderr, "%s: 片段 %q 命中 %d 行（现读 add_step 行 %d 条 · 接线面 = precommit / all.sh / real-gates.sh / 发布面（按需 · GAP-20260928-29））\n",
 		progName, probe, len(rows), len(decls))
 	if _, u := gateFindHitFace(len(rows)); u == gateFindUniqueNo {
 		// 「命中不唯一」的那一档：机器面字段已给（hits/unique），这里再把**人面**也说清 ——
@@ -298,7 +298,7 @@ func gateFindUnnamedVerdict(rel string, unc []gateStepUncertain) string {
 		return fmt.Sprintf("— **解析不确定**：该件名出现在读不出的声明行 %s 原文里 ⇒ 点没点名**判不了**（不当「未点名」）",
 			joinLines(ls))
 	}
-	return "—（真件在，但 `add_step` 步骤表里未点名 —— 判据看 `wiring` 格的三处面）"
+	return "—（真件在，但 `add_step` 步骤表里未点名 —— 判据看 `wiring` 格的接线面）"
 }
 
 func gateFindUnnamedSource(rel string, unc []gateStepUncertain) string {
@@ -334,7 +334,7 @@ func joinLines(ls []int) string {
 // **步骤行**传的是**带实参的命令串**（`python3 scripts/gates/x.py --scope devdocs --missing=fail`）
 // ⇒ 基名成 `x.py --scope devdocs --missing=fail` ⇒ 后缀判 `.py` **不成立** ⇒ 落进非目标支、
 // 被**误印成「该面不收」** ✗，且 precommit 点名面与 real-gates 名录面按基名找也**全部落空**。
-// 现按**空白切词**认那一概含 `gates/` 且以 `.py`/`.sh` 收尾的词（本命令的三处面都住在
+// 现按**空白切词**认那一概含 `gates/` 且以 `.py`/`.sh` 收尾的词（本命令的接线面都住在
 // `scripts/gates/`）⇒ 取它的 `filepath.Base`。
 //
 // **范围**：只认**门件目录**里那一概 —— 不含 `gates/` 的形态（如 `scripts/docs/gen-x.py --check`、
@@ -395,7 +395,9 @@ func gateAllShFace(root string) (line int, collectsSh bool, ok bool) {
 	return 0, false, false
 }
 
-// gateWiringNote —— 一件门件在**三处接线面**的现读结论（同夜补的第二半）：
+// gateWiringNote —— 一件门件在**各接线面**的现读结论（同夜补的第二半）：
+//
+//	★ GAP-20260928-29：第四处面 = **发布面**（scripts/build/publish-preflight.sh 闸④）——门件被它真命令位调用时**按需**补印；
 //
 //	precommit：`add_step` 的命令串里点到它的那几步（步名 + 出处行）；
 //	all.sh  ：收集面 = `for f in "${GATEDIR}"/*.py "${GATEDIR}"/*.sh`（行号由 `gateAllShFace` **现算**）
@@ -471,5 +473,23 @@ func gateWiringNote(root, what string, decls []gateStepDecl, unc []gateStepUncer
 	} else {
 		parts = append(parts, "real-gates: 读不到该件 ⇒ 判不了")
 	}
+
+	// ★ GAP-20260928-29：第四处接线面 = **发布面**（scripts/build/publish-preflight.sh 的闸④）。
+	//   发布面闸（如 check-public-tree-hazards.py）按设计不在 precommit-gates.sh 的 add_step 里，
+	//   此前 gate find 只印前两面、不指向这条真家 ⇒ 发布面闸「无正门读数口」。
+	//   现读该件：点名 ⇒ 印出处行；未点名 ⇒ 不加这一面（不给其余二百多件添噪声）。
+	if pb, err := os.ReadFile(filepath.Join(root, "scripts", "build", "publish-preflight.sh")); err == nil {
+		line := 0
+		for i, ln := range strings.Split(string(pb), "\n") {
+			if strings.Contains(ln, base) {
+				line = i + 1
+				break
+			}
+		}
+		if line > 0 {
+			parts = append(parts, fmt.Sprintf("发布面: 点名@%d（scripts/build/publish-preflight.sh 闸④ —— 发布面闸的真家）", line))
+		}
+	}
+
 	return strings.Join(parts, " ｜ ")
 }

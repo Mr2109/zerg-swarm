@@ -196,6 +196,30 @@ func auHitsOf(path, text string) []int {
 }
 
 // auRun —— py `run()`。
+// auVersionRE / auRegVersionRE —— py `re.search(r'Version\s*=\s*"([^"]+)"')` / `re.search(r"v(\d+\.\d+\.\d+)")`。
+var auVersionRE = regexp.MustCompile(`Version\s*=\s*"([^"]+)"`)
+var auRegVersionRE = regexp.MustCompile(`v(\d+\.\d+\.\d+)`)
+
+// auCurrentVersion —— py `current_version(root)`：现读版本真源 core/internal/version/version.go 的 const Version（取不到 ⇒ 空串）。
+func auCurrentVersion(root string) string {
+	b, err := os.ReadFile(filepath.Join(root, "core", "internal", "version", "version.go"))
+	if err != nil {
+		return ""
+	}
+	if m := auVersionRE.FindSubmatch(b); m != nil {
+		return string(m[1])
+	}
+	return ""
+}
+
+// auRegisterVersion —— py `register_version(register)`：登记件路径里的版本段（如 v2.5.12 ⇒ 2.5.12）。
+func auRegisterVersion(register string) string {
+	if m := auRegVersionRE.FindStringSubmatch(register); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 func auRun(w io.Writer, root, docsRoot, register string, jsonOut bool) int {
 	root = auAbs(root)
 	if !auIsDir(filepath.Join(root, "scripts", "gates")) {
@@ -270,8 +294,15 @@ func auRun(w io.Writer, root, docsRoot, register string, jsonOut bool) int {
 		}
 	}
 
+	// 缺口 `GAP-20260926-106`：登记过期告警（键失指 ⇒ 点名）。登记件路径里的版本段 ↔ 现读版本真源不符
+	//   ⇒ 内容锚可能已失指（只告警，不改退码）—— 与 py 同口径。
+	var warnings []string
+	if _regv, _cur := auRegisterVersion(register), auCurrentVersion(root); _regv != "" && _cur != "" && _regv != _cur {
+		warnings = append(warnings, fmt.Sprintf("登记件版本 v%s 与当前版 v%s 不符 ⇒ 疑**登记过期**（内容锚可能已失指；缺口 GAP-20260926-106）", _regv, _cur))
+	}
+
 	if jsonOut {
-		fmt.Fprintln(w, auBuildJSON(register, len(rows), uniques, reds, problems))
+		fmt.Fprintln(w, auBuildJSON(register, len(rows), uniques, reds, problems, warnings))
 		if len(problems) > 0 {
 			return 2
 		}
@@ -285,6 +316,9 @@ func auRun(w io.Writer, root, docsRoot, register string, jsonOut bool) int {
 	fmt.Fprintf(w, "  主仓根  : %s\n", root)
 	fmt.Fprintf(w, "  文档仓根: %s\n", docs)
 	fmt.Fprintf(w, "  登记件  : %s\n", register)
+	for _, _w := range warnings {
+		fmt.Fprintf(w, "  ⚠ 告警：%s\n", _w)
+	}
 	if len(problems) > 0 {
 		fmt.Fprint(w, "⛔ 不给结论（rc=2）：\n")
 		for _, p := range problems {
@@ -395,7 +429,7 @@ func auJSONString(s string) string {
 }
 
 // auBuildJSON —— py `json.dumps(doc, ensure_ascii=False)`（默认分隔符 ", " / ": "）逐字节对齐。
-func auBuildJSON(register string, anchors int, uniques []auUnique, reds []auRed, problems []string) string {
+func auBuildJSON(register string, anchors int, uniques []auUnique, reds []auRed, problems []string, warnings []string) string {
 	var b strings.Builder
 	// ⚠ 自指处理：门⑤（check-error-kinds `R3`）现读 `core/cmd/zerg/*.go` 里 kin 键的 JSON 字面量 ⇒
 	// 本件落 core/ ⇒ 直接写完整字面会把本件自己判成「闭集外的 kind」。拆开拼（运行时输出逐字不变）。
@@ -437,7 +471,14 @@ func auBuildJSON(register string, anchors int, uniques []auUnique, reds []auRed,
 		}
 		b.WriteString(auJSONString(p))
 	}
-	b.WriteString(`], "warnings": [], "truncated": false}`)
+	b.WriteString(`], "warnings": [`)
+	for i, x := range warnings {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(auJSONString(x))
+	}
+	b.WriteString(`], "truncated": false}`)
 	return b.String()
 }
 

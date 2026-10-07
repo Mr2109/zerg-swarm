@@ -123,6 +123,10 @@ var gapAxisRecExemptExistence = []gapAxisRecExemptPair{
 	{gid: "GAP-20260928-137", unit: "scripts/gates/check-newfile-registry.py"},
 	{gid: "GAP-20260928-51", unit: "scripts/gates/check-trustroot-witness.py"},
 	{gid: "GAP-20260927-70", unit: "scripts/gates/check-approve-backfill.py"},
+	// 段2 捞回4件批（2026-10-07）：check-public-face-pairing.py 已登记退场（`zerg script retire`）⇒ 该仍缺行 unit 失指，入存量豁免.
+	{gid: "GAP-20260926-39", unit: "scripts/gates/check-public-face-pairing.py"},
+	// G19/G20 退役批（2026-10-07 · 35d270c0）：check-build-tags.py 已退役（Go 半 core/cmd/zerg/check_build_tags.go 在盘）⇒ 该仍缺行 unit 失指，入存量豁免.
+	{gid: "GAP-20261007-18", unit: "scripts/gates/check-build-tags.py"},
 }
 
 // gapAxisRecWUClosed —— 无件桶名闭集 = 裸 `无件` + `无件(<面>)`（面 ∈ 面闭集）

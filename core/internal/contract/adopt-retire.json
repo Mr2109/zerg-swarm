@@ -705,9 +705,79 @@
       "object": "scripts/gates/check-public-face-wording.py",
       "state": "已登记退场（2026-10-07）",
       "evidence": "两态三面逐字同（./bin/zerg gate check check-public-face-wording ⟷ python3.14.7 scripts/gates/check-public-face-wording.py：rc/stdout/stderr 逐字同 · 已存 twostate/ 原件）· Go 后继件 core/cmd/zerg/check_public_face_wording.go@1619be8d6b054407 · 段2 G13+G14+G15 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/judge-lock.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（`./bin/zerg gate check judge-lock` ⟷ 规范解释器 3.14.7 `scripts/gates/judge-lock.py`：rc/stdout/stderr 逐字同 · 原件存 ~/.zerg/state/退役段2-G16G17G18-20261007/twostate/）· Go 后继件 core/cmd/zerg/judge_lock.go@e73d97a4a26ac780 · 段2 G16+G17+G18 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-newcmd-followup.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（`./bin/zerg gate check check-newcmd-followup` ⟷ 规范解释器 3.14.7 `scripts/gates/check-newcmd-followup.py`：rc/stdout/stderr 逐字同 · 原件存 ~/.zerg/state/退役段2-G16G17G18-20261007/twostate/）· Go 后继件 core/cmd/zerg/check_newcmd_followup.go@fe5afaa12988511e · 段2 G16+G17+G18 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-nodes-roster.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（`./bin/zerg gate check check-nodes-roster` ⟷ 规范解释器 3.14.7 `scripts/gates/check-nodes-roster.py`：rc/stdout/stderr 逐字同 · 原件存 ~/.zerg/state/退役段2-G16G17G18-20261007/twostate/）· Go 后继件 core/cmd/zerg/check_nodes_roster.go@aff57042675fe880 · 段2 G16+G17+G18 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-curl-timeout.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（`./bin/zerg gate check check-curl-timeout` ⟷ 规范解释器 3.14.7 `scripts/gates/check-curl-timeout.py`：rc/stdout/stderr 逐字同 · 原件存 ~/.zerg/state/退役段2-G16G17G18-20261007/twostate/）· Go 后继件 core/cmd/zerg/check_curl_timeout.go@9a672525ebb73624 · 段2 G16+G17+G18 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-docs-orphans-links.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（`./bin/zerg gate check check-docs-orphans-links` ⟷ 规范解释器 3.14.7 `scripts/gates/check-docs-orphans-links.py`：rc/stdout/stderr 逐字同 · 原件存 ~/.zerg/state/退役段2-G16G17G18-20261007/twostate/）· Go 后继件 core/cmd/zerg/check_docs_orphans_links.go@eeec400c1b5cbd3f · 段2 G16+G17+G18 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-public-face-commands.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（`./bin/zerg gate check check-public-face-commands` ⟷ 规范解释器 3.14.7 `scripts/gates/check-public-face-commands.py`：rc/stdout/stderr 逐字同 · 原件存 ~/.zerg/state/退役段2-G16G17G18-20261007/twostate/）· Go 后继件 core/cmd/zerg/check_public_face_commands.go@044ee2e9cc13dcf6 · 段2 G16+G17+G18 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/baseline-ratchet.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check baseline-ratchet ⟷ 规范解释器 3.14.7 scripts/gates/baseline-ratchet.py：rc 0/0 · stdout 1746B sha16 fbda2ccdda1878c8 · stderr 0B 逐字同 · 原件存 ~/.zerg/state/G19G20-两态-20261007/baseline-ratchet/）· Go 后继件 core/cmd/zerg/baseline_ratchet.go@820ae6b6d2be2e9a（含显式退役容忍 brMeasureValue goMain 回落 ＋ TestBrMeasureValueRetiredGoFallback）· 旁引 77 去自身 63 · 段2 G19+G20 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-build-tags.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同·噪声归一后（./bin/zerg gate check check-build-tags ⟷ 规范解释器 3.14.7 scripts/gates/check-build-tags.py：rc 0/0 · stdout 5620B/5615B 噪声归一后 sha16 c049c834f5a6ff48 · 噪声=夹具后缀 fx-one-side-<R> ＋ 临时目录 zerg-buildtags-out-<R> · stderr 0B 逐字同 · 原件存 ~/.zerg/state/G19G20-两态-20261007/check-build-tags/）· Go 后继件 core/cmd/zerg/check_build_tags.go@0555ae215bcd22d2 · 旁引 43 去自身 36 · 段2 G19+G20 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-dangling-refs.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-dangling-refs ⟷ 规范解释器 3.14.7 scripts/gates/check-dangling-refs.py：rc 1/1 · stdout 43277B sha16 fa880000ccbc1ecb · stderr 0B 逐字同 · 原件存 ~/.zerg/state/G19G20-两态-20261007/check-dangling-refs/）· Go 后继件 core/cmd/zerg/check_dangling_refs.go@b268a8e5683d31a4 · 旁引 57 去自身 43 · GAP-20260926-48（已立项）unit 失指 ⇒ 按⑧豁免表补一条 · 段2 G19+G20 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-public-face-pairing.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态逐字同 rc=0/0 · stdout=1915B · stderr=0B（./bin/zerg gate check check-public-face-pairing ⟷ py3.14.7 scripts/gates/check-public-face-pairing.py · sha16 263ad49e839cdca4）· 九面：publish-public.sh:415 / mirror-public-lib.py:361(DROP_EXACT) / 公开标记.tsv:153 · 缺口账豁免表 +GAP-20260926-39 · core/internal/** 0 · 段2 捞回4件批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-gap-axis-reconcile.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态逐字同 rc=0/0 · stdout=2105B · stderr=0B（./bin/zerg gate check check-gap-axis-reconcile ⟷ py3.14.7 scripts/gates/check-gap-axis-reconcile.py · sha16 081e8dc473046154）· 九面：publish-public.sh:660 / mirror-public-lib.py:512(DROP_EXACT) / 公开标记.tsv:185 · GPO 白名单 check_git_path_outlet.go:105 摘 · core/internal/** 0 · 段2 捞回4件批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-contract-registry.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态逐字同 rc=0/0 · stdout=532B · stderr=0B（./bin/zerg gate check check-contract-registry ⟷ py3.14.7 scripts/gates/check-contract-registry.py · sha16 de5b1cde5dfd4bee）· Go 半 R7 已容忍退役 · 九面：publish-public.sh:455 / mirror-public-lib.py:383(DROP_EXACT) / 公开标记.tsv:155 · core/internal/** 0 · 段2 捞回4件批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/who-references.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态逐字同 rc=2/2 用法档 · stdout=0B · stderr=282B（./bin/zerg gate check who-references ⟷ py3.14.7 scripts/gates/who-references.py · sha16 4b0bd66a712dc239）· 九面：publish-public.sh:570 / mirror-public-lib.py:472(DROP_EXACT) / 公开标记.tsv:160 · GPO 白名单 check_git_path_outlet.go:99 摘 · dangling-refs-registry.json:583 摘 · core/internal/** 0 · 段2 捞回4件批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-zh-en.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态 CLI⟷py3.14.7 rc1/1·stdout sha16 e88993b48d2e17c6 逐字同·stderr 0B; Go半 check_zh_en.go 在盘·键 gate_inproc_table.go:147; 三查全过(公开面no/缺口账0/Go半无硬耦合)"
     }
   ],
-    "retire_exceptions": [
+  "retire_exceptions": [
     {
       "object": "scripts/build/publish-public.sh",
       "category": "外部依赖（退场例外）",
@@ -1185,7 +1255,7 @@
       "review_date": "2026-10-07"
     }
   ],
-"pending_items": [
+  "pending_items": [
     {
       "object": "入口 7 件（agent · api · compat · model · review · scheduler · trace）",
       "count": 7,
