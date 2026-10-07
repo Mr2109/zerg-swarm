@@ -85,8 +85,24 @@ def load_module(name, path):
     return mod
 
 
-HSEC = load_module("face_sync_hsec", os.path.join(REPO, "scripts", "gates", "check-history-secrets.py"))
-PRIV = load_module("face_sync_priv", os.path.join(REPO, "scripts", "gates", "check-public-tree-private.py"))
+def load_reusable_asset(name, py_path, go_half, inline_attr):
+    """复用件加载（退役容忍 · 同族 `publish/mirror-public-lib.py` 口径）：
+    py 在盘 ⇒ 照旧加载；py 退场（不在盘）∧ 其 Go 半在盘 ⇒ 用镜像器**内化副本**
+    （`_InlineHsec` / `_InlinePriv` · 逐字同构 · 暴露同名判定面）；两半皆缺 ⇒ fail-closed（不给结论）。"""
+    if os.path.exists(py_path):
+        return load_module(name, py_path)
+    mirror_lib = os.path.join(REPO, "publish", "mirror-public-lib.py")
+    if os.path.exists(go_half) and os.path.exists(mirror_lib):
+        mirror = load_module(name + "_inl", mirror_lib)
+        return getattr(mirror, inline_attr)
+    print("✗ 缺少要复用的资产：%s（其 Go 半 %s 亦不在盘 ⇒ 不给结论）" % (py_path, go_half), file=sys.stderr)
+    raise SystemExit(2)
+
+
+HSEC = load_reusable_asset("face_sync_hsec", os.path.join(REPO, "scripts", "gates", "check-history-secrets.py"),
+                           os.path.join(REPO, "core", "cmd", "zerg", "check_history_secrets.go"), "_InlineHsec")
+PRIV = load_reusable_asset("face_sync_priv", os.path.join(REPO, "scripts", "gates", "check-public-tree-private.py"),
+                           os.path.join(REPO, "core", "cmd", "zerg", "check_public_tree_private.go"), "_InlinePriv")
 # 判据⑥（表 × 两器）复用**表自己的加载器**（`check-public-marks.py` 的 `load_table` / `TableError`）——
 # 单一真源，绝不另抄第二份表解析器（那张表的合规口径由提交闸上的 B15 管，本门只读它的判定结果）。
 MARKS = load_module("face_sync_marks", os.path.join(REPO, "scripts", "gates", "check-public-marks.py"))
