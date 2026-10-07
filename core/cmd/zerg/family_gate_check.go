@@ -793,6 +793,23 @@ func gateCheck(inv *invocation, stdout, stderr io.Writer, root string) int {
 	}
 
 	full, ok := byName[name]
+	// ★ 退役最后一道前置：**名解析并入 inproc 键** —— 键 ∈ inproc 表（gateCheckGoEntry）
+	//   ⇒ 视为在册（✗ 不再要求 py 件在盘）。
+	//   病根：名录真源 = 现读 `scripts/` 递归列举（gateCheckRoster）⇒ inproc 表只决定
+	//         「进程内 vs exec」、**不参与名解析** ⇒ 某键的 py 件退役（已删）后，判据体虽仍在
+	//         Go 侧（gateCheckGoEntry）跑得动，却被判「不在册」rc=2（门105 步即
+	//         `zerg gate check <键>` ⇒ 删 py 即 BLOCKED）。
+	//   治法：键在表里 ⇒ 合成它的件路径、判定为**已解析**，随后照原路走下面的 inproc 分派。
+	//         合成的路径只喂下游三处 —— ① 路径边界（落 `scripts/` 前缀内 ⇒ 必过）② 类判
+	//         （读不到件 ⇒ 三判全取安全默认：只读档 / 非重编 / 非整套门）③ 台账（sha256 记
+	//         `unavailable`，如实记）。
+	//   ✗ 不改「py 件在盘」的任何行为：那一路 byName 命中、full 用真件路径、逐字同旧。
+	if !ok {
+		if _, inproc := gateCheckGoEntry[name]; inproc {
+			full = filepath.Join(root, gateCheckRosterDirRel, "gates", name+".py")
+			ok = true
+		}
+	}
 	if !ok {
 		// **保守拒**：名字不在册 ⇒ 拒并给可用名列表（✗ 不猜 · 不模糊匹配）。
 		fmt.Fprintf(stderr, "%s: 判据名 %q **不在册**（名字 ⇒ 件 只认逐字同名；不模糊匹配）\n", progName, name)

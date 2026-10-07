@@ -16,7 +16,7 @@
 //	  `check-partial-run-acceptance.py`（subprocess+mkdtemp）· `check-selfcount.py`（subprocess+mkdtemp）·
 //	  `check-stale-frozen.py`（subprocess+mkdtemp+importlib）· `check-write-face-gate.py`（importlib+写面）·
 //	  `check-verify-cmd-real.py`（mkdtemp+写面）· `check-registry-key-unique.py` / `check-selftest-knobs.py` /
-//	  `check-write-authz.py`（tempfile+写面）· `check-stepcount-drift.py`（mkdtemp+写面）·
+//	  `check-write-authz.py`（tempfile+写面）·
 //	  `check-repo-symlink-farm.py`（tempfile+environ）· `check-public-marks-tracked-parity.py`（subprocess+写面）·
 //	  `check-py-go-pairing-drift.py`（**另路独占 · 本单明令禁碰**）。
 //

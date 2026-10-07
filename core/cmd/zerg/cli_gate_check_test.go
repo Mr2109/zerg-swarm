@@ -264,7 +264,8 @@ func TestGateCheckLockContentionIsBlocked(t *testing.T) {
 	}
 }
 
-// ⑥ 进程内 Go 表完整性：项数 == 154，且**每项 key 都能在现读名录里找到**（名字 ⇒ 件 不断裂）。
+// ⑥ 进程内 Go 表完整性：项数 == 154，且**每项 key 都能被名解析找到**（名字 ⇒ 件 不断裂）。
+// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 或 inproc 键 二者其一」。
 // ★ 棘轮口径：本数 == 表内真搬入口数（现读 113）。门111 check-fleet-loadable 的 Go 真搬件（check_fleet_loadable.go）入 gate_inproc_table.go 后 107→108 ⇒ 期望随动（✗ 非凑绿）。★ 2026-10-05 接线 check-manifest-freshness（mfMain）⇒ 108→109。★ 2026-10-05 同批接线 check-contract-version-diff（cvdMain）· check-wallclock-ratchet（checkWallclockRatchetMain）⇒ 109→111。★ 2026-10-06 接线 gate-check-health（gateCheckHealthMain）· gate-report（gateReportMain）⇒ 111→113。★ 2026-10-07 接线批（本单）：14 件（buildSelfclean/checkDevTargets/checkDryrunYesConflictCoverage/checkEnvKnobs/checkGapClosureDrift/checkGatePointOutput/checkGateScriptRegistered/checkMainrepoMd/checkMkdirTempCleanup/checkRecordNotEvidence/stepSwitch/stepcountDrift/writeAuthz/m2GoPyIsomorphismScan）⇒ 113→127（check-registry-key-unique 未接：自检档 stderr 非法 JSON 报错正文 py⟷Go 不逐字）。★ 2026-10-07 接线批-第一批（本单）：9 件（check-repo-symlink-farm/check-selftest-knobs/check-outrepo-dead-refs/decl-label/evalCompare/evalStabilityStats/genGlossaryExports/checkRegistryKeyUnique/checkBypassIdioms）⇒ 127→136（writeout-probe 未接：两态不逐字 —— Go 缺 PROBE_DIR 时 rc=2 fail-closed ⟷ py 原件对环境变量取键抛 KeyError ⇒ 回溯 rc=1）。★ 本单同批落 决-10：防波门 B 侧真身路径改查判据注册表 entries[].path★ 2026-10-07 接线批-第二批（本单）：15 件（checkDelegationSelfreport/checkEmptyDomainGuards/checkExecTwoCondition/checkGapStateVsArtifact/checkI18nDrift/checkLooseExitRegistry/checkModelSizeAnchor/checkPublicMarksTrackedParity/checkSelfcount/csf/checkToolVersionSync/checkVerifyCmdReal/checkWriteFaceGate/genCliReference/zergEgg）⇒ 136→151（gen-gap-ledger 未接：py 侧 stderr 逐发带 SyntaxWarning（反斜杠 d 非法转义）⟷ Go 无 ⇒ stderr 面不逐字；writer-lock 未接：转发壳按 D2 写工具档拒执 rc=2 ⟷ py 真身 rc=0）。★ 本批勘误：后接10 的 inplace-window 无 inproc 入口（inplace_window.go 无 GateMain）⇒ 不接；check-i18n·doc-index-gen·gen-tools-md·i18n-audit 真身不在判据注册表（ui/scripts·tools）⇒ 不接为判据；kb-docs-sync 无注册表真身 ⇒ 不接。★ 2026-10-07 接线批-第三批（本单）：接线 inplace-window（ipwGateMain）⇒ 151→152。gen-gap-ledger 未接：py 侧 stderr 逐发带 SyntaxWarning（反斜杠 d 非法转义 · 门环境 python3 ≥3.12）⟷ Go 无 ⇒ stderr 面不逐字；writer-lock 未接：壳按件头 write D2 声明判写工具档拒执（缺 --yes ⇒ rc=2）⟷ py 真身 rc=0 ⇒ rc/stdout 面不逐字。★ 两条待防波门补掩码/侧路后另批再接（在册 GAP-20261007-11）。★ 2026-10-07 接线批-第四批（本单·收尾）：接线 gen-gap-ledger（genGapLedgerGateMain）· writer-lock（writerLockGateMain）⇒ 152→154（防波门 DEV-1816 已落：SyntaxWarning 面掩码 ⇒ gen-gap-ledger 的 stderr 面归一；写类键 side_a 补壳级 --yes ⇒ writer-lock 写工具档 fail-closed 消解）。
 func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
@@ -278,18 +279,36 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	if got := len(gateCheckGoEntry); got != 154 {
 		t.Fatalf("进程内 Go 表项数要 == 154，得到 %d", got)
 	}
+	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
+	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；
+	//   py 在盘那一路逐字同旧（byName 命中 ⇒ 沿用真件路径）。二者皆无 ⇒ 仍 fail-closed（不许出新孤儿）。
 	missing := []string{}
+	inprocOnly := []string{} // 有键无件（py 已退役）：名解析改由 inproc 键那一路担保。
 	for name := range gateCheckGoEntry {
-		if _, ok := byName[name]; !ok {
+		_, inRoster := byName[name]
+		_, inProc := gateCheckGoEntry[name]
+		switch {
+		case inRoster:
+			// py 件在盘：名解析走名录真件路径（旧路逐字同）。
+		case inProc:
+			// 有键无件（退役态）：名解析走 inproc 兜底（退役批新路）。
+			inprocOnly = append(inprocOnly, name)
+		default:
 			missing = append(missing, name)
 		}
 	}
 	if len(missing) != 0 {
-		t.Fatalf("表里 %d 项在名录里找不到（名字 ⇒ 件 断裂）：%q", len(missing), missing)
+		t.Fatalf("表里 %d 项既不在名录、又非 inproc 兜底（名字 ⇒ 件 断裂）：%q", len(missing), missing)
+	}
+	if len(inprocOnly) != 0 {
+		t.Logf("退役态（有键无件 · 名解析走 inproc 兜底）：%q", inprocOnly)
 	}
 }
 
 // ⑦ 进程内 Go 表 key 形态：key == 名录件的**基名去扩展名**（与名录扫描面同形 · 现读交叉 · ✗ 不抄字面量）。
+// ★ 放宽（2026-10-07 退役批）：名录命中 ⇒ 仍逐字同旧（key == 基名去扩展名）；
+//
+//	名录未命中 ⇒ 放宽为「须是 inproc 键」（退役态 · 名解析走 inproc 兜底）· ✗ 不静默（二者皆无即判红）。
 func TestGateCheckGoEntryKeysMirrorRoster(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	byName, _, err := gateCheckRoster(root)
@@ -299,7 +318,10 @@ func TestGateCheckGoEntryKeysMirrorRoster(t *testing.T) {
 	for name := range gateCheckGoEntry {
 		full, ok := byName[name]
 		if !ok {
-			t.Errorf("表 key %q 在名录里找不到", name)
+			if _, inproc := gateCheckGoEntry[name]; inproc {
+				continue // 退役态（有键无件）：名解析由 inproc 兜底担保。
+			}
+			t.Errorf("表 key %q 既不在名录、又非 inproc 兜底", name)
 			continue
 		}
 		base := filepath.Base(full)
@@ -625,5 +647,63 @@ func TestGateCheckStepTableReadersUnaffected(t *testing.T) {
 		if rc != 0 {
 			t.Fatalf("只读判据 %q ⇒ 照跑退 0（不受护栏影响），得到 %d · stderr=%s", name, rc, errb)
 		}
+	}
+}
+
+// ⑲ ★ 退役最后一道前置：**键 ∈ inproc 表 ⇒ 视为在册**（✗ 不再要求 py 件在盘）。
+//
+//	名解析真源从「现读 scripts/ 递归列举」并入「现读名录 ∪ inproc 表键」—— 某键的 py 件退役
+//	（已删）后，判据体仍在 Go 侧（gateCheckGoEntry）跑得动 ⇒ 照跑。
+//	两态（**仓外合成**「退役态」夹具 · 只动合成面，真仓不删任何 py 件）：
+//	  ①「有键无件」：inproc 表里的键、盘上无 py 件 ⇒ 名解析通过、走 inproc（rc/输出 = Go 体真读数）；
+//	     成对对照：py 件在盘时**逐字同**（inproc 优先 ⇒ 行为不变）；
+//	  ②「既不在 inproc、又无 py 件」⇒ 仍退 2「不在册」（成对负控 · 必留一格）。
+func TestGateCheckInprocKeyResolvesWithoutPyFile(t *testing.T) {
+	const name = "gct-retired-probe" // 合成键：现读断言它不在真表里（避免污染真表）。
+	if _, hit := gateCheckGoEntry[name]; hit {
+		t.Fatalf("前置不成立：%q 竟已在 Go 表里", name)
+	}
+	// 注入一枚合成 inproc 入口（跑完删回 —— 只动本进程内存 · ✗ 不碰 gate_inproc_table.go）。
+	gateCheckGoEntry[name] = func(stdout, stderr io.Writer, argv []string) int {
+		_, _ = io.WriteString(stdout, "gct-inproc-ran\n")
+		return 0
+	}
+	defer delete(gateCheckGoEntry, name)
+
+	root := t.TempDir()
+	py := gctWrite(t, root, "scripts/gates/"+name+".py", "print('py-should-not-run')\n")
+	t.Setenv("ZERG_GATE_FORWARD", "on")
+
+	// 态①-a（成对对照）：py 件在盘 ⇒ 行为不变（inproc 优先 ⇒ 走 Go 体 · py 不跑）。
+	rc, out, errb := gctRun(gctInv(name), root)
+	if rc != 0 || !strings.Contains(out, "gct-inproc-ran") || strings.Contains(out, "py-should-not-run") {
+		t.Fatalf("py 件在盘 ⇒ 走 inproc、行为不变：rc=%d out=%q stderr=%q", rc, out, errb)
+	}
+
+	// 态①-b（退役态）：**把 py 件移开** ⇒ 键仍在 inproc 表 ⇒ **仍解析、仍走 inproc**（本单新行为）。
+	if err := os.Remove(py); err != nil {
+		t.Fatal(err)
+	}
+	rc, out, errb = gctRun(gctInv(name), root)
+	if rc != 0 {
+		t.Fatalf("有键无件（退役态）⇒ 名解析应通过并走 inproc 退 0，得到 %d · stderr=%s", rc, errb)
+	}
+	if !strings.Contains(out, "gct-inproc-ran") {
+		t.Errorf("退役态应走 inproc 真体（stdout 带标记），却 %q", out)
+	}
+	if strings.Contains(errb, "不在册") {
+		t.Errorf("退役态**不该**判「不在册」（那正是本单要除的病）：%q", errb)
+	}
+
+	// 态②（成对负控）：既不在 inproc、又无 py 件 ⇒ 仍退 2「不在册」（必留一格）。
+	if _, hit := gateCheckGoEntry["gct-truly-absent"]; hit {
+		t.Fatal("前置不成立：gct-truly-absent 竟在 Go 表里")
+	}
+	rc2, _, errb2 := gctRun(gctInv("gct-truly-absent"), root)
+	if rc2 != exitUsage {
+		t.Fatalf("既不在 inproc、又无 py 件 ⇒ 退 %d（保守拒），得到 %d · stderr=%s", exitUsage, rc2, errb2)
+	}
+	if !strings.Contains(errb2, "不在册") {
+		t.Errorf("负控要逐字说「不在册」：%q", errb2)
 	}
 }
