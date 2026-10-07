@@ -820,8 +820,12 @@ def report(root, opts, files, mode, a_cands, b_cands, hits_a, wired_a, n_gate_pr
     out.append("  已挂门脚本 %d 只（不打印；--list-rules 可看闸清单与调用方式）" % len(wired_a))
 
     out.append("")
-    out.append("【断言 B】零引用件必须登记白名单 —— 候选 %d 只 · 零引用 %d 只 · **未登记 %d 只**"
-               % (len(rows), len(zero), len(unreg)))
+    if opts.wired_only:
+        out.append("【断言 B】**未判**（--wired-only：零引用普查**未执行**）—— 本档**不给出** B 的任何数字"
+                   "（≠「零引用 0 · 未登记 0」）")
+    else:
+        out.append("【断言 B】零引用件必须登记白名单 —— 候选 %d 只 · 零引用 %d 只 · **未登记 %d 只**"
+                   % (len(rows), len(zero), len(unreg)))
     if reg:
         out.append("  已登记（%d 只）：" % len(reg))
         by_name = {e["name"]: e for e in wl if e.get("name")}
@@ -909,7 +913,8 @@ def report(root, opts, files, mode, a_cands, b_cands, hits_a, wired_a, n_gate_pr
     out.append("        不算接线的三类：纯注释行 · 纯清单项（`\"scripts/<…>/<名>\"`，**含被排除表/白名单点名**）"
                "· 只被文案/说明/grep 模式串提到。")
     out.append("")
-    out.append("【结论】A 命中 %d · B 未登记 %d · C 失真 %d · 配置错 %d" % (len(hits_a), len(unreg), len(hits_c), len(errs)))
+    b_field = "未判（--wired-only）" if opts.wired_only else ("未登记 %d" % len(unreg))
+    out.append("【结论】A 命中 %d · B %s · C 失真 %d · 配置错 %d" % (len(hits_a), b_field, len(hits_c), len(errs)))
     if errs:
         out.append("        rc=2（缺件/配置错/空转 ⇒ 不给结论，不许静默）")
     elif opts.strict_report and hit_n:
@@ -1333,6 +1338,8 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--strict-report", action="store_true",
                     help="有命中即 rc=1（默认：只报告 ⇒ rc=0）")
+    ap.add_argument("--wired-only", dest="wired_only", action="store_true",
+                    help="只判断言 A/C，跳过零引用普查（断言 B）—— B 未判，报告里明写（✗ 不把空表印成「零引用 0 · 未登记 0」）")
     ap.add_argument("--list-rules", action="store_true", help="打判据/闸清单/口径/升级路径，然后退出")
     ap.add_argument("--self-test", dest="self_test", action="store_true", help="只跑自检")
     ap.add_argument("--no-self-test", action="store_true", help="跳过自检（自检内部的子进程用，防递归）")
@@ -1392,7 +1399,12 @@ def main(argv=None):
         return 2
 
     errs, wl_names = validate_whitelist(root, {c["name"] for c in b_cands}, wl)
-    zero, unreg, reg, stale, doc_only, rows = judge_b(root, files, b_cands, wl_names)
+    if opts.wired_only:
+        # ★ --wired-only：只判断言 A/C，**跳过**零引用普查（断言 B 的贵腿 judge_b）—— B 面在本档**未判**：
+        #   报告里明写「未判」，✗ 不把空表印成「零引用 0 · 未登记 0」（那是假绿）。
+        zero, unreg, reg, stale, doc_only, rows = [], [], [], [], [], []
+    else:
+        zero, unreg, reg, stale, doc_only, rows = judge_b(root, files, b_cands, wl_names)
 
     wired_names = {c["name"] for (c, _g, _ev) in wired_a}
     hits_c, c_rows, c_counts = judge_c(root, a_cands, wired_names)

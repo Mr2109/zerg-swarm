@@ -158,11 +158,11 @@ var dcmdExcl = map[string]bool{
 	"__pycache__": true, ".history": true, ".obsidian": true,
 }
 
-// ── 抽取正则（逐字复刻 py；★ `^` 锚定以复刻 py 的 `.match` 语义）──────────────────────────
+// ── 抽取正则（逐字复刻 py；★ `dcmdCmdWord` 用 `\A…\z` 整词锚定 —— GAP-20260927-60）──────────────────────────
 var (
 	dcmdZergInline  = regexp.MustCompile("`zerg(\\s+[^\\s`][^`]*)?`")
 	dcmdFence       = regexp.MustCompile("^(```|~~~)")
-	dcmdCmdWord     = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_-]*")
+	dcmdCmdWord     = regexp.MustCompile("\\A[A-Za-z][A-Za-z0-9_-]*\\z")
 	dcmdFlagWord    = regexp.MustCompile("^[\\[\\(]*-{1,2}[A-Za-z]")
 	dcmdIdentitySeg = regexp.MustCompile("`?zerg\\s+(?:[0-9]+\\.[0-9]+[0-9A-Za-z.+\\-]*\\s+)?[0-9a-fA-F]{7,64}(?:\\+dirty)?\\s+[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:]{5,8}Z?[^`]*`?")
 	dcmdVersionTok  = regexp.MustCompile("^[0-9]+(?:\\.[0-9]+)+[0-9A-Za-z.+\\-]*$")
@@ -175,6 +175,9 @@ var (
 	dcmdIDSkipRE     = regexp.MustCompile("身份行 / 版本串形态\\s*([0-9]+)\\s*段")
 	dcmdPropSkipRE   = regexp.MustCompile("未建提案体例[^0-9]*([0-9]+)\\s*段")
 )
+
+// dcmdASCIILetters —— 判「token 里含 ASCII 字母」用（与 py `re.search(r'[A-Za-z]', tok)` 同口径）。
+const dcmdASCIILetters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 // dcmdHit —— 一段抽出的 `zerg …`（行号 + 命令词）。
 type dcmdHit struct {
@@ -348,7 +351,7 @@ func dcmdSplitLines(s string) []string {
 }
 
 // dcmdSegmentWords —— 一段 `zerg …` 之后的行文 → (类别, 命令词)；类别 ∈ {cmd,identity,noise}。
-func dcmdSegmentWords(seg string) (string, []string) {
+func dcmdSegmentWords(seg string, stats map[string]int) (string, []string) {
 	toks := strings.Fields(seg)
 	first := ""
 	if len(toks) > 0 {
@@ -360,7 +363,7 @@ func dcmdSegmentWords(seg string) (string, []string) {
 		}
 		return "noise", nil
 	}
-	return "cmd", dcmdCommandWords(seg)
+	return "cmd", dcmdCommandWords(seg, stats)
 }
 
 // dcmdCountSkip —— 两类「认出来才丢」的段数分别计数（stats 为 nil 时只当没传）。
@@ -372,7 +375,7 @@ func dcmdCountSkip(stats map[string]int, kind string) {
 }
 
 // dcmdCommandWords —— 一段 `zerg …` 之后的行文 → 命令词（剥掉旗标与**紧跟旗标的取值**）。
-func dcmdCommandWords(seg string) []string {
+func dcmdCommandWords(seg string, stats map[string]int) []string {
 	out := []string{}
 	skip := false
 	for _, tok := range strings.Fields(seg) {
@@ -386,6 +389,9 @@ func dcmdCommandWords(seg string) []string {
 		}
 		if m := dcmdCmdWord.FindString(tok); m != "" {
 			out = append(out, m)
+		} else if stats != nil && strings.ContainsAny(tok, dcmdASCIILetters) {
+			// 越界 token（含字母、整词不合法）：前缀匹配会截成假词直接当判据 ⇒ 认出来才丢 + 出声计数
+			stats["dropped"] = stats["dropped"] + 1
 		}
 	}
 	return out
@@ -484,7 +490,7 @@ func dcmdExtract(text string, stats map[string]int) []dcmdHit {
 		if inFence {
 			for _, seg := range dcmdSplitPrompt(stripped) {
 				if m := dcmdFenceSeg.FindStringSubmatch(strings.TrimSpace(seg)); m != nil {
-					kind, words := dcmdSegmentWords(m[1])
+					kind, words := dcmdSegmentWords(m[1], stats)
 					dcmdCountSkip(stats, kind)
 					hits = append(hits, dcmdHit{lineno, words})
 				}
@@ -502,7 +508,7 @@ func dcmdExtract(text string, stats map[string]int) []dcmdHit {
 				if m[2] >= 0 {
 					seg = line[m[2]:m[3]]
 				}
-				kind, words := dcmdSegmentWords(seg)
+				kind, words := dcmdSegmentWords(seg, stats)
 				dcmdCountSkip(stats, kind)
 				hits = append(hits, dcmdHit{lineno, words})
 			}
@@ -821,9 +827,9 @@ func dcmdCheck(root string, scopes []string) (int, []string) {
 	lines = append(lines, fmt.Sprintf("命令树 %d 条（L1+L2）· formal 命中 %d（阻断档）· devdocs 命中 %d（只报告档）",
 		len(tree), formalHits, devdocsHits))
 	lines = append(lines, fmt.Sprintf("识别跳过（**不计入**上面两个数）：身份行 / 版本串形态 %d 段 · 非命令噪声 %d 段"+
-		" · 未建提案体例（判语引出的 `zerg <名>`）%d 段"+
+		" · 未建提案体例（判语引出的 `zerg <名>`）%d 段 · 越界 token（含字母、整词不合法）%d 段"+
 		" —— ★ 三类都是**认出来了**才丢（≠ 修前那种「抽不出词 ⇒ 静默」）",
-		stats["identity_lines"]+stats["identity"], stats["noise"], stats["proposal"]))
+		stats["identity_lines"]+stats["identity"], stats["noise"], stats["proposal"], stats["dropped"]))
 	for _, d := range detailAll {
 		lines = append(lines, "  "+d)
 	}

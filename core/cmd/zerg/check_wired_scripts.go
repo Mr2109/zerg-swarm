@@ -102,6 +102,7 @@ func checkWiredScriptsGateMain(stdout, stderr io.Writer, argv []string) int {
 
 type cwsOpts struct {
 	strictReport bool
+	wiredOnly    bool
 	listRules    bool
 	selfTest     bool
 	noSelfTest   bool
@@ -152,6 +153,8 @@ func cwsParseArgs(argv []string) (cwsOpts, error) {
 		switch key {
 		case "--strict-report":
 			o.strictReport = true
+		case "--wired-only":
+			o.wiredOnly = true
 		case "--list-rules":
 			o.listRules = true
 		case "--self-test":
@@ -271,7 +274,12 @@ func cwsRun(stdout io.Writer, opts cwsOpts) int {
 		candNames[c.name] = true
 	}
 	errs, wlNames := cwsValidateWhitelist(candNames, wl)
-	zero, unreg, reg, stale, docOnly, rows := cwsJudgeB(root, files, cands, wlNames)
+	// ★ --wired-only：只判断言 A/C，**跳过**零引用普查（断言 B 的贵腿 cwsJudgeB）—— B 面在本档**未判**：
+	//   报告里明写「未判」，✗ 不把空表印成「零引用 0 · 未登记 0」（那是假绿）。
+	var zero, unreg, reg, stale, docOnly, rows []cwsRow
+	if !opts.wiredOnly {
+		zero, unreg, reg, stale, docOnly, rows = cwsJudgeB(root, files, cands, wlNames)
+	}
 
 	wiredNames := map[string]bool{}
 	for _, c := range aCands {
@@ -1217,8 +1225,12 @@ func cwsReport(root string, opts cwsOpts, files []string, mode string, aCands, b
 	out = append(out, fmt.Sprintf("  已挂门脚本 %d 只（不打印；--list-rules 可看闸清单与调用方式）", nWired))
 
 	out = append(out, "")
-	out = append(out, fmt.Sprintf("【断言 B】零引用件必须登记白名单 —— 候选 %d 只 · 零引用 %d 只 · **未登记 %d 只**",
-		len(rows), len(zero), len(unreg)))
+	if opts.wiredOnly {
+		out = append(out, "【断言 B】**未判**（--wired-only：零引用普查**未执行**）—— 本档**不给出** B 的任何数字（≠「零引用 0 · 未登记 0」）")
+	} else {
+		out = append(out, fmt.Sprintf("【断言 B】零引用件必须登记白名单 —— 候选 %d 只 · 零引用 %d 只 · **未登记 %d 只**",
+			len(rows), len(zero), len(unreg)))
+	}
 	byName := map[string]cwsWLEntry{}
 	for _, e := range wl {
 		if e.name != "" {
@@ -1376,7 +1388,11 @@ func cwsReport(root string, opts cwsOpts, files []string, mode string, aCands, b
 	out = append(out, "        「在闸里」= **命令位调用**（真接线面）：名字紧跟解释器/启动器（`python3`/`bash`/`${PY}`/`./`…），中间只允许选项旗标。")
 	out = append(out, "        不算接线的三类：纯注释行 · 纯清单项（`\"scripts/<…>/<名>\"`，**含被排除表/白名单点名**）· 只被文案/说明/grep 模式串提到。")
 	out = append(out, "")
-	out = append(out, fmt.Sprintf("【结论】A 命中 %d · B 未登记 %d · C 失真 %d · 配置错 %d", len(hitsA), len(unreg), len(hitsC), len(errs)))
+	bField := "未判（--wired-only）"
+	if !opts.wiredOnly {
+		bField = fmt.Sprintf("未登记 %d", len(unreg))
+	}
+	out = append(out, fmt.Sprintf("【结论】A 命中 %d · B %s · C 失真 %d · 配置错 %d", len(hitsA), bField, len(hitsC), len(errs)))
 	if len(errs) > 0 {
 		out = append(out, "        rc=2（缺件/配置错/空转 ⇒ 不给结论，不许静默）")
 	} else if opts.strictReport && hitN > 0 {

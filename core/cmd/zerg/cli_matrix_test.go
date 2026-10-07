@@ -569,3 +569,68 @@ func TestCLIContractJSONShape(t *testing.T) {
 		t.Errorf("items 不是数组：%s（§九 M6 I3：恒数组、永不为 null）", string(doc["items"]))
 	}
 }
+
+// TestCLIContractSubmitAcceptanceStates —— 判据 T-44 ② 补（GAP-20260927-34）：`--acceptance` 三态**端到端**断言。
+//
+// 合同层（API 结构体 `core/internal/api/slice_schema.go:112` 的 `Acceptance *[]string`）是三态：
+// nil（没写）/ `&[]string{}`（显式空）/ `&[]string{"…"}`（有内容）。但**从命令面到端到端只两态可达**：
+//
+//	S1 裸形 `--acceptance`   ⇒ 请求体 `"acceptance":null`（`family_task.go:253-254` 发 `inv.acceptance`，其为 nil ⇒ null）
+//	S2 等号形 `--acceptance=` ⇒ 逐字节同 S1（⇒ null）
+//	S4 有值 `--acceptance v`  ⇒ 请求体 `"acceptance":["v"]`
+//	S5 不给                   ⇒ 请求体里**没有** acceptance 键
+//
+// ★ S3「显式空 `[]`」**从命令面不可达** —— 空声明一律落 null，绝不产出 `[]`（本用例逐发回读断言无任一形态含 `[]`）。
+// ★ 且 API 收受端把 `null` 与「键缺席」**并成一件事**：JSON null 解进 `*[]string` 仍是 nil ⇒ 与「没写」同走
+// `slice_schema.go:303` 的 `in.Acceptance == nil` 分支 ⇒ 同一码 SLICE_MISSING_ACCEPTANCE。
+// 合成主控（本机随机端口 · 不碰生产 8580）逐发回读请求体。
+func TestCLIContractSubmitAcceptanceStates(t *testing.T) {
+	seen := []string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks" {
+			http.NotFound(w, r)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		seen = append(seen, string(body))
+		w.WriteHeader(201)
+		fmt.Fprint(w, `{"id":"synthetic-accept-1","status":"queued"}`)
+	}))
+	defer srv.Close()
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+	t.Setenv("ZERG_PORT", strconv.Itoa(port))
+
+	cases := []struct {
+		name     string
+		argv     []string
+		wantBody string // 请求体应含（逐字）
+		notBody  string // 请求体不应含（逐字；空串 = 不判）
+	}{
+		{"S1 裸形", []string{"task", "submit", "--desc", "合成", "--acceptance", "--yes"}, `"acceptance":null`, `"acceptance":[`},
+		{"S2 等号形", []string{"task", "submit", "--desc", "合成", "--acceptance=", "--yes"}, `"acceptance":null`, `"acceptance":[`},
+		{"S4 有值", []string{"task", "submit", "--desc", "合成", "--acceptance", "判据甲", "--yes"}, `"acceptance":["判据甲"]`, ""},
+	}
+	for _, c := range cases {
+		if rc, out, errb := runCapture(c.argv...); rc != 0 {
+			t.Errorf("%s %v 退码 = %d（要 0）· stdout=%s stderr=%s", c.name, c.argv, rc, out, errb)
+		}
+	}
+	// S5 不给 `--acceptance`（无 slice 字段）：请求体里不该有 acceptance 键。
+	if rc, out, errb := runCapture("task", "submit", "--desc", "合成", "--yes"); rc != 0 {
+		t.Errorf("S5 退码 = %d（要 0）· stdout=%s stderr=%s", rc, out, errb)
+	}
+	if len(seen) != 4 {
+		t.Fatalf("合成主控收到 %d 次请求（要 4 次）· seen=%v", len(seen), seen)
+	}
+	for i, c := range cases {
+		if !strings.Contains(seen[i], c.wantBody) {
+			t.Errorf("%s 请求体应含 %q：%s", c.name, c.wantBody, seen[i])
+		}
+		if c.notBody != "" && strings.Contains(seen[i], c.notBody) {
+			t.Errorf("%s 请求体**不该**含 %q（`[]` 从命令面不可达）：%s", c.name, c.notBody, seen[i])
+		}
+	}
+	if strings.Contains(seen[3], `"acceptance"`) {
+		t.Errorf("S5 不给 --acceptance ⇒ 请求体不该出现 acceptance 键（缺席 != null）：%s", seen[3])
+	}
+}
