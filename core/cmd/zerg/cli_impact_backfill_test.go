@@ -444,6 +444,51 @@ func TestImpactBackfill_SourceSelfCheck(t *testing.T) {
 	}
 }
 
+// TestImpactSlotLineRetiredTolerant —— 现成槽那一行（`scripts/gates/check-slice.py` 第 7 行）的退役容忍
+// （缺口 `GAP-20261007-16` · 类①）：尺 py 退役（不在盘）∧ 其 Go 半 `check_slice.go` 在盘 ⇒
+// `zerg.ImpactSlotLineForTest` 回落**内化样本**（与真身第 7 行逐字同 · ✗ 不 fail-closed）；
+// 两半皆不在盘（真消失）⇒ 返回 error（fail-closed · 缺件 ≠ 绿）。
+// ★ 哑化 `ImpactSlotLineForTest` 里的 `impactCalibScriptRetired` 回落支 ⇒ 第 ② 格 FAIL（带行号）。
+func TestImpactSlotLineRetiredTolerant(t *testing.T) {
+	mk := func(rel string) string {
+		dir := t.TempDir()
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+
+	// ① 真仓 py 在盘 ⇒ 旧路逐字不变（读到真身第 7 行）；退役态（真仓 py 已退场）⇒ 本格无真身可比，照会跳过。
+	real, realErr := zerg.ImpactSlotLineForTest(repoRootFromCLI(t))
+	if realErr != nil {
+		t.Logf("真仓 check-slice.py 不在盘（退役态）⇒ 跳过「内化样本 == 真身」照会：%v", realErr)
+	} else if !strings.Contains(real, "假绿 = 0 · 假红 ≤ 10%") {
+		t.Fatalf("真仓第 7 行不含现成槽门槛串：%q", real)
+	}
+
+	// ② 退役态（夹具）：py 缺 ∧ Go 半在盘 ⇒ 回落内化样本（✗ 不是 error）。
+	retired := mk("core/cmd/zerg/check_slice.go")
+	got, err := zerg.ImpactSlotLineForTest(retired)
+	if err != nil {
+		t.Fatalf("退役态应回落内化样本（✗ 不 fail-closed）：%v", err)
+	}
+	if !strings.Contains(got, "假绿 = 0 · 假红 ≤ 10%") {
+		t.Fatalf("退役态内化样本不含现成槽门槛串：%q", got)
+	}
+	if realErr == nil && got != real {
+		t.Fatalf("退役态内化样本与真身第 7 行不逐字同：\n got=%q\n真身=%q", got, real)
+	}
+
+	// ③ 负控（两半皆不在盘 ⇒ fail-closed）：夹具里只有一处无关件 ⇒ 必 error。
+	if _, err := zerg.ImpactSlotLineForTest(mk("scripts/gates/other.py")); err == nil {
+		t.Fatal("两半皆不在盘应 error（fail-closed · 缺件 ≠ 绿）")
+	}
+}
+
 // ---- E2E：判据①③ + 干跑/真写边界 + 齐不齐（真跑 `zerg impact --gate-results`）------------------
 
 // TestImpactBackfill_EndToEnd —— 判据①③ + 零副作用边界，逐条真跑（**每枚都是合成结果表 + 合成状态目录**）：

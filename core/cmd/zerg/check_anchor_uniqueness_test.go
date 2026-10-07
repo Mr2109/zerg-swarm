@@ -114,3 +114,41 @@ func TestCheckAnchorUniquenessGatePort(t *testing.T) {
 		}
 	})
 }
+
+// TestCheckAnchorUniquenessVersionWarning —— 缺口 GAP-20260926-106 告警面：
+// 登记件版本段 ≠ 现读版本真源 ⇒ 人面 / --json 皆出告警；相等 ⇒ 无告警（成对负控）。
+func TestCheckAnchorUniquenessVersionWarning(t *testing.T) {
+	repo, docs, _ := auTestFixture(t)
+	if err := os.MkdirAll(filepath.Join(repo, "core", "internal", "version"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeVer := func(v string) {
+		if err := os.WriteFile(filepath.Join(repo, "core", "internal", "version", "version.go"),
+			[]byte("package version\n\nconst Version = \""+v+"\"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	regV := filepath.Join(docs, "v9.9.9", "登记.md")
+	if err := os.MkdirAll(filepath.Dir(regV), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeVer("2.5.13")
+	auWriteReg(t, regV, "| `W-45-01` | `@docs/件.md` | 唯一句甲在此。 | a |\n")
+	rc, out, _ := auRunEntry("--root", repo, "--docs-root", docs, "--register", regV)
+	if rc != 0 {
+		t.Fatalf("rc=%d want 0\nout=%q", rc, out)
+	}
+	if !strings.Contains(out, "⚠ 告警：登记件版本 v9.9.9 与当前版 v2.5.13 不符") {
+		t.Fatalf("人面缺告警行:\n%q", out)
+	}
+	_, jout, _ := auRunEntry("--root", repo, "--docs-root", docs, "--register", regV, "--json")
+	if !strings.Contains(jout, `"warnings": ["登记件版本 v9.9.9 与当前版 v2.5.13 不符`) {
+		t.Fatalf("--json 缺 warnings:\n%q", jout)
+	}
+	// 负控：版本相等 ⇒ 不得出告警
+	writeVer("9.9.9")
+	rc2, out2, _ := auRunEntry("--root", repo, "--docs-root", docs, "--register", regV)
+	if rc2 != 0 || strings.Contains(out2, "⚠ 告警：") {
+		t.Fatalf("版本相等时不应告警：rc=%d out=%q", rc2, out2)
+	}
+}

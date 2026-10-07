@@ -183,14 +183,27 @@ func TestCPDPathAndStripSemantics(t *testing.T) {
 // 且其 Go 半在盘 ⇒ docs_allowlist 不再报「缺件」（与在盘一致）；Go 半也缺 ⇒ 仍报缺件（牙未放宽）。
 func TestCPDHistorySecretsRetiredTolerant(t *testing.T) {
 	repo := cptpTRepo(t)
+	const (
+		hsecPyRel = "scripts/gates/check-history-secrets.py"
+		hsecGoRel = "core/cmd/zerg/check_history_secrets.go"
+	)
+	// 真源 py 是否在盘（退役态判定的两缀之一）。py 退役 ⇒ 正控无对象（下）· 退役/负控两格本就要它缺。
+	pyPresent := cptpExists(cptpPyJoin(repo, hsecPyRel))
+	// 负控·fail-closed（两半皆不在盘 ⇒ 真消失）：夹具无从构造（缺件 ≠ 绿）。
+	if !pyPresent && !cptpExists(cptpPyJoin(repo, hsecGoRel)) {
+		t.Fatalf("真仓既无 %s 又无其 Go 半 %s ⇒ fail-closed（缺件 ≠ 绿）", hsecPyRel, hsecGoRel)
+	}
 	mk := func(hsecAbsent, goHalf bool) string {
 		root := t.TempDir()
 		for _, rel := range []string{
 			"publish/mirror-public-lib.py", "publish/whitelist.txt",
-			"scripts/build/publish-public.sh", "scripts/gates/check-history-secrets.py",
+			"scripts/build/publish-public.sh", hsecPyRel,
 		} {
 			b, err := os.ReadFile(cptpPyJoin(repo, rel))
 			if err != nil {
+				if rel == hsecPyRel {
+					continue // 退役容忍：真源 py 已退场 ⇒ 不拷（退役/负控两格本就要它缺）
+				}
 				t.Fatalf("真仓缺 %s：%v", rel, err)
 			}
 			dst := cptpPyJoin(root, rel)
@@ -202,12 +215,10 @@ func TestCPDHistorySecretsRetiredTolerant(t *testing.T) {
 			}
 		}
 		if hsecAbsent {
-			if err := os.Remove(cptpPyJoin(root, "scripts/gates/check-history-secrets.py")); err != nil {
-				t.Fatal(err)
-			}
+			_ = os.Remove(cptpPyJoin(root, hsecPyRel))
 		}
 		if goHalf {
-			g := cptpPyJoin(root, "core/cmd/zerg/check_history_secrets.go")
+			g := cptpPyJoin(root, hsecGoRel)
 			if err := os.MkdirAll(cptpPyDirname(g), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -218,9 +229,11 @@ func TestCPDHistorySecretsRetiredTolerant(t *testing.T) {
 		return root
 	}
 
-	// 正控：py 在盘 ⇒ 合法集读得出（不报 err）
-	if a := cptpDocsAllowlistWith(cptpTRepo(t), mk(false, false), ""); a.err != "" {
-		t.Fatalf("正控（py 在盘）不该报 err：%q", a.err)
+	// 正控（py 真身在盘）⇒ 合法集读得出（不报 err）。py 已退役 ⇒ 该格无对象，跳过（✗ 不 Fatal）。
+	if pyPresent {
+		if a := cptpDocsAllowlistWith(cptpTRepo(t), mk(false, false), ""); a.err != "" {
+			t.Fatalf("正控（py 在盘）不该报 err：%q", a.err)
+		}
 	}
 
 	// 退役：py 移开 + Go 半在盘 ⇒ 不再「缺件」，err 为空

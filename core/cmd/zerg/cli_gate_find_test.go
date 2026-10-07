@@ -291,3 +291,39 @@ func TestCLIGateFindUnreadableGateDirNoVerdict(t *testing.T) {
 		t.Fatalf("零命中也不许往 stdout 写东西（K2 的 0 字节档），实得 stdout=%q", out2)
 	}
 }
+
+// TestCLIGateFindPublishFaceForPublishGate —— GAP-20260928-29：发布面闸（按设计不在 add_step 里）的真家
+// = scripts/build/publish-preflight.sh 的闸④ ⇒ `gate find` 的 wiring 格必须补印「发布面: 点名@N」
+// （此前只印 precommit / all.sh / real-gates 三面、不指向这条真家 ⇒ 发布面闸「无正门读数口」）。
+//
+// 两态成对：① 负控（移走态）：publish-preflight.sh 不在盘 ⇒ wiring 不许出现「发布面」；
+// ② 正控（在盘态）：闸④ 以真命令位调该件（第 1 行）⇒ wiring 补印「发布面: 点名@1」。
+// 走进程内 `runZergRepo`（读当前源码 · 与同件 rc=8 那条同层 —— `bin/zerg` 是按批重建制品，本单不重建）。
+func TestCLIGateFindPublishFaceForPublishGate(t *testing.T) {
+	root := showRepo(t) // precommit-gates.sh 是自举件 ⇒ 不在 add_step ⇒ 走门件行
+	pb := filepath.Join(root, "scripts", "build", "publish-preflight.sh")
+	if err := os.MkdirAll(filepath.Dir(pb), 0o755); err != nil {
+		t.Fatalf("建 scripts/build/ 失败：%v", err)
+	}
+
+	// ① 负控（移走态）：该件不在盘 ⇒ wiring 不许含「发布面」。
+	rc0, out0, errb0 := runZergRepo(t, root, "gate", "find", "precommit-gates.sh", "--json", "name,wiring")
+	if rc0 != 0 {
+		t.Fatalf("门件行应 rc=0，实得 rc=%d（stderr=%s）", rc0, errb0)
+	}
+	if strings.Contains(out0, "发布面") {
+		t.Fatalf("publish-preflight.sh 不在盘时 wiring 不许含「发布面」，实得 %q", out0)
+	}
+
+	// ② 正控（在盘态）：闸④ 以真命令位调它（第 1 行）⇒ wiring 补印「发布面: 点名@1」。
+	if err := os.WriteFile(pb, []byte("python3 \"$Z/scripts/gates/precommit-gates.sh\" \"$D\" HEAD > /tmp/pf4.log 2>&1; RC4=$?\n"), 0o644); err != nil {
+		t.Fatalf("写 publish-preflight.sh 失败：%v", err)
+	}
+	rc1, out1, errb1 := runZergRepo(t, root, "gate", "find", "precommit-gates.sh", "--json", "name,wiring")
+	if rc1 != 0 {
+		t.Fatalf("门件行应 rc=0，实得 rc=%d（stderr=%s）", rc1, errb1)
+	}
+	if !strings.Contains(out1, "发布面: 点名@1") {
+		t.Fatalf("publish-preflight.sh 真命令位调用该件（第 1 行）⇒ wiring 必须补印「发布面: 点名@1」，实得 %q", out1)
+	}
+}

@@ -13,13 +13,6 @@
  "_扫描命令": "grep -r -E \"dry.?run|DryRun\" --include=*.go --include=*.sh --include=*.py --include=*.rs --exclude-dir=venv --exclude-dir=.venv core agent scripts wall gateway ui",
  "件": [
   {
-   "file": "scripts/gates/check-newcmd-followup.py",
-   "类": "只读聚合门（判据面 · 本件用 dry-run 一词作**被检字段名**，不是第五套语义）",
-   "语义": "dryrun.v1",
-   "零副作用判据": "全程只读：不写盘 / 不改状态 / 不 exec 任何被测命令；唯一写动作局限于 `--self-test` 在 `tempfile.mkdtemp()` 的**仓外夹具**里造合成树（跑完即删），真目标档（裸跑 / `--root`）一个字节都不写",
-   "备注": "第三批甲④「新命令随动总账」的**面①（dryrun 落点）**判据件"
-  },
-  {
    "file": "agent/internal/backend/manager.go",
    "类": "收卵前静态判据模拟",
    "语义": "dryrun.v1",
@@ -483,13 +476,6 @@
    "语义": "dryrun.v1",
    "零副作用判据": "`--dry-run` 只打计划件（落点 / 差异逐件点名 / 声明行 / 写前后 sha），不写件也不落审计 ⇒ 目标件 `sha256` 与审计件行数两处都不变（本批现跑：真实 `Zerg-内部文档` 落点 dry-run 前后 sha 逐字相同 · 审计 1 → 1 行）",
    "备注": "`A3` 取「b」案的新写面（`设计-仓外台账写面-A3-b案-v1.0-20260923.md` §二 三态表 —— 与 `repo commit` 同一张表）"
-  },
-  {
-   "file": "scripts/gates/check-public-face-commands.py",
-   "类": "门：公开面命令名抽取器 + 反向探针（T-14 · 判据 V10 · 漏点 E-4）",
-   "语义": "dryrun.v1",
-   "零副作用判据": "本件是**消费者 / 引文命中**：全件唯一命中是一处件头**引文**（解释「危险块那一行只声明三态」时引那三个旗标名），本件既不解析、也不产生干跑档。它自己的动作面 = 只跑 `bin/zerg help` / `bin/zerg help dangerous` / `zerg <命令> --help`（只读面）与只读 `publish/docs/**`，**不写任何件**（不落盘 / 不删 / 不推 / 不造目录 / 不改 git 状态）；`--self-test` 全跑在 `tempfile.mkdtemp()` 的夹具树里、且 `--root` 换根时真源二进制只回落到本仓现制品（回落逐条打印）",
-   "备注": "T-14 落地（2026-09-24 · 三处公开面登记同批）· 本件**无自己的干跑档** ⇒ 借本条声明「引文命中」，防它被当第五套语义"
   },
   {
    "file": "core/cmd/zerg/family_route.go",

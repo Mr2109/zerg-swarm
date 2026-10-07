@@ -838,6 +838,32 @@ func csfBridge(root, op string, stderr io.Writer) (map[string]any, string) {
 			return map[string]any{"ok": true, "fp": fp, "head": head}, ""
 		}
 	}
+	// ★ 退役态（2026-10-07 退役批 · help_shape 桥退役容忍）：`help_shape` 这一路的兄弟件
+	//   `scripts/gates/check-help-shape.py` 退役（不在盘）⇒ importlib 桥取不到其 `BASELINE`
+	//   （原样 = 「取不到 ⇒ 不给结论」= fail-closed）。⇒ 回落**同判据的 Go 半** `chsBaseline`
+	//   （本包内 · 与 py 半同一冻结真源 · ✗ 非第二条实现）现取同一读数，✗ 不因缺 py 而 fail-closed。
+	//   ★ 两半皆不在（chsBaseline 空）⇒ fail-closed。py 件在盘时照旧走下面那条 importlib 桥
+	//   （两态逐字同 · 单一真源不变）。
+	if op == "help_shape" {
+		sib := filepath.Join(root, "scripts", "gates", "check-help-shape.py")
+		if fi, err := os.Stat(sib); err != nil || fi.IsDir() {
+			bl := map[string]any{}
+			for k, v := range chsBaseline {
+				m := map[string]any{}
+				if v.HasLines {
+					m["lines"] = v.Lines
+				}
+				if v.HasBytes {
+					m["bytes"] = v.Bytes
+				}
+				bl[k] = m
+			}
+			if len(bl) == 0 {
+				return nil, "兄弟件已退役，且 Go 半 chsBaseline 为空（冻结读数取不到）"
+			}
+			return map[string]any{"ok": true, "baseline": bl}, ""
+		}
+	}
 	cmd := exec.Command("python3", "-c", csfBridgeSrc, root, op)
 	var ob, eb bytes.Buffer
 	cmd.Stdout = &ob

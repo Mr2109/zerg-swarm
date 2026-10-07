@@ -90,28 +90,10 @@ var gpoTextAllow = []gpoTextAllowEntry{
 		Replacement: "若要真给可复跑命令，交由「命令串产地」统一（另批）；本门不判文字面。",
 	},
 	{
-		Path: "scripts/gates/check-dangling-refs.py", Rule: "GPO-F1",
-		Anchor:      "print(\"✗ " + gpoGitTok + " " + gpoNLsFiles + " rc=%d",
-		Reason:      "消息串：出错时印给人看的文本；同函数真调用在**另一行**且已带 `-z`（同函数把 stdout 按 NUL 逐字切分 = 证据）。",
-		Replacement: "无需改：真调用已合规；本行只是报错文本里的字面。",
-	},
-	{
 		Path: "scripts/gates/check-publish-face-sync.py", Rule: "GPO-F1",
 		Anchor:      "print(\"✗ " + gpoGitTok + " " + gpoNLsFiles + " 失败：%s（rc=%d）",
 		Reason:      "消息串：`r.returncode != 0` 分支里的报错文本；真调用在**上一行**且已带 `-c " + gpoKeyLower + "=false`（同件 L102）。",
 		Replacement: "无需改：真调用已合规。",
-	},
-	{
-		Path: "scripts/gates/who-references.py", Rule: "GPO-F1",
-		Anchor:      "print(\"✗ " + gpoGitTok + " " + gpoNLsFiles + " rc=%d",
-		Reason:      "消息串：同 `check-dangling-refs.py` 的报错文本；真调用已带 `-z`（同函数按 NUL 切分 stdout）。",
-		Replacement: "无需改：真调用已合规。",
-	},
-	{
-		Path: "scripts/gates/check-gap-axis-reconcile.py", Rule: "GPO-F1",
-		Anchor:      "现读 " + gpoGitTok + " " + gpoNLsFiles + " 失败",
-		Reason:      "消息串：`ctx.get` 的第二实参 = **兜底文字**（戊 取数面拿不到时印给人看的报错文本），不是 argv —— 没有哪台机器会去跑它。同件真调用在 L143 且已带 `-z`（三锚点：`-C` + `" + gpoKeyLower + "=false` + `-z` · 同函数按 NUL 逐字切分 stdout = 证据）。",
-		Replacement: "无需改：真调用已合规；本行只是报错文本里的字面。",
 	},
 	// ── 2026-10-02 · M2 py→Go 端口补齐（与 py 侧 TEXT_ALLOW 逐字同族同因）───────────
 	//    这五条与上面 py 侧三条**同因**：命中行是**消息串**（非 argv），真调用已合规

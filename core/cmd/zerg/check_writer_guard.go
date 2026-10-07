@@ -9,8 +9,8 @@
 // 未覆盖面（✗ 不声称逐字对齐 · 详单见伴随测试件与交付报）：
 //
 //	① argparse 前缀缩写 / 「旗标缺值」usage 正文未实现（`-h` 未定义 ⇒ 未知旗标，已复刻）。
-//	② 默认根：py 由 `__file__` 上溯三级；Go 无 `__file__` ⇒ 由 `os.Executable()` 上溯三级
-//	   ⇒ 仅当探针与 py 副本同处 `<root>/scripts/gates/` 时逐字相同（乙组即如此摆位）。
+//	② 默认根：py 由 `__file__` 上溯三级（⇒ 仓根）；Go 无 `__file__` ⇒ 起于 cwd / `os.Executable()`
+//	   上溯 ≤8 层找含 `scripts/gates/` 的祖先（⇒ 仓根），兜底 abspath(cwd)（见下 cwgDefaultRoot）。
 //	③ 异常正文：`OSError`（仅复刻 `FileNotFoundError` 的 `[Errno 2] ...` 形）/ `JSONDecodeError` /
 //	   台账非 dict 的 `AttributeError` / 台账 `regex` 非 str 的 `TypeError` 正文不属承诺。
 //	④ 遍历序：用 `f.ReadDir(-1)`（非排序）复刻 `os.scandir` 原序；**输出行序处处由 py 自己的
@@ -996,14 +996,42 @@ func cwgInFields(f string) bool {
 	return false
 }
 
-// cwgDefaultRoot —— py `DEFAULT_ROOT = dirname(dirname(HERE))`（HERE=脚本所在目录）。
-// Go 无 `__file__` ⇒ 由 `os.Executable()` 上溯三级（见件头未覆盖面②）。
+// cwgDefaultRoot —— py `DEFAULT_ROOT = dirname(dirname(HERE))`（HERE=脚本所在目录 ⇒ 仓根）。
+// Go 入口无 `__file__` ⇒ 起于 `os.Executable()` / cwd 上溯找含 `scripts/gates/` 的祖先（⇒ 仓根），
+// 兜底 abspath(cwd)（与同包 clrlDefaultRoot 同体例；见件头未覆盖面②）。
 func cwgDefaultRoot() string {
-	exe, err := os.Executable()
+	if exe, err := os.Executable(); err == nil {
+		if r := cwgAncestorWithGates(filepath.Dir(exe)); r != "" {
+			return r
+		}
+	}
+	wd, err := os.Getwd()
 	if err != nil {
 		return ""
 	}
-	return filepath.Dir(filepath.Dir(filepath.Dir(exe)))
+	if abs, err := filepath.Abs(wd); err == nil {
+		wd = abs
+	}
+	if r := cwgAncestorWithGates(wd); r != "" {
+		return r
+	}
+	return wd
+}
+
+// cwgAncestorWithGates —— 自 start 上溯 ≤8 层，返回首个含 `scripts/gates/` 的祖先（无 ⇒ 空串）。
+func cwgAncestorWithGates(start string) string {
+	cur := start
+	for i := 0; i < 8; i++ {
+		if fi, err := os.Stat(filepath.Join(cur, "scripts", "gates")); err == nil && fi.IsDir() {
+			return cur
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur || parent == "" {
+			break
+		}
+		cur = parent
+	}
+	return ""
 }
 
 // checkWriterGuardGateMain —— 入口。

@@ -37,9 +37,13 @@ func publishSetRun(t *testing.T, argv ...string) (int, string, string) {
 //	  `scripts/gates/precommit-gates.sh`（门禁运行器本体 · 恒 `public=no` + 两器排除面在册 ·
 //	  **不在 py→Go 退役面内** ⇒ 样本不随单件退役而失）。其余两枚仍在盘 ⇒ 逐字不变
 //	  （照「py 在盘 ⇒ 旧路逐字不变」）。
+//	★ 2026-10-07（本波 · 同上口径补齐）：原次枚 `scripts/gates/check-help-shape.py` **仍在 py→Go
+//	  退役面内**（门69 判据件 · 待退役）⇒ 同病（退役即红）⇒ 同批内化：改拿**结构性机制件**
+//	  `scripts/gates/real-gates.sh`（门面「真跑档」本体 · 恒 `public=no` + 两器排除面在册 ·
+//	  不在任何 py→Go 退役面内）。现读一键核：三枚 + 一正控 `publish set` 全「不发 · EXCLUDES」。
 var publishSetGateBlockedFiles = []string{
 	"scripts/gates/precommit-gates.sh",
-	"scripts/gates/check-help-shape.py",
+	"scripts/gates/real-gates.sh",
 	"scripts/gates/check-lineref-limit.py",
 }
 
