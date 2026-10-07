@@ -331,3 +331,39 @@ func TestTsmFixtureDriverUsesSubcommandShape(t *testing.T) {
 		}
 	}
 }
+
+// ★ 退役容忍（缺口 `GAP-20261007-16`）：本件**运行时/自检不读**仓内 `scripts/gates/two-states-gate-mutate.py`
+// 的正文 —— 夹具里的「本件」是【硬拷贝 `tsmDriverPath()`（默认可执行自身）】⇒ 该 py 退役（不在盘）对本件零影响。
+// 本用例坐实：驱动**源** = 可执行自身（非该 py）；且夹具驱动从**给定源**拷入（不是从仓内该 py）。
+// 哑化 `tsmMkFixture` 改从仓内该 py 取源 ⇒ 本用例 FAIL（带本行号）。
+func TestTsmDriverSourcedNotFromJudgePy(t *testing.T) {
+	if tsmMutDriverRel != filepath.Join("scripts", "gates", "two-states-gate-mutate.py") {
+		t.Fatalf("驱动**落点**应是该 py 路径（落点≠源），实 %q", tsmMutDriverRel)
+	}
+	saved, had := os.LookupEnv("ZERG_ZTS_MUT_DRIVER")
+	os.Unsetenv("ZERG_ZTS_MUT_DRIVER")
+	defer func() {
+		if had {
+			os.Setenv("ZERG_ZTS_MUT_DRIVER", saved)
+		}
+	}()
+	drv := tsmDriverPath()
+	if drv == "" {
+		t.Fatal("驱动源（默认可执行自身）为空")
+	}
+	if strings.HasSuffix(drv, "two-states-gate-mutate.py") {
+		t.Fatalf("驱动源不得是仓内该 py（应可执行自身）：%q", drv)
+	}
+	src := filepath.Join(t.TempDir(), "drv-probe")
+	if err := os.WriteFile(src, []byte("#drv-probe\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fix, e := tsmMkFixture(t.TempDir(), src, "fx", "", "")
+	if e != "" {
+		t.Fatalf("建夹具失败：%s", e)
+	}
+	got, _ := tsmReadText(filepath.Join(fix, tsmMutDriverRel))
+	if got != "#drv-probe\n" {
+		t.Fatalf("夹具驱动应逐字等于**给定源**（不是仓内该 py）：%q", got)
+	}
+}

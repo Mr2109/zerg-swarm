@@ -1,7 +1,9 @@
-// check_docs_orphans_links_test.go —— Go 真搬的**成对负控**定向单测（M2 新口径 · 文仓/外部树依赖类）。
+// check_docs_orphans_links_test.go —— Go 真搬的**成对负控**定向单测（M2 · 文仓/外部树依赖类）。
 //
-// ✗ 禁恒绿：本件同时断言「必然判绿」「必然出红明细」「不给结论」三态，且钉住**新口径退 2 边界的牙**：
-// 「两棵外部树都取不到 ⇒ rc=2」与「只剩一棵 ⇒ rc=0 且照实打印判不了」**必须不同码**（✗ 恒 2 / ✗ 恒 0）。
+// ✗ 禁恒绿：本件同时断言「必然判绿」「必然出红明细」「不给结论」三态，且钉住**退 2 边界的牙**
+// （逐字沿用 py · 缺件 ≠ 绿 · 承 GAP-20260927-82 / GAP-20261005-69）：
+// 「两棵外部树都取不到 ⇒ rc=2」「只剩一棵（导出树缺）⇒ 仍 rc=2」「第二棵树在盘但真扫面 0 件 ⇒ rc=2」
+// 与「三棵树全好 ⇒ rc=0」**必须不同码**（✗ 恒 2 / ✗ 恒 0）。
 // 用例名：TestCheckDocsOrphansLinksGatePort（定向：go test -run TestCheckDocsOrphansLinksGatePort）。
 package main
 
@@ -97,27 +99,36 @@ func TestCheckDocsOrphansLinksGatePort(t *testing.T) {
 		t.Fatalf("负控②失败：孤儿格应数 1 件并点名，得 rc=%d out=%s", rcO, outO)
 	}
 
-	// ── 退 2 边界（★ 新口径的牙）：两棵外部树**都取不到** ⇒ rc=2 ────────────────
+	// ── 退 2 边界（★ 缺件 ≠ 绿 · 逐字沿用 py）：两棵外部树**都取不到** ⇒ rc=2 ────────────
 	missDocs := filepath.Join(t.TempDir(), "no-docs")
 	missTree := filepath.Join(t.TempDir(), "no-tree")
 	rcBoth, outBoth, _ := cdoRun(t, "--repo-root", repo, "--docs-root", missDocs, "--tree", missTree)
-	if rcBoth != 2 || !strings.Contains(outBoth, "外部树「都取不到」") {
-		t.Fatalf("退2边界失败：都取不到应 rc=2，得 rc=%d out=%s", rcBoth, outBoth)
+	if rcBoth != 2 || !strings.Contains(outBoth, "第二棵树是本门 ①③ 两格的域") {
+		t.Fatalf("退2边界失败：都取不到应 rc=2 且点名第二棵树域 ⇒ rc=%d out=%s", rcBoth, outBoth)
 	}
 	if rcBoth == rcGreen {
 		t.Fatalf("成对断言失败：都取不到 rc=%d 与正控 rc=%d 同码", rcBoth, rcGreen)
 	}
 
-	// ── 退 2 边界（成对）：只剩**一棵**外部树在场 ⇒ rc=0（≠ 恒红）＋照实打印判不了 ──────
+	// ── 退 2 边界（成对 · 缺件 ≠ 绿）：只剩**一棵**外部树在场（导出树缺）⇒ 仍 rc=2 ──────────
 	rcOne, outOne, _ := cdoRun(t, "--repo-root", repo, "--docs-root", docs, "--tree", missTree)
-	if rcOne != 0 {
-		t.Fatalf("退2边界（单棵）失败：docs 在场、树缺 ⇒ 按新口径应 rc=0，得 rc=%d out=%s", rcOne, outOne)
+	if rcOne != 2 || !strings.Contains(outOne, "结论：**不给结论（rc=2）** —— 导出树读不到") {
+		t.Fatalf("退2边界（单棵）失败：docs 在场、导出树缺 ⇒ 缺件 ≠ 绿应 rc=2，得 rc=%d out=%s", rcOne, outOne)
 	}
 	if !strings.Contains(outOne, "孤儿 · 导出树：判不了") || !strings.Contains(outOne, "★读不到") {
 		t.Fatalf("退2边界（单棵）失败：应照实打印导出树判不了，得 out=%s", outOne)
 	}
-	if rcOne == rcBoth {
-		t.Fatalf("成对断言失败：单棵 rc=%d 与都取不到 rc=%d 同码 ⇒ 边界无牙", rcOne, rcBoth)
+	if rcOne == rcGreen {
+		t.Fatalf("成对断言失败：单棵缺 rc=%d 与正控 rc=%d 同码 ⇒ 缺件 ≠ 绿无牙", rcOne, rcGreen)
+	}
+
+	// ── 空树（★ GAP-20261005-69 的牙）：第二棵树在盘但**真扫面 0 件 .md** ⇒ 判不了 ⇒ rc=2 ────
+	rcEmpty, outEmpty, _ := cdoRun(t, "--repo-root", repo, "--docs-root", t.TempDir(), "--tree", pub)
+	if rcEmpty != 2 || !strings.Contains(outEmpty, "本地断链 · 第二棵树：判不了（扫面 0 件 .md）") {
+		t.Fatalf("空树失败：第二棵树 0 件 .md ⇒ 判不了应 rc=2，得 rc=%d out=%s", rcEmpty, outEmpty)
+	}
+	if rcEmpty == rcGreen {
+		t.Fatalf("成对断言失败：空树 rc=%d 与正控 rc=%d 同码 ⇒ 空扫描无牙", rcEmpty, rcGreen)
 	}
 
 	// ── 不给结论：主仓不在盘 ⇒ rc=2（py 逐字对齐档）─────────────────────────
@@ -145,10 +156,10 @@ func TestCheckDocsOrphansLinksGatePort(t *testing.T) {
 	if !strings.Contains(outJ, `"orphans": {"count": 0, "domain": "`+pub+`"}`) {
 		t.Fatalf("机器面失败：orphans 格形态不符 out=%s", outJ)
 	}
+	// 导出树缺 ⇒ 不给结论（rc=2）⇒ **不打印**机器面行（逐字沿用 py：`json` 只在 rc=0 出口）。
 	rcJN, outJN, _ := cdoRun(t, "--repo-root", repo, "--docs-root", docs, "--tree", missTree, "--json")
-	if rcJN != 0 || !strings.Contains(outJN, `"orphans": {"count": null, "domain": "`+missTree+`"}`) ||
-		!strings.Contains(outJN, `"stale": []`) {
-		t.Fatalf("机器面（空值形态）失败：应见 count:null 与 stale:[]，得 rc=%d out=%s", rcJN, outJN)
+	if rcJN != 2 || strings.Contains(outJN, `"schema": "zerg-gate/v1"`) {
+		t.Fatalf("机器面（缺导出树）失败：应 rc=2 且无机器面行，得 rc=%d out=%s", rcJN, outJN)
 	}
 
 	// ── 判据清单 / 自检 / 帮助 / 用法错 ─────────────────────────────────────

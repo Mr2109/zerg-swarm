@@ -72,6 +72,16 @@ const cacsLedgerFile = "登记表-档位闭集与契约槽-20260923.md"
 
 var cacsSyncGateRel = caciPyJoin("scripts", "gates", "check-publish-face-sync.py")
 
+// cacsSyncGoHalfRel —— 同步门（check-publish-face-sync）的 Go 真搬件（相对仓根）。
+// 退役容忍判据用（缺口 GAP-20261007-16）：该 py 退役后 S5 由 Go 半承载 ⇒ 不过问，✗ 不 fail-closed。
+var cacsSyncGoHalfRel = caciPyJoin("core", "cmd", "zerg", "check_publish_face_sync.go")
+
+// cacsSyncRetired —— 同步门 py 不在盘（已退役）且其 Go 真搬件在盘 ⇒ 退役态（S5 不过问）。
+// 两缀分离：仅「py 不在盘」不够（真·缺件也长这样）⇒ 必须 Go 半在盘才算退役。
+func cacsSyncRetired(root string) bool {
+	return !caciExists(caciPyJoin(root, cacsSyncGateRel)) && caciExists(caciPyJoin(root, cacsSyncGoHalfRel))
+}
+
 // cacsTopKeys：批前现读（5 键 · 按序）—— ★ 序也是判据的一部分（`list(d.keys())` == 本表）。
 var cacsTopKeys = []string{"schema", "note", "authority", "entries", "change_flow"}
 
@@ -670,7 +680,11 @@ func cacsScan(stdout io.Writer, root, state, devdocs, registry string, staticOnl
 		fmt.Fprint(stdout, "── S5 公开面零改（`F4` 判据④ 点名的那条命令）\n")
 		sync := caciPyJoin(root, cacsSyncGateRel)
 		if !caciExists(sync) {
-			nocalls = append(nocalls, fmt.Sprintf("S5 **未取数**：同步门不在（%s）⇒ 不给结论（rc=2）", sync))
+			if cacsSyncRetired(root) { // 退役容忍（GAP-20261007-16）：同步门已 Go 化且 Go 半在盘 ⇒ S5 不过问（✗ 不 fail-closed）
+				fmt.Fprintf(stdout, "   · 同步门已退役（`%s` 不在盘 · Go 半在盘）⇒ S5 不过问\n", cacsSyncGateRel)
+			} else {
+				nocalls = append(nocalls, fmt.Sprintf("S5 **未取数**：同步门不在（%s）⇒ 不给结论（rc=2）", sync))
+			}
 		} else {
 			rc, rcNone, _, errS := cacsRunCmd([]string{cacsPyExe, sync}, state, timeout)
 			tail := cacsLastLine(errS)

@@ -17,13 +17,12 @@
 //	   ⟷ 起于 **cwd 上溯**（Go，无 `__file__` 语境）；`docs_root = pyJoin(dirname(repo_root), "Zerg-内部文档")`
 //	   —— 用**字符串拼接**而非 `filepath.Join`（后者的 normalizer 会吃掉中间的 `..`，而 py 把 `..`
 //	   原样留在打印串里 ⇒ 需要时必须串拼，逐字对拍验证）。
-//	③ ★ 退 2 边界（**新口径核心，与 py 有意不同**）：py 对**任一**外部树取不到即退 2
-//	   （`docs_root` 或 `tree` 任一不在盘 ⇒ rc=2）。真仓现读：`tree` 无 env、缺省值为空 ⇒ **真仓恒红**
-//	   （`--repo-root` 指真仓时 py 现读 rc=2）。⇒ 本件按新口径改为 **只判「都取不到」才退 2**：
-//	   仅当 `docs_root` 与 `tree` **两棵外部树都取不到** ⇒ rc=2；只剩一棵 ⇒ 照判那棵、另一格**照实打印
-//	   「判不了」**（不静默）。判准同 `who_references.go` / `check_idspace_map.go`（真仓 `Zerg-归档`
-//	   是**悬空符号链接** ⇒ 单棵缺席是常态、✗ 禁「任一取不到就退 2」）。**主仓 `--repo-root` 是必需输入**
-//	   ⇒ 它取不到仍**逐字**照 py 退 2（这一档本件零放宽）。
+//	③ ★ 退 2 边界（**逐字沿用 py · 缺件 ≠ 绿**）：本门两棵外部树都是**必需输入** ——
+//	   `docs_root`（第二棵树 · ①/③ 两格的域）与 `tree`（导出树 · ② 格的域）**任一**取不到 /
+//	   判不了（域不在盘 / 真扫面 0 件 / 件读不了）⇒ rc=2「不给结论」。判准同 `check-dangling-refs.go`
+//	   该档（py `absent_corpus_trees` 逐字沿用）与 `check-docs-orphans-links.py` 件头退码节
+//	   （承 `GAP-20260927-82` · `GAP-20261005-69`）。**主仓 `--repo-root` 是必需输入**
+//	   ⇒ 它取不到同 rc=2。
 //	④ 取不到一律**不给结论**、✗ 不静默绿：任一格的域取不到 ⇒ 该格打印 `判不了`＋原因（绝不读成
 //	   「0 件」＝干净）；本件是把「查不到」当「不存在」的那类静默绿的**反例**。
 //
@@ -85,7 +84,8 @@
 //	① argparse **长选项前缀缩写**（如 `--rep`⇒`--repo-root`）本件不实现；`store_true` 型带 `=值`
 //	   的 argparse 文案（"ignored explicit argument"）本件复刻。
 //	② **默认根定位**：见 (a) —— 「脚本位置 ≠ cwd 上溯根」时不属逐字对齐承诺。
-//	③ **新口径退 2 边界**：见 ③ —— 「只一棵外部树在场」时本件 rc=0 而 py rc=2（**有意差异**，逐格点名）。
+//	③ （**已收口 · 2026-10-07**）退 2 边界逐字沿用 py：两棵外部树任一取不到 / 判不了 ⇒ rc=2
+//	   （见 3️⃣ ③；不再是「有意差异」，两态逐字同）。
 //	④ py `open(..., encoding="utf-8")` 于 `nav_whitelist` 遇非 UTF-8 抛 `UnicodeDecodeError`
 //	   （未捕获 ⇒ 进程 rc=1 + 回溯正文）；本件按「读不了 ⇒ 不给结论」处理（rc=2、正文自定）。
 //	⑤ `--self-test` 用 `tempfile.mkdtemp`（随机后缀）——但**输出只打 ✓/✗ 行、不含路径** ⇒ 两态可逐字对齐。
@@ -1603,7 +1603,10 @@ func checkDocsOrphansLinksGateMain(stdout, stderr io.Writer, argv []string) int 
 	if brCounts[0] == nil {
 		return 2
 	}
-	// ★ 新口径③：**只判「都取不到」才退 2**（py 是「任一取不到即退 2」⇒ 真仓恒红）。
+	// ★ 缺件 ≠ 绿（逐字沿用 py `check-docs-orphans-links.py` 退码节 · 同族 `check-dangling-refs.go`
+	//   该档口径）：本门两棵外部树都是**必需输入** —— `docs_root`（第二棵树 · ①/③ 两格的域）与
+	//   `tree`（导出树 · ② 格的域）**任一**取不到 / 判不了（域不在盘 / 真扫面 0 件 / 件读不了）⇒
+	//   本门**不给结论 rc=2**（承 `GAP-20260927-82` · `GAP-20261005-69`）。
 	noConcl := []string{}
 	if secondMissing {
 		noConcl = append(noConcl, fmt.Sprintf("① local_broken 第二棵树格：读不到（%s）", secondWhy))
@@ -1611,20 +1614,15 @@ func checkDocsOrphansLinksGateMain(stdout, stderr io.Writer, argv []string) int 
 	if !okInz {
 		noConcl = append(noConcl, fmt.Sprintf("③ %s 格（域 = 第二棵树整棵）：读不到（%s）", inzWord, inzWhy))
 	}
-	if !okOrph {
-		noConcl = append(noConcl, fmt.Sprintf("② orphans 导出树格：读不到（%s）", owhy))
-	}
-	docsMissing := !coanIsDir(docsRoot)
-	treeMissing := !(tree != "" && coanIsDir(tree))
-	if docsMissing && treeMissing {
-		fmt.Fprint(stdout, "\n结论：**不给结论（rc=2）** —— 外部树「都取不到」（第二棵树 + 导出树两处）· 缺件 ≠ 绿：\n")
+	if len(noConcl) > 0 {
+		fmt.Fprint(stdout, "\n结论：**不给结论（rc=2）** —— 第二棵树是本门 ①③ 两格的域 · 缺件 ≠ 绿：\n")
 		for _, r := range noConcl {
 			fmt.Fprintf(stdout, "      · %s\n", r)
 		}
 		fmt.Fprint(stdout, "      （本地断链 域 = 两棵树 `--repo-root` + `--docs-root`/同级 `Zerg-内部文档`；两格同域 ⇒ 一并触碰）\n")
 		return 2
 	}
-	if !okOrph && docsMissing {
+	if !okOrph { // ★ 导出树读不到 ⇒ 孤儿格判不了 · 缺件 ≠ 绿 ⇒ 本门不给结论（零放宽）
 		fmt.Fprintf(stdout, "\n结论：**不给结论（rc=2）** —— 导出树读不到（%s）\n", owhy)
 		fmt.Fprintf(stdout, "      取树次序 `--tree` → `$%s` → `$%s`（与 B12/B14/B16/B17 同口径 · 缺件 ≠ 绿）\n",
 			coanPubTreeEnv, coanPubTreeEnvAlias)

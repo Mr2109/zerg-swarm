@@ -122,6 +122,11 @@ func gateCheckShebangInterp(path string) (string, []string, bool) {
 // 与 `scripts/gates/judge-lock.py` 逐字同源（`<仓根>/scripts/gates/judge-lock.py`）。
 var gateCheckLockToolRel = []string{"gates", "judge-lock.py"}
 
+// gateCheckLockToolKey —— 锁件对应的**判据名 / inproc 键**（M2 判据件 Go 化后两器同名）。
+// 用于退役态判定：锁件 py 不在盘时，据它现读 gateCheckGoEntry 看 Go 半是否在册
+// （见 gateCheckAcquire · G16 · 2026-10-07 退役批）。
+const gateCheckLockToolKey = "judge-lock"
+
 // gateCheckLedgerRel —— M1-08 判据运行台账件（append-only）。与读侧
 // `scripts/gates/check-judge-ledger.py` 的 `LEDGER_DEFAULT` 逐字同源。
 var gateCheckLedgerRel = []string{"gates", "judge-run-ledger.jsonl"}
@@ -348,6 +353,15 @@ func gateCheckLedgerAppend(root, judgePath string, rawRC int, detail string, res
 func gateCheckAcquire(root, name string, stderr io.Writer) (int, bool) {
 	tool := filepath.Join(root, gateCheckRosterDirRel, filepath.Join(gateCheckLockToolRel...))
 	if _, err := os.Stat(tool); err != nil {
+		// ★ 退役态（G16 · 2026-10-07 退役批）：锁件 `scripts/gates/judge-lock.py` 已退役（不在盘）
+		//   而它的 **Go 半**（`judge_lock.go` · inproc 键 `judge-lock`）在册 ⇒ **退役态不过问**：
+		//   静默跳过取锁（✗ 不告警 / ✗ 不改退码）。否则每跑一门都往 stderr 吐一行警告 ——
+		//   把 `zerg gate check <键>` 的 stderr 面弄脏（「两态三面逐字同」取证的前提）。
+		//   ★ 负控：锁件不在盘 **且** Go 半也不在册（合成夹具 / 最小仓）⇒ 保留原「如实报」档
+		//   （✗ 不静默降级 —— 那一路读数只能靠现读 gateCheckGoEntry 判，测试件可删键做负控）。
+		if _, inproc := gateCheckGoEntry[gateCheckLockToolKey]; inproc {
+			return exitOK, true
+		}
 		fmt.Fprintf(stderr, "%s: ⚠ 件级锁件不在盘（%s）⇒ 本轮**不取锁**（如实报 · 非静默降级）\n", progName, tool)
 		return exitOK, true
 	}

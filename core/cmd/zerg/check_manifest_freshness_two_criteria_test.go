@@ -17,7 +17,8 @@ import (
 	"testing"
 )
 
-// cmfTestRepoRoot —— 由 cwd 上溯找同族 py 的位置（与入口 `--root` 缺省推导同一枚标记）。
+// cmfTestRepoRoot —— 由 cwd 上溯找同族标记所在仓根（与入口缺省推导同一枚标记）。
+// ★ 退役稳态（B轨 · 2026-10-07）：认「自指 py **或** `cmfRootMarkerRel`」⇒ 自指 py 退役后仍能定位真仓。
 func cmfTestRepoRoot(t *testing.T) string {
 	t.Helper()
 	d, err := os.Getwd()
@@ -26,7 +27,7 @@ func cmfTestRepoRoot(t *testing.T) string {
 	}
 	cur := d
 	for i := 0; i < 32; i++ {
-		if cmfFileExists(filepath.Join(cur, cmfSelfRelPath)) {
+		if cmfFileExists(filepath.Join(cur, cmfSelfRelPath)) || cmfFileExists(filepath.Join(cur, cmfRootMarkerRel)) {
 			return cur
 		}
 		p := filepath.Dir(cur)
@@ -35,11 +36,12 @@ func cmfTestRepoRoot(t *testing.T) string {
 		}
 		cur = p
 	}
-	t.Fatalf("找不到同族 py 所在仓根（由 %s 上溯）", d)
+	t.Fatalf("找不到同族标记所在仓根（由 %s 上溯）", d)
 	return ""
 }
 
 // cmfTestFixture —— 在 t.TempDir() 下按 py 的 HERE 形态造一棵夹具树；withTruth=false ⇒ 不放真源件。
+// ★ 可退役件（自指 py）在原件缺时不 fail（退役态夹具）；`cmfRootMarkerRel` 同拷（根上溯形态同真仓）。
 func cmfTestFixture(t *testing.T, withTruth bool) string {
 	t.Helper()
 	src := cmfTestRepoRoot(t)
@@ -48,18 +50,25 @@ func cmfTestFixture(t *testing.T, withTruth bool) string {
 	if err := os.MkdirAll(g, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	copyFile := func(name string) {
+	copyIfPresent := func(name string) {
 		b, err := os.ReadFile(filepath.Join(src, "scripts", "gates", name))
 		if err != nil {
-			t.Fatalf("缺同族 py 原件 %s：%v", name, err)
+			return // 退役件缺席 ⇒ 合法（✗ 不 fail-closed）
 		}
 		if err := os.WriteFile(filepath.Join(g, name), b, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	copyFile("check-manifest-freshness-two-criteria.py")
+	copyIfPresent("check-manifest-freshness-two-criteria.py")
+	copyIfPresent("precommit-gates.sh")
 	if withTruth {
-		copyFile("check-manifest-freshness.py")
+		b, err := os.ReadFile(filepath.Join(src, "scripts", "gates", "check-manifest-freshness.py"))
+		if err != nil {
+			t.Fatalf("缺真源原件 check-manifest-freshness.py：%v", err)
+		}
+		if err := os.WriteFile(filepath.Join(g, "check-manifest-freshness.py"), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return root
 }
@@ -177,5 +186,46 @@ func TestCheckManifestFreshnessTwoCriteriaGatePort(t *testing.T) {
 	vBad, _, _ := cmfJudgeLines(merged)
 	if vGood != "green" || vBad != "hit" {
 		t.Fatalf("区分度失败：分列=%q 合并=%q（应 green/hit）", vGood, vBad)
+	}
+}
+
+// TestCheckManifestFreshnessTwoCriteriaRetired —— 退役态（B轨 · 2026-10-07）：本件同族 py 退役
+// （不在盘）⇒ 判据照常出结论（✗ 不得 fail-closed / rc=2）。
+//
+//	① 根上溯：自指 py 缺席时靠退役稳态标记 `cmfRootMarkerRel` 仍能上溯到仓根（✗ 退回 cwd）；
+//	② 两态逐字：同夹具「py 在盘」⟷「py 移开」⇒ rc/stdout/stderr 三面逐字同，且非 rc=2。
+//
+// ★ 哑化负控：抽掉 `cmfResolveRootFrom` 的 `|| cmfFileExists(…cmfRootMarkerRel)` 一支 ⇒ ① 断言红（带行号）。
+func TestCheckManifestFreshnessTwoCriteriaRetired(t *testing.T) {
+	// ① 根上溯（退役态：仓里只有退役稳态标记，✗ 无自指 py）。
+	fx := t.TempDir()
+	g := filepath.Join(fx, "scripts", "gates")
+	if err := os.MkdirAll(g, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(g, "precommit-gates.sh"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(fx, "core", "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := cmfResolveRootFrom(sub); got != fx {
+		t.Fatalf("退役态根上溯失败：应 %s，得 %s ⇒ 自指 py 退役后上溯落空、退回 cwd ⇒ 真源找不到 ⇒ rc=2", fx, got)
+	}
+
+	// ② py 在盘 ⟷ py 移开：**同一夹具、同一 git 仓**（⇒ 分支头哈希不变）三面逐字同。
+	fx2 := cmfTestFixture(t, true)
+	cmfTestGitInit(t, fx2)
+	rcOn, outOn, errOn := cmfTestRun(t, "--root", fx2)
+	// 强制退役态：把自指 py 从夹具移开（若已随真仓拷入；✗ 不动真仓）。
+	_ = os.Remove(filepath.Join(fx2, "scripts", "gates", "check-manifest-freshness-two-criteria.py"))
+	rcRe, outRe, errRe := cmfTestRun(t, "--root", fx2)
+	if rcRe != rcOn || outRe != outOn || errRe != errOn {
+		t.Fatalf("退役态读数与在盘态不一致：\n-- 在盘 rc=%d --\n%s\nstderr=%q\n-- 退役 rc=%d --\n%s\nstderr=%q",
+			rcOn, outOn, errOn, rcRe, outRe, errRe)
+	}
+	if rcRe == 2 {
+		t.Fatalf("退役态 fail-closed（rc=2）—— 件退役不得让判据判不出")
 	}
 }

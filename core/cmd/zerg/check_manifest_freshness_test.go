@@ -21,25 +21,18 @@ import (
 	"time"
 )
 
-// mfTestRepoRoot —— 由 cwd 上溯找同族 py 原件所在仓根（与入口缺省推导同一枚标记）。
+// mfTestRepoRoot —— 由 cwd 上溯找仓根（与入口缺省推导同一枚标记）。
+// ★ 退役稳态（B轨 · 2026-10-07）：认「自指 py **或** mfRootMarkerRel」⇒ 自指 py 退役后仍能定位真仓。
 func mfTestRepoRoot(t *testing.T) string {
 	t.Helper()
 	d, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	cur := d
-	for i := 0; i < 32; i++ {
-		if _, err := os.Stat(filepath.Join(cur, mfSelfRel)); err == nil {
-			return cur
-		}
-		p := filepath.Dir(cur)
-		if p == cur {
-			break
-		}
-		cur = p
+	if root := mfRepoFrom(d); root != "" {
+		return root
 	}
-	t.Fatalf("找不到同族 py 原件所在仓根（由 %s 上溯）", d)
+	t.Fatalf("找不到同族标记所在仓根（由 %s 上溯）", d)
 	return ""
 }
 
@@ -236,4 +229,50 @@ func TestCheckManifestFreshnessDifferential(t *testing.T) {
 		}
 	}
 	t.Logf("对拍格数=%d 失配数=%d", cells, mismatch)
+}
+
+// TestCheckManifestFreshnessRetired —— 退役态（B轨 · 2026-10-07）：本件自指 py 退役（不在盘）
+// ⇒ 仓根上溯照常出结论（✗ 不得退回 cwd ⇒ 缺省档 rc=2 fail-closed）。
+//
+//	① 根上溯：自指 py 缺席时靠退役稳态标记 mfRootMarkerRel 仍能上溯到仓根（✗ 退回 cwd）；
+//	② 两态逐字：同夹具「py 在盘」⟷「py 移开（退役）」⇒ mfRepoFrom 逐字同、且非空。
+//
+// ★ 哑化负控：抽掉 mfRepoFrom 的 mfRootMarkerRel 一支 ⇒ ① 断言红（带行号）。
+func TestCheckManifestFreshnessRetired(t *testing.T) {
+	// ① 退役态：仓里只有退役稳态标记（✗ 无自指 py）。
+	fx := t.TempDir()
+	g := filepath.Join(fx, "scripts", "gates")
+	if err := os.MkdirAll(g, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(g, "precommit-gates.sh"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(fx, "core", "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := mfRepoFrom(sub); got != fx {
+		t.Fatalf("退役态根上溯失败：应 %s，得 %s ⇒ 自指 py 退役后上溯落空、退回 cwd ⇒ 判据 rc=2", fx, got)
+	}
+
+	// ② 同夹具「py 在盘」⟷「py 移开」：mfRepoFrom 读数逐字同（✗ 不因退役而变）。
+	fx2 := t.TempDir()
+	g2 := filepath.Join(fx2, "scripts", "gates")
+	if err := os.MkdirAll(g2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(g2, "precommit-gates.sh"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	py := filepath.Join(g2, "check-manifest-freshness.py")
+	if err := os.WriteFile(py, []byte("# stub\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	onRep := mfRepoFrom(g2)
+	_ = os.Remove(py) // 强制退役态（✗ 不动真仓）
+	reRep := mfRepoFrom(g2)
+	if onRep != reRep || reRep != fx2 {
+		t.Fatalf("退役态与在盘态根定位不一致：在盘=%q 退役=%q（应同为 %q）⇒ py 退役改变了根定位结论", onRep, reRep, fx2)
+	}
 }

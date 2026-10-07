@@ -99,7 +99,7 @@ FAMILY_GAP_REL = os.path.join("core", "cmd", "zerg", "family_gap.go")
 #  也从表里留痕（表条目 = 指针，不是判据）。
 #  条目形制：(GAP-id, unit) —— 两键全等才算豁免，少一维都不免（防「同 id 换个件」混过）。
 #  ★ 5b 首读现读（真账副本 · `git ls-files` 现跑）：失效件 **0 条** ⇒ 本表**空**（首读无存量）。
-EXEMPT_EXISTENCE = ()
+EXEMPT_EXISTENCE = (("GAP-20261001-11", "scripts/gates/check-archive-mount.py"), ("GAP-20261005-18", "scripts/gates/check-pending-decisions.py"), ("GAP-20260928-137", "scripts/gates/check-newfile-registry.py"), ("GAP-20260928-51", "scripts/gates/check-trustroot-witness.py"), ("GAP-20260927-70", "scripts/gates/check-approve-backfill.py"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -71,6 +71,15 @@ func TestCheckTtyOutputContractGatePort(t *testing.T) {
 		}
 	})
 
+	// ── 内化自证 ①b（判据件退役前置 ② · GAP-20261007-16）：金标真源 = Go 半 `ctocHelp`（✗ 不读 py）──
+	//    py 退役后本格仍须绿；抽掉 `ctocHelpNativeSha256` 的内化（改成与 ctocHelp 无关的值）本格即红。
+	t.Run("help_golden_internalized", func(t *testing.T) {
+		if got := ctocHelpNativeSha256(); got != ctocHelpSha256 {
+			t.Fatalf("Go 真源自证失配：sha256(ctocHelp)=%s ≠ 冻结 %s（金标真源已离开 Go 半）",
+				got, ctocHelpSha256)
+		}
+	})
+
 	// ── 正控 ②：`--list-rules` 逐字 ────────────────────────────────────────────────
 	t.Run("list_rules", func(t *testing.T) {
 		rc, out, errb := ctocTestRun("--list-rules")

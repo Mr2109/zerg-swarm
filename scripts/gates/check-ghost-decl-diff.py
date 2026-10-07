@@ -373,7 +373,7 @@ def print_report(root, decl_path, rc, side1, side2, notes, problems):
         print("⇒ 不给结论（rc=2）")
 
 
-SIBLING_HINTS = ("bin/zerg-", "bin/cocoon-")
+SIBLING_HINTS = ("bin/zerg-", "bin/cocoon-", "searx.webapp")
 
 
 def list_rules():

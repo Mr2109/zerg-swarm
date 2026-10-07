@@ -380,6 +380,331 @@
       "object": "scripts/gates/check-stepcount-drift.py",
       "state": "已登记退场（2026-10-07）",
       "evidence": "两态三面逐字同（rc=0/0 · stdout/stderr 逐字同：FAST_STEPS=41 · 规范计数 1 处 · 不一致 0 处 · 泛化计数 225 条）＋ Go 后继件 core/cmd/zerg/check_stepcount_drift.go@df98d286e07e8e84 ＋ 引用普查 9 件 19 命中（旁引 1 = core/cmd/zerg/check_step_switch.go:19 注释面 · 已摘）"
+    },
+    {
+      "object": "scripts/gates/bench-summary.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "G01 两态三面逐字同：go[./bin/zerg gate check bench-summary] ⇔ py[python3.14 scripts/gates/bench-summary.py] · rc 2/2 同 · stdout 0B/0B 同 · stderr 68B/68B 逐字同(用法档用法：bench-summary.py --json <件> | --from-results <趟目录>) · Go 后继件 core/cmd/zerg/bench_summary.go@08dc677d5a3d113c · inproc 键在册 · 普查：公开标记.tsv no 1 行 + publish-public.sh EXCLUDES 1 行 + mirror-public-lib.py DROP_EXACT 1 行 + gate-coverage.config.json 1 条 + affected-map.json 1 条"
+    },
+    {
+      "object": "scripts/gates/check-approve-freeze.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "G01 两态三面逐字同：go[./bin/zerg gate check check-approve-freeze] ⇔ py[python3.14 scripts/gates/check-approve-freeze.py] · rc 0/0 同 · stdout 1716B/1716B 逐字同(自检 6 格过 · 0 格不过 · 真目标只读未改字节) · stderr 0B/0B 同 · Go 后继件 core/cmd/zerg/check_approve_freeze.go@f2e6c46e51704f55 · inproc 键在册 · 普查：公开标记.tsv no 1 行 + publish-public.sh EXCLUDES 1 行 + mirror-public-lib.py DROP_EXACT 1 行 + gate-coverage.config.json 0 + affected-map.json 0"
+    },
+    {
+      "object": "scripts/gates/check-dryrun-yes-conflict-coverage.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "G01 两态三面逐字同：go[./bin/zerg gate check check-dryrun-yes-conflict-coverage] ⇔ py[python3.14 scripts/gates/check-dryrun-yes-conflict-coverage.py] · rc 1/1 同（载荷：判决自身报红 · 应产者 35 件 ∖ 真产者 26 件 ⇒ 8 件未收敛）· stdout 749B/749B 逐字同 · stderr 0B/0B 同 · Go 后继件 core/cmd/zerg/check_dryrun_yes_conflict_coverage.go@32c1f5e539ac8875 · inproc 键在册 · 普查：公开标记.tsv no 1 行 + publish-public.sh EXCLUDES 1 行 + mirror-public-lib.py DROP_PREFIX 1 行 + DROP_EXACT 1 行 + gate-coverage.config.json 0 + affected-map.json 0"
+    },
+    {
+      "object": "scripts/gates/check-fleet-loadable.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "G01 两态三面逐字同：go[./bin/zerg gate check check-fleet-loadable] ⇔ py[python3.14 scripts/gates/check-fleet-loadable.py] · rc 0/0 同 · stdout 153B/153B 逐字同（可加载判据全过 · fleet=gateway/fleet.yaml）· stderr 0B/0B 同 · Go 后继件 core/cmd/zerg/check_fleet_loadable.go@f9f8428c9f9b0121 · inproc 键在册 · 普查：公开标记.tsv no 1 行 + publish-public.sh EXCLUDES 1 行 + mirror-public-lib.py DROP_PREFIX 1 行 + DROP_EXACT 1 行 + gate-coverage.config.json 0 + affected-map.json 0"
+    },
+    {
+      "object": "scripts/gates/check-public-tree-selfcheck.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面：go[./bin/zerg gate check check-public-tree-selfcheck]⇔py[py3.14.7 scripts/gates/check-public-tree-selfcheck.py] · rc 1/1/1/1 同 · stderr 0B/0B 逐字同 · stdout 1838B/1904B （差4行全环境噪声：go test 时值/临时目录名/解释器绝对路径 ⇒ 实质同） · Go后继件 core/cmd/zerg/check_public_tree_selfcheck.go@f6cafe5058f83a0d · inproc键在册 · 普查：公开标记.tsv:85 + publish-public.sh:350 + mirror DROP_EXACT:327 + gate-coverage 0 + affected-map 0"
+    },
+    {
+      "object": "scripts/gates/gate-check-health.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面：go[./bin/zerg gate check gate-check-health]⇔py[py3.14.7 scripts/gates/gate-check-health.py] · rc 0/0/0/0 同 · stderr 0B/0B 逐字同 · stdout 250B/251B （差1行=解释器版本 3.9.6↔3.14.7；用 py3.9.6 复验与 go 逐字 MATCH_GO ⇒ 实质同） · Go后继件 core/cmd/zerg/gate_check_health.go@5ba7f07ae464cfad · inproc键在册 · 普查：公开标记.tsv:261 + publish-public.sh:830 + mirror DROP_EXACT:627 + gate-coverage:132 + affected-map:454"
+    },
+    {
+      "object": "scripts/gates/show-baseline.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面：go[./bin/zerg gate check show-baseline]⇔py[py3.14.7 scripts/gates/show-baseline.py] · rc 0/0/0/0 同 · stderr 0B/0B 逐字同 · stdout 2087B/2087B （） · Go后继件 core/cmd/zerg/show_baseline.go@cff378a855d9f9f9 · inproc键在册 · 普查：公开标记.tsv:156 + publish-public.sh:325 + mirror DROP_EXACT:232 + gate-coverage 0 + affected-map 0"
+    },
+    {
+      "object": "scripts/gates/check-affected-reprove.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面：go[./bin/zerg gate check check-affected-reprove]⇔py[py3.14.7 scripts/gates/check-affected-reprove.py] · rc 2/2/2/2 同 · stderr 0B/0B 逐字同 · stdout 94B/94B （） · Go后继件 core/cmd/zerg/check_affected_reprove.go@0489c6f6878977ed · inproc键在册 · 普查：公开标记.tsv:252 + publish-public.sh:855 + mirror DROP_EXACT:647 + gate-coverage:147 + affected-map:371"
+    },
+    {
+      "object": "scripts/gates/check-approve-closedset.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面：go[./bin/zerg gate check check-approve-closedset]⇔py[py3.14.7 scripts/gates/check-approve-closedset.py] · rc 1/1/1/1 同 · stderr 0B/0B 逐字同 · stdout 3348B/3348B （rc=1=存量 S5 公开面漂移载荷，非本件自身） · Go后继件 core/cmd/zerg/check_approve_closedset.go@99012081e2653402 · inproc键在册 · 普查：公开标记.tsv:55 + publish-public.sh:284 + mirror DROP_EXACT:196 + gate-coverage 0 + affected-map 0"
+    },
+    {
+      "object": "scripts/gates/check-approve-time.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面：go[./bin/zerg gate check check-approve-time]⇔py[py3.14.7 scripts/gates/check-approve-time.py] · rc 0/0/0/0 同 · stderr 0B/0B 逐字同 · stdout 4347B/4343B （差4行=mktemp 随机临时目录名 同源同量） · Go后继件 core/cmd/zerg/check_approve_time.go@e30bbd964104a5dd · inproc键在册 · 普查：公开标记.tsv:57 + publish-public.sh:287 + mirror DROP_EXACT:189 + gate-coverage 0 + affected-map 0"
+    },
+    {
+      "object": "scripts/gates/check-archive-mount.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面：go[./bin/zerg gate check check-archive-mount]⇔py[py3.14.7 scripts/gates/check-archive-mount.py] · rc 0/0/0/0 同 · stderr 0B/0B 逐字同 · stdout 719B/719B （） · Go后继件 core/cmd/zerg/check_archive_mount.go@16ed67acc10b16aa · inproc键在册 · 普查：公开标记.tsv:174 + publish-public.sh:146 + mirror DROP_EXACT:132 + gate-coverage 0 + affected-map 0"
+    },
+    {
+      "object": "scripts/gates/check-env-knobs.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面：go[./bin/zerg gate check check-env-knobs]⇔py[py3.14.7 scripts/gates/check-env-knobs.py] · rc 0/0/0/0 同 · stderr 0B/0B 逐字同 · stdout 321B/321B （） · Go后继件 core/cmd/zerg/check_env_knobs.go@0e94f1b56a91d336 · inproc键在册 · 普查：公开标记.tsv:296 + publish-public.sh:137 + mirror DROP_PREFIX:114+DROP_EXACT:168 + gate-coverage 0 + affected-map 0 + 禁碰 dryrun-semantics.json:859 字样"
+    },
+    {
+      "object": "scripts/gates/check-mutation-residue.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面：go[./bin/zerg gate check check-mutation-residue]⇔py[py3.14.7 scripts/gates/check-mutation-residue.py] · rc 0/0/0/0 同 · stderr 0B/0B 逐字同 · stdout 622B/622B （） · Go后继件 core/cmd/zerg/check_mutation_residue.go@e810457c39c4ab5a · inproc键在册 · 普查：公开标记.tsv:231 + publish-public.sh:180 + mirror DROP_EXACT:159 + gate-coverage 0 + affected-map 0"
+    },
+    {
+      "object": "scripts/gates/check-parser-discipline.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面：go[./bin/zerg gate check check-parser-discipline]⇔py[py3.14.7 scripts/gates/check-parser-discipline.py] · rc 0/0/0/0 同 · stderr 0B/0B 逐字同 · stdout 466B/466B （） · Go后继件 core/cmd/zerg/check_parser_discipline.go@d0cb84e90fef1d8c · inproc键在册 · 普查：公开标记.tsv:196 + publish-public.sh:593 + mirror DROP_EXACT:503 + gate-coverage 0 + affected-map 0"
+    },
+    {
+      "object": "scripts/gates/check-two-pass-identity.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=2 · stdout=1406B · stderr=0B（./bin/zerg gate check check-two-pass-identity ⟷ py3.14.7 scripts/gates/check-two-pass-identity.py）· Go 后继件 check_two_pass_identity.go@a03d546e0288d0ff · 五面命中 publish-public.sh:574 / mirror-public-lib.py:483(DROP_EXACT) / 公开标记.tsv:190 · 旁引 core/internal/** 0 · 段2 G04/G05 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-unsubstituted-placeholders.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0 · stdout=616B · stderr=0B（./bin/zerg gate check check-unsubstituted-placeholders ⟷ py3.14.7 scripts/gates/check-unsubstituted-placeholders.py）· Go 后继件 check_unsubstituted_placeholders.go@503fbf61d46f9fcd · 五面命中 publish-public.sh:503 / mirror-public-lib.py:425(DROP_EXACT) / 公开标记.tsv:177 · 旁引 core/internal/** 0 · 段2 G04/G05 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-verdict-record.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0 · stdout=1661B · stderr=0B（./bin/zerg gate check check-verdict-record ⟷ py3.14.7 scripts/gates/check-verdict-record.py）· Go 后继件 check_verdict_record.go@c935458de464b8e9 · 五面命中 publish-public.sh:559 / mirror-public-lib.py:467(DROP_EXACT) / 公开标记.tsv:188 · 旁引 core/internal/** 0 · 段2 G04/G05 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/input-fingerprint.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=2 · stdout=0B · stderr=37B（./bin/zerg gate check input-fingerprint ⟷ py3.14.7 scripts/gates/input-fingerprint.py）· Go 后继件 input_fingerprint.go@aa86995106177d94 · 五面命中 publish-public.sh:777 / mirror-public-lib.py:596(DROP_EXACT) / 公开标记.tsv:245 + gate-coverage.config.json:117 / affected-map.json:454 · 旁引 core/internal/** 0 · 段2 G04/G05 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-approve-merge.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=2 · stdout=27771B · stderr=0B（./bin/zerg gate check check-approve-merge ⟷ py3.14.7 scripts/gates/check-approve-merge.py）· Go 后继件 check_approve_merge.go@e035ee186e208439 · 五面命中 publish-public.sh:609 / mirror-public-lib.py:511(DROP_EXACT) / 公开标记.tsv:194 · 旁引 core/internal/** 0 · 段2 G04/G05 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-approve-tier.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0 · stdout=2002B · stderr=0B（./bin/zerg gate check check-approve-tier ⟷ py3.14.7 scripts/gates/check-approve-tier.py）· Go 后继件 check_approve_tier.go@f18fd91aab70738d · 五面命中 publish-public.sh:282 / mirror-public-lib.py:184(DROP_EXACT) / 公开标记.tsv:55 · 旁引 core/internal/** 0 · 段2 G04/G05 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-ci-package-parity.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0 · stdout=1865B · stderr=0B（./bin/zerg gate check check-ci-package-parity ⟷ py3.14.7 scripts/gates/check-ci-package-parity.py）· Go 后继件 check_ci_package_parity.go@2548fc466e6cc871 · 五面命中 publish-public.sh:308 / mirror-public-lib.py:214(DROP_EXACT) / 公开标记.tsv:166 · 旁引 core/internal/** 0 · 段2 G04/G05 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-multirepo-summary.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0 · stdout=986B · stderr=0B（./bin/zerg gate check check-multirepo-summary ⟷ py3.14.7 scripts/gates/check-multirepo-summary.py）· Go 后继件 check_multirepo_summary.go@4d1ce09941d28c4d · 五面命中 publish-public.sh:294 / mirror-public-lib.py:201(DROP_EXACT) / 公开标记.tsv:154 · 旁引 core/internal/** 0 · 段2 G04/G05 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-pending-decisions.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0 · stdout=1590B · stderr=0B（./bin/zerg gate check check-pending-decisions ⟷ py3.14.7 scripts/gates/check-pending-decisions.py）· Go 后继件 check_pending_decisions.go@aa2c673e5a1f4f38 · 五面命中 publish-public.sh:558 / mirror-public-lib.py:466(DROP_EXACT) / 公开标记.tsv:187 · 旁引 core/internal/** 0 · 段2 G04/G05 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-symbol-delete-ripple.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态逐字同 rc0/0 stdout 478B · Go 后继件 core/cmd/zerg/check_symbol_delete_ripple.go@4c8ca88feb7df2e9 · 引用普查按 退役预取-G06G07-20261007.tsv"
+    },
+    {
+      "object": "scripts/gates/check-tty-output-contract.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态逐字同 rc0/0 stdout 991B · Go 后继件 core/cmd/zerg/check_tty_output_contract.go@bab5bf3f961be087 · 引用普查按 退役预取-G06G07-20261007.tsv"
+    },
+    {
+      "object": "scripts/gates/gate-report.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态逐字同 rc0/0（--list 2736B / --self-test 362B 两有界档） · Go 后继件 core/cmd/zerg/gate_report.go@2e131274df6c843c · 引用普查按 退役预取-G06G07-20261007.tsv"
+    },
+    {
+      "object": "scripts/gates/preview-gate-steps.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态逐字同 rc0/0 stdout 300B · Go 后继件 core/cmd/zerg/preview_gate_steps.go@3b58a19cd0a9cb58 · 引用普查按 退役预取-G06G07-20261007.tsv"
+    },
+    {
+      "object": "scripts/gates/check-ai-direct-edits.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态逐字同 rc1/1（载荷）stdout 2684B · Go 后继件 core/cmd/zerg/check_ai_direct_edits.go@64c7a787eeabe656 · 引用普查按 退役预取-G06G07-20261007.tsv"
+    },
+    {
+      "object": "scripts/gates/check-approve-ci.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态同 rc0/0（stdout 仅 mktemp 临时目录名噪声·同源同量） · Go 后继件 core/cmd/zerg/check_approve_ci.go@0298cd543775a923 · 引用普查按 退役预取-G06G07-20261007.tsv"
+    },
+    {
+      "object": "scripts/gates/check-flag-registry-parity.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态逐字同 rc0/0 stdout 6626B · Go 后继件 core/cmd/zerg/check_flag_registry_parity.go@6ad3b1715f676f38 · 引用普查按 退役预取-G06G07-20261007.tsv"
+    },
+    {
+      "object": "scripts/gates/check-gap-ledger-face.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态同 rc0/0（stdout 逐字同·Go 侧多 1 行锁件缺告警=并发删 judge-lock.py 噪声） · Go 后继件 core/cmd/zerg/check_gap_ledger_face.go@2c7ce453cc537b07 · 引用普查按 退役预取-G06G07-20261007.tsv"
+    },
+    {
+      "object": "scripts/gates/check-newfile-registry.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=2 · stdout=5557B · stderr=0B（./bin/zerg gate check check-newfile-registry ⟷ py3.14.7 scripts/gates/check-newfile-registry.py）· Go 后继件 check_newfile_registry.go@af084ff34938d63d · 五面命中 publish-public.sh:177 / mirror-public-lib.py:156(DROP_EXACT) / 公开标记.tsv:218 / gate-coverage.config.json:92 / affected-map.json:403 · 旁引 core/internal/** 0 · 段2 G08/G09 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-signature-identity.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0 · stdout=1238B · stderr=0B（./bin/zerg gate check check-signature-identity ⟷ py3.14.7 scripts/gates/check-signature-identity.py）· Go 后继件 check_signature_identity.go@d952c75fcaf727da · 五面命中 publish-public.sh:579 / mirror-public-lib.py:487(DROP_EXACT) / 公开标记.tsv:179 · 旁引 core/internal/** 0 · 段2 G08/G09 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-trustroot-witness.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0 · stdout=6355B · stderr=0B（./bin/zerg gate check check-trustroot-witness ⟷ py3.14.7 scripts/gates/check-trustroot-witness.py）· Go 后继件 check_trustroot_witness.go@7dd2349c44446ccd · 五面命中 publish-public.sh:279 / mirror-public-lib.py:188(DROP_EXACT) / 公开标记.tsv:91 · 旁引 core/internal/** 0 · 段2 G08/G09 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-zero-side-effect.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=2 · stdout=166B · stderr=0B（./bin/zerg gate check check-zero-side-effect ⟷ py3.14.7 scripts/gates/check-zero-side-effect.py）· Go 后继件 check_zero_side_effect.go@543603f7e5423418 · 五面命中 publish-public.sh:290 / mirror-public-lib.py:198(DROP_EXACT) / 公开标记.tsv:151 · 旁引 core/internal/** 0 · 段2 G08/G09 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/affected-steps.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=2 · stdout=0B · stderr=81B（./bin/zerg gate check affected-steps ⟷ py3.14.7 scripts/gates/affected-steps.py）· Go 后继件 affected_steps.go@bcee1ddeb33fdffb · 五面命中 publish-public.sh:760 / mirror-public-lib.py:579(DROP_EXACT) / 公开标记.tsv:226 / gate-coverage.config.json:112 / affected-map.json:348 · 旁引 core/internal/** 0 · 段2 G08/G09 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/audit_go_logs.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0 · stdout=1165B · stderr=0B（./bin/zerg gate check audit_go_logs ⟷ py3.14.7 scripts/gates/audit_go_logs.py）· Go 后继件 audit_go_logs.go@415466df2c4da543 · 五面命中 publish-public.sh:267 / mirror-public-lib.py:288(DROP_EXACT) / 公开标记.tsv:52 · 旁引 core/internal/** 0 · 段2 G08/G09 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-contract-version-diff.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=1 · stdout=1009B · stderr=0B（./bin/zerg gate check check-contract-version-diff ⟷ py3.14.7 scripts/gates/check-contract-version-diff.py）· Go 后继件 check_contract_version_diff.go@e98cbca8a4f7129e · 五面命中 publish-public.sh:595 / mirror-public-lib.py:497(DROP_EXACT) / 公开标记.tsv:181 · 旁引 core/internal/** 0 · 段2 G08/G09 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-dev-targets.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0 · stdout=179B · stderr=0B（./bin/zerg gate check check-dev-targets ⟷ py3.14.7 scripts/gates/check-dev-targets.py）· Go 后继件 check_dev_targets.go@0999e5e2f3c63280 · 五面命中 publish-public.sh:836 / mirror-public-lib.py:638(DROP_EXACT) / 公开标记.tsv:250 · 旁引 core/internal/** 0 · 段2 G08/G09 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-password-argv.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0/0 · stdout=15351B · stderr=0B（./bin/zerg gate check check-password-argv ⟷ py3.14.7 scripts/gates/check-password-argv.py · sha16 9426183dbaa4989c）· 九面：publish-public.sh:644 / mirror-public-lib.py:515(DROP_EXACT) / 公开标记.tsv:203 · core/internal/** 0 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-write-authz.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=1/1 载荷（裸写点报告档）· stdout=38039B · stderr=0B（./bin/zerg gate check check-write-authz ⟷ py3.14.7 scripts/gates/check-write-authz.py · sha16 753f8daab0256fce）· 九面：publish-public.sh:129 / mirror-public-lib.py:102(DROP_PREFIX)+611(DROP_EXACT 双面登记) / 公开标记.tsv:253 · core/internal/** 0 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-approve-backfill.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0/0 · stdout=3114B · stderr=0B（./bin/zerg gate check check-approve-backfill ⟷ py3.14.7 scripts/gates/check-approve-backfill.py · sha16 4de2aa0f2271b588）· Go 半 B5 常量已内化（cafbDevEditSHA256 · DEV-1837 退役态安全）· 九面：publish-public.sh:276 / mirror-public-lib.py:181(DROP_EXACT) / 公开标记.tsv:52 · core/internal/** 0 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-doc-section-numbers.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=2/2 用法错（缺省须给件）· stdout=0B · stderr=41B（./bin/zerg gate check check-doc-section-numbers ⟷ py3.14.7 scripts/gates/check-doc-section-numbers.py）· 九面：publish-public.sh:591 / mirror-public-lib.py:493(DROP_EXACT) / 公开标记.tsv:178 · core/internal/** 0 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-judge-ledger.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=2/2 用法错（裸跑须给 --check/--self-test）· stdout=0B · stderr=84B（./bin/zerg gate check check-judge-ledger ⟷ py3.14.7 scripts/gates/check-judge-ledger.py）· 随动摘④ dryrun-semantics.json:634 · 九面：publish-public.sh:798 / mirror-public-lib.py:592(DROP_EXACT) / 公开标记.tsv:230,231 / gate-coverage.config.json:122-123 / affected-map.json:382 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-no-symlink-farm.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（噪声归一：临时目录 zerg-nosymfarm-<TOK> ×38 两侧同量）rc=0/0 · Go 半 clerGoPorted 含本件（退件前置·类②）· 九面：publish-public.sh:593 / mirror-public-lib.py:495(DROP_EXACT) / 公开标记.tsv:180 · core/internal/** 0 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-private-path-forms.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0/0 · stdout=4683B · stderr=0B（./bin/zerg gate check check-private-path-forms ⟷ py3.14.7 scripts/gates/check-private-path-forms.py · sha16 b0509f0f73770d0c）· 九面：publish-public.sh:563 / mirror-public-lib.py:473(DROP_EXACT) / 公开标记.tsv:175 · core/internal/** 0 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-wallclock-ratchet.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=2/2 不给结论（既无 --measured 亦无 --from-bench）· stdout=0B · stderr=95B（./bin/zerg gate check check-wallclock-ratchet ⟷ py3.14.7 scripts/gates/check-wallclock-ratchet.py）· Go 半 test 退件前置已落（类③）· 九面：publish-public.sh:713 / mirror-public-lib.py:554(DROP_EXACT) / 公开标记.tsv:215,217 / gate-coverage.config.json:92-93 / affected-map.json:412 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-artifact-source-parity.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=1/1 载荷（门74 制品落后·非退场）· stdout=2388B · stderr=0B（./bin/zerg gate check check-artifact-source-parity ⟷ py3.14.7 scripts/gates/check-artifact-source-parity.py · sha16 7e4f18fadd5ed54a）· 九面：publish-public.sh:176 / mirror-public-lib.py:155(DROP_EXACT) / 公开标记.tsv:213 · core/internal/** 0 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-keep-marks.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0/0 · stdout=2807B · stderr=0B（./bin/zerg gate check check-keep-marks ⟷ py3.14.7 scripts/gates/check-keep-marks.py · sha16 f78b0e745b21dde8）· 九面：publish-public.sh:290 / mirror-public-lib.py:199(DROP_EXACT) / 公开标记.tsv:152 · core/internal/** 0 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-links-lychee.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0/0 · stdout=7607B · stderr=0B（./bin/zerg gate check check-links-lychee ⟷ py3.14.7 scripts/gates/check-links-lychee.py · sha16 4a1b46552a73f3c6）· 九面：publish-public.sh:451 / mirror-public-lib.py:387(DROP_EXACT) / 公开标记.tsv:167 · core/internal/** 0 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-marks-coverage-parity.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=1/1 载荷（R2-a py-go-pairing-drift.ratchet.json 缺两器排除表·存量现况非退场）· stdout=2206B · stderr=0B（./bin/zerg gate check check-marks-coverage-parity ⟷ py3.14.7 scripts/gates/check-marks-coverage-parity.py · sha16 74ee1a2ad41bb4c3）· 九面：publish-public.sh:627 / mirror-public-lib.py:506(DROP_EXACT) / 公开标记.tsv:200 · core/internal/** 0 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-public-face-anchor.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0/0 · stdout=3624B · stderr=0B（./bin/zerg gate check check-public-face-anchor ⟷ py3.14.7 scripts/gates/check-public-face-anchor.py · sha16 baf516a270334f73）· Go 半 cpfp 退件前置已落（回落 cpfpRetiredExceptions·B轨 2026-10-07）· 九面：publish-public.sh:408 / mirror-public-lib.py:363(DROP_EXACT) / 公开标记.tsv:161 · core/internal/** 0 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-publish-layer-names.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0/0 · stdout=918B · stderr=0B（./bin/zerg gate check check-publish-layer-names ⟷ py3.14.7 scripts/gates/check-publish-layer-names.py · sha16 a57244ec85069b62）· 九面：publish-public.sh:331 / mirror-public-lib.py:308(DROP_EXACT) / 公开标记.tsv:205 · core/internal/** 0 · 段2 G10-G12 退役批（2026-10-07） · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-registry-vs-disk.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-registry-vs-disk ⟷ python3.14.7 scripts/gates/check-registry-vs-disk.py：rc/stdout/stderr 逐字同 · 已存 twostate/ 原件）· Go 后继件 core/cmd/zerg/check_registry_vs_disk.go@58012a1e936f26c1 · 段2 G13+G14+G15 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-gap-ledger-view.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-gap-ledger-view ⟷ python3.14.7 scripts/gates/check-gap-ledger-view.py：rc/stdout/stderr 逐字同 · 已存 twostate/ 原件）· Go 后继件 core/cmd/zerg/check_gap_ledger_view.go@5b2d3091fb7ca60f · 段2 G13+G14+G15 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-git-env-hygiene.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-git-env-hygiene ⟷ python3.14.7 scripts/gates/check-git-env-hygiene.py：rc/stdout/stderr 逐字同 · 已存 twostate/ 原件）· Go 后继件 core/cmd/zerg/check_git_env_hygiene.go@151eecf5581f3352 · 段2 G13+G14+G15 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-git-path-outlet.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-git-path-outlet ⟷ python3.14.7 scripts/gates/check-git-path-outlet.py：rc/stdout/stderr 逐字同 · 已存 twostate/ 原件）· Go 后继件 core/cmd/zerg/check_git_path_outlet.go@272913b894357931 · 段2 G13+G14+G15 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-help-snapshot.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-help-snapshot ⟷ python3.14.7 scripts/gates/check-help-snapshot.py：rc/stdout/stderr 逐字同 · 已存 twostate/ 原件）· Go 后继件 core/cmd/zerg/check_help_snapshot.go@b4b87807a0533f08 · 段2 G13+G14+G15 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-idspace-map.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-idspace-map ⟷ python3.14.7 scripts/gates/check-idspace-map.py：rc/stdout/stderr 逐字同 · 已存 twostate/ 原件）· Go 后继件 core/cmd/zerg/check_idspace_map.go@318ab9c49181fe5d · 段2 G13+G14+G15 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-token-argv.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-token-argv ⟷ python3.14.7 scripts/gates/check-token-argv.py：rc/stdout/stderr 逐字同 · 已存 twostate/ 原件）· Go 后继件 core/cmd/zerg/check_token_argv.go@c79be1627dbdb94a · 段2 G13+G14+G15 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/seal-ledger.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check seal-ledger ⟷ python3.14.7 scripts/gates/seal-ledger.py：rc/stdout/stderr 逐字同 · 已存 twostate/ 原件）· Go 后继件 core/cmd/zerg/seal_ledger.go@8f395f2ca05ccde0 · 段2 G13+G14+G15 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-dryrun-semantics.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-dryrun-semantics ⟷ python3.14.7 scripts/gates/check-dryrun-semantics.py：rc/stdout/stderr 逐字同 · 已存 twostate/ 原件）· Go 后继件 core/cmd/zerg/check_dryrun_semantics.go@92b38e30f4972da5 · 段2 G13+G14+G15 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-fields-face-parity.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-fields-face-parity ⟷ python3.14.7 scripts/gates/check-fields-face-parity.py：rc/stdout/stderr 逐字同 · 已存 twostate/ 原件）· Go 后继件 core/cmd/zerg/check_fields_face_parity.go@b35ff6aa62283731 · 段2 G13+G14+G15 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-judge-registry.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-judge-registry ⟷ python3.14.7 scripts/gates/check-judge-registry.py：rc/stdout/stderr 逐字同 · 已存 twostate/ 原件）· Go 后继件 core/cmd/zerg/check_judge_registry.go@e5c125e2baec9a54 · 段2 G13+G14+G15 退役批 · by Mr2109"
+    },
+    {
+      "object": "scripts/gates/check-public-face-wording.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-public-face-wording ⟷ python3.14.7 scripts/gates/check-public-face-wording.py：rc/stdout/stderr 逐字同 · 已存 twostate/ 原件）· Go 后继件 core/cmd/zerg/check_public_face_wording.go@1619be8d6b054407 · 段2 G13+G14+G15 退役批 · by Mr2109"
     }
   ],
     "retire_exceptions": [

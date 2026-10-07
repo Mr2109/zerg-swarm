@@ -78,6 +78,7 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"check-judge-ledger":                    judgeLedgerGateMain,
 	"check-judge-registry":                  checkJudgeRegistryGateMain,
 	"check-keep-marks":                      keepMarksGateMain,
+	"check-lang-freeze":                     checkLangFreezeGateMain,
 	"check-lineref-limit":                   checkLinerefLimitGateMain,
 	"check-links-lychee":                    checkLinksLycheeGateMain,
 	"check-loose-exit-registry":             checkLooseExitRegistryGateMain,

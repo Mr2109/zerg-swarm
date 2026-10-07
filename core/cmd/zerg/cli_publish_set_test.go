@@ -27,9 +27,18 @@ func publishSetRun(t *testing.T, argv ...string) (int, string, string) {
 	return rc, out.String(), errb.String()
 }
 
-// publishSetGateBlockedFiles —— 上一批门 B9 判据⑥ 报的那三件（现读：两器排除面已收 ⇒ 链上「不发」）。
+// publishSetGateBlockedFiles —— 三枚「表 `public=no`、两器排除面在册」的真源件（现读：链上「不发」）。
+//
+//	★ 2026-10-07（退役段2 · G13-G15 退件解阻塞 · GAP「夹具硬依赖被退役件」一类）：
+//	  原首枚 `scripts/gates/check-git-path-outlet.py` 随门68 py 半退役（不在盘）⇒ 其 `EXCLUDES` /
+//	  `DROP_EXACT` 登记同批摘除 ⇒ 本「**拿真实件当样本**」的夹具丢样本：`publish set` 现读对它
+//	  报「会发=是 · 拦的层=—」（原本该是「不发 · EXCLUDES」）⇒ 本用例红。
+//	★ 改法 = 「**内化样本**」（✗ 不点名已退役 / 在退役面的门禁 py 半）：改拿**结构性机制件**
+//	  `scripts/gates/precommit-gates.sh`（门禁运行器本体 · 恒 `public=no` + 两器排除面在册 ·
+//	  **不在 py→Go 退役面内** ⇒ 样本不随单件退役而失）。其余两枚仍在盘 ⇒ 逐字不变
+//	  （照「py 在盘 ⇒ 旧路逐字不变」）。
 var publishSetGateBlockedFiles = []string{
-	"scripts/gates/check-git-path-outlet.py",
+	"scripts/gates/precommit-gates.sh",
 	"scripts/gates/check-help-shape.py",
 	"scripts/gates/check-lineref-limit.py",
 }

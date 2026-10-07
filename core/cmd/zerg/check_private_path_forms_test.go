@@ -212,3 +212,41 @@ func TestPrivatePathFormsSelfTestNoTempLeak(t *testing.T) {
 		t.Fatalf("自检夹具未回收：跑前 %d 个 w15-forms-* / 跑后 %d 个（defer os.RemoveAll 被回退？）", before, after)
 	}
 }
+
+// TestPrivatePathFormsGateRetired —— 退役态牙（类① · 本件退件前置）：门禁侧点名件 py 退役
+// （缺席 · 其 Go 半在盘）⇒ 那四格**不过问**（✗ 不判「空指」· rc 与在盘一致 = 0）；
+// 负控：Go 半也移开（真消失）⇒ 仍判 [E3] 空指（rc=1）。
+// ★ 哑化负控：抽掉 pvGateRetired 判定（恒 false）⇒ ①段当场 FAIL 并给出本行号。
+func TestPrivatePathFormsGateRetired(t *testing.T) {
+	const pf = "scripts/gates/check-public-face-wording.py"
+
+	t.Run("①退役_不过问_rc0", func(t *testing.T) {
+		d := t.TempDir()
+		ppfBuild(t, d, ppfRulesBase)
+		if err := os.Remove(filepath.Join(d, pf)); err != nil {
+			t.Fatal(err)
+		}
+		// Go 半在盘 ⇒ 判「已退役」（模拟 py 已退役 · Go 半接管）
+		ppfWrite(t, filepath.Join(d, "core/cmd/zerg/check_public_face_wording.go"), "package main\n")
+		rc, out, _ := ppfRun(d)
+		if rc != 0 {
+			t.Fatalf("退役态期望 rc=0（与在盘一致 · ✗ 不 fail-closed），实得 rc=%d out=%q", rc, out)
+		}
+		if !strings.Contains(out, "已退役") {
+			t.Fatalf("退役态未打印「已退役」行：%q", out)
+		}
+	})
+
+	t.Run("②负控_Go半也移开_仍判空指_rc1", func(t *testing.T) {
+		d := t.TempDir()
+		ppfBuild(t, d, ppfRulesBase)
+		if err := os.Remove(filepath.Join(d, pf)); err != nil {
+			t.Fatal(err)
+		}
+		// Go 半也不在盘（真消失）⇒ 不得当退役
+		rc, out, _ := ppfRun(d)
+		if rc != 1 || !strings.Contains(out, "[E3]") || !strings.Contains(out, "空指") {
+			t.Fatalf("真消失期望 rc=1 且 [E3] 空指，实得 rc=%d out=%q", rc, out)
+		}
+	})
+}

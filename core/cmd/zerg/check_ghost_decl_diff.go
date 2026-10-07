@@ -48,8 +48,8 @@ const gddDoctorItem = "回收候选（幽灵服务）"
 const gddDoctorFields = "name,verdict,detail,advice"
 const gddSelftestMarker = "# ─────────────────── " + "自检"
 
-var gddSiblingHints = []string{"bin/zerg-", "bin/cocoon-"}
-var gddProcHints = []string{"bin/zerg-", "bin/cocoon-"}
+var gddSiblingHints = []string{"bin/zerg-", "bin/cocoon-", "searx.webapp"}
+var gddProcHints = []string{"bin/zerg-", "bin/cocoon-", "searx.webapp"}
 var gddZergLabelPrefixes = []string{"com.zerg."}
 
 // ── 写旗标闭集（负控 · 唯一真源）───────────────────────────────────────────────
@@ -1161,7 +1161,15 @@ func gddLoadSibling(root, selfPy string) string {
 	sib := filepath.Join(gddScriptDir(root), gddSiblingName)
 	st, err := os.Stat(sib)
 	if err != nil || st.IsDir() {
-		return fmt.Sprintf("同源件缺失：%s（门⑧ = 声明侧真源的唯一解析器）⇒ 不给结论", sib)
+		// ★ 退役态（G17 · 2026-10-07 退役批）：同源件 `check-service-declaration.py`（门⑧ py 半）
+		//   已退役（不在盘）⇒ 口径真源已换人（其 **Go 半** `core/cmd/zerg/check_service_declaration.go`）
+		//   ⇒ 按退役态处置：改查 Go 半里的**同一组同源口径标记**（✗ 不因缺 py 而 fail-closed）。
+		//   Go 半也不在盘 / 标记不齐（合成夹具 · 最小仓 · 真坏件）⇒ 保留原「不给结论」档（✗ 不静默放行）。
+		if why := gddSiblingGoHalfOK(root); why == "" {
+			return ""
+		} else {
+			return fmt.Sprintf("同源件缺失：%s（门⑧ = 声明侧真源的唯一解析器）且 Go 半不可用（%s）⇒ 不给结论", sib, why)
+		}
 	}
 	b, rerr := os.ReadFile(sib)
 	if rerr != nil {
@@ -1174,6 +1182,25 @@ func gddLoadSibling(root, selfPy string) string {
 		}
 	}
 	_ = selfPy
+	return ""
+}
+
+// gddSiblingGoHalfOK —— 门⑧ 退役态：py 半退役后，其口径真源改由 **Go 半** 承载。
+// 现读 Go 半 `core/cmd/zerg/check_service_declaration.go` 里四个同源口径符号
+// （与查 py 半的 parse_decl / PROC_HINTS / read_lines / label_set_diff 一一对应）。
+// 返回 "" = 可用；否则失败说明（调用方据此走原「不给结论」档）。
+func gddSiblingGoHalfOK(root string) string {
+	p := filepath.Join(root, "core", "cmd", "zerg", "check_service_declaration.go")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "Go 半读不到（" + filepath.ToSlash(filepath.Join("core", "cmd", "zerg", "check_service_declaration.go")) + "）：" + err.Error()
+	}
+	src := string(b)
+	for _, sym := range []string{"csdParseDecl", "csdProcHints", "csdReadLines", "csdLabelSetDiff"} {
+		if !strings.Contains(src, sym) {
+			return "Go 半里没有 " + sym
+		}
+	}
 	return ""
 }
 
@@ -1310,7 +1337,11 @@ func gddFixture(d, decl, ps, lc string, plists []string) (string, string, string
 
 // gddSelfTest —— 成对负控 · 合成夹具 · 不碰真目标。★ 自回收：defer os.RemoveAll(tmp)
 // （py 原件用 tempfile.mkdtemp **从不回收** —— A 类系统临时目录泄漏，见件头未覆盖面 ②）。
-func gddSelfTest(stdout io.Writer) int {
+func gddSelfTest(stdout io.Writer) int { return gddSelfTestRoot(stdout, gddDefaultRoot()) }
+
+// gddSelfTestRoot —— gddSelfTest 的可注入根版本（root 决定同源件与「本件 py 真身」的位置）。
+// ★ 退役态（GAP-20261007-16 · 判据件退役前置 ③）：py 真身退役后本函数仍须照常出结论（✗ 不 fail-closed）。
+func gddSelfTestRoot(stdout io.Writer, root string) int {
 	ok := true
 	tmp, terr := os.MkdirTemp("", "gdd-selftest-")
 	if terr != nil {
@@ -1319,7 +1350,6 @@ func gddSelfTest(stdout io.Writer) int {
 	}
 	defer os.RemoveAll(tmp)
 
-	root := gddDefaultRoot()
 	if err := gddLoadSibling(root, ""); err != "" {
 		fmt.Fprintf(stdout, "  ✗ 同源件加载失败：%s\n", err)
 		return 1
@@ -1371,19 +1401,27 @@ func gddSelfTest(stdout io.Writer) int {
 
 	fake := "import os\ndef f(p):\n    os.remove(p)\n"
 	casef("④ 负控（源码级牙）：合成源码含 "+"`os.remove(`"+` ⇒ 命中`, "True", gddBoolStr(len(assertNoWriteAPIPy(fake, "")) > 0), "")
-	srcB, _ := os.ReadFile(filepath.Join(gddScriptDir(root), gddSelfName))
-	src := string(srcB)
-	hits := assertNoWriteAPIPy(src, gddSelftestMarker)
-	n4b := ""
-	if len(hits) > 0 {
-		hs := hits
-		if len(hs) > 3 {
-			hs = hs[:3]
+	// ★ 退役态（GAP-20261007-16 · 判据件退役前置 ③）：旧口径**硬读**本件 py 真身源码；
+	//   py 退役（不在盘）⇒ src="" ⇒ ④c 恒 False ⇒ 自检判红 rc=1（把「退役」错当「故障」）。
+	//   现口径：py 在盘 ⇒ 照旧读真源（与 py 半逐字同）；py 不在盘（已退役）⇒ 两条真源正例降为
+	//   「不过问」，扫描器非恒空改由合成夹具（已知正命中 `os.remove(`）承载 —— ✗ 不因缺 py 判红。
+	if srcB, rerr := os.ReadFile(filepath.Join(gddScriptDir(root), gddSelfName)); rerr == nil {
+		src := string(srcB)
+		hits := assertNoWriteAPIPy(src, gddSelftestMarker)
+		n4b := ""
+		if len(hits) > 0 {
+			hs := hits
+			if len(hs) > 3 {
+				hs = hs[:3]
+			}
+			n4b = "  " + strings.Join(hs, " / ")
 		}
-		n4b = "  " + strings.Join(hs, " / ")
+		casef("④b 正例：本件**真目标段**写 API 命中数 = 0（自检夹具段豁免）", "0", fmt.Sprintf("%d", len(hits)), n4b)
+		casef("④c 正例：同一份源码**整篇**扫（含自检段）应有命中 ⇒ 证明扫描器不是恒空", "True", gddBoolStr(len(assertNoWriteAPIPy(src, "")) > 0), "")
+	} else {
+		casef("④bc 退役态：本件 py 真身不在盘 ⇒ 源码级牙正例改由合成夹具承载（真源两格不过问 · ✗ 不判红）",
+			"True", gddBoolStr(len(assertNoWriteAPIPy(fake, "")) > 0), "")
 	}
-	casef("④b 正例：本件**真目标段**写 API 命中数 = 0（自检夹具段豁免）", "0", fmt.Sprintf("%d", len(hits)), n4b)
-	casef("④c 正例：同一份源码**整篇**扫（含自检段）应有命中 ⇒ 证明扫描器不是恒空", "True", gddBoolStr(len(assertNoWriteAPIPy(src, "")) > 0), "")
 
 	for _, flag := range []string{"--reap", "--clean", "--fix", "commit", "--stop", "--kill", "--apply"} {
 		rcf := gddRunWriteFlagMain(flag)

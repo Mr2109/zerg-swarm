@@ -232,3 +232,78 @@ func TestCheckManifestFreshnessProfileGatePort(t *testing.T) {
 		t.Fatalf("⑬ --list-rules 不对（rc=%d）：\n%s", rc, out)
 	}
 }
+
+// mfpRetiredFixture —— 造一枚「邻件已退役」的仓外夹具：本件 py 在盘（自根推导用）＋ 邻件 Go 半在盘，
+// 邻件 py **缺席**。☆ 真仓不受影响（全在 t.TempDir()）。
+func mfpRetiredFixture(t *testing.T, withGoHalf bool) string {
+	t.Helper()
+	root := t.TempDir()
+	g := filepath.Join(root, "scripts", "gates")
+	if err := os.MkdirAll(g, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(g, "check-manifest-freshness-profile.py"), []byte("# stub\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if withGoHalf {
+		gh := filepath.Join(root, "core", "cmd", "zerg")
+		if err := os.MkdirAll(gh, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(gh, "check_manifest_freshness.go"), []byte("package main\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}, {"commit", "-q", "-m", "seed"}} {
+		c := exec.Command("git", args...)
+		c.Dir = root
+		c.Env = env
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("夹具 git %v 失败：%v\n%s", args, err, out)
+		}
+	}
+	return root
+}
+
+// TestCheckManifestFreshnessProfileRetired —— 退役容忍（B轨 · 2026-10-07 · 类①）：邻件
+// `check-manifest-freshness.py` 退役（py 缺席 · 其 Go 半在盘）⇒ 本件视同「单一口径可得」
+// ⇒ 判据照常出结论（✗ 不得 rc=2 fail-closed）；真消失（无 Go 半）⇒ 仍 fail-closed（⑫ 格不破）。
+//
+// ★ 哑化负控：抽掉 `mfpNeighborRetired`（恒 false）⇒ 本用例退役两格必 FAIL 带行号。
+func TestCheckManifestFreshnessProfileRetired(t *testing.T) {
+	// ① 退役态：邻件 py 缺席 + Go 半在盘 ⇒ 缺省档（不给 --release-head，靠仓 HEAD）照常出结论。
+	root := mfpRetiredFixture(t, true)
+	t.Chdir(root)
+	head := mfpGitTolerant(root, []string{"rev-parse", "HEAD"})
+	fresh := filepath.Join(root, "fresh.json")
+	mfpTestWrite(t, fresh, `{"commit":"`+head+`","source_sha":"`+head+`","dirty":false,"generated_at":"2026-09-23T00:00:00Z"}`)
+	rc, out, _ := mfpTestRun([]string{"--profile", "dev", "--manifest", fresh})
+	if rc == 2 {
+		t.Fatalf("退役态 fail-closed（rc=2）—— 邻件退役不得让判据判不出：\n%s", out)
+	}
+	if strings.Contains(out, "真源不在场") {
+		t.Fatalf("退役态仍报「真源不在场」（未走退役容忍分支）：\n%s", out)
+	}
+	// ①′ 自检也不得因邻件退役而不过（门 all.sh 会逐门跑自检档）。
+	rcST, outST, _ := mfpTestRun([]string{"--self-test"})
+	if rcST != 0 {
+		t.Fatalf("退役态 --self-test 应 rc=0（真源由 Go 半承载），实得 rc=%d：\n%s", rcST, outST)
+	}
+
+	// ② 真消失（邻件 py 缺席 **且** 无 Go 半）⇒ 未退役 ⇒ 旧 fail-closed 语义必须保留（仅 --release-head 缺时退 2）。
+	root2 := mfpRetiredFixture(t, false)
+	t.Chdir(root2)
+	head2 := mfpGitTolerant(root2, []string{"rev-parse", "HEAD"})
+	fresh2 := filepath.Join(root2, "fresh.json")
+	mfpTestWrite(t, fresh2, `{"commit":"`+head2+`","source_sha":"`+head2+`","dirty":false}`)
+	rc2, out2, _ := mfpTestRun([]string{"--profile", "dev", "--manifest", fresh2})
+	if !strings.Contains(out2, "取不到") {
+		t.Fatalf("真消失（无 Go 半）应仍报「取不到」（⑫ 格语义被误改）：\n%s", out2)
+	}
+	if rc2 != 2 {
+		t.Fatalf("真消失（无 Go 半）应仍 fail-closed rc=2（取不到发布提交 HEAD），实得 rc=%d", rc2)
+	}
+}

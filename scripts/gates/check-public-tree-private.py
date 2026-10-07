@@ -35,6 +35,7 @@ docs 子目录/文件它看不见。故对公开树 `docs/` 下的**每一条路
 import argparse
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -98,6 +99,67 @@ WHITELIST = os.path.join(REPO, "publish", "whitelist.txt")
 PUBLISH_SH = os.path.join(REPO, "scripts", "build", "publish-public.sh")
 HISTORY_SECRETS = os.path.join(REPO, "scripts", "gates", "check-history-secrets.py")
 OVERLAY_DIR = os.path.join(REPO, "publish", "docs")
+# ★ 退役容忍（缺口 `GAP-20261007-16` · 与 Go 半 `check_public_tree_private.go:630-667` 同口径）：
+#   历史扫描器 py `check-history-secrets.py` 的 **Go 半**（M2 真搬件）。该 py 退役（不在盘）而本件在盘
+#   ⇒ 退役态：发布侧四谓词由 Go 半承载，本 py 半**内联**同一份真源（逐字取自 `check-history-secrets.py`
+#   `load_whitelist`:161-169 · `load_excludes`:177-193 · `excluded`:218-224 · `published_path`:267-274）
+#   ⇒ 不要求该 py 在盘、不读其正文（✗ 不 fail-closed）。两缺（真消失）⇒ 仍「缺件」（fail-closed 保留）。
+HISTORY_SECRETS_GO_HALF = os.path.join(REPO, "core", "cmd", "zerg", "check_history_secrets.go")
+
+_NOISE_SUFFIX = (".bak", ".orig", ".rej")
+_NOISE_DIRS = ("__pycache__",)
+
+
+def _inl_load_whitelist(path):
+    """内联 = `check-history-secrets.py::load_whitelist`（退役态真源回落 · 逐字同构）。"""
+    entries = []
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            entries.append(line)
+    return entries
+
+
+def _inl_load_excludes(path):
+    """内联 = `check-history-secrets.py::load_excludes`（退役态真源回落 · 逐字同构）。"""
+    ex = []
+    if not os.path.exists(path):
+        return ex
+    text = open(path, encoding="utf-8").read()
+    m = re.search(r"EXCLUDES=\((.*?)\n\)", text, re.S)
+    if not m:
+        return ex
+    for raw in m.group(1).split("\n"):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        line = line.split("#")[0].strip().strip('"').strip("'")
+        if line:
+            ex.append(line)
+    return ex
+
+
+def _inl_excluded(rel, ex):
+    """内联 = `check-history-secrets.py::excluded`（退役态真源回落 · 逐字同构）。"""
+    if rel.endswith(_NOISE_SUFFIX) or any(part in _NOISE_DIRS for part in rel.split("/")):
+        return True
+    for e in ex:
+        if rel == e or rel.startswith(e.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def _inl_published_path(rel, entries):
+    """内联 = `check-history-secrets.py::published_path`（退役态真源回落 · 逐字同构）。"""
+    for e in entries:
+        if e.endswith("/"):
+            if rel.startswith(e):
+                return True
+        elif rel == e:
+            return True
+    return False
 
 
 def _load_module(name, path):
@@ -137,24 +199,36 @@ def docs_allowlist():
 
     error 非空 ⇒ 判据读不出 ⇒ 调用方走「不给结论」（rc=2），不当作通过。
     """
-    for path in (MIRROR_LIB, WHITELIST, PUBLISH_SH, HISTORY_SECRETS):
+    hsec_retired = (not os.path.exists(HISTORY_SECRETS)) and os.path.exists(HISTORY_SECRETS_GO_HALF)
+    required = (MIRROR_LIB, WHITELIST, PUBLISH_SH) if hsec_retired else \
+        (MIRROR_LIB, WHITELIST, PUBLISH_SH, HISTORY_SECRETS)
+    for path in required:
         if not os.path.exists(path):
             return {"prefixes": FORMAL_FACE_PREFIXES, "exact": set(), "prov": {},
                     "source_mode": "-", "error": "缺件：%s" % os.path.relpath(path, REPO)}
-    hsec = _load_module("pubtree_hsec", HISTORY_SECRETS)
+    hsec = None if hsec_retired else _load_module("pubtree_hsec", HISTORY_SECRETS)
     mlib = _load_module("pubtree_mirror_map", MIRROR_LIB)
-    if hsec is None or mlib is None:
+    if (hsec is None and not hsec_retired) or mlib is None:
         return {"prefixes": FORMAL_FACE_PREFIXES, "exact": set(), "prov": {},
                 "source_mode": "-", "error": "加载失败：镜像器或历史扫描器读不进"}
     if not hasattr(mlib, "map_path"):
         return {"prefixes": FORMAL_FACE_PREFIXES, "exact": set(), "prov": {},
                 "source_mode": "-", "error": "镜像器映射真身读不出（无 map_path）"}
-    for fn in ("published_path", "load_whitelist", "load_excludes", "excluded"):
-        if not hasattr(hsec, fn):
-            return {"prefixes": FORMAL_FACE_PREFIXES, "exact": set(), "prov": {},
-                    "source_mode": "-", "error": "发布侧谓词读不出（无 %s）" % fn}
-    entries = hsec.load_whitelist(WHITELIST)
-    excludes = hsec.load_excludes(PUBLISH_SH)
+    if not hsec_retired:
+        for fn in ("published_path", "load_whitelist", "load_excludes", "excluded"):
+            if not hasattr(hsec, fn):
+                return {"prefixes": FORMAL_FACE_PREFIXES, "exact": set(), "prov": {},
+                        "source_mode": "-", "error": "发布侧谓词读不出（无 %s）" % fn}
+    if hsec_retired:      # 退役态：四谓词走本件内联真源（与 Go 半同口径）
+        load_whitelist, load_excludes = _inl_load_whitelist, _inl_load_excludes
+        published_path, excluded = _inl_published_path, _inl_excluded
+    else:
+        load_whitelist = getattr(hsec, "load_whitelist")
+        load_excludes = getattr(hsec, "load_excludes")
+        published_path = getattr(hsec, "published_path")
+        excluded = getattr(hsec, "excluded")
+    entries = load_whitelist(WHITELIST)
+    excludes = load_excludes(PUBLISH_SH)
     if not excludes:
         return {"prefixes": FORMAL_FACE_PREFIXES, "exact": set(), "prov": {},
                 "source_mode": "-",
@@ -164,9 +238,9 @@ def docs_allowlist():
     rels, mode = _published_sources()
     exact, prov = set(), {}
     for rel in rels:
-        if not hsec.published_path(rel, entries):
+        if not published_path(rel, entries):
             continue                      # 白名单外 ⇒ 不导
-        if hsec.excluded(rel, excludes) or rel in drop_exact or rel.startswith(drop_prefix):
+        if excluded(rel, excludes) or rel in drop_exact or rel.startswith(drop_prefix):
             continue                      # 排除项 / 镜像器丢弃 ⇒ 不导
         mp = mlib.map_path(rel)
         if mp and mp.startswith("docs/"):

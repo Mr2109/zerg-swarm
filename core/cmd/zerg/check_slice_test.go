@@ -263,3 +263,46 @@ func csTailStr(s string, n int) string {
 	}
 	return s[len(s)-n:]
 }
+
+// ★ 退役容忍（缺口 `GAP-20261007-16` · 类①「硬要求在盘 ⇒ 退役态不过问」）：尺 `scripts/gates/check-slice.py`
+// 退役（不在盘）而其 **Go 半** `check_slice.go` 在盘 ⇒ `impactCalibrationOf` **不落**那一格缺件「取不到」
+// （否则退役态永久「取不到」）；改由 Go 半进程内现跑取数。两缺（真消失）⇒ 保留原「取不到」（fail-closed）。
+// 哑化 `impactCalibScriptRetired` ⇒ 本用例 FAIL（带本行号）。
+func TestImpactCalibScriptRetiredTolerant(t *testing.T) {
+	dir := t.TempDir()
+	mk := func(rel, body string) {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("core/cmd/zerg/check_slice.go", "package main\n")
+	// ① py 缺 · Go 半在盘 ⇒ 退役；越过缺件格 ⇒ 作「未机检」（✗ 不是「取不到」）
+	if !impactCalibScriptRetired(dir) {
+		t.Fatal("退役判定错：py 缺 + Go 半在 ⇒ 应判退役")
+	}
+	if c := impactCalibrationOf(dir, false); c.Status != "未机检" {
+		t.Fatalf("退役态应「未机检」（越过缺件格），实 Status=%q reason=%q", c.Status, c.Reason)
+	}
+	// ② py 在盘 ⇒ 非退役（在盘照走真子进程 · 单一真源不变）
+	mk("scripts/gates/check-slice.py", "x\n")
+	if impactCalibScriptRetired(dir) {
+		t.Fatal("py 在盘 ⇒ 非退役")
+	}
+	// ③ 两缺（真消失）⇒ 非退役 ⇒ fail-closed 保留：「取不到」+ 点名「尺的件不在盘上」
+	if err := os.Remove(filepath.Join(dir, "scripts", "gates", "check-slice.py")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "core", "cmd", "zerg", "check_slice.go")); err != nil {
+		t.Fatal(err)
+	}
+	if impactCalibScriptRetired(dir) {
+		t.Fatal("两缺 ⇒ 非退役（真消失，不许当退役）")
+	}
+	if c := impactCalibrationOf(dir, false); c.Status != "取不到" || !strings.Contains(c.Reason, "尺的件不在盘上") {
+		t.Fatalf("两缺应「取不到」+ 点名缺件（fail-closed 保留），实 Status=%q reason=%q", c.Status, c.Reason)
+	}
+}

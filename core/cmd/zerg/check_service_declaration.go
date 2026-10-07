@@ -54,6 +54,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -71,7 +73,11 @@ const (
 	csdProg = "check-service-declaration.py"
 	csdTool = "check-service-declaration"
 
-	// csdHelpGoldenSHA256 —— py 3.9.6 `-h` stdout 的 sha256（GAP-20261001-61 钉死一版）。
+	// csdHelpGoldenSHA256 —— 帮助面 `-h` stdout 的 sha256（GAP-20261001-61 钉死一版）。
+	// ★ 退役态（G17 · 2026-10-07 退役批）：金标真源由「py `-h` 输出」**收回本件 `csdHelpText` 常量**
+	//   （Go 半即真源）；本字面量降为 Go 半的**冻结回归值**（csdHelpNativeSha256 现算自证）。
+	//   为什么内化：原真源件 `scripts/gates/check-service-declaration.py`（py 半）正被退役（M2 判据件 Go 化），
+	//   py 件一退役即无从再刷该金标 ⇒ 把真源内化进 Go（✗ 运行时不读任何 py）。
 	csdHelpGoldenSHA256 = "ef130b81036c077cd892b01c105018d6b525e1320ce380790198e24ac013b44e"
 
 	csdUsageShort = "usage: check-service-declaration.py [-h] [--self-test] [root]"
@@ -85,6 +91,13 @@ const (
 		"  -h, --help   show this help message and exit\n" +
 		"  --self-test\n"
 )
+
+// csdHelpNativeSha256 —— 从 **Go 真源** `csdHelpText` 现算 sha256（✗ 不读 py）。
+// 与冻结常量 csdHelpGoldenSHA256 自证：二者相等 ⇒ 帮助面真源在 Go 半、退役态无缺口。
+func csdHelpNativeSha256() string {
+	sum := sha256.Sum256([]byte(csdHelpText))
+	return hex.EncodeToString(sum[:])
+}
 
 var (
 	csdKinds = []string{"launchd", "ghost"}

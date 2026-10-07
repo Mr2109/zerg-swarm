@@ -400,3 +400,72 @@ func TestCICGTempdirReclaimed(t *testing.T) {
 		}
 	}
 }
+
+// TestCICGResolveRootRetirementSafe —— 退役态安全（类①）：本门自指 py 退役（不在盘）后，
+// 仓根锚必须仍**上溯**命中真仓根（认 `scripts/gates` **目录**），✗ 不退化成 cwd。
+// ★ 从**子目录**起跑（core/cmd/zerg）：修好后须上溯到 root；旧锚（只认自指 py）在 py 缺席时
+// 找不到任何锚 ⇒ 落回 cwd 子目录 ≠ root ⇒ 本用例必红。
+// ★ 哑化负控：抽掉 check_public_ci_green.go 的 `|| cicgStatIsDir(...scripts/gates)` 一支 ⇒
+// 本用例第一处 Fatalf 行当场 FAIL（实测 check_public_ci_green_test.go:429）。
+func TestCICGResolveRootRetirementSafe(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repo")
+	sub := filepath.Join(root, "core", "cmd", "zerg")
+	if err := os.MkdirAll(filepath.Join(root, "scripts", "gates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// t.TempDir() 在 macOS 常带 /var→/private/var 链接 ⇒ 用真身比。
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		root = r
+		sub = filepath.Join(root, "core", "cmd", "zerg")
+	}
+	t.Chdir(sub)
+
+	// 退役态：有 scripts/gates 目录、**无**自指 py；从子目录起跑 ⇒ 必须上溯命中 root。
+	if got := cicgResolveRoot(); got != root {
+		t.Fatalf("自指 py 缺席时仓根锚应上溯命中 %s，得 %s（退役态退化 cwd）", root, got)
+	}
+	// 正控：自指 py 在盘 ⇒ 同根（两锚同根 · 逐字同旧）。
+	if err := os.WriteFile(filepath.Join(root, "scripts", "gates", "check-public-ci-green.py"), []byte("#!/usr/bin/env python3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := cicgResolveRoot(); got != root {
+		t.Fatalf("自指 py 在盘时仓根锚应命中 %s，得 %s", root, got)
+	}
+}
+
+// ── 退役态（B轨 · 2026-10-07）：分档真源件退役 ⇒ K1 不过问（✗ 不 fail-closed）─────────────────
+// ★ 牙：哑化 `cicgProfileRetired`（恒 false）⇒ 本用例第 ② 段必 FAIL 带行号。
+func TestCICGProfileRetiredPredicate(t *testing.T) {
+	// ① 在场 ⇒ 未退役
+	present := t.TempDir()
+	pd := filepath.Join(present, "scripts", "gates")
+	if err := os.MkdirAll(pd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pd, "check-manifest-freshness-profile.py"), []byte("# stub\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if cicgProfileRetired(present) {
+		t.Fatalf("在场件被误判为已退役")
+	}
+	// ② 缺席 + Go 半在盘 ⇒ 已退役（不过问）
+	retired := t.TempDir()
+	gh := filepath.Join(retired, "core", "cmd", "zerg", "check_manifest_freshness_profile.go")
+	if err := os.MkdirAll(filepath.Dir(gh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gh, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !cicgProfileRetired(retired) {
+		t.Fatalf("缺席件 + Go 半在盘应判为已退役")
+	}
+	// ③ 负控（真消失）：既无 py 又无 Go 半 ⇒ 未退役（fail-closed 保留）
+	if cicgProfileRetired(t.TempDir()) {
+		t.Fatalf("既无 py 又无 Go 半不应判为已退役（fail-closed 保留）")
+	}
+}

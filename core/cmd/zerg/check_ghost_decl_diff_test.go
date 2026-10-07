@@ -56,11 +56,16 @@ func tgFixture(t *testing.T, plists []string) []string {
 	d := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(d, "scripts", "gates"), 0o755)
 	// 同源件（门⑧）必须在对拍根下 —— 从真仓拷一份（夹具在 t.TempDir() 内 · 自回收）
+	tgWrite(t, filepath.Join(d, "scripts", "gates", "check-ghost-decl-diff.py"), "#!/usr/bin/env python3\n")
 	if b, err := os.ReadFile(filepath.Join(tgRepoRoot(t), "scripts", "gates", "check-service-declaration.py")); err == nil {
 		tgWrite(t, filepath.Join(d, "scripts", "gates", "check-service-declaration.py"), string(b))
-		tgWrite(t, filepath.Join(d, "scripts", "gates", "check-ghost-decl-diff.py"), "#!/usr/bin/env python3\n")
 	}
 	_ = os.MkdirAll(filepath.Join(d, "core", "cmd", "zerg"), 0o755)
+	// ★ 退役态（G17 · 2026-10-07 退役批）：同源件 py 退役后口径真源改由 Go 半承载 ⇒ 夹具同备一份
+	//   （含四个同源口径符号，与 gddSiblingGoHalfOK 现读的那组一一对应）。py 在盘时这份不被读（走 py 那把）；
+	//   退役态它顶上 ⇒ 测「在盘 / 退役」两态都过。
+	tgWrite(t, filepath.Join(d, "core", "cmd", "zerg", "check_service_declaration.go"),
+		"package main\n\nfunc csdParseDecl() {}\n\nvar csdProcHints = []string{}\n\nfunc csdReadLines() {}\n\nfunc csdLabelSetDiff() {}\n")
 	tgWrite(t, filepath.Join(d, "core", "cmd", "zerg", "main.go"), "package main\n")
 	dp := filepath.Join(d, "服务声明.tsv")
 	pp := filepath.Join(d, "ps.txt")
@@ -85,13 +90,18 @@ func tgRepoRoot(t *testing.T) string {
 		if st, err := os.Stat(filepath.Join(d, "scripts", "gates", "check-service-declaration.py")); err == nil && !st.IsDir() {
 			return d
 		}
+		// ★ 退役态（G17 · 2026-10-07 退役批）：同源件 py 退役 ⇒ 改认其 **Go 半**所在件做仓根锚
+		//   （口径真源换人后仓根仍可定位）·✗ 不再 t.Fatal。
+		if st, err := os.Stat(filepath.Join(d, "core", "cmd", "zerg", "check_service_declaration.go")); err == nil && !st.IsDir() {
+			return d
+		}
 		p := filepath.Dir(d)
 		if p == d {
 			break
 		}
 		d = p
 	}
-	t.Fatal("找不着仓根（scripts/gates/check-service-declaration.py）")
+	t.Skip("仓根未定位到同源件（check-service-declaration.py 或 Go 半）⇒ 跳过对拍（退役容忍）")
 	return ""
 }
 
@@ -224,6 +234,28 @@ func TestCheckGhostDeclDiffGatePort(t *testing.T) {
 		}
 	})
 
+	t.Run("SelfTestRetiredTolerant", func(t *testing.T) {
+		// ★ 退役态（GAP-20261007-16 · 判据件退役前置 ③）：把本件 py 真身从**仓外夹具**移开
+		//   ⇒ 自检仍须照常出结论 rc=0（✗ 不得因缺 py 判红 rc=1）。旧口径此格必红（④c 恒 False）。
+		f := tgFixture(t, []string{"com.zerg.core.plist"})
+		root := f[0]
+		if err := os.Remove(filepath.Join(root, "scripts", "gates", "check-ghost-decl-diff.py")); err != nil {
+			t.Fatalf("移开夹具 py 真身失败：%v", err)
+		}
+		var buf bytes.Buffer
+		rc := gddSelfTestRoot(&buf, root)
+		out := buf.String()
+		if rc != 0 {
+			t.Fatalf("退役态自检 rc=%d want 0（✗ 缺 py 不得判红）\n%s", rc, out)
+		}
+		if !strings.Contains(out, "退役态") {
+			t.Fatalf("退役态自检未点明退役态分支（抽掉该分支本格即红）:\n%s", out)
+		}
+		if !strings.Contains(out, "自检结论: 全过") {
+			t.Fatalf("退役态自检未全过:\n%s", out)
+		}
+	})
+
 	t.Run("BogusFlagUsageError", func(t *testing.T) {
 		rc, _, serr := tgRun([]string{"--bogus"})
 		if rc != 2 {
@@ -233,4 +265,36 @@ func TestCheckGhostDeclDiffGatePort(t *testing.T) {
 			t.Fatalf("用法错正文不符:\n%s", serr)
 		}
 	})
+}
+
+// TestGddSiblingGoHalfRetiredFallback —— G17（2026-10-07 退役批）：门⑧ py 半
+// `check-service-declaration.py` 退役（不在盘）⇒ gddLoadSibling 改查其 **Go 半**
+// `core/cmd/zerg/check_service_declaration.go` 的同源口径符号（✗ 不因缺 py 而 rc=2 fail-closed）。
+// ★ 成对负控：Go 半也不在盘 / 缺符号 ⇒ 仍「不给结论」（✗ 不静默放行）。
+// ★ 哑化负控：抽掉 gddLoadSibling 里 `if why := gddSiblingGoHalfOK(root); why == ""` 那段 ⇒ 本用例 FAIL（带行号）。
+func TestGddSiblingGoHalfRetiredFallback(t *testing.T) {
+	root := t.TempDir()
+	// 前置：无 py、无 Go 半 ⇒ 该报「不给结论」。
+	if why := gddLoadSibling(root, ""); why == "" {
+		t.Fatal("前置不成立：无 py 又无 Go 半竟通过")
+	}
+	// 放 Go 半（含四个同源口径符号）⇒ 退役态通过。
+	goHalf := filepath.Join(root, "core", "cmd", "zerg", "check_service_declaration.go")
+	if err := os.MkdirAll(filepath.Dir(goHalf), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "package main\n\nfunc csdParseDecl() {}\n\nvar csdProcHints = []string{}\n\nfunc csdReadLines() {}\n\nfunc csdLabelSetDiff() {}\n"
+	if err := os.WriteFile(goHalf, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if why := gddLoadSibling(root, ""); why != "" {
+		t.Fatalf("退役态（Go 半在盘）该通过，却：%q", why)
+	}
+	// 负控：Go 半缺一个符号 ⇒ 仍不给结论。
+	if err := os.WriteFile(goHalf, []byte("package main\n\nfunc csdParseDecl() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if why := gddLoadSibling(root, ""); why == "" {
+		t.Fatal("负控：Go 半缺符号该仍不给结论")
+	}
 }

@@ -179,6 +179,63 @@ func TestCPDPathAndStripSemantics(t *testing.T) {
 	}
 }
 
+// TestCPDHistorySecretsRetiredTolerant —— 退役容忍（GAP-20261007-16）：历史扫描器 py 移开（已退役）
+// 且其 Go 半在盘 ⇒ docs_allowlist 不再报「缺件」（与在盘一致）；Go 半也缺 ⇒ 仍报缺件（牙未放宽）。
+func TestCPDHistorySecretsRetiredTolerant(t *testing.T) {
+	repo := cptpTRepo(t)
+	mk := func(hsecAbsent, goHalf bool) string {
+		root := t.TempDir()
+		for _, rel := range []string{
+			"publish/mirror-public-lib.py", "publish/whitelist.txt",
+			"scripts/build/publish-public.sh", "scripts/gates/check-history-secrets.py",
+		} {
+			b, err := os.ReadFile(cptpPyJoin(repo, rel))
+			if err != nil {
+				t.Fatalf("真仓缺 %s：%v", rel, err)
+			}
+			dst := cptpPyJoin(root, rel)
+			if err := os.MkdirAll(cptpPyDirname(dst), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(dst, b, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if hsecAbsent {
+			if err := os.Remove(cptpPyJoin(root, "scripts/gates/check-history-secrets.py")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if goHalf {
+			g := cptpPyJoin(root, "core/cmd/zerg/check_history_secrets.go")
+			if err := os.MkdirAll(cptpPyDirname(g), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(g, []byte("package main\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return root
+	}
+
+	// 正控：py 在盘 ⇒ 合法集读得出（不报 err）
+	if a := cptpDocsAllowlistWith(cptpTRepo(t), mk(false, false), ""); a.err != "" {
+		t.Fatalf("正控（py 在盘）不该报 err：%q", a.err)
+	}
+
+	// 退役：py 移开 + Go 半在盘 ⇒ 不再「缺件」，err 为空
+	rootB := mk(true, true)
+	if b := cptpDocsAllowlistWith(rootB, rootB, ""); b.err != "" {
+		t.Fatalf("退役态仍报错（✗ 未退役容忍）：%q", b.err)
+	}
+
+	// 负控：py 移开 + 无 Go 半 ⇒ 仍是「缺件」（判据没放宽）
+	rootC := mk(true, false)
+	if c := cptpDocsAllowlistWith(rootC, rootC, ""); !strings.Contains(c.err, "缺件") {
+		t.Fatalf("负控（无 Go 半）应仍报「缺件」，实得 %q", c.err)
+	}
+}
+
 // TestCPDSelfTest —— 成对负控自检须全绿（真仓 publish/docs 非空）。
 func TestCPDSelfTest(t *testing.T) {
 	cptpTRepo(t)

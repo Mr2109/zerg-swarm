@@ -79,6 +79,12 @@ const (
 	cmfSynthMaxAge  = 720.0
 	cmfTruthRelPath = "scripts/gates/check-manifest-freshness.py"
 	cmfSelfRelPath  = "scripts/gates/check-manifest-freshness-two-criteria.py"
+	// cmfRootMarkerRel —— 仓根上溯的**退役稳态**标记（B轨 · 2026-10-07 · 退件阻塞批次）。
+	// 原实现只认自指 py（`cmfSelfRelPath`）当仓根标记；该件退役（不在盘）后上溯落空、退回 cwd
+	// ⇒ 从非仓根 cwd 跑时真源找不到 ⇒ rc=2（fail-closed）。按「件退役后判据照常出结论」口径，
+	// 标记补上**不会被退役**的门禁自举件（`precommit-gates.sh` · 与 newfile-registry 的
+	// `gnrStepsRel` 同源选择）⇒ py 退役不改变根定位结论。自指 py 在盘时仍优先命中同一目录。
+	cmfRootMarkerRel = "scripts/gates/precommit-gates.sh"
 )
 
 // cmfManifest —— 真源 `diagnose()` 吃的清单（四键）。
@@ -594,9 +600,16 @@ func cmfResolveRoot(rootArg string) string {
 	if err != nil {
 		return "."
 	}
-	cur := d
+	return cmfResolveRootFrom(d)
+}
+
+// cmfResolveRootFrom —— 由给定起点上溯找仓根（✗ 不读进程 cwd ⇒ 可单测；cwd 支见 `cmfResolveRoot`）。
+// 标记：本件同族 py（在盘时优先 · 逐字沿用原语义）**或**退役稳态标记 `cmfRootMarkerRel`。
+// ★ 后者是本单（B轨 · 2026-10-07）补的：自指 py 退役后仍能上溯 ⇒ 「件退役后判据照常出结论」。
+func cmfResolveRootFrom(start string) string {
+	cur := start
 	for i := 0; i < 32; i++ {
-		if cmfFileExists(filepath.Join(cur, cmfSelfRelPath)) {
+		if cmfFileExists(filepath.Join(cur, cmfSelfRelPath)) || cmfFileExists(filepath.Join(cur, cmfRootMarkerRel)) {
 			return cur
 		}
 		parent := filepath.Dir(cur)
@@ -605,7 +618,7 @@ func cmfResolveRoot(rootArg string) string {
 		}
 		cur = parent
 	}
-	return d
+	return start
 }
 
 func cmfPresentText(present bool) string {

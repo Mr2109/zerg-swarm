@@ -170,3 +170,30 @@ func TestCsfJSONShape(t *testing.T) {
 		}
 	}
 }
+
+// TestCsfBridgeAffectedMapRetiredFallback —— G16（2026-10-07 退役批）：兄弟件
+// `scripts/gates/check-affected-map.py` 退役（不在盘）⇒ `csfBridge("affected_map")` 回落**同判据
+// Go 半** `afmBuildMap`（✗ 不因缺 py 而「重算失败 ⇒ 不给结论」fail-closed）。
+// ★ 成对：兄弟件在盘（哪怕是个空壳）⇒ 仍走 importlib 那条桥（单一真源不变）。
+// ★ 哑化负控：抽掉 csfBridge 里 `if op == "affected_map"` 那段 ⇒ 本用例 FAIL（带行号）。
+func TestCsfBridgeAffectedMapRetiredFallback(t *testing.T) {
+	root := afmFix(t) // 仓外夹具（自带脚本面）· 其中**无** check-affected-map.py
+	if _, err := os.Stat(filepath.Join(root, "scripts", "gates", "check-affected-map.py")); err == nil {
+		t.Fatal("前置不成立：夹具里竟有 check-affected-map.py")
+	}
+	res, errStr := csfBridge(root, "affected_map", io.Discard)
+	if errStr != "" {
+		t.Fatalf("退役态该回落 Go 半 afmBuildMap（✗ 不 fail-closed）：%q", errStr)
+	}
+	if res == nil || csfPctS(res["fp"]) == "" || csfPctS(res["head"]) == "" {
+		t.Fatalf("回落读数缺 fp/head：%v", res)
+	}
+	// 成对负控：把（空壳）兄弟件放回盘 ⇒ 仍走 importlib 桥（空壳 ⇒ 桥必报错 ⇒ 证明在盘时走 py 那把）。
+	py := filepath.Join(root, "scripts", "gates", "check-affected-map.py")
+	if err := os.WriteFile(py, []byte("raise SystemExit('stub')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, e2 := csfBridge(root, "affected_map", io.Discard); e2 == "" {
+		t.Fatalf("兄弟件在盘时该走 importlib 桥（成对负控：空壳 py 应让桥报错）")
+	}
+}

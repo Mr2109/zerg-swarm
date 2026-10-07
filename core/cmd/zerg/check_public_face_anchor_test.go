@@ -18,8 +18,28 @@ func cpfaT_run(argv []string) (int, string, string) {
 	return rc, so.String(), se.String()
 }
 
-// cpfaT_repoRoot：从 cwd 上溯找含 py 真身的仓根。
-func cpfaT_repoRoot(t *testing.T) string {
+// cpfaT_pyRel / cpfaT_goHalfRel —— py 真身（所搬原件）与其同源 Go 半（本件实现件）的仓根相对路径。
+const (
+	cpfaT_pyRel     = "scripts/gates/check-public-face-anchor.py"
+	cpfaT_goHalfRel = "core/cmd/zerg/check_public_face_anchor.go"
+)
+
+func cpfaT_fileIsFile(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
+// cpfaT_retired —— 退役态口径（与同族 `cicgProfileRetired` / `cpfpRetiredExceptions` 同）：
+// py 真身**缺席** ∧ 其 Go 半**在盘**。两半皆不在 ⇒ 非本口径（交调用方 fail-closed）。
+func cpfaT_retired(root string) bool {
+	return !cpfaT_fileIsFile(cpfaPyJoin(root, cpfaT_pyRel)) &&
+		cpfaT_fileIsFile(cpfaPyJoin(root, cpfaT_goHalfRel))
+}
+
+// cpfaT_repoRoot：从 cwd 上溯找仓根（py 真身 **或** 其 Go 半任一在盘即认根）。
+// 返回 (root, pyOnDisk)：py 在盘 ⇒ 旧路；py 缺席但 Go 半在盘 ⇒ 退役态（容忍）；
+// 两半皆不在 ⇒ ("", false) 交调用方 fail-closed（缺件 ≠ 绿）。
+func cpfaT_repoRoot(t *testing.T) (string, bool) {
 	t.Helper()
 	wd, err := os.Getwd()
 	if err != nil {
@@ -27,8 +47,9 @@ func cpfaT_repoRoot(t *testing.T) string {
 	}
 	d := wd
 	for i := 0; i < 8; i++ {
-		if _, err := os.Stat(cpfaPyJoin(d, "scripts/gates/check-public-face-anchor.py")); err == nil {
-			return d
+		pyOnDisk := cpfaT_fileIsFile(cpfaPyJoin(d, cpfaT_pyRel))
+		if pyOnDisk || cpfaT_fileIsFile(cpfaPyJoin(d, cpfaT_goHalfRel)) {
+			return d, pyOnDisk
 		}
 		nd := cpfaPyDirname(d)
 		if nd == d || nd == "" {
@@ -36,8 +57,7 @@ func cpfaT_repoRoot(t *testing.T) string {
 		}
 		d = nd
 	}
-	t.Fatalf("上溯 8 层没找到 py 真身（cwd=%s）", wd)
-	return ""
+	return "", false
 }
 
 type cpfaParityCell struct {
@@ -76,7 +96,15 @@ func cpfaT_fixturePair(t *testing.T, name string) string {
 }
 
 func TestCheckPublicFaceAnchorPort_Parity(t *testing.T) {
-	repo := cpfaT_repoRoot(t)
+	repo, pyOnDisk := cpfaT_repoRoot(t)
+	if repo == "" {
+		t.Fatalf("上溯 8 层两半皆不在盘（py 真身 %s 与 Go 半 %s）⇒ fail-closed（缺件 ≠ 绿）", cpfaT_pyRel, cpfaT_goHalfRel)
+	}
+	if !pyOnDisk {
+		// 退役态（B轨 · 2026-10-07）：py 真身已退场 ⇒ 对拍台无对拍对象；容忍跳过
+		// （与同族 `cicgProfileRetired` / `cpfpRetiredExceptions` 同口径 · ✗ 不 fail-closed）。
+		t.Skipf("退役态：py 真身 %s 已退场（其 Go 半 %s 在盘）⇒ 对拍格无对象，容忍跳过", cpfaT_pyRel, cpfaT_goHalfRel)
+	}
 	pyPath := filepath.Join(repo, "scripts", "gates", "check-public-face-anchor.py")
 	py, err := exec.LookPath("python3")
 	// ★ 解释器**钉死**（GAP-20261002-04/-07）：本格对拍 py 原件的 `-h` 输出，而其中一行随 py 版本变
@@ -270,4 +298,37 @@ func cpfaDumbAlwaysGreen(root string) int {
 		return 0
 	}
 	return rc
+}
+
+// ── 退役感知（B轨 · 2026-10-07）：仓根哨兵两半皆不在 ⇒ fail-closed ────────────────────────
+// ★ 牙：哑化 `cpfaT_repoRoot`（只认 py 真身 · 抹掉 Go 半支）/ `cpfaT_retired`（恒 false）
+// ⇒ 真仓退役态下 `TestCheckPublicFaceAnchorPort_Parity` 必 FAIL 带行号（哨兵行）。
+func TestCheckPublicFaceAnchor_RepoRootRetiredAware(t *testing.T) {
+	root := t.TempDir()
+	gh := cpfaPyJoin(root, cpfaT_goHalfRel)
+	if err := os.MkdirAll(cpfaPyDirname(gh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gh, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// ② 退役态：py 缺席 · Go 半在盘 ⇒ 判 retired（容忍）
+	if !cpfaT_retired(root) {
+		t.Fatalf("退役态（py 缺席 · Go 半在盘）应判 retired")
+	}
+	// ③ 两半皆不在 ⇒ 非 retired（缺件 ≠ 绿 · 交调用方 fail-closed）
+	if cpfaT_retired(t.TempDir()) {
+		t.Fatalf("两半皆不在不应判 retired（缺件 ≠ 绿）")
+	}
+	// ① 旧路：py 回盘 ⇒ 非 retired
+	py := cpfaPyJoin(root, cpfaT_pyRel)
+	if err := os.MkdirAll(cpfaPyDirname(py), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(py, []byte("# py\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if cpfaT_retired(root) {
+		t.Fatalf("py 在盘不应判 retired（旧路）")
+	}
 }

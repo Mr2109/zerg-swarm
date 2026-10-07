@@ -66,6 +66,18 @@ LOOSE_EXIT = {
 # `--strict-*` 形态（开着才严）——登记面必须含它
 STRICT_TRUE_PREFIX = "--strict-"
 
+# 已有 Go 真搬半的登记件（键 = 脚本基名 · 与 Go 半 `clerGoPorted` 逐条同）。
+#   ★ 退役态安全：这些门的判据体已搬进 Go，py 原件退役（不在盘）属预期，不再算「B 登记陈旧」；
+#   未 Go 化的登记件缺席仍判红（牙未放松）。py 在盘时 B 档旗标字面照验（逐字同旧）。
+GO_PORTED = {
+    "check-doc-meta.py",
+    "check-git-path-outlet.py",
+    "check-wired-scripts.py",
+    "check-doc-freshness.py",
+    "check-no-symlink-farm.py",
+    "check-version-sources.py",
+}
+
 
 def detect(root):
     """扫 `scripts/gates/*.py` ⇒ (found, ast_errors)。found={脚本: [flag…]} 检出有宽松出口档的脚本。"""
@@ -136,7 +148,10 @@ def run(root, as_json):
     for s, items in sorted(LOOSE_EXIT.items()):
         p = os.path.join(root, "scripts", "gates", s)
         if not os.path.isfile(p):
-            stale.append("%s（脚本不在盘）" % s)
+            # ★ 退役态安全：已 Go 真搬（GO_PORTED）的登记件，py 退役（不在盘）属预期 ⇒ 不算陈旧；
+            # 未 Go 化件缺席仍判红（牙不放松）。
+            if s not in GO_PORTED:
+                stale.append("%s（脚本不在盘）" % s)
             continue
         src = open(p, "r", encoding="utf-8", errors="replace").read()
         for it in items:

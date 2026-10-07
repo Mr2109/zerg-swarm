@@ -148,7 +148,10 @@ func checkManifestFreshnessProfileGateMain(stdout, stderr io.Writer, argv []stri
 
 	neiPath := mfpPyJoin(mfpPyJoin(selfRoot, "scripts"), "gates")
 	neiPath = mfpPyJoin(neiPath, "check-manifest-freshness.py")
-	neiPresent := mfpFileExists(neiPath)
+	// ★ 退役容忍（B轨 · 2026-10-07 · 退件阻塞批次 · 类①）：邻件退役（py 缺席 · 其 Go 半在盘）
+	// ⇒ 视同「口径可得」（本 Go 半已把邻件 diagnose()/git_head() 真身重建）⇒ 判据照常出结论
+	// （✗ 不得 rc=2 fail-closed）。件在盘 ⇒ 逐字沿用原语义；真消失（无 Go 半）⇒ 仍 fail-closed。
+	neiPresent := mfpFileExists(neiPath) || mfpNeighborRetired(selfRoot)
 
 	if opt.listRules {
 		return mfpListRules(stdout)
@@ -1025,6 +1028,17 @@ func mfpPyJoin(a, b string) string {
 func mfpFileExists(path string) bool {
 	fi, err := os.Stat(path)
 	return err == nil && !fi.IsDir()
+}
+
+// mfpNeighborRetired —— 邻件 `check-manifest-freshness.py` 是否**已退役**（B轨 · 2026-10-07 · 类①）：
+// 邻件 py 缺席 **且** 其 Go 半（`core/cmd/zerg/check_manifest_freshness.go`）在盘。
+// 退役态 ⇒ 本件视同「单一口径可得」（本 Go 半已把邻件 diagnose()/git_head() 真身重建）⇒ 判据照常
+// 出结论（✗ 不 fail-closed）；缺件且无 Go 半（真消失）⇒ 未退役（照旧 fail-closed，⑫ 格不变）。
+// 与 check_public_ci_green 的 cicgProfileRetired 同口径（同一「退役」判据，✗ 不新造第二套）。
+func mfpNeighborRetired(selfRoot string) bool {
+	py := mfpPyJoin(mfpPyJoin(mfpPyJoin(selfRoot, "scripts"), "gates"), "check-manifest-freshness.py")
+	goHalf := mfpPyJoin(mfpPyJoin(mfpPyJoin(selfRoot, "core"), "cmd"), mfpPyJoin("zerg", "check_manifest_freshness.go"))
+	return !mfpFileExists(py) && mfpFileExists(goHalf)
 }
 
 func mfpIsDir(path string) bool {

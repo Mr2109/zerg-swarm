@@ -12,6 +12,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -264,9 +265,10 @@ func TestGateCheckLockContentionIsBlocked(t *testing.T) {
 	}
 }
 
-// ⑥ 进程内 Go 表完整性：项数 == 154，且**每项 key 都能被名解析找到**（名字 ⇒ 件 不断裂）。
+// ⑥ 进程内 Go 表完整性：项数 == 155，且**每项 key 都能被名解析找到**（名字 ⇒ 件 不断裂）。
 // ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 或 inproc 键 二者其一」。
 // ★ 棘轮口径：本数 == 表内真搬入口数（现读 113）。门111 check-fleet-loadable 的 Go 真搬件（check_fleet_loadable.go）入 gate_inproc_table.go 后 107→108 ⇒ 期望随动（✗ 非凑绿）。★ 2026-10-05 接线 check-manifest-freshness（mfMain）⇒ 108→109。★ 2026-10-05 同批接线 check-contract-version-diff（cvdMain）· check-wallclock-ratchet（checkWallclockRatchetMain）⇒ 109→111。★ 2026-10-06 接线 gate-check-health（gateCheckHealthMain）· gate-report（gateReportMain）⇒ 111→113。★ 2026-10-07 接线批（本单）：14 件（buildSelfclean/checkDevTargets/checkDryrunYesConflictCoverage/checkEnvKnobs/checkGapClosureDrift/checkGatePointOutput/checkGateScriptRegistered/checkMainrepoMd/checkMkdirTempCleanup/checkRecordNotEvidence/stepSwitch/stepcountDrift/writeAuthz/m2GoPyIsomorphismScan）⇒ 113→127（check-registry-key-unique 未接：自检档 stderr 非法 JSON 报错正文 py⟷Go 不逐字）。★ 2026-10-07 接线批-第一批（本单）：9 件（check-repo-symlink-farm/check-selftest-knobs/check-outrepo-dead-refs/decl-label/evalCompare/evalStabilityStats/genGlossaryExports/checkRegistryKeyUnique/checkBypassIdioms）⇒ 127→136（writeout-probe 未接：两态不逐字 —— Go 缺 PROBE_DIR 时 rc=2 fail-closed ⟷ py 原件对环境变量取键抛 KeyError ⇒ 回溯 rc=1）。★ 本单同批落 决-10：防波门 B 侧真身路径改查判据注册表 entries[].path★ 2026-10-07 接线批-第二批（本单）：15 件（checkDelegationSelfreport/checkEmptyDomainGuards/checkExecTwoCondition/checkGapStateVsArtifact/checkI18nDrift/checkLooseExitRegistry/checkModelSizeAnchor/checkPublicMarksTrackedParity/checkSelfcount/csf/checkToolVersionSync/checkVerifyCmdReal/checkWriteFaceGate/genCliReference/zergEgg）⇒ 136→151（gen-gap-ledger 未接：py 侧 stderr 逐发带 SyntaxWarning（反斜杠 d 非法转义）⟷ Go 无 ⇒ stderr 面不逐字；writer-lock 未接：转发壳按 D2 写工具档拒执 rc=2 ⟷ py 真身 rc=0）。★ 本批勘误：后接10 的 inplace-window 无 inproc 入口（inplace_window.go 无 GateMain）⇒ 不接；check-i18n·doc-index-gen·gen-tools-md·i18n-audit 真身不在判据注册表（ui/scripts·tools）⇒ 不接为判据；kb-docs-sync 无注册表真身 ⇒ 不接。★ 2026-10-07 接线批-第三批（本单）：接线 inplace-window（ipwGateMain）⇒ 151→152。gen-gap-ledger 未接：py 侧 stderr 逐发带 SyntaxWarning（反斜杠 d 非法转义 · 门环境 python3 ≥3.12）⟷ Go 无 ⇒ stderr 面不逐字；writer-lock 未接：壳按件头 write D2 声明判写工具档拒执（缺 --yes ⇒ rc=2）⟷ py 真身 rc=0 ⇒ rc/stdout 面不逐字。★ 两条待防波门补掩码/侧路后另批再接（在册 GAP-20261007-11）。★ 2026-10-07 接线批-第四批（本单·收尾）：接线 gen-gap-ledger（genGapLedgerGateMain）· writer-lock（writerLockGateMain）⇒ 152→154（防波门 DEV-1816 已落：SyntaxWarning 面掩码 ⇒ gen-gap-ledger 的 stderr 面归一；写类键 side_a 补壳级 --yes ⇒ writer-lock 写工具档 fail-closed 消解）。
+// ★ 2026-10-07 接线批-第四批（本单 · 语言冻结门接入）：接线 check-lang-freeze（checkLangFreezeGateMain）⇒ 154→155。
 func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	byName, dupes, err := gateCheckRoster(root)
@@ -276,8 +278,8 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	if len(dupes) != 0 {
 		t.Fatalf("真实名录有同名多件 ⇒ 前置不成立：%v", dupes)
 	}
-	if got := len(gateCheckGoEntry); got != 154 {
-		t.Fatalf("进程内 Go 表项数要 == 154，得到 %d", got)
+	if got := len(gateCheckGoEntry); got != 155 {
+		t.Fatalf("进程内 Go 表项数要 == 155，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；
@@ -705,5 +707,40 @@ func TestGateCheckInprocKeyResolvesWithoutPyFile(t *testing.T) {
 	}
 	if !strings.Contains(errb2, "不在册") {
 		t.Errorf("负控要逐字说「不在册」：%q", errb2)
+	}
+}
+
+// TestGateCheckAcquireLockToolRetiredSilent —— G16（2026-10-07 退役批）：锁件 `judge-lock.py`
+// 退役（不在盘）而它的 Go 半（inproc 键 `judge-lock`）在册 ⇒ **退役态不过问**：静默跳过取锁
+// （✗ 不告警 / ✗ 不改退码）—— 否则每跑一门都往 stderr 吐一行警告，弄脏「两态三面逐字同」的面。
+// ★ 哑化负控：抽掉 `if _, inproc := gateCheckGoEntry[gateCheckLockToolKey]; inproc` 这层
+// （即无论有无 Go 半都走「如实报」那支，或反之恒静默）⇒ 下面「负控」格 FAIL（带行号）。
+func TestGateCheckAcquireLockToolRetiredSilent(t *testing.T) {
+	root := t.TempDir()
+	// ✗ 不放 scripts/gates/judge-lock.py —— 即退役态。
+	var errb bytes.Buffer
+	rc, proceed := gateCheckAcquire(root, "any-gate", &errb)
+	if rc != exitOK || !proceed {
+		t.Fatalf("退役态该静默放行：(rc=%d, proceed=%v)", rc, proceed)
+	}
+	if errb.Len() != 0 {
+		t.Fatalf("退役态该**静默**（✗ 不告警）：stderr=%q", errb.String())
+	}
+
+	// 负控：Go 半也移开（现读时刻删掉 inproc 键）⇒ 保留原「如实报」档（✗ 不静默降级）。
+	saved, had := gateCheckGoEntry[gateCheckLockToolKey]
+	delete(gateCheckGoEntry, gateCheckLockToolKey)
+	defer func() {
+		if had {
+			gateCheckGoEntry[gateCheckLockToolKey] = saved
+		}
+	}()
+	var errb2 bytes.Buffer
+	rc2, p2 := gateCheckAcquire(root, "any-gate", &errb2)
+	if rc2 != exitOK || !p2 {
+		t.Fatalf("负控（无 Go 半）仍应放行：(rc=%d, %v)", rc2, p2)
+	}
+	if !strings.Contains(errb2.String(), "件级锁件不在盘") {
+		t.Fatalf("负控（无 Go 半）该保留「如实报」档：stderr=%q", errb2.String())
 	}
 }

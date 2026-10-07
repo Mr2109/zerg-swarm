@@ -485,3 +485,12 @@ func TestCheckServiceDeclarationGatePort(t *testing.T) {
 		}
 	})
 }
+
+// TestCsdHelpGoldenInternalized —— G17（2026-10-07 退役批）：帮助面金标真源已由 py `-h` 输出
+// **内化**回本件 `csdHelpText` 常量 ⇒ Go 半现算自证（退役态无缺口 · ✗ 运行时不读任何 py）。
+// ★ 哑化负控：把 csdHelpNativeSha256 改成与 csdHelpText 无关的值（或改 csdHelpText）⇒ 本用例 FAIL（带行号）。
+func TestCsdHelpGoldenInternalized(t *testing.T) {
+	if got := csdHelpNativeSha256(); got != csdHelpGoldenSHA256 {
+		t.Fatalf("Go 真源现算 sha256 = %s ≠ 冻结回归值 %s（帮助面真源漂了）", got, csdHelpGoldenSHA256)
+	}
+}

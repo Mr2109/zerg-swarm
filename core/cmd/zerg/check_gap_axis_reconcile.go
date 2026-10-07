@@ -117,7 +117,13 @@ type gapAxisRecExemptPair struct {
 	unit string
 }
 
-var gapAxisRecExemptExistence = []gapAxisRecExemptPair{}
+var gapAxisRecExemptExistence = []gapAxisRecExemptPair{
+	{gid: "GAP-20261001-11", unit: "scripts/gates/check-archive-mount.py"},
+	{gid: "GAP-20261005-18", unit: "scripts/gates/check-pending-decisions.py"},
+	{gid: "GAP-20260928-137", unit: "scripts/gates/check-newfile-registry.py"},
+	{gid: "GAP-20260928-51", unit: "scripts/gates/check-trustroot-witness.py"},
+	{gid: "GAP-20260927-70", unit: "scripts/gates/check-approve-backfill.py"},
+}
 
 // gapAxisRecWUClosed —— 无件桶名闭集 = 裸 `无件` + `无件(<面>)`（面 ∈ 面闭集）
 func gapAxisRecWUClosed() []string {

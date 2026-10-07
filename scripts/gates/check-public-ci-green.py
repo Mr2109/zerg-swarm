@@ -343,6 +343,12 @@ def main():
     print("   单一口径：现调 %s 的两个 --profile（本件不另写一份新鲜度判据）"
           % os.path.relpath(PROFILE_GATE, REPO_ROOT))
     dev_rc = dev_prof = pub_rc = pub_prof = None
+    # 退役态（B轨 · 2026-10-07）：分档真源件退役（缺席 · 其 Go 半在盘）⇒ K1 分档两态**不过问**（✗ 不 fail-closed）。
+    profile_retired = (not os.path.isfile(PROFILE_GATE)) and os.path.isfile(
+        os.path.join(REPO_ROOT, "core", "cmd", "zerg", "check_manifest_freshness_profile.go"))
+    if profile_retired:
+        print("   ⚠ 分档真源件已退役（%s 不在盘 · Go 半接管）⇒ K1 分档两态**不过问**（✗ 不 fail-closed）"
+              % os.path.relpath(PROFILE_GATE, REPO_ROOT))
     # 样张 A：合成清单（J1/J2 双命中）—— 分档的**机械证明**
     d = _tracked_mkdtemp("zerg-ci-green-")
     synth = os.path.join(d, "manifest.json")
@@ -353,9 +359,9 @@ def main():
     a_pub, _ = run_profile("public", synth, ["--release-head", "1" * 40])
     print("   样张 A（合成清单 · J1/J2 双命中）：开发机档 rc=%s（期望 0 · 只告警）· 公开制品档 rc=%s（期望 1 · 阻断）"
           % (a_dev, a_pub))
-    if a_dev != 0:
+    if (not profile_retired) and a_dev != 0:
         hits.append("K1 开发机档**拦了**（rc=%s · 判据：开发机档只告警、rc 不拦）⇒ 红" % a_dev)
-    if a_pub != 1:
+    if (not profile_retired) and a_pub != 1:
         hits.append("K1 公开制品档**没拦**（rc=%s · 判据：`source_sha != HEAD` 或 `dirty != false` ⇒ 红）⇒ 红" % a_pub)
 
     # 样张 B：真清单（照实读数 · 命中不是错，是状态）
@@ -371,7 +377,7 @@ def main():
         print("     公开制品档 rc=%s ⇒ %s" % (pub_rc, "阻断 ✓" if pub_rc == 1 else "未阻断（清单该条判据成立）"))
         if dev_rc == 1:
             hits.append("K1 真清单在开发机档被拦（rc=1）⇒ 红（判据：只告警）")
-        if dev_rc is None:
+        if (not profile_retired) and dev_rc is None:
             print("     （分档真源跑不出来 ⇒ 交给 rc=2 那一路）")
     else:
         # ★ GAP-20260927-128 第②格：**缺清单件不给结论**。
@@ -421,7 +427,7 @@ def main():
         print("     %s：%d 个 —— %s" % (rel, len(names), " · ".join(names[:8])))
 
     rc = 1 if hits else 0
-    if hits and (dev_rc is None and pub_rc is None and not os.path.isfile(PROFILE_GATE)):
+    if hits and (not profile_retired) and (dev_rc is None and pub_rc is None and not os.path.isfile(PROFILE_GATE)):
         rc = 2
     if no_conclusion:
         # ★ 缺件不给结论：压过命中(1)与未命中(0) —— 「读不到」≠「判过且判对」

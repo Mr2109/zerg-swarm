@@ -9,6 +9,8 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -114,12 +116,110 @@ func TestCtpiWriteFlagRejected(t *testing.T) {
 }
 
 // ⑥ 自检全过（成对正/负夹具）—— 哑化任一判据 ⇒ 本用例 FAIL。
+// ★ 自检 ⑨/⑩ 的内嵌判据现走「Go 半」（py 件已退役）⇒ 需真子进程 ⇒ 测试二进制换仓外探针壳。
 func TestCtpiSelfTestAllPass(t *testing.T) {
+	ctpiTUseProbe(t)
 	rc, out, _ := ctpiRunMain(t, "--self-test")
 	if rc != ctpiRCOK {
 		t.Fatalf("自检应 rc=0，实得 %d；输出:\n%s", rc, out)
 	}
 	if !strings.Contains(out, "自检结论: 全过") {
 		t.Fatalf("自检应全过，实得:\n%s", out)
+	}
+}
+
+// ── 内嵌判据退守 Go 半的探针壳（测试二进制不是 CLI 入口）────────────────────────
+// ★ 照 judge_lock_test.go / gate_report_test.go / check_approve_closedset_test.go 的探针壳体例；
+//   主件默认档一字未改。
+
+func ctpiTShQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func ctpiTChildArgs() []string {
+	for i, a := range os.Args {
+		if a == "--" {
+			return os.Args[i+1:]
+		}
+	}
+	return nil
+}
+
+// TestCtpiHelperProcess —— 探针壳落点。仅当 argv 带 `--` 分界（被探针壳调起）时才当 CLI 入口。
+func TestCtpiHelperProcess(t *testing.T) {
+	args := ctpiTChildArgs()
+	if args == nil {
+		return
+	}
+	// ★ 必须带 inproc 路由前缀（`gate check check-zero-side-effect`）；缺前缀 ⇒ 重跑面破形 ⇒ 退 2。
+	if !(len(args) >= 3 && args[0] == "gate" && args[1] == "check" && args[2] == "check-zero-side-effect") {
+		io.WriteString(os.Stderr, "探针壳：argv 缺 inproc 路由前缀（gate check check-zero-side-effect）⇒ 重跑面破形\n")
+		os.Exit(2)
+	}
+	os.Exit(checkZeroSideEffectGateMain(os.Stdout, os.Stderr, args[3:]))
+}
+
+// ctpiTUseProbe —— 把「Go 半可执行件」换成仓外探针壳（主件默认档一字未改）。
+func ctpiTUseProbe(t *testing.T) {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	script := filepath.Join(t.TempDir(), "ctpi-probe.sh")
+	body := "#!/bin/sh\nexec " + ctpiTShQuote(exe) + " '-test.run=^TestCtpiHelperProcess$' -- \"$@\"\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatalf("写探针壳: %v", err)
+	}
+	old := ctpiSelfExe
+	ctpiSelfExe = func() (string, error) { return script, nil }
+	t.Cleanup(func() { ctpiSelfExe = old })
+}
+
+// ⑦ 内嵌判据两态（退役耦合回归牙）：py 件在盘 ⇒ 走 py 件；退役 ⇒ 退守 Go 半
+// （`gate check check-zero-side-effect`，✗ 不得判 rc=2）；两态皆不可用 ⇒ 不过问。
+// ★ 哑化「退役态退守分支」（抽掉 ctpiInnerJudgeCmd 里的 Go 半支）⇒ 本用例 FAIL 带行号。
+func TestCtpiInnerJudgeCmdTwoStates(t *testing.T) {
+	sealed := "/tmp/ctpi-sealed-fixture.txt"
+	obj := "/tmp/ctpi-obj-fixture"
+
+	// 态① py 件在盘 ⇒ 走 py 件命令。
+	rootPy := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(rootPy, "scripts", "gates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rootPy, ctpiGateRelPy), []byte("# fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmdPy, okPy := ctpiInnerJudgeCmd(rootPy, obj, sealed)
+	if !okPy {
+		t.Fatalf("py 件在盘态应取到命令（实得 ok=false）")
+	}
+	if !strings.Contains(cmdPy, "scripts/gates/check-zero-side-effect.py") || strings.Contains(cmdPy, "gate check") {
+		t.Fatalf("py 在盘态应走 py 件命令，实得 %q", cmdPy)
+	}
+
+	// 态② 退役（py 不在盘）⇒ 退守 Go 半（exec Go 入口）。
+	rootGo := t.TempDir()
+	old := ctpiSelfExe
+	ctpiSelfExe = func() (string, error) { return "/tmp/ctpi-fake-zerg", nil }
+	t.Cleanup(func() { ctpiSelfExe = old })
+	cmdGo, okGo := ctpiInnerJudgeCmd(rootGo, obj, sealed)
+	if !okGo {
+		t.Fatalf("退役态应退守 Go 半（实得 ok=false）")
+	}
+	if !strings.Contains(cmdGo, "gate check check-zero-side-effect") {
+		t.Fatalf("退役态应走 Go 半入口（gate check check-zero-side-effect），实得 %q", cmdGo)
+	}
+	if !strings.Contains(cmdGo, "/tmp/ctpi-fake-zerg") {
+		t.Fatalf("退役态应带 Go 半可执行件，实得 %q", cmdGo)
+	}
+
+	// 态③ 两态皆不可用 ⇒ 不过问（ok=false ⇒ 调用方不判 rc=2）。
+	old2 := ctpiSelfExe
+	ctpiSelfExe = func() (string, error) { return "", errors.New("no exe") }
+	t.Cleanup(func() { ctpiSelfExe = old2 })
+	if _, ok := ctpiInnerJudgeCmd(rootGo, obj, sealed); ok {
+		t.Fatalf("两态皆不可用应返回 ok=false（不过问），实得 ok=true")
 	}
 }
