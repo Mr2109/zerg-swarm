@@ -790,6 +790,26 @@
       "object": "scripts/gates/check-writer-guard.py",
       "state": "已登记退场（2026-10-07）",
       "evidence": "两态三面逐字同 rc=0/0 · stdout=126B · stderr=0B（./bin/zerg gate check check-writer-guard ⟷ /opt/homebrew/bin/python3.14 scripts/gates/check-writer-guard.py · sha16 d461831b961326d8）· 九面：publish-public.sh:175 / mirror-public-lib.py:154+502 / 公开标记.tsv:176 / real-gates.sh(0 命中) / gate-coverage.config.json:87(白名单条目) / affected-map.json:398 · (a)公开面 no · (b)缺口账 unit=本件 0 条 · (c)Go 半在盘·步表走键（precommit-gates.sh:3417 zerg gate check check-writer-guard）· 无直调 py"
+    },
+    {
+      "object": "scripts/gates/check-doc-meta.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-doc-meta ⟷ 规范解释器 3.14.7 scripts/gates/check-doc-meta.py：rc 0/0 · stdout 1349B sha16 7a23c9d40fa71ee6 · stderr 0B 逐字同）· 阻塞面解：步骤表直调已改走 CLI（precommit-gates.sh 步命令位 → zerg gate check check-doc-meta）"
+    },
+    {
+      "object": "scripts/gates/check-history-secrets.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态逐字同（./bin/zerg gate check check-history-secrets --self-test ⟷ 规范解释器 3.14.7 scripts/gates/check-history-secrets.py --self-test：rc 0/0 · stdout 5135B sha16 affe8ce7cad81f2b · stderr 0B）· 阻塞面解：发布机制硬解耦（两器同批加退役容忍 mirror-public-lib.py/publish-public.sh）"
+    },
+    {
+      "object": "scripts/gates/check-public-tree-private.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态逐字同（./bin/zerg gate check check-public-tree-private ⟷ 规范解释器 3.14.7 scripts/gates/check-public-tree-private.py：rc 2/2 · stdout 60B sha16 1fc24624f906929b · stderr 0B）· 阻塞面解：发布机制硬解耦（两器同批加退役容忍 mirror-public-lib.py/publish-public.sh）"
+    },
+    {
+      "object": "scripts/gates/check-placeholder-residue.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-placeholder-residue ⟷ 规范解释器 3.14.7 scripts/gates/check-placeholder-residue.py：rc 0/0 · stdout 907B sha16 b9383c8964e0a06c · stderr 0B 逐字同）· 阻塞面解：slice-probes 3 枚探针落点已改指 Go 半（slice-probes.json → ./bin/zerg gate check check-placeholder-residue）"
     }
  ],
  "retire_exceptions": [
