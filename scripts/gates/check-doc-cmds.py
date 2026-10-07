@@ -133,7 +133,7 @@ EXCL = {"target", "node_modules", "dist", "bin", "vendor", "data", ".git",
 # 只认「zerg 后面跟命令词」的形态；`zerg` 单独出现（如「跑 zerg」）不抽。
 ZERG_INLINE = re.compile(r'`zerg(\s+[^\s`][^`]*)?`')
 FENCE = re.compile(r'^(```|~~~)')
-CMD_WORD = re.compile(r'[A-Za-z][A-Za-z0-9_-]*')
+CMD_WORD = re.compile(r'\A[A-Za-z][A-Za-z0-9_-]*\Z')   # GAP-20260927-60: 锚定整词（原前缀匹配会截尾造假词）
 # 旗标词：`-h` / `--json` / `--confirm=<目标>`；**方括号里也算**（用法串把可选旗标写成 `[--json <字段>]`，
 # 那种写法后面跟的取值同样是取值 ⇒ 认它才能把值剥掉。实测：`zerg ask <提示> [--min-ctx n]` 的 `n]`
 # 曾是唯一漏网的那个取值（抽成 `('ask','n')` ⇒ 假红）。
@@ -160,7 +160,7 @@ PROPOSAL_MARK = re.compile(
     r'(?:想要|建议|须|未建|待建|待拍|候选|规划|新面|不建|尚未建|已拍未建|拟建|应建|提出)\s*$')
 
 
-def segment_words(seg):
+def segment_words(seg, stats=None):
     """一段 `zerg …` 之后的行文 → (类别, 命令词)；类别 ∈ {'cmd','identity','noise'}（治法②）。
 
     判据（2026-09-24 · 治本）：`zerg` 紧跟的**第一段**既不是命令词、也不是旗标
@@ -173,7 +173,7 @@ def segment_words(seg):
     first = toks[0] if toks else ""
     if first and not CMD_WORD.match(first) and not FLAGWORD.match(first):
         return ("identity" if VERSION_TOKEN.match(first) else "noise"), []
-    return "cmd", command_words(seg)
+    return "cmd", command_words(seg, stats)
 
 
 def count_skip(stats, kind):
@@ -183,7 +183,7 @@ def count_skip(stats, kind):
     stats[kind] = stats.get(kind, 0) + 1
 
 
-def command_words(seg):
+def command_words(seg, stats=None):
     """一段 `zerg …` 之后的行文 → **命令词**（剥掉旗标与**紧跟旗标的取值**）。
 
     为什么必须剥（实测的假红，2026-09-21）：`CMD_WORD.findall` 会把旗标名与旗标取值也算成命令词 ——
@@ -198,9 +198,12 @@ def command_words(seg):
         if skip:
             skip = False
             continue             # 紧随旗标的那个词 = 取值，不是命令名
-        m = CMD_WORD.match(tok)
+        m = CMD_WORD.match(tok)          # 锚定 ⇒ 整词匹配
         if m:
             out.append(m.group(0))
+        elif stats is not None and re.search(r'[A-Za-z]', tok):
+            # 越界 token（含字母、整词不合法）：前缀匹配会截成假词直接当判据 ⇒ 认出来才丢 + 出声计数
+            stats["dropped"] = stats.get("dropped", 0) + 1
     return out
 
 
@@ -289,7 +292,7 @@ def extract_zerg_segments(text, stats=None):
             for seg in re.split(r'(?<!\S)(?:\$|PS\s*[A-Za-z]>|>)\s*', stripped):
                 m = re.match(r'zerg(\s+\S.*)?$', seg.strip())
                 if m:
-                    kind, words = segment_words(m.group(1) or "")   # 治法②
+                    kind, words = segment_words(m.group(1) or "", stats)   # 治法②
                     count_skip(stats, kind)
                     hits.append((lineno, words))
         else:
@@ -300,7 +303,7 @@ def extract_zerg_segments(text, stats=None):
                     count_skip(stats, "proposal")
                     hits.append((lineno, []))
                     continue
-                kind, words = segment_words(m.group(1) or "")       # 治法②
+                kind, words = segment_words(m.group(1) or "", stats)       # 治法②
                 count_skip(stats, kind)
                 hits.append((lineno, words))
     return hits
@@ -494,10 +497,10 @@ def check(root, scopes):
     lines.append("命令树 %d 条（L1+L2）· formal 命中 %d（阻断档）· devdocs 命中 %d（只报告档）"
                  % (len(tree), formal_hits, devdocs_hits))
     lines.append("识别跳过（**不计入**上面两个数）：身份行 / 版本串形态 %d 段 · 非命令噪声 %d 段"
-                 " · 未建提案体例（判语引出的 `zerg <名>`）%d 段"
+                 " · 未建提案体例（判语引出的 `zerg <名>`）%d 段 · 越界 token（含字母、整词不合法）%d 段"
                  " —— ★ 三类都是**认出来了**才丢（≠ 修前那种「抽不出词 ⇒ 静默」）"
                  % (stats.get("identity_lines", 0) + stats.get("identity", 0), stats.get("noise", 0),
-                    stats.get("proposal", 0)))
+                    stats.get("proposal", 0), stats.get("dropped", 0)))
     lines.extend("  " + d for d in detail_all)
     lines.extend(blocked)                    # 缺件/空转：先于红判「不给结论」（`Q-157`）
     for e in errs:
