@@ -182,12 +182,12 @@ type chzeFPDef struct{ path, sub, why string }
 type chzeFPStale struct{ path, sub, why, hit string }
 
 var chzeKnownFP = []chzeFPDef{
-	{"scripts/gates/check-glossary.py", "\"" + "\u866b\u5de2|" + "\u96c6\u88c5\u7bb1" + "\", \"pod\"", "术语词表字面量（`COLS` 里逐字写着 `" + "\u866b\u5de2|" + "\u96c6\u88c5\u7bb1" + "` 用作**被检词**，与 `docs/术语表.forbid.txt` 同源）"},
-	{"scripts/gates/check-glossary.py", "scan_page(\"docs/zh/a.md\", \"这里叫" + "\u866b\u5de2" + "。\", gloss, \"zh\")[1], 1)", "自证夹具：断言「T2 中文页禁写 " + "\u866b\u5de2" + "」的那条**用例正文**（`\"这里叫" + "\u866b\u5de2" + "。\"`）"},
-	{"scripts/gates/check-glossary.py", "旧称" + "\u866b\u5de2" + "。<!-- glossary-allow -->", "自证夹具：断言「T2 单条豁免生效」的**用例正文**（`\"旧称" + "\u866b\u5de2" + "。<!-- glossary-allow -->\"`）"},
-	{"scripts/gates/check-glossary.py", "f.write(\"" + "\u866b\u5de2" + "\\t\\t\\t\\t" + "\u866b\u5de2" + "\\t\\tMr2109\\t英文待拍\\n\")", "`Q-176` 第五批合成夹具：喂 `load_glossary` 的**词表行**（`" + "\u866b\u5de2" + "` 当 `forbid_zh` 列 ⇒ 验 T2 抓得到）"},
-	{"scripts/gates/check-glossary.py", "f.write(\"旧称：这里叫" + "\u866b\u5de2" + "。\\n\")", "`Q-176` 第五批合成夹具：中文页的**用例正文**（`\"旧称：这里叫" + "\u866b\u5de2" + "。\"` ⇒ 验 T2 负控 rc=1）"},
-	{"scripts/gates/check-glossary.py", "中文页出现 `forbid_zh` 词（" + "\u866b\u5de2" + "）⇒ T2 非阻塞 rc=1", "`Q-176` 第五批自证**用例标题串**（`chk(\"档② 负控：…（" + "\u866b\u5de2" + "）…\")`；与 413 同种：标题里点名被检词）"},
+	{"core/cmd/zerg/check_glossary.go", "\"" + "\u866b\u5de2|" + "\u96c6\u88c5\u7bb1" + "\", \"pod\"", "术语词表字面量（`COLS` 里逐字写着 `" + "\u866b\u5de2|" + "\u96c6\u88c5\u7bb1" + "` 用作**被检词**，与 `docs/术语表.forbid.txt` 同源）"},
+	{"core/cmd/zerg/check_glossary.go", "terms(\"docs/zh/a.md\", \"这里叫" + "\u866b\u5de2" + "。\", \"zh\")", "自证夹具：断言「T2 中文页禁写 " + "\u866b\u5de2" + "」的那条**用例正文**（`\"这里叫" + "\u866b\u5de2" + "。\"`）"},
+	{"core/cmd/zerg/check_glossary.go", "旧称" + "\u866b\u5de2" + "。<!-- glossary-allow -->", "自证夹具：断言「T2 单条豁免生效」的**用例正文**（`\"旧称" + "\u866b\u5de2" + "。<!-- glossary-allow -->\"`）"},
+	{"core/cmd/zerg/check_glossary.go", "\u866b\u5de2\\t\\t\\t\\t\u866b\u5de2\\t\\tMr2109\\t英文待拍", "`Q-176` 第五批合成夹具：喂 `load_glossary` 的**词表行**（`" + "\u866b\u5de2" + "` 当 `forbid_zh` 列 ⇒ 验 T2 抓得到）"},
+	{"core/cmd/zerg/check_glossary.go", "WriteFile(dirty, []byte(\"旧称：这里叫" + "\u866b\u5de2" + "。", "`Q-176` 第五批合成夹具：中文页的**用例正文**（`\"旧称：这里叫" + "\u866b\u5de2" + "。\"` ⇒ 验 T2 负控 rc=1）"},
+	{"core/cmd/zerg/check_glossary.go", "中文页出现 `forbid_zh` 词（" + "\u866b\u5de2" + "）⇒ T2 非阻塞 rc=1", "`Q-176` 第五批自证**用例标题串**（`chk(\"档② 负控：…（" + "\u866b\u5de2" + "）…\")`；与 413 同种：标题里点名被检词）"},
 	{"scripts/docs/gen-glossary-exports.py", "\"" + "\u866b\u5de2" + "\", \"pod\", \"Mr2109\", \"\"]))])[1].split(\"\\t\")[0], \"pod\")", "生成器自证夹具：喂 `gen_forbid(...)` 的合成词表行（验它把 `pod` 翻出来）"},
 	{"scripts/docs/gen-glossary-exports.py", "\"只有「虫茧」\" in gen_forbid([dict(zip(COLS, [\"虫茧\", \"cocoon\", \"\", \"\", \"" + "\u866b\u5de2" + "\", \"\", \"Mr2109\", \"\"]))])[0], True)", "生成器自证夹具：喂 `gen_forbid(...)` 的合成词表行（验理由串「只有「虫茧」」在）"},
 }

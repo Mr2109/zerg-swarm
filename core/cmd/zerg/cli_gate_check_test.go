@@ -265,10 +265,12 @@ func TestGateCheckLockContentionIsBlocked(t *testing.T) {
 	}
 }
 
-// ⑥ 进程内 Go 表完整性：项数 == 155，且**每项 key 都能被名解析找到**（名字 ⇒ 件 不断裂）。
+// ⑥ 进程内 Go 表完整性：项数 == 157，且**每项 key 都能被名解析找到**（名字 ⇒ 件 不断裂）。
 // ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 或 inproc 键 二者其一」。
 // ★ 棘轮口径：本数 == 表内真搬入口数（现读 113）。门111 check-fleet-loadable 的 Go 真搬件（check_fleet_loadable.go）入 gate_inproc_table.go 后 107→108 ⇒ 期望随动（✗ 非凑绿）。★ 2026-10-05 接线 check-manifest-freshness（mfMain）⇒ 108→109。★ 2026-10-05 同批接线 check-contract-version-diff（cvdMain）· check-wallclock-ratchet（checkWallclockRatchetMain）⇒ 109→111。★ 2026-10-06 接线 gate-check-health（gateCheckHealthMain）· gate-report（gateReportMain）⇒ 111→113。★ 2026-10-07 接线批（本单）：14 件（buildSelfclean/checkDevTargets/checkDryrunYesConflictCoverage/checkEnvKnobs/checkGapClosureDrift/checkGatePointOutput/checkGateScriptRegistered/checkMainrepoMd/checkMkdirTempCleanup/checkRecordNotEvidence/stepSwitch/stepcountDrift/writeAuthz/m2GoPyIsomorphismScan）⇒ 113→127（check-registry-key-unique 未接：自检档 stderr 非法 JSON 报错正文 py⟷Go 不逐字）。★ 2026-10-07 接线批-第一批（本单）：9 件（check-repo-symlink-farm/check-selftest-knobs/check-outrepo-dead-refs/decl-label/evalCompare/evalStabilityStats/genGlossaryExports/checkRegistryKeyUnique/checkBypassIdioms）⇒ 127→136（writeout-probe 未接：两态不逐字 —— Go 缺 PROBE_DIR 时 rc=2 fail-closed ⟷ py 原件对环境变量取键抛 KeyError ⇒ 回溯 rc=1）。★ 本单同批落 决-10：防波门 B 侧真身路径改查判据注册表 entries[].path★ 2026-10-07 接线批-第二批（本单）：15 件（checkDelegationSelfreport/checkEmptyDomainGuards/checkExecTwoCondition/checkGapStateVsArtifact/checkI18nDrift/checkLooseExitRegistry/checkModelSizeAnchor/checkPublicMarksTrackedParity/checkSelfcount/csf/checkToolVersionSync/checkVerifyCmdReal/checkWriteFaceGate/genCliReference/zergEgg）⇒ 136→151（gen-gap-ledger 未接：py 侧 stderr 逐发带 SyntaxWarning（反斜杠 d 非法转义）⟷ Go 无 ⇒ stderr 面不逐字；writer-lock 未接：转发壳按 D2 写工具档拒执 rc=2 ⟷ py 真身 rc=0）。★ 本批勘误：后接10 的 inplace-window 无 inproc 入口（inplace_window.go 无 GateMain）⇒ 不接；check-i18n·doc-index-gen·gen-tools-md·i18n-audit 真身不在判据注册表（ui/scripts·tools）⇒ 不接为判据；kb-docs-sync 无注册表真身 ⇒ 不接。★ 2026-10-07 接线批-第三批（本单）：接线 inplace-window（ipwGateMain）⇒ 151→152。gen-gap-ledger 未接：py 侧 stderr 逐发带 SyntaxWarning（反斜杠 d 非法转义 · 门环境 python3 ≥3.12）⟷ Go 无 ⇒ stderr 面不逐字；writer-lock 未接：壳按件头 write D2 声明判写工具档拒执（缺 --yes ⇒ rc=2）⟷ py 真身 rc=0 ⇒ rc/stdout 面不逐字。★ 两条待防波门补掩码/侧路后另批再接（在册 GAP-20261007-11）。★ 2026-10-07 接线批-第四批（本单·收尾）：接线 gen-gap-ledger（genGapLedgerGateMain）· writer-lock（writerLockGateMain）⇒ 152→154（防波门 DEV-1816 已落：SyntaxWarning 面掩码 ⇒ gen-gap-ledger 的 stderr 面归一；写类键 side_a 补壳级 --yes ⇒ writer-lock 写工具档 fail-closed 消解）。
 // ★ 2026-10-07 接线批-第四批（本单 · 语言冻结门接入）：接线 check-lang-freeze（checkLangFreezeGateMain）⇒ 154→155。
+// ★ 2026-10-07 接线批-第五批（本单）：接线 check-partial-run-acceptance（checkPartialRunAcceptanceGateMain）⇒ 155→156。
+// ★ 2026-10-07 接线批-第六批（本单）：接线 check-py-go-pairing-drift（pgpdGateMain · 防波门本体）⇒ 156→157。★ 自指面：本门「自身两态对拍」= 判自己（见表A/未覆盖面）—— 本批只接线，不主张自身 py⟷Go 逐字。
 func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	byName, dupes, err := gateCheckRoster(root)
@@ -278,8 +280,8 @@ func TestGateCheckGoEntryTableComplete(t *testing.T) {
 	if len(dupes) != 0 {
 		t.Fatalf("真实名录有同名多件 ⇒ 前置不成立：%v", dupes)
 	}
-	if got := len(gateCheckGoEntry); got != 155 {
-		t.Fatalf("进程内 Go 表项数要 == 155，得到 %d", got)
+	if got := len(gateCheckGoEntry); got != 157 {
+		t.Fatalf("进程内 Go 表项数要 == 157，得到 %d", got)
 	}
 	// ★ 放宽（2026-10-07 退役批）：旧不变量「表键必在名录」⇒「表键 ⇒ 名录 **或** inproc 键 二者其一」。
 	//   退役件（py 已 `git rm`）只余 inproc 那一路（family_gate_check.go 的 inproc 兜底 ⇒ rc=0）；

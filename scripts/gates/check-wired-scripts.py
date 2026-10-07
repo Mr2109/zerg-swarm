@@ -286,15 +286,6 @@ WHITELIST = [
 #   本表只影响**报告的可行动性**，不影响判据 —— 没登记建议的命中项会打印「未登记建议 ⇒ 人工判定」。
 # ─────────────────────────────────────────────────────────────────────────────
 SUGGEST = {
-    "check-glossary.py": (
-        "提交闸 · docs scope（模式 tri-report 起步）",
-        "与 check-doc-* 同族（文档/术语面），docs 已在默认 scope 集里（precommit-gates.sh:47-50）；"
-        "现用法 `python3 scripts/gates/check-glossary.py --lang zh|en [--enforce]`（docs/zh/README.md:56 · docs/en/README.md:98）。"
-        "术语档 T2 现为非阻塞 ⇒ 起步按「只报告」挂，同 D2 先例。"),
-    "check-manifest-freshness.py": (
-        "发布闸 · scripts/build/publish-preflight.sh 新增一道（对产物目录判清单新鲜度，模式 tri）",
-        "它判的是**发布产物**（manifest 的新鲜度），归发布面；"
-        "现形态是「只告警不拒绝」，退出码恒 0 除 `--strict`（Zerg-内部文档/调研/调研-文档分块落地-门禁与迁移.md:373 —— 该件 2026-09-19 已随开发文档分家迁出工作树，原路径 docs/调研/）。"),
     "check-slice.py": (
         "提交闸 · 新 scope（例 slice，模式 tri-report 起步）",
         "自带 `--probe` / `--selftest` / `--list-rules` 三档与「自检不过 rc=2」的口径"

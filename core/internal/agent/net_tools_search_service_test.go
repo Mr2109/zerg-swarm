@@ -6,7 +6,7 @@ package agent
 // 两腿（httptest **真起一个 HTTP 服务** —— ✗ 不打桩内部函数、✗ 不 `export ZERG_*`）：
 //   ① 服务在跑腿：200 + 合法 JSON ⇒ `webSearchBridge` 正常返回结果（✗ 空、✗ 错）。
 //   ② 服务不在腿：端口拒连 ⇒ 带具名原因「不可达」的 error（✗ 静默空 —— **两态可分**）。
-// 另加：空结果 fail-closed（保留 A-06 语义）· 挂起超时 fail-closed · 回退旋钮回旧桥。
+// 另加：空结果 fail-closed（保留 A-06 语义）· 挂起超时 fail-closed · 撤桥后默认路恒走服务。
 //
 // 负控（父代理 `go test -overlay` 哑化 ⇒ FAIL 带行号）：把 `searxQueryService` 的空结果 fail-closed
 // 还原成静默（`return res, nil`）＋ `webSearchBridge` 的质量过滤空集支还原成「（无搜索结果）」⇒
@@ -126,26 +126,18 @@ func TestSearxSearchServiceTimeoutFailsClosed(t *testing.T) {
 	}
 }
 
-// TestSearxLegacyBridgeKnob — 回退旋钮（A2 步3 ③）：未置 ⇒ 走服务直连（默认新路）；置 1 ⇒ 回旧 Python 桥。
-func TestSearxLegacyBridgeKnob(t *testing.T) {
-	// 默认（未置旋钮）：走服务直连（httptest），✗ 不碰 Python 桥。
+// TestSearxSearchServiceDefaultPath — 撤桥（2026-10-07）：`webSearchBridge` 恒走服务直连
+// （旧 Python 桥 searx_search.py 与回退旋钮 ZERG_SEARX_LEGACY_BRIDGE 已退役）。
+// 原 TestSearxLegacyBridgeKnob 的「回退格」随旋钮删除退场；此保留其「服务态格」。
+func TestSearxSearchServiceDefaultPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"results":[{"title":"via-service","url":"http://svc/1","content":"c","score":1.0}]}`))
 	}))
 	defer srv.Close()
 	withSearxClientOverride(t, &SearxClient{BaseURL: srv.URL, HTTP: srv.Client()})
-	t.Setenv(searxLegacyBridgeEnv, "")
-	r, err := webSearchBridge("旋钮默认", 3, "all", "")
-	if err != nil || r == nil || !strings.Contains(r.Formatted, "http://svc/1") {
-		t.Fatalf("未置旋钮应走服务直连: err=%v r=%+v", err, r)
-	}
 
-	// 置旋钮 = 1：回旧桥（注入假桥脚本；withBridgeFixture 自带 t.Setenv(...,\"1\")）。
-	withBridgeFixture(t, writeBridgeFixture(t,
-		`printf '{"results":[{"title":"via-bridge","url":"http://bridge/1","content":"c","score":1.0}]}'`))
-	withSearchServiceTimeout(t, 5*time.Second)
-	r2, err := webSearchBridge("旋钮回退", 3, "all", "")
-	if err != nil || r2 == nil || !strings.Contains(r2.Formatted, "http://bridge/1") {
-		t.Fatalf("置旋钮应回旧桥: err=%v r=%+v", err, r2)
+	r, err := webSearchBridge("服务默认路", 3, "all", "")
+	if err != nil || r == nil || !strings.Contains(r.Formatted, "http://svc/1") {
+		t.Fatalf("撤桥后应恒走服务直连: err=%v r=%+v", err, r)
 	}
 }

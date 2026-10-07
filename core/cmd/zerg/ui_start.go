@@ -84,3 +84,20 @@ func cmdUIStart(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	return exitOK
 }
+
+// uiStartGateMain —— `cmdUIStart` 的 **inproc 同签名包装入口**（与 `gateCheckGoEntry` 表值
+// 同签名：`func(stdout, stderr io.Writer, argv []string) int`）。
+//
+// ★ **仅转发**：把 argv 原样当作 `zerg ui start` 之后的实参，转交 `cmdUIStart`
+// （唯一实现仍是 `cmdUIStart` ＋ 底层脚本 `scripts/build/start-zerg-ui.sh` —— 本件 ✗ 不重写
+// 任何一段、✗ 不改退码口径、✗ 不新增机器面；两态三面与 `cmdUIStart` 逐字同）。
+// ★ 单一真源：底层脚本恒为 A6 面 `scripts/build/start-zerg-ui.sh`（顶层 `start-zerg-ui.sh`＝A17
+// 是**另一件**、待退 ⇒ ✗ 不在此双登）。
+// ★ M2 纪律：本入口**暂不接线**（✗ 未在 `core/cmd/zerg/gate_inproc_table.go` 登记键 —— 表键另路一并接）。
+func uiStartGateMain(stdout, stderr io.Writer, argv []string) int {
+	inv := &invocation{
+		path: []string{"ui", "start"},
+		orig: append([]string{"ui", "start"}, argv...),
+	}
+	return cmdUIStart(inv, stdout, stderr)
+}

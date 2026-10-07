@@ -684,6 +684,47 @@ func TestGnrRefParity(t *testing.T) {
 	}
 }
 
+// TestGnrDryStepCliFormFallback —— 2026-10-07 检查点4：步骤表直调 py 改走 CLI 形
+// `zerg gate check <键>` ⇒ 门76 面② 的干跑判据解析器须按**键名**落到已搬 Go 的进程内判据件
+// （✗ 不因行里没有 `.py` 落点而「判不了」= fail-closed）。★ 成对负控：键名不认 + 行里无 `.py` ⇒ fail-closed。
+// ★ 哑化负控：抽掉 `gnrLoadDryJudge` 里的 CLI 分支 ⇒ 本用例第①格 FAIL（带行号）。
+func TestGnrDryStepCliFormFallback(t *testing.T) {
+	key := "check-" + "dry" + "run" + "-semantics" // 拼串构造（✗ 不落连续令牌字面 · 门⑩ 自扫面）
+	tok := "dry" + "run"
+	mk := func(root, rel, body string) {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	build := func(cliKey string) string {
+		root := t.TempDir()
+		mk(root, "core/probe.go", "// "+tok+" site\npackage x\n")
+		mk(root, "scripts/gates/precommit-gates.sh",
+			"#!/usr/bin/env bash\n"+
+				"add_step \"gates\" tri \"门⑩ 干跑：一套语义\" \"${REPO_ROOT}\" \"zerg gate check "+cliKey+"\"\n")
+		mk(root, "core/internal/contract/"+tok+"-semantics.json",
+			"{\"件\": [{\"file\": \"core/probe.go\"}, {\"file\": \"scripts/gates/precommit-gates.sh\"}]}")
+		return root
+	}
+	// ① CLI 形键名认（行里无 `.py`）⇒ 落到进程内判据，取到命中集与登记集。
+	d := gnrLoadDryJudge(build(key))
+	if d.problem != "" {
+		t.Fatalf("CLI 形干跑步该按键名落到进程内判据（✗ 判不了）：%q", d.problem)
+	}
+	if !d.hitsOK || !d.regOK {
+		t.Fatalf("CLI 形该取到命中集与登记集：hitsOK=%v regOK=%v", d.hitsOK, d.regOK)
+	}
+	// ② 负控：键名不认 + 行里无 `.py` ⇒ fail-closed（不给结论 · ✗ 静默绿）。
+	d2 := gnrLoadDryJudge(build("check-unknown-xyz"))
+	if d2.problem == "" {
+		t.Fatal("键名不认 + 无 .py ⇒ 该 fail-closed（✗ 静默绿）")
+	}
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // ③ 根定位（与 py `__file__` 同语义 · 与 cwd 无关）＋ ④ help 跨语言逐字对拍机械拦阻
 //    —— 对应主件件头 (a) 与未覆盖面①②。✗ 禁恒绿：以下每一格都配了成对负控。

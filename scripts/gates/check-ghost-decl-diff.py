@@ -99,14 +99,113 @@ GIT_WRITE_SUBS = ("add", "commit", "push", "rm", "mv", "checkout", "restore", "r
                   "update-index", "write-tree", "stash", "rebase", "fetch", "pull", "tag")
 
 TOOL_DIR = None     # 由 load_sibling() 填
+# 姊妹件真身 ＋ 其 Go 半（退役容忍两半判据 · 同族 `check-write-face-gate.py` 口径）。
+CSD_PY = SIBLING                                                       # 门⑧ py 半（同源真身）
+CSD_GO = os.path.join(DEFAULT_ROOT, "core", "cmd", "zerg", "check_service_declaration.go")
+
+
+# ── 内化副本（退役态回落面 · 逐字同构自 `check-service-declaration.py`）─────────────────────────
+# ★ 2026-10-07 姊妹依赖退役容忍（`check-service-declaration.py` 当日退役 · M2 甲组）：本件原 importlib 期
+#   **硬载**门⑧ py 半，它退场后 rc=1（自检段逐字「同源件加载失败」）。现照同族口径：姊妹 py 在盘 ⇒ 照旧
+#   加载；退场 ∧ 其 **Go 半** `core/cmd/zerg/check_service_declaration.go` 在盘 ⇒ 用本件内化副本（只内化
+#   本件真用的四个同源面 · 逐字同构 · ✗ 不搬整个姊妹件、✗ 不另写第二份判定口径 · 同族 `_cwa_scan_file`
+#   先例）；两半皆缺 ⇒ fail-closed（rc=2 不给结论）。
+_CSD_KINDS = ('launchd', 'ghost')
+_CSD_PROC_HINTS = ('bin/zerg-', 'bin/cocoon-', 'searx.webapp')
+_CSD_ZERG_LABEL_PREFIXES = ('com.zerg.',)
+
+
+def _csd_parse_decl(path):
+    """内化 = `check-service-declaration.py::parse_decl`（退役态真源回落 · 逐字同构）。"""
+    rows, problems = [], []
+    if not os.path.isfile(path):
+        return None, ['缺件：声明树不存在 %s（判据不可判 ⇒ 不给结论）' % path]
+    with open(path, encoding='utf-8') as f:
+        for ln, line in enumerate(f, 1):
+            line = line.rstrip('\n')
+            if not line.strip() or line.lstrip().startswith('#'):
+                continue
+            if line.startswith('kind\t'):          # 表头
+                continue
+            cells = line.split('\t')
+            if len(cells) < 7:
+                problems.append('行 %d 列数不足（要 7 列，得到 %d）：%s' % (ln, len(cells), line[:60]))
+                continue
+            kind = cells[0].strip()
+            if kind not in _CSD_KINDS:
+                problems.append('行 %d 的 kind=%r 不在闭集 %s 内' % (ln, kind, list(_CSD_KINDS)))
+                continue
+            rows.append({'line': ln, 'kind': kind, 'name': cells[1].strip(),
+                         'decl': cells[2].strip(), 'prog': cells[3].strip(),
+                         'proc': cells[4].strip(), 'owner': cells[5].strip(),
+                         'disposition': cells[6].strip(),
+                         'layer': cells[7].strip() if len(cells) >= 8 else ''})
+    return rows, problems
+
+
+def _csd_read_lines(path, cmd):
+    """内化 = `check-service-declaration.py::read_lines`（逐字同构）。"""
+    if path:
+        if not os.path.isfile(path):
+            return [], 'fixture', '夹具文件不存在：%s' % path
+        with open(path, encoding='utf-8') as f:
+            return [l.rstrip('\n') for l in f if l.strip()], 'fixture', None
+    try:
+        out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+    except Exception as e:                                    # noqa: BLE001
+        return [], 'live', '%s 跑不起来：%s' % (cmd, e)
+    if out.returncode != 0:
+        return [], 'live', '%s 退出码 %d：%s' % (cmd, out.returncode, (out.stderr or '').strip()[:120])
+    return [l for l in out.stdout.splitlines() if l.strip()], 'live', None
+
+
+def _csd_parse_launchctl_labels(lines):
+    """内化 = `check-service-declaration.py::parse_launchctl_labels`（逐字同构 · 私有助手）。"""
+    out = {}
+    for ln in lines:
+        cells = ln.split('\t')
+        if len(cells) < 3:
+            continue
+        lab = cells[2].strip()
+        if lab:
+            out.setdefault(lab, ln.strip())
+    return out
+
+
+def _csd_label_set_diff(launchd_rows, lc_lines):
+    """内化 = `check-service-declaration.py::label_set_diff`（逐字同构 · 私有助手内联）。"""
+    decl_labels = {r['name']: r for r in launchd_rows}
+    live_labels = {lab: raw for lab, raw in _csd_parse_launchctl_labels(lc_lines).items()
+                   if lab.startswith(_CSD_ZERG_LABEL_PREFIXES)}
+    only_live = sorted(set(live_labels) - set(decl_labels))
+    only_decl = sorted(set(decl_labels) - set(live_labels))
+    return live_labels, decl_labels, only_live, only_decl
+
+
+class _SiblingInternalized:
+    """退役态内化副本（只含本件真用的四个同源面：解析器 ＋ 进程特征 ＋ 读行 ＋ 标签集合比较）。"""
+    PROC_HINTS = _CSD_PROC_HINTS
+    parse_decl = staticmethod(_csd_parse_decl)
+    read_lines = staticmethod(_csd_read_lines)
+    label_set_diff = staticmethod(_csd_label_set_diff)
 
 
 # ─────────────────────────── 同源：把门⑧ 当模块加载（不许抄第二份解析器）───────────────────────────
 def load_sibling(path=SIBLING):
-    """按路径加载门⑧ ⇒ (module, err)。**加载不了就不给结论**（不许退化成自带一份口径）。"""
+    """按路径加载门⑧ ⇒ (module, err)。**加载不了就不给结论**（不许退化成自带一份口径）。
+    ★ 退役容忍（同族 `check-write-face-gate.py` 口径）：姊妹 py 退役 ∧ 其 Go 半在盘 ⇒ 用内化副本
+      `_SiblingInternalized`（✗ 不因缺 py 而 fail-closed）；两半皆缺 ⇒ 原「不给结论」档。"""
     global TOOL_DIR
     if not os.path.isfile(path):
-        return None, "同源件缺失：%s（门⑧ = 声明侧真源的唯一解析器）⇒ 不给结论" % path
+        if os.path.isfile(CSD_GO):
+            if tuple(SIBLING_HINTS) != tuple(_CSD_PROC_HINTS):
+                return None, ("同源漂移：本件 `SIBLING_HINTS`=%r ≠ 内化副本 `PROC_HINTS`=%r ⇒ 两份进程特征"
+                              "口径已分叉（`GAP-20260927-107`：同族件不许再写第二份）"
+                              % (tuple(SIBLING_HINTS), tuple(_CSD_PROC_HINTS)))
+            TOOL_DIR = HERE
+            return _SiblingInternalized, None
+        return None, ("同源件缺失：%s（门⑧ = 声明侧真源的唯一解析器）且其 Go 半 "
+                      "core/cmd/zerg/check_service_declaration.go 不在盘 ⇒ 不给结论" % path)
     try:
         spec = importlib.util.spec_from_file_location("svcdecl_src", path)
         mod = importlib.util.module_from_spec(spec)

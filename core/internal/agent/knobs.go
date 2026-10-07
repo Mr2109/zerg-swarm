@@ -59,7 +59,6 @@ var knobs = []Knob{
 	{Name: "memory.hotLimit", Current: "4096", Source: "core/internal/agent/memory.go:22", Face: "无面", Note: "热记忆上限（字节）"},
 	{Name: "nettools.x3RewritePort", Current: "9001", Source: "core/internal/agent/net_tools.go:343", Face: "无面", Note: "X3 直连改写端口"},
 	{Name: "nettools.searchCacheTTL", Current: "300s", Source: "core/internal/agent/net_tools.go:425", Face: "无面", Note: "网络检索缓存 TTL（5*60 秒）"},
-	{Name: "nettools.searxLegacyBridgeEnv", Current: "ZERG_SEARX_LEGACY_BRIDGE", Source: "core/internal/agent/net_tools.go:69", Face: "只读面", Note: "A2 步3 searxng 回退旋钮：置 1/true/yes/on ⇒ 回旧 Python 桥 searx_search.py；默认走 Go 客户端直连 8888"},
 	// ── gateway 包（本批补齐：工具输出压缩 / DS4 路由 / 孵蛋等待 / 路由打分 / 输出预算 / 前缀缓存 / SSE 尾窗 / token 上限兜底） ──
 	{Name: "compactor.toolOutputHeadLines", Current: "60", Source: "core/internal/gateway/compactor.go:17", Face: "无面", Note: "工具输出保留开头行数"},
 	{Name: "compactor.toolOutputTailLines", Current: "40", Source: "core/internal/gateway/compactor.go:18", Face: "无面", Note: "工具输出保留结尾行数"},

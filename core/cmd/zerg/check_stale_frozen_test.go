@@ -234,3 +234,94 @@ func TestCsfBridgeHelpShapeRetiredFallback(t *testing.T) {
 		t.Fatalf("兄弟件在盘时该走 importlib 桥（成对负控：空壳 py 应让桥报错）")
 	}
 }
+
+// csfCliContractFixture —— 仓外夹具：只放 cli_contract 桥的 **Go 半**输入面
+// （`core/cmd/zerg/main.go` 的最小命令树 + `testdata/cli-matrix.json`），**无** check-cli-contract.py。
+func csfCliContractFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	mk := func(rel, body string) {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("core/cmd/zerg/main.go",
+		"package main\n\nfunc buildCommands() []*command {\n"+
+			"	commands = []*command{\n"+
+			"		{path: []string{\"gate\", \"check\"}},\n"+
+			"	}\n	return commands\n}\n")
+	mk("core/cmd/zerg/testdata/cli-matrix.json",
+		`{"cases": [{"want_rc": 2}, {"want_rc": 0}, {"want_rc": 2}, {"argv": ["x"]}]}`)
+	return root
+}
+
+// TestCsfBridgeCliContractRetiredFallback —— 2026-10-07 退役批：兄弟件
+// `scripts/gates/check-cli-contract.py` 退役（不在盘）⇒ `csfBridge("cli_contract")` 回落**同判据的
+// Go 半** `clicParseTree` / `clicLoadMatrix`（✗ 不因缺 py 而「现读重算失败 ⇒ 不给结论」fail-closed）。
+// ★ 成对：兄弟件在盘（哪怕是个空壳）⇒ 仍走 importlib 那条桥（单一真源不变）。
+// ★ 负控：两半皆缺（无 py ∧ Go 半输入面缺）⇒ fail-closed（✗ 静默出数）。
+// ★ 哑化负控：抽掉 csfBridge 里 `if op == "cli_contract"` 那段 ⇒ 本用例第①②格 FAIL（带行号）。
+func TestCsfBridgeCliContractRetiredFallback(t *testing.T) {
+	root := csfCliContractFixture(t)
+	if _, err := os.Stat(filepath.Join(root, "scripts", "gates", "check-cli-contract.py")); err == nil {
+		t.Fatal("前置不成立：夹具里竟有 check-cli-contract.py")
+	}
+	res, errStr := csfBridge(root, "cli_contract", io.Discard)
+	if errStr != "" {
+		t.Fatalf("退役态该回落 Go 半 clicParseTree/clicLoadMatrix（✗ 不 fail-closed）：%q", errStr)
+	}
+	if n, _ := csfNumInt(res["n_cmd"]); n != 1 {
+		t.Fatalf("回落 n_cmd 期望 1（夹具一件命令）实得 %v", res["n_cmd"])
+	}
+	if n, _ := csfNumInt(res["n_mf"]); n != 2 {
+		t.Fatalf("回落 n_mf 期望 2（want_rc≠0 两格）实得 %v", res["n_mf"])
+	}
+	// 负控（两半皆缺 ⇒ fail-closed）：裸临时目录（无 main.go / cli-matrix.json）
+	if _, e := csfBridge(t.TempDir(), "cli_contract", io.Discard); e == "" {
+		t.Fatal("两半皆缺该 fail-closed（✗ 静默出数）")
+	}
+	// 成对负控：把（空壳）兄弟件放回盘 ⇒ 仍走 importlib 桥（空壳 ⇒ 桥必报错）。
+	if err := os.MkdirAll(filepath.Join(root, "scripts", "gates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	py := filepath.Join(root, "scripts", "gates", "check-cli-contract.py")
+	if err := os.WriteFile(py, []byte("raise SystemExit('stub')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, e2 := csfBridge(root, "cli_contract", io.Discard); e2 == "" {
+		t.Fatalf("兄弟件在盘时该走 importlib 桥（成对负控：空壳 py 应让桥报错）")
+	}
+}
+
+// TestCsfBridgeApproveBackfillRetiredFallback —— 同族（2026-10-07 退役批）：兄弟件
+// `scripts/gates/check-approve-backfill.py` 退役（不在盘）⇒ `csfBridge("approve_backfill")` 回落
+// **同判据的 Go 半常量** `cafbDevEditSHA256` / `cafbTicketRel`（✗ 不因缺 py 而「件读不到 ⇒ 取不到」）。
+// ★ 哑化负控：抽掉 csfBridge 里 `if op == "approve_backfill"` 那段 ⇒ 本用例第①格 FAIL（带行号）。
+func TestCsfBridgeApproveBackfillRetiredFallback(t *testing.T) {
+	root := t.TempDir() // 仓外空夹具 · 其中**无** check-approve-backfill.py
+	if _, err := os.Stat(filepath.Join(root, "scripts", "gates", "check-approve-backfill.py")); err == nil {
+		t.Fatal("前置不成立：夹具里竟有 check-approve-backfill.py")
+	}
+	res, errStr := csfBridge(root, "approve_backfill", io.Discard)
+	if errStr != "" {
+		t.Fatalf("退役态该回落 Go 半常量 cafbDevEditSHA256/cafbTicketRel（✗ 不 fail-closed）：%q", errStr)
+	}
+	if csfPctS(res["sha"]) != cafbDevEditSHA256 || csfPctS(res["rel"]) != cafbTicketRel {
+		t.Fatalf("回落读数错：sha=%v rel=%v（期望 %s / %s）", res["sha"], res["rel"], cafbDevEditSHA256, cafbTicketRel)
+	}
+	// 成对负控：把（空壳）兄弟件放回盘 ⇒ 仍走 importlib 桥（空壳 ⇒ 桥必报错）。
+	py := filepath.Join(root, "scripts", "gates", "check-approve-backfill.py")
+	if err := os.MkdirAll(filepath.Dir(py), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(py, []byte("raise SystemExit('stub')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, e2 := csfBridge(root, "approve_backfill", io.Discard); e2 == "" {
+		t.Fatalf("兄弟件在盘时该走 importlib 桥（成对负控：空壳 py 应让桥报错）")
+	}
+}

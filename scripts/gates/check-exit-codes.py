@@ -8,7 +8,7 @@
 # 七条规则（任一不通过 ⇒ 见下方退出码）：
 #   R1 **主表自身**：`core/cmd/zerg/exitcodes.go` 的 `exitcodeTable` + `exitcodeReserved` 里
 #      **数字唯一**（同表两义 ⇒ 红），且每行 name/meaning/retry 三格非空（占空格的号不算登记）。
-#   R2 **门禁直通档逐字对齐**：`scripts/gates/precommit-gates.sh` 第 35 行（去行首 `# `）==
+#   R2 **门禁直通档逐字对齐**：`scripts/gates/precommit-gates.sh` 头注释里以「# 退出码：」起头的那一行（去行首 `# `）==
 #      `core/cmd/zerg/helptext.go` 的 `gateExitLine`。
 #   R3 **七处声明面全部指向同一张表**：每处都含标记行 `退码唯一真源 = zerg help exit-codes`。
 #   R4 **「回滚成功」唯一说法**：`zerg-swap-core.sh` 与 `zerg-upgrade.sh` 里都必须出现 `ROLLED_BACK`，
@@ -509,7 +509,7 @@ def self_test():
         ('负控② 主表里数字重复（0 出现两次）⇒ rc=1', 1, {'table': GOOD_TABLE.replace(
             '{2, "usage", "用法错 / **不给结论**", "改用法后可重试"},',
             '{0, "dup", "重复的 0", "—"},')}),
-        ('负控③ 门禁头注释第 35 行被改一个词 ⇒ rc=1', 1, {'gate_file_line': '退出码：0 全绿 · 1 有失败项 · 2 不给结论'}),
+        ('负控③ 门禁头注释退码行被改一个词 ⇒ rc=1', 1, {'gate_file_line': '退出码：0 全绿 · 1 有失败项 · 2 不给结论'}),
         ('负控④ 某处声明面摘掉标记行 ⇒ rc=1', 1, {'decl': GOOD_DECL.replace(
             '# 退码唯一真源 = zerg help exit-codes（契约 §三）—— 本件是组件自有码空间\n', '')}),
         ('负控⑤ 把「回滚成功」又写成 2 ⇒ rc=1', 1, {'swap': GOOD_SWAP.replace(

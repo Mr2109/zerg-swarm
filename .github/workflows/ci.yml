@@ -22,12 +22,27 @@ jobs:
           cache-dependency-path: |
             core/go.sum
             agent/go.sum
+      - name: 构建命令面 CLI（Go 判据入口 · 公开面判据件走 Go 半）
+        # 公开面判据件须能退 py ⇒ 判据转发壳 `zerg gate check <键>` 走 Go 半（core 源码现编；判据与 py 逐字节同）。
+        working-directory: core
+        run: mkdir -p ../bin && go build -o ../bin/zerg ./cmd/zerg
       - name: 配置 git 身份（zerg-git 相关测试要 git commit）
         run: |
           git config --global user.email "ci@example.invalid"
           git config --global user.name "Zerg CI"
-      - name: shell 静态检查（$VAR 后紧跟非 ASCII → unbound variable）
-        run: python3 scripts/gates/check-shell-unicode-vars.py --check scripts/*.sh *.sh
+      - name: shell 静态检查（$VAR 后紧跟非 ASCII → unbound variable · Go 半优先）
+        run: |
+          # 判据件优先走 Go 半（`zerg gate check <键>`）；Go 半不可用 ⇒ 退回 py 半；两半皆缺 ⇒ 拒通过（不给结论）。
+          rc=0
+          if [ -x ./bin/zerg ]; then
+            ./bin/zerg gate check check-shell-unicode-vars --check scripts/*.sh *.sh || rc=$?
+          elif [ -f scripts/gates/check-shell-unicode-vars.py ]; then
+            python3 scripts/gates/check-shell-unicode-vars.py --check scripts/*.sh *.sh || rc=$?
+          else
+            echo "❌ 判据件 check-shell-unicode-vars 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            exit 1
+          fi
+          exit "$rc"
       - name: core 构建 + 测试（公开面测试面名单 · 逐包点名）
         working-directory: core
         run: |
@@ -115,23 +130,63 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      - name: 检查
-        run: python3 scripts/gates/check_version.py
-      - name: Go 工具链钉住一致性（G6：core/agent 两模块同值）
-        run: python3 scripts/gates/check-gotoolchain.py
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: 构建命令面 CLI（Go 判据入口 · 公开面判据件走 Go 半）
+        working-directory: core
+        run: mkdir -p ../bin && go build -o ../bin/zerg ./cmd/zerg
+      - name: 检查（版本号一致性 · Go 半优先）
+        run: |
+          rc=0
+          if [ -x ./bin/zerg ]; then
+            ./bin/zerg gate check check_version || rc=$?
+          elif [ -f scripts/gates/check_version.py ]; then
+            python3 scripts/gates/check_version.py || rc=$?
+          else
+            echo "❌ 判据件 check_version 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            exit 1
+          fi
+          exit "$rc"
+      - name: Go 工具链钉住一致性（G6：core/agent 两模块同值 · Go 半优先）
+        run: |
+          rc=0
+          if [ -x ./bin/zerg ]; then
+            ./bin/zerg gate check check-gotoolchain || rc=$?
+          elif [ -f scripts/gates/check-gotoolchain.py ]; then
+            python3 scripts/gates/check-gotoolchain.py || rc=$?
+          else
+            echo "❌ 判据件 check-gotoolchain 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            exit 1
+          fi
+          exit "$rc"
 
   compat:
     name: 跨版本状态兼容清单门禁（B7 / G10）
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      - name: 清单 ↔ 代码双向一致（R1–R6）
-        # 只读源码与 core/internal/compat/compat.json；**不碰真机状态目录**（CI 里跑 ~/.zerg/** 是禁忌）。
-        run: python3 scripts/gates/check-compat-manifest.py --selftest && python3 scripts/gates/check-compat-manifest.py
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
         with:
           go-version-file: core/go.mod
           cache-dependency-path: core/go.sum
+      - name: 构建命令面 CLI（Go 判据入口 · 公开面判据件走 Go 半）
+        working-directory: core
+        run: mkdir -p ../bin && go build -o ../bin/zerg ./cmd/zerg
+      - name: 清单 ↔ 代码双向一致（R1–R6 · Go 半优先）
+        # 只读源码与 core/internal/compat/compat.json；**不碰真机状态目录**（CI 里跑 ~/.zerg/** 是禁忌）。
+        run: |
+          rc=0
+          if [ -x ./bin/zerg ]; then
+            ./bin/zerg gate check check-compat-manifest --selftest && ./bin/zerg gate check check-compat-manifest || rc=$?
+          elif [ -f scripts/gates/check-compat-manifest.py ]; then
+            python3 scripts/gates/check-compat-manifest.py --selftest && python3 scripts/gates/check-compat-manifest.py || rc=$?
+          else
+            echo "❌ 判据件 check-compat-manifest 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            exit 1
+          fi
+          exit "$rc"
       - name: 兼容层单测（迁移幂等 / 不覆盖 / 高版本不猜 / 旁路信封）
         working-directory: core
         run: go test ./internal/compat/ ./internal/api/ -run 'Compat|Manifest|Migration|Migrate|Schema|Sidecar|Engine|VerifyGuard|Dirs|Path' -count=1
@@ -141,8 +196,25 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      - name: 检查
-        run: python3 scripts/gates/check_docs.py
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: 构建命令面 CLI（Go 判据入口 · 公开面判据件走 Go 半）
+        working-directory: core
+        run: mkdir -p ../bin && go build -o ../bin/zerg ./cmd/zerg
+      - name: 检查（文档双语 · Go 半优先）
+        run: |
+          rc=0
+          if [ -x ./bin/zerg ]; then
+            ./bin/zerg gate check check_docs || rc=$?
+          elif [ -f scripts/gates/check_docs.py ]; then
+            python3 scripts/gates/check_docs.py || rc=$?
+          else
+            echo "❌ 判据件 check_docs 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            exit 1
+          fi
+          exit "$rc"
 
   i18n:
     name: i18n 门禁（键对称/引用完整/占位符/中文基线）
@@ -176,7 +248,34 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-      - name: 两条判据各自成句（R-24 · 合并成一句即红）
-        run: python3 scripts/gates/check-manifest-freshness-two-criteria.py
-      - name: 公开制品档分档行为（R-23 · 公开档有命中必须 rc=1；合成样张，不碰真制品）
-        run: python3 scripts/gates/check-public-ci-green.py
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: 构建命令面 CLI（Go 判据入口 · 公开面判据件走 Go 半）
+        working-directory: core
+        run: mkdir -p ../bin && go build -o ../bin/zerg ./cmd/zerg
+      - name: 两条判据各自成句（R-24 · 合并成一句即红 · Go 半优先）
+        run: |
+          rc=0
+          if [ -x ./bin/zerg ]; then
+            ./bin/zerg gate check check-manifest-freshness-two-criteria || rc=$?
+          elif [ -f scripts/gates/check-manifest-freshness-two-criteria.py ]; then
+            python3 scripts/gates/check-manifest-freshness-two-criteria.py || rc=$?
+          else
+            echo "❌ 判据件 check-manifest-freshness-two-criteria 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            exit 1
+          fi
+          exit "$rc"
+      - name: 公开制品档分档行为（R-23 · 公开档有命中必须 rc=1；合成样张，不碰真制品 · Go 半优先）
+        run: |
+          rc=0
+          if [ -x ./bin/zerg ]; then
+            ./bin/zerg gate check check-public-ci-green || rc=$?
+          elif [ -f scripts/gates/check-public-ci-green.py ]; then
+            python3 scripts/gates/check-public-ci-green.py || rc=$?
+          else
+            echo "❌ 判据件 check-public-ci-green 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            exit 1
+          fi
+          exit "$rc"

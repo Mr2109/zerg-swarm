@@ -15,6 +15,9 @@
 // 断言「脚本直跑 ⟷ 走 `cmdUIStart`」的 rc/stdout 逐字同、stderr 剥掉命令面那两行（转发宣言 +
 // 退码行）后逐字同 ⇒ 证明命令面**不改原件行为**。★ 之所以只取这一档：本机 `bin/zerg-ui` 在位且可执行，
 // 直接跑真脚本会**真起 UI** ⇒ 那是不可接受的副作用（不在用例里做）。
+//
+// 再加一条**包装入口栅格**（`uiStartGateMain` · inproc 同签名）：两态三面逐格对拍 ≥8 格。
+// ★ 单一真源：底层恒为 A6 `scripts/build/start-zerg-ui.sh`（顶层 `start-zerg-ui.sh`＝A17 是另一件、待退）。
 package main
 
 import (
@@ -165,5 +168,82 @@ func TestUIStartRealScriptSafeStateVerbatim(t *testing.T) {
 	got = strings.TrimSuffix(got, progName+": UI 启动脚本退 "+strconv.Itoa(rc2)+"（原样转发，不翻译）\n")
 	if e1.String() != got {
 		t.Errorf("剥掉命令面两行后 stderr 与脚本不同（改了原件行为）：\n脚本  =%q\n命令面=%q", e1.String(), got)
+	}
+}
+
+// uisGateMainRun 走**包装入口**（inproc 同签名 `uiStartGateMain`）：给合成仓根，返回 rc / stdout / stderr。
+func uisGateMainRun(t *testing.T, root string, tail ...string) (int, string, string) {
+	t.Helper()
+	t.Setenv("ZERG_REPO", root)
+	var out, errb bytes.Buffer
+	rc := uiStartGateMain(&out, &errb, tail)
+	return rc, out.String(), errb.String()
+}
+
+// uisRunScriptDirect 直跑底层脚本（「仓外候选 ⟷ 直跑原 .sh」里的对照态）：返回 rc / stdout / stderr。
+func uisRunScriptDirect(t *testing.T, root string, tail ...string) (int, string, string) {
+	t.Helper()
+	script := filepath.Join(root, uiStartScriptRel)
+	var o, e bytes.Buffer
+	c := exec.Command("bash", append([]string{script}, tail...)...)
+	c.Dir = root
+	c.Stdin = strings.NewReader("")
+	c.Stdout, c.Stderr = &o, &e
+	rc := 0
+	if err := c.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			rc = ee.ExitCode()
+		} else {
+			t.Fatalf("脚本直跑起不来：%v", err)
+		}
+	}
+	return rc, o.String(), e.String()
+}
+
+// TestUIStartGateMainGridTwoStatesThreeFaces —— **包装入口栅格**（`uiStartGateMain` · inproc 同签名）：
+// 态1 = 仓外候选包装入口 `uiStartGateMain(&out,&errb,tail)`；态2 = 直跑原脚本 `bash <script> <tail>`。
+// 三面 = rc / stdout / stderr（stderr 剥命令面 banner ＋ 退码行 ⇒ **噪声归一**）。逐格对拍 ≥8 格（旗标面 × 退码面）。
+// 另断言包装入口与 `cmdUIStart` 三面**逐字同**（= 包装入口只转发、零新增语义）。
+func TestUIStartGateMainGridTwoStatesThreeFaces(t *testing.T) {
+	cells := []struct {
+		name string
+		tail []string
+		rc   int
+	}{
+		{"bare", nil, 0},
+		{"log-flag", []string{"--log", "/tmp/zerg-ui.log"}, 0},
+		{"no-proxy", []string{"--no-proxy"}, 1},
+		{"detach", []string{"--detach"}, 2},
+		{"unknown", []string{"--nope-not-a-flag"}, 1},
+		{"model-flag", []string{"--model", "m1"}, 0},
+		{"port-flag", []string{"--port", "8580"}, 1},
+		{"double", []string{"--log", "/tmp/a.log", "--detach"}, 2},
+	}
+	banner := progName + ": 底层 = " + uiStartScriptRel + "（**唯一真源** · 命令面只转发、不翻译）\n"
+	for _, c := range cells {
+		// stub 把 `$*`（argv 逐字）打进 stdout ⇒ 旗标面 passthrough 可观测。
+		root := uisSyntheticRepo(t, c.rc, "printf 'ARGS:%s\\n' \"$*\"\n")
+		rcS, outS, errS := uisRunScriptDirect(t, root, c.tail...)
+		rcW, outW, errW := uisGateMainRun(t, root, c.tail...)
+		rcC, outC, errC := uisRun(t, root, c.tail...)
+		if rcW != rcS || rcC != rcS {
+			t.Errorf("[%s] rc 三态不同：脚本=%d 包装=%d cmd=%d", c.name, rcS, rcW, rcC)
+		}
+		if outW != outS || outC != outS {
+			t.Errorf("[%s] stdout 三态不同：\n脚本=%q\n包装=%q\ncmd =%q", c.name, outS, outW, outC)
+		}
+		if !strings.HasPrefix(errW, banner) {
+			t.Errorf("[%s] 包装 stderr 缺 banner：%q", c.name, errW)
+		}
+		got := strings.TrimPrefix(errW, banner)
+		if rcW != 0 {
+			got = strings.TrimSuffix(got, progName+": UI 启动脚本退 "+strconv.Itoa(rcW)+"（原样转发，不翻译）\n")
+		}
+		if got != errS {
+			t.Errorf("[%s] 剥噪声后 stderr 与脚本不同：\n脚本=%q\n包装=%q", c.name, errS, got)
+		}
+		if errW != errC {
+			t.Errorf("[%s] 包装 stderr 与 cmd 不同：\n包装=%q\ncmd =%q", c.name, errW, errC)
+		}
 	}
 }

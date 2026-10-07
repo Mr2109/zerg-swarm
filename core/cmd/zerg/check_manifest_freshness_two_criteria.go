@@ -37,6 +37,13 @@
 //
 // ⇒ 自指=真（本件在被扫域内）；落仓前后他门输出 sha16 逐字相同（他门贡献 0）。
 //
+// ── 标准声明 (c)：真源退役容忍（B轨 · 2026-10-07 · 退件阻塞批次 · 类①）──────────────
+// 真源 `check-manifest-freshness.py` 退役（py 缺席 · 其 Go 半 `core/cmd/zerg/check_manifest_freshness.go`
+// 在盘）⇒ 本件视同「单一口径可得」：C1/C2 走本件移植后的 `cmfDiagnose()`、C3 改读真源 **Go 半源码**
+// （同一「两处判据分列」口径 · 真源内化）、C4 走进程内自检 ⇒ **判据照常出结论**（✗ 不 fail-closed）。
+// ★ 只在**缺省真源**上生效：显式 `--truth <路径>`（取证副本）缺件仍照旧 rc=2。
+// 与姊妹 `check-manifest-freshness-profile` 的 `mfpNeighborRetired` 同口径（同一「退役」判据）。
+//
 // ── 未覆盖面（✗ 不声称逐字对齐）──────────────────────────────────────────────
 //  1. argparse 的 `-h/--help` 帮助正文 · 未知旗标 usage 正文（本件只对齐退码 rc=2 与「不给结论」语义）。
 //  2. **默认根定位**：py 由 `__file__` 上溯 ⟷ Go 由 cwd 上溯（见「标准声明 (a)」）；对拍一律显式 `--root`。
@@ -85,6 +92,10 @@ const (
 	// 标记补上**不会被退役**的门禁自举件（`precommit-gates.sh` · 与 newfile-registry 的
 	// `gnrStepsRel` 同源选择）⇒ py 退役不改变根定位结论。自指 py 在盘时仍优先命中同一目录。
 	cmfRootMarkerRel = "scripts/gates/precommit-gates.sh"
+	// cmfTruthGoHalfRel —— 真源 `check-manifest-freshness.py` 的 **Go 半**（仓内相对路径）。
+	// 退役稳态下 C3 的**真源内化**读取面（同一「两处判据分列」口径，改读 Go 半源码；
+	// ✗ 不新写第二份判据）。见 `cmfTruthRetired`。
+	cmfTruthGoHalfRel = "core/cmd/zerg/check_manifest_freshness.go"
 )
 
 // cmfManifest —— 真源 `diagnose()` 吃的清单（四键）。
@@ -168,14 +179,25 @@ func checkManifestFreshnessTwoCriteriaGateMain(stdout, stderr io.Writer, argv []
 			truthPath = truthArg
 		}
 	}
-	truthPresent := cmfFileExists(truthPath)
+	// ★ 真源退役容忍（B轨 · 2026-10-07 · 退件阻塞批次 · 类①）：真源 `check-manifest-freshness.py`
+	// 退役（py 缺席 · 其 Go 半在盘）⇒ 视同「单一口径可得」⇒ 判据照常出结论（✗ 不得 rc=2
+	// fail-closed）。与姊妹 `check-manifest-freshness-profile` 的 mfpNeighborRetired 同口径
+	// （同一「退役」判据）。★ **只在缺省真源上生效** —— 显式 `--truth <路径>`（取证副本）缺件
+	// 仍照旧 rc=2（✗ 不拿退役当 `--truth` 的免死牌）。
+	truthRetired := truthArg == "" && cmfTruthRetired(repoRoot)
+	truthPresent := cmfFileExists(truthPath) || truthRetired
+	// C3 源级读取面：py 在盘 ⇒ 读 py；退役 ⇒ 读其 Go 半（**真源内化** · 同一「两处判据分列」口径）。
+	truthSrcPath := truthPath
+	if truthRetired {
+		truthSrcPath = cmfTruthGoHalfPath(repoRoot)
+	}
 
 	if listRules {
 		return cmfListRules(stdout, repoRoot, defaultTruth)
 	}
 	if selfTest {
 		fmt.Fprintln(stdout, "── 两条判据都要报（R-24）· 自检（正/负成对 · 合成夹具）──")
-		return cmfSelfTest(stdout, repoRoot, defaultTruth, truthPresent)
+		return cmfSelfTest(stdout, repoRoot, truthSrcPath, truthPresent)
 	}
 
 	if !truthPresent {
@@ -194,7 +216,7 @@ func checkManifestFreshnessTwoCriteriaGateMain(stdout, stderr io.Writer, argv []
 		return 1
 	}
 	verdict, hits, why := cmfJudgeLines(lines)
-	srcA, srcB, srcHits := cmfSourceLevelSplit(truthPath, truthPresent)
+	srcA, srcB, srcHits := cmfSourceLevelSplit(truthSrcPath, truthPresent)
 	truthRC, truthTail := cmfTruthSelfTest(repoRoot, truthPresent, now)
 	trc := truthRC
 	srcPresent := srcA != nil || srcB != nil
@@ -209,7 +231,7 @@ func checkManifestFreshnessTwoCriteriaGateMain(stdout, stderr io.Writer, argv []
 	}
 
 	fmt.Fprintln(stdout, "── 两条判据都要报（R-24）· 现调真源 ──")
-	fmt.Fprintf(stdout, "真源：%s（%s）\n", cmfRelpath(truthPath, repoRoot), cmfPresentText(truthPresent))
+	fmt.Fprintf(stdout, "真源：%s（%s）\n", cmfRelpath(truthSrcPath, repoRoot), cmfPresentText(truthPresent))
 	fmt.Fprintf(stdout, "合成清单喂进去：source_sha=%s · commit=%s（两条判据都该命中）\n",
 		cmfCut(cmfSynthSrcSHA, 12), cmfSynthCommit)
 	fmt.Fprintln(stdout, "")
@@ -515,7 +537,7 @@ func cmfTruthSelfTest(repoRoot string, truthPresent bool, now time.Time) (int, s
 
 // ── 自检（正/负成对 · 合成夹具）──────────────────────────────────────────────
 
-func cmfSelfTest(stdout io.Writer, repoRoot, defaultTruth string, truthPresent bool) int {
+func cmfSelfTest(stdout io.Writer, repoRoot, truthSrc string, truthPresent bool) int {
 	ok := 0
 	var bad, log []string
 	check := func(name, got, want string) {
@@ -550,9 +572,9 @@ func cmfSelfTest(stdout io.Writer, repoRoot, defaultTruth string, truthPresent b
 
 	if !truthPresent {
 		bad = append(bad, "真源不在场")
-		log = append(log, fmt.Sprintf("   ✗ 真源 %s 不在场 ⇒ 单一口径不成立", defaultTruth))
+		log = append(log, fmt.Sprintf("   ✗ 真源 %s 不在场 ⇒ 单一口径不成立", truthSrc))
 	} else {
-		_, _, srcHits := cmfSourceLevelSplit(defaultTruth, truthPresent)
+		_, _, srcHits := cmfSourceLevelSplit(truthSrc, truthPresent)
 		check("真源 · 两条判据在**不同源码行**（C3）", cmfPyStrList(srcHits), "[]")
 		rc, tail := cmfTruthSelfTest(repoRoot, truthPresent, time.Now().UTC())
 		check("真源 · 自带正负例 --self-test rc=0（C4）", cmfPyStrInt(rc), "0")
@@ -619,6 +641,22 @@ func cmfResolveRootFrom(start string) string {
 		cur = parent
 	}
 	return start
+}
+
+// cmfTruthGoHalfPath —— 真源 Go 半的绝对路径（由仓根拼出 · 单一常量 `cmfTruthGoHalfRel`）。
+func cmfTruthGoHalfPath(repoRoot string) string {
+	return filepath.Join(repoRoot, filepath.FromSlash(cmfTruthGoHalfRel))
+}
+
+// cmfTruthRetired —— 真源 `check-manifest-freshness.py` 是否**已退役**（B轨 · 2026-10-07 · 类①）：
+// 真源 py 缺席 **且** 其 Go 半（`core/cmd/zerg/check_manifest_freshness.go`）在盘。
+// 退役态 ⇒ 本件视同「单一口径可得」（邻件 diagnose() 已由本包 Go 半真身重建 · C3 改读其 Go 半源码）
+// ⇒ 判据照常出结论（✗ 不 fail-closed）；缺件且无 Go 半（真消失）⇒ 未退役（照旧 fail-closed）。
+// 与 check-manifest-freshness-profile 的 mfpNeighborRetired / check-public-ci-green 的 cicgProfileRetired
+// 同口径（同一「退役」判据，✗ 不新造第二套）。
+func cmfTruthRetired(repoRoot string) bool {
+	py := filepath.Join(repoRoot, "scripts", "gates", "check-manifest-freshness.py")
+	return !cmfFileExists(py) && cmfFileExists(cmfTruthGoHalfPath(repoRoot))
 }
 
 func cmfPresentText(present bool) string {

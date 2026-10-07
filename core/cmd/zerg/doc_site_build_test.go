@@ -13,6 +13,8 @@
 // 另有一条**真件两态**（`docs/site/export-and-build.sh` 现读在位才跑，否则 Skip）：`--help`（rc=0）
 // 与未知参数（rc=2）各跑「脚本直跑 ⟷ 走 `cmdDocSiteBuild`」，断言 stdout/rc 逐字同、stderr 只多命令面
 // 那行**转发宣言**（banner 固定前缀 + 尾部「退 N」行 ⇒ 剥掉后与脚本 stderr 逐字同 ⇒ 证明「不改原件行为」）。
+//
+// 再加一条**包装入口栅格**（`docSiteBuildGateMain` · inproc 同签名）：两态三面逐格对拍 ≥8 格。
 package main
 
 import (
@@ -149,6 +151,83 @@ func TestDocSiteBuildRealScriptTwoStatesVerbatim(t *testing.T) {
 		got = strings.TrimSuffix(got, progName+": 文档站导出+构建脚本退 "+strconv.Itoa(rc2)+"（原样转发，不翻译）\n")
 		if e1.String() != got {
 			t.Errorf("[%s] 剥掉命令面宣言后 stderr 与脚本不同（改了原件行为）：\n脚本  =%q\n命令面=%q", tc.name, e1.String(), got)
+		}
+	}
+}
+
+// dsbGateMainRun 走**包装入口**（inproc 同签名 `docSiteBuildGateMain`）：给合成仓根，返回 rc / stdout / stderr。
+func dsbGateMainRun(t *testing.T, root string, tail ...string) (int, string, string) {
+	t.Helper()
+	t.Setenv("ZERG_REPO", root)
+	var out, errb bytes.Buffer
+	rc := docSiteBuildGateMain(&out, &errb, tail)
+	return rc, out.String(), errb.String()
+}
+
+// dsbRunScriptDirect 直跑底层脚本（「仓外候选 ⟷ 直跑原 .sh」里的对照态）：返回 rc / stdout / stderr。
+func dsbRunScriptDirect(t *testing.T, root string, tail ...string) (int, string, string) {
+	t.Helper()
+	script := filepath.Join(root, docSiteBuildScriptRel)
+	var o, e bytes.Buffer
+	c := exec.Command("bash", append([]string{script}, tail...)...)
+	c.Dir = root
+	c.Stdin = strings.NewReader("")
+	c.Stdout, c.Stderr = &o, &e
+	rc := 0
+	if err := c.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			rc = ee.ExitCode()
+		} else {
+			t.Fatalf("脚本直跑起不来：%v", err)
+		}
+	}
+	return rc, o.String(), e.String()
+}
+
+// TestDocSiteBuildGateMainGridTwoStatesThreeFaces —— **包装入口栅格**（`docSiteBuildGateMain` · inproc 同签名）：
+// 态1 = 仓外候选包装入口 `docSiteBuildGateMain(&out,&errb,tail)`；态2 = 直跑原脚本 `bash <script> <tail>`。
+// 三面 = rc / stdout / stderr（stderr 剥命令面 banner ＋ 退码行 ⇒ **噪声归一**）。逐格对拍 ≥8 格（旗标面 × 退码面）。
+// 另断言包装入口与 `cmdDocSiteBuild` 三面**逐字同**（= 包装入口只转发、零新增语义）。
+func TestDocSiteBuildGateMainGridTwoStatesThreeFaces(t *testing.T) {
+	cells := []struct {
+		name string
+		tail []string
+		rc   int
+	}{
+		{"help", []string{"--help"}, 0},
+		{"unknown", []string{"--nope-not-a-flag"}, 2},
+		{"strict", []string{"--strict"}, 1},
+		{"serve", []string{"--serve"}, 0},
+		{"strict-serve", []string{"--strict", "--serve"}, 2},
+		{"out-dir", []string{"--out", "/tmp/site"}, 0},
+		{"strict-out", []string{"--strict", "--out", "/tmp/site"}, 1},
+		{"two-unknown", []string{"--aaa", "--bbb"}, 2},
+	}
+	banner := progName + ": 底层 = " + docSiteBuildScriptRel + "（**唯一真源** · 命令面只转发、不翻译）\n"
+	for _, c := range cells {
+		// stub 把 `$*`（argv 逐字）打进 stdout ⇒ 旗标面 passthrough 可观测。
+		root := dsbSyntheticRepo(t, c.rc, "printf 'ARGS:%s\\n' \"$*\"\n")
+		rcS, outS, errS := dsbRunScriptDirect(t, root, c.tail...)
+		rcW, outW, errW := dsbGateMainRun(t, root, c.tail...)
+		rcC, outC, errC := dsbRun(t, root, c.tail...)
+		if rcW != rcS || rcC != rcS {
+			t.Errorf("[%s] rc 三态不同：脚本=%d 包装=%d cmd=%d", c.name, rcS, rcW, rcC)
+		}
+		if outW != outS || outC != outS {
+			t.Errorf("[%s] stdout 三态不同：\n脚本=%q\n包装=%q\ncmd =%q", c.name, outS, outW, outC)
+		}
+		if !strings.HasPrefix(errW, banner) {
+			t.Errorf("[%s] 包装 stderr 缺 banner：%q", c.name, errW)
+		}
+		got := strings.TrimPrefix(errW, banner)
+		if rcW != 0 {
+			got = strings.TrimSuffix(got, progName+": 文档站导出+构建脚本退 "+strconv.Itoa(rcW)+"（原样转发，不翻译）\n")
+		}
+		if got != errS {
+			t.Errorf("[%s] 剥噪声后 stderr 与脚本不同：\n脚本=%q\n包装=%q", c.name, errS, got)
+		}
+		if errW != errC {
+			t.Errorf("[%s] 包装 stderr 与 cmd 不同：\n包装=%q\ncmd =%q", c.name, errW, errC)
 		}
 	}
 }

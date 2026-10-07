@@ -810,6 +810,136 @@
       "object": "scripts/gates/check-placeholder-residue.py",
       "state": "已登记退场（2026-10-07）",
       "evidence": "两态三面逐字同（./bin/zerg gate check check-placeholder-residue ⟷ 规范解释器 3.14.7 scripts/gates/check-placeholder-residue.py：rc 0/0 · stdout 907B sha16 b9383c8964e0a06c · stderr 0B 逐字同）· 阻塞面解：slice-probes 3 枚探针落点已改指 Go 半（slice-probes.json → ./bin/zerg gate check check-placeholder-residue）"
+    },
+    {
+      "object": "scripts/gates/check-cli-contract.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0/0 · stdout 1957B sha16 47ae029e2240b23a · stderr 0B（./bin/zerg gate check check-cli-contract ⟷ /opt/homebrew/bin/python3.14 scripts/gates/check-cli-contract.py）· 阻塞面解：baseline_ratchet.go:94 补 goMain 回落 cliContractGateMain"
+    },
+    {
+      "object": "scripts/gates/check-glossary.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同 rc=0/0 · stdout 294B sha16 2755a6f92f9c91fb · stderr 0B（./bin/zerg gate check check-glossary ⟷ /opt/homebrew/bin/python3.14 scripts/gates/check-glossary.py）· 阻塞面解：check_zh_en.go chzeKnownFP 6 条改指 Go 半 core/cmd/zerg/check_glossary.go"
+    },
+    {
+      "object": "scripts/gates/check-bypass-idioms.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-bypass-idioms ⟷ 规范解释器 3.14.7 scripts/gates/check-bypass-idioms.py：rc 1/1 · stdout 88040B sha16 e03ee479829226de · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-delegation-selfreport.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-delegation-selfreport ⟷ 规范解释器 3.14.7 scripts/gates/check-delegation-selfreport.py：rc 2/2 · stdout 77B sha16 3705e55e45b0c61f · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-empty-domain-guards.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-empty-domain-guards ⟷ 规范解释器 3.14.7 scripts/gates/check-empty-domain-guards.py：rc 0/0 · stdout 1983B sha16 a77889bb7e194c95 · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-exec-two-condition.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-exec-two-condition ⟷ 规范解释器 3.14.7 scripts/gates/check-exec-two-condition.py：rc 1/1 · stdout 7090B sha16 b7109aab799ed941 · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-gap-state-vs-artifact.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-gap-state-vs-artifact ⟷ 规范解释器 3.14.7 scripts/gates/check-gap-state-vs-artifact.py：rc 1/1 · stdout 19621B sha16 07e469a6c97e85d4 · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-loose-exit-registry.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-loose-exit-registry ⟷ 规范解释器 3.14.7 scripts/gates/check-loose-exit-registry.py：rc 0/0 · stdout 345B sha16 d81ac62bda2d6cf8 · stderr 0B（py 侧 161B 仅 Python SyntaxWarning 解释器噪声，已归一））"
+    },
+    {
+      "object": "scripts/gates/check-model-size-anchor.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-model-size-anchor ⟷ 规范解释器 3.14.7 scripts/gates/check-model-size-anchor.py：rc 0/0 · stdout 955B sha16 bd52f84f7c63e756 · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-public-marks-tracked-parity.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-public-marks-tracked-parity ⟷ 规范解释器 3.14.7 scripts/gates/check-public-marks-tracked-parity.py：rc 1/1 · stdout 135B sha16 382ae97352f22a5d · stderr 179B）"
+    },
+    {
+      "object": "scripts/gates/check-registry-key-unique.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-registry-key-unique ⟷ 规范解释器 3.14.7 scripts/gates/check-registry-key-unique.py：rc 0/0 · stdout 1520B sha16 aefbc7ac65c809f8 · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-repo-symlink-farm.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-repo-symlink-farm ⟷ 规范解释器 3.14.7 scripts/gates/check-repo-symlink-farm.py：rc 1/1 · stdout 22123B sha16 eb8a81389ac6e30d · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-selftest-knobs.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-selftest-knobs ⟷ 规范解释器 3.14.7 scripts/gates/check-selftest-knobs.py：rc 1/1 · stdout 1197B sha16 82fb98b95df4f4e0 · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-stale-frozen.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-stale-frozen ⟷ 规范解释器 3.14.7 scripts/gates/check-stale-frozen.py：rc 0/0 · stdout 5236B sha16 3fc263fb99e45dac · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-verify-cmd-real.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "两态三面逐字同（./bin/zerg gate check check-verify-cmd-real ⟷ 规范解释器 3.14.7 scripts/gates/check-verify-cmd-real.py：rc 0/0 · stdout 3860B sha16 a3ae8e874deb6d2e · stderr 453B/449B（随机临时目录后缀噪声，已归一））"
+    },
+    {
+      "object": "scripts/gates/check_version.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "（./bin/zerg gate check check_version ⟷ 规范解释器 3.14.7 scripts/gates/check_version.py：rc 0/0 · stdout 169B sha16 c93593800f700760 · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-gotoolchain.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "（./bin/zerg gate check check-gotoolchain ⟷ 规范解释器 3.14.7 scripts/gates/check-gotoolchain.py：rc 0/0 · stdout 243B sha16 07f7a1ad4f046f98 · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-shell-unicode-vars.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "（./bin/zerg gate check check-shell-unicode-vars ⟷ 规范解释器 3.14.7 scripts/gates/check-shell-unicode-vars.py：rc 2/2 · stdout 0B · stderr 338B sha16 aeb7655a5ae65b8f）"
+    },
+    {
+      "object": "scripts/gates/check-compat-manifest.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "（./bin/zerg gate check check-compat-manifest ⟷ 规范解释器 3.14.7 scripts/gates/check-compat-manifest.py：rc 0/0 · stdout 1372B sha16 8e3c22e89cf0bec4 · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check_docs.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "（./bin/zerg gate check check_docs ⟷ 规范解释器 3.14.7 scripts/gates/check_docs.py：rc 0/0 · stdout 300B sha16 a8a7fc1ef5641a96 · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-manifest-freshness-two-criteria.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "（./bin/zerg gate check check-manifest-freshness-two-criteria ⟷ 规范解释器 3.14.7 scripts/gates/check-manifest-freshness-two-criteria.py：rc 0/0 · stdout 1082B sha16 9ce3d34d02357bf0 · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-public-ci-green.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "（./bin/zerg gate check check-public-ci-green ⟷ 规范解释器 3.14.7 scripts/gates/check-public-ci-green.py：rc 0/0 · stdout 2162B sha16 6ca7f10d861998d4 · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-manifest-freshness-profile.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "（./bin/zerg gate check check-manifest-freshness-profile ⟷ 规范解释器 3.14.7 scripts/gates/check-manifest-freshness-profile.py：rc 2/2 · stdout 116B sha16 110a6fad4e159c9a · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-manifest-freshness.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "（./bin/zerg gate check check-manifest-freshness ⟷ 规范解释器 3.14.7 scripts/gates/check-manifest-freshness.py：rc 64/64 · stdout 97B sha16 2f8c6b0236868603 · stderr 0B）"
+    },
+    {
+      "object": "scripts/gates/check-write-face-gate.py",
+      "state": "已登记退场（2026-10-07）",
+      "evidence": "（./bin/zerg gate check check-write-face-gate ⟷ 规范解释器 3.14.7 scripts/gates/check-write-face-gate.py：rc 1/1 · stdout 1747B sha16 e30344e844e98a26 · stderr 0B）"
+    },
+    {
+      "object": "core/internal/agent/searx_search.py",
+      "state": "已登记退场（2026-10-08）",
+      "evidence": "撤桥批 D 组：老桥 searx_search.py 退役（替身 core/internal/agent/searx_client.go SearxClient 已默认启用·net_tools.go 恒走 searxQueryService；原例外名册『唯一桥』理由已作废·决-05）。旁引 zerg code find 'searx_search'=7 命中/5 件（Go 侧 3 处均注释·无活引用）；退役容忍：Go 侧无读取本件的活引用；lang-freeze 快照同批 --emit 随动。"
     }
  ],
  "retire_exceptions": [
@@ -923,13 +1053,6 @@
    "category": "门跑基建·结构性例外（真跑 git diffstat）",
    "reason": "真跑 `git diffstat` 取数",
    "keep_cost": "随 git 面同步",
-   "review_date": "2026-10-07"
-  },
-  {
-   "object": "core/internal/agent/searx_search.py",
-   "category": "外部依赖/联网",
-   "reason": "Agent web_search 唯一桥（SearXNG）；坏则联网搜索全断",
-   "keep_cost": "随 SearXNG 接口同步",
    "review_date": "2026-10-07"
   },
   {

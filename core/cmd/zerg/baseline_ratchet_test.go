@@ -340,3 +340,25 @@ func TestBrMeasureValueRetiredGoFallback(t *testing.T) {
 		t.Fatalf("负控：无 Go 半该判不了（fail-closed 保留）")
 	}
 }
+
+// TestBrConditionsRetiredGoFallbackTabled —— ★ 退役态回落面的登记牙：`cli-contract.blanks` 格
+// （原现测件 check-cli-contract.py 在退场批）必须带 goMain（其 Go 半 cliContractGateMain）⇒ 退役态
+// 照常出结论（✗ 不 fail-closed）。哑化：抽掉该格 goMain ⇒ 本用例 FAIL（带行号）。
+func TestBrConditionsRetiredGoFallbackTabled(t *testing.T) {
+	seen := false
+	for _, c := range brConditions {
+		if c.name != "cli-contract.blanks" {
+			continue
+		}
+		seen = true
+		if c.goMain == nil {
+			t.Fatalf("`cli-contract.blanks` 格缺 goMain ⇒ check-cli-contract.py 退场后该格 fail-closed")
+		}
+		if len(c.measure) < 2 || c.measure[0] != "python3" || !strings.HasSuffix(c.measure[1], "check-cli-contract.py") {
+			t.Fatalf("`cli-contract.blanks` 格现测命令形态变了：%v（回落前置是 [python3, <py>]）", c.measure)
+		}
+	}
+	if !seen {
+		t.Fatal("`cli-contract.blanks` 格不见了（表被改名/删）")
+	}
+}
