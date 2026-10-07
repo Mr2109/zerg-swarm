@@ -11,6 +11,9 @@
      步集合，「`D==N` ＋ 命名集合逐字相等」缺一即红 —— 治「门84 只判件面、判不出步面漂移」那个缝
      （见设计稿 §七-(b) / §六负控①）。★ 本格**复甲① `affected-steps.py` 的 C0 唯一实现**
      （`c0_step_face()` · 由 importlib 现载邻件取用），✗ **不另写第二份「逐字相等」**（违唯一真源即红）。
+     ★ 2026-10-07 姊妹依赖退役容忍（`affected-steps.py` 当日退役）：姊妹 py 在盘 ⇒ 照旧加载；
+     退场 ∧ 其 Go 半 `core/cmd/zerg/affected_steps.go` 在盘 ⇒ 用本件内化副本（逐字同构 · 同族
+     `check-write-face-gate.py` 口径）；两半皆缺 ⇒ fail-closed（rc=2 不给结论）。
 
 声明表（本单新件 `scripts/gates/affected-map.json`）**由本件 `--emit` 现读生成**，
 来源三处（逐条现读 · ✗ 不手敲）：
@@ -409,24 +412,56 @@ def check_map(mp, files_on_disk):
 
 
 # ── 步面格（拍乙 · D9 步面接线）：**复甲① C0 唯一实现** ──────────────────────
+HERE = os.path.dirname(os.path.abspath(__file__))
+# 姊妹件真身 ＋ 其 Go 半（退役容忍两半判据 · 同族 `check-write-face-gate.py` 口径）。
+AS_PY = os.path.join(HERE, 'affected-steps.py')
+AS_GO = os.path.join(REPO_DEFAULT, 'core', 'cmd', 'zerg', 'affected_steps.go')
+
+
+def _as_c0_step_face(table_names, face_names):
+    """★ 内化副本（退役态回落面 · **逐字同构**自 `affected-steps.py::c0_step_face`）。
+    2026-10-07 姊妹依赖退役容忍（`affected-steps.py` 当日退役 · M2 甲组）：本件原 importlib 期**硬载**邻件，
+    它退场后取不到 ⇒ 步面格 ⑦⑧⑨⑩ 转红（自检 rc=2 假红）。现照同族口径：姊妹 py 在盘 ⇒ 照旧加载；
+    退场 ∧ 其 Go 半 `core/cmd/zerg/affected_steps.go` 在盘 ⇒ 用本内化副本（✗ 不另写第二份判定口径）；
+    两半皆缺 ⇒ fail-closed（rc=2 不给结论）。"""
+    N, D = len(table_names), len(face_names)
+    tset, dset = set(table_names), set(face_names)
+    if D != N:
+        return False, ("C0 未过：声明命名 %d 步 ≠ 步骤表 %d 步 ⇒ **有步未声明 = 静默漏选**" % (D, N))
+    if dset != tset:
+        miss = sorted(tset - dset)
+        ghost = sorted(dset - tset)
+        return False, ("C0 未过：命名集合 ≠ 表集合（漏=%s · 幻影=%s）"
+                       % (miss[:5], ghost[:5]))
+    return True, ("C0 双向计数过：D==N==%d 且命名集合逐字相等（**没少声明**）" % N)
+
+
+class _AffectedStepsInternalized:
+    """退役态内化副本（只含本件真用的那一面：`c0_step_face`）。"""
+    c0_step_face = staticmethod(_as_c0_step_face)
+
+
 def _load_affected_steps():
-    """importlib 现载**邻件** `scripts/gates/affected-steps.py`（C0 唯一真源 · ✗ 不另写第二份「逐字相等」）。
-    取不到 ⇒ None（调用方按「判不了」rc=2 fail-closed）。"""
-    import importlib.util
-    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'affected-steps.py')
-    if not os.path.isfile(p):
-        return None
-    spec = importlib.util.spec_from_file_location('_affected_steps_c0', p)
-    if spec is None or spec.loader is None:
-        return None
-    mod = importlib.util.module_from_spec(spec)
-    prev = sys.dont_write_bytecode
-    sys.dont_write_bytecode = True          # ✗ 不在仓内 scripts/gates 落 .pyc 副产物
-    try:
-        spec.loader.exec_module(mod)
-    finally:
-        sys.dont_write_bytecode = prev
-    return mod
+    """C0 唯一真源（同族 `check-write-face-gate.py::_load_write_scanner` 口径 · 退役容忍）：
+    姊妹 py 在盘 ⇒ 照旧 importlib 现载它（单一真源 · ✗ 不另写第二份「逐字相等」）；
+    退场 ∧ 其 Go 半在盘 ⇒ 用内化副本 `_AffectedStepsInternalized`；
+    两半皆缺 ⇒ None（调用方按「判不了」rc=2 fail-closed · ✗ 不静默当空集）。"""
+    if os.path.isfile(AS_PY):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('_affected_steps_c0', AS_PY)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        prev = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True          # ✗ 不在仓内 scripts/gates 落 .pyc 副产物
+        try:
+            spec.loader.exec_module(mod)
+        finally:
+            sys.dont_write_bytecode = prev
+        return mod
+    if os.path.isfile(AS_GO):
+        return _AffectedStepsInternalized
+    return None
 
 
 def declared_face_names(mp):
@@ -448,7 +483,8 @@ def check_step_face(table_names, mp):
     2 判不了（C0 真源取不到 ⇒ fail-closed）。"""
     mod = _load_affected_steps()
     if mod is None:
-        return 2, 'C0 唯一真源取不到（邻件 affected-steps.py 不在）⇒ 判不了'
+        return 2, ('C0 唯一真源取不到（邻件 affected-steps.py 与其 Go 半 '
+                   'core/cmd/zerg/affected_steps.go 皆不在盘）⇒ 判不了')
     ok, detail = mod.c0_step_face(list(table_names), declared_face_names(mp))
     return (0, detail) if ok else (3, detail)
 

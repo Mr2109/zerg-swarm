@@ -56,7 +56,6 @@ func mkcpMakeFx(t *testing.T, tsv, globs string, files, excludes, dropExact []st
 		mkcpWrite(t, root, f, "#!/usr/bin/env python3\nprint('fixture')\n")
 	}
 	if _, err := exec.LookPath("git"); err == nil {
-		_ = exec.Command("git", "init", "-q").Run()
 		c := exec.Command("git", "init", "-q")
 		c.Dir = root
 		_ = c.Run()

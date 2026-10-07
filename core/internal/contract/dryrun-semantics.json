@@ -708,20 +708,6 @@
    "备注": "登记依据 = 门76 面②（干跑登记）MISSING_ENTRY 现读（2026-10-03）。★ 该面适用性曾被网络卵判『不适用』，由门76 现读推翻。"
   },
   {
-   "file": "scripts/gates/check-gap-state-vs-artifact.py",
-   "类": "判据面：**字样引用**（不是干跑语义站点 —— 全件 `dry.?run|DryRun` 唯一命中 = 销案两态取证串里的一条 `zerg dev edit … --dry-run --json result` 实测样例（第 432 行 · 作被检数据）；本件本身**没有** `--dry-run` 档，档面只有 `--source` / `--cutoff` / `--expect-sha16` / `--expect-lines` / `--json` / `--list-rules` / `--self-test`）",
-   "语义": "dryrun.v1",
-   "零副作用判据": "本件**纯只读**：默认档只读真源 jsonl（open(path,'rb')）＋ 只 os.Stat/os.listdir 判被点名件「在盘 / 已挂门」（读 precommit-gates.sh 亦只 open(...,'r')），**不写任何落地件**（--json/--source/--cutoff/--list-rules 四档都不写盘）；唯一写动作局限于 --self-test 在 tempfile.mkdtemp(prefix='gap-r5-selftest-') 的**仓外夹具**里造合成树（跑完即删），真目标档一个字节都不写。不落盘 · 不删 · 不推 · 不调服务 · 不改 git 状态。",
-   "备注": "登记依据 = 门⑩ `R1 未登记件`（现跑命中即红）：命中是**引文**（销案证据正文里那一条 `dev edit --dry-run` 实测样例命令），不是第五套语义 —— 同门先例 `check-help-shape.py` / `check-judge-registry.py` / `check-public-face-commands.py` 的「消费者 / 字样引用」处置。复核：`zerg gate run --step '门⑩ 干跑：dry-run 一套语义（站点逐件登记 + 零副作用判据）（阻断）' --only-step` ⇒ rc=0。"
-  },
-  {
-   "file": "scripts/gates/check-cli-contract.py",
-   "类": "真 dry-run 站点：矩阵导出 `emit_matrix(root, out_path, dry_run=)` —— 干跑只出计划、不落盘",
-   "语义": "dryrun.v1",
-   "零副作用判据": "dry_run=True ⇒ 只把「计划写 <dst>」打印到 stdout、一个字节不写；dry_run=False 才**增量合并**落盘。全程不改 git 状态、不 exec 被测命令。",
-   "备注": "门⑩ R1 现读点名（2026-10-04 wave23 尾批补登记）。"
-  },
-  {
    "file": "core/cmd/zerg/family_impact_matrix.go",
    "类": "引用件（消费者）：反查「某个 argv token」（如 `--dry-run`）命中的矩阵格 id —— 只把 `--dry-run` 当**被检 token**，非语义站点",
    "语义": "dryrun.v1",
@@ -767,13 +753,6 @@
    "语义": "dryrun.v1",
    "零副作用判据": "本件是**消费者 / 对拍件**：现跑把 `gap regress --dry-run [--json]` 当**数据**调用，判「干跑只列命令 ⇒ 零副作用」（跑前跑后真源 sha256 逐字比）。它自己不写真件：用例跑在 `t.TempDir()` 的夹具账上；不落盘 / 不删 / 不推 / 不造目录 / 不改 git 状态。",
    "备注": "登记依据 = 门⑩ `R1`（现跑命中即红）。同 `cli_gap_state_test.go` / `cli_route_test.go` 的「判据件 / 消费者」处置 —— 它不声明语义，只是**判**那一档。"
-  },
-  {
-   "file": "scripts/gates/check-write-face-gate.py",
-   "类": "只读判据门（命令面写面「声明↔实现」两面判 · 本件 `--dry-run` 只作 `--self-test` 夹具串里的被检 usage 字面，不是第五套语义）",
-   "语义": "dryrun.v1",
-   "零副作用判据": "全程只读：真目标档只 `open()` 现读 `core/cmd/zerg/*.go` 与 `core/internal/contract/authority-map.json`，不写盘 / 不改状态 / 不 exec 被测命令；唯一写动作局限于 `--self-test` 在 `tempfile.TemporaryDirectory()` 的**仓外夹具**里造合成 main.go 与登记表（跑完即删），真目标档一个字节都不写。",
-   "备注": "登记依据 = 门⑩ `R1 未登记件`（本件 `--self-test` 夹具串里的 usage 字面「zerg help export [--out <目录>] [--dry-run]」含 `--dry-run` ⇒ 进扫描面）。它是同一套语义的被检字面，不另立语义 —— 同门先例 `scripts/gates/check-newcmd-followup.py` / `check-flag-registry-parity.py` 的「字样引用 / 判据面」处置。"
   },
   {
    "file": "core/cmd/zerg/family_script_retire.go",
@@ -843,6 +822,14 @@
    "语义": "dryrun.v1",
    "零副作用判据": "本件是**透传薄壳**（`os/exec` 起底层脚本、退码原样转出 0/2/3/4/5）：不写件 / 不建目录 / 不删 / 不推 / 不改 git 状态；干跑语义真身在底层脚本那边。唯一命令面自退码 = 解析不到仓根 / 脚本不在 ⇒ `8`（不给结论），**不拿脚本的 2 冒充**。",
    "备注": "登记依据 = 门⑩ `R1 未登记件`（A13 新落壳 · 件头注释带 `--dry-run` 字面 ⇒ 进扫描面）。★ 本件**未接线**（`main.go` 未登记 `deploy launch`）—— 登记只为 R1/R2，不声明语义；同 `build_wall.go` / `family_isolate_ro.go` 的透传族先例。"
+  }
+,
+  {
+   "file": "core/cmd/zerg/deploy_launch_test.go",
+   "类": "测试件（对拍）：**字样引用**（不是干跑语义站点 —— 全件唯一命中＝包装入口栅格用例表里的旗标值；本件只把该参数原样转发给底层 deploy/scripts/deploy-launch.sh 对拍 rc/stdout/stderr，自身不解析不实现干跑语义）",
+   "语义": "dryrun.v1",
+   "零副作用判据": "进程内直调 cmdDeployLaunch / deployLaunchGateMain 两态对拍：夹具落 t.TempDir()（合成仓根 + stub 脚本），命令面只起底层脚本、退码原样转出；不写仓内件 / 不 ssh / 不触 ~/.zerg/deploy_launch/（--dry-run 格零副作用）",
+   "备注": "登记依据 = 门⑩ R1 未登记件（A13 新落测试件·用例表带 --dry-run 字面 ⇒ 进扫描面）；同 deploy_launch.go 透传族先例：登记只为 R1/R2，不声明语义。"
   }
 ,
   {

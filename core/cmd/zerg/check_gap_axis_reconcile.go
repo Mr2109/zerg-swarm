@@ -130,6 +130,12 @@ var gapAxisRecExemptExistence = []gapAxisRecExemptPair{
 	// 段2 续退批（2026-10-07 · 本单）：check-service-declaration.py 已登记退场（`zerg script retire`）⇒ 该仍缺行（GAP-20260927-101 · 门⑧/门㉒ 自检夹具族）unit 失指，入存量豁免.
 	{gid: "GAP-20260927-101", unit: "scripts/gates/check-service-declaration.py"},
 	// 段2 续退批（2026-10-07 · 本单）：check-anchor-uniqueness.py 已登记退场（Go 半 core/cmd/zerg/check_anchor_uniqueness.go 在盘）⇒ 该件无仍缺 unit 行，登记留痕.
+	// 乙组退役批（2026-10-07 · 本单）：check-stale-frozen.py 已登记退场（`zerg script retire` · Go 半 core/cmd/zerg/check_stale_frozen.go 在盘）⇒ 该仍缺行 unit 失指，入存量豁免。
+	{gid: "GAP-20261005-64", unit: "scripts/gates/check-stale-frozen.py"},
+	// 乙组退役批（2026-10-07 · 本单）：check-registry-key-unique.py 已登记退场（`zerg script retire` · Go 半 core/cmd/zerg/check_registry_key_unique.go 在盘）⇒ 该仍缺行 unit 失指，入存量豁免。
+	{gid: "GAP-20261007-09", unit: "scripts/gates/check-registry-key-unique.py"},
+	// 公开面退 10 件批（2026-10-07 · 本单）：check-write-face-gate.py 已登记退场（`zerg script retire` · Go 半 core/cmd/zerg/check_write_face_gate.go 在盘）⇒ 该仍缺行（GAP-20261007-08）unit 失指，入存量豁免.
+	{gid: "GAP-20261007-08", unit: "scripts/gates/check-write-face-gate.py"},
 }
 
 // gapAxisRecWUClosed —— 无件桶名闭集 = 裸 `无件` + `无件(<面>)`（面 ∈ 面闭集）

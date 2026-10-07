@@ -1230,7 +1230,7 @@ func cecSelfTestTo(w io.Writer) int {
 	cases := []cecCase{
 		{"正控① 好件：主表唯一 · 门禁行逐字对齐 · 四处都有标记 · 回滚说法为 1+ROLLED_BACK ⇒ rc=0", 0, cecOver{}},
 		{"负控② 主表里数字重复（0 出现两次）⇒ rc=1", 1, cecOver{table: ss(dupTable)}},
-		{"负控③ 门禁头注释第 35 行被改一个词 ⇒ rc=1", 1, cecOver{gateFileLine: ss("退出码：0 全绿 · 1 有失败项 · 2 不给结论")}},
+		{"负控③ 门禁头注释退码行被改一个词 ⇒ rc=1", 1, cecOver{gateFileLine: ss("退出码：0 全绿 · 1 有失败项 · 2 不给结论")}},
 		{"负控④ 某处声明面摘掉标记行 ⇒ rc=1", 1, cecOver{decl: ss(noMarkerDecl)}},
 		{"负控⑤ 把「回滚成功」又写成 2 ⇒ rc=1", 1, cecOver{swap: ss(badSwap)}},
 		{"负控⑥ 声明面用了未登记的退码（swap 用了 7）⇒ rc=1", 1, cecOver{swap: ss(cecGoodSwap + "exit 7\n")}},

@@ -42,11 +42,26 @@ jobs:
       commit: ${{ steps.v.outputs.commit }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: 构建命令面 CLI（Go 判据入口 · 公开面判据件走 Go 半）
+        working-directory: core
+        run: mkdir -p ../bin && go build -o ../bin/zerg ./cmd/zerg
       - name: 版本真源一致 + 标签匹配
         id: v
         run: |
           set -euo pipefail
-          python3 scripts/gates/check_version.py
+          # 公开面判据件须能退 py ⇒ 优先 Go 半（`zerg gate check <键>`）；退回 py 半；两半皆缺 ⇒ 拒通过。
+          if [ -x ./bin/zerg ]; then
+            ./bin/zerg gate check check_version
+          elif [ -f scripts/gates/check_version.py ]; then
+            python3 scripts/gates/check_version.py
+          else
+            echo "❌ 判据件 check_version 两半皆缺（py 与 Go 半）⇒ 拒通过（不给结论）" >&2
+            exit 1
+          fi
           V=$(grep -m1 '^const Version = ' core/internal/version/version.go | sed 's/.*"\(.*\)".*/\1/')
           C=$(git rev-parse --short HEAD)
           echo "version=$V" >> "$GITHUB_OUTPUT"
@@ -169,6 +184,13 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4（取 scripts/evals/make-manifest.py · 与本地共用）
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+      - name: 构建命令面 CLI（Go 判据入口 · 公开面判据件走 Go 半）
+        working-directory: core
+        run: mkdir -p ../bin && go build -o ../bin/zerg ./cmd/zerg
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           path: dist
@@ -187,11 +209,23 @@ jobs:
       #   但**发布链上这一步必须红**：公开面「用 A 打包、声称是 B」是**不可逆**的（源件逐字）。
       #   两条判据**各自成句**（`source_sha` 不等 ／ `commit ≠ source_sha`），**合并成一句即红** ⇒
       #   现调门㉕（真源同一份代码），再走公开制品档 `--profile public`（rc=1 ⇒ 本 job 失败 ⇒ **不发布**）。
-      - name: 公开制品档（阻断）：source_sha 必须等于发布提交 · 两条判据各自成句（R-23 / R-24）
+      - name: 公开制品档（阻断）：source_sha 必须等于发布提交 · 两条判据各自成句（R-23 / R-24 · Go 半优先）
         run: |
           set -euo pipefail
-          python3 scripts/gates/check-manifest-freshness-two-criteria.py
-          python3 scripts/gates/check-manifest-freshness-profile.py \
+          # 公开面判据件须能退 py ⇒ 优先 Go 半（`zerg gate check <键>`）；退回 py 半；两半皆缺 ⇒ 拒发布（fail-closed）。
+          run_judge() {   # $1 = 判据键（＝ py 件名去扩展名）；其余 = 子件参数
+            local key="$1"; shift
+            if [ -x ./bin/zerg ]; then
+              ./bin/zerg gate check "$key" "$@"
+            elif [ -f "scripts/gates/${key}.py" ]; then
+              python3 "scripts/gates/${key}.py" "$@"
+            else
+              echo "❌ 判据件 ${key} 两半皆缺（py 与 Go 半）⇒ 拒发布（不给结论）" >&2
+              return 1
+            fi
+          }
+          run_judge check-manifest-freshness-two-criteria
+          run_judge check-manifest-freshness-profile \
             --profile public --manifest dist/manifest.json --release-head "$GITHUB_SHA"
       - name: 发布到 Releases
         env:

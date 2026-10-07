@@ -83,3 +83,18 @@ func cmdDeployLaunch(inv *invocation, stdout, stderr io.Writer) int {
 	}
 	return exitOK
 }
+
+// deployLaunchGateMain —— `cmdDeployLaunch` 的 **inproc 同签名包装入口**（与 `gateCheckGoEntry` 表值
+// 同签名：`func(stdout, stderr io.Writer, argv []string) int`）。
+//
+// ★ **仅转发**：把 argv 原样当作 `zerg deploy launch` 之后的实参，转交 `cmdDeployLaunch`
+// （唯一实现仍是 `cmdDeployLaunch` ＋ 底层脚本 `deploy/scripts/deploy-launch.sh` —— 本件 ✗ 不重写
+// 任何一段、✗ 不改退码口径、✗ 不新增机器面；两态三面与 `cmdDeployLaunch` 逐字同）。
+// ★ M2 纪律：本入口**暂不接线**（✗ 未在 `core/cmd/zerg/gate_inproc_table.go` 登记键 —— 表键另路一并接）。
+func deployLaunchGateMain(stdout, stderr io.Writer, argv []string) int {
+	inv := &invocation{
+		path: []string{"deploy", "launch"},
+		orig: append([]string{"deploy", "launch"}, argv...),
+	}
+	return cmdDeployLaunch(inv, stdout, stderr)
+}

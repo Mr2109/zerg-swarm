@@ -14,6 +14,8 @@
 // 未知参数（rc=2）各跑「脚本直跑 ⟷ 走 `cmdDeployLaunch`」，断言 stdout/rc 逐字同、stderr 只多命令面那行
 // **转发宣言**（banner 固定前缀 ⇒ 剥掉后与脚本 stderr 逐字同 ⇒ 证明「不改原件行为」）。
 //
+// 再加一条**包装入口栅格**（`deployLaunchGateMain` · inproc 同签名）：两态三面逐格对拍 ≥8 格。
+//
 // ★ 两个 `--nope`/`--help` 档都不 ssh、不写盘（`--help` 走 awk 打脚本头；未知参数走 `die` ⇒ 2）
 // ⇒ 真件两态档**零副作用**（不触 `~/.zerg/deploy_launch/`）。
 package main
@@ -153,6 +155,83 @@ func TestDeployLaunchRealScriptTwoStatesVerbatim(t *testing.T) {
 		got = strings.TrimSuffix(got, progName+": 发布封装脚本退 "+strconv.Itoa(rc2)+"（原样转发，不翻译）\n")
 		if e1.String() != got {
 			t.Errorf("[%s] 剥掉命令面宣言后 stderr 与脚本不同（改了原件行为）：\n脚本  =%q\n命令面=%q", tc.name, e1.String(), got)
+		}
+	}
+}
+
+// dplGateMainRun 走**包装入口**（inproc 同签名 `deployLaunchGateMain`）：给合成仓根，返回 rc / stdout / stderr。
+func dplGateMainRun(t *testing.T, root string, tail ...string) (int, string, string) {
+	t.Helper()
+	t.Setenv("ZERG_REPO", root)
+	var out, errb bytes.Buffer
+	rc := deployLaunchGateMain(&out, &errb, tail)
+	return rc, out.String(), errb.String()
+}
+
+// dplRunScriptDirect 直跑底层脚本（「仓外候选 ⟷ 直跑原 .sh」里的对照态）：返回 rc / stdout / stderr。
+func dplRunScriptDirect(t *testing.T, root string, tail ...string) (int, string, string) {
+	t.Helper()
+	script := filepath.Join(root, deployLaunchScriptRel)
+	var o, e bytes.Buffer
+	c := exec.Command("bash", append([]string{script}, tail...)...)
+	c.Dir = root
+	c.Stdin = strings.NewReader("")
+	c.Stdout, c.Stderr = &o, &e
+	rc := 0
+	if err := c.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			rc = ee.ExitCode()
+		} else {
+			t.Fatalf("脚本直跑起不来：%v", err)
+		}
+	}
+	return rc, o.String(), e.String()
+}
+
+// TestDeployLaunchGateMainGridTwoStatesThreeFaces —— **包装入口栅格**（`deployLaunchGateMain` · inproc 同签名）：
+// 态1 = 仓外候选包装入口 `deployLaunchGateMain(&out,&errb,tail)`；态2 = 直跑原脚本 `bash <script> <tail>`。
+// 三面 = rc / stdout / stderr（stderr 剥命令面 banner ＋ 退码行 ⇒ **噪声归一**）。逐格对拍 ≥8 格（旗标面 × 退码面）。
+// 另断言包装入口与 `cmdDeployLaunch` 三面**逐字同**（= 包装入口只转发、零新增语义）。
+func TestDeployLaunchGateMainGridTwoStatesThreeFaces(t *testing.T) {
+	cells := []struct {
+		name string
+		tail []string
+		rc   int
+	}{
+		{"help", []string{"--help"}, 0},
+		{"unknown", []string{"--nope-not-a-flag"}, 2},
+		{"host-file", []string{"--host", "edge-node", "--file", "/tmp/x.json"}, 0},
+		{"host-file-sha", []string{"--host", "edge-node", "--file", "/tmp/x.json", "--expect-sha256", "abc"}, 3},
+		{"dry-run", []string{"--dry-run"}, 0},
+		{"agent-unit", []string{"--agent", "a", "--unit", "u"}, 3},
+		{"target-version", []string{"--target", "t", "--expect-version", "1.2.3"}, 4},
+		{"probe-launchdir", []string{"--probe-url", "http://127.0.0.1:1", "--launch-dir", "/tmp/d"}, 5},
+	}
+	banner := progName + ": 底层 = " + deployLaunchScriptRel + "（**唯一真源** · 命令面只转发、不翻译）\n"
+	for _, c := range cells {
+		// stub 把 `$*`（argv 逐字）打进 stdout ⇒ 旗标面 passthrough 可观测。
+		root := dplSyntheticRepo(t, c.rc, "printf 'ARGS:%s\\n' \"$*\"\n")
+		rcS, outS, errS := dplRunScriptDirect(t, root, c.tail...)
+		rcW, outW, errW := dplGateMainRun(t, root, c.tail...)
+		rcC, outC, errC := dplRun(t, root, c.tail...)
+		if rcW != rcS || rcC != rcS {
+			t.Errorf("[%s] rc 三态不同：脚本=%d 包装=%d cmd=%d", c.name, rcS, rcW, rcC)
+		}
+		if outW != outS || outC != outS {
+			t.Errorf("[%s] stdout 三态不同：\n脚本=%q\n包装=%q\ncmd =%q", c.name, outS, outW, outC)
+		}
+		if !strings.HasPrefix(errW, banner) {
+			t.Errorf("[%s] 包装 stderr 缺 banner：%q", c.name, errW)
+		}
+		got := strings.TrimPrefix(errW, banner)
+		if rcW != 0 {
+			got = strings.TrimSuffix(got, progName+": 发布封装脚本退 "+strconv.Itoa(rcW)+"（原样转发，不翻译）\n")
+		}
+		if got != errS {
+			t.Errorf("[%s] 剥噪声后 stderr 与脚本不同：\n脚本=%q\n包装=%q", c.name, errS, got)
+		}
+		if errW != errC {
+			t.Errorf("[%s] 包装 stderr 与 cmd 不同：\n包装=%q\ncmd =%q", c.name, errW, errC)
 		}
 	}
 }

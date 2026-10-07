@@ -99,10 +99,18 @@ func TestPublishSet_ThreeBlockedOneControl(t *testing.T) {
 // TestPublishSet_PrivateFaceHardGate —— 必验①：真在 `publish/private-paths.txt` 里的件 ⇒ 不发 + 层名
 // `私有面硬门禁`；不在清单里的件 ⇒ 该层名**不出现**（两半都在一条口令里现跑对拍）。
 //
-// 真源现读：`scripts/gates/check-history-secrets.py` 是 `publish/private-paths.txt:73` 逐字一行
+// 真源现读：`scripts/build/publish-public.sh` 是 `publish/private-paths.txt:83` 逐字一行
 // （发布机制自身 · 只增不减）；`core/cmd/zerg/main.go` 不在那份清单里（控制件）。
+//
+//	★ 2026-10-07（退役段2 · G13-G15 退件解阻塞 · GAP「夹具硬依赖被退役件」一类）：
+//	  原样本 `scripts/gates/check-history-secrets.py` 随 M2 退役（不在盘）⇒ 其对
+//	  `publish/private-paths.txt` 的登记同批摘除 ⇒ `publish set` 现读对它报「会发=是 · 拦的层=—」
+//	  （原本该是「不发 · 私有面硬门禁」）⇒ 本用例红。
+//	★ 改法 = 「**内化样本**」（✗ 不点名已退役 / 在退役面的门禁 py 半）：改拿**结构性机制件**
+//	  `scripts/build/publish-public.sh`（发布机制本体 · `publish/private-paths.txt` 逐字一行 ·
+//	  **不在 py→Go 退役面内** ⇒ 样本不随单件退役而失）。控制件 `core/cmd/zerg/main.go` 逐字不变。
 func TestPublishSet_PrivateFaceHardGate(t *testing.T) {
-	const privateFile = "scripts/gates/check-history-secrets.py"
+	const privateFile = "scripts/build/publish-public.sh"
 	const control = "core/cmd/zerg/main.go"
 	rc, out, errb := publishSetRun(t, "publish", "set", privateFile, control,
 		"--json", "path,caliber,will_publish,layer,public_path,private_face,non_blob_basis")

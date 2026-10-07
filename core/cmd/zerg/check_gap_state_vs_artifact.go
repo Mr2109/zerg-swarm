@@ -62,10 +62,10 @@
 // ═══════════════════════ ★ 声明 (a) 默认根定位差异 ═══════════════════════
 //
 //	py `REPO_ROOT = dirname(dirname(abspath(__file__)))`（起于**脚本位置**）；Go 无 `__file__` 语境
-//	⇒ 缺省 `--repo-root` 走 **从 cwd 上溯找锚点件** `scripts/gates/check-gap-state-vs-artifact.py`
-//	（≈「脚本所在仓」），取不到回落 cwd。⇒ 当「本件在其仓内、且调用方 cwd 也落在该仓内」时与 py
-//	逐字同构（判据常从仓根跑、或乙档把 py 副本放进 `<fixture>/scripts/gates/` 且 Go cwd = `<fixture>`）；
-//	其余摆位下**本件不声称逐字对齐**（列未覆盖面①）。
+//	⇒ 缺省 `--repo-root` 走 **从 cwd 上溯找固定仓根锚**（`gsaRepoAnchorRels`：`core/internal/version/version.go`
+//	/ `scripts/gates` —— ✗ 不用本件 py，它退役后就不在盘；✗ 不用 `.git`，包目录下有游离嵌套 `.git`）；取不到锚 ⇒ **fail-closed**（rc=2
+//	不给结论，✗ 不静默回落 cwd）。⇒ 当「本件在其仓内、且调用方 cwd 也落在该仓内」时与 py 逐字同构
+//	（判据常从仓根跑）；其余摆位下**本件不声称逐字对齐**（列未覆盖面①）。
 //
 // ═══════════════════════ ★ 声明 (b) 自指面（本件落在扫描面内 ⇒ 逐条消解）═══════════════════════
 //
@@ -1262,8 +1262,12 @@ func gsaSelfTest(stdout io.Writer) int {
 	rc, reds, _ = gsaJudge(rows3b, "/nonexistent", gsaCutoffDef)
 	casef("R3 作废注不计入末条 ⇒ 不红", gsaTuple{rc, gsaRedReprList(reds)}, gsaTuple{0, gsaList{}})
 
-	repoRoot := gsaDefaultRepoRoot()
-	rows2 := []map[string]any{{"id": "r2", "state": "仍缺", "unit": "scripts/gates/check-gap-state-vs-artifact.py"}}
+	repoRoot, rootOK := gsaDefaultRepoRoot()
+	if !rootOK {
+		fmt.Fprintln(stdout, "自检 FAIL（cwd 上溯定位不到仓根锚 —— 本件应在真仓内跑）")
+		return 1
+	}
+	rows2 := []map[string]any{{"id": "r2", "state": "仍缺", "unit": "core/internal/version/version.go"}}
 	rc, reds, reports = gsaJudge(rows2, repoRoot, gsaCutoffDef)
 	casef("R2 点名件在盘 ⇒ 只报告不判红",
 		gsaTuple{rc, gsaRedReprList(reds), gsaAnyRedRule(reports, "R2")}, gsaTuple{0, gsaList{}, true})
@@ -1412,19 +1416,35 @@ func gsaCloneRow(base map[string]any, ev string) map[string]any {
 	return out
 }
 
+// gsaRepoAnchorRels —— 仓根**固定锚**（逐级按序判「存在即仓根」· 每项 = 一段相对路径）：
+//
+//	① `core/internal/version/version.go`（同族口径 · 稳定件）
+//	② `scripts/gates`（判据件目录）
+//
+// ★ ✗ 不用本件 py `scripts/gates/check-gap-state-vs-artifact.py` 当锚 —— 它退役后就不在盘，
+// 锚随之消失（正是自检 `TestGsaSelfTestPasses` 转红的真因）。
+// ★ ✗ 不用 `.git` 当锚 —— `core/cmd/zerg/` 下现读有一枚**游离的嵌套 `.git`**（非本仓根），
+// 拿它当锚会把仓根错定到包目录。
+var gsaRepoAnchorRels = [][]string{
+	{"core", "internal", "version", "version.go"},
+	{"scripts", "gates"},
+}
+
 // gsaDefaultRepoRoot —— py `REPO_ROOT = dirname(dirname(abspath(__file__)))`（**脚本所在仓**）。
-// Go 无 `__file__` 语境 ⇒ 从 **cwd 上溯**找锚点件 `scripts/gates/check-gap-state-vs-artifact.py`
-// （≈「脚本所在仓」），取不到回落 cwd，再 `pyAbspath`（声明 (a)；该锚点件与 py `__file__` 同件）。
-func gsaDefaultRepoRoot() string {
+// Go 无 `__file__` 语境 ⇒ 从 **cwd 上溯**找**固定仓根锚**（见 `gsaRepoAnchorRels`）定仓根
+// （≈「脚本所在仓」· 与 py 同件不同法）。
+// 取不到锚 ⇒ 返回 ("", false)（**fail-closed**：调用方报「不给结论」rc=2，✗ 不静默回落 cwd）。
+func gsaDefaultRepoRoot() (string, bool) {
 	wd, err := os.Getwd()
 	if err != nil {
-		return ""
+		return "", false
 	}
-	start := pyAbspath(wd)
-	cur := start
+	cur := pyAbspath(wd)
 	for {
-		if _, e := os.Stat(pyJoin(cur, "scripts", "gates", "check-gap-state-vs-artifact.py")); e == nil {
-			return cur
+		for _, rel := range gsaRepoAnchorRels {
+			if _, e := os.Stat(pyJoin(cur, strings.Join(rel, "/"))); e == nil {
+				return cur, true
+			}
 		}
 		up := pyDirname(cur)
 		if up == "" || up == cur || up == "/" {
@@ -1432,7 +1452,7 @@ func gsaDefaultRepoRoot() string {
 		}
 		cur = up
 	}
-	return start
+	return "", false
 }
 
 // ── argparse 面 ────────────────────────────────────────────────────────────
@@ -1646,7 +1666,13 @@ func checkGapStateVsArtifactGateMain(stdout, stderr io.Writer, argv []string) in
 	}
 	repoRoot := a.repoRoot
 	if !a.repoRootSet {
-		repoRoot = gsaDefaultRepoRoot()
+		rr, ok := gsaDefaultRepoRoot()
+		if !ok {
+			return gsaEmitProblem(stdout, a.jsonOut, "R0",
+				"定位不到仓根（cwd 上溯未找到锚点 core/internal/version/version.go · scripts/gates）⇒ 不给结论",
+				gsaObj{}, "")
+		}
+		repoRoot = rr
 	}
 	src := ""
 	if a.source != nil && *a.source != "" {
@@ -1703,10 +1729,11 @@ func checkGapStateVsArtifactGateMain(stdout, stderr io.Writer, argv []string) in
 
 // ═══════════════════════ ★ 未覆盖面（逐条如实声明）═══════════════════════
 //
-//	① **默认根定位差异（声明 (a) 的推论）**：py `REPO_ROOT` 起于 `__file__`，Go 起于 cwd ⇒ 仅当
-//	   「脚本位置 == cwd」时逐字同构。对拍：甲 = 真仓且从仓根跑；乙 = 仓外夹具把 py 副本放进
-//	   `<fixture>/scripts/gates/` 且 Go cwd = `<fixture>`。其余摆位下 `--repo-root` 缺省值与
-//	   `--self-test` 的 R2「件在盘」用例会分叉（后者是 py 传 `REPO_ROOT` 的摆位敏感面）。
+//	① **默认根定位差异（声明 (a) 的推论）**：py `REPO_ROOT` 起于 `__file__`，Go 起于 cwd 上溯固定仓根锚
+//	   （version.go / scripts/gates）⇒ 仅当「脚本位置 == cwd 上溯到的仓根」时逐字同构。对拍：
+//	   甲 = 真仓且从仓根跑。取不到锚（真仓外）⇒ 本件 fail-closed rc=2，✗ 不静默回落 cwd。
+//	   `--self-test` 的 R2「件在盘」用例锚**稳定件** `core/internal/version/version.go`（✗ 不用本件 py
+//	   —— 它退役后就不在盘，锚/用例会随之分叉）。
 //	② **argparse 帮助 / 错误正文 = py 版本相关**：本件按**本机 python3.14** 复刻（`options:` 措辞 ·
 //	   usage 换行缩进 · 歧义文案 `ambiguous option: --e could match …`）。门跑环境若用 py≤3.9
 //	   （印 `optional arguments:`）则帮助面 stdout 分叉（rc 恒 0）。未知旗标/缺值/`--json=1` 的 error

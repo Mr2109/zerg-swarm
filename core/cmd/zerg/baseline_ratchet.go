@@ -93,6 +93,7 @@ var brConditions = []brCond{
 		unit:      "命令面矩阵的空白格条数",
 		measure:   []string{"python3", brPyJoin("scripts", "gates", "check-cli-contract.py")},
 		measureRe: `空白\s*(\d+)\s*条`,
+		goMain:    cliContractGateMain,
 	},
 	{
 		name:      "doc-cmds.devdocs_report_hits",

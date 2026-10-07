@@ -236,3 +236,94 @@ func TestCheckManifestFreshnessTwoCriteriaRetired(t *testing.T) {
 		t.Fatalf("退役态 fail-closed（rc=2）—— 件退役不得让判据判不出")
 	}
 }
+
+// TestCheckManifestFreshnessTwoCriteriaTruthRetired —— **真源**退役态（B轨 · 2026-10-07 · 类①）：
+// 真源 `check-manifest-freshness.py` 退役（py 缺席 · 其 Go 半在盘）⇒ 判据照常出结论（✗ 不得 rc=2）。
+//
+//	① 退役（py 缺席 · Go 半在盘）⇒ rc=0，且 C3 改读真源 **Go 半源码**（人读面「真源：core/cmd/zerg/check_manifest_freshness.go（在场）」）；
+//	② 成对负控 · **真消失**（两半皆缺）⇒ rc=2（fail-closed 一格不变）；
+//	③ 成对正控 · py 在盘 ⇒ rc=0（逐字沿用原语义）。
+//
+// ★ 哑化负控（带行号）：抽掉入口 `truthPresent := cmfFileExists(truthPath) || cmfTruthRetired(repoRoot)`
+// 的 `|| cmfTruthRetired(repoRoot)` 一支（`check_manifest_freshness_two_criteria.go:188`）⇒ ① 断言当场红（rc=2）。
+func TestCheckManifestFreshnessTwoCriteriaTruthRetired(t *testing.T) {
+	src := cmfTestRepoRoot(t)
+
+	build := func(withTruthPy, withGoHalf bool) string {
+		root := t.TempDir()
+		g := filepath.Join(root, "scripts", "gates")
+		if err := os.MkdirAll(g, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// 根上溯标记（退役稳态）——本用例一律显式 `--root`，但保持与真仓同形。
+		if err := os.WriteFile(filepath.Join(g, "precommit-gates.sh"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if withGoHalf {
+			gd := filepath.Join(root, "core", "cmd", "zerg")
+			if err := os.MkdirAll(gd, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			b, err := os.ReadFile(filepath.Join(src, "core", "cmd", "zerg", "check_manifest_freshness.go"))
+			if err != nil {
+				t.Fatalf("缺真源 Go 半原件：%v", err)
+			}
+			if err := os.WriteFile(filepath.Join(gd, "check_manifest_freshness.go"), b, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if withTruthPy {
+			b, err := os.ReadFile(filepath.Join(src, "scripts", "gates", "check-manifest-freshness.py"))
+			if err != nil {
+				t.Fatalf("缺真源 py 原件：%v", err)
+			}
+			if err := os.WriteFile(filepath.Join(g, "check-manifest-freshness.py"), b, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cmfTestGitInit(t, root)
+		return root
+	}
+
+	// ① 退役（py 缺席 · Go 半在盘）⇒ rc=0 且 C3 读 Go 半源码。
+	fxRetired := build(false, true)
+	rcR, outR, errR := cmfTestRun(t, "--root", fxRetired)
+	if rcR != 0 {
+		t.Fatalf("① 真源退役态应 rc=0（判据照常出结论），得 rc=%d\nout=%s\nerr=%s", rcR, outR, errR)
+	}
+	if !strings.Contains(outR, "真源：core/cmd/zerg/check_manifest_freshness.go（在场）") {
+		t.Fatalf("① 退役态 C3 未改读真源 Go 半 ⇒ out=%s", outR)
+	}
+	if strings.Contains(outR, "缺件：真源") {
+		t.Fatalf("① 退役态仍落 fail-closed 缺件分支 ⇒ out=%s", outR)
+	}
+	// 退役态 `--self-test` 亦须过（C3/C4 走 Go 半与进程内自检）。
+	if rcST, outST, _ := cmfTestRun(t, "--root", fxRetired, "--self-test"); rcST != 0 {
+		t.Fatalf("① 退役态 --self-test 应 rc=0，得 rc=%d out=%s", rcST, outST)
+	}
+
+	// ② 成对负控 · 真消失（两半皆缺）⇒ rc=2（fail-closed 一格不变）。
+	fxGone := build(false, false)
+	rcG, outG, _ := cmfTestRun(t, "--root", fxGone)
+	if rcG != 2 || !strings.Contains(outG, "缺件：真源") {
+		t.Fatalf("② 真消失应 fail-closed rc=2，得 rc=%d out=%s", rcG, outG)
+	}
+
+	// ③ 成对正控 · py 在盘 ⇒ rc=0 且仍是 py 源（原语义逐字沿用）。
+	//   ★ 真源 py 退役容忍（2026-10-07 公开面退 10 件批 · 同族 `mfpTestFixture` 口径）：真源 py 退役
+	//   （不在盘）∧ 其 Go 半在盘 ⇒ 本片无「py 在盘」正控对象，如实跳过本片（①② 已覆退役态/真消失态）；
+	//   两半皆缺（真消失）已由 ② 的成对负控兜住。
+	truthPy := filepath.Join(src, "scripts", "gates", "check-manifest-freshness.py")
+	if !cmfFileExists(truthPy) {
+		if !cmfFileExists(filepath.Join(src, "core", "cmd", "zerg", "check_manifest_freshness.go")) {
+			t.Fatalf("③ 真源 py 与 Go 半皆不在盘（真消失）⇒ fail-closed，不应走到本片")
+		}
+		t.Logf("③ 跳过：真源 py %s 已退场（Go 半在盘）⇒ 无「py 在盘」正控对象", truthPy)
+		return
+	}
+	fxPy := build(true, true)
+	rcP, outP, _ := cmfTestRun(t, "--root", fxPy)
+	if rcP != 0 || !strings.Contains(outP, "check-manifest-freshness.py（在场）") {
+		t.Fatalf("③ py 在盘应 rc=0 且读 py 源，得 rc=%d out=%s", rcP, outP)
+	}
+}

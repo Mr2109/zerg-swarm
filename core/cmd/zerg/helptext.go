@@ -3,7 +3,7 @@
 // 三条纪律：
 //
 //	① 命令名与用法**逐字来自命令树**（`commands`），本文件不旁写第二份命令清单 ✗；
-//	② 退码行与**门禁头注释第 35 行逐字对齐**（不改字、不换词序）—— 对齐检查见
+//	② 退码行与**门禁头注释里以「# 退出码：」起头的那一行逐字对齐**（不改字、不换词序）—— 对齐检查见
 //	   `zerg help exit-codes` 的「对齐」段与《开工记录-批A》T-01/T-04 两节；
 //	③ 五级配置优先级照 §4.1 K10 序写死一份（clig.dev 五级序），不加不减。
 package main
@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// gateExitLine —— `scripts/gates/precommit-gates.sh` 第 35 行的正文（去掉行首 `# `）。
+// gateExitLine —— `scripts/gates/precommit-gates.sh` 头注释里以「# 退出码：」起头的那一行的正文（去掉行首 `# `）。
 // 门禁直通档（`zerg gate run` 不翻译脚本退码）逐字用它，故这里**一个字都不许改**。
 const gateExitLine = "退出码：0 全绿 · 1 有失败项 · 2 **不给结论**（用法错/前置缺件/自检不过/**有步骤报 BLOCKED**）"
 

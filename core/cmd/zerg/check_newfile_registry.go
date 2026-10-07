@@ -1390,6 +1390,26 @@ var gnrDryGoJudge = map[string]func(root string) gnrDry{
 	"scripts/gates/check-" + "dry" + "run" + "-semantics.py": gnrDryInProc,
 }
 
+// gnrDryGoCLIKey —— CLI 形 `zerg gate check <键>` → **进程内**判据件的映射。2026-10-07 检查点4 起
+// 步骤表直调 py 改走 CLI：门⑩ 那条「干跑」步的命令**不再是** `python3 …check-<…>.py`，而是
+// `zerg gate check check-<…>` ⇒ 解析器须按**键名**落到同一已搬 Go 的判据件（✗ 不因 py 形消失而判不了）。
+// ★ 键与 `gnrDryGoJudge` 的 `.py` 名同源（同一判据件的两种指法）；键字面按件头 (b)③ **拼串**构造，
+// 不落连续的判据件名词干（否则本件被门⑩ 的扫描口径扫成未登记站点 ⇒ 真仓 R1 假红）。
+var gnrDryGoCLIKey = map[string]func(root string) gnrDry{
+	"check-" + "dry" + "run" + "-semantics": gnrDryInProc,
+}
+
+// gnrDryCLIKeyRE —— 从步骤行现读 CLI 形 `zerg gate check <键>` 的键名（正则源串不含「干跑令牌」字面）。
+var gnrDryCLIKeyRE = regexp.MustCompile(`\bzerg\s+gate\s+check\s+([A-Za-z0-9_-]+)`)
+
+// gnrDryCLIKey —— 抽键名（不中 ⇒ 空串）。
+func gnrDryCLIKey(ln string) string {
+	if m := gnrDryCLIKeyRE.FindStringSubmatch(ln); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 // gnrDryInProc —— 进程内调用已搬 Go 的判据件（当前唯一项 = 门⑩ 干跑语义）。
 // 取数面与 py 驱动逐字对齐：`hits` = `scan_hits(root)` 四元组里**全部字符串**
 // （files ∪ sites ∪ refs）· `rel` = 判据件的登记表相对路径 · `reg` = 登记表 `件[].file` 集合。
@@ -1459,6 +1479,14 @@ func gnrLoadDryJudge(root string) gnrDry {
 		}
 		m := gnrJudgeRECompiled.FindString(ln)
 		if m == "" {
+			// ★ 步骤表直调 py 已改 CLI 形 `zerg gate check <键>`（2026-10-07 检查点4）：行里**没有**
+			//   `.py` 落点时，按**键名**落到已搬 Go 的进程内判据件（✗ 不因 py 形消失而判不了）。
+			//   键名不中映射表 ⇒ 落到本函数末的 fail-closed（✗ 不静默跳过）。
+			if key := gnrDryCLIKey(ln); key != "" {
+				if fn, ok := gnrDryGoCLIKey[key]; ok {
+					return fn(root)
+				}
+			}
 			continue
 		}
 		cand := filepath.Join(root, m)
@@ -1500,7 +1528,7 @@ func gnrLoadDryJudge(root string) gnrDry {
 		}
 		return d
 	}
-	return gnrDry{problem: "步骤表里找不到「" + gnrStepMark + "」那条步的判据件（.py）"}
+	return gnrDry{problem: "步骤表里找不到「" + gnrStepMark + "」那条步的判据件（.py 或 `zerg gate check <键>` 两形皆不中）"}
 }
 
 func gnrRunDryDriver(cand, root, relArg string) (*gnrDryOut, string) {

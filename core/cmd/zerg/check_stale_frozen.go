@@ -864,6 +864,46 @@ func csfBridge(root, op string, stderr io.Writer) (map[string]any, string) {
 			return map[string]any{"ok": true, "baseline": bl}, ""
 		}
 	}
+	// ★ 退役态（2026-10-07 退役批 · cli_contract 桥退役容忍）：`cli_contract` 这一路的兄弟件
+	//   `scripts/gates/check-cli-contract.py` 退役（不在盘）⇒ 下面那条 importlib 桥取不到其
+	//   parse_tree/load_matrix（原样 = 「现读重算失败 ⇒ 不给结论」= fail-closed）。⇒ 回落**同判据的
+	//   Go 半** `clicParseTree` / `clicLoadMatrix`（本包内 · 与 py 半同一真源 · ✗ 非第二条实现）现算
+	//   同一读数，✗ 不因缺 py 而 fail-closed。★ 两半皆取不到（Go 半读不到 main.go 或 cli-matrix.json）
+	//   ⇒ fail-closed。py 件在盘时照旧走下面那条 importlib 桥（两态逐字同 · 单一真源不变）。
+	if op == "cli_contract" {
+		sib := filepath.Join(root, "scripts", "gates", "check-cli-contract.py")
+		if fi, err := os.Stat(sib); err != nil || fi.IsDir() {
+			mainP := filepath.Join(root, "core", "cmd", "zerg", "main.go")
+			if fi, err := os.Stat(mainP); err != nil || fi.IsDir() {
+				return nil, "兄弟件已退役，且 Go 半 clicParseTree 取不到 main.go（命令树真源读不到）"
+			}
+			matrix := clicLoadMatrix(root)
+			if matrix == nil {
+				return nil, "兄弟件已退役，且 Go 半 clicLoadMatrix 取不到 cli-matrix.json（现读基线读不到）"
+			}
+			n := 0
+			for _, c := range clicCasesOf(matrix) {
+				if rc, ok := clicPyInt(clicMapGetOr(c, "want_rc", nil)); ok && rc != 0 {
+					n++
+				}
+			}
+			return map[string]any{"ok": true, "n_cmd": len(clicParseTree(root)), "n_mf": n}, ""
+		}
+	}
+	// ★ 退役态（2026-10-07 退役批 · approve_backfill 桥退役容忍）：`approve_backfill` 这一路的兄弟件
+	//   `scripts/gates/check-approve-backfill.py` 退役（不在盘）⇒ importlib 桥取不到其 DEV_EDIT_SHA256 /
+	//   TICKET_REL（原样 = 「件读不到 ⇒ 取不到」= fail-closed）。⇒ 回落**同判据的 Go 半常量**
+	//   `cafbDevEditSHA256` / `cafbTicketRel`（本包内 · 与 py 半同一真源 · ✗ 非第二条实现），
+	//   ✗ 不因缺 py 而 fail-closed。★ Go 半常量也取不到（空）⇒ fail-closed。
+	if op == "approve_backfill" {
+		sib := filepath.Join(root, "scripts", "gates", "check-approve-backfill.py")
+		if fi, err := os.Stat(sib); err != nil || fi.IsDir() {
+			if cafbDevEditSHA256 == "" {
+				return nil, "兄弟件已退役，且 Go 半 cafbDevEditSHA256 为空（登记常量取不到）"
+			}
+			return map[string]any{"ok": true, "sha": cafbDevEditSHA256, "rel": cafbTicketRel}, ""
+		}
+	}
 	cmd := exec.Command("python3", "-c", csfBridgeSrc, root, op)
 	var ob, eb bytes.Buffer
 	cmd.Stdout = &ob
