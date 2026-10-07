@@ -1028,6 +1028,44 @@ func cwsJudgeC(root string, cands []cwsCand, wiredNames map[string]bool) (hits [
 }
 
 // ── 断言 B：零引用件必须登记白名单 ─────────────────────────────────────────────
+//
+// cwsRefCmdHits —— 引用面「命令位调用」计数（B 列与断言 A **同口径** · 缺口 `GAP-20260927-148`）。
+//
+// 病：旧 B 口径 = **任意出现次数**（`strings.Count(t, name)`）⇒ 与 A 面「命令位调用」口径**不对称**：
+// 一条只在散文 / 说明 / 清单 / 注释 / `echo` 文案里被点名的白名单件，按 A 口径是**零引用**（可下架），
+// 按旧 B 口径却「有引用」⇒「可下架」名单静默失真（`GAP-20260927-148` 症状）。
+//
+// 治法：把 B 的计数换成**与 `cwsWiringHit` 同一套谓词** —— 逐行判 `cwsCallRe` / `cwsZergGateRe`，
+// 排除纯注释行与纯清单项（`cwsBareItemRe`）：命中一行计一次。
+//
+//	★ ✗ 不是「换一个计数函数」：判据结构（启动器 + 命令位 + 名字边界）与断言 A 逐字同源，
+//	  只是把 A 的「命中即止（bool）」改成「逐行累加（int）」—— 两列从此读同一把尺。
+func cwsRefCmdHits(name, text string) int {
+	stem, _ := cwsSplitext(name)
+	bare := cwsBareItemRe(name)
+	call := cwsCallRe(name)
+	zerg := cwsZergGateRe(name)
+	n := 0
+	for _, line := range cwsSplitLines(text) {
+		// ★ 预筛放宽：`zerg gate check` 形里名字**不带扩展名**（行里无 name、只有去扩展名 stem）。
+		if !strings.Contains(line, name) && !strings.Contains(line, stem) {
+			continue
+		}
+		s := cwsPyStrip(line)
+		if s == "" || strings.HasPrefix(s, "#") {
+			continue
+		}
+		if bare.MatchString(s) {
+			continue
+		}
+		if call.FindStringIndex(line) == nil && zerg.FindStringIndex(line) == nil {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
 func cwsRefCounts(root string, files []string, name, selfRel string) (int, int, int, []string) {
 	total, code, doc := 0, 0, 0
 	var samples []string
@@ -1045,10 +1083,10 @@ func cwsRefCounts(root string, files []string, name, selfRel string) (int, int, 
 		if !ok {
 			continue
 		}
-		if !strings.Contains(t, name) {
+		n := cwsRefCmdHits(name, t)
+		if n == 0 {
 			continue
 		}
-		n := strings.Count(t, name)
 		total += n
 		if strings.HasPrefix(p, "docs/") || strings.Contains(p, "/docs/") {
 			doc += n
@@ -1414,7 +1452,7 @@ func cwsListRules() string {
 	L = append(L, fmt.Sprintf("断言 A（门脚本必须上岗）：凡门脚本 —— ① 名以 `check-` 开头（scripts/ 顶层 · .py/.sh/无后缀 shebang）或 ② 说明书自称门（同干 .md 头部 %d 行内出现「门」）—— 必须出现在至少一个闸里。", cwsDocHeadLines))
 	L = append(L, "  「在闸里」判据 = **命令位调用**（真接线面）：名字紧跟解释器/启动器（`python3` / `bash` / `${PY}` / `./` …），中间只允许选项旗标；可带引号与路径前缀（`python3 \"$Z/scripts/gates/<名>\" \"$D\"`）。")
 	L = append(L, "    不算接线：① 纯注释行（`#` 开头）② 纯清单项（整行就是 `\"scripts/<…>/<名>\",` 这类数组/数据项—— **含被 `EXCLUDES` / `DROP_EXACT` 这类排除表点名**，任意层深）③ 只被文案（`echo \"…\"`）/ 说明文字 / grep 模式串提到。")
-	L = append(L, "断言 B（零引用件必须登记）：scripts/ 顶层零引用（引用面里出现 0 次）⇒ 必须登记白名单（每项 name + reason + date；缺一即 rc=2；点名的脚本已不存在即 rc=2 悬空）。")
+	L = append(L, "断言 B（零引用件必须登记）：scripts/ 顶层零引用（引用面里**命令位调用** 0 次 · 与断言 A **同口径** · 缺口 `GAP-20260927-148`）⇒ 必须登记白名单（每项 name + reason + date；缺一即 rc=2；点名的脚本已不存在即 rc=2 悬空）。")
 	L = append(L, "")
 	L = append(L, "闸清单（判据只吃这份表；实际文件名与调用方式 = 2026-09-18 现读）：")
 	for _, g := range cwsGates {
@@ -1509,6 +1547,30 @@ var cwsWhitelist = []cwsWLEntry{
 	{"test-update-sandbox\u002Esh", "零引用件（登记，非死件）：升级/换件沙箱夹具脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.9/变更-v2.5.9.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
 	{"stability-stats\u002Epy", "零引用件（登记，非死件）：稳定性统计脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.10/任务表-协作骨架v2.1仓内核对结论-20260918.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
 	{"ab-campaigns\u002Epy", "零引用件（登记，非死件）：A/B 活动编排脚本。它在**仓内已跟踪引用面**里唯一的点名出自 `docs/项目文档/v2.5.10/任务表-协作骨架v2.1仓内核对结论-20260918.md`——该目录（`docs/项目文档/`，17 套快照）已于 2026-09-19「项目文档」二次分家**整目录移出工作树**（现位置 = 同级 `Zerg-内部文档/项目文档/`，件级 sha256 已核对）⇒ 仓内引用面不再含该点名，**接线已不可行**（不能为了凑引用去造一个调用方）。登记自证：登记前 断言 B「未登记 20 只」= FAIL(rc=1) ↔ 登记后 未登记 0 只 = rc=0（豁免只增这 20 条、逐条带 reason+date，判据一字未改）。", "2026-09-19"},
+	{"lib-sign.sh", "零命令位引用（登记 · 非死件 · `GAP-20260927-148` 新口径 = 与断言 A 同源的「命令位调用」）：macOS 签名身份公共库；被 `scripts/build/build-all.sh` 与 `scripts/build/pack-release.sh` 以 shell `source` 内建引入（`source` 不在本门启动器表内）+ 读判据件 `[ -f \"$REPO_ROOT/scripts/build/lib-sign.sh\" ]` ⇒ 判零引用；Go 对等体 = `scripts/build/internal/sign`。活件（唯一签名真源），保留。", "2026-10-08"},
+	{"publish-public.sh", "零命令位引用（登记 · 非死件 · 新口径）：压平快照发布器（Q5 已弃用 · 现役 = `publish/mirror-public.sh`）；未被任何闸/脚本按命令位执行，仍作 `EXCLUDES` 单一真源被多件按路径读正文（check-history-secrets / check-public-tree-private / check-registry-vs-disk / family_publish 等 Go 半件）⇒ 零引用。留待 Q5 退役。", "2026-10-08"},
+	{"start-zerg-core.sh", "零命令位引用（登记 · 非死件 · 新口径）：主控启动／按仓根重写 plist 的引导脚本；被 `scripts/build/zerg-upgrade.sh` 以变量 `STARTCORE=\"${ZERG_START_CORE:-…}\"` 赋值引用（变量间接 ⇒ 非命令位字面）⇒ 零引用。活件保留（plist 真源形态）。", "2026-10-08"},
+	{"start-zerg-ui.sh", "零命令位引用（登记 · 非死件 · 新口径）：UI 脱离会话启动的单一真源（CLI `zerg ui start` 壳转账 · `core/cmd/zerg/ui_start.go` 的常量 + exec）；引用为 Go 常量与 shell 变量（`LAUNCHER_REL` / `STARTUI`），非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
+	{"zerg-swap-agent.sh", "零命令位引用（登记 · 非死件 · 新口径）：子端换件脚本（只报告档）；CLI `zerg swap agent` 壳转账（`core/cmd/zerg/swap_agent.go` 的常量 + exec），引用为 Go 常量而非命令位字面 ⇒ 零引用。活件保留（换件三闸形态）。", "2026-10-08"},
+	{"zerg-swap-core.sh", "零命令位引用（登记 · 非死件 · 新口径）：主控换件脚本（事故面固化 · 三道门禁＋两前置闸）；CLI `zerg swap core`（`core/cmd/zerg/family_swap_core.go` 常量）＋ `.githooks/pre-commit` 与步骤表注释点名 ⇒ 无命令位字面引用。活件保留（换件唯一入口）。", "2026-10-08"},
+	{"zerg-swap-ui.sh", "零命令位引用（登记 · 非死件 · 新口径）：桌面 UI 换件脚本（只报告档）；CLI `zerg swap ui`（`core/cmd/zerg/swap_ui.go` 常量 + exec），引用为 Go 常量 ⇒ 零引用。活件保留。", "2026-10-08"},
+	{"zerg-upgrade.sh", "零命令位引用（登记 · 非死件 · 新口径）：六阶段换件内核（自举／发布共用 · Go 与 Rust 两处皆调用方）；被 `core/internal/selfupdate` 与 `scripts/svc/fleet-relay.sh`、各 `scripts/sandbox/*` 以变量 `KERNEL` 赋值调用（变量间接）⇒ 非命令位字面 ⇒ 零引用。活件保留（真源内核）。", "2026-10-08"},
+	{"calib-local-model.sh", "零命令位引用（登记 · 非死件 · 新口径）：模型标定件；CLI `zerg calib local-model`（`core/cmd/zerg/family_calib.go` 数据 `File` + `Run: bash`），引用为 Go 数据结构字段而非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
+	{"calib-task-budget.py", "零命令位引用（登记 · 非死件 · 新口径）：标定件；CLI `zerg calib task-budget`（`core/cmd/zerg/family_calib.go` 数据 `File` + `Run: python3`），引用为 Go 字段 ⇒ 零引用。活件保留（闸门日后只读其档案）。", "2026-10-08"},
+	{"inplace-window.py", "零命令位引用（登记 · 非死件 · 新口径）：就地窗口公共件（`GAP-20260927-112`）；Go 真搬 = `core/cmd/zerg/inplace_window.go`；被 `scripts/gates/two-states-gate-mutate.py` / `scripts/wall/wall-bridge-mutate.py` 以 importlib 载入（路径拼在 Python 字符串／docstring 里，非命令位字面）⇒ 零引用。活件保留。", "2026-10-08"},
+	{"chat-harness.py", "零命令位引用（登记 · 非死件 · 新口径）：评测夹具件；CLI `zerg eval chat-harness`（`core/cmd/zerg/family_eval.go` 数据 `File` + `Run: python3`），引用为 Go 字段 ⇒ 零引用。活件保留。", "2026-10-08"},
+	{"compare.py", "零命令位引用（登记 · 非死件 · 新口径）：评测比较器；CLI `zerg eval compare`（`core/cmd/zerg/family_eval.go` ＋ Go 真搬 `eval_compare.go`），引用为 Go 字段 ⇒ 零引用。活件保留（对拍通过后逐件点名退场）。", "2026-10-08"},
+	{"replay-fidelity.sh", "零命令位引用（登记 · 非死件 · 新口径）：复现保真度验收件；CLI `zerg eval replay-fidelity`（`core/cmd/zerg/family_eval.go` 数据 `File` + `Run: bash`），引用为 Go 字段 ⇒ 零引用。活件保留。", "2026-10-08"},
+	{"accept-no-probe-selftest.sh", "零命令位引用（登记 · 非死件 · 新口径）：验收自证件；由 `scripts/gates/accept-no-probe.sh` 以变量 `SELFTEST` 转交，并在 `scripts/gates/real-gates.sh` 的 `SH_GATES=(…)` 数组项中被循环调用（变量／数组间接）⇒ 非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
+	{"accept-no-probe.sh", "零命令位引用（登记 · 非死件 · 新口径）：验收负控夹具；`scripts/gates/real-gates.sh` 的 `SH_GATES=(…)` 数组成员（循环变量间接调用）⇒ 非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
+	{"judge-targets.sh", "零命令位引用（登记 · 非死件 · 新口径）：overlay 两态取证靶；`scripts/gates/real-gates.sh` 的 `SH_GATES=(…)` 数组成员（循环变量间接）⇒ 非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
+	{"overlay-guard.sh", "零命令位引用（登记 · 非死件 · 新口径）：overlay 叠加鉴别器；同上 `scripts/gates/real-gates.sh` 的 `SH_GATES=(…)` 数组成员 ⇒ 非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
+	{"shard-go-test.sh", "零命令位引用（登记 · 非死件 · 新口径）：贵步分片执行器；在 `scripts/gates/precommit-gates.sh` 的 `add_step …` 命令串里被调（命令串内引号被转义 ⇒ 落本门命令位正则的引号识别之外）⇒ 判零引用。活件保留（真接线）。", "2026-10-08"},
+	{"zerg-hello", "零命令位引用（登记 · 非死件 · 新口径）：仓内演示插件（`§6.3 S6` 判据①证据件 · 零副作用）；由插件机制按名调用（CLI `zerg hello`），非 shell 命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
+	{"archive-mount.sh", "零命令位引用（登记 · 非死件 · 新口径）：归档区按需挂载命令面（on/off/status）；CLI `zerg archive mount`（`core/cmd/zerg/archive_mount.go` 常量 + exec），引用为 Go 常量 ⇒ 零引用。活件保留。", "2026-10-08"},
+	{"fleet-relay.sh", "零命令位引用（登记 · 非死件 · 新口径）：机群镜像中继；被 `scripts/sandbox/test-relay-sandbox.sh` 以变量 `RELAY` 调用（变量间接），其余点名在注释／文案里 ⇒ 非命令位字面 ⇒ 零引用。活件保留。", "2026-10-08"},
+	{"zerg-core-daemon.sh", "零命令位引用（登记 · 非死件 · 新口径）：launchd 托管的启动包装；由 `deploy/服务声明.tsv` 的 `/bin/bash …`（绝对解释器 · TSV 声明列）与 plist 引用（绝对解释器不在本门启动器表＋非命令位文件面）⇒ 零引用。活件保留（com.zerg.core 的被调入口）。", "2026-10-08"},
+	{"zerg-egg.py", "零命令位引用（登记 · 非死件 · 新口径）：.egg 封装工具的 py 原件；Go 真搬 = `core/cmd/zerg/zerg_egg.go`（DEV-1798），原件按退场规则保留待对拍通过后逐件点名退场 ⇒ 无命令位字面引用。活件保留。", "2026-10-08"},
 }
 
 var cwsSuggest = map[string]cwsSuggestT{

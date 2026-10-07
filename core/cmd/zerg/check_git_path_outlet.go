@@ -123,12 +123,6 @@ var gpoTextAllow = []gpoTextAllowEntry{
 		Reason:      "消息串：Go 搬 py `who-references.py` 的报错文本（py 侧同形已登记）；同函数真调用在 L533 且已带 `-z`（随后按 NUL 切分 stdout = 证据）。",
 		Replacement: "无需改：真调用已合规；本行只是报错文本里的字面。",
 	},
-	{
-		Path: "scripts/gates/check-affected-map.py", Rule: "GPO-F1",
-		Anchor:      "print('[缺读数] " + gpoGitTok + " " + gpoNLsFiles + " 取不到：%s",
-		Reason:      "消息串：`except` 分支里的报错文本；真取数走 `disk_files` 的 `os.walk`（同函数 L351-352 注释逐字「✗ 不经 git」）⇒ 本行非 argv。该文案对现实现已陈旧，另批校正时本锚随之更新。",
-		Replacement: "无需改：本行只是报错文本里的字面。",
-	},
 	// ── 2026-10-04 · 门⑦/门68 收口：`precommit-gates.sh` 的**步骤名文字面**（非 argv）──
 	//    命中行是 `add_step … "<步骤名>" …` 里印给人看的**步骤名**；真取数走被点名的
 	//    `check-public-marks-tracked-parity.py`（该件自带取件名现读对拍，见门94）。

@@ -146,7 +146,7 @@ const afmUsageLine = "用法：check-affected-map.py (--emit | --check [--map <�
 const (
 	afmGates       = "scripts/gates"
 	afmMapDefault  = afmGates + "/affected-map.json"
-	afmSrcStepTbl  = "scripts/gates/precommit-gates.sh"
+	afmSrcStepTbl  = zergPrecommitGatesRel
 	afmSrcCoverage = "scripts/gates/gate-coverage.config.json"
 	afmSrcNewcmd   = "scripts/gates/newcmd-paths-baseline.json"
 )

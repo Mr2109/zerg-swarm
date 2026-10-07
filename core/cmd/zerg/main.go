@@ -1298,7 +1298,7 @@ func init() {
 			summary: "在码里找一处东西在哪（只读取证 · 手搓 grep/git grep 的替身 · **扫工作树**：含未跟踪件与被忽略目录，比 `git grep` 的索引面多一片（两个面各扫多少件，命令每跑一次自己报一行「扫了 N 件」—— **不在这里写死**，写了就会烂；差值由运行时的数说话）；跳过 >2MB 的件）",
 			usage:   "zerg code find <正则> [--path <目录或单件>] [--glob <模式>] [--limit <N>] [-i|--ignore-case] [--after <N>|-A<N>] [--before <N>|-B<N>|-C<N>] [--kind <代码|注释>] [--timeout <秒>] [--count | --files-only] [--full] [--hidden] [--include-runtime] [--json <字段>]",
 			arity:   "any",
-			args:    []string{"正则（POSIX 语法）"},
+			args:    []string{"正则（**Go/RE2 语法** —— 不是 POSIX BRE；**交替**用**裸** `|`（例：a|b）；写 `\\|` 会被**拒**：本命令退 2 并给替身，因 RE2 里 `\\|` 是**字面竖线**不是交替）"},
 			// ★ `GAP-20260928-118`（2026-09-28 · 本枚）：字段表补上 `truncated` —— 截断位此前
 			// 只能从顶层包封读，字段面没有直读口（给 `truncated` 即报未知字段）。三档面（默认 /
 			// `--count` / `--files-only`）逐行都产出它（**跑级真值**：本跑真裁了 = true，没裁 = false）
@@ -2469,6 +2469,51 @@ func init() {
 			endpoint:    "",
 			passthrough: true,
 			run:         cmdSwapUI,
+		},
+		// ---- ② 类 CLI 工具子命令（壳转账 · 命令树登记 · 2026-10-08）────────────────────────────────
+		// 三条同为「只转发、不翻译」的 CLI 工具子命令（✗ 不是判据 ⇒ ✗ 不进 `gate_inproc_table.go`，
+		// 那会伪造判据名）；形状逐字跟同族先例 `zerg doc kb-sync` / `zerg ui i18n-audit`
+		// （`passthrough: true` + `run` 直调薄壳 · 无 `kind`/`fields`/`danger`/`opened`）。
+		// 落件＝壳转账三薄壳（`deploy_launch.go` / `doc_site_build.go` / `ui_start.go`）：命令面**不重写
+		// 底层脚本任何一段**（只入口 + 转发；递不到脚本退 8），故各条记录「旗标与退码逐字来自底层脚本」。
+		// ---- A 档 批 4（机群/发布面）· A13：机群发布的 **CLI 正门**（`zerg deploy launch` · 新族 `deploy` · 壳转账）----
+		// 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 4 · A13。
+		// 底层唯一实现 = `deploy/scripts/deploy-launch.sh`（真跑 `ssh` 到节点跑发布器 · OS 原生/联网面）。
+		{
+			path:        []string{"deploy", "launch"},
+			summary:     "机群发布「意图件 + 回读」（底层只调 deploy/scripts/deploy-launch.sh —— 命令面不重写逻辑 · 只转发不翻译）",
+			usage:       "zerg deploy launch [--host <主机> --file <意图件> --expect-sha256 <sha> | --help]",
+			arity:       "any",
+			args:        []string{"旗标与退码逐字来自 deploy/scripts/deploy-launch.sh（原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdDeployLaunch,
+		},
+		// ---- A 档 批 2（文档面）· A14：文档站「导出 + 构建」的 **CLI 正门**（`zerg doc site build` · 族 `doc` 扩 action · 壳转账）----
+		// 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 2 · A14。
+		// 底层唯一实现 = `docs/site/export-and-build.sh`（真跑站点工具链 · 联网 + 子进程）。
+		{
+			path:        []string{"doc", "site", "build"},
+			summary:     "文档站「导出 + 构建」（底层只调 docs/site/export-and-build.sh —— 命令面不重写逻辑 · 只转发不翻译）",
+			usage:       "zerg doc site build [--strict | --serve | --help]",
+			arity:       "any",
+			args:        []string{"旗标与退码逐字来自 docs/site/export-and-build.sh（原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdDocSiteBuild,
+		},
+		// ---- A 档 批 3（运行面）· A6：UI「脱离会话」启动口的 **CLI 正门**（`zerg ui start` · 族 `ui` 扩 action · 壳转账）----
+		// 依据：`~/.zerg/state/A档18件-收CLI设计稿-20261007.md` 批 3 · A6（单一真源 = `scripts/build/start-zerg-ui.sh`）。
+		// 底层唯一实现 = `scripts/build/start-zerg-ui.sh`（`setsid`/逐 PID 点名/日志重定向 · OS 原生面）。
+		{
+			path:        []string{"ui", "start"},
+			summary:     "UI 脱离会话启动（底层只调 scripts/build/start-zerg-ui.sh —— 命令面不重写逻辑 · 只转发不翻译）",
+			usage:       "zerg ui start",
+			arity:       "any",
+			args:        []string{"旗标与退码逐字来自 scripts/build/start-zerg-ui.sh（原样透传）"},
+			endpoint:    "",
+			passthrough: true,
+			run:         cmdUIStart,
 		},
 		// ---- T-56 余项 · 标定族 `calib`（`scripts/calib/` 3 件 ⇒ ① 收编 · DEV-0010 · 2026-09-21）----
 		{

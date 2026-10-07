@@ -167,3 +167,145 @@ func cmdRepoDiffstat(inv *invocation, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "（本命令只读 · 不改报告件 · 也不产报告件）\n")
 	return exitOK
 }
+
+// ── M2 接线入口：`zerg gate check repo-diffstat-check`（进程内）────────────────────────────────
+//
+// 本件是 `zerg repo diffstat`（T20 正门一条）的**本体**；其判据件
+// `scripts/gates/repo-diffstat-check.py`（55 行）是它的**薄壳**：只解析 `--file`（缺省读 stdin 落
+// 临时件），把判定**整件委托**给正门 `zerg repo diffstat --report <件>`，逐字透传 rc（退码口径
+// 3 格齐 0 / 空 1 / 缺格 2 / 件读不到 8 全在正门）。
+// ⇒ 本入口 = 那条委托的**进程内等价物**：解析面照 py argparse 复刻，判定面直接调本件
+// `cmdRepoDiffstat`（✗ 不起子进程 · ✗ 不改 `cmdRepoDiffstat` 一个字节 · 纯接口适配层）。
+//
+// 两条标准声明（照 M2 口径）：
+//
+//	(a) **默认根定位**：py 薄壳**无任何路径拼接 / 无 `__file__` 语境** —— 只把 `--file`（或临时件）
+//	    路径**原样**交给正门；Go 侧同构（同样原样交给 `cmdRepoDiffstat`）⇒ 两侧与 cwd 无关、无推导差。
+//	(b) **自指**：本件**不在**本门判据面内 —— 本门只读它被点名的那**一枚**报告件、不扫任何源码
+//	    ⇒ 自指为假（改本件不影响本门对被扫件的读数）。
+//
+// 未覆盖面（如实列 · ✗ 不声称逐字）：
+//
+//	① `ZERG_BIN` 环境旋钮：py 用它选正门启动器；进程内**没有「另一个正门」可换** ⇒ 本入口不读它
+//	   （该面只在「薄壳 exec 外部启动器」那一态下存在）。
+//	② py `FileNotFoundError` 支（正门启动器不在 PATH）：进程内**恒不触发**（我们自己就是正门）；
+//	   本入口对「临时件建不出/写失败」按 fail-closed 口径具名退 8（py 那一路是裸回溯 rc=1）。
+//	③ argparse 极角落形态（短选项聚簇 `-hx` · 负号数值当值 …）只复刻被扫常见档。
+
+const rdcProg = "repo-diffstat-check.py"
+
+// rdcUsage —— py argparse 的用法串（prog 名 = `os.path.basename(sys.argv[0])` · 逐字）。
+const rdcUsage = "usage: repo-diffstat-check.py [-h] [--file FILE]\n"
+
+// rdcHelpText —— py argparse（py3.9 · 本机 PATH `python3` = 3.9.6）`-h/--help` 的**逐字**正文。
+// ★ `optional arguments:` 这一小节标题是 **py<3.10** 形态（3.10+ 印 `options:` ⇒ 属解释器版本面）。
+const rdcHelpText = rdcUsage +
+	"\n" +
+	"报数三格机检（**薄壳** → 正门 `zerg repo diffstat` · 只读 · 缺格即判不了）\n" +
+	"\n" +
+	"optional arguments:\n" +
+	"  -h, --help   show this help message and exit\n" +
+	"  --file FILE  diffstat 文本件（缺省读 stdin）\n"
+
+// rdcLongOpts —— argparse 已注册的长选项串（按注册序 · 用于前缀缩写匹配）。
+var rdcLongOpts = []string{"--help", "--file"}
+
+// rdcArgErr —— 用法错（py argparse）：stderr 印 usage ＋ `prog: error: …`，退码 2。
+func rdcArgErr(stderr io.Writer, msg string) int {
+	fmt.Fprint(stderr, rdcUsage)
+	fmt.Fprintf(stderr, "%s: error: %s\n", rdcProg, msg)
+	return 2
+}
+
+// repoDiffstatGateMain —— 判据件 `scripts/gates/repo-diffstat-check.py` 的进程内入口
+// （argv **不含程序名** · inproc 口径 · 照 M2 固定签名）。
+func repoDiffstatGateMain(stdout, stderr io.Writer, argv []string) int {
+	fileVal := ""
+	var extras []string
+	for i := 0; i < len(argv); i++ {
+		a := argv[i]
+		if a == "--" {
+			// py argparse：`--` 与其后全部**原样**进 extras（无位置参数 ⇒ 报「unrecognized arguments」）。
+			extras = append(extras, argv[i:]...)
+			break
+		}
+		if a == "-h" {
+			fmt.Fprint(stdout, rdcHelpText)
+			return 0
+		}
+		if a == "-" || !strings.HasPrefix(a, "-") {
+			extras = append(extras, a)
+			continue
+		}
+		if !strings.HasPrefix(a, "--") {
+			extras = append(extras, a) // 非 -h 的短选项（py argparse 不认 ⇒ unrecognized）
+			continue
+		}
+		name, explicit, hasExplicit := a, "", false
+		if idx := strings.Index(a, "="); idx >= 0 {
+			name, explicit, hasExplicit = a[:idx], a[idx+1:], true
+		}
+		var matches []string
+		for _, o := range rdcLongOpts {
+			if strings.HasPrefix(o, name) {
+				matches = append(matches, o)
+			}
+		}
+		if len(matches) == 0 {
+			extras = append(extras, a)
+			continue
+		}
+		if len(matches) > 1 {
+			return rdcArgErr(stderr, "ambiguous option: "+name+" could match "+strings.Join(matches, ", "))
+		}
+		switch matches[0] {
+		case "--help":
+			if hasExplicit {
+				return rdcArgErr(stderr, "argument -h/--help: ignored explicit argument '"+explicit+"'")
+			}
+			fmt.Fprint(stdout, rdcHelpText)
+			return 0
+		case "--file":
+			if hasExplicit {
+				fileVal = explicit
+			} else if i+1 < len(argv) && (argv[i+1] == "-" || !strings.HasPrefix(argv[i+1], "-")) {
+				i++
+				fileVal = argv[i]
+			} else {
+				return rdcArgErr(stderr, "argument --file: expected one argument")
+			}
+		}
+	}
+	if len(extras) > 0 {
+		return rdcArgErr(stderr, "unrecognized arguments: "+strings.Join(extras, " "))
+	}
+
+	// 判定面：py「`--file` 有值 ⇒ 用它；否则读 stdin 落临时件」+「交给正门 `--report <target>`」
+	// ⇒ 此处**进程内**同构。★ py 判的是 `if a.file:`（假值即走 stdin）⇒ 空串同「没给」。
+	target := fileVal
+	if target == "" {
+		text, _ := io.ReadAll(os.Stdin)
+		f, err := os.CreateTemp("", "repo-diffstat-*.txt")
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: 临时件建不出（%v）⇒ 判不了（退码 %d）\n", progName, err, exitBlocked)
+			return exitBlocked
+		}
+		tmp := f.Name()
+		defer func() { _ = os.Remove(tmp) }() // 自回收（py `finally: os.unlink(tmp)` 同构）
+		if _, werr := f.Write(text); werr != nil {
+			_ = f.Close()
+			fmt.Fprintf(stderr, "%s: 临时件写失败（%v）⇒ 判不了（退码 %d）\n", progName, werr, exitBlocked)
+			return exitBlocked
+		}
+		_ = f.Close()
+		target = tmp
+	}
+
+	// 正门调用面：argv 形态照 CLI `repo diffstat --report <件>` 逐字（`inv.orig` 供写旗标守卫 · `inv.path` 供报错）。
+	inv, err := parseInvocation([]string{"repo", "diffstat", "--report", target})
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", progName, err)
+		return exitUsage
+	}
+	return cmdRepoDiffstat(inv, stdout, stderr)
+}

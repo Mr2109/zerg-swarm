@@ -8709,6 +8709,46 @@
   },
   {
    "argv": [
+    "deploy",
+    "launch",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "deploy launch",
+   "id": "deploy/launch#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "doc",
+    "site",
+    "build",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "doc site build",
+   "id": "doc/site/build#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
+    "ui",
+    "start",
+    "--schema",
+    "zerg/v9"
+   ],
+   "command": "ui start",
+   "id": "ui/start#不认的契约主号",
+   "want_rc": 2,
+   "want_stdout_bytes": 0,
+   "why": "消费侧拒绝不认的 schema 主号（§十二 P-026）· 执行前判"
+  },
+  {
+   "argv": [
     "doc",
     "kb-sync",
     "--schema",

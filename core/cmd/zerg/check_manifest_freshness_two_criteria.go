@@ -91,7 +91,7 @@ const (
 	// ⇒ 从非仓根 cwd 跑时真源找不到 ⇒ rc=2（fail-closed）。按「件退役后判据照常出结论」口径，
 	// 标记补上**不会被退役**的门禁自举件（`precommit-gates.sh` · 与 newfile-registry 的
 	// `gnrStepsRel` 同源选择）⇒ py 退役不改变根定位结论。自指 py 在盘时仍优先命中同一目录。
-	cmfRootMarkerRel = "scripts/gates/precommit-gates.sh"
+	cmfRootMarkerRel = zergPrecommitGatesRel
 	// cmfTruthGoHalfRel —— 真源 `check-manifest-freshness.py` 的 **Go 半**（仓内相对路径）。
 	// 退役稳态下 C3 的**真源内化**读取面（同一「两处判据分列」口径，改读 Go 半源码；
 	// ✗ 不新写第二份判据）。见 `cmfTruthRetired`。

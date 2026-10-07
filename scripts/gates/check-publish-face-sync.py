@@ -105,7 +105,8 @@ PRIV = load_reusable_asset("face_sync_priv", os.path.join(REPO, "scripts", "gate
                            os.path.join(REPO, "core", "cmd", "zerg", "check_public_tree_private.go"), "_InlinePriv")
 # 判据⑥（表 × 两器）复用**表自己的加载器**（`check-public-marks.py` 的 `load_table` / `TableError`）——
 # 单一真源，绝不另抄第二份表解析器（那张表的合规口径由提交闸上的 B15 管，本门只读它的判定结果）。
-MARKS = load_module("face_sync_marks", os.path.join(REPO, "scripts", "gates", "check-public-marks.py"))
+MARKS = load_reusable_asset("face_sync_marks", os.path.join(REPO, "scripts", "gates", "check-public-marks.py"),
+                            os.path.join(REPO, "core", "cmd", "zerg", "check_public_marks.go"), "_InlineMarks")
 MARKS_TABLE_REL = "scripts/公开标记.tsv"
 
 

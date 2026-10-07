@@ -144,6 +144,41 @@ func codeGitRoot(dir string) string {
 	}
 }
 
+// codeFindBackslashPipe —— 判「模式里有没有一颗**未被转义、且在字符组之外**的 `\|`」。
+//
+// 为什么要有这条判据（缺口 `GAP-20261008-01` · 本枚）：本命令的正则引擎是 **Go `regexp`（RE2）**，
+// 不是 POSIX BRE / GNU grep。两方言对 `\|` 的读法**不同**：
+//
+//	POSIX BRE（`grep` 默认档 · GNU 扩展）：`\|` = **交替**；
+//	RE2（Go `regexp` · git grep -E / egrep 也同）：`\|` = **字面竖线**（= `\x7c`）。
+//
+// ⇒ 用户按 grep 习惯写 `A\|B`：`regexp.Compile` **编译得过**（不报坏正则），但它只去找
+// 「A|B」这串**字面**文本 ⇒ 必然**零命中 ∧ rc=1**，与「真的没有」**同一个形状**
+// ⇒ 静默假阴（两个都各有命中的模式被一口吞成「没有」）。
+//
+// 判据只认**外层**那一颗：字符组 `[...]` 里的 `\|` 照旧放行（`[\|]` 是合法的字面竖线类），
+// `\\|`（转义反斜杠 + 裸 `|`）也不算 —— 那颗反斜杠被前一颗转义了（逐字符跳 esc 序列即可）。
+func codeFindBackslashPipe(pat string) bool {
+	inClass := false
+	for i := 0; i < len(pat); i++ {
+		c := pat[i]
+		if c == '\\' && i+1 < len(pat) {
+			if pat[i+1] == '|' && !inClass {
+				return true
+			}
+			i++ // 吞掉被转义的那一颗（含 `\\` / `[` 等）
+			continue
+		}
+		switch {
+		case c == '[' && !inClass:
+			inClass = true
+		case c == ']' && inClass:
+			inClass = false
+		}
+	}
+	return false
+}
+
 func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 	if len(inv.args) == 0 || strings.TrimSpace(inv.args[0]) == "" {
 		inv.setErr("usage", "missing_pattern", "缺正则")
@@ -157,6 +192,26 @@ func cmdCodeFind(inv *invocation, stdout, stderr io.Writer) int {
 		inv.setErr("usage", "bad_regex", "正则编译不过")
 		fmt.Fprintf(stderr, "%s: 正则编译不过：%v\n", progName, err)
 		fmt.Fprintf(stderr, "下一步：换一个正则（例：把 `a(` 写成 `a\\(`）\n")
+		return exitUsage
+	}
+	// ★ 缺口 `GAP-20261008-01`（本枚 · P1）：**`\|` 交替形态 ⇒ 显式出声拒绝**（fail-closed）。
+	//
+	//   病（现读坐实现场）：`zerg code find 'publish/install.sh\|gateway/install.sh'` ⇒ rc=1 ∧ 0 条，
+	//   而两条**单独**跑各为 13 条 / 3 条。真因 = 本命令走 **RE2（Go `regexp`）**：`\|` 是**字面竖线**
+	//   （= `\x7c`），不是交替（那是 POSIX BRE / GNU grep 的写法）⇒ 编译得过、只找字面「A|B」⇒
+	//   必然零命中，与「真的没有」**同一个形状**（两个都有命中的模式被吞成「没有」= 静默假阴）。
+	//
+	//   为什么不把 `\|` **自动改写成**交替 `|`：RE2 里 `\|` 有它**确定**的意思（字面竖线），
+	//   自动改写 = 静默改语义（找字面竖线的人从此拿到假阴的另一面）✗。两方言对同一串有**两种**读法
+	//   ⇒ 按本仓「歧义输入 ⇒ fail-closed、✗ 不猜」的口径：**判在扫之前（零副作用）**、逐字点名 +
+	//   给可行替身，退 `usage`=2（✗ 不许再退 1 装作「没有」——那正是本缺口的病）。
+	if codeFindBackslashPipe(pat) {
+		inv.setErr("usage", "backslash_pipe_not_alternation", "`\\|` 是字面竖线、不是交替（RE2 方言）")
+		fmt.Fprintf(stderr, "%s: 模式里的 `\\|` **不是交替** —— 本命令走 **RE2（Go regexp）** 方言：\n", progName)
+		fmt.Fprintf(stderr, "  `\\|` 是**字面竖线**（= `\\x7c`），所以 %q 只会去找「A|B」这种字面串 ⇒ 必然零命中。\n", pat)
+		fmt.Fprintf(stderr, "  · 要**交替**用**裸** `|`：A|B（例：publish/install\\.sh|gateway/install\\.sh）\n")
+		fmt.Fprintf(stderr, "  · 要**字面竖线**用 `[|]` 或 `\\x7c`\n")
+		fmt.Fprintf(stderr, "⇒ 退码 2（这不是「没有命中」，是模式写法不合法）\n")
 		return exitUsage
 	}
 	// ★ 缺口 `GAP-20260927-252`（本枚 · P1）：`-i`/`--ignore-case` —— 大小写归一档（POSIX grep 惯用）。

@@ -168,3 +168,77 @@ func TestCodeFind_PathAcceptsRegularFile(t *testing.T) {
 		t.Errorf("--path <不存在的路径> 退了 2 却没给理由（stderr 空）")
 	}
 }
+
+// TestCodeFind_BackslashPipeIsNotAlternation —— 缺口 `GAP-20261008-01` 的真二进制判据。
+//
+// 病（改前现读）：`zerg code find 'publish/install.sh\|gateway/install.sh'` ⇒ **rc=1 ∧ 0 条**，
+// 而两条**单独**跑各 13 / 3 条。真因 = 本命令走 **RE2（Go `regexp`）**：`\|` 是**字面竖线**
+// （= `\x7c`），不是交替（POSIX BRE / GNU grep 的写法）⇒ 编译得过 ∧ 只找字面「A|B」⇒ 必然零命中，
+// 与「真的没有」同形状（静默假阴）。治法 = fail-closed：判在扫之前，逐字拒绝（rc=2）+ 给可行替身。
+//
+// ★ 本组从源码现编（`zergBinaryFromSource`）—— 本单硬约束禁重编 `bin/zerg`（行为面待重编）
+//
+//	⇒ 拿旧制品会把「本面未落制品」误读成「本面不存在」（与 `cli_gate_run_step_test.go` 同法）。
+//
+// 四档成对：
+//
+//	① 正控（软肋）：`A\|B` ⇒ **rc=2**（改前是 rc=1 ⇒ 本格改前必红）、stderr 逐字给替身；
+//	② 替身可行：**裸 `|`** `A|B` ⇒ rc=0 且两件都在（证明「给的替身真能用」）；
+//	③ 不误伤①：`\\|`（转义反斜杠 + 裸交替）⇒ 不被拒（仍按 RE2 语义 = `A\` OR `B`，rc=0）；
+//	③ 不误伤②：`[\|]`（字符组里的 `\|`）⇒ 不被拒（合法字面竖线类，rc=0）；
+//	④ 负控：真无命中 ⇒ 仍 **rc=1** 且逐字出声「这不是错，是「没有」」（不把「没有」当「错」）。
+func TestCodeFind_BackslashPipeIsNotAlternation(t *testing.T) {
+	bin := zergBinaryFromSource(t)
+	root := syntheticRepo(t, "exit 0\n")
+	mustWrite(t, filepath.Join(root, "aaa", "one.go"), "package aaa\n// alphaToken here\n")
+	mustWrite(t, filepath.Join(root, "bbb", "two.go"), "package bbb\n// betaToken here\n")
+	mustWrite(t, filepath.Join(root, "ccc", "three.txt"), "a|b\n") // 字面竖线
+
+	// ① 正控：`\|` 交替形态 ⇒ rc=2（改前 rc=1 ⇒ 本格改前必红）+ 出声给替身。
+	rc, out, errb := execCase(t, bin, root, "code", "find", `alphaToken\|betaToken`)
+	if rc != 2 {
+		t.Fatalf("`A\\|B` 必须 rc=2（不许静默退 1 装作「没有」），得到 %d · stdout=%q stderr=%q", rc, out, errb)
+	}
+	if !strings.Contains(errb, "不是交替") || !strings.Contains(errb, "字面竖线") {
+		t.Errorf("拒绝时必须逐字点名真因（不是交替 / 字面竖线）：stderr=%q", errb)
+	}
+	if !strings.Contains(errb, "|") {
+		t.Errorf("拒绝时必须给**可行替身**（裸 |）：stderr=%q", errb)
+	}
+
+	// ② 替身可行：裸 `|` ⇒ rc=0，且两份都命中（改前 A\|B 吞掉的正是这两件）。
+	rc, out, errb = execCase(t, bin, root, "code", "find", "alphaToken|betaToken")
+	if rc != 0 {
+		t.Fatalf("替身（裸 |）必须 rc=0，得到 %d · stderr=%q", rc, errb)
+	}
+	if !strings.Contains(out, "aaa/one.go") || !strings.Contains(out, "bbb/two.go") {
+		t.Errorf("裸 | 交替没同时命中两件：%q", out)
+	}
+
+	// ③ 不误伤①：`\\|`（转义反斜杠 + 裸交替）⇒ 不被拒（rc≠2）。
+	rc, out, errb = execCase(t, bin, root, "code", "find", `alphaToken\\|betaToken`)
+	if rc == 2 {
+		t.Errorf("`\\\\|`（转义反斜杠 + 裸交替）不该被拒（它不含外层 `\\|`）：rc=2 · stderr=%q", errb)
+	}
+	if rc != 0 || !strings.Contains(out, "bbb/two.go") {
+		t.Errorf("`alphaToken\\\\|betaToken` 应当按 RE2 语义 = (alphaToken\\) OR (betaToken) ⇒ rc=0 且命中 bbb/two.go；得到 rc=%d out=%q", rc, out)
+	}
+
+	// ③ 不误伤②：`[\|]`（字符组里的 `\|`）⇒ 不被拒（合法字面竖线类，rc=0 命中 a|b）。
+	rc, out, errb = execCase(t, bin, root, "code", "find", `[\|]`)
+	if rc != 0 {
+		t.Errorf("`[\\|]` 是合法字面竖线类、不该被拒：得到 rc=%d · stderr=%q", rc, errb)
+	}
+	if !strings.Contains(out, "ccc/three.txt") {
+		t.Errorf("`[\\|]` 没命中字面竖线件：%q", out)
+	}
+
+	// ④ 负控：真无命中 ⇒ rc=1 且逐字出声（「这不是错，是『没有』」）。
+	rc, out, errb = execCase(t, bin, root, "code", "find", "zzz_never_there_zzz")
+	if rc != 1 {
+		t.Fatalf("真无命中 ⇒ rc=1（不是错，是「没有」），得到 %d · stdout=%q stderr=%q", rc, out, errb)
+	}
+	if !strings.Contains(errb, "这不是错，是「没有」") {
+		t.Errorf("零命中必须逐字出声「这不是错，是「没有」」：stderr=%q", errb)
+	}
+}

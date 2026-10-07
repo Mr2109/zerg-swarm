@@ -1,6 +1,6 @@
 // family_gate_explain.go —— `zerg gate explain <步名>`（§四 D6 · 缺口-命令面-20260921 §十一 P0-4）。
 //
-// 为什么它排 P0：今天读「这一步判什么」靠 `sed -n '35p' precommit-gates.sh`（**5 行**），
+// 为什么它排 P0：今天读「这一步判什么」靠 `sed -n '/^# 退出码：/p' precommit-gates.sh`（**5 行**），
 // 而 `gate show` **只给命令串** —— 实测 `zerg gate show "门⑪"` ⇒ 只输出
 // `python3 scripts/gates/check-cli-contract.py`，`scope/mode/判据/出处` 一个都不给。
 // 命令化之后：`dev verify` 证据单的 `criterion` 一列有真源、文档-命令一致性门能把「判据」

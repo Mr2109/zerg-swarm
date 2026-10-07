@@ -23,6 +23,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"go/parser"
@@ -339,17 +340,40 @@ func impactImportWhitelistDir(root, rel string) ([]impactImportRow, error) {
 
 // ---- 茧壁门（既有面 · 判据④的现跑读数）------------------------------------------------------
 
-// impactDupWallGate 现跑既有茧壁门（`scripts/gates/check-wall-layer.py`）—— 只读、只报 rc。
+// impactDupWallPyRel —— 茧壁门的 py 半（待退役 · 在盘即仍走它 ⇒ 单一真源不变）。
+const impactDupWallPyRel = "scripts/gates/check-wall-layer.py"
+
+// impactDupWallGoHalfRel —— 茧壁门的 Go 半（后继实现 · 退役态回落到它）。
+const impactDupWallGoHalfRel = "core/cmd/zerg/check_wall_layer.go"
+
+// impactDupWallRetired —— 退役态判据（同 `impactCalibScriptRetired` 口径）：py 半不在盘 **且**
+// 其 Go 半在盘 ⇒ 退役（不过问 py）；两者皆缺（真消失）⇒ false ⇒ 保留原 fail-closed。✗ 不猜。
+func impactDupWallRetired(root string) bool {
+	py := filepath.Join(root, filepath.FromSlash(impactDupWallPyRel))
+	goHalf := filepath.Join(root, filepath.FromSlash(impactDupWallGoHalfRel))
+	return !impactCalibIsFile(py) && impactCalibIsFile(goHalf)
+}
+
+// impactDupWallGate 现跑既有茧壁门（后继实现 `core/cmd/zerg/check_wall_layer.go`）—— 只读、只报 rc。
+// ★ 退役容忍（2026-10-08 · B 轨残件 · `GAP-20261007-16` 类①「Go 半硬要求在盘 py」）：py 半在盘 ⇒
+// 旧路逐字不变（起 `python3` 跑它）；py 半退役（不在盘 ∧ Go 半在盘）⇒ 回落**同判据的 Go 半**
+// `walllayerGateMain`（同包 inproc · 读同一真源 · 两态 IDENTICAL）；两半皆缺（真消失）⇒ 照旧
+// fail-closed（✗ 不静默当绿）。
 func impactDupWallGate(root string) (int, string, string) {
-	rel := "scripts/gates/check-wall-layer.py"
-	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
-		return -1, "读不到", "茧壁门脚本不在盘上（" + rel + "）"
+	py := filepath.Join(root, filepath.FromSlash(impactDupWallPyRel))
+	if impactCalibIsFile(py) {
+		out, errOut, code, err := impactRunIn(root, "python3", impactDupWallPyRel)
+		if err != nil {
+			return -1, "读不到", "茧壁门起不来：" + err.Error()
+		}
+		return code, impactFirstLine(out), impactFirstLine(errOut)
 	}
-	out, errOut, code, err := impactRunIn(root, "python3", rel)
-	if err != nil {
-		return -1, "读不到", "茧壁门起不来：" + err.Error()
+	if impactDupWallRetired(root) {
+		var out, errb bytes.Buffer
+		rc := walllayerGateMain(&out, &errb, []string{root})
+		return rc, impactFirstLine(out.String()), impactFirstLine(errb.String())
 	}
-	return code, impactFirstLine(out), impactFirstLine(errOut)
+	return -1, "读不到", "茧壁门脚本不在盘上（" + impactDupWallPyRel + "）"
 }
 
 // ---- 渲染（stderr · 报数档 · 两档跑法都由调用方定）-------------------------------------------

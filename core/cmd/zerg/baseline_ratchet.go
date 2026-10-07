@@ -83,6 +83,11 @@ var brConditions = []brCond{
 		unit:      "「闸文件里查无此名」的脚本条数",
 		measure:   []string{"python3", brPyJoin("scripts", "gates", "check-gate-coverage.py"), "--baseline"},
 		measureRe: `③\s*实测命中数[^=]*=\s*(\d+)`,
+		// ★ 退役态回落（G21 · 2026-10-07 退役批）：本格现测件 `scripts/gates/check-gate-coverage.py`
+		//   在退场批（甲组 B-先解阻塞 ①）⇒ 带其 Go 半 `checkGateCoverageGateMain`（同一 `--baseline`
+		//   输出面 · 同一 `measureRe` 抽取）。py 在盘 ⇒ 旧路逐字不变；py 退役 ⇒ 进程内跑 Go 半
+		//   （✗ 不 fail-closed）；两半皆缺 ⇒ 仍判不了（fail-closed 保留）。见 `brMeasureValue`。
+		goMain: checkGateCoverageGateMain,
 	},
 	{
 		name:      "cli-contract.blanks",

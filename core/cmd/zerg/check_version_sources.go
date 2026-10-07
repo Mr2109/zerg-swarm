@@ -1095,7 +1095,84 @@ type vsResult struct {
 	blockers     []string
 	docs         *vsDocs
 	defEntries   []vsDefEntry
+	ddEntries    []vsDDEnt
 	rc           int
+}
+
+type vsSiteEnt struct{ file, pat, role, want, note, reviewDate string }
+
+type vsDDEnt struct{ file, role, state, got, want, note, reviewDate string }
+
+// vsDerivedDefaultSites —— R7 派生默认层版本位点登记册（缺口 GAP-20260927-89 · py 同名段逐字镜像）。
+var vsReReviewDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+var vsDerivedDefaultSites = []vsSiteEnt{
+	{"scripts/gates/check-doc-freshness.py", `os\.path\.join\(sibling, "项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.10", "乙·沿革/引证：v2.5.10 是文档面上一次定稿版（改真源 2.5.13 破 devdocs:meta/freshness D1 两阻断步）· Mr2109 2026-10-08 拍·GAP-20260927-89", "2026-10-08"},
+	{"core/cmd/zerg/check_doc_freshness.go", `cdfSlugVersionDir = "(v[0-9.]+)"`, "pinned", "v2.5.10", "乙·沿革同上（Go 半 · 缺口 GAP-20260926-174）", "2026-10-08"},
+	{"core/cmd/zerg/check_doc_meta.go", `cdmPyJoin\(sibling, "项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.10", "乙·沿革同上（devdocs 默认根）", "2026-10-08"},
+	{"core/cmd/zerg/check_doc_meta.go", `\{"docs/项目文档/(v[0-9.]+)/"`, "pinned", "v2.5.10", "FORMAL_PREFIX 首棵（面登记 · 沿革同上）", "2026-10-08"},
+	{"core/cmd/zerg/check_glossary.go", `chglJoin\(sibling, "项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.10", "乙·沿革同上（devdocs 默认根）", "2026-10-08"},
+	{"core/cmd/zerg/check_approve_ci.go", `caciDevdocsTail = caciPyJoin\("项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.11", "乙·引证：口径-CI永不人签-20260923.md 实际只在 v2.5.11（他版 0 份）", "2026-10-08"},
+	{"core/cmd/zerg/check_approve_closedset.go", `cacsDevdocsTail = caciPyJoin\("项目文档", "(v[0-9.]+)"\)`, "pinned", "v2.5.11", "乙·引证：S2 单向铁律台账实际只在 v2.5.11", "2026-10-08"},
+	{"core/cmd/zerg/check_approve_freeze.go", `cafrDocsVer\s+= "(v[0-9.]+)"`, "pinned", "v2.5.11", "乙·引证：缺口-命令面-20260922.md 顶账 16 条实际只在 v2.5.11", "2026-10-08"},
+}
+
+// vsCheckDerivedDefaults —— R7：派生默认层版本位点登记册。
+// derived 档：定位串是**真源钩子**，捕获值须 == `v<canonical>`；pinned 档：捕获值须 == 登记值。
+func vsCheckDerivedDefaults(root, canonical string, roster []vsSiteEnt) ([]string, []string, []vsDDEnt) {
+	if roster == nil {
+		roster = vsDerivedDefaultSites
+	}
+	var problems, blockers []string
+	var entries []vsDDEnt
+	if len(roster) == 0 {
+		blockers = append(blockers, "空转：派生默认层位点登记册为空（判据不可判 ⇒ 不给结论）")
+		return problems, blockers, entries
+	}
+	for _, e := range roster {
+		if !vsReReviewDate.MatchString(e.reviewDate) {
+			problems = append(problems, fmt.Sprintf("FAIL %s 缺/坏 review_date=%s（要 `YYYY-MM-DD` —— 钉版不许无复查日）", e.file, e.reviewDate))
+		}
+		ap := vsPyJoin(root, e.file)
+		if st, err := os.Stat(ap); err != nil || st.IsDir() {
+			entries = append(entries, vsDDEnt{file: e.file, role: e.role, state: "件缺·跳过", got: "", want: e.want, note: e.note, reviewDate: e.reviewDate})
+			continue
+		}
+		b, err := os.ReadFile(ap)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("FAIL %s 读不了：%v（位点判不了）", e.file, err))
+			entries = append(entries, vsDDEnt{file: e.file, role: e.role, state: "读失败", got: "", want: e.want, note: e.note, reviewDate: e.reviewDate})
+			continue
+		}
+		re, cerr := regexp.Compile(e.pat)
+		if cerr != nil {
+			problems = append(problems, fmt.Sprintf("FAIL %s 位点定位串坏：%v", e.file, cerr))
+			entries = append(entries, vsDDEnt{file: e.file, role: e.role, state: "定位串坏", got: "", want: e.want, note: e.note, reviewDate: e.reviewDate})
+			continue
+		}
+		ms := re.FindAllStringSubmatch(string(b), -1)
+		if len(ms) != 1 {
+			problems = append(problems, fmt.Sprintf("FAIL %s 位点定位串命中 %d 次（应为 1）⇒ 位点丢失/歧义：%s", e.file, len(ms), e.pat))
+			entries = append(entries, vsDDEnt{file: e.file, role: e.role, state: fmt.Sprintf("定位%dx", len(ms)), got: "", want: e.want, note: e.note, reviewDate: e.reviewDate})
+			continue
+		}
+		got := ms[0][1]
+		want := e.want
+		if e.role == "derived" {
+			if canonical == "" {
+				blockers = append(blockers, fmt.Sprintf("不给结论：真源版本未解出 ⇒ 派生位点判不了（%s）", e.file))
+				entries = append(entries, vsDDEnt{file: e.file, role: e.role, state: "真源未解", got: got, want: "", note: e.note, reviewDate: e.reviewDate})
+				continue
+			}
+			want = "v" + canonical
+		}
+		state := "命中"
+		if got != want {
+			state = "漂移"
+			problems = append(problems, fmt.Sprintf("FAIL %s 版本目录位点 = %s ≠ 登记期望 %s（%s · %s）", e.file, got, want, e.role, e.note))
+		}
+		entries = append(entries, vsDDEnt{file: e.file, role: e.role, state: state, got: got, want: want, note: e.note, reviewDate: e.reviewDate})
+	}
+	return problems, blockers, entries
 }
 
 func vsCheckSources(cwd, root string, staleSet []string, strictDocs bool, roster []vsDefRootEnt, relocated map[string]vsRelocEnt) *vsResult {
@@ -1232,6 +1309,11 @@ func vsCheckSources(cwd, root string, staleSet []string, strictDocs bool, roster
 	problems = append(problems, drProblems...)
 	blockers = append(blockers, drBlockers...)
 
+	// ⑦ R7 派生默认层版本位点登记册（GAP-20260927-89）
+	ddProblems, ddBlockers, ddEntries := vsCheckDerivedDefaults(root, canonical, nil)
+	problems = append(problems, ddProblems...)
+	blockers = append(blockers, ddBlockers...)
+
 	rc := vsRCOK
 	if len(problems) > 0 {
 		rc = vsRCFail
@@ -1247,7 +1329,7 @@ func vsCheckSources(cwd, root string, staleSet []string, strictDocs bool, roster
 	return &vsResult{
 		root: vsPyAbspath(cwd, root), canonical: canonical, hasCanonical: canonical != "",
 		sources: sources, problems: problems, blockers: blockers, docs: docs,
-		defEntries: drEntries, rc: rc,
+		defEntries: drEntries, ddEntries: ddEntries, rc: rc,
 	}
 }
 
@@ -1316,6 +1398,21 @@ func vsPrintReport(w io.Writer, res *vsResult, strictDocs bool) int {
 			tail = "登记迁出 ⇒ " + e.landed
 		}
 		fmt.Fprintf(w, "  %s  %s  %s\n", mark, e.dir, tail)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "-- 派生默认层（R7 · 位点登记册：%d 条）--\n", len(res.ddEntries))
+	for _, e := range res.ddEntries {
+		mark := "✗"
+		if e.state == "命中" {
+			mark = "✓"
+		} else if e.state == "件缺·跳过" {
+			mark = "·"
+		}
+		got := e.got
+		if got == "" {
+			got = "—"
+		}
+		fmt.Fprintf(w, "  %s  %s [%s] %s = %s（复查 %s）\n", mark, e.file, e.role, e.state, got, e.reviewDate)
 	}
 	fmt.Fprintln(w)
 	if len(res.problems) > 0 {
@@ -2104,6 +2201,21 @@ func (r *vsResult) toJSON() *vsJobj {
 	}
 	drObj.set("entries", drEnt)
 	obj.set("default_roots", drObj)
+	ddObj := &vsJobj{}
+	ddEnt := make([]vsJval, 0, len(r.ddEntries))
+	for _, e := range r.ddEntries {
+		eo := &vsJobj{}
+		eo.set("file", e.file)
+		eo.set("role", e.role)
+		eo.set("state", e.state)
+		eo.set("got", e.got)
+		eo.set("want", e.want)
+		eo.set("note", e.note)
+		eo.set("review_date", e.reviewDate)
+		ddEnt = append(ddEnt, eo)
+	}
+	ddObj.set("entries", ddEnt)
+	obj.set("derived_defaults", ddObj)
 	obj.set("rc", r.rc)
 	return obj
 }
