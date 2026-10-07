@@ -79,7 +79,7 @@ const mfSelfRel = "scripts/gates/check-manifest-freshness.py"
 // 跑时真源找不到 ⇒ rc=2（fail-closed）。按「件退役后判据照常出结论」口径，标记补上
 // **不会被退役**的门禁自举件（precommit-gates.sh · 与 check-manifest-freshness-two-criteria
 // 的 cmfRootMarkerRel 同源选择）⇒ py 退役不改变根定位结论。自指 py 在盘时仍优先命中同一目录。
-const mfRootMarkerRel = "scripts/gates/precommit-gates.sh"
+const mfRootMarkerRel = zergPrecommitGatesRel
 
 // mfEmptyManifestMsg —— ★ 空清单（`{}` / 四键全缺）⇒ **没输入可判**：✗ 不许报「新鲜」。
 // ★ 口径（`GAP-20260927-108` · 2026-10-05 拍板）：**rc 契约一字不动**（本门是报告档：缺省退码恒 0、

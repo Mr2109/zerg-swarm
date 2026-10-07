@@ -41,10 +41,15 @@ func publishSetRun(t *testing.T, argv ...string) (int, string, string) {
 //	  退役面内**（门69 判据件 · 待退役）⇒ 同病（退役即红）⇒ 同批内化：改拿**结构性机制件**
 //	  `scripts/gates/real-gates.sh`（门面「真跑档」本体 · 恒 `public=no` + 两器排除面在册 ·
 //	  不在任何 py→Go 退役面内）。现读一键核：三枚 + 一正控 `publish set` 全「不发 · EXCLUDES」。
+//
+// ★ 2026-10-08（退场批 · 队列表头 a0b95f29）：原第三枚 `scripts/gates/check-lineref-limit.py` 随门67 py 半退役（不在盘）
+// ⇒ 同病（退役即红：其 EXCLUDES/DROP_EXACT 登记同批摘除，`publish set` 对它报「会发=是」）⇒ 同批内化：改拿
+// **结构性机制件** `scripts/gates/check-doc-name.md`（判据说明书 · 恒 `public=no` + 两器排除面在册 · 不在 py→Go 退役面 ⇒
+// 样本不随单件退役而失）。现读一键核：三枚 + 一正控 `publish set` 全「不发 · EXCLUDES」。
 var publishSetGateBlockedFiles = []string{
 	"scripts/gates/precommit-gates.sh",
 	"scripts/gates/real-gates.sh",
-	"scripts/gates/check-lineref-limit.py",
+	"scripts/gates/check-doc-name.md",
 }
 
 // TestPublishSet_ThreeBlockedOneControl —— 必验①：三枚 blocked + 一件正控（现读真仓真源件）。

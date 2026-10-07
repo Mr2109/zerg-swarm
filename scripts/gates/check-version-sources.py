@@ -233,6 +233,77 @@ def check_default_roots(root, roster=None, relocated=None):
     return problems, blockers, entries
 
 
+# ── R7 · 派生默认层版本位点登记册（缺口 GAP-20260927-89）────────────────────────
+# 每一个「版本目录默认根 / 派生默认位点」都必须在本册**点名登记**，✗ 不许静默漂移。
+#   role="derived"：该位点应由**真源现算**（跟 version.go 的 `const Version`）⇒ 件里必须出现真源钩子（钩子即 pat，
+#                   如 `CurrentVersionDirTail` / `current_version`），捕获值须 == `v<当前版>`。
+#   role="pinned" ：该位点**钉死某一版**（历史台账/口径件实际所在版 = 引证；或经裁定的暂钉）⇒ 捕获值须 == 登记值。
+# entry = (件(仓根相对), 定位正则(1 个捕获组), role, 期望值, 理由, review_date)。
+#   review_date = 复查日（`YYYY-MM-DD`）：沿革/引证钉版**何时应被重新复核**；缺或写坏 ⇒ rc=1（钉版不许无复查日）。
+# 件不在盘 ⇒ 记「件缺·跳过」（夹具/公开树无此件 ⇒ 不误红）；定位串命中 ≠1 次 ⇒ rc=1（位点丢失/歧义）；
+# 捕获值 ≠ 期望 ⇒ rc=1（静默漂移被逮）。名册空 ⇒ rc=2（空转不给结论）。
+RE_REVIEW_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+DERIVED_DEFAULT_SITES = [
+    ("scripts/gates/check-doc-freshness.py", r'os\.path\.join\(sibling, "项目文档", "(v[0-9.]+)"\)',
+     "pinned", "v2.5.10", "乙·沿革/引证：v2.5.10 是文档面上一次定稿版（改真源 2.5.13 破 devdocs:meta/freshness D1 两阻断步）· Mr2109 2026-10-08 拍·GAP-20260927-89", "2026-10-08"),
+    ("core/cmd/zerg/check_doc_freshness.go", r'cdfSlugVersionDir = "(v[0-9.]+)"',
+     "pinned", "v2.5.10", "乙·沿革同上（Go 半 · 缺口 GAP-20260926-174）", "2026-10-08"),
+    ("core/cmd/zerg/check_doc_meta.go", r'cdmPyJoin\(sibling, "项目文档", "(v[0-9.]+)"\)',
+     "pinned", "v2.5.10", "乙·沿革同上（devdocs 默认根）", "2026-10-08"),
+    ("core/cmd/zerg/check_doc_meta.go", r'\{"docs/项目文档/(v[0-9.]+)/"',
+     "pinned", "v2.5.10", "FORMAL_PREFIX 首棵（面登记 · 沿革同上）", "2026-10-08"),
+    ("core/cmd/zerg/check_glossary.go", r'chglJoin\(sibling, "项目文档", "(v[0-9.]+)"\)',
+     "pinned", "v2.5.10", "乙·沿革同上（devdocs 默认根）", "2026-10-08"),
+    ("core/cmd/zerg/check_approve_ci.go", r'caciDevdocsTail = caciPyJoin\("项目文档", "(v[0-9.]+)"\)',
+     "pinned", "v2.5.11", "乙·引证：口径-CI永不人签-20260923.md 实际只在 v2.5.11（他版 0 份）", "2026-10-08"),
+    ("core/cmd/zerg/check_approve_closedset.go", r'cacsDevdocsTail = caciPyJoin\("项目文档", "(v[0-9.]+)"\)',
+     "pinned", "v2.5.11", "乙·引证：S2 单向铁律台账实际只在 v2.5.11", "2026-10-08"),
+    ("core/cmd/zerg/check_approve_freeze.go", r'cafrDocsVer\s+= "(v[0-9.]+)"',
+     "pinned", "v2.5.11", "乙·引证：缺口-命令面-20260922.md 顶账 16 条实际只在 v2.5.11", "2026-10-08"),
+]
+
+
+def check_derived_defaults(root, roster=None, canonical=None):
+    """R7：派生默认层版本位点登记册。返回 (problems, blockers, entries)。"""
+    roster = DERIVED_DEFAULT_SITES if roster is None else roster
+    problems, blockers, entries = [], [], []
+    if not roster:
+        blockers.append("空转：派生默认层位点登记册为空（判据不可判 ⇒ 不给结论）")
+        return problems, blockers, entries
+    for rel, pat, role, expect, note, review_date in roster:
+        if not RE_REVIEW_DATE.fullmatch(review_date):
+            problems.append("FAIL %s 缺/坏 review_date=%s（要 `YYYY-MM-DD` —— 钉版不许无复查日）" % (rel, review_date))
+        ap = os.path.join(root, rel)
+        if not os.path.isfile(ap):
+            entries.append({"file": rel, "role": role, "state": "件缺·跳过", "got": "", "want": expect, "note": note, "review_date": review_date})
+            continue
+        text, err = read_text(ap)
+        if err:
+            problems.append("FAIL %s 读不了：%s（位点判不了）" % (rel, err))
+            entries.append({"file": rel, "role": role, "state": "读失败", "got": "", "want": expect, "note": note, "review_date": review_date})
+            continue
+        hits = re.findall(pat, text)
+        if len(hits) != 1:
+            problems.append("FAIL %s 位点定位串命中 %d 次（应为 1）⇒ 位点丢失/歧义：%s" % (rel, len(hits), pat))
+            entries.append({"file": rel, "role": role, "state": "定位%dx" % len(hits), "got": "", "want": expect, "note": note, "review_date": review_date})
+            continue
+        got = hits[0]
+        if role == "derived":
+            if not canonical:
+                blockers.append("不给结论：真源版本未解出 ⇒ 派生位点判不了（%s）" % rel)
+                entries.append({"file": rel, "role": role, "state": "真源未解", "got": got, "want": "", "note": note, "review_date": review_date})
+                continue
+            want = "v" + canonical
+        else:
+            want = expect
+        ok = (got == want)
+        if not ok:
+            problems.append("FAIL %s 版本目录位点 = %s ≠ 登记期望 %s（%s · %s）" % (rel, got, want, role, note))
+        entries.append({"file": rel, "role": role, "state": "命中" if ok else "漂移",
+                        "got": got, "want": want, "note": note, "review_date": review_date})
+    return problems, blockers, entries
+
+
 def docs_snapshot_root(root):
     """返回 (绝对路径, 来源说明)；两处都缺 ⇒ (None, 说明)。"""
     for rel in DOCS_REL_CANDIDATES:
@@ -468,6 +539,11 @@ def check_sources(root, stale_set=None, strict_docs=False, roots_roster=None, re
     problems.extend(dr_problems)
     blockers.extend(dr_blockers)
 
+    # ⑦ R7 派生默认层版本位点登记册（GAP-20260927-89）
+    dd_problems, dd_blockers, dd_entries = check_derived_defaults(root, None, canonical)
+    problems.extend(dd_problems)
+    blockers.extend(dd_blockers)
+
     rc = RC_OK
     if problems:
         rc = RC_FAIL
@@ -477,6 +553,7 @@ def check_sources(root, stale_set=None, strict_docs=False, roots_roster=None, re
             "canonical": canonical, "sources": sources,
             "problems": problems, "blockers": blockers, "docs": docs,
             "default_roots": {"entries": dr_entries},
+            "derived_defaults": {"entries": dd_entries},
             "rc": rc}
 
 
@@ -506,6 +583,12 @@ def print_report(res, strict_docs):
         else:
             _tail = _st
         print("  %s  %s  %s" % ("✓" if _st in ("在盘", "登记迁出") else "✗", e["dir"], _tail))
+    print()
+    _dd = (res.get("derived_defaults") or {"entries": []})["entries"]
+    print("-- 派生默认层（R7 · 位点登记册：%d 条）--" % len(_dd))
+    for e in _dd:
+        _m = "✓" if e["state"] == "命中" else ("·" if e["state"] == "件缺·跳过" else "✗")
+        print("  %s  %s [%s] %s = %s（复查 %s）" % (_m, e["file"], e["role"], e["state"], e["got"] or "—", e["review_date"]))
     print()
     if res["problems"]:
         print("问题（%d 条）：" % len(res["problems"]))

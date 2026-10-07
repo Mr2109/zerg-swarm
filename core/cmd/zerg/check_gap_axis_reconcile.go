@@ -136,6 +136,8 @@ var gapAxisRecExemptExistence = []gapAxisRecExemptPair{
 	{gid: "GAP-20261007-09", unit: "scripts/gates/check-registry-key-unique.py"},
 	// 公开面退 10 件批（2026-10-07 · 本单）：check-write-face-gate.py 已登记退场（`zerg script retire` · Go 半 core/cmd/zerg/check_write_face_gate.go 在盘）⇒ 该仍缺行（GAP-20261007-08）unit 失指，入存量豁免.
 	{gid: "GAP-20261007-08", unit: "scripts/gates/check-write-face-gate.py"},
+	// 甲组 G01 第5件退场随动（2026-10-08 · 本单）：check-ghost-decl-diff.py 退场后（Go 半 core/cmd/zerg/check_ghost_decl_diff.go 在盘 · 其读取面 :844 源码级牙已 by-guard 容忍 · 自检 ④b/④c 已 by-else 容忍）⇒ 该仍缺行（GAP-20260927-62 · 门㉒ 侧① 现值面）unit 失指，入存量豁免（本表只增不删）。py 在盘时本对不生效（`ls-files` 命中即 continue）。
+	{gid: "GAP-20260927-62", unit: "scripts/gates/check-ghost-decl-diff.py"},
 }
 
 // gapAxisRecWUClosed —— 无件桶名闭集 = 裸 `无件` + `无件(<面>)`（面 ∈ 面闭集）

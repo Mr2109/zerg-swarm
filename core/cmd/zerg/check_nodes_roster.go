@@ -1075,6 +1075,159 @@ func cnrCheckFleet(fleetPath string, nodes map[string]cnrValue, localNames map[s
 	return fails, checks, ""
 }
 
+// ══════════════════════════ 判据 I：host ↔ 路径用户名（GAP-20260927-06）═════════════════════════════
+
+// cnrSshUser —— ssh 串 `user@host` 的用户段（无 `@` / 空 ⇒ ""）。**不猜**：只读声明值。
+func cnrSshUser(ssh string) string {
+	ssh = cnrPyStrip(cnrStripQuotes(ssh))
+	at := cnrLastIndexByte(ssh, '@')
+	if at <= 0 {
+		return ""
+	}
+	return ssh[:at]
+}
+
+// cnrAccountSets —— 各机**声明**的账户名集合（源 = 名册 `nodes.<名>.ssh` ＋ `updates.nodes[].ssh` 用户段）。
+func cnrAccountSets(nodes map[string]cnrValue, fleetLines []string) map[string]map[string]bool {
+	acc := map[string]map[string]bool{}
+	add := func(name, ssh string) {
+		if name == "" {
+			return
+		}
+		u := cnrSshUser(ssh)
+		if u == "" {
+			return
+		}
+		if acc[name] == nil {
+			acc[name] = map[string]bool{}
+		}
+		acc[name][u] = true
+	}
+	for name, v := range nodes {
+		if m, ok := v.(map[string]cnrValue); ok {
+			add(name, cnrToString(m["ssh"]))
+		}
+	}
+	if s, e, ok := cnrSectionRange(fleetLines, "updates"); ok {
+		ups := cnrParseBlock(fleetLines[s:e])
+		if v, ok := ups["nodes"]; ok {
+			if lst, ok := v.([]cnrValue); ok {
+				for _, itv := range lst {
+					if it, ok := itv.(map[string]cnrValue); ok {
+						add(cnrStripQuotes(cnrToString(it["name"])), cnrToString(it["ssh"]))
+					}
+				}
+			}
+		}
+	}
+	return acc
+}
+
+// cnrPathUsernames —— 从一段路径值里抽账户名（`/Users/<u>/…` 或 `/home/<u>/…`，可多处）。
+func cnrPathUsernames(val string) []string {
+	v := cnrPyStrip(cnrStripQuotes(val))
+	var out []string
+	for _, pre := range []string{"/Users/", "/home/"} {
+		start := 0
+		for {
+			i := cnrIndexFrom(v, pre, start)
+			if i < 0 {
+				break
+			}
+			rest := v[i+len(pre):]
+			j := cnrIndexByte(rest, '/')
+			if j < 0 {
+				j = len(rest)
+			}
+			if u := rest[:j]; u != "" {
+				out = append(out, u)
+			}
+			start = i + len(pre)
+		}
+	}
+	return out
+}
+
+// cnrIndexFrom —— `strings.Index(s[from:], sub)` 的偏移还原（找不到 ⇒ -1）。
+func cnrIndexFrom(s, sub string, from int) int {
+	if from > len(s) {
+		return -1
+	}
+	i := cnrIndexStr(s[from:], sub)
+	if i < 0 {
+		return -1
+	}
+	return from + i
+}
+
+// cnrSortedSet —— map[string]bool → 排序后的键切片（唯一进输出的 dict 序来源）。
+func cnrSortedSet(m map[string]bool) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	return ks
+}
+
+// cnrCheckHostPathUsername —— 判据 I（GAP-20260927-06）：`models:` 每条里路径字段
+// （`file` / `mmproj` / `cmd`）里的账户名必须 ∈ 该机**声明的**账户集
+// （源 = 名册 `nodes.<名>.ssh` 与 `updates.nodes[].ssh` 的用户段）。
+//
+//	✦ ✗ 不按命名规律猜（`mini-node-1` 的账户是 `a1`，与机器名无关）；
+//	✦ `host` 非名册键 ⇒ 交给 E 判；该机未声明 `ssh:`（账户集空）⇒ 跳过该条（报告跳过数）。
+func cnrCheckHostPathUsername(fleetLines []string, nodes map[string]cnrValue) ([]string, []string) {
+	fails := []string{}
+	checks := []string{}
+	acc := cnrAccountSets(nodes, fleetLines)
+	ents := cnrModelsEntries(fleetLines)
+	if len(ents) == 0 {
+		checks = append(checks, "I host↔路径用户名：models: 段解析不出条目 ⇒ 跳过")
+		return fails, checks
+	}
+	nChecked, nSkip := 0, 0
+	for _, me := range ents {
+		e := me.ent
+		host := cnrStripQuotes(cnrPyStrip(cnrToString(e["host"])))
+		if host == "" {
+			continue
+		}
+		accs := acc[host]
+		if len(accs) == 0 {
+			nSkip++
+			continue
+		}
+		for _, f := range []string{"file", "mmproj", "cmd"} {
+			v, ok := e[f]
+			if !ok {
+				continue
+			}
+			var vals []string
+			switch x := v.(type) {
+			case []cnrValue:
+				for _, it := range x {
+					vals = append(vals, cnrToString(it))
+				}
+			default:
+				vals = append(vals, cnrToString(v))
+			}
+			for _, val := range vals {
+				for _, u := range cnrPathUsernames(val) {
+					nChecked++
+					if !accs[u] {
+						fails = append(fails, fmt.Sprintf(
+							"I `%s`（host=%s）路径里的账户名 `%s` 不在该机声明账户集 {%s}"+
+								"（源：名册/updates 的 ssh 用户段）—— 路径与机器对不上",
+							me.name, host, u, cnrJoinStr(cnrSortedSet(accs), "/")))
+					}
+				}
+			}
+		}
+	}
+	checks = append(checks, fmt.Sprintf("I host↔路径用户名：核对 %d 处账户名 · 跳过 %d 条（host 未声明 ssh: 或非名册键）", nChecked, nSkip))
+	return fails, checks
+}
+
 // cnrRunningAgentdMachine —— py `running_agentd_machine`（只读 ps · 不碰进程）。
 func cnrRunningAgentdMachine() (string, bool) {
 	out, err := exec.Command("ps", "-Ao", "command=").Output()
@@ -1438,7 +1591,7 @@ func cnrCheckController(plistPaths []string, nodes map[string]cnrValue, rosterLi
 }
 
 // cnrRunChecks —— py `run_checks`。
-func cnrRunChecks(stdout io.Writer, roster, fleet, plist string, verbose bool, verifySha bool, ctrlPlists []string, ctrlCheck bool) int {
+func cnrRunChecks(stdout io.Writer, roster, fleet, plist string, verbose bool, verifySha bool, ctrlPlists []string, ctrlCheck bool, pathUserCheck bool) int {
 	nodes, errMsg := cnrLoadRoster(roster)
 	if errMsg != "" {
 		fmt.Fprintf(stdout, "⛔ 不给结论：%s\n", errMsg)
@@ -1471,11 +1624,25 @@ func cnrRunChecks(stdout io.Writer, roster, fleet, plist string, verbose bool, v
 	} else {
 		c3 = []string{"H 拨号对账：断言哑化（ctrl_check=False · 负控用）⇒ 不报"}
 	}
+	// I host↔路径用户名（GAP-20260927-06）—— 负控可哑化（pathUserCheck=false）。
+	var c4 []string
+	if pathUserCheck {
+		_, flines, ferr := cnrReadTextLines(fleet)
+		if ferr != nil {
+			flines = nil
+		}
+		f4, c4x := cnrCheckHostPathUsername(flines, nodes)
+		fails = append(fails, f4...)
+		c4 = c4x
+	} else {
+		c4 = []string{"I host↔路径用户名：断言哑化（path_user_check=False · 负控用）⇒ 不报"}
+	}
 	all := []string{}
 	all = append(all, lchecks...)
 	all = append(all, checks...)
 	all = append(all, c2...)
 	all = append(all, c3...)
+	all = append(all, c4...)
 	checks = all
 	uncovered := []string{}
 	for k := range nodes {
@@ -1515,7 +1682,8 @@ func cnrRunChecks(stdout io.Writer, roster, fleet, plist string, verbose bool, v
 	}
 	fmt.Fprint(stdout, "✓ **本机层**（read_layer=local）与名册逐字一致：fleet: · updates.nodes · "+
 		"models: host 各在册 · G verified 闭集（无锚 true 仅报告·GAP-20261003-21） · "+
-		"本机子端名册（plist/本机在跑 agentd） · H 拨号地址由名册可推导\n")
+		"本机子端名册（plist/本机在跑 agentd） · H 拨号地址由名册可推导 · "+
+		"I host↔路径用户名（路径账户名 ∈ 该机声明 ssh 用户段）\n")
 	fmt.Fprintf(stdout, "   ↳ verdict_scope=**本机**（%s）—— 本门**不覆盖**远端：%s\n", localStr, uncovStr)
 	return 0
 }
@@ -1604,6 +1772,23 @@ func cnrSelfTest(stdout, stderr io.Writer) int {
 		kase{"G 闭集外取值 ⇒ 1", roster,
 			w("g8.yaml", gfix("verified: maybe", "Mr2109", nonexistent)), plist, 1, false})
 
+	// ── 判据 I：host ↔ 路径用户名（GAP-20260927-06；正控 / 红 / 跳过 / 哑化成对）──
+	// 夹具名册 edge-node 的 ssh = g01@<worker-ip> ⇒ 账户集 {g01}：路径 /home/<user>/… 应 ✓、/home/other/… 应 ✗。
+	iOK := w("i_ok.yaml", cnrReplaceAll(cnrFleetFix,
+		"m1: { host: edge-node, backend: llama-server }",
+		"m1: { host: edge-node, backend: llama-server, file: /home/<user>/models/m.gguf }"))
+	iBad := w("i_bad.yaml", cnrReplaceAll(cnrFleetFix,
+		"m1: { host: edge-node, backend: llama-server }",
+		"m1: { host: edge-node, backend: llama-server, file: /home/other/models/m.gguf }"))
+	iSkip := w("i_skip.yaml", cnrReplaceAll(cnrFleetFix,
+		"m1: { host: edge-node, backend: llama-server }",
+		"m1: { host: Mr2109, backend: llama-server, file: /Users/nobody/models/m.gguf }"))
+	cases = append(cases,
+		kase{"I 路径账户名 ∈ 该机声明集 ⇒ 0", roster, iOK, plist, 0, false},
+		kase{"I 路径账户名 ∉ 该机声明集 ⇒ 1", roster, iBad, plist, 1, false},
+		kase{"I host 未声明 ssh: ⇒ 跳过 ⇒ 0", roster, iSkip, plist, 0, false},
+		kase{"I 负控：断言哑化（同一 bad）⇒ 0（回不报）", roster, iBad, plist, 0, false})
+
 	hCtrl := map[string]struct {
 		ctrl []string
 		cchk bool
@@ -1613,12 +1798,17 @@ func cnrSelfTest(stdout, stderr io.Writer) int {
 		"H 拨号端口 ≠ core 端口 ⇒ 1":      {ctrl: []string{cPort}, cchk: true},
 		"H 负控：断言哑化（同一 bad）⇒ 0（回不报）": {ctrl: []string{cBad}, cchk: false},
 	}
+	// 判据 I 哑化（负控）：同一 bad，关掉 I 断言 ⇒ 回不报（rc=0）
+	iMute := map[string]bool{"I 负控：断言哑化（同一 bad）⇒ 0（回不报）": true}
 	for _, c := range cases {
-		ptrs, cchk := []string{}, true
+		ptrs, cchk, puc := []string{}, true, true
 		if v, ok := hCtrl[c.name]; ok {
 			ptrs, cchk = v.ctrl, v.cchk
 		}
-		rc := cnrRunChecks(stdout, c.roster, c.fleet, c.plist, false, c.vsha, ptrs, cchk)
+		if iMute[c.name] {
+			puc = false
+		}
+		rc := cnrRunChecks(stdout, c.roster, c.fleet, c.plist, false, c.vsha, ptrs, cchk, puc)
 		mark := "✓"
 		if rc != c.want {
 			mark = "✗"
@@ -1629,7 +1819,7 @@ func cnrSelfTest(stdout, stderr io.Writer) int {
 
 	// ── 判词层限成对负控：判词必须带 read_layer / verdict_scope 与「不覆盖远端」声明 ──
 	var vbuf strings.Builder
-	_ = cnrRunChecks(&vbuf, roster, fleet, plist, true, false, []string{}, true)
+	_ = cnrRunChecks(&vbuf, roster, fleet, plist, true, false, []string{}, true, true)
 	vout := vbuf.String()
 	for _, kv := range []struct {
 		name string
@@ -1847,7 +2037,7 @@ func checkNodesRosterGateMain(stdout, stderr io.Writer, argv []string) int {
 		return 2
 	}
 	fmt.Fprint(stdout, "── 自检通过，开始核真目标 ──\n")
-	return cnrRunChecks(stdout, a.roster, a.fleet, a.plist, true, a.verifySha, a.ctrlPlists, true)
+	return cnrRunChecks(stdout, a.roster, a.fleet, a.plist, true, a.verifySha, a.ctrlPlists, true, true)
 }
 
 // ══════════════════════════ 薄封装（件名前缀 · 便于并发路不撞名）══════════════════════════
@@ -1869,6 +2059,8 @@ func cnrHasPrefix(s, p string) bool { return strings.HasPrefix(s, p) }
 func cnrHasSuffix(s, suf string) bool { return strings.HasSuffix(s, suf) }
 
 func cnrIndexByte(s string, b byte) int { return strings.IndexByte(s, b) }
+
+func cnrIndexStr(s, sub string) int { return strings.Index(s, sub) }
 
 func cnrLastIndexByte(s string, b byte) int { return strings.LastIndexByte(s, b) }
 

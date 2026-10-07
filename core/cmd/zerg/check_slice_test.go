@@ -125,10 +125,12 @@ func csRun(t *testing.T, argv ...string) (int, string, string) {
 
 func TestCheckSliceGatePort(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "scripts", "gates"), 0o755); err != nil {
+	// ★ 落点改指 Go 半（与 slice-probes 探针落点同批改指 Go 半）：夹具不再引用待退 py 名
+	//   `scripts/gates/check-slice.py`（G22 退场批）⇒ 退役态与在盘态同绿（✗ 不硬读真仓 py）。
+	if err := os.MkdirAll(filepath.Join(dir, "core", "cmd", "zerg"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "scripts", "gates", "check-slice.py"), []byte("x\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "core", "cmd", "zerg", "check_slice.go"), []byte("x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	w := func(name, body string) string {
@@ -138,7 +140,7 @@ func TestCheckSliceGatePort(t *testing.T) {
 		}
 		return p
 	}
-	good := strings.Replace(csGoodSliceJSON, "../Zerg-内部文档/01-设计/切片合同-模板.md:1", "scripts/gates/check-slice.py", 1)
+	good := strings.Replace(csGoodSliceJSON, "../Zerg-内部文档/01-设计/切片合同-模板.md:1", "core/cmd/zerg/check_slice.go", 1)
 
 	// ── 正控（必然判绿）：合法片 ⇒ rc=0 ──
 	fg := w("g.json", good)

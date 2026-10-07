@@ -70,10 +70,10 @@ import (
 
 const (
 	carvGatesDirRel  = "scripts/gates"
-	carvPrecommitRel = "scripts/gates/precommit-gates.sh"
+	carvPrecommitRel = zergPrecommitGatesRel
 	carvSelfRel      = "scripts/gates/check-affected-reprove.py"
 	carvSelfBase     = "check-affected-reprove.py"
-	carvFixDriverRel = "scripts/gates/precommit-gates.sh"
+	carvFixDriverRel = zergPrecommitGatesRel
 )
 
 // carvExit* —— 四档退码（与 py `EXIT_OK/EXIT_UNRESOLVED/EXIT_HARD/EXIT_RESTORE` 逐字）

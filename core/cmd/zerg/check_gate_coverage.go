@@ -65,7 +65,7 @@ import (
 
 const (
 	cgcLocalConfig = "scripts/gates/gate-coverage.config.json"
-	cgcGatesRel    = "scripts/gates/precommit-gates.sh"
+	cgcGatesRel    = zergPrecommitGatesRel
 	cgcRcOK        = 0
 	cgcRcFail      = 1
 	cgcRcBlocked   = 2

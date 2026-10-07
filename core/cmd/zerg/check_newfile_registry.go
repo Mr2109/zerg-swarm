@@ -128,7 +128,7 @@ import (
 const (
 	gnrSelfRel     = "scripts/gates/check-newfile-registry.py"
 	gnrMarksRel    = "scripts/公开标记.tsv"
-	gnrStepsRel    = "scripts/gates/precommit-gates.sh"
+	gnrStepsRel    = zergPrecommitGatesRel
 	gnrCovRel      = "scripts/gates/gate-coverage.config.json"
 	gnrCovJudgeRel = "scripts/gates/check-gate-coverage.py"
 	gnrPubRel      = "scripts/build/publish-public.sh"

@@ -199,6 +199,43 @@ func TestCheckWiredScriptsRecordSurfaceNotReference(t *testing.T) {
 	}
 }
 
+// 断言 B 的**口径**牙（缺口 GAP-20260927-148）：B 列 =「命令位调用」**与断言 A 同口径**，
+// ✗ 不是「任意出现次数」—— 只在散文 / 文案 / 清单 / 注释里被点名的白名单件必须仍判**零引用**
+// （旧口径会把它记成 refs>0 ⇒ 误落「可下架」）。
+//
+// 成对负控：同一夹具里「只在文案里被点名」⟷「命令位被调用」两只白名单件 ——
+// 前者必判零引用、后者必落「可下架」；哑化 cwsRefCmdHits 的谓词（换回 strings.Count）即红。
+func TestCheckWiredScriptsRefCaliberCommandPosition(t *testing.T) {
+	d := cwsBaseFixture(t)
+	cwsWrite(t, filepath.Join(d, "scripts/check-prose.py"), "# ck（只在文案里被点名 · 零命令位调用）\n")
+	cwsWrite(t, filepath.Join(d, "scripts/check-cmd.py"), "# ck（命令位被调用）\n")
+	cwsWrite(t, filepath.Join(d, "scripts/gates/precommit-gates.sh"),
+		"#!/usr/bin/env bash\nset -u\npython3 scripts/check-alpha.py --scope x\n"+
+			"python3 scripts/check-cmd.py\n"+
+			"echo \"   见 check-prose.py 的说明文字（非命令位）\"\n")
+	wl := cwsWL(t, []map[string]string{
+		{"name": "helper.py", "reason": "夹具", "date": "2026-10-01"},
+		{"name": "check-prose.py", "reason": "夹具：白名单里但零命令位调用", "date": "2026-10-01"},
+		{"name": "check-cmd.py", "reason": "夹具：命令位被调用", "date": "2026-10-01"},
+	})
+	out, rc := cwsRunT(t, "--root", d, "--no-self-test", "--whitelist", wl)
+	if rc != 0 {
+		t.Fatalf("只报告档 rc=%d 期望 0\n%s", rc, out)
+	}
+	// 负控：只在文案里被点名的白名单件 ⇒ 仍零引用（helper + check-prose = 2 只）。
+	if !strings.Contains(out, "零引用 2 只") {
+		t.Fatalf("文案点名的白名单件未被判零引用（B 列口径未与 A 同口径）：\n%s", out)
+	}
+	// 正控：命令位被调用的白名单件 ⇒ 有引用 ⇒ 落「可下架」。
+	if !strings.Contains(out, "check-cmd.py(refs=1)") {
+		t.Fatalf("命令位被调用的白名单件未落「可下架」：\n%s", out)
+	}
+	// 负控成对：文案件**不**得落「可下架」（旧口径残留即此处红）。
+	if strings.Contains(out, "check-prose.py(refs=") {
+		t.Fatalf("只在文案里被点名的件被误落「可下架」（旧口径残留）：\n%s", out)
+	}
+}
+
 // 白名单悬空 ⇒ rc=2（配置错）。
 func TestCheckWiredScriptsDanglingWhitelistRc2(t *testing.T) {
 	d := cwsBaseFixture(t)

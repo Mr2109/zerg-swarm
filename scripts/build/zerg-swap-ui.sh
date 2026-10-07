@@ -13,7 +13,9 @@
 #   ③ 起不来 ⇒ 回滚 + **回滚件同样验签** + 打印失败现场（**任何命令的输出都不许被吞**）。
 # 两道前置闸：
 #   闸 A **工作树里没有并行的半成品**（ui/ 与 wall/ 下有未提交改动 ⇒ 半成品进生产件）；
-#   闸 B **启动链可用**：UI 不是 launchd 作业，走仓根 `start-zerg-ui.sh`（它 `exec ./bin/zerg-ui`）
+#   闸 B **启动链可用**：UI 不是 launchd 作业，走 A6 真源 `scripts/build/start-zerg-ui.sh`
+#        （正门 `zerg ui start` 转发到它；它 os.execv 仓内 `bin/zerg-ui`）——
+#        顶层 `start-zerg-ui.sh`=A17 已于 2026-10-08 退场并入 A6（剥代理已在 `ui/src/api.rs` 根治）。
 #        ⇒ 判据 = 启动器在位 **且** 它 exec 的那个件真存在（启动器在位而件被搬走 = 同族悬空）。
 #
 # ★ 本轮档位 = **只报告**（P13 拍板原文：「先工装 · 先只报告」）：
@@ -36,7 +38,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 BIN_REL="${ZERG_SWAP_BIN:-bin/zerg-ui}"
-LAUNCHER_REL="${ZERG_SWAP_LAUNCHER:-start-zerg-ui.sh}"
+LAUNCHER_REL="${ZERG_SWAP_LAUNCHER:-scripts/build/start-zerg-ui.sh}"
 TS="$(date +%Y%m%dT%H%M%S)"
 LOG="${ZERG_SWAP_LOG:-/tmp/zerg-swap-ui-$TS.log}"
 
@@ -57,7 +59,7 @@ zerg-swap-ui.sh —— 桌面 UI（zerg-ui）换件的受控流程 · **只报�
 
 判的六闸（三闸形态 + 两前置闸；逐条对应 scripts/build/zerg-swap-core.sh）：
   闸 A 工作树半成品：`git status --porcelain ui/ wall/ core/ agent/` 的非未跟踪项计数必须 0
-  闸 B 启动链可用：仓根 `start-zerg-ui.sh` 在位，**且**它 exec 的 `bin/zerg-ui` 真存在
+  闸 B 启动链可用：A6 真源 `scripts/build/start-zerg-ui.sh` 在位（正门 `zerg ui start`），**且**它 exec 的 `bin/zerg-ui` 真存在
   闸① 构建口径：件必须由 scripts/build/build-all.sh 产出；读 bin/build-info.json 判身份四格
   闸② 验签：目标件必须 `codesign --verify` 通过（UI 件验签失效 = 秒杀 EXIT137）
   闸③ 回滚位：回滚件（bin/_history/zerg-ui.prev）必须**在位且验签通过**
@@ -108,18 +110,23 @@ else
   judge "A 工作树半成品" FAIL "未提交改动数 = ${DIRTY}（换件会把半成品编进生产件）"
 fi
 
-hr; say "[闸B] 启动链可用（启动器在位 ∧ 它 exec 的件在位）"
+hr; say "[闸B] 启动链可用（A6 真源：正门 zerg ui start → 启动器在位 ∧ 它 exec 的件在位）"
+# A6 真源 = `scripts/build/start-zerg-ui.sh`（单一真源·顶层 `start-zerg-ui.sh`=A17 已于 2026-10-08 退场并入它）。
+# exec 目标两种写法都认：A6 真源 `BIN=<仓根>/bin/…`（os.execv）；旧顶层（已退）`./bin/…`。
 if [ ! -f "$LAUNCHER_REL" ]; then
   judge "B 启动链" FAIL "启动器不存在（${LAUNCHER_REL}）—— 换上去也起不来"
 else
-  EXEC_TARGET="$(grep -oE '\./[A-Za-z0-9_./-]+' "$LAUNCHER_REL" | tail -1)"
+  EXEC_TARGET="$(grep -oE 'BIN="\$REPO_ROOT/[A-Za-z0-9_./-]+"' "$LAUNCHER_REL" 2>/dev/null | tail -1 | sed 's#^BIN="\$REPO_ROOT/##' | sed 's#"$##')"
+  if [ -z "$EXEC_TARGET" ]; then
+    EXEC_TARGET="$(grep -oE '\./[A-Za-z0-9_./-]+' "$LAUNCHER_REL" 2>/dev/null | tail -1 | sed 's#^\./##')"
+  fi
   say "      启动器：${LAUNCHER_REL} · 它 exec 的件：${EXEC_TARGET:-（解析不到）}"
   if [ -z "$EXEC_TARGET" ]; then
     judge "B 启动链" BLOCKED "启动器里解析不出 exec 目标 —— 判不了，不许当绿"
-  elif [ ! -e "${EXEC_TARGET#./}" ]; then
-    judge "B 启动链" FAIL "启动器 exec 的件盘上不存在（${EXEC_TARGET#./}）—— 悬空，同族于主控件 2026-09-20 那次"
+  elif [ ! -e "$EXEC_TARGET" ]; then
+    judge "B 启动链" FAIL "启动器 exec 的件盘上不存在（${EXEC_TARGET}）—— 悬空，同族于主控件 2026-09-20 那次"
   else
-    judge "B 启动链" PASS "启动器与它 exec 的件都在位"
+    judge "B 启动链" PASS "启动器（A6 真源 ${LAUNCHER_REL}）与它 exec 的件（${EXEC_TARGET}）都在位"
   fi
 fi
 

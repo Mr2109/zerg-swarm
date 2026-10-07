@@ -8,7 +8,8 @@
 //
 // 选它 / 不选它的理由（本单口径 · 桶 a–e · 纯静态只读单件）：
 //
-//	✓ 选：判据是**纯字符串 / 正则面**（读 7 枚显式点名的旋钮宿主件，逐行抽样 `ZERG_*` 消费形态）——
+//	✓ 选：判据是**纯字符串 / 正则面**（读 8 枚显式点名的旋钮宿主件 = 7 枚 shell/py ＋
+//	  `core/cmd/zerg/root.go`，逐行抽样 `ZERG_*` 消费形态；缺口 GAP-20260927-436 补 CLI 侧仓根读者）——
 //	  **不开子进程、不碰网络、不读时刻、不用随机**（`--self-test` 只在 `tempfile.TemporaryDirectory` 里造件，
 //	  自回收 ⇒ 唯一写面自回收）。退码 `0/1/2` 三档齐 · 主路径**零写面** · 行数适中（210 行）。
 //	✓ 契合桶：件名首字母 `d` 之外取 `e`（`check-env-knobs` ⇒ 桶 a–e）—— ⚠ 同批首选 `check-dev-targets.py`
@@ -90,7 +91,12 @@ const (
 const cenkWS = `\x{0009}-\x{000D}\x{001C}-\x{001F}\x{0020}\x{0085}\x{00A0}` +
 	`\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}`
 
-// cenkKnobHosts —— py `KNOB_HOSTS`（显式点名 · 固定次序 · miss 按此次序产出）。
+// cenkKnobHosts —— py `KNOB_HOSTS` 副本 ＋ 1 枚 core 宿主件（缺口 GAP-20260927-436）：
+//
+//	py 原表只收 `scripts/gates/**` 7 枚 shell/py 宿主件，**漏了 CLI 侧仓根旋钮 `ZERG_REPO` 的真读者**
+//	（`core/cmd/zerg/root.go` 的 `ZERG_REPO` 读取）⇒ 该旋钮在消费面查无、登记即判「陈旧」。
+//	⇒ 补 `core/cmd/zerg/root.go`（本件同仓 · 静态只读 · 只产出 `ZERG_REPO` 一枚）当第 8 枚宿主件。
+//	显式点名 · 固定次序 · miss 按此次序产出。
 var cenkKnobHosts = []string{
 	"scripts/gates/precommit-gates.sh",
 	"scripts/gates/all.sh",
@@ -99,6 +105,7 @@ var cenkKnobHosts = []string{
 	"scripts/gates/judge-lock.py",
 	"scripts/gates/judge-targets.sh",
 	"scripts/gates/mutation-smoke.sh",
+	"core/cmd/zerg/root.go",
 }
 
 // cenkKnob —— 登记项三格：谁读 / 换什么真源 / 毒化后表现。
@@ -109,6 +116,9 @@ func cenkKnobTable() map[string]cenkKnob {
 	return map[string]cenkKnob{
 		"ZERG_GATE_REPO_ROOT": {Readers: "precommit-gates.sh", Swap: "仓根（本件专用旋钮）",
 			Poison: "把整趟门指到另一棵树 ⇒ 门判的不是你要提交的那个仓"},
+		"ZERG_REPO": {Readers: "core/cmd/zerg/root.go（CLI 侧仓根；gate 直通 / commit 入口）",
+			Swap:   "仓根（与脚本侧 ZERG_REPO_ROOT 同名族、互不读取）",
+			Poison: "换门步根 ⇒ 门对着另一棵树判（缺口 GAP-20260927-436：门70 假 BLOCKED rc=2）"},
 		"ZERG_REPO_ROOT": {Readers: "all.sh · real-gates.sh", Swap: "仓根（与命令面 ZERG_REPO 同名族、互不读取）",
 			Poison: "门/包装脚本读的是别处的仓 ⇒ 覆盖面静默缩小"},
 		"ZERG_GATE_LOCK_HELD": {Readers: "precommit-gates.sh", Swap: "单实例闸（自报「已持锁」）",

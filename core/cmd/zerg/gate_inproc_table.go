@@ -161,11 +161,13 @@ var gateCheckGoEntry = map[string]func(stdout, stderr io.Writer, argv []string) 
 	"judge-lock":                            judgeLockGateMain,
 	"m2-go-py-isomorphism-scan":             m2GoPyIsomorphismScanGateMain,
 	"preview-gate-steps":                    pgsGateMain,
+	"repo-diffstat-check":                   repoDiffstatGateMain,
 	"seal-ledger":                           sealLedgerGateMain,
 	"show-baseline":                         showBaselineGateMain,
 	"stability-stats":                       evalStabilityStatsGateMain,
 	"two-states-gate-mutate":                twoStatesMutateGateMain,
 	"who-references":                        whoReferencesGateMain,
 	"writer-lock":                           writerLockGateMain,
+	"writeout-probe":                        writeoutProbeGateMain,
 	"zerg-egg":                              zergEggGateMain,
 }

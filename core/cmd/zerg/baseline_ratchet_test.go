@@ -341,24 +341,64 @@ func TestBrMeasureValueRetiredGoFallback(t *testing.T) {
 	}
 }
 
-// TestBrConditionsRetiredGoFallbackTabled —— ★ 退役态回落面的登记牙：`cli-contract.blanks` 格
-// （原现测件 check-cli-contract.py 在退场批）必须带 goMain（其 Go 半 cliContractGateMain）⇒ 退役态
-// 照常出结论（✗ 不 fail-closed）。哑化：抽掉该格 goMain ⇒ 本用例 FAIL（带行号）。
+// TestBrConditionsRetiredGoFallbackTabled —— ★ 退役态回落面的登记牙：**退场批**里的现测门格必须带
+// goMain（其 Go 半）⇒ 退役态照常出结论（✗ 不 fail-closed）。逐格点名，缺哪格报哪格。
+// ★ 哑化负控（带行号）：
+//
+//	· 抽掉 `brConditions` 里 `gate-coverage.baseline` 格的 `goMain: checkGateCoverageGateMain,` 行
+//	  （紧邻该格 `measureRe: ③…` 那行之下）⇒ 本用例 FAIL，逐字「`gate-coverage.baseline` 格缺 goMain」。
+//	· 抽掉 `cli-contract.blanks` 格的 `goMain: cliContractGateMain,` 行 ⇒ 同法 FAIL（原覆盖保留）。
 func TestBrConditionsRetiredGoFallbackTabled(t *testing.T) {
-	seen := false
+	// 表：格名 ⇒ 待退 py（退场批 · 引用它当现测件的格必须带 Go 半）。
+	want := []struct{ name, py string }{
+		{"cli-contract.blanks", "check-cli-contract.py"},
+		{"gate-coverage.baseline", "check-gate-coverage.py"},
+	}
+	byName := map[string]brCond{}
 	for _, c := range brConditions {
-		if c.name != "cli-contract.blanks" {
-			continue
+		byName[c.name] = c
+	}
+	for _, w := range want {
+		c, ok := byName[w.name]
+		if !ok {
+			t.Fatalf("`%s` 格不见了（表被改名/删）", w.name)
 		}
-		seen = true
 		if c.goMain == nil {
-			t.Fatalf("`cli-contract.blanks` 格缺 goMain ⇒ check-cli-contract.py 退场后该格 fail-closed")
+			t.Fatalf("`%s` 格缺 goMain ⇒ %s 退场后该格 fail-closed", w.name, w.py)
 		}
-		if len(c.measure) < 2 || c.measure[0] != "python3" || !strings.HasSuffix(c.measure[1], "check-cli-contract.py") {
-			t.Fatalf("`cli-contract.blanks` 格现测命令形态变了：%v（回落前置是 [python3, <py>]）", c.measure)
+		if len(c.measure) < 2 || c.measure[0] != "python3" || !strings.HasSuffix(c.measure[1], w.py) {
+			t.Fatalf("`%s` 格现测命令形态变了：%v（回落前置是 [python3, <py>]）", w.name, c.measure)
 		}
 	}
-	if !seen {
-		t.Fatal("`cli-contract.blanks` 格不见了（表被改名/删）")
+}
+
+// TestBrGateCoverageRetiredGoFallback —— 判据「gate-coverage.baseline」的退役态回落牙（G21）：
+// 现测件 `scripts/gates/check-gate-coverage.py` 退役（不在盘）而本格带 Go 半 ⇒ `brMeasureValue`
+// 回落**进程内跑 `checkGateCoverageGateMain --baseline`** 取同一读数（同一 `measureRe` · ✗ 不 fail-closed）。
+// 本用例以「指向一件不在盘的 py」逼出该支（**真仓 py 不动** · 与 `TestBrMeasureValueRetiredGoFallback` 同法）。
+// ★ 成对负控：Go 半也移开（goMain=nil）⇒ 真起 python3（件不在）⇒ 判不了（fail-closed 保留）。
+// ★ 哑化负控（带行号）：抽掉 `brConditions` 里 `gate-coverage.baseline` 格的 `goMain:` 行 ⇒ 本用例 FAIL。
+func TestBrGateCoverageRetiredGoFallback(t *testing.T) {
+	root := brTestRepoRoot(t)
+	if _, err := os.Stat(filepath.Join(root, "core", "cmd", "zerg", "main.go")); err != nil {
+		t.Skip("仓根未定位到 core/cmd/zerg/main.go")
+	}
+	cond := brCond{
+		name:      "gate-coverage.baseline",
+		measure:   []string{"python3", brPyJoin("scripts", "gates", "__retired_check_gate_coverage__.py"), "--baseline"},
+		measureRe: `③\s*实测命中数[^=]*=\s*(\d+)`,
+		goMain:    checkGateCoverageGateMain,
+	}
+	v, src, merr := brMeasureValue(root, cond, nil, false)
+	if merr != nil {
+		t.Fatalf("退役态该回落 Go 半（✗ 不 fail-closed）：%v", *merr)
+	}
+	if v == nil || src == nil || !strings.Contains(*src, "退役态回落") {
+		t.Fatalf("未走退役态回落：v=%v src=%v", v, src)
+	}
+	// 成对负控：Go 半也移开 ⇒ 真起 python3（件不在）⇒ 判不了（fail-closed 保留）。
+	cond.goMain = nil
+	if _, _, e2 := brMeasureValue(root, cond, nil, false); e2 == nil {
+		t.Fatal("负控：无 Go 半该判不了（fail-closed 保留）")
 	}
 }

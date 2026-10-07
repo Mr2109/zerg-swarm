@@ -2,10 +2,10 @@
 //
 // 覆盖面（与件头「已对拍面 / 未覆盖面」对齐）：
 //
-//	① 自检二十二档全过（正控 rc=0）· ② 显式三路径表（全对 0 / 漂移 1 / 无声明 1 / 名册不在 2 / 空名册 2 /
+//	① 自检二十六档全过（正控 rc=0）· ② 显式三路径表（全对 0 / 漂移 1 / 无声明 1 / 名册不在 2 / 空名册 2 /
 //	plist 不在 0）· ③ `--json` 用法错 rc=2（Q-176 本门无机器读面）· ④ `-h` 帮助 rc=0 ·
 //	⑤ 未知旗标 rc=2（unrecognized）· ⑥ 缺值 rc=2（expected one argument）· ⑦ `--list-rules` rc=0 ·
-//	⑧ A 类对齐：自检后临时目录同前缀计数 delta=0 · ⑨ 漂移**点名到字段**（负控锚点：哑化后必红）· ⑩ 判据 H（拨号地址由名册可推导）：红逐字点名/绿/端口不符/哑化负控。
+//	⑧ A 类对齐：自检后临时目录同前缀计数 delta=0 · ⑨ 漂移**点名到字段**（负控锚点：哑化后必红）· ⑩ 判据 H（拨号地址由名册可推导）：红逐字点名/绿/端口不符/哑化负控 · ⑪ 判据 I（host↔路径用户名 · GAP-20260927-06）：红逐字点名/绿/跳过/哑化负控。
 package main
 
 import (
@@ -32,7 +32,7 @@ func cnrRunMain(argv ...string) (int, string, string) {
 	return rc, so.String(), se.String()
 }
 
-// TestCheckNodesRoster_SelfTestAllPass —— ① 自检二十二档（正控：全过 ⇒ rc=0）。
+// TestCheckNodesRoster_SelfTestAllPass —— ① 自检二十六档（正控：全过 ⇒ rc=0）。
 func TestCheckNodesRoster_SelfTestAllPass(t *testing.T) {
 	var so, se strings.Builder
 	rc := cnrSelfTest(&so, &se)
@@ -40,10 +40,10 @@ func TestCheckNodesRoster_SelfTestAllPass(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("自检应 rc=0，实得 %d\n%s", rc, out)
 	}
-	if !strings.Contains(out, "自检结论：全过（25 条，失败 0）") {
+	if !strings.Contains(out, "自检结论：全过（29 条，失败 0）") {
 		t.Fatalf("自检结论行不符，实得尾部：\n%s", out)
 	}
-	// 二十二档里负控必须真红过（成对：少一台/host 漂/声明缺/ssh 漂/models 未登记/plist 未登记）
+	// 二十六档里负控必须真红过（成对：少一台/host 漂/声明缺/ssh 漂/models 未登记/plist 未登记）
 	for _, want := range []string{"fleet: host 改一位 ⇒ 1", "updates 段声明删掉 ⇒ 1", "plist 机器名未登记 ⇒ 1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("自检输出缺档 %q", want)
@@ -273,10 +273,53 @@ func TestCheckNodesRoster_ControllerJudgementH(t *testing.T) {
 
 	// 哑化负控：去掉 H 断言（ctrlCheck=false）⇒ 同一 bad 回不报（rc=0）
 	var so strings.Builder
-	if rc3 := cnrRunChecks(&so, roster, fleet, plist, true, false, []string{cBad}, false); rc3 != 0 {
+	if rc3 := cnrRunChecks(&so, roster, fleet, plist, true, false, []string{cBad}, false, true); rc3 != 0 {
 		t.Fatalf("H 哑化负控应 rc=0（回不报），实得 %d\n%s", rc3, so.String())
 	}
 	if !strings.Contains(so.String(), "断言哑化") {
+		t.Fatalf("哑化档未声明「断言哑化」：\n%s", so.String())
+	}
+}
+
+// TestCheckNodesRoster_HostPathUsernameI —— ⑪ 判据 I（GAP-20260927-06）定向：
+//
+//	路径账户名 ∈ 该机声明账户集（源 = ssh 用户段）⇒ 绿；∉ ⇒ 红 + 逐字点名；哑化 ⇒ 回不报。
+//
+//	★ 关键口径：判据建在**声明**（`ssh: <user>@<host>` 的用户段）上，✗ **不按机器名推**账户
+//	  （夹具名册里 edge-node 的账户是 `g01`，路径写 `/home/<user>/…` 才是对的）。
+func TestCheckNodesRoster_HostPathUsernameI(t *testing.T) {
+	d := t.TempDir()
+	roster := cnrWriteFixture(t, d, "roster.yaml", cnrRosterFix)
+	plist := cnrWriteFixture(t, d, "a.plist", cnrPlistFix)
+	mk := func(name, pathUser string) string {
+		return cnrWriteFixture(t, d, name, strings.ReplaceAll(cnrFleetFix,
+			"m1: { host: edge-node, backend: llama-server }",
+			"m1: { host: edge-node, backend: llama-server, file: /home/"+pathUser+"/models/m.gguf }"))
+	}
+	fleetOK := mk("i_ok.yaml", "g01")
+	fleetBad := mk("i_bad.yaml", "other")
+
+	// 绿例：路径账户 g01 ∈ {g01} ⇒ rc=0
+	if rc, out, _ := cnrRunMain("--roster", roster, "--fleet", fleetOK, "--plist", plist); rc != 0 {
+		t.Fatalf("I 绿例应 rc=0，实得 %d\n%s", rc, out)
+	}
+
+	// 红例：路径账户 other ∉ {g01} ⇒ rc=1 + 逐字点名
+	rc, out, _ := cnrRunMain("--roster", roster, "--fleet", fleetBad, "--plist", plist)
+	if rc != 1 {
+		t.Fatalf("I 红例应 rc=1，实得 %d\n%s", rc, out)
+	}
+	want := "I `m1`（host=edge-node）路径里的账户名 `other` 不在该机声明账户集 {g01}"
+	if !strings.Contains(out, want) {
+		t.Fatalf("I 红例未逐字点名：缺\n%q\n实得：\n%s", want, out)
+	}
+
+	// 哑化负控：关掉 I 断言（pathUserCheck=false）⇒ 同一 bad 回不报（rc=0）
+	var so strings.Builder
+	if rc2 := cnrRunChecks(&so, roster, fleetBad, plist, true, false, []string{}, true, false); rc2 != 0 {
+		t.Fatalf("I 哑化负控应 rc=0（回不报），实得 %d\n%s", rc2, so.String())
+	}
+	if !strings.Contains(so.String(), "path_user_check=False") {
 		t.Fatalf("哑化档未声明「断言哑化」：\n%s", so.String())
 	}
 }
